@@ -3,11 +3,11 @@
 // Miami 1 … Miami 7, New York 1 … Seoul … Madrid … Vienna … St. Petersburg …
 // Moscow 7: weakest rung to strongest, and within a rung by instance number.
 // Before this the lobby asked Postgres for `created_at` descending, which is the
-// order seed.sql happens to INSERT, backwards - the picker opened on Moscow 7
+// order c_base's schema.sql happens to INSERT, backwards - the picker opened on Moscow 7
 // and walked out through the families in reverse.
 //
 // TWO SOURCES MEET HERE and neither is restated in TypeScript: the rows come
-// from seed.sql (where the nickname IS the city - there is no display map) and
+// from c_base's schema.sql (where the nickname IS the city - there is no display map) and
 // the strength order from `tier` in c/src/bot_roster.c. The comparator the lobby
 // uses (src/common/botLadder.ts) is handed the tiers, so this drives the real one
 // over the real data rather than a fixture that could agree with a bug.
@@ -35,13 +35,13 @@ function tiers(): Map<string, number> {
     return out;
 }
 
-/** The rows seed.sql inserts, as the site stores them. */
+/** The rows c_base's schema.sql inserts, as the site stores them. */
 function seededRows(): { nickname: string; strategy_key: string }[] {
-    const src = read('server/impls/supabase/seed.sql').replace(/--[^\n]*/g, '');
-    const at = src.indexOf('INSERT INTO bots');
+    const src = read('../c_base/sql/schema.sql').replace(/--[^\n]*/g, '');
+    const at = src.indexOf('INTO bots (');
     const stmt = src.slice(at, src.indexOf(';', at));
     const out: { nickname: string; strategy_key: string }[] = [];
-    for (const m of stmt.matchAll(/\(\s*'([^']*)'\s*,\s*'([^']+)'\s*\)/g)) {
+    for (const m of stmt.matchAll(/\(\s*'[^']*'\s*,\s*'%([^']*)'\s*,\s*'([^']+)'\s*\)/g)) {
         out.push({ nickname: `%${m[1]}`, strategy_key: m[2] });
     }
     assert.ok(out.length >= 20, `parsed only ${out.length} seeded rows - parser drifted?`);

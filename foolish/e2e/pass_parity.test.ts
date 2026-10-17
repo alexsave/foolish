@@ -1,5 +1,6 @@
-// Pass legality - owns BOTH the exhaustive fuzzer AND the handpicked validation
-// scenarios for passing. Per project convention, anything pass-related lives in
+// Pass legality - the handpicked validation scenarios for passing (the fuzzer that
+// played dealt games through the TypeScript server's Postgres move path went with
+// that server in stage 4). Per project convention, anything pass-related lives in
 // this file; the fast validation runner (e2e/validation/pass_parity_validation.test.ts)
 // imports `registerPassValidation` and executes just those deterministic cases.
 //
@@ -22,21 +23,16 @@
 // SERVER oracle runs table_act in memory rather than through the endpoint because
 // asking it commits: a probe that applied would move the game on.
 
-import './harness.ts';
-import { test, before, beforeEach, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import type { TableView } from '../sdk/ts/table/client_table.ts';
 import { boardPills } from '../src/utils/gameValidation.ts';
 import { PLAY_PILL_PASS } from '../sdk/ts/gen/view_layout.bots.ts';
 import { readEnvelopeView as readEnvelope } from './helpers/client_read.ts';
 import { encodeAction } from '../sdk/ts/table/client_table.ts';
-import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
-import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { fixture, fixtureTable, OUT } from './helpers/table_fixture.ts';
-import { cardText, legalMoves, mustReadTable, residentBoard, type BoardState, type PlayCard } from './helpers/table_play.ts';
-import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
+import { cardText, legalMoves, residentBoard, type BoardState, type PlayCard } from './helpers/table_play.ts';
 import { suiteRng } from './helpers/rng.ts';
 
 // Whether the board shows the Pass button for the selection `cards`.
@@ -167,112 +163,7 @@ export function registerPassValidation(): void {
 // Exhaustive fuzzer + its validation cases - only when run directly (full e2e),
 // NOT when the validation runner imports this file for registerPassValidation.
 // ===========================================================================
-if (!process.env.VALIDATION_ONLY) {
-    // Every non-empty same-value subset of the defender's hand whose value also
-    // appears on the table - the candidate space we ask all three oracles about.
-    const candidatePassSets = (hand: PlayCard[], b: BoardState): Card[][] => {
-        if (b.battles.length === 0) return [];
-        const tableValues = new Set(b.battles.map((x) => x.attack.value));
-        const byValue = new Map<number, Card[]>();
-        for (const c of hand) {
-            if (!tableValues.has(c.value)) continue;
-            (byValue.get(c.value) ?? byValue.set(c.value, []).get(c.value)!).push(c);
-        }
-        const out: Card[][] = [];
-        for (const cards of byValue.values()) {
-            const n = Math.min(cards.length, 6);
-            for (let mask = 1; mask < (1 << n); mask++) {
-                const set: Card[] = [];
-                for (let i = 0; i < n; i++) if (mask & (1 << i)) set.push(cards[i]);
-                out.push(set);
-            }
-        }
-        return out;
-    };
 
-    // Moves and deals from the suite seed (E2E_SEED_PASS_PARITY), so a red run replays.
-    const rng = suiteRng('pass_parity');
+// The handpicked cases also run in the full e2e suite.
+if (!process.env.VALIDATION_ONLY) registerPassValidation();
 
-    const freshGame = async (): Promise<string> => {
-        const gameId = `p${uuid().slice(0, 6)}`;
-        const h0 = uuid();
-        // Three players so the game eliminates someone mid-play, producing the
-        // OUT-player-between-defender-and-next states the bug needs.
-        await seedLobby(gameId, [
-            { id: h0, name: 'H0', ready: false },
-            { id: uuid(), name: 'H1' },
-            { id: uuid(), name: 'B0', brain: 'random' },
-        ]);
-        __setTableDealSeedOverride(Uint8Array.from({ length: 32 }, () => rng.int(256)));
-        await runMeta(gameId, h0, { type: 'start' });
-        return gameId;
-    };
-
-    before(async () => { await applySchema(); });
-    beforeEach(async () => { await resetDb(); __clearGameCache(); });
-    after(async () => { __setTableDealSeedOverride(null); await pgPool.end(); });
-
-    test('pass parity fuzz: client offers exactly the legal passes the server accepts', async () => {
-        const ITER = Number(process.env.FUZZ_ITERS || 8000);
-        let gameId = await freshGame();
-        let checkedStates = 0, sawEliminations = 0, fromStoredView = 0;
-        const hiddenLegal: string[] = [];    // server YES, client NO (the reported bug)
-        const offeredIllegal: string[] = []; // client YES, server NO (the dual)
-        const truthDisagrees: string[] = []; // the enumerator and the table disagree
-
-        for (let i = 0; i < ITER; i++) {
-            let t = await mustReadTable(gameId);
-            if (t.status !== L.GAME_STATUS_PLAYING) { gameId = await freshGame(); t = await mustReadTable(gameId); }
-
-            const d = t.defender;
-            const defender = t.seats[d];
-            if (defender && defender.status === L.PLAYER_STATUS_IN && t.battles.length > 0) {
-                if (t.seats.some((s) => s.status === L.PLAYER_STATUS_OUT)) sawEliminations++;
-                // The client's game: the player_views row the server committed for a
-                // human defender (what the client reads), the same envelope in memory
-                // for the bot seat (which has no client and no row).
-                let personal: TableView;
-                const row = defender.brain ? null : (await pgPool.query(
-                    'SELECT view, version FROM player_views WHERE game_id=$1 AND player_id=$2', [gameId, defender.id])).rows[0];
-                if (row) {
-                    assert.equal(Number(row.version), t.version, `the stored view is at the row's version (iter=${i})`);
-                    personal = readView(Buffer.from(row.view.replace(/^\\x/, ''), 'hex'));
-                    fromStoredView++;
-                } else {
-                    personal = clientGame(t, d, t.version);
-                }
-                const truthKeys = truthPasses(t, d);
-
-                for (const cards of candidatePassSets(defender.hand, t)) {
-                    const k = setKey(cards);
-                    const truthYes = truthKeys.has(k);
-                    const serverYes = serverAllowsPass(t, d, cards);
-                    const clientYes = clientCanPass(personal, cards);
-                    checkedStates++;
-                    const detail = `seed=${rng.seed} iter=${i} truth=${truthYes} cards=[${cards.map(cardKey).join(',')}] `
-                        + `defender=#${d}(${defender.name}) players=[${t.seats.map((s, idx) => `${idx}:${s.name}:${s.status}:h${s.hand.length}`).join(' ')}] `
-                        + `table=[${t.battles.map((b) => `${cardKey(b.attack)}${b.defense ? '/' + cardKey(b.defense) : ''}`).join(' ')}]`;
-                    if (serverYes && !clientYes && hiddenLegal.length < 3) hiddenLegal.push(detail);
-                    if (clientYes && !serverYes && offeredIllegal.length < 3) offeredIllegal.push(detail);
-                    if (truthYes !== serverYes && truthDisagrees.length < 3) truthDisagrees.push(detail);
-                }
-            }
-
-            const moves = legalMoves(t);
-            if (moves.length) {
-                const m = rng.pick(moves);
-                try { await runAction(gameId, m.playerId, m); } catch { /* race -> no-op */ }
-            } else { gameId = await freshGame(); }
-        }
-
-        process.stdout.write(`[pass-parity] checked=${checkedStates} statesWithEliminations=${sawEliminations} fromStoredView=${fromStoredView} hiddenLegal=${hiddenLegal.length} offeredIllegal=${offeredIllegal.length} truthDisagrees=${truthDisagrees.length}\n`);
-        assert.ok(checkedStates > 0 && sawEliminations > 0 && fromStoredView > 0,
-            `the fuzz reached pass states, eliminations and stored views (seed=${rng.seed})`);
-        assert.equal(hiddenLegal.length, 0, `CLIENT hides a pass the SERVER accepts (legal pass, no button):\n  ${hiddenLegal.join('\n  ')}`);
-        assert.equal(offeredIllegal.length, 0, `CLIENT offers a pass the SERVER rejects:\n  ${offeredIllegal.join('\n  ')}`);
-        assert.equal(truthDisagrees.length, 0, `the legal-move enumerator and the SERVER disagree on a pass:\n  ${truthDisagrees.join('\n  ')}`);
-    });
-
-    // The handpicked cases also run as part of the full e2e suite.
-    registerPassValidation();
-}

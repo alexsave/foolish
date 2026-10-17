@@ -6,7 +6,7 @@
 // called and what c/src/bot_roster.c dispatches on. The player-facing nickname
 // is a city on the road to Moscow, in the table, and nothing maps between them:
 // src/common/botDisplayName drops the reserved '%' and returns the rest. So a
-// page shows what seed.sql says, and a replay shows what its blob stored.
+// page shows what c_base's schema.sql says, and a replay shows what its blob stored.
 //
 // THAT MAKES THIS GATE STRONGER THAN THE ONE IT REPLACES. It used to check that
 // a render-time map covered every seeded rung in 25 languages; there is no map
@@ -25,15 +25,15 @@ import { botDisplayName } from '../../src/common/botName.ts';
 const REPO = resolve(import.meta.dirname, '../..');
 const read = (p: string) => readFileSync(join(REPO, p), 'utf8');
 
-/** The rows seed.sql inserts: stored nickname and strategy key. */
+/** The rows c_base's schema.sql inserts: stored nickname and strategy key. */
 function seededRows(): { nickname: string; key: string }[] {
     // Strip `--` comments first: the prose between the rows carries semicolons
     // and apostrophes, either of which ends the statement early and silently.
-    const src = read('server/impls/supabase/seed.sql').replace(/--[^\n]*/g, '');
-    const at = src.indexOf('INSERT INTO bots');
+    const src = read('../c_base/sql/schema.sql').replace(/--[^\n]*/g, '');
+    const at = src.indexOf('INTO bots (');
     const stmt = src.slice(at, src.indexOf(';', at));
     const out: { nickname: string; key: string }[] = [];
-    for (const m of stmt.matchAll(/\(\s*'([^']*)'\s*,\s*'([^']+)'\s*\)/g)) {
+    for (const m of stmt.matchAll(/\(\s*'[^']*'\s*,\s*'%([^']*)'\s*,\s*'([^']+)'\s*\)/g)) {
         out.push({ nickname: m[1], key: m[2] });
     }
     assert.ok(out.length >= 20, `parsed only ${out.length} seeded rows - parser drifted?`);
@@ -66,7 +66,7 @@ test('no seeded nickname is an ordnance name', () => {
     }
     assert.deepEqual(bad, [], 'these rows put a kernel brain name on a board, where a city belongs:\n  '
         + `${bad.join('\n  ')}\n`
-        + 'The nickname in seed.sql IS what a page shows - there is no display map to hide it.');
+        + 'The nickname in c_base\'s schema.sql IS what a page shows - there is no display map to hide it.');
 });
 
 test('every seeded nickname is a rung of the ladder plus an instance number', () => {

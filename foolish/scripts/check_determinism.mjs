@@ -4,7 +4,7 @@
  * =============================================================================
  * The invariant, in the owner's words: the only true nondeterministic
  * randomness should be when we seed a live game. That is ONE crypto draw, at
- * the deal (drawDealSeed, server/impls/supabase/functions/_shared/adapter/table_io.ts). Mid-game engine randomness
+ * the deal (c_base's cb_table_run, c_base/src/app/table_ops.c). Mid-game engine randomness
  * and bot decisions are both reseeded from that deal seed, so a whole game
  * replays from it, and a test that pins the seed pins the game.
  *
@@ -107,64 +107,6 @@ export const RULES = [
 ];
 
 export const ALLOW = [
-    {
-        rule: 'math-random',
-        file: 'server/impls/supabase/functions/_shared/adapter/meta_actions.ts',
-        calls: 1,
-        // TEMPORARY, not a blessing. This is the only reachable Math.random() in
-        // server/. It picks which bot joins a LOBBY when the client sends no bot
-        // id - and the one client that does that is the iOS app, whose lobby is a
-        // plain "Add Bot" button. The web has a picker and passes an id. Two
-        // clients answering "which bot gets added" differently is the actual
-        // problem; this draw is the symptom.
-        // Deleting the branch now would leave iOS "Add Bot" unable to add
-        // anything, so it stays until the iOS picker lands, and this entry goes
-        // with it. See "Queued: the iOS lobby needs the bot picker" in
-        // docs/KERNEL_LIFT_BRIEF.md for the three steps.
-        reason:
-            'TEMPORARY: the no-bot-id fallback the iOS lobby still relies on, having '
-            + 'no bot picker. Delete with the server branch once the picker lands - '
-            + 'see "Queued: the iOS lobby needs the bot picker" in docs/KERNEL_LIFT_BRIEF.md.',
-    },
-    {
-        rule: 'random-uuid',
-        file: 'server/impls/supabase/functions/_shared/adapter/utils.ts',
-        calls: 1,
-        reason:
-            'A request-id prefix for log lines on the LIVE server. No reader compares or '
-            + 'orders by it; nothing replays it.',
-    },
-    {
-        rule: 'random-bytes',
-        file: 'server/impls/supabase/functions/_shared/adapter/table_io.ts',
-        calls: 1,
-        // The server's half of THE draw (engine.ts carries the offline hosts').
-        reason:
-            'The server\'s deal seed: 32 crypto bytes per attempt of a lobby edit that may '
-            + 'deal (drawDealSeed), handed to table_ready / table_add_bot and saved to '
-            + 'games.game_seed when the edit deals, so the game replays from it; tests pin '
-            + 'it with __setTableDealSeedOverride.',
-    },
-    {
-        rule: 'random-uuid',
-        file: 'server/impls/supabase/functions/create/index.ts',
-        calls: 1,
-        reason:
-            'The game id, which is also the code a player shares to join, so it must be '
-            + 'unguessable. Part of "seeding a live game", not a defect. CAVEAT: it is '
-            + 'randomUUID().slice(0, 6) - 24 bits, which collides at a few thousand live '
-            + 'games. Widen it; do not derive it.',
-    },
-    {
-        rule: 'clock',
-        file: 'e2e/auth_jwt.test.ts',
-        calls: 1,
-        reason:
-            'The subject under test is JWT expiry, and verifyJwtLocal reads the real '
-            + 'clock inside. Minting exp/iat relative to the same clock is the test, not '
-            + 'a leak: pinning only this side would assert against a token the verifier '
-            + 'considers ancient.',
-    },
     {
         rule: 'clock',
         file: 'e2e/wasm_kernel_fuzz.test.ts',
@@ -306,8 +248,8 @@ if (process.argv[1] && fileURLToPath(new URL(`file://${process.argv[1]}`)).endsW
         process.stderr.write(
             'determinism gate failed.\n\n'
             + 'The invariant: the only true nondeterministic draw in the system is the one\n'
-            + 'that seeds a live game - 32 crypto bytes at the deal (drawDealSeed in\n'
-            + 'server/impls/supabase/functions/_shared/adapter/table_io.ts). Mid-game engine randomness and bot decisions are both\n'
+            + 'that seeds a live game - 32 crypto bytes at the deal (cb_table_run in\n'
+            + 'c_base/src/app/table_ops.c). Mid-game engine randomness and bot decisions are both\n'
             + 'reseeded from that deal seed, so a whole game replays from it. Entropy in\n'
             + 'e2e/, sdk/ or server/ breaks that, and a clock read that decides a test\n'
             + 'verdict breaks it from the outside.\n\n'

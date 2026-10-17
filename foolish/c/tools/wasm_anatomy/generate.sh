@@ -82,7 +82,7 @@ console.log(JSON.stringify({
     { key:'web', human:'web.wasm', wasm:`${B}/web.wasm`, named:`${B}/named/web.named.wasm`,
       blurb:'What a browser downloads. The same object files as bots.wasm under a smaller export allow-list, so wasm-ld drops everything no browser call site reaches: the client slot, the animation plan, the replay reader and the message decode stay; the C Table and every Monte-Carlo brain go. Compare the two pages below - the difference is the whole argument for linking per call site.' },
     { key:'bots', human:'bots.wasm', wasm:`${B}/bots.wasm`, named:`${B}/named/bots.named.wasm`,
-      blurb:'The server-side link, read off disk by the Supabase edge functions and by Node: the rules, the C Table the server plays, the web client slot, the replay and message codecs, and every algorithmic bot strategy.' },
+      blurb:'The server-side link, read off disk by Node (the tests and tools): the rules, the C Table the tests drive, the web client slot, the replay and message codecs, and every algorithmic bot strategy.' },
   ],
 }));
 NODE
