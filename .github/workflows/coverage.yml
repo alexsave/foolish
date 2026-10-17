@@ -82,8 +82,14 @@ jobs:
   # twenty games a player count - every assertion the c-engine job no longer
   # makes at volume, made here at the flags the product ships, uninstrumented.
   # Before the split both ran in c-engine, instrumented, one after another.
+  #
+  # It is also the regression guard for a miscompile only these flags show:
+  # the solvers once cast their move scratch to LegalMoves *, and gcc 13 at the
+  # analyser's -O3 -flto acted on the strict-aliasing violation (analyse_test's
+  # endgame proof came back unresolved; -O0 coverage never saw it). Pinned to
+  # ubuntu-24.04 so the compiler that caught it stays the one that runs.
   c-native:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: C kernel suites at volume (tests, msg_wire_test 20, analyse_test)
