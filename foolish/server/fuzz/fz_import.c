@@ -9,7 +9,7 @@
 // NUL bytes; a missing one is written empty.
 #include "fz.h"
 
-#include "store/store.h"
+#include "store/rows_foolish.h"
 #include "store/store_import.h"
 #include "util/log.h"
 

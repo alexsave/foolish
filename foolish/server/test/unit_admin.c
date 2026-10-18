@@ -372,7 +372,7 @@ static void user_delete_is_the_delete_account_path(void) {
     T_EQ_INT(cb_table_create(&g_ctx, &s.user, &made), CB_OK);
     free(made.envelope);
     int games = 0;
-    T_EQ_INT(CB_STORE_CALL(g_ctx.store, games_of_user, s.user.id, 10, count_game, &games), 1);
+    T_EQ_INT(CB_ROWS_CALL(g_ctx.store, games_of_user, s.user.id, 10, count_game, &games), 1);
 
     T_EQ_INT(call("POST", "/admin/api/users/delete", NULL, ADMIN_TOKEN, "{\"id\":\"nobody\"}"), 404);
     T_EQ_INT(call("POST", "/admin/api/users/delete", NULL, ADMIN_TOKEN, "{}"), 400);
@@ -385,7 +385,7 @@ static void user_delete_is_the_delete_account_path(void) {
     T_CHECK(strstr(B(), s.user.id) != NULL);
     T_EQ_INT(CB_STORE_CALL(g_ctx.store, user_get, s.user.id, &row), CB_E_NOT_FOUND);
     games = 0;
-    CB_STORE_CALL(g_ctx.store, games_of_user, s.user.id, 10, count_game, &games);
+    CB_ROWS_CALL(g_ctx.store, games_of_user, s.user.id, 10, count_game, &games);
     T_EQ_INT(games, 0);
     cb_auth_free(g_ctx.auth);
     g_ctx.auth = NULL;

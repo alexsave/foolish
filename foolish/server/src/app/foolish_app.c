@@ -8,6 +8,8 @@
 #include "unfurl_http.h"
 #include "v1_http.h"
 
+#include "store/rows_foolish.h"
+
 #include "table.h"
 #include "util/clock.h"
 #include "util/err.h"
@@ -86,4 +88,8 @@ const cb_app cb_foolish_app = {
     .n_topics = 4,
     .cached_paths = cb_foolish_cached_paths,
     .n_cached_paths = 2,
+    .store = &cb_foolish_store,
 };
+
+// foolish is the app every binary of this build serves (cbase/app.h).
+const cb_app *const cb_main_app = &cb_foolish_app;

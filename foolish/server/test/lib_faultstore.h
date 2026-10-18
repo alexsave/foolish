@@ -11,7 +11,7 @@
 #ifndef CB_LIB_FAULTSTORE_H
 #define CB_LIB_FAULTSTORE_H
 
-#include "store/store.h"
+#include "store/rows_foolish.h"
 
 #include <stdbool.h>
 

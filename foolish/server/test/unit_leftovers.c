@@ -11,7 +11,6 @@
 #include "aws_json.h"
 #include "store/rows_foolish.h"
 #include "lib_aws_tls.h"
-#include "store/store.h"
 #include "../../../shared/c/b64/b64.h"
 #include "util/err.h"
 #include "util/json.h"

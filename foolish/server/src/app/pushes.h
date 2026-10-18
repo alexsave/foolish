@@ -9,7 +9,7 @@
 #define CB_PUSHES_H
 
 #include "realtime/realtime.h"
-#include "store/store.h"
+#include "store/rows_foolish.h"
 #include "table_ops.h"
 
 #include "netwire.h"

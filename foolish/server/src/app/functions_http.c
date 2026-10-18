@@ -239,7 +239,7 @@ static void h_meta(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
         return;
     }
     bot_list bots = { 0, 0, NULL };
-    if (ask.kind == ASK_ADD_BOT && CB_STORE_CALL(ctx->store, bots_list, collect_bot, &bots) < 0) {
+    if (ask.kind == ASK_ADD_BOT && CB_ROWS_CALL(ctx->store, bots_list, collect_bot, &bots) < 0) {
         CB_ERROR("functions", "meta: failed to fetch bots");
         free(bots.rows);
         refusal(res, 500, ASK_WHY_INTERNAL, 0, 0);
@@ -363,7 +363,7 @@ static bool collect_snapshot(const cb_snapshot_row *r, void *ud) {
 static int redact_snapshots(cb_ctx *ctx, const char *user_id) {
     snap_list l = { .user_id = user_id };
     cb_snapshot_query q = { .viewer_id = user_id };
-    int rc = CB_STORE_CALL(ctx->store, snapshots_query, &q, collect_snapshot, &l);
+    int rc = CB_ROWS_CALL(ctx->store, snapshots_query, &q, collect_snapshot, &l);
     if (rc >= 0) rc = l.oom ? CB_E_NOMEM : CB_OK;
     const int name_len = (int)strlen(REDACTED_PLAYER_NAME);
     for (int i = 0; i < l.n && rc == CB_OK; i++) {
@@ -378,7 +378,7 @@ static int redact_snapshots(cb_ctx *ctx, const char *user_id) {
             n = 0;
         }
         if ((size_t)n != e->extras_len || memcmp(out, e->extras, (size_t)n) != 0) {
-            int w = CB_STORE_CALL(ctx->store, snapshot_set_extras, e->id, out, (size_t)n);
+            int w = CB_ROWS_CALL(ctx->store, snapshot_set_extras, e->id, out, (size_t)n);
             if (w != CB_OK && w != CB_E_NOT_FOUND) rc = w;   // a replay gone meanwhile names nobody
         }
         free(out);
@@ -394,7 +394,7 @@ int cb_app_delete_account(cb_ctx *ctx, const char *user_id, int *refused_code, i
     // 1. Every table the user sits at, before the account delete takes the
     //    membership rows with it.
     game_ids l = { 0, 0, NULL };
-    int rc = CB_STORE_CALL(ctx->store, games_of_user, user_id, 1 << 20, collect_game, &l);
+    int rc = CB_ROWS_CALL(ctx->store, games_of_user, user_id, 1 << 20, collect_game, &l);
     if (rc < 0) { free(l.ids); return rc; }
     // 2. The name redacted in each, one fresh CAS commit per game.
     rc = CB_OK;
@@ -414,7 +414,7 @@ int cb_app_delete_account(cb_ctx *ctx, const char *user_id, int *refused_code, i
     if ((rc = redact_snapshots(ctx, user_id)) != CB_OK) { free(l.ids); return rc; }
     // 3. The leaderboard name, then 4. the account (sessions, memberships,
     //    the rating row and chat go with it).
-    rc = CB_STORE_CALL(ctx->store, rating_set_username, user_id, NULL);
+    rc = CB_ROWS_CALL(ctx->store, rating_set_username, user_id, NULL);
     if (rc != CB_OK && rc != CB_E_NOT_FOUND) { free(l.ids); return rc; }
     cb_edge_stale(CB_EDGE_BOARD);   // their name and row leave the leaderboard
     if (!ctx->auth) { free(l.ids); return CB_E_STATE; }

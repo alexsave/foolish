@@ -353,7 +353,7 @@ static void h_game(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 // with the refusal answered.
 static bool chat_of(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, cb_user *u, char *gid, size_t cap, bool *member) {
     if (!caller(ctx, req, res, u) || !path_id(req, res, "/v1/chat/", gid, cap)) return false;
-    int m = CB_STORE_CALL(ctx->store, is_member, gid, u->id);
+    int m = CB_ROWS_CALL(ctx->store, is_member, gid, u->id);
     if (m < 0) { failed(res, m); return false; }
     *member = m == 1;
     return true;
@@ -376,7 +376,7 @@ static void h_chat_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     list_begin(&l, NW_LIST_HEAD_BYTES);
     // Someone who does not sit at the game sees no messages, as chat_messages'
     // row policy answered: an empty list, not a refusal (a spectator's page asks).
-    int rc = member ? CB_STORE_CALL(ctx->store, chat_list, gid, CHAT_PAGE, chat_fn, &l) : 0;
+    int rc = member ? CB_ROWS_CALL(ctx->store, chat_list, gid, CHAT_PAGE, chat_fn, &l) : 0;
     if (rc < 0) { cb_buf_free(&l.body); failed(res, rc); return; }
     list_send(res, &l, NW_CHATS);
 }
@@ -400,7 +400,7 @@ static void h_chat_post(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     // message on their own topic (realtime.h). Read before anything is
     // written, so a failed read stores nothing.
     members m = { 0 };
-    int mn = CB_STORE_CALL(ctx->store, game_members, gid, member_fn, &m);
+    int mn = CB_ROWS_CALL(ctx->store, game_members, gid, member_fn, &m);
     if (mn < 0) { failed(res, mn); return; }
     bool member = false;
     for (int i = 0; i < m.n; i++) member = member || strcmp(m.ids[i], u.id) == 0;
@@ -419,7 +419,7 @@ static void h_chat_post(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     memcpy(row.message, q.message, q.message_len);
     row.message[q.message_len] = 0;
     row.created_at = cb_now_ms();
-    int rc = CB_STORE_CALL(ctx->store, chat_put, &row);
+    int rc = CB_ROWS_CALL(ctx->store, chat_put, &row);
     if (rc != CB_OK) failed(res, rc);
     else {
         rt_publish_chat(ctx->rt, gid, &row, m.ids, m.n);
@@ -451,7 +451,7 @@ static void h_bots(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     if (!ctx->store) { refuse(res, 503, ASK_WHY_INTERNAL, 0); return; }
     list l;
     list_begin(&l, NW_LIST_HEAD_BYTES);
-    int rc = CB_STORE_CALL(ctx->store, bots_list, bot_fn, &l);
+    int rc = CB_ROWS_CALL(ctx->store, bots_list, bot_fn, &l);
     if (rc < 0) { cb_buf_free(&l.body); failed(res, rc); return; }
     list_send_as(res, &l, NW_BOTS, CC_BOTS);
 }
@@ -508,7 +508,7 @@ typedef struct {
 
 static void read_bots(void *ud) {
     bots_read *b = ud;
-    b->rc = CB_STORE_CALL(b->store, bots_list, board_bot, &b->rows);
+    b->rc = CB_ROWS_CALL(b->store, bots_list, board_bot, &b->rows);
 }
 
 static void h_board(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
@@ -518,7 +518,7 @@ static void h_board(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     bots_read br = { .store = ctx->store };
     cb_store_side side;
     cb_store_side_start(&side, read_bots, &br);
-    int rc = CB_STORE_CALL(ctx->store, ratings_top, BOARD_TOP, board_human, &humans);
+    int rc = CB_ROWS_CALL(ctx->store, ratings_top, BOARD_TOP, board_human, &humans);
     cb_store_side_join(&side);
     board bots = br.rows;
     if (rc >= 0) rc = br.rc;
@@ -569,7 +569,7 @@ typedef struct {
 static void read_rating(void *ud) {
     rating_read *r = ud;
     const char *ids[1] = { r->id };
-    r->rc = CB_STORE_CALL(r->store, ratings_for, ids, 1, &r->mine);
+    r->rc = CB_ROWS_CALL(r->store, ratings_for, ids, 1, &r->mine);
 }
 
 static void h_history(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
@@ -583,7 +583,7 @@ static void h_history(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     list l;
     list_begin(&l, NW_HISTORY_HEAD_BYTES);
     cb_snapshot_query q = { u.id, NULL, NULL, HISTORY_PAGE, true };
-    int rc = CB_STORE_CALL(ctx->store, snapshots_query, &q, history_fn, &l);
+    int rc = CB_ROWS_CALL(ctx->store, snapshots_query, &q, history_fn, &l);
     cb_store_side_join(&side);
     if (rc >= 0 && rr.rc < 0) rc = rr.rc;
     if (rc < 0) { cb_buf_free(&l.body); failed(res, rc); return; }
@@ -618,7 +618,7 @@ static void h_replay(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     r.found = r.bad = false;
     // Only a replay of a game the caller played (game_snapshots' policy).
     cb_snapshot_query q = { u.id, gid, NULL, 1, true };
-    int rc = CB_STORE_CALL(ctx->store, snapshots_query, &q, replay_fn, &r);
+    int rc = CB_ROWS_CALL(ctx->store, snapshots_query, &q, replay_fn, &r);
     if (rc < 0) failed(res, rc);
     else if (!r.found) refuse(res, 404, ASK_WHY_NOT_FOUND, 0);
     else if (r.bad) failed(res, CB_E_NOMEM);

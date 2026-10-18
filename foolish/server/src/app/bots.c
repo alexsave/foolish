@@ -10,7 +10,7 @@
 #include "bots.h"
 
 #include "app_internal.h"
-#include "store/store.h"
+#include "store/rows_foolish.h"
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
@@ -160,7 +160,7 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
     cb_store_tally st = *stp;
     *settled = false;
     cb_uuid lease;
-    int rc = CB_STORE_CALL(ctx->store, lease_acquire, game_id, cb_app_now(), cb_bots_ms(ctx, CB_BOT_LEASE_MS), lease);
+    int rc = CB_ROWS_CALL(ctx->store, lease_acquire, game_id, cb_app_now(), cb_bots_ms(ctx, CB_BOT_LEASE_MS), lease);
     if (rc == CB_E_CONFLICT) {
         CB_INFO("bots", "game %s: bot lease held by another drive, skipping", game_id);
         return CB_OK;
@@ -171,7 +171,7 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
     }
     cb_section *s = cb_section_new();
     if (!s) {
-        CB_STORE_CALL(ctx->store, lease_release, game_id, lease);
+        CB_ROWS_CALL(ctx->store, lease_release, game_id, lease);
         return CB_E_NOMEM;
     }
     cpu_acct cpu = { 0, 0, 0 };
@@ -188,7 +188,7 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
                 if (predicted < (double)cpu.max_ms) predicted = (double)cpu.max_ms;
                 if (predicted > (double)budget_left(ctx)) { rekick = true; break; }
             }
-            int r = CB_STORE_CALL(ctx->store, lease_renew, game_id, lease, cb_app_now(), cb_bots_ms(ctx, CB_BOT_LEASE_MS));
+            int r = CB_ROWS_CALL(ctx->store, lease_renew, game_id, lease, cb_app_now(), cb_bots_ms(ctx, CB_BOT_LEASE_MS));
             // Another drive took the lease over; a store failure keeps going (renewBotLease).
             if (r == CB_E_CONFLICT) break;
             if (r != CB_OK) CB_ERROR("bots", "game %s: lease renewal failed (%s), driving on", game_id, cb_strerror(r));
@@ -209,13 +209,13 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
     }
     if (idle_version >= 0) {
         // Before the release: the delete takes the lease with the marker.
-        int r = CB_STORE_CALL(ctx->store, bots_idle, game_id, idle_version);
+        int r = CB_ROWS_CALL(ctx->store, bots_idle, game_id, idle_version);
         if (r == CB_OK)
             CB_INFO("bots", "game %s: no bot can act at version %lld, out of the scan", game_id, (long long)idle_version);
         else if (r != CB_E_CONFLICT)
             CB_ERROR("bots", "game %s: could not take it out of the scan (%s)", game_id, cb_strerror(r));
     }
-    CB_STORE_CALL(ctx->store, lease_release, game_id, lease);
+    CB_ROWS_CALL(ctx->store, lease_release, game_id, lease);
     cb_store_tally_take(&st);
     if (st.reads || st.writes)
         CB_DEBUG("store", "bot drive %s end: %d reads, %d writes, %g RCU, %g WCU (%s)", game_id, st.reads, st.writes,
@@ -282,7 +282,7 @@ int cb_bots_scan(cb_ctx *ctx, int64_t now_ms) {
     // Stale on updated_at (a drive in flight has just touched the row), active
     // on last_commit_at (only a commit moves it, so the scan's own leases never
     // refresh the abandon guard).
-    int rc = CB_STORE_CALL(ctx->store, games_needing_bots, now_ms - cb_bots_ms(ctx, CB_BOT_STALE_MS),
+    int rc = CB_ROWS_CALL(ctx->store, games_needing_bots, now_ms - cb_bots_ms(ctx, CB_BOT_STALE_MS),
                            now_ms - cb_bots_ms(ctx, CB_BOT_ABANDON_MS),
                            CB_BOT_SCAN_MAX, scan_collect, l);
     if (rc < 0) {
@@ -309,7 +309,7 @@ int cb_bots_scan(cb_ctx *ctx, int64_t now_ms) {
 // game). A store that cannot say kicks: a wasted drive beats a stalled game.
 static bool kick_wanted(cb_ctx *ctx, const char *game_id) {
     if (!ctx->store) return true;
-    int held = CB_STORE_CALL(ctx->store, lease_held, game_id, cb_app_now());
+    int held = CB_ROWS_CALL(ctx->store, lease_held, game_id, cb_app_now());
     if (held == 1) {
         CB_DEBUG("bots", "kick %s: a drive holds the lease, it takes this move", game_id);
         return false;

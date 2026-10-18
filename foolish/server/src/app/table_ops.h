@@ -37,6 +37,7 @@
 
 #include "auth/auth.h"
 #include "ctx.h"
+#include "store/rows_foolish.h"
 #include "table.h"   // the kernel: Table, TableAsk, TABLE_*, ASK_*
 
 #include <pthread.h>

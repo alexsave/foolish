@@ -11,7 +11,7 @@
 #ifndef CB_APP_INTERNAL_H
 #define CB_APP_INTERNAL_H
 
-#include "store/store.h"
+#include "store/rows_foolish.h"
 #include "table_ops.h"
 
 #include <stdbool.h>
