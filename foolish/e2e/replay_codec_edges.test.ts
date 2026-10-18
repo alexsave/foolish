@@ -27,6 +27,10 @@ test('classifyPathSegment splits legacy shortcodes from long replay codes', () =
   assert.equal(classifyPathSegment('abc123'), 'shortcode', 'short (<=7) is a legacy shortcode');
   assert.equal(classifyPathSegment('1234567'), 'shortcode', 'exactly 7 is still a shortcode');
   assert.equal(classifyPathSegment('12345678'), 'replay', '8+ chars is a replay code');
+  assert.equal(classifyPathSegment('0123456789ab'), 'shortcode', 'a 12-hex game id (the width since L3) is a game');
+  assert.equal(classifyPathSegment('0123456789AB'), 'shortcode', 'in any case (the lobby QR is upper-cased)');
+  assert.equal(classifyPathSegment('0123456789ag'), 'replay', '12 characters that are not all hex are a replay code');
+  assert.equal(classifyPathSegment('0123456789abc'), 'replay', '13 hex is not a game id');
 });
 
 // The link is BUILT by the kernel now (replay_extras_link_styled, through
