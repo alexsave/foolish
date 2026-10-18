@@ -60,7 +60,7 @@ static int state_put_rules(const Game *g, int viewer, int rules, unsigned char *
         const Player *pl = &g->players[i];
         const int visible = hand_visible(viewer, i);
         *q++ = (unsigned char)pl->status;
-        *q++ = (unsigned char)((visible && pl->awaiting_attack) ? 1 : 0);
+        *q++ = (unsigned char)((visible && game_seat_awaiting(g, i)) ? 1 : 0);
         *q++ = (unsigned char)pl->hand_count;
         // Same hoist as the deck loop: a hidden hand (every seat except the
         // viewer, on a masked push) is one memset instead of a per-card branch.

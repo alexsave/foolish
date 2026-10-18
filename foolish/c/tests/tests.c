@@ -1135,6 +1135,68 @@ static void test_good_rejects_and_success(void) {
     CHECK_REJECT(handle_good(&g, 0), ENGINE_REJECT_ALREADY_GOOD, "good: already good");
 }
 
+// A GOOD LIVES IN THE MASK AND NOWHERE ELSE (game.h game_seat_awaiting). The
+// seat that says good is not asked to throw in while its good stands; the
+// move that withdraws every good (here a partial cover) asks it again; and a
+// defender is never asked, even one a transfer just made out of a seat the
+// bout had asked. What a board says (state_put, the client's view) is this
+// reading, so a replay that never saw a withdrawn good shows the same board.
+static int awaiting_on_wire(const Game *g, int seat) {
+    static unsigned char buf[RS_BOARD_MAX];
+    static Game back;
+    const int n = state_put(g, seat, buf);
+    memset(&back, 0, sizeof back);
+    if (state_get(&back, buf, n, 1) < 0) return -1;
+    return back.players[seat].awaiting_attack ? 1 : 0;
+}
+
+static void test_a_withdrawn_good_leaves_no_trace(void) {
+    Game g; setup_playing_np(&g, 3);              // 0 attacks, 1 defends, 2 throws in
+    fill_deck(&g, 12);
+    g.players[0].hand[0] = (Card){ SUIT_SPADES, 7 };
+    g.players[0].hand[1] = (Card){ SUIT_CLUBS, 7 };
+    g.players[0].hand_count = 2;
+    g.players[1].hand[0] = (Card){ SUIT_SPADES, 9 };
+    g.players[1].hand[1] = (Card){ SUIT_HEARTS, 7 };
+    g.players[1].hand[2] = (Card){ SUIT_HEARTS, 8 };
+    g.players[1].hand_count = 3;
+    g.players[2].hand[0] = (Card){ SUIT_CLUBS, 12 };
+    g.players[2].hand[1] = (Card){ SUIT_CLUBS, 13 };
+    g.players[2].hand[2] = (Card){ SUIT_HEARTS, 12 };
+    g.players[2].hand_count = 3;
+
+    Card two7[2] = { { SUIT_SPADES, 7 }, { SUIT_CLUBS, 7 } };
+    CHECK(handle_attack(&g, 0, two7, 2), "withdrawn good: the opening attack lands");
+    CHECK(awaiting_on_wire(&g, 2) == 1, "withdrawn good: the attack asks seat 2 to throw in");
+    CHECK(handle_good(&g, 2), "withdrawn good: seat 2 says good over the open table");
+    CHECK(awaiting_on_wire(&g, 2) == 0 && !game_seat_awaiting(&g, 2),
+          "withdrawn good: while it stands, seat 2 is not asked");
+
+    Card s9 = { SUIT_SPADES, 9 }, s7 = { SUIT_SPADES, 7 };
+    CHECK(handle_cover(&g, 1, &s9, &s7, 1), "withdrawn good: a partial cover lands");
+    CHECK(g.good_players_mask == 0, "withdrawn good: the cover withdrew every good");
+    CHECK(awaiting_on_wire(&g, 2) == 1 && game_seat_awaiting(&g, 2),
+          "withdrawn good: and seat 2 is asked again, as if it had never said it");
+
+    // A transfer: seat 1 passes the bout on to seat 2, whom it had asked.
+    Game t; setup_playing_np(&t, 3);
+    fill_deck(&t, 12);
+    t.players[0].hand[0] = (Card){ SUIT_SPADES, 7 };
+    t.players[0].hand_count = 1;
+    t.players[1].hand[0] = (Card){ SUIT_HEARTS, 7 };
+    t.players[1].hand[1] = (Card){ SUIT_HEARTS, 8 };
+    t.players[1].hand_count = 2;
+    t.players[2].hand[0] = (Card){ SUIT_CLUBS, 12 };
+    t.players[2].hand[1] = (Card){ SUIT_CLUBS, 13 };
+    t.players[2].hand[2] = (Card){ SUIT_HEARTS, 12 };
+    t.players[2].hand_count = 3;
+    Card one7 = { SUIT_SPADES, 7 }, h7 = { SUIT_HEARTS, 7 };
+    CHECK(handle_attack(&t, 0, &one7, 1) && t.players[2].awaiting_attack, "transfer: the attack asks seat 2");
+    CHECK(handle_pass(&t, 1, &h7, 1) && t.defender == 2, "transfer: seat 2 now defends");
+    CHECK(awaiting_on_wire(&t, 2) == 0 && !game_seat_awaiting(&t, 2),
+          "transfer: a defender is never asked to throw in");
+}
+
 // good by all attackers over a fully-covered table triggers the round
 // transition (discard + refill + defender rotation).
 static void test_good_round_transition(void) {
@@ -11568,12 +11630,14 @@ static uint64_t dl_hands_digest(int np, int wide) {
 
 static void test_opening_deal_hands_are_unchanged(void) {
     // [wide][np], np 2..8; taken on 8cbdb81f (seat-major hooks); the legacy row
-    // re-taken when the draw stream became rng.h's splitmix64.
+    // re-taken when the draw stream became rng.h's splitmix64, and both rows
+    // when a dealt hand began to be held in ascending card order (game.c
+    // deal_initial): the same cards, so only the order inside each hand moved.
     static const uint64_t golden[2][MAX_PLAYERS + 1] = {
-        { 0, 0, 0x831514eae5b0cc4dULL, 0x39905dfc57427173ULL, 0x125c3ca16560e2caULL, 0x68bc9714bf6eca08ULL,
-          0xedd0b60a5858962bULL, 0x5343e213e5c74406ULL, 0x7f6f3f07112df2f9ULL },
-        { 0, 0, 0x46a9e621612bc528ULL, 0x444f2a440b54c733ULL, 0x6d726bc6d309e712ULL, 0xca04dd1810f1613dULL,
-          0x9ab74ca063aa6584ULL, 0x5c89835e0e15ece8ULL, 0x546811c8ad70b0aaULL },
+        { 0, 0, 0xbff8981e1634d14fULL, 0x95f8341f9ea4a911ULL, 0x7f9baf0a1218ed26ULL, 0x55570f60181608d0ULL,
+          0x355c481231a5bae5ULL, 0xfa54f8505d33ef16ULL, 0x2e77e1199bcb38f5ULL },
+        { 0, 0, 0x24c0d7b3ce606206ULL, 0x06f83792381481fdULL, 0xe9d0b2c7ae5b3af4ULL, 0xf5b314e74e2286fbULL,
+          0x22c019ed4e4f0852ULL, 0x8f77ce6443bd320eULL, 0x04b9aa9aace546e6ULL },
     };
     for (int wide = 0; wide <= 1; wide++) {
         for (int np = 2; np <= MAX_PLAYERS; np++) {
@@ -11717,9 +11781,10 @@ static void test_refill_events_and_plan_are_unchanged(void) {
     // the trump steps and nothing else reproduced the 8cbdb81f digests for all
     // five table sizes: no other byte of any refill or plan step moved. Re-taken
     // again when the draw stream (these are legacy-seeded deals) became rng.h's
-    // splitmix64.
+    // splitmix64, and when a dealt hand became ascending (the 4p games' bots
+    // then chose differently).
     static const uint64_t golden[] = {
-        0xc1455ae3fbac7d8dULL, 0xda4f0e97babaf3edULL, 0x225a0fa3f482a1f5ULL,
+        0xc1455ae3fbac7d8dULL, 0xda4f0e97babaf3edULL, 0x2587b4ef2b703549ULL,
         0x29e6b6f3b7443897ULL, 0x531cbe66e21399a4ULL,
     };
     for (int i = 0; i < (int)(sizeof nps / sizeof nps[0]); i++) {
@@ -11778,8 +11843,11 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // once more when the writer went to v5: hashing each blob as its v4 self
     // (format byte 4, without the GAME_RATINGS_BYTES behind the clock) gives the
     // v4 digest 0xeaae85afbc52968e back, so the format byte and the empty rating
-    // stamp are the whole of that one - a deal's envelopes did not move.
-    static const uint64_t golden[2] = { 0x8ca6eb1fe9345faaULL, 0x443d8c85b6da4e19ULL };
+    // stamp are the whole of that one - a deal's envelopes did not move. Both
+    // moved when a dealt hand became ascending (game.c deal_initial): the
+    // envelopes carry the hands in their new order, and the bots, reading
+    // hands in that order, played different games.
+    static const uint64_t golden[2] = { 0xbf57d7cd081b31a6ULL, 0xee9ca1b1164510adULL };
     uint64_t hc = 1469598103934665603ULL;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         for (int seed_k = 1; seed_k <= 3; seed_k++) {
@@ -13618,7 +13686,7 @@ static int ct_view_is(const TableView *v, const Game *g, const Roster *r, int vi
     for (int s = 0; ok && s < g->num_players; s++) {
         const ViewSeat *vs = &v->seats[s];
         ok = vs->status == g->players[s].status && vs->hand_count == g->players[s].hand_count
-          && vs->awaiting_attack == (s == viewer && g->players[s].awaiting_attack)
+          && vs->awaiting_attack == (s == viewer && game_seat_awaiting(g, s))
           && vs->is_ai == (r->seats[s].brain_len > 0) && vs->id_len == r->seats[s].id_len
           && memcmp(vs->id, r->seats[s].id, vs->id_len) == 0 && vs->name_len == r->seats[s].name_len
           && memcmp(vs->name, r->seats[s].name, vs->name_len) == 0;
@@ -19475,6 +19543,7 @@ int main(void) {
     test_podkidnoy();
     test_pickup_rejects_and_success();
     test_good_rejects_and_success();
+    test_a_withdrawn_good_leaves_no_trace();
     test_good_round_transition();
     test_short_log_instance();
     test_should_bot_act_edges();

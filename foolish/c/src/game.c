@@ -578,6 +578,20 @@ static void deal_initial(Game *g) {
             if (!draw_card(g, &c)) break;
             staged[j][n_staged[j]++] = c;
         }
+        // A DEALT HAND IS HELD IN ASCENDING CARD ORDER. A hand is a set, and
+        // the replay codec records the opening one as a set (replay.c codes it
+        // as a combination, ascending), so the order the stock happened to
+        // hand the cards over in is not in any replay code. Left in draw order,
+        // a rebuilt game (start_game_with_deck, fed that set) held the same
+        // cards in a different order from the game it was cut from, and every
+        // later board of it did too. Sorting here makes both deals one rule.
+        for (int a = 1; a < n_staged[j]; a++) {
+            const Card t = staged[j][a];
+            int b = a;
+            for (; b > 0 && card_to_id(staged[j][b - 1]) > card_to_id(t); b--)
+                staged[j][b] = staged[j][b - 1];
+            staged[j][b] = t;
+        }
     }
 
     // The stock as the draws left it, restored whole after the reveal.
@@ -869,11 +883,12 @@ static void draw_up_to_six(Game *g, int seat) {
 
 static void refill_player_hands(Game *g) {
     // A BOUT'S END CLEARS awaiting_attack. The flag is a bout's: the first
-    // attack sets it and a good clears it. Left standing across the round end,
-    // it carried an order the board does not record - a good said before the
-    // last cover (which re-sets it) against one said after - so a replay, which
-    // knows the round ended and not who said good when, rebuilt a different
-    // final board from the same game (tests.c "the replay's last board").
+    // attack sets it, and with no bout open nobody is being asked to throw in.
+    // Without this, a bout a pickup ended left every attacker that had not
+    // said good flagged into the next bout's opening, before anyone attacked.
+    // (It was first added for the replay's final board, but that divergence
+    // was a good writing the flag - handle_good no longer does - and
+    // tests/replay_rebuild_difftest.c stays at zero without this line.)
     for (int i = 0; i < g->num_players; i++) g->players[i].awaiting_attack = false;
     if (no_cards_left(g)) {
         for (int i = 0; i < g->num_players; i++) {
@@ -1285,6 +1300,12 @@ static void execute_round_transition(Game *g) {
     g->has_good_timestamp = false;
 }
 
+bool game_seat_awaiting(const Game *g, int seat) {
+    const Player *p = &g->players[seat];
+    return p->awaiting_attack && p->status == PLAYER_STATUS_IN && seat != g->defender
+           && !(g->good_players_mask & (1u << seat));
+}
+
 uint32_t game_shown_good_mask(const Game *g) {
     if (g->num_battles == 0 || count_uncovered(g) > 0) return 0;
     return g->good_players_mask;
@@ -1298,9 +1319,15 @@ bool handle_good(Game *g, int player_idx) {
     if (g->num_battles == 0 && player_idx == g->first_attacker) REJECT(ENGINE_REJECT_FIRST_MUST_ATTACK);
     if (g->good_players_mask & (1u << player_idx)) REJECT(ENGINE_REJECT_ALREADY_GOOD);
 
+    // A good lives in the mask and nowhere else. It used to clear the seat's
+    // awaiting_attack too, and the next attack, cover, transfer or pickup -
+    // which zeroes the mask - left that flag cleared: a silent good leaving a
+    // trace on the board after it was gone. The replay codec drops a good the
+    // next move supersedes (replay.c log_atom_kind), because it is dead state,
+    // so the rebuilt game kept the flag set and finished on a different board.
+    // game_seat_awaiting reads the mask instead.
     g->good_players_mask |= (1u << player_idx);
     log_alloc(g, LOG_GOOD, player_idx);
-    g->players[player_idx].awaiting_attack = false;
 
     // Count attackers and check all_attackers_good.
     int n_attackers = 0;

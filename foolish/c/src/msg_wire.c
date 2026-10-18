@@ -499,7 +499,13 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
         const int d = replay_decode_atoms_v6(e->actions, e->actions_len, &hdr, msg_atom, &m);
         if (d < 0) return MSG_EBODY;
         msg_last_body_version = hdr.version;   // 1.0(6) diag: the body's replay codec version
-        if (m.err != MSG_EOK) return m.err;
+        // The header checks come BEFORE the applied atoms' verdict (m.err, read
+        // below them): the atoms were applied to the game the envelope deals,
+        // so when the two layers disagree about that game a rejected move is a
+        // symptom and the disagreement is the cause. Read the other way round,
+        // a classic chain relabelled podkidnoy was ECHAIN when it transferred
+        // and EBODY when it did not.
+        //
         // The code's own header must describe the table the envelope claims.
         if (hdr.n != e->n_players) return MSG_EBODY;
         // …including who opened it. The body records the opener independently
@@ -521,6 +527,7 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
         // FMSG body is always the inline-reveal line, so this only fires on a
         // hand-made payload.
         if (hdr.pass_allowed != msg_pass_allowed(e)) return MSG_EBODY;
+        if (m.err != MSG_EOK) return m.err;
     }
 
     const int rounds = m.rounds, applied = m.applied;

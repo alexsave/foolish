@@ -655,6 +655,14 @@ bool handle_good(Game *g, int player_idx);
 // raw one, so the two can never disagree about which goods are silent.
 uint32_t game_shown_good_mask(const Game *g);
 
+// Is `seat` expected to attack or throw in: the bout asked it to
+// (Player.awaiting_attack), it is still in, it is not the defender, and it has
+// not said good. The one reading of the flag: state_put (view.c) writes this,
+// never the raw field, and every board a host or a client slot holds came
+// through those bytes, so a good that the next move withdraws leaves nothing
+// behind on any of them.
+bool game_seat_awaiting(const Game *g, int seat);
+
 // ---------- Loop helpers ------------------------------------------------
 
 bool should_bot_act(const Game *g, int bot_idx);
