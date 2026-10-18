@@ -1,4 +1,4 @@
-// The WebSocket frame codec - see ws.h. The connection half lives in server.c,
+// The WebSocket frame codec, see ws.h. The connection half lives in server.c,
 // beside the connection it is a state of.
 //
 // LIFTED from foolish/server/impls/native: the header writer is ws.c's
