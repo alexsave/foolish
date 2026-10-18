@@ -5,7 +5,7 @@
 //
 // The feed holds the seat's stream while the board shows a seat and republishes
 // each of its game's casts. What a refused or reopened stream missed is the
-// kernel's client's to refetch (c_base/test/unit_netclient.c
+// kernel's client's to refetch (foolish/server/test/unit_netclient.c
 // accepted_again_refetches); the board it fetches reaches the page as a view.
 //
 // Needs --experimental-test-module-mocks (see the test:e2e script).

@@ -24,7 +24,7 @@ open http://localhost:3000/AJG7NYNQG4RFXXGVPGD7QR2ETSOYTWMCREAQ
 `public/uttt.wasm` is a build output and is never committed. CI builds it
 with the repo's pinned clang, and every push to `main` that touches the site
 deploys it with `.github/workflows/web_aws.yml`, as a static export (`out/`)
-to S3 behind CloudFront (`c_base/ops/web.yaml`), which serves `uttt.live` and
+to S3 behind CloudFront (`c_base/providers/aws/ops/site/web.yaml`), which serves `uttt.live` and
 `www.uttt.live`.
 
 ## /243: two bots on the 243 x 243 board

@@ -1764,7 +1764,7 @@ wasm-fm-exp-test: wasm-cc-check build/fm_exp_native_bits build/fm_exp_test_O3.wa
 # runtime. Objects (and their .gcno/.gcda) land in covbuild/ where gcovr finds
 # them recursively. Tune the floors with COV_LINE_MIN / COV_BRANCH_MIN.
 COV_CC         ?= gcc
-COV_FLAGS      := -O0 -g --coverage -fprofile-update=atomic -Isrc -I../../c_base/test -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE -DCOVERAGE_CORPUS
+COV_FLAGS      := -O0 -g --coverage -fprofile-update=atomic -Isrc -I../../c_base/core/test -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE -DCOVERAGE_CORPUS
 COV_LINE_MIN   ?= 90
 COV_BRANCH_MIN ?= 74
 # THE WHOLE SHIPPED KERNEL, not three files of it.
@@ -1854,10 +1854,10 @@ $(eval $(call COV_PROG,anim_plan_test,tests/anim_plan_test.c))
 $(eval $(call COV_PROG,msg_expand_test,tests/msg_expand_test.c))
 $(eval $(call COV_PROG,analyse_test,tests/analyse_test.c))
 # The backend's codec and client are kernel files whose suites live with
-# their server (c_base/test, whose t.h needs nothing of c_base's own; the
-# -I../../c_base/test in COV_FLAGS is for them).
-$(eval $(call COV_PROG,unit_netwire,../../c_base/test/unit_netwire.c))
-$(eval $(call COV_PROG,unit_netclient,../../c_base/test/unit_netclient.c))
+# their server (foolish/server/test; c_base's t.h needs nothing of c_base's
+# own, and the -I../../c_base/core/test in COV_FLAGS is for it).
+$(eval $(call COV_PROG,unit_netwire,../server/test/unit_netwire.c))
+$(eval $(call COV_PROG,unit_netclient,../server/test/unit_netclient.c))
 
 COV_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 COV_RUNS := cov-run-tests cov-run-difftests cov-run-msg-wire cov-run-analyse cov-run-small

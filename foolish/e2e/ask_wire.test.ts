@@ -9,7 +9,7 @@
 // (c/tests/tests.c test_ask_round_trips), every kind run on a table
 // (test_table_ask_runs_every_kind, test_ask_body_runs_for_the_caller) and the
 // cast (test_table_cast_carries_its_version). The handlers are c_base's,
-// tested there (c_base/test/unit_app.c, the door's 415 included).
+// tested there (foolish/server/test/unit_app.c, the door's 415 included).
 //
 // What stays here is the TypeScript that wraps the client's halves
 // (sdk/ts/table/client_table.ts askBody, readRefusal, readCast, castVersion)

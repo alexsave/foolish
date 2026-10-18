@@ -1,9 +1,9 @@
-# c_base's fuzz targets (c_base/fuzz), every night for 10 minutes each, one
+# c_base's fuzz targets (each side's fuzz/ under c_base and foolish/server), every night for 10 minutes each, one
 # runner per target. c_base.yml's fuzz job runs each for 30 s on a pull
 # request that reaches it (.github/scripts/fuzz_select.sh) and on every push
 # to main; this is the long run. A crash fails the target's job and its input
 # is uploaded: minimise it (`build/fuzz/<target> -minimize_crash=1 <input>`),
-# add it to c_base/fuzz/corpus/<target> and as a unit test, and fix it.
+# add it to the target's corpus (<side>/fuzz/corpus/<target>) and as a unit test, and fix it.
 name: c_base fuzz (nightly)
 
 on:
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v5
       - id: list
         run: |
-          t=$(ls c_base/fuzz/fz_*.c | sed 's|.*/fz_||; s|\.c$||' | jq -R . | jq -sc .)
+          t=$(make -s -C c_base print-fuzz-targets | tr ' ' '\n' | sed '/^$/d' | jq -R . | jq -sc .)
           echo "targets=$t" >> "$GITHUB_OUTPUT"
 
   fuzz:

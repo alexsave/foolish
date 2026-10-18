@@ -9,7 +9,7 @@
 // (This file was realtime_refused_join.test.ts, which also held the page's own
 // retry loop for a refused Phoenix channel. That loop is gone: the retry of a
 // refused subscription is the kernel's client's, held by
-// c_base/test/unit_netclient.c stream_order_and_retries and unit_stream.c.)
+// foolish/server/test/unit_netclient.c stream_order_and_retries and unit_stream.c.)
 //
 // Needs --experimental-test-module-mocks (see the test:e2e script).
 

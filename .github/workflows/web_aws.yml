@@ -1,6 +1,6 @@
-# The web on AWS (c_base/ops/web.yaml): foolish.cards and uttt.live built here
+# The web on AWS (c_base/providers/aws/ops/site/web.yaml): foolish.cards and uttt.live built here
 # as static exports and uploaded to S3 behind CloudFront by
-# c_base/ops/web_deploy.sh. It is the only deploy lane for both sites;
+# c_base/providers/aws/ops/site/web_deploy.sh. It is the only deploy lane for both sites;
 # Vercel is gone (c_base/RUNBOOK.md, "W9").
 #
 #   foolish   gen, wasm, `next build` (out/): the compile gate, on every pull
@@ -25,7 +25,7 @@
 #
 # Secrets (Settings > Secrets and variables > Actions):
 #   CBASE_AWS_ROLE_ARN   the cbase-github stack's DeployRoleArn
-#                        (c_base/ops/github_oidc.yaml; OIDC, no keys, main only)
+#                        (c_base/providers/aws/ops/github_oidc.yaml; OIDC, no keys, main only)
 # The backend URL is not a secret: NEXT_PUBLIC_BACKEND_URL is
 # https://api.foolish.cards, and the binary surface the bundle speaks has no
 # anon key.
@@ -39,7 +39,7 @@ on:
       - 'shared/**'
       - 'uttt/c/**'
       - 'uttt/web/**'
-      - 'c_base/ops/web_deploy.sh'
+      - 'c_base/providers/aws/ops/site/web_deploy.sh'
       - 'c_base/ops/require_main.sh'
       - '.github/workflows/web_aws.yml'
   pull_request:
@@ -48,7 +48,7 @@ on:
       - 'shared/**'
       - 'uttt/c/**'
       - 'uttt/web/**'
-      - 'c_base/ops/web_deploy.sh'
+      - 'c_base/providers/aws/ops/site/web_deploy.sh'
       - 'c_base/ops/require_main.sh'
       - '.github/workflows/web_aws.yml'
   workflow_dispatch: {}
@@ -192,10 +192,10 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: foolish.cards - upload, route, invalidate
-        run: c_base/ops/web_deploy.sh site foolish --out foolish/out
+        run: c_base/providers/aws/ops/site/web_deploy.sh site foolish --out foolish/out
 
       - name: uttt.live - upload, route, invalidate
-        run: c_base/ops/web_deploy.sh site uttt --out uttt/web/out
+        run: c_base/providers/aws/ops/site/web_deploy.sh site uttt --out uttt/web/out
 
       - name: the sites answer
         run: |

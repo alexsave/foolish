@@ -1,5 +1,5 @@
 // The [game_id] page the static export writes once (out/_shell.html). On S3
-// behind CloudFront (c_base/ops/web.yaml) the viewer-request Function answers
+// behind CloudFront (c_base/providers/aws/ops/site/web.yaml) the viewer-request Function answers
 // every unknown one-segment path with that file, so the router's param is this
 // placeholder and the real segment is in location.pathname (useUrlGameId). `next dev`
 // renders the real param and never sees this value. Its own module so the

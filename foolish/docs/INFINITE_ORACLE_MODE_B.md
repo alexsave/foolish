@@ -156,7 +156,7 @@ A build-time flag rather than a code change, because the headers apply to the wh
 - **c_base**'s `/v1` requests and its `/v1/stream` push stream are CORS fetches and a websocket, which COEP permits.
 - **COOP: same-origin severs `window.opener`.** Redirect-based auth is unaffected; any popup flow is not.
 
-To turn it on: set `FOOLISH_CROSS_ORIGIN_ISOLATION=1` in the build environment, or on CloudFront the web stack's `CrossOriginIsolation=yes` (`c_base/ops/web.yaml`), since a static export sends no headers of its own; redeploy, then open a replay and confirm `crossOriginIsolated === true` and `window.__oracleMode === 'B'`, and that fonts, sign-in and a live game are all unharmed.
+To turn it on: set `FOOLISH_CROSS_ORIGIN_ISOLATION=1` in the build environment, or on CloudFront the web stack's `CrossOriginIsolation=yes` (`c_base/providers/aws/ops/site/web.yaml`), since a static export sends no headers of its own; redeploy, then open a replay and confirm `crossOriginIsolated === true` and `window.__oracleMode === 'B'`, and that fonts, sign-in and a live game are all unharmed.
 To turn it off: unset it and redeploy.
 
 ## MT3 static audit, as found today

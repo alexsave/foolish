@@ -1,7 +1,7 @@
 // NetTests.swift - the online app's crossing into the kernel's client
 // (sdk/swift/NetClient.swift): the generated writer hands C the intent, and the
 // generated readers hand back what C wrote. What the client decides is tested
-// in C (c_base/test/unit_netclient.c, unit_v1.c, unit_stream.c); this pins the
+// in C (foolish/server/test/unit_netclient.c, unit_v1.c, unit_stream.c); this pins the
 // Swift side of the bridge.
 
 import XCTest

@@ -24,7 +24,7 @@ import { PHASE_PRODUCTION_BUILD } from 'next/constants.js';
 //
 // Turning it on is FOOLISH_CROSS_ORIGIN_ISOLATION=1 in the deployment's
 // environment plus a redeploy. On CloudFront the same two headers come from
-// the web stack instead (c_base/ops/web.yaml, CrossOriginIsolation=yes), since
+// the web stack instead (c_base/providers/aws/ops/site/web.yaml, CrossOriginIsolation=yes), since
 // a static export answers no headers of its own. Turning it off is unsetting it plus a redeploy:
 // no revert, no code review, and the loader returns every visitor to Mode A by
 // itself. Verify on the deployment, not from a checkout: open a replay and check
@@ -38,10 +38,10 @@ const CROSS_ORIGIN_ISOLATED = process.env.FOOLISH_CROSS_ORIGIN_ISOLATION === '1'
 // [game_id] route locally and working fine in production. If that happens, move
 // the local next.config.js aside rather than doubting this file.
 //
-// The production build is a static export (out/), which c_base/ops/web_deploy.sh
+// The production build is a static export (out/), which c_base/providers/aws/ops/site/web_deploy.sh
 // uploads to S3 behind CloudFront; there the rewrites below and the [game_id]
 // fallback live in the distribution's viewer-request Function and the headers
-// in the stack (c_base/ops/web.yaml), because an export has no server.
+// in the stack (c_base/providers/aws/ops/site/web.yaml), because an export has no server.
 //
 // `next dev` is a server, and it takes the routing below: an export's
 // [game_id] page has one prerendered id, so `output: 'export'` under the dev

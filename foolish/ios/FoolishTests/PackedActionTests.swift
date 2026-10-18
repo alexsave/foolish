@@ -14,7 +14,7 @@
 // for - because "this move has no bytes" is equally the kernel's answer.
 //
 // The request around the frame is the kernel's client's (c/src/netclient.c,
-// tested in c_base/test/unit_netclient.c), and so is reading the answer.
+// tested in foolish/server/test/unit_netclient.c), and so is reading the answer.
 
 import XCTest
 @testable import FoolishKit

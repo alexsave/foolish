@@ -7,7 +7,7 @@
 // its key through that table on the C Table (table_load refuses a brain the
 // build does not know). The other places that name bots:
 //
-//   * c_base/sql/schema.sql - the live bot rows c_base seeds, which must be
+//   * c_base/providers/local/sql/schema.sql - the live bot rows c_base seeds, which must be
 //     exactly the roster's `seeded` set, each linked into the shipped bots.wasm. A
 //     seeded key the kernel does not dispatch is a bot that plays nothing like its
 //     name and pollutes the Elo leaderboard.
@@ -95,7 +95,7 @@ function parseSeededKeys(): Set<string> {
     // Strip `--` comments FIRST: the prose between the rows contains semicolons
     // and apostrophes, either of which would otherwise end the statement early
     // and silently under-report the seeded set.
-    const src = read('../c_base/sql/schema.sql').replace(/--[^\n]*/g, '');
+    const src = read('../c_base/providers/local/sql/schema.sql').replace(/--[^\n]*/g, '');
     const at = src.indexOf('INTO bot_seed (');
     assert.ok(at > 0, 'schema.sql: no INSERT INTO bot_seed');
     const end = src.indexOf(';', at);

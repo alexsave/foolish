@@ -19151,7 +19151,7 @@ static void test_table_ranks_every_finished_game(void) {
 // see any sword->checkbox rotation animations unless all cards are covered": it
 // bundles, buys no beat, changes no shown goods, and the cover or pickup after it
 // carries no check on any board. The server's push gate (c_base table_ops.c asks
-// goods_changed) is c_base/test/unit_app.c a_goods_only_commit_is_broadcast.
+// goods_changed) is foolish/server/test/unit_app.c a_goods_only_commit_is_broadcast.
 #define GM_NOW 1726600000000LL
 
 // Seat 0 the human attacking, seat 1 a bot defending, seat 2 a bot holding a card
