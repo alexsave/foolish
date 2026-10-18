@@ -1250,9 +1250,11 @@ static void snapshot_attrs(attrs *x, strs *z, const cb_snapshot_row *s, const ch
 // replay: the only item holding the moves, the extras (the seats' names) and
 // player_ids, listed on GSI1 GAMESNAPS#<game>. Each player's SNAP#<id>
 // PLAYER#<user> is a pointer listed on GSI2 PLAYER#<user> by date: the id,
-// the game and the date, nothing else, so a game end writes the replay once
-// and N small items, and no copy ever holds a name. "My replays" is a Query
-// of the pointers and one BatchGetItem of the replays (snapshots_query).
+// the game, the date and the summary the history list shows (the seat, the
+// rank, the fool, the player count, the duration: numbers, never a name), so
+// a game end writes the replay once and N small items, and no copy ever holds
+// a name. "My history" is ONE Query of the pointers (snapshots_query with
+// summary_only); a replay is opened by id (the BatchGetItem of the full path).
 // Copies written before the change hold the whole replay; a reader ignores
 // what a pointer should not have, and redaction slims them (set_extras).
 
@@ -1280,6 +1282,13 @@ int cb_rows_snapshot_put(cb_store *s, const cb_snapshot_row *sn) {
         add(a, CB_AVS("id", sn->id));
         add(a, CB_AVS("game_id", sn->game_id));
         add(a, CB_AVN("created_at", sn->created_at));
+        if (sn->sum.has) {
+            add(a, CB_AVN("n_players", sn->n_players));
+            add(a, CB_AVN("seat", i));
+            add(a, CB_AVN("rank", cb_snapshot_rank(&sn->sum, sn->n_players, i)));
+            add(a, CB_AVN("fool", sn->sum.fool));
+            add(a, CB_AVN("dur", sn->sum.duration_s));
+        }
         b->w[b->n] = (cb_iwrite){ .op = CB_IW_PUT, .key = { pkk, keep(bz_next(b), k(sk, sizeof sk, "PLAYER#", sn->player_ids[i])) },
                                   .attrs = a->a, .n_attrs = a->n };
         b->n++;
@@ -1297,6 +1306,9 @@ typedef struct {
     char (*key)[KB];   // each pointer's replay pk, SNAP#<id>
     int    n, cap;
     bool   oom;
+    cb_snapshot_fn fn;   // summary_only: the pointers answered as they are read
+    void  *ud;
+    bool   stop;
 } pointers;
 
 static bool pointer_step(const cb_item *it, void *ud) {
@@ -1305,6 +1317,23 @@ static bool pointer_step(const cb_item *it, void *ud) {
     if (!s_of(it, "id", id, sizeof id)) return true;
     s_of(it, "game_id", gid, sizeof gid);
     if ((p->q->id && strcmp(id, p->q->id) != 0) || (p->q->game_id && strcmp(gid, p->q->game_id) != 0)) return true;
+    if (p->q->ref && strcmp(id, p->q->ref) != 0 && strcmp(gid, p->q->ref) != 0) return true;
+    if (p->q->summary_only) {
+        cb_snapshot_row r;
+        memset(&r, 0, sizeof r);
+        snprintf(r.id, sizeof r.id, "%s", id);
+        snprintf(r.game_id, sizeof r.game_id, "%s", gid);
+        r.created_at = cb_item_n_or(it, "created_at", 0);
+        r.n_players = (int)cb_item_n_or(it, "n_players", 0);
+        r.seat = (int)cb_item_n_or(it, "seat", -1);
+        r.rank = (int)cb_item_n_or(it, "rank", 0);
+        r.sum.has = cb_item_n_or(it, "dur", -2) != -2;
+        r.sum.fool = (int8_t)cb_item_n_or(it, "fool", -1);
+        r.sum.duration_s = (int32_t)cb_item_n_or(it, "dur", -1);
+        p->n++;
+        p->stop = !p->fn(&r, p->ud);
+        return !p->stop && (p->q->limit <= 0 || p->n < p->q->limit);
+    }
     if (p->n == p->cap) {
         int cap = p->cap ? p->cap * 2 : 16;
         char (*t)[KB] = realloc(p->key, (size_t)cap * sizeof *t);
@@ -1332,10 +1361,11 @@ static bool replay_step(int i, const cb_item *it, void *ud) {
 int cb_rows_snapshots_query(cb_store *s, const cb_snapshot_query *q, cb_snapshot_fn fn, void *ud) {
     if (!q || !q->viewer_id || !*q->viewer_id) return CB_E_INVALID;
     char g2[KB];
-    pointers p = { .q = q };
+    pointers p = { .q = q, .fn = fn, .ud = ud };
     int rc = query(s, (cb_iquery){ .index = 2, .pk = k(g2, sizeof g2, "PLAYER#", q->viewer_id), .forward = !q->newest_first },
                    pointer_step, &p);
     if (rc == CB_OK && p.oom) rc = CB_E_NOMEM;
+    if (q->summary_only) { free(p.key); return rc == CB_OK ? p.n : rc; }
     cb_ikey *keys = rc == CB_OK ? malloc((size_t)(p.n ? p.n : 1) * sizeof *keys) : NULL;
     replays r = { .rows = rc == CB_OK ? calloc((size_t)(p.n ? p.n : 1), sizeof *r.rows) : NULL,
                   .got = rc == CB_OK ? calloc((size_t)(p.n ? p.n : 1), sizeof *r.got) : NULL };
@@ -1350,6 +1380,7 @@ int cb_rows_snapshots_query(cb_store *s, const cb_snapshot_query *q, cb_snapshot
         if (!r.got[i]) continue;
         const cb_snapshot_row *sn = &r.rows[i];
         if ((q->id && strcmp(sn->id, q->id) != 0) || (q->game_id && strcmp(sn->game_id, q->game_id) != 0)) continue;
+        if (q->ref && strcmp(sn->id, q->ref) != 0 && strcmp(sn->game_id, q->ref) != 0) continue;
         n++;
         more = fn(sn, ud);
     }

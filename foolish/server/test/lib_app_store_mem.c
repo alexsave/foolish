@@ -464,8 +464,13 @@ static int m_snapshots_query(cb_store *s, const cb_snapshot_query *q, cb_snapsho
         bool mine = false;
         for (int j = 0; j < r->n_players; j++) if (strcmp(r->player_ids[j], q->viewer_id) == 0) mine = true;
         if (!mine || (q->game_id && strcmp(q->game_id, r->game_id) != 0) || (q->id && strcmp(q->id, r->id) != 0)) continue;
+        if (q->ref && strcmp(q->ref, r->id) != 0 && strcmp(q->ref, r->game_id) != 0) continue;
         n++;
-        if (!fn(r, ud) || (q->limit && n >= q->limit)) break;
+        cb_snapshot_row v = *r;
+        v.seat = -1;
+        for (int j = 0; j < r->n_players; j++) if (strcmp(r->player_ids[j], q->viewer_id) == 0) { v.seat = j; break; }
+        v.rank = r->sum.has ? cb_snapshot_rank(&r->sum, r->n_players, v.seat) : 0;
+        if (!fn(&v, ud) || (q->limit && n >= q->limit)) break;
     }
     pthread_mutex_unlock(&m->mu);
     return n;

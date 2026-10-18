@@ -30,6 +30,8 @@
 // replay. The kernel's compact default (16) is its arena's; the Makefile builds
 // with the shipped human-game capacities (KERNEL_CAPS), and this holds it there.
 #include "game.h"
+#include "replay_extras.h"
+#include "replay_steps.h"
 _Static_assert(MAX_LOG_PAIRS >= MAX_DECK,
                "the kernel must be built with the human-game capacities (c_base/Makefile KERNEL_CAPS)");
 
@@ -234,6 +236,27 @@ static void seat_id(const RosterSeat *seat, cb_uuid out) {
 // unfenced UPDATE; the C store has no such write, so the log is left for the
 // next commit that leaves the finished table (commit_table's rule: a lobby
 // commit empties it, a deal replaces it).
+// The history list's line of a replay (cb_snap_summary): who was the fool, the
+// order the others went out, and the extras' gaps summed. A code or extras the
+// kernel will not read leave the summary absent, and the list shows the row
+// without it.
+static void snap_summary(cb_snapshot_row *snap, const uint8_t *code, int n_code, const uint8_t *extras, int n_extras) {
+    ReplaySummary d;
+    cb_snap_summary *m = &snap->sum;
+    if (replay_summary_v6(code, n_code, &d) != REPLAY_EOK || d.num_eliminated < 0 || d.num_eliminated > CB_MAX_SEATS) return;
+    m->has = true;
+    m->fool = d.fool;
+    m->n_elim = d.num_eliminated;
+    for (int i = 0; i < d.num_eliminated; i++) m->elim[i] = d.elimination[i];
+    m->duration_s = -1;
+    static _Thread_local ReplayExtras x;
+    if (n_extras > 0 && replay_extras_unpack(extras, n_extras, &x) >= 0 && x.n_gaps > 0) {
+        double sum = 0;
+        for (int i = 0; i < x.n_gaps; i++) sum += x.gaps[i];
+        m->duration_s = sum >= 0 && sum < 2e9 ? (int32_t)(sum + 0.5) : -1;
+    }
+}
+
 static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     enum { CODE_CAP = 2 * 1024 * 1024, SCRATCH_CAP = 1024 * 1024, EXTRAS_CAP = 256 * 1024 };
     uint8_t *code = NULL, *scratch = NULL, *extras = NULL;
@@ -272,6 +295,7 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     snap.extras = extras;
     snap.extras_len = (size_t)n_extras;
     snap.created_at = cb_app_now();
+    snap_summary(&snap, code, n_code, extras, n_extras);
     if ((rc = CB_ROWS_CALL(ctx->store, snapshot_put, &snap)) != CB_OK) why = "snapshot_put failed";
 out:
     if (why) CB_ERROR("table", "game %s: snapshot failed, keeping the log: %s (%d)", nrow->id, why, rc);

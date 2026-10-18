@@ -31,8 +31,9 @@
 //     NW_BOTS      u16 n, n x { str8 id, str8 nickname, str8 strategy key }
 //     NW_BOARD     u16 n, n x { u8 is_bot, str8 id, str8 name, u32 rating, u32 games }
 //     NW_HISTORY   u8 has_rating, u32 rating, u16 n,
-//                  n x { str8 id, u48 created, u8 n_players, n_players x str8 id,
-//                        blob moves, blob extras }
+//                  n x { str8 id, u48 created, u8 n_players, u8 seat, u8 rank,
+//                        u8 fool, u32 duration }   (id: the replay's, GET /v1/replay/<id>;
+//                        seat 255 = none, fool 255 = none, duration 0xffffffff = none)
 //     chat         str8 id, str8 user id, u48 created, u8 is_system, str16 message
 //   stream, server to client (the payload of an MQTT PUBLISH, realtime.h)
 //     NW_WS_VIEW   str8 game id, u32 version, blob envelope (empty: the seat is gone)
@@ -156,10 +157,13 @@ typedef struct {
     uint8_t  id_len;        char id[NW_ID_MAX];
     uint64_t created_ms;
     uint8_t  n_players;
-    uint8_t  player_len[MAX_PLAYERS];
-    char     player[MAX_PLAYERS][NW_ID_MAX];
-    NwBlob   moves, extras;
+    uint8_t  seat;          // the caller's seat; NW_HISTORY_NONE for none
+    uint8_t  rank;          // 1 = first out, n_players = the fool; 0 when the row has no summary
+    uint8_t  fool;          // seat; NW_HISTORY_NONE for none
+    uint32_t duration_s;    // NW_HISTORY_NO_TIME for none
 } NwHistoryRow;
+#define NW_HISTORY_NONE    255
+#define NW_HISTORY_NO_TIME 0xffffffffu
 
 // One stream frame; only the fields its kind carries are written or read (the
 // rest read zero).

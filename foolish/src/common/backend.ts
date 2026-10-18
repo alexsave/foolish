@@ -212,16 +212,13 @@ export const board = async (): Promise<NetBoardRow[]> => (await ask({ kind: N.NC
 /** The caller's rating (null for none) and their replays, newest first. */
 export async function history(): Promise<{ rating: number | null; rows: NetHistoryRow[] }> {
     const a = await ask({ kind: N.NC_DO_HISTORY });
-    const rows = a.rows as { id: string; createdMs: bigint; players: { id: string }[]; movesOff: number; movesLen: number; extrasOff: number; extrasLen: number }[];
+    const rows = a.rows as { id: string; createdMs: bigint; nPlayers: number; seat: number; rank: number; fool: number; durationS: number }[];
     return {
         rating: a.done.hasRating ? a.done.rating : null,
-        rows: rows.map((r) => ({
-            id: r.id, createdMs: Number(r.createdMs), players: r.players.map((p) => p.id),
-            moves: span(a, r.movesOff, r.movesLen), extras: span(a, r.extrasOff, r.extrasLen),
-        })),
+        rows: rows.map((r) => ({ id: r.id, createdMs: Number(r.createdMs), nPlayers: r.nPlayers, seat: r.seat, rank: r.rank, fool: r.fool, durationS: r.durationS })),
     };
 }
-/** The newest replay of a game the caller played in, or null. */
+/** The newest replay of a game the caller played in (the game's id or a history row's), or null. */
 export async function replay(gameId: string): Promise<NetReplay | null> {
     const a = await ask({ kind: N.NC_DO_REPLAY, gid: gameId }).catch(() => null);
     return a ? { moves: span(a, a.done.aOff, a.done.aLen), extras: span(a, a.done.bOff, a.done.bLen) } : null;
