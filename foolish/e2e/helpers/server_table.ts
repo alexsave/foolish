@@ -23,15 +23,6 @@
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import { startTableHost, type HostEntries, type TableHost } from './table_host.ts';
 
-/** One recorded bot SEARCH, as the kernel saw it (c/src/bot_drive.h BeliefProbe). */
-interface BeliefProbeRecord {
-    seat: number;
-    /** Log records spliced into the Game the strategy was about to read. */
-    nLogs: number;
-    /** Real cards visible in that log - `${suit}:${value}` ids. */
-    cards: Set<string>;
-}
-
 /** One bot-loop cycle (table.h table_bot_drive): what it applied, and why it stopped. */
 export interface TableDrive {
     /** Actions applied; 0 means nothing to commit. */
@@ -40,13 +31,6 @@ export interface TableDrive {
     stop: number;
     /** The acting seat of each applied action, in order (for logs). */
     seats: number[];
-}
-
-/** A decoded action request: the game id, the action wire, and the intent version when the request carried one. */
-interface TableActionRequest {
-    gameId: string;
-    wire: Uint8Array;
-    intent: number | null;
 }
 
 /** A decoded ask (ask.h TableAsk): a request that is not a move, as the kernel read its body. */
@@ -146,21 +130,6 @@ export class ServerTable {
         return this.out(n) as Uint8Array;
     }
 
-    /** table_request_decode: the request's parts, or a TABLE_E_* refusal. */
-    requestDecode(body: Uint8Array): TableActionRequest | number {
-        const rc = this.ex.wasm_table_request_decode(...this.put(body));
-        if (rc < 0) return rc;
-        const m = this.struct(this.ex.wasm_table_request_ptr(), L.TableRequest_SIZE);
-        const q = 0;
-        const gidOff = L.TableRequest_get_gid_off(m, q);
-        const wireOff = L.TableRequest_get_wire_off(m, q);
-        return {
-            gameId: new TextDecoder().decode(body.subarray(gidOff, gidOff + L.TableRequest_get_gid_len(m, q))),
-            wire: body.slice(wireOff, wireOff + L.TableRequest_get_wire_len(m, q)),
-            intent: L.TableRequest_get_has_intent(m, q) ? L.TableRequest_get_intent(m, q) : null,
-        };
-    }
-
     /** table_load: TABLE_OK, or a GAME_INVALID_* / TABLE_E_* refusal (see detail()). */
     load(state: Uint8Array, roster: Uint8Array): number {
         return this.ex.wasm_table_load(...this.put(state, roster));
@@ -181,11 +150,6 @@ export class ServerTable {
 
     join(actorId: string, name: string): number {
         return this.ex.wasm_table_join(...this.put(actorId, name));
-    }
-
-    /** A human leaves, or a seated player removes another human. */
-    leave(actorId: string, targetId: string): number {
-        return this.ex.wasm_table_leave(...this.put(actorId, targetId));
     }
 
     /** `dealSeed`: FOOLISH_SEED_LEN bytes from crypto, used if the bot makes every seat ready. */
@@ -211,19 +175,10 @@ export class ServerTable {
         return this.ex.wasm_table_rearrange_hand(...this.put(actorId, Uint8Array.from(indices)));
     }
 
-    redact(userId: string, name: string): number {
-        return this.ex.wasm_table_redact(...this.put(userId, name));
-    }
-
     /** The ENGINE_REJECT_* behind the last TABLE_REJECTED. */
     reject(): number { return this.ex.wasm_table_reject(); }
 
-    /** The ROSTER_E_* behind the last TABLE_E_ROSTER. */
-    detail(): number { return this.ex.wasm_table_detail(); }
-
     needsBots(): boolean { return this.ex.wasm_table_needs_bots() !== 0; }
-
-    botsNeedLogs(): boolean { return this.ex.wasm_table_bots_need_logs() !== 0; }
 
     /** table_seat_of: the seat whose roster id is exactly `actorId`, or -1 (or TABLE_E_NOT_LOADED). */
     seatOf(actorId: string): number {
@@ -261,12 +216,6 @@ export class ServerTable {
         };
     }
 
-    /** table_drive_prefs: the opaque blob to offer a retry of the last cycle. */
-    drivePrefs(): Uint8Array { return this.must('drive prefs', this.ex.wasm_table_drive_prefs()); }
-
-    /** table_bot_wait_ms: ms from `nowMs` to wait before driving the loaded board (0: drive now), or a refusal. */
-    botWaitMs(nowMs: number): number { return this.ex.wasm_table_bot_wait_ms(nowMs); }
-
     // ---- the end of a game ----
 
     /** table_replay_code: the verified v6 replay code of the loaded finished game, or a refusal. */
@@ -277,35 +226,6 @@ export class ServerTable {
     /** table_replay_extras: the replay extras blob (names from the roster, times from the log), or a refusal. */
     replayExtras(log: Uint8Array): Uint8Array | number {
         return this.out(this.ex.wasm_table_replay_extras(...this.put(log)));
-    }
-
-    /**
-     * Test observability: arm the belief probe of THIS instance.
-     *
-     * What a bot SEARCH saw of the session log, recorded by the kernel as the
-     * strategy was about to read it (c/src/bot_drive.h BeliefProbe). A spy on this
-     * side could only prove the log's bytes were handed over, never that they were
-     * spliced into the Game the strategy read - and since the choose step moved
-     * in-kernel there is no TS seam left to spy on. Off until this is called.
-     */
-    __beliefProbeReset(): void { this.ex.wasm_belief_probe_reset(); }
-
-    /** The searches recorded since the last reset, in order, read through the generated accessors. */
-    __beliefProbeDump(): BeliefProbeRecord[] {
-        const n = this.ex.wasm_belief_probe_dump();
-        const m = this.struct(this.ex.wasm_belief_probe_ptr(), n * L.BeliefProbe_SIZE);
-        const out: BeliefProbeRecord[] = [];
-        for (let i = 0; i < n; i++) {
-            const p = i * L.BeliefProbe_SIZE;
-            const bits = L.BeliefProbe_get_cards(m, p);
-            const cards = new Set<string>();
-            // bit (suit * 16 + value) per real card the log showed.
-            for (let code = 0n; code < 64n; code++) {
-                if ((bits >> code) & 1n) cards.add(`${Number(code / 16n)}:${Number(code % 16n)}`);
-            }
-            out.push({ seat: L.BeliefProbe_get_seat(m, p), nLogs: L.BeliefProbe_get_n_logs(m, p), cards });
-        }
-        return out;
     }
 
     /** The loaded roster's seats, in seat order. */
@@ -402,22 +322,9 @@ export class ServerTable {
         return this.ex.wasm_table_ask(b, a, n, i, k, r);
     }
 
-    /** ask_refusal_encode: the body of a reply that has no answer (ASK_WHY_*, and the kernel's codes behind it). */
-    refusal(why: number, code = 0, detail = 0): Uint8Array {
-        return this.must('refusal', this.ex.wasm_ask_refusal_encode(why, code, detail));
-    }
-
     /** table_cast: one viewer's realtime message for the last operation, carrying `version`, or a refusal. */
     cast(gameId: string, viewer: number, version: number): Uint8Array | number {
         return this.out(this.ex.wasm_table_cast(...this.put(gameId), viewer, version));
-    }
-
-    /** table_rankings: seats, best first. */
-    rankings(): number[] {
-        const n = this.ex.wasm_table_rankings();
-        if (n < 0) throw new Error(`table: rankings refused (${n})`);
-        const m = this.struct(this.ex.wasm_table_elo_ptr(), L.TableElo_SIZE);
-        return Array.from({ length: n }, (_, i) => L.TableElo_get_order(m, 0, i));
     }
 
     /**

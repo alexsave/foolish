@@ -68,190 +68,39 @@ static inline int64_t I64(double d) { return (int64_t)d; }
 // address does not fit one; and wasm_setenv_from_io / wasm_clearenv, whose
 // table only wasm's getenv reads (wasm_bots_api.c).
 #define TABLE_HOST_ENTRIES(E) \
-    E(P, wasm_anim_finish_ask_ptr, 0, ()) \
-    E(P, wasm_anim_finish_ptr, 0, ()) \
-    E(I, wasm_anim_finish_rows, 0, ()) \
-    E(P, wasm_anim_frame_ptr, 0, ()) \
-    E(P, wasm_anim_hand_ask_ptr, 0, ()) \
-    E(I, wasm_anim_hand_laid_out, 0, ()) \
-    E(P, wasm_anim_hand_laid_ptr, 0, ()) \
-    E(I, wasm_anim_plan_at, 1, (I64(a[0]))) \
-    E(P, wasm_anim_plan_ptr, 0, ()) \
-    E(P, wasm_anim_reversal_ask_ptr, 0, ()) \
-    E(I, wasm_anim_reversal_order, 0, ()) \
-    E(P, wasm_anim_reversal_plan_ptr, 0, ()) \
-    E(I, wasm_anim_set_transport, 1, (I64(a[0]))) \
-    E(I, wasm_anim_should_drop_stale, 4, (I64(a[0]), I64(a[1]), I64(a[2]), I64(a[3]))) \
-    E(I, wasm_anim_shown_ledger_allows, 2, (I64(a[0]), I64(a[1]))) \
-    E(P, wasm_anim_stale_ask_ptr, 0, ()) \
-    E(I, wasm_anim_stale_optimistic, 0, ()) \
-    E(P, wasm_anim_stale_release_ptr, 0, ()) \
-    E(I, wasm_apply_action, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_ask_refusal_encode, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
-    E(I, wasm_attack, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_belief_probe_dump, 0, ()) \
-    E(P, wasm_belief_probe_ptr, 0, ()) \
-    E(V, wasm_belief_probe_reset, 0, ()) \
-    E(I, wasm_bot_cycle_delay_ms, 0, ()) \
-    E(I, wasm_bot_drive, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
-    E(I, wasm_bot_drive_log_start, 0, ()) \
-    E(I, wasm_bot_eligible_mask, 1, (I64(a[0]))) \
-    E(I, wasm_can_cover, 5, (I64(a[0]), I64(a[1]), I64(a[2]), I64(a[3]), I64(a[4]))) \
     E(I, wasm_card_list_parse, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
     E(P, wasm_cards_a_ptr, 0, ()) \
     E(P, wasm_cards_b_ptr, 0, ()) \
-    E(I, wasm_choose_move, 2, (I64(a[0]), I64(a[1]))) \
-    E(V, wasm_clear_logs, 0, ()) \
-    E(I, wasm_client_action_request, 3, (I64(a[0]), I64(a[1]), a[2])) \
-    E(I, wasm_client_action_response, 1, (I64(a[0]))) \
-    E(I, wasm_client_adopt_envelope, 1, (I64(a[0]))) \
-    E(I, wasm_client_ask_apply, 0, ()) \
-    E(I, wasm_client_ask_encode, 0, ()) \
-    E(P, wasm_client_ask_ptr, 0, ()) \
-    E(I, wasm_client_board_edit, 0, ()) \
-    E(P, wasm_client_board_edit_ptr, 0, ()) \
-    E(I, wasm_client_cast_open, 2, (I64(a[0]), I64(a[1]))) \
-    E(D, wasm_client_cast_version, 1, (I64(a[0]))) \
-    E(P, wasm_client_conflict_ptr, 0, ()) \
-    E(I, wasm_client_detail, 0, ()) \
-    E(P, wasm_client_edit_view_ptr, 0, ()) \
-    E(P, wasm_client_event_ptr, 0, ()) \
-    E(P, wasm_client_final_view_ptr, 0, ()) \
-    E(P, wasm_client_gesture_ptr, 0, ()) \
-    E(I, wasm_client_identity, 0, ()) \
-    E(I, wasm_client_identity_at, 0, ()) \
-    E(I, wasm_client_identity_begin, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_client_identity_seat, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
-    E(I, wasm_client_keep_board, 1, (I64(a[0]))) \
-    E(P, wasm_client_move_ptr, 0, ()) \
-    E(I, wasm_client_move_wire, 0, ()) \
-    E(I, wasm_client_optimistic_apply, 1, (I64(a[0]))) \
-    E(I, wasm_client_plan, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_client_plan_step, 2, (I64(a[0]), I64(a[1]))) \
-    E(P, wasm_client_plan_step_ptr, 0, ()) \
-    E(I, wasm_client_play, 0, ()) \
-    E(P, wasm_client_play_ptr, 0, ()) \
-    E(I, wasm_client_push_final, 0, ()) \
-    E(I, wasm_client_push_next, 0, ()) \
-    E(I, wasm_client_push_open, 4, (I64(a[0]), I64(a[1]), I64(a[2]), a[3])) \
-    E(I, wasm_client_push_settle, 1, (I64(a[0]))) \
-    E(I, wasm_client_rearrange_hand, 1, (I64(a[0]))) \
-    E(I, wasm_client_refusal_decode, 1, (I64(a[0]))) \
-    E(P, wasm_client_refusal_ptr, 0, ()) \
-    E(P, wasm_client_response_ptr, 0, ()) \
-    E(I, wasm_client_revert_board, 0, ()) \
-    E(P, wasm_client_rules_ptr, 0, ()) \
-    E(P, wasm_client_rules_view_ptr, 0, ()) \
-    E(P, wasm_client_settle_ptr, 0, ()) \
-    E(I, wasm_client_validate, 1, (I64(a[0]))) \
-    E(P, wasm_client_view_ptr, 0, ()) \
-    E(I, wasm_client_view_rules, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
-    E(I, wasm_cover, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_events_serialize, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
-    E(I, wasm_events_serialize_from, 4, (I64(a[0]), I64(a[1]), I64(a[2]), I64(a[3]))) \
-    E(I, wasm_export_logs, 0, ()) \
-    E(I, wasm_export_logs_masked, 0, ()) \
-    E(I, wasm_export_logs_masked_from, 1, (I64(a[0]))) \
-    E(I, wasm_export_snapshot, 1, (I64(a[0]))) \
-    E(I, wasm_export_state, 0, ()) \
-    E(I, wasm_finalize_win, 1, (I64(a[0]))) \
     E(P, wasm_fixture_begin, 0, ()) \
     E(I, wasm_fixture_seal, 0, ()) \
     E(I, wasm_fixture_game_bytes, 0, ()) \
     E(I, wasm_fixture_seat, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
     E(P, wasm_fixture_stamp_ptr, 0, ()) \
     E(I, wasm_fixture_title, 1, (I64(a[0]))) \
-    E(I, wasm_game_done, 0, ()) \
     E(P, wasm_game_ptr_internal, 0, ()) \
-    E(I, wasm_good, 1, (I64(a[0]))) \
-    E(I, wasm_hand_layout, 2, (I64(a[0]), a[1])) \
-    E(P, wasm_hand_layout_ptr, 0, ()) \
-    E(P, wasm_hand_metrics_ptr, 0, ()) \
-    E(I, wasm_human_mask, 0, ()) \
-    E(V, wasm_import_logs, 0, ()) \
-    E(I, wasm_import_state, 2, (I64(a[0]), I64(a[1]))) \
-    E(V, wasm_import_strategy_keys, 0, ()) \
     E(V, wasm_init, 0, ()) \
     E(I, wasm_io_cap, 0, ()) \
     E(P, wasm_io_ptr, 0, ()) \
     E(I, wasm_layout_hash, 0, ()) \
     E(I, wasm_legal_moves, 1, (I64(a[0]))) \
-    E(P, wasm_legal_moves_ptr, 0, ()) \
     E(P, wasm_moves_ptr_internal, 0, ()) \
-    E(I, wasm_msg_rematch, 3, (I64(a[0]), a[1], I64(a[2]))) \
-    E(I, wasm_net_do, 1, (a[0])) \
-    E(I, wasm_net_due_ms, 1, (a[0])) \
-    E(P, wasm_net_error, 0, ()) \
-    E(P, wasm_net_event, 1, (I64(a[0]))) \
-    E(P, wasm_net_event_payload, 1, (I64(a[0]))) \
-    E(P, wasm_net_inbox, 1, (I64(a[0]))) \
-    E(P, wasm_net_intent_ptr, 0, ()) \
-    E(P, wasm_net_next_done, 0, ()) \
-    E(P, wasm_net_next_request, 1, (a[0])) \
-    E(P, wasm_net_on_response, 4, (I64(a[0]), I64(a[1]), I64(a[2]), a[3])) \
-    E(V, wasm_net_reset, 0, ()) \
-    E(P, wasm_net_row, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
-    E(P, wasm_net_session_info, 0, ()) \
-    E(I, wasm_net_session_load, 1, (I64(a[0]))) \
-    E(I, wasm_net_session_save, 0, ()) \
-    E(I, wasm_net_stream_closed, 1, (a[0])) \
-    E(I, wasm_net_stream_in, 3, (I64(a[0]), I64(a[1]), a[2])) \
-    E(P, wasm_net_stream_next, 1, (a[0])) \
-    E(V, wasm_net_stream_opened, 1, (a[0])) \
-    E(P, wasm_net_stream_request, 0, ()) \
-    E(I, wasm_net_stream_sub, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_net_stream_unsub, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_next_player, 1, (I64(a[0]))) \
-    E(I, wasm_pass, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_pickup, 1, (I64(a[0]))) \
-    E(I, wasm_rearrange_hand, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_refill, 0, ()) \
-    E(I, wasm_reject_reason, 0, ()) \
-    E(V, wasm_reload_bot_flags, 0, ()) \
     E(I, wasm_replay_b32_decode, 1, (I64(a[0]))) \
-    E(I, wasm_replay_b32_encode, 1, (I64(a[0]))) \
-    E(I, wasm_replay_decode, 1, (I64(a[0]))) \
-    E(I, wasm_replay_decoded_open, 1, (I64(a[0]))) \
-    E(I, wasm_replay_encode_v6, 1, (I64(a[0]))) \
-    E(I, wasm_replay_error_detail, 0, ()) \
-    E(P, wasm_replay_error_ptr, 0, ()) \
-    E(I, wasm_replay_events, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
-    E(P, wasm_replay_events_index_ptr, 0, ()) \
-    E(I, wasm_replay_extras_decode, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
     E(I, wasm_replay_extras_encode, 0, ()) \
     E(P, wasm_replay_extras_ptr, 0, ()) \
     E(I, wasm_replay_io_cap, 0, ()) \
     E(P, wasm_replay_io_ptr, 0, ()) \
-    E(I, wasm_replay_link, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_replay_link_parse, 1, (I64(a[0]))) \
     E(I, wasm_replay_step_count, 1, (I64(a[0]))) \
     E(I, wasm_replay_step_logs, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_replay_step_masked_state, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
     E(I, wasm_replay_step_play, 1, (I64(a[0]))) \
-    E(I, wasm_reset_to_lobby, 1, (I64(a[0]))) \
-    E(I, wasm_roster_decode, 1, (I64(a[0]))) \
     E(I, wasm_roster_encode, 0, ()) \
     E(P, wasm_roster_spec_ptr, 0, ()) \
     E(P, wasm_roster_trailer_ptr, 0, ()) \
     E(I, wasm_roster_trailer_read, 1, (I64(a[0]))) \
     E(I, wasm_roster_trailer_write, 5, (I64(a[0]), I64(a[1]), I64(a[2]), I64(a[3]), I64(a[4]))) \
-    E(V, wasm_seed_rng_deterministic, 0, ()) \
-    E(V, wasm_set_deal_seed_bytes, 0, ()) \
-    E(V, wasm_set_deterministic_deck, 1, (I64(a[0]))) \
-    E(V, wasm_set_game_key, 1, (I64(a[0]))) \
-    E(V, wasm_set_rng_base, 1, (I64(a[0]))) \
     E(V, wasm_set_seed, 1, (I64(a[0]))) \
-    E(V, wasm_set_strategy_seed, 1, (I64(a[0]))) \
-    E(V, wasm_set_strategy_seed_deterministic, 0, ()) \
-    E(I, wasm_should_act, 1, (I64(a[0]))) \
-    E(I, wasm_snap_aux, 1, (I64(a[0]))) \
-    E(I, wasm_snap_count, 0, ()) \
-    E(I, wasm_snap_tag, 1, (I64(a[0]))) \
     E(I, wasm_start_game, 0, ()) \
-    E(I, wasm_state_deserialize, 1, (I64(a[0]))) \
-    E(I, wasm_state_format_version, 0, ()) \
-    E(I, wasm_state_serialize, 0, ()) \
-    E(I, wasm_strategy_seed_probe, 0, ()) \
     E(I, wasm_table_act, 4, (I64(a[0]), I64(a[1]), a[2], a[3])) \
     E(I, wasm_table_action_response, 3, (I64(a[0]), I64(a[1]), a[2])) \
     E(I, wasm_table_add_bot, 4, (I64(a[0]), I64(a[1]), I64(a[2]), I64(a[3]))) \
@@ -259,40 +108,30 @@ static inline int64_t I64(double d) { return (int64_t)d; }
     E(I, wasm_table_ask_decode, 1, (I64(a[0]))) \
     E(P, wasm_table_ask_ptr, 0, ()) \
     E(I, wasm_table_bot_drive, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_table_bot_wait_ms, 1, (a[0])) \
-    E(I, wasm_table_bots_need_logs, 0, ()) \
     E(I, wasm_table_cast, 3, (I64(a[0]), I64(a[1]), a[2])) \
     E(I, wasm_table_commit_products, 3, (I64(a[0]), a[1], a[2])) \
     E(P, wasm_table_commit_ptr, 0, ()) \
     E(I, wasm_table_continue, 1, (I64(a[0]))) \
     E(I, wasm_table_create, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_table_detail, 0, ()) \
-    E(I, wasm_table_drive_prefs, 0, ()) \
     E(P, wasm_table_drive_ptr, 0, ()) \
     E(P, wasm_table_elo_ptr, 0, ()) \
     E(I, wasm_table_envelope, 3, (I64(a[0]), I64(a[1]), a[2])) \
     E(I, wasm_table_join, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_table_leave, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_table_load, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_table_needs_bots, 0, ()) \
     E(I, wasm_table_push, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_table_rankings, 0, ()) \
     E(I, wasm_table_rate, 1, (I64(a[0]))) \
     E(I, wasm_table_ready, 1, (I64(a[0]))) \
     E(I, wasm_table_rearrange_hand, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_table_redact, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_table_reject, 0, ()) \
     E(I, wasm_table_replay_code, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_table_replay_extras, 1, (I64(a[0]))) \
-    E(I, wasm_table_request_decode, 1, (I64(a[0]))) \
-    E(P, wasm_table_request_ptr, 0, ()) \
     E(P, wasm_table_roster_ptr, 0, ()) \
     E(I, wasm_table_seat_of, 1, (I64(a[0]))) \
     E(I, wasm_table_set_deal_seed, 1, (I64(a[0]))) \
     E(I, wasm_table_set_session_log, 1, (I64(a[0]))) \
-    E(I, wasm_transition, 0, ()) \
     E(I, wasm_unambiguous_cover, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
-    E(I, wasm_view_serialize, 1, (I64(a[0]))) \
     /* end */
 
 #define RESULT_I(call) return (double)(int32_t)(call)
@@ -333,11 +172,22 @@ static void write_all(const void *p, size_t n) {
     }
 }
 
+// One write per answer: a frame is a few dozen bytes far more often than not,
+// and three syscalls for each of them were most of the host's time.
+static uint8_t *reply;
+static uint32_t reply_cap;
 static void answer(uint8_t status, const void *body, uint32_t n) {
-    uint32_t len = n + 1;
-    write_all(&len, 4);
-    write_all(&status, 1);
-    if (n) write_all(body, n);
+    const uint32_t len = n + 1;
+    if (len + 4 > reply_cap) {
+        free(reply);
+        reply_cap = len + 4 > 65536 ? len + 4 : 65536;
+        reply = malloc(reply_cap);
+        if (!reply) { perror("table_host"); exit(1); }
+    }
+    memcpy(reply, &len, 4);
+    reply[4] = status;
+    if (n) memcpy(reply + 5, body, n);
+    write_all(reply, len + 4);
 }
 
 static void refuse(const char *fmt, const char *what) {

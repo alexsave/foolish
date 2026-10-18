@@ -30,7 +30,6 @@ extern uint32_t wasm_rng_base_internal(void);
 extern void wasm_set_rng_base(uint32_t base);
 extern void wasm_clearenv(void);
 extern void wasm_reload_bot_flags(void);
-extern void wasm_belief_probe_observe_internal(const Game *g, int seat);
 extern LegalMoves *wasm_moves_ptr_internal(void);
 extern unsigned char *wasm_replay_io_ptr(void);
 extern int wasm_replay_io_cap(void);
@@ -39,7 +38,6 @@ extern void *wasm_anim_plan_ptr(void);
 static TableSnaps   g_table_snaps;
 static Table        g_table;
 static TableCommit  g_table_commit;
-static TableRequest g_table_request;
 static TableElo     g_table_elo;
 static BotDriveOut  g_table_drive;
 static int          g_table_ready;
@@ -47,7 +45,6 @@ static int          g_table_ready;
 static Table *table(void) {
     if (!g_table_ready) {
         table_init(&g_table, wasm_game_ptr_internal(), &g_table_snaps);
-        table_choose_observer = wasm_belief_probe_observe_internal;
         g_table_ready = 1;
     }
     return &g_table;
@@ -65,17 +62,10 @@ static uint32_t u32_of(double v) { return v < 0 ? 0u : (uint32_t)(uint64_t)v; }
 
 Roster       *wasm_table_roster_ptr(void)  { return &table()->r; }
 TableCommit  *wasm_table_commit_ptr(void)  { return &g_table_commit; }
-TableRequest *wasm_table_request_ptr(void) { return &g_table_request; }
 TableElo     *wasm_table_elo_ptr(void)     { return &g_table_elo; }
 BotDriveOut  *wasm_table_drive_ptr(void)   { return &g_table_drive; }
 int wasm_table_detail(void) { return table()->detail; }
 int wasm_table_reject(void) { return table()->reject; }
-
-// io = the request body.
-int wasm_table_request_decode(int len) {
-    if (len < 0 || len > wasm_io_cap()) return TABLE_E_WIRE;
-    return table_request_decode(wasm_io_ptr(), len, &g_table_request);
-}
 
 // io = [state blob][durable roster].
 int wasm_table_load(int state_len, int roster_len) {
@@ -115,13 +105,6 @@ int wasm_table_join(int id_len, int name_len) {
     return table_join(table(), (const char *)io, id_len, (const char *)io + id_len, name_len);
 }
 
-// io = [actor id][target id]
-int wasm_table_leave(int id_len, int target_len) {
-    const unsigned char *io = inputs(id_len + target_len);
-    if (!io || id_len < 0 || target_len < 0) return TABLE_E_WIRE;
-    return table_leave(table(), (const char *)io, id_len, (const char *)io + id_len, target_len);
-}
-
 // io = [actor id][bot id][nickname][brain key][deal seed, FOOLISH_SEED_LEN]
 int wasm_table_add_bot(int id_len, int bot_len, int nick_len, int brain_len) {
     const int seed_at = id_len + bot_len + nick_len + brain_len;
@@ -153,13 +136,6 @@ int wasm_table_rearrange_hand(int id_len, int n) {
     return table_rearrange_hand(table(), (const char *)io, id_len, io + id_len, n);
 }
 
-// io = [user id][replacement name]
-int wasm_table_redact(int id_len, int name_len) {
-    const unsigned char *io = inputs(id_len + name_len);
-    if (!io || id_len < 0 || name_len < 0) return TABLE_E_WIRE;
-    return table_redact(table(), (const char *)io, id_len, (const char *)io + id_len, name_len);
-}
-
 // io = [actor id] -> the seat, -1, or TABLE_E_NOT_LOADED.
 int wasm_table_seat_of(int id_len) {
     const unsigned char *io = inputs(id_len);
@@ -188,7 +164,7 @@ int wasm_table_set_session_log(int len) {
     return table_set_session_log(table(), io, len);
 }
 
-// io = [prefs blob from wasm_table_drive_prefs, or nothing] -> actions applied;
+// io = [a prefs blob (table.h table_drive_prefs), or nothing] -> actions applied;
 // the cycle is at wasm_table_drive_ptr. No env: the C roster's knob specs are
 // authoritative, and a table an earlier decision left must not override them
 // (the reason sdk/ts/wasm/bots.ts wasmBotDrive clears it too).
@@ -199,13 +175,6 @@ int wasm_table_bot_drive(int prefs_len, int max_actions) {
     wasm_reload_bot_flags();
     return table_bot_drive(table(), io, prefs_len, max_actions, &g_table_drive);
 }
-
-// -> io = the preferred moves to offer a retry of the last cycle.
-int wasm_table_drive_prefs(void) {
-    return table_drive_prefs(table(), &g_table_drive, wasm_io_ptr(), wasm_io_cap());
-}
-
-int wasm_table_bot_wait_ms(double now_ms) { return table_bot_wait_ms(table(), (int64_t)now_ms); }
 
 // io = [deal seed][session log] -> io = the verified v6 replay code. The code is
 // written into the replay buffer and decoded back into the IO buffer past the
@@ -230,7 +199,6 @@ int wasm_table_replay_extras(int log_len) {
     if (n > 0) memcpy(wasm_io_ptr(), wasm_replay_io_ptr(), (size_t)n);
     return n;
 }
-int wasm_table_bots_need_logs(void) { return table_bots_need_logs(table()) ? 1 : 0; }
 
 // io = [game id] -> io = the arena wasm_table_commit_ptr's spans point into.
 int wasm_table_commit_products(int gid_len, double next_version, double now_ms) {
@@ -257,11 +225,6 @@ int wasm_table_envelope(int gid_len, int viewer, double version) {
 // -> io = the action response body.
 int wasm_table_action_response(int result, int reject, double version) {
     return table_action_response(result, reject, u32_of(version), wasm_io_ptr(), wasm_io_cap());
-}
-
-// -> TableElo.order, best first.
-int wasm_table_rankings(void) {
-    return table_rankings(table(), g_table_elo.order);
 }
 
 // TableElo.ratings (by seat, `n` of them): rates the game the last operation
@@ -511,8 +474,8 @@ int wasm_client_move_wire(void) { return client_move_wire(&g_move, wasm_io_ptr()
 
 // ---- the `action` endpoint's bodies, as a client holds them (table.h) ----
 //
-// The client's halves of the request and the response the server's entries
-// above read and write (wasm_table_request_decode, wasm_table_action_response).
+// The client's halves of the request and the response the server reads and
+// writes (table.h table_request_decode, table_action_response).
 
 // io = [game id][action wire] -> io = the request body. intent < 0: none (v1).
 int wasm_client_action_request(int gid_len, int wire_len, double intent) {
@@ -637,13 +600,6 @@ int wasm_table_ask(int body_len, int id_len, int name_len, int bot_len, int nick
     };
     return table_ask(table(), c + body_len, id_len, c + body_len + id_len, name_len,
                      &a, bot_len > 0 ? &bot : 0, io + seed_at);
-}
-
-// -> io = a refusal body (ask.h): why an endpoint has no answer.
-int wasm_ask_refusal_encode(int why, int code, int detail) {
-    if (why < 0 || why > 255) return ASK_E_WIRE;
-    const AskRefusal r = { (uint8_t)why, code, detail };
-    return ask_refusal_encode(&r, wasm_io_ptr(), wasm_io_cap());
 }
 
 // io = [game id] -> io = one viewer's cast: the realtime message for the last

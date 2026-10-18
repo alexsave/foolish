@@ -13495,9 +13495,9 @@ static int bl_row_cycle(BlRow *row, const uint8_t *log, int log_len, int max_act
 // here hands over a log of the SAME record count made of GAME_START records,
 // which carry nothing and which og_build_belief ignores: same seed, same board,
 // no memory. With the import cut out the two runs are then identical and the
-// count is exactly 0. A choose observer (table_choose_observer, what the wasm
-// bridge's belief probe is) also confirms that every decision was made over a
-// board holding exactly the records handed over.
+// count is exactly 0. A choose observer (table_choose_observer) also confirms
+// that every decision was made over a board holding exactly the records handed
+// over.
 //
 // Native and wasm read the log through the same table_set_session_log, but at
 // different caps: MAX_LOG_PAIRS is 16 here and 64 in bots.wasm, and the engine's

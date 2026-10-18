@@ -386,69 +386,10 @@ extern void wasm_set_strategy_seed_deterministic(void);
 extern void wasm_seed_rng_deterministic(void);
 extern uint32_t wasm_rng_base_internal(void);
 
-// ---------- belief probe (observability) ----------------------------------
-//
-// "Did the bot actually SEE the session log?" — answered by the kernel rather
-// than inferred from outside it.
-//
-// The loop hands the belief bots the persisted session log as packed bytes
-// (importLogsPacked). A host-side spy can only prove the bytes were HANDED
-// OVER; it cannot prove the importer spliced them into the Game the strategy
-// then read. That gap is exactly where the octogen-blind and cordite
-// stale-belief regressions lived. Since the choose step moved in-kernel
-// (docs/C_CORE_CONSOLIDATION.md F2/A2) there is no TS seam left to spy on
-// anyway, so the observation belongs where the read happens.
-//
-// Records, per SEARCH, the log the strategy was about to read. A reused
-// preferred move never fires the CHOOSE phase (no search, no belief read), so
-// it correctly records nothing.
-//
-// Behavior-neutral and OFF until a harness calls reset(): production drives
-// never pay the log pass.
-// BeliefProbe and BELIEF_PROBE_CAP are bot_drive.h's, so the records' layout is
-// declared where structgen can generate their reader.
-static BeliefProbe g_probe[BELIEF_PROBE_CAP];
-static int g_n_probe = 0;
-static int g_probe_on = 0;
-
-static void probe_capture(const Game *g, int seat) {
-    if (!g_probe_on || g_n_probe >= BELIEF_PROBE_CAP) return;
-    BeliefProbe *p = &g_probe[g_n_probe++];
-    p->seat   = (uint8_t)seat;
-    p->n_logs = (uint16_t)g->num_logs;
-    p->cards  = 0;
-    for (int i = 0; i < g->num_logs; i++) {
-        const GameLog *l = &g->logs[i];
-        for (int k = 0; k < l->num_pairs; k++) {
-            const Card cs[2] = { l->pairs[k].primary, l->pairs[k].target };
-            for (int c = 0; c < 2; c++) {
-                // Card backs (WIRE_CARD_HIDDEN -> suit/value < 0) are not cards.
-                if (cs[c].suit >= 0 && cs[c].value > 0)
-                    p->cards |= 1ull << ((unsigned)cs[c].suit * 16u + (unsigned)cs[c].value);
-            }
-        }
-    }
-}
-
-// Clear + arm. Records accumulate across drives until the next reset, so a
-// harness can read the decisions of several cycles in order.
-void wasm_belief_probe_reset(void) { g_n_probe = 0; g_probe_on = 1; }
-
-// The records: how many, and where they are (a BeliefProbe[] at the pointer,
-// read through the generated accessors). They used to be re-packed into the IO
-// buffer as 11-byte rows a harness took apart by hand.
-int wasm_belief_probe_dump(void) { return g_n_probe; }
-void *wasm_belief_probe_ptr(void) { return g_probe; }
-
-// The same capture for a drive the C Table runs (table.h table_choose_observer),
-// which seeds itself from the table's deal seed rather than through this bridge.
-void wasm_belief_probe_observe_internal(const Game *g, int seat) { probe_capture(g, seat); }
-
 // One policy, the kernel's (bot_drive.h bot_drive_seed_decision), over this
 // bridge's own base. Log offset 0: g_game is resident, so it holds the whole
 // session log the host imported.
 static void drive_seed_hook(const Game *g, int seat, int phase) {
-    if (phase == BOT_DRIVE_PHASE_CHOOSE) probe_capture(g, seat);
     bot_drive_seed_decision(g, wasm_rng_base_internal(), 0u, phase);
 }
 
@@ -580,34 +521,12 @@ int wasm_replay_summary(int code_len) {
     return (int)(uintptr_t)&g_replay_summary;
 }
 
-// replay_decode's log stream, one record at a time (replay.h ReplayDecodedLog),
-// for the generated reader. TEST build only (c/Makefile bots_test.wasm): tests
-// and tools read a code's whole log stream; no shipped host does. open decodes
-// the code in the replay buffer in place and returns REPLAY_EOK or -REPLAY_E*;
-// next returns the record's address, 0 past the last, or -REPLAY_EINPUT.
-static ReplayDecodedLog g_replay_log;
-static int g_replay_log_len, g_replay_log_at;
-extern int wasm_replay_decode(int in_len);
-int wasm_replay_decoded_open(int code_len) {
-    g_replay_log_len = g_replay_log_at = 0;
-    const int n = wasm_replay_decode(code_len);
-    if (n < 0) return n;
-    g_replay_log_len = n;
-    g_replay_log_at = REPLAY_DEC_HDR;
-    return REPLAY_EOK;
-}
-int wasm_replay_decoded_next(void) {
-    if (g_replay_log_len == 0) return -REPLAY_EINPUT;
-    const int r = replay_decoded_log(wasm_replay_io_ptr(), g_replay_log_len, &g_replay_log_at, &g_replay_log);
-    return r == 1 ? (int)(uintptr_t)&g_replay_log : r;
-}
-
 // ---------- the C Roster (src/roster.h), test-only exports ------------------
 //
-// Exported only from the test build (WASM_ROSTER_EXPORTS, part of
-// WASM_BOTS_ALL_EXPORTS in the Makefile). They let e2e drive roster.c directly and
-// feed the real Swift decoder C-written trailers (e2e/packed_roster_wire.test.ts);
-// production reaches the roster through the wasm_table_* exports.
+// No wasm module exports these: the native table host offers them
+// (tests/table_host.c), so e2e can drive roster.c directly and feed the real
+// Swift decoder C-written trailers (e2e/packed_roster_wire.test.ts); production
+// reaches the roster through the table.
 //
 // Every call reads its input from the IO buffer and writes its answer back
 // there. A roster crosses in one test-only SPEC layout:
@@ -643,15 +562,6 @@ int wasm_roster_encode(void) {
         rc = roster_seat_add(&g_roster, q->id, q->id_len, q->name, q->name_len, q->brain, q->brain_len);
         if (rc < 0) return rc;
     }
-    return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
-}
-
-// ROSTER_BYTES in io -> roster_decode -> roster_encode back into io, so a test
-// asserts decode is lossless without reading the layout itself. Returns
-// ROSTER_BYTES or the ROSTER_E_* refusal.
-int wasm_roster_decode(int len) {
-    const int rc = roster_decode(&g_roster, wasm_io_ptr(), len);
-    if (rc != ROSTER_OK) return rc;
     return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
 }
 

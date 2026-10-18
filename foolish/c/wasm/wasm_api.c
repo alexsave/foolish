@@ -693,7 +693,7 @@ const void *wasm_replay_error_ptr(void) { return replay_last_error(); }
 // bubble opens with are the phone's, through ios_api_msg.c, tested natively
 // (tests/msg_wire_test.c); the web's /m/ unfurl decodes in C on the server
 // (c_base). wasm_msg_decode is exported only by msg.wasm, the extension-floor
-// measurement (see the Makefile), and wasm_msg_rematch only by the test build.
+// measurement (see the Makefile).
 //
 // A decode replays into the resident g_game.
 
@@ -736,32 +736,6 @@ int wasm_msg_decode(int in_len) {
     g_msg_header.e.actions_len = 0;
     memcpy(g_msg_header.digest, digest, SHA256_DIGEST_LEN);
     return MSG_EOK;
-}
-
-// THE REMATCH LOBBY (msg_wire.h msg_rematch_lobby) for the FINISHED envelope in
-// g_replay_io[0, in_len): the same game dealt again, written back into
-// g_replay_io. Returns its length or a negative MSG_E*. Adopts nothing - the
-// resident game is untouched; decode the answer to put it on screen. The same
-// C the phone's fio_msg_rematch calls, exported from the TEST build only
-// (Makefile WASM_BOTS_ALL_EXPORTS). Nothing calls it any more: the suite that
-// held it to the native bytes (e2e/msg_rematch.test.ts) is gone, the bytes are
-// pinned by tests/msg_wire_test.c test_rematch_golden, and no shipped module
-// builds a rematch.
-// `tapped_at_ms` crosses as a double: a JS number holds every millisecond
-// timestamp exactly, and wasm32 has no 64-bit integer a JS caller can pass
-// without BigInt.
-int wasm_msg_rematch(int in_len, double tapped_at_ms, int creator_seat) {
-    // The scratch Game the lobby is replayed and dealt in (a Game is far too
-    // big for a wasm stack). Not held across a return.
-    static Game g_msg_scratch;
-    if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
-    // The answer is written where the question was, so the question is copied
-    // out first: the lobby is built while the finished chain is still read.
-    static unsigned char finished[REPLAY_IO_CAP];
-    memcpy(finished, g_replay_io, (size_t)in_len);
-    if (!(tapped_at_ms >= 0.0) || tapped_at_ms > 9007199254740991.0) return MSG_ESHORT;
-    return msg_rematch_lobby(finished, in_len, (uint64_t)tapped_at_ms, creator_seat,
-                             g_replay_io, REPLAY_IO_CAP, &g_msg_scratch);
 }
 
 // ---------- animation core (anim_plan.h) --------------------------------------
