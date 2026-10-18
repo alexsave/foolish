@@ -150,7 +150,7 @@ function memLimits(wasm: Uint8Array): { min: number; max: number | null } {
     throw new Error('no memory section');
 }
 
-test("web.wasm declared INITIAL memory is 25 pages", () => {
+test("web.wasm declared INITIAL memory is 26 pages", () => {
     // A LINKER FACT, not a second budget. wasm-ld keeps a static only if
     // something an export reaches refers to it, so dropping the bot bridge and
     // the C Table from the browser's export list drops their buffers with their
@@ -178,10 +178,17 @@ test("web.wasm declared INITIAL memory is 25 pages", () => {
     // frame has to be decoded somewhere), the subscriptions and the per-game
     // version gates (NC_GATES_MAX 64, cut from 128 so bots.wasm keeps its
     // 34-page line), about 54 KiB in all.
+    //
+    // 26, RAISED from 25 on purpose: the stream is MQTT now (stage 2 of the move
+    // to AWS IoT Core, c_base/DESIGN.md "Module: realtime"), and the client keeps
+    // the broker's bytes in g_mq_in (NC_MQ_IN_MAX, 33 KiB): MQTT over WebSocket
+    // may cut a packet across messages, and a pushed message's payload is read
+    // where it lies until the next feed. g_frame stays for the envelope a
+    // refetch answer hands out as an event.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/web.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 25,
-        `web.wasm initial memory is ${min} pages (${min * PAGE} B); expected 25. `
+    assert.equal(min, 26,
+        `web.wasm initial memory is ${min} pages (${min * PAGE} B); expected 26. `
         + 'Up means the browser\'s link started keeping a static it used to drop - look at what '
         + 'was added to c/Makefile WASM_WEB_NAMES, because an export is a GC root and roots the '
         + 'data its code reads. Down means something was freed: lower this pin in the same commit.');

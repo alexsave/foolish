@@ -99,8 +99,12 @@ public enum NetClient {
     public static func streamIn(_ frame: Data, isText: Bool) {
         _ = bytes(frame) { fio_net_stream_in($0, $1, isText ? 1 : 0, now) }
     }
-    /// The next frame to send as text, nil for none now.
-    public static func streamNext() -> String? { fio_net_stream_next(now).flatMap { try? readNcOut($0).text } }
+    /// The next message to send as one binary frame, nil for none now.
+    public static func streamNext() -> Data? {
+        fio_net_stream_next(now).flatMap { try? readNcOut($0) }.map { Data($0.bytes.map { UInt8(truncatingIfNeeded: $0) }) }
+    }
+    /// The WebSocket subprotocol the stream speaks: MQTT over WebSocket's own name (MQTT 3.1.1, 6.0).
+    public static let streamProtocol = "mqtt"
 
     // MARK: marshaling
 

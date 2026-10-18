@@ -3,6 +3,7 @@
 #include "roster.h"
 #include "table.h"
 #include "view.h"
+#include "../../../shared/c/mqtt/mqtt.h"
 #include <string.h>
 
 // ---- state -------------------------------------------------------------------------
@@ -14,9 +15,7 @@ typedef struct {
     uint8_t  state;        // SUB_WANT, SUB_SENT, SUB_LIVE, SUB_REFUSED
     uint16_t holds;        // the host's nc_stream_sub calls not yet let go
     uint8_t  pinned;       // held by this file (a game just created) until the host lets go
-    uint8_t  lived;        // accepted once: accepted again means pushes were missed
-    uint8_t  missed;       // refused since it was last accepted
-    uint16_t ref;
+    uint16_t pid;          // the SUBSCRIBE's packet id while SENT
     int64_t  retry_at;
     int32_t  backoff;
 } sub;
@@ -27,6 +26,7 @@ typedef struct {
     uint8_t  gid_len;
     char     gid[NW_GID_MAX];
     uint8_t  has_view, has_cast, has_answer;
+    uint8_t  seat_known, seated;   // whether the user sits at the game, as the last envelope or cast said
     uint32_t view_v;       // the dashboard's: the newest view pushed
     uint32_t cast_v;       // the table's: the newest cast applied
     uint32_t answer_v;     // the table's: the newest view answered and applied
@@ -51,15 +51,24 @@ static unsub    g_unsubs[NC_SUBS_MAX];
 static int      g_n_unsubs;
 static gate     g_gates[NC_GATES_MAX];
 static uint32_t g_gate_clock;
-static uint8_t  g_open;
-static int64_t  g_last_ping;
-static uint16_t g_next_ref;
+static uint8_t  g_open;                 // the host's socket is open
+static uint8_t  g_mq;                   // MQ_*: where the MQTT session on it is
+static int64_t  g_last_out;             // when a packet last went out: the keep-alive runs from it
+static uint16_t g_next_pid;
 static int32_t  g_reconnect_ms;
+static uint32_t g_conn_seq;             // makes each connection's client id its own
+static int64_t  g_forced_at;            // when a refused CONNECT last forced a refresh
+// The broker's bytes: whole packets parsed in place (a pushed message's payload
+// is read where it lies), a packet cut across WebSocket messages kept for the next.
+static uint8_t  g_mq_in[NC_MQ_IN_MAX];
+static int      g_mq_in_len, g_mq_in_off;
+enum { MQ_SHUT = 0, MQ_OPENED, MQ_CONNECTING, MQ_LIVE };
 
-// What the last feed changed. A payload is in g_frame: the message a frame
-// decoded to, or the envelope an answer carried, copied there.
+// What the last feed changed. A payload is in g_mq_in (a pushed message, where
+// it lies) or g_frame (the envelope a refetch answer carried, copied there).
 static NcEvent  g_events[NC_EVENTS_MAX];
 static uint32_t g_event_at[NC_EVENTS_MAX];
+static const uint8_t *g_event_base[NC_EVENTS_MAX];   // g_frame (an answer) or g_mq_in (a push)
 static int      g_n_events;
 static uint32_t g_session_told;         // the session generation the host was last told
 static uint8_t  g_boards;               // the host shows boards and never decodes a cast (nc_set_boards)
@@ -99,9 +108,11 @@ static void signed_out(void) {
 
 static void pump_reset(void);
 static void book_for(const NwSession *s);
+static void book_reset(void);
 
 void nc_reset(void) {
     pump_reset();
+    book_reset();
     signed_out();
     memset(&g_error, 0, sizeof g_error);
     memset(g_subs, 0, sizeof g_subs);
@@ -109,9 +120,12 @@ void nc_reset(void) {
     g_n_unsubs = 0;
     g_gate_clock = 0;
     g_open = 0;
-    g_last_ping = 0;
-    g_next_ref = 0;
+    g_mq = MQ_SHUT;
+    g_last_out = 0;
+    g_next_pid = 0;
     g_reconnect_ms = 0;
+    g_forced_at = 0;
+    g_mq_in_len = g_mq_in_off = 0;
     g_n_events = 0;
     g_session_told = g_session_gen;
 }
@@ -378,7 +392,7 @@ const NcRequest *nc_req_chat_send(const char *gid, int gid_len, const char *msg,
     return body_of(&w);
 }
 
-const NcRequest *nc_req_stream(void) { return begin(NC_GET, "/v1/stream?proto=nw1"); }
+const NcRequest *nc_req_stream(void) { return begin(NC_GET, "/mqtt"); }
 
 // ---- answers -------------------------------------------------------------------------
 
@@ -588,7 +602,8 @@ static int events_end(void);
 static sub *sub_make(int what, const char *gid, int gid_len);
 static sub *sub_find(int what, const char *gid, int gid_len);
 static int same_id(const char *a, int a_len, const char *b, int b_len);
-static void sub_again(sub *s);
+static void seat_learn(gate *g, const uint8_t *env, uint32_t len);
+static int stream_wants_token(int64_t now_ms);
 
 static void pump_reset(void) {
     memset(g_slots, 0, sizeof g_slots);
@@ -718,10 +733,17 @@ static void session_over(void) {
 // user's: another user's session starts it over.
 static uint8_t g_book_user_len;
 static char    g_book_user[NW_ID_MAX];
+// A book that was nobody's yet (a page that holds its streams before its kept
+// session is restored, as the web's do) is the first user's: what it holds is
+// theirs, not another user's to forget.
+static void book_reset(void) { g_book_user_len = 0; }
+
 static void book_for(const NwSession *s) {
     if (same_id(g_book_user, g_book_user_len, s->user_id, s->user_id_len)) return;
+    int had_user = g_book_user_len != 0;
     g_book_user_len = s->user_id_len;
     memcpy(g_book_user, s->user_id, s->user_id_len);
+    if (!had_user) return;
     memset(g_gates, 0, sizeof g_gates);
     memset(g_subs, 0, sizeof g_subs);
     g_n_unsubs = 0;
@@ -811,6 +833,17 @@ static int caught_up(const slot *sl) {
 }
 
 const NcRequest *nc_next_request(int64_t now_ms) {
+    // The stream's CONNECT carries the token: a socket waiting to connect with
+    // one about to expire asks for the refresh itself, whatever else waits.
+    if (stream_wants_token(now_ms) && !g_refresh_id && g_refresh_not_before <= now_ms) {
+        const NcRequest *q = nc_req_refresh();
+        if (q) {
+            if (++g_req_id == 0) g_req_id = 1;
+            g_req.id = g_req_id;
+            g_refresh_id = g_req_id;
+            return &g_req;
+        }
+    }
     for (int pass = 0; pass < NC_PUMP_MAX; pass++) {
         slot *pick = NULL;
         for (int i = 0; i < NC_PUMP_MAX; i++) {
@@ -860,11 +893,13 @@ static int answer_view(NcDone *d, const char *gid, int gid_len, uint32_t version
                        const uint8_t *body, uint32_t off, uint32_t len, int own) {
     gate *g = gate_find(gid, gid_len, 1);
     if (!answer_pass(g, version)) { d->stale = 1; return 0; }
+    seat_learn(g, body + off, len);
     d->version = version;
     if (!own) { d->a_off = off; d->a_len = len; return 1; }
     if (len > NC_FRAME_MAX) return 0;
     NcEvent *e = event_add(NC_EV_VIEW);
     if (!e) return 0;
+    g_event_base[g_n_events - 1] = g_frame;
     memcpy(g_frame, body + off, len);
     e->what = NW_SUB_GAME;
     e->gid_len = (uint8_t)gid_len;
@@ -910,14 +945,14 @@ static void read_answer(NcDone *d, const NcIntent *in, int own, int status, cons
                        (ask.player_len == 0 || same_id(ask.player, ask.player_len, g_session.user_id, g_session.user_id_len));
         int moved = d->kind == NC_DO_CREATE || (asked && ask.kind == ASK_JOIN) || own_exit;
         if (!moved || !named) break;
+        // The answer says whether the asker now sits there (the envelope's
+        // seat), which picks the casts taken from now on: the seat's or the
+        // spectators', both of which a game's subscription hears.
         answer_view(d, gid, gl, version, body, 0, (uint32_t)len, 0);
-        // Which stream the game is heard on is the seat's to say: a create's
-        // game is heard from now on, and a join or a leave asks again.
+        // A create's game is heard from now on.
         if (d->kind == NC_DO_CREATE && !g_boards) {
             sub *s = sub_make(NW_SUB_GAME, gid, gl);
             if (s) s->pinned = 1;
-        } else if (d->kind != NC_DO_CREATE) {
-            sub_again(sub_find(NW_SUB_GAME, gid, gl));
         }
         break;
     }
@@ -1030,6 +1065,8 @@ const NcDone *nc_next_done(void) {
 int nc_pump_due_ms(int64_t now_ms) {
     if (g_n_dropped) return 0;
     int64_t due = -1;
+    if (stream_wants_token(now_ms) && !g_refresh_id)
+        due = g_refresh_not_before > now_ms ? g_refresh_not_before - now_ms : 0;
     for (int i = 0; i < NC_PUMP_MAX; i++) {
         const slot *sl = &g_slots[i];
         if (sl->state != SLOT_QUEUED) continue;
@@ -1077,6 +1114,22 @@ void nc_gate_reset(const char *gid, int gid_len) {
 }
 
 // ---- the stream --------------------------------------------------------------------------
+//
+// MQTT 3.1.1 over the host's one WebSocket (shared/c/mqtt): this file writes
+// every packet and reads every one the broker sends; the host carries bytes.
+// CONNECT carries the access token as its password and a client id of
+// "<user>-<this connection>"; a subscription is a SUBSCRIBE of its topics:
+//   NW_SUB_GAMES          u/<user>/v
+//   NW_SUB_CHAT   <game>  u/<user>/m/<game>
+//   NW_SUB_GAME   <game>  u/<user>/c/<game> and s/<game>, both: which casts are
+//                         taken is the book's (the seat's when the user sits there)
+// Every push's payload is the server's nw1 message (netwire.h). A game
+// subscription answered (SUBACK) takes the game whole once (the catch-up, an
+// HTTP read) unless something newer arrives first, so nothing pushed between
+// the host's read and the subscription going live is lost. A refusal has no
+// code on the wire (the broker ends the connection), so a socket closed before
+// its CONNACK refreshes the token before the next CONNECT (at most once every
+// NC_FORCE_REFRESH_MS).
 
 static sub *sub_find(int what, const char *gid, int gid_len) {
     for (int i = 0; i < NC_SUBS_MAX; i++) {
@@ -1090,7 +1143,14 @@ static sub *sub_find(int what, const char *gid, int gid_len) {
 static int sub_args_ok(int what, const char *gid, int gid_len) {
     if (what == NW_SUB_GAMES) return gid_len == 0;
     if (what != NW_SUB_GAME && what != NW_SUB_CHAT) return 0;
-    return gid && gid_len > 0 && gid_len <= NW_GID_MAX;
+    if (!gid || gid_len <= 0 || gid_len > NW_GID_MAX) return 0;
+    // A game id becomes a topic level: only bytes a level can hold.
+    for (int i = 0; i < gid_len; i++) {
+        char c = gid[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_'))
+            return 0;
+    }
+    return 1;
 }
 
 static sub *sub_make(int what, const char *gid, int gid_len) {
@@ -1116,14 +1176,6 @@ static sub *sub_make(int what, const char *gid, int gid_len) {
     return NULL;
 }
 
-// Asked again, at once: which stream it hears may have changed.
-static void sub_again(sub *s) {
-    if (!s || s->state == SUB_FREE) return;
-    s->state = SUB_WANT;
-    s->retry_at = 0;
-    s->backoff = NC_RETRY_FIRST_MS;
-}
-
 int nc_stream_sub(int what, const char *gid, int gid_len) {
     if (!sub_args_ok(what, gid, gid_len)) return NW_E_WIRE;
     sub *s = sub_make(what, gid, gid_len);
@@ -1140,7 +1192,7 @@ int nc_stream_unsub(int what, const char *gid, int gid_len) {
     // The last hold (a pin the host never held is let go with it).
     int told = s->state == SUB_SENT || s->state == SUB_LIVE;
     memset(s, 0, sizeof *s);
-    if (told && g_open) {
+    if (told && g_mq == MQ_LIVE) {
         if (g_n_unsubs == NC_SUBS_MAX) return NW_E_CAP;
         unsub *u = &g_unsubs[g_n_unsubs++];
         u->what = (uint8_t)what;
@@ -1152,19 +1204,36 @@ int nc_stream_unsub(int what, const char *gid, int gid_len) {
 
 void nc_stream_opened(int64_t now_ms) {
     g_open = 1;
-    g_last_ping = now_ms;
+    g_mq = MQ_OPENED;
+    g_last_out = now_ms;
     g_n_unsubs = 0;
+    g_mq_in_len = g_mq_in_off = 0;
     for (int i = 0; i < NC_SUBS_MAX; i++)
         if (g_subs[i].state != SUB_FREE) { g_subs[i].state = SUB_WANT; g_subs[i].retry_at = 0; }
 }
 
 int nc_stream_closed(int64_t now_ms) {
-    (void)now_ms;
+    // Closed with a CONNECT out and no CONNACK: the broker's only way to say
+    // "not you". The token may be what it refused; refresh it before the next
+    // CONNECT, but not more often than NC_FORCE_REFRESH_MS (a broker that is
+    // down would otherwise cost a refresh, and its writes, per reconnect).
+    if (g_mq == MQ_CONNECTING && g_signed_in && (!g_forced_at || now_ms - g_forced_at >= NC_FORCE_REFRESH_MS)) {
+        g_forced_at = now_ms;
+        g_session.expires_at_ms = 0;
+    }
     g_open = 0;
+    g_mq = MQ_SHUT;
     g_n_unsubs = 0;
+    g_mq_in_len = g_mq_in_off = 0;
     int wait = g_reconnect_ms ? g_reconnect_ms : NC_RETRY_FIRST_MS;
     g_reconnect_ms = wait * 2 > NC_RETRY_MAX_MS ? NC_RETRY_MAX_MS : wait * 2;
     return wait;
+}
+
+// A socket open and waiting to CONNECT whose token is due.
+static int stream_wants_token(int64_t now_ms) {
+    return g_open && g_mq == MQ_OPENED && g_signed_in &&
+           (int64_t)g_session.expires_at_ms - NC_REFRESH_EARLY_MS <= now_ms;
 }
 
 // ---- what changed ------------------------------------------------------------------
@@ -1177,6 +1246,7 @@ static NcEvent *event_add(uint8_t kind) {
     memset(e, 0, sizeof *e);
     e->kind = kind;
     g_event_at[g_n_events] = 0;
+    g_event_base[g_n_events] = g_mq_in;
     g_n_events++;
     return e;
 }
@@ -1196,7 +1266,7 @@ const NcEvent *nc_event(int i) { return i >= 0 && i < g_n_events ? &g_events[i] 
 
 const uint8_t *nc_event_payload(int i) {
     if (i < 0 || i >= g_n_events || !g_events[i].payload_len) return NULL;
-    return g_frame + g_event_at[i];
+    return g_event_base[i] + g_event_at[i];
 }
 
 static uint32_t table_top(const gate *g) {
@@ -1244,283 +1314,357 @@ static int envelope_names(const uint8_t *p, int len, char *gid, uint8_t *gid_len
     return 1;
 }
 
-// ---- the stream: frames in ------------------------------------------------------------
+// ---- the stream: what the broker sends -------------------------------------------------
 
-static void take_frame(NwFrame *f, int64_t now_ms);
-
-int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
-    events_begin();
-    // An empty message is what API Gateway sends for a frame whose answer
-    // carried nothing (its route response): there is nothing in it.
-    if (len == 0) return events_end();
-    const uint8_t *msg = frame;
-    int n = len;
-    if (is_text) {
-        n = nw_text_decode((const char *)frame, len, g_frame, NC_FRAME_MAX);
-        if (n < 0) { event_add(NC_EV_BAD); return events_end(); }
-        msg = g_frame;
-    } else if (frame && len > 0 && len <= NC_FRAME_MAX && frame != g_frame) {
-        memcpy(g_frame, frame, (size_t)len);
-        msg = g_frame;
-    } else if (len > NC_FRAME_MAX) {
-        event_add(NC_EV_BAD);
-        return events_end();
-    }
-    NwFrame *f = &g_nwf;   // one frame for both directions: never two at once
-    if (nw_frame_decode(msg, n, f) != NW_OK) { event_add(NC_EV_BAD); return events_end(); }
-    g_reconnect_ms = 0;   // the socket works: a later close starts the schedule over
-    if (f->kind != NW_WS_BATCH) {
-        take_frame(f, now_ms);
-        return events_end();
-    }
-    // A batch: each entry in order, as if it had come alone (its bytes stay in
-    // g_frame, so an event's payload points into it as a lone frame's would).
-    NwBlob all = f->blob, one;
-    for (uint32_t pos = 0; nw_batch_next(all, &pos, &one) == 1;) {
-        // Each frame makes at most one event, and the session may need the
-        // last slot. A batch longer than this client asks for (NC_BATCH_OUT
-        // frames answered with an ACK and a catch-up each) loses its tail,
-        // which the unanswered subscriptions' NC_ACK_WAIT_MS asks for again.
-        if (g_n_events >= NC_EVENTS_MAX - 1) break;
-        if (nw_frame_decode(one.p, (int)one.len, f) != NW_OK) { event_add(NC_EV_BAD); continue; }
-        take_frame(f, now_ms);
-    }
-    return events_end();
+// What the user sits at, as an envelope says (its seat; an empty one: the seat is gone).
+static void seat_learn(gate *g, const uint8_t *env, uint32_t len) {
+    EnvHeader h;
+    if (!g) return;
+    if (!env || !len) { g->seat_known = 1; g->seated = 0; return; }
+    if (!env_header_read(env, (int)len, &h)) return;
+    g->seat_known = 1;
+    g->seated = h.seat >= 0;
 }
 
-// One frame from the server (never a batch).
-static void take_frame(NwFrame *f, int64_t now_ms) {
-    switch (f->kind) {
-    case NW_WS_ACK: {
-        sub *s = NULL;
-        for (int i = 0; i < NC_SUBS_MAX && !s; i++)
-            if (g_subs[i].state == SUB_SENT && g_subs[i].ref == f->ref) s = &g_subs[i];
-        if (!s) break;   // a subscription since dropped or asked again
-        NcEvent *e = event_add(NC_EV_NONE);
-        e->what = s->what;
-        e->gid_len = s->gid_len;
-        memcpy(e->gid, s->gid, s->gid_len);
-        if (f->why == 0) {
-            s->state = SUB_LIVE;
-            s->backoff = NC_RETRY_FIRST_MS;
-            if (s->what == NW_SUB_GAME) {
-                e->kind = NC_EV_SEATED;
-                e->seated = f->seated;
-                // Pushes sent while it was not held are not replayed: take the game whole.
-                if (s->lived || s->missed) refetch_queue(s->gid, s->gid_len, now_ms, 0);
-            }
-            s->lived = 1;
-            s->missed = 0;
-            break;
+// Which of this user's topics a PUBLISH came on.
+enum { T_NONE = 0, T_VIEWS, T_SEAT, T_WATCH, T_CHAT };
+
+// The topic's family, and its game into gid/gid_len (none for T_VIEWS). T_NONE
+// for any topic this client never subscribes to: another user's, a level it
+// does not know.
+static int topic_of(const uint8_t *t, int n, char *gid, uint8_t *gid_len) {
+    *gid_len = 0;
+    const char *u = g_session.user_id;
+    int ul = g_session.user_id_len;
+    const uint8_t *rest = NULL;
+    int rn = 0, fam = T_NONE;
+    if (n > 2 && t[0] == 's' && t[1] == '/') {
+        fam = T_WATCH;
+        rest = t + 2;
+        rn = n - 2;
+    } else if (ul && n > 2 + ul + 1 && t[0] == 'u' && t[1] == '/' && memcmp(t + 2, u, (size_t)ul) == 0 && t[2 + ul] == '/') {
+        const uint8_t *k = t + 3 + ul;
+        int kn = n - 3 - ul;
+        if (kn == 1 && k[0] == 'v') return T_VIEWS;
+        if (kn > 2 && k[1] == '/' && (k[0] == 'c' || k[0] == 'm')) {
+            fam = k[0] == 'c' ? T_SEAT : T_CHAT;
+            rest = k + 2;
+            rn = kn - 2;
         }
-        s->state = SUB_REFUSED;
-        s->missed = 1;
-        s->retry_at = now_ms + s->backoff;
-        s->backoff = s->backoff * 2 > NC_RETRY_MAX_MS ? NC_RETRY_MAX_MS : s->backoff * 2;
-        e->kind = NC_EV_REFUSED;
-        e->why = f->why;
-        break;
     }
-    case NW_WS_CATCHUP: {
-        // What a game subscription missed, sent behind its ACK: the table's,
-        // taken as an answer is (a dashboard view of a held game is not).
-        if (!f->gid_len || !f->blob.len) { event_add(NC_EV_BAD); break; }
+    if (fam == T_NONE || rn <= 0 || rn > NW_GID_MAX || !sub_args_ok(NW_SUB_GAME, (const char *)rest, rn)) return T_NONE;
+    memcpy(gid, rest, (size_t)rn);
+    *gid_len = (uint8_t)rn;
+    return fam;
+}
+
+static void push_event(NcEvent *e, const NwFrame *f, int what) {
+    e->what = (uint8_t)what;
+    e->gid_len = f->gid_len;
+    memcpy(e->gid, f->gid, f->gid_len);
+    e->version = f->version;
+    e->payload_len = f->blob.len;
+    g_event_at[g_n_events - 1] = f->blob.len ? (uint32_t)(f->blob.p - g_mq_in) : 0;
+}
+
+// One pushed message, which came on a topic of family `fam` (its game agreeing).
+static void take_push(const NwFrame *f, int fam, int64_t now_ms) {
+    switch (f->kind) {
+    case NW_WS_VIEW: {
+        if (fam != T_VIEWS || !f->gid_len) { event_add(NC_EV_BAD); return; }
         gate *g = gate_find(f->gid, f->gid_len, 1);
-        if (!answer_pass(g, f->version)) break;   // stale
-        NcEvent *e = event_add(NC_EV_VIEW);
-        e->what = NW_SUB_GAME;
-        e->gid_len = f->gid_len;
-        memcpy(e->gid, f->gid, f->gid_len);
-        e->version = f->version;
-        e->payload_len = f->blob.len;
-        g_event_at[g_n_events - 1] = (uint32_t)(f->blob.p - g_frame);
-        break;
-    }
-    case NW_WS_VIEW:
-    case NW_WS_CAST: {
-        if (!f->gid_len) { event_add(NC_EV_BAD); break; }
-        int cast = f->kind == NW_WS_CAST;
-        gate *g = gate_find(f->gid, f->gid_len, 1);
-        if (!cast && f->blob.len == 0) {
+        if (f->blob.len == 0) {
             // An empty view (the seat is gone) always applies and ends the game's gate.
             memset(g, 0, sizeof *g);
             g->used = 1;
             g->gid_len = f->gid_len;
             memcpy(g->gid, f->gid, f->gid_len);
-        } else if (cast && g_boards) {
+            seat_learn(g, NULL, 0);
+        } else {
+            seat_learn(g, f->blob.p, f->blob.len);   // a view is only ever of a seat the user holds
+            // A game held on its own stream is the casts' and the answers' to
+            // move; a dashboard view of it would snap past what they animate.
+            if (!g_boards && sub_find(NW_SUB_GAME, f->gid, f->gid_len)) return;
+            if (g->has_view && f->version <= g->view_v) return;   // stale
+            g->has_view = 1;
+            g->view_v = f->version;
+        }
+        NcEvent *e = event_add(NC_EV_VIEW);
+        if (e) push_event(e, f, NW_SUB_GAMES);
+        return;
+    }
+    case NW_WS_CAST: {
+        if ((fam != T_SEAT && fam != T_WATCH) || !f->gid_len) { event_add(NC_EV_BAD); return; }
+        gate *g = gate_find(f->gid, f->gid_len, 1);
+        if (fam == T_SEAT) {
+            // Only a seated user is sent a seat's casts.
+            g->seat_known = 1;
+            g->seated = 1;
+        } else if (!g->seat_known) {
+            // A spectators' cast for a game whose seat the book does not know
+            // yet: a seated user hears the same version as their own cast, and
+            // a spectators' board is not theirs. Take the game whole instead.
+            refetch_queue(f->gid, f->gid_len, now_ms, f->version);
+            return;
+        } else if (g->seated) {
+            return;   // the seat's own cast carries this move
+        }
+        if (g_boards) {
             // A host that shows boards never decodes a cast: the game moved, so
             // take it whole (caught_up lets the fetch go when its view at this
             // version is here by the time it would be sent).
             refetch_queue(f->gid, f->gid_len, now_ms, f->version);
-            break;
-        } else if (cast) {
-            int table = g->has_cast || g->has_answer;
-            uint32_t top = table_top(g);
-            if (table && f->version <= top) break;   // stale
-            if (table && f->version > top + 1) {
-                // A version was skipped: this cast would land on a board it does not
-                // follow. Drop it and take the game whole instead.
-                refetch_queue(f->gid, f->gid_len, now_ms, f->version);
-                break;
-            }
-            g->has_cast = 1;
-            g->cast_v = f->version;
-        } else {
-            // A game held on its own stream is the casts' and the answers' to
-            // move; a dashboard view of it would snap past what they animate.
-            if (!g_boards && sub_find(NW_SUB_GAME, f->gid, f->gid_len)) break;
-            if (g->has_view && f->version <= g->view_v) break;   // stale
-            g->has_view = 1;
-            g->view_v = f->version;
+            return;
         }
-        NcEvent *e = event_add(cast ? NC_EV_CAST : NC_EV_VIEW);
-        e->what = cast ? NW_SUB_GAME : NW_SUB_GAMES;
-        e->gid_len = f->gid_len;
-        memcpy(e->gid, f->gid, f->gid_len);
-        e->version = f->version;
-        e->payload_len = f->blob.len;
-        g_event_at[g_n_events - 1] = f->blob.len ? (uint32_t)(f->blob.p - g_frame) : 0;
-        break;
+        int table = g->has_cast || g->has_answer;
+        uint32_t top = table_top(g);
+        if (table && f->version <= top) return;   // stale
+        if (table && f->version > top + 1) {
+            // A version was skipped: this cast would land on a board it does not
+            // follow. Drop it and take the game whole instead.
+            refetch_queue(f->gid, f->gid_len, now_ms, f->version);
+            return;
+        }
+        g->has_cast = 1;
+        g->cast_v = f->version;
+        NcEvent *e = event_add(NC_EV_CAST);
+        if (e) push_event(e, f, NW_SUB_GAME);
+        return;
     }
     case NW_WS_CHAT: {
+        if (fam != T_CHAT) { event_add(NC_EV_BAD); return; }
         NcEvent *e = event_add(NC_EV_CHAT);
+        if (!e) return;
         e->what = NW_SUB_CHAT;
         e->gid_len = f->gid_len;
         memcpy(e->gid, f->gid, f->gid_len);
         chat_copy(&e->chat, &f->chat);
-        break;
+        return;
     }
-    case NW_WS_PONG:
-        break;
     default:
-        event_add(NC_EV_BAD);   // a client frame, or one this client does not take
-        break;
+        event_add(NC_EV_BAD);   // not a push the server sends
+        return;
     }
 }
 
-static const NcOut *out_frame(const NwFrame *f) {
-    uint8_t raw[NW_ACCESS_MAX + 128];
-    int n = nw_frame_encode(f, raw, (int)sizeof raw);
-    if (n < 0) return NULL;
-    int t = nw_text_encode(raw, n, g_out.text, NC_TEXT_MAX);
-    if (t < 0) return NULL;
-    g_out.len = (uint16_t)t;
-    return &g_out;
+static void take_suback(const MqttPacket *p, int64_t now_ms) {
+    sub *s = NULL;
+    for (int i = 0; i < NC_SUBS_MAX && !s; i++)
+        if (g_subs[i].state == SUB_SENT && g_subs[i].pid == p->packet_id) s = &g_subs[i];
+    if (!s) return;   // a subscription since dropped or asked again
+    int refused = 0;
+    for (int k = 0; k < p->n_items; k++) refused |= p->items[k] == MQTT_SUBACK_FAILURE;
+    NcEvent *e = event_add(NC_EV_NONE);
+    if (!e) return;
+    e->what = s->what;
+    e->gid_len = s->gid_len;
+    memcpy(e->gid, s->gid, s->gid_len);
+    if (refused) {
+        s->state = SUB_REFUSED;
+        s->retry_at = now_ms + s->backoff;
+        s->backoff = s->backoff * 2 > NC_RETRY_MAX_MS ? NC_RETRY_MAX_MS : s->backoff * 2;
+        e->kind = NC_EV_REFUSED;
+        e->why = ASK_WHY_FORBIDDEN;
+        return;
+    }
+    s->state = SUB_LIVE;
+    s->backoff = NC_RETRY_FIRST_MS;
+    if (s->what != NW_SUB_GAME) return;
+    // Live from here on: take the game whole once, so a commit between the
+    // host's own read and this moment is not lost; anything newer than what is
+    // held, arriving first, makes it moot.
+    gate *g = gate_find(s->gid, s->gid_len, 0);
+    e->kind = NC_EV_SEATED;
+    e->seated = g && g->seat_known && g->seated;
+    refetch_queue(s->gid, s->gid_len, now_ms, g ? any_top(g) + 1 : 1);
 }
 
-// The frame for unsubscription u.
-static void unsub_frame(const unsub *u, NwFrame *f) {
-    memset(f, 0, sizeof *f);
-    f->kind = NW_WS_UNSUB;
-    f->what = u->what;
-    f->gid_len = u->gid_len;
-    memcpy(f->gid, u->gid, u->gid_len);
+// One whole packet from the broker.
+static void take_packet(const MqttPacket *p, int64_t now_ms) {
+    switch (p->type) {
+    case MQTT_CONNACK:
+        if (g_mq != MQ_CONNECTING) { event_add(NC_EV_BAD); return; }
+        if (p->return_code != MQTT_RC_ACCEPTED) return;   // the broker closes it; nc_stream_closed decides
+        g_mq = MQ_LIVE;
+        g_reconnect_ms = 0;   // the socket works: a later close starts the schedule over
+        for (int i = 0; i < NC_SUBS_MAX; i++)
+            if (g_subs[i].state != SUB_FREE) { g_subs[i].state = SUB_WANT; g_subs[i].retry_at = 0; }
+        return;
+    case MQTT_SUBACK:
+        take_suback(p, now_ms);
+        return;
+    case MQTT_PUBLISH: {
+        if (g_mq != MQ_LIVE) { event_add(NC_EV_BAD); return; }
+        char gid[NW_GID_MAX];
+        uint8_t gl = 0;
+        int fam = topic_of(p->topic, p->topic_len, gid, &gl);
+        NwFrame *f = &g_nwf;
+        if (fam == T_NONE || nw_frame_decode(p->payload, p->payload_len, f) != NW_OK) { event_add(NC_EV_BAD); return; }
+        // The message names its game: it must be the topic's.
+        if (fam != T_VIEWS && !same_id(f->gid, f->gid_len, gid, gl)) { event_add(NC_EV_BAD); return; }
+        take_push(f, fam, now_ms);
+        return;
+    }
+    case MQTT_UNSUBACK:
+    case MQTT_PINGRESP:
+    case MQTT_PUBACK:
+        return;
+    default:
+        event_add(NC_EV_BAD);
+        return;
+    }
 }
 
-// The frame for subscription s, asked with `ref`.
-static void sub_frame(const sub *s, uint16_t ref, NwFrame *f) {
-    memset(f, 0, sizeof *f);
-    // The subscription says who asks: behind API Gateway a frame of its own
-    // carrying the token could be stored after this one is read.
-    f->kind = NW_WS_SUB_AS;
-    f->token_len = g_session.access_len;
-    memcpy(f->token, g_session.access, g_session.access_len);
-    f->ref = ref;
-    f->what = s->what;
-    f->gid_len = s->gid_len;
-    memcpy(f->gid, s->gid, s->gid_len);
-    // What this client already holds of the game, so the server sends
-    // only a newer view (the catch-up).
-    const gate *g = s->gid_len ? gate_find(s->gid, s->gid_len, 0) : NULL;
-    if (g) f->version = any_top(g);
+int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
+    events_begin();
+    // MQTT over WebSocket is binary (3.1.1, 6.0): a text frame is not the broker's.
+    if (is_text || len < 0 || (len > 0 && !frame)) { event_add(NC_EV_BAD); return events_end(); }
+    // What the last feed parsed (its events' payloads) is let go now.
+    if (g_mq_in_off) {
+        memmove(g_mq_in, g_mq_in + g_mq_in_off, (size_t)(g_mq_in_len - g_mq_in_off));
+        g_mq_in_len -= g_mq_in_off;
+        g_mq_in_off = 0;
+    }
+    if (len > NC_MQ_IN_MAX - g_mq_in_len) {
+        g_mq_in_len = 0;   // past anything this client takes: the stream is lost; the host reconnects
+        event_add(NC_EV_BAD);
+        return events_end();
+    }
+    if (len) memcpy(g_mq_in + g_mq_in_len, frame, (size_t)len);
+    g_mq_in_len += len;
+    while (g_mq_in_off < g_mq_in_len && g_n_events < NC_EVENTS_MAX - 1) {
+        MqttPacket p;
+        int k = mqtt_parse(g_mq_in + g_mq_in_off, g_mq_in_len - g_mq_in_off, NC_MQ_IN_MAX, MQTT_FROM_SERVER, &p);
+        if (k == 0) break;   // the rest comes in a later message
+        if (k < 0) {
+            g_mq_in_off = g_mq_in_len;   // not the protocol: nothing after it can be read either
+            event_add(NC_EV_BAD);
+            break;
+        }
+        g_mq_in_off += k;
+        take_packet(&p, now_ms);
+    }
+    return events_end();
 }
 
-// Due: wanted, refused and its wait over, or sent and never answered (a frame
-// the server dropped: API Gateway's answers are not promised, and a frame that
-// lost its row's compare-and-set too often goes unanswered).
+// ---- the stream: what this client sends -------------------------------------------------
+
+static uint16_t next_pid(void) {
+    if (++g_next_pid == 0) g_next_pid = 1;
+    return g_next_pid;
+}
+
+// Appends n bytes at *at in out (cap): 0 when they do not fit.
+static int put_bytes(char *out, int cap, int *at, const char *p, int n) {
+    if (n < 0 || *at + n > cap) return 0;
+    memcpy(out + *at, p, (size_t)n);
+    *at += n;
+    return 1;
+}
+
+// A subscription's topics (one, or a game's two) into t[0..), their text in
+// buf. The count, or 0 when they do not fit (never: ids are short).
+static int topics_of(int what, const char *gid, int gid_len, MqttTopic *t, char buf[2][NC_TOPIC_MAX]) {
+    const char *u = g_session.user_id;
+    int ul = g_session.user_id_len, at = 0;
+    if (what == NW_SUB_GAMES) {
+        int ok = put_bytes(buf[0], NC_TOPIC_MAX, &at, "u/", 2) && put_bytes(buf[0], NC_TOPIC_MAX, &at, u, ul) &&
+                 put_bytes(buf[0], NC_TOPIC_MAX, &at, "/v", 2);
+        t[0] = (MqttTopic){ buf[0], at, 0 };
+        return ok;
+    }
+    int ok = put_bytes(buf[0], NC_TOPIC_MAX, &at, "u/", 2) && put_bytes(buf[0], NC_TOPIC_MAX, &at, u, ul) &&
+             put_bytes(buf[0], NC_TOPIC_MAX, &at, what == NW_SUB_CHAT ? "/m/" : "/c/", 3) &&
+             put_bytes(buf[0], NC_TOPIC_MAX, &at, gid, gid_len);
+    if (!ok) return 0;
+    t[0] = (MqttTopic){ buf[0], at, 0 };
+    if (what != NW_SUB_GAME) return 1;
+    at = 0;
+    if (!put_bytes(buf[1], NC_TOPIC_MAX, &at, "s/", 2) || !put_bytes(buf[1], NC_TOPIC_MAX, &at, gid, gid_len)) return 0;
+    t[1] = (MqttTopic){ buf[1], at, 0 };
+    return 2;
+}
+
+// Due: wanted, refused and its wait over, or sent and never answered.
 static int sub_due(const sub *s, int64_t now_ms) {
     return s->state == SUB_WANT || ((s->state == SUB_REFUSED || s->state == SUB_SENT) && s->retry_at <= now_ms);
 }
 
-// The ref after the last one sent, never 0.
-static uint16_t next_ref(void) {
-    uint16_t r = (uint16_t)(g_next_ref + 1);
-    return r ? r : 1;
+// The client id of this connection: "<user>-<8 base-36 digits>", the digits
+// from the clock and a counter, so two tabs of one user never share one (a
+// broker drops the older connection of a client id that connects again).
+static int client_id(char *out, int cap, int64_t now_ms) {
+    static const char D[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    int at = 0;
+    if (!put_bytes(out, cap, &at, g_session.user_id, g_session.user_id_len) || !put_bytes(out, cap, &at, "-", 1)) return -1;
+    uint64_t x = (uint64_t)now_ms * 2654435761u ^ ((uint64_t)++g_conn_seq << 40);
+    for (int i = 0; i < 8; i++) {
+        if (at >= cap) return -1;
+        out[at++] = D[x % 36];
+        x /= 36;
+    }
+    return at;
 }
 
-// Everything the client has to say at this moment goes in one message: the
-// unsubscriptions, then the subscriptions due, as one NW_WS_BATCH when there
-// are several (behind API Gateway: one invocation and one stored write for a
-// page's subscriptions, instead of one each, all at once, racing). What does
-// not fit NC_TEXT_MAX or NC_BATCH_OUT waits for the next call. A lone frame
-// goes as itself.
-static uint8_t g_batch[(NC_TEXT_MAX / 4) * 3];   // the entries: never more than a message's text holds
-
+// Everything the client has to say at this moment, as one WebSocket message
+// (MQTT allows several packets in one): the CONNECT once the socket is open
+// and the token fresh; once connected, the unsubscriptions, the subscriptions
+// due (one SUBSCRIBE each, so each SUBACK names its own), and a PINGREQ when
+// nothing has gone out for NC_PING_MS. What does not fit NC_OUT_MAX waits for
+// the next call.
 const NcOut *nc_stream_next(int64_t now_ms) {
     if (!g_open || !g_signed_in) return NULL;
-    NwFrame *f = &g_nwf;   // one frame for both directions: never two at once
-    uint8_t raw[NW_ACCESS_MAX + 128];
-    // Room for the entries once the batch's head (6 bytes) and base64 are counted.
-    const int room = (NC_TEXT_MAX / 4) * 3 - 6;
-    int at = 0, count = 0;
-    for (int u = g_n_unsubs - 1; u >= 0 && count < NC_BATCH_OUT; u--) {
-        unsub_frame(&g_unsubs[u], f);
-        int n = nw_frame_encode(f, raw, (int)sizeof raw);
-        if (n < 0 || at + 4 + n > room) break;
-        at += nw_batch_add(raw, n, g_batch + at, (int)sizeof g_batch - at);
-        g_n_unsubs--;
-        count++;
+    int at = 0, n;
+    uint8_t *o = g_out.bytes;
+    if (g_mq == MQ_OPENED) {
+        if (stream_wants_token(now_ms)) return NULL;   // the pump refreshes it first
+        char id[NW_ID_MAX + 16];
+        int il = client_id(id, (int)sizeof id, now_ms);
+        n = il < 0 ? -1
+                   : mqtt_write_connect(o, NC_OUT_MAX, id, il, NC_KEEPALIVE_S, "token", 5, (const uint8_t *)g_session.access,
+                                        g_session.access_len);
+        if (n < 0) return NULL;
+        g_mq = MQ_CONNECTING;
+        g_last_out = now_ms;
+        g_out.len = (uint16_t)n;
+        return &g_out;
     }
-    for (int i = 0; i < NC_SUBS_MAX && count < NC_BATCH_OUT; i++) {
+    if (g_mq != MQ_LIVE) return NULL;
+    MqttTopic t[2];
+    char buf[2][NC_TOPIC_MAX];
+    while (g_n_unsubs) {
+        unsub *u = &g_unsubs[g_n_unsubs - 1];
+        int k = topics_of(u->what, u->gid, u->gid_len, t, buf);
+        n = k ? mqtt_write_unsubscribe(o + at, NC_OUT_MAX - at, next_pid(), t, k) : 0;
+        if (n < 0) break;   // the next message
+        at += n;
+        g_n_unsubs--;
+    }
+    for (int i = 0; i < NC_SUBS_MAX; i++) {
         sub *s = &g_subs[i];
         if (!sub_due(s, now_ms)) continue;
-        uint16_t ref = next_ref();
-        sub_frame(s, ref, f);
-        int n = nw_frame_encode(f, raw, (int)sizeof raw);
-        if (n < 0 || at + 4 + n > room) break;
-        at += nw_batch_add(raw, n, g_batch + at, (int)sizeof g_batch - at);
-        g_next_ref = ref;
-        // Asked again unanswered: what was pushed meanwhile may be lost, so the
-        // acceptance takes the game whole.
-        if (s->state == SUB_SENT) s->missed = 1;
+        int k = topics_of(s->what, s->gid, s->gid_len, t, buf);
+        uint16_t pid = next_pid();
+        n = k ? mqtt_write_subscribe(o + at, NC_OUT_MAX - at, pid, t, k) : -1;
+        if (n < 0) break;
+        at += n;
         s->state = SUB_SENT;
-        s->ref = ref;
+        s->pid = pid;
         s->retry_at = now_ms + NC_ACK_WAIT_MS;
-        count++;
     }
-    if (count == 1) {
-        // A lone frame as itself: its bytes are the one entry's, past its length.
-        int n = (int)(at - 4);
-        int t = nw_text_encode(g_batch + 4, n, g_out.text, NC_TEXT_MAX);
-        if (t < 0) return NULL;
-        g_out.len = (uint16_t)t;
-        return &g_out;
-    }
-    if (count > 1) {
-        memset(f, 0, sizeof *f);
-        f->kind = NW_WS_BATCH;
-        f->blob.p = g_batch;
-        f->blob.len = (uint32_t)at;
-        uint8_t whole[sizeof g_batch + 8];
-        int n = nw_frame_encode(f, whole, (int)sizeof whole);
-        int t = n < 0 ? n : nw_text_encode(whole, n, g_out.text, NC_TEXT_MAX);
-        if (t < 0) return NULL;
-        g_out.len = (uint16_t)t;
-        return &g_out;
-    }
-    if (now_ms - g_last_ping >= NC_PING_MS) {
-        g_last_ping = now_ms;
-        memset(f, 0, sizeof *f);
-        f->kind = NW_WS_PING;
-        return out_frame(f);
-    }
-    return NULL;
+    if (!at && now_ms - g_last_out >= NC_PING_MS) at = mqtt_write_bare(o, NC_OUT_MAX, MQTT_PINGREQ);
+    if (at <= 0) return NULL;
+    g_last_out = now_ms;
+    g_out.len = (uint16_t)at;
+    return &g_out;
 }
 
 int nc_stream_due_ms(int64_t now_ms) {
-    if (!g_open) return -1;
+    if (!g_open || !g_signed_in) return -1;   // nobody to connect as: nothing to send
+    if (g_mq == MQ_OPENED) return stream_wants_token(now_ms) ? -1 : 0;   // the pump's refresh wakes it
+    if (g_mq != MQ_LIVE) return -1;                                       // the CONNACK wakes it
     if (g_n_unsubs) return 0;
-    int64_t due = g_last_ping + NC_PING_MS;
+    int64_t due = g_last_out + NC_PING_MS;
     for (int i = 0; i < NC_SUBS_MAX; i++) {
         if (g_subs[i].state == SUB_WANT) return 0;
         if ((g_subs[i].state == SUB_REFUSED || g_subs[i].state == SUB_SENT) && g_subs[i].retry_at < due)

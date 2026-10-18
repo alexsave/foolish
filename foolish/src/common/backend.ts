@@ -283,7 +283,7 @@ class Stream {
         const ws = this.socket;
         if (!ws) { if (this.holds > 0) this.open(); return; }   // e.g. just signed in
         if (ws.readyState !== WebSocket.OPEN) return;
-        for (let t = netClient().streamNext(); t !== null; t = netClient().streamNext()) ws.send(t);
+        for (let b = netClient().streamNext(); b !== null; b = netClient().streamNext()) ws.send(b);
     }
 
     stop(): void {
@@ -296,7 +296,7 @@ class Stream {
         if (this.socket || typeof WebSocket === 'undefined' || !sessionUser()) return;
         const url = new URL(netClient().streamPath(), BASE || window.location.origin);
         url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(url);
+        const ws = new WebSocket(url, netClient().streamProtocol());
         ws.binaryType = 'arraybuffer';
         this.socket = ws;
         ws.onopen = () => { netClient().streamOpened(); pump(); };

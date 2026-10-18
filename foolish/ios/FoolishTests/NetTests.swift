@@ -48,6 +48,6 @@ final class NetTests: XCTestCase {
 
     func testTheStreamIsShutUntilOpened() {
         XCTAssertNil(NetClient.streamNext())
-        XCTAssertEqual(NetClient.streamPath, "/v1/stream?proto=nw1")
+        XCTAssertEqual(NetClient.streamPath, "/mqtt")
     }
 }

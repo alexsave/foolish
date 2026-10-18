@@ -84,7 +84,7 @@
 --count NcSessionInfo.user_id=user_id_len --count NcSessionInfo.username=username_len
 --count NcEvent.gid=gid_len --count NcDone.gid=gid_len
 --count NcChatRow.id=id_len --count NcChatRow.user_id=user_id_len --count NcChatRow.message=message_len
---count NcOut.text=len
+--count NcOut.bytes=len
 #
 # The constants a reader of these structs needs, and no others: every one is a
 # public symbol in FoolishKit.

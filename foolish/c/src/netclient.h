@@ -37,16 +37,23 @@
 #define NC_PATH_MAX  160
 #define NC_AUTH_MAX  (7 + NW_ACCESS_MAX)      // "Bearer " and the token
 #define NC_BODY_MAX  1100                     // a chat message is the largest body
-#define NC_TEXT_MAX  2900                     // a stream frame as base64: a SUB_AS (its token) is the largest
-#define NC_FRAME_MAX 32768                    // a stream message, decoded
+#define NC_FRAME_MAX 32768                    // an answered envelope this file hands out as an event
+#define NC_OUT_MAX   4096                     // one message to the broker: a CONNECT (its token) is the largest
+#define NC_MQ_IN_MAX (NC_FRAME_MAX + 1024)    // what the broker sends, whole packets and a part one
+#define NC_TOPIC_MAX 96                       // u/<user>/c/<game>: an MQTT topic this client names
 #define NC_SESSION_BLOB_MAX 2400              // what nc_session_save writes, at most
 
 // Refresh an access token this long before it expires.
 #define NC_REFRESH_EARLY_MS 60000
-// The stream: a ping this often, a refused subscription retried after
+// The stream: a PINGREQ when nothing went out this long (the CONNECT asks for a
+// keep-alive of NC_KEEPALIVE_S), a refused subscription retried after
 // NC_RETRY_FIRST_MS doubling to NC_RETRY_MAX_MS, and a closed socket reopened
-// on the same schedule (reset once a frame arrives).
-#define NC_PING_MS        25000
+// on the same schedule (reset by a CONNACK). A socket closed before its
+// CONNACK (the broker's refusal) refreshes the token first, at most once every
+// NC_FORCE_REFRESH_MS.
+#define NC_PING_MS        30000
+#define NC_KEEPALIVE_S    60
+#define NC_FORCE_REFRESH_MS 600000
 #define NC_ACK_WAIT_MS    10000   // a subscription not answered in this long is asked again
 #define NC_RETRY_FIRST_MS 500
 #define NC_RETRY_MAX_MS   10000
@@ -60,11 +67,10 @@
 #define NC_EV_CAST    2   // apply the cast in the payload
 #define NC_EV_CHAT    3   // append ev->chat to game ev->gid
 #define NC_EV_REFUSED 4   // a subscription was refused (ev->why); it is retried by itself
-#define NC_EV_SEATED  5   // a game subscription was accepted; ev->seated says which stream it hears
+#define NC_EV_SEATED  5   // a game subscription went live; ev->seated: the user sits there, as the book knows
 #define NC_EV_BAD     6   // a frame that is not this protocol (the host may log it)
 #define NC_EV_SESSION 7   // the session changed: keep nc_session_save's blob, show nc_session_info
-#define NC_BATCH_OUT  4   // frames in one batch this client sends (a page holds three subscriptions)
-#define NC_EVENTS_MAX (2 * NC_BATCH_OUT + 1)   // what one feed can change at most: a batch's replies (an ACK and a catch-up per frame it answers), and the session
+#define NC_EVENTS_MAX 16  // what one feed can change at most (packets past it wait for the next feed), and the session
 
 typedef struct {
     uint32_t id;                        // nc_next_request's: hand the answer back with it
@@ -162,7 +168,7 @@ typedef struct {
 
 typedef struct {
     uint16_t len;
-    char     text[NC_TEXT_MAX];   // send as a TEXT frame
+    uint8_t  bytes[NC_OUT_MAX];   // send as one BINARY frame: MQTT packets
 } NcOut;
 
 // ---- the session ------------------------------------------------------------------
@@ -211,7 +217,9 @@ const NcRequest *nc_req_board(void);
 const NcRequest *nc_req_history(int64_t now_ms);
 // The newest replay of a game the caller played in.
 const NcRequest *nc_req_replay(const char *gid, int gid_len, int64_t now_ms);
-// The stream's path (GET, upgraded to a WebSocket by the host).
+// The stream's path (GET, upgraded to a WebSocket by the host with the
+// subprotocol "mqtt", MQTT over WebSocket's own name): "/mqtt", where AWS IoT
+// Core and `cbase serve` both speak it.
 const NcRequest *nc_req_stream(void);
 
 // ---- answers -----------------------------------------------------------------------
@@ -329,19 +337,20 @@ int nc_pump_due_ms(int64_t now_ms);
 
 // ---- the stream --------------------------------------------------------------------
 
-// The subscriptions the host holds; each is (re)sent whenever the socket opens.
-// They are counted: the last nc_stream_unsub of a (what, gid) lets it go. Which
-// stream a game subscription hears (the seat's or the spectators') is the
-// server's to say, and this file asks again when a join or a leave changes it.
+// The subscriptions the host holds; each is (re)sent whenever the socket connects.
+// They are counted: the last nc_stream_unsub of a (what, gid) lets it go. A game
+// id must be one a topic level can hold (A-Z a-z 0-9 '-' '_').
 // NW_OK, or NW_E_CAP / NW_E_WIRE.
 int nc_stream_sub(int what, const char *gid, int gid_len);
 int nc_stream_unsub(int what, const char *gid, int gid_len);
-// The socket opened; it closed (the answer is how long to wait before
-// reopening it, in ms).
+// The socket opened (the CONNECT goes out next, once the token is fresh: the
+// pump refreshes it first when it is not); it closed (the answer is how long
+// to wait before reopening it, in ms).
 void nc_stream_opened(int64_t now_ms);
 int nc_stream_closed(int64_t now_ms);
-// One frame as it arrived (is_text: a text frame, base64 of the message): how
-// many events it made, read with nc_event.
+// One frame as it arrived (binary: MQTT packets, whole, several or part of one;
+// a text frame is not the broker's and is BAD): how many events it made, read
+// with nc_event.
 int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms);
 // The next frame to send, or NULL for none now; call until NULL. Then
 // nc_stream_due_ms says how long until there is one (a retry, a ping), -1 for
@@ -366,9 +375,13 @@ void nc_gate_reset(const char *gid, int gid_len);
 //     very version was (a ticket's NcDone says stale, with no envelope);
 //   - a move refused over a newer version refetches the game when no push has
 //     caught up NC_RECONCILE_MS later;
-//   - a game subscription accepted again (the socket reopened, a seat changed)
-//     or accepted after a refusal refetches the game;
-//   - a join, a leave or a create moves the game's subscription itself.
+//   - a game subscription that goes live (SUBACK) takes the game whole once,
+//     unless something newer is applied before the read would go;
+//   - a game's subscription hears both the seat's casts and the spectators',
+//     and the book takes the seat's when the user sits there (the last
+//     envelope or cast says), the spectators' otherwise, and a spectators'
+//     cast while it does not know yet is a read of the game instead;
+//   - a create subscribes the game's stream itself.
 // After each feed the host reads the events it made, nc_event(0) up to the
 // count, as often as it likes until the next feed; then it sends what
 // nc_next_request and nc_stream_next have for it.
