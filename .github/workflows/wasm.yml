@@ -17,8 +17,8 @@ name: wasm
 # Case 1 is `compile`, which builds every wasm target the Makefile declares.
 #
 # NOT `build`, which is what it was called until this comment was written, and
-# the rename is worth a line. web.yml's site gate is also a job called `build`,
-# and a job's name is what a pull request's check list and a branch-protection
+# the rename is worth a line. The site gate (then web.yml, since deleted) was
+# also a job called `build`, and a job's name is what a pull request's check list and a branch-protection
 # rule see - so two unrelated jobs were sharing one check name, in two lanes that
 # can fail for entirely different reasons. "build failed" named neither of them.
 # The names are distinct now; anything that names one by hand (a required status
