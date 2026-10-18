@@ -16,11 +16,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* xorshift64*, the tests' own randomness (never the game's) */
+/* rng.h, the tests' own randomness (never the game's) */
 static uint64_t RS = 0x9e3779b97f4a7c15ull;
 static inline uint32_t rnd(uint32_t n)
 {
-    return n ? (uint32_t)((rng_xorshift64star(&RS) >> 33) % n) : 0;
+    return n ? rng_u32(&RS) % n : 0;
 }
 
 /* All 32 bytes from splitmix64 of k (shared/c/stats/seed_hash.h). */

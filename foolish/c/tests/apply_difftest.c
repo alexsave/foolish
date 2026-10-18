@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
                 for (int mi = 0; mi < moves.n; mi++) {
                     Game gc; memcpy(&gc, &g, sizeof(g));
                     SimState s; cd_sim_from_game(&s, &g);
-                    uint32_t rng = game_rng_get();
+                    uint64_t rng = game_rng_get();
                     int ok_s = apply_struct(&gc, pi, &moves.moves[mi]);
                     game_rng_set(rng);
                     int ok_b = cd_sim_apply_root_move(&s, pi, &moves.moves[mi]);

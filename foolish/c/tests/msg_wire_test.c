@@ -48,8 +48,8 @@ static int g_fails = 0;
     if (!(cond)) { printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); g_fails++; } \
 } while (0)
 
-static uint32_t g_rng = 1;
-static uint32_t rnd(void) { return rng_lcg32(&g_rng); }
+static uint64_t g_rng = 1;
+static uint32_t rnd(void) { return rng_u32(&g_rng); }
 
 // ---------- 1. SHA-256 known-answer tests --------------------------------
 
@@ -5197,9 +5197,14 @@ static void fb_pose(const Game *g, const OBubble *p, const Game *gpg, const OBub
     CHECK(msg_turn_field_after_arrival(MSG_TURN_READY | MSG_TURN_BOARD_WATCHING | MSG_TURN_STAGED,
                                        fb_fate(&S, &N1)) == MSG_TURN_FIELD_NOTHING,
           "fate %dp %s: a sibling's arrival leaves the stale move in the field", np, kn);
+    // ...unless that child IS the parent: a fork further back plus the next
+    // move can play the same moves the parent holds (a one-card attack off
+    // the bubble before, then its throw-in, is the two-card attack this board
+    // saw), and then the staged move rightly stands on it.
     game_clone(&c1, &n1);
     if (og_live(&c1) && fb_step_by_another(&c1, seat)
-        && fb_seal(&NC, &c1, seed, np, gid, N1.logs, &N1))
+        && fb_seal(&NC, &c1, seed, np, gid, N1.logs, &N1)
+        && !(fb_fate(p, &NC) == MSG_FATE_LANDED && fb_fate(&NC, p) == MSG_FATE_LANDED))
         CHECK(fb_fate(&S, &NC) == MSG_FATE_SUPERSEDED,
               "fate %dp %s: a child of the sibling is %d, want SUPERSEDED", np, kn, fb_fate(&S, &NC));
 
@@ -5438,6 +5443,27 @@ static const char *const GOLDEN_HEX[4] = {
     "6f6e61730305507269796101000d37490e3be569077df74386ce7a",
 };
 
+// WHAT THE BUILDER SEALS TODAY, for the same four shapes. Not the shipped
+// bytes above: golden_build deals and plays from this test's own stream
+// (seed_fill, rnd), and that stream moved when every generator became rng.h's
+// splitmix64, so the builder now seals different GAMES in the same formats.
+// The shipped bubbles above still decode, re-encode byte for byte and replay;
+// these hold the builder still from here on. Re-captured with --print-goldens.
+static const char *const GOLDEN_BUILD_HEX[4] = {
+    "f70500025151515151515151070001030101000000000000000087e000ae0d555fca235461be10fc3840"
+    "09a34d55d8985794521d958a77530dc5341207030004416c657801044d69726102054a6f6e617307003c"
+    "14ae394e8a50f457c6e0b6dce61a",
+    "f7050003525252525252525254000002001900000000000000002dfbf0be0d8b172b3463193eb836c563"
+    "17b75accb61b903b5f51628db2e791bd452354020004416c657801044d6972615400df2dd4ce88d8608b"
+    "0fb312abca6f026387adac791c7340311c987b2446f0791a2484120d32c76329a644dcea",
+    "f706000053535353535353530000000401000000000000000000f913b1bc68c2c2d90298a7cbe3375753"
+    "571a6062836bf6679e3a1f3f1021defbad0b0000ff44c9ed0102040004416c657801044d69726102054a"
+    "6f6e6173030550726979610000",
+    "f7060002545454545454545401000204010000000000000000002514e2306e62fe00d0faa519f392fc0e"
+    "fa0262bb02787aa3beaaa333cdc409920d0c01000200000000ff040004416c657801044d69726102054a"
+    "6f6e617303055072697961010007efd551c95345634e488822851c7a",
+};
+
 static int unhex(const char *h, unsigned char *out, int cap) {
     int n = 0;
     for (const char *p = h; p[0] && p[1] && n < cap; p += 2) {
@@ -5450,11 +5476,12 @@ static int unhex(const char *h, unsigned char *out, int cap) {
 
 static void test_format56_goldens(void) {
     for (int w = 0; w < 4; w++) {
-        unsigned char want[ENV_CAP], got[ENV_CAP], again[ENV_CAP];
+        unsigned char want[ENV_CAP], got[ENV_CAP], again[ENV_CAP], built[ENV_CAP];
         const int nw = unhex(GOLDEN_HEX[w], want, sizeof(want));
+        const int nb = unhex(GOLDEN_BUILD_HEX[w], built, sizeof(built));
         const int ng = golden_build(w, got, sizeof(got));
-        CHECK(ng == nw && ng > 0 && !memcmp(got, want, (size_t)nw),
-              "golden %d: the builder now seals %d bytes, not the pinned %d - formats 5/6 moved", w, ng, nw);
+        CHECK(ng == nb && ng > 0 && !memcmp(got, built, (size_t)nb),
+              "golden %d: the builder now seals %d bytes, not the pinned %d - formats 5/6 moved", w, ng, nb);
         MsgEnvelope e;
         const int rc = msg_decode(want, nw, &e);
         CHECK(rc == MSG_EOK, "golden %d: decode %d", w, rc);
@@ -6579,17 +6606,19 @@ static void test_damaged_link(void) {
 // prints both). The phone's kernel is the one that builds a rematch; no shipped
 // wasm module calls msg_rematch_lobby, so the bytes are held here alone (an
 // e2e/msg_rematch.test.ts once held the test build of bots.wasm to them).
+// Re-captured when this test's own stream (seed_fill, rnd) became rng.h's
+// splitmix64: rm_finished now plays a different game, in the same format.
 //
 // MUTATION-CHECKED:
 //   msg_rematch_seed draws from half the moment           -> "builds other bytes"
 static const char *const REMATCH_FINISHED_HEX =
-    "f7050003606000000000000064000004011100000000000000006d380f1cae7638124850ee2cbae14e7f"
-    "c19e018780f568cd99f0b18252d0fe21e43400040004416c657801044d69726102054a6f6e6173030550"
-    "726979616400" "0370d96bdfca53aaf159b08e7238ee50564efe1f1864a345b71d69ef4147da284b47f32f"
-    "0cdca05a1cc4661a827ad6cfc3e8d7bafa";
+    "f705000360600000000000005b000004011000000000000000005880cc882c9c9b76d5ec5ef52e4902e1"
+    "5ff3853a67afe662df0e439231c67a7fe43400040004416c657801044d69726102054a6f6e6173030550"
+    "726979615b00031dc3077380d6d8670c0826acc45ad913bfc033acb07e6c2fe3267a0f2b11e843b6e122"
+    "4908ec96d7566d9c52f9ac1d722fdafa";
 static const char *const REMATCH_LOBBY_HEX =
-    "f70600006060000000000000000002040100f887535ca3ce410d5792a42bb5bb707687ad8735658d6b93"
-    "11cd750e096921e6a88a4dea8f3814aa34120000ff44c9ed0100040004416c657801044d69726102054a"
+    "f70600006060000000000000000002040100f6bde6d566052cf179a2e6c7c0ab58dd52fde74a0ee01d4d"
+    "40a633291f9021abd84f5797c3e8349234120000ff44c9ed0103040004416c657801044d69726102054a"
     "6f6e6173030550726979610000";
 
 static void test_rematch_golden(void) {

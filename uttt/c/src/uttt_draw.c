@@ -683,7 +683,7 @@ int uttt_draw_icon(UtttDL *d, float w, float h)
     rx.roughness = 1.5f * powf(8.9f / 100.f, .75f) * (100.f / 8.9f);
     rx.bowing    = 1.0f * powf(8.9f / 100.f, .85f);
     UtttRough ro = rx;
-    ro.seed = 52 * 97 + 3;
+    ro.state = 52 * 97 + 3;
 
     const float L = .3f;             /* the same lopsidedness every mark has */
     int n1 = uttt_rough_line(&rx, 10 - L*4, 11, 94 + L*3, 92 - L*6,

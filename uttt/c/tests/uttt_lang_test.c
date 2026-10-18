@@ -34,7 +34,7 @@ static int fails, checks;
 static uint64_t rs = 0x2545f4914f6cdd1dull;
 static uint32_t rnd(void)
 {
-    return (uint32_t)(rng_xorshift64(&rs) >> 11);
+    return rng_u32(&rs);
 }
 
 static int has_em_dash(const char *s) { return strstr(s, "\xe2\x80\x94") != 0; }

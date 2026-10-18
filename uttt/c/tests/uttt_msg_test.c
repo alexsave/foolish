@@ -25,7 +25,7 @@ static int fails, checks;
 static uint64_t rs = 0x9e3779b97f4a7c15ull;
 static uint32_t rnd(void)
 {
-    return (uint32_t)(rng_xorshift64(&rs) >> 11);
+    return rng_u32(&rs);
 }
 
 static void tag_of(const char *who, int32_t seed, uint8_t t[UTM_TAG_LEN])

@@ -330,13 +330,13 @@ static void score_is_exact(void)
     for (int depth = 2; depth <= 5; depth++) {
         for (uint64_t seed = 1; seed <= (depth == 5 ? 1u : depth == 4 ? 2u : 12u); seed++) {
             UtbGame g; utb_init(&g, depth);
-            uint64_t rs = seed * 0x9e3779b97f4a7c15ull + (uint64_t)depth;
+            uint64_t rs = rng_seed64(seed << 8 | (uint64_t)depth);
             while (!g.over && (depth < 5 || g.n_plies < 1000)) {
                 int n = utb_legal(&g, legal, UTB_LEAVES_MAX);
                 const int mover = g.turn;
                 const int before = utb_bot_eval(&g, mover);
                 for (int i = 0; i < n && i < 24; i++) {
-                    int mv = legal[n <= 24 ? i : (int)(rng_xorshift64(&rs) % (uint64_t)n)];
+                    int mv = legal[n <= 24 ? i : (int)(rng_splitmix64(&rs) % (uint64_t)n)];
                     int got = utb_bot_score(&g, mv);
                     UtbGame h = g;
                     utb_play(&h, mv);
@@ -347,7 +347,7 @@ static void score_is_exact(void)
                         CHECK(0, "depth %d seed %d ply %d move %d: scored %d, the board says %d",
                               depth, (int)seed, g.n_plies, mv, got, want);
                 }
-                utb_play(&g, legal[rng_xorshift64(&rs) % (uint64_t)n]);
+                utb_play(&g, legal[rng_splitmix64(&rs) % (uint64_t)n]);
             }
         }
     }
@@ -454,7 +454,7 @@ static void deepest_setting(void)
 static int random_move(UtbGame *g, uint64_t *rs)
 {
     int n = utb_legal(g, legal, UTB_LEAVES_MAX);
-    return n ? legal[rng_xorshift64(rs) % (uint64_t)n] : -1;
+    return n ? legal[rng_splitmix64(rs) % (uint64_t)n] : -1;
 }
 
 /* `bot_side` is the seat the bot plays (0: both seats bots). Returns the

@@ -913,8 +913,7 @@ static void test_win_line_drawn(void)
         uint8_t mv[81];
         while (!g.over) {
             int n = uttt_legal(&g, mv);
-            rng_xorshift64(&r);
-            uttt_play(&g, mv[r % (uint64_t)n]);
+            uttt_play(&g, mv[rng_splitmix64(&r) % (uint64_t)n]);
         }
         if (g.over != UTTT_X && g.over != UTTT_O) continue;
         /* the settle draws the last block's big mark and the line only

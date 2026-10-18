@@ -172,9 +172,9 @@ static inline void cnf_die(CnfOut *o, const CnfPose *P, float d, int atlas)
     }
 }
 
-/* xorshift32 noise for the textures, one draw a statement */
-static uint32_t cnf_rs = 2463534242u;
-static inline uint32_t cnf_rnd(void) { return rng_xorshift32(&cnf_rs); }
+/* rng.h noise for the textures, one draw a statement */
+static uint64_t cnf_rs = 2463534242u;
+static inline uint32_t cnf_rnd(void) { return rng_u32(&cnf_rs); }
 /* a texture of noise with the study's statistics (measured from its uploads): the cup's green-black
  * verdigris (red about 55) whose normal map is flat but for one texel in twenty at +-1 or 2, or the die's
  * ivory (red about 178) whose map is flat at seven texels in ten, +-1 to 3 elsewhere and +-12 at one in a

@@ -11,7 +11,7 @@
 #include "rng.h"
 
 static uint64_t rng = 88172645463325252ull;
-static uint32_t next(void) { return (uint32_t)rng_xorshift64(&rng); }
+static uint32_t next(void) { return rng_u32(&rng); }
 
 int main(void)
 {

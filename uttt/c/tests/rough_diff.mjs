@@ -23,7 +23,24 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, '../../docs/vendor/rough.umd.js'), 'utf8');
+/* rough.js's dice, swapped for the kernel's. rough.js draws from a Lehmer
+ * generator; the pen draws from shared/c/rng.h's splitmix64 (31 bits over
+ * 2^31, as rough.js reads its own), the repo's one generator. The diff is of
+ * the PORT - every shape, every draw in its order - so rough.js gets the same
+ * dice: its randomiser, and nothing else in it, is replaced here. */
+const LEHMER = 'next(){return this.seed?(2**31-1&(this.seed=Math.imul(48271,this.seed)))/2**31:Math.random()}';
+const vendored = readFileSync(join(here, '../../docs/vendor/rough.umd.js'), 'utf8');
+if (!vendored.includes(LEHMER)) throw new Error("rough.js's randomiser moved: update LEHMER");
+const M64 = (1n << 64n) - 1n;
+globalThis.__uttt_rng = (r) => {               /* rng_u32 >> 1, over 2^31 */
+  if (r.__s === undefined) r.__s = BigInt(r.seed >>> 0);
+  let z = r.__s = (r.__s + 0x9e3779b97f4a7c15n) & M64;
+  z = ((z ^ (z >> 30n)) * 0xbf58476d1ce4e5b9n) & M64;
+  z = ((z ^ (z >> 27n)) * 0x94d049bb133111ebn) & M64;
+  z ^= z >> 31n;
+  return Number(z >> 33n) / 2 ** 31;
+};
+const src = vendored.replace(LEHMER, 'next(){return globalThis.__uttt_rng(this)}');
 const rough = new Function(src + '; return rough;')();
 
 const SIDE = 54;    /* the button that ships */

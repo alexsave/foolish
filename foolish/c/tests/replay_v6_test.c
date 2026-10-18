@@ -34,8 +34,8 @@ static unsigned char g_enc[ENC_CAP];
 static unsigned char g_enc2[ENC_CAP];
 static unsigned char g_dec[DEC_CAP];
 
-static uint32_t g_sh_seed = 1;
-static uint32_t sh_rand(void) { return rng_lcg32(&g_sh_seed); }
+static uint64_t g_sh_seed = 1;
+static uint32_t sh_rand(void) { return rng_u32(&g_sh_seed); }
 
 static unsigned char wire_of(Card c) {
     if (c.suit < 0 || c.value < 1) return (unsigned char)REPLAY_CARD_HIDDEN;
@@ -371,9 +371,9 @@ static unsigned char g_seed32[FOOLISH_SEED_LEN];
 static unsigned char g_enc3[ENC_CAP];
 
 static void make_seed(uint32_t s) {
-    uint32_t x = s ? s : 1u;   // xorshift32: any spread of bytes will do
+    uint64_t x = s;   // any spread of bytes will do
     for (int i = 0; i < FOOLISH_SEED_LEN; i++) {
-        g_seed32[i] = (unsigned char)(rng_xorshift32(&x) & 0xffu);
+        g_seed32[i] = (unsigned char)(rng_u32(&x) >> 24);
     }
 }
 

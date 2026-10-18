@@ -53,7 +53,7 @@ static double now(void) { return (double)clock() / (double)CLOCKS_PER_SEC; }
 static uint64_t rs = 0x9e3779b97f4a7c15ull;
 static uint32_t rnd(void)
 {
-    return (uint32_t)(rng_xorshift64(&rs) >> 11);
+    return rng_u32(&rs);
 }
 
 /* The kit's own image: sRGB, RGBX, no interpolation (BubbleData.image). */

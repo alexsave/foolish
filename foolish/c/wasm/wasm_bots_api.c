@@ -162,7 +162,7 @@ void wasm_set_game_key(unsigned int key) { (void)key; }
 
 // ---------- strategy dispatch ----------------------------------------------
 
-void random_strategy_set_seed(uint32_t s);
+void random_strategy_set_seed(uint64_t s);
 
 void wasm_set_strategy_seed(unsigned int s) { random_strategy_set_seed(s); }
 

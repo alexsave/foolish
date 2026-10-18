@@ -9,7 +9,7 @@ const char *UTTT_BOT_NAME[BOT_COUNT] =
 
 static uint32_t rnd(uint64_t *s, uint32_t n)
 {
-    uint32_t v = (uint32_t)(rng_xorshift64star(s) >> 33);
+    uint32_t v = rng_u32(s);
     /* A POWER OF TWO IS A MASK, and the commonest call here asks for four.
      * `% n` with a runtime n is a hardware divide - the only one left in
      * this binary - and it fired twice per playout step. */
@@ -785,15 +785,15 @@ static uint8_t mc_move(const UtttGame *g, int budget, uint64_t *rs,
          * stream, so a difference between two of them is the move and not
          * the dice. Without this the ranking at small budgets is mostly
          * noise. */
-        uint64_t base = *rs + (uint64_t)r * 0x9E3779B97F4A7C15ull;
+        uint64_t base = rng_seed64(*rs + (uint64_t)r * RNG_GOLDEN);
         for (int i = 0; i < n; i++) {
-            uint64_t s = crn ? base : (*rs += 0x9E3779B97F4A7C15ull);
+            uint64_t s = crn ? base : rng_seed64(*rs += RNG_GOLDEN);
             UtttGame t = *g;
             uttt_play(&t, list[i]);
             score[i] += playout(&t, &s, biased, me, 0);
         }
     }
-    *rs += 0x9E3779B97F4A7C15ull;
+    *rs += RNG_GOLDEN;
 
     /* TIE-BREAKS ARE A DECISION, not whatever the loop order gives. On equal
      * rollout score we take the move the heuristic prefers - which is
@@ -1089,7 +1089,7 @@ static void tree_search(const UtttGame *g, long playouts, uint64_t *rs,
         else if (leaf->pv == PV_LOSS) val = 0;
         else if (leaf->pv == PV_DRAW) val = 100;
         else {
-            uint64_t s = (*rs += 0x9E3779B97F4A7C15ull);
+            uint64_t s = rng_seed64(*rs += RNG_GOLDEN);
             val = playout(&t, &s, 1, leaf_turn, W.leaf_cutoff);
         }
 
@@ -1107,7 +1107,7 @@ static void tree_search(const UtttGame *g, long playouts, uint64_t *rs,
         }
         for (int d = depth - 1; d >= 0; d--) tree_prove(path[d]);
     }
-    *rs += 0x9E3779B97F4A7C15ull;
+    *rs += RNG_GOLDEN;
 
     /* Remember what this tree is a tree OF, for next time. */
     if (keep) {
@@ -1220,7 +1220,7 @@ static void f_tables(void)
 /* No divide: the top of a 32-bit draw scaled by n (Lemire). */
 static inline uint32_t f_rnd(uint64_t *s, uint32_t n)
 {
-    uint32_t v = (uint32_t)(rng_xorshift64star(s) >> 32);
+    uint32_t v = rng_u32(s);
     return (uint32_t)(((uint64_t)v * n) >> 32);
 }
 
@@ -1409,7 +1409,7 @@ static void fountain_search(const UtttGame *g, long playouts, uint64_t *rs)
         else if (leaf->pv == PV_LOSS) val = 0;
         else if (leaf->pv == PV_DRAW) val = 100;
         else {
-            uint64_t s = (*rs += 0x9E3779B97F4A7C15ull);
+            uint64_t s = rng_seed64(*rs += RNG_GOLDEN);
             val = f_rollout(&t, &s, t.turn);
         }
         if (t.turn != g->turn) val = 200 - val;
@@ -1430,7 +1430,7 @@ static void fountain_search(const UtttGame *g, long playouts, uint64_t *rs)
             changed = tree_pool[path[d]].pv != was;
         }
     }
-    *rs += 0x9E3779B97F4A7C15ull;
+    *rs += RNG_GOLDEN;
     tree_cache_plies[g->turn - 1] = g->n_plies;
     memcpy(tree_cache_move[g->turn - 1], g->move, (size_t)g->n_plies);
 }

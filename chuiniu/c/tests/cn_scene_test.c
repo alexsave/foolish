@@ -278,17 +278,18 @@ static void test_table_pinned(uint8_t *mem, size_t ios)
     CHECK(cnf_nf == 12864 && d > 6000 && d < cnf_nf, "six cups and thirty dice: %d faces, %d drawn (the rest turned away)", cnf_nf, d);
     uint64_t h = cnf_hash();
     /* re-pinned for package V1: the picture is the same bytes but at the pixels on a surface's edge, which the
-     * edges pass draws from four samples (the frame with the edges left out is the old golden, 78fcf817e8be90f8,
-     * and 0xb65b95f13c6d841a below; checked when the pin moved) */
-    CHECK(h == 0x658558ffc67caa06ull, "the still table at 1x: %016llx", (unsigned long long)h);
+     * edges pass draws from four samples (the frame with the edges left out is the old golden, the two pins
+     * below; checked when the pin moved). All four re-pinned when the textures' noise (cnf_rnd) moved to
+     * rng.h's splitmix64: other noise, the same scene */
+    CHECK(h == 0x911b002f65da83b2ull, "the still table at 1x: %016llx", (unsigned long long)h);
     d = throw_frame(&t);
     h = cnf_hash();
-    CHECK(h == 0x2ffa90346b8d21d5ull, "a throw's frame at 1.5x: %016llx", (unsigned long long)h);
+    CHECK(h == 0x28324ecccc9df7caull, "a throw's frame at 1.5x: %016llx", (unsigned long long)h);
     /* the edges left out: the old renderer's picture, byte for byte (the strips change no pixel) */
     cn_scene_skip(16); cnf_frame(&t, 390, 718, 40, 1, 1024, 0); cn_scene_skip(0);
-    CHECK(cnf_hash() == 0x78fcf817e8be90f8ull, "the still table at 1x without the edges: the old golden (%016llx)", (unsigned long long)cnf_hash());
+    CHECK(cnf_hash() == 0x7f2a98a4f94c42c5ull, "the still table at 1x without the edges: the old golden (%016llx)", (unsigned long long)cnf_hash());
     cn_scene_skip(16); throw_frame(&t); cn_scene_skip(0);
-    CHECK(cnf_hash() == 0xb65b95f13c6d841aull, "a throw's frame at 1.5x without the edges: the old golden (%016llx)", (unsigned long long)cnf_hash());
+    CHECK(cnf_hash() == 0x084b69cba512e87full, "a throw's frame at 1.5x without the edges: the old golden (%016llx)", (unsigned long long)cnf_hash());
     throw_frame(&t);
     /* drawing it again draws it the same: nothing carries from one frame to the next */
     throw_frame(&t);

@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
             // snapshot
             Game gcopy; memcpy(&gcopy, &g, sizeof(g));
             SimState s; cd_sim_from_game(&s, &g);
-            uint32_t rng = game_rng_get();
+            uint64_t rng = game_rng_get();
             int dbg_power = g.power_suit, dbg_nb = g.num_battles;
             int dbg_atk[24], dbg_atkv[24], dbg_def[24], dbg_cov[24], dbg_defcnt=g.players[g.defender].hand_count;
             for (int i=0;i<g.num_battles;i++){dbg_atkv[i]=g.table_battles[i].attack.value; dbg_atk[i]=g.table_battles[i].attack.suit; dbg_cov[i]=!card_is_none(g.table_battles[i].defense); dbg_def[i]=!card_is_none(g.table_battles[i].defense)?g.table_battles[i].defense.value:-1;}

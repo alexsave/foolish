@@ -27,7 +27,7 @@
 
 static uint64_t RS = 0x243F6A8885A308D3ull;
 static uint32_t rnd(uint32_t n)
-{ return (uint32_t)(rng_xorshift64(&RS) % n); }
+{ return (uint32_t)(rng_splitmix64(&RS) % n); }
 
 /* An independent exact solver: +1 win for side to move, 0 draw, -1 loss. */
 static int solve(UtttGame *g)

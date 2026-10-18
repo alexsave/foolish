@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../shared/c/rng.h"
 
 #define PLAYOUTS 200
 
@@ -75,7 +76,7 @@ int main(void)
     UtttGame g;
     int at = -1;
     uint64_t seed = 1;
-    for (; seed < 500 && at < 0; seed++) at = blunder_game(seed * 0x9E3779B97F4A7C15ull, &g);
+    for (; seed < 500 && at < 0; seed++) at = blunder_game(rng_seed64(seed), &g);
     CHECK(at >= 0, "no blunder game in 500 seeds");
     if (at < 0) return 1;
     char url[128];

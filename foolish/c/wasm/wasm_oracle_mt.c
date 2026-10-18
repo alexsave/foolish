@@ -32,7 +32,7 @@
 /* kernel + strategy entry points (real TLS in this build) */
 void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *moves);
 int  octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
-void random_strategy_set_seed(uint32_t s);
+void random_strategy_set_seed(uint64_t s);
 void og_reload_flags(void);                 /* FOOLISH_ORACLE_BUILD hook, reused */
 Game *wasm_game_ptr_internal(void);         /* the shared resident game */
 extern unsigned char *wasm_io_ptr(void);
