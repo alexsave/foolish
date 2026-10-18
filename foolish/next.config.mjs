@@ -33,26 +33,21 @@ const CROSS_ORIGIN_ISOLATED = process.env.FOOLISH_CROSS_ORIGIN_ISOLATION === '1'
 
 // A LOCAL next.config.js SHADOWS THIS FILE. Next resolves .js before .mjs, and
 // this repo's .gitignore hides a next.config.js, so a machine that has one gets
-// NONE of this - no rewrites, no headers - while CI and Vercel get all of it.
+// NONE of this - no rewrites, no headers - while CI gets all of it.
 // The symptom is /privacy, /imessage-privacy and /support falling through to the
 // [game_id] route locally and working fine in production. If that happens, move
 // the local next.config.js aside rather than doubting this file.
 //
-// TWO HOSTS, ONE APP, until foolish.cards' DNS moves (c_base/RUNBOOK.md, "Web
-// hosting"). By default the build is a static export (out/), which
-// c_base/ops/web_deploy.sh uploads to S3 behind CloudFront; there the
-// rewrites below and the [game_id] fallback live in the distribution's
-// viewer-request Function and the headers in the stack (c_base/ops/web.yaml),
-// because an export has no server. Vercel's build (VERCEL=1, which Vercel sets
-// and web.yml also sets explicitly) keeps the server build and this routing, so
-// both hosts serve the same site while both are live.
+// The production build is a static export (out/), which c_base/ops/web_deploy.sh
+// uploads to S3 behind CloudFront; there the rewrites below and the [game_id]
+// fallback live in the distribution's viewer-request Function and the headers
+// in the stack (c_base/ops/web.yaml), because an export has no server.
 //
-// `next dev` is a server too, and it takes the same routing: an export's
+// `next dev` is a server, and it takes the routing below: an export's
 // [game_id] page has one prerendered id, so `output: 'export'` under the dev
 // server answers every real game id with a 500 ("missing param ... in
 // generateStaticParams()"). So the export is a property of `next build`
-// alone, and when the Vercel project goes, only the VERCEL test goes with it.
-const VERCEL = process.env.VERCEL === '1';
+// alone.
 
 const serverRouting = {
   async rewrites() {
@@ -90,7 +85,7 @@ const serverRouting = {
 };
 
 export default function nextConfig(phase) {
-  const staticExport = phase === PHASE_PRODUCTION_BUILD && !VERCEL;
+  const staticExport = phase === PHASE_PRODUCTION_BUILD;
   return {
     reactStrictMode: true,
     ...(staticExport ? { output: 'export' } : serverRouting),

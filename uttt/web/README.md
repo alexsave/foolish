@@ -25,10 +25,7 @@ open http://localhost:3000/AJG7NYNQG4RFXXGVPGD7QR2ETSOYTWMCREAQ
 with the repo's pinned clang, and every push to `main` that touches the site
 deploys it with `.github/workflows/web_aws.yml`, as a static export (`out/`)
 to S3 behind CloudFront (`c_base/ops/web.yaml`), which serves `uttt.live` and
-`www.uttt.live`. `.github/workflows/uttt-web.yml` deploys to Vercel only when
-run by hand, as a rollback until 2026-10-28 (`c_base/RUNBOOK.md`, W9). Vercel's
-build sets `VERCEL=1` and gets the server build with `next.config.mjs`'s
-rewrites instead.
+`www.uttt.live`.
 
 ## /243: two bots on the 243 x 243 board
 
@@ -49,9 +46,3 @@ The site's AWS side (the `cbase-web` stack's bucket prefix `uttt/`, its own
 CloudFront distribution, the certificate and the Squarespace DNS records) is
 set up once by the owner, as `c_base/RUNBOOK.md` "Web hosting: foolish.cards
 and uttt.live off Vercel" records; after that a push to `main` is the deploy.
-
-The Vercel project, its `UTTT_VERCEL_PROJECT_ID` secret and
-`uttt-web.yml` exist only for the rollback: with DNS pointed back at Vercel
-(RUNBOOK, W7), Actions, uttt-web, Run workflow on `main` brings it up to
-main's commit. All of it goes at W9 (on or after 2026-10-28), with the
-`VERCEL` half of `next.config.mjs`.

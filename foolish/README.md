@@ -249,7 +249,7 @@ Every one of those was written because the un-derived version of it had already 
 
 On the C side, `c/tests/tests.c` is 9,972 lines and 200 tests in a hand-rolled single-binary harness, alongside three differential suites that check the bitboard rollout engine, the apply path and the solver against the struct engine.
 
-Ten GitHub Actions workflows build Foolish: `web_aws` (the site's compile gate and deploy), `c_base` (the backend's tests and deploy), `wasm`, `memory`, `validate`, `coverage`, `foolyard`, `ios`, `metrics`, and `web`, the hand-run Vercel rollback kept until 2026-10-28.
+Nine GitHub Actions workflows build Foolish: `web_aws` (the site's compile gate and deploy), `c_base` (the backend's tests and deploy), `wasm`, `memory`, `validate`, `coverage`, `foolyard`, `ios`, and `metrics`.
 The Apple suite (847 Swift tests plus snapshot tests) runs on a Mac by hand via `ios/scripts/mac_tests.sh`, deliberately, because macOS Actions minutes bill at ten times Linux.
 
 ---
@@ -261,8 +261,6 @@ The Apple suite (847 Swift tests plus snapshot tests) runs on a Mac by hand via 
 On a pull request the same job is the compile gate.
 The backend is c_base on AWS Lambda, deployed from `main` by [`.github/workflows/c_base.yml`](../.github/workflows/c_base.yml).
 Both assume one GitHub OIDC role ([`c_base/ops/github_oidc.yaml`](../c_base/ops/github_oidc.yaml)); [`c_base/RUNBOOK.md`](../c_base/RUNBOOK.md) has the rest.
-
-The Vercel lane ([`.github/workflows/web.yml`](../.github/workflows/web.yml)) runs only by hand now, as a rollback, until it is deleted.
 
 The shipped wasm is a **build output**, like `sdk/ts/gen`: [`scripts/wasm_build.sh`](scripts/wasm_build.sh) is the one entry point, every lane that loads a module builds it, and nothing is committed.
 It used to be built by hand on a Mac and committed, which needed two gates to hold it up - a freshness check that compared commit *order* because it could not compare bytes, and a `WASM_STAMP` committed beside the artifacts to prove a human had run `make`.
