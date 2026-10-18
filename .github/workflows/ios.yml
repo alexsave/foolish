@@ -56,7 +56,7 @@ jobs:
   bridge-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Bridge smoke test (drives a full game through fio_*)
         run: cd c && make ios-smoke
@@ -119,9 +119,9 @@ jobs:
     runs-on: ubuntu-latest
     container: swift:6.2.4-noble
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           # 20 matches validate.yml. The test is pure TS + a subprocess; it does
           # not need the 24 that coverage.yml's ESM-loader tests do.

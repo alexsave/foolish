@@ -44,7 +44,7 @@ jobs:
       run:
         working-directory: tallybones
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Every test binary and the bridge smoke. It compiles the shared C it
       # uses from ../../shared/c, so this lane is also the check that the
       # shared half still builds for this product under -Werror.
@@ -62,7 +62,7 @@ jobs:
       run:
         working-directory: tallybones
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Toolchain (the repo's pinned clang and libclang)
         working-directory: .
         run: bash shared/scripts/ci_llvm.sh

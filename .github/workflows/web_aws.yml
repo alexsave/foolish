@@ -75,9 +75,9 @@ jobs:
       run:
         working-directory: foolish
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -101,7 +101,7 @@ jobs:
           test -f out/index.html && test -f out/_shell.html && test -f out/.well-known/apple-app-site-association
           du -sh out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: env.DEPLOYS == 'true'
         with:
           name: foolish-out
@@ -116,9 +116,9 @@ jobs:
       run:
         working-directory: uttt/web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -144,7 +144,7 @@ jobs:
           test -f out/index.html && test -f out/_shell.html && test -f out/uttt.wasm
           du -sh out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: env.DEPLOYS == 'true'
         with:
           name: uttt-out
@@ -174,19 +174,19 @@ jobs:
           fi
 
       # For web_deploy.sh and its main-ancestry gate (require_main.sh).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: foolish-out
           path: foolish/out
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: uttt-out
           path: uttt/web/out
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.CBASE_AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}

@@ -49,7 +49,7 @@ jobs:
       line: ${{ steps.covc.outputs.line }}
       branch: ${{ steps.covc.outputs.branch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install gcovr
         run: pipx install gcovr==8.6 || pip install --break-system-packages gcovr==8.6
@@ -91,7 +91,7 @@ jobs:
   c-native:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: C kernel suites at volume (tests, msg_wire_test 20, analyse_test)
         working-directory: foolish/c
         run: make -j"$(nproc)" volume
@@ -103,9 +103,9 @@ jobs:
       client_branch: ${{ steps.covts.outputs.client_branch }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           # 24, not 20: e2e/wasm_asset_doors spawns a real ESM child with
           # --experimental-strip-types (Node 22+), and Node 20's older ESM loader
@@ -170,8 +170,8 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/github-script@v7
+      - uses: actions/checkout@v5
+      - uses: actions/github-script@v8
         with:
           script: |
             const { renderCoverage, spliceSlot, MARKER } = require(`${process.env.GITHUB_WORKSPACE}/foolish/scripts/render_metrics.cjs`);

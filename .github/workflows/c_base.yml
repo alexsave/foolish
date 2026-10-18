@@ -58,7 +58,7 @@ jobs:
         os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: dependencies (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
@@ -74,7 +74,7 @@ jobs:
     name: make check-asan
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
       - name: unit tests and smoke under ASan + UBSan
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check-asan
@@ -100,7 +100,7 @@ jobs:
     steps:
       # The whole history (trees only, no blobs) so a pull request can diff
       # against its base.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           filter: blob:none
@@ -138,7 +138,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential clang libssl-dev libsqlite3-dev
       - name: build
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" build/fuzz/${{ matrix.target }}
@@ -146,7 +146,7 @@ jobs:
         run: make -C c_base fuzz-smoke FUZZ_TIME=30 FUZZ_TARGETS=${{ matrix.target }}
       - name: the inputs that crashed
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fuzz-crashes-${{ matrix.target }}
           path: c_base/build/fuzz-crashes/${{ matrix.target }}
@@ -175,13 +175,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
       - name: gcovr
         run: pipx install gcovr==8.6 || pip install --break-system-packages gcovr==8.6
       - name: the coverage build, every test, the gate
         run: make -C c_base -j"$(nproc)" coverage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: cbase-coverage
@@ -196,7 +196,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
       # The runner image has Docker and the AWS CLI; dynamo_local.sh starts
       # amazon/dynamodb-local (pinned by digest) and makes the table from
@@ -213,7 +213,7 @@ jobs:
     name: template and scripts
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: the CloudFormation template (cfn-lint, no AWS calls)
         run: |
           python3 -m venv /tmp/cfn
@@ -239,13 +239,13 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # The build container is linux/arm64 (tools/build_bootstrap.sh); this
       # runner is GitHub's native arm64 one, so Docker runs it with no
       # emulation. Same bytes as the x86 + QEMU build this replaced.
       - name: package
         run: c_base/ops/package.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cbase-lambda
           path: |
@@ -277,12 +277,12 @@ jobs:
             exit 1
           fi
       # The checkout is for lambda_deploy.sh and its main-ancestry gate.
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           name: cbase-lambda
           path: c_base/build
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.CBASE_AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}

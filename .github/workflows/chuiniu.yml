@@ -40,7 +40,7 @@ jobs:
       run:
         working-directory: chuiniu
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Every test binary and the bridge smoke. It compiles deal_rng and
       # sha256 from ../../shared/c, so this lane also checks that the shared
       # half still builds for this product under -Werror.
@@ -57,7 +57,7 @@ jobs:
       run:
         working-directory: chuiniu
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Toolchain (the repo's pinned clang and libclang)
         working-directory: .
         run: bash shared/scripts/ci_llvm.sh
