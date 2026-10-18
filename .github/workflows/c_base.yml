@@ -89,8 +89,8 @@ jobs:
   # which: on a push to main or a dispatch every fuzz/fz_*.c; on a pull
   # request only the targets built from a file it changes
   # (.github/scripts/fuzz_select.sh: link line, nm reachability, the
-  # compiler's dependency files), all of them when a makefile, this workflow
-  # or the script changes, and none for, say, a doc.
+  # compiler's dependency files), all of them when a makefile changes, and
+  # none for a doc, this workflow or the script.
   fuzz_targets:
     name: fuzz targets to run
     runs-on: ubuntu-24.04
