@@ -49,8 +49,8 @@ const REPO = resolve(import.meta.dirname, '../..');
  * What the build provides
  * ---------------------------------------------------------------------------
  * sdk/ts/gen and its siblings stopped being committed (#174), so on a fresh
- * checkout they are simply absent - and scripts/decode_replay.mjs imports one
- * of them. "The file is not there" is the right answer for a source module and
+ * checkout they are simply absent - and a script that imports one of them
+ * would read as broken. "The file is not there" is the right answer for a source module and
  * the wrong one for a build output, so those directories are held to be
  * PROVIDED rather than checked for existence.
  *
@@ -365,7 +365,8 @@ test('the scan actually reaches the helper scripts and what they name', () => {
     assert.ok(live.length >= 20, `walked only ${live.length} helper scripts - did ROOTS move?`);
 
     const withImports = live.filter((f) => importsOf(f).some((i) => i.target !== null));
-    assert.ok(withImports.length >= 2,
+    // One since scripts/decode_replay.mjs went (cnitro_replay --code reads a link natively).
+    assert.ok(withImports.length >= 1,
         `no helper script appears to import a repo module (${withImports.length}) - `
         + 'the import regexes have stopped matching');
 

@@ -77,6 +77,8 @@ make tests        # build + run the engine unit tests
   `./build/cnitro_elo --games=3000 --pcs=2,3,4,5,6,7,8 \`
   `    --pool=random,handwritten,espresso,robusta,firecracker,gunpowder,blackpowder,cordite`
 - `cnitro_replay` — replay one game move-by-move from a seed.
+  `./build/cnitro_replay --code="<share link or code>" [--from=N]` prints a share link's decoded
+  log stream instead, with the seat names and move gaps its extras carry.
 - `cnitro_tests`  — engine smoke tests.
 - `cnitro_distill`, `cnitro_analyse` - the distillation arm (`CORDITE_RESEARCH.md`) and the
   post-game analyser (`docs/POST_GAME_ANALYSER.md`).

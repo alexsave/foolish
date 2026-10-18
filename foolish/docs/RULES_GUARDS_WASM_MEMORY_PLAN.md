@@ -291,7 +291,7 @@ Differences for the rules build:
    (DB-backed tests need Postgres; in an environment without it, expect
    `ECONNREFUSED 127.0.0.1:5432` failures on meta/fuzz-DB tests — those are
    environmental, CI covers them. The wasm/codec tests run without DB.)
-5. **Write the new interleave gate** (model: `e2e/replay_solver_overlay.test.ts`):
+5. **Write the new interleave gate** (model: `c/tests/replay_overlay_test.c`, formerly `e2e/replay_solver_overlay.test.ts`):
    on ONE rules instance — (a) enumerate a large menu and capture the decoded
    move list; (b) run a full replay encode AND decode of a real game;
    (c) enumerate the same state again → the move lists must be identical;

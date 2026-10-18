@@ -197,6 +197,7 @@ tests: build/cnitro_tests build/bot_drive_threads_test build/replay_threads_test
 	./build/replay_threads_test
 	./build/replay_overlay_test
 	./tests/replay_cli_labels.sh build/cnitro_replay
+	./tests/replay_cli_decode.sh build/cnitro_replay
 
 # M8's overlay (src/wasm_overlay.h): the replay codec's scratch aliased into the
 # solver arena, as the bots modules compile it. Its own objects, with the
@@ -1154,7 +1155,8 @@ WASM_FIXTURE_EXPORTS := \
   -Wl,--export=wasm_card_list_parse
 
 # A code's whole log stream, record by record (replay.h ReplayDecodedLog,
-# e2e/helpers/replay_decode.ts): tests and tools read it, no shipped host does.
+# once read by e2e/helpers/replay_decode.ts, which cnitro_replay --code replaced
+# natively): no test, tool or shipped host reads it now.
 WASM_REPLAY_DECODE_EXPORTS := \
   -Wl,--export=wasm_replay_decoded_open -Wl,--export=wasm_replay_decoded_next
 
