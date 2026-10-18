@@ -1,5 +1,5 @@
 #!/bin/bash
-# Amazon's DynamoDB Local with the table providers/aws/ops/cbase.yaml defines, for the
+# Amazon's DynamoDB Local with the table the app's aws template defines, for the
 # DynamoDB store's tests and the import rehearsal (DESIGN.md "Store").
 #
 #   c_base/providers/aws/ops/dynamo_local.sh            start (or reuse) it, create the table if missing
@@ -14,7 +14,9 @@
 #
 # The table: providers/aws/ops/dynamo_table.py reads the template's AWS::DynamoDB::Table
 # resource and writes the create-table, TTL and point-in-time-recovery input,
-# so this table is the stack's table, never a second spelling of it.
+# so this table is the stack's table, never a second spelling of it. The
+# template is the one the build writes (`make dist/<app>/aws/template.yaml`,
+# providers/aws/provider.mk), made here first when it is missing or stale.
 #
 # The container runs in memory with -sharedDb: without it DynamoDB Local keeps
 # a separate database per access key and region, and a client whose dummy key
@@ -88,8 +90,10 @@ fi
 if ! exists; then
   input="$(mktemp -d)"
   trap 'rm -rf "$input"' EXIT
-  python3 -I "$here/providers/aws/ops/dynamo_table.py" "$here/providers/aws/ops/cbase.yaml" "$table" "$input"
-  say "creating table $table from providers/aws/ops/cbase.yaml"
+  tpl="dist/$(make -s -C "$here" print-app)/aws/template.yaml"
+  make -s -C "$here" "$tpl" >&2 || die "could not write $tpl"
+  python3 -I "$here/providers/aws/ops/dynamo_table.py" "$here/$tpl" "$table" "$input"
+  say "creating table $table from $tpl"
   ddb create-table --cli-input-json "file://$input/create.json" >/dev/null
   ddb wait table-exists --table-name "$table"
   ddb update-time-to-live --cli-input-json "file://$input/ttl.json" >/dev/null

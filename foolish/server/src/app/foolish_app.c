@@ -73,7 +73,28 @@ static const cb_route_list *const FOOLISH_ROUTES[] = { &cb_functions_route_list,
 // The bot drive, started by a kick (bots.h cb_bots_kick), and the scan that
 // catches a lost one: EventBridge's literal "scan" under Lambda.
 static const cb_job FOOLISH_JOBS[] = { { CB_BOTS_JOB, cb_bots_drive } };
-static const cb_schedule FOOLISH_SCHEDULES[] = { { CB_BOTS_SCHEDULE, CB_BOT_SCAN_EVERY_MS, cb_bots_scan } };
+static const cb_schedule FOOLISH_SCHEDULES[] = { {
+    .name = CB_BOTS_SCHEDULE,
+    .every_ms = CB_BOT_SCAN_EVERY_MS,
+    .run = cb_bots_scan,
+    .deployed_every_s = 60,
+    .deployed_name = "bot-scan",
+    .about = "The bot heartbeat (bot-heartbeat/index.ts, moved). Games that need bots, untouched for 10 s, "
+             "active within the hour.",
+} };
+
+// The one deployment: the stack, function and table are all "cbase" (the
+// names production has had since its first deploy), and the store's units
+// are the free tier's 25 a side, 15 to the table and 5 to each index
+// (DESIGN.md "The free tier, provisioned").
+static const cb_deploy FOOLISH_DEPLOY = {
+    .stack = "cbase",
+    .domain = "api.foolish.cards",
+    .table_read = 15,
+    .table_write = 15,
+    .index_read = 5,
+    .index_write = 5,
+};
 
 const char *const cb_foolish_cached_paths[2] = { "/v1/leaderboard", "/v1/bots" };
 
@@ -95,6 +116,7 @@ const cb_app cb_foolish_app = {
     .admin_calls = cb_foolish_admin_calls,
     .n_admin_calls = 3,
     .admin_count = cb_admin_games_needing_bots,
+    .deploy = &FOOLISH_DEPLOY,
 };
 
 // foolish is the app every binary of this build serves (cbase/app.h).

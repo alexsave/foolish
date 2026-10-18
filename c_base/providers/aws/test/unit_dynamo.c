@@ -915,11 +915,11 @@ static void flow_admin_query_guard(void) {
     cb_store_close(s);
 }
 
-// providers/aws/ops/cbase.yaml creates the table this wire writes to: the same index names,
+// The app's template (CB_AWS_TEMPLATE, written by cbase-describe) creates the table this wire writes to: the same index names,
 // all four index keys String (gsi1sk is "<ms>#<id>" text, not a Number),
 // both projecting ALL, and the TTL on the attribute the wire writes seconds to.
 static void the_template_matches_the_wire(void) {
-    FILE *f = fopen("providers/aws/ops/cbase.yaml", "r");
+    FILE *f = fopen(CB_AWS_TEMPLATE, "r");
     T_CHECK(f != NULL);
     if (!f) return;
     static char y[64 * 1024];
@@ -953,7 +953,7 @@ static void the_template_matches_the_wire(void) {
 // six numbers add up to no more than 25 a side. No auto scaling, which would
 // provision past them.
 static void the_template_stays_free(void) {
-    FILE *f = fopen("providers/aws/ops/cbase.yaml", "r");
+    FILE *f = fopen(CB_AWS_TEMPLATE, "r");
     T_CHECK(f != NULL);
     if (!f) return;
     static char y[64 * 1024];

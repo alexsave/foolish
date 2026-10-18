@@ -38,8 +38,16 @@ typedef struct {
 // >= 0 when it ran.
 typedef struct {
     const char *name;      // [a-z0-9_], at most CB_JOB_NAME_MAX: "scan"
-    int64_t     every_ms;  // serve's period (divided by CBASE_BOT_SPEEDUP); AWS's is the template's
+    int64_t     every_ms;  // serve's period (divided by CBASE_BOT_SPEEDUP)
     int (*run)(cb_ctx *ctx, int64_t now_ms);
+    // What a deployed schedule is made of (a provider's describe, docs/PLATFORM.md
+    // 8.5): its period in seconds (a whole number of minutes, hours or days), its
+    // name after the stack's ("bot-scan": [a-z0-9-]; NULL for `name` with '_' as
+    // '-') and one sentence about it (no ": " and no " #", so it is plain text in
+    // any infrastructure file).
+    int64_t     deployed_every_s;
+    const char *deployed_name;
+    const char *about;
 } cb_schedule;
 
 // A TOPIC FAMILY: a set of push topics (realtime.h), as a pattern over
@@ -59,6 +67,16 @@ typedef struct {
     const char *name;   // the path after /admin/api/
     cb_handler  fn;
 } cb_admin_call;
+
+// WHERE THE APP IS DEPLOYED, for a provider's describe and its deploy
+// (docs/PLATFORM.md 8.5): the names a deployment's resources take and the
+// store's provisioned units. A provider that bills none ignores the units.
+typedef struct {
+    const char *stack;    // the deployment's name, and its function's and table's: [a-z0-9-]
+    const char *domain;   // the public host the clients use
+    int table_read, table_write;   // the store's provisioned units: the table
+    int index_read, index_write;   // and each of its two indexes (items.h)
+} cb_deploy;
 
 struct cb_app {
     const char          *name;            // "foolish": the log tag, later the stack and the key namespace
@@ -88,6 +106,8 @@ struct cb_app {
     const cb_admin_call *admin_calls;
     int                  n_admin_calls;
     int (*admin_count)(cb_ctx *ctx, int64_t now_ms);
+    // Where it is deployed; NULL: it cannot be (a test app).
+    const cb_deploy     *deploy;
 };
 
 // The app this binary serves: the product defines it, one per link.

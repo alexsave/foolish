@@ -92,8 +92,13 @@ SRC_ROOTS := core/src providers/local/src providers/aws/src $(C_ROOT)/foolish/se
 # Each side's tests (core's, each provider's, the product's), and every test
 # program reaches every one of them: a test may assemble a mixed lane.
 TEST_ROOTS := core/test providers/local/test providers/aws/test $(C_ROOT)/foolish/server/test
-MAIN_SERVE  := providers/local/src/main_serve.c
-MAIN_LAMBDA := providers/aws/src/main_lambda.c
+# THE PRODUCT this build links (its cb_app, cbase/app.h): what dist/<app>/ is named after.
+APP := foolish
+# Each provider's provider.mk (docs/PLATFORM.md 8.5): its main, its artifact
+# and its package rule. PROVIDERS lists them.
+include providers/local/provider.mk providers/aws/provider.mk
+MAIN_SERVE  := $(MAIN_local)
+MAIN_LAMBDA := $(MAIN_aws)
 # THE COMPILER GATE (docs/PLATFORM.md 8.4): each side's sources see only the
 # headers that side may use, so an include across the line does not compile.
 # core: its own headers and shared/c. A provider: core's and its own, never
@@ -109,9 +114,12 @@ LOCAL_INC   := $(CORE_INC) -Iproviders/local/src
 AWS_INC     := $(CORE_INC) -Iproviders/aws/src
 PRODUCT_INC := $(CORE_INC) -I$(C_ROOT)/foolish/server/src -I$(KDIR)/src
 ALL_INC     := -Icore/include $(addprefix -I,$(SRC_ROOTS)) $(addprefix -I,$(TEST_ROOTS)) -Ibench -I$(KDIR)/src $(SHARED_INC)
+# The rest also learn where the build writes the app's aws template (the
+# tests that read it, provider.mk AWS_TEMPLATE).
+REST_FLAGS  := $(ALL_INC) -DCB_AWS_TEMPLATE=\"$(AWS_TEMPLATE)\"
 side_inc = $(if $(filter core/src/%,$*),$(CORE_INC),$(if $(filter providers/local/src/%,$*),$(LOCAL_INC),$(if \
-             $(filter providers/aws/src/%,$*),$(AWS_INC),$(if $(filter foolish/server/src/%,$*),$(PRODUCT_INC),$(ALL_INC)))))
-SIDE_STAMP := core: $(CORE_INC) local: $(LOCAL_INC) aws: $(AWS_INC) product: $(PRODUCT_INC) rest: $(ALL_INC)
+             $(filter providers/aws/src/%,$*),$(AWS_INC),$(if $(filter foolish/server/src/%,$*),$(PRODUCT_INC),$(REST_FLAGS)))))
+SIDE_STAMP := core: $(CORE_INC) local: $(LOCAL_INC) aws: $(AWS_INC) product: $(PRODUCT_INC) rest: $(REST_FLAGS)
 CB_CFLAGS = -std=gnu11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wshadow -Wvla \
             $(side_inc) $(OPENSSL_CFLAGS) -pthread $(KERNEL_CAPS)
 LDLIBS := $(OPENSSL_LDFLAGS) -lsqlite3 -lssl -lcrypto -lpthread -lm $(PLATFORM_LDLIBS) $(LTO_LDFLAGS)
@@ -185,6 +193,8 @@ prog = $(eval $(call PROG,$(1),$(2),$(3),$(4),$(5),$(6)))
 $(call prog,build,build/obj/cbase,build/obj/kernel,cbase,$(MAIN_SERVE),CB_CFLAGS)
 $(call prog,build,build/obj/cbase,build/obj/kernel,bootstrap,$(MAIN_LAMBDA),CB_CFLAGS)
 $(call prog,build,build/obj/cbase,build/obj/kernel,cbase-import,$(IMPORT_SRC),CB_CFLAGS)
+# The packager's describe (tools/cbase_describe.c, docs/PLATFORM.md 8.5).
+$(call prog,build,build/obj/cbase,build/obj/kernel,cbase-describe,tools/cbase_describe.c,CB_CFLAGS)
 # The /m/<payload> cases foolish/server/test/fixture_unfurl.h holds, made by the kernel
 # ($(C_ROOT)/foolish/server/tools/unfurl_payloads.c). Not part of any check: it
 # is run by hand when the goldens are regenerated.
@@ -205,7 +215,7 @@ $(call prog,build/asan/test,build/obj/asan,build/obj/asan-kernel,unit_bench,benc
 $(foreach s,smoke smoke_lambda smoke_lambda_after smoke_authz smoke_matrix smoke_boot,$(call prog,build/asan/test,build/obj/asan,build/obj/asan-kernel,$(s),$(call tsrc,$(s)) $(TLIB_SRC),ASAN_CB_CFLAGS))
 
 .PHONY: coverage all test smoke check check-asan test-asan smoke-asan check-dynamo bench-dynamo clean print-kernel-src bootstrap bench
-all: build/cbase build/bootstrap build/cbase-import build/cbase-bench
+all: build/cbase build/bootstrap build/cbase-import build/cbase-bench build/cbase-describe
 
 # THE TEST RUNS, in parallel. Every program is its own process with its own
 # server, port, temporary directory and database (the smokes start their own
@@ -243,19 +253,19 @@ include $(C_ROOT)/shared/tools/shared_tests.mk
 $(call SHARED_TESTS_IN,,build/obj/cbase,CC,CB_CFLAGS)
 $(call SHARED_TESTS_IN,asan_,build/obj/asan,CC,ASAN_CB_CFLAGS)
 
-test: shared-tests $(call UNIT_RUNS,build/test)
+test: shared-tests $(call UNIT_RUNS,build/test) $(AWS_TEMPLATE)
 	$(call RUN_ALL,UNIT TESTS,$(call UNIT_RUNS,build/test))
 smoke: $(call SMOKE_PROGS,build)
 	$(call RUN_ALL,SMOKE,$(call SMOKE_RUNS,build))
 # One pool for both, so the smokes and the units share the machine's cores.
-check: shared-tests $(call UNIT_RUNS,build/test) $(call SMOKE_PROGS,build)
+check: shared-tests $(call UNIT_RUNS,build/test) $(call SMOKE_PROGS,build) $(AWS_TEMPLATE)
 	$(call RUN_ALL,CHECK,$(call SMOKE_RUNS,build) $(call UNIT_RUNS,build/test))
 
-test-asan: shared-tests-asan $(call UNIT_RUNS,build/asan/test)
+test-asan: shared-tests-asan $(call UNIT_RUNS,build/asan/test) $(AWS_TEMPLATE)
 	$(call RUN_ALL,ASAN UNIT TESTS,$(call UNIT_RUNS,build/asan/test))
 smoke-asan: $(call SMOKE_PROGS,build/asan)
 	$(call RUN_ALL,ASAN SMOKE,$(call SMOKE_RUNS,build/asan))
-check-asan: shared-tests-asan $(call UNIT_RUNS,build/asan/test) $(call SMOKE_PROGS,build/asan)
+check-asan: shared-tests-asan $(call UNIT_RUNS,build/asan/test) $(call SMOKE_PROGS,build/asan) $(AWS_TEMPLATE)
 	$(call RUN_ALL,ASAN CHECK,$(call SMOKE_RUNS,build/asan) $(call UNIT_RUNS,build/asan/test))
 
 # The DynamoDB backend against Amazon's DynamoDB Local: the table made from
@@ -272,7 +282,7 @@ DYNAMO_UNITS := unit_store unit_admin unit_import unit_v1
 # file, for a change that means to.
 DYNAMO_SHAPES := $(CURDIR)/build/dynamo_shapes.raw
 DYNAMO_GOLDEN := providers/aws/test/golden/dynamo_shapes.txt
-check-dynamo: $(addprefix build/test/,$(DYNAMO_UNITS)) build/cbase build/cbase-import build/test/smoke build/test/smoke_matrix
+check-dynamo: $(addprefix build/test/,$(DYNAMO_UNITS)) build/cbase build/cbase-import build/test/smoke build/test/smoke_matrix $(AWS_TEMPLATE)
 	providers/aws/ops/dynamo_local.sh --reset > build/dynamo.env
 	rm -f $(DYNAMO_SHAPES)
 	. ./build/dynamo.env && CBASE_DYNAMO_CAPTURE=$(DYNAMO_SHAPES) build/cbase-import --seed-bots
@@ -292,10 +302,6 @@ bench-dynamo: build/test/bench_dynamo
 	providers/aws/ops/dynamo_local.sh > build/dynamo.env
 	. ./build/dynamo.env && build/test/bench_dynamo
 
-# The Lambda artifact: dist/bootstrap and dist/bootstrap.zip, static Linux
-# arm64, built in a pinned arm64 Alpine container (providers/aws/ops/build_bootstrap.sh).
-bootstrap:
-	providers/aws/ops/build_bootstrap.sh
 
 bench: build/cbase-bench
 
@@ -337,7 +343,7 @@ COV_RUNS := 'build/cov/test/smoke build/cov/cbase' \
             'build/cov/test/smoke_boot build/cov/cbase build/cov/bootstrap' \
             'build/cov/test/smoke_authz build/cov/cbase' \
             $(addprefix build/cov/test/,$(UNITS))
-coverage: $(addprefix build/cov/test/,$(UNITS)) build/cov/cbase build/cov/bootstrap build/cov/test/smoke build/cov/test/smoke_lambda build/cov/test/smoke_matrix build/cov/test/smoke_authz build/cov/test/smoke_boot build/cov/test/smoke_lambda_after build/cov_gate
+coverage: $(AWS_TEMPLATE) $(addprefix build/cov/test/,$(UNITS)) build/cov/cbase build/cov/bootstrap build/cov/test/smoke build/cov/test/smoke_lambda build/cov/test/smoke_matrix build/cov/test/smoke_authz build/cov/test/smoke_boot build/cov/test/smoke_lambda_after build/cov_gate
 	@find build/obj/cov build/obj/cov-kernel -name '*.gcda' -delete
 	@printf '%s\0' $(COV_RUNS) | xargs -0 -P $(COV_JOBS) -n 1 sh -c 'log=build/cov/$$(echo "$$0" | tr " /=" "___").log; eval "$$0" > $$log 2>&1 || { cat $$log; echo "coverage: FAILED: $$0"; exit 1; }'
 	gcovr --root . --object-directory build/obj --gcov-executable '$(COV_GCOV)' --gcov-ignore-parse-errors=all \
@@ -350,6 +356,9 @@ COV_JOBS ?= $(shell getconf _NPROCESSORS_ONLN)
 # The fuzz targets: every <side>/fuzz/fz_*.c (fuzz/fuzz.mk).
 include fuzz/fuzz.mk
 
+print-app:
+	@echo $(APP)
+.PHONY: print-app
 print-kernel-src:
 	@echo $(KERNEL_SRC)
 

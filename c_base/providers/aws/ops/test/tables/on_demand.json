@@ -1,0 +1,1 @@
+{"Table":{"TableName":"ondemand","BillingModeSummary":{"BillingMode":"PAY_PER_REQUEST"},"ProvisionedThroughput":{"ReadCapacityUnits":0,"WriteCapacityUnits":0},"GlobalSecondaryIndexes":[{"IndexName":"g","ProvisionedThroughput":{"ReadCapacityUnits":0,"WriteCapacityUnits":0}}]}}

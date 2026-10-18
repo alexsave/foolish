@@ -1,6 +1,6 @@
-# dynamo_table.py - the DynamoDB table providers/aws/ops/cbase.yaml defines, as AWS CLI input.
+# dynamo_table.py - the DynamoDB table an aws template defines, as AWS CLI input.
 #
-#   python3 -I providers/aws/ops/dynamo_table.py providers/aws/ops/cbase.yaml <table name> <out dir>
+#   python3 -I providers/aws/ops/dynamo_table.py dist/<app>/aws/template.yaml <table name> <out dir>
 #
 # Reads the template's one AWS::DynamoDB::Table resource and writes, into
 # <out dir>:
@@ -136,7 +136,7 @@ def table_resource(path, table):
 
 def main():
     if len(sys.argv) != 4:
-        die("usage: dynamo_table.py <cbase.yaml> <table name> <out dir>")
+        die("usage: dynamo_table.py <template.yaml> <table name> <out dir>")
     path, table, out = sys.argv[1:]
     p = dict(table_resource(path, table))
     create = {}

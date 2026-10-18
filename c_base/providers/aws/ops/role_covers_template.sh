@@ -1,6 +1,8 @@
 #!/bin/bash
-# role_covers_template.sh [cbase.yaml] [github_oidc.yaml]: the GitHub deploy
-# role can apply a code deploy to the stack.
+# role_covers_template.sh [template.yaml] [github_oidc.yaml]: the GitHub deploy
+# role can apply a code deploy to the stack. The template is the app's, as the
+# build writes it (dist/<app>/aws/template.yaml, providers/aws/provider.mk),
+# which is what deploy.sh deploys.
 #
 # lambda_deploy.sh updates the cbase stack's CodeKey on its previous template,
 # and CloudFormation applies that update with the role's credentials: it
@@ -12,7 +14,9 @@
 # this table does not know stops the check: add its read here and to the role.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-tpl="${1:-$here/cbase.yaml}"
+c_base="$(cd "$here/../../.." && pwd)"
+tpl="${1:-$c_base/dist/$(make -s -C "$c_base" print-app)/aws/template.yaml}"
+[ -f "$tpl" ] || { echo "role_covers_template: no $tpl (make -C c_base ${tpl#"$c_base"/})" >&2; exit 1; }
 role="${2:-$here/github_oidc.yaml}"
 
 # Each type's reads, space-separated: all of them must be in the role.

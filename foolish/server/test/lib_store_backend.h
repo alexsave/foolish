@@ -2,7 +2,7 @@
 // Local when CBASE_STORE=dynamo (`make check-dynamo`).
 //
 // Under dynamo every fresh store is its own new table, created from
-// providers/aws/ops/cbase.yaml through providers/aws/ops/dynamo_table.py (the table the stack creates) and
+// the app's aws template (CB_AWS_TEMPLATE) through providers/aws/ops/dynamo_table.py (the table the stack creates) and
 // seeded with the schema's bots as SQLite seeds them, so a test sees the same
 // starting state on both backends. Tables are made only at the endpoint
 // AWS_ENDPOINT_URL_DYNAMODB names, and only when it is an http:// one (a
@@ -25,7 +25,7 @@ cb_store *tsb_open_fresh(const char *sqlite_path);
 // test's PartiQL.
 const char *tsb_table(void);
 
-// Creates DynamoDB table `name` as providers/aws/ops/cbase.yaml defines it, at the local
+// Creates DynamoDB table `name` as the app's aws template (CB_AWS_TEMPLATE) defines it, at the local
 // endpoint. 0, or -1.
 int tsb_create_table(const char *name);
 

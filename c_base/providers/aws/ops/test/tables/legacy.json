@@ -1,0 +1,1 @@
+{"Table":{"TableName":"old","ProvisionedThroughput":{"ReadCapacityUnits":2,"WriteCapacityUnits":1}}}

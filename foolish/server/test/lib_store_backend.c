@@ -40,7 +40,7 @@ int tsb_create_table(const char *name) {
     const char *tmp = getenv("TMPDIR");
     char dir[512], cmd[1400], path[600];
     snprintf(dir, sizeof dir, "%s/cbase-tsb-%d-%s", tmp && *tmp ? tmp : "/tmp", (int)getpid(), name);
-    snprintf(cmd, sizeof cmd, "python3 -I providers/aws/ops/dynamo_table.py providers/aws/ops/cbase.yaml '%s' '%s'", name, dir);
+    snprintf(cmd, sizeof cmd, "python3 -I providers/aws/ops/dynamo_table.py " CB_AWS_TEMPLATE " '%s' '%s'", name, dir);
     if (system(cmd) != 0) { fprintf(stderr, "tsb: %s failed\n", cmd); return -1; }
     snprintf(path, sizeof path, "%s/create.json", dir);
     size_t len = 0;

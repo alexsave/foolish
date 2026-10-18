@@ -1,0 +1,856 @@
+AWSTemplateFormatVersion: "2010-09-09"
+# c_base on AWS: everything an app's backend runs on, in one stack.
+#
+#@# THE SKELETON of the template (docs/PLATFORM.md 8.5): `cbase-describe
+#@# --provider aws` (providers/aws/src/describe.c) fills it from the app's
+#@# descriptor (cbase/app.h) and writes dist/<app>/aws/template.yaml, which is
+#@# what deploy.sh deploys. Its directive lines (a hash and an at sign at the
+#@# start of the line, like these) never reach the output: "if <what>" ... "end"
+#@# keeps the lines between only when the app declares <what> (jobs,
+#@# schedules, topics, cached; "a|b" for either); "schedules",
+#@# "cache_behaviours" and "iot_topics" are replaced by one entry per declared
+#@# schedule, cached path and topic prefix; "#" is a comment. A name between
+#@# two at signs is the descriptor's value (describe.c lists them); any other
+#@# is refused.
+# Written by cbase-describe from providers/aws/ops/app.yaml.in and the app's
+# descriptor: change those, never the written template.
+#
+# Deploy it with providers/aws/ops/deploy.sh, or upload it in the
+# CloudFormation console (Create stack > Upload a template file).
+# c_base/RUNBOOK.md walks through every click, in order.
+#
+# What it makes:
+#   * the DynamoDB table (single-table design, DESIGN.md "Store"), PROVISIONED
+#     inside the always-free 25 WCU / 25 RCU, point-in-time recovery on, TTL
+#     on expires_at;
+#   * the Lambda function (the static arm64 `bootstrap`, ops/package.sh), its
+#     role and its log group;
+#   * a Function URL for the HTTP routes (/v1, /admin, /m, /health);
+#   * realtime over AWS IoT Core (MQTT over WebSocket), when IotEndpoint is set:
+#     the custom authorizer (the same function answers it), the function's
+#     right to publish under u/ and s/, and the /mqtt path at the edge;
+#   * an EventBridge Scheduler schedule per declared schedule;
+#   * a CloudFront distribution at the custom domain, sending /mqtt to IoT
+#     Core and everything else to the Function URL, so the clients see one
+#     origin; it caches exactly the app's declared public reads
+#     (@cached_list@), which the function invalidates
+#     when they change (DESIGN.md "Edge cache");
+#   (GitHub Actions deploys new code through ops/github_oidc.yaml's role, which
+#   holds no other rights here: see that file.)
+#
+# Region: create the stack in us-east-1. The ACM certificate must be in
+# us-east-1 for CloudFront whatever region the stack is in, and keeping
+# everything in one region keeps the runbook to one region selector.
+#
+# Cost at the first app's volume: Lambda, DynamoDB (provisioned capacity; on-demand
+# has no free tier), the Function URL, EventBridge Scheduler, CloudFront and
+# ACM sit inside their always-free allowances; IoT Core bills per million
+# connection-minutes and messages, cents a month at our volume; the code zip in S3 is a
+# few MB; point-in-time recovery bills $0.20 per GB-month of table, a
+# fraction of a cent at our few MB (DESIGN.md "The free tier, provisioned").
+
+Description: c_base, the @app@ backend (Lambda + DynamoDB + CloudFront)
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: "Code" }
+        Parameters: [CodeBucket, CodeKey]
+      - Label: { default: "Secrets (generate each with: openssl rand -base64 32)" }
+        Parameters: [SecretsPrefix, OriginSecret, OriginEnforced]
+      - Label: { default: "Alarms" }
+        Parameters: [AlarmEmail]
+      - Label: { default: "Domain" }
+        Parameters: [DomainName, CertificateArn, AllowedOrigins]
+      - Label: { default: "Names" }
+        Parameters: [FunctionName, TableName]
+      - Label: { default: "Edge cache" }
+        Parameters: [DistributionId]
+      - Label: { default: "Realtime over IoT Core" }
+        Parameters: [IotEndpoint]
+
+Parameters:
+  CodeBucket:
+    Type: String
+    Description: The S3 bucket holding cbase-lambda.zip (ops/package.sh builds it). A provided.al2023 function cannot be created without code, and CloudFormation's inline code works only for Node.js and Python, so the zip goes to S3 first.
+    AllowedPattern: "[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]"
+  CodeKey:
+    Type: String
+    Default: cbase-lambda.zip
+    Description: The object key of the zip in CodeBucket.
+  SecretsPrefix:
+    Type: String
+    Default: /@stack@/
+    AllowedPattern: "/[a-z0-9-]+/"
+    Description: >-
+      The SSM Parameter Store prefix of the function's two secrets, SecureString
+      parameters ops/deploy.sh writes: <prefix>jwt-secret (CBASE_JWT_SECRET, the
+      HS256 key for access tokens) and <prefix>admin-token (CBASE_ADMIN_TOKEN, the
+      console's bearer). The function reads them when a container starts
+      (src/aws/ssm.h); they are not in its environment, which the GitHub deploy
+      role can read. CloudFormation cannot make a SecureString, so the
+      parameters are not resources here.
+  OriginSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: >-
+      CBASE_ORIGIN_SECRET, the value CloudFront adds to every request it sends to
+      the function and the WebSocket API as X-Cbase-Origin. The function refuses
+      anything without it (403), so neither origin hostname can be used to walk
+      around the distribution. At least 32 characters.
+  OriginEnforced:
+    Type: String
+    Default: "yes"
+    AllowedValues: ["yes", "no"]
+    Description: >-
+      "yes": the function refuses a request without the origin header. "no": the
+      header is sent but not checked. Adding or rotating the secret is two
+      deploys: "no" with the new value (CloudFront takes minutes to send it
+      everywhere, the function changes at once), then "yes" (RUNBOOK.md).
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: >-
+      Where the alarms (throttles, errors, concurrency, the table's capacity) are
+      emailed through SNS. Empty: the alarms still exist and show in the
+      console, but nobody is mailed. A new address must confirm the email SNS
+      sends it before anything arrives.
+  DomainName:
+    Type: String
+    Default: @domain@
+    Description: The custom domain clients use. CBASE_PUBLIC_URL becomes https://<this>.
+  CertificateArn:
+    Type: String
+    Description: The ACM certificate for DomainName. It MUST be in us-east-1 (N. Virginia) for CloudFront.
+    AllowedPattern: "arn:aws:acm:us-east-1:[0-9]{12}:certificate/[0-9a-f-]+"
+    ConstraintDescription: an ACM certificate ARN in us-east-1
+  AllowedOrigins:
+    Type: String
+    Default: "*"
+    Description: CBASE_ALLOWED_ORIGINS, "*" or a comma list such as https://example.com,https://www.example.com.
+  FunctionName:
+    Type: String
+    Default: @stack@
+    AllowedPattern: "[a-zA-Z0-9-_]{1,64}"
+  TableName:
+    Type: String
+    Default: @stack@
+    AllowedPattern: "[a-zA-Z0-9_.-]{3,255}"
+  DistributionId:
+    Type: String
+    Default: ""
+    AllowedPattern: "[A-Z0-9]*"
+    Description: >-
+      This stack's own CloudFront distribution id (the DistributionId output), for
+      CBASE_CF_DISTRIBUTION: the function invalidates the cached public reads there.
+      The function cannot name the distribution in front of it without a cycle
+      (Distribution -> FunctionUrl -> Function), so ops/deploy.sh reads it from the
+      stack and passes it back. Empty on a first deploy: nothing is invalidated until
+      the next one, and the cached reads are fresh within their s-maxage meanwhile.
+
+  IotEndpoint:
+    Type: String
+    Default: ""
+    AllowedPattern: "[a-z0-9.-]*"
+    Description: >-
+      This account's AWS IoT Core data endpoint in this region, a host name
+      (aws iot describe-endpoint --endpoint-type iot:Data-ATS; ops/deploy.sh
+      reads it). Set: every push is published to IoT Core over MQTT
+      (CBASE_IOT_ENDPOINT, realtime/rt_iot.h), IoT asks this function to
+      authorize each CONNECT, and /mqtt at the edge reaches IoT. Empty: none
+      of that exists, and the backend has no realtime push.
+
+Conditions:
+  OriginChecked: !Equals [!Ref OriginEnforced, "yes"]
+  HasIot: !Not [!Equals [!Ref IotEndpoint, ""]]
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
+
+Resources:
+  # ---- the store ----------------------------------------------------------------
+  # Keys (DESIGN.md "Store"; src/json_surface.h is the owner and this
+  # must match it exactly): pk/sk on the table, and two indexes, both String
+  # keys, both projecting ALL. gsi1 carries USERGAMES#<user> (the dashboard,
+  # gsi1sk "<updated_at>#<game>" zero-padded so text order is time order),
+  # USERCHAT#, USERREFRESH# and GAMESNAPS#; gsi2 carries USERS, RATINGS, BOTS,
+  # SESSION#<session> and PLAYER#<user>. A topic's connections are plain items
+  # under pk "TOPIC#<topic>" and need no index (a base-table Query is strongly
+  # consistent, so a push right after a join is not missed). TTL deletes items
+  # whose expires_at (epoch SECONDS: DynamoDB's TTL unit) has passed: the CONN
+  # rows and their TOPIC reverse-index rows.
+  #
+  # Capacity: PROVISIONED, because DynamoDB's always-free allowance (25 WCU
+  # and 25 RCU per Region per payer account) is provisioned capacity only and
+  # an on-demand table bills every request unit. The 25 are shared by every
+  # table and every global secondary index in the account and Region, and each
+  # index has its own provisioned throughput (minimum 1). The split, 15 to the
+  # table and 5 to each index, with the arithmetic behind it, is DESIGN.md
+  # "The free tier, provisioned"; test/unit_dynamo.c fails when these six
+  # numbers add up to more than 25 a side. No auto scaling: it would scale
+  # past the free 25. A sustained overload is throttled (and retried, then
+  # failed, store_dynamo.c), never billed.
+  Table:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PROVISIONED
+      ProvisionedThroughput: { ReadCapacityUnits: @table_read@, WriteCapacityUnits: @table_write@ }
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+        - { AttributeName: gsi1pk, AttributeType: S }
+        - { AttributeName: gsi1sk, AttributeType: S }
+        - { AttributeName: gsi2pk, AttributeType: S }
+        - { AttributeName: gsi2sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - { AttributeName: gsi1pk, KeyType: HASH }
+            - { AttributeName: gsi1sk, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+          ProvisionedThroughput: { ReadCapacityUnits: @index_read@, WriteCapacityUnits: @index_write@ }
+        - IndexName: gsi2
+          KeySchema:
+            - { AttributeName: gsi2pk, KeyType: HASH }
+            - { AttributeName: gsi2sk, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+          ProvisionedThroughput: { ReadCapacityUnits: @index_read@, WriteCapacityUnits: @index_write@ }
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  # ---- the function ---------------------------------------------------------------
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${FunctionName}"
+      RetentionInDays: 30
+
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cbase
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Table
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                  # TransactWriteItems is authorized per item, by the actions
+                  # above and this one; it is not an IAM action of its own.
+                  - dynamodb:ConditionCheckItem
+                  - dynamodb:DescribeTable
+                  # The console's Query panel (ExecuteStatement).
+                  - dynamodb:PartiQLSelect
+                  - dynamodb:PartiQLInsert
+                  - dynamodb:PartiQLUpdate
+                  - dynamodb:PartiQLDelete
+                Resource:
+                  - !GetAtt Table.Arn
+                  - !Sub "${Table.Arn}/index/*"
+#@if topics
+              # Realtime over IoT Core: publish under the prefixes of the app's
+              # topic families (realtime.h: u/<user>/... and s/<doc>), nothing else.
+              - !If
+                - HasIot
+                - Sid: IotPublish
+                  Effect: Allow
+                  Action: iot:Publish
+                  Resource:
+#@iot_topics
+                - !Ref AWS::NoValue
+#@end
+#@if jobs
+              - Sid: SelfInvoke   # a job's async start (jobs.h cb_job_start)
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${FunctionName}"
+#@end
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${LogGroup.Arn}:*"
+              # The two secrets (src/aws/ssm.h), read at container start. They
+              # are SecureStrings under the AWS-managed aws/ssm key, whose key
+              # policy lets SSM decrypt for any principal of the account that
+              # may read the parameter: no kms statement is needed.
+              - Sid: Secrets
+                Effect: Allow
+                Action: ssm:GetParameters
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPrefix}*"
+
+#@if cached
+  # The one CloudFront right the function holds: invalidating its own
+  # distribution's cached public reads (app/edge.h). A policy of its own, not a
+  # statement in FunctionRole, so the role does not depend on the distribution
+  # (Distribution -> FunctionUrl -> Function -> FunctionRole would be a cycle).
+  EdgeInvalidationPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: edge-invalidation
+      Roles: [!Ref FunctionRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: cloudfront:CreateInvalidation
+            Resource: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+#@end
+
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      Description: c_base, the @app@ backend (static arm64 bootstrap)
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      Handler: bootstrap
+      MemorySize: 256
+      Timeout: 60
+      # The most invocations that run at once (free to set). It is the ceiling
+      # on what a flood can bill: at 30 x 256 MB a day of saturation is about
+      # 650k GB-seconds, under $9, against about $290 at the account's 1000.
+      # The peak measured over two weeks, benches included, was 10 (CloudWatch
+      # ConcurrentExecutions, 2026-10-03..17); a bot drive and a request's
+      # pushes each hold one slot. A request past it is throttled (429), and
+      # the Throttles alarm below says so.
+      ReservedConcurrentExecutions: 30
+      Role: !GetAtt FunctionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      LoggingConfig:
+        LogGroup: !Ref LogGroup
+        LogFormat: Text
+      Environment:
+        Variables:
+          CBASE_STORE: dynamo
+          CBASE_TABLE: !Ref Table
+          # The JWT secret and the admin token are read from SSM, not set here.
+          CBASE_SECRETS_SSM: !Ref SecretsPrefix
+          CBASE_ALLOWED_ORIGINS: !Ref AllowedOrigins
+          CBASE_PUBLIC_URL: !Sub "https://${DomainName}"
+#@if topics
+          # Every push is published here, over MQTT (realtime/rt_iot.h); "" for none.
+          CBASE_IOT_ENDPOINT: !Ref IotEndpoint
+#@end
+          CBASE_LOG_LEVEL: info
+          # The edge cache's invalidations go here (app/edge.h).
+          CBASE_CF_DISTRIBUTION: !Ref DistributionId
+          # Requests that did not come through the distribution are refused (config.h).
+          CBASE_ORIGIN_SECRET: !If [OriginChecked, !Ref OriginSecret, ""]
+
+  # ---- the HTTP front: a Function URL ---------------------------------------------
+  # AuthType NONE and no CORS block: the function answers CORS itself
+  # (net/router.h), as the edge functions did. NONE is not open: every request
+  # must carry the distribution's X-Cbase-Origin (CBASE_ORIGIN_SECRET), so a
+  # direct hit costs one invocation that answers 403 and touches nothing.
+  # (CloudFront Origin Access Control with AuthType AWS_IAM was weighed and
+  # not taken: CloudFront then signs every request and overwrites the
+  # clients' Authorization: Bearer header, and Lambda refuses a POST whose
+  # body hash the viewer did not compute into x-amz-content-sha256, so every
+  # client and the console would have to change how they authenticate. Its
+  # one gain, a direct hit never invoking the function, buys nothing while
+  # the same flood sent through CloudFront invokes it all the same.)
+  FunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt Function.Arn
+      AuthType: NONE
+
+  # A public Function URL needs both statements (AWS, October 2025): the URL
+  # permission, and InvokeFunction limited to calls that come through the URL.
+  FunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  FunctionUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+#@if topics
+  # ---- realtime: AWS IoT Core, MQTT over WebSocket ----------------------------------
+  # IoT Core holds the MQTT connections and their subscriptions; at each
+  # CONNECT it asks this same function (main_lambda.c, CB_EVENT_IOT_AUTH), which
+  # verifies the access token and answers a policy for that user alone:
+  # subscribe and receive under u/<user>/ and s/, connect as client id
+  # <user>-*, never publish (realtime/stream_mqtt.h). Signing is off: a browser
+  # cannot sign a WebSocket URL, and the token itself is the credential. The
+  # name reaches IoT as the x-amz-customauthorizer-name parameter the edge adds
+  # (MqttAuthorizerName below), so no client knows it.
+  IotAuthorizer:
+    Type: AWS::IoT::Authorizer
+    Condition: HasIot
+    Properties:
+      AuthorizerName: !Sub "${FunctionName}-stream"
+      AuthorizerFunctionArn: !GetAtt Function.Arn
+      SigningDisabled: true
+      EnableCachingForHttp: false
+      Status: ACTIVE
+
+  IotAuthorizerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasIot
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !GetAtt IotAuthorizer.Arn
+#@end
+
+#@if schedules
+  # ---- the schedules: one per schedule the app declares ----------------------------
+  # Each one's payload is the JSON string literal of its name, "scan" say
+  # (c_base_brief_lambda.md, decision record): valid JSON for Lambda, read by
+  # stripping two quotes (event.h cb_event_job_payload).
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+      Policies:
+        - PolicyName: invoke
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt Function.Arn
+
+#@schedules
+#@end
+
+  # ---- the front door: CloudFront at the custom domain ----------------------------
+#@if topics
+  # Names the IoT custom authorizer on an MQTT connection's upgrade
+  # (x-amz-customauthorizer-name), so clients open plain /mqtt, the same path
+  # `cbase serve` answers, and the authorizer's name stays in this template.
+  MqttAuthorizerName:
+    Type: AWS::CloudFront::Function
+    Condition: HasIot
+    Properties:
+      Name: !Sub "${FunctionName}-mqtt-authorizer"
+      AutoPublish: true
+      FunctionConfig:
+        Comment: /mqtt -> IoT Core with the custom authorizer named
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        function handler(event) {
+          var request = event.request;
+          request.querystring['x-amz-customauthorizer-name'] = { value: '${FunctionName}-stream' };
+          return request;
+        }
+#@end
+
+#@if cached
+  # The app's public reads (its cached paths): the same bytes for every
+  # caller, so the key is the path alone. No header, cookie or query string is
+  # in it: Authorization is never part of the key (nor sent on), and a query
+  # string cannot split the cache or walk past it to the origin (no client
+  # sends one). The TTL is the origin's s-maxage, capped at a day; an answer
+  # without one (a refusal says no-store) is not kept.
+  PublicReadsCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "${FunctionName}-public-reads"
+        Comment: @cached_list@, keyed on the path only
+        MinTTL: 0
+        DefaultTTL: 0
+        MaxTTL: 86400
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          HeadersConfig: { HeaderBehavior: none }
+          CookiesConfig: { CookieBehavior: none }
+          QueryStringsConfig: { QueryStringBehavior: none }
+#@end
+
+  # CloudFront's own timing of every API answer, in a Server-Timing header
+  # (free): cdn-upstream-connect (a new connection to the Function URL, else
+  # 0), cdn-upstream-fbl (the origin's first byte), cdn-downstream-fbl, the
+  # POP and the layer. It is how the edge's share of a move is measured
+  # (c_base/docs/BENCH_VM_VS_DYNAMO.md): about 30% of requests through the
+  # edge took 25 to 30 ms more than the same request to the Function URL,
+  # with the Lambda's own time unchanged.
+  ServerTimingPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub "${FunctionName}-server-timing"
+        Comment: CloudFront's timing of each API answer (Server-Timing)
+        ServerTimingHeadersConfig:
+          Enabled: true
+          SamplingRate: 100
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "c_base ${DomainName}"
+        Enabled: true
+        Aliases: [!Ref DomainName]
+        HttpVersion: http2
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: function
+            # https://<id>.lambda-url.<region>.on.aws/ -> the host name.
+            DomainName: !Select [2, !Split ["/", !GetAtt FunctionUrl.FunctionUrl]]
+            OriginCustomHeaders:
+              - { HeaderName: X-Cbase-Origin, HeaderValue: !Ref OriginSecret }
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+              # The function's Timeout (60 s), so CloudFront never gives up
+              # on an answer the Lambda is still allowed to send.
+              OriginReadTimeout: 60
+              # How long CloudFront keeps an idle connection to the Function
+              # URL. The default, 5 s, is shorter than the usual gap between
+              # requests at our traffic, so most requests paid a new TCP + TLS
+              # handshake to the origin (about 45 ms at p50, measured with
+              # `cbase-bench spaced`). 60 is the most without a quota request.
+              OriginKeepaliveTimeout: 60
+#@if topics
+          # IoT Core's MQTT over WebSocket (path /mqtt). The authorizer refuses a
+          # CONNECT without X-Cbase-Origin (realtime/rt_iot.c), so IoT's own
+          # host cannot be used to walk around the edge either.
+          - !If
+            - HasIot
+            - Id: iot
+              DomainName: !Ref IotEndpoint
+              OriginCustomHeaders:
+                - { HeaderName: X-Cbase-Origin, HeaderValue: !Ref OriginSecret }
+              CustomOriginConfig:
+                OriginProtocolPolicy: https-only
+                OriginSSLProtocols: [TLSv1.2]
+            - !Ref AWS::NoValue
+#@end
+        # Nothing else is cached (CachingDisabled), and every viewer header, cookie
+        # and query string but Host reaches the origin (AllViewerExceptHostHeader):
+        # the Function URL and IoT Core each require their own Host, and the
+        # WebSocket handshake needs its Sec-WebSocket-* headers and the query.
+        DefaultCacheBehavior:
+          TargetOriginId: function
+          ViewerProtocolPolicy: https-only
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+          ResponseHeadersPolicyId: !Ref ServerTimingPolicy
+#@if cached|topics
+#@if cached
+        # The public reads: cached (PublicReadsCachePolicy), and only the CORS
+        # request headers reach the function (Managed-CORS-CustomOrigin), so a
+        # browser's preflight is still answered; the Host stays the origin's.
+#@end
+        CacheBehaviors:
+#@cache_behaviours
+#@if topics
+          # MQTT over WebSocket to IoT Core: nothing cached, every viewer header
+          # (the upgrade's Sec-WebSocket-* and the mqtt subprotocol) and the
+          # query reach it, the Host becomes IoT's.
+          - !If
+            - HasIot
+            - PathPattern: /mqtt*
+              TargetOriginId: iot
+              ViewerProtocolPolicy: https-only
+              AllowedMethods: [GET, HEAD]
+              CachedMethods: [GET, HEAD]
+              Compress: false
+              CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+              FunctionAssociations:
+                - EventType: viewer-request
+                  FunctionARN: !GetAtt MqttAuthorizerName.FunctionMetadata.FunctionARN
+            - !Ref AWS::NoValue
+#@end
+#@end
+
+  # ---- alarms: CloudWatch, emailed through SNS ---------------------------------------
+  # Ten alarm metrics, CloudWatch's always-free allowance (10 standard-resolution
+  # alarm metrics; each alarm below watches one), and an SNS email topic (1,000
+  # emails a month free). Each says something is being spent that should not
+  # be: the function's ceiling, its errors, a flood, or the table's free units
+  # nearly gone (a throttled table refuses every player's moves, H2).
+  # Adding an alarm here means taking one out.
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${FunctionName}-alarms"
+      DisplayName: c_base alarms
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # The topic takes alarms from this account's CloudWatch only.
+  AlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref AlarmTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudwatch.amazonaws.com }
+            Action: sns:Publish
+            Resource: !Ref AlarmTopic
+            Condition:
+              ArnLike: { "aws:SourceArn": !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:*" }
+
+  # 1. Any invocation refused for the concurrency ceiling.
+  AlarmThrottles:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${FunctionName}-lambda-throttles"
+      AlarmDescription: Invocations were refused at the reserved concurrency (a flood, or the ceiling is too low).
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions: [{ Name: FunctionName, Value: !Ref Function }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # 2. Invocations that failed (an event that did not decode, a handler that could not answer).
+  AlarmErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${FunctionName}-lambda-errors"
+      AlarmDescription: More than 5 failed invocations in 5 minutes.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref Function }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # 3. Near the ceiling: 20 of the 30 at once.
+  AlarmConcurrency:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${FunctionName}-lambda-concurrency"
+      AlarmDescription: 20 or more invocations at once (the reserved ceiling is 30; the normal peak is under 10).
+      Namespace: AWS/Lambda
+      MetricName: ConcurrentExecutions
+      Dimensions: [{ Name: FunctionName, Value: !Ref Function }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      Threshold: 20
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # 4. Server errors answered through the Function URL (the API's 5xx).
+  AlarmUrl5xx:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${FunctionName}-url-5xx"
+      AlarmDescription: More than 10 5xx answers from the Function URL in 5 minutes (503 BUSY is the table throttled).
+      Namespace: AWS/Lambda
+      MetricName: Url5xxCount
+      Dimensions: [{ Name: FunctionName, Value: !Ref Function }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # 5. A flood: Lambda's free allowance is 1M requests a month, about 115 per
+  # 5 minutes on average; this is far above the first app's traffic.
+  AlarmInvocations:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${FunctionName}-lambda-invocations"
+      AlarmDescription: More than 6000 invocations in 5 minutes (20 a second sustained); a flood or a loop.
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions: [{ Name: FunctionName, Value: !Ref Function }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 6000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # 6-9. The table's provisioned units nearly spent: consumed over 5 minutes
+  # against 80% of 300 s x the provisioned rate (table 15/15, each index 5 WCU).
+  AlarmTableWrites:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${FunctionName}-ddb-table-writes"
+      AlarmDescription: The table used over 80% of its @table_write@ provisioned WCU for 5 minutes.
+      Namespace: AWS/DynamoDB
+      MetricName: ConsumedWriteCapacityUnits
+      Dimensions: [{ Name: TableName, Value: !Ref Table }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: @table_write_alarm@
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  AlarmTableReads:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${FunctionName}-ddb-table-reads"
+      AlarmDescription: The table used over 80% of its @table_read@ provisioned RCU for 5 minutes.
+      Namespace: AWS/DynamoDB
+      MetricName: ConsumedReadCapacityUnits
+      Dimensions: [{ Name: TableName, Value: !Ref Table }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: @table_read_alarm@
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  AlarmGsi1Writes:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${FunctionName}-ddb-gsi1-writes"
+      AlarmDescription: Index gsi1 used over 80% of its @index_write@ provisioned WCU for 5 minutes (a throttled index throttles the table's writes).
+      Namespace: AWS/DynamoDB
+      MetricName: ConsumedWriteCapacityUnits
+      Dimensions:
+        - { Name: TableName, Value: !Ref Table }
+        - { Name: GlobalSecondaryIndexName, Value: gsi1 }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: @index_write_alarm@
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  AlarmGsi2Writes:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${FunctionName}-ddb-gsi2-writes"
+      AlarmDescription: Index gsi2 used over 80% of its @index_write@ provisioned WCU for 5 minutes (a throttled index throttles the table's writes).
+      Namespace: AWS/DynamoDB
+      MetricName: ConsumedWriteCapacityUnits
+      Dimensions:
+        - { Name: TableName, Value: !Ref Table }
+        - { Name: GlobalSecondaryIndexName, Value: gsi2 }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: @index_write_alarm@
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # 10. Writes actually refused (the table's, which an index's throttle causes too).
+  AlarmWriteThrottles:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${FunctionName}-ddb-write-throttles"
+      AlarmDescription: The table refused writes for capacity (players see 503 BUSY on moves).
+      Namespace: AWS/DynamoDB
+      MetricName: WriteThrottleEvents
+      Dimensions: [{ Name: TableName, Value: !Ref Table }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+Outputs:
+  FunctionUrl:
+    Description: The Function URL (the HTTP routes, before CloudFront).
+    Value: !GetAtt FunctionUrl.FunctionUrl
+  DistributionDomain:
+    Description: Point the DNS CNAME for DomainName here.
+    Value: !GetAtt Distribution.DomainName
+  DistributionId:
+    Description: The distribution's id; ops/deploy.sh passes it back as the DistributionId parameter.
+    Value: !Ref Distribution
+  TableName:
+    Value: !Ref Table
+#@if topics
+  IotAuthorizerName:
+    Condition: HasIot
+    Description: The IoT Core custom authorizer the edge names on /mqtt.
+    Value: !Ref IotAuthorizer
+#@end
+  FunctionName:
+    Value: !Ref Function
+  PublicUrl:
+    Description: The backend URL the web and iOS clients use (NEXT_PUBLIC_BACKEND_URL, BACKEND_URL).
+    Value: !Sub "https://${DomainName}"
