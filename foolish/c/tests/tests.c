@@ -19383,10 +19383,13 @@ static void test_table_composed_boards_round_trip(void) {
           "the viewer's seat, the title and the status");
     CHECK(v->my_hand_count == 3 && card_is(v->my_hand[0], SUIT_HEARTS, 5) && card_is(v->my_hand[1], SUIT_HEARTS, 6)
           && card_is(v->my_hand[2], SUIT_SPADES, 11), "seat 0's hand, in order");
-    CHECK(v->seats[0].awaiting_attack && v->seats[0].status == PLAYER_STATUS_IN && v->seats[0].hand_count == 3 && !v->seats[0].is_ai
+    // Seat 0 is flagged awaiting AND has said good: a board says the kernel's
+    // one reading of the flag (game.h game_seat_awaiting), and a seat whose
+    // good stands is not being asked to throw in.
+    CHECK(!v->seats[0].awaiting_attack && v->seats[0].status == PLAYER_STATUS_IN && v->seats[0].hand_count == 3 && !v->seats[0].is_ai
           && v->seats[1].is_ai && v->seats[1].status == PLAYER_STATUS_IN && v->seats[1].hand_count == 2
           && !v->seats[2].is_ai && v->seats[2].status == PLAYER_STATUS_IN && v->seats[2].hand_count == 1,
-          "each seat's status, hand count and kind, and the viewer awaiting an attack");
+          "each seat's status, hand count and kind, and the viewer not asked while its good stands");
     CHECK(v->num_battles == 2 && card_is(v->battles[0].attack, SUIT_CLUBS, 6) && card_is(v->battles[0].defense, SUIT_CLUBS, 7)
           && card_is(v->battles[1].attack, SUIT_SPADES, 8) && card_is_none(v->battles[1].defense), "the battles, one covered");
     CHECK(v->deck_count == 2 && v->has_flipped && card_is(v->flipped, SUIT_SPADES, 13) && v->power_suit == SUIT_SPADES,
