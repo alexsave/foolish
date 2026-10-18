@@ -163,16 +163,18 @@ export class NetClient {
     streamOpened(): void { this.ex.wasm_net_stream_opened(Date.now()); }
     /** The socket closed: how long to wait before reopening it, in ms. */
     streamClosed(): number { return this.ex.wasm_net_stream_closed(Date.now()); }
-    /** One frame as it arrived; then events() says what it changed. */
+    /** One frame as it arrived (a text frame is not the broker's); then events() says what it changed. */
     streamIn(frame: Uint8Array | string): void {
         const n = this.put(typeof frame === 'string' ? enc.encode(frame) : frame);
         this.ex.wasm_net_stream_in(Math.max(n, 0), typeof frame === 'string' ? 1 : 0, Date.now());   // too long: a bad frame
     }
-    /** The next frame to send as text, or null for none now. */
-    streamNext(): string | null {
+    /** The next message to send as one binary frame, or null for none now. */
+    streamNext(): Uint8Array | null {
         const p = this.ex.wasm_net_stream_next(Date.now());
-        return p ? N.readNcOut(this.m(), p).text : null;
+        return p ? new Uint8Array(N.readNcOut(this.m(), p).bytes) : null;
     }
+    /** The WebSocket subprotocol the stream speaks: MQTT over WebSocket's own name (MQTT 3.1.1, 6.0). */
+    streamProtocol(): string { return 'mqtt'; }
 }
 
 let shared: NetClient | null = null;

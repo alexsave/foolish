@@ -36,7 +36,7 @@ final class Stream {
     /// Sends every frame the client has for the socket.
     func send() {
         guard let task else { return }
-        while let text = NetClient.streamNext() { task.send(.string(text)) { _ in } }
+        while let bytes = NetClient.streamNext() { task.send(.data(bytes)) { _ in } }
     }
 
     /// What the client says changed, to the game it is of.
@@ -46,7 +46,7 @@ final class Stream {
 
     private func open() {
         guard task == nil, let url = Backend.shared.streamURL else { return }
-        let t = URLSession.shared.webSocketTask(with: url)
+        let t = URLSession.shared.webSocketTask(with: url, protocols: [NetClient.streamProtocol])
         task = t
         t.resume()
         NetClient.streamOpened()
