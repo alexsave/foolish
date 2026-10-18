@@ -67,7 +67,7 @@ static int roundtrip(const CnMsg *m, const char *what)
     CHECK(e == CN_EOK, "%s: decodes (%d)", what, e);
     int n2 = cn_msg_encode(&D, buf2, sizeof buf2);
     CHECK(n2 == n && !memcmp(buf, buf2, (size_t)n), "%s: re-encodes to its own bytes", what);
-    if (m->phase != CN_PHASE_WAITING)
+    if (m->w.phase != CN_PHASE_WAITING)
         CHECK(cn_hash(&D.game) == cn_hash(&m->game) && !memcmp(D.game.dice, m->game.dice, sizeof D.game.dice),
               "%s: the same game, the same dice", what);
     int t = cn_msg_text_encode(m, text, sizeof text);
@@ -114,7 +114,7 @@ static void test_worst_case(void)
     TEST("the worst case fits MSMessage.url");
     for (int n = 2; n <= 6; n++) {
         CHECK(table(&M, 77 + (uint32_t)n, n, 0, 1), "n %d: a table of 48-byte names", n);
-        for (int s = 0; s < n; s++) CHECK(M.seat[s].name_len == 48, "48 bytes");
+        for (int s = 0; s < n; s++) CHECK(M.w.seat[s].name_len == 48, "48 bytes");
         while (M.game.phase == CN_PH_BIDDING || M.game.phase == CN_PH_REVEALED) if (!cn_apply(&M.game, M.game.turn, long_move(&M.game))) break;
         CHECK(M.game.hist_n == CN_MAX_MOVES_OF(n), "the longest game");
         int t = roundtrip(&M, "the longest game");
@@ -262,7 +262,7 @@ static void test_tamper(void)
     {
         CnGame g;
         uint8_t seed[32];
-        memcpy(seed, M.seed, 32);
+        memcpy(seed, M.w.seed, 32);
         cn_new(&g, seed, 3);
         int nm = cn_legal(&g, 0, 0);
         uint8_t v[8] = { 1 };
@@ -280,13 +280,13 @@ static void test_tamper(void)
     while (M.game.phase == CN_PH_BIDDING || M.game.phase == CN_PH_REVEALED) if (!cn_apply(&M.game, M.game.turn, bot_move(&M.game))) break;
     int len = cn_code_encode(&M.game, buf, sizeof buf);
     CnGame out;
-    CHECK(!cn_code_decode(&out, M.seed, 2, M.game.hist_n + 1, buf, len), "nothing after the end");
+    CHECK(!cn_code_decode(&out, M.w.seed, 2, M.game.hist_n + 1, buf, len), "nothing after the end");
     /* the roster */
     table(&M, 33, 3, 0, 0);
-    M.seat[2] = M.seat[1];
+    M.w.seat[2] = M.w.seat[1];
     CHECK(cn_msg_encode(&M, buf, sizeof buf) == CN_EROSTER, "a duplicate seat refused at encode");
     table(&M, 33, 3, 0, 0);
-    M.seat[1].name_len = 0;
+    M.w.seat[1].name_len = 0;
     CHECK(cn_msg_encode(&M, buf, sizeof buf) == CN_EROSTER, "an empty name refused");
 }
 
@@ -306,7 +306,7 @@ static void test_lobby(void)
         if (s == 5) {
             E = M;
             CHECK(cn_msg_join_start(&E, tag, (const uint8_t *)NM[s], (int)strlen(NM[s])) == 5, "the sixth joins and starts");
-            CHECK(E.phase == CN_PHASE_LIVE && E.game.n == 6 && E.starter == 5, "six seats, started by the joiner");
+            CHECK(E.w.phase == CN_PHASE_LIVE && E.game.n == 6 && E.w.starter == 5, "six seats, started by the joiner");
         }
         CHECK(cn_msg_join(&M, tag, (const uint8_t *)NM[s], (int)strlen(NM[s])) == s, "seat %d", s);
         CHECK(cn_msg_offered(&M, s) == (s == 5 ? CN_LOBBY_START : CN_LOBBY_WAITING), "the newest joiner waits unless full");
@@ -317,7 +317,7 @@ static void test_lobby(void)
     CHECK(cn_msg_join(&M, tag, (const uint8_t *)"Gus", 3) == CN_EREFUSED, "no seventh");
     tag_of(seed, 1, tag);
     E = M;
-    CHECK(cn_msg_leave(&E, 1) == CN_EOK && E.n_seats == 5 && !memcmp(E.seat[1].name, "Cy", 2), "a leave moves later rows down");
+    CHECK(cn_msg_leave(&E, 1) == CN_EOK && E.w.n_seats == 5 && !memcmp(E.w.seat[1].name, "Cy", 2), "a leave moves later rows down");
     CHECK(cn_msg_join(&E, tag, (const uint8_t *)"Cy", 2) == CN_EROSTER, "a taken name refused");
     CnEvent ev[16];
     int k = cn_msg_plan_lobby(&M, &E, ev, 16);
@@ -336,8 +336,8 @@ static void test_prefer(void)
     TEST("Rule P and common moves");
     table(&M, 404, 3, 0, 0);
     CnMsg lobby = M;
-    lobby.phase = CN_PHASE_WAITING;
-    lobby.starter = CN_SEAT_NONE;
+    lobby.w.phase = CN_PHASE_WAITING;
+    lobby.w.starter = CN_SEAT_NONE;
     cn_apply(&M.game, 0, bid(2, 2));
     CnMsg a = M, b = M;
     cn_apply(&a.game, 1, bid(3, 3));
@@ -360,7 +360,7 @@ static void test_resolve(void)
     table(&M, 505, 3, 0, 0);
     uint8_t tag[CN_TAG_LEN];
     int by;
-    tag_of(M.seed, 2, tag);
+    tag_of(M.w.seed, 2, tag);
     CHECK(cn_msg_resolve(&M, -1, cn_msg_seat_of_tag(&M, tag), 0, CN_SENT_UNKNOWN, 0, 0, &by) == 2 && by == CN_BY_TAG, "the tag");
     CHECK(cn_msg_resolve(&M, 1, 2, 0, CN_SENT_UNKNOWN, 0, 0, &by) == 1 && by == CN_BY_RECORD, "the record first");
     CHECK(cn_msg_resolve(&M, -1, -1, 0, 1, 0, 0, &by) == 0 && by == CN_BY_SENDER, "I sent the start: the starter");
@@ -418,8 +418,8 @@ static void test_records(void)
     for (int i = 0; i < CN_REC_MAX; i++) {
         CnMsg g;
         table(&g, 800 + i, 2, 0, 0);
-        cn_game_id(g.seed, v1 + i * CN_REC_LEN_V1);
-        memcpy(v1 + i * CN_REC_LEN_V1 + 8, g.seat[i % 2].tag, CN_TAG_LEN);
+        cn_game_id(g.w.seed, v1 + i * CN_REC_LEN_V1);
+        memcpy(v1 + i * CN_REC_LEN_V1 + 8, g.w.seat[i % 2].tag, CN_TAG_LEN);
     }
     bn = cn_rec_load(back, v1, (int)sizeof v1);
     CHECK(bn == CN_REC_BYTES, "a full first-form store loads every game");

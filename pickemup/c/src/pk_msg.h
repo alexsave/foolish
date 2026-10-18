@@ -50,14 +50,14 @@
 #include "pk_lobby.h"
 #include "pk_plan.h"
 #include "pk_code.h"
-#include "../../../shared/c/msg_seat_tag/msg_seat_tag.h"
+#include "../../../shared/c/msg_whole/msg_whole.h"
 
 #define PK_MSG_MAGIC      0xB9
 #define PK_MSG_FORMAT     1
 
-#define PK_PHASE_WAITING  0
-#define PK_PHASE_LIVE     2
-#define PK_PHASE_FINISHED 3
+#define PK_PHASE_WAITING  MSG_WHOLE_WAITING
+#define PK_PHASE_LIVE     MSG_WHOLE_LIVE
+#define PK_PHASE_FINISHED MSG_WHOLE_FINISHED
 
 #define PK_FLAG_DM        0x01
 #define PK_FLAG_TIP_SAID  0x02
@@ -67,47 +67,47 @@
 #define PK_TAG_LEN        MSG_SEAT_TAG_LEN
 #define PK_NAME_MAX_BYTES MSG_SEAT_NAME_MAX_BYTES  /* D23 */
 #define PK_NAME_MAX_CHARS MSG_SEAT_NAME_MAX_CHARS  /* D23; the seat-name clipping cap */
-#define PK_CHECK_LEN      2
-#define PK_HEAD_LEN       44
-#define PK_ROW_MAX        (PK_TAG_LEN + 1 + PK_NAME_MAX_BYTES)
+#define PK_CHECK_LEN      MSG_WHOLE_CHECK_LEN
+#define PK_HEAD_LEN       MSG_WHOLE_HEAD_LEN(2)   /* 44 */
+#define PK_ROW_MAX        MSG_WHOLE_ROW_MAX
 #define PK_MSG_MAX_BYTES  (PK_HEAD_LEN + PK_MAX_SEATS * PK_ROW_MAX + PK_CHECK_LEN + PK_CODE_MAX)
 /* "?m=" + base32 + NUL */
-#define PK_MSG_MAX_TEXT   (3 + (PK_MSG_MAX_BYTES * 8 + 4) / 5 + 1)
+#define PK_MSG_MAX_TEXT   MSG_WHOLE_TEXT_LEN(PK_MSG_MAX_BYTES)
 
 /* EVERY GAME FITS ONE MESSAGE (D23, 4.5): the capped worst case, every name
  * at 48 bytes and the body at its bound, is under the 5,000 characters Apple
  * documents for MSMessage.url. Raise a cap past this and the build stops. */
 _Static_assert(PK_MSG_MAX_TEXT - 1 < 5000, "the capped worst case fits MSMessage.url");
 
-/* Errors (4.3). */
-#define PK_EOK      0
-#define PK_ESHORT  -1    /* the buffer ends inside the header or the roster  */
-#define PK_EMAGIC  -2    /* not one of ours                                  */
-#define PK_EFORMAT -3    /* a format this build does not know                */
-#define PK_EFLAGS  -4    /* a reserved flag bit, or a flag the phase forbids */
-#define PK_ECHECK  -5    /* the check does not match: cut or edited          */
-#define PK_EGAME   -6    /* the body does not replay, or disagrees with the header */
-#define PK_EROSTER -7    /* empty or long name, duplicate tag or name, seats out of range */
-#define PK_ECAP    -8    /* output buffer too small                          */
-#define PK_ETEXT   -9    /* no "m=" in the text, or it is not base32         */
-#define PK_EREFUSED -10  /* a lobby or seat verdict said no (not a wire error, D41) */
+/* Errors (4.3), each one msg_whole.h says. */
+#define PK_EOK      MSG_WHOLE_EOK
+#define PK_ESHORT   MSG_WHOLE_ESHORT
+#define PK_EMAGIC   MSG_WHOLE_EMAGIC
+#define PK_EFORMAT  MSG_WHOLE_EFORMAT
+#define PK_EFLAGS   MSG_WHOLE_EFLAGS
+#define PK_ECHECK   MSG_WHOLE_ECHECK
+#define PK_EGAME    MSG_WHOLE_EGAME
+#define PK_EROSTER  MSG_WHOLE_EROSTER
+#define PK_ECAP     MSG_WHOLE_ECAP
+#define PK_ETEXT    MSG_WHOLE_ETEXT
+#define PK_EREFUSED MSG_WHOLE_EREFUSED
 
 /* A roster row, shared/c/msg_seat_tag's: the tag is
  * SHA-256("pickemup.seat.1|" || seed || id)[0..9), then a 1..48-byte UTF-8 name. */
 typedef MsgSeat PkSeat;
+_Static_assert(PK_MAX_SEATS <= MSG_WHOLE_MAX_SEATS, "the shared roster seats the whole table");
+_Static_assert(PK_HEAD_LEN == 44, "the head is format 1's");
 
 typedef struct {
-    uint8_t  phase;                   /* PK_PHASE_*                                  */
-    uint8_t  dm;
-    uint8_t  left;                    /* WAITING: the newest lobby bubble was a leave */
+    MsgWhole w;                       /* the roster half: phase, dm, left, lobby_rev,
+                                         n_seats, starter, seed, seat[] (msg_whole.h) */
     uint8_t  tip_said;                /* derived: the newest bubble said it          */
-    uint16_t lobby_rev;
-    uint8_t  n_seats;
-    uint8_t  starter;                 /* PK_SEAT_NONE while WAITING                  */
-    uint8_t  seed[32];
-    PkSeat   seat[PK_MAX_SEATS];
     PkGame   game;                    /* the table once started (phase LIVE / FINISHED) */
 } PkMsg;
+
+/* This product's envelope: its salts, magic, flags, counters and caps
+ * (shared/c/msg_whole). */
+extern const MsgWholeSpec PK_MSG_SPEC;
 
 /* ------------------------------------------------------------- identity */
 

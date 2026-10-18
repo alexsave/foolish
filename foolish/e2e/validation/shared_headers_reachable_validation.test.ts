@@ -171,6 +171,7 @@ test('the shared sources compile with no -I whatsoever', () => {
         'shared/c/stats/stats_test.c',  // stats.h, seed_hash.h
         'shared/c/msg_seat_tag/msg_seat_tag.c',
         'shared/c/msg_lobby_roster/msg_lobby_roster.c',
+        'shared/c/msg_whole/msg_whole.c',
         'foolish/c/src/game.c',
         'foolish/c/src/main_eval.c',    // stats/stats.h
         'werewolf/c/src/ww_game.c',
@@ -179,16 +180,16 @@ test('the shared sources compile with no -I whatsoever', () => {
         'uttt/c/src/uttt_lang.c',       // i18n/languages.h
         'uttt/c/src/uttt_msg.c',        // sha256.h, b32.h, wire_check.h
         'pickemup/c/src/pk_deck.c',     // deal_rng.h
-        'pickemup/c/src/pk_msg.c',      // sha256.h, b32.h, wire_check.h, msg_seat_tag.h (via pk_msg.h)
+        'pickemup/c/src/pk_msg.c',      // msg_whole.h (via pk_msg.h)
         'chuiniu/c/src/cn_dice.c',      // deal_rng.h, sha256.h
         'chuiniu/c/src/cn_code.c',      // mixrad.h
-        'chuiniu/c/src/cn_msg.c',       // sha256.h, b32.h, wire_check.h, msg_seat_tag.h (via cn_msg.h)
+        'chuiniu/c/src/cn_msg.c',       // msg_whole.h (via cn_msg.h)
         'tallybones/c/src/tb.c',        // sha256.h, deal_rng.h
-        'tallybones/c/src/tb_msg.c',    // sha256.h, b32.h, wire_check.h, msg_seat_tag.h (via tb_msg.h)
-        // The bridges, which reach the seat module through the message header.
-        'pickemup/c/ios/pk_api.c',      // msg_seat_tag.h (via ../src/pk_msg.h)
-        'chuiniu/c/ios/cn_api.c',       // msg_seat_tag.h (via ../src/cn_msg.h)
-        'tallybones/c/ios/tb_api.c',    // msg_seat_tag.h (via ../src/tb_msg.h)
+        'tallybones/c/src/tb_msg.c',    // msg_whole.h (via tb_msg.h)
+        // The bridges, which reach the envelope module through the message header.
+        'pickemup/c/ios/pk_api.c',      // msg_whole.h (via ../src/pk_msg.h)
+        'chuiniu/c/ios/cn_api.c',       // msg_whole.h (via ../src/cn_msg.h)
+        'tallybones/c/ios/tb_api.c',    // msg_whole.h (via ../src/tb_msg.h)
         // The lobby adapters, which include the shared lobby rules directly.
         'pickemup/c/src/pk_lobby.c',    // msg_lobby_roster.h (via pk_lobby.h)
         'chuiniu/c/src/cn_lobby.c',     // msg_lobby_roster.h (via cn_lobby.h)

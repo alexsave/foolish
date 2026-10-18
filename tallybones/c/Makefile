@@ -21,7 +21,8 @@ SRC     := src/tb.c src/tb_code.c src/tb_plan.c src/tb_view.c src/tb_lobby.c src
            src/tb_say.c src/tb_beats.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
            $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c \
-           $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c
+           $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c \
+           $(SHARED)/msg_whole/msg_whole.c
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := tb_test tb_msg_test tb_fuzz tb_say_test tb_beats_test tb_twophone_test
@@ -49,7 +50,7 @@ SAN_FLAGS   = $(ASAN_FLAGS) $(if $(filter ios/%,$*),-Iios/include)
 # SHA-256 that tb_msg.c carries TB_CHECK_LEN bytes of, the seat identity
 # tb_msg_resolve hands its rows to, and the lobby rules the lobby adapter and
 # tb_msg.c call. What each is built from is shared/tools/shared_tests.mk's.
-SHARED_TESTS := check_test rng_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test
+SHARED_TESTS := check_test rng_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test msg_whole_test
 
 include ../../shared/tools/c_rules.mk
 include ../../shared/tools/shared_tests.mk

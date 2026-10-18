@@ -27,16 +27,11 @@ _Static_assert(PK_API_ME != PK_VIEW_SPECTATOR && PK_API_ME != PK_VIEW_ALL && PK_
 #define SG_LAYOUT_HASH 0u            /* not stamped: matches no generated module */
 #endif
 
-#define MAX_ID 64
-
 /* THE RESIDENT, and the scratch the calls fill. Nothing here is allocated. */
 static struct {
     PkMsg    m;
     int      have;                   /* a message is resident                  */
-    uint8_t  id[MAX_ID];
-    int      id_n;
-    uint8_t  nick[PK_NAME_MAX_BYTES];
-    int      nick_n;
+    MsgWholeBridge b;                /* who I am, the sender fact, the names (msg_whole.h) */
     /* this device's seat records, the host's bytes */
     uint8_t  rec[PK_REC_BYTES];
     int      rec_n;
@@ -45,14 +40,8 @@ static struct {
      * (O9); saved with the seat records, never on the wire */
     PkArr    arr[ARR_GAMES];
     int      arr_n;
-    /* THE SENDER FACT, about one message only */
-    char     sent_text[PK_MSG_MAX_TEXT];
-    int      sent_dm, sent_mine, sent_set;
     /* my seat in the resident message, and the witness */
     int      me, by;
-    /* the roster's names, NUL-terminated, for the words */
-    char     name[PK_MAX_SEATS][PK_NAME_MAX_BYTES + 1];
-    const char *names[PK_MAX_SEATS];
     /* what a read hands back */
     PkApiTable  table;
     PkView      view;
@@ -84,20 +73,9 @@ uint32_t pk_api_layout_hash(void) { return (uint32_t)SG_LAYOUT_HASH; }
 
 /* ---- who I am -------------------------------------------------------------- */
 
-void pk_api_me(const uint8_t *id, int n)
-{
-    if (!id || n < 0) n = 0;
-    if (n > MAX_ID) n = MAX_ID;
-    if (n) memcpy(S.id, id, (size_t)n);
-    S.id_n = n;
-}
+void pk_api_me(const uint8_t *id, int n) { msg_whole_bridge_id(&S.b, id, n); }
 
-void pk_api_nickname(const uint8_t *name, int n)
-{
-    if (!name || msg_seat_name_verdict(name, n) != PK_NAME_OK) { S.nick_n = 0; return; }
-    memcpy(S.nick, name, (size_t)n);
-    S.nick_n = n;
-}
+void pk_api_nickname(const uint8_t *name, int n) { msg_whole_bridge_nick(&S.b, name, n); }
 
 int pk_api_name_verdict(const uint8_t *name, int n) { return msg_seat_name_verdict(name, n); }
 
@@ -165,19 +143,9 @@ int pk_api_seats_save(uint8_t *out, int cap)
 
 /* ---- the resident ----------------------------------------------------------- */
 
-static void my_tag(const PkMsg *m, uint8_t tag[PK_TAG_LEN])
-{
-    pk_tag(m->seed, S.id, S.id_n, tag);
-}
-
 static void names_of(void)
 {
-    for (int s = 0; s < PK_MAX_SEATS; s++) {
-        int n = s < S.m.n_seats ? S.m.seat[s].name_len : 0;
-        memcpy(S.name[s], S.m.seat[s].name, (size_t)n);
-        S.name[s][n] = 0;
-        S.names[s] = S.name[s];
-    }
+    msg_whole_bridge_names(&S.b, &S.m.w);
 }
 
 static void record(int seat)
@@ -190,11 +158,8 @@ static void record(int seat)
  * and a seat found any way but the record is recorded. */
 static void seat_me(int is_dm, int i_sent)
 {
-    uint8_t tag[PK_TAG_LEN];
-    my_tag(&S.m, tag);
-    int rec = pk_rec_find(S.rec, S.rec_n, &S.m);
-    S.me = pk_msg_resolve(&S.m, rec, pk_msg_seat_of_tag(&S.m, tag), is_dm, i_sent,
-                          S.nick, S.nick_n, &S.by);
+    S.me = msg_whole_bridge_seat(&PK_MSG_SPEC, &S.b, &S.m.w, pk_msg_sender(&S.m), S.rec, S.rec_n,
+                                 is_dm, i_sent, &S.by);
     if (S.me >= 0 && S.by != PK_BY_RECORD) record(S.me);
     names_of();
 }
@@ -213,11 +178,11 @@ int pk_api_new(const uint8_t seed[32], int dm)
 {
     static PkMsg m;
     uint8_t tag[PK_TAG_LEN];
-    pk_tag(seed, S.id, S.id_n, tag);
-    int e = pk_msg_new(&m, seed, dm, tag, S.nick, S.nick_n);
+    msg_whole_bridge_tag(&PK_MSG_SPEC, &S.b, seed, tag);
+    int e = pk_msg_new(&m, seed, dm, tag, S.b.nick, S.b.nick_n);
     if (e) return e;
     S.m = m;
-    S.sent_set = 0;
+    S.b.sent_set = 0;
     S.lobby_prev_ok = 0;
     adopt_mine(0);
     return PK_EOK;
@@ -235,27 +200,21 @@ int pk_api_read(const char *text)
     S.m = S.other;
     S.have = 1;
     S.lobby_prev_ok = 0;                 /* a read is not my lobby action */
-    int mine = S.sent_set && text && !strcmp(text, S.sent_text);
-    seat_me(mine ? S.sent_dm : 0, mine ? S.sent_mine : PK_SENT_UNKNOWN);
+    int is_dm, i_sent;
+    msg_whole_bridge_sent_of(&S.b, text, &is_dm, &i_sent);
+    seat_me(is_dm, i_sent);
     return PK_EOK;
 }
 
 void pk_api_sender(const char *text, int is_dm, int i_sent)
 {
-    S.sent_set = 0;
-    if (!text || (i_sent != 0 && i_sent != 1)) return;
-    size_t n = strlen(text);
-    if (n >= sizeof S.sent_text) return;
-    memcpy(S.sent_text, text, n + 1);
-    S.sent_dm = is_dm != 0;
-    S.sent_mine = i_sent;
-    S.sent_set = 1;
+    msg_whole_bridge_sent(&PK_MSG_SPEC, &S.b, text, is_dm, i_sent);
 }
 
 int pk_api_text(char *out, int cap)
 {
     if (!S.have) return PK_EGAME;
-    if (S.m.phase != PK_PHASE_WAITING && S.m.game.b_open) {
+    if (S.m.w.phase != PK_PHASE_WAITING && S.m.game.b_open) {
         S.other = S.m;
         if (!pk_seal(&S.other.game)) return PK_EGAME;
         return pk_msg_text_encode(&S.other, out, cap);
@@ -265,7 +224,7 @@ int pk_api_text(char *out, int cap)
 
 int pk_api_commit(void)
 {
-    if (!S.have || S.m.phase == PK_PHASE_WAITING || !S.m.game.b_open) return 0;
+    if (!S.have || S.m.w.phase == PK_PHASE_WAITING || !S.m.game.b_open) return 0;
     return pk_seal(&S.m.game);
 }
 
@@ -282,9 +241,9 @@ int pk_api_join(void)
 {
     if (!S.have) return PK_EGAME;
     uint8_t tag[PK_TAG_LEN];
-    my_tag(&S.m, tag);
+    msg_whole_bridge_tag(&PK_MSG_SPEC, &S.b, S.m.w.seed, tag);
     S.other = S.m;
-    int s = pk_msg_join(&S.other, tag, S.nick, S.nick_n);
+    int s = pk_msg_join(&S.other, tag, S.b.nick, S.b.nick_n);
     if (s < 0) return s;
     lobby_remember(&S.m, S.me);
     S.m = S.other;
@@ -324,9 +283,9 @@ int pk_api_join_start(void)
 {
     if (!S.have) return PK_EGAME;
     uint8_t tag[PK_TAG_LEN];
-    my_tag(&S.m, tag);
+    msg_whole_bridge_tag(&PK_MSG_SPEC, &S.b, S.m.w.seed, tag);
     S.other = S.m;
-    int s = pk_msg_join_start(&S.other, tag, S.nick, S.nick_n);
+    int s = pk_msg_join_start(&S.other, tag, S.b.nick, S.b.nick_n);
     if (s < 0) return s;
     S.m = S.other;
     adopt_mine(s);
@@ -337,7 +296,7 @@ int pk_api_join_start(void)
 
 static PkGame *live(void)
 {
-    if (!S.have || S.m.phase == PK_PHASE_WAITING || S.me < 0) return 0;
+    if (!S.have || S.m.w.phase == PK_PHASE_WAITING || S.me < 0) return 0;
     return &S.m.game;
 }
 
@@ -347,9 +306,9 @@ static PkGame *live(void)
  * newest-first list; with `create`, a new empty one (the oldest falls off). */
 static PkArr *my_arr(int create)
 {
-    if (!S.have || S.m.phase == PK_PHASE_WAITING || S.me < 0) return 0;
+    if (!S.have || S.m.w.phase == PK_PHASE_WAITING || S.me < 0) return 0;
     uint8_t id[8];
-    pk_game_id(S.m.seed, id);
+    pk_game_id(S.m.w.seed, id);
     int i = 0;
     while (i < S.arr_n && (S.arr[i].seat != S.me || memcmp(S.arr[i].id, id, 8) != 0)) i++;
     if (i == S.arr_n && !create) return 0;
@@ -448,11 +407,11 @@ const void *pk_api_table(void)
     t->me = t->starter = t->sender = PK_SEAT_NONE;
     if (!S.have) return t;
     const PkMsg *m = &S.m;
-    const int started = m->phase != PK_PHASE_WAITING;
+    const int started = m->w.phase != PK_PHASE_WAITING;
     t->readable = 1;
     t->phase = (uint8_t)(!started ? PK_PHASE_WAITING : m->game.over ? PK_PHASE_FINISHED : PK_PHASE_LIVE);
-    t->dm = m->dm;
-    t->n_seats = m->n_seats;
+    t->dm = m->w.dm;
+    t->n_seats = m->w.n_seats;
     t->me = (uint8_t)(S.me >= 0 ? S.me : PK_SEAT_NONE);
     t->by = (uint8_t)S.by;
     if (!started) {
@@ -462,10 +421,10 @@ const void *pk_api_table(void)
         t->can_exit = (uint8_t)msg_lobby_roster_can_exit(&l, S.me);
         t->can_join_start = (uint8_t)(S.me < 0 && msg_lobby_roster_can_join_and_start(&l));
     }
-    t->starter = m->starter;
+    t->starter = m->w.starter;
     int snd = pk_msg_sender(m);
     t->sender = (uint8_t)(snd >= 0 ? snd : PK_SEAT_NONE);
-    t->lobby_rev = m->lobby_rev;
+    t->lobby_rev = m->w.lobby_rev;
     if (started) {
         const PkGame *g = &m->game;
         t->bubbles = g->bubbles;
@@ -478,9 +437,9 @@ const void *pk_api_table(void)
         t->draft = (uint8_t)(g->b_open && S.me >= 0 && g->b_sender == S.me);
         t->can_send = (uint8_t)(t->draft && pk_can_seal(g));
     }
-    for (int s = 0; s < m->n_seats; s++) {
-        t->seat[s].name_len = m->seat[s].name_len;
-        memcpy(t->seat[s].name, m->seat[s].name, m->seat[s].name_len);
+    for (int s = 0; s < m->w.n_seats; s++) {
+        t->seat[s].name_len = m->w.seat[s].name_len;
+        memcpy(t->seat[s].name, m->w.seat[s].name, m->w.seat[s].name_len);
     }
     return t;
 }
@@ -493,14 +452,14 @@ static int viewer_of(int viewer)
 
 static int valid_viewer(int v)
 {
-    return v == PK_VIEW_SPECTATOR || v == PK_VIEW_ALL || (v >= 0 && v < S.m.n_seats);
+    return v == PK_VIEW_SPECTATOR || v == PK_VIEW_ALL || (v >= 0 && v < S.m.w.n_seats);
 }
 
 const void *pk_api_view(int viewer)
 {
     memset(&S.view, 0, sizeof S.view);
     int v = viewer_of(viewer);
-    if (!S.have || S.m.phase == PK_PHASE_WAITING || !valid_viewer(v)) return &S.view;
+    if (!S.have || S.m.w.phase == PK_PHASE_WAITING || !valid_viewer(v)) return &S.view;
     pk_view(&S.m.game, v, &S.view);
     if (v >= 0 && v == S.me) {
         const PkArr *a = arr_sync();
@@ -512,7 +471,7 @@ const void *pk_api_view(int viewer)
 const void *pk_api_plan(int viewer, int from, int to)
 {
     int v = viewer_of(viewer);
-    if (!S.have || S.m.phase == PK_PHASE_WAITING || !valid_viewer(v)) return 0;
+    if (!S.have || S.m.w.phase == PK_PHASE_WAITING || !valid_viewer(v)) return 0;
     int n = pk_plan(&S.m.game, v, from, to, S.events.ev, PK_API_EVENTS);
     if (n < 0) return 0;
     S.events.n = (uint16_t)n;
@@ -522,7 +481,7 @@ const void *pk_api_plan(int viewer, int from, int to)
 const void *pk_api_plan_draft(int viewer)
 {
     int v = viewer_of(viewer);
-    if (!S.have || S.m.phase == PK_PHASE_WAITING || !valid_viewer(v)) return 0;
+    if (!S.have || S.m.w.phase == PK_PHASE_WAITING || !valid_viewer(v)) return 0;
     int n = pk_plan_draft(&S.m.game, v, S.events.ev, PK_API_EVENTS);
     if (n < 0) return 0;
     S.events.n = (uint16_t)n;
@@ -531,7 +490,7 @@ const void *pk_api_plan_draft(int viewer)
 
 const void *pk_api_since(int from, int to)
 {
-    if (!S.have || S.m.phase == PK_PHASE_WAITING) return 0;
+    if (!S.have || S.m.w.phase == PK_PHASE_WAITING) return 0;
     return pk_since(&S.m.game, from, to, &S.since) ? &S.since : 0;
 }
 
@@ -549,7 +508,7 @@ const void *pk_api_plan_lobby(const char *before)
 
 static const PkGame *started(void)
 {
-    return S.have && S.m.phase != PK_PHASE_WAITING ? &S.m.game : 0;
+    return S.have && S.m.w.phase != PK_PHASE_WAITING ? &S.m.game : 0;
 }
 
 void pk_api_beats_mark(void)
@@ -659,12 +618,12 @@ const void *pk_api_beats_conflict(int card, int pos, int from, int to)
  * table before the deal (the lobby has no board of its own). */
 static const void *lobby_beats(int mode)
 {
-    if (!S.lobby_prev_ok || !S.have || S.m.phase != PK_PHASE_WAITING) return built(-1);
+    if (!S.lobby_prev_ok || !S.have || S.m.w.phase != PK_PHASE_WAITING) return built(-1);
     int n = pk_msg_plan_lobby(&S.lobby_prev, &S.m, S.events.ev, PK_API_EVENTS);
     if (n <= 0) return built(-1);
     PkBeatFrame start;
-    pk_beats_frame_of(0, S.m.n_seats, &start);
-    return built(pk_beats_build(S.events.ev, n, &start, S.me >= 0 ? S.me : PK_SEAT_NONE, S.m.n_seats, mode,
+    pk_beats_frame_of(0, S.m.w.n_seats, &start);
+    return built(pk_beats_build(S.events.ev, n, &start, S.me >= 0 ? S.me : PK_SEAT_NONE, S.m.w.n_seats, mode,
                                 0, 0, 0, &S.beats));
 }
 
@@ -716,18 +675,18 @@ static int numbered_row_of(const char *const *names, int me, int number, int sea
 
 static int numbered_row(int number, int seat, int mine_marked, char *out, int cap)
 {
-    return numbered_row_of(S.names, S.me, number, seat, mine_marked, out, cap);
+    return numbered_row_of(S.b.names, S.me, number, seat, mine_marked, out, cap);
 }
 
 /* A row of the lobby before its newest roster change, as it read then. */
 static int gone_row(int seat, char *out, int cap)
 {
-    if (!S.lobby_prev_ok || seat < 0 || seat >= S.lobby_prev.n_seats) return -1;
+    if (!S.lobby_prev_ok || seat < 0 || seat >= S.lobby_prev.w.n_seats) return -1;
     static char name[PK_MAX_SEATS][PK_NAME_MAX_BYTES + 1];
     const char *names[PK_MAX_SEATS];
     for (int s = 0; s < PK_MAX_SEATS; s++) {
-        int n = s < S.lobby_prev.n_seats ? S.lobby_prev.seat[s].name_len : 0;
-        memcpy(name[s], S.lobby_prev.seat[s].name, (size_t)n);
+        int n = s < S.lobby_prev.w.n_seats ? S.lobby_prev.w.seat[s].name_len : 0;
+        memcpy(name[s], S.lobby_prev.w.seat[s].name, (size_t)n);
         name[s][n] = 0;
         names[s] = name[s];
     }
@@ -744,7 +703,7 @@ static void buried_one(const PkEvent *e, void *ctx)
 
 int pk_api_buried(uint8_t out[8])
 {
-    if (!out || !S.have || S.m.phase == PK_PHASE_WAITING) return 0;
+    if (!out || !S.have || S.m.w.phase == PK_PHASE_WAITING) return 0;
     const PkGame *g = &S.m.game;
     if (g->reshuffles) return 0;              /* the deck has been rebuilt since */
     Buried b = { { 0 }, 0 };
@@ -758,7 +717,7 @@ int pk_api_buried(uint8_t out[8])
 
 int pk_api_ranks(uint8_t out[8])
 {
-    if (!out || !S.have || S.m.phase == PK_PHASE_WAITING || !S.m.game.over) return 0;
+    if (!out || !S.have || S.m.w.phase == PK_PHASE_WAITING || !S.m.game.over) return 0;
     const PkGame *g = &S.m.game;
     int n = 0;
     if (g->winner < g->n) out[n++] = g->winner;
@@ -775,7 +734,7 @@ int pk_api_ranks(uint8_t out[8])
 int pk_api_words(int what, int arg, char *out, int cap)
 {
     if (!out || cap < 1 || what < 0 || what >= PK_API_W_COUNT) return -1;
-    const int started = S.have && S.m.phase != PK_PHASE_WAITING;
+    const int started = S.have && S.m.w.phase != PK_PHASE_WAITING;
     const PkGame *g = &S.m.game;
     const int me = S.me >= 0 ? S.me : PK_VIEW_SPECTATOR;
     switch (what) {
@@ -783,19 +742,19 @@ int pk_api_words(int what, int arg, char *out, int cap)
     case PK_API_W_RULE:        return pk_say_rule(arg, out, cap);
     case PK_API_W_CARD:        return arg >= 0 && arg < PK_DECK ? pk_say_card((uint8_t)arg, out, cap) : -1;
     case PK_API_W_INVITE: case PK_API_W_JOINED: case PK_API_W_LEFT: {
-        if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
+        if (!S.have || arg < 0 || arg >= S.m.w.n_seats) return -1;
         int which = what == PK_API_W_INVITE ? PK_SAY_INVITE : what == PK_API_W_JOINED ? PK_SAY_JOINED : PK_SAY_LEFT;
-        return pk_say_lobby_caption(which, S.names[arg], out, cap);
+        return pk_say_lobby_caption(which, S.b.names[arg], out, cap);
     }
     case PK_API_W_SEAT:
-        if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
-        return pk_say_seat(S.names, arg, out, cap);
+        if (!S.have || arg < 0 || arg >= S.m.w.n_seats) return -1;
+        return pk_say_seat(S.b.names, arg, out, cap);
     case PK_API_W_SPOKEN_FAN:
-        if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
-        return pk_say_spoken_fan(S.names, arg, out, cap);
+        if (!S.have || arg < 0 || arg >= S.m.w.n_seats) return -1;
+        return pk_say_spoken_fan(S.b.names, arg, out, cap);
     case PK_API_W_LOBBY_GONE:  return gone_row(arg, out, cap);
     case PK_API_W_LOBBY_ROW: case PK_API_W_PUBLIC_ROW:
-        if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
+        if (!S.have || arg < 0 || arg >= S.m.w.n_seats) return -1;
         return numbered_row(arg + 1, arg, what == PK_API_W_LOBBY_ROW, out, cap);
     case PK_API_W_RANK_ROW: {
         uint8_t rank[PK_MAX_SEATS];
@@ -804,9 +763,9 @@ int pk_api_words(int what, int arg, char *out, int cap)
         return numbered_row(arg + 1, rank[arg], 1, out, cap);
     }
     case PK_API_W_LOBBY_DEALER: {
-        if (!S.have || S.m.n_seats < 1) return -1;
+        if (!S.have || S.m.w.n_seats < 1) return -1;
         char who[PK_NAME_MAX_BYTES + 24];
-        if (pk_say_seat(S.names, 0, who, sizeof who) < 0) return -1;
+        if (pk_say_seat(S.b.names, 0, who, sizeof who) < 0) return -1;
         const char *kv[] = { "who", who, 0 };
         return pk_fill(out, cap, pk_text(PK_K_LOBBY_DEALER), kv);
     }
@@ -833,18 +792,18 @@ int pk_api_words(int what, int arg, char *out, int cap)
     }
     if (!started) return empty(out, cap);
     switch (what) {
-    case PK_API_W_CAPTION:      return pk_say_caption(g, arg, S.names, out, cap);
+    case PK_API_W_CAPTION:      return pk_say_caption(g, arg, S.b.names, out, cap);
     case PK_API_W_STAGED_CAPTION:
         /* the bubble pk_api_text would write: my draft sealed into a copy
          * (the resident keeps its draft), else the newest sealed bubble */
         if (g->b_open) {
             S.other = S.m;
             if (!pk_seal(&S.other.game)) return -1;
-            return pk_say_caption(&S.other.game, S.other.game.bubbles, S.names, out, cap);
+            return pk_say_caption(&S.other.game, S.other.game.bubbles, S.b.names, out, cap);
         }
-        return pk_say_caption(g, g->bubbles, S.names, out, cap);
-    case PK_API_W_HEADLINE:     return pk_say_headline(g, me, S.names, out, cap);
-    case PK_API_W_SUBLINE:      return pk_say_subline(g, me, S.names, out, cap);
+        return pk_say_caption(g, g->bubbles, S.b.names, out, cap);
+    case PK_API_W_HEADLINE:     return pk_say_headline(g, me, S.b.names, out, cap);
+    case PK_API_W_SUBLINE:      return pk_say_subline(g, me, S.b.names, out, cap);
     case PK_API_W_DECK_LEFT:    return pk_say_deck_left(g, out, cap);
     case PK_API_W_DIR:          return pk_say_dir(g, out, cap);
     case PK_API_W_DECK_N:       return pk_say_deck_n(arg, out, cap);
@@ -890,8 +849,8 @@ int pk_api_adopt(const char *text, int arrival)
      * was a live game, my open draft and the play staged in it, and the chain
      * as its link reads (a draft sealed into a copy, exactly what pk_api_text
      * writes; a draft that cannot be written yet is no chain to compare). */
-    const int prior_live = S.have && S.m.phase != PK_PHASE_WAITING;
-    const int prior_lobby = S.have && S.m.phase == PK_PHASE_WAITING, prior_me = S.me;
+    const int prior_live = S.have && S.m.w.phase != PK_PHASE_WAITING;
+    const int prior_lobby = S.have && S.m.w.phase == PK_PHASE_WAITING, prior_me = S.me;
     const int prior_draft = prior_live && S.me >= 0 && S.m.game.b_open && S.m.game.b_sender == S.me;
     const int prior_bubbles = prior_live ? S.m.game.bubbles : 0;
     int staged_card = -1, staged_pos = -1;
@@ -915,7 +874,7 @@ int pk_api_adopt(const char *text, int arrival)
     int e = pk_api_read(text);
     if (e) return e;
     const int same = prior_ok && pk_msg_same_game(&S.prior, &S.m);
-    if (S.m.phase == PK_PHASE_WAITING) {
+    if (S.m.w.phase == PK_PHASE_WAITING) {
         /* a lobby over the lobby of the same game on screen: its rows (A13);
          * opened cold, or over a table, nothing moves (the read forgot any
          * lobby action of mine) */

@@ -510,8 +510,8 @@ static void t_resolve_after_leave(void)
     /* a roster never holds a name twice, on the wire or by a join */
     static PkMsg dup;
     dup = m;
-    memcpy(dup.seat[1].name, "Cleo", 4);
-    dup.seat[1].name_len = 4;
+    memcpy(dup.w.seat[1].name, "Cleo", 4);
+    dup.w.seat[1].name_len = 4;
     static uint8_t b[PK_MSG_MAX_BYTES];
     CHECK(pk_msg_encode(&dup, b, (int)sizeof b) == PK_EROSTER, "a roster with a name twice is not written");
 }

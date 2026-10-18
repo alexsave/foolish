@@ -25,7 +25,8 @@ SRC     := src/cn.c src/cn_dice.c src/cn_plan.c src/cn_view.c src/cn_lobby.c src
            src/cn_code.c src/cn_msg.c src/cn_beats.c src/cn_roll.c src/cn_scene.c src/cn_geom.c src/cn_cam.c src/cn_lay.c src/cn_tex.c src/cn_stage.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
            $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c \
-           $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c
+           $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c \
+           $(SHARED)/msg_whole/msg_whole.c
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := cn_test cn_dice_test cn_plan_test cn_say_test cn_fuzz cn_msg_test cn_twophone_test cn_roll_test cn_scene_test cn_geom_test cn_cam_test cn_lay_test cn_stage_test
@@ -58,7 +59,7 @@ O2_FLAGS   := -O2 $(WARN)
 # cn_msg_resolve hands its rows to, the lobby rules the lobby adapter and
 # cn_msg.c call, and the arena's statistics. What each is built from is
 # shared/tools/shared_tests.mk's.
-SHARED_TESTS := check_test rng_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test stats_test
+SHARED_TESTS := check_test rng_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test msg_whole_test stats_test
 
 include ../../shared/tools/c_rules.mk
 include ../../shared/tools/shared_tests.mk
