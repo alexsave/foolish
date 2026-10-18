@@ -23,8 +23,9 @@
 # A changed file selects every target whose set holds it. A file under the
 # target's corpus (fuzz/corpus/<target>, beside fz_<target>.c) selects that
 # target. A change to any makefile either build reads (MAKEFILE_LIST of
-# c_base's and of the kernel's, which c_base asks for its source list), to the
-# workflow, or to this script selects every target: flags change every object.
+# c_base's and of the kernel's, which c_base asks for its source list) selects
+# every target: flags change every object. The workflow and this script build
+# no target, so a change to them alone fuzzes nothing.
 # Files moving keeps all of this true with no edit here.
 set -euo pipefail
 
@@ -135,19 +136,17 @@ awk -v targets="$targets" -v cbrel=c_base '
 # FUZZ_SELECT_DEPS=<file>: keep the whole "<target> <path>" table to read.
 [ -z "${FUZZ_SELECT_DEPS:-}" ] || cp "$work/deps" "$FUZZ_SELECT_DEPS"
 
-# The makefiles of both builds, the workflow and this script select everything.
+# The makefiles of both builds select everything.
 {
   sed -n 's/^MAKEFILE_LIST := //p' "$work/db" | head -1 | tr ' ' '\n' | sed '/^$/d; /\.d$/d; s|^|c_base/|'
   tr ' ' '\n' < "$work/kmk" | sed '/^$/d; s|^|c_base/'"$kdir"'/|'
 } | awk '{ n = split($0, a, "/"); k = 0
            for (i = 1; i <= n; i++) { if (a[i] == "..") k--; else if (a[i] != "." && a[i] != "") s[++k] = a[i] }
            o = s[1]; for (i = 2; i <= k; i++) o = o "/" s[i]; print o }' > "$work/all_triggers"
-echo .github/workflows/c_base.yml >> "$work/all_triggers"
-echo .github/scripts/fuzz_select.sh >> "$work/all_triggers"
 
 all=$(grep -Fxf "$work/all_triggers" "$work/changed" || true)
 if [ -n "$all" ]; then
-  echo "fuzz_select: every target, a build rule or the workflow changed:" >&2
+  echo "fuzz_select: every target, a makefile changed:" >&2
   while read -r f; do echo "  $f"; done <<< "$all" >&2
   echo "$targets"
   exit 0
