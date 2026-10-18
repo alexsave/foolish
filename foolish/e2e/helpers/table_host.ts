@@ -77,7 +77,7 @@ export class TableHost {
     readonly ex: HostEntries;
     private readonly wfd: number;
     private readonly rfd: number;
-    private readonly head = new Uint8Array(4);
+    private readonly scratch = new Uint8Array(65536);
 
     constructor(wfd: number, rfd: number) {
         this.wfd = wfd;
@@ -89,20 +89,25 @@ export class TableHost {
 
     private send(frame: Uint8Array): Uint8Array<ArrayBuffer> {
         for (let at = 0; at < frame.length;) at += writeSync(this.wfd, frame, at, frame.length - at);
-        this.fill(this.head);
-        const n = new DataView(this.head.buffer).getUint32(0, true);
+        // One answer is in flight at a time, so whatever a read returns belongs
+        // to it: read into the scratch buffer, and only a long answer reads again.
+        let got = this.more(this.scratch, 0, 4);
+        const n = new DataView(this.scratch.buffer).getUint32(0, true);
         const body = new Uint8Array(n);
-        this.fill(body);
+        body.set(this.scratch.subarray(4, Math.min(got, 4 + n)), 0);
+        for (let at = got - 4; at < n;) at = this.more(body, at, n);
         if (body[0] !== 0) throw new Error(new TextDecoder().decode(body.subarray(1)));
         return body.subarray(1);
     }
 
-    private fill(buf: Uint8Array): void {
-        for (let at = 0; at < buf.length;) {
+    /** Reads into `buf` from `at` until at least `want` bytes are there; how many are. */
+    private more(buf: Uint8Array, at: number, want: number): number {
+        while (at < want) {
             const n = readSync(this.rfd, buf, at, buf.length - at, null);
             if (n === 0) throw new Error('table host: the host process is gone (it crashed, or was killed)');
             at += n;
         }
+        return at;
     }
 
     /** Frames one request: its length, its op and the body `fill` writes. */

@@ -1038,7 +1038,6 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
   -Wl,--export=wasm_replay_link_parse \
   -Wl,--export=wasm_unambiguous_cover \
-  -Wl,--export=wasm_msg_rematch \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
   -Wl,--export=wasm_anim_stale_ask_ptr -Wl,--export=wasm_anim_stale_release_ptr \
   -Wl,--export=wasm_anim_reversal_ask_ptr -Wl,--export=wasm_anim_reversal_plan_ptr \
@@ -1050,8 +1049,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_plan_at \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
-  -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
-  -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump -Wl,--export=wasm_belief_probe_ptr
+  -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows
 
 # The backend's client (src/netclient.h, wasm/wasm_net_api.c): what the web asks
 # c_base and how it reads the answers and the push stream. In the browser's

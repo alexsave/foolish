@@ -12,10 +12,10 @@
 --const FOOLISH_SEED_LEN
 #
 # The C Table (c/src/table.h): what a table host reads back from the kernel (the Node suites, from the native table host, c/tests/table_host.c) - the
-# loaded roster, a commit's spans and scalars, a decoded action request, the
+# loaded roster, a commit's spans and scalars, the
 # finish order and rating changes - and the result codes it maps. Part of the
 # same hash, so a module and these readers cannot disagree about any of it.
---header table.h --root Roster --root TableCommit --root TableRequest --root TableElo
+--header table.h --root Roster --root TableCommit --root TableElo
 # A finished fixture's rating stamp (view.h), which e2e/helpers/table_fixture.ts writes.
 --header view.h --root GameRatings --const ENV_ISLAND_
 # The test entries' shapes (roster.h): a table as a test states it, and what
@@ -33,14 +33,12 @@
 --root PushSettle
 --header replay_steps.h --root ReplaySummary --root ReplayFrameIndex
 #
-# A code's decoded log stream, record by record (replay.h, the test build's
-# wasm_replay_decoded_next): its log types and the codec's result codes.
---header replay.h --root ReplayDecodedLog --root ReplayError
+# The replay codec's result codes and log types (replay.h).
+--header replay.h --root ReplayError
 --const LOG_ --const REPLAY_E
 #
-# The bot cycle the table drives (bot_drive.h): what a server logs of it, and
-# what a bot search saw of the session log (BeliefProbe, test observability).
---header bot_drive.h --root BotDriveOut --root BeliefProbe
+# The bot cycle the table drives (bot_drive.h): what a server logs of it.
+--header bot_drive.h --root BotDriveOut
 --fields LegalMove=type,n_cards,cards,attack_cards
 --const BOT_STOP_ --const BOT_PACE_ --const MOVE_
 #
