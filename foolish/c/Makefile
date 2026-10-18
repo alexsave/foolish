@@ -66,8 +66,9 @@ CFLAGS += -DCD_LEAFBOOK
 # tests, coverage and asan builds below carry it too, and no shipped module does.
 CFLAGS += -DCD_PASS_PROBE
 
-# The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
-CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
+# The engine + all heuristic / Monte-Carlo bots: the kernel, as a host that
+# serves games links it (c_base reads it through print-kernel).
+KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
             src/replay_extras.c src/view.c src/awire.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
@@ -84,20 +85,24 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
             src/strategy.c src/hand_layout.c \
             src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c
-# What only host programs link (the arenas, the CLIs, the tests, the research
-# tools): the offline play-to-the-end loop. No shipped module carries it, so the
-# iOS bots archive filters it back out below.
+# What only host programs add (the arenas, the CLIs, the tests, the research
+# tools): the offline play-to-the-end loop. No shipped module carries it.
 HOST_ONLY_SRC := src/bot_play.c
-CORE_SRC += $(HOST_ONLY_SRC)
+# Linked into every binary built here.
+CORE_SRC := $(KERNEL_SRC) $(HOST_ONLY_SRC)
 # Where each becomes an object: build/obj/host/<the source's own path>.o, the
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
 
-.PHONY: all clean tests print-core print-human-caps
+.PHONY: all clean tests print-core print-kernel print-human-caps
 # Emit the core engine+strategy source list (used by tools/tt_divergence.sh to
 # build cnitro_eval at arbitrary -DCD_TT_BITS without duplicating the list).
 print-core:
 	@echo $(CORE_SRC)
+# The kernel alone, for a host that serves games (c_base/Makefile): what
+# print-core lists minus the host-only tools.
+print-kernel:
+	@echo $(KERNEL_SRC)
 # Emit the capacity flags the SHIPPED human-game build compiles the kernel
 # with (MAX_LOG_PAIRS=64, MAX_BATTLES=64 and the rest), for a host that links
 # the kernel natively and serves human games (c_base/Makefile). Read out of
@@ -421,7 +426,7 @@ IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
                 src/hand_layout.c $(IOS_BRIDGE_SRC) \
                 src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c
-IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC) $(HOST_ONLY_SRC),$(CORE_SRC)) ios/ios_bots_api.c
+IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(KERNEL_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
 IOS_SRC    := $(IOS_CORE_SRC) $(IOS_BOTS_SRC)
