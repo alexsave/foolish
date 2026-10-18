@@ -92,13 +92,13 @@ board alone; that was a regression vs the `Math.random` it replaced, because the
 board is (largely) public and, in the endgame, fully reconstructible — so a
 source-code holder could recompute the seed and predict octogen. Folding the
 server-only `game_seed` into every bot seed closes that: without it the seed is
-unrecoverable. Proven by `e2e/deal_determinism.test.ts` — octogen replays
+unrecoverable. Proven by `e2e/deal_determinism.test.ts` (now c/tests/tests.c `test_table_octogen_game_is_its_deal_seeds`) - octogen replays
 identically *with* the seed but **diverges when the seed is withheld** (the
 attacker's view), so its play is not a function of anything a player can see.
 
 ## Validation
 
-- `e2e/deal_determinism.test.ts` (new): a whole game replays byte-identically
+- `e2e/deal_determinism.test.ts` (new; since ported to c/tests/tests.c `test_table_bots_only_game_replays_from_its_seed` and `test_table_octogen_game_is_its_deal_seeds`): a whole game replays byte-identically
   from a pinned deal seed, for both simple_heuristic (no RNG — isolates draws)
   and octogen (samples worlds from state). Two *different* seeds still produce
   different games.

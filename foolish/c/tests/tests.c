@@ -12543,9 +12543,9 @@ static void test_table_bot_drive_progress_seeds_the_decision(void) {
 // commit the products, and the next cycle loads what the last one committed.
 // These helpers are that chain for a row of `np` `brain` seats, so the two tests
 // after them can say what the whole chain guarantees over whole games at every
-// width. e2e/marshal_resident.test.ts keeps a short handwritten case of the same
-// over the wasm build (and its full cordite case), e2e/deal_determinism.test.ts
-// its cheap simple_heuristic cases and its octogen games; each says why.
+// width. test_table_a_load_leaves_nothing_of_the_last_table holds the same of
+// random endgame boards for handwritten and cordite, and
+// test_table_octogen_game_is_its_deal_seeds octogen's seed purity; each says why.
 
 typedef struct {
     uint8_t  state[8192];
@@ -12655,11 +12655,10 @@ static void tb_seed_hex_of(const uint8_t *seed, char *out) {
 // every commit - and two seeds are two games, so a deal that stopped reading its
 // seed is caught. simple_heuristic consumes no RNG and keeps no memory, so a
 // divergence here is the deck or the commit, never the bot. The seeds are the
-// two e2e/deal_determinism.test.ts plays; that file keeps the same assertions
-// over the wasm build, and its octogen games too: six whole octogen games cost
-// more natively than this entire suite, so the brain whose decisions are the
-// seed's is proven per cycle by test_table_bot_drive_ignores_instance_history
-// and per whole game only over wasm.
+// two the retired e2e/deal_determinism.test.ts played. Whole octogen games cost
+// seconds each here, so the brain whose decisions are the seed's is proven per
+// cycle: by test_table_bot_drive_ignores_instance_history, and on these two
+// seeds, with the seed withheld as well, by test_table_octogen_game_is_its_deal_seeds.
 static void test_table_bots_only_game_replays_from_its_seed(void) {
     static TbRow row;
     static const uint8_t reviewed[FOOLISH_SEED_LEN] = {
@@ -12693,11 +12692,9 @@ static void test_table_bots_only_game_replays_from_its_seed(void) {
 // Five bots-only games of 2 to 6 seats are played to their end in lockstep on
 // one table, so every load follows a different board of a different width; each
 // must commit, cycle for cycle, the bytes it commits when it is the only game the
-// table plays. e2e/marshal_resident.test.ts keeps a short random-board case of
-// the same over the wasm build for handwritten, and its full cordite case: the
-// world slots and transposition table cordite leaves resident are sized by
-// defines the wasm build alone sets (WORLD_LOG_CAP, CD_TT_BITS), so the native
-// build cannot stand in for it there.
+// table plays. test_table_a_load_leaves_nothing_of_the_last_table holds the
+// same of random endgame boards for handwritten and for cordite, whose solver
+// state persists in the module between decisions.
 static void test_table_bot_drive_ignores_other_tables(void) {
     enum { GAMES = 5, CYCLES = 1024 };
     static TbRow rows[GAMES];
@@ -12886,9 +12883,11 @@ static void test_table_replay_code_and_extras(void) {
 // no server and no client crossed, and together they were the floor under the
 // whole e2e suite's wall clock (73 seconds each). The rule for that suite is
 // that a test which only calls C methods is not an e2e test, so the bulk of
-// each moved here, where the same games cost an order of magnitude less (and
-// state_codec's last cases followed: test_state_blob_formats_read_and_written).
-// The rows here are played exactly as those files played
+// each moved here, where the same games cost an order of magnitude less, and
+// both files have since gone whole: state_codec's last cases are
+// test_state_blob_formats_read_and_written, and belief_logs' last game's
+// belief-probe assertions are the choose observer's below. The rows here are
+// played exactly as those files played
 // them: the same lobby, the same deal seeds, the same one-action bot cycle.
 
 // The 32-byte deal seed of test game `s` at `np` seats, exactly as
@@ -13006,8 +13005,7 @@ static int bl_row_cycle(BlRow *row, const uint8_t *log, int log_len, int max_act
 // state with the memory taken away on a meaningful fraction of positions. If the
 // imported log were being ignored again (the regression), that count would be
 // exactly 0. The wiring half - that the real bot loop reads and hands over the
-// whole log - is e2e/belief_logs_wiring.test.ts, and e2e/belief_logs.test.ts
-// keeps one game through the shipped wasm, watched by the belief probe.
+// whole log - is e2e/belief_logs_wiring.test.ts.
 //
 // "The memory taken away" is NOT an empty log, which is what the e2e file
 // compared against. The log's record count is the progress term of every bot
@@ -13036,7 +13034,8 @@ static int bl_row_cycle(BlRow *row, const uint8_t *log, int log_len, int max_act
 // eight attacks picks up sixteen cards); it is reported, not asserted. The
 // decisions themselves are not promised bit-identical across the builds (the
 // solver's transposition table is CD_TT_BITS=12 in wasm, WORLD_LOG_CAP is 40
-// there and 0 here), which is why one game of this still runs through the wasm.
+// there and 0 here); since e2e/belief_logs.test.ts went, no game of this runs
+// through the module's own configuration.
 static int tb_expect_logs, tb_decisions, tb_blind_decisions, tb_carded_decisions, tb_with_memory, tb_memory_decisions;
 static void tb_choose_observer(const Game *g, int seat) {
     (void)seat;
@@ -18076,7 +18075,7 @@ static void test_table_octogen_game_is_its_deal_seeds(void) {
             diverged = trace[i] != h;
             i++;
         }
-        snprintf(what, sizeof(what), "octogen: deal seed %d withheld, the game is another (it differs at cycle %d)", k, i - 1);
+        snprintf(what, sizeof(what), "octogen: deal seed %d withheld, the game is another (first difference at cycle %d of %d, -1 none)", k, diverged ? i - 1 : -1, n);
         CHECK(diverged, what);
     }
 }
