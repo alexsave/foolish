@@ -104,7 +104,6 @@ Seeding narrows nothing: the trial counts are what they were.
 
 | file | asserts |
 | --- | --- |
-| `wasm_kernel_fuzz.test.ts` | hostile bytes at the wasm module's doors: no trap, no hang, no corruption of the flat linear memory |
 | `pass_parity.test.ts` | pass legality agreed by the kernel, the table and the client's Pass button |
 | `client.test.ts`, `client_*.test.ts` | the client's reconciliation, gates and rendered hand |
 | `replay_*.test.ts` | the replay codec round-trips byte-exact, its extras, frames and links |

@@ -109,16 +109,6 @@ export const RULES = [
 export const ALLOW = [
     {
         rule: 'clock',
-        file: 'e2e/wasm_kernel_fuzz.test.ts',
-        calls: 2,
-        // One guard, survives(): the start read and the elapsed read beside it.
-        reason:
-            'One hang guard over malformed kernel input (a 2s ceiling on work that takes '
-            + 'milliseconds). The clock is what "did not hang" means. The margin is three '
-            + 'orders of magnitude, so machine speed cannot flip the verdict.',
-    },
-    {
-        rule: 'clock',
         file: 'e2e/client_guards.test.ts',
         calls: 2,
         reason:

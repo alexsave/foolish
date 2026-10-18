@@ -6576,9 +6576,9 @@ static void test_damaged_link(void) {
 
 // THE REMATCH LOBBY, PINNED AS BYTES. A finished 4-seat game and the lobby
 // seat 2's tap on it builds at 0x1234 seconds and 567 ms (--rematch-fixture
-// prints both). e2e/msg_rematch.test.ts holds the wasm kernel to the same two
-// strings, so the phone's build and the test build of bots.wasm are each held
-// to one answer rather than to each other.
+// prints both). The phone's kernel is the one that builds a rematch; no shipped
+// wasm module calls msg_rematch_lobby, so the bytes are held here alone (an
+// e2e/msg_rematch.test.ts once held the test build of bots.wasm to them).
 //
 // MUTATION-CHECKED:
 //   msg_rematch_seed draws from half the moment           -> "builds other bytes"
@@ -6682,8 +6682,7 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && !strcmp(argv[1], "--rematch-fixture")) {
         // A finished 4-seat game and the rematch lobby the NATIVE kernel builds
-        // for it when seat 2 taps at 0x1234 seconds and 567 ms -
-        // e2e/msg_rematch.test.ts holds wasm to it.
+        // for it when seat 2 taps at 0x1234 seconds and 567 ms (test_rematch_golden).
         static unsigned char fin[ENV_CAP], lob[ENV_CAP];
         static Game scratch;
         static char hx[ENV_CAP * 2 + 1];

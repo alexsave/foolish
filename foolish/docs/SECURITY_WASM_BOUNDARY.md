@@ -51,11 +51,14 @@ corruption. "The engine defends itself regardless of its caller."
 
 ## Verification
 
-- `e2e/wasm_kernel_fuzz.test.ts` — permanent regression: handpicked
-  overflow/OOB/DoS cases + ~1500 randomized wild games through the rules
-  path, plus malformed games through every bot (including cordite/fulminate's
-  `1<<card_id` belief build). Asserts: no wasm trap, bounded move count,
-  in-range enumerated cards, and no >2s hang.
+- `c/tests/tests.c` `test_doors_survive_hostile_bytes` — permanent regression
+  (it was `e2e/wasm_kernel_fuzz.test.ts` over bots.wasm until it moved native):
+  damaged state and roster blobs at the load door, played on when they load;
+  random boards through every kind of bot under damaged session logs
+  (including the belief builds that shift by card id); random bytes at the
+  action, request, envelope and push doors. Asserts: bounded move counts, a
+  drive within its cap, and nothing a door held corrupted; the asan lane
+  (`make -C c tests-asan`) turns any stray read into a failure.
 - Ad-hoc adversarial harness (scratch): 25 handpicked cases + ~14,000
   malformed-game bot decisions — 0 crashes, 0 corruption, 0 hangs after the
   fixes (multiple hard hangs before them).
