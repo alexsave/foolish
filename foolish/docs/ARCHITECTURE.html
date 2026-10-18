@@ -672,7 +672,7 @@ The current design is <code>c_base/DESIGN.md</code> at the repository root.</div
       <text class="t2" x="278" y="100" text-anchor="middle">+ intent_version</text>
       <rect class="box hb" x="402" y="46" width="200" height="66" rx="6"/>
       <text class="tb" x="502" y="68" text-anchor="middle">action fn</text>
-      <text class="t2" x="502" y="85" text-anchor="middle">local JWKS JWT verify</text>
+      <text class="t2" x="502" y="85" text-anchor="middle">HS256 JWT verify</text>
       <text class="t2" x="502" y="100" text-anchor="middle">seat = players.indexOf(uid)</text>
       <rect class="box hk" x="636" y="46" width="280" height="66" rx="6"/>
       <text class="tb" x="776" y="68" text-anchor="middle">kernel — one wasm section</text>
@@ -726,9 +726,12 @@ The current design is <code>c_base/DESIGN.md</code> at the repository root.</div
     than re-validated into the fresh round (the "revert, then it plays anyway" ghost). Round-scoped, not
     version-scoped, so legitimate cross-version throw-ins still flow.</li>
     <li><strong>Identity is deliberately minimal</strong>: username → SHA-256 → 16 hex chars →
-    <code>@foolish.cards</code> pseudo-email, guest-first, mirrored byte-for-byte on iOS. Edge auth verifies
-    JWTs locally against the project JWKS (asymmetric algorithms only — the alg-confusion defense) to keep
-    supabase-js out of the cold-start boot graph. Personal identity never enters the kernel blob; the
+    <code>@foolish.cards</code> pseudo-email, guest-first, mirrored byte-for-byte on iOS. Access tokens are
+    HS256 JWTs that c_base signs and verifies itself (<code>c_base/src/auth/jwt.c</code>) with one shared
+    secret, <code>CBASE_JWT_SECRET</code>, which must be at least 32 characters and without which the Lambda
+    refuses to start. There is no JWKS and no asymmetric key: verification checks the signature first, in
+    constant time, then requires the alg to be exactly HS256, so an alg-confusion token fails either way.
+    Personal identity never enters the kernel blob; the
     caller's auth id <em>is</em> the player id, and a seat is just its array index.</li>
   </ul>
   <p>Realtime holds no websocket on the server: one REST POST fans out every recipient's envelope —
