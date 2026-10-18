@@ -4,38 +4,14 @@
  * study's order, in doubles, stored as floats at the end as the study's
  * Float32Array did; where it is not, the comment says why. */
 #include "cn_geom.h"
+#include "cn_libm.h"
 #include <string.h>
 
 /* ---- the kernel's own maths --------------------------------------------------------- */
 
-/* sin and cos as cn_roll.c spells them (shared/c/wasm/libm.c's series on
- * [-pi/4, pi/4], then quadrant by quadrant), copied so this file stands alone. */
-static double sin_k(double x)
-{
-    double x2 = x * x;
-    return x * (1 - x2 / 6 * (1 - x2 / 20 * (1 - x2 / 42 * (1 - x2 / 72 * (1 - x2 / 110 * (1 - x2 / 156))))));
-}
-static double cos_k(double x)
-{
-    double x2 = x * x;
-    return 1 - x2 / 2 * (1 - x2 / 12 * (1 - x2 / 30 * (1 - x2 / 56 * (1 - x2 / 90 * (1 - x2 / 132)))));
-}
-static double quad(double x, int *q)
-{
-    double k = __builtin_floor(x / (CN_PI / 2) + .5);
-    *q = (int)((long long)k & 3);
-    return x - k * (CN_PI / 2);
-}
-double cn_m_sin(double x)
-{
-    int q; double r = quad(x, &q);
-    switch (q) { case 0: return sin_k(r); case 1: return cos_k(r); case 2: return -sin_k(r); default: return -cos_k(r); }
-}
-double cn_m_cos(double x)
-{
-    int q; double r = quad(x, &q);
-    switch (q) { case 0: return cos_k(r); case 1: return -sin_k(r); case 2: return -cos_k(r); default: return sin_k(r); }
-}
+/* sin and cos are shared/c/wasm/libm.c's series (cn_libm.h), as cn_roll.c's are */
+double cn_m_sin(double x) { return cn_libm_sin(x); }
+double cn_m_cos(double x) { return cn_libm_cos(x); }
 /* IEEE sqrt, floor and ceil are single correctly rounded instructions on
  * every target here (as cn_roll.c says of sqrt). */
 double cn_m_sqrt(double x) { return __builtin_sqrt(x); }

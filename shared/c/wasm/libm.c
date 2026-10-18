@@ -39,6 +39,24 @@ double cos(double x)
     switch (q) { case 0: return cos_k(r); case 1: return -sin_k(r); case 2: return -cos_k(r); default: return sin_k(r); }
 }
 
+/* sin and cos of one angle: one reduction, both series, then the quadrant
+ * swaps and negates. Each result is bit-identical to sin(x) and cos(x). */
+void sincos(double x, double *s, double *c)
+{
+    int q; double r = quad(x, &q), a = sin_k(r), b = cos_k(r);
+    switch (q) {
+    case 0:  *s = a;  *c = b;  break;
+    case 1:  *s = b;  *c = -a; break;
+    case 2:  *s = -a; *c = -b; break;
+    default: *s = -b; *c = a;  break;
+    }
+}
+void sincosf(float x, float *s, float *c)
+{
+    double a, b; sincos(x, &a, &b);
+    *s = (float)a; *c = (float)b;
+}
+
 /* e^x = 2^k e^r, |r| <= ln2/2, and 2^k built straight into the exponent */
 double exp(double x)
 {

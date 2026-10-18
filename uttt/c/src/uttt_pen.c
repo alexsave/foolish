@@ -1,5 +1,6 @@
 #include "uttt_pen.h"
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/sincos.h"
 #include <math.h>
 #include <string.h>
 
@@ -156,7 +157,8 @@ static int hachure(const UtttPt *poly, int np, int gap, int alt, float angle,
     /* the caller's hachureAngle, turned ninety degrees, is the rotation that
      * makes the lines horizontal */
     float a = (float)UTTT_PI / 180.f * (angle + 90.f);
-    float c = cosf(a), s = sinf(a);
+    float c, s;
+    sc_sincosf(a, &s, &c);
 
     UtttPt r[UTTT_HACHURE_POLY];
     for (int i = 0; i < np; i++) rot(poly[i].x, poly[i].y, c, s, &r[i].x, &r[i].y);
@@ -269,8 +271,9 @@ static int ell_points(UtttRough *o, float cx, float cy, float rx, float ry,
     int n = 0;
     float start = ofs1(.5f, o, 1.f) - (float)UTTT_PI / 2.f;
     #define P(ang, sc) do { if (n < cap) { \
-        buf[n].x = ofs1(off,o,1.f) + cx + (sc) * rx * cosf(ang); \
-        buf[n].y = ofs1(off,o,1.f) + cy + (sc) * ry * sinf(ang); n++; } } while (0)
+        float sn_, cs_; sc_sincosf((ang), &sn_, &cs_); \
+        buf[n].x = ofs1(off,o,1.f) + cx + (sc) * rx * cs_; \
+        buf[n].y = ofs1(off,o,1.f) + cy + (sc) * ry * sn_; n++; } } while (0)
     P(start - inc, .9f);
     float end = 2.f * (float)UTTT_PI + start - .01f;
     for (float a = start; a < end; a += inc) P(a, 1.f);
@@ -345,13 +348,14 @@ UtttPen uttt_pen_92(void)
 static float pen_w(const UtttPen *p, float x, float y, float t)
 {
     float k = p->w;
-    if (p->vel)   k *= 1.f + p->vel * (.5f - sinf((float)UTTT_PI * t));
+    const float sp = sinf((float)UTTT_PI * t);       /* both tapers share it */
+    if (p->vel)   k *= 1.f + p->vel * (.5f - sp);
     /* sinf of a float pi is -8.7e-8, not 0, and powf of a negative number
      * is NaN - so the last segment of every lifted stroke used to come out
      * NaN and was never drawn: the four main lines lost their whole far
      * overshoot (owner: "major grid lines aren't centered on the grid"). */
     if (p->lift)  k *= (1.f - p->lift)
-                     + p->lift * powf(fmaxf(sinf((float)UTTT_PI * t), 0.f), p->liftp);
+                     + p->lift * powf(fmaxf(sp, 0.f), p->liftp);
     if (p->press) k *= 1.f + p->press * (.5f - t);
     if (p->grain) k *= (1.f - p->grain)
                      + 2.f * p->grain * uttt_grain(x, y, p->gfx, p->gfy, 3);
@@ -489,7 +493,9 @@ static int join(UtttPt *o, UtttPt c, float h, float s,
          * opposite, no short way) round the tip, the way the pen was going */
         float sg = cr > 1e-6f ? 1.f : cr < -1e-6f ? -1.f : -s;
         for (int j = 1; j < steps; j++) {
-            float f = th * j / steps, co = cosf(f), si = sinf(f) * sg;
+            float f = th * j / steps, co, si;
+            sc_sincosf(f, &si, &co);
+            si *= sg;
             o[k].x = c.x + (ax * co - ay * si) * h;
             o[k].y = c.y + (ax * si + ay * co) * h;
             k++;
@@ -521,6 +527,10 @@ static int join(UtttPt *o, UtttPt c, float h, float s,
 void uttt_ink_part(UtttDL *d, const UtttPt *pts, int n, int m, const UtttPen *p)
 {
     enum { MAXS = 512, CAP = 6 };
+    /* cos and sin of pi * j / CAP, j = 1 .. CAP - 1: CAP is fixed, so the
+     * angles are, and no call is made for them */
+    static const float CAP_COS[CAP] = { 0.f, .8660254f, .5f, 0.f, -.5f, -.8660254f };
+    static const float CAP_SIN[CAP] = { 0.f, .5f, .8660254f, 1.f, .8660254f, .5f };
     if (n < 2) return;
     if (m > n) m = n;
     if (m < 2) return;
@@ -572,7 +582,7 @@ void uttt_ink_part(UtttDL *d, const UtttPt *pts, int n, int m, const UtttPen *p)
     PUT(c[e].x - uy[s] * hw[e], c[e].y + ux[s] * hw[e]);
     /* round the far end, through the way the pen was going */
     for (int j = 1; j < CAP; j++) {
-        float t = (float)UTTT_PI * j / CAP, co = cosf(t), si = sinf(t);
+        float co = CAP_COS[j], si = CAP_SIN[j];
         PUT(c[e].x + (-uy[s] * co + ux[s] * si) * hw[e],
             c[e].y + ( ux[s] * co + uy[s] * si) * hw[e]);
     }
@@ -585,7 +595,7 @@ void uttt_ink_part(UtttDL *d, const UtttPt *pts, int n, int m, const UtttPen *p)
     PUT(c[0].x + uy[0] * hw[0], c[0].y - ux[0] * hw[0]);
     /* round the near end, through the way the pen came from */
     for (int j = 1; j < CAP; j++) {
-        float t = (float)UTTT_PI * j / CAP, co = cosf(t), si = sinf(t);
+        float co = CAP_COS[j], si = CAP_SIN[j];
         PUT(c[0].x + ( uy[0] * co - ux[0] * si) * hw[0],
             c[0].y + (-ux[0] * co - uy[0] * si) * hw[0]);
     }

@@ -1,5 +1,6 @@
 #include "uttt_anim.h"
 #include "uttt_draw.h"
+#include "../../../shared/c/sincos.h"
 #include <math.h>
 
 #define BL (1.f / 3.f)
@@ -218,7 +219,9 @@ float uttt_spring_left(float travel, float mass, float stiffness, float damping,
         x = (1.0 + (w0 - v0) * t) * exp(-w0 * t);
     } else if (zeta < 1.0) {
         double wd = w0 * sqrt(1.0 - zeta * zeta);
-        x = exp(-zeta * w0 * t) * (cos(wd * t) + (zeta * w0 - v0) / wd * sin(wd * t));
+        double sw, cw;
+        sc_sincos(wd * t, &sw, &cw);
+        x = exp(-zeta * w0 * t) * (cw + (zeta * w0 - v0) / wd * sw);
     } else {
         double r = w0 * sqrt(zeta * zeta - 1.0);
         double r1 = -zeta * w0 + r, r2 = -zeta * w0 - r;

@@ -22,7 +22,7 @@ WARN    := -Wall -Wextra -Werror -std=c11 -ffp-contract=off
 CFLAGS  ?= -O2 $(WARN)
 SHARED  := ../../shared/c
 SRC     := src/cn.c src/cn_dice.c src/cn_plan.c src/cn_view.c src/cn_lobby.c src/cn_say.c \
-           src/cn_code.c src/cn_msg.c src/cn_beats.c src/cn_roll.c src/cn_scene.c src/cn_geom.c src/cn_cam.c src/cn_lay.c src/cn_tex.c src/cn_stage.c i18n/strings_en.c \
+           src/cn_code.c src/cn_msg.c src/cn_beats.c src/cn_roll.c src/cn_libm.c src/cn_scene.c src/cn_geom.c src/cn_cam.c src/cn_lay.c src/cn_tex.c src/cn_stage.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
            $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c \
            $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c \
@@ -163,7 +163,7 @@ $(eval $(call WASM_OBJECT_PROOF,$(SRC)))
 # shadow map, in C for speed, the same file the iOS library links; wasm/cn_scene_web.c
 # gives it its 256 MB static arena and the names the page calls). Its test is
 # cn_scene_test; its speed is cn_scene_bench (make bench).
-ROLL_WASM_SRC := src/cn_roll.c wasm/cn_roll_web.c src/cn_scene.c wasm/cn_scene_web.c $(SHARED)/wasm/libc.c
+ROLL_WASM_SRC := src/cn_roll.c src/cn_libm.c wasm/cn_roll_web.c src/cn_scene.c wasm/cn_scene_web.c $(SHARED)/wasm/libc.c
 ROLL_WASM_OUT := build/wasm/cn_roll.wasm
 # What compiles a file and what links the module, apart: the linker's flags
 # mean nothing to a compile. The link is still handed every flag the single
