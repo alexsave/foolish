@@ -1,5 +1,5 @@
-// store_import.h - the Supabase export (migrate/export.sh's CSVs) into any
-// store, through store.h and rows_foolish.h: the body of `cbase-import` (migrate/import.c).
+// store_import.h - the Supabase export (foolish/server/migrate/export.sh's CSVs) into any
+// store, through store.h and rows_foolish.h: the body of `cbase-import` (foolish/server/migrate/import.c).
 //
 // Reads users, bots, user_elo_ratings, games with player_hands and
 // bot_hands, game_snapshots and chat_messages, and writes them in that

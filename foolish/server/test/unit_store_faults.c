@@ -1,6 +1,6 @@
 // unit_store_faults.c - every store call a request makes, failed one at a time.
 //
-// test/lib_faultstore.c wraps the in-RAM store; each sweep runs one request
+// foolish/server/test/lib_faultstore.c wraps the in-RAM store; each sweep runs one request
 // with its k-th store call answering CB_E_DB (then CB_E_BUSY, a throttle past
 // its backoff), for k = 0, 1, 2, ... until a run makes no store failure, and
 // holds every run to two rules: it returns, and it answers as the server's

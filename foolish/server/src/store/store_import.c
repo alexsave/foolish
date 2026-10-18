@@ -1,5 +1,5 @@
 // store_import.c - the Supabase export into a store (store_import.h), the
-// body of `cbase-import` (migrate/import.c), here so test/unit_import.c can
+// body of `cbase-import` (foolish/server/migrate/import.c), here so foolish/server/test/unit_import.c can
 // run it on a fixture without a second binary.
 #include "store_import.h"
 #include "store/store_priv.h"
@@ -514,7 +514,7 @@ static long long export_count(const char *dir, const char *name) {
     if (!f) return -1;
     long long n = -1;
     while (fgets(line, sizeof line, f)) {
-        // "<name> <count>\n", as migrate/export.sh writes it.
+        // "<name> <count>\n", as foolish/server/migrate/export.sh writes it.
         size_t len = strcspn(line, "\r\n");
         const char *sp = memchr(line, ' ', len);
         size_t kn = strlen(name);

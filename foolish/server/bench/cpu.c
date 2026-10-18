@@ -6,10 +6,10 @@
 //   event_decode       a Function URL event for POST /v1/action, as
 //                      AWS would deliver the browser's request (its headers,
 //                      a minted access token, the binary body as base64), into
-//                      a cb_http_req (src/aws/event.c)
+//                      a cb_http_req (providers/aws/src/aws/event.c)
 //   event_encode       the action's 7-byte answer back into the response JSON
 //   dynamo_get_parse   a GetItem answer for the game row (the row the kernel
-//                      just committed, as json_surface.c writes it) read back into
+//                      just committed, as core_json.c or aws_json.c writes it) read back into
 //                      a cb_game_row: the JSON scan and the base64 of the blobs
 //   dynamo_commit_build the commit's UpdateItem body (the CAS on the row,
 //                      store/rows_foolish.c cb_rows_cas_write, as a move

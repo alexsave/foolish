@@ -238,7 +238,7 @@ typedef struct cb_rows_ops {
     // highest rating first, then user id, at most `limit` of them. Bounded
     // whatever the number of sign-ups: on DynamoDB it is one Query of `limit`
     // items on GSI2's rating-ordered key, which only played rows carry
-    // (json_surface.h "THE ITEM LAYOUT", DESIGN.md "Edge cache").
+    // (aws_json.h "THE ITEM LAYOUT", DESIGN.md "Edge cache").
     int (*ratings_top)(cb_store *s, int limit, cb_rating_fn fn, void *ud);
     // seat_ratings: ids[i]'s rating (a bot's, else a user's), or -1
     // (TABLE_RATING_NONE) when it has none, into out[i].
@@ -260,7 +260,7 @@ typedef struct cb_rows_ops {
     // Oldest first, the newest `limit` (0: all).
     int (*chat_list)(cb_store *s, const char *game_id, int limit, cb_chat_fn fn, void *ud);
 
-    // migration (migrate/import.c): rows written as they are, with no side
+    // migration (foolish/server/migrate/import.c): rows written as they are, with no side
     // effects. Nothing but the import calls these.
     // The rating row as given (username "" stores none), insert or replace.
     int (*rating_import)(cb_store *s, const cb_rating_row *r);

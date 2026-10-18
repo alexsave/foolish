@@ -3,7 +3,7 @@
 // ratings a commit applies, the admin console's reads, the import writes.
 //
 // SQLite (a real file) by default; DynamoDB Local with CBASE_STORE=dynamo
-// (`make check-dynamo`, each test on a fresh table made from ops/cbase.yaml).
+// (`make check-dynamo`, each test on a fresh table made from providers/aws/ops/cbase.yaml).
 // The same assertions hold both backends to one contract; the few that need
 // the backend's own query language (SQL or PartiQL) say which they run.
 #include "t.h"
