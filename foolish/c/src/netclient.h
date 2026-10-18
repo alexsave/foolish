@@ -353,7 +353,8 @@ int nc_stream_closed(int64_t now_ms);
 // with nc_event.
 int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms);
 // The next frame to send, or NULL for none now; call until NULL. Then
-// nc_stream_due_ms says how long until there is one (a retry, a ping), -1 for
+// nc_stream_due_ms says how long until there is one (a retry, a ping, a quiet
+// game's read for nc_next_request), -1 for
 // none while the socket is shut.
 const NcOut *nc_stream_next(int64_t now_ms);
 int nc_stream_due_ms(int64_t now_ms);
