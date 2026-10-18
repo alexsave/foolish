@@ -5,6 +5,7 @@
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"
+#include "bot_play.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,24 +24,18 @@ int main(int argc,char**argv){
     start_game(&g);
     printf("{\"seed\":\"%s\",\"trump_suit\":%d,\"flip\":[%d,%d],\"first_attacker\":%d,\"moves\":[\n",
         argv[1],g.power_suit,g.flipped.suit,g.flipped.value,g.first_attacker);
-    int iters=0,first=1;
-    while(game_done(&g)<0 && iters++<4000){
-        int elig[MAX_PLAYERS],n_e=0;for(int i=0;i<g.num_players;i++)if(should_bot_act(&g,i))elig[n_e++]=i;if(n_e==0)break;
-        for(int i=n_e-1;i>0;i--){int j=(int)(game_random()*(i+1));if(j<0)j=0;if(j>i)j=i;int t=elig[i];elig[i]=elig[j];elig[j]=t;}
-        bool acted=false;
-        for(int k=0;k<n_e;k++){int pi=elig[k];LegalMoves moves;calculate_legal_moves(&g,pi,&moves);if(moves.n==0)continue;
-            int ply=g.num_logs;
-            int idx=octogen_strategy_choose(&g,pi,&moves,NULL);if(idx<0||idx>=moves.n)continue;
-            const LegalMove*m=&moves.moves[idx];
-            printf("%s{\"ply\":%d,\"seat\":%d,\"type\":\"%s\",\"cards\":[",first?"":",\n",ply,pi,tname(m->type));
-            for(int j=0;j<m->n_cards;j++)printf("%s[%d,%d]",j?",":"",m->cards[j].suit,m->cards[j].value);
-            printf("]");
-            if(m->type==MOVE_COVER){printf(",\"attack\":[");for(int j=0;j<m->n_cards;j++)printf("%s[%d,%d]",j?",":"",m->attack_cards[j].suit,m->attack_cards[j].value);printf("]");}
-            printf("}");first=0;
-            bool ok=false;
-            switch(m->type){case MOVE_ATTACK:ok=handle_attack(&g,pi,m->cards,m->n_cards);break;case MOVE_COVER:ok=handle_cover(&g,pi,m->cards,m->attack_cards,m->n_cards);break;case MOVE_PASS:ok=handle_pass(&g,pi,m->cards,m->n_cards);break;case MOVE_PICKUP:ok=handle_pickup(&g,pi);break;case MOVE_GOOD:ok=handle_good(&g,pi);break;default:break;}
-            if(ok){acted=true;break;}}
-        if(!acted)break;
+    int first=1;
+    BotPlay bp;bot_play_init(&bp,&g,4000,BOT_PLAY_SHUFFLE,NULL);
+    for(int pi;(pi=bot_play_next(&bp))>=0;){const LegalMoves*mv=&bp.moves;
+        int ply=g.num_logs;
+        int idx=octogen_strategy_choose(&g,pi,mv,NULL);if(idx<0||idx>=mv->n)continue;
+        const LegalMove*m=&mv->moves[idx];
+        printf("%s{\"ply\":%d,\"seat\":%d,\"type\":\"%s\",\"cards\":[",first?"":",\n",ply,pi,tname(m->type));
+        for(int j=0;j<m->n_cards;j++)printf("%s[%d,%d]",j?",":"",m->cards[j].suit,m->cards[j].value);
+        printf("]");
+        if(m->type==MOVE_COVER){printf(",\"attack\":[");for(int j=0;j<m->n_cards;j++)printf("%s[%d,%d]",j?",":"",m->attack_cards[j].suit,m->attack_cards[j].value);printf("]");}
+        printf("}");first=0;
+        bot_play_apply(&bp,idx);
     }
     printf("\n],\"fool\":%d,\"num_logs\":%d}\n",game_done(&g),g.num_logs);
     (void)TN;

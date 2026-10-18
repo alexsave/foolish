@@ -18,6 +18,7 @@
 #include "../src/legal.h"
 #include "../src/strategy.h"
 #include "../src/cli_util.h"
+#include "../src/bot_play.h"
 #include "../src/distill_feat.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,50 +52,34 @@ static int play_one_dump(uint32_t seed, int n_players, int max_moves, FILE *out)
     start_game(&g);
 
     static double feats[DISTILL_NUM_FEATURES];
-    int iters = 0;
-    while (game_done(&g) < 0 && iters++ < 4000) {
-        int elig[MAX_PLAYERS]; int n_e = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
-        if (n_e == 0) break;
-        for (int i = n_e - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
-        }
-        bool acted = false;
-        for (int k = 0; k < n_e; k++) {
-            int pi = elig[k];
-            LegalMoves moves;
-            calculate_legal_moves(&g, pi, &moves);
-            if (moves.n == 0) continue;
-            double t0 = wall_secs();
-            int idx = cordite_strategy_choose(&g, pi, &moves, NULL);
-            if (moves.n >= 2) { g_choose_secs += wall_secs() - t0; g_timed++; }
-            if (idx < 0 || idx >= moves.n) continue;
+    BotPlay bp;
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SHUFFLE, NULL);
+    for (int pi; (pi = bot_play_next(&bp)) >= 0; ) {
+        const LegalMoves *mv = &bp.moves;
+        double t0 = wall_secs();
+        int idx = cordite_strategy_choose(&g, pi, mv, NULL);
+        if (mv->n >= 2) { g_choose_secs += wall_secs() - t0; g_timed++; }
+        if (idx < 0 || idx >= mv->n) continue;
 
-            if (moves.n >= 2) {
-                if (moves.n > max_moves) {
-                    g_skipped_big++;
-                } else {
-                    // Dump this decision: one row per candidate.
-                    long did = g_decisions++;
-                    distill_decision_reset();
-                    for (int ci = 0; ci < moves.n; ci++) {
-                        distill_features(&g, pi, &moves.moves[ci], &moves, feats);
-                        fprintf(out, "%u,%ld,%d,%d", seed, did, ci, ci == idx);
-                        for (int f = 0; f < DISTILL_NUM_FEATURES; f++)
-                            fprintf(out, ",%.17g", feats[f]);
-                        fputc('\n', out);
-                        g_rows++;
-                    }
+        if (mv->n >= 2) {
+            if (mv->n > max_moves) {
+                g_skipped_big++;
+            } else {
+                // Dump this decision: one row per candidate.
+                long did = g_decisions++;
+                distill_decision_reset();
+                for (int ci = 0; ci < mv->n; ci++) {
+                    distill_features(&g, pi, &mv->moves[ci], mv, feats);
+                    fprintf(out, "%u,%ld,%d,%d", seed, did, ci, ci == idx);
+                    for (int f = 0; f < DISTILL_NUM_FEATURES; f++)
+                        fprintf(out, ",%.17g", feats[f]);
+                    fputc('\n', out);
+                    g_rows++;
                 }
             }
-
-            const LegalMove *m = &moves.moves[idx];
-            bool ok = legal_move_apply(&g, pi, m);
-            if (ok) { acted = true; break; }
         }
-        if (!acted) break;
+
+        bot_play_apply(&bp, idx);
     }
     if (game_done(&g) < 0) return -1;
     for (int i = 0; i < g.num_eliminated; i++) {

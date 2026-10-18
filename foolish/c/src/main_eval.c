@@ -18,6 +18,7 @@
 #include "../src/legal.h"
 #include "../src/strategy.h"
 #include "../src/cli_util.h"
+#include "../src/bot_play.h"
 #include "../src/cordite_sim.h"
 #include "../../../shared/c/stats/stats.h"
 #include <stdio.h>
@@ -33,9 +34,6 @@ static double wall_secs(void) {
 }
 
 // Dispatch on strategy_key — seat 0 uses `protagonist`, others use `opp`.
-static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *moves) {
-    return strategy_choose(strat, g, pi, moves);
-}
 
 static const char SUIT_CHAR[4] = { 'S', 'H', 'C', 'D' };
 static const char *VALUE_STR[14] = {
@@ -80,50 +78,35 @@ static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int o
     }
     printf("\n");
 
-    int iters = 0;
     int step = 0;
-    while (game_done(&g) < 0 && iters++ < 4000) {
-        int elig[MAX_PLAYERS]; int n_e = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
-        if (n_e == 0) break;
-        for (int i = n_e - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
+    BotPlay bp;
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SHUFFLE, NULL);
+    for (int pi; (pi = bot_play_next(&bp)) >= 0; ) {
+        const LegalMoves *mv = &bp.moves;
+        int idx = strategy_choose(g.players[pi].strategy_key, &g, pi, mv);
+        if (idx < 0 || idx >= mv->n) continue;
+        const LegalMove *m = &mv->moves[idx];
+        const char *mt =
+            m->type == MOVE_ATTACK ? "ATTACK" :
+            m->type == MOVE_COVER  ? "COVER " :
+            m->type == MOVE_PASS   ? "PASS  " :
+            m->type == MOVE_PICKUP ? "PICKUP" :
+            m->type == MOVE_GOOD   ? "GOOD  " : "?";
+        char cbuf[128]; format_card_list(m->cards, m->n_cards, cbuf, sizeof(cbuf));
+        char table_buf[256]; table_buf[0] = 0;
+        for (int b = 0; b < g.num_battles; b++) {
+            char ab[8], db[8] = {0};
+            format_card_short(g.table_battles[b].attack, ab, sizeof(ab));
+            if (!card_is_none(g.table_battles[b].defense))
+                format_card_short(g.table_battles[b].defense, db, sizeof(db));
+            char piece[24];
+            snprintf(piece, sizeof(piece), "%s/%s ", ab, db[0] ? db : "_");
+            strncat(table_buf, piece, sizeof(table_buf) - strlen(table_buf) - 1);
         }
-        bool acted = false;
-        for (int k = 0; k < n_e; k++) {
-            int pi = elig[k];
-            LegalMoves moves;
-            calculate_legal_moves(&g, pi, &moves);
-            if (moves.n == 0) continue;
-            int idx = dispatch_choose(g.players[pi].strategy_key, &g, pi, &moves);
-            if (idx < 0 || idx >= moves.n) continue;
-            const LegalMove *m = &moves.moves[idx];
-            const char *mt =
-                m->type == MOVE_ATTACK ? "ATTACK" :
-                m->type == MOVE_COVER  ? "COVER " :
-                m->type == MOVE_PASS   ? "PASS  " :
-                m->type == MOVE_PICKUP ? "PICKUP" :
-                m->type == MOVE_GOOD   ? "GOOD  " : "?";
-            char cbuf[128]; format_card_list(m->cards, m->n_cards, cbuf, sizeof(cbuf));
-            char table_buf[256]; table_buf[0] = 0;
-            for (int b = 0; b < g.num_battles; b++) {
-                char ab[8], db[8] = {0};
-                format_card_short(g.table_battles[b].attack, ab, sizeof(ab));
-                if (!card_is_none(g.table_battles[b].defense))
-                    format_card_short(g.table_battles[b].defense, db, sizeof(db));
-                char piece[24];
-                snprintf(piece, sizeof(piece), "%s/%s ", ab, db[0] ? db : "_");
-                strncat(table_buf, piece, sizeof(table_buf) - strlen(table_buf) - 1);
-            }
-            printf("[%3d] p%d  %s  [%-22s]  hand=%d  table=[%s]\n",
-                   ++step, pi, mt, cbuf, g.players[pi].hand_count,
-                   table_buf[0] ? table_buf : "(empty)");
-            bool ok = legal_move_apply(&g, pi, m);
-            if (ok) { acted = true; break; }
-        }
-        if (!acted) break;
+        printf("[%3d] p%d  %s  [%-22s]  hand=%d  table=[%s]\n",
+               ++step, pi, mt, cbuf, g.players[pi].hand_count,
+               table_buf[0] ? table_buf : "(empty)");
+        bot_play_apply(&bp, idx);
     }
     if (game_done(&g) < 0) { printf("game incomplete\n"); return -1; }
     printf("\nelimination order:");
@@ -172,48 +155,33 @@ static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp
     }
     start_game(&g);
 
-    int iters = 0, step = 0;
-    while (game_done(&g) < 0 && iters++ < 4000) {
-        int elig[MAX_PLAYERS]; int n_e = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
-        if (n_e == 0) break;
-        for (int i = n_e - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
-        }
-        bool acted = false;
-        for (int k = 0; k < n_e; k++) {
-            int pi = elig[k];
-            LegalMoves moves;
-            calculate_legal_moves(&g, pi, &moves);
-            if (moves.n == 0) continue;
-            int idx = dispatch_choose(g.players[pi].strategy_key, &g, pi, &moves);
-            if (idx < 0 || idx >= moves.n) continue;
-            step++;
-            if (pi == 0 && moves.n > 1) {
-                (*n_dec)++;
-                int oidx = octogen_oracle_strategy_choose(&g, pi, &moves, NULL);
-                if (oidx >= 0 && oidx < moves.n && oidx != idx) {
-                    (*n_disagree)++;
-                    int in_c = 0;
-                    for (int q = 0; q < g.num_players; q++)
-                        if (g.players[q].status == PLAYER_STATUS_IN) in_c++;
-                    char mb[160], ob[160];
-                    fmt_move(&moves.moves[idx], mb, sizeof(mb));
-                    fmt_move(&moves.moves[oidx], ob, sizeof(ob));
-                    printf("  DISAGREE seed=%u step=%d deck=%d in=%d role=%s hand=%d "
-                           "moves=%d  played=%s  oracle=%s\n",
-                           seed, step, g.deck_count, in_c,
-                           (g.defender == 0) ? "def" : "att",
-                           g.players[0].hand_count, moves.n, mb, ob);
-                }
+    int step = 0;
+    BotPlay bp;
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SHUFFLE, NULL);
+    for (int pi; (pi = bot_play_next(&bp)) >= 0; ) {
+        const LegalMoves *mv = &bp.moves;
+        int idx = strategy_choose(g.players[pi].strategy_key, &g, pi, mv);
+        if (idx < 0 || idx >= mv->n) continue;
+        step++;
+        if (pi == 0 && mv->n > 1) {
+            (*n_dec)++;
+            int oidx = octogen_oracle_strategy_choose(&g, pi, mv, NULL);
+            if (oidx >= 0 && oidx < mv->n && oidx != idx) {
+                (*n_disagree)++;
+                int in_c = 0;
+                for (int q = 0; q < g.num_players; q++)
+                    if (g.players[q].status == PLAYER_STATUS_IN) in_c++;
+                char mb[160], ob[160];
+                fmt_move(&mv->moves[idx], mb, sizeof(mb));
+                fmt_move(&mv->moves[oidx], ob, sizeof(ob));
+                printf("  DISAGREE seed=%u step=%d deck=%d in=%d role=%s hand=%d "
+                       "moves=%d  played=%s  oracle=%s\n",
+                       seed, step, g.deck_count, in_c,
+                       (g.defender == 0) ? "def" : "att",
+                       g.players[0].hand_count, mv->n, mb, ob);
             }
-            const LegalMove *m = &moves.moves[idx];
-            bool ok = legal_move_apply(&g, pi, m);
-            if (ok) { acted = true; break; }
         }
-        if (!acted) break;
+        bot_play_apply(&bp, idx);
     }
     if (game_done(&g) < 0) return -1;
     for (int i = 0; i < g.num_eliminated; i++) {
@@ -261,38 +229,23 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
     }
     start_game(&g);
 
-    int iters = 0;
-    while (game_done(&g) < 0 && iters++ < 4000) {
-        int elig[MAX_PLAYERS]; int n_e = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
-        if (n_e == 0) break;
-        for (int i = n_e - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
+    BotPlay bp;
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SHUFFLE, NULL);
+    for (int pi; (pi = bot_play_next(&bp)) >= 0; ) {
+        const LegalMoves *mv = &bp.moves;
+        long long _lt0 = (g_lat && pi == 0) ? now_cpu_ns() : 0;
+        int idx = strategy_choose(g.players[pi].strategy_key, &g, pi, mv);
+        if (g_lat && pi == 0) {
+            g_lat_ns += now_cpu_ns() - _lt0; g_lat_n++;
+            if (!g_lat_reg) { g_lat_reg = 1; atexit(lat_dump); }
         }
-        bool acted = false;
-        for (int k = 0; k < n_e; k++) {
-            int pi = elig[k];
-            LegalMoves moves;
-            calculate_legal_moves(&g, pi, &moves);
-            if (moves.n == 0) continue;
-            long long _lt0 = (g_lat && pi == 0) ? now_cpu_ns() : 0;
-            int idx = dispatch_choose(g.players[pi].strategy_key, &g, pi, &moves);
-            if (g_lat && pi == 0) {
-                g_lat_ns += now_cpu_ns() - _lt0; g_lat_n++;
-                if (!g_lat_reg) { g_lat_reg = 1; atexit(lat_dump); }
-            }
-            if (idx < 0 || idx >= moves.n) continue;
-            const LegalMove *m = &moves.moves[idx];
-            if (g_sig && pi == 0) {  // hash only the protagonist's chosen moves
-                SIG_FOLD(m->type); SIG_FOLD(m->n_cards);
-                for (int c = 0; c < m->n_cards; c++) { SIG_FOLD(m->cards[c].suit); SIG_FOLD(m->cards[c].value); }
-            }
-            bool ok = legal_move_apply(&g, pi, m);
-            if (ok) { acted = true; break; }
+        if (idx < 0 || idx >= mv->n) continue;
+        const LegalMove *m = &mv->moves[idx];
+        if (g_sig && pi == 0) {  // hash only the protagonist's chosen moves
+            SIG_FOLD(m->type); SIG_FOLD(m->n_cards);
+            for (int c = 0; c < m->n_cards; c++) { SIG_FOLD(m->cards[c].suit); SIG_FOLD(m->cards[c].value); }
         }
-        if (!acted) break;
+        bot_play_apply(&bp, idx);
     }
     int finish;
     if (game_done(&g) < 0) finish = -1;

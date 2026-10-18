@@ -10,6 +10,7 @@
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"
+#include "bot_play.h"
 #include "retro_seed.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,29 +63,22 @@ int main(int argc,char**argv){
         Game g;memset(&g,0,sizeof g);g.num_players=2;for(int i=0;i<2;i++){g.players[i].status=PLAYER_STATUS_READY;g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;}
         start_game(&g);scanned++;
         int run[2]={0,0},maxrun[2]={0,0},maxstart[2]={-1,-1},runstart[2]={-1,-1};
-        int iters=0;
-        while(game_done(&g)<0 && iters++<4000){
-            int elig[MAX_PLAYERS],n_e=0;for(int i=0;i<g.num_players;i++)if(should_bot_act(&g,i))elig[n_e++]=i;if(n_e==0)break;
-            for(int i=n_e-1;i>0;i--){int j=(int)(game_random()*(i+1));if(j<0)j=0;if(j>i)j=i;int t=elig[i];elig[i]=elig[j];elig[j]=t;}
-            bool acted=false;
-            for(int k=0;k<n_e;k++){int pi=elig[k];LegalMoves moves;calculate_legal_moves(&g,pi,&moves);if(moves.n==0)continue;
-                int nin=0;for(int p=0;p<g.num_players;p++)if(g.players[p].status==PLAYER_STATUS_IN)nin++;
-                int total=0;for(int p=0;p<g.num_players;p++)total+=g.players[p].hand_count;
-                int idx=octogen_strategy_choose(&g,pi,&moves,NULL);if(idx<0||idx>=moves.n)continue;
-                if(g.deck_count==0&&!g.has_flipped&&nin==2&&total<=MAXCARDS&&moves.n>=MINMOVES){
-                    SimState root;cd_sim_from_game(&root,&g);
-                    if(retro_build(&root,pi)==0){
-                        int nwin=0; int playedwin=0;
-                        for(int mi=0;mi<moves.n;mi++){SimState c=root;if(!cd_sim_apply_root_move(&c,pi,&moves.moves[mi]))continue;int v=child_value(&c);if(v==WIN){nwin++;if(mi==idx)playedwin=1;}}
-                        if(nwin==1 && playedwin){ if(run[pi]==0)runstart[pi]=g.num_logs; run[pi]++; if(run[pi]>maxrun[pi]){maxrun[pi]=run[pi];maxstart[pi]=runstart[pi];} }
-                        else { run[pi]=0; }   // a non-unique-win (or losing) real choice breaks the tightrope
-                    }
-                    retro_clear();
+        BotPlay bp;bot_play_init(&bp,&g,4000,BOT_PLAY_SHUFFLE,NULL);
+        for(int pi;(pi=bot_play_next(&bp))>=0;){const LegalMoves*mv=&bp.moves;
+            int nin=0;for(int p=0;p<g.num_players;p++)if(g.players[p].status==PLAYER_STATUS_IN)nin++;
+            int total=0;for(int p=0;p<g.num_players;p++)total+=g.players[p].hand_count;
+            int idx=octogen_strategy_choose(&g,pi,mv,NULL);if(idx<0||idx>=mv->n)continue;
+            if(g.deck_count==0&&!g.has_flipped&&nin==2&&total<=MAXCARDS&&mv->n>=MINMOVES){
+                SimState root;cd_sim_from_game(&root,&g);
+                if(retro_build(&root,pi)==0){
+                    int nwin=0; int playedwin=0;
+                    for(int mi=0;mi<mv->n;mi++){SimState c=root;if(!cd_sim_apply_root_move(&c,pi,&mv->moves[mi]))continue;int v=child_value(&c);if(v==WIN){nwin++;if(mi==idx)playedwin=1;}}
+                    if(nwin==1 && playedwin){ if(run[pi]==0)runstart[pi]=g.num_logs; run[pi]++; if(run[pi]>maxrun[pi]){maxrun[pi]=run[pi];maxstart[pi]=runstart[pi];} }
+                    else { run[pi]=0; }   // a non-unique-win (or losing) real choice breaks the tightrope
                 }
-                const LegalMove*m=&moves.moves[idx];bool ok=false;
-                switch(m->type){case MOVE_ATTACK:ok=handle_attack(&g,pi,m->cards,m->n_cards);break;case MOVE_COVER:ok=handle_cover(&g,pi,m->cards,m->attack_cards,m->n_cards);break;case MOVE_PASS:ok=handle_pass(&g,pi,m->cards,m->n_cards);break;case MOVE_PICKUP:ok=handle_pickup(&g,pi);break;case MOVE_GOOD:ok=handle_good(&g,pi);break;default:break;}
-                if(ok){acted=true;break;}}
-            if(!acted)break;
+                retro_clear();
+            }
+            bot_play_apply(&bp,idx);
         }
         int fool=game_done(&g);            // the loser seat (heads-up); winner = 1-fool
         if(fool<0)continue;

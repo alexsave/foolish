@@ -24,6 +24,7 @@
 #include "../src/legal.h"
 #include "../src/strategy.h"
 #include "../src/cli_util.h"
+#include "../src/bot_play.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,9 +47,6 @@ static void snapshot(const Game *g) {
 }
 
 // Dispatch a strategy id to its choose function (mirrors main_eval).
-static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *moves) {
-    return strategy_choose(strat, g, pi, moves);
-}
 
 // Play one all-`strat` game to completion, recording the hand-size history.
 // Returns true if it finished with a single durak.
@@ -65,30 +63,10 @@ static bool play_all_cordite(Game *g, int np, uint32_t seed, int strat) {
     g_T = 0;
     snapshot(g);
 
-    int iters = 0;
-    while (game_done(g) < 0 && iters++ < 4000) {
-        int elig[MAX_PLAYERS]; int n_e = 0;
-        for (int i = 0; i < g->num_players; i++) if (should_bot_act(g, i)) elig[n_e++] = i;
-        if (n_e == 0) break;
-        for (int i = n_e - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
-        }
-        bool acted = false;
-        for (int k = 0; k < n_e; k++) {
-            int pi = elig[k];
-            LegalMoves moves;
-            calculate_legal_moves(g, pi, &moves);
-            if (moves.n == 0) continue;
-            int idx = dispatch_choose(strat, g, pi, &moves);
-            if (idx < 0 || idx >= moves.n) continue;
-            const LegalMove *m = &moves.moves[idx];
-            bool ok = legal_move_apply(g, pi, m);
-            if (ok) { acted = true; snapshot(g); break; }
-        }
-        if (!acted) break;
-    }
+    BotPlay bp;
+    bot_play_init(&bp, g, 4000, BOT_PLAY_SHUFFLE, NULL);
+    for (int pi; (pi = bot_play_next(&bp)) >= 0; )
+        if (bot_play_apply(&bp, strategy_choose(strat, g, pi, &bp.moves))) snapshot(g);
     return game_done(g) >= 0;
 }
 

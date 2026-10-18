@@ -19,6 +19,7 @@
 #include "legal.h"
 #include "strategy.h"
 #include "cli_util.h"
+#include "bot_play.h"
 #include "robusta_strategy.h"
 #include "firecracker_strategy.h"
 #include "gunpowder_strategy.h"
@@ -50,9 +51,6 @@ typedef struct {
 static Competitor COMPS[MAX_COMPS];
 static int        N_COMPS = 0;
 
-static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *moves) {
-    return strategy_choose(strat, g, pi, moves);
-}
 
 static double elo_change(double player_rating, double opp_rating, double actual_score) {
     double expected = 1.0 / (1.0 + pow(10.0, (opp_rating - player_rating) / 400.0));
@@ -74,30 +72,10 @@ static bool play_one_game(uint32_t seed, int num_players, const int *seat_strats
     }
     start_game(&g);
 
-    int iters = 0;
-    while (game_done(&g) < 0 && iters++ < 4000) {
-        int elig[MAX_PLAYERS]; int n_e = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
-        if (n_e == 0) break;
-        for (int i = n_e - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
-        }
-        bool acted = false;
-        for (int k = 0; k < n_e; k++) {
-            int pi = elig[k];
-            LegalMoves moves;
-            calculate_legal_moves(&g, pi, &moves);
-            if (moves.n == 0) continue;
-            int idx = dispatch_choose(g.players[pi].strategy_key, &g, pi, &moves);
-            if (idx < 0 || idx >= moves.n) continue;
-            const LegalMove *m = &moves.moves[idx];
-            bool ok = legal_move_apply(&g, pi, m);
-            if (ok) { acted = true; break; }
-        }
-        if (!acted) break;
-    }
+    BotPlay bp;
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SHUFFLE, NULL);
+    for (int pi; (pi = bot_play_next(&bp)) >= 0; )
+        bot_play_apply(&bp, strategy_choose(g.players[pi].strategy_key, &g, pi, &bp.moves));
     if (game_done(&g) < 0) return false;
     // rankings[i] = seat that finished position i (0-indexed).
     // elimination_order is the seat order of clearings; the remaining seat is durak.

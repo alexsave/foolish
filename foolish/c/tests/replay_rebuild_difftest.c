@@ -24,6 +24,7 @@
 #include "../src/game.h"
 #include "../src/legal.h"
 #include "../src/strategy.h"
+#include "../src/bot_play.h"
 #include "../src/replay.h"
 #include "../src/replay_steps.h"
 #include "../src/view.h"
@@ -98,38 +99,17 @@ static bool play(Game *g, int np, bool handwritten, int8_t rules, uint64_t seed,
     g_n_live = 0;
     tr_live(g, "deal");
 
-    static LegalMoves moves;
-    for (int guard = 0; guard < 100000 && game_done(g) < 0; guard++) {
-        int elig[MAX_PLAYERS], n_e = 0;
-        for (int i = 0; i < np; i++) if (should_bot_act(g, i)) elig[n_e++] = i;
-        for (int i = n_e - 1; i > 0; i--) {
-            int j = (int)(rng_u32(&g_rng) % (uint32_t)(i + 1));
-            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
-        }
-        bool acted = false;
-        for (int e = 0; e < n_e && !acted; e++) {
-            const int pi = elig[e];
-            calculate_legal_moves(g, pi, &moves);
-            if (moves.n == 0) continue;
-            const int mi = handwritten ? handwritten_strategy_choose(g, pi, &moves, 0)
-                                       : random_strategy_choose(g, pi, &moves, 0);
-            const LegalMove *m = &moves.moves[mi];
-            switch (m->type) {
-                case MOVE_ATTACK: acted = handle_attack(g, pi, m->cards, m->n_cards); break;
-                case MOVE_COVER:  acted = handle_cover(g, pi, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   acted = handle_pass(g, pi, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: acted = handle_pickup(g, pi); break;
-                case MOVE_GOOD:   acted = handle_good(g, pi); break;
-                default: break;
-            }
-            if (acted && rng_u32(&g_rng) % 16 == 0) check_mid_game(g, seed32);
-            if (acted) {
-                char w[64];
-                snprintf(w, 64, "live seat %d move %d n=%d", pi, m->type, m->n_cards);
-                tr_live(g, w);
-            }
-        }
-        if (!acted) return false;
+    static BotPlay bp;
+    bot_play_init(&bp, g, 100000, BOT_PLAY_SHUFFLE, &g_rng);
+    for (int pi; (pi = bot_play_next(&bp)) >= 0; ) {
+        const int mi = handwritten ? handwritten_strategy_choose(g, pi, &bp.moves, 0)
+                                   : random_strategy_choose(g, pi, &bp.moves, 0);
+        if (!bot_play_apply(&bp, mi)) continue;
+        if (rng_u32(&g_rng) % 16 == 0) check_mid_game(g, seed32);
+        const LegalMove *m = &bp.moves.moves[mi];
+        char w[64];
+        snprintf(w, 64, "live seat %d move %d n=%d", pi, m->type, m->n_cards);
+        tr_live(g, w);
     }
     return game_done(g) >= 0;
 }

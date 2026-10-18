@@ -4,6 +4,7 @@
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"
+#include "bot_play.h"
 #include "retro_seed.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,35 +56,28 @@ int main(int argc,char**argv){
     Game g;memset(&g,0,sizeof g);g.num_players=2;for(int i=0;i<2;i++){g.players[i].status=PLAYER_STATUS_READY;g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;}
     start_game(&g);
     printf("trump=%c\n",SUIT[g.power_suit]);
-    int iters=0;
-    while(game_done(&g)<0 && iters++<4000){
-        int elig[MAX_PLAYERS],n_e=0;for(int i=0;i<g.num_players;i++)if(should_bot_act(&g,i))elig[n_e++]=i;if(n_e==0)break;
-        for(int i=n_e-1;i>0;i--){int j=(int)(game_random()*(i+1));if(j<0)j=0;if(j>i)j=i;int t=elig[i];elig[i]=elig[j];elig[j]=t;}
-        bool acted=false;
-        for(int k=0;k<n_e;k++){int pi=elig[k];LegalMoves moves;calculate_legal_moves(&g,pi,&moves);if(moves.n==0)continue;
-            int nin=0;for(int p=0;p<g.num_players;p++)if(g.players[p].status==PLAYER_STATUS_IN)nin++;
-            int total=0;for(int p=0;p<g.num_players;p++)total+=g.players[p].hand_count;
-            int ply=g.num_logs;
-            int idx=octogen_strategy_choose(&g,pi,&moves,NULL);if(idx<0||idx>=moves.n)continue;
-            if(g.deck_count==0&&!g.has_flipped&&nin==2&&total<=12&&moves.n>=2&&(only<0||pi==only)){
-                SimState root;cd_sim_from_game(&root,&g);
-                if(retro_build(&root,pi)==0){
-                    int nwin=0,nn=moves.n; char wins[256]={0}; int ww=0;
-                    for(int mi=0;mi<nn;mi++){SimState c=root;if(!cd_sim_apply_root_move(&c,pi,&moves.moves[mi]))continue;if(child_value(&c)==WIN){nwin++;char mb[64];movestr(mb,&moves.moves[mi]);ww+=snprintf(wins+ww,256-ww,"%s%s",ww?",":"",mb);}}
-                    char hs[160]={0};int w=0;for(int j=0;j<g.players[pi].hand_count;j++){char c[8];cardstr(c,g.players[pi].hand[j].suit,g.players[pi].hand[j].value);w+=snprintf(hs+w,160-w,"%s%s",j?" ":"",c);}
-                    char od[80]={0};int ow=0;int opp=pi^1;for(int j=0;j<g.players[opp].hand_count;j++){char c[8];cardstr(c,g.players[opp].hand[j].suit,g.players[opp].hand[j].value);ow+=snprintf(od+ow,80-ow,"%s%s",j?" ":"",c);}
-                    char pl[64];movestr(pl,&moves.moves[idx]);
-                    SimState pc=root;cd_sim_apply_root_move(&pc,pi,&moves.moves[idx]);int pv=child_value(&pc);
-                    printf("ply %3d seat%d %s | hand[%s] vs[%s] | %d moves, %d WIN {%s} | played %s -> %s%s\n",
-                        ply,pi,pi==g.defender?"DEF":"ATK",hs,od,nn,nwin,wins,pl,pv==WIN?"WIN":pv==LOSS?"LOSS":"?",
-                        (nwin==1&&pv==WIN)?"  <<forced":"");
-                }
-                retro_clear();
+    BotPlay bp;bot_play_init(&bp,&g,4000,BOT_PLAY_SHUFFLE,NULL);
+    for(int pi;(pi=bot_play_next(&bp))>=0;){const LegalMoves*mv=&bp.moves;
+        int nin=0;for(int p=0;p<g.num_players;p++)if(g.players[p].status==PLAYER_STATUS_IN)nin++;
+        int total=0;for(int p=0;p<g.num_players;p++)total+=g.players[p].hand_count;
+        int ply=g.num_logs;
+        int idx=octogen_strategy_choose(&g,pi,mv,NULL);if(idx<0||idx>=mv->n)continue;
+        if(g.deck_count==0&&!g.has_flipped&&nin==2&&total<=12&&mv->n>=2&&(only<0||pi==only)){
+            SimState root;cd_sim_from_game(&root,&g);
+            if(retro_build(&root,pi)==0){
+                int nwin=0,nn=mv->n; char wins[256]={0}; int ww=0;
+                for(int mi=0;mi<nn;mi++){SimState c=root;if(!cd_sim_apply_root_move(&c,pi,&mv->moves[mi]))continue;if(child_value(&c)==WIN){nwin++;char mb[64];movestr(mb,&mv->moves[mi]);ww+=snprintf(wins+ww,256-ww,"%s%s",ww?",":"",mb);}}
+                char hs[160]={0};int w=0;for(int j=0;j<g.players[pi].hand_count;j++){char c[8];cardstr(c,g.players[pi].hand[j].suit,g.players[pi].hand[j].value);w+=snprintf(hs+w,160-w,"%s%s",j?" ":"",c);}
+                char od[80]={0};int ow=0;int opp=pi^1;for(int j=0;j<g.players[opp].hand_count;j++){char c[8];cardstr(c,g.players[opp].hand[j].suit,g.players[opp].hand[j].value);ow+=snprintf(od+ow,80-ow,"%s%s",j?" ":"",c);}
+                char pl[64];movestr(pl,&mv->moves[idx]);
+                SimState pc=root;cd_sim_apply_root_move(&pc,pi,&mv->moves[idx]);int pv=child_value(&pc);
+                printf("ply %3d seat%d %s | hand[%s] vs[%s] | %d moves, %d WIN {%s} | played %s -> %s%s\n",
+                    ply,pi,pi==g.defender?"DEF":"ATK",hs,od,nn,nwin,wins,pl,pv==WIN?"WIN":pv==LOSS?"LOSS":"?",
+                    (nwin==1&&pv==WIN)?"  <<forced":"");
             }
-            const LegalMove*m=&moves.moves[idx];bool ok=false;
-            switch(m->type){case MOVE_ATTACK:ok=handle_attack(&g,pi,m->cards,m->n_cards);break;case MOVE_COVER:ok=handle_cover(&g,pi,m->cards,m->attack_cards,m->n_cards);break;case MOVE_PASS:ok=handle_pass(&g,pi,m->cards,m->n_cards);break;case MOVE_PICKUP:ok=handle_pickup(&g,pi);break;case MOVE_GOOD:ok=handle_good(&g,pi);break;default:break;}
-            if(ok){acted=true;break;}}
-        if(!acted)break;
+            retro_clear();
+        }
+        bot_play_apply(&bp,idx);
     }
     printf("fool=seat%d\n",game_done(&g));
     return 0;

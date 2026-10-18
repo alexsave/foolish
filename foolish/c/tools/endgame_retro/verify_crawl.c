@@ -9,6 +9,7 @@
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"
+#include "bot_play.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,44 +62,37 @@ int main(int argc,char**argv){
     cd_sim_solve_reset();game_set_seed(1);game_set_deal_seed_bytes(seed,32);
     Game g;memset(&g,0,sizeof g);g.num_players=2;for(int i=0;i<2;i++){g.players[i].status=PLAYER_STATUS_READY;g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;}
     start_game(&g);
-    int iters=0;
-    while(game_done(&g)<0 && iters++<4000){
-        int elig[MAX_PLAYERS],n_e=0;for(int i=0;i<g.num_players;i++)if(should_bot_act(&g,i))elig[n_e++]=i;if(n_e==0)break;
-        for(int i=n_e-1;i>0;i--){int j=(int)(game_random()*(i+1));if(j<0)j=0;if(j>i)j=i;int t=elig[i];elig[i]=elig[j];elig[j]=t;}
-        bool acted=false;
-        for(int k=0;k<n_e;k++){int pi=elig[k];LegalMoves moves;calculate_legal_moves(&g,pi,&moves);if(moves.n==0)continue;
-            if(g.num_logs==target){
-                // ANALYSIS at the target decision
-                SimState root;cd_sim_from_game(&root,&g);
-                if(retro_build(&root,pi)!=0){printf("retro overflow at target\n");return 1;}
-                int nn=moves.n, val[64], winmv=-1;
-                printf("=== target ply %d, seat %d (%s), trump %c ===\n",target,pi,g.defender==pi?"DEFENDER":"ATTACKER",SUIT[g.power_suit]);
-                char hs[160]={0};int w=0;for(int j=0;j<g.players[pi].hand_count;j++){char c[8];cardstr(c,g.players[pi].hand[j].suit,g.players[pi].hand[j].value);w+=snprintf(hs+w,160-w,"%s%s",j?" ":"",c);}
-                char od[160]={0};int ow=0;int opp=pi^1;for(int j=0;j<g.players[opp].hand_count;j++){char c[8];cardstr(c,g.players[opp].hand[j].suit,g.players[opp].hand[j].value);ow+=snprintf(od+ow,160-ow,"%s%s",j?" ":"",c);}
-                printf("hand=[%s]  opponent=[%s]\n",hs,od);
-                for(int mi=0;mi<nn&&mi<64;mi++){SimState c=root;if(!cd_sim_apply_root_move(&c,pi,&moves.moves[mi])){val[mi]=-9;continue;}val[mi]=child_value(&c);
-                    char mb[64];movestr(mb,&moves.moves[mi]);printf("  move %2d %-12s -> %s\n",mi,mb,val[mi]==WIN?"WIN":val[mi]==LOSS?"LOSS":val[mi]==UNK?"DRAW":"?");if(val[mi]==WIN)winmv=mi;}
-                // solver-on pick
-                unsetenv("OG_NO_SOLVE");og_reload_flags();
-                int idx_solver=octogen_strategy_choose(&g,pi,&moves,NULL);
-                // MC-only pick: disable the ROOT exact solver AND the exact-leaf
-                // rollouts, so MC is pure heuristic (no exact endgame knowledge).
-                setenv("OG_NO_SOLVE","1",1);setenv("OG_BBLEAF","0",1);og_reload_flags();
-                int idx_mc=octogen_strategy_choose(&g,pi,&moves,NULL);
-                unsetenv("OG_NO_SOLVE");unsetenv("OG_BBLEAF");og_reload_flags();
-                char sb[64],mb[64],wb[64];movestr(sb,&moves.moves[idx_solver]);movestr(mb,&moves.moves[idx_mc]);
-                if(winmv>=0)movestr(wb,&moves.moves[winmv]); else snprintf(wb,64,"?");
-                printf("winning move        : %s\n",wb);
-                printf("octogen (solver ON) : idx %d %-12s -> %s\n",idx_solver,sb,idx_solver<64?(val[idx_solver]==WIN?"WIN":val[idx_solver]==LOSS?"LOSS":"?"):"?");
-                printf("octogen (MC only)   : idx %d %-12s -> %s  %s\n",idx_mc,mb,idx_mc<64?(val[idx_mc]==WIN?"WIN":val[idx_mc]==LOSS?"LOSS":"?"):"?",
-                    (idx_mc<64&&val[idx_mc]==LOSS)?"<== NON-OBVIOUS (MC picks a LOSS; only the solver finds the win)":"(MC also finds the win — obvious)");
-                return 0;
-            }
-            int idx=octogen_strategy_choose(&g,pi,&moves,NULL);if(idx<0||idx>=moves.n)continue;
-            const LegalMove*m=&moves.moves[idx];bool ok=false;
-            switch(m->type){case MOVE_ATTACK:ok=handle_attack(&g,pi,m->cards,m->n_cards);break;case MOVE_COVER:ok=handle_cover(&g,pi,m->cards,m->attack_cards,m->n_cards);break;case MOVE_PASS:ok=handle_pass(&g,pi,m->cards,m->n_cards);break;case MOVE_PICKUP:ok=handle_pickup(&g,pi);break;case MOVE_GOOD:ok=handle_good(&g,pi);break;default:break;}
-            if(ok){acted=true;break;}}
-        if(!acted)break;
+    BotPlay bp;bot_play_init(&bp,&g,4000,BOT_PLAY_SHUFFLE,NULL);
+    for(int pi;(pi=bot_play_next(&bp))>=0;){const LegalMoves*mv=&bp.moves;
+        if(g.num_logs==target){
+            // ANALYSIS at the target decision
+            SimState root;cd_sim_from_game(&root,&g);
+            if(retro_build(&root,pi)!=0){printf("retro overflow at target\n");return 1;}
+            int nn=mv->n, val[64], winmv=-1;
+            printf("=== target ply %d, seat %d (%s), trump %c ===\n",target,pi,g.defender==pi?"DEFENDER":"ATTACKER",SUIT[g.power_suit]);
+            char hs[160]={0};int w=0;for(int j=0;j<g.players[pi].hand_count;j++){char c[8];cardstr(c,g.players[pi].hand[j].suit,g.players[pi].hand[j].value);w+=snprintf(hs+w,160-w,"%s%s",j?" ":"",c);}
+            char od[160]={0};int ow=0;int opp=pi^1;for(int j=0;j<g.players[opp].hand_count;j++){char c[8];cardstr(c,g.players[opp].hand[j].suit,g.players[opp].hand[j].value);ow+=snprintf(od+ow,160-ow,"%s%s",j?" ":"",c);}
+            printf("hand=[%s]  opponent=[%s]\n",hs,od);
+            for(int mi=0;mi<nn&&mi<64;mi++){SimState c=root;if(!cd_sim_apply_root_move(&c,pi,&mv->moves[mi])){val[mi]=-9;continue;}val[mi]=child_value(&c);
+                char mb[64];movestr(mb,&mv->moves[mi]);printf("  move %2d %-12s -> %s\n",mi,mb,val[mi]==WIN?"WIN":val[mi]==LOSS?"LOSS":val[mi]==UNK?"DRAW":"?");if(val[mi]==WIN)winmv=mi;}
+            // solver-on pick
+            unsetenv("OG_NO_SOLVE");og_reload_flags();
+            int idx_solver=octogen_strategy_choose(&g,pi,mv,NULL);
+            // MC-only pick: disable the ROOT exact solver AND the exact-leaf
+            // rollouts, so MC is pure heuristic (no exact endgame knowledge).
+            setenv("OG_NO_SOLVE","1",1);setenv("OG_BBLEAF","0",1);og_reload_flags();
+            int idx_mc=octogen_strategy_choose(&g,pi,mv,NULL);
+            unsetenv("OG_NO_SOLVE");unsetenv("OG_BBLEAF");og_reload_flags();
+            char sb[64],mb[64],wb[64];movestr(sb,&mv->moves[idx_solver]);movestr(mb,&mv->moves[idx_mc]);
+            if(winmv>=0)movestr(wb,&mv->moves[winmv]); else snprintf(wb,64,"?");
+            printf("winning move        : %s\n",wb);
+            printf("octogen (solver ON) : idx %d %-12s -> %s\n",idx_solver,sb,idx_solver<64?(val[idx_solver]==WIN?"WIN":val[idx_solver]==LOSS?"LOSS":"?"):"?");
+            printf("octogen (MC only)   : idx %d %-12s -> %s  %s\n",idx_mc,mb,idx_mc<64?(val[idx_mc]==WIN?"WIN":val[idx_mc]==LOSS?"LOSS":"?"):"?",
+                (idx_mc<64&&val[idx_mc]==LOSS)?"<== NON-OBVIOUS (MC picks a LOSS; only the solver finds the win)":"(MC also finds the win — obvious)");
+            return 0;
+        }
+        int idx=octogen_strategy_choose(&g,pi,mv,NULL);if(idx<0||idx>=mv->n)continue;
+        bot_play_apply(&bp,idx);
     }
     printf("target ply %d not reached (game ended earlier)\n",target);
     return 1;

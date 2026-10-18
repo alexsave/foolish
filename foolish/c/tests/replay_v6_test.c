@@ -18,6 +18,7 @@
 #include "../src/game.h"
 #include "../src/legal.h"
 #include "../src/strategy.h"
+#include "../src/bot_play.h"
 #include "../src/replay.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,8 +35,9 @@ static unsigned char g_enc[ENC_CAP];
 static unsigned char g_enc2[ENC_CAP];
 static unsigned char g_dec[DEC_CAP];
 
+// The seat-order stream (bot_play's order_rng): kept apart from the game's own
+// streams so the harness's shuffles never move a deal or a bot's draw.
 static uint64_t g_sh_seed = 1;
-static uint32_t sh_rand(void) { return rng_u32(&g_sh_seed); }
 
 static unsigned char wire_of(Card c) {
     if (c.suit < 0 || c.value < 1) return (unsigned char)REPLAY_CARD_HIDDEN;
@@ -68,38 +70,14 @@ static bool play_game_ex(Game *g, int np, int strat, uint32_t seed,
             g_init_hand[s][k] = wire_of(g->players[s].hand[k]);
     }
 
-    static LegalMoves moves;
-    int actions = 0;
-    while (game_done(g) < 0) {
-        if (++actions > MAX_ACTIONS) return false;
-        int elig[MAX_PLAYERS], n_e = 0;
-        for (int i = 0; i < np; i++) if (should_bot_act(g, i)) elig[n_e++] = i;
-        if (n_e == 0) return false;
-        for (int i = n_e - 1; i > 0; i--) {
-            int j = (int)(sh_rand() % (uint32_t)(i + 1));
-            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
-        }
-        bool acted = false;
-        for (int e = 0; e < n_e && !acted; e++) {
-            int pi = elig[e];
-            calculate_legal_moves(g, pi, &moves);
-            if (moves.n == 0) continue;
-            int mi = strat == STRAT_RANDOM
-                ? random_strategy_choose(g, pi, &moves, 0)
-                : handwritten_strategy_choose(g, pi, &moves, 0);
-            const LegalMove *m = &moves.moves[mi];
-            switch (m->type) {
-                case MOVE_ATTACK: acted = handle_attack(g, pi, m->cards, m->n_cards); break;
-                case MOVE_COVER:  acted = handle_cover(g, pi, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   acted = handle_pass(g, pi, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: acted = handle_pickup(g, pi); break;
-                case MOVE_GOOD:   acted = handle_good(g, pi); break;
-                default: break;
-            }
-        }
-        if (!acted) return false;
+    static BotPlay bp;
+    bot_play_init(&bp, g, MAX_ACTIONS, BOT_PLAY_SHUFFLE, &g_sh_seed);
+    for (int pi; (pi = bot_play_next(&bp)) >= 0; ) {
+        bot_play_apply(&bp, strat == STRAT_RANDOM
+            ? random_strategy_choose(g, pi, &bp.moves, 0)
+            : handwritten_strategy_choose(g, pi, &bp.moves, 0));
     }
-    return true;
+    return game_done(g) >= 0;
 }
 
 static bool play_game(Game *g, int np, int strat, uint32_t seed) {
