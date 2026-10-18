@@ -2,36 +2,19 @@
 // M6, round-16); the reasons below are the owner's, kept with the arithmetic
 // they explain.
 
-// IEEE-EXACT, whatever the build says. Every line below must produce the bits
-// Swift produces for the same expression, and Swift neither contracts a*b+c
-// into a fused multiply-add nor reassociates nor turns a divide into a
-// reciprocal multiply. c/Makefile and the native server compile with
-// -ffast-math, which allows all three, and clang on arm64 contracts by default
-// even without it. So this file turns them off for itself rather than asking
-// every build tree for a per-file flag: precise semantics first (no
-// reassociation, no reciprocal, NaN and infinity honoured), then contraction
-// off, because clang's precise mode alone leaves contraction at "on".
-//
-// The pragmas reach the IR and nothing past it. Under -ffast-math clang also
-// hands the BACKEND a global "fuse anything" switch (-ffp-contract=fast), and
-// the backend fuses regardless of what the IR says: measured on arm64 at
-// -O3 -ffast-math with only the pragmas, this file compiled to eight
-// fmadd/fmsub. So every product below that meets an add goes through
-// `product`, whose volatile is a barrier no optimizer may fuse across. Both
-// stay: the pragmas keep the reassociation and reciprocal rewrites out of the
-// IR, `product` keeps the backend from fusing, and neither covers the other.
-// wasm32 is the one target clang has no float_control for (it warns and
-// ignores it), and the one that needs it least: every wasm build compiles
-// without -ffast-math (c/Makefile says why) and wasm has no fused multiply-add
-// instruction, so contraction off is all that is left to say there.
-#if defined(__clang__)
-#if !defined(__wasm__)
-#pragma float_control(precise, on)
-#endif
-#pragma clang fp contract(off)
-#elif defined(__GNUC__)
-#pragma GCC optimize("no-fast-math", "fp-contract=off")
-#endif
+// IEEE-EXACT. Every line below must produce the bits Swift produces for the
+// same expression, and Swift neither contracts a*b+c into a fused multiply-add
+// nor reassociates nor turns a divide into a reciprocal multiply. No build
+// compiles with -ffast-math any more, so the reassociation and the reciprocal
+// cannot happen. The one that can is contraction: clang on arm64 contracts by
+// default, and a fused multiply-add is rounded once where Swift rounds twice.
+// So the owner of this is the build's flag, -ffp-contract=off, and every build
+// that compiles this file carries it: c/Makefile CFLAGS (host, overlay,
+// analyse, fuzz), ASAN_CFLAGS, COV_FLAGS, TABLE_HOST_CFLAGS, IOS_CFLAGS (the
+// device and simulator slices Xcode runs through ios_xcframework.mk), and
+// c_base's KERNEL_CFLAGS. wasm32 is strict IEEE and has no fused multiply-add
+// instruction, so it needs nothing. A new build tree that compiles this file
+// takes the flag too.
 
 #include "hand_layout.h"
 
@@ -43,12 +26,6 @@
 static double swift_min(double x, double y) { return y < x ? y : x; }
 static double swift_max(double x, double y) { return y >= x ? y : x; }
 
-// a * b, rounded on its own before anything adds to it (see the top of file).
-static double product(double a, double b) {
-    volatile double p = a * b;
-    return p;
-}
-
 // The per-card width if `count` cards shared `width` in ONE row:
 // min(card_w_max, max(card_w_min, avail / n)), with a gap between neighbours and
 // at both ends. A 0-card hand is sized as a 1-card one.
@@ -56,7 +33,7 @@ static double one_row_card_w(const HandMetrics *m, int count, double width) {
     const int n = count > 1 ? count : 1;
     // (double)n + 1.0 rather than (double)(n + 1): the same value for every n
     // a hand can be, without an int overflow at INT_MAX.
-    const double avail = width - product(m->gap, (double)n + 1.0);
+    const double avail = width - m->gap * ((double)n + 1.0);
     return swift_min(m->card_w_max, swift_max(m->card_w_min, avail / (double)n));
 }
 
@@ -111,7 +88,7 @@ int hand_rows(const HandMetrics *m, int count, double width, HandRows *out) {
 
     // One row stands card_h + row_pad; two such rows stack with row_gap between.
     const double one_row = m->card_h + m->row_pad;
-    out->height = two ? product(one_row, 2.0) + m->row_gap : one_row;
+    out->height = two ? one_row * 2.0 + m->row_gap : one_row;
     return HAND_EOK;
 }
 
@@ -133,18 +110,18 @@ int hand_slots(const HandMetrics *m, int count, double width, HandRect *out, int
     //
     // The block of rows is centred vertically in the hand's height, and each
     // row is centred horizontally in the width.
-    const double stack_h = product((double)r.rows, m->card_h)
-                         + product((double)(r.rows - 1), m->row_gap);
+    const double stack_h = (double)r.rows * m->card_h
+                         + (double)(r.rows - 1) * m->row_gap;
     const double v_top = (r.height - stack_h) / 2.0;
     int k = 0;
     for (int row = 0; row < r.rows; row++) {
         const int n = r.row_n[row];
-        const double row_w = product((double)n, r.card_w)
-                             + product((double)(n > 1 ? n - 1 : 0), m->gap);
+        const double row_w = (double)n * r.card_w
+                             + (double)(n > 1 ? n - 1 : 0) * m->gap;
         const double row_left = (width - row_w) / 2.0;
-        const double y = v_top + product((double)row, m->card_h + m->row_gap);
+        const double y = v_top + (double)row * (m->card_h + m->row_gap);
         for (int c = 0; c < n; c++) {
-            out[k].x = row_left + product((double)c, r.card_w + m->gap);
+            out[k].x = row_left + (double)c * (r.card_w + m->gap);
             out[k].y = y;
             out[k].w = r.card_w;
             out[k].h = m->card_h;

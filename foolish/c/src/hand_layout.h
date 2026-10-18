@@ -18,11 +18,9 @@
 // rule before this file was, and the move was proved bit for bit against a
 // verbatim copy of that math at every hand count and every half point of
 // width (PR #266) before the copy was deleted. Swift neither fuses a multiply-add nor
-// reassociates, while every build tree that compiles c/src does one or both by
-// default (c/Makefile and the native server at -ffast-math, clang arm64 at
-// -ffp-contract=on). hand_layout.c pins IEEE semantics for itself with
-// pragmas, so no build tree needs a per-file flag, and keeps the Swift
-// operation order step for step.
+// reassociates, and clang on arm64 contracts by default. hand_layout.c says
+// which flag keeps every build tree off that (-ffp-contract=off), and keeps the
+// Swift operation order step for step.
 #ifndef CNITRO_HAND_LAYOUT_H
 #define CNITRO_HAND_LAYOUT_H
 

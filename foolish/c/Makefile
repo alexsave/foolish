@@ -229,7 +229,7 @@ build/replay_overlay_test: $(call c_objs,build/obj/overlay,$(CORE_SRC) tests/rep
 # object-size is off: replay.c's DealSlot is a Game DELIBERATELY shorter than a
 # Game (see deal_reveals_from_seed, which already turns gcc's -Warray-bounds off
 # for the same reason), and that check flags the intent rather than a bug.
-ASAN_CFLAGS := -fsanitize=address,undefined -fno-sanitize=object-size \
+ASAN_CFLAGS := -ffp-contract=off -fsanitize=address,undefined -fno-sanitize=object-size \
                -fno-omit-frame-pointer -fno-sanitize-recover=undefined \
                -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DCD_LEAFBOOK \
                -DCD_PASS_PROBE
@@ -448,7 +448,7 @@ IOS_SRC    := $(IOS_CORE_SRC) $(IOS_BOTS_SRC)
 # "Multiple commands produce". Nested, the bots map lands at
 # include/CFoolishBots/module.modulemap, and the FoolishBots target names that
 # directory in HEADER_SEARCH_PATHS (ios/project.yml).
-IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS)
+IOS_CFLAGS := -O2 -ffp-contract=off -Isrc -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS)
 
 # The device slice, both simulator slices, the lipo and the xcframework, once
 # per library, and all of it rebuilt only when something it is made of changed
@@ -1538,7 +1538,7 @@ wasm-web-size: build/web.wasm
 # were generated with (sdk/ts/gen/layout_hash.bots.ts). The wasm entry files are
 # not objects of their own here: tests/table_host.c includes them, so each entry
 # is called with its definition in view.
-TABLE_HOST_CFLAGS := -O2 -g $(filter-out --target=wasm32 -nostdlib -ffreestanding -mbulk-memory \
+TABLE_HOST_CFLAGS := -O2 -g -ffp-contract=off $(filter-out --target=wasm32 -nostdlib -ffreestanding -mbulk-memory \
                        -mno-nontrapping-fptoint -isystem wasm/include $(SHARED)/wasm/include,$(WASM_BOT_CFLAGS))
 TABLE_HOST_SRC := $(filter-out $(SHARED)/wasm/% wasm/%,$(WASM_BOT_SRC)) tests/table_host.c
 TABLE_HOST_OBJ_FLAGS = $(TABLE_HOST_CFLAGS) \
@@ -1764,7 +1764,7 @@ wasm-fm-exp-test: wasm-cc-check build/fm_exp_native_bits build/fm_exp_test_O3.wa
 # runtime. Objects (and their .gcno/.gcda) land in covbuild/ where gcovr finds
 # them recursively. Tune the floors with COV_LINE_MIN / COV_BRANCH_MIN.
 COV_CC         ?= gcc
-COV_FLAGS      := -O0 -g --coverage -fprofile-update=atomic -Isrc -I../../c_base/core/test -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE -DCOVERAGE_CORPUS
+COV_FLAGS      := -O0 -g -ffp-contract=off --coverage -fprofile-update=atomic -Isrc -I../../c_base/core/test -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE -DCOVERAGE_CORPUS
 COV_LINE_MIN   ?= 90
 COV_BRANCH_MIN ?= 74
 # THE WHOLE SHIPPED KERNEL, not three files of it.

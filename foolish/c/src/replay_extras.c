@@ -4,7 +4,7 @@
 // NO LIBM. This file is compiled into bots.wasm, which is freestanding: there
 // is no log() and no pow() to call, and clang would fail the link rather than
 // emit one. Both would also be a liability if they existed - the same C is
-// built at -O3 -ffast-math for the native tests, at -O2 for the iOS slices and
+// built at -O3 -ffp-contract=off -fno-math-errno for the native tests, at -O2 for the iOS slices and
 // at -Oz for wasm, and a curve that is one transcendental call away from its
 // answer is a curve those three builds can disagree about. So the log curve is
 // walked by repeated multiplication instead, which is exact in the only sense

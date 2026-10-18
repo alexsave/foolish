@@ -1,7 +1,7 @@
 // The native half of `make wasm-fm-exp-test`: prints fm_exp's result bits at
 // every digest input, one hex word per line, for tests/fm_exp_wasm_test.mjs to
 // compare against the wasm module input by input. Built with the native CFLAGS
-// (-ffast-math included), which is the point.
+// (-ffp-contract=off -fno-math-errno included), which is the point.
 #include <inttypes.h>
 #include <stdio.h>
 #include "fm_exp_digest.h"

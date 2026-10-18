@@ -10,7 +10,7 @@
 //   4. The Q62 value in [0.70, 1.42] is rounded to 53 bits (half to even) and
 //      2^n goes straight into the exponent field.
 // Every step is an integer operation with one defined answer, so a clang
-// native build, a gcc build, a -ffast-math build and the wasm build agree to
+// native build, a gcc build, a build with FP contraction on and the wasm build agree to
 // the bit. No double arithmetic happens anywhere in this file.
 #include "fm_exp.h"
 #include <string.h>
