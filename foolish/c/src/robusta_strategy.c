@@ -171,10 +171,9 @@ static bool sample_consistent_state(Game *g_out, const Game *g_in, int my_idx,
     Card hidden[80]; int hn = 0;
     for (int i = 0; i < u->n && hn < 80; i++) hidden[hn++] = u->pool[i];
     if (hn == 0) return true;
-    uint32_t s = seed ? seed : 0xCAFEu;
+    uint64_t s = seed;
     for (int i = hn - 1; i > 0; i--) {
-        rng_xorshift32(&s);
-        int j = (int)(s % (uint32_t)(i + 1));
+        int j = (int)(rng_u32(&s) % (uint32_t)(i + 1));
         Card sw = hidden[i]; hidden[i] = hidden[j]; hidden[j] = sw;
     }
     int k = 0;

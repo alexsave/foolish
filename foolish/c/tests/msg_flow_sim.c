@@ -77,8 +77,8 @@ typedef struct {
     uint8_t joins[1 + 8 * (2 + 64)]; int joins_len;
 } Env;
 
-static uint32_t rng;
-static uint32_t rnd(void) { return rng_lcg32(&rng) >> 8; }
+static uint64_t rng;
+static uint32_t rnd(void) { return rng_u32(&rng) >> 8; }
 
 // The decode hands back the header WHERE IT LIES (msg_wire.h MsgHeader), so
 // this reads it by its fields.

@@ -53,8 +53,8 @@ static void count_snap(const Game *g, int tag, int aux) {
 }
 #define MAXX(v, x) do { if ((x) > (v)) (v) = (x); } while (0)
 
-static uint32_t g_sh_seed = 1;
-static uint32_t sh_rand(void) { return rng_lcg32(&g_sh_seed); }
+static uint64_t g_sh_seed = 1;
+static uint32_t sh_rand(void) { return rng_u32(&g_sh_seed); }
 
 static unsigned char wire_of(Card c) {
     if (c.suit < 0 || c.value < 1) return (unsigned char)REPLAY_CARD_HIDDEN;

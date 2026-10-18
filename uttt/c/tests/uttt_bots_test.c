@@ -58,10 +58,10 @@ static void own_tree(UtttBot bot, int games)
     uint64_t s = 77;
     for (int i = 0; i < games; i++) {
         UtttGame g; uttt_init(&g);
-        int plies = 4 + (int)(rng_xorshift64(&s) % 12);
+        int plies = 4 + (int)(rng_splitmix64(&s) % 12);
         for (int p = 0; p < plies && !g.over; p++) {
             uint8_t l[81]; int n = uttt_legal(&g, l);
-            uttt_play(&g, l[rng_xorshift64(&s) % (uint64_t)n]);
+            uttt_play(&g, l[rng_splitmix64(&s) % (uint64_t)n]);
         }
         if (g.over) continue;
         uint64_t r1 = 5 + (uint64_t)i, r2 = r1, rb = 99;

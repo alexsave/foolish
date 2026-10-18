@@ -100,7 +100,7 @@ static int fails, checks;
 static uint64_t rs = 0x9e3779b97f4a7c15ull;
 static uint32_t rnd(void)
 {
-    return (uint32_t)(rng_xorshift64(&rs) >> 11);
+    return rng_u32(&rs);
 }
 
 static float frnd(void) { return (float)(rnd() & 0xffffff) / (float)0x1000000; }

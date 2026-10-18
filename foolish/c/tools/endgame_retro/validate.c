@@ -74,7 +74,7 @@ static int ab_value(uint64_t HA,uint64_t HD,int power,int*aborted){
 
 // deck: 36-card (ids where value 5..13, i.e. offset 4..12 within each suit)
 static int DECK[36], NDECK;
-static uint32_t rng=0x12345678u; static uint32_t rnd(void){return rng_xorshift32(&rng);}
+static uint64_t rng=0x12345678u; static uint32_t rnd(void){return rng_u32(&rng);}
 
 int main(int argc,char**argv){
     int NCASE=argc>1?atoi(argv[1]):20000;

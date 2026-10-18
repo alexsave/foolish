@@ -176,7 +176,7 @@ typedef struct {
     // Seed-dealt game: the deck was ChaCha-shuffled once at the deal and every
     // draw pops the top, so the whole game is reproducible from the seed. Set at
     // the deal, carried in the durable state blob (state format v2), and read by
-    // every mid-game refill. Legacy (LCG) games leave it false and draw at
+    // every mid-game refill. Legacy (32-bit seed) games leave it false and draw at
     // random exactly as before. Not part of the ephemeral IO marshal.
     bool    deterministic_deck;
     // THE RULES THIS GAME IS PLAYED UNDER - a bitmask of GAME_RULE_*, 0 for the
@@ -247,15 +247,16 @@ extern _Thread_local long game_pass_probe;
 
 // ---------- RNG ---------------------------------------------------------
 
-// Mirrors `seededRandom` in common_utils.ts and `setRandomSeed` in
-// random_strategy.ts: two independent LCGs with the same recurrence.
+// Two independent rng.h splitmix64 streams: the draw stream (game_random) and
+// the strategy stream (random_strategy_random). game_set_seed also selects the
+// legacy 32-bit deal, whose cards come from the draw stream.
 void   game_set_seed(uint32_t s);
 double game_random(void);            // 0..1
 uint32_t game_random_u32(void);
 
 // The wide deal seed's length: two 128-bit ChaCha lanes. A SHORT seed does not
 // half-seed the deal — it silently leaves wide mode off and degrades the game
-// to the legacy 32-bit LCG, which is catastrophic for any host that must
+// to the legacy 32-bit seed, which is catastrophic for any host that must
 // reproduce a deal from it (iMessage deals the same game on both devices; the
 // v6 replay encoder re-derives a finished game's true hands from it). So the
 // length is a named constant every producer and consumer rejects against,
@@ -264,7 +265,7 @@ uint32_t game_random_u32(void);
 
 // Wide, reproducible, full-universe deal seed (see deal_rng.h). Supplying
 // FOOLISH_SEED_LEN bytes (two 128-bit lanes) switches the DEAL's random card
-// picks from the 32-bit LCG to an unbiased ChaCha stream — lifting reachable
+// picks from the 32-bit-seeded draw stream to an unbiased ChaCha stream — lifting reachable
 // deals from 2^32 to the whole 52!/36! space and making the deal reproducible
 // from the seed. len must be >= FOOLISH_SEED_LEN; fewer bytes is ignored (wide
 // mode stays off). Any later game_set_seed() call turns wide mode back off, so
@@ -289,17 +290,18 @@ void   game_deal_rng_set(const unsigned char in[GAME_DEAL_RNG_STATE_MAX]);
 // restores that flag, and draws pop the pre-shuffled deck. game_set_seed()
 // clears the wide flag; the persisted per-game flag is untouched by it.
 
-// Save/restore the game LCG state. Lets a strategy run internal
+// Save/restore the draw stream's state (all 64 bits of it). Lets a strategy run internal
 // simulations (which consume game_random via draws and rollout policies)
 // without perturbing the outer game's random stream, and gives all
 // simulations of competing moves identical RNG streams (common random
 // numbers). Purely additive — no behavior change for existing callers.
-uint32_t game_rng_get(void);
-void     game_rng_set(uint32_t s);
+uint64_t game_rng_get(void);
+void     game_rng_set(uint64_t s);
 
-void     random_strategy_set_seed(uint32_t s);
+// Seeds the strategy stream, and restores one: the state is the whole seed.
+void     random_strategy_set_seed(uint64_t s);
 double   random_strategy_random(void);
-uint32_t random_strategy_rng_get(void);
+uint64_t random_strategy_rng_get(void);
 
 // A 32-bit RNG seed from `base` (the SERVER-ONLY secret derived from
 // games.game_seed, 0 when a game has none), a per-use `salt`, and the PUBLIC,

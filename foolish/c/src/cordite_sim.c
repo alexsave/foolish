@@ -1565,8 +1565,8 @@ static int sim_pos_of(const SimState *s, int p) {
     return s->num_players;
 }
 
-extern uint32_t game_rng_get(void);
-extern void game_rng_set(uint32_t s);
+extern uint64_t game_rng_get(void);
+extern void game_rng_set(uint64_t s);
 
 int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
                          int leaf_cards, long leaf_budget,
@@ -1624,7 +1624,7 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
                 uint8_t t = buf[i].type;
                 if (t == MV_PICKUP || t == MV_GOOD) kept_idx[kept++] = i;
             }
-            uint32_t rng0 = game_rng_get();
+            uint64_t rng0 = game_rng_get();
             int best_actor_pos = 1 << 20;
             int best_my_pos = -1;
             for (int k = 0; k < kept; k++) {

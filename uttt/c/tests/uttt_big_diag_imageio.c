@@ -28,8 +28,8 @@
 
 static CGColorSpaceRef g_srgb;
 
-static uint32_t rs = 777;
-static uint32_t rnd(void) { return rng_xorshift32(&rs); }
+static uint64_t rs = 777;
+static uint32_t rnd(void) { return rng_u32(&rs); }
 
 static CGImageRef image_of(uint8_t *rgba, int w, int h)
 {

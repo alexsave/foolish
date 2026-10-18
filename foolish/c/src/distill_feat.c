@@ -21,20 +21,6 @@
 #include "distill_feat.h"
 #include "strategy.h"
 #include "card.h"
-#include "../../../shared/c/rng.h"
-
-// ---------- random_strategy LCG snapshot/restore -------------------------
-
-// game.c: state = state * 1664525 + 1013904223 (mod 2^32), draw = state/2^32.
-// 4276115653 is the inverse of 1664525 mod 2^32. Recover the CURRENT state by
-// drawing once and stepping back. (If the recovered state is 0 — probability
-// 2^-32 — random_strategy_set_seed maps it to 1; accepted.)
-static uint32_t df_rs_state(void) {
-    double r = random_strategy_random();
-    uint32_t after = (uint32_t)(r * 4294967296.0);
-    return (after - RNG_LCG32_INC) * 4276115653u;
-}
-_Static_assert(RNG_LCG32_MUL * 4276115653u == 1u, "4276115653 is the LCG multiplier's inverse mod 2^32");
 
 static uint32_t df_mix(uint32_t a, uint32_t b) {
     uint32_t h = a * 0x9E3779B1u ^ (b + 0x7F4A7C15u);
@@ -206,7 +192,7 @@ static void df_fill_decision(const Game *g, int bot_idx, const LegalMoves *all) 
     // Oracles. Re-seed the random_strategy stream deterministically from the
     // public decision state (each oracle gets its own sub-seed so one
     // oracle's draw count never shifts another's stream), then restore.
-    uint32_t saved = df_rs_state();
+    uint64_t saved = random_strategy_rng_get();
     uint32_t base = df_mix((uint32_t)g->num_logs * 2654435761u,
                            ((uint32_t)g->deck_count << 10)
                            ^ ((uint32_t)bot_idx << 20)

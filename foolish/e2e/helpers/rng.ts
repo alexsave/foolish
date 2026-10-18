@@ -21,16 +21,16 @@
  * Seeding must not shrink what a suite explores. Same trial count, same shapes,
  * just reproducible. To widen the search deliberately, run a range of seeds.
  *
- * The stream is the kernel's own strategy LCG (c/src/game.c
- * random_strategy_random), so a seed pinned here and a seed handed to the
- * kernel walk the same numbers.
+ * The stream is a 32-bit LCG of the suites' own. It is not the kernel's: the
+ * kernel draws from shared/c/rng.h's splitmix64, so a seed pinned here and the
+ * same seed handed to the kernel walk different numbers.
  * ========================================================================== */
 
 /* Picked as the date this pass landed, before any suite had been run under it.
  * Not chosen because it is green. */
 export const DEFAULT_SEED = 20260905;
 
-/** The kernel's strategy LCG as a [0,1) stream. */
+/** The suites' LCG as a [0,1) stream. */
 export const mkLcg = (seed: number): (() => number) => {
     let s = (seed >>> 0) || 1;
     return () => {

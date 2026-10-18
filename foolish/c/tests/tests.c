@@ -11182,10 +11182,11 @@ static uint64_t dl_hands_digest(int np, int wide) {
 }
 
 static void test_opening_deal_hands_are_unchanged(void) {
-    // [wide][np], np 2..8; taken on 8cbdb81f (seat-major hooks).
+    // [wide][np], np 2..8; taken on 8cbdb81f (seat-major hooks); the legacy row
+    // re-taken when the draw stream became rng.h's splitmix64.
     static const uint64_t golden[2][MAX_PLAYERS + 1] = {
-        { 0, 0, 0x690e152658d2f546ULL, 0xb6055d602d40f0fcULL, 0x7a3fc3492b5f6328ULL, 0xbdf09df63c7d7b26ULL,
-          0x0b11870e888114cbULL, 0xda7baca61b3906b8ULL, 0x5376d7da3657ca5dULL },
+        { 0, 0, 0x831514eae5b0cc4dULL, 0x39905dfc57427173ULL, 0x125c3ca16560e2caULL, 0x68bc9714bf6eca08ULL,
+          0xedd0b60a5858962bULL, 0x5343e213e5c74406ULL, 0x7f6f3f07112df2f9ULL },
         { 0, 0, 0x46a9e621612bc528ULL, 0x444f2a440b54c733ULL, 0x6d726bc6d309e712ULL, 0xca04dd1810f1613dULL,
           0x9ab74ca063aa6584ULL, 0x5c89835e0e15ece8ULL, 0x546811c8ad70b0aaULL },
     };
@@ -11329,10 +11330,12 @@ static void test_refill_events_and_plan_are_unchanged(void) {
     // trump_from folded in, and in_flight_from_deck no longer counting that
     // trump). Before re-taking them, folding in_flight_from_deck + 1 on exactly
     // the trump steps and nothing else reproduced the 8cbdb81f digests for all
-    // five table sizes: no other byte of any refill or plan step moved.
+    // five table sizes: no other byte of any refill or plan step moved. Re-taken
+    // again when the draw stream (these are legacy-seeded deals) became rng.h's
+    // splitmix64.
     static const uint64_t golden[] = {
-        0x3f5de256bd24caa2ULL, 0x852490db65708a6dULL, 0x42f2bf2819ad2519ULL,
-        0x4cd82e08d9a0f73dULL, 0xc98a0e3d112a9b29ULL,
+        0xc1455ae3fbac7d8dULL, 0xda4f0e97babaf3edULL, 0x225a0fa3f482a1f5ULL,
+        0x29e6b6f3b7443897ULL, 0x531cbe66e21399a4ULL,
     };
     for (int i = 0; i < (int)(sizeof nps / sizeof nps[0]); i++) {
         int n_refill = 0, n_steps = 0, n_trump = 0;
@@ -11391,7 +11394,7 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // (format byte 4, without the GAME_RATINGS_BYTES behind the clock) gives the
     // v4 digest 0xeaae85afbc52968e back, so the format byte and the empty rating
     // stamp are the whole of that one - a deal's envelopes did not move.
-    static const uint64_t golden[2] = { 0x8ca6eb1fe9345faaULL, 0x3ec4d781fc36b8baULL };
+    static const uint64_t golden[2] = { 0x8ca6eb1fe9345faaULL, 0x443d8c85b6da4e19ULL };
     uint64_t hc = 1469598103934665603ULL;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         for (int seed_k = 1; seed_k <= 3; seed_k++) {
@@ -14384,7 +14387,7 @@ static TableView cb_view, cb_view2;
 static ClientConflict cb_q;
 static ConflictVerdicts cb_out;
 static ConflictHope cb_h;
-static uint32_t cb_rng;
+static uint64_t cb_rng;
 
 // seat 0 led 7h, the attack cvr_board lays.
 static Card cvr_attack(void) { return (Card){ .suit = SUIT_HEARTS, .value = 6 }; }
@@ -14398,7 +14401,7 @@ static void cb_finalize(Game *g, uint32_t bots) {
 }
 
 static int cb_rand(int n) {
-    return (int)((rng_lcg32(&cb_rng) >> 8) % (uint32_t)n);
+    return (int)(rng_u32(&cb_rng) % (uint32_t)n);
 }
 
 static void cb_deal(Game *g, int np, int seed) {
@@ -16110,17 +16113,17 @@ static void test_masked_board_carries_the_rules(void) {
 }
 
 // A random two-seat endgame: deck gone, table empty, seat 0 to lead into seat 1.
-static void pk_endgame(Game *g, uint32_t *rng, int n0, int n1) {
+static void pk_endgame(Game *g, uint64_t *rng, int n0, int n1) {
     memset(g, 0, offsetof(Game, logs));
     g->status = GAME_STATUS_PLAYING;
     g->num_players = 2;
-    g->power_suit = (int8_t)((rng_lcg32(rng) >> 16) % 4);
+    g->power_suit = (int8_t)(rng_u32(rng) % 4);
     g->first_attacker = 0;
     g->defender = 1;
     int ids[36];
     for (int i = 0; i < 36; i++) ids[i] = i;
     for (int i = 0; i < n0 + n1; i++) {
-        const int j = i + (int)((rng_lcg32(rng) >> 16) % (uint32_t)(36 - i));
+        const int j = i + (int)(rng_u32(rng) % (uint32_t)(36 - i));
         const int t = ids[i]; ids[i] = ids[j]; ids[j] = t;
     }
     for (int s = 0; s < 2; s++) {
@@ -16153,13 +16156,13 @@ static int pk_solve(const Game *g, int8_t rules, int book, int reset) {
 // The table is shared by every solve in a process (a server holds both kinds of
 // table in one module), so its key must tell the two games apart.
 static void test_podkidnoy_solver_and_book(void) {
-    uint32_t rng = 4242u;
+    uint64_t rng = 4242u;
     int differ = 0, book_wrong = 0, tt_wrong = 0, book_classic_hits = 0, book_classic_wrong = 0;
     long pk_hits = 0;
     static Game g;
     for (int trial = 0; trial < 3000; trial++) {
-        const int total = 2 + (int)((rng_lcg32(&rng) >> 16) % 6);          // 2..7 cards
-        const int n0 = 1 + (int)((rng >> 8) % (uint32_t)(total - 1));
+        const int total = 2 + (int)(rng_u32(&rng) % 6);          // 2..7 cards
+        const int n0 = 1 + (int)(rng_u32(&rng) % (uint32_t)(total - 1));
         pk_endgame(&g, &rng, n0, total - n0);
         const int classic = pk_solve(&g, 0, 0, 1);
         const int podk = pk_solve(&g, GAME_RULE_NO_PASS, 0, 1);
@@ -16353,8 +16356,11 @@ static void test_podkidnoy_every_brain(void) {
     for (int s = 0; s < STRAT_COUNT; s++) {
         if (strategy_retired(s)) { retired++; continue; }
         long passes = 0; int chose = 0, refused = 0, decisions = 0, transferable = 0;
-        for (int np = 2; np <= 3; np++)
-            decisions += pk_play(s, -1, np, 500u + (uint32_t)(s * 3 + np), PK_ACTIONS, &passes, &chose, &refused, &transferable);
+        // Deals until one hands this brain a transferable defence: whether a
+        // given deal does is the dice's, and the claim is about the brain.
+        for (uint32_t k = 0; k < 16 && (k == 0 || transferable == 0); k++)
+            for (int np = 2; np <= 3; np++)
+                decisions += pk_play(s, -1, np, 500u + (uint32_t)(s * 3 + np) + k * 1000u, PK_ACTIONS, &passes, &chose, &refused, &transferable);
         if (getenv("PK_TRACE")) fprintf(stderr, "  brain %d: %d decisions, %d transferable\n", s, decisions, transferable);
         if (passes || chose || refused)
             fprintf(stderr, "  brain %d: %ld transfers searched, %d chosen, %d refused\n", s, passes, chose, refused);
@@ -16367,8 +16373,9 @@ static void test_podkidnoy_every_brain(void) {
     for (int r = 0; r < bot_roster_count(); r++) {
         if (!bot_roster_linked(r)) continue;
         long passes = 0; int chose = 0, refused = 0, transferable = 0;
-        for (int np = 2; np <= 3; np++)
-            (void)pk_play(-1, r, np, 900u + (uint32_t)(r * 3 + np), PK_ACTIONS, &passes, &chose, &refused, &transferable);
+        for (uint32_t k = 0; k < 16 && (k == 0 || transferable == 0); k++)
+            for (int np = 2; np <= 3; np++)
+                (void)pk_play(-1, r, np, 900u + (uint32_t)(r * 3 + np) + k * 1000u, PK_ACTIONS, &passes, &chose, &refused, &transferable);
         if (passes || chose || refused)
             fprintf(stderr, "  bot %s: %ld transfers searched, %d chosen, %d refused\n", bot_roster_at(r)->key, passes, chose, refused);
         CHECK(transferable > 0 && passes == 0 && chose == 0 && refused == 0,
@@ -16850,8 +16857,8 @@ static void ucf_recurse(UcOracle *o, int depth, uint8_t used) {
 }
 
 static void test_unambiguous_cover_fuzz(void) {
-    uint32_t r = 0x1234abcdu;
-#define UC_RI(n) ((int)(rng_lcg32(&r) >> 8) % (n))
+    uint64_t r = 0x1234abcdu;
+#define UC_RI(n) ((int)(rng_u32(&r) >> 8) % (n))
     int accepts = 0, refusals = 0, wrong = 0, illegal = 0;
     for (int it = 0; it < 4000; it++) {
         // A narrow rank band so cards share ranks and suits and one card can

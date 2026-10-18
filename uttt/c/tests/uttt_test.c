@@ -12,9 +12,9 @@
 #include "../../../shared/c/rng.h"
 
 static uint64_t RS;
-static uint32_t rnd(uint32_t n)          /* xorshift64*, no libc dependency */
+static uint32_t rnd(uint32_t n)          /* rng.h, no libc dependency */
 {
-    return (uint32_t)((rng_xorshift64star(&RS) >> 33) % n);
+    return rng_u32(&RS) % n;
 }
 
 /* Two bots. `uniform` picks any legal move. `stretch` refuses to close a block

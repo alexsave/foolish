@@ -580,10 +580,9 @@ static void og_sample_world(Game *g_out, const Game *g_in, int my_idx,
     for (int i = 0; i < hn; i++) hidden[i] = B->pool[i];
     if (hn == 0) return;
 
-    uint32_t s = seed ? seed : 0xCAFEu;
+    uint64_t s = seed;
     for (int i = hn - 1; i > 0; i--) {
-        rng_xorshift32(&s);
-        int j = (int)(s % (uint32_t)(i + 1));
+        int j = (int)(rng_u32(&s) % (uint32_t)(i + 1));
         Card sw = hidden[i]; hidden[i] = hidden[j]; hidden[j] = sw;
     }
 
@@ -834,7 +833,7 @@ static _Thread_local long og_diff_total = 0, og_diff_mismatch = 0;
 static int og_rollout(Game *g, int my_idx, int max_turns) {
     if (og_no_fastroll || !og_no_leaf) return og_simulate(g, my_idx, max_turns);
     if (og_difftest) {
-        uint32_t rng0 = game_rng_get();
+        uint64_t rng0 = game_rng_get();
         int fast = og_simulate_fast(g, my_idx, max_turns);
         game_rng_set(rng0);
         Game *slow_g = rollout_scratch_diff();
@@ -995,7 +994,7 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
     // 0-differ with this on).
     if (og_explain_on() && bbsolve) {
         og_ex_solve_applied = 1;
-        uint32_t og_ex_rng_save = random_strategy_rng_get();
+        uint64_t og_ex_rng_save = random_strategy_rng_get();
         int cap = (int)(sizeof(og_ex_verdict) / sizeof(og_ex_verdict[0]));
         for (int i = 0; i < moves->n && i < cap; i++) {
             SimState child = root_sim;
@@ -1020,7 +1019,7 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
     // batches are pure-MC-priced.
     if (bbsolve && !__atomic_load_n(&g_ogmt.defuse_probe, __ATOMIC_RELAXED)) {
         og_ex_solve_applied = 1;
-        uint32_t og_ex_rng_save = random_strategy_rng_get();
+        uint64_t og_ex_rng_save = random_strategy_rng_get();
         int cap = (int)(sizeof(og_ex_verdict) / sizeof(og_ex_verdict[0]));
         for (int i = 0; i < moves->n && i < cap; i++) {
             SimState child = root_sim;
@@ -2208,7 +2207,7 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
     // secret deal seed - a source holder can't recompute it - and the W diverse
     // wseeds within a decision come from (w+1) below, so MC coverage is intact.
     // bot_idx only decorrelates co-seated bots in multi-bot games.
-    uint32_t base = og_mix((uint32_t)bot_idx * 2654435761u, random_strategy_rng_get());
+    uint32_t base = og_mix((uint32_t)bot_idx * 2654435761u, (uint32_t)random_strategy_rng_get());
 
     Game *world = world_scratch_game(), *trial = trial_scratch_game();
     SimState *world_sim = world_scratch_sim(), *trial_sim = trial_scratch_sim();
@@ -2325,7 +2324,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
 
     if (!og_flags_loaded) og_load_flags();
 
-    uint32_t saved_rng = game_rng_get();
+    uint64_t saved_rng = game_rng_get();
 
     Belief B;
     og_build_belief(g, bot_idx, &B);

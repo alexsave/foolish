@@ -80,11 +80,10 @@ static uint8_t duel(const Entrant *x, const Entrant *o, uint64_t seed)
         uint8_t list[81];
         if (uttt_legal(&g, list) <= 0) break;
         const Entrant *m = g.turn == UTTT_X ? x : o;
-        rng_xorshift64(&rs);
-        if (m->noise && (int)(rs % 100) < m->noise) {
+        const uint64_t d = rng_splitmix64(&rs);
+        if (m->noise && (int)(d % 100) < m->noise) {
             int n = uttt_legal(&g, list);
-            rng_xorshift64(&rs);
-            uttt_play(&g, list[rs % (uint64_t)n]);
+            uttt_play(&g, list[rng_splitmix64(&rs) % (uint64_t)n]);
         } else {
             double t0 = now_cpu();
             uint8_t mv = uttt_bot_move(m->bot, &g, m->budget, &rs);

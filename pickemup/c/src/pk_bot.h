@@ -75,7 +75,7 @@ typedef struct {
 
 /* What `seat` does next. 1 with a move in `out`, 0 when it has nothing to do
  * (another seat's bubble is open, or out of turn with nothing to say or call).
- * `rng` is the caller's xorshift state; it is advanced. */
+ * `rng` is the caller's rng.h state; it is advanced. */
 int pk_bot_choose(const PkGame *g, int seat, int strategy, const PkBotKnobs *k,
                   uint64_t *rng, PkBotMove *out);
 
@@ -100,7 +100,7 @@ int pk_bot_round(PkGame *g, const uint8_t strategy[PK_MAX_SEATS],
  * An index into m. */
 int pk_bot_greedy(const PkGame *g, int seat, const PkAct *m, int n);
 
-/* The tests' and the arena's randomness: xorshift64*, never the game's. */
+/* The tests' and the arena's randomness: rng.h's splitmix64, never the game's. */
 uint64_t pk_bot_rand(uint64_t *rng);
 
 extern const char *const PK_BOT_NAME[PK_BOT_COUNT];

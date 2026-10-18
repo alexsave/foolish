@@ -8,12 +8,10 @@
 
 const char *const PK_BOT_NAME[PK_BOT_COUNT] = { "random", "greedy", "mc" };
 
-/* xorshift64* (rng.h); a state of 0, which xorshift cannot leave, starts at
- * the golden constant, so a caller may hand in a zeroed state */
+/* rng.h's splitmix64; every state, a zeroed one included, is a good one */
 uint64_t pk_bot_rand(uint64_t *rng)
 {
-    if (!*rng) *rng = RNG_GOLDEN;
-    return rng_xorshift64star(rng);
+    return rng_splitmix64(rng);
 }
 
 static uint32_t below(uint64_t *rng, uint32_t n)

@@ -1,4 +1,5 @@
 #include "uttt_pen.h"
+#include "../../../shared/c/rng.h"
 #include <math.h>
 #include <string.h>
 
@@ -9,15 +10,15 @@
 
 /* ======================= rough.js, transcribed ========================= */
 
-/* Its randomiser is a Lehmer generator with the MINSTD multiplier, and the
- * seed advances in place - which is why the ORDER of the random draws below
- * matters as much as the arithmetic. Reordering two of them would give a
- * different, equally plausible-looking sheet, and the document would stop
- * matching the app. */
+/* rough.js's randomiser was a Lehmer generator; this one draws from rng.h's
+ * splitmix64 the way rough.js read its own (31 bits over 2^31), so the shapes
+ * are rough.js's and only the dice are the repo's. The state advances in place
+ * - which is why the ORDER of the random draws below matters as much as the
+ * arithmetic. Reordering two of them would give a different, equally
+ * plausible-looking sheet, and every phone must draw the same one. */
 static float rnd(UtttRough *o)
 {
-    o->seed = (int32_t)((uint32_t)o->seed * 48271u);
-    return (float)((double)(o->seed & 0x7fffffff) / 2147483648.0);
+    return (float)((double)(rng_u32(&o->state) >> 1) / 2147483648.0);
 }
 static float ofs(float mn, float mx, UtttRough *o, float gain)
 {
@@ -35,7 +36,7 @@ UtttRough uttt_rough_default(int32_t seed)
     o.curve_tightness = 0.f; o.curve_fitting = .95f;
     o.curve_step_count = 9; o.single = 0;
     o.seg_line = 22; o.seg_curve = 14;
-    o.seed = seed ? seed : 1;
+    o.state = (uint64_t)(uint32_t)seed;
     return o;
 }
 

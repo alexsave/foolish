@@ -8,7 +8,7 @@
  * with every event of the whole game's plan as the all-seeing viewer sees it
  * (pk_plan_each), so the deal, every reshuffle's order, every penalty and the
  * replay that the plan runs are all in it. The bot's randomness is the
- * tests' xorshift, 64-bit integer arithmetic only, so both engines choose the
+ * tests' (rng.h), 64-bit integer arithmetic only, so both engines choose the
  * same actions.
  *
  * The same file is both sides. Natively it is a program that prints one hex

@@ -50,10 +50,10 @@ static uint8_t *slurp(const char *name, long *n)
     return b;
 }
 
-static uint32_t rng_state = 12345;
+static uint64_t rng_state = 12345;
 static uint32_t rnd(void)
 {
-    return rng_xorshift32(&rng_state);
+    return rng_u32(&rng_state);
 }
 
 /* ------------------------------------------------------------- the JPEGs */

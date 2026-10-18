@@ -332,9 +332,13 @@ static void sampler_visit(const Game *g, int step, int seat, void *u) {
     analyse_belief(g, seat, &B);
     if (!B.ok || B.n < 2) return;
     Card a[MAX_DECK], b[MAX_DECK], c[MAX_DECK];
-    analyse_sample_world(&B, 1234u, a);
-    analyse_sample_world(&B, 1234u, b);
-    analyse_sample_world(&B, 4321u, c);
+    // A fresh pair of seeds per decision: consecutive decisions often hold the
+    // same pool, and one fixed pair that happened to collide on it would be
+    // counted at every one of them.
+    const uint32_t s1 = 1234u + 2u * (uint32_t)st->n, s2 = 4321u + 2u * (uint32_t)st->n;
+    analyse_sample_world(&B, s1, a);
+    analyse_sample_world(&B, s1, b);
+    analyse_sample_world(&B, s2, c);
     st->n++;
     // A permutation of the pool: every pool card once, nothing else.
     unsigned long long seen = 0;
@@ -342,8 +346,8 @@ static void sampler_visit(const Game *g, int step, int seat, void *u) {
     unsigned long long pool = 0;
     for (int i = 0; i < B.n; i++) pool |= 1ull << card_to_id(B.pool[i]);
     if (seen != pool) st->bad_perm++;
-    if (memcmp(a, b, (size_t)B.n) != 0) st->same_seed_differs++;
-    if (memcmp(a, c, (size_t)B.n) == 0) st->diff_seed_same++;
+    if (memcmp(a, b, (size_t)B.n * sizeof a[0]) != 0) st->same_seed_differs++;
+    if (memcmp(a, c, (size_t)B.n * sizeof a[0]) == 0) st->diff_seed_same++;
 }
 
 static void test_sampler(void) {

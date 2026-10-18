@@ -75,6 +75,11 @@ const WIDE: [string, string[], number][] =
 // a fully covered one still ends its cycle, so the bot order changed once more
 // and 752 stopped staging the board. 758 is the first seed after it that does:
 // seven legal passes at its widest over five pass decisions, measured.
+//
+// AND 758 -> 762 WHEN EVERY GENERATOR BECAME SPLITMIX64 (shared/c/rng.h): the
+// bots' streams changed, so they play a different game from the same deal.
+// 762 is the first seed from 758 that stages the board again: seven legal
+// passes at its widest over two pass decisions, measured.
 const PASS_BOARD = ['handwritten', 'octogen', 'random', 'handwritten', 'octogen', 'random'];
 /** REPLAY_ATOM_* -> its name, so a failure names the move type it broke on. */
 const STEP_NAME = REPLAY_ATOM_NAMES;
@@ -228,7 +233,7 @@ test('§12.2-1c every pass a hand can make is on the panel', async () => {
     // just animated, and octogen, sharing this selection, could not have chosen
     // it either.
     const inst = await freshInstance();
-    const { code, frames, id } = await fixture('6p-pass', PASS_BOARD, 758);
+    const { code, frames, id } = await fixture('6p-pass', PASS_BOARD, 762);
     let widest = 0, walked = 0;
     for (let j = 1; j < frames.length; j++) {
         if (findDecisionIndex(frames, j) !== j) continue;

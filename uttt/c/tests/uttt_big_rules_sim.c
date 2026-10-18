@@ -27,7 +27,7 @@ static void one(Sum *t, int rule, int bots, uint64_t seed, int n)
     UtbBot b[2];
     utb_bot_seat(&b[0], seed, UTTT_X);
     utb_bot_seat(&b[1], seed, UTTT_O);
-    uint64_t rs = seed * 0x9e3779b97f4a7c15ull + 1;
+    uint64_t rs = rng_seed64(seed);
     long jumps = 0;
     clock_t t0 = clock();
     while (!g.over) {
@@ -36,8 +36,7 @@ static void one(Sum *t, int rule, int bots, uint64_t seed, int n)
             mv = utb_bot_move(&b[g.turn - 1], &g);
         } else {
             int m = utb_legal(&g, LIST, UTB_LEAVES_MAX);
-            rng_xorshift64(&rs);
-            mv = LIST[rs % (uint64_t)m];
+            mv = LIST[rng_splitmix64(&rs) % (uint64_t)m];
         }
         if (g.last >= 0 && mv / 6561 != g.last / 6561) jumps++;
         if (!utb_play(&g, mv)) { printf("illegal move %d\n", mv); exit(1); }

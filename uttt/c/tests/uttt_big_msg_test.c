@@ -86,7 +86,7 @@ static int fails, checks;
 static uint64_t rs = 0x2545f4914f6cdd1dull;
 static uint32_t rnd(void)
 {
-    return (uint32_t)(rng_xorshift64(&rs) >> 11);
+    return rng_u32(&rs);
 }
 
 /* Elapsed seconds for the timings this test prints: clock() is standard C,

@@ -278,9 +278,9 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions,
 
     if (n_order == 0) { out->stop = BOT_STOP_NO_ELIGIBLE; return 0; }
 
-    uint32_t rs = drive_seed(g);
+    uint64_t rs = drive_seed(g);
     for (int i = n_order - 1; i > 0; i--) {
-        int j = (int)(rng_xorshift32(&rs) % (uint32_t)(i + 1));
+        int j = (int)(rng_u32(&rs) % (uint32_t)(i + 1));
         int t = order[i]; order[i] = order[j]; order[j] = t;
     }
 

@@ -1,7 +1,7 @@
 #include "rng.h"
 
 u32 rng_next(u64 *state) {
-    return (u32)(rng_xorshift64(state) >> 32);
+    return rng_u32(state);
 }
 
 u32 rng_below(u64 *state, u32 n) {

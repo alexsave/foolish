@@ -42,11 +42,11 @@ int utb_bot_threat_weight(const UtbGame *g, int id)
 
 /* ------------------------------------------------------------------ dice */
 
-/* 0..n-1, n >= 1: the high 32 bits of an xorshift64* draw scaled, so no
- * modulo bias worth naming */
+/* 0..n-1, n >= 1: the high 32 bits of a draw scaled, so no modulo bias
+ * worth naming */
 static uint32_t below(uint64_t *s, uint32_t n)
 {
-    return (uint32_t)(((rng_xorshift64star(s) >> 32) * (uint64_t)n) >> 32);
+    return (uint32_t)(((uint64_t)rng_u32(s) * n) >> 32);
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }

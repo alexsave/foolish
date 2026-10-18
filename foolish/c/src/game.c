@@ -14,27 +14,24 @@
 #include "../../../shared/c/deal_rng.h"
 #include "../../../shared/c/rng.h"
 
-// ---------- RNG (two independent LCGs, same recurrence as TS) ----------
+// ---------- RNG (two independent splitmix64 streams) ----------
 //
-// The recurrence is rng.h's rng_lcg32 (Numerical Recipes). It is not free to
-// change: the legacy deal is re-derived from a stored 32-bit seed, and
-// rng_test.c pins it by its published vectors.
+// Both streams are rng.h's one generator. Neither is re-derived from anything
+// a player holds: every production deal is the ChaCha stream below (a 32-byte
+// seed), and the draw and strategy streams are reseeded from game_state_seed
+// before every bot decision and every applied move, so changing them changes
+// which move a bot picks, never a game anyone already has. Only the legacy
+// 32-bit deal (game_set_seed, used by native tools and the golden fixtures)
+// draws its cards from g_seed.
 //
-// Both LCGs are _Thread_local so multiple worker threads can each run their
-// own game(s) without racing. Default seeds are non-zero so a thread that
-// never calls game_set_seed/random_strategy_set_seed still produces a
-// well-defined sequence.
+// Both are _Thread_local so multiple worker threads can each run their own
+// game(s) without racing. Default seeds are fixed so a thread that never calls
+// game_set_seed/random_strategy_set_seed still produces a well-defined
+// sequence.
 
-static _Thread_local uint32_t g_seed = 1237;
-static _Thread_local uint32_t g_rand_seed = 1;
+static _Thread_local uint64_t g_seed = 1237;
+static _Thread_local uint64_t g_rand_seed = 1;
 
-// Deterministic-deck mode. When on, the deck is a full ChaCha shuffle from the
-// stored seed and every draw pops the top — so the whole game (deal AND every
-// mid-game refill) is a pure function of the seed, with the persisted deck
-// order carrying the determinism between kernel calls. Off by default: the deal
-// and draws use the 32-bit LCG exactly as before, so every pinned LCG stream
-// (the C suite, the e2e seedSource hooks, in-flight legacy games) is unchanged.
-// game_set_seed() always turns it off.
 static _Thread_local int g_deal_wide = 0;
 static _Thread_local DealRng g_deal_rng;
 
@@ -67,7 +64,7 @@ static void deal_shuffle(Game *g) {
 // Random index in [0, n) for a DECK DRAW. Deterministic mode pops the top of the
 // pre-shuffled deck (0); legacy consumes one game_random() and clamps, byte-for-
 // byte as the original inline draw code did (including on a 1-card deck, so the
-// pinned LCG stream never desyncs). Deterministic mode is signalled two ways,
+// draw stream never desyncs). Deterministic mode is signalled two ways,
 // both meaning "the deck is pre-shuffled, pop it": g_deal_wide during the deal
 // itself, and the per-game deterministic_deck flag mid-game (restored from the
 // durable blob, since the thread-local does not survive between kernel calls).
@@ -81,7 +78,7 @@ static int draw_index(const Game *g, int n) {
 
 // Random index in [0, n) for the first-attacker fallback (pick among players
 // when nobody holds a trump). Deterministic mode draws it, unbiased, from the
-// same ChaCha stream (so it too is reproducible); legacy uses the LCG.
+// same ChaCha stream (so it too is reproducible); legacy uses the draw stream.
 static int deal_index(int n) {
     if (g_deal_wide) return (n <= 1) ? 0 : (int)deal_rng_bounded(&g_deal_rng, (uint32_t)n);
     int idx = (int)(game_random() * n);
@@ -105,8 +102,8 @@ _Thread_local long game_pass_probe = 0;   // test-only; see game.h
 #define REJECT(code) do { engine_last_reject = (code); return false; } while (0)
 
 void game_set_seed(uint32_t s) {
-    g_seed = s ? s : 1;
-    g_deal_wide = 0;   // revert the deal to the legacy 32-bit LCG path
+    g_seed = s;
+    g_deal_wide = 0;   // revert the deal to the legacy 32-bit seed path
 }
 
 void game_set_deal_seed_bytes(const uint8_t *seed, int len) {
@@ -136,21 +133,16 @@ void game_deal_rng_set(const unsigned char in[GAME_DEAL_RNG_STATE_MAX]) {
     memcpy(&g_deal_rng, in + 1, sizeof g_deal_rng);
 }
 uint32_t game_random_u32(void) {
-    return rng_lcg32(&g_seed);
+    return rng_u32(&g_seed);
 }
 double game_random(void) {
-    uint32_t v = game_random_u32();
-    return (double)v / 4294967296.0;
+    return rng_unit(rng_splitmix64(&g_seed));
 }
 
-uint32_t game_rng_get(void) { return g_seed; }
-void     game_rng_set(uint32_t s) {
-    g_seed = s ? s : 1;
-}
+uint64_t game_rng_get(void) { return g_seed; }
+void     game_rng_set(uint64_t s) { g_seed = s; }
 
-void random_strategy_set_seed(uint32_t s) {
-    g_rand_seed = s ? s : 1;
-}
+void random_strategy_set_seed(uint64_t s) { g_rand_seed = s; }
 
 // See game.h. Moved here from wasm_api.c (state_fnv) so the table layer and the
 // wasm bridge seed from one definition; the byte order of the mix is unchanged.
@@ -170,14 +162,14 @@ uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt) {
     h ^= h >> 16; h *= 0x85EBCA6Bu; h ^= h >> 13; h *= 0xC2B2AE35u; h ^= h >> 16;
     return h ? h : 1;
 }
-// Current strategy-LCG state, WITHOUT advancing it. Live (wasm) this is reseeded
+// Current strategy-stream state, WITHOUT advancing it. Live (wasm) this is reseeded
 // per bot decision from state_fnv (which folds in the SERVER-ONLY g_rng_base),
 // so it carries the secret; the Monte-Carlo bots mix it into their world seed so
 // their move can't be recomputed from the public board. Reproducible to the
 // server (same game_seed -> same value), deterministic in native tests.
-uint32_t random_strategy_rng_get(void) { return g_rand_seed; }
+uint64_t random_strategy_rng_get(void) { return g_rand_seed; }
 double random_strategy_random(void) {
-    return (double)rng_lcg32(&g_rand_seed) / 4294967296.0;
+    return rng_unit(rng_splitmix64(&g_rand_seed));
 }
 
 // ---------- Helpers ----------------------------------------------------
@@ -876,6 +868,13 @@ static void draw_up_to_six(Game *g, int seat) {
 }
 
 static void refill_player_hands(Game *g) {
+    // A BOUT'S END CLEARS awaiting_attack. The flag is a bout's: the first
+    // attack sets it and a good clears it. Left standing across the round end,
+    // it carried an order the board does not record - a good said before the
+    // last cover (which re-sets it) against one said after - so a replay, which
+    // knows the round ended and not who said good when, rebuilt a different
+    // final board from the same game (tests.c "the replay's last board").
+    for (int i = 0; i < g->num_players; i++) g->players[i].awaiting_attack = false;
     if (no_cards_left(g)) {
         for (int i = 0; i < g->num_players; i++) {
             if (g->players[i].hand_count == 0 && g->players[i].status == PLAYER_STATUS_IN) {

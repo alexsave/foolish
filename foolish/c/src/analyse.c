@@ -479,10 +479,9 @@ static void an_perm_from_labels(const AnalyseBelief *B, const AnWorldShape *S,
         int start = k;
         for (int i = 0; i < B->n; i++) if (labels[i] == gi) perm[k++] = B->pool[i];
         if (gi == S->deck_group && future_seed && k - start > 1) {
-            uint32_t s = future_seed;
+            uint64_t s = future_seed;
             for (int i = k - start - 1; i > 0; i--) {
-                rng_xorshift32(&s);   // future_seed != 0, so s never is
-                int j = (int)(s % (uint32_t)(i + 1));
+                int j = (int)(rng_u32(&s) % (uint32_t)(i + 1));
                 Card t = perm[start + i]; perm[start + i] = perm[start + j]; perm[start + j] = t;
             }
         }
@@ -491,12 +490,9 @@ static void an_perm_from_labels(const AnalyseBelief *B, const AnWorldShape *S,
 
 void analyse_sample_world(const AnalyseBelief *B, uint32_t seed, Card *perm) {
     for (int i = 0; i < B->n; i++) perm[i] = B->pool[i];
-    uint32_t s = seed;
+    uint64_t s = seed;
     for (int i = B->n - 1; i > 0; i--) {
-        // 0 is xorshift's one fixed point: a zero seed goes on from the golden
-        // constant, and any other state never reaches 0.
-        if (!rng_xorshift32(&s)) s = 0x9E3779B9u;
-        int j = (int)(s % (uint32_t)(i + 1));
+        int j = (int)(rng_u32(&s) % (uint32_t)(i + 1));
         Card t = perm[i]; perm[i] = perm[j]; perm[j] = t;
     }
 }

@@ -79,8 +79,7 @@ static long check_legality(long games, long *positions)
             UtttGame t = g;
             if (uttt_play(&t, 81) || uttt_play(&t, 255)) bad++;
             if (n <= 0) break;
-            rng_xorshift64(&rs);
-            uttt_play(&g, list[rs % (uint64_t)n]);
+            uttt_play(&g, list[rng_splitmix64(&rs) % (uint64_t)n]);
         }
     }
     return bad;

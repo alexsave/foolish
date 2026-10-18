@@ -48,7 +48,7 @@ typedef struct {
     float curve_fitting;    /* 0.95                               */
     int   curve_step_count; /* 9                                  */
     int   single;           /* disableMultiStroke                 */
-    int32_t seed;
+    uint64_t state;         /* rng.h stream, from the seed        */
     /* How finely a cubic is flattened. NOT a rough.js number - rough.js hands
      * a renderer cubics and stops. But this pen sets a width per SAMPLE, so the
      * sample count is what the grain and the width modulation are carried on,

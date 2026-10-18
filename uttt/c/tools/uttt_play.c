@@ -231,7 +231,7 @@ int main(int argc, char **argv)
             uint8_t mv;
             if (autoplay) {
                 int n = uttt_legal(&g, list);
-                mv = list[(int)(rng_xorshift64(&rs) % (uint64_t)n)];
+                mv = list[(int)(rng_splitmix64(&rs) % (uint64_t)n)];
                 printf("\n  you play row %d col %d\n",
                        (mv / 9 / 3) * 3 + (mv % 9) / 3 + 1,
                        (mv / 9 % 3) * 3 + (mv % 9) % 3 + 1);
