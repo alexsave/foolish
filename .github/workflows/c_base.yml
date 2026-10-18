@@ -224,7 +224,7 @@ jobs:
       - name: the shell scripts
         run: |
           bash -n c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/ops_env.sh c_base/providers/aws/ops/deploy.sh
-          shellcheck -x .github/scripts/fuzz_select.sh c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/providers/aws/ops/test/changeset_gate_test.sh c_base/providers/aws/ops/role_covers_template.sh c_base/providers/aws/ops/test/role_covers_template_test.sh
+          shellcheck -x .github/scripts/fuzz_select.sh c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/providers/aws/ops/test/changeset_gate_test.sh c_base/providers/aws/ops/role_covers_template.sh c_base/providers/aws/ops/test/role_covers_template_test.sh c_base/fuzz/test/fuzz_mk_test.sh
       - name: web_deploy.sh and lambda_deploy.sh refuse a tree behind main (no AWS calls)
         run: bash c_base/ops/test/web_deploy_gate_test.sh
       - name: ops_env.sh never generates a secret for a live stack (no AWS calls)
@@ -233,6 +233,8 @@ jobs:
         run: bash c_base/providers/aws/ops/test/changeset_gate_test.sh
       - name: the GitHub deploy role reads everything a code deploy re-resolves (no AWS calls)
         run: bash c_base/providers/aws/ops/test/role_covers_template_test.sh
+      - name: fuzz.mk's targets, one name per root, and fuzz-seeds beside each target (no fuzzer, no build)
+        run: bash c_base/fuzz/test/fuzz_mk_test.sh
       - name: the web router's rules (providers/aws/ops/site/web.yaml's Function code)
         run: node --test c_base/providers/aws/ops/site/test/web_router.test.mjs
 
