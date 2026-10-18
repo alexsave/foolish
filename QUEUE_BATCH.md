@@ -33,3 +33,29 @@ Owed tests (nothing new was written; these still reference the old row and will 
 - smoke: GET /v1/history carries no moves or extras; its row id opens GET /v1/replay/<id>; a deleted account's name appears in no history body.
 - web: historyEntry (matchHistoryRow.ts) maps rank 0 / seat 255 to null, fool 255 to -1, duration 0xffffffff to null; MatchHistory tap fetches the replay and navigates.
 - Mutation-check each.
+
+## 8. Store fixes found by the stage 8 test work
+
+Commits: efd0e78e8 (cherry-pick -x of a84301973 from origin/stage8-owed-tests: cb_iwrite_check / cb_ikey_check / cb_iquery_check in c_base/core/src/store/items.c are called by both backends; no conflict) and the cb_rows_user_import fix below.
+
+cb_rows_user_import (c_base/core/src/store/rows_auth.c) replaced the whole profile and wrote no session_gen, so a re-import reset it to 0 and sessions ended by a global sign-out passed the generation check again.
+Now it reads the existing profile first.
+When the stored session_gen is >= the imported one it keeps the stored session_gen and kept_session; a higher imported value wins.
+Why max: an import must never lower a generation (that revives ended sessions), but an export taken after more sign-outs should still raise it.
+It is read then write, not atomic, which is fine for the one-shot cbase-import run on a quiet store.
+acct_writes now also writes session_gen (when nonzero) and kept_session (when set), so a fresh import carries them; profile[] grew from 8 to 10 attributes.
+
+Owed tests:
+- Pull the stage8-owed-tests branch's tests that cover a84301973: 2bf3960ce (core/test/conformance/store.{c,h}, unit_conf_store_local.c, unit_conf_store_dynamo.c; WIP, green, not mutation-checked; the dynamo runner skips without CBASE_STORE=dynamo and is not yet on DYNAMO_UNITS) and the unit_core.c / unit_jobs.c additions (b8c2aaf1c, ab60c0390). Mutation-check them against the three bugs: SQLite cond_holds read at n_cond 5, the 1024-byte pk dropped by DynamoDB batch get and the key walk, and keys-only queries answering every attribute.
+- unit (rows_auth): import over an existing user keeps session_gen and kept_session; import with a higher session_gen takes it; import of a new user writes the imported session_gen; end_sessions then import leaves the old sessions dead. Mutation-check by writing session_gen 0 again.
+
+## Fixes to make (collected; done at the end of the list, before the test pass)
+
+- History names restore (item 1 regression, UI): the web history list shows `#1 #2 ...` instead of player names.
+  Plan: /v1/history does its Query of pointers, then ONE BatchGetItem of the main SNAP#<id>/SNAP items projecting only what names need (extras; SQLite: the column subset); names go in the history row; pointers stay name-free so account delete still redacts only the main item.
+  Keep the replay fetch-on-tap.
+  Old pointers (written before item 1, no summary, rank 0) are SKIPPED by historyEntry, so every old replay vanishes from the list: in the same batch read, compute the summary from the main item with snap_summary (table_ops.c, moves + extras projected), so old and new replays both show, with names.
+  No backfill unless the per-read cost matters.
+  The list must render identically to before b092fe333: names, bold viewer seat, fool icon.
+  Note the netwire row shape change when done.
+- cb_rows_user_import is not atomic (read then write); fine for cbase-import, noted in case another caller appears.
