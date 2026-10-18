@@ -11,12 +11,14 @@
 #   deploy    on a push to main, or a workflow_dispatch from main: both exports,
 #             foolish then uttt (each rewrites the cbase-web stack's page list,
 #             and two stack updates cannot overlap), each upload gated on the
-#             tree containing origin/main. One deploy runs at a time
-#             (the job's concurrency group, never cancelled mid-way: that
-#             would stop a stack update half done); a newer push's deploy
-#             waiting behind it replaces any older one still waiting, and a
-#             run whose commit main has since superseded ends skipped, green,
-#             before any AWS call (c_base/ops/require_main.sh, SUPERSEDED)
+#             tree containing origin/main, or being a commit of main whose
+#             newer push's run is queued behind this one. One run on main at
+#             a time (the workflow's concurrency group, never cancelled
+#             mid-way: that would stop a stack update half done); a newer
+#             push's run waiting behind it replaces any older one still
+#             waiting, and every run that starts deploys its own commit
+#             (c_base/ops/require_main.sh, QUEUED), so the newest commit of
+#             main always deploys
 #
 # The template and the router's tests are c_base.yml's (its ops job). A
 # template change is deployed by hand (web_deploy.sh stack): this lane only
@@ -52,9 +54,10 @@ on:
       - '.github/workflows/web_aws.yml'
   workflow_dispatch: {}
 
+# THE DEPLOY QUEUE, and its one owner (the header's deploy paragraph). A
+# deploy half done is worse than a late one: cancel only pull request runs.
 concurrency:
   group: web_aws-${{ github.ref }}
-  # A deploy half done is worse than a late one: cancel only pull request runs.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -155,13 +158,9 @@ jobs:
     needs: [foolish, uttt]
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # Queue, never cancel the running one (a cancel can land mid-way through a
-    # CloudFormation update). GitHub keeps one waiting job per group and
-    # cancels an older waiting one when a newer arrives, so a superseded deploy
-    # either never starts or, if it started first, skips in require_main.sh.
-    concurrency:
-      group: web-aws-deploy
-      cancel-in-progress: false
+    # One deploy at a time, and the newest always deploys: the workflow's
+    # concurrency group above. No job-level group here: a second queue would
+    # order deploys by which build finished first, not by push.
     permissions:
       contents: read
       id-token: write   # the OIDC token configure-aws-credentials exchanges for the role

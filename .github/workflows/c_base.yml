@@ -34,6 +34,14 @@ on:
       - '.github/workflows/c_base.yml'
   workflow_dispatch: {}
 
+# THE DEPLOY QUEUE, and its one owner. On main, one run at a time, never
+# cancelled once started (a cancel can land mid-way through a CloudFormation
+# update); GitHub keeps one waiting run per group and cancels an older waiting
+# one when a newer push arrives, so the waiting slot always holds the newest
+# commit. A run that starts deploys its own commit even if main moved on while
+# it built (require_main.sh, QUEUED): the newest push's run is behind it and
+# deploys next. So the newest commit of main always deploys. Pull request runs
+# are cancelled by newer pushes to the same pull request; they deploy nothing.
 concurrency:
   group: c_base-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -187,14 +195,9 @@ jobs:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: [check, asan, fuzz, dynamo, ops, bootstrap]
     runs-on: ubuntu-24.04
-    # One deploy at a time; a queued one waits rather than cancelling a stack
-    # update half way. GitHub keeps one waiting job per group and cancels an
-    # older waiting one when a newer arrives, so a superseded deploy either
-    # never starts or, if it started first, ends skipped (green, a notice, no
-    # AWS call) in lambda_deploy.sh's require_main.sh (SUPERSEDED).
-    concurrency:
-      group: cbase-lambda-deploy
-      cancel-in-progress: false
+    # One deploy at a time, and the newest always deploys: the workflow's
+    # concurrency group above. No job-level group here: a second queue would
+    # order deploys by which build finished first, not by push.
     permissions:
       contents: read
       id-token: write   # the OIDC token configure-aws-credentials exchanges for the role
