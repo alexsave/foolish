@@ -93,10 +93,14 @@ const REPO = resolve(PRODUCT, '..');
  *                          u16 / u32 / u48 put and get under the card kernel's
  *                          blobs, wires and session log; header-only (static
  *                          inline), so no build list names a .c for it either
+ *   num_parse.h            shared/c/num_parse.h, the one strict decimal integer
+ *                          parser (-?[0-9]+ in a range, no blank, no '+', no
+ *                          wrap) under the backend's settings, ports, cursors
+ *                          and headers; header-only (static inline) too
  */
 const SHARED_HEADERS = ['sha256.h', 'deal_rng.h', 'b32.h', 'mixrad.h', 'languages.h', 'msg_stage.h', 'motion_ruler.h',
     'check.h', 'twophone.h', 'text_util.h', 'wire_check.h', 'stats.h', 'seed_hash.h',
-    'msg_seat_tag.h', 'msg_lobby_roster.h', 'collapse.h', 'le_bytes.h'];
+    'msg_seat_tag.h', 'msg_lobby_roster.h', 'collapse.h', 'le_bytes.h', 'num_parse.h'];
 
 /** Every C source and header in the repo, both products, excluding build output. */
 function kernelSources(): string[] {
