@@ -1,4 +1,4 @@
-// Exact-solver difftest: struct cd_solve vs bitboard cd_sim_solve.
+// Exact-solver difftest: struct bot_solve vs bitboard cd_sim_solve.
 //
 // Plays real games (handwritten rollout policy on the struct engine). At every
 // node where the deck is empty and exactly 2 players are IN — the regime the

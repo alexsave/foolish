@@ -1,10 +1,10 @@
 // Compact bitboard rollout engine — see cordite_sim.h.
 //
 // Why only the handwritten policy is reimplemented:
-//   cd_rollout_for(g) returns espresso ONLY when the deck is dead AND in_count
+//   bot_rollout_for(g, 0) returns espresso ONLY when the deck is dead AND in_count
 //   != 2 (i.e. 3+ players). But espresso_strategy_choose with in_count > 2
 //   immediately defers to handwritten_strategy_choose. So espresso's 1v1 logic
-//   (which needs in_count == 2) is never reached through cd_rollout_for: the
+//   (which needs in_count == 2) is never reached through bot_rollout_for: the
 //   effective rollout policy is ALWAYS handwritten. We reproduce handwritten
 //   exactly here, directly on the bitboard state (no move-list materialized).
 
@@ -799,7 +799,7 @@ int cd_sim_apply_root_move(SimState *s, int p_idx, const LegalMove *m) {
 // ===================================================================
 // Exact 2-player deck-empty endgame solver (bitboard).
 //
-// Mirrors cd_solve in cordite_strategy.c node-for-node (same actor
+// Mirrors bot_solve in bot_common.c node-for-node (same actor
 // selection, the SAME full legal-move set, the same alpha-beta and the
 // same ±(1000-depth) value encoding) but on the compact SimState, so a
 // node clones with a memcpy and moves are enumerated with bit ops. A
@@ -1143,7 +1143,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     if (depth >= CD_SIM_SOLVE_MAX_DEPTH) { S->aborted = 1; return 0; }
     if (--S->budget <= 0) { S->aborted = 1; return 0; }
 
-    // actor: defender-priority, then first IN actor (mirrors cd_solve).
+    // actor: defender-priority, then first IN actor (mirrors bot_solve).
     int actor = -1;
     if (sim_should_act(s, s->defender)) actor = s->defender;
     else {

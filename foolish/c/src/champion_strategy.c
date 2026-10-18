@@ -19,6 +19,7 @@
 #include "card.h"
 #include "game.h"
 #include "legal.h"
+#include "bot_common.h"
 
 int champion_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
@@ -228,23 +229,6 @@ static bool conservative_give_up_decision(const Game *g, const Player *bot) {
 
     return base_give_up;   // true here
 }
-
-// ---------- selectDefenseCard -----------------------------------------------
-
-static bool move_some_trump(const LegalMove *m, int trump) {
-    for (int i = 0; i < m->n_cards; i++) {
-        if (m->cards[i].suit == trump) return true;
-    }
-    return false;
-}
-
-static bool move_every_non_trump(const LegalMove *m, int trump) {
-    for (int i = 0; i < m->n_cards; i++) {
-        if (m->cards[i].suit == trump) return false;
-    }
-    return true;
-}
-
 static int select_defense_card(const Game *g, const Player *bot, const LegalMoves *moves) {
     int trump_count = 0;
     for (int i = 0; i < bot->hand_count; i++) {
@@ -258,7 +242,7 @@ static int select_defense_card(const Game *g, const Player *bot, const LegalMove
         int best_score = 0;
         for (int i = 0; i < moves->n; i++) {
             const LegalMove *m = &moves->moves[i];
-            if (m->type != MOVE_COVER || !move_some_trump(m, g->power_suit)) continue;
+            if (m->type != MOVE_COVER || !bot_move_has_trump(m, g->power_suit)) continue;
             int s = get_card_score(m, g->power_suit);
             if (best < 0 || s < best_score) {
                 best = i;
@@ -274,7 +258,7 @@ static int select_defense_card(const Game *g, const Player *bot, const LegalMove
         int best_score = 0;
         for (int i = 0; i < moves->n; i++) {
             const LegalMove *m = &moves->moves[i];
-            if (m->type != MOVE_COVER || !move_every_non_trump(m, g->power_suit)) continue;
+            if (m->type != MOVE_COVER || !bot_move_no_trump(m, g->power_suit)) continue;
             int s = get_card_score(m, g->power_suit);
             if (best < 0 || s < best_score) {
                 best = i;

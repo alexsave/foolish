@@ -12,7 +12,7 @@
 // The rollout reimplements the same rules (handle_attack/cover/pass/pickup/good
 // + refill + elimination) and the same rollout POLICY (handwritten — see
 // cordite_sim.c for why espresso is never actually reached through
-// cd_rollout_for) directly on the bitboard state.
+// bot_rollout_for, bot_common.c) directly on the bitboard state.
 #ifndef CNITRO_CORDITE_SIM_H
 #define CNITRO_CORDITE_SIM_H
 

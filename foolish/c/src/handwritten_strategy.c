@@ -13,36 +13,13 @@
 #include "strategy.h"
 #include "card.h"
 #include "game.h"
+#include "bot_common.h"
 #include <stdint.h>
 #include <stddef.h>
 
 static inline int card_score(Card c, int power_suit) {
     return c.value + (c.suit == power_suit ? 1000 : 0);
 }
-
-static int compute_total_card_count(const Game *g) {
-    int table = 0;
-    for (int i = 0; i < g->num_battles; i++) {
-        table += 1 + (!card_is_none(g->table_battles[i].defense) ? 1 : 0);
-    }
-    int hands = 0;
-    for (int i = 0; i < g->num_players; i++) hands += g->players[i].hand_count;
-    return g->deck_count + g->discard_pile_length + table + hands + (g->has_flipped ? 1 : 0);
-}
-
-static double trump_attack_probability(const Game *g) {
-    if (g->deck_count > 0 || g->has_flipped) return 0.02;
-    int total = compute_total_card_count(g);
-    if (total < 1) total = 1;
-    double ratio = (double)g->discard_pile_length / total;
-    if (ratio < 0) ratio = 0;
-    if (ratio > 1) ratio = 1;
-    double p = 0.65 + 0.35 * ratio;
-    if (p < 0.5) p = 0.5;
-    if (p > 0.95) p = 0.95;
-    return p;
-}
-
 static bool move_has_trump(const LegalMove *m, int power_suit) {
     for (int i = 0; i < m->n_cards; i++) {
         if (m->cards[i].suit == power_suit) return true;
@@ -143,7 +120,7 @@ int handwritten_strategy_choose(const Game *g, int bot_idx,
         if (n_nt > 0) {
             cand = nt.idx;
         } else if (n_tr > 0) {
-            if (game_random() < trump_attack_probability(g)) {
+            if (game_random() < bot_trump_attack_probability(g)) {
                 cand = tr.idx;
             } else {
                 // Decline trump attack: prefer GOOD (end round) over falling

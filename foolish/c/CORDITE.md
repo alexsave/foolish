@@ -95,7 +95,7 @@ bitboard engine:
   and the rollout **policy** are reimplemented directly on the bitboard
   state — the policy move is *computed* (decision tree over bit masks), no
   `LegalMoves` list is ever materialized. The effective rollout policy is
-  always **handwritten**: `cd_rollout_for` only returns espresso when the
+  always **handwritten**: `bot_rollout_for` only returns espresso when the
   deck is dead **and** 3+ players are in, but espresso defers to handwritten
   at 3+ in, so its 1v1 path is never reached. Only handwritten is ported.
 - Each sampled determinized **world** is converted to a `SimState` once
@@ -133,7 +133,7 @@ reports the divergence rate.
 ### 7. Bitboard exact endgame solver (v2.2 — the solver was the new top cost)
 
 Once the rollout was on bitboards, the **exact 2-player endgame solver**
-(`cd_try_endgame_solve` → `cd_solve`) became the dominant cost — it still ran
+(`cd_try_endgame_solve` → `bot_solve`) became the dominant cost — it still ran
 on the 44 KB `Game` struct, cloning a Game and re-enumerating
 `calculate_legal_moves` (combinations + cover blow-up) at every minimax node.
 Profiled share of total eval wall-clock (cordite vs handwritten, 300 games):

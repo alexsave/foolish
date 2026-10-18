@@ -16,6 +16,7 @@
 #include "card.h"
 #include "game.h"
 #include "legal.h"
+#include "bot_common.h"
 
 // ---------- tuned parameters (verbatim from the TS class fields) --------
 
@@ -71,16 +72,6 @@ static bool pred_all_value_le8(const LegalMove *m, int power_suit) {
 
 typedef bool (*MovePred)(const LegalMove *m, int power_suit);
 
-// getAttackScore / getCardScore (trump_bonus = 20) and getDefenseScore
-// (trump_bonus = 10) collapse to one sum.
-static int score_cards(const LegalMove *m, int power_suit, int trump_bonus) {
-    int score = 0;
-    for (int i = 0; i < m->n_cards; i++) {
-        score += m->cards[i].value + (m->cards[i].suit == power_suit ? trump_bonus : 0);
-    }
-    return score;
-}
-
 // The TS reduce pattern (getBestAttackMove / getLowestCostDefense /
 // selectPassMove): first strict minimum over matching moves, in list order.
 // Returns the move index, or -1 if no move matches (TS never reduces an
@@ -93,7 +84,7 @@ static int reduce_lowest(const LegalMoves *moves, int type, MovePred pred,
         const LegalMove *m = &moves->moves[i];
         if (m->type != type) continue;
         if (pred && !pred(m, power_suit)) continue;
-        int s = score_cards(m, power_suit, trump_bonus);
+        int s = bot_card_sum(m, power_suit, trump_bonus);
         if (best < 0 || s < best_score) { best = i; best_score = s; }
     }
     return best;

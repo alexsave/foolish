@@ -33,7 +33,8 @@
 #include "strategy.h"
 #include "card.h"
 #include "game.h"
-#include "cordite_sim.h"   // shared MC/solver scratch (reused so wasm memory is unchanged)
+#include "cordite_sim.h"
+#include "bot_common.h"   // shared MC/solver scratch (reused so wasm memory is unchanged)
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,18 +47,6 @@
 static inline int bp_card_score(Card c, int power) {
     return c.value + (c.suit == power ? 1000 : 0);
 }
-
-static bool bp_set_contains(const Card *arr, int n, Card c) {
-    for (int i = 0; i < n; i++) if (card_eq(arr[i], c)) return true;
-    return false;
-}
-
-static uint32_t bp_mix(uint32_t a, uint32_t b) {
-    uint32_t h = a * 0x9E3779B1u ^ (b + 0x7F4A7C15u);
-    h ^= h >> 16; h *= 0x85EBCA77u; h ^= h >> 13;
-    return h ? h : 1;
-}
-
 // Ablation switches (read once): BP_NO_SOLVE / BP_NO_VOIDS / BP_NO_FLIP
 // disable the endgame solver, the void constraints, and the flipped-trump
 // pin respectively. For benchmarking component contributions.
@@ -68,52 +57,10 @@ static int bp_flag(const char *name) {
 static _Thread_local int bp_flags_loaded = 0;
 static _Thread_local int bp_no_solve = 0, bp_no_voids = 0, bp_no_flip = 0;
 static _Thread_local int bp_verify = 0;
-
-static int bp_in_count(const Game *g) {
-    int n = 0;
-    for (int i = 0; i < g->num_players; i++)
-        if (g->players[i].status == PLAYER_STATUS_IN) n++;
-    return n;
-}
-
 // ---------- belief state ------------------------------------------------
 
-#define BP_MAX_VOIDS 6
-
-typedef struct {
-    Card pool[80];                  // unseen pool (deck ∪ opp unknowns)
-    int  n;
-    Card pinned[MAX_PLAYERS][MAX_HAND_SIZE];  // publicly located in p's hand
-    int  pinned_n[MAX_PLAYERS];
-    // Active void constraints per opponent: each entry is an attack card
-    // that player demonstrably could not cover at pickup time. Valid for
-    // their unknown cards until their next draw (cleared on LOG_DRAW).
-    Card voids[MAX_PLAYERS][BP_MAX_VOIDS];
-    int  void_n[MAX_PLAYERS];
-} Belief;
-
-static bool bp_card_forbidden(const Belief *B, const Game *g, int p, Card c) {
-    for (int k = 0; k < B->void_n[p]; k++) {
-        if (can_cover(B->voids[p][k], c, g->power_suit)) return true;
-    }
-    return false;
-}
-
-static void bp_pinned_remove(Belief *B, int p, Card c) {
-    for (int q = 0; q < B->pinned_n[p]; q++) {
-        if (card_eq(B->pinned[p][q], c)) {
-            B->pinned[p][q] = B->pinned[p][B->pinned_n[p] - 1];
-            B->pinned_n[p]--;
-            return;
-        }
-    }
-}
-
-static void bp_pinned_add(Belief *B, int p, Card c) {
-    if (B->pinned_n[p] >= MAX_HAND_SIZE) return;
-    if (bp_set_contains(B->pinned[p], B->pinned_n[p], c)) return;
-    B->pinned[p][B->pinned_n[p]++] = c;
-}
+// The belief is bot_common.h's.
+typedef BotBelief Belief;
 
 // Chronological scan over logs: pinned cards, flipped-trump holder, and
 // void constraints, all in one pass.
@@ -150,7 +97,7 @@ static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
                     Card c = L->pairs[k].primary;
                     if (unc_n < (int)(sizeof(unc) / sizeof(unc[0]))) unc[unc_n++] = c;
                     if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
-                    if (p >= 0 && p != bot_idx) bp_pinned_remove(B, p, c);
+                    if (p >= 0 && p != bot_idx) bot_pinned_remove(B, p, c);
                 }
                 break;
             case LOG_COVER:
@@ -158,7 +105,7 @@ static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
                     // primary = cover card (leaves p's hand), target = attack.
                     Card c = L->pairs[k].primary;
                     if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
-                    if (p >= 0 && p != bot_idx) bp_pinned_remove(B, p, c);
+                    if (p >= 0 && p != bot_idx) bot_pinned_remove(B, p, c);
                     if (!card_is_none(L->pairs[k].target)) {
                         for (int q = 0; q < unc_n; q++) {
                             if (card_eq(unc[q], L->pairs[k].target)) {
@@ -175,11 +122,11 @@ static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
                     // cover for it. (Multi-attack pickups only prove "no
                     // joint full cover" — too weak to use as a hard
                     // constraint, so we skip those.)
-                    if (unc_n == 1 && B->void_n[p] < BP_MAX_VOIDS) {
+                    if (unc_n == 1 && B->void_n[p] < BOT_MAX_VOIDS) {
                         B->voids[p][B->void_n[p]++] = unc[0];
                     }
                     // The whole replayed table enters p's hand.
-                    for (int k = 0; k < tbl_n; k++) bp_pinned_add(B, p, tbl[k]);
+                    for (int k = 0; k < tbl_n; k++) bot_pinned_add(B, p, tbl[k]);
                 }
                 tbl_n = 0;
                 unc_n = 0;
@@ -192,7 +139,7 @@ static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
             case LOG_DRAW:
                 if (p >= 0 && p != bot_idx) {
                     B->void_n[p] = 0;  // new unknown cards: constraints expire
-                    if (i == flip_log_idx) bp_pinned_add(B, p, g->flipped);
+                    if (i == flip_log_idx) bot_pinned_add(B, p, g->flipped);
                 }
                 break;
             default:
@@ -235,7 +182,7 @@ static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
     for (int suit = 0; suit < 4; suit++) {
         for (int v = start_v; v <= ACE_VALUE; v++) {
             Card c = { (int8_t)suit, (int8_t)v };
-            if (!bp_set_contains(known, kn, c)) B->pool[B->n++] = c;
+            if (!bot_set_contains(known, kn, c)) B->pool[B->n++] = c;
         }
     }
 
@@ -249,7 +196,7 @@ static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
         if (unknown <= 0) continue;
         int allowed = 0;
         for (int i = 0; i < B->n; i++) {
-            if (!bp_card_forbidden(B, g, p, B->pool[i])) allowed++;
+            if (!bot_void_forbidden(B, g, p, B->pool[i])) allowed++;
         }
         if (allowed < unknown) B->void_n[p] = 0;
     }
@@ -257,31 +204,9 @@ static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
 
 // ---------- world sampling ------------------------------------------------
 
-// Sample one full consistent world: pinned cards go to their holders, the
-// rest of the unseen pool shuffles into the deck and the unknown hand slots,
-// then a repair pass swaps constraint-violating cards into the deck.
-// Clone into a shared short world slot: the log-free prefix plus the LOG_DISCARD
-// tail (the only log type a rollout policy — espresso's discard memory — reads
-// back), capped at WORLD_LOG_CAP. Mirrors cordite's sampler exactly, so the
-// shared world_scratch slots are respected on the wasm short-log build; on native
-// (WORLD_LOG_CAP==0) the slot is full-size and every discard is kept. Dropping
-// non-discard logs is the same tradeoff cordite already makes.
-static void bp_clone_world(Game *dst, const Game *src) {
-    memcpy(dst, src, offsetof(Game, logs));
-    int nl = 0;
-    for (int i = 0; i < src->num_logs; i++) {
-        if (src->logs[i].log_type != LOG_DISCARD) continue;
-        if (WORLD_LOG_CAP > 0 && nl >= WORLD_LOG_CAP) break;
-        dst->logs[nl++] = src->logs[i];
-    }
-    dst->num_logs = nl;
-    dst->log_cap  = WORLD_LOG_CAP;
-    dst->log_virt = (int16_t)nl;
-}
-
 static void bp_sample_world(Game *g_out, const Game *g_in, int my_idx,
                             const Belief *B, uint32_t seed, bool apply_voids) {
-    bp_clone_world(g_out, g_in);
+    bot_clone_world(g_out, g_in);
 
     for (int i = 0; i < g_in->num_players; i++) {
         if (i == my_idx) continue;
@@ -332,9 +257,9 @@ static void bp_sample_world(Game *g_out, const Game *g_in, int my_idx,
         int p = slots[si].player;
         if (B->void_n[p] == 0) continue;
         Card c = g_out->players[p].hand[slots[si].slot];
-        if (!bp_card_forbidden(B, g_in, p, c)) continue;
+        if (!bot_void_forbidden(B, g_in, p, c)) continue;
         for (int d = 0; d < deck_n; d++) {
-            if (!bp_card_forbidden(B, g_in, p, g_out->deck[d])) {
+            if (!bot_void_forbidden(B, g_in, p, g_out->deck[d])) {
                 Card sw = g_out->deck[d];
                 g_out->deck[d] = c;
                 g_out->players[p].hand[slots[si].slot] = sw;
@@ -345,14 +270,6 @@ static void bp_sample_world(Game *g_out, const Game *g_in, int my_idx,
 }
 
 // ---------- simulation ---------------------------------------------------
-
-// Stage-aware rollout policy (gunpowder's rule): handwritten while the deck
-// is alive or the game is heads-up, espresso for multi-player endgames.
-static StrategyFn bp_rollout_for(const Game *g) {
-    bool deck_active = (g->deck_count > 0 || g->has_flipped);
-    if (deck_active || bp_in_count(g) == 2) return handwritten_strategy_choose;
-    return espresso_strategy_choose;
-}
 
 // Roll a sampled world to completion; returns my finish position (1..N),
 // or 0 if the simulation didn't terminate.
@@ -370,7 +287,7 @@ static int bp_simulate(Game *g, int my_idx, int max_turns) {
             if (!should_bot_act(g, pi)) continue;
             calculate_legal_moves_lite(g, pi, moves);
             if (moves->n == 0) continue;
-            StrategyFn fn = bp_rollout_for(g);
+            StrategyFn fn = bot_rollout_for(g, 0);
             int idx = fn(g, pi, moves, NULL);
             if (idx < 0 || idx >= moves->n) continue;
             if (legal_move_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
@@ -386,16 +303,9 @@ static int bp_simulate(Game *g, int my_idx, int max_turns) {
 
 // ---------- exact endgame solver ------------------------------------------
 
-#define BP_SOLVE_MAX_DEPTH   48
-#define BP_SOLVE_MAX_MOVES   96
 #define BP_SOLVE_BUDGET      200000L
 #define BP_SOLVE_MAX_CARDS   20
 
-typedef struct {
-    long budget;
-    bool aborted;
-    int  me;
-} Solver;
 
 // The endgame solver runs entirely on the SHARED cordite_sim solve scratch —
 // the same log-less child slots (solve_scratch_child), compact 100-move lists
@@ -405,59 +315,8 @@ typedef struct {
 // the wasm MAX_LEGAL_MOVES=4096. The depth/move ceilings must fit the shared
 // slots (they do — 48 == SOLVE_SCRATCH_DEPTH, 96 < SOLVE_SCRATCH_MOVES=100, the
 // same tradeoff octogen accepts).
-_Static_assert(BP_SOLVE_MAX_DEPTH <= SOLVE_SCRATCH_DEPTH, "bp solver depth exceeds shared scratch");
-_Static_assert(BP_SOLVE_MAX_MOVES <= SOLVE_SCRATCH_MOVES, "bp solver move cap exceeds shared scratch");
-
-// Returns a value in [-1000, 1000] from `me`'s perspective: positive = me
-// escaping (win), negative = me as durak. Magnitude prefers faster wins and
-// slower losses.
-static int bp_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
-    int loser = game_done(g);
-    if (loser >= 0) return (loser == S->me) ? -(1000 - depth) : (1000 - depth);
-    if (bp_in_count(g) == 0) return 0;   // simultaneous out: draw
-    if (depth >= BP_SOLVE_MAX_DEPTH) { S->aborted = true; return 0; }
-    if (--S->budget <= 0) { S->aborted = true; return 0; }
-
-    // Actor: defender first when they have uncovered attacks; otherwise the
-    // first eligible attacker. (The real loop randomizes simultaneous
-    // eligibility; defender-priority is the standard sequential abstraction.)
-    int actor = -1;
-    if (should_bot_act(g, g->defender)) actor = g->defender;
-    else {
-        for (int i = 0; i < g->num_players; i++) {
-            if (should_bot_act(g, i)) { actor = i; break; }
-        }
-    }
-    if (actor < 0) return 0;
-
-    // Bounded generation into the compact shared slot (see SOLVE_SCRATCH_MOVES):
-    // the cast is safe because SolveMoves shares LegalMoves' leading {n, moves[]}
-    // layout and the cap keeps writes inside its 100-slot bound.
-    SolveMoves *mv = &solve_scratch_mv()[depth];
-    mv->n = legal_moves_into(g, actor, mv->moves, SOLVE_SCRATCH_MOVES);
-    if (mv->n == 0) return 0;
-    if (mv->n > BP_SOLVE_MAX_MOVES) { S->aborted = true; return 0; }
-
-    bool maximizing = (actor == S->me);
-    int best = maximizing ? -2000 : 2000;
-    for (int i = 0; i < mv->n; i++) {
-        Game *child = solve_scratch_child(depth);
-        solve_clone_prefix(child, g);
-        if (!legal_move_apply(child, actor, &mv->moves[i])) continue;
-        int v = bp_solve(S, child, alpha, beta, depth + 1);
-        if (S->aborted) return 0;
-        if (maximizing) {
-            if (v > best) best = v;
-            if (best > alpha) alpha = best;
-        } else {
-            if (v < best) best = v;
-            if (best < beta) beta = best;
-        }
-        if (alpha >= beta) break;
-    }
-    if (best == -2000 || best == 2000) return 0;  // no move applied
-    return best;
-}
+_Static_assert(BOT_SOLVE_MAX_DEPTH <= SOLVE_SCRATCH_DEPTH, "bp solver depth exceeds shared scratch");
+_Static_assert(BOT_SOLVE_MAX_MOVES <= SOLVE_SCRATCH_MOVES, "bp solver move cap exceeds shared scratch");
 
 // Try to solve the real position exactly. Possible when 2 players remain,
 // the deck is gone, and the unseen pool exactly fills the opponent's unknown
@@ -466,7 +325,7 @@ static int bp_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
 static int bp_try_endgame_solve(const Game *g, int bot_idx,
                                 const LegalMoves *moves, const Belief *B) {
     if (g->deck_count > 0 || g->has_flipped) return -1;
-    if (bp_in_count(g) != 2) return -1;
+    if (bot_in_count(g) != 2) return -1;
     if (g->players[bot_idx].status != PLAYER_STATUS_IN) return -1;
 
     int opp = -1;
@@ -481,7 +340,7 @@ static int bp_try_endgame_solve(const Game *g, int bot_idx,
     int total = g->players[bot_idx].hand_count + g->players[opp].hand_count;
     if (total > BP_SOLVE_MAX_CARDS) return -1;
 
-    // Root + per-candidate child live on the shared solver slots. bp_solve
+    // Root + per-candidate child live on the shared solver slots. bot_solve
     // recurses from depth 1, so child(0) is free for the top candidate child.
     Game *root = solve_scratch_root();
     solve_clone_root(root, g);   // prefix copy, num_logs = 0 (solver reads no history)
@@ -492,7 +351,7 @@ static int bp_try_endgame_solve(const Game *g, int bot_idx,
         root->players[opp].hand[B->pinned_n[opp] + k] = B->pool[k];
     }
 
-    Solver S;
+    BotSolver S;
     S.budget  = BP_SOLVE_BUDGET;
     S.aborted = false;
     S.me      = bot_idx;
@@ -504,7 +363,7 @@ static int bp_try_endgame_solve(const Game *g, int bot_idx,
         Game *child = solve_scratch_child(0);
         solve_clone_prefix(child, root);
         if (!legal_move_apply(child, bot_idx, &moves->moves[i])) continue;
-        int v = bp_solve(&S, child, alpha, 2000, 1);
+        int v = bot_solve(&S, child, alpha, 2000, 1);
         if (S.aborted) return -1;
         if (v > best_v) { best_v = v; best_idx = i; }
         if (v > alpha) alpha = v;
@@ -609,8 +468,8 @@ static void bp_verify_belief(const Game *g, int bot_idx, const Belief *B) {
         }
         for (int j = 0; j < pl->hand_count; j++) {
             // Unknown portion = cards not pinned; every unknown must obey voids.
-            if (bp_set_contains(B->pinned[p], B->pinned_n[p], pl->hand[j])) continue;
-            if (B->void_n[p] > 0 && bp_card_forbidden(B, g, p, pl->hand[j])) {
+            if (bot_set_contains(B->pinned[p], B->pinned_n[p], pl->hand[j])) continue;
+            if (B->void_n[p] > 0 && bot_void_forbidden(B, g, p, pl->hand[j])) {
                 fprintf(stderr, "BP_VERIFY: void violated: p%d holds v%d s%d power=%d voids=[",
                         p, pl->hand[j].value, pl->hand[j].suit, g->power_suit);
                 for (int k = 0; k < B->void_n[p]; k++) {
@@ -620,7 +479,7 @@ static void bp_verify_belief(const Game *g, int bot_idx, const Belief *B) {
                         B->pinned_n[p], pl->hand_count, g->num_logs);
             }
             // Every unknown card must be in the pool.
-            if (!bp_set_contains(B->pool, B->n, pl->hand[j])) {
+            if (!bot_set_contains(B->pool, B->n, pl->hand[j])) {
                 fprintf(stderr, "BP_VERIFY: p%d unknown card v%d s%d missing from pool (logs=%d)\n",
                         p, pl->hand[j].value, pl->hand[j].suit, g->num_logs);
             }
@@ -664,7 +523,7 @@ int blackpowder_strategy_choose(const Game *g, int bot_idx,
     int W1, W2;
     bp_params(g->num_players, &W1, &W2);
 
-    uint32_t base = bp_mix((uint32_t)g->num_logs * 2654435761u,
+    uint32_t base = bot_mix((uint32_t)g->num_logs * 2654435761u,
                            ((uint32_t)g->deck_count << 8)
                            ^ (uint32_t)g->discard_pile_length
                            ^ ((uint32_t)bot_idx << 20));
@@ -685,16 +544,16 @@ int blackpowder_strategy_choose(const Game *g, int bot_idx,
         int w_lo = (stage == 0) ? 0 : W1;
         int w_hi = (stage == 0) ? W1 : W1 + W2;
         for (int w = w_lo; w < w_hi; w++) {
-            uint32_t wseed = bp_mix(base, (uint32_t)(w + 1) * 0x85EBCA77u);
+            uint32_t wseed = bot_mix(base, (uint32_t)(w + 1) * 0x85EBCA77u);
             // Void constraints assume "cover if you can" pickups. Strategic
             // players (and the random bot) sometimes pick up while holding
             // covers, so 1 world in 4 ignores the voids — a belief mixture
             // that degrades gracefully when the assumption is wrong.
             bp_sample_world(world, g, bot_idx, &B, wseed, (w & 3) != 3);
-            uint32_t sim_rng = bp_mix(wseed, 0x51AB1E5u);
+            uint32_t sim_rng = bot_mix(wseed, 0x51AB1E5u);
             for (int ci = 0; ci < C.n; ci++) {
                 if (!alive[ci]) continue;
-                bp_clone_world(trial, world);
+                bot_clone_world(trial, world);
                 game_rng_set(sim_rng);   // identical stream for every move
                 if (!legal_move_apply(trial, bot_idx, &moves->moves[C.idx[ci]])) {
                     // Move invalid in this world (can't happen for own-hand

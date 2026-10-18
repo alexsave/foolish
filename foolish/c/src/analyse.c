@@ -21,6 +21,7 @@
 #include "replay.h"
 #include "replay_steps.h"
 #include "strategy.h"
+#include "bot_common.h"
 
 #include <math.h>
 #include <string.h>
@@ -37,14 +38,6 @@
 #define AN_SOLVE_DEPTH SOLVE_SCRATCH_DEPTH
 #define AN_PLAYOUT_CYCLES 4000
 
-// ---------- small helpers -----------------------------------------------------
-static uint32_t an_mix(uint32_t a, uint32_t b) {
-    uint32_t h = a ^ 0x9E3779B9u;
-    h ^= b + 0x7F4A7C15u + (h << 6) + (h >> 2);
-    h *= 0x85EBCA77u; h ^= h >> 13; h *= 0xC2B2AE3Du; h ^= h >> 16;
-    return h ? h : 1u;
-}
-
 static uint32_t an_now_ms(void) {
 #ifdef __wasm__
     return 0;
@@ -54,14 +47,6 @@ static uint32_t an_now_ms(void) {
     return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 #endif
 }
-
-static int an_in_count(const Game *g) {
-    int n = 0;
-    for (int i = 0; i < g->num_players; i++)
-        if (g->players[i].status == PLAYER_STATUS_IN) n++;
-    return n;
-}
-
 static int an_card_score(Card c, int trump) {
     return c.value + (c.suit == trump ? 20 : 0);
 }
@@ -72,37 +57,6 @@ int analyse_finish_of(const Game *g, int seat) {
         if (g->elimination_order[i] == seat) return i + 1;
     return g->num_players;
 }
-
-// ---------- the belief --------------------------------------------------------
-//
-// PUBLIC information only: the seat's own hand, the table, the discard, the
-// flip, and the cards it watched opponents pick up (minus the ones they have
-// played since). No inference from behaviour - a void, a rank floor - because
-// the analyser asks "what was available to you", and that question has an
-// exact answer. The table is tracked from the per-move records, never read off
-// LOG_PICKUP / LOG_DISCARD card lists, which truncate at MAX_LOG_PAIRS.
-
-static bool an_set_has(const Card *arr, int n, Card c) {
-    for (int i = 0; i < n; i++) if (card_eq(arr[i], c)) return true;
-    return false;
-}
-
-static void an_pinned_remove(AnalyseBelief *B, int p, Card c) {
-    for (int q = 0; q < B->pinned_n[p]; q++) {
-        if (card_eq(B->pinned[p][q], c)) {
-            B->pinned[p][q] = B->pinned[p][B->pinned_n[p] - 1];
-            B->pinned_n[p]--;
-            return;
-        }
-    }
-}
-
-static void an_pinned_add(AnalyseBelief *B, int p, Card c) {
-    if (B->pinned_n[p] >= MAX_HAND_SIZE) return;
-    if (an_set_has(B->pinned[p], B->pinned_n[p], c)) return;
-    B->pinned[p][B->pinned_n[p]++] = c;
-}
-
 void analyse_belief(const Game *g, int seat, AnalyseBelief *B) {
     memset(B, 0, sizeof *B);
 
@@ -128,11 +82,11 @@ void analyse_belief(const Game *g, int seat, AnalyseBelief *B) {
                 for (int k = 0; k < L->num_pairs; k++) {
                     Card c = L->pairs[k].primary;
                     if (tbl_n < (int)(sizeof tbl / sizeof tbl[0])) tbl[tbl_n++] = c;
-                    if (p >= 0) an_pinned_remove(B, p, c);
+                    if (p >= 0) bot_pin_remove(B->pinned[p], &B->pinned_n[p], c);
                 }
                 break;
             case LOG_PICKUP:
-                if (p >= 0) for (int k = 0; k < tbl_n; k++) an_pinned_add(B, p, tbl[k]);
+                if (p >= 0) for (int k = 0; k < tbl_n; k++) bot_pin_add(B->pinned[p], &B->pinned_n[p], tbl[k]);
                 tbl_n = 0;
                 break;
             case LOG_DISCARD:
@@ -142,7 +96,7 @@ void analyse_belief(const Game *g, int seat, AnalyseBelief *B) {
             case LOG_DRAW:
                 if (p >= 0 && i == flip_log && L->num_pairs > 0) {
                     Card fc = L->pairs[L->num_pairs - 1].primary;
-                    if (fc.suit >= 0 && fc.value > 0) an_pinned_add(B, p, fc);
+                    if (fc.suit >= 0 && fc.value > 0) bot_pin_add(B->pinned[p], &B->pinned_n[p], fc);
                 }
                 break;
             default:
@@ -173,7 +127,7 @@ void analyse_belief(const Game *g, int seat, AnalyseBelief *B) {
     for (int s = 0; s < NUM_SUITS; s++) {
         for (int v = start_v; v <= ACE_VALUE; v++) {
             Card c = { (int8_t)s, (int8_t)v };
-            if (!an_set_has(known, kn, c) && B->n < MAX_DECK) B->pool[B->n++] = c;
+            if (!bot_set_contains(known, kn, c) && B->n < MAX_DECK) B->pool[B->n++] = c;
         }
     }
 
@@ -249,12 +203,12 @@ int analyse_verdict(int n_cands, int played_best, int all_lost, double loss, dou
 // Full minimax over the real kernel (calculate_legal_moves + handle_*), with
 // the bitboard solver taking the deck-empty tails. Returns +1 (the seat
 // escapes), -1 (the seat is the fool) or 0 (not resolved inside the budget).
-// The opponent moves with the defender-priority abstraction og_solve uses.
+// The opponent moves with the defender-priority abstraction bot_solve uses.
 
 static int an_exact_rec(Game *g, int me, long *budget, int depth) {
     int loser = game_done(g);
     if (loser >= 0) return (loser == me) ? -1 : 1;
-    if (an_in_count(g) != 2) return 0;
+    if (bot_in_count(g) != 2) return 0;
     if (g->deck_count == 0 && !g->has_flipped) {
         SimState s;
         cd_sim_from_game(&s, g);
@@ -295,7 +249,7 @@ static int an_exact(const Game *g, int me, long budget) {
     if (budget <= 0) return 0;
     int loser = game_done(g);
     if (loser >= 0) return (loser == me) ? -1 : 1;   // the candidate ended the game
-    if (an_in_count(g) != 2) return 0;
+    if (bot_in_count(g) != 2) return 0;
     if (g->deck_count > 1) return 0;
     Game *root = solve_scratch_root();
     solve_clone_root(root, g);
@@ -533,7 +487,7 @@ static void an_cell(AnWork *W, int w, int ci) {
     // streams, and a cold transposition table, so a budget-bounded solve
     // inside a bot resolves the same way whichever candidate ran first.
     game_rng_set(g_wseed[w]);
-    random_strategy_set_seed(an_mix(g_wseed[w], 0xA5A5A5A5u));
+    random_strategy_set_seed(bot_mix_combine(g_wseed[w], 0xA5A5A5A5u));
     cd_sim_solve_reset();
     AnCell cell = { 0, 0 };
     if (!legal_move_apply(wg, W->seat, &W->moves->moves[W->node->cand_move[ci]])) {
@@ -623,7 +577,7 @@ static int an_evaluate(const Game *g, int seat, const LegalMoves *moves, AnNode 
 
     int n_worlds = 0;
     uint8_t flags = 0;
-    uint32_t base = an_mix(an_mix(p->seed, (uint32_t)node->step * 0x9E3779B9u), (uint32_t)(seat * 131 + node->sub));
+    uint32_t base = bot_mix_combine(bot_mix_combine(p->seed, (uint32_t)node->step * 0x9E3779B9u), (uint32_t)(seat * 131 + node->sub));
 
     // Enumerate when the hand assignments fit the budget; the deck orders then
     // get whatever is left of it, one at least. Hands before futures, because a
@@ -646,13 +600,13 @@ static int an_evaluate(const Game *g, int seat, const LegalMoves *moves, AnNode 
         if (k == 0) {
             // Nothing unknown: one world, the board itself.
             n_worlds = 1;
-            g_wseed[0] = an_mix(base, 1u);
+            g_wseed[0] = bot_mix_combine(base, 1u);
         } else {
             do {
                 for (int f = 0; f < futures && n_worlds < AN_MAX_WORLDS; f++) {
-                    uint32_t fs = (B->deck_n > 1) ? an_mix(base, (uint32_t)(n_worlds + 1) * 0x85EBCA77u) : 0;
+                    uint32_t fs = (B->deck_n > 1) ? bot_mix_combine(base, (uint32_t)(n_worlds + 1) * 0x85EBCA77u) : 0;
                     an_perm_from_labels(B, &S, labels, fs, g_perms[n_worlds]);
-                    g_wseed[n_worlds] = an_mix(base, (uint32_t)(n_worlds + 1));
+                    g_wseed[n_worlds] = bot_mix_combine(base, (uint32_t)(n_worlds + 1));
                     n_worlds++;
                 }
             } while (n_worlds < AN_MAX_WORLDS && an_next_perm(labels, k));
@@ -662,8 +616,8 @@ static int an_evaluate(const Game *g, int seat, const LegalMoves *moves, AnNode 
         if (n_worlds < 1) n_worlds = 1;
         if (n_worlds > AN_MAX_WORLDS) n_worlds = AN_MAX_WORLDS;
         for (int w = 0; w < n_worlds; w++) {
-            g_wseed[w] = an_mix(base, (uint32_t)(w + 1));
-            analyse_sample_world(B, an_mix(g_wseed[w], 0x51AB1E5u), g_perms[w]);
+            g_wseed[w] = bot_mix_combine(base, (uint32_t)(w + 1));
+            analyse_sample_world(B, bot_mix_combine(g_wseed[w], 0x51AB1E5u), g_perms[w]);
         }
     }
 
@@ -671,7 +625,7 @@ static int an_evaluate(const Game *g, int seat, const LegalMoves *moves, AnNode 
     AnWork W;
     W.g = g; W.seat = seat; W.moves = moves; W.node = node; W.B = B; W.p = p;
     W.strat = strat; W.n_worlds = n_worlds;
-    W.exact_eligible = p->solve_budget > 0 && an_in_count(g) == 2 && B->deck_n <= 1;
+    W.exact_eligible = p->solve_budget > 0 && bot_in_count(g) == 2 && B->deck_n <= 1;
     an_run_worlds(&W);
 
     // Statistics, paired against the played move.

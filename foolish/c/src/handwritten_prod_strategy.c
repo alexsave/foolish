@@ -61,6 +61,7 @@
 #include "card.h"
 #include "game.h"
 #include "legal.h"
+#include "bot_common.h"
 
 int handwritten_prod_strategy_choose(const Game *g, int bot_idx,
                                      const LegalMoves *moves, void *ctx);
@@ -68,22 +69,6 @@ int handwritten_prod_strategy_choose(const Game *g, int bot_idx,
 // cardScore: value + (1000 if power suit).
 static int card_score(Card c, int power_suit) {
     return c.value + (c.suit == power_suit ? 1000 : 0);
-}
-
-// cards.every(c => c.suit !== game.power_suit); vacuously true when empty.
-static bool every_non_trump(const LegalMove *m, int power) {
-    for (int i = 0; i < m->n_cards; i++) {
-        if (m->cards[i].suit == power) return false;
-    }
-    return true;
-}
-
-// cards.some(c => c.suit === game.power_suit).
-static bool some_trump(const LegalMove *m, int power) {
-    for (int i = 0; i < m->n_cards; i++) {
-        if (m->cards[i].suit == power) return true;
-    }
-    return false;
 }
 
 // Summed cardScore of a move's cards (integers throughout; exact in the TS
@@ -94,20 +79,6 @@ static int sum_card_score(const LegalMove *m, int power) {
     return s;
 }
 
-// computeTotalCardCount: deck + discard + table (1 per attack + 1 per
-// defense) + every player's hand (including OUT players' empty hands) +
-// flipped (1 if present).
-static int compute_total_card_count(const Game *g) {
-    int table = 0;
-    for (int i = 0; i < g->num_battles; i++) {
-        table += 1 + (!card_is_none(g->table_battles[i].defense) ? 1 : 0);
-    }
-    int hands = 0;
-    for (int i = 0; i < g->num_players; i++) hands += g->players[i].hand_count;
-    return g->deck_count + g->discard_pile_length + table + hands
-         + (g->has_flipped ? 1 : 0);
-}
-
 // getTrumpAttackProbability. Uses no RNG.
 static double trump_attack_probability(const Game *g) {
     // TS: `if (game.deck_length > 0 || game.flipped !== null) return 0.02;`
@@ -116,7 +87,7 @@ static double trump_attack_probability(const Game *g) {
     if (g->has_flipped) return 0.02;
 
     // Endgame: deck exhausted, flipped taken.
-    int total = compute_total_card_count(g);   // Math.max(1, ...)
+    int total = bot_total_card_count(g);       // Math.max(1, ...)
     if (total < 1) total = 1;
     double ratio = (double)g->discard_pile_length / (double)total;
     if (ratio > 1.0) ratio = 1.0;              // Math.min(1, ...)
@@ -136,8 +107,8 @@ static double trump_attack_probability(const Game *g) {
 
 static bool attack_matches(const LegalMove *m, int power, int cls) {
     if (m->type != MOVE_ATTACK) return false;
-    if (cls == ATK_NON_TRUMP) return every_non_trump(m, power);
-    if (cls == ATK_TRUMP)     return some_trump(m, power);
+    if (cls == ATK_NON_TRUMP) return bot_move_no_trump(m, power);
+    if (cls == ATK_TRUMP)     return bot_move_has_trump(m, power);
     return true;
 }
 
@@ -201,8 +172,8 @@ int handwritten_prod_strategy_choose(const Game *g, int bot_idx,
         for (int i = 0; i < moves->n; i++) {
             const LegalMove *m = &moves->moves[i];
             if (m->type != MOVE_ATTACK) continue;
-            if (every_non_trump(m, power)) any_non_trump = true;
-            if (some_trump(m, power))      any_trump = true;
+            if (bot_move_no_trump(m, power))  any_non_trump = true;
+            if (bot_move_has_trump(m, power)) any_trump = true;
         }
 
         int cls = -1;

@@ -51,6 +51,7 @@
 #include "card.h"
 #include "game.h"
 #include "thread_heap.h"
+#include "bot_common.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -151,18 +152,6 @@ static int as_find_attack(const LegalMoves *moves, const Card *bundle, int bn) {
     }
     return -1;
 }
-
-static bool cd_set_contains(const Card *arr, int n, Card c) {
-    for (int i = 0; i < n; i++) if (card_eq(arr[i], c)) return true;
-    return false;
-}
-
-static uint32_t cd_mix(uint32_t a, uint32_t b) {
-    uint32_t h = a * 0x9E3779B1u ^ (b + 0x7F4A7C15u);
-    h ^= h >> 16; h *= 0x85EBCA77u; h ^= h >> 13;
-    return h ? h : 1;
-}
-
 // Ablation switches (read once): CD_NO_SOLVE / CD_NO_VOIDS / CD_NO_FLIP /
 // CD_NO_FLOORS / CD_NO_LEAF / CD_NO_AVOID / CD_VERIFY, plus CD_W1/CD_W2
 // world-count overrides for tuning.
@@ -214,79 +203,10 @@ static void as_print_stats(void) {
         as_stat_dec, as_stat_l1, as_stat_l2, as_stat_l3, as_stat_l4,
         as_stat_l5, as_stat_l5_extra, as_stat_l6, as_stat_l7);
 }
-
-static int cd_in_count(const Game *g) {
-    int n = 0;
-    for (int i = 0; i < g->num_players; i++)
-        if (g->players[i].status == PLAYER_STATUS_IN) n++;
-    return n;
-}
-
-// Copy only the live prefix of a Game (header + first num_logs entries).
-// logs[] is the final member, so everything else is inside the prefix.
-static void cd_lite_clone(Game *dst, const Game *src) {
-    size_t base = offsetof(Game, logs);
-    memcpy(dst, src, base + (size_t)src->num_logs * sizeof(GameLog));
-}
-
 // ---------- belief state ------------------------------------------------
 
-#define CD_MAX_VOIDS 6
-
-typedef struct {
-    Card pool[80];                  // unseen pool (deck ∪ opp unknowns)
-    int  n;
-    Card pinned[MAX_PLAYERS][MAX_HAND_SIZE];  // publicly located in p's hand
-    int  pinned_n[MAX_PLAYERS];
-    // Hard-ish void constraints (see blackpowder): attack cards a defender
-    // demonstrably couldn't cover at pickup time. Cleared on their draw.
-    Card voids[MAX_PLAYERS][CD_MAX_VOIDS];
-    int  void_n[MAX_PLAYERS];
-    // Soft rank floor: lowest non-trump value p can hold (0 = none). Set by
-    // a single-card non-trump first attack at 3+ players in (lowest-first
-    // attacker policies reveal their minimum). Cleared when p gains cards.
-    int  floor_v[MAX_PLAYERS];
-    // Trust flags, from observed behavior this game.
-    bool distrust_floor[MAX_PLAYERS];
-    bool distrust_void[MAX_PLAYERS];
-} Belief;
-
-static bool cd_void_forbidden(const Belief *B, const Game *g, int p, Card c) {
-    for (int k = 0; k < B->void_n[p]; k++) {
-        if (can_cover(B->voids[p][k], c, g->power_suit)) return true;
-    }
-    return false;
-}
-
-static bool cd_floor_forbidden(const Belief *B, const Game *g, int p, Card c) {
-    return B->floor_v[p] > 0 && c.suit != g->power_suit && c.value < B->floor_v[p];
-}
-
-static void cd_pinned_remove(Belief *B, int p, Card c) {
-    for (int q = 0; q < B->pinned_n[p]; q++) {
-        if (card_eq(B->pinned[p][q], c)) {
-            B->pinned[p][q] = B->pinned[p][B->pinned_n[p] - 1];
-            B->pinned_n[p]--;
-            return;
-        }
-    }
-}
-
-static void cd_pinned_add(Belief *B, int p, Card c) {
-    if (B->pinned_n[p] >= MAX_HAND_SIZE) return;
-    if (cd_set_contains(B->pinned[p], B->pinned_n[p], c)) return;
-    B->pinned[p][B->pinned_n[p]++] = c;
-}
-
-// A floor contradiction (p plays a non-trump card below their inferred
-// floor) means p is not a lowest-first attacker: distrust their floors.
-static void cd_floor_check(Belief *B, const Game *g, int p, Card c) {
-    if (p < 0 || B->floor_v[p] <= 0) return;
-    if (c.suit != g->power_suit && c.value < B->floor_v[p]) {
-        B->floor_v[p] = 0;
-        B->distrust_floor[p] = true;
-    }
-}
+// The belief is bot_common.h's.
+typedef BotBelief Belief;
 
 // Chronological scan over logs: pinned cards, flipped-trump holder, void
 // constraints, rank floors and trust flags, all in one pass.
@@ -329,8 +249,8 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
                     if (unc_n < (int)(sizeof(unc) / sizeof(unc[0]))) unc[unc_n++] = c;
                     if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
                     if (p >= 0 && p != bot_idx) {
-                        cd_floor_check(B, g, p, c);
-                        cd_pinned_remove(B, p, c);
+                        bot_floor_check(B, g, p, c);
+                        bot_pinned_remove(B, p, c);
                     }
                 }
                 if (p >= 0 && p != bot_idx && L->log_type == LOG_ATTACK) {
@@ -347,8 +267,8 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
                     Card c = L->pairs[k].primary;
                     if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
                     if (p >= 0 && p != bot_idx) {
-                        cd_floor_check(B, g, p, c);
-                        cd_pinned_remove(B, p, c);
+                        bot_floor_check(B, g, p, c);
+                        bot_pinned_remove(B, p, c);
                     }
                     if (!card_is_none(L->pairs[k].target)) {
                         for (int q = 0; q < unc_n; q++) {
@@ -363,10 +283,10 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
             case LOG_PICKUP:
                 if (p >= 0 && p != bot_idx) {
                     // Exactly one uncovered attack => defender held no cover.
-                    if (unc_n == 1 && B->void_n[p] < CD_MAX_VOIDS) {
+                    if (unc_n == 1 && B->void_n[p] < BOT_MAX_VOIDS) {
                         B->voids[p][B->void_n[p]++] = unc[0];
                     }
-                    for (int k = 0; k < tbl_n; k++) cd_pinned_add(B, p, tbl[k]);
+                    for (int k = 0; k < tbl_n; k++) bot_pinned_add(B, p, tbl[k]);
                     B->floor_v[p] = 0;   // hand gained cards
                 }
                 tbl_n = 0;
@@ -381,7 +301,7 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
                 if (p >= 0 && p != bot_idx) {
                     B->void_n[p] = 0;    // new unknown cards: constraints expire
                     B->floor_v[p] = 0;
-                    if (i == flip_log_idx) cd_pinned_add(B, p, g->flipped);
+                    if (i == flip_log_idx) bot_pinned_add(B, p, g->flipped);
                 }
                 break;
             case LOG_PLAYER_OUT:
@@ -435,7 +355,7 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
     for (int suit = 0; suit < 4; suit++) {
         for (int v = start_v; v <= ACE_VALUE; v++) {
             Card c = { (int8_t)suit, (int8_t)v };
-            if (!cd_set_contains(known, kn, c)) B->pool[B->n++] = c;
+            if (!bot_set_contains(known, kn, c)) B->pool[B->n++] = c;
         }
     }
 
@@ -447,14 +367,14 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
         if (unknown <= 0) continue;
         int allowed = 0;
         for (int i = 0; i < B->n; i++) {
-            if (!cd_void_forbidden(B, g, p, B->pool[i])
-                && !cd_floor_forbidden(B, g, p, B->pool[i])) allowed++;
+            if (!bot_void_forbidden(B, g, p, B->pool[i])
+                && !bot_floor_forbidden(B, g, p, B->pool[i])) allowed++;
         }
         if (allowed < unknown && B->floor_v[p] > 0) {
             B->floor_v[p] = 0;
             allowed = 0;
             for (int i = 0; i < B->n; i++) {
-                if (!cd_void_forbidden(B, g, p, B->pool[i])) allowed++;
+                if (!bot_void_forbidden(B, g, p, B->pool[i])) allowed++;
             }
         }
         if (allowed < unknown) B->void_n[p] = 0;
@@ -528,13 +448,13 @@ static void cd_sample_world(Game *g_out, const Game *g_in, int my_idx,
         bool use_f = apply_floors && B->floor_v[p] > 0;
         if (!use_v && !use_f) continue;
         Card c = g_out->players[p].hand[slots[si].slot];
-        bool bad = (use_v && cd_void_forbidden(B, g_in, p, c))
-                || (use_f && cd_floor_forbidden(B, g_in, p, c));
+        bool bad = (use_v && bot_void_forbidden(B, g_in, p, c))
+                || (use_f && bot_floor_forbidden(B, g_in, p, c));
         if (!bad) continue;
         for (int d = 0; d < deck_n; d++) {
             Card dc = g_out->deck[d];
-            bool dc_bad = (use_v && cd_void_forbidden(B, g_in, p, dc))
-                       || (use_f && cd_floor_forbidden(B, g_in, p, dc));
+            bool dc_bad = (use_v && bot_void_forbidden(B, g_in, p, dc))
+                       || (use_f && bot_floor_forbidden(B, g_in, p, dc));
             if (!dc_bad) {
                 g_out->deck[d] = c;
                 g_out->players[p].hand[slots[si].slot] = dc;
@@ -578,7 +498,7 @@ static bool cd_solver_ready(void) {
 static int cd_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     int loser = game_done(g);
     if (loser >= 0) return (loser == S->me) ? -(1000 - depth) : (1000 - depth);
-    if (cd_in_count(g) == 0) return 0;   // defensive: simultaneous out
+    if (bot_in_count(g) == 0) return 0;   // defensive: simultaneous out
     if (depth >= CD_SOLVE_MAX_DEPTH) { S->aborted = true; return 0; }
     if (--S->budget <= 0) { S->aborted = true; return 0; }
 
@@ -601,7 +521,7 @@ static int cd_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     int best = maximizing ? -2000 : 2000;
     for (int i = 0; i < mv->n; i++) {
         Game *child = &S->child[depth];
-        cd_lite_clone(child, g);
+        bot_lite_clone(child, g);
         if (!legal_move_apply(child, actor, &mv->moves[i])) continue;
         int v = cd_solve(S, child, alpha, beta, depth + 1);
         if (S->aborted) return 0;
@@ -638,7 +558,7 @@ static int cd_leaf_solve(const Game *g) {
     if (opp < 0) return -1;
 
     Game root;
-    cd_lite_clone(&root, g);
+    bot_lite_clone(&root, g);
     root.num_logs = 0;   // solver never reads history
 
     Solver S;
@@ -656,14 +576,6 @@ static int cd_leaf_solve(const Game *g) {
 }
 
 // ---------- simulation ---------------------------------------------------
-
-// Stage-aware rollout policy (gunpowder's rule): handwritten while the deck
-// is alive or the game is heads-up, espresso for multi-player endgames.
-static StrategyFn cd_rollout_for(const Game *g) {
-    bool deck_active = (g->deck_count > 0 || g->has_flipped);
-    if (deck_active || cd_in_count(g) == 2) return handwritten_strategy_choose;
-    return espresso_strategy_choose;
-}
 
 // Roll a sampled world forward; returns my finish position (1..N), or 0 if
 // the simulation didn't terminate. Exits early once my position is known,
@@ -683,7 +595,7 @@ static int cd_simulate(Game *g, int my_idx, int max_turns) {
         }
 
         if (!cd_no_leaf && !leaf_tried && g->deck_count == 0 && !g->has_flipped
-            && cd_in_count(g) == 2) {
+            && bot_in_count(g) == 2) {
             int total = 0;
             for (int i = 0; i < g->num_players; i++) {
                 if (g->players[i].status == PLAYER_STATUS_IN)
@@ -705,7 +617,7 @@ static int cd_simulate(Game *g, int my_idx, int max_turns) {
             LegalMoves moves;
             calculate_legal_moves_lite(g, pi, &moves);
             if (moves.n == 0) continue;
-            StrategyFn fn = cd_rollout_for(g);
+            StrategyFn fn = bot_rollout_for(g, 0);
             int idx = fn(g, pi, &moves, NULL);
             if (idx < 0 || idx >= moves.n) continue;
             if (legal_move_apply(g, pi, &moves.moves[idx])) { acted = true; break; }
@@ -731,7 +643,7 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
                                 bool *forced_loss, int *n_safe) {
     *n_safe = moves->n;
     if (g->deck_count > 0 || g->has_flipped) return -1;
-    if (cd_in_count(g) != 2) return -1;
+    if (bot_in_count(g) != 2) return -1;
     if (g->players[bot_idx].status != PLAYER_STATUS_IN) return -1;
 
     int opp = -1;
@@ -776,7 +688,7 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
     bool any_abort = false;
     for (int i = 0; i < moves->n; i++) {
         Game child;
-        cd_lite_clone(&child, &root);
+        bot_lite_clone(&child, &root);
         if (!legal_move_apply(&child, bot_idx, &moves->moves[i])) continue;
         S.aborted = false;
         int v = cd_solve(&S, &child, alpha, 2000, 1);
@@ -794,7 +706,7 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
     int n_loss = 0, n_nonloss = 0;
     for (int i = 0; i < moves->n; i++) {
         Game child;
-        cd_lite_clone(&child, &root);
+        bot_lite_clone(&child, &root);
         if (!legal_move_apply(&child, bot_idx, &moves->moves[i])) continue;
         S.aborted = false;
         int v = cd_solve(&S, &child, -1, 0, 1);
@@ -896,40 +808,6 @@ static void cd_params(int num_players, int *W1, int *W2, int *W3) {
     if (cd_w3_override >= 0) *W3 = cd_w3_override;
 }
 
-// CD_VERIFY=1: oracle self-check (test-only — reads real hands to validate
-// the public-info belief, never to play).
-static void cd_verify_belief(const Game *g, int bot_idx, const Belief *B) {
-    for (int p = 0; p < g->num_players; p++) {
-        if (p == bot_idx) continue;
-        const Player *pl = &g->players[p];
-        for (int k = 0; k < B->pinned_n[p]; k++) {
-            bool found = false;
-            for (int j = 0; j < pl->hand_count; j++) {
-                if (card_eq(pl->hand[j], B->pinned[p][k])) { found = true; break; }
-            }
-            if (!found) {
-                fprintf(stderr, "CD_VERIFY: pinned card v%d s%d NOT in p%d hand (logs=%d)\n",
-                        B->pinned[p][k].value, B->pinned[p][k].suit, p, g->num_logs);
-            }
-        }
-        for (int j = 0; j < pl->hand_count; j++) {
-            if (cd_set_contains(B->pinned[p], B->pinned_n[p], pl->hand[j])) continue;
-            if (B->void_n[p] > 0 && cd_void_forbidden(B, g, p, pl->hand[j])) {
-                fprintf(stderr, "CD_VERIFY: void violated: p%d holds v%d s%d\n",
-                        p, pl->hand[j].value, pl->hand[j].suit);
-            }
-            if (cd_floor_forbidden(B, g, p, pl->hand[j])) {
-                fprintf(stderr, "CD_VERIFY: floor violated: p%d holds v%d s%d floor=%d\n",
-                        p, pl->hand[j].value, pl->hand[j].suit, B->floor_v[p]);
-            }
-            if (!cd_set_contains(B->pool, B->n, pl->hand[j])) {
-                fprintf(stderr, "CD_VERIFY: p%d unknown card v%d s%d missing from pool (logs=%d)\n",
-                        p, pl->hand[j].value, pl->hand[j].suit, g->num_logs);
-            }
-        }
-    }
-}
-
 int astrolite_strategy_choose(const Game *g, int bot_idx,
                               const LegalMoves *moves, void *ctx) {
     (void)ctx;
@@ -986,7 +864,7 @@ int astrolite_strategy_choose(const Game *g, int bot_idx,
     Belief B;
     cd_build_belief(g, bot_idx, &B);
     if (cd_no_voids) for (int p = 0; p < MAX_PLAYERS; p++) B.void_n[p] = 0;
-    if (cd_verify) cd_verify_belief(g, bot_idx, &B);
+    if (cd_verify) bot_verify_belief("CD_VERIFY", g, bot_idx, &B);
 
     // Exact endgame: take a proven win; mark proven losses for exclusion.
     static _Thread_local bool forced_loss[MAX_LEGAL_MOVES];
@@ -1117,7 +995,7 @@ int astrolite_strategy_choose(const Game *g, int bot_idx,
     int W1, W2, W3;
     cd_params(g->num_players, &W1, &W2, &W3);
 
-    uint32_t base = cd_mix((uint32_t)g->num_logs * 2654435761u,
+    uint32_t base = bot_mix((uint32_t)g->num_logs * 2654435761u,
                            ((uint32_t)g->deck_count << 8)
                            ^ (uint32_t)g->discard_pile_length
                            ^ ((uint32_t)bot_idx << 20));
@@ -1136,17 +1014,17 @@ int astrolite_strategy_choose(const Game *g, int bot_idx,
         int w_lo = (stage == 0) ? 0 : (stage == 1) ? W1 : W1 + W2;
         int w_hi = (stage == 0) ? W1 : (stage == 1) ? W1 + W2 : W1 + W2 + W3;
         for (int w = w_lo; w < w_hi; w++) {
-            uint32_t wseed = cd_mix(base, (uint32_t)(w + 1) * 0x85EBCA77u);
+            uint32_t wseed = bot_mix(base, (uint32_t)(w + 1) * 0x85EBCA77u);
             // Belief mixture: voids assume cover-if-you-can pickups (3 of 4
             // worlds), floors assume lowest-first attackers (every other
             // world). Per-player distrust already cleared bogus constraints.
             bool use_voids  = (w & 3) != 3;
             bool use_floors = !cd_no_floors && (w % cd_floor_mod) == 0;
             cd_sample_world(&world, g, bot_idx, &B, wseed, use_voids, use_floors);
-            uint32_t sim_rng = cd_mix(wseed, 0x51AB1E5u);
+            uint32_t sim_rng = bot_mix(wseed, 0x51AB1E5u);
             for (int ci = 0; ci < C.n; ci++) {
                 if (!alive[ci]) continue;
-                cd_lite_clone(&trial, &world);
+                bot_lite_clone(&trial, &world);
                 game_rng_set(sim_rng);   // identical stream for every move
                 if (!legal_move_apply(&trial, bot_idx, &moves->moves[C.idx[ci]])) {
                     score[ci] += (double)g->num_players;
