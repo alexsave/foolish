@@ -46,7 +46,7 @@ options:
 settings:
   base:
     MARKETING_VERSION: "1.3"
-    CURRENT_PROJECT_VERSION: "76"
+    CURRENT_PROJECT_VERSION: "77"
     SWIFT_VERSION: "5.9"
     # CMotionRuler, the debug ruler's palette and sizes once in C
     # (shared/c/motion_ruler): every target, because a target that imports the
@@ -284,7 +284,7 @@ targets:
         # without an id, so the watch sim refused to install it.
         GENERATE_INFOPLIST_FILE: "YES"
         MARKETING_VERSION: "1.3"
-        CURRENT_PROJECT_VERSION: "76"
+        CURRENT_PROJECT_VERSION: "77"
         # The circular watch icon (WatchUI/Assets.xcassets/AppIcon).
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
