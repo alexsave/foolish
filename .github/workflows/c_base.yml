@@ -254,28 +254,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  bootstrap_qemu_tmp:
-    name: make bootstrap (Lambda zip)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      # The build container is linux/arm64 (tools/build_bootstrap.sh); this
-      # runner is x86, so Docker runs it under QEMU. Slower, same bytes.
-      - uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-      - name: package
-        run: c_base/ops/package.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cbase-lambda-qemu
-          path: |
-            c_base/build/cbase-lambda.zip
-            c_base/build/cbase-lambda.zip.sha256
-          if-no-files-found: error
-          retention-days: 30
-
   deploy:
     name: deploy to Lambda
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
