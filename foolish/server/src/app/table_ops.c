@@ -14,11 +14,11 @@
 
 #include "util/clock.h"
 #include "util/err.h"
-#include "../../../shared/c/hex/hex.h"
+#include "../../../../shared/c/hex/hex.h"
 #include "util/log.h"
 #include "util/str.h"
 #include "util/uuid.h"
-#include "../../../shared/c/rng.h"
+#include "../../../../shared/c/rng.h"
 
 #include <pthread.h>
 #include <stdio.h>
