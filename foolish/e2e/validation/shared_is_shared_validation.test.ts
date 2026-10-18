@@ -34,8 +34,8 @@ import { join, resolve, relative } from 'node:path';
 const REPO = resolve(import.meta.dirname, '../../..');
 const SHARED = join(REPO, 'shared');
 
-/** Build outputs and generated modules are not source and are not committed. */
-const SKIP_DIR = new Set(['build', 'gen', 'node_modules', '__pycache__', '.git']);
+/** Build outputs and generated modules are not source and are not committed; name_gate/ is the name lists. */
+const SKIP_DIR = new Set(['build', 'gen', 'node_modules', '__pycache__', '.git', 'name_gate']);
 
 function sourceFiles(dir: string): string[] {
     const out: string[] = [];
@@ -50,39 +50,20 @@ function sourceFiles(dir: string): string[] {
     return out;
 }
 
-/** What a product is called, in every spelling a file might reach for. */
-const PRODUCT = [
-    // The game nouns. `wolf` is matched on a word boundary so `werewolf` is one
-    // hit rather than two, and so an ordinary English word is not one at all.
-    /\bdurak\b/i,
-    /foolish/i,
-    /werewolf/i,
-    /\bwolf\b/i,
-    // The shedding game, in the folder name and in the title's spellings
-    // ("Pick 'Em Up", "Pick Em Up", "pickemup").
-    /pickemup/i,
-    /pick ?'?em ?up/i,
-    // Liar's Dice, in the folder name and the title ("Chui Niu", "chuiniu").
-    /chui ?niu/i,
-    // The dice solitaire, in the folder name and the title's spellings
-    // ("Tally Bones", "TallyBones", "tallybones"); unanchored, so its targets
-    // (TallybonesKit, TallybonesMessages) are hits too. A bare "tally" is not:
-    // it is an ordinary word a shared counter may well use.
-    /tally ?bones/i,
-    // Bundle ids, App Groups and the reverse-DNS they are built from.
-    /cards\.foolish/i,
-    /group\.cards/i,
-    // Schemes, targets and the Xcode/Swift names that follow a product around.
-    /\bCFoolish\w*/,
-    /\bFoolish\w*/,
-    /\bCWerewolf\w*/,
-    /\.xcodeproj/,
-    /MessagesExtension/,
-];
+/**
+ * What a product is called, in every spelling a file might reach for: the
+ * [products] list of shared/tools/name_gate/words.txt, which c_base's name gate
+ * (unit_name_gate.c) reads too. Each line is a RegExp literal.
+ */
+const PRODUCT = readFileSync(join(SHARED, 'tools/name_gate/words.txt'), 'utf8')
+    .split('\n[products]\n')[1].split('\n[')[0].split('\n')
+    .filter((l) => l.startsWith('/'))
+    .map((l) => new RegExp(l.slice(1, l.lastIndexOf('/')), l.slice(l.lastIndexOf('/') + 1)));
 
 test('no file under shared/ names a product', () => {
     const files = sourceFiles(SHARED);
     assert.ok(files.length > 20, `found only ${files.length} files under shared/ - did it move?`);
+    assert.ok(PRODUCT.length >= 15, `read only ${PRODUCT.length} product patterns from name_gate/words.txt`);
 
     const bad: string[] = [];
     for (const file of files) {
