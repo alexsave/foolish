@@ -18,7 +18,7 @@ comma := ,
 # hot loops instead of being cross-translation-unit calls. ~1.5x faster cordite
 # eval, bit-identical play (verified: same mean_finish / win_rate / histogram,
 # CD_DIFFTEST clean). The win grows with player count.
-CFLAGS  ?= -O3 -ffast-math -flto -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DACCELERATE_NEW_LAPACK
+CFLAGS  ?= -O3 -ffp-contract=off -fno-math-errno -flto -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DACCELERATE_NEW_LAPACK
 ifeq ($(shell uname),Darwin)
   LDFLAGS ?= -lm -flto -framework Accelerate
 else
@@ -606,7 +606,7 @@ l1-measure: build/l1_measure
 # The build_book pass compiles WITHOUT -DCD_LEAFBOOK (it builds the book by
 # direct solves); verify_book compiles WITH it to exercise the engine probe.
 LEAFBOOK_K ?= 4
-LEAFBOOK_CFLAGS := -O2 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_BITS=12
+LEAFBOOK_CFLAGS := -O2 -ffp-contract=off -fno-math-errno -Isrc -Wno-deprecated-declarations -DCD_TT_BITS=12
 .PHONY: leafbook leafbook-gate leafbook-verify
 leafbook:
 	@mkdir -p build
@@ -1736,7 +1736,7 @@ wasm-alloc-test: wasm-cc-check build/bump_alloc_test.wasm build/bump_alloc_test_
 # ---------------------------------------------------------------------------
 # fm_exp (src/fm_exp.c), the one exp a bot's decision may call, is the same bits
 # native and wasm. The native half is built with the kernel's own CFLAGS, the
-# -ffast-math the arena and c_base compile with (less -flto and -fopenmp, which
+# -ffp-contract=off -fno-math-errno the arena and c_base compile with (less -flto and -fopenmp, which
 # only change the link), and the wasm half with the bot module's flags at both
 # of its optimisation levels. The runner compares every input's bits, native
 # against each module, and each module's digest against the committed one
