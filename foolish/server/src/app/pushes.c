@@ -2,12 +2,18 @@
 // publish builds its netwire.h frame once and hands it to the stream.
 #include "pushes.h"
 
+#include "netwire.h"
+#include "realtime/stream_mqtt.h"
+
 #include "util/log.h"
 #include "util/str.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// The stream takes the same longest token the clients send.
+_Static_assert(CB_RT_TOKEN_MAX == NW_ACCESS_MAX, "stream_mqtt.h CB_RT_TOKEN_MAX is netwire.h NW_ACCESS_MAX");
 
 const cb_topic_family cb_fam_views = { "views", "u/{user}/v" };
 const cb_topic_family cb_fam_seat = { "seat", "u/{user}/c/{doc}" };

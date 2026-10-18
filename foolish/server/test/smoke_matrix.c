@@ -88,7 +88,7 @@ static int64_t mono_ms(void) {
 static void start_server(void) {
     char line[512];
     // Every wrong-token cell comes from 127.0.0.1: the console's per-address
-    // limit (app/limits.h, L7) is raised past the matrix's count of them, and
+    // limit (rate_limits.h, L7) is raised past the matrix's count of them, and
     // its fresh accounts are rated at once (CBASE_RATED_MIN_AGE, M6): it reads the leaderboard.
     char *mem[] = { "CBASE_LISTEN=127.0.0.1:0", "CBASE_JWT_SECRET=" SECRET, "CBASE_ADMIN_TOKEN=" ADMIN,
                     "CBASE_DB=:memory:", "CBASE_REQ_WORKERS=4", "CBASE_ADMIN_FAIL_LIMIT=100000", "CBASE_RATED_MIN_AGE=0", NULL };

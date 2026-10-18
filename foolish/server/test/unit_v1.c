@@ -5,7 +5,7 @@
 // every request through cb_handle.
 #include "t.h"
 #include "cbase/provider.h"
-#include "app/limits.h"
+#include "rate_limits.h"
 
 #include "app/fanout.h"
 #include "app/functions_http.h"

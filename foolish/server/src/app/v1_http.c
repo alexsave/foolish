@@ -7,7 +7,7 @@
 
 #include "auth/auth.h"
 #include "auth/names.h"
-#include "limits.h"
+#include "rate_limits.h"
 #include "net/router.h"
 #include "pushes.h"
 #include "realtime/realtime.h"
@@ -213,7 +213,7 @@ static void h_credentials(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res,
     }
     cb_v1_email_of(canon, (size_t)cn, email);
     // The limits before any work: an address's attempts, an account's
-    // guesses, and every sign-up this container makes (limits.h).
+    // guesses, and every sign-up this container makes (rate_limits.h).
     char ip[96];
     cb_viewer_key(ctx, req, ip, sizeof ip);
     if (kind == NW_SIGNUP ? !within(res, CB_LIMIT_SIGNUP_IP, ip, true) || !within(res, CB_LIMIT_SIGNUP_ALL, "*", true)

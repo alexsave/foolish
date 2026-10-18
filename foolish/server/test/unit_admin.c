@@ -2,8 +2,9 @@
 // fake store (test/lib_admin_fakestore.c): the gate, paging, the write
 // confirmation, redaction, the log tail and the games list.
 #include "t.h"
+#include "cbase/app.h"
 #include "cbase/provider.h"
-#include "app/limits.h"
+#include "rate_limits.h"
 
 #include "admin/admin.h"
 #include "app/table_ops.h"
@@ -44,6 +45,7 @@ static void setup(const char *admin_token, const char *store_name) {
     g_cfg.log_level = CB_LOG_INFO;
     g_ctx.cfg = &g_cfg;
     g_ctx.prov = &cb_provider_local;
+    g_ctx.app = cb_main_app;   // the linked product's panels (foolish's games, game, bots)
     g_ctx.version = CB_VERSION;
     g_ctx.started_ms = 1;
     g_ctx.router = cb_router_new();

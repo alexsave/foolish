@@ -10,7 +10,7 @@
 #include "t.h"
 #include "app/foolish_app.h"
 #include "cbase/provider.h"
-#include "app/limits.h"
+#include "rate_limits.h"
 
 #include "app/app_internal.h"
 #include "boot.h"
@@ -87,7 +87,7 @@ static void run(const rq *q) {
     cb_http_res res;
     cb_res_init(&res);
     // A sweep repeats a request once per store call: the in-memory rate
-    // limits (limits.h) are not what it measures.
+    // limits (rate_limits.h) are not what it measures.
     cb_limits_reset();
     cb_handle(&g_ctx, &r, &res);
     g_status = res.status;

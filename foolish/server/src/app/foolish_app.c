@@ -2,6 +2,8 @@
 // and the kernel self-test every main runs before it serves.
 #include "foolish_app.h"
 
+#include "admin_panels.h"
+
 #include "bots.h"
 #include "pushes.h"
 #include "functions_http.h"
@@ -89,6 +91,10 @@ const cb_app cb_foolish_app = {
     .cached_paths = cb_foolish_cached_paths,
     .n_cached_paths = 2,
     .store = &cb_foolish_store,
+    .delete_account = cb_app_delete_account,
+    .admin_calls = cb_foolish_admin_calls,
+    .n_admin_calls = 3,
+    .admin_count = cb_admin_games_needing_bots,
 };
 
 // foolish is the app every binary of this build serves (cbase/app.h).

@@ -378,7 +378,7 @@ static void mqtt_matrix(void) {
     cb_buf_free(&m);
 }
 
-// limits.h and auth.h over real HTTP (H1): an address's sign-ups run out, and
+// rate_limits.h and auth.h over real HTTP (H1): an address's sign-ups run out, and
 // guessing one account's password locks it, after which even the right
 // password is answered 429 TOO_MANY.
 static void limits_hold(void) {

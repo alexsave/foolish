@@ -1,10 +1,10 @@
-// unit_limits.c - the in-memory rate limits (app/limits.h): a bucket's burst
+// unit_limits.c - the in-memory rate limits (rate_limits.h): a bucket's burst
 // and refill, keys and kinds kept apart, the table's fixed memory under a
 // flood of keys, and the viewer address a limit is keyed on.
 #include "t.h"
 #include "cbase/provider.h"
 
-#include "app/limits.h"
+#include "rate_limits.h"
 
 static void burst_then_refill(void) {
     cb_limits_reset();
