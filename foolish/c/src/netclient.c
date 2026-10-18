@@ -3,6 +3,7 @@
 #include "roster.h"
 #include "table.h"
 #include "view.h"
+#include "evwire.h"
 #include "../../../shared/c/mqtt/mqtt.h"
 #include <string.h>
 
@@ -18,6 +19,8 @@ typedef struct {
     uint16_t pid;          // the SUBSCRIBE's packet id while SENT
     int64_t  retry_at;
     int32_t  backoff;
+    int64_t  quiet_at;     // a LIVE game's: heard nothing of it by then, a push was lost (quiet_check)
+    uint8_t  over;         // the game's last board applied was its terminal one: nothing more to hear
 } sub;
 enum { SUB_FREE = 0, SUB_WANT, SUB_SENT, SUB_LIVE, SUB_REFUSED };
 
@@ -58,6 +61,7 @@ static uint16_t g_next_pid;
 static int32_t  g_reconnect_ms;
 static uint32_t g_conn_seq;             // makes each connection's client id its own
 static int64_t  g_forced_at;            // when a refused CONNECT last forced a refresh
+static uint32_t g_quiet_mix;            // the quiet jitter's running state
 // The broker's bytes: whole packets parsed in place (a pushed message's payload
 // is read where it lies), a packet cut across WebSocket messages kept for the next.
 static uint8_t  g_mq_in[NC_MQ_IN_MAX];
@@ -615,6 +619,9 @@ static sub *sub_find(int what, const char *gid, int gid_len);
 static int same_id(const char *a, int a_len, const char *b, int b_len);
 static void seat_learn(gate *g, const uint8_t *env, uint32_t len);
 static int stream_wants_token(int64_t now_ms);
+static void heard(const char *gid, int gid_len, int over, int64_t now_ms);
+static int envelope_over(const uint8_t *env, uint32_t len);
+static void quiet_check(int64_t now_ms);
 
 static void pump_reset(void) {
     memset(g_slots, 0, sizeof g_slots);
@@ -864,6 +871,7 @@ static void own_forget(const char *gid, int gid_len) {
 }
 
 const NcRequest *nc_next_request(int64_t now_ms) {
+    quiet_check(now_ms);
     // The stream's CONNECT carries the token: a socket waiting to connect with
     // one about to expire asks for the refresh itself, whatever else waits.
     if (stream_wants_token(now_ms) && !g_refresh_id && g_refresh_not_before <= now_ms) {
@@ -920,10 +928,11 @@ static void refresh_answered(int status, const uint8_t *body, int len, int64_t n
 // An answered envelope of game `gid` through the book: applied, or stale.
 // `own`: this file's refetch, so it becomes an event (its payload copied to g_frame).
 static int answer_view(NcDone *d, const char *gid, int gid_len, uint32_t version,
-                       const uint8_t *body, uint32_t off, uint32_t len, int own) {
+                       const uint8_t *body, uint32_t off, uint32_t len, int own, int64_t now_ms) {
     gate *g = gate_find(gid, gid_len, 1);
-    if (!answer_pass(g, version)) { d->stale = 1; return 0; }
+    if (!answer_pass(g, version)) { d->stale = 1; heard(gid, gid_len, -1, now_ms); return 0; }
     seat_learn(g, body + off, len);
+    heard(gid, gid_len, envelope_over(body + off, len), now_ms);
     d->version = version;
     if (!own) { d->a_off = off; d->a_len = len; return 1; }
     if (len > NC_FRAME_MAX) return 0;
@@ -978,7 +987,7 @@ static void read_answer(NcDone *d, const NcIntent *in, int own, int status, cons
         // The answer says whether the asker now sits there (the envelope's
         // seat), which picks the casts taken from now on: the seat's or the
         // spectators', both of which a game's subscription hears.
-        answer_view(d, gid, gl, version, body, 0, (uint32_t)len, 0);
+        answer_view(d, gid, gl, version, body, 0, (uint32_t)len, 0, now_ms);
         // A create's game is heard from now on.
         if (d->kind == NC_DO_CREATE && !g_boards) {
             sub *s = sub_make(NW_SUB_GAME, gid, gl);
@@ -1003,7 +1012,7 @@ static void read_answer(NcDone *d, const NcIntent *in, int own, int status, cons
     }
     case NC_DO_OPEN_GAME: {
         const NcGameRow *r = nc_view_read(status, body, len);
-        if (r) answer_view(d, in->gid, in->gid_len, r->version, body, r->env_off, r->env_len, own);
+        if (r) answer_view(d, in->gid, in->gid_len, r->version, body, r->env_off, r->env_len, own, now_ms);
         break;
     }
     case NC_DO_REPLAY: {
@@ -1359,6 +1368,80 @@ static void seat_learn(gate *g, const uint8_t *env, uint32_t len) {
     g->seated = h.seat >= 0;
 }
 
+// ---- the quiet game ------------------------------------------------------------------
+//
+// The stream is at most once (MQTT QoS 0), and a lost cast shows only when a
+// later one skips its version. The LAST cast of a quiet table has no later one:
+// a player whose turn it now is would wait on a board that says it is not, and
+// nobody else moves. So a live game subscription that hears nothing of its
+// game for NC_QUIET_MS (plus a jitter, so a table's clients do not read in
+// step) takes the game whole once, as its SUBACK's catch-up does, and is let
+// go as caught up when something newer arrives first. A game whose terminal
+// board was applied has nothing more to hear and is not read.
+
+// Whether the `len`-byte envelope at env is a board whose game is over.
+static int envelope_over(const uint8_t *env, uint32_t len) {
+    EnvHeader h;
+    return env && env_header_read(env, (int)len, &h) && h.state_len > 0 && env[h.state_at] == GAME_STATUS_GAME_OVER;
+}
+
+// Whether the cast at p (evwire.h: its header, then the as3 push) ends on a
+// board whose game is over (the sequence's final board, whose first byte is
+// the status, view.c state_put).
+static int cast_over(const uint8_t *p, uint32_t len) {
+    uint32_t v;
+    int at = evwire_cast_header_get(p, (int)len, &v);
+    const unsigned char *fin = NULL;
+    int fin_len = 0;
+    return at > 0 && evwire_read(p + at, (int)len - at, NULL, &fin, &fin_len, NULL, NULL) >= 0 && fin_len > 0 &&
+           fin[0] == GAME_STATUS_GAME_OVER;
+}
+
+// The jitter of one wait, below NC_QUIET_JITTER_MS: from the clock, the user
+// and the game, so clients that heard the same push at the same moment differ.
+static int32_t quiet_jitter(const char *gid, int gid_len, int64_t now_ms) {
+    uint32_t x = g_quiet_mix ^ (uint32_t)now_ms ^ (uint32_t)((uint64_t)now_ms >> 32) * 2654435761u;
+    for (int i = 0; i < g_session.user_id_len; i++) x = (x ^ (uint8_t)g_session.user_id[i]) * 16777619u;
+    for (int i = 0; i < gid_len; i++) x = (x ^ (uint8_t)gid[i]) * 16777619u;
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    g_quiet_mix = x;
+    return (int32_t)(x % NC_QUIET_JITTER_MS);
+}
+
+static void quiet_arm(sub *s, int64_t now_ms) {
+    s->quiet_at = now_ms + NC_QUIET_MS + quiet_jitter(s->gid, s->gid_len, now_ms);
+}
+
+// A live game subscription that waits on its quiet deadline.
+static int quiet_watched(const sub *s) {
+    return g_mq == MQ_LIVE && s->what == NW_SUB_GAME && s->state == SUB_LIVE && !s->over;
+}
+
+// Something of game `gid` was heard: its quiet wait starts over. `over`: a
+// board was applied, and is (1) or is not (0) the game's terminal one; -1:
+// nothing was applied (a stale cast or answer, a cast a read stands in for).
+static void heard(const char *gid, int gid_len, int over, int64_t now_ms) {
+    sub *s = sub_find(NW_SUB_GAME, gid, gid_len);
+    if (!s) return;
+    if (over >= 0) s->over = (uint8_t)over;
+    quiet_arm(s, now_ms);
+}
+
+// Every quiet game whose wait is over is read, and waits again.
+static void quiet_check(int64_t now_ms) {
+    for (int i = 0; i < NC_SUBS_MAX; i++) {
+        sub *s = &g_subs[i];
+        if (!quiet_watched(s) || s->quiet_at > now_ms) continue;
+        gate *g = gate_find(s->gid, s->gid_len, 0);
+        refetch_queue(s->gid, s->gid_len, now_ms, g ? any_top(g) + 1 : 1);
+        quiet_arm(s, now_ms);
+    }
+}
+
 // Which of this user's topics a PUBLISH came on.
 enum { T_NONE = 0, T_VIEWS, T_SEAT, T_WATCH, T_CHAT };
 
@@ -1422,6 +1505,8 @@ static void take_push(const NwFrame *f, int fam, int64_t now_ms) {
             g->has_view = 1;
             g->view_v = f->version;
         }
+        // Only a host of boards gets here with the game held (above).
+        heard(f->gid, f->gid_len, f->blob.len ? envelope_over(f->blob.p, f->blob.len) : -1, now_ms);
         NcEvent *e = event_add(NC_EV_VIEW);
         if (e) push_event(e, f, NW_SUB_GAMES);
         return;
@@ -1429,6 +1514,7 @@ static void take_push(const NwFrame *f, int fam, int64_t now_ms) {
     case NW_WS_CAST: {
         if ((fam != T_SEAT && fam != T_WATCH) || !f->gid_len) { event_add(NC_EV_BAD); return; }
         gate *g = gate_find(f->gid, f->gid_len, 1);
+        heard(f->gid, f->gid_len, -1, now_ms);   // whatever becomes of it, the game's pushes arrive
         if (fam == T_SEAT) {
             // Only a seated user is sent a seat's casts.
             g->seat_known = 1;
@@ -1460,6 +1546,7 @@ static void take_push(const NwFrame *f, int fam, int64_t now_ms) {
         }
         g->has_cast = 1;
         g->cast_v = f->version;
+        heard(f->gid, f->gid_len, cast_over(f->blob.p, f->blob.len), now_ms);
         NcEvent *e = event_add(NC_EV_CAST);
         if (e) push_event(e, f, NW_SUB_GAME);
         return;
@@ -1510,6 +1597,7 @@ static void take_suback(const MqttPacket *p, int64_t now_ms) {
     e->kind = NC_EV_SEATED;
     e->seated = g && g->seat_known && g->seated;
     refetch_queue(s->gid, s->gid_len, now_ms, g ? any_top(g) + 1 : 1);
+    quiet_arm(s, now_ms);
 }
 
 // One whole packet from the broker.
@@ -1702,6 +1790,7 @@ int nc_stream_due_ms(int64_t now_ms) {
         if (g_subs[i].state == SUB_WANT) return 0;
         if ((g_subs[i].state == SUB_REFUSED || g_subs[i].state == SUB_SENT) && g_subs[i].retry_at < due)
             due = g_subs[i].retry_at;
+        if (quiet_watched(&g_subs[i]) && g_subs[i].quiet_at < due) due = g_subs[i].quiet_at;   // quiet_check's
     }
     int64_t d = due - now_ms;
     return d < 0 ? 0 : d > NC_PING_MS ? NC_PING_MS : (int)d;

@@ -382,7 +382,12 @@ void nc_gate_reset(const char *gid, int gid_len);
 //     and the book takes the seat's when the user sits there (the last
 //     envelope or cast says), the spectators' otherwise, and a spectators'
 //     cast while it does not know yet is a read of the game instead;
-//   - a create subscribes the game's stream itself.
+//   - a create subscribes the game's stream itself;
+//   - a live game subscription that hears nothing of its game (a cast, a view,
+//     an answered read) for NC_QUIET_MS plus a jitter below
+//     NC_QUIET_JITTER_MS takes the game whole once, as the SUBACK's catch-up
+//     does: the stream is at most once, and a lost LAST cast has no later one
+//     to show its gap. Not once the game's terminal board was applied.
 // After each feed the host reads the events it made, nc_event(0) up to the
 // count, as often as it likes until the next feed; then it sends what
 // nc_next_request and nc_stream_next have for it.
@@ -392,6 +397,8 @@ void nc_gate_reset(const char *gid, int gid_len);
 // handed out, and a create does not subscribe the game's own stream.
 void nc_set_boards(int on);
 #define NC_RECONCILE_MS 1000
+#define NC_QUIET_MS        60000
+#define NC_QUIET_JITTER_MS 6000
 const NcEvent *nc_event(int i);
 const uint8_t *nc_event_payload(int i);
 // When to call again (nc_next_request, nc_next_done, nc_stream_next): the
