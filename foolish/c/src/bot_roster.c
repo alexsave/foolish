@@ -1,5 +1,5 @@
 // See bot_roster.h. The table below is the single source of truth for what a
-// named bot IS; c_base/sql/schema.sql's bot rows, ios_api.c and wasm_bots_api.c
+// named bot IS; c_base/providers/local/sql/schema.sql's bot rows, ios_api.c and wasm_bots_api.c
 // are all consumers of it now.
 
 #include "bot_roster.h"

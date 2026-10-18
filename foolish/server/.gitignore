@@ -1,0 +1,2 @@
+# The migration export (migrate/export.sh): it holds password hashes. Never commit it.
+/migrate/out/

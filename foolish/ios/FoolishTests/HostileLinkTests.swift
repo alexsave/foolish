@@ -13,7 +13,7 @@ import XCTest
 @MainActor
 final class HostileLinkTests: XCTestCase {
 
-    /// c_base/fuzz/corpus/unfurl/repro-endless-replay, byte for byte: the '1'
+    /// foolish/server/fuzz/corpus/unfurl/repro-endless-replay, byte for byte: the '1'
     /// text-format version and then the base32 envelope.
     private let segment =
         "164BQAAXPZWVYSZ2FE0MAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZeLGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAACGQQHILXUF22CYACCK2N7B2WIHQT6BY6DAADULZ36CMVMNO"

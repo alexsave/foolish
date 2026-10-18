@@ -514,7 +514,7 @@ async function answer(stage: Stage, label: string): Promise<void> {
 /**
  * Answers my move. A move refused over a game newer than the page was handed:
  * the kernel's client refetches the game NC_RECONCILE_MS later unless a push
- * has caught it up by then (c_base/test/unit_netclient.c
+ * has caught it up by then (foolish/server/test/unit_netclient.c
  * a_refused_move_catches_up), and the board reaches the page as a view. This
  * stands in for that client, rule for rule.
  */

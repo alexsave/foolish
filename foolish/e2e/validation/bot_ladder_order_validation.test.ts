@@ -37,7 +37,7 @@ function tiers(): Map<string, number> {
 
 /** The rows c_base's schema.sql inserts, as the site stores them. */
 function seededRows(): { nickname: string; strategy_key: string }[] {
-    const src = read('../c_base/sql/schema.sql').replace(/--[^\n]*/g, '');
+    const src = read('../c_base/providers/local/sql/schema.sql').replace(/--[^\n]*/g, '');
     const at = src.indexOf('INTO bot_seed (');
     const stmt = src.slice(at, src.indexOf(';', at));
     const out: { nickname: string; strategy_key: string }[] = [];

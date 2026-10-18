@@ -10,5 +10,5 @@ public/uttt.wasm
 # Makefile, wasm-243), build outputs like uttt.wasm
 public/uttt243.wasm
 lib/gen/
-# the static export (next.config.mjs), uploaded by c_base/ops/web_deploy.sh
+# the static export (next.config.mjs), uploaded by c_base/providers/aws/ops/site/web_deploy.sh
 out/
