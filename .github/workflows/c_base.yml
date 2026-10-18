@@ -158,13 +158,15 @@ jobs:
       - name: the shell scripts
         run: |
           bash -n c_base/ops/package.sh c_base/tools/build_bootstrap.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh c_base/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/ops_env.sh c_base/ops/deploy.sh
-          shellcheck -x c_base/ops/package.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh c_base/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/ops/test/changeset_gate_test.sh
+          shellcheck -x c_base/ops/package.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh c_base/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/ops/test/changeset_gate_test.sh c_base/ops/role_covers_template.sh c_base/ops/test/role_covers_template_test.sh
       - name: web_deploy.sh and lambda_deploy.sh refuse a tree behind main (no AWS calls)
         run: bash c_base/ops/test/web_deploy_gate_test.sh
       - name: ops_env.sh never generates a secret for a live stack (no AWS calls)
         run: bash c_base/ops/test/ops_env_test.sh
       - name: deploy.sh's replacement gate on recorded change sets (no AWS calls)
         run: bash c_base/ops/test/changeset_gate_test.sh
+      - name: the GitHub deploy role reads everything a code deploy re-resolves (no AWS calls)
+        run: bash c_base/ops/test/role_covers_template_test.sh
       - name: the web router's rules (ops/web.yaml's Function code)
         run: node --test c_base/ops/test/web_router.test.mjs
 
