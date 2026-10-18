@@ -2127,14 +2127,23 @@ static void test_podkidnoy_wire(void) {
           "chains prove nothing", passes_seen);
 
     // The other direction: a classic chain with its rules bit cleared is just as
-    // dead. (Same fixture shape, one game.)
+    // dead. (Same fixture shape, one game.) The game TRANSFERS, so the relabel
+    // also makes a move illegal: the refusal must still name the rules
+    // disagreement (EBODY), not the move it caused (ECHAIN).
     {
         uint8_t seed[MSG_SEED_LEN];
-        seed_fill(seed, 4242);
-        Chain ch; memset(&ch, 0, sizeof(ch));
+        Chain ch;
         Game end;
-        g_rng = 4242;
-        play_game(seed, 4, 80, &ch, &end, -1);
+        int transferred = 0;
+        for (uint32_t k = 4242; k < 4242 + 64 && !transferred; k++) {
+            seed_fill(seed, k);
+            memset(&ch, 0, sizeof(ch));
+            g_rng = k;
+            play_game(seed, 4, 80, &ch, &end, -1);
+            for (int i = 0; i < end.num_logs && !transferred; i++)
+                transferred = end.logs[i].log_type == LOG_PASS;
+        }
+        CHECK(transferred, "no classic game in 64 seeds transferred");
         MsgEnvelope e;
         env_init(&e, seed, 4);
         const int over = game_done(&end) >= 0 || end.status == GAME_STATUS_GAME_OVER;
@@ -5448,20 +5457,22 @@ static const char *const GOLDEN_HEX[4] = {
 // (seed_fill, rnd), and that stream moved when every generator became rng.h's
 // splitmix64, so the builder now seals different GAMES in the same formats.
 // The shipped bubbles above still decode, re-encode byte for byte and replay;
-// these hold the builder still from here on. Re-captured with --print-goldens.
+// these hold the builder still from here on. Re-captured with --print-goldens,
+// and again when a dealt hand became ascending (game.c deal_initial): the
+// bots read hands in that order and played different games.
 static const char *const GOLDEN_BUILD_HEX[4] = {
-    "f70500025151515151515151070001030101000000000000000087e000ae0d555fca235461be10fc3840"
-    "09a34d55d8985794521d958a77530dc5341207030004416c657801044d69726102054a6f6e617307003c"
-    "14ae394e8a50f457c6e0b6dce61a",
-    "f7050003525252525252525254000002001900000000000000002dfbf0be0d8b172b3463193eb836c563"
-    "17b75accb61b903b5f51628db2e791bd452354020004416c657801044d6972615400df2dd4ce88d8608b"
-    "0fb312abca6f026387adac791c7340311c987b2446f0791a2484120d32c76329a644dcea",
+    "f70500025151515151515151050001030102000000000000000087e000ae0d555fca235461be10fc3840"
+    "09a34d55d8985794521d958a77530dc5341205030004416c657801044d69726102054a6f6e617305002b"
+    "2904dc1e785d9962d35cb6db961a",
+    "f7050003525252525252525250000002001d00000000000000002dfbf0be0d8b172b3463193eb836c563"
+    "17b75accb61b903b5f51628db2e791bd452350020004416c657801044d697261500082602da0e63fcb50"
+    "bf358dd087272950fa299494daabc40980560137194ca25cb37d26c4937e4e8806431cea",
     "f706000053535353535353530000000401000000000000000000f913b1bc68c2c2d90298a7cbe3375753"
     "571a6062836bf6679e3a1f3f1021defbad0b0000ff44c9ed0102040004416c657801044d69726102054a"
     "6f6e6173030550726979610000",
     "f7060002545454545454545401000204010000000000000000002514e2306e62fe00d0faa519f392fc0e"
     "fa0262bb02787aa3beaaa333cdc409920d0c01000200000000ff040004416c657801044d69726102054a"
-    "6f6e617303055072697961010007efd551c95345634e488822851c7a",
+    "6f6e61730305507269796101000451a2185f8a41a7d6c08822851c7a",
 };
 
 static int unhex(const char *h, unsigned char *out, int cap) {
@@ -6607,18 +6618,20 @@ static void test_damaged_link(void) {
 // wasm module calls msg_rematch_lobby, so the bytes are held here alone (an
 // e2e/msg_rematch.test.ts once held the test build of bots.wasm to them).
 // Re-captured when this test's own stream (seed_fill, rnd) became rng.h's
-// splitmix64: rm_finished now plays a different game, in the same format.
+// splitmix64: rm_finished now plays a different game, in the same format. And
+// again when a dealt hand became ascending (game.c deal_initial), for the same
+// reason: the bots play a different game from the same deal.
 //
 // MUTATION-CHECKED:
 //   msg_rematch_seed draws from half the moment           -> "builds other bytes"
 static const char *const REMATCH_FINISHED_HEX =
-    "f705000360600000000000005b000004011000000000000000005880cc882c9c9b76d5ec5ef52e4902e1"
+    "f7050003606000000000000081000004011b00000000000000005880cc882c9c9b76d5ec5ef52e4902e1"
     "5ff3853a67afe662df0e439231c67a7fe43400040004416c657801044d69726102054a6f6e6173030550"
-    "726979615b00031dc3077380d6d8670c0826acc45ad913bfc033acb07e6c2fe3267a0f2b11e843b6e122"
-    "4908ec96d7566d9c52f9ac1d722fdafa";
+    "726979618100087474af3111a584b3ef2965316b6cb8f0a6673234cb0c5ea9fc44b3176c14bb0bbbdd87"
+    "ae99244974a3eae380c75079c132284cd50ae94bd103b9db45f86a5fa6ed71e1511afa";
 static const char *const REMATCH_LOBBY_HEX =
-    "f70600006060000000000000000002040100f6bde6d566052cf179a2e6c7c0ab58dd52fde74a0ee01d4d"
-    "40a633291f9021abd84f5797c3e8349234120000ff44c9ed0103040004416c657801044d69726102054a"
+    "f70600006060000000000000000002040100897614e5ddfbc88079a2e6c7c0ab58dd52fde74a0ee01d4d"
+    "40a633291f9021abd84f5797c3e8349234120000ff44c9ed0102040004416c657801044d69726102054a"
     "6f6e6173030550726979610000";
 
 static void test_rematch_golden(void) {

@@ -191,13 +191,14 @@ $(call host_prog,cnitro_distill,src/main_distill.c)
 # leaving the experiment out of the coverage build - not one without the other,
 # since dropping it from coverage today would leave it running in no CI at all.
 tests: build/cnitro_tests build/bot_drive_threads_test build/replay_threads_test build/cnitro_replay \
-       build/replay_overlay_test
+       build/replay_overlay_test build/replay_rebuild_difftest
 	./build/cnitro_tests
 	./build/bot_drive_threads_test
 	./build/replay_threads_test
 	./build/replay_overlay_test
 	./tests/replay_cli_labels.sh build/cnitro_replay
 	./tests/replay_cli_decode.sh build/cnitro_replay
+	./build/replay_rebuild_difftest 700
 
 # M8's overlay (src/wasm_overlay.h): the replay codec's scratch aliased into the
 # solver arena, as the bots modules compile it. Its own objects, with the
@@ -244,6 +245,10 @@ $(call host_test,solver_difftest,tests/solver_difftest.c)
 # replay_difftest, which drove the same games through the retired retrodiction
 # encoder and asserted the same full-stream fidelity.
 $(call host_test,replay_v6_test,tests/replay_v6_test.c)
+# A replay rebuilds the game it was cut from: random 2-8 seat games, whole and
+# cut mid-game, rebuilt from their v6 codes and compared board for board.
+# `make tests` runs 700 games (~1s), `make difftests` 10,000.
+$(call host_test,replay_rebuild_difftest,tests/replay_rebuild_difftest.c)
 # FMSG v1 envelope (the iMessage payload): round-trip, replay fidelity, tamper
 # matrix, size guardrail (docs/IMESSAGE_GAME_DESIGN.md §4/§7, src/msg_wire.h).
 $(call host_test,msg_wire_test,tests/msg_wire_test.c)
@@ -256,7 +261,7 @@ $(call host_test,msg_wire_test,tests/msg_wire_test.c)
 # filmed trace or it does not.
 $(call host_test,msg_expand_test,tests/msg_expand_test.c)
 $(call host_test,anim_plan_test,tests/anim_plan_test.c)
-difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test build/msg_expand_test
+difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test build/msg_expand_test build/replay_rebuild_difftest
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
 	./build/msg_expand_test && \
@@ -265,6 +270,7 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 	./build/solver_difftest 3 40 "" 200000 && \
 	./build/solver_difftest 4 40 "" 200000 && \
 	./build/replay_v6_test 40 && \
+	./build/replay_rebuild_difftest 10000 && \
 	$(MAKE) analyse-test && \
 	$(MAKE) msg-flow-sim
 
