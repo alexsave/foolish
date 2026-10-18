@@ -30,7 +30,7 @@ function seededRows(): { nickname: string; key: string }[] {
     // Strip `--` comments first: the prose between the rows carries semicolons
     // and apostrophes, either of which ends the statement early and silently.
     const src = read('../c_base/sql/schema.sql').replace(/--[^\n]*/g, '');
-    const at = src.indexOf('INTO bots (');
+    const at = src.indexOf('INTO bot_seed (');
     const stmt = src.slice(at, src.indexOf(';', at));
     const out: { nickname: string; key: string }[] = [];
     for (const m of stmt.matchAll(/\(\s*'[^']*'\s*,\s*'%([^']*)'\s*,\s*'([^']+)'\s*\)/g)) {

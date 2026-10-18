@@ -96,10 +96,10 @@ function parseSeededKeys(): Set<string> {
     // and apostrophes, either of which would otherwise end the statement early
     // and silently under-report the seeded set.
     const src = read('../c_base/sql/schema.sql').replace(/--[^\n]*/g, '');
-    const at = src.indexOf('INTO bots (');
-    assert.ok(at > 0, 'schema.sql: no INSERT INTO bots');
+    const at = src.indexOf('INTO bot_seed (');
+    assert.ok(at > 0, 'schema.sql: no INSERT INTO bot_seed');
     const end = src.indexOf(';', at);
-    assert.ok(end > at, 'schema.sql: unterminated INSERT INTO bots');
+    assert.ok(end > at, 'schema.sql: unterminated INSERT INTO bot_seed');
     const stmt = src.slice(at, end);
     const keys = new Set<string>();
     for (const m of stmt.matchAll(/\(\s*'[^']*'\s*,\s*'[^']*'\s*,\s*'([^']+)'\s*\)/g)) keys.add(m[1]);
