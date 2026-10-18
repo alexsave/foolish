@@ -4,6 +4,7 @@
 #include "../../../shared/c/sha256.h"
 #include "../../../shared/c/deal_rng.h"
 #include <string.h>
+#include "../../../shared/c/fnv.h"
 
 /* ---- scoring (T4) ----------------------------------------------------------- */
 
@@ -314,16 +315,11 @@ int tb_draft(TbGame *out, const TbGame *g, TbMove m)
 
 /* ---- the hash --------------------------------------------------------------------- */
 
-static uint64_t fnv(uint64_t h, const void *p, size_t n)
-{
-    const uint8_t *b = p;
-    for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ull; }
-    return h;
-}
+static uint64_t fnv(uint64_t h, const void *p, size_t n) { return fnv1a64(h, p, n); }
 
 uint64_t tb_hash(const TbGame *g)
 {
-    uint64_t h = 1469598103934665603ull;
+    uint64_t h = FNV64_OFFSET_SHORT;
     h = fnv(h, &g->n, 1); h = fnv(h, &g->turn, 1); h = fnv(h, &g->roll, 1); h = fnv(h, &g->over, 1);
     h = fnv(h, &g->left, 1); h = fnv(h, &g->starter, 1); h = fnv(h, &g->kept, 1); h = fnv(h, &g->draft, 1);
     h = fnv(h, g->dice, TB_DICE);

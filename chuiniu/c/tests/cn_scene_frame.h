@@ -18,6 +18,7 @@
 #include "../src/cn_scene.h"
 #include <string.h>
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/fnv.h"
 
 #define CNF_SEATS 6
 #define CNF_DICE 5
@@ -267,9 +268,7 @@ static inline int cnf_frame(const CnfTex *t, int W, int H, int pad, float dpr, i
 static inline uint64_t cnf_hash(void)
 {
     const uint8_t *p = cn_scene_fb(); size_t n = (size_t)cn_scene_fb_w() * cn_scene_fb_h() * 4;
-    uint64_t h = 1469598103934665603ull;
-    for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ull; }
-    return h;
+    return fnv1a64(FNV64_OFFSET_SHORT, p, n);
 }
 
 /* A NAME ON THE TABLE (CN_SCENE_F_DECAL): a decal 80 by 40 lying .3 up from (20, 20), its 64 by 32 texture

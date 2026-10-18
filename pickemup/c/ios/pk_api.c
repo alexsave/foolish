@@ -11,6 +11,7 @@
 #include "../i18n/keys.h"
 #include <stddef.h>
 #include <string.h>
+#include "../../../shared/c/fnv.h"
 
 /* The host's numbers against the kernel's, held together by the compiler. */
 _Static_assert(PK_API_TEXT_MAX >= PK_MSG_MAX_TEXT, "the longest link fits the host buffer");
@@ -81,12 +82,7 @@ int pk_api_name_verdict(const uint8_t *name, int n) { return msg_seat_name_verdi
 
 static const uint8_t ARR_MAGIC[4] = { 'P', 'K', 'A', '1' };
 
-static uint32_t fnv32(const uint8_t *p, int n)
-{
-    uint32_t h = 2166136261u;
-    for (int i = 0; i < n; i++) { h ^= p[i]; h *= 16777619u; }
-    return h;
-}
+static uint32_t fnv32(const uint8_t *p, int n) { return fnv1a32(FNV32_OFFSET, p, (size_t)n); }
 
 /* THE BLOCK IS KNOWN BY ITS LENGTH: seat records come in whole 17-byte rows
  * and the block is not a whole number of them, so bytes with a block and

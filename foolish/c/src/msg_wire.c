@@ -6,6 +6,7 @@
 #include "replay.h"
 #include "../../../shared/c/deal_rng.h"
 #include <string.h>
+#include "../../../shared/c/fnv.h"
 
 // ---------- little-endian readers/writers -------------------------------
 // Explicit, byte-at-a-time: the payload's endianness is a WIRE property and
@@ -1165,8 +1166,8 @@ int msg_roster_key(const MsgJoin *joins, int n, uint32_t *hash, int *rot) {
         if (roster_cmp_at(seated, n, r, best) < 0) best = r;
 
     // FNV-1a over the player count and then the canonical rotation's names.
-    uint32_t h = 2166136261u;
-    #define FNV_BYTE(b) do { h ^= (uint32_t)(unsigned char)(b); h *= 16777619u; } while (0)
+    uint32_t h = FNV32_OFFSET;
+    #define FNV_BYTE(b) do { h = fnv1a32_step(h, (unsigned char)(b)); } while (0)
     FNV_BYTE(n);
     for (int k = 0; k < n; k++) {
         const MsgJoin *j = &seated[(best + k) % n];

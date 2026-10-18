@@ -36,6 +36,7 @@
 #include "replay.h"
 #include "strategy.h"
 #include "wasm_overlay.h"
+#include "../../../shared/c/fnv.h"
 
 #ifndef CD_WASM_OVERLAY
 #error "replay_overlay_test is built with -DCD_WASM_OVERLAY (c/Makefile OVERLAY_CFLAGS)"
@@ -81,9 +82,7 @@ static int drive(Game *g, const char *brain, int decisions) {
 
 // FNV-1a over the replay's slice of the arena: whether the solver wrote it.
 static uint64_t scratch_hash(void) {
-    uint64_t h = 1469598103934665603ULL;
-    for (unsigned i = CD_OVL_REC_OFF; i < CD_OVL_IO_OFF; i++) h = (h ^ cd_overlay[i]) * 1099511628211ULL;
-    return h;
+    return fnv1a64(FNV64_OFFSET_SHORT, cd_overlay + CD_OVL_REC_OFF, CD_OVL_IO_OFF - CD_OVL_REC_OFF);
 }
 
 // A burst of solver decisions on fresh games: the heaviest searching brains, so

@@ -6,6 +6,7 @@
 #include "game.h"
 #include "legal.h"
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/fnv.h"
 
 // ---------- pacing ---------------------------------------------------------
 
@@ -192,9 +193,7 @@ void bot_drive_seed_decision(const Game *g, uint32_t base, uint32_t log_offset, 
 
 uint32_t bot_drive_seed_base(const uint8_t *seed, int len) {
     if (!seed || len <= 0) return 0u;
-    uint32_t h = 2166136261u;
-    for (int i = 0; i < len; i++) h = (h ^ seed[i]) * 16777619u;
-    return h;
+    return fnv1a32(FNV32_OFFSET, seed, (size_t)len);
 }
 
 // Choose with the snapshot hook OFF.

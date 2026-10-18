@@ -11,6 +11,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "../../../shared/c/fnv.h"
 
 #define ARENA ((size_t)48 << 20)
 
@@ -18,12 +19,7 @@ static uint8_t *PACK;
 static size_t PACK_N;
 static CnStage ST;           /* about 700 KB: static, not on the stack */
 
-static uint32_t fnv(const uint8_t *b, size_t n)
-{
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 16777619u; }
-    return h;
-}
+static uint32_t fnv(const uint8_t *b, size_t n) { return fnv1a32(FNV32_OFFSET, b, n); }
 
 static void *arena_new(size_t n)
 {

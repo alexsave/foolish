@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "../../shared/c/fnv.h"
 
 typedef struct {
     uint8_t num_players, power_suit, defender, first_attacker;
@@ -24,17 +25,13 @@ typedef struct {
     uint8_t hand[8][64];
 } PocState;
 
-static inline uint64_t fnv1a(uint64_t h, const void *data, size_t n) {
-    const unsigned char *p = (const unsigned char *)data;
-    for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ull; }
-    return h;
-}
+static inline uint64_t fnv1a(uint64_t h, const void *data, size_t n) { return fnv1a64(h, data, n); }
 static inline uint64_t fnv1a_u32(uint64_t h, uint32_t v) {
     unsigned char b[4] = { (unsigned char)v, (unsigned char)(v >> 8),
                            (unsigned char)(v >> 16), (unsigned char)(v >> 24) };
     return fnv1a(h, b, 4);
 }
-#define FNV_INIT 1469598103934665603ull
+#define FNV_INIT FNV64_OFFSET_SHORT
 
 static inline const unsigned char *rd_bytes(const unsigned char *p, void *dst, size_t n) {
     memcpy(dst, p, n);

@@ -70,7 +70,7 @@ EN_FLAGS     = $(CFLAGS) -DUTTT_LANG_ENGLISH_ONLY
 # every shared test in one place. What each is built from is
 # shared/tools/shared_tests.mk's.
 SHARED_TESTS      := msg_stage_test collapse_test text_util_test wire_check_test stats_test \
-                     libc_test b32_test mixrad_test sha256_test deal_rng_test le_bytes_test rng_test
+                     libc_test b32_test mixrad_test sha256_test deal_rng_test le_bytes_test rng_test fnv_test
 SHARED_ASAN_TESTS := text_util_test wire_check_test stats_test collapse_test
 
 include ../../shared/tools/c_rules.mk

@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../shared/c/fnv.h"
 
 static int fails, checks;
 #define OK(c, what) do { checks++; if (!(c)) { fails++; printf("  FAIL %s:%d %s\n", __FILE__, __LINE__, what); } } while (0)
@@ -44,12 +45,7 @@ static void send(void)
     cn_api_commit();
 }
 
-static uint32_t fnv(const uint8_t *b, size_t n)
-{
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 16777619u; }
-    return h;
-}
+static uint32_t fnv(const uint8_t *b, size_t n) { return fnv1a32(FNV32_OFFSET, b, n); }
 
 /* THE STAGE through the bridge: Bo's phone right after his call (the resident's
  * plan is CALL, LIFT, COUNT, DROP, SHAKE) */
