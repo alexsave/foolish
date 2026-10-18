@@ -29,6 +29,7 @@
 #include "../src/msg_wire.h"   // msg_lobby_can_set_rules, the iMessage spelling of the lobby rule
 #include "../src/hand_layout.h"
 #include "../wasm/wire.h"
+#include "fm_exp_digest.h"   // fm_exp, its digest inputs and the committed digest
 #include <stdio.h>
 #include <sys/mman.h>
 #include <signal.h>
@@ -19384,6 +19385,43 @@ static void test_table_composed_boards_round_trip(void) {
           "the durable blob carries the deterministic-deck flag, and the load reads it");
 }
 
+// fm_exp (src/fm_exp.c), the exp fulminate's posterior softmax calls, is one
+// function on every build. Three things hold it there: its bits over 100,000
+// seeded inputs hash to the committed digest, which `make wasm-fm-exp-test`
+// holds the wasm module to as well (so this -ffast-math native build and the
+// strict-IEEE wasm build give the same bits); it is within 1 ulp of libm's exp
+// everywhere off the clamps; and the edges are what fm_exp.h says. Checked by
+// bits, not by comparisons, because this suite is built -ffast-math.
+static void test_fm_exp(void) {
+    CHECK(fm_exp_digest(FM_EXP_DIGEST_N) == FM_EXP_DIGEST,
+          "fm_exp: the result bits hash to the committed digest the wasm build is held to");
+    int64_t worst = 0;
+    for (int i = 8; i < FM_EXP_DIGEST_N; i++) {
+        const double x = fm_exp_digest_input(i);
+        const uint64_t xb = fmd_bits(x) & ~(UINT64_C(1) << 63);
+        if (xb >= UINT64_C(0x4086200000000000)) continue;   // |x| >= 708: the clamps
+        int64_t d = (int64_t)fmd_bits(fm_exp(x)) - (int64_t)fmd_bits(exp(x));
+        if (d < 0) d = -d;
+        if (d > worst) worst = d;
+    }
+    CHECK(worst <= 1, "fm_exp: within 1 ulp of libm exp over the digest inputs");
+    // The edges, read through a volatile count: this suite is -ffast-math
+    // -flto, and a constant argument would let the compiler fold an infinite
+    // or NaN result it is allowed to assume never happens.
+    static const uint64_t edge_want[8] = {
+        UINT64_C(0x3FF0000000000000), UINT64_C(0x3FF0000000000000),  // +-0 -> 1
+        0, UINT64_C(0x7FF0000000000000),                              // -708 -> 0, 709 -> inf
+        0, UINT64_C(0x7FF0000000000000),                              // -inf -> 0, +inf -> inf
+        UINT64_C(0x3FE0000000000000),                                 // -ln2 -> 0.5
+        UINT64_C(0x3FE6A09E667F3BCC),                                 // -ln2/2 -> 1/sqrt2, 1 ulp low
+    };
+    volatile int n_edges = 8;
+    int edges_ok = 1;
+    for (int i = 0; i < n_edges; i++)
+        edges_ok &= fmd_bits(fm_exp(fm_exp_digest_input(i))) == edge_want[i];
+    CHECK(edges_ok, "fm_exp: +-0, the clamps, +-inf and the reduction edges give the documented bits");
+}
+
 int main(void) {
 #ifdef CD_PASS_PROBE
     test_masked_board_carries_the_rules();
@@ -19396,6 +19434,7 @@ int main(void) {
     test_podkidnoy_every_brain();
 #endif
 #endif
+    test_fm_exp();
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();
     test_state_import_refuses_a_truncated_payload();

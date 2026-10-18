@@ -30,46 +30,21 @@
 #include "cordite_strategy.h"
 #include "card.h"
 #include "game.h"
+#include "fm_exp.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 // ---------- exp ----------------------------------------------------------
 // seatWeightsFromProfiles' posterior is a softmax (TS Math.exp, cordite_core
-// line 2042). Native builds use libm's exp. The wasm build is freestanding
-// (no libm), so it uses a local range-reduced Taylor evaluation instead —
-// the ONE knowingly-inexact spot of this port: TS Math.exp is a correctly-
-// rounded fdlibm implementation we cannot reproduce bit-for-bit without
-// libm. The local version is accurate to well under 1 ulp on the domain the
-// softmax uses (x <= 0), so the downstream branch outcomes (the 0.50+ commit
-// threshold, the per-world sampling walk) could only differ from TS on
-// razor-edge float ties the thresholds are nowhere near.
-#if defined(__wasm__) || defined(__wasm32__)
-static double fm_exp(double x) {
-    if (x <= -708.0) return 0.0;   // softmax weight ~1e-308: negligible mass
-    if (x == 0.0) return 1.0;
-    // Reduce: x = n*ln2 + r, |r| <= ln2/2, with a two-part ln2 so the
-    // reduction itself loses almost no bits.
-    static const double LN2_HI  = 6.93147180369123816490e-01;
-    static const double LN2_LO  = 1.90821492927058770002e-10;
-    static const double INV_LN2 = 1.44269504088896338700e+00;
-    double fn = x * INV_LN2;
-    int n = (int)(fn >= 0.0 ? fn + 0.5 : fn - 0.5);
-    double r = (x - (double)n * LN2_HI) - (double)n * LN2_LO;
-    // Taylor to r^13 (nested Horner): with |r| <= 0.3466 the first dropped
-    // term r^14/14! is < 4e-18 relative — below double ulp.
-    double s = 1.0;
-    for (int k = 13; k >= 1; k--) s = 1.0 + r * s / (double)k;
-    // Scale by 2^n through the exponent bits. n is in [-1021, 1] here (the
-    // -708 clamp above keeps the result normal).
-    union { double d; uint64_t u; } sc;
-    sc.u = (uint64_t)(1023 + n) << 52;
-    return s * sc.d;
-}
-#else
-#include <math.h>
-static double fm_exp(double x) { return exp(x); }
-#endif
+// line 2042). It calls fm_exp (fm_exp.h), integer fixed point that gives the
+// same bits on every build: libm's exp differs between glibc, Apple and the
+// freestanding wasm modules (which have none), and this file's native build is
+// -ffast-math while wasm is strict IEEE, so neither libm nor a double-arithmetic
+// polynomial would weigh one position the same way everywhere. fm_exp is within
+// 1 ulp of a correctly rounded exp, so it can differ from TS Math.exp only on
+// razor-edge ties the 0.50+ commit threshold and the per-world sampling walk
+// are nowhere near.
 
 // ---------- seat profile (cordite_core.ts SeatProfile, 1636-1649) ----------
 

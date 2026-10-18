@@ -78,7 +78,7 @@ KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/re
             src/cordite_sim.c src/bot_common.c src/astrolite_strategy.c \
             src/simple_heuristic_strategy.c src/champion_strategy.c \
             src/ultimate_champion_strategy.c src/hacker_strategy.c \
-            src/fulminate_strategy.c src/espresso_prod_strategy.c \
+            src/fulminate_strategy.c src/fm_exp.c src/espresso_prod_strategy.c \
             src/handwritten_prod_strategy.c src/distill_feat.c \
             src/distilled_strategy.c src/octogen_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
@@ -244,6 +244,15 @@ tests-asan: build/cnitro_tests_asan
 $(call host_test,sim_difftest,tests/sim_difftest.c)
 $(call host_test,apply_difftest,tests/apply_difftest.c)
 $(call host_test,solver_difftest,tests/solver_difftest.c)
+# fulminate on fm_exp against fulminate on libm's exp, the native path it
+# replaced (tests/fm_exp_decisions_test.c): the second copy is the same source
+# with fm_exp and the entry point renamed, and the test defines the renamed
+# fm_exp as libm's exp.
+build/obj/fmref/fulminate_strategy_libm_ref.o: src/fulminate_strategy.c $(wildcard src/*.h) Makefile
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -Dfm_exp=fm_exp_libm_ref -Dfulminate_strategy_choose=fulminate_strategy_choose_libm_ref -c $< -o $@
+build/fm_exp_decisions_test: $(call c_objs,build/obj/host,tests/fm_exp_decisions_test.c) build/obj/fmref/fulminate_strategy_libm_ref.o $(CORE_OBJ)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 # Replay-codec round trip against real engine games (the native mirror of
 # e2e/replay_codec.test.ts): losslessness, mid-game cuts, size
 # (docs/IMESSAGE_GAME_DESIGN.md §16 option 3). It absorbed the old
@@ -266,7 +275,8 @@ $(call host_test,msg_wire_test,tests/msg_wire_test.c)
 # filmed trace or it does not.
 $(call host_test,msg_expand_test,tests/msg_expand_test.c)
 $(call host_test,anim_plan_test,tests/anim_plan_test.c)
-difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test build/msg_expand_test build/replay_rebuild_difftest
+difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test build/msg_expand_test build/replay_rebuild_difftest \
+           build/fm_exp_decisions_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
 	./build/msg_expand_test && \
@@ -276,6 +286,7 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 	./build/solver_difftest 4 40 "" 200000 && \
 	./build/replay_v6_test 40 && \
 	./build/replay_rebuild_difftest 10000 && \
+	./build/fm_exp_decisions_test 200 6 && \
 	$(MAKE) analyse-test && \
 	$(MAKE) msg-flow-sim
 
@@ -1721,6 +1732,29 @@ build/bump_alloc_test_mt.wasm: $(ALLOC_TEST_SRC) $(wildcard $(SHARED)/wasm/inclu
 .PHONY: wasm-alloc-test
 wasm-alloc-test: wasm-cc-check build/bump_alloc_test.wasm build/bump_alloc_test_mt.wasm
 	node $(SHARED)/wasm/bump_alloc_test.mjs build/bump_alloc_test.wasm build/bump_alloc_test_mt.wasm
+
+# ---------------------------------------------------------------------------
+# fm_exp (src/fm_exp.c), the one exp a bot's decision may call, is the same bits
+# native and wasm. The native half is built with the kernel's own CFLAGS, the
+# -ffast-math the arena and c_base compile with (less -flto and -fopenmp, which
+# only change the link), and the wasm half with the bot module's flags at both
+# of its optimisation levels. The runner compares every input's bits, native
+# against each module, and each module's digest against the committed one
+# (tests/fm_exp_digest.h) that `make tests` holds the native suite to. A
+# `wasm…` target, so wasm.yml runs it.
+FM_EXP_TEST_SRC := src/fm_exp.c tests/fm_exp_wasm_test.c $(SHARED)/wasm/libc.c
+FM_EXP_TEST_DEPS := $(FM_EXP_TEST_SRC) src/fm_exp.h tests/fm_exp_digest.h Makefile
+build/fm_exp_native_bits: src/fm_exp.c tests/fm_exp_native_bits.c src/fm_exp.h tests/fm_exp_digest.h Makefile
+	@mkdir -p build
+	$(CC) $(filter-out -flto -fopenmp,$(CFLAGS)) -Itests src/fm_exp.c tests/fm_exp_native_bits.c -o $@
+build/fm_exp_test_O3.wasm build/fm_exp_test_Oz.wasm: build/fm_exp_test_%.wasm: $(FM_EXP_TEST_DEPS)
+	@mkdir -p build
+	$(WASM_CC) $(WASM_BOT_CFLAGS) -$* -Itests -Werror -Wl,--no-entry $(FM_EXP_TEST_SRC) -o $@
+
+.PHONY: wasm-fm-exp-test
+wasm-fm-exp-test: wasm-cc-check build/fm_exp_native_bits build/fm_exp_test_O3.wasm build/fm_exp_test_Oz.wasm
+	./build/fm_exp_native_bits > build/fm_exp_native_bits.txt
+	node tests/fm_exp_wasm_test.mjs build/fm_exp_native_bits.txt build/fm_exp_test_O3.wasm build/fm_exp_test_Oz.wasm
 
 # ---------------------------------------------------------------------------
 # Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine
