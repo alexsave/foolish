@@ -41,6 +41,7 @@
 #include <float.h>
 #include <math.h>   // fabs
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/fnv.h"
 
 static int n_pass = 0;
 static int n_fail = 0;
@@ -1556,8 +1557,8 @@ static unsigned run_repro_game(const unsigned char *seed) {
     game_set_deal_seed_bytes(seed, 32);    // deck: shuffle + pop (stays on all game)
     Game g; make_2p_game(&g);
     start_game(&g);
-    unsigned h = 2166136261u;
-#define HH(b) do { h ^= (unsigned char)(b); h *= 16777619u; } while (0)
+    unsigned h = FNV32_OFFSET;
+#define HH(b) do { h = fnv1a32_step(h, (unsigned char)(b)); } while (0)
     BotPlay bp;
     bot_play_init(&bp, &g, 2000, BOT_PLAY_SHUFFLE, NULL);
     for (int idx; (idx = bot_play_next(&bp)) >= 0; ) {
@@ -2104,14 +2105,14 @@ static void test_bot_drive_deterministic(void) {
         make_seeded_game(&g, 4, 77);
         seat_all(&g, STRAT_HANDWRITTEN_PROD);
 
-        unsigned acc = 2166136261u;
+        unsigned acc = FNV32_OFFSET;
         BotDriveOut out;
         for (int step = 0; step < 300 && game_done(&g) < 0; step++) {
             if (bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out) == 0) break;
             for (int a = 0; a < out.n; a++) {
-                acc = (acc ^ (unsigned)out.actions[a].seat) * 16777619u;
-                acc = (acc ^ (unsigned)out.actions[a].move.type) * 16777619u;
-                acc = (acc ^ (unsigned)out.actions[a].pacing_class) * 16777619u;
+                acc = fnv1a32_step(acc, (unsigned)out.actions[a].seat);
+                acc = fnv1a32_step(acc, (unsigned)out.actions[a].move.type);
+                acc = fnv1a32_step(acc, (unsigned)out.actions[a].pacing_class);
             }
         }
         h[rep] = acc;
@@ -11547,14 +11548,11 @@ static void test_validate_seat_none_only_before_the_opening(void) {
 // goldens were taken against the seat-major hook code, before round-robin: a
 // hook pass that moved a single card, or drew one more random number, shows up
 // here as a different digest.
-static uint64_t dl_fnv(uint64_t h, int v) {
-    h ^= (uint64_t)(unsigned char)v;
-    return h * 1099511628211ULL;
-}
+static uint64_t dl_fnv(uint64_t h, int v) { return fnv1a64_step(h, (unsigned char)v); }
 
 static uint64_t dl_hands_digest(int np, int wide) {
     static Game g;
-    uint64_t h = 1469598103934665603ULL;
+    uint64_t h = FNV64_OFFSET_SHORT;
     game_force_first_attacker(-1);
     game_open_at_seat(-1);
     for (int seed = 0; seed < 300; seed++) {
@@ -11639,7 +11637,7 @@ static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps, int *n_tru
     static Game g;
     static LegalMoves moves;
     static AnimPlan plan;
-    uint64_t h = 1469598103934665603ULL;
+    uint64_t h = FNV64_OFFSET_SHORT;
     game_force_first_attacker(-1);
     game_open_at_seat(-1);
     for (int salt = 0; salt < 4; salt++) {
@@ -11805,7 +11803,7 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // envelopes carry the hands in their new order, and the bots, reading
     // hands in that order, played different games.
     static const uint64_t golden[2] = { 0xbf57d7cd081b31a6ULL, 0xee9ca1b1164510adULL };
-    uint64_t hc = 1469598103934665603ULL;
+    uint64_t hc = FNV64_OFFSET_SHORT;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         for (int seed_k = 1; seed_k <= 3; seed_k++) {
             if (!dl_deal_table(np, 60 + seed_k * 5 + np)) {
@@ -11823,7 +11821,7 @@ static void test_opening_deal_bytes_are_unchanged(void) {
             hc = dl_bytes(hc, tb_arena + c.spectator.off, c.spectator.len);
         }
     }
-    uint64_t hr = 1469598103934665603ULL;
+    uint64_t hr = FNV64_OFFSET_SHORT;
     static Game g;
     static unsigned char code[1 << 14];
     for (int np = 2; np <= 6; np++) {
@@ -12240,11 +12238,7 @@ static char tb_seed_hex[2 * FOOLISH_SEED_LEN + 1];
 static BotDriveOut tb_drv, tb_drv2;
 static Game tb_ref;
 
-static uint32_t tb_fnv(const char *s, int n) {
-    uint32_t h = 2166136261u;
-    for (int i = 0; i < n; i++) h = (h ^ (uint8_t)s[i]) * 16777619u;
-    return h;
-}
+static uint32_t tb_fnv(const char *s, int n) { return fnv1a32(FNV32_OFFSET, s, (size_t)n); }
 
 // A v3 blob's clock bytes: shown_ms, then settles_ms, each u48 little-endian.
 static void tb_put_clock(uint8_t *q, const BoardClock *clk) {
@@ -12967,10 +12961,7 @@ typedef struct {
     uint32_t version;
 } TbRow;
 
-static uint32_t tb_fold(uint32_t h, const uint8_t *p, int n) {
-    for (int i = 0; i < n; i++) h = (h ^ p[i]) * 16777619u;
-    return h;
-}
+static uint32_t tb_fold(uint32_t h, const uint8_t *p, int n) { return fnv1a32(h, p, (size_t)n); }
 
 // A bots-only lobby of `np` `brain` seats, dealt from `seed` by table_ready on
 // `t` as the server deals one (dealBotTable), committed as version 1 into `row`.
@@ -13049,7 +13040,7 @@ typedef struct { uint32_t hash; int cycles, ended; } TbPlayed;
 // deal seed of every cycle: the hash of the deal and everything the chain
 // committed, closed with the fool.
 static TbPlayed tb_row_play(TbRow *row, Table *t, const char *seed_hex) {
-    TbPlayed p = { tb_fold(2166136261u, row->state, row->state_len), 0, 0 };
+    TbPlayed p = { tb_fold(FNV32_OFFSET, row->state, row->state_len), 0, 0 };
     while (p.cycles < 4000 && row->status == GAME_STATUS_PLAYING && tb_row_cycle(row, t, seed_hex, &p.hash) > 0) p.cycles++;
     p.ended = row->status == GAME_STATUS_GAME_OVER;
     const uint8_t fool = (uint8_t)row->fool;
@@ -13126,7 +13117,7 @@ static void test_table_bot_drive_ignores_other_tables(void) {
             for (int g = 0; g < GAMES; g++) {
                 seed[0] = (uint8_t)(g + 2);
                 dealt &= tb_row_deal(&rows[g], &tb, g + 2, brains[b], seed);
-                uint32_t h = tb_fold(2166136261u, rows[g].state, rows[g].state_len);
+                uint32_t h = tb_fold(FNV32_OFFSET, rows[g].state, rows[g].state_len);
                 want_n[g] = 0;
                 while (want_n[g] < CYCLES && rows[g].status == GAME_STATUS_PLAYING && tb_row_cycle(&rows[g], &tb, hex, &h) > 0)
                     want[g][want_n[g]++] = h;
@@ -13141,7 +13132,7 @@ static void test_table_bot_drive_ignores_other_tables(void) {
             for (int g = 0; g < GAMES; g++) {
                 seed[0] = (uint8_t)(g + 2);
                 dealt &= tb_row_deal(&rows[g], &tb, g + 2, brains[b], seed);
-                h[g] = tb_fold(2166136261u, rows[g].state, rows[g].state_len);
+                h[g] = tb_fold(FNV32_OFFSET, rows[g].state, rows[g].state_len);
                 n[g] = 0;
             }
             for (int live = GAMES; live > 0;) {
@@ -18490,14 +18481,14 @@ static void test_table_octogen_game_is_its_deal_seeds(void) {
 
         table_init(&tb, &tb_game, &tb_snaps);
         CHECK(tb_row_deal(&row, &tb, 2, "octogen", seed), "an octogen lobby deals a deterministic-deck game");
-        uint32_t h = tb_fold(2166136261u, row.state, row.state_len);
+        uint32_t h = tb_fold(FNV32_OFFSET, row.state, row.state_len);
         int n = 0;
         while (n < CYCLES && row.status == GAME_STATUS_PLAYING && tb_row_cycle(&row, &tb, hex, &h) > 0) trace[n++] = h;
 
         // Again, on a table initialised afresh.
         table_init(&tb, &tb_game, &tb_snaps);
         tb_row_deal(&row, &tb, 2, "octogen", seed);
-        h = tb_fold(2166136261u, row.state, row.state_len);
+        h = tb_fold(FNV32_OFFSET, row.state, row.state_len);
         int m = 0, same = 1;
         while (m < CYCLES && row.status == GAME_STATUS_PLAYING && tb_row_cycle(&row, &tb, hex, &h) > 0) {
             same &= m < n && trace[m] == h;
@@ -18508,7 +18499,7 @@ static void test_table_octogen_game_is_its_deal_seeds(void) {
 
         // The same deal, its seed withheld from every cycle after it.
         tb_row_deal(&row, &tb, 2, "octogen", seed);
-        h = tb_fold(2166136261u, row.state, row.state_len);
+        h = tb_fold(FNV32_OFFSET, row.state, row.state_len);
         int i = 0, diverged = 0;
         while (!diverged && i < n && row.status == GAME_STATUS_PLAYING && tb_row_cycle(&row, &tb, "", &h) > 0) {
             diverged = trace[i] != h;
@@ -18551,9 +18542,9 @@ static int tb_row_play_mixed(TbRow *row, Table *t, uint32_t *states, int cap) {
     int n = 0;
     if (!tb_row_deal(row, t, 4, "random", tb_seed)) return -1;
     tb_row_rebrain(row, mix);
-    states[n++] = tb_fold(2166136261u, row->state, row->state_len);
+    states[n++] = tb_fold(FNV32_OFFSET, row->state, row->state_len);
     while (n < cap && row->status == GAME_STATUS_PLAYING && tb_row_cycle(row, t, tb_seed_hex, &h) > 0)
-        states[n++] = tb_fold(2166136261u, row->state, row->state_len);
+        states[n++] = tb_fold(FNV32_OFFSET, row->state, row->state_len);
     return n;
 }
 
@@ -18705,7 +18696,7 @@ static int tp_cycle(const BlRow *row, const char *seed_hex, const uint8_t *prefs
     *next_len = table_drive_prefs(&tb, &tb_drv, next, 4096);
     if (*next_len < 0) return -1;
     if (table_commit_products(&tb, RS("g"), row->version + 1, TP_NOW0 + row->version, c, tb_arena, sizeof(tb_arena)) < 0) return -1;
-    uint32_t x = tb_fold(2166136261u, (const uint8_t *)&delay, 4);
+    uint32_t x = tb_fold(FNV32_OFFSET, (const uint8_t *)&delay, 4);
     const uint8_t head[4] = { (uint8_t)tb_drv.stop, (uint8_t)c->ended, c->n_events, (uint8_t)n };
     x = tb_fold(x, head, 4);
     for (int i = 0; i < n; i++) { const uint8_t s = (uint8_t)tb_drv.actions[i].seat; x = tb_fold(x, &s, 1); }
@@ -18956,7 +18947,7 @@ static uint32_t mr_drive(Table *t, const uint8_t *state, int len, const uint8_t 
     const int n = table_bot_drive(t, 0, 0, 1, &tb_drv);
     if (n <= 0) return 0;
     if (table_commit_products(t, gid, (int)strlen(gid), 2, 1700000000000LL, &c, tb_arena, sizeof(tb_arena)) < 0) return 1;
-    uint32_t h = 2166136261u;
+    uint32_t h = FNV32_OFFSET;
     for (int i = 0; i < n; i++) { const uint8_t s = (uint8_t)tb_drv.actions[i].seat; h = tb_fold(h, &s, 1); }
     const uint8_t stop = (uint8_t)tb_drv.stop;
     h = tb_fold(h, &stop, 1);

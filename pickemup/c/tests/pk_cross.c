@@ -24,10 +24,7 @@ static uint64_t HASHES[CROSS_MAX];
 
 static void fold(uint64_t *h, uint32_t v)
 {
-    for (int i = 0; i < 4; i++) {
-        *h ^= (uint8_t)(v >> (8 * i));
-        *h *= 0x100000001b3ull;
-    }
+    for (int i = 0; i < 4; i++) *h = fnv1a64_step(*h, (uint8_t)(v >> (8 * i)));
 }
 
 static void fold_event(const PkEvent *e, void *ctx)
@@ -67,6 +64,7 @@ const uint64_t *pk_cross_hashes(void) { return HASHES; }
 #ifndef PK_CROSS_WASM
 #include <stdio.h>
 #include <stdlib.h>
+#include "../../../shared/c/fnv.h"
 
 int main(int argc, char **argv)
 {

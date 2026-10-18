@@ -32,6 +32,7 @@
 #include "game.h"
 #include "replay_extras.h"
 #include "replay_steps.h"
+#include "../../../../shared/c/fnv.h"
 _Static_assert(MAX_LOG_PAIRS >= MAX_DECK,
                "the kernel must be built with the human-game capacities (c_base/Makefile KERNEL_CAPS)");
 
@@ -323,8 +324,7 @@ static void order_init(void) {
 }
 pthread_mutex_t *cb_table_order_lock(const char *gid) {
     pthread_once(&g_order_once, order_init);
-    uint32_t h = 2166136261u;
-    for (const char *p = gid; *p; p++) h = (h ^ (uint8_t)*p) * 16777619u;
+    uint32_t h = fnv1a32_str(FNV32_OFFSET, gid);
     pthread_mutex_t *m = &g_order_mu[h % ORDER_STRIPES];
     pthread_mutex_lock(m);
     return m;

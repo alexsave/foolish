@@ -4,6 +4,7 @@
 #include "cn_beats.h"
 #include <stddef.h>
 #include <string.h>
+#include "../../../shared/c/fnv.h"
 
 /* the renderer's format is cn_geom's, written there as numbers */
 _Static_assert(CN_GEOM_VF == CN_SCENE_VF && CN_GEOM_FF == CN_SCENE_FF, "one vertex and face format");
@@ -23,12 +24,10 @@ static uint32_t scene_gen_now;
 uint32_t cn_stage_round_seed(const uint8_t seed[32], int round)
 {
     static const char tag[] = "chuiniu.throw.1|";
-    uint32_t h = 2166136261u;
-    for (int i = 0; tag[i]; i++) { h ^= (uint8_t)tag[i]; h *= 16777619u; }
-    for (int i = 0; i < 32; i++) { h ^= seed ? seed[i] : 0; h *= 16777619u; }
-    h ^= (uint32_t)(round & 0xFF); h *= 16777619u;
-    h ^= (uint32_t)((round >> 8) & 0xFF); h *= 16777619u;
-    return h;
+    uint32_t h = fnv1a32_str(FNV32_OFFSET, tag);
+    for (int i = 0; i < 32; i++) h = fnv1a32_step(h, seed ? seed[i] : 0);
+    h = fnv1a32_step(h, (uint32_t)(round & 0xFF));
+    return fnv1a32_step(h, (uint32_t)((round >> 8) & 0xFF));
 }
 
 /* ---- the arena and the textures ----------------------------------------------------- */

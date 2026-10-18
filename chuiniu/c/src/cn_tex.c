@@ -5,6 +5,7 @@
  * canvas stores it. */
 #include "cn_tex.h"
 #include <string.h>
+#include "../../../shared/c/fnv.h"
 
 /* ---- small arithmetic ------------------------------------------------------------- */
 static double dsqrt(double x) { return __builtin_sqrt(x); }   /* one instruction everywhere, correctly rounded */
@@ -22,9 +23,7 @@ static uint32_t rd32(const uint8_t *b) { return (uint32_t)b[0] | (uint32_t)b[1] 
 
 uint32_t cn_tex_fnv1a(const uint8_t *b, uint32_t n)
 {
-    uint32_t h = 2166136261u;
-    for (uint32_t i = 0; i < n; i++) { h ^= b[i]; h *= 16777619u; }
-    return h;
+    return fnv1a32(FNV32_OFFSET, b, n);
 }
 
 /* the study's TEX.hash on UInt32: Math.imul is the low 32 bits of the product, >>> a logical shift */

@@ -20,6 +20,7 @@
 #include "../src/cn_roll.h"
 #include <math.h>
 #include <time.h>
+#include "../../../shared/c/fnv.h"
 
 static float   F[CN_ROLL_MAX_FRAMES * CN_ROLL_FRAME_FLOATS], F2[CN_ROLL_MAX_FRAMES * CN_ROLL_FRAME_FLOATS];
 static uint8_t P[CN_ROLL_MAX_FRAMES];
@@ -64,12 +65,7 @@ static int upOf(const float *pose)
     return best;
 }
 
-static uint32_t fnv(const void *p, size_t n)
-{
-    const uint8_t *b = p; uint32_t h = 2166136261u;
-    for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 16777619u; }
-    return h;
-}
+static uint32_t fnv(const void *p, size_t n) { return fnv1a32(FNV32_OFFSET, p, n); }
 
 static void test_determinism(void)
 {

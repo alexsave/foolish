@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/fnv.h"
 
 const char *UTTT_BOT_NAME[BOT_COUNT] =
     { "random", "biro", "roller", "crn", "bias", "nib", "sniper", "quill", "fountain" };
@@ -438,14 +439,12 @@ static int root_dedupe(const UtttGame *g, uint8_t *list, int n)
 
 static uint64_t pos_key(const UtttGame *g)
 {
-    uint64_t h = 1469598103934665603ull;
-    const uint8_t *p = (const uint8_t *)g->cm;
-    for (size_t i = 0; i < sizeof g->cm; i++) h = (h ^ p[i]) * 1099511628211ull;
-    h = (h ^ g->bm[0])  * 1099511628211ull;
-    h = (h ^ g->bm[1])  * 1099511628211ull;
-    h = (h ^ g->bdrawn) * 1099511628211ull;
-    h = (h ^ g->forced) * 1099511628211ull;
-    h = (h ^ g->turn)   * 1099511628211ull;
+    uint64_t h = fnv1a64(FNV64_OFFSET_SHORT, g->cm, sizeof g->cm);
+    h = fnv1a64_step(h, g->bm[0]);
+    h = fnv1a64_step(h, g->bm[1]);
+    h = fnv1a64_step(h, g->bdrawn);
+    h = fnv1a64_step(h, g->forced);
+    h = fnv1a64_step(h, g->turn);
     /* Never 0: an untouched table slot is all zeroes, and a position whose
      * key happened to be 0 would read that empty slot back as its own
      * entry - a proved draw, for free, wrongly. */

@@ -3,6 +3,7 @@
 #include "cn_internal.h"
 #include <stddef.h>
 #include <string.h>
+#include "../../../shared/c/fnv.h"
 
 _Static_assert(CN_MAX_MOVES == 2349, "the longest six-seat game (cn.h)");
 _Static_assert(CN_MAX_MOVES < 65535, "hist_n is a u16");
@@ -227,16 +228,11 @@ int cn_replay(CnGame *out, const CnGame *g, int k)
 
 /* ---- the hash ---------------------------------------------------------------------- */
 
-static uint64_t fnv(uint64_t h, const void *p, int n)
-{
-    const uint8_t *b = (const uint8_t *)p;
-    for (int i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ull; }
-    return h;
-}
+static uint64_t fnv(uint64_t h, const void *p, int n) { return fnv1a64(h, p, (size_t)n); }
 
 uint64_t cn_hash(const CnGame *g)
 {
-    uint64_t h = 1469598103934665603ull;
+    uint64_t h = FNV64_OFFSET_SHORT;
     h = fnv(h, g, (int)offsetof(CnGame, hist));
     h = fnv(h, g->hist, (int)sizeof(CnMove) * g->hist_n);
     return fnv(h, g->seed, 32);

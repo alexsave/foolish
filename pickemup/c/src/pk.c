@@ -6,6 +6,7 @@
  * never an unwinding (the uttt_undo rule). */
 #include "pk_internal.h"
 #include <string.h>
+#include "../../../shared/c/fnv.h"
 
 #define BIT(s) ((uint8_t)(1u << (s)))
 
@@ -709,16 +710,11 @@ int pk_to_floor(PkGame *g)
 
 /* ---- hash ----------------------------------------------------------------------- */
 
-static uint64_t fnv(uint64_t h, const void *p, int n)
-{
-    const uint8_t *b = (const uint8_t *)p;
-    for (int i = 0; i < n; i++) { h ^= b[i]; h *= 0x100000001b3ull; }
-    return h;
-}
+static uint64_t fnv(uint64_t h, const void *p, int n) { return fnv1a64(h, p, (size_t)n); }
 
 uint64_t pk_hash(const PkGame *g)
 {
-    uint64_t h = 0xcbf29ce484222325ull;
+    uint64_t h = FNV64_OFFSET;
     uint8_t small[] = {
         g->n, g->turn, (uint8_t)g->dir, g->live_suit, g->deck_n, g->stack_n,
         g->exposed, g->said, g->over, g->winner, g->idle_passes, g->starter,

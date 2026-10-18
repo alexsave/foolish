@@ -18,14 +18,12 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include "../../../shared/c/fnv.h"
 
 static char buf[1 << 16];
 
 // FNV-1a 64-bit over the exact bytes we hashed, so Swift can reproduce it.
-static uint64_t fnv1a(uint64_t h, const char *s, int n) {
-    for (int i = 0; i < n; i++) { h ^= (unsigned char)s[i]; h *= 1099511628211ULL; }
-    return h;
-}
+static uint64_t fnv1a(uint64_t h, const char *s, int n) { return fnv1a64(h, s, (size_t)n); }
 
 // A card byte off the packed menu, as the suit/value pair fio_awire_encode
 // takes. Reading the menu's own byte is this generator's job; what the FRAME
@@ -76,16 +74,16 @@ int main(void) {
         // Deal fingerprint: the initial masked PACKED state for viewer 0
         // (view.c state_put — the wire the app ships).
         int dealLen = fio_state_packed(0, buf, sizeof(buf));
-        uint64_t dealHash = fnv1a(1469598103934665603ULL, buf, dealLen);
+        uint64_t dealHash = fnv1a(FNV64_OFFSET_SHORT, buf, dealLen);
 
         // Seat-0 legal menu as the PACKED move wire (pins the enumeration/order).
         int legalLen = fio_legal_packed(0, buf, sizeof(buf));
-        uint64_t seat0LegalHash = fnv1a(1469598103934665603ULL, buf, legalLen);
+        uint64_t seat0LegalHash = fnv1a(FNV64_OFFSET_SHORT, buf, legalLen);
 
         // Deterministic playthrough: lowest eligible seat plays its first legal
         // move. Roll a hash over every post-move state(0). No bot auto-play (all
         // seats are strategy 0 and we never call fio_bot_step) → fully repeatable.
-        uint64_t playHash = 1469598103934665603ULL;
+        uint64_t playHash = FNV64_OFFSET_SHORT;
         int steps = 0;
         // A mid-game menu is combinatorial (every legal cover assignment), so it
         // runs to a few hundred KB — the packed legal wire needs room. This is a

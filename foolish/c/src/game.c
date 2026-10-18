@@ -13,6 +13,7 @@
 
 #include "../../../shared/c/deal_rng.h"
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/fnv.h"
 
 // ---------- RNG (two independent splitmix64 streams) ----------
 //
@@ -147,8 +148,8 @@ void random_strategy_set_seed(uint64_t s) { g_rand_seed = s; }
 // See game.h. Moved here from wasm_api.c (state_fnv) so the table layer and the
 // wasm bridge seed from one definition; the byte order of the mix is unchanged.
 uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt) {
-    uint32_t h = 2166136261u ^ (salt * 2654435761u) ^ base;
-#define MIX(b) do { h = (h ^ (uint32_t)(unsigned char)(b)) * 16777619u; } while (0)
+    uint32_t h = FNV32_OFFSET ^ (salt * 2654435761u) ^ base;
+#define MIX(b) do { h = fnv1a32_step(h, (unsigned char)(b)); } while (0)
     MIX(g->defender); MIX(g->first_attacker); MIX(g->power_suit);
     MIX(g->deck_count); MIX((unsigned)g->deck_count >> 8);
     MIX(g->discard_pile_length); MIX((unsigned)g->discard_pile_length >> 8);

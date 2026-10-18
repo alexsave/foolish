@@ -59,7 +59,7 @@ SAN_FLAGS   = $(ASAN_FLAGS) $(if $(filter ios/%,$*),-Iios/include)
 # pk_msg.c call, the arena's statistics, and the auto-collapse push
 # pk_api_collapse_push forwards to. What each is built from is
 # shared/tools/shared_tests.mk's.
-SHARED_TESTS := check_test rng_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test msg_whole_test \
+SHARED_TESTS := check_test rng_test fnv_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test msg_whole_test \
                 stats_test collapse_test
 
 include ../../shared/tools/c_rules.mk
