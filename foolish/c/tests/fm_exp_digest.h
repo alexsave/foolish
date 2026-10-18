@@ -13,18 +13,12 @@
 #include <stdint.h>
 #include <string.h>
 #include "fm_exp.h"
+#include "../../../shared/c/rng.h"
 
 // fm_exp_digest(FM_EXP_DIGEST_N) on every build. Changing fm_exp changes this
 // on purpose: the new value is the one the native and the wasm build agree on.
 #define FM_EXP_DIGEST_N 100000
 #define FM_EXP_DIGEST   UINT64_C(0xBDE7190BAF003B4B)
-
-static inline uint64_t fmd_mix(uint64_t *s) {
-    uint64_t z = (*s += UINT64_C(0x9E3779B97F4A7C15));
-    z = (z ^ (z >> 30)) * UINT64_C(0xBF58476D1CE4E5B9);
-    z = (z ^ (z >> 27)) * UINT64_C(0x94D049BB133111EB);
-    return z ^ (z >> 31);
-}
 
 static inline uint64_t fmd_bits(double d) { uint64_t u; memcpy(&u, &d, sizeof u); return u; }
 static inline double fmd_double(uint64_t u) { double d; memcpy(&d, &u, sizeof d); return d; }
@@ -42,7 +36,7 @@ static inline double fm_exp_digest_input(int i) {
     };
     if (i < 8) return fmd_double(edge[i]);
     uint64_t s = UINT64_C(0xF00115E) + (uint64_t)i;
-    const uint64_t a = fmd_mix(&s), b = fmd_mix(&s);
+    const uint64_t a = rng_splitmix64(&s), b = rng_splitmix64(&s);
     const uint64_t sign = (a & 3) ? UINT64_C(1) << 63 : 0;    // 3 in 4 negative
     const uint64_t bexp = 963 + (b % 70);
     return fmd_double(sign | (bexp << 52) | (a >> 12));
