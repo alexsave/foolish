@@ -233,30 +233,35 @@ test('§12.2-1c every pass a hand can make is on the panel', async () => {
     // just animated, and octogen, sharing this selection, could not have chosen
     // it either.
     const inst = await freshInstance();
-    const { code, frames, id } = await fixture('6p-pass', PASS_BOARD, 762);
-    let widest = 0, walked = 0;
-    for (let j = 1; j < frames.length; j++) {
-        if (findDecisionIndex(frames, j) !== j) continue;
-        if (frames[j].kind !== REPLAY_ATOM_PASS) continue;
-        const job = buildOracleJob(frames, code, j, true, id);
-        if (!job) continue;
-        inst.setKnobs({ ...ORACLE_KNOBS, w1: 8 });
-        const r = inst.analyzeOnce(job, 0x9e37 + j);
-        if (!('record' in r)) continue;
-        walked++;
-        const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
-        acc.add(r.record);
-        const passes = acc.candidates(false).filter((c) => String(c.key).startsWith('pass|')).length;
-        widest = Math.max(widest, passes);
-        assert.ok(acc.hasKey(job.recordedKey),
-            `${id} step ${j}: recorded ${JSON.stringify(job.recordedKey)} is not among `
-            + JSON.stringify(acc.candidates(false).map((c) => c.key)));
+    // The seed is SEARCHED for, not pinned: which deal produces a seven-pass
+    // board depends on how the bots play it, and that moves whenever a bot or
+    // the deal does (a dealt hand becoming ascending moved it off 762).
+    let widest = 0, walked = 0, seed = 762;
+    for (; seed < 762 + 400 && widest < 7; seed++) {
+        const { code, frames, id } = await fixture(`6p-pass-${seed}`, PASS_BOARD, seed);
+        for (let j = 1; j < frames.length; j++) {
+            if (findDecisionIndex(frames, j) !== j) continue;
+            if (frames[j].kind !== REPLAY_ATOM_PASS) continue;
+            const job = buildOracleJob(frames, code, j, true, id);
+            if (!job) continue;
+            inst.setKnobs({ ...ORACLE_KNOBS, w1: 8 });
+            const r = inst.analyzeOnce(job, 0x9e37 + j);
+            if (!('record' in r)) continue;
+            walked++;
+            const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
+            acc.add(r.record);
+            const passes = acc.candidates(false).filter((c) => String(c.key).startsWith('pass|')).length;
+            widest = Math.max(widest, passes);
+            assert.ok(acc.hasKey(job.recordedKey),
+                `${id} step ${j}: recorded ${JSON.stringify(job.recordedKey)} is not among `
+                + JSON.stringify(acc.candidates(false).map((c) => c.key)));
+        }
     }
     // AND THE BOARD IS STILL THE BOARD. Seven legal passes is what makes this
-    // game worth walking; if the deal or the bot cycle ever stops producing one,
-    // the assertion above would pass while proving nothing.
-    assert.ok(widest >= 7, `the 6p pass board no longer offers more than six passes (widest ${widest} over ${walked} pass decisions)`);
-    console.log(`  §12.2-1c: ${walked} pass decisions, widest board offered ${widest} passes`);
+    // walk worth doing; if no deal in the range produces one, the assertion
+    // above passed while proving nothing.
+    assert.ok(widest >= 7, `no 6p pass board offered more than six passes (widest ${widest} over ${walked} pass decisions)`);
+    console.log(`  §12.2-1c: ${walked} pass decisions up to seed ${seed - 1}, widest board offered ${widest} passes`);
 });
 
 test('§12.2-1d a podkidnoy replay is deliberated as podkidnoy: no transfer on the panel', async () => {
