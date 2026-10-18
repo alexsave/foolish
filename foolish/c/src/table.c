@@ -1064,12 +1064,10 @@ static int timed_next(const TimesCursor *c, int at) {
 }
 
 // Exactly the JavaScript arithmetic (Date.parse(created_at) / 1000, then a
-// difference): volatile, so a -ffast-math native build cannot fold the division
-// and the subtraction into something that rounds differently.
+// difference): an IEEE division, which no build can turn into a reciprocal
+// multiply now that none compiles with -ffast-math.
 static double record_seconds(const uint8_t *rec) {
-    volatile double ms = (double)(int64_t)le_get_u48(rec);
-    volatile double s = ms / 1000;
-    return s;
+    return (double)(int64_t)le_get_u48(rec) / 1000;
 }
 
 static double times_gap(void *ctx, int i) {

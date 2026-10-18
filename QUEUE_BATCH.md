@@ -49,6 +49,45 @@ Owed tests:
 - Pull the stage8-owed-tests branch's tests that cover a84301973: 2bf3960ce (core/test/conformance/store.{c,h}, unit_conf_store_local.c, unit_conf_store_dynamo.c; WIP, green, not mutation-checked; the dynamo runner skips without CBASE_STORE=dynamo and is not yet on DYNAMO_UNITS) and the unit_core.c / unit_jobs.c additions (b8c2aaf1c, ab60c0390). Mutation-check them against the three bugs: SQLite cond_holds read at n_cond 5, the 1024-byte pk dropped by DynamoDB batch get and the key walk, and keys-only queries answering every attribute.
 - unit (rows_auth): import over an existing user keeps session_gen and kept_session; import with a higher session_gen takes it; import of a new user writes the imported session_gen; end_sessions then import leaves the old sessions dead. Mutation-check by writing session_gen 0 again.
 
+## 9. One shared wasm libm, with sincos; fast-math leftovers removed
+
+shared/c/wasm/libm.c gained sincos and sincosf (one quad() reduction, both series, quadrant swap/negate), declared in shared/c/wasm/include/math.h.
+Bit-identical to separate sin()/cos(): 0 mismatches over 100001 angles, float and double (throwaway program, not kept).
+shared/c/sincos.h gives sc_sincosf / sc_sincos: sincosf on wasm, sinf + cosf elsewhere (macOS and glibc have no portable sincos).
+uttt sites switched: uttt_pen.c hachure rotation, ellipse points, join arc fan; uttt_draw.c tutorial dashed ring; uttt_anim.c spring.
+uttt_pen.c round caps use a 5-entry static table (cos/sin of pi*j/6, zero calls); pen_w computes sinf(pi t) once and shares it.
+uttt_draw.c: powf(x, .75) is sqrtf(x) * sqrtf(sqrtf(x)) (rough_for, mro_for, mark_geom); the constant powf pair near the logo is two literals.
+chuiniu: cn_roll.c and cn_geom.c lost their private sin_k/cos_k/quad copies (59 lines removed, 11 added).
+chuiniu/c/src/cn_libm.c includes shared/c/wasm/libm.c under cn_libm_ names (natively the platform has sin/cos, so every name is renamed); it is in the Makefile SRC (native) and ROLL_WASM_SRC (wasm).
+cn_roll_test (golden) and cn_geom_test pass unchanged, so the series is bit-identical to the copies it replaced.
+
+Outputs that may change:
+- uttt drawing (wasm only): powf(x,.75) vs sqrt identity differs by float rounding; round-cap angles are exact now (cos(pi/2) was -4.4e-8, now 0); the logo roughness/bowing literals are rounded to float.
+  Native/iOS keep the platform sinf/cosf/powf for the non-.75 calls but also take the sqrt identity and the cap table, so their drawing goldens can move by a ulp too.
+- chuiniu: none intended (golden passes).
+
+Workarounds removed (fast-math is gone from foolish/c CFLAGS and c_base KERNEL_CFLAGS since #385):
+- hand_layout.c pragmas (float_control, fp contract) and the `product` volatile helper are deleted; table.c record_seconds lost its volatiles.
+- Not every build had -ffp-contract=off: ASAN_CFLAGS, COV_FLAGS, IOS_CFLAGS (device/simulator slices and the ioshost smoke build) and TABLE_HOST_CFLAGS did not, and clang on arm64 contracts by default.
+  Added the flag to those four (one owner: the flag). Checked on arm64 by compiling hand_layout.c to asm under each flag set: 0 fused ops with the flag, 13 without (so the flag is load-bearing).
+- wasm: strict IEEE, no fused multiply-add instruction, nothing needed.
+- Stale -ffast-math comments rewritten in hand_layout.c/.h, table.c, replay_extras.c, fm_exp.c/.h, fulminate_strategy.c, tests.c, fm_exp_native_bits.c.
+
+Owed tests:
+- libm: a test of sincos/sincosf against sin/cos (bitwise) and sincos on the quadrant edges, NaN and inf; mutation-check by swapping the case 1 and case 3 outputs.
+- uttt: a drawing test that the cap table equals cos/sin(pi*j/6) within 1e-6, and pow75 against powf within 2 ulp (mutation: change .25 root to .5).
+- foolish: run ios-goldens, ios-smoke and the xcframework build once (IOS_CFLAGS changed), plus tests-asan and the coverage build; confirm structgen layout hashes are unchanged (they are fed IOS_CFLAGS and TABLE_HOST_CFLAGS).
+- hand_layout: a native test that fails if contraction is on (compile hand_layout.c with -ffp-contract=on in a test lane and compare to the Swift golden bits) so a new build tree without the flag is caught.
+
+Tests to fix:
+- chuiniu docs/UI.html embeds cn_roll.wasm: `make docs-roll-check` will report stale until `make docs-roll` is run (cn_libm.c is linked in).
+- uttt drawing goldens (wasm and native) may move by a ulp; regenerate after reviewing.
+
+Fixes to make:
+- foolish/rust/Makefile and README still say the production flags are -O3 -ffast-math -flto; they are -ffp-contract=off -fno-math-errno now, and the rust POC bench builds with the old flags.
+- docs mentioning -ffast-math as production flags (foolish/docs/NATIVE_SERVER.md, RUST_VS_C_KERNEL.md, c/MAKE_UNMAKE.md and other tool scripts under foolish/c/tools) are stale.
+- uttt/c/Makefile line 10 table is a historical measurement, fine, but check it.
+
 ## Fixes to make (collected; done at the end of the list, before the test pass)
 
 - History names restore (item 1 regression, UI): the web history list shows `#1 #2 ...` instead of player names.

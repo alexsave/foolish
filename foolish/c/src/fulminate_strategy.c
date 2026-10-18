@@ -39,8 +39,8 @@
 // seatWeightsFromProfiles' posterior is a softmax (TS Math.exp, cordite_core
 // line 2042). It calls fm_exp (fm_exp.h), integer fixed point that gives the
 // same bits on every build: libm's exp differs between glibc, Apple and the
-// freestanding wasm modules (which have none), and this file's native build is
-// -ffast-math while wasm is strict IEEE, so neither libm nor a double-arithmetic
+// freestanding wasm modules (which have none), and this file's native build may
+// contract a multiply-add where wasm is strict IEEE, so neither libm nor a double-arithmetic
 // polynomial would weigh one position the same way everywhere. fm_exp is within
 // 1 ulp of a correctly rounded exp, so it can differ from TS Math.exp only on
 // razor-edge ties the 0.50+ commit threshold and the per-world sampling walk

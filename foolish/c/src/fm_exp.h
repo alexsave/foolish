@@ -11,10 +11,10 @@
 //     posterior differently, and at a near-tie pick a different move, on two
 //     hosts.
 //   - Plain double arithmetic is not one function either here: the native
-//     builds compile with -ffast-math (foolish/c/Makefile CFLAGS, and the
-//     c_base kernel build), which licenses the compiler to fuse, reassociate
-//     and swap a divide for a reciprocal multiply, while the wasm builds are
-//     strict IEEE. Integer arithmetic has no such licence to take.
+//     builds compile with -ffp-contract=off -fno-math-errno (foolish/c/Makefile
+//     CFLAGS, and the c_base kernel build), but a build tree that dropped the
+//     flag would let the compiler fuse a multiply-add, which wasm (strict IEEE)
+//     never does. Integer arithmetic has no such licence to take.
 //
 // Accuracy: within 1 ulp of the correctly rounded exp over the domain below
 // (tests.c checks the bound against libm over a seeded grid, and holds the

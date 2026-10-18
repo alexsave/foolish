@@ -9575,7 +9575,7 @@ static void test_extras_decode_answers_or_refuses_any_bytes(void) {
             answered++;
             if (replay_extras_unpack(answer, rc, &back) != rc) bad++;
             else for (int g = 0; g < back.n_gaps; g++) {
-                // By its bits: -ffast-math lets the compiler assume isfinite().
+                // By its bits: a NaN gap would compare unequal to itself.
                 uint64_t bits;
                 memcpy(&bits, &back.gaps[g], 8);
                 if (((bits >> 52) & 0x7FF) == 0x7FF || (bits >> 63)) bad++;
@@ -19388,10 +19388,10 @@ static void test_table_composed_boards_round_trip(void) {
 // fm_exp (src/fm_exp.c), the exp fulminate's posterior softmax calls, is one
 // function on every build. Three things hold it there: its bits over 100,000
 // seeded inputs hash to the committed digest, which `make wasm-fm-exp-test`
-// holds the wasm module to as well (so this -ffast-math native build and the
+// holds the wasm module to as well (so this native build (-ffp-contract=off) and the
 // strict-IEEE wasm build give the same bits); it is within 1 ulp of libm's exp
 // everywhere off the clamps; and the edges are what fm_exp.h says. Checked by
-// bits, not by comparisons, because this suite is built -ffast-math.
+// bits, not by comparisons, so a NaN or an infinity is checked as itself.
 static void test_fm_exp(void) {
     CHECK(fm_exp_digest(FM_EXP_DIGEST_N) == FM_EXP_DIGEST,
           "fm_exp: the result bits hash to the committed digest the wasm build is held to");
@@ -19405,9 +19405,9 @@ static void test_fm_exp(void) {
         if (d > worst) worst = d;
     }
     CHECK(worst <= 1, "fm_exp: within 1 ulp of libm exp over the digest inputs");
-    // The edges, read through a volatile count: this suite is -ffast-math
-    // -flto, and a constant argument would let the compiler fold an infinite
-    // or NaN result it is allowed to assume never happens.
+    // The edges, read through a volatile count: this suite is built -flto, and
+    // a constant argument would let the compiler fold the call away before
+    // the edge is ever evaluated.
     static const uint64_t edge_want[8] = {
         UINT64_C(0x3FF0000000000000), UINT64_C(0x3FF0000000000000),  // +-0 -> 1
         0, UINT64_C(0x7FF0000000000000),                              // -708 -> 0, 709 -> inf
