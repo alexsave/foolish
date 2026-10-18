@@ -89,12 +89,39 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
+      # The whole history (trees only, no blobs) so a pull request can diff
+      # against its base.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
       - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential clang libssl-dev libsqlite3-dev
       - name: build every target
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" fuzz
+      # A pull request fuzzes only the targets built from a file it changes
+      # (.github/scripts/fuzz_select.sh: link line, nm reachability, the
+      # compiler's dependency files); a change to a makefile, this workflow or
+      # the script runs them all. A push to main and a dispatch run every one.
+      - name: the targets this pull request can reach
+        id: select
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          FUZZ_SELECT_STATS: '1'
+        run: echo "targets=$(.github/scripts/fuzz_select.sh --base "$BASE" --head "$HEAD")" >> "$GITHUB_OUTPUT"
       - name: each target for 30 s from its corpus
-        run: make -C c_base fuzz-smoke FUZZ_TIME=30
+        env:
+          EVENT: ${{ github.event_name }}
+          TARGETS: ${{ steps.select.outputs.targets }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            make -C c_base fuzz-smoke FUZZ_TIME=30
+          elif [ -z "$TARGETS" ]; then
+            echo "No fuzz target is built from a file this pull request changes: nothing to fuzz."
+          else
+            make -C c_base fuzz-smoke FUZZ_TIME=30 FUZZ_TARGETS="$TARGETS"
+          fi
       - name: the inputs that crashed
         if: failure()
         uses: actions/upload-artifact@v4
@@ -158,7 +185,7 @@ jobs:
       - name: the shell scripts
         run: |
           bash -n c_base/ops/package.sh c_base/tools/build_bootstrap.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh c_base/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/ops_env.sh c_base/ops/deploy.sh
-          shellcheck -x c_base/ops/package.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh c_base/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/ops/test/changeset_gate_test.sh c_base/ops/role_covers_template.sh c_base/ops/test/role_covers_template_test.sh
+          shellcheck -x .github/scripts/fuzz_select.sh c_base/ops/package.sh c_base/ops/dynamo_local.sh c_base/ops/web_deploy.sh c_base/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/ops/test/changeset_gate_test.sh c_base/ops/role_covers_template.sh c_base/ops/test/role_covers_template_test.sh
       - name: web_deploy.sh and lambda_deploy.sh refuse a tree behind main (no AWS calls)
         run: bash c_base/ops/test/web_deploy_gate_test.sh
       - name: ops_env.sh never generates a secret for a live stack (no AWS calls)
