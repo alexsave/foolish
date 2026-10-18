@@ -22,6 +22,8 @@ What changed:
   foolish/server/test/smoke_matrix.c (replay_names fetches each replay), foolish/sdk/ts/net/net_client.ts, foolish/src/common/backend.ts,
   foolish/src/components/{MatchHistory.tsx,matchHistoryRow.ts}.
 
+Tests to fix (broken by this change, not run or fixed now; smoke_matrix.c replay_names and lib_app_store_mem.c were already adapted and compile, but were not run):
+
 Owed tests (nothing new was written; these still reference the old row and will not compile or pass):
 - foolish/server/test/unit_netwire.c, unit_netclient.c, unit_leftovers.c (hr = nc_row), unit_v1.c (hr), smoke.c, fuzz/fz_netwire.c, fz_netclient.c (moves_off check), c_base/fuzz/seeds.c: move to the new row fields.
 - unit: nw_put_history/nw_get_history round trip of the new row, and its bounds (n_players > MAX_PLAYERS, id too long).
