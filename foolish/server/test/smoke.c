@@ -551,7 +551,7 @@ static void game_scenario(void) {
     // Play: each human reads the game for their envelope, as a client does,
     // and moves when they have a move; the bot pool plays the bot (a move
     // that leaves the bot to act wakes it). Not by bumping: a bump is a
-    // seated player's nudge, limited (limits.h), not a way to poll.
+    // seated player's nudge, limited (rate_limits.h), not a way to poll.
     //
     // Once, when neither human has a move and the stored row says the bots owe
     // one, the server is KILLED (no drain) and started again on the same file,

@@ -1,11 +1,11 @@
-// limits.h - rate limits on the requests that cost something: guessing a
+// rate_limits.h - the platform's rate limits on the requests that cost something: guessing a
 // password, making an account, refreshing a session, creating a game,
 // chatting, subscribing and bumping a game (security findings H1, M7, M8).
 //
 // Held in memory, per process: under Lambda that is per warm container, so a
 // caller spread over several containers gets each one's allowance. That is
 // best effort on purpose (it costs no request and no write); the reserved
-// concurrency (ops/cbase.yaml) bounds the containers, and the one attack that
+// concurrency (providers/aws/ops/cbase.yaml) bounds the containers, and the one attack that
 // must be stopped across containers, guessing one account's password, is
 // also counted in the table (auth.h CB_AUTH_FAIL_*).
 //

@@ -1,5 +1,5 @@
-// limits.c - in-memory rate limits (limits.h).
-#include "limits.h"
+// rate_limits.c - in-memory rate limits (rate_limits.h).
+#include "rate_limits.h"
 
 #include "cbase/provider.h"
 

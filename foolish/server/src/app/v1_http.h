@@ -43,7 +43,7 @@ int cb_v1_routes(cb_ctx *ctx);
 // (CB_E_BUSY). A client sends a read again (netclient.h nc_retry_ms).
 struct cb_http_res;
 void cb_v1_busy(struct cb_http_res *res);
-// Over a rate limit (limits.h): 429 with Retry-After retry_s, refused as
+// Over a rate limit (rate_limits.h): 429 with Retry-After retry_s, refused as
 // ACCOUNT TOO_MANY on an account route (`account`), else as BUSY.
 void cb_v1_limited(struct cb_http_res *res, int retry_s, bool account);
 void cb_v1_email_of(const char *name, size_t len, char out[CB_V1_EMAIL_BYTES]);

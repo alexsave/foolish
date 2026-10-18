@@ -11,7 +11,7 @@
 #include "app/fanout.h"
 #include "cbase/provider.h"
 #include "cbase/provider.h"
-#include "app/limits.h"
+#include "rate_limits.h"
 
 #include <pthread.h>
 #include <time.h>
@@ -825,7 +825,7 @@ static void add_bot_never_picks_a_seated_bot(void) {
     T_EQ_INT(version_of(gid), 1);
 }
 
-// limits.h: an account's game creations are limited; past the burst, 429 BUSY.
+// rate_limits.h: an account's game creations are limited; past the burst, 429 BUSY.
 static void create_is_limited(void) {
     setup(0);
     reply r;
@@ -864,7 +864,7 @@ static void bump_is_moot_and_seated_only(void) {
     T_EQ_INT(tm_hooks_of(g_store)->commits, commits);
     T_EQ_INT(g_fan.count, fans);
     T_EQ_INT(g_kicks, 0);
-    // limits.h: an account's bumps are counted; past the burst, 429 BUSY.
+    // rate_limits.h: an account's bumps are counted; past the burst, 429 BUSY.
     for (int i = 1; i < cb_limit_rules[CB_LIMIT_BUMP_USER].burst; i++) {
         meta("A", ASK_BUMP, gid, NULL, &r);
         T_EQ_INT(r.status, 200);
@@ -1704,7 +1704,7 @@ static void hidden_info_at(int n_humans, int n_bots) {
         if (!moved) T_EQ_INT(cb_bots_drive(&g_ctx, gid), CB_OK);
         // Every asker's view (the read the view routes make): their own
         // seat, or the spectators' (-1). Read directly, not by a bump: a bump
-        // is a seated player's only, and limited (limits.h).
+        // is a seated player's only, and limited (rate_limits.h).
         for (int k = 0; k < 4; k++) {
             int seat = seat_of(gid, asker_ids[k]);
             cb_view_row v;

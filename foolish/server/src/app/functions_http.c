@@ -17,7 +17,7 @@
 #include "app_internal.h"
 #include "edge.h"
 #include "foolish_app.h"
-#include "limits.h"
+#include "rate_limits.h"
 #include "v1_http.h"
 #include "auth/auth.h"
 #include "net/router.h"
@@ -232,7 +232,7 @@ static void h_meta(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     if (ask.kind == ASK_JOIN && !account_lives(ctx, &u, res)) return;
     // A bump starts a bot run (a Lambda invocation and a lease write): only a
     // seated player may ask (the kernel's rule, TABLE_E_NOT_SEATED), and not
-    // often (limits.h).
+    // often (rate_limits.h).
     int retry;
     if (ask.kind == ASK_BUMP && !cb_limit_take(CB_LIMIT_BUMP_USER, u.id, cb_now_ms(), &retry)) {
         cb_v1_limited(res, retry, false);
