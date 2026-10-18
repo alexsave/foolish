@@ -398,6 +398,11 @@ static void calc_moves(const Game *g, int bot_idx, MoveOut *out,
                        void (*cover)(const Game *, const Player *, MoveOut *)) {
     out->n = 0;
     if (g->status != GAME_STATUS_PLAYING) return;
+    // A seat the table does not have has no menu. A host can name any seat
+    // (wasm_legal_moves takes it straight off the caller), and players[] is
+    // MAX_PLAYERS long: a seat past it read the Game's next fields as a Player
+    // (the door fuzz, tests.c test_doors_survive_hostile_bytes, under UBSan).
+    if (bot_idx < 0 || bot_idx >= g->num_players) return;
     const Player *p = &g->players[bot_idx];
     // An out (hand empty, already safe) or otherwise not-in seat is a spectator:
     // no legal move. Without this, the non-defender branch below would still hand
