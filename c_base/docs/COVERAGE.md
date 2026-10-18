@@ -42,3 +42,4 @@ needs gcovr (`brew install gcovr`); the Makefile hands it `xcrun llvm-cov gcov` 
 - `test/lib_faultstore.c`: a store that forwards to a real one and fails one chosen call, so `unit_store_faults.c` can fail every store call of a request in turn.
 
 Neither needs a hook in the code under test.
+
