@@ -424,79 +424,13 @@ GET_ROW(nw_get_history, NW_HISTORY, NwHistoryRow, hist)
 
 // ---- the stream ---------------------------------------------------------------------
 
-static int sub_what(uint8_t w) { return w == NW_SUB_GAMES || w == NW_SUB_GAME || w == NW_SUB_CHAT; }
-
-// An entry may be any frame but a batch: a head, then its kind's bytes (which
-// the reader of the entry checks when it decodes it).
-static int entry_ok(const uint8_t *p, uint32_t len) { return len >= 2 && p[0] == NW_V1 && p[1] != NW_WS_BATCH; }
-
-int nw_batch_add(const uint8_t *frame, int len, uint8_t *out, int cap) {
-    if (!frame || len < 0 || !entry_ok(frame, (uint32_t)len)) return NW_E_WIRE;
-    wr w = { out, out ? cap : 0, 0, 0 };
-    w_blob(&w, (NwBlob){ frame, (uint32_t)len });
-    return w_done(&w);
-}
-
-int nw_batch_next(NwBlob entries, uint32_t *pos, NwBlob *one) {
-    one->p = NULL;
-    one->len = 0;
-    if (*pos == entries.len) return 0;
-    if (!entries.p || *pos > entries.len) return NW_E_WIRE;
-    rd r = { entries.p + *pos, (int)(entries.len - *pos), 0, 0 };
-    NwBlob b;
-    r_blob(&r, &b);
-    if (r.bad || !entry_ok(b.p, b.len)) return NW_E_WIRE;
-    *one = b;
-    *pos += (uint32_t)r.at;
-    return 1;
-}
-
-// A batch's entries: 1..NW_BATCH_MAX of them, each one, exactly filling it.
-static int batch_ok(NwBlob entries) {
-    uint32_t pos = 0;
-    NwBlob one;
-    int n = 0, rc;
-    while ((rc = nw_batch_next(entries, &pos, &one)) == 1)
-        if (++n > NW_BATCH_MAX) return 0;
-    return rc == 0 && n >= 1;
-}
-
 int nw_frame_encode(const NwFrame *f, uint8_t *out, int cap) {
     if (!f || !fits8(f->gid_len, NW_GID_MAX)) return NW_E_WIRE;
     wr w = { out, out ? cap : 0, 0, 0 };
     w_u8(&w, NW_V1);
     w_u8(&w, f->kind);
     switch (f->kind) {
-    case NW_WS_AUTH:
-        if (f->token_len > NW_ACCESS_MAX) return NW_E_WIRE;
-        w_str16(&w, f->token, f->token_len);
-        break;
-    case NW_WS_SUB_AS:
-        if (f->token_len > NW_ACCESS_MAX) return NW_E_WIRE;
-        w_str16(&w, f->token, f->token_len);
-        /* fall through - then a SUB's fields */
-    case NW_WS_SUB:
-        if (!sub_what(f->what)) return NW_E_WIRE;
-        w_u16(&w, f->ref);
-        w_u8(&w, f->what);
-        w_str8(&w, f->gid, f->gid_len);
-        w_u32(&w, f->version);
-        break;
-    case NW_WS_UNSUB:
-        if (!sub_what(f->what)) return NW_E_WIRE;
-        w_u8(&w, f->what);
-        w_str8(&w, f->gid, f->gid_len);
-        break;
-    case NW_WS_PING:
-    case NW_WS_PONG:
-        break;
-    case NW_WS_ACK:
-        w_u16(&w, f->ref);
-        w_u8(&w, f->why);
-        w_u8(&w, f->seated ? 1 : 0);
-        break;
     case NW_WS_VIEW:
-    case NW_WS_CATCHUP:
     case NW_WS_CAST:
         w_str8(&w, f->gid, f->gid_len);
         w_u32(&w, f->version);
@@ -506,10 +440,6 @@ int nw_frame_encode(const NwFrame *f, uint8_t *out, int cap) {
         if (!chat_ok(&f->chat)) return NW_E_WIRE;
         w_str8(&w, f->gid, f->gid_len);
         put_chat(&w, &f->chat);
-        break;
-    case NW_WS_BATCH:
-        if (!batch_ok(f->blob)) return NW_E_WIRE;
-        w_blob(&w, f->blob);
         break;
     default:
         return NW_E_WIRE;
@@ -524,33 +454,7 @@ int nw_frame_decode(const uint8_t *p, int len, NwFrame *out) {
     r_head(&r, p, len, p[1]);
     out->kind = p[1];
     switch (out->kind) {
-    case NW_WS_AUTH: r_str16(&r, out->token, NW_ACCESS_MAX, &out->token_len); break;
-    case NW_WS_SUB_AS:
-        r_str16(&r, out->token, NW_ACCESS_MAX, &out->token_len);
-        /* fall through - then a SUB's fields */
-    case NW_WS_SUB:
-        out->ref = r_u16(&r);
-        out->what = r_u8(&r);
-        r_str8(&r, out->gid, NW_GID_MAX, &out->gid_len);
-        out->version = r_u32(&r);
-        if (!sub_what(out->what)) r.bad = 1;
-        break;
-    case NW_WS_UNSUB:
-        out->what = r_u8(&r);
-        r_str8(&r, out->gid, NW_GID_MAX, &out->gid_len);
-        if (!sub_what(out->what)) r.bad = 1;
-        break;
-    case NW_WS_PING:
-    case NW_WS_PONG:
-        break;
-    case NW_WS_ACK:
-        out->ref = r_u16(&r);
-        out->why = r_u8(&r);
-        out->seated = r_u8(&r);
-        if (out->seated > 1) r.bad = 1;
-        break;
     case NW_WS_VIEW:
-    case NW_WS_CATCHUP:
     case NW_WS_CAST:
         r_str8(&r, out->gid, NW_GID_MAX, &out->gid_len);
         out->version = r_u32(&r);
@@ -560,62 +464,9 @@ int nw_frame_decode(const uint8_t *p, int len, NwFrame *out) {
         r_str8(&r, out->gid, NW_GID_MAX, &out->gid_len);
         get_chat(&r, &out->chat);
         break;
-    case NW_WS_BATCH:
-        r_blob(&r, &out->blob);
-        if (!r.bad && !batch_ok(out->blob)) r.bad = 1;
-        break;
     default: r.bad = 1;
     }
     int rc = r_done(&r);
     if (rc != NW_OK) memset(out, 0, sizeof *out);
     return rc;
-}
-
-// ---- base64 --------------------------------------------------------------------------
-
-static const char B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-int nw_text_encode(const uint8_t *p, int len, char *out, int cap) {
-    if (len < 0 || (len && !p)) return NW_E_WIRE;
-    int need = (len + 2) / 3 * 4;
-    if (!out || cap < need) return NW_E_CAP;
-    int o = 0;
-    for (int i = 0; i < len; i += 3) {
-        uint32_t v = (uint32_t)p[i] << 16;
-        if (i + 1 < len) v |= (uint32_t)p[i + 1] << 8;
-        if (i + 2 < len) v |= p[i + 2];
-        out[o++] = B64[(v >> 18) & 63];
-        out[o++] = B64[(v >> 12) & 63];
-        out[o++] = i + 1 < len ? B64[(v >> 6) & 63] : '=';
-        out[o++] = i + 2 < len ? B64[v & 63] : '=';
-    }
-    return o;
-}
-
-static int b64v(char c) {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
-    return -1;
-}
-
-int nw_text_decode(const char *p, int len, uint8_t *out, int cap) {
-    if (len < 0 || len % 4 || (len && !p)) return NW_E_WIRE;
-    int o = 0;
-    for (int i = 0; i < len; i += 4) {
-        int pad = (p[i + 3] == '=') + (p[i + 2] == '=' && p[i + 3] == '=');
-        if (pad && i + 4 != len) return NW_E_WIRE;   // padding only at the end
-        int a = b64v(p[i]), b = b64v(p[i + 1]);
-        int c = pad == 2 ? 0 : b64v(p[i + 2]), d = pad ? 0 : b64v(p[i + 3]);
-        if (a < 0 || b < 0 || c < 0 || d < 0) return NW_E_WIRE;
-        uint32_t v = ((uint32_t)a << 18) | ((uint32_t)b << 12) | ((uint32_t)c << 6) | (uint32_t)d;
-        int n = 3 - pad;
-        if (!out || o + n > cap) return NW_E_CAP;
-        out[o++] = (uint8_t)(v >> 16);
-        if (n > 1) out[o++] = (uint8_t)(v >> 8);
-        if (n > 2) out[o++] = (uint8_t)v;
-    }
-    return o;
 }
