@@ -21,6 +21,7 @@ on:
     paths:
       - 'c_base/**'
       - 'foolish/c/**'
+      - 'foolish/server/**'
       - 'shared/c/**'
       - 'shared/tools/**'
       - '.github/workflows/c_base.yml'
@@ -29,6 +30,7 @@ on:
     paths:
       - 'c_base/**'
       - 'foolish/c/**'
+      - 'foolish/server/**'
       - 'shared/c/**'
       - 'shared/tools/**'
       - '.github/workflows/c_base.yml'
