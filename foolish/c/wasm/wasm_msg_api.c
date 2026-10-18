@@ -75,7 +75,7 @@ int wasm_replay_extras_decode(int blob_len, int player_count, int move_count) {
 // byte" - which is a mirror admitting it is a mirror. The web asks for it now,
 // and there is one alphabet.
 int wasm_replay_b32_encode(int in_len) {
-    return replay_b32_encode(wasm_replay_io_ptr(), in_len,
+    return b32_encode(wasm_replay_io_ptr(), in_len,
                              (char *)wasm_io_ptr(), wasm_io_cap());
 }
 
@@ -85,7 +85,7 @@ int wasm_replay_b32_decode(int in_len) {
     unsigned char *in = wasm_replay_io_ptr();
     if (in_len < 0 || in_len >= wasm_replay_io_cap()) return -1;
     in[in_len] = 0;
-    return replay_b32_decode((const char *)in, wasm_io_ptr(), wasm_io_cap());
+    return b32_decode((const char *)in, wasm_io_ptr(), wasm_io_cap());
 }
 
 // Reading a link back (replay_extras.h replay_link_parse): the pasted string

@@ -14,6 +14,12 @@
 #define CNITRO_REPLAY_H
 
 #include "game.h"
+// A replay integer travels as text in shared/c/b32.h's base32 (b32_encode /
+// b32_decode): RFC 4648, no padding, the web's alphabet; decode accepts lower
+// case, skips characters outside the alphabet and stops at '-', where a share
+// link's extras suffix begins. Included here because every reader of a code
+// reaches it through this header.
+#include "../../../shared/c/b32.h"
 
 // THE ONE REPLAY FORMAT (docs/IMESSAGE_GAME_DESIGN.md §16, option 3): a
 // partial-game, hidden-state-lossless stream. It entropy-codes every hidden
@@ -316,14 +322,6 @@ int replay_first_attacker_from_logs(const GameLog *logs, int num_logs);
 // would count the very goods this exists to drop.
 int replay_atoms_before_log(const GameLog *logs, int num_logs, int cut_log);
 
-// RFC 4648 base32, no padding, the web's codec.ts alphabet: how a replay
-// integer travels as text. Decode accepts lower case, ignores characters
-// outside the alphabet and stops at '-' (where a share link's extras suffix
-// begins); encode writes a NUL-terminated string. Both return the count
-// written, or -1 when `cap` is too small. One implementation: the iOS bridge
-// and the analyser both read codes through this.
-int replay_b32_decode(const char *s, unsigned char *out, int cap);
-int replay_b32_encode(const unsigned char *in, int n, char *out, int cap);
 
 // Parameter of the last error (version for EVERSION, log_type<<16|menu size
 // for ENOTINMENU, 0 otherwise). The C diagnostics print it; a host that words

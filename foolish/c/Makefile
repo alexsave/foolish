@@ -1,8 +1,9 @@
 CC      ?= clang
 
-# THE TWO SHARED PRIMITIVES. sha256 and deal_rng are compiled from ../../shared/c
+# THE SHARED PRIMITIVES. sha256 and deal_rng are compiled from ../../shared/c
 # by this product and by werewolf alike - a standard and a pure function, with
-# no game in either. Everything else under src/ is foolish's.
+# no game in either - and b32 (the replay code's text form) by this one and the
+# newer products. Everything else under src/ is foolish's.
 SHARED  := ../../shared/c
 
 # A literal comma, so $(filter-out) patterns can name a -Wl,--flag. Defined here
@@ -68,7 +69,7 @@ CFLAGS += -DCD_PASS_PROBE
 
 # The engine + all heuristic / Monte-Carlo bots: the kernel, as a host that
 # serves games links it (c_base reads it through print-kernel).
-KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
+KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/replay.c src/replay_steps.c \
             src/replay_extras.c src/view.c src/awire.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
@@ -420,7 +421,7 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 IOS_BRIDGE_SRC := ios/ios_api.c ios/ios_api_view.c ios/ios_api_play.c \
                   ios/ios_api_anim.c ios/ios_api_replay.c \
                   ios/ios_api_identity.c ios/ios_api_msg.c ios/ios_api_net.c
-IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c \
+IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
@@ -1167,7 +1168,7 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 # extension very much does want the share URL at the end of a game - but only
 # the writing half of them ships. The exports below name the encoders and
 # nothing else, so wasm-ld drops replay_decode (the step-list decode behind a
-# replay screen), replay_b32_decode, replay_extras_decode and
+# replay screen), b32_decode, replay_extras_decode and
 # replay_link_parse: reading a code someone else made is the WEB's job, and the
 # extension only ever writes its own. wasm/msg_exports_check.mjs fails the build
 # if a decoder comes back or an encoder goes missing.
@@ -1177,7 +1178,7 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 # opening a bubble needs it and it is not optional at any size.
 WASM_MSG_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/anim_plan.c \
-                src/replay.c src/replay_extras.c $(SHARED)/wasm/libc.c \
+                src/replay.c src/replay_extras.c $(SHARED)/b32.c $(SHARED)/wasm/libc.c \
                 wasm/wasm_api.c wasm/wasm_msg_api.c
 
 WASM_MSG_EXPORTS := \
@@ -1301,7 +1302,7 @@ wasm-msg-size: build/msg.wasm
 # Nothing here is committed any more - CI builds the shipped modules in the lane
 # that ships them (scripts/wasm_build.sh), so there is no committed artifact to
 # reproduce as a baseline.
-WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
+WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/replay.c src/replay_steps.c \
                 src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/anim_plan.c \
                 src/random_strategy.c \
@@ -1753,13 +1754,13 @@ COV_BRANCH_MIN ?= 74
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
                   hand_layout bot_drive bot_roster analyse ask table_wire netwire netclient
-# deal_rng and sha256 are in the SAME gate, from their new home. They left this
+# deal_rng, sha256 and b32 are in the SAME gate, from their new home. They left this
 # list's `src/` prefix behind when they moved to shared/, and a filter that no
 # longer matches does not fail - gcovr simply reports the file it cannot find as
 # nothing at all, which is how a shared primitive quietly stops being measured.
 # Anchored loosely (.*) because gcovr matches these against the path it resolved,
 # which is absolute.
-COV_SHARED     := deal_rng sha256
+COV_SHARED     := deal_rng sha256 b32
 COV_FILTERS    := $(foreach f,$(COV_KERNEL),--filter 'src/$(f)\.c') \
                   $(foreach f,$(COV_SHARED),--filter '.*shared/c/$(f)\.c')
 

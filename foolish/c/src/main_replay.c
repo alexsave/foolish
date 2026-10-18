@@ -140,7 +140,7 @@ static int decode_link(const char *link, int first) {
     static ReplayExtras x;
     const int n = replay_link_parse(link, code, (int)sizeof code);
     if (n <= 0) { fprintf(stderr, "not a replay code: \"%s\"\n", link); return 2; }
-    const int nb = replay_b32_decode(code, bytes, (int)sizeof bytes);
+    const int nb = b32_decode(code, bytes, (int)sizeof bytes);
     ReplaySummary s;
     int r = nb > 0 ? replay_summary_v6(bytes, nb, &s) : -REPLAY_ECAP;
     const int dn = r < 0 ? r : replay_decode(bytes, nb, dec, (int)sizeof dec);
@@ -152,7 +152,7 @@ static int decode_link(const char *link, int first) {
     const ReplayExtras *names = NULL;
     const int ns = extras_segment(link, code, n, seg, (int)sizeof seg);
     if (ns > 0) {
-        const int bl = replay_b32_decode(seg, blob, (int)sizeof blob);
+        const int bl = b32_decode(seg, blob, (int)sizeof blob);
         const int na = bl > 0 ? replay_extras_decode(blob, bl, s.num_players, s.moves, answer, (int)sizeof answer) : -1;
         if (na > 0 && replay_extras_unpack(answer, na, &x) == na) names = &x;
         else fprintf(stderr, "extras: unreadable (%d), printing without them\n", na);

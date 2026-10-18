@@ -584,7 +584,7 @@ int main(int argc, char **argv) {
     if (make_code() <= 0) { fprintf(stderr, "the fixture does not encode (%d)\n", g_code_len); return 1; }
     if (argc > 1 && !strcmp(argv[1], "--code")) {
         static char b32[8192];
-        replay_b32_encode(g_code, g_code_len, b32, (int)sizeof b32);
+        b32_encode(g_code, g_code_len, b32, (int)sizeof b32);
         printf("%s\n", b32);
         return 0;
     }

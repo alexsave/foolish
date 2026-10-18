@@ -15,7 +15,7 @@
 // [B^(v-0.5), B^(v+0.5)) contains x - and can only differ where the true value
 // sits within ~1e-12 of a bucket edge, on a quantization already 7% coarse.
 #include "replay_extras.h"
-#include "replay.h"   // replay_b32_encode - the code and the link share one alphabet
+#include "replay.h"   // b32_encode - the code and the link share one alphabet
 #include <stdint.h>
 #include <string.h>
 
@@ -428,7 +428,7 @@ int replay_extras_redact(const unsigned char *blob, int blob_len, int player_cou
 // ---------- the whole shareable link ----------------------------------------
 
 // The replay code out of a pasted link. See replay_extras.h for why stripping
-// is its own step and not something replay_b32_decode can be trusted to do.
+// is its own step and not something b32_decode can be trusted to do.
 static int b32_char(char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '2' && c <= '7');
 }
@@ -537,7 +537,7 @@ int replay_extras_link_styled(const char *moves,
     // NUL-terminated in the caller's buffer and the function declined to say so.
     if (w >= cap - 2) return bare;
     out[w++] = '-';
-    n = replay_b32_encode(blob, n, out + w, cap - w);
+    n = b32_encode(blob, n, out + w, cap - w);
     if (n < 0) { out[bare] = 0; return bare; }
     return w + n;
 }

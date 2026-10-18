@@ -2333,7 +2333,7 @@ static int extras_link_check(void) {
     }
     // The segment decodes back to the blob the codec would write for that roster.
     {
-        int b = replay_b32_decode(out + blen + 1, blob, sizeof(blob));
+        int b = b32_decode(out + blen + 1, blob, sizeof(blob));
         int w = 0, nw;
         args[w++] = REPLAY_EXTRAS_FLAG_NAMES;
         args[w++] = 2;

@@ -6459,7 +6459,7 @@ static void test_send_accept_leg(void) {
         ReplaySummary sum;
         CHECK(replay_summary_v6(code, cn, &sum) == REPLAY_EOK && sum.num_players == np && sum.fool == fool,
               "leg %dp: the replay code is not this game's", np);
-        const int tn = replay_b32_encode(code, cn, text, sizeof(text));
+        const int tn = b32_encode(code, cn, text, sizeof(text));
         CHECK(tn > 7, "leg %dp: a %d-character code routes as a legacy short code", np, tn);
     }
     CHECK(games == 3, "leg: %d of 3 games reached a fool", games);

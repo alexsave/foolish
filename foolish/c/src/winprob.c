@@ -315,7 +315,7 @@ static void wp_names(const char *extras_b32, int n_players, int move_count,
     memset(text_out, 0, (size_t)n_players * WINPROB_NAME_MAX);
     if (!extras_b32 || !*extras_b32) return;
     static unsigned char blob[4096], packed[8192];
-    int blob_len = replay_b32_decode(extras_b32, blob, (int)sizeof blob);
+    int blob_len = b32_decode(extras_b32, blob, (int)sizeof blob);
     if (blob_len <= 0) return;
     int n = replay_extras_decode(blob, blob_len, n_players, move_count, packed, (int)sizeof packed);
     if (n < 0) return;

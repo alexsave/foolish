@@ -17,7 +17,7 @@ function ok(rc: number, refusal: (code: number) => Error): number {
 /**
  * The replay code out of whatever a person pasted - the kernel's
  * replay_link_parse. Building a link and reading one back are two halves of the
- * same format, and this is the half that has to REFUSE: replay_b32_decode is
+ * same format, and this is the half that has to REFUSE: b32_decode is
  * deliberately tolerant, so an unstripped "https" prefix would decode to a
  * different game rather than fail. Throws when the input is not a code.
  */

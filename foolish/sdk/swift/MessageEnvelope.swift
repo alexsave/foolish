@@ -190,7 +190,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// and the URL layer is the one thing here that is Swift's" - and #113
     /// reversed it on the campaign's own test: a watch would build exactly the
     /// same characters. The prefix is a constant, the dash is already the
-    /// codec's (replay_b32_decode stops at it), and the roster's trimming rule
+    /// codec's (b32_decode stops at it), and the roster's trimming rule
     /// is a format. What is genuinely per-platform is the `URL` type, not the
     /// text inside it, so the boundary sits here and nowhere higher.
     public static func replayLink(code: String, names: [String]) -> URL {

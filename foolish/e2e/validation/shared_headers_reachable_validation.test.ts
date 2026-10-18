@@ -263,7 +263,8 @@ test('every build system that compiles the kernel also compiles the shared sourc
     //
     // The expected set is PER BUILD, and it is what that build's own sources
     // include today: uttt deals no cards, so it has no deal_rng.c; the card
-    // kernel and the third product code nothing in base32 or mixed radix. (The
+    // kernel writes its replay codes in base32 and codes nothing in mixed radix,
+    // and the third product codes in neither. (The
     // sim takes $(wildcard shared/c/*.c), so it compiles b32.c and mixrad.c too;
     // what it must not lose is the pair it links.)
     // wire_check.c follows the message coders: the replay page's WEB_WASM_SRC
@@ -277,11 +278,12 @@ test('every build system that compiles the kernel also compiles the shared sourc
     // the card kernel and the third product decide their lobbies over scalar
     // arguments with no roster struct.
     const KERNEL = ['deal_rng.c', 'sha256.c'];
+    const CARDS = [...KERNEL, 'b32.c'];
     const NEWER = ['deal_rng.c', 'sha256.c', 'b32.c', 'mixrad.c', 'text_util.c', 'wire_check.c', 'msg_seat_tag.c',
         'msg_lobby_roster.c'];
     const builds: Array<{ make: string; variable: string; shared: string[] }> = [
-        { make: 'foolish/c', variable: 'CORE_SRC', shared: KERNEL },
-        { make: 'foolish/foolyard', variable: 'KERNEL_SRC', shared: KERNEL },
+        { make: 'foolish/c', variable: 'CORE_SRC', shared: CARDS },
+        { make: 'foolish/foolyard', variable: 'KERNEL_SRC', shared: CARDS },
         { make: 'werewolf/c', variable: 'CORE_SRC', shared: KERNEL },
         { make: 'uttt/c', variable: 'SRC', shared: ['sha256.c', 'b32.c', 'mixrad.c', 'text_util.c', 'wire_check.c'] },
         { make: 'uttt/c', variable: 'WEB_WASM_SRC', shared: ['b32.c', 'mixrad.c', 'text_util.c'] },

@@ -25,29 +25,29 @@ static int g_last_replay_error = 0;
 // with the server by construction (shared replay.c), so a web-generated code
 // plays natively.
 
-// base32 lives in replay.c (replay_b32_decode / replay_b32_encode).
+// base32 is shared/c/b32.c (b32_decode / b32_encode).
 
 // BYTES AS BASE32, for the one text layer that is not a replay code: the /m/
 // bubble URL the iMessage extension puts an envelope in. See ios_api.h.
 //
 // Swift had its own copy of this alphabet and its own 5-bit packing loop. The
-// web never did - server/api pulls the same replay_b32_encode out of the wasm -
+// web never did - server/api pulls the same b32_encode out of the wasm -
 // so Swift was the only host restating a codec the kernel exports, and the only
 // test it had encoded and then decoded with the same file.
 int fio_b32_encode(const uint8_t *in, int n, char *out, int cap) {
     if (!out || n < 0 || (n > 0 && !in)) return FIO_EBADARG;
-    const int w = replay_b32_encode(in, n, out, cap);
+    const int w = b32_encode(in, n, out, cap);
     return w < 0 ? FIO_ECAP : w;
 }
 
-// ...and its inverse, the same replay_b32_decode the web's kernelB32Decode calls
+// ...and its inverse, the same b32_decode the web's kernelB32Decode calls
 // through the wasm: lower case reads as upper, a character outside the alphabet
 // is skipped, and '-' ENDS the payload (a link hangs its suffix there). Swift
 // once decoded with a loop of its own that skipped the '-' too, folding a
 // suffix's bits into the bytes it returned.
 int fio_b32_decode(const char *s, uint8_t *out, int cap) {
     if (!s || cap < 0 || (cap > 0 && !out)) return FIO_EBADARG;
-    const int n = replay_b32_decode(s, out, cap);
+    const int n = b32_decode(s, out, cap);
     return n < 0 ? FIO_ECAP : n;
 }
 
@@ -68,7 +68,7 @@ int fio_replay_encode_v6_b32(char *out, int cap) {
     int enclen = replay_encode_v6_from_game(&s->game, s->deal_seed, FOOLISH_SEED_LEN,
                                             1 << 30, encout, sizeof(encout));
     if (enclen < 0) { g_last_replay_error = -enclen; return FIO_EREPLAY; }
-    int w = replay_b32_encode(encout, enclen, out, cap);
+    int w = b32_encode(encout, enclen, out, cap);
     if (w < 0) return FIO_ECAP;
     return w;
 }
@@ -171,7 +171,7 @@ int fio_replay_last_events_packed(const char *code, int viewer, int atoms_before
     g_last_replay_error = 0;
 
     static unsigned char intbuf[16384];
-    int ilen = replay_b32_decode(code, intbuf, sizeof(intbuf));
+    int ilen = b32_decode(code, intbuf, sizeof(intbuf));
     if (ilen < 0) return FIO_ECAP;
 
     // What each step IS (kind + acting seat), so the run can be found without
@@ -239,7 +239,7 @@ int fio_replay_decode_packed(const char *code, unsigned char *out, int cap) {
     if (!code) return FIO_EBADARG;
     g_last_replay_error = 0;
     static unsigned char intbuf[16384];
-    int ilen = replay_b32_decode(code, intbuf, sizeof(intbuf));
+    int ilen = b32_decode(code, intbuf, sizeof(intbuf));
     if (ilen < 0) return FIO_ECAP;
     int dlen = replay_decode(intbuf, ilen, out, cap);
     if (dlen < 0) { g_last_replay_error = -dlen; return FIO_EREPLAY; }
