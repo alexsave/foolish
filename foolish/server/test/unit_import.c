@@ -239,7 +239,7 @@ static void failing_checks(void) {
     // A malformed file is an I/O error too, and refusing it frees what was
     // read before the bad byte (the rows so far, the row and the field it was
     // in, and a file read before it): LeakSanitizer holds this under
-    // check-asan on Linux, where fuzz/fz_import.c found three such leaks.
+    // check-asan on Linux, where foolish/server/fuzz/fz_import.c found three such leaks.
     static const char *const MALFORMED[] = { "games.csv", "bot_hands.csv" };
     for (size_t i = 0; i < sizeof MALFORMED / sizeof MALFORMED[0]; i++) {
         char dir[320], name[32];

@@ -34,7 +34,7 @@ int tsb_create_table(const char *name) {
     int port;
     bool tls = true;
     if (!ep || cb_aws_url_parse(ep, host, sizeof host, &port, &tls, base, sizeof base) != CB_OK || tls) {
-        fprintf(stderr, "tsb: AWS_ENDPOINT_URL_DYNAMODB must be DynamoDB Local's http:// URL (ops/dynamo_local.sh)\n");
+        fprintf(stderr, "tsb: AWS_ENDPOINT_URL_DYNAMODB must be DynamoDB Local's http:// URL (providers/aws/ops/dynamo_local.sh)\n");
         return -1;
     }
     const char *tmp = getenv("TMPDIR");

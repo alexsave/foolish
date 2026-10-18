@@ -1,6 +1,6 @@
 // unit_oom.c - every allocation a request makes, failed one at a time.
 //
-// test/oom.h replaces malloc, calloc, realloc and free in this program only.
+// core/test/oom.h replaces malloc, calloc, realloc and free in this program only.
 // Each sweep runs one operation with its k-th allocation failing, for k = 0,
 // 1, 2, ... until a run makes no failure, and holds every run to three rules:
 //   * it returns: no crash, no hang (the ASan lane runs it unfailed, once);

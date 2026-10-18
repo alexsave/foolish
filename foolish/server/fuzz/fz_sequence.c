@@ -28,7 +28,7 @@
 //
 // DETERMINISM. The deal seed, the bot pick and every id come from
 // cb_random_bytes, which this target replaces with a stream seeded per run
-// (src/util/uuid.c is linked out; fuzz.mk FUZZ_EXCLUDE_sequence), so a saved
+// (core/src/util/uuid.c is linked out; fuzz.mk FUZZ_EXCLUDE_sequence), so a saved
 // input replays the same game.
 //
 // The input is a program: one byte picks a step, the next bytes its arguments

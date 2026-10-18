@@ -1,5 +1,5 @@
 // import.c - `cbase-import <export dir>`: the Supabase export into a c_base
-// store. The work is src/store/store_import.c (store_import.h); this is the
+// store. The work is foolish/server/src/store/store_import.c (store_import.h); this is the
 // command around it.
 //
 //   CBASE_STORE=sqlite CBASE_DB=./cbase.sqlite build/cbase-import migrate/out
@@ -11,7 +11,7 @@
 // provisioned capacity, and never giving up on a throttle.
 //
 // --seed-bots writes the schema's 49 bots into a store that has none (a fresh
-// DynamoDB table; ops/deploy.sh runs it after every deploy) and leaves a store
+// DynamoDB table; providers/aws/ops/deploy.sh runs it after every deploy) and leaves a store
 // with bots alone.
 //
 // --reindex-ratings moves every rating row to the leaderboard's sparse,

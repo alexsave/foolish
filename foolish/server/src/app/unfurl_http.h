@@ -18,7 +18,7 @@
 //
 // The answer: 200 text/html; charset=utf-8, Cache-Control public, max-age=300,
 // title + description + robots noindex, follow + og:* + twitter:* (the
-// strings test/fixture_unfurl.h holds), a meta refresh to https://foolish.cards/
+// strings foolish/server/test/fixture_unfurl.h holds), a meta refresh to https://foolish.cards/
 // and a plain link to it. 404 for an empty payload or a path with another
 // slash in it, as Next answered. HEAD is the router's (router.h): GET's
 // headers, no body. No API key: a crawler sends none.

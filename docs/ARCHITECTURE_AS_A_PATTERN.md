@@ -327,7 +327,7 @@ Items 1, 2 and 6 were Postgres findings, and their suites (`e2e/db_platform_gran
 3. **Non-members could edit a lobby.**
    The lobby endpoints removed whoever the request body named and never checked that the caller was seated, and the add-a-bot endpoint checked no caller at all.
    The web relied on the first as a shipped "remove player" feature, so it was a policy question and not a silent fix: the behaviour was written down as a decision in the plan, and then closed in C, where the seat is resolved from the authenticated id and a caller who is not seated is refused with a named code.
-   Held by **seat-from-auth** (once `e2e/security_seat_from_auth.test.ts` and `e2e/table_server_seat.test.ts`, now `a_stranger_changes_nothing` and its neighbours in `c_base/test/unit_app.c`): the seat a request acts as comes from the token and only from the token, for the move endpoint and for every lobby operation, and a body-supplied id never selects the actor.
+   Held by **seat-from-auth** (once `e2e/security_seat_from_auth.test.ts` and `e2e/table_server_seat.test.ts`, now `a_stranger_changes_nothing` and its neighbours in `foolish/server/test/unit_app.c`): the seat a request acts as comes from the token and only from the token, for the move endpoint and for every lobby operation, and a body-supplied id never selects the actor.
 4. **15 full-state readers were reachable from the web bundle.**
    Found by the **static bundle boundary** test (`e2e/security_client_boundary.test.ts`), which bundles every browser entry with tree-shaking on and fails if any denied module, symbol or wasm export survives into it.
    The denied list is 15 named readers of an unmasked kernel game.

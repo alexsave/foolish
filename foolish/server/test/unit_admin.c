@@ -1,5 +1,5 @@
 // unit_admin.c - the admin console's routes, driven through cb_handle with a
-// fake store (test/lib_admin_fakestore.c): the gate, paging, the write
+// fake store (core/test/lib_admin_fakestore.c): the gate, paging, the write
 // confirmation, redaction, the log tail and the games list.
 #include "t.h"
 #include "cbase/app.h"

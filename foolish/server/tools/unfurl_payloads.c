@@ -1,4 +1,4 @@
-// unfurl_payloads.c - prints the /m/<payload> cases test/fixture_unfurl.h holds.
+// unfurl_payloads.c - prints the /m/<payload> cases foolish/server/test/fixture_unfurl.h holds.
 //
 // Every envelope is made by the kernel: a fixture the kernel's own tests sealed
 // (foolish/e2e/msg_wire.test.ts, foolish/c/tests/msg_wire_test.c) is decoded with
@@ -10,7 +10,7 @@
 // goes after /m/ in the URL (already percent-encoded where a case needs it).
 // The goldens are what the TypeScript route (foolish/src/app/m/[payload]/
 // layout.tsx) answered for these payloads under `next start`; see the header
-// comment of test/fixture_unfurl.h for the whole regeneration recipe.
+// comment of foolish/server/test/fixture_unfurl.h for the whole regeneration recipe.
 //
 //   make -C c_base build/unfurl-payloads && c_base/build/unfurl-payloads
 #include "game.h"

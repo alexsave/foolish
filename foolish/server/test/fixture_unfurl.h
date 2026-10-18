@@ -1,7 +1,7 @@
 // fixture_unfurl.h - the /m/<payload> goldens unit_unfurl.c holds the C route to.
 //
 // WHERE THEY CAME FROM (2026-10-14). The payloads are kernel-made
-// (tools/unfurl_payloads.c: kernel-sealed fixtures decoded, renamed where a case
+// (foolish/server/tools/unfurl_payloads.c: kernel-sealed fixtures decoded, renamed where a case
 // needs other names, encoded again, base32'd). The tags are what the TypeScript
 // route, foolish/src/app/m/[payload]/layout.tsx generateMetadata, answered for
 // each payload, run under tsx with bots.wasm loaded, its Metadata mapped to tags
