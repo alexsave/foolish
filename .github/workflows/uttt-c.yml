@@ -35,7 +35,7 @@ jobs:
       run:
         working-directory: uttt
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # How a C file becomes an object, for every product (shared/tools/
       # c_rules.mk), tested before anything is built with it: a header edit
       # recompiles exactly its includers, a changed flag its variant, and a

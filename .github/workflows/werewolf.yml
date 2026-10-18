@@ -48,7 +48,7 @@ jobs:
       run:
         working-directory: werewolf
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # 2,390 kernel assertions plus the 115 the Swift-visible bridge answers
       # for. Both come out of `make -C c tests`, which builds deal_rng.c and
       # sha256.c from ../../shared/c - so this lane is also the check that the

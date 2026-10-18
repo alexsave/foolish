@@ -59,7 +59,7 @@ jobs:
   sim:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # No node, no libclang, no wasm toolchain: foolyard is a plain native C
       # build of foolyard/src + foolyard/clients + c/src, and tools/structgen
