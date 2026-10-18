@@ -18425,8 +18425,7 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
 // every roster brain against perturbed streams.
 static uint32_t mr_rng;
 static int mr_ri(int n) {
-    mr_rng = mr_rng * 1103515245u + 12345u;
-    return (int)((mr_rng >> 8) % (uint32_t)n);
+    return (int)((rng_lcg32(&mr_rng) >> 8) % (uint32_t)n);
 }
 
 // A random PLAYING board every seat of which is a `brain` bot, sealed into
