@@ -117,3 +117,15 @@ Fixes to make:
   The list must render identically to before b092fe333: names, bold viewer seat, fool icon.
   Note the netwire row shape change when done.
 - cb_rows_user_import is not atomic (read then write); fine for cbase-import, noted in case another caller appears.
+
+## Item: hand-rolled security follow-ups (admin token, SigV4 wipes, product fuzz)
+
+- Admin token: c_base/core/src/admin/admin.c const_eq now hashes both strings with SHA-256 and compares the digests with CRYPTO_memcmp, so neither content nor length shows in the timing (the old loop ran strlen on the secret and branched on the length).
+- SigV4 (c_base/providers/aws/src/aws/sigv4.c): OPENSSL_cleanse on derive()'s k0/kd/kr/ks, hmac()'s k/ipad/opad/inner (also on the early return), the signing key kk in cb_sigv4_debug, and the cache entry that a new key replaces (it held the old secret and key).
+- Fuzz targets: shared/fuzz/ (own Makefile, `make -C shared/fuzz build/<t>`, `make seeds`): msg_whole (shared envelope reader + link text + seat tag, under pickemup's spec), pickemup, tallybones, chuiniu (message bytes + link text, decode/encode/re-decode property), uttt (utm_*, utb_* header/link readers), foolish_wire (msg_decode, msg_chain_key, replay_decode, awire_decode). Seeds in shared/fuzz/corpus/<t> come from the products' real encoders (fz_seeds in each target). All six link and ran 2000 corpus-only runs clean. Nightly: .github/workflows/product_fuzz_nightly.yml (10 min per target). Werewolf skipped (paused).
+- Gaps: foolish_wire has no started-game seed (needs a played Game and msg_seal; add one from msg_wire_test's play_game); utb_msg_decode is only fed a blank board so it stops at the CRC; the re-decode abort in the whole-product targets is a design property (pk_msg.h says a host cannot emit a payload it would refuse) and a nightly failure there is a real finding.
+
+Owed tests (files written, NOT yet mutation-checked):
+- shared/c/deal_rng_openssl_test.c and shared/c/sha256_openssl_test.c (native, link -lcrypto; both pass, 1600 and 4522 assertions, under 1 s). Mutate: drop the feed-forward add in deal_rng_block; change one padding constant in sha256.c. Neither is wired into a Makefile or CI lane yet (they need OpenSSL on the link line).
+- c_base/providers/aws/test/unit_sigv4.c hmac_long_key_boundaries (secrets of 1, 59, 60, 61, 62, 100, 127 chars against libcrypto HMAC, the kept key re-signed). Not run (c_base build is over the 5 s budget). Mutate: hash the key at klen >= 64 instead of > 64 in hmac().
+- Wipe tests are not possible from outside (the buffers are locals); check once by reading the asm or with a valgrind-style stack scan if wanted.
