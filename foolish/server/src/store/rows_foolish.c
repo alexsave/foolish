@@ -1132,7 +1132,7 @@ bool cb_rows_bot_of(const cb_item *it, cb_bot_row *b) {
     if (!s_of(it, "id", b->id, sizeof b->id) || !s_of(it, "nickname", b->nickname, sizeof b->nickname) ||
         !s_of(it, "strategy_key", b->strategy_key, sizeof b->strategy_key))
         return false;
-    b->elo_rating = (int32_t)cb_item_n_or(it, "elo_rating", 1000);
+    b->elo_rating = (int32_t)cb_item_n_or(it, "elo_rating", TABLE_RATING_START);
     b->previous_elo = (int32_t)cb_item_n_or(it, "previous_elo", -1);
     b->games_played = (int32_t)cb_item_n_or(it, "games_played", 0);
     b->created_at = cb_item_n_or(it, "created_at", 0);
@@ -1144,7 +1144,7 @@ bool cb_rows_rating_of(const cb_item *it, cb_rating_row *r) {
     memset(r, 0, sizeof *r);
     if (!s_of(it, "user_id", r->user_id, sizeof r->user_id)) return false;
     s_of(it, "username", r->username, sizeof r->username);
-    r->elo_rating = (int32_t)cb_item_n_or(it, "elo_rating", 1000);
+    r->elo_rating = (int32_t)cb_item_n_or(it, "elo_rating", TABLE_RATING_START);
     r->previous_elo = (int32_t)cb_item_n_or(it, "previous_elo", -1);
     r->games_played = (int32_t)cb_item_n_or(it, "games_played", 0);
     r->updated_at = cb_item_n_or(it, "updated_at", 0);
