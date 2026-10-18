@@ -4109,9 +4109,9 @@ static void test_replay_answers_or_refuses_any_bytes(void) {
     uint64_t st = 0x5eed5eed5eedULL;
     int answered = 0, refused = 0, played = 0, bad_decode = 0, bad_summary = 0, bad_play = 0;
     for (int i = 0; i < 3000; i++) {
-        int n = 1 + (int)(rng_xorshift64(&st) % (i < 2000 ? 4 : 64));
+        int n = 1 + (int)(rng_splitmix64(&st) % (i < 2000 ? 4 : 64));
         unsigned char *code = malloc((size_t)n);
-        for (int k = 0; k < n; k++) code[k] = (unsigned char)rng_xorshift64(&st);
+        for (int k = 0; k < n; k++) code[k] = (unsigned char)rng_splitmix64(&st);
         if (i == 0) { n = 64; free(code); code = malloc(64); for (int k = 0; k < 64; k++) code[k] = (unsigned char)((k * 37 + 11) & 0xff); }
         const int d = replay_decode(code, n, dec, (int)sizeof dec);
         if (d > 0) {
@@ -9364,9 +9364,9 @@ static void test_extras_link_short_buffer_answers_itself_twice(void) {
 // inside the curve; the blob's size is a function of the roster and the move
 // count - rather than as agreement with a frozen copy of the format.
 
-// shared/c/rng.h's xorshift64, seeded, so the corpus is the same on every machine.
+// shared/c/rng.h's splitmix64, seeded, so the corpus is the same on every machine.
 static uint64_t ex_rng_state;
-static double ex_rnd(void) { return rng_unit(rng_xorshift64(&ex_rng_state)); }
+static double ex_rnd(void) { return rng_unit(rng_splitmix64(&ex_rng_state)); }
 static int ex_rndi(int k) { return (int)(ex_rnd() * k); }
 
 typedef struct { unsigned char b[96]; int n; } ExName;
