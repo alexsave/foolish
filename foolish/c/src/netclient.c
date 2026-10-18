@@ -575,7 +575,18 @@ typedef struct {
     uint16_t bytes_len;
 } slot;
 
-static slot     g_slots[NC_PUMP_MAX];
+// Two pools in one array. The host's intents take [0, NC_PUMP_MAX) and only
+// those: what the host is refused is what the host itself has waiting. This
+// file's own refetches (a reconcile, a catch-up, a board's read) take
+// [NC_PUMP_MAX, NC_SLOTS), so background work never refuses a host intent,
+// however fast games go. They are one per game and carry no arena bytes;
+// NC_OWN_MAX is NC_SUBS_MAX so a reconnect's catch-up of every game the host
+// holds a stream of fits at once. A cap on own work inside one shared pool was
+// the other way: it still lets own work shrink what the host has, by an amount
+// that depends on timing, where this pool gives the host a fixed NC_PUMP_MAX.
+#define NC_OWN_MAX NC_SUBS_MAX
+#define NC_SLOTS   (NC_PUMP_MAX + NC_OWN_MAX)
+static slot     g_slots[NC_SLOTS];
 // What the waiting intents carry beyond a game id: most carry nothing, a move a
 // few bytes, a chat line or an ask up to NC_BODY_MAX. Shared rather than a full
 // NcIntent per slot, which was most of the pump's memory.
@@ -680,11 +691,11 @@ static void slot_intent(const slot *sl, NcIntent *in) {
 // The lowest offset in g_arena where `need` bytes overlap no waiting slot's, or -1.
 static int arena_find(int need) {
     if (need == 0) return 0;
-    for (int c = -1; c < NC_PUMP_MAX; c++) {
+    for (int c = -1; c < NC_SLOTS; c++) {
         int at = c < 0 ? 0 : g_slots[c].state != SLOT_FREE && slot_extra(&g_slots[c]) ? g_slots[c].at + slot_extra(&g_slots[c]) : -1;
         if (at < 0 || at + need > NC_ARENA_BYTES) continue;
         int clear = 1;
-        for (int i = 0; i < NC_PUMP_MAX && clear; i++) {
+        for (int i = 0; i < NC_SLOTS && clear; i++) {
             const slot *o = &g_slots[i];
             int n = slot_extra(o);
             if (o->state != SLOT_FREE && n && at < o->at + n && o->at < at + need) clear = 0;
@@ -714,7 +725,7 @@ static void drop(slot *sl, uint8_t why, int status) {
 }
 
 static void drop_user_slots(uint8_t why, int status) {
-    for (int i = 0; i < NC_PUMP_MAX; i++)
+    for (int i = 0; i < NC_SLOTS; i++)
         if (g_slots[i].state != SLOT_FREE && needs_user(g_slots[i].kind)) drop(&g_slots[i], why, status);
 }
 
@@ -747,8 +758,7 @@ static void book_for(const NwSession *s) {
     memset(g_gates, 0, sizeof g_gates);
     memset(g_subs, 0, sizeof g_subs);
     g_n_unsubs = 0;
-    for (int i = 0; i < NC_PUMP_MAX; i++)
-        if (g_slots[i].own) memset(&g_slots[i], 0, sizeof g_slots[i]);
+    for (int i = NC_PUMP_MAX; i < NC_SLOTS; i++) memset(&g_slots[i], 0, sizeof g_slots[i]);
 }
 
 static int32_t backoff_ms(int attempts) {
@@ -757,11 +767,12 @@ static int32_t backoff_ms(int attempts) {
     return (int32_t)(ms < NC_RETRY_MAX_MS ? ms : NC_RETRY_MAX_MS);
 }
 
-static slot *slot_take(const NcIntent *in) {
+// A free slot of the host's pool, or of this file's own when `own`.
+static slot *slot_take(const NcIntent *in, int own) {
     int need = in->name_len + in->password_len + in->bytes_len;
     int at = arena_find(need);
     if (at < 0) return NULL;
-    for (int i = 0; i < NC_PUMP_MAX; i++) {
+    for (int i = own ? NC_PUMP_MAX : 0; i < (own ? NC_SLOTS : NC_PUMP_MAX); i++) {
         slot *sl = &g_slots[i];
         if (sl->state != SLOT_FREE) continue;
         memset(sl, 0, sizeof *sl);
@@ -778,6 +789,7 @@ static slot *slot_take(const NcIntent *in) {
         memcpy(g_arena + at + in->name_len, in->password, in->password_len);
         memcpy(g_arena + at + in->name_len + in->password_len, in->bytes, in->bytes_len);
         sl->state = SLOT_QUEUED;
+        sl->own = (uint8_t)(own != 0);
         if (++g_ticket == 0) g_ticket = 1;
         sl->ticket = g_ticket;
         return sl;
@@ -795,8 +807,11 @@ uint32_t nc_do(const NcIntent *in, int64_t now_ms) {
     int ok = build(in, now_ms) != NULL;
     g_req = kept;
     if (!ok) { g_error.why = ASK_WHY_MALFORMED; return 0; }
-    slot *sl = slot_take(in);
-    if (!sl) { g_error.why = ASK_WHY_INTERNAL; return 0; }   // NC_PUMP_MAX (or NC_ARENA_BYTES) already waiting
+    slot *sl = slot_take(in, 0);
+    // The host's NC_PUMP_MAX (or NC_ARENA_BYTES) already waiting: busy for a
+    // moment, as a throttled server is (status 0: nothing was sent). The host
+    // has its pool to itself, so this is only ever its own intents piling up.
+    if (!sl) { g_error.why = ASK_WHY_BUSY; return 0; }
     return sl->ticket;
 }
 
@@ -804,9 +819,9 @@ uint32_t nc_do(const NcIntent *in, int64_t now_ms) {
 // least `min_version` new has been applied by then. One per game at a time.
 static int refetch_queue(const char *gid, int gid_len, int64_t not_before, uint32_t min_version) {
     if (!g_signed_in || gid_len <= 0 || gid_len > NW_GID_MAX) return 0;
-    for (int i = 0; i < NC_PUMP_MAX; i++) {
+    for (int i = NC_PUMP_MAX; i < NC_SLOTS; i++) {
         slot *sl = &g_slots[i];
-        if (sl->state != SLOT_FREE && sl->own && same_id(sl->gid, sl->gid_len, gid, gid_len)) {
+        if (sl->state != SLOT_FREE && same_id(sl->gid, sl->gid_len, gid, gid_len)) {
             if (sl->state == SLOT_QUEUED && not_before < sl->not_before) sl->not_before = not_before;
             if (min_version > sl->min_version) sl->min_version = min_version;
             return 1;
@@ -817,9 +832,8 @@ static int refetch_queue(const char *gid, int gid_len, int64_t not_before, uint3
     in.kind = NC_DO_OPEN_GAME;
     in.gid_len = (uint8_t)gid_len;
     memcpy(in.gid, gid, (size_t)gid_len);
-    slot *sl = slot_take(&in);
+    slot *sl = slot_take(&in, 1);
     if (!sl) return 0;   // full: the next push that finds a gap asks again
-    sl->own = 1;
     sl->not_before = not_before;
     sl->min_version = min_version;
     return 1;
@@ -830,6 +844,23 @@ static int caught_up(const slot *sl) {
     if (!sl->own || !sl->min_version) return 0;
     gate *g = gate_find(sl->gid, sl->gid_len, 0);
     return g && (g->has_view || g->has_cast || g->has_answer) && any_top(g) >= sl->min_version;
+}
+
+// Lets go of every own refetch still waiting to be sent that is moot. The one
+// place a caught-up refetch is let go: every gate rises inside a feed and every
+// refetch is queued inside one, so the end of each feed is the moment it can
+// first be moot (and the slot is free at once, not when its time comes).
+static void own_settle(void) {
+    for (int i = NC_PUMP_MAX; i < NC_SLOTS; i++)
+        if (g_slots[i].state == SLOT_QUEUED && caught_up(&g_slots[i])) memset(&g_slots[i], 0, sizeof g_slots[i]);
+}
+
+// The host let go of game `gid`'s stream: its own refetch still waiting to be
+// sent has nobody to tell. One already sent is read as usual.
+static void own_forget(const char *gid, int gid_len) {
+    for (int i = NC_PUMP_MAX; i < NC_SLOTS; i++)
+        if (g_slots[i].state == SLOT_QUEUED && same_id(g_slots[i].gid, g_slots[i].gid_len, gid, gid_len))
+            memset(&g_slots[i], 0, sizeof g_slots[i]);
 }
 
 const NcRequest *nc_next_request(int64_t now_ms) {
@@ -844,16 +875,15 @@ const NcRequest *nc_next_request(int64_t now_ms) {
             return &g_req;
         }
     }
-    for (int pass = 0; pass < NC_PUMP_MAX; pass++) {
+    for (int pass = 0; pass < NC_SLOTS; pass++) {
         slot *pick = NULL;
-        for (int i = 0; i < NC_PUMP_MAX; i++) {
+        for (int i = 0; i < NC_SLOTS; i++) {
             slot *sl = &g_slots[i];
             if (sl->state != SLOT_QUEUED || sl->not_before > now_ms) continue;
             if (needs_user(sl->kind) && (g_refresh_id || g_refresh_not_before > now_ms)) continue;
             if (!pick || sl->ticket - pick->ticket > 0x7fffffffu) pick = sl;   // the oldest ticket first
         }
         if (!pick) return NULL;
-        if (caught_up(pick)) { drop(pick, 0, 0); continue; }
         if (needs_user(pick->kind) && !g_signed_in) { drop(pick, ASK_WHY_AUTH, 0); continue; }
         NcIntent in;
         slot_intent(pick, &in);
@@ -1007,7 +1037,7 @@ static const NcDone *answered(uint32_t id, int status, const uint8_t *body, int 
     if (len < 0 || (len > 0 && !body)) len = 0;
     if (id == g_refresh_id) { refresh_answered(status, body, len, now_ms); return NULL; }
     slot *sl = NULL;
-    for (int i = 0; i < NC_PUMP_MAX; i++)
+    for (int i = 0; i < NC_SLOTS; i++)
         if (g_slots[i].state == SLOT_SENT && g_slots[i].sent_id == id) { sl = &g_slots[i]; break; }
     if (!sl) return NULL;   // an answer for nothing waiting (it was dropped meanwhile)
     if (status == 0 && idempotent(sl->kind) && sl->attempts + 1 < NC_PUMP_TRIES) {
@@ -1067,7 +1097,7 @@ int nc_pump_due_ms(int64_t now_ms) {
     int64_t due = -1;
     if (stream_wants_token(now_ms) && !g_refresh_id)
         due = g_refresh_not_before > now_ms ? g_refresh_not_before - now_ms : 0;
-    for (int i = 0; i < NC_PUMP_MAX; i++) {
+    for (int i = 0; i < NC_SLOTS; i++) {
         const slot *sl = &g_slots[i];
         if (sl->state != SLOT_QUEUED) continue;
         int64_t at = sl->not_before;
@@ -1192,6 +1222,7 @@ int nc_stream_unsub(int what, const char *gid, int gid_len) {
     // The last hold (a pin the host never held is let go with it).
     int told = s->state == SUB_SENT || s->state == SUB_LIVE;
     memset(s, 0, sizeof *s);
+    if (what == NW_SUB_GAME) own_forget(gid, gid_len);
     if (told && g_mq == MQ_LIVE) {
         if (g_n_unsubs == NC_SUBS_MAX) return NW_E_CAP;
         unsub *u = &g_unsubs[g_n_unsubs++];
@@ -1251,8 +1282,10 @@ static NcEvent *event_add(uint8_t kind) {
     return e;
 }
 
-// The feed's end: a session that changed during it is an event of its own.
+// The feed's end: own refetches it made moot are let go, and a session that
+// changed during it is an event of its own.
 static int events_end(void) {
+    own_settle();
     if (g_session_told != g_session_gen) {
         g_session_told = g_session_gen;
         event_add(NC_EV_SESSION);
