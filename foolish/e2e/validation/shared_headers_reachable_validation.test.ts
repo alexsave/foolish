@@ -282,7 +282,7 @@ test('every build system that compiles the kernel also compiles the shared sourc
     const NEWER = ['deal_rng.c', 'sha256.c', 'b32.c', 'mixrad.c', 'text_util.c', 'wire_check.c', 'msg_seat_tag.c',
         'msg_lobby_roster.c'];
     const builds: Array<{ make: string; variable: string; shared: string[] }> = [
-        { make: 'foolish/c', variable: 'CORE_SRC', shared: CARDS },
+        { make: 'foolish/c', variable: 'KERNEL_SRC', shared: CARDS },
         { make: 'foolish/foolyard', variable: 'KERNEL_SRC', shared: CARDS },
         { make: 'werewolf/c', variable: 'CORE_SRC', shared: KERNEL },
         { make: 'uttt/c', variable: 'SRC', shared: ['sha256.c', 'b32.c', 'mixrad.c', 'text_util.c', 'wire_check.c'] },
