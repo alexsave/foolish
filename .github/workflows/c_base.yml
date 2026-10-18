@@ -84,52 +84,89 @@ jobs:
       - name: the fuzz corpus as a regression test
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" fuzz-replay
 
-  fuzz:
-    name: make fuzz-smoke (libFuzzer, 30 s a target)
+  # THE FUZZ STAGE: one job per target, in parallel, each 30 s from its corpus
+  # (c_base_fuzz_nightly.yml is the same shape at 10 min). fuzz_targets says
+  # which: on a push to main or a dispatch every fuzz/fz_*.c; on a pull
+  # request only the targets built from a file it changes
+  # (.github/scripts/fuzz_select.sh: link line, nm reachability, the
+  # compiler's dependency files), all of them when a makefile, this workflow
+  # or the script changes, and none for, say, a doc.
+  fuzz_targets:
+    name: fuzz targets to run
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 15
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
     steps:
       # The whole history (trees only, no blobs) so a pull request can diff
       # against its base.
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           filter: blob:none
-      - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential clang libssl-dev libsqlite3-dev
-      - name: build every target
-        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" fuzz
-      # A pull request fuzzes only the targets built from a file it changes
-      # (.github/scripts/fuzz_select.sh: link line, nm reachability, the
-      # compiler's dependency files); a change to a makefile, this workflow or
-      # the script runs them all. A push to main and a dispatch run every one.
-      - name: the targets this pull request can reach
-        id: select
+      - name: dependencies (pull request)
         if: github.event_name == 'pull_request'
+        run: sudo apt-get update -q && sudo apt-get install -y -q build-essential clang libssl-dev libsqlite3-dev
+      # The selection reads the objects of the fuzz build.
+      - name: build every target (pull request)
+        if: github.event_name == 'pull_request'
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" fuzz
+      - id: list
         env:
+          EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
           FUZZ_SELECT_STATS: '1'
-        run: echo "targets=$(.github/scripts/fuzz_select.sh --base "$BASE" --head "$HEAD")" >> "$GITHUB_OUTPUT"
-      - name: each target for 30 s from its corpus
-        env:
-          EVENT: ${{ github.event_name }}
-          TARGETS: ${{ steps.select.outputs.targets }}
         run: |
-          if [ "$EVENT" != pull_request ]; then
-            make -C c_base fuzz-smoke FUZZ_TIME=30
-          elif [ -z "$TARGETS" ]; then
-            echo "No fuzz target is built from a file this pull request changes: nothing to fuzz."
+          if [ "$EVENT" = pull_request ]; then
+            t=$(.github/scripts/fuzz_select.sh --base "$BASE" --head "$HEAD")
+            [ -n "$t" ] || echo "No fuzz target is built from a file this pull request changes: nothing to fuzz."
           else
-            make -C c_base fuzz-smoke FUZZ_TIME=30 FUZZ_TARGETS="$TARGETS"
+            t=$(find c_base/fuzz -maxdepth 1 -name 'fz_*.c' | sed 's|.*/fz_||; s|\.c$||' | sort | tr '\n' ' ')
           fi
+          echo "targets=$(tr ' ' '\n' <<< "$t" | sed '/^$/d' | jq -R . | jq -sc .)" | tee -a "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: fuzz-smoke ${{ matrix.target }} (30 s)
+    needs: fuzz_targets
+    # An empty list never expands into a matrix (that would fail the run).
+    if: needs.fuzz_targets.outputs.targets != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.fuzz_targets.outputs.targets) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential clang libssl-dev libsqlite3-dev
+      - name: build
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" build/fuzz/${{ matrix.target }}
+      - name: 30 s from its corpus
+        run: make -C c_base fuzz-smoke FUZZ_TIME=30 FUZZ_TARGETS=${{ matrix.target }}
       - name: the inputs that crashed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-crashes
-          path: c_base/build/fuzz-crashes
+          name: fuzz-crashes-${{ matrix.target }}
+          path: c_base/build/fuzz-crashes/${{ matrix.target }}
           if-no-files-found: ignore
           retention-days: 30
+
+  # One check for the whole stage, green when every selected target passed or
+  # none was selected (the matrix skipped), and what deploy waits on.
+  fuzz_done:
+    name: make fuzz-smoke (every selected target)
+    needs: [fuzz_targets, fuzz]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          LIST: ${{ needs.fuzz_targets.result }}
+          FUZZ: ${{ needs.fuzz.result }}
+        run: |
+          echo "target list: $LIST, targets: $FUZZ"
+          [ "$LIST" = success ] && { [ "$FUZZ" = success ] || [ "$FUZZ" = skipped ]; }
 
   # c_base/docs/COVERAGE.md: line and branch floors, and no function that no
   # test calls (tools/cov_floor.txt names the ones allowed, with a reason).
@@ -222,7 +259,7 @@ jobs:
   deploy:
     name: deploy to Lambda
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    needs: [check, asan, fuzz, dynamo, ops, bootstrap]
+    needs: [check, asan, fuzz_done, dynamo, ops, bootstrap]
     runs-on: ubuntu-24.04
     # One deploy at a time, and the newest always deploys: the workflow's
     # concurrency group above. No job-level group here: a second queue would
