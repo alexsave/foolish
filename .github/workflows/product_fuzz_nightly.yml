@@ -1,0 +1,48 @@
+# The product iMessage byte-decoder fuzz targets (shared/fuzz: msg_whole for
+# pickemup/tallybones/chuiniu, each product's own message reader, uttt's big
+# game header, foolish's FMSG/replay/awire readers), every night for 10 minutes
+# each, one runner per target. Sibling of c_base_fuzz_nightly.yml: c_base's
+# Makefile does not link the product kernels, so these build from
+# shared/fuzz/Makefile. A crash fails the target's job and its input is
+# uploaded: minimise it, add it to shared/fuzz/corpus/<target> and as a unit
+# test, and fix it.
+name: product fuzz (nightly)
+
+on:
+  schedule:
+    - cron: '47 6 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }} (10 min)
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [msg_whole, pickemup, tallybones, chuiniu, uttt, foolish_wire]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential clang
+      - name: build
+        run: make -C shared/fuzz build/${{ matrix.target }}
+      - name: fuzz
+        run: |
+          set -e
+          t=${{ matrix.target }}
+          cd shared/fuzz
+          mkdir -p build/work build/crashes/$t
+          cp corpus/$t/* build/work/
+          build/$t -max_total_time=600 -artifact_prefix=build/crashes/$t/ build/work
+      - name: the inputs that crashed
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: product-fuzz-crashes-${{ matrix.target }}
+          path: shared/fuzz/build/crashes/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30
