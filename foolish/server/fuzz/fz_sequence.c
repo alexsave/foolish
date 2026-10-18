@@ -51,7 +51,7 @@
 #include "app/pushes.h"
 #include "realtime/realtime.h"
 #include "realtime/stream_mqtt.h"
-#include "store/store.h"
+#include "store/rows_foolish.h"
 #include "util/log.h"
 #include "util/uuid.h"
 
@@ -96,8 +96,10 @@ static const char *const BOT_ID[2] = { "b0000000-0000-4000-8000-000000000001", "
 static cb_ctx g_ctx;
 static cb_config g_cfg;
 static cb_store *g_store;
-static cb_store_ops g_ops;               // the store's ops with game_commit wrapped
-static const cb_store_ops *g_real;
+static const cb_store_ops *g_real;      // the store's ops
+static cb_rows_ops g_rows;              // the store's rows with game_commit wrapped
+static const cb_rows_ops *g_real_rows;
+static cb_store_app g_app;              // the store's app, carrying g_rows
 static int64_t g_now;
 static char g_token[N_USERS][CB_JWT_MAX];
 // Accounts this run deleted: their tokens still verify, and nothing may answer them.
@@ -125,7 +127,7 @@ static int g_steal;   // the next game_commit finds the row moved on by another 
 static int64_t stored_version(const char *gid) {
     cb_game_row g;
     memset(&g, 0, sizeof g);
-    int rc = g_real->game_get(g_store, gid, &g);
+    int rc = g_real_rows->game_get(g_store, gid, &g);
     int64_t v = rc == CB_OK ? g.version : -1;
     cb_game_row_free(&g);
     return v;
@@ -142,7 +144,7 @@ static int watched_commit(cb_store *s, const cb_game_commit *c) {
         FZ_CHECK(rc == CB_OK || rc == CB_E_CONFLICT);   // CONFLICT: no such game
     }
     int64_t before = stored_version(c->row->id);
-    int rc = g_real->game_commit(s, c);
+    int rc = g_real_rows->game_commit(s, c);
     int64_t after = stored_version(c->row->id);
     if (rc == CB_OK) {
         FZ_CHECK(before == c->expected_version);
@@ -160,7 +162,7 @@ static int watched_commit(cb_store *s, const cb_game_commit *c) {
 static bool plant_marker(const char *gid) {
     cb_game_row g;
     memset(&g, 0, sizeof g);
-    if (g_real->game_get(g_store, gid, &g) != CB_OK) { cb_game_row_free(&g); return false; }
+    if (g_real_rows->game_get(g_store, gid, &g) != CB_OK) { cb_game_row_free(&g); return false; }
     char pk[64];
     snprintf(pk, sizeof pk, "GAME#%s", gid);
     const cb_iset up[] = { { CB_AVBOOL("needs_bots", true), CB_SET_TO } };
@@ -183,7 +185,7 @@ static TableSnaps *g_snaps;
 static bool stored_table(const char *gid, Table *t, int64_t *version) {
     cb_game_row g;
     memset(&g, 0, sizeof g);
-    if (g_real->game_get(g_store, gid, &g) != CB_OK) { cb_game_row_free(&g); return false; }
+    if (g_real_rows->game_get(g_store, gid, &g) != CB_OK) { cb_game_row_free(&g); return false; }
     table_init(t, g_game, g_snaps);
     int rc = table_load(t, g.state, (int)g.state_len, g.roster, (int)g.roster_len);
     *version = g.version;
@@ -394,7 +396,7 @@ static int fz_deliver(cb_rt *rt, const cb_rt_to *to, const uint8_t *frame, size_
     } else if (to->family == CB_RT_CHAT) {
         // A chat goes to a member's own topic, only ever someone who sits there.
         FZ_CHECK(f->kind == NW_WS_CHAT && to->user_id && strcmp(to->doc_id, gid) == 0);
-        FZ_CHECK(g_real->is_member(g_store, gid, to->user_id) == 1);
+        FZ_CHECK(g_real_rows->is_member(g_store, gid, to->user_id) == 1);
     } else {
         FZ_CHECK(0);
     }
@@ -834,7 +836,7 @@ static bool listed_cb(const char *name, void *ud) {
 static bool in_scan(const char *gid) {
     listed_cb_found = false;
     listed_cb_want = gid;
-    FZ_CHECK(g_real->games_needing_bots(g_store, INT64_MAX, INT64_MIN, 0, listed_cb, NULL) >= 0);
+    FZ_CHECK(g_real_rows->games_needing_bots(g_store, INT64_MAX, INT64_MIN, 0, listed_cb, NULL) >= 0);
     return listed_cb_found;
 }
 
@@ -921,9 +923,12 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
     g_ctx.version = "fuzz";
     if (cb_store_open_sqlite(":memory:", &g_store) != CB_OK) abort();
     g_real = g_store->ops;
-    g_ops = *g_real;
-    g_ops.game_commit = watched_commit;
-    g_store->ops = &g_ops;
+    g_real_rows = cb_rows_of(g_store);
+    g_rows = *g_real_rows;
+    g_rows.game_commit = watched_commit;
+    g_app = *g_store->app;
+    g_app.rows = &g_rows;
+    g_store->app = &g_app;
     g_ctx.store = g_store;
     // Two bots that play at once.
     cb_bot_row bots[2];
@@ -935,7 +940,7 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
         bots[i].elo_rating = 1000;
         bots[i].previous_elo = -1;
     }
-    if (g_real->bots_replace(g_store, bots, 2) != CB_OK) abort();
+    if (g_real_rows->bots_replace(g_store, bots, 2) != CB_OK) abort();
     if (cb_auth_new(&g_ctx, &g_ctx.auth) != CB_OK) abort();
     g_ctx.rt = &g_rt;
     g_ctx.job_start = fz_kick;

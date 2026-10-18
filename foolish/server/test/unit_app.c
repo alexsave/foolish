@@ -230,7 +230,7 @@ static int refusal_why(const reply *r, AskRefusal *out) {
 static cb_game_row stored(const char *gid) {
     cb_game_row row;
     memset(&row, 0, sizeof row);
-    CB_STORE_CALL(g_store, game_get, gid, &row);
+    CB_ROWS_CALL(g_store, game_get, gid, &row);
     return row;
 }
 
@@ -392,7 +392,7 @@ static void create_answers_the_seat_0_envelope(void) {
     T_EQ_INT(g_fan.count, 1);
     T_EQ_INT(g_fan.joined, 1);
     T_EQ_STR(g_fan.first_joined, UID_A);
-    T_EQ_INT(CB_STORE_CALL(g_store, is_member, gid, UID_A), 1);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_A), 1);
 }
 
 static void join_add_bot_and_start(void) {
@@ -405,7 +405,7 @@ static void join_add_bot_and_start(void) {
     EnvHeader h;
     T_CHECK(env_header_read(r.body, (int)r.len, &h) && h.seat == 1 && h.version == 1);
     T_EQ_INT(version_of(gid), 1);
-    T_EQ_INT(CB_STORE_CALL(g_store, is_member, gid, UID_B), 1);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_B), 1);
     T_EQ_INT(g_fan.joined, 1);
     T_EQ_STR(g_fan.first_joined, UID_B);
     T_EQ_INT(g_fan.humans, 2);
@@ -672,14 +672,14 @@ static void a_lost_delete_backs_off(void) {
     T_CHECK(g_nslept >= 1 && g_nslept <= 3);
     for (int i = 0; i < g_nslept; i++) T_CHECK(g_slept[i] >= 1 && g_slept[i] <= 40);
     cb_game_row row;
-    T_EQ_INT(CB_STORE_CALL(g_store, game_get, gid, &row), CB_OK);   // still there
+    T_EQ_INT(CB_ROWS_CALL(g_store, game_get, gid, &row), CB_OK);   // still there
     cb_game_row_free(&row);
     h->steal_commits = 1;
     g_nslept = 0;
     meta("A", ASK_EXIT, gid, NULL, &r);
     T_EQ_INT(r.status, 200);
     T_EQ_INT(g_nslept, 0);
-    T_EQ_INT(CB_STORE_CALL(g_store, game_get, gid, &row), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(g_store, game_get, gid, &row), CB_E_NOT_FOUND);
 }
 
 typedef struct { int n; size_t moves; } snap_seen;
@@ -791,7 +791,7 @@ static void a_finished_game_writes_a_snapshot_and_ratings(void) {
     // The snapshot is the players', with a verified replay code.
     snap_seen seen = { 0, 0 };
     cb_snapshot_query q = { UID_B, gid, NULL, 0, false };
-    T_EQ_INT(CB_STORE_CALL(g_store, snapshots_query, &q, count_snap, &seen), 1);
+    T_EQ_INT(CB_ROWS_CALL(g_store, snapshots_query, &q, count_snap, &seen), 1);
     T_CHECK(seen.moves > 0);
     // The finished game is evicted from the cache: it is read fresh.
     T_EQ_INT(cb_row_cache_size(), 0);
@@ -928,7 +928,7 @@ static void the_last_seat_leaving_deletes_the_game(void) {
     // the sequence fuzzer, fuzz/fz_sequence.c, found it).
     T_EQ_INT((int)r.len, 0);
     cb_game_row row;
-    T_EQ_INT(CB_STORE_CALL(g_store, game_get, gid, &row), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(g_store, game_get, gid, &row), CB_E_NOT_FOUND);
     T_EQ_INT(g_fan.left, 1);
     T_EQ_STR(g_fan.first_left, UID_A);
 }
@@ -955,11 +955,11 @@ static void commits_hand_over_their_seats(void) {
     T_EQ_INT(h->commits - commits, 2);
     T_EQ_INT(h->prev_given - given, 2);
     T_EQ_INT(h->prev_wrong, 0);
-    T_EQ_INT(CB_STORE_CALL(g_store, is_member, gid, UID_B), 1);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_B), 1);
     meta("B", ASK_EXIT, gid, NULL, &r);
     T_EQ_INT(r.status, 200);
-    T_EQ_INT(CB_STORE_CALL(g_store, is_member, gid, UID_B), 0);
-    T_EQ_INT(CB_STORE_CALL(g_store, is_member, gid, UID_A), 1);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_B), 0);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_A), 1);
     T_EQ_INT(h->prev_given - given, 3);
 
     T_EQ_INT(tm_forget_seats(g_store, gid), CB_OK);
@@ -969,13 +969,13 @@ static void commits_hand_over_their_seats(void) {
     T_EQ_INT(r.status, 200);
     T_EQ_INT(h->commits - commits, 1);
     T_EQ_INT(h->prev_given - given, 0);
-    T_EQ_INT(CB_STORE_CALL(g_store, is_member, gid, UID_B), 1);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_B), 1);
     row = stored(gid);
     T_CHECK(row.seats_exact);   // the commit vouches again
     cb_game_row_free(&row);
     meta("B", ASK_EXIT, gid, NULL, &r);
     T_EQ_INT(h->prev_given - given, 1);
-    T_EQ_INT(CB_STORE_CALL(g_store, is_member, gid, UID_B), 0);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_B), 0);
     T_EQ_INT(h->prev_wrong, 0);
 }
 
@@ -1078,7 +1078,7 @@ static void delete_account_anonymizes_stored_replays(void) {
     T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
     snap_copy before = { .n = 0 }, after = { .n = 0 };
     cb_snapshot_query q = { UID_A, gid, NULL, 0, false };
-    T_EQ_INT(CB_STORE_CALL(g_store, snapshots_query, &q, copy_snap, &before), 1);
+    T_EQ_INT(CB_ROWS_CALL(g_store, snapshots_query, &q, copy_snap, &before), 1);
     extras_names nb, na;
     T_CHECK(read_extras_names(before.row.extras, before.row.extras_len, before.row.n_players, &nb));
     T_EQ_INT(nb.n, 2);
@@ -1093,7 +1093,7 @@ static void delete_account_anonymizes_stored_replays(void) {
     cb_auth_free(g_ctx.auth);
     g_ctx.auth = NULL;
 
-    T_EQ_INT(CB_STORE_CALL(g_store, snapshots_query, &q, copy_snap, &after), 1);
+    T_EQ_INT(CB_ROWS_CALL(g_store, snapshots_query, &q, copy_snap, &after), 1);
     T_CHECK(read_extras_names(after.row.extras, after.row.extras_len, after.row.n_players, &na));
     T_EQ_INT(na.n, 2);
     T_EQ_STR(na.names[0], "ALICE");
@@ -1249,7 +1249,7 @@ static void a_taken_game_id_is_drawn_again(void) {
     T_EQ_INT(cb_table_view(&g_ctx, "fedcba987654", UID_B, &v), CB_OK);
     T_EQ_MEM(r.body, r.len, v.view, v.view_len);
     cb_view_row_free(&v);
-    T_EQ_INT(CB_STORE_CALL(g_store, is_member, g_taken, UID_B), 0);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, g_taken, UID_B), 0);
     T_EQ_INT(version_of(g_taken), 0);
     // Every draw taken: a failure, and nothing stored for C.
     g_draws = 0;
@@ -2107,7 +2107,7 @@ static void a_held_lease_skips_the_drive(void) {
     meta("A", ASK_START, gid, NULL, &r);
     T_CHECK(until_a_bot_is_due(gid));
     cb_uuid other;
-    T_EQ_INT(CB_STORE_CALL(g_store, lease_acquire, gid, g_now, CB_BOT_LEASE_MS, other), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(g_store, lease_acquire, gid, g_now, CB_BOT_LEASE_MS, other), CB_OK);
     int64_t v = version_of(gid);
     T_EQ_INT(cb_bots_drive(&g_ctx, gid), CB_OK);
     T_EQ_INT(version_of(gid), v);
@@ -2207,7 +2207,7 @@ static void a_drive_that_finds_nothing_takes_the_game_out_of_the_scan(void) {
     T_EQ_INT(cb_bots_drive(&g_ctx, gid), CB_E_NOT_FOUND);
     // The fence: a commit after the read leaves its own answer alone.
     T_EQ_INT(tm_set_scan(g_store, gid, true, g_now - 1, g_now - 1), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(g_store, bots_idle, gid, v - 1), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(g_store, bots_idle, gid, v - 1), CB_E_CONFLICT);
     row = stored(gid);
     T_CHECK(row.needs_bots);
     cb_game_row_free(&row);

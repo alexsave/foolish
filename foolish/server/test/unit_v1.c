@@ -338,7 +338,7 @@ static void games_views_and_chat(void) {
     int created_len = g_len;
     memcpy(created, g_body, (size_t)g_len);
     char gid[CB_GAME_ID_MAX + 1] = "";
-    CB_STORE_CALL(g_ctx.store, games_of_user, dora_id, 1, first_game, gid);
+    CB_ROWS_CALL(g_ctx.store, games_of_user, dora_id, 1, first_game, gid);
     T_CHECK(gid[0] != 0);
 
     // The dashboard: one game, the envelope create answered with.
@@ -437,7 +437,7 @@ static void bots_board_history_replay(void) {
     r.elo_rating = 1600;
     r.previous_elo = -1;
     r.games_played = 3;
-    T_EQ_INT(CB_STORE_CALL(g_ctx.store, rating_import, &r), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(g_ctx.store, rating_import, &r), CB_OK);
     // Someone who has not played is not on the board (sign-up made their row).
     uint8_t fay_blob[NC_SESSION_BLOB_MAX];
     int fbn = nc_session_save(fay_blob, sizeof fay_blob);
@@ -465,7 +465,7 @@ static void bots_board_history_replay(void) {
     T_CHECK(h && h->has_rating && h->rating == 1600 && h->n == 0);
     T_EQ_INT(call(b_create, NULL), 200);
     char gid[CB_GAME_ID_MAX + 1] = "";
-    CB_STORE_CALL(g_ctx.store, games_of_user, fay, 1, first_game, gid);
+    CB_ROWS_CALL(g_ctx.store, games_of_user, fay, 1, first_game, gid);
     cb_snapshot_row s;
     memset(&s, 0, sizeof s);
     cb_uuid_v4(s.id);
@@ -478,12 +478,12 @@ static void bots_board_history_replay(void) {
     s.extras = extras;
     s.extras_len = 1;
     s.created_at = 1700000000000;
-    T_EQ_INT(CB_STORE_CALL(g_ctx.store, snapshot_put, &s), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(g_ctx.store, snapshot_put, &s), CB_OK);
     // A newer replay of another of Fay's games: the replay route still answers the one asked for.
     T_EQ_INT(call(b_create, NULL), 200);
     char gid2[CB_GAME_ID_MAX + 1] = "";
-    CB_STORE_CALL(g_ctx.store, games_of_user, fay, 1, first_game, gid2);
-    if (strcmp(gid2, gid) == 0) CB_STORE_CALL(g_ctx.store, games_of_user, fay, 2, second_game, gid2);
+    CB_ROWS_CALL(g_ctx.store, games_of_user, fay, 1, first_game, gid2);
+    if (strcmp(gid2, gid) == 0) CB_ROWS_CALL(g_ctx.store, games_of_user, fay, 2, second_game, gid2);
     cb_snapshot_row s2 = s;
     cb_uuid_v4(s2.id);
     cb_strlcpy(s2.game_id, gid2, sizeof s2.game_id);
@@ -491,7 +491,7 @@ static void bots_board_history_replay(void) {
     s2.moves = moves2;
     s2.moves_len = 1;
     s2.created_at = s.created_at + 1000;
-    T_EQ_INT(CB_STORE_CALL(g_ctx.store, snapshot_put, &s2), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(g_ctx.store, snapshot_put, &s2), CB_OK);
     T_EQ_INT(call(b_history, NULL), 200);
     T_EQ_INT(nc_list_read(g_status, g_body, g_len, NW_HISTORY), 2);
     T_CHECK(nc_history_row(g_body, g_len, 0) && nc_history_row(g_body, g_len, 0)->moves_len == 1);   // newest first
@@ -578,8 +578,18 @@ static void cache_control_per_route(void) {
 // A store that gives up on a throttle: the leaderboard's read and the
 // history's rating read fail as DynamoDB's does (store.h CB_STORE_CALL), and
 // the full ratings read is not to be called by any route.
-static cb_store_ops g_busy_ops;
-static const cb_store_ops *g_real_ops;
+static cb_rows_ops g_busy_ops;
+static const cb_rows_ops *g_real_ops;
+// A swapped rows table: the store's app as it was, with other rows.
+static cb_store_app g_swap_app;
+static const cb_store_app *g_real_app;
+static void rows_swap(const cb_rows_ops *rows) {
+    g_real_app = g_ctx.store->app;
+    g_swap_app = *g_real_app;
+    g_swap_app.rows = rows;
+    g_ctx.store->app = &g_swap_app;
+}
+static void rows_restore(void) { g_ctx.store->app = g_real_app; }
 static bool g_busy;
 static int busy_top(cb_store *s, int limit, cb_rating_fn fn, void *ud) {
     if (g_busy) { cb_store_mark_busy(); return CB_E_DB; }
@@ -594,12 +604,12 @@ static int plain_fail(cb_store *s, int limit, cb_rating_fn fn, void *ud) { retur
 
 static void a_throttled_read_is_busy_and_retried(void) {
     setup();
-    g_real_ops = g_ctx.store->ops;
+    g_real_ops = cb_rows_of(g_ctx.store);
     g_busy_ops = *g_real_ops;
     g_busy_ops.ratings_top = busy_top;
     g_busy_ops.ratings_for = busy_for;
     g_busy_ops.ratings_list = no_list;
-    g_ctx.store->ops = &g_busy_ops;
+    rows_swap(&g_busy_ops);
     T_EQ_INT(sign(1, "JO", "secret-11"), 0);
     // The history reads only the caller's rating, never every rating row.
     g_busy = false;
@@ -629,7 +639,7 @@ static void a_throttled_read_is_busy_and_retried(void) {
     T_EQ_INT(send_req(nc_req_board()), 503);
     T_EQ_INT(nc_retry_ms(NC_GET, 0, g_status, g_body, g_len), 0);
     g_ctx.store = store;
-    g_ctx.store->ops = g_real_ops;
+    rows_restore();
     teardown();
 }
 
@@ -637,7 +647,7 @@ static void a_throttled_read_is_busy_and_retried(void) {
 // so each pair is in flight at once (cb_store_side), the side thread under
 // the request's store deadline. Each wrapped read waits (up to 2 s) for its
 // partner to start: one after the other, neither ever sees the other.
-static cb_store_ops g_pair_ops;
+static cb_rows_ops g_pair_ops;
 static atomic_int g_in_flight;
 static atomic_int g_overlapped;
 static int64_t g_side_deadline[2];
@@ -677,13 +687,13 @@ static int pair_snaps(cb_store *s, const cb_snapshot_query *q, cb_snapshot_fn fn
 static void independent_reads_run_at_once(void) {
     setup();
     T_EQ_INT(sign(1, "JO", "secret-11"), 0);
-    g_real_ops = g_ctx.store->ops;
+    g_real_ops = cb_rows_of(g_ctx.store);
     g_pair_ops = *g_real_ops;
     g_pair_ops.ratings_top = pair_top;
     g_pair_ops.bots_list = pair_bots;
     g_pair_ops.ratings_for = pair_for;
     g_pair_ops.snapshots_query = pair_snaps;
-    g_ctx.store->ops = &g_pair_ops;
+    rows_swap(&g_pair_ops);
     const int64_t deadline = cb_now_ms() + 60000;
     cb_store_set_deadline(deadline);
     atomic_store(&g_overlapped, 0);
@@ -696,7 +706,7 @@ static void independent_reads_run_at_once(void) {
     T_EQ_INT(atomic_load(&g_overlapped), 2);
     T_EQ_INT(g_side_deadline[1], deadline);   // the rating's read, on the side thread
     cb_store_set_deadline(0);
-    g_ctx.store->ops = g_real_ops;
+    rows_restore();
     teardown();
 }
 

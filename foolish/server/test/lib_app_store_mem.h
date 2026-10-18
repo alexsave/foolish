@@ -14,7 +14,7 @@
 #ifndef CB_TEST_APP_STORE_MEM_H
 #define CB_TEST_APP_STORE_MEM_H
 
-#include "store/store.h"
+#include "store/rows_foolish.h"
 
 typedef struct {
     int steal_commits;     // see above

@@ -504,6 +504,10 @@ static const cb_store_ops tm_ops = {
     .user_get = m_user_get,
     .user_create = m_user_create,
     .user_delete = m_user_delete,
+};
+
+// foolish's rows, kept here whole (no item layer under them).
+static const cb_rows_ops tm_rows = {
     .game_get = m_game_get,
     .games_get_views = cb_store_games_get_each,
     .game_create = m_game_create,
@@ -525,6 +529,9 @@ static const cb_store_ops tm_ops = {
     .snapshots_query = m_snapshots_query,
     .snapshot_set_extras = m_snapshot_set_extras,
 };
+// The account rows are this store's own (m_user_create writes the rating
+// row itself), so no account hooks.
+static const cb_store_app tm_app = { .rows = &tm_rows };
 
 cb_store *tm_store_new(int n_bots, const char *brain) {
     cb_store *s = calloc(1, sizeof *s);
@@ -532,6 +539,7 @@ cb_store *tm_store_new(int n_bots, const char *brain) {
     pthread_mutex_init(&m->mu, NULL);
     s->ops = &tm_ops;
     s->impl = m;
+    s->app = &tm_app;
     for (int i = 0; i < n_bots && i < TM_BOTS; i++) {
         cb_bot_row *b = &m->bots[m->n_bots++];
         snprintf(b->id, sizeof b->id, "b0000000-0000-4000-8000-%012d", i + 1);

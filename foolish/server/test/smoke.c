@@ -424,7 +424,7 @@ static cb_store *db_store(void) {
 static bool db_game(const char *gid, int64_t *needs_bots, int64_t *version) {
     cb_store *st = db_store();
     cb_game_row g;
-    if (!st || CB_STORE_CALL(st, game_get, gid, &g) != CB_OK) return false;
+    if (!st || CB_ROWS_CALL(st, game_get, gid, &g) != CB_OK) return false;
     *needs_bots = g.needs_bots;
     *version = g.version;
     cb_game_row_free(&g);

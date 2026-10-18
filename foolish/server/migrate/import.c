@@ -23,7 +23,7 @@
 // (app/edge.h; deploy.sh passes the stack's).
 //
 // Exit 0 when every check passed, 1 when one failed, 2 on a usage or I/O error.
-#include "store/store.h"
+#include "store/rows_foolish.h"
 #include "store/store_import.h"
 #include "store/store_priv.h"
 #include "edge.h"

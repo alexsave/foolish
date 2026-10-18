@@ -14,7 +14,7 @@
 #include "app/bots.h"
 #include "app/foolish_app.h"
 #include "cbase/provider.h"
-#include "store/store.h"
+#include "store/rows_foolish.h"
 #include "util/err.h"
 #include "util/pool.h"
 
@@ -39,7 +39,9 @@ static int counting_lease_acquire(cb_store *s, const char *game, int64_t now, in
     return CB_E_NOT_FOUND;
 }
 
-static const cb_store_ops OPS = { .name = "counting", .lease_acquire = counting_lease_acquire };
+static const cb_store_ops OPS = { .name = "counting" };
+static const cb_rows_ops ROWS = { .lease_acquire = counting_lease_acquire };
+static const cb_store_app APP = { .rows = &ROWS };
 
 static atomic_int g_block, g_blocking;
 static void blocker(void *ud) {
@@ -48,7 +50,7 @@ static void blocker(void *ud) {
 }
 
 static void one_queued_drive_per_game(void) {
-    cb_store store = { .ops = &OPS };
+    cb_store store = { .ops = &OPS, .app = &APP };
     cb_ctx ctx;
     memset(&ctx, 0, sizeof ctx);
     ctx.store = &store;

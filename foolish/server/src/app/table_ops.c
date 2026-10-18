@@ -150,7 +150,7 @@ int cb_row_load(cb_ctx *ctx, const char *id, bool allow_cache, cb_game_row *out,
         if (rc == CB_OK) { *cached = true; return CB_OK; }
     }
     memset(out, 0, sizeof *out);
-    return CB_STORE_CALL(ctx->store, game_get, id, out);
+    return CB_ROWS_CALL(ctx->store, game_get, id, out);
 }
 
 // ---- the section -----------------------------------------------------------------------
@@ -272,7 +272,7 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     snap.extras = extras;
     snap.extras_len = (size_t)n_extras;
     snap.created_at = cb_app_now();
-    if ((rc = CB_STORE_CALL(ctx->store, snapshot_put, &snap)) != CB_OK) why = "snapshot_put failed";
+    if ((rc = CB_ROWS_CALL(ctx->store, snapshot_put, &snap)) != CB_OK) why = "snapshot_put failed";
 out:
     if (why) CB_ERROR("table", "game %s: snapshot failed, keeping the log: %s (%d)", nrow->id, why, rc);
     free(code);
@@ -342,7 +342,7 @@ static bool read_ratings(cb_ctx *ctx, const Table *t, int32_t ratings[CB_MAX_SEA
     cb_uuid ids[CB_MAX_SEATS];
     const char *ptrs[CB_MAX_SEATS];
     for (int i = 0; i < t->r.n; i++) { seat_id(&t->r.seats[i], ids[i]); ptrs[i] = ids[i]; }
-    int rc = CB_STORE_CALL(ctx->store, ratings_for, ptrs, t->r.n, ratings);
+    int rc = CB_ROWS_CALL(ctx->store, ratings_for, ptrs, t->r.n, ratings);
     if (rc != CB_OK) CB_WARN("table", "seat ratings unreadable (%s): the game ends unrated", cb_strerror(rc));
     return rc == CB_OK;
 }
@@ -518,7 +518,7 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
 
     if (rc == CB_OK) {
         pthread_mutex_t *order = cb_table_order_lock(row->id);
-        rc = CB_STORE_CALL(ctx->store, game_commit, &gc);
+        rc = CB_ROWS_CALL(ctx->store, game_commit, &gc);
         if (rc == CB_E_CONFLICT) {
             // Somebody committed first: nothing was written.
             cb_row_cache_drop(row->id);
@@ -636,7 +636,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             // not a board, and client_adopt_envelope refuses one (the asker's
             // client takes the empty answer as "the game is gone").
             pthread_mutex_t *order = cb_table_order_lock(op->game_id);
-            ret = CB_STORE_CALL(ctx->store, game_delete, op->game_id, row.version);
+            ret = CB_ROWS_CALL(ctx->store, game_delete, op->game_id, row.version);
             if (ret != CB_OK) { pthread_mutex_unlock(order); order = NULL; }
             cb_row_cache_drop(op->game_id);
             if (ret == CB_E_CONFLICT) {
@@ -731,7 +731,7 @@ int cb_table_create(cb_ctx *ctx, const cb_user *u, cb_table_result *out) {
         row.created_at = row.updated_at = row.last_commit_at = now;
         row.seats_exact = true;   // the create writes the creator's seat, the only one
         // Stored BEFORE the answer: the envelope names the game id.
-        ret = CB_STORE_CALL(ctx->store, game_create, &row, u->id);
+        ret = CB_ROWS_CALL(ctx->store, game_create, &row, u->id);
         if (ret == CB_E_CONFLICT) {
             CB_WARN("table", "game id %s is taken (draw %d/%d), drawing again", s->gid, draw, CB_TABLE_ID_DRAWS);
             continue;
@@ -804,7 +804,7 @@ int cb_table_view(cb_ctx *ctx, const char *game_id, const char *viewer_id, cb_vi
     if (!ctx->store) return CB_E_STATE;
     cb_game_row row;
     memset(&row, 0, sizeof row);
-    int rc = CB_STORE_CALL(ctx->store, game_get, game_id, &row);
+    int rc = CB_ROWS_CALL(ctx->store, game_get, game_id, &row);
     if (rc != CB_OK) return rc;
     cb_section *s = cb_section_new();
     rc = s ? view_of_row(s, &row, viewer_id, out) : CB_E_NOMEM;
@@ -856,7 +856,7 @@ static bool collect_member(const cb_member_row *r, void *ud) {
 int cb_table_views_of_user(cb_ctx *ctx, const char *user_id, int limit, cb_view_fn fn, void *ud) {
     if (!ctx->store) return CB_E_STATE;
     id_list l = { 0, 0, NULL };
-    int rc = CB_STORE_CALL(ctx->store, games_of_user, user_id, limit, collect_member, &l);
+    int rc = CB_ROWS_CALL(ctx->store, games_of_user, user_id, limit, collect_member, &l);
     if (rc < 0) { free(l.ids); return rc; }
     cb_section *s = cb_section_new();
     const char **ptrs = malloc((size_t)(l.n ? l.n : 1) * sizeof *ptrs);
@@ -865,7 +865,7 @@ int cb_table_views_of_user(cb_ctx *ctx, const char *user_id, int limit, cb_view_
     // One batch read of the rows (a game deleted between the two reads is
     // simply not among them), each masked for this viewer by the kernel.
     views_walk w = { .s = s, .user_id = user_id, .fn = fn, .ud = ud };
-    rc = CB_STORE_CALL(ctx->store, games_get_views, ptrs, l.n, view_step, &w);
+    rc = CB_ROWS_CALL(ctx->store, games_get_views, ptrs, l.n, view_step, &w);
     cb_section_free(s);
     free(ptrs);
     free(l.ids);

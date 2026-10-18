@@ -1,8 +1,8 @@
-// rows_foolish.c - foolish's rows and the accounts, written once over the
+// rows_foolish.c - foolish's rows, and its part of an account, written once over the
 // item layer (items.h) for both backends (docs/PLATFORM.md stage 6). Every
 // key, index key and attribute is the one the DynamoDB backend wrote before
-// (json_surface.h "THE ITEM LAYOUT"); check-dynamo's key-capture proof holds
-// them. Each backend's cb_store_ops points its row operations here.
+// (aws_json.h "THE ITEM LAYOUT"); check-dynamo's key-capture proof holds
+// them. Every store carries these as its product rows (cb_foolish_store).
 //
 // THE CAS. game_commit takes the stored seats from the caller when the row it
 // is fenced on vouches for them (cb_game_row seats_exact; else it reads them
@@ -28,7 +28,9 @@
 #include "store/rows_foolish.h"
 
 #include "store/store_priv.h"
+#include "store/store_import.h"
 
+#include "bot_roster.h"
 #include "table.h"
 #include "util/clock.h"
 #include "util/log.h"
@@ -129,46 +131,7 @@ static const char *keep(strs *z, const char *v) {
     return z->s[z->n++];
 }
 
-// ---- users ---------------------------------------------------------------------------------
-
-bool cb_rows_user_of(const cb_item *it, cb_user_row *u) {
-    memset(u, 0, sizeof *u);
-    if (!s_of(it, "id", u->id, sizeof u->id) || !s_of(it, "email", u->email, sizeof u->email) ||
-        !s_of(it, "password_hash", u->password_hash, sizeof u->password_hash))
-        return false;
-    s_of(it, "username", u->username, sizeof u->username);
-    u->created_at = cb_item_n_or(it, "created_at", 0);
-    u->last_sign_in_at = cb_item_n_or(it, "last_sign_in_at", 0);
-    u->session_gen = cb_item_n_or(it, "session_gen", 0);
-    s_of(it, "kept_session", u->kept_session, sizeof u->kept_session);
-    return true;
-}
-
-// USER#<id> PROFILE: listed on GSI2 USERS by creation.
-static void profile_write(cb_iwrite *w, attrs *x, strs *z, const cb_user_row *u, bool fresh) {
-    char gsk[KB];
-    add(x, CB_AVS("gsi2pk", "USERS"));
-    add(x, CB_AVS("gsi2sk", keep(z, tsk(gsk, sizeof gsk, u->created_at, u->id))));
-    add(x, CB_AVS("id", u->id));
-    add(x, CB_AVS("email", u->email));
-    add(x, CB_AVS("password_hash", u->password_hash));
-    if (u->username[0]) add(x, CB_AVS("username", u->username));
-    add(x, CB_AVN("created_at", u->created_at));
-    if (u->last_sign_in_at) add(x, CB_AVN("last_sign_in_at", u->last_sign_in_at));
-    char pk[KB];
-    *w = (cb_iwrite){ .op = CB_IW_PUT, .key = { keep(z, k(pk, sizeof pk, "USER#", u->id)), "PROFILE" }, .attrs = x->a,
-                      .n_attrs = x->n };
-    if (fresh) w->cond[w->n_cond++] = CB_IF_ABSENT;
-}
-
-// EMAIL#<email> USER: the id (signup's uniqueness is the condition on it).
-static void email_write(cb_iwrite *w, attrs *x, strs *z, const cb_user_row *u, bool fresh) {
-    char pk[KB];
-    add(x, CB_AVS("user_id", u->id));
-    *w = (cb_iwrite){ .op = CB_IW_PUT, .key = { keep(z, k(pk, sizeof pk, "EMAIL#", u->email)), "USER" }, .attrs = x->a,
-                      .n_attrs = x->n };
-    if (fresh) w->cond[w->n_cond++] = CB_IF_ABSENT;
-}
+// ---- the rating row, and an account's part of foolish -----------------------------------------
 
 // USER#<id> RATING: on GSI2 RATINGS (sparse: only a player who has played).
 static void rating_attrs(attrs *x, strs *z, const cb_rating_row *rt) {
@@ -187,91 +150,6 @@ static void rating_attrs(attrs *x, strs *z, const cb_rating_row *rt) {
 
 static int get_item(cb_store *s, const char *pk, const char *sk, cb_item *it) {
     return s->ops->item_get(s, (cb_ikey){ pk, sk }, true, it);
-}
-
-int cb_rows_user_get(cb_store *s, const char *id, cb_user_row *out) {
-    char pk[KB];
-    cb_item it;
-    cb_item_init(&it);
-    int rc = get_item(s, k(pk, sizeof pk, "USER#", id), "PROFILE", &it);
-    if (rc == CB_OK && !cb_rows_user_of(&it, out)) rc = CB_E_DB;
-    cb_item_free(&it);
-    return rc;
-}
-
-int cb_rows_user_by_email(cb_store *s, const char *email, cb_user_row *out) {
-    char pk[KB];
-    cb_uuid id;
-    cb_item it;
-    cb_item_init(&it);
-    int rc = get_item(s, k(pk, sizeof pk, "EMAIL#", email), "USER", &it);
-    if (rc == CB_OK && !s_of(&it, "user_id", id, sizeof id)) rc = CB_E_DB;
-    cb_item_free(&it);
-    return rc == CB_OK ? cb_rows_user_get(s, id, out) : rc;
-}
-
-int cb_rows_user_create(cb_store *s, const cb_user_row *u) {
-    cb_iwrite w[3];
-    attrs x[3] = { 0 };
-    strs *z = calloc(1, sizeof *z);
-    if (!z) return CB_E_NOMEM;
-    email_write(&w[0], &x[0], z, u, true);
-    profile_write(&w[1], &x[1], z, u, true);
-    // The auth.users trigger's row: the start rating, previous_elo the
-    // column default (the start too), the username.
-    cb_rating_row rt = { .elo_rating = TABLE_RATING_START, .previous_elo = TABLE_RATING_START, .updated_at = u->created_at };
-    memcpy(rt.user_id, u->id, sizeof rt.user_id);
-    memcpy(rt.username, u->username, sizeof rt.username);
-    rating_attrs(&x[2], z, &rt);
-    char pk[KB];
-    w[2] = (cb_iwrite){ .op = CB_IW_PUT, .key = { keep(z, k(pk, sizeof pk, "USER#", u->id)), "RATING" }, .attrs = x[2].a,
-                        .n_attrs = x[2].n };
-    int failed;
-    int rc = s->ops->item_txn(s, w, 3, &failed, NULL);
-    free(z);
-    return rc == CB_E_CONFLICT ? (failed == 0 || failed == 1 ? CB_E_CONFLICT : CB_E_DB) : rc;
-}
-
-int cb_rows_user_import(cb_store *s, const cb_user_row *u) {
-    cb_iwrite w[2];
-    attrs x[2] = { 0 };
-    strs *z = calloc(1, sizeof *z);
-    if (!z) return CB_E_NOMEM;
-    email_write(&w[0], &x[0], z, u, false);
-    profile_write(&w[1], &x[1], z, u, false);
-    int rc = s->ops->item_txn(s, w, 2, NULL, NULL);
-    free(z);
-    return rc == CB_E_CONFLICT ? CB_E_DB : rc;
-}
-
-// A present-only update of the profile (CB_E_NOT_FOUND when the user is gone).
-static int profile_update(cb_store *s, const char *id, const cb_iset *st, int n) {
-    char pk[KB];
-    cb_iwrite w = { .op = CB_IW_UPDATE, .key = { k(pk, sizeof pk, "USER#", id), "PROFILE" }, .sets = st, .n_sets = n,
-                    .cond = { CB_IF_EXISTS }, .n_cond = 1 };
-    int rc = s->ops->item_write(s, &w, NULL);
-    return rc == CB_E_CONFLICT ? CB_E_NOT_FOUND : rc;
-}
-
-// The new hash and, in the same write, every session so far ended but `keep`
-// (session_gen one up; a missing one counts as 0).
-int cb_rows_user_set_password(cb_store *s, const char *id, const char *hash, const char *keep_session) {
-    const cb_iset st[] = {
-        { CB_AVS("password_hash", hash), CB_SET_TO },
-        { CB_AVN("session_gen", 1), CB_SET_INCR },
-        { CB_AVS("kept_session", keep_session ? keep_session : ""), CB_SET_TO },
-    };
-    return profile_update(s, id, st, 3);
-}
-
-int cb_rows_user_end_sessions(cb_store *s, const char *id) {
-    const cb_iset st[] = { { CB_AVN("session_gen", 1), CB_SET_INCR }, { CB_AVS("kept_session", ""), CB_SET_TO } };
-    return profile_update(s, id, st, 2);
-}
-
-int cb_rows_user_touch_sign_in(cb_store *s, const char *id, int64_t at) {
-    const cb_iset st[] = { { CB_AVN("last_sign_in_at", at), CB_SET_TO } };
-    return profile_update(s, id, st, 1);
 }
 
 // Keys collected from a query, for a batch delete.
@@ -312,56 +190,47 @@ static void keylist_free(keylist *l) {
 
 static int query(cb_store *s, cb_iquery q, cb_item_fn fn, void *ud) { return s->ops->item_query(s, &q, fn, ud); }
 
-// The cascade auth.admin.deleteUser had, by hand: the account's seats, chat
-// messages and refresh tokens (found through GSI1), then the account itself.
-int cb_rows_user_delete(cb_store *s, const char *id) {
-    cb_user_row u;
-    int rc = cb_rows_user_get(s, id, &u);
-    if (rc != CB_OK) return rc;
-    keylist keys = { 0 };
+// A signup's rating row, in the account's transaction (cb_store_app
+// signup_txn): the auth.users trigger's row, the start rating, previous_elo
+// the column default (the start too), the username.
+static int signup_txn(cb_store *s, const cb_user_row *u, const cb_iwrite *acct, int n, int *failed) {
+    cb_iwrite w[CB_ITEM_TXN_MAX];
+    if (n < 0 || n >= CB_ITEM_TXN_MAX) return CB_E_INVALID;
+    attrs x = { 0 };
+    strs *z = calloc(1, sizeof *z);
+    if (!z) return CB_E_NOMEM;
+    memcpy(w, acct, (size_t)n * sizeof *w);
+    cb_rating_row rt = { .elo_rating = TABLE_RATING_START, .previous_elo = TABLE_RATING_START, .updated_at = u->created_at };
+    memcpy(rt.user_id, u->id, sizeof rt.user_id);
+    memcpy(rt.username, u->username, sizeof rt.username);
+    rating_attrs(&x, z, &rt);
+    char pk[KB];
+    w[n] = (cb_iwrite){ .op = CB_IW_PUT, .key = { keep(z, k(pk, sizeof pk, "USER#", u->id)), "RATING" }, .attrs = x.a,
+                        .n_attrs = x.n };
+    int rc = s->ops->item_txn(s, w, n + 1, failed, NULL);
+    free(z);
+    return rc;
+}
+
+// What a deleted account leaves of foolish's (cb_store_app delete_keys): its
+// seats and its chat messages, found through GSI1.
+static int delete_keys(cb_store *s, const char *id, cb_item_fn key, void *ud) {
     char g1[KB];
-    rc = query(s, (cb_iquery){ .index = 1, .pk = k(g1, sizeof g1, "USERGAMES#", id) }, collect_key, &keys);
-    if (rc == CB_OK) rc = query(s, (cb_iquery){ .index = 1, .pk = k(g1, sizeof g1, "USERCHAT#", id), .forward = true, .keys_only = true }, collect_key, &keys);
-    if (rc == CB_OK) rc = query(s, (cb_iquery){ .index = 1, .pk = k(g1, sizeof g1, "USERREFRESH#", id), .forward = true, .keys_only = true }, collect_key, &keys);
-    if (rc == CB_OK && keys.oom) rc = CB_E_NOMEM;
-    if (rc == CB_OK) rc = keylist_keys(&keys);
-    if (rc == CB_OK && keys.n) rc = s->ops->item_batch_delete(s, keys.keys, keys.n);
-    keylist_free(&keys);
-    if (rc != CB_OK) return rc;
-    char pk[KB], epk[KB];
-    k(pk, sizeof pk, "USER#", u.id);
-    const cb_iwrite w[3] = {
-        { .op = CB_IW_DELETE, .key = { pk, "PROFILE" } },
-        { .op = CB_IW_DELETE, .key = { pk, "RATING" } },
-        { .op = CB_IW_DELETE, .key = { k(epk, sizeof epk, "EMAIL#", u.email), "USER" } },
-    };
-    rc = s->ops->item_txn(s, w, 3, NULL, NULL);
-    return rc == CB_E_CONFLICT ? CB_E_DB : rc;
+    int rc = query(s, (cb_iquery){ .index = 1, .pk = k(g1, sizeof g1, "USERGAMES#", id) }, key, ud);
+    if (rc == CB_OK)
+        rc = query(s, (cb_iquery){ .index = 1, .pk = k(g1, sizeof g1, "USERCHAT#", id), .forward = true, .keys_only = true },
+                   key, ud);
+    return rc;
 }
 
-typedef struct {
-    const char *search;
-    int         skip, limit, n;
-    cb_user_fn  fn;
-    void       *ud;
-} users_walk;
-
-static bool users_step(const cb_item *it, void *ud) {
-    users_walk *w = ud;
-    cb_user_row u;
-    if (!cb_rows_user_of(it, &u)) return true;
-    if (!cb_store_user_matches(&u, w->search)) return true;
-    if (w->skip > 0) { w->skip--; return true; }
-    w->n++;
-    if (!w->fn(&u, w->ud)) return false;
-    return w->limit <= 0 || w->n < w->limit;
-}
-
-// Newest first (GSI2 USERS by creation).
-int cb_rows_users_list(cb_store *s, const char *search, int offset, int limit, cb_user_fn fn, void *ud) {
-    users_walk w = { .search = search, .skip = offset > 0 ? offset : 0, .limit = limit, .fn = fn, .ud = ud };
-    int rc = query(s, (cb_iquery){ .index = 2, .pk = "USERS" }, users_step, &w);
-    return rc == CB_OK ? w.n : rc;
+// And its rating row, with the account (cb_store_app delete_txn).
+static int delete_txn(cb_store *s, const cb_user_row *u, const cb_iwrite *acct, int n) {
+    cb_iwrite w[CB_ITEM_TXN_MAX];
+    if (n < 0 || n >= CB_ITEM_TXN_MAX) return CB_E_INVALID;
+    memcpy(w, acct, (size_t)n * sizeof *w);
+    char pk[KB];
+    w[n] = (cb_iwrite){ .op = CB_IW_DELETE, .key = { k(pk, sizeof pk, "USER#", u->id), "RATING" } };
+    return s->ops->item_txn(s, w, n + 1, NULL, NULL);
 }
 
 // ---- games --------------------------------------------------------------------------------
@@ -1604,4 +1473,122 @@ int cb_rows_chat_list(cb_store *s, const char *game, int limit, cb_chat_fn fn, v
     }
     free(v.rows);
     return rc == CB_OK ? n : rc;
+}
+
+// ---- what every store carries for foolish (rows_foolish.h) ------------------------------------
+
+const cb_rows_ops cb_rows_foolish = {
+    .game_get = cb_rows_game_get,
+    .games_get_views = cb_rows_games_get_views,
+    .game_create = cb_rows_game_create,
+    .game_commit = cb_rows_game_commit,
+    .game_import = cb_rows_game_import,
+    .game_delete = cb_rows_game_delete,
+    .games_of_user = cb_rows_games_of_user,
+    .is_member = cb_rows_is_member,
+    .game_members = cb_rows_game_members,
+    .games_needing_bots = cb_rows_games_needing_bots,
+    .lease_acquire = cb_rows_lease_acquire,
+    .lease_renew = cb_rows_lease_renew,
+    .lease_release = cb_rows_lease_release,
+    .bots_idle = cb_rows_bots_idle,
+    .lease_held = cb_rows_lease_held,
+    .bots_list = cb_rows_bots_list,
+    .ratings_list = cb_rows_ratings_list,
+    .ratings_top = cb_rows_ratings_top,
+    .ratings_for = cb_rows_ratings_for,
+    .rating_set_username = cb_rows_rating_set_username,
+    .rating_import = cb_rows_rating_import,
+    .rating_reindex = cb_rows_rating_reindex,
+    .bots_replace = cb_rows_bots_replace,
+    .snapshot_put = cb_rows_snapshot_put,
+    .snapshots_query = cb_rows_snapshots_query,
+    .snapshot_set_extras = cb_rows_snapshot_set_extras,
+    .chat_put = cb_rows_chat_put,
+    .chat_list = cb_rows_chat_list,
+};
+
+const cb_store_app cb_foolish_store = {
+    .rows = &cb_rows_foolish,
+    .signup_txn = signup_txn,
+    .delete_keys = delete_keys,
+    .delete_txn = delete_txn,
+    .seed = cb_import_seed_bots,
+};
+
+static const cb_rows_ops NO_ROWS;
+
+const cb_rows_ops *cb_rows_of(const cb_store *s) {
+    return s && s->app && s->app->rows ? (const cb_rows_ops *)s->app->rows : &NO_ROWS;
+}
+
+void cb_game_row_free(cb_game_row *g) {
+    free(g->state);
+    free(g->roster);
+    free(g->logs);
+    g->state = g->roster = g->logs = NULL;
+    g->state_len = g->roster_len = g->logs_len = 0;
+}
+
+void cb_snapshot_row_free(cb_snapshot_row *s) {
+    free(s->moves);
+    free(s->extras);
+    s->moves = s->extras = NULL;
+    s->moves_len = s->extras_len = 0;
+}
+
+void cb_chat_row_free(cb_chat_row *c) {
+    free(c->message);
+    c->message = NULL;
+}
+
+int cb_store_games_get_each(cb_store *s, const char *const *ids, int n, cb_game_fn fn, void *ud) {
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        cb_game_row row;
+        memset(&row, 0, sizeof row);
+        int rc = cb_rows_of(s)->game_get(s, ids[i], &row);
+        if (rc == CB_E_NOT_FOUND) continue;
+        if (rc != CB_OK) return rc;
+        free(row.logs);
+        row.logs = NULL;
+        row.logs_len = 0;
+        count++;
+        bool more = fn(&row, ud);
+        cb_game_row_free(&row);
+        if (!more) break;
+    }
+    return count;
+}
+
+// ---- the orders the list operations promise ---------------------------------------------------
+
+static int bot_tier(const char *key) {
+    int idx = bot_roster_find(key);
+    const BotRosterEntry *e = idx >= 0 ? bot_roster_at(idx) : NULL;
+    return e && e->tier ? e->tier : 1000;
+}
+
+int cb_store_bot_ladder_cmp(const cb_bot_row *a, const cb_bot_row *b) {
+    int ta = bot_tier(a->strategy_key), tb = bot_tier(b->strategy_key);
+    if (ta != tb) return ta < tb ? -1 : 1;
+    // "%Miami 7" before "%Miami 10": a shorter name of the same family sorts first.
+    size_t la = strlen(a->nickname), lb = strlen(b->nickname);
+    if (la != lb) return la < lb ? -1 : 1;
+    int c = strcmp(a->nickname, b->nickname);
+    return c ? c : strcmp(a->id, b->id);
+}
+
+static int bot_qcmp(const void *a, const void *b) { return cb_store_bot_ladder_cmp(a, b); }
+void cb_store_bots_sort(cb_bot_row *rows, int n) {
+    if (n > 1) qsort(rows, (size_t)n, sizeof *rows, bot_qcmp);
+}
+
+static int rating_qcmp(const void *pa, const void *pb) {
+    const cb_rating_row *a = pa, *b = pb;
+    if (a->elo_rating != b->elo_rating) return a->elo_rating > b->elo_rating ? -1 : 1;
+    return strcmp(a->user_id, b->user_id);
+}
+void cb_store_ratings_sort(cb_rating_row *rows, int n) {
+    if (n > 1) qsort(rows, (size_t)n, sizeof *rows, rating_qcmp);
 }

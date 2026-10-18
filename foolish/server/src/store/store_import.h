@@ -1,5 +1,5 @@
 // store_import.h - the Supabase export (migrate/export.sh's CSVs) into any
-// store, through store.h: the body of `cbase-import` (migrate/import.c).
+// store, through store.h and rows_foolish.h: the body of `cbase-import` (migrate/import.c).
 //
 // Reads users, bots, user_elo_ratings, games with player_hands and
 // bot_hands, game_snapshots and chat_messages, and writes them in that
@@ -15,7 +15,7 @@
 #ifndef CB_STORE_IMPORT_H
 #define CB_STORE_IMPORT_H
 
-#include "store/store.h"
+#include "store/rows_foolish.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -31,16 +31,21 @@ int cb_import_dir(cb_store *s, const char *dir, FILE *out);
 // becomes (a SCAN marker, a refresh token).
 const char *cb_import_export_kind(const char *pk, const char *sk, char *id, size_t cap);
 
-// The 49 bots sql/schema.sql seeds (fixed ids, ladder order), written into a
-// store that has no bots yet: a fresh DynamoDB table, which nothing else
-// seeds (SQLite seeds them at open from the same schema). Read from an
-// in-memory SQLite store, so the list has one owner. The number written, 0
-// when the store already has bots (an import's hosted rows are never
-// replaced), or a CB_E_*.
+// THE BOTS foolish seeds (bot_seed.c): fixed ids, ladder order.
+typedef struct {
+    const char *id, *nickname, *strategy_key;
+} cb_bot_seed;
+extern const cb_bot_seed CB_BOT_SEED[];
+extern const int CB_BOT_SEED_N;
+
+// CB_BOT_SEED written into a store that has no bots yet (cb_store_app seed:
+// SQLite at open, a fresh DynamoDB table by a deploy's --seed-bots), at the
+// start rating, in ladder order. The number written, 0 when the store
+// already has bots (an import's hosted rows are never replaced), or a CB_E_*.
 int cb_import_seed_bots(cb_store *s);
 
 // Every rating row the leaderboard index holds, brought to its current key
-// layout (store.h rating_reindex; json_surface.h "THE ITEM LAYOUT"): the rows
+// layout (rows_foolish.h rating_reindex; aws_json.h "THE ITEM LAYOUT"): the rows
 // written before the sparse rating-ordered key move to it, rows with no games
 // leave the index. A second run rewrites nothing; a row a commit changes
 // meanwhile is left to the commit. The number of rows rewritten, or a CB_E_* code.

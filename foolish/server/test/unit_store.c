@@ -10,7 +10,7 @@
 #include "lib_store_backend.h"
 #include "store/store_import.h"
 
-#include "store/store.h"
+#include "store/rows_foolish.h"
 #include "table.h"
 #include "util/clock.h"
 #include "util/err.h"
@@ -92,7 +92,7 @@ static bool collect_rating(const cb_rating_row *r, void *ud) {
 static int32_t rating_of(cb_store *s, const char *id) {
     int32_t out = -99;
     const char *ids[1] = { id };
-    T_EQ_INT(CB_STORE_CALL(s, ratings_for, ids, 1, &out), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, ratings_for, ids, 1, &out), CB_OK);
     return out;
 }
 
@@ -102,7 +102,7 @@ static void open_applies_schema_and_seeds_bots(void) {
     cb_store *s = open_fresh();
     T_EQ_STR(s->ops->name, tsb_dynamo() ? "dynamo" : "sqlite");
     bots_t b = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, bots_list, collect_bot, &b), 49);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 49);
     T_EQ_STR(b.rows[0].nickname, "%Miami 1");
     T_EQ_STR(b.rows[0].strategy_key, "random");
     T_EQ_STR(b.rows[6].nickname, "%Miami 7");
@@ -115,7 +115,7 @@ static void open_applies_schema_and_seeds_bots(void) {
         // A second seed finds the bots there and writes nothing.
         T_EQ_INT(cb_import_seed_bots(s), 0);
         b.n = 0;
-        T_EQ_INT(CB_STORE_CALL(s, bots_list, collect_bot, &b), 49);
+        T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 49);
         cb_store_close(s);
         return;
     }
@@ -126,7 +126,7 @@ static void open_applies_schema_and_seeds_bots(void) {
     snprintf(path, sizeof path, "%s/s%d.sqlite", g_dir, g_seq);
     T_EQ_INT(cb_store_open_sqlite(path, &s), CB_OK);
     b.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, bots_list, collect_bot, &b), 49);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 49);
     cb_store_close(s);
 
     // Schema 3 -> 4: the API Gateway connection tables, rows and all, are
@@ -227,8 +227,8 @@ static void users_round_trip(void) {
     // until they play (the index key is sparse).
     T_EQ_INT(rating_of(s, a.id), TABLE_RATING_START);
     ratings_t r = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, ratings_list, collect_rating, &r), 0);
-    T_EQ_INT(CB_STORE_CALL(s, ratings_top, 100, collect_rating, &r), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, ratings_list, collect_rating, &r), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, ratings_top, 100, collect_rating, &r), 0);
 
     T_EQ_INT(got.session_gen, 0);
     T_EQ_STR(got.kept_session, "");
@@ -258,9 +258,9 @@ static void users_round_trip(void) {
     T_EQ_INT(CB_STORE_CALL(s, users_list, "", 1, 10, collect_user, &n), 1);
     T_EQ_STR(n.ids[0], "ann@x.io");
 
-    T_EQ_INT(CB_STORE_CALL(s, rating_set_username, a.id, NULL), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, rating_set_username, a.id, NULL), CB_OK);
     r.n = 0;
-    CB_STORE_CALL(s, ratings_list, collect_rating, &r);
+    CB_ROWS_CALL(s, ratings_list, collect_rating, &r);
     for (int i = 0; i < r.n; i++)
         if (strcmp(r.rows[i].user_id, a.id) == 0) T_EQ_STR(r.rows[i].username, "");
     cb_store_close(s);
@@ -351,9 +351,9 @@ static void game_round_trip(void) {
     cb_user_row a = mkuser("a@x.io", "A", 1);
     T_EQ_INT(CB_STORE_CALL(s, user_create, &a), CB_OK);
     cb_game_row g = mkgame("ab12cd", 100), got;
-    T_EQ_INT(CB_STORE_CALL(s, game_create, &g, a.id), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, game_create, &g, a.id), CB_E_CONFLICT);
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "ab12cd", &got), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_create, &g, a.id), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_create, &g, a.id), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "ab12cd", &got), CB_OK);
     T_EQ_MEM(got.state, got.state_len, g_state, sizeof g_state);
     T_EQ_MEM(got.roster, got.roster_len, g_roster, sizeof g_roster);
     T_CHECK(got.logs == NULL && got.logs_len == 0);
@@ -362,8 +362,8 @@ static void game_round_trip(void) {
     T_EQ_INT(got.created_at, 100);
     T_EQ_INT(got.last_commit_at, 100);
     cb_game_row_free(&got);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "ab12cd", a.id), 1);
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "ffffff", &got), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "ab12cd", a.id), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "ffffff", &got), CB_E_NOT_FOUND);
 
     // A commit writes every column.
     cb_game_row n = mkgame("ab12cd", 100);
@@ -379,8 +379,8 @@ static void game_round_trip(void) {
     n.last_commit_at = 0;   // the store stamps the commit's time itself
     cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1 };
     memcpy(c.humans[0], a.id, sizeof c.humans[0]);
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "ab12cd", &got), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "ab12cd", &got), CB_OK);
     T_EQ_INT(got.status, 1);
     T_EQ_MEM(got.logs, got.logs_len, g_logs, sizeof g_logs);
     T_CHECK(got.has_seed);
@@ -396,10 +396,10 @@ static void game_round_trip(void) {
     // The dashboard's read: every column but the log, in the order asked, a
     // game that does not exist left out.
     cb_game_row g2 = mkgame("ef34gh", 150);
-    T_EQ_INT(CB_STORE_CALL(s, game_create, &g2, a.id), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_create, &g2, a.id), CB_OK);
     const char *ids[3] = { "ef34gh", "ffffff", "ab12cd" };
     views_got v = { .state_ok = true };
-    T_EQ_INT(CB_STORE_CALL(s, games_get_views, ids, 3, collect_view_row, &v), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, games_get_views, ids, 3, collect_view_row, &v), 2);
     T_EQ_INT(v.n, 2);
     T_CHECK(v.state_ok);
     T_CHECK(!v.logs);
@@ -427,7 +427,7 @@ static void cas_second_writer_loses(void) {
     CB_STORE_CALL(s, user_create, &a);
     CB_STORE_CALL(s, user_create, &b);
     cb_game_row g = mkgame("cas001", 10);
-    T_EQ_INT(CB_STORE_CALL(s, game_create, &g, a.id), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_create, &g, a.id), CB_OK);
 
     cb_game_row w1 = mkgame("cas001", 10), w2 = mkgame("cas001", 10);
     uint8_t s1[1] = { 0x11 }, s2[1] = { 0x22 };
@@ -440,22 +440,22 @@ static void cas_second_writer_loses(void) {
     memcpy(c2.humans[1], b.id, sizeof(cb_uuid));
     memcpy(c2.rated_ids[0], b.id, sizeof(cb_uuid));
     c2.rating_delta[0] = 50;
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c1), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c2), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c1), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c2), CB_E_CONFLICT);
     cb_game_row got;
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "cas001", &got), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "cas001", &got), CB_OK);
     T_EQ_INT(got.version, 1);
     T_EQ_MEM(got.state, got.state_len, s1, 1);
     T_EQ_INT(got.updated_at, 20);
     cb_game_row_free(&got);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "cas001", b.id), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "cas001", b.id), 0);
     T_EQ_INT(rating_of(s, b.id), 1000);
 
     // Reloaded at version 1, the second writer wins.
     c2.expected_version = 1;
     w2.version = 2;
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c2), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "cas001", b.id), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c2), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "cas001", b.id), 1);
     T_EQ_INT(rating_of(s, b.id), 1050);
 
     // One transaction: when one write of a commit (a rating) fails, nothing
@@ -471,11 +471,11 @@ static void cas_second_writer_loses(void) {
         T_EQ_INT(CB_STORE_CALL(s, admin_query,
                                "CREATE TRIGGER no_ratings BEFORE UPDATE ON items WHEN OLD.sk = 'RATING' BEGIN SELECT RAISE(ABORT, 'no'); END",
                                true, NULL, NULL), 0);
-        T_EQ_INT(CB_STORE_CALL(s, game_commit, &c3), CB_E_DB);
-        T_EQ_INT(CB_STORE_CALL(s, game_get, "cas001", &got), CB_OK);
+        T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c3), CB_E_DB);
+        T_EQ_INT(CB_ROWS_CALL(s, game_get, "cas001", &got), CB_OK);
         T_EQ_INT(got.version, 2);
         cb_game_row_free(&got);
-        T_EQ_INT(CB_STORE_CALL(s, is_member, "cas001", b.id), 1);   // the seats were not rewritten either
+        T_EQ_INT(CB_ROWS_CALL(s, is_member, "cas001", b.id), 1);   // the seats were not rewritten either
         CB_STORE_CALL(s, admin_query, "DROP TRIGGER no_ratings", true, NULL, NULL);
     }
 
@@ -483,14 +483,14 @@ static void cas_second_writer_loses(void) {
     // not a reason to refuse the commit.
     c3.n_rated = 0;
     snprintf(c3.humans[0], sizeof c3.humans[0], "00000000-0000-4000-8000-0000000000ff");
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c3), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "cas001", c3.humans[0]), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c3), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "cas001", c3.humans[0]), 0);
 
     // A commit to a game that is gone is NOT_FOUND, not a conflict to retry.
     cb_game_row x = mkgame("nogame", 1);
     x.version = 1;
     cb_game_commit cx = { .row = &x, .expected_version = 0 };
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &cx), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &cx), CB_E_NOT_FOUND);
     cb_store_close(s);
 }
 
@@ -507,7 +507,7 @@ static void lone_commit_cas(void) {
     CB_STORE_CALL(s, user_create, &b);
     const int64_t NOW = 10000000, STALE = NOW - 10000, ACTIVE = NOW - 3600000;
     cb_game_row g = mkgame("lone01", NOW - 20000);
-    T_EQ_INT(CB_STORE_CALL(s, game_create, &g, a.id), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_create, &g, a.id), CB_OK);
     // b sits down (a roster change: the transaction).
     cb_game_row j = mkgame("lone01", NOW - 20000);
     j.version = 1;
@@ -517,7 +517,7 @@ static void lone_commit_cas(void) {
     memcpy(cj.prev_humans[0], a.id, sizeof(cb_uuid));
     cb_store_tally t;
     cb_store_tally_take(&t);
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &cj), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &cj), CB_OK);
     cb_store_tally_take(&t);
     if (tsb_dynamo()) T_EQ_STR(t.detail, "BatchGetItem 1 TransactWriteItems 1");   // b's account read, then seated
 
@@ -532,14 +532,14 @@ static void lone_commit_cas(void) {
     memcpy(c1.prev_humans[1], a.id, sizeof(cb_uuid));
     cb_game_commit c2 = c1;
     c2.row = &w2;
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c1), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c1), CB_OK);
     cb_store_tally_take(&t);
     if (tsb_dynamo()) T_EQ_STR(t.detail, "UpdateItem 1");
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c2), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c2), CB_E_CONFLICT);
     cb_store_tally_take(&t);
     if (tsb_dynamo()) T_EQ_STR(t.detail, "UpdateItem 1");   // refused once, not sent again
     cb_game_row got;
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "lone01", &got), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "lone01", &got), CB_OK);
     T_EQ_INT(got.version, 2);
     T_EQ_MEM(got.state, got.state_len, s1, 1);
     T_EQ_INT(got.updated_at, NOW - 19000);
@@ -547,19 +547,19 @@ static void lone_commit_cas(void) {
     T_CHECK(!got.needs_bots);
     T_CHECK(got.seats_exact);
     cb_game_row_free(&got);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "lone01", a.id), 1);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "lone01", b.id), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "lone01", a.id), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "lone01", b.id), 1);
     names_t nm = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, games_of_user, b.id, 10, collect_member, &nm), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, games_of_user, b.id, 10, collect_member, &nm), 1);
 
     // Reloaded at version 2, the second writer wins, alone again.
     c2.expected_version = 2;
     w2.version = 3;
     cb_store_tally_take(&t);
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c2), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c2), CB_OK);
     cb_store_tally_take(&t);
     if (tsb_dynamo()) T_EQ_STR(t.detail, "UpdateItem 1");
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "lone01", &got), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "lone01", &got), CB_OK);
     T_EQ_INT(got.version, 3);
     T_EQ_MEM(got.state, got.state_len, s2, 1);
     cb_game_row_free(&got);
@@ -570,8 +570,8 @@ static void lone_commit_cas(void) {
     cb_game_commit cx = c1;
     cx.row = &x;
     cx.expected_version = 0;
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &cx), CB_E_NOT_FOUND);
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "nolone", &got), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &cx), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "nolone", &got), CB_E_NOT_FOUND);
 
     // Bot work at version 4 (the transaction puts the marker) ...
     cb_game_row w4 = mkgame("lone01", NOW - 20000);
@@ -580,9 +580,9 @@ static void lone_commit_cas(void) {
     cb_game_commit c4 = c1;
     c4.row = &w4;
     c4.expected_version = 3;
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c4), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c4), CB_OK);
     nm.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 1);
     // ... and none at 5: fenced on a row that had bot work, it is the
     // transaction, and the marker goes.
     cb_game_row w5 = mkgame("lone01", NOW - 20000);
@@ -592,13 +592,13 @@ static void lone_commit_cas(void) {
     c5.expected_version = 4;
     c5.prev_needs_bots = true;
     cb_store_tally_take(&t);
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c5), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c5), CB_OK);
     cb_store_tally_take(&t);
     if (tsb_dynamo()) T_EQ_STR(t.detail, "TransactWriteItems 1");
     nm.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 0);
     cb_uuid tok;
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "lone01", NOW, 25000, tok), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lone01", NOW, 25000, tok), CB_E_NOT_FOUND);
     // Then alone again, and still no marker.
     cb_game_row w6 = mkgame("lone01", NOW - 20000);
     w6.version = 6;
@@ -606,11 +606,11 @@ static void lone_commit_cas(void) {
     c6.row = &w6;
     c6.expected_version = 5;
     cb_store_tally_take(&t);
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c6), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c6), CB_OK);
     cb_store_tally_take(&t);
     if (tsb_dynamo()) T_EQ_STR(t.detail, "UpdateItem 1");
     nm.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 0);
     cb_store_close(s);
 }
 
@@ -627,8 +627,8 @@ static void membership_follows_commits(void) {
     CB_STORE_CALL(s, user_create, &a);
     CB_STORE_CALL(s, user_create, &b);
     cb_game_row g1 = mkgame("game01", 10), g2 = mkgame("game02", 11);
-    CB_STORE_CALL(s, game_create, &g1, a.id);
-    CB_STORE_CALL(s, game_create, &g2, a.id);
+    CB_ROWS_CALL(s, game_create, &g1, a.id);
+    CB_ROWS_CALL(s, game_create, &g2, a.id);
 
     cb_game_row n = mkgame("game01", 10);
     n.version = 1;
@@ -637,34 +637,34 @@ static void membership_follows_commits(void) {
     memcpy(c.humans[0], a.id, sizeof(cb_uuid));
     memcpy(c.humans[1], b.id, sizeof(cb_uuid));
     snprintf(c.bots[0], sizeof c.bots[0], "2c601cde-63d2-5291-8fcb-735f5860b1ec");
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "game01", b.id), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "game01", b.id), 1);
     // The game's members: both humans, never the bot (a chat is published to each).
     names_t who = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, game_members, "game01", collect_name, &who), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, game_members, "game01", collect_name, &who), 2);
     T_EQ_INT(who.n, 2);
     T_CHECK((strcmp(who.ids[0], a.id) == 0 && strcmp(who.ids[1], b.id) == 0) ||
             (strcmp(who.ids[0], b.id) == 0 && strcmp(who.ids[1], a.id) == 0));
     who.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, game_members, "game02", collect_name, &who), 1);   // its creator
+    T_EQ_INT(CB_ROWS_CALL(s, game_members, "game02", collect_name, &who), 1);   // its creator
     T_EQ_STR(who.ids[0], a.id);
     who.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, game_members, "nogame", collect_name, &who), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, game_members, "nogame", collect_name, &who), 0);
     // fn answering false stops after the one it was handed.
     who.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, game_members, "game01", collect_one_name, &who), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, game_members, "game01", collect_one_name, &who), 1);
     T_EQ_INT(who.n, 1);
 
     // a's dashboard: most recently seated first, which is when the seat was
     // written (seats are not rewritten on every commit), so game01, seated at
     // 10, sorts after game02, seated at 11.
     names_t m = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, games_of_user, a.id, 10, collect_member, &m), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, games_of_user, a.id, 10, collect_member, &m), 2);
     T_EQ_STR(m.ids[0], "game02");
     T_EQ_INT(m.at[0], 11);
     T_EQ_STR(m.ids[1], "game01");
     m.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, games_of_user, a.id, 1, collect_member, &m), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, games_of_user, a.id, 1, collect_member, &m), 1);
 
     // a leaves game01: the next commit seats only b, and no bot.
     n.version = 2;
@@ -673,11 +673,11 @@ static void membership_follows_commits(void) {
     memcpy(c.humans[0], b.id, sizeof(cb_uuid));
     c.n_humans = 1;
     c.n_bots = 0;
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "game01", a.id), 0);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "game01", b.id), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "game01", a.id), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "game01", b.id), 1);
     who.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, game_members, "game01", collect_name, &who), 1);   // read consistently: a is gone at once
+    T_EQ_INT(CB_ROWS_CALL(s, game_members, "game01", collect_name, &who), 1);   // read consistently: a is gone at once
     T_EQ_STR(who.ids[0], b.id);
     char v[64], q[256];
     if (tsb_dynamo()) {
@@ -717,29 +717,29 @@ static void game_delete_cascades(void) {
     cb_user_row a = mkuser("a@x.io", "A", 1);
     CB_STORE_CALL(s, user_create, &a);
     cb_game_row g = mkgame("del001", 10);
-    CB_STORE_CALL(s, game_create, &g, a.id);
+    CB_ROWS_CALL(s, game_create, &g, a.id);
     cb_chat_row ch = { .message = "hi", .created_at = 5 };
     cb_uuid_v4(ch.id);
     snprintf(ch.game_id, sizeof ch.game_id, "del001");
     memcpy(ch.user_id, a.id, sizeof(cb_uuid));
-    T_EQ_INT(CB_STORE_CALL(s, chat_put, &ch), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, chat_put, &ch), CB_OK);
     uint8_t mv[2] = { 1, 2 };
     cb_snapshot_row sn = { .n_players = 1, .moves = mv, .moves_len = 2, .created_at = 9 };
     cb_uuid_v4(sn.id);
     snprintf(sn.game_id, sizeof sn.game_id, "del001");
     memcpy(sn.player_ids[0], a.id, sizeof(cb_uuid));
-    T_EQ_INT(CB_STORE_CALL(s, snapshot_put, &sn), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshot_put, &sn), CB_OK);
 
-    T_EQ_INT(CB_STORE_CALL(s, game_delete, "del001", 3), CB_E_CONFLICT);
-    T_EQ_INT(CB_STORE_CALL(s, game_delete, "del001", 0), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, game_delete, "del001", 0), CB_E_NOT_FOUND);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "del001", a.id), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, game_delete, "del001", 3), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, game_delete, "del001", 0), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_delete, "del001", 0), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "del001", a.id), 0);
     names_t n = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, chat_list, "del001", 0, collect_chat, &n), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, chat_list, "del001", 0, collect_chat, &n), 0);
     // The replay outlives the game, its game_id cleared.
     snapcopy c = { 0 };
     cb_snapshot_query q = { .viewer_id = a.id };
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
     T_EQ_STR(c.row.game_id, "");
     cb_snapshot_row_free(&c.row);
     cb_store_close(s);
@@ -753,7 +753,7 @@ static void user_delete_cascades(void) {
     CB_STORE_CALL(s, user_create, &a);
     CB_STORE_CALL(s, user_create, &b);
     cb_game_row g = mkgame("ud0001", 10);
-    CB_STORE_CALL(s, game_create, &g, a.id);
+    CB_ROWS_CALL(s, game_create, &g, a.id);
     cb_refresh_row r = { .token_hash = "t1", .session_id = "s" };
     memcpy(r.user_id, a.id, sizeof(cb_uuid));
     CB_STORE_CALL(s, refresh_put, &r);
@@ -761,24 +761,24 @@ static void user_delete_cascades(void) {
     cb_uuid_v4(ch.id);
     snprintf(ch.game_id, sizeof ch.game_id, "ud0001");
     memcpy(ch.user_id, a.id, sizeof(cb_uuid));
-    CB_STORE_CALL(s, chat_put, &ch);
+    CB_ROWS_CALL(s, chat_put, &ch);
     uint8_t mv[1] = { 1 };
     cb_snapshot_row sn = { .n_players = 2, .moves = mv, .moves_len = 1, .created_at = 9 };
     cb_uuid_v4(sn.id);
     memcpy(sn.player_ids[0], a.id, sizeof(cb_uuid));
     memcpy(sn.player_ids[1], b.id, sizeof(cb_uuid));
-    CB_STORE_CALL(s, snapshot_put, &sn);
+    CB_ROWS_CALL(s, snapshot_put, &sn);
 
     T_EQ_INT(CB_STORE_CALL(s, user_delete, a.id), CB_OK);
     T_EQ_INT(CB_STORE_CALL(s, user_delete, a.id), CB_E_NOT_FOUND);
     cb_refresh_row got;
     T_EQ_INT(CB_STORE_CALL(s, refresh_take, "t1", 1, 1000, &got), CB_E_NOT_FOUND);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "ud0001", a.id), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "ud0001", a.id), 0);
     T_EQ_INT(rating_of(s, a.id), TABLE_RATING_NONE);
     names_t n = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, chat_list, "ud0001", 0, collect_chat, &n), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, chat_list, "ud0001", 0, collect_chat, &n), 0);
     cb_snapshot_query q = { .viewer_id = b.id };
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, collect_snap, &n), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, collect_snap, &n), 1);
     cb_store_close(s);
 }
 
@@ -790,50 +790,50 @@ static void lease_semantics(void) {
     CB_STORE_CALL(s, user_create, &a);
     cb_game_row g = mkgame("lease1", 10);
     g.needs_bots = true;   // a drive takes the lease only on a game with bot work
-    CB_STORE_CALL(s, game_create, &g, a.id);
+    CB_ROWS_CALL(s, game_create, &g, a.id);
     const int64_t T0 = 1000000, TTL = 25000;
     cb_uuid t1, t2;
-    T_EQ_INT(CB_STORE_CALL(s, lease_held, "lease1", T0), 0);   // never taken
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "lease1", T0, TTL, t1), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_held, "lease1", T0), 0);   // never taken
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", T0, TTL, t1), CB_OK);
     T_CHECK(cb_uuid_valid(t1, strlen(t1)));
     // Held exactly while an acquire is refused: up to and including its last ms.
-    T_EQ_INT(CB_STORE_CALL(s, lease_held, "lease1", T0 + TTL), 1);
-    T_EQ_INT(CB_STORE_CALL(s, lease_held, "lease1", T0 + TTL + 1), 0);
-    T_EQ_INT(CB_STORE_CALL(s, lease_held, "nogame", T0), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_held, "lease1", T0 + TTL), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_held, "lease1", T0 + TTL + 1), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_held, "nogame", T0), 0);
     // A second acquire while the lease is live fails, up to and including its last ms.
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "lease1", T0 + 1, TTL, t2), CB_E_CONFLICT);
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "lease1", T0 + TTL, TTL, t2), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", T0 + 1, TTL, t2), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", T0 + TTL, TTL, t2), CB_E_CONFLICT);
     // Renew needs the holder's token.
-    T_EQ_INT(CB_STORE_CALL(s, lease_renew, "lease1", "00000000-0000-4000-8000-000000000000", T0 + 10, TTL), CB_E_CONFLICT);
-    T_EQ_INT(CB_STORE_CALL(s, lease_renew, "lease1", t1, T0 + 10000, TTL), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_renew, "lease1", "00000000-0000-4000-8000-000000000000", T0 + 10, TTL), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_renew, "lease1", t1, T0 + 10000, TTL), CB_OK);
     // The renewal moved the expiry: T0 + TTL + 1 is inside it now.
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "lease1", T0 + TTL + 1, TTL, t2), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", T0 + TTL + 1, TTL, t2), CB_E_CONFLICT);
     // A release by someone else's token does nothing.
-    T_EQ_INT(CB_STORE_CALL(s, lease_release, "lease1", "00000000-0000-4000-8000-000000000000"), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "lease1", T0 + 10001, TTL, t2), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_release, "lease1", "00000000-0000-4000-8000-000000000000"), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", T0 + 10001, TTL, t2), CB_E_CONFLICT);
     // Released by its holder, it is free at once.
-    T_EQ_INT(CB_STORE_CALL(s, lease_held, "lease1", T0 + 10001), 1);
-    T_EQ_INT(CB_STORE_CALL(s, lease_release, "lease1", t1), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, lease_held, "lease1", T0 + 10001), 0);
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "lease1", T0 + 10002, TTL, t2), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_held, "lease1", T0 + 10001), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_release, "lease1", t1), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_held, "lease1", T0 + 10001), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", T0 + 10002, TTL, t2), CB_OK);
     T_CHECK(strcmp(t1, t2) != 0);
-    T_EQ_INT(CB_STORE_CALL(s, lease_renew, "lease1", t1, T0 + 10003, TTL), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_renew, "lease1", t1, T0 + 10003, TTL), CB_E_CONFLICT);
     // TTL expiry: a holder that died is replaced once the lease has run out.
     cb_uuid t3;
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "lease1", T0 + 10002 + TTL + 1, TTL, t3), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, lease_renew, "lease1", t2, T0 + 10002 + TTL + 2, TTL), CB_E_CONFLICT);
-    T_EQ_INT(CB_STORE_CALL(s, lease_renew, "lease1", t3, T0 + 10002 + TTL + 2, TTL), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "nogame", T0, TTL, t2), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", T0 + 10002 + TTL + 1, TTL, t3), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_renew, "lease1", t2, T0 + 10002 + TTL + 2, TTL), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_renew, "lease1", t3, T0 + 10002 + TTL + 2, TTL), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "nogame", T0, TTL, t2), CB_E_NOT_FOUND);
     // A game with no bot work has no lease to take.
     cb_game_row idle = mkgame("idle01", 10);
-    CB_STORE_CALL(s, game_create, &idle, a.id);
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "idle01", T0, TTL, t2), CB_E_NOT_FOUND);
+    CB_ROWS_CALL(s, game_create, &idle, a.id);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "idle01", T0, TTL, t2), CB_E_NOT_FOUND);
 
     // The lease moves the scan's staleness clock (the scan sees a drive in
     // flight), never last_commit_at. The clock is on the SCAN marker the
     // lease lives on, so the row's updated_at stays its last commit's.
     cb_game_row got;
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "lease1", &got), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "lease1", &got), CB_OK);
     T_EQ_INT(got.updated_at, 10);
     T_EQ_INT(got.last_commit_at, 10);
     T_EQ_INT(got.version, 0);
@@ -847,9 +847,9 @@ static void lease_semantics(void) {
     n.updated_at = T0 + 10002 + TTL + 3;
     cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1 };
     memcpy(c.humans[0], a.id, sizeof(cb_uuid));
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "lease1", T0 + 10002 + TTL + 4, TTL, t2), CB_E_CONFLICT);
-    T_EQ_INT(CB_STORE_CALL(s, lease_renew, "lease1", t3, T0 + 10002 + TTL + 5, TTL), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", T0 + 10002 + TTL + 4, TTL, t2), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_renew, "lease1", t3, T0 + 10002 + TTL + 5, TTL), CB_OK);
     cb_store_close(s);
 }
 
@@ -862,7 +862,7 @@ static void bots_idle_semantics(void) {
     const int64_t NOW = 10000000, STALE = NOW - 10000, ACTIVE = NOW - 3600000;
     cb_game_row g = mkgame("idle02", NOW - 20000);
     g.needs_bots = true;
-    CB_STORE_CALL(s, game_create, &g, a.id);
+    CB_ROWS_CALL(s, game_create, &g, a.id);
     // A commit moves the row to version 1, still with a bot able to act.
     cb_game_row n = mkgame("idle02", NOW - 20000);
     n.needs_bots = true;
@@ -870,31 +870,31 @@ static void bots_idle_semantics(void) {
     n.updated_at = NOW - 20000;
     cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1 };
     memcpy(c.humans[0], a.id, sizeof(cb_uuid));
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
     cb_uuid tok;
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "idle02", STALE - 5000, 1000, tok), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "idle02", STALE - 5000, 1000, tok), CB_OK);
     names_t nm = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 1);
     // A stale read (version 0) changes nothing: the commit's answer stands.
-    T_EQ_INT(CB_STORE_CALL(s, bots_idle, "idle02", 0), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_idle, "idle02", 0), CB_E_CONFLICT);
     nm.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 1);
     // At the version read: out of the scan, and no lease left to take.
-    T_EQ_INT(CB_STORE_CALL(s, bots_idle, "idle02", 1), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_idle, "idle02", 1), CB_OK);
     nm.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 0);
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "idle02", NOW, 25000, tok), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "idle02", NOW, 25000, tok), CB_E_NOT_FOUND);
     // The game itself is untouched.
     cb_game_row got;
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "idle02", &got), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "idle02", &got), CB_OK);
     T_EQ_INT(got.version, 1);
     cb_game_row_free(&got);
     // The next commit that leaves a bot able to act puts it back.
     n.version = 2;
     c.expected_version = 1;
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
     nm.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 1);
     cb_store_close(s);
 }
 
@@ -921,17 +921,17 @@ static void games_needing_bots_windows(void) {
         cb_game_row g = mkgame(rows[i].id, rows[i].last_commit);
         g.needs_bots = rows[i].needs;
         cb_uuid none[1];
-        T_EQ_INT(CB_STORE_CALL(s, game_import, &g, none, 0, none, 0), CB_OK);
+        T_EQ_INT(CB_ROWS_CALL(s, game_import, &g, none, 0, none, 0), CB_OK);
     }
     // lease1: its last commit is old, but a drive renewed the lease a second ago.
     cb_uuid tok;
-    T_EQ_INT(CB_STORE_CALL(s, lease_acquire, "lease1", NOW - 1000, 25000, tok), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", NOW - 1000, 25000, tok), CB_OK);
     names_t n = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &n), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &n), 2);
     T_EQ_STR(n.ids[0], "due002");   // oldest first
     T_EQ_STR(n.ids[1], "due001");
     n.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, games_needing_bots, STALE, ACTIVE, 1, collect_name, &n), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 1, collect_name, &n), 1);
     cb_store_close(s);
 }
 
@@ -963,8 +963,8 @@ static void ratings_reindexed(void) {
     cb_rating_row ta = { .elo_rating = 1000, .games_played = 0 }, tb = { .elo_rating = 1100, .games_played = 3 };
     memcpy(ta.user_id, a.id, sizeof ta.user_id);
     memcpy(tb.user_id, b.id, sizeof tb.user_id);
-    T_EQ_INT(CB_STORE_CALL(s, rating_reindex, &ta), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, rating_reindex, &tb), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, rating_reindex, &ta), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, rating_reindex, &tb), CB_OK);
     T_CHECK(!has_attr(s, pa, "RATING", "gsi2pk"));
     cb_item it;
     cb_item_init(&it);
@@ -973,11 +973,11 @@ static void ratings_reindexed(void) {
     T_CHECK(cb_item_s(&it, "gsi2sk", sk, sizeof sk));
     T_CHECK(strncmp(sk, "E#", 2) == 0 && strstr(sk, b.id) != NULL);
     cb_item_free(&it);
-    T_EQ_INT(CB_STORE_CALL(s, rating_reindex, &ta), CB_E_CONFLICT);
-    T_EQ_INT(CB_STORE_CALL(s, rating_reindex, &tb), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, rating_reindex, &ta), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, rating_reindex, &tb), CB_E_CONFLICT);
     // A row a commit moved meanwhile (another elo) is left to the commit.
     tb.elo_rating = 1200;
-    T_EQ_INT(CB_STORE_CALL(s, rating_reindex, &tb), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, rating_reindex, &tb), CB_E_CONFLICT);
     cb_store_close(s);
 }
 
@@ -988,7 +988,7 @@ static void ratings_applied_by_commit(void) {
     CB_STORE_CALL(s, user_import, &b);   // an account with no rating row yet
     T_EQ_INT(rating_of(s, b.id), TABLE_RATING_NONE);
     cb_game_row g = mkgame("rate01", 10);
-    CB_STORE_CALL(s, game_create, &g, a.id);
+    CB_ROWS_CALL(s, game_create, &g, a.id);
     const char *bot = "2c601cde-63d2-5291-8fcb-735f5860b1ec", *gone = "00000000-0000-4000-8000-0000000000aa";
     cb_game_row n = mkgame("rate01", 10);
     n.version = 1;
@@ -1006,14 +1006,14 @@ static void ratings_applied_by_commit(void) {
     c.rating_delta[2] = -8;
     snprintf(c.rated_ids[3], sizeof(cb_uuid), "%s", gone);   // a deleted account: skipped
     c.rating_delta[3] = 3;
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
 
     T_EQ_INT(rating_of(s, a.id), 0);
     T_EQ_INT(rating_of(s, b.id), 1012);
     T_EQ_INT(rating_of(s, bot), 992);
     T_EQ_INT(rating_of(s, gone), TABLE_RATING_NONE);
     ratings_t r = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, ratings_list, collect_rating, &r), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, ratings_list, collect_rating, &r), 2);
     T_EQ_STR(r.rows[0].user_id, b.id);   // highest first
     T_EQ_STR(r.rows[0].username, "Bee");
     T_EQ_INT(r.rows[0].previous_elo, 1000);
@@ -1022,7 +1022,7 @@ static void ratings_applied_by_commit(void) {
     T_EQ_INT(r.rows[1].elo_rating, 0);
     T_EQ_INT(r.rows[1].previous_elo, 1000);
     bots_t bl = { 0 };
-    CB_STORE_CALL(s, bots_list, collect_bot, &bl);
+    CB_ROWS_CALL(s, bots_list, collect_bot, &bl);
     T_EQ_STR(bl.rows[0].id, bot);
     T_EQ_INT(bl.rows[0].previous_elo, 1000);
     T_EQ_INT(bl.rows[0].games_played, 1);
@@ -1033,31 +1033,31 @@ static void ratings_applied_by_commit(void) {
     c.n_rated = 1;
     memcpy(c.rated_ids[0], b.id, sizeof(cb_uuid));
     c.rating_delta[0] = -2;
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
     T_EQ_INT(rating_of(s, b.id), 1010);
     r.n = 0;
-    CB_STORE_CALL(s, ratings_list, collect_rating, &r);
+    CB_ROWS_CALL(s, ratings_list, collect_rating, &r);
     T_EQ_INT(r.rows[0].previous_elo, 1012);
     T_EQ_INT(r.rows[0].games_played, 2);
     // The leaderboard's read: the played rows, highest first, at most `limit`.
     r.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, ratings_top, 100, collect_rating, &r), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, ratings_top, 100, collect_rating, &r), 2);
     T_EQ_STR(r.rows[0].user_id, b.id);
     T_EQ_INT(r.rows[0].elo_rating, 1010);
     T_EQ_STR(r.rows[1].user_id, a.id);
     T_EQ_INT(r.rows[1].elo_rating, 0);
     r.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, ratings_top, 1, collect_rating, &r), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, ratings_top, 1, collect_rating, &r), 1);
     T_EQ_STR(r.rows[0].user_id, b.id);
-    T_EQ_INT(CB_STORE_CALL(s, ratings_top, 0, collect_rating, &r), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, ratings_top, 0, collect_rating, &r), 0);
     // A third player who signed up and never played is not on it.
     cb_user_row z = mkuser("zed@x.io", "Zed", 9);
     T_EQ_INT(CB_STORE_CALL(s, user_create, &z), CB_OK);
     r.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, ratings_top, 100, collect_rating, &r), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, ratings_top, 100, collect_rating, &r), 2);
     // A row the commit already keyed is not rewritten, and its values stay.
     cb_rating_row same = r.rows[0];
-    T_EQ_INT(CB_STORE_CALL(s, rating_reindex, &same), CB_E_CONFLICT);
+    T_EQ_INT(CB_ROWS_CALL(s, rating_reindex, &same), CB_E_CONFLICT);
     T_EQ_INT(rating_of(s, b.id), 1010);
     cb_store_close(s);
 }
@@ -1070,7 +1070,7 @@ static void snapshots_query_shapes(void) {
     CB_STORE_CALL(s, user_create, &a);
     CB_STORE_CALL(s, user_create, &b);
     cb_game_row g = mkgame("snap01", 10);
-    CB_STORE_CALL(s, game_create, &g, a.id);
+    CB_ROWS_CALL(s, game_create, &g, a.id);
     uint8_t mv[3] = { 7, 8, 9 }, ex[2] = { 1, 1 };
     const char *ids[3] = { "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002",
                            "00000000-0000-4000-8000-000000000003" };
@@ -1084,34 +1084,34 @@ static void snapshots_query_shapes(void) {
         }
         memcpy(sn.player_ids[0], i == 2 ? b.id : a.id, sizeof(cb_uuid));
         memcpy(sn.player_ids[1], b.id, sizeof(cb_uuid));
-        T_EQ_INT(CB_STORE_CALL(s, snapshot_put, &sn), CB_OK);
+        T_EQ_INT(CB_ROWS_CALL(s, snapshot_put, &sn), CB_OK);
     }
     names_t n = { 0 };
     cb_snapshot_query q = { .viewer_id = a.id, .newest_first = true };
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, collect_snap, &n), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, collect_snap, &n), 2);
     T_EQ_STR(n.ids[0], ids[1]);
     T_EQ_STR(n.ids[1], ids[0]);
     n.n = 0;
     q.viewer_id = b.id;
     q.newest_first = false;
     q.limit = 2;
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, collect_snap, &n), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, collect_snap, &n), 2);
     T_EQ_STR(n.ids[0], ids[0]);
     n.n = 0;
     q.limit = 0;
     q.game_id = "snap01";
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, collect_snap, &n), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, collect_snap, &n), 1);
     n.n = 0;
     q.game_id = NULL;
     q.id = ids[2];
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, collect_snap, &n), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, collect_snap, &n), 1);
     // Not a player of it: not visible.
     n.n = 0;
     q.viewer_id = a.id;
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, collect_snap, &n), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, collect_snap, &n), 0);
     q.viewer_id = NULL;
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, collect_snap, &n), CB_E_INVALID);
-    T_EQ_INT(CB_STORE_CALL(s, snapshot_put, &(cb_snapshot_row){ .id = "00000000-0000-4000-8000-000000000001",
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, collect_snap, &n), CB_E_INVALID);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshot_put, &(cb_snapshot_row){ .id = "00000000-0000-4000-8000-000000000001",
                                                                 .moves = mv, .moves_len = 3 }),
              CB_E_CONFLICT);
     cb_store_close(s);
@@ -1123,10 +1123,10 @@ static void snapshot_round_trip(void) {
     cb_snapshot_row sn = { .n_players = 3, .moves = mv, .moves_len = 4, .extras = ex, .extras_len = 3, .created_at = 42 };
     cb_uuid_v4(sn.id);
     for (int i = 0; i < 3; i++) cb_uuid_v4(sn.player_ids[i]);
-    T_EQ_INT(CB_STORE_CALL(s, snapshot_put, &sn), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshot_put, &sn), CB_OK);
     snapcopy c = { 0 };
     cb_snapshot_query q = { .viewer_id = sn.player_ids[2] };
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
     T_EQ_STR(c.row.id, sn.id);
     T_EQ_STR(c.row.game_id, "");
     T_EQ_INT(c.row.n_players, 3);
@@ -1149,12 +1149,12 @@ static void snapshot_set_extras_rewrites_only_extras(void) {
     cb_uuid_v4(other.id);
     for (int i = 0; i < 2; i++) cb_uuid_v4(sn.player_ids[i]);
     memcpy(other.player_ids, sn.player_ids, sizeof sn.player_ids);
-    T_EQ_INT(CB_STORE_CALL(s, snapshot_put, &sn), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, snapshot_put, &other), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, snapshot_set_extras, sn.id, ex2, sizeof ex2), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshot_put, &sn), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshot_put, &other), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshot_set_extras, sn.id, ex2, sizeof ex2), CB_OK);
     snapcopy c = { 0 };
     cb_snapshot_query q = { .viewer_id = sn.player_ids[1], .id = sn.id };
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
     T_EQ_MEM(c.row.extras, c.row.extras_len, ex2, 5);
     T_EQ_MEM(c.row.moves, c.row.moves_len, mv, 4);
     T_EQ_INT(c.row.created_at, 42);
@@ -1162,13 +1162,13 @@ static void snapshot_set_extras_rewrites_only_extras(void) {
     cb_snapshot_row_free(&c.row);
     snapcopy o = { 0 };
     cb_snapshot_query qo = { .viewer_id = other.player_ids[0], .id = other.id };
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &qo, copy_snap, &o), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &qo, copy_snap, &o), 1);
     T_EQ_MEM(o.row.extras, o.row.extras_len, ex, 3);   // another replay is untouched
     cb_snapshot_row_free(&o.row);
-    T_EQ_INT(CB_STORE_CALL(s, snapshot_set_extras, "00000000-0000-4000-8000-00000000dead", ex2, 5), CB_E_NOT_FOUND);
-    T_EQ_INT(CB_STORE_CALL(s, snapshot_set_extras, sn.id, NULL, 0), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshot_set_extras, "00000000-0000-4000-8000-00000000dead", ex2, 5), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshot_set_extras, sn.id, NULL, 0), CB_OK);
     memset(&c, 0, sizeof c);
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
     T_EQ_INT(c.row.extras_len, 0);
     cb_snapshot_row_free(&c.row);
     cb_store_close(s);
@@ -1194,7 +1194,7 @@ static void replay_copies_hold_no_names(void) {
     cb_uuid_v4(sn.id);
     snprintf(sn.game_id, sizeof sn.game_id, "nm0001");
     for (int i = 0; i < 2; i++) cb_uuid_v4(sn.player_ids[i]);
-    T_EQ_INT(CB_STORE_CALL(s, snapshot_put, &sn), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshot_put, &sn), CB_OK);
     char pk[64], sk0[64], sk1[64];
     snprintf(pk, sizeof pk, "SNAP#%s", sn.id);
     snprintf(sk0, sizeof sk0, "PLAYER#%s", sn.player_ids[0]);
@@ -1223,15 +1223,15 @@ static void replay_copies_hold_no_names(void) {
     // Read compatibly: the viewer still gets the replay, from the replay itself.
     snapcopy c = { 0 };
     cb_snapshot_query q = { .viewer_id = sn.player_ids[1], .id = sn.id };
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
     T_EQ_MEM(c.row.extras, c.row.extras_len, ex, 3);
     cb_snapshot_row_free(&c.row);
     // Redacted: the replay's extras are the new ones, and the fat copy is a pointer.
-    T_EQ_INT(CB_STORE_CALL(s, snapshot_set_extras, sn.id, ex2, sizeof ex2), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshot_set_extras, sn.id, ex2, sizeof ex2), CB_OK);
     for (int i = 0; i < 4; i++) T_CHECK(!has_attr(s, pk, sk1, NOT_ON_A_POINTER[i]));
     T_CHECK(has_attr(s, pk, sk1, "gsi2pk"));
     memset(&c, 0, sizeof c);
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, copy_snap, &c), 1);
     T_EQ_MEM(c.row.extras, c.row.extras_len, ex2, 2);
     T_EQ_MEM(c.row.moves, c.row.moves_len, mv, 4);
     cb_snapshot_row_free(&c.row);
@@ -1243,28 +1243,28 @@ static void chat_newest_oldest_first(void) {
     cb_user_row a = mkuser("a@x.io", "A", 1);
     CB_STORE_CALL(s, user_create, &a);
     cb_game_row g = mkgame("chat01", 10);
-    CB_STORE_CALL(s, game_create, &g, a.id);
+    CB_ROWS_CALL(s, game_create, &g, a.id);
     const char *msgs[4] = { "one", "two", "three", "four" };
     for (int i = 0; i < 4; i++) {
         cb_chat_row c = { .message = (char *)msgs[i], .created_at = 100 + i, .is_system = i == 0 };
         cb_uuid_v4(c.id);
         snprintf(c.game_id, sizeof c.game_id, "chat01");
         memcpy(c.user_id, a.id, sizeof(cb_uuid));
-        T_EQ_INT(CB_STORE_CALL(s, chat_put, &c), CB_OK);
+        T_EQ_INT(CB_ROWS_CALL(s, chat_put, &c), CB_OK);
     }
     names_t n = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, chat_list, "chat01", 2, collect_chat, &n), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, chat_list, "chat01", 2, collect_chat, &n), 2);
     T_EQ_STR(n.ids[0], "three");
     T_EQ_STR(n.ids[1], "four");
     n.n = 0;
-    T_EQ_INT(CB_STORE_CALL(s, chat_list, "chat01", 0, collect_chat, &n), 4);
+    T_EQ_INT(CB_ROWS_CALL(s, chat_list, "chat01", 0, collect_chat, &n), 4);
     T_EQ_STR(n.ids[0], "one");
     // A message for a game that does not exist is refused.
     cb_chat_row bad = { .message = "x", .created_at = 1 };
     cb_uuid_v4(bad.id);
     snprintf(bad.game_id, sizeof bad.game_id, "nogame");
     memcpy(bad.user_id, a.id, sizeof(cb_uuid));
-    T_EQ_INT(CB_STORE_CALL(s, chat_put, &bad), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(s, chat_put, &bad), CB_E_NOT_FOUND);
     cb_store_close(s);
 }
 
@@ -1350,12 +1350,12 @@ static void admin_reads(void) {
                            collect_row, &r),
              0);
     bots_t b = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, bots_list, collect_bot, &b), 48);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 48);
     // A blob reads as "\x" hex.
     cb_user_row a = mkuser("a@x.io", "A", 1);
     CB_STORE_CALL(s, user_create, &a);
     cb_game_row g = mkgame("adm001", 1);
-    CB_STORE_CALL(s, game_create, &g, a.id);
+    CB_ROWS_CALL(s, game_create, &g, a.id);
     r.rows = 0;
     CB_STORE_CALL(s, admin_query, "SELECT attrs FROM items WHERE pk = 'GAME#adm001' AND sk = 'ROW'", false, collect_row, &r);
     T_CHECK(strncmp(r.first[0], "\\x", 2) == 0);
@@ -1380,7 +1380,7 @@ static void admin_reads(void) {
     T_EQ_INT(cb_store_open_sqlite(vac, &copy), CB_OK);
     if (copy) {
         cb_game_row back;
-        T_EQ_INT(CB_STORE_CALL(copy, game_get, "adm001", &back), CB_OK);
+        T_EQ_INT(CB_ROWS_CALL(copy, game_get, "adm001", &back), CB_OK);
         cb_game_row_free(&back);
         cb_store_close(copy);
     }
@@ -1424,14 +1424,14 @@ static void admin_reads_dynamo(void) {
     T_EQ_INT(CB_STORE_CALL(s, admin_query, q, false, collect_row, &r), CB_E_FORBIDDEN);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, q, true, collect_row, &r), 0);
     bots_t b = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, bots_list, collect_bot, &b), 48);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 48);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELEKT", true, collect_row, &r), CB_E_INVALID);
 
     // A Binary attribute reads as "\x" hex.
     cb_user_row a = mkuser("a@x.io", "A", 1);
     CB_STORE_CALL(s, user_create, &a);
     cb_game_row g = mkgame("adm001", 1);
-    CB_STORE_CALL(s, game_create, &g, a.id);
+    CB_ROWS_CALL(s, game_create, &g, a.id);
     snprintf(q, sizeof q, "SELECT state FROM \"%s\" WHERE pk = 'GAME#adm001' AND sk = 'ROW'", tsb_table());
     r.rows = 0;
     T_EQ_INT(CB_STORE_CALL(s, admin_query, q, false, collect_row, &r), 1);
@@ -1460,16 +1460,16 @@ static void import_writes(void) {
     cb_rating_row r = { .elo_rating = 1234, .previous_elo = 1200, .games_played = 9, .updated_at = 5 };
     memcpy(r.user_id, a.id, sizeof(cb_uuid));
     snprintf(r.username, sizeof r.username, "A2");
-    T_EQ_INT(CB_STORE_CALL(s, rating_import, &r), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, rating_import, &r), CB_OK);
     T_EQ_INT(rating_of(s, a.id), 1234);
 
     cb_bot_row bots[2] = { { .id = "11111111-1111-4111-8111-111111111111", .nickname = "%Seoul 1",
                              .strategy_key = "robusta", .elo_rating = 1100, .previous_elo = 1090, .games_played = 3 },
                            { .id = "22222222-2222-4222-8222-222222222222", .nickname = "%Miami 1",
                              .strategy_key = "random", .elo_rating = 900, .previous_elo = -1 } };
-    T_EQ_INT(CB_STORE_CALL(s, bots_replace, bots, 2), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_replace, bots, 2), CB_OK);
     bots_t bl = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, bots_list, collect_bot, &bl), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &bl), 2);
     T_EQ_STR(bl.rows[0].nickname, "%Miami 1");   // ladder order, not insertion order
     T_EQ_INT(bl.rows[0].previous_elo, -1);
     T_EQ_INT(bl.rows[1].previous_elo, 1090);
@@ -1482,18 +1482,18 @@ static void import_writes(void) {
     cb_uuid humans[1], botids[1];
     memcpy(humans[0], a.id, sizeof(cb_uuid));
     snprintf(botids[0], sizeof botids[0], "%s", bots[0].id);
-    T_EQ_INT(CB_STORE_CALL(s, game_import, &g, humans, 1, botids, 1), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_import, &g, humans, 1, botids, 1), CB_OK);
     cb_game_row gg;
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "imp001", &gg), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "imp001", &gg), CB_OK);
     T_EQ_INT(gg.version, 37);
     T_EQ_INT(gg.round_epoch, 30);
     T_EQ_INT(gg.last_commit_at, 55);
     T_EQ_INT(gg.updated_at, 60);
     cb_game_row_free(&gg);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "imp001", a.id), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "imp001", a.id), 1);
     // Imported again with no members: the old seats go.
-    T_EQ_INT(CB_STORE_CALL(s, game_import, &g, humans, 0, botids, 0), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "imp001", a.id), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, game_import, &g, humans, 0, botids, 0), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "imp001", a.id), 0);
     cb_store_close(s);
 }
 
@@ -1526,7 +1526,7 @@ static void big_items_and_pages(void) {
     cb_user_row a = mkuser("a@x.io", "A", 1);
     T_EQ_INT(CB_STORE_CALL(s, user_create, &a), CB_OK);
     cb_game_row g = mkgame("big001", 10);
-    T_EQ_INT(CB_STORE_CALL(s, game_create, &g, a.id), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_create, &g, a.id), CB_OK);
     size_t sn = 150000, ln = 100000;
     uint8_t *state = malloc(sn), *logs = malloc(ln);
     for (size_t i = 0; i < sn; i++) state[i] = (uint8_t)(i * 131 + (i >> 8));
@@ -1535,9 +1535,9 @@ static void big_items_and_pages(void) {
     n.state = state, n.state_len = sn, n.logs = logs, n.logs_len = ln, n.version = 1, n.updated_at = 20;
     cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1 };
     memcpy(c.humans[0], a.id, sizeof(cb_uuid));
-    T_EQ_INT(CB_STORE_CALL(s, game_commit, &c), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
     cb_game_row got;
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "big001", &got), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "big001", &got), CB_OK);
     T_EQ_MEM(got.state, got.state_len, state, sn);
     T_EQ_MEM(got.logs, got.logs_len, logs, ln);
     cb_game_row_free(&got);
@@ -1550,11 +1550,11 @@ static void big_items_and_pages(void) {
         cb_uuid_v4(r.id);
         memcpy(r.player_ids[0], a.id, sizeof(cb_uuid));
         cb_uuid_v4(r.player_ids[1]);
-        T_EQ_INT(CB_STORE_CALL(s, snapshot_put, &r), CB_OK);
+        T_EQ_INT(CB_ROWS_CALL(s, snapshot_put, &r), CB_OK);
     }
     pages_t p = { .ordered = true };
     cb_snapshot_query q = { .viewer_id = a.id };
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, count_snap_pages, &p), NSNAP);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, count_snap_pages, &p), NSNAP);
     T_EQ_INT(p.n, NSNAP);
     T_CHECK(p.ordered);
     T_EQ_INT((long long)p.bytes, (long long)NSNAP * SNAPLEN);
@@ -1568,20 +1568,20 @@ static void big_items_and_pages(void) {
         cb_uuid_v4(m.id);
         snprintf(m.game_id, sizeof m.game_id, "big001");
         memcpy(m.user_id, a.id, sizeof(cb_uuid));
-        T_EQ_INT(CB_STORE_CALL(s, chat_put, &m), CB_OK);
+        T_EQ_INT(CB_ROWS_CALL(s, chat_put, &m), CB_OK);
     }
     p = (pages_t){ .ordered = true };
-    T_EQ_INT(CB_STORE_CALL(s, chat_list, "big001", 0, count_chat_pages, &p), NCHAT);
+    T_EQ_INT(CB_ROWS_CALL(s, chat_list, "big001", 0, count_chat_pages, &p), NCHAT);
     T_CHECK(p.ordered);
     T_EQ_INT(p.last_at, 5000 + NCHAT - 1);
     p = (pages_t){ .ordered = true };
-    T_EQ_INT(CB_STORE_CALL(s, chat_list, "big001", 250, count_chat_pages, &p), 250);
+    T_EQ_INT(CB_ROWS_CALL(s, chat_list, "big001", 250, count_chat_pages, &p), 250);
     T_CHECK(p.ordered);
     T_EQ_INT(p.last_at, 5000 + NCHAT - 1);   // the newest 250, oldest of them first
     // A game with that much under it still deletes (its chat in batches of 25).
-    T_EQ_INT(CB_STORE_CALL(s, game_delete, "big001", 1), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_delete, "big001", 1), CB_OK);
     p = (pages_t){ .ordered = true };
-    T_EQ_INT(CB_STORE_CALL(s, chat_list, "big001", 0, count_chat_pages, &p), 0);
+    T_EQ_INT(CB_ROWS_CALL(s, chat_list, "big001", 0, count_chat_pages, &p), 0);
     free(msg);
     free(mv);
     free(state);
@@ -1631,7 +1631,7 @@ static void *race(void *ud) {
     racer *r = ud;
     for (int k = 0; k < 50; k++) {
         cb_game_row g;
-        if (CB_STORE_CALL(r->s, game_get, "race01", &g) != CB_OK) continue;
+        if (CB_ROWS_CALL(r->s, game_get, "race01", &g) != CB_OK) continue;
         int64_t v = g.version;
         g.version = v + 1;
         g.updated_at = v + 1;
@@ -1643,7 +1643,7 @@ static void *race(void *ud) {
             c.prev_known = g.seats_exact;
             c.prev_needs_bots = g.needs_bots;
         }
-        int rc = CB_STORE_CALL(r->s, game_commit, &c);
+        int rc = CB_ROWS_CALL(r->s, game_commit, &c);
         if (rc == CB_OK) r->wins++;
         else if (rc == CB_E_CONFLICT) r->losses++;
         cb_game_row_free(&g);
@@ -1661,7 +1661,7 @@ static void race_on(bool lone) {
     cb_user_row a = mkuser("a@x.io", "A", 1);
     CB_STORE_CALL(s, user_create, &a);
     cb_game_row g = mkgame("race01", 1);
-    CB_STORE_CALL(s, game_create, &g, a.id);
+    CB_ROWS_CALL(s, game_create, &g, a.id);
     racer r[4];
     pthread_t th[4];
     for (int i = 0; i < 4; i++) {
@@ -1676,12 +1676,12 @@ static void race_on(bool lone) {
         total += r[i].wins + r[i].losses;
     }
     cb_game_row got;
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "race01", &got), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "race01", &got), CB_OK);
     T_EQ_INT(got.version, wins);
     T_EQ_INT(total, 200);
     T_CHECK(wins >= 50);
     cb_game_row_free(&got);
-    if (lone) T_EQ_INT(CB_STORE_CALL(s, is_member, "race01", a.id), 1);
+    if (lone) T_EQ_INT(CB_ROWS_CALL(s, is_member, "race01", a.id), 1);
     cb_store_close(s);
 }
 

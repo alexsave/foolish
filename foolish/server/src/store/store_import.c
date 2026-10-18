@@ -297,7 +297,7 @@ static bool import_bots(cb_store *s, const char *dir, tally *t) {
             fprintf(stderr, "cbase-import: bot %s (%s): strategy %s is not in the kernel's roster\n", b->id, b->nickname,
                     b->strategy_key);
     }
-    int rc = n ? CB_STORE_CALL(s, bots_replace, rows, n) : CB_OK;
+    int rc = n ? CB_ROWS_CALL(s, bots_replace, rows, n) : CB_OK;
     if (rc == CB_OK) t->written = n;
     else t->bad = n;
     free(rows);
@@ -318,7 +318,7 @@ static bool import_ratings(cb_store *s, const char *dir, tally *t) {
         rt.previous_elo = (int32_t)cell_i64(&c, r, pe, -1);
         rt.games_played = (int32_t)cell_i64(&c, r, gp, 0);
         rt.updated_at = cell_i64(&c, r, ua, 0);
-        note(t, CB_STORE_CALL(s, rating_import, &rt));
+        note(t, CB_ROWS_CALL(s, rating_import, &rt));
     }
     csv_free(&c);
     return true;
@@ -386,7 +386,7 @@ static bool import_games(cb_store *s, const char *dir, tally *t, tally *th, tall
         }
         cb_uuid humans[CB_MAX_SEATS], bots[CB_MAX_SEATS];
         int nh = seats_of(&ph, ph_g, ph_u, g.id, humans), nbots = seats_of(&bh, bh_g, bh_b, g.id, bots);
-        int rc = CB_STORE_CALL(s, game_import, &g, humans, nh, bots, nbots);
+        int rc = CB_ROWS_CALL(s, game_import, &g, humans, nh, bots, nbots);
         note(t, rc);
         if (rc == CB_OK) {
             th->written += nh;
@@ -424,7 +424,7 @@ static bool import_snapshots(cb_store *s, const char *dir, tally *t) {
             cb_snapshot_row_free(&sn);
             continue;
         }
-        note(t, CB_STORE_CALL(s, snapshot_put, &sn));
+        note(t, CB_ROWS_CALL(s, snapshot_put, &sn));
         cb_snapshot_row_free(&sn);
     }
     csv_free(&c);
@@ -444,7 +444,7 @@ static bool import_chat(cb_store *s, const char *dir, tally *t) {
         m.message = (char *)(cell(&c, r, msg) ? cell(&c, r, msg) : "");
         m.is_system = cell_bool(&c, r, sys);
         m.created_at = cell_i64(&c, r, ca, 0);
-        note(t, CB_STORE_CALL(s, chat_put, &m));
+        note(t, CB_ROWS_CALL(s, chat_put, &m));
     }
     csv_free(&c);
     return true;
@@ -538,20 +538,25 @@ static bool add_bot(const cb_bot_row *b, void *ud) {
 }
 
 int cb_import_seed_bots(cb_store *s) {
-    bot_set have = { .rows = calloc(64, sizeof(cb_bot_row)) }, seed = { .rows = calloc(64, sizeof(cb_bot_row)) };
-    cb_store *mem = NULL;
-    int rc = !have.rows || !seed.rows ? CB_E_NOMEM : CB_STORE_CALL(s, bots_list, add_bot, &have);
+    bot_set have = { .rows = calloc(64, sizeof(cb_bot_row)) };
+    cb_bot_row *seed = calloc((size_t)CB_BOT_SEED_N, sizeof *seed);
+    int rc = !have.rows || !seed ? CB_E_NOMEM : CB_ROWS_CALL(s, bots_list, add_bot, &have);
     if (rc >= 0 && have.n == 0) {
-        rc = cb_store_open_sqlite(":memory:", &mem);
-        if (rc == CB_OK) rc = CB_STORE_CALL(mem, bots_list, add_bot, &seed);
-        if (rc >= 0) rc = seed.n == 0 ? CB_E_STATE : CB_STORE_CALL(s, bots_replace, seed.rows, seed.n);
-        if (rc == CB_OK) rc = seed.n;
+        for (int i = 0; i < CB_BOT_SEED_N; i++) {
+            cb_strlcpy(seed[i].id, CB_BOT_SEED[i].id, sizeof seed[i].id);
+            cb_strlcpy(seed[i].nickname, CB_BOT_SEED[i].nickname, sizeof seed[i].nickname);
+            cb_strlcpy(seed[i].strategy_key, CB_BOT_SEED[i].strategy_key, sizeof seed[i].strategy_key);
+            seed[i].elo_rating = TABLE_RATING_START;
+            seed[i].previous_elo = -1;
+        }
+        cb_store_bots_sort(seed, CB_BOT_SEED_N);
+        rc = CB_ROWS_CALL(s, bots_replace, seed, CB_BOT_SEED_N);
+        if (rc == CB_OK) rc = CB_BOT_SEED_N;
     } else if (rc >= 0) {
         rc = 0;
     }
-    if (mem) cb_store_close(mem);
     free(have.rows);
-    free(seed.rows);
+    free(seed);
     return rc;
 }
 
@@ -576,11 +581,11 @@ static bool add_rating(const cb_rating_row *r, void *ud) {
 
 int cb_import_reindex_ratings(cb_store *s) {
     rating_set all = { 0 };
-    int rc = CB_STORE_CALL(s, ratings_list, add_rating, &all);
+    int rc = CB_ROWS_CALL(s, ratings_list, add_rating, &all);
     if (rc >= 0 && all.oom) rc = CB_E_NOMEM;
     int done = 0;
     for (int i = 0; rc >= 0 && i < all.n; i++) {
-        int r = CB_STORE_CALL(s, rating_reindex, &all.rows[i]);
+        int r = CB_ROWS_CALL(s, rating_reindex, &all.rows[i]);
         if (r == CB_OK) done++;
         else if (r != CB_E_CONFLICT) rc = r;   // already done, or raced (the commit's); anything else stops it
     }

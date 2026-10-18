@@ -1,5 +1,5 @@
 // lib_faultstore.c - a store that fails one chosen call (lib_faultstore.h).
-// The wrappers below are one per store.h operation, each the operation's own
+// The wrappers below are one per store.h and rows_foolish.h operation, each the operation's own
 // signature, forwarding to the store it wraps.
 #include "lib_faultstore.h"
 
@@ -105,99 +105,99 @@ static int w_session_revoke(cb_store *s, const char *id, const char *user_id, in
 }
 static int w_game_get(cb_store *s, const char *id, cb_game_row *out) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->game_get ? IN(s)->ops->game_get(IN(s), id, out) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->game_get ? cb_rows_of(IN(s))->game_get(IN(s), id, out) : CB_E_NOTIMPL;
 }
 static int w_game_create(cb_store *s, const cb_game_row *g, const char *creator_id) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->game_create ? IN(s)->ops->game_create(IN(s), g, creator_id) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->game_create ? cb_rows_of(IN(s))->game_create(IN(s), g, creator_id) : CB_E_NOTIMPL;
 }
 static int w_game_commit(cb_store *s, const cb_game_commit *c) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->game_commit ? IN(s)->ops->game_commit(IN(s), c) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->game_commit ? cb_rows_of(IN(s))->game_commit(IN(s), c) : CB_E_NOTIMPL;
 }
 static int w_game_delete(cb_store *s, const char *id, int64_t expected_version) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->game_delete ? IN(s)->ops->game_delete(IN(s), id, expected_version) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->game_delete ? cb_rows_of(IN(s))->game_delete(IN(s), id, expected_version) : CB_E_NOTIMPL;
 }
 static int w_games_of_user(cb_store *s, const char *user_id, int limit, cb_member_fn fn, void *ud) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->games_of_user ? IN(s)->ops->games_of_user(IN(s), user_id, limit, fn, ud) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->games_of_user ? cb_rows_of(IN(s))->games_of_user(IN(s), user_id, limit, fn, ud) : CB_E_NOTIMPL;
 }
 static int w_games_get_views(cb_store *s, const char *const *ids, int n, cb_game_fn fn, void *ud) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->games_get_views ? IN(s)->ops->games_get_views(IN(s), ids, n, fn, ud) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->games_get_views ? cb_rows_of(IN(s))->games_get_views(IN(s), ids, n, fn, ud) : CB_E_NOTIMPL;
 }
 static int w_is_member(cb_store *s, const char *game_id, const char *user_id) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->is_member ? IN(s)->ops->is_member(IN(s), game_id, user_id) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->is_member ? cb_rows_of(IN(s))->is_member(IN(s), game_id, user_id) : CB_E_NOTIMPL;
 }
 static int w_game_members(cb_store *s, const char *game_id, cb_name_fn fn, void *ud) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->game_members ? IN(s)->ops->game_members(IN(s), game_id, fn, ud) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->game_members ? cb_rows_of(IN(s))->game_members(IN(s), game_id, fn, ud) : CB_E_NOTIMPL;
 }
 static int w_games_needing_bots(cb_store *s, int64_t stale_before, int64_t active_after, int limit, cb_name_fn fn, void *ud) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->games_needing_bots ? IN(s)->ops->games_needing_bots(IN(s), stale_before, active_after, limit, fn, ud) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->games_needing_bots ? cb_rows_of(IN(s))->games_needing_bots(IN(s), stale_before, active_after, limit, fn, ud) : CB_E_NOTIMPL;
 }
 static int w_lease_acquire(cb_store *s, const char *game_id, int64_t now, int64_t ttl_ms, cb_uuid token_out) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->lease_acquire ? IN(s)->ops->lease_acquire(IN(s), game_id, now, ttl_ms, token_out) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->lease_acquire ? cb_rows_of(IN(s))->lease_acquire(IN(s), game_id, now, ttl_ms, token_out) : CB_E_NOTIMPL;
 }
 static int w_lease_renew(cb_store *s, const char *game_id, const char *token, int64_t now, int64_t ttl_ms) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->lease_renew ? IN(s)->ops->lease_renew(IN(s), game_id, token, now, ttl_ms) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->lease_renew ? cb_rows_of(IN(s))->lease_renew(IN(s), game_id, token, now, ttl_ms) : CB_E_NOTIMPL;
 }
 static int w_lease_release(cb_store *s, const char *game_id, const char *token) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->lease_release ? IN(s)->ops->lease_release(IN(s), game_id, token) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->lease_release ? cb_rows_of(IN(s))->lease_release(IN(s), game_id, token) : CB_E_NOTIMPL;
 }
 static int w_bots_list(cb_store *s, cb_bot_fn fn, void *ud) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->bots_list ? IN(s)->ops->bots_list(IN(s), fn, ud) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->bots_list ? cb_rows_of(IN(s))->bots_list(IN(s), fn, ud) : CB_E_NOTIMPL;
 }
 static int w_ratings_list(cb_store *s, cb_rating_fn fn, void *ud) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->ratings_list ? IN(s)->ops->ratings_list(IN(s), fn, ud) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->ratings_list ? cb_rows_of(IN(s))->ratings_list(IN(s), fn, ud) : CB_E_NOTIMPL;
 }
 static int w_ratings_top(cb_store *s, int limit, cb_rating_fn fn, void *ud) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->ratings_top ? IN(s)->ops->ratings_top(IN(s), limit, fn, ud) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->ratings_top ? cb_rows_of(IN(s))->ratings_top(IN(s), limit, fn, ud) : CB_E_NOTIMPL;
 }
 static int w_ratings_for(cb_store *s, const char *const *ids, int n, int32_t *out) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->ratings_for ? IN(s)->ops->ratings_for(IN(s), ids, n, out) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->ratings_for ? cb_rows_of(IN(s))->ratings_for(IN(s), ids, n, out) : CB_E_NOTIMPL;
 }
 static int w_rating_set_username(cb_store *s, const char *user_id, const char *username) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->rating_set_username ? IN(s)->ops->rating_set_username(IN(s), user_id, username) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->rating_set_username ? cb_rows_of(IN(s))->rating_set_username(IN(s), user_id, username) : CB_E_NOTIMPL;
 }
 static int w_snapshot_put(cb_store *s, const cb_snapshot_row *r) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->snapshot_put ? IN(s)->ops->snapshot_put(IN(s), r) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->snapshot_put ? cb_rows_of(IN(s))->snapshot_put(IN(s), r) : CB_E_NOTIMPL;
 }
 static int w_snapshots_query(cb_store *s, const cb_snapshot_query *q, cb_snapshot_fn fn, void *ud) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->snapshots_query ? IN(s)->ops->snapshots_query(IN(s), q, fn, ud) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->snapshots_query ? cb_rows_of(IN(s))->snapshots_query(IN(s), q, fn, ud) : CB_E_NOTIMPL;
 }
 static int w_snapshot_set_extras(cb_store *s, const char *id, const uint8_t *extras, size_t extras_len) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->snapshot_set_extras ? IN(s)->ops->snapshot_set_extras(IN(s), id, extras, extras_len) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->snapshot_set_extras ? cb_rows_of(IN(s))->snapshot_set_extras(IN(s), id, extras, extras_len) : CB_E_NOTIMPL;
 }
 static int w_chat_put(cb_store *s, const cb_chat_row *r) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->chat_put ? IN(s)->ops->chat_put(IN(s), r) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->chat_put ? cb_rows_of(IN(s))->chat_put(IN(s), r) : CB_E_NOTIMPL;
 }
 static int w_chat_list(cb_store *s, const char *game_id, int limit, cb_chat_fn fn, void *ud) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->chat_list ? IN(s)->ops->chat_list(IN(s), game_id, limit, fn, ud) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->chat_list ? cb_rows_of(IN(s))->chat_list(IN(s), game_id, limit, fn, ud) : CB_E_NOTIMPL;
 }
 static int w_bots_idle(cb_store *s, const char *game_id, int64_t version) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->bots_idle ? IN(s)->ops->bots_idle(IN(s), game_id, version) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->bots_idle ? cb_rows_of(IN(s))->bots_idle(IN(s), game_id, version) : CB_E_NOTIMPL;
 }
 static int w_lease_held(cb_store *s, const char *game_id, int64_t now) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->lease_held ? IN(s)->ops->lease_held(IN(s), game_id, now) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->lease_held ? cb_rows_of(IN(s))->lease_held(IN(s), game_id, now) : CB_E_NOTIMPL;
 }
 static int w_admin_collections(cb_store *s, cb_name_fn fn, void *ud) {
     if (take()) return atomic_load(&g_rc);
@@ -217,19 +217,19 @@ static int w_user_import(cb_store *s, const cb_user_row *u) {
 }
 static int w_rating_import(cb_store *s, const cb_rating_row *r) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->rating_import ? IN(s)->ops->rating_import(IN(s), r) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->rating_import ? cb_rows_of(IN(s))->rating_import(IN(s), r) : CB_E_NOTIMPL;
 }
 static int w_rating_reindex(cb_store *s, const cb_rating_row *r) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->rating_reindex ? IN(s)->ops->rating_reindex(IN(s), r) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->rating_reindex ? cb_rows_of(IN(s))->rating_reindex(IN(s), r) : CB_E_NOTIMPL;
 }
 static int w_bots_replace(cb_store *s, const cb_bot_row *rows, int n) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->bots_replace ? IN(s)->ops->bots_replace(IN(s), rows, n) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->bots_replace ? cb_rows_of(IN(s))->bots_replace(IN(s), rows, n) : CB_E_NOTIMPL;
 }
 static int w_game_import(cb_store *s, const cb_game_row *g, const cb_uuid *humans, int n_humans, const cb_uuid *bots, int n_bots) {
     if (take()) return atomic_load(&g_rc);
-    return IN(s)->ops->game_import ? IN(s)->ops->game_import(IN(s), g, humans, n_humans, bots, n_bots) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->game_import ? cb_rows_of(IN(s))->game_import(IN(s), g, humans, n_humans, bots, n_bots) : CB_E_NOTIMPL;
 }
 
 static int w_item_get(cb_store *s, cb_ikey key, bool consistent, cb_item *out) {
@@ -287,6 +287,21 @@ static const cb_store_ops FAULT_OPS = {
     .session_get = w_session_get,
     .session_revoke = w_session_revoke,
     .user_end_sessions = w_user_end_sessions,
+    .admin_collections = w_admin_collections,
+    .admin_browse = w_admin_browse,
+    .admin_query = w_admin_query,
+    .user_import = w_user_import,
+    .item_get = w_item_get,
+    .item_write = w_item_write,
+    .item_txn = w_item_txn,
+    .item_query = w_item_query,
+    .item_batch_get = w_item_batch_get,
+    .item_batch_delete = w_item_batch_delete,
+    .item_keys = w_item_keys,
+};
+
+// foolish's rows, each forwarded to the wrapped store's own.
+static const cb_rows_ops FAULT_ROWS = {
     .game_get = w_game_get,
     .game_create = w_game_create,
     .game_commit = w_game_commit,
@@ -311,33 +326,29 @@ static const cb_store_ops FAULT_OPS = {
     .chat_list = w_chat_list,
     .bots_idle = w_bots_idle,
     .lease_held = w_lease_held,
-    .admin_collections = w_admin_collections,
-    .admin_browse = w_admin_browse,
-    .admin_query = w_admin_query,
-    .user_import = w_user_import,
     .rating_import = w_rating_import,
     .rating_reindex = w_rating_reindex,
     .bots_replace = w_bots_replace,
     .game_import = w_game_import,
-    .item_get = w_item_get,
-    .item_write = w_item_write,
-    .item_txn = w_item_txn,
-    .item_query = w_item_query,
-    .item_batch_get = w_item_batch_get,
-    .item_batch_delete = w_item_batch_delete,
-    .item_keys = w_item_keys,
 };
+static const cb_store_app FAULT_APP = { .rows = &FAULT_ROWS };
 
-// Every operation of store.h is wrapped above. An operation added there and
-// not here would be left NULL (CB_E_NOTIMPL to whatever calls it through this
-// store), so the table's size is held to the count: the name, close, and 56 - 1.
-_Static_assert(sizeof(cb_store_ops) == (size_t)(56 + 1) * sizeof(void *),
+// Every operation of store.h and of rows_foolish.h is wrapped above. An
+// operation added there and not here would be left NULL (CB_E_NOTIMPL to
+// whatever calls it through this store), so each table's size is held to its
+// count: store.h's name, close and 27 operations; rows_foolish.h's 28. The
+// account hooks are the wrapped store's (its user_create and user_delete run
+// them), so this store has none of its own.
+_Static_assert(sizeof(cb_store_ops) == (size_t)(27 + 2) * sizeof(void *),
                "store.h has an operation lib_faultstore.c does not wrap: add its w_ wrapper and its line in FAULT_OPS");
+_Static_assert(sizeof(cb_rows_ops) == (size_t)28 * sizeof(void *),
+               "rows_foolish.h has an operation lib_faultstore.c does not wrap: add its w_ wrapper and its line in FAULT_ROWS");
 
 cb_store *fs_wrap(cb_store *inner) {
     fault_store *f = calloc(1, sizeof *f);
     if (!f) return NULL;
     f->base.ops = &FAULT_OPS;
+    f->base.app = &FAULT_APP;
     f->inner = inner;
     return &f->base;
 }

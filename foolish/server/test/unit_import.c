@@ -6,7 +6,7 @@
 #include "t.h"
 #include "lib_store_backend.h"
 
-#include "store/store.h"
+#include "store/rows_foolish.h"
 #include "store/store_import.h"
 #include "table.h"
 #include "util/clock.h"
@@ -164,18 +164,18 @@ static void clean_export_imports_everything(void) {
 
     const char *ids[3] = { U1, U2, B2 };
     int32_t r[3];
-    T_EQ_INT(CB_STORE_CALL(s, ratings_for, ids, 3, r), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, ratings_for, ids, 3, r), CB_OK);
     T_EQ_INT(r[0], 1033);
     T_EQ_INT(r[1], TABLE_RATING_NONE);   // no row in the export: none made up
     T_EQ_INT(r[2], 1200);
 
     bots_t b = { 0 };   // the hosted bots replaced the 49 seeded ones
-    T_EQ_INT(CB_STORE_CALL(s, bots_list, collect_bot, &b), 2);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 2);
     T_EQ_STR(b.rows[0].id, B1);
     T_EQ_INT(b.rows[1].previous_elo, 1190);
 
     cb_game_row g;
-    T_EQ_INT(CB_STORE_CALL(s, game_get, "ab12cd", &g), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "ab12cd", &g), CB_OK);
     T_EQ_INT(g.version, 3);
     T_EQ_INT(g.updated_at, 4000);
     T_EQ_INT(g.last_commit_at, 3900);
@@ -183,17 +183,17 @@ static void clean_export_imports_everything(void) {
     T_CHECK(!g.has_seed && g.logs_len == 0);
     T_EQ_INT((long long)g.state_len * 2, (long long)strlen(g_state_hex));
     cb_game_row_free(&g);
-    T_EQ_INT(CB_STORE_CALL(s, is_member, "ab12cd", U1), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, "ab12cd", U1), 1);
 
     snap_t sn = { 0 };
     cb_snapshot_query q = { .viewer_id = U2 };
-    T_EQ_INT(CB_STORE_CALL(s, snapshots_query, &q, collect_snap, &sn), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, snapshots_query, &q, collect_snap, &sn), 1);
     T_EQ_INT(sn.row.n_players, 2);
     T_EQ_STR(sn.row.player_ids[1], U2);
     T_EQ_INT(sn.row.moves_len, 3);
 
     chat_t ch = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, chat_list, "ab12cd", 0, collect_chat, &ch), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, chat_list, "ab12cd", 0, collect_chat, &ch), 1);
     T_EQ_STR(ch.msg, "hi, \"you\"\nsecond line");
 
     // A rerun replaces rows and counts the replay and the message as present.
@@ -225,7 +225,7 @@ static void failing_checks(void) {
         if (cases[i].variant == TEXT_COUNT) {
             // A cell that is not a number is the column's none: last_commit_at's is updated_at.
             cb_game_row g;
-            T_EQ_INT(CB_STORE_CALL(s, game_get, "ab12cd", &g), CB_OK);
+            T_EQ_INT(CB_ROWS_CALL(s, game_get, "ab12cd", &g), CB_OK);
             T_EQ_INT(g.last_commit_at, 4000);
             cb_game_row_free(&g);
         }
@@ -267,7 +267,7 @@ static void extras_named_not_failed(void) {
     uint8_t st[1] = { 1 };
     cb_game_row g = { .id = "zz99zz", .status = 1, .state = st, .state_len = 1, .roster = st, .roster_len = 1,
                       .version = 1, .updated_at = 2000 };
-    T_EQ_INT(CB_STORE_CALL(s, game_import, &g, NULL, 0, NULL, 0), CB_OK);
+    T_EQ_INT(CB_ROWS_CALL(s, game_import, &g, NULL, 0, NULL, 0), CB_OK);
     T_EQ_INT(run_import(s, dir, report, sizeof report), 0);
     T_CHECK(strstr(report, "extra (not in the export): games zz99zz") != NULL);
     T_CHECK(strstr(report, "games                     1        1        1        0        0        1        1 ok") != NULL);

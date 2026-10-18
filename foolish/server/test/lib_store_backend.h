@@ -10,7 +10,7 @@
 #ifndef CB_TEST_STORE_BACKEND_H
 #define CB_TEST_STORE_BACKEND_H
 
-#include "store/store.h"
+#include "store/rows_foolish.h"
 
 #include <stdbool.h>
 
