@@ -67,7 +67,7 @@ test('the gate stays green on the shapes that only look like draws', () => {
         ['a mention in a block comment', { 'sdk/ts/x.ts': '/* was crypto.randomUUID() once */\nexport const a = 1;' }],
         ['a mention in a string', { 'e2e/x.test.ts': "const msg = 'no Math.random() here';" }],
         ['a mention in a template literal', { 'e2e/x.test.ts': 'const msg = `use Date.now() never`;' }],
-        // bot_parity.test.ts pins code it does not own by ASSIGNING the global.
+        // A test that pins code it does not own does it by ASSIGNING the global.
         ['patching the global, not drawing', { 'e2e/x.test.ts': 'Math.random = mkLcg(seed);' }],
         ['restoring the global', { 'e2e/x.test.ts': 'Math.random = realRandom;' }],
         // A conversion, not a reading.

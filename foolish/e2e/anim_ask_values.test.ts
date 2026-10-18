@@ -14,7 +14,8 @@
  * crossing - a null slot, the 64-bit deferred set as one bigint, a list at its
  * cap - and that the exported functions still answer in the shapes their
  * callers read. The reversal's and the finish order's rules have their own
- * suites (e2e/anim_plan_frames.test.ts, e2e/finish_order.test.ts), and the
+ * suites (e2e/anim_plan_frames.test.ts, e2e/finish_order.test.ts and c/tests/tests.c
+ * test_table_ranks_every_finished_game), and the
  * release rule has e2e/optimistic_animation.test.ts.
  *
  * Pure kernel/wasm test - needs no Postgres.
