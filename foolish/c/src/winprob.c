@@ -16,6 +16,7 @@
 #include "replay.h"
 #include "replay_extras.h"
 #include "replay_steps.h"
+#include "bot_common.h"
 
 #include <string.h>
 #ifndef __wasm__
@@ -30,15 +31,6 @@
 #define WP_MAX_TASKS   8192
 #define WP_MAX_THREADS 64
 #define WP_THREAD_STACK (8u << 20)
-
-// ---------- small helpers ---------------------------------------------------
-
-static uint32_t wp_mix(uint32_t a, uint32_t b) {
-    uint32_t h = a ^ 0x9E3779B9u;
-    h ^= b + 0x7F4A7C15u + (h << 6) + (h >> 2);
-    h *= 0x85EBCA77u; h ^= h >> 13; h *= 0xC2B2AE3Du; h ^= h >> 16;
-    return h ? h : 1u;
-}
 
 static uint32_t wp_now_ms(void) {
 #ifdef __wasm__
@@ -87,7 +79,7 @@ static void wp_task_run(WpWork *W, int t) {
         analyse_install_world(wg, task->seat, &W->bel[task->seat], perm);
     }
     game_rng_set(task->seed);
-    random_strategy_set_seed(wp_mix(task->seed, 0xA5A5A5A5u));
+    random_strategy_set_seed(bot_mix_combine(task->seed, 0xA5A5A5A5u));
     if (!analyse_playout_board(wg, W->strat)) {
         memset(W->fp[t], 0, MAX_PLAYERS);
         return;
@@ -181,7 +173,7 @@ static void wp_measure(const Game *g, WpStep *S, const WinprobParams *p, int idx
 
     int n = 0;
     for (int w = 0; w < p->worlds && n < WP_MAX_TASKS; w++)
-        g_tasks[n++] = (WpTask){ -1, wp_mix(wp_mix(p->seed, (uint32_t)idx), (uint32_t)w) };
+        g_tasks[n++] = (WpTask){ -1, bot_mix_combine(bot_mix_combine(p->seed, (uint32_t)idx), (uint32_t)w) };
     for (int s = 0; s < np && p->belief_worlds > 0; s++) {
         if (S->hand[s] == 0xFF) continue;
         analyse_belief(g, s, &g_bel[s]);
@@ -190,7 +182,7 @@ static void wp_measure(const Game *g, WpStep *S, const WinprobParams *p, int idx
         if (!g_bel[s].ok) { g_belief_fail = 1; continue; }
         for (int w = 0; w < p->belief_worlds && n < WP_MAX_TASKS; w++)
             g_tasks[n++] = (WpTask){ (int8_t)s,
-                wp_mix(wp_mix(p->seed, (uint32_t)(idx * (MAX_PLAYERS + 1) + s + 1)), (uint32_t)w) };
+                bot_mix_combine(bot_mix_combine(p->seed, (uint32_t)(idx * (MAX_PLAYERS + 1) + s + 1)), (uint32_t)w) };
     }
     if (!n) return;
 

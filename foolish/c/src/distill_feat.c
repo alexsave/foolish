@@ -21,13 +21,7 @@
 #include "distill_feat.h"
 #include "strategy.h"
 #include "card.h"
-
-static uint32_t df_mix(uint32_t a, uint32_t b) {
-    uint32_t h = a * 0x9E3779B1u ^ (b + 0x7F4A7C15u);
-    h ^= h >> 16; h *= 0x85EBCA77u; h ^= h >> 13;
-    return h ? h : 1;
-}
-
+#include "bot_common.h"
 // ---------- per-decision cache --------------------------------------------
 
 typedef struct {
@@ -193,17 +187,17 @@ static void df_fill_decision(const Game *g, int bot_idx, const LegalMoves *all) 
     // public decision state (each oracle gets its own sub-seed so one
     // oracle's draw count never shifts another's stream), then restore.
     uint64_t saved = random_strategy_rng_get();
-    uint32_t base = df_mix((uint32_t)g->num_logs * 2654435761u,
+    uint32_t base = bot_mix((uint32_t)g->num_logs * 2654435761u,
                            ((uint32_t)g->deck_count << 10)
                            ^ ((uint32_t)bot_idx << 20)
                            ^ (uint32_t)all->n);
 
-    random_strategy_set_seed(df_mix(base, 0xD1571001u));
+    random_strategy_set_seed(bot_mix(base, 0xD1571001u));
     df_cache.hp_idx = handwritten_prod_strategy_choose(g, bot_idx, all, (void *)0);
     df_cache.sh_idx = simple_heuristic_strategy_choose(g, bot_idx, all, (void *)0);
-    random_strategy_set_seed(df_mix(base, 0xD1571002u));
+    random_strategy_set_seed(bot_mix(base, 0xD1571002u));
     df_cache.ch_idx = champion_strategy_choose(g, bot_idx, all, (void *)0);
-    random_strategy_set_seed(df_mix(base, 0xD1571003u));
+    random_strategy_set_seed(bot_mix(base, 0xD1571003u));
     df_cache.ep_idx = espresso_prod_strategy_choose(g, bot_idx, all, (void *)0);
 
     random_strategy_set_seed(saved);

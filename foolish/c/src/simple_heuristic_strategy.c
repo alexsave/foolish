@@ -22,17 +22,7 @@
 #include "card.h"
 #include "game.h"
 #include "legal.h"
-
-// getAttackPreference / getCardValue (identical bodies, trump_bonus 20) and
-// getDefensePreference (trump_bonus 10): sum of value + bonus-if-trump.
-static int sum_card_value(const LegalMove *m, int power_suit, int trump_bonus) {
-    int total = 0;
-    for (int i = 0; i < m->n_cards; i++) {
-        total += m->cards[i].value
-               + (m->cards[i].suit == power_suit ? trump_bonus : 0);
-    }
-    return total;
-}
+#include "bot_common.h"
 
 // shouldGiveUp(bot.hand, game): give up when we can't defend every
 // uncovered attack, when defending would spend more than half our trumps,
@@ -107,7 +97,7 @@ static int argmin_by_type(const LegalMoves *moves, int8_t type,
     int best_score = 0;
     for (int i = 0; i < moves->n; i++) {
         if (moves->moves[i].type != type) continue;
-        int s = sum_card_value(&moves->moves[i], power_suit, trump_bonus);
+        int s = bot_card_sum(&moves->moves[i], power_suit, trump_bonus);
         if (best < 0 || s < best_score) {
             best = i;
             best_score = s;

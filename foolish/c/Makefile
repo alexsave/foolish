@@ -73,7 +73,7 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
             src/blackpowder_strategy.c src/cordite_strategy.c \
-            src/cordite_sim.c src/astrolite_strategy.c \
+            src/cordite_sim.c src/bot_common.c src/astrolite_strategy.c \
             src/simple_heuristic_strategy.c src/champion_strategy.c \
             src/ultimate_champion_strategy.c src/hacker_strategy.c \
             src/fulminate_strategy.c src/espresso_prod_strategy.c \
@@ -1298,7 +1298,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/rep
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/robusta_strategy.c src/firecracker_strategy.c \
                 src/blackpowder_strategy.c \
-                src/cordite_strategy.c src/cordite_sim.c \
+                src/cordite_strategy.c src/cordite_sim.c src/bot_common.c \
                 src/simple_heuristic_strategy.c \
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
@@ -1372,7 +1372,7 @@ WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS)) -DCD_WASM_OVERL
 # web.wasm keeps this stack and enumerates moves in its client slot, so a change
 # that grows the cover enumeration's frame is the one to re-measure, from that tree.
 WASM_BOT_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS)) -Wl,-z,stack-size=22528
-WASM_BOT_O3_SRC  := src/cordite_sim.c src/cordite_strategy.c \
+WASM_BOT_O3_SRC  := src/cordite_sim.c src/bot_common.c src/cordite_strategy.c \
                     src/octogen_strategy.c
 
 # The objects: a variant (c_rules.mk). Per-file opt is said by SOURCE ($* in a

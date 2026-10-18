@@ -12,6 +12,7 @@
 #include "strategy.h"
 #include "card.h"
 #include "game.h"
+#include "bot_common.h"
 #include "cordite_sim.h"   // rollout_index_scratch (shared, idle-solver-arena)
 #include <string.h>
 #include <stdint.h>
@@ -38,30 +39,6 @@ static int *esp_idx_scratch(int which) {
 static inline int card_score(Card c, int power_suit) {
     return c.value + (c.suit == power_suit ? 1000 : 0);
 }
-
-static int compute_total_card_count(const Game *g) {
-    int table = 0;
-    for (int i = 0; i < g->num_battles; i++) {
-        table += 1 + (!card_is_none(g->table_battles[i].defense) ? 1 : 0);
-    }
-    int hands = 0;
-    for (int i = 0; i < g->num_players; i++) hands += g->players[i].hand_count;
-    return g->deck_count + g->discard_pile_length + table + hands + (g->has_flipped ? 1 : 0);
-}
-
-static double get_trump_attack_probability(const Game *g) {
-    if (g->deck_count > 0 || g->has_flipped) return 0.02;
-    int total = compute_total_card_count(g);
-    if (total < 1) total = 1;
-    double ratio = (double)g->discard_pile_length / total;
-    if (ratio < 0) ratio = 0;
-    if (ratio > 1) ratio = 1;
-    double p = 0.65 + 0.35 * ratio;
-    if (p < 0.5) p = 0.5;
-    if (p > 0.95) p = 0.95;
-    return p;
-}
-
 // Pick the opponent the same way the TS code does.
 static const Player *get_opponent(const Game *g, int bot_idx) {
     int in_count = 0;
@@ -126,12 +103,6 @@ typedef struct {
     int  opp_n;
     bool pickup;
 } RolloutResult;
-
-static bool set_contains(const Card *arr, int n, Card c) {
-    for (int i = 0; i < n; i++) if (card_eq(arr[i], c)) return true;
-    return false;
-}
-
 static void rollout_round(const Card *first_attack, int fa_n,
                           const Card *my_hand, int my_n,
                           const Card *opp_hand, int opp_n,
@@ -151,7 +122,7 @@ static void rollout_round(const Card *first_attack, int fa_n,
         // Drop attack cards from my hand (they're moving to the table).
         int new_mN = 0;
         for (int i = 0; i < mN; i++) {
-            if (!set_contains(attack, an, my[i])) my[new_mN++] = my[i];
+            if (!bot_set_contains(attack, an, my[i])) my[new_mN++] = my[i];
         }
         mN = new_mN;
         for (int i = 0; i < an; i++) card_mark_value(table_values, attack[i].value);
@@ -170,7 +141,7 @@ static void rollout_round(const Card *first_attack, int fa_n,
         // Opp covered with `covers`. Drop those from opp hand.
         int new_oN = 0;
         for (int i = 0; i < oN; i++) {
-            if (!set_contains(covers.cards, covers.n, opp[i])) opp[new_oN++] = opp[i];
+            if (!bot_set_contains(covers.cards, covers.n, opp[i])) opp[new_oN++] = opp[i];
         }
         oN = new_oN;
         for (int i = 0; i < covers.n; i++) card_mark_value(table_values, covers.cards[i].value);
@@ -295,7 +266,7 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
                     }
                 }
             }
-            if (allow || game_random() < get_trump_attack_probability(g)) {
+            if (allow || game_random() < bot_trump_attack_probability(g)) {
                 for (int i = 0; i < moves->n; i++) {
                     if (move_is_attack_any_trump(&moves->moves[i], g->power_suit)) candidate_idx[cn++] = i;
                 }
@@ -412,7 +383,7 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
             // myH: bot.hand minus pass cards
             Card myH[MAX_HAND_SIZE]; int my_n = 0;
             for (int i = 0; i < bot->hand_count; i++) {
-                if (!set_contains(m->cards, m->n_cards, bot->hand[i])) myH[my_n++] = bot->hand[i];
+                if (!bot_set_contains(m->cards, m->n_cards, bot->hand[i])) myH[my_n++] = bot->hand[i];
             }
             Card oppH[MAX_HAND_SIZE + MAX_BATTLES + MAX_MOVE_CARDS]; int opp_n = 0;
             if (pickup) {
@@ -420,7 +391,7 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
                 for (int i = 0; i < an; i++) oppH[opp_n++] = all_attacks[i];
             } else {
                 for (int i = 0; i < opp->hand_count; i++) {
-                    if (!set_contains(covers.cards, covers.n, opp->hand[i])) oppH[opp_n++] = opp->hand[i];
+                    if (!bot_set_contains(covers.cards, covers.n, opp->hand[i])) oppH[opp_n++] = opp->hand[i];
                 }
             }
             int my_t = 0; for (int i = 0; i < my_n; i++) if (myH[i].suit == g->power_suit) my_t++;
@@ -511,7 +482,7 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
 
                 Card remaining[MAX_HAND_SIZE]; int rn = 0;
                 for (int i = 0; i < bot->hand_count; i++) {
-                    if (!set_contains(m->cards, m->n_cards, bot->hand[i])) remaining[rn++] = bot->hand[i];
+                    if (!bot_set_contains(m->cards, m->n_cards, bot->hand[i])) remaining[rn++] = bot->hand[i];
                 }
                 int my_trumps_after = 0;
                 for (int i = 0; i < rn; i++) if (remaining[i].suit == g->power_suit) my_trumps_after++;

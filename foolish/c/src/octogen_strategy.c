@@ -36,6 +36,7 @@
 #include "card.h"
 #include "game.h"
 #include "cordite_sim.h"
+#include "bot_common.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,18 +56,6 @@
 static inline int og_card_score(Card c, int power) {
     return c.value + (c.suit == power ? 1000 : 0);
 }
-
-static bool og_set_contains(const Card *arr, int n, Card c) {
-    for (int i = 0; i < n; i++) if (card_eq(arr[i], c)) return true;
-    return false;
-}
-
-static uint32_t og_mix(uint32_t a, uint32_t b) {
-    uint32_t h = a * 0x9E3779B1u ^ (b + 0x7F4A7C15u);
-    h ^= h >> 16; h *= 0x85EBCA77u; h ^= h >> 13;
-    return h ? h : 1;
-}
-
 // Ablation switches (read once): OG_NO_SOLVE / OG_NO_VOIDS / OG_NO_FLIP /
 // OG_NO_FLOORS / OG_NO_LEAF / OG_NO_AVOID / OG_VERIFY, plus OG_W1/OG_W2
 // world-count overrides for tuning.
@@ -174,44 +163,14 @@ static _Thread_local double og_trump_keep = 0.040;
 // in less wall-clock. Tunable via OG_BB_WIN / OG_BB_AVOID for sweeps.
 static _Thread_local int og_bb_win_budget = 20000;
 static _Thread_local int og_bb_avoid_budget = 15000;
-
-static int og_in_count(const Game *g) {
-    int n = 0;
-    for (int i = 0; i < g->num_players; i++)
-        if (g->players[i].status == PLAYER_STATUS_IN) n++;
-    return n;
-}
-
-// Copy only the live prefix of a Game (header + first num_logs entries).
-// logs[] is the final member, so everything else is inside the prefix.
-static void og_lite_clone(Game *dst, const Game *src) {
-    size_t base = offsetof(Game, logs);
-    memcpy(dst, src, base + (size_t)src->num_logs * sizeof(GameLog));
-}
-
 // ---------- belief state ------------------------------------------------
 
-#define OG_MAX_VOIDS 6
 #ifdef OG_EXPLAIN_BUILD
-_Static_assert(OG_MAX_VOIDS <= OG_ANSWER_MAX_VOIDS, "the answer cannot hold a seat's voids");
+_Static_assert(BOT_MAX_VOIDS <= OG_ANSWER_MAX_VOIDS, "the answer cannot hold a seat's voids");
 #endif
 
 typedef struct {
-    Card pool[80];                  // unseen pool (deck ∪ opp unknowns)
-    int  n;
-    Card pinned[MAX_PLAYERS][MAX_HAND_SIZE];  // publicly located in p's hand
-    int  pinned_n[MAX_PLAYERS];
-    // Hard-ish void constraints (see blackpowder): attack cards a defender
-    // demonstrably couldn't cover at pickup time. Cleared on their draw.
-    Card voids[MAX_PLAYERS][OG_MAX_VOIDS];
-    int  void_n[MAX_PLAYERS];
-    // Soft rank floor: lowest non-trump value p can hold (0 = none). Set by
-    // a single-card non-trump first attack at 3+ players in (lowest-first
-    // attacker policies reveal their minimum). Cleared when p gains cards.
-    int  floor_v[MAX_PLAYERS];
-    // Trust flags, from observed behavior this game.
-    bool distrust_floor[MAX_PLAYERS];
-    bool distrust_void[MAX_PLAYERS];
+    BotBelief b;                    // the shared belief (bot_common.h)
     // Per-seat behavior profile from the public log (semtex additions).
     int  cards_played[MAX_PLAYERS];   // cards played while the deck was alive
     int  trumps_played[MAX_PLAYERS];  // of those, trumps
@@ -220,44 +179,6 @@ typedef struct {
                                       // pickup-while-holding-cover (MC/human)
     bool loose[MAX_PLAYERS];          // profiled weak/random seat
 } Belief;
-
-static bool og_void_forbidden(const Belief *B, const Game *g, int p, Card c) {
-    for (int k = 0; k < B->void_n[p]; k++) {
-        if (can_cover(B->voids[p][k], c, g->power_suit)) return true;
-    }
-    return false;
-}
-
-static bool og_floor_forbidden(const Belief *B, const Game *g, int p, Card c) {
-    return B->floor_v[p] > 0 && c.suit != g->power_suit && c.value < B->floor_v[p];
-}
-
-static void og_pinned_remove(Belief *B, int p, Card c) {
-    for (int q = 0; q < B->pinned_n[p]; q++) {
-        if (card_eq(B->pinned[p][q], c)) {
-            B->pinned[p][q] = B->pinned[p][B->pinned_n[p] - 1];
-            B->pinned_n[p]--;
-            return;
-        }
-    }
-}
-
-static void og_pinned_add(Belief *B, int p, Card c) {
-    if (B->pinned_n[p] >= MAX_HAND_SIZE) return;
-    if (og_set_contains(B->pinned[p], B->pinned_n[p], c)) return;
-    B->pinned[p][B->pinned_n[p]++] = c;
-}
-
-// A floor contradiction (p plays a non-trump card below their inferred
-// floor) means p is not a lowest-first attacker: distrust their floors.
-static void og_floor_check(Belief *B, const Game *g, int p, Card c) {
-    if (p < 0 || B->floor_v[p] <= 0) return;
-    if (c.suit != g->power_suit && c.value < B->floor_v[p]) {
-        B->floor_v[p] = 0;
-        B->distrust_floor[p] = true;
-    }
-}
-
 // Chronological scan over logs: pinned cards, flipped-trump holder, void
 // constraints, rank floors and trust flags, all in one pass.
 static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
@@ -322,19 +243,19 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                         // (and that wasn't publicly picked up) proves the void
                         // wrong: the seat picked up strategically while
                         // holding cover. Handwritten-family never does that.
-                        if (!og_set_contains(B->pinned[p], B->pinned_n[p], c)
-                            && og_void_forbidden(B, g, p, c)) B->mc_tell[p] = true;
+                        if (!bot_set_contains(B->b.pinned[p], B->b.pinned_n[p], c)
+                            && bot_void_forbidden(&B->b, g, p, c)) B->mc_tell[p] = true;
                         if (c.suit != g->power_suit
                             && (decl_vals[p] & (1u << c.value))) B->mc_tell[p] = true;
-                        og_floor_check(B, g, p, c);
-                        og_pinned_remove(B, p, c);
+                        bot_floor_check(&B->b, g, p, c);
+                        bot_pinned_remove(&B->b, p, c);
                     }
                 }
                 if (p >= 0 && p != bot_idx && L->log_type == LOG_ATTACK) {
                     if (any_trump && deck_alive_at) trump_viol[p]++;
                     if (first_attack && L->num_pairs == 1 && !any_trump
                         && in_now > 2 && !og_no_floors) {
-                        B->floor_v[p] = L->pairs[0].primary.value;
+                        B->b.floor_v[p] = L->pairs[0].primary.value;
                     }
                 }
                 break;
@@ -349,12 +270,12 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                             B->cards_played[p]++;
                             if (c.suit == g->power_suit) B->trumps_played[p]++;
                         }
-                        if (!og_set_contains(B->pinned[p], B->pinned_n[p], c)
-                            && og_void_forbidden(B, g, p, c)) B->mc_tell[p] = true;
+                        if (!bot_set_contains(B->b.pinned[p], B->b.pinned_n[p], c)
+                            && bot_void_forbidden(&B->b, g, p, c)) B->mc_tell[p] = true;
                         if (c.suit != g->power_suit
                             && (decl_vals[p] & (1u << c.value))) B->mc_tell[p] = true;
-                        og_floor_check(B, g, p, c);
-                        og_pinned_remove(B, p, c);
+                        bot_floor_check(&B->b, g, p, c);
+                        bot_pinned_remove(&B->b, p, c);
                     }
                     if (!card_is_none(L->pairs[k].target)) {
                         for (int q = 0; q < unc_n; q++) {
@@ -382,11 +303,11 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                 if (p >= 0) { hand_n[p] += tbl_n; decl_vals[p] = 0; }
                 if (p >= 0 && p != bot_idx) {
                     // Exactly one uncovered attack => defender held no cover.
-                    if (unc_n == 1 && B->void_n[p] < OG_MAX_VOIDS) {
-                        B->voids[p][B->void_n[p]++] = unc[0];
+                    if (unc_n == 1 && B->b.void_n[p] < BOT_MAX_VOIDS) {
+                        B->b.voids[p][B->b.void_n[p]++] = unc[0];
                     }
-                    for (int k = 0; k < tbl_n; k++) og_pinned_add(B, p, tbl[k]);
-                    B->floor_v[p] = 0;   // hand gained cards
+                    for (int k = 0; k < tbl_n; k++) bot_pinned_add(&B->b, p, tbl[k]);
+                    B->b.floor_v[p] = 0;   // hand gained cards
                 }
                 tbl_n = 0;
                 unc_n = 0;
@@ -399,8 +320,8 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
             case LOG_DRAW:
                 if (p >= 0) { hand_n[p] += L->num_pairs; decl_vals[p] = 0; }
                 if (p >= 0 && p != bot_idx) {
-                    B->void_n[p] = 0;    // new unknown cards: constraints expire
-                    B->floor_v[p] = 0;
+                    B->b.void_n[p] = 0;    // new unknown cards: constraints expire
+                    B->b.floor_v[p] = 0;
                     if (i == flip_log_idx) {
                         // Deck just ran dry: this seat picked up the face-up
                         // trump, watched all game, so pin it. Its identity is the
@@ -413,7 +334,7 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                         // pinning g->flipped there phantom-pins {0,0}.
                         if (L->num_pairs > 0) {
                             Card fc = L->pairs[L->num_pairs - 1].primary;
-                            if (fc.value >= 0 && fc.suit >= 0) og_pinned_add(B, p, fc);
+                            if (fc.value >= 0 && fc.suit >= 0) bot_pinned_add(&B->b, p, fc);
                         }
                     }
                 }
@@ -432,7 +353,7 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
     // 1-in-4 unconstrained world mixture already absorbs void violators.
     for (int p = 0; p < g->num_players; p++) {
         B->trump_leads[p] = trump_viol[p];
-        if (trump_viol[p] >= 1) { B->distrust_floor[p] = true; B->floor_v[p] = 0; }
+        if (trump_viol[p] >= 1) { B->b.distrust_floor[p] = true; B->b.floor_v[p] = 0; }
     }
 
     // Semtex adaptivity: a proven void contradiction means the seat picks up
@@ -443,10 +364,10 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
     if (og_adapt) {
         for (int p = 0; p < g->num_players; p++) {
             if (!B->mc_tell[p]) continue;
-            B->void_n[p] = 0;
-            B->floor_v[p] = 0;
-            B->distrust_void[p] = true;
-            B->distrust_floor[p] = true;
+            B->b.void_n[p] = 0;
+            B->b.floor_v[p] = 0;
+            B->b.distrust_void[p] = true;
+            B->b.distrust_floor[p] = true;
         }
     }
 
@@ -470,22 +391,22 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
             conf += 0.25 * leads;
             if (conf >= 0.70) {
                 B->loose[p] = true;
-                B->void_n[p] = 0;    // weak seats don't obey cover-if-you-can
-                B->floor_v[p] = 0;   // ...or lowest-first attacks
+                B->b.void_n[p] = 0;    // weak seats don't obey cover-if-you-can
+                B->b.floor_v[p] = 0;   // ...or lowest-first attacks
             }
         }
     }
 
     // Players that left the game hold nothing.
     for (int p = 0; p < g->num_players; p++) {
-        if (p == bot_idx) { B->pinned_n[p] = 0; B->void_n[p] = 0; B->floor_v[p] = 0; continue; }
+        if (p == bot_idx) { B->b.pinned_n[p] = 0; B->b.void_n[p] = 0; B->b.floor_v[p] = 0; continue; }
         if (g->players[p].status != PLAYER_STATUS_IN) {
-            B->pinned_n[p] = 0;
-            B->void_n[p] = 0;
-            B->floor_v[p] = 0;
+            B->b.pinned_n[p] = 0;
+            B->b.void_n[p] = 0;
+            B->b.floor_v[p] = 0;
         }
-        if (B->pinned_n[p] > g->players[p].hand_count) {
-            B->pinned_n[p] = g->players[p].hand_count;  // defensive clamp
+        if (B->b.pinned_n[p] > g->players[p].hand_count) {
+            B->b.pinned_n[p] = g->players[p].hand_count;  // defensive clamp
         }
     }
 
@@ -501,39 +422,39 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
     if (g->has_flipped) known[kn++] = g->flipped;
     for (int i = 0; i < disc_n && kn < 160; i++) known[kn++] = discards[i];
     for (int p = 0; p < g->num_players; p++) {
-        for (int j = 0; j < B->pinned_n[p] && kn < 160; j++) {
-            known[kn++] = B->pinned[p][j];
+        for (int j = 0; j < B->b.pinned_n[p] && kn < 160; j++) {
+            known[kn++] = B->b.pinned[p][j];
         }
     }
 
     int start_v = min_value_for(g->num_players);
-    B->n = 0;
+    B->b.n = 0;
     for (int suit = 0; suit < 4; suit++) {
         for (int v = start_v; v <= ACE_VALUE; v++) {
             Card c = { (int8_t)suit, (int8_t)v };
-            if (!og_set_contains(known, kn, c)) B->pool[B->n++] = c;
+            if (!bot_set_contains(known, kn, c)) B->b.pool[B->b.n++] = c;
         }
     }
 
     // Feasibility: if constraints leave fewer allowed pool cards than the
     // player's unknown count, relax floors first, then voids.
     for (int p = 0; p < g->num_players; p++) {
-        if (B->void_n[p] == 0 && B->floor_v[p] == 0) continue;
-        int unknown = g->players[p].hand_count - B->pinned_n[p];
+        if (B->b.void_n[p] == 0 && B->b.floor_v[p] == 0) continue;
+        int unknown = g->players[p].hand_count - B->b.pinned_n[p];
         if (unknown <= 0) continue;
         int allowed = 0;
-        for (int i = 0; i < B->n; i++) {
-            if (!og_void_forbidden(B, g, p, B->pool[i])
-                && !og_floor_forbidden(B, g, p, B->pool[i])) allowed++;
+        for (int i = 0; i < B->b.n; i++) {
+            if (!bot_void_forbidden(&B->b, g, p, B->b.pool[i])
+                && !bot_floor_forbidden(&B->b, g, p, B->b.pool[i])) allowed++;
         }
-        if (allowed < unknown && B->floor_v[p] > 0) {
-            B->floor_v[p] = 0;
+        if (allowed < unknown && B->b.floor_v[p] > 0) {
+            B->b.floor_v[p] = 0;
             allowed = 0;
-            for (int i = 0; i < B->n; i++) {
-                if (!og_void_forbidden(B, g, p, B->pool[i])) allowed++;
+            for (int i = 0; i < B->b.n; i++) {
+                if (!bot_void_forbidden(&B->b, g, p, B->b.pool[i])) allowed++;
             }
         }
-        if (allowed < unknown) B->void_n[p] = 0;
+        if (allowed < unknown) B->b.void_n[p] = 0;
     }
 }
 
@@ -554,30 +475,19 @@ static void og_sample_world(Game *g_out, const Game *g_in, int my_idx,
     if (og_full_logs && WORLD_LOG_CAP == 0) {
         game_clone(g_out, g_in);
     } else {
-        memcpy(g_out, g_in, offsetof(Game, logs));
-        int nl = 0;
-        for (int i = 0; i < g_in->num_logs; i++) {
-            if (g_in->logs[i].log_type != LOG_DISCARD) continue;
-            if (WORLD_LOG_CAP > 0 && nl >= WORLD_LOG_CAP) break;  // crafted states only
-            g_out->logs[nl++] = g_in->logs[i];
-        }
-        g_out->num_logs = nl;
-        // Mark short slots so log_alloc applies the same discard filter to
-        // rollout appends (see game.h); 0 on native keeps full capacity.
-        g_out->log_cap  = WORLD_LOG_CAP;
-        g_out->log_virt = (int16_t)nl;
+        bot_clone_world(g_out, g_in);
     }
 
     for (int i = 0; i < g_in->num_players; i++) {
         if (i == my_idx) continue;
-        for (int k = 0; k < B->pinned_n[i]; k++) {
-            g_out->players[i].hand[k] = B->pinned[i][k];
+        for (int k = 0; k < B->b.pinned_n[i]; k++) {
+            g_out->players[i].hand[k] = B->b.pinned[i][k];
         }
     }
 
     Card hidden[80];
-    int hn = B->n;
-    for (int i = 0; i < hn; i++) hidden[i] = B->pool[i];
+    int hn = B->b.n;
+    for (int i = 0; i < hn; i++) hidden[i] = B->b.pool[i];
     if (hn == 0) return;
 
     uint64_t s = seed;
@@ -596,11 +506,11 @@ static void og_sample_world(Game *g_out, const Game *g_in, int my_idx,
     int ns = 0;
     for (int i = 0; i < g_in->num_players; i++) {
         if (i == my_idx) continue;
-        int need = g_in->players[i].hand_count - B->pinned_n[i];
+        int need = g_in->players[i].hand_count - B->b.pinned_n[i];
         for (int j = 0; j < need && k < hn; j++) {
-            g_out->players[i].hand[B->pinned_n[i] + j] = hidden[k];
+            g_out->players[i].hand[B->b.pinned_n[i] + j] = hidden[k];
             slots[ns].player = i;
-            slots[ns].slot = B->pinned_n[i] + j;
+            slots[ns].slot = B->b.pinned_n[i] + j;
             ns++;
             k++;
         }
@@ -609,17 +519,17 @@ static void og_sample_world(Game *g_out, const Game *g_in, int my_idx,
     if (!apply_voids && !apply_floors) return;
     for (int si = 0; si < ns; si++) {
         int p = slots[si].player;
-        bool use_v = apply_voids && B->void_n[p] > 0;
-        bool use_f = apply_floors && B->floor_v[p] > 0;
+        bool use_v = apply_voids && B->b.void_n[p] > 0;
+        bool use_f = apply_floors && B->b.floor_v[p] > 0;
         if (!use_v && !use_f) continue;
         Card c = g_out->players[p].hand[slots[si].slot];
-        bool bad = (use_v && og_void_forbidden(B, g_in, p, c))
-                || (use_f && og_floor_forbidden(B, g_in, p, c));
+        bool bad = (use_v && bot_void_forbidden(&B->b, g_in, p, c))
+                || (use_f && bot_floor_forbidden(&B->b, g_in, p, c));
         if (!bad) continue;
         for (int d = 0; d < deck_n; d++) {
             Card dc = g_out->deck[d];
-            bool dc_bad = (use_v && og_void_forbidden(B, g_in, p, dc))
-                       || (use_f && og_floor_forbidden(B, g_in, p, dc));
+            bool dc_bad = (use_v && bot_void_forbidden(&B->b, g_in, p, dc))
+                       || (use_f && bot_floor_forbidden(&B->b, g_in, p, dc));
             if (!dc_bad) {
                 g_out->deck[d] = c;
                 g_out->players[p].hand[slots[si].slot] = dc;
@@ -631,131 +541,18 @@ static void og_sample_world(Game *g_out, const Game *g_in, int my_idx,
 
 // ---------- exact solver (shared by root + rollout leaves) -----------------
 
-#define OG_SOLVE_MAX_DEPTH   48
-#define OG_SOLVE_MAX_MOVES   96
 #define OG_SOLVE_BUDGET      200000L
 #define OG_AVOID_BUDGET      150000L
 #define OG_SOLVE_MAX_CARDS   20
 #define OG_LEAF_BUDGET       1500L
 
-typedef struct {
-    long budget;
-    bool aborted;
-    int  me;
-    SolveMoves *mv;      // [OG_SOLVE_MAX_DEPTH]
-} Solver;
-
-static _Thread_local SolveMoves *og_solver_mv = NULL;
-
-_Static_assert(OG_SOLVE_MAX_DEPTH <= SOLVE_SCRATCH_DEPTH,
-               "shared solver scratch shallower than this family's depth");
-static bool og_solver_ready(void) {
-    if (!og_solver_mv) {
-        og_solver_mv = solve_scratch_mv();
-    }
-    return og_solver_mv != NULL;
-}
-
-// Value in [-1000, 1000] from `me`'s perspective: positive = me escaping,
-// negative = me as durak. Magnitude prefers faster wins / slower losses.
-static int og_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
-    int loser = game_done(g);
-    if (loser >= 0) return (loser == S->me) ? -(1000 - depth) : (1000 - depth);
-    if (og_in_count(g) == 0) return 0;   // defensive: simultaneous out
-    if (depth >= OG_SOLVE_MAX_DEPTH) { S->aborted = true; return 0; }
-    if (--S->budget <= 0) { S->aborted = true; return 0; }
-
-    // Defender-priority sequential abstraction of the real loop.
-    int actor = -1;
-    if (should_bot_act(g, g->defender)) actor = g->defender;
-    else {
-        for (int i = 0; i < g->num_players; i++) {
-            if (should_bot_act(g, i)) { actor = i; break; }
-        }
-    }
-    if (actor < 0) return 0;
-
-    SolveMoves *mv = &S->mv[depth];
-    // Bounded generation into the compact scratch slot (see SOLVE_SCRATCH_MOVES
-    // in cordite_sim.h): the cast is safe because SolveMoves shares LegalMoves'
-    // leading layout and the cap keeps writes within its {n, moves[]} bounds.
-    mv->n = legal_moves_into(g, actor, mv->moves, SOLVE_SCRATCH_MOVES);
-    if (mv->n == 0) return 0;
-    if (mv->n > OG_SOLVE_MAX_MOVES) { S->aborted = true; return 0; }
-
-    bool maximizing = (actor == S->me);
-    int best = maximizing ? -2000 : 2000;
-    for (int i = 0; i < mv->n; i++) {
-        Game *child = solve_scratch_child(depth);
-        solve_clone_prefix(child, g);
-        if (!legal_move_apply(child, actor, &mv->moves[i])) continue;
-        int v = og_solve(S, child, alpha, beta, depth + 1);
-        if (S->aborted) return 0;
-        if (maximizing) {
-            if (v > best) best = v;
-            if (best > alpha) alpha = best;
-        } else {
-            if (v < best) best = v;
-            if (best < beta) beta = best;
-        }
-        if (alpha >= beta) break;
-    }
-    if (best == -2000 || best == 2000) return 0;  // no move applied
-    return best;
-}
-
-
-// Exact full-info resolution of a rollout leaf: 2 players in, deck gone,
-// few cards. Returns the loser index, or -1 if unresolved (abort/draw).
+// The rollout leaf's exact solve (bot_leaf_solve): its node budget and the
+// most cards it is tried at, both from the knobs at init.
 static _Thread_local long og_leaf_budget = OG_LEAF_BUDGET;
 static _Thread_local int  og_leaf_max_cards = 0;   // set from env at init
 static _Thread_local int  og_floor_mod = 2;        // floors in 1/mod worlds
 
-static int og_leaf_solve(const Game *g) {
-    if (!og_solver_ready()) return -1;
-    int me = -1;
-    for (int i = 0; i < g->num_players; i++) {
-        if (g->players[i].status == PLAYER_STATUS_IN) { me = i; break; }
-    }
-    if (me < 0) return -1;
-    int opp = -1;
-    for (int i = me + 1; i < g->num_players; i++) {
-        if (g->players[i].status == PLAYER_STATUS_IN) { opp = i; break; }
-    }
-    if (opp < 0) return -1;
-
-    Game *root = solve_scratch_root();
-    solve_clone_root(root, g);
-
-    Solver S;
-    S.budget  = og_leaf_budget;
-    S.aborted = false;
-    S.me      = me;
-    S.mv      = og_solver_mv;
-
-    // Null window around 0: only the sign matters (true values are ±(1000-d)
-    // for decided games), and the narrow window maximizes pruning.
-    int v = og_solve(&S, root, -1, 1, 0);
-    if (S.aborted || v == 0) return -1;
-    return (v > 0) ? opp : me;
-}
-
 // ---------- simulation ---------------------------------------------------
-
-// Stage-aware rollout policy (gunpowder's rule): handwritten while the deck
-// is alive or the game is heads-up, espresso for multi-player endgames.
-static StrategyFn og_rollout_for(const Game *g) {
-    // OG_ROLLOUT (struct path only): 1 = espresso everywhere, 2 = handwritten
-    // everywhere. Research knob for the "rollout-policy bias" hypothesis — vs a
-    // strong opponent, a weak (handwritten) rollout policy biases value
-    // estimates, so more worlds saturates. A stronger rollout policy may reduce
-    // that bias. Run with OG_NO_FASTROLL=1.
-    if (og_rollout_policy == 1) return espresso_strategy_choose;
-    if (og_rollout_policy == 2) return handwritten_strategy_choose;
-    bool deck_active = (g->deck_count > 0 || g->has_flipped);
-    if (deck_active || og_in_count(g) == 2) return handwritten_strategy_choose;
-    return espresso_strategy_choose;
-}
 
 // Roll a sampled world forward; returns my finish position (1..N), or 0 if
 // the simulation didn't terminate. Exits early once my position is known,
@@ -775,7 +572,7 @@ static int og_simulate(Game *g, int my_idx, int max_turns) {
         }
 
         if (!og_no_leaf && !leaf_tried && g->deck_count == 0 && !g->has_flipped
-            && og_in_count(g) == 2) {
+            && bot_in_count(g) == 2) {
             int total = 0;
             for (int i = 0; i < g->num_players; i++) {
                 if (g->players[i].status == PLAYER_STATUS_IN)
@@ -783,7 +580,7 @@ static int og_simulate(Game *g, int my_idx, int max_turns) {
             }
             if (total <= og_leaf_max_cards) {
                 leaf_tried = true;
-                int loser = og_leaf_solve(g);
+                int loser = bot_leaf_solve(g, og_leaf_budget);
                 if (loser >= 0) {
                     // 2 left => positions N-1 and N remain.
                     return (loser == my_idx) ? g->num_players : g->num_players - 1;
@@ -797,7 +594,7 @@ static int og_simulate(Game *g, int my_idx, int max_turns) {
             LegalMoves *moves = rollout_moves_scratch();
             calculate_legal_moves_lite(g, pi, moves);
             if (moves->n == 0) continue;
-            StrategyFn fn = og_rollout_for(g);
+            StrategyFn fn = bot_rollout_for(g, og_rollout_policy);
             int idx = fn(g, pi, moves, NULL);
             if (idx < 0 || idx >= moves->n) continue;
             if (legal_move_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
@@ -837,7 +634,7 @@ static int og_rollout(Game *g, int my_idx, int max_turns) {
         int fast = og_simulate_fast(g, my_idx, max_turns);
         game_rng_set(rng0);
         Game *slow_g = rollout_scratch_diff();
-        og_lite_clone(slow_g, g);
+        bot_lite_clone(slow_g, g);
         int slow = og_simulate(slow_g, my_idx, max_turns);
         og_diff_total++;
         if (fast != slow) {
@@ -942,7 +739,7 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
                                 bool *forced_loss, int *n_safe) {
     *n_safe = moves->n;
     if (g->deck_count > 0 || g->has_flipped) return -1;
-    if (og_in_count(g) != 2) return -1;
+    if (bot_in_count(g) != 2) return -1;
     if (g->players[bot_idx].status != PLAYER_STATUS_IN) return -1;
 
     int opp = -1;
@@ -951,21 +748,21 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
     }
     if (opp < 0) return -1;
 
-    int unknown = g->players[opp].hand_count - B->pinned_n[opp];
-    if (unknown < 0 || unknown != B->n) return -1;  // deduction failed; bail
+    int unknown = g->players[opp].hand_count - B->b.pinned_n[opp];
+    if (unknown < 0 || unknown != B->b.n) return -1;  // deduction failed; bail
 
     int total = g->players[bot_idx].hand_count + g->players[opp].hand_count;
     if (total > og_solve_cards) return -1;
 
-    if (!og_solver_ready()) return -1;
+    if (!bot_solver_ready()) return -1;
 
     Game *root = solve_scratch_root();
     solve_clone_root(root, g);
-    for (int k = 0; k < B->pinned_n[opp]; k++) {
-        root->players[opp].hand[k] = B->pinned[opp][k];
+    for (int k = 0; k < B->b.pinned_n[opp]; k++) {
+        root->players[opp].hand[k] = B->b.pinned[opp][k];
     }
-    for (int k = 0; k < B->n; k++) {
-        root->players[opp].hand[B->pinned_n[opp] + k] = B->pool[k];
+    for (int k = 0; k < B->b.n; k++) {
+        root->players[opp].hand[B->b.pinned_n[opp] + k] = B->b.pool[k];
     }
 
     // Fast path: solve on the compact bitboard engine (transposition table +
@@ -1037,11 +834,10 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
     }
 #endif  // OG_EXPLAIN_BUILD / FOOLISH_ORACLE_MT
 
-    Solver S;
+    BotSolver S;
     S.budget  = OG_SOLVE_BUDGET;
     S.aborted = false;
     S.me      = bot_idx;
-    S.mv      = og_solver_mv;
     long win_budget   = bbsolve ? (long)og_bb_win_budget   : OG_SOLVE_BUDGET;
     long avoid_budget = bbsolve ? (long)og_bb_avoid_budget : OG_AVOID_BUDGET;
     long budget = win_budget;
@@ -1063,12 +859,12 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
             v = cd_sim_solve_d(&child, bot_idx, alpha, 2000, &budget, 1, &aborted_i);
             if (budget <= 0) return -1;   // shared budget drained: no claims
         } else {
-            // Slot 0 is free here: og_solve starts the recursion at depth 1.
+            // Slot 0 is free here: bot_solve starts the recursion at depth 1.
             Game *child = solve_scratch_child(0);
             solve_clone_prefix(child, root);
             if (!legal_move_apply(child, bot_idx, &moves->moves[i])) continue;
             S.aborted = false;
-            v = og_solve(&S, child, alpha, 2000, 1);
+            v = bot_solve(&S, child, alpha, 2000, 1);
             aborted_i = S.aborted;
             if (S.budget <= 0) return -1;
         }
@@ -1098,7 +894,7 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
             solve_clone_prefix(child, root);
             if (!legal_move_apply(child, bot_idx, &moves->moves[i])) continue;
             S.aborted = false;
-            v = og_solve(&S, child, -1, 0, 1);
+            v = bot_solve(&S, child, -1, 0, 1);
             aborted_i = (S.budget <= 0) || S.aborted;
         }
         if (aborted_i) continue;   // unknown
@@ -1652,40 +1448,6 @@ static void og_params(int num_players, int *W1, int *W2, int *W3) {
     if (og_w3_override >= 0) *W3 = og_w3_override;
 }
 
-// OG_VERIFY=1: oracle self-check (test-only — reads real hands to validate
-// the public-info belief, never to play).
-static void og_verify_belief(const Game *g, int bot_idx, const Belief *B) {
-    for (int p = 0; p < g->num_players; p++) {
-        if (p == bot_idx) continue;
-        const Player *pl = &g->players[p];
-        for (int k = 0; k < B->pinned_n[p]; k++) {
-            bool found = false;
-            for (int j = 0; j < pl->hand_count; j++) {
-                if (card_eq(pl->hand[j], B->pinned[p][k])) { found = true; break; }
-            }
-            if (!found) {
-                fprintf(stderr, "OG_VERIFY: pinned card v%d s%d NOT in p%d hand (logs=%d)\n",
-                        B->pinned[p][k].value, B->pinned[p][k].suit, p, g->num_logs);
-            }
-        }
-        for (int j = 0; j < pl->hand_count; j++) {
-            if (og_set_contains(B->pinned[p], B->pinned_n[p], pl->hand[j])) continue;
-            if (B->void_n[p] > 0 && og_void_forbidden(B, g, p, pl->hand[j])) {
-                fprintf(stderr, "OG_VERIFY: void violated: p%d holds v%d s%d\n",
-                        p, pl->hand[j].value, pl->hand[j].suit);
-            }
-            if (og_floor_forbidden(B, g, p, pl->hand[j])) {
-                fprintf(stderr, "OG_VERIFY: floor violated: p%d holds v%d s%d floor=%d\n",
-                        p, pl->hand[j].value, pl->hand[j].suit, B->floor_v[p]);
-            }
-            if (!og_set_contains(B->pool, B->n, pl->hand[j])) {
-                fprintf(stderr, "OG_VERIFY: p%d unknown card v%d s%d missing from pool (logs=%d)\n",
-                        p, pl->hand[j].value, pl->hand[j].suit, g->num_logs);
-            }
-        }
-    }
-}
-
 // ---------- OG_EXPLAIN emit (defined here: needs Candidates + MOVE_*) -------
 #ifdef OG_EXPLAIN_BUILD
 // A bounded text cursor: what a row's label is written through. It saturates at
@@ -1863,13 +1625,13 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
     // holds nothing that beats them (a deduced constraint, not a card).
     for (int p = 0; p < g->num_players; p++) {
         a->hand_count[p] = (uint8_t)g->players[p].hand_count;
-        a->pinned[p].n = (uint8_t)B->pinned_n[p];
-        for (int i = 0; i < B->pinned_n[p]; i++) a->pinned[p].cards[i] = B->pinned[p][i];
-        a->voids[p].n = (uint8_t)B->void_n[p];
-        for (int i = 0; i < B->void_n[p]; i++) a->voids[p].cards[i] = B->voids[p][i];
-        a->floor[p] = (int8_t)B->floor_v[p];
+        a->pinned[p].n = (uint8_t)B->b.pinned_n[p];
+        for (int i = 0; i < B->b.pinned_n[p]; i++) a->pinned[p].cards[i] = B->b.pinned[p][i];
+        a->voids[p].n = (uint8_t)B->b.void_n[p];
+        for (int i = 0; i < B->b.void_n[p]; i++) a->voids[p].cards[i] = B->b.voids[p][i];
+        a->floor[p] = (int8_t)B->b.floor_v[p];
     }
-    a->n_pool = (uint8_t)B->n;
+    a->n_pool = (uint8_t)B->b.n;
 
     int ncand = C ? C->n : moves->n;
     if (ncand > OG_ANSWER_MAX_CANDS) ncand = OG_ANSWER_MAX_CANDS;
@@ -2207,7 +1969,7 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
     // secret deal seed - a source holder can't recompute it - and the W diverse
     // wseeds within a decision come from (w+1) below, so MC coverage is intact.
     // bot_idx only decorrelates co-seated bots in multi-bot games.
-    uint32_t base = og_mix((uint32_t)bot_idx * 2654435761u, (uint32_t)random_strategy_rng_get());
+    uint32_t base = bot_mix((uint32_t)bot_idx * 2654435761u, (uint32_t)random_strategy_rng_get());
 
     Game *world = world_scratch_game(), *trial = trial_scratch_game();
     SimState *world_sim = world_scratch_sim(), *trial_sim = trial_scratch_sim();
@@ -2226,14 +1988,14 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
         int w_lo = (stage == 0) ? 0 : (stage == 1) ? W1 : W1 + W2;
         int w_hi = (stage == 0) ? W1 : (stage == 1) ? W1 + W2 : W1 + W2 + W3;
         for (int w = w_lo; w < w_hi; w++) {
-            uint32_t wseed = og_mix(base, (uint32_t)(w + 1) * 0x85EBCA77u);
+            uint32_t wseed = bot_mix(base, (uint32_t)(w + 1) * 0x85EBCA77u);
             // Belief mixture: voids assume cover-if-you-can pickups (3 of 4
             // worlds), floors assume lowest-first attackers (every other
             // world). Per-player distrust already cleared bogus constraints.
             bool use_voids  = (w % og_void_mod) != og_void_mod - 1;
             bool use_floors = !og_no_floors && (w % og_floor_mod) == 0;
             og_sample_world(world, g, bot_idx, B, wseed, use_voids, use_floors);
-            uint32_t sim_rng = og_mix(wseed, 0x51AB1E5u);
+            uint32_t sim_rng = bot_mix(wseed, 0x51AB1E5u);
 
             if (fast_path) {
                 cd_sim_from_game(world_sim, world);     // convert world ONCE
@@ -2271,7 +2033,7 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
 
             for (int ci = 0; ci < C->n; ci++) {
                 if (!alive[ci]) continue;
-                og_lite_clone(trial, world);
+                bot_lite_clone(trial, world);
                 game_rng_set(sim_rng);   // identical stream for every move
                 if (!legal_move_apply(trial, bot_idx, &moves->moves[C->idx[ci]])) {
                     score[ci] += (double)g->num_players;
@@ -2328,8 +2090,8 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
 
     Belief B;
     og_build_belief(g, bot_idx, &B);
-    if (og_no_voids) for (int p = 0; p < MAX_PLAYERS; p++) B.void_n[p] = 0;
-    if (og_verify) og_verify_belief(g, bot_idx, &B);
+    if (og_no_voids) for (int p = 0; p < MAX_PLAYERS; p++) B.b.void_n[p] = 0;
+    if (og_verify) bot_verify_belief("OG_VERIFY", g, bot_idx, &B.b);
 
     // Player-count gate for the leaf lever (see og_bbleaf comment). In the
     // pc-aware default mode heads-up uses the small-leaf threshold.

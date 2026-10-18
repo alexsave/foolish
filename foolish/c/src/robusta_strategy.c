@@ -9,6 +9,7 @@
 #include "robusta_strategy.h"
 #include "card.h"
 #include "game.h"
+#include "bot_common.h"
 #include "cordite_sim.h"   // shared MC scratch (reused so wasm memory is unchanged)
 #include <string.h>
 #include <stdint.h>
@@ -22,13 +23,6 @@
 // scratch octogen already reserves: the sampled world goes in world_scratch_game()
 // (a short log-capped slot) and the rollout move list in rollout_moves_scratch().
 // Only one MC family runs per decision, so the slots are ours for the duration.
-
-// ---------- helpers ---------------------------------------------------
-
-static bool set_contains(const Card *arr, int n, Card c) {
-    for (int i = 0; i < n; i++) if (card_eq(arr[i], c)) return true;
-    return false;
-}
 
 // Build the unseen pool: cards in the full deck minus everything I've
 // publicly seen. Anything in this pool could be in the deck or in some
@@ -118,7 +112,7 @@ static void build_unseen_pool(const Game *g, int bot_idx, UnseenPool *u) {
     for (int suit = 0; suit < 4; suit++) {
         for (int v = start_v; v <= ACE_VALUE; v++) {
             Card c = { (int8_t)suit, (int8_t)v };
-            if (!set_contains(known, kn, c)) {
+            if (!bot_set_contains(known, kn, c)) {
                 u->pool[u->n++] = c;
             }
         }
@@ -135,28 +129,11 @@ static void build_unseen_pool(const Game *g, int bot_idx, UnseenPool *u) {
 
 // Sample a fictional consistent state into `g_out`. Pinned cards (from
 // pickup logs) go to their known holder; the unseen pool shuffles into the
-// remaining opp-hand slots + the deck.
-// Clone into a shared short world slot: the log-free prefix plus the LOG_DISCARD
-// tail (the only log type the espresso/handwritten rollout policies read),
-// capped at WORLD_LOG_CAP. Mirrors cordite's sampler so the shared world slot is
-// respected on the wasm short-log build; native (WORLD_LOG_CAP==0) keeps every
-// discard in a full-size slot. Same tradeoff cordite already makes.
-static void robusta_clone_world(Game *dst, const Game *src) {
-    memcpy(dst, src, offsetof(Game, logs));
-    int nl = 0;
-    for (int i = 0; i < src->num_logs; i++) {
-        if (src->logs[i].log_type != LOG_DISCARD) continue;
-        if (WORLD_LOG_CAP > 0 && nl >= WORLD_LOG_CAP) break;
-        dst->logs[nl++] = src->logs[i];
-    }
-    dst->num_logs = nl;
-    dst->log_cap  = WORLD_LOG_CAP;
-    dst->log_virt = (int16_t)nl;
-}
-
+// remaining opp-hand slots + the deck. The board is cloned into a shared short
+// world slot (bot_clone_world), as cordite's sampler does.
 static bool sample_consistent_state(Game *g_out, const Game *g_in, int my_idx,
                                      const UnseenPool *u, uint32_t seed) {
-    robusta_clone_world(g_out, g_in);
+    bot_clone_world(g_out, g_in);
 
     // Step 1: place pinned cards in the right opp's hand at slot 0..pinned_n.
     for (int i = 0; i < g_in->num_players; i++) {
