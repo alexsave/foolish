@@ -8,6 +8,7 @@
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"
+#include "bot_play.h"
 #include "retro_seed.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -109,59 +110,46 @@ int main(int argc,char**argv){
         for(int i=0;i<2;i++){ g.players[i].status=PLAYER_STATUS_READY; g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN; }
         start_game(&g);
         scanned++;
-        int iters=0;
-        while(game_done(&g)<0 && iters++<4000){
-            int elig[MAX_PLAYERS],n_e=0; for(int i=0;i<g.num_players;i++) if(should_bot_act(&g,i)) elig[n_e++]=i;
-            if(n_e==0) break;
-            for(int i=n_e-1;i>0;i--){ int j=(int)(game_random()*(i+1)); if(j<0)j=0; if(j>i)j=i; int t=elig[i];elig[i]=elig[j];elig[j]=t; }
-            bool acted=false;
-            for(int k=0;k<n_e;k++){ int pi=elig[k]; LegalMoves moves; calculate_legal_moves(&g,pi,&moves);
-                if(moves.n==0) continue;
-                // ---- analysis: deck-empty heads-up small endgame? ----
-                int nin=0; for(int p=0;p<g.num_players;p++) if(g.players[p].status==PLAYER_STATUS_IN) nin++;
-                int total=0; for(int p=0;p<g.num_players;p++) total+=g.players[p].hand_count;
-                if(g.deck_count==0 && !g.has_flipped && nin==2 && total<=MAXCARDS && moves.n>=MINMOVES){
-                    SimState root; cd_sim_from_game(&root,&g);
-                    if(retro_build(&root,pi)==0){
-                        int nwin=0,nloss=0,ndraw=0,nunk=0,winmv=-1;
-                        int val[64]; int nn=moves.n<64?moves.n:64;
-                        for(int mi=0;mi<nn;mi++){ SimState c=root; if(!cd_sim_apply_root_move(&c,pi,&moves.moves[mi])){val[mi]=-9;continue;}
-                            int v=child_value(&c); val[mi]=v;
-                            if(v==WIN){nwin++;winmv=mi;} else if(v==LOSS)nloss++; else if(v==UNK)ndraw++; else nunk++; }
-                        if(nwin==1 && nloss==(nn-1) && ndraw==0 && nunk==0){
-                            hits++;
-                            // non-obvious check: pure-MC octogen (no root solver,
-                            // no exact-leaf rollouts) — does it pick a LOSS?
-                            setenv("OG_NO_SOLVE","1",1); setenv("OG_BBLEAF","0",1); og_reload_flags();
-                            int mc_idx=octogen_strategy_choose(&g,pi,&moves,NULL);
-                            unsetenv("OG_NO_SOLVE"); unsetenv("OG_BBLEAF"); og_reload_flags();
-                            int mc_loss = (mc_idx>=0 && mc_idx<nn && val[mc_idx]==LOSS);
-                            char sx[65]; for(int i=0;i<32;i++) snprintf(sx+2*i,3,"%02x",seed[i]);
-                            char wm[64]; movestr(wm,&moves.moves[winmv]);
-                            char hs[160]={0}; int w=0;
-                            for(int j=0;j<g.players[pi].hand_count;j++){char c[8];cardstr(c,g.players[pi].hand[j].suit,g.players[pi].hand[j].value);w+=snprintf(hs+w,160-w,"%s%s",j?" ":"",c);}
-                            char oppd[64]={0}; int ow=0; int opp=pi^1;
-                            for(int j=0;j<g.players[opp].hand_count;j++){char c[8];cardstr(c,g.players[opp].hand[j].suit,g.players[opp].hand[j].value);ow+=snprintf(oppd+ow,64-ow,"%s%s",j?" ":"",c);}
-                            char losers[256]={0}; int lw=0;
-                            for(int mi=0;mi<nn;mi++) if(val[mi]==LOSS){char mb[64];movestr(mb,&moves.moves[mi]);lw+=snprintf(losers+lw,256-lw,"%s%s",lw?" ":"",mb);}
-                            printf("%s idx=%ld ply=%d seat=%d(%s) trump=%c total=%d nmoves=%d WIN=[%s] LOSE=[%s] hand=[%s] opp=[%s] mcpick=%s seed=%s\n",
-                                mc_loss?"NONOBV":"HIT",sidx,g.num_logs,pi,g.defender==pi?"DEF":"ATK",SUIT[g.power_suit],total,nn,wm,losers,hs,oppd,
-                                mc_loss?"LOSS":"win",sx);
-                            fflush(stdout);
-                        }
+        BotPlay bp;bot_play_init(&bp,&g,4000,BOT_PLAY_SHUFFLE,NULL);
+        for(int pi;(pi=bot_play_next(&bp))>=0;){const LegalMoves*mv=&bp.moves;
+            // ---- analysis: deck-empty heads-up small endgame? ----
+            int nin=0; for(int p=0;p<g.num_players;p++) if(g.players[p].status==PLAYER_STATUS_IN) nin++;
+            int total=0; for(int p=0;p<g.num_players;p++) total+=g.players[p].hand_count;
+            if(g.deck_count==0 && !g.has_flipped && nin==2 && total<=MAXCARDS && mv->n>=MINMOVES){
+                SimState root; cd_sim_from_game(&root,&g);
+                if(retro_build(&root,pi)==0){
+                    int nwin=0,nloss=0,ndraw=0,nunk=0,winmv=-1;
+                    int val[64]; int nn=mv->n<64?mv->n:64;
+                    for(int mi=0;mi<nn;mi++){ SimState c=root; if(!cd_sim_apply_root_move(&c,pi,&mv->moves[mi])){val[mi]=-9;continue;}
+                        int v=child_value(&c); val[mi]=v;
+                        if(v==WIN){nwin++;winmv=mi;} else if(v==LOSS)nloss++; else if(v==UNK)ndraw++; else nunk++; }
+                    if(nwin==1 && nloss==(nn-1) && ndraw==0 && nunk==0){
+                        hits++;
+                        // non-obvious check: pure-MC octogen (no root solver,
+                        // no exact-leaf rollouts) — does it pick a LOSS?
+                        setenv("OG_NO_SOLVE","1",1); setenv("OG_BBLEAF","0",1); og_reload_flags();
+                        int mc_idx=octogen_strategy_choose(&g,pi,mv,NULL);
+                        unsetenv("OG_NO_SOLVE"); unsetenv("OG_BBLEAF"); og_reload_flags();
+                        int mc_loss = (mc_idx>=0 && mc_idx<nn && val[mc_idx]==LOSS);
+                        char sx[65]; for(int i=0;i<32;i++) snprintf(sx+2*i,3,"%02x",seed[i]);
+                        char wm[64]; movestr(wm,&mv->moves[winmv]);
+                        char hs[160]={0}; int w=0;
+                        for(int j=0;j<g.players[pi].hand_count;j++){char c[8];cardstr(c,g.players[pi].hand[j].suit,g.players[pi].hand[j].value);w+=snprintf(hs+w,160-w,"%s%s",j?" ":"",c);}
+                        char oppd[64]={0}; int ow=0; int opp=pi^1;
+                        for(int j=0;j<g.players[opp].hand_count;j++){char c[8];cardstr(c,g.players[opp].hand[j].suit,g.players[opp].hand[j].value);ow+=snprintf(oppd+ow,64-ow,"%s%s",j?" ":"",c);}
+                        char losers[256]={0}; int lw=0;
+                        for(int mi=0;mi<nn;mi++) if(val[mi]==LOSS){char mb[64];movestr(mb,&mv->moves[mi]);lw+=snprintf(losers+lw,256-lw,"%s%s",lw?" ":"",mb);}
+                        printf("%s idx=%ld ply=%d seat=%d(%s) trump=%c total=%d nmoves=%d WIN=[%s] LOSE=[%s] hand=[%s] opp=[%s] mcpick=%s seed=%s\n",
+                            mc_loss?"NONOBV":"HIT",sidx,g.num_logs,pi,g.defender==pi?"DEF":"ATK",SUIT[g.power_suit],total,nn,wm,losers,hs,oppd,
+                            mc_loss?"LOSS":"win",sx);
+                        fflush(stdout);
                     }
-                    retro_clear();
                 }
-                int idx=octogen_strategy_choose(&g,pi,&moves,NULL);
-                if(idx<0||idx>=moves.n) continue;
-                const LegalMove*m=&moves.moves[idx]; bool ok=false;
-                switch(m->type){ case MOVE_ATTACK: ok=handle_attack(&g,pi,m->cards,m->n_cards); break;
-                    case MOVE_COVER: ok=handle_cover(&g,pi,m->cards,m->attack_cards,m->n_cards); break;
-                    case MOVE_PASS: ok=handle_pass(&g,pi,m->cards,m->n_cards); break;
-                    case MOVE_PICKUP: ok=handle_pickup(&g,pi); break;
-                    case MOVE_GOOD: ok=handle_good(&g,pi); break; default: break; }
-                if(ok){acted=true;break;} }
-            if(!acted) break;
+                retro_clear();
+            }
+            int idx=octogen_strategy_choose(&g,pi,mv,NULL);
+            if(idx<0||idx>=mv->n) continue;
+            bot_play_apply(&bp,idx);
         }
     }
     fprintf(stderr,"scanned=%ld hits=%ld\n",scanned,hits);

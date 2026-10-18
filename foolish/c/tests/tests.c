@@ -11,6 +11,7 @@
 #include "../src/legal.h"
 #include "../src/awire.h"
 #include "../src/strategy.h"
+#include "../src/bot_play.h"
 #include "../src/bot_roster.h"
 #include "../src/bot_knobs.h"
 #include "../src/bot_drive.h"
@@ -163,26 +164,17 @@ static void test_awire_apply_settles_game_over(void) {
     start_game(&g);
     CHECK(g.status == GAME_STATUS_PLAYING, "settle: a dealt game is PLAYING");
 
-    int iters = 0;
-    while (game_done(&g) < 0 && iters++ < 4000) {
-        int eligible[MAX_PLAYERS]; int n_elig = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) eligible[n_elig++] = i;
-        if (n_elig == 0) break;
-        bool acted = false;
-        for (int k = 0; k < n_elig && !acted; k++) {
-            int idx = eligible[k];
-            LegalMoves moves; calculate_legal_moves(&g, idx, &moves);
-            if (moves.n == 0) continue;
-            int chosen = handwritten_strategy_choose(&g, idx, &moves, NULL);
-            if (chosen < 0) continue;
-            const LegalMove *m = &moves.moves[chosen];
-            if (m->type > MOVE_GOOD) continue;   // 'wait' is not an awire action
-            AwireAction a; memset(&a, 0, sizeof a);
-            a.kind = m->type; a.n = m->n_cards;
-            for (int c = 0; c < m->n_cards; c++) { a.cards[c] = m->cards[c]; a.attacks[c] = m->attack_cards[c]; }
-            acted = awire_apply(&g, idx, &a);
-        }
-        if (!acted) break;
+    BotPlay bp;
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SEAT_ORDER, NULL);
+    for (int idx; (idx = bot_play_next(&bp)) >= 0; ) {
+        int chosen = handwritten_strategy_choose(&g, idx, &bp.moves, NULL);
+        if (chosen < 0) continue;
+        const LegalMove *m = &bp.moves.moves[chosen];
+        if (m->type > MOVE_GOOD) continue;   // 'wait' is not an awire action
+        AwireAction a; memset(&a, 0, sizeof a);
+        a.kind = m->type; a.n = m->n_cards;
+        for (int c = 0; c < m->n_cards; c++) { a.cards[c] = m->cards[c]; a.attacks[c] = m->attack_cards[c]; }
+        bot_play_took(&bp, awire_apply(&g, idx, &a));
     }
     CHECK(game_done(&g) >= 0, "settle: the game terminates under awire_apply");
     CHECK(g.status == GAME_STATUS_GAME_OVER, "settle: the kernel flipped g->status to GAME_OVER");
@@ -381,42 +373,116 @@ static void test_full_game_3p_handwritten(void) {
         g.players[i].status = PLAYER_STATUS_READY;
     }
     start_game(&g);
-    int iters = 0;
-    while (game_done(&g) < 0 && iters < 4000) {
-        iters++;
-        int eligible[MAX_PLAYERS]; int n_elig = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) eligible[n_elig++] = i;
-        if (n_elig == 0) break;
-        for (int i = n_elig - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int tmp = eligible[i]; eligible[i] = eligible[j]; eligible[j] = tmp;
-        }
-        bool acted = false;
-        for (int k = 0; k < n_elig; k++) {
-            int idx = eligible[k];
-            LegalMoves moves;
-            calculate_legal_moves(&g, idx, &moves);
-            if (moves.n == 0) continue;
-            int chosen = handwritten_strategy_choose(&g, idx, &moves, NULL);
-            if (chosen < 0) continue;
-            const LegalMove *m = &moves.moves[chosen];
-            bool ok = false;
-            switch (m->type) {
-                case MOVE_ATTACK: ok = handle_attack(&g, idx, m->cards, m->n_cards); break;
-                case MOVE_COVER:  ok = handle_cover (&g, idx, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   ok = handle_pass  (&g, idx, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: ok = handle_pickup(&g, idx); break;
-                case MOVE_GOOD:   ok = handle_good  (&g, idx); break;
-                default: break;
-            }
-            if (ok) { acted = true; break; }
-        }
-        if (!acted) break;
-    }
+    BotPlay bp;
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SHUFFLE, NULL);
+    for (int idx; (idx = bot_play_next(&bp)) >= 0; )
+        bot_play_apply(&bp, handwritten_strategy_choose(&g, idx, &bp.moves, NULL));
     int loser = game_done(&g);
     CHECK(loser >= 0, "3p hw vs hw vs hw terminates");
     CHECK(g.num_eliminated == g.num_players - 1, "all but one player eliminated");
+}
+
+// bot_play (src/bot_play.h): the one offline play-to-the-end loop sixteen
+// copies became. What every arena, CLI and seeded test relies on: which seats a
+// turn offers and in what order, that a turn nobody moves in stops the game, the
+// turn cap, a skipped index leaving the turn to the next seat, and the exact
+// draws the shuffle makes (n-1 from game_random, or from order_rng and never
+// from game_random), so a seeded game plays the game it played before the lift.
+static void test_bot_play_turn_rules(void) {
+    // A 4-player board where at least three seats may act: play seat order with
+    // handwritten until a turn offers that many.
+    game_set_seed(31);
+    random_strategy_set_seed(31);
+    static Game g0;
+    memset(&g0, 0, sizeof g0);
+    g0.num_players = 4;
+    for (int i = 0; i < 4; i++) g0.players[i].status = PLAYER_STATUS_READY;
+    start_game(&g0);
+    static BotPlay bp;
+    int n_elig = 0;
+    for (int guard = 0; guard < 400 && game_done(&g0) < 0; guard++) {
+        n_elig = 0;
+        for (int i = 0; i < 4; i++) n_elig += should_bot_act(&g0, i);
+        if (n_elig >= 3) break;
+        bot_play_init(&bp, &g0, 1, BOT_PLAY_SEAT_ORDER, NULL);
+        for (int s; (s = bot_play_next(&bp)) >= 0; )
+            bot_play_apply(&bp, handwritten_strategy_choose(&g0, s, &bp.moves, NULL));
+    }
+    CHECK(n_elig >= 3, "bot_play: found a board where three seats may act");
+
+    // Seat order, nobody moves: every seat that may act and has a menu, lowest
+    // first, each once; then the stalled turn stops the game.
+    static Game g;
+    g = g0;
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SEAT_ORDER, NULL);
+    int got[MAX_PLAYERS], n_got = 0, s;
+    while ((s = bot_play_next(&bp)) >= 0 && n_got < MAX_PLAYERS) {
+        CHECK(bp.moves.n > 0 && bp.seat == s, "bot_play: a seat comes with its own non-empty menu");
+        got[n_got++] = s;
+    }
+    int want[MAX_PLAYERS], n_want = 0;
+    for (int i = 0; i < 4; i++) {
+        if (!should_bot_act(&g, i)) continue;
+        static LegalMoves lm;
+        calculate_legal_moves(&g, i, &lm);
+        if (lm.n > 0) want[n_want++] = i;
+    }
+    bool same = n_got == n_want && n_want >= 2;
+    for (int i = 0; same && i < n_got; i++) same = got[i] == want[i];
+    CHECK(same, "bot_play: seat order offers exactly the seats that may act, lowest first");
+    CHECK(s < 0 && bp.turns == 1, "bot_play: a turn nobody moves in stops after that one turn");
+    CHECK(bot_play_next(&bp) < 0, "bot_play: and stays stopped");
+
+    // A skipped index (out of range either way) leaves the turn to the next seat.
+    g = g0;
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SEAT_ORDER, NULL);
+    int first = bot_play_next(&bp);
+    CHECK(!bot_play_apply(&bp, -1) && !bot_play_apply(&bp, bp.moves.n), "bot_play: an index off the menu does not apply");
+    CHECK(bot_play_next(&bp) == want[1], "bot_play: and the turn goes on to the next seat");
+    CHECK(first == want[0] && bp.turns == 1, "bot_play: still within the first turn");
+    // ...while a move that applies ends the turn: the next call begins another.
+    CHECK(bot_play_apply(&bp, handwritten_strategy_choose(&g, bp.seat, &bp.moves, NULL)), "bot_play: a chosen move applies");
+    CHECK(bot_play_next(&bp) >= 0 && bp.turns == 2, "bot_play: an applied move ends the turn");
+
+    // The cap counts turns begun.
+    g = g0;
+    bot_play_init(&bp, &g, 0, BOT_PLAY_SHUFFLE, NULL);
+    CHECK(bot_play_next(&bp) < 0 && bp.turns == 0, "bot_play: a cap of 0 plays nothing");
+    bot_play_init(&bp, &g, 5, BOT_PLAY_SEAT_ORDER, NULL);
+    int applied = 0;
+    for (int t; (t = bot_play_next(&bp)) >= 0; )
+        applied += bot_play_apply(&bp, handwritten_strategy_choose(&g, t, &bp.moves, NULL));
+    CHECK(applied == 5 && bp.turns == 5 && game_done(&g) < 0, "bot_play: a cap of 5 plays five turns of a live game");
+
+    // The shuffle's draws: n-1 from game_random at the start of a turn.
+    g = g0;
+    game_set_seed(77);
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SHUFFLE, NULL);
+    bot_play_next(&bp);
+    int n_order = bp.n_order;
+    double after = game_random();
+    game_set_seed(77);
+    for (int i = 0; i < n_order - 1; i++) (void)game_random();
+    CHECK(n_order == n_want && after == game_random(), "bot_play: a shuffled turn draws n-1 values from game_random");
+    bool perm = true;
+    for (int i = 0; i < n_order; i++) {
+        bool found = false;
+        for (int j = 0; j < n_order; j++) found |= bp.order[j] == want[i];
+        perm &= found;
+    }
+    CHECK(perm, "bot_play: the shuffled order is the same seats");
+
+    // ...or from order_rng, and then never from game_random.
+    g = g0;
+    uint64_t r = 5, r_ref = 5;
+    game_set_seed(77);
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SHUFFLE, &r);
+    bot_play_next(&bp);
+    after = game_random();
+    game_set_seed(77);
+    CHECK(after == game_random(), "bot_play: an order_rng turn leaves game_random alone");
+    for (int i = 0; i < n_order - 1; i++) (void)rng_u32(&r_ref);
+    CHECK(r == r_ref, "bot_play: and draws n-1 values from order_rng");
 }
 
 // Test: a full handwritten-vs-handwritten game terminates without crashing.
@@ -425,39 +491,10 @@ static void test_full_game_handwritten(void) {
     random_strategy_set_seed(99);
     Game g; make_2p_game(&g);
     start_game(&g);
-    int iters = 0;
-    while (game_done(&g) < 0 && iters < 2000) {
-        iters++;
-        int eligible[MAX_PLAYERS]; int n_elig = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) eligible[n_elig++] = i;
-        if (n_elig == 0) break;
-        for (int i = n_elig - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int tmp = eligible[i]; eligible[i] = eligible[j]; eligible[j] = tmp;
-        }
-        bool acted = false;
-        for (int k = 0; k < n_elig; k++) {
-            int idx = eligible[k];
-            LegalMoves moves;
-            calculate_legal_moves(&g, idx, &moves);
-            if (moves.n == 0) continue;
-            int chosen = handwritten_strategy_choose(&g, idx, &moves, NULL);
-            if (chosen < 0) continue;
-            const LegalMove *m = &moves.moves[chosen];
-            bool ok = false;
-            switch (m->type) {
-                case MOVE_ATTACK: ok = handle_attack(&g, idx, m->cards, m->n_cards); break;
-                case MOVE_COVER:  ok = handle_cover (&g, idx, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   ok = handle_pass  (&g, idx, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: ok = handle_pickup(&g, idx); break;
-                case MOVE_GOOD:   ok = handle_good  (&g, idx); break;
-                default: break;
-            }
-            if (ok) { acted = true; break; }
-        }
-        if (!acted) break;
-    }
+    BotPlay bp;
+    bot_play_init(&bp, &g, 2000, BOT_PLAY_SHUFFLE, NULL);
+    for (int idx; (idx = bot_play_next(&bp)) >= 0; )
+        bot_play_apply(&bp, handwritten_strategy_choose(&g, idx, &bp.moves, NULL));
     int loser = game_done(&g);
     CHECK(loser >= 0, "handwritten vs handwritten terminates");
 }
@@ -490,33 +527,10 @@ static void test_elimination_order_never_repeats_a_seat(void) {
             }
             g.status = GAME_STATUS_WAITING;
             start_game(&g);
-            int iters = 0;
-            while (game_done(&g) < 0 && iters < 4000) {
-                iters++;
-                int elig[MAX_PLAYERS]; int ne = 0;
-                for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[ne++] = i;
-                if (ne == 0) break;
-                bool acted = false;
-                for (int k = 0; k < ne; k++) {
-                    int idx = elig[k];
-                    LegalMoves moves; calculate_legal_moves(&g, idx, &moves);
-                    if (moves.n == 0) continue;
-                    int ch = random_strategy_choose(&g, idx, &moves, NULL);
-                    if (ch < 0) continue;
-                    const LegalMove *m = &moves.moves[ch];
-                    bool ok = false;
-                    switch (m->type) {
-                        case MOVE_ATTACK: ok = handle_attack(&g, idx, m->cards, m->n_cards); break;
-                        case MOVE_COVER:  ok = handle_cover (&g, idx, m->cards, m->attack_cards, m->n_cards); break;
-                        case MOVE_PASS:   ok = handle_pass  (&g, idx, m->cards, m->n_cards); break;
-                        case MOVE_PICKUP: ok = handle_pickup(&g, idx); break;
-                        case MOVE_GOOD:   ok = handle_good  (&g, idx); break;
-                        default: break;
-                    }
-                    if (ok) { acted = true; break; }
-                }
-                if (!acted) break;
-            }
+            BotPlay bp;
+            bot_play_init(&bp, &g, 4000, BOT_PLAY_SEAT_ORDER, NULL);
+            for (int idx; (idx = bot_play_next(&bp)) >= 0; )
+                bot_play_apply(&bp, random_strategy_choose(&g, idx, &bp.moves, NULL));
             played++;
             int seen[MAX_PLAYERS];
             memset(seen, 0, sizeof(seen));
@@ -546,40 +560,10 @@ static void test_full_game_random(void) {
     random_strategy_set_seed(456);
     Game g; make_2p_game(&g);
     start_game(&g);
-    int iters = 0;
-    while (game_done(&g) < 0 && iters < 2000) {
-        iters++;
-        int eligible[MAX_PLAYERS]; int n_elig = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) eligible[n_elig++] = i;
-        if (n_elig == 0) break;
-        // shuffle by Math.random (matches TS Fisher-Yates)
-        for (int i = n_elig - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int tmp = eligible[i]; eligible[i] = eligible[j]; eligible[j] = tmp;
-        }
-        bool acted = false;
-        for (int k = 0; k < n_elig; k++) {
-            int idx = eligible[k];
-            LegalMoves moves;
-            calculate_legal_moves(&g, idx, &moves);
-            if (moves.n == 0) continue;
-            int chosen = random_strategy_choose(&g, idx, &moves, NULL);
-            if (chosen < 0) continue;
-            const LegalMove *m = &moves.moves[chosen];
-            bool ok = false;
-            switch (m->type) {
-                case MOVE_ATTACK: ok = handle_attack(&g, idx, m->cards, m->n_cards); break;
-                case MOVE_COVER:  ok = handle_cover (&g, idx, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   ok = handle_pass  (&g, idx, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: ok = handle_pickup(&g, idx); break;
-                case MOVE_GOOD:   ok = handle_good  (&g, idx); break;
-                default: break;
-            }
-            if (ok) { acted = true; break; }
-        }
-        if (!acted) break;
-    }
+    BotPlay bp;
+    bot_play_init(&bp, &g, 2000, BOT_PLAY_SHUFFLE, NULL);
+    for (int idx; (idx = bot_play_next(&bp)) >= 0; )
+        bot_play_apply(&bp, random_strategy_choose(&g, idx, &bp.moves, NULL));
     int loser = game_done(&g);
     CHECK(loser >= 0, "random vs random terminates");
 }
@@ -1573,38 +1557,10 @@ static unsigned run_repro_game(const unsigned char *seed) {
     start_game(&g);
     unsigned h = 2166136261u;
 #define HH(b) do { h ^= (unsigned char)(b); h *= 16777619u; } while (0)
-    int iters = 0;
-    while (game_done(&g) < 0 && iters < 2000) {
-        iters++;
-        int eligible[MAX_PLAYERS]; int n_elig = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) eligible[n_elig++] = i;
-        if (n_elig == 0) break;
-        for (int i = n_elig - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int tmp = eligible[i]; eligible[i] = eligible[j]; eligible[j] = tmp;
-        }
-        bool acted = false;
-        for (int k = 0; k < n_elig; k++) {
-            int idx = eligible[k];
-            LegalMoves moves;
-            calculate_legal_moves(&g, idx, &moves);
-            if (moves.n == 0) continue;
-            int chosen = handwritten_strategy_choose(&g, idx, &moves, NULL);
-            if (chosen < 0) continue;
-            const LegalMove *m = &moves.moves[chosen];
-            bool ok = false;
-            switch (m->type) {
-                case MOVE_ATTACK: ok = handle_attack(&g, idx, m->cards, m->n_cards); break;
-                case MOVE_COVER:  ok = handle_cover (&g, idx, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   ok = handle_pass  (&g, idx, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: ok = handle_pickup(&g, idx); break;
-                case MOVE_GOOD:   ok = handle_good  (&g, idx); break;
-                default: break;
-            }
-            if (ok) { acted = true; break; }
-        }
-        if (!acted) break;
+    BotPlay bp;
+    bot_play_init(&bp, &g, 2000, BOT_PLAY_SHUFFLE, NULL);
+    for (int idx; (idx = bot_play_next(&bp)) >= 0; ) {
+        if (!bot_play_apply(&bp, handwritten_strategy_choose(&g, idx, &bp.moves, NULL))) continue;
         HH(g.deck_count); HH(g.discard_pile_length); HH(g.power_suit);
         for (int p = 0; p < g.num_players; p++) {
             HH(g.players[p].hand_count);
@@ -19533,6 +19489,7 @@ int main(void) {
     test_play_pills_one_move_one_button();
     test_good_is_always_enumerated_for_an_attacker();
     test_full_game_random();
+    test_bot_play_turn_rules();
     test_full_game_handwritten();
     test_full_game_3p_handwritten();
 

@@ -13,6 +13,7 @@
 #include "../src/legal.h"
 #include "../src/strategy.h"
 #include "../src/cli_util.h"
+#include "../src/bot_play.h"
 #include "../src/replay.h"
 #include "../src/replay_steps.h"
 #include "../src/replay_extras.h"
@@ -242,40 +243,24 @@ int main(int argc, char **argv) {
     if (g.has_flipped) print_card(g.flipped, trump); else printf("-");
     printf("  first_attacker=p%d  defender=p%d\n\n", g.first_attacker, g.defender);
 
-    int move_no = 0, iters = 0;
-    int max_iters = 4000;
-    while (game_done(&g) < 0 && iters++ < max_iters) {
-        int elig[MAX_PLAYERS]; int n_e = 0;
-        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
-        if (n_e == 0) break;
-        for (int i = n_e - 1; i > 0; i--) {
-            int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
-            int tmp = elig[i]; elig[i] = elig[j]; elig[j] = tmp;
-        }
-        bool acted = false;
-        for (int k = 0; k < n_e; k++) {
-            int p = elig[k];
-            LegalMoves moves;
-            calculate_legal_moves(&g, p, &moves);
-            if (moves.n == 0) continue;
-            int idx = run_strategy(strats[p], &g, p, &moves);
-            if (idx < 0 || idx >= moves.n) continue;
-            const LegalMove *m = &moves.moves[idx];
+    int move_no = 0;
+    BotPlay bp;
+    bot_play_init(&bp, &g, 4000, BOT_PLAY_SHUFFLE, NULL);
+    for (int p; (p = bot_play_next(&bp)) >= 0; ) {
+        int idx = run_strategy(strats[p], &g, p, &bp.moves);
+        if (idx < 0 || idx >= bp.moves.n) continue;
+        const LegalMove *m = &bp.moves.moves[idx];
 
-            move_no++;
-            printf("[%d] p%d (%s) %s ", move_no, p,
-                   strats[p] == STRAT_RANDOM ? "rand" :
-                   strats[p] == STRAT_ESPRESSO ? "esp" :
-                   strats[p] == STRAT_HANDWRITTEN ? "hw" : "?",
-                   p == g.defender ? "DEF" : "ATK");
-            describe_move(m, trump);
-            printf("   (had %d legal)\n", moves.n);
+        move_no++;
+        printf("[%d] p%d (%s) %s ", move_no, p,
+               strats[p] == STRAT_RANDOM ? "rand" :
+               strats[p] == STRAT_ESPRESSO ? "esp" :
+               strats[p] == STRAT_HANDWRITTEN ? "hw" : "?",
+               p == g.defender ? "DEF" : "ATK");
+        describe_move(m, trump);
+        printf("   (had %d legal)\n", bp.moves.n);
 
-            bool ok = legal_move_apply(&g, p, m);
-            if (ok) { acted = true; break; }
-        }
-        if (!acted) break;
+        bot_play_apply(&bp, idx);
     }
 
     int loser = game_done(&g);

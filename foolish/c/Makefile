@@ -84,6 +84,11 @@ CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
             src/strategy.c src/hand_layout.c \
             src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c
+# What only host programs link (the arenas, the CLIs, the tests, the research
+# tools): the offline play-to-the-end loop. No shipped module carries it, so the
+# iOS bots archive filters it back out below.
+HOST_ONLY_SRC := src/bot_play.c
+CORE_SRC += $(HOST_ONLY_SRC)
 # Where each becomes an object: build/obj/host/<the source's own path>.o, the
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
@@ -416,7 +421,7 @@ IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
                 src/hand_layout.c $(IOS_BRIDGE_SRC) \
                 src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c
-IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
+IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC) $(HOST_ONLY_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
 IOS_SRC    := $(IOS_CORE_SRC) $(IOS_BOTS_SRC)
@@ -569,7 +574,7 @@ GAMES ?= 1500
 L1_CFLAGS := -O2 -Isrc -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=2048 \
              -DMAX_LEGAL_MOVES=16384 -DMAX_MOVE_CARDS=52 -DREPLAY_STATS
 L1_SRC    := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/view.c \
-             src/random_strategy.c src/handwritten_strategy.c tests/l1_measure.c
+             src/random_strategy.c src/handwritten_strategy.c src/bot_play.c tests/l1_measure.c
 build/l1_measure: $(call c_objs,build/obj/l1,$(L1_SRC))
 	$(CC) $(L1_CFLAGS) $^ -o $@ -lm
 .PHONY: l1-measure
