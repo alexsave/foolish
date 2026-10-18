@@ -1177,10 +1177,22 @@ static int replay_names(const user *u, const forms *name) {
     if (http("GET", "/v1/history", u->auth, NULL, 0, NULL) != 200) return -1;
     int n = nw_list_open(g_a.body, g_a.len, NW_HISTORY);
     int found = 0;
+    // The list holds no replay: each row's is fetched by its id (GET /v1/replay/<id>).
+    char ids[64][NW_ID_MAX + 1];
+    if (n > 64) n = 64;
     for (int i = 0; i < n; i++) {
         static NwHistoryRow r;
         if (nw_get_history(g_a.body, g_a.len, i, &r) != NW_OK) return -1;
-        if (r.extras.len && memmem(r.extras.p, r.extras.len, name->form[0], strlen(name->form[0]))) found++;
+        memcpy(ids[i], r.id, r.id_len);
+        ids[i][r.id_len] = 0;
+    }
+    for (int i = 0; i < n; i++) {
+        char path[96];
+        snprintf(path, sizeof path, "/v1/replay/%s", ids[i]);
+        if (http("GET", path, u->auth, NULL, 0, NULL) != 200) return -1;
+        NwBlob mv, ex;
+        if (nw_replay_decode(g_a.body, g_a.len, &mv, &ex) != NW_OK) return -1;
+        if (ex.len && memmem(ex.p, ex.len, name->form[0], strlen(name->form[0]))) found++;
     }
     return found;
 }

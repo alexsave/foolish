@@ -541,21 +541,16 @@ static bool history_fn(const cb_snapshot_row *s, void *ud) {
     static _Thread_local NwHistoryRow h;
     memset(&h, 0, sizeof h);
     size_t n = strlen(s->id);
-    if (n > NW_ID_MAX || s->n_players > MAX_PLAYERS) return true;   // not a row a client can hold: skipped
+    if (n > NW_ID_MAX || s->n_players < 0 || s->n_players > MAX_PLAYERS) return true;   // not a row a client can hold: skipped
     h.id_len = (uint8_t)n;
     memcpy(h.id, s->id, n);
     h.created_ms = s->created_at > 0 ? (uint64_t)s->created_at : 0;
     h.n_players = (uint8_t)s->n_players;
-    for (int i = 0; i < s->n_players; i++) {
-        size_t pn = strlen(s->player_ids[i]);
-        h.player_len[i] = (uint8_t)(pn <= NW_ID_MAX ? pn : 0);
-        memcpy(h.player[i], s->player_ids[i], h.player_len[i]);
-    }
-    h.moves.p = s->moves;
-    h.moves.len = (uint32_t)s->moves_len;
-    h.extras.p = s->extras;
-    h.extras.len = (uint32_t)s->extras_len;
-    LIST_PUT(l, 32 + (size_t)(MAX_PLAYERS + 1) * (NW_ID_MAX + 1) + s->moves_len + s->extras_len, nw_put_history(&h, out, (int)cap_));
+    h.seat = s->seat >= 0 ? (uint8_t)s->seat : NW_HISTORY_NONE;
+    h.rank = (uint8_t)(s->sum.has && s->rank > 0 ? s->rank : 0);
+    h.fool = s->sum.has && s->sum.fool >= 0 ? (uint8_t)s->sum.fool : NW_HISTORY_NONE;
+    h.duration_s = s->sum.has && s->sum.duration_s >= 0 ? (uint32_t)s->sum.duration_s : NW_HISTORY_NO_TIME;
+    LIST_PUT(l, 48, nw_put_history(&h, out, (int)cap_));
     return !l->bad;
 }
 
@@ -582,7 +577,8 @@ static void h_history(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_store_side_start(&side, read_rating, &rr);
     list l;
     list_begin(&l, NW_HISTORY_HEAD_BYTES);
-    cb_snapshot_query q = { u.id, NULL, NULL, HISTORY_PAGE, true };
+    // One Query of the caller's pointers: the summary each holds is the list (no replay is read).
+    cb_snapshot_query q = { .viewer_id = u.id, .limit = HISTORY_PAGE, .newest_first = true, .summary_only = true };
     int rc = CB_ROWS_CALL(ctx->store, snapshots_query, &q, history_fn, &l);
     cb_store_side_join(&side);
     if (rc >= 0 && rr.rc < 0) rc = rr.rc;
@@ -616,8 +612,9 @@ static void h_replay(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     replay r;
     cb_buf_init(&r.body);
     r.found = r.bad = false;
-    // Only a replay of a game the caller played (game_snapshots' policy).
-    cb_snapshot_query q = { u.id, gid, NULL, 1, true };
+    // Only a replay of a game the caller played (game_snapshots' policy); the
+    // id is the game's or the replay's (the history row's id: its game may be gone).
+    cb_snapshot_query q = { .viewer_id = u.id, .limit = 1, .newest_first = true, .ref = gid };
     int rc = CB_ROWS_CALL(ctx->store, snapshots_query, &q, replay_fn, &r);
     if (rc < 0) failed(res, rc);
     else if (!r.found) refuse(res, 404, ASK_WHY_NOT_FOUND, 0);

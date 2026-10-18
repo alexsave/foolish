@@ -116,6 +116,17 @@ typedef struct {
     int64_t updated_at;
 } cb_rating_row;
 
+// What the history list shows of a replay, cut once when the game ends (the
+// kernel's replay_summary_v6 and the extras' gaps) and written into every
+// player's pointer, so the list is one Query and no copy holds a name.
+typedef struct {
+    bool    has;                             // false: a pointer from before the summary, or none given
+    int8_t  fool;                            // seat, -1 for none
+    int8_t  n_elim;
+    int8_t  elim[CB_MAX_SEATS];              // seats in the order they went out; the fool is not one
+    int32_t duration_s;                      // -1 when the extras time nothing
+} cb_snap_summary;
+
 typedef struct {
     cb_uuid  id;
     char     game_id[CB_GAME_ID_MAX + 1];    // "" once the game is deleted
@@ -124,9 +135,21 @@ typedef struct {
     uint8_t *moves;  size_t moves_len;       // kernel v6 replay code
     uint8_t *extras; size_t extras_len;      // kernel replay extras
     int64_t  created_at;
+    cb_snap_summary sum;                     // on put: the game's; the pointers hold the per-player part below
+    // Filled by a query for its viewer (a summary_only row holds no moves,
+    // extras or player ids): their seat and rank (1 = first out, n = the fool).
+    int      seat, rank;
 } cb_snapshot_row;
 
 void cb_snapshot_row_free(cb_snapshot_row *s);
+
+// Seat's rank in a summary: 1 = first out, n_players = the fool (never in the
+// elimination order). The one rule the pointer writer and a store's query share.
+static inline int cb_snapshot_rank(const cb_snap_summary *m, int n_players, int seat) {
+    for (int i = 0; i < m->n_elim; i++)
+        if (m->elim[i] == seat) return i + 1;
+    return n_players;
+}
 
 typedef struct {
     cb_uuid id;
@@ -146,6 +169,8 @@ typedef struct {
     const char *id;          // NULL: any
     int         limit;       // 0: no limit
     bool        newest_first;
+    const char *ref;         // NULL: any; else the game id OR the snapshot id (the history row's id opens its replay)
+    bool        summary_only;   // the viewer's pointers alone: no BatchGetItem, no moves/extras/player ids (history)
 } cb_snapshot_query;
 
 typedef bool (*cb_member_fn)(const cb_member_row *r, void *ud);

@@ -534,14 +534,10 @@ const NcHistoryRow *nc_history_row(const uint8_t *body, int len, int i) {
     memcpy(g_row.hist.id, h.id, h.id_len);
     g_row.hist.created_ms = h.created_ms;
     g_row.hist.n_players = h.n_players;
-    for (int k = 0; k < h.n_players; k++) {
-        g_row.hist.players[k].len = h.player_len[k];
-        memcpy(g_row.hist.players[k].id, h.player[k], h.player_len[k]);
-    }
-    g_row.hist.moves_off = off_in(body, h.moves.p);
-    g_row.hist.moves_len = h.moves.len;
-    g_row.hist.extras_off = off_in(body, h.extras.p);
-    g_row.hist.extras_len = h.extras.len;
+    g_row.hist.seat = h.seat;
+    g_row.hist.rank = h.rank;
+    g_row.hist.fool = h.fool;
+    g_row.hist.duration_s = h.duration_s;
     return &g_row.hist;
 }
 

@@ -40,8 +40,8 @@ export interface NetAnswer { done: NetDone; body: Uint8Array; rows: unknown[] }
 export interface NetAction { status: number; rejectCode: number; version: number }
 /** One replay: the moves code's bytes and its extras (empty for none). */
 export interface NetReplay { moves: Uint8Array; extras: Uint8Array }
-/** A row of match history, its blobs sliced out. */
-export interface NetHistoryRow { id: string; createdMs: number; players: string[]; moves: Uint8Array; extras: Uint8Array }
+/** A row of match history: the summary the server cut when the game ended (255 / 0xffffffff for none; rank 0 for no summary). */
+export interface NetHistoryRow { id: string; createdMs: number; nPlayers: number; seat: number; rank: number; fool: number; durationS: number }
 
 const enc = new TextEncoder();
 const NONE = new Uint8Array(0);

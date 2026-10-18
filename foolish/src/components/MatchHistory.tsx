@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { history as fetchHistory } from '../common/backend';
+import { history as fetchHistory, replay as fetchReplay } from '../common/backend';
 import { useAuth } from '../contexts/AuthContext';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { BackButton } from './BackButton';
@@ -9,8 +9,9 @@ import { Text } from './Text';
 import { SovietIcon, RankIcon } from './SovietIcon';
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
 import { botDisplayName, isBotName } from '../common/botName';
-import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
-import { decodeHistoryRow, type HistoryEntry } from './matchHistoryRow';
+import { ensureBotsAsync, kernelB32Encode } from '@sdk/ts/wasm/bots.ts';
+import { joinReplayCode } from '@api/common/replay_extras.ts';
+import { historyEntry, type HistoryEntry } from './matchHistoryRow';
 
 /**
  * Match history: every finished game the signed-in user played, newest first
@@ -129,6 +130,17 @@ const HistoryRow: React.FC<{ entry: HistoryEntry; woodUrl: string | null; onOpen
 
 export const MatchHistory: React.FC = () => {
     const router = useRouter();
+    // The list holds no replay: tapping a row fetches it, then goes to its link.
+    const open = async (id: string) => {
+        try {
+            const r = await fetchReplay(id);
+            if (!r || r.moves.length === 0) throw new Error('no replay');
+            await ensureBotsAsync();
+            router.push(`/${joinReplayCode(kernelB32Encode(r.moves), r.extras.length > 0 ? kernelB32Encode(r.extras) : null)}`);
+        } catch (e) {
+            console.error('Replay unavailable:', e);
+        }
+    };
     const { user_id } = useAuth();
     const { woodUrl } = useTexture();
     const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
@@ -142,29 +154,7 @@ export const MatchHistory: React.FC = () => {
         const load = async () => {
             try {
                 const history = await fetchHistory();
-                const rows = history.rows;
-                // The extras blob is decoded by the kernel (decodeExtras ->
-                // wasm_replay_extras_decode), which is a synchronous call into
-                // a module that has to be warm first.
-                await ensureBotsAsync();
-                const decoded: HistoryEntry[] = [];
-                for (let i = 0; i < rows.length; i++) {
-                    // the summary decodes the whole code; yield to the
-                    // event loop periodically so a full page of long games
-                    // can't freeze input on slow devices.
-                    if (i > 0 && i % 10 === 0)
-                        await new Promise((r) => setTimeout(r, 0));
-                    if (cancelled) return;
-
-                    // A snapshot that fails to decode (corrupt / future format)
-                    // shouldn't take the whole screen down - skip it.
-                    try {
-                        const entry = decodeHistoryRow(rows[i], user_id);
-                        if (entry) decoded.push(entry);
-                    } catch (e) {
-                        console.error('History snapshot skipped:', e);
-                    }
-                }
+                const decoded = history.rows.map(historyEntry).filter((e): e is HistoryEntry => e !== null);
 
                 if (!cancelled) {
                     setEntries(decoded);
@@ -220,7 +210,7 @@ export const MatchHistory: React.FC = () => {
                 )}
 
                 {entries?.map((entry) => (
-                    <HistoryRow key={entry.id} entry={entry} woodUrl={woodUrl} onOpen={() => router.push(`/${entry.code}`)} />
+                    <HistoryRow key={entry.id} entry={entry} woodUrl={woodUrl} onOpen={() => void open(entry.id)} />
                 ))}
             </div>
 
