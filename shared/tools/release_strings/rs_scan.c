@@ -118,8 +118,13 @@ static void scan_utf8(report *r, const unsigned char *b, size_t n, const char *h
             while (end + 2 < n && b[end] == 0xE2 && b[end + 1] == 0x80 && b[end + 2] == 0x94) end += 3;
             /* A PAIR beside non-ASCII text is the Chinese dash (U+2014 twice), correct
              * punctuation in the zh strings (owner, 2026-09-26); only a lone
-             * em dash, or a pair in English, is English. */
-            if (end - i == 6 && ((i > 0 && b[i - 1] >= 0x80) || (end < n && b[end] >= 0x80))) {
+             * em dash, or a pair in English, is English. "Beside" looks past
+             * spaces, because the zh table spaces its dashes ("{name} 加入了 ——
+             * 点一下加入") and a space is ASCII whatever language it sits in. */
+            size_t before = i, after = end;
+            while (before > 0 && b[before - 1] == ' ') before--;
+            while (after < n && b[after] == ' ') after++;
+            if (end - i == 6 && ((before > 0 && b[before - 1] >= 0x80) || (after < n && b[after] >= 0x80))) {
                 i = end - 1;
                 continue;
             }
