@@ -256,8 +256,11 @@ final class MessageCountWindingTests: XCTestCase {
     /// failure among whatever else broke, with nothing saying which rule died.
     func testARefillOffTheFlippedTrumpDoesNotPutAnExtraCardBackInTheDeck() async throws {
         var seen = 0
+        // Eight games a table size, not four: which games draw the trump off the
+        // bottom depends on how the bots play, and four sat right at the floor
+        // (3 sightings) once dealt hands became ascending.
         for players in [2, 3] {
-            try await sweepBubbles(players: players, games: 4) { before, events, after, label in
+            try await sweepBubbles(players: players, games: 8) { before, events, after, label in
                 // The tell: cards drawn exceed the deck they were drawn from.
                 let drawn = events.filter { $0.kind == .refill || $0.kind == .deal }
                     .reduce(0) { $0 + $1.cards.count }
