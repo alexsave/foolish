@@ -36,6 +36,18 @@ static char     code_in[256];
 static UtttMotion motion;       /* the last ply's, uw_motion */
 static uint8_t  paper[PAPER_MAX * PAPER_MAX * 4];
 
+/* THE SETTLED FRAME CACHE (invisible to the page). uw_frame is a pure
+ * function of three things: the position `cur`, the drawing byte `look`, and
+ * the UtttFrame the motion gives at `now_ms` (the wash, the three draw
+ * fractions, the outline; the board is 0..1 so there is no size, scale or
+ * theme here, and there is no clock inside the drawing). `cur` and `look`
+ * only change in uw_load and uw_seek, which drop the cache; the motion only
+ * changes in those and uw_motion, which drop it too. When the same inputs
+ * ask again (every animation frame once the ink is down, and every frame of
+ * a paused page), the display list in dl, pt and poly is already right. */
+static UtttFrame cache_f;       /* the frame the display list was built for */
+static int       cache_ok;
+
 /* the page writes the code (letters and digits, NUL-terminated) here */
 EXPORT(uw_code_ptr) char *uw_code_ptr(void) { return code_in; }
 EXPORT(uw_code_cap) int   uw_code_cap(void) { return (int)sizeof code_in; }
@@ -45,6 +57,7 @@ EXPORT(uw_code_cap) int   uw_code_cap(void) { return (int)sizeof code_in; }
 EXPORT(uw_load) int uw_load(void)
 {
     code_in[sizeof code_in - 1] = 0;
+    cache_ok = 0;
     if (!uttt_replay_read(code_in, &full, &look) || full.n_plies == 0) return 0;
     uttt_init(&cur);
     motion = uttt_motion(&cur, UTTT_CH_STILL);
@@ -54,6 +67,7 @@ EXPORT(uw_load) int uw_load(void)
 /* Move the position to after `k` plies of the loaded game, at rest. */
 EXPORT(uw_seek) int uw_seek(int k)
 {
+    cache_ok = 0;
     if (k < 0) k = 0;
     if (k > full.n_plies) k = full.n_plies;
     uttt_init(&cur);
@@ -77,6 +91,7 @@ EXPORT(uw_block)  int uw_block(int b) { return b >= 0 && b < 9 ? uttt_block(&cur
  * won, the win line, then the highlighter's travel; anything else rests. */
 EXPORT(uw_motion) void uw_motion(int animate)
 {
+    cache_ok = 0;
     motion = uttt_motion(&cur, animate ? UTTT_CH_THEIRS : UTTT_CH_STILL);
 }
 
@@ -92,6 +107,9 @@ EXPORT(uw_frame) int uw_frame(int now_ms)
 {
     UtttFrame f;
     uttt_motion_at(&motion, now_ms, &f);
+    /* UtttFrame is all 4-byte fields, no padding, so the bytes are the value */
+    if (cache_ok && !__builtin_memcmp(&f, &cache_f, sizeof f)) return f.running;
+    cache_f = f; cache_ok = 1;
     uttt_dl_init(&dl, pt, MAX_PT, poly, MAX_POLY);
     if (f.wash[2] > 0 && dl.n_poly < dl.cap_poly && dl.n_pt + 4 <= dl.cap_pt) {
         UtttPoly *p = &dl.poly[dl.n_poly++];
