@@ -18290,6 +18290,20 @@ static int tp_cycle(const BlRow *row, const char *seed_hex, const uint8_t *prefs
     return n;
 }
 
+// A LOG_PICKUP record of exactly MAX_LOG_PAIRS cards in a session log: at this
+// suite's caps, a pickup the log may have cut short. Records are a 6-byte time,
+// then type, seat, defender, the pair count and the pairs.
+static int tp_log_has_capped_pickup(const uint8_t *log, int len) {
+    for (int at = 0; at + 10 <= len;) {
+        const uint8_t *r = log + at + 6;
+        const int k = 10 + 2 * r[3];
+        if (at + k > len) break;
+        if (r[0] == LOG_PICKUP && r[3] == MAX_LOG_PAIRS) return 1;
+        at += k;
+    }
+    return 0;
+}
+
 static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
     static const char *const games[][5] = {
         { "", "blackpowder" },
@@ -18309,7 +18323,7 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
 #else
     enum { GAMES = 5 };
 #endif
-    int logged = 0, retries = 0, retry_diff = 0, humans = 0, codes = 0, stuck = 0;
+    int logged = 0, retries = 0, retry_diff = 0, humans = 0, codes = 0, capped = 0, stuck = 0;
     for (int k = 0; k < GAMES; k++) {
         const int np = widths[k];
         char what[200];
@@ -18371,6 +18385,17 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
         memset(&sum, 0, sizeof(sum));
         table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
         const int cl = table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+        // At this suite's compact caps a pickup of more than MAX_LOG_PAIRS cards
+        // is logged short (c/Makefile print-human-caps: the shipped builds log 64),
+        // and the round-trip gate must then refuse the code rather than pass a
+        // game the log does not hold whole. Which game takes that many is the
+        // bots' business, so the test asks the log instead of pinning a seed.
+        if (tp_log_has_capped_pickup(bl_row.log, bl_row.log_len)) {
+            snprintf(what, sizeof(what), "game %d: a pickup logged short at MAX_LOG_PAIRS is refused by the round-trip gate", k);
+            CHECK(cl == TABLE_E_REPLAY_VERIFY, what);
+            capped++;
+            continue;
+        }
         snprintf(what, sizeof(what), "game %d: the replay code verifies, and its summary is the table's seats and fool", k);
         CHECK(cl > 0 && replay_summary_v6(tb_code, cl, &sum) == REPLAY_EOK && sum.num_players == np && sum.fool == fool, what);
         table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
@@ -18397,7 +18422,8 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
     }
     fprintf(stderr, "  [bot cycles] %d codes, %d human moves, %d retries, %d logged loads\n", codes, humans, retries, logged);
     CHECK(stuck == 0, "every load, drive, move and commit of the games was accepted");
-    CHECK(logged > 0 && retries > 0 && humans > 0 && codes == GAMES, "every path was exercised: belief loads, retries, human moves, codes");
+    CHECK(logged > 0 && retries > 0 && humans > 0 && codes + capped == GAMES && codes >= GAMES - 1,
+          "every path was exercised: belief loads, retries, human moves, codes");
     CHECK(retry_diff == 0, "a CAS retry offered the lost attempt's moves replays them byte for byte, under another seed");
 }
 
@@ -18423,9 +18449,9 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
 // test_table_bot_drive_ignores_other_tables carries the whole-game volume for
 // the brains that keep no state, and test_table_bot_drive_ignores_instance_history
 // every roster brain against perturbed streams.
-static uint32_t mr_rng;
+static uint64_t mr_rng;
 static int mr_ri(int n) {
-    return (int)((rng_lcg32(&mr_rng) >> 8) % (uint32_t)n);
+    return (int)(rng_u32(&mr_rng) % (uint32_t)n);
 }
 
 // A random PLAYING board every seat of which is a `brain` bot, sealed into
@@ -18521,7 +18547,7 @@ static void test_table_a_load_leaves_nothing_of_the_last_table(void) {
     Table fresh;
     for (int b = 0; b < 2; b++) {
         int checked = 0, differ = 0, refused = 0;
-        mr_rng = 12345u + 6789u * (uint32_t)b;
+        mr_rng = rng_seed64(12345u + 6789u * (uint64_t)b);
         for (int i = 0; i < boards[b]; i++) {
             while (!mr_board(brains[b])) { }
             const int tl = tb_state_len;
