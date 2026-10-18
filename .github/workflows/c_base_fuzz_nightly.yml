@@ -1,6 +1,7 @@
 # c_base's fuzz targets (c_base/fuzz), every night for 10 minutes each, one
-# runner per target. c_base.yml's fuzz job runs each for 30 s on every pull
-# request; this is the long run. A crash fails the target's job and its input
+# runner per target. c_base.yml's fuzz job runs each for 30 s on a pull
+# request that reaches it (.github/scripts/fuzz_select.sh) and on every push
+# to main; this is the long run. A crash fails the target's job and its input
 # is uploaded: minimise it (`build/fuzz/<target> -minimize_crash=1 <input>`),
 # add it to c_base/fuzz/corpus/<target> and as a unit test, and fix it.
 name: c_base fuzz (nightly)
