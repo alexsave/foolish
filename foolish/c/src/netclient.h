@@ -265,7 +265,7 @@ const void *nc_row(int kind, const uint8_t *body, int len, int i);
 // sends what nc_next_request names, and hands every answer to nc_on_response.
 //
 // THE LOOP, whole:
-//   ticket = nc_do(&intent, now)                 // 0: refused at once (nc_error)
+//   ticket = nc_do(&intent, now)                 // 0: refused at once (nc_error; ASK_WHY_BUSY: NC_PUMP_MAX wait already)
 //   while ((r = nc_next_request(now))) send r, then later:
 //       done = nc_on_response(r->id, status, body, now)   // status 0: it never arrived
 //       if (done) resolve done->ticket with (done, body)
@@ -296,7 +296,7 @@ const void *nc_row(int kind, const uint8_t *body, int len, int i);
 #define NC_DO_HISTORY        15  // -> a list, with the user's rating
 #define NC_DO_REPLAY         16  // gid -> moves (a_off, a_len) and extras (b_off, b_len)
 
-#define NC_PUMP_MAX   8          // tickets waiting at once
+#define NC_PUMP_MAX   8          // the host's tickets waiting at once (this file's own refetches have a pool of their own)
 #define NC_PUMP_TRIES 4
 
 typedef struct {
@@ -374,7 +374,8 @@ void nc_gate_reset(const char *gid, int gid_len);
 //     applies unless something newer was applied, or an answer or cast at its
 //     very version was (a ticket's NcDone says stale, with no envelope);
 //   - a move refused over a newer version refetches the game when no push has
-//     caught up NC_RECONCILE_MS later;
+//     caught up NC_RECONCILE_MS later (let go the moment one does, or the host
+//     lets go of the game's stream);
 //   - a game subscription that goes live (SUBACK) takes the game whole once,
 //     unless something newer is applied before the read would go;
 //   - a game's subscription hears both the seat's casts and the spectators',
