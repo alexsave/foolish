@@ -88,6 +88,25 @@ Fixes to make:
 - docs mentioning -ffast-math as production flags (foolish/docs/NATIVE_SERVER.md, RUST_VS_C_KERNEL.md, c/MAKE_UNMAKE.md and other tool scripts under foolish/c/tools) are stale.
 - uttt/c/Makefile line 10 table is a historical measurement, fine, but check it.
 
+## Item: uttt settled-frame cache (uw_frame)
+
+- Only the web page calls uw_frame (uttt/c/wasm/uttt_web.c, via uttt/web/lib/kernel.ts); the iOS app composes its own frames. No host code changed.
+- uw_frame is a pure function of (cur position, look byte, UtttFrame from uttt_motion_at). The board is 0..1 normalised, so there is no viewport size, device scale, theme, seed or wall clock in the drawing; the pen seed is the look byte.
+- Cache key: the whole UtttFrame (memcmp, all 4-byte fields, no padding: wash rect + rgba, mark_t, fall_t, line_t, outline, outline_t, outline_a, running...) plus a valid flag that uw_load, uw_seek and uw_motion clear (those are the only places cur, look or the motion change).
+  A frame with any animation value in flight differs from the previous one, so it rebuilds; a settled or paused page returns the kept display list (dl, pt, poly are untouched statics).
+- Overlay split NOT done: uttt_draw_board takes mark_t/fall_t/meta_t as one call and builds board, marks and win line into one list, so a clean split needs the draw kernel to emit the settled part and the moving part separately.
+
+Owed tests:
+- A cached frame is byte-identical to a rebuilt one: for a few replay codes and plies, call uw_frame(t) twice and compare uw_points/uw_poly_* against a build with the cache disabled (cache_ok = 0 before each call).
+- Every key input invalidates: after uw_frame, each of uw_seek, uw_motion, uw_load (other code) must change the list; a now_ms mid-ink must differ from the settled frame; mutation: drop the cache_ok = 0 in uw_seek and the seek test must fail, and make the memcmp ignore the last field and a late-outline frame must fail.
+- Measured per-frame cost before and after (not run: batch limit): time uw_frame over 1000 settled calls at the end of a 40 ply game in node, cache on vs off; expect the repeat call to be a ~100 byte memcmp.
+
+Tests to fix:
+- none known; the display list is unchanged by construction.
+
+Fixes to make:
+- Finer cache: split uttt_draw_board into settled board and animated overlay (last mark, big mark, win line, outline) so the in-flight frames only rebuild the moving part.
+
 ## Fixes to make (collected; done at the end of the list, before the test pass)
 
 - History names restore (item 1 regression, UI): the web history list shows `#1 #2 ...` instead of player names.
