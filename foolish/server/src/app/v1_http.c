@@ -19,8 +19,8 @@
 
 #include "ask.h"
 #include "netwire.h"
-#include "../../../shared/c/sha256.h"
-#include "../../../shared/c/hex/hex.h"
+#include "../../../../shared/c/sha256.h"
+#include "../../../../shared/c/hex/hex.h"
 
 #include <stdio.h>
 #include <stdlib.h>
