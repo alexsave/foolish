@@ -41,14 +41,14 @@
 #include "cn.h"
 #include "cn_lobby.h"
 #include "cn_code.h"
-#include "../../../shared/c/msg_seat_tag/msg_seat_tag.h"
+#include "../../../shared/c/msg_whole/msg_whole.h"
 
 #define CN_MSG_MAGIC      0xC5
 #define CN_MSG_FORMAT     1
 
-#define CN_PHASE_WAITING  0
-#define CN_PHASE_LIVE     2
-#define CN_PHASE_FINISHED 3
+#define CN_PHASE_WAITING  MSG_WHOLE_WAITING
+#define CN_PHASE_LIVE     MSG_WHOLE_LIVE
+#define CN_PHASE_FINISHED MSG_WHOLE_FINISHED
 
 #define CN_FLAG_DM        0x01
 #define CN_FLAG_LEFT      0x02
@@ -57,12 +57,12 @@
 #define CN_TAG_LEN        MSG_SEAT_TAG_LEN
 #define CN_NAME_MAX_BYTES MSG_SEAT_NAME_MAX_BYTES
 #define CN_NAME_MAX_CHARS MSG_SEAT_NAME_MAX_CHARS
-#define CN_CHECK_LEN      2
-#define CN_HEAD_LEN       42
-#define CN_ROW_MAX        (CN_TAG_LEN + 1 + CN_NAME_MAX_BYTES)
+#define CN_CHECK_LEN      MSG_WHOLE_CHECK_LEN
+#define CN_HEAD_LEN       MSG_WHOLE_HEAD_LEN(1)   /* 42 */
+#define CN_ROW_MAX        MSG_WHOLE_ROW_MAX
 #define CN_MSG_MAX_BYTES  (CN_HEAD_LEN + CN_MAX_SEATS * CN_ROW_MAX + CN_CHECK_LEN + CN_CODE_MAX)
 /* "?m=" + base32 + NUL */
-#define CN_MSG_MAX_TEXT   (3 + (CN_MSG_MAX_BYTES * 8 + 4) / 5 + 1)
+#define CN_MSG_MAX_TEXT   MSG_WHOLE_TEXT_LEN(CN_MSG_MAX_BYTES)
 
 /* EVERY GAME FITS ONE MESSAGE: the longest game there can be (cn.h's
  * CN_MAX_MOVES, every digit at 8 bits) with six 48-byte names is under the
@@ -70,34 +70,33 @@
  * and the build stops. tests/cn_msg_test.c builds that game and measures it. */
 _Static_assert(CN_MSG_MAX_TEXT - 1 < 5000, "the capped worst case fits MSMessage.url");
 
-#define CN_EOK      0
-#define CN_ESHORT  -1    /* the buffer ends inside the header or the roster  */
-#define CN_EMAGIC  -2    /* not one of ours                                  */
-#define CN_EFORMAT -3    /* a format this build does not know                */
-#define CN_EFLAGS  -4    /* a reserved flag bit, or a flag the phase forbids */
-#define CN_ECHECK  -5    /* the check does not match: cut or edited          */
-#define CN_EGAME   -6    /* the body does not replay, or disagrees with the header */
-#define CN_EROSTER -7    /* empty or long name, duplicate tag or name, seats out of range */
-#define CN_ECAP    -8    /* output buffer too small                          */
-#define CN_ETEXT   -9    /* no "m=" in the text, or it is not base32         */
-#define CN_EREFUSED -10  /* a lobby or seat verdict said no                  */
+#define CN_EOK      MSG_WHOLE_EOK
+#define CN_ESHORT   MSG_WHOLE_ESHORT
+#define CN_EMAGIC   MSG_WHOLE_EMAGIC
+#define CN_EFORMAT  MSG_WHOLE_EFORMAT
+#define CN_EFLAGS   MSG_WHOLE_EFLAGS
+#define CN_ECHECK   MSG_WHOLE_ECHECK
+#define CN_EGAME    MSG_WHOLE_EGAME
+#define CN_EROSTER  MSG_WHOLE_EROSTER
+#define CN_ECAP     MSG_WHOLE_ECAP
+#define CN_ETEXT    MSG_WHOLE_ETEXT
+#define CN_EREFUSED MSG_WHOLE_EREFUSED
 
 /* A roster row, shared/c/msg_seat_tag's: the tag is
  * SHA-256("chuiniu.seat.1|" || seed || id)[0..9), then a 1..48-byte UTF-8 name. */
 typedef MsgSeat CnSeat;
+_Static_assert(CN_MAX_SEATS <= MSG_WHOLE_MAX_SEATS, "the shared roster seats the whole table");
+_Static_assert(CN_HEAD_LEN == 42, "the head is format 1's");
 
 typedef struct {
-    uint8_t  phase;                   /* CN_PHASE_*                                  */
-    uint8_t  dm;
-    uint8_t  left;                    /* WAITING: the newest lobby bubble was a leave */
-    uint8_t  n_seats;
-    uint16_t lobby_rev;
-    uint8_t  starter;                 /* CN_SEAT_NONE while WAITING                  */
-    uint8_t  pad0;
-    uint8_t  seed[32];
-    CnSeat   seat[CN_MAX_SEATS];
+    MsgWhole w;                       /* the roster half: phase, dm, left, lobby_rev,
+                                         n_seats, starter, seed, seat[] (msg_whole.h) */
     CnGame   game;                    /* the table once started                      */
 } CnMsg;
+
+/* This product's envelope: its salts, magic, flags, counters and caps
+ * (shared/c/msg_whole). */
+extern const MsgWholeSpec CN_MSG_SPEC;
 
 /* ------------------------------------------------------------- identity */
 

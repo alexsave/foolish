@@ -25,30 +25,19 @@ _Static_assert(CN_API_W_RULE == 16 && CN_RULES_N == 6, "the rules the header pro
 #define SG_LAYOUT_HASH 0u            /* not stamped: matches no generated module */
 #endif
 
-#define MAX_ID 64
-
 /* THE RESIDENT, and the scratch the calls fill. Nothing here is allocated. */
 static struct {
     CnMsg    m;
     int      have;                   /* a message is resident                  */
-    uint8_t  id[MAX_ID];
-    int      id_n;
-    uint8_t  nick[CN_NAME_MAX_BYTES];
-    int      nick_n;
+    MsgWholeBridge b;                /* who I am, the sender fact, the names (msg_whole.h) */
     uint8_t  rec[CN_REC_BYTES];
     int      rec_n;
     int      rec_dirty;
-    /* THE SENDER FACT, about one message only */
-    char     sent_text[CN_MSG_MAX_TEXT];
-    int      sent_dm, sent_mine, sent_set;
     /* my seat in the resident message, and the witness */
     int      me, by;
     /* my staged move: never part of the resident until commit */
     int      staged;
     CnMove   move;
-    /* the roster's names, NUL-terminated, for the words */
-    char     name[CN_MAX_SEATS][CN_NAME_MAX_BYTES + 1];
-    const char *names[CN_MAX_SEATS];
     /* what a read hands back */
     CnApiTable  table;
     CnView      view;
@@ -65,20 +54,9 @@ uint32_t cn_api_layout_hash(void) { return (uint32_t)SG_LAYOUT_HASH; }
 
 /* ---- who I am -------------------------------------------------------------- */
 
-void cn_api_me(const uint8_t *id, int n)
-{
-    if (!id || n < 0) n = 0;
-    if (n > MAX_ID) n = MAX_ID;
-    if (n) memcpy(S.id, id, (size_t)n);
-    S.id_n = n;
-}
+void cn_api_me(const uint8_t *id, int n) { msg_whole_bridge_id(&S.b, id, n); }
 
-void cn_api_nickname(const uint8_t *name, int n)
-{
-    if (!name || msg_seat_name_verdict(name, n) != CN_NAME_OK) { S.nick_n = 0; return; }
-    memcpy(S.nick, name, (size_t)n);
-    S.nick_n = n;
-}
+void cn_api_nickname(const uint8_t *name, int n) { msg_whole_bridge_nick(&S.b, name, n); }
 
 int cn_api_name_verdict(const uint8_t *name, int n) { return msg_seat_name_verdict(name, n); }
 
@@ -99,21 +77,11 @@ int cn_api_seats_save(uint8_t *out, int cap)
 
 /* ---- the resident ----------------------------------------------------------- */
 
-static int started(void) { return S.have && S.m.phase != CN_PHASE_WAITING; }
-
-static void my_tag(const CnMsg *m, uint8_t tag[CN_TAG_LEN])
-{
-    cn_tag(m->seed, S.id, S.id_n, tag);
-}
+static int started(void) { return S.have && S.m.w.phase != CN_PHASE_WAITING; }
 
 static void names_of(void)
 {
-    for (int s = 0; s < CN_MAX_SEATS; s++) {
-        int n = s < S.m.n_seats ? S.m.seat[s].name_len : 0;
-        memcpy(S.name[s], S.m.seat[s].name, (size_t)n);
-        S.name[s][n] = 0;
-        S.names[s] = S.name[s];
-    }
+    msg_whole_bridge_names(&S.b, &S.m.w);
 }
 
 static void record(int seat)
@@ -126,11 +94,8 @@ static void record(int seat)
  * (cn_msg.h), and a seat found any way but the record is recorded. */
 static void seat_me(int is_dm, int i_sent)
 {
-    uint8_t tag[CN_TAG_LEN];
-    my_tag(&S.m, tag);
-    int rec = cn_rec_find(S.rec, S.rec_n, &S.m);
-    S.me = cn_msg_resolve(&S.m, rec, cn_msg_seat_of_tag(&S.m, tag), is_dm, i_sent,
-                          S.nick, S.nick_n, &S.by);
+    S.me = msg_whole_bridge_seat(&CN_MSG_SPEC, &S.b, &S.m.w, cn_msg_sender(&S.m), S.rec, S.rec_n,
+                                 is_dm, i_sent, &S.by);
     if (S.me >= 0 && S.by != CN_BY_RECORD) record(S.me);
     names_of();
 }
@@ -150,11 +115,11 @@ int cn_api_new(const uint8_t seed[32], int dm)
 {
     uint8_t tag[CN_TAG_LEN];
     if (!seed) return CN_EGAME;
-    cn_tag(seed, S.id, S.id_n, tag);
-    int e = cn_msg_new(&S.other, seed, dm, tag, S.nick, S.nick_n);
+    msg_whole_bridge_tag(&CN_MSG_SPEC, &S.b, seed, tag);
+    int e = cn_msg_new(&S.other, seed, dm, tag, S.b.nick, S.b.nick_n);
     if (e) return e;
     S.m = S.other;
-    S.sent_set = 0;
+    S.b.sent_set = 0;
     S.beats_ok = 0;
     adopt_mine(0);
     return CN_EOK;
@@ -172,21 +137,15 @@ int cn_api_read(const char *text)
     S.m = S.other;
     S.have = 1;
     S.staged = 0;
-    int mine = S.sent_set && text && !strcmp(text, S.sent_text);
-    seat_me(mine ? S.sent_dm : 0, mine ? S.sent_mine : CN_SENT_UNKNOWN);
+    int is_dm, i_sent;
+    msg_whole_bridge_sent_of(&S.b, text, &is_dm, &i_sent);
+    seat_me(is_dm, i_sent);
     return CN_EOK;
 }
 
 void cn_api_sender(const char *text, int is_dm, int i_sent)
 {
-    S.sent_set = 0;
-    if (!text || (i_sent != 0 && i_sent != 1)) return;
-    size_t n = strlen(text);
-    if (n >= sizeof S.sent_text) return;
-    memcpy(S.sent_text, text, n + 1);
-    S.sent_dm = is_dm != 0;
-    S.sent_mine = i_sent;
-    S.sent_set = 1;
+    msg_whole_bridge_sent(&CN_MSG_SPEC, &S.b, text, is_dm, i_sent);
 }
 
 /* The resident with my staged move applied, in S.other. */
@@ -217,9 +176,9 @@ int cn_api_join(void)
 {
     if (!S.have) return CN_EGAME;
     uint8_t tag[CN_TAG_LEN];
-    my_tag(&S.m, tag);
+    msg_whole_bridge_tag(&CN_MSG_SPEC, &S.b, S.m.w.seed, tag);
     S.other = S.m;
-    int s = cn_msg_join(&S.other, tag, S.nick, S.nick_n);
+    int s = cn_msg_join(&S.other, tag, S.b.nick, S.b.nick_n);
     if (s < 0) return s;
     S.m = S.other;
     adopt_mine(s);
@@ -259,9 +218,9 @@ int cn_api_join_start(void)
 {
     if (!S.have) return CN_EGAME;
     uint8_t tag[CN_TAG_LEN];
-    my_tag(&S.m, tag);
+    msg_whole_bridge_tag(&CN_MSG_SPEC, &S.b, S.m.w.seed, tag);
     S.other = S.m;
-    int s = cn_msg_join_start(&S.other, tag, S.nick, S.nick_n);
+    int s = cn_msg_join_start(&S.other, tag, S.b.nick, S.b.nick_n);
     if (s < 0) return s;
     S.m = S.other;
     adopt_mine(s);
@@ -315,10 +274,10 @@ const void *cn_api_table(void)
     t->sender = CN_SEAT_NONE;
     if (!S.have) return t;
     t->readable = 1;
-    t->phase = S.m.phase;
+    t->phase = S.m.w.phase;
     t->game_phase = started() ? S.m.game.phase : 0;
-    t->dm = S.m.dm;
-    t->n_seats = S.m.n_seats;
+    t->dm = S.m.w.dm;
+    t->n_seats = S.m.w.n_seats;
     t->me = S.me >= 0 ? (uint8_t)S.me : CN_SEAT_NONE;
     t->by = (uint8_t)S.by;
     t->offered = (uint8_t)cn_msg_offered(&S.m, S.me);
@@ -326,7 +285,7 @@ const void *cn_api_table(void)
     cn_msg_lobby(&S.m, &l);
     t->can_exit = (uint8_t)msg_lobby_roster_can_exit(&l, S.me);
     t->can_join_start = (uint8_t)(S.me < 0 && msg_lobby_roster_can_join_and_start(&l));
-    t->starter = S.m.starter;
+    t->starter = S.m.w.starter;
     int snd = cn_msg_sender(&S.m);
     t->sender = snd >= 0 ? (uint8_t)snd : CN_SEAT_NONE;
     if (S.staged) {
@@ -334,11 +293,11 @@ const void *cn_api_table(void)
         t->staged_q = S.move.q;
         t->staged_f = S.move.f;
     }
-    t->lobby_rev = S.m.lobby_rev;
+    t->lobby_rev = S.m.w.lobby_rev;
     t->moves = started() ? S.m.game.hist_n : 0;
-    for (int s = 0; s < S.m.n_seats; s++) {
-        t->seat[s].name_len = S.m.seat[s].name_len;
-        memcpy(t->seat[s].name, S.m.seat[s].name, S.m.seat[s].name_len);
+    for (int s = 0; s < S.m.w.n_seats; s++) {
+        t->seat[s].name_len = S.m.w.seat[s].name_len;
+        memcpy(t->seat[s].name, S.m.w.seat[s].name, S.m.w.seat[s].name_len);
     }
     return t;
 }
@@ -433,7 +392,7 @@ int cn_api_adopt(const char *text)
     S.beats_ok = 0;
     if (!started()) return CN_EOK;                          /* a lobby: no motion */
     const int tip = S.m.game.hist_n;
-    const int warm = had && cn_msg_same_game(&S.prior, &S.m) && S.prior.phase != CN_PHASE_WAITING;
+    const int warm = had && cn_msg_same_game(&S.prior, &S.m) && S.prior.w.phase != CN_PHASE_WAITING;
     if (warm) {
         int common = cn_common_moves(&S.prior, &S.m);
         if (common < tip) cn_api_beats(common, tip);
@@ -457,25 +416,25 @@ int cn_api_string(int key, char *out, int cap)
 
 static int lobby_caption(int which, int seat, char *out, int cap)
 {
-    if (!S.have || seat < 0 || seat >= S.m.n_seats) return -1;
-    return cn_say_lobby_caption(which, S.names[seat], out, cap);
+    if (!S.have || seat < 0 || seat >= S.m.w.n_seats) return -1;
+    return cn_say_lobby_caption(which, S.b.names[seat], out, cap);
 }
 
 static int staged_caption(char *out, int cap)
 {
     if (!started()) {
         if (!S.have) return -1;
-        if (S.m.left) { out[0] = 0; return 0; }        /* captioned by W_LEFT before the leave */
+        if (S.m.w.left) { out[0] = 0; return 0; }        /* captioned by W_LEFT before the leave */
         int snd = cn_msg_sender(&S.m);
-        return lobby_caption(S.m.n_seats == 1 ? CN_SAY_INVITE : CN_SAY_JOINED, snd, out, cap);
+        return lobby_caption(S.m.w.n_seats == 1 ? CN_SAY_INVITE : CN_SAY_JOINED, snd, out, cap);
     }
     if (S.staged) {
         CnEvent ev[CN_EVENTS_PER_MOVE + 1];
         int n = cn_plan_move(&S.m.game, S.move, ev, (int)(sizeof ev / sizeof ev[0]));
         if (n < 0) return -1;
-        return cn_say_caption_of(ev, n, S.names, out, cap);
+        return cn_say_caption_of(ev, n, S.b.names, out, cap);
     }
-    return cn_say_caption(&S.m.game, S.m.game.hist_n, S.names, out, cap);
+    return cn_say_caption(&S.m.game, S.m.game.hist_n, S.b.names, out, cap);
 }
 
 int cn_api_words(int what, int arg, char *out, int cap)
@@ -483,25 +442,25 @@ int cn_api_words(int what, int arg, char *out, int cap)
     if (!out || cap < 1) return -1;
     const CnGame *g = started() ? &S.m.game : 0;
     switch (what) {
-    case CN_API_W_CAPTION:        return g ? cn_say_caption(g, arg, S.names, out, cap) : -1;
+    case CN_API_W_CAPTION:        return g ? cn_say_caption(g, arg, S.b.names, out, cap) : -1;
     case CN_API_W_STAGED_CAPTION: return staged_caption(out, cap);
     case CN_API_W_HEADLINE:
         if (!S.have) return -1;
         if (!g) return cn_api_string(cn_msg_offered(&S.m, S.me) == CN_LOBBY_FULL ? CN_K_LOBBY_FULL
                                                                                 : CN_K_LOBBY_WAITING, out, cap);
         if (S.staged) return cn_say_staged(g, S.move, out, cap);
-        return cn_say_headline(g, S.me, S.names, out, cap);
-    case CN_API_W_SUBLINE:        return g ? cn_say_subline(g, S.names, out, cap) : -1;
-    case CN_API_W_OUTCOME:        return g ? cn_say_outcome(g, S.names, out, cap) : -1;
-    case CN_API_W_OUTCOME_LOSS:   return g ? cn_say_outcome_part(g, S.names, CN_SAY_PART_LOSS, out, cap) : -1;
-    case CN_API_W_OUTCOME_WIN:    return g ? cn_say_outcome_part(g, S.names, CN_SAY_PART_WIN, out, cap) : -1;
-    case CN_API_W_SEAT:           return S.have && arg >= 0 && arg < S.m.n_seats ? cn_say_seat(S.names, arg, out, cap) : -1;
+        return cn_say_headline(g, S.me, S.b.names, out, cap);
+    case CN_API_W_SUBLINE:        return g ? cn_say_subline(g, S.b.names, out, cap) : -1;
+    case CN_API_W_OUTCOME:        return g ? cn_say_outcome(g, S.b.names, out, cap) : -1;
+    case CN_API_W_OUTCOME_LOSS:   return g ? cn_say_outcome_part(g, S.b.names, CN_SAY_PART_LOSS, out, cap) : -1;
+    case CN_API_W_OUTCOME_WIN:    return g ? cn_say_outcome_part(g, S.b.names, CN_SAY_PART_WIN, out, cap) : -1;
+    case CN_API_W_SEAT:           return S.have && arg >= 0 && arg < S.m.w.n_seats ? cn_say_seat(S.b.names, arg, out, cap) : -1;
     case CN_API_W_BID:            return cn_say_bid(arg / 8, arg % 8, 0, out, cap);
     case CN_API_W_DICE_N:         return cn_say_dice_n(arg, out, cap);
     case CN_API_W_TABLE:          return g ? cn_say_table(g, out, cap) : -1;
     case CN_API_W_REVEAL_COUNT:   return g ? cn_say_reveal_count(g, out, cap) : -1;
     case CN_API_W_LOBBY_ROW:
-        return S.have && arg >= 0 && arg < S.m.n_seats ? cn_say_lobby_row(S.names, arg, arg == S.me, out, cap) : -1;
+        return S.have && arg >= 0 && arg < S.m.w.n_seats ? cn_say_lobby_row(S.b.names, arg, arg == S.me, out, cap) : -1;
     case CN_API_W_INVITE:         return lobby_caption(CN_SAY_INVITE, arg, out, cap);
     case CN_API_W_JOINED:         return lobby_caption(CN_SAY_JOINED, arg, out, cap);
     case CN_API_W_LEFT:           return lobby_caption(CN_SAY_LEFT, arg, out, cap);

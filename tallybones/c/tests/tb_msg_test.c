@@ -44,7 +44,7 @@ static void w_lobby(void)
     TbMsg m, back;
     tag_of(0, seed, tag);
     CHECK(tb_msg_new(&m, seed, 0, tag, (const uint8_t *)"Alex", 4) == TB_EOK, "a new lobby");
-    CHECK(round_trip(&m, &back) == TB_EOK && back.phase == TB_PHASE_WAITING && back.n_seats == 1, "it reads back");
+    CHECK(round_trip(&m, &back) == TB_EOK && back.w.phase == TB_PHASE_WAITING && back.w.n_seats == 1, "it reads back");
     CHECK(tb_msg_offered(&m, 0) == TB_LOBBY_WAITING && tb_msg_offered(&m, -1) == TB_LOBBY_JOIN, "the verdicts");
     tag_of(1, seed, tag);
     CHECK(tb_msg_join(&m, tag, (const uint8_t *)"Alex", 4) == TB_EROSTER, "a name taken");
@@ -52,18 +52,18 @@ static void w_lobby(void)
     CHECK(tb_msg_start(&m, 1) == TB_EREFUSED, "the newest joiner stands aside while there is room");
     tag_of(2, seed, tag);
     CHECK(tb_msg_join(&m, tag, (const uint8_t *)"Cy", 2) == 2, "Cy joins");
-    CHECK(tb_msg_leave(&m, 1) == TB_EOK && m.n_seats == 2 && m.seat[1].name_len == 2 && !memcmp(m.seat[1].name, "Cy", 2),
+    CHECK(tb_msg_leave(&m, 1) == TB_EOK && m.w.n_seats == 2 && m.w.seat[1].name_len == 2 && !memcmp(m.w.seat[1].name, "Cy", 2),
           "Bo leaves; Cy moves down");
-    CHECK(round_trip(&m, &back) == TB_EOK && back.left && back.lobby_rev == 3, "a leave reads back (rev %d)", back.lobby_rev);
-    CHECK(tb_msg_start(&m, 0) == TB_EOK && m.phase == TB_PHASE_LIVE && m.game.n == 2, "Alex starts");
-    CHECK(round_trip(&m, &back) == TB_EOK && back.phase == TB_PHASE_LIVE && back.game.hist_n == 0
+    CHECK(round_trip(&m, &back) == TB_EOK && back.w.left && back.w.lobby_rev == 3, "a leave reads back (rev %d)", back.w.lobby_rev);
+    CHECK(tb_msg_start(&m, 0) == TB_EOK && m.w.phase == TB_PHASE_LIVE && m.game.n == 2, "Alex starts");
+    CHECK(round_trip(&m, &back) == TB_EOK && back.w.phase == TB_PHASE_LIVE && back.game.hist_n == 0
           && !memcmp(back.game.dice, m.game.dice, 5), "the start bubble: roll 1 is the same on both sides");
     /* join and start: only when the join fills the table */
     TbMsg dm;
     tag_of(0, seed, tag);
     tb_msg_new(&dm, seed, 1, tag, (const uint8_t *)"Alex", 4);
     tag_of(1, seed, tag);
-    CHECK(tb_msg_join_start(&dm, tag, (const uint8_t *)"Bo", 2) == 1 && dm.phase == TB_PHASE_LIVE && dm.starter == 1,
+    CHECK(tb_msg_join_start(&dm, tag, (const uint8_t *)"Bo", 2) == 1 && dm.w.phase == TB_PHASE_LIVE && dm.w.starter == 1,
           "a DM: Bo joins and starts");
 }
 
@@ -91,11 +91,11 @@ static void w_race(void)
     /* Alex: KEEP, KEEP, SCORE - one chain, growing */
     a = base;
     TbMove h[3] = { mv(TB_M_KEEP, 0, 1), mv(TB_M_KEEP, 0, 3), mv(TB_M_SCORE, 0, TB_C_ANY) };
-    CHECK(tb_replay(&a.game, a.seed, 2, 0, h, 1), "keep");
+    CHECK(tb_replay(&a.game, a.w.seed, 2, 0, h, 1), "keep");
     b = base;
-    CHECK(tb_replay(&b.game, b.seed, 2, 0, h, 2), "keep keep");
+    CHECK(tb_replay(&b.game, b.w.seed, 2, 0, h, 2), "keep keep");
     c = base;
-    CHECK(tb_replay(&c.game, c.seed, 2, 0, h, 3), "keep keep score");
+    CHECK(tb_replay(&c.game, c.w.seed, 2, 0, h, 3), "keep keep score");
     CHECK(tb_msg_prefer(&a, &b) > 0 && tb_msg_prefer(&b, &a) < 0, "the second keep beats the first");
     CHECK(tb_msg_prefer(&b, &c) > 0 && tb_msg_prefer(&c, &b) < 0, "the score beats the keeps");
     CHECK(tb_msg_prefer(&base, &a) > 0, "a keep beats the start");
@@ -104,18 +104,18 @@ static void w_race(void)
     CHECK(tb_msg_sender(&a) == 0 && tb_msg_sender(&b) == 0 && tb_msg_sender(&c) == 0, "the same seat three times");
     TbMsg d = base;
     TbMove hd[4] = { h[0], h[1], h[2], mv(TB_M_KEEP, 1, 0) };
-    CHECK(tb_replay(&d.game, d.seed, 2, 0, hd, 4) && tb_msg_sender(&d) == 1, "then Bo's keep: Bo sent it");
+    CHECK(tb_replay(&d.game, d.w.seed, 2, 0, hd, 4) && tb_msg_sender(&d) == 1, "then Bo's keep: Bo sent it");
     /* two different bubbles on one parent: decided by the digest, the same way both ways round */
     TbMsg x = base, y = base;
     TbMove hx[1] = { mv(TB_M_KEEP, 0, 1) }, hy[1] = { mv(TB_M_LEAVE, 1, 0) };
-    tb_replay(&x.game, x.seed, 2, 0, hx, 1);
-    tb_replay(&y.game, y.seed, 2, 0, hy, 1);
+    tb_replay(&x.game, x.w.seed, 2, 0, hx, 1);
+    tb_replay(&y.game, y.w.seed, 2, 0, hy, 1);
     int p = tb_msg_prefer(&x, &y), q = tb_msg_prefer(&y, &x);
     CHECK(p != 0 && p == -q, "a race on one parent: %d %d", p, q);
     CHECK(tb_common_bubbles(&x, &y) == 0, "they share nothing past the start");
     /* the resolver in consecutive bubbles from one seat */
     uint8_t tag[TB_TAG_LEN];
-    tag_of(1, b.seed, tag);
+    tag_of(1, b.w.seed, tag);
     int by;
     CHECK(tb_msg_resolve(&b, -1, -1, 1, 1, 0, 0, &by) == 0 && by == TB_BY_SENDER, "I sent the keep: Alex");
     CHECK(tb_msg_resolve(&b, -1, -1, 1, 0, 0, 0, &by) == 1 && by == TB_BY_SENDER, "I did not, in a DM: Bo");
@@ -152,7 +152,7 @@ static void w_fit(void)
         static TbMove h[TB_HIST_CAP];
         memcpy(h, m.game.hist, sizeof(TbMove) * m.game.hist_n);
         h[m.game.hist_n] = pick;
-        if (!tb_replay(&m.game, m.seed, 8, 0, h, m.game.hist_n + 1)) break;
+        if (!tb_replay(&m.game, m.w.seed, 8, 0, h, m.game.hist_n + 1)) break;
     }
     static char text[TB_MSG_MAX_TEXT];
     int n = tb_msg_text_encode(&m, text, sizeof text);

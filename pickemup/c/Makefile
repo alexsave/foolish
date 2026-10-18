@@ -22,7 +22,8 @@ SRC     := src/pk.c src/pk_deck.c src/pk_plan.c src/pk_view.c src/pk_lobby.c src
            src/pk_code.c src/pk_msg.c src/pk_beats.c src/pk_arrange.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
            $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c \
-           $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c
+           $(SHARED)/msg_seat_tag/msg_seat_tag.c $(SHARED)/msg_lobby_roster/msg_lobby_roster.c \
+           $(SHARED)/msg_whole/msg_whole.c
 # THE BOTS ARE NOT IN THE APP (DECISION D63): only the bot test and the arena
 # link them, so SRC, the wasm objects and the xcframework never carry them.
 BOT_SRC := src/pk_belief.c src/pk_bot.c
@@ -58,7 +59,7 @@ SAN_FLAGS   = $(ASAN_FLAGS) $(if $(filter ios/%,$*),-Iios/include)
 # pk_msg.c call, the arena's statistics, and the auto-collapse push
 # pk_api_collapse_push forwards to. What each is built from is
 # shared/tools/shared_tests.mk's.
-SHARED_TESTS := check_test rng_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test \
+SHARED_TESTS := check_test rng_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test msg_whole_test \
                 stats_test collapse_test
 
 include ../../shared/tools/c_rules.mk

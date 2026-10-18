@@ -46,14 +46,14 @@
 #include "tb_lobby.h"
 #include "tb_plan.h"
 #include "tb_code.h"
-#include "../../../shared/c/msg_seat_tag/msg_seat_tag.h"
+#include "../../../shared/c/msg_whole/msg_whole.h"
 
 #define TB_MSG_MAGIC      0xD7
 #define TB_MSG_FORMAT     1
 
-#define TB_PHASE_WAITING  0
-#define TB_PHASE_LIVE     2
-#define TB_PHASE_FINISHED 3
+#define TB_PHASE_WAITING  MSG_WHOLE_WAITING
+#define TB_PHASE_LIVE     MSG_WHOLE_LIVE
+#define TB_PHASE_FINISHED MSG_WHOLE_FINISHED
 
 #define TB_FLAG_DM        0x01
 #define TB_FLAG_LEFT      0x02
@@ -62,12 +62,12 @@
 #define TB_TAG_LEN        MSG_SEAT_TAG_LEN
 #define TB_NAME_MAX_BYTES MSG_SEAT_NAME_MAX_BYTES  /* D23 */
 #define TB_NAME_MAX_CHARS MSG_SEAT_NAME_MAX_CHARS  /* D23; the seat-name clipping cap */
-#define TB_CHECK_LEN      2
-#define TB_HEAD_LEN       44
-#define TB_ROW_MAX        (TB_TAG_LEN + 1 + TB_NAME_MAX_BYTES)
+#define TB_CHECK_LEN      MSG_WHOLE_CHECK_LEN
+#define TB_HEAD_LEN       MSG_WHOLE_HEAD_LEN(2)   /* 44 */
+#define TB_ROW_MAX        MSG_WHOLE_ROW_MAX
 #define TB_MSG_MAX_BYTES  (TB_HEAD_LEN + TB_MAX_SEATS * TB_ROW_MAX + TB_CHECK_LEN + TB_CODE_MAX)
 /* "?m=" + base32 + NUL */
-#define TB_MSG_MAX_TEXT   (3 + (TB_MSG_MAX_BYTES * 8 + 4) / 5 + 1)
+#define TB_MSG_MAX_TEXT   MSG_WHOLE_TEXT_LEN(TB_MSG_MAX_BYTES)
 
 /* EVERY GAME FITS ONE MESSAGE (T7): the capped worst case, every name at 48
  * bytes and the body at its bound (319 bubbles of 6 bits), is under the 5,000
@@ -76,35 +76,35 @@
 _Static_assert(TB_MSG_MAX_TEXT - 1 < 5000, "the capped worst case fits MSMessage.url");
 
 /* Errors. */
-#define TB_EOK      0
-#define TB_ESHORT  -1    /* the buffer ends inside the header or the roster  */
-#define TB_EMAGIC  -2    /* not one of ours                                  */
-#define TB_EFORMAT -3    /* a format this build does not know                */
-#define TB_EFLAGS  -4    /* a reserved flag bit, or a flag the phase forbids */
-#define TB_ECHECK  -5    /* the check does not match: cut or edited          */
-#define TB_EGAME   -6    /* the body does not replay, or disagrees with the header */
-#define TB_EROSTER -7    /* empty or long name, duplicate tag or name, seats out of range */
-#define TB_ECAP    -8    /* output buffer too small                          */
-#define TB_ETEXT   -9    /* no "m=" in the text, or it is not base32         */
-#define TB_EREFUSED -10  /* a lobby or seat verdict said no (not a wire error, D41) */
+#define TB_EOK      MSG_WHOLE_EOK
+#define TB_ESHORT   MSG_WHOLE_ESHORT
+#define TB_EMAGIC   MSG_WHOLE_EMAGIC
+#define TB_EFORMAT  MSG_WHOLE_EFORMAT
+#define TB_EFLAGS   MSG_WHOLE_EFLAGS
+#define TB_ECHECK   MSG_WHOLE_ECHECK
+#define TB_EGAME    MSG_WHOLE_EGAME
+#define TB_EROSTER  MSG_WHOLE_EROSTER
+#define TB_ECAP     MSG_WHOLE_ECAP
+#define TB_ETEXT    MSG_WHOLE_ETEXT
+#define TB_EREFUSED MSG_WHOLE_EREFUSED
 #define TB_ESTAGED  -11  /* the bridge: this is my own staged, unsent bubble (T15) */
 
 /* A roster row, shared/c/msg_seat_tag's: the tag is
  * SHA-256("tallybones.seat.1|" || seed || id)[0..9), then a 1..48-byte UTF-8 name. */
 typedef MsgSeat TbSeat;
+_Static_assert(TB_MAX_SEATS <= MSG_WHOLE_MAX_SEATS, "the shared roster seats the whole table");
+_Static_assert(TB_HEAD_LEN == 44, "the head is format 1's");
 
 typedef struct {
-    uint8_t  phase;                   /* TB_PHASE_*                                  */
-    uint8_t  dm;
-    uint8_t  left;                    /* WAITING: the newest lobby bubble was a leave */
-    uint16_t lobby_rev;
-    uint8_t  n_seats;
-    uint8_t  starter;                 /* TB_SEAT_NONE while WAITING                  */
-    uint8_t  seed[32];
-    TbSeat   seat[TB_MAX_SEATS];
+    MsgWhole w;                       /* the roster half: phase, dm, left, lobby_rev,
+                                         n_seats, starter, seed, seat[] (msg_whole.h) */
     TbGame   game;                    /* the table once started (LIVE / FINISHED); may be
                                          a draft, which encode writes and decode never is */
 } TbMsg;
+
+/* This product's envelope: its salts, magic, flags, counters and caps
+ * (shared/c/msg_whole). */
+extern const MsgWholeSpec TB_MSG_SPEC;
 
 /* ------------------------------------------------------------- identity */
 

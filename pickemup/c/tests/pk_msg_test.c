@@ -106,7 +106,7 @@ static void round_trip(int games)
             CHECK(e == PK_EOK, "game %d bubble %d decodes (%d)", gi, last, e);
             CHECK(pk_hash(&back.game) == pk_hash(&m.game) && conserved(&back.game),
                   "game %d bubble %d: the decoded game is the game", gi, last);
-            CHECK(back.phase == (m.game.over ? PK_PHASE_FINISHED : PK_PHASE_LIVE),
+            CHECK(back.w.phase == (m.game.over ? PK_PHASE_FINISHED : PK_PHASE_LIVE),
                   "game %d bubble %d: phase", gi, last);
             int n2 = pk_msg_encode(&back, b2, (int)sizeof b2);
             CHECK(n2 == n1 && !memcmp(b1, b2, (size_t)n1), "game %d bubble %d re-encodes byte-identical", gi, last);
@@ -889,7 +889,7 @@ static void seat_resolve(void)
     CHECK(pk_msg_resolve(&lob, -1, -1, 0, 1, U("Zoe"), 3, &by) == -1,
           "a lobby row under another name is not mine, whoever sent the bubble");
     gone = lob;
-    CHECK(pk_msg_leave(&gone, 1) == PK_EOK && gone.left, "Bo leaves");
+    CHECK(pk_msg_leave(&gone, 1) == PK_EOK && gone.w.left, "Bo leaves");
     CHECK(pk_msg_sender(&gone) == -1, "a leave's sender has no seat");
     CHECK(pk_msg_resolve(&gone, -1, -1, 0, 1, U("Bo"), 2, &by) == -1 && by == PK_BY_NONE,
           "the leaver, holding their own leave, is not seated");
@@ -955,11 +955,11 @@ static void lobby_wire(void)
     int n = 0;
     static uint8_t b[PK_MSG_MAX_BYTES];
     n = pk_msg_encode(&m, b, (int)sizeof b);
-    CHECK(n > 0 && pk_msg_decode(b, n, &back) == PK_EOK && back.n_seats == 2 && back.lobby_rev == 1
-          && !back.left && pk_msg_offered(&back, 1) == PK_LOBBY_WAITING, "the lobby round trips with its verdicts");
-    CHECK(pk_msg_leave(&m, 0) == PK_EOK && m.n_seats == 1 && !memcmp(m.seat[0].name, "Bo", 2), "the creator leaves: Bo is seat 0");
+    CHECK(n > 0 && pk_msg_decode(b, n, &back) == PK_EOK && back.w.n_seats == 2 && back.w.lobby_rev == 1
+          && !back.w.left && pk_msg_offered(&back, 1) == PK_LOBBY_WAITING, "the lobby round trips with its verdicts");
+    CHECK(pk_msg_leave(&m, 0) == PK_EOK && m.w.n_seats == 1 && !memcmp(m.w.seat[0].name, "Bo", 2), "the creator leaves: Bo is seat 0");
     n = pk_msg_encode(&m, b, (int)sizeof b);
-    CHECK(n > 0 && pk_msg_decode(b, n, &back) == PK_EOK && back.left && back.lobby_rev == 2
+    CHECK(n > 0 && pk_msg_decode(b, n, &back) == PK_EOK && back.w.left && back.w.lobby_rev == 2
           && pk_msg_offered(&back, 0) == PK_LOBBY_INVITE, "after a leave Bo, alone, is offered the invite");
     CHECK(pk_msg_leave(&m, 0) == PK_EREFUSED, "the last one cannot leave");
     CHECK(pk_msg_start(&m, 0) == PK_EREFUSED, "one cannot start");
@@ -969,9 +969,9 @@ static void lobby_wire(void)
     lobby_of(&dm, seed, 1, 1);
     id_tag(seed, "id-Bo", t);
     int s = pk_msg_join_start(&dm, t, U("Bo"), 2);
-    CHECK(s == 1 && dm.phase == PK_PHASE_LIVE && dm.starter == 1 && dm.game.n == 2, "join and start in a DM");
+    CHECK(s == 1 && dm.w.phase == PK_PHASE_LIVE && dm.w.starter == 1 && dm.game.n == 2, "join and start in a DM");
     n = pk_msg_encode(&dm, b, (int)sizeof b);
-    CHECK(n > 0 && pk_msg_decode(b, n, &back) == PK_EOK && back.starter == 1 && back.game.starter == 1
+    CHECK(n > 0 && pk_msg_decode(b, n, &back) == PK_EOK && back.w.starter == 1 && back.game.starter == 1
           && pk_msg_sender(&back) == 1, "the start bubble names its starter");
     id_tag(seed, "id-Cleo", t);
     CHECK(pk_msg_join(&dm, t, U("Cleo"), 4) == PK_EREFUSED, "nobody joins a started game");

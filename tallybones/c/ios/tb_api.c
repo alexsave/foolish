@@ -22,8 +22,6 @@ _Static_assert(TB_ROW_N == 16 && TB_ROW_TOTAL == TB_ROW_N - 1 && TB_ROW_THREE_AL
 #define SG_LAYOUT_HASH 0u            /* not stamped: matches no generated module */
 #endif
 
-#define MAX_ID 64
-
 /* THE RESIDENT, MY STAGED MOVE, and the scratch the calls fill. Nothing here
  * is allocated. The resident game is never a draft: `draft` is the resident
  * with the staged move applied (tb_draft), and nothing in it was derived. */
@@ -33,18 +31,11 @@ static struct {
     int      staged;
     TbMove   move;
     TbGame   draft;
-    uint8_t  id[MAX_ID];
-    int      id_n;
-    uint8_t  nick[TB_NAME_MAX_BYTES];
-    int      nick_n;
+    MsgWholeBridge b;                /* who I am, the sender fact, the names (msg_whole.h) */
     uint8_t  rec[TB_REC_BYTES];
     int      rec_n;
     int      rec_dirty;
-    char     sent_text[TB_MSG_MAX_TEXT];
-    int      sent_dm, sent_mine, sent_set;
     int      me, by;
-    char     name[TB_MAX_SEATS][TB_NAME_MAX_BYTES + 1];
-    const char *names[TB_MAX_SEATS];
     TbApiTable  table;
     TbView      view;
     TbApiEvents events;
@@ -61,20 +52,9 @@ uint32_t tb_api_layout_hash(void) { return (uint32_t)SG_LAYOUT_HASH; }
 
 /* ---- who I am -------------------------------------------------------------- */
 
-void tb_api_me(const uint8_t *id, int n)
-{
-    if (!id || n < 0) n = 0;
-    if (n > MAX_ID) n = MAX_ID;
-    if (n) memcpy(S.id, id, (size_t)n);
-    S.id_n = n;
-}
+void tb_api_me(const uint8_t *id, int n) { msg_whole_bridge_id(&S.b, id, n); }
 
-void tb_api_nickname(const uint8_t *name, int n)
-{
-    if (!name || msg_seat_name_verdict(name, n) != TB_NAME_OK) { S.nick_n = 0; return; }
-    memcpy(S.nick, name, (size_t)n);
-    S.nick_n = n;
-}
+void tb_api_nickname(const uint8_t *name, int n) { msg_whole_bridge_nick(&S.b, name, n); }
 
 int tb_api_name_verdict(const uint8_t *name, int n) { return msg_seat_name_verdict(name, n); }
 
@@ -102,12 +82,7 @@ int tb_api_seats_save(uint8_t *out, int cap)
 
 static void names_of(void)
 {
-    for (int s = 0; s < TB_MAX_SEATS; s++) {
-        int n = s < S.m.n_seats ? S.m.seat[s].name_len : 0;
-        memcpy(S.name[s], S.m.seat[s].name, (size_t)n);
-        S.name[s][n] = 0;
-        S.names[s] = S.name[s];
-    }
+    msg_whole_bridge_names(&S.b, &S.m.w);
 }
 
 static void record(int seat)
@@ -118,10 +93,8 @@ static void record(int seat)
 
 static void seat_me(int is_dm, int i_sent)
 {
-    uint8_t tag[TB_TAG_LEN];
-    tb_tag(S.m.seed, S.id, S.id_n, tag);
-    int rec = tb_rec_find(S.rec, S.rec_n, &S.m);
-    S.me = tb_msg_resolve(&S.m, rec, tb_msg_seat_of_tag(&S.m, tag), is_dm, i_sent, S.nick, S.nick_n, &S.by);
+    S.me = msg_whole_bridge_seat(&TB_MSG_SPEC, &S.b, &S.m.w, tb_msg_sender(&S.m), S.rec, S.rec_n,
+                                 is_dm, i_sent, &S.by);
     if (S.me >= 0 && S.by != TB_BY_RECORD) record(S.me);
     names_of();
 }
@@ -138,7 +111,7 @@ static void adopt_mine(int seat)
 
 static int started(void)
 {
-    return S.have && S.m.phase != TB_PHASE_WAITING;
+    return S.have && S.m.w.phase != TB_PHASE_WAITING;
 }
 
 /* The game as a host draws it: the resident, my staged move applied. */
@@ -161,11 +134,11 @@ int tb_api_new(const uint8_t seed[32], int dm)
 {
     static TbMsg m;
     uint8_t tag[TB_TAG_LEN];
-    tb_tag(seed, S.id, S.id_n, tag);
-    int e = tb_msg_new(&m, seed, dm, tag, S.nick, S.nick_n);
+    msg_whole_bridge_tag(&TB_MSG_SPEC, &S.b, seed, tag);
+    int e = tb_msg_new(&m, seed, dm, tag, S.b.nick, S.b.nick_n);
     if (e) return e;
     S.m = m;
-    S.sent_set = 0;
+    S.b.sent_set = 0;
     adopt_mine(0);
     return TB_EOK;
 }
@@ -194,21 +167,15 @@ int tb_api_read(const char *text)
     S.m = S.other;
     S.have = 1;
     S.staged = 0;
-    int mine = S.sent_set && text && !strcmp(text, S.sent_text);
-    seat_me(mine ? S.sent_dm : 0, mine ? S.sent_mine : TB_SENT_UNKNOWN);
+    int is_dm, i_sent;
+    msg_whole_bridge_sent_of(&S.b, text, &is_dm, &i_sent);
+    seat_me(is_dm, i_sent);
     return TB_EOK;
 }
 
 void tb_api_sender(const char *text, int is_dm, int i_sent)
 {
-    S.sent_set = 0;
-    if (!text || (i_sent != 0 && i_sent != 1)) return;
-    size_t n = strlen(text);
-    if (n >= sizeof S.sent_text) return;
-    memcpy(S.sent_text, text, n + 1);
-    S.sent_dm = is_dm != 0;
-    S.sent_mine = i_sent;
-    S.sent_set = 1;
+    msg_whole_bridge_sent(&TB_MSG_SPEC, &S.b, text, is_dm, i_sent);
 }
 
 int tb_api_text(char *out, int cap)
@@ -223,9 +190,9 @@ int tb_api_stage_join(void)
 {
     if (!S.have) return TB_EGAME;
     uint8_t tag[TB_TAG_LEN];
-    tb_tag(S.m.seed, S.id, S.id_n, tag);
+    msg_whole_bridge_tag(&TB_MSG_SPEC, &S.b, S.m.w.seed, tag);
     S.other = S.m;
-    int s = tb_msg_join(&S.other, tag, S.nick, S.nick_n);
+    int s = tb_msg_join(&S.other, tag, S.b.nick, S.b.nick_n);
     if (s < 0) return s;
     S.m = S.other;
     adopt_mine(s);
@@ -280,9 +247,9 @@ int tb_api_stage_join_start(void)
 {
     if (!S.have) return TB_EGAME;
     uint8_t tag[TB_TAG_LEN];
-    tb_tag(S.m.seed, S.id, S.id_n, tag);
+    msg_whole_bridge_tag(&TB_MSG_SPEC, &S.b, S.m.w.seed, tag);
     S.other = S.m;
-    int s = tb_msg_join_start(&S.other, tag, S.nick, S.nick_n);
+    int s = tb_msg_join_start(&S.other, tag, S.b.nick, S.b.nick_n);
     if (s < 0) return s;
     S.m = S.other;
     adopt_mine(s);
@@ -357,8 +324,8 @@ const void *tb_api_table(void)
     const int live = started();
     t->readable = 1;
     t->phase = (uint8_t)(!live ? TB_PHASE_WAITING : m->game.over ? TB_PHASE_FINISHED : TB_PHASE_LIVE);
-    t->dm = m->dm;
-    t->n_seats = m->n_seats;
+    t->dm = m->w.dm;
+    t->n_seats = m->w.n_seats;
     t->me = (uint8_t)(S.me >= 0 ? S.me : TB_SEAT_NONE);
     t->by = (uint8_t)S.by;
     if (!live) {
@@ -368,10 +335,10 @@ const void *tb_api_table(void)
         t->can_exit = (uint8_t)msg_lobby_roster_can_exit(&l, S.me);
         t->can_join_start = (uint8_t)(S.me < 0 && msg_lobby_roster_can_join_and_start(&l));
     }
-    t->starter = m->starter;
+    t->starter = m->w.starter;
     int snd = tb_msg_sender(m);
     t->sender = (uint8_t)(snd >= 0 ? snd : TB_SEAT_NONE);
-    t->lobby_rev = m->lobby_rev;
+    t->lobby_rev = m->w.lobby_rev;
     if (live) {
         t->bubbles = m->game.hist_n;
         t->turns = m->game.turns;
@@ -380,9 +347,9 @@ const void *tb_api_table(void)
         t->staged_kind = S.staged ? S.move.kind : 0;
         t->staged_arg = S.staged ? S.move.arg : 0;
     }
-    for (int s = 0; s < m->n_seats; s++) {
-        t->seat[s].name_len = m->seat[s].name_len;
-        memcpy(t->seat[s].name, m->seat[s].name, m->seat[s].name_len);
+    for (int s = 0; s < m->w.n_seats; s++) {
+        t->seat[s].name_len = m->w.seat[s].name_len;
+        memcpy(t->seat[s].name, m->w.seat[s].name, m->w.seat[s].name_len);
     }
     return t;
 }
@@ -483,7 +450,7 @@ static int empty(char *out, int cap)
 static int numbered_row(int number, int seat, int mine_marked, int total, char *out, int cap)
 {
     char num[8], who[TB_NAME_MAX_BYTES + 24], tot[8];
-    if (tb_itoa(number, num, sizeof num) < 0 || tb_say_seat(S.names, seat, who, sizeof who) < 0) return -1;
+    if (tb_itoa(number, num, sizeof num) < 0 || tb_say_seat(S.b.names, seat, who, sizeof who) < 0) return -1;
     tb_itoa(total, tot, sizeof tot);
     const char *kv[] = { "n", num, "who", who, "total", tot, 0 };
     int key = total >= 0 ? TB_K_RANK_ROW : mine_marked && seat == S.me ? TB_K_LOBBY_ROW_YOU : TB_K_LOBBY_ROW;
@@ -502,17 +469,17 @@ int tb_api_words(int what, int arg, char *out, int cap)
     case TB_API_W_CAT:         return tb_say_cat(arg, out, cap);
     case TB_API_W_ROW_LABEL:   return tb_say_row_label(arg, out, cap);
     case TB_API_W_INVITE: case TB_API_W_JOINED: case TB_API_W_LEFT: {
-        if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
+        if (!S.have || arg < 0 || arg >= S.m.w.n_seats) return -1;
         int which = what == TB_API_W_INVITE ? TB_SAY_INVITE : what == TB_API_W_JOINED ? TB_SAY_JOINED : TB_SAY_LEFT;
         char who[TB_NAME_MAX_BYTES + 24];
-        if (tb_say_seat(S.names, arg, who, sizeof who) < 0) return -1;
+        if (tb_say_seat(S.b.names, arg, who, sizeof who) < 0) return -1;
         return tb_say_lobby_caption(which, who, out, cap);
     }
     case TB_API_W_SEAT:
-        if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
-        return tb_say_seat(S.names, arg, out, cap);
+        if (!S.have || arg < 0 || arg >= S.m.w.n_seats) return -1;
+        return tb_say_seat(S.b.names, arg, out, cap);
     case TB_API_W_LOBBY_ROW: case TB_API_W_PUBLIC_ROW:
-        if (!S.have || arg < 0 || arg >= S.m.n_seats) return -1;
+        if (!S.have || arg < 0 || arg >= S.m.w.n_seats) return -1;
         return numbered_row(arg + 1, arg, what == TB_API_W_LOBBY_ROW, -1, out, cap);
     case TB_API_W_RANK_ROW: {
         uint8_t rank[TB_MAX_SEATS];
@@ -528,15 +495,15 @@ int tb_api_words(int what, int arg, char *out, int cap)
     }
     if (!live) return empty(out, cap);
     switch (what) {
-    case TB_API_W_CAPTION:  return tb_say_caption(g, arg, S.names, out, cap);
-    case TB_API_W_SUMMARY:  return tb_say_summary(g, arg, S.names, out, cap);
+    case TB_API_W_CAPTION:  return tb_say_caption(g, arg, S.b.names, out, cap);
+    case TB_API_W_SUMMARY:  return tb_say_summary(g, arg, S.b.names, out, cap);
     case TB_API_W_STAGED_CAPTION: case TB_API_W_STAGED_SUMMARY: {
         const int full = what == TB_API_W_STAGED_SUMMARY;
-        if (S.staged) return tb_say_move(&S.m.game, S.move, S.names, full, out, cap);
-        return full ? tb_say_summary(g, g->hist_n, S.names, out, cap) : tb_say_caption(g, g->hist_n, S.names, out, cap);
+        if (S.staged) return tb_say_move(&S.m.game, S.move, S.b.names, full, out, cap);
+        return full ? tb_say_summary(g, g->hist_n, S.b.names, out, cap) : tb_say_caption(g, g->hist_n, S.b.names, out, cap);
     }
-    case TB_API_W_HEADLINE:    return tb_say_headline(cur(), me, S.names, out, cap);
-    case TB_API_W_SUBLINE:     return tb_say_subline(cur(), me, S.names, out, cap);
+    case TB_API_W_HEADLINE:    return tb_say_headline(cur(), me, S.b.names, out, cap);
+    case TB_API_W_SUBLINE:     return tb_say_subline(cur(), me, S.b.names, out, cap);
     case TB_API_W_SPOKEN_DIE:  return tb_say_spoken_die(cur(), arg, out, cap);
     }
     return -1;
