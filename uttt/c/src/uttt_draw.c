@@ -1,6 +1,7 @@
 #include "uttt_draw.h"
 #include "uttt_anim.h"
 #include "uttt_lang.h"
+#include "../../../shared/c/sincos.h"
 #include <math.h>
 #include <string.h>
 
@@ -29,12 +30,15 @@ static int32_t sd(int32_t s, uint32_t k, int32_t a) { return (int32_t)((uint32_t
 
 #define REF   (8.9f / 100.f * CE * 9.f)   /* a normal mark, in board units */
 
-static float rough_for(float L) { return 1.5f * powf(REF / (L > 1e-4f ? L : 1e-4f), .75f); }
+/* x^.75 = x^.5 * x^.25: two sqrt instructions where powf is exp(log) */
+static float pow75(float x) { return sqrtf(x) * sqrtf(sqrtf(x)); }
+
+static float rough_for(float L) { return 1.5f * pow75(REF / (L > 1e-4f ? L : 1e-4f)); }
 static float bow_for  (float L) { return 1.0f * powf(REF / (L > 1e-4f ? L : 1e-4f), .85f); }
 /* rough.js's maxRandomnessOffset of 2 is in the drawing's OWN units, and the
  * board here is a unit square rather than a hundred of them - so it converts
  * once, here, instead of at four call sites that would each forget. */
-static float mro_for  (float L) { return .02f * powf(REF / (L > 1e-4f ? L : 1e-4f), .75f); }
+static float mro_for  (float L) { return .02f * pow75(REF / (L > 1e-4f ? L : 1e-4f)); }
 
 uint32_t uttt_mark_ink(int mark) { return mark == UTTT_O ? INK_O : INK_X; }
 
@@ -116,7 +120,7 @@ static int mark_geom(int kind, float s, int32_t seed, UtttPt *pts, int cap,
     int np = 0;
     const float s100 = s * 100.f;          /* the mark's size, board-100 */
     UtttRough r = uttt_rough_default(sd(seed, 97, 3));
-    r.roughness = 1.5f * powf(8.9f / s100, .75f) * (s100 / 8.9f);
+    r.roughness = 1.5f * pow75(8.9f / s100) * (s100 / 8.9f);
     r.bowing    = 1.0f * powf(8.9f / s100, .85f);
 
     /* LOPSIDED. Nobody draws an X whose two strokes cross in the middle with
@@ -680,8 +684,8 @@ int uttt_draw_icon(UtttDL *d, float w, float h)
     p.a = 1.f; p.agrain = .12f; p.grain = .3f;
 
     UtttRough rx = uttt_rough_default(31 * 97 + 3);
-    rx.roughness = 1.5f * powf(8.9f / 100.f, .75f) * (100.f / 8.9f);
-    rx.bowing    = 1.0f * powf(8.9f / 100.f, .85f);
+    rx.roughness = 2.7462732f;   /* 1.5 * (8.9 / 100)^.75 * (100 / 8.9) */
+    rx.bowing    = .1279327f;    /* (8.9 / 100)^.85 */
     UtttRough ro = rx;
     ro.state = 52 * 97 + 3;
 
@@ -930,8 +934,9 @@ int uttt_draw_rule(UtttDL *d, int i)
             UtttPt q[6];
             float a0 = (float)k / n * 6.2831853f;
             for (int j = 0; j < 6; j++) {
-                float a = a0 + dash / rr * j / 5.f;
-                q[j] = (UtttPt){ cx + rr * cosf(a), cy + rr * sinf(a) };
+                float a = a0 + dash / rr * j / 5.f, sa, ca;
+                sc_sincosf(a, &sa, &ca);
+                q[j] = (UtttPt){ cx + rr * ca, cy + rr * sa };
             }
             r_line(d, q, 6, .9f, INK_X);
         }
