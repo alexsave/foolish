@@ -667,7 +667,8 @@ WASM_OPT   ?= -Oz
 # bots.wasm; CI does not rebuild the wasm (it ships the committed .gz), so this
 # is a build-time dep only for whoever regenerates the asset. Correctness is
 # gated by the SAME suites that caught the LTO table corruption — the embedded
-# module still feeds e2e/wasm_kernel_fuzz + e2e/bot_parity (both green).
+# module then fed e2e/wasm_kernel_fuzz + e2e/bot_parity (both green; the fuzz
+# is native now, c/tests/tests.c test_doors_survive_hostile_bytes).
 #
 # Measured on the shipped bots.wasm (post strategy-cull, docs/
 # WASM_OPT_INLINING_PROTOTYPE.md): -O2 --inlining-optimizing shrinks the SHIPPED

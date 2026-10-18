@@ -12885,9 +12885,9 @@ static void test_table_replay_code_and_extras(void) {
 // no server and no client crossed, and together they were the floor under the
 // whole e2e suite's wall clock (73 seconds each). The rule for that suite is
 // that a test which only calls C methods is not an e2e test, so the bulk of
-// each moved here, where the same games cost an order of magnitude less, and
-// each TypeScript file keeps one small case that still runs its property through
-// the shipped wasm build. The rows here are played exactly as those files played
+// each moved here, where the same games cost an order of magnitude less (and
+// state_codec's last cases followed: test_state_blob_formats_read_and_written).
+// The rows here are played exactly as those files played
 // them: the same lobby, the same deal seeds, the same one-action bot cycle.
 
 // The 32-byte deal seed of test game `s` at `np` seats, exactly as
@@ -13114,10 +13114,8 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
 // and at every committed state asserts that the blob a table writes back for a
 // board it only loaded is byte-identical to the blob it loaded, over more than
 // 2,000 states, with every blob under 2,048 bytes (it is the whole row's game).
-// The suite's other assertion - that a board read back through the GENERATED
-// TypeScript accessors rebuilds the same blob - is a claim about the generated
-// readers that only a test across the wasm boundary can make; it stays in
-// e2e/state_codec.test.ts over two of these games.
+// The formats themselves - v2 to v5 read, v5 written, every other refused - are
+// test_state_blob_formats_read_and_written.
 static void test_table_state_blob_round_trips_every_reachable_state(void) {
     static const int seats[4] = { 2, 3, 4, 6 };
     TableCommit c;
@@ -14551,7 +14549,7 @@ static void test_client_move_wire_is_the_old_encoders_bytes(void) {
 
 // Test: awire_decode's strictness, shape by shape. These were the cases a
 // TypeScript twin of the decoder was held to (sdk/ts/wire/awire.ts decodeAction,
-// e2e/awire_codec.test.ts); the twin is gone, so they are asked of the decoder
+// then e2e/awire_codec.test.ts); the twin is gone, so they are asked of the decoder
 // itself: 0 on anything malformed, and whatever it accepts is a whole move that
 // encodes back to the same bytes.
 static void test_awire_decode_refuses_every_malformed_shape(void) {
@@ -17670,7 +17668,8 @@ static void test_ask_body_runs_for_the_caller(void) {
     a = ask_of(ASK_START, "g-1");
     CHECK(WV_ASK("stranger", "S", a) == TABLE_E_NOT_SEATED, "ask: a stranger's start is refused");
     a = ask_of(ASK_BUMP, "g-1");
-    CHECK(WV_ASK("stranger", "S", a) == TABLE_MOOT, "ask: a stranger's bump is not (a spectator's client sends it)");
+    CHECK(WV_ASK("stranger", "S", a) == TABLE_E_NOT_SEATED, "ask: a stranger's bump is refused (it wakes the bots, a server run)");
+    CHECK(WV_ASK("a", "Ana", a) == TABLE_MOOT, "ask: a seated player's bump commits nothing");
     a = ask_of(ASK_UPDATE_NAME, "g-1");
     a.title_len = 10;
     memcpy(a.title, "  Friday  ", 10);
@@ -17723,15 +17722,15 @@ static int fz_damage(uint8_t *p, int len, int cap) {
     return len;
 }
 
-// Everything a server does with a loaded table, on whatever did load.
-static int fz_exercise(void) {
+// Everything a server does with a loaded table, on whatever did load: the
+// menus (seats past the table too), junk moves by every seat, a bot cycle, the
+// commit, every viewer's push and envelope, read back by the client. Nothing is
+// asserted of the answers: what this asks is that none of it reads or writes
+// out of bounds, which the asan lane checks.
+static void fz_exercise(void) {
     static uint8_t junk[64];
     const int np = tb.r.n;
-    int bounded = 1;
-    for (int s = 0; s < np + 2; s++) {
-        calculate_legal_moves(&tb_game, s, &tb_moves);
-        bounded &= tb_moves.n >= 0 && tb_moves.n <= 70000;
-    }
+    for (int s = 0; s < np + 2; s++) calculate_legal_moves(&tb_game, s, &tb_moves);
     for (int s = 0; s < np; s++)
         for (int k = 0; k < 3; k++) {
             const int n = fz_junk(junk, cb_rand(24));
@@ -17740,8 +17739,7 @@ static int fz_exercise(void) {
     char ab[2 * FOOLISH_SEED_LEN + 1];
     for (int i = 0; i < FOOLISH_SEED_LEN; i++) memcpy(ab + 2 * i, "ab", 2);
     table_set_deal_seed(&tb, ab, 2 * FOOLISH_SEED_LEN);
-    const int d = table_bot_drive(&tb, 0, 0, 2, &tb_drv);
-    bounded &= d <= 2;
+    table_bot_drive(&tb, 0, 0, 1, &tb_drv);
     TableCommit c;
     if (table_commit_products(&tb, RS("fuzz"), 1, 0, &c, tb_arena, sizeof(tb_arena)) >= 0) {
         for (int v = -1; v < np; v++) {
@@ -17750,7 +17748,6 @@ static int fz_exercise(void) {
             if (en > 0) client_adopt_envelope(&ct, ct_env, en);
         }
     }
-    return bounded;
 }
 
 // A random PLAYING board of 2 to 6 `brain` seats (e2e/helpers/kernel_board.ts
@@ -17838,7 +17835,7 @@ static void test_doors_survive_hostile_bytes(void) {
     }
 
     // The load door: damaged state and roster blobs.
-    int loaded = 0, refused = 0, bounded = 1;
+    int loaded = 0, refused = 0, judged = 1;
     for (int it = 0; it < 600 * scale; it++) {
         const TbRow *row = &rows[cb_rand(5)];
         memcpy(state, row->state, (size_t)row->state_len);
@@ -17848,11 +17845,13 @@ static void test_doors_survive_hostile_bytes(void) {
         table_init(&tb, &tb_game, &tb_snaps);
         if (table_load(&tb, state, sl, roster, rl) != TABLE_OK) { refused++; continue; }
         loaded++;
-        bounded &= fz_exercise();
+        judged &= game_validate(&tb_game, 0) == GAME_VALID;
+        fz_exercise();
     }
+    fprintf(stderr, "  [doors] load door: %d refused, %d loaded\n", refused, loaded);
     CHECK(refused > 200, "doors: the kernel refuses damaged blobs");
     CHECK(loaded > 10, "doors: some damaged blobs still load and are played on");
-    CHECK(bounded, "doors: on whatever loads, every menu stays bounded and a drive within its cap");
+    CHECK(judged, "doors: every damaged blob that loads is a board the kernel could have produced");
 
     // The bot cycle under hostile session logs, on sealed boards, for every
     // kind of brain: framing mostly intact, cards, seats and types not.
@@ -17875,6 +17874,7 @@ static void test_doors_survive_hostile_bytes(void) {
         imported += table_set_session_log(&tb, log, ll) >= 0;
         drives += table_bot_drive(&tb, 0, 0, 1, &tb_drv) >= 0;
     }
+    fprintf(stderr, "  [doors] %d boards, %d drives, %d logs imported\n", boards, drives, imported);
     CHECK(boards > 10 && drives == boards && imported > 0, "doors: the bots drive on hostile session logs");
 
     // The action, request and client doors: random bytes.

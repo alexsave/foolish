@@ -1228,7 +1228,8 @@ bool handle_pickup(Game *g, int player_idx) {
     // this is the engine, and a caller that hands it a wide table — a corrupt
     // row, a hostile marshal, a bot's sampled world — used to walk straight off
     // the end of `hand`: 2 cards per battle, no check. It cost real time to find
-    // (e2e/wasm_kernel_fuzz, 40 battles: 3 + 2*40 = 83 into hand[64], a wasm trap
+    // (the door fuzz, then e2e/wasm_kernel_fuzz and now tests.c
+    // test_doors_survive_hostile_bytes; 40 battles: 3 + 2*40 = 83 into hand[64], a wasm trap
     // ~19 cards past the end) because the wide table only reaches this path
     // through a ROLLOUT, so it read as a bot bug for hours. Drop the excess: a
     // truncated hand is a wrong game, but a corrupted Game is a wrong process.

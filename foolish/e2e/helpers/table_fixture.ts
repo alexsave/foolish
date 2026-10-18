@@ -59,17 +59,6 @@ function k(): { ex: BotsTestExports; table: ServerTable } {
 /** The C Table over the fixtures' own bots_test.wasm instance. */
 export function fixtureTable(): ServerTable { return k().table; }
 
-/**
- * A state blob's BOARD: every byte but what its format carries behind the board
- * (table.h): from v3 the clock (TABLE_STATE_V3_CLOCK_BYTES), which says when
- * the board was shown rather than what is on it, and from v5 the game's rating
- * stamp behind that (TABLE_STATE_STAMP_BYTES) - so two commits of one board at
- * two times, or a board and a fixture that was never shown, compare equal here.
- */
-export const boardBytes = (state: Uint8Array): Uint8Array =>
-    state.subarray(0, state.length - (state[0] === L.TABLE_STATE_FORMAT_V2 ? 0
-        : L.TABLE_STATE_V3_CLOCK_BYTES + (state[0] === L.TABLE_STATE_FORMAT_V5 ? L.TABLE_STATE_STAMP_BYTES : 0)));
-
 /** The raw exports of that instance, for a test helper that reads the loaded board through the generated accessors. */
 export function fixtureExports(): BotsTestExports {
     return k().ex;

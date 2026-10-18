@@ -224,7 +224,8 @@ same as the TT plan's failed-approaches appendix).
 *Also verify the contract (W2):* the chosen-index parity is covered by
 `bot_parity` (7/7) — it replays real decisions through both TS and wasm and
 compares the *move*, which catches any enumeration divergence. Run it plus
-`e2e/wasm_kernel_fuzz.test.ts`.
+the native door fuzz (`c/tests/tests.c` `test_doors_survive_hostile_bytes`,
+which was `e2e/wasm_kernel_fuzz.test.ts`).
 
 *Change:* `Makefile:184`: `-DMAX_LEGAL_MOVES=4096` → `=1024` in `WASM_FLAGS`,
 and fix the now-stale `filter-out` + re-add in `WASM_RULES_FLAGS:280` (rules
@@ -429,7 +430,7 @@ Build/refresh everything first: `cd c && make build/bots.wasm && make wasm-bots`
 | V-diff | `build/sim_difftest`, `build/apply_difftest`, `build/replay_difftest` | 0 real / 0 / 0 failed (solver_difftest is a known `-flto` false alarm — issue #56) |
 | V-mem | `npm run test:mem` | 4/4, bounded & flat |
 | V-parity | `bot_parity.test.ts` | 7/7 exact-move match |
-| V-fuzz | `e2e/wasm_kernel_fuzz.test.ts` + cover/guards e2e | green (stack + enumeration net) |
+| V-fuzz | `c/tests/tests.c` `test_doors_survive_hostile_bytes` (was `e2e/wasm_kernel_fuzz.test.ts`) + cover/guards e2e | green (stack + enumeration net) |
 | V4-outcome | only for M3/M5: `c/tools/tt_divergence_viz/outcome_pair.sh` 2,000+ espresso seeds, flag-on vs flag-off at SAME TT config | 0 outcome flips |
 | V-latency | 40-game CPU-time probe (`CD_LAT=1`, see `SOLVER_TT_WORKING_SET_PLAN.md`) before/after | within ±5% |
 | V-size | `llvm-nm` map + anatomy regen + page count | saving matches prediction; no other block grew |
