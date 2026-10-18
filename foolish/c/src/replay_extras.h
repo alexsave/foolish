@@ -166,7 +166,7 @@ int replay_extras_redact(const unsigned char *blob, int blob_len, int player_cou
 // `https://foolish.cards/<base32 moves>` and, when the roster says anything,
 // `-<base32 extras>` after it. This is the string a client puts in front of a
 // person, built here rather than concatenated per platform: the prefix is a
-// constant, the dash is already this codec's (replay_b32_decode stops at it),
+// constant, the dash is already this codec's (b32_decode stops at it),
 // and gluing them would give the same answer on a watch, a phone and a browser.
 // What stays platform-side is the URL *type*, not the string that goes into it.
 //
@@ -199,7 +199,7 @@ int replay_extras_redact(const unsigned char *blob, int blob_len, int player_cou
 
 // READING a link back: the replay code out of whatever a person pasted.
 //
-// The builders above are only half of it. replay_b32_decode is deliberately
+// The builders above are only half of it. b32_decode is deliberately
 // tolerant - it ignores characters outside the alphabet and stops at '-' -
 // which is right for a code and WRONG for a URL, because every letter of
 // "https" is in the base32 alphabet. A prefix nothing strips does not fail: it

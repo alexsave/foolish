@@ -13,7 +13,7 @@ import { useTexture, getTextureStyle } from './TexturedSurface';
  * stored binary: `moves` (the rANS move integer) and `extras` (player names +
  * per-move timing). The code is base32(moves), with '-' + base32(extras) when
  * the checkbox is on, and both the base32 and the link around it come from the
- * kernel (replay_b32_encode, replay_extras_link_styled) rather than being
+ * kernel (b32_encode, replay_extras_link_styled) rather than being
  * assembled here.
  *
  * The QR and the clipboard get DIFFERENT forms of the same link. Uppercase

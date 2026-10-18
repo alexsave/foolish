@@ -13,7 +13,7 @@
  *     segment's type - replay_extras.h keeps the URL *type* platform-side
  *
  * Everything the kernel does do has gone to it: the rANS coder (c/src/replay.c,
- * which always had its own), base32 (replay_b32_encode / _decode) and the link
+ * which always had its own), base32 (b32_encode / _decode) and the link
  * builders (replay_extras_link_styled).
  * ========================================================================== */
 
@@ -50,7 +50,7 @@ export function bytesToBigint(b: Uint8Array): bigint {
 }
 
 // base32 lived here, with its alphabet. It is the kernel's
-// (replay.c replay_b32_encode/decode, reached through bots.ts kernelB32Encode /
+// (shared/c/b32.c b32_encode/decode, reached through bots.ts kernelB32Encode /
 // kernelB32Decode) - replay.h had always described the C one as "the web's
 // codec.ts alphabet", which is a mirror naming its original. The base64 pair
 // that sat beside it went too: sdk/ts/wire/bytes.ts has the one the web uses.

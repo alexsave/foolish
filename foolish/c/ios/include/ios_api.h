@@ -760,7 +760,7 @@ int fio_shown_ledger_allows(int claim, int sequencing);
 //
 // The replay entries below are whole codes; this is the raw codec, for the one
 // other text layer the app has: the /m/ bubble URL an iMessage envelope rides
-// in (§4.3). The web reaches the same replay_b32_encode through the wasm, so
+// in (§4.3). The web reaches the same b32_encode through the wasm, so
 // without this Swift is the only host of three with its own alphabet and its
 // own bit-packing loop - and a Swift test that encodes and then decodes cannot
 // notice if both halves move together.
@@ -770,7 +770,7 @@ int fio_b32_encode(const uint8_t *in, int n, char *out, int cap);
 // The inverse: base32 text (NUL-terminated) as bytes into `out`. Lower case
 // reads as upper, characters outside the alphabet (a URL's stray '.', '/') are
 // skipped, and '-' ENDS the payload, because a link hangs its suffix there.
-// Those rules are replay_b32_decode's, which the web calls through the wasm, so
+// Those rules are b32_decode's, which the web calls through the wasm, so
 // every host reads a link the same way. Returns the byte count, FIO_ECAP when
 // `cap` is too small, FIO_EBADARG for a NULL input. ceil(5 * strlen / 8) bytes
 // is always enough.
@@ -800,7 +800,7 @@ int fio_replay_share_code_b32(char *out, int cap);
 // build before names emitted.
 //
 // The STRING is the kernel's and only the URL value is the platform's: the
-// prefix is a constant, the dash is already this codec's (replay_b32_decode
+// prefix is a constant, the dash is already this codec's (b32_decode
 // stops at it), and a watch would build the same characters.
 //
 // `names` is a dense SEAT-ORDERED roster, `n_names` entries of

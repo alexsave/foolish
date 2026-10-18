@@ -35,7 +35,7 @@ public enum Base32 {
     }
 
     /// Base32 text as bytes, read by THE KERNEL (`fio_b32_decode` ->
-    /// replay_b32_decode, the decoder the web calls through the wasm): lower
+    /// b32_decode, the decoder the web calls through the wasm): lower
     /// case reads as upper, stray characters are skipped, and '-' ENDS the
     /// payload, since a link hangs its suffix there.
     public static func decode(_ s: String) -> Data? {

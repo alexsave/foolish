@@ -1758,14 +1758,14 @@ static void test_b32_long_input(void) {
     unsigned char in[32], back[32];
     char b32[64];
     memset(in, 0xFF, sizeof in);
-    CHECK(replay_b32_encode(in, (int)sizeof in, b32, (int)sizeof b32) == 52,
+    CHECK(b32_encode(in, (int)sizeof in, b32, (int)sizeof b32) == 52,
           "b32: 32 bytes are 52 characters");
     int all_seven = 1;
     for (int i = 0; i < 51; i++) if (b32[i] != '7') all_seven = 0;
     CHECK(all_seven && b32[51] == 'Q', "b32: all-ones bytes encode to 7s and a padded tail");
-    CHECK(replay_b32_decode(b32, back, (int)sizeof back) == 32 && memcmp(in, back, 32) == 0,
+    CHECK(b32_decode(b32, back, (int)sizeof back) == 32 && memcmp(in, back, 32) == 0,
           "b32: 32 all-ones bytes read back unchanged");
-    CHECK(replay_b32_encode((const unsigned char *)"foobar", 6, b32, (int)sizeof b32) == 10
+    CHECK(b32_encode((const unsigned char *)"foobar", 6, b32, (int)sizeof b32) == 10
           && strcmp(b32, "MZXW6YTBOI") == 0,
           "b32: the RFC 4648 vector for foobar");
 }
@@ -9257,7 +9257,7 @@ static void test_extras_link_is_the_code_and_what_the_roster_says(void) {
     CHECK(n > bare && (int)strlen(link) == n, "link: a named roster lengthens the link");
     CHECK(memcmp(link, REPLAY_LINK_PREFIX "MZXW6YTB-", (size_t)bare + 1) == 0,
           "link: the roster rides behind a dash, after the whole code");
-    const int nb = replay_b32_decode(link + bare + 1, blob, (int)sizeof blob);
+    const int nb = b32_decode(link + bare + 1, blob, (int)sizeof blob);
     CHECK(nb > 0, "link: the tail is base32");
     const int na = replay_extras_decode(blob, nb, 3, 0, answer, (int)sizeof answer);
     CHECK(na > 0, "link: and the tail is an extras blob");
@@ -9338,7 +9338,7 @@ static void test_extras_link_is_the_code_and_what_the_roster_says(void) {
 //
 //     if (w >= cap - 2) return -REPLAY_EXTRAS_ECAP;      // no room for the dash
 //     out[w++] = '-';
-//     n = replay_b32_encode(blob, n, out + w, cap - w);
+//     n = b32_encode(blob, n, out + w, cap - w);
 //     if (n < 0) { out[bare] = 0; return bare; }         // no room for the roster
 //
 // The second is the rule replay_extras.h states: "A roster the codec cannot
@@ -9517,8 +9517,8 @@ static void test_extras_corpus_round_trips(void) {
         if (nb != size) bad_size++;
 
         // The text half of the URL carries the blob unchanged.
-        const int nt = replay_b32_encode(blob, nb, b32, (int)sizeof b32);
-        if (nt <= 0 || replay_b32_decode(b32, back32, (int)sizeof back32) != nb || memcmp(back32, blob, (size_t)nb) != 0)
+        const int nt = b32_encode(blob, nb, b32, (int)sizeof b32);
+        if (nt <= 0 || b32_decode(b32, back32, (int)sizeof back32) != nb || memcmp(back32, blob, (size_t)nb) != 0)
             bad_b32++;
 
         with_names += n_names > 0;
@@ -18421,7 +18421,7 @@ static void test_a_replay_code_that_never_ends_is_refused(void) {
     static const char LINK[] =
         "64BQAAXPZWVYSZ2FE0MAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZeLGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAACGQQHILXUF22CYACCK2N7B2WIHQT6BY6DAADULZ36CMVMNO";
     static unsigned char blob[8192];
-    const int n = replay_b32_decode(LINK, blob, (int)sizeof blob);
+    const int n = b32_decode(LINK, blob, (int)sizeof blob);
     CHECK(n > 0, "the link's base32 decodes");
     if (n <= 0) return;
     MsgEnvelope e;

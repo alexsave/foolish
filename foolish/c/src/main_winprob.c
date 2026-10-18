@@ -163,7 +163,7 @@ int main(int argc, char **argv) {
     p.names_b32 = (dash && dash[1]) ? dash + 1 : 0;
 
     static unsigned char code[REPLAY_MAX_INT_BYTES];
-    int code_len = replay_b32_decode(code_s, code, (int)sizeof code);
+    int code_len = b32_decode(code_s, code, (int)sizeof code);
     if (code_len <= 0) { fprintf(stderr, "bad code\n"); return 2; }
 
     static unsigned char out[1 << 21];

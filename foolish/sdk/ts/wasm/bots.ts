@@ -191,7 +191,7 @@ export function kernelReplayExtrasDecode(blob: Uint8Array, playerCount: number,
     };
 }
 
-// base32, from the kernel (replay.c replay_b32_encode/decode). replay.h called
+// base32, from the kernel (shared/c/b32.c b32_encode/decode). replay.h called
 // this alphabet "the web's codec.ts alphabet" and replay.c said a code made on
 // the web "reads here byte for byte" - a mirror documenting itself as one. The
 // web asks for it now, so there is one alphabet.

@@ -118,7 +118,7 @@ static int make_roster(unsigned char *out, int k, int n) {
 }
 
 static void moves_text(const Lane *L, char *moves) {
-    replay_b32_encode(L->code, L->code_len, moves, CODE_CAP * 2);
+    b32_encode(L->code, L->code_len, moves, CODE_CAP * 2);
 }
 
 // Everything one round does, on whichever thread calls it.

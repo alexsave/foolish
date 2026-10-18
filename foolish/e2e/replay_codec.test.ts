@@ -49,7 +49,7 @@ import { recordBotTable } from './helpers/replay_play.ts';
 import { suiteRng } from './helpers/rng.ts';
 
 // A pasted link as the moves bigint: the kernel strips and refuses
-// (replay_link_parse), the kernel decodes (replay_b32_decode). Composed here
+// (replay_link_parse), the kernel decodes (b32_decode). Composed here
 // rather than in the product, which never needed the bigint form.
 const urlToGame = (url: string): bigint =>
     bytesToBigint(kernelB32Decode(kernelReplayLinkParse(url)));
