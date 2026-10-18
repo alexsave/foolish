@@ -11,7 +11,6 @@
 oracle_mode_b.test.ts	30.8	28.3
 ui_animation_trace.test.ts	26.7	32.1
 ui_dom_snapshots.test.ts	10.9	20.1
-replay_solver_overlay.test.ts	6.9	16.3
 oracle_replay.test.ts	6.1	11.8
 fern_texture.test.ts	5.2	8.1
 game_loading_name.test.ts	4.4	8.7
@@ -45,7 +44,6 @@ pass_parity.test.ts	0.5	2.5
 replay_steps_frames.test.ts	0.4	2.3
 client_pass_rules.test.ts	0.4	2.2
 packed_roster_wire.test.ts	0.4	3.8
-replay_decode_helper.test.ts	0.4	2.0
 match_history_row.test.ts	0.3	2.0
 security_client_boundary.test.ts	0.3	0.8
 wasm_web_link.test.ts	0.3	0.3
