@@ -53,6 +53,7 @@
 // NC_FORCE_REFRESH_MS.
 #define NC_PING_MS        30000
 #define NC_KEEPALIVE_S    60
+#define NC_PONG_MS        10000   // a PINGREQ and every packet since unanswered this long: half-open socket; nc_stream_next hands out one empty frame, "close it"
 #define NC_FORCE_REFRESH_MS 600000
 #define NC_ACK_WAIT_MS    10000   // a subscription not answered in this long is asked again
 #define NC_RETRY_FIRST_MS 500
@@ -347,7 +348,8 @@ int nc_stream_closed(int64_t now_ms);
 // a text frame is not the broker's and is BAD): how many events it made, read
 // with nc_event.
 int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms);
-// The next frame to send, or NULL for none now; call until NULL. Then
+// The next frame to send, or NULL for none now; call until NULL. A frame of
+// len 0 is not to be sent: close the socket (nc_stream_closed follows). Then
 // nc_stream_due_ms says how long until there is one (a retry, a ping, a quiet
 // game's read for nc_next_request), -1 for
 // none while the socket is shut.
