@@ -92,11 +92,41 @@ Measured:
 - Real pacing (CBASE_BOT_SPEEDUP=1, 20 octogen games, 2 seats, 0.1 CPU, 38 s window): HEAD 76ced0515 29 human moves = 0.76 moves/s (each followed by one bot move); after fix 1, 118 = 3.11 moves/s.
   p95 move ack went 1.3 ms to 61 ms only because the box is now throttled (305 of 346 CFS periods) doing 4x the work.
 - Fixes 2 and 3 are unit-tested (unit_http, unit_net, unit_server_edges, unit_app pass) but NOT benchmarked.
+Update after the client fix (c36b533e2), all on the emulator at 0.1 CPU, CBASE_REQ_WORKERS=1:
+
+| build | 64 games | 192 games | saturation (1 CPU, 2 seats) |
+|---|---|---|---|
+| B0 = 76ced0515 (before everything) | 460 us/move, p95 1.2 ms, 7.1 MB | 310 us, p95 0.7 ms, 9.7 MB | 13.4k moves/s |
+| B2 = + no-sleep, free list, method enum | 470 us, p95 1.2 ms, 7.2 MB | 320 us, p95 0.7 ms, 10.2 MB | 13.1k-13.6k |
+| N1 = B2 with CPU=neoverse-n1 | 570 us (noise), p95 1.2 ms | 320 us | 13.0k (3% worse) |
+| B3 = B2 + sorted router | not run | not run | 12.86k vs B2 13.05-13.1k, repeated twice |
+
+- Fixes 2 and 3 (free list, method enum) move nothing measurable at this resolution; they are kept as removals of per-request mallocs and strcmps.
+- -mcpu=neoverse-n1 does not win here: not shipped. `make CPU=...` stays as an opt-in variable.
+- The sorted router reads about 1.7% slower than B2 at saturation in two A/B pairs, where the router is not in the profile at all, so this is probably code layout and not the algorithm; kept because it was asked for and it removes a strlen per route per request. Worth one more A/B with a different build order before anyone concludes anything.
+- Bot games at real pacing (SPEEDUP=1, 20 games, 2 seats): 0.76 -> 3.11 human moves/s (each followed by one bot move) with fix 1.
+- 8 seats + 3 spectators, human pace, 0.1 CPU: 16 tables 26 moves/s, 0.86 ms CPU/move, p95 2.5 ms; 64 tables 102 moves/s, p95 1.5 ms (p99 54 ms), 16 MB RSS; 128 tables 190 moves/s, p95 142 ms, p99 206 ms, the box at 0.102 CPU (CPU bound).
+  So the max before p95 > 250 ms is roughly 130-150 concurrent 8-seat tables (about 0.54 ms of CPU per move including the idle floor).
+  At 1 CPU saturation one move costs 0.18 ms (24 tables, 4.7k moves/s, p95 55 ms).
+- Fix 7: with the fixed client there are NO /v1/meta refusals (every "ask done" line has why 0, code 0, status 0, 128 of them in 16 tables).
+  The 10 "why 0 st 1" are PLAY actions the kernel answered REJECTED (TABLE_STATUS_REJECTED = 1), not asks: p3load3.c on_done NC_DO_PLAY counts action_status != APPLIED. Not examined further (a client move chosen against a stale view is the likely cause; each X line in runs/*/events has game, version).
+- Fix 4 (8-player fan-out): the profile does not point at it. cb_fanout_publish already batches (cb_rt_batch_begin/end) and builds the spectator cast once; per-viewer cost is flat. Top self time at 1 CPU, 24 8-seat tables: loopback sock_def_readable 14% (rig artifact: client and server share a kernel), el0_svc 4.3%, memcpy 3.1%, wake_up_q 2.7%, malloc 2.2%, strcmp 1.5%, memset 1.4%, printf_core 1.3%, cb_rt_topic 1.1%. Nothing user-space above 3%, so no fan-out change was made.
+- Fix 5 (snprintf/strlen): printf_core 1.3-1.5% and strlen 1.0-1.6% split over many sites; not done.
+
+Final profile of the FINAL build (B4 = HEAD with the token change), saturation, 1 CPU, 8 two-seat games, 12.56k moves/s:
+top self %: sock_def_readable 5.9 (kernel: waking the client's blocked reader on a loopback write, offset +72 is the wake itself), el0_svc 5.3 (syscall entry, offset +32), wake_up_q 4.1 (kernel: the wake of a pool or loop thread, +104), vfs_write 3.4, memcpy 2.9, malloc 2.7, memset 2.5 (memset.S:95 is cb_section_free zeroing the pooled section), tlb_flush 1.6 and __arm64_sys_mmap 1.2 (malloc growing by mmap from alloc_slot in a request thread), strlen 1.6, printf_core 1.5.
+The three hottest are all kernel wake and syscall paths, i.e. per-move syscalls (one write per delivery plus the post wake), not instructions of ours; perf annotate gave no per-line split for kernel symbols.
+
+Done in the later part of this pass (commits after a8617b79e): router sorted at add (net/router.c, first fit by score, memcmp), access token as a fixed binary layout (auth/jwt.c is the one owner; cb_js_jwt_* and the issuer argument are gone; no client decodes the token, checked in foolish/web, ios, netclient.c, shared; old tokens stop verifying), step.sh/step3.sh bounded waits, prof8.sh.
+smoke_authz fails one check on this branch: "GET /health as edgeless: 200, want 403" (the loopback probe exemption in handler.c is_local_probe; not touched by the token change, not investigated).
+smoke_matrix passes (its alg-none and swapped forgeries were re-cut as truncated and spliced tokens).
+
 Unfinished:
-1. Human-pace run.sh (step.sh) plays 0 moves on B1 and B2 ("deadline in game 0 at v2"), 2-seat tables never deal.
-   run.sh uses step.sh, which does not use the fixed p3load2-linux client; B0 at 192 was fine, so a server regression from a1edd8a44 is possible.
-   The coordinator took this one.
-2. Bench fixes 2 and 3 (B2 vs B1 at 64/192 games) once item 1 is solved.
-3. Fix 4: cb_fanout_publish already batches (cb_rt_batch_begin/end) and builds one spectator cast; the per-viewer cast build and per-frame encode are unprofiled. Run big8.sh then prof, then decide on encode-once and writev.
-4. Fixes 5 and 7 not started. 6: build with MK="CPU=neoverse-n1" ./build.sh N1 and compare with B2 (saturation and 192 games); the Makefile variable is in place, shipped flags not changed.
-5. Test pitfall: macOS sed needs -i '' and make's same-second rebuild trap bit twice while mutation checking (sleep 1 and touch after restoring).
+1. In-memory bot leases on the VM (not started beyond reading).
+   The lease is not a separate row: it lives on the SCAN marker (rows_foolish.c ~:967) and acquire/renew also move the marker's updated_at, which is the heartbeat scan's staleness clock (games_needing_bots), and unit_store tests that clock on SQLite.
+   A faithful in-memory version needs: a mutex-guarded map keyed by game id (inside the store, so tests with many stores do not alias); acquire = marker exists (a read) and no live entry; renew = token match; release = token match; lease_held = live entry; bots_idle and game delete drop the entry; games_needing_bots must skip games with a live entry (replacing the updated_at bump); and the local provider must switch it on (a flag set from provider_local), with unit_store keeping the item path for the DynamoDB and test stores.
+   Then bench botg.sh SPEEDUP=1 before and after.
+   The table_ops stripe lock covering same-game CAS on serve was not looked at.
+2. Make sat.sh / run.sh print the p95 of the human ack so a 1.7% throughput difference can be judged against run-to-run noise (two reruns of the same build differ by about 0.5%).
+3. Unexplained 400s and "ask refused" from the earlier handoff are gone with the fixed client; the 10 REJECTED plays per 16 tables are worth a look in the client's move choice.
+4. smoke_authz /health edgeless check (above).
