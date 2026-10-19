@@ -5,6 +5,7 @@
 // layouts go through one helper each way rather than being spelled out per
 // field.
 #include "roster.h"
+#include "../../../shared/c/text_util/utf8.h"
 #include <string.h>
 
 // Every durable field is a length byte followed by its bytes; these are the
@@ -21,30 +22,10 @@ _Static_assert(SEATS_AT + MAX_PLAYERS * ROSTER_SEAT_BYTES == ROSTER_BYTES, "the 
 
 // ---------- byte rules --------------------------------------------------------
 
-// Strict UTF-8: no overlong forms, no UTF-16 surrogates, nothing past U+10FFFF.
-// TextEncoder and Swift's String.utf8 only ever produce this, so anything else
-// is corruption or a hostile writer.
+// Strict UTF-8 (shared/c/text_util/utf8.h): TextEncoder and Swift's String.utf8
+// only ever produce it, so anything else is corruption or a hostile writer.
 static int utf8_valid(const char *str, int n) {
-    const uint8_t *s = (const uint8_t *)str;
-    int i = 0;
-    while (i < n) {
-        // ASCII eight bytes at a time: names, ids and titles are mostly ASCII.
-        uint64_t w;
-        while (i + 8 <= n && (memcpy(&w, s + i, 8), (w & 0x8080808080808080ull) == 0)) i += 8;
-        if (i >= n) break;
-        const uint8_t c = s[i];
-        int k;
-        uint8_t lo = 0x80, hi = 0xbf;
-        if (c < 0x80) { i++; continue; }
-        if (c >= 0xc2 && c <= 0xdf) k = 1;
-        else if (c >= 0xe0 && c <= 0xef) { k = 2; if (c == 0xe0) lo = 0xa0; if (c == 0xed) hi = 0x9f; }
-        else if (c >= 0xf0 && c <= 0xf4) { k = 3; if (c == 0xf0) lo = 0x90; if (c == 0xf4) hi = 0x8f; }
-        else return 0;
-        if (i + k >= n || s[i + 1] < lo || s[i + 1] > hi) return 0;
-        for (int j = 2; j <= k; j++) if ((s[i + j] & 0xc0) != 0x80) return 0;
-        i += k + 1;
-    }
-    return 1;
+    return text_utf8_scan(str, (size_t)n, 0, 0, 0) == 0;
 }
 
 // A byte walk, not memcmp: the wasm builds have no libc, only the small one in
@@ -251,11 +232,9 @@ static int js_space(const uint8_t *p, int n) {
 
 int roster_title_keep(const char *t, int len, int *lo_out) {
     const uint8_t *p = (const uint8_t *)t;
-    if (len < 0 || (len > 0 && !p) || !utf8_valid(t, len)) return ROSTER_E_TITLE;
-    int units = 0;
-    for (int i = 0; i < len; i++) {
-        if ((p[i] & 0xc0) != 0x80) units += p[i] >= 0xf0 ? 2 : 1;
-    }
+    if (len < 0 || (len > 0 && !p)) return ROSTER_E_TITLE;
+    int units;
+    if (text_utf8_scan(t, (size_t)len, 0, 0, &units) != 0) return ROSTER_E_TITLE;
     if (units > 50) return ROSTER_E_TITLE;
     int lo = 0, hi = len, k;
     while (lo < hi && (k = js_space(p + lo, hi - lo)) > 0) lo += k;

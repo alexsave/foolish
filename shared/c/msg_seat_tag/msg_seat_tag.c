@@ -1,31 +1,12 @@
 // Who sits where. See msg_seat_tag.h.
 #include "msg_seat_tag.h"
+#include "../text_util/utf8.h"
 #include <string.h>
 
 int msg_seat_utf8_chars(const uint8_t *s, int len)
 {
-    int chars = 0;
-    for (int i = 0; i < len;) {
-        uint32_t b = s[i], cp;
-        int k;
-        if (b < 0x80)      { cp = b; k = 1; }
-        else if (b < 0xC2) return -1;
-        else if (b < 0xE0) { cp = b & 0x1F; k = 2; }
-        else if (b < 0xF0) { cp = b & 0x0F; k = 3; }
-        else if (b < 0xF5) { cp = b & 0x07; k = 4; }
-        else return -1;
-        if (i + k > len) return -1;
-        for (int j = 1; j < k; j++) {
-            if ((s[i + j] & 0xC0) != 0x80) return -1;
-            cp = (cp << 6) | (s[i + j] & 0x3F);
-        }
-        if ((k == 3 && cp < 0x800) || (k == 4 && (cp < 0x10000 || cp > 0x10FFFF))) return -1;
-        if (cp >= 0xD800 && cp <= 0xDFFF) return -1;
-        if (cp < 0x20 || cp == 0x7F || (cp >= 0x80 && cp < 0xA0)) return -1;
-        i += k;
-        chars++;
-    }
-    return chars;
+    int chars;
+    return text_utf8_scan(s, (size_t)len, TEXT_UTF8_NO_CONTROLS, &chars, 0) == 0 ? chars : -1;
 }
 
 int msg_seat_name_verdict(const uint8_t *name, int len)
