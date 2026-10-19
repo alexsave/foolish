@@ -8,6 +8,7 @@
 // the backend's own query language (SQL or PartiQL) say which they run.
 #include "t.h"
 #include "lib_store_backend.h"
+#include "store/store_sql.h"
 #include "store/store_import.h"
 
 #include "store/rows_foolish.h"
@@ -232,13 +233,13 @@ static void users_round_trip(void) {
 
     T_EQ_INT(got.session_gen, 0);
     T_EQ_STR(got.kept_session, "");
-    T_EQ_INT(CB_STORE_CALL(s, user_set_password, a.id, "$2b$10$new", "keep-me"), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_set_password, a.id, "$2b$10$new", "33333333-cccc-4ccc-8ccc-333333333333"), CB_OK);
     T_EQ_INT(CB_STORE_CALL(s, user_touch_sign_in, a.id, 5555), CB_OK);
     T_EQ_INT(CB_STORE_CALL(s, user_get, a.id, &got), CB_OK);
     T_EQ_STR(got.password_hash, "$2b$10$new");
     T_EQ_INT(got.last_sign_in_at, 5555);
     T_EQ_INT(got.session_gen, 1);   // the same write ends the other sessions
-    T_EQ_STR(got.kept_session, "keep-me");
+    T_EQ_STR(got.kept_session, "33333333-cccc-4ccc-8ccc-333333333333");
     T_EQ_INT(CB_STORE_CALL(s, user_end_sessions, a.id), CB_OK);
     T_EQ_INT(CB_STORE_CALL(s, user_by_email, "ann@x.io", &got), CB_OK);
     T_EQ_INT(got.session_gen, 2);   // a global sign-out keeps none
@@ -270,31 +271,31 @@ static void refresh_tokens_rotate(void) {
     cb_store *s = open_fresh();
     cb_user_row a = mkuser("a@x.io", "A", 1);
     T_EQ_INT(CB_STORE_CALL(s, user_create, &a), CB_OK);
-    cb_refresh_row r = { .token_hash = "aa", .session_id = "sess-1", .created_at = 7, .expires_at = 100000 }, t1 = r, got;
+    cb_refresh_row r = { .token_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", .session_id = "44444444-dddd-4ddd-8ddd-444444444444", .created_at = 7, .expires_at = 100000 }, t1 = r, got;
     memcpy(r.user_id, a.id, sizeof r.user_id);
     t1 = r;
-    snprintf(t1.token_hash, sizeof t1.token_hash, "bb");
+    snprintf(t1.token_hash, sizeof t1.token_hash, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     T_EQ_INT(CB_STORE_CALL(s, refresh_put, &r), CB_OK);
     T_EQ_INT(CB_STORE_CALL(s, refresh_put, &t1), CB_OK);
     T_EQ_INT(CB_STORE_CALL(s, refresh_put, &r), CB_E_CONFLICT);
-    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "aa", 100, 1000, &got), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 100, 1000, &got), CB_OK);
     T_CHECK(!got.revoked);
     T_EQ_INT(got.revoked_at, 0);
     T_EQ_STR(got.user_id, a.id);
-    T_EQ_STR(got.session_id, "sess-1");
+    T_EQ_STR(got.session_id, "44444444-dddd-4ddd-8ddd-444444444444");
     T_EQ_INT(got.created_at, 7);
     T_EQ_INT(got.expires_at, 100000);
-    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "aa", 200, 1000, &got), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 200, 1000, &got), CB_OK);
     T_CHECK(got.revoked);   // a second use is a reuse
     T_EQ_INT(got.revoked_at, 100);   // stamped by the first take
     T_EQ_INT(got.expires_at, 1100);  // a spent token is kept spent_ms after a take
-    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "aa", 300, 1000, &got), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 300, 1000, &got), CB_OK);
     T_EQ_INT(got.revoked_at, 100);   // and only the first stamps
-    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "zz", 300, 1000, &got), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", 300, 1000, &got), CB_E_NOT_FOUND);
     // Past its time a token is gone, whatever the TTL has swept.
-    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "aa", 1300, 1000, &got), CB_E_NOT_FOUND);
-    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "bb", 99999, 1000, &got), CB_OK);
-    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "bb", 200000, 1000, &got), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1300, 1000, &got), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 99999, 1000, &got), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, refresh_take, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 200000, 1000, &got), CB_E_NOT_FOUND);
     cb_store_close(s);
 }
 
@@ -463,7 +464,7 @@ static void cas_second_writer_loses(void) {
 
     // One transaction: when one write of a commit (a rating) fails, nothing
     // of it stays, the row included. A trigger on the rating item makes it
-    // fail (SQLite only: DynamoDB has no trigger; unit_dynamo.c cancels the
+    // fail (SQLite only, a trigger on the ratings table: DynamoDB has no trigger; unit_dynamo.c cancels the
     // transaction's rating item in flow_rating_moved instead).
     cb_game_row w3 = mkgame("cas001", 10);
     w3.version = 3;
@@ -472,7 +473,7 @@ static void cas_second_writer_loses(void) {
     memcpy(c3.rated_ids[0], a.id, sizeof(cb_uuid));
     if (!tsb_dynamo()) {
         T_EQ_INT(CB_STORE_CALL(s, admin_query,
-                               "CREATE TRIGGER no_ratings BEFORE UPDATE ON items WHEN OLD.sk = 'RATING' BEGIN SELECT RAISE(ABORT, 'no'); END",
+                               "CREATE TRIGGER no_ratings BEFORE UPDATE ON ratings BEGIN SELECT RAISE(ABORT, 'no'); END",
                                true, NULL, NULL), 0);
         T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c3), CB_E_DB);
         T_EQ_INT(CB_ROWS_CALL(s, game_get, "cas001", &got), CB_OK);
@@ -587,7 +588,7 @@ static void lone_commit_cas(void) {
     nm.n = 0;
     T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 0);
     cb_uuid tok;
-    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lone01", NOW, 25000, tok), CB_E_NOT_FOUND);
+    if (tsb_dynamo()) T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lone01", NOW, 25000, tok), CB_E_NOT_FOUND);   // no marker
     // Then alone again, and still no marker.
     cb_game_row w6 = mkgame("lone01", NOW - 20000);
     w6.version = 6;
@@ -641,14 +642,15 @@ static void membership_follows_commits(void) {
     T_EQ_INT(CB_ROWS_CALL(s, game_members, "game01", collect_one_name, &who), 1);
     T_EQ_INT(who.n, 1);
 
-    // a's dashboard: most recently seated first, which is when the seat was
-    // written (seats are not rewritten on every commit), so game01, seated at
-    // 10, sorts after game02, seated at 11.
+    // a's dashboard. DynamoDB: most recently seated first, which is when the
+    // seat was written (seats are not rewritten on every commit), so game01,
+    // seated at 10, sorts after game02, seated at 11. SQL: the games' own
+    // order, most recently updated first (game01's commit at 50).
     names_t m = { 0 };
     T_EQ_INT(CB_ROWS_CALL(s, games_of_user, a.id, 10, collect_member, &m), 2);
-    T_EQ_STR(m.ids[0], "game02");
-    T_EQ_INT(m.at[0], 11);
-    T_EQ_STR(m.ids[1], "game01");
+    T_EQ_STR(m.ids[0], tsb_dynamo() ? "game02" : "game01");
+    T_EQ_INT(m.at[0], tsb_dynamo() ? 11 : 50);
+    T_EQ_STR(m.ids[1], tsb_dynamo() ? "game01" : "game02");
     m.n = 0;
     T_EQ_INT(CB_ROWS_CALL(s, games_of_user, a.id, 1, collect_member, &m), 1);
 
@@ -673,14 +675,11 @@ static void membership_follows_commits(void) {
         snprintf(q, sizeof q, "SELECT sk FROM \"%s\" WHERE pk = 'GAME#game01' AND begins_with(sk, 'MEMBER#')", tsb_table());
         T_EQ_INT(CB_STORE_CALL(s, admin_query, q, false, first_value, v), 1);
     } else {
-        // SQL over the items: the same two families of seat items.
+        // SQL over the seat tables: the same two kinds of seat.
         (void)q;
-        T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT count(*) FROM items WHERE pk = 'GAME#game01' AND sk LIKE 'BOT#%'", false,
-                               first_value, v),
-                 1);
+        T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT count(*) FROM game_bots WHERE game_id = 'game01'", false, first_value, v), 1);
         T_EQ_STR(v, "0");
-        T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT count(*) FROM items WHERE pk = 'GAME#game01' AND sk LIKE 'MEMBER#%'", false,
-                               first_value, v),
+        T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT count(*) FROM game_members WHERE game_id = 'game01'", false, first_value, v),
                  1);
         T_EQ_STR(v, "1");
     }
@@ -906,12 +905,14 @@ static void games_needing_bots_windows(void) {
     for (size_t i = 0; i < sizeof rows / sizeof rows[0]; i++) {
         cb_game_row g = mkgame(rows[i].id, rows[i].last_commit);
         g.needs_bots = rows[i].needs;
+        // SQL keeps no lease: lease1's row was touched a second ago by a commit that left the last move old.
+        if (!tsb_dynamo() && strcmp(rows[i].id, "lease1") == 0) g.updated_at = NOW - 1000;
         cb_uuid none[1];
         T_EQ_INT(CB_ROWS_CALL(s, game_import, &g, none, 0, none, 0), CB_OK);
     }
     // lease1: its last commit is old, but a drive renewed the lease a second ago.
     cb_uuid tok;
-    T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", NOW - 1000, 25000, tok), CB_OK);
+    if (tsb_dynamo()) T_EQ_INT(CB_ROWS_CALL(s, lease_acquire, "lease1", NOW - 1000, 25000, tok), CB_OK);
     names_t n = { 0 };
     T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &n), 2);
     T_EQ_STR(n.ids[0], "due002");   // oldest first
@@ -1285,18 +1286,19 @@ static bool collect_state(int n, const char *const *names, const char *const *va
 
 static void admin_reads(void) {
     cb_store *s = open_fresh();
-    // The collections are the key families, as on DynamoDB (admin_reads_dynamo).
+    // The collections are the tables, by name.
     names_t n = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, admin_collections, collect_name, &n), 8);
-    T_EQ_STR(n.ids[3], "GAME");
+    T_EQ_INT(CB_STORE_CALL(s, admin_collections, collect_name, &n), 13);
+    T_EQ_STR(n.ids[0], "bots");
+    T_EQ_STR(n.ids[5], "games");
+    T_EQ_STR(n.ids[12], "users");
 
-    // Pages of 20 over the 49 bots (the only items in a fresh store): 20, 20, 9,
-    // and the cursor runs out.
+    // Pages of 20 over the 49 bots: 20, 20, 9, and the cursor runs out.
     rows_t r = { 0 };
     char cur[64] = "", next[64];
     int pages = 0, total = 0;
     do {
-        int k = CB_STORE_CALL(s, admin_browse, "BOT", NULL, cur, 20, collect_row, &r, next, sizeof next);
+        int k = CB_STORE_CALL(s, admin_browse, "bots", NULL, cur, 20, collect_row, &r, next, sizeof next);
         T_CHECK(k >= 0);
         total += k;
         pages++;
@@ -1304,35 +1306,42 @@ static void admin_reads(void) {
     } while (cur[0] && pages < 10);
     T_EQ_INT(total, 49);
     T_EQ_INT(pages, 3);
-    // SQLite's cursor is the rowid a page answered, nothing else: strtoll read
+    // The cursor is the row offset a page ends at, nothing else: strtoll read
     // "3x", " 3" and "+3" as 3, and "x" as the first page.
     static const char *const bad_cursors[] = { "3x", " 3", "+3", "x", "3 ", "-5", "99999999999999999999" };
     for (size_t i = 0; i < sizeof bad_cursors / sizeof bad_cursors[0]; i++)
-        T_EQ_INT(CB_STORE_CALL(s, admin_browse, "BOT", NULL, bad_cursors[i], 20, collect_row, &r, next, sizeof next),
+        T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots", NULL, bad_cursors[i], 20, collect_row, &r, next, sizeof next),
                  CB_E_INVALID);
-    // A key prefix after the family.
+    // A prefix of the first column: a UUID column matches its text (its 16 bytes shown as the UUID).
     r.rows = 0;
-    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "BOT", "2c601cde", "", 100, collect_row, &r, next, sizeof next), 1);
+    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots", "2c601cde", "", 100, collect_row, &r, next, sizeof next), 1);
     T_EQ_STR(next, "");
-    T_EQ_STR(r.col0, "pk");
-    T_EQ_STR(r.first[0], "BOT#2c601cde-63d2-5291-8fcb-735f5860b1ec");
-    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "BOT; DROP TABLE items", NULL, "", 10, collect_row, &r, next, sizeof next),
+    T_EQ_STR(r.col0, "id");
+    T_EQ_STR(r.first[0], "2c601cde-63d2-5291-8fcb-735f5860b1ec");
+    // "column=value": an equality, a UUID by its text.
+    r.rows = 0;
+    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots", "id=98d81d2b-94d3-540f-a5c9-106293670763", "", 100, collect_row, &r, next,
+                           sizeof next),
+             1);
+    T_EQ_STR(r.first[0], "98d81d2b-94d3-540f-a5c9-106293670763");
+    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots", "nope=1", "", 10, collect_row, &r, next, sizeof next), CB_E_INVALID);
+    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots; DROP TABLE users", NULL, "", 10, collect_row, &r, next, sizeof next),
              CB_E_INVALID);
-    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots", NULL, "", 10, collect_row, &r, next, sizeof next), CB_E_INVALID);
+    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "BOT", NULL, "", 10, collect_row, &r, next, sizeof next), CB_E_INVALID);
 
-    // Query: SQL over the items table; reads always, writes only when allowed,
+    // Query: SQL over the tables; reads always, writes only when allowed,
     // one statement only.
     r.rows = 0;
-    T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT count(*) AS n FROM items WHERE pk LIKE 'BOT#%'", false, collect_row, &r), 1);
+    T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT count(*) AS n FROM bots", false, collect_row, &r), 1);
     T_EQ_STR(r.first[0], "49");
     T_EQ_STR(r.col0, "n");
-    T_EQ_INT(CB_STORE_CALL(s, admin_query, "DELETE FROM items", false, collect_row, &r), CB_E_FORBIDDEN);
-    T_EQ_INT(CB_STORE_CALL(s, admin_query, "  -- c\n DELETE FROM items", false, collect_row, &r), CB_E_FORBIDDEN);
+    T_EQ_INT(CB_STORE_CALL(s, admin_query, "DELETE FROM bots", false, collect_row, &r), CB_E_FORBIDDEN);
+    T_EQ_INT(CB_STORE_CALL(s, admin_query, "  -- c\n DELETE FROM bots", false, collect_row, &r), CB_E_FORBIDDEN);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "ATTACH DATABASE ':memory:' AS x", false, collect_row, &r), CB_E_FORBIDDEN);
-    T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT 1; DELETE FROM items", true, collect_row, &r), CB_E_INVALID);
+    T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT 1; DELETE FROM bots", true, collect_row, &r), CB_E_INVALID);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT 1;", false, collect_row, &r), 1);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELEKT", false, collect_row, &r), CB_E_INVALID);
-    T_EQ_INT(CB_STORE_CALL(s, admin_query, "DELETE FROM items WHERE pk = 'BOT#2c601cde-63d2-5291-8fcb-735f5860b1ec'", true,
+    T_EQ_INT(CB_STORE_CALL(s, admin_query, "DELETE FROM bots WHERE id = x'2c601cde63d252918fcb735f5860b1ec'", true,
                            collect_row, &r),
              0);
     bots_t b = { 0 };
@@ -1343,10 +1352,10 @@ static void admin_reads(void) {
     cb_game_row g = mkgame("adm001", 1);
     CB_ROWS_CALL(s, game_create, &g, a.id);
     r.rows = 0;
-    CB_STORE_CALL(s, admin_query, "SELECT attrs FROM items WHERE pk = 'GAME#adm001' AND sk = 'ROW'", false, collect_row, &r);
+    CB_STORE_CALL(s, admin_query, "SELECT state FROM games WHERE id = 'adm001'", false, collect_row, &r);
     T_CHECK(strncmp(r.first[0], "\\x", 2) == 0);
-    // CB_ADMIN_GAMES: the GAME family; only the ROW item carries the id (the
-    // console's Games panel), and its state reads as "\x" hex.
+    // CB_ADMIN_GAMES: the games table, whose rows carry the id (the console's
+    // Games panel), and its state reads as "\x" hex.
     id_rows ir = { 0 };
     T_CHECK(CB_STORE_CALL(s, admin_browse, CB_ADMIN_GAMES, NULL, "", 100, collect_id, &ir, next, sizeof next) >= 1);
     T_EQ_STR(ir.id, "adm001");
@@ -1721,26 +1730,25 @@ static void race_on(bool lone) {
 static void cas_under_threads(void) { race_on(false); }
 static void lone_cas_under_threads(void) { race_on(true); }
 
-// Group commit: threads queue item_txn writes at once. Each txn is (put my own
-// key, put a shared key only if absent); exactly one wins the shared key, the
-// losers report failed == 1 and leave NO trace of their own key (their
-// savepoint rolled back), and every winner's own key is there.
-typedef struct { cb_store *s; int id; int rc[40]; int failed[40]; } gc_arg;
+// Group commit: threads queue writes at once. Each is (insert my own row, insert a shared row that
+// exists at most once); exactly one wins the shared row, the losers answer CB_E_CONFLICT and leave NO
+// trace of their own row (their savepoint rolled back), and every winner's own row is there.
+typedef struct { cb_store *s; int id; int rc[40]; } gc_arg;
+typedef struct { int id, i; } gc_write;
+
+static int gc_put(cb_sql *x, void *ud) {
+    gc_write *w = ud;
+    char sql[256];
+    snprintf(sql, sizeof sql, "INSERT INTO signin_fails VALUES ('gc-%d-%d', 1, 0, 0, 9223372036854775807);"
+                              "INSERT INTO signin_fails VALUES ('gcs-%d', 1, 0, 0, 9223372036854775807);", w->id, w->i, w->i);
+    return cb_sql_exec(x, sql);
+}
 
 static void *gc_run(void *arg) {
     gc_arg *a = arg;
-    for (int i = 0; i < 40; i++) {
-        char own[64], shared[64];
-        snprintf(own, sizeof own, "GC#%d-%d", a->id, i);
-        snprintf(shared, sizeof shared, "GCS#%d", i);   // forty shared keys, many writers each
-        const cb_av at[] = { CB_AVN("v", a->id) };
-        cb_iwrite w[2] = {
-            { .op = CB_IW_PUT, .key = { own, "X" }, .attrs = at, .n_attrs = 1 },
-            { .op = CB_IW_PUT, .key = { shared, "X" }, .attrs = at, .n_attrs = 1, .cond = { CB_IF_ABSENT }, .n_cond = 1 },
-        };
-        int failed = -1;
-        a->rc[i] = a->s->ops->item_txn(a->s, w, 2, &failed, NULL);
-        a->failed[i] = failed;
+    for (int i = 0; i < 40; i++) {   // forty shared rows, many writers each
+        gc_write w = { a->id, i };
+        a->rc[i] = cb_sql_write(a->s, gc_put, &w);
     }
     return NULL;
 }
@@ -1756,13 +1764,11 @@ static void group_commit_keeps_each_txn_alone(void) {
         int winners = 0;
         for (int i = 0; i < T; i++) {
             char own[64];
-            snprintf(own, sizeof own, "GC#%d-%d", i, k);
-            cb_item it;
-            cb_item_init(&it);
-            int got = s->ops->item_get(s, (cb_ikey){ own, "X" }, true, &it);
-            cb_item_free(&it);
+            snprintf(own, sizeof own, "gc-%d-%d", i, k);
+            cb_signin_fails f;
+            int got = CB_STORE_CALL(s, signin_fails_get, own, 0, &f);
             if (a[i].rc[k] == CB_OK) { winners++; T_EQ_INT(got, CB_OK); }
-            else { T_EQ_INT(a[i].rc[k], CB_E_CONFLICT); T_EQ_INT(a[i].failed[k], 1); T_EQ_INT(got, CB_E_NOT_FOUND); }
+            else { T_EQ_INT(a[i].rc[k], CB_E_CONFLICT); T_EQ_INT(got, CB_E_NOT_FOUND); }
         }
         T_EQ_INT(winners, 1);
     }
@@ -1808,15 +1814,15 @@ int main(void) {
     T_RUN(membership_follows_commits);
     T_RUN(game_delete_cascades);
     T_RUN(user_delete_cascades);
-    T_RUN(lease_semantics);
+    if (tsb_dynamo()) T_RUN(lease_semantics);   // the SQL store keeps no lease (serve: app/bots.c, in memory)
     T_RUN(games_needing_bots_windows);
-    T_RUN(bots_idle_semantics);
+    if (tsb_dynamo()) T_RUN(bots_idle_semantics);
     T_RUN(ratings_applied_by_commit);
-    T_RUN(ratings_reindexed);
+    if (tsb_dynamo()) T_RUN(ratings_reindexed);   // the item layout's index key (SQL: an index)
     T_RUN(snapshots_query_shapes);
     T_RUN(snapshot_round_trip);
     T_RUN(snapshot_set_extras_rewrites_only_extras);
-    T_RUN(replay_copies_hold_no_names);
+    if (tsb_dynamo()) T_RUN(replay_copies_hold_no_names);   // the item layout's pointers (SQL: replay_players holds no name)
     T_RUN(chat_newest_oldest_first);
     if (tsb_dynamo()) T_RUN(admin_reads_dynamo);
     else T_RUN(admin_reads);
@@ -1825,7 +1831,7 @@ int main(void) {
     T_RUN(big_items_and_pages);
     T_RUN(cas_under_threads);
     T_RUN(lone_cas_under_threads);
-    T_RUN(group_commit_keeps_each_txn_alone);
+    if (!tsb_dynamo()) T_RUN(group_commit_keeps_each_txn_alone);
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
     if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", g_dir);
