@@ -223,8 +223,8 @@ jobs:
           /tmp/cfn/bin/cfn-lint --regions us-east-1 -- c_base/providers/aws/ops/cbase.yaml c_base/providers/aws/ops/site/web.yaml c_base/providers/aws/ops/github_oidc.yaml
       - name: the shell scripts
         run: |
-          bash -n c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/ops_env.sh c_base/providers/aws/ops/deploy.sh
-          shellcheck -x .github/scripts/fuzz_select.sh c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/providers/aws/ops/test/changeset_gate_test.sh c_base/providers/aws/ops/role_covers_template.sh c_base/providers/aws/ops/test/role_covers_template_test.sh c_base/fuzz/test/fuzz_mk_test.sh
+          bash -n c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/ops_env.sh c_base/providers/aws/ops/deploy.sh
+          shellcheck -x .github/scripts/fuzz_select.sh c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/providers/aws/ops/test/changeset_gate_test.sh c_base/providers/aws/ops/role_covers_template.sh c_base/providers/aws/ops/test/role_covers_template_test.sh c_base/fuzz/test/fuzz_mk_test.sh
       - name: web_deploy.sh and lambda_deploy.sh refuse a tree behind main (no AWS calls)
         run: bash c_base/ops/test/web_deploy_gate_test.sh
       - name: ops_env.sh never generates a secret for a live stack (no AWS calls)
@@ -249,6 +249,8 @@ jobs:
       # emulation. Same bytes as the x86 + QEMU build this replaced.
       - name: package
         run: c_base/providers/aws/ops/package.sh
+      - name: the pinned Alpine and the built-in OpenSSL are inside their support windows
+        run: c_base/providers/aws/ops/eol_guard.sh c_base/dist/bootstrap
       - uses: actions/upload-artifact@v6
         with:
           name: cbase-lambda
