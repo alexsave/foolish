@@ -217,6 +217,20 @@ $(eval $(call C_VARIANT,build/obj/overlay,CC,OVERLAY_CFLAGS))
 build/replay_overlay_test: $(call c_objs,build/obj/overlay,$(CORE_SRC) tests/replay_overlay_test.c)
 	$(CC) $(OVERLAY_CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# The wasm bots module's size limits, driven natively: WORLD_LOG_CAP=40 (a sampled world keeps
+# at most 40 logs, its slot marked short) and the solver table at CD_TT_BITS=12 with
+# CD_TT_2WAY and CD_TT_PACK8, which no other native build sets. tests/tests.c compiled with
+# -DWASM_CAPS_TESTS runs only the cordite, octogen and belief-log cases under them (the rest of
+# the suite assumes the native sizes). Its own objects, single-threaded like the shipped module.
+WASMCAPS_CFLAGS = $(filter-out -fopenmp,$(CFLAGS)) -DWASM_CAPS_TESTS -DWORLD_LOG_CAP=40 \
+                  -DCD_TT_BITS=12 -DCD_TT_2WAY -DCD_TT_PACK8
+$(eval $(call C_VARIANT,build/obj/wasmcaps,CC,WASMCAPS_CFLAGS))
+.PHONY: tests-wasm-caps
+build/cnitro_tests_wasmcaps: $(call c_objs,build/obj/wasmcaps,$(CORE_SRC) tests/tests.c)
+	$(CC) $(WASMCAPS_CFLAGS) $^ -o $@ $(LDFLAGS)
+tests-wasm-caps: build/cnitro_tests_wasmcaps
+	./build/cnitro_tests_wasmcaps
+
 # The same suite under AddressSanitizer + UBSan, at -O1, from its own objects
 # (build/obj/asan - not CORE_OBJ, whose objects are -O3 -flto and not
 # instrumented).
