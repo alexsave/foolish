@@ -190,3 +190,53 @@ Rig additions: prof_sc.sh (syscalls per move via perf stat tracepoints), prof_mm
 - Item 9: the smokes did not set CBASE_DEV=1 and serve refused to start; fixed, all six smokes green (smoke_authz /health too).
 - Also fixed: unit_name_gate (store_priv.h comment from the creds commit).
 - NOT DONE: item 10, in-memory bot leases (design in Pass 2 item 1 above).
+
+
+## Sniper 5 paused (2026-10-19, stopped for "proper SQL first")
+Everything below is committed and pushed on vm-fixes; the tree is clean, no WIP.
+Commits, oldest first: 5156ecd64 (item 1: LOG# items), the one-lock commit (item 2), the in-memory-lease commit (item 3), 8bc0df4e0 (item 5: tally deleted).
+`make -k test` and `make smoke` were green at 8bc0df4e0.
+
+### Item 1 (partial): the session log left the game row
+A commit PUTs its log records as one item pk `LOG#<game>`, sk = the new version zero-padded to 20 digits; the ROW keeps only `log_from` (version where the session log starts).
+`game_logs` (rows_foolish.c cb_rows_game_logs) reads it for the bot drive and finalize; `game_get` never carries logs.
+cb_game_commit has log_add/log_add_len/log_clear; a deal or lobby clears (old items pruned after the commit); game_delete prunes all.
+NOT done: native relational tables for any family, export.c (unchanged: it maps Dynamo families to CSV and the import writes one LOG item), items table unchanged (WITHOUT ROWID on items broke admin browse, which pages by rowid, so it was reverted).
+BLOCKER on the item-table schema: the product's rows are written through the generic item layer (items.h) shared with the aws provider and the in-memory test store, so a native schema means replacing cb_store_ops item_* and rewriting rows_auth.c and rows_foolish.c together; the admin browse (rowid cursor) and unit_dynamo_ops (exact request sequences) are the other dependents.
+MEASURED REGRESSION to fix first in the SQL rewrite: saturation (sat.sh, 8 two-seat games, 1 CPU, CBASE_REQ_WORKERS=1) went from 16.8k moves/s (I0, HEAD before this pass) to 11.7k (I1 = item 1 alone; I2, I3 the same within noise).
+Human pace is unchanged (370/280 us at 64/192 games against 380/260 the same day).
+Cause: every move is now an item_txn of two writes (ROW update + LOG put) instead of the one-write fast path, and touches two pages (walChecksumBytes 2.7% against 1.1%, vfs_write, VdbeExec, memcmp up).
+A native game_moves INSERT in the same transaction as the games UPDATE should cost far less than a second generic item write; or keep the last few records inline in the row.
+Long-game benefit (no O(log) copy, no 400 KB cap) is real but was not measured (no WAL bytes per move number was taken; the rig only reports db size).
+
+### Item 2 (done)
+cb_table_run takes cb_table_order_lock (64 stripes) at the start and holds it through the commit and pushes; cb_section_commit and the TABLE_EMPTY path no longer lock; contention_pause and CB_TABLE_BACKOFF_MS are gone; a lost fence is an error (500), not a retry; the attempt loop remains only for the cache recheck (2 attempts).
+The bot cycle (bots.c run_cycle) holds the same stripe lock through its compute, so a human move at a table waits for a bot drive (up to ~6 ms for octogen), and unrelated games on the same stripe too; stripes were not resized.
+Left: the row cache is still not authoritative (the cache-drop branches remain); the bot loop's CAS retry and its tests (steal_commits) remain.
+Tests: a_lost_fence_is_an_error_not_a_retry, a_lost_delete_is_an_error (mutation-checked). No threaded test of the lock.
+
+### Item 3 (partial)
+Under serve (ctx->job_start_after set) the bot lease is an in-memory list behind a mutex (bots.c mem_lease_*), 2x wall-ceiling guard against a hung drive; kick_wanted reads it; a failed kick is retried once from a timer (not on NOMEM).
+The 10 s scan now runs once after start (cb_schedule.serve_once) as the recovery pass.
+Test: unit_bots_kick serve_leases_live_in_memory (mutation-checked).
+NOT done: the store lease_acquire/renew/release/lease_held, bots_idle, the SCAN marker upkeep (scan_write, needs_bots on every commit) and games_needing_bots on the SCAN partition are still there and used by the aws provider and ~40 tests; a dual path (in_memory()) exists on purpose until the store ops go. Planned replacement: a gsi2 "BOTSDUE" entry on the ROW instead of the SCAN item, queried only at startup.
+
+### Item 4 (not started)
+Per Alex: a plain binary WebSocket with netwire frames both ways, no MQTT on the VM path, a user -> connections map plus game -> viewers, ws ping/pong, HTTP fallback stays, iOS FoolishNet out of scope (list what it needs: it speaks the same MQTT frames through netclient.c).
+The web host does not speak MQTT itself: see scratchpad/vm_simplify_codemap.md (backend.ts:246-312 moves opaque binary frames; MQTT encoding is in foolish/c/src/netclient.c and shared/c/mqtt), so the web needs at most a subprotocol-string change.
+Server pieces to replace: c_base/core/src/realtime/stream_mqtt.c (cb_mqtt_authorize, on_packet), providers/local/src/realtime/rt_local.c (lconn ix[], topic index, job/pump).
+Security requirement (Alex): sign-out, session revocation and account deletion must close that user's sockets (JWT verify never reads the SESSION row, so a revoked access token stays valid until expiry); check the session is live at socket connect; mutation-checked test: sign out, the socket closes, further frames are refused.
+
+### Item 5 (partial)
+Deleted: cb_store_tally and its producers (store_dynamo.c), handler.c and bots.c debug lines, bench_dynamo (Makefile target too); name gate allow.txt lowered.
+NOT done: budget_left/deadline/rekick in bots.c (cold: INT64_MAX under serve; they share ctx->deadline_ms with main_lambda.c) and the after-phase (after.c, cb_after_fanout, cb_after_kick; never opened under serve).
+
+### Item 6 (measured only)
+RSS at human pace, 0.1 CPU, 1 worker: 64 games 9.5 MB, 192 games 13.2 MB, 384 games 14.8 MB; the steady slope is about 4 KB per connection (384 connections for 192 games), the 64 -> 192 step (14 KB per connection) is heap high water from signup.
+The structs are about 1.2 KB per connection (cb_ws ~390, lconn ~360, cb_mqtt_conn ~350), so shrinking them (ix[32] and subs[32] are 512 B) would save under 10%; SO_SNDBUF/SO_RCVBUF are kernel memory, not RSS, and setting them disables autotuning. Nothing changed.
+
+### Final numbers (I3 = all of the above)
+Human pace 0.1 CPU: 64 games 390 us/move p95 0.9 ms RSS 9.5 MB; 192 games 250 us p95 0.6 ms RSS 13.2 MB; 384 games 220 us p95 0.5 ms RSS 14.8 MB.
+Saturation: 11.7k moves/s against 16.8k for the pass's start (see item 1).
+Saturation top self time on I3: sock_def_readable 7.0, vfs_write 4.7, el0_svc 4.1, __arch_copy_from_user 3.5, memcpy 2.8, walChecksumBytes 2.7, malloc 2.1, memcmp 2.1, printf_core 1.9, strlen 1.8 (I0: sock_def_readable 8.9, el0_svc 4.8, memcpy 3.7, vfs_write 3.7, malloc 2.7, printf_core 1.8, strcmp 1.7).
+Rig note: binaries bin/serve-I0 (start), I1, I2, I3 are in c_base/bench/nano/bin; the lock script is scratchpad/lrun.sh.
