@@ -4,11 +4,11 @@
 //   CBASE_TABLE=cbase build/cbase-export ./cbase.sqlite
 //   CBASE_TABLE=cbase build/cbase-export --rate 100 --into-existing ./cbase.sqlite
 //
-// Both backends keep the same items (core/src/store/items.h), so this is the
-// item layer's walk and put: item_keys lists the table's keys, item_batch_get
-// reads them 100 at a time, item_write puts each into the SQLite store (which
-// the schema creates when the file is new). Every attribute is copied as it
-// is, the index keys and the TTL's two attributes among them.
+// The table's keys are listed (item_keys), sorted into the order the rows need, and read 100 at a
+// time (item_batch_get); each item is decoded by its family into its row and written through the SQL
+// store's own operations into the plain tables (store/migrate_rows.h lists the families). Nothing of
+// DynamoDB's key shape reaches the file. An unknown family, a duplicate or non-canonical username,
+// and a row the store refuses each fail the run loudly.
 //
 // READ-ONLY ON DYNAMODB: the Scan, BatchGetItem and DescribeTable calls, and
 // nothing that writes. The table is shared with production, so the reads are
@@ -17,32 +17,25 @@
 // on), and held to --rate percent of them (default 25; 100 is all of the
 // provisioned capacity, which production then goes without).
 //
-// It then VERIFIES: both sides' keys listed again with item_keys (the table
-// a second time, at the same pace), counted and compared. A key in the table
-// and not in the file is a MISSING item; a key in the file and not in the
-// table is an EXTRA (an item deleted from the table, or TTL-expired, during
-// the run). Then three more checks (verify_deep): the pk families counted on both sides, every
-// item's gsi1 and gsi2 keys queried in the file (each must list its item), and a second read of
-// every item compared with the file (an item written in the table since is CHANGED).
-//
-// Values are also compared as each item is copied: the item is read back from the file right
-// after its put and compared attribute by attribute (kind and value, and the same set of
-// attributes) with the item as DynamoDB answered it. A difference is a MISMATCH.
+// It then VERIFIES: each family's item count against its table's row count (an expired session,
+// token or sign-in count is skipped and counted as such; the bot scan's markers are not kept), then a
+// second read of the whole table, each item looked up in the file by its row's natural key (an
+// account's id, a game's code, a replay's id, ...) and compared field by field.
 //
 // A new file is built as <file>.partial and renamed to <file> only when the copy and every
 // check passed, so <file> is never half an export; a failed run leaves the .partial for a look
-// and the next run refuses until it is removed. A file that already exists is refused unless
-// --into-existing (a put replaces an item). A new file's seed (the bots a store is opened
-// with) is cleared first: the file ends up holding exactly the table. --no-verify skips the
-// second scan and the checks after it.
+// and the next run refuses until it is removed. A file that already holds accounts or games is
+// refused unless --into-existing. A new file's seed (the bots a store is opened with) is
+// cleared first: the file ends up holding exactly the table. --no-verify skips the second read.
 //
 // Credentials and region come from the environment (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 // AWS_SESSION_TOKEN, AWS_REGION), as the Lambda gets them; they are never printed.
 //
-// Exit 0: every item copied and read back equal, and the key sets equal. 1: an
-// item failed to copy or read back different, or the key sets differ. 2: a usage or I/O error.
+// Exit 0: every item copied, every count equal, every item read back equal. 1: an item failed to
+// copy, a count differs or an item differs. 2: a usage or I/O error.
 #include "store/store.h"
-#include "store/store_copy.h"
+#include "store/migrate_rows.h"
+#include "util/clock.h"
 #include "store/store_priv.h"
 #include "util/err.h"
 #include "util/log.h"
@@ -100,106 +93,84 @@ static int keys_of(cb_store *st, keyset *out) {
     return rc;
 }
 
-typedef struct {
-    cb_store *dst;
-    const key *keys;     // this batch's keys
-    long      copied, failed, mismatched;
-    bool      seen[100];
-    int       base;
-} copy_ctx;
+static bool count_cell(int n, const char *const *names, const char *const *values, void *ud) {
+    (void)names;
+    int64_t v;
+    if (n > 0 && values[0] && num_parse_i64_cstr(values[0], 0, INT64_MAX, &v)) *(long *)ud = (long)v;
+    return false;
+}
 
-static bool put_one(int i, const cb_item *it, void *ud) {
-    copy_ctx *c = ud;
-    c->seen[i] = true;
-    cb_ikey at = { c->keys[i].pk, c->keys[i].sk };
-    int rc = cb_copy_put(c->dst, at, it);
-    if (rc == CB_OK) {
-        c->copied++;
-        if (!cb_copy_same(c->dst, at, it)) {
-            c->mismatched++;
-            fprintf(stderr, "cbase-export: %s / %s reads back different from the table\n", at.pk, at.sk);
-        }
-    } else {
-        c->failed++;
-        fprintf(stderr, "cbase-export: cannot put %s / %s: %s\n", at.pk, at.sk, cb_strerror(rc));
-    }
+// The copy's order: the family's rank (migrate_rows.h), then the key. An unknown family sorts first,
+// so it is reported before anything is written.
+static int order_cmp(const void *a, const void *b) {
+    const key *x = a, *y = b;
+    int rx = cb_mig_rank(x->pk, x->sk), ry = cb_mig_rank(y->pk, y->sk);
+    return rx != ry ? (rx < ry ? -1 : 1) : key_cmp(a, b);
+}
+
+// A deep copy of an item as the read handed it.
+static bool item_dup(cb_item *dst, const cb_item *src) {
+    *dst = *src;
+    dst->store.p = malloc(src->store.len ? src->store.len : 1);
+    if (!dst->store.p) return false;
+    memcpy(dst->store.p, src->store.p, src->store.len);
+    dst->store.cap = src->store.len;
     return true;
 }
 
 typedef struct {
-    cb_store  *dst;
-    const key *keys;
-    long       differ, seen;
-    bool       got[100];
-} rescan_ctx;
+    cb_item items[100];
+    bool    got[100];
+} batch;
 
-static bool rescan_one(int i, const cb_item *it, void *ud) {
-    rescan_ctx *c = ud;
-    c->got[i] = true;
-    cb_ikey at = { c->keys[i].pk, c->keys[i].sk };
-    if (!cb_copy_same(c->dst, at, it)) {
-        if (c->differ++ < 20) printf("CHANGED since it was copied: %s / %s\n", at.pk, at.sk);
-    }
-    c->seen++;
+static bool keep_one(int i, const cb_item *it, void *ud) {
+    batch *b = ud;
+    if (item_dup(&b->items[i], it)) b->got[i] = true;
     return true;
 }
 
-// The checks after the key sets agree. Returns the number of failed ones.
-//   1. The key families: each pk prefix (USER, GAME, ...) counted in the table and in the file.
-//   2. Every index key round-trips: each item's gsi1 and gsi2 keys, queried in the file, list the item.
-//   3. A second read of the table's items (the keys of `a`) compared with the file attribute by attribute:
-//      an item written in the table since it was copied shows as CHANGED (expected while the app still
-//      writes; none at the cutover, when writes are frozen).
-static int verify_deep(cb_store *src, cb_store *dst, const keyset *a, const keyset *b) {
-    int failed = 0;
-    printf("families (table / file):\n");
-    for (size_t i = 0; i < a->n;) {
-        char fam[64];
-        cb_copy_family(a->k[i].pk, fam, sizeof fam);
-        long ta = 0, tb = 0;
-        size_t j = i;
-        while (j < a->n) {
-            char f2[64];
-            cb_copy_family(a->k[j].pk, f2, sizeof f2);
-            if (strcmp(f2, fam) != 0) break;
-            ta++, j++;
+// Every key in `ks`, read 100 at a time in their order: with `m` and `put`, each put into the SQL store
+// (cb_mig_put); else each compared with it (cb_mig_same). The items that failed or differ; *gone the keys
+// the table no longer had. -1 when a read failed.
+static long walk(cb_store *src, cb_mig *m, const keyset *ks, bool put, long *gone) {
+    long bad = 0;
+    *gone = 0;
+    batch *b = calloc(1, sizeof *b);
+    if (!b) return -1;
+    for (size_t base = 0; base < ks->n; base += 100) {
+        int n = ks->n - base < 100 ? (int)(ks->n - base) : 100;
+        cb_ikey k[100];
+        for (int i = 0; i < n; i++) k[i] = (cb_ikey){ ks->k[base + i].pk, ks->k[base + i].sk };
+        memset(b->got, 0, sizeof b->got);
+        if (src->ops->item_batch_get(src, k, n, NULL, 0, keep_one, b) != CB_OK) {
+            fprintf(stderr, "cbase-export: reading items %zu-%zu failed\n", base, base + (size_t)n);
+            free(b);
+            return -1;
         }
-        for (size_t k = 0; k < b->n; k++) {
-            char f2[64];
-            cb_copy_family(b->k[k].pk, f2, sizeof f2);
-            if (strcmp(f2, fam) == 0) tb++;
+        for (int i = 0; i < n; i++) {
+            if (!b->got[i]) { (*gone)++; continue; }
+            if (put) { if (cb_mig_put(m, &b->items[i]) != CB_OK) bad++; }
+            else if (cb_mig_same(m, &b->items[i]) != 1) bad++;
+            free(b->items[i].store.p);
         }
-        printf("  %-16s %6ld %6ld%s\n", fam, ta, tb, ta == tb ? "" : "   DIFFERENT");
-        if (ta != tb) failed++;
-        i = j;
+        if (put && ((base / 100) % 50 == 49 || base + 100 >= ks->n)) printf("  %zu of %zu read\n", base + (size_t)n, ks->n);
     }
-    long indexed = 0, bad = 0;
-    for (size_t i = 0; i < b->n; i++) {
-        int n = 0, miss = cb_copy_index_roundtrip(dst, (cb_ikey){ b->k[i].pk, b->k[i].sk }, &n);
-        indexed += n;
-        if (miss != 0) {
-            if (bad++ < 20) printf("INDEX KEY does not list the item: %s / %s\n", b->k[i].pk, b->k[i].sk);
-        }
+    free(b);
+    return bad;
+}
+
+// The rows a file holds that a run would put over: accounts, games, replays.
+static long held(cb_store *dst) {
+    long total = 0;
+    static const char *const T[] = { "users", "games", "replays", "chat" };
+    for (size_t i = 0; i < sizeof T / sizeof T[0]; i++) {
+        char sql[64];
+        snprintf(sql, sizeof sql, "SELECT count(*) FROM %s", T[i]);
+        struct { long n; } c = { -1 };
+        if (CB_STORE_CALL(dst, admin_query, sql, false, count_cell, &c) != 1) return -1;
+        total += c.n;
     }
-    printf("index keys: %ld checked, %ld did not round-trip\n", indexed, bad);
-    if (bad) failed++;
-    rescan_ctx c = { .dst = dst };
-    long gone = 0;
-    for (size_t base = 0; base < a->n; base += 100) {
-        int n = a->n - base < 100 ? (int)(a->n - base) : 100;
-        cb_ikey ks[100];
-        for (int i = 0; i < n; i++) ks[i] = (cb_ikey){ a->k[base + i].pk, a->k[base + i].sk };
-        c.keys = a->k + base;
-        memset(c.got, 0, sizeof c.got);
-        if (src->ops->item_batch_get(src, ks, n, NULL, 0, rescan_one, &c) != CB_OK) {
-            fprintf(stderr, "cbase-export: the second read failed at item %zu\n", base);
-            return failed + 1;
-        }
-        for (int i = 0; i < n; i++) if (!c.got[i]) gone++;
-    }
-    printf("second read: %ld items compared, %ld changed, %ld gone\n", c.seen, c.differ, gone);
-    if (c.differ || gone) failed++;
-    return failed;
+    return total;
 }
 
 static void usage(void) {
@@ -276,30 +247,19 @@ int main(int argc, char **argv) {
     }
     cb_store_dynamo_read_share(src, (double)pct / 100.0);
 
-    keyset have;
-    if (keys_of(dst, &have) != CB_OK) { fprintf(stderr, "cbase-export: cannot list %s\n", work); return 2; }
-    if (fresh) {
-        for (size_t i = 0; i < have.n; i++) {
-            cb_iwrite del;
-            memset(&del, 0, sizeof del);
-            del.op = CB_IW_DELETE;
-            del.key = (cb_ikey){ have.k[i].pk, have.k[i].sk };
-            if (dst->ops->item_write(dst, &del, NULL) != CB_OK) {
-                fprintf(stderr, "cbase-export: cannot clear the new file's seed (%s / %s)\n", del.key.pk, del.key.sk);
-                keyset_free(&have);
-                cb_store_close(src);
-                cb_store_close(dst);
-                return 2;
-            }
-        }
-    } else if (have.n && !existing) {
-        fprintf(stderr, "cbase-export: %s already holds %zu items; use --into-existing to put over them\n", work, have.n);
-        keyset_free(&have);
+    // A new file was seeded with the store's bots: the table's own are the truth, so they go first. A file
+    // that already holds accounts or games is put over only with --into-existing.
+    if (fresh && CB_ROWS_CALL(dst, bots_replace, NULL, 0) != CB_OK) {
+        fprintf(stderr, "cbase-export: cannot clear the new file's seed\n");
+        return 2;
+    }
+    long had = held(dst);
+    if (had < 0 || (had > 0 && !existing)) {
+        fprintf(stderr, "cbase-export: %s already holds %ld rows; use --into-existing to put over them\n", work, had);
         cb_store_close(src);
         cb_store_close(dst);
         return 2;
     }
-    keyset_free(&have);
 
     keyset want;
     rc = keys_of(src, &want);
@@ -310,56 +270,34 @@ int main(int argc, char **argv) {
         cb_store_close(dst);
         return 2;
     }
+    qsort(want.k, want.n, sizeof *want.k, order_cmp);
     printf("table %s: %zu items\n", table, want.n);
 
-    copy_ctx c = { .dst = dst };
-    long vanished = 0;
-    for (size_t base = 0; base < want.n; base += 100) {
-        int n = want.n - base < 100 ? (int)(want.n - base) : 100;
-        cb_ikey ks[100];
-        for (int i = 0; i < n; i++) ks[i] = (cb_ikey){ want.k[base + i].pk, want.k[base + i].sk };
-        c.keys = want.k + base;
-        memset(c.seen, 0, sizeof c.seen);
-        rc = src->ops->item_batch_get(src, ks, n, NULL, 0, put_one, &c);
-        if (rc != CB_OK) {
-            fprintf(stderr, "cbase-export: reading items %zu-%zu failed: %s\n", base, base + (size_t)n, cb_strerror(rc));
-            c.failed += n;
-            continue;
-        }
-        for (int i = 0; i < n; i++) if (!c.seen[i]) vanished++;
-        if ((base / 100) % 50 == 49 || base + 100 >= want.n)
-            printf("  %ld copied of %zu\n", c.copied, want.n);
-    }
-    if (vanished) printf("%ld keys were gone by the time they were read (deleted or expired during the run)\n", vanished);
+    // THE COPY: each item decoded by its family into its row, in the order rows need (accounts before
+    // the seats that name them, a game's seats before its row, a replay's history rows before it).
+    cb_mig *m = cb_mig_new(dst, cb_now_ms(), stderr);
+    if (!m) return 2;
+    long gone = 0, failed = walk(src, m, &want, true, &gone);
+    if (failed >= 0 && cb_mig_finish(m) != CB_OK) failed++;
+    if (gone) printf("%ld keys were gone by the time they were read (deleted or expired during the run)\n", gone);
+    int exit_code = failed != 0 ? 1 : 0;
+    if (failed < 0) exit_code = 2;
 
-    if (c.mismatched) printf("%ld items read back from the file different from the table\n", c.mismatched);
-    int exit_code = c.failed || c.mismatched ? 1 : 0;
-    if (verify) {
-        keyset a, b;
-        if (keys_of(src, &a) != CB_OK || keys_of(dst, &b) != CB_OK) {
-            fprintf(stderr, "cbase-export: the verification scan failed\n");
-            return 2;
-        }
-        // Two sorted lists: walk them together.
-        size_t i = 0, j = 0;
-        long missing = 0, extra = 0;
-        while (i < a.n || j < b.n) {
-            int d = i == a.n ? 1 : j == b.n ? -1 : key_cmp(&a.k[i], &b.k[j]);
-            if (d < 0) {
-                if (missing++ < 20) printf("MISSING from the file: %s / %s\n", a.k[i].pk, a.k[i].sk);
-                i++;
-            } else if (d > 0) {
-                if (extra++ < 20) printf("EXTRA in the file:     %s / %s\n", b.k[j].pk, b.k[j].sk);
-                j++;
-            } else { i++; j++; }
-        }
-        printf("verify: table %zu keys, file %zu keys, %ld missing, %ld extra\n", a.n, b.n, missing, extra);
-        if (missing || extra) exit_code = 1;
-        if (verify_deep(src, dst, &a, &b) != 0) exit_code = 1;
-        keyset_free(&a);
-        keyset_free(&b);
+    // THE CHECKS: the counts (each family's items against its table's rows), then a second read of the
+    // whole table, each item looked up in the file by its row's natural key and compared field by field
+    // (at the cutover, writes are frozen: any difference is a failure).
+    if (cb_mig_report(m, stdout) != 0) exit_code = exit_code ? exit_code : 1;
+    if (verify && exit_code == 0) {
+        keyset again;
+        if (keys_of(src, &again) != CB_OK) { fprintf(stderr, "cbase-export: the verification scan failed\n"); return 2; }
+        qsort(again.k, again.n, sizeof *again.k, order_cmp);
+        long gone2 = 0, differ = walk(src, m, &again, false, &gone2);
+        printf("second read: %zu items, %ld differ from the file, %ld gone, %zu then %zu keys\n", again.n, differ, gone2, want.n, again.n);
+        if (differ != 0 || gone2 || again.n != want.n) exit_code = 1;
+        keyset_free(&again);
     }
-    printf("%ld items copied, %ld failed, %ld read back different\n", c.copied, c.failed, c.mismatched);
+    printf("%ld items failed\n", failed);
+    cb_mig_free(m);
     keyset_free(&want);
     cb_store_close(src);
     cb_store_close(dst);
