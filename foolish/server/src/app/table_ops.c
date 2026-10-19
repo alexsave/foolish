@@ -684,7 +684,12 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
     for (int attempt = 1; attempt <= CB_TABLE_ATTEMPTS; attempt++) {
         if (contended) {
             int64_t pause = contention_pause(attempt);
-            if (pause > 0) cb_app_sleep(pause);
+            // Under serve the writers that beat us are threads of this process,
+            // done in microseconds, and a sleep here would hold a request worker
+            // (one on a small box) while every other request waits. The reload
+            // below is the retry; the attempts bound it. The sleep stays where
+            // writers are other processes (lambda).
+            if (pause > 0 && !ctx->job_start_after) cb_app_sleep(pause);
         }
         cb_game_row row;
         bool cached = false;

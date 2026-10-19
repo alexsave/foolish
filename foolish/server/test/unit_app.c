@@ -2050,6 +2050,50 @@ static void a_drive_takes_its_lease_over_the_speedup(void) {
     g_cfg.bot_speedup = 1;
 }
 
+// ---- a bot's pause does not hold the thread --------------------------------------------
+
+static int  g_afters;
+static char g_after_gid[CB_GAME_ID_MAX + 1];
+static int64_t g_after_ms;
+static int after_recorder(cb_ctx *ctx, const char *job, const char *game_id, int64_t delay_ms) {
+    g_afters++;
+    g_after_ms = delay_ms;
+    snprintf(g_after_gid, sizeof g_after_gid, "%s", game_id);
+    return CB_OK;
+}
+
+// Under serve (a provider with a delayed start) a bot waiting out its pause
+// lets go of the lease and the thread and asks to be run again after the wait.
+// Game A's bot waits; game B's bot moves in the meantime on the same thread,
+// and nothing slept.
+static void a_bot_pause_does_not_hold_the_thread(void) {
+    setup(1);
+    char ga[CB_GAME_ID_MAX + 1], gb[CB_GAME_ID_MAX + 1];
+    reply r;
+    create_game(ga, &r);
+    meta("A", ASK_ADD_BOT, ga, NULL, &r);
+    meta("A", ASK_START, ga, NULL, &r);
+    create_game(gb, &r);
+    meta("A", ASK_ADD_BOT, gb, NULL, &r);
+    meta("A", ASK_START, gb, NULL, &r);
+    T_CHECK(until_a_bot_is_due(gb));
+    g_ctx.job_start_after = after_recorder;
+    g_afters = 0;
+    g_nslept = 0;
+    const int64_t va = version_of(ga), vb = version_of(gb);
+    T_EQ_INT(cb_bots_drive(&g_ctx, ga), CB_OK);   // A's bot is not due yet: it waits
+    T_EQ_INT(g_afters, 1);
+    T_EQ_STR(g_after_gid, ga);
+    T_CHECK(g_after_ms > 0);
+    T_EQ_INT(g_nslept, 0);
+    T_EQ_INT(version_of(ga), va);
+    g_now += 60000;   // B's pause is over (A's is only as long as the fake clock says)
+    T_EQ_INT(cb_bots_drive(&g_ctx, gb), CB_OK);   // B's bot moves while A waits
+    T_CHECK(version_of(gb) > vb);
+    T_EQ_INT(g_nslept, 0);
+    g_ctx.job_start_after = NULL;
+}
+
 // The drive's wall ceiling over k: a drive whose wait ran 13 s past what it
 // asked for (a starved host) is past a tenth of the 120 s ceiling, so at k 10
 // it hands the game to a fresh drive (the rekick) without acting; at k 1 the
@@ -2437,6 +2481,7 @@ int main(void) {
     T_RUN(bots_pace_at_production_speed_and_at_a_speedup);
     T_RUN(a_drive_takes_its_lease_over_the_speedup);
     T_RUN(the_scan_windows_follow_the_speedup);
+    T_RUN(a_bot_pause_does_not_hold_the_thread);
     T_RUN(the_wall_ceiling_follows_the_speedup);
     cb_row_cache_clear();
     cb_router_free(g_ctx.router);

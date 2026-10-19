@@ -177,6 +177,7 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
     cpu_acct cpu = { 0, 0, 0 };
     const int64_t started = cb_app_now();
     bool rekick = false;
+    int64_t wait_ms = 0;   // > 0: the drive lets go and the provider re-runs it after this long
     int64_t idle_version = -1;
     rc = CB_OK;
     for (int cycle = 0;; cycle++) {
@@ -204,6 +205,11 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
         if (delay > 0) {
             // A wait that would outlive the budget is the next drive's to sit out.
             if (delay > budget_left(ctx)) { rekick = true; break; }
+            // Where the provider can start a job later without holding a thread
+            // (serve: a loop timer), the wait is its to keep: sleeping here would
+            // stall every other game's bots behind this one's pause. Lambda has
+            // no such start and sits the wait out, one invocation per drive.
+            if (ctx->job_start_after) { wait_ms = delay; break; }
             cb_app_sleep(delay);
         }
     }
@@ -221,6 +227,11 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
         CB_DEBUG("store", "bot drive %s end: %d reads, %d writes, %g RCU, %g WCU (%s)", game_id, st.reads, st.writes,
                  st.rcu, st.wcu, st.detail);
     cb_section_free(s);
+    if (wait_ms > 0) {
+        int r = cb_job_start_after(ctx, CB_BOTS_JOB, game_id, wait_ms);
+        // A lost timer is the heartbeat scan's to catch, as a lost kick is.
+        if (r != CB_OK) CB_WARN("bots", "wait %s: not scheduled (%s)", game_id, cb_strerror(r));
+    }
     if (rekick && ctx->job_start) {
         CB_INFO("bots", "game %s: budget spent with bot work left, kicking a fresh drive", game_id);
         int r = cb_job_start(ctx, CB_BOTS_JOB, game_id);
