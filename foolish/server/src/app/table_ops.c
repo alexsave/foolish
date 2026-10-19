@@ -242,6 +242,18 @@ static void seat_id(const RosterSeat *seat, cb_uuid out) {
 // kernel will not read leave the summary absent, and the list shows the row
 // without it. One owner: the game end cuts it here for the pointers, and the
 // history list cuts it here for a pointer written before they held one.
+// The seats' names and the gaps of a STORED extras blob (the version-2 bytes
+// behind the dash in a replay link): decoded with the seat and move counts
+// the moves give, then read as the struct. The one reader of stored extras in
+// the server (the list's names and the summary's duration both come here).
+int cb_table_extras_read(ReplayExtras *x, const uint8_t *extras, int n_extras, int n_players, int n_moves) {
+    static _Thread_local unsigned char blob[sizeof(ReplayExtras)];
+    if (!extras || n_extras <= 0) return -1;
+    int nb = replay_extras_decode(extras, n_extras, n_players, n_moves, blob, (int)sizeof blob);
+    if (nb < 0 || replay_extras_unpack(blob, nb, x) < 0) return -1;
+    return 0;
+}
+
 void cb_table_snap_summary(cb_snap_summary *m, const uint8_t *code, int n_code, const uint8_t *extras, int n_extras) {
     ReplaySummary d;
     if (replay_summary_v6(code, n_code, &d) != REPLAY_EOK || d.num_eliminated < 0 || d.num_eliminated > CB_MAX_SEATS) return;
@@ -251,7 +263,7 @@ void cb_table_snap_summary(cb_snap_summary *m, const uint8_t *code, int n_code, 
     for (int i = 0; i < d.num_eliminated; i++) m->elim[i] = d.elimination[i];
     m->duration_s = -1;
     static _Thread_local ReplayExtras x;
-    if (n_extras > 0 && replay_extras_unpack(extras, n_extras, &x) >= 0 && x.n_gaps > 0) {
+    if (cb_table_extras_read(&x, extras, n_extras, d.num_players, d.moves) == 0 && x.n_gaps > 0) {
         double sum = 0;
         for (int i = 0; i < x.n_gaps; i++) sum += x.gaps[i];
         m->duration_s = sum >= 0 && sum < 2e9 ? (int32_t)(sum + 0.5) : -1;
