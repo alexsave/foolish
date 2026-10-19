@@ -3,6 +3,7 @@
 #include "pushes.h"
 
 #include "netwire.h"
+#include "../../../../shared/c/stream_frame.h"
 #include "realtime/stream_mqtt.h"
 
 #include "util/log.h"
@@ -14,6 +15,9 @@
 
 // The stream takes the same longest token the clients send.
 _Static_assert(CB_RT_TOKEN_MAX == NW_ACCESS_MAX, "stream_mqtt.h CB_RT_TOKEN_MAX is netwire.h NW_ACCESS_MAX");
+
+// The socket's own frames (stream_frame.h) and the pushes (netwire.h) share one kind byte.
+_Static_assert(NW_WS_SPECT < SF_HELLO && NW_WS_CHAT < SF_HELLO && NW_V1 == SF_V, "push kinds below the socket's own");
 
 const cb_topic_family cb_fam_views = { "views", "u/{user}/v" };
 const cb_topic_family cb_fam_seat = { "seat", "u/{user}/c/{doc}" };
@@ -63,7 +67,7 @@ void rt_publish_cast(cb_rt *rt, const char *user_id, const char *game_id, int64_
     if (!rt || !game_id) return;
     static _Thread_local NwFrame f;
     memset(&f, 0, sizeof f);
-    f.kind = NW_WS_CAST;
+    f.kind = user_id ? NW_WS_CAST : NW_WS_SPECT;   // the spectators' casts are their own kind: the stream has no topic to tell them
     frame_gid(&f, game_id);
     f.version = (uint32_t)version;
     f.blob.p = cast;

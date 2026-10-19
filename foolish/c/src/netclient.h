@@ -38,22 +38,19 @@
 #define NC_AUTH_MAX  (7 + NW_ACCESS_MAX)      // "Bearer " and the token
 #define NC_BODY_MAX  1100                     // a chat message is the largest body
 #define NC_FRAME_MAX 32768                    // an answered envelope this file hands out as an event
-#define NC_OUT_MAX   4096                     // one message to the broker: a CONNECT (its token) is the largest
-#define NC_MQ_IN_MAX (NC_FRAME_MAX + 1024)    // what the broker sends, whole packets and a part one
-#define NC_TOPIC_MAX 96                       // u/<user>/c/<game>: an MQTT topic this client names
+#define NC_OUT_MAX   4096                     // one message to the server: a HELLO (its token) or an action is the largest
+#define NC_MQ_IN_MAX (NC_FRAME_MAX + 1024)    // the largest frame the server sends
 #define NC_SESSION_BLOB_MAX 2400              // what nc_session_save writes, at most
 
 // Refresh an access token this long before it expires.
 #define NC_REFRESH_EARLY_MS 60000
-// The stream: a PINGREQ when nothing went out this long (the CONNECT asks for a
-// keep-alive of NC_KEEPALIVE_S), a refused subscription retried after
-// NC_RETRY_FIRST_MS doubling to NC_RETRY_MAX_MS, and a closed socket reopened
-// on the same schedule (reset by a CONNACK). A socket closed before its
-// CONNACK (the broker's refusal) refreshes the token first, at most once every
+// The stream: a PING when nothing went out this long, a refused subscription
+// retried after NC_RETRY_FIRST_MS doubling to NC_RETRY_MAX_MS, and a closed
+// socket reopened on the same schedule (reset by a READY). A socket closed
+// before its READY (the server's refusal) refreshes the token first, at most once every
 // NC_FORCE_REFRESH_MS.
 #define NC_PING_MS        30000
-#define NC_KEEPALIVE_S    60
-#define NC_PONG_MS        10000   // a PINGREQ and every packet since unanswered this long: half-open socket; nc_stream_next hands out one empty frame, "close it"
+#define NC_PONG_MS        10000   // a PING and every frame since unanswered this long: half-open socket; nc_stream_next hands out one empty frame, "close it"
 #define NC_FORCE_REFRESH_MS 600000
 #define NC_ACK_WAIT_MS    10000   // a subscription not answered in this long is asked again
 #define NC_RETRY_FIRST_MS 500
@@ -71,7 +68,7 @@
 #define NC_EV_SEATED  5   // a game subscription went live; ev->seated: the user sits there, as the book knows
 #define NC_EV_BAD     6   // a frame that is not this protocol (the host may log it)
 #define NC_EV_SESSION 7   // the session changed: keep nc_session_save's blob, show nc_session_info
-#define NC_EVENTS_MAX 16  // what one feed can change at most (packets past it wait for the next feed), and the session
+#define NC_EVENTS_MAX 16  // what one feed can change at most (a feed is one frame), and the session
 
 typedef struct {
     uint32_t id;                        // nc_next_request's: hand the answer back with it
@@ -170,7 +167,7 @@ typedef struct {
 
 typedef struct {
     uint16_t len;
-    uint8_t  bytes[NC_OUT_MAX];   // send as one BINARY frame: MQTT packets
+    uint8_t  bytes[NC_OUT_MAX];   // send as one BINARY message
 } NcOut;
 
 // ---- the session ------------------------------------------------------------------
@@ -219,9 +216,8 @@ const NcRequest *nc_req_board(void);
 const NcRequest *nc_req_history(int64_t now_ms);
 // The newest replay of a game the caller played in.
 const NcRequest *nc_req_replay(const char *gid, int gid_len, int64_t now_ms);
-// The stream's path (GET, upgraded to a WebSocket by the host with the
-// subprotocol "mqtt", MQTT over WebSocket's own name): "/mqtt", where AWS IoT
-// Core and `cbase serve` both speak it.
+// The stream's path (GET, upgraded to a plain binary WebSocket by the host, no
+// subprotocol): "/ws", where `cbase serve` speaks it (shared/c/stream_frame.h).
 const NcRequest *nc_req_stream(void);
 
 // ---- answers -----------------------------------------------------------------------
@@ -345,15 +341,18 @@ int nc_pump_due_ms(int64_t now_ms);
 // NW_OK, or NW_E_CAP / NW_E_WIRE.
 int nc_stream_sub(int what, const char *gid, int gid_len);
 int nc_stream_unsub(int what, const char *gid, int gid_len);
-// The socket opened (the CONNECT goes out next, once the token is fresh: the
+// The socket opened (the HELLO goes out next, once the token is fresh: the
 // pump refreshes it first when it is not); it closed (the answer is how long
 // to wait before reopening it, in ms).
 void nc_stream_opened(int64_t now_ms);
 int nc_stream_closed(int64_t now_ms);
-// One frame as it arrived (binary: MQTT packets, whole, several or part of one;
-// a text frame is not the broker's and is BAD): how many events it made, read
+// One message as it arrived (binary, one whole frame; a text message is not
+// the server's and is BAD): how many events it made, read
 // with nc_event.
 int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms);
+// Tests only: 1 takes every push whatever the client holds (the server sends a user
+// all their views, seat casts and chat; the client drops what it did not subscribe to).
+void nc_stream_hear_all(int on);
 // The next frame to send, or NULL for none now; call until NULL. A frame of
 // len 0 is not to be sent: close the socket (nc_stream_closed follows). Then
 // nc_stream_due_ms says how long until there is one (a retry, a ping, a quiet
@@ -380,7 +379,7 @@ void nc_gate_reset(const char *gid, int gid_len);
 //   - a move refused over a newer version refetches the game when no push has
 //     caught up NC_RECONCILE_MS later (let go the moment one does, or the host
 //     lets go of the game's stream);
-//   - a game subscription that goes live (SUBACK) takes the game whole once,
+//   - a game subscription that goes live (its REPLY) takes the game whole once,
 //     unless something newer is applied before the read would go;
 //   - a game's subscription hears both the seat's casts and the spectators',
 //     and the book takes the seat's when the user sits there (the last
@@ -389,7 +388,7 @@ void nc_gate_reset(const char *gid, int gid_len);
 //   - a create subscribes the game's stream itself;
 //   - a live game subscription that hears nothing of its game (a cast, a view,
 //     an answered read) for NC_QUIET_MS plus a jitter below
-//     NC_QUIET_JITTER_MS takes the game whole once, as the SUBACK's catch-up
+//     NC_QUIET_JITTER_MS takes the game whole once, as the REPLY's catch-up
 //     does: the stream is at most once, and a lost LAST cast has no later one
 //     to show its gap. Not once the game's terminal board was applied.
 // After each feed the host reads the events it made, nc_event(0) up to the

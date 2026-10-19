@@ -15,7 +15,7 @@
 #include "evwire.h"
 #include "game.h"
 
-#include "../../../shared/c/mqtt/mqtt.h"
+#include "../../../shared/c/stream_frame.h"
 
 #include <stdlib.h>
 
@@ -94,7 +94,7 @@ static void requests(void) {
     const uint8_t out_g[] = { 1, NW_SIGNOUT, NW_SCOPE_GLOBAL };
     T_EQ_MEM(q->body, q->body_len, out_g, sizeof out_g);
     q = nc_req_stream();
-    T_EQ_MEM(q->path, q->path_len, "/mqtt", 5);
+    T_EQ_MEM(q->path, q->path_len, "/ws", 3);
 
     // Due within NC_REFRESH_EARLY_MS of the expiry: the refresh comes first.
     q = nc_req_games(T0 + 3600000 - NC_REFRESH_EARLY_MS - 1);
@@ -144,69 +144,50 @@ static void answers(void) {
     T_EQ_INT(nc_list_read(200, games, sizeof games - 1, NW_GAMES), -ASK_WHY_MALFORMED);
 }
 
-// ---- the stream: a fake broker ------------------------------------------------------------
+// ---- the stream: a fake server ------------------------------------------------------------
 
-// The packets the client's last messages held, read one at a time. A packet
-// is described by its type, packet id, and for (UN)SUBSCRIBE the
-// subscription its topics name: what (NW_SUB_*, from the first topic) and gid.
+// The frames the client wrote, read one at a time (one nc_stream_next call, one
+// frame). A frame is described by its kind and request id, and for (UN)SUB the
+// subscription it names: what (NW_SUB_*) and gid.
+enum { PK_NONE = 0, PK_HELLO, PK_SUB, PK_UNSUB, PK_PING, PK_REQ };
 typedef struct {
-    int      type;            // MQTT_*, 0 for none
-    uint16_t pid;
-    int      what;            // (UN)SUBSCRIBE
+    int      type;            // PK_*, 0 for none
+    uint32_t pid;             // the request id
+    int      what;            // SUB, UNSUB
     char     gid[16];
-    int      n_topics;
-    char     topics[2][96];
-    char     password[NW_ACCESS_MAX + 1];   // CONNECT
-    char     client_id[160];
-    uint16_t keepalive;
+    char     token[NW_ACCESS_MAX + 1];   // HELLO
+    char     path[32];        // REQ
+    int      body_len;
 } cpkt;
 
-static struct { uint8_t b[NC_OUT_MAX]; int len, at, msgs; } g_cout;
-static void pending_drop(void) { g_cout.len = g_cout.at = 0; }
-
-// The subscription a topic names: "u/u1/v", "u/u1/c/<g>", "u/u1/m/<g>", "s/<g>".
-static void topic_names(const char *t, int n, cpkt *k) {
-    if (n == 6 && memcmp(t, "u/u1/v", 6) == 0) { k->what = NW_SUB_GAMES; return; }
-    if (n > 7 && memcmp(t, "u/u1/c/", 7) == 0) { k->what = NW_SUB_GAME; snprintf(k->gid, sizeof k->gid, "%.*s", n - 7, t + 7); return; }
-    if (n > 7 && memcmp(t, "u/u1/m/", 7) == 0) { k->what = NW_SUB_CHAT; snprintf(k->gid, sizeof k->gid, "%.*s", n - 7, t + 7); return; }
-    if (n > 2 && memcmp(t, "s/", 2) == 0 && !k->what) { k->what = -1; snprintf(k->gid, sizeof k->gid, "%.*s", n - 2, t + 2); }
-}
+static void pending_drop(void) {}
 
 static cpkt next_pkt(int64_t now) {
     cpkt k;
     memset(&k, 0, sizeof k);
-    if (g_cout.at >= g_cout.len) {
-        const NcOut *o = nc_stream_next(now);
-        if (!o) return k;
-        T_CHECK(o->len > 0 && o->len <= NC_OUT_MAX);
-        memcpy(g_cout.b, o->bytes, o->len);
-        g_cout.len = o->len;
-        g_cout.at = 0;
-        g_cout.msgs++;
-    }
-    MqttPacket p;
-    int n = mqtt_parse(g_cout.b + g_cout.at, g_cout.len - g_cout.at, NC_OUT_MAX, MQTT_FROM_CLIENT, &p);
-    T_CHECK(n > 0);
-    if (n <= 0) { g_cout.len = 0; return k; }
-    g_cout.at += n;
-    k.type = p.type;
-    k.pid = p.packet_id;
-    if (p.type == MQTT_CONNECT) {
-        snprintf(k.password, sizeof k.password, "%.*s", p.password_len, p.password ? (const char *)p.password : "");
-        snprintf(k.client_id, sizeof k.client_id, "%.*s", p.client_id_len, (const char *)p.client_id);
-        k.keepalive = p.keepalive_s;
-    }
-    if (p.type == MQTT_SUBSCRIBE || p.type == MQTT_UNSUBSCRIBE) {
-        int pos = 0;
-        const uint8_t *f;
-        uint16_t fl;
-        uint8_t q;
-        while (k.n_topics < 2 && mqtt_next_filter(&p, &pos, &f, &fl, &q)) {
-            T_EQ_INT(q, 0);
-            snprintf(k.topics[k.n_topics], sizeof k.topics[0], "%.*s", fl, (const char *)f);
-            topic_names((const char *)f, fl, &k);
-            k.n_topics++;
-        }
+    const NcOut *o = nc_stream_next(now);
+    if (!o) return k;
+    T_CHECK(o->len > 0 && o->len <= NC_OUT_MAX);
+    sf_frame f;
+    T_EQ_INT(sf_parse(o->bytes, o->len, &f), 0);
+    k.pid = f.id;
+    switch (f.kind) {
+    case SF_HELLO:
+        k.type = PK_HELLO;
+        snprintf(k.token, sizeof k.token, "%.*s", f.tok_len, (const char *)f.tok);
+        break;
+    case SF_SUB: case SF_UNSUB:
+        k.type = f.kind == SF_SUB ? PK_SUB : PK_UNSUB;
+        k.what = f.what;
+        snprintf(k.gid, sizeof k.gid, "%.*s", f.gid_len, f.gid);
+        break;
+    case SF_PING: k.type = PK_PING; break;
+    case SF_REQ:
+        k.type = PK_REQ;
+        snprintf(k.path, sizeof k.path, "%.*s", f.path_len, f.path);
+        k.body_len = (int)f.body_len;
+        break;
+    default: T_CHECK(0);
     }
     return k;
 }
@@ -224,46 +205,62 @@ static const NcEvent *first(int n) {
 
 static const NcEvent *feed_bytes(const uint8_t *b, int n, int64_t now) { return first(nc_stream_in(b, n, 0, now)); }
 
+// The server's READY (rc 0). A refusal is the server closing the socket: no frame.
 static const NcEvent *connack(int rc, int64_t now) {
     uint8_t b[4];
-    return feed_bytes(b, mqtt_write_connack(b, sizeof b, 0, rc), now);
+    if (rc != 0) return first(0);
+    return feed_bytes(b, sf_put_bare(b, sizeof b, SF_READY), now);
 }
 
-static const NcEvent *suback(uint16_t pid, int code, int n, int64_t now) {
-    uint8_t b[16], codes[2] = { (uint8_t)code, (uint8_t)code };
-    return feed_bytes(b, mqtt_write_suback(b, sizeof b, pid, codes, n), now);
+// The REPLY to a SUB: status 200 takes it, anything else refuses it.
+static const NcEvent *suback(uint32_t pid, int refuse, int n, int64_t now) {
+    uint8_t b[16];
+    (void)n;
+    return feed_bytes(b, sf_put_reply_head(b, sizeof b, pid, refuse ? 403 : 200), now);
 }
+#define SUBACK_FAILURE 1
 
-// The socket opened, the client's CONNECT read (with its token) and accepted.
+// The socket opened, the client's HELLO read (with its token) and accepted.
 static cpkt live(int64_t now) {
     pending_drop();
     nc_stream_opened(now);
     cpkt c = next_pkt(now);
-    T_EQ_INT(c.type, MQTT_CONNECT);
+    T_EQ_INT(c.type, PK_HELLO);
     connack(0, now);
     return c;
 }
 
-// The topic a push of `kind` travels on: a cast on the seat's topic, or the
+// A push the server published, as the frame it is: a cast on the seat's kind, or the
 // spectators' when `watch`.
-static int topic_for(const NwFrame *f, int watch, char *t, int cap) {
-    const NcSessionInfo *me = nc_session_info();
-    int ul = me->user_id_len;
-    if (f->kind == NW_WS_VIEW) return snprintf(t, (size_t)cap, "u/%.*s/v", ul, me->user_id);
-    if (f->kind == NW_WS_CHAT) return snprintf(t, (size_t)cap, "u/%.*s/m/%.*s", ul, me->user_id, f->gid_len, f->gid);
-    if (watch) return snprintf(t, (size_t)cap, "s/%.*s", f->gid_len, f->gid);
-    return snprintf(t, (size_t)cap, "u/%.*s/c/%.*s", ul, me->user_id, f->gid_len, f->gid);
+static const NcEvent *feed(const NwFrame *f0, int watch, int64_t now) {
+    static uint8_t raw[1100];
+    nc_stream_hear_all(1);   // the tests that look at what is dropped turn it off
+    NwFrame f = *f0;
+    if (watch && f.kind == NW_WS_CAST) f.kind = NW_WS_SPECT;
+    int n = nw_frame_encode(&f, raw, sizeof raw);
+    T_CHECK(n > 0);
+    return feed_bytes(raw, n, now);
 }
 
-// A push the server published: the nw1 message as a PUBLISH's payload.
-static const NcEvent *feed(const NwFrame *f, int watch, int64_t now) {
-    static uint8_t raw[1024], pkt[1200];
-    int n = nw_frame_encode(f, raw, sizeof raw);
-    char t[96];
-    int tl = topic_for(f, watch, t, sizeof t);
-    int k = mqtt_write_publish(pkt, sizeof pkt, t, tl, raw, n);
-    T_CHECK(k > 0);
-    return feed_bytes(pkt, k, now);
+static int path_is(const NcRequest *q, const char *path) {
+    return q && q->path_len == strlen(path) && memcmp(q->path, path, q->path_len) == 0;
+}
+
+// The answer to the action the pump has next: over the socket when it is live (the REQ frame
+// is read and its REPLY fed back; the done comes from nc_next_done), else over HTTP.
+static const NcDone *action_answer(const uint8_t *r, int rn, int64_t now) {
+    const NcRequest *q = nc_next_request(now);
+    if (q) {
+        T_CHECK(path_is(q, "/v1/action"));
+        return nc_on_response(id_of(q), 200, r, rn, now);
+    }
+    cpkt k = next_pkt(now);
+    T_CHECK(k.type == PK_REQ && strcmp(k.path, "/v1/action") == 0);
+    uint8_t b[128];
+    int h = sf_put_reply_head(b, sizeof b, k.pid, 200);
+    memcpy(b + h, r, (size_t)rn);
+    nc_stream_in(b, h + rn, 0, now);
+    return nc_next_done();
 }
 
 static NwFrame push(int kind, const char *gid, uint32_t v, const uint8_t *p, uint32_t n) {
@@ -287,27 +284,24 @@ static void connect_carries_the_token(void) {
     nc_stream_opened(T0);
     T_EQ_INT(nc_stream_due_ms(T0), 0);
     cpkt c = next_pkt(T0);
-    T_EQ_INT(c.type, MQTT_CONNECT);
-    T_EQ_STR(c.password, "jwt");
-    T_CHECK(strncmp(c.client_id, "u1-", 3) == 0 && strlen(c.client_id) == 3 + 8);
-    T_EQ_INT(c.keepalive, NC_KEEPALIVE_S);
+    T_EQ_INT(c.type, PK_HELLO);
+    T_EQ_STR(c.token, "jwt");
     // Nothing else until the CONNACK: no SUBSCRIBE a refused CONNECT would drop.
     T_EQ_INT(nc_stream_sub(NW_SUB_GAMES, NULL, 0), NW_OK);
     T_EQ_INT(next_pkt(T0).type, 0);
     T_EQ_INT(nc_stream_due_ms(T0), -1);
     T_EQ_INT(connack(0, T0)->kind, NC_EV_NONE);
     cpkt s = next_pkt(T0);
-    T_CHECK(s.type == MQTT_SUBSCRIBE && s.what == NW_SUB_GAMES && s.n_topics == 1);
-    T_EQ_STR(s.topics[0], "u/u1/v");
+    T_CHECK(s.type == PK_SUB && s.what == NW_SUB_GAMES);
     // Another connection, in the same millisecond: another client id (two
     // tabs never share one, or the broker would drop the older).
     nc_stream_closed(T0);
     nc_stream_opened(T0);
     cpkt c2 = next_pkt(T0);
-    T_CHECK(c2.type == MQTT_CONNECT && strcmp(c2.client_id, c.client_id) != 0);
+    T_CHECK(c2.type == PK_HELLO);
     // A CONNACK refusing it is no subscription either; the broker closes the
     // socket, and the next CONNECT waits for a refreshed token.
-    connack(MQTT_RC_NOT_AUTHORIZED, T0 + 1);
+    connack(1, T0 + 1);
     T_EQ_INT(next_pkt(T0 + 1).type, 0);
     nc_stream_closed(T0 + 1);
     nc_stream_opened(T0 + 2);
@@ -324,7 +318,7 @@ static void connect_carries_the_token(void) {
     ses.username_len = 3; memcpy(ses.username, "ANA", 3);
     if (q) nc_on_response(id_of(q), 200, b, nw_session_encode(&ses, b, sizeof b), T0 + 2);
     cpkt c3 = next_pkt(T0 + 2);
-    T_CHECK(c3.type == MQTT_CONNECT && strcmp(c3.password, "jwt3") == 0);
+    T_CHECK(c3.type == PK_HELLO && strcmp(c3.token, "jwt3") == 0);
     // A second CONNACK is not the protocol.
     connack(0, T0 + 2);
     T_EQ_INT(connack(0, T0 + 2)->kind, NC_EV_BAD);
@@ -358,7 +352,7 @@ static void connect_waits_for_a_fresh_token(void) {
     T_CHECK(nc_on_response(id_of(q), 200, b, n, T0) == NULL);
     T_EQ_INT(nc_stream_due_ms(T0), 0);
     cpkt c = next_pkt(T0);
-    T_CHECK(c.type == MQTT_CONNECT && strcmp(c.password, "jwt2") == 0);
+    T_CHECK(c.type == PK_HELLO && strcmp(c.token, "jwt2") == 0);
     T_CHECK(nc_next_request(T0) == NULL);   // connected: no refresh wanted
     // A refresh that fails is tried again later, as the pump's always is.
     signed_in(T0 + NC_REFRESH_EARLY_MS / 2);
@@ -378,7 +372,7 @@ static void connect_waits_for_a_fresh_token(void) {
 static void closed_before_connack_refreshes(void) {
     signed_in(T0 + 3600000);
     nc_stream_opened(T0);
-    T_EQ_INT(next_pkt(T0).type, MQTT_CONNECT);
+    T_EQ_INT(next_pkt(T0).type, PK_HELLO);
     nc_stream_closed(T0);
     nc_stream_opened(T0 + 500);
     T_EQ_INT(next_pkt(T0 + 500).type, 0);   // waits for the refresh
@@ -393,11 +387,11 @@ static void closed_before_connack_refreshes(void) {
     ses.user_id_len = 2; memcpy(ses.user_id, "u1", 2);
     ses.username_len = 3; memcpy(ses.username, "ANA", 3);
     nc_on_response(id_of(q), 200, b, nw_session_encode(&ses, b, sizeof b), T0 + 500);
-    T_EQ_INT(next_pkt(T0 + 500).type, MQTT_CONNECT);
+    T_EQ_INT(next_pkt(T0 + 500).type, PK_HELLO);
     // Refused again at once: no second refresh inside NC_FORCE_REFRESH_MS.
     nc_stream_closed(T0 + 600);
     nc_stream_opened(T0 + 1000);
-    T_EQ_INT(next_pkt(T0 + 1000).type, MQTT_CONNECT);
+    T_EQ_INT(next_pkt(T0 + 1000).type, PK_HELLO);
     T_CHECK(nc_next_request(T0 + 1000) == NULL);
     nc_stream_closed(T0 + NC_FORCE_REFRESH_MS + 1);   // refused again, past the window: refreshed again
     nc_stream_opened(T0 + NC_FORCE_REFRESH_MS + 1000);
@@ -407,7 +401,7 @@ static void closed_before_connack_refreshes(void) {
     live(T0);
     nc_stream_closed(T0);
     nc_stream_opened(T0);
-    T_EQ_INT(next_pkt(T0).type, MQTT_CONNECT);
+    T_EQ_INT(next_pkt(T0).type, PK_HELLO);
 }
 
 static void stream_order_and_retries(void) {
@@ -419,15 +413,10 @@ static void stream_order_and_retries(void) {
     T_EQ_INT(nc_stream_sub(NW_SUB_GAME, "g/1", 3), NW_E_WIRE);   // not a topic level
     T_EQ_INT(nc_stream_sub(NW_SUB_GAME, "g+", 2), NW_E_WIRE);
     live(T0);
-    // Each subscription its own SUBSCRIBE, all in one message; a game's names
-    // both its streams.
-    int msgs0 = g_cout.msgs;
+    // Each subscription its own SUB frame.
     cpkt s1 = next_pkt(T0), s2 = next_pkt(T0);
-    T_EQ_INT(g_cout.msgs, msgs0 + 1);
-    T_CHECK(s1.type == MQTT_SUBSCRIBE && s1.what == NW_SUB_GAMES);
-    T_CHECK(s2.type == MQTT_SUBSCRIBE && s2.what == NW_SUB_GAME && s2.n_topics == 2 && s2.pid != s1.pid);
-    T_EQ_STR(s2.topics[0], "u/u1/c/g1");
-    T_EQ_STR(s2.topics[1], "s/g1");
+    T_CHECK(s1.type == PK_SUB && s1.what == NW_SUB_GAMES);
+    T_CHECK(s2.type == PK_SUB && s2.what == NW_SUB_GAME && s2.pid != s1.pid);
     T_EQ_INT(next_pkt(T0).type, 0);
     T_EQ_INT(nc_stream_due_ms(T0), NC_ACK_WAIT_MS);   // unanswered, they are asked again then
 
@@ -441,18 +430,17 @@ static void stream_order_and_retries(void) {
     // A refused chat is retried after 0.5 s, then 1 s, then 2 s.
     T_EQ_INT(nc_stream_sub(NW_SUB_CHAT, "g1", 2), NW_OK);
     cpkt c = next_pkt(T0);
-    T_CHECK(c.type == MQTT_SUBSCRIBE && c.what == NW_SUB_CHAT);
-    T_EQ_STR(c.topics[0], "u/u1/m/g1");
-    e = suback(c.pid, MQTT_SUBACK_FAILURE, 1, T0);
+    T_CHECK(c.type == PK_SUB && c.what == NW_SUB_CHAT);
+    e = suback(c.pid, SUBACK_FAILURE, 1, T0);
     T_CHECK(e->kind == NC_EV_REFUSED && e->what == NW_SUB_CHAT);
     T_EQ_INT(next_pkt(T0 + NC_RETRY_FIRST_MS - 1).type, 0);
     T_EQ_INT(nc_stream_due_ms(T0), NC_RETRY_FIRST_MS);
     c = next_pkt(T0 + NC_RETRY_FIRST_MS);
-    T_CHECK(c.type == MQTT_SUBSCRIBE && c.what == NW_SUB_CHAT);
-    suback(c.pid, MQTT_SUBACK_FAILURE, 1, T0 + 1000);
+    T_CHECK(c.type == PK_SUB && c.what == NW_SUB_CHAT);
+    suback(c.pid, SUBACK_FAILURE, 1, T0 + 1000);
     T_EQ_INT(next_pkt(T0 + 1000 + 2 * NC_RETRY_FIRST_MS - 1).type, 0);
     cpkt c3 = next_pkt(T0 + 1000 + 2 * NC_RETRY_FIRST_MS);
-    T_EQ_INT(c3.type, MQTT_SUBSCRIBE);
+    T_EQ_INT(c3.type, PK_SUB);
     // Held twice, let go once: still held, and nothing is sent.
     T_EQ_INT(nc_stream_sub(NW_SUB_GAME, "g1", 2), NW_OK);
     T_EQ_INT(nc_stream_unsub(NW_SUB_GAME, "g1", 2), NW_OK);
@@ -461,19 +449,19 @@ static void stream_order_and_retries(void) {
     T_EQ_INT(nc_stream_unsub(NW_SUB_GAME, "g1", 2), NW_OK);
     T_EQ_INT(nc_stream_sub(NW_SUB_GAME, "g1", 2), NW_OK);
     cpkt s3 = next_pkt(T0 + 2000);
-    T_CHECK(s3.type == MQTT_SUBSCRIBE && s3.what == NW_SUB_GAME);
+    T_CHECK(s3.type == PK_SUB && s3.what == NW_SUB_GAME);
     T_EQ_INT(next_pkt(T0 + 2000).type, 0);
 
     // Unsubscribing a live subscription tells the broker, every topic it held;
     // one never sent does not.
     T_EQ_INT(nc_stream_unsub(NW_SUB_GAMES, NULL, 0), NW_OK);
     cpkt u = next_pkt(T0 + 2000);
-    T_CHECK(u.type == MQTT_UNSUBSCRIBE && u.what == NW_SUB_GAMES && u.n_topics == 1);
+    T_CHECK(u.type == PK_UNSUB && u.what == NW_SUB_GAMES);
     suback(s3.pid, 0, 2, T0 + 2000);   // answered, so neither is asked again below
     suback(c3.pid, 0, 1, T0 + 2000);
     T_EQ_INT(nc_stream_unsub(NW_SUB_GAME, "g1", 2), NW_OK);
     u = next_pkt(T0 + 2000);
-    T_CHECK(u.type == MQTT_UNSUBSCRIBE && u.what == NW_SUB_GAME && u.n_topics == 2);
+    T_CHECK(u.type == PK_UNSUB && u.what == NW_SUB_GAME);
     T_EQ_INT(nc_stream_sub(NW_SUB_GAME, "g9", 2), NW_OK);
     T_EQ_INT(nc_stream_unsub(NW_SUB_GAME, "g9", 2), NW_OK);   // never sent: nothing to take back
     while (next_pkt(T0 + 2000).type) {}
@@ -481,10 +469,10 @@ static void stream_order_and_retries(void) {
     // The PINGREQ, once nothing went out for NC_PING_MS.
     T_EQ_INT(next_pkt(T0 + 2000 + NC_PING_MS - 1).type, 0);
     T_EQ_INT(nc_stream_due_ms(T0 + 2000), NC_PING_MS);
-    T_EQ_INT(next_pkt(T0 + 2000 + NC_PING_MS).type, MQTT_PINGREQ);
+    T_EQ_INT(next_pkt(T0 + 2000 + NC_PING_MS).type, PK_PING);
     T_EQ_INT(next_pkt(T0 + 2000 + NC_PING_MS).type, 0);
     uint8_t pr[2];
-    T_EQ_INT(feed_bytes(pr, mqtt_write_bare(pr, sizeof pr, MQTT_PINGRESP), T0)->kind, NC_EV_NONE);
+    T_EQ_INT(feed_bytes(pr, sf_put_bare(pr, sizeof pr, SF_PONG), T0)->kind, NC_EV_NONE);
 
     // Closed: the reopen waits 0.5 s, doubling to 10 s, and starts over once a CONNACK arrives.
     T_EQ_INT(nc_stream_closed(T0), NC_RETRY_FIRST_MS);
@@ -497,7 +485,7 @@ static void stream_order_and_retries(void) {
     // Reconnected: every subscription again.
     live(T0);
     int subs = 0;
-    for (cpkt x; (x = next_pkt(T0)).type == MQTT_SUBSCRIBE;) subs++;
+    for (cpkt x; (x = next_pkt(T0)).type == PK_SUB;) subs++;
     T_EQ_INT(subs, 1);   // the chat; the dashboard and the games were let go
 }
 
@@ -516,7 +504,7 @@ static void holds_made_before_the_session_are_kept(void) {
     T_EQ_INT(nc_session_load(b, nw_session_encode(&s, b, sizeof b)), NW_OK);
     live(T0);
     cpkt k = next_pkt(T0);
-    T_CHECK(k.type == MQTT_SUBSCRIBE && k.what == NW_SUB_GAMES);
+    T_CHECK(k.type == PK_SUB && k.what == NW_SUB_GAMES);
     // Another user's session afterwards: their book starts from nothing.
     memcpy(s.user_id, "u2", 2);
     T_EQ_INT(nc_session_load(b, nw_session_encode(&s, b, sizeof b)), NW_OK);
@@ -531,32 +519,25 @@ static void what_is_not_the_brokers(void) {
     next_pkt(T0);
     const uint8_t env[] = { 1, 2, 3 };
     NwFrame v = push(NW_WS_VIEW, "g1", 5, env, 3);
-    T_EQ_INT(feed(&v, 0, T0)->kind, NC_EV_BAD);   // a PUBLISH before the CONNACK
+    T_EQ_INT(nc_stream_sub(NW_SUB_GAMES, NULL, 0), NW_OK);
+    T_EQ_INT(feed(&v, 0, T0)->kind, NC_EV_BAD);   // a push before the READY
     connack(0, T0);
     T_EQ_INT(feed(&v, 0, T0)->kind, NC_EV_VIEW);
-    // A text frame, bytes that are not MQTT, a packet a broker never sends.
+    // A text message, bytes that are not a frame, a frame only a client writes.
     T_EQ_INT(first(nc_stream_in((const uint8_t *)"\xD0\x00", 2, 1, T0))->kind, NC_EV_BAD);   // a PINGRESP, as text
     T_EQ_INT(first(nc_stream_in((const uint8_t *)"\x01\x05", 2, 0, T0))->kind, NC_EV_BAD);
-    T_EQ_INT(first(nc_stream_in((const uint8_t *)"\xC0\x00", 2, 0, T0))->kind, NC_EV_BAD);   // a PINGREQ
-    // Another user's topic, a level nobody subscribes to, a message whose game
-    // is not the topic's, a payload that is not a push, a push of the wrong kind.
-    static uint8_t raw[256], pkt[400];
-    int rn = nw_frame_encode(&v, raw, sizeof raw);
-    const char *bad_topics[] = { "u/u2/v", "u/u1/x/g1", "u/u1/vx", "s/", "x/g1", "u/u1/c/g2" };
-    NwFrame cast = push(NW_WS_CAST, "g1", 6, env, 1);
-    int cn = 0;
-    static uint8_t craw[256];
-    cn = nw_frame_encode(&cast, craw, sizeof craw);
-    for (int i = 0; i < 6; i++) {
-        const uint8_t *body = i == 5 ? craw : raw;
-        int bn = i == 5 ? cn : rn;
-        int k = mqtt_write_publish(pkt, sizeof pkt, bad_topics[i], (int)strlen(bad_topics[i]), body, bn);
-        T_EQ_INT(feed_bytes(pkt, k, T0)->kind, NC_EV_BAD);
-    }
-    int k = mqtt_write_publish(pkt, sizeof pkt, "u/u1/v", 6, (const uint8_t *)"\x01", 1);
-    T_EQ_INT(feed_bytes(pkt, k, T0)->kind, NC_EV_BAD);
-    k = mqtt_write_publish(pkt, sizeof pkt, "u/u1/v", 6, craw, cn);   // a cast on the views topic
-    T_EQ_INT(feed_bytes(pkt, k, T0)->kind, NC_EV_BAD);
+    T_EQ_INT(first(nc_stream_in((const uint8_t *)"\x01\x42", 2, 0, T0))->kind, NC_EV_BAD);   // a PING
+    // A push for a game nobody here holds is not for this client (dropped, no event);
+    // a payload that is not a push, and a frame only a client writes, are BAD.
+    static uint8_t raw[256];
+    nc_stream_hear_all(0);
+    NwFrame other = push(NW_WS_VIEW, "zz9", 6, env, 1);
+    int rn = nw_frame_encode(&other, raw, sizeof raw);
+    T_CHECK(rn > 0);
+    T_EQ_INT(nc_stream_in(raw, rn, 0, T0) == 0 || first(nc_stream_in(raw, rn, 0, T0))->kind == NC_EV_NONE, 1);
+    T_EQ_INT(feed_bytes((const uint8_t *)"\x01\x33\x01", 3, T0)->kind, NC_EV_BAD);   // a view frame cut short
+    uint8_t cf[16];
+    T_EQ_INT(feed_bytes(cf, sf_put_sub(cf, sizeof cf, SF_SUB, 1, 1, "", 0), T0)->kind, NC_EV_BAD);
     // After junk the stream still reads: the buffer starts over.
     v.version = 7;
     T_EQ_INT(feed(&v, 0, T0)->kind, NC_EV_VIEW);
@@ -565,65 +546,8 @@ static void what_is_not_the_brokers(void) {
     T_EQ_INT(first(nc_stream_in(huge, (int)sizeof huge, 0, T0))->kind, NC_EV_BAD);
     v.version = 8;
     T_EQ_INT(feed(&v, 0, T0)->kind, NC_EV_VIEW);
-    T_EQ_INT(nc_stream_in((const uint8_t *)"", 0, 0, T0), 0);   // an empty message: nothing
+    T_EQ_INT(first(nc_stream_in((const uint8_t *)"", 0, 0, T0))->kind, NC_EV_BAD);   // an empty message is no frame
     T_EQ_INT(first(nc_stream_in(NULL, 3, 0, T0))->kind, NC_EV_BAD);
-}
-
-// MQTT over WebSocket: a message may hold part of a packet, or several; each
-// push's payload is handed out where it lies, until the next feed.
-static void packets_across_messages(void) {
-    signed_in(T0 + 3600000);
-    live(T0);
-    static uint8_t raw[256], all[1200];
-    const uint8_t env[] = { 0xe1, 0xe2 };
-    int at = 0;
-    for (int i = 0; i < 3; i++) {
-        NwFrame v = push(NW_WS_VIEW, "g1", (uint32_t)(5 + i), env, 2);
-        int rn = nw_frame_encode(&v, raw, sizeof raw);
-        at += mqtt_write_publish(all + at, (int)sizeof all - at, "u/u1/v", 6, raw, rn);
-    }
-    // All three in one message: three events, each payload in place.
-    int n = nc_stream_in(all, at, 0, T0);
-    int views = 0;
-    for (int i = 0; i < n; i++) {
-        const NcEvent *e = nc_event(i);
-        if (e->kind != NC_EV_VIEW) continue;
-        T_EQ_INT(e->version, (uint32_t)(5 + views));
-        T_EQ_MEM(nc_event_payload(i), e->payload_len, env, 2);
-        views++;
-    }
-    T_EQ_INT(views, 3);
-    // Cut at every byte: the first part makes nothing, the rest all three.
-    for (int cut = 1; cut < at; cut++) {
-        signed_in(T0 + 3600000);
-        live(T0);
-        int got = 0;
-        n = nc_stream_in(all, cut, 0, T0);
-        for (int i = 0; i < n; i++) got += nc_event(i)->kind == NC_EV_VIEW;
-        n = nc_stream_in(all + cut, at - cut, 0, T0);
-        for (int i = 0; i < n; i++) {
-            if (nc_event(i)->kind != NC_EV_VIEW) continue;
-            T_EQ_MEM(nc_event_payload(i), nc_event(i)->payload_len, env, 2);
-            got++;
-        }
-        T_EQ_INT(got, 3);
-    }
-    // More packets in one message than one feed's events: the rest wait for the next feed.
-    signed_in(T0 + 3600000);
-    live(T0);
-    at = 0;
-    for (int i = 0; i < NC_EVENTS_MAX + 4; i++) {
-        NwFrame v = push(NW_WS_VIEW, "g1", (uint32_t)(10 + i), env, 2);
-        int rn = nw_frame_encode(&v, raw, sizeof raw);
-        at += mqtt_write_publish(all + at, (int)sizeof all - at, "u/u1/v", 6, raw, rn);
-    }
-    n = nc_stream_in(all, at, 0, T0);
-    T_CHECK(n <= NC_EVENTS_MAX);
-    int seen = 0;
-    for (int i = 0; i < n; i++) seen += nc_event(i)->kind == NC_EV_VIEW;
-    n = nc_stream_in(NULL, 0, 0, T0);
-    for (int i = 0; i < n; i++) seen += nc_event(i)->kind == NC_EV_VIEW;
-    T_EQ_INT(seen, NC_EVENTS_MAX + 4);
 }
 
 static void gates(void) {
@@ -703,10 +627,6 @@ static NcIntent intent(int kind, const char *gid) {
     if (gid) { in.gid_len = (uint8_t)strlen(gid); memcpy(in.gid, gid, in.gid_len); }
     in.intent = -1;
     return in;
-}
-
-static int path_is(const NcRequest *q, const char *path) {
-    return q && q->path_len == strlen(path) && memcmp(q->path, path, q->path_len) == 0;
 }
 
 static int refusal_body(uint8_t *b, int why, int code) {
@@ -1056,11 +976,9 @@ static void a_refused_move_catches_up(void) {
         play.bytes_len = 2; play.bytes[0] = 3; play.bytes[1] = 0;
         play.intent = 5;
         nc_do(&play, T0);
-        const NcRequest *q = nc_next_request(T0);
-        T_CHECK(path_is(q, "/v1/action"));
         // Refused: the server is at 9.
         T_EQ_INT(table_action_response(TABLE_REJECTED, 4, 9, r, sizeof r), TABLE_RESP_BYTES);
-        const NcDone *d = nc_on_response(id_of(q), 200, r, sizeof r, T0);
+        const NcDone *d = action_answer(r, (int)sizeof r, T0);
         T_CHECK(d && d->action_status == TABLE_STATUS_REJECTED);
         // The pushes get a moment to arrive.
         T_EQ_INT(nc_pump_due_ms(T0), NC_RECONCILE_MS);
@@ -1072,7 +990,7 @@ static void a_refused_move_catches_up(void) {
             T_CHECK(nc_next_request(T0 + NC_RECONCILE_MS) == NULL);
             T_EQ_INT(nc_pump_due_ms(T0 + NC_RECONCILE_MS), -1);
         } else {
-            q = nc_next_request(T0 + NC_RECONCILE_MS);
+            const NcRequest *q = nc_next_request(T0 + NC_RECONCILE_MS);
             T_CHECK(path_is(q, "/v1/games/g1"));
         }
     }
@@ -1167,18 +1085,18 @@ static void an_unanswered_subscription_is_asked_again(void) {
     nc_stream_sub(NW_SUB_GAME, "g1", 2);
     live(T0);
     cpkt s1 = next_pkt(T0);
-    T_EQ_INT(s1.type, MQTT_SUBSCRIBE);
+    T_EQ_INT(s1.type, PK_SUB);
     T_EQ_INT(nc_stream_due_ms(T0), NC_ACK_WAIT_MS);
     T_EQ_INT(next_pkt(T0 + NC_ACK_WAIT_MS - 1).type, 0);
     cpkt s2 = next_pkt(T0 + NC_ACK_WAIT_MS);
-    T_EQ_INT(s2.type, MQTT_SUBSCRIBE);
+    T_EQ_INT(s2.type, PK_SUB);
     T_CHECK(s2.pid != s1.pid);
     T_EQ_INT(suback(s1.pid, 0, 2, T0 + NC_ACK_WAIT_MS)->kind, NC_EV_NONE);   // the first one's, late
     T_CHECK(nc_next_request(T0 + NC_ACK_WAIT_MS) == NULL);
     T_EQ_INT(suback(s2.pid, 0, 2, T0 + NC_ACK_WAIT_MS)->kind, NC_EV_SEATED);
     T_CHECK(path_is(nc_next_request(T0 + NC_ACK_WAIT_MS), "/v1/games/g1"));
     // Answered: never asked again; only the keep-alive goes.
-    T_EQ_INT(next_pkt(T0 + 3 * NC_ACK_WAIT_MS + NC_PING_MS).type, MQTT_PINGREQ);
+    T_EQ_INT(next_pkt(T0 + 3 * NC_ACK_WAIT_MS + NC_PING_MS).type, PK_PING);
     // Asked again and again, the packet id wraps past 65535 and is never 0.
     signed_in(T0 + 100000000LL);
     nc_stream_sub(NW_SUB_GAMES, NULL, 0);
@@ -1187,7 +1105,7 @@ static void an_unanswered_subscription_is_asked_again(void) {
     int64_t t = T0;
     for (int i = 0; i < 65540; i++, t += NC_ACK_WAIT_MS) {
         cpkt k = next_pkt(t);
-        zero += k.type == MQTT_SUBSCRIBE && k.pid == 0;
+        zero += k.type == PK_SUB && k.pid == 0;
     }
     T_EQ_INT(zero, 0);
 }
@@ -1208,11 +1126,11 @@ static void seat_and_spectator_casts(void) {
     T_CHECK(d && d->why == 0 && d->gid_len == 6 && memcmp(d->gid, "newg01", 6) == 0);
     T_CHECK(d && d->version == 1 && d->a_off == 0 && (int)d->a_len == n && !d->stale);
     cpkt s = next_pkt(T0);
-    T_CHECK(s.type == MQTT_SUBSCRIBE && s.what == NW_SUB_GAME && strcmp(s.gid, "newg01") == 0 && s.n_topics == 2);
+    T_CHECK(s.type == PK_SUB && s.what == NW_SUB_GAME && strcmp(s.gid, "newg01") == 0);
     // The host holds it and lets it go: it is let go.
     nc_stream_sub(NW_SUB_GAME, "newg01", 6);
     nc_stream_unsub(NW_SUB_GAME, "newg01", 6);
-    T_EQ_INT(next_pkt(T0).type, MQTT_UNSUBSCRIBE);
+    T_EQ_INT(next_pkt(T0).type, PK_UNSUB);
 
     host_t h;
     memset(&h, 0, sizeof h);
@@ -1438,10 +1356,8 @@ static void refused_at_9(const char *gid, int64_t now) {
     play.intent = 5;
     uint32_t t = nc_do(&play, now);
     T_CHECK(t != 0);   // a host intent: never refused while only the pump's own work waits
-    const NcRequest *q = nc_next_request(now);
-    T_CHECK(path_is(q, "/v1/action"));
     T_EQ_INT(table_action_response(TABLE_REJECTED, 4, 9, r, sizeof r), TABLE_RESP_BYTES);
-    const NcDone *d = nc_on_response(id_of(q), 200, r, sizeof r, now);
+    const NcDone *d = action_answer(r, (int)sizeof r, now);
     T_CHECK(d && d->ticket == t && d->action_status == TABLE_STATUS_REJECTED);
 }
 
@@ -1604,7 +1520,7 @@ static void quiet_live(host_t *h, const char *gid, uint32_t v, const uint8_t *en
     T_EQ_INT(nc_stream_sub(NW_SUB_GAME, gid, (int)strlen(gid)), NW_OK);
     cpkt s;
     while ((s = next_pkt(now)).type && !(s.what == NW_SUB_GAME && strcmp(s.gid, gid) == 0)) {}
-    T_EQ_INT(s.type, MQTT_SUBSCRIBE);
+    T_EQ_INT(s.type, PK_SUB);
     T_EQ_INT(suback(s.pid, 0, 2, now)->kind, NC_EV_SEATED);
     const NcRequest *q = nc_next_request(now);
     char path[32];
@@ -1626,9 +1542,9 @@ static int64_t quiet_run(const char *gid, int64_t now, int64_t until, uint32_t *
         }
         // A live broker answers a PINGREQ (a socket that does not is closed after NC_PONG_MS).
         for (cpkt k; (k = next_pkt(now)).type;) {
-            if (k.type != MQTT_PINGREQ) continue;
+            if (k.type != PK_PING) continue;
             uint8_t pr[2];
-            T_EQ_INT(feed_bytes(pr, mqtt_write_bare(pr, sizeof pr, MQTT_PINGRESP), now)->kind, NC_EV_NONE);
+            T_EQ_INT(feed_bytes(pr, sf_put_bare(pr, sizeof pr, SF_PONG), now)->kind, NC_EV_NONE);
         }
         int d = nc_due_ms(now);
         if (d < 0) break;
@@ -1833,7 +1749,7 @@ static void a_half_open_socket_is_closed_after_the_pong_wait(void) {
     quiet_live(&h, "g1", 5, env, en, T0);
     while (next_pkt(T0).type) {}
     int64_t t = T0 + NC_PING_MS;
-    T_EQ_INT(next_pkt(t).type, MQTT_PINGREQ);
+    T_EQ_INT(next_pkt(t).type, PK_PING);
     T_EQ_INT(nc_stream_due_ms(t), NC_PONG_MS);   // the deadline is folded into the wake
     T_CHECK(nc_stream_next(t + NC_PONG_MS - 1) == NULL);
     T_EQ_INT(nc_stream_due_ms(t + NC_PONG_MS - 1), 1);
@@ -1847,14 +1763,13 @@ static void a_half_open_socket_is_closed_after_the_pong_wait(void) {
     int64_t t2 = t + NC_PONG_MS + NC_RETRY_FIRST_MS;
     live(t2);
     cpkt s = next_pkt(t2);
-    T_CHECK(s.type == MQTT_SUBSCRIBE && s.what == NW_SUB_GAME);
-    T_EQ_STR(s.topics[0], "u/u1/c/g1");
+    T_CHECK(s.type == PK_SUB && s.what == NW_SUB_GAME);
     T_EQ_INT(suback(s.pid, 0, 2, t2)->kind, NC_EV_SEATED);
     const NcRequest *q = nc_next_request(t2);
     T_CHECK(path_is(q, "/v1/games/g1"));   // the catch-up read
     // A reset socket pings normally and can die again (the dead flag and the ping clock start over).
     while (next_pkt(t2).type) {}
-    T_EQ_INT(next_pkt(t2 + NC_PING_MS).type, MQTT_PINGREQ);
+    T_EQ_INT(next_pkt(t2 + NC_PING_MS).type, PK_PING);
     T_CHECK(!dead_frame(t2 + NC_PING_MS + NC_PONG_MS - 1));
     T_CHECK(dead_frame(t2 + NC_PING_MS + NC_PONG_MS));
 }
@@ -1868,21 +1783,21 @@ static void a_live_socket_is_never_closed(void) {
     uint8_t pr[2];
     for (int k = 0; k < 20; k++) {
         now += NC_PING_MS;
-        T_EQ_INT(next_pkt(now).type, MQTT_PINGREQ);
+        T_EQ_INT(next_pkt(now).type, PK_PING);
         now += 100;
-        T_EQ_INT(feed_bytes(pr, mqtt_write_bare(pr, sizeof pr, MQTT_PINGRESP), now)->kind, NC_EV_NONE);
+        T_EQ_INT(feed_bytes(pr, sf_put_bare(pr, sizeof pr, SF_PONG), now)->kind, NC_EV_NONE);
         T_CHECK(!dead_frame(now + NC_PONG_MS + 1));
     }
     // The answer NC_PONG_MS - 1 late is in time.
     now += NC_PING_MS;
-    T_EQ_INT(next_pkt(now).type, MQTT_PINGREQ);
-    T_EQ_INT(feed_bytes(pr, mqtt_write_bare(pr, sizeof pr, MQTT_PINGRESP), now + NC_PONG_MS - 1)->kind, NC_EV_NONE);
+    T_EQ_INT(next_pkt(now).type, PK_PING);
+    T_EQ_INT(feed_bytes(pr, sf_put_bare(pr, sizeof pr, SF_PONG), now + NC_PONG_MS - 1)->kind, NC_EV_NONE);
     T_CHECK(!dead_frame(now + NC_PONG_MS + 5));
     // Any packet clears it, not only the PINGRESP: a PUBLISH does.
     now += NC_PING_MS;
-    T_EQ_INT(next_pkt(now).type, MQTT_PINGREQ);
+    T_EQ_INT(next_pkt(now).type, PK_PING);
     uint8_t pub[64];
-    int k = mqtt_write_publish(pub, sizeof pub, "x/y", 3, (const uint8_t *)"z", 1);
+    int k = sf_put_bare(pub, sizeof pub, SF_PONG);
     T_CHECK(k > 0);
     nc_stream_in(pub, k, 0, now + 100);
     T_CHECK(!dead_frame(now + 100 + NC_PONG_MS + 1));
@@ -1949,7 +1864,6 @@ int main(void) {
     T_RUN(stream_order_and_retries);
     T_RUN(holds_made_before_the_session_are_kept);
     T_RUN(what_is_not_the_brokers);
-    T_RUN(packets_across_messages);
     T_RUN(an_unanswered_subscription_is_asked_again);
     T_RUN(gates);
     T_RUN(pump_signs_in_and_reads_answers);

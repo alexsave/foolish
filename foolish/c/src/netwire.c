@@ -439,6 +439,7 @@ int nw_frame_encode(const NwFrame *f, uint8_t *out, int cap) {
     switch (f->kind) {
     case NW_WS_VIEW:
     case NW_WS_CAST:
+    case NW_WS_SPECT:
         w_str8(&w, f->gid, f->gid_len);
         w_u32(&w, f->version);
         w_blob(&w, f->blob);
@@ -463,6 +464,7 @@ int nw_frame_decode(const uint8_t *p, int len, NwFrame *out) {
     switch (out->kind) {
     case NW_WS_VIEW:
     case NW_WS_CAST:
+    case NW_WS_SPECT:
         r_str8(&r, out->gid, NW_GID_MAX, &out->gid_len);
         out->version = r_u32(&r);
         r_blob(&r, &out->blob);

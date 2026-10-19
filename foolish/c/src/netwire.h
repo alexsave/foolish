@@ -38,12 +38,14 @@
 //                        the seats' in seat order, read from the replay's extras
 //                        when the list is answered, 0 of them when it holds none)
 //     chat         str8 id, str8 user id, u48 created, u8 is_system, str16 message
-//   stream, server to client (the payload of an MQTT PUBLISH, realtime.h)
+//   stream, server to client (one binary WebSocket message each, realtime.h)
 //     NW_WS_VIEW   str8 game id, u32 version, blob envelope (empty: the seat is gone)
-//     NW_WS_CAST   str8 game id, u32 version, blob cast
+//     NW_WS_CAST   str8 game id, u32 version, blob cast (the seat's own)
+//     NW_WS_SPECT  str8 game id, u32 version, blob cast (a spectators')
 //     NW_WS_CHAT   str8 game id, chat
-//   A client sends no frame of this file on the stream: it speaks MQTT
-//   (shared/c/mqtt), and what it hears is chosen by topic (netclient.c).
+//   What a client says on the stream, and the server's replies, are
+//   shared/c/stream_frame.h's; the server sends a user every view, seat cast
+//   and chat of theirs, and a game's spectator casts to those who watch it.
 //
 // A refusal of an HTTP request is the kernel's AskRefusal (ask.h), not a body
 // of this file. A body is read whole: a byte short or a byte over is NW_E_WIRE.
@@ -76,6 +78,8 @@
 #define NW_WS_VIEW   51
 #define NW_WS_CAST   52
 #define NW_WS_CHAT   53
+#define NW_WS_SPECT  57   // a cast for the spectators of a game (the seat's own is NW_WS_CAST); same layout
+// 60-67 are the socket's own frames (shared/c/stream_frame.h): never reuse them.
 
 #define NW_SCOPE_LOCAL  0   // sign out this session
 #define NW_SCOPE_GLOBAL 1   // sign out every session of the user
