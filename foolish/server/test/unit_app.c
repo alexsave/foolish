@@ -791,7 +791,7 @@ static void a_finished_game_writes_a_snapshot_and_ratings(void) {
     T_EQ_INT((ra.elo_rating - TABLE_RATING_START) + (rb.elo_rating - TABLE_RATING_START), 0);
     // The snapshot is the players', with a verified replay code.
     snap_seen seen = { 0, 0 };
-    cb_snapshot_query q = { UID_B, gid, NULL, 0, false };
+    cb_snapshot_query q = { .viewer_id = UID_B, .game_id = gid };
     T_EQ_INT(CB_ROWS_CALL(g_store, snapshots_query, &q, count_snap, &seen), 1);
     T_CHECK(seen.moves > 0);
     // The finished game is evicted from the cache: it is read fresh.
@@ -1078,7 +1078,7 @@ static void delete_account_anonymizes_stored_replays(void) {
     T_EQ_INT(status_of(gid), GAME_STATUS_GAME_OVER);
     T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
     snap_copy before = { .n = 0 }, after = { .n = 0 };
-    cb_snapshot_query q = { UID_A, gid, NULL, 0, false };
+    cb_snapshot_query q = { .viewer_id = UID_A, .game_id = gid };
     T_EQ_INT(CB_ROWS_CALL(g_store, snapshots_query, &q, copy_snap, &before), 1);
     extras_names nb, na;
     T_CHECK(read_extras_names(before.row.extras, before.row.extras_len, before.row.n_players, &nb));

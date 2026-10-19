@@ -73,7 +73,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 case NW_BOARD: rc = nw_get_board(p, len, i, &br); break;
                 case NW_HISTORY:
                     rc = nw_get_history(p, len, i, &h);
-                    if (!rc) FZ_CHECK(h.n_players <= MAX_PLAYERS);
+                    if (!rc) FZ_CHECK(h.n_players <= MAX_PLAYERS && h.n_names <= MAX_PLAYERS);
                     break;
                 }
                 // The list opened, so the whole body holds exactly n rows.

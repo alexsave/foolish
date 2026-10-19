@@ -494,17 +494,23 @@ static void bots_board_history_replay(void) {
     T_EQ_INT(CB_ROWS_CALL(g_ctx.store, snapshot_put, &s2), CB_OK);
     T_EQ_INT(call(b_history, NULL), 200);
     T_EQ_INT(nc_list_read(g_status, g_body, g_len, NW_HISTORY), 2);
-    T_CHECK(nc_history_row(g_body, g_len, 0) && nc_history_row(g_body, g_len, 0)->moves_len == 1);   // newest first
+    // Newest first, and a row carries the replay's id (no moves, no extras, no player ids).
+    T_CHECK(nc_history_row(g_body, g_len, 0) && nc_history_row(g_body, g_len, 0)->id_len == strlen(s2.id)
+            && memcmp(nc_history_row(g_body, g_len, 0)->id, s2.id, strlen(s2.id)) == 0);
     hr_skip = 1;
     const NcHistoryRow *hr = nc_history_row(g_body, g_len, hr_skip);
     T_CHECK(hr != NULL);
     if (hr) {
-        T_EQ_MEM(g_body + hr->moves_off, hr->moves_len, moves, 3);
-        T_EQ_MEM(g_body + hr->extras_off, hr->extras_len, extras, 1);
+        T_EQ_MEM(hr->id, hr->id_len, s.id, strlen(s.id));
         T_EQ_INT(hr->n_players, 1);
-        T_EQ_MEM(hr->players[0].id, hr->players[0].len, fay, 36);
+        T_EQ_INT(hr->seat, 0);
         T_EQ_INT(hr->created_ms, 1700000000000);
     }
+    // The row's id opens its replay.
+    T_EQ_INT(call(b_replay, s.id), 200);
+    const NcReplay *rp0 = nc_replay_read(g_status, g_body, g_len);
+    T_CHECK(rp0 != NULL);
+    if (rp0) T_EQ_MEM(g_body + rp0->moves_off, rp0->moves_len, moves, 3);
     T_EQ_INT(call(b_replay, gid), 200);
     const NcReplay *rp = nc_replay_read(g_status, g_body, g_len);
     T_CHECK(rp != NULL);

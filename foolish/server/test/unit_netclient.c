@@ -1624,7 +1624,12 @@ static int64_t quiet_run(const char *gid, int64_t now, int64_t until, uint32_t *
             if (q->path_len == pl && memcmp(q->path, path, (size_t)pl) == 0) { *out = id_of(q); return now; }
             nc_on_response(id_of(q), 500, NULL, 0, now);
         }
-        while (next_pkt(now).type) {}
+        // A live broker answers a PINGREQ (a socket that does not is closed after NC_PONG_MS).
+        for (cpkt k; (k = next_pkt(now)).type;) {
+            if (k.type != MQTT_PINGREQ) continue;
+            uint8_t pr[2];
+            T_EQ_INT(feed_bytes(pr, mqtt_write_bare(pr, sizeof pr, MQTT_PINGRESP), now)->kind, NC_EV_NONE);
+        }
         int d = nc_due_ms(now);
         if (d < 0) break;
         now += d ? d : 1;

@@ -191,7 +191,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 const void *row = nc_row(kind, x, n, i);
                 FZ_CHECK(row != NULL);
                 if (kind == NW_GAMES) { const NcGameRow *gr = row; FZ_CHECK((uint64_t)gr->env_off + gr->env_len <= (uint64_t)n); }
-                if (kind == NW_HISTORY) { const NcHistoryRow *h = row; FZ_CHECK((uint64_t)h->moves_off + h->moves_len <= (uint64_t)n); }
+                if (kind == NW_HISTORY) { const NcHistoryRow *h = row; FZ_CHECK(h->n_names <= MAX_PLAYERS); }
             }
             (void)nc_history_head(x, n);
             (void)nc_retry_ms(fz_u8(&in) & 1 ? NC_GET : NC_POST, fz_u8(&in) % 8, status, x, n);

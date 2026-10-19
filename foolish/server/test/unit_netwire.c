@@ -212,12 +212,15 @@ static void lists(void) {
     h.id_len = 1; h.id[0] = 's';
     h.created_ms = 1;
     h.n_players = 2;
-    h.player_len[0] = 1; h.player[0][0] = 'p';
-    h.player_len[1] = 1; h.player[1][0] = 'q';
-    h.moves.p = (const uint8_t *)"\xff";
-    h.moves.len = 1;
+    h.seat = 1;
+    h.rank = 2;
+    h.fool = 0;
+    h.duration_s = 90;
+    h.n_names = 2;
+    h.name_len[0] = 1; h.name[0][0] = 'p';
+    h.name_len[1] = 1; h.name[1][0] = 'q';
     const uint8_t hist[] = { 1, 27, 1, 0xb0, 0x04, 0, 0, 1, 0,
-                             1, 's', 1, 0, 0, 0, 0, 0, 2, 1, 'p', 1, 'q', 1, 0, 0, 0, 0xff, 0, 0, 0, 0 };
+                             1, 's', 1, 0, 0, 0, 0, 0, 2, 1, 2, 0, 90, 0, 0, 0, 2, 1, 'p', 1, 'q' };
     n = NW_HISTORY_HEAD_BYTES + nw_put_history(&h, out + NW_HISTORY_HEAD_BYTES, (int)sizeof out - NW_HISTORY_HEAD_BYTES);
     T_EQ_INT(nw_history_head(1, 1200, 1, out, NW_HISTORY_HEAD_BYTES), NW_HISTORY_HEAD_BYTES);
     T_EQ_MEM(out, n, hist, sizeof hist);
@@ -228,16 +231,48 @@ static void lists(void) {
     T_EQ_INT(nw_get_history(hist, sizeof hist, 0, &hgot), NW_OK);
     T_EQ_MEM(hgot.id, hgot.id_len, "s", 1);
     T_EQ_INT(hgot.n_players, 2);
-    T_EQ_MEM(hgot.player[1], hgot.player_len[1], "q", 1);
-    T_CHECK(hgot.moves.len == 1 && hgot.moves.p[0] == 0xff && hgot.extras.len == 0);
+    T_EQ_INT(hgot.seat, 1);
+    T_EQ_INT(hgot.rank, 2);
+    T_EQ_INT(hgot.fool, 0);
+    T_EQ_INT(hgot.duration_s, 90);
+    T_EQ_INT(hgot.n_names, 2);
+    T_EQ_MEM(hgot.name[1], hgot.name_len[1], "q", 1);
     T_EQ_INT(refused_everywhere(hist, sizeof hist, dec_history), 0);
+    // "None" is 255 for the seat and the fool, all ones for the duration, rank 0 "no summary", and no names.
+    NwHistoryRow nr;
+    memset(&nr, 0, sizeof nr);
+    nr.id_len = 1; nr.id[0] = 'n';
+    nr.n_players = 3;
+    nr.seat = NW_HISTORY_NONE;
+    nr.fool = NW_HISTORY_NONE;
+    nr.duration_s = NW_HISTORY_NO_TIME;
+    const uint8_t nrow[] = { 1, 'n', 0, 0, 0, 0, 0, 0, 3, 255, 0, 255, 0xff, 0xff, 0xff, 0xff, 0 };
+    T_EQ_INT(nw_put_history(&nr, out, sizeof out), (int)sizeof nrow);
+    T_EQ_MEM(out, sizeof nrow, nrow, sizeof nrow);
     // No rating is said as zero, and a rating beside "none" is refused.
     uint8_t none[sizeof hist];
     memcpy(none, hist, sizeof hist);
     none[2] = 0;
     T_EQ_INT(nw_list_open(none, sizeof none, NW_HISTORY), NW_E_WIRE);
-    h.n_players = MAX_PLAYERS + 1;
-    T_EQ_INT(nw_put_history(&h, out, sizeof out), NW_E_WIRE);
+    // The bounds: players, names, a name and an id past their caps are refused, and the cap itself is not.
+    NwHistoryRow bad = h;
+    bad.n_players = MAX_PLAYERS + 1;
+    T_EQ_INT(nw_put_history(&bad, out, sizeof out), NW_E_WIRE);
+    bad = h;
+    bad.n_players = MAX_PLAYERS;
+    T_CHECK(nw_put_history(&bad, out, sizeof out) > 0);
+    bad = h;
+    bad.n_names = MAX_PLAYERS + 1;
+    T_EQ_INT(nw_put_history(&bad, out, sizeof out), NW_E_WIRE);
+    bad = h;
+    bad.name_len[1] = NW_NAME_MAX + 1;
+    T_EQ_INT(nw_put_history(&bad, out, sizeof out), NW_E_WIRE);
+    bad = h;
+    bad.id_len = NW_ID_MAX + 1;
+    T_EQ_INT(nw_put_history(&bad, out, sizeof out), NW_E_WIRE);
+    bad = h;
+    bad.created_ms = (uint64_t)1 << 48;
+    T_EQ_INT(nw_put_history(&bad, out, sizeof out), NW_E_WIRE);
 }
 
 static void frames(void) {
