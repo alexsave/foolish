@@ -223,6 +223,16 @@ static void users_round_trip(void) {
     cb_user_row dup = mkuser("ann@x.io", "Other", 3000);
     T_EQ_INT(CB_STORE_CALL(s, user_create, &dup), CB_E_CONFLICT);
     T_EQ_INT(CB_STORE_CALL(s, user_get, dup.id, &got), CB_E_NOT_FOUND);
+    // The name is unique too, whatever the email (the caller stores it canonical: auth/names.h), and
+    // no name at all may repeat.
+    cb_user_row twin = mkuser("ann2@x.io", "Ann", 3000), anon1 = mkuser("n1@x.io", "", 3000), anon2 = mkuser("n2@x.io", "", 3000);
+    T_EQ_INT(CB_STORE_CALL(s, user_create, &twin), tsb_dynamo() ? CB_OK : CB_E_CONFLICT);   // DynamoDB: the email only
+    if (!tsb_dynamo()) T_EQ_INT(CB_STORE_CALL(s, user_get, twin.id, &got), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_STORE_CALL(s, user_create, &anon1), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_create, &anon2), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_delete, anon1.id), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_delete, anon2.id), CB_OK);
+    if (tsb_dynamo()) CB_STORE_CALL(s, user_delete, twin.id);
 
     // The trigger's rating row came with the account, off the leaderboard
     // until they play (the index key is sparse).
