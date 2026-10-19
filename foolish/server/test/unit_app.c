@@ -40,6 +40,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/clock.h"
 
 static const char UID_A[] = "aaaaaaaa-0000-4000-8000-000000000001";
 static const char UID_B[] = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -1164,9 +1165,7 @@ static void pushes_go_out_in_commit_order(void) {
     pthread_create(&b, NULL, order_move, gid);
     // Give it the time it needs to commit and publish if nothing stops it.
     struct timespec dl;
-    clock_gettime(CLOCK_REALTIME, &dl);
-    dl.tv_nsec += 300 * 1000000L;
-    if (dl.tv_nsec >= 1000000000L) { dl.tv_sec++; dl.tv_nsec -= 1000000000L; }
+    host_deadline_after_ms(&dl, 300);
     pthread_mutex_lock(&g_order.mu);
     while (g_order.n == 0 && pthread_cond_timedwait(&g_order.cv, &g_order.mu, &dl) == 0) {}
     g_order.released = true;

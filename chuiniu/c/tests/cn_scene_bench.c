@@ -25,6 +25,7 @@
 #include <time.h>
 #ifdef __APPLE__
 #include <dispatch/dispatch.h>
+#include "../../../shared/c/clock.h"
 #endif
 
 #define BOARD_W 390
@@ -32,9 +33,9 @@
 #define BOARD_PAD 40
 #define SHADOW_RES 1024
 
-static double now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+static double now_ms(void) { return host_mono_ms_f(); }
 static int cmp_d(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
-static double cpu_ms(void) { struct timespec t; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+static double cpu_ms(void) { return host_thread_cpu_ms_f(); }
 
 /* the frame in nbands bands, each pass's bands at once; one band is cn_scene_render */
 static int g_pass, g_bands;

@@ -66,6 +66,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include "../../../shared/c/clock.h"
 
 #define SECRET "authz-secret-authz-secret-authz-secret-0"
 #define OTHER_SECRET "not-the-servers-secret-not-the-servers-secret"
@@ -80,9 +81,7 @@ static int g_cells;          // matrix cells asserted
 static int g_bodies_checked; // envelopes and casts decoded and judged
 
 static int64_t mono_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    return host_mono_ms();
 }
 
 static void start_server(void) {

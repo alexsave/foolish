@@ -29,10 +29,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
+#include "../../../shared/c/clock.h"
+#include "../../../shared/c/clock.h"
 
 static double wall_secs(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return host_mono_s();
 }
 
 // Dispatch on strategy_key — seat 0 uses `protagonist`, others use `opp`.
@@ -203,8 +204,7 @@ static long long g_lat_ns = 0; static long g_lat_n = 0; static int g_lat_reg = 0
 static void lat_dump(void){ if (g_lat_n) fprintf(stderr, "LAT %lld %ld\n", g_lat_ns, g_lat_n); }
 // CD_LEAFBOOK_STATS=1: dump the cumulative round-boundary book-hit count at exit.
 static void leafbook_dump(void){ fprintf(stderr, "LEAFBOOK hits=%ld\n", cd_sim_leafbook_hits()); }
-static long long now_cpu_ns(void){ struct timespec t;
-  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t); return (long long)t.tv_sec*1000000000LL + t.tv_nsec; }
+static long long now_cpu_ns(void){ return host_process_cpu_ns(); }
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
     if (g_sig < 0) { const char *e = getenv("GAME_SIG"); g_sig = (e && e[0] && e[0] != '0') ? 1 : 0; }
     if (g_lat < 0) { const char *e = getenv("CD_LAT");   g_lat = (e && e[0] && e[0] != '0') ? 1 : 0; }

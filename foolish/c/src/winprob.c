@@ -22,6 +22,7 @@
 #ifndef __wasm__
 #include <pthread.h>
 #include <time.h>
+#include "../../../shared/c/clock.h"
 #endif
 
 // One step per recorded action, plus the opening position. Sized off the
@@ -36,9 +37,7 @@ static uint32_t wp_now_ms(void) {
 #ifdef __wasm__
     return 0;
 #else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+    return (uint32_t)host_mono_ms();
 #endif
 }
 

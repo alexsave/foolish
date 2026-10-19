@@ -44,6 +44,7 @@ static _Thread_local int dl_tau = DL_TAU_DEFAULT;
 #if !defined(__wasm__) && !defined(__wasm32__)
 #include <stdio.h>
 #include <time.h>
+#include "../../../shared/c/clock.h"
 static int dl_stats = 0;
 static long dl_n_decisions = 0, dl_n_deferred = 0;
 static double dl_secs = 0.0;
@@ -55,8 +56,7 @@ static void dl_report(void) {
             dl_n_decisions ? 1e6 * dl_secs / (double)dl_n_decisions : 0.0);
 }
 static double dl_wall(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return host_mono_s();
 }
 #endif
 

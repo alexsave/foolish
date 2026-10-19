@@ -67,6 +67,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "../../../shared/c/clock.h"
 
 static int n_pass = 0, n_fail = 0;
 #define CHECK(cond, msg) do { \
@@ -540,8 +541,7 @@ static void test_deep_pass(void) {
 }
 
 static double now_s(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec / 1e9;
+    return host_mono_s();
 }
 
 // The handoff's first instruction: measure one playout per engine before
