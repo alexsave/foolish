@@ -74,15 +74,17 @@ static void the_viewer_address(void) {
     // IPv6: cut to the /64, with or without brackets, with or without a port.
     viewer_key("2001:db8:1:2:3:4:5:6:443", &cb_provider_aws, NULL, "2001:db8:1:2::/64");
     viewer_key("[2001:db8:1:2::9]:443", &cb_provider_aws, NULL, "2001:db8:1:2::/64");
-    viewer_key("2001:db8:1:2:ffff::1", &cb_provider_aws, NULL, "2001:db8:1:2::/64");
+    viewer_key("2001:db8:1:2:ffff::1:443", &cb_provider_aws, NULL, "2001:db8:1:2::/64");
     // No header: the source address.
     viewer_key(NULL, &cb_provider_aws, "198.51.100.9", "198.51.100.9");
     // Under serve the socket's peer, whatever a client puts in the header.
     viewer_key("203.0.113.7:1", &cb_provider_local, "127.0.0.1", "127.0.0.1");
     // Nothing known: "" (not limited).
     viewer_key(NULL, &cb_provider_local, NULL, "");
-    // Text that is no address is still a key, as sent.
-    viewer_key("not-an-address", &cb_provider_aws, NULL, "not-an-address");
+    // Text that is no "ip:port" is no key (the strict parser's, as under serve): the peer stands.
+    viewer_key("not-an-address", &cb_provider_aws, NULL, "");
+    viewer_key("not-an-address", &cb_provider_aws, "198.51.100.9", "198.51.100.9");
+    viewer_key("203.0.113.7", &cb_provider_aws, "198.51.100.9", "198.51.100.9");
 }
 
 // Behind CloudFront under serve: the header counts only with the origin secret.
