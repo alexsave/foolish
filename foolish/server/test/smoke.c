@@ -11,7 +11,7 @@
 // the binary surface (DESIGN.md "Binary surface") as the clients speak it,
 // every request built and every answer read by the kernel's client library
 // (netclient.h): three humans sign up; A creates, B joins, A adds a bot, both
-// start; each holds an MQTT stream socket: A on its own seat's casts, B on its
+// start; each holds a stream socket: A on its own seat's casts, B on its
 // views, C, who never sits, on the game's spectator casts. The humans play legal moves (chosen on their own masked
 // envelope with the kernel's client table, as the browser does) while the bot
 // pool drives the bot. Once mid-game, when only the bots owe a move, the
@@ -23,7 +23,7 @@
 // game reloads at the same version with the same envelope.
 //
 // Every module is real here: auth (real JWTs), the SQLite store, the /v1
-// routes, realtime (rt_local + stream_mqtt, through rt_deps' production table),
+// routes, realtime (rt_local, through rt_deps' production table),
 // the app.
 //
 // THE BOTS' TIME RUNS SMOKE_SPEEDUP TIMES FASTER (CBASE_BOT_SPEEDUP, config.h):
@@ -50,7 +50,7 @@
 #include "ask.h"
 #include "netclient.h"
 #include "netwire.h"
-#include "mqtt/mqtt.h"
+#include "stream_frame.h"
 
 #include <signal.h>
 #include <stdbool.h>
@@ -286,13 +286,13 @@ static int choose_move(smoke_client *sc, const cb_buf *env, uint8_t *wire, int c
 }
 
 // One stream socket and what it heard: the versions of the casts and of the
-// views pushed, in order. It speaks MQTT (shared/c/mqtt) on /mqtt, as the
-// clients do against IoT Core, and each PUBLISH's payload is a netwire.h frame.
+// views pushed, in order. It speaks the socket's frames (shared/c/stream_frame.h)
+// on /ws, as the clients do, and each push is a netwire.h frame.
 typedef struct {
     int      fd;
     char     token[NW_ACCESS_MAX + 1];
     char     uid[64];
-    char     topic[128];          // the one filter it subscribes
+    char     topic[128];          // what it listens to, named as the old topics were: u/<id>/v (views), u/<id>/c/<game> (seat casts), s/<game> (spectators')
     int      n_cast;
     uint32_t cast_v[4096];
     int      n_view;
@@ -325,20 +325,19 @@ static void mq_send(listener *l, const uint8_t *b, int n) {
     if (n > 0) tc_ws_send(l->fd, CB_WS_OP_BIN, b, (size_t)n);
 }
 
-// Every packet of one WebSocket message; the SUBACK's first code into *suback.
+// One frame; a REPLY's status into *suback (0 granted, 1 refused).
 static void hear(listener *l, const uint8_t *p, size_t n, int *suback) {
-    MqttPacket m;
-    for (int at = 0, k; at < (int)n && (k = mqtt_parse(p + at, (int)n - at, 1 << 20, MQTT_FROM_SERVER, &m)) > 0; at += k) {
-        if (m.type == MQTT_SUBACK) {
-            if (m.n_items && m.items[0] == MQTT_SUBACK_FAILURE) l->refused++;
-            if (suback && m.n_items) *suback = m.items[0];
-        }
-        if (m.type != MQTT_PUBLISH) continue;
+    if (sf_is_push(p, n)) {
         static NwFrame f;
-        if (nw_frame_decode(m.payload, m.payload_len, &f) != NW_OK) continue;
-        if (f.kind == NW_WS_CAST && l->n_cast < 4096) l->cast_v[l->n_cast++] = f.version;
+        if (nw_frame_decode(p, (int)n, &f) != NW_OK) return;
+        if (f.kind == (l->topic[0] == 's' ? NW_WS_SPECT : NW_WS_CAST) && l->n_cast < 4096) l->cast_v[l->n_cast++] = f.version;
         else if (f.kind == NW_WS_VIEW && f.blob.len && l->n_view < 4096) l->view_v[l->n_view++] = f.version;
+        return;
     }
+    sf_frame sf;
+    if (sf_parse(p, n, &sf) != 0 || sf.kind != SF_REPLY) return;
+    if (sf.status != 200) l->refused++;
+    if (suback) *suback = sf.status == 200 ? 0 : 1;
 }
 
 // Reads every message that arrives within timeout_ms, then each next one that
@@ -348,7 +347,7 @@ static void hear(listener *l, const uint8_t *p, size_t n, int *suback) {
 static void drain_ws(listener *l, int timeout_ms, int gap_ms) {
     if (l->fd >= 0 && mono_ms() - l->last_ping > NC_PING_MS) {
         uint8_t b[2];
-        mq_send(l, b, mqtt_write_bare(b, sizeof b, MQTT_PINGREQ));
+        mq_send(l, b, sf_put_bare(b, sizeof b, SF_PING));
         l->last_ping = mono_ms();
     }
     cb_buf f;
@@ -363,21 +362,23 @@ static void drain_ws(listener *l, int timeout_ms, int gap_ms) {
     cb_buf_free(&f);
 }
 
-// Opens the socket, CONNECTs with the token and subscribes; true once the
+// Opens the socket, says HELLO with the token and subscribes; true once the
 // subscription is granted. Pushes that arrive first are heard.
 static bool ws_open(listener *l) {
     if (l->n_cast > 0 && l->n_reopen < 16) l->reopen_at[l->n_reopen++] = l->n_cast;
-    l->fd = tc_ws_open(g_port, "/mqtt", "Sec-WebSocket-Protocol: mqtt\r\n");
+    l->fd = tc_ws_open(g_port, "/ws", NULL);
     l->last_ping = mono_ms();
     if (l->fd < 0) return false;
     static uint8_t b[NW_ACCESS_MAX + 256];
-    char id[80];
-    int idn = snprintf(id, sizeof id, "%s-smoke", l->uid);
-    int n = mqtt_write_connect(b, sizeof b, id, idn, 60, "token", 5, (const uint8_t *)l->token, (int)strlen(l->token));
-    MqttTopic t = { l->topic, (int)strlen(l->topic), 0 };
-    int m = n > 0 ? mqtt_write_subscribe(b + n, (int)sizeof b - n, 1, &t, 1) : -1;
-    if (m < 0) return false;
-    mq_send(l, b, n + m);
+    mq_send(l, b, sf_put_hello(b, sizeof b, l->token, strlen(l->token)));
+    // The topic names what is heard: views are the user's own (nothing to say), a game's casts are
+    // subscribed to (a seat's come with the user anyway, the spectators' only on the subscription).
+    const char *g = strstr(l->topic, "/c/");
+    g = g ? g + 3 : (strncmp(l->topic, "s/", 2) == 0 ? l->topic + 2 : NULL);
+    bool views = g == NULL;
+    mq_send(l, b, g ? sf_put_sub(b, sizeof b, SF_SUB, 0x80000001u, NW_SUB_GAME, g, strlen(g))
+                    : sf_put_sub(b, sizeof b, SF_SUB, 0x80000001u, NW_SUB_GAMES, "", 0));
+    (void)views;
     cb_buf in;
     cb_buf_init(&in);
     int code = -1;

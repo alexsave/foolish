@@ -28,7 +28,7 @@
 #include "auth/jwt.h"
 #include "net/ws.h"
 
-#include "../../../shared/c/mqtt/mqtt.h"
+#include "../../../shared/c/stream_frame.h"
 
 #include <signal.h>
 #include <stdio.h>
@@ -238,74 +238,54 @@ static void matrix(void) {
     cb_buf_free(&out);
 }
 
-// ---- the MQTT stream (realtime/stream_mqtt.h) ----------------------------------------------
+// ---- the socket (realtime/rt_local.c, shared/c/stream_frame.h) -------------------------------
 //
-// The same rows for /mqtt, the path IoT Core serves in production; each
-// refusal ENDS the connection with no CONNACK or SUBACK (IoT's way), so a cell
-// is "open" or "closed". A forged, expired or deleted account's token never
-// connects; a user subscribes to their own topics and the spectators', never
-// another user's; and a chat a member posts reaches the members' own topics.
+// The same rows for /ws; each refusal ENDS the connection with no READY, so a
+// cell is "open" or "closed". A forged, expired, signed-out or deleted
+// account's token never connects; a socket closes when its session ends; and a
+// chat a member posts reaches only that user's own connections.
 
-static int mqtt_open(caller who) {
-    return tc_ws_open(g_port, "/mqtt", who == EDGELESS ? "Sec-WebSocket-Protocol: mqtt\r\n"
-                                                       : "Sec-WebSocket-Protocol: mqtt\r\nX-Cbase-Origin: " ORIGIN_SECRET "\r\n");
+static int ws_open_as(caller who) {
+    return tc_ws_open(g_port, "/ws", who == EDGELESS ? NULL : "X-Cbase-Origin: " ORIGIN_SECRET "\r\n");
 }
 
-// The next packet, its type (0 timeout, -1 the socket closed).
-static int mqtt_next(int fd, int ms, cb_buf *m, MqttPacket *p) {
+// The next frame's kind (0 timeout, -1 the socket closed), the frame in m.
+static int ws_next(int fd, int ms, cb_buf *m) {
     cb_buf_reset(m);
     int op = tc_ws_recv(fd, ms, m);
     if (op == CB_WS_OP_CLOSE) return -1;
-    if (op != CB_WS_OP_BIN) return 0;
-    return mqtt_parse(m->p, (int)m->len, 1 << 20, MQTT_FROM_SERVER, p) == (int)m->len ? p->type : -2;
+    if (op != CB_WS_OP_BIN || m->len < 2) return 0;
+    return m->p[1];
 }
 
-// CONNECT with `token` and a client id for `uid`: the CONNACK's type, or -1 closed.
-static int mqtt_connect(int fd, const char *uid, const char *token, cb_buf *m) {
-    uint8_t b[NW_ACCESS_MAX + 256];
-    char id[96];
-    snprintf(id, sizeof id, "%s-smoke", uid[0] ? uid : "nobody");
-    int n = mqtt_write_connect(b, sizeof b, id, (int)strlen(id), 60, token ? "jwt" : NULL, 3, (const uint8_t *)token,
-                               token ? (int)strlen(token) : 0);
+// HELLO with `token`: the next frame's kind (SF_READY), or -1 closed.
+static int ws_hello(int fd, const char *token, cb_buf *m) {
+    uint8_t b[NW_ACCESS_MAX + 16];
+    int n = sf_put_hello(b, sizeof b, token ? token : "", token ? strlen(token) : 0);
     T_EQ_INT(tc_ws_send(fd, CB_WS_OP_BIN, b, (size_t)n), 0);
-    MqttPacket p;
-    return mqtt_next(fd, 3000, m, &p);
+    return ws_next(fd, 3000, m);
 }
 
-// SUBSCRIBE to one filter: its SUBACK's type, or -1 closed.
-static int mqtt_sub(int fd, const char *filter, cb_buf *m) {
-    uint8_t b[512];
-    MqttTopic t = { filter, (int)strlen(filter), 0 };
-    int n = mqtt_write_subscribe(b, sizeof b, 1, &t, 1);
-    T_EQ_INT(tc_ws_send(fd, CB_WS_OP_BIN, b, (size_t)n), 0);
-    MqttPacket p;
-    return mqtt_next(fd, 3000, m, &p);
-}
-
-static void mqtt_matrix(void) {
+static void ws_matrix(void) {
     cb_buf m;
     cb_buf_init(&m);
     // Around the edge: no socket at all.
-    int fd = mqtt_open(EDGELESS);
+    int fd = ws_open_as(EDGELESS);
     T_CHECK(fd < 0);
     if (fd >= 0) close(fd);
-    // CONNECT, by caller: only a live account's own token connects.
+    // HELLO, by caller: only a live account's own token connects.
     struct { caller who; const char *token; int want; } connects[] = {
-        { ANON, NULL, -1 }, { FORGED, g_token[FORGED], -1 }, { OWNER, g_token[OWNER], MQTT_CONNACK },
-        { STRANGER, g_token[STRANGER], MQTT_CONNACK },
+        { ANON, NULL, -1 }, { FORGED, g_token[FORGED], -1 }, { OWNER, g_token[OWNER], SF_READY },
+        { STRANGER, g_token[STRANGER], SF_READY },
     };
     for (size_t i = 0; i < sizeof connects / sizeof connects[0]; i++) {
-        fd = mqtt_open(connects[i].who);
+        fd = ws_open_as(connects[i].who);
         T_CHECK(fd >= 0);
-        int got = mqtt_connect(fd, g_uid[connects[i].who], connects[i].token, &m);
-        if (got != connects[i].want) fprintf(stderr, "  mqtt connect as %s: %d\n", CALLER_NAME[connects[i].who], got);
+        int got = ws_hello(fd, connects[i].token, &m);
+        if (got != connects[i].want) fprintf(stderr, "  ws hello as %s: %d\n", CALLER_NAME[connects[i].who], got);
         T_EQ_INT(got, connects[i].want);
         close(fd);
     }
-    // A's token with B's client id.
-    fd = mqtt_open(OWNER);
-    T_EQ_INT(mqtt_connect(fd, g_uid[STRANGER], g_token[OWNER], &m), -1);
-    close(fd);
     // An expired token, signed with the server's own key.
     cb_jwt_claims c;
     memset(&c, 0, sizeof c);
@@ -315,70 +295,90 @@ static void mqtt_matrix(void) {
     c.exp = c.iat + 3600;
     char expired[CB_JWT_MAX];
     T_CHECK(cb_jwt_mint("authz-secret-authz-secret-authz-secret", &c, expired, sizeof expired) > 0);
-    fd = mqtt_open(OWNER);
-    T_EQ_INT(mqtt_connect(fd, g_uid[OWNER], expired, &m), -1);
+    fd = ws_open_as(OWNER);
+    T_EQ_INT(ws_hello(fd, expired, &m), -1);
+    close(fd);
+    // A validly signed token of a session that never began: refused (the session is read).
+    c.iat = cb_now_ms() / 1000;
+    c.exp = c.iat + 3600;
+    char ghost[CB_JWT_MAX];
+    T_CHECK(cb_jwt_mint("authz-secret-authz-secret-authz-secret", &c, ghost, sizeof ghost) > 0);
+    fd = ws_open_as(OWNER);
+    T_EQ_INT(ws_hello(fd, ghost, &m), -1);
     close(fd);
 
-    // SUBSCRIBE, by filter: A's own and the spectators' topics, nothing of B's.
-    struct { caller who; const char *fmt; int want; } subs[] = {
-        { OWNER, "u/%s/v", MQTT_SUBACK },      { OWNER, "u/%s/#", MQTT_SUBACK },   { OWNER, "s/%s", MQTT_SUBACK },
-        { OWNER, "u/%s/c/x", MQTT_SUBACK },    { STRANGER, "s/%s", MQTT_SUBACK },  { STRANGER, "u/%s/m/x", -1 },
-        { STRANGER, "u/%s/#", -1 },            { OWNER, "u/+/v", -1 },             { OWNER, "#", -1 },
-    };
-    for (size_t i = 0; i < sizeof subs / sizeof subs[0]; i++) {
-        char filter[160];
-        // u/%s/... names A's own topics for every row: for B, they are someone else's.
-        snprintf(filter, sizeof filter, subs[i].fmt, strncmp(subs[i].fmt, "s/", 2) == 0 ? g_gid : g_uid[OWNER]);
-        fd = mqtt_open(subs[i].who);
-        T_EQ_INT(mqtt_connect(fd, g_uid[subs[i].who], g_token[subs[i].who], &m), MQTT_CONNACK);
-        int got = mqtt_sub(fd, filter, &m);
-        if (got != subs[i].want) fprintf(stderr, "  mqtt subscribe %s as %s: %d\n", filter, CALLER_NAME[subs[i].who], got);
-        T_EQ_INT(got, subs[i].want);
-        close(fd);
-    }
+    // REQ is HTTP over the socket: the connection's user is the caller, and a session route is refused.
+    fd = ws_open_as(OWNER);
+    T_EQ_INT(ws_hello(fd, g_token[OWNER], &m), SF_READY);
+    uint8_t rb[256];
+    int rn = sf_put_req(rb, sizeof rb, 5, SF_METH_POST, "/v1/auth/signout", 16, (const uint8_t *)"", 0);
+    T_EQ_INT(tc_ws_send(fd, CB_WS_OP_BIN, rb, (size_t)rn), 0);
+    T_EQ_INT(ws_next(fd, 3000, &m), SF_REPLY);
+    sf_frame rf;
+    T_EQ_INT(sf_parse(m.p, m.len, &rf), 0);
+    T_EQ_INT(rf.status, 403);
+    close(fd);
 
-    // A real push through `cbase serve`: A's chat reaches A's own topic, and B (not a member) hears nothing.
-    int a = mqtt_open(OWNER), b = mqtt_open(STRANGER);
-    T_EQ_INT(mqtt_connect(a, g_uid[OWNER], g_token[OWNER], &m), MQTT_CONNACK);
-    T_EQ_INT(mqtt_connect(b, g_uid[STRANGER], g_token[STRANGER], &m), MQTT_CONNACK);
-    char filter[160];
-    snprintf(filter, sizeof filter, "u/%s/#", g_uid[OWNER]);
-    T_EQ_INT(mqtt_sub(a, filter, &m), MQTT_SUBACK);
-    snprintf(filter, sizeof filter, "s/%s", g_gid);
-    T_EQ_INT(mqtt_sub(b, filter, &m), MQTT_SUBACK);
+    // A real push through `cbase serve`: A's chat reaches A's own connection, and B (not a member) hears nothing.
+    int a = ws_open_as(OWNER), b = ws_open_as(STRANGER);
+    T_EQ_INT(ws_hello(a, g_token[OWNER], &m), SF_READY);
+    T_EQ_INT(ws_hello(b, g_token[STRANGER], &m), SF_READY);
+    uint8_t sb[64];
+    int sn = sf_put_sub(sb, sizeof sb, SF_SUB, 0x80000001u, NW_SUB_GAME, g_gid, strlen(g_gid));
+    T_EQ_INT(tc_ws_send(b, CB_WS_OP_BIN, sb, (size_t)sn), 0);
+    T_EQ_INT(ws_next(b, 3000, &m), SF_REPLY);
     uint8_t body[64];
     int n = build(B_CHAT, body, sizeof body);
     char path[64];
     snprintf(path, sizeof path, "/v1/chat/%s", g_gid);
     T_EQ_INT(req(OWNER, "POST", path, body, (size_t)n, NULL), 204);
-    MqttPacket p;
-    T_EQ_INT(mqtt_next(a, 3000, &m, &p), MQTT_PUBLISH);
-    char want[160];
-    snprintf(want, sizeof want, "u/%s/m/%s", g_uid[OWNER], g_gid);
-    T_EQ_MEM(p.topic, p.topic_len, want, strlen(want));
+    T_EQ_INT(ws_next(a, 3000, &m), NW_WS_CHAT);
     NwFrame f;
-    T_EQ_INT(nw_frame_decode(p.payload, p.payload_len, &f), NW_OK);
+    T_EQ_INT(nw_frame_decode(m.p, (int)m.len, &f), NW_OK);
     T_CHECK(f.kind == NW_WS_CHAT && f.chat.message_len == 2);
-    T_EQ_INT(mqtt_next(b, 500, &m, &p), 0);
+    T_EQ_INT(ws_next(b, 500, &m), 0);
     close(a);
     close(b);
 
-    // A deleted account: its connection ends, and its unexpired token never connects again.
+    // SIGN-OUT closes the session's socket, and its token never connects again; the REQ on it is refused.
     char tok[NW_ACCESS_MAX + 1], uid[NW_ID_MAX + 1];
-    T_CHECK(signup("AUTHZ_D", tok));
-    snprintf(uid, sizeof uid, "%s", g_signed_up_id);
-    int d = mqtt_open(OWNER);
-    T_EQ_INT(mqtt_connect(d, uid, tok, &m), MQTT_CONNACK);
+    T_CHECK(signup("AUTHZ_E", tok));
+    int e = ws_open_as(OWNER);
+    T_EQ_INT(ws_hello(e, tok, &m), SF_READY);
     char headers[NW_ACCESS_MAX + 128];
     snprintf(headers, sizeof headers, "X-Cbase-Origin: " ORIGIN_SECRET "\r\nAuthorization: Bearer %s\r\nContent-Type: application/octet-stream\r\n", tok);
+    NwRequest so;
+    memset(&so, 0, sizeof so);
+    so.kind = NW_SIGNOUT;
+    so.scope = NW_SCOPE_LOCAL;
+    uint8_t sob[16];
+    int son = nw_request_encode(&so, sob, sizeof sob);
     tc_response r;
+    T_EQ_INT(tc_http(g_port, "POST", "/v1/auth/signout", headers, sob, (size_t)son, &r), 0);
+    T_CHECK(r.status == 204 || r.status == 200);
+    tc_response_free(&r);
+    T_EQ_INT(ws_next(e, 3000, &m), -1);
+    close(e);
+    e = ws_open_as(OWNER);
+    T_EQ_INT(ws_hello(e, tok, &m), -1);
+    close(e);
+    T_EQ_INT(tc_http(g_port, "POST", "/v1/games", headers, NULL, 0, &r), 0);   // and over HTTP the signed-out token is refused at once
+    T_CHECK(r.status == 401 || r.status == 400 || r.status == 404 || r.status == 405);
+    tc_response_free(&r);
+
+    // A deleted account: its connection ends, and its unexpired token never connects again.
+    T_CHECK(signup("AUTHZ_D", tok));
+    snprintf(uid, sizeof uid, "%s", g_signed_up_id);
+    int d = ws_open_as(OWNER);
+    T_EQ_INT(ws_hello(d, tok, &m), SF_READY);
+    snprintf(headers, sizeof headers, "X-Cbase-Origin: " ORIGIN_SECRET "\r\nAuthorization: Bearer %s\r\nContent-Type: application/octet-stream\r\n", tok);
     T_EQ_INT(tc_http(g_port, "POST", "/v1/account/delete", headers, NULL, 0, &r), 0);
     T_EQ_INT(r.status, 204);
     tc_response_free(&r);
-    T_EQ_INT(mqtt_next(d, 3000, &m, &p), -1);
+    T_EQ_INT(ws_next(d, 3000, &m), -1);
     close(d);
-    d = mqtt_open(OWNER);
-    T_EQ_INT(mqtt_connect(d, uid, tok, &m), -1);
+    d = ws_open_as(OWNER);
+    T_EQ_INT(ws_hello(d, tok, &m), -1);
     close(d);
     cb_buf_free(&m);
 }
@@ -402,7 +402,7 @@ static void limits_hold(void) {
         int n = request_body(&q, b, sizeof b);
         if (req(ANON, "POST", "/v1/auth/signup", b, (size_t)n, NULL) == 429) refused_at = i;
     }
-    // Three sign-ups were the world's (two, and mqtt_matrix's deleted one); the address's burst is 5.
+    // Three sign-ups were the world's (two, and ws_matrix's two); the address's burst is 5.
     T_EQ_INT(refused_at, 2);
     uint8_t b[256];
     int n = build(B_SIGNIN, b, sizeof b);   // AUTHZ_A, a wrong password; the matrix spent two (a sign-in, a change)
@@ -435,7 +435,7 @@ int main(int argc, char **argv) {
     g_bin = argv[1];
     T_RUN(setup_world);
     T_RUN(matrix);
-    T_RUN(mqtt_matrix);
+    T_RUN(ws_matrix);
     T_RUN(limits_hold);
     T_RUN(stops);
     return T_DONE();
