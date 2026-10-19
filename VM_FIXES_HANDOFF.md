@@ -83,3 +83,20 @@ cd ../.. && make -s -j2 build/test/unit_loop && build/test/unit_loop
 - c_base/DESIGN.md lines 394 and 426 are stale.
 - The batch test pass: the group-commit kill-mid-group durability test, the smoke tests that need CBASE_DEV=1, a test for the CPU-derived worker default and the eventfd path; then one PR, CI, rebase-merge.
 - Rerun the nano rehearsal for before/after, and decide on a lower-contention allocator or per-move allocation cuts before anyone runs serve on 2+ CPUs.
+
+
+## Pass 2 (2026-10-19, second agent)
+Commits, in order: 0b243c929-ish "bots: a pause holds no thread under serve" (job_start_after on the provider, a loop timer; CAS backoff does not sleep under serve; loop cancel O(log n) via a slot in the timer id), "server: a pooled request is one block from a loop-thread free list", "http: the method is parsed once into an int", "make: CPU=<name>", and "bench: botg.sh takes SPEEDUP".
+Use `git log --oneline` for the SHAs.
+Measured:
+- Real pacing (CBASE_BOT_SPEEDUP=1, 20 octogen games, 2 seats, 0.1 CPU, 38 s window): HEAD 76ced0515 29 human moves = 0.76 moves/s (each followed by one bot move); after fix 1, 118 = 3.11 moves/s.
+  p95 move ack went 1.3 ms to 61 ms only because the box is now throttled (305 of 346 CFS periods) doing 4x the work.
+- Fixes 2 and 3 are unit-tested (unit_http, unit_net, unit_server_edges, unit_app pass) but NOT benchmarked.
+Unfinished:
+1. Human-pace run.sh (step.sh) plays 0 moves on B1 and B2 ("deadline in game 0 at v2"), 2-seat tables never deal.
+   run.sh uses step.sh, which does not use the fixed p3load2-linux client; B0 at 192 was fine, so a server regression from a1edd8a44 is possible.
+   The coordinator took this one.
+2. Bench fixes 2 and 3 (B2 vs B1 at 64/192 games) once item 1 is solved.
+3. Fix 4: cb_fanout_publish already batches (cb_rt_batch_begin/end) and builds one spectator cast; the per-viewer cast build and per-frame encode are unprofiled. Run big8.sh then prof, then decide on encode-once and writev.
+4. Fixes 5 and 7 not started. 6: build with MK="CPU=neoverse-n1" ./build.sh N1 and compare with B2 (saturation and 192 games); the Makefile variable is in place, shipped flags not changed.
+5. Test pitfall: macOS sed needs -i '' and make's same-second rebuild trap bit twice while mutation checking (sleep 1 and touch after restoring).
