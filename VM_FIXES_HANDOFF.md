@@ -276,3 +276,54 @@ Commits 846f948c4 .. b11b99ae1 on vm-fixes, pushed. `make -k test` and `make smo
 2. In-memory ids as 16 bytes in the row structs (storage already is).
 3. Delete the aws provider after cutover (store_dynamo, items.c, rows_auth.c, rows_foolish.c item path, the dynamo tests).
 4. The admin console now lists tables; its Games panel uses "games" (works); other panels unchecked by hand.
+
+## vm-ws (branch vm-ws, from vm-fixes 302851836): plain WebSocket replaces MQTT on the VM path
+WIP checkpoint 61505bd06 plus later commits. Tree is NOT green yet (list below). No overlap with the SQL agent's files.
+
+### Frame protocol (shared/c/stream_frame.h, header-only, both ends)
+GET /ws, plain binary WebSocket, no subprotocol. One WS message = one frame `[1][kind]...`, little-endian.
+Client to server: HELLO(60) u16 n + token (first frame, only once); SUB(62)/UNSUB(63) u32 id, u8 what (NW_SUB_*), u8 n, gid; REQ(64) u32 id, u8 meth(1 GET,2 POST), u16 n, path, body; PING(66).
+Server to client: READY(61); REPLY(65) u32 id, u16 status, body (answer to SUB/UNSUB with empty body, and to REQ with the HTTP body); PONG(67); pushes are netwire frames NW_WS_VIEW 51, CAST 52, CHAT 53, SPECT 57 (new: spectators' cast, same layout as CAST).
+SUB ids carry the top bit (client next_pid), action ids are the pump's request ids.
+A malformed frame, a non-HELLO first frame, a second HELLO, a text message: close 1008/1003. Refusals have no wire reason.
+
+### Done (file:function)
+- c_base/providers/local/src/realtime/rt_local.c: whole hub rewritten. maps_add/user_add/user_del (user -> connections chained through the by-user hash), game_add/game_del (game -> spectators), pump (SUB/UNSUB/PING inline on the loop, HELLO/REQ as pool jobs, one per connection), run_req (REQ = synthetic cb_http_req through cb_router_match, handler runs as for HTTP; loop routes and /v1/auth/* refused), local_deliver (family pattern containing "{user}" = all of that user's connections, else game spectators), local_forget/end_on_loop.
+- c_base/core/src/net/http.h: `auth_user` on cb_http_req; auth.c cb_auth_verify_bearer returns it when set (only rt_local sets it; the parser never does).
+- c_base/core/src/auth/auth.c: cb_auth_verify_token now reads session + user (cb_auth_session_live, new in auth.h); cb_auth_logout/change_password/refresh-reuse/delete_user call cb_rt_end_sessions (realtime.c/h, new; transport `forget` got session_id/keep_session args). realtime.c live_verify just calls verify_token.
+- c_base/core/src/net/server.c: server sends WS PING after ws_ping_ms (30 s) of silence; ws_idle_ms (120 s) still closes. ping_sent resets on any read.
+- foolish/c/src/netclient.c: stream part rewritten (take_frame, take_suback(id,status), nc_stream_next one frame per call, action_frame, wire_lost, nc_stream_hear_all test seam). nc_req_stream path is "/ws". Actions (NC_DO_PLAY) go as REQ when the socket is LIVE (slot.wire 1 queued, 2 sent); the REPLY becomes a NcDone via g_dropped / nc_next_done (web pump() drains it after streamIn); an unanswered one at close is answered as status 0. Pushes for something not subscribed are dropped (the server sends a user all their views/seat casts/chat on every connection).
+- foolish/c/src/netwire.[ch]: NW_WS_SPECT=57. foolish/server/src/app/pushes.c: rt_publish_cast uses it when no user; functions_http.c: removed the duplicate cb_rt_forget_user on delete (auth owns it).
+- foolish/server/test/unit_netclient.c ported (fake server helpers next_pkt/connack/suback/feed, action_answer); 39 tests pass. packets_across_messages test deleted (no reassembly any more).
+
+### Design decisions
+- auth_user on cb_http_req: a socket request is authenticated once at HELLO; handlers see the same cb_user a bearer would give, so there is ONE handler path and no token stored per connection.
+- End-generation counter (local->end_gen, atomic, bumped in local_forget on the calling thread): each REQ job compares it with the connection's checked_gen and re-reads the session (cb_auth_session_live) when it moved, so a REQ that starts after a revocation but before the loop closes the socket is refused. A HELLO job in flight when it moves is closed (job_done).
+- Connection ends at the token's exp (checked per frame in pump); no min/max life constants.
+- Client SF_PING/PONG kept only because a browser cannot see WS ping frames (dead-socket detection NC_PONG_MS); server liveness is WS ping/pong.
+- aws provider untouched: shared/c/mqtt, stream_mqtt.*, rt_iot.c, cb_rt_topic stay (aws still uses them). Lambda's stream no longer matches the client.
+
+### Failing right now (make -k test, c_base; log /private/tmp/claude-501/ws_test2.log, run was still going)
+- unit_stream (providers/local/test/unit_stream.c): serve_end_to_end speaks MQTT/"/mqtt"; port to HELLO/SUB/REPLY.
+- unit_rt_local (providers/local/test/unit_rt_local.c): uses cb_mqtt_*; rewrite (not yet seen in log, will not compile or fail).
+- unit_leftovers.c:251,258: nc_due_ms expectations assume the ping/keepalive timing of the old stream (re-check against nc_stream_due_ms).
+- unit_name_gate.c:333: new_hits (name gate sees new identifiers: SF_*, PK_*, wire_lost etc; add to shared/tools/name_gate/allow.txt or rename).
+- unit_auth.c:192: a token used after cb_auth_logout(GLOBAL) now correctly fails verify_token; the test must re-sign-in/pick the right session (mutation: this is the new behaviour, test needs updating, not code).
+- unit_oom.c:180 routes_fail_cleanly: probably the extra store reads in verify_token under fault injection; check.
+- Not yet seen: smoke, smoke_matrix, smoke_authz (still MQTT), fuzzers fz_mqtt_hub/fz_netclient/fz_sequence, benches (c_base/bench/net.c, foolish/server/bench/mqtt.c roundtrip.c cpu.c, p3load3.c), make smoke.
+
+### Not done
+1. Port the tests above; delete local MQTT tests/fuzz; keep codec tests only for aws.
+2. New mutation-checked tests: sign-out closes the socket and a REQ after it is refused; same for password change (other session's socket closes, caller's stays); revoked-session HELLO refused; REQ replay after reconnect is refused by the intent version; netclient: action over socket, close with an unanswered action gives status 0.
+3. Long-poll endpoint "wait for next version of game X" (GET, no thread held, ~25 s) on the event loop + test.
+4. Web host: foolish/sdk/ts/net/net_client.ts:177 streamProtocol() -> '' (and backend.ts:299 must then call `new WebSocket(url)` without a protocol; streamPath is now /ws); foolish/e2e/stream_dead_socket.test.ts:50 stubs streamProtocol. iOS FoolishNet (Stream.swift:53 protocols:[NetClient.streamProtocol], sdk/swift/NetClient.swift:108) needs the same plus the new frames via netclient.c (it links the same C).
+5. Makefile coverage filter lines in c_base/Makefile (341-364) still name shared/c/mqtt; foolish/c/Makefile and foolish/foolyard/Makefile still compile mqtt.c into the client (no longer needed there).
+6. Rig: p3load3.c must send actions as REQ over /ws; measure us/move at 64/192, p95, RSS per connection, syscalls per move, before (origin/vm-fixes) and after (lock: scratchpad/nano.lock).
+7. Rebase onto latest origin/vm-fixes, rerun make -k test, make smoke, gates.
+
+### Landmines
+- macOS sed has no `-i` without '' and no `\n` in replacements: use python for edits.
+- grep "Werror" matches every compile line; filter on `error:`.
+- cb_user is ~500 B, heap-allocated per open connection (RSS per connection); could be trimmed.
+- verify_token now costs two store point reads per HTTP request; measure before/after.
+- HELLO closes if ANY session ended during its flight (cheap and safe, rare).
