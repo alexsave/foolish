@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "text_util.h"
+#include "utf8.h"
 
 static int fails, checks;
 #define OK(c, what) do { checks++; if (!(c)) { fails++; printf("FAIL %s\n", what); } } while (0)
@@ -29,8 +30,36 @@ static char *block(int cap)
     return b;
 }
 
+
+/* utf8.h: strict validity, the two counts, and the controls flag. */
+static int u8(const char *s, size_t n, unsigned fl, int *c, int *u)
+{
+    return text_utf8_scan(s, n, fl, c, u);
+}
+static void utf8_tests(void)
+{
+    int c = -1, u = -1;
+    OK(u8("abc", 3, 0, &c, &u) == 0 && c == 3 && u == 3, "ascii counts");
+    OK(u8("\xc3\xa9", 2, 0, &c, &u) == 0 && c == 1 && u == 1, "two-byte");
+    OK(u8("\xf0\x9f\x98\x80", 4, 0, &c, &u) == 0 && c == 1 && u == 2, "astral is two UTF-16 units");
+    OK(u8("\xc0\x80", 2, 0, 0, 0) == -1, "overlong two-byte");
+    OK(u8("\xe0\x80\x80", 3, 0, 0, 0) == -1, "overlong three-byte");
+    OK(u8("\xed\xa0\x80", 3, 0, 0, 0) == -1, "surrogate");
+    OK(u8("\xf4\x90\x80\x80", 4, 0, 0, 0) == -1, "past U+10FFFF");
+    OK(u8("\xe2\x82", 2, 0, 0, 0) == -1, "cut short");
+    OK(u8("\xff", 1, 0, 0, 0) == -1, "bad lead");
+    OK(u8("a\x01", 2, 0, 0, 0) == 0, "control is text by default");
+    OK(u8("a\x01", 2, TEXT_UTF8_NO_CONTROLS, 0, 0) == -1, "C0 refused with the flag");
+    OK(u8("\x7f", 1, TEXT_UTF8_NO_CONTROLS, 0, 0) == -1, "DEL refused with the flag");
+    OK(u8("\xc2\x85", 2, TEXT_UTF8_NO_CONTROLS, 0, 0) == -1, "C1 refused with the flag");
+    OK(u8("\xc2\xa0", 2, TEXT_UTF8_NO_CONTROLS, 0, 0) == 0, "U+00A0 is not a control");
+    OK(u8("0123456789abcdef\xc3\xa9", 18, 0, &c, &u) == 0 && c == 17, "fast path then a multibyte");
+    OK(u8("", 0, 0, &c, &u) == 0 && c == 0, "empty");
+}
+
 int main(void)
 {
+    utf8_tests();
     /* STEPPING: one to four bytes, and a cut-short sequence never steps over
      * what cut it. */
     OK(cp_is("A", 'A', 1), "next_cp: ASCII is one byte");
