@@ -171,3 +171,22 @@ Rig additions: prof_sc.sh (syscalls per move via perf stat tracepoints), prof_mm
 - unit_oom is green (10 consecutive runs) and `make -k test` shows no failure. Cause: the sqlite pool allocator made SQLite's own blocks visible to the failing-allocator seam (kept statements, schema affinities, page-cache churn); they are now tallied by the store (cb_store_local_mark/blocks) and checked on their own. It also exposed a real bug: ROLLBACK prepared lazily, so an OOM in that prepare left the transaction open (begin() now prepares the transaction-ending statements). unit_unfurl had not compiled since the method enum change; fixed.
 - Backup job built (providers/local/src/store/backup.[ch], util/blob.h, providers/aws/src/aws/s3_blob.[ch], unit_backup, unit_imds, runbook, vm.yaml SSM params). NOT run against real S3 or IMDS: first deploy must watch for `backed up to` in the journal, and check the stack's role can PutObject (it can on paper) and that GET of a missing key answers 404 (ListBucket is granted).
 - NOT DONE: item 2 (mmap 0.6 -> 1.5 per move after inline dispatch) was not measured or fixed; the suspect is still the loop thread allocating per-request buffers without the per-thread pools; the inline "last ready event" gate (cb_loop_ready_left) still has no test of its own.
+
+
+## Pass 6 (2026-10-19)
+- Item 1, mmap per move at human pace (192 games, perf stat 20 s): 1.07 -> 0.02.
+  Two sources, found with perf dwarf callers (bench/nano/prof_mm_h.sh): the SQLite row buffer of 1.5-1.8 KB, below the pool's old 2 KB floor (now 1 KB, classes 2K..64K), and the calloc of the local realtime delivery record in local_deliver (now a 64-entry free list holding the packet buffer too).
+  The cause was not the loop thread allocating from per-thread pools; the pools are global, and the churn was musl unmapping a group whenever its last slot was freed.
+  CPU per move 270-280 us before, 230-250 us after (noise about 20 us).
+- Item 2: unit_inline last_ready, mutation-checked (dropping the ready_left term fails it).
+- Item 3: (a) and (b) were already done (single group skips the savepoint; BEGIN/COMMIT are prepared via ctl).
+  PINGREQ is now answered on the loop (unit_rt_local holds every pool worker and still gets the PINGRESP, mutation-checked); the rig does not ping, so no us number.
+  (c) commit-batching window: a 1 ms leader wait was tried (experiment, not committed); with a human-pace arrival rate near 100 per second only about 10% of lone writes would find company, and it would stall the loop thread under inline dispatch; the experimental binary also produced no result under load. Rejected.
+- Item 4: LTO=1 on the kernel and c_base objects: 10.93k / 11.09k moves/s against 11.02k / 11.48k without (8 games, 1 CPU), binary 4% smaller. Not adopted. build_bootstrap.sh caps the container (BUILD_CPUS, default 2).
+- Item 5: libm quad() guard, test with NaN, +/-inf; the web wasm still links with the Homebrew clang.
+- Item 6: DESIGN.md "The VM path" section. The two stale lines named in VM_FIXES.md were already fixed.
+- Item 7: unit_groupcommit_kill (fork, SIGKILL, 6 rounds), mutation-checked.
+- Item 8: eol_guard OpenSSL 3.0 and 3.3 rows removed (the page says 3.0 is unsupported, lists no 3.3).
+- Item 9: the smokes did not set CBASE_DEV=1 and serve refused to start; fixed, all six smokes green (smoke_authz /health too).
+- Also fixed: unit_name_gate (store_priv.h comment from the creds commit).
+- NOT DONE: item 10, in-memory bot leases (design in Pass 2 item 1 above).
