@@ -117,7 +117,7 @@ static bool g_everywhere;
 static void drain_pools(void) {
     cb_section_drain();
     cb_rows_batch_drain();
-    cb_store_sqlite_drain();
+    cb_store_local_drain();
 }
 
 static void sweep(const char *what, rq *q, int ok, void (*prep)(rq *, int)) {
