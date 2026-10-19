@@ -6,6 +6,7 @@
 // not a hot path. Integer-only => identical on x86 and wasm32.
 
 #include "deal_rng.h"
+#include "le_bytes.h"
 
 #define ROTL32(x, n) (((x) << (n)) | ((x) >> (32 - (n))))
 
@@ -15,11 +16,6 @@
     c += d; b ^= c; b = ROTL32(b, 12); \
     a += b; d ^= a; d = ROTL32(d, 8);  \
     c += d; b ^= c; b = ROTL32(b, 7)
-
-static uint32_t rd_le32(const uint8_t *p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8)
-         | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
 
 void deal_rng_block(const uint32_t state_in[16], uint32_t out[16]) {
     uint32_t x[16];
@@ -41,7 +37,7 @@ void deal_rng_seed(DealRng *r, const uint8_t seed[32]) {
     // "expand 32-byte k", the ChaCha sigma constants.
     r->state[0] = 0x61707865u; r->state[1] = 0x3320646eu;
     r->state[2] = 0x79622d32u; r->state[3] = 0x6b206574u;
-    for (int i = 0; i < 8; i++) r->state[4 + i] = rd_le32(seed + 4 * i);
+    for (int i = 0; i < 8; i++) r->state[4 + i] = le_get_u32(seed + 4 * i);
     r->state[12] = 0; r->state[13] = 0;     // 64-bit block counter
     r->state[14] = 0; r->state[15] = 0;     // 64-bit nonce (fixed 0)
     r->used = 16;                            // force a block on first draw

@@ -39,6 +39,8 @@
  * absolute difference of each, and with --sheet writes a contact sheet PNG
  * (reference, C, difference times four) with a stored-deflate PNG writer. */
 #include "../src/cn_tex.h"
+#include "../../../shared/c/le_bytes.h"
+#include "../../../shared/c/be_bytes.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -478,16 +480,14 @@ void cn_texgen_crust(uint8_t *rgba)
 
 /* ---- TrueType: the few tables a digit needs ---------------------------------------------- */
 typedef struct { const uint8_t *b; size_t n; size_t glyf, loca, head, hhea, hmtx, cmap, os2, maxp; } Font;
-static unsigned be16(const uint8_t *p) { return (unsigned)(p[0] << 8 | p[1]); }
-static int bes16(const uint8_t *p) { return (int16_t)be16(p); }
-static uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
+static int bes16(const uint8_t *p) { return (int16_t)be_get_u16(p); }
 static int font_open(Font *f, const uint8_t *b, size_t n)
 {
     memset(f, 0, sizeof *f); f->b = b; f->n = n;
     if (n < 12) return 0;
-    unsigned nt = be16(b + 4);
+    unsigned nt = be_get_u16(b + 4);
     for (unsigned i = 0; i < nt && 12 + 16 * (size_t)(i + 1) <= n; i++) {
-        const uint8_t *r = b + 12 + 16 * i; uint32_t off = be32(r + 8);
+        const uint8_t *r = b + 12 + 16 * i; uint32_t off = be_get_u32(r + 8);
         if (off >= n) return 0;
         if (!memcmp(r, "glyf", 4)) f->glyf = off; else if (!memcmp(r, "loca", 4)) f->loca = off;
         else if (!memcmp(r, "head", 4)) f->head = off; else if (!memcmp(r, "hhea", 4)) f->hhea = off;
@@ -499,34 +499,34 @@ static int font_open(Font *f, const uint8_t *b, size_t n)
 /* the glyph id of a character through a format 4 subtable (Windows Unicode BMP, or Unicode) */
 static int font_gid(const Font *f, unsigned ch)
 {
-    const uint8_t *c = f->b + f->cmap; unsigned n = be16(c + 2);
+    const uint8_t *c = f->b + f->cmap; unsigned n = be_get_u16(c + 2);
     for (unsigned i = 0; i < n; i++) {
-        unsigned pl = be16(c + 4 + 8 * i), en = be16(c + 6 + 8 * i); const uint8_t *t = c + be32(c + 8 + 8 * i);
-        if (!((pl == 3 && en == 1) || pl == 0) || be16(t) != 4) continue;
-        unsigned segs = be16(t + 6) / 2;
+        unsigned pl = be_get_u16(c + 4 + 8 * i), en = be_get_u16(c + 6 + 8 * i); const uint8_t *t = c + be_get_u32(c + 8 + 8 * i);
+        if (!((pl == 3 && en == 1) || pl == 0) || be_get_u16(t) != 4) continue;
+        unsigned segs = be_get_u16(t + 6) / 2;
         const uint8_t *ends = t + 14, *starts = ends + 2 * segs + 2, *deltas = starts + 2 * segs, *ranges = deltas + 2 * segs;
         for (unsigned s = 0; s < segs; s++) {
-            if (be16(ends + 2 * s) < ch) continue;
-            if (be16(starts + 2 * s) > ch) return 0;
-            unsigned ro = be16(ranges + 2 * s);
-            if (!ro) return (int)((ch + be16(deltas + 2 * s)) & 0xFFFF);
-            unsigned g = be16(ranges + 2 * s + ro + 2 * (ch - be16(starts + 2 * s)));
-            return g ? (int)((g + be16(deltas + 2 * s)) & 0xFFFF) : 0;
+            if (be_get_u16(ends + 2 * s) < ch) continue;
+            if (be_get_u16(starts + 2 * s) > ch) return 0;
+            unsigned ro = be_get_u16(ranges + 2 * s);
+            if (!ro) return (int)((ch + be_get_u16(deltas + 2 * s)) & 0xFFFF);
+            unsigned g = be_get_u16(ranges + 2 * s + ro + 2 * (ch - be_get_u16(starts + 2 * s)));
+            return g ? (int)((g + be_get_u16(deltas + 2 * s)) & 0xFFFF) : 0;
         }
     }
     return 0;
 }
 static unsigned font_advance(const Font *f, int gid)
 {
-    unsigned nh = be16(f->b + f->hhea + 34);
-    return be16(f->b + f->hmtx + 4 * ((unsigned)gid < nh ? (unsigned)gid : nh - 1));
+    unsigned nh = be_get_u16(f->b + f->hhea + 34);
+    return be_get_u16(f->b + f->hmtx + 4 * ((unsigned)gid < nh ? (unsigned)gid : nh - 1));
 }
 /* a glyph's yMax from its glyf header, font units (0 for an empty glyph) */
 static int font_top(const Font *f, int gid)
 {
     int long_loca = bes16(f->b + f->head + 50);
-    uint32_t o0 = long_loca ? be32(f->b + f->loca + 4 * gid) : 2u * be16(f->b + f->loca + 2 * gid);
-    uint32_t o1 = long_loca ? be32(f->b + f->loca + 4 * gid + 4) : 2u * be16(f->b + f->loca + 2 * gid + 2);
+    uint32_t o0 = long_loca ? be_get_u32(f->b + f->loca + 4 * gid) : 2u * be_get_u16(f->b + f->loca + 2 * gid);
+    uint32_t o1 = long_loca ? be_get_u32(f->b + f->loca + 4 * gid + 4) : 2u * be_get_u16(f->b + f->loca + 2 * gid + 2);
     return o1 > o0 ? bes16(f->b + f->glyf + o0 + 8) : 0;
 }
 /* the glyph's outline as line segments (each quadratic cut in 16), in font units; returns the count or -1 */
@@ -534,13 +534,13 @@ typedef struct { double x0, y0, x1, y1; } Edge;
 static int font_outline(const Font *f, int gid, Edge *e, int cap, int *bbox)
 {
     int long_loca = bes16(f->b + f->head + 50);
-    uint32_t o0 = long_loca ? be32(f->b + f->loca + 4 * gid) : 2u * be16(f->b + f->loca + 2 * gid);
+    uint32_t o0 = long_loca ? be_get_u32(f->b + f->loca + 4 * gid) : 2u * be_get_u16(f->b + f->loca + 2 * gid);
     const uint8_t *g = f->b + f->glyf + o0;
     int nc = bes16(g);
     if (nc <= 0) return -1;                    /* empty or composite: no digit is either */
     for (int i = 0; i < 4; i++) bbox[i] = bes16(g + 2 + 2 * i);
-    const uint8_t *ends = g + 10; int np = (int)be16(ends + 2 * (nc - 1)) + 1;
-    const uint8_t *p = ends + 2 * nc; p += 2 + be16(p);
+    const uint8_t *ends = g + 10; int np = (int)be_get_u16(ends + 2 * (nc - 1)) + 1;
+    const uint8_t *p = ends + 2 * nc; p += 2 + be_get_u16(p);
     uint8_t *fl = malloc((size_t)np); int *xs = malloc(sizeof(int) * (size_t)np), *ys = malloc(sizeof(int) * (size_t)np);
     for (int i = 0; i < np;) { uint8_t c = *p++; fl[i++] = c; if (c & 8) { int r = *p++; while (r-- && i < np) fl[i++] = c; } }
     int v = 0;
@@ -554,7 +554,7 @@ static int font_outline(const Font *f, int gid, Edge *e, int cap, int *bbox)
         for (int t_ = 1; t_ <= 16; t_++) { double u_ = t_ / 16.0, a_ = (1 - u_) * (1 - u_), b_ = 2 * u_ * (1 - u_), c_ = u_ * u_; \
             double nx_ = a_ * (ax) + b_ * (cx_) + c_ * (bx), ny_ = a_ * (ay) + b_ * (cy_) + c_ * (by); EMIT(px_, py_, nx_, ny_); px_ = nx_; py_ = ny_; } } while (0)
     for (int c = 0; c < nc; c++) {
-        int en = (int)be16(ends + 2 * c), n = en - s + 1, m = 0;
+        int en = (int)be_get_u16(ends + 2 * c), n = en - s + 1, m = 0;
         /* start on an on-curve point (the first, else the last, else the midpoint of the two), and end the sequence on it */
         double sx, sy;
         if (fl[s] & 1) { sx = xs[s]; sy = ys[s]; for (int i = 1; i < n; i++) { qx[m] = xs[s + i]; qy[m] = ys[s + i]; qo[m++] = fl[s + i] & 1; } }
@@ -620,7 +620,7 @@ static int bake_glyph(const Font *f, int digit, int px, Glyph *out)
     static Edge e[8192];
     int ne = font_outline(f, gid, e, 8192, bbox);
     if (ne < 0) return 0;
-    double upem = be16(f->b + f->head + 18), s = px / upem;
+    double upem = be_get_u16(f->b + f->head + 18), s = px / upem;
     /* the figures' middle above the baseline, font units: half the 1's height (a lining 1 is flat at
      * both ends, from the baseline to the figure height), so every figure is centred on the anchor */
     int one = font_gid(f, '1');
@@ -640,8 +640,6 @@ static int bake_glyph(const Font *f, int digit, int px, Glyph *out)
 }
 
 /* ---- the pack ------------------------------------------------------------------------------ */
-static void put16(uint8_t *b, unsigned v) { b[0] = (uint8_t)v; b[1] = (uint8_t)(v >> 8); }
-static void put32(uint8_t *b, uint32_t v) { b[0] = (uint8_t)v; b[1] = (uint8_t)(v >> 8); b[2] = (uint8_t)(v >> 16); b[3] = (uint8_t)(v >> 24); }
 static uint8_t *read_file(const char *path, size_t *n)
 {
     FILE *fp = fopen(path, "rb"); if (!fp) return 0;
@@ -671,22 +669,22 @@ uint8_t *cn_texgen_pack(const char *font_path, uint32_t *len)
     for (int i = 0; i < CN_TEX_ENTRIES; i++) { off = (off + 3) & ~3u; offs[i] = off; off += lens[i]; }
     uint32_t total = (off + 3) & ~3u;
     uint8_t *b = calloc(total, 1);
-    put32(b, CN_TEX_MAGIC); put16(b + 4, CN_TEX_VERSION); put16(b + 6, CN_TEX_ENTRIES); put32(b + 8, total);
+    le_put_u32(b, CN_TEX_MAGIC); le_put_u16(b + 4, CN_TEX_VERSION); le_put_u16(b + 6, CN_TEX_ENTRIES); le_put_u32(b + 8, total);
     for (int i = 0; i < CN_TEX_ENTRIES; i++) {
         uint8_t *e = b + CN_TEX_HEAD_BYTES + i * CN_TEX_ENTRY_BYTES;
         if (i < 2) {
             int sz = i == 0 ? CN_TEX_VERD : CN_TEX_BONE;
-            e[0] = i == 0 ? CN_TEXK_VERD : CN_TEXK_BONE; e[1] = 3; put16(e + 6, (unsigned)sz); put16(e + 8, (unsigned)sz);
+            e[0] = i == 0 ? CN_TEXK_VERD : CN_TEXK_BONE; e[1] = 3; le_put_u16(e + 6, (unsigned)sz); le_put_u16(e + 8, (unsigned)sz);
             memcpy(b + offs[i], i == 0 ? verd : bone, lens[i]);
         } else {
             int s = (i - 2) / CN_TEX_DIGITS, d = (i - 2) % CN_TEX_DIGITS; Glyph *g = &gl[s][d];
-            e[0] = CN_TEXK_GLYPH; e[1] = 1; e[2] = (uint8_t)d; put16(e + 4, (unsigned)SIZES[s]);
-            put16(e + 6, (unsigned)g->w); put16(e + 8, (unsigned)g->h); put16(e + 10, (unsigned)(uint16_t)(int16_t)g->ox); put16(e + 12, (unsigned)(uint16_t)(int16_t)g->oy);
+            e[0] = CN_TEXK_GLYPH; e[1] = 1; e[2] = (uint8_t)d; le_put_u16(e + 4, (unsigned)SIZES[s]);
+            le_put_u16(e + 6, (unsigned)g->w); le_put_u16(e + 8, (unsigned)g->h); le_put_u16(e + 10, (unsigned)(uint16_t)(int16_t)g->ox); le_put_u16(e + 12, (unsigned)(uint16_t)(int16_t)g->oy);
             memcpy(b + offs[i], g->px, lens[i]); free(g->px);
         }
-        put32(e + 16, offs[i]);
+        le_put_u32(e + 16, offs[i]);
     }
-    put32(b + 12, cn_tex_fnv1a(b + CN_TEX_HEAD_BYTES, total - CN_TEX_HEAD_BYTES));
+    le_put_u32(b + 12, cn_tex_fnv1a(b + CN_TEX_HEAD_BYTES, total - CN_TEX_HEAD_BYTES));
     *len = total;
     return b;
 }

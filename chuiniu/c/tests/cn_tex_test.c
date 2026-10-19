@@ -7,9 +7,8 @@
 #define CN_TEXGEN_NO_MAIN
 #include "../tools/cn_texgen.c"
 #include "../../../shared/c/test/check.h"
+#include "../../../shared/c/le_bytes.h"
 
-static uint32_t le32(const uint8_t *b) { return (uint32_t)b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24; }
-static uint32_t le16(const uint8_t *b) { return (uint32_t)(b[0] | b[1] << 8); }
 /* a texture or a pack as one number */
 static uint32_t fnv(const void *b, size_t n) { return cn_tex_fnv1a((const uint8_t *)b, (uint32_t)n); }
 
@@ -100,7 +99,7 @@ int main(int argc, char **argv)
     TEST("pack round trip");
     CnTexPack p;
     CHECK(cn_tex_pack_open(&p, pk, len) == CN_TEX_OK, "open");
-    CHECK(le32(pk) == CN_TEX_MAGIC && le16(pk + 6) == CN_TEX_ENTRIES && le32(pk + 8) == len, "header");
+    CHECK(le_get_u32(pk) == CN_TEX_MAGIC && le_get_u16(pk + 6) == CN_TEX_ENTRIES && le_get_u32(pk + 8) == len, "header");
     /* the layout is what the header says: the records, then 4-aligned blocks, nothing after the last */
     uint32_t expect = CN_TEX_HEAD_BYTES + CN_TEX_ENTRIES * CN_TEX_ENTRY_BYTES;
     expect = ((expect + 3) & ~3u) + CN_TEX_VERD * CN_TEX_VERD * 3; expect = ((expect + 3) & ~3u) + CN_TEX_BONE * CN_TEX_BONE * 3;
