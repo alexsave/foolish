@@ -117,6 +117,7 @@ static bool g_everywhere;
 static void drain_pools(void) {
     cb_section_drain();
     cb_rows_batch_drain();
+    cb_auth_forget_sessions(g_ctx.auth);   // the sessions held live: a cache, refilled by one read
     cb_store_local_release(g_ctx.store);   // before the pools: the statements' blocks go back to them
     cb_store_local_drain();
 }
