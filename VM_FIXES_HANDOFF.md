@@ -165,3 +165,9 @@ Rig additions: prof_sc.sh (syscalls per move via perf stat tracepoints), prof_mm
 - Game.logs is no longer zeroed (poison 0xAA under ASan and CBASE_POISON_LOGS, which the Makefile exports); nothing tripped. memset left the top of the saturation profile; moves/s is inside noise (11.8-13.1k vs 12.06k).
 - OPEN: unit_oom still fails (12 checks): the sweeps count SQLite's per-store allocations (kept prepared statements, page cache), which now go through the pool allocator the test counts. Boot and the 500 answers are fixed by cb_section_drain, cb_rows_batch_drain, cb_store_local_drain. A warm-up run did not fix it.
 - Not done: item 5 (snprintf of keys).
+
+
+## Pass 5 (2026-10-19)
+- unit_oom is green (10 consecutive runs) and `make -k test` shows no failure. Cause: the sqlite pool allocator made SQLite's own blocks visible to the failing-allocator seam (kept statements, schema affinities, page-cache churn); they are now tallied by the store (cb_store_local_mark/blocks) and checked on their own. It also exposed a real bug: ROLLBACK prepared lazily, so an OOM in that prepare left the transaction open (begin() now prepares the transaction-ending statements). unit_unfurl had not compiled since the method enum change; fixed.
+- Backup job built (providers/local/src/store/backup.[ch], util/blob.h, providers/aws/src/aws/s3_blob.[ch], unit_backup, unit_imds, runbook, vm.yaml SSM params). NOT run against real S3 or IMDS: first deploy must watch for `backed up to` in the journal, and check the stack's role can PutObject (it can on paper) and that GET of a missing key answers 404 (ListBucket is granted).
+- NOT DONE: item 2 (mmap 0.6 -> 1.5 per move after inline dispatch) was not measured or fixed; the suspect is still the loop thread allocating per-request buffers without the per-thread pools; the inline "last ready event" gate (cb_loop_ready_left) still has no test of its own.
