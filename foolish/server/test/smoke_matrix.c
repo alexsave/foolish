@@ -1213,18 +1213,11 @@ static void account_deletion(void) {
     T_CHECK(!mq_connect(&again_s, E.id, E.auth + 7));
     T_EQ_INT(again_s.n_connack, 0);
     close(again_s.fd);
-    // The deleted user's access token, still unexpired, reaches nothing that was theirs.
-    T_EQ_INT(http("GET", "/v1/games", E.auth, NULL, 0, NULL), 200);
-    T_EQ_INT(nw_list_open(g_a.body, g_a.len, NW_GAMES), 0);
-    // History: a replay keeps its seats' ids (DESIGN.md "Open defects carried
-    // over"), so the token still lists the games it played, every name in
-    // them redacted, its own included; and no rating.
-    T_EQ_INT(http("GET", "/v1/history", E.auth, NULL, 0, NULL), 200);
-    T_CHECK(!has_any(g_a.body, g_a.len, &name, NULL));
-    int has_rating = 1;
-    uint32_t rating = 0;
-    T_EQ_INT(nw_history_rating(g_a.body, g_a.len, &has_rating, &rating), NW_OK);
-    T_EQ_INT(has_rating, 0);
+    // The deleted user's access token, still unexpired, is refused everywhere: the token check reads the
+    // account (auth.c cb_auth_verify_token), so it reaches nothing, theirs or anyone's. (A replay keeps its
+    // seats' ids, DESIGN.md "Open defects carried over", but nobody can ask for them with this token.)
+    T_EQ_INT(http("GET", "/v1/games", E.auth, NULL, 0, NULL), 401);
+    T_EQ_INT(http("GET", "/v1/history", E.auth, NULL, 0, NULL), 401);
     NwRequest pq;
     memset(&pq, 0, sizeof pq);
     pq.kind = NW_PASSWORD;
@@ -1240,10 +1233,11 @@ static void account_deletion(void) {
     CELL_REFUSED("POST /v1/meta join", "deleted user", 400, ASK_WHY_AUTH, 0);
     snprintf(path, sizeof path, "/v1/chat/%s", G);
     http("POST", path, E.auth, body, (size_t)n, OCTETS);
-    CELL_REFUSED("POST /v1/chat/<id>", "deleted user", 403, ASK_WHY_FORBIDDEN, 0);
-    // A second delete (a retry whose first answer was lost): done, as the first was.
+    CELL_REFUSED("POST /v1/chat/<id>", "deleted user", 401, ASK_WHY_AUTH, 0);
+    // A second delete (a retry whose first answer was lost): the token is of a gone account, 401, which the
+    // client reads as "already deleted" (functions_http.c h_delete_account).
     http("POST", "/v1/account/delete", E.auth, NULL, 0, OCTETS);
-    CELL_STATUS("POST /v1/account/delete (again)", "deleted user", 204);
+    CELL_STATUS("POST /v1/account/delete (again)", "deleted user", 401);
 }
 
 // A validly signed token for a user who never existed: a nobody with no rows.
@@ -1251,20 +1245,15 @@ static void a_token_for_nobody(void) {
     char ghost[NW_ACCESS_MAX + 16];
     int64_t now = cb_now_ms() / 1000;
     mint(ghost, sizeof ghost, SECRET, "00000000-0000-4000-8000-00000000dead", "GHOST", now, now + 600);
-    T_EQ_INT(http("GET", "/v1/games", ghost, NULL, 0, NULL), 200);
+    // A signed token of a session that never began (and an account that never was) is refused on every route.
+    T_EQ_INT(http("GET", "/v1/games", ghost, NULL, 0, NULL), 401);
     g_cells++;
-    T_EQ_INT(nw_list_open(g_a.body, g_a.len, NW_GAMES), 0);
-    T_EQ_INT(http("GET", "/v1/history", ghost, NULL, 0, NULL), 200);
+    T_EQ_INT(http("GET", "/v1/history", ghost, NULL, 0, NULL), 401);
     g_cells++;
-    T_EQ_INT(nw_list_open(g_a.body, g_a.len, NW_HISTORY), 0);
     char path[48];
     snprintf(path, sizeof path, "/v1/games/%s", G);
-    T_EQ_INT(http("GET", path, ghost, NULL, 0, NULL), 200);   // anyone may watch
+    T_EQ_INT(http("GET", path, ghost, NULL, 0, NULL), 401);
     g_cells++;
-    uint32_t v;
-    NwBlob env;
-    T_EQ_INT(nw_view_decode(g_a.body, g_a.len, &v, &env), NW_OK);
-    T_CHECK(envelope_hides(env.p, (int)env.len, -1, NULL, NULL, NULL, "a nobody's GET game"));
     http("POST", "/v1/create", ghost, NULL, 0, OCTETS);
     CELL_REFUSED("POST /v1/create", "a token for nobody", 400, ASK_WHY_AUTH, 0);
     meta(NULL, ASK_JOIN, G, NULL, NULL);   // no bearer: refused before the account is asked

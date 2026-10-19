@@ -328,6 +328,40 @@ static void h_games(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     list_send(res, &l, NW_GAMES);
 }
 
+// GET /v1/wait/<id>?v=N: the long poll for HTTP-only clients. Answers the game's view (the body GET /v1/games/<id>
+// gives) as soon as its version is past N, or 204 after about WAIT_MS with nothing newer. A request that has
+// nothing yet PARKS (http.h park_ms): no thread waits, and the server runs this handler again when a push for
+// the caller (a seated user's views and casts) or for the game (a spectator's) is published, or time is up.
+#define WAIT_MS 25000
+static void h_wait(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    cb_user u;
+    char gid[CB_GAME_ID_MAX + 1], vs[16];
+    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/wait/", gid, sizeof gid, CB_GAME_ID_MAX)) return;
+    int64_t after = -1;
+    if (cb_http_query_get(req, "v", vs, sizeof vs)) after = atoll(vs);
+    cb_view_row v;
+    memset(&v, 0, sizeof v);
+    bool seated = true;
+    int rc = cb_table_view(ctx, gid, u.id, &v);
+    if (rc == CB_E_NOT_FOUND) { seated = false; cb_view_row_free(&v); memset(&v, 0, sizeof v); rc = cb_table_view(ctx, gid, NULL, &v); }
+    if (rc != CB_OK) { cb_view_row_free(&v); failed(res, rc); return; }
+    if (v.version > after) {
+        size_t cap = 16 + v.view_len;
+        uint8_t *body = malloc(cap);
+        NwBlob env = { v.view, (uint32_t)v.view_len };
+        int n = body ? nw_view_encode((uint32_t)v.version, env, body, (int)cap) : -1;
+        if (n < 0) failed(res, CB_E_NOMEM);
+        else octets(res, body, (size_t)n);
+        free(body);
+    } else if (req->park_expired) {
+        cb_res_status(res, 204);
+    } else {
+        res->park_ms = WAIT_MS;
+        snprintf(res->park_key, sizeof res->park_key, "%s", seated ? u.id : gid);
+    }
+    cb_view_row_free(&v);
+}
+
 static void h_game(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
     char gid[CB_GAME_ID_MAX + 1];
@@ -654,6 +688,7 @@ static const cb_route V1_ROUTES[] = {
     { "POST", "/v1/auth/password", CB_ROUTE_POOL, h_password },
     { "GET", "/v1/games", CB_ROUTE_POOL, h_games },
     { "GET", "/v1/games/*", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_game },
+    { "GET", "/v1/wait/*", CB_ROUTE_POOL, h_wait },
     { "GET", "/v1/chat/*", CB_ROUTE_POOL, h_chat_get },
     { "POST", "/v1/chat/*", CB_ROUTE_POOL, h_chat_post },
     { "GET", "/v1/bots", CB_ROUTE_POOL, h_bots },

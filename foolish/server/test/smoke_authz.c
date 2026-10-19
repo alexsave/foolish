@@ -367,8 +367,26 @@ static void ws_matrix(void) {
     tc_response_free(&r);
 
     // A deleted account: its connection ends, and its unexpired token never connects again.
-    T_CHECK(signup("AUTHZ_D", tok));
-    snprintf(uid, sizeof uid, "%s", g_signed_up_id);
+    // (Signs in again as the account that signed out above: a sign-up is rate limited per address.)
+    {
+        NwRequest si;
+        memset(&si, 0, sizeof si);
+        si.kind = NW_SIGNIN;
+        si.name_len = 7;
+        memcpy(si.name, "AUTHZ_E", 7);
+        si.password_len = 14;
+        memcpy(si.password, "authz-pass-123", 14);
+        uint8_t sib[128];
+        int sin = request_body(&si, sib, sizeof sib);
+        cb_buf so_out;
+        cb_buf_init(&so_out);
+        T_EQ_INT(req(ANON, "POST", "/v1/auth/signin", sib, (size_t)sin, &so_out), 200);
+        static NwSession ns;
+        T_EQ_INT(nw_session_decode(so_out.p, (int)so_out.len, &ns), NW_OK);
+        snprintf(tok, sizeof tok, "%.*s", (int)ns.access_len, ns.access);
+        snprintf(uid, sizeof uid, "%.*s", (int)ns.user_id_len, ns.user_id);
+        cb_buf_free(&so_out);
+    }
     int d = ws_open_as(OWNER);
     T_EQ_INT(ws_hello(d, tok, &m), SF_READY);
     snprintf(headers, sizeof headers, "X-Cbase-Origin: " ORIGIN_SECRET "\r\nAuthorization: Bearer %s\r\nContent-Type: application/octet-stream\r\n", tok);
@@ -402,7 +420,7 @@ static void limits_hold(void) {
         int n = request_body(&q, b, sizeof b);
         if (req(ANON, "POST", "/v1/auth/signup", b, (size_t)n, NULL) == 429) refused_at = i;
     }
-    // Three sign-ups were the world's (two, and ws_matrix's two); the address's burst is 5.
+    // Three sign-ups were the world's (two, and ws_matrix's one); the address's burst is 5.
     T_EQ_INT(refused_at, 2);
     uint8_t b[256];
     int n = build(B_SIGNIN, b, sizeof b);   // AUTHZ_A, a wrong password; the matrix spent two (a sign-in, a change)
