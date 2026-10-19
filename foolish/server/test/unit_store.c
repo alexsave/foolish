@@ -1734,6 +1734,54 @@ static void race_on(bool lone) {
 static void cas_under_threads(void) { race_on(false); }
 static void lone_cas_under_threads(void) { race_on(true); }
 
+// Group commit: threads queue item_txn writes at once. Each txn is (put my own
+// key, put a shared key only if absent); exactly one wins the shared key, the
+// losers report failed == 1 and leave NO trace of their own key (their
+// savepoint rolled back), and every winner's own key is there.
+typedef struct { cb_store *s; int id; int rc[40]; int failed[40]; } gc_arg;
+
+static void *gc_run(void *arg) {
+    gc_arg *a = arg;
+    for (int i = 0; i < 40; i++) {
+        char own[64], shared[64];
+        snprintf(own, sizeof own, "GC#%d-%d", a->id, i);
+        snprintf(shared, sizeof shared, "GCS#%d", i);   // forty shared keys, many writers each
+        const cb_av at[] = { CB_AVN("v", a->id) };
+        cb_iwrite w[2] = {
+            { .op = CB_IW_PUT, .key = { own, "X" }, .attrs = at, .n_attrs = 1 },
+            { .op = CB_IW_PUT, .key = { shared, "X" }, .attrs = at, .n_attrs = 1, .cond = { CB_IF_ABSENT }, .n_cond = 1 },
+        };
+        int failed = -1;
+        a->rc[i] = a->s->ops->item_txn(a->s, w, 2, &failed, NULL);
+        a->failed[i] = failed;
+    }
+    return NULL;
+}
+
+static void group_commit_keeps_each_txn_alone(void) {
+    cb_store *s = open_fresh();
+    enum { T = 8 };
+    gc_arg a[T];
+    pthread_t th[T];
+    for (int i = 0; i < T; i++) { a[i].s = s; a[i].id = i; pthread_create(&th[i], NULL, gc_run, &a[i]); }
+    for (int i = 0; i < T; i++) pthread_join(th[i], NULL);
+    for (int k = 0; k < 40; k++) {
+        int winners = 0;
+        for (int i = 0; i < T; i++) {
+            char own[64];
+            snprintf(own, sizeof own, "GC#%d-%d", i, k);
+            cb_item it;
+            cb_item_init(&it);
+            int got = s->ops->item_get(s, (cb_ikey){ own, "X" }, true, &it);
+            cb_item_free(&it);
+            if (a[i].rc[k] == CB_OK) { winners++; T_EQ_INT(got, CB_OK); }
+            else { T_EQ_INT(a[i].rc[k], CB_E_CONFLICT); T_EQ_INT(a[i].failed[k], 1); T_EQ_INT(got, CB_E_NOT_FOUND); }
+        }
+        T_EQ_INT(winners, 1);
+    }
+    cb_store_close(s);
+}
+
 int main(void) {
     snprintf(g_dir, sizeof g_dir, "/tmp/cbase-unit-store-XXXXXX");
     if (!mkdtemp(g_dir)) { perror("mkdtemp"); return 1; }
@@ -1765,6 +1813,7 @@ int main(void) {
     T_RUN(big_items_and_pages);
     T_RUN(cas_under_threads);
     T_RUN(lone_cas_under_threads);
+    T_RUN(group_commit_keeps_each_txn_alone);
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
     if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", g_dir);
