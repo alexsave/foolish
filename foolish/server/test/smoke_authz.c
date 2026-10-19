@@ -267,6 +267,7 @@ static int ws_hello(int fd, const char *token, cb_buf *m) {
 }
 
 static void ws_matrix(void) {
+    char path0[96];
     cb_buf m;
     cb_buf_init(&m);
     // Around the edge: no socket at all.
@@ -307,6 +308,13 @@ static void ws_matrix(void) {
     T_EQ_INT(ws_hello(fd, ghost, &m), -1);
     close(fd);
 
+    // The long poll: a version past the one asked answers at once (the parked case is unit_rt_local.c's); a bad token never parks.
+    snprintf(path0, sizeof path0, "/v1/wait/%s", g_gid);
+    int wst = req(OWNER, "GET", path0, NULL, 0, NULL);
+    if (wst != 200) fprintf(stderr, "  wait as owner: %d\n", wst);
+    T_EQ_INT(wst, 200);
+    T_EQ_INT(req(FORGED, "GET", path0, NULL, 0, NULL), 401);
+    T_EQ_INT(req(ANON, "GET", path0, NULL, 0, NULL), 401);
     // REQ is HTTP over the socket: the connection's user is the caller, and a session route is refused.
     fd = ws_open_as(OWNER);
     T_EQ_INT(ws_hello(fd, g_token[OWNER], &m), SF_READY);

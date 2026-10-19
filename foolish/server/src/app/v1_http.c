@@ -4,6 +4,7 @@
 // read is the same store call the PostgREST facade makes, without its query
 // language: each route answers exactly the one question a client asks.
 #include "v1_http.h"
+#include "num_parse.h"
 
 #include "auth/auth.h"
 #include "auth/names.h"
@@ -338,7 +339,7 @@ static void h_wait(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     char gid[CB_GAME_ID_MAX + 1], vs[16];
     if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/wait/", gid, sizeof gid, CB_GAME_ID_MAX)) return;
     int64_t after = -1;
-    if (cb_http_query_get(req, "v", vs, sizeof vs)) after = atoll(vs);
+    if (cb_http_query_get(req, "v", vs, sizeof vs) && !num_parse_i64_cstr(vs, 0, INT32_MAX, &after)) { refuse(res, 400, ASK_WHY_MALFORMED, 0); return; }
     cb_view_row v;
     memset(&v, 0, sizeof v);
     bool seated = true;

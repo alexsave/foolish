@@ -303,23 +303,32 @@ A malformed frame, a non-HELLO first frame, a second HELLO, a text message: clos
 - Client SF_PING/PONG kept only because a browser cannot see WS ping frames (dead-socket detection NC_PONG_MS); server liveness is WS ping/pong.
 - aws provider untouched: shared/c/mqtt, stream_mqtt.*, rt_iot.c, cb_rt_topic stay (aws still uses them). Lambda's stream no longer matches the client.
 
-### Failing right now (make -k test, c_base; log /private/tmp/claude-501/ws_test2.log, run was still going)
-- unit_stream (providers/local/test/unit_stream.c): serve_end_to_end speaks MQTT/"/mqtt"; port to HELLO/SUB/REPLY.
-- unit_rt_local (providers/local/test/unit_rt_local.c): uses cb_mqtt_*; rewrite (not yet seen in log, will not compile or fail).
-- unit_leftovers.c:251,258: nc_due_ms expectations assume the ping/keepalive timing of the old stream (re-check against nc_stream_due_ms).
-- unit_name_gate.c:333: new_hits (name gate sees new identifiers: SF_*, PK_*, wire_lost etc; add to shared/tools/name_gate/allow.txt or rename).
-- unit_auth.c:192: a token used after cb_auth_logout(GLOBAL) now correctly fails verify_token; the test must re-sign-in/pick the right session (mutation: this is the new behaviour, test needs updating, not code).
-- unit_oom.c:180 routes_fail_cleanly: probably the extra store reads in verify_token under fault injection; check.
-- Not yet seen: smoke, smoke_matrix, smoke_authz (still MQTT), fuzzers fz_mqtt_hub/fz_netclient/fz_sequence, benches (c_base/bench/net.c, foolish/server/bench/mqtt.c roundtrip.c cpu.c, p3load3.c), make smoke.
+### Status (rebased onto origin/vm-fixes fd9bd7ab5, no conflicts)
+`make -k test` and `make smoke` (c_base) are green; every new test below was mutation-checked (change the code, see the named assertion fail, restore).
+- c_base/providers/local/test/unit_rt_local.c: 7 tests (upgrade route, pushes by user and by watched game, many sockets, REQ as the user, ended sessions close sockets, refusals, parked requests). Mutations: dropping the end-generation check fails ended_sessions_close_their_sockets (REPLY arrives on a revoked session); ignoring the session filter in end_on_loop fails it; dropping the wake in server.c wake_conn fails parked_requests_hold_no_thread.
+- c_base/core/test/unit_auth.c: after local logout / global logout / password change the other tokens stop verifying (mutation: session_over ignored, 5 failures).
+- foolish/server/test/unit_netclient.c actions_ride_the_socket (mutations: socket branch off, wire_lost silent).
+- Smokes ported: smoke.c, smoke_matrix.c (stream_frames), smoke_authz.c (ws_matrix: HELLO rows, sign-out closes the socket and the token never connects again, delete closes it, long poll rows). Behaviour change they now assert: a deleted account's or a never-begun session's token is 401 on EVERY authed route (it used to read as an empty user).
+- Long poll: GET /v1/wait/<gid>[?v=N] (v1_http.c h_wait). Answers the view at once if version > N (no v: now), else the request PARKS: http.h park_ms/park_key on the response, server.c job_done/resubmit/wake_conn/cb_server_wake (a wake counter stops a lost wake-up), rt_local.c pub_on_loop wakes key = user id (a seated caller) or game id (a spectator). Time up (25 s, server sweep 1 s granularity) runs the handler once more with req->park_expired and it answers 204. No thread is held while parked. Client disconnects of a parked request are noticed only at the next wake/deadline (reads stay paused).
+- Web host: streamProtocol removed (sdk/ts/net/net_client.ts, backend.ts `new WebSocket(url)`, e2e stub); Swift SDK constant and ios/FoolishNet/Stream.swift likewise (not compiled here).
+- Fuzzers fz_netclient.c ported (syntax-checked only; fuzz-smoke does not build on this Mac because of aws s3_blob.c sprintf, pre-existing); fz_sequence.c only got the new `forget` signature: it still models the MQTT/IoT hub through stream_mqtt (aws), not the local hub. No fuzzer for rt_local's frame handling or sf_parse yet.
+
+### Rig numbers (nano, 0.1 CPU, CBASE_REQ_WORKERS=1, human pace, same day, bins serve-I3 + old client vs serve-W1 + new client, actions over the socket)
+| games | | server cpu ms/move | move p50 | move p95 | rss_max kB |
+| 64 | before | 0.48 | 0.4 | 1.1 | 9456 |
+| 64 | after  | 0.43 | 0.4 | 1.0 | 9612 |
+| 192 | before | 0.29 | 0.3 | 1.1 (p99 91) | 13392 |
+| 192 | after  | 0.23 | 0.3 | 0.5 (p99 1.8) | 12992 |
+Marginal RSS per connection (64 to 192 games, 256 more sockets): before 15.4 kB, after 13.2 kB (includes signup heap high water; cb_user is heap-allocated per open socket, about 500 B). Syscalls per move were NOT measured (no strace in the container; sat.sh saturation run was not repeated). The rig is flaky: summ.py `NameError: name 'a'` appeared 3 times (cgroup stat missing at the end of a run); rerun the single size with /private/tmp/claude-501/ws_one.sh. Run logs: /private/tmp/claude-501/m_after64.log, rig_after.log (192), m_before192.log, rig_before.log (64). Bins: c_base/bench/nano/bin/serve-W1 and p3load2-linux (untracked, in vm-ws worktree; secrets.env and client.env copied from the vm-fixes worktree, ignored by git).
 
 ### Not done
-1. Port the tests above; delete local MQTT tests/fuzz; keep codec tests only for aws.
-2. New mutation-checked tests: sign-out closes the socket and a REQ after it is refused; same for password change (other session's socket closes, caller's stays); revoked-session HELLO refused; REQ replay after reconnect is refused by the intent version; netclient: action over socket, close with an unanswered action gives status 0.
-3. Long-poll endpoint "wait for next version of game X" (GET, no thread held, ~25 s) on the event loop + test.
-4. Web host: foolish/sdk/ts/net/net_client.ts:177 streamProtocol() -> '' (and backend.ts:299 must then call `new WebSocket(url)` without a protocol; streamPath is now /ws); foolish/e2e/stream_dead_socket.test.ts:50 stubs streamProtocol. iOS FoolishNet (Stream.swift:53 protocols:[NetClient.streamProtocol], sdk/swift/NetClient.swift:108) needs the same plus the new frames via netclient.c (it links the same C).
-5. Makefile coverage filter lines in c_base/Makefile (341-364) still name shared/c/mqtt; foolish/c/Makefile and foolish/foolyard/Makefile still compile mqtt.c into the client (no longer needed there).
-6. Rig: p3load3.c must send actions as REQ over /ws; measure us/move at 64/192, p95, RSS per connection, syscalls per move, before (origin/vm-fixes) and after (lock: scratchpad/nano.lock).
-7. Rebase onto latest origin/vm-fixes, rerun make -k test, make smoke, gates.
+1. Syscalls per move and a saturation (sat.sh) run: measure with `strace -c -f` or perf in the container.
+2. Shrinking cb_user per socket (keep id, session id, username only).
+3. SF_PING could go if the browser host stops needing client-side dead-socket detection.
+4. aws provider still on MQTT (stream_mqtt.*, rt_iot.c, shared/c/mqtt, unit_mqtt, fz_mqtt*, iot authorizer): delete with the provider. foolish/c/Makefile and foolish/foolyard/Makefile still compile mqtt.c into the client (no longer used there); c_base/Makefile coverage filter still lists shared/c/mqtt (still true for aws tests).
+5. Benches still speaking MQTT: c_base/bench/net.c, foolish/server/bench/mqtt.c, roundtrip.c, cpu.c (not built by make test).
+6. iOS FoolishNet: Stream.swift opens `webSocketTask(with: url)` now; it needs nothing else because netclient.c does the framing, but it must be built and run on a device/simulator (wasm/xcframework rebuild of netclient.c) and the host loop must drain `nc_next_done` after each stream message (the web pump() already does).
+7. Password-change socket close is covered by unit tests (rt_local end_sessions with keep, auth) but not by a smoke over HTTP; the sign-out one is.
 
 ### Landmines
 - macOS sed has no `-i` without '' and no `\n` in replacements: use python for edits.
