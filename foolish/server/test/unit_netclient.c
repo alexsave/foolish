@@ -912,6 +912,49 @@ static void a_cast_and_a_stale_answer_end_alike(void) {
     T_EQ_INT(end[1][0].row_v, 5);     // the view: the dashboard is
 }
 
+// A move that ends a game is pushed before its own answer reaches the client
+// (the stream has no after-the-answer window): the cast has no room for the
+// rating stamp, so the stamped envelope at the cast's own version applies
+// once, and only that. The finish screen reads the game for exactly that.
+static void a_stamped_answer_applies_at_the_casts_version(void) {
+    uint8_t env[64];
+    GameRatings gr;
+    memset(&gr, 0, sizeof gr);
+    gr.n = 2; gr.before[0] = 1000; gr.before[1] = 1000; gr.delta[0] = 16; gr.delta[1] = -16;
+    const int at = env_header_write(env, sizeof env, 0, 5, &gr);
+    T_CHECK(at > 0);
+    env[at + 2] = GAME_STATUS_GAME_OVER;
+    env_header_set_view_len(env, at, 3);
+    const int n = at + 3;
+    uint8_t bare[64];
+    memcpy(bare, env, (size_t)n);
+    const int bare_at = env_header_write(bare, sizeof bare, 0, 5, NULL);
+    bare[bare_at + 2] = GAME_STATUS_GAME_OVER;
+    env_header_set_view_len(bare, bare_at, 3);
+
+    signed_in(T0 + 3600000);
+    live(T0);
+    host_t h;
+    memset(&h, 0, sizeof h);
+    const uint8_t c5[] = { 0x55, 0x05 };
+    host_push(&h, NW_WS_CAST, "g1", 5, c5, 2, T0);
+    for (int round = 0; round < 3; round++) {
+        NcIntent open = intent(NC_DO_OPEN_GAME, "g1");
+        T_CHECK(nc_do(&open, T0) != 0);
+        const NcRequest *q = nc_next_request(T0);
+        T_CHECK(path_is(q, "/v1/games/g1"));
+        const int stale = h.stale;
+        // Round 0: an unstamped read at the cast's version (stale, as ever).
+        // Round 1: the stamped one (applies). Round 2: the stamped one again (stale).
+        if (round == 0) host_answer(&h, id_of(q), 5, bare, (uint32_t)(bare_at + 3), T0);
+        else host_answer(&h, id_of(q), 5, env, (uint32_t)n, T0);
+        T_EQ_INT(h.stale - stale, round == 1 ? 0 : 1);
+    }
+    T_EQ_INT(h.table_v, 5);
+    T_EQ_INT(h.table_len, n);
+    T_EQ_MEM(h.table, n, env, n);
+}
+
 static void a_skipped_version_refetches(void) {
     signed_in(T0 + 3600000);
     live(T0);
@@ -1925,6 +1968,7 @@ int main(void) {
     T_RUN(pump_retries_reads_not_writes);
     T_RUN(pump_signs_out);
     T_RUN(a_cast_and_a_stale_answer_end_alike);
+    T_RUN(a_stamped_answer_applies_at_the_casts_version);
     T_RUN(a_skipped_version_refetches);
     T_RUN(a_refused_move_catches_up);
     T_RUN(suback_takes_the_game_whole);
