@@ -125,10 +125,10 @@ static bool request_of(const cb_http_req *req, cb_http_res *res, uint8_t kind, N
 }
 
 // The id after `prefix` in the path, or false with 404.
-static bool path_id(const cb_http_req *req, cb_http_res *res, const char *prefix, char *out, size_t cap) {
+static bool path_id(const cb_http_req *req, cb_http_res *res, const char *prefix, char *out, size_t cap, size_t max) {
     const char *id = req->path + strlen(prefix);
     size_t n = strlen(id);
-    bool ok = n > 0 && n < cap && n <= CB_GAME_ID_MAX;
+    bool ok = n > 0 && n < cap && n <= max;
     for (size_t i = 0; ok && i < n; i++) {
         char c = id[i];
         ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
@@ -331,7 +331,7 @@ static void h_games(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 static void h_game(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
     char gid[CB_GAME_ID_MAX + 1];
-    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/games/", gid, sizeof gid)) return;
+    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/games/", gid, sizeof gid, CB_GAME_ID_MAX)) return;
     cb_view_row v;
     memset(&v, 0, sizeof v);
     // The caller's own view when they sit at the game, else the spectators'.
@@ -353,7 +353,7 @@ static void h_game(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 // The game in the path and whether the caller sits at it (*member), or false
 // with the refusal answered.
 static bool chat_of(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, cb_user *u, char *gid, size_t cap, bool *member) {
-    if (!caller(ctx, req, res, u) || !path_id(req, res, "/v1/chat/", gid, cap)) return false;
+    if (!caller(ctx, req, res, u) || !path_id(req, res, "/v1/chat/", gid, cap, CB_GAME_ID_MAX)) return false;
     int m = CB_ROWS_CALL(ctx->store, is_member, gid, u->id);
     if (m < 0) { failed(res, m); return false; }
     *member = m == 1;
@@ -396,7 +396,7 @@ static bool member_fn(const char *id, void *ud) {
 static void h_chat_post(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
     char gid[CB_GAME_ID_MAX + 1];
-    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/chat/", gid, sizeof gid)) return;
+    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/chat/", gid, sizeof gid, CB_GAME_ID_MAX)) return;
     // Who sits at the game: the caller must, and each of them hears the
     // message on their own topic (realtime.h). Read before anything is
     // written, so a failed read stores nothing.
@@ -628,8 +628,8 @@ static bool replay_fn(const cb_snapshot_row *s, void *ud) {
 
 static void h_replay(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
-    char gid[CB_GAME_ID_MAX + 1];
-    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/replay/", gid, sizeof gid)) return;
+    char gid[CB_UUID_LEN + 1];   // a game's id (up to CB_GAME_ID_MAX) or a replay's (a uuid)
+    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/replay/", gid, sizeof gid, CB_UUID_LEN)) return;
     replay r;
     cb_buf_init(&r.body);
     r.found = r.bad = false;

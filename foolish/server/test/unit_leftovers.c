@@ -224,7 +224,7 @@ static void the_list_reader_by_kind(void) {
     const NcGameRow *gr = nc_row(NW_GAMES, body, n, 0);
     T_CHECK(gr && gr->version == 7);
     n = nw_history_head(1, 1000, 1, body, sizeof body);
-    NwHistoryRow h = { .id_len = 1, .id = "h", .n_players = 1, .player_len = { 1 }, .player = { "u" } };
+    NwHistoryRow h = { .id_len = 1, .id = "h", .n_players = 1, .seat = 0, .rank = 1, .fool = NW_HISTORY_NONE, .duration_s = NW_HISTORY_NO_TIME };
     n += nw_put_history(&h, body + n, (int)sizeof body - n);
     const NcHistoryRow *hr = nc_row(NW_HISTORY, body, n, 0);
     T_CHECK(hr && hr->n_players == 1);
