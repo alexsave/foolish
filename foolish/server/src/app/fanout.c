@@ -48,19 +48,19 @@ static bool dup_into(const uint8_t *p, size_t n, const uint8_t **out) {
     return true;
 }
 
-// Each queued fan-out is published under the game's order lock
-// (cb_table_order_lock), the lock a commit and its pushes have always shared,
+// Each queued fan-out is published under the game's lock
+// (cb_table_lock), the lock a commit and its pushes have always shared,
 // so a game's pushes still go out in its commit order. A response can now
 // arrive before its own pushes, which the clients already handle: they gate
 // every push on its version. Because the invocation has already answered, a
 // failed push can no longer fail it: it is logged with the game and version.
 static void held_run(cb_ctx *ctx, void *arg) {
     held_fanout *h = arg;
-    pthread_mutex_t *order = cb_table_order_lock(h->game_id);
+    cb_game_lock *lock = cb_table_lock(h->game_id);
     cb_rt_failures_take();
     cb_fanout_publish(ctx, &h->f);
     int failed = cb_rt_failures_take();
-    pthread_mutex_unlock(order);
+    cb_table_unlock(lock);
     if (failed)
         CB_WARN("after", "game %s v%lld: %d push(es) failed after the answer was sent", h->game_id,
                 (long long)h->f.version, failed);

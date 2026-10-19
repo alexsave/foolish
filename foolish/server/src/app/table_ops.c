@@ -423,29 +423,55 @@ out:
     free(logs);
 }
 
-// ---- commit order ---------------------------------------------------------------------------
+// ---- the game lock ---------------------------------------------------------------------------
 
-// A game's pushes go out in its commit order. Each commit is published by the
-// thread that made it, and two threads (a bot drive and a human's action, say)
-// can commit v10 and v11 in that order and publish v11 first, which a client
-// gating on version reads as a gap (the game smoke caught it under Linux
-// ASan). So a commit and its publish happen under the game's lock, striped by
-// id: the next commit of the same game waits for this one's pushes. Lambda
-// runs one invocation per container, so there the lock is never contended;
-// two containers' pushes can still cross, which the clients' version gates
-// and resync cover (DESIGN.md "The push stream").
-#define ORDER_STRIPES 64
-static pthread_mutex_t g_order_mu[ORDER_STRIPES];
-static pthread_once_t g_order_once = PTHREAD_ONCE_INIT;
-static void order_init(void) {
-    for (int i = 0; i < ORDER_STRIPES; i++) pthread_mutex_init(&g_order_mu[i], NULL);
+// A game's commits and their pushes happen under the game's own lock: from the row a request reads
+// to its last push nothing else in this process moves the row, and a game's pushes go out in its
+// commit order (two threads could commit v10 and v11 in that order and publish v11 first, which a
+// client gating on version reads as a gap). One mutex per game id that some thread holds or waits
+// for: the first taker makes the entry and the last one out frees it, so games never share a lock
+// (an unrelated game never waits) and the table holds only the games in flight.
+#define LOCK_BUCKETS 1024
+struct cb_game_lock {
+    struct cb_game_lock *next;
+    pthread_mutex_t      mu;
+    int                  users;   // holders and waiters, under g_locks_mu
+    uint32_t             bucket;
+    char                 id[CB_GAME_ID_MAX + 1];
+};
+static pthread_mutex_t g_locks_mu = PTHREAD_MUTEX_INITIALIZER;
+static cb_game_lock *g_locks[LOCK_BUCKETS];
+
+cb_game_lock *cb_table_lock(const char *gid) {
+    uint32_t b = fnv1a32_str(FNV32_OFFSET, gid) % LOCK_BUCKETS;
+    pthread_mutex_lock(&g_locks_mu);
+    cb_game_lock *l = g_locks[b];
+    while (l && strcmp(l->id, gid) != 0) l = l->next;
+    if (!l && (l = calloc(1, sizeof *l)) != NULL) {
+        pthread_mutex_init(&l->mu, NULL);
+        l->bucket = b;
+        cb_strlcpy(l->id, gid, sizeof l->id);
+        l->next = g_locks[b];
+        g_locks[b] = l;
+    }
+    if (l) l->users++;
+    pthread_mutex_unlock(&g_locks_mu);
+    if (l) pthread_mutex_lock(&l->mu);
+    return l;
 }
-pthread_mutex_t *cb_table_order_lock(const char *gid) {
-    pthread_once(&g_order_once, order_init);
-    uint32_t h = fnv1a32_str(FNV32_OFFSET, gid);
-    pthread_mutex_t *m = &g_order_mu[h % ORDER_STRIPES];
-    pthread_mutex_lock(m);
-    return m;
+
+void cb_table_unlock(cb_game_lock *l) {
+    if (!l) return;
+    pthread_mutex_unlock(&l->mu);
+    pthread_mutex_lock(&g_locks_mu);
+    if (--l->users == 0) {
+        cb_game_lock **pp = &g_locks[l->bucket];
+        while (*pp != l) pp = &(*pp)->next;
+        *pp = l->next;
+        pthread_mutex_destroy(&l->mu);
+        free(l);
+    }
+    pthread_mutex_unlock(&g_locks_mu);
 }
 
 // ---- the commit ---------------------------------------------------------------------------
@@ -655,7 +681,7 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     if (rc == CB_OK) rc = row_copy(&kept, &nrow);
 
     if (rc == CB_OK) {
-        // The caller holds the game's lock (cb_table_order_lock): from the row it read to
+        // The caller holds the game's lock (cb_table_lock): from the row it read to
         // these pushes nothing else in this process commits the game.
         rc = CB_ROWS_CALL(ctx->store, game_commit, &gc);
         if (rc == CB_E_CONFLICT) {
@@ -720,7 +746,11 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
     // (version = expected) stays as the store's own guarantee; a loss is an error, not a retry.
     // The only second attempt left is the cache's: a refusal or a load failure from a cached
     // row is rechecked against the stored one.
-    pthread_mutex_t *order = cb_table_order_lock(op->game_id);
+    cb_game_lock *lock = cb_table_lock(op->game_id);
+    if (!lock) {
+        cb_section_free(s);
+        return CB_E_NOMEM;
+    }
     for (int attempt = 1; attempt <= 2; attempt++) {
         cb_game_row row;
         bool cached = false;
@@ -803,7 +833,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         out->envelope = NULL;
         out->envelope_len = 0;
     }
-    pthread_mutex_unlock(order);
+    cb_table_unlock(lock);
     cb_section_free(s);
     return ret;
 }

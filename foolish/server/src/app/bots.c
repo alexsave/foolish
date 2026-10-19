@@ -43,8 +43,8 @@ enum { CYCLE_DONE = 0, CYCLE_AGAIN = 1, CYCLE_ERROR = -1 };
 // drive (no bot can act, the game ended, or the game is gone), CYCLE_ERROR.
 // *idle_version is the version of a row the scan holds although the kernel
 // says no bot can act on it (store.h bots_idle), else -1.
-static int run_cycle_locked(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle, cpu_acct *cpu, int64_t *delay_ms,
-                            int64_t *idle_version) {
+static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle, cpu_acct *cpu, int64_t *delay_ms,
+                     int64_t *idle_version) {
     // The moves an attempt that lost the CAS already chose, offered back: the
     // kernel replays one only while the reloaded board still makes it legal.
     uint8_t prefs[BOT_PREFS_CAP];
@@ -119,27 +119,25 @@ static int run_cycle_locked(cb_ctx *ctx, cb_section *s, const char *game_id, int
 
         int pl = table_drive_prefs(&s->t, &drv, prefs, sizeof prefs);
         prefs_len = pl > 0 ? pl : 0;
+        // The drive was computed from a row read without the game's lock (octogen takes milliseconds,
+        // and a human at this table, or the next game's request, does not wait for it). The commit
+        // takes the lock, and the store's fence (version = the row's) validates it: a human who
+        // committed meanwhile makes it lost, and the cycle reloads and drives again, its choices
+        // offered back.
         cb_commit_out co;
+        cb_game_lock *lock = cb_table_lock(game_id);
+        if (!lock) { cb_game_row_free(&row); return CYCLE_ERROR; }
         rc = cb_section_commit(ctx, s, &row, NULL, NULL, ratings, &have_ratings, &co);
+        cb_table_unlock(lock);
         cb_game_row_free(&row);
         if (rc != CB_OK) return CYCLE_ERROR;
-        if (co.lost) continue;   // somebody else committed: reload and drive again
+        if (co.lost) continue;   // a human committed during the drive: reload and drive again
         return co.ended ? CYCLE_DONE : CYCLE_AGAIN;
     }
     CB_ERROR("bots", "could not commit game %s after %d attempts: write contention", game_id, CB_TABLE_ATTEMPTS);
     return CYCLE_ERROR;
 }
 
-// A cycle holds the game's lock from the row read to the commit's pushes (table_ops.c ONE LOCK),
-// the drive's compute included: a human's move at the same table waits for it, as it would wait
-// for the CAS it would otherwise lose.
-static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle, cpu_acct *cpu, int64_t *delay_ms,
-                     int64_t *idle_version) {
-    pthread_mutex_t *order = cb_table_order_lock(game_id);
-    int rc = run_cycle_locked(ctx, s, game_id, cycle, cpu, delay_ms, idle_version);
-    pthread_mutex_unlock(order);
-    return rc;
-}
 
 // ---- the speedup (config.h CBASE_BOT_SPEEDUP) ----------------------------------------
 

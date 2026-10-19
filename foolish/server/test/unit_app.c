@@ -14,6 +14,8 @@
 #include "rate_limits.h"
 
 #include <pthread.h>
+#include <stdatomic.h>
+#include <unistd.h>
 #include <time.h>
 #include "lib_app_store_mem.h"
 
@@ -1668,7 +1670,7 @@ static void a_stranger_changes_nothing(void) {
 // moves from their own threads at once, on stale versions as often as not.
 // Every APPLIED answer is exactly one stored version, and the board stays one
 // the kernel loads.
-typedef struct { const char *gid, *uid, *bearer; int applied; } hammer_arg;
+typedef struct { const char *gid, *uid, *bearer; int applied, errors; } hammer_arg;
 static void *hammer(void *p) {
     hammer_arg *a = p;
     g_rng = (uint64_t)(uintptr_t)a->uid;
@@ -1680,6 +1682,7 @@ static void *hammer(void *p) {
         reply r;
         action(a->bearer, a->gid, wire, n, (uint32_t)version_of(a->gid), &r);
         TableResponse resp;
+        if (r.status >= 500) a->errors++;
         if (r.status == 200 && table_response_decode(r.body, (int)r.len, &resp) == 0 &&
             resp.status == TABLE_STATUS_APPLIED)
             a->applied++;
@@ -1693,7 +1696,7 @@ static void concurrent_moves_lose_and_duplicate_nothing(void) {
     two_humans_dealt(gid);
     cb_fanout_observer = NULL;   // g_fan is one struct; two threads would tear it
     int64_t v0 = version_of(gid);
-    hammer_arg a = { gid, UID_A, "A", 0 }, b = { gid, UID_B, "B", 0 };
+    hammer_arg a = { gid, UID_A, "A", 0, 0 }, b = { gid, UID_B, "B", 0, 0 };
     pthread_t ta, tb;
     pthread_create(&ta, NULL, hammer, &a);
     pthread_create(&tb, NULL, hammer, &b);
@@ -1701,12 +1704,182 @@ static void concurrent_moves_lose_and_duplicate_nothing(void) {
     pthread_join(tb, NULL);
     cb_fanout_observer = fan_observer;
     T_CHECK(a.applied + b.applied > 0);
+    T_EQ_INT(a.errors + b.errors, 0);   // the game's lock: no move lost its fence (a 500)
     T_EQ_INT(version_of(gid), v0 + a.applied + b.applied);
     cb_game_row row = stored(gid);
     cb_section *s = cb_section_new();
     T_CHECK(cb_section_load(s, &row) >= 0);   // table_load validates the board (state_import)
     cb_section_free(s);
     cb_game_row_free(&row);
+}
+
+// A bot drive and a human hammering one game from two threads: the drive computes without the game's
+// lock and commits under it, so a human's commit during the compute makes the drive's lost (it drives
+// again) and never the human's (a 500). Nothing errs, and the board loads.
+typedef struct { const char *gid; atomic_bool stop; int errors, drives; } driver_arg;
+static void *driver(void *p) {
+    driver_arg *d = p;
+    while (!atomic_load(&d->stop)) {
+        // CB_E_NOT_FOUND: no bot was due (the store's lease needs the game in the bot scan).
+        int rc = cb_bots_drive(&g_ctx, d->gid);
+        if (rc != CB_OK && rc != CB_E_NOT_FOUND) d->errors++;
+        d->drives++;
+    }
+    return NULL;
+}
+
+// Every push the two threads make, in the order they went out (under its own mutex).
+static pthread_mutex_t g_seq_mu = PTHREAD_MUTEX_INITIALIZER;
+static int64_t g_seq_last;
+static int g_seq_n, g_seq_back;
+static void seq_observer(const cb_fanout *f) {
+    pthread_mutex_lock(&g_seq_mu);
+    if (f->version <= g_seq_last) g_seq_back++;
+    g_seq_last = f->version;
+    g_seq_n++;
+    pthread_mutex_unlock(&g_seq_mu);
+}
+
+static void a_bot_and_a_human_on_one_game_lose_nothing(void) {
+    setup(1);
+    char gid[CB_GAME_ID_MAX + 1];
+    reply r;
+    create_game(gid, &r);
+    meta("A", ASK_ADD_BOT, gid, NULL, &r);
+    meta("A", ASK_START, gid, NULL, &r);
+    T_EQ_INT(status_of(gid), GAME_STATUS_PLAYING);
+    int64_t v0 = version_of(gid);
+    g_seq_last = v0;
+    g_seq_n = g_seq_back = 0;
+    cb_fanout_observer = seq_observer;   // the game's pushes, in commit order
+    hammer_arg a = { gid, UID_A, "A", 0, 0 };
+    driver_arg d = { .gid = gid };
+    pthread_t ta, td;
+    pthread_create(&td, NULL, driver, &d);
+    pthread_create(&ta, NULL, hammer, &a);
+    pthread_join(ta, NULL);
+    atomic_store(&d.stop, true);
+    pthread_join(td, NULL);
+    cb_fanout_observer = fan_observer;
+    T_CHECK(a.applied > 0);
+    T_CHECK(d.drives > 0);
+    T_CHECK(version_of(gid) > v0 + a.applied);   // the bot committed too
+    T_CHECK(g_seq_n > 0);
+    T_EQ_INT(g_seq_back, 0);   // each push newer than the one before it
+    T_EQ_INT(a.errors, 0);
+    T_EQ_INT(d.errors, 0);
+    cb_game_row row = stored(gid);
+    cb_section *s = cb_section_new();
+    T_CHECK(cb_section_load(s, &row) >= 0);
+    cb_section_free(s);
+    cb_game_row_free(&row);
+}
+
+// While a bot's move is computed the game's lock is free: from inside the drive (the cycle observer
+// runs between the row read and the compute) another thread takes and gives back the lock.
+typedef struct { const char *gid; atomic_bool got; } taker_arg;
+static void *taker(void *p) {
+    taker_arg *t = p;
+    cb_game_lock *l = cb_table_lock(t->gid);
+    atomic_store(&t->got, true);
+    cb_table_unlock(l);
+    return NULL;
+}
+static taker_arg g_taker;
+static pthread_t g_taker_th;
+static int g_taker_runs, g_taker_free;
+static void taking_observer(const char *game_id, int attempt, int logs_len, int prefs_len) {
+    (void)attempt; (void)logs_len; (void)prefs_len;
+    if (g_taker_runs++) return;
+    g_taker.gid = game_id;
+    atomic_store(&g_taker.got, false);
+    pthread_create(&g_taker_th, NULL, taker, &g_taker);
+    for (int i = 0; i < 2000 && !atomic_load(&g_taker.got); i++) usleep(1000);
+    if (atomic_load(&g_taker.got)) g_taker_free++;
+}
+
+// A commit's pushes go out under the game's lock: another taker does not get it within 20 ms.
+static taker_arg g_pub_taker[8];
+static pthread_t g_pub_th[8];
+static int g_pub_n, g_pub_unheld;
+static void held_observer(const cb_fanout *f) {
+    fan_observer(f);
+    if (g_pub_n >= 8) return;
+    taker_arg *t = &g_pub_taker[g_pub_n];
+    t->gid = f->game_id;
+    atomic_store(&t->got, false);
+    pthread_create(&g_pub_th[g_pub_n++], NULL, taker, t);
+    usleep(20 * 1000);
+    if (atomic_load(&t->got)) g_pub_unheld++;
+}
+
+static void a_bot_computes_unlocked_and_commits_locked(void) {
+    setup(1);
+    char gid[CB_GAME_ID_MAX + 1];
+    reply r;
+    create_game(gid, &r);
+    meta("A", ASK_ADD_BOT, gid, NULL, &r);
+    meta("A", ASK_START, gid, NULL, &r);
+    g_taker_runs = g_taker_free = 0;
+    g_pub_n = g_pub_unheld = 0;
+    cb_bots_cycle_observer = taking_observer;
+    cb_fanout_observer = held_observer;
+    for (int i = 0; i < 400 && g_taker_runs == 0 && status_of(gid) == GAME_STATUS_PLAYING; i++) {
+        uint8_t wire[64];
+        int n = pick_move(gid, 0, wire, sizeof wire);
+        if (n > 0) action("A", gid, wire, n, (uint32_t)version_of(gid), &r);
+        else T_EQ_INT(cb_bots_drive(&g_ctx, gid), CB_OK);
+    }
+    for (int i = 0; i < 400 && g_pub_n < 8 && status_of(gid) == GAME_STATUS_PLAYING; i++) {
+        uint8_t wire[64];
+        int n = pick_move(gid, 0, wire, sizeof wire);
+        if (n > 0) action("A", gid, wire, n, (uint32_t)version_of(gid), &r);
+        else T_EQ_INT(cb_bots_drive(&g_ctx, gid), CB_OK);
+    }
+    cb_bots_cycle_observer = NULL;
+    cb_fanout_observer = fan_observer;
+    for (int i = 0; i < g_pub_n; i++) pthread_join(g_pub_th[i], NULL);
+    T_EQ_INT(g_pub_n, 8);
+    T_EQ_INT(g_pub_unheld, 0);
+    T_EQ_INT(g_taker_runs > 0, 1);
+    if (g_taker_runs) pthread_join(g_taker_th, NULL);
+    T_EQ_INT(g_taker_free, 1);
+}
+
+// Games never share a lock: with one game's lock held, the locks of a thousand others are taken at
+// once (a lock striped by id would put some of them behind the held one).
+typedef struct { atomic_int done; } many_arg;
+static void *take_many(void *p) {
+    many_arg *m = p;
+    for (int i = 0; i < 1000; i++) {
+        char id[CB_GAME_ID_MAX + 1];
+        snprintf(id, sizeof id, "g%05d", i);
+        cb_table_unlock(cb_table_lock(id));
+        atomic_fetch_add(&m->done, 1);
+    }
+    return NULL;
+}
+
+static void games_never_share_a_lock(void) {
+    cb_game_lock *held = cb_table_lock("held01");
+    T_CHECK(held != NULL);
+    many_arg m = { 0 };
+    pthread_t th;
+    pthread_create(&th, NULL, take_many, &m);
+    for (int i = 0; i < 2000 && atomic_load(&m.done) < 1000; i++) usleep(1000);
+    T_EQ_INT(atomic_load(&m.done), 1000);
+    cb_table_unlock(held);
+    pthread_join(th, NULL);
+    // The same game's lock is one: a second taker waits for the first.
+    held = cb_table_lock("held01");
+    g_taker.gid = "held01";
+    atomic_store(&g_taker.got, false);
+    pthread_create(&th, NULL, taker, &g_taker);
+    usleep(20 * 1000);
+    T_CHECK(!atomic_load(&g_taker.got));
+    cb_table_unlock(held);
+    pthread_join(th, NULL);
+    T_CHECK(atomic_load(&g_taker.got));
 }
 
 // security_hidden_info_{2p,4p,6p}.test.ts: every envelope goes to the user
@@ -2430,6 +2603,9 @@ int main(void) {
     T_RUN(continue_returns_a_clean_lobby);
     T_RUN(a_stranger_changes_nothing);
     T_RUN(concurrent_moves_lose_and_duplicate_nothing);
+    T_RUN(a_bot_and_a_human_on_one_game_lose_nothing);
+    T_RUN(a_bot_computes_unlocked_and_commits_locked);
+    T_RUN(games_never_share_a_lock);
     T_RUN(every_view_goes_to_its_own_seat);
     T_RUN(every_bot_cycle_gets_the_whole_log_and_its_choices_back);
     T_RUN(bot_moves_wait_for_the_table_to_settle);

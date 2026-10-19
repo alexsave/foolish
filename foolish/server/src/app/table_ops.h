@@ -78,9 +78,11 @@ typedef struct {
     size_t   envelope_len;
 } cb_table_result;
 
-// A game's commit order lock, taken (striped by id; table_ops.c says why a
-// commit and its pushes share it). The caller unlocks what it returns.
-pthread_mutex_t *cb_table_order_lock(const char *gid);
+// The game's own lock, taken (table_ops.c "the game lock" says why a commit and
+// its pushes share it): NULL when out of memory. cb_table_unlock gives it back.
+typedef struct cb_game_lock cb_game_lock;
+cb_game_lock *cb_table_lock(const char *gid);
+void cb_table_unlock(cb_game_lock *l);
 
 // Runs one operation with the CAS retry loop. CB_OK (look at out->result for
 // the kernel's answer), CB_E_NOT_FOUND (no such game), CB_E_CONFLICT (lost the
