@@ -79,6 +79,12 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
         }
         int64_t wait = cb_bots_wait_ms(ctx, &s->t, row.created_at, cb_app_now());
         if (wait > 0) { cb_game_row_free(&row); *delay_ms = wait; return CYCLE_AGAIN; }
+        // The stored session log, whole (the belief brains read it): the LOG# items since the deal.
+        if (CB_ROWS_CALL(ctx->store, game_logs, game_id, row.log_from, &row.logs, &row.logs_len) != CB_OK) {
+            CB_ERROR("bots", "game %s: session log unreadable", game_id);
+            cb_game_row_free(&row);
+            return CYCLE_ERROR;
+        }
         const int log_len = (int)row.logs_len;
         kr = table_set_session_log(&s->t, row.logs, log_len);
         if (kr < 0) {

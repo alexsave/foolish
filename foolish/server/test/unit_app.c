@@ -234,7 +234,8 @@ static int refusal_why(const reply *r, AskRefusal *out) {
 static cb_game_row stored(const char *gid) {
     cb_game_row row;
     memset(&row, 0, sizeof row);
-    CB_ROWS_CALL(g_store, game_get, gid, &row);
+    if (CB_ROWS_CALL(g_store, game_get, gid, &row) == CB_OK)
+        CB_ROWS_CALL(g_store, game_logs, gid, row.log_from, &row.logs, &row.logs_len);
     return row;
 }
 

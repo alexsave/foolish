@@ -372,11 +372,16 @@ void cb_table_snap_summary(cb_snap_summary *m, const uint8_t *code, int n_code, 
 
 static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     enum { CODE_CAP = 2 * 1024 * 1024, SCRATCH_CAP = 1024 * 1024, EXTRAS_CAP = 256 * 1024 };
-    uint8_t *code = NULL, *scratch = NULL, *extras = NULL;
+    uint8_t *code = NULL, *scratch = NULL, *extras = NULL, *logs = NULL;
+    size_t logs_len = 0;
     const char *why = NULL;
     int rc = 0;
     if (!nrow->has_seed) { why = "no deal seed: nothing to encode a replay from"; goto out; }
-    if (nrow->logs_len == 0) { why = "no session log: nothing to encode a replay from"; goto out; }
+    if (CB_ROWS_CALL(ctx->store, game_logs, nrow->id, nrow->log_from, &logs, &logs_len) != CB_OK || logs_len == 0) {
+        free(logs);
+        why = "no session log: nothing to encode a replay from";
+        goto out;
+    }
     code = malloc(CODE_CAP);
     scratch = malloc(SCRATCH_CAP);
     extras = malloc(EXTRAS_CAP);
@@ -386,13 +391,13 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
         why = "does not load";
         goto out;
     }
-    int n_extras = table_replay_extras(&s->t, nrow->logs, (int)nrow->logs_len, extras, EXTRAS_CAP);
+    int n_extras = table_replay_extras(&s->t, logs, (int)logs_len, extras, EXTRAS_CAP);
     if (n_extras < 0) { rc = n_extras; why = "replay extras refused"; goto out; }
     if ((rc = table_load(&s->t, nrow->state, (int)nrow->state_len, nrow->roster, (int)nrow->roster_len)) < 0) {
         why = "does not load";
         goto out;
     }
-    int n_code = table_replay_code(&s->t, nrow->seed, CB_SEED_LEN, nrow->logs, (int)nrow->logs_len,
+    int n_code = table_replay_code(&s->t, nrow->seed, CB_SEED_LEN, logs, (int)logs_len,
                                    code, CODE_CAP, scratch, SCRATCH_CAP);
     if (n_code < 0) { rc = n_code; why = "replay code refused"; goto out; }
     CB_INFO("table", "game %s: replay encoded (v6) to %d+%d bytes", nrow->id, n_code, n_extras);
@@ -415,6 +420,7 @@ out:
     free(code);
     free(scratch);
     free(extras);
+    free(logs);
 }
 
 // ---- commit order ---------------------------------------------------------------------------
@@ -542,22 +548,11 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         memcpy(nrow.seed, row->seed, CB_SEED_LEN);
     }
     // The session log: a deal replaces it, a lobby empties it, anything else
-    // appends this operation's records.
-    uint8_t *logs = NULL;
-    if (c->logs_reset) {
-        nrow.logs = (uint8_t *)A + c->logs.off;
-        nrow.logs_len = (size_t)c->logs.len;
-    } else if (!waiting) {
-        size_t n = row->logs_len + (size_t)c->logs.len;
-        if (n) {
-            logs = malloc(n);
-            if (!logs) return CB_E_NOMEM;
-            if (row->logs_len) memcpy(logs, row->logs, row->logs_len);
-            if (c->logs.len) memcpy(logs + row->logs_len, A + c->logs.off, (size_t)c->logs.len);
-        }
-        nrow.logs = logs;
-        nrow.logs_len = n;
-    }
+    // appends this operation's records. The store appends the delta (a LOG# item
+    // at the new version); the row only says where the session's log starts.
+    const bool log_clear = c->logs_reset || waiting;
+    nrow.log_from = log_clear ? nrow.version : row->log_from;
+    if (waiting && !c->logs_reset) nrow.log_from = nrow.version;
     // The round guard's epoch: 0 on a deal or in a lobby, the new version when
     // this operation closed a round, else unchanged.
     nrow.round_epoch = (c->logs_reset || waiting) ? 0 : c->closed_round ? row->version + 1 : row->round_epoch;
@@ -565,6 +560,11 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     cb_game_commit gc;
     memset(&gc, 0, sizeof gc);
     gc.row = &nrow;
+    gc.log_clear = log_clear;
+    if (!(waiting && !c->logs_reset) && c->logs.len > 0) {
+        gc.log_add = (uint8_t *)A + c->logs.off;
+        gc.log_add_len = (size_t)c->logs.len;
+    }
     gc.expected_version = row->version;
     // The loaded row's seats, when it vouches that they are the stored ones
     // (store.h cb_game_commit prev_known): the store skips reading them.
@@ -680,7 +680,6 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     }
 
     cb_game_row_free(&kept);
-    free(logs);
     for (int i = 0; i < CB_MAX_SEATS; i++) {
         free((void *)f.seats[i].envelope);
         free((void *)f.seats[i].cast);

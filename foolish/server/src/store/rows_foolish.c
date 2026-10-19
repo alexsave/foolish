@@ -31,6 +31,7 @@
 #include "store/store_import.h"
 
 #include "bot_roster.h"
+#include "../../../../shared/c/num_parse.h"
 #include "table.h"
 #include "util/clock.h"
 #include "util/log.h"
@@ -246,7 +247,7 @@ bool cb_rows_game_of(const cb_item *it, cb_game_row *g) {
     uint8_t *seed;
     size_t seed_len;
     if (!b_of(it, "state", &g->state, &g->state_len) || !b_of(it, "roster", &g->roster, &g->roster_len) ||
-        !b_of(it, "logs_packed", &g->logs, &g->logs_len) || !b_of(it, "game_seed", &seed, &seed_len)) {
+        !b_of(it, "game_seed", &seed, &seed_len)) {
         cb_game_row_free(g);
         return false;
     }
@@ -258,6 +259,7 @@ bool cb_rows_game_of(const cb_item *it, cb_game_row *g) {
     bool_of(it, "needs_bots", &g->needs_bots);
     bool_of(it, "seats_exact", &g->seats_exact);
     g->round_epoch = cb_item_n_or(it, "round_epoch", 0);
+    g->log_from = cb_item_n_or(it, "log_from", 0);
     g->created_at = cb_item_n_or(it, "created_at", 0);
     g->updated_at = cb_item_n_or(it, "updated_at", 0);
     g->last_commit_at = cb_item_n_or(it, "last_commit_at", 0);
@@ -270,7 +272,7 @@ static void game_attrs(attrs *x, const cb_game_row *g) {
     add(x, CB_AVN("status", g->status));
     add(x, CB_AVB("state", g->state, g->state_len));
     add(x, CB_AVB("roster", g->roster, g->roster_len));
-    if (g->logs_len) add(x, CB_AVB("logs_packed", g->logs, g->logs_len));
+    if (g->log_from) add(x, CB_AVN("log_from", g->log_from));
     if (g->has_seed) add(x, CB_AVB("game_seed", g->seed, CB_SEED_LEN));
     add(x, CB_AVBOOL("needs_bots", g->needs_bots));
     add(x, CB_AVN("version", g->version));
@@ -289,6 +291,71 @@ int cb_rows_game_get(cb_store *s, const char *id, cb_game_row *out) {
     if (rc == CB_OK && !cb_rows_game_of(&it, out)) rc = CB_E_DB;
     cb_item_free(&it);
     return rc;
+}
+
+// ---- the session log: one LOG#<game> item per commit that appended records -------------------
+//
+// A move used to rewrite the whole cumulative log inside the game row. Now a commit PUTs this
+// operation's records at sk = its new version (zero-padded, so the keys sort as numbers) and the
+// row keeps only log_from, the version where the current session log starts. The log is read by
+// the two consumers that need it all (the bot drive and the replay at game end). An older session's
+// items (before a deal or a lobby reset) are deleted after the commit that cleared the log.
+
+static void log_sk(char *out, size_t cap, int64_t seq) { snprintf(out, cap, "%020lld", (long long)seq); }
+
+typedef struct {
+    int64_t  from;
+    uint8_t *buf;
+    size_t   len, cap;
+    bool     oom;
+} log_acc;
+
+static bool log_step(const cb_item *it, void *ud) {
+    log_acc *a = ud;
+    char sk[KB];
+    int64_t seq;
+    if (!s_of(it, CB_ITEM_SK, sk, sizeof sk) || !num_parse_i64_cstr(sk, 0, INT64_MAX, &seq) || seq < a->from) return true;
+    uint8_t *b;
+    size_t n;
+    if (!b_of(it, "a", &b, &n)) return true;
+    if (a->len + n > a->cap) {
+        size_t cap = a->cap ? a->cap * 2 : 4096;
+        while (cap < a->len + n) cap *= 2;
+        uint8_t *t = realloc(a->buf, cap);
+        if (!t) { free(b); a->oom = true; return false; }
+        a->buf = t;
+        a->cap = cap;
+    }
+    if (n) memcpy(a->buf + a->len, b, n);
+    a->len += n;
+    free(b);
+    return true;
+}
+
+int cb_rows_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
+    *out = NULL;
+    *out_len = 0;
+    if (log_from <= 0) return CB_OK;
+    char pk[KB];
+    log_acc a = { .from = log_from };
+    int rc = query(s, (cb_iquery){ .pk = k(pk, sizeof pk, "LOG#", id), .forward = true }, log_step, &a);
+    if (rc == CB_OK && a.oom) rc = CB_E_NOMEM;
+    if (rc != CB_OK) { free(a.buf); return rc; }
+    *out = a.buf;
+    *out_len = a.len;
+    return CB_OK;
+}
+
+// The LOG# items of game `id` below version `below` (0: every one), deleted. Best effort: logged.
+static void log_prune(cb_store *s, const char *id, int64_t below) {
+    char pk[KB], sk[KB];
+    keylist l = { 0 };
+    cb_iquery q = { .pk = k(pk, sizeof pk, "LOG#", id), .forward = true, .keys_only = true };
+    if (below > 0) { log_sk(sk, sizeof sk, below); q.sk_below = sk; }
+    if (query(s, q, collect_key, &l) != CB_OK || l.oom || keylist_keys(&l) != CB_OK ||
+        (l.n && s->ops->item_batch_delete(s, l.keys, l.n) != CB_OK))
+        CB_WARN(MOD, "game %s: old log items not fully deleted", id);
+    keylist_free(&l);
 }
 
 typedef struct {
@@ -591,8 +658,8 @@ void cb_rows_cas_write(const cb_game_commit *c, int64_t last_commit_at, cb_rows_
     set(&x, CB_AVN("status", g->status), CB_SET_TO);
     set(&x, CB_AVB("state", g->state, g->state_len), CB_SET_TO);
     set(&x, CB_AVB("roster", g->roster, g->roster_len), CB_SET_TO);
-    if (g->logs_len) set(&x, CB_AVB("logs_packed", g->logs, g->logs_len), CB_SET_TO);
-    else set(&x, CB_AVB("logs_packed", NULL, 0), CB_SET_REMOVE);
+    if (g->log_from) set(&x, CB_AVN("log_from", g->log_from), CB_SET_TO);
+    else set(&x, CB_AVN("log_from", 0), CB_SET_REMOVE);
     if (g->has_seed) set(&x, CB_AVB("game_seed", g->seed, CB_SEED_LEN), CB_SET_TO);
     else set(&x, CB_AVB("game_seed", NULL, 0), CB_SET_REMOVE);
     set(&x, CB_AVBOOL("needs_bots", g->needs_bots), CB_SET_TO);
@@ -749,7 +816,11 @@ static int commit_or_import(cb_store *s, const cb_game_commit *c0, bool import) 
         // without bot work and the row it is fenced on had none (prev_known):
         // no marker exists then (DESIGN.md "Store").
         bool no_marker = c.prev_known && !c.prev_needs_bots && !row.needs_bots;
-        if (!import && no_marker && c.n_rated == 0 && seat_writes(NULL, &c, stored) == 0) {
+        // The records this commit appends (an import: the whole log the row carries).
+        const uint8_t *log_bytes = import ? g->logs : c.log_add;
+        size_t log_n = import ? g->logs_len : c.log_add_len;
+        if (import && log_n) row.log_from = g->version;
+        if (!import && no_marker && c.n_rated == 0 && !log_n && seat_writes(NULL, &c, stored) == 0) {
             // Only the row changes: one conditional write, the same fence,
             // and a refusal brings the stored item back unless the game is gone.
             row_cas(b, &c, row.last_commit_at);
@@ -758,6 +829,7 @@ static int commit_or_import(cb_store *s, const cb_game_commit *c0, bool import) 
             rc = s->ops->item_write(s, &b->w[0], &old);
             if (rc == CB_E_CONFLICT && old.n == 0) rc = CB_E_NOT_FOUND;
             cb_item_free(&old);
+            if (rc == CB_OK && c.log_clear) log_prune(s, c.row->id, c.row->log_from);
             break;
         }
         char pk[KB];
@@ -779,6 +851,14 @@ static int commit_or_import(cb_store *s, const cb_game_commit *c0, bool import) 
             scan_write(&b->w[b->n], &b->a[b->n], &b->x[b->n], bz_next(b), &row, !import);
             b->n++;
         }
+        char lpk[KB], lsk[KB];
+        cb_av lattr[1];
+        if (log_n && bw(b)) {
+            lattr[0] = CB_AVB("a", log_bytes, log_n);
+            log_sk(lsk, sizeof lsk, g->version);
+            b->w[b->n++] = (cb_iwrite){ .op = CB_IW_PUT, .key = { k(lpk, sizeof lpk, "LOG#", g->id), lsk },
+                                        .attrs = lattr, .n_attrs = 1 };
+        }
         if (b->n > CB_ITEM_TXN_MAX) {
             CB_ERROR(MOD, "commit %s: more than %d items in one transaction", g->id, CB_ITEM_TXN_MAX);
             rc = CB_E_FULL;
@@ -787,6 +867,7 @@ static int commit_or_import(cb_store *s, const cb_game_commit *c0, bool import) 
         int failed;
         bool had;
         rc = s->ops->item_txn(s, b->w, b->n, &failed, &had);
+        if (rc == CB_OK && !import && c.log_clear) log_prune(s, g->id, g->log_from);
         if (rc != CB_E_CONFLICT) break;
         if (!import && failed == 0) {   // the fence: moved on, or gone
             rc = had ? CB_E_CONFLICT : CB_E_NOT_FOUND;
@@ -863,6 +944,7 @@ int cb_rows_game_delete(cb_store *s, const char *id, int64_t expected) {
         }
     keylist_free(&chat);
     keylist_free(&snaps);
+    log_prune(s, id, 0);
     return CB_OK;
 }
 
@@ -1599,6 +1681,7 @@ int cb_rows_chat_list(cb_store *s, const char *game, int limit, cb_chat_fn fn, v
 
 const cb_rows_ops cb_rows_foolish = {
     .game_get = cb_rows_game_get,
+    .game_logs = cb_rows_game_logs,
     .games_get_views = cb_rows_games_get_views,
     .game_create = cb_rows_game_create,
     .game_commit = cb_rows_game_commit,

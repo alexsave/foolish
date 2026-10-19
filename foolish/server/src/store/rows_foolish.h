@@ -35,7 +35,12 @@ typedef struct {
     int      status;            // kernel GAME_STATUS_*
     uint8_t *state;   size_t state_len;    // kernel state blob
     uint8_t *roster;  size_t roster_len;   // kernel durable roster (ROSTER_BYTES)
-    uint8_t *logs;    size_t logs_len;     // session log (games.logs_packed); NULL/0 for none
+    // The session log is NOT in the row: a move appends its records to the game's
+    // LOG# items (rows_foolish.c) and the row only names where the current session's
+    // log begins. game_get never fills logs; game_logs reads them (finalize, bot drive).
+    // A row handed to game_import may carry logs (the migration's whole log).
+    uint8_t *logs;    size_t logs_len;
+    int64_t  log_from;          // version of the first LOG# item of the current session log; 0: none
     bool     has_seed;
     uint8_t  seed[CB_SEED_LEN];            // the deal seed, when has_seed
     bool     needs_bots;
@@ -60,6 +65,11 @@ void cb_game_row_free(cb_game_row *g);   // frees the byte fields; the struct is
 // removed) and the rating changes the kernel computed (TableCommit.n_rated).
 typedef struct {
     const cb_game_row *row;     // row->version is the NEW version (expected + 1)
+    // The session log, as a delta: log_clear empties it first (a deal, a lobby), then
+    // log_add (this operation's records) is appended, stored at seq row->version. The
+    // caller sets row->log_from to row->version when it clears, else carries it over.
+    const uint8_t *log_add;  size_t log_add_len;
+    bool     log_clear;
     int64_t  expected_version;
     int      n_humans;
     cb_uuid  humans[CB_MAX_SEATS];
@@ -189,6 +199,9 @@ typedef struct cb_rows_ops {
     // games
     // CB_E_NOT_FOUND, or the row (caller frees with cb_game_row_free).
     int (*game_get)(cb_store *s, const char *id, cb_game_row *out);
+    // The session log of a game whose row has log_from: the records of every commit
+    // since, in order, one malloc'd buffer (NULL, 0 for none).
+    int (*game_logs)(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len);
     // A new game at version 0 with its creator as member. CB_E_CONFLICT when
     // the id is taken (the caller draws another, up to 5 times).
     int (*game_create)(cb_store *s, const cb_game_row *g, const char *creator_id);
@@ -356,6 +369,7 @@ bool cb_rows_snapshot_of(const cb_item *it, cb_snapshot_row *s);   // SNAP#<id> 
 bool cb_rows_chat_of(const cb_item *it, cb_chat_row *c);       // CHAT#<game> <created>#<id>
 
 int cb_rows_game_get(cb_store *s, const char *id, cb_game_row *out);
+int cb_rows_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len);
 int cb_rows_games_get_views(cb_store *s, const char *const *ids, int n, cb_game_fn fn, void *ud);
 int cb_rows_game_create(cb_store *s, const cb_game_row *g, const char *creator);
 int cb_rows_game_commit(cb_store *s, const cb_game_commit *c);

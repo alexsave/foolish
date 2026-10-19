@@ -107,6 +107,10 @@ static int w_game_get(cb_store *s, const char *id, cb_game_row *out) {
     if (take()) return atomic_load(&g_rc);
     return cb_rows_of(IN(s))->game_get ? cb_rows_of(IN(s))->game_get(IN(s), id, out) : CB_E_NOTIMPL;
 }
+static int w_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
+    if (take()) return atomic_load(&g_rc);
+    return cb_rows_of(IN(s))->game_logs ? cb_rows_of(IN(s))->game_logs(IN(s), id, log_from, out, out_len) : CB_E_NOTIMPL;
+}
 static int w_game_create(cb_store *s, const cb_game_row *g, const char *creator_id) {
     if (take()) return atomic_load(&g_rc);
     return cb_rows_of(IN(s))->game_create ? cb_rows_of(IN(s))->game_create(IN(s), g, creator_id) : CB_E_NOTIMPL;
@@ -303,6 +307,7 @@ static const cb_store_ops FAULT_OPS = {
 // foolish's rows, each forwarded to the wrapped store's own.
 static const cb_rows_ops FAULT_ROWS = {
     .game_get = w_game_get,
+    .game_logs = w_game_logs,
     .game_create = w_game_create,
     .game_commit = w_game_commit,
     .game_delete = w_game_delete,
@@ -336,12 +341,12 @@ static const cb_store_app FAULT_APP = { .rows = &FAULT_ROWS };
 // Every operation of store.h and of rows_foolish.h is wrapped above. An
 // operation added there and not here would be left NULL (CB_E_NOTIMPL to
 // whatever calls it through this store), so each table's size is held to its
-// count: store.h's name, close and 27 operations; rows_foolish.h's 28. The
+// count: store.h's name, close and 27 operations; rows_foolish.h's 29. The
 // account hooks are the wrapped store's (its user_create and user_delete run
 // them), so this store has none of its own.
 _Static_assert(sizeof(cb_store_ops) == (size_t)(27 + 2) * sizeof(void *),
                "store.h has an operation lib_faultstore.c does not wrap: add its w_ wrapper and its line in FAULT_OPS");
-_Static_assert(sizeof(cb_rows_ops) == (size_t)28 * sizeof(void *),
+_Static_assert(sizeof(cb_rows_ops) == (size_t)29 * sizeof(void *),
                "rows_foolish.h has an operation lib_faultstore.c does not wrap: add its w_ wrapper and its line in FAULT_ROWS");
 
 cb_store *fs_wrap(cb_store *inner) {

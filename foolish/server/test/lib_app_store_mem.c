@@ -132,7 +132,24 @@ static int m_game_get(cb_store *s, const char *id, cb_game_row *out) {
     tm_impl *m = IMPL(s);
     pthread_mutex_lock(&m->mu);
     tm_game *g = find_game(m, id);
-    if (g) row_copy(out, &g->row);
+    if (g) {
+        row_copy(out, &g->row);
+        free(out->logs);   // game_get never carries the session log (game_logs does)
+        out->logs = NULL;
+        out->logs_len = 0;
+    }
+    pthread_mutex_unlock(&m->mu);
+    return g ? CB_OK : CB_E_NOT_FOUND;
+}
+
+static int m_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
+    (void)log_from;
+    tm_impl *m = IMPL(s);
+    *out = NULL;
+    *out_len = 0;
+    pthread_mutex_lock(&m->mu);
+    tm_game *g = find_game(m, id);
+    if (g && g->row.logs_len && (*out = dupb(g->row.logs, g->row.logs_len))) *out_len = g->row.logs_len;
     pthread_mutex_unlock(&m->mu);
     return g ? CB_OK : CB_E_NOT_FOUND;
 }
@@ -235,8 +252,20 @@ static int m_game_commit(cb_store *s, const cb_game_commit *c) {
     else if (g->row.version != c->expected_version) { rc = CB_E_CONFLICT; m->hooks.conflicts++; }
     else if (c->prev_known && !stored_within_prev(g, c)) { rc = CB_E_STATE; m->hooks.prev_wrong++; }
     else {
+        uint8_t *old = g->row.logs;
+        size_t old_n = g->row.logs_len;
+        g->row.logs = NULL;
         cb_game_row_free(&g->row);
         row_copy(&g->row, c->row);
+        if (c->log_clear) { free(old); old = NULL; old_n = 0; }
+        if (c->log_add_len) {
+            uint8_t *t = realloc(old, old_n + c->log_add_len);
+            memcpy(t + old_n, c->log_add, c->log_add_len);
+            old = t;
+            old_n += c->log_add_len;
+        }
+        g->row.logs = old;
+        g->row.logs_len = old_n;
         if (c->prev_known) {
             apply_seat_diff(g->humans, &g->n_humans, c->prev_humans, c->n_prev_humans, c->humans, c->n_humans);
             apply_seat_diff(g->bots, &g->n_bots, c->prev_bots, c->n_prev_bots, c->bots, c->n_bots);
@@ -514,6 +543,7 @@ static const cb_store_ops tm_ops = {
 // foolish's rows, kept here whole (no item layer under them).
 static const cb_rows_ops tm_rows = {
     .game_get = m_game_get,
+    .game_logs = m_game_logs,
     .games_get_views = cb_store_games_get_each,
     .game_create = m_game_create,
     .game_commit = m_game_commit,

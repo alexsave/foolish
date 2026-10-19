@@ -368,8 +368,7 @@ static void game_round_trip(void) {
     // A commit writes every column.
     cb_game_row n = mkgame("ab12cd", 100);
     n.status = 1;
-    n.logs = g_logs;
-    n.logs_len = sizeof g_logs;
+    n.log_from = 1;
     n.has_seed = true;
     for (int i = 0; i < CB_SEED_LEN; i++) n.seed[i] = (uint8_t)(i * 7);
     n.needs_bots = true;
@@ -377,11 +376,15 @@ static void game_round_trip(void) {
     n.round_epoch = 1;
     n.updated_at = 200;
     n.last_commit_at = 0;   // the store stamps the commit's time itself
-    cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1 };
+    cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1, .log_add = g_logs, .log_add_len = sizeof g_logs,
+                         .log_clear = true };
     memcpy(c.humans[0], a.id, sizeof c.humans[0]);
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
     T_EQ_INT(CB_ROWS_CALL(s, game_get, "ab12cd", &got), CB_OK);
     T_EQ_INT(got.status, 1);
+    T_CHECK(got.logs == NULL);
+    T_EQ_INT(got.log_from, 1);
+    CB_ROWS_CALL(s, game_logs, "ab12cd", got.log_from, &got.logs, &got.logs_len);
     T_EQ_MEM(got.logs, got.logs_len, g_logs, sizeof g_logs);
     T_CHECK(got.has_seed);
     T_EQ_MEM(got.seed, CB_SEED_LEN, n.seed, CB_SEED_LEN);
@@ -1578,13 +1581,14 @@ static void big_items_and_pages(void) {
     for (size_t i = 0; i < sn; i++) state[i] = (uint8_t)(i * 131 + (i >> 8));
     for (size_t i = 0; i < ln; i++) logs[i] = (uint8_t)(255 - i % 251);
     cb_game_row n = mkgame("big001", 10);
-    n.state = state, n.state_len = sn, n.logs = logs, n.logs_len = ln, n.version = 1, n.updated_at = 20;
-    cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1 };
+    n.state = state, n.state_len = sn, n.log_from = 1, n.version = 1, n.updated_at = 20;
+    cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1, .log_add = logs, .log_add_len = ln, .log_clear = true };
     memcpy(c.humans[0], a.id, sizeof(cb_uuid));
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
     cb_game_row got;
     T_EQ_INT(CB_ROWS_CALL(s, game_get, "big001", &got), CB_OK);
     T_EQ_MEM(got.state, got.state_len, state, sn);
+    CB_ROWS_CALL(s, game_logs, "big001", got.log_from, &got.logs, &got.logs_len);
     T_EQ_MEM(got.logs, got.logs_len, logs, ln);
     cb_game_row_free(&got);
 
