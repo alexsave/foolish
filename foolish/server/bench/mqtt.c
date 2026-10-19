@@ -196,7 +196,7 @@ int bench_mqtt(const bench_opts *o) {
         cl.iat = cb_now_ms() / 1000 - 7200;
         cl.exp = cl.iat + 3600;
         char expired[CB_JWT_MAX];
-        if (cb_jwt_mint(secret, &cl, "bench", expired, sizeof expired) > 0)
+        if (cb_jwt_mint(secret, &cl, expired, sizeof expired) > 0)
             expect("an expired token signed with the server's key", cell(&u, A.uid, expired, false, NULL), 0);
     } else {
         printf("  (an expired token: skipped, CBASE_BENCH_JWT_SECRET unset)\n");

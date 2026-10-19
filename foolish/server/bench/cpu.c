@@ -265,7 +265,7 @@ static bool fixtures(void) {
     snprintf(cl.session_id, sizeof cl.session_id, "cccccccc-0000-4000-8000-000000000001");
     cl.iat = 1760000000 - 60;
     cl.exp = 1760000000 + 3540;
-    if (cb_jwt_mint(SECRET, &cl, "https://api.foolish.cards/auth/v1", g_token, sizeof g_token) < 0) return false;
+    if (cb_jwt_mint(SECRET, &cl, g_token, sizeof g_token) < 0) return false;
 
     // The action request's body, as the event carries it (base64).
     uint8_t body[128];

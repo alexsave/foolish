@@ -116,8 +116,8 @@ static void setup_world(void) {
     snprintf(g_uid[STRANGER], sizeof g_uid[STRANGER], "%s", g_signed_up_id);
     // A token of the right shape signed with another key.
     snprintf(g_token[FORGED], sizeof g_token[FORGED], "%s", g_token[OWNER]);
-    char *sig = strrchr(g_token[FORGED], '.');
-    if (sig && sig[1]) sig[1] = sig[1] == 'A' ? 'B' : 'A';
+    char *mid = g_token[FORGED] + strlen(g_token[FORGED]) / 2;   // one character of the payload, MAC kept
+    *mid = *mid == 'A' ? 'B' : 'A';
     // A creates; the envelope names the game.
     cb_buf env;
     cb_buf_init(&env);
@@ -309,7 +309,7 @@ static void mqtt_matrix(void) {
     c.iat = cb_now_ms() / 1000 - 7200;
     c.exp = c.iat + 3600;
     char expired[CB_JWT_MAX];
-    T_CHECK(cb_jwt_mint("authz-secret-authz-secret-authz-secret", &c, "http://x/auth/v1", expired, sizeof expired) > 0);
+    T_CHECK(cb_jwt_mint("authz-secret-authz-secret-authz-secret", &c, expired, sizeof expired) > 0);
     fd = mqtt_open(OWNER);
     T_EQ_INT(mqtt_connect(fd, g_uid[OWNER], expired, &m), -1);
     close(fd);

@@ -461,7 +461,7 @@ static void send(const char *method, const char *path, int user, auth_kind ak, c
         c.iat = g_now / 1000 - 7200;
         c.exp = ak == AUTH_EXPIRED ? g_now / 1000 - 3600 : g_now / 1000 + 3600;
         char tok[CB_JWT_MAX];
-        FZ_CHECK(cb_jwt_mint(ak == AUTH_EXPIRED ? SECRET : "another-secret-another-secret!!", &c, "", tok, sizeof tok) > 0);
+        FZ_CHECK(cb_jwt_mint(ak == AUTH_EXPIRED ? SECRET : "another-secret-another-secret!!", &c, tok, sizeof tok) > 0);
         snprintf(authz, sizeof authz, "Bearer %s", tok);
         break;
     }
@@ -906,7 +906,7 @@ static void reset_world(uint64_t seed) {
         snprintf(c.username, sizeof c.username, "%s", UNAME[i]);
         c.iat = g_now / 1000;
         c.exp = g_now / 1000 + 365 * 86400;   // outlives any clock the program moves
-        FZ_CHECK(cb_jwt_mint(SECRET, &c, "", g_token[i], sizeof g_token[i]) > 0);
+        FZ_CHECK(cb_jwt_mint(SECRET, &c, g_token[i], sizeof g_token[i]) > 0);
     }
 }
 

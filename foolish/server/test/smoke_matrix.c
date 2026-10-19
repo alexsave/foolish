@@ -207,13 +207,13 @@ static void mint(char *auth, size_t cap, const char *secret, const char *sub, co
     c.iat = iat;
     c.exp = exp;
     char tok[CB_JWT_MAX];
-    T_CHECK(cb_jwt_mint(secret, &c, "http://127.0.0.1/auth/v1", tok, sizeof tok) > 0);
+    T_CHECK(cb_jwt_mint(secret, &c, tok, sizeof tok) > 0);
     snprintf(auth, cap, "Bearer %s", tok);
 }
 
 // The bad identities: each must be refused as nobody wherever a caller is needed.
-enum { BAD_NONE, BAD_GARBAGE, BAD_EMPTY, BAD_EXPIRED, BAD_FORGED, BAD_ALG_NONE, BAD_SWAPPED, BAD_ADMIN, BAD_BASIC, N_BAD };
-static const char *const BAD_NAMES[N_BAD] = { "no token", "garbage", "empty bearer", "expired", "forged", "alg none",
+enum { BAD_NONE, BAD_GARBAGE, BAD_EMPTY, BAD_EXPIRED, BAD_FORGED, BAD_TRUNCATED, BAD_SWAPPED, BAD_ADMIN, BAD_BASIC, N_BAD };
+static const char *const BAD_NAMES[N_BAD] = { "no token", "garbage", "empty bearer", "expired", "forged", "truncated",
                                               "payload swapped", "admin token", "basic auth" };
 static char g_bad[N_BAD][NW_ACCESS_MAX + 16];
 
@@ -225,18 +225,14 @@ static void make_bad(const user *victim, const user *other) {
     // An hour past expiry: far outside the verifier's 30 s of skew.
     mint(g_bad[BAD_EXPIRED], sizeof g_bad[0], SECRET, victim->id, victim->name, now - 7200, now - 3600);
     mint(g_bad[BAD_FORGED], sizeof g_bad[0], OTHER_SECRET, victim->id, victim->name, now, now + 3600);
-    // alg none: the victim's own payload, an unsigned header, no signature.
+    // Truncated: the victim's own token without its last 43 characters (the MAC).
     const char *tok = victim->auth + 7;
-    const char *dot1 = strchr(tok, '.'), *dot2 = dot1 ? strchr(dot1 + 1, '.') : NULL;
-    static const char none_hdr[] = "{\"alg\":\"none\",\"typ\":\"JWT\"}";
-    char h64[128];
-    b64url_encode((const uint8_t *)none_hdr, strlen(none_hdr), h64, sizeof h64);
-    if (dot1 && dot2) snprintf(g_bad[BAD_ALG_NONE], sizeof g_bad[0], "Bearer %s.%.*s.", h64, (int)(dot2 - dot1 - 1), dot1 + 1);
-    // Swapped: the other user's payload under the victim's header and signature.
+    size_t tl = strlen(tok);
+    if (tl > 43) snprintf(g_bad[BAD_TRUNCATED], sizeof g_bad[0], "Bearer %.*s", (int)(tl - 43), tok);
+    // Swapped: the other user's first 30 characters (the version and the start
+    // of the id) spliced onto the victim's token, whose MAC no longer matches.
     const char *ot = other->auth + 7;
-    const char *o1 = strchr(ot, '.'), *o2 = o1 ? strchr(o1 + 1, '.') : NULL;
-    if (dot1 && dot2 && o1 && o2)
-        snprintf(g_bad[BAD_SWAPPED], sizeof g_bad[0], "Bearer %.*s.%.*s%s", (int)(dot1 - tok), tok, (int)(o2 - o1 - 1), o1 + 1, dot2);
+    if (tl > 30 && strlen(ot) > 30) snprintf(g_bad[BAD_SWAPPED], sizeof g_bad[0], "Bearer %.30s%s", ot, tok + 30);
     snprintf(g_bad[BAD_ADMIN], sizeof g_bad[0], "Bearer " ADMIN);
     snprintf(g_bad[BAD_BASIC], sizeof g_bad[0], "Basic %s", victim->auth + 7);
 }
