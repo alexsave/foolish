@@ -12,7 +12,7 @@
 #include "netclient.h"
 #include "table.h"
 
-#include "../../../shared/c/mqtt/mqtt.h"
+#include "../../../shared/c/stream_frame.h"
 
 static int64_t g_now;
 
@@ -106,23 +106,21 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             int is_text = fz_u8(&in) & 1;
             int n = 0;
             uint8_t shape = fz_u8(&in) % 4;
-            if (shape == 1) {   // a PUBLISH on one of the user's topics or a spectators' one, its payload the input
-                static const char *const topics[] = { "u/11111111-1111-4111-8111-111111111111/v",
-                                                      "u/11111111-1111-4111-8111-111111111111/c/ab12cd",
-                                                      "u/11111111-1111-4111-8111-111111111111/m/ab12cd", "s/ab12cd",
-                                                      "u/22222222-2222-4222-8222-222222222222/v" };
-                const char *t = topics[fz_u8(&in) % 5];
+            if (shape == 1) {   // a push frame of one of the kinds, its tail the input
+                static const uint8_t kinds[] = { 51, 52, 53, 57, 54 };
                 int bn = body_of(&in, body + 600, (int)sizeof body - 600);
                 static uint8_t tmp[NC_FRAME_MAX + 64];
                 memcpy(tmp, body + 600, (size_t)bn);
-                n = mqtt_write_publish(body, (int)sizeof body, t, (int)strlen(t), tmp, bn);
-                if (n < 0) n = 0;
-            } else if (shape == 2) {   // a CONNACK, a SUBACK or a PINGRESP
-                uint8_t codes[2] = { fz_u8(&in), fz_u8(&in) };
+                body[0] = SF_V;
+                body[1] = kinds[fz_u8(&in) % 5];
+                memcpy(body + 2, tmp, (size_t)bn);
+                n = bn + 2;
+            } else if (shape == 2) {   // a READY, a REPLY (a sub's or an action's) or a PONG
                 int k = fz_u8(&in) % 3;
-                n = k == 0 ? mqtt_write_connack(body, 8, 0, fz_u8(&in) % 6)
-                  : k == 1 ? mqtt_write_suback(body, 16, (uint16_t)(1 + fz_u8(&in) % 8), codes[0] <= 2 || codes[0] == 0x80 ? codes : (uint8_t[]){ 0, 0 }, 1 + (fz_u8(&in) & 1))
-                           : mqtt_write_bare(body, 8, MQTT_PINGRESP);
+                uint32_t id = (fz_u8(&in) & 1 ? 0x80000000u : 0) | (1 + fz_u8(&in) % 8);
+                n = k == 0 ? sf_put_bare(body, 8, SF_READY)
+                  : k == 1 ? sf_put_reply_head(body, 16, id, fz_u8(&in) & 1 ? 200 : 403)
+                           : sf_put_bare(body, 8, SF_PONG);
                 if (n < 0) n = 0;
             } else {
                 n = body_of(&in, body, sizeof body);
@@ -139,15 +137,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             for (int i = 0; i < 64 && (o = nc_stream_next(g_now)); i++) {
                 // A frame of len 0 is the close signal for a socket that answered nothing (once, then nothing).
                 if (o->len == 0) { FZ_CHECK(nc_stream_next(g_now) == NULL); break; }
-                // Every other message is whole client packets the broker reads.
+                // Every other message is one client frame the server reads.
                 FZ_CHECK(o->len > 0 && o->len <= NC_OUT_MAX);
-                for (int at = 0; at < o->len;) {
-                    MqttPacket p;
-                    int k = mqtt_parse(o->bytes + at, o->len - at, NC_OUT_MAX, MQTT_FROM_CLIENT, &p);
-                    FZ_CHECK(k > 0);
-                    FZ_CHECK(p.type == MQTT_CONNECT || p.type == MQTT_SUBSCRIBE || p.type == MQTT_UNSUBSCRIBE || p.type == MQTT_PINGREQ);
-                    at += k;
-                }
+                sf_frame f;
+                FZ_CHECK(sf_parse(o->bytes, o->len, &f) == 0);
+                FZ_CHECK(f.kind == SF_HELLO || f.kind == SF_SUB || f.kind == SF_UNSUB || f.kind == SF_REQ || f.kind == SF_PING);
             }
             for (int i = 0; i < 64 && nc_next_done(); i++) {}
             break;

@@ -173,8 +173,6 @@ export class NetClient {
         const p = this.ex.wasm_net_stream_next(Date.now());
         return p ? new Uint8Array(N.readNcOut(this.m(), p).bytes) : null;
     }
-    /** The WebSocket subprotocol the stream speaks: MQTT over WebSocket's own name (MQTT 3.1.1, 6.0). */
-    streamProtocol(): string { return 'mqtt'; }
 }
 
 let shared: NetClient | null = null;

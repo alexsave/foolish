@@ -296,7 +296,7 @@ class Stream {
         if (this.socket || typeof WebSocket === 'undefined' || !sessionUser()) return;
         const url = new URL(netClient().streamPath(), BASE || window.location.origin);
         url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(url, netClient().streamProtocol());
+        const ws = new WebSocket(url);
         ws.binaryType = 'arraybuffer';
         this.socket = ws;
         ws.onopen = () => { netClient().streamOpened(); pump(); };

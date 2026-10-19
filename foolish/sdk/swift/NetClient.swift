@@ -104,8 +104,6 @@ public enum NetClient {
     public static func streamNext() -> Data? {
         fio_net_stream_next(now).flatMap { try? readNcOut($0) }.map { Data($0.bytes.map { UInt8(truncatingIfNeeded: $0) }) }
     }
-    /// The WebSocket subprotocol the stream speaks: MQTT over WebSocket's own name (MQTT 3.1.1, 6.0).
-    public static let streamProtocol = "mqtt"
 
     // MARK: marshaling
 

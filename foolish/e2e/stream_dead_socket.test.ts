@@ -47,7 +47,6 @@ const fakeClient = {
     subscribe: (what: number, gid: string) => { calls.push(`sub ${what} ${gid}`); },
     unsubscribe: () => {},
     streamPath: () => '/v1/stream',
-    streamProtocol: () => 'mqtt',
     streamNext: () => frames.shift() ?? null,
     streamOpened: () => { calls.push('opened'); },
     streamClosed: () => { calls.push('closed'); return 5; },

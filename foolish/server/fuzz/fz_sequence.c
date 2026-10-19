@@ -407,7 +407,7 @@ static int fz_deliver(cb_rt *rt, const cb_rt_to *to, const uint8_t *frame, size_
     return 0;
 }
 // Ends the user's connections, as rt_local closes their sockets.
-static void fz_forget(cb_rt *rt, const char *user_id) {
+static void fz_forget(cb_rt *rt, const char *user_id, const char *session_id, const char *keep_session) {   // (this model has no sessions: it ends them all)
     for (int i = 0; i < N_CONNS; i++)
         if (g_conn[i].mq.state == CB_MQTT_OPEN && strcmp(g_conn[i].mq.user_id, user_id) == 0) cb_mqtt_conn_init(&g_conn[i].mq);
 }

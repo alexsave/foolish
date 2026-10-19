@@ -50,7 +50,7 @@ final class Stream {
 
     private func open() {
         guard task == nil, let url = Backend.shared.streamURL else { return }
-        let t = URLSession.shared.webSocketTask(with: url, protocols: [NetClient.streamProtocol])
+        let t = URLSession.shared.webSocketTask(with: url)
         task = t
         t.resume()
         NetClient.streamOpened()
