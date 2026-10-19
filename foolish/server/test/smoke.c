@@ -75,7 +75,7 @@ static void start_server(void) {
     // Fresh accounts, rated at once (CBASE_RATED_MIN_AGE, table_ops.c): the scenario checks the leaderboard moves.
     static char speedup[48];
     snprintf(speedup, sizeof speedup, "CBASE_BOT_SPEEDUP=%d", SMOKE_SPEEDUP);
-    char *env[] = { "CBASE_LISTEN=127.0.0.1:0", envdb, "CBASE_JWT_SECRET=smoke-secret-smoke-secret-smoke-secret",
+    char *env[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", envdb, "CBASE_JWT_SECRET=smoke-secret-smoke-secret-smoke-secret",
                     "CBASE_RATED_MIN_AGE=0", speedup, NULL };
     char *argv[] = { (char *)g_bin, "serve", NULL };
     g_port = 0;

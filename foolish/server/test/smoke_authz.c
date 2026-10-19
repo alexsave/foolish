@@ -54,7 +54,7 @@ static void start_server(void) {
     char line[512];
     static char envdb[512];
     snprintf(envdb, sizeof envdb, "CBASE_DB=%s/cbase.sqlite", g_dbdir);
-    char *env[] = { "CBASE_LISTEN=127.0.0.1:0", envdb, "CBASE_JWT_SECRET=authz-secret-authz-secret-authz-secret",
+    char *env[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", envdb, "CBASE_JWT_SECRET=authz-secret-authz-secret-authz-secret",
                     "CBASE_ORIGIN_SECRET=" ORIGIN_SECRET, "CBASE_ADMIN_TOKEN=authz-admin-token-0123456789abcdef", NULL };
     char *argv[] = { (char *)g_bin, "serve", NULL };
     T_EQ_INT(tp_start(&g_child, argv, env), 0);
