@@ -260,6 +260,14 @@ static void the_export_end_to_end(void) {
     snprintf(want, sizeof want, "%d items copied, 0 failed, 0 read back different", N_ITEMS + g_special + g_bots);
     T_CHECK(strstr(r.out, want) != NULL);
     T_CHECK(strstr(r.out, "0 missing, 0 extra") != NULL);
+    // The deeper checks ran and agreed: the index keys round-tripped, a second read of the table matched, and
+    // the file was made only at the end (the .partial it was built as is gone).
+    T_CHECK(strstr(r.out, "index keys: ") != NULL && strstr(r.out, ", 0 did not round-trip") != NULL);
+    T_CHECK(strstr(r.out, "second read: ") != NULL && strstr(r.out, ", 0 changed, 0 gone") != NULL);
+    T_CHECK(strstr(r.out, "EXP ") != NULL && strstr(r.out, "DIFFERENT") == NULL);
+    char partial[340];
+    snprintf(partial, sizeof partial, "%s.partial", file);
+    T_EQ_INT(access(partial, F_OK), -1);
     cb_store *dst = NULL;
     T_EQ_INT(cb_store_open_sqlite(file, &dst), CB_OK);
     T_EQ_INT(compare_every_item(table, dst), N_ITEMS + g_special);
@@ -347,7 +355,16 @@ static void the_export_end_to_end(void) {
     T_CHECK(strstr(r.out, "1 missing, 0 extra") != NULL);
     T_CHECK(strstr(r.out, "1 failed") != NULL || strstr(r.out, "reading items") != NULL);
     cb_store_close(dst);
-    T_EQ_INT(cb_store_open_sqlite(file2, &dst), CB_OK);
+    // The failed copy was not accepted: no file2, the .partial stays for a look, and a rerun refuses until it goes.
+    char partial2[340];
+    snprintf(partial2, sizeof partial2, "%s.partial", file2);
+    T_EQ_INT(access(file2, F_OK), -1);
+    T_EQ_INT(access(partial2, F_OK), 0);
+    T_CHECK(strstr(r.out, "not accepted") != NULL);
+    run_export(&r, "--rate", "100", file2, NULL);
+    T_EQ_INT(r.code, 2);
+    T_CHECK(strstr(r.out, "left from an earlier run") != NULL);
+    T_EQ_INT(cb_store_open_sqlite(partial2, &dst), CB_OK);
     T_EQ_INT(compare_every_item(table, dst), N_ITEMS + g_special);   // every other item made it
     cb_store_close(dst);
     cb_store_close(table);

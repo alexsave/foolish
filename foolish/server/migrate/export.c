@@ -21,22 +21,28 @@
 // a second time, at the same pace), counted and compared. A key in the table
 // and not in the file is a MISSING item; a key in the file and not in the
 // table is an EXTRA (an item deleted from the table, or TTL-expired, during
-// the run).
+// the run). Then three more checks (verify_deep): the pk families counted on both sides, every
+// item's gsi1 and gsi2 keys queried in the file (each must list its item), and a second read of
+// every item compared with the file (an item written in the table since is CHANGED).
 //
-// Values are compared as each item is copied, not in the verify pass: the item
-// is read back from the file right after its put and compared attribute by
-// attribute (kind and value, and the same set of attributes) with the item as
-// DynamoDB answered it. That costs no second read of the table. A difference
-// is a MISMATCH: the file does not hold what the table did.
+// Values are also compared as each item is copied: the item is read back from the file right
+// after its put and compared attribute by attribute (kind and value, and the same set of
+// attributes) with the item as DynamoDB answered it. A difference is a MISMATCH.
 //
-// A file that already held items before this run is refused unless --into-existing: the
-// export is meant to start a new store, and a put replaces an item. (A new file's seed, the
-// bots a store is opened with, is cleared first: the file ends up holding exactly the table.)
-// --no-verify skips the second scan.
+// A new file is built as <file>.partial and renamed to <file> only when the copy and every
+// check passed, so <file> is never half an export; a failed run leaves the .partial for a look
+// and the next run refuses until it is removed. A file that already exists is refused unless
+// --into-existing (a put replaces an item). A new file's seed (the bots a store is opened
+// with) is cleared first: the file ends up holding exactly the table. --no-verify skips the
+// second scan and the checks after it.
+//
+// Credentials and region come from the environment (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+// AWS_SESSION_TOKEN, AWS_REGION), as the Lambda gets them; they are never printed.
 //
 // Exit 0: every item copied and read back equal, and the key sets equal. 1: an
 // item failed to copy or read back different, or the key sets differ. 2: a usage or I/O error.
 #include "store/store.h"
+#include "store/store_copy.h"
 #include "store/store_priv.h"
 #include "util/err.h"
 #include "util/log.h"
@@ -46,6 +52,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 typedef struct {
     char *pk, *sk;
@@ -101,57 +108,106 @@ typedef struct {
     int       base;
 } copy_ctx;
 
-// Does the file hold `src` (an item as DynamoDB answered it) exactly: the same
-// attributes, each of the same kind and value?
-static bool same_in_file(cb_store *dst, cb_ikey at, const cb_item *src) {
-    cb_item got;
-    cb_item_init(&got);
-    bool same = dst->ops->item_get(dst, at, true, &got) == CB_OK && got.n == src->n;
-    for (int a = 0; same && a < src->n; a++) {
-        cb_av want, have;
-        cb_item_at(src, a, &want);
-        same = cb_item_get(&got, want.name, &have) && cb_av_same(&want, &have);
-    }
-    cb_item_free(&got);
-    return same;
-}
-
 static bool put_one(int i, const cb_item *it, void *ud) {
     copy_ctx *c = ud;
     c->seen[i] = true;
-    cb_av attrs[CB_ITEM_ATTRS];
-    int na = 0;
-    for (int a = 0; a < it->n; a++) {
-        cb_av v;
-        cb_item_at(it, a, &v);
-        if (strcmp(v.name, CB_ITEM_PK) == 0 || strcmp(v.name, CB_ITEM_SK) == 0) continue;
-        attrs[na++] = v;
-    }
-    cb_iwrite w;
-    memset(&w, 0, sizeof w);
-    w.op = CB_IW_PUT;
-    w.key = (cb_ikey){ c->keys[i].pk, c->keys[i].sk };
-    w.attrs = attrs;
-    w.n_attrs = na;
-    int rc = c->dst->ops->item_write(c->dst, &w, NULL);
+    cb_ikey at = { c->keys[i].pk, c->keys[i].sk };
+    int rc = cb_copy_put(c->dst, at, it);
     if (rc == CB_OK) {
         c->copied++;
-        if (!same_in_file(c->dst, w.key, it)) {
+        if (!cb_copy_same(c->dst, at, it)) {
             c->mismatched++;
-            fprintf(stderr, "cbase-export: %s / %s reads back different from the table\n", w.key.pk, w.key.sk);
+            fprintf(stderr, "cbase-export: %s / %s reads back different from the table\n", at.pk, at.sk);
         }
     } else {
         c->failed++;
-        fprintf(stderr, "cbase-export: cannot put %s / %s: %s\n", w.key.pk, w.key.sk, cb_strerror(rc));
+        fprintf(stderr, "cbase-export: cannot put %s / %s: %s\n", at.pk, at.sk, cb_strerror(rc));
     }
     return true;
+}
+
+typedef struct {
+    cb_store  *dst;
+    const key *keys;
+    long       differ, seen;
+    bool       got[100];
+} rescan_ctx;
+
+static bool rescan_one(int i, const cb_item *it, void *ud) {
+    rescan_ctx *c = ud;
+    c->got[i] = true;
+    cb_ikey at = { c->keys[i].pk, c->keys[i].sk };
+    if (!cb_copy_same(c->dst, at, it)) {
+        if (c->differ++ < 20) printf("CHANGED since it was copied: %s / %s\n", at.pk, at.sk);
+    }
+    c->seen++;
+    return true;
+}
+
+// The checks after the key sets agree. Returns the number of failed ones.
+//   1. The key families: each pk prefix (USER, GAME, ...) counted in the table and in the file.
+//   2. Every index key round-trips: each item's gsi1 and gsi2 keys, queried in the file, list the item.
+//   3. A second read of the table's items (the keys of `a`) compared with the file attribute by attribute:
+//      an item written in the table since it was copied shows as CHANGED (expected while the app still
+//      writes; none at the cutover, when writes are frozen).
+static int verify_deep(cb_store *src, cb_store *dst, const keyset *a, const keyset *b) {
+    int failed = 0;
+    printf("families (table / file):\n");
+    for (size_t i = 0; i < a->n;) {
+        char fam[64];
+        cb_copy_family(a->k[i].pk, fam, sizeof fam);
+        long ta = 0, tb = 0;
+        size_t j = i;
+        while (j < a->n) {
+            char f2[64];
+            cb_copy_family(a->k[j].pk, f2, sizeof f2);
+            if (strcmp(f2, fam) != 0) break;
+            ta++, j++;
+        }
+        for (size_t k = 0; k < b->n; k++) {
+            char f2[64];
+            cb_copy_family(b->k[k].pk, f2, sizeof f2);
+            if (strcmp(f2, fam) == 0) tb++;
+        }
+        printf("  %-16s %6ld %6ld%s\n", fam, ta, tb, ta == tb ? "" : "   DIFFERENT");
+        if (ta != tb) failed++;
+        i = j;
+    }
+    long indexed = 0, bad = 0;
+    for (size_t i = 0; i < b->n; i++) {
+        int n = 0, miss = cb_copy_index_roundtrip(dst, (cb_ikey){ b->k[i].pk, b->k[i].sk }, &n);
+        indexed += n;
+        if (miss != 0) {
+            if (bad++ < 20) printf("INDEX KEY does not list the item: %s / %s\n", b->k[i].pk, b->k[i].sk);
+        }
+    }
+    printf("index keys: %ld checked, %ld did not round-trip\n", indexed, bad);
+    if (bad) failed++;
+    rescan_ctx c = { .dst = dst };
+    long gone = 0;
+    for (size_t base = 0; base < a->n; base += 100) {
+        int n = a->n - base < 100 ? (int)(a->n - base) : 100;
+        cb_ikey ks[100];
+        for (int i = 0; i < n; i++) ks[i] = (cb_ikey){ a->k[base + i].pk, a->k[base + i].sk };
+        c.keys = a->k + base;
+        memset(c.got, 0, sizeof c.got);
+        if (src->ops->item_batch_get(src, ks, n, NULL, 0, rescan_one, &c) != CB_OK) {
+            fprintf(stderr, "cbase-export: the second read failed at item %zu\n", base);
+            return failed + 1;
+        }
+        for (int i = 0; i < n; i++) if (!c.got[i]) gone++;
+    }
+    printf("second read: %ld items compared, %ld changed, %ld gone\n", c.seen, c.differ, gone);
+    if (c.differ || gone) failed++;
+    return failed;
 }
 
 static void usage(void) {
     fprintf(stderr,
             "usage: cbase-export [--rate PERCENT] [--into-existing] [--no-verify] <sqlite file>\n"
             "  reads the DynamoDB table CBASE_TABLE (default cbase), read-only, at PERCENT (1-100, default 25)\n"
-            "  of its provisioned read capacity, and puts every item into the SQLite file\n");
+            "  of its provisioned read capacity, and puts every item into the SQLite file\n"
+            "  (built as <file>.partial, renamed when every check passed)\n");
 }
 
 int main(int argc, char **argv) {
@@ -174,15 +230,24 @@ int main(int argc, char **argv) {
     // A file that is new (absent, or empty) gets the schema's seed when it is opened (the 49 bots): that is
     // the store's start, not an earlier export, and the table's own rows are the truth, so the seed is cleared
     // and the file ends up holding exactly the table. A file that held something before is another matter.
+    // A new file is built as <file>.partial and renamed to <file> only when every check passed, so the
+    // file at <file> is never half an export (the whole copy is one all-or-nothing step). --into-existing
+    // works in the file itself.
     struct stat sb;
     bool fresh = stat(path, &sb) != 0 || sb.st_size == 0;
+    char work[1100];
+    snprintf(work, sizeof work, fresh ? "%s.partial" : "%s", path);
+    if (fresh && stat(work, &sb) == 0) {
+        fprintf(stderr, "cbase-export: %s is left from an earlier run; remove it first\n", work);
+        return 2;
+    }
 
     cb_store *src = NULL, *dst = NULL;
     int rc = cb_store_open_dynamo(table, &src);
     if (rc != CB_OK) { fprintf(stderr, "cbase-export: cannot open the DynamoDB table %s: %s\n", table, cb_strerror(rc)); return 2; }
-    rc = cb_store_open_sqlite(path, &dst);
+    rc = cb_store_open_sqlite(work, &dst);
     if (rc != CB_OK) {
-        fprintf(stderr, "cbase-export: cannot open %s: %s\n", path, cb_strerror(rc));
+        fprintf(stderr, "cbase-export: cannot open %s: %s\n", work, cb_strerror(rc));
         cb_store_close(src);
         return 2;
     }
@@ -198,7 +263,7 @@ int main(int argc, char **argv) {
     cb_store_dynamo_read_share(src, (double)pct / 100.0);
 
     keyset have;
-    if (keys_of(dst, &have) != CB_OK) { fprintf(stderr, "cbase-export: cannot list %s\n", path); return 2; }
+    if (keys_of(dst, &have) != CB_OK) { fprintf(stderr, "cbase-export: cannot list %s\n", work); return 2; }
     if (fresh) {
         for (size_t i = 0; i < have.n; i++) {
             cb_iwrite del;
@@ -214,7 +279,7 @@ int main(int argc, char **argv) {
             }
         }
     } else if (have.n && !existing) {
-        fprintf(stderr, "cbase-export: %s already holds %zu items; use --into-existing to put over them\n", path, have.n);
+        fprintf(stderr, "cbase-export: %s already holds %zu items; use --into-existing to put over them\n", work, have.n);
         keyset_free(&have);
         cb_store_close(src);
         cb_store_close(dst);
@@ -276,6 +341,7 @@ int main(int argc, char **argv) {
         }
         printf("verify: table %zu keys, file %zu keys, %ld missing, %ld extra\n", a.n, b.n, missing, extra);
         if (missing || extra) exit_code = 1;
+        if (verify_deep(src, dst, &a, &b) != 0) exit_code = 1;
         keyset_free(&a);
         keyset_free(&b);
     }
@@ -283,5 +349,26 @@ int main(int argc, char **argv) {
     keyset_free(&want);
     cb_store_close(src);
     cb_store_close(dst);
+    if (strcmp(work, path) != 0) {
+        // The closed file holds everything (the WAL is checkpointed into it and empty); a WAL that still
+        // holds data would be left behind by the rename, so it is refused, and the empty ones are removed.
+        char side[1110];
+        for (int w = 0; exit_code == 0 && w < 2; w++) {
+            snprintf(side, sizeof side, "%s%s", work, w ? "-shm" : "-wal");
+            if (stat(side, &sb) == 0 && w == 0 && sb.st_size > 0) {
+                fprintf(stderr, "cbase-export: %s still holds data after the close; not renaming\n", side);
+                exit_code = 2;
+            }
+        }
+        if (exit_code == 0) {
+            snprintf(side, sizeof side, "%s-wal", work);
+            unlink(side);
+            snprintf(side, sizeof side, "%s-shm", work);
+            unlink(side);
+        }
+        if (exit_code == 0 && rename(work, path) == 0) printf("%s written\n", path);
+        else if (exit_code == 0) { fprintf(stderr, "cbase-export: cannot rename %s to %s\n", work, path); exit_code = 2; }
+        else printf("not accepted: the copy stays at %s, %s is not made\n", work, path);
+    }
     return exit_code;
 }
