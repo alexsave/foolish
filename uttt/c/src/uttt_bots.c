@@ -439,7 +439,7 @@ static int root_dedupe(const UtttGame *g, uint8_t *list, int n)
 
 static uint64_t pos_key(const UtttGame *g)
 {
-    uint64_t h = fnv1a64(FNV64_OFFSET_SHORT, g->cm, sizeof g->cm);
+    uint64_t h = fnv1a64(FNV64_OFFSET, g->cm, sizeof g->cm);
     h = fnv1a64_step(h, g->bm[0]);
     h = fnv1a64_step(h, g->bm[1]);
     h = fnv1a64_step(h, g->bdrawn);

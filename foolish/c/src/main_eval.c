@@ -211,7 +211,7 @@ static long long now_cpu_ns(void){ struct timespec t;
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
     if (g_sig < 0) { const char *e = getenv("GAME_SIG"); g_sig = (e && e[0] && e[0] != '0') ? 1 : 0; }
     if (g_lat < 0) { const char *e = getenv("CD_LAT");   g_lat = (e && e[0] && e[0] != '0') ? 1 : 0; }
-    unsigned long long sig = FNV64_OFFSET_SHORT;
+    unsigned long long sig = FNV64_OFFSET;
     #define SIG_FOLD(x) do { sig = fnv1a64_step(sig, (unsigned)(x)); } while (0)
     // Cold solver TT per game: octogen leaf solving persists the TT
     // across the worlds of a decision (sound: exact fingerprints), but

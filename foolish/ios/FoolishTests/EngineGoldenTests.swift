@@ -39,7 +39,7 @@ final class EngineGoldenTests: XCTestCase {
         for b in bytes { h ^= UInt64(b); h = h &* 1099511628211 }
         return h
     }
-    private var fnvOffset: UInt64 { 1469598103934665603 }
+    private var fnvOffset: UInt64 { 14695981039346656037 }
 
     func testEngineMatchesGoldens() async throws {
         let goldens = try loadGoldens()
