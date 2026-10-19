@@ -50,7 +50,7 @@ SAN_FLAGS   = $(ASAN_FLAGS) $(if $(filter ios/%,$*),-Iios/include)
 # SHA-256 that tb_msg.c carries TB_CHECK_LEN bytes of, the seat identity
 # tb_msg_resolve hands its rows to, and the lobby rules the lobby adapter and
 # tb_msg.c call. What each is built from is shared/tools/shared_tests.mk's.
-SHARED_TESTS := check_test rng_test fnv_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test msg_whole_test util_test clock_test percentile_test
+SHARED_TESTS := check_test check_ok_test rng_test fnv_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test msg_whole_test util_test clock_test percentile_test
 
 include ../../shared/tools/c_rules.mk
 include ../../shared/tools/shared_tests.mk

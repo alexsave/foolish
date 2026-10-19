@@ -1247,6 +1247,9 @@ static void test_short_log_instance(void) {
     CHECK(g.num_logs <= g.log_cap, "short-log: kept logs never exceed the cap");
     CHECK(g.num_logs >= logs_before, "short-log: at least the discard was retained");
     CHECK(g.log_virt > 0, "short-log: virtual counter advanced past dropped appends");
+    int only_discards = g.num_logs > logs_before;
+    for (int i = logs_before; i < g.num_logs; i++) only_discards &= g.logs[i].log_type == LOG_DISCARD;
+    CHECK(only_discards, "short-log: what it kept is discards only (a GOOD, DRAW or CHANGE append is dropped)");
 }
 
 
@@ -8567,6 +8570,49 @@ static void test_solver_tt_value_carries_its_seat(void) {
     CHECK(dirty_matches_clean == compared,
           "the second seat's value is the same with a warm table as with a cold one");
 }
+
+#ifdef WASM_CAPS_TESTS
+// The solver's table at the shipped size (CD_TT_BITS=12: 4096 8-byte entries, 2-way) is a cache
+// the module keeps for a whole game, so it fills and evicts: a value read from a table that
+// holds hundreds of other endgames must still be the value a cold table gives. Solve each endgame
+// of many games on the table as the previous ones left it, then again after a reset.
+static void test_wasm_tt_survives_filling(void) {
+    int compared = 0, same = 0, aborted = 0;
+    cd_sim_solve_reset();
+    for (int gi = 0; gi < 60 && compared < 150; gi++) {
+        game_set_seed((uint32_t)(gi + 101));
+        Game g; memset(&g, 0, sizeof g);
+        g.num_players = 2;
+        for (int i = 0; i < 2; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = (int8_t)STRAT_HANDWRITTEN;
+        }
+        start_game(&g);
+        int it = 0;
+        while (game_done(&g) < 0 && it++ < 3000 && compared < 150) {
+            int in[MAX_PLAYERS], nin = 0;
+            for (int i = 0; i < g.num_players; i++)
+                if (g.players[i].status == PLAYER_STATUS_IN) in[nin++] = i;
+            if (nin == 2 && g.deck_count == 0 && !g.has_flipped) {
+                SimState warm, cold;
+                cd_sim_from_game(&warm, &g); cold = warm;
+                int aw = 0, ac = 0;
+                const int vw = cd_sim_solve(&warm, in[0], -2000, 2000, 2000000L, &aw);   // the table as the games left it
+                cd_sim_solve_reset();
+                const int vc = cd_sim_solve(&cold, in[0], -2000, 2000, 2000000L, &ac);
+                if (aw || ac) aborted++;
+                else { compared++; if (vw == vc) same++; }
+            }
+            if (!tt_seat_step(&g)) break;
+        }
+    }
+    char msg[160];
+    snprintf(msg, sizeof msg, "tt: enough endgames to fill a 4096-entry table (%d solved, %d aborted)", compared, aborted);
+    CHECK(compared >= 100, msg);
+    snprintf(msg, sizeof msg, "tt: a warm, full table gives the cold table's value (%d of %d)", same, compared);
+    CHECK(same == compared, msg);
+}
+#endif
 
 static void test_board_every_card_of_the_deck_crosses_both_ways(void) {
     unsigned char out[64];
@@ -19474,6 +19520,7 @@ int main(void) {
     { clock_t t0_ = clock(); test_short_log_instance(); fprintf(stderr, "  %5.2f s  test_short_log_instance\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
     { clock_t t0_ = clock(); test_podkidnoy_solver_and_book(); fprintf(stderr, "  %5.2f s  test_podkidnoy_solver_and_book\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
     { clock_t t0_ = clock(); test_solver_tt_value_carries_its_seat(); fprintf(stderr, "  %5.2f s  test_solver_tt_value_carries_its_seat\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_wasm_tt_survives_filling(); fprintf(stderr, "  %5.2f s  test_wasm_tt_survives_filling\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
     { clock_t t0_ = clock(); test_analyse_belief_holds_on_played_games(); fprintf(stderr, "  %5.2f s  test_analyse_belief_holds_on_played_games\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
     { clock_t t0_ = clock(); test_table_bot_drive_cycle(); fprintf(stderr, "  %5.2f s  test_table_bot_drive_cycle\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
     { clock_t t0_ = clock(); test_table_bot_drive_ignores_instance_history(); fprintf(stderr, "  %5.2f s  test_table_bot_drive_ignores_instance_history\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }

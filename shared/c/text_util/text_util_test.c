@@ -56,6 +56,40 @@ static void utf8_tests(void)
     OK(u8("\xc2\xa0", 2, TEXT_UTF8_NO_CONTROLS, 0, 0) == 0, "U+00A0 is not a control");
     OK(u8("0123456789abcdef\xc3\xa9", 18, 0, &c, &u) == 0 && c == 17, "fast path then a multibyte");
     OK(u8("", 0, 0, &c, &u) == 0 && c == 0, "empty");
+
+    /* The edges of every range: the first value in, the last value out, and the reverse. */
+    OK(u8("\xc2\x80", 2, 0, &c, &u) == 0 && c == 1, "U+0080 is the shortest two-byte");
+    OK(u8("\xc1\xbf", 2, 0, 0, 0) == -1, "0xc1 lead (U+007F in two bytes) is overlong");
+    OK(u8("\xdf\xbf", 2, 0, &c, &u) == 0 && c == 1, "U+07FF is the longest two-byte");
+    OK(u8("\xe0\xa0\x80", 3, 0, &c, &u) == 0 && c == 1, "U+0800 is the shortest three-byte");
+    OK(u8("\xe0\x9f\xbf", 3, 0, 0, 0) == -1, "U+07FF in three bytes is overlong");
+    OK(u8("\xed\x9f\xbf", 3, 0, &c, &u) == 0 && c == 1, "U+D7FF, the last before the surrogates");
+    OK(u8("\xed\xa0\x80", 3, 0, 0, 0) == -1, "U+D800, the first surrogate");
+    OK(u8("\xed\xbf\xbf", 3, 0, 0, 0) == -1, "U+DFFF, the last surrogate");
+    OK(u8("\xee\x80\x80", 3, 0, &c, &u) == 0 && c == 1, "U+E000, the first after the surrogates");
+    OK(u8("\xef\xbf\xbf", 3, 0, &c, &u) == 0 && c == 1 && u == 1, "U+FFFF is the last single UTF-16 unit");
+    OK(u8("\xf0\x90\x80\x80", 4, 0, &c, &u) == 0 && c == 1 && u == 2, "U+10000 is the shortest four-byte");
+    OK(u8("\xf0\x8f\xbf\xbf", 4, 0, 0, 0) == -1, "U+FFFF in four bytes is overlong");
+    OK(u8("\xf4\x8f\xbf\xbf", 4, 0, &c, &u) == 0 && c == 1 && u == 2, "U+10FFFF is the last scalar value");
+    OK(u8("\xf5\x80\x80\x80", 4, 0, 0, 0) == -1, "0xf5 lead is past U+10FFFF");
+    OK(u8("\xe2\x82\xac", 2, 0, 0, 0) == -1, "a three-byte sequence cut at 2 with its last byte in memory");
+    OK(u8("\xf0\x9f\x98\x80", 3, 0, 0, 0) == -1, "a four-byte sequence cut at 3 with its last byte in memory");
+    OK(u8("\x80", 1, 0, 0, 0) == -1, "a lone continuation byte");
+    OK(u8("\xc3\x28", 2, 0, 0, 0) == -1, "a lead then a non-continuation");
+    OK(u8("\x1f", 1, TEXT_UTF8_NO_CONTROLS, 0, 0) == -1 && u8(" ", 1, TEXT_UTF8_NO_CONTROLS, 0, 0) == 0,
+        "U+001F refused and U+0020 kept with the flag");
+    OK(u8("~", 1, TEXT_UTF8_NO_CONTROLS, 0, 0) == 0, "U+007E kept with the flag");
+    OK(u8("\xc2\x80", 2, TEXT_UTF8_NO_CONTROLS, 0, 0) == -1, "U+0080, the first C1, refused with the flag");
+    OK(u8("\xc2\x9f", 2, TEXT_UTF8_NO_CONTROLS, 0, 0) == -1, "U+009F, the last C1, refused with the flag");
+    OK(u8("\xc2\xa0", 2, 0, &c, &u) == 0 && c == 1, "U+00A0 without the flag");
+    OK(u8("\xc2\x9f", 2, 0, &c, &u) == 0 && c == 1, "C1 is text without the flag");
+    OK(u8("abcdefgh\xc2\x9f", 10, 0, &c, &u) == 0 && c == 9, "the eight-byte ASCII skip then a C1 without the flag");
+    OK(u8("abcdefgh", 8, 0, &c, &u) == 0 && c == 8 && u == 8, "exactly eight ASCII bytes");
+    OK(u8("abcdefghi", 9, 0, &c, &u) == 0 && c == 9, "nine ASCII bytes: the skip then one");
+    OK(u8("abcdefg\xf0\x9f\x98\x80", 11, 0, &c, &u) == 0 && c == 8 && u == 9, "a multibyte after seven ASCII (no skip)");
+    OK(u8("abcdefg\xff", 8, 0, 0, 0) == -1, "a bad byte in the eighth place");
+    c = 77; u = 88;
+    OK(u8("\xff", 1, 0, &c, &u) == -1 && c == 77 && u == 88, "the outputs are untouched when the text is refused");
 }
 
 int main(void)
