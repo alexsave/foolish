@@ -1,18 +1,21 @@
 # c_base, the foolish backend in C (c_base/DESIGN.md): built and tested on
-# Linux and macOS, sanitized on Linux, packaged as the static arm64 Lambda
-# zip, and on main deployed to the cbase stack (c_base/providers/aws/ops/lambda_deploy.sh).
+# Linux and macOS, sanitized on Linux, built as the static arm64 `cbase serve`
+# binary, and on main deployed to the cbase-vm instance that serves
+# api.foolish.cards (c_base/providers/local/ops/vm_release.sh).
 #
-# Paths: c_base itself, the kernel it links (foolish/c), the shared C it
-# compiles (shared/c), and the compile rules and tools its Makefile includes
-# (shared/tools). A change to any of them changes the deployed binary.
+# Paths: c_base itself, the kernel it links (foolish/c), the server it links
+# (foolish/server), the shared C it compiles (shared/c), and the compile rules
+# and tools its Makefile includes (shared/tools). A change to any of them
+# changes the deployed binary.
 #
 # The deploy job runs on every push to main that touches those paths, and on a
 # workflow_dispatch from main (Actions > c_base > Run workflow: redeploy main
 # as it is). It assumes the role c_base/providers/aws/ops/github_oidc.yaml makes, whose trust
 # accepts only refs/heads/main of this repository, through OIDC (no keys):
 #   CBASE_AWS_ROLE_ARN    repository secret, the cbase-github stack's DeployRoleArn
-# The role can replace the Lambda's code (a new CodeKey on the stack's existing
-# template) and nothing else; a template change is c_base/providers/aws/ops/deploy.sh by hand.
+# The role can upload a serve binary under the code bucket's vm/, point
+# /cbase-vm/release/serve at it and run commands on the cbase-vm instance
+# through SSM, and nothing else; a stack change is vm_deploy.sh by hand.
 name: c_base
 
 on:
@@ -37,8 +40,8 @@ on:
   workflow_dispatch: {}
 
 # THE DEPLOY QUEUE, and its one owner. On main, one run at a time, never
-# cancelled once started (a cancel can land mid-way through a CloudFormation
-# update); GitHub keeps one waiting run per group and cancels an older waiting
+# cancelled once started (a cancel can land mid-way through a release: the
+# pointer moved, the instance not yet restarted); GitHub keeps one waiting run per group and cancels an older waiting
 # one when a newer push arrives, so the waiting slot always holds the newest
 # commit. A run that starts deploys its own commit even if main moved on while
 # it built (require_main.sh, QUEUED): the newest push's run is behind it and
@@ -220,54 +223,32 @@ jobs:
         run: |
           python3 -m venv /tmp/cfn
           /tmp/cfn/bin/pip install -q cfn-lint==1.57.2
-          /tmp/cfn/bin/cfn-lint --regions us-east-1 -- c_base/providers/aws/ops/cbase.yaml c_base/providers/aws/ops/site/web.yaml c_base/providers/aws/ops/github_oidc.yaml
+          /tmp/cfn/bin/cfn-lint --regions us-east-1 -- c_base/providers/aws/ops/cbase.yaml c_base/providers/aws/ops/site/web.yaml c_base/providers/aws/ops/github_oidc.yaml c_base/providers/local/ops/vm.yaml
       - name: the shell scripts
         run: |
-          bash -n c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/ops_env.sh c_base/providers/aws/ops/deploy.sh
-          shellcheck -x .github/scripts/fuzz_select.sh c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/providers/aws/ops/test/changeset_gate_test.sh c_base/providers/aws/ops/role_covers_template.sh c_base/providers/aws/ops/test/role_covers_template_test.sh c_base/fuzz/test/fuzz_mk_test.sh
-      - name: web_deploy.sh and lambda_deploy.sh refuse a tree behind main (no AWS calls)
+          bash -n c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/ops_env.sh c_base/providers/aws/ops/deploy.sh c_base/providers/local/ops/vm_release.sh c_base/providers/local/ops/vm_deploy.sh c_base/providers/local/ops/vm_boot.sh
+          shellcheck -x .github/scripts/fuzz_select.sh c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/providers/aws/ops/test/changeset_gate_test.sh c_base/providers/aws/ops/role_covers_release.sh c_base/providers/aws/ops/test/role_covers_release_test.sh c_base/providers/local/ops/vm_release.sh c_base/providers/local/ops/vm_deploy.sh c_base/providers/local/ops/vm_boot.sh c_base/fuzz/test/fuzz_mk_test.sh
+      - name: web_deploy.sh, vm_release.sh and lambda_deploy.sh refuse a tree behind main (no AWS calls)
         run: bash c_base/ops/test/web_deploy_gate_test.sh
       - name: ops_env.sh never generates a secret for a live stack (no AWS calls)
         run: bash c_base/ops/test/ops_env_test.sh
       - name: deploy.sh's replacement gate on recorded change sets (no AWS calls)
         run: bash c_base/providers/aws/ops/test/changeset_gate_test.sh
-      - name: the GitHub deploy role reads everything a code deploy re-resolves (no AWS calls)
-        run: bash c_base/providers/aws/ops/test/role_covers_template_test.sh
+      - name: the GitHub deploy role grants every AWS call vm_release.sh makes (no AWS calls)
+        run: bash c_base/providers/aws/ops/test/role_covers_release_test.sh
       - name: fuzz.mk's targets, one name per root, and fuzz-seeds beside each target (no fuzzer, no build)
         run: bash c_base/fuzz/test/fuzz_mk_test.sh
       - name: the web router's rules (providers/aws/ops/site/web.yaml's Function code)
         run: node --test c_base/providers/aws/ops/site/test/web_router.test.mjs
 
-  bootstrap:
-    name: make bootstrap (Lambda zip)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v5
-      # The build container is linux/arm64 (providers/aws/ops/build_bootstrap.sh); this
-      # runner is GitHub's native arm64 one, so Docker runs it with no
-      # emulation. Same bytes as the x86 + QEMU build this replaced.
-      - name: package
-        run: c_base/providers/aws/ops/package.sh
-      - name: the pinned Alpine and the built-in OpenSSL are inside their support windows
-        run: c_base/providers/aws/ops/eol_guard.sh c_base/dist/bootstrap
-      - uses: actions/upload-artifact@v6
-        with:
-          name: cbase-lambda
-          path: |
-            c_base/build/cbase-lambda.zip
-            c_base/build/cbase-lambda.zip.sha256
-          if-no-files-found: error
-          retention-days: 30
-
-  # `cbase serve` for a plain Linux arm64 host (an EC2 t4g.nano behind the
-  # CloudFront): the same pinned Alpine static build as the Lambda bootstrap,
-  # the other binary. Main pushes only. Kept as a workflow artifact and a GitHub
-  # release cbase-serve-<short sha>, with its sha256. contents: write is on this
-  # job alone.
+  # `cbase serve` for the cbase-vm instance (an EC2 t4g.nano behind the
+  # CloudFront): the pinned Alpine static build (providers/aws/ops/build_bootstrap.sh
+  # serve) on GitHub's native arm64 runner. Every run builds it, so a pull
+  # request proves the shipped build; on main it is also kept as a GitHub
+  # release cbase-serve-<short sha> with its sha256, and the deploy job ships it.
+  # contents: write is on this job alone.
   serve_binary:
     name: cbase serve (Linux arm64, static)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     permissions:
@@ -279,8 +260,10 @@ jobs:
       - name: check the binary is arm64 and static, and the sha256 matches
         run: |
           cd c_base/dist
-          file cbase-serve-linux-arm64 | grep -E 'ARM aarch64.*statically linked'
+          file cbase-serve-linux-arm64 | grep -E 'ARM aarch64.*(statically|static-pie) linked'
           sha256sum -c cbase-serve-linux-arm64.sha256
+      - name: the pinned Alpine and the built-in OpenSSL are inside their support windows
+        run: c_base/providers/aws/ops/eol_guard.sh c_base/dist/cbase-serve-linux-arm64
       - uses: actions/upload-artifact@v6
         with:
           name: cbase-serve-linux-arm64
@@ -290,6 +273,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: release cbase-serve-<short sha>
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -299,10 +283,11 @@ jobs:
             c_base/dist/cbase-serve-linux-arm64 c_base/dist/cbase-serve-linux-arm64.sha256
 
   deploy:
-    name: deploy to Lambda
+    name: deploy to cbase-vm
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    needs: [check, asan, fuzz_done, dynamo, ops, bootstrap]
+    needs: [check, asan, fuzz_done, dynamo, ops, serve_binary]
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     # One deploy at a time, and the newest always deploys: the workflow's
     # concurrency group above. No job-level group here: a second queue would
     # order deploys by which build finished first, not by push.
@@ -320,15 +305,15 @@ jobs:
             echo "::error::CBASE_AWS_ROLE_ARN is not set: main did not deploy (c_base/RUNBOOK.md, GitHub deploys)."
             exit 1
           fi
-      # The checkout is for lambda_deploy.sh and its main-ancestry gate.
+      # The checkout is for vm_release.sh, its version (the short SHA) and its main-ancestry gate.
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
         with:
-          name: cbase-lambda
-          path: c_base/build
+          name: cbase-serve-linux-arm64
+          path: c_base/dist
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.CBASE_AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: upload, point the stack at it, smoke /health
-        run: c_base/providers/aws/ops/lambda_deploy.sh c_base/build/cbase-lambda.zip
+      - name: upload, point the instance at it, restart, check /health and /ready
+        run: c_base/providers/local/ops/vm_release.sh c_base/dist/cbase-serve-linux-arm64
