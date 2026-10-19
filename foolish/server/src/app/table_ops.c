@@ -195,9 +195,22 @@ static bool logs_poisoned(void) {
 #endif
 }
 
-// Frees the calling thread's kept section (not while one is out). For a leak-counting test and thread exit.
+// A pool thread's kept section goes when the thread does: t_section is also the value of a
+// pthread key whose destructor frees it (a _Thread_local has no destructor in C). Without it every
+// worker's section leaked at shutdown (LeakSanitizer, 4 req workers x 320 KB).
+static pthread_key_t  g_section_key;
+static pthread_once_t g_section_once = PTHREAD_ONCE_INIT;
+static bool           g_section_key_ok;
+static void section_at_exit(void *p) { free(p); }   // a thread ends with nothing out
+static void section_key_make(void) { g_section_key_ok = pthread_key_create(&g_section_key, section_at_exit) == 0; }
+
+// Frees the calling thread's kept section (not while one is out). For a leak-counting test.
 void cb_section_drain(void) {
-    if (t_section && !t_section->in_use) { free(t_section); t_section = NULL; }
+    if (t_section && !t_section->in_use) {
+        free(t_section);
+        t_section = NULL;
+        if (g_section_key_ok) pthread_setspecific(g_section_key, NULL);
+    }
 }
 
 bool cb_section_logs_poisoned(void) { return logs_poisoned(); }
@@ -215,6 +228,8 @@ cb_section *cb_section_new(void) {
         if (logs_poisoned()) memset(s->g.logs, LOGS_POISON, sizeof s->g.logs);
         s->pooled = true;
         t_section = s;
+        pthread_once(&g_section_once, section_key_make);
+        if (g_section_key_ok) pthread_setspecific(g_section_key, s);
     }
     s->in_use = true;
     return s;

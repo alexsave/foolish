@@ -30,7 +30,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     case 1: {   // client side: a stream frame (an MQTT PUBLISH's payload)
         static NwFrame f;
         if (nw_frame_decode(p, len, &f) == NW_OK) {
-            FZ_CHECK(f.kind == NW_WS_VIEW || f.kind == NW_WS_CAST || f.kind == NW_WS_CHAT);
+            FZ_CHECK(f.kind == NW_WS_VIEW || f.kind == NW_WS_CAST || f.kind == NW_WS_SPECT || f.kind == NW_WS_CHAT);
             FZ_CHECK(f.gid_len <= NW_GID_MAX);
             FZ_CHECK(!f.blob.len || (f.blob.p >= p && f.blob.p + f.blob.len <= p + len));
             FZ_CHECK(nw_frame_encode(&f, out, BIG) == len && memcmp(out, p, (size_t)len) == 0);

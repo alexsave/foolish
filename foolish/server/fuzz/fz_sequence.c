@@ -65,6 +65,8 @@
 #include "mqtt/mqtt.h"
 #include "rng.h"
 
+#include <sqlite3.h>
+
 // ---- determinism: the process's randomness, replaced -------------------------------------
 
 // The run's stream: rng.h's splitmix64, seeded from the input.
@@ -122,6 +124,7 @@ static int64_t g_planted[N_GAMES];
 
 // ---- the CAS, watched ---------------------------------------------------------------------
 
+static bool collect_nothing(int n, const char *const *names, const char *const *values, void *ud) { return true; }
 static int g_steal;   // the next game_commit finds the row moved on by another writer
 
 static int64_t stored_version(const char *gid) {
@@ -136,12 +139,9 @@ static int64_t stored_version(const char *gid) {
 static int watched_commit(cb_store *s, const cb_game_commit *c) {
     if (g_steal > 0) {
         g_steal--;
-        char pk[64];
-        snprintf(pk, sizeof pk, "GAME#%s", c->row->id);
-        const cb_iset up[] = { { CB_AVN("version", 1), CB_SET_INCR } };
-        cb_iwrite w = { .op = CB_IW_UPDATE, .key = { pk, "ROW" }, .sets = up, .n_sets = 1, .cond = { CB_IF_EXISTS }, .n_cond = 1 };
-        int rc = g_real->item_write(s, &w, NULL);
-        FZ_CHECK(rc == CB_OK || rc == CB_E_CONFLICT);   // CONFLICT: no such game
+        char sql[128];
+        sqlite3_snprintf(sizeof sql, sql, "UPDATE games SET version = version + 1 WHERE id = %Q", c->row->id);
+        FZ_CHECK(g_real->admin_query(s, sql, true, collect_nothing, NULL) >= 0);   // no such game: no row changes
     }
     int64_t before = stored_version(c->row->id);
     int rc = g_real_rows->game_commit(s, c);
@@ -156,23 +156,14 @@ static int watched_commit(cb_store *s, const cb_game_commit *c) {
     return rc;
 }
 
-// The row says the bots are owed a move, and its SCAN marker is there (at
-// the row's version, stale): what a lagging marker or a commit racing a
+// The row says the bots are owed a move (its needs_bots column, which the
+// recovery scan reads), at the row's version, stale: what a commit racing a
 // drive's idle leaves. false: no such game.
 static bool plant_marker(const char *gid) {
-    cb_game_row g;
-    memset(&g, 0, sizeof g);
-    if (g_real_rows->game_get(g_store, gid, &g) != CB_OK) { cb_game_row_free(&g); return false; }
-    char pk[64];
-    snprintf(pk, sizeof pk, "GAME#%s", gid);
-    const cb_iset up[] = { { CB_AVBOOL("needs_bots", true), CB_SET_TO } };
-    cb_iwrite row = { .op = CB_IW_UPDATE, .key = { pk, "ROW" }, .sets = up, .n_sets = 1 };
-    const cb_av a[] = { CB_AVS("game_id", gid), CB_AVN("updated_at", 0), CB_AVN("last_commit_at", g.last_commit_at),
-                        CB_AVN("row_version", g.version) };
-    cb_iwrite marker = { .op = CB_IW_PUT, .key = { "SCAN", pk }, .attrs = a, .n_attrs = 4 };
-    cb_game_row_free(&g);
-    FZ_CHECK(g_real->item_write(g_store, &row, NULL) == CB_OK);
-    FZ_CHECK(g_real->item_write(g_store, &marker, NULL) == CB_OK);
+    if (stored_version(gid) < 0) return false;
+    char sql[128];
+    sqlite3_snprintf(sizeof sql, sql, "UPDATE games SET needs_bots = 1 WHERE id = %Q", gid);
+    FZ_CHECK(g_real->admin_query(g_store, sql, true, collect_nothing, NULL) >= 0);
     return true;
 }
 
@@ -871,7 +862,6 @@ static void step_drive(const char *gid) {
 
 // ---- one run ------------------------------------------------------------------------------
 
-static bool collect_nothing(int n, const char *const *names, const char *const *values, void *ud) { return true; }
 
 static void reset_world(uint64_t seed) {
     g_rng = rng_seed64(seed);
@@ -886,7 +876,11 @@ static void reset_world(uint64_t seed) {
     for (int i = 0; i < N_CONNS; i++) cb_mqtt_conn_init(&g_conn[i].mq);
     g_steal = 0;
     cb_row_cache_clear();
-    static const char *const EMPTY[] = { "DELETE FROM items WHERE pk NOT LIKE 'BOT#%'" };   // every row but the bots
+    static const char *const EMPTY[] = {   // every row but the bots, children before their parents
+        "DELETE FROM chat", "DELETE FROM replay_players", "DELETE FROM replays", "DELETE FROM ratings",
+        "DELETE FROM game_bots", "DELETE FROM game_members", "DELETE FROM game_moves", "DELETE FROM games",
+        "DELETE FROM signin_fails", "DELETE FROM refresh_tokens", "DELETE FROM sessions", "DELETE FROM users",
+    };
     for (size_t i = 0; i < sizeof EMPTY / sizeof EMPTY[0]; i++)
         FZ_CHECK(g_real->admin_query(g_store, EMPTY[i], true, collect_nothing, NULL) >= 0);
     for (int i = 0; i < N_USERS; i++) {
