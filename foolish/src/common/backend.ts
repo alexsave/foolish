@@ -280,7 +280,10 @@ class Stream {
         const ws = this.socket;
         if (!ws) { if (this.holds > 0) this.open(); return; }   // e.g. just signed in
         if (ws.readyState !== WebSocket.OPEN) return;
-        for (let b = netClient().streamNext(); b !== null; b = netClient().streamNext()) ws.send(b);
+        for (let b = netClient().streamNext(); b !== null; b = netClient().streamNext()) {
+            if (b.length === 0) { ws.close(); this.lost(ws); return; }   // the client's "this socket is dead" (no PINGRESP)
+            ws.send(b);
+        }
     }
 
     stop(): void {
@@ -302,11 +305,14 @@ class Stream {
             changed();
             pump();
         };
-        ws.onclose = () => {
-            if (this.socket !== ws) return;
-            this.socket = null;
-            setTimeout(() => { if (this.holds > 0) this.open(); }, netClient().streamClosed());
-        };
+        ws.onclose = () => this.lost(ws);
+    }
+
+    /** The socket is gone: reopen after the delay the client names (a later onclose of the same socket is ignored). */
+    private lost(ws: WebSocket): void {
+        if (this.socket !== ws) return;
+        this.socket = null;
+        setTimeout(() => { if (this.holds > 0) this.open(); }, netClient().streamClosed());
     }
 }
 
