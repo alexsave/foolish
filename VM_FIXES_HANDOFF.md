@@ -156,3 +156,12 @@ Saturation (1 CPU, 8 two-seat games, emulator, CBASE_REQ_WORKERS=1), per commit:
   * printf_core 1.7% (snprintf 1.0 over many sites, cb_buf_vprintf 0.6) and strlen 1.7% (cb_item_add 0.5, cb_av_size 0.5): cb_item_size now uses stored lengths; cb_item_add still strlen's the value (its callers pass C strings); the snprintf sites were not converted.
   * In-memory bot leases: still the design in the Pass 2 list item 1; not started.
 Rig additions: prof_sc.sh (syscalls per move via perf stat tracepoints), prof_mm.sh (callers of mmap), prof8.sh (8 seats).
+
+
+## Pass 4 (2026-10-19)
+- Rig image: c_base/bench/nano/Dockerfile.al2023 + build_images.sh (fresh amazonlinux:2023, dnf upgrade --releasever=latest); `dnf check-update --security` is empty.
+- Build base: Alpine 3.24 by digest (OpenSSL 3.5.9 LTS, SQLite 3.53.4), `apk upgrade` + a pending-upgrade check in build_bootstrap.sh and build.sh, eol_guard.sh in the CI bootstrap job. zlib is not linked into the binary. EOL dates (alpinelinux.org/releases, openssl-library.org release strategy, 2026-10-19): Alpine 3.20 2026-04-01 (past), 3.21 2026-11-01, 3.22 2027-05-01, 3.23 2027-11-01, 3.24 2028-06-01; OpenSSL 3.4 2026-10-22, 3.5 LTS 2030-04-08, 3.6 2026-11-01, 4.0 2027-05-14; 3.0 and 3.3 are not supported (3.0/3.3 dates in the guard's table are not on that page).
+- Inline dispatch: CB_ROUTE_INLINE on GET /v1/games/* and /v1/action; inline_ok in net/server.c; unit_inline. At saturation it almost never fires (the pool is never idle with 16 clients); at human pace, 192 games, futex per move 2.4 -> 1.44, mmap per move rose 0.6 -> 1.5 (cause not investigated: cross-thread frees on the loop thread are the suspect), CPU per move 0.28 -> 0.27 ms. 64 games is inside the noise. ready_left has no test of its own.
+- Game.logs is no longer zeroed (poison 0xAA under ASan and CBASE_POISON_LOGS, which the Makefile exports); nothing tripped. memset left the top of the saturation profile; moves/s is inside noise (11.8-13.1k vs 12.06k).
+- OPEN: unit_oom still fails (12 checks): the sweeps count SQLite's per-store allocations (kept prepared statements, page cache), which now go through the pool allocator the test counts. Boot and the 500 answers are fixed by cb_section_drain, cb_rows_batch_drain, cb_store_local_drain. A warm-up run did not fix it.
+- Not done: item 5 (snprintf of keys).
