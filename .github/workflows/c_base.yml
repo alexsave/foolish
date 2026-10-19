@@ -55,21 +55,28 @@ permissions:
   contents: read
 
 jobs:
+  # Linux: the platform the shipped binary runs on, and what the deploy waits on.
   check:
-    name: make check (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-latest]
-    runs-on: ${{ matrix.os }}
+    name: make check (ubuntu-24.04)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - name: dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
-      - name: dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+      - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev libsqlite3-dev
+      - name: build
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)"
+      - name: unit tests and both smoke lanes
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check
+
+  # macOS: the same suite on the development platform, linked against Apple's system SQLite. It is a
+  # check of its own, not one the deploy waits on: nothing ships for macOS, and a defect of Apple's
+  # library (2026-10-19: its purgeable page cache keeps blocks unit_oom counts) must not hold the
+  # Linux binary back. Its result still shows on every run.
+  check_macos:
+    name: make check (macos-latest)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
       - name: build
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)"
       - name: unit tests and both smoke lanes
