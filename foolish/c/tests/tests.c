@@ -11552,7 +11552,7 @@ static uint64_t dl_fnv(uint64_t h, int v) { return fnv1a64_step(h, (unsigned cha
 
 static uint64_t dl_hands_digest(int np, int wide) {
     static Game g;
-    uint64_t h = FNV64_OFFSET_SHORT;
+    uint64_t h = FNV64_OFFSET;
     game_force_first_attacker(-1);
     game_open_at_seat(-1);
     for (int seed = 0; seed < 300; seed++) {
@@ -11637,7 +11637,7 @@ static uint64_t dl_refill_digest(int np, int *n_refill, int *n_steps, int *n_tru
     static Game g;
     static LegalMoves moves;
     static AnimPlan plan;
-    uint64_t h = FNV64_OFFSET_SHORT;
+    uint64_t h = FNV64_OFFSET;
     game_force_first_attacker(-1);
     game_open_at_seat(-1);
     for (int salt = 0; salt < 4; salt++) {
@@ -11803,7 +11803,7 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // envelopes carry the hands in their new order, and the bots, reading
     // hands in that order, played different games.
     static const uint64_t golden[2] = { 0xbf57d7cd081b31a6ULL, 0xee9ca1b1164510adULL };
-    uint64_t hc = FNV64_OFFSET_SHORT;
+    uint64_t hc = FNV64_OFFSET;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         for (int seed_k = 1; seed_k <= 3; seed_k++) {
             if (!dl_deal_table(np, 60 + seed_k * 5 + np)) {
@@ -11821,7 +11821,7 @@ static void test_opening_deal_bytes_are_unchanged(void) {
             hc = dl_bytes(hc, tb_arena + c.spectator.off, c.spectator.len);
         }
     }
-    uint64_t hr = FNV64_OFFSET_SHORT;
+    uint64_t hr = FNV64_OFFSET;
     static Game g;
     static unsigned char code[1 << 14];
     for (int np = 2; np <= 6; np++) {

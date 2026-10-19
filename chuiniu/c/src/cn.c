@@ -232,7 +232,7 @@ static uint64_t fnv(uint64_t h, const void *p, int n) { return fnv1a64(h, p, (si
 
 uint64_t cn_hash(const CnGame *g)
 {
-    uint64_t h = FNV64_OFFSET_SHORT;
+    uint64_t h = FNV64_OFFSET;
     h = fnv(h, g, (int)offsetof(CnGame, hist));
     h = fnv(h, g->hist, (int)sizeof(CnMove) * g->hist_n);
     return fnv(h, g->seed, 32);

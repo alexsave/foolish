@@ -14,6 +14,7 @@
 #include <string.h>
 #include "fm_exp.h"
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/fnv.h"
 
 // fm_exp_digest(FM_EXP_DIGEST_N) on every build. Changing fm_exp changes this
 // on purpose: the new value is the one the native and the wasm build agree on.
@@ -43,10 +44,10 @@ static inline double fm_exp_digest_input(int i) {
 }
 
 static inline uint64_t fm_exp_digest(int n) {
-    uint64_t h = UINT64_C(0xCBF29CE484222325);
+    uint64_t h = FNV64_OFFSET;
     for (int i = 0; i < n; i++) {
         const uint64_t u = fmd_bits(fm_exp(fm_exp_digest_input(i)));
-        for (int k = 0; k < 8; k++) { h ^= (u >> (8 * k)) & 0xFF; h *= UINT64_C(0x100000001B3); }
+        for (int k = 0; k < 8; k++) h = fnv1a64_step(h, (u >> (8 * k)) & 0xFF);
     }
     return h;
 }

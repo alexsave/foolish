@@ -4,7 +4,7 @@ pub mod sim;
 // FNV-1a checksumming (must match ../bench_common.h exactly), the engine LCG,
 // and peak-RSS reporting.
 
-pub const FNV_INIT: u64 = 1469598103934665603;
+pub const FNV_INIT: u64 = 14695981039346656037;
 
 #[inline]
 pub fn fnv1a(mut h: u64, data: &[u8]) -> u64 {

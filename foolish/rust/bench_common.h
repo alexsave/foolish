@@ -31,7 +31,7 @@ static inline uint64_t fnv1a_u32(uint64_t h, uint32_t v) {
                            (unsigned char)(v >> 16), (unsigned char)(v >> 24) };
     return fnv1a(h, b, 4);
 }
-#define FNV_INIT FNV64_OFFSET_SHORT
+#define FNV_INIT FNV64_OFFSET
 
 static inline const unsigned char *rd_bytes(const unsigned char *p, void *dst, size_t n) {
     memcpy(dst, p, n);

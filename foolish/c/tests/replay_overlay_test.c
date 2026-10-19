@@ -82,7 +82,7 @@ static int drive(Game *g, const char *brain, int decisions) {
 
 // FNV-1a over the replay's slice of the arena: whether the solver wrote it.
 static uint64_t scratch_hash(void) {
-    return fnv1a64(FNV64_OFFSET_SHORT, cd_overlay + CD_OVL_REC_OFF, CD_OVL_IO_OFF - CD_OVL_REC_OFF);
+    return fnv1a64(FNV64_OFFSET, cd_overlay + CD_OVL_REC_OFF, CD_OVL_IO_OFF - CD_OVL_REC_OFF);
 }
 
 // A burst of solver decisions on fresh games: the heaviest searching brains, so

@@ -74,16 +74,16 @@ int main(void) {
         // Deal fingerprint: the initial masked PACKED state for viewer 0
         // (view.c state_put — the wire the app ships).
         int dealLen = fio_state_packed(0, buf, sizeof(buf));
-        uint64_t dealHash = fnv1a(FNV64_OFFSET_SHORT, buf, dealLen);
+        uint64_t dealHash = fnv1a(FNV64_OFFSET, buf, dealLen);
 
         // Seat-0 legal menu as the PACKED move wire (pins the enumeration/order).
         int legalLen = fio_legal_packed(0, buf, sizeof(buf));
-        uint64_t seat0LegalHash = fnv1a(FNV64_OFFSET_SHORT, buf, legalLen);
+        uint64_t seat0LegalHash = fnv1a(FNV64_OFFSET, buf, legalLen);
 
         // Deterministic playthrough: lowest eligible seat plays its first legal
         // move. Roll a hash over every post-move state(0). No bot auto-play (all
         // seats are strategy 0 and we never call fio_bot_step) → fully repeatable.
-        uint64_t playHash = FNV64_OFFSET_SHORT;
+        uint64_t playHash = FNV64_OFFSET;
         int steps = 0;
         // A mid-game menu is combinatorial (every legal cover assignment), so it
         // runs to a few hundred KB — the packed legal wire needs room. This is a

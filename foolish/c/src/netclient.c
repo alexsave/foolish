@@ -5,6 +5,7 @@
 #include "view.h"
 #include "evwire.h"
 #include "../../../shared/c/mqtt/mqtt.h"
+#include "../../../shared/c/fnv.h"
 #include <string.h>
 
 // ---- state -------------------------------------------------------------------------
@@ -1397,8 +1398,7 @@ static int cast_over(const uint8_t *p, uint32_t len) {
 // and the game, so clients that heard the same push at the same moment differ.
 static int32_t quiet_jitter(const char *gid, int gid_len, int64_t now_ms) {
     uint32_t x = g_quiet_mix ^ (uint32_t)now_ms ^ (uint32_t)((uint64_t)now_ms >> 32) * 2654435761u;
-    for (int i = 0; i < g_session.user_id_len; i++) x = (x ^ (uint8_t)g_session.user_id[i]) * 16777619u;
-    for (int i = 0; i < gid_len; i++) x = (x ^ (uint8_t)gid[i]) * 16777619u;
+    x = fnv1a32(fnv1a32(x, g_session.user_id, (size_t)g_session.user_id_len), gid, (size_t)gid_len);
     x ^= x >> 16;
     x *= 0x7feb352du;
     x ^= x >> 15;

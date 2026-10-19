@@ -319,7 +319,7 @@ static uint64_t fnv(uint64_t h, const void *p, size_t n) { return fnv1a64(h, p, 
 
 uint64_t tb_hash(const TbGame *g)
 {
-    uint64_t h = FNV64_OFFSET_SHORT;
+    uint64_t h = FNV64_OFFSET;
     h = fnv(h, &g->n, 1); h = fnv(h, &g->turn, 1); h = fnv(h, &g->roll, 1); h = fnv(h, &g->over, 1);
     h = fnv(h, &g->left, 1); h = fnv(h, &g->starter, 1); h = fnv(h, &g->kept, 1); h = fnv(h, &g->draft, 1);
     h = fnv(h, g->dice, TB_DICE);
