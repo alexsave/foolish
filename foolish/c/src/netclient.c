@@ -30,6 +30,8 @@ typedef struct {
     uint8_t  gid_len;
     char     gid[NW_GID_MAX];
     uint8_t  has_view, has_cast, has_answer;
+    uint8_t  has_stamp;   // a finished board with the rating stamp was applied from an answer, at stamp_v
+    uint32_t stamp_v;
     uint8_t  seat_known, seated;   // whether the user sits at the game, as the last envelope or cast said
     uint32_t view_v;       // the dashboard's: the newest view pushed
     uint32_t cast_v;       // the table's: the newest cast applied
@@ -616,7 +618,7 @@ static NcDone   g_dropped_out;
 // The book of games and the stream, below.
 static gate *gate_find(const char *gid, int gid_len, int make);
 static uint32_t any_top(const gate *g);
-static int answer_pass(gate *g, uint32_t version);
+static int answer_pass(gate *g, uint32_t version, int stamped);
 static int envelope_names(const uint8_t *p, int len, char *gid, uint8_t *gid_len, uint32_t *version);
 static void events_begin(void);
 static NcEvent *event_add(uint8_t kind);
@@ -628,6 +630,7 @@ static void seat_learn(gate *g, const uint8_t *env, uint32_t len);
 static int stream_wants_token(int64_t now_ms);
 static void heard(const char *gid, int gid_len, int over, int64_t now_ms);
 static int envelope_over(const uint8_t *env, uint32_t len);
+static int envelope_stamped(const uint8_t *env, uint32_t len);
 static void quiet_check(int64_t now_ms);
 
 static void pump_reset(void) {
@@ -945,7 +948,7 @@ static void refresh_answered(int status, const uint8_t *body, int len, int64_t n
 static int answer_view(NcDone *d, const char *gid, int gid_len, uint32_t version,
                        const uint8_t *body, uint32_t off, uint32_t len, int own, int64_t now_ms) {
     gate *g = gate_find(gid, gid_len, 1);
-    if (!answer_pass(g, version)) { d->stale = 1; heard(gid, gid_len, -1, now_ms); return 0; }
+    if (!answer_pass(g, version, envelope_stamped(body + off, len))) { d->stale = 1; heard(gid, gid_len, -1, now_ms); return 0; }
     seat_learn(g, body + off, len);
     heard(gid, gid_len, envelope_over(body + off, len), now_ms);
     d->version = version;
@@ -1365,17 +1368,33 @@ static uint32_t any_top(const gate *g) {
     return g->has_view && g->view_v > v ? g->view_v : v;
 }
 
+// 1 when the envelope is a finished board that carries the game's rating stamp.
+static int envelope_stamped(const uint8_t *env, uint32_t len) {
+    EnvHeader h;
+    GameRatings r;
+    return envelope_over(env, len) && env_header_read(env, (int)len, &h) && env_island_ratings(env, &h, &r) && r.n > 0;
+}
+
 // 1 when an answered view of `version` applies (see netclient.h "what changed").
-static int answer_pass(gate *g, uint32_t version) {
+// `stamped`: the view is a finished board with the rating stamp. A cast has no
+// room for the stamp, so the board a game-ending cast leaves is unrated until
+// an envelope is read, and the stream pushes a move before its own answer
+// arrives: the stamp applies once at a version a cast or an answer already
+// holds, and that version is closed to it from then on.
+static int answer_pass(gate *g, uint32_t version, int stamped) {
     int any = g->has_view || g->has_cast || g->has_answer;
     if (any) {
         uint32_t top = any_top(g);
         if (version < top) return 0;
         // At the top itself only when nothing the table took is there already
         // (a dashboard push the table may not have shown is not).
-        if (version == top && ((g->has_cast && g->cast_v == top) || (g->has_answer && g->answer_v == top)))
-            return 0;
+        if (version == top) {
+            if (stamped ? g->has_stamp && g->stamp_v == top
+                        : (g->has_cast && g->cast_v == top) || (g->has_answer && g->answer_v == top))
+                return 0;
+        }
     }
+    if (stamped) { g->has_stamp = 1; g->stamp_v = version; }
     g->has_answer = 1;
     if (!any || version > g->answer_v) g->answer_v = version;
     return 1;
