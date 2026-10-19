@@ -6,6 +6,7 @@
 #include "cn_tex.h"
 #include <string.h>
 #include "../../../shared/c/fnv.h"
+#include "../../../shared/c/le_bytes.h"
 
 /* ---- small arithmetic ------------------------------------------------------------- */
 static double dsqrt(double x) { return __builtin_sqrt(x); }   /* one instruction everywhere, correctly rounded */
@@ -18,8 +19,6 @@ static void over(uint8_t *t, double r, double g, double b, double A)
     if (A <= 0) return;
     t[0] = q8(t[0] + (r - t[0]) * A); t[1] = q8(t[1] + (g - t[1]) * A); t[2] = q8(t[2] + (b - t[2]) * A);
 }
-static uint16_t rd16(const uint8_t *b) { return (uint16_t)(b[0] | b[1] << 8); }
-static uint32_t rd32(const uint8_t *b) { return (uint32_t)b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24; }
 
 uint32_t cn_tex_fnv1a(const uint8_t *b, uint32_t n)
 {
@@ -41,16 +40,16 @@ int cn_tex_pack_open(CnTexPack *p, const uint8_t *b, uint32_t len)
 {
     memset(p, 0, sizeof *p);
     if (!b || len < CN_TEX_HEAD_BYTES) return CN_TEX_E_SHORT;
-    if (rd32(b) != CN_TEX_MAGIC) return CN_TEX_E_MAGIC;
-    if (rd16(b + 4) != CN_TEX_VERSION) return CN_TEX_E_VERSION;
-    uint32_t n = rd16(b + 6), total = rd32(b + 8);
+    if (le_get_u32(b) != CN_TEX_MAGIC) return CN_TEX_E_MAGIC;
+    if (le_get_u16(b + 4) != CN_TEX_VERSION) return CN_TEX_E_VERSION;
+    uint32_t n = le_get_u16(b + 6), total = le_get_u32(b + 8);
     if (total != len || (uint64_t)CN_TEX_HEAD_BYTES + (uint64_t)n * CN_TEX_ENTRY_BYTES > len) return CN_TEX_E_SHORT;
-    if (rd32(b + 12) != cn_tex_fnv1a(b + CN_TEX_HEAD_BYTES, len - CN_TEX_HEAD_BYTES)) return CN_TEX_E_CHECK;
+    if (le_get_u32(b + 12) != cn_tex_fnv1a(b + CN_TEX_HEAD_BYTES, len - CN_TEX_HEAD_BYTES)) return CN_TEX_E_CHECK;
     for (uint32_t i = 0; i < n; i++) {
         const uint8_t *e = b + CN_TEX_HEAD_BYTES + i * CN_TEX_ENTRY_BYTES;
-        uint32_t kind = e[0], bpt = e[1], digit = e[2], px = rd16(e + 4), w = rd16(e + 6), h = rd16(e + 8);
-        int ox = (int16_t)rd16(e + 10), oy = (int16_t)rd16(e + 12);
-        uint32_t off = rd32(e + 16);
+        uint32_t kind = e[0], bpt = e[1], digit = e[2], px = le_get_u16(e + 4), w = le_get_u16(e + 6), h = le_get_u16(e + 8);
+        int ox = (int16_t)le_get_u16(e + 10), oy = (int16_t)le_get_u16(e + 12);
+        uint32_t off = le_get_u32(e + 16);
         uint64_t end = (uint64_t)off + (uint64_t)w * h * bpt;
         if (off & 3 || end > len || off < CN_TEX_HEAD_BYTES + n * CN_TEX_ENTRY_BYTES) return CN_TEX_E_ENTRY;
         if (kind == CN_TEXK_VERD) {

@@ -17,6 +17,7 @@
 #include "replay_extras.h"
 #include "replay.h"   // b32_encode - the code and the link share one alphabet
 #include <stdint.h>
+#include "../../../shared/c/le_bytes.h"
 #include <string.h>
 
 // The curve, and the exponent bias for the stored unit. Wire format.
@@ -33,29 +34,27 @@ static int rd_u8(const unsigned char *b, int len, int *p, int *v) {
 
 static int rd_u16(const unsigned char *b, int len, int *p, int *v) {
     if (*p + 2 > len) return 0;
-    *v = b[*p] | (b[*p + 1] << 8);
+    *v = le_get_u16(b + *p);
     *p += 2;
     return 1;
 }
 
 static int rd_f64(const unsigned char *b, int len, int *p, double *v) {
-    uint64_t bits = 0;
     if (*p + 8 > len) return 0;
-    for (int i = 7; i >= 0; i--) bits = (bits << 8) | b[*p + i];
+    uint64_t bits = le_get_u64(b + *p);
     memcpy(v, &bits, 8);
     *p += 8;
     return 1;
 }
 
 static void wr_u16(unsigned char *b, int v) {
-    b[0] = (unsigned char)(v & 0xff);
-    b[1] = (unsigned char)((v >> 8) & 0xff);
+    le_put_u16(b, (uint16_t)v);
 }
 
 static void wr_f64(unsigned char *b, double v) {
     uint64_t bits;
     memcpy(&bits, &v, 8);
-    for (int i = 0; i < 8; i++) b[i] = (unsigned char)((bits >> (8 * i)) & 0xff);
+    le_put_u64(b, bits);
 }
 
 // ---------- the time curve, without libm ------------------------------------

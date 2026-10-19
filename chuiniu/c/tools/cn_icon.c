@@ -32,6 +32,7 @@
  * TEXEL device pixels a pixel's footprint), never shrunk from the 1024.
  * PNGs are written with zlib (RGB, opaque: the App Store refuses an icon with
  * alpha), deterministic for a given pack and compiler. */
+#include "../../../shared/c/be_bytes.h"
 #include "../src/cn_scene.h"
 #include "../src/cn_geom.h"
 #include "../src/cn_cam.h"
@@ -151,13 +152,12 @@ static void caustic(double rgb[3], double c, double k)
 }
 
 /* ---- PNG through zlib --------------------------------------------------------------------- */
-static void be32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
 static void chunk(FILE *fp, const char *type, const uint8_t *d, uint32_t n)
 {
-    uint8_t h[8]; be32(h, n); memcpy(h + 4, type, 4); fwrite(h, 1, 8, fp);
+    uint8_t h[8]; be_put_u32(h, n); memcpy(h + 4, type, 4); fwrite(h, 1, 8, fp);
     if (n) fwrite(d, 1, n, fp);
     uLong c = crc32(0, h + 4, 4); c = crc32(c, d, n);
-    uint8_t t[4]; be32(t, (uint32_t)c); fwrite(t, 1, 4, fp);
+    uint8_t t[4]; be_put_u32(t, (uint32_t)c); fwrite(t, 1, 4, fp);
 }
 static int write_png(const char *path, const uint8_t *rgb, int w, int h)
 {
@@ -182,7 +182,7 @@ static int write_png(const char *path, const uint8_t *rgb, int w, int h)
     if (!fp) { free(raw); free(z); return 0; }
     static const uint8_t sig[8] = { 137, 'P', 'N', 'G', 13, 10, 26, 10 };
     fwrite(sig, 1, 8, fp);
-    uint8_t ih[13]; be32(ih, (uint32_t)w); be32(ih + 4, (uint32_t)h); ih[8] = 8; ih[9] = 2; ih[10] = ih[11] = ih[12] = 0;
+    uint8_t ih[13]; be_put_u32(ih, (uint32_t)w); be_put_u32(ih + 4, (uint32_t)h); ih[8] = 8; ih[9] = 2; ih[10] = ih[11] = ih[12] = 0;
     chunk(fp, "IHDR", ih, 13);
     chunk(fp, "IDAT", z, (uint32_t)zn);
     chunk(fp, "IEND", 0, 0);

@@ -1,6 +1,7 @@
 // FMSG envelope codec — see msg_wire.h for the layout, the two-layer
 // (structure vs semantics) split, and why the body is a v6 replay code.
 #include "msg_wire.h"
+#include "../../../shared/c/le_bytes.h"
 #include "awire.h"
 #include "legal.h"   // MOVE_PICKUP, for the turn controller's admission door
 #include "replay.h"
@@ -8,37 +9,7 @@
 #include <string.h>
 #include "../../../shared/c/fnv.h"
 
-// ---------- little-endian readers/writers -------------------------------
-// Explicit, byte-at-a-time: the payload's endianness is a WIRE property and
-// must not inherit the host's. (Every target here is little-endian today; that
-// is exactly the kind of accident that rots.)
-
-static uint16_t rd16(const unsigned char *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
-
-static uint32_t rd32(const unsigned char *p) {
-    uint32_t v = 0;
-    for (int i = 3; i >= 0; i--) v = (v << 8) | p[i];
-    return v;
-}
-
-static uint64_t rd64(const unsigned char *p) {
-    uint64_t v = 0;
-    for (int i = 7; i >= 0; i--) v = (v << 8) | p[i];
-    return v;
-}
-
-static void wr16(unsigned char *p, uint16_t v) {
-    p[0] = (unsigned char)(v & 0xff);
-    p[1] = (unsigned char)(v >> 8);
-}
-
-static void wr32(unsigned char *p, uint32_t v) {
-    for (int i = 0; i < 4; i++) p[i] = (unsigned char)(v >> (8 * i));
-}
-
-static void wr64(unsigned char *p, uint64_t v) {
-    for (int i = 0; i < 8; i++) p[i] = (unsigned char)(v >> (8 * i));
-}
+// Little-endian by explicit bytes (shared/c/le_bytes.h): the payload's endianness is a WIRE property and must not inherit the host's.
 
 // Overlap-safe copy. In-place encode (out aliasing the body) is a documented
 // caller pattern, and the wasm build is freestanding: its string.h shim offers
@@ -225,8 +196,8 @@ int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     out->format          = in[1];
     out->flags           = in[2];
     out->phase           = in[3];
-    out->game_id         = rd64(in + 4);
-    out->turn            = rd16(in + 12);
+    out->game_id         = le_get_u64(in + 4);
+    out->turn            = le_get_u16(in + 12);
     out->last_actor_seat = in[14];
     out->n_players       = in[15];
     out->variant         = in[16];
@@ -234,13 +205,13 @@ int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     memcpy(out->parent8, in + 18, MSG_PARENT_LEN);
     memcpy(out->seed, in + 26, MSG_SEED_LEN);
 
-    out->sent_at = has_clock ? rd16(in + MSG_CLOCK_OFF) : 0;
+    out->sent_at = has_clock ? le_get_u16(in + MSG_CLOCK_OFF) : 0;
     out->n_new   = has_clock ? in[MSG_NEW_OFF] : 0;
 
     // A format that cannot carry the rematch block decodes to the "no penalty"
     // sentinels, which is what every chain sealed before this format means.
     out->opening    = has_rematch ? in[MSG_OPEN_OFF] : MSG_NO_OPENING;
-    out->carry_key  = has_rematch ? rd32(in + MSG_CARRY_OFF) : 0u;
+    out->carry_key  = has_rematch ? le_get_u32(in + MSG_CARRY_OFF) : 0u;
     out->carry_fool = has_rematch ? in[MSG_FOOL_OFF] : MSG_NO_FOOL;
 
     const int n_joins = in[hdr_len - 1];
@@ -264,7 +235,7 @@ int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     }
 
     if (off + 2 > in_len) return MSG_ESHORT;
-    const int n_actions = rd16(in + off);
+    const int n_actions = le_get_u16(in + off);
     off += 2;
     if (n_actions > MSG_MAX_ACTIONS) return MSG_EACTION;
 
@@ -307,8 +278,8 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
     out[1] = e->format;
     out[2] = e->flags;   // faithful: whatever flags the envelope carries
     out[3] = e->phase;
-    wr64(out + 4, e->game_id);
-    wr16(out + 12, e->turn);
+    le_put_u64(out + 4, e->game_id);
+    le_put_u16(out + 12, e->turn);
     out[14] = e->last_actor_seat;
     out[15] = e->n_players;
     out[16] = e->variant;
@@ -316,7 +287,7 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
     memcpy(out + 18, e->parent8, MSG_PARENT_LEN);
     memcpy(out + 26, e->seed, MSG_SEED_LEN);
     if (has_clock) {
-        wr16(out + MSG_CLOCK_OFF, e->sent_at);
+        le_put_u16(out + MSG_CLOCK_OFF, e->sent_at);
         out[MSG_NEW_OFF] = e->n_new;
     }
     if (has_rematch) {
@@ -330,7 +301,7 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
         // opens.
         out[MSG_HEADER_LEN_CLOCK - 1] = 0;
         out[MSG_OPEN_OFF] = e->opening;
-        wr32(out + MSG_CARRY_OFF, e->carry_key);
+        le_put_u32(out + MSG_CARRY_OFF, e->carry_key);
         out[MSG_FOOL_OFF] = e->carry_fool;
     }
     out[hdr_len - 1] = (unsigned char)e->n_joins;
@@ -342,7 +313,7 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
         memcpy(out + off, e->joins[i].name, e->joins[i].name_len);
         off += e->joins[i].name_len;
     }
-    wr16(out + off, (uint16_t)e->n_actions);
+    le_put_u16(out + off, (uint16_t)e->n_actions);
     off += 2;
     move_down(out + off, e->actions, e->actions_len);
     off += e->actions_len;
@@ -1225,7 +1196,7 @@ void msg_rematch_seed(const uint8_t old_seed[MSG_SEED_LEN], uint64_t tapped_at_m
     // handful of blocks, nowhere near a timestamp's.
     DealRng r;
     deal_rng_seed_at(&r, old_seed, tapped_at_ms);
-    for (int i = 0; i < MSG_SEED_LEN / 4; i++) wr32(out + 4 * i, deal_rng_u32(&r));
+    for (int i = 0; i < MSG_SEED_LEN / 4; i++) le_put_u32(out + 4 * i, deal_rng_u32(&r));
 }
 
 int msg_rematch_lobby(const unsigned char *finished, int finished_len,

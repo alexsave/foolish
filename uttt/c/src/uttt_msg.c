@@ -3,26 +3,14 @@
 #include "../../../shared/c/sha256.h"
 #include "../../../shared/c/wire_check/wire_check.h"
 #include "../../../shared/c/b32.h"
+#include "../../../shared/c/be_bytes.h"
 #include <string.h>
-
-static void put32(uint8_t *p, int32_t v)
-{
-    uint32_t u = (uint32_t)v;
-    p[0] = (uint8_t)(u >> 24); p[1] = (uint8_t)(u >> 16);
-    p[2] = (uint8_t)(u >> 8);  p[3] = (uint8_t)u;
-}
-
-static int32_t get32(const uint8_t *p)
-{
-    return (int32_t)(((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
-                     ((uint32_t)p[2] << 8)  |  (uint32_t)p[3]);
-}
 
 void utm_tag(int32_t seed, const uint8_t *id, int id_len, uint8_t out[UTM_TAG_LEN])
 {
     static const char salt[] = "uttt.seat.1|";
     uint8_t s[4], d[SHA256_DIGEST_LEN];
-    put32(s, seed);
+    be_put_u32(s, seed);
     Sha256 c;
     sha256_init(&c);
     sha256_update(&c, salt, sizeof salt - 1);
@@ -71,7 +59,7 @@ int utm_encode(const UtmMsg *m, uint8_t *out, int cap)
     int n = 0;
     buf[n++] = UTM_MAGIC;
     buf[n++] = UTM_FORMAT;
-    put32(buf + n, m->seed); n += 4;
+    be_put_u32(buf + n, m->seed); n += 4;
     buf[n++] = m->sealed ? UTM_FLAG_SEALED : 0;
     buf[n++] = m->look;
     memcpy(buf + n, m->o, UTM_TAG_LEN); n += UTM_TAG_LEN;
@@ -112,7 +100,7 @@ int utm_decode(const uint8_t *in, int n, UtmMsg *out)
 
     UtmMsg m;
     memset(&m, 0, sizeof m);
-    m.seed = get32(in + 2);
+    m.seed = (int32_t)be_get_u32(in + 2);
     m.look = old ? uttt_look_of_seed(m.seed) : in[7];
     m.sealed = (uint8_t)sealed;
     memcpy(m.o, in + tags, UTM_TAG_LEN);
@@ -235,7 +223,7 @@ static void rec_key(const UtmMsg *m, int x, uint8_t out[UTM_REC_LEN - 1])
 {
     static const char salt[] = "uttt.rec.1|";
     uint8_t s[4], d[SHA256_DIGEST_LEN];
-    put32(s, m->seed);
+    be_put_u32(s, m->seed);
     Sha256 c;
     sha256_init(&c);
     sha256_update(&c, salt, sizeof salt - 1);
@@ -353,7 +341,7 @@ void utm_join_key(const UtmMsg *m, uint8_t out[32])
     static const char salt[] = "uttt.join.1|";
     uint8_t s[4];
     uint8_t first = m->game.n_plies ? m->game.move[0] : 0xff;
-    put32(s, m->seed);
+    be_put_u32(s, m->seed);
     Sha256 c;
     sha256_init(&c);
     sha256_update(&c, salt, sizeof salt - 1);

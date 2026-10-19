@@ -1,6 +1,7 @@
 #include "uttt_big_msg.h"
 #include "uttt_say.h"
 #include "../../../shared/c/sha256.h"
+#include "../../../shared/c/be_bytes.h"
 #include "../../../shared/c/wire_check/wire_check.h"
 #include "../../../shared/c/b32.h"
 #include <string.h>
@@ -52,18 +53,6 @@ uint32_t utb_board_check(const uint8_t *cells, int n)
 }
 
 /* ------------------------------------------------------------ the bytes */
-
-static void put16(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
-static void put32(uint8_t *p, uint32_t v)
-{
-    p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
-    p[2] = (uint8_t)(v >> 8);  p[3] = (uint8_t)v;
-}
-static uint32_t get16(const uint8_t *p) { return ((uint32_t)p[0] << 8) | p[1]; }
-static uint32_t get32(const uint8_t *p)
-{
-    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
-}
 
 static int is(const uint8_t *a, const uint8_t *b) { return memcmp(a, b, UTM_TAG_LEN) == 0; }
 
@@ -124,14 +113,14 @@ int utb_head_encode(const UtbHead *h, uint8_t *out, int cap)
     int n = 0;
     buf[n++] = UTM_MAGIC;
     buf[n++] = UTB_FORMAT;
-    put32(buf + n, (uint32_t)h->seed); n += 4;
+    be_put_u32(buf + n, (uint32_t)h->seed); n += 4;
     buf[n++] = h->sealed ? UTM_FLAG_SEALED : 0;
     buf[n++] = h->look;
     memcpy(buf + n, h->o, UTM_TAG_LEN); n += UTM_TAG_LEN;
     if (h->sealed) { memcpy(buf + n, h->x, UTM_TAG_LEN); n += UTM_TAG_LEN; }
-    put16(buf + n, (uint32_t)h->n_plies); n += 2;
-    put16(buf + n, h->last == UTB_NONE ? UTB_LAST_NONE : (uint32_t)h->last); n += 2;
-    put32(buf + n, h->board_check); n += 4;
+    be_put_u16(buf + n, (uint32_t)h->n_plies); n += 2;
+    be_put_u16(buf + n, h->last == UTB_NONE ? UTB_LAST_NONE : (uint32_t)h->last); n += 2;
+    be_put_u32(buf + n, h->board_check); n += 4;
     /* the check is last, over every byte before it (one span, no body) */
     wire_check(buf, (size_t)n, NULL, 0, buf + n, UTM_CHECK_LEN);
     n += UTM_CHECK_LEN;
@@ -168,16 +157,16 @@ int utb_msg_peek(const uint8_t *in, int n, UtbHead *out)
 
     UtbHead h;
     memset(&h, 0, sizeof h);
-    h.seed = (int32_t)get32(in + 2);
+    h.seed = (int32_t)be_get_u32(in + 2);
     h.look = in[7];
     h.sealed = (uint8_t)sealed;
     memcpy(h.o, in + UTM_TAGS_AT, UTM_TAG_LEN);
     int at = UTM_HEAD_OPEN;
     if (sealed) { memcpy(h.x, in + at, UTM_TAG_LEN); at += UTM_TAG_LEN; }
-    h.n_plies = (int32_t)get16(in + at);
-    uint32_t last = get16(in + at + 2);
+    h.n_plies = (int32_t)be_get_u16(in + at);
+    uint32_t last = be_get_u16(in + at + 2);
     h.last = last == UTB_LAST_NONE ? UTB_NONE : (int32_t)last;
-    h.board_check = get32(in + at + 4);
+    h.board_check = be_get_u32(in + at + 4);
     int r = head_ok(&h);
     if (r != UTM_EOK) return r;
     if (out) *out = h;
@@ -379,7 +368,7 @@ static void join_key(const UtbHead *h, uint8_t out[32])
 {
     static const char salt[] = "uttt.join.big|";
     uint8_t s[4];
-    put32(s, (uint32_t)h->seed);
+    be_put_u32(s, (uint32_t)h->seed);
     Sha256 c;
     sha256_init(&c);
     sha256_update(&c, salt, sizeof salt - 1);
