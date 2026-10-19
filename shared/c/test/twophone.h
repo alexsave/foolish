@@ -25,19 +25,13 @@
 static int g_quiet;
 
 #define STEP(name) TEST(name)
+/* The phone tests' OK takes a printf message (check.h's takes a plain string), and
+ * is silent while g_quiet is set (a step run only to reach a state). The condition
+ * is evaluated either way. */
+#undef OK
 #define OK(c, ...) do {                                                          \
-        int ok_ = (c) ? 1 : 0;                                                   \
-        if (g_quiet) break;                                                      \
-        g_checks++;                                                              \
-        if (!ok_) {                                                              \
-            g_fails++;                                                           \
-            if (g_fails <= 40) {                                                 \
-                fprintf(stderr, "FAIL %s:%d [%s] %s: ", __FILE__, __LINE__,      \
-                        g_test, #c);                                             \
-                fprintf(stderr, __VA_ARGS__);                                    \
-                fputc('\n', stderr);                                             \
-            }                                                                    \
-        }                                                                        \
+        if (g_quiet) { (void)(c); break; }                                       \
+        CHECK(c, __VA_ARGS__);                                                   \
     } while (0)
 
 #endif

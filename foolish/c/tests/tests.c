@@ -11589,10 +11589,10 @@ static void test_opening_deal_hands_are_unchanged(void) {
     // when a dealt hand began to be held in ascending card order (game.c
     // deal_initial): the same cards, so only the order inside each hand moved.
     static const uint64_t golden[2][MAX_PLAYERS + 1] = {
-        { 0, 0, 0xbff8981e1634d14fULL, 0x95f8341f9ea4a911ULL, 0x7f9baf0a1218ed26ULL, 0x55570f60181608d0ULL,
-          0x355c481231a5bae5ULL, 0xfa54f8505d33ef16ULL, 0x2e77e1199bcb38f5ULL },
-        { 0, 0, 0x24c0d7b3ce606206ULL, 0x06f83792381481fdULL, 0xe9d0b2c7ae5b3af4ULL, 0xf5b314e74e2286fbULL,
-          0x22c019ed4e4f0852ULL, 0x8f77ce6443bd320eULL, 0x04b9aa9aace546e6ULL },
+        { 0, 0, 0xa03b31bcdd8998edULL, 0x65eb92a78c2ac4d7ULL, 0x09a618d6261330e4ULL, 0xfdaaca16a337e3ceULL,
+          0xbb05725167a270c7ULL, 0xc159e176dae37a98ULL, 0x5e5eb2cb9827b67bULL },
+        { 0, 0, 0x038b564a2fb93ca0ULL, 0x5e84a66689c0e7f7ULL, 0x6703d6851263fe5aULL, 0x9ee4b6ca20f582ddULL,
+          0xfd5c2ba7e1933a00ULL, 0x4597306550506a20ULL, 0x78ba879667df7890ULL },
     };
     for (int wide = 0; wide <= 1; wide++) {
         for (int np = 2; np <= MAX_PLAYERS; np++) {
@@ -11739,8 +11739,8 @@ static void test_refill_events_and_plan_are_unchanged(void) {
     // splitmix64, and when a dealt hand became ascending (the 4p games' bots
     // then chose differently).
     static const uint64_t golden[] = {
-        0xc1455ae3fbac7d8dULL, 0xda4f0e97babaf3edULL, 0x2587b4ef2b703549ULL,
-        0x29e6b6f3b7443897ULL, 0x531cbe66e21399a4ULL,
+        0x90807a672fa140cfULL, 0xfd61618a1df041cbULL, 0x6f53d5e03ed3d223ULL,
+        0x69cb10b7ff9786ddULL, 0x3b19c06ea50e56daULL,
     };
     for (int i = 0; i < (int)(sizeof nps / sizeof nps[0]); i++) {
         int n_refill = 0, n_steps = 0, n_trump = 0;
@@ -11802,7 +11802,7 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // moved when a dealt hand became ascending (game.c deal_initial): the
     // envelopes carry the hands in their new order, and the bots, reading
     // hands in that order, played different games.
-    static const uint64_t golden[2] = { 0xbf57d7cd081b31a6ULL, 0xee9ca1b1164510adULL };
+    static const uint64_t golden[2] = { 0x56a752e11fc9bd4cULL, 0xb5f5c29cf53142ebULL };
     uint64_t hc = FNV64_OFFSET;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         for (int seed_k = 1; seed_k <= 3; seed_k++) {

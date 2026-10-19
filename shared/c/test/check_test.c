@@ -128,6 +128,8 @@ static void test_report(void)
 static void test_ok(void)
 {
     g_checks = g_fails = 0;
+    memset(g_named, 0, sizeof g_named);   /* the fan-out test filled the (3-slot) name table */
+    memset(g_named_fails, 0, sizeof g_named_fails);
     calls = 0;
     catch_begin(stderr);
     g_quiet = 1;
@@ -141,7 +143,7 @@ static void test_ok(void)
     EXPECT(calls == 2, "a quiet OK still evaluates its condition, once (%d)", calls);
     EXPECT(g_checks == 46 && g_fails == 45, "a quiet OK counts nothing (%d, %d)", g_checks, g_fails);
     EXPECT(lines_with(err, "[rehearsal]") == 0, "and prints nothing");
-    EXPECT(lines_with(err, "[walk] i < 0: walk") == 40, "OK prints the first 40 failures of the binary (%d)",
+    EXPECT(lines_with(err, "[walk] i < 0: walk") == CHECK_PRINT_CAP, "OK prints the first CHECK_PRINT_CAP failures of its test (%d)",
            lines_with(err, "[walk]"));
 }
 
