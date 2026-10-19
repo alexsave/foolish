@@ -1,9 +1,8 @@
 // roundtrip.c - `cbase-bench roundtrip`: a real game, measured as a client sees it.
 //
 // Each worker (--concurrency of them, each its own pair of players and its own
-// connections) signs up two users, opens one MQTT stream socket per player
-// (/mqtt, which `cbase serve` and IoT Core behind the edge both serve)
-// subscribed to that player's views (u/<uid>/v), and plays two-human
+// connections) signs up two users, opens one /ws stream socket per player
+// (shared/c/stream_frame.h) subscribed to that player's views (NW_SUB_GAMES), and plays two-human
 // games: create, join, both ready, then moves until the game ends, and a new
 // game after that. Per move it measures:
 //
@@ -33,7 +32,7 @@
 #include "net/ws.h"
 #include "netclient.h"   // NC_PING_MS: the browser client's keep-alive, one owner
 #include "netwire.h"
-#include "mqtt/mqtt.h"
+#include "stream_frame.h"
 #include "util/uuid.h"
 
 #include <pthread.h>
@@ -53,7 +52,7 @@
 // ---- one stream socket and its reader thread ---------------------------------------
 
 typedef struct {
-    bn_mq           mq;
+    bn_ws          *ws;
     pthread_t       th;
     pthread_mutex_t mu;
     pthread_cond_t  cv;
@@ -69,23 +68,26 @@ static void *reader(void *arg) {
     cb_buf b;
     cb_buf_init(&b);
     NwFrame f;
-    MqttPacket p;
     int64_t last_ping = bn_now_us();
     while (!atomic_load(&l->stop)) {
-        // The clients' keep-alive: a PINGREQ every 30 s inside the 60 s CONNECT asked for.
+        // The clients' keep-alive: an SF_PING every NC_PING_MS.
         if (bn_now_us() - last_ping > (int64_t)NC_PING_MS * 1000) {
-            bn_mq_ping(&l->mq);
+            uint8_t pg[2];
+            int n = sf_put_bare(pg, sizeof pg, SF_PING);
+            bn_ws_send_bin(l->ws, pg, (size_t)n);
             last_ping = bn_now_us();
         }
-        int t = bn_mq_next(&l->mq, 200, &p, &b);
-        if (t < 0) break;
-        if (t != MQTT_PUBLISH) continue;
+        cb_buf_reset(&b);
+        int op = bn_ws_recv(l->ws, 200, &b);
+        if (op == -1) continue;
+        if (op < 0 || op == CB_WS_OP_CLOSE) break;
+        if (op != CB_WS_OP_BIN) continue;
         int64_t ts = bn_now_us();
-        if (nw_frame_decode(p.payload, p.payload_len, &f) != NW_OK || f.kind != NW_WS_VIEW || !f.blob.len) continue;
-        int64_t t_us = ts;
+        if (!sf_is_push(b.p, b.len)) continue;
+        if (nw_frame_decode(b.p, (int)b.len, &f) != NW_OK || f.kind != NW_WS_VIEW || !f.blob.len) continue;
         int64_t v = f.version;
         pthread_mutex_lock(&l->mu);
-        l->t_us[l->count % RING] = t_us;
+        l->t_us[l->count % RING] = ts;
         l->ver[l->count % RING] = v;
         l->count++;
         pthread_cond_broadcast(&l->cv);
@@ -179,16 +181,29 @@ static int signup(worker *w, player *p, int k) {
 // CONNECT with the token, then the SUBSCRIBE of u/<uid>/v.
 static bool listen_games(worker *w, int k) {
     listener *l = &w->l[k];
-    cb_buf_init(&l->mq.in);
-    l->mq.ws = bn_mq_open(&w->u, NULL, TIMEOUT_MS);
-    if (!l->mq.ws) return false;
-    if (bn_mq_connect(&l->mq, w->p[k].uid, w->p[k].token, TIMEOUT_MS) != 1) {
-        fprintf(stderr, "bench: the stream's CONNECT was refused\n");
+    l->ws = bn_ws_open(&w->u, "/ws", TIMEOUT_MS);
+    if (!l->ws) return false;
+    uint8_t o[SF_TOKEN_MAX + 16];
+    int n = sf_put_hello(o, sizeof o, w->p[k].token, strlen(w->p[k].token));
+    cb_buf in;
+    cb_buf_init(&in);
+    sf_frame sf;
+    bool ok = n > 0 && bn_ws_send_bin(l->ws, o, (size_t)n) == 0 &&
+              bn_ws_recv(l->ws, TIMEOUT_MS, &in) == CB_WS_OP_BIN && sf_parse(in.p, in.len, &sf) == 0 && sf.kind == SF_READY;
+    if (!ok) {
+        fprintf(stderr, "bench: the stream's HELLO was refused\n");
+        cb_buf_free(&in);
         return false;
     }
-    char topic[NW_ID_MAX + 8];
-    snprintf(topic, sizeof topic, "u/%s/v", w->p[k].uid);
-    if (bn_mq_subscribe(&l->mq, 1, topic, TIMEOUT_MS) != 1) {
+    n = sf_put_sub(o, sizeof o, SF_SUB, 0x80000001u, NW_SUB_GAMES, "", 0);
+    ok = bn_ws_send_bin(l->ws, o, (size_t)n) == 0;
+    for (int tries = 0; ok && tries < 20; tries++) {   // a push may come before the REPLY
+        cb_buf_reset(&in);
+        if (bn_ws_recv(l->ws, TIMEOUT_MS, &in) != CB_WS_OP_BIN) { ok = false; break; }
+        if (sf_parse(in.p, in.len, &sf) == 0 && sf.kind == SF_REPLY) { ok = sf.id == 0x80000001u && sf.status == 200; break; }
+    }
+    cb_buf_free(&in);
+    if (!ok) {
         fprintf(stderr, "bench: the views subscription was refused\n");
         return false;
     }
@@ -375,7 +390,7 @@ static void stop_listener(listener *l) {
         pthread_mutex_destroy(&l->mu);
         pthread_cond_destroy(&l->cv);
     }
-    bn_mq_close(&l->mq);
+    if (l->ws) bn_ws_close(l->ws);
 }
 
 int bench_roundtrip(const bench_opts *o) {
