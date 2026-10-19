@@ -117,6 +117,7 @@ static bool g_everywhere;
 static void drain_pools(void) {
     cb_section_drain();
     cb_rows_batch_drain();
+    cb_store_local_release(g_ctx.store);   // before the pools: the statements' blocks go back to them
     cb_store_local_drain();
 }
 
@@ -130,8 +131,20 @@ static void sweep(const char *what, rq *q, int ok, void (*prep)(rq *, int)) {
         return;
     }
     int k = 0, failures = 0, wrong = 0, leaks = 0;
+    // SQLite computes some of a schema's index data the first time a query reads it (an index's column
+    // affinities) and keeps it as long as the schema lives. A read changes nothing, so it runs once,
+    // unarmed, and the sweep then counts only what the request itself keeps.
+    if (strcmp(q->method, "GET") == 0) {
+        if (prep) prep(q, 0);
+        run(q);
+        cb_row_cache_clear();
+        drain_pools();
+    }
     for (;; k++) {
         if (prep) prep(q, k);
+        long cache0 = cb_store_local_cache_bytes(g_ctx.store);
+        cb_store_local_mark();
+        long held0 = cb_store_local_blocks(NULL);
         oom_fail_after(k);
         oom_everywhere(g_everywhere);
         run(q);
@@ -141,6 +154,17 @@ static void sweep(const char *what, rq *q, int ok, void (*prep)(rq *, int)) {
         oom_everywhere(false);
         bool failed = oom_failed();
         oom_off();
+        // SQLite's blocks are counted apart (the store's allocator tallies them): the allocator's count of
+        // blocks still live holds them too, and its page cache is recycled by a rollback (an old page
+        // freed before the run, a new one made during it), so they are not a request's leak. What is checked
+        // is each side on its own: the request's blocks (everything but SQLite's) are all given back, and
+        // SQLite holds no more than the data it grew by (two blocks, a page and its header, per 4 KB of
+        // page cache), which a statement or a buffer left behind would exceed.
+        long fresh = 0;
+        long held = cb_store_local_blocks(&fresh) - held0;
+        long grown = 2 * ((cb_store_local_cache_bytes(g_ctx.store) - cache0 + 4095) / 4096);
+        live = live > fresh ? live - fresh : 0;
+        if (!g_everywhere && held > (grown > 0 ? grown : 0)) live += held - (grown > 0 ? grown : 0);
         if (!failed) break;
         failures++;
         if (g_status != ok && g_status < 500) {
