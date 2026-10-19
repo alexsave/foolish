@@ -258,6 +258,44 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # `cbase serve` for a plain Linux arm64 host (an EC2 t4g.nano behind the
+  # CloudFront): the same pinned Alpine static build as the Lambda bootstrap,
+  # the other binary. Main pushes only. Kept as a workflow artifact and a GitHub
+  # release cbase-serve-<short sha>, with its sha256. contents: write is on this
+  # job alone.
+  serve_binary:
+    name: cbase serve (Linux arm64, static)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: build
+        run: c_base/providers/aws/ops/build_bootstrap.sh serve
+      - name: check the binary is arm64 and static, and the sha256 matches
+        run: |
+          cd c_base/dist
+          file cbase-serve-linux-arm64 | grep -E 'ARM aarch64.*statically linked'
+          sha256sum -c cbase-serve-linux-arm64.sha256
+      - uses: actions/upload-artifact@v6
+        with:
+          name: cbase-serve-linux-arm64
+          path: |
+            c_base/dist/cbase-serve-linux-arm64
+            c_base/dist/cbase-serve-linux-arm64.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - name: release cbase-serve-<short sha>
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="cbase-serve-$(git rev-parse --short=9 HEAD)"
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" \
+            --notes "cbase serve, Linux arm64, static (musl). Built from $GITHUB_SHA." \
+            c_base/dist/cbase-serve-linux-arm64 c_base/dist/cbase-serve-linux-arm64.sha256
+
   deploy:
     name: deploy to Lambda
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
