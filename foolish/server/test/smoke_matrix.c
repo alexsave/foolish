@@ -1196,6 +1196,12 @@ static int replay_names(const user *u, const forms *name) {
     return found;
 }
 
+// Whether u's history list itself (the body of GET /v1/history, which carries the seats' names) holds `name`.
+static int history_holds(const user *u, const forms *name) {
+    if (http("GET", "/v1/history", u->auth, NULL, 0, NULL) != 200) return -1;
+    return memmem(g_a.body, (size_t)g_a.len, name->form[0], strlen(name->form[0])) != NULL;
+}
+
 static void account_deletion(void) {
     forms name;
     forms_of(E.name, &name);
@@ -1211,6 +1217,7 @@ static void account_deletion(void) {
     T_CHECK(name_in_games);   // the roster's bytes are found through their encoding
     T_CHECK(id_in_users);
     T_EQ_INT(replay_names(&A, &name), 1);
+    T_EQ_INT(history_holds(&A, &name), 1);   // the positive control: the list shows E's name before the delete
     // A lobby E sits at, with E's socket on its seat and its chat.
     char G3[16];
     T_EQ_INT(http("POST", "/v1/create", A.auth, NULL, 0, OCTETS), 200);
@@ -1256,6 +1263,8 @@ static void account_deletion(void) {
     T_CHECK(!memmem(g_a.body, (size_t)g_a.len, E.id, strlen(E.id)));
     // The replays: A's still plays, and no longer names E.
     T_EQ_INT(replay_names(&A, &name), 0);
+    T_EQ_INT(history_holds(&A, &name), 0);   // and no history body names E after it
+    T_EQ_INT(history_holds(&B, &name), 0);
     char path[48];
     snprintf(path, sizeof path, "/v1/replay/%s", G);
     T_EQ_INT(http("GET", path, A.auth, NULL, 0, NULL), 200);

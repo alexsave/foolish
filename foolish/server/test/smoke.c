@@ -712,8 +712,24 @@ static void game_scenario(void) {
     T_EQ_INT(nc_list_read(g_status, g_body, g_len, NW_HISTORY), 1);
     const NcHistoryHead *head = nc_history_head(g_body, g_len);
     T_CHECK(head && head->has_rating);
-    T_EQ_INT(call(&A, NC_DO_REPLAY, gid, NULL, 0, -1), 200);
+    // The list carries no moves and no extras: a row is the replay's id and the summary, and the id opens the replay.
+    const NcHistoryRow *hrow = nc_history_row(g_body, g_len, 0);
+    T_CHECK(hrow && hrow->id_len > 0 && hrow->rank > 0);
+    char rid[NW_ID_MAX + 1] = "";
+    if (hrow) { memcpy(rid, hrow->id, hrow->id_len); rid[hrow->id_len] = 0; }
+    int hist_len = g_len;
+    uint8_t hist_body[4096];
+    T_CHECK(hist_len > 0 && (size_t)hist_len <= sizeof hist_body);
+    memcpy(hist_body, g_body, (size_t)hist_len);
+    T_EQ_INT(call(&A, NC_DO_REPLAY, rid, NULL, 0, -1), 200);
     const NcReplay *rp = nc_replay_read(g_status, g_body, g_len);
+    T_CHECK(rp && rp->moves_len > 0);
+    if (rp) {
+        T_CHECK(memmem(hist_body, (size_t)hist_len, g_body + rp->moves_off, rp->moves_len > 16 ? 16 : rp->moves_len) == NULL);
+    }
+    // The game's id opens it too.
+    T_EQ_INT(call(&A, NC_DO_REPLAY, gid, NULL, 0, -1), 200);
+    rp = nc_replay_read(g_status, g_body, g_len);
     T_CHECK(rp && rp->moves_len > 0);
 
     // The view, then a restart on the same database: the same view.
