@@ -6,6 +6,7 @@
 // on a cyclic endgame every move aborts (why the oracle falls back to MC).
 // #includes cordite_sim.c to reach the static move-gen + apply helpers.
 #include "cordite_sim.c"
+#include "common.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -19,7 +20,6 @@ static void make_state(SimState *s, uint64_t HA, uint64_t HD, int power) {
     s->status_p[0] = PLAYER_STATUS_IN; s->status_p[1] = PLAYER_STATUS_IN;
     s->in_mask = 0x3u;
 }
-static uint64_t mask_of(const int *ids, int n){uint64_t m=0;for(int i=0;i<n;i++)m|=1ull<<ids[i];return m;}
 static const char *SUIT="SHCD";
 static const char *MT[]={"ATK","COV","PASS","PICKUP","GOOD","NONE"};
 static void movelbl(char *o, const SolMove *m){

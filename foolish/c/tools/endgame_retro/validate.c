@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../../../shared/c/rng.h"
+#include "common.h"
 
 enum { UNK=0, WIN=1, LOSS=2 };
 enum { N_TWIN=0, N_TLOSS=1, N_TDRAW=2, N_BASE=3 };
@@ -22,10 +23,6 @@ static long sNID, sCAP=4000000;
 static uint32_t *sEP,*sEC; static long sNE,sECAP=8000000;
 static uint32_t *sstk; static long ssn;
 
-static void two_in(const SimState*s,int*a,int*b){*a=-1;*b=-1;
-    for(int i=0;i<s->num_players;i++) if(s->status_p[i]==PLAYER_STATUS_IN){ if(*a<0)*a=i; else *b=i;}}
-static int actor_of(const SimState*s){ if(sim_should_act(s,s->defender)) return s->defender;
-    for(int i=0;i<s->num_players;i++) if(sim_should_act(s,i)) return i; return -1; }
 static long sintern(const SimState*c,int*isnew){ int a,b; two_in(c,&a,&b); uint64_t fp=sim_fingerprint(c,a,b);
     uint32_t i=(uint32_t)((fp*0x9E3779B97F4A7C15ull)>>(64-SHB))&(SHS-1);
     for(;;){ if(SV[i]==0){ long id=sNID++; SK[i]=fp; SV[i]=(uint32_t)(id+1); sST[id]=*c;

@@ -6,6 +6,7 @@
 // cyclic lines. me = attacker = player 0. Edit A[]/D[]/power for a different
 // endgame. See c/ENDGAME_CYCLES.md.
 #include "cordite_sim.c"
+#include "common.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,10 +30,6 @@ static void spush(long id){ if(SN==SCAP){SCAP=SCAP?SCAP*2:(1L<<20);STK=realloc(S
 static uint32_t *EP=NULL,*EC=NULL; static long NE=0,ECAP=0;
 static void add_edge(uint32_t p,uint32_t c){ if(NE==ECAP){ECAP=ECAP?ECAP*2:(1L<<21);EP=realloc(EP,ECAP*4);EC=realloc(EC,ECAP*4);} EP[NE]=p;EC[NE]=c;NE++; }
 
-static void two_in(const SimState*s,int*a,int*b){*a=-1;*b=-1;
-    for(int i=0;i<s->num_players;i++) if(s->status_p[i]==PLAYER_STATUS_IN){ if(*a<0)*a=i; else *b=i;}}
-static int actor_of(const SimState*s){ if(sim_should_act(s,s->defender)) return s->defender;
-    for(int i=0;i<s->num_players;i++) if(sim_should_act(s,i)) return i; return -1; }
 static long intern(const SimState*c,int*isnew){ int a,b; two_in(c,&a,&b); uint64_t fp=sim_fingerprint(c,a,b);
     uint32_t i=(uint32_t)((fp*0x9E3779B97F4A7C15ull)>>(64-HBITS))&HMASK;
     for(;;){ if(HV[i]==0){ if(NID>=CAP){overflow=1;return -1;} long id=NID++; HK[i]=fp; HV[i]=(uint32_t)(id+1);
@@ -43,8 +40,6 @@ static long classify(const SimState*c){ int loser=sim_done(c); if(loser>=0) retu
 static void make_root(SimState*s,uint64_t HA,uint64_t HD){ memset(s,0,sizeof*s); s->num_players=2; s->power_suit=1;
     s->defender=1; s->first_attacker=0; s->status=GAME_STATUS_PLAYING; s->hand[0]=HA; s->hand[1]=HD;
     s->status_p[0]=PLAYER_STATUS_IN; s->status_p[1]=PLAYER_STATUS_IN; s->in_mask=0x3u; }
-static uint64_t mask_of(const int*ids,int n){uint64_t m=0;for(int i=0;i<n;i++)m|=1ull<<ids[i];return m;}
-
 int main(int argc,char**argv){
     CAP=argc>1?atol(argv[1]):60000000L;
     int A[]={47,36,8,19,23,32,33,11,24},D[]={34,22,21};

@@ -6,6 +6,7 @@
 #include "strategy.h"
 #include "bot_play.h"
 #include "retro_seed.h"
+#include "common.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,8 +18,6 @@ static uint64_t SK[SHS]; static uint32_t SV[SHS]; static uint32_t *used_slots; s
 #define RCAP 3000000
 static SimState *sST; static uint8_t *sACT,*sVAL; static uint32_t *sCNT; static long sNID; static int rovf;
 static uint32_t *sEP,*sEC; static long sNE,SECAP=12000000; static uint32_t*sstk; static long ssn; static int ME;
-static void two_in(const SimState*s,int*a,int*b){*a=-1;*b=-1;for(int i=0;i<s->num_players;i++)if(s->status_p[i]==PLAYER_STATUS_IN){if(*a<0)*a=i;else *b=i;}}
-static int actor_of(const SimState*s){if(sim_should_act(s,s->defender))return s->defender;for(int i=0;i<s->num_players;i++)if(sim_should_act(s,i))return i;return -1;}
 static long sintern(const SimState*c,int*isnew){int a,b;two_in(c,&a,&b);uint64_t fp=sim_fingerprint(c,a,b);uint32_t i=(uint32_t)((fp*0x9E3779B97F4A7C15ull)>>(64-SHB))&(SHS-1);
     for(;;){if(SV[i]==0){if(sNID>=RCAP||sNE>=SECAP-256){rovf=1;*isnew=0;return -1;}long id=sNID++;SK[i]=fp;SV[i]=(uint32_t)(id+1);used_slots[n_used++]=i;sST[id]=*c;sACT[id]=(actor_of(c)==ME);sVAL[id]=UNK;*isnew=1;return id;}
         if(SK[i]==fp){*isnew=0;return SV[i]-1;}i=(i+1)&(SHS-1);}}
