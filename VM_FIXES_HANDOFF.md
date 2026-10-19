@@ -240,3 +240,39 @@ Human pace 0.1 CPU: 64 games 390 us/move p95 0.9 ms RSS 9.5 MB; 192 games 250 us
 Saturation: 11.7k moves/s against 16.8k for the pass's start (see item 1).
 Saturation top self time on I3: sock_def_readable 7.0, vfs_write 4.7, el0_svc 4.1, __arch_copy_from_user 3.5, memcpy 2.8, walChecksumBytes 2.7, malloc 2.1, memcmp 2.1, printf_core 1.9, strlen 1.8 (I0: sock_def_readable 8.9, el0_svc 4.8, memcpy 3.7, vfs_write 3.7, malloc 2.7, printf_core 1.8, strcmp 1.7).
 Rig note: binaries bin/serve-I0 (start), I1, I2, I3 are in c_base/bench/nano/bin; the lock script is scratchpad/lrun.sh.
+
+
+## Proper SQL (2026-10-19, after sniper 5)
+Commits 846f948c4 .. b11b99ae1 on vm-fixes, pushed. `make -k test` and `make smoke` green (gates included); unit_export passes against DynamoDB Local.
+
+### Schema (7)
+- Platform (c_base/providers/local/sql/schema.sql): users (id BLOB 16, email UNIQUE, username with a UNIQUE index on the canonical name auth/names.h stores, kept_session BLOB), sessions, refresh_tokens (token_hash BLOB 32), signin_fails. WITHOUT ROWID; indexes only sessions(user_id), refresh_tokens(user_id). Schemas 1-5's tables are dropped before 7 is created; 6's `items` is dropped.
+- foolish (foolish/server/sql/schema.sql, embedded as cb_foolish_schema_sql, applied in the same transaction): games (rowid table, TEXT id = the short code unchanged, fixed size: state, roster, seed, log_from, no log), game_moves(game_id, seq, action) WITHOUT ROWID, game_members (+ index user_id), game_bots, bots, ratings (+ partial index for the leaderboard), replays (rowid; players as 16-byte ids, moves, extras, fool/dur summary, partial index on game_id), replay_players(user_id, created_at, replay_id) WITHOUT ROWID, chat(game_id, created_at, id) WITHOUT ROWID (+ index user_id).
+- No lease, bots_idle or SCAN in SQL: bots.c keeps the lease in memory under serve and wherever the store has no lease op; the startup scan reads games.needs_bots.
+- Replays keep their own v6 code (not a pointer into game_moves): different compact format, outlives the game and the session log a rematch clears.
+- Store API for products: core/src/store/store_sql.h (cb_sql_read, cb_sql_write = the group commit as a transaction of callbacks, cb_sql_stmt for the product's prepared statements, uuid bind/column helpers). Every statement is prepared at open. foolish's rows: foolish/server/src/store/rows_sql.c; positions are named (G_*, B_*, ... and P()/COL()).
+- The DynamoDB item path (rows_foolish.c, rows_auth.c, store_dynamo.c, items.c) is unchanged except: logs_packed back in the row (production's layout, LOG# items removed). It is only for Lambda and cbase-export's read side.
+- Ids: UUIDs are 16-byte BLOBs in storage (cb_uuid_pack/unpack in util/uuid.c, the one owner, jwt.c uses it). In memory the row structs still carry text cb_uuid (not converted; a handler-wide change). Wire and URLs unchanged (text).
+
+### Numbers (rig, CBASE_REQ_WORKERS=1; Q1 = bc0cad859 behaviour, I0/I3 as in sniper 5)
+| | 64 games | 192 games | saturation (8 games, 1 CPU) |
+|---|---|---|---|
+| I3 (302851836, before) | 390 us/move, p95 0.9 ms, 9.5 MB | 250 us, p95 0.6 ms, 13.2 MB | 11.7k |
+| I0 (sniper 5 start), same session as Q1 | - | - | 16.76k at 0.98 cores (145/202 throttled), 59 us CPU/move |
+| Q1 | 330 us, p95 1.0 ms, 8.2 MB | 210 us, p95 0.5 ms, 10.5 MB | 15.9k at 0.83 cores (0 throttled), 52 us CPU/move, p99 10 ms |
+- Saturation does NOT beat 16.8k yet, but CPU per move does (-11%): the server sits idle 17% of the time. Suspected cause: SQLite's automatic checkpoint runs inside the group's COMMIT with the connection locked (its fsync stalls every queued request); a commit now dirties two pages (games + game_moves). Profile this first (perf/sample at saturation, look for fsync/walCheckpoint under the leader).
+- NOTE (idea, not code): a background PASSIVE checkpointer on its own connection with the writer's autocheckpoint off was tried and FAILED (WAL grew to 1.1 GB under constant writes: a passive checkpoint never catches the moving end, so the WAL never restarts). Patch: scratchpad/checkpointer_experiment.patch. A workable variant needs a bounded fallback (writer checkpoints past N frames) or a RESTART at a quiet moment.
+- WAL bytes per move: NOT measured (the rig has no WAL meter). db file growth per move at saturation: 78 B (Q1) vs 97 B (I0).
+- Long-game scenario: NOT run. Structurally a move writes two small rows (the fixed games row and one game_moves row) whatever the game's length; before, the row carried the whole cumulative log.
+
+### Export (foolish/server/migrate/export.c + foolish/server/src/store/migrate_rows.c)
+- Keys from DynamoDB, sorted by family rank then key; each item decoded by its family codec into its row and written through the SQL store's operations; counts per family vs per table; a second read compared by natural key. Unknown family, duplicate or non-canonical username, refused row: loud failure. Expired sessions/tokens/sign-in counts and SCAN markers are skipped and counted. store_copy and unit_store_copy are gone.
+- Tests: unit_migrate (no table, mutation-checked), unit_export (DynamoDB Local, mutation-checked). Run unit_export only against a private DynamoDB Local (not cbase-dynamodb-local).
+- cbase-import counts SQL rows per family with a per-table SELECT of ids (cb_rows_sql_keys) for its "extra" report.
+- The production dry run has not been re-run.
+
+### Left
+1. Saturation over 16.8k (profile the checkpoint stall first, see above); WAL meter and the long-game scenario on the rig.
+2. In-memory ids as 16 bytes in the row structs (storage already is).
+3. Delete the aws provider after cutover (store_dynamo, items.c, rows_auth.c, rows_foolish.c item path, the dynamo tests).
+4. The admin console now lists tables; its Games panel uses "games" (works); other panels unchecked by hand.
