@@ -36,7 +36,11 @@ final class Stream {
     /// Sends every frame the client has for the socket.
     func send() {
         guard let task else { return }
-        while let bytes = NetClient.streamNext() { task.send(.data(bytes)) { _ in } }
+        while let bytes = NetClient.streamNext() {
+            // An empty frame is the client's "this socket is dead" (no PINGRESP): drop it and reconnect.
+            if bytes.isEmpty { task.cancel(with: .goingAway, reason: nil); closed(); return }
+            task.send(.data(bytes)) { _ in }
+        }
     }
 
     /// What the client says changed, to the game it is of.

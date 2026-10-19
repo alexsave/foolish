@@ -168,7 +168,7 @@ export class NetClient {
         const n = this.put(typeof frame === 'string' ? enc.encode(frame) : frame);
         this.ex.wasm_net_stream_in(Math.max(n, 0), typeof frame === 'string' ? 1 : 0, Date.now());   // too long: a bad frame
     }
-    /** The next message to send as one binary frame, or null for none now. */
+    /** The next message to send as one binary frame, or null for none now. An EMPTY frame says the socket is dead (no PINGRESP): the host closes it and runs its reconnect. */
     streamNext(): Uint8Array | null {
         const p = this.ex.wasm_net_stream_next(Date.now());
         return p ? new Uint8Array(N.readNcOut(this.m(), p).bytes) : null;

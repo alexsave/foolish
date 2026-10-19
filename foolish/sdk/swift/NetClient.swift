@@ -99,7 +99,8 @@ public enum NetClient {
     public static func streamIn(_ frame: Data, isText: Bool) {
         _ = bytes(frame) { fio_net_stream_in($0, $1, isText ? 1 : 0, now) }
     }
-    /// The next message to send as one binary frame, nil for none now.
+    /// The next message to send as one binary frame, nil for none now. An EMPTY frame is not one to send: it
+    /// says the socket is dead (the broker has not answered a ping), so the host closes it and runs its reconnect.
     public static func streamNext() -> Data? {
         fio_net_stream_next(now).flatMap { try? readNcOut($0) }.map { Data($0.bytes.map { UInt8(truncatingIfNeeded: $0) }) }
     }
