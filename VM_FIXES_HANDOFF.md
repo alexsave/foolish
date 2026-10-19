@@ -336,3 +336,48 @@ Marginal RSS per connection (64 to 192 games, 256 more sockets): before 15.4 kB,
 - cb_user is ~500 B, heap-allocated per open connection (RSS per connection); could be trimmed.
 - verify_token now costs two store point reads per HTTP request; measure before/after.
 - HELLO closes if ANY session ended during its flight (cheap and safe, rare).
+
+
+## Cleanup pass (2026-10-19, after vm-ws; final state of this pass)
+Every commit below is pushed on vm-fixes, and `make -k test` and `make smoke` were green at each one.
+No PR (merges wait for the cutover).
+
+### Done
+- 80cbab25b checkpoints off the commit path (store_sqlite.c "the checkpointer"): a thread with its own connection runs PASSIVE passes every 1000 frames, and at 8192 frames the next group waits for a pass that starts after it stopped, so the WAL rewinds; the WAL hook is the meter (`cb_store_local_wal_frames`, logged at close).
+  Cause, from `bench/nano/prof_off.sh` (perf trace): 354 fsyncs in 12 s inside commits, 4.1 ms average, 42 ms max, with the one worker holding the connection.
+  Saturation 16.5k to 19.5k moves/s on a quiet host, p99 10.3 to 0.9 ms, 0.74 to 0.96 cores.
+  `unit_checkpoint` runs on a VFS whose syncs take 20 ms; the first read before a pass matters only on Linux (Alpine's SQLite), where its mutant fails.
+- 2bb1034a4 a true per-game lock (`cb_table_lock`/`cb_table_unlock` in table_ops.c); a bot computes unlocked and takes the lock only to commit (the store's version fence validates it).
+  48 four-seat octogen tables at 1 CPU: human ack p99 1.3 to 0.8 ms.
+- 9cbdf5a67 sessions found live are held in memory under serve (auth.c, `CB_PROV_ONE_PROCESS`): 5.7 to 1.3 us per HTTP token check; filled on first check rather than loaded at start.
+- a2f4fe2af one instance per database (flock on `<db>.serve-lock`, boot.c).
+- 682a0e345 unit_v1's flaky second-game pick (a stale `g_seen`), and s3_blob's sprintf (it broke the macOS ASan build).
+- 4a55481ff staging fixes from the cutover prep, plus vm_boot.sh paging GetParametersByPath.
+- aec8f168d export: schema 8 (`username_key` unique, `username` as shown), orphan chat skipped and counted, bulk reads paced to the table's RCU instead of the 5 RCU of an index the export never reads.
+  The account merge and ELO reset belong to another agent now: stay out of foolish/server/migrate/.
+- DESIGN.md "The VM path" rewritten to match the code.
+
+### Numbers (final build F1, rig, CBASE_REQ_WORKERS=1)
+- Human pace at 0.1 CPU: 64 games 390 us/move, p95 1.0 ms, RSS 8.5 MB; 192 games 250 us/move, p95 0.5 ms, p99 0.7 ms, RSS 10.9 MB.
+- Saturation: 18.3k moves/s, p99 1.1 ms (C4 beside it 18.6k).
+  The host's load average was 5 to 10 during this pass (other agents), and the same binary read anywhere from 7.8k to 18.3k, so compare only runs made back to back.
+- WAL: 9.8 KB per move (463190 frames over 194089 moves, 2.4 frames per move: the games row's page and the game_moves page); 186603 commits for 194089 moves, so group commit rarely finds company at 16 clients.
+  A smaller page size (1 KB pages: about 2.5 KB per move) is the obvious next experiment.
+- 1024 games at 0.1 CPU (Alex asked for it over 192): started with `runbig.sh F1 0.1 1024`, result not collected before the stop; rerun it.
+
+### Not done (in the order the list gave them)
+1. Item 4, the rest of the Lambda leftovers on the serve path:
+   - the store's `lease_*`, `bots_idle`, `games_needing_bots` and the SCAN marker: rows_foolish.c/.h, rows_sql.c (4 refs), bots.c (`in_memory()`, `drive_round`), lib_app_store_mem.c, lib_faultstore.c, unit_store.c (43 refs), unit_dynamo_ops.c, fz_dynamo_store.c, admin_panels.c;
+   - bots.c `budget_left`, `BOT_DEADLINE_MARGIN_MS`, `rekick` and the `ctx->deadline_ms` branches (`main_lambda.c` sets it);
+   - the after-phase (`core/src/after.c`, `cb_after_fanout` in fanout.c `held_run`, `cb_after_kick` in bots.c ~:422);
+   - the row cache (table_ops.c `g_cache`, `cb_row_load`'s cache path, the 2-attempt recheck in `cb_table_run`), to be replaced by game state held under the per-game lock.
+2. Item 5, 16-byte ids in the in-memory row structs (`cb_uuid` text in store.h rows, `cb_user`), text only at URLs and the wire.
+3. Item 6: the long-game scenario (games forced past 100 moves, before = bin/serve-I0, which needs the old MQTT client `bin/p3load2-linux.new`), the smaps split at 192 vs 384 games (`mem.sh`, `smaps.py`), the open connection count, and sizing the per-thread pools and SQLite's cache to one worker.
+4. A fresh saturation top-10 profile on a quiet host (`prof2.sh F1 8` with TMIN=0 TMAX=1, then `rep3.sh` in the perf image).
+
+### Landmines found in this pass
+- macOS make 3.81 compares mtimes in whole seconds: a mutation written in the same second as the last build is not rebuilt, and the test "passes".
+  `scratchpad/mut1.sh` sleeps 1.2 s around each edit; earlier batch results without the sleep are not to be trusted.
+- A fresh SQLite connection does not know the file is in WAL mode until its first read; on Linux a checkpoint before that is a silent no-op (log -1).
+- `docker rm -f` kills the server without SIGTERM, so the WAL meter's close line needs `WAL=1` with `CBASE_RESTART=1`.
+- The users.email column is a Supabase-ism (a transform of the username); it can go once sign-in resolves users through `username_key` everywhere.
