@@ -282,7 +282,9 @@ int nw_put_board(const NwBoardRow *b, uint8_t *out, int cap) {
 }
 
 int nw_put_history(const NwHistoryRow *h, uint8_t *out, int cap) {
-    if (!h || !fits8(h->id_len, NW_ID_MAX) || h->n_players > MAX_PLAYERS || h->created_ms > LE_U48_MAX) return NW_E_WIRE;
+    if (!h || !fits8(h->id_len, NW_ID_MAX) || h->n_players > MAX_PLAYERS || h->created_ms > LE_U48_MAX || h->n_names > MAX_PLAYERS) return NW_E_WIRE;
+    for (int i = 0; i < h->n_names; i++)
+        if (!fits8(h->name_len[i], NW_NAME_MAX)) return NW_E_WIRE;
     wr w = { out, out ? cap : 0, 0, 0 };
     w_str8(&w, h->id, h->id_len);
     w_u48(&w, h->created_ms);
@@ -291,6 +293,8 @@ int nw_put_history(const NwHistoryRow *h, uint8_t *out, int cap) {
     w_u8(&w, h->rank);
     w_u8(&w, h->fool);
     w_u32(&w, h->duration_s);
+    w_u8(&w, h->n_names);
+    for (int i = 0; i < h->n_names; i++) w_str8(&w, h->name[i], h->name_len[i]);
     return w_done(&w);
 }
 
@@ -329,6 +333,9 @@ static void get_history(rd *r, NwHistoryRow *h) {
     h->rank = r_u8(r);
     h->fool = r_u8(r);
     h->duration_s = r_u32(r);
+    h->n_names = r_u8(r);
+    if (h->n_names > MAX_PLAYERS) { r->bad = 1; return; }
+    for (int i = 0; i < h->n_names; i++) r_str8(r, h->name[i], NW_NAME_MAX, &h->name_len[i]);
 }
 
 // Scratch for skipping rows while walking to row i; each kind's row is read

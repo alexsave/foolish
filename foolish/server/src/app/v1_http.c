@@ -21,6 +21,7 @@
 #include "netwire.h"
 #include "../../../../shared/c/sha256.h"
 #include "../../../../shared/c/hex/hex.h"
+#include "replay_extras.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -546,11 +547,31 @@ static bool history_fn(const cb_snapshot_row *s, void *ud) {
     memcpy(h.id, s->id, n);
     h.created_ms = s->created_at > 0 ? (uint64_t)s->created_at : 0;
     h.n_players = (uint8_t)s->n_players;
+    // A pointer from before they held a summary: cut it from the replay the
+    // store lent (table_ops' rule, the same one the game end uses).
+    cb_snap_summary sum = s->sum;
+    int rank = s->rank;
+    if (!sum.has && s->moves_len && s->moves_len <= INT32_MAX) {
+        cb_table_snap_summary(&sum, s->moves, (int)s->moves_len, s->extras, (int)s->extras_len);
+        if (sum.has && s->seat >= 0) rank = cb_snapshot_rank(&sum, s->n_players, s->seat);
+    }
     h.seat = s->seat >= 0 ? (uint8_t)s->seat : NW_HISTORY_NONE;
-    h.rank = (uint8_t)(s->sum.has && s->rank > 0 ? s->rank : 0);
-    h.fool = s->sum.has && s->sum.fool >= 0 ? (uint8_t)s->sum.fool : NW_HISTORY_NONE;
-    h.duration_s = s->sum.has && s->sum.duration_s >= 0 ? (uint32_t)s->sum.duration_s : NW_HISTORY_NO_TIME;
-    LIST_PUT(l, 48, nw_put_history(&h, out, (int)cap_));
+    h.rank = (uint8_t)(sum.has && rank > 0 ? rank : 0);
+    h.fool = sum.has && sum.fool >= 0 ? (uint8_t)sum.fool : NW_HISTORY_NONE;
+    h.duration_s = sum.has && sum.duration_s >= 0 ? (uint32_t)sum.duration_s : NW_HISTORY_NO_TIME;
+    // The seats' names come from the replay's extras (a pointer holds none);
+    // extras the kernel will not read, or naming a different number of seats,
+    // give none and the list shows "#1 #2 ...".
+    static _Thread_local ReplayExtras x;
+    if (s->extras_len && s->extras_len <= INT32_MAX && replay_extras_unpack(s->extras, (int)s->extras_len, &x) >= 0
+        && x.n_names == s->n_players && x.n_names <= MAX_PLAYERS) {
+        h.n_names = (uint8_t)x.n_names;
+        for (int i = 0; i < x.n_names; i++) {
+            h.name_len[i] = (uint8_t)(x.names[i].len <= NW_NAME_MAX ? x.names[i].len : 0);
+            memcpy(h.name[i], x.names[i].text, h.name_len[i]);
+        }
+    }
+    LIST_PUT(l, 48 + (size_t)MAX_PLAYERS * (NW_NAME_MAX + 1), nw_put_history(&h, out, (int)cap_));
     return !l->bad;
 }
 

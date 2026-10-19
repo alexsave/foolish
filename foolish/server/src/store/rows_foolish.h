@@ -136,8 +136,11 @@ typedef struct {
     uint8_t *extras; size_t extras_len;      // kernel replay extras
     int64_t  created_at;
     cb_snap_summary sum;                     // on put: the game's; the pointers hold the per-player part below
-    // Filled by a query for its viewer (a summary_only row holds no moves,
-    // extras or player ids): their seat and rank (1 = first out, n = the fool).
+    // Filled by a query for its viewer (a summary_only row holds no player ids):
+    // their seat and rank (1 = first out, n = the fool; 0 with sum.has false).
+    // A summary_only row lends its extras (the names) for the callback, and
+    // its moves too when sum.has is false: the caller cuts the summary from
+    // them (then the rank from cb_snapshot_rank).
     int      seat, rank;
 } cb_snapshot_row;
 
@@ -170,7 +173,7 @@ typedef struct {
     int         limit;       // 0: no limit
     bool        newest_first;
     const char *ref;         // NULL: any; else the game id OR the snapshot id (the history row's id opens its replay)
-    bool        summary_only;   // the viewer's pointers alone: no BatchGetItem, no moves/extras/player ids (history)
+    bool        summary_only;   // history: the viewer's pointers (one Query) and one BatchGetItem of the replays projected to extras (+ moves for a pointer with no summary); no player ids
 } cb_snapshot_query;
 
 typedef bool (*cb_member_fn)(const cb_member_row *r, void *ud);

@@ -212,10 +212,10 @@ export const board = async (): Promise<NetBoardRow[]> => (await ask({ kind: N.NC
 /** The caller's rating (null for none) and their replays, newest first. */
 export async function history(): Promise<{ rating: number | null; rows: NetHistoryRow[] }> {
     const a = await ask({ kind: N.NC_DO_HISTORY });
-    const rows = a.rows as { id: string; createdMs: bigint; nPlayers: number; seat: number; rank: number; fool: number; durationS: number }[];
+    const rows = a.rows as { id: string; createdMs: bigint; nPlayers: number; seat: number; rank: number; fool: number; durationS: number; names: { name: string }[] }[];
     return {
         rating: a.done.hasRating ? a.done.rating : null,
-        rows: rows.map((r) => ({ id: r.id, createdMs: Number(r.createdMs), nPlayers: r.nPlayers, seat: r.seat, rank: r.rank, fool: r.fool, durationS: r.durationS })),
+        rows: rows.map((r) => ({ id: r.id, createdMs: Number(r.createdMs), nPlayers: r.nPlayers, seat: r.seat, rank: r.rank, fool: r.fool, durationS: r.durationS, names: r.names.map((n) => n.name) })),
     };
 }
 /** The newest replay of a game the caller played in (the game's id or a history row's), or null. */

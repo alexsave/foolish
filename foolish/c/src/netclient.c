@@ -543,6 +543,11 @@ const NcHistoryRow *nc_history_row(const uint8_t *body, int len, int i) {
     g_row.hist.rank = h.rank;
     g_row.hist.fool = h.fool;
     g_row.hist.duration_s = h.duration_s;
+    g_row.hist.n_names = h.n_names;
+    for (int k = 0; k < h.n_names; k++) {
+        g_row.hist.names[k].len = h.name_len[k];
+        memcpy(g_row.hist.names[k].name, h.name[k], h.name_len[k]);
+    }
     return &g_row.hist;
 }
 

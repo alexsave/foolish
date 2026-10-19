@@ -115,6 +115,12 @@ int cb_table_view(cb_ctx *ctx, const char *game_id, const char *viewer_id, cb_vi
 typedef bool (*cb_view_fn)(const cb_view_row *v, void *ud);
 int cb_table_views_of_user(cb_ctx *ctx, const char *user_id, int limit, cb_view_fn fn, void *ud);
 
+// The history list's summary of a replay (who was the fool, the order the
+// others went out, the extras' gaps summed): the game end writes it into the
+// pointers, and the list cuts it for a pointer from before they held one. A
+// code the kernel will not read leaves m->has false.
+void cb_table_snap_summary(cb_snap_summary *m, const uint8_t *code, int n_code, const uint8_t *extras, int n_extras);
+
 // The status label the facade prints for a GAME_STATUS_* number.
 const char *cb_table_status_label(int status);
 

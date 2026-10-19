@@ -15,6 +15,6 @@
 --count NcOut.bytes=len
 --count NcBotRow.id=id_len --count NcBotRow.nickname=nickname_len --count NcBotRow.key=key_len
 --count NcBoardRow.id=id_len --count NcBoardRow.name=name_len
---count NcHistoryRow.id=id_len
+--count NcHistoryRow.id=id_len --count NcHistoryRow.names=n_names --count NcName.name=len
 --count NcIntent.gid=gid_len --count NcIntent.name=name_len --count NcIntent.password=password_len --count NcIntent.bytes=bytes_len
 --const NC_ --const NW_ --const ASK_WHY_

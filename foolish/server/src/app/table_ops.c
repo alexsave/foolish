@@ -240,10 +240,10 @@ static void seat_id(const RosterSeat *seat, cb_uuid out) {
 // The history list's line of a replay (cb_snap_summary): who was the fool, the
 // order the others went out, and the extras' gaps summed. A code or extras the
 // kernel will not read leave the summary absent, and the list shows the row
-// without it.
-static void snap_summary(cb_snapshot_row *snap, const uint8_t *code, int n_code, const uint8_t *extras, int n_extras) {
+// without it. One owner: the game end cuts it here for the pointers, and the
+// history list cuts it here for a pointer written before they held one.
+void cb_table_snap_summary(cb_snap_summary *m, const uint8_t *code, int n_code, const uint8_t *extras, int n_extras) {
     ReplaySummary d;
-    cb_snap_summary *m = &snap->sum;
     if (replay_summary_v6(code, n_code, &d) != REPLAY_EOK || d.num_eliminated < 0 || d.num_eliminated > CB_MAX_SEATS) return;
     m->has = true;
     m->fool = d.fool;
@@ -296,7 +296,7 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     snap.extras = extras;
     snap.extras_len = (size_t)n_extras;
     snap.created_at = cb_app_now();
-    snap_summary(&snap, code, n_code, extras, n_extras);
+    cb_table_snap_summary(&snap.sum, code, n_code, extras, n_extras);
     if ((rc = CB_ROWS_CALL(ctx->store, snapshot_put, &snap)) != CB_OK) why = "snapshot_put failed";
 out:
     if (why) CB_ERROR("table", "game %s: snapshot failed, keeping the log: %s (%d)", nrow->id, why, rc);
