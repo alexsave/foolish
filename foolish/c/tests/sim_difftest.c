@@ -7,6 +7,7 @@
 #include "../src/legal.h"
 #include "../src/strategy.h"
 #include "../src/cordite_sim.h"
+#include "difftest_step.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -35,29 +36,6 @@ static void game_fingerprint(const Game *g, uint64_t *hand, int *def, int *fa,
     }
     *good = g->good_players_mask;
     *deckc = g->deck_count;
-}
-
-// One struct step (mirrors cd_simulate's inner loop, handwritten only).
-static int struct_step(Game *g) {
-    for (int pi = 0; pi < g->num_players; pi++) {
-        if (!should_bot_act(g, pi)) continue;
-        LegalMoves moves;
-        calculate_legal_moves_lite(g, pi, &moves);
-        if (moves.n == 0) continue;
-        int idx = handwritten_strategy_choose(g, pi, &moves, NULL);
-        if (idx < 0 || idx >= moves.n) continue;
-        bool ok;
-        switch (moves.moves[idx].type) {
-            case MOVE_ATTACK: ok = handle_attack(g, pi, moves.moves[idx].cards, moves.moves[idx].n_cards); break;
-            case MOVE_COVER:  ok = handle_cover(g, pi, moves.moves[idx].cards, moves.moves[idx].attack_cards, moves.moves[idx].n_cards); break;
-            case MOVE_PASS:   ok = handle_pass(g, pi, moves.moves[idx].cards, moves.moves[idx].n_cards); break;
-            case MOVE_PICKUP: ok = handle_pickup(g, pi); break;
-            case MOVE_GOOD:   ok = handle_good(g, pi); break;
-            default: ok = false;
-        }
-        if (ok) return pi;
-    }
-    return -1;
 }
 
 extern int cd_sim_one_step(SimState *s);  // exposed for the difftest
