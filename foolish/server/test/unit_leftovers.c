@@ -244,10 +244,10 @@ static void when_to_call_again(void) {
     s.user_id_len = 1; s.user_id[0] = 'u';
     uint8_t blob[64];
     T_EQ_INT(nc_session_load(blob, nw_session_encode(&s, blob, sizeof blob)), NW_OK);
-    T_EQ_INT(nc_due_ms(1000), 0);   // the CONNECT
+    T_EQ_INT(nc_due_ms(1000), 0);   // the HELLO
     T_CHECK(nc_stream_next(1000) != NULL);
-    const uint8_t connack[] = { 0x20, 2, 0, 0 };
-    nc_stream_in(connack, 4, 0, 1000);
+    const uint8_t ready[] = { 1, 61 };   // SF_READY
+    nc_stream_in(ready, 2, 0, 1000);
     T_EQ_INT(nc_due_ms(1000), NC_PING_MS);   // the stream's ping
     NcIntent in;
     memset(&in, 0, sizeof in);
