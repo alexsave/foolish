@@ -5,8 +5,8 @@
  *   ./build/tb_fuzz [games] [stream]  */
 #include "tb_check.h"
 #include "../src/tb_plan.h"
+#include "../../../shared/c/util.h"
 
-static int popcount(unsigned x) { int k = 0; while (x) { k += x & 1; x >>= 1; } return k; }
 
 static void invariants(const TbGame *g, int *scores)
 {
@@ -18,7 +18,7 @@ static void invariants(const TbGame *g, int *scores)
             CHECK((g->filled[s] >> c & 1) || g->score[s][c] == 0, "an open category holds nothing");
         if (!tb_is_in(g, s)) continue;
         in++;
-        int f = popcount(g->filled[s]);
+        int f = util_popcount32(g->filled[s]);
         if (f < lo) lo = f;
         if (f > hi) hi = f;
     }

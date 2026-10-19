@@ -6,6 +6,7 @@
 #include "uttt_big_bot.h"
 #include <string.h>
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/util.h"
 
 /* The node numbering uttt_big.h states as its contract: the level-L node
  * with prefix p is id (9^L - 1) / 8 + p. */
@@ -49,15 +50,13 @@ static uint32_t below(uint64_t *s, uint32_t n)
     return (uint32_t)(((uint64_t)rng_u32(s) * n) >> 32);
 }
 
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
-
 int utb_bot_cap_for(int plies, int budget)
 {
     /* The widest c whose tree of `plies` plies fits the budget. An alpha-beta
      * tree that meets its best move first has c^ceil(N/2) + c^floor(N/2) - 1
      * leaves, and a leaf with the scans and plays above it costs about
      * UTB_BOT_NODE_COST units. */
-    plies = clampi(plies, 1, UTB_BOT_PLIES_MAX);
+    plies = util_clampi(plies, 1, UTB_BOT_PLIES_MAX);
     if (budget <= 0) return UTB_BOT_CAP_NODE_MIN;
     const long room = (long)budget / UTB_BOT_NODE_COST;
     int c = UTB_BOT_CAP_NODE_MIN;
@@ -73,10 +72,10 @@ int utb_bot_cap_for(int plies, int budget)
 
 void utb_bot_set(UtbBot *b, int plies, int budget)
 {
-    b->plies    = clampi(plies, 1, UTB_BOT_PLIES_MAX);
-    b->budget   = clampi(budget, 0, UTB_BOT_BUDGET_MAX);
+    b->plies    = util_clampi(plies, 1, UTB_BOT_PLIES_MAX);
+    b->budget   = util_clampi(budget, 0, UTB_BOT_BUDGET_MAX);
     b->cap_node = utb_bot_cap_for(b->plies, b->budget);
-    b->cap_root = clampi(4 * b->cap_node, UTB_BOT_CAP_ROOT, UTB_BOT_CAP_MAX);
+    b->cap_root = util_clampi(4 * b->cap_node, UTB_BOT_CAP_ROOT, UTB_BOT_CAP_MAX);
 }
 
 void utb_bot_init(UtbBot *b, uint64_t seed)
@@ -430,10 +429,10 @@ static int negamax(Ctx *c, int d, int alpha, int beta, int ext)
 
 static void sane(UtbBot *b)
 {
-    b->plies    = clampi(b->plies, 1, UTB_BOT_PLIES_MAX);
-    b->cap_root = clampi(b->cap_root, 1, UTB_BOT_CAP_MAX);
-    b->cap_node = clampi(b->cap_node, 1, UTB_BOT_CAP_MAX);
-    b->budget   = clampi(b->budget, 0, UTB_BOT_BUDGET_MAX);
+    b->plies    = util_clampi(b->plies, 1, UTB_BOT_PLIES_MAX);
+    b->cap_root = util_clampi(b->cap_root, 1, UTB_BOT_CAP_MAX);
+    b->cap_node = util_clampi(b->cap_node, 1, UTB_BOT_CAP_MAX);
+    b->budget   = util_clampi(b->budget, 0, UTB_BOT_BUDGET_MAX);
 }
 
 int utb_bot_move(UtbBot *b, UtbGame *g)

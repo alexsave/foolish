@@ -2,6 +2,7 @@
 #include "tb_beats.h"
 #include "tb_code.h"
 #include <string.h>
+#include "../../../shared/c/util.h"
 
 /* ---- curves ----------------------------------------------------------------------- */
 
@@ -56,13 +57,6 @@ int tb_beats_pre(const TbGame *g, int from, TbBeatFrame *out)
 
 /* ---- building --------------------------------------------------------------------------- */
 
-static int popcount5(int m)
-{
-    int k = 0;
-    for (int i = 0; i < TB_DICE; i++) k += m >> i & 1;
-    return k;
-}
-
 int tb_beats_build(const TbEvent *ev, int n, const TbBeatFrame *start, int n_seats, int mode, TbBeats *out)
 {
     memset(out, 0, sizeof *out);
@@ -86,7 +80,7 @@ int tb_beats_build(const TbEvent *ev, int n, const TbBeatFrame *start, int n_sea
             b.kind = TB_BK_SETTLE;
             b.ease = TB_EASE_SETTLE;
             b.mask = e->mask;
-            b.parts = (uint8_t)popcount5(e->mask);
+            b.parts = (uint8_t)util_popcount32((unsigned)(e->mask) & ((1u << TB_DICE) - 1));
             b.stagger_ms = TB_T_SETTLE_STEP;
             b.part_ms = TB_T_SETTLE;
             b.dur_ms = (uint16_t)((b.parts - 1) * TB_T_SETTLE_STEP + TB_T_SETTLE);
