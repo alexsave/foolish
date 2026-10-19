@@ -733,10 +733,11 @@ int table_rankings(const Table *t, int8_t seats_out[MAX_PLAYERS]) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     const Game *g = t->g;
     unsigned char elim[MAX_PLAYERS];
-    for (int i = 0; i < g->num_eliminated; i++) elim[i] = (unsigned char)g->elimination_order[i];
+    const int n_elim = g->num_eliminated < MAX_PLAYERS ? g->num_eliminated : MAX_PLAYERS;
+    for (int i = 0; i < n_elim; i++) elim[i] = (unsigned char)g->elimination_order[i];
     const int fool = unnamed_seat(g);
     AnimFinishRow rows[MAX_PLAYERS + 1];
-    const int n = anim_finish_rows(elim, g->num_eliminated, fool, g->num_players, -1, rows, MAX_PLAYERS + 1);
+    const int n = anim_finish_rows(elim, n_elim, fool, g->num_players, -1, rows, MAX_PLAYERS + 1);
     if (n < 0) return n;
     for (int i = 0; i < n && i < MAX_PLAYERS; i++) seats_out[i] = (int8_t)rows[i].seat;
     return n;

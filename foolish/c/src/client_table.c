@@ -986,7 +986,7 @@ int client_push_settle(ClientTable *c, const TableView *open, const TableView *f
     }
 
     // 3. What is left, judged on the board of the last event not played.
-    uint8_t table_bound[CLIENT_CONFLICT_MAX_MOTIONS], hand_bound[CLIENT_CONFLICT_MAX_MOTIONS], pick[CLIENT_CONFLICT_MAX_MOTIONS];
+    uint8_t table_bound[CLIENT_CONFLICT_MAX_MOTIONS], hand_bound[CLIENT_CONFLICT_MAX_MOTIONS], pick[CLIENT_CONFLICT_MAX_MOTIONS] = { 0 };
     uint8_t verdicts[CLIENT_CONFLICT_MAX_MOTIONS];
     int n_table_bound = 0, n_hand_bound = 0, pass_pending = 0;
     for (int i = 0; i < n_motions; i++) {
@@ -1101,12 +1101,12 @@ int client_revert_board(ClientTable *c, TableView *v, const TableView *magic, co
         || q->n_events > CLIENT_CONFLICT_MAX_EVENTS || q->n_motions > CLIENT_CONFLICT_MAX_MOTIONS) return CLIENT_E_FORMAT;
     for (int e = 0; e < q->n_events; e++) if (q->events[e].n_cards > MAX_HAND_SIZE) return CLIENT_E_FORMAT;
     const int8_t lead = v->first_attacker, shield = v->defender;
-    Card to_table[CLIENT_CONFLICT_MAX_MOTIONS], to_hand[CLIENT_CONFLICT_MAX_MOTIONS];
+    Card to_hand[CLIENT_CONFLICT_MAX_MOTIONS];
     int n_to_table = 0, n_to_hand = 0, sweep = CLIENT_EVENT_NONE, rc = CLIENT_OK;
     for (int i = 0; i < s->n_order; i++) {
         if (s->order[i] >= q->n_motions) return CLIENT_E_FORMAT;
         const ConflictMotion *m = &q->motions[s->order[i]];
-        if (m->dest == ANIM_DEST_MY_HAND) to_table[n_to_table++] = m->card; else to_hand[n_to_hand++] = m->card;
+        if (m->dest == ANIM_DEST_MY_HAND) n_to_table++; else to_hand[n_to_hand++] = m->card;
     }
     for (int e = 0; e < q->n_events && sweep < 0; e++)
         if (!s->played[e] && (q->events[e].type == ANIM_EVT_PICKUP || q->events[e].type == ANIM_EVT_CARDS_TO_TRASH)) sweep = e;

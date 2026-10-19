@@ -63,7 +63,13 @@ Note for a nano: each client holds two connections (HTTP plus MQTT), and the pro
 
 ## 6. Build hygiene
 
-(see the end of this file once done)
+- rows_foolish.c:1332 (gcc 11 `-Werror=format-truncation`): the `%.*s` snprintf of the snapshot id became `cb_strlcpy` (same cut). Checked with gcc 16 only; the AL2023 gcc 11 build was not rerun.
+- The kernel's 18 warnings (found with gcc 16 on macOS, which prints the same 18 as the Linux build; gcc 13 in docker is clean after the fixes):
+  - client_table.c `pick` maybe-uninitialized: zero-initialized; `to_table` set but never read: dropped, only its count is kept.
+  - cordite_sim.c:1024 (14 warnings): the cover copy loop is bounded by the size of `cards`.
+  - table.c:736 (2): `table_rankings` clamps the eliminated count to MAX_PLAYERS before the copy.
+  - winprob.c:497 (gcc 13 only): `winprob_step` checks the player count at the read site.
+- An AL2023 build needs `diffutils` (the Makefile uses `cmp`), plus gcc, make, openssl-devel and sqlite-devel.
 
 ## Owed tests
 

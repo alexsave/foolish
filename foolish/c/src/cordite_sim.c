@@ -1021,7 +1021,7 @@ static void cover_assign(const SimState *s, int power, const int *bidx, int pn,
         SolMove *m = &buf[(*n)++];
         m->type = MV_COVER;
         m->n = (uint8_t)pn;
-        for (int i = 0; i < pn; i++) { m->cards[i] = chosen_card[i]; m->battle[i] = (uint8_t)bidx[i]; }
+        for (int i = 0; i < pn && i < (int)sizeof m->cards; i++) { m->cards[i] = chosen_card[i]; m->battle[i] = (uint8_t)bidx[i]; }
         return;
     }
     int atk = s->atk[bidx[depth]];

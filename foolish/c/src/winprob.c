@@ -481,6 +481,7 @@ int winprob_read_step(const unsigned char *buf, int len, const WinprobHeader *h,
     if (at + h->step_bytes > len) return -WINPROB_ETRUNC;
     const unsigned char *r = buf + at;
     int np = h->n_players;
+    if (np < 2 || np > MAX_PLAYERS) return -WINPROB_ETRUNC;   // the header says so (winprob_header), a hand-built one may not
     out->move    = (uint16_t)wp_rd16(&r);
     out->seat    = (uint8_t)wp_rd8(&r);
     out->kind    = (uint8_t)wp_rd8(&r);
