@@ -106,7 +106,8 @@ Owed tests:
 Tests to fix:
 - none known; the display list is unchanged by construction.
 
-Fixes to make:
+Fixes to make - LEFT (decided, not done): the split is not contained. uttt_draw_board emits ONE flat list whose order is part of the frame: wash rect first, the grid hashes, then per block the cells in order with the last mark drawn IN PLACE (the `continue` inside the cell loop), the block's big mark after its cells, the win line last. The moving parts (wash, last mark, big mark, win line, outline) sit between settled pieces, so a settled-board/overlay split either reorders the list (frames no longer byte-identical, and overdraw order changes) or caches several list ranges with point-offset fix-ups. That needs the draw kernel emitting ranges, a bigger change than the whole-frame memcmp cache that is in. Revisit only if the measured settled-frame cost shows the in-flight rebuild matters.
+(original note:)
 - Finer cache: split uttt_draw_board into settled board and animated overlay (last mark, big mark, win line, outline) so the in-flight frames only rebuild the moving part.
 
 ## Fixes to make (collected; done at the end of the list, before the test pass)
@@ -118,7 +119,7 @@ Fixes to make:
   A pointer with no summary (written before item 1) is cut by cb_table_snap_summary (table_ops.c, the one function the game end also calls), the viewer's seat from player_ids and the rank from cb_snapshot_rank. Pointers stay name-free.
   Owed tests: history_fn with a pointer lacking n_players/rank gets its row from the replay (old pointer shows, rank 1..n, fool, duration); a summary pointer's batch get projects only id+extras (mutation: project moves too and a counting store fails); names order and the "#n" fallback for extras naming fewer seats; nw_put_history/nw_get_history round trip with n_names (0, n, MAX_PLAYERS+1 bad, name_len > NW_NAME_MAX bad); web historyEntry uses the names when names.length == nPlayers.
   Tests to fix: everything listed under item 1 that builds an NwHistoryRow or reads NcHistoryRow (the names fields are new; zero n_names is valid); fz_netclient moves_off check; unit_v1.c hr checks.
-- cb_rows_user_import is not atomic (read then write); fine for cbase-import, noted in case another caller appears.
+- LEFT: cb_rows_user_import is not atomic (read then write); fine for cbase-import, noted in case another caller appears.
 
 ## Item: hand-rolled security follow-ups (admin token, SigV4 wipes, product fuzz)
 
@@ -276,3 +277,10 @@ Lifts, all header-only in shared/ unless noted. Every change is compile-checked 
 - (original note:) cbase-export does not compare attribute values in the verify, only keys; a value compare via item_batch_get on both sides would cost a second full read of the table.
 - DONE: the Lambda path reads CloudFront-Viewer-Address through cb_viewer_addr_parse too (cb_viewer_key has one header read; a header that is not strict ip:port falls to the peer). Tests to fix: unit_limits.c the_viewer_address - the "not-an-address" Lambda case now expects "" (and the peer when one is given), and the portless v6 case got a port ("2001:db8:1:2:ffff::1:443"); both edited, not run. Still true: Lambda trusts the header with CBASE_ORIGIN_SECRET unset (the function URL is reachable only through the edge).
 - (original note:) Lambda path still trusts CloudFront-Viewer-Address with CBASE_ORIGIN_SECRET unset (existing behaviour, function URL reachable only through the edge); leniency of address_key for the Lambda header could go through cb_viewer_addr_parse too (the existing test expects "not-an-address" to stay a key, so that is a behaviour change).
+
+## Fixes pass (this branch's "Fixes to make" round)
+
+Done: history names (7827a940d), dead-socket hookup, production-flag docs, Lambda viewer parse + shellcheck, cbase-export value compare.
+Left on purpose: family 16 (CCollapse, Xcode project), tallybones mac_tests Catalyst, project.yml changes (Alex's call); the uttt overlay split (reason above); cb_rows_user_import atomicity (one-shot import).
+Tests to fix added: unit_limits.c the_viewer_address (edited, not run); the history-row tests (new names fields) listed under item 1.
+Compile status: every changed C file was checked with -fsyntax-only (rows_foolish.c, table_ops.c, v1_http.c, netwire.c, netclient.c, lib_app_store_mem.c, rate_limits.c, unit_limits.c, export.c); the web/iOS edits were not compiled (tsc and xcodebuild are over the 5 s budget).
