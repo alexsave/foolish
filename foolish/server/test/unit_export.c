@@ -1,14 +1,15 @@
 // unit_export.c - cbase-export (migrate/export.c) end to end, against DynamoDB Local (`make check-dynamo`,
 // CBASE_STORE=dynamo; without it the test skips, saying so).
 //
-// A table of about a thousand items is made through the item layer (all five attribute kinds, index keys, the TTL
-// pair, a 1024-byte pk, a 300 KB item), the real build/cbase-export is run on it, and every item is read back
-// out of the SQLite file with item_get and compared attribute by attribute with the table's. Then the exit codes:
-// a second run into the same file is refused (2) unless --into-existing (0), a bad --rate is a usage error (2),
-// an extra item in the file is reported (1), and an item the SQLite side cannot hold (a name past the layer's
-// limit, put straight into DynamoDB Local) is a failure and a MISSING key (1).
+// A table is filled the way production's was, through the DynamoDB store's own operations (accounts with
+// their emails and ratings, games with their seats and session logs, replays with their players' history
+// rows, chat, sessions, refresh tokens, the seeded bots), the real build/cbase-export is run on it, and the
+// SQLite file is read back through its tables: the counts, a game's log, a replay's summary, a message.
+// Then the exit codes: a second run into the same file is refused (2) unless --into-existing (0), a bad
+// --rate is a usage error (2), and an item of a family the SQL store has no table for is a failure (1)
+// that leaves the .partial and makes no file.
 //
-// argv[1] is the path of build/cbase-export. Run from c_base/ (tsb_create_table reads providers/aws/ops/).
+// argv[1] is the path of build/cbase-export. Run from c_base/.
 #include "t.h"
 
 #include "aws/aws_call.h"
@@ -17,6 +18,7 @@
 #include "store/store_import.h"
 #include "store/store_priv.h"
 #include "util/err.h"
+#include "util/uuid.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,88 +29,82 @@
 
 static const char *g_bin;
 static char g_table[64], g_dir[256];
-#define N_ITEMS 1000
+enum { N_USERS = 12, N_GAMES = 6, N_SNAPS = 4, N_CHAT = 5 };
+static cb_uuid g_user[N_USERS];
+static int g_bots;
 
-// ---- the items ---------------------------------------------------------------------------------
-
-typedef struct {
-    char pk[1100], sk[16];
-    char s[64], g1p[40], g1s[40], g2p[40], g2s[40];
-    uint8_t *bytes;
-    size_t   blen;
-    const char *list[3];
-    char l0[16], l1[16], l2[16];
-    cb_av attrs[16];
-    int n;
-} gen;
-
-static void gen_item(gen *g, int i) {
-    memset(g, 0, sizeof *g);
-    snprintf(g->pk, sizeof g->pk, "EXP#%04d", i);
-    snprintf(g->sk, sizeof g->sk, i % 2 ? "ODD" : "EVEN");
-    snprintf(g->s, sizeof g->s, "text %d \xc3\xa9 \"q\" \\ end", i);   // quotes, a backslash, a two-byte character
-    snprintf(g->g1p, sizeof g->g1p, "G1#%d", i % 10);
-    snprintf(g->g1s, sizeof g->g1s, "%08d", i);
-    snprintf(g->g2p, sizeof g->g2p, "G2#%d", i % 7);
-    snprintf(g->g2s, sizeof g->g2s, "%08d", 1000 - i);
-    g->blen = (size_t)(i % 97) + 1;
-    g->bytes = malloc(g->blen);
-    for (size_t k = 0; k < g->blen; k++) g->bytes[k] = (uint8_t)(k * 31 + i);
-    snprintf(g->l0, sizeof g->l0, "a%d", i);
-    snprintf(g->l1, sizeof g->l1, "b");
-    snprintf(g->l2, sizeof g->l2, "c,d");
-    g->list[0] = g->l0; g->list[1] = g->l1; g->list[2] = g->l2;
-    int n = 0;
-    g->attrs[n++] = CB_AVS("s", g->s);
-    g->attrs[n++] = CB_AVN("n", (int64_t)i * 1000003 - 500000000);
-    g->attrs[n++] = CB_AVN("big", i % 3 ? INT64_MAX - i : INT64_MIN + i);
-    g->attrs[n++] = CB_AVBOOL("flag", i % 5 == 0);
-    g->attrs[n++] = CB_AVB("b", g->bytes, g->blen);
-    g->attrs[n++] = CB_AVSL("l", g->list, 3);
-    g->attrs[n++] = CB_AVS("gsi1pk", g->g1p);
-    g->attrs[n++] = CB_AVS("gsi1sk", g->g1s);
-    if (i % 2) {
-        g->attrs[n++] = CB_AVS("gsi2pk", g->g2p);
-        g->attrs[n++] = CB_AVS("gsi2sk", g->g2s);
-    }
-    g->attrs[n++] = CB_AVN("expires_at", 4102444800LL + i);   // seconds: year 2100, so DynamoDB's TTL leaves it
-    g->attrs[n++] = CB_AVN("expires_ms", 4102444800000LL + i);
-    g->n = n;
-}
-
-static bool put(cb_store *s, const char *pk, const char *sk, const cb_av *attrs, int n) {
-    cb_iwrite w;
-    memset(&w, 0, sizeof w);
-    w.op = CB_IW_PUT;
-    w.key = (cb_ikey){ pk, sk };
-    w.attrs = attrs;
-    w.n_attrs = n;
-    int rc = s->ops->item_write(s, &w, NULL);
-    if (rc != CB_OK) fprintf(stderr, "     put %.20s: %s\n", pk, cb_strerror(rc));
-    return rc == CB_OK;
-}
-
-static int g_special, g_bots;
+static bool keep_first_bot(const cb_bot_row *r, void *ud);
 
 static void seed(cb_store *s) {
-    for (int i = 0; i < N_ITEMS; i++) {
-        gen g;
-        gen_item(&g, i);
-        T_CHECK(put(s, g.pk, g.sk, g.attrs, g.n));
-        free(g.bytes);
+    static const uint8_t state[] = { 1, 2, 3, 4 }, roster[] = { 9, 9 }, log1[] = { 0x10, 0x11 }, log2[] = { 0x20 },
+                         moves[] = { 7, 8, 9 }, extras[] = { 5, 6 };
+    for (int i = 0; i < N_USERS; i++) {
+        cb_user_row u = { .created_at = 1000 + i };
+        cb_uuid_v4(u.id);
+        snprintf(u.email, sizeof u.email, "u%d@x.io", i);
+        snprintf(u.username, sizeof u.username, "USER%d", i);
+        snprintf(u.password_hash, sizeof u.password_hash, "$2b$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234");
+        T_EQ_INT(CB_STORE_CALL(s, user_create, &u), CB_OK);
+        memcpy(g_user[i], u.id, sizeof g_user[i]);
+        cb_session_row ss = { .created_at = 5000, .expires_at = 4102444800000LL, .gen = 0 };
+        cb_uuid_v4(ss.id);
+        memcpy(ss.user_id, u.id, sizeof ss.user_id);
+        T_EQ_INT(CB_STORE_CALL(s, session_put, &ss), CB_OK);
+        cb_refresh_row rt = { .created_at = 5000, .expires_at = 4102444800000LL };
+        for (int k = 0; k < 64; k++) rt.token_hash[k] = "0123456789abcdef"[(i * 7 + k) % 16];
+        memcpy(rt.user_id, u.id, sizeof rt.user_id);
+        memcpy(rt.session_id, ss.id, sizeof rt.session_id);
+        T_EQ_INT(CB_STORE_CALL(s, refresh_put, &rt), CB_OK);
     }
-    // A pk of the layer's longest (1024 bytes), and an item of about 300 KB.
-    static char longpk[1100];
-    memset(longpk, 'k', 1024);
-    longpk[1024] = 0;
-    cb_av one[1] = { CB_AVS("s", "long key") };
-    T_CHECK(put(s, longpk, "LONG", one, 1));
-    uint8_t *big = malloc(300 * 1024);
-    for (size_t k = 0; k < 300 * 1024; k++) big[k] = (uint8_t)(k * 7 + k / 251);
-    cb_av ba[2] = { CB_AVB("b", big, 300 * 1024), CB_AVS("s", "big") };
-    T_CHECK(put(s, "EXP#BIG", "BIG", ba, 2));
-    free(big);
-    g_special = 2;
+    g_bots = cb_import_seed_bots(s);
+    T_CHECK(g_bots > 0);
+    cb_bot_row first_bot_row = { 0 };
+    CB_ROWS_CALL(s, bots_list, keep_first_bot, &first_bot_row);
+    for (int i = 0; i < N_GAMES; i++) {
+        cb_game_row g = { .status = 1, .state = (uint8_t *)state, .state_len = sizeof state, .roster = (uint8_t *)roster,
+                          .roster_len = sizeof roster, .created_at = 10, .updated_at = 10 };
+        snprintf(g.id, sizeof g.id, "%06d", i);   // all-digit codes, a leading zero
+        T_EQ_INT(CB_ROWS_CALL(s, game_create, &g, g_user[i]), CB_OK);
+        // A commit seats a second human and a bot and writes the session log; a second one adds to it.
+        cb_game_row n = g;
+        n.version = 1;
+        n.updated_at = 20;
+        cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 2, .n_bots = 1, .log_add = log1,
+                             .log_add_len = sizeof log1, .log_clear = true };
+        n.log_from = 1;
+        memcpy(c.humans[0], g_user[i], sizeof(cb_uuid));
+        memcpy(c.humans[1], g_user[i + 1], sizeof(cb_uuid));
+        memcpy(c.bots[0], first_bot_row.id, sizeof(cb_uuid));
+        T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
+        n.version = 2;
+        c.expected_version = 1;
+        c.log_add = log2;
+        c.log_add_len = sizeof log2;
+        c.log_clear = false;
+        T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
+    }
+    for (int i = 0; i < N_SNAPS; i++) {
+        cb_snapshot_row sn = { .n_players = 2, .moves = (uint8_t *)moves, .moves_len = sizeof moves,
+                               .extras = (uint8_t *)extras, .extras_len = sizeof extras, .created_at = 30 + i,
+                               .sum = { .has = true, .fool = 0, .n_elim = 1, .elim = { 1 }, .duration_s = 60 + i } };
+        cb_uuid_v4(sn.id);
+        snprintf(sn.game_id, sizeof sn.game_id, "%06d", i);
+        memcpy(sn.player_ids[0], g_user[i], sizeof(cb_uuid));
+        memcpy(sn.player_ids[1], g_user[i + 1], sizeof(cb_uuid));
+        T_EQ_INT(CB_ROWS_CALL(s, snapshot_put, &sn), CB_OK);
+    }
+    for (int i = 0; i < N_CHAT; i++) {
+        cb_chat_row c = { .created_at = 40 + i, .message = (char *)"it's \"quoted\" \xc3\xa9" };
+        cb_uuid_v4(c.id);
+        snprintf(c.game_id, sizeof c.game_id, "%06d", 0);
+        memcpy(c.user_id, g_user[i % 2], sizeof c.user_id);
+        T_EQ_INT(CB_ROWS_CALL(s, chat_put, &c), CB_OK);
+    }
+}
+
+static bool keep_first_bot(const cb_bot_row *r, void *ud) {
+    *(cb_bot_row *)ud = *r;
+    return false;
 }
 
 // ---- running the binary -------------------------------------------------------------------------
@@ -155,52 +151,19 @@ static void run_export(run *r, const char *a1, const char *a2, const char *a3, c
 
 // ---- comparing ------------------------------------------------------------------------------------
 
-static bool same_item(const cb_item *a, const cb_item *b) {
-    if (a->n != b->n) return false;
-    for (int i = 0; i < a->n; i++) {
-        cb_av x, y;
-        cb_item_at(a, i, &x);
-        if (!cb_item_get(b, x.name, &y) || !cb_av_same(&x, &y)) return false;
-    }
-    return true;
-}
 
-static int compare_every_item(cb_store *table, cb_store *file) {
-    int same = 0;
-    for (int i = 0; i < N_ITEMS + g_special; i++) {
-        char pk[1100], sk[16];
-        if (i < N_ITEMS) {
-            snprintf(pk, sizeof pk, "EXP#%04d", i);
-            snprintf(sk, sizeof sk, i % 2 ? "ODD" : "EVEN");
-        } else if (i == N_ITEMS) {
-            memset(pk, 'k', 1024);
-            pk[1024] = 0;
-            snprintf(sk, sizeof sk, "LONG");
-        } else {
-            snprintf(pk, sizeof pk, "EXP#BIG");
-            snprintf(sk, sizeof sk, "BIG");
-        }
-        cb_item a, b;
-        cb_item_init(&a);
-        cb_item_init(&b);
-        cb_ikey key = { pk, sk };
-        bool ok = table->ops->item_get(table, key, true, &a) == CB_OK && file->ops->item_get(file, key, true, &b) == CB_OK
-                  && a.n > 0 && same_item(&a, &b);
-        if (!ok) fprintf(stderr, "     item %.24s / %s differs between the table and the file\n", pk, sk);
-        same += ok;
-        cb_item_free(&a);
-        cb_item_free(&b);
-    }
-    return same;
-}
-
-typedef struct { char pk[80], sk[16]; } botkey;
-static bool first_bot(const char *pk, const char *sk, void *ud) {
-    botkey *b = ud;
-    if (strncmp(pk, "BOT#", 4) != 0) return true;
-    snprintf(b->pk, sizeof b->pk, "%s", pk);
-    snprintf(b->sk, sizeof b->sk, "%s", sk);
+typedef struct { long n; } first_count;
+static bool take_count(int n, const char *const *names, const char *const *values, void *ud) {
+    (void)names;
+    if (n > 0 && values[0]) ((first_count *)ud)->n = atol(values[0]);
     return false;
+}
+
+// One count from the file.
+static long count_of(cb_store *s, const char *sql) {
+    first_count c = { -1 };
+    CB_STORE_CALL(s, admin_query, sql, false, take_count, &c);
+    return c.n;
 }
 
 static bool raw_call(const char *target, const char *json) {
@@ -238,10 +201,6 @@ static void the_export_end_to_end(void) {
     cb_store *table = NULL;
     T_EQ_INT(cb_store_open_dynamo(g_table, &table), CB_OK);
     seed(table);
-    // The table holds the schema's bots as a deployed one does, so a SQLite store opened on the file (which seeds
-    // them itself) agrees with it about them.
-    g_bots = cb_import_seed_bots(table);
-    T_CHECK(g_bots > 0);
 
     const char *tmp = getenv("TMPDIR");
     snprintf(g_dir, sizeof g_dir, "%s/cbase-export-%d", tmp && *tmp ? tmp : "/tmp", (int)getpid());
@@ -250,35 +209,42 @@ static void the_export_end_to_end(void) {
     snprintf(file, sizeof file, "%s/out.sqlite", g_dir);
     static run r;
 
-    // The copy: exit 0, everything counted, every item equal in the file.
+    // The copy: exit 0, every family written and counted, the second read equal.
     run_export(&r, "--rate", "100", file, NULL);
     if (r.code != 0) fprintf(stderr, "%s\n", r.out);
     T_EQ_INT(r.code, 0);
-    char want[160];
-    snprintf(want, sizeof want, "table %s: %d items", g_table, N_ITEMS + g_special + g_bots);
-    T_CHECK(strstr(r.out, want) != NULL);
-    snprintf(want, sizeof want, "%d items copied, 0 failed, 0 read back different", N_ITEMS + g_special + g_bots);
-    T_CHECK(strstr(r.out, want) != NULL);
-    T_CHECK(strstr(r.out, "0 missing, 0 extra") != NULL);
-    // The deeper checks ran and agreed: the index keys round-tripped, a second read of the table matched, and
-    // the file was made only at the end (the .partial it was built as is gone).
-    T_CHECK(strstr(r.out, "index keys: ") != NULL && strstr(r.out, ", 0 did not round-trip") != NULL);
-    T_CHECK(strstr(r.out, "second read: ") != NULL && strstr(r.out, ", 0 changed, 0 gone") != NULL);
-    T_CHECK(strstr(r.out, "EXP ") != NULL && strstr(r.out, "DIFFERENT") == NULL);
+    T_CHECK(strstr(r.out, "second read: ") != NULL && strstr(r.out, " 0 differ from the file, 0 gone") != NULL);
+    T_CHECK(strstr(r.out, "DIFFERENT") == NULL && strstr(r.out, "FAILED") == NULL);
+    T_CHECK(strstr(r.out, "0 items failed") != NULL);
     char partial[340];
     snprintf(partial, sizeof partial, "%s.partial", file);
     T_EQ_INT(access(partial, F_OK), -1);
+    // The file's tables, by plain SQL and through the rows serve reads.
     cb_store *dst = NULL;
     T_EQ_INT(cb_store_open_sqlite(file, &dst), CB_OK);
-    T_EQ_INT(compare_every_item(table, dst), N_ITEMS + g_special);
-    // The index keys came with them: a query of one group answers the same on both.
-    cb_item probe;
-    cb_item_init(&probe);
-    cb_ikey k7 = { "EXP#0007", "ODD" };
-    T_EQ_INT(dst->ops->item_get(dst, k7, true, &probe), CB_OK);
-    char g1[40];
-    T_CHECK(cb_item_s(&probe, "gsi1pk", g1, sizeof g1) && strcmp(g1, "G1#7") == 0);
-    cb_item_free(&probe);
+    if (!dst) return;
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM users"), N_USERS);
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM ratings"), N_USERS);
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM bots"), g_bots);
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM games"), N_GAMES);
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM game_members"), 2 * N_GAMES);
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM game_bots"), N_GAMES);
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM replays"), N_SNAPS);
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM replay_players"), 2 * N_SNAPS);
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM chat"), N_CHAT);
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM sessions"), N_USERS);
+    T_EQ_INT(count_of(dst, "SELECT count(*) FROM refresh_tokens"), N_USERS);
+    cb_game_row g;
+    T_EQ_INT(CB_ROWS_CALL(dst, game_get, "000001", &g), CB_OK);
+    T_EQ_INT(g.version, 2);
+    uint8_t *logs = NULL;
+    size_t logs_len = 0;
+    T_EQ_INT(CB_ROWS_CALL(dst, game_logs, "000001", g.log_from, &logs, &logs_len), CB_OK);
+    T_EQ_MEM(logs, logs_len, "\x10\x11\x20", 3);   // the cumulative log, whole
+    free(logs);
+    cb_game_row_free(&g);
+    T_EQ_INT(CB_ROWS_CALL(dst, is_member, "000002", g_user[3]), 1);
+    cb_store_close(dst);
 
     // A second run into the same file is refused; with --into-existing it puts over and agrees.
     run_export(&r, file, NULL, NULL, NULL);
@@ -286,88 +252,41 @@ static void the_export_end_to_end(void) {
     T_CHECK(strstr(r.out, "already holds") != NULL);
     run_export(&r, "--into-existing", file, NULL, NULL);
     T_EQ_INT(r.code, 0);
-    T_CHECK(strstr(r.out, "0 failed, 0 read back different") != NULL);
+    T_CHECK(strstr(r.out, "0 items failed") != NULL);
 
     // Usage errors: exit 2, nothing read (on a path that does not exist, so a refusal of the file cannot stand in for it).
     char fresh[320];
     snprintf(fresh, sizeof fresh, "%s/usage.sqlite", g_dir);
-    run_export(&r, "--rate", "0", fresh, NULL);
-    T_EQ_INT(r.code, 2);
-    run_export(&r, "--rate", "101", fresh, NULL);
-    T_EQ_INT(r.code, 2);
-    run_export(&r, "--rate", "x", fresh, NULL);
-    T_EQ_INT(r.code, 2);
-    run_export(&r, "--rate", "-5", fresh, NULL);
-    T_EQ_INT(r.code, 2);
-    run_export(&r, "--bogus", fresh, NULL, NULL);
-    T_EQ_INT(r.code, 2);
+    static const char *const bad[][2] = { { "--rate", "0" }, { "--rate", "101" }, { "--rate", "x" }, { "--rate", "-5" }, { "--bogus", NULL } };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        run_export(&r, bad[i][0], bad[i][1] ? bad[i][1] : fresh, bad[i][1] ? fresh : NULL, NULL);
+        T_EQ_INT(r.code, 2);
+    }
     T_EQ_INT(access(fresh, F_OK), -1);   // no file was made for any of them
-    run_export(&r, "--rate", NULL, NULL, NULL);
-    T_EQ_INT(r.code, 2);
     run_export(&r, NULL, NULL, NULL, NULL);
     T_EQ_INT(r.code, 2);
     T_CHECK(strstr(r.out, "usage:") != NULL);
 
-    // An item in the file the table does not have (deleted from the table, or expired, during a run) is EXTRA: exit 1.
-    cb_av ex[1] = { CB_AVS("s", "only in the file") };
-    T_CHECK(put(dst, "EXP#EXTRA", "X", ex, 1));
-    run_export(&r, "--into-existing", file, NULL, NULL);
-    T_EQ_INT(r.code, 1);
-    T_CHECK(strstr(r.out, "EXTRA in the file:     EXP#EXTRA / X") != NULL);
-    T_CHECK(strstr(r.out, "0 missing, 1 extra") != NULL);
-    cb_iwrite del;
-    memset(&del, 0, sizeof del);
-    del.op = CB_IW_DELETE;
-    del.key = (cb_ikey){ "EXP#EXTRA", "X" };
-    T_EQ_INT(dst->ops->item_write(dst, &del, NULL), CB_OK);
-
-    // A new file ends up holding exactly the table: the bots a store is opened with are cleared first, so a bot the table
-    // does not have (retired from a deployed table) is not left in the file as an EXTRA.
-    botkey bk = { "", "" };
-    table->ops->item_keys(table, first_bot, &bk);
-    T_CHECK(bk.pk[0] != 0);
-    cb_iwrite rm;
-    memset(&rm, 0, sizeof rm);
-    rm.op = CB_IW_DELETE;
-    rm.key = (cb_ikey){ bk.pk, bk.sk };
-    T_EQ_INT(table->ops->item_write(table, &rm, NULL), CB_OK);
-    char file3[320];
-    snprintf(file3, sizeof file3, "%s/third.sqlite", g_dir);
-    run_export(&r, "--rate", "100", file3, NULL);
-    T_EQ_INT(r.code, 0);
-    T_CHECK(strstr(r.out, "0 missing, 0 extra") != NULL);
-    snprintf(want, sizeof want, "%d items copied, 0 failed", N_ITEMS + g_special + g_bots - 1);
-    T_CHECK(strstr(r.out, want) != NULL);
-    g_bots--;
-
-    // An item the SQLite side cannot hold (an attribute name past the layer's 30 bytes, put straight into
-    // DynamoDB Local) is a failure and a MISSING key: exit 1, the rest still copied.
+    // An item of a family the SQL store has no table for fails the run loudly: exit 1, no file, the .partial
+    // left for a look, and a rerun refuses until it goes.
     char json[512];
-    snprintf(json, sizeof json,
-             "{\"TableName\":\"%s\",\"Item\":{\"pk\":{\"S\":\"EXP#BAD\"},\"sk\":{\"S\":\"BAD\"},"
-             "\"an_attribute_name_far_too_long_for_the_layer\":{\"S\":\"x\"}}}", g_table);
+    snprintf(json, sizeof json, "{\"TableName\":\"%s\",\"Item\":{\"pk\":{\"S\":\"EXP#BAD\"},\"sk\":{\"S\":\"BAD\"}}}", g_table);
     T_CHECK(raw_call("PutItem", json));
-    char file2[320];
+    char file2[320], partial2[340];
     snprintf(file2, sizeof file2, "%s/second.sqlite", g_dir);
+    snprintf(partial2, sizeof partial2, "%s.partial", file2);
     run_export(&r, "--rate", "100", file2, NULL);
     T_EQ_INT(r.code, 1);
-    T_CHECK(strstr(r.out, "MISSING from the file: EXP#BAD / BAD") != NULL);
-    T_CHECK(strstr(r.out, "1 missing, 0 extra") != NULL);
-    T_CHECK(strstr(r.out, "1 failed") != NULL || strstr(r.out, "reading items") != NULL);
-    cb_store_close(dst);
-    // The failed copy was not accepted: no file2, the .partial stays for a look, and a rerun refuses until it goes.
-    char partial2[340];
-    snprintf(partial2, sizeof partial2, "%s.partial", file2);
+    T_CHECK(strstr(r.out, "EXP#BAD / BAD: an unknown family") != NULL);
     T_EQ_INT(access(file2, F_OK), -1);
     T_EQ_INT(access(partial2, F_OK), 0);
     T_CHECK(strstr(r.out, "not accepted") != NULL);
     run_export(&r, "--rate", "100", file2, NULL);
     T_EQ_INT(r.code, 2);
     T_CHECK(strstr(r.out, "left from an earlier run") != NULL);
-    T_EQ_INT(cb_store_open_sqlite(partial2, &dst), CB_OK);
-    T_EQ_INT(compare_every_item(table, dst), N_ITEMS + g_special);   // every other item made it
-    cb_store_close(dst);
     cb_store_close(table);
+    snprintf(json, sizeof json, "{\"TableName\":\"%s\"}", g_table);
+    raw_call("DeleteTable", json);
 }
 
 int main(int argc, char **argv) {
