@@ -3,6 +3,7 @@
 #include "pk_beats.h"
 #include "pk_internal.h"
 #include <string.h>
+#include "../../../shared/c/ease.h"
 
 /* ---- curves ---------------------------------------------------------------- */
 
@@ -16,42 +17,13 @@ static const float BEZ[PK_EASE_COUNT][4] = {
     [PK_EASE_EASE_OUT] = { 0, 0, .58f, 1 },
 };
 
-static float bez1(float a, float b, float t)
-{
-    float u = 1 - t;
-    return 3 * u * u * t * a + 3 * u * t * t * b + t * t * t;
-}
-
-static float bez1_d(float a, float b, float t)
-{
-    float u = 1 - t;
-    return 3 * u * u * a + 6 * u * t * (b - a) + 3 * t * t * (1 - b);
-}
-
 float pk_ease(int ease, float x)
 {
     if (x <= 0) return 0;
     if (x >= 1) return 1;
     if (ease <= PK_EASE_LINEAR || ease >= PK_EASE_COUNT) return x;
     const float *c = BEZ[ease];
-    /* x(t) = x: Newton from t = x, then bisection if it wandered */
-    float t = x;
-    for (int i = 0; i < 8; i++) {
-        float d = bez1_d(c[0], c[2], t);
-        if (d > -1e-5f && d < 1e-5f) break;
-        t -= (bez1(c[0], c[2], t) - x) / d;
-    }
-    float e = bez1(c[0], c[2], t) - x;
-    if (t < 0 || t > 1 || e > 1e-4f || e < -1e-4f) {
-        float lo = 0, hi = 1;
-        t = x;
-        for (int i = 0; i < 30; i++) {
-            float v = bez1(c[0], c[2], t);
-            if (v < x) lo = t; else hi = t;
-            t = (lo + hi) / 2;
-        }
-    }
-    return bez1(c[1], c[3], t);
+    return ease_cubic_bezier(c[0], c[1], c[2], c[3], x);
 }
 
 /* ---- U20 ------------------------------------------------------------------------ */

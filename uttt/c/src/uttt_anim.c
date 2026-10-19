@@ -1,6 +1,7 @@
 #include "uttt_anim.h"
 #include "uttt_draw.h"
 #include "../../../shared/c/sincos.h"
+#include "../../../shared/c/ease.h"
 #include <math.h>
 
 #define BL (1.f / 3.f)
@@ -109,35 +110,6 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
     return m;
 }
 
-/* CSS cubic-bezier(x1, y1, x2, y2) at x, solved for the curve's parameter
- * by Newton then bisection, as a browser does. */
-static float bezier(float x1, float y1, float x2, float y2, float x)
-{
-    if (x <= 0.f) return 0.f;
-    if (x >= 1.f) return 1.f;
-    const float cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
-    const float cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
-    float u = x;
-    for (int i = 0; i < 8; i++) {
-        float fx = ((ax * u + bx) * u + cx) * u - x;
-        float d  = (3 * ax * u + 2 * bx) * u + cx;
-        if (fabsf(fx) < 1e-6f) goto done;
-        if (fabsf(d) < 1e-6f) break;
-        u -= fx / d;
-    }
-    {
-        float lo = 0.f, hi = 1.f; u = x;
-        for (int i = 0; i < 40; i++) {
-            float fx = ((ax * u + bx) * u + cx) * u;
-            if (fabsf(fx - x) < 1e-6f) break;
-            if (fx < x) lo = u; else hi = u;
-            u = (lo + hi) * .5f;
-        }
-    }
-done:
-    return ((ay * u + by) * u + cy) * u;
-}
-
 static float smooth(float t)
 {
     if (t <= 0.f) return 0.f;
@@ -155,8 +127,8 @@ void uttt_motion_at(const UtttMotion *m, int32_t now, UtttFrame *f)
     if (m->mv < 0 || still || now >= m->ink_ms) f->mark_t = 1.f;
     else {
         float x = (float)now / (float)m->ink_ms;
-        f->mark_t = m->mark == UTTT_O ? bezier(.3f, .66f, .36f, 1.f, x)
-                                      : bezier(.32f, .72f, .4f, 1.f, x);
+        f->mark_t = m->mark == UTTT_O ? ease_cubic_bezier(.3f, .66f, .36f, 1.f, x)
+                                      : ease_cubic_bezier(.32f, .72f, .4f, 1.f, x);
     }
     f->landed = f->mark_t >= 1.f;
     f->words = f->landed ? UTTT_WORDS_NOW
@@ -186,15 +158,15 @@ void uttt_motion_at(const UtttMotion *m, int32_t now, UtttFrame *f)
 
     /* the big mark on the X's own curve, the line on UI.html's strikein */
     f->fall_t = (m->fall_at < 0 || still) ? 1.f
-              : bezier(.32f, .72f, .4f, 1.f, (float)(now - m->fall_at) / UTTT_MS_FALL);
+              : ease_cubic_bezier(.32f, .72f, .4f, 1.f, (float)(now - m->fall_at) / UTTT_MS_FALL);
     f->line_t = (m->line_at < 0 || still) ? 1.f
-              : bezier(.4f, .8f, .4f, 1.f, (float)(now - m->line_at) / UTTT_MS_LINE);
+              : ease_cubic_bezier(.4f, .8f, .4f, 1.f, (float)(now - m->line_at) / UTTT_MS_LINE);
     /* the promise: drawn round on the ink's curve, faded as the wash lands */
     f->outline = m->outline;
     if (m->outline < 0) { f->outline_t = 0.f; f->outline_a = 0.f; }
     else {
         f->outline_t = (m->outline_at < 0 || still) ? 1.f
-                     : bezier(.32f, .72f, .4f, 1.f, (float)(now - m->outline_at) / UTTT_MS_OUTLINE);
+                     : ease_cubic_bezier(.32f, .72f, .4f, 1.f, (float)(now - m->outline_at) / UTTT_MS_OUTLINE);
         f->outline_a = m->outline_fade ? 1.f - p : 1.f;
         if (f->outline_a <= 0.f) f->outline = -1, f->outline_a = 0.f;
     }
