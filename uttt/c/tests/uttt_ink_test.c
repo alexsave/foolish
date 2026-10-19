@@ -17,10 +17,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "../../../shared/c/rng.h"
+/* OK(cond, "what") is check.h's; every failure prints (no per-test cap here). */
+#define CHECK_PRINT_CAP 1000000
+#include "../../../shared/c/test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; \
-    printf("FAIL %s:%d %s\n", __FILE__, __LINE__, what); } } while (0)
 
 static UtttPt   PT[400000];
 static UtttPoly PO[4000];
@@ -278,6 +278,5 @@ int main(void)
         OK(hi < 600, "a finished board is a few hundred polygons");
     }
 
-    printf("uttt_ink: %d checks, %d failed\n", checks, fails);
-    return fails ? 1 : 0;
+    return report("uttt_ink");
 }

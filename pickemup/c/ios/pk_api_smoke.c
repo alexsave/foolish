@@ -10,9 +10,9 @@
 #include "pk_api_layout.h"
 #include <stdio.h>
 #include <string.h>
+#define CHECK_PRINT_CAP 1000000
+#include "../../../shared/c/test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("  FAIL %s:%d %s\n", __FILE__, __LINE__, what); } } while (0)
 
 /* ONE KERNEL, SEVERAL PHONES: each person's identity, nickname and seat
  * records are their own device's, so switching person swaps them - and drops
@@ -890,7 +890,7 @@ int main(void)
         words_and_refusals();
     }
 
-    printf("bridge: %d checks, %d failed\n", checks, fails);
-    if (!fails) printf("bridge ok\n");
-    return fails ? 1 : 0;
+    const int rc = report("bridge");
+    if (!rc) printf("bridge ok\n");
+    return rc;
 }

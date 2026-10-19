@@ -12,11 +12,11 @@
 #include <string.h>
 #include "stats.h"
 #include "seed_hash.h"
+#define CHECK_PRINT_CAP 1000000
+#include "../test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("FAIL %s\n", what); } } while (0)
-#define NEAR(a, b, what) do { double a_ = (a), b_ = (b); checks++; \
-    if (!(fabs(a_ - b_) <= 1e-12)) { fails++; printf("FAIL %s: %.17g, want %.17g\n", what, a_, b_); } } while (0)
+#define NEAR(a, b, what) do { double a_ = (a), b_ = (b); g_checks++; \
+    if (!(fabs(a_ - b_) <= 1e-12)) { g_fails++; printf("FAIL %s: %.17g, want %.17g\n", what, a_, b_); } } while (0)
 
 static void test_sums(void)
 {
@@ -122,6 +122,5 @@ int main(void)
     test_sums();
     test_wilson();
     test_seed_hash();
-    printf("stats: %d checks, %d failed\n", checks, fails);
-    return fails ? 1 : 0;
+    return report("stats");
 }

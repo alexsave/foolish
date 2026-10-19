@@ -11,10 +11,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../../shared/c/rng.h"
+/* OK(cond, "what") is check.h's; every failure prints (no per-test cap here). */
+#define CHECK_PRINT_CAP 1000000
+#include "../../../shared/c/test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; \
-    printf("FAIL %s:%d %s\n", __FILE__, __LINE__, what); } } while (0)
 
 static int same_rect(const float *a, const float *b)
 {
@@ -1124,6 +1124,5 @@ int main(void)
     test_rules_drawings();
     test_rules_phrase_box();
 
-    printf("uttt_anim: %d checks, %d failed\n", checks, fails);
-    return fails ? 1 : 0;
+    return report("uttt_anim");
 }

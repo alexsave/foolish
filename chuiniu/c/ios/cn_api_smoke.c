@@ -14,9 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../../shared/c/fnv.h"
+#define CHECK_PRINT_CAP 1000000
+#include "../../../shared/c/test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("  FAIL %s:%d %s\n", __FILE__, __LINE__, what); } } while (0)
 
 static uint8_t recs[3][CN_API_REC_BYTES];
 static int     recn[3];
@@ -274,6 +274,5 @@ int main(int argc, char **argv)
     OK(cn_api_leave() == CN_EOK && table()->me == CN_SEAT_NONE && table()->n_seats == 1, "Cy leaves");
     OK(cn_api_start() == CN_EREFUSED, "not seated: no start");
 
-    printf("ios smoke: %d checks, %d failed\n", checks, fails);
-    return fails ? 1 : 0;
+    return report("ios smoke");
 }

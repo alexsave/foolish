@@ -9,9 +9,10 @@
 #include <math.h>
 #include <stdio.h>
 #include "collapse.h"
+/* OK(cond, "what") is check.h's; every failure prints (no per-test cap here). */
+#define CHECK_PRINT_CAP 1000000
+#include "../test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("FAIL %s (line %d)\n", what, __LINE__); } } while (0)
 
 /* Within 0.05 points, the tolerance the drawn sheet is held to. */
 static int near(float a, float b) { return fabsf(a - b) < 0.05f; }
@@ -49,6 +50,5 @@ int main(void)
     OK(fabsf(collapse_push(500.f, COLLAPSE_MS - 1)) < .05f, "and no step to it at the release");
     OK(collapse_push(500.f, COLLAPSE_MS - 1) > 0.f, "the last step before the end still has something left");
 
-    printf("collapse: %d checks, %d failed\n", checks, fails);
-    return fails != 0;
+    return report("collapse");
 }
