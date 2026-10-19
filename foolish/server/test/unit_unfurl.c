@@ -189,13 +189,13 @@ static void head_falls_back_to_get(void) {
     T_EQ_INT(cb_router_add(r, "HEAD", "/b", 0, h_head), CB_OK);
     T_EQ_INT(cb_router_add(r, "POST", "/c", 0, h_get), CB_OK);
     bool known = false;
-    const cb_route *m = cb_router_match(r, "HEAD", "/a", &known);
+    const cb_route *m = cb_router_match(r, CB_M_HEAD, "/a", &known);
     T_CHECK(m && m->fn == h_get && (m->flags & CB_ROUTE_LOOP));
-    m = cb_router_match(r, "HEAD", "/b", &known);
+    m = cb_router_match(r, CB_M_HEAD, "/b", &known);
     T_CHECK(m && m->fn == h_head);   // a HEAD route of its own wins
-    m = cb_router_match(r, "HEAD", "/c", &known);
+    m = cb_router_match(r, CB_M_HEAD, "/c", &known);
     T_CHECK(!m && known);            // POST only: still 405
-    m = cb_router_match(r, "HEAD", "/d", &known);
+    m = cb_router_match(r, CB_M_HEAD, "/d", &known);
     T_CHECK(!m && !known);
     cb_router_free(r);
 
