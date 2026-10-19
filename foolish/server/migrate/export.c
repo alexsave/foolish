@@ -29,8 +29,9 @@
 // DynamoDB answered it. That costs no second read of the table. A difference
 // is a MISMATCH: the file does not hold what the table did.
 //
-// A file that already holds items is refused unless --into-existing: the
-// export is meant to start a new store, and a put replaces an item.
+// A file that already held items before this run is refused unless --into-existing: the
+// export is meant to start a new store, and a put replaces an item. (A new file's seed, the
+// bots a store is opened with, is cleared first: the file ends up holding exactly the table.)
 // --no-verify skips the second scan.
 //
 // Exit 0: every item copied and read back equal, and the key sets equal. 1: an
@@ -44,6 +45,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 typedef struct {
     char *pk, *sk;
@@ -169,6 +171,12 @@ int main(int argc, char **argv) {
     const char *table = getenv("CBASE_TABLE");
     if (!table || !*table) table = "cbase";
 
+    // A file that is new (absent, or empty) gets the schema's seed when it is opened (the 49 bots): that is
+    // the store's start, not an earlier export, and the table's own rows are the truth, so the seed is cleared
+    // and the file ends up holding exactly the table. A file that held something before is another matter.
+    struct stat sb;
+    bool fresh = stat(path, &sb) != 0 || sb.st_size == 0;
+
     cb_store *src = NULL, *dst = NULL;
     int rc = cb_store_open_dynamo(table, &src);
     if (rc != CB_OK) { fprintf(stderr, "cbase-export: cannot open the DynamoDB table %s: %s\n", table, cb_strerror(rc)); return 2; }
@@ -191,7 +199,21 @@ int main(int argc, char **argv) {
 
     keyset have;
     if (keys_of(dst, &have) != CB_OK) { fprintf(stderr, "cbase-export: cannot list %s\n", path); return 2; }
-    if (have.n && !existing) {
+    if (fresh) {
+        for (size_t i = 0; i < have.n; i++) {
+            cb_iwrite del;
+            memset(&del, 0, sizeof del);
+            del.op = CB_IW_DELETE;
+            del.key = (cb_ikey){ have.k[i].pk, have.k[i].sk };
+            if (dst->ops->item_write(dst, &del, NULL) != CB_OK) {
+                fprintf(stderr, "cbase-export: cannot clear the new file's seed (%s / %s)\n", del.key.pk, del.key.sk);
+                keyset_free(&have);
+                cb_store_close(src);
+                cb_store_close(dst);
+                return 2;
+            }
+        }
+    } else if (have.n && !existing) {
         fprintf(stderr, "cbase-export: %s already holds %zu items; use --into-existing to put over them\n", path, have.n);
         keyset_free(&have);
         cb_store_close(src);

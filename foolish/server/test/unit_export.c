@@ -14,6 +14,7 @@
 #include "aws/aws_call.h"
 #include "lib_store_backend.h"
 #include "store/store.h"
+#include "store/store_import.h"
 #include "store/store_priv.h"
 #include "util/err.h"
 
@@ -87,7 +88,7 @@ static bool put(cb_store *s, const char *pk, const char *sk, const cb_av *attrs,
     return rc == CB_OK;
 }
 
-static int g_special;
+static int g_special, g_bots;
 
 static void seed(cb_store *s) {
     for (int i = 0; i < N_ITEMS; i++) {
@@ -141,9 +142,12 @@ static void run_export(run *r, const char *a1, const char *a2, const char *a3, c
     close(pfd[1]);
     size_t len = 0;
     ssize_t k;
-    while ((k = read(pfd[0], r->out + len, sizeof r->out - 1 - len)) > 0) len += (size_t)k;
+    char drain[4096];
+    while ((k = len < sizeof r->out - 1 ? read(pfd[0], r->out + len, sizeof r->out - 1 - len) : read(pfd[0], drain, sizeof drain)) > 0)
+        if (len < sizeof r->out - 1) len += (size_t)k;   // (what does not fit is read and dropped: the child must not get SIGPIPE)
     r->out[len] = 0;
     close(pfd[0]);
+    if (getenv("UNIT_EXPORT_TRACE")) fprintf(stderr, "---- cbase-export %s %s ----\n%s\n", a1 ? a1 : "", a2 ? a2 : "", r->out);
     int st = 0;
     waitpid(pid, &st, 0);
     r->code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + WTERMSIG(st);
@@ -190,13 +194,24 @@ static int compare_every_item(cb_store *table, cb_store *file) {
     return same;
 }
 
-static bool raw_put(const char *json) {
+typedef struct { char pk[80], sk[16]; } botkey;
+static bool first_bot(const char *pk, const char *sk, void *ud) {
+    botkey *b = ud;
+    if (strncmp(pk, "BOT#", 4) != 0) return true;
+    snprintf(b->pk, sizeof b->pk, "%s", pk);
+    snprintf(b->sk, sizeof b->sk, "%s", sk);
+    return false;
+}
+
+static bool raw_call(const char *target, const char *json) {
     const char *ep = getenv("AWS_ENDPOINT_URL_DYNAMODB");
     char host[256], base[64];
     int port;
     bool tls = true;
     if (!ep || cb_aws_url_parse(ep, host, sizeof host, &port, &tls, base, sizeof base) != CB_OK || tls) return false;
-    static const char *const headers[] = { "Content-Type: application/x-amz-json-1.0", "X-Amz-Target: DynamoDB_20120810.PutItem" };
+    char tg[96];
+    snprintf(tg, sizeof tg, "X-Amz-Target: DynamoDB_20120810.%s", target);
+    const char *const headers[] = { "Content-Type: application/x-amz-json-1.0", tg };
     cb_https_response r;
     int rc = cb_aws_call("dynamodb", "POST", host, port, false, "/", headers, 2, json, strlen(json), 10000, &r);
     bool ok = rc == CB_OK && r.status == 200;
@@ -206,10 +221,27 @@ static bool raw_put(const char *json) {
 
 static void the_export_end_to_end(void) {
     snprintf(g_table, sizeof g_table, "exp_%d_%d", (int)getpid(), rand() % 100000);
-    T_EQ_INT(tsb_create_table(g_table), 0);
+    // The stack table's shape, on demand: the export paces itself to a provisioned table's reads (5 RCU/s here, which a
+    // thousand items would take minutes to read), and an on-demand one is not paced.
+    char ct[1400];
+    snprintf(ct, sizeof ct,
+             "{\"TableName\":\"%s\",\"BillingMode\":\"PAY_PER_REQUEST\",\"AttributeDefinitions\":["
+             "{\"AttributeName\":\"pk\",\"AttributeType\":\"S\"},{\"AttributeName\":\"sk\",\"AttributeType\":\"S\"},"
+             "{\"AttributeName\":\"gsi1pk\",\"AttributeType\":\"S\"},{\"AttributeName\":\"gsi1sk\",\"AttributeType\":\"S\"},"
+             "{\"AttributeName\":\"gsi2pk\",\"AttributeType\":\"S\"},{\"AttributeName\":\"gsi2sk\",\"AttributeType\":\"S\"}],"
+             "\"KeySchema\":[{\"AttributeName\":\"pk\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"sk\",\"KeyType\":\"RANGE\"}],"
+             "\"GlobalSecondaryIndexes\":["
+             "{\"IndexName\":\"gsi1\",\"KeySchema\":[{\"AttributeName\":\"gsi1pk\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"gsi1sk\",\"KeyType\":\"RANGE\"}],\"Projection\":{\"ProjectionType\":\"ALL\"}},"
+             "{\"IndexName\":\"gsi2\",\"KeySchema\":[{\"AttributeName\":\"gsi2pk\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"gsi2sk\",\"KeyType\":\"RANGE\"}],\"Projection\":{\"ProjectionType\":\"ALL\"}}]}",
+             g_table);
+    T_CHECK(raw_call("CreateTable", ct));
     cb_store *table = NULL;
     T_EQ_INT(cb_store_open_dynamo(g_table, &table), CB_OK);
     seed(table);
+    // The table holds the schema's bots as a deployed one does, so a SQLite store opened on the file (which seeds
+    // them itself) agrees with it about them.
+    g_bots = cb_import_seed_bots(table);
+    T_CHECK(g_bots > 0);
 
     const char *tmp = getenv("TMPDIR");
     snprintf(g_dir, sizeof g_dir, "%s/cbase-export-%d", tmp && *tmp ? tmp : "/tmp", (int)getpid());
@@ -223,9 +255,9 @@ static void the_export_end_to_end(void) {
     if (r.code != 0) fprintf(stderr, "%s\n", r.out);
     T_EQ_INT(r.code, 0);
     char want[160];
-    snprintf(want, sizeof want, "table %s: %d items", g_table, N_ITEMS + g_special);
+    snprintf(want, sizeof want, "table %s: %d items", g_table, N_ITEMS + g_special + g_bots);
     T_CHECK(strstr(r.out, want) != NULL);
-    snprintf(want, sizeof want, "%d items copied, 0 failed, 0 read back different", N_ITEMS + g_special);
+    snprintf(want, sizeof want, "%d items copied, 0 failed, 0 read back different", N_ITEMS + g_special + g_bots);
     T_CHECK(strstr(r.out, want) != NULL);
     T_CHECK(strstr(r.out, "0 missing, 0 extra") != NULL);
     cb_store *dst = NULL;
@@ -248,15 +280,20 @@ static void the_export_end_to_end(void) {
     T_EQ_INT(r.code, 0);
     T_CHECK(strstr(r.out, "0 failed, 0 read back different") != NULL);
 
-    // Usage errors: exit 2, nothing read.
-    run_export(&r, "--rate", "0", file, NULL);
+    // Usage errors: exit 2, nothing read (on a path that does not exist, so a refusal of the file cannot stand in for it).
+    char fresh[320];
+    snprintf(fresh, sizeof fresh, "%s/usage.sqlite", g_dir);
+    run_export(&r, "--rate", "0", fresh, NULL);
     T_EQ_INT(r.code, 2);
-    run_export(&r, "--rate", "101", file, NULL);
+    run_export(&r, "--rate", "101", fresh, NULL);
     T_EQ_INT(r.code, 2);
-    run_export(&r, "--rate", "x", file, NULL);
+    run_export(&r, "--rate", "x", fresh, NULL);
     T_EQ_INT(r.code, 2);
-    run_export(&r, "--bogus", file, NULL, NULL);
+    run_export(&r, "--rate", "-5", fresh, NULL);
     T_EQ_INT(r.code, 2);
+    run_export(&r, "--bogus", fresh, NULL, NULL);
+    T_EQ_INT(r.code, 2);
+    T_EQ_INT(access(fresh, F_OK), -1);   // no file was made for any of them
     run_export(&r, "--rate", NULL, NULL, NULL);
     T_EQ_INT(r.code, 2);
     run_export(&r, NULL, NULL, NULL, NULL);
@@ -276,13 +313,32 @@ static void the_export_end_to_end(void) {
     del.key = (cb_ikey){ "EXP#EXTRA", "X" };
     T_EQ_INT(dst->ops->item_write(dst, &del, NULL), CB_OK);
 
+    // A new file ends up holding exactly the table: the bots a store is opened with are cleared first, so a bot the table
+    // does not have (retired from a deployed table) is not left in the file as an EXTRA.
+    botkey bk = { "", "" };
+    table->ops->item_keys(table, first_bot, &bk);
+    T_CHECK(bk.pk[0] != 0);
+    cb_iwrite rm;
+    memset(&rm, 0, sizeof rm);
+    rm.op = CB_IW_DELETE;
+    rm.key = (cb_ikey){ bk.pk, bk.sk };
+    T_EQ_INT(table->ops->item_write(table, &rm, NULL), CB_OK);
+    char file3[320];
+    snprintf(file3, sizeof file3, "%s/third.sqlite", g_dir);
+    run_export(&r, "--rate", "100", file3, NULL);
+    T_EQ_INT(r.code, 0);
+    T_CHECK(strstr(r.out, "0 missing, 0 extra") != NULL);
+    snprintf(want, sizeof want, "%d items copied, 0 failed", N_ITEMS + g_special + g_bots - 1);
+    T_CHECK(strstr(r.out, want) != NULL);
+    g_bots--;
+
     // An item the SQLite side cannot hold (an attribute name past the layer's 30 bytes, put straight into
     // DynamoDB Local) is a failure and a MISSING key: exit 1, the rest still copied.
     char json[512];
     snprintf(json, sizeof json,
              "{\"TableName\":\"%s\",\"Item\":{\"pk\":{\"S\":\"EXP#BAD\"},\"sk\":{\"S\":\"BAD\"},"
              "\"an_attribute_name_far_too_long_for_the_layer\":{\"S\":\"x\"}}}", g_table);
-    T_CHECK(raw_put(json));
+    T_CHECK(raw_call("PutItem", json));
     char file2[320];
     snprintf(file2, sizeof file2, "%s/second.sqlite", g_dir);
     run_export(&r, "--rate", "100", file2, NULL);
