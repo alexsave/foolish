@@ -64,6 +64,7 @@ typedef struct cb_section {
     int         n_old_bots;
     cb_uuid     old_bots[CB_MAX_SEATS];
     uint8_t     arena[CB_ARENA_BYTES];
+    int         arena_hw;         // bytes of the arena a products call may have written (cb_section_free zeroes that prefix)
     bool        in_use, pooled;   // cb_section_new's own: the worker thread's reusable one, and whether it is handed out
 } cb_section;
 

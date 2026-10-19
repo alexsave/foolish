@@ -185,12 +185,33 @@ cb_section *cb_section_new(void) {
     return s;
 }
 
+// What a products call wrote into the arena: its spans, or all of it when the
+// call failed part-way (nothing then says how far it got).
+static void arena_note(cb_section *s, int rc) {
+    const TableCommit *c = &s->c;
+    int hw = rc < 0 ? (int)sizeof s->arena : 0;
+    const Span *sp[4 + MAX_PLAYERS];
+    int n = 0;
+    sp[n++] = &c->state; sp[n++] = &c->roster; sp[n++] = &c->logs; sp[n++] = &c->spectator;
+    for (int i = 0; i < MAX_PLAYERS; i++) sp[n++] = &c->views[i];
+    for (int i = 0; i < n; i++) {
+        int end = sp[i]->len > 0 ? sp[i]->off + sp[i]->len : 0;
+        if (end > hw) hw = end;
+    }
+    if (hw > (int)sizeof s->arena) hw = (int)sizeof s->arena;
+    if (hw > s->arena_hw) s->arena_hw = hw;
+}
+
 void cb_section_free(cb_section *s) {
     if (!s) return;
     if (!s->pooled) { free(s); return; }
+    // calloc's zeros back: the board, the table through the commit, and the
+    // arena prefix the products wrote (the rest was never written).
     memset(&s->g, 0, sizeof s->g);
     s->snaps.n = 0;
-    memset((char *)s + offsetof(cb_section, t), 0, offsetof(cb_section, in_use) - offsetof(cb_section, t));
+    memset((char *)s + offsetof(cb_section, t), 0, offsetof(cb_section, arena) - offsetof(cb_section, t));
+    memset(s->arena, 0, (size_t)s->arena_hw);
+    s->arena_hw = 0;
     s->in_use = false;
 }
 
@@ -426,6 +447,7 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     const int64_t board_now = cb_bots_board_now(ctx, row->created_at, now);   // the kernel's (bots.h)
     const uint32_t next = (uint32_t)(row->version + 1);
     int rc = table_commit_products(t, s->gid, gid_len, next, board_now, c, s->arena, sizeof s->arena);
+    arena_note(s, rc);
     if (rc >= 0 && c->wants_ratings) {
         // The kernel rates the game inside the section that ends it. Its products
         // are const, so the C host rates and asks for them again: no re-run.
@@ -433,6 +455,7 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         if (*have_ratings) {
             table_rate(t, ratings, t->r.n);
             rc = table_commit_products(t, s->gid, gid_len, next, board_now, c, s->arena, sizeof s->arena);
+            arena_note(s, rc);
         }
     }
     if (rc < 0) {
@@ -777,6 +800,7 @@ int cb_table_create(cb_ctx *ctx, const cb_user *u, cb_table_result *out) {
         }
         const int64_t now = cb_app_now();
         rc = table_commit_products(&s->t, s->gid, (int)strlen(s->gid), 0, now, &s->c, s->arena, sizeof s->arena);
+        arena_note(s, rc);
         if (rc < 0 || s->c.views[0].len <= 0) {
             CB_ERROR("table", "create: no products (%d)", rc);
             ret = CB_E_STATE;
