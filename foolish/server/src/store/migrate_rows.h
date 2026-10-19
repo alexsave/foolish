@@ -37,6 +37,11 @@ void cb_mig_free(cb_mig *m);
 // (rank, pk, sk) order.
 int cb_mig_rank(const char *pk, const char *sk);
 
+// Accounts whose names compare equal are copied as they are instead of failing (the caller has dropped
+// the unique username_key index and runs cb_mig_transform, migrate_merge.h, which restores it).
+void cb_mig_allow_name_collisions(cb_mig *m);
+long cb_mig_name_collisions(const cb_mig *m);
+
 // One item. CB_OK (written, held for its owner, or skipped by rule), or an error (logged, counted).
 int cb_mig_put(cb_mig *m, const cb_item *it);
 // The held rows written (the bots). CB_OK or an error.

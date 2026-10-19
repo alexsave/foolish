@@ -45,6 +45,7 @@
 // copy, a count differs or an item differs. 2: a usage or I/O error.
 #include "store/store.h"
 #include "store/migrate_rows.h"
+#include "store/migrate_merge.h"
 #include "util/clock.h"
 #include "store/store_priv.h"
 #include "util/err.h"
@@ -185,16 +186,19 @@ static long held(cb_store *dst) {
 
 static void usage(void) {
     fprintf(stderr,
-            "usage: cbase-export [--rate PERCENT] [--creds-cmd COMMAND] [--into-existing] [--no-verify] <sqlite file>\n"
+            "usage: cbase-export [--rate PERCENT] [--creds-cmd COMMAND] [--into-existing] [--no-verify] [--merge-case-duplicates] [--reset-ratings] <sqlite file>\n"
             "  reads the DynamoDB table CBASE_TABLE (default cbase), read-only, at PERCENT (1-100, default 25)\n"
             "  of its provisioned read capacity, and puts every item into the SQLite file\n"
             "  expired temporary credentials are fetched again with COMMAND (default: aws configure export-credentials --format process)\n"
+            "  --merge-case-duplicates: accounts whose names differ only in case merge into the oldest, with the newest password\n"
+            "  --reset-ratings: every account rating goes back to the start (migrate_merge.h; applied to the copy, after the checks)\n"
             "  (built as <file>.partial, renamed when every check passed)\n");
 }
 
 int main(int argc, char **argv) {
     int64_t pct = 25;
     bool existing = false, verify = true;
+    unsigned tx_flags = 0;
     const char *creds_cmd = getenv("CBASE_CREDS_CMD");
     const char *path = NULL;
     for (int i = 1; i < argc; i++) {
@@ -203,6 +207,8 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--creds-cmd") == 0 && i + 1 < argc) creds_cmd = argv[++i];
         else if (strcmp(argv[i], "--into-existing") == 0) existing = true;
         else if (strcmp(argv[i], "--no-verify") == 0) verify = false;
+        else if (strcmp(argv[i], "--merge-case-duplicates") == 0) tx_flags |= CB_MIG_MERGE_CASE_DUPLICATES;
+        else if (strcmp(argv[i], "--reset-ratings") == 0) tx_flags |= CB_MIG_RESET_RATINGS;
         else if (argv[i][0] != '-' && !path) path = argv[i];
         else { usage(); return 2; }
     }
@@ -287,6 +293,15 @@ int main(int argc, char **argv) {
     // the seats that name them, a game's seats before its row, a replay's history rows before it).
     cb_mig *m = cb_mig_new(dst, cb_now_ms(), stderr);
     if (!m) return 2;
+    if (tx_flags & CB_MIG_MERGE_CASE_DUPLICATES) {
+        // The copy is faithful, case duplicates included: the unique index goes for the copy and the
+        // transform (migrate_merge.c) brings it back, which proves no group is left.
+        if (CB_STORE_CALL(dst, admin_query, "DROP INDEX IF EXISTS users_username_key", true, count_cell, &(long){ 0 }) < 0) {
+            fprintf(stderr, "cbase-export: cannot drop the name index for the copy\n");
+            return 2;
+        }
+        cb_mig_allow_name_collisions(m);
+    }
     long gone = 0, failed = walk(src, m, &want, true, &gone);
     if (failed >= 0 && cb_mig_finish(m) != CB_OK) failed++;
     if (gone) printf("%ld keys were gone by the time they were read (deleted or expired during the run)\n", gone);
@@ -307,10 +322,17 @@ int main(int argc, char **argv) {
         keyset_free(&again);
     }
     printf("%ld items failed\n", failed);
+    if (cb_mig_name_collisions(m)) printf("%ld accounts share a name key with an older one (merged below)\n", cb_mig_name_collisions(m));
     cb_mig_free(m);
     keyset_free(&want);
     cb_store_close(src);
     cb_store_close(dst);
+    if (exit_code == 0 && tx_flags) {
+        // THE TRANSFORM, on the closed copy and only when the copy and its checks passed.
+        cb_mig_tx tx;
+        printf("transform (flags %u):\n", tx_flags);
+        if (cb_mig_transform(work, tx_flags, stdout, &tx) != CB_OK) exit_code = 1;
+    }
     if (strcmp(work, path) != 0) {
         // The closed file holds everything (the WAL is checkpointed into it and empty); a WAL that still
         // holds data would be left behind by the rename, so it is refused, and the empty ones are removed.

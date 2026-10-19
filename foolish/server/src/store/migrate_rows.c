@@ -93,6 +93,8 @@ struct cb_mig {
     // loudly, naming both ids and no name).
     struct name_claim { char key[4 * CB_USERNAME_MAX + 8]; cb_uuid id; } *names;
     int         n_names, cap_names;
+    bool        allow_dup_names;   // --merge-case-duplicates: copied faithfully, merged by migrate_merge.c
+    long        dup_names;
 };
 
 cb_mig *cb_mig_new(cb_store *dst, int64_t now_ms, FILE *log) {
@@ -222,7 +224,8 @@ int cb_mig_put(cb_mig *m, const cb_item *it) {
                 return failed(m, f, pk, sk, "the username does not fit its key");
             const char *other = claim_name(m, key, u.id);
             if (other && !*other) return CB_E_NOMEM;
-            if (other) {
+            if (other && m->allow_dup_names) m->dup_names++;
+            else if (other) {
                 snprintf(why, sizeof why, "the username compares equal to account %s's (names.h cb_name_key)", other);
                 return failed(m, f, pk, sk, why);
             }
@@ -689,3 +692,6 @@ int cb_mig_report(cb_mig *m, FILE *out) {
     }
     return bad;
 }
+
+void cb_mig_allow_name_collisions(cb_mig *m) { m->allow_dup_names = true; }
+long cb_mig_name_collisions(const cb_mig *m) { return m->dup_names; }
