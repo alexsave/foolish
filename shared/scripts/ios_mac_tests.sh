@@ -63,6 +63,9 @@
 #   LIB_LABEL       what the step prints (default: LIB_CMD)
 #   XCFRAMEWORK     what --no-lib requires to exist already: the xcframework and
 #                   anything else LIB_CMD writes, space separated
+#   POST_LIB_CMD    run after step 1 on every invocation, --no-lib or not, once the
+#                   kernel's generated readers exist (a lint that reads them)
+#   POST_LIB_LABEL  what that step prints (default: POST_LIB_CMD)
 #   PRE_CMD         run first on every invocation, --no-lib or not (optional)
 #   PRE_LABEL       what that step prints (default: PRE_CMD)
 #   SUITE_NAME      prefix of the final line (optional)
@@ -195,6 +198,12 @@ else
       exit 1
     }
   done
+fi
+
+# ---- 1b. what must read the kernel's output, after it exists -----------------
+if [ -n "${POST_LIB_CMD:-}" ]; then
+  say "${POST_LIB_LABEL:-$POST_LIB_CMD}"
+  eval "$POST_LIB_CMD"
 fi
 
 # ---- 2. the project, plus 3. the entitlements it eats -----------------------
