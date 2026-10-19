@@ -6,6 +6,7 @@
 // kernel called directly. What a blob, a seat or a push means stays the
 // kernel's; what is here is which row to read, which results commit, the CAS
 // loop, and the new row's bookkeeping columns.
+#include <stddef.h>
 #include "app_internal.h"
 #include "bots.h"
 #include "edge.h"
@@ -158,12 +159,39 @@ int cb_row_load(cb_ctx *ctx, const char *id, bool allow_cache, cb_game_row *out,
 
 // ---- the section -----------------------------------------------------------------------
 
+// ONE OWNER of the section's storage (217 KB: the board, the snapshots, the
+// table, the commit and a 128 KB arena). Every operation took a fresh calloc,
+// which at that size is an mmap, page faults and a munmap each time. Each
+// worker thread keeps one instead. A section is made and freed by the same
+// operation on the same thread (no handoff), and a second one wanted while it
+// is out (a nested operation) is a private calloc.
+//
+// What an operation sees is exactly what calloc gave: every byte is zeroed on
+// the way out, except the snapshots' slots. Those are written whole
+// (table_snap memcpys the entire slot with its tag and aux) before they are
+// counted in snaps.n, which is zeroed, and nothing reads past n.
+static _Thread_local cb_section *t_section;
+
 cb_section *cb_section_new(void) {
-    return calloc(1, sizeof(cb_section));
+    cb_section *s = t_section;
+    if (s && s->in_use) return calloc(1, sizeof(cb_section));
+    if (!s) {
+        s = calloc(1, sizeof(cb_section));
+        if (!s) return NULL;
+        s->pooled = true;
+        t_section = s;
+    }
+    s->in_use = true;
+    return s;
 }
 
 void cb_section_free(cb_section *s) {
-    free(s);
+    if (!s) return;
+    if (!s->pooled) { free(s); return; }
+    memset(&s->g, 0, sizeof s->g);
+    s->snaps.n = 0;
+    memset((char *)s + offsetof(cb_section, t), 0, offsetof(cb_section, in_use) - offsetof(cb_section, t));
+    s->in_use = false;
 }
 
 int cb_section_load(cb_section *s, const cb_game_row *row) {

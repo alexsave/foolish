@@ -531,6 +531,45 @@ typedef struct {
     cb_rows_write cas;
 } batch;
 
+// ONE OWNER of the batch's storage. The struct is ~1 MB (sized for DynamoDB's
+// 100-item transaction), but a commit uses a few slots of it: a plain move one
+// item, the biggest real one (a rated 8-seat finish) 10-20. So each worker
+// thread keeps one, calloc'd once (untouched pages cost nothing; only the
+// slots a commit claims are ever resident), and a use resets only what the
+// last use dirtied: the counters of the slots it claimed. Adds append at a
+// zero count and every write is assigned whole, so nothing of the previous
+// game is readable. It is not a realloc'd array on purpose: every cb_iwrite
+// points into its slot's attribute array, and those pointers must not move.
+// Slots a use claimed: 0..n inclusive (one taken at index n and not
+// committed to), and 0..nz inclusive for the string stores.
+static _Thread_local batch *t_batch;
+static _Thread_local bool   t_batch_busy;
+
+static void batch_clean(batch *b) {
+    int hi = b->n + 1 < CB_ITEM_TXN_MAX + 8 ? b->n + 1 : CB_ITEM_TXN_MAX + 8;
+    for (int i = 0; i < hi; i++) b->a[i].n = 0, b->x[i].n = 0;
+    int hz = b->nz + 1 < 40 ? b->nz + 1 : 40;
+    for (int i = 0; i < hz; i++) b->z[i].n = 0;
+    b->n = 0;
+    b->nz = 0;
+}
+
+// A clean batch, or NULL when out of memory. A nested use on one thread (none
+// today) gets a private one.
+static batch *batch_take(void) {
+    if (t_batch_busy) return calloc(1, sizeof(batch));
+    if (!t_batch && !(t_batch = calloc(1, sizeof(batch)))) return NULL;
+    t_batch_busy = true;
+    return t_batch;
+}
+
+static void batch_give(batch *b) {
+    if (!b) return;
+    if (b != t_batch) { free(b); return; }
+    batch_clean(b);
+    t_batch_busy = false;
+}
+
 // A string store with room for the next write's few strings (each write
 // keeps at most four at a time between two calls).
 static strs *bz(batch *b) { return &b->z[b->nz < 40 ? b->nz : 39]; }
@@ -683,11 +722,11 @@ static int commit_or_import(cb_store *s, const cb_game_commit *c0, bool import) 
         c0->n_bots > CB_MAX_SEATS || c0->n_rated < 0 || c0->n_rated > CB_MAX_SEATS)
         return CB_E_INVALID;
     seats_t *stored = malloc(sizeof *stored);
-    batch *b = malloc(sizeof *b);
-    if (!stored || !b) { free(stored); free(b); return CB_E_NOMEM; }
+    batch *b = batch_take();
+    if (!stored || !b) { free(stored); batch_give(b); return CB_E_NOMEM; }
     int rc = CB_E_CONFLICT;
     for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
-        memset(b, 0, sizeof *b);
+        batch_clean(b);
         cb_game_commit c;
         rating_read ratings[CB_MAX_SEATS];
         if (!import && c0->prev_known) seats_given(c0, stored);
@@ -752,7 +791,7 @@ static int commit_or_import(cb_store *s, const cb_game_commit *c0, bool import) 
         rc = CB_E_CONFLICT;
         nap(10LL << attempt);
     }
-    free(b);
+    batch_give(b);
     free(stored);
     return rc;
 }
@@ -1173,7 +1212,7 @@ int cb_rows_bots_replace(cb_store *s, const cb_bot_row *rows, int n) {
     vec stored = { .size = sizeof(cb_uuid) };
     int rc = query(s, (cb_iquery){ .index = 2, .pk = "BOTS", .forward = true }, bot_key_step, &stored);
     if (rc == CB_OK && stored.oom) rc = CB_E_NOMEM;
-    batch *b = rc == CB_OK ? calloc(1, sizeof *b) : NULL;
+    batch *b = rc == CB_OK ? batch_take() : NULL;
     if (rc == CB_OK && !b) rc = CB_E_NOMEM;
     for (int i = 0; rc == CB_OK && i < stored.n; i++) {
         const char *id = ((cb_uuid *)stored.rows)[i];
@@ -1208,7 +1247,7 @@ int cb_rows_bots_replace(cb_store *s, const cb_bot_row *rows, int n) {
         rc = s->ops->item_txn(s, b->w, b->n, NULL, NULL);
         if (rc == CB_E_CONFLICT) rc = CB_E_DB;
     }
-    free(b);
+    batch_give(b);
     free(stored.rows);
     return rc;
 }
@@ -1263,7 +1302,7 @@ static void snapshot_attrs(attrs *x, strs *z, const cb_snapshot_row *s, const ch
 // sees half of one), the replay refusing a reused id.
 int cb_rows_snapshot_put(cb_store *s, const cb_snapshot_row *sn) {
     if (sn->n_players < 0 || sn->n_players > CB_MAX_SEATS) return CB_E_INVALID;
-    batch *b = calloc(1, sizeof *b);
+    batch *b = batch_take();
     if (!b) return CB_E_NOMEM;
     const char *players[CB_MAX_SEATS];
     for (int i = 0; i < sn->n_players; i++) players[i] = sn->player_ids[i];
@@ -1296,7 +1335,7 @@ int cb_rows_snapshot_put(cb_store *s, const cb_snapshot_row *sn) {
     }
     int failed;
     int rc = s->ops->item_txn(s, b->w, b->n, &failed, NULL);
-    free(b);
+    batch_give(b);
     return rc == CB_E_CONFLICT ? (failed == 0 ? CB_E_CONFLICT : CB_E_DB) : rc;
 }
 
