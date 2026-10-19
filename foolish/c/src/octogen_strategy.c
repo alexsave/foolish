@@ -34,6 +34,7 @@
 #include "strategy.h"
 #include "bot_knobs.h"
 #include "card.h"
+#include "../cardtext/card_text.h"
 #include "game.h"
 #include "cordite_sim.h"
 #include "bot_common.h"
@@ -1457,13 +1458,10 @@ typedef struct { char *b; int cap, n; } OgText;
 static void og_text_put(OgText *t, const char *s) {
     for (; *s; s++) if (t->n < t->cap) t->b[t->n++] = *s;
 }
-static const char *OG_EX_VAL[14] = {
-    "?","2","3","4","5","6","7","8","9","10","J","Q","K","A"
-};
 // Canonical durak rank convention (wire v13 = A), trump marked with '*'.
 static void og_text_card(OgText *t, Card c, int trump) {
-    char s[2] = { (c.suit >= 0 && c.suit < 4) ? "SHCD"[(int)c.suit] : '?', 0 };
-    og_text_put(t, (c.value >= 1 && c.value <= 13) ? OG_EX_VAL[c.value] : "?");
+    char s[2] = { card_suit_letter(c.suit), 0 };
+    og_text_put(t, card_rank_text(c.value));
     og_text_put(t, s);
     if (c.suit == trump) og_text_put(t, "*");
 }

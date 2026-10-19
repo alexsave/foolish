@@ -24,6 +24,7 @@
 #include "../src/cordite_sim.h"
 #include "../src/strategy.h"
 #include <stdio.h>
+#include "../cardtext/card_text.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -43,9 +44,8 @@ static struct {
 // The JSON emitter's own format strings (octogen_strategy.c og_ex_move_label,
 // before the struct), kept here as the reference the text cursor is held to.
 static void ref_card(char *buf, size_t n, Card c, int trump) {
-    static const char *VAL[14] = { "?","2","3","4","5","6","7","8","9","10","J","Q","K","A" };
-    const char *v = (c.value >= 1 && c.value <= 13) ? VAL[c.value] : "?";
-    char s = (c.suit >= 0 && c.suit < 4) ? "SHCD"[(int)c.suit] : '?';
+    const char *v = card_rank_text(c.value);
+    char s = card_suit_letter(c.suit);
     snprintf(buf, n, "%s%c%s", v, s, (c.suit == trump) ? "*" : "");
 }
 static void ref_label(char *label, size_t cap, const LegalMove *m, int trump) {

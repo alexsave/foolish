@@ -39,4 +39,17 @@ static const SuitFace CARD_SUIT_FACE[] = {
 };
 _Static_assert(sizeof(CARD_SUIT_FACE) / sizeof(CARD_SUIT_FACE[0]) == NUM_SUITS, "one face per suit");
 
+// The ASCII spelling the CLIs, logs and test diagnostics print ("10H", "AS*"):
+// the rank label, "?" for a value no card has, and the suit's letter by suit.
+// Freestanding on purpose (no stdio), so the wasm build can use it too.
+static const char CARD_SUIT_LETTER[NUM_SUITS + 1] = {
+    [SUIT_SPADES] = 'S', [SUIT_HEARTS] = 'H', [SUIT_CLUBS] = 'C', [SUIT_DIAMONDS] = 'D', [NUM_SUITS] = 0,
+};
+static inline const char *card_rank_text(int value) {
+    return value >= 1 && value <= ACE_VALUE ? CARD_RANK_LABEL[value] : "?";
+}
+static inline char card_suit_letter(int suit) {
+    return suit >= 0 && suit < NUM_SUITS ? CARD_SUIT_LETTER[suit] : '?';
+}
+
 #endif

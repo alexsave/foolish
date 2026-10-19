@@ -15,6 +15,7 @@
 //   --inspect=<seed>                        verbose single-game dump
 
 #include "../src/game.h"
+#include "../cardtext/card_text.h"
 #include "../src/legal.h"
 #include "../src/strategy.h"
 #include "../src/cli_util.h"
@@ -36,13 +37,9 @@ static double wall_secs(void) {
 
 // Dispatch on strategy_key — seat 0 uses `protagonist`, others use `opp`.
 
-static const char SUIT_CHAR[4] = { 'S', 'H', 'C', 'D' };
-static const char *VALUE_STR[14] = {
-    "?", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"
-};
 static void format_card_short(Card c, char *buf, size_t n) {
-    const char *v = (c.value >= 1 && c.value <= 13) ? VALUE_STR[c.value] : "?";
-    char s = (c.suit >= 0 && c.suit < 4) ? SUIT_CHAR[(int)c.suit] : '?';
+    const char *v = card_rank_text(c.value);
+    char s = card_suit_letter(c.suit);
     snprintf(buf, n, "%s%c", v, s);
 }
 static void format_card_list(const Card *cards, int n, char *buf, size_t buflen) {
@@ -72,7 +69,7 @@ static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int o
         g.players[i].strategy_key = (int8_t)((i == 0) ? protagonist : opp);
     }
     start_game(&g);
-    printf("seed=%u  trump=%c  deck=%d  hands:", seed, SUIT_CHAR[(int)g.power_suit], g.deck_count);
+    printf("seed=%u  trump=%c  deck=%d  hands:", seed, card_suit_letter(g.power_suit), g.deck_count);
     for (int i = 0; i < n_players; i++) {
         char hbuf[128]; format_card_list(g.players[i].hand, g.players[i].hand_count, hbuf, sizeof(hbuf));
         printf("  p%d=[%s]", i, hbuf);

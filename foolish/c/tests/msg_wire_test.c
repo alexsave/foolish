@@ -25,6 +25,7 @@
 // Usage: msg_wire_test [games_per_pc] [seed0]   (defaults 20, 20260716)
 
 #include "../src/game.h"
+#include "../cardtext/card_text.h"
 #include "../src/legal.h"
 #include "../src/awire.h"
 #include "../src/bot_roster.h"
@@ -2887,18 +2888,12 @@ static void print_goodwait(int np) {
                             for (int q = 0; q < np; q++)
                                 fprintf(stderr, "%s%d", q ? "/" : "", g.players[q].hand_count);
                             fprintf(stderr, " pair=%s hand=", 
-                                    pair_value >= 1 && pair_value <= 13
-                                        ? (const char *[]){"?","2","3","4","5","6","7","8",
-                                                           "9","10","J","Q","K","A"}[pair_value]
-                                        : "?");
+                                    card_rank_text(pair_value));
                             for (int c = 0; c < g.players[pending].hand_count; c++) {
                                 const int v = g.players[pending].hand[c].value;
                                 const int u = g.players[pending].hand[c].suit;
                                 fprintf(stderr, "%s%s%c", c ? "," : "",
-                                        v >= 1 && v <= 13
-                                            ? (const char *[]){"?","2","3","4","5","6","7","8",
-                                                               "9","10","J","Q","K","A"}[v] : "?",
-                                        u >= 0 && u < 4 ? "SHCD"[u] : '?');
+                                        card_rank_text(v), card_suit_letter(u));
                             }
                             fprintf(stderr, "\n");
                             return;
@@ -3638,17 +3633,12 @@ static void print_chain(int np, int count, int depth) {
             // card one rank low, and a shoot spent an afternoon treating the
             // product's correct sentences as a bug because they disagreed with
             // it. Copy the table, do not re-derive it.
-            static const char rankname[14][3] = { "?", "2", "3", "4", "5", "6", "7", "8",
-                                                  "9", "10", "J", "Q", "K", "A" };
-            static const char suitname[4] = { 'S', 'H', 'C', 'D' };
             fprintf(stderr, "chain[%d]: actor=seat %d %s", i, actors[i],
                     kinds[i] >= 0 && kinds[i] <= 4 ? kindname[kinds[i]] : "?");
             for (int c = 0; c < ncards[i] && c < 6; c++) {
                 const int v = acards[i][c].value;
                 fprintf(stderr, " %s%c",
-                        v >= 1 && v <= 13 ? rankname[v] : "?",
-                        acards[i][c].suit >= 0 && acards[i][c].suit < 4
-                            ? suitname[acards[i][c].suit] : '?');
+                        card_rank_text(v), card_suit_letter(acards[i][c].suit));
             }
             // THE SHAPE OF THE TABLE, which is what a collapsed frame is
             // actually composed of. The owner's spec for the transcript shots
@@ -3671,9 +3661,7 @@ static void print_chain(int np, int count, int depth) {
                     for (int c = 0; c < hands[i][q] && c < MAX_HAND_SIZE; c++) {
                         const int v = handcards[q][c].value;
                         fprintf(stderr, "%s%s%c", c ? "," : "",
-                                v >= 1 && v <= 13 ? rankname[v] : "?",
-                                handcards[q][c].suit >= 0 && handcards[q][c].suit < 4
-                                    ? suitname[handcards[q][c].suit] : '?');
+                                card_rank_text(v), card_suit_letter(handcards[q][c].suit));
                     }
                 }
             }
