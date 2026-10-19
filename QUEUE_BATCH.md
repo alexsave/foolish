@@ -207,3 +207,29 @@ Lifts, all header-only in shared/ unless noted. Every change is compile-checked 
 - Regenerate: foolish/ios/Fixtures/goldens.json (+ any other fnv-pinned digests above), pickemup beats pins, structgen outputs (expect no diff).
 - Run: shared tests (make -C uttt/c or pickemup/c run for the shared lanes), foolish/c tests, chuiniu/tallybones/pickemup/uttt run + asan, c_base unit_bench, unit_event utf8_rule, roster tests (tests.c ROSTER cases), a CI pass for the wasm builds (roster.c, analyse.c, winprob.c, msg_wire.c, octogen_strategy.c all changed and are in wasm).
 - Mutation-check: utf8.h (surrogate, overlong, C1), ease_test (clamp ends), le_bytes u64/be tests, check.h CHECK_PRINT_CAP.
+
+## Item: half-open socket detection + dashboard-view hint (netclient.c)
+
+### What changed (foolish/c/src/netclient.c, netclient.h)
+- PINGRESP bound: NC_PONG_MS = 10000. g_ping_at is set when a PINGREQ goes out with none outstanding, and cleared by ANY packet from the broker (take_packet: a stream that delivers pushes is alive, so a busy socket never false-positives behind a late PINGRESP). Ten seconds after the PINGREQ with nothing heard, nc_stream_next hands out ONE frame of len 0 (the "close this socket" signal), then NULL; nc_stream_due_ms returns 0 until that frame is out and folds g_ping_at + NC_PONG_MS into its wake. Keepalive (NC_KEEPALIVE_S 60, NC_PING_MS 30000) unchanged: 10 s is the NC_ACK_WAIT_MS precedent and is far inside the broker's 1.5 x 60 s drop.
+- Dashboard view hint: in take_push, a u/<uid>/v view for a game held on its own stream is still not applied, but if its version > any_top(gate) the client queues refetch_queue(gid, now_ms + NC_RECONCILE_MS, version). Deliberate deviation from "immediately": the seat's cast normally follows the view in the next feed and own_settle drops the queued read for free; only a lost cast pays the read, 1 s later. Equal or older view: nothing.
+
+### Fixes to make (host hookup owed, not done: batch rule is no host code growth)
+- The three hosts must treat an nc_stream_next frame with len 0 as "close the socket": foolish/ios/FoolishNet/Stream.swift send() (cancel the task, then call closed()), foolish/sdk/ts/net/net_client.ts streamNext() consumers (web: ws.close(), then the existing onclose path), foolish/sdk/swift/NetClient.swift streamNext (today it would send an empty binary frame on the dead socket, which does nothing; the detection is inert until this lands). Also the readNcOut wrappers must not drop a len-0 frame as "none".
+- Check wasm_net_api.c / ios_api_net.c need no change (NcOut layout unchanged).
+
+### Owed tests (foolish/server/test/unit_netclient.c style; each natively, under 5 s, simulated clock)
+1. Half-open: live socket, advance to NC_PING_MS, next() yields PINGREQ; advance NC_PONG_MS - 1: next() NULL and due_ms > 0 and <= 1; advance to NC_PONG_MS: next() yields a len-0 frame, then NULL, due_ms -1; nc_stream_closed returns the backoff wait; opened + CONNACK: every game sub is SUBSCRIBEd again and its SUBACK queues the catch-up read.
+2. due_ms folds the deadline: right after the PINGREQ due_ms == NC_PONG_MS.
+3. No false positive: PINGRESP at +100 ms after each PINGREQ for 20 cycles, never a len-0 frame; also a non-PINGRESP packet (a PUBLISH) clears the wait; a PINGRESP late by NC_PONG_MS - 1 is fine.
+4. After the dead frame, opened()/closed() reset g_dead and g_ping_at (a second connection pings normally and can die again).
+5. View hint: game held via nc_stream_sub(NW_SUB_GAME), board at version 5 (cast applied). View v=6 on u/<uid>/v: exactly one own refetch queued (not_before = now + NC_RECONCILE_MS), event list has no NC_EV_VIEW, board unchanged; a second view v=6 or v=7: still one slot (deduped, min_version raised to 7). View v=5 and v=4: none. View v=6 followed by the cast v=6 in the next feed: queued read is dropped (own_settle).
+6. A game with no own subscription (g_boards false): the view still applies as before (regression).
+
+### Mutation checks owed
+- NC_PONG_MS test bound +1 / -1 (tests 1 and 3 must fail on the edge assertions).
+- Drop `g_ping_at = 0` in take_packet: test 3 fails. Drop `g_ping_at = ...` set on PINGREQ: test 1 fails. Drop g_ping_at fold in due_ms: test 2 fails. Drop g_dead reset in opened/closed: test 4 fails.
+- View hint: `>` to `>=` (test 5 equal-version case fails); remove the refetch_queue call (test 5 fails); apply the view to the board (board-unchanged assertion fails); remove NC_RECONCILE_MS (settle-for-free case fails).
+
+### Tests to fix
+- Any existing unit_netclient / unit_leftovers / fz_netclient / unit_stream case that runs next() past a PINGREQ for more than 10 s without a PINGRESP will now see a len-0 frame (grep for NC_PING_MS users); and any that asserts a dashboard view of a held game produces no read.

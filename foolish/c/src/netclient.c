@@ -57,6 +57,8 @@ static gate     g_gates[NC_GATES_MAX];
 static uint32_t g_gate_clock;
 static uint8_t  g_open;                 // the host's socket is open
 static uint8_t  g_mq;                   // MQ_*: where the MQTT session on it is
+static int64_t  g_ping_at;              // when a PINGREQ went out that nothing from the broker has answered since (0: none)
+static uint8_t  g_dead;                 // 1: the socket is declared dead, the close frame not yet handed out; 2: handed out
 static int64_t  g_last_out;             // when a packet last went out: the keep-alive runs from it
 static uint16_t g_next_pid;
 static int32_t  g_reconnect_ms;
@@ -127,6 +129,8 @@ void nc_reset(void) {
     g_open = 0;
     g_mq = MQ_SHUT;
     g_last_out = 0;
+    g_ping_at = 0;
+    g_dead = 0;
     g_next_pid = 0;
     g_reconnect_ms = 0;
     g_forced_at = 0;
@@ -1242,6 +1246,8 @@ int nc_stream_unsub(int what, const char *gid, int gid_len) {
 void nc_stream_opened(int64_t now_ms) {
     g_open = 1;
     g_mq = MQ_OPENED;
+    g_ping_at = 0;
+    g_dead = 0;
     g_last_out = now_ms;
     g_n_unsubs = 0;
     g_mq_in_len = g_mq_in_off = 0;
@@ -1260,6 +1266,8 @@ int nc_stream_closed(int64_t now_ms) {
     }
     g_open = 0;
     g_mq = MQ_SHUT;
+    g_ping_at = 0;
+    g_dead = 0;
     g_n_unsubs = 0;
     g_mq_in_len = g_mq_in_off = 0;
     int wait = g_reconnect_ms ? g_reconnect_ms : NC_RETRY_FIRST_MS;
@@ -1496,7 +1504,14 @@ static void take_push(const NwFrame *f, int fam, int64_t now_ms) {
             seat_learn(g, f->blob.p, f->blob.len);   // a view is only ever of a seat the user holds
             // A game held on its own stream is the casts' and the answers' to
             // move; a dashboard view of it would snap past what they animate.
-            if (!g_boards && sub_find(NW_SUB_GAME, f->gid, f->gid_len)) return;
+            if (!g_boards && sub_find(NW_SUB_GAME, f->gid, f->gid_len)) {
+                // Not applied, but a view newer than the board is a hint that a
+                // cast was lost: read the game whole. NC_RECONCILE_MS lets the
+                // cast that normally follows the view settle it (own_settle)
+                // for free; only a lost one costs the read.
+                if (f->version > any_top(g)) refetch_queue(f->gid, f->gid_len, now_ms + NC_RECONCILE_MS, f->version);
+                return;
+            }
             if (g->has_view && f->version <= g->view_v) return;   // stale
             g->has_view = 1;
             g->view_v = f->version;
@@ -1598,6 +1613,7 @@ static void take_suback(const MqttPacket *p, int64_t now_ms) {
 
 // One whole packet from the broker.
 static void take_packet(const MqttPacket *p, int64_t now_ms) {
+    g_ping_at = 0;   // any packet from the broker proves the socket carries data both ways (a PINGRESP is the one owed)
     switch (p->type) {
     case MQTT_CONNACK:
         if (g_mq != MQ_CONNECTING) { event_add(NC_EV_BAD); return; }
@@ -1747,6 +1763,16 @@ const NcOut *nc_stream_next(int64_t now_ms) {
         return &g_out;
     }
     if (g_mq != MQ_LIVE) return NULL;
+    // A PINGREQ nothing has answered in NC_PONG_MS: the socket is half open (no
+    // FIN, nothing arrives). One empty frame tells the host to close it; its
+    // close runs nc_stream_closed and the reconnect, whose SUBACKs re-read every game.
+    if (g_ping_at && now_ms - g_ping_at >= NC_PONG_MS && !g_dead) g_dead = 1;
+    if (g_dead) {
+        if (g_dead != 1) return NULL;
+        g_dead = 2;
+        g_out.len = 0;
+        return &g_out;
+    }
     MqttTopic t[2];
     char buf[2][NC_TOPIC_MAX];
     while (g_n_unsubs) {
@@ -1769,7 +1795,10 @@ const NcOut *nc_stream_next(int64_t now_ms) {
         s->pid = pid;
         s->retry_at = now_ms + NC_ACK_WAIT_MS;
     }
-    if (!at && now_ms - g_last_out >= NC_PING_MS) at = mqtt_write_bare(o, NC_OUT_MAX, MQTT_PINGREQ);
+    if (!at && now_ms - g_last_out >= NC_PING_MS) {
+        at = mqtt_write_bare(o, NC_OUT_MAX, MQTT_PINGREQ);
+        if (at > 0 && !g_ping_at) g_ping_at = now_ms;
+    }
     if (at <= 0) return NULL;
     g_last_out = now_ms;
     g_out.len = (uint16_t)at;
@@ -1780,8 +1809,10 @@ int nc_stream_due_ms(int64_t now_ms) {
     if (!g_open || !g_signed_in) return -1;   // nobody to connect as: nothing to send
     if (g_mq == MQ_OPENED) return stream_wants_token(now_ms) ? -1 : 0;   // the pump's refresh wakes it
     if (g_mq != MQ_LIVE) return -1;                                       // the CONNACK wakes it
+    if (g_dead) return g_dead == 1 ? 0 : -1;   // the close frame is due; once out, the host's close wakes it
     if (g_n_unsubs) return 0;
     int64_t due = g_last_out + NC_PING_MS;
+    if (g_ping_at && g_ping_at + NC_PONG_MS < due) due = g_ping_at + NC_PONG_MS;
     for (int i = 0; i < NC_SUBS_MAX; i++) {
         if (g_subs[i].state == SUB_WANT) return 0;
         if ((g_subs[i].state == SUB_REFUSED || g_subs[i].state == SUB_SENT) && g_subs[i].retry_at < due)
