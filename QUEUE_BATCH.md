@@ -129,3 +129,81 @@ Owed tests (files written, NOT yet mutation-checked):
 - shared/c/deal_rng_openssl_test.c and shared/c/sha256_openssl_test.c (native, link -lcrypto; both pass, 1600 and 4522 assertions, under 1 s). Mutate: drop the feed-forward add in deal_rng_block; change one padding constant in sha256.c. Neither is wired into a Makefile or CI lane yet (they need OpenSSL on the link line).
 - c_base/providers/aws/test/unit_sigv4.c hmac_long_key_boundaries (secrets of 1, 59, 60, 61, 62, 100, 127 chars against libcrypto HMAC, the kept key re-signed). Not run (c_base build is over the 5 s budget). Mutate: hash the key at klen >= 64 instead of > 64 in hmac().
 - Wipe tests are not possible from outside (the buffers are locals); check once by reading the asm or with a valgrind-style stack scan if wanted.
+
+## Item: near-duplicate families 7-18 (dup_audit.md)
+
+Lifts, all header-only in shared/ unless noted. Every change is compile-checked only (nothing over 5 s was run).
+
+### Family 7, FNV-1a (shared/c/fnv.h, fnv_test.c)
+- Cherry-picked the parked WIP (origin/claude/dedup-fnv, now deleted) and fixed the c_base paths (c_base/core/src/rate_limits.c, foolish/server/src/app/table_ops.c).
+- ONE 64-bit basis: FNV64_OFFSET = 14695981039346656037. The truncated 1469598103934665603 (the WIP's FNV64_OFFSET_SHORT) is gone from C, from foolish/rust/rs/src/lib.rs and from foolish/ios/FoolishTests/EngineGoldenTests.swift.
+- Also moved: netclient.c quiet_jitter (32-bit fold), tests/fm_exp_digest.h (already the right basis, now through fnv1a64_step).
+- Goldens / pins that change (the 64-bit users that were on the short basis):
+  - foolish/ios/Fixtures/goldens.json (dealHash, seat0LegalHash, playHash) - regenerate with foolish/c/ios/ios_goldens.c; EngineGoldenTests.swift compares against them with the new basis.
+  - foolish/c/tests/tests.c (the four digests built from FNV64_OFFSET near lines 11555, 11640, 11806, 11824) and foolish/c/tests/replay_overlay_test.c (overlay digest): expected values.
+  - foolish/c/src/main_eval.c GAME_SIG outputs (any recorded GAME_SIG baseline).
+  - chuiniu: cn.c game hash and chuiniu/c/tests/cn_scene_frame.h (frame digest) pins in cn_test / scene tests.
+  - tallybones: tb.c game hash pins; uttt: uttt_bots.c cm hash pins in uttt_bots_test.
+  - foolish/rust bench_common.h FNV_INIT and rs/src/lib.rs: the bench checksum the Rust port must reproduce changes (C and Rust moved together).
+  - c_base/core/src/rate_limits.c hash is internal (slot index), nothing pinned.
+- Unchanged by construction: every 32-bit fold (roster hash, game seed, texture pins, table stripe).
+
+### Family 8, endian bytes (shared/c/le_bytes.h + new be_bytes.h)
+- le_bytes.h gained le_put_u64/le_get_u64; be_bytes.h is the big-endian half (be_put/get_u16/u32). le_bytes_test.c covers both (60k assertions pass).
+- Switched: foolish msg_wire.c (6 helpers), replay_extras.c, shared deal_rng.c, chuiniu cn_tex.c / cn_texgen.c / cn_tex_test.c / cn_icon.c (PNG chunks, TrueType), uttt uttt_big_msg.c and uttt_msg.c (big-endian headers), shared mqtt.c, c_base items.c.
+- Left on purpose: werewolf (paused), pk_msg/tb_msg/cn_msg (already msg_whole), deal_rng_openssl_test.c (an independent oracle).
+- ctl_wire.c no longer exists (native server retired).
+
+### Family 9, card labels (foolish/c/cardtext/card_text.h)
+- Added card_rank_text(value), card_suit_letter(suit) and CARD_SUIT_LETTER (freestanding, so wasm may use them). datagen reads only the two named tables, so the generated TS is unchanged.
+- main_replay.c was already fixed (the drift in the audit is gone). Switched: main_analyse, main_winprob, main_eval, octogen_strategy, oracle_answer_test, msg_wire_test (3 sites).
+- Not changed: tests.c:9794 (a parser table, lowercase), tools/endgame_retro/{find_crawl,trace_path,verify_crawl,alphabeta_probe}.c (their own 5..13 "T"-style or six-up tables and no -Isrc to cardtext), foolyard trace.c.
+- TS/Swift/Python label tables that are NOT generated and stay: src/components/OracleOverlay.tsx, SegmentDisplay.tsx, src/oracle/explain.ts, src/oracle/types.ts, scripts/decode_replay.mjs, e2e/helpers/table_mem.ts, table_play.ts, e2e/ui_animation_trace.test.ts, ios/FoolishMessages/MessagesViewController.swift, c/tools/winprob/winprob_bin.py. (sdk/ts/gen/card_rank.ts and card_suit.ts are the generated ones; moving the web onto them is a host edit.)
+
+### Family 13, UTF-8 (shared/c/text_util/utf8.h, header-only)
+- text_utf8_next (strict decoder) and text_utf8_scan(flags, cps, utf16). TEXT_UTF8_NO_CONTROLS is the one policy bit (display names); code point and UTF-16 unit counts are outputs.
+- Policies kept explicit: roster.c (controls allowed, UTF-16 units for the 50-unit title cap, ASCII fast path kept), msg_seat_tag (no controls, code points), aws_json body check (controls allowed), c_base names.c (decoder only). unfurl_http.c is a lenient replacement walker (different policy) and stays; text_util.c text_next_cp is the other lenient one.
+- c_base auth.c password length counts continuation bytes without validating; left (it is a password, not a trust boundary for text).
+- text_util_test.c got 15 utf8 checks (pass). Owed: mutation check (break the surrogate range, the overlong minimum, the C1 range).
+
+### Family 15, clocks (shared/c/clock.h, host-only)
+- host_mono_ns/us/ms/s, host_real_ms, host_thread_cpu_ms, host_process_cpu_ns/s, host_sleep_ms, host_deadline_after_ms. c_base clock.c (cb_now_ms, cb_mono_ms, cb_sleep_ms) is now a thin wrapper.
+- 25 sites switched (c_base bench/test/aws, foolish analyse/winprob/main_* /tests/rust/server bench+test, chuiniu bench, tallybones tb_solve, uttt_ladder). Left: inline timespec subtraction in main_eval/main_showcase/alphabeta_probe/solve/uttt_analyse/cn_arena (elapsed-time pairs; a host_elapsed helper would be new API), uttt tests that use clock() on purpose.
+- c_base util/str and util/uuid: already built on shared/c/hex; nothing duplicated to lift (cb_url_decode has no twin).
+
+### Family 11, easing (shared/c/ease.h, ease_test.c)
+- ease_cubic_bezier is uttt's solver verbatim (uttt output unchanged). pickemup pk_ease now calls it: pickemup's old solver had a 1e-4 tolerance, so pk_ease values move by up to ~1e-4. REGENERATE: pickemup beats / frame goldens that hash or pin pk_ease output (pk_beats_test expectations, docs/MOTION_REPORT.md dump if pinned).
+- Left: roleMotion.ts solver (TS, host), Swift literals, cn_beats / tb_beats / cn_cam named eases (no solver in them).
+
+### Family 10, test harness (shared/c/test/check.h)
+- check.h gained OK(cond, "what"), CHECK_PRINT_CAP (default 5 per test; suites with no TEST() names raise it so every failure prints, as their private OK did) and CHECK_ZERO_IS_FAIL (c_base's "zero checks is a failure" rule as an option).
+- 17 suites dropped their private counters and OK macros: shared collapse/msg_lobby_roster/msg_seat_tag/msg_stage/msg_whole/text_util/stats/wire_check tests, uttt msg/anim/ink/big/big_msg tests, pickemup/chuiniu/tallybones api smokes. Output changed: failures go to stderr in CHECK's format, the tally line reads "N assertions".
+- Mutation-check counts per file must be re-recorded (assertion counts are unchanged except text_util_test, +15).
+- NOT converted: foolish tests (tests.c, msg_wire_test, analyse_test, oracle_answer_test, replay_* tests, bot_drive_threads, msg_expand, anim_plan: their CHECK(cond, msg) takes the message as a plain string and some count n_pass for a summary), uttt_analyse/bots/lang tests (no checks counter, variadic OK), uttt_api_smoke (no counter), werewolf, motion_test.c, c_base core/test/t.h (own T_EQ_* family; its zero-check rule is now check.h's CHECK_ZERO_IS_FAIL, but t_done's "ok  file: N tests" line is parsed by the c_base runner), twophone.h.
+
+### Family 12, build scaffolding
+- Done: chuiniu/ios/scripts/mac_tests.sh (176 -> about 45 lines) is a thin wrapper over shared/scripts/ios_mac_tests.sh, which gained POST_LIB_CMD/POST_LIB_LABEL (the architecture lint runs after the readers exist, also with --no-lib). Behaviour change: it now tests on the shared locked "ios-mac-tests" simulator instead of "iPhone 17e".
+- Not done (risk or unverifiable without a Mac run): tallybones/ios/scripts/mac_tests.sh (needs Mac Catalyst support in the shared script: extra build settings, `env -u DEST`, ios-lib-catalyst), the three project.yml files (xcodegen base spec; signing and UI risk), the c/Makefile PROG template (shared .mk already holds most; the rest differs per product), the three product workflows (reusable workflow_call), wasm.yml's own clang apt-install beside shared/scripts/ci_llvm.sh.
+
+### Family 16, collapse spring in foolish Swift
+- Skipped. No Swift target imports CCollapse today (pickemup and uttt read the constant through their kernels' C headers: pk_api.h, uttt_anim.h), so foolish's CollapseTween.hostResponse (0.338) needs either a SWIFT_INCLUDE_PATHS edit in foolish's project.yml or a foolish kernel export plus a regenerated reader; both touch the Xcode project and cannot be checked here. 338 ms is shared/c/collapse/collapse.h COLLAPSE_RESPONSE_MS. Smallest safe route: export it from the foolish kernel (one const in the ios API header, picked up by structgen) and set `hostResponse = Double(FOOLISH_COLLAPSE_RESPONSE_MS) / 1000`.
+
+### Family 17, small helpers
+- shared/c/stats/percentile.h: stat_pct_i64/f64 (nearest rank, no libm), stat_cmp_f64. c_base bs_percentile is a wrapper (unit_bench expectations unchanged: checked by hand for 7, 95, 100, 20, 21). bench_dynamo, cn_scene_bench (p95 moves from a floor index to nearest rank) and uttt_test (comparator only) use it.
+- Not lifted: pickemup pk_msg_test pct() (rounded index; its assertions would shift), uttt_test p50/p95 index math (printed only), native hammer/wt_client (retired).
+- shared/c/util.h: ARRAY_LEN, util_clampi/f/d, util_mini/maxi/mind/maxd, util_popcount32/64. Applied to cn_scene, cn_stage, cn_lay, uttt_big_bot, tb_beats, tb_fuzz. The 174 inline `sizeof x / sizeof x[0]` are NOT rewritten (a churn-only sweep needing an include in each file); cn_tex clamp01 and hand_layout/analyse/uttt_anim clamps have a different shape and stay.
+
+### Family 18, research-tool clones
+- foolish/c/tools/endgame_retro/common.h: two_in, actor_of, mask_of (7 tools). The positions tables and interning stay per tool (sizes differ, one-liners are tuned).
+- foolish/rust/bench_game.h: state_to_game and GAME_PREFIX once for bench_legal, bench_playout, bench_solve (playout now clears the prefix like the other two; num_logs stays 0).
+- foolish/c/tests/difftest_step.h: struct_step once for sim_difftest and solver_difftest.
+- structgen: backtick_name once for sg_kotlin kt_name and sg_swift swift_name (compile-checked with homebrew llvm headers; regenerated output must be byte-identical: run the structgen golden).
+- Not done: foolyard clients c01/c02/c08/c09 on_view/on_wake, tools/leafbook build_book/enumerate and the other endgame_retro intern tables, c_base listed() (gone).
+- leafbook/c_base: nothing.
+
+### Deferred, per the first plan (superseded by the scope change above): none.
+
+### Final-pass checklist for this item
+- Regenerate: foolish/ios/Fixtures/goldens.json (+ any other fnv-pinned digests above), pickemup beats pins, structgen outputs (expect no diff).
+- Run: shared tests (make -C uttt/c or pickemup/c run for the shared lanes), foolish/c tests, chuiniu/tallybones/pickemup/uttt run + asan, c_base unit_bench, unit_event utf8_rule, roster tests (tests.c ROSTER cases), a CI pass for the wasm builds (roster.c, analyse.c, winprob.c, msg_wire.c, octogen_strategy.c all changed and are in wasm).
+- Mutation-check: utf8.h (surrogate, overlong, C1), ease_test (clamp ends), le_bytes u64/be tests, check.h CHECK_PRINT_CAP.
