@@ -120,7 +120,7 @@ $(call prog,uttt_big_diag_test,$(BUBBLE_DATA)/bubble_data.c tests/uttt_big_diag_
 
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_big_test build/uttt_msg_test build/uttt_big_msg_test build/uttt_big_diag_test build/uttt_anim_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test build/uttt_big_bot_test
+run: build/uttt_test build/uttt_big_test build/uttt_msg_test build/uttt_big_msg_test build/uttt_big_diag_test build/uttt_anim_test build/uttt_web_test build/uttt_draw_math_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test build/uttt_big_bot_test
 	./build/uttt_test 1000
 	./build/uttt_big_test 2000 10
 	./build/uttt_big_bot_test 40
@@ -131,6 +131,8 @@ run: build/uttt_test build/uttt_big_test build/uttt_msg_test build/uttt_big_msg_
 	./build/uttt_big_msg_test 20
 	./build/uttt_big_diag_test
 	./build/uttt_anim_test
+	./build/uttt_web_test
+	./build/uttt_draw_math_test
 	./build/uttt_ink_test
 
 # ...and shared/c's own tests, as part of the same `make run`.
@@ -151,6 +153,17 @@ build/uttt_lang_en_test: $(call c_objs,build/obj/en,$(SRC_EN) tests/uttt_lang_te
 $(call prog,uttt_bots_test,tests/uttt_bots_test.c)
 
 $(call prog,uttt_anim_test,tests/uttt_anim_test.c)
+
+# The drawing's private arithmetic (the cap fan, pow75): the test includes the pen and the
+# drawing itself, so the program links the rest of SRC without them.
+MATH_SRC := $(filter-out src/uttt_pen.c src/uttt_draw.c,$(SRC))
+build/uttt_draw_math_test: $(call c_objs,build/obj/host,$(MATH_SRC) tests/uttt_draw_math_test.c)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
+build/asan_uttt_draw_math_test: $(call c_objs,build/obj/asan,$(MATH_SRC) tests/uttt_draw_math_test.c)
+	$(CC) $(ASAN_FLAGS) $^ -o $@ $(LDLIBS)
+
+# The replay page's kernel (wasm/uttt_web.c) compiled as plain C, and its settled-frame cache.
+$(call prog,uttt_web_test,tests/uttt_web_test.c)
 
 # The board's side per drawer height, for the ruler's scorer (tools/uttt_side.c).
 $(call prog,uttt_side,tools/uttt_side.c)
@@ -232,7 +245,7 @@ rough-diff: build/uttt_render
 # the kernel is compiled for them once, where each program used to compile it
 # again.
 ASAN_PROGS := uttt_test uttt_big_test uttt_big_bot_test uttt_msg_test uttt_big_msg_test \
-              uttt_big_diag_test uttt_anim_test uttt_bots_test uttt_ink_test uttt_lang_test
+              uttt_big_diag_test uttt_anim_test uttt_web_test uttt_draw_math_test uttt_bots_test uttt_ink_test uttt_lang_test
 asan: $(addprefix build/asan_,$(ASAN_PROGS)) shared-tests-asan
 	./build/asan_uttt_test 400
 	./build/asan_uttt_big_test 300 1
@@ -241,6 +254,8 @@ asan: $(addprefix build/asan_,$(ASAN_PROGS)) shared-tests-asan
 	./build/asan_uttt_big_msg_test 3
 	./build/asan_uttt_big_diag_test
 	./build/asan_uttt_anim_test
+	./build/asan_uttt_web_test
+	./build/asan_uttt_draw_math_test
 	./build/asan_uttt_bots_test 3
 	./build/asan_uttt_ink_test
 	./build/asan_uttt_lang_test

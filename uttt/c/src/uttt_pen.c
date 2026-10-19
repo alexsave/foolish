@@ -505,6 +505,13 @@ static int join(UtttPt *o, UtttPt c, float h, float s,
     return k;
 }
 
+/* The round cap's fan: cos and sin of pi * j / CAP, j = 1 .. CAP - 1 (entry 0
+ * is unused). CAP is fixed, so the angles are, and no call is made for them;
+ * tests/uttt_draw_math_test.c holds the table to cos and sin. */
+enum { CAP = 6 };
+static const float CAP_COS[CAP] = { 0.f, .8660254f, .5f, 0.f, -.5f, -.8660254f };
+static const float CAP_SIN[CAP] = { 0.f, .5f, .8660254f, 1.f, .8660254f, .5f };
+
 /* LAY A STROKE DOWN AS ONE POLYGON: its outline, width per sample.
  *
  * It was a quad per segment and a disc per sample, every one at the stroke's
@@ -526,11 +533,7 @@ static int join(UtttPt *o, UtttPt c, float h, float s,
  * (t along all `n`), so what is drawn never changes as more is drawn. */
 void uttt_ink_part(UtttDL *d, const UtttPt *pts, int n, int m, const UtttPen *p)
 {
-    enum { MAXS = 512, CAP = 6 };
-    /* cos and sin of pi * j / CAP, j = 1 .. CAP - 1: CAP is fixed, so the
-     * angles are, and no call is made for them */
-    static const float CAP_COS[CAP] = { 0.f, .8660254f, .5f, 0.f, -.5f, -.8660254f };
-    static const float CAP_SIN[CAP] = { 0.f, .5f, .8660254f, 1.f, .8660254f, .5f };
+    enum { MAXS = 512 };
     if (n < 2) return;
     if (m > n) m = n;
     if (m < 2) return;
