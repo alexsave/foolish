@@ -473,7 +473,10 @@ static void boot_fails_cleanly(void) {
         oom_off();
         if (!failed) { T_EQ_INT(rc, CB_OK); break; }
         failures++;
-        if (live) fprintf(stderr, "     boot: allocation %d failed (rc %d), %ld blocks leaked\n", k, rc, live);
+        if (live) {
+            fprintf(stderr, "     boot: allocation %d failed (rc %d), %ld blocks leaked\n", k, rc, live);
+            oom_dump_live(stderr);
+        }
         T_EQ_INT(live, 0);
         if (k > 20000) break;
     }
