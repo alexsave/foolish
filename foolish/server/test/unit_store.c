@@ -1497,6 +1497,52 @@ static void import_writes(void) {
     cb_store_close(s);
 }
 
+// cbase-import over an account that already exists never lowers its session generation (that would revive the
+// sessions a global sign-out ended): the stored one is kept when it is at least the imported one, a higher
+// imported one wins, and a new account takes the imported one.
+static void import_never_lowers_a_session_generation(void) {
+    cb_store *s = open_fresh();
+    cb_user_row a = mkuser("gen@x.io", "GEN", 1);
+    cb_user_row got;
+    // A new account takes what is imported (a generation and the session it kept).
+    a.session_gen = 3;
+    snprintf(a.kept_session, sizeof a.kept_session, "%s", "11111111-1111-4111-8111-111111111111");
+    T_EQ_INT(CB_STORE_CALL(s, user_import, &a), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_get, a.id, &got), CB_OK);
+    T_EQ_INT(got.session_gen, 3);
+    T_EQ_STR(got.kept_session, "11111111-1111-4111-8111-111111111111");
+    // Sessions ended since (a global sign-out: one up, none kept), then the same export is imported again
+    // (its generation 3 is older than the stored 4): the stored generation and its empty kept session stay.
+    T_EQ_INT(CB_STORE_CALL(s, user_end_sessions, a.id), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_get, a.id, &got), CB_OK);
+    T_EQ_INT(got.session_gen, 4);
+    T_EQ_INT(CB_STORE_CALL(s, user_import, &a), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_get, a.id, &got), CB_OK);
+    T_EQ_INT(got.session_gen, 4);
+    T_EQ_STR(got.kept_session, "");
+    // An equal generation keeps the stored one too (and its kept session).
+    a.session_gen = 4;
+    T_EQ_INT(CB_STORE_CALL(s, user_import, &a), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_get, a.id, &got), CB_OK);
+    T_EQ_INT(got.session_gen, 4);
+    T_EQ_STR(got.kept_session, "");
+    // An export taken after more sign-outs raises it, and its kept session comes with it.
+    a.session_gen = 9;
+    snprintf(a.kept_session, sizeof a.kept_session, "%s", "22222222-2222-4222-8222-222222222222");
+    T_EQ_INT(CB_STORE_CALL(s, user_import, &a), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_get, a.id, &got), CB_OK);
+    T_EQ_INT(got.session_gen, 9);
+    T_EQ_STR(got.kept_session, "22222222-2222-4222-8222-222222222222");
+    // The profile was replaced otherwise: the imported name stands.
+    snprintf(a.username, sizeof a.username, "GEN2");
+    a.session_gen = 0;
+    T_EQ_INT(CB_STORE_CALL(s, user_import, &a), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_get, a.id, &got), CB_OK);
+    T_EQ_STR(got.username, "GEN2");
+    T_EQ_INT(got.session_gen, 9);
+    cb_store_close(s);
+}
+
 // ---- big items and many pages ----------------------------------------------------------------
 
 typedef struct { int n; int64_t last_at; bool ordered; size_t bytes; } pages_t;
@@ -1715,6 +1761,7 @@ int main(void) {
     if (tsb_dynamo()) T_RUN(admin_reads_dynamo);
     else T_RUN(admin_reads);
     T_RUN(import_writes);
+    T_RUN(import_never_lowers_a_session_generation);
     T_RUN(big_items_and_pages);
     T_RUN(cas_under_threads);
     T_RUN(lone_cas_under_threads);
