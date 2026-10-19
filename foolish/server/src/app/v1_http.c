@@ -4,7 +4,7 @@
 // read is the same store call the PostgREST facade makes, without its query
 // language: each route answers exactly the one question a client asks.
 #include "v1_http.h"
-#include "num_parse.h"
+#include "../../../../shared/c/num_parse.h"
 
 #include "auth/auth.h"
 #include "auth/names.h"
