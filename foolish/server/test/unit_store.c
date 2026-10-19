@@ -1782,9 +1782,34 @@ static void group_commit_keeps_each_txn_alone(void) {
     cb_store_close(s);
 }
 
+// cb_item_size reads the lengths the item carries; it must be the sum of
+// cb_av_size over the attributes it gives back, for every kind.
+static void item_size_is_the_sum_of_its_attributes(void) {
+    cb_item it;
+    cb_item_init(&it);
+    const uint8_t blob[7] = { 1, 2, 3, 4, 5, 6, 7 };
+    const char *list[] = { "ab", "", "cde" };
+    T_CHECK(cb_item_add(&it, &CB_AVS("name", "value-of-some-length")));
+    T_CHECK(cb_item_add(&it, &CB_AVS("empty", "")));
+    T_CHECK(cb_item_add(&it, &CB_AVN("count", 12345)));
+    T_CHECK(cb_item_add(&it, &CB_AVBOOL("flag", true)));
+    T_CHECK(cb_item_add(&it, &CB_AVB("blob", blob, sizeof blob)));
+    T_CHECK(cb_item_add(&it, &CB_AVSL("list", list, 3)));
+    size_t want = 0;
+    for (int i = 0; i < it.n; i++) {
+        cb_av v;
+        cb_item_at(&it, i, &v);
+        want += cb_av_size(&v);
+    }
+    T_CHECK(want > 0);
+    T_EQ_INT(cb_item_size(&it), want);
+    cb_item_free(&it);
+}
+
 int main(void) {
     snprintf(g_dir, sizeof g_dir, "/tmp/cbase-unit-store-XXXXXX");
     if (!mkdtemp(g_dir)) { perror("mkdtemp"); return 1; }
+    T_RUN(item_size_is_the_sum_of_its_attributes);
     T_RUN(open_applies_schema_and_seeds_bots);
     T_RUN(users_round_trip);
     T_RUN(signin_fails_round_trip);
