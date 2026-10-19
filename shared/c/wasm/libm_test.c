@@ -2,7 +2,7 @@
  * sc_sincos(f) the products call (sincos.h).
  *
  * libm.c defines sin, cos, sincos and the rest under the platform's own names,
- * so, as chuiniu's cn_libm.c does, every name is renamed (wl_) before the file
+ * so, as a product's wrapper does, every name is renamed (wl_) before the file
  * is included. What is held:
  *
  *   - sincos(x) is BIT-IDENTICAL to sin(x) and cos(x) (one range reduction

@@ -34,8 +34,11 @@ import { join, resolve, relative } from 'node:path';
 const REPO = resolve(import.meta.dirname, '../../..');
 const SHARED = join(REPO, 'shared');
 
-/** Build outputs and generated modules are not source and are not committed; name_gate/ is the name lists. */
-const SKIP_DIR = new Set(['build', 'gen', 'node_modules', '__pycache__', '.git', 'name_gate']);
+/**
+ * Build outputs and generated modules are not source and are not committed; name_gate/ is the name lists;
+ * fuzz/ is the products' fuzz harness, which links each product's readers and so names them by design.
+ */
+const SKIP_DIR = new Set(['build', 'gen', 'node_modules', '__pycache__', '.git', 'name_gate', 'fuzz']);
 
 function sourceFiles(dir: string): string[] {
     const out: string[] = [];
