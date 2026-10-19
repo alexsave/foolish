@@ -160,9 +160,9 @@ const span = (a: NetAnswer, off: number, len: number): Uint8Array => a.body.slic
 // refusal. The page imports these and never the client: this file is the one
 // seam a test stands a fake backend in.
 
-/** Sign up or in with the username as typed (upper-cased here, as both clients always did). */
+/** Sign up or in with the username as typed; the server owns its canonical case (c_base auth/names.h cb_name_case). */
 export async function signIn(up: boolean, name: string, password: string): Promise<void> {
-    await ask({ kind: up ? N.NC_DO_SIGN_UP : N.NC_DO_SIGN_IN, name: name.toUpperCase(), password });
+    await ask({ kind: up ? N.NC_DO_SIGN_UP : N.NC_DO_SIGN_IN, name, password });
 }
 
 /** Sign out everywhere; this page forgets the session whatever the server answered. */
