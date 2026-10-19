@@ -81,3 +81,5 @@ Note for a nano: each client holds two connections (HTTP plus MQTT), and the pro
 
 ## Fixes to make (found on the way)
 
+- shared/c/wasm/libm.c `quad()` casts a NaN or infinite double to long long: undefined behaviour and a trap in the wasm module. Guard non-finite input.
+- c_base/DESIGN.md:394 says the kernel section is "per-thread scratch", but the code callocs a fresh cb_section per operation (table_ops.c:161). DESIGN.md:426 says "no Lambda yet", which is stale. Fix both with the batch/section reuse item.
