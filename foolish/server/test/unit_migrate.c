@@ -119,9 +119,77 @@ static void items_become_rows(void) {
     cb_store_close(s);
 }
 
+// Production holds names from before the case rule (lower case): they are copied as they are shown,
+// and compared by their key (names.h cb_name_key), so "Ann" beside "ann" fails loudly, naming the
+// accounts by id only. Chat whose game is gone is skipped and counted, not failed; chat whose author
+// is missing fails.
+static void old_names_keep_their_case_and_orphan_chat_is_skipped(void) {
+    char path[320];
+    snprintf(path, sizeof path, "%s/n.sqlite", g_dir);
+    cb_store *s = NULL;
+    T_EQ_INT(cb_store_open_sqlite(path, &s), CB_OK);
+    if (!s) return;
+    T_EQ_INT(CB_ROWS_CALL(s, bots_replace, NULL, 0), CB_OK);
+    enum { N = 5 };
+    cb_item it[N];
+    mk(&it[0], (cb_av[]){ CB_AVS("pk", "USER#" U1), CB_AVS("sk", "PROFILE"), CB_AVS("id", U1), CB_AVS("email", "a@x.io"),
+                         CB_AVS("password_hash", HASH), CB_AVS("username", "ann"), CB_AVN("created_at", 5) }, 7);
+    mk(&it[1], (cb_av[]){ CB_AVS("pk", "EMAIL#a@x.io"), CB_AVS("sk", "USER"), CB_AVS("user_id", U1) }, 3);
+    mk(&it[2], (cb_av[]){ CB_AVS("pk", "GAME#ab12cd"), CB_AVS("sk", "ROW"), CB_AVS("id", "ab12cd"), CB_AVN("status", 1),
+                         CB_AVB("state", STATE, 3), CB_AVB("roster", ROSTER, 2), CB_AVN("version", 4), CB_AVN("created_at", 1),
+                         CB_AVN("updated_at", 2), CB_AVN("last_commit_at", 2) }, 10);
+    mk(&it[3], (cb_av[]){ CB_AVS("pk", "CHAT#ab12cd"), CB_AVS("sk", "000000000000009#" CH), CB_AVS("id", CH),
+                         CB_AVS("game_id", "ab12cd"), CB_AVS("user_id", U1), CB_AVS("message", "hi"),
+                         CB_AVBOOL("is_system", false), CB_AVN("created_at", 9) }, 8);
+    mk(&it[4], (cb_av[]){ CB_AVS("pk", "CHAT#zz99yy"), CB_AVS("sk", "000000000000009#" SN), CB_AVS("id", SN),
+                         CB_AVS("game_id", "zz99yy"), CB_AVS("user_id", U1), CB_AVS("message", "gone"),
+                         CB_AVBOOL("is_system", false), CB_AVN("created_at", 9) }, 8);
+    char *log = NULL;
+    size_t log_len = 0;
+    FILE *lf = open_memstream(&log, &log_len);
+    cb_mig *m = cb_mig_new(s, 100, lf);
+    for (int i = 0; i < N; i++) T_EQ_INT(cb_mig_put(m, &it[i]), CB_OK);
+    T_EQ_INT(cb_mig_finish(m), CB_OK);
+    for (int i = 0; i < N; i++) T_EQ_INT(cb_mig_same(m, &it[i]), 1);
+    T_EQ_INT(cb_mig_report(m, lf), 0);
+    // The name is shown as it was.
+    cb_user_row u;
+    T_EQ_INT(CB_STORE_CALL(s, user_get, U1, &u), CB_OK);
+    T_EQ_STR(u.username, "ann");
+    // A second account whose name compares equal: refused, and the log names both ids, not the name.
+    cb_item bad;
+    mk(&bad, (cb_av[]){ CB_AVS("pk", "USER#" U2), CB_AVS("sk", "PROFILE"), CB_AVS("id", U2), CB_AVS("email", "b@x.io"),
+                       CB_AVS("password_hash", HASH), CB_AVS("username", "Ann"), CB_AVN("created_at", 6) }, 7);
+    T_CHECK(cb_mig_put(m, &bad) != CB_OK);
+    cb_item_free(&bad);
+    // Chat by an author the copy does not hold fails.
+    mk(&bad, (cb_av[]){ CB_AVS("pk", "CHAT#ab12cd"), CB_AVS("sk", "000000000000010#" CH), CB_AVS("id", "66666666-6666-4666-8666-666666666666"),
+                       CB_AVS("game_id", "ab12cd"), CB_AVS("user_id", U2), CB_AVS("message", "who"),
+                       CB_AVBOOL("is_system", false), CB_AVN("created_at", 10) }, 8);
+    T_CHECK(cb_mig_put(m, &bad) != CB_OK);
+    cb_item_free(&bad);
+    fflush(lf);
+    T_CHECK(log && strstr(log, "orphaned, skipped") != NULL);
+    T_CHECK(log && strstr(log, "USER#" U2) && strstr(log, "account " U1));
+    T_CHECK(log && strstr(log, "Ann") == NULL);
+    T_CHECK(log && strstr(log, "author"));
+    // The store's own index holds the rule too: a new "ANN" beside "ann" is a conflict.
+    cb_user_row v = u;
+    cb_strlcpy(v.id, U2, sizeof v.id);
+    cb_strlcpy(v.email, "c@x.io", sizeof v.email);
+    cb_strlcpy(v.username, "ANN", sizeof v.username);
+    T_EQ_INT(CB_STORE_CALL(s, user_create, &v), CB_E_CONFLICT);
+    fclose(lf);
+    free(log);
+    cb_mig_free(m);
+    for (int i = 0; i < N; i++) cb_item_free(&it[i]);
+    cb_store_close(s);
+}
+
 int main(void) {
     if (tp_tempdir(g_dir, sizeof g_dir) != 0) return 1;
     T_RUN(items_become_rows);
+    T_RUN(old_names_keep_their_case_and_orphan_chat_is_skipped);
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
     if (system(cmd) != 0) return 1;

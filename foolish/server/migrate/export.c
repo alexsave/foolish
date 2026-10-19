@@ -7,15 +7,25 @@
 // The table's keys are listed (item_keys), sorted into the order the rows need, and read 100 at a
 // time (item_batch_get); each item is decoded by its family into its row and written through the SQL
 // store's own operations into the plain tables (store/migrate_rows.h lists the families). Nothing of
-// DynamoDB's key shape reaches the file. An unknown family, a duplicate or non-canonical username,
-// and a row the store refuses each fail the run loudly.
+// DynamoDB's key shape reaches the file. A username is copied as it is shown (names from before the
+// case rule keep their lower case); two accounts whose names compare equal (auth/names.h cb_name_key)
+// fail the run loudly, naming both ids. Chat whose game is gone is skipped and counted ("orphaned,
+// skipped"). An unknown family and a row the store refuses each fail the run loudly.
 //
 // READ-ONLY ON DYNAMODB: the Scan, BatchGetItem and DescribeTable calls, and
 // nothing that writes. The table is shared with production, so the reads are
 // paced in the store's bulk mode (a token bucket on the table's provisioned
 // read units, throttles waited out with a jittered backoff, never given up
 // on), and held to --rate percent of them (default 25; 100 is all of the
-// provisioned capacity, which production then goes without).
+// provisioned capacity, which production then goes without). Only the base table is read (a Scan and
+// BatchGetItem, never an index), so reads are paced to the TABLE's read units, not an index's.
+//
+// THE FREEZE WINDOW: with writes frozen, run it at --rate 100. The run reads the table about three
+// times (the key scan, the copy, the verify), so its length is about 3 x the table's read units used
+// / its provisioned RCU. To shorten the window, raise the table's ReadCapacityUnits before the freeze
+// (aws dynamodb update-table --table-name cbase --provisioned-throughput ReadCapacityUnits=N,
+// WriteCapacityUnits=<unchanged>; it applies in seconds and the pacing reads it at start) and lower
+// it after (decreases are limited per day).
 //
 // It then VERIFIES: each family's item count against its table's row count (an expired session,
 // token or sign-in count is skipped and counted as such; the bot scan's markers are not kept), then a

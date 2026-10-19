@@ -76,6 +76,7 @@ struct cb_mig {
     int64_t   now;
     FILE     *log;
     long      seen[F__N], written[F__N], skipped[F__N], failed[F__N];
+    long      orphans;     // chat whose game is gone: skipped (counted in skipped[F_CHAT])
     long      game_logs;   // games whose row carried a session log: one game_moves row each
     // A game's seats, held until its ROW (same pk).
     char      seat_game[CB_GAME_ID_MAX + 1];
@@ -88,8 +89,9 @@ struct cb_mig {
     // The bots, written together at the end (they replace the seeded ones).
     cb_bot_row *bots_rows;
     int         n_bots_rows, cap_bots_rows;
-    // The canonical names taken so far, sorted (a duplicate fails loudly).
-    char      (*names)[CB_USERNAME_MAX + 1];
+    // The name keys taken so far and whose they are, sorted by key (a second account with one fails
+    // loudly, naming both ids and no name).
+    struct name_claim { char key[4 * CB_USERNAME_MAX + 8]; cb_uuid id; } *names;
     int         n_names, cap_names;
 };
 
@@ -120,26 +122,28 @@ static const char *after_hash(const char *s) {
     return h ? h + 1 : s;
 }
 
-// A name not yet taken goes into the sorted list: false when it is there already.
-static bool claim_name(cb_mig *m, const char *name) {
+// A name key not yet taken goes into the sorted list: NULL. Taken: the id of the account that has it.
+// Out of memory: "" (the caller fails the row).
+static const char *claim_name(cb_mig *m, const char *key, const char *id) {
     int lo = 0, hi = m->n_names;
     while (lo < hi) {
-        int mid = (lo + hi) / 2, c = strcmp(m->names[mid], name);
-        if (c == 0) return false;
+        int mid = (lo + hi) / 2, c = strcmp(m->names[mid].key, key);
+        if (c == 0) return m->names[mid].id;
         if (c < 0) lo = mid + 1;
         else hi = mid;
     }
     if (m->n_names == m->cap_names) {
         int cap = m->cap_names ? m->cap_names * 2 : 256;
         void *p = realloc(m->names, (size_t)cap * sizeof *m->names);
-        if (!p) return false;
+        if (!p) return "";
         m->names = p;
         m->cap_names = cap;
     }
     memmove(&m->names[lo + 1], &m->names[lo], (size_t)(m->n_names - lo) * sizeof *m->names);
-    cb_strlcpy(m->names[lo], name, sizeof m->names[lo]);
+    cb_strlcpy(m->names[lo].key, key, sizeof m->names[lo].key);
+    cb_strlcpy(m->names[lo].id, id, sizeof m->names[lo].id);
     m->n_names++;
-    return true;
+    return NULL;
 }
 
 // ---- the decoders the item path has no public one for ------------------------------------------
@@ -210,12 +214,18 @@ int cb_mig_put(cb_mig *m, const cb_item *it) {
     case F_USER: {
         cb_user_row u;
         if (!cb_rows_user_of(it, &u)) return failed(m, f, pk, sk, "does not decode as an account");
+        // The name is copied as it is shown (a name from before the case rule keeps its case); its key
+        // (names.h cb_name_key) is what must be unique, as the store's index has it.
         if (u.username[0]) {
-            char canon[CB_USERNAME_MAX * 2 + 8];
-            int cn = cb_name_case(u.username, strlen(u.username), canon, sizeof canon);
-            if (cn < 0 || strcmp(canon, u.username) != 0)
-                return failed(m, f, pk, sk, "the username is not in its canonical form (auth/names.h)");
-            if (!claim_name(m, canon)) return failed(m, f, pk, sk, "the username is another account's: duplicate names");
+            char key[sizeof m->names->key], why[160];
+            if (cb_name_key(u.username, strlen(u.username), key, sizeof key) < 0)
+                return failed(m, f, pk, sk, "the username does not fit its key");
+            const char *other = claim_name(m, key, u.id);
+            if (other && !*other) return CB_E_NOMEM;
+            if (other) {
+                snprintf(why, sizeof why, "the username compares equal to account %s's (names.h cb_name_key)", other);
+                return failed(m, f, pk, sk, why);
+            }
         }
         rc = CB_STORE_CALL(m->dst, user_import, &u);
         break;
@@ -309,6 +319,22 @@ int cb_mig_put(cb_mig *m, const cb_item *it) {
         if (!cb_rows_chat_of(it, &c)) return failed(m, f, pk, sk, "does not decode as a chat message");
         rc = CB_ROWS_CALL(m->dst, chat_put, &c);
         if (rc == CB_E_CONFLICT) rc = CB_OK;
+        if (rc == CB_E_NOT_FOUND) {
+            // The store keeps chat only beside its game and its author. A message whose game is gone
+            // (deleted, or a lobby that emptied: its chat was never deleted with it) is unreachable
+            // and is skipped, counted; one whose author is missing is a failed copy.
+            cb_game_row g;
+            int gr = CB_ROWS_CALL(m->dst, game_get, c.game_id, &g);
+            if (gr == CB_OK) cb_game_row_free(&g);
+            cb_chat_row_free(&c);
+            if (gr == CB_E_NOT_FOUND) {
+                m->skipped[f]++;
+                m->orphans++;
+                return CB_OK;
+            }
+            if (gr != CB_OK) return gr;
+            return failed(m, f, pk, sk, "its author's account is not in the copy");
+        }
         cb_chat_row_free(&c);
         break;
     }
@@ -559,6 +585,11 @@ int cb_mig_same(cb_mig *m, const cb_item *it) {
         snprintf(sql, sizeof sql, "SELECT user_id, message, is_system, created_at FROM chat WHERE game_id = %s AND id = %s", k2, k1);
         int n = q1(m->dst, sql, &r);
         if (n < 0) { cb_chat_row_free(&c); return n; }
+        if (n == 0) {   // an orphan (its game is gone) was skipped by rule
+            snprintf(sql, sizeof sql, "SELECT id FROM games WHERE id = %s", k2);
+            int g = q1(m->dst, sql, &r);
+            if (g <= 0) { cb_chat_row_free(&c); return g < 0 ? g : 1; }
+        }
         if (n != 1 || !eq(r.v[0], c.user_id) || !eq(r.v[1], c.message) || !eq_i(r.v[2], c.is_system) ||
             !eq_i(r.v[3], c.created_at))
             rc = differ(m, pk, sk, "no such message, or its author, text or date");
@@ -623,6 +654,7 @@ int cb_mig_report(cb_mig *m, FILE *out) {
                 m->failed[f] || m->written[f] + m->skipped[f] != m->seen[f] ? "   FAILED" : "");
         if (m->failed[f] || m->written[f] + m->skipped[f] != m->seen[f]) bad++;
     }
+    if (m->orphans) fprintf(out, "chat whose game is gone: %ld, orphaned, skipped\n", m->orphans);
     // Each table against the items that make its rows.
     static const struct { const char *table; int f; } T[] = {
         { "users", F_USER }, { "ratings", F_RATING }, { "bots", F_BOT }, { "games", F_GAME }, { "game_members", F_MEMBER },
