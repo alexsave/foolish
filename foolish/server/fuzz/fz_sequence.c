@@ -872,6 +872,7 @@ static void reset_world(uint64_t seed) {
     for (int i = 0; i < N_GAMES; i++) g_planted[i] = -1;
     memset(g_deleted, 0, sizeof g_deleted);
     memset(g_kept_seat, 0, sizeof g_kept_seat);
+    for (int i = 0; i < N_CONNS; i++) cb_mqtt_conn_free(&g_conn[i].mq);   // the last run's filters and token
     memset(g_conn, 0, sizeof g_conn);
     for (int i = 0; i < N_CONNS; i++) cb_mqtt_conn_init(&g_conn[i].mq);
     g_steal = 0;
