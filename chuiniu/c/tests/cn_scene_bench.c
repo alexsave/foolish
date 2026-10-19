@@ -26,6 +26,7 @@
 #ifdef __APPLE__
 #include <dispatch/dispatch.h>
 #include "../../../shared/c/clock.h"
+#include "../../../shared/c/stats/percentile.h"
 #endif
 
 #define BOARD_W 390
@@ -34,7 +35,6 @@
 #define SHADOW_RES 1024
 
 static double now_ms(void) { return host_mono_ms_f(); }
-static int cmp_d(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
 static double cpu_ms(void) { return host_thread_cpu_ms_f(); }
 
 /* the frame in nbands bands, each pass's bands at once; one band is cn_scene_render */
@@ -67,8 +67,8 @@ static void run(const CnfTex *t, float dpr, int frames, int roll, int nbands, do
         render_bands(nbands);
         ms[i] = now_ms() - t0; sum += ms[i];
     }
-    qsort(ms, (size_t)frames, sizeof ms[0], cmp_d);
-    *mean = sum / frames; *p95 = ms[(int)(frames * .95)];
+    qsort(ms, (size_t)frames, sizeof ms[0], stat_cmp_f64);
+    *mean = sum / frames; *p95 = stat_pct_f64(ms, frames, 95);
 }
 
 int main(int argc, char **argv)
@@ -90,7 +90,7 @@ int main(int argc, char **argv)
             cnf_build(&t, BOARD_W, BOARD_H, BOARD_PAD, dpr, SHADOW_RES, (float)(i % 2) * .5f); render_bands(1);
             ms[i] = cpu_ms() - t0;
         }
-        qsort(ms, (size_t)n, sizeof ms[0], cmp_d);
+        qsort(ms, (size_t)n, sizeof ms[0], stat_cmp_f64);
         printf("%.1fx, %d frames, thread CPU: least %.2f ms, median %.2f ms\n", dpr, n, ms[0], ms[n / 2]);
         return 0;
     }
@@ -114,7 +114,7 @@ int main(int argc, char **argv)
         }
         static const char *name[NP] = { "build", "prepare", "shadow map", "picture and shade", "edges", "commit" };
         printf("%.1fx, %d frames, thread CPU, least:", dpr, n);
-        for (int p = 0; p < NP; p++) { qsort(ms[p], (size_t)n, sizeof ms[p][0], cmp_d); printf(" %s %.2f ms%s", name[p], ms[p][0], p + 1 < NP ? ";" : "\n"); }
+        for (int p = 0; p < NP; p++) { qsort(ms[p], (size_t)n, sizeof ms[p][0], stat_cmp_f64); printf(" %s %.2f ms%s", name[p], ms[p][0], p + 1 < NP ? ";" : "\n"); }
         printf("  edge pixels %u, edge samples shaded where they lie %u\n", cn_scene_prof(4), cn_scene_prof(5));
         return 0;
     }

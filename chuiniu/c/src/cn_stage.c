@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <string.h>
 #include "../../../shared/c/fnv.h"
+#include "../../../shared/c/util.h"
 
 /* the renderer's format is cn_geom's, written there as numbers */
 _Static_assert(CN_GEOM_VF == CN_SCENE_VF && CN_GEOM_FF == CN_SCENE_FF, "one vertex and face format");
@@ -15,8 +16,6 @@ _Static_assert(CN_STAGE_PASSES == CN_SCENE_PASSES && CN_STAGE_BANDS <= CN_SCENE_
 #define CN_STAGE_DROWN_KM .45f   /* a drowned die's shade scale and floor (a lying cup's .45, the study's wash .55) */
 #define CN_STAGE_DROWN_KA .55f
 static float absf(float a) { return a < 0 ? -a : a; }
-
-static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 /* every upload into the renderer is numbered, so a stage notices another one used it */
 static uint32_t scene_gen_now;
@@ -491,8 +490,8 @@ const CnStageHud *cn_stage_begin(CnStage *st, const CnStageIn *in_)
     memset(L, 0, sizeof *L);
     memset(&st->lin, 0, sizeof st->lin);
     h->kind = in->kind; h->seats = in->seats; h->me = in->me; h->out_mask = in->out_mask;
-    h->scale_still = clampf(in->scale, CN_STAGE_SCALE_MIN, CN_STAGE_SCALE_STILL);
-    h->scale_roll = clampf(in->scale, CN_STAGE_SCALE_MIN, CN_STAGE_SCALE_ROLL);
+    h->scale_still = util_clampf(in->scale, CN_STAGE_SCALE_MIN, CN_STAGE_SCALE_STILL);
+    h->scale_roll = util_clampf(in->scale, CN_STAGE_SCALE_MIN, CN_STAGE_SCALE_ROLL);
 
     if (in->kind == CN_STAGE_BUBBLE) {
         in->roll_at_ms = CN_STAGE_NO_ROLL;
@@ -622,8 +621,8 @@ const CnObj *cn_stage_objects(CnStage *st, uint32_t t_ms, float peek, float lift
     if (n) *n = 0;
     if (!st->begun) return 0;
     posed(st, t_ms, st->obj);
-    peek = clampf(peek, 0, 1);
-    lift = st->in.kind == CN_STAGE_REVEAL ? clampf(lift, 0, 1) : 0;
+    peek = util_clampf(peek, 0, 1);
+    lift = st->in.kind == CN_STAGE_REVEAL ? util_clampf(lift, 0, 1) : 0;
     for (int i = 0; i < st->nobj; i++) {
         CnObj *o = &st->obj[i];
         if (o->kind != CN_OBJ_CUP || o->out || st->in.kind == CN_STAGE_BUBBLE) continue;

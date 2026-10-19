@@ -48,6 +48,7 @@
  * pixel) are a strip's, one strip a band. */
 #include "cn_scene.h"
 #include <string.h>
+#include "../../../shared/c/util.h"
 
 /* ---- the arena ------------------------------------------------------------------- */
 static uint8_t *arena;
@@ -234,7 +235,6 @@ static int skip;                                          /* for profiling only:
 void cn_scene_skip(int mask) { skip = mask; }
 
 static float fsqrt(float x) { return __builtin_sqrtf(x); }
-static float fclamp(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 /* THE FRAME'S BUFFERS, in the order they are taken; cn_scene_begin and cn_scene_frame_bytes both read this
  * one list, so the bytes a host is told a frame needs are the bytes it takes. B_SLOTS is every band's slot,
@@ -401,7 +401,7 @@ static inline __attribute__((always_inline)) int span(const Edges *E, float sy, 
     if (!(lo <= hi)) return 0;
     /* held to the screen before the conversion (a corner near the eye's plane lands far off it); the
      * clamps below give the same columns */
-    lo = fclamp(lo, -1, (float)lim + 1); hi = fclamp(hi, -1, (float)lim + 1);
+    lo = util_clampf(lo, -1, (float)lim + 1); hi = util_clampf(hi, -1, (float)lim + 1);
     int l = (int)__builtin_ceilf(lo - .5f), r = (int)__builtin_floorf(hi - .5f);
     if (l < 0) l = 0;
     if (r > lim - 1) r = lim - 1;
@@ -439,8 +439,8 @@ static Bufs bufs_now(const Slot *s, int s0)
 /* the rows a triangle's corners span, held to [0, lim) (both passes, and the bands' quick test) */
 static void rows_of(float ay, float by, float cy, int lim, int *y0, int *y1)
 {
-    *y0 = (int)fclamp(__builtin_floorf(ay < by ? (ay < cy ? ay : cy) : (by < cy ? by : cy)), 0, lim - 1);
-    *y1 = (int)fclamp(__builtin_ceilf(ay > by ? (ay > cy ? ay : cy) : (by > cy ? by : cy)), 0, lim - 1);
+    *y0 = (int)util_clampf(__builtin_floorf(ay < by ? (ay < cy ? ay : cy) : (by < cy ? by : cy)), 0, lim - 1);
+    *y1 = (int)util_clampf(__builtin_ceilf(ay > by ? (ay > cy ? ay : cy) : (by > cy ? by : cy)), 0, lim - 1);
 }
 
 /* ---- pass 1: the shadow map ---------------------------------------------------------- */
@@ -612,8 +612,8 @@ static inline __attribute__((always_inline)) int table_block(const TPlane *P, co
     plane_range(P->d0, P->dx, P->dy, x0, x1, y0, y1, &dmin, &dmax);
     if (!(ulo == ulo && uhi == uhi && vlo == vlo && vhi == vhi && dmin == dmin && dmax == dmax)) return -1;
     const float gmax = (B->SR - 1.01f) * 64;   /* light4's clamp */
-    const int umin = (int)fclamp(ulo - 4, 0, gmax), umax = (int)fclamp(uhi + 4, 0, gmax) + 1;
-    const int vmin = (int)fclamp(vlo - 4, 0, gmax), vmax = (int)fclamp(vhi + 4, 0, gmax) + 1;
+    const int umin = (int)util_clampf(ulo - 4, 0, gmax), umax = (int)util_clampf(uhi + 4, 0, gmax) + 1;
+    const int vmin = (int)util_clampf(vlo - 4, 0, gmax), vmax = (int)util_clampf(vhi + 4, 0, gmax) + 1;
     const int S = B->SR; const float *sm = B->smap;
     /* the texels lit_q reads for any gu in [umin, umax]: i - 1 to i + 2, held to the map */
     int k0 = ((umin + 32) >> 6) - 2, k1 = ((umax + 32) >> 6) + 1, m0 = ((vmin + 32) >> 6) - 2, m1 = ((vmax + 32) >> 6) + 1;
@@ -744,7 +744,7 @@ static void tri(const Light *Lp, const Bufs *Bp, int r0, int r1, uint32_t *walke
     const float aiw = a.iw, biw = b.iw, ciw = c.iw;
     /* the face's own bytes for pass 3, the same at every pixel */
     const uint8_t t0 = (uint8_t)t->tr, t1 = (uint8_t)t->tg, t2 = (uint8_t)t->tb;
-    const uint8_t mk = (uint8_t)(fclamp(t->km, 0, 1) * 255 + .5f), mka = (uint8_t)(fclamp(t->ka, 0, 1) * 255 + .5f);
+    const uint8_t mk = (uint8_t)(util_clampf(t->km, 0, 1) * 255 + .5f), mka = (uint8_t)(util_clampf(t->ka, 0, 1) * 255 + .5f);
     const uint8_t tint12[12] = { t0, t1, t2, t0, t1, t2, t0, t1, t2, t0, t1, t2 };   /* four pixels' tints */
     const uint8_t key = t->key;
     const uint16_t kface = t->kface, kface4[4] = { kface, kface, kface, kface };
@@ -1024,7 +1024,7 @@ __attribute__((noinline, cold)) static uint32_t edge_shade(const Light *Lp, cons
             return decal_word(o, table_alpha(lit, ao_at(&B, x, y)), B.premul, B.bgra);
         } else {
             const uint8_t tint[3] = { (uint8_t)t->tr, (uint8_t)t->tg, (uint8_t)t->tb };
-            const uint8_t mk = (uint8_t)(fclamp(t->km, 0, 1) * 255 + .5f), mka = (uint8_t)(fclamp(t->ka, 0, 1) * 255 + .5f);
+            const uint8_t mk = (uint8_t)(util_clampf(t->km, 0, 1) * 255 + .5f), mka = (uint8_t)(util_clampf(t->ka, 0, 1) * 255 + .5f);
             int32_t w = F.rgba[s]; memcpy(o, &w, 4);
             const int kept = F.keep[s] != 0;
             body_px(&B, o, tint, S.receives ? 1 : 3, (uint8_t)F.gk[s], mk, mka, (uint8_t)F.gc[s], kept ? (uint16_t)F.gu[s] : 0, kept ? (uint16_t)F.gv[s] : 0, kept ? F.gd[s] : 0);
@@ -1176,8 +1176,8 @@ static void contact(void)
         const Occ c = occ[oi]; float reach = c.r + c.out;
         /* held near the map before the conversion (a host's far footprint must not overflow it); -2 and one past
          * the end give the blocks the unheld numbers would */
-        float fbx0 = fclamp((c.x - reach) * dpr / 4, -2, (float)AW + 1), fbx1 = fclamp((c.x + reach) * dpr / 4, -2, (float)AW + 1);
-        float fby0 = fclamp((c.y - reach + pad) * dpr / 4, -2, (float)AH + 1), fby1 = fclamp((c.y + reach + pad) * dpr / 4, -2, (float)AH + 1);
+        float fbx0 = util_clampf((c.x - reach) * dpr / 4, -2, (float)AW + 1), fbx1 = util_clampf((c.x + reach) * dpr / 4, -2, (float)AW + 1);
+        float fby0 = util_clampf((c.y - reach + pad) * dpr / 4, -2, (float)AH + 1), fby1 = util_clampf((c.y + reach + pad) * dpr / 4, -2, (float)AH + 1);
         int bx0 = (int)fbx0, bx1 = (int)fbx1 + 1, by0 = (int)fby0, by1 = (int)fby1 + 1;
         if (bx0 < 0) bx0 = 0;
         if (by0 < 0) by0 = 0;
@@ -1263,7 +1263,7 @@ int cn_scene_prepare(int nverts, int nfaces)
         if (!face_ok(F, nverts)) continue;
         float z0 = verts[(int)F[0] * VF + 2], z1 = verts[(int)F[1] * VF + 2], z2 = verts[(int)F[2] * VF + 2];
         float z = z0 > z1 ? (z0 > z2 ? z0 : z2) : (z1 > z2 ? z1 : z2);
-        int b = (int)fclamp((z + 100) * 2, 0, NB - 1);
+        int b = (int)util_clampf((z + 100) * 2, 0, NB - 1);
         chain[f] = head[b]; head[b] = f;
     }
     int no = 0;

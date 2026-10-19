@@ -5,11 +5,10 @@
  * headless Chromium computed from the study itself (tools/study_layout.txt). */
 #include "cn_lay.h"
 #include <string.h>
+#include "../../../shared/c/util.h"
 
 #define MAXS CN_LAY_SEATS
 
-static double dmax(double a, double b) { return a > b ? a : b; }
-static double dmin(double a, double b) { return a < b ? a : b; }
 static double dabs(double a) { return a < 0 ? -a : a; }
 static double hyp(double a, double b) { return cn_m_sqrt(a * a + b * b); }
 
@@ -120,7 +119,7 @@ static void cup_hull(const CnLay *L, const CnObj *o, Hull *H)
 static int hull_meets(const Hull *H, const Reach *b, double g)
 {
     double x0 = 1e30, x1 = -1e30, y0 = 1e30, y1 = -1e30;
-    for (int i = 0; i < H->n; i++) { x0 = dmin(x0, H->x[i]); x1 = dmax(x1, H->x[i]); y0 = dmin(y0, H->y[i]); y1 = dmax(y1, H->y[i]); }
+    for (int i = 0; i < H->n; i++) { x0 = util_mind(x0, H->x[i]); x1 = util_maxd(x1, H->x[i]); y0 = util_mind(y0, H->y[i]); y1 = util_maxd(y1, H->y[i]); }
     if (x1 < b->x0 - g || x0 > b->x1 + g || y1 < b->y0 - g || y0 > b->y1 + g) return 0;
     for (int i = 0; i < H->n; i++) {
         const int j = (i + 1) % H->n;
@@ -129,14 +128,14 @@ static int hull_meets(const Hull *H, const Reach *b, double g)
         /* the hull lies on the side of this edge its winding puts it; the box past it by more than g separates */
         const double c = (nx * H->x[i] + ny * H->y[i]) / nl;
         double bmin = 1e30;
-        for (int q = 0; q < 4; q++) bmin = dmin(bmin, (nx * (q & 1 ? b->x1 : b->x0) + ny * (q & 2 ? b->y1 : b->y0)) / nl);
+        for (int q = 0; q < 4; q++) bmin = util_mind(bmin, (nx * (q & 1 ? b->x1 : b->x0) + ny * (q & 2 ? b->y1 : b->y0)) / nl);
         double hmax = -1e30;
-        for (int q = 0; q < H->n; q++) hmax = dmax(hmax, (nx * H->x[q] + ny * H->y[q]) / nl);
+        for (int q = 0; q < H->n; q++) hmax = util_maxd(hmax, (nx * H->x[q] + ny * H->y[q]) / nl);
         (void)c;
         if (bmin > hmax + g) return 0;
         double bmax = -1e30, hmin = 1e30;
-        for (int q = 0; q < 4; q++) bmax = dmax(bmax, (nx * (q & 1 ? b->x1 : b->x0) + ny * (q & 2 ? b->y1 : b->y0)) / nl);
-        for (int q = 0; q < H->n; q++) hmin = dmin(hmin, (nx * H->x[q] + ny * H->y[q]) / nl);
+        for (int q = 0; q < 4; q++) bmax = util_maxd(bmax, (nx * (q & 1 ? b->x1 : b->x0) + ny * (q & 2 ? b->y1 : b->y0)) / nl);
+        for (int q = 0; q < H->n; q++) hmin = util_mind(hmin, (nx * H->x[q] + ny * H->y[q]) / nl);
         if (bmax < hmin - g) return 0;
     }
     return 1;
@@ -187,7 +186,7 @@ static Reach name_box(const CnLay *L, int s, double w, double h)
     for (int c = 0; c < 4; c++) {
         float gx, gy;
         cn_cam_map(&L->cam, (float)(x + (c & 1 ? 1 : -1) * w / 2), (float)(y - CN_LAY_NAME_UP + (c & 2 ? h : 0)), &gx, &gy);
-        r.x0 = dmin(r.x0, gx); r.x1 = dmax(r.x1, gx); r.y0 = dmin(r.y0, gy); r.y1 = dmax(r.y1, gy);
+        r.x0 = util_mind(r.x0, gx); r.x1 = util_maxd(r.x1, gx); r.y0 = util_mind(r.y0, gy); r.y1 = util_maxd(r.y1, gy);
     }
     return r;
 }
@@ -291,13 +290,13 @@ static void ring_seats(const CnLayIn *in, CnLay *L, double W, double H, double m
     const int n = in->seats, me = in->me;
     const double hc = CN_CAM_VIEW_HC, ey = H / 2 + CN_CAM_VIEW_DOWN * H, half = (W + 32) / 2 - 6;
     double ang[MAXS], stretch = 0;
-    for (int j = 0; j < n - 1; j++) { ang[j] = CN_PI * 2 * (j + 1) / n; stretch = dmax(stretch, 1 - cn_m_cos(ang[j])); }
+    for (int j = 0; j < n - 1; j++) { ang[j] = CN_PI * 2 * (j + 1) / n; stretch = util_maxd(stretch, 1 - cn_m_cos(ang[j])); }
     const CnCam *cam = &L->cam;
     for (double R = myR; ; R -= 2) {
         const double h = R * CN_CUP_TALL, Lf = hc / (hc - h), f = Lf - 1, crown = CN_CUP_RC * R * Lf;
         /* the top seat: the board y whose crown top lands at the HUD's foot, then the table y whose crown that is */
         const double yc = mcy + cn_cam_from_screen(cam, (float)(hudB + 6)), yTop = (yc + ey * f + crown) / (1 + f);
-        double ry = dmax(R, (mcy - yTop) / stretch), ys[MAXS], rx = W;
+        double ry = util_maxd(R, (mcy - yTop) / stretch), ys[MAXS], rx = W;
         for (int j = 0; j < n - 1; j++) ys[j] = mcy - ry * (1 - cn_m_cos(ang[j]));
         /* the width: no crown and no mouth past the screen's side after the turn, for any seat */
         for (int j = 0; j < n - 1; j++) {
@@ -306,7 +305,7 @@ static void ring_seats(const CnLayIn *in, CnLay *L, double W, double H, double m
             float sc, sm;
             cn_cam_to_screen(cam, (float)(ys[j] - (ey - ys[j]) * f - mcy), &sc);
             cn_cam_to_screen(cam, (float)(ys[j] - mcy), &sm);
-            rx = dmin(rx, dmin((half / sc - crown) / (sn * Lf), (half / sm - R) / sn));
+            rx = util_mind(rx, util_mind((half / sc - crown) / (sn * Lf), (half / sm - R) / sn));
         }
         /* a ring is at most twice as tall as it is wide */
         if (ry > 2 * rx) ry = 2 * rx;
@@ -326,14 +325,14 @@ static void ring_seats(const CnLayIn *in, CnLay *L, double W, double H, double m
                 Reach r = reach_none();
                 if (in->reveal) lift_reach(L, &o, i, in->dice[i], sring, sd, &r);
                 else cup_reach(L, &o, &r);
-                if (r.y0 < CN_LAY_EDGE) top = dmax(top, CN_LAY_EDGE - r.y0);
-                if (L->has_plate && over_rect(&r, L->plate, 2)) top = dmax(top, L->plate[1] + L->plate[3] + 2 - r.y0);
-                if (r.x0 < CN_LAY_EDGE) side = dmax(side, CN_LAY_EDGE - r.x0);
-                if (r.x1 > L->w - CN_LAY_EDGE) side = dmax(side, r.x1 - (L->w - CN_LAY_EDGE));
+                if (r.y0 < CN_LAY_EDGE) top = util_maxd(top, CN_LAY_EDGE - r.y0);
+                if (L->has_plate && over_rect(&r, L->plate, 2)) top = util_maxd(top, L->plate[1] + L->plate[3] + 2 - r.y0);
+                if (r.x0 < CN_LAY_EDGE) side = util_maxd(side, CN_LAY_EDGE - r.x0);
+                if (r.x1 > L->w - CN_LAY_EDGE) side = util_maxd(side, r.x1 - (L->w - CN_LAY_EDGE));
             }
             if (!(top > 0) && !(side > 0)) { fits = 1; break; }
-            if (top > 0) ry -= dmax(1, cn_m_floor(top / 2));
-            if (side > 0) rx -= dmax(1, cn_m_floor(side / 2));
+            if (top > 0) ry -= util_maxd(1, cn_m_floor(top / 2));
+            if (side > 0) rx -= util_maxd(1, cn_m_floor(side / 2));
             if (ry < R || rx < R) break;
         }
         if (!fits && R - 2 >= CN_LAY_ROW_MIN_R) continue;
@@ -353,7 +352,7 @@ static void ring_seats(const CnLayIn *in, CnLay *L, double W, double H, double m
         double reach = W / 2;
         for (int j = 0; j < n - 1; j++) {
             const double sn = dabs(cn_m_sin(ang[j]));
-            reach = dmax(reach, dmax(sn * rx * Lf + crown + 4, sn * rx + h + 4));
+            reach = util_maxd(reach, util_maxd(sn * rx * Lf + crown + 4, sn * rx + h + 4));
         }
         /* the name: under the mouth, unless a nearer cup leans over that spot; then
          * beside the mouth, on the side toward the ring's centre */
@@ -382,7 +381,7 @@ static void ring_seats(const CnLayIn *in, CnLay *L, double W, double H, double m
         for (int j = 0; j < n - 1; j++) { int i = (me + 1 + j) % n; L->cup_x[i] = (float)sx[i]; L->cup_y[i] = (float)sy[i]; }
         L->cup_r = (float)R;
         L->ring_cy = (float)(mcy - ry); L->ring_rx = (float)rx; L->ring_ry = (float)ry;
-        L->pad = (float)dmax(40, cn_m_ceil(-(mcy + cn_cam_from_screen(cam, 0)) + 8));
+        L->pad = (float)util_maxd(40, cn_m_ceil(-(mcy + cn_cam_from_screen(cam, 0)) + 8));
         L->pad_x = (float)cn_m_ceil(reach - W / 2);
         return;
     }
@@ -400,8 +399,8 @@ static void ring_seats(const CnLayIn *in, CnLay *L, double W, double H, double m
  * width, 0 for none (under CN_LAY_PLATE_MIN). */
 static double row_step(int others, double W, double *plate_w)
 {
-    double step = dmin(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / others);
-    double w = dmin(CN_LAY_PLATE_W, W - 2 * CN_LAY_MARGIN - others * step);
+    double step = util_mind(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / others);
+    double w = util_mind(CN_LAY_PLATE_W, W - 2 * CN_LAY_MARGIN - others * step);
     if (w < CN_LAY_PLATE_SHORT_W) {
         const double s2 = (W - 2 * CN_LAY_MARGIN - CN_LAY_PLATE_SHORT_W) / others;
         if (s2 >= CN_LAY_ROW_STEP_MIN) { step = s2; w = CN_LAY_PLATE_SHORT_W; }
@@ -414,9 +413,9 @@ static void row_seats(const CnLayIn *in, CnLay *L, double W, double H, double my
 {
     const int n = in->seats, me = in->me, others = n - 1;
     const double step = row_step(others, W, 0), bandTop = H - CN_LAY_SHORT_BAND;
-    double R = dmin(myR, step / 2 - 4), cy;
+    double R = util_mind(myR, step / 2 - 4), cy;
     for (;; R -= 1) {
-        cy = dmax(R + 2, (bandTop - (2 * R + 24)) / 2 + R);
+        cy = util_maxd(R + 2, (bandTop - (2 * R + 24)) / 2 + R);
         if (R - 1 < CN_LAY_ROW_MIN_R) break;
         Reach r = reach_none();
         for (int j = 0; j < others; j++) {
@@ -434,7 +433,7 @@ static void row_seats(const CnLayIn *in, CnLay *L, double W, double H, double my
     }
     L->cup_r = (float)R;
     L->ring_cy = (float)cy; L->ring_rx = 0; L->ring_ry = 0;
-    L->pad = (float)dmax(40, cn_m_ceil(-(mcy + cn_cam_from_screen(&L->cam, 0)) + 8));
+    L->pad = (float)util_maxd(40, cn_m_ceil(-(mcy + cn_cam_from_screen(&L->cam, 0)) + 8));
     L->pad_x = 40;
 }
 
@@ -463,7 +462,7 @@ static double foot_glass(const CnLay *L, double W, double y)
     cn_cam_map(&L->cam, L->board_x, (float)(L->board_y + y), &ax, &ay);
     cn_cam_map(&L->cam, (float)(L->board_x + W), (float)(L->board_y + y), &bx, &by);
     (void)ax; (void)bx;
-    return dmax(ay, by);
+    return util_maxd(ay, by);
 }
 
 static void row_fit(const CnLayIn *in, const CnLay *L, double W, double H, double d0, double myR0, double x0, double step,
@@ -473,7 +472,7 @@ static void row_fit(const CnLayIn *in, const CnLay *L, double W, double H, doubl
     /* under each mouth its name and the loser's stamp, all over the outcome line over the shelf (on the glass) */
     const double below = 14 + CN_LAY_STAMP_FOOT, lowest = L->shelf[1] - 6 - CN_LAY_OUTCOME_H;
     (void)H;
-    double R = dmin(myR0, step / 2 - 4), cy = R + 2;
+    double R = util_mind(myR0, step / 2 - 4), cy = R + 2;
     Reach r;
     for (;; R -= 1) {
         const double sd = d0 * R / myR0, sring = ring_of(sd);
@@ -497,7 +496,7 @@ static void row_fit(const CnLayIn *in, const CnLay *L, double W, double H, doubl
 static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, double myR0)
 {
     const int n = in->seats, me = in->me;
-    const double step = dmin(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / n), below = 14 + CN_LAY_STAMP_FOOT;
+    const double step = util_mind(CN_LAY_BADGE + CN_LAY_MARGIN, (W - 2 * CN_LAY_MARGIN) / n), below = 14 + CN_LAY_STAMP_FOOT;
     const double right = CN_LAY_SIDE + W - CN_LAY_MARGIN, lowest = L->shelf[1] - 6 - CN_LAY_OUTCOME_H;
     double R, cy, w = 0;
     Reach ext;
@@ -508,9 +507,9 @@ static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, 
         const int i = (me + v) % n;
         L->name_x[i] = (float)(x0 + v * step); L->name_y[i] = (float)(cy + R + 14);
         const Reach nb = name_box(L, i, CN_LAY_NAME_TEXT_W, CN_LAY_NAME_H);
-        ext.x1 = dmax(ext.x1, nb.x1);
+        ext.x1 = util_maxd(ext.x1, nb.x1);
     }
-    w = dmin(CN_LAY_PLATE_REVEAL_W, right - (ext.x1 + 2));
+    w = util_mind(CN_LAY_PLATE_REVEAL_W, right - (ext.x1 + 2));
     const int beside = w >= CN_LAY_PLATE_MIN;
     if (!beside) { x0 = (W - n * step) / 2 + step / 2; row_fit(in, L, W, H, d0, myR0, x0, step, &R, &cy, &ext); }
     const double sd = d0 * R / myR0, sring = ring_of(sd);
@@ -522,18 +521,18 @@ static void one_row(const CnLayIn *in, CnLay *L, double W, double H, double d0, 
     L->cup_r = L->my_r = (float)R;
     L->d = L->sd = (float)sd; L->ring = L->sring = (float)sring;
     L->ring_cy = (float)cy; L->ring_rx = 0; L->ring_ry = 0;
-    L->pad = (float)dmax(40, cn_m_ceil(-(L->cam.origin_y - L->board_y + cn_cam_from_screen(&L->cam, 0)) + 8));
+    L->pad = (float)util_maxd(40, cn_m_ceil(-(L->cam.origin_y - L->board_y + cn_cam_from_screen(&L->cam, 0)) + 8));
     L->pad_x = 40;
     L->outcome[0] = 0; L->outcome[1] = (float)lowest; L->outcome[2] = (float)L->w; L->outcome[3] = CN_LAY_OUTCOME_H;
     if (beside) {
         /* level with the row's mouths, never over the outcome line */
-        const double y = dmax(CN_LAY_EDGE, dmin(L->board_y + cy - CN_LAY_PLATE_H / 2, lowest - CN_LAY_PLATE_H));
+        const double y = util_maxd(CN_LAY_EDGE, util_mind(L->board_y + cy - CN_LAY_PLATE_H / 2, lowest - CN_LAY_PLATE_H));
         L->has_plate = 1;
         L->plate[0] = (float)(right - w); L->plate[1] = (float)y; L->plate[2] = (float)w; L->plate[3] = CN_LAY_PLATE_H;
         return;
     }
     const double top = foot_glass(L, W, cy + R + below) + 4;
-    w = dmin(CN_LAY_PLATE_REVEAL_W, W);
+    w = util_mind(CN_LAY_PLATE_REVEAL_W, W);
     if (top + CN_LAY_PLATE_H <= lowest - .5) {   /* a half point: the plate is kept in floats */
         L->has_plate = 1;
         L->plate[0] = (float)(L->w / 2 - w / 2); L->plate[1] = (float)top; L->plate[2] = (float)w; L->plate[3] = CN_LAY_PLATE_H;
@@ -565,7 +564,7 @@ static Reach die_box(const CnLay *L, double x, double y, double d)
         float px, py, gx, gy;
         cn_cam_project(&L->cam, (float)(x + (c & 1 ? e : -e)), (float)(y + (c & 2 ? e : -e)), (float)(c & 4 ? d : 0), &px, &py);
         cn_cam_map(&L->cam, L->board_x + px, L->board_y + py, &gx, &gy);
-        r.x0 = dmin(r.x0, gx); r.x1 = dmax(r.x1, gx); r.y0 = dmin(r.y0, gy); r.y1 = dmax(r.y1, gy);
+        r.x0 = util_mind(r.x0, gx); r.x1 = util_maxd(r.x1, gx); r.y0 = util_mind(r.y0, gy); r.y1 = util_maxd(r.y1, gy);
     }
     return r;
 }
@@ -576,7 +575,7 @@ static Reach stamp_box(const CnLay *L, double x, double y)
     for (int c = 0; c < 4; c++) {
         float gx, gy;
         cn_cam_map(&L->cam, (float)(L->board_x + x + (c & 1 ? 1 : -1) * LIST_STAMP_W / 2), (float)(L->board_y + y + (c & 2 ? CN_LAY_STAMP_FOOT : 14)), &gx, &gy);
-        r.x0 = dmin(r.x0, gx); r.x1 = dmax(r.x1, gx); r.y0 = dmin(r.y0, gy); r.y1 = dmax(r.y1, gy);
+        r.x0 = util_mind(r.x0, gx); r.x1 = util_maxd(r.x1, gx); r.y0 = util_mind(r.y0, gy); r.y1 = util_maxd(r.y1, gy);
     }
     return r;
 }
@@ -626,7 +625,7 @@ static int list_try(const CnLayIn *in, const CnLay *L, double W, double d0, doub
             if (ok) ok = reach_inside(&ext, L->w) && !(L->has_plate && over_rect(&ext, L->plate, 2));
             if (ok) break;
         }
-        if (!ok) { fail = 1; cy = dmax(R + 2, cy - 1); }   /* placed anyway: the fallback's */
+        if (!ok) { fail = 1; cy = util_maxd(R + 2, cy - 1); }   /* placed anyway: the fallback's */
         out->cy[r] = cy;
         for (int c = 0; c < m; c++) {
             const int i = (me + first + c) % n;
@@ -638,7 +637,7 @@ static int list_try(const CnLayIn *in, const CnLay *L, double W, double d0, doub
             for (int q = 0; q < 4; q++) {
                 float gx, gy;
                 cn_cam_map(&L->cam, (float)(L->board_x + x + (q & 1 ? 1 : -1) * CN_LAY_NAME_TEXT_W / 2), (float)(L->board_y + cy + R + 14 - CN_LAY_NAME_UP + (q & 2 ? CN_LAY_NAME_H : 0)), &gx, &gy);
-                nbx.x0 = dmin(nbx.x0, gx); nbx.x1 = dmax(nbx.x1, gx); nbx.y0 = dmin(nbx.y0, gy); nbx.y1 = dmax(nbx.y1, gy);
+                nbx.x0 = util_mind(nbx.x0, gx); nbx.x1 = util_maxd(nbx.x1, gx); nbx.y0 = util_mind(nbx.y0, gy); nbx.y1 = util_maxd(nbx.y1, gy);
             }
             behind[nb++] = nbx;
             behind[nb++] = stamp_box(L, x, cy + R + 14);
@@ -656,7 +655,7 @@ static void list_rows(const CnLayIn *in, CnLay *L, double W, double d0, double m
     for (int per = n; per >= 1; per--) {
         if (per > 1 && (n + per - 1) / per == (n + per - 2) / (per - 1)) continue;   /* as many rows as one fewer a row, which is wider */
         const double step = (W - 2 * CN_LAY_MARGIN) / per;
-        for (double R = cn_m_floor(dmin(myR0, step / 2 - 4)); R >= CN_LAY_ROW_MIN_R && R > best.R; R -= 1)
+        for (double R = cn_m_floor(util_mind(myR0, step / 2 - 4)); R >= CN_LAY_ROW_MIN_R && R > best.R; R -= 1)
             if (list_try(in, L, W, d0, myR0, per, R, &t)) { best = t; break; }
     }
     if (!(best.R > 0)) list_try(in, L, W, d0, myR0, (n + 1) / 2, CN_LAY_ROW_MIN_R, &best);
@@ -665,18 +664,18 @@ static void list_rows(const CnLayIn *in, CnLay *L, double W, double d0, double m
     for (int i = 0; i < n; i++) {
         L->cup_x[i] = (float)best.x[i]; L->cup_y[i] = (float)best.y[i];
         L->name_x[i] = L->cup_x[i]; L->name_y[i] = (float)(best.y[i] + R + 14); L->name_how[i] = CN_NAME_BOX;
-        last = dmax(last, best.y[i]);
+        last = util_maxd(last, best.y[i]);
     }
     L->list_rows = (uint8_t)best.rows;
     L->cup_r = L->my_r = (float)R;
     L->d = L->sd = (float)sd; L->ring = L->sring = (float)sring;
     L->ring_cy = (float)best.y[in->me]; L->ring_rx = 0; L->ring_ry = 0;
-    L->pad = (float)dmax(40, cn_m_ceil(-(L->cam.origin_y - L->board_y + cn_cam_from_screen(&L->cam, 0)) + 8));
+    L->pad = (float)util_maxd(40, cn_m_ceil(-(L->cam.origin_y - L->board_y + cn_cam_from_screen(&L->cam, 0)) + 8));
     L->pad_x = 40;
     /* the outcome line under the last row's stamps: their foot is flat, turned with the planks, and the line is
      * on the glass, so the foot goes through the turn (the deepest of the row's, at its sides) */
     const double lowest = L->shelf[1] - 6 - CN_LAY_OUTCOME_H;
-    L->outcome[0] = 0; L->outcome[1] = (float)dmin(lowest, foot_glass(L, W, last + R + 14 + CN_LAY_STAMP_FOOT) + 4);
+    L->outcome[0] = 0; L->outcome[1] = (float)util_mind(lowest, foot_glass(L, W, last + R + 14 + CN_LAY_STAMP_FOOT) + 4);
     L->outcome[2] = (float)L->w; L->outcome[3] = CN_LAY_OUTCOME_H;
 }
 
@@ -703,8 +702,8 @@ static void seat_throw(const CnLayIn *in, const CnLay *L, int v, int kind, CnLay
     t->t.dice = in->dice[i];
     /* mine held as high as the drawer allows (the default, R / CN_THROW_REF_R, when the study's fits) */
     if (v == 0 && kind == CN_THROW_CUP && L->my_reach < 1) t->t.scale = L->my_reach * R / CN_THROW_REF_R;
-    t->t.band_x0 = (float)dmax(20, mcx - 160); t->t.band_x1 = (float)dmin(W - 20, mcx + 160);
-    t->t.band_y0 = (float)dmax(20, mcy - 120); t->t.band_y1 = (float)dmin(H - 10, mcy + 60);
+    t->t.band_x0 = (float)util_maxd(20, mcx - 160); t->t.band_x1 = (float)util_mind(W - 20, mcx + 160);
+    t->t.band_y0 = (float)util_maxd(20, mcy - 120); t->t.band_y1 = (float)util_mind(H - 10, mcy + 60);
     t->t.shake_s = v ? (float)(1.5 + cn_geom_hash(v, 81, (int32_t)seed) * .8) : 0;
     t->delay = v ? (float)(.1 + cn_geom_hash(v, 82, (int32_t)seed) * .5) : 0;
     t->seed = (uint64_t)seed + (uint64_t)v * 1000;
@@ -757,7 +756,7 @@ int cn_lay_make(const CnLayIn *in, CnLay *L) { return make(in, L, 1); }
  * picker-up board is 280 from 400 to 422 and then grows, so short and tall is one
  * threshold on the drawer (under 400 short) and the board never shrinks as the
  * drawer grows (package V2). */
-static double top_margin(double H) { return H <= 400 ? 8 : dmin(30, H - 392); }
+static double top_margin(double H) { return H <= 400 ? 8 : util_mind(30, H - 392); }
 
 /* The board and my cup's centre on it: what the camera is made from (cn_lay_cam)
  * and what the layout starts from (make), one derivation for both. */
@@ -844,7 +843,7 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
         if (w > 0) {
             L->has_plate = 1;
             L->plate[0] = (float)(CN_LAY_SIDE + inner - CN_LAY_MARGIN - w);
-            L->plate[1] = (float)(topM + dmax(0, (boardH - CN_LAY_SHORT_BAND - CN_LAY_PLATE_H) / 2));
+            L->plate[1] = (float)(topM + util_maxd(0, (boardH - CN_LAY_SHORT_BAND - CN_LAY_PLATE_H) / 2));
             L->plate[2] = (float)w; L->plate[3] = CN_LAY_PLATE_H;
         }
     } else if (list) {
@@ -903,7 +902,7 @@ static int make(const CnLayIn *in, CnLay *L, int fit)
             if (!make(&p, &P, 0)) continue;
             CnLayThrow t;
             seat_throw(&p, &P, 0, CN_THROW_CUP, &t);
-            k = dmin(k, fit_reach(&P, &t.t));
+            k = util_mind(k, fit_reach(&P, &t.t));
         }
         L->my_reach = (float)k;
     }

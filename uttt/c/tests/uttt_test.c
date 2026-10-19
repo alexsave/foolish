@@ -10,6 +10,7 @@
 #include <string.h>
 #include <math.h>
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/stats/percentile.h"
 
 static uint64_t RS;
 static uint32_t rnd(uint32_t n)          /* rng.h, no libc dependency */
@@ -59,12 +60,6 @@ static uint8_t pick(const UtttGame *g, const uint8_t *list, int n, int stretch)
     return ns ? safe[rnd((uint32_t)ns)] : list[rnd((uint32_t)n)];
 }
 
-static int cmp_d(const void *a, const void *b)
-{
-    double x = *(const double *)a, y = *(const double *)b;
-    return x < y ? -1 : x > y;
-}
-
 typedef struct { double bytes, ideal; int plies; } Row;
 
 static void report(const char *name, Row *r, int n)
@@ -80,9 +75,9 @@ static void report(const char *name, Row *r, int n)
         if (r[i].plies > longest) { longest = r[i].plies; longest_bytes = r[i].bytes; }
         if (r[i].bytes > most_bytes) most_bytes = r[i].bytes;
     }
-    qsort(by, (size_t)n, sizeof(double), cmp_d);
-    qsort(id, (size_t)n, sizeof(double), cmp_d);
-    qsort(pl, (size_t)n, sizeof(double), cmp_d);
+    qsort(by, (size_t)n, sizeof(double), stat_cmp_f64);
+    qsort(id, (size_t)n, sizeof(double), stat_cmp_f64);
+    qsort(pl, (size_t)n, sizeof(double), stat_cmp_f64);
     int p50 = n / 2, p95 = (int)(n * 0.95), p99 = (int)(n * 0.99);
 
     printf("\n%s  (%d games)\n", name, n);
