@@ -70,6 +70,7 @@ typedef struct cb_section {
 
 cb_section *cb_section_new(void);
 void cb_section_free(cb_section *s);
+bool cb_section_pooled_is_clean(void);   // test hook: the idle pooled section is all zero
 
 // table_init + table_load + table_set_deal_seed (the row's seed as lowercase
 // hex, "" for none), and the old humans noted. The kernel's result (< 0 a

@@ -127,6 +127,7 @@ static int fake_verify(cb_ctx *ctx, const struct cb_http_req *req, cb_user *out)
 }
 
 static void setup(int n_bots) {
+    T_CHECK(cb_section_pooled_is_clean());   // what the previous test left in the worker's pooled section
     char err[256];
     cb_config_from_env(&g_cfg, err, sizeof err);
     if (g_ctx.router) cb_router_free(g_ctx.router);
@@ -185,6 +186,7 @@ static void call(const char *method, const char *fn, const char *bearer, const c
     cb_http_res res;
     cb_res_init(&res);
     cb_handle(&g_ctx, &req, &res);
+    T_CHECK(cb_section_pooled_is_clean());   // every request leaves the worker's section as calloc made it
     out->status = res.status;
     out->len = res.body.len < sizeof out->body ? res.body.len : sizeof out->body;
     if (out->len) memcpy(out->body, res.body.p, out->len);

@@ -215,6 +215,19 @@ void cb_section_free(cb_section *s) {
     s->in_use = false;
 }
 
+// Test hook: the calling thread's pooled section, when idle, is entirely zero
+// (the calloc state every cb_section_new caller relies on).
+bool cb_section_pooled_is_clean(void) {
+    const cb_section *s = t_section;
+    if (!s || s->in_use) return true;
+    const unsigned char *p = (const unsigned char *)&s->g;
+    for (size_t i = 0; i < sizeof s->g; i++) if (p[i]) return false;
+    p = (const unsigned char *)&s->t;
+    for (size_t i = 0; i < offsetof(cb_section, arena) - offsetof(cb_section, t); i++) if (p[i]) return false;
+    for (int i = 0; i < s->arena_hw; i++) if (s->arena[i]) return false;
+    return true;
+}
+
 int cb_section_load(cb_section *s, const cb_game_row *row) {
     snprintf(s->gid, sizeof s->gid, "%s", row->id);
     table_init(&s->t, &s->g, &s->snaps);
