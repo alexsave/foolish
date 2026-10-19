@@ -232,21 +232,20 @@ int cb_section_envelope(cb_section *s, int viewer, uint32_t version, uint8_t **o
     return *out ? CB_OK : CB_E_NOMEM;
 }
 
-// One viewer's cast for the last operation, malloc'd. The buffer is generous:
-// a deal's push carries every snapshot's events.
+// One viewer's cast for the last operation, malloc'd at its own size. It is
+// built in a per-thread 64 KB scratch (generous: a deal's push carries every
+// snapshot's events) instead of a 64 KB malloc and free per viewer per move.
 static int section_cast(cb_section *s, int viewer, uint32_t version, uint8_t **out, size_t *out_len) {
     enum { CAST_CAP = 64 * 1024 };
-    uint8_t *buf = malloc(CAST_CAP);
-    if (!buf) return CB_E_NOMEM;
+    static _Thread_local uint8_t buf[CAST_CAP];
     int n = table_cast(&s->t, s->gid, (int)strlen(s->gid), viewer, version, buf, CAST_CAP);
     if (n < 0) {
-        free(buf);
         CB_ERROR("table", "game %s: cast for viewer %d refused (%d)", s->gid, viewer, n);
         return CB_E_STATE;
     }
-    *out = buf;
+    *out = dup_bytes(buf, (size_t)n);
     *out_len = (size_t)n;
-    return CB_OK;
+    return *out ? CB_OK : CB_E_NOMEM;
 }
 
 static bool seat_is_human(const RosterSeat *seat) { return seat->brain_len == 0; }
