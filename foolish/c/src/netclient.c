@@ -1251,8 +1251,8 @@ int nc_stream_unsub(int what, const char *gid, int gid_len) {
 void nc_stream_opened(int64_t now_ms) {
     g_open = 1;
     g_mq = MQ_OPENED;
-    g_ping_at = 0;
-    g_dead = 0;
+    g_ping_at = 0;   // the dead-socket watch is a connection's: it starts clean here, the one owner (nc_stream_closed
+    g_dead = 0;      // leaves it, and g_open == 0 hides it until the next open)
     g_last_out = now_ms;
     g_n_unsubs = 0;
     g_mq_in_len = g_mq_in_off = 0;
@@ -1271,8 +1271,6 @@ int nc_stream_closed(int64_t now_ms) {
     }
     g_open = 0;
     g_mq = MQ_SHUT;
-    g_ping_at = 0;
-    g_dead = 0;
     g_n_unsubs = 0;
     g_mq_in_len = g_mq_in_off = 0;
     int wait = g_reconnect_ms ? g_reconnect_ms : NC_RETRY_FIRST_MS;

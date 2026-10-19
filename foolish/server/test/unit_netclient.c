@@ -1813,6 +1813,132 @@ static void the_quiet_jitter_is_bounded(void) {
     T_CHECK(kinds > 32);   // spread over the range, not one value
 }
 
+// ---- a half-open socket and the dashboard's view hint ---------------------------------------------------------
+
+// The close signal: nc_stream_next's one frame of len 0 (NULL for nothing, a frame with bytes for a packet).
+static bool dead_frame(int64_t now) {
+    const NcOut *o = nc_stream_next(now);
+    return o && o->len == 0;
+}
+
+// A PINGREQ nothing answers inside NC_PONG_MS is a half-open socket: ONE len-0 frame says close it, then
+// nothing; the reopened socket subscribes every game again and its catch-up read is queued.
+static void a_half_open_socket_is_closed_after_the_pong_wait(void) {
+    signed_in(T0 + 360000000);
+    live(T0);
+    host_t h;
+    memset(&h, 0, sizeof h);
+    uint8_t env[256];
+    int en = envelope_status("g1", 5, 0, GAME_STATUS_PLAYING, env, sizeof env);
+    quiet_live(&h, "g1", 5, env, en, T0);
+    while (next_pkt(T0).type) {}
+    int64_t t = T0 + NC_PING_MS;
+    T_EQ_INT(next_pkt(t).type, MQTT_PINGREQ);
+    T_EQ_INT(nc_stream_due_ms(t), NC_PONG_MS);   // the deadline is folded into the wake
+    T_CHECK(nc_stream_next(t + NC_PONG_MS - 1) == NULL);
+    T_EQ_INT(nc_stream_due_ms(t + NC_PONG_MS - 1), 1);
+    T_EQ_INT(nc_stream_due_ms(t + NC_PONG_MS), 0);   // the close frame is due
+    const NcOut *o = nc_stream_next(t + NC_PONG_MS);
+    T_CHECK(o != NULL && o->len == 0);
+    T_CHECK(nc_stream_next(t + NC_PONG_MS) == NULL);   // once
+    T_EQ_INT(nc_stream_due_ms(t + NC_PONG_MS), -1);    // the host's close wakes it
+    // The host closes: the reopen waits, and the new connection puts every game back.
+    T_EQ_INT(nc_stream_closed(t + NC_PONG_MS), NC_RETRY_FIRST_MS);
+    int64_t t2 = t + NC_PONG_MS + NC_RETRY_FIRST_MS;
+    live(t2);
+    cpkt s = next_pkt(t2);
+    T_CHECK(s.type == MQTT_SUBSCRIBE && s.what == NW_SUB_GAME);
+    T_EQ_STR(s.topics[0], "u/u1/c/g1");
+    T_EQ_INT(suback(s.pid, 0, 2, t2)->kind, NC_EV_SEATED);
+    const NcRequest *q = nc_next_request(t2);
+    T_CHECK(path_is(q, "/v1/games/g1"));   // the catch-up read
+    // A reset socket pings normally and can die again (the dead flag and the ping clock start over).
+    while (next_pkt(t2).type) {}
+    T_EQ_INT(next_pkt(t2 + NC_PING_MS).type, MQTT_PINGREQ);
+    T_CHECK(!dead_frame(t2 + NC_PING_MS + NC_PONG_MS - 1));
+    T_CHECK(dead_frame(t2 + NC_PING_MS + NC_PONG_MS));
+}
+
+// A socket that answers is never closed: a PINGRESP a little late, a long run of them, and any other packet from the
+// broker (a stream that delivers pushes is alive) clear the wait.
+static void a_live_socket_is_never_closed(void) {
+    signed_in(T0 + 360000000);
+    live(T0);
+    int64_t now = T0;
+    uint8_t pr[2];
+    for (int k = 0; k < 20; k++) {
+        now += NC_PING_MS;
+        T_EQ_INT(next_pkt(now).type, MQTT_PINGREQ);
+        now += 100;
+        T_EQ_INT(feed_bytes(pr, mqtt_write_bare(pr, sizeof pr, MQTT_PINGRESP), now)->kind, NC_EV_NONE);
+        T_CHECK(!dead_frame(now + NC_PONG_MS + 1));
+    }
+    // The answer NC_PONG_MS - 1 late is in time.
+    now += NC_PING_MS;
+    T_EQ_INT(next_pkt(now).type, MQTT_PINGREQ);
+    T_EQ_INT(feed_bytes(pr, mqtt_write_bare(pr, sizeof pr, MQTT_PINGRESP), now + NC_PONG_MS - 1)->kind, NC_EV_NONE);
+    T_CHECK(!dead_frame(now + NC_PONG_MS + 5));
+    // Any packet clears it, not only the PINGRESP: a PUBLISH does.
+    now += NC_PING_MS;
+    T_EQ_INT(next_pkt(now).type, MQTT_PINGREQ);
+    uint8_t pub[64];
+    int k = mqtt_write_publish(pub, sizeof pub, "x/y", 3, (const uint8_t *)"z", 1);
+    T_CHECK(k > 0);
+    nc_stream_in(pub, k, 0, now + 100);
+    T_CHECK(!dead_frame(now + 100 + NC_PONG_MS + 1));
+}
+
+// A dashboard view of a game held on its own stream is not applied; a view newer than the board hints that a cast was lost
+// and queues ONE read NC_RECONCILE_MS later, which the cast that normally follows settles for free.
+static void a_newer_view_of_a_held_game_queues_one_read(void) {
+    const uint8_t view[] = { 0x5f }, cast[] = { 0xc6, 0x01 };
+    uint8_t env[256];
+    int en = envelope_status("g1", 5, 0, GAME_STATUS_PLAYING, env, sizeof env);
+    for (int how = 0; how < 3; how++) {
+        signed_in(T0 + 360000000);
+        live(T0);
+        host_t h;
+        memset(&h, 0, sizeof h);
+        quiet_live(&h, "g1", 5, env, en, T0);
+        T_EQ_INT(h.table_v, 5);
+        // Older and equal views: nothing.
+        host_push(&h, NW_WS_VIEW, "g1", 5, view, 1, T0 + 10);
+        host_push(&h, NW_WS_VIEW, "g1", 4, view, 1, T0 + 10);
+        T_CHECK(nc_next_request(T0 + 10 + NC_RECONCILE_MS) == NULL);
+        // A newer one: not applied, one read at its time.
+        host_push(&h, NW_WS_VIEW, "g1", 6, view, 1, T0 + 20);
+        T_EQ_INT(h.views, 0);
+        T_EQ_INT(h.table_v, 5);
+        T_CHECK(nc_next_request(T0 + 20 + NC_RECONCILE_MS - 1) == NULL);
+        if (how == 1) {   // a second and a newer view of the same game are the same slot
+            host_push(&h, NW_WS_VIEW, "g1", 6, view, 1, T0 + 30);
+            host_push(&h, NW_WS_VIEW, "g1", 7, view, 1, T0 + 30);
+        }
+        if (how == 2) {   // the seat's cast arrives first: the read is dropped
+            host_push(&h, NW_WS_CAST, "g1", 6, cast, 2, T0 + 40);
+            T_CHECK(nc_next_request(T0 + 20 + NC_RECONCILE_MS + 100) == NULL);
+            continue;
+        }
+        const NcRequest *q = nc_next_request(T0 + 30 + NC_RECONCILE_MS);
+        T_CHECK(path_is(q, "/v1/games/g1"));
+        T_CHECK(nc_next_request(T0 + 30 + NC_RECONCILE_MS) == NULL);   // exactly one
+        T_EQ_INT(h.views, 0);
+    }
+}
+
+// A game with no stream of its own still takes the dashboard's view (the host of rows).
+static void a_view_of_an_unheld_game_applies(void) {
+    const uint8_t view[] = { 0x5f };
+    signed_in(T0 + 360000000);
+    live(T0);
+    host_t h;
+    memset(&h, 0, sizeof h);
+    host_push(&h, NW_WS_VIEW, "g2", 6, view, 1, T0);
+    T_EQ_INT(h.views, 1);
+    T_EQ_INT(h.row_v, 6);
+    T_CHECK(nc_next_request(T0 + 10 * NC_RECONCILE_MS) == NULL);
+}
+
 int main(void) {
     T_RUN(session_blob);
     T_RUN(requests);
@@ -1848,6 +1974,10 @@ int main(void) {
     T_RUN(a_finished_game_is_not_read);
     T_RUN(a_released_game_is_not_read);
     T_RUN(a_failed_catch_up_waits_the_quiet);
+    T_RUN(a_half_open_socket_is_closed_after_the_pong_wait);
+    T_RUN(a_live_socket_is_never_closed);
+    T_RUN(a_newer_view_of_a_held_game_queues_one_read);
+    T_RUN(a_view_of_an_unheld_game_applies);
     T_RUN(a_spectators_game_is_read_after_the_quiet);
     T_RUN(the_quiet_jitter_is_bounded);
     return T_DONE();

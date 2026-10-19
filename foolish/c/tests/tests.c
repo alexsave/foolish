@@ -22,6 +22,7 @@
 #include "../src/view.h"
 #include "../src/anim_plan.h"
 #include "../src/cordite_sim.h"
+#include "../src/bot_common.h"
 #include "../src/analyse.h"
 #include "../src/roster.h"
 #include "../src/table.h"
@@ -31,6 +32,7 @@
 #include "../wasm/wire.h"
 #include "fm_exp_digest.h"   // fm_exp, its digest inputs and the committed digest
 #include <stdio.h>
+#include <time.h>
 #include <sys/mman.h>
 #include <signal.h>
 #include <unistd.h>
@@ -1245,6 +1247,48 @@ static void test_short_log_instance(void) {
     CHECK(g.num_logs <= g.log_cap, "short-log: kept logs never exceed the cap");
     CHECK(g.num_logs >= logs_before, "short-log: at least the discard was retained");
     CHECK(g.log_virt > 0, "short-log: virtual counter advanced past dropped appends");
+}
+
+
+// The wasm-only size limits, driven natively (make tests-wasm-caps builds this file with
+// -DWASM_CAPS_TESTS -DWORLD_LOG_CAP=40 -DCD_TT_BITS=12 -DCD_TT_2WAY -DCD_TT_PACK8, the
+// values the shipped bots module is built with). A sampled world keeps at most
+// WORLD_LOG_CAP logs and marks its slot short; with the cap 0 (every other build) it keeps
+// them all and is not short. The cap path is crafted-state-only in play (<= 32 discards can
+// exist), so a Game holding 60 discard logs is the only way to reach it.
+static void test_world_clone_honours_the_log_cap(void) {
+    static Game src, dst;
+    memset(&src, 0, sizeof src);
+    enum { N = 60 };
+    for (int i = 0; i < N; i++) {
+        src.logs[src.num_logs].log_type = (i % 5 == 4) ? LOG_GOOD : LOG_DISCARD;   // every fifth is not a discard
+        src.logs[src.num_logs].num_pairs = (int8_t)(i & 7);
+        src.num_logs++;
+    }
+    int discards = 0;
+    for (int i = 0; i < src.num_logs; i++) discards += src.logs[i].log_type == LOG_DISCARD;
+    bot_clone_world(&dst, &src);
+#if WORLD_LOG_CAP > 0
+    CHECK(WORLD_LOG_CAP == 40 && discards > WORLD_LOG_CAP, "world cap: the crafted state holds more discards than the cap");
+    CHECK(dst.num_logs == WORLD_LOG_CAP, "world cap: a world keeps no more than WORLD_LOG_CAP logs");
+    CHECK(dst.log_cap == WORLD_LOG_CAP, "world cap: the slot is marked short");
+    CHECK(dst.log_virt == WORLD_LOG_CAP, "world cap: the virtual counter starts at the kept logs");
+    // and the kept ones are the FIRST discards, in order
+    int ok = 1, k = 0;
+    for (int i = 0; i < src.num_logs && k < dst.num_logs; i++) {
+        if (src.logs[i].log_type != LOG_DISCARD) continue;
+        ok &= dst.logs[k].log_type == LOG_DISCARD && dst.logs[k].num_pairs == src.logs[i].num_pairs;
+        k++;
+    }
+    CHECK(ok && k == WORLD_LOG_CAP, "world cap: the kept logs are the first discards, in order");
+    // the world scratch slot really holds WORLD_LOG_CAP logs: write the last one and read it back
+    Game *w = world_scratch_game();
+    memset(w, 0, offsetof(Game, logs));
+    for (int i = 0; i < WORLD_LOG_CAP; i++) { w->logs[i].log_type = LOG_DISCARD; w->logs[i].num_pairs = (int8_t)(i + 1); }
+    CHECK(w->logs[WORLD_LOG_CAP - 1].num_pairs == WORLD_LOG_CAP, "world cap: the scratch slot's last log is addressable");
+#else
+    CHECK(dst.num_logs == discards && dst.log_cap == 0, "world cap: with the cap 0 a world keeps every discard, full-size");
+#endif
 }
 
 // ---- legal.c edge move-generation states -----------------------------------
@@ -19414,6 +19458,30 @@ static void test_fm_exp(void) {
 }
 
 int main(void) {
+#ifdef WASM_CAPS_TESTS
+    // make tests-wasm-caps: the cordite and belief-log cases under the wasm size limits only.
+    _Static_assert(WORLD_LOG_CAP == 40, "tests-wasm-caps builds with the shipped WORLD_LOG_CAP");
+#ifndef CD_TT_BITS
+#error tests-wasm-caps builds with the shipped CD_TT_BITS
+#endif
+    _Static_assert(CD_TT_BITS == 12, "tests-wasm-caps builds with the shipped CD_TT_BITS");
+#if !defined(CD_TT_2WAY) || !defined(CD_TT_PACK8)
+#error tests-wasm-caps builds with the shipped solver table (CD_TT_2WAY, CD_TT_PACK8)
+#endif
+    { clock_t t0_ = clock(); test_world_clone_honours_the_log_cap(); fprintf(stderr, \"  %5.2f s  test_world_clone_honours_the_log_cap\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_short_log_instance(); fprintf(stderr, \"  %5.2f s  test_short_log_instance\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_podkidnoy_solver_and_book(); fprintf(stderr, \"  %5.2f s  test_podkidnoy_solver_and_book\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_solver_tt_value_carries_its_seat(); fprintf(stderr, \"  %5.2f s  test_solver_tt_value_carries_its_seat\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_analyse_belief_holds_on_played_games(); fprintf(stderr, \"  %5.2f s  test_analyse_belief_holds_on_played_games\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_bot_drive_cycle(); fprintf(stderr, \"  %5.2f s  test_table_bot_drive_cycle\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_bot_drive_ignores_instance_history(); fprintf(stderr, \"  %5.2f s  test_table_bot_drive_ignores_instance_history\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_bot_drive_ignores_other_tables(); fprintf(stderr, \"  %5.2f s  test_table_bot_drive_ignores_other_tables\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_session_log_is_load_bearing_for_octogen(); fprintf(stderr, \"  %5.2f s  test_table_session_log_is_load_bearing_for_octogen\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_octogen_game_is_its_deal_seeds(); fprintf(stderr, \"  %5.2f s  test_table_octogen_game_is_its_deal_seeds\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_a_load_leaves_nothing_of_the_last_table(); fprintf(stderr, \"  %5.2f s  test_table_a_load_leaves_nothing_of_the_last_table\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    printf("\n%d passed, %d failed\n", n_pass, n_fail);
+    return n_fail > 0 ? 1 : 0;
+#endif
 #ifdef CD_PASS_PROBE
     test_masked_board_carries_the_rules();
     test_oracle_board_keeps_the_rules();
