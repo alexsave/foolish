@@ -233,3 +233,41 @@ Lifts, all header-only in shared/ unless noted. Every change is compile-checked 
 
 ### Tests to fix
 - Any existing unit_netclient / unit_leftovers / fz_netclient / unit_stream case that runs next() past a PINGREQ for more than 10 s without a PINGRESP will now see a len-0 frame (grep for NC_PING_MS users); and any that asserts a dashboard view of a held game produces no read.
+
+## Item: home-server readiness (c_base on one EC2 `cbase serve` behind CloudFront)
+
+### What changed
+- a. Real client address behind CloudFront in serve mode.
+  c_base/core/src/rate_limits.c cb_viewer_key: when the provider names no viewer_header (local/serve), the key is CloudFront-Viewer-Address
+  ONLY if CBASE_ORIGIN_SECRET is configured AND the request carries it (cb_config_origin_proven, the one check handler.c also uses; an unset secret proves everything, so it is not enough here).
+  The header is parsed by the new c_base/core/src/net/viewer_addr.[ch] (strict: ip:port, v6 bare or bracketed, inet_pton, port 1..65535 in plain digits via shared/c/num_parse.h).
+  A malformed header, a wrong or missing secret, or no secret configured: the TCP peer. X-Forwarded-For is never read.
+  The Lambda path (provider_aws viewer_header) is unchanged.
+  Deploy note: the serve host must set CBASE_ORIGIN_SECRET and CloudFront must send X-Cbase-Origin, or the peer (CloudFront's address) is still the key.
+- b. foolish/server/migrate/export.c, `build/cbase-export [--rate PCT] [--into-existing] [--no-verify] <sqlite file>` (CBASE_TABLE, default cbase).
+  item_keys scan of the table, item_batch_get 100 at a time, item_write PUT into the SQLite store with every attribute as read; then a verify pass (item_keys on both sides, sorted, counts, MISSING / EXTRA keys, first 20 printed).
+  Read-only on DynamoDB. Pacing: cb_store_dynamo_bulk (token bucket on provisioned RCU, throttles never given up on) plus the new cb_store_dynamo_read_share (store_priv.h, store_dynamo.c) holding reads to --rate percent (default 25).
+  Refuses to run if DescribeTable fails (no unpaced scan of a shared table), and refuses a non-empty file without --into-existing. Exit 0 equal, 1 failed/mismatch, 2 usage or I/O.
+  Makefile: EXPORT_SRC, build/cbase-export, in `all`.
+- c. .github/workflows/c_base.yml job serve_binary (main pushes only, ubuntu-24.04-arm, contents: write on that job only): `build_bootstrap.sh serve` (same pinned Alpine static build, target build/cbase) -> c_base/dist/cbase-serve-linux-arm64 + .sha256;
+  checks `file` says aarch64 statically linked and sha256sum -c; uploads the artifact; `gh release create cbase-serve-<9-char sha>` with both files.
+  Not run (needs Docker, over 5 s).
+
+### Owed tests
+- a. unit_limits.c the_viewer_address_behind_cloudfront was written (9 cases) but NOT run. Also a unit for cb_viewer_addr_parse itself (table of good and bad: v4, bracketed v6, bare v6, no port, port 0 / 65536 / 5+ digits / "12x", trailing blank, "[v4]:5", empty, 64+ bytes).
+  Mutation-check: drop the origin_secret[0] test (the unset-secret case must fail), drop the proven call, read X-Forwarded-For, loosen the port range.
+- a. FUZZ TARGET OWED: fz_viewer_addr in c_base/core/fuzz (untrusted header): arbitrary bytes into cb_viewer_addr_parse with cap from 0 to 70; invariants: never reads past the NUL, out is NUL-terminated on success and empty on failure, a success re-parses to itself (idempotent on out + ":1"), the port never exceeds 65535. Seeds in c_base/fuzz/seeds.c, corpus dir, and a fuzz.mk entry.
+  Also a cb_viewer_key harness (secret set, header arbitrary).
+- b. END-TO-END TEST OWED: against DynamoDB Local (providers/aws/ops/dynamo_local.sh, make check-dynamo style): seed ~1000 items through the item layer (all four attribute kinds, SL, index keys, TTL attrs, a 1 KB pk, a ~300 KB item), run cbase-export, assert exit 0, and read every item back from the SQLite file with item_get and compare attribute by attribute.
+  Then: delete one item from the table after the key scan (vanished path), a second run without --into-existing refuses (exit 2), an item the SQLite side rejects counts as failed (exit 1), the verify pass reports a planted MISSING and a planted EXTRA, --rate 100 and --rate 0 / 101 / "x" (usage, 2).
+  Unit for cb_store_dynamo_read_share with the fake clock (unit_store style): rate scales, bal clamps, refused outside bulk mode and for 0 / >1 / non-dynamo.
+  Mutation-check: put without the index attributes; skip the verify's EXTRA side; drop the sort.
+- c. The CI job only runs on main; the first main push after merge is its test (check the release exists, sha256sum -c on the download, `file` shows static aarch64, and it starts with CBASE_LISTEN on a t4g).
+
+### Tests to fix
+- None known broken. unit_limits.c compiles (-fsyntax-only) but was not linked or run.
+
+### Fixes to make
+- ops/ shellcheck list in c_base.yml's ops job does not include build_bootstrap.sh in the shellcheck line (it is in bash -n); consider adding it.
+- cbase-export does not compare attribute values in the verify, only keys; a value compare via item_batch_get on both sides would cost a second full read of the table.
+- Lambda path still trusts CloudFront-Viewer-Address with CBASE_ORIGIN_SECRET unset (existing behaviour, function URL reachable only through the edge); leniency of address_key for the Lambda header could go through cb_viewer_addr_parse too (the existing test expects "not-an-address" to stay a key, so that is a behaviour change).
