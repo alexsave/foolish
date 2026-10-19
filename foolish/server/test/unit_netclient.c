@@ -1346,6 +1346,59 @@ static void a_busy_read_goes_again_a_write_does_not(void) {
 }
 
 
+// An action goes over the live socket as a REQ frame, and its REPLY is the HTTP answer; before the READY it goes by HTTP;
+// a socket that closes with one unanswered answers it as a request that never arrived.
+static void actions_ride_the_socket(void) {
+    uint8_t r[TABLE_RESP_BYTES];
+    NcIntent play = intent(NC_DO_PLAY, "g1");
+    play.bytes_len = 2; play.bytes[0] = 3; play.bytes[1] = 0;
+    play.intent = 5;
+    // Not live yet (opened, no READY): HTTP.
+    signed_in(T0 + 3600000);
+    nc_stream_opened(T0);
+    next_pkt(T0);   // the HELLO
+    uint32_t t = nc_do(&play, T0);
+    T_CHECK(t != 0);
+    T_CHECK(path_is(nc_next_request(T0), "/v1/action"));
+    // Live: the pump leaves it to the socket.
+    signed_in(T0 + 3600000);
+    live(T0);
+    t = nc_do(&play, T0);
+    T_CHECK(t != 0);
+    T_CHECK(nc_next_request(T0) == NULL);
+    T_EQ_INT(nc_stream_due_ms(T0), 0);
+    cpkt k = next_pkt(T0);
+    T_CHECK(k.type == PK_REQ && strcmp(k.path, "/v1/action") == 0 && k.body_len > 0);
+    T_EQ_INT(next_pkt(T0).type, PK_NONE);   // sent once
+    T_EQ_INT(table_action_response(TABLE_APPLIED, 0, 6, r, sizeof r), TABLE_RESP_BYTES);
+    uint8_t b[64];
+    int h = sf_put_reply_head(b, sizeof b, k.pid, 200);
+    memcpy(b + h, r, sizeof r);
+    nc_stream_in(b, h + (int)sizeof r, 0, T0);
+    const NcDone *d = nc_next_done();
+    T_CHECK(d && d->ticket == t && d->action_status == TABLE_STATUS_APPLIED && d->version == 6);
+    T_CHECK(nc_next_done() == NULL);
+    // A REPLY for nothing waiting is nothing.
+    nc_stream_in(b, h + (int)sizeof r, 0, T0);
+    T_CHECK(nc_next_done() == NULL);
+    // Written and never answered: the socket closes, and the action ends as a request that never arrived.
+    t = nc_do(&play, T0);
+    T_CHECK(t != 0 && nc_next_request(T0) == NULL);
+    k = next_pkt(T0);
+    T_EQ_INT(k.type, PK_REQ);
+    nc_stream_closed(T0 + 10);
+    d = nc_next_done();
+    T_CHECK(d && d->ticket == t && d->why == ASK_WHY_INTERNAL);
+    // Queued for the socket but not yet written when it closes: it goes by HTTP instead.
+    signed_in(T0 + 3600000);
+    live(T0 + 20);
+    t = nc_do(&play, T0 + 20);
+    T_CHECK(t != 0 && nc_next_request(T0 + 20) == NULL);
+    nc_stream_closed(T0 + 21);
+    T_CHECK(nc_next_done() == NULL);
+    T_CHECK(path_is(nc_next_request(T0 + 22), "/v1/action"));
+}
+
 // ---- the pump's own work never crowds out the host's ------------------------------------
 
 // A move refused over version 9 of `gid`, its answer read: the reconcile is queued.
@@ -1862,6 +1915,7 @@ int main(void) {
     T_RUN(connect_waits_for_a_fresh_token);
     T_RUN(closed_before_connack_refreshes);
     T_RUN(stream_order_and_retries);
+    T_RUN(actions_ride_the_socket);
     T_RUN(holds_made_before_the_session_are_kept);
     T_RUN(what_is_not_the_brokers);
     T_RUN(an_unanswered_subscription_is_asked_again);
