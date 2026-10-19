@@ -90,11 +90,30 @@ const fb = fakeBackend();
 fb.module.view = async (gid: string) => rows.playerViews.get(gid) ?? rows.spectatorViews.get(gid) ?? null;
 fb.module.games = async () => rows.dashboard;
 fb.module.bots = async () => rows.bots.map((b) => ({ id: b.id, nickname: b.nickname, key: b.strategy_key }));
-fb.module.history = async () => ({
-    rating: rows.elo.find((r) => r.user_id === ME)?.elo_rating ?? null,
-    rows: rows.snapshots.map((x) => ({ id: x.id, createdMs: Date.parse(x.created_at + 'Z'), players: x.player_ids,
-        moves: x.moves, extras: x.extras ?? new Uint8Array() })),
-});
+// The list the server answers: each row is the summary it cut when the game ended (the
+// viewer's seat, place, the fool, the length, and the names the replay's extras hold),
+// asked of the kernel here from the stored code. The row's id opens its replay.
+fb.module.history = async () => {
+    const { ensureBotsAsync, replaySummary, kernelReplayExtrasDecode } = await import('../sdk/ts/wasm/bots.ts');
+    await ensureBotsAsync();
+    return {
+        rating: rows.elo.find((r) => r.user_id === ME)?.elo_rating ?? null,
+        rows: rows.snapshots.map((x) => {
+            const sum = replaySummary(x.moves)!;
+            const np = x.player_ids.length;
+            const seat = x.player_ids.indexOf(ME);
+            const ex = x.extras && x.extras.length ? kernelReplayExtrasDecode(x.extras, np, sum.moves) : null;
+            return {
+                id: x.id, createdMs: Date.parse(x.created_at + 'Z'), nPlayers: np,
+                seat: seat < 0 ? 255 : seat,
+                rank: seat === sum.fool ? np : sum.elimination.indexOf(seat) + 1,
+                fool: sum.fool < 0 ? 255 : sum.fool,
+                durationS: ex?.moveGaps ? Math.round(ex.moveGaps.reduce((a, b) => a + b, 0)) : 0xffffffff,
+                names: ex?.names ?? [],
+            };
+        }),
+    };
+};
 // Every write the page sends, by name, so a test can see a move sent.
 const sent = new Set(['action', 'meta', 'create']);
 const invoked = {
@@ -106,10 +125,11 @@ const invoked = {
 };
 
 let routeGameId = '';
+const pushed: string[] = [];
 mock.module('../src/common/backend.ts', { namedExports: fb.module });
 mock.module('next/navigation', { namedExports: {
     useParams: () => (routeGameId ? { game_id: routeGameId } : {}),
-    useRouter: () => ({ push() {}, replace() {}, back() {} }),
+    useRouter: () => ({ push(to: string) { pushed.push(to); }, replace() {}, back() {} }),
     usePathname: () => (routeGameId ? `/${routeGameId}` : '/'),
 } });
 
@@ -488,6 +508,41 @@ test('the match history', async () => {
         rows.snapshots = snapshots;
         rows.elo = [{ user_id: ME, elo_rating: 1234, previous_elo: 1200 }];
     }, () => historyPage());
+});
+
+// The list holds no replay: tapping a row asks for the replay by the row's id (the
+// replay's own, which a deleted game leaves behind), then goes to the link built
+// from its moves and extras. A replay that is gone goes nowhere.
+test('the match history: a tap fetches the replay by the row id, then opens its link', async () => {
+    const { seededCode } = await import('./helpers/seeded_codes.ts');
+    const { replaySummary, kernelB32Encode } = await import('../sdk/ts/wasm/bots.ts');
+    const { encodeExtrasBytes } = await import('./helpers/extras_encode.ts');
+    const code = seededCode(2, 7);
+    const sum = replaySummary(code)!;
+    const extras = encodeExtrasBytes(['Boris', 'Me'], Array.from({ length: sum.moves + 1 }, (_, k) => 1_780_000_000 + k * 5));
+    rows = emptyRows();
+    rows.snapshots = [{ id: 'replay-uuid-1', player_ids: ['u-other', ME], moves: code, extras, created_at: '2026-09-10T12:00:00' }];
+    fb.replays['replay-uuid-1'] = { moves: code, extras };
+    fb.calls.length = 0;
+    pushed.length = 0;
+    await render(() => historyPage(), async (host, wait) => {
+        assert.equal(host.querySelectorAll('.result-card').length, 2, 'the stats card and one game');
+        assert.equal(fb.calls.filter((c) => c.fn === 'replay').length, 0, 'the list alone fetches no replay');
+        await click(host, '.result-card[style*="cursor: pointer"]', wait);
+        await wait(60);
+    });
+    assert.deepEqual(fb.calls.filter((c) => c.fn === 'replay').map((c) => c.arg), ['replay-uuid-1'], 'the replay of the row id');
+    assert.deepEqual(pushed, [`/${kernelB32Encode(code)}-${kernelB32Encode(extras)}`], 'the link from the moves and extras');
+    // Gone: the tap fetches, finds nothing, and stays.
+    delete fb.replays['replay-uuid-1'];
+    fb.calls.length = 0;
+    pushed.length = 0;
+    await render(() => historyPage(), async (host, wait) => {
+        await click(host, '.result-card[style*="cursor: pointer"]', wait);
+        await wait(60);
+    });
+    assert.equal(fb.calls.filter((c) => c.fn === 'replay').length, 1, 'it asked');
+    assert.deepEqual(pushed, [], 'and went nowhere');
 });
 
 test('the tutorial, first screen', async () => {
