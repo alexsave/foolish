@@ -137,7 +137,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         case 3: {
             const NcOut *o;
             for (int i = 0; i < 64 && (o = nc_stream_next(g_now)); i++) {
-                // Every message is whole client packets the broker reads.
+                // A frame of len 0 is the close signal for a socket that answered nothing (once, then nothing).
+                if (o->len == 0) { FZ_CHECK(nc_stream_next(g_now) == NULL); break; }
+                // Every other message is whole client packets the broker reads.
                 FZ_CHECK(o->len > 0 && o->len <= NC_OUT_MAX);
                 for (int at = 0; at < o->len;) {
                     MqttPacket p;
