@@ -43,7 +43,7 @@ rate directly. That is a *strength* lever, not a memory lever.
 Build pattern (from `c/`, `CORE=$(make -s print-core)`):
 
 ```sh
-cc -O2 -ffast-math -Isrc -Wno-deprecated-declarations \
+cc -O2 -ffp-contract=off -fno-math-errno -Isrc -Wno-deprecated-declarations \
    -DCD_TT_BOUNDS [-DCD_TT_BOUNDS_USE] -DCD_TT_2WAY -DCD_TT_BITS=22 \
    $CORE src/main_eval.c -o eval_bounds -lm
 GAME_SIG=1 CD_BUDGET=prod CD_RACE=0 ./eval_bounds \

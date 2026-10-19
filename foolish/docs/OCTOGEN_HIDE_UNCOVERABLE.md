@@ -59,7 +59,7 @@ for a paired comparison (same deals → variance-reduced).
 
 ```sh
 NOCS="<core srcs minus cordite_sim.c>"; CORE="$NOCS src/cordite_sim.c"
-clang -O3 -ffast-math -Isrc -DCD_TT_BITS=20 -DOG_HIDE_UNCOVERABLE \
+clang -O3 -ffp-contract=off -fno-math-errno -Isrc -DCD_TT_BITS=20 -DOG_HIDE_UNCOVERABLE \
   $CORE tools/hide_tax/hide_eval.c -o build/hide_eval -lm
 OG_HIDE_MASK=1 ./build/hide_eval <seed0> <count> <players> 1 > hide.txt 2> hide.err
 OG_HIDE_MASK=0 ./build/hide_eval <seed0> <count> <players> 1 > ctrl.txt 2> ctrl.err

@@ -93,7 +93,7 @@ with the standalone build:
 ```sh
 cd c
 CORE=$(make -s print-core)
-clang -O3 -ffast-math -Isrc -DCD_LEAFBOOK               $CORE src/main_eval.c -o /tmp/eval_off -lm
-clang -O3 -ffast-math -Isrc -DCD_LEAFBOOK -DCD_MAKE_UNMAKE $CORE src/main_eval.c -o /tmp/eval_on  -lm
+clang -O3 -ffp-contract=off -fno-math-errno -Isrc -DCD_LEAFBOOK               $CORE src/main_eval.c -o /tmp/eval_off -lm
+clang -O3 -ffp-contract=off -fno-math-errno -Isrc -DCD_LEAFBOOK -DCD_MAKE_UNMAKE $CORE src/main_eval.c -o /tmp/eval_on  -lm
 # A/B must be identical (strip the wall-clock line); solver_difftest must be mismatches=0.
 ```

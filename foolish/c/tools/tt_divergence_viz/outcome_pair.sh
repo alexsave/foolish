@@ -32,7 +32,7 @@ build_bin() { local b=$1
   BIN_OUT="$out"
   [ -x "$out" ] && [ "$out" -nt "$CNITRO/src/cordite_sim.c" ] && return
   local CORE; CORE=$(cd "$CNITRO" && make -s print-core)
-  ( cd "$CNITRO" && $CC -O2 -ffast-math -Isrc -Wno-deprecated-declarations \
+  ( cd "$CNITRO" && $CC -O2 -ffp-contract=off -fno-math-errno -Isrc -Wno-deprecated-declarations \
       $EXTRA -DCD_TT_BITS="$b" $CORE src/main_eval.c -o "$out" -lm ); }
 
 echo "[pair] $BOT vs $OPP pc$PC  TT$CAND vs TT$BASE  +$N seeds from $SEED0  extra='$EXTRA'"

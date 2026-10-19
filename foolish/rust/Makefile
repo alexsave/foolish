@@ -5,7 +5,7 @@
 #   make bench-rs  # build + run the three Rust benchmarks (cargo --release)
 #
 # The C benches compile the actual kernel sources from ../c/src with the same
-# native flags production uses (c/Makefile: -O3 -ffast-math -flto, clang).
+# native flags production uses (c/Makefile: -O3 -ffp-contract=off -fno-math-errno -flto, clang).
 #
 # `CC ?= clang` would NOT do it: make ships CC with a built-in default of `cc`,
 # so `?=` never fires and the "clang" build silently became whatever `cc` points
@@ -14,7 +14,7 @@
 ifeq ($(origin CC),default)
 CC := clang
 endif
-CFLAGS ?= -O3 -ffast-math -flto -Wall -Wextra -Wno-unused-parameter -I../c/src
+CFLAGS ?= -O3 -ffp-contract=off -fno-math-errno -flto -Wall -Wextra -Wno-unused-parameter -I../c/src
 
 KSRC_LEGAL   = ../c/src/game.c ../../shared/c/deal_rng.c ../c/src/legal.c
 KSRC_PLAYOUT = $(KSRC_LEGAL) ../c/src/cordite_sim.c

@@ -112,7 +112,7 @@ Prior results this plan builds on (details: `docs/OCTOGEN_PC2_DIVERGENCE.md`,
 - The **real state `s` is never modified** — canonicalization happens only inside
   fingerprint computation.
 - Build pattern (native measurement):
-  `CORE=$(make -s print-core); cc -O2 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_STATS -DCD_TT_<FLAG> -DCD_TT_BITS=<b> $CORE src/main_eval.c -o /tmp/l1/<name> -lm`
+  `CORE=$(make -s print-core); cc -O2 -ffp-contract=off -fno-math-errno -Isrc -Wno-deprecated-declarations -DCD_TT_STATS -DCD_TT_<FLAG> -DCD_TT_BITS=<b> $CORE src/main_eval.c -o /tmp/l1/<name> -lm`
 - Env for every measurement: `CD_BUDGET=prod CD_RACE=1 CD_RACE_C=75`, plus
   `GAME_SIG=1` (move hash + fin), `CD_GW=1` (per-seed W), `CD_LAT=1` (decision
   latency). pc2 games ≈ 1.5 s each; shard seeds across cores (see the tools in §7).
