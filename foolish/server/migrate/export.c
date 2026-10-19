@@ -103,10 +103,10 @@ typedef struct {
 
 // Does the file hold `src` (an item as DynamoDB answered it) exactly: the same
 // attributes, each of the same kind and value?
-static bool same_in_file(cb_store *dst, cb_ikey key, const cb_item *src) {
+static bool same_in_file(cb_store *dst, cb_ikey at, const cb_item *src) {
     cb_item got;
     cb_item_init(&got);
-    bool same = dst->ops->item_get(dst, key, true, &got) == CB_OK && got.n == src->n;
+    bool same = dst->ops->item_get(dst, at, true, &got) == CB_OK && got.n == src->n;
     for (int a = 0; same && a < src->n; a++) {
         cb_av want, have;
         cb_item_at(src, a, &want);

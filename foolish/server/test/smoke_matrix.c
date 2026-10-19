@@ -1187,7 +1187,7 @@ static int replay_names(const user *u, const forms *name) {
     }
     for (int i = 0; i < n; i++) {
         char path[96];
-        snprintf(path, sizeof path, "/v1/replay/%s", ids[i]);
+        snprintf(path, sizeof path, "/v1/replay/%.*s", NW_ID_MAX, ids[i]);
         if (http("GET", path, u->auth, NULL, 0, NULL) != 200) return -1;
         NwBlob mv, ex;
         if (nw_replay_decode(g_a.body, g_a.len, &mv, &ex) != NW_OK) return -1;
