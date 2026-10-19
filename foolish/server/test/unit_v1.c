@@ -14,6 +14,7 @@
 #include "auth/auth.h"
 #include "handler.h"
 #include "lib_store_backend.h"
+#include "app/app_internal.h"
 #include "net/router.h"
 #include "app/pushes.h"
 #include "realtime/realtime.h"
@@ -325,6 +326,39 @@ static bool second_game(const cb_member_row *m, void *ud) {
     return false;
 }
 static int hr_skip;
+
+// A game's code is the text the share URL carries: the store keeps it as it is. A code the generator
+// draws comes back from the dashboard and opens by its path; so does an all-digit code with a leading
+// zero (a store that took it for a number would hand back "12345").
+static void digits_code(char out[CB_GAME_ID_MAX + 1]) { cb_strlcpy(out, "012345", CB_GAME_ID_MAX + 1); }
+
+static void game_codes_round_trip(void) {
+    setup();
+    T_EQ_INT(sign(1, "CODY", "secret-11"), 0);
+    char uid[40];
+    memcpy(uid, nc_session_info()->user_id, 36);
+    uid[36] = 0;
+    cb_app_game_id = digits_code;
+    T_EQ_INT(call(b_create, NULL), 200);
+    cb_app_game_id = cb_game_id_random;
+    T_EQ_INT(call(b_create, NULL), 200);
+    char codes[2][CB_GAME_ID_MAX + 1] = { "", "" };
+    g_seen = 0;
+    CB_ROWS_CALL(g_ctx.store, games_of_user, uid, 0, second_game, codes[0]);
+    CB_ROWS_CALL(g_ctx.store, games_of_user, uid, 1, first_game, codes[1]);
+    // One of the two is the digits, the other the generator's (CB_GAME_ID_HEX lowercase hex).
+    int d = strcmp(codes[0], "012345") == 0 ? 0 : 1;
+    T_EQ_STR(codes[d], "012345");
+    const char *drawn = codes[1 - d];
+    T_EQ_INT((int)strlen(drawn), CB_GAME_ID_HEX);
+    T_EQ_INT((int)strspn(drawn, "0123456789abcdef"), CB_GAME_ID_HEX);
+    for (int i = 0; i < 2; i++) {
+        T_EQ_INT(call(b_game, codes[i]), 200);
+        const NcGameRow *row = nc_view_read(g_status, g_body, g_len);
+        T_CHECK(row != NULL);
+    }
+    teardown();
+}
 
 static void games_views_and_chat(void) {
     setup();
@@ -887,6 +921,7 @@ int main(void) {
     T_RUN(without_a_backend);
     T_RUN(refresh_password_signout_delete);
     T_RUN(games_views_and_chat);
+    T_RUN(game_codes_round_trip);
     T_RUN(bots_board_history_replay);
     T_RUN(history_rows_from_a_real_replay);
     T_RUN(independent_reads_run_at_once);
