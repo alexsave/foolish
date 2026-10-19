@@ -1,4 +1,4 @@
-// migrate_merge.h - cbase-export's explicit TRANSFORM step, applied to the SQLite copy (never to DynamoDB).
+// migrate_merge.h - cbase-export's explicit TRANSFORM step, applied to the copy it makes (never to the source table).
 //
 // MERGE_CASE_DUPLICATES: accounts whose names compare equal (auth/names.h cb_name_key) are one person.
 // Each group merges into its OLDEST account (created_at, then id): it keeps its id, history and display
