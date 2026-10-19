@@ -1329,7 +1329,7 @@ static bool pointer_step(const cb_item *it, void *ud) {
     if (p->q->summary_only) {
         cb_snapshot_row *r = &p->rows[p->n];
         memset(r, 0, sizeof *r);
-        snprintf(r->id, sizeof r->id, "%s", id);
+        snprintf(r->id, sizeof r->id, "%.*s", (int)(sizeof r->id - 1), id);   // (an id longer than a uuid is not one of ours)
         snprintf(r->game_id, sizeof r->game_id, "%s", gid);
         r->created_at = cb_item_n_or(it, "created_at", 0);
         r->n_players = (int)cb_item_n_or(it, "n_players", 0);
