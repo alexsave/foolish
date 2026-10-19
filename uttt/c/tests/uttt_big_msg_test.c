@@ -713,5 +713,6 @@ int main(int argc, char **argv)
     test_seats();
     test_prefer();
     test_caption();
+    printf("uttt_big_msg_test: %.2f s\n", now() - t0);
     return report("uttt_big_msg_test");
 }
