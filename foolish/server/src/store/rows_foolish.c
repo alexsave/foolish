@@ -1306,9 +1306,8 @@ typedef struct {
     char (*key)[KB];   // each pointer's replay pk, SNAP#<id>
     int    n, cap;
     bool   oom;
-    cb_snapshot_fn fn;   // summary_only: the pointers answered as they are read
-    void  *ud;
-    bool   stop;
+    cb_snapshot_row *rows;   // summary_only: each pointer's summary, in the query's order (n of them)
+    bool   need_replay;      // summary_only: some pointer holds no summary, so the replay is read whole for it
 } pointers;
 
 static bool pointer_step(const cb_item *it, void *ud) {
@@ -1318,28 +1317,28 @@ static bool pointer_step(const cb_item *it, void *ud) {
     s_of(it, "game_id", gid, sizeof gid);
     if ((p->q->id && strcmp(id, p->q->id) != 0) || (p->q->game_id && strcmp(gid, p->q->game_id) != 0)) return true;
     if (p->q->ref && strcmp(id, p->q->ref) != 0 && strcmp(gid, p->q->ref) != 0) return true;
-    if (p->q->summary_only) {
-        cb_snapshot_row r;
-        memset(&r, 0, sizeof r);
-        snprintf(r.id, sizeof r.id, "%s", id);
-        snprintf(r.game_id, sizeof r.game_id, "%s", gid);
-        r.created_at = cb_item_n_or(it, "created_at", 0);
-        r.n_players = (int)cb_item_n_or(it, "n_players", 0);
-        r.seat = (int)cb_item_n_or(it, "seat", -1);
-        r.rank = (int)cb_item_n_or(it, "rank", 0);
-        r.sum.has = cb_item_n_or(it, "dur", -2) != -2;
-        r.sum.fool = (int8_t)cb_item_n_or(it, "fool", -1);
-        r.sum.duration_s = (int32_t)cb_item_n_or(it, "dur", -1);
-        p->n++;
-        p->stop = !p->fn(&r, p->ud);
-        return !p->stop && (p->q->limit <= 0 || p->n < p->q->limit);
-    }
     if (p->n == p->cap) {
         int cap = p->cap ? p->cap * 2 : 16;
         char (*t)[KB] = realloc(p->key, (size_t)cap * sizeof *t);
-        if (!t) { p->oom = true; return false; }
+        cb_snapshot_row *rw = p->q->summary_only ? realloc(p->rows, (size_t)cap * sizeof *rw) : NULL;
+        if (rw) p->rows = rw;
+        if (!t || (p->q->summary_only && !rw)) { if (t) p->key = t; p->oom = true; return false; }
         p->key = t;
         p->cap = cap;
+    }
+    if (p->q->summary_only) {
+        cb_snapshot_row *r = &p->rows[p->n];
+        memset(r, 0, sizeof *r);
+        snprintf(r->id, sizeof r->id, "%s", id);
+        snprintf(r->game_id, sizeof r->game_id, "%s", gid);
+        r->created_at = cb_item_n_or(it, "created_at", 0);
+        r->n_players = (int)cb_item_n_or(it, "n_players", 0);
+        r->seat = (int)cb_item_n_or(it, "seat", -1);
+        r->rank = (int)cb_item_n_or(it, "rank", 0);
+        r->sum.has = cb_item_n_or(it, "dur", -2) != -2;
+        r->sum.fool = (int8_t)cb_item_n_or(it, "fool", -1);
+        r->sum.duration_s = (int32_t)cb_item_n_or(it, "dur", -1);
+        if (!r->sum.has) p->need_replay = true;
     }
     k(p->key[p->n++], KB, "SNAP#", id);
     return p->q->limit <= 0 || p->n < p->q->limit;
@@ -1361,11 +1360,56 @@ static bool replay_step(int i, const cb_item *it, void *ud) {
 int cb_rows_snapshots_query(cb_store *s, const cb_snapshot_query *q, cb_snapshot_fn fn, void *ud) {
     if (!q || !q->viewer_id || !*q->viewer_id) return CB_E_INVALID;
     char g2[KB];
-    pointers p = { .q = q, .fn = fn, .ud = ud };
+    pointers p = { .q = q };
     int rc = query(s, (cb_iquery){ .index = 2, .pk = k(g2, sizeof g2, "PLAYER#", q->viewer_id), .forward = !q->newest_first },
                    pointer_step, &p);
     if (rc == CB_OK && p.oom) rc = CB_E_NOMEM;
-    if (q->summary_only) { free(p.key); return rc == CB_OK ? p.n : rc; }
+    if (q->summary_only) {
+        // The history list: the pointers' summaries plus ONE BatchGetItem of the
+        // replays, projected to what the list still needs - the seats' names
+        // (extras) and, for a pointer from before the summary, what the caller
+        // cuts it from (moves) and where the viewer sat (player ids). No row
+        // handed out holds more than that, and the caller reads them in the
+        // callback only.
+        static const char *const names_only[] = { "id", "extras" };
+        static const char *const whole[] = { "id", "extras", "moves", "player_ids" };
+        cb_ikey *ks = rc == CB_OK ? malloc((size_t)(p.n ? p.n : 1) * sizeof *ks) : NULL;
+        replays r = { .rows = rc == CB_OK ? calloc((size_t)(p.n ? p.n : 1), sizeof *r.rows) : NULL,
+                      .got = rc == CB_OK ? calloc((size_t)(p.n ? p.n : 1), sizeof *r.got) : NULL };
+        if (rc == CB_OK && (!ks || !r.rows || !r.got)) rc = CB_E_NOMEM;
+        for (int i = 0; rc == CB_OK && i < p.n; i++) ks[i] = (cb_ikey){ p.key[i], "SNAP" };
+        if (rc == CB_OK && p.n)
+            rc = s->ops->item_batch_get(s, ks, p.n, p.need_replay ? whole : names_only, p.need_replay ? 4 : 2, replay_step, &r);
+        int n = 0;
+        bool more = true;
+        for (int i = 0; rc == CB_OK && more && i < p.n; i++) {
+            cb_snapshot_row *v = &p.rows[i];
+            if (r.got[i]) {
+                const cb_snapshot_row *sn = &r.rows[i];
+                v->moves = sn->moves;
+                v->moves_len = sn->moves_len;
+                v->extras = sn->extras;
+                v->extras_len = sn->extras_len;
+                if (!v->sum.has) {
+                    v->n_players = sn->n_players;
+                    v->seat = -1;
+                    for (int j = 0; j < sn->n_players; j++)
+                        if (strcmp(sn->player_ids[j], q->viewer_id) == 0) { v->seat = j; break; }
+                }
+            }
+            n++;
+            more = fn(v, ud);
+            v->moves = v->extras = NULL;   // the replays' copies, freed below
+        }
+        for (int i = 0; r.rows && i < p.n; i++)
+            if (r.got[i]) cb_snapshot_row_free(&r.rows[i]);
+        free(r.rows);
+        free(r.got);
+        free(ks);
+        free(p.rows);
+        free(p.key);
+        return rc == CB_OK ? n : rc;
+    }
     cb_ikey *keys = rc == CB_OK ? malloc((size_t)(p.n ? p.n : 1) * sizeof *keys) : NULL;
     replays r = { .rows = rc == CB_OK ? calloc((size_t)(p.n ? p.n : 1), sizeof *r.rows) : NULL,
                   .got = rc == CB_OK ? calloc((size_t)(p.n ? p.n : 1), sizeof *r.got) : NULL };

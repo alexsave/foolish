@@ -109,13 +109,13 @@ Fixes to make:
 
 ## Fixes to make (collected; done at the end of the list, before the test pass)
 
-- History names restore (item 1 regression, UI): the web history list shows `#1 #2 ...` instead of player names.
-  Plan: /v1/history does its Query of pointers, then ONE BatchGetItem of the main SNAP#<id>/SNAP items projecting only what names need (extras; SQLite: the column subset); names go in the history row; pointers stay name-free so account delete still redacts only the main item.
-  Keep the replay fetch-on-tap.
-  Old pointers (written before item 1, no summary, rank 0) are SKIPPED by historyEntry, so every old replay vanishes from the list: in the same batch read, compute the summary from the main item with snap_summary (table_ops.c, moves + extras projected), so old and new replays both show, with names.
-  No backfill unless the per-read cost matters.
-  The list must render identically to before b092fe333: names, bold viewer seat, fool icon.
-  Note the netwire row shape change when done.
+- DONE: History names restore (item 1 regression, UI). The list renders as before b092fe333 (names, bold viewer seat, fool icon; MatchHistory.tsx is untouched).
+  The NW_HISTORY row grew `u8 n_names, n_names x str8 name` after the duration (netwire, NcHistoryRow.names / NcName, net_layout.args counts, NetHistoryRow.names, backend.ts, historyEntry).
+  /v1/history: ONE Query of the pointers, then ONE BatchGetItem of the main SNAP#<id>/SNAP items (cb_rows_snapshots_query summary_only), projected to id + extras; when any pointer holds no summary the projection also takes moves + player_ids.
+  The names are unpacked from the extras in v1_http history_fn (replay_extras_unpack; only when the extras name exactly n_players seats, else the list shows "#1 #2 ...").
+  A pointer with no summary (written before item 1) is cut by cb_table_snap_summary (table_ops.c, the one function the game end also calls), the viewer's seat from player_ids and the rank from cb_snapshot_rank. Pointers stay name-free.
+  Owed tests: history_fn with a pointer lacking n_players/rank gets its row from the replay (old pointer shows, rank 1..n, fool, duration); a summary pointer's batch get projects only id+extras (mutation: project moves too and a counting store fails); names order and the "#n" fallback for extras naming fewer seats; nw_put_history/nw_get_history round trip with n_names (0, n, MAX_PLAYERS+1 bad, name_len > NW_NAME_MAX bad); web historyEntry uses the names when names.length == nPlayers.
+  Tests to fix: everything listed under item 1 that builds an NwHistoryRow or reads NcHistoryRow (the names fields are new; zero n_names is valid); fz_netclient moves_off check; unit_v1.c hr checks.
 - cb_rows_user_import is not atomic (read then write); fine for cbase-import, noted in case another caller appears.
 
 ## Item: hand-rolled security follow-ups (admin token, SigV4 wipes, product fuzz)

@@ -126,11 +126,17 @@ typedef struct {
 } NcBoardRow;
 
 typedef struct {
+    uint8_t  len;
+    char     name[NW_NAME_MAX];
+} NcName;
+
+typedef struct {
     uint8_t  id_len;        char id[NW_ID_MAX];     // the replay's: GET /v1/replay/<id> opens it
     uint64_t created_ms;
     uint8_t  n_players;
     uint8_t  seat, rank, fool;                      // NW_HISTORY_NONE for none; rank 0: no summary
     uint32_t duration_s;                            // NW_HISTORY_NO_TIME for none
+    uint8_t  n_names;       NcName names[MAX_PLAYERS];   // seat order; 0 when the replay holds none
 } NcHistoryRow;
 
 typedef struct {
