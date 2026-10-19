@@ -1148,7 +1148,7 @@ const cb_rows_ops cb_rows_sql = {
     .chat_list = sql_chat_list,
 };
 
-// foolish on every store: on SQLite the rows above (and its tables and statements), on DynamoDB
+// foolish on every store: on the SQL store the rows above (and its tables and statements), on the item store
 // rows_foolish.c's over the items; its part of an account on each.
 const cb_store_app cb_foolish_store = {
     .rows = &cb_rows_foolish,

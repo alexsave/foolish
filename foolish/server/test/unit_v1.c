@@ -686,6 +686,7 @@ static void rows_swap(const cb_rows_ops *rows) {
     g_real_app = g_ctx.store->app;
     g_swap_app = *g_real_app;
     g_swap_app.rows = rows;
+    g_swap_app.sql_rows = rows;
     g_ctx.store->app = &g_swap_app;
 }
 static void rows_restore(void) { g_ctx.store->app = g_real_app; }

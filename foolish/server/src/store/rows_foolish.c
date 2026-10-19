@@ -639,8 +639,11 @@ void cb_rows_cas_write(const cb_game_commit *c, int64_t last_commit_at, cb_rows_
     set(&x, CB_AVN("status", g->status), CB_SET_TO);
     set(&x, CB_AVB("state", g->state, g->state_len), CB_SET_TO);
     set(&x, CB_AVB("roster", g->roster, g->roster_len), CB_SET_TO);
-    if (g->logs_len) set(&x, CB_AVB("logs_packed", g->logs, g->logs_len), CB_SET_TO);
-    else set(&x, CB_AVB("logs_packed", NULL, 0), CB_SET_REMOVE);
+    // A commit that neither clears the log nor adds to it leaves the stored log as it is.
+    if (c->log_clear || c->log_add_len) {
+        if (g->logs_len) set(&x, CB_AVB("logs_packed", g->logs, g->logs_len), CB_SET_TO);
+        else set(&x, CB_AVB("logs_packed", NULL, 0), CB_SET_REMOVE);
+    }
     if (g->has_seed) set(&x, CB_AVB("game_seed", g->seed, CB_SEED_LEN), CB_SET_TO);
     else set(&x, CB_AVB("game_seed", NULL, 0), CB_SET_REMOVE);
     set(&x, CB_AVBOOL("needs_bots", g->needs_bots), CB_SET_TO);
@@ -796,7 +799,7 @@ static int commit_or_import(cb_store *s, const cb_game_commit *c0, bool import) 
         const cb_game_row *g = c.row;
         cb_game_row row = *g;
         row.last_commit_at = import ? g->last_commit_at : g->updated_at;   // a commit's time is its last commit
-        if (!import) {   // the row carries the whole log
+        if (!import && (c.log_clear || c.log_add_len)) {   // the row carries the whole log
             size_t full_len = 0;
             if ((rc = full_log(s, &c, &full, &full_len)) != CB_OK) break;
             row.logs = full;

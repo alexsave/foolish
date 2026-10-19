@@ -49,7 +49,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     // run, schema and all, is most of the time a run takes).
     static cb_store *s;
     if (!s && cb_store_open_sqlite(":memory:", &s) != 0) abort();
-    static const char *const EMPTY[] = { "DELETE FROM items" };   // every row is an item (schema 6), the bots too
+    static const char *const EMPTY[] = { "DELETE FROM users", "DELETE FROM bots", "DELETE FROM ratings",
+                                         "DELETE FROM games", "DELETE FROM game_moves", "DELETE FROM game_members",
+                                         "DELETE FROM game_bots", "DELETE FROM replays", "DELETE FROM replay_players",
+                                         "DELETE FROM chat" };
     for (size_t i = 0; i < sizeof EMPTY / sizeof EMPTY[0]; i++)
         FZ_CHECK(CB_STORE_CALL(s, admin_query, EMPTY[i], true, NULL, NULL) >= 0);
     int rc = cb_import_dir(s, g_dir, g_null);

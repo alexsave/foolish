@@ -267,6 +267,11 @@ static int w_item_keys(cb_store *s, cb_ikey_fn fn, void *ud) {
     return IN(s)->ops->item_keys ? IN(s)->ops->item_keys(IN(s), fn, ud) : CB_E_NOTIMPL;
 }
 
+static int w_ready(cb_store *s) {
+    if (take()) return atomic_load(&g_rc);
+    return IN(s)->ops->ready ? IN(s)->ops->ready(IN(s)) : CB_E_NOTIMPL;
+}
+
 static void w_close(cb_store *s) {
     cb_store_close(IN(s));
     free(s);
@@ -275,6 +280,7 @@ static void w_close(cb_store *s) {
 static const cb_store_ops FAULT_OPS = {
     .name = "fault",
     .close = w_close,
+    .ready = w_ready,
     .user_get = w_user_get,
     .user_by_email = w_user_by_email,
     .user_create = w_user_create,
@@ -341,10 +347,10 @@ static const cb_store_app FAULT_APP = { .rows = &FAULT_ROWS };
 // Every operation of store.h and of rows_foolish.h is wrapped above. An
 // operation added there and not here would be left NULL (CB_E_NOTIMPL to
 // whatever calls it through this store), so each table's size is held to its
-// count: store.h's name, close and 27 operations; rows_foolish.h's 29. The
+// count: store.h's name, close and 28 operations; rows_foolish.h's 29. The
 // account hooks are the wrapped store's (its user_create and user_delete run
 // them), so this store has none of its own.
-_Static_assert(sizeof(cb_store_ops) == (size_t)(27 + 2) * sizeof(void *),
+_Static_assert(sizeof(cb_store_ops) == (size_t)(28 + 2) * sizeof(void *),
                "store.h has an operation lib_faultstore.c does not wrap: add its w_ wrapper and its line in FAULT_OPS");
 _Static_assert(sizeof(cb_rows_ops) == (size_t)29 * sizeof(void *),
                "rows_foolish.h has an operation lib_faultstore.c does not wrap: add its w_ wrapper and its line in FAULT_ROWS");
