@@ -89,3 +89,46 @@ Note for a nano: each client holds two connections (HTTP plus MQTT), and the pro
 
 - shared/c/wasm/libm.c `quad()` casts a NaN or infinite double to long long: undefined behaviour and a trap in the wasm module. Guard non-finite input.
 - c_base/DESIGN.md:394 says the kernel section is "per-thread scratch", but the code callocs a fresh cb_section per operation (table_ops.c:161). DESIGN.md:426 says "no Lambda yet", which is stale. Fix both with the batch/section reuse item.
+
+## 7. Per-thread commit batch and kernel section (item A, done)
+
+- `batch` (rows_foolish.c, ~1 MB) and `cb_section` (table_ops.c, 217 KB: Game 37.5 KB, TableSnaps 46 KB, Table 1.5 KB, TableCommit 144 B, arena 128 KB) are `_Thread_local`, calloc'd once per worker thread.
+- Not a realloc'd array on purpose: every cb_iwrite points into its slot's attribute array and those pointers must not move. Untouched pages cost nothing, so only the claimed slots are ever resident. No shrink logic (not needed with lazily touched pages).
+- Batch reset: counters only (b->n, b->nz and a[i].n, x[i].n for i <= n, z[i].n for i <= nz). A nested use gets a private calloc.
+- Section reset (at cb_section_free): Game, everything from Table to the arena zeroed, snaps.n = 0; snapshot slots are not zeroed (written whole by table_snap before they are counted). This is exactly what calloc gave, so commits are byte-identical by construction (not yet diffed, see owed tests).
+- Assumption: a section is made and freed on the same thread (true at every call site).
+- Also moved cb_rows_bots_replace and cb_rows_snapshot_put to the shared batch. DESIGN.md per-thread-scratch and no-Lambda lines fixed.
+
+## 8. epoll / kqueue (item B, done)
+
+- net/poller.h + poller.c are the one owner: epoll on Linux, kqueue on macOS/BSD, `#error` elsewhere. No poll(2) fallback (both platforms have one of the two). loop.c keeps its watch table and generation check; the generation now rides in the event tag.
+- Level-triggered like before. Behaviour difference: a paused fd (events 0) still reports error/hangup on epoll, as poll did, but reports nothing on kqueue (macOS dev only).
+- max_conns, backlog and the settings are untouched (server.c not changed).
+- Tested: core/test/unit_loop.c (600 socketpairs, removal plus fd reuse in a callback, interest changes, hangup, cross-thread post, timers). Passed on macOS (kqueue) and Alpine arm64 (epoll). Mutation check: dropping the stale/tag guards fails the reuse test, restored.
+
+## 9. Not done (stopped on request)
+
+- C (hub index by topic): not started. D (request-scoped arena): not started; after A the per-move mallocs are not re-counted.
+- The 1024-game runs (0.1 and 1.0 cpu) were started and cancelled when asked to wrap up; no numbers.
+- Other per-request allocate-and-zero spots seen but not fixed: section_cast mallocs 64 KB per viewer cast (table_ops.c section_cast), cb_section_envelope has a CB_ENVELOPE_MAX stack buffer, read_seats/seats_t (~8 KB) malloc'd per commit, MQTT fan-out strlen scan of all connections (item C).
+
+## 10. Nano perf (0.1 cpu, 512m, SQLite on the data disk, human pace)
+
+Harness: scratchpad/perf/ (build.sh LABEL, run.sh LABEL, run1024.sh LABEL CPUS). Container names nano-perf-*, removed.
+
+| build | games | server ms/move | p95 ms | moves/s | RSS MB |
+|---|---|---|---|---|---|
+| baseline a1932f617 | 64 | 1.55 | 2.6 | 31.3 | 13.0 |
+| +A | 64 | 1.03 | 1.6 | 32.7 | 14.6 |
+| +B | 64 | 0.91 | 1.4 | 32.5 | 14.5 |
+| baseline | 192 | 1.39 | 548 | 81.2 | 31.2 |
+| +A | 192 | 1.01 | 36.8 | 91.0 | 28.4 |
+| +B | 192 | 0.61 | 0.9 | 90.2 | 27.9 |
+| +C, +D | | not run | | | |
+
+## Owed tests (this batch)
+
+- byte-identical commits before/after A (diff the stored rows of a scripted game on both builds).
+- no cross-request data after a reset: two games through one thread, the second must not see the first's strings/attrs (batch and section), mutation: skip the clean.
+- hub index subscribe/unsub/disconnect (C, not built).
+- per-move CPU after C and D; the 1024-game runs.
