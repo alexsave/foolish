@@ -270,7 +270,9 @@ Lifts, all header-only in shared/ unless noted. Every change is compile-checked 
 - None known broken. unit_limits.c compiles (-fsyntax-only) but was not linked or run.
 
 ### Fixes to make
-- ops/ shellcheck list in c_base.yml's ops job does not include build_bootstrap.sh in the shellcheck line (it is in bash -n); consider adding it.
-- cbase-export does not compare attribute values in the verify, only keys; a value compare via item_batch_get on both sides would cost a second full read of the table.
+- DONE: build_bootstrap.sh is on the shellcheck line (it passes shellcheck -x clean).
+- (original note:) ops/ shellcheck list in c_base.yml's ops job does not include build_bootstrap.sh in the shellcheck line (it is in bash -n); consider adding it.
+- DONE: cbase-export compares values with NO second table read: each item is read back from the SQLite file right after its put and compared attribute by attribute (cb_av_same, same attribute set) with the item as DynamoDB answered it (same_in_file); a difference counts as 'read back different' and exits 1. Owed test: in the DynamoDB-Local end-to-end test above, plant a SQLite store that mangles one attribute (or a mutation: drop an attribute in put_one) and assert exit 1; mutation-check by dropping the cb_av_same compare.
+- (original note:) cbase-export does not compare attribute values in the verify, only keys; a value compare via item_batch_get on both sides would cost a second full read of the table.
 - DONE: the Lambda path reads CloudFront-Viewer-Address through cb_viewer_addr_parse too (cb_viewer_key has one header read; a header that is not strict ip:port falls to the peer). Tests to fix: unit_limits.c the_viewer_address - the "not-an-address" Lambda case now expects "" (and the peer when one is given), and the portless v6 case got a port ("2001:db8:1:2:ffff::1:443"); both edited, not run. Still true: Lambda trusts the header with CBASE_ORIGIN_SECRET unset (the function URL is reachable only through the edge).
 - (original note:) Lambda path still trusts CloudFront-Viewer-Address with CBASE_ORIGIN_SECRET unset (existing behaviour, function URL reachable only through the edge); leniency of address_key for the Lambda header could go through cb_viewer_addr_parse too (the existing test expects "not-an-address" to stay a key, so that is a behaviour change).
