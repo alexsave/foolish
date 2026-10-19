@@ -339,6 +339,17 @@ int cb_rows_item_signup_txn(cb_store *s, const cb_user_row *u, const cb_iwrite *
 int cb_rows_item_delete_keys(cb_store *s, const char *id, cb_item_fn key, void *ud);
 int cb_rows_item_delete_txn(cb_store *s, const cb_user_row *u, const cb_iwrite *acct, int n);
 
+// THE MIGRATION'S FAMILIES (the hosted export's tables, foolish/server/migrate): what cbase-import and
+// cbase-export count on each side. An id is a family's own key as text: a UUID, a game id, or for
+// player_hands, bot_hands and chat_messages the game the row hangs off.
+#define CB_ROWS_N_FAMILIES 8
+#define CB_ROWS_KEY_MAX    (CB_UUID_LEN + 1)
+extern const char *const CB_ROWS_FAMILIES[CB_ROWS_N_FAMILIES];
+typedef bool (*cb_rows_key_fn)(const char *family, const char *id, void *ud);
+// Every row of every family on the SQL store, read consistently, in no set order: CB_OK, or a CB_E_*
+// (CB_E_INVALID: not the SQL store). fn answers false to stop; it may call the store.
+int cb_rows_sql_keys(cb_store *s, cb_rows_key_fn fn, void *ud);
+
 // games_get_views for a store with no round trip to save (SQLite, the tests'
 // memory store): game_get for each id, its log dropped.
 int cb_store_games_get_each(cb_store *s, const char *const *ids, int n, cb_game_fn fn, void *ud);

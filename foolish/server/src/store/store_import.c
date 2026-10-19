@@ -3,6 +3,7 @@
 // run it on a fixture without a second binary.
 #include "store_import.h"
 #include "store/store_priv.h"
+#include "store/store_sql.h"
 
 #include "bot_roster.h"
 #include "table.h"
@@ -483,11 +484,8 @@ const char *cb_import_export_kind(const char *pk, const char *sk, char *id, size
     return NULL;
 }
 
-static bool count_item(const char *pk, const char *sk, void *ud) {
+static bool count_row(const char *export_name, const char *id, void *ud) {
     extras *x = ud;
-    char id[CB_ITEM_KEY_MAX];
-    const char *export_name = cb_import_export_kind(pk, sk, id, sizeof id);
-    if (!export_name) return true;
     for (int i = 0; i < x->n; i++) {
         tally *t = x->tallies[i];
         if (!t->name || strcmp(t->name, export_name) != 0) continue;
@@ -502,6 +500,12 @@ static bool count_item(const char *pk, const char *sk, void *ud) {
         return true;
     }
     return true;
+}
+
+static bool count_item(const char *pk, const char *sk, void *ud) {
+    char id[CB_ITEM_KEY_MAX];
+    const char *export_name = cb_import_export_kind(pk, sk, id, sizeof id);
+    return export_name ? count_row(export_name, id, ud) : true;
 }
 
 // The export's count for `name` (counts.txt): -1 when it names no such
@@ -611,11 +615,11 @@ int cb_import_dir(cb_store *s, const char *dir, FILE *out) {
     // against the export's ids. An item of an id the export does not have (a
     // game played on the new stack before the import, a bench leftover) is an
     // extra, listed and not a mismatch.
-    static const char *const names[] = { "users", "bots", "user_elo_ratings", "games",
-                                         "player_hands", "bot_hands", "game_snapshots", "chat_messages" };
+    const char *const *names = CB_ROWS_FAMILIES;
     tally *tallies[] = { &users, &bots, &ratings, &games, &hands, &bhands, &snaps, &chat };
     extras ex = { .tallies = tallies, .n = 8, .out = out };
-    bool scanned = s->ops->item_keys && s->ops->item_keys(s, count_item, &ex) == CB_OK;
+    bool scanned = cb_store_is_sql(s) ? cb_rows_sql_keys(s, count_row, &ex) == CB_OK
+                                      : s->ops->item_keys && s->ops->item_keys(s, count_item, &ex) == CB_OK;
     fprintf(out, "%-18s %8s %8s %8s %8s %8s %8s %8s\n", "table", "export", "read", "written", "present", "failed", "stored",
             "extra");
     for (int i = 0; i < 8; i++) {

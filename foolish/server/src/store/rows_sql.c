@@ -42,6 +42,7 @@ enum {
     S_REPLAY_PUT, S_REPLAY_PLAYER_PUT, S_REPLAYS_NEW, S_REPLAYS_OLD, S_REPLAY_EXTRAS,
     S_CHAT_PUT, S_CHAT_LIST,
     S_DEL_MEMBERS, S_DEL_CHAT, S_DEL_RATING,
+    S_KEYS_USERS, S_KEYS_BOTS, S_KEYS_RATINGS, S_KEYS_GAMES, S_KEYS_MEMBERS, S_KEYS_SEAT_BOTS, S_KEYS_REPLAYS, S_KEYS_CHAT,
     S__COUNT
 };
 
@@ -207,6 +208,15 @@ static const char *const STMTS[S__COUNT] = {
     [S_DEL_MEMBERS] = "DELETE FROM game_members WHERE user_id = ?1",
     [S_DEL_CHAT] = "DELETE FROM chat WHERE user_id = ?1",
     [S_DEL_RATING] = "DELETE FROM ratings WHERE user_id = ?1",
+    // The migration's walk (cb_rows_sql_keys): each family's id column, in the families' order.
+    [S_KEYS_USERS] = "SELECT id FROM users",
+    [S_KEYS_BOTS] = "SELECT id FROM bots",
+    [S_KEYS_RATINGS] = "SELECT user_id FROM ratings",
+    [S_KEYS_GAMES] = "SELECT id FROM games",
+    [S_KEYS_MEMBERS] = "SELECT game_id FROM game_members",
+    [S_KEYS_SEAT_BOTS] = "SELECT game_id FROM game_bots",
+    [S_KEYS_REPLAYS] = "SELECT id FROM replays",
+    [S_KEYS_CHAT] = "SELECT game_id FROM chat",
 };
 
 // ---- helpers ------------------------------------------------------------------------------
@@ -1147,6 +1157,48 @@ const cb_rows_ops cb_rows_sql = {
     .chat_put = sql_chat_put,
     .chat_list = sql_chat_list,
 };
+
+// ---- the migration's walk ---------------------------------------------------------------------
+
+const char *const CB_ROWS_FAMILIES[CB_ROWS_N_FAMILIES] = {
+    "users", "bots", "user_elo_ratings", "games", "player_hands", "bot_hands", "game_snapshots", "chat_messages",
+};
+
+typedef struct {
+    vec ids;   // char[CB_ROWS_KEY_MAX]
+    vec fam;   // int
+} keys_op;
+
+static int keys_step(cb_sql *x, void *ud) {
+    keys_op *o = ud;
+    for (int f = 0; f < CB_ROWS_N_FAMILIES; f++) {
+        stmt_t *s = cb_sql_stmt(x, S_KEYS_USERS + f);
+        if (!s) return CB_E_DB;
+        int k;
+        while ((k = step_row(x, s, "keys")) == 1) {
+            char *id = vec_push(&o->ids);
+            int *fam = vec_push(&o->fam);
+            if (!id || !fam) { sqlite3_reset(s); return CB_E_NOMEM; }
+            *fam = f;
+            if (sqlite3_column_type(s, 0) == SQLITE_BLOB) cb_sql_col_uuid(s, 0, id);
+            else cb_sql_col_text(s, 0, id, CB_ROWS_KEY_MAX);
+        }
+        sqlite3_reset(s);
+        if (k < 0) return k;
+    }
+    return CB_OK;
+}
+
+int cb_rows_sql_keys(cb_store *s, cb_rows_key_fn fn, void *ud) {
+    if (!cb_store_is_sql(s)) return CB_E_INVALID;
+    keys_op o = { .ids = { .size = CB_ROWS_KEY_MAX }, .fam = { .size = sizeof(int) } };
+    int rc = cb_sql_read(s, keys_step, &o);
+    for (int i = 0; rc == CB_OK && i < o.ids.n; i++)
+        if (!fn(CB_ROWS_FAMILIES[((int *)o.fam.rows)[i]], (char *)o.ids.rows + (size_t)i * CB_ROWS_KEY_MAX, ud)) break;
+    free(o.ids.rows);
+    free(o.fam.rows);
+    return rc;
+}
 
 // foolish on every store: on the SQL store the rows above (and its tables and statements), on the item store
 // rows_foolish.c's over the items; its part of an account on each.
