@@ -40,7 +40,8 @@ static int counting_lease_acquire(cb_store *s, const char *game, int64_t now, in
 }
 
 static const cb_store_ops OPS = { .name = "counting" };
-static const cb_rows_ops ROWS = { .lease_acquire = counting_lease_acquire };
+static int gone_game_get(cb_store *s, const char *id, cb_game_row *out) { return CB_E_NOT_FOUND; }
+static const cb_rows_ops ROWS = { .lease_acquire = counting_lease_acquire, .game_get = gone_game_get };
 static const cb_store_app APP = { .rows = &ROWS };
 
 static atomic_int g_block, g_blocking;
@@ -82,7 +83,27 @@ static void one_queued_drive_per_game(void) {
     T_EQ_INT(atomic_load(&g_drives_b), 1);
 }
 
+static int no_start_after(cb_ctx *ctx, const char *job, const char *key, int64_t delay_ms) { return CB_OK; }
+
+// Under serve (job_start_after set) the lease is a set in memory: a drive takes no store lease, and
+// lets go of its own, so the next drive of the same game is not refused.
+static void serve_leases_live_in_memory(void) {
+    cb_store store = { .ops = &OPS, .app = &APP };
+    cb_ctx ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.store = &store;
+    ctx.app = &cb_foolish_app;
+    ctx.job_start_after = no_start_after;
+    int before = atomic_load(&g_drives_b);
+    for (int i = 0; i < 3; i++) (void)cb_bots_drive(&ctx, "cccccc");
+    T_EQ_INT(atomic_load(&g_drives_b), before);   // the store's lease was never asked
+    ctx.job_start_after = NULL;
+    (void)cb_bots_drive(&ctx, "cccccc");
+    T_EQ_INT(atomic_load(&g_drives_b), before + 1);   // without serve it is
+}
+
 int main(void) {
     T_RUN(one_queued_drive_per_game);
+    T_RUN(serve_leases_live_in_memory);
     return T_DONE();
 }

@@ -73,7 +73,7 @@ static const cb_route_list *const FOOLISH_ROUTES[] = { &cb_functions_route_list,
 // The bot drive, started by a kick (bots.h cb_bots_kick), and the scan that
 // catches a lost one: EventBridge's literal "scan" under Lambda.
 static const cb_job FOOLISH_JOBS[] = { { CB_BOTS_JOB, cb_bots_drive } };
-static const cb_schedule FOOLISH_SCHEDULES[] = { { CB_BOTS_SCHEDULE, CB_BOT_SCAN_EVERY_MS, cb_bots_scan } };
+static const cb_schedule FOOLISH_SCHEDULES[] = { { CB_BOTS_SCHEDULE, CB_BOT_SCAN_EVERY_MS, cb_bots_scan, true } };
 
 const char *const cb_foolish_cached_paths[2] = { "/v1/leaderboard", "/v1/bots" };
 

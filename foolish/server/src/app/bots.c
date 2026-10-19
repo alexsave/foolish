@@ -163,6 +163,71 @@ int64_t cb_bots_wait_ms(const cb_ctx *ctx, const Table *t, int64_t created_at, i
     return wait > 0 ? (wait + k - 1) / k : 0;
 }
 
+// ---- the lease: in memory under serve, the store's item elsewhere ---------------------------
+//
+// Under serve there is one process, so "a drive holds the game" is a set of game ids behind a
+// mutex: no row is written to take, renew or release it, and kick_wanted reads it without a
+// store round trip. An entry older than twice the drive's wall ceiling is a drive that hung (it
+// cannot be released by its owner) and is taken over. The store's lease (another provider has no
+// shared memory) stays for every other provider; serve is told apart by job_start_after.
+typedef struct mem_lease {
+    struct mem_lease *next;
+    int64_t           since;
+    char              id[CB_GAME_ID_MAX + 1];
+} mem_lease;
+static pthread_mutex_t g_lease_mu = PTHREAD_MUTEX_INITIALIZER;
+static mem_lease *g_leases;
+
+static bool in_memory(const cb_ctx *ctx) { return ctx->job_start_after != NULL; }
+
+static bool mem_lease_live(const mem_lease *l, const cb_ctx *ctx, int64_t now) {
+    return now - l->since <= 2 * cb_bots_ms(ctx, CB_BOT_WALL_MS);
+}
+
+static bool mem_lease_acquire(const cb_ctx *ctx, const char *id) {
+    const int64_t now = cb_mono_ms();
+    bool ok = true;
+    pthread_mutex_lock(&g_lease_mu);
+    for (mem_lease *l = g_leases; l; l = l->next)
+        if (strcmp(l->id, id) == 0) {
+            if (mem_lease_live(l, ctx, now)) ok = false;
+            else l->since = now;
+            pthread_mutex_unlock(&g_lease_mu);
+            return ok;
+        }
+    mem_lease *l = calloc(1, sizeof *l);
+    if (l) {
+        snprintf(l->id, sizeof l->id, "%s", id);
+        l->since = now;
+        l->next = g_leases;
+        g_leases = l;
+    }
+    pthread_mutex_unlock(&g_lease_mu);
+    return l != NULL;
+}
+
+static void mem_lease_release(const char *id) {
+    pthread_mutex_lock(&g_lease_mu);
+    for (mem_lease **pp = &g_leases; *pp; pp = &(*pp)->next)
+        if (strcmp((*pp)->id, id) == 0) {
+            mem_lease *dead = *pp;
+            *pp = dead->next;
+            free(dead);
+            break;
+        }
+    pthread_mutex_unlock(&g_lease_mu);
+}
+
+static bool mem_lease_held(const cb_ctx *ctx, const char *id) {
+    const int64_t now = cb_mono_ms();
+    bool held = false;
+    pthread_mutex_lock(&g_lease_mu);
+    for (mem_lease *l = g_leases; l; l = l->next)
+        if (strcmp(l->id, id) == 0) held = mem_lease_live(l, ctx, now);
+    pthread_mutex_unlock(&g_lease_mu);
+    return held;
+}
+
 // ms left before this drive must stop, or INT64_MAX under serve (no deadline).
 static int64_t budget_left(const cb_ctx *ctx) {
     if (ctx->deadline_ms <= 0) return INT64_MAX;
@@ -177,7 +242,9 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
     cb_store_tally st = *stp;
     *settled = false;
     cb_uuid lease;
-    int rc = CB_ROWS_CALL(ctx->store, lease_acquire, game_id, cb_app_now(), cb_bots_ms(ctx, CB_BOT_LEASE_MS), lease);
+    int rc = CB_OK;
+    if (in_memory(ctx)) { if (!mem_lease_acquire(ctx, game_id)) rc = CB_E_CONFLICT; }
+    else rc = CB_ROWS_CALL(ctx->store, lease_acquire, game_id, cb_app_now(), cb_bots_ms(ctx, CB_BOT_LEASE_MS), lease);
     if (rc == CB_E_CONFLICT) {
         CB_INFO("bots", "game %s: bot lease held by another drive, skipping", game_id);
         return CB_OK;
@@ -188,7 +255,8 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
     }
     cb_section *s = cb_section_new();
     if (!s) {
-        CB_ROWS_CALL(ctx->store, lease_release, game_id, lease);
+        if (in_memory(ctx)) mem_lease_release(game_id);
+        else CB_ROWS_CALL(ctx->store, lease_release, game_id, lease);
         return CB_E_NOMEM;
     }
     cpu_acct cpu = { 0, 0, 0 };
@@ -206,7 +274,8 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
                 if (predicted < (double)cpu.max_ms) predicted = (double)cpu.max_ms;
                 if (predicted > (double)budget_left(ctx)) { rekick = true; break; }
             }
-            int r = CB_ROWS_CALL(ctx->store, lease_renew, game_id, lease, cb_app_now(), cb_bots_ms(ctx, CB_BOT_LEASE_MS));
+            int r = in_memory(ctx) ? CB_OK
+                                   : CB_ROWS_CALL(ctx->store, lease_renew, game_id, lease, cb_app_now(), cb_bots_ms(ctx, CB_BOT_LEASE_MS));
             // Another drive took the lease over; a store failure keeps going (renewBotLease).
             if (r == CB_E_CONFLICT) break;
             if (r != CB_OK) CB_ERROR("bots", "game %s: lease renewal failed (%s), driving on", game_id, cb_strerror(r));
@@ -238,7 +307,8 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
         else if (r != CB_E_CONFLICT)
             CB_ERROR("bots", "game %s: could not take it out of the scan (%s)", game_id, cb_strerror(r));
     }
-    CB_ROWS_CALL(ctx->store, lease_release, game_id, lease);
+    if (in_memory(ctx)) mem_lease_release(game_id);
+    else CB_ROWS_CALL(ctx->store, lease_release, game_id, lease);
     cb_store_tally_take(&st);
     if (st.reads || st.writes)
         CB_DEBUG("store", "bot drive %s end: %d reads, %d writes, %g RCU, %g WCU (%s)", game_id, st.reads, st.writes,
@@ -305,6 +375,9 @@ static bool scan_collect(const char *id, void *ud) {
 
 int cb_bots_scan(cb_ctx *ctx, int64_t now_ms) {
     if (!ctx->store) return CB_E_STATE;
+    // Under serve this runs once, a period after start (cb_schedule serve_once): the recovery of
+    // games whose bots were due when the last process stopped. Every later drive is started by
+    // the commit that left bots due (cb_bots_kick) or by its own wait timer.
     scan_list *l = calloc(1, sizeof *l);
     if (!l) return CB_E_NOMEM;
     // Stale on updated_at (a drive in flight has just touched the row), active
@@ -337,7 +410,8 @@ int cb_bots_scan(cb_ctx *ctx, int64_t now_ms) {
 // game). A store that cannot say kicks: a wasted drive beats a stalled game.
 static bool kick_wanted(cb_ctx *ctx, const char *game_id) {
     if (!ctx->store) return true;
-    int held = CB_ROWS_CALL(ctx->store, lease_held, game_id, cb_app_now());
+    int held = in_memory(ctx) ? (mem_lease_held(ctx, game_id) ? 1 : 0)
+                              : CB_ROWS_CALL(ctx->store, lease_held, game_id, cb_app_now());
     if (held == 1) {
         CB_DEBUG("bots", "kick %s: a drive holds the lease, it takes this move", game_id);
         return false;
@@ -366,6 +440,7 @@ void cb_after_kick(cb_ctx *ctx, const char *game_id) {
 void cb_bots_kick(cb_ctx *ctx, const char *game_id) {
     if (!ctx->job_start || !kick_wanted(ctx, game_id)) return;
     int rc = cb_job_start(ctx, CB_BOTS_JOB, game_id);
-    // A lost kick is the scan's to catch, within a minute.
+    // Under serve no scan follows to catch a lost kick: it is started again from a timer.
+    if (rc != CB_OK && rc != CB_E_NOMEM && ctx->job_start_after) rc = cb_job_start_after(ctx, CB_BOTS_JOB, game_id, 1000);
     if (rc != CB_OK) CB_WARN("bots", "kick %s: not started (%s)", game_id, cb_strerror(rc));
 }
