@@ -191,7 +191,12 @@ typedef struct {
 // The statuses. Read across: who may do what.
 static const row ROWS[] = {
     //                                                  edgeless anon forged owner stranger
-    { "GET",  "/health",            B_NONE,       { 403, 200, 200, 200, 200 } },
+    // The loopback probe exemption (handler.c is_local_probe): GET or HEAD of /health and /ready from
+    // the machine itself needs no origin proof. Anything else, from the same address, still does.
+    { "GET",  "/health",            B_NONE,       { 200, 200, 200, 200, 200 } },
+    { "GET",  "/ready",             B_NONE,       { 200, 0, 0, 0, 0 } },
+    { "POST", "/health",            B_NONE,       { 403, 0, 0, 0, 0 } },    // another method is not the probe
+    { "GET",  "/health/x",          B_NONE,       { 403, 0, 0, 0, 0 } },    // nor another path
     { "GET",  "/v1/bots",           B_NONE,       { 403, 200, 200, 200, 200 } },
     { "GET",  "/v1/leaderboard",    B_NONE,       { 403, 200, 200, 200, 200 } },
     { "POST", "/v1/auth/signin",    B_SIGNIN,     { 403, 400, 0, 0, 0 } },    // wrong password: ACCOUNT refusal
