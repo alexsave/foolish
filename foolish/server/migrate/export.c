@@ -204,20 +204,23 @@ static int verify_deep(cb_store *src, cb_store *dst, const keyset *a, const keys
 
 static void usage(void) {
     fprintf(stderr,
-            "usage: cbase-export [--rate PERCENT] [--into-existing] [--no-verify] <sqlite file>\n"
+            "usage: cbase-export [--rate PERCENT] [--creds-cmd COMMAND] [--into-existing] [--no-verify] <sqlite file>\n"
             "  reads the DynamoDB table CBASE_TABLE (default cbase), read-only, at PERCENT (1-100, default 25)\n"
             "  of its provisioned read capacity, and puts every item into the SQLite file\n"
+            "  expired temporary credentials are fetched again with COMMAND (default: aws configure export-credentials --format process)\n"
             "  (built as <file>.partial, renamed when every check passed)\n");
 }
 
 int main(int argc, char **argv) {
     int64_t pct = 25;
     bool existing = false, verify = true;
+    const char *creds_cmd = getenv("CBASE_CREDS_CMD");
     const char *path = NULL;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rate") == 0 && i + 1 < argc) {
             if (!num_parse_i64_cstr(argv[++i], 1, 100, &pct)) { usage(); return 2; }
-        } else if (strcmp(argv[i], "--into-existing") == 0) existing = true;
+        } else if (strcmp(argv[i], "--creds-cmd") == 0 && i + 1 < argc) creds_cmd = argv[++i];
+        else if (strcmp(argv[i], "--into-existing") == 0) existing = true;
         else if (strcmp(argv[i], "--no-verify") == 0) verify = false;
         else if (argv[i][0] != '-' && !path) path = argv[i];
         else { usage(); return 2; }
@@ -249,6 +252,17 @@ int main(int argc, char **argv) {
     if (rc != CB_OK) {
         fprintf(stderr, "cbase-export: cannot open %s: %s\n", work, cb_strerror(rc));
         cb_store_close(src);
+        return 2;
+    }
+    // Temporary credentials (an `aws login` export lasts 15 minutes) are fetched again through a credential
+    // process when DynamoDB says they expired: --creds-cmd, CBASE_CREDS_CMD, or by default the AWS CLI's own
+    // when the environment holds a session token.
+    if (!creds_cmd || !*creds_cmd) {
+        const char *tok = getenv("AWS_SESSION_TOKEN");
+        creds_cmd = tok && *tok ? "aws configure export-credentials --format process" : NULL;
+    }
+    if (creds_cmd && cb_store_dynamo_creds_process(src, creds_cmd) != CB_OK) {
+        fprintf(stderr, "cbase-export: the credential command is too long\n");
         return 2;
     }
     // Paced to the provisioned reads, then held to the share asked for. Without a
