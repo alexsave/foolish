@@ -22,6 +22,7 @@
 #include "../../../../shared/c/rng.h"
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -172,12 +173,46 @@ int cb_row_load(cb_ctx *ctx, const char *id, bool allow_cache, cb_game_row *out,
 // counted in snaps.n, which is zeroed, and nothing reads past n.
 static _Thread_local cb_section *t_section;
 
+// EXCEPTION to "exactly what calloc gave": Game.logs (36 of the Game's 37 KB) is NOT zeroed on the
+// way out. Nothing may read it past g.num_logs (table_create and friends reset num_logs to 0 with
+// entries still in the array, so zeroing only the first num_logs would not be calloc's state
+// either). Where that is the rule to check, the array is filled with LOGS_POISON instead of zeros
+// on every reset and on every fresh section, so a read past num_logs shows up as 0xAA garbage in
+// the tests and the fuzzers: always under ASan (CB_INSTRUMENTED), and whenever the environment
+// has CBASE_POISON_LOGS (the Makefile sets it for every test lane). Shipped builds skip both.
+#define LOGS_POISON 0xAA
+static bool logs_poisoned(void) {
+#ifdef CB_INSTRUMENTED
+    return true;
+#else
+    static atomic_int state;   // 0 unknown, 1 off, 2 on
+    int v = atomic_load_explicit(&state, memory_order_relaxed);
+    if (!v) {
+        v = getenv("CBASE_POISON_LOGS") ? 2 : 1;
+        atomic_store_explicit(&state, v, memory_order_relaxed);
+    }
+    return v == 2;
+#endif
+}
+
+// Frees the calling thread's kept section (not while one is out). For a leak-counting test and thread exit.
+void cb_section_drain(void) {
+    if (t_section && !t_section->in_use) { free(t_section); t_section = NULL; }
+}
+
+bool cb_section_logs_poisoned(void) { return logs_poisoned(); }
+
 cb_section *cb_section_new(void) {
     cb_section *s = t_section;
-    if (s && s->in_use) return calloc(1, sizeof(cb_section));
+    if (s && s->in_use) {
+        s = calloc(1, sizeof(cb_section));
+        if (s && logs_poisoned()) memset(s->g.logs, LOGS_POISON, sizeof s->g.logs);
+        return s;
+    }
     if (!s) {
         s = calloc(1, sizeof(cb_section));
         if (!s) return NULL;
+        if (logs_poisoned()) memset(s->g.logs, LOGS_POISON, sizeof s->g.logs);
         s->pooled = true;
         t_section = s;
     }
@@ -207,7 +242,8 @@ void cb_section_free(cb_section *s) {
     if (!s->pooled) { free(s); return; }
     // calloc's zeros back: the board, the table through the commit, and the
     // arena prefix the products wrote (the rest was never written).
-    memset(&s->g, 0, sizeof s->g);
+    memset(&s->g, 0, offsetof(Game, logs));   // every field but the log array (see t_section)
+    if (logs_poisoned()) memset(s->g.logs, LOGS_POISON, sizeof s->g.logs);
     s->snaps.n = 0;
     memset((char *)s + offsetof(cb_section, t), 0, offsetof(cb_section, arena) - offsetof(cb_section, t));
     memset(s->arena, 0, (size_t)s->arena_hw);
@@ -221,7 +257,10 @@ bool cb_section_pooled_is_clean(void) {
     const cb_section *s = t_section;
     if (!s || s->in_use) return true;
     const unsigned char *p = (const unsigned char *)&s->g;
-    for (size_t i = 0; i < sizeof s->g; i++) if (p[i]) return false;
+    for (size_t i = 0; i < offsetof(Game, logs); i++) if (p[i]) return false;
+    // The log array is unspecified when not poisoned; under poison it is all LOGS_POISON.
+    if (logs_poisoned())
+        for (size_t i = 0; i < sizeof s->g.logs; i++) if (((const unsigned char *)s->g.logs)[i] != LOGS_POISON) return false;
     p = (const unsigned char *)&s->t;
     for (size_t i = 0; i < offsetof(cb_section, arena) - offsetof(cb_section, t); i++) if (p[i]) return false;
     for (int i = 0; i < s->arena_hw; i++) if (s->arena[i]) return false;
@@ -701,7 +740,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             // done in microseconds, and a sleep here would hold a request worker
             // (one on a small box) while every other request waits. The reload
             // below is the retry; the attempts bound it. The sleep stays where
-            // writers are other processes (lambda).
+            // writers are other processes (a one-shot platform).
             if (pause > 0 && !ctx->job_start_after) cb_app_sleep(pause);
         }
         cb_game_row row;

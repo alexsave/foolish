@@ -45,6 +45,8 @@ int  cb_row_load(cb_ctx *ctx, const char *id, bool allow_cache, cb_game_row *out
 void cb_row_cache_note(const cb_game_row *row);
 void cb_row_cache_drop(const char *id);
 void cb_row_cache_clear(void);
+void cb_section_drain(void);        // frees the thread's kept section (a leak-counting test)
+void cb_rows_batch_drain(void);     // frees the thread's kept commit batch (a leak-counting test)
 int  cb_row_cache_size(void);
 
 // ---- the section ------------------------------------------------------------------
@@ -70,7 +72,8 @@ typedef struct cb_section {
 
 cb_section *cb_section_new(void);
 void cb_section_free(cb_section *s);
-bool cb_section_pooled_is_clean(void);   // test hook: the idle pooled section is all zero
+bool cb_section_pooled_is_clean(void);   // test hook: the idle pooled section is all zero (Game.logs: all 0xAA when poisoned)
+bool cb_section_logs_poisoned(void);     // Game.logs is filled with 0xAA, not left stale (ASan builds, CBASE_POISON_LOGS)
 
 // table_init + table_load + table_set_deal_seed (the row's seed as lowercase
 // hex, "" for none), and the old humans noted. The kernel's result (< 0 a

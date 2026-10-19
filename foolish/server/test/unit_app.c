@@ -2435,6 +2435,8 @@ static void a_move_made_while_the_lease_is_held_is_driven(void) {
 }
 
 int main(void) {
+    // This program checks the poison rule (table_ops.c t_section) whatever lane runs it.
+    setenv("CBASE_POISON_LOGS", "1", 1);
     // Foolish's cached paths, as boot sets them up (app/edge.h).
     cb_edge_setup(cb_foolish_app.cached_paths, cb_foolish_app.n_cached_paths, NULL);
     T_RUN(create_answers_the_seat_0_envelope);
