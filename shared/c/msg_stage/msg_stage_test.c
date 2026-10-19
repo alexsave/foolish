@@ -5,9 +5,10 @@
  * No -I: the header is beside this file. Exits 1 on any failure. */
 #include <stdio.h>
 #include "msg_stage.h"
+/* OK(cond, "what") is check.h's; every failure prints (no per-test cap here). */
+#define CHECK_PRINT_CAP 1000000
+#include "../test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("FAIL %s\n", what); } } while (0)
 
 int main(void)
 {
@@ -139,6 +140,5 @@ int main(void)
     OK(ms_receive(1, 0) == MS_RECV_ECHO, "receive: my own sent or draft bubble is an echo");
     OK(ms_receive(1, 1) == MS_RECV_ECHO_SENT, "receive: my staged bubble back is the send landing");
 
-    printf("msg_stage: %d checks, %d failed\n", checks, fails);
-    return fails ? 1 : 0;
+    return report("msg_stage");
 }

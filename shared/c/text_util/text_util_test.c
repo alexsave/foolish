@@ -11,9 +11,10 @@
 #include <string.h>
 #include "text_util.h"
 #include "utf8.h"
+/* OK(cond, "what") is check.h's; every failure prints (no per-test cap here). */
+#define CHECK_PRINT_CAP 1000000
+#include "../test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("FAIL %s\n", what); } } while (0)
 
 static int cp_is(const char *s, unsigned want, int want_len)
 {
@@ -184,6 +185,5 @@ int main(void)
         free(b);
     }
 
-    printf("text_util: %d checks, %d failed\n", checks, fails);
-    return fails ? 1 : 0;
+    return report("text_util");
 }

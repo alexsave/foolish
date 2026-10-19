@@ -7,9 +7,9 @@
 #include "tb_api_layout.h"
 #include <stdio.h>
 #include <string.h>
+#define CHECK_PRINT_CAP 1000000
+#include "../../../shared/c/test/check.h"
 
-static int checks, fails;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; fprintf(stderr, "FAIL %s:%d %s\n", __FILE__, __LINE__, what); } } while (0)
 
 static void be(uint8_t id, const char *nick)
 {
@@ -126,6 +126,5 @@ int main(void)
        && tb_lay_row_cat(TB_ROW_ANY) == TB_C_ANY && tb_lay_row_cat(TB_ROW_TOTAL) == -1, "rows");
     OK(tb_lay_row_y(TB_ROW_TOTAL, &y) == 0 && y > 0 && tb_lay_card_h() > y && tb_lay_row_y(16, &y) == -1, "row tops");
 
-    printf("tb_api smoke: %d checks, %d failed\n", checks, fails);
-    return fails ? 1 : 0;
+    return report("tb_api smoke");
 }

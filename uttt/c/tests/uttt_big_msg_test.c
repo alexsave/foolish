@@ -78,10 +78,10 @@
 #include <string.h>
 #include <time.h>
 #include "../../../shared/c/rng.h"
+/* OK(cond, "what") is check.h's; every failure prints (no per-test cap here). */
+#define CHECK_PRINT_CAP 1000000
+#include "../../../shared/c/test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; \
-    printf("  FAIL %s:%d %s\n", __FILE__, __LINE__, what); } } while (0)
 
 static uint64_t rs = 0x2545f4914f6cdd1dull;
 static uint32_t rnd(void)
@@ -713,6 +713,5 @@ int main(int argc, char **argv)
     test_seats();
     test_prefer();
     test_caption();
-    printf("uttt_big_msg_test: %d checks, %d failed, %.2f s\n", checks, fails, now() - t0);
-    return fails ? 1 : 0;
+    return report("uttt_big_msg_test");
 }

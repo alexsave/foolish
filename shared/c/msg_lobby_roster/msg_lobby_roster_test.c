@@ -9,9 +9,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "msg_lobby_roster.h"
+/* OK(cond, "what") is check.h's; every failure prints (no per-test cap here). */
+#define CHECK_PRINT_CAP 1000000
+#include "../test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("FAIL %s (line %d)\n", what, __LINE__); } } while (0)
 
 /* The stand-in game constructor: counts its calls and records what it saw. */
 typedef struct { int calls, n, starter; uint8_t seed0; int refuse; } Game;
@@ -273,6 +274,5 @@ int main(void)
     test_leave();
     test_plan();
     test_bounds();
-    printf("msg_lobby_roster: %d checks, %d failed\n", checks, fails);
-    return fails != 0;
+    return report("msg_lobby_roster");
 }

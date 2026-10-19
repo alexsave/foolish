@@ -13,9 +13,9 @@
 #include "wire_check.h"
 #include "../sha256.h"
 #include "../rng.h"
+#define CHECK_PRINT_CAP 1000000
+#include "../test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("FAIL %s\n", what); } } while (0)
 
 /* SHA-256("") and SHA-256("abc"), FIPS 180-4 / NIST CSRC examples. */
 static const uint8_t EMPTY[32] = {
@@ -101,7 +101,7 @@ int main(void)
                         printf("FAIL split: %zu bytes cut at %zu, %zu-byte check\n", sizes[s], cut, lens[k]);
                 }
             }
-    checks += splits; fails += split_fails;
+    g_checks += splits; g_fails += split_fails;
 
     /* The last body byte counts: flipping it moves the full-length check. */
     uint8_t a[32], b[32];
@@ -115,6 +115,5 @@ int main(void)
     msg[0] ^= 1;
     OK(memcmp(a, b, 32) != 0, "the head's first byte is in the check");
 
-    printf("wire_check: %d checks, %d failed\n", checks, fails);
-    return fails ? 1 : 0;
+    return report("wire_check");
 }

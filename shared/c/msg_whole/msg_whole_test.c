@@ -31,9 +31,10 @@
 #include "msg_whole.h"
 #include "../sha256.h"
 #include "../le_bytes.h"
+/* OK(cond, "what") is check.h's; every failure prints (no per-test cap here). */
+#define CHECK_PRINT_CAP 1000000
+#include "../test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("FAIL %s (line %d)\n", what, __LINE__); } } while (0)
 
 #define REC_LEN (MSG_WHOLE_ID_LEN + MSG_SEAT_TAG_LEN + 1)
 #define REC_MAX 4
@@ -391,6 +392,5 @@ int main(void)
     test_prefer();
     test_records();
     test_resolve();
-    printf("msg_whole: %d checks, %d failed\n", checks, fails);
-    return fails ? 1 : 0;
+    return report("msg_whole");
 }

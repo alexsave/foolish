@@ -28,6 +28,14 @@ static const char *g_test = "";
 #define CHECK_NAMED_CAP 128
 #endif
 
+/* How many failures of one test print before the rest only count. The
+ * default is the named-test rule above; a suite that never calls TEST() (all
+ * its checks are one nameless test) raises it, or its sixth failure would go
+ * unreported. */
+#ifndef CHECK_PRINT_CAP
+#define CHECK_PRINT_CAP 5
+#endif
+
 static const char *g_named[CHECK_NAMED_CAP];
 static int         g_named_fails[CHECK_NAMED_CAP];
 static inline int first_fails_of(const char *test)
@@ -36,7 +44,7 @@ static inline int first_fails_of(const char *test)
     while (i < CHECK_NAMED_CAP && g_named[i] && strcmp(g_named[i], test)) i++;
     if (i == CHECK_NAMED_CAP) return 0;
     g_named[i] = test;
-    return ++g_named_fails[i] <= 5;
+    return ++g_named_fails[i] <= CHECK_PRINT_CAP;
 }
 
 #define CHECK(cond, ...) do {                                                   \
@@ -52,8 +60,18 @@ static inline int first_fails_of(const char *test)
         }                                                                       \
     } while (0)
 
+/* The plain spelling most suites grew: OK(cond, "what it checked"). */
+#define OK(c, what) CHECK(c, "%s", what)
+
+/* report() fails a binary that ran no check at all when CHECK_ZERO_IS_FAIL is
+ * defined (c_base's t.h rule: a suite that silently stopped registering its
+ * tests must not pass). Off by default: some suites check inside a loop that
+ * may legitimately be empty. */
 static inline int report(const char *what)
 {
+#ifdef CHECK_ZERO_IS_FAIL
+    if (g_checks == 0) { printf("%s: no assertions ran\n", what); return 1; }
+#endif
     printf("%s: %d assertions, %d failed\n", what, g_checks, g_fails);
     return g_fails ? 1 : 0;
 }

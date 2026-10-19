@@ -9,9 +9,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "msg_seat_tag.h"
+/* OK(cond, "what") is check.h's; every failure prints (no per-test cap here). */
+#define CHECK_PRINT_CAP 1000000
+#include "../test/check.h"
 
-static int fails, checks;
-#define OK(c, what) do { checks++; if (!(c)) { fails++; printf("FAIL %s (line %d)\n", what, __LINE__); } } while (0)
 
 #define U(s) ((const uint8_t *)(s))
 static int chars(const char *s) { return msg_seat_utf8_chars(U(s), (int)strlen(s)); }
@@ -217,6 +218,5 @@ int main(void)
     test_verdict();
     test_same_name();
     test_resolve();
-    printf("msg_seat_tag: %d checks, %d failed\n", checks, fails);
-    return fails != 0;
+    return report("msg_seat_tag");
 }
