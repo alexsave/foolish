@@ -519,7 +519,12 @@ static void bots_board_history_replay(void) {
     T_EQ_INT(call(b_create, NULL), 200);
     char gid2[CB_GAME_ID_MAX + 1] = "";
     CB_ROWS_CALL(g_ctx.store, games_of_user, fay, 1, first_game, gid2);
-    if (strcmp(gid2, gid) == 0) CB_ROWS_CALL(g_ctx.store, games_of_user, fay, 2, second_game, gid2);
+    // Two games made in one millisecond list in either order: then the other one is the second.
+    if (strcmp(gid2, gid) == 0) {
+        g_seen = 0;
+        CB_ROWS_CALL(g_ctx.store, games_of_user, fay, 2, second_game, gid2);
+    }
+    T_CHECK(gid2[0] && strcmp(gid2, gid) != 0);
     cb_snapshot_row s2 = s;
     cb_uuid_v4(s2.id);
     cb_strlcpy(s2.game_id, gid2, sizeof s2.game_id);
