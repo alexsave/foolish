@@ -15,19 +15,18 @@
 #include "../src/bot_roster.h"
 #include "../src/cli_util.h"
 #include "../src/replay.h"
+#include "../cardtext/card_text.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static const char *SUIT = "SHCD";
 // card.h values 1..13: value 13 is the ace and the 36-card deck is 5..13, so a
 // value reads one pip higher (5 = six, 9 = ten, 10 = jack).
-static const char *VAL[14] = { "?", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A" };
 
 static void card_str(char *b, size_t n, int id, int trump) {
     if (id >= 52) { snprintf(b, n, "??"); return; }
-    snprintf(b, n, "%s%c%s", VAL[id % 13 + 1], SUIT[id / 13], (id / 13 == trump) ? "*" : "");
+    snprintf(b, n, "%s%c%s", card_rank_text(id % 13 + 1), card_suit_letter(id / 13), (id / 13 == trump) ? "*" : "");
 }
 
 static void move_str(char *out, size_t n, const AnalyseCand *c, int trump) {
@@ -129,7 +128,7 @@ int main(int argc, char **argv) {
     int trump = h.trump_suit;
 
     printf("post-game analysis: %d players, trump %c, fool %s, engine %s",
-           h.n_players, SUIT[trump], h.fool == 0xFF ? "-" : (char[]){ (char)('0' + h.fool), 0 },
+           h.n_players, card_suit_letter(trump), h.fool == 0xFF ? "-" : (char[]){ (char)('0' + h.fool), 0 },
            roster_key(h.roster_idx));
     if (h.deep_roster_idx != 0xFF) printf(", deep %s", roster_key(h.deep_roster_idx));
     printf("\ncost: %u playouts, %u exact solves, %u ms\n", h.n_playouts, h.n_solves, h.elapsed_ms);

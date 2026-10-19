@@ -17,17 +17,16 @@
 #include "../src/replay.h"
 #include "../src/replay_extras.h"
 #include "../src/winprob.h"
+#include "../cardtext/card_text.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static const char *SUIT = "SHCD";
-static const char *VAL[13] = { "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A" };
 
 static void card_str(char *b, size_t n, unsigned id, int trump) {
     if (id >= 52) { snprintf(b, n, "??"); return; }
-    snprintf(b, n, "%s%c%s", VAL[id % 13], SUIT[id / 13], (int)(id / 13) == trump ? "*" : "");
+    snprintf(b, n, "%s%c%s", card_rank_text(id % 13 + 1), card_suit_letter(id / 13), (int)(id / 13) == trump ? "*" : "");
 }
 
 static const char *kind_str(unsigned kind) {
@@ -80,7 +79,7 @@ static void dump_tsv(FILE *f, const unsigned char *buf, int len, const WinprobHe
     int trump = h->trump_suit;
     fprintf(f, "# cnitro_winprob wire v%d, replay code v%d\n", h->version, h->code_version);
     fprintf(f, "players\t%d\n", np);
-    fprintf(f, "trump\t%c\n", SUIT[trump]);
+    fprintf(f, "trump\t%c\n", card_suit_letter(trump));
     fprintf(f, "fool\t%d\n", h->fool == 0xFF ? -1 : h->fool);
     fprintf(f, "engine\t%s\n", bot_roster_at(h->roster_idx) ? bot_roster_at(h->roster_idx)->key : "?");
     fprintf(f, "worlds\t%d\t%d\n", h->worlds, h->belief_worlds);
@@ -190,7 +189,7 @@ int main(int argc, char **argv) {
     if (quiet) { printf("%d bytes\n", n); return 0; }
 
     printf("\n%d seats, trump %c, replay code v%d, %d steps, %s at every seat\n",
-           h.n_players, SUIT[h.trump_suit], h.code_version, h.n_steps,
+           h.n_players, card_suit_letter(h.trump_suit), h.code_version, h.n_steps,
            bot_roster_at(h.roster_idx) ? bot_roster_at(h.roster_idx)->key : "?");
     printf("%u playouts, %u ms, %d bytes (%d header + %d x %d)\n",
            h.playouts, h.elapsed_ms, n, h.header_bytes, h.n_steps, h.step_bytes);
