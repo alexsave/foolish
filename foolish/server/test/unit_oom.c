@@ -475,6 +475,14 @@ static void boot_fails_cleanly(void) {
         failures++;
         if (live) {
             fprintf(stderr, "     boot: allocation %d failed (rc %d), %ld blocks leaked\n", k, rc, live);
+            // The same failure again, with every block's call stack.
+            oom_trace(true);
+            oom_fail_after(k);
+            (void)boot();
+            cb_unboot(&g_ctx);
+            drain_pools();
+            oom_off();
+            oom_trace(false);
             oom_dump_live(stderr);
         }
         T_EQ_INT(live, 0);
