@@ -1809,6 +1809,36 @@ static void item_size_is_the_sum_of_its_attributes(void) {
     cb_item_free(&it);
 }
 
+// The backup job uploads only when cb_store_local_changes moved (providers/local/src/store/backup.c).
+// Every write path has to move it: the core ops (a user), the product's SQL rows (a game, its commit).
+// A write path that skipped the count would leave the database unbacked-up with no error anywhere.
+static void every_write_moves_the_change_count(void) {
+    cb_store *s = open_fresh();
+    unsigned long c0 = cb_store_local_changes(s);
+    cb_user_row a = mkuser("count@x.io", "Count", 1);
+    T_EQ_INT(CB_STORE_CALL(s, user_create, &a), CB_OK);
+    unsigned long c1 = cb_store_local_changes(s);
+    T_CHECK(c1 > c0);
+    cb_game_row g = mkgame("cc11dd", 100);
+    T_EQ_INT(CB_ROWS_CALL(s, game_create, &g, a.id), CB_OK);
+    unsigned long c2 = cb_store_local_changes(s);
+    T_CHECK(c2 > c1);
+    cb_game_row n = mkgame("cc11dd", 100);
+    n.version = 1;
+    n.updated_at = 200;
+    cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1 };
+    memcpy(c.humans[0], a.id, sizeof c.humans[0]);
+    T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
+    unsigned long c3 = cb_store_local_changes(s);
+    T_CHECK(c3 > c2);
+    // A read moves nothing.
+    cb_game_row got;
+    T_EQ_INT(CB_ROWS_CALL(s, game_get, "cc11dd", &got), CB_OK);
+    cb_game_row_free(&got);
+    T_EQ_INT((long long)cb_store_local_changes(s), (long long)c3);
+    cb_store_close(s);
+}
+
 int main(void) {
     snprintf(g_dir, sizeof g_dir, "/tmp/cbase-unit-store-XXXXXX");
     if (!mkdtemp(g_dir)) { perror("mkdtemp"); return 1; }
@@ -1842,6 +1872,7 @@ int main(void) {
     T_RUN(cas_under_threads);
     T_RUN(lone_cas_under_threads);
     if (!tsb_dynamo()) T_RUN(group_commit_keeps_each_txn_alone);
+    if (!tsb_dynamo()) T_RUN(every_write_moves_the_change_count);
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
     if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", g_dir);
