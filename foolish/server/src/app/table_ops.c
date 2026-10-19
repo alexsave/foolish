@@ -655,7 +655,8 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     if (rc == CB_OK) rc = row_copy(&kept, &nrow);
 
     if (rc == CB_OK) {
-        pthread_mutex_t *order = cb_table_order_lock(row->id);
+        // The caller holds the game's lock (cb_table_order_lock): from the row it read to
+        // these pushes nothing else in this process commits the game.
         rc = CB_ROWS_CALL(ctx->store, game_commit, &gc);
         if (rc == CB_E_CONFLICT) {
             // Somebody committed first: nothing was written.
@@ -676,7 +677,6 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         } else {
             CB_ERROR("table", "game %s: commit failed (%s)", row->id, cb_strerror(rc));
         }
-        pthread_mutex_unlock(order);
     }
 
     cb_game_row_free(&kept);
@@ -705,19 +705,6 @@ static bool fresh_only(int rc) {
     return rc == TABLE_STALE_ROUND || rc == TABLE_REJECTED;
 }
 
-// The pause before attempt `attempt` after the last one lost to another
-// writer (table_ops.h CB_TABLE_BACKOFF_MS): none before the second, then full
-// jitter under a ceiling that doubles, so writers that keep colliding drift
-// apart instead of reloading in step. rng.h, one stream a thread: a jitter,
-// not a secret.
-static int64_t contention_pause(int attempt) {
-    if (attempt < 3) return 0;
-    static _Thread_local uint64_t rng;
-    if (!rng) rng = rng_seed64((uint64_t)cb_mono_ms() ^ (uint64_t)(uintptr_t)&rng);
-    int64_t cap = (int64_t)CB_TABLE_BACKOFF_MS << (attempt - 3);
-    return (int64_t)(rng_splitmix64(&rng) % (uint64_t)(cap + 1));
-}
-
 int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
     memset(out, 0, sizeof *out);
     if (!ctx->store) return CB_E_STATE;
@@ -728,20 +715,13 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
     bool have_ratings = false;
     int ret = CB_E_CONFLICT;
 
-    // An attempt lost to another writer. Only the first attempt can come from
-    // the cache (and go again for that), so every attempt after a loss
-    // follows one.
-    bool contended = false;
-    for (int attempt = 1; attempt <= CB_TABLE_ATTEMPTS; attempt++) {
-        if (contended) {
-            int64_t pause = contention_pause(attempt);
-            // Under serve the writers that beat us are threads of this process,
-            // done in microseconds, and a sleep here would hold a request worker
-            // (one on a small box) while every other request waits. The reload
-            // below is the retry; the attempts bound it. The sleep stays where
-            // writers are other processes (a one-shot platform).
-            if (pause > 0 && !ctx->job_start_after) cb_app_sleep(pause);
-        }
+    // ONE LOCK: the game's lock is held from the row read to the last push, so in this
+    // process nothing moves the row in between and a commit does not lose its fence. The fence
+    // (version = expected) stays as the store's own guarantee; a loss is an error, not a retry.
+    // The only second attempt left is the cache's: a refusal or a load failure from a cached
+    // row is rechecked against the stored one.
+    pthread_mutex_t *order = cb_table_order_lock(op->game_id);
+    for (int attempt = 1; attempt <= 2; attempt++) {
         cb_game_row row;
         bool cached = false;
         int rc = cb_row_load(ctx, op->game_id, !op->fresh && attempt == 1, &row, &cached);
@@ -777,15 +757,8 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             // commit. The answer carries no envelope: a table with no seats is
             // not a board, and client_adopt_envelope refuses one (the asker's
             // client takes the empty answer as "the game is gone").
-            pthread_mutex_t *order = cb_table_order_lock(op->game_id);
             ret = CB_ROWS_CALL(ctx->store, game_delete, op->game_id, row.version);
-            if (ret != CB_OK) { pthread_mutex_unlock(order); order = NULL; }
             cb_row_cache_drop(op->game_id);
-            if (ret == CB_E_CONFLICT) {
-                cb_game_row_free(&row);
-                contended = true;
-                continue;
-            }
             if (ret == CB_OK) {
                 out->committed = true;
                 out->version = row.version;
@@ -798,7 +771,6 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
                 for (int i = 0; i < s->n_old; i++) snprintf(f.left[f.n_left++], sizeof(cb_uuid), "%s", s->old_humans[i]);
                 cb_fanout_commit(ctx, &f);
             }
-            if (order) pthread_mutex_unlock(order);
             cb_game_row_free(&row);
             break;
         }
@@ -816,7 +788,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         ret = cb_section_commit(ctx, s, &row, seed, actor, ratings, &have_ratings, &co);
         cb_game_row_free(&row);
         if (ret != CB_OK) break;
-        if (co.lost) { ret = CB_E_CONFLICT; contended = true; continue; }
+        if (co.lost) { ret = CB_E_CONFLICT; break; }
         out->committed = true;
         out->version = co.version;
         out->needs_bots = co.needs_bots;
@@ -825,12 +797,13 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         break;
     }
     if (ret == CB_E_CONFLICT)
-        CB_ERROR("table", "could not commit game %s after %d attempts: write contention", op->game_id, CB_TABLE_ATTEMPTS);
+        CB_ERROR("table", "could not commit game %s: write contention", op->game_id);
     if (ret != CB_OK) {
         free(out->envelope);
         out->envelope = NULL;
         out->envelope_len = 0;
     }
+    pthread_mutex_unlock(order);
     cb_section_free(s);
     return ret;
 }

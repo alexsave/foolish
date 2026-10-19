@@ -43,8 +43,8 @@ enum { CYCLE_DONE = 0, CYCLE_AGAIN = 1, CYCLE_ERROR = -1 };
 // drive (no bot can act, the game ended, or the game is gone), CYCLE_ERROR.
 // *idle_version is the version of a row the scan holds although the kernel
 // says no bot can act on it (store.h bots_idle), else -1.
-static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle, cpu_acct *cpu, int64_t *delay_ms,
-                     int64_t *idle_version) {
+static int run_cycle_locked(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle, cpu_acct *cpu, int64_t *delay_ms,
+                            int64_t *idle_version) {
     // The moves an attempt that lost the CAS already chose, offered back: the
     // kernel replays one only while the reloaded board still makes it legal.
     uint8_t prefs[BOT_PREFS_CAP];
@@ -128,6 +128,17 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
     }
     CB_ERROR("bots", "could not commit game %s after %d attempts: write contention", game_id, CB_TABLE_ATTEMPTS);
     return CYCLE_ERROR;
+}
+
+// A cycle holds the game's lock from the row read to the commit's pushes (table_ops.c ONE LOCK),
+// the drive's compute included: a human's move at the same table waits for it, as it would wait
+// for the CAS it would otherwise lose.
+static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle, cpu_acct *cpu, int64_t *delay_ms,
+                     int64_t *idle_version) {
+    pthread_mutex_t *order = cb_table_order_lock(game_id);
+    int rc = run_cycle_locked(ctx, s, game_id, cycle, cpu, delay_ms, idle_version);
+    pthread_mutex_unlock(order);
+    return rc;
 }
 
 // ---- the speedup (config.h CBASE_BOT_SPEEDUP) ----------------------------------------

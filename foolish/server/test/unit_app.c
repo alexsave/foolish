@@ -592,98 +592,51 @@ static void a_stale_intent_is_stale_round(void) {
     T_EQ_INT(resp.status, TABLE_STATUS_APPLIED);
 }
 
-static void a_lost_cas_reloads_and_wins(void) {
+// ONE LOCK (table_ops.c): a commit does not retry. A fence lost to a writer outside the
+// lock (the store's steal hook stands in for one) is an INTERNAL 500 with nothing written
+// and no pause; the next move, with the thief gone, applies on top of the thief's version.
+static void a_lost_fence_is_an_error_not_a_retry(void) {
     setup(0);
     char gid[CB_GAME_ID_MAX + 1];
     two_humans_dealt(gid);
     int64_t v = version_of(gid);
     tm_hooks *h = tm_hooks_of(g_store);
-    h->steal_commits = 1;
-    int conflicts = h->conflicts, commits = h->commits;
+    int commits = h->commits;
     reply r;
+    h->steal_commits = 1;
+    g_nslept = 0;
+    T_CHECK(any_human_move(gid, &r));
+    T_EQ_INT(r.status, 500);
+    T_EQ_INT(refusal_why(&r, NULL), ASK_WHY_INTERNAL);
+    T_EQ_INT(h->commits, commits);
+    T_EQ_INT(g_nslept, 0);
+    T_EQ_INT(version_of(gid), v + 1);   // the thief's
     T_CHECK(any_human_move(gid, &r));
     TableResponse resp;
     T_EQ_INT(table_response_decode(r.body, (int)r.len, &resp), 0);
     T_EQ_INT(resp.status, TABLE_STATUS_APPLIED);
-    // The thief's version, then ours on top of it.
     T_EQ_INT(resp.version, v + 2);
-    T_EQ_INT(version_of(gid), v + 2);
-    T_EQ_INT(h->conflicts, conflicts + 1);
-    T_EQ_INT(h->commits, commits + 1);
-    // Five losses in a row: write contention, INTERNAL 500, nothing written.
-    h->steal_commits = CB_TABLE_ATTEMPTS;
-    v = version_of(gid);
-    T_CHECK(any_human_move(gid, &r));
-    T_EQ_INT(r.status, 500);
-    T_EQ_INT(refusal_why(&r, NULL), ASK_WHY_INTERNAL);
     T_EQ_INT(h->commits, commits + 1);
 }
 
-// A lost CAS reloads at once; a second loss in a row and later ones wait a
-// jittered pause under a doubling ceiling (table_ops.h CB_TABLE_BACKOFF_MS).
-static void contention_backs_off_with_jitter(void) {
-    setup(0);
-    char gid[CB_GAME_ID_MAX + 1];
-    two_humans_dealt(gid);
-    tm_hooks *h = tm_hooks_of(g_store);
-    reply r;
-    // One loss: the reload is immediate.
-    h->steal_commits = 1;
-    g_nslept = 0;
-    T_CHECK(any_human_move(gid, &r));
-    T_EQ_INT(r.status, 200);
-    T_EQ_INT(g_nslept, 0);
-    // Every attempt lost, many times over: pauses before attempts 3, 4 and 5
-    // only, each within its ceiling, and not the same pause every time.
-    int64_t max_seen[3] = { 0 }, min_seen[3] = { 1000, 1000, 1000 };
-    for (int run = 0; run < 40; run++) {
-        h->steal_commits = CB_TABLE_ATTEMPTS;
-        g_nslept = 0;
-        T_CHECK(any_human_move(gid, &r));
-        T_EQ_INT(r.status, 500);
-        T_CHECK(g_nslept <= 3);
-        int64_t total = 0;
-        for (int i = 0; i < g_nslept; i++) total += g_slept[i];
-        T_CHECK(total <= 70);
-        // A pause of 0 is not taken, so the pauses are matched to their
-        // attempts by ceiling only: none may pass the largest one's.
-        for (int i = 0; i < g_nslept; i++) T_CHECK(g_slept[i] >= 1 && g_slept[i] <= 40);
-        if (g_nslept == 3)
-            for (int i = 0; i < 3; i++) {
-                T_CHECK(g_slept[i] <= (int64_t)CB_TABLE_BACKOFF_MS << i);
-                if (g_slept[i] > max_seen[i]) max_seen[i] = g_slept[i];
-                if (g_slept[i] < min_seen[i]) min_seen[i] = g_slept[i];
-            }
-    }
-    // Jitter: across the runs each ceiling saw spread, and the longest pause
-    // came near its ceiling.
-    T_CHECK(max_seen[2] > min_seen[2]);
-    T_CHECK(max_seen[2] >= 20);
-    T_CHECK(max_seen[0] > min_seen[0]);
-}
-
-// The last seat leaving deletes the game fenced on the version like a commit,
-// and a delete that loses backs off the same way.
-static void a_lost_delete_backs_off(void) {
+// The last seat leaving deletes the game fenced on the version like a commit; a lost
+// fence is an error and the game stays.
+static void a_lost_delete_is_an_error(void) {
     setup(0);
     char gid[CB_GAME_ID_MAX + 1];
     reply r;
     create_game(gid, &r);
     tm_hooks *h = tm_hooks_of(g_store);
-    h->steal_commits = CB_TABLE_ATTEMPTS;
-    g_nslept = 0;
-    meta("A", ASK_EXIT, gid, NULL, &r);
-    T_EQ_INT(r.status, 500);
-    T_CHECK(g_nslept >= 1 && g_nslept <= 3);
-    for (int i = 0; i < g_nslept; i++) T_CHECK(g_slept[i] >= 1 && g_slept[i] <= 40);
-    cb_game_row row;
-    T_EQ_INT(CB_ROWS_CALL(g_store, game_get, gid, &row), CB_OK);   // still there
-    cb_game_row_free(&row);
     h->steal_commits = 1;
     g_nslept = 0;
     meta("A", ASK_EXIT, gid, NULL, &r);
-    T_EQ_INT(r.status, 200);
+    T_EQ_INT(r.status, 500);
     T_EQ_INT(g_nslept, 0);
+    cb_game_row row;
+    T_EQ_INT(CB_ROWS_CALL(g_store, game_get, gid, &row), CB_OK);   // still there
+    cb_game_row_free(&row);
+    meta("A", ASK_EXIT, gid, NULL, &r);
+    T_EQ_INT(r.status, 200);
     T_EQ_INT(CB_ROWS_CALL(g_store, game_get, gid, &row), CB_E_NOT_FOUND);
 }
 
@@ -2447,9 +2400,8 @@ int main(void) {
     T_RUN(a_legal_action_applies_and_bumps_the_version);
     T_RUN(an_illegal_action_is_rejected_and_commits_nothing);
     T_RUN(a_stale_intent_is_stale_round);
-    T_RUN(a_lost_cas_reloads_and_wins);
-    T_RUN(contention_backs_off_with_jitter);
-    T_RUN(a_lost_delete_backs_off);
+    T_RUN(a_lost_fence_is_an_error_not_a_retry);
+    T_RUN(a_lost_delete_is_an_error);
     T_RUN(a_refusal_from_a_stale_cache_is_rechecked_fresh);
     T_RUN(a_finished_game_writes_a_snapshot_and_ratings);
     T_RUN(a_new_account_plays_unrated);
