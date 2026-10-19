@@ -4,6 +4,7 @@
 #include "t.h"
 #include "cbase/provider.h"
 
+#include "config.h"
 #include "rate_limits.h"
 
 static void burst_then_refill(void) {
@@ -84,10 +85,47 @@ static void the_viewer_address(void) {
     viewer_key("not-an-address", &cb_provider_aws, NULL, "not-an-address");
 }
 
+// Behind CloudFront under serve: the header counts only with the origin secret.
+static void viewer_key_serve(const char *secret_cfg, const char *secret_sent, const char *addr, const char *xff,
+                             const char *want) {
+    cb_config cfg;
+    memset(&cfg, 0, sizeof cfg);
+    if (secret_cfg) cb_strlcpy(cfg.origin_secret, secret_cfg, sizeof cfg.origin_secret);
+    cb_ctx ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.prov = &cb_provider_local;
+    ctx.cfg = &cfg;
+    cb_http_req req;
+    memset(&req, 0, sizeof req);
+    if (secret_sent) req.headers[req.n_headers++] = (cb_http_header){ CB_ORIGIN_HEADER, secret_sent };
+    if (addr) req.headers[req.n_headers++] = (cb_http_header){ CB_VIEWER_HEADER, addr };
+    if (xff) req.headers[req.n_headers++] = (cb_http_header){ "X-Forwarded-For", xff };
+    cb_strlcpy(req.peer, "130.176.0.1", sizeof req.peer);
+    char out[96];
+    cb_viewer_key(&ctx, &req, out, sizeof out);
+    T_EQ_STR(out, want);
+}
+
+static void the_viewer_address_behind_cloudfront(void) {
+    viewer_key_serve("s3cret", "s3cret", "203.0.113.7:50238", NULL, "203.0.113.7");
+    viewer_key_serve("s3cret", "s3cret", "[2001:db8:1:2::9]:443", NULL, "2001:db8:1:2::/64");
+    // Wrong or no secret: the peer, whatever the header says.
+    viewer_key_serve("s3cret", "wrong!", "203.0.113.7:50238", NULL, "130.176.0.1");
+    viewer_key_serve("s3cret", NULL, "203.0.113.7:50238", NULL, "130.176.0.1");
+    // No secret configured: the header is anyone's, so it is not read.
+    viewer_key_serve(NULL, NULL, "203.0.113.7:50238", NULL, "130.176.0.1");
+    // Malformed: the peer. X-Forwarded-For is never read.
+    viewer_key_serve("s3cret", "s3cret", "203.0.113.7", NULL, "130.176.0.1");
+    viewer_key_serve("s3cret", "s3cret", "not-an-address:1", NULL, "130.176.0.1");
+    viewer_key_serve("s3cret", "s3cret", NULL, "203.0.113.99", "130.176.0.1");
+    viewer_key_serve("s3cret", "s3cret", "203.0.113.7:50238", "203.0.113.99", "203.0.113.7");
+}
+
 int main(void) {
     T_RUN(burst_then_refill);
     T_RUN(keys_and_kinds_are_apart);
     T_RUN(a_flood_of_keys_stays_bounded);
     T_RUN(the_viewer_address);
+    T_RUN(the_viewer_address_behind_cloudfront);
     return T_DONE();
 }
