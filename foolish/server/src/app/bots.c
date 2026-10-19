@@ -294,8 +294,9 @@ static int drive_round(cb_ctx *ctx, const char *game_id, bool *settled) {
             cb_app_sleep(delay);
         }
     }
-    if (idle_version >= 0) {
-        // Before the release: the delete takes the lease with the marker.
+    if (idle_version >= 0 && !in_memory(ctx)) {
+        // Before the release: the delete takes the lease with the marker. Under serve there is no marker
+        // (the lease is in memory, the recovery scan reads the games table): nothing to take out.
         int r = CB_ROWS_CALL(ctx->store, bots_idle, game_id, idle_version);
         if (r == CB_OK)
             CB_INFO("bots", "game %s: no bot can act at version %lld, out of the scan", game_id, (long long)idle_version);

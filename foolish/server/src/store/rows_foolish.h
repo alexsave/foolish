@@ -331,8 +331,13 @@ const cb_rows_ops *cb_rows_of(const cb_store *s);
 
 // foolish on every store: rows_foolish.c's operations, and its part of an
 // account (a signup's rating row; a delete's seats, chat and rating row).
-extern const cb_rows_ops  cb_rows_foolish;
-extern const cb_store_app cb_foolish_store;
+extern const cb_rows_ops  cb_rows_foolish;   // over the items (DynamoDB)
+extern const cb_rows_ops  cb_rows_sql;       // on the SQL store (rows_sql.c)
+extern const cb_store_app cb_foolish_store;  // rows_sql.c
+// The account hooks over the items (cb_store_app signup_txn, delete_keys, delete_txn).
+int cb_rows_item_signup_txn(cb_store *s, const cb_user_row *u, const cb_iwrite *acct, int n, int *failed);
+int cb_rows_item_delete_keys(cb_store *s, const char *id, cb_item_fn key, void *ud);
+int cb_rows_item_delete_txn(cb_store *s, const cb_user_row *u, const cb_iwrite *acct, int n);
 
 // games_get_views for a store with no round trip to save (SQLite, the tests'
 // memory store): game_get for each id, its log dropped.
