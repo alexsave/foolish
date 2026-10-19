@@ -24,7 +24,7 @@ echo "[lat] ${BOT}_pc${PC}  bits=${BITS[*]}  +${N} games/config  jobs=$J"
 build_bin() { local b=$1 out="$HERE/eval_sig${b}"
   [ -x "$out" ] && [ "$out" -nt "$CNITRO/src/main_eval.c" ] && return
   local CORE; CORE=$(cd "$CNITRO" && make -s print-core)
-  ( cd "$CNITRO" && $CC -O2 -ffast-math -Isrc -Wno-deprecated-declarations \
+  ( cd "$CNITRO" && $CC -O2 -ffp-contract=off -fno-math-errno -Isrc -Wno-deprecated-declarations \
       -DCD_TT_BITS="$b" $CORE src/main_eval.c -o "$out" -lm ); }
 for b in "${BITS[@]}"; do build_bin "$b" & throttle; done; wait
 

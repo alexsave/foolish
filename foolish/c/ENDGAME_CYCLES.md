@@ -134,7 +134,7 @@ cd c
 # Ask the Makefile rather than hardcoding the list - it has grown a lot, and a
 # stale hardcoded list fails at link with "_bot_knob_int, referenced from ...".
 CORE=$(make -s print-core | tr ' ' '\n' | grep -v cordite_sim.c | tr '\n' ' ')
-FLAGS="-O3 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_BITS=20"
+FLAGS="-O3 -ffp-contract=off -fno-math-errno -Isrc -Wno-deprecated-declarations -DCD_TT_BITS=20"
 
 # bash: $CORE.  zsh (this Mac's default shell) does not word-split, so: ${=CORE}
 clang $FLAGS tools/endgame_retro/solve.c    $CORE -o build/eg_solve    -lm && ./build/eg_solve 60000000

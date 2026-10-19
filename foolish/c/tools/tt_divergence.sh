@@ -44,7 +44,7 @@ NSIZES=$(( ${#BITS[@]} + 1 ))
 S=${S:-$(( J/NSIZES > 1 ? J/NSIZES : 1 ))}
 
 echo "compiler=$CC  jobs=$J  shards/size=$S  baseline=TT$BASE  candidates=${BITS[*]}"
-build() { $CC -O2 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_BITS="$1" $CORE src/main_eval.c -o "$WORK/eval_$1" -lm; }
+build() { $CC -O2 -ffp-contract=off -fno-math-errno -Isrc -Wno-deprecated-declarations -DCD_TT_BITS="$1" $CORE src/main_eval.c -o "$WORK/eval_$1" -lm; }
 # portable job cap: no `wait -n` (needs bash>=4.3; absent on macOS /bin/bash 3.2)
 throttle() { while [ "$(jobs -rp | wc -l)" -ge "$J" ]; do wait "$(jobs -rp | head -1)"; done; }
 t0=$SECONDS

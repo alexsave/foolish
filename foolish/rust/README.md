@@ -28,7 +28,7 @@ Four hot paths, each the real shipped C compiled straight out of `../c/src` at p
 
 Every port is verified by checksum.
 A Rust implementation has to reproduce the C output bit-for-bit before its timing is allowed to count, and for `solve` the checksum covers the value, abort flag and node count of every single solve, so all implementations are proven to expand the identical search forest.
-The playout port carries the engine LCG and all the `double` math, and its checksums match the `-ffast-math -flto` clang build, the gcc build and Rust exactly.
+The playout port carries the engine LCG and all the `double` math, and its checksums match the `-ffp-contract=off -fno-math-errno -flto` clang build, the gcc build and Rust exactly.
 
 That last point is the most interesting thing in this directory, and it is worth keeping even though the answer was no: bit-exact cross-language behaviour is achievable here, even for the float-bearing rollout policy.
 
@@ -87,7 +87,7 @@ Re-run before quoting any of them.
 ```bash
 cd rust
 make gen          # play 240 games through the real kernel, dump the workloads
-make bench-c      # clang -O3 -ffast-math -flto, the production native flags
+make bench-c      # clang -O3 -ffp-contract=off -fno-math-errno -flto, the production native flags
 make bench-c-gcc  # same flags, gcc - this is what calibrates compiler variance
 make bench-rs     # cargo --release: opt-level=3, fat LTO, 1 CGU, panic=abort
 make clean

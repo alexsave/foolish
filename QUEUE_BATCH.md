@@ -83,7 +83,9 @@ Tests to fix:
 - chuiniu docs/UI.html embeds cn_roll.wasm: `make docs-roll-check` will report stale until `make docs-roll` is run (cn_libm.c is linked in).
 - uttt drawing goldens (wasm and native) may move by a ulp; regenerate after reviewing.
 
-Fixes to make:
+Fixes to make - DONE (commit 'docs: the production flags'): rust Makefile + README + RUST_VS_C_KERNEL line 101, the how-to build lines in c/tools/tt_divergence*.sh, c/tools/tt_divergence_viz/*.sh, ENDGAME_CYCLES, MAKE_UNMAKE, C5_BOUNDS_HANDOFF, OCTOGEN_HIDE_UNCOVERABLE, SOLVER_TT_WORKING_SET_PLAN now say -ffp-contract=off -fno-math-errno.
+Left on purpose (dated measurements or 'banned' statements): MAKE_UNMAKE 'Measured' header, L1_SPEND_PLAN appendix A, NATIVE_SERVER:92 and RUST_VS_C_KERNEL:49/105 (the parity was measured against the fast-math build), uttt/c/Makefile table (checked: a historical measurement). The rust bench checksums must still match the strict build: re-run bench-c / bench-rs in the test pass.
+(original list:)
 - foolish/rust/Makefile and README still say the production flags are -O3 -ffast-math -flto; they are -ffp-contract=off -fno-math-errno now, and the rust POC bench builds with the old flags.
 - docs mentioning -ffast-math as production flags (foolish/docs/NATIVE_SERVER.md, RUST_VS_C_KERNEL.md, c/MAKE_UNMAKE.md and other tool scripts under foolish/c/tools) are stale.
 - uttt/c/Makefile line 10 table is a historical measurement, fine, but check it.
