@@ -563,6 +563,11 @@ static batch *batch_take(void) {
     return t_batch;
 }
 
+// Frees the calling thread's kept batch (not while one is out). For a leak-counting test and thread exit.
+void cb_rows_batch_drain(void) {
+    if (t_batch && !t_batch_busy) { free(t_batch); t_batch = NULL; }
+}
+
 static void batch_give(batch *b) {
     if (!b) return;
     if (b != t_batch) { free(b); return; }

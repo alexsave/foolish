@@ -112,6 +112,14 @@ static void run(const rq *q) {
 // only), and leaks are not counted, since a library keeps what it caches.
 static bool g_everywhere;
 
+// What the worker-thread pools keep between requests (a section, a commit batch, the SQLite scratch and
+// block lists) is deliberate, so a leak count would see it as a leak: give it back before counting.
+static void drain_pools(void) {
+    cb_section_drain();
+    cb_rows_batch_drain();
+    cb_store_sqlite_drain();
+}
+
 static void sweep(const char *what, rq *q, int ok, void (*prep)(rq *, int)) {
     // OOM_ONLY=<text>: only the sweeps whose name holds it (to chase one by hand).
     const char *only = getenv("OOM_ONLY");
@@ -127,7 +135,8 @@ static void sweep(const char *what, rq *q, int ok, void (*prep)(rq *, int)) {
         oom_fail_after(k);
         oom_everywhere(g_everywhere);
         run(q);
-        cb_row_cache_clear();   // the one thing a request may keep
+        cb_row_cache_clear();   // the one thing a request may keep, and the per-thread pools below, given back
+        drain_pools();
         long live = g_everywhere ? 0 : oom_live();
         oom_everywhere(false);
         bool failed = oom_failed();
@@ -427,6 +436,7 @@ static void boot_fails_cleanly(void) {
         oom_fail_after(k);
         int rc = boot();
         cb_unboot(&g_ctx);
+        drain_pools();
         long live = oom_live();
         bool failed = oom_failed();
         oom_off();
