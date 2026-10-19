@@ -130,3 +130,29 @@ Unfinished:
 2. Make sat.sh / run.sh print the p95 of the human ack so a 1.7% throughput difference can be judged against run-to-run noise (two reruns of the same build differ by about 0.5%).
 3. Unexplained 400s and "ask refused" from the earlier handoff are gone with the fixed client; the 10 REJECTED plays per 16 tables are worth a look in the client's move choice.
 4. smoke_authz /health edgeless check (above).
+
+
+## Pass 3 (profile-driven, 2026-10-19)
+Saturation (1 CPU, 8 two-seat games, emulator, CBASE_REQ_WORKERS=1), per commit:
+
+| step | moves/s | per move: sendto / futex / mmap+munmap |
+|---|---|---|
+| B4 (before this pass) | 12.6k | 4.7 / 7.6 / 2.2+2.2 |
+| + sqlite store buffers pooled (item_apply scratch per thread, SQLite SQLITE_CONFIG_MALLOC size-class free lists) | 15.0k | 4.2 / 3.7 / 0.4+0.4 |
+| + cb_ws_send queues, the loop flushes each marked connection once per iteration (cb_loop_after) | 15.35k | 2.7 / 3.0 / 0.4 |
+| + cb_item_size from stored lengths | 15.4k | - |
+
+- The mmap churn was musl mallocng unmapping an 8 KB group each time its last slot is freed; the sqlite row buffers were exactly such groups (perf with dwarf unwinding, runs/mm_8.txt: cb_item_add realloc, SQLite VdbeMemGrow).
+  Futex per move halved with it (malloc lock traffic).
+  Cost: RSS about +0.7 MB at 64 games, +2 MB at 192 (the pools keep 8 blocks per class up to 64 KB; POOL_KEEP in store_sqlite.c).
+  Human pace, 0.1 CPU: 64 games 400 us/move (was 460-470), 192 games p95 0.8 ms.
+- Run-to-run noise at saturation is about 0.5%, but one B8 run read 11.0k with another agent on the rig; compare pairs only.
+- Not done, with reasons:
+  * Wake-ups (item 2): the remaining 3 futex per move are the request pool handoff and the loop post; running h_action on the loop thread would block the loop for a sqlite commit (about 40 us, an fsync at checkpoint), a design decision for Alex, not done.
+    The group commit already runs on the calling thread (leader/follower in store_sqlite.c submit), it adds none.
+  * memset in cb_section_free (item 4, 2-2.7%): 36 of the Game's 37 KB is logs[]. Narrowing the zero to num_logs fails: num_logs is reset to 0 (table_create, the suite hit it 163+ times) while logs hold entries.
+    It needs a log high-water field in Game (kernel + structgen).
+    unit_app now checks the pooled section is all zero after every request (cb_section_pooled_is_clean, mutation-checked), so any narrowing has a regression guard.
+  * printf_core 1.7% (snprintf 1.0 over many sites, cb_buf_vprintf 0.6) and strlen 1.7% (cb_item_add 0.5, cb_av_size 0.5): cb_item_size now uses stored lengths; cb_item_add still strlen's the value (its callers pass C strings); the snprintf sites were not converted.
+  * In-memory bot leases: still the design in the Pass 2 list item 1; not started.
+Rig additions: prof_sc.sh (syscalls per move via perf stat tracepoints), prof_mm.sh (callers of mmap), prof8.sh (8 seats).
