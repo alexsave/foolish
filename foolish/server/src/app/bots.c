@@ -207,7 +207,7 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
             if (delay > budget_left(ctx)) { rekick = true; break; }
             // Where the provider can start a job later without holding a thread
             // (serve: a loop timer), the wait is its to keep: sleeping here would
-            // stall every other game's bots behind this one's pause. Lambda has
+            // stall every other game's bots behind this one's pause. A one-shot platform has
             // no such start and sits the wait out, one invocation per drive.
             if (ctx->job_start_after) { wait_ms = delay; break; }
             cb_app_sleep(delay);

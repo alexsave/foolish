@@ -531,7 +531,7 @@ typedef struct {
     cb_rows_write cas;
 } batch;
 
-// ONE OWNER of the batch's storage. The struct is ~1 MB (sized for DynamoDB's
+// ONE OWNER of the batch's storage. The struct is ~1 MB (sized for a remote store's
 // 100-item transaction), but a commit uses a few slots of it: a plain move one
 // item, the biggest real one (a rated 8-seat finish) 10-20. So each worker
 // thread keeps one, calloc'd once (untouched pages cost nothing; only the
