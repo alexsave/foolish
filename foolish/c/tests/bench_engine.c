@@ -24,6 +24,7 @@
 #include "../src/legal.h"
 #include "../src/roster.h"
 #include "../src/table.h"
+#include "../../../shared/c/clock.h"
 
 // Random play can circle forever (attack, take, attack, take); such a game stops here unfinished.
 #define MAX_ACTIONS 5000
@@ -98,9 +99,7 @@ static int play(const char *brain, int np, int n, long *actions, long *evals) {
 }
 
 static double now_s(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+    return host_mono_s();
 }
 
 int main(void) {

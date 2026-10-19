@@ -44,6 +44,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/clock.h"
 
 #define TIMEOUT_MS 15000
 #define PUSH_WAIT_MS 5000
@@ -97,10 +98,7 @@ static void *reader(void *arg) {
 // The arrival time of the push for `version`, waiting up to timeout_ms. false: none.
 static bool wait_version(listener *l, int64_t version, int timeout_ms, int64_t *t_us) {
     struct timespec dl;
-    clock_gettime(CLOCK_REALTIME, &dl);
-    dl.tv_sec += timeout_ms / 1000;
-    dl.tv_nsec += (long)(timeout_ms % 1000) * 1000000;
-    if (dl.tv_nsec >= 1000000000) { dl.tv_sec++; dl.tv_nsec -= 1000000000; }
+    host_deadline_after_ms(&dl, timeout_ms);
     bool found = false;
     pthread_mutex_lock(&l->mu);
     for (;;) {

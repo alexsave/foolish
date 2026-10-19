@@ -17,12 +17,11 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include "../../../shared/c/clock.h"
 
 static double now(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return host_mono_s();
 }
 
 int main(int argc, char **argv)

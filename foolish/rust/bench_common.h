@@ -10,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 #include "../../shared/c/fnv.h"
+#include "../../shared/c/clock.h"
 
 typedef struct {
     uint8_t num_players, power_suit, defender, first_attacker;
@@ -78,9 +79,7 @@ static inline PocState *load_states(const char *path, unsigned *out_n) {
 }
 
 static inline double now_s(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+    return host_mono_s();
 }
 
 static inline long peak_rss_kb(void) {

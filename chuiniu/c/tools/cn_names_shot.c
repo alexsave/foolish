@@ -15,6 +15,7 @@
 #include "../src/cn_stage.h"
 #include <math.h>
 #include <time.h>
+#include "../../../shared/c/clock.h"
 
 /* the table's six names, the study's */
 static const char *const NAMES[6] = { "Alex", "Bo", "Cy", "Dee", "Eve", "Fay" };
@@ -106,7 +107,7 @@ static void name_bitmap(const Font *f, const char *name, int bright, int box, in
     free(m); free(s); free(sh);
 }
 
-static double now_ms(void) { struct timespec t; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+static double now_ms(void) { return host_thread_cpu_ms_f(); }
 
 static CnStage ST;
 static uint8_t NAME_PX[CN_STAGE_NAME_W_MAX * CN_STAGE_NAME_H_MAX * 4];

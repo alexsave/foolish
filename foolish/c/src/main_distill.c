@@ -26,10 +26,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
+#include "../../../shared/c/clock.h"
 
 static double wall_secs(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return host_mono_s();
 }
 
 static long g_decisions = 0;       // dumped decisions (moves.n >= 2, <= cap)

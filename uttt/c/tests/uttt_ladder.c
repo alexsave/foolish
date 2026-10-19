@@ -21,6 +21,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/clock.h"
 
 /* noise: percent of moves played uniformly at random instead - the only way
  * to get a tier between random and any bot that looks ahead at all. */
@@ -58,9 +59,7 @@ static int parse(const char *spec, Entrant *e)
 
 static double now_cpu(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return host_process_cpu_s();
 }
 
 static uint64_t salt;   /* LADDER_SEED=n: a fresh stream, for confirming a tuned result */

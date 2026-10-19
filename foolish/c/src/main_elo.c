@@ -32,6 +32,7 @@
 #include <string.h>
 #include <time.h>
 #include "../../../shared/c/rng.h"
+#include "../../../shared/c/clock.h"
 
 #define STARTING_ELO    1000.0
 #define MAX_COMPS       128
@@ -146,8 +147,7 @@ static void print_snapshot(int game_no, double t) {
 }
 
 static double wall_secs(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return host_mono_s();
 }
 
 int main(int argc, char **argv) {
