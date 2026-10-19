@@ -56,17 +56,6 @@
 #undef fmaxf
 #include "../sincos.h"
 
-/* quad() casts floor(x / (pi/2)) to long long: for NaN and the infinities that is
- * out of range, undefined in C (a trap in the wasm module, whose conversions are the
- * trapping ones). Natively it is some fixed value, the same in sin() and sincos() since
- * both go through quad(), which is what is compared; UBSan's float-cast-overflow stops
- * the run first, so the sanitized lane leaves those three angles out. */
-#if defined(__has_feature)
-#if __has_feature(undefined_behavior_sanitizer)
-#define NO_NONFINITE 1
-#endif
-#endif
-
 static int same_d(double a, double b) { return memcmp(&a, &b, sizeof a) == 0; }
 static int same_f(float a, float b)   { return memcmp(&a, &b, sizeof a) == 0; }
 
@@ -99,12 +88,19 @@ int main(void)
 
     TEST("sincos: zero, tiny, huge, NaN and the infinities");
     const double odd[] = { 0.0, -0.0, 1e-300, -1e-300, 5e-324, 1e-9, 1e6, -1e6, 1e12, 1e15, -1e15,
-#ifndef NO_NONFINITE
-                           (double)NAN, (double)INFINITY, -(double)INFINITY
-#endif
+                           (double)NAN, (double)INFINITY, -(double)INFINITY, 1e300, -1e300
     };
     for (size_t i = 0; i < sizeof odd / sizeof odd[0]; i++) both(odd[i]);
     double s, c;
+    /* NaN and the infinities in, NaN out - and no float-to-integer overflow on the way (the sanitized lane
+     * checks that, -fsanitize=float-cast-overflow). */
+    const double bad[] = { (double)NAN, (double)INFINITY, -(double)INFINITY };
+    for (size_t i = 0; i < 3; i++) {
+        wl_sincos(bad[i], &s, &c);
+        CHECK(isnan(s) && isnan(c) && isnan(wl_sin(bad[i])) && isnan(wl_cos(bad[i])), "sin/cos/sincos of a non-finite angle is NaN");
+    }
+    wl_sincos(1e300, &s, &c);
+    CHECK(s == s && c == c, "a huge finite angle gives numbers, not NaN");
     wl_sincos(0.0, &s, &c);
     CHECK(s == 0.0 && c == 1.0, "sincos(0) is (0, 1): %g %g", s, c);
     wl_sincos(3.14159265358979323846 / 2, &s, &c);

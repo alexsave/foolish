@@ -25,6 +25,16 @@ static double cos_k(double x)
 static double quad(double x, int *q)
 {
     double k = __builtin_floor(x / (PI / 2) + .5);
+    /* NaN, the infinities and angles past 2^62 quadrants have no integer to cast to (undefined in C,
+     * a trap in wasm): NaN comes back for the first two, and the quadrant of the huge ones is k mod 4,
+     * which a double holds exactly. */
+    if (!(k > -4611686018427387904.0 && k < 4611686018427387904.0)) {
+        *q = 0;
+        if (k != k || k - k != 0) return x - x;   /* NaN or infinite: NaN out */
+        double m = k - 4 * __builtin_floor(k / 4);
+        *q = (int)m & 3;
+        return x - k * (PI / 2);
+    }
     *q = (int)((long long)k & 3);
     return x - k * (PI / 2);
 }
