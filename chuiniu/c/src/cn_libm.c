@@ -2,6 +2,8 @@
  * log and the rest as the freestanding wasm kernel's own; natively the
  * platform has the same names, so every one is renamed here before the file
  * is included, and only cn_libm_sin and cn_libm_cos are used (cn_libm.h). */
+#include <math.h>   /* before the renames: a glibc math.h included after them warns that a macro called log exists */
+
 #define sin     cn_libm_sin
 #define cos     cn_libm_cos
 #define sincos  cn_libm_sincos
