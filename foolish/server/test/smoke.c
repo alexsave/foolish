@@ -430,18 +430,14 @@ static bool db_game(const char *gid, int64_t *needs_bots, int64_t *version) {
     return true;
 }
 
-// The scan's staleness clock: the SCAN marker's updated_at, which every lease
-// acquire moves; -2 when there is no marker (a game no bot can act on has
-// none, so no scan can lease it).
+// The scan's staleness clock: the game row's updated_at, which only a commit moves (serve keeps a bot
+// drive's lease in memory, app/bots.c); -2 when the game cannot be read.
 static int64_t db_scan_clock(const char *gid) {
     cb_store *st = db_store();
-    char sk[96];
-    snprintf(sk, sizeof sk, "GAME#%s", gid);
-    cb_item it;
-    cb_item_init(&it);
-    int64_t at = -2;
-    if (st && st->ops->item_get(st, (cb_ikey){ "SCAN", sk }, true, &it) == CB_OK) at = cb_item_n_or(&it, "updated_at", -1);
-    cb_item_free(&it);
+    cb_game_row g;
+    if (!st || CB_ROWS_CALL(st, game_get, gid, &g) != CB_OK) return -2;
+    int64_t at = g.updated_at;
+    cb_game_row_free(&g);
     return at;
 }
 
@@ -449,9 +445,9 @@ static int64_t db_scan_clock(const char *gid) {
 // drove nothing). One human against one bot; the human owes the move and walks
 // away. No bot can act, so the stored row must not say the bots are owed one,
 // and serve's heartbeat (a scan every CB_BOT_SCAN_EVERY_MS, a game stale after
-// CB_BOT_STALE_MS, both over SMOKE_SPEEDUP) must never start a drive for it: no
-// lease is taken (a lease acquire moves the SCAN marker's updated_at) and
-// nothing is committed, across two scans past the staleness window.
+// CB_BOT_STALE_MS, both over SMOKE_SPEEDUP) must never start a drive for it:
+// nothing is committed (the version and the row's updated_at stay), across two
+// scans past the staleness window.
 static void an_idle_human_turn_is_never_kicked(void) {
     smoke_user D;
     if (signup(&D, "SMOKED") != 0) { T_CHECK(0); return; }

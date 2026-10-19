@@ -41,7 +41,7 @@ enum {
     S_RATINGS_PLAYED, S_RATING_NAME, S_RATING_PUT,
     S_REPLAY_PUT, S_REPLAY_PLAYER_PUT, S_REPLAYS_NEW, S_REPLAYS_OLD, S_REPLAY_EXTRAS,
     S_CHAT_PUT, S_CHAT_LIST,
-    S_DEL_MEMBERS, S_DEL_CHAT, S_DEL_RATING,
+    S_DEL_MEMBERS, S_DEL_CHAT, S_DEL_RATING, S_DEL_HISTORY,
     S_KEYS_USERS, S_KEYS_BOTS, S_KEYS_RATINGS, S_KEYS_GAMES, S_KEYS_MEMBERS, S_KEYS_SEAT_BOTS, S_KEYS_REPLAYS, S_KEYS_CHAT,
     S__COUNT
 };
@@ -208,6 +208,7 @@ static const char *const STMTS[S__COUNT] = {
     [S_DEL_MEMBERS] = "DELETE FROM game_members WHERE user_id = ?1",
     [S_DEL_CHAT] = "DELETE FROM chat WHERE user_id = ?1",
     [S_DEL_RATING] = "DELETE FROM ratings WHERE user_id = ?1",
+    [S_DEL_HISTORY] = "DELETE FROM replay_players WHERE user_id = ?1",
     // The migration's walk (cb_rows_sql_keys): each family's id column, in the families' order.
     [S_KEYS_USERS] = "SELECT id FROM users",
     [S_KEYS_BOTS] = "SELECT id FROM bots",
@@ -1118,10 +1119,11 @@ static int sql_signup(cb_sql *x, const cb_user_row *u) {
     return rating_put(x, &rt);
 }
 
-// What a deleted account leaves of foolish's: its seats, its chat and its rating row, in the delete's
-// transaction. Its replays stay (their names redacted first, functions_http.c).
+// What a deleted account leaves of foolish's: its seats, its chat, its rating row and its history (the
+// list only it could read), in the delete's transaction. The replays stay for the other players, their
+// names redacted first (functions_http.c); a replay's players keep the id, as a game's roster does.
 static int sql_delete(cb_sql *x, const char *user) {
-    static const int IDS[] = { S_DEL_MEMBERS, S_DEL_CHAT, S_DEL_RATING };
+    static const int IDS[] = { S_DEL_MEMBERS, S_DEL_CHAT, S_DEL_RATING, S_DEL_HISTORY };
     int rc = CB_OK;
     for (size_t i = 0; rc == CB_OK && i < sizeof IDS / sizeof IDS[0]; i++) {
         stmt_t *s = cb_sql_stmt(x, IDS[i]);

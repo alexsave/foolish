@@ -178,7 +178,11 @@ typedef struct mem_lease {
 static pthread_mutex_t g_lease_mu = PTHREAD_MUTEX_INITIALIZER;
 static mem_lease *g_leases;
 
-static bool in_memory(const cb_ctx *ctx) { return ctx->job_start_after != NULL; }
+// The lease lives in memory under serve (one process owns every game), and wherever the store keeps
+// none (the SQL store has no lease operations).
+static bool in_memory(const cb_ctx *ctx) {
+    return ctx->job_start_after != NULL || !cb_rows_of(ctx->store)->lease_acquire;
+}
 
 static bool mem_lease_live(const mem_lease *l, const cb_ctx *ctx, int64_t now) {
     return now - l->since <= 2 * cb_bots_ms(ctx, CB_BOT_WALL_MS);

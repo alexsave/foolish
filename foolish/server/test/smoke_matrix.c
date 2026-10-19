@@ -1164,7 +1164,7 @@ static int scan_collections(const forms *name, const char *id, coll_hit *out, in
 // The collections whose rows are a game's or a replay's own, where a seat's
 // id stays after its account goes (store.h user_delete; the roster keeps the id).
 static bool shared_collection(const char *c) {
-    return strcmp(c, "games") == 0 || strcmp(c, "game_snapshots") == 0 || strcmp(c, "GAME") == 0 || strcmp(c, "SNAP") == 0;
+    return strcmp(c, "games") == 0 || strcmp(c, "replays") == 0 || strcmp(c, "GAME") == 0 || strcmp(c, "SNAP") == 0;
 }
 
 // Whether u's replay of G (the newest of their history) names `name` in its extras.
