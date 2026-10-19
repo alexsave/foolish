@@ -35,6 +35,7 @@
 #ifndef CB_TABLE_OPS_H
 #define CB_TABLE_OPS_H
 
+#include "replay_extras.h"
 #include "auth/auth.h"
 #include "ctx.h"
 #include "store/rows_foolish.h"
@@ -120,6 +121,12 @@ int cb_table_views_of_user(cb_ctx *ctx, const char *user_id, int limit, cb_view_
 // pointers, and the list cuts it for a pointer from before they held one. A
 // code the kernel will not read leaves m->has false.
 void cb_table_snap_summary(cb_snap_summary *m, const uint8_t *code, int n_code, const uint8_t *extras, int n_extras);
+
+// A stored extras blob (the bytes behind the dash of a replay link) read as the
+// struct, for a game of `n_players` seats and `n_moves` information-bearing
+// moves (0 reads the names and no gaps). 0 on success, -1 for a blob the kernel
+// will not read. The one reader of stored extras in the server.
+int cb_table_extras_read(ReplayExtras *x, const uint8_t *extras, int n_extras, int n_players, int n_moves);
 
 // The status label the facade prints for a GAME_STATUS_* number.
 const char *cb_table_status_label(int status);

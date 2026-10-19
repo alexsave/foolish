@@ -22,6 +22,8 @@
 #include "util/uuid.h"
 
 #include "ask.h"
+#include "replay_extras.h"
+#include "replay_steps.h"
 #include "netclient.h"
 
 #include <stdatomic.h>
@@ -542,6 +544,97 @@ static const char *res_header(const char *name) {
 
 // Each route's Cache-Control: only the two public reads may be kept by the
 // edge, they never need a caller, and they never vary by Origin.
+// A real two-player replay code (a game played to its end by the kernel; ALICE and BOB sat), for the history rows.
+static const uint8_t REAL_CODE[] = {
+    0x07, 0x8e, 0x48, 0x3f, 0x4e, 0xb5, 0xdb, 0xe1, 0xc9, 0x84, 0x77, 0x7a, 0x1c, 0x42, 0xc8, 0xaa, 0x1c, 0xcf, 0x06, 0x88, 0x2f, 0x43, 0x0e, 0x06, 0x05, 0x24, 0xc3, 0xfa, 0x5c, 0xa7, 0x5b, 0x37, 0x89, 0x7d, 0xa7, 0x1f, 0x03, 0x75, 0xeb, 0xac, 0xe1, 0x10, 0x56, 0xf1, 0xf7, 0xeb, 0x3a,
+};
+static double no_gap(void *ctx, int i) { (void)ctx; (void)i; return 0.0; }
+
+// GET /v1/history over a real replay, through the client: a pointer written WITH its summary and one written
+// WITHOUT (a pointer from before they held it; the list cuts it from the replay) give the same row, the names
+// come out of the stored extras in seat order, one name for two seats gives none, a row's id opens its replay
+// after the game is gone, and a stranger is told it is not there.
+static void history_rows_from_a_real_replay(void) {
+    setup();
+    T_EQ_INT(sign(1, "FAY", "secret-11"), 0);
+    char fay[40];
+    memcpy(fay, nc_session_info()->user_id, 36);
+    fay[36] = 0;
+    ReplaySummary d;
+    T_EQ_INT(replay_summary_v6(REAL_CODE, (int)sizeof REAL_CODE, &d), REPLAY_EOK);
+    T_EQ_INT(d.num_players, 2);
+    // The extras as the server stores them: ALICE and BOB, and d.moves zero gaps.
+    const unsigned char *names[2] = { (const unsigned char *)"ALICE", (const unsigned char *)"BOB" };
+    const int name_lens[2] = { 5, 3 };
+    uint8_t extras[256], one_name[8];
+    int en = replay_extras_encode_parts(names, name_lens, 2, 1, 1700000000.0, d.moves, no_gap, NULL, extras, (int)sizeof extras);
+    T_CHECK(en > 0);
+    const unsigned char *lone[1] = { (const unsigned char *)"x" };
+    const int lone_len[1] = { 1 };
+    int on = replay_extras_encode_parts(lone, lone_len, 1, 0, 0, 0, NULL, NULL, one_name, (int)sizeof one_name);
+    T_CHECK(on > 0);
+
+    cb_snapshot_row with = { .n_players = 2, .created_at = 1700000000000 + 2000 };
+    cb_uuid_v4(with.id);
+    cb_strlcpy(with.player_ids[0], fay, sizeof with.player_ids[0]);
+    cb_strlcpy(with.player_ids[1], "bbbbbbbb-0000-4000-8000-000000000002", sizeof with.player_ids[1]);
+    with.moves = (uint8_t *)REAL_CODE;
+    with.moves_len = sizeof REAL_CODE;
+    with.extras = extras;
+    with.extras_len = (size_t)en;
+    cb_table_snap_summary(&with.sum, REAL_CODE, (int)sizeof REAL_CODE, extras, en);
+    T_CHECK(with.sum.has);
+    T_EQ_INT(CB_ROWS_CALL(g_ctx.store, snapshot_put, &with), CB_OK);
+    cb_snapshot_row old = with;     // the same game, written before pointers held a summary
+    cb_uuid_v4(old.id);
+    old.created_at = with.created_at - 1000;
+    old.sum.has = false;
+    T_EQ_INT(CB_ROWS_CALL(g_ctx.store, snapshot_put, &old), CB_OK);
+    cb_snapshot_row few = old;      // and one whose extras name one seat of two
+    cb_uuid_v4(few.id);
+    few.created_at = with.created_at - 2000;
+    few.extras = one_name;
+    few.extras_len = (size_t)on;
+    T_EQ_INT(CB_ROWS_CALL(g_ctx.store, snapshot_put, &few), CB_OK);
+
+    T_EQ_INT(call(b_history, NULL), 200);
+    T_EQ_INT(nc_list_read(g_status, g_body, g_len, NW_HISTORY), 3);
+    const int fool = d.fool, rank_of_fay = fool == 0 ? 2 : 1;
+    for (int i = 0; i < 3; i++) {
+        const NcHistoryRow *hr = nc_history_row(g_body, g_len, i);
+        T_CHECK(hr != NULL);
+        if (!hr) continue;
+        const char *id = i == 0 ? with.id : i == 1 ? old.id : few.id;
+        T_EQ_MEM(hr->id, hr->id_len, id, strlen(id));          // newest first, each its replay's id
+        T_EQ_INT(hr->n_players, 2);
+        T_EQ_INT(hr->seat, 0);
+        T_EQ_INT(hr->rank, rank_of_fay);                         // the summary pointer and the cut one agree
+        T_EQ_INT(hr->fool, fool);
+        T_EQ_INT(hr->duration_s, i == 2 ? NW_HISTORY_NO_TIME : 0);   // zero gaps are a duration of 0; no times is none
+        if (i == 2) {
+            T_EQ_INT(hr->n_names, 0);                            // one name for two seats: "#1 #2"
+        } else {
+            T_EQ_INT(hr->n_names, 2);
+            T_EQ_MEM(hr->names[0].name, hr->names[0].len, "ALICE", 5);
+            T_EQ_MEM(hr->names[1].name, hr->names[1].len, "BOB", 3);
+        }
+    }
+    // The row's id opens the replay though its game never existed here; a stranger gets 404.
+    T_EQ_INT(call(b_replay, with.id), 200);
+    const NcReplay *rp = nc_replay_read(g_status, g_body, g_len);
+    T_CHECK(rp != NULL);
+    if (rp) T_EQ_MEM(g_body + rp->moves_off, rp->moves_len, REAL_CODE, sizeof REAL_CODE);
+    uint8_t fay_blob[NC_SESSION_BLOB_MAX];
+    int fbn = nc_session_save(fay_blob, sizeof fay_blob);
+    T_EQ_INT(sign(1, "GUS", "secret-11"), 0);
+    T_EQ_INT(call(b_replay, with.id), 404);
+    // Her own name is in no one else's history.
+    T_EQ_INT(call(b_history, NULL), 200);
+    T_EQ_INT(nc_list_read(g_status, g_body, g_len, NW_HISTORY), 0);
+    as(fay_blob, fbn);
+    teardown();
+}
+
 static void cache_control_per_route(void) {
     setup();
     cb_strlcpy(g_cfg.allowed_origins, "https://foolish.cards", sizeof g_cfg.allowed_origins);
@@ -794,6 +887,7 @@ int main(void) {
     T_RUN(refresh_password_signout_delete);
     T_RUN(games_views_and_chat);
     T_RUN(bots_board_history_replay);
+    T_RUN(history_rows_from_a_real_replay);
     T_RUN(independent_reads_run_at_once);
     T_RUN(cache_control_per_route);
     T_RUN(a_throttled_read_is_busy_and_retried);

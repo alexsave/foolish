@@ -31,6 +31,7 @@
 #include "app/pushes.h"
 #include "realtime/realtime.h"
 #include "replay_extras.h"
+#include "replay_steps.h"
 #include "auth/auth.h"
 #include "table.h"
 #include "util/err.h"
@@ -691,6 +692,98 @@ static bool count_snap(const cb_snapshot_row *row, void *ud) {
     return true;
 }
 
+// A snapshot's replay bytes, copied out of the callback.
+typedef struct { uint8_t moves[4096], extras[1024]; int n_moves, n_extras, seat, rank, n_players; cb_snap_summary sum; } snap_bytes;
+static bool copy_snap_bytes(const cb_snapshot_row *row, void *ud) {
+    snap_bytes *c = ud;
+    if (row->moves_len <= sizeof c->moves) memcpy(c->moves, row->moves, row->moves_len);
+    if (row->extras_len <= sizeof c->extras) memcpy(c->extras, row->extras, row->extras_len);
+    c->n_moves = (int)row->moves_len;
+    c->n_extras = (int)row->extras_len;
+    c->seat = row->seat;
+    c->rank = row->rank;
+    c->n_players = row->n_players;
+    c->sum = row->sum;
+    return true;
+}
+
+static double constant_gap(void *ctx, int i) { (void)i; return *(double *)ctx; }
+
+// The history summary (table_ops.c cb_table_snap_summary), cut once at the game end and written to the
+// pointers: the fool, the order the others went out, the duration as the rounded sum of the extras' gaps,
+// -1 with no times, and nothing for a code the kernel will not read.
+static void the_summary_of_a_finished_game(const snap_bytes *c) {
+    ReplaySummary d;
+    T_EQ_INT(replay_summary_v6(c->moves, c->n_moves, &d), REPLAY_EOK);
+    cb_snap_summary m;
+    memset(&m, 0, sizeof m);
+    cb_table_snap_summary(&m, c->moves, c->n_moves, c->extras, c->n_extras);
+    T_CHECK(m.has);
+    T_EQ_INT(m.fool, d.fool);
+    T_CHECK(m.fool >= 0 && m.fool < 2);                       // the loser of a two-player game
+    T_EQ_INT(m.n_elim, d.num_eliminated);
+    T_EQ_INT(m.n_elim, 1);                                    // the winner went out; the fool is not one
+    for (int i = 0; i < m.n_elim; i++) T_EQ_INT(m.elim[i], d.elimination[i]);
+    T_CHECK(m.elim[0] != m.fool);
+    // The duration is the rounded sum of the extras' gaps, read from the STORED bytes (the encoded blob, version 2).
+    // This game was played at once: its times section holds d.moves zero gaps, so its duration is 0 and not "none".
+    T_EQ_INT(m.duration_s, 0);
+    for (int pass = 0; pass < 2; pass++) {
+        unsigned char blob[512];
+        struct gap_ctx { double v; } gc = { pass == 0 ? 10.0 : 0.0 };
+        int nb = replay_extras_encode_parts(NULL, NULL, 0, 1, 1700000000.0, d.moves, constant_gap, &gc, blob, (int)sizeof blob);
+        T_CHECK(nb > 0);
+        cb_snap_summary timed;
+        memset(&timed, 0, sizeof timed);
+        cb_table_snap_summary(&timed, c->moves, c->n_moves, blob, nb);
+        T_CHECK(timed.has);
+        // The gaps are on a log curve (about 7% a step): the sum is what the decoder says, rounded.
+        static ReplayExtras x;
+        T_EQ_INT(cb_table_extras_read(&x, blob, nb, d.num_players, d.moves), 0);
+        T_EQ_INT(x.n_gaps, d.moves);
+        double sum = 0;
+        for (int i = 0; i < x.n_gaps; i++) sum += x.gaps[i];
+        T_EQ_INT(timed.duration_s, (int32_t)(sum + 0.5));
+        if (pass == 0) T_CHECK(timed.duration_s > d.moves * 9 && timed.duration_s < d.moves * 11);
+        else T_EQ_INT(timed.duration_s, 0);
+    }
+    // Extras that time nothing (names only): -1, not 0.
+    const unsigned char names_only[3] = { REPLAY_EXTRAS_VERSION, REPLAY_EXTRAS_FLAG_NAMES, 0 };
+    cb_snap_summary timed;
+    memset(&timed, 0, sizeof timed);
+    cb_table_snap_summary(&timed, c->moves, c->n_moves, names_only, 3);
+    T_CHECK(timed.has);
+    T_EQ_INT(timed.duration_s, -1);
+    // No extras: no duration, but the rest stands.
+    cb_snap_summary none;
+    memset(&none, 0, sizeof none);
+    cb_table_snap_summary(&none, c->moves, c->n_moves, NULL, 0);
+    T_CHECK(none.has);
+    T_EQ_INT(none.duration_s, -1);
+    T_EQ_INT(none.fool, m.fool);
+    // Extras the kernel will not read: the same.
+    const uint8_t junk[3] = { 0xff, 0xff, 0xff };
+    memset(&none, 0, sizeof none);
+    cb_table_snap_summary(&none, c->moves, c->n_moves, junk, 3);
+    T_CHECK(none.has);
+    T_EQ_INT(none.duration_s, -1);
+    // A code the kernel will not read leaves the summary as it was, absent.
+    cb_snap_summary bad;
+    memset(&bad, 0, sizeof bad);
+    bad.fool = 5;
+    cb_table_snap_summary(&bad, junk, 3, c->extras, c->n_extras);
+    T_CHECK(!bad.has);
+    T_EQ_INT(bad.fool, 5);
+    cb_table_snap_summary(&bad, NULL, 0, NULL, 0);
+    T_CHECK(!bad.has);
+    // The pointers hold it: each seat's rank (the winner 1, the fool 2) and the numbers.
+    T_CHECK(c->sum.has);
+    T_EQ_INT(c->sum.fool, m.fool);
+    T_EQ_INT(c->sum.duration_s, 0);
+    T_EQ_INT(c->rank, c->seat == m.fool ? 2 : 1);
+    T_EQ_INT(c->n_players, 2);
+}
+
 // What `wire` by `uid` comes to on a stored board: table_act on a scratch table.
 static int act_on(const cb_game_row *row, const char *uid, const uint8_t *wire, int n) {
     Game *g = calloc(1, sizeof *g);
@@ -794,6 +887,19 @@ static void a_finished_game_writes_a_snapshot_and_ratings(void) {
     cb_snapshot_query q = { .viewer_id = UID_B, .game_id = gid };
     T_EQ_INT(CB_ROWS_CALL(g_store, snapshots_query, &q, count_snap, &seen), 1);
     T_CHECK(seen.moves > 0);
+    {   // the history summary: cut from this replay, written to each player's pointer
+        static snap_bytes c, cs;
+        memset(&c, 0, sizeof c);
+        T_EQ_INT(CB_ROWS_CALL(g_store, snapshots_query, &q, copy_snap_bytes, &c), 1);
+        cb_snapshot_query qs = { .viewer_id = UID_B, .game_id = gid, .summary_only = true };
+        memset(&cs, 0, sizeof cs);
+        T_EQ_INT(CB_ROWS_CALL(g_store, snapshots_query, &qs, copy_snap_bytes, &cs), 1);
+        cs.n_moves = c.n_moves;
+        memcpy(cs.moves, c.moves, sizeof c.moves);
+        memcpy(cs.extras, c.extras, sizeof c.extras);
+        cs.n_extras = c.n_extras;
+        the_summary_of_a_finished_game(&cs);
+    }
     // The finished game is evicted from the cache: it is read fresh.
     T_EQ_INT(cb_row_cache_size(), 0);
     // A move on a finished game is MOOT and commits nothing.

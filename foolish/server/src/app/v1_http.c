@@ -559,12 +559,12 @@ static bool history_fn(const cb_snapshot_row *s, void *ud) {
     h.rank = (uint8_t)(sum.has && rank > 0 ? rank : 0);
     h.fool = sum.has && sum.fool >= 0 ? (uint8_t)sum.fool : NW_HISTORY_NONE;
     h.duration_s = sum.has && sum.duration_s >= 0 ? (uint32_t)sum.duration_s : NW_HISTORY_NO_TIME;
-    // The seats' names come from the replay's extras (a pointer holds none);
-    // extras the kernel will not read, or naming a different number of seats,
-    // give none and the list shows "#1 #2 ...".
+    // The seats' names come from the replay's stored extras (a pointer holds
+    // none): the decode reads exactly n_players names, so a blob naming fewer
+    // seats, or none, is refused or empty and the list shows "#1 #2 ...".
     static _Thread_local ReplayExtras x;
-    if (s->extras_len && s->extras_len <= INT32_MAX && replay_extras_unpack(s->extras, (int)s->extras_len, &x) >= 0
-        && x.n_names == s->n_players && x.n_names <= MAX_PLAYERS) {
+    if (s->extras_len && s->extras_len <= INT32_MAX && s->n_players > 0
+        && cb_table_extras_read(&x, s->extras, (int)s->extras_len, s->n_players, 0) == 0) {
         h.n_names = (uint8_t)x.n_names;
         for (int i = 0; i < x.n_names; i++) {
             h.name_len[i] = (uint8_t)(x.names[i].len <= NW_NAME_MAX ? x.names[i].len : 0);
