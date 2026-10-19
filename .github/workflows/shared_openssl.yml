@@ -1,0 +1,36 @@
+# shared/c's OpenSSL oracle tests: sha256.c and deal_rng.c (ChaCha20) against
+# OpenSSL's own over random inputs (shared/c/Makefile `openssl-tests`). OpenSSL is
+# the independent oracle and is in no kernel, so the product lanes do not link it;
+# this one does, on a runner with libssl-dev. Native only (the wasm kernels carry
+# neither OpenSSL nor a libc).
+name: shared-openssl
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared/c/sha256*'
+      - 'shared/c/deal_rng*'
+      - 'shared/c/rng.h'
+      - 'shared/c/test/**'
+      - 'shared/c/Makefile'
+      - '.github/workflows/shared_openssl.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'shared/c/sha256*'
+      - 'shared/c/deal_rng*'
+      - 'shared/c/rng.h'
+      - 'shared/c/test/**'
+      - 'shared/c/Makefile'
+      - '.github/workflows/shared_openssl.yml'
+
+jobs:
+  openssl-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install OpenSSL headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q build-essential libssl-dev
+      - name: sha256 and deal_rng against OpenSSL
+        run: make -C shared/c openssl-tests

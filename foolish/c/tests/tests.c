@@ -13533,6 +13533,8 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
     // COVERAGE_CORPUS) plays one, two-handed; the volume floors scale with it.
 #ifdef COVERAGE_CORPUS
     enum { GAMES = 1, WIDEST = 2 };
+#elif defined(WASM_CAPS_TESTS)
+    enum { GAMES = 2, WIDEST = 4 };   // make tests-wasm-caps: six games a width is a minute under the 4096-entry table
 #else
     enum { GAMES = 6, WIDEST = 4 };
 #endif
@@ -19468,17 +19470,17 @@ int main(void) {
 #if !defined(CD_TT_2WAY) || !defined(CD_TT_PACK8)
 #error tests-wasm-caps builds with the shipped solver table (CD_TT_2WAY, CD_TT_PACK8)
 #endif
-    { clock_t t0_ = clock(); test_world_clone_honours_the_log_cap(); fprintf(stderr, \"  %5.2f s  test_world_clone_honours_the_log_cap\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
-    { clock_t t0_ = clock(); test_short_log_instance(); fprintf(stderr, \"  %5.2f s  test_short_log_instance\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
-    { clock_t t0_ = clock(); test_podkidnoy_solver_and_book(); fprintf(stderr, \"  %5.2f s  test_podkidnoy_solver_and_book\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
-    { clock_t t0_ = clock(); test_solver_tt_value_carries_its_seat(); fprintf(stderr, \"  %5.2f s  test_solver_tt_value_carries_its_seat\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
-    { clock_t t0_ = clock(); test_analyse_belief_holds_on_played_games(); fprintf(stderr, \"  %5.2f s  test_analyse_belief_holds_on_played_games\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
-    { clock_t t0_ = clock(); test_table_bot_drive_cycle(); fprintf(stderr, \"  %5.2f s  test_table_bot_drive_cycle\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
-    { clock_t t0_ = clock(); test_table_bot_drive_ignores_instance_history(); fprintf(stderr, \"  %5.2f s  test_table_bot_drive_ignores_instance_history\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
-    { clock_t t0_ = clock(); test_table_bot_drive_ignores_other_tables(); fprintf(stderr, \"  %5.2f s  test_table_bot_drive_ignores_other_tables\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
-    { clock_t t0_ = clock(); test_table_session_log_is_load_bearing_for_octogen(); fprintf(stderr, \"  %5.2f s  test_table_session_log_is_load_bearing_for_octogen\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
-    { clock_t t0_ = clock(); test_table_octogen_game_is_its_deal_seeds(); fprintf(stderr, \"  %5.2f s  test_table_octogen_game_is_its_deal_seeds\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
-    { clock_t t0_ = clock(); test_table_a_load_leaves_nothing_of_the_last_table(); fprintf(stderr, \"  %5.2f s  test_table_a_load_leaves_nothing_of_the_last_table\n\", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_world_clone_honours_the_log_cap(); fprintf(stderr, "  %5.2f s  test_world_clone_honours_the_log_cap\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_short_log_instance(); fprintf(stderr, "  %5.2f s  test_short_log_instance\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_podkidnoy_solver_and_book(); fprintf(stderr, "  %5.2f s  test_podkidnoy_solver_and_book\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_solver_tt_value_carries_its_seat(); fprintf(stderr, "  %5.2f s  test_solver_tt_value_carries_its_seat\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_analyse_belief_holds_on_played_games(); fprintf(stderr, "  %5.2f s  test_analyse_belief_holds_on_played_games\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_bot_drive_cycle(); fprintf(stderr, "  %5.2f s  test_table_bot_drive_cycle\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_bot_drive_ignores_instance_history(); fprintf(stderr, "  %5.2f s  test_table_bot_drive_ignores_instance_history\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_bot_drive_ignores_other_tables(); fprintf(stderr, "  %5.2f s  test_table_bot_drive_ignores_other_tables\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_session_log_is_load_bearing_for_octogen(); fprintf(stderr, "  %5.2f s  test_table_session_log_is_load_bearing_for_octogen\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_octogen_game_is_its_deal_seeds(); fprintf(stderr, "  %5.2f s  test_table_octogen_game_is_its_deal_seeds\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
+    { clock_t t0_ = clock(); test_table_a_load_leaves_nothing_of_the_last_table(); fprintf(stderr, "  %5.2f s  test_table_a_load_leaves_nothing_of_the_last_table\n", (double)(clock() - t0_) / CLOCKS_PER_SEC); }
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;
 #endif

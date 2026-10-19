@@ -196,8 +196,9 @@ $(call host_prog,bench_engine,tests/bench_engine.c)
 # leaving the experiment out of the coverage build - not one without the other,
 # since dropping it from coverage today would leave it running in no CI at all.
 tests: build/cnitro_tests build/bot_drive_threads_test build/replay_threads_test build/cnitro_replay \
-       build/replay_overlay_test build/replay_rebuild_difftest
+       build/replay_overlay_test build/replay_rebuild_difftest build/hand_contract_test
 	./build/cnitro_tests
+	./build/hand_contract_test
 	./build/bot_drive_threads_test
 	./build/replay_threads_test
 	./build/replay_overlay_test
@@ -230,6 +231,20 @@ build/cnitro_tests_wasmcaps: $(call c_objs,build/obj/wasmcaps,$(CORE_SRC) tests/
 	$(CC) $(WASMCAPS_CFLAGS) $^ -o $@ $(LDFLAGS)
 tests-wasm-caps: build/cnitro_tests_wasmcaps
 	./build/cnitro_tests_wasmcaps
+
+# The hand's layout is computed without floating-point contraction (hand_layout.h): the
+# rule is the build flag -ffp-contract=off, and tests/hand_contract_test.c fails in a build
+# tree that lacks it. build/obj/fused/hand_layout.o is the same source compiled WITH
+# contraction, its symbol renamed, so the test can show its pin sees the difference.
+build/obj/fused/hand_layout.o: src/hand_layout.c
+	@mkdir -p $(@D)
+	$(CC) $(filter-out -ffp-contract=off -flto,$(CFLAGS)) -ffp-contract=on -Dhand_layout=hand_layout_fused \
+	    -Dhand_rows=hand_rows_fused -Dhand_slots=hand_slots_fused -c $< -o $@
+build/hand_contract_test: $(call c_objs,build/obj/host,src/hand_layout.c tests/hand_contract_test.c) build/obj/fused/hand_layout.o
+	$(CC) $(CFLAGS) $^ -o $@ -lm
+.PHONY: hand-contract-test
+hand-contract-test: build/hand_contract_test
+	./build/hand_contract_test
 
 # The same suite under AddressSanitizer + UBSan, at -O1, from its own objects
 # (build/obj/asan - not CORE_OBJ, whose objects are -O3 -flto and not
@@ -345,7 +360,7 @@ analyse-test: build/analyse_test
 # below): every suite at the flags the product ships, side by side under -j.
 # coverage.yml's c-native job runs it on every PR.
 .PHONY: volume volume-msg-wire
-volume: tests volume-msg-wire analyse-test
+volume: tests volume-msg-wire analyse-test tests-wasm-caps
 volume-msg-wire: build/msg_wire_test
 	./build/msg_wire_test 20
 # Two bot drives on two threads under two pre-action hooks, each of which must

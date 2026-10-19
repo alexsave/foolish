@@ -60,7 +60,7 @@ SAN_FLAGS   = $(ASAN_FLAGS) $(if $(filter ios/%,$*),-Iios/include)
 # pk_api_collapse_push forwards to. What each is built from is
 # shared/tools/shared_tests.mk's.
 SHARED_TESTS := check_test rng_test fnv_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test msg_whole_test \
-                stats_test collapse_test
+                stats_test collapse_test ease_test util_test clock_test percentile_test
 
 include ../../shared/tools/c_rules.mk
 include ../../shared/tools/shared_tests.mk

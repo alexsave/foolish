@@ -59,7 +59,7 @@ O2_FLAGS   := -O2 $(WARN)
 # cn_msg_resolve hands its rows to, the lobby rules the lobby adapter and
 # cn_msg.c call, and the arena's statistics. What each is built from is
 # shared/tools/shared_tests.mk's.
-SHARED_TESTS := check_test rng_test fnv_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test msg_whole_test stats_test
+SHARED_TESTS := check_test rng_test fnv_test text_util_test wire_check_test msg_seat_tag_test msg_lobby_roster_test msg_whole_test stats_test libm_test util_test clock_test percentile_test
 
 include ../../shared/tools/c_rules.mk
 include ../../shared/tools/shared_tests.mk
