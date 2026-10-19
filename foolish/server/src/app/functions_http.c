@@ -456,7 +456,7 @@ static void h_delete_account(cb_ctx *ctx, const cb_http_req *req, cb_http_res *r
 // router answers OPTIONS (DESIGN.md "Binary surface").
 static const cb_route FUNCTION_ROUTES[] = {
     { "*", "/v1/create", CB_ROUTE_POOL, h_create },
-    { "*", "/v1/action", CB_ROUTE_POOL, h_action },
+    { "*", "/v1/action", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_action },
     { "*", "/v1/meta", CB_ROUTE_POOL, h_meta },
     { "*", "/v1/account/delete", CB_ROUTE_POOL, h_delete_account },
 };

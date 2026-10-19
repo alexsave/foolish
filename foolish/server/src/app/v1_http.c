@@ -653,7 +653,7 @@ static const cb_route V1_ROUTES[] = {
     { "POST", "/v1/auth/signout", CB_ROUTE_POOL, h_signout },
     { "POST", "/v1/auth/password", CB_ROUTE_POOL, h_password },
     { "GET", "/v1/games", CB_ROUTE_POOL, h_games },
-    { "GET", "/v1/games/*", CB_ROUTE_POOL, h_game },
+    { "GET", "/v1/games/*", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_game },
     { "GET", "/v1/chat/*", CB_ROUTE_POOL, h_chat_get },
     { "POST", "/v1/chat/*", CB_ROUTE_POOL, h_chat_post },
     { "GET", "/v1/bots", CB_ROUTE_POOL, h_bots },
