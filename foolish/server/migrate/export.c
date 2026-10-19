@@ -21,14 +21,20 @@
 // a second time, at the same pace), counted and compared. A key in the table
 // and not in the file is a MISSING item; a key in the file and not in the
 // table is an EXTRA (an item deleted from the table, or TTL-expired, during
-// the run). Attribute values are not compared, only keys.
+// the run).
+//
+// Values are compared as each item is copied, not in the verify pass: the item
+// is read back from the file right after its put and compared attribute by
+// attribute (kind and value, and the same set of attributes) with the item as
+// DynamoDB answered it. That costs no second read of the table. A difference
+// is a MISMATCH: the file does not hold what the table did.
 //
 // A file that already holds items is refused unless --into-existing: the
 // export is meant to start a new store, and a put replaces an item.
 // --no-verify skips the second scan.
 //
-// Exit 0: every item copied and the key sets equal. 1: an item failed to copy
-// or the key sets differ. 2: a usage or I/O error.
+// Exit 0: every item copied and read back equal, and the key sets equal. 1: an
+// item failed to copy or read back different, or the key sets differ. 2: a usage or I/O error.
 #include "store/store.h"
 #include "store/store_priv.h"
 #include "util/err.h"
@@ -88,10 +94,25 @@ static int keys_of(cb_store *st, keyset *out) {
 typedef struct {
     cb_store *dst;
     const key *keys;     // this batch's keys
-    long      copied, failed;
+    long      copied, failed, mismatched;
     bool      seen[100];
     int       base;
 } copy_ctx;
+
+// Does the file hold `src` (an item as DynamoDB answered it) exactly: the same
+// attributes, each of the same kind and value?
+static bool same_in_file(cb_store *dst, cb_ikey key, const cb_item *src) {
+    cb_item got;
+    cb_item_init(&got);
+    bool same = dst->ops->item_get(dst, key, true, &got) == CB_OK && got.n == src->n;
+    for (int a = 0; same && a < src->n; a++) {
+        cb_av want, have;
+        cb_item_at(src, a, &want);
+        same = cb_item_get(&got, want.name, &have) && cb_av_same(&want, &have);
+    }
+    cb_item_free(&got);
+    return same;
+}
 
 static bool put_one(int i, const cb_item *it, void *ud) {
     copy_ctx *c = ud;
@@ -111,8 +132,13 @@ static bool put_one(int i, const cb_item *it, void *ud) {
     w.attrs = attrs;
     w.n_attrs = na;
     int rc = c->dst->ops->item_write(c->dst, &w, NULL);
-    if (rc == CB_OK) c->copied++;
-    else {
+    if (rc == CB_OK) {
+        c->copied++;
+        if (!same_in_file(c->dst, w.key, it)) {
+            c->mismatched++;
+            fprintf(stderr, "cbase-export: %s / %s reads back different from the table\n", w.key.pk, w.key.sk);
+        }
+    } else {
         c->failed++;
         fprintf(stderr, "cbase-export: cannot put %s / %s: %s\n", w.key.pk, w.key.sk, cb_strerror(rc));
     }
@@ -205,7 +231,8 @@ int main(int argc, char **argv) {
     }
     if (vanished) printf("%ld keys were gone by the time they were read (deleted or expired during the run)\n", vanished);
 
-    int exit_code = c.failed ? 1 : 0;
+    if (c.mismatched) printf("%ld items read back from the file different from the table\n", c.mismatched);
+    int exit_code = c.failed || c.mismatched ? 1 : 0;
     if (verify) {
         keyset a, b;
         if (keys_of(src, &a) != CB_OK || keys_of(dst, &b) != CB_OK) {
@@ -230,7 +257,7 @@ int main(int argc, char **argv) {
         keyset_free(&a);
         keyset_free(&b);
     }
-    printf("%ld items copied, %ld failed\n", c.copied, c.failed);
+    printf("%ld items copied, %ld failed, %ld read back different\n", c.copied, c.failed, c.mismatched);
     keyset_free(&want);
     cb_store_close(src);
     cb_store_close(dst);
