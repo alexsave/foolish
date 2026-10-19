@@ -238,8 +238,7 @@ static int64_t budget_left(const cb_ctx *ctx) {
 // release. *settled is true when it let go because no bot could act (or the
 // game ended) with the lease still its own: the case a kick skipped while the
 // lease was held relies on (kick_wanted), so the caller looks once more.
-static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bool *settled) {
-    cb_store_tally st = *stp;
+static int drive_round(cb_ctx *ctx, const char *game_id, bool *settled) {
     *settled = false;
     cb_uuid lease;
     int rc = CB_OK;
@@ -282,10 +281,6 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
         }
         int64_t delay = 0;
         int c = run_cycle(ctx, s, game_id, cycle, &cpu, &delay, &idle_version);
-        cb_store_tally_take(&st);   // the lease (acquire or renew) and the cycle
-        if (st.reads || st.writes)
-            CB_DEBUG("store", "bot cycle %s/%d: %d reads, %d writes, %g RCU, %g WCU (%s)", game_id, cycle, st.reads,
-                     st.writes, st.rcu, st.wcu, st.detail);
         if (c == CYCLE_ERROR) { rc = CB_E_DB; break; }
         if (c == CYCLE_DONE) { *settled = true; break; }
         if (delay > 0) {
@@ -309,10 +304,6 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
     }
     if (in_memory(ctx)) mem_lease_release(game_id);
     else CB_ROWS_CALL(ctx->store, lease_release, game_id, lease);
-    cb_store_tally_take(&st);
-    if (st.reads || st.writes)
-        CB_DEBUG("store", "bot drive %s end: %d reads, %d writes, %g RCU, %g WCU (%s)", game_id, st.reads, st.writes,
-                 st.rcu, st.wcu, st.detail);
     cb_section_free(s);
     if (wait_ms > 0) {
         int r = cb_job_start_after(ctx, CB_BOTS_JOB, game_id, wait_ms);
@@ -324,7 +315,6 @@ static int drive_round(cb_ctx *ctx, const char *game_id, cb_store_tally *stp, bo
         int r = cb_job_start(ctx, CB_BOTS_JOB, game_id);
         if (r != CB_OK) CB_WARN("bots", "kick %s: not started (%s)", game_id, cb_strerror(r));
     }
-    *stp = st;
     return rc;
 }
 
@@ -344,12 +334,10 @@ static bool due_now(cb_ctx *ctx, const char *game_id) {
 
 int cb_bots_drive(cb_ctx *ctx, const char *game_id) {
     if (!ctx->store) return CB_E_STATE;
-    cb_store_tally st;
-    cb_store_tally_take(&st);   // this drive's count starts here
     int rc = CB_OK;
     for (int round = 0; round < BOT_DRIVE_ROUNDS; round++) {
         bool settled = false;
-        rc = drive_round(ctx, game_id, &st, &settled);
+        rc = drive_round(ctx, game_id, &settled);
         // A commit that landed while this drive held the lease kicked no drive
         // (kick_wanted): its kick's lease check came after its commit, and this
         // read comes after the release, so one of the two saw the other.

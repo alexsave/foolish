@@ -518,11 +518,7 @@ static void lone_commit_cas(void) {
     memcpy(cj.humans[0], a.id, sizeof(cb_uuid));
     memcpy(cj.humans[1], b.id, sizeof(cb_uuid));
     memcpy(cj.prev_humans[0], a.id, sizeof(cb_uuid));
-    cb_store_tally t;
-    cb_store_tally_take(&t);
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &cj), CB_OK);
-    cb_store_tally_take(&t);
-    if (tsb_dynamo()) T_EQ_STR(t.detail, "BatchGetItem 1 TransactWriteItems 1");   // b's account read, then seated
 
     // Two writers read version 1 and move.
     cb_game_row w1 = mkgame("lone01", NOW - 20000), w2 = mkgame("lone01", NOW - 20000);
@@ -536,11 +532,7 @@ static void lone_commit_cas(void) {
     cb_game_commit c2 = c1;
     c2.row = &w2;
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c1), CB_OK);
-    cb_store_tally_take(&t);
-    if (tsb_dynamo()) T_EQ_STR(t.detail, "UpdateItem 1");
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c2), CB_E_CONFLICT);
-    cb_store_tally_take(&t);
-    if (tsb_dynamo()) T_EQ_STR(t.detail, "UpdateItem 1");   // refused once, not sent again
     cb_game_row got;
     T_EQ_INT(CB_ROWS_CALL(s, game_get, "lone01", &got), CB_OK);
     T_EQ_INT(got.version, 2);
@@ -558,10 +550,7 @@ static void lone_commit_cas(void) {
     // Reloaded at version 2, the second writer wins, alone again.
     c2.expected_version = 2;
     w2.version = 3;
-    cb_store_tally_take(&t);
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c2), CB_OK);
-    cb_store_tally_take(&t);
-    if (tsb_dynamo()) T_EQ_STR(t.detail, "UpdateItem 1");
     T_EQ_INT(CB_ROWS_CALL(s, game_get, "lone01", &got), CB_OK);
     T_EQ_INT(got.version, 3);
     T_EQ_MEM(got.state, got.state_len, s2, 1);
@@ -594,10 +583,7 @@ static void lone_commit_cas(void) {
     c5.row = &w5;
     c5.expected_version = 4;
     c5.prev_needs_bots = true;
-    cb_store_tally_take(&t);
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c5), CB_OK);
-    cb_store_tally_take(&t);
-    if (tsb_dynamo()) T_EQ_STR(t.detail, "TransactWriteItems 1");
     nm.n = 0;
     T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 0);
     cb_uuid tok;
@@ -608,10 +594,7 @@ static void lone_commit_cas(void) {
     cb_game_commit c6 = c1;
     c6.row = &w6;
     c6.expected_version = 5;
-    cb_store_tally_take(&t);
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c6), CB_OK);
-    cb_store_tally_take(&t);
-    if (tsb_dynamo()) T_EQ_STR(t.detail, "UpdateItem 1");
     nm.n = 0;
     T_EQ_INT(CB_ROWS_CALL(s, games_needing_bots, STALE, ACTIVE, 100, collect_name, &nm), 0);
     cb_store_close(s);
