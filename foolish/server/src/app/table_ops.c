@@ -205,9 +205,11 @@ int cb_row_load(cb_ctx *ctx, const char *id, bool allow_cache, cb_row_buf *rb, c
 // is out (a nested operation) is a private calloc.
 //
 // What an operation sees is exactly what calloc gave: every byte is zeroed on
-// the way out, except the snapshots' slots. Those are written whole
-// (table_snap memcpys the entire slot with its tag and aux) before they are
-// counted in snaps.n, which is zeroed, and nothing reads past n.
+// the way out, except the snapshots' slots, the Table and the TableCommit. The
+// slots are written whole (table_snap memcpys the entire slot with its tag and
+// aux) before they are counted in snaps.n, which is zeroed, and nothing reads
+// past n. The Table and the TableCommit are zeroed by their owners,
+// table_init and table_commit_products, before anything reads them.
 static _Thread_local cb_section *t_section;
 
 // EXCEPTION to "exactly what calloc gave": Game.logs (36 of the Game's 37 KB) is NOT zeroed on the
@@ -298,12 +300,15 @@ static void arena_note(cb_section *s, int rc) {
 void cb_section_free(cb_section *s) {
     if (!s) return;
     if (!s->pooled) { section_release(s); return; }
-    // calloc's zeros back: the board, the table through the commit, and the
-    // arena prefix the products wrote (the rest was never written).
+    // calloc's zeros back: the board, the host's fields after the commit, and the arena prefix
+    // the products wrote (the rest was never written). NOT the Table and the TableCommit (2 KB of
+    // the 3.3 KB this zeroed per move): each has one owner that zeroes it before anything reads
+    // it, table_init the Table (every use of a section starts there) and table_commit_products
+    // the commit, so a second zeroing here bought nothing.
     memset(&s->g, 0, offsetof(Game, logs));   // every field but the log array (see t_section)
     if (logs_poisoned()) memset(s->g.logs, LOGS_POISON, sizeof s->g.logs);
     s->snaps.n = 0;
-    memset((char *)s + offsetof(cb_section, t), 0, offsetof(cb_section, arena) - offsetof(cb_section, t));
+    memset((char *)s + offsetof(cb_section, gid), 0, offsetof(cb_section, arena) - offsetof(cb_section, gid));
     memset(s->arena, 0, (size_t)s->arena_hw);
     s->arena_hw = 0;
     s->in_use = false;
@@ -319,8 +324,9 @@ bool cb_section_pooled_is_clean(void) {
     // The log array is unspecified when not poisoned; under poison it is all LOGS_POISON.
     if (logs_poisoned())
         for (size_t i = 0; i < sizeof s->g.logs; i++) if (((const unsigned char *)s->g.logs)[i] != LOGS_POISON) return false;
-    p = (const unsigned char *)&s->t;
-    for (size_t i = 0; i < offsetof(cb_section, arena) - offsetof(cb_section, t); i++) if (p[i]) return false;
+    // The Table and the TableCommit are their owners' to zero (cb_section_free).
+    p = (const unsigned char *)s->gid;
+    for (size_t i = 0; i < offsetof(cb_section, arena) - offsetof(cb_section, gid); i++) if (p[i]) return false;
     for (int i = 0; i < s->arena_hw; i++) if (s->arena[i]) return false;
     return true;
 }
