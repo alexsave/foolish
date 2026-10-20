@@ -191,7 +191,19 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         const origin = originRef.current;
         if (origin === null) return;
         const run = runRef.current;
-        const plan = planFor(run, hooksRef.current.board());
+        let plan: ReturnType<typeof planFor>;
+        try {
+            plan = planFor(run, hooksRef.current.board());
+        } catch (e) {
+            // A RUN THE KERNEL WILL NOT PLAN LANDS AT ONCE, every board in order,
+            // and settles as if it had played. A throw used to leave the run open
+            // with no frame asked for, and every later push queued behind it for
+            // the rest of the session (the lobby-join stall of 2026-10-13).
+            console.error('animation: the plan was refused, the run lands at once', e);
+            while (landedRef.current < run.length) hooksRef.current.onLanded(run[landedRef.current++]);
+            settle();
+            return;
+        }
         const nowMs = performance.now() - origin;
         const frame = frameAt(nowMs);
 
@@ -266,32 +278,37 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         });
 
         if (frame.done && landedRef.current >= run.length) {
-            runRef.current = [];
-            originRef.current = null;
-            landedRef.current = 0;
-            beatRef.current = null;
-            trumpStepRef.current = null;
-            startedRef.current = 0;
-            setCurrentAnimation(null);
-            setTrumpFlight(null);
-            setFlightMs(0);
-            setHeld(NO_HELD);
-            setArriving(NO_ARRIVING);
-            // `rowMs` is NOT cleared here, and that is deliberate: the run's
-            // last landing moves the row in this very frame and is entitled to
-            // the same glide every earlier one had. The next run zeroes it as
-            // it starts, and a seek's `reset` zeroes it outright.
-            setIsAnimating(false);
-            setInFlightFromDeck(0);
-            setInFlightToFlipped(0);
-            setAnimatingCards((prev) => (prev.size === 0 ? prev : new Map()));
-            hooksRef.current.onIdle();
+            settle();
             return;
         }
         frameHandleRef.current = requestAnimationFrame(() => tickRef.current());
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     tickRef.current = tick;
+
+    // THE RUN IS OVER: every step has landed, so nothing is in the air.
+    function settle(): void {
+        runRef.current = [];
+        originRef.current = null;
+        landedRef.current = 0;
+        beatRef.current = null;
+        trumpStepRef.current = null;
+        startedRef.current = 0;
+        setCurrentAnimation(null);
+        setTrumpFlight(null);
+        setFlightMs(0);
+        setHeld(NO_HELD);
+        setArriving(NO_ARRIVING);
+        // `rowMs` is NOT cleared here, and that is deliberate: the run's
+        // last landing moves the row in this very frame and is entitled to
+        // the same glide every earlier one had. The next run zeroes it as
+        // it starts, and a seek's `reset` zeroes it outright.
+        setIsAnimating(false);
+        setInFlightFromDeck(0);
+        setInFlightToFlipped(0);
+        setAnimatingCards((prev) => (prev.size === 0 ? prev : new Map()));
+        hooksRef.current.onIdle();
+    }
 
     /**
      * Add steps to the run, starting it if nothing is playing. A step queued

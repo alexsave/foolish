@@ -1487,6 +1487,37 @@ test('a push for another table plays nothing on this page', async () => {
     });
 });
 
+test('a run the kernel refuses to plan lands at once, and the next push still plays', async () => {
+    // ONE REFUSED PLAN MUST NOT WEDGE THE QUEUE (the lobby-join stall of
+    // 2026-10-13: anim_build_plan refused a run, the throw left the run open with
+    // no frame asked for, and the page played nothing for the rest of the
+    // session). A run longer than the kernel plans (ANIM_MAX_STEPS) is refused
+    // today; it lands at once on the board it carries, and Boris's next card
+    // flies as it always did. Take the try out of useAnimationRun's tick and his
+    // card never leaves his hand.
+    const board = threeMeFirst().hand(0, '7d Tc Jd').hand(1, 'Js Qs Ks 6s As').hand(2, '9d Qd 6d').table('7h/9h')
+        .attacker(0).defender(1).build();
+    await play('refused_plan', 152, 'a-refused-plan', board, async (s, srv) => {
+        const { animationFeed } = await import('../src/state/animationFeed.ts');
+        const here = JSON.parse(probe.store).view;
+        await s.step('a run too long to plan', () => {
+            animationFeed.publish({
+                type: 'animation_sequence',
+                events: Array.from({ length: V.ANIM_MAX_STEPS + 1 }, () => ({ type: 'magic_transition' as const, game_state: here })),
+                game: here,
+            });
+        });
+        await s.advance(150);
+        assert.equal(flights(s.host).length, 0, 'nothing of it is in the air');
+        await s.step('Boris throws in 9d', () => { srv.act(BORIS, encodeAction({ kind: 'attack', cards: cards('9d') })); });
+        await deliver(s, 'push: Boris\'s throw-in');
+        await s.advance(150);
+        assert.equal(flights(s.host).length, 1, 'his card is in the air');
+        await s.advance(1000);
+        assert.equal(JSON.parse(probe.store).view.battles.length, 2, 'and lands on the table');
+    });
+});
+
 test('flicker A: a concurrent throw-in lands after my optimistic board, without my card', async () => {
     const board = threeMeFirst().hand(0, '7d Tc Jd').hand(1, 'Js Qs Ks 6s As').hand(2, '9d Qd 6d').table('7h/9h')
         .attacker(0).defender(1).build();

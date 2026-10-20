@@ -143,3 +143,45 @@ test('an unreadable payload decodes to null rather than a wrong board', async ()
     // And the kernel says why, rather than returning an empty sequence.
     assert.equal(clientTable().lastRefusal().code, V.CLIENT_E_PUSH, 'refused as a push that does not read');
 });
+
+// A DELTA CAST (c/src/evwire.h EVW_CAST_DELTA) is the moves, not the boards: the
+// page's kernel rebuilds the boards on the one it kept for the game, and what it
+// hands the animation pipeline is what the board cast would have handed it -
+// every step, every board, the final one. Without a kept board it is refused as
+// behind (the page fetches the game), and it still names the version to fetch.
+test('a delta cast reads as the board cast it stands for, and without a kept board is behind', async () => {
+    await ensureBotsAsync();
+    const { fixture, fixtureTable, PLAYING } = await import('./helpers/table_fixture.ts');
+    const { encodeAction } = await import('../sdk/ts/table/client_table.ts');
+    const ME = 'u-me-0000', BORIS = 'u-boris-001', GID = 'delta-wire';
+    // Boris covers the last attack with his last card: the bout ends, the table
+    // goes to the discard, and I draw from the stock - a draw only my delta can say.
+    const board = fixture().title('Two of us').seats([{ id: ME, name: 'Me' }, { id: BORIS, name: 'Boris' }])
+        .status(PLAYING).deterministic().trump('Kc').deck('7s 8s 9s Ts 6h')
+        .hand(0, '7d Tc').hand(1, '9h').table('7h').attacker(0).defender(1).build();
+    const t = fixtureTable();
+    const table = clientTable();
+    const load = () => { assert.equal(t.load(board.state, board.roster), 0, 'the table loads'); t.setDealSeed(null); };
+    load();
+    const env = t.envelope(GID, 0, 7);
+    assert.ok(env instanceof Uint8Array && table.adoptEnvelope(env), 'my envelope reads, and its board is kept');
+    const card = (t: string) => ({ suit: 'shcd'.indexOf(t[1]), value: '23456789TJQKA'.indexOf(t[0]) + 1 });
+    assert.equal(t.act(BORIS, encodeAction({ kind: 'cover', cards: [card('9h')], attack_cards: [card('7h')] }), null, 0), 0, 'Boris covers');
+    const delta = t.castDelta(0, 8), whole = t.cast(GID, 0, 8);
+    assert.ok(delta instanceof Uint8Array && whole instanceof Uint8Array, 'both casts are written');
+    assert.equal(delta[0], V.EVW_CAST_DELTA, 'the delta is one');
+    assert.ok(delta.length * 5 < whole.length, `the delta is a fraction of the board cast (${delta.length} of ${whole.length} bytes)`);
+    const rebuilt = table.readCast(delta, { gameId: GID });
+    assert.ok(rebuilt, `the delta rebuilds (${JSON.stringify(table.lastRefusal())})`);
+    // The board cast, read on the same kept board the delta was.
+    assert.ok(table.adoptEnvelope(env), 'my envelope again');
+    const read = table.readCast(whole, { gameId: GID });
+    assert.ok(read, 'the board cast reads');
+    assert.deepEqual(pushToSequence(rebuilt!), pushToSequence(read!), 'every step and every board are the board cast\'s');
+    assert.ok(rebuilt!.steps.some((s) => s.event.type === V.EVW_T_REFILL && s.event.seat === 0
+        && s.event.cards.every((c) => c.suit >= 0)), 'my own draw is named');
+
+    assert.equal(table.readCast(delta, { gameId: 'no-board-here' }), null, 'a game with no kept board does not read it');
+    assert.equal(table.lastRefusal().code, V.CLIENT_E_BEHIND, 'and is behind');
+    assert.equal(table.castVersion(delta), 8, 'which still names the version to fetch');
+});
