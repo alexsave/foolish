@@ -22,6 +22,7 @@
 #include "app/pushes.h"
 #include "app/table_ops.h"
 #include "auth/auth.h"
+#include "auth/jwt.h"
 #include "boot.h"
 #include "config.h"
 #include "ctx.h"
@@ -496,6 +497,10 @@ static void boot_fails_cleanly(void) {
 }
 
 int main(void) {
+    // The thread's verified-token cache is made by its first verify and kept (jwt.c): made here,
+    // before any sweep, it is never one of a request's blocks.
+    cb_jwt_claims warm;
+    (void)cb_jwt_verify(SECRET, "warm", 0, &warm);
     setvbuf(stdout, NULL, _IOLBF, 0);   // a crash under a sweep must not eat what ran before it
     cb_log_init(CB_LOG_ERROR + 1, 0);   // the failures log; nobody needs to read them here
     if (!OOM_AVAILABLE) printf("NOTE unit_oom: under a sanitizer the allocator is the sanitizer's; each sweep runs once, unfailed\n");
