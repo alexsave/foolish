@@ -309,24 +309,14 @@ static bool write_all(int fd, const uint8_t *p, size_t n) {
     return true;
 }
 
-// A new segment after the open one (closed): its header written. The writer is held.
+// A new, empty segment after the open one (closed); its header goes with its first batch,
+// which gives it its start time. The writer is held.
 static int seg_open(cb_journal *j, uint64_t seq) {
     char path[1200];
     seg_path(j, seq, path, sizeof path);
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     if (fd < 0) {
         CB_ERROR(MOD, "open %s: %s", path, strerror(errno));
-        return CB_E_IO;
-    }
-    uint8_t h[SEG_HDR];
-    memcpy(h, SEG_MAGIC, 4);
-    put_u32(h + 4, FORMAT);
-    const int64_t start = cb_now_ms();
-    put_u64(h + 8, (uint64_t)start);
-    if (!write_all(fd, h, sizeof h)) {
-        CB_ERROR(MOD, "write %s: %s", path, strerror(errno));
-        close(fd);
-        unlink(path);
         return CB_E_IO;
     }
     cb_jslots *t = cb_jslots_new();
@@ -340,8 +330,8 @@ static int seg_open(cb_journal *j, uint64_t seq) {
     j->fd = fd;
     j->slots = t;
     j->seg_seq = seq;
-    j->seg_start = start;
-    j->seg_len = SEG_HDR;
+    j->seg_start = 0;
+    j->seg_len = 0;
     return CB_OK;
 }
 
@@ -350,12 +340,26 @@ static void write_batch(cb_journal *j, jrec *list) {
     int n = 0;
     for (jrec *r = list; r; r = r->next) n++;
     // A batch is at most CB_JOURNAL_BATCH_MAX moves; more go as several, in the same write.
-    const size_t cap = (size_t)(n / CB_JOURNAL_BATCH_MAX + 1) * (CB_JOURNAL_BATCH_HDR + REPLAY_MAX_INT_BYTES);
+    const size_t cap = SEG_HDR + (size_t)(n / CB_JOURNAL_BATCH_MAX + 1) * (CB_JOURNAL_BATCH_HDR + REPLAY_MAX_INT_BYTES);
     uint8_t *buf = malloc(cap);
     cb_jmove *ms = malloc(sizeof *ms * (size_t)(n < CB_JOURNAL_BATCH_MAX ? n : CB_JOURNAL_BATCH_MAX));
     int rc = buf && ms && j->fd >= 0 ? CB_OK : j->fd < 0 ? CB_E_IO : CB_E_NOMEM;
     size_t len = 0;
     int frames = 0;
+    int64_t first = list->m.now_ms;
+    for (jrec *r = list; r; r = r->next) if (r->m.now_ms < first) first = r->m.now_ms;
+    // A batch's time is coded against its segment's start: one a clock jump put out of
+    // reach starts a segment of its own.
+    if (rc == CB_OK && j->seg_len > 0 && (first - j->seg_start > INT32_MAX / 2 || first - j->seg_start < INT32_MIN / 2) &&
+        seg_open(j, j->seg_seq + 1) != CB_OK)
+        rc = CB_E_IO;
+    if (rc == CB_OK && j->seg_len == 0) {
+        memcpy(buf, SEG_MAGIC, 4);
+        put_u32(buf + 4, FORMAT);
+        put_u64(buf + 8, (uint64_t)first);
+        j->seg_start = first;
+        len = SEG_HDR;
+    }
     for (jrec *r = list; rc == CB_OK && r;) {
         int k = 0;
         for (; r && k < CB_JOURNAL_BATCH_MAX; r = r->next) ms[k++] = r->m;
@@ -516,7 +520,7 @@ static int flush_all(cb_journal *j) {
     // The segments up to here hold nothing the snapshot does not: a new one takes the moves
     // that come during the transaction.
     uint64_t cut = 0;
-    if (rc == CB_OK && (j->seg_len > SEG_HDR || j->fd < 0)) {
+    if (rc == CB_OK && (j->seg_len > 0 || j->fd < 0)) {
         if (seg_open(j, j->seg_seq + 1) == CB_OK) cut = j->seg_seq;
         else rc = CB_E_IO;
     }
@@ -852,6 +856,10 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
     if (rc != CB_OK) {
         snprintf(err, cap, "journal: %s does not read", path);
         return rc;
+    }
+    if (len == 0) {   // opened, never written to
+        free(buf);
+        return CB_OK;
     }
     if (len < SEG_HDR || memcmp(buf, SEG_MAGIC, 4) != 0 || get_u32(buf + 4) != FORMAT) {
         // A segment cut before its header was whole was never written to.
