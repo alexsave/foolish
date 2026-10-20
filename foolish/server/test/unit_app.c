@@ -1433,41 +1433,46 @@ static void a_taken_game_id_is_drawn_again(void) {
 // event) still goes out, or an open page never sees the badge.
 static void a_goods_only_commit_is_broadcast(void) {
     setup(0);
-    char gid[CB_GAME_ID_MAX + 1];
-    reply r;
-    create_game(gid, &r);
-    meta("B", ASK_JOIN, gid, NULL, &r);
-    meta("C", ASK_JOIN, gid, NULL, &r);
-    meta("A", ASK_START, gid, NULL, &r);
-    meta("B", ASK_START, gid, NULL, &r);
-    meta("C", ASK_START, gid, NULL, &r);
-    T_EQ_INT(status_of(gid), GAME_STATUS_PLAYING);
     static const char *const uids[3] = { UID_A, UID_B, UID_C }, *const bearers[3] = { "A", "B", "C" };
     cb_section *s = cb_section_new();
     int found = 0;
-    for (int step = 0; step < 4000 && found < 3 && status_of(gid) == GAME_STATUS_PLAYING; step++) {
-        int k = step % 3;
-        int seat = seat_of(gid, uids[k]);
-        uint8_t wire[64];
-        int n = pick_move(gid, seat, wire, sizeof wire);
-        if (n <= 0) continue;
-        // What the kernel will make of it, on a scratch copy of the stored row.
-        cb_game_row row = stored(gid);
-        bool goods_only = false;
-        if (cb_section_load(s, &row) >= 0 &&
-            table_act(&s->t, uids[k], (int)strlen(uids[k]), wire, n, -1, row.round_epoch) == TABLE_OK &&
-            table_commit_products(&s->t, gid, (int)strlen(gid), (uint32_t)row.version + 1, g_now, &s->c, s->arena,
-                                  sizeof s->arena) >= 0)
-            goods_only = s->c.n_events == 0 && s->c.goods_changed && !s->c.roster_changed;
-        int64_t v = row.version;
-        cb_game_row_free(&row);
-        int fans = g_fan.count;
-        action(bearers[k], gid, wire, n, (uint32_t)v, &r);
-        if (!goods_only || version_of(gid) != v + 1) continue;
-        found++;
-        T_EQ_INT(g_fan.count, fans + 1);
-        T_EQ_INT(g_fan.version, v + 1);
-        T_CHECK(g_fan.casts > 0 && g_fan.spectator_cast);
+    // The deal is the crypto's: a game may hold no goods-only commit, so games are played until
+    // one did (a single game left it to the deal, and the coverage lane drew one without).
+    for (int games = 0; games < 8 && !found; games++) {
+        char gid[CB_GAME_ID_MAX + 1];
+        reply r;
+        cb_limits_reset();
+        create_game(gid, &r);
+        meta("B", ASK_JOIN, gid, NULL, &r);
+        meta("C", ASK_JOIN, gid, NULL, &r);
+        meta("A", ASK_START, gid, NULL, &r);
+        meta("B", ASK_START, gid, NULL, &r);
+        meta("C", ASK_START, gid, NULL, &r);
+        T_EQ_INT(status_of(gid), GAME_STATUS_PLAYING);
+        for (int step = 0; step < 4000 && found < 3 && status_of(gid) == GAME_STATUS_PLAYING; step++) {
+            int k = step % 3;
+            int seat = seat_of(gid, uids[k]);
+            uint8_t wire[64];
+            int n = pick_move(gid, seat, wire, sizeof wire);
+            if (n <= 0) continue;
+            // What the kernel will make of it, on a scratch copy of the stored row.
+            cb_game_row row = stored(gid);
+            bool goods_only = false;
+            if (cb_section_load(s, &row) >= 0 &&
+                table_act(&s->t, uids[k], (int)strlen(uids[k]), wire, n, -1, row.round_epoch) == TABLE_OK &&
+                table_commit_products(&s->t, gid, (int)strlen(gid), (uint32_t)row.version + 1, g_now, &s->c, s->arena,
+                                      sizeof s->arena) >= 0)
+                goods_only = s->c.n_events == 0 && s->c.goods_changed && !s->c.roster_changed;
+            int64_t v = row.version;
+            cb_game_row_free(&row);
+            int fans = g_fan.count;
+            action(bearers[k], gid, wire, n, (uint32_t)v, &r);
+            if (!goods_only || version_of(gid) != v + 1) continue;
+            found++;
+            T_EQ_INT(g_fan.count, fans + 1);
+            T_EQ_INT(g_fan.version, v + 1);
+            T_CHECK(g_fan.casts > 0 && g_fan.spectator_cast);
+        }
     }
     cb_section_free(s);
     T_CHECK(found > 0);
