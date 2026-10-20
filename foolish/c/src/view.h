@@ -56,6 +56,16 @@ int state_put(const Game *g, int viewer, unsigned char *out);
 // byte-identical to one marshaled from the host's own PersonalGame.
 int state_get(Game *g, const unsigned char *p, int len, int masked);
 
+// THE BLOB'S CANONICAL BOARD: `g` brought to what state_get gives back from its own
+// unmasked state_put, in place - the fields the blob does not carry or writes in a
+// canonical form (an unflipped trump's stale card, each seat's raw awaiting flag, which
+// the blob writes as game_seat_awaiting, the log's counters). A host that keeps a board
+// between operations (table.h TableResident) keeps it canonical, so the next operation
+// starts on exactly the board a load of the stored row would give. Every field a later
+// state_put or state_get form changes is this function's to follow (unit_journal
+// the_resident_is_the_row compares the two after every operation of random games).
+void state_canonical(Game *g);
+
 // The exact byte length of the state_put payload at p, reading no byte at or
 // past p + len, or -1: a count past its capacity (a player count, the deck, the
 // battles, a hand, the eliminations) or a payload that runs off the end.

@@ -104,32 +104,52 @@ void cb_row_buf_free(cb_row_buf *b) {
     memset(b, 0, sizeof *b);
 }
 
-// ---- the row an operation runs on ----------------------------------------------------------
+// ---- the game an operation runs on -----------------------------------------------------------
 //
 // ONE OWNER: under serve the journal's overlay holds every game an operation touched
-// (journal.h cb_journal_game_acquire) and the row is read there, copied into the section's kept
-// buffers (no allocation); a game it does not hold is read from the tables and made resident.
+// (journal.h cb_journal_game_acquire), decoded: the section ADOPTS a copy of it (table_adopt, a
+// 2 KB copy; no decode, and a refused operation leaves the game as it was, R1), and gets the
+// row's columns only. A game the overlay holds as bytes (read from the tables, recovered) is
+// copied into the section's kept buffers (no allocation), decoded by the caller and handed back.
 // With no journal (CBASE_JOURNAL=0, another store) every operation reads the store. There is no
-// other copy of a row in this process: a refusal or a load failure is the game's own answer.
+// other copy of a game in this process: a refusal or a load failure is the game's own answer.
 
 typedef struct {
-    cb_row_buf  *rb;
+    cb_section  *s;
     cb_game_row *out;
+    bool         adopted;   // the section holds the game (out: its columns, no bytes)
 } row_into;
 
-static int copy_row(void *ud, const cb_game_row *row) {
+static void section_seats(cb_section *s);
+
+static int take_game(void *ud, const cb_game_row *row, const TableResident *res) {
     row_into *w = ud;
-    return row_copy_into(w->out, w->rb, row);
+    if (!res) return row_copy_into(w->out, &w->s->rb, row);
+    cb_section *s = w->s;
+    table_init(&s->t, &s->g, &s->snaps);
+    table_adopt(&s->t, res);
+    *w->out = *row;
+    w->out->state = w->out->roster = w->out->logs = NULL;
+    w->out->state_len = w->out->roster_len = w->out->logs_len = 0;
+    w->adopted = true;
+    return CB_OK;
 }
 
-// The game's row, under its lock: *kept true when its bytes are rb's (not freed: row_release).
-static int row_acquire(cb_ctx *ctx, const char *id, cb_row_buf *rb, cb_game_row *out, bool *kept) {
+// The game, under its lock, into the section: adopted (*kept true, the row its columns), or
+// its row (*kept true: the bytes are s->rb's, not freed; false: the store's, freed by
+// row_release) for the caller to load.
+static int game_acquire(cb_ctx *ctx, const char *id, cb_section *s, cb_game_row *out, bool *kept, bool *adopted) {
     memset(out, 0, sizeof *out);
-    *kept = false;
+    *kept = *adopted = false;
     if (cb_journal_of(ctx->store)) {
-        row_into w = { rb, out };
-        int rc = cb_journal_game_acquire(ctx->store, id, copy_row, &w);
+        row_into w = { s, out, false };
+        int rc = cb_journal_game_acquire(ctx->store, id, take_game, &w);
         *kept = rc == CB_OK;
+        *adopted = rc == CB_OK && w.adopted;
+        if (*adopted) {
+            cb_strlcpy(s->gid, id, sizeof s->gid);
+            section_seats(s);
+        }
         return rc;
     }
     return CB_ROWS_CALL(ctx->store, game_get, id, out);
@@ -286,6 +306,12 @@ int cb_section_load(cb_section *s, const cb_game_row *row) {
     if (row->has_seed) hex_encode(row->seed, CB_SEED_LEN, hex, sizeof hex);
     rc = table_set_deal_seed(&s->t, hex, (int)strlen(hex));
     if (rc < 0) return rc;
+    section_seats(s);
+    return TABLE_OK;
+}
+
+// The humans and bots the loaded roster seats before the operation.
+static void section_seats(cb_section *s) {
     s->n_old = s->n_old_bots = 0;
     for (int i = 0; i < s->t.r.n; i++) {
         const RosterSeat *seat = &s->t.r.seats[i];
@@ -298,7 +324,6 @@ int cb_section_load(cb_section *s, const cb_game_row *row) {
             cb_strncpy0((human ? s->old_humans : s->old_bots)[(*n_list)++], sizeof(cb_uuid), (const char *)seat->id, n);
         }
     }
-    return TABLE_OK;
 }
 
 int cb_section_envelope(cb_section *s, int viewer, uint32_t version, uint8_t **out, size_t *out_len) {
@@ -685,9 +710,8 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // A plain human move (journal.h): the store may hold it in its journal. Its menu
     // index was taken at the board before the move (cb_table_run); anything a move does
     // besides moving the board goes to the tables at once.
-    if (s->n_mv > 0 && !c->ended && !c->dealt_now && !gc.log_clear && gc.n_rated == 0 &&
-        row->status == GAME_STATUS_PLAYING && nrow.status == GAME_STATUS_PLAYING &&
-        row->roster_len == nrow.roster_len && memcmp(row->roster, nrow.roster, nrow.roster_len) == 0)
+    if (s->n_mv > 0 && !c->ended && !c->dealt_now && !gc.log_clear && gc.n_rated == 0 && !c->roster_changed &&
+        row->status == GAME_STATUS_PLAYING && nrow.status == GAME_STATUS_PLAYING)
     {
         gc.moves = s->mv;
         gc.n_moves = s->n_mv;
@@ -751,6 +775,16 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     }
     // nrow's bytes are the arena's, which nothing below writes (finalize_game reloads the
     // table from them and writes only the Table and the board): the cache and finalize read them.
+    // The game as the commit leaves it, decoded, for a store that keeps it (the journal): what a
+    // section loaded from the new row would hold, its RNG base from the new row's seed too.
+    TableResident res;
+    if (rc == CB_OK && cb_journal_of(ctx->store)) {
+        char hex[2 * CB_SEED_LEN + 1] = "";
+        if (nrow.has_seed) hex_encode(nrow.seed, CB_SEED_LEN, hex, sizeof hex);
+        table_set_deal_seed(t, hex, (int)strlen(hex));
+        table_resident(t, &c->clock, &res);
+        gc.resident = &res;
+    }
     if (rc == CB_OK) {
         // The caller holds the game's lock (cb_table_lock): from the row it read to
         // these pushes nothing else in this process commits the game.
@@ -918,8 +952,8 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
     }
     do {
         cb_game_row row;
-        bool kept = false;   // the row's bytes are s->rb's (not freed: row_release)
-        int rc = row_acquire(ctx, op->game_id, &s->rb, &row, &kept);
+        bool kept = false, adopted = false;   // the row's bytes are s->rb's (not freed: row_release)
+        int rc = game_acquire(ctx, op->game_id, s, &row, &kept, &adopted);
         if (rc != CB_OK) { ret = rc; break; }
         // The deal seed decides a deck nobody may predict: drawn from the CSPRNG, fresh for each
         // attempt of an operation that can deal, and not at all for one that cannot (a move).
@@ -927,7 +961,12 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         if (!op->no_deal) cb_random_bytes(seed, sizeof seed);
 
         // ---- the kernel section ----
-        int lr = cb_section_load(s, &row);
+        int lr = adopted ? TABLE_OK : cb_section_load(s, &row);
+        if (!adopted && lr >= 0 && kept) {   // decoded once: the journal keeps the game so
+            TableResident res;
+            table_resident(&s->t, NULL, &res);
+            cb_journal_game_decoded(ctx->store, op->game_id, row.version, &res);
+        }
         if (lr < 0) {
             row_release(&row, kept);
             // A stored row the kernel refuses: never silently repaired or played on.

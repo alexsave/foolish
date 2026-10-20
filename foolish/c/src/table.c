@@ -165,9 +165,6 @@ bool table_bots_need_logs(const Table *t) {
 
 static int unnamed_seat(const Game *g);
 
-// A bound on one state_put, for reserving space before writing it.
-#define TABLE_STATE_MAX (STATE_BLOB_HEADER + 24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS \
-                         + STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES)
 
 // ---------- fixtures --------------------------------------------------------------
 
@@ -821,6 +818,56 @@ int table_rate(Table *t, const int32_t *ratings, int n) {
 int table_seat_of(const Table *t, const char *id, int id_len) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     return roster_seat_of(&t->r, id, id_len);
+}
+
+// ---------- the resident game ---------------------------------------------------
+
+// The Game's log array is its last field, so everything before it is the board a resident
+// keeps (a layout change that put a field after it would leave that field out: refused here).
+_Static_assert(offsetof(Game, num_logs) < offsetof(Game, logs), "num_logs is in the resident head");
+_Static_assert(sizeof(Game) - offsetof(Game, logs) - sizeof(((Game *)0)->logs) < 8, "Game.logs is the Game's last field");
+
+int table_adopt(Table *t, const TableResident *res) {
+    memcpy(t->g, res->head, TABLE_HEAD_BYTES);
+    t->g->num_logs = 0;   // the board carries no log (table_load's rule)
+    t->r = res->r;
+    t->clock = res->clock;
+    t->ratings = res->ratings;
+    t->rng_base = res->rng_base;
+    t->detail = 0;
+    scope_open(t, -1);
+    t->log_len = 0;
+    t->loaded = true;
+    return TABLE_OK;
+}
+
+void table_resident(const Table *t, const BoardClock *clock, TableResident *out) {
+    memcpy(out->head, t->g, TABLE_HEAD_BYTES);
+    // THE BOARD A LOAD OF ITS OWN ROW WOULD HOLD (view.h state_canonical), not the working
+    // board: a seat's raw awaiting flag that the blob writes as game_seat_awaiting, carried
+    // instead, played the next operation on another board than the recovery's replay of it;
+    // log_virt (the MAX_LOGS cliff, game.h) carried would reach a cliff a load never does.
+    state_canonical((Game *)out->head);
+    out->r = t->r;
+    out->clock = clock ? *clock : t->clock;
+    out->ratings = t->ratings;
+    out->rng_base = t->rng_base;
+}
+
+int table_resident_encode(const TableResident *res, uint8_t *state, int state_cap, int *state_len, uint8_t *roster,
+                          int roster_cap, int *roster_len) {
+    const Game *g = (const Game *)res->head;
+    if (state_cap < TABLE_STATE_MAX) return TABLE_E_CAP;
+    // table_stamp's rule: the stamp rides a finished, rated board.
+    const GameRatings *stamp = g->status == GAME_STATUS_GAME_OVER && res->ratings.n > 0 ? &res->ratings : 0;
+    const int n = state_blob_put_rated_at(g, &res->clock, stamp, STATE_BLOB_FORMAT, state);
+    if (n == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
+    if (n < 0) return n;
+    const int rl = roster_encode(&res->r, roster, roster_cap);
+    if (rl < 0) return rl == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
+    *state_len = n;
+    *roster_len = rl;
+    return TABLE_OK;
 }
 
 int table_set_deal_seed(Table *t, const char *seed_hex, int len) {
