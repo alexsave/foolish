@@ -1056,6 +1056,13 @@ static void the_wire_surface(void) {
     T_EQ_STR(r.ctype, OCT);
     T_EQ_INT(r.len, ASK_REFUSAL_BYTES);
     T_EQ_INT(refusal_why(&r, NULL), ASK_WHY_MALFORMED);
+    // The type is the octets' itself, parameters after it allowed; one that only mentions it is not.
+    call("POST", "meta", "A", "text/plain; x=application/octet-stream", body, (size_t)n, &r);
+    T_EQ_INT(r.status, 415);
+    call("POST", "meta", "A", "application/octet-streamy", body, (size_t)n, &r);
+    T_EQ_INT(r.status, 415);
+    call("POST", "meta", "A", OCT "; charset=binary", body, (size_t)n, &r);
+    T_EQ_INT(r.status, 200);
     // No bearer: AUTH, 400 (wrap400 gave every reason 400).
     call("POST", "meta", NULL, OCT, body, (size_t)n, &r);
     T_EQ_INT(r.status, 400);

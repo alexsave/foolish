@@ -73,9 +73,11 @@ static void run_failure(cb_http_res *res, int rc) {
     else refusal(res, 500, ASK_WHY_INTERNAL, 0, 0);
 }
 
+// The body is octets: the content type IS application/octet-stream (parameters after it allowed).
+// A compare of the prefix, not a search: it runs on every move.
 static bool octet_body(const cb_http_req *req) {
     const char *ct = cb_http_header_get(req, "content-type");
-    return ct && strstr(ct, OCTETS) != NULL;
+    return ct && strncmp(ct, OCTETS, sizeof OCTETS - 1) == 0 && (ct[sizeof OCTETS - 1] == 0 || ct[sizeof OCTETS - 1] == ';');
 }
 
 // The bearer, or false with the refusal answered: `status` AUTH for a token
