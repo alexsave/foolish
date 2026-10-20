@@ -972,17 +972,23 @@ static void mapped_segments_keep_every_committed_batch(void) {
     T_CHECK(s != NULL);
     if (!s) return;
     char gid[CB_GAME_ID_MAX + 1];
-    two_humans_dealt(gid);
     move_t m;
     int64_t v[32];
     uint64_t h[32];
     int n = 0;
     // Twelve steps at least, the last one a single commit: a bot drive may commit more than
-    // one cycle in a step, and the cut below takes off only the last batch (one record).
+    // one cycle in a step, and the cut below takes off only the last batch (one record). The
+    // game still playing: a game's end is written to the tables at once (it rates), and a cut
+    // batch before it would change nothing; a game that ends that soon is dealt again.
     bool single = false;
-    for (; n < 32 && !(n >= 12 && single) && (v[n] = step(s, gid, &m)) > 0; n++) {
-        h[n] = row_hash(s, gid);
-        single = n > 0 && v[n] == v[n - 1] + 1;
+    for (int game = 0; game < 4 && !(n >= 12 && single); game++) {
+        two_humans_dealt(gid);
+        n = 0;
+        single = false;
+        for (; n < 32 && !(n >= 12 && single) && (v[n] = step(s, gid, &m)) > 0 && version_of(s, gid) > 0; n++) {
+            h[n] = row_hash(s, gid);
+            single = n > 0 && v[n] == v[n - 1] + 1;
+        }
     }
     T_CHECK(n >= 12 && single);
     cb_journal_stats js;
