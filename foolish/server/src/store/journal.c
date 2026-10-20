@@ -984,7 +984,7 @@ void cb_journal_close(cb_store *s) {
     int rc = flush_all(j);
     if (rc == CB_OK) delete_segments_before(j, j->seg_seq + 1);
     else CB_ERROR(MOD, "the last flush failed (%s): the segments stay for the next start", cb_strerror(rc));
-    CB_INFO(MOD, "journal: %ld record(s) in %ld batch(es), %ld write(s), %ld byte(s); %ld flush(es) of %ld move(s)",
+    CB_INFO(MOD, "%ld record(s) in %ld batch(es), %ld write(s), %ld byte(s); %ld flush(es) of %ld move(s)",
             (long)j->records, (long)j->batches, (long)j->writes, (long)j->bytes, (long)j->flushes, (long)j->flushed_moves);
     s->app_state = NULL;
     s->app_settle = NULL;
