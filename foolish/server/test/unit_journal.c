@@ -1027,6 +1027,45 @@ static int count_segments(const char *path) {
     return n;
 }
 
+// A game deleted while moves wait in the journal: the delete goes around the journal (its
+// waiting moves leave with it), and a crash after it does not bring the game back from the
+// segments that still hold them.
+static bool game_gone(cb_store *s, const char *gid) {
+    cb_game_row g;
+    memset(&g, 0, sizeof g);
+    int rc = CB_ROWS_CALL(s, game_get, gid, &g);
+    cb_game_row_free(&g);
+    return rc == CB_E_NOT_FOUND;
+}
+
+static void a_deleted_game_stays_deleted(void) {
+    char path[320], copy[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/deleted%d.sqlite", g_dir, g_bots);
+    snprintf(copy, sizeof copy, "%s/deleted%d_crash.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    move_t m;
+    int64_t v = 0;
+    for (int k = 0; k < 6; k++) v = step(s, gid, &m);
+    T_CHECK(v > 0);
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    T_CHECK(js.waiting > 0);
+    T_EQ_INT(CB_ROWS_CALL(s, game_delete, gid, v), CB_OK);
+    T_CHECK(game_gone(s, gid));
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.waiting, 0);
+    crash_copy(path, copy);
+    close_world(s);
+    s = open_world(copy, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (s) { T_CHECK(game_gone(s, gid)); close_world(s); }
+}
+
 static void a_move_writes_no_table_until_its_game_is_due(void) {
     char path[320], err[256] = "";
     snprintf(path, sizeof path, "%s/rule%d.sqlite", g_dir, g_bots);
@@ -1343,6 +1382,7 @@ int main(void) {
         T_RUN(the_lists_read_the_overlay_without_a_flush);
         T_RUN(an_admin_write_is_never_written_over);
         T_RUN(mapped_segments_keep_every_committed_batch);
+        T_RUN(a_deleted_game_stays_deleted);
     }
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
