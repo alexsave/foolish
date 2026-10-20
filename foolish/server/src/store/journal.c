@@ -208,6 +208,13 @@ int cb_journal_batch_decode(cb_jslots *t, int64_t seg_start_ms, const uint8_t *i
 
 // ---- the overlay: each journaled game's acknowledged state ----------------------------------
 
+// A waiting move: its version and where its log delta is in the game's log buffer.
+typedef struct {
+    int64_t  seq;
+    uint32_t off, len;   // the log delta's bytes in jgame.logs
+    bool     clear;      // (a whole commit) it clears the session log first
+} jmove;
+
 typedef struct jgame {
     struct jgame *next;
     // THE GAME, decoded (table.h TableResident): valid when res_valid. An operation adopts a
@@ -220,8 +227,13 @@ typedef struct jgame {
     cb_game_row   row;
     bool          row_fresh;
     int64_t       sql_version;   // the version the tables hold
-    cb_game_move *moves;         // the moves since sql_version, in order (each log owned)
+    jmove        *moves;         // the moves since sql_version, in order
     int           n_moves, cap_moves;
+    // THE WAITING MOVES' LOG DELTAS, one grown buffer: moves[i] is at logs + moves[i].off, the
+    // deltas back to back in move order (a flush cuts a prefix). One buffer per game instead of
+    // one allocation per move: no malloc on the move path and no allocator header per delta.
+    uint8_t      *logs;
+    size_t        logs_len, logs_cap;
     long          bytes;         // what the waiting moves hold (move_bytes each)
     size_t        state_cap, roster_cap;   // row.state's and row.roster's buffers
     int64_t       touched_ms;    // cb_mono_ms of its last move
@@ -237,7 +249,7 @@ typedef struct jgame {
     int64_t       seats_seq;
 } jgame;
 
-static long move_bytes(const cb_game_move *m) { return (long)(sizeof *m + m->len); }
+static long move_bytes(const jmove *m) { return (long)(sizeof *m + m->len); }
 
 // A segment file, mapped.
 typedef struct {
@@ -256,7 +268,7 @@ typedef struct jrec {
     const TableResident *res;   // the new game decoded (the caller's), or NULL (a recovered move: row's bytes)
     bool         full;          // a whole commit (FULL_MAGIC): the row's bytes are written, not m's moves
     bool         clear;         // (full) it clears the session log first
-    uint8_t     *log;
+    const uint8_t *log;         // the commit's log delta (the caller's: ov_apply copies it)
     size_t       log_len;
     int          rc;
     bool         done;
@@ -322,7 +334,7 @@ static jgame **ov_slot(cb_journal *j, const char *id) {
 
 static void game_free(jgame *g) {
     cb_game_row_free(&g->row);
-    for (int i = 0; i < g->n_moves; i++) free((void *)g->moves[i].log);
+    free(g->logs);
     free(g->moves);
     free(g);
 }
@@ -464,7 +476,8 @@ static void kick_flusher(cb_journal *j) {
     pthread_mutex_unlock(&j->mu);
 }
 
-// A record's row and log become the game's (ov_mu held). The log is taken, the row copied.
+// A record's row and log become the game's (ov_mu held). Both are copied: the log onto the end
+// of the game's log buffer.
 static int ov_apply(cb_journal *j, jrec *r) {
     jgame **p = ov_slot(j, r->m.game), *g = *p;
     if (!g) {
@@ -479,10 +492,19 @@ static int ov_apply(cb_journal *j, jrec *r) {
     }
     if (g->n_moves == g->cap_moves) {
         int cap = g->cap_moves ? g->cap_moves * 2 : 8;
-        cb_game_move *m = realloc(g->moves, (size_t)cap * sizeof *m);
+        jmove *m = realloc(g->moves, (size_t)cap * sizeof *m);
         if (!m) return CB_E_NOMEM;
         g->moves = m;
         g->cap_moves = cap;
+    }
+    if (r->log_len > UINT32_MAX - g->logs_len) return CB_E_NOMEM;   // an offset is 32 bits
+    if (g->logs_len + r->log_len > g->logs_cap) {
+        size_t cap = g->logs_cap ? g->logs_cap : 256;
+        while (cap < g->logs_len + r->log_len) cap *= 2;
+        uint8_t *q = realloc(g->logs, cap);
+        if (!q) return CB_E_NOMEM;
+        g->logs = q;
+        g->logs_cap = cap;
     }
     const int64_t now = cb_mono_ms();
     if (!g->n_moves) {
@@ -499,15 +521,21 @@ static int ov_apply(cb_journal *j, jrec *r) {
         g->seats_dirty = true;
         g->seats_seq = r->row.version;
     }
-    g->moves[g->n_moves] = (cb_game_move){ r->row.version, r->log, r->log_len, r->full && r->clear };
+    g->moves[g->n_moves] = (jmove){ r->row.version, (uint32_t)g->logs_len, (uint32_t)r->log_len, r->full && r->clear };
+    if (r->log_len) memcpy(g->logs + g->logs_len, r->log, r->log_len);
+    g->logs_len += r->log_len;
     const long b = move_bytes(&g->moves[g->n_moves++]);
-    r->log = NULL;
     g->touched_ms = now;
     g->bytes += b;
     j->w_bytes += b;
     j->n_waiting++;
     return CB_OK;
 }
+
+// A game whose waiting moves hold game_bytes: part of THE FLUSH RULE (flush_due), and the
+// writer's reason to kick the flush thread at once. (The transaction a flush writes is bounded
+// apart, by its one owner snapshot_take: no cap on a game's move count is wanted beside it.)
+static bool game_full(const cb_journal *j, const jgame *g) { return g->bytes >= j->o.game_bytes; }
 
 // ---- segments ------------------------------------------------------------------------------
 
@@ -747,7 +775,7 @@ static long full_decode(const uint8_t *in, size_t len, jrec *r) {
 #undef NEED
     w->state = (uint8_t *)p[0], w->state_len = n[0];
     w->roster = (uint8_t *)p[1], w->roster_len = n[1];
-    r->log = (uint8_t *)p[2], r->log_len = n[2];
+    r->log = p[2], r->log_len = n[2];
     w->version = r->m.base_version + 1;
     w->updated_at = w->last_commit_at = r->m.now_ms;
     w->seats_exact = true;
@@ -853,7 +881,7 @@ static void write_batch(cb_journal *j, jrec *list) {
         r->rc = rc;
         if (rc == CB_OK && (r->rc = ov_apply(j, r)) != CB_OK) CB_ERROR(MOD, "game %s: overlay out of memory", r->m.game);
         jgame *g = rc == CB_OK ? *ov_slot(j, r->m.game) : NULL;
-        if (g && g->bytes >= j->o.game_bytes) due = true;
+        if (g && game_full(j, g)) due = true;
     }
     if (j->w_bytes >= j->o.total_bytes) due = true;
     pthread_mutex_unlock(&j->ov_mu);
@@ -1129,10 +1157,27 @@ static void flush_seats(const jgame *g, cb_game_flush *f, seats_copy *c) {
 }
 
 // THE FLUSH RULE: a game whose oldest waiting move is game_age_ms old, or whose waiting moves
-// hold game_bytes, is due; with `all` (every waiting move together over total_bytes, a
-// settle, the close) every game with a move waiting is.
+// hold game_bytes (game_full), is due; with `all` (every waiting move
+// together over total_bytes, a settle, the close) every game with a move waiting is.
 static bool flush_due(const cb_journal *j, const jgame *g, bool all, int64_t now) {
-    return g->n_moves > 0 && (all || now - g->first_ms >= j->o.game_age_ms || g->bytes >= j->o.game_bytes);
+    return g->n_moves > 0 && (all || now - g->first_ms >= j->o.game_age_ms || game_full(j, g));
+}
+
+// g's waiting moves as the tables' write takes them: an array of n moves whose logs point into
+// `logs` (g's own buffer when the caller holds g still, else a copy). One allocation: the moves,
+// then (copy) the log bytes after them.
+static cb_game_move *moves_for_flush(const jgame *g, bool copy) {
+    cb_game_move *m = malloc((size_t)g->n_moves * sizeof *m + (copy ? g->logs_len : 0) + 1);
+    if (!m) return NULL;
+    const uint8_t *logs = g->logs;
+    if (copy) {
+        uint8_t *b = (uint8_t *)(m + g->n_moves);
+        if (g->logs_len) memcpy(b, g->logs, g->logs_len);
+        logs = b;
+    }
+    for (int i = 0; i < g->n_moves; i++)
+        m[i] = (cb_game_move){ g->moves[i].seq, logs + g->moves[i].off, g->moves[i].len, g->moves[i].clear };
+    return m;
 }
 
 static int first_ms_cmp(const void *a, const void *b) {
@@ -1140,8 +1185,8 @@ static int first_ms_cmp(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-// One transaction's worth of the games due, copied (ov_mu held): rows and the move lists (the
-// logs stay the overlay's; only a flush frees them, and the flush lock is held). THE
+// One transaction's worth of the games due, copied (ov_mu held): rows, the move lists and their log bytes
+// (a move after the snapshot may grow, and so move, the game's log buffer while the flush writes). THE
 // TRANSACTION BUDGET (its one owner): the oldest waiting games first, while their waiting moves
 // together stay within opts.txn_moves (one game bigger than that goes alone: its moves and its
 // row are one write). Only games that waited since before the pass began (first_ms <= pass_ms)
@@ -1171,7 +1216,7 @@ static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now, int
     if (!sn->f || !sn->rows || !sn->seats) { free(due); snapshot_free(sn); return CB_E_NOMEM; }
     for (int i = 0; i < n; i++) {
         jgame *g = due[i];
-        cb_game_move *m = malloc((size_t)g->n_moves * sizeof *m);
+        cb_game_move *m = moves_for_flush(g, true);
         // R4: the rows the flush writes are the residents' encodes, made now.
         if (!m || row_refresh(g) != CB_OK || row_dup(&sn->rows[sn->n], &g->row) != CB_OK) {
             free(m);
@@ -1179,7 +1224,6 @@ static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now, int
             snapshot_free(sn);
             return CB_E_NOMEM;
         }
-        memcpy(m, g->moves, (size_t)g->n_moves * sizeof *m);
         sn->f[sn->n] = (cb_game_flush){ &sn->rows[sn->n], g->sql_version, m, g->n_moves, false, 0, 0, NULL, NULL };
         flush_seats(g, &sn->f[sn->n], &sn->seats[sn->n]);
         sn->n++;
@@ -1193,12 +1237,24 @@ static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now, int
 static void ov_flushed(cb_journal *j, jgame *g, const cb_game_flush *f, uint64_t snap_seg, int64_t now) {
     int k = 0;
     long b = 0;
-    for (; k < g->n_moves && g->moves[k].seq <= f->row->version; k++) {
-        b += move_bytes(&g->moves[k]);
-        free((void *)g->moves[k].log);
-    }
+    for (; k < g->n_moves && g->moves[k].seq <= f->row->version; k++) b += move_bytes(&g->moves[k]);
+    // The flushed deltas are the buffer's prefix: the rest moves down to its start. An emptied
+    // buffer is freed (a game between flushes holds no log memory).
+    const size_t cut = k < g->n_moves ? g->moves[k].off : g->logs_len;
     memmove(g->moves, g->moves + k, (size_t)(g->n_moves - k) * sizeof *g->moves);
     g->n_moves -= k;
+    for (int i = 0; i < g->n_moves; i++) g->moves[i].off -= (uint32_t)cut;
+    if (!g->n_moves) {   // and the move array goes with it: a game between flushes holds neither
+        free(g->logs);
+        g->logs = NULL;
+        g->logs_len = g->logs_cap = 0;
+        free(g->moves);
+        g->moves = NULL;
+        g->cap_moves = 0;
+    } else if (cut) {
+        memmove(g->logs, g->logs + cut, g->logs_len - cut);
+        g->logs_len -= cut;
+    }
     g->bytes -= b;
     j->w_bytes -= b;
     j->n_waiting -= k;
@@ -1484,7 +1540,7 @@ static int logs_of(cb_journal *j, const char *id, int64_t log_from, uint8_t **ou
             *out = p;
             for (int i = 0; i < g->n_moves; i++)
                 if (g->moves[i].seq >= log_from) {
-                    memcpy(p + *out_len, g->moves[i].log, g->moves[i].len);
+                    memcpy(p + *out_len, g->logs + g->moves[i].off, g->moves[i].len);
                     *out_len += g->moves[i].len;
                 }
         }
@@ -1513,7 +1569,11 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
     pthread_mutex_lock(&j->flush_mu);
     pthread_mutex_lock(&j->ov_mu);
     jgame *g = *ov_slot(j, id);
-    const int fr = g ? row_refresh(g) : CB_OK;   // the waiting moves' row, written below (R4)
+    int fr = g ? row_refresh(g) : CB_OK;   // the waiting moves' row, written below (R4)
+    // Its waiting moves, their logs in place: no move of this game comes while the caller
+    // holds its lock, so its log buffer stays where it is.
+    cb_game_move *moves = fr == CB_OK && g && g->n_moves ? moves_for_flush(g, false) : NULL;
+    if (fr == CB_OK && g && g->n_moves && !moves) fr = CB_E_NOMEM;
     pthread_mutex_unlock(&j->ov_mu);
     if (fr != CB_OK) {
         pthread_mutex_unlock(&j->flush_mu);
@@ -1524,7 +1584,7 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
     cb_game_flush f = { 0 };
     seats_copy sc;
     if (g) {
-        f = (cb_game_flush){ &g->row, g->sql_version, g->moves, g->n_moves, false, 0, 0, NULL, NULL };
+        f = (cb_game_flush){ &g->row, g->sql_version, moves, g->n_moves, false, 0, 0, NULL, NULL };
         flush_seats(g, &f, &sc);
     }
     int rc = cb_rows_sql_flush(s, &f, g && g->n_moves ? 1 : 0, c, del_id, del_version);
@@ -1562,6 +1622,7 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
     }
     pthread_mutex_unlock(&j->ov_mu);
     pthread_mutex_unlock(&j->flush_mu);
+    free(moves);
     if (over) kick_flusher(j);
     return rc;
 }
@@ -1608,11 +1669,9 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     }
     r.row = *row;   // read by ov_apply while this thread waits in append
     r.res = c->resident;
-    if (c->log_add_len && !(r.log = dup_bytes(c->log_add, c->log_add_len))) return CB_E_NOMEM;
+    r.log = c->log_add_len ? c->log_add : NULL;   // copied by ov_apply while this thread waits
     r.log_len = c->log_add_len;
-    int rc = on_loop(j) ? loop_append(j, &r) : append(j, &r);
-    free(r.log);   // NULL once the overlay took it
-    return rc;
+    return on_loop(j) ? loop_append(j, &r) : append(j, &r);
 }
 
 static int j_game_delete(cb_store *s, const char *id, int64_t expected) { return around(s, id, NULL, id, expected); }
@@ -1977,10 +2036,11 @@ static int recover_move(cb_journal *j, const cb_jmove *m, char *err, size_t cap)
     jrec r;
     memset(&r, 0, sizeof r);
     r.m = *m;
-    uint8_t *slog = NULL;
+    uint8_t *slog = NULL, *mlog = NULL;
     size_t slog_len = 0;
     if (m->bots) rc = logs_of(j, m->game, cur.log_from, &slog, &slog_len);   // a bot's moves are seeded from it
-    if (rc == CB_OK) rc = j->o.apply(j->o.apply_ud, &cur, slog, slog_len, m, &r.row, &r.log, &r.log_len);
+    if (rc == CB_OK) rc = j->o.apply(j->o.apply_ud, &cur, slog, slog_len, m, &r.row, &mlog, &r.log_len);
+    r.log = mlog;
     free(slog);
     cb_game_row_free(&cur);
     if (rc == CB_OK && r.row.version != m->base_version + 1) rc = CB_E_STATE;
@@ -1988,14 +2048,14 @@ static int recover_move(cb_journal *j, const cb_jmove *m, char *err, size_t cap)
         snprintf(err, cap, "journal: game %s's move from version %lld does not replay (%s)", m->game,
                  (long long)m->base_version, cb_strerror(rc));
         cb_game_row_free(&r.row);
-        free(r.log);
+        free(mlog);
         return rc;
     }
     pthread_mutex_lock(&j->ov_mu);
     rc = ov_apply(j, &r);
     pthread_mutex_unlock(&j->ov_mu);
     cb_game_row_free(&r.row);
-    free(r.log);
+    free(mlog);
     if (rc == CB_OK) atomic_fetch_add(&j->recovered, 1);
     return rc;
 }
@@ -2025,13 +2085,10 @@ static int recover_full(cb_journal *j, jrec *r, char *err, size_t cap) {
                  r->m.game, (long long)at, (long long)r->m.base_version);
         return CB_E_STATE;
     }
-    // The log is the overlay's once applied; the record's bytes are the segment buffer's.
-    if (r->log_len && !(r->log = dup_bytes(r->log, r->log_len))) return CB_E_NOMEM;
-    if (!r->log_len) r->log = NULL;
+    // The record's bytes are the segment buffer's: ov_apply copies its log.
     pthread_mutex_lock(&j->ov_mu);
     rc = ov_apply(j, r);
     pthread_mutex_unlock(&j->ov_mu);
-    free(r->log);
     if (rc == CB_OK) atomic_fetch_add(&j->recovered, 1);
     return rc;
 }
@@ -2127,7 +2184,7 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     j->o = *o;
     if (j->o.game_age_ms <= 0) j->o.game_age_ms = 600000;
     if (j->o.game_bytes <= 0) j->o.game_bytes = 256 << 10;
-    if (j->o.total_bytes <= 0) j->o.total_bytes = 64 << 20;
+    if (j->o.total_bytes <= 0) j->o.total_bytes = 16 << 20;
     if (j->o.txn_moves <= 0) j->o.txn_moves = 2000;
     if (j->o.seg_bytes <= 0) j->o.seg_bytes = 8 << 20;
     if (j->o.max_games <= 0) j->o.max_games = OV_MAX_GAMES;

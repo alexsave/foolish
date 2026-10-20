@@ -76,11 +76,12 @@ out:
 // ---- the move journal under `cbase serve` (store/journal.h) -----------------------------
 //
 // CBASE_JOURNAL=0 turns it off (every move commits to the tables, as before). The flush
-// rule's three knobs: CBASE_JOURNAL_GAME_AGE_S (600: a game's moves wait at most this long),
-// CBASE_JOURNAL_GAME_BYTES (262144: or until they hold this many bytes) and
-// CBASE_JOURNAL_TOTAL_BYTES (67108864: every game goes once all of them hold this many);
-// CBASE_JOURNAL_SEG_BYTES (8388608) closes a segment; CBASE_JOURNAL_SYNC=1 adds an
-// fdatasync to every batch (a move then survives an OS crash too).
+// rule's knobs: CBASE_JOURNAL_GAME_AGE_S (a game's moves wait at most this long),
+// CBASE_JOURNAL_GAME_BYTES (or until they hold this many bytes) and CBASE_JOURNAL_TOTAL_BYTES
+// (every game goes once all of them hold this many); CBASE_JOURNAL_TXN_MOVES bounds one flush
+// transaction; CBASE_JOURNAL_SEG_BYTES closes a segment; CBASE_JOURNAL_SYNC=1 adds an fdatasync to
+// every batch (a move then survives an OS crash too). Unset, each is journal.h's default (its
+// one owner, sized for the production t4g.nano).
 static long env_long(const char *name, long dflt) {
     const char *v = getenv(name);
     if (!v || !*v) return dflt;
@@ -94,11 +95,11 @@ static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
     if (!db || !*db || *db == ':') return CB_OK;   // an in-memory database has nothing to recover into
     cb_journal_opts o = {
         .path = db,
-        .game_age_ms = (int64_t)env_long("CBASE_JOURNAL_GAME_AGE_S", 600) * 1000,
-        .game_bytes = env_long("CBASE_JOURNAL_GAME_BYTES", 256 << 10),
-        .total_bytes = env_long("CBASE_JOURNAL_TOTAL_BYTES", 64 << 20),
-        .seg_bytes = env_long("CBASE_JOURNAL_SEG_BYTES", 8 << 20),
-        .txn_moves = (int)env_long("CBASE_JOURNAL_TXN_MOVES", 2000),
+        .game_age_ms = (int64_t)env_long("CBASE_JOURNAL_GAME_AGE_S", 0) * 1000,
+        .game_bytes = env_long("CBASE_JOURNAL_GAME_BYTES", 0),
+        .total_bytes = env_long("CBASE_JOURNAL_TOTAL_BYTES", 0),
+        .seg_bytes = env_long("CBASE_JOURNAL_SEG_BYTES", 0),
+        .txn_moves = (int)env_long("CBASE_JOURNAL_TXN_MOVES", 0),
         .sync = env_long("CBASE_JOURNAL_SYNC", 0) != 0,
         .loop = ctx->loop,
         .apply = cb_table_replay_move,
