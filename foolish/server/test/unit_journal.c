@@ -428,6 +428,47 @@ static void a_move_off_its_board_is_refused(void) {
     // A board whose menu is not the one it was coded against refuses it.
     m.menu_n++;
     T_EQ_INT(replay_move_wire(g, &m, back, sizeof back), -REPLAY_ENOTINMENU);
+
+    // A live move is coded raw (no menu looked up): it codes and decodes to its own bytes,
+    // and on its board it names them.
+    ReplayMove raw, dec;
+    T_EQ_INT(replay_move_raw(seat, wire, n, &raw), 0);
+    T_EQ_INT(raw.menu_n, REPLAY_MOVE_RAW);
+    ReplayCoder c;
+    uint8_t code[64];
+    T_EQ_INT(replay_coder_begin_encode(&c), 0);
+    T_EQ_INT(replay_move_code(&c, &raw), 0);
+    int code_len = replay_coder_finish(&c, code, sizeof code);
+    T_CHECK(code_len > 0);
+    T_EQ_INT(replay_coder_begin_decode(&c, code, code_len), 0);
+    memset(&dec, 0, sizeof dec);
+    T_EQ_INT(replay_move_code(&c, &dec), 0);
+    T_CHECK(dec.seat == seat && dec.menu_n == REPLAY_MOVE_RAW && dec.wire_len == n && memcmp(dec.wire, wire, (size_t)n) == 0);
+    k = replay_move_wire(g, &dec, back, sizeof back);
+    T_CHECK(k == n && memcmp(back, wire, (size_t)n) == 0);
+    // Its board check: the seat must have a move there. The other seat, with none, is refused.
+    int other = 1 - seat;
+    if (pick_move(&row, other, back, sizeof back) <= 0) {
+        dec.seat = other;
+        T_EQ_INT(replay_move_wire(g, &dec, back, sizeof back), -REPLAY_ENOTINMENU);
+    }
+    // No index is coded for it: 64 raw moves in one coder are smaller than the same moves as
+    // the index form's escape (an index over a menu of REPLAY_MOVE_MENU_CAP, about 10 bits each).
+    ReplayMove esc = raw;
+    esc.menu_n = esc.index = REPLAY_MOVE_MENU_CAP;
+    int lens[2];
+    for (int form = 0; form < 2; form++) {
+        static uint8_t batch[64 * 16];
+        T_EQ_INT(replay_coder_begin_encode(&c), 0);
+        for (int i = 0; i < 64; i++) {
+            ReplayMove one = form ? esc : raw;
+            T_EQ_INT(replay_move_code(&c, &one), 0);
+        }
+        lens[form] = replay_coder_finish(&c, batch, sizeof batch);
+    }
+    T_CHECK(lens[0] > 0 && lens[0] + 64 < lens[1]);
+    // A malformed frame is not coded.
+    T_EQ_INT(replay_move_raw(seat, wire, 0, &raw), -REPLAY_EINPUT);
     free(g);
     free(snaps);
     cb_game_row_free(&row);

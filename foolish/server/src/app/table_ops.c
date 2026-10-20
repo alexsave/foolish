@@ -994,13 +994,15 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             ret = CB_E_STATE;
             break;
         }
-        // The move as the kernel's menu names it, at the board before it: what the store's
-        // journal holds (journal.h). Only a store with a journal asks.
+        // The move as the store's journal holds it (journal.h): its seat and its awire bytes,
+        // coded raw (replay_move.h REPLAY_MOVE_RAW). Not its menu index: finding that enumerated
+        // the whole menu at the board on every move; the replay checks the board instead. Only a
+        // store with a journal asks.
         s->n_mv = 0;
         s->mv_bots = false;
         if (op->wire && actor && cb_journal_of(ctx->store)) {
             int seat = table_seat_of(&s->t, actor, (int)strlen(actor));
-            if (seat >= 0 && replay_move_of(&s->g, seat, op->wire, op->wire_len, &s->mv[0]) == 0) s->n_mv = 1;
+            if (seat >= 0 && replay_move_raw(seat, op->wire, op->wire_len, &s->mv[0]) == 0) s->n_mv = 1;
         }
         rc = op->run(&s->t, &row, seed, op->ud);
         if (rc < 0 || (cached && fresh_only(rc))) {

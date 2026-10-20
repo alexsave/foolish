@@ -61,17 +61,39 @@ int replay_move_of(const Game *g, int seat, const uint8_t *wire, int wire_len, R
     return 0;
 }
 
+int replay_move_raw(int seat, const uint8_t *wire, int wire_len, ReplayMove *out) {
+    memset(out, 0, sizeof *out);
+    AwireAction want;
+    if (seat < 0 || seat >= MAX_PLAYERS || wire_len < 0 || wire_len > REPLAY_MOVE_WIRE_MAX || !awire_decode(wire, wire_len, &want))
+        return -REPLAY_EINPUT;
+    out->seat = seat;
+    out->menu_n = out->index = REPLAY_MOVE_RAW;
+    memcpy(out->wire, wire, (size_t)wire_len);
+    out->wire_len = wire_len;
+    return 0;
+}
+
+// The escape's bytes: a varint length and each byte uniform over 256.
+static void code_wire(ReplayCoder *c, ReplayMove *m, bool enc) {
+    m->wire_len = (int)replay_coder_varint(c, enc ? (uint32_t)m->wire_len : 0);
+    if (!c->err && (m->wire_len < 0 || m->wire_len > REPLAY_MOVE_WIRE_MAX)) c->err = REPLAY_EINPUT;
+    for (int i = 0; !c->err && i < m->wire_len; i++) m->wire[i] = (uint8_t)replay_coder_uniform(c, 256, enc ? m->wire[i] : -1);
+}
+
 int replay_move_code(ReplayCoder *c, ReplayMove *m) {
     const bool enc = c->encode;
     m->seat = replay_coder_uniform(c, MAX_PLAYERS, enc ? m->seat : -1);
     m->menu_n = (int)replay_coder_varint(c, enc ? (uint32_t)m->menu_n : 0);
-    if (!c->err && (m->menu_n < 0 || m->menu_n > REPLAY_MOVE_MENU_CAP)) c->err = REPLAY_EINPUT;
+    if (!c->err && (m->menu_n < 0 || m->menu_n > REPLAY_MOVE_RAW)) c->err = REPLAY_EINPUT;
     if (c->err) return -c->err;
+    if (m->menu_n == REPLAY_MOVE_RAW) {   // no index: the bytes follow
+        m->index = REPLAY_MOVE_RAW;
+        code_wire(c, m, enc);
+        return c->err ? -c->err : 0;
+    }
     m->index = replay_coder_uniform(c, m->menu_n + 1, enc ? m->index : -1);
     if (!c->err && m->index == m->menu_n) {
-        m->wire_len = (int)replay_coder_varint(c, enc ? (uint32_t)m->wire_len : 0);
-        if (!c->err && (m->wire_len < 0 || m->wire_len > REPLAY_MOVE_WIRE_MAX)) c->err = REPLAY_EINPUT;
-        for (int i = 0; !c->err && i < m->wire_len; i++) m->wire[i] = (uint8_t)replay_coder_uniform(c, 256, enc ? m->wire[i] : -1);
+        code_wire(c, m, enc);
     } else if (!enc) {
         m->wire_len = 0;
     }
@@ -82,7 +104,8 @@ int replay_move_wire(const Game *g, const ReplayMove *m, uint8_t *wire, int cap)
     if (m->seat < 0 || m->seat >= MAX_PLAYERS || m->index < 0 || m->index > m->menu_n) return -REPLAY_EINPUT;
     int n = menu_of(g, m->seat);
     if (n < 0) return n;
-    if (n != m->menu_n) return -REPLAY_ENOTINMENU;
+    // A raw move's board check: the seat has a move here (the host's apply checks the move).
+    if (m->menu_n == REPLAY_MOVE_RAW ? n == 0 : n != m->menu_n) return -REPLAY_ENOTINMENU;
     if (m->index == m->menu_n) {
         if (m->wire_len > cap) return -REPLAY_ECAP;
         memcpy(wire, m->wire, (size_t)m->wire_len);
