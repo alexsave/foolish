@@ -413,9 +413,35 @@ Pushed, no PR (main decides). Commits on top of origin/main cef6bcb3b; `git log 
 - With one request worker each batch held exactly one record (one move in flight at a time): the group commit coalesces only with more workers or bot jobs.
 - At human pace each 2 s segment re-announces its games (a game code per game per segment), so a record there is about 25 B.
 
+### Second pass (2026-10-20): rare flush, backup without flush, mapped segments
+- Flush rule (`flush_due`): a game reaches the tables at its end (any write around the journal), after `CBASE_JOURNAL_GAME_AGE_S` (600), or at `CBASE_JOURNAL_GAME_BYTES` (256 KiB) of waiting moves; every game at `CBASE_JOURNAL_TOTAL_BYTES` (64 MiB), at close and for the admin console. `CBASE_JOURNAL_FLUSH_MS`/`_FLUSH_MOVES` are gone.
+- Segments: `CBASE_JOURNAL_SEG_BYTES` (8 MiB), made at full size (posix_fallocate) and mapped shared; the coder writes into the map, the batch header (magic byte last, release store) is the commit marker; the flush thread makes the next segment ahead; a finished segment is cut to its length; numbers start from the wall clock's ms (16 digits). Trim (`trim`): below the oldest waiting move's segment and, with a backup attached, below the last uploaded copy's mark.
+- Reads: the dashboard list and the bot scan read through the overlay (no flush); an import still settles.
+- Backup: no settle; the db is copied only when it changed; segments from the copy's mark go up as they grow (only their used prefix), then `<key>.manifest` (binary) last; restore fetches the copy and the named segments and leaves `<db>-restored`, under which a game the copy holds at an older version than its records is skipped (refused on an ordinary start). Bucket objects the manifest stops naming are deleted: vm.yaml now grants s3:DeleteObject, which needs a stack update (vm_deploy.sh); until then the deletes warn and the objects stay.
+- Admin rule (`cb_store_admin_query`): a write runs in the journal's exclusive section (flush, writer held, overlay dropped, epoch bumped so a record whose base was read before is refused), then `cb_app.store_forget` clears foolish's row cache.
+- Per-move waste found on the box's profile and fixed: the flush thread had shared the writers' condvar (a futex wake per move), and every move malloc'd a row copy; rig 49 -> 42 us/move (main 54).
+- Tests (all mutation-checked, unit_journal 19 tests): flush rule (age, size, total), trim bounds, dashboard merge and scan swap, restore drill (three backups mid-game, no flush, disk lost, every acked move back; the gap skip and marker), pinning until upload, admin rule (flush, overlay drop, epoch, store_forget), both former survivors killed (walk across a legacy-deck draw; a cut cycle record refused), mapped segments (twelve rotations recover, a batch without its magic or with a torn header is not there). One equivalent survivor: the zero-tail stop in recover_segment (decode refuses a zero magic anyway; it only spares a warning).
+
+### Numbers, second pass
+Rig (CBASE_REQ_WORKERS=1): J1 = first pass, J2 = rare flush with write(), J3 = mapped, J4 = J3 + the waste fix, M0 = main.
+| | M0 | J1 | J2 | J4 |
+|---|---|---|---|---|
+| sat moves/s, p99 | 18.6k, 1.2 ms | 19.8k, 0.8 | 19.7k, 0.9 | 20.6k, 0.8 |
+| sat server CPU/move | 54 us | 50 | 50 | 42 (0.87 core: now client-bound) |
+| sat syscalls/move | 20.3 | 11.6 | 11.9 | 11.5 |
+| sat bytes/move | 9.8 KB WAL | 14.7 B + 1.05 KB WAL | 15.9 B + 1.05 KB WAL | same as J2 |
+| h192 bytes/move | | 24.8 B + ~2.5 KB WAL | 16.3 B + 0 WAL in play (~0.2 KB once at game end) | |
+- The 1.05 KB of WAL per move left at saturation is the game ends (every ~114 moves: the game's moves, finalize, ratings, the rig's next create/join/start).
+Graviton2 (two temp t4g.nano, load on the other box over IPv6, server CPU from perf stat task-clock; the 8-pair saturation there is latency-bound, server at 1.3-1.4 of 2 vCPU, so us/move is the number):
+| | main | write() journal | mapped | mapped + fix |
+|---|---|---|---|---|
+| h192 us/move, syscalls/move, p99 | 182, 21.9, 0.8 ms | 146, 14.2, 0.7 | 137, 13.9, 0.6 | 106, 10.3, 0.5 |
+| sat moves/s, us/move, syscalls/move, p99 | 10.0k, 140, 29.5, 2.2 ms | 12.4k, 112, 27.5, 1.9 | 12.9k, 104, 25.8, 1.9 | 13.8k, 91, 22.1, 1.7 |
+- Profile (sat, inclusive): main cb_sql_write 35% (sqlite3_step 31%, pwrite 9.4%); mapped j_game_commit 11.6% before the fix, mostly the per-move futex wake and row_dup.
+- Real hardware analysis is paused (Alex): rerun with scratchpad ec2run.sh / ec2all2.sh / ec2pkg once the next changes land.
+
 ### Left
-1. A real-hardware (Graviton2) measurement.
-2. Recovery replays bot cycles through `table_bot_drive` with prefs; a seat the original drive tried and got rejected would search again (deterministic, so the same result, only slower).
-3. `games_of_user` (the dashboard list) flushes first; if dashboards are hot under load, merge the overlay's updated_at instead (the list is ordered by it, with a LIMIT).
-4. Admin SQL writes to `games` behind the journal's back: the next flush's version fence fails loudly; the overlay is not invalidated.
-5. Longer segments (rotate on size, not every flush) would cut the per-segment game announcements at human pace.
+1. Recovery replays bot cycles through `table_bot_drive` with prefs; a seat the original drive tried and got rejected would search again (deterministic, so the same result, only slower).
+2. An admin edit to a live game should bump `version`: a bot drive computes unlocked and is fenced on the version alone.
+3. The remaining per-move allocations: the move's session-log copy (`dup_bytes` in j_game_commit) and `ov_get`'s row copy for readers.
+4. vm_deploy.sh once for s3:DeleteObject.
