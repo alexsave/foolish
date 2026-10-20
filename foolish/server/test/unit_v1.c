@@ -15,6 +15,7 @@
 #include "handler.h"
 #include "lib_store_backend.h"
 #include "app/app_internal.h"
+#include "net/loop.h"
 #include "net/router.h"
 #include "app/pushes.h"
 #include "realtime/realtime.h"
@@ -27,6 +28,7 @@
 #include "replay_steps.h"
 #include "netclient.h"
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -918,7 +920,52 @@ static void rate_limited_account_routes(void) {
     teardown();
 }
 
+// ---- a session on the loop's thread ------------------------------------------------------
+
+// An inline request runs on the loop's thread, which never reads the store (net/server.h): a token
+// whose session is not held live there answers CB_E_WOULD_BLOCK (the request runs again on the
+// pool, http.h to_pool), and one held live is answered from memory.
+static char g_tok[NC_AUTH_MAX + 1];
+static int g_loop_rc;
+static void verify_on_loop(cb_loop *l, void *ud) {
+    cb_user u;
+    g_loop_rc = cb_auth_verify_token(g_ctx.auth, g_tok, &u);
+    cb_loop_stop(l);
+}
+static void *run_loop(void *ud) {
+    cb_loop_run(ud);
+    return NULL;
+}
+static int verify_on_the_loop(void) {
+    g_ctx.loop = cb_loop_new();
+    g_loop_rc = -999;
+    T_EQ_INT(cb_loop_post(g_ctx.loop, verify_on_loop, NULL), CB_OK);
+    pthread_t th;
+    pthread_create(&th, NULL, run_loop, g_ctx.loop);
+    pthread_join(th, NULL);
+    cb_loop_free(g_ctx.loop);
+    g_ctx.loop = NULL;
+    return g_loop_rc;
+}
+
+static void a_session_is_never_read_on_the_loop(void) {
+    setup();
+    T_EQ_INT(sign(1, "LOOPY", "secret-11"), 0);
+    const NcRequest *q = nc_req_history(g_now);
+    T_CHECK(q && q->auth_len > 7);
+    memcpy(g_tok, q->auth + 7, q->auth_len - 7);   // past "Bearer "
+    g_tok[q->auth_len - 7] = 0;
+    T_EQ_INT(verify_on_the_loop(), CB_E_WOULD_BLOCK);
+    cb_user u;
+    T_EQ_INT(cb_auth_verify_token(g_ctx.auth, g_tok, &u), CB_OK);   // off the loop: the store answers
+    cb_auth_hold_sessions(g_ctx.auth);
+    T_EQ_INT(cb_auth_verify_token(g_ctx.auth, g_tok, &u), CB_OK);   // read once more, now held live
+    T_EQ_INT(verify_on_the_loop(), CB_OK);
+    teardown();
+}
+
 int main(void) {
+    T_RUN(a_session_is_never_read_on_the_loop);
     T_RUN(only_through_the_edge);
     T_RUN(rate_limited_account_routes);
     T_RUN(the_email_is_the_clients_derivation);
