@@ -66,6 +66,10 @@ jobs:
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)"
       - name: unit tests and both smoke lanes
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check
+      # CBASE_IO_URING (net/loop.h): the suite again with every loop on io_uring; unit_uring's first
+      # line says whether the runner allowed it (else the loops fall back to epoll, as serve's would).
+      - name: unit tests and smokes with every loop on io_uring
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" test-uring
 
   # macOS: the same suite on the development platform, linked against Apple's system SQLite. It is a
   # check of its own, not one the deploy waits on: nothing ships for macOS, and a defect of Apple's
