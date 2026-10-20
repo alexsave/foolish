@@ -70,6 +70,9 @@ typedef struct {
     // The caller reads no envelope (an action answers its result only): none is built,
     // out->envelope stays NULL. The actor still names the seat that acts.
     bool no_envelope;
+    // The operation cannot deal (an action: table_act takes no seed): no deal seed is drawn.
+    // An operation that deals anyway is refused (CB_E_STATE), never dealt from a stale seed.
+    bool no_deal;
 } cb_table_op;
 
 typedef struct {
