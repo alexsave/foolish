@@ -1340,6 +1340,6 @@ int main(void) {
     }
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
-    (void)system(cmd);
+    if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", g_dir);
     return T_DONE();
 }

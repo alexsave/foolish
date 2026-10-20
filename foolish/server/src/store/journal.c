@@ -1198,7 +1198,7 @@ static int list_segments(const cb_journal *j, uint64_t **out, int *n) {
     char dir[1100];
     snprintf(dir, sizeof dir, "%s", j->prefix);
     char *slash = strrchr(dir, '/');
-    char name[300];
+    char name[1100];
     snprintf(name, sizeof name, "%s", slash ? j->prefix + (slash - dir) + 1 : j->prefix);
     if (slash) *slash = 0;
     else snprintf(dir, sizeof dir, ".");
