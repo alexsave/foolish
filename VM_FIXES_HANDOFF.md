@@ -381,3 +381,41 @@ No PR (merges wait for the cutover).
 - A fresh SQLite connection does not know the file is in WAL mode until its first read; on Linux a checkpoint before that is a silent no-op (log -1).
 - `docker rm -f` kills the server without SIGTERM, so the WAL meter's close line needs `WAL=1` with `CBASE_RESTART=1`.
 - The users.email column is a Supabase-ism (a transform of the username); it can go once sign-in resolves users through `username_key` everywhere.
+
+## Move journal (branch move-journal, 2026-10-20)
+Pushed, no PR (main decides). Commits on top of origin/main cef6bcb3b; `git log --oneline origin/main..move-journal` lists them.
+`make -k test` and `make smoke` green on macOS.
+
+### What it is (c_base/DESIGN.md "The move journal" has the full rule set)
+- Kernel: `foolish/c/src/replay.c` exports the v10 rANS coder (`replay_coder_*`, replay.h); `foolish/c/src/replay_move.[ch]` (native kernel only, in KERNEL_SRC, not in the wasm lists) codes one move as seat + menu size (varint) + index into `legal_moves_into` (cap 1024) or an escape with the awire bytes; `replay_move_drive_walk` replays a bot cycle's moves on a scratch board with the drive's APPLY seeding (`table_drive_seeding`, table.c).
+- v10 has no standalone per-step encoder (its model is a whole game with hidden-card reveals), so the record codes the index into the kernel menu the v6 family codes against, on v10's own coder; v10's move timing is a lossy log curve (7%), and the board clock needs exact ms, so time is an exact ms delta on v10's varint.
+- Server: `foolish/server/src/store/journal.[ch]` (segments, batch codec with the slot table, overlay, flush thread, recovery, the decorating `cb_rows_ops`); `rows_sql.c cb_rows_sql_flush` (one transaction: dirty games fenced on their table version, then an optional commit or delete); `table_ops.c` (`section_row` shared by commit and replay, `cb_table_replay_move`, the eligibility rule in `cb_section_commit`); `bots.c` codes a cycle's moves around `table_bot_drive`.
+- c_base: `cb_app.serve_open/serve_close` (boot.c, one-process providers), `cb_store.app_state/app_settle` + `cb_store_settle` (store.h), backup.c settles before VACUUM INTO, admin browse/query settle first.
+- Env: `CBASE_JOURNAL=0` off, `CBASE_JOURNAL_FLUSH_MS` (2000), `CBASE_JOURNAL_FLUSH_MOVES` (4096), `CBASE_JOURNAL_SYNC=1` (fdatasync per batch).
+
+### Tests (foolish/server/test/unit_journal.c, each mutation-checked with scratchpad mut.py, which bumps the restored file's mtime past make's same-second trap)
+- codec round trip (3 batches, 5 games, a version jump, a third of the records bot cycles, escapes), size bound under 6 B per coded move;
+- torn tail (mid-batch, mid-header) and flipped payload / checksum bits drop only that batch;
+- a move on a board whose menu differs is refused (ENOTINMENU);
+- for two humans and for a human against a bot: the flush writes rows byte-equal to per-move commits (games row + game_moves), records == commits since the deal; a backup mid-game holds every acknowledged move; 6 rounds of fork + SIGKILL after 3..23 acknowledgements plus a torn half-batch appended: every acknowledged move present, row + session log hash equal to the pre-crash process's, and the same after a reopen without the journal.
+- Mutations that failed the named assertions: encoder follows-flag, checksum check, recovery skipped, torn tail made fatal, flush drops a move, backup without settle, replay_move index off by one, escape loses its bytes, menu-size check, bot cycles not journaled.
+- Survived (documented, not covered): removing the APPLY reseed in replay_move_drive_walk (every rig/test game is a deterministic-deck deal, so the seed changes nothing there; it mirrors bot_drive for legacy boards), and the move-for-move check after the recovered bot drive (unreachable while prefs are reused; a defensive check).
+- unit_app flake fixed (a_bot_and_a_human_on_one_game_lose_nothing): the hammer counted 150 looks, and under load every look came before the bot's first drive committed (instrumented: all polls at the start version, no move for the human, one drive in flight). Counts tries now; 6/72 loaded runs failed before, 0/72 after. Not a production race.
+
+### Numbers (rig, CBASE_REQ_WORKERS=1, J0 = cef6bcb3b, J1 = this branch; `bench/nano/journal_meas.sh LABEL sat|h192` under the scratchpad nano.lock)
+| | J0 | J1 |
+|---|---|---|
+| saturation, 8 games, 1 CPU | 19.1k moves/s, p99 1.0 ms, 50 us CPU/move | 19.9k moves/s, p99 0.8 ms, 50 us |
+| bytes written per move (saturation) | 9.83 KB WAL (2.4 frames) | 14.7 B journal + 1.05 KB WAL |
+| syscalls per move (perf stat raw_syscalls, 8 s) | 19.6 | 11.6 |
+| 192 games, human pace, 0.1 CPU | 0.21 ms CPU/move, p99 0.6 ms | 0.20 ms, p99 0.6 ms, 24.7 B journal/move |
+- The 1.05 KB of WAL left at saturation is the games that end every ~114 moves (finalize, replay, ratings, the rig's next create/join/start) and the 2 s flushes.
+- With one request worker each batch held exactly one record (one move in flight at a time): the group commit coalesces only with more workers or bot jobs.
+- At human pace each 2 s segment re-announces its games (a game code per game per segment), so a record there is about 25 B.
+
+### Left
+1. A real-hardware (Graviton2) measurement.
+2. Recovery replays bot cycles through `table_bot_drive` with prefs; a seat the original drive tried and got rejected would search again (deterministic, so the same result, only slower).
+3. `games_of_user` (the dashboard list) flushes first; if dashboards are hot under load, merge the overlay's updated_at instead (the list is ordered by it, with a LIMIT).
+4. Admin SQL writes to `games` behind the journal's back: the next flush's version fence fails loudly; the overlay is not invalidated.
+5. Longer segments (rotate on size, not every flush) would cut the per-segment game announcements at human pace.
