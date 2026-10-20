@@ -19,12 +19,13 @@
 // the oldest games first, the flush lock given back between them. A segment is closed once it holds opts.seg_bytes and deleted once
 // every move in it is in the tables and (with a backup attached) in an uploaded copy.
 //
-// Every other commit but one that rates (a deal, a seat change, a lobby edit, an unrated end)
-// is journaled WHOLE, as a full record (below): the overlay keeps its row and seats, the
-// store's membership reads see them, and the flush writes the row, its session-log changes
-// and the seats. A commit that rates and a game's delete are written at once, around the
-// journal, with that game's waiting commits first in the same transaction (a rating is read
-// by the leaderboard, a profile and the next game's rating straight from the tables).
+// Every other commit (a deal, a seat change, a lobby edit, an end, a rated one too) is journaled
+// WHOLE, as a full record (below): the overlay keeps its row and seats, the store's membership
+// reads see them, and the flush writes the row, its session-log changes, the seats and a rated
+// end's rating rows. A rated end makes its game due at once (the leaderboard and the profiles
+// read the tables), and its changes are THE RATINGS' ONE OWNER's (cb_journal_seat_ratings) from
+// its commit on. A game's delete is written at once, around the journal, with that game's
+// waiting commits first in the same transaction.
 //
 // At start the tables are read and the journal's segments replayed through the kernel
 // (the app's apply), in order, before anything is served; a torn or corrupt batch at a
@@ -51,9 +52,10 @@
 // A FULL RECORD (one whole commit): u8 'R', u8 format (1), u16 0, u32 LE FNV-1a 32 over the
 // payload length and the payload, u32 LE payload length, then the payload: u8 id length, the
 // id, i64 LE base version, i64 LE ms, u8 flags (1 clears the session log, 2 has a deal seed,
-// 4 needs bots), i8 status, i64 LE log_from, round_epoch and created_at, the 32-byte seed when
+// 4 needs bots, 8 rated), i8 status, i64 LE log_from, round_epoch and created_at, the 32-byte seed when
 // flagged, then u32 LE length + bytes each of the state blob, the roster and the session-log
-// records it appended. Recovery adopts its row as the game's (no kernel run: the record is
+// records it appended, and when rated (flag 8) the rating changes: u8 n, then per seat u8 id
+// length, the id, u8 1 for a bot, i32 LE delta, u8 name length, the name. Recovery adopts its row as the game's (no kernel run: the record is
 // the commit's result) when the game is at its base version. It names no slot: a move after
 // it codes its version (the "old" bit).
 #ifndef CB_JOURNAL_H
@@ -132,6 +134,16 @@ int cb_journal_game_peek(cb_store *s, const char *id, cb_journal_game_fn fn, voi
 // A game the tables just created (row, as written) made resident with its decoded state, so
 // its first operation reads no table. Nobody else knows the id yet: no lock is needed.
 void cb_journal_game_created(cb_store *s, const cb_game_row *row, const struct TableResident *res);
+
+// THE SEATS' RATINGS under serve (THE RATINGS' ONE OWNER, journal.c jrating): each id's rating
+// (TABLE_RATING_NONE: no row) as the tables hold it plus every acknowledged rated end not flushed
+// yet, and whether every account behind them is min_age_ms old at now_ms (an id with no account
+// - a bot, a deleted user - is no reason). A seat not held yet is read from the tables first, so
+// on the network loop's thread that answers CB_E_WOULD_BLOCK having read nothing (a join, a deal,
+// any pool operation reads its seats here first, and the end then runs on the loop). CB_OK, or
+// the tables' error.
+int cb_journal_seat_ratings(cb_store *s, const char *const *ids, int n, int64_t now_ms, int64_t min_age_ms,
+                            int32_t *ratings, bool *old_enough);
 
 // Every acknowledged move into the tables now (store.h cb_store_settle).
 int cb_journal_flush(cb_store *s);

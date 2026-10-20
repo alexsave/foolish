@@ -386,10 +386,12 @@ static void a_game_not_resident_is_read_on_the_pool(void) {
     world_close();
 }
 
-// A game played to its end over the socket: every move on the loop, but the one that rates it
-// (the accounts and the ratings are the tables', read and written: on the pool), and a move after
-// the end, while the replay job has not run (it would make the replay first: on the pool too).
-static void the_rated_end_and_a_pending_replay_go_to_the_pool(void) {
+// A game played to its end over the socket: every move on the loop, the one that rates it too
+// (its seats' ratings were read at the deal, on the pool: journal.h cb_journal_seat_ratings, and
+// its changes are a journal record), and the leaderboard's tables have them after the flush; a
+// move after the end, while the replay job has not run, goes to the pool (it makes the replay
+// first).
+static void the_rated_end_stays_on_the_loop_and_a_pending_replay_goes_to_the_pool(void) {
     world_open();
     journal_open();
     char gid[CB_GAME_ID_MAX + 1];
@@ -417,9 +419,15 @@ static void the_rated_end_and_a_pending_replay_go_to_the_pool(void) {
     counters c1 = stats();
     T_CHECK(moves > 4);
     T_EQ_INT((int)(c1.ran - c0.ran), moves);
-    T_EQ_INT((int)(c1.to_pool - c0.to_pool), 1);
-    T_CHECK(atomic_load(&g_ratings_reads) >= 1);
+    T_EQ_INT((int)(c1.to_pool - c0.to_pool), 0);
+    T_EQ_INT(atomic_load(&g_ratings_reads), 0);   // read at the deal, before the counters
     T_EQ_INT(atomic_load(&g_ratings_on_loop), 0);
+    // The end's ratings reach the tables at its game's flush (kicked by the end itself).
+    T_EQ_INT(cb_journal_flush(g_ctx.store), CB_OK);
+    const char *ids[2] = { UID_A, UID_B };
+    int32_t rt[2];
+    T_EQ_INT(cb_rows_sql.ratings_for(g_ctx.store, ids, 2, rt), CB_OK);
+    T_CHECK(rt[0] != rt[1] && rt[0] + rt[1] == 2 * TABLE_RATING_START);
     T_EQ_INT(atomic_load(&g_fin_jobs), 1);
     T_EQ_INT((int)c1.tripped, 0);
     // A move on the finished table (MOOT), the replay still a queued job: made first, on the pool.
@@ -729,7 +737,7 @@ static void a_synced_journal_writes_nothing_on_the_loop(void) {
 int main(void) {
     T_RUN(a_move_on_a_locked_game_waits_on_the_pool);
     T_RUN(a_game_not_resident_is_read_on_the_pool);
-    T_RUN(the_rated_end_and_a_pending_replay_go_to_the_pool);
+    T_RUN(the_rated_end_stays_on_the_loop_and_a_pending_replay_goes_to_the_pool);
     T_RUN(the_store_is_never_read_or_written_on_the_loop);
     T_RUN(a_drives_commits_are_written_by_the_loop);
     T_RUN(a_held_writer_never_holds_the_loop);

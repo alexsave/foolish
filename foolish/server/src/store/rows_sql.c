@@ -454,27 +454,36 @@ static int seats_to(cb_sql *x, const cb_game_commit *c, const seats_t *st) {
     return rc;
 }
 
-static int rate(cb_sql *x, const cb_game_commit *c) {
+// THE RATING WRITE (its one writer): each id's rating = max(0, rating + delta), games_played + 1,
+// previous_elo the old one; a human with no row gets one from TABLE_RATING_START if the user
+// exists. A commit's ratings (rate) and a journaled rated end's at its flush (cb_game_move.rated).
+static int rate_rows(cb_sql *x, int n, const cb_uuid *ids, const bool *is_bot, const int32_t *delta,
+                     const char (*names)[CB_USERNAME_MAX + 1], int64_t at) {
     int rc = CB_OK;
-    for (int i = 0; rc == CB_OK && i < c->n_rated; i++) {
+    for (int i = 0; rc == CB_OK && i < n; i++) {
         bool dup = false;   // one write per id: a repeated id is rated once
-        for (int j = 0; j < i; j++) dup |= strcmp(c->rated_ids[j], c->rated_ids[i]) == 0;
+        for (int j = 0; j < i; j++) dup |= strcmp(ids[j], ids[i]) == 0;
         if (dup) continue;
-        stmt_t *s = cb_sql_stmt(x, c->rated_is_bot[i] ? S_BOT_RATE : S_USER_RATE);
+        stmt_t *s = cb_sql_stmt(x, is_bot[i] ? S_BOT_RATE : S_USER_RATE);
         if (!s) return CB_E_DB;
-        cb_sql_bind_uuid(s, 1, c->rated_ids[i]);
-        if (c->rated_is_bot[i]) {
-            b_i64(s, 2, c->rating_delta[i]);
-            b_i64(s, 3, c->row->updated_at);
+        cb_sql_bind_uuid(s, 1, ids[i]);
+        if (is_bot[i]) {
+            b_i64(s, 2, delta[i]);
+            b_i64(s, 3, at);
         } else {
-            cb_sql_bind_text_or_null(s, 2, c->rated_names[i]);
-            b_i64(s, 3, c->rating_delta[i]);
+            cb_sql_bind_text_or_null(s, 2, names[i]);
+            b_i64(s, 3, delta[i]);
             b_i64(s, 4, TABLE_RATING_START);
-            b_i64(s, 5, c->row->updated_at);
+            b_i64(s, 5, at);
         }
         rc = cb_sql_run(x, s, "rating");
     }
     return rc;
+}
+
+static int rate(cb_sql *x, const cb_game_commit *c) {
+    return rate_rows(x, c->n_rated, c->rated_ids, c->rated_is_bot, c->rating_delta,
+                     (const char (*)[CB_USERNAME_MAX + 1])c->rated_names, c->row->updated_at);
 }
 
 static int moves_write(cb_sql *x, const char *game, bool clear, int64_t seq, const uint8_t *log, size_t len) {
@@ -613,9 +622,13 @@ static int flush_step(cb_sql *x, void *ud) {
                      (long long)f->sql_version);
             return CB_E_CONFLICT;
         }
-        for (int k = 0; k < f->n_moves; k++)
-            if ((rc = moves_write(x, f->row->id, f->moves[k].clear, f->moves[k].seq, f->moves[k].log, f->moves[k].len)) != CB_OK)
+        for (int k = 0; k < f->n_moves; k++) {
+            const cb_game_move *m = &f->moves[k];
+            if ((rc = moves_write(x, f->row->id, m->clear, m->seq, m->log, m->len)) != CB_OK) return rc;
+            if (m->rated && (rc = rate_rows(x, m->rated->n, m->rated->ids, m->rated->is_bot, m->rated->delta,
+                                            m->rated->names, m->rated->at)) != CB_OK)
                 return rc;
+        }
         if (f->seats) {   // the stored seats brought to the row's
             cb_game_commit c;
             memset(&c, 0, sizeof c);
