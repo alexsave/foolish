@@ -141,6 +141,8 @@ typedef struct {
     long games;                             // games resident in the overlay
     long table_reads;                       // games read from the tables to be made resident
     long log_reads;                         // session logs read from the tables (the rest was the overlay's)
+    long loop_writes;                       // of the writes, made on the network loop's thread
+    long loop_seg_opens;                    // segments opened on it by a wait (none: loop_write rotates at once or not at all)
 } cb_journal_stats;
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 

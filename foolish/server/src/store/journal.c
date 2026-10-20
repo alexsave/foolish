@@ -274,6 +274,8 @@ struct cb_journal {
     cb_jmove        ms[CB_JOURNAL_BATCH_MAX];   // the writer's (held): one batch's moves as coded
     jrec           *head, *tail;
     bool            writing;
+    size_t          prepare_need;  // the loop's write waits for a segment this big (mu): the flush thread makes it
+    atomic_bool     loop_gone;     // the loop refused a post (it stopped): its writer role is over
     jseg            cur, next;     // the open segment, and the one made ahead
     uint64_t        seg_seq;       // the open segment's number
     pthread_mutex_t seg_mu;
@@ -300,6 +302,8 @@ struct cb_journal {
     atomic_long     epoch;
     // stats
     atomic_long     batches, writes, records, bytes, flushes, flushed_games, flushed_moves, recovered, table_reads, log_reads;
+    atomic_long     loop_writes;   // writes made on the loop's thread
+    atomic_long     loop_seg_opens;   // seg_open on the loop's thread (a wait for seg_mu, a file made)
 };
 
 cb_journal *cb_journal_of(const cb_store *s) { return s && s->app_settle == cb_journal_flush ? s->app_state : NULL; }
@@ -579,23 +583,29 @@ static size_t write_need(int n) {   // the most a write of n records takes, its 
 
 // The next segment made ahead, so the writer's rotation only swaps maps (the flush thread's
 // tick and a rotation's kick; seg_mu held by the caller).
-static void prepare_next_locked(cb_journal *j) {
+static void prepare_next_locked(cb_journal *j, size_t need) {
     const uint64_t seq = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED) + 1;
-    if (j->next.map && j->next.seq == seq) return;
+    if (need < write_need(CB_JOURNAL_BATCH_MAX)) need = write_need(CB_JOURNAL_BATCH_MAX);
+    if (j->next.map && j->next.seq == seq && j->next.size >= seg_size(j, need)) return;
     seg_drop(j, &j->next);
-    (void)seg_make(j, seq, seg_size(j, write_need(CB_JOURNAL_BATCH_MAX)), &j->next);
+    (void)seg_make(j, seq, seg_size(j, need), &j->next);
 }
 
+// The flush thread's: the next segment made, big enough for what the loop last asked for.
 static void prepare_next(cb_journal *j) {
+    pthread_mutex_lock(&j->mu);
+    const size_t need = j->prepare_need;
+    j->prepare_need = 0;
+    pthread_mutex_unlock(&j->mu);
     pthread_mutex_lock(&j->seg_mu);
-    prepare_next_locked(j);
+    prepare_next_locked(j, need);
     pthread_mutex_unlock(&j->seg_mu);
 }
 
 // The open segment finished and the next one (made ahead, or now) open, able to take `need`
-// bytes; its header goes with its first batch, which gives it its start time. The writer is held.
-static int seg_open(cb_journal *j, size_t need) {
-    pthread_mutex_lock(&j->seg_mu);
+// bytes; its header goes with its first batch, which gives it its start time. The writer is held,
+// and seg_mu.
+static int seg_open_locked(cb_journal *j, size_t need) {
     const uint64_t seq = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED) + 1;
     int rc = CB_OK;
     if (!j->next.map || j->next.seq != seq || j->next.size < need) {
@@ -623,13 +633,26 @@ static int seg_open(cb_journal *j, size_t need) {
     } else {
         cb_jslots_free(t);
     }
+    return rc;
+}
+
+// The flush thread makes the one after the segment just opened.
+static void ask_prepare(cb_journal *j, size_t need) {
+    pthread_mutex_lock(&j->mu);
+    j->prepare = true;
+    if (need > j->prepare_need) j->prepare_need = need;
+    pthread_cond_signal(&j->fcv);
+    pthread_mutex_unlock(&j->mu);
+}
+
+// seg_open_locked under seg_mu (the writer held; never on the loop's thread, which may not wait
+// for the flush thread making a segment: loop_write rotates itself, under a seg_mu it got at once).
+static int seg_open(cb_journal *j, size_t need) {
+    if (on_loop(j)) atomic_fetch_add(&j->loop_seg_opens, 1);   // only after a failed write (write_batch)
+    pthread_mutex_lock(&j->seg_mu);
+    int rc = seg_open_locked(j, need);
     pthread_mutex_unlock(&j->seg_mu);
-    if (rc == CB_OK) {   // the flush thread makes the one after
-        pthread_mutex_lock(&j->mu);
-        j->prepare = true;
-        pthread_cond_signal(&j->fcv);
-        pthread_mutex_unlock(&j->mu);
-    }
+    if (rc == CB_OK) ask_prepare(j, 0);
     return rc;
 }
 
@@ -730,6 +753,29 @@ static long full_decode(const uint8_t *in, size_t len, jrec *r) {
     return (long)(FULL_HDR + plen);
 }
 
+// Whether a write of `need` bytes, its first record at `first`, must open another segment (the
+// writer held): the open one is full, too small for it, or its start out of the batch clock's reach.
+static bool rotates(const cb_journal *j, size_t need, int64_t first) {
+    return !j->cur.map || j->seg_len >= j->o.seg_bytes || (size_t)j->seg_len + need > j->cur.size ||
+           (j->seg_len > 0 && (first - j->seg_start > INT32_MAX / 2 || first - j->seg_start < INT32_MIN / 2));
+}
+
+// The most a write of `list` takes (its records with rc CB_OK only, or all of them), and its
+// earliest record's time: a whole commit is its own frame, and each one may cut a run of moves
+// into another batch.
+static size_t batch_need(const jrec *list, bool only_ok, int64_t *first) {
+    int n = 0, n_full = 0;
+    size_t full_bytes = 0;
+    *first = INT64_MAX;
+    for (const jrec *r = list; r; r = r->next) {
+        if (only_ok && r->rc != CB_OK) continue;
+        n++;
+        if (r->full) n_full++, full_bytes += full_size(r);
+        if (r->m.now_ms < *first) *first = r->m.now_ms;
+    }
+    return write_need(n - n_full) + (size_t)n_full * (CB_JOURNAL_BATCH_HDR + REPLAY_MAX_INT_BYTES) + full_bytes;
+}
+
 // Codes and writes one batch of records (the writer is held, j->mu is not). Each record's rc set.
 static void write_batch(cb_journal *j, jrec *list) {
     // A record whose base version was read before an exclusive section (an admin write) is
@@ -747,19 +793,11 @@ static void write_batch(cb_journal *j, jrec *list) {
     // so one a clock jump put out of reach starts a segment of its own too.
     cb_jmove *const ms = j->ms;
     int rc = CB_OK;
-    // A whole commit is its own frame, and each one may cut a run of moves into another batch.
-    int n_full = 0;
-    size_t full_bytes = 0;
-    for (jrec *r = list; r; r = r->next)
-        if (r->rc == CB_OK && r->full) n_full++, full_bytes += full_size(r);
-    const size_t need = write_need(n - n_full) + (size_t)n_full * (CB_JOURNAL_BATCH_HDR + REPLAY_MAX_INT_BYTES) + full_bytes;
+    int64_t first;
+    const size_t need = batch_need(list, true, &first);
     size_t len = 0;
     int frames = 0;
-    int64_t first = INT64_MAX;
-    for (jrec *r = list; r; r = r->next) if (r->rc == CB_OK && r->m.now_ms < first) first = r->m.now_ms;
-    if (rc == CB_OK && (!j->cur.map || j->seg_len >= j->o.seg_bytes || (size_t)j->seg_len + need > j->cur.size ||
-                        (j->seg_len > 0 && (first - j->seg_start > INT32_MAX / 2 || first - j->seg_start < INT32_MIN / 2))))
-        rc = seg_open(j, need);
+    if (rc == CB_OK && rotates(j, need, first)) rc = seg_open(j, need);
     uint8_t *at = rc == CB_OK ? j->cur.map + j->seg_len : NULL;
     const size_t room = rc == CB_OK ? j->cur.size - (size_t)j->seg_len : 0;
     if (rc == CB_OK && j->seg_len == 0) {
@@ -796,6 +834,7 @@ static void write_batch(cb_journal *j, jrec *list) {
         __atomic_store_n(&j->seg_len, j->seg_len + (off_t)len, __ATOMIC_RELEASE);   // the backup reads it
         atomic_fetch_add(&j->batches, frames);
         atomic_fetch_add(&j->writes, 1);
+        if (on_loop(j)) atomic_fetch_add(&j->loop_writes, 1);
         atomic_fetch_add(&j->records, n);
         atomic_fetch_add(&j->bytes, (long)len);
     } else if (at) {
@@ -819,14 +858,153 @@ static void write_batch(cb_journal *j, jrec *list) {
     if (due) kick_flusher(j);   // the flush thread applies the rule now rather than at its next tick
 }
 
-// Appends r and returns once its batch is written: the first waiter with no batch in flight
-// writes every record queued (group commit).
+// ---- the writer ----------------------------------------------------------------------------
+//
+// THE LOOP IS THE ONLY WRITER while it runs (journal.h opts.loop). A record committed on its thread
+// is written there at once, one record (and whatever another thread handed it) per batch; a record
+// committed on any other thread (a bot drive, a pooled request) is queued, the loop is told
+// (cb_loop_post: one wake per bot cycle, none per human move), and that thread waits for the
+// loop's write. The loop itself never waits, and each case is its own guard:
+//   - the writer held by the flush thread (a snapshot) or an admin's write: the loop's own record
+//     is refused (CB_E_WOULD_BLOCK: the request runs again on the pool) and the queued ones wait
+//     for the release, which tells the loop again (writer_release);
+//   - a segment to open that the flush thread has not made ahead: the loop makes no file; it asks
+//     the flush thread for one, which tells the loop once it is made (flusher), and its own
+//     record is refused as above;
+//   - each write synced (opts.sync: an msync per batch waits on the disk): the loop writes nothing
+//     and every commit on it is refused.
+// Where there is no loop, before it runs, once it has stopped (a post refused), or with sync, the
+// writer is whichever committing thread finds it free (group commit: append).
+
+static bool loop_writes(const cb_journal *j) {
+    return j->o.loop && !j->o.sync && cb_loop_running(j->o.loop) && !atomic_load(&j->loop_gone);
+}
+
+static void loop_drain(cb_loop *l, void *ud);
+
+// Tells the loop to write what is queued (any thread). false once it has stopped: the waiters are
+// woken, and write their own.
+static bool loop_tell(cb_journal *j) {
+    if (cb_loop_post(j->o.loop, loop_drain, j) == CB_OK) return true;
+    atomic_store(&j->loop_gone, true);
+    pthread_mutex_lock(&j->mu);
+    if (j->waiters) pthread_cond_broadcast(&j->cv);
+    pthread_mutex_unlock(&j->mu);
+    return false;
+}
+
+// The loop's write of `list` (the writer taken, j->mu not held): false, with nothing written, when
+// it would open a segment the flush thread has not made yet (it is asked to).
+static bool loop_write(cb_journal *j, jrec *list) {
+    int64_t first;
+    const size_t need = batch_need(list, false, &first);   // every record: at least what write_batch needs
+    if (rotates(j, need, first)) {
+        // Only into a segment made ahead, and only if the flush thread is not making one now: the
+        // rotation is made here under the seg_mu taken at once, so write_batch has none to make.
+        bool ready = false;
+        if (pthread_mutex_trylock(&j->seg_mu) == 0) {
+            const uint64_t seq = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED) + 1;
+            ready = j->next.map && j->next.seq == seq && j->next.size >= need && seg_open_locked(j, need) == CB_OK;
+            pthread_mutex_unlock(&j->seg_mu);
+        }
+        ask_prepare(j, ready ? 0 : need);   // the one after it, or the one this write waits for
+        if (!ready) return false;
+    }
+    write_batch(j, list);
+    return true;
+}
+
+// The writer, taken by the loop with every queued record (j->mu held): NULL when another holds it.
+static jrec *loop_take(cb_journal *j, jrec *own) {
+    if (j->writing) return NULL;
+    jrec *list = j->head;
+    if (own) {
+        if (j->tail) j->tail->next = own;
+        else list = own;
+    }
+    j->head = j->tail = NULL;
+    j->writing = true;
+    return list;
+}
+
+// The writer given back by the loop (j->mu held): the written records done, the rest queued again
+// in front of anything queued since, in their order.
+static void loop_give(cb_journal *j, jrec *list, bool written, jrec *own) {
+    if (written) {
+        for (jrec *x = list; x; x = x->next) x->done = true;
+    } else {
+        jrec *keep = NULL, **at = &keep, *last = NULL;
+        for (jrec *x = list, *nx; x; x = nx) {
+            nx = x->next;
+            if (x == own) continue;
+            x->next = NULL;
+            *at = x;
+            at = &x->next;
+            last = x;
+        }
+        if (keep) {
+            last->next = j->head;
+            if (!j->head) j->tail = last;
+            j->head = keep;
+        }
+    }
+    j->writing = false;
+    if (j->waiters) pthread_cond_broadcast(&j->cv);
+}
+
+// A commit on the loop's thread: written now, or CB_E_WOULD_BLOCK with nothing written.
+static int loop_append(cb_journal *j, jrec *r) {
+    if (!loop_writes(j)) return CB_E_WOULD_BLOCK;   // synced writes wait on the disk
+    pthread_mutex_lock(&j->mu);
+    jrec *list = loop_take(j, r);
+    pthread_mutex_unlock(&j->mu);
+    if (!list) return CB_E_WOULD_BLOCK;   // the writer is held
+    const bool written = loop_write(j, list);
+    pthread_mutex_lock(&j->mu);
+    loop_give(j, list, written, r);
+    pthread_mutex_unlock(&j->mu);
+    return written ? r->rc : CB_E_WOULD_BLOCK;
+}
+
+// Posted by loop_tell: the queued records written (on the loop), unless the writer is held or the
+// segment is not made yet (each tells the loop again when that is over).
+static void loop_drain(cb_loop *l, void *ud) {
+    (void)l;
+    cb_journal *j = ud;
+    pthread_mutex_lock(&j->mu);
+    jrec *list = j->head ? loop_take(j, NULL) : NULL;
+    pthread_mutex_unlock(&j->mu);
+    if (!list) return;
+    const bool written = loop_write(j, list);
+    pthread_mutex_lock(&j->mu);
+    loop_give(j, list, written, NULL);
+    pthread_mutex_unlock(&j->mu);
+}
+
+// Appends r and returns once its batch is written (any thread but the loop's): the loop writes it
+// while it runs; else the first waiter with no batch in flight writes every record queued.
 static int append(cb_journal *j, jrec *r) {
     pthread_mutex_lock(&j->mu);
     if (j->tail) j->tail->next = r;
     else j->head = r;
     j->tail = r;
+    bool told = false;
     while (!r->done) {
+        if (!told && loop_writes(j)) {
+            pthread_mutex_unlock(&j->mu);
+            told = loop_tell(j);
+            pthread_mutex_lock(&j->mu);
+            continue;
+        }
+        if (told && loop_writes(j)) {
+            // The loop writes it. A timed wait: a wake lost to a loop stopping mid-way costs a tick.
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_nsec += 50 * 1000000;
+            if (ts.tv_nsec >= 1000000000) ts.tv_sec++, ts.tv_nsec -= 1000000000;
+            j->waiters++, pthread_cond_timedwait(&j->cv, &j->mu, &ts), j->waiters--;
+            continue;
+        }
         if (!j->writing) {
             jrec *list = j->head;
             j->head = j->tail = NULL;
@@ -847,7 +1025,8 @@ static int append(cb_journal *j, jrec *r) {
 
 // ---- the flush -----------------------------------------------------------------------------
 
-// The writer, held (no batch in flight while the caller rotates).
+// The writer, held (no batch in flight while the caller rotates). Never the loop's thread: it
+// waits for the batch in flight.
 static void writer_hold(cb_journal *j) {
     pthread_mutex_lock(&j->mu);
     while (j->writing) j->waiters++, pthread_cond_wait(&j->cv, &j->mu), j->waiters--;
@@ -855,11 +1034,14 @@ static void writer_hold(cb_journal *j) {
     pthread_mutex_unlock(&j->mu);
 }
 
+// The writer given back; records queued meanwhile are the loop's to write: it is told.
 static void writer_release(cb_journal *j) {
     pthread_mutex_lock(&j->mu);
     j->writing = false;
     if (j->waiters) pthread_cond_broadcast(&j->cv);
+    const bool tell = j->head && loop_writes(j);
     pthread_mutex_unlock(&j->mu);
+    if (tell) loop_tell(j);
 }
 
 // The segments on disk (seg_mu): seg_open adds, delete_segments_before takes away.
@@ -1113,6 +1295,10 @@ static void *flusher(void *ud) {
         j->kick = j->prepare = false;
         pthread_mutex_unlock(&j->mu);
         prepare_next(j);   // the next segment, made ahead of the rotation that takes it
+        pthread_mutex_lock(&j->mu);
+        const bool tell = j->head && !j->writing && loop_writes(j);   // records the loop left for want of it
+        pthread_mutex_unlock(&j->mu);
+        if (tell) loop_tell(j);
         if (flush) (void)flush_some(j, false);
         pthread_mutex_lock(&j->mu);
     }
@@ -1370,7 +1556,7 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     r.res = c->resident;
     if (c->log_add_len && !(r.log = dup_bytes(c->log_add, c->log_add_len))) return CB_E_NOMEM;
     r.log_len = c->log_add_len;
-    int rc = append(j, &r);
+    int rc = on_loop(j) ? loop_append(j, &r) : append(j, &r);
     free(r.log);   // NULL once the overlay took it
     return rc;
 }
@@ -2010,4 +2196,6 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     out->recovered = j->recovered;
     out->table_reads = j->table_reads;
     out->log_reads = j->log_reads;
+    out->loop_writes = j->loop_writes;
+    out->loop_seg_opens = j->loop_seg_opens;
 }

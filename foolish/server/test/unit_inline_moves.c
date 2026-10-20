@@ -6,6 +6,7 @@
 #include "app/app_internal.h"
 #include "app/functions_http.h"
 #include "app/table_ops.h"
+#include "app/bots.h"
 #include "cbase/provider.h"
 #include "handler.h"
 #include "lib_client.h"
@@ -30,6 +31,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 static const char UID_A[] = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -40,6 +43,11 @@ static cb_config g_cfg;
 static cb_ctx g_ctx;
 static int g_port;
 static pthread_t g_loop_thr;
+
+// The app's clock, faked (a bot drive waits out the kernel's pacing on it: no real sleep).
+static _Atomic int64_t g_now = 1760000000000LL;
+static int64_t fake_now(void) { return atomic_load(&g_now); }
+static void fake_sleep(int64_t ms) { atomic_fetch_add(&g_now, ms); }
 
 static int fake_verify(cb_ctx *ctx, const struct cb_http_req *req, cb_user *out) {
     const char *b = cb_http_bearer(req);
@@ -115,6 +123,12 @@ static void meta(const char *bearer, int kind, const char *gid, reply *out) {
     call("meta", bearer, body, n > 0 ? (size_t)n : 0, out);
 }
 
+static bool all_games(const cb_view_row *row, void *ud) {
+    struct { int n; char (*ids)[CB_GAME_ID_MAX + 1]; } *g = ud;
+    snprintf(g->ids[g->n++], CB_GAME_ID_MAX + 1, "%s", row->game_id);
+    return true;
+}
+
 static bool first_game(const cb_view_row *row, void *ud) {
     snprintf((char *)ud, CB_GAME_ID_MAX + 1, "%s", row->game_id);
     return false;
@@ -160,13 +174,17 @@ static void world_open(void) {
     g_ctx.router = cb_router_new();
     T_EQ_INT(cb_functions_routes(&g_ctx), CB_OK);
     cb_functions_verify = fake_verify;
+    cb_app_now = fake_now;
+    cb_app_sleep = fake_sleep;
     cb_limits_reset();
     g_ctx.loop = cb_loop_new();
     g_ctx.req_pool = cb_pool_new(1, "tinm");
 }
 
+static size_t g_seg_bytes;   // the journal's seg_bytes for the next open (0: its default)
 static void journal_open(void) {
-    cb_journal_opts o = { .path = g_db, .game_age_ms = 3600000, .loop = g_ctx.loop, .apply = cb_table_replay_move, .apply_ud = &g_ctx };
+    cb_journal_opts o = { .path = g_db, .game_age_ms = 3600000, .seg_bytes = (int64_t)g_seg_bytes, .loop = g_ctx.loop,
+                          .apply = cb_table_replay_move, .apply_ud = &g_ctx };
     char err[256];
     T_EQ_INT(cb_journal_open(g_ctx.store, &o, err, sizeof err), CB_OK);
     cb_rows_ops *ops = (cb_rows_ops *)cb_journal_rows();   // the journal's table: its ratings read spied on
@@ -477,10 +495,209 @@ static void the_store_is_never_read_or_written_on_the_loop(void) {
     world_close();
 }
 
+// ---- the journal's one writer: the loop (journal.c "the writer") ---------------------------
+
+static cb_journal_stats jstats(void) {
+    cb_journal_stats st;
+    cb_journal_stats_get(g_ctx.store, &st);
+    return st;
+}
+
+// A human (A) against a bot, dealt.
+static void a_human_and_a_bot_dealt(char gid[CB_GAME_ID_MAX + 1]) {
+    reply r;
+    call("create", "A", NULL, 0, &r);
+    T_EQ_INT(r.status, 200);
+    gid[0] = 0;
+    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    meta("A", ASK_ADD_BOT, gid, &r);
+    meta("A", ASK_START, gid, &r);
+    T_CHECK(gid[0] != 0);
+}
+
+// A's move over the socket when A has one. true when one was applied.
+static bool a_moves(const char *gid) {
+    const char *b;
+    uint8_t body[256];
+    int n = next_move(gid, &b, body, sizeof body);
+    if (n <= 0 || strcmp(b, "A") != 0) return false;
+    TableResponse resp;
+    return post_action(b, body, n, &resp) == 200 && resp.status == TABLE_STATUS_APPLIED;
+}
+
+// While the loop runs it is the only writer: a bot drive's cycles, committed on another thread,
+// are handed to it and written there, as the human's moves are.
+static void a_drives_commits_are_written_by_the_loop(void) {
+    world_open();
+    journal_open();
+    char gid[CB_GAME_ID_MAX + 1];
+    a_human_and_a_bot_dealt(gid);
+    serve();
+    cb_journal_stats j0 = jstats();
+    int drives = 0, moves = 0;
+    for (int round = 0; round < 40; round++) {
+        if (a_moves(gid)) moves++;
+        cb_game_row row;
+        T_EQ_INT(CB_ROWS_CALL(g_ctx.store, game_get, gid, &row), CB_OK);
+        const bool playing = row.status == GAME_STATUS_PLAYING;
+        cb_game_row_free(&row);
+        if (!playing) break;
+        T_EQ_INT(cb_bots_drive(&g_ctx, gid), CB_OK);   // this thread, not the loop's
+        drives++;
+    }
+    cb_journal_stats j1 = jstats();
+    T_CHECK(moves > 0 && drives > 0);
+    T_CHECK(j1.writes - j0.writes > moves);           // the cycles were written too
+    T_EQ_INT((int)(j1.loop_writes - j0.loop_writes), (int)(j1.writes - j0.writes));
+    world_close();
+}
+
+// An admin's write holds the journal's writer (store.h cb_store_admin_query) for as long as it runs.
+// A move then is not written on the loop, and the loop does not wait for the writer: the move goes
+// to the pool, which waits there, while the loop answers everyone else. The admin rule then refuses
+// the move (its base was read before the admin's write: a conflict, as ever), and the next is the
+// loop's again.
+static atomic_int g_admin_in;
+static int slow_admin(void *ud) {
+    atomic_store(&g_admin_in, 1);
+    usleep(300000);
+    return CB_OK;
+}
+static void *admin_thread(void *ud) {
+    g_ctx.store->app_exclusive(g_ctx.store, slow_admin, NULL);
+    return NULL;
+}
+
+static void a_held_writer_never_holds_the_loop(void) {
+    world_open();
+    journal_open();
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    serve();
+    T_CHECK(g_ctx.store->app_exclusive != NULL);
+    cb_journal_stats j0 = jstats();
+    counters c0 = stats();
+    mover m;
+    memset(&m, 0, sizeof m);
+    m.n = next_move(gid, &m.bearer, m.body, sizeof m.body);
+    T_CHECK(m.n > 0);
+    atomic_store(&g_admin_in, 0);
+    pthread_t adm, th;
+    pthread_create(&adm, NULL, admin_thread, NULL);
+    for (int i = 0; i < 2000 && !atomic_load(&g_admin_in); i++) usleep(1000);
+    T_CHECK(atomic_load(&g_admin_in));
+    pthread_create(&th, NULL, move_thread, &m);
+    usleep(100000);
+    counters c1 = stats();
+    T_CHECK(c1.ok && c1.took_us < 100000);   // the loop answers while the writer is held
+    T_EQ_INT((int)(c1.to_pool - c0.to_pool), 1);
+    T_CHECK(!atomic_load(&m.done));           // the move waits, on the pool
+    pthread_join(adm, NULL);
+    pthread_join(th, NULL);
+    T_CHECK(m.status == 200 || m.status == 500);   // applied, or refused by the admin rule
+    // The writer free again: the next move is written on the loop.
+    T_CHECK(a_moves(gid) || next_move(gid, &m.bearer, m.body, sizeof m.body) > 0);
+    m.n = next_move(gid, &m.bearer, m.body, sizeof m.body);
+    T_CHECK(m.n > 0);
+    T_EQ_INT(post_action(m.bearer, m.body, m.n, &m.resp), 200);
+    T_EQ_INT(m.resp.status, TABLE_STATUS_APPLIED);
+    counters c2 = stats();
+    cb_journal_stats j1 = jstats();
+    T_EQ_INT((int)(j1.loop_writes - j0.loop_writes), (int)(j1.writes - j0.writes));
+    T_CHECK(c2.to_pool - c1.to_pool <= 1);   // A's move above may be the one refused and asked again
+    world_close();
+}
+
+// The loop makes no segment file: segments rotate after every write here (seg_bytes 1), and a
+// dozen moves of a dozen games, pipelined on one connection, are made in one loop pass, back to
+// back - faster than the flush thread makes the next segment ahead. A move that finds none made yet
+// goes to the pool, the flush thread is asked for it and tells the loop when it is made, and the
+// loop writes what waited; every write is the loop's, every move lands, and no file was made on it.
+static void the_loop_makes_no_segment(void) {
+    enum { N = 12 };
+    world_open();
+    g_seg_bytes = 1;
+    journal_open();
+    g_seg_bytes = 0;
+    char gids[N][CB_GAME_ID_MAX + 1];
+    reply r;
+    for (int i = 0; i < N; i++) {
+        call("create", "A", NULL, 0, &r);
+        T_EQ_INT(r.status, 200);
+    }
+    // The dashboard lists A's games (they are all A's): each is dealt.
+    struct { int n; char (*ids)[CB_GAME_ID_MAX + 1]; } got = { 0, gids };
+    T_EQ_INT(cb_table_views_of_user(&g_ctx, UID_A, N, all_games, &got), N);
+    for (int i = 0; i < N; i++) {
+        meta("B", ASK_JOIN, gids[i], &r);
+        meta("A", ASK_START, gids[i], &r);
+        meta("B", ASK_START, gids[i], &r);
+    }
+    serve();
+    cb_journal_stats j0 = jstats();
+    // One write holding the dozen requests.
+    char *wire = malloc(N * 512);
+    size_t wl = 0;
+    for (int i = 0; i < N; i++) {
+        const char *b;
+        uint8_t body[256];
+        int n = next_move(gids[i], &b, body, sizeof body);
+        T_CHECK(n > 0);
+        wl += (size_t)snprintf(wire + wl, 512, "POST /v1/action HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\n"
+                               "Content-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n", b, n);
+        memcpy(wire + wl, body, (size_t)n);
+        wl += (size_t)n;
+    }
+    int fd = tc_connect(g_port);
+    T_CHECK(write(fd, wire, wl) == (ssize_t)wl);
+    free(wire);
+    // The dozen answers, in order: each a head with its Content-Length and the kernel's answer.
+    cb_buf in;
+    cb_buf_init(&in);
+    size_t at = 0;
+    for (int i = 0; i < N; i++) {
+        char *he = NULL;
+        int st = 0;
+        size_t cl = 0;
+        for (;;) {
+            he = in.len > at ? strstr((char *)in.p + at, "\r\n\r\n") : NULL;
+            if (he) {
+                const char *c = strcasestr((char *)in.p + at, "content-length:");
+                cl = c && c < he ? strtoul(c + 15, NULL, 10) : 0;
+                if ((size_t)(he + 4 - (char *)in.p) + cl <= in.len) break;
+            }
+            struct pollfd p = { fd, POLLIN, 0 };
+            char buf[4096];
+            ssize_t n = poll(&p, 1, 5000) == 1 ? recv(fd, buf, sizeof buf, 0) : -1;
+            if (n <= 0) break;
+            cb_buf_append(&in, buf, (size_t)n);
+        }
+        T_CHECK(he != NULL);
+        if (!he) break;
+        T_CHECK(sscanf((char *)in.p + at, "HTTP/1.1 %d", &st) == 1 && st == 200);
+        const size_t body = (size_t)(he + 4 - (char *)in.p);
+        TableResponse tr;
+        T_EQ_INT(table_response_decode(in.p + body, (int)cl, &tr), 0);
+        T_EQ_INT(tr.status, TABLE_STATUS_APPLIED);
+        at = body + cl;
+    }
+    cb_buf_free(&in);
+    close(fd);
+    cb_journal_stats j1 = jstats();
+    T_EQ_INT((int)(j1.writes - j0.writes), N);
+    T_EQ_INT((int)(j1.loop_writes - j0.loop_writes), N);
+    T_EQ_INT((int)j1.loop_seg_opens, 0);
+    T_CHECK(j1.segments >= N);
+    world_close();
+}
+
 int main(void) {
     T_RUN(a_move_on_a_locked_game_waits_on_the_pool);
     T_RUN(a_game_not_resident_is_read_on_the_pool);
     T_RUN(the_rated_end_and_a_pending_replay_go_to_the_pool);
     T_RUN(the_store_is_never_read_or_written_on_the_loop);
+    T_RUN(a_drives_commits_are_written_by_the_loop);
+    T_RUN(a_held_writer_never_holds_the_loop);
+    T_RUN(the_loop_makes_no_segment);
     return T_DONE();
 }
