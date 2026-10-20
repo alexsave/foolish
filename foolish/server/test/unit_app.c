@@ -1525,6 +1525,7 @@ static void meta_ask(const char *bearer, const TableAsk *a, reply *out) {
 // spectators as a cast at that version, the quiet ones by name included.
 static void every_commit_is_cast(void) {
     setup(0);
+    g_cfg.cast_delta = false;   // the board cast, which a server with CBASE_CAST_DELTA=0 sends
     static const char *const uids[2] = { UID_A, UID_B }, *const bearers[2] = { "A", "B" };
     cb_section *s = cb_section_new();
     int commits = 0, quiet_goods = 0, rearranged = 0, games = 0;
@@ -1575,14 +1576,14 @@ static void every_commit_is_cast(void) {
     T_CHECK(rearranged > 0);
 }
 
-// CBASE_CAST_DELTA: the same whole game with the flag on. Every commit that only
+// CBASE_CAST_DELTA, on by default: the same whole game. Every commit that only
 // moved reaches both seats and the spectators as a delta, every other one (the
 // create, the join, the deal) as the board cast, and every one of them - read in
 // order through the kernel's client the way a page reads them, each delta on the
 // board the cast before it left - reads, to the game's end.
 static void every_commit_is_cast_as_a_delta(void) {
     setup(0);
-    g_cfg.cast_delta = true;
+    T_CHECK(g_cfg.cast_delta);   // the default (config.h)
     memset(&g_cast_read, 0, sizeof g_cast_read);
     g_cast_read.on = true;
     char gid[CB_GAME_ID_MAX + 1];
@@ -1614,7 +1615,6 @@ static void every_commit_is_cast_as_a_delta(void) {
     T_EQ_INT(g_cast_read.deltas, 3 * commits);        // two seats and the spectators
     T_CHECK(setup_boards >= 3 * 3);                    // the create, the join, the deal: board casts
     g_cast_read.on = false;
-    g_cfg.cast_delta = false;
 }
 
 // ---- answer first (app/after.h) ---------------------------------------------------------------
