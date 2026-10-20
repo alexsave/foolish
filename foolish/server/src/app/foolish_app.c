@@ -4,6 +4,7 @@
 
 #include "admin_panels.h"
 
+#include "app_internal.h"
 #include "bots.h"
 #include "pushes.h"
 #include "functions_http.h"
@@ -136,6 +137,7 @@ const cb_app cb_foolish_app = {
     .admin_count = cb_admin_games_needing_bots,
     .serve_open = foolish_serve_open,
     .serve_close = foolish_serve_close,
+    .store_forget = cb_row_cache_clear,
 };
 
 // foolish is the app every binary of this build serves (cbase/app.h).

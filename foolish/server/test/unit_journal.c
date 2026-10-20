@@ -22,6 +22,7 @@
 #include "../../../shared/c/rng.h"
 
 #include <dirent.h>
+#include <pthread.h>
 #include <errno.h>
 #include <sys/stat.h>
 #include <signal.h>
@@ -501,9 +502,10 @@ static void every_acknowledged_move_survives_a_sigkill(void) {
         T_CHECK(s != NULL);
         if (!s) { fprintf(stderr, "reopen: %s\n", err); return; }
         cb_game_row row = stored(s, gid);
-        // Every acknowledged move is there (one more may be: written, not yet reported).
+        // Every acknowledged move is there (one more may be: written, not yet reported; with a
+        // bot, one more drive, whose cycles each commit, may have been under way).
         T_CHECK(row.version >= last.version);
-        T_CHECK(row.version <= last.version + 1);
+        if (!g_bots) T_CHECK(row.version <= last.version + 1);
         uint64_t h = row_hash(s, gid);
         for (int i = 0; i < got; i++)
             if (acks[i].version == row.version) { T_CHECK(acks[i].hash == h); compared++; }
@@ -603,6 +605,109 @@ static void the_flush_writes_the_rows_per_move_commits_write(void) {
     close_world(b);
 }
 
+
+
+// ---- THE ADMIN RULE: an admin's write is never written over by what the journal held ---------
+
+static bool no_row(int n, const char *const *names, const char *const *values, void *ud) { return true; }
+
+// A commit whose base was read before the admin's write, waiting for the writer when it runs.
+typedef struct {
+    cb_store   *s;
+    cb_game_row row;     // the row as read before, at version + 1
+    int64_t     base;
+    int         rc;
+    pthread_t   th;
+} racer_t;
+
+static void *racer(void *ud) {
+    racer_t *r = ud;
+    ReplayMove mv;
+    memset(&mv, 0, sizeof mv);
+    mv.menu_n = 2;
+    cb_game_commit c;
+    memset(&c, 0, sizeof c);
+    c.row = &r->row;
+    c.expected_version = r->base;
+    c.moves = &mv;
+    c.n_moves = 1;
+    r->rc = CB_ROWS_CALL(r->s, game_commit, &c);
+    return NULL;
+}
+
+typedef struct {
+    cb_store   *s;
+    const char *sql;
+    racer_t    *race;
+} admin_t;
+
+static int admin_body(void *ud) {
+    admin_t *a = ud;
+    if (a->race) {
+        pthread_create(&a->race->th, NULL, racer, a->race);
+        usleep(100000);   // it read its base and waits for the writer the section holds
+    }
+    return CB_STORE_CALL(a->s, admin_query, a->sql, true, no_row, NULL);
+}
+
+static void an_admin_write_is_never_written_over(void) {
+    char path[320], err[256] = "", sql[200];
+    snprintf(path, sizeof path, "%s/admin%d.sqlite", g_dir, g_bots);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    move_t m;
+    int64_t v = -1;
+    for (int i = 0; i < 5 && (v = step(s, gid, &m)) > 0; i++) {}
+    T_CHECK(v > 0);
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    T_CHECK(js.waiting > 0);
+    // The console's write: the waiting moves go first, and the store reads the admin's row after.
+    snprintf(sql, sizeof sql, "UPDATE games SET created_at = 4242 WHERE id = '%s'", gid);
+    T_CHECK(cb_store_admin_query(s, sql, true, no_row, NULL) >= 0);
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.waiting, 0);
+    cb_game_row row = stored(s, gid);
+    T_EQ_INT(row.created_at, 4242);
+    T_EQ_INT(row.version, v);
+    cb_game_row_free(&row);
+    // The next move builds on the admin's row, not on a copy the app held from before it.
+    T_CHECK((v = step(s, gid, &m)) > 0);
+    row = stored(s, gid);
+    T_EQ_INT(row.created_at, 4242);
+    cb_game_row_free(&row);
+    // A move read before an admin's write and acknowledged after it would carry the old row:
+    // it is refused (the client asks again), and the moves after build on the admin's row.
+    racer_t race;
+    memset(&race, 0, sizeof race);
+    race.s = s;
+    race.row = stored(s, gid);
+    race.base = race.row.version++;
+    race.row.created_at = 1111;
+    snprintf(sql, sizeof sql, "UPDATE games SET created_at = 4343 WHERE id = '%s'", gid);
+    admin_t a = { s, sql, &race };
+    T_CHECK(s->app_exclusive(s, admin_body, &a) >= 0);
+    pthread_join(race.th, NULL);
+    T_EQ_INT(race.rc, CB_E_CONFLICT);
+    cb_game_row_free(&race.row);
+    row = stored(s, gid);
+    T_EQ_INT(row.created_at, 4343);
+    cb_game_row_free(&row);
+    for (int i = 0; i < 3 && step(s, gid, &m) > 0; i++) {}
+    close_world(s);
+    // The tables alone: the admin's last value, under every move since.
+    s = open_world(path, false, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    row = stored(s, gid);
+    T_EQ_INT(row.created_at, 4343);
+    T_CHECK(row.version > v);
+    cb_game_row_free(&row);
+    close_world(s);
+}
 
 // ---- the flush rule: a move writes no table until its game is due --------------------------
 
@@ -915,6 +1020,7 @@ int main(void) {
         T_RUN(every_acknowledged_move_survives_a_sigkill);
         T_RUN(a_move_writes_no_table_until_its_game_is_due);
         T_RUN(the_lists_read_the_overlay_without_a_flush);
+        T_RUN(an_admin_write_is_never_written_over);
     }
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
