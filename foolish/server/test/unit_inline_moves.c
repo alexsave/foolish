@@ -182,8 +182,9 @@ static void world_open(void) {
 }
 
 static size_t g_seg_bytes;   // the journal's seg_bytes for the next open (0: its default)
+static bool g_sync;          // and its sync
 static void journal_open(void) {
-    cb_journal_opts o = { .path = g_db, .game_age_ms = 3600000, .seg_bytes = (int64_t)g_seg_bytes, .loop = g_ctx.loop,
+    cb_journal_opts o = { .path = g_db, .game_age_ms = 3600000, .seg_bytes = (int64_t)g_seg_bytes, .sync = g_sync, .loop = g_ctx.loop,
                           .apply = cb_table_replay_move, .apply_ud = &g_ctx };
     char err[256];
     T_EQ_INT(cb_journal_open(g_ctx.store, &o, err, sizeof err), CB_OK);
@@ -691,6 +692,35 @@ static void the_loop_makes_no_segment(void) {
     world_close();
 }
 
+// With every write synced (opts.sync: an msync per batch, a wait on the disk) the loop writes
+// nothing: every move goes to the pool, which writes it.
+static void a_synced_journal_writes_nothing_on_the_loop(void) {
+    world_open();
+    g_sync = true;
+    journal_open();
+    g_sync = false;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    serve();
+    counters c0 = stats();
+    cb_journal_stats j0 = jstats();
+    for (int i = 0; i < 3; i++) {
+        const char *b;
+        uint8_t body[256];
+        int n = next_move(gid, &b, body, sizeof body);
+        T_CHECK(n > 0);
+        TableResponse resp;
+        T_EQ_INT(post_action(b, body, n, &resp), 200);
+        T_EQ_INT(resp.status, TABLE_STATUS_APPLIED);
+    }
+    counters c1 = stats();
+    cb_journal_stats j1 = jstats();
+    T_EQ_INT((int)(c1.to_pool - c0.to_pool), 3);
+    T_EQ_INT((int)(j1.writes - j0.writes), 3);
+    T_EQ_INT((int)(j1.loop_writes - j0.loop_writes), 0);
+    world_close();
+}
+
 int main(void) {
     T_RUN(a_move_on_a_locked_game_waits_on_the_pool);
     T_RUN(a_game_not_resident_is_read_on_the_pool);
@@ -699,5 +729,6 @@ int main(void) {
     T_RUN(a_drives_commits_are_written_by_the_loop);
     T_RUN(a_held_writer_never_holds_the_loop);
     T_RUN(the_loop_makes_no_segment);
+    T_RUN(a_synced_journal_writes_nothing_on_the_loop);
     return T_DONE();
 }

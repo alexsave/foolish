@@ -854,6 +854,33 @@ static void a_finished_games_replay_is_a_job(void) {
     play_to_the_end(gid);
     T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
     T_CHECK(!cb_table_finalize_wait(&g_ctx, gid));
+
+    // Where one process does not make every write (Lambda's provider), the reader may be another
+    // process: the commit makes the replay itself, and queues no job.
+    setup(0);
+    g_fin_hold = true;
+    g_ctx.prov = &cb_provider_aws;
+    two_humans_dealt(gid);
+    play_to_the_end(gid);
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
+    T_EQ_INT(g_n_fin_jobs, 0);
+    g_ctx.prov = &cb_provider_local;
+
+    // Two games pending at once: each reader makes its own, whichever is first in the queue.
+    setup(0);
+    g_fin_hold = true;
+    char g1[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(g1);
+    play_to_the_end(g1);
+    g_now += 60000;   // the second game is the dashboard's newest
+    two_humans_dealt(gid);
+    play_to_the_end(gid);
+    T_CHECK(strcmp(g1, gid) != 0);
+    T_EQ_INT(g_n_fin_jobs, 2);
+    T_CHECK(cb_table_finalize_wait(&g_ctx, g1));   // the older, behind the newer in the queue
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
+    T_CHECK(cb_table_finalize_wait(&g_ctx, gid));
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 2);
 }
 
 static void a_finished_game_writes_a_snapshot_and_ratings(void) {
