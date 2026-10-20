@@ -873,11 +873,17 @@ static void mapped_segments_keep_every_committed_batch(void) {
     char gid[CB_GAME_ID_MAX + 1];
     two_humans_dealt(gid);
     move_t m;
-    int64_t v[12];
-    uint64_t h[12];
+    int64_t v[32];
+    uint64_t h[32];
     int n = 0;
-    for (; n < 12 && (v[n] = step(s, gid, &m)) > 0; n++) h[n] = row_hash(s, gid);
-    T_CHECK(n == 12);
+    // Twelve steps at least, the last one a single commit: a bot drive may commit more than
+    // one cycle in a step, and the cut below takes off only the last batch (one record).
+    bool single = false;
+    for (; n < 32 && !(n >= 12 && single) && (v[n] = step(s, gid, &m)) > 0; n++) {
+        h[n] = row_hash(s, gid);
+        single = n > 0 && v[n] == v[n - 1] + 1;
+    }
+    T_CHECK(n >= 12 && single);
     cb_journal_stats js;
     cb_journal_stats_get(s, &js);
     T_CHECK(js.segments >= 12);
