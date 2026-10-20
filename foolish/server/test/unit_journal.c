@@ -1107,8 +1107,8 @@ static int ask_status(const reply *r) {   // 200: the ask committed or answered
     return r->status;
 }
 
-// THE GAME IS RESIDENT FROM ITS CREATE ON (a join, the deal, its moves): every operation reads
-// it from the overlay, never from the tables.
+// THE GAME IS RESIDENT FROM ITS CREATE ON (a join, the deal, its moves, its bots' cycles):
+// every operation reads it, and its session log, from the overlay, never from the tables.
 static void a_deal_and_its_moves_read_no_table(void) {
     char path[320], err[256] = "";
     snprintf(path, sizeof path, "%s/resident%d.sqlite", g_dir, g_bots);
@@ -1128,11 +1128,20 @@ static void a_deal_and_its_moves_read_no_table(void) {
     else { meta("A", ASK_START, gid, &r); meta("B", ASK_START, gid, &r); }
     T_EQ_INT(ask_status(&r), 200);
     T_EQ_INT(version_of(s, gid) > 0, 1);   // dealt and playing
+    cb_journal_stats js0;
+    cb_journal_stats_get(s, &js0);
+    const long loads0 = cb_section_loads();
     move_t m;
-    int moves = 0;
-    for (; moves < 12 && step(s, gid, &m) > 0; moves++) {}
+    int moves = 0, drives = 0;
+    for (; moves < 12 && step(s, gid, &m) > 0; moves++) drives += m.n == 0;
     T_EQ_INT(moves, 12);
     T_EQ_INT(table_reads(s) - reads0, 0);
+    T_EQ_INT(cb_section_loads() - loads0, 0);   // every move and every cycle adopted the resident: no decode
+    // A bot cycle adopts the resident and reads its session log from the overlay: no table.
+    cb_journal_stats js1;
+    cb_journal_stats_get(s, &js1);
+    T_EQ_INT(js1.log_reads - js0.log_reads, 0);
+    if (g_bots) T_CHECK(drives > 0);
     // A view on another connection reads the overlay too: the newest version.
     cb_view_row v;
     T_EQ_INT(cb_table_view(&g_ctx, gid, UID_A, &v), CB_OK);

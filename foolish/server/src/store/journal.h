@@ -115,6 +115,10 @@ int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, 
 // resident if the game is still at that version, so the next operation adopts instead of
 // decoding. Under the game's lock.
 void cb_journal_game_decoded(cb_store *s, const char *id, int64_t version, const struct TableResident *res);
+// The game as the overlay holds it, read WITHOUT the game's lock (a bot drive, whose commit is
+// fenced): fn as for acquire. CB_E_NOT_FOUND when the overlay does not hold it (nothing is
+// read from the tables, nothing made resident).
+int cb_journal_game_peek(cb_store *s, const char *id, cb_journal_game_fn fn, void *ud);
 // A game the tables just created (row, as written) made resident with its decoded state, so
 // its first operation reads no table. Nobody else knows the id yet: no lock is needed.
 void cb_journal_game_created(cb_store *s, const cb_game_row *row, const struct TableResident *res);
@@ -132,6 +136,7 @@ typedef struct {
     long segments;                          // segment files on disk
     long games;                             // games resident in the overlay
     long table_reads;                       // games read from the tables to be made resident
+    long log_reads;                         // session logs read from the tables (the rest was the overlay's)
 } cb_journal_stats;
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 

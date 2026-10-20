@@ -57,41 +57,35 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
 
     for (int attempt = 1; attempt <= CB_TABLE_ATTEMPTS; attempt++) {
         // Always fresh, and always with the log: its length seeds every bot
-        // decision (bot_drive.h), whatever the seated brains read.
+        // decision (bot_drive.h), whatever the seated brains read. Under serve the game is the
+        // overlay's resident, adopted (no decode), and its session log the overlay's moves.
         cb_game_row row;
-        memset(&row, 0, sizeof row);
-        int rc = CB_ROWS_CALL(ctx->store, game_get, game_id, &row);
+        bool kept = false;
+        uint8_t *logs = NULL;
+        size_t logs_len = 0;
+        int rc = cb_section_read(ctx, game_id, s, &row, &kept);
         if (rc == CB_E_NOT_FOUND) return CYCLE_DONE;
         if (rc != CB_OK) return CYCLE_ERROR;
-
-        // ---- the kernel section ----
-        int kr = cb_section_load(s, &row);
-        if (kr < 0) {
-            CB_ERROR("bots", "game %s: load refused (%d)", game_id, kr);
-            cb_game_row_free(&row);
-            return CYCLE_ERROR;
-        }
+#define CYCLE_OUT(v) do { cb_row_release(&row, kept); free(logs); return (v); } while (0)
+        int kr;
         // The kernel's own answer, the one the row's needs_bots was written
         // from (table_bots_due): a row that says otherwise leaves the scan.
         if (!table_bots_due(&s->t)) {
             if (row.needs_bots) *idle_version = row.version;
-            cb_game_row_free(&row);
-            return CYCLE_DONE;
+            CYCLE_OUT(CYCLE_DONE);
         }
         int64_t wait = cb_bots_wait_ms(ctx, &s->t, row.created_at, cb_app_now());
-        if (wait > 0) { cb_game_row_free(&row); *delay_ms = wait; return CYCLE_AGAIN; }
+        if (wait > 0) { *delay_ms = wait; CYCLE_OUT(CYCLE_AGAIN); }
         // The stored session log, whole (the belief brains read it): the LOG# items since the deal.
-        if (CB_ROWS_CALL(ctx->store, game_logs, game_id, row.log_from, &row.logs, &row.logs_len) != CB_OK) {
+        if (CB_ROWS_CALL(ctx->store, game_logs, game_id, row.log_from, &logs, &logs_len) != CB_OK) {
             CB_ERROR("bots", "game %s: session log unreadable", game_id);
-            cb_game_row_free(&row);
-            return CYCLE_ERROR;
+            CYCLE_OUT(CYCLE_ERROR);
         }
-        const int log_len = (int)row.logs_len;
-        kr = table_set_session_log(&s->t, row.logs, log_len);
+        const int log_len = (int)logs_len;
+        kr = table_set_session_log(&s->t, logs, log_len);
         if (kr < 0) {
             CB_ERROR("bots", "game %s: session log refused (%d)", game_id, kr);
-            cb_game_row_free(&row);
-            return CYCLE_ERROR;
+            CYCLE_OUT(CYCLE_ERROR);
         }
         if (cb_bots_cycle_observer) cb_bots_cycle_observer(game_id, attempt, log_len, prefs_len);
         BotDriveOut drv;
@@ -105,8 +99,7 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
         const int64_t drive_ms = cb_mono_ms() - t0;
         if (kr < 0) {
             CB_ERROR("bots", "game %s: bot drive refused (%d)", game_id, kr);
-            cb_game_row_free(&row);
-            return CYCLE_ERROR;
+            CYCLE_OUT(CYCLE_ERROR);
         }
         cpu->compute_ms += (double)drive_ms;
         cpu->cycles += 1;
@@ -120,8 +113,7 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
             // or the heartbeat would ask it the same question every minute.
             CB_WARN("bots", "game %s: a bot was due at version %lld and none acted", game_id, (long long)row.version);
             if (row.needs_bots) *idle_version = row.version;
-            cb_game_row_free(&row);
-            return CYCLE_DONE;
+            CYCLE_OUT(CYCLE_DONE);
         }
 
         if (journal) cb_bots_journal_moves_after(s, jboard, jbase, joff, &drv);
@@ -134,10 +126,12 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
         // offered back.
         cb_commit_out co;
         cb_game_lock *lock = cb_table_lock(game_id);
-        if (!lock) { cb_game_row_free(&row); return CYCLE_ERROR; }
+        if (!lock) CYCLE_OUT(CYCLE_ERROR);
         rc = cb_section_commit(ctx, s, &row, NULL, NULL, ratings, &have_ratings, &co);
         cb_table_unlock(lock);
-        cb_game_row_free(&row);
+        cb_row_release(&row, kept);
+        free(logs);
+#undef CYCLE_OUT
         if (rc != CB_OK) return CYCLE_ERROR;
         if (co.lost) continue;   // a human committed during the drive: reload and drive again
         return co.ended ? CYCLE_DONE : CYCLE_AGAIN;
@@ -331,13 +325,14 @@ static int drive_round(cb_ctx *ctx, const char *game_id, bool *settled) {
 
 // A bot can act on the stored row now (a fresh read).
 static bool due_now(cb_ctx *ctx, const char *game_id) {
-    cb_game_row row;
-    memset(&row, 0, sizeof row);
-    if (CB_ROWS_CALL(ctx->store, game_get, game_id, &row) != CB_OK) return false;
     cb_section *s = cb_section_new();
-    bool due = s && cb_section_load(s, &row) >= 0 && table_bots_due(&s->t);
+    if (!s) return false;
+    cb_game_row row;
+    bool kept = false;
+    const int rc = cb_section_read(ctx, game_id, s, &row, &kept);
+    const bool due = rc == CB_OK && table_bots_due(&s->t);
+    if (rc == CB_OK) cb_row_release(&row, kept);
     cb_section_free(s);
-    cb_game_row_free(&row);
     return due;
 }
 
