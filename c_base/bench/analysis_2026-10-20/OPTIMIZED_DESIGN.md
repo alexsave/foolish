@@ -34,6 +34,7 @@ The children column of rec_children.txt is the attribution; self percentages nam
 | clock reads (vdso 0.86%) | 0.9% | 0.7 | about 20 clock_gettime per move at 31 ns (cb_mono_us x2 for the valve, cb_app_now, cb_mono_ms in the loop, the journal, the overlay) |
 | memcpy 2.57% self, strcmp 1.68%, strlen 0.88%, malloc 0.77% | | | the leaves, already inside the rows above |
 
+The rows sum to 77 of the 83 us; the remaining 6 us are leaves under rec_children's 2% cutoff (the sccp syscall stub 0.82%, malloc 0.77%, the vdso, and the tails of memcpy, strcmp and strlen outside the rows that name them).
 Warm, the move is about 38 us: 37 us of kernel for two sends, a recv and a wait, and the handler's user side is under 25 us of the 83.
 At human pace the cold start multiplies everything by about 2.2, which is why the per-function shares are what to optimize and the thread count is what to design.
 
