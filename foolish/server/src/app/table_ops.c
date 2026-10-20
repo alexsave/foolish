@@ -245,6 +245,7 @@ static bool           g_section_key_ok;
 static void section_release(cb_section *s) {   // the section and what it keeps
     if (!s) return;
     free(s->walk);
+    free(s->fin);
     cb_row_buf_free(&s->rb);
     free(s);
 }
@@ -475,21 +476,20 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
         why = "no session log: nothing to encode a replay from";
         goto out;
     }
-    code = malloc(CODE_CAP);
-    scratch = malloc(SCRATCH_CAP);
-    extras = malloc(EXTRAS_CAP);
-    if (!code || !scratch || !extras) { why = "out of memory"; goto out; }
+    // The section's kept scratch (one allocation per thread, not three per game end).
+    if (!s->fin && !(s->fin = malloc(CODE_CAP + SCRATCH_CAP + EXTRAS_CAP))) { why = "out of memory"; goto out; }
+    code = s->fin;
+    scratch = code + CODE_CAP;
+    extras = scratch + SCRATCH_CAP;
     table_init(&s->t, &s->g, &s->snaps);
     if ((rc = table_load(&s->t, nrow->state, (int)nrow->state_len, nrow->roster, (int)nrow->roster_len)) < 0) {
         why = "does not load";
         goto out;
     }
+    // The extras read the roster and the log, never the board (table_replay_extras takes the
+    // Table const), so the board table_replay_code replays is still the loaded one.
     int n_extras = table_replay_extras(&s->t, logs, (int)logs_len, extras, EXTRAS_CAP);
     if (n_extras < 0) { rc = n_extras; why = "replay extras refused"; goto out; }
-    if ((rc = table_load(&s->t, nrow->state, (int)nrow->state_len, nrow->roster, (int)nrow->roster_len)) < 0) {
-        why = "does not load";
-        goto out;
-    }
     int n_code = table_replay_code(&s->t, nrow->seed, CB_SEED_LEN, logs, (int)logs_len,
                                    code, CODE_CAP, scratch, SCRATCH_CAP);
     if (n_code < 0) { rc = n_code; why = "replay code refused"; goto out; }
@@ -510,9 +510,6 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     if ((rc = CB_ROWS_CALL(ctx->store, snapshot_put, &snap)) != CB_OK) why = "snapshot_put failed";
 out:
     if (why) CB_ERROR("table", "game %s: snapshot failed, keeping the log: %s (%d)", nrow->id, why, rc);
-    free(code);
-    free(scratch);
-    free(extras);
     free(logs);
 }
 

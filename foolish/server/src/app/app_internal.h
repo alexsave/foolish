@@ -78,6 +78,10 @@ typedef struct cb_section {
     // The bot cycle's scratch board (cb_bots_journal_moves_before), made on first use and kept
     // with the section: freed with it (cb_section_free of an unpooled one, or the thread's exit).
     Game       *walk;
+    // The game end's replay scratch (finalize_game: the code, the decode gate's scratch and the
+    // extras, 3.25 MB), made on first use and kept with the section like `walk`: a job thread
+    // that finalizes allocates it once, not per finished game.
+    uint8_t    *fin;
     cb_row_buf  rb;               // the loaded row's bytes, the journal's copy (row_acquire); kept with the section, not zeroed
 } cb_section;
 
