@@ -1173,8 +1173,10 @@ static void mapped_segments_keep_every_committed_batch(void) {
     int n = 0;
     // Twelve steps at least, the last one a single commit: a bot drive may commit more than
     // one cycle in a step, and the cut below takes off only the last batch (one record). The
-    // game still playing: a game's end is written to the tables at once (it rates), and a cut
-    // batch before it would change nothing; a game that ends that soon is dealt again.
+    // game still playing, and a game that ends that soon dealt again. The games end unrated: a
+    // rated end makes its game due at once, and the flush thread would write and trim while the
+    // copies below are made.
+    g_cfg.rated_min_age_s = 1 << 30;
     bool single = false;
     for (int game = 0; game < 4 && !(n >= 12 && single); game++) {
         two_humans_dealt(gid);
@@ -1192,6 +1194,7 @@ static void mapped_segments_keep_every_committed_batch(void) {
     cb_journal_stats js;
     cb_journal_stats_get(s, &js);
     T_CHECK(js.segments >= 12);
+    T_EQ_INT(js.flushes, 0);   // nothing was due: nothing moved under the copies
     crash_copy(path, a);
     crash_copy(path, b);
     crash_copy(path, c);
