@@ -7,6 +7,7 @@
 #include "app/functions_http.h"
 #include "app/table_ops.h"
 #include "app/bots.h"
+#include "app/fanout.h"
 #include "cbase/provider.h"
 #include "handler.h"
 #include "lib_client.h"
@@ -566,6 +567,137 @@ static void a_drives_commits_are_written_by_the_loop(void) {
     world_close();
 }
 
+// THREE THREADS (OPTIMIZED_DESIGN.md step 10): the loop, one request worker and one job worker
+// (CBASE_REQ_WORKERS=1, CBASE_BOT_WORKERS=1). A bot drive runs on the job worker. A human's move
+// made while the drive commits - the game's lock held by the job worker, its pushes going out -
+// is not waited for on the loop (cb_table_trylock): it goes to the one request worker, which waits
+// for the lock there, and commits after the drive. One made while the drive computes (no lock
+// held) commits inline at once, and the drive, fenced, loses its commit and drives again.
+typedef struct { const char *gid; atomic_bool done; int rc; } drive_job;
+static void drive_run(void *ud) {
+    drive_job *d = ud;
+    d->rc = cb_bots_drive(&g_ctx, d->gid);
+    atomic_store(&d->done, true);
+}
+static const char *g_race_gid;
+static mover g_race;
+static pthread_t g_race_th;
+static atomic_int g_race_when;   // 1: post the move from the drive's commit; 2: from its compute; 0: done
+static atomic_int g_race_attempts;
+static void race_on_commit(const cb_fanout *f) {
+    if (atomic_load(&g_race_when) != 1 || strcmp(f->game_id, g_race_gid) != 0) return;
+    atomic_store(&g_race_when, 0);
+    memset(&g_race, 0, sizeof g_race);
+    g_race.n = next_move(g_race_gid, &g_race.bearer, g_race.body, sizeof g_race.body);
+    if (g_race.n <= 0) return;
+    pthread_create(&g_race_th, NULL, move_thread, &g_race);
+    usleep(100000);   // the move reaches the loop, which finds the game locked and hands it on
+}
+static void race_on_cycle(const char *game_id, int attempt, int logs_len, int prefs_len) {
+    atomic_fetch_add(&g_race_attempts, attempt > 1);
+    if (atomic_load(&g_race_when) != 2 || strcmp(game_id, g_race_gid) != 0) return;
+    atomic_store(&g_race_when, 0);
+    memset(&g_race, 0, sizeof g_race);
+    g_race.n = next_move(g_race_gid, &g_race.bearer, g_race.body, sizeof g_race.body);
+    if (g_race.n > 0) g_race.status = post_action(g_race.bearer, g_race.body, g_race.n, &g_race.resp);   // inline: no lock is held
+    atomic_store(&g_race.done, true);
+}
+
+// A, B and a bot, dealt.
+static void two_humans_and_a_bot_dealt(char gid[CB_GAME_ID_MAX + 1]) {
+    reply r;
+    cb_limits_reset();   // a game after a game: the create limit is not what is tested
+    call("create", "A", NULL, 0, &r);
+    T_EQ_INT(r.status, 200);
+    gid[0] = 0;
+    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    meta("B", ASK_JOIN, gid, &r);
+    meta("A", ASK_ADD_BOT, gid, &r);
+    meta("A", ASK_START, gid, &r);
+    meta("B", ASK_START, gid, &r);
+    T_CHECK(gid[0] != 0);
+}
+
+static bool bots_due_at(const char *gid) {
+    cb_game_row row;
+    if (CB_ROWS_CALL(g_ctx.store, game_get, gid, &row) != CB_OK) return false;
+    Game *g = calloc(1, sizeof *g);
+    TableSnaps *snaps = calloc(1, sizeof *snaps);
+    Table t;
+    table_init(&t, g, snaps);
+    const bool due = row.status == GAME_STATUS_PLAYING &&
+                     table_load(&t, row.state, (int)row.state_len, row.roster, (int)row.roster_len) == TABLE_OK && table_bots_due(&t);
+    free(g);
+    free(snaps);
+    cb_game_row_free(&row);
+    return due;
+}
+
+static void a_humans_move_during_a_drive_commits_on_one_worker_each(void) {
+    world_open();
+    journal_open();
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_and_a_bot_dealt(gid);
+    serve();
+    g_ctx.job_pool = cb_pool_new(1, "tinj");   // the one job worker beside the one request worker
+    g_race_gid = gid;
+    atomic_store(&g_race_attempts, 0);
+    cb_fanout_observer = race_on_commit;
+    cb_bots_cycle_observer = race_on_cycle;
+    int pooled = 0, inline_raced = 0;
+    for (int round = 0; round < 400 && (pooled < 2 || inline_raced < 2); round++) {
+        cb_game_row row;
+        T_EQ_INT(CB_ROWS_CALL(g_ctx.store, game_get, gid, &row), CB_OK);
+        const bool playing = row.status == GAME_STATUS_PLAYING;
+        cb_game_row_free(&row);
+        if (!playing) {   // the next game, with the same seats
+            cb_fanout_observer = NULL;
+            cb_bots_cycle_observer = NULL;
+            two_humans_and_a_bot_dealt(gid);
+            cb_fanout_observer = race_on_commit;
+            cb_bots_cycle_observer = race_on_cycle;
+            continue;
+        }
+        const char *b;
+        uint8_t body[256];
+        if (!bots_due_at(gid) || next_move(gid, &b, body, sizeof body) <= 0) {
+            // Nobody races here: a human moves, or the bot drives, plainly.
+            if (next_move(gid, &b, body, sizeof body) > 0) post_action(b, body, next_move(gid, &b, body, sizeof body), NULL);
+            else if (bots_due_at(gid)) { drive_job d = { gid, false, 0 }; drive_run(&d); }
+            continue;
+        }
+        const int when = pooled <= inline_raced ? 1 : 2;
+        atomic_store(&g_race_when, when);
+        const counters c0 = stats();
+        drive_job d = { .gid = gid };
+        T_EQ_INT(cb_pool_submit(g_ctx.job_pool, drive_run, &d), CB_OK);
+        for (int i = 0; i < 20000 && !atomic_load(&d.done); i++) usleep(1000);
+        T_CHECK(atomic_load(&d.done));
+        T_EQ_INT(d.rc, CB_OK);
+        if (atomic_load(&g_race_when) != 0) { atomic_store(&g_race_when, 0); continue; }   // the drive found nothing to commit
+        if (when == 1) {
+            if (g_race.n <= 0) continue;
+            pthread_join(g_race_th, NULL);
+            const counters c1 = stats();
+            T_EQ_INT(g_race.status, 200);
+            T_CHECK(c1.to_pool > c0.to_pool);   // the loop handed it on rather than wait for the lock
+            pooled++;
+        } else {
+            if (g_race.n <= 0) continue;
+            T_EQ_INT(g_race.status, 200);
+            inline_raced++;
+        }
+    }
+    cb_fanout_observer = NULL;
+    cb_bots_cycle_observer = NULL;
+    T_CHECK(pooled >= 2);
+    T_CHECK(inline_raced >= 2);
+    T_CHECK(atomic_load(&g_race_attempts) >= 1);   // a drive whose compute a move overtook drove again
+    cb_pool_free(g_ctx.job_pool);
+    g_ctx.job_pool = NULL;
+    world_close();
+}
+
 // An admin's write holds the journal's writer (store.h cb_store_admin_query) for as long as it runs.
 // A move then is not written on the loop, and the loop does not wait for the writer: the move goes
 // to the pool, which waits there, while the loop answers everyone else. The admin rule then refuses
@@ -740,6 +872,7 @@ int main(void) {
     T_RUN(the_rated_end_stays_on_the_loop_and_a_pending_replay_goes_to_the_pool);
     T_RUN(the_store_is_never_read_or_written_on_the_loop);
     T_RUN(a_drives_commits_are_written_by_the_loop);
+    T_RUN(a_humans_move_during_a_drive_commits_on_one_worker_each);
     T_RUN(a_held_writer_never_holds_the_loop);
     T_RUN(the_loop_makes_no_segment);
     T_RUN(a_synced_journal_writes_nothing_on_the_loop);
