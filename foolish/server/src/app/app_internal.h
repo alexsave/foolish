@@ -67,8 +67,8 @@ int  cb_row_cache_size(void);
 typedef struct cb_section {
     Game        g;
     TableSnaps  snaps;
-    Table       t;
-    TableCommit c;
+    Table       t;                // zeroed by table_init, not by cb_section_free
+    TableCommit c;                // zeroed by table_commit_products, not by cb_section_free
     char        gid[CB_GAME_ID_MAX + 1];
     // The humans and bots the loaded roster seated before the operation (the
     // membership diff, and the commit's prev seats).
