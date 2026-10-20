@@ -209,6 +209,7 @@ typedef struct jgame {
     cb_game_move *moves;         // the moves since sql_version, in order (each log owned)
     int           n_moves, cap_moves;
     long          bytes;         // what the waiting moves hold (move_bytes each)
+    size_t        state_cap, roster_cap;   // row.state's and row.roster's buffers
     int64_t       touched_ms;    // cb_mono_ms of its last move
     int64_t       first_ms;      // cb_mono_ms of its oldest waiting move
     uint64_t      first_seg;     // a segment at or before the one holding its oldest waiting move
@@ -231,7 +232,7 @@ typedef struct jrec {
     struct jrec *next;
     long         epoch;         // the journal's epoch when its base version was read
     cb_jmove     m;
-    cb_game_row  row;           // the new row (owned)
+    cb_game_row  row;           // the new row (the caller's bytes: ov_apply copies them)
     uint8_t     *log;
     size_t       log_len;
     int          rc;
@@ -244,7 +245,9 @@ struct cb_journal {
     char            prefix[1100];   // <db>-journal.
     // the writer: the queue and the one batch in flight
     pthread_mutex_t mu;
-    pthread_cond_t  cv;
+    pthread_cond_t  cv;            // the writers: a batch written, the writer free (waiters: how many wait)
+    pthread_cond_t  fcv;           // the flush thread: a kick, a segment to make ahead, the stop
+    int             waiters;
     jrec           *head, *tail;
     bool            writing;
     jseg            cur, next;     // the open segment, and the one made ahead
@@ -309,7 +312,32 @@ static int row_dup(cb_game_row *dst, const cb_game_row *src) {
     return CB_OK;
 }
 
-// A record's row and log become the game's (ov_mu held). The record's buffers are taken.
+static int grow_copy(uint8_t **p, size_t *cap, const uint8_t *src, size_t n) {
+    if (n > *cap) {
+        uint8_t *q = realloc(*p, n);
+        if (!q) return CB_E_NOMEM;
+        *p = q;
+        *cap = n;
+    }
+    if (n) memcpy(*p, src, n);
+    return CB_OK;
+}
+
+static int row_assign(jgame *g, const cb_game_row *src) {
+    uint8_t *state = g->row.state, *roster = g->row.roster;
+    if (grow_copy(&state, &g->state_cap, src->state, src->state_len) != CB_OK) { g->row.state = state; return CB_E_NOMEM; }
+    g->row.state = state;
+    if (grow_copy(&roster, &g->roster_cap, src->roster, src->roster_len) != CB_OK) { g->row.roster = roster; return CB_E_NOMEM; }
+    cb_game_row r = *src;
+    r.state = state;
+    r.roster = roster;
+    r.logs = NULL;
+    r.logs_len = 0;
+    g->row = r;
+    return CB_OK;
+}
+
+// A record's row and log become the game's (ov_mu held). The log is taken, the row copied.
 static int ov_apply(cb_journal *j, jrec *r) {
     jgame **p = ov_slot(j, r->m.game), *g = *p;
     if (!g) {
@@ -337,12 +365,12 @@ static int ov_apply(cb_journal *j, jrec *r) {
         g->first_ms = now;
         g->first_seg = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
     }
+    // The row's bytes go into the game's own buffers, grown only when a row outgrows them:
+    // no allocation per move.
+    if (row_assign(g, &r->row) != CB_OK) return CB_E_NOMEM;
     g->moves[g->n_moves] = (cb_game_move){ r->row.version, r->log, r->log_len };
     const long b = move_bytes(&g->moves[g->n_moves++]);
     r->log = NULL;
-    cb_game_row_free(&g->row);
-    g->row = r->row;
-    memset(&r->row, 0, sizeof r->row);
     g->touched_ms = now;
     g->bytes += b;
     j->w_bytes += b;
@@ -474,7 +502,7 @@ static int seg_open(cb_journal *j, size_t need) {
     if (rc == CB_OK) {   // the flush thread makes the one after
         pthread_mutex_lock(&j->mu);
         j->prepare = true;
-        pthread_cond_broadcast(&j->cv);
+        pthread_cond_signal(&j->fcv);
         pthread_mutex_unlock(&j->mu);
     }
     return rc;
@@ -557,7 +585,7 @@ static void write_batch(cb_journal *j, jrec *list) {
     if (due) {   // the flush thread applies the rule now rather than at its next tick
         pthread_mutex_lock(&j->mu);
         j->kick = true;
-        pthread_cond_broadcast(&j->cv);
+        pthread_cond_signal(&j->fcv);
         pthread_mutex_unlock(&j->mu);
     }
 }
@@ -579,9 +607,9 @@ static int append(cb_journal *j, jrec *r) {
             pthread_mutex_lock(&j->mu);
             for (jrec *x = list; x; x = x->next) x->done = true;
             j->writing = false;
-            pthread_cond_broadcast(&j->cv);
+            if (j->waiters) pthread_cond_broadcast(&j->cv);   // no wake-up when nobody waits
         } else {
-            pthread_cond_wait(&j->cv, &j->mu);
+            j->waiters++, pthread_cond_wait(&j->cv, &j->mu), j->waiters--;
         }
     }
     pthread_mutex_unlock(&j->mu);
@@ -593,7 +621,7 @@ static int append(cb_journal *j, jrec *r) {
 // The writer, held (no batch in flight while the caller rotates).
 static void writer_hold(cb_journal *j) {
     pthread_mutex_lock(&j->mu);
-    while (j->writing) pthread_cond_wait(&j->cv, &j->mu);
+    while (j->writing) j->waiters++, pthread_cond_wait(&j->cv, &j->mu), j->waiters--;
     j->writing = true;
     pthread_mutex_unlock(&j->mu);
 }
@@ -601,7 +629,7 @@ static void writer_hold(cb_journal *j) {
 static void writer_release(cb_journal *j) {
     pthread_mutex_lock(&j->mu);
     j->writing = false;
-    pthread_cond_broadcast(&j->cv);
+    if (j->waiters) pthread_cond_broadcast(&j->cv);
     pthread_mutex_unlock(&j->mu);
 }
 
@@ -800,7 +828,7 @@ static void *flusher(void *ud) {
         ts.tv_sec += (time_t)(tick / 1000 + ns / 1000000000);
         ts.tv_nsec = (long)(ns % 1000000000);
         int w = 0;
-        while (!j->stop && !j->kick && !j->prepare && (w = pthread_cond_timedwait(&j->cv, &j->mu, &ts)) != ETIMEDOUT) {}
+        while (!j->stop && !j->kick && !j->prepare && (w = pthread_cond_timedwait(&j->fcv, &j->mu, &ts)) != ETIMEDOUT) {}
         if (j->stop) break;
         const bool flush = j->kick || w == ETIMEDOUT;
         j->kick = j->prepare = false;
@@ -922,15 +950,11 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     r.m.bots = c->moves_by_bots;
     r.m.n_mv = c->n_moves;
     memcpy(r.m.mv, c->moves, (size_t)c->n_moves * sizeof *c->moves);
-    if (row_dup(&r.row, row) != CB_OK) return CB_E_NOMEM;
-    if (c->log_add_len && !(r.log = dup_bytes(c->log_add, c->log_add_len))) {
-        cb_game_row_free(&r.row);
-        return CB_E_NOMEM;
-    }
+    r.row = *row;   // read by ov_apply while this thread waits in append
+    if (c->log_add_len && !(r.log = dup_bytes(c->log_add, c->log_add_len))) return CB_E_NOMEM;
     r.log_len = c->log_add_len;
     int rc = append(j, &r);
-    cb_game_row_free(&r.row);   // taken by the overlay on success
-    free(r.log);
+    free(r.log);   // NULL once the overlay took it
     return rc;
 }
 
@@ -1339,6 +1363,7 @@ static void journal_free(cb_journal *j) {
         }
     pthread_mutex_destroy(&j->mu);
     pthread_cond_destroy(&j->cv);
+    pthread_cond_destroy(&j->fcv);
     pthread_mutex_destroy(&j->ov_mu);
     pthread_mutex_destroy(&j->flush_mu);
     pthread_mutex_destroy(&j->seg_mu);
@@ -1362,6 +1387,7 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     snprintf(j->prefix, sizeof j->prefix, "%s-journal.", o->path);
     pthread_mutex_init(&j->mu, NULL);
     pthread_cond_init(&j->cv, NULL);
+    pthread_cond_init(&j->fcv, NULL);
     pthread_mutex_init(&j->ov_mu, NULL);
     pthread_mutex_init(&j->flush_mu, NULL);
     pthread_mutex_init(&j->seg_mu, NULL);
@@ -1433,7 +1459,7 @@ void cb_journal_close(cb_store *s) {
     if (!j) return;
     pthread_mutex_lock(&j->mu);
     j->stop = true;
-    pthread_cond_broadcast(&j->cv);
+    pthread_cond_signal(&j->fcv);
     pthread_mutex_unlock(&j->mu);
     if (j->thr_started) pthread_join(j->thr, NULL);
     const unsigned long wal = cb_store_local_wal_frames(s);   // what the moves cost the tables before the close's flush
