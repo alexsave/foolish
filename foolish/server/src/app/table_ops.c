@@ -686,7 +686,15 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     const int64_t now = cb_app_now();
     const int64_t board_now = cb_bots_board_now(ctx, row->created_at, now);   // the kernel's (bots.h)
     const uint32_t next = (uint32_t)(row->version + 1);
-    int rc = table_commit_products(t, s->gid, gid_len, next, board_now, c, s->arena, sizeof s->arena);
+    // A plain move's products need no row: the journal keeps the game as its resident and
+    // encodes the row only when something reads it (journal.c row_refresh). The kernel's own
+    // flags decide it before the products (whatever else could disqualify the commit comes with
+    // an end or a deal: then the row is written after all, below).
+    unsigned pflags = cb_journal_of(ctx->store) && s->n_mv > 0 && !t->ended && !t->dealt_now && !t->roster_changed &&
+                              row->status == GAME_STATUS_PLAYING && t->g->status == GAME_STATUS_PLAYING
+                          ? TABLE_PRODUCTS_NO_ROW
+                          : 0;
+    int rc = table_commit_products_flags(t, s->gid, gid_len, next, board_now, pflags, c, s->arena, sizeof s->arena);
     arena_note(s, rc);
     if (rc >= 0 && c->wants_ratings) {
         // The kernel rates the game inside the section that ends it. Its products
@@ -706,7 +714,6 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     cb_game_row nrow;
     cb_game_commit gc;
     section_row(s, row, dealt_seed, now, &nrow, &gc);
-    const uint8_t *A = s->arena;
     // A plain human move (journal.h): the store may hold it in its journal. Its menu
     // index was taken at the board before the move (cb_table_run); anything a move does
     // besides moving the board goes to the tables at once.
@@ -716,7 +723,17 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         gc.moves = s->mv;
         gc.n_moves = s->n_mv;
         gc.moves_by_bots = s->mv_bots;
+    } else if (pflags) {
+        // Not plain after all: the tables are written now, so the products carry the row.
+        rc = table_commit_products(t, s->gid, gid_len, next, board_now, c, s->arena, sizeof s->arena);
+        arena_note(s, rc);
+        if (rc < 0) {
+            CB_ERROR("table", "game %s: no commit products (%d)", s->gid, rc);
+            return CB_E_STATE;
+        }
+        section_row(s, row, dealt_seed, now, &nrow, &gc);
     }
+    const uint8_t *A = s->arena;
 
     // ---- everything the aftermath needs, copied out of the section ----------------
     // EVERY COMMIT IS CAST, one per human seat and one for the spectators, at
