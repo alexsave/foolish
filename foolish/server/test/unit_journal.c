@@ -1155,6 +1155,19 @@ static void poke(const char *path, long off, uint8_t v) {
     if (f) { fseek(f, off, SEEK_SET); fputc(v, f); fclose(f); }
 }
 
+// The byte at off inverted: a byte that always changes (a poke of a constant left the byte as it
+// was whenever it already held that constant, 1 in 256 of the runs, and the "torn" record read whole).
+static void flip(const char *path, long off) {
+    FILE *f = fopen(path, "r+b");
+    if (!f) return;
+    fseek(f, off, SEEK_SET);
+    const int c = fgetc(f);
+    T_CHECK(c != EOF);
+    fseek(f, off, SEEK_SET);
+    fputc((uint8_t)~c, f);
+    fclose(f);
+}
+
 static void mapped_segments_keep_every_committed_batch(void) {
     char path[320], a[320], b[320], c[320], err[256] = "", seg[700];
     snprintf(path, sizeof path, "%s/mapped%d.sqlite", g_dir, g_bots);
@@ -1213,7 +1226,7 @@ static void mapped_segments_keep_every_committed_batch(void) {
     if (s) { T_EQ_INT(version_of(s, gid), v[n - 2]); T_CHECK(row_hash(s, gid) == h[n - 2]); close_world(s); }
     // A torn header (its checksum not the payload's): the same.
     T_CHECK(last_batch(c, seg, sizeof seg, &off));
-    poke(seg, off + 4, 0x5a);
+    flip(seg, off + 4);
     s = open_world(c, true, err, sizeof err);
     T_CHECK(s != NULL);
     if (s) { T_EQ_INT(version_of(s, gid), v[n - 2]); close_world(s); }
@@ -1593,7 +1606,7 @@ static void a_torn_or_corrupt_whole_commit_is_dropped(void) {
             // when flagged, then the state blob's u32 length: a byte of the board.
             const long flags_at = 12 + 1 + h[12] + 16;
             const long state_at = flags_at + 2 + 24 + ((h[flags_at] & 2) ? 32 : 0) + 4;
-            poke(seg, off + state_at + 3, 0x5A);
+            flip(seg, off + state_at + 3);
         }
         else poke(seg, off + 11, 0x40);                 // the length past the file's end: torn
         s = open_world(copy, true, err, sizeof err);
