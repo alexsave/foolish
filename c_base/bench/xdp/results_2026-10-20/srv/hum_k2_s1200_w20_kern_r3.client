@@ -1,0 +1,1 @@
+RUN label=hum_k2_s1200_w20_kern_r3 mode=hum k=2 size=1200 conns=300 warm=10.0 dur=45.0 moves_sent=5491 completed=5491 sent_win=4495 done_win=4495 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=10982 p50_us=202.5 p95_us=257.4 p99_us=281.8 p999_us=336.6 max_us=377.5 mean_us=204.9 client_cpu_us=146147

@@ -1,0 +1,40 @@
+$ ip -d link show ens5 | grep -o "prog/xdp.*\|xdpgeneric.*\|xdpdrv.*" || echo no-xdp
+no-xdp
+[rc 0]
+$ curl -s -m 3 -H "X-aws-ec2-metadata-token: $(curl -s -m 3 -X PUT http://[fd00:ec2::254]/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" http://[fd00:ec2::254]/latest/meta-data/instance-id; echo
+i-08d8e5af2f4baa69d
+[rc 0]
+$ getent ahosts s3.dualstack.us-east-1.amazonaws.com | head -2
+2600:1f60:8060:1::100f:fca8 STREAM s3.dualstack.us-east-1.amazonaws.com
+2600:1f60:8060:1::100f:fca8 DGRAM  
+[rc 0]
+$ getent ahosts ssm.us-east-1.api.aws | head -2
+2600:1f70:8000:a1:fda5:15c2:50ca:222a STREAM ssm.us-east-1.api.aws
+2600:1f70:8000:a1:fda5:15c2:50ca:222a DGRAM  
+[rc 0]
+$ curl -s -m 5 -o /dev/null -w 'ssm endpoint http %{http_code} in %{time_total}s\n' https://ssm.us-east-1.api.aws/
+ssm endpoint http 400 in 0.017326s
+[rc 0]
+$ date > /tmp/chk.txt && AWS_USE_DUALSTACK_ENDPOINT=true aws s3 cp --only-show-errors /tmp/chk.txt s3://cbase-perf-temp-xdp-eeddf4a4/xdp/check/$(date +%s).txt && echo s3 put ok
+s3 put ok
+[rc 0]
+$ systemctl is-active amazon-ssm-agent
+active
+[rc 0]
+$ tail -n 400 /var/log/amazon/ssm/amazon-ssm-agent.log | grep -ciE "error|fail" ; tail -n 5 /var/log/amazon/ssm/amazon-ssm-agent.log
+17
+2026-10-20 17:42:23.0556 INFO [ssm-agent-worker] [HealthCheck] HealthCheck reporting agent health.
+2026-10-20 17:42:23.0556 INFO [ssm-agent-worker] [HealthCheck] Agent does not have an explicit provider.
+2026-10-20 17:42:23.0601 INFO [ECSIdentity] Agent not taking ECS identity: Could not fetch metadata endpoint
+2026-10-20 17:42:23.0614 WARN [ssm-agent-worker] [HealthCheck] No default route found in routing table
+2026-10-20 17:42:36.7738 INFO [CredentialRefresher] Next credential rotation will be in 17.001707275383332 minutes
+[rc 0]
+$ ss -tnp | grep -E 'ssm|:443' | head
+ESTAB 0      0      [2600:1f18:e01:9f00:9702:3de4:e510:b45e]:57418 [2600:1f70:8000:a1:fda5:15c2:50ca:222a]:443   users:(("ssm-agent-worke",pid=2047,fd=15))
+ESTAB 0      0      [2600:1f18:e01:9f00:9702:3de4:e510:b45e]:41164  [2600:1f70:8000:a0:584:570f:1ae6:acc9]:443   users:(("ssm-agent-worke",pid=2047,fd=17))
+[rc 0]
+$ ss -ltn | grep -E ":22 |:9000 |:7100 |:7000 "
+LISTEN 0      128          0.0.0.0:22        0.0.0.0:*   
+LISTEN 0      5                  *:9000            *:*   
+LISTEN 0      128             [::]:22           [::]:*   
+[rc 0]

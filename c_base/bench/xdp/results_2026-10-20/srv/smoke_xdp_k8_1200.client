@@ -1,0 +1,1 @@
+RUN label=smoke_xdp_k8_1200 mode=smoke k=8 size=1200 conns=64 warm=0.0 dur=0.0 moves_sent=10001 completed=10001 sent_win=10001 done_win=10001 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=80008 p50_us=282.9 p95_us=352.6 p99_us=401.7 p999_us=481.4 max_us=671.6 mean_us=284.5 client_cpu_us=230284

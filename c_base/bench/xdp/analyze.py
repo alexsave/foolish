@@ -35,7 +35,9 @@ def delta(lab):
 
 
 def cpus(dl):
-    return sorted({int(m.group(1)) for k in dl for m in [re.match(r'c(\d+)_user', k)] if m})
+    # c<N>_ keys with N >= 64 come from the aggregate "cpu  " line, which the server's sscanf("cpu%d") also matched
+    # (%d skips the spaces and takes the total user ticks as an index; fixed in srv.c after the run)
+    return sorted({int(m.group(1)) for k in dl for m in [re.match(r'c(\d+)_user', k)] if m and int(m.group(1)) < 64})
 
 
 def metrics(lab):

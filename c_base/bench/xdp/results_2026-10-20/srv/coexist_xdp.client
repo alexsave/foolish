@@ -1,0 +1,1 @@
+RUN label=coexist_xdp mode=smoke k=2 size=300 conns=16 warm=10.0 dur=45.0 moves_sent=2000 completed=2000 sent_win=2000 done_win=2000 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=4000 p50_us=195.2 p95_us=275.1 p99_us=302.5 p999_us=359.0 max_us=390.8 mean_us=202.2 client_cpu_us=10923

@@ -1,0 +1,1 @@
+RUN label=sat_k2_s300_w20_xdpP_r1 mode=sat k=2 size=300 conns=300 warm=5.0 dur=20.0 moves_sent=961661 completed=961661 sent_win=769932 done_win=769932 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=1923322 p50_us=3242.7 p95_us=5585.5 p99_us=5793.8 p999_us=5953.9 max_us=7516.4 mean_us=3896.2 client_cpu_us=5234772

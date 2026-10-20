@@ -1,0 +1,1 @@
+RUN label=sat_k8_s1200_w20_xdp_r2 mode=sat k=8 size=1200 conns=304 warm=5.0 dur=20.0 moves_sent=622730 completed=622730 sent_win=499618 done_win=499618 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=4981840 p50_us=1528.7 p95_us=1809.8 p99_us=1943.6 p999_us=2148.8 max_us=3190.1 mean_us=1520.3 client_cpu_us=11893024

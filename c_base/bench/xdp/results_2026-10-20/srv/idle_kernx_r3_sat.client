@@ -1,0 +1,1 @@
+RUN label=idle_kernx_r3_sat mode=idle k=2 size=300 conns=300 warm=5.0 dur=30.0 moves_sent=0 completed=0 sent_win=0 done_win=0 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=0 p50_us=0.0 p95_us=0.0 p99_us=0.0 p999_us=0.0 max_us=0.0 mean_us=0.0 client_cpu_us=49842

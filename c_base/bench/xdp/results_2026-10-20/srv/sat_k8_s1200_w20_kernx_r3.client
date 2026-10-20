@@ -1,0 +1,1 @@
+RUN label=sat_k8_s1200_w20_kernx_r3 mode=sat k=8 size=1200 conns=304 warm=5.0 dur=20.0 moves_sent=487276 completed=487276 sent_win=389584 done_win=389584 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=3898208 p50_us=1953.4 p95_us=2012.8 p99_us=2071.9 p999_us=2209.2 max_us=4079.9 mean_us=1950.0 client_cpu_us=9762310

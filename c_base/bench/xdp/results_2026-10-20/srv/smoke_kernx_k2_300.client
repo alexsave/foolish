@@ -1,0 +1,1 @@
+RUN label=smoke_kernx_k2_300 mode=smoke k=2 size=300 conns=16 warm=0.0 dur=0.0 moves_sent=10000 completed=10000 sent_win=10000 done_win=10000 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=20000 p50_us=194.0 p95_us=294.7 p99_us=403.1 p999_us=439.9 max_us=452.9 mean_us=197.9 client_cpu_us=61835

@@ -1,0 +1,1 @@
+RUN label=hum_k8_s300_w0_kern_r3 mode=hum k=8 size=300 conns=304 warm=10.0 dur=45.0 moves_sent=5590 completed=5590 sent_win=4576 done_win=4576 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=44720 p50_us=224.6 p95_us=284.8 p99_us=315.8 p999_us=446.7 max_us=478.9 mean_us=229.0 client_cpu_us=224283

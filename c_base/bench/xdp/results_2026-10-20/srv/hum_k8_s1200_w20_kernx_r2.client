@@ -1,0 +1,1 @@
+RUN label=hum_k8_s1200_w20_kernx_r2 mode=hum k=8 size=1200 conns=304 warm=10.0 dur=45.0 moves_sent=5587 completed=5587 sent_win=4571 done_win=4571 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=44696 p50_us=267.5 p95_us=332.5 p99_us=375.6 p999_us=487.7 max_us=639.4 mean_us=271.1 client_cpu_us=253785

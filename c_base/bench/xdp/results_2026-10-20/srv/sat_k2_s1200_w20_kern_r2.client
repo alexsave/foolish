@@ -1,0 +1,1 @@
+RUN label=sat_k2_s1200_w20_kern_r2 mode=sat k=2 size=1200 conns=300 warm=5.0 dur=20.0 moves_sent=741441 completed=741441 sent_win=592167 done_win=592167 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=1482882 p50_us=5035.1 p95_us=5277.5 p99_us=5527.4 p999_us=7286.8 max_us=10140.9 mean_us=5065.3 client_cpu_us=5168353

@@ -1,0 +1,5 @@
+cmd /var/tmp/xs/bin/xsrv kern --if ens5 --port 7000 --ctl 7100 --spin 0
+network answered after 0.01 s
+READY backend=kern port=7000 spin_us=0 spin_iters=0 ns_per_iter=4.545 idle_tp=yes idle_filtered=1 tp_sys=0
+dmesg:
+

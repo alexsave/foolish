@@ -1,0 +1,1 @@
+RUN label=hum_k8_s300_w20_xdpP_r3 mode=hum k=8 size=300 conns=304 warm=10.0 dur=45.0 moves_sent=5546 completed=5546 sent_win=4538 done_win=4538 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=44368 p50_us=249.7 p95_us=318.8 p99_us=356.6 p999_us=399.0 max_us=477.2 mean_us=256.6 client_cpu_us=220289

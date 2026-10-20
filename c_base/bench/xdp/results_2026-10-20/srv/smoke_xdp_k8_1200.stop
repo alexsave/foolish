@@ -1,0 +1,6 @@
+rc 0
+XSK q=0 zerocopy bind: ok
+XSK q=1 zerocopy bind: ok
+XDP queues=2 zc=1 gw_mac=given kick=sendto drop_rx=0 drop_tx=0
+READY backend=xdp port=7000 spin_us=0 spin_iters=0 ns_per_iter=4.493 idle_tp=yes idle_filtered=1 tp_sys=1
+FINAL t_ns=100584271340 sched_ns=202970626 ut_us=131967 st_us=71058 nvcsw=3983 nivcsw=6 moves=10001 frames=80008 fbytes=96009600 rxmsgs=10065 missing=0 badmsg=0 opens=64 closes=64 sc_wait=11454 sc_recv=0 sc_send=0 sc_accept=0 sc_kick=6870 sc_other=0 sc_ctl=10 passes=11454 rx_pkts=50517 tx_pkts=80200 tx_full=0 rexmit=0 rx_bytes=3982634 tp_sys=18447 c4475_user=227 c4475_nice=3339 c4475_sys=9786 c4475_idle=2161 c4475_iowait=0 c4475_irq=59 c4475_softirq=0 c4475_steal=0 c0_user=1518 c0_nice=100 c0_sys=1646 c0_idle=5654 c0_iowait=1055 c0_irq=0 c0_softirq=33 c0_steal=0 c1_user=2956 c1_nice=126 c1_sys=1692 c1_idle=4132 c1_iowait=1105 c1_irq=0 c1_softirq=26 c1_steal=0 intr=175203 ctxt=293951 si_TIMER_0=3054 si_TIMER_1=2582 si_NET_TX_0=1 si_NET_TX_1=0 si_NET_RX_0=36123 si_NET_RX_1=57242 si_SCHED_0=6365 si_SCHED_1=5579 si_HRTIMER_0=0 si_HRTIMER_1=0 si_RCU_0=13236 si_RCU_1=15783 nicirq_0=16429 nicmgmt_0=10 nicirq_1=20816 nicmgmt_1=300 idlex_0=624 idlex_1=5456 xdp_redirect=74725 xdp_drop=0 xdp_pass=297 xdp_other=0 zc=1 nq=2 kicks_skipped=0 rx_nomem=0 drop_tx=0 tcp_out=80008 fill_wakeups=22908 learned_mac=0 pcbs=0

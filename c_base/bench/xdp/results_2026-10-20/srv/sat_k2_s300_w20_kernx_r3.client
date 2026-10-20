@@ -1,0 +1,1 @@
+RUN label=sat_k2_s300_w20_kernx_r3 mode=sat k=2 size=300 conns=300 warm=5.0 dur=20.0 moves_sent=779083 completed=779083 sent_win=623085 done_win=623085 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=1558166 p50_us=4791.4 p95_us=4990.6 p99_us=5184.2 p999_us=5849.0 max_us=9625.9 mean_us=4814.5 client_cpu_us=4581549

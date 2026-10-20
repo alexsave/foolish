@@ -1,0 +1,147 @@
+Amazon Linux 2023 repository                     69 MB/s |  83 MB     00:01    
+Amazon Linux 2023 Kernel Livepatch repository   727 kB/s |  87 kB     00:00    
+Package ethtool-2:5.15-1.amzn2023.0.2.aarch64 is already installed.
+Dependencies resolved.
+================================================================================
+ Package                   Arch    Version                    Repository   Size
+================================================================================
+Installing:
+ clang                     aarch64 15.0.7-3.amzn2023.0.4      amazonlinux  68 k
+ gcc                       aarch64 11.5.0-5.amzn2023.0.5      amazonlinux  31 M
+ kernel-headers            aarch64 1:6.1.188-233.393.amzn2023 amazonlinux 1.3 M
+ libbpf-devel              aarch64 2:1.6.1-3.amzn2023         amazonlinux  92 k
+Installing dependencies:
+ annobin-docs              noarch  12.69-1.amzn2023.0.1       amazonlinux  93 k
+ annobin-plugin-gcc        aarch64 12.69-1.amzn2023.0.1       amazonlinux 973 k
+ clang-libs                aarch64 15.0.7-3.amzn2023.0.4      amazonlinux  18 M
+ clang-resource-filesystem aarch64 15.0.7-3.amzn2023.0.4      amazonlinux 8.9 k
+ cpp                       aarch64 11.5.0-5.amzn2023.0.5      amazonlinux  10 M
+ elfutils-libelf-devel     aarch64 0.188-3.amzn2023.0.3       amazonlinux  19 k
+ gc                        aarch64 8.0.4-5.amzn2023.0.2       amazonlinux 102 k
+ gcc-c++                   aarch64 11.5.0-5.amzn2023.0.5      amazonlinux  12 M
+ gcc-plugin-annobin        aarch64 11.5.0-5.amzn2023.0.5      amazonlinux  37 k
+ glibc-devel               aarch64 2.34-231.amzn2023.0.5      amazonlinux 445 k
+ guile22                   aarch64 2.2.7-2.amzn2023.0.3       amazonlinux 6.4 M
+ libmpc                    aarch64 1.2.1-2.amzn2023.0.2       amazonlinux  63 k
+ libstdc++-devel           aarch64 11.5.0-5.amzn2023.0.5      amazonlinux 2.8 M
+ libtool-ltdl              aarch64 2.4.7-1.amzn2023.0.3       amazonlinux  38 k
+ libxcrypt-devel           aarch64 4.4.33-7.amzn2023          amazonlinux  32 k
+ llvm                      aarch64 15.0.7-3.amzn2023.0.1      amazonlinux  13 M
+ llvm-libs                 aarch64 15.0.7-3.amzn2023.0.1      amazonlinux  24 M
+ make                      aarch64 1:4.3-5.amzn2023.0.2       amazonlinux 530 k
+ zlib-devel                aarch64 1.2.11-33.amzn2023.0.6     amazonlinux  44 k
+
+Transaction Summary
+================================================================================
+Install  23 Packages
+
+Total download size: 122 M
+Installed size: 471 M
+Downloading Packages:
+(1/23): annobin-docs-12.69-1.amzn2023.0.1.noarc 3.1 MB/s |  93 kB     00:00    
+(2/23): annobin-plugin-gcc-12.69-1.amzn2023.0.1  27 MB/s | 973 kB     00:00    
+(3/23): clang-resource-filesystem-15.0.7-3.amzn 324 kB/s | 8.9 kB     00:00    
+(4/23): clang-15.0.7-3.amzn2023.0.4.aarch64.rpm 941 kB/s |  68 kB     00:00    
+(5/23): elfutils-libelf-devel-0.188-3.amzn2023. 647 kB/s |  19 kB     00:00    
+(6/23): gc-8.0.4-5.amzn2023.0.2.aarch64.rpm     4.7 MB/s | 102 kB     00:00    
+(7/23): cpp-11.5.0-5.amzn2023.0.5.aarch64.rpm    66 MB/s |  10 MB     00:00    
+(8/23): clang-libs-15.0.7-3.amzn2023.0.4.aarch6  50 MB/s |  18 MB     00:00    
+(9/23): gcc-plugin-annobin-11.5.0-5.amzn2023.0. 1.5 MB/s |  37 kB     00:00    
+(10/23): glibc-devel-2.34-231.amzn2023.0.5.aarc  14 MB/s | 445 kB     00:00    
+(11/23): gcc-c++-11.5.0-5.amzn2023.0.5.aarch64.  48 MB/s |  12 MB     00:00    
+(12/23): kernel-headers-6.1.188-233.393.amzn202  27 MB/s | 1.3 MB     00:00    
+(13/23): guile22-2.2.7-2.amzn2023.0.3.aarch64.r  43 MB/s | 6.4 MB     00:00    
+(14/23): libbpf-devel-1.6.1-3.amzn2023.aarch64. 1.1 MB/s |  92 kB     00:00    
+(15/23): libmpc-1.2.1-2.amzn2023.0.2.aarch64.rp 2.3 MB/s |  63 kB     00:00    
+(16/23): libtool-ltdl-2.4.7-1.amzn2023.0.3.aarc 1.5 MB/s |  38 kB     00:00    
+(17/23): libstdc++-devel-11.5.0-5.amzn2023.0.5.  35 MB/s | 2.8 MB     00:00    
+(18/23): libxcrypt-devel-4.4.33-7.amzn2023.aarc 829 kB/s |  32 kB     00:00    
+(19/23): gcc-11.5.0-5.amzn2023.0.5.aarch64.rpm   49 MB/s |  31 MB     00:00    
+(20/23): make-4.3-5.amzn2023.0.2.aarch64.rpm     11 MB/s | 530 kB     00:00    
+(21/23): zlib-devel-1.2.11-33.amzn2023.0.6.aarc 1.7 MB/s |  44 kB     00:00    
+(22/23): llvm-15.0.7-3.amzn2023.0.1.aarch64.rpm  42 MB/s |  13 MB     00:00    
+(23/23): llvm-libs-15.0.7-3.amzn2023.0.1.aarch6  46 MB/s |  24 MB     00:00    
+--------------------------------------------------------------------------------
+Total                                            96 MB/s | 122 MB     00:01     
+Running transaction check
+Transaction check succeeded.
+Running transaction test
+Transaction test succeeded.
+Running transaction
+  Preparing        :                                                        1/1 
+  Installing       : llvm-libs-15.0.7-3.amzn2023.0.1.aarch64               1/23 
+  Installing       : libmpc-1.2.1-2.amzn2023.0.2.aarch64                   2/23 
+  Installing       : zlib-devel-1.2.11-33.amzn2023.0.6.aarch64             3/23 
+  Installing       : libstdc++-devel-11.5.0-5.amzn2023.0.5.aarch64         4/23 
+  Installing       : kernel-headers-1:6.1.188-233.393.amzn2023.aarch64     5/23 
+  Installing       : libxcrypt-devel-4.4.33-7.amzn2023.aarch64             6/23 
+  Installing       : glibc-devel-2.34-231.amzn2023.0.5.aarch64             7/23 
+  Installing       : elfutils-libelf-devel-0.188-3.amzn2023.0.3.aarch64    8/23 
+  Installing       : cpp-11.5.0-5.amzn2023.0.5.aarch64                     9/23 
+  Installing       : libtool-ltdl-2.4.7-1.amzn2023.0.3.aarch64            10/23 
+  Installing       : gc-8.0.4-5.amzn2023.0.2.aarch64                      11/23 
+  Installing       : guile22-2.2.7-2.amzn2023.0.3.aarch64                 12/23 
+  Installing       : make-1:4.3-5.amzn2023.0.2.aarch64                    13/23 
+  Installing       : gcc-11.5.0-5.amzn2023.0.5.aarch64                    14/23 
+  Running scriptlet: gcc-11.5.0-5.amzn2023.0.5.aarch64                    14/23 
+  Installing       : gcc-c++-11.5.0-5.amzn2023.0.5.aarch64                15/23 
+  Installing       : clang-resource-filesystem-15.0.7-3.amzn2023.0.4.aa   16/23 
+  Installing       : clang-libs-15.0.7-3.amzn2023.0.4.aarch64             17/23 
+  Installing       : annobin-docs-12.69-1.amzn2023.0.1.noarch             18/23 
+  Installing       : annobin-plugin-gcc-12.69-1.amzn2023.0.1.aarch64      19/23 
+  Running scriptlet: annobin-plugin-gcc-12.69-1.amzn2023.0.1.aarch64      19/23 
+  Installing       : clang-15.0.7-3.amzn2023.0.4.aarch64                  20/23 
+  Installing       : gcc-plugin-annobin-11.5.0-5.amzn2023.0.5.aarch64     21/23 
+  Installing       : libbpf-devel-2:1.6.1-3.amzn2023.aarch64              22/23 
+  Installing       : llvm-15.0.7-3.amzn2023.0.1.aarch64                   23/23 
+  Running scriptlet: llvm-15.0.7-3.amzn2023.0.1.aarch64                   23/23 
+  Verifying        : annobin-docs-12.69-1.amzn2023.0.1.noarch              1/23 
+  Verifying        : annobin-plugin-gcc-12.69-1.amzn2023.0.1.aarch64       2/23 
+  Verifying        : clang-15.0.7-3.amzn2023.0.4.aarch64                   3/23 
+  Verifying        : clang-libs-15.0.7-3.amzn2023.0.4.aarch64              4/23 
+  Verifying        : clang-resource-filesystem-15.0.7-3.amzn2023.0.4.aa    5/23 
+  Verifying        : cpp-11.5.0-5.amzn2023.0.5.aarch64                     6/23 
+  Verifying        : elfutils-libelf-devel-0.188-3.amzn2023.0.3.aarch64    7/23 
+  Verifying        : gc-8.0.4-5.amzn2023.0.2.aarch64                       8/23 
+  Verifying        : gcc-11.5.0-5.amzn2023.0.5.aarch64                     9/23 
+  Verifying        : gcc-c++-11.5.0-5.amzn2023.0.5.aarch64                10/23 
+  Verifying        : gcc-plugin-annobin-11.5.0-5.amzn2023.0.5.aarch64     11/23 
+  Verifying        : glibc-devel-2.34-231.amzn2023.0.5.aarch64            12/23 
+  Verifying        : guile22-2.2.7-2.amzn2023.0.3.aarch64                 13/23 
+  Verifying        : kernel-headers-1:6.1.188-233.393.amzn2023.aarch64    14/23 
+  Verifying        : libbpf-devel-2:1.6.1-3.amzn2023.aarch64              15/23 
+  Verifying        : libmpc-1.2.1-2.amzn2023.0.2.aarch64                  16/23 
+  Verifying        : libstdc++-devel-11.5.0-5.amzn2023.0.5.aarch64        17/23 
+  Verifying        : libtool-ltdl-2.4.7-1.amzn2023.0.3.aarch64            18/23 
+  Verifying        : libxcrypt-devel-4.4.33-7.amzn2023.aarch64            19/23 
+  Verifying        : llvm-15.0.7-3.amzn2023.0.1.aarch64                   20/23 
+  Verifying        : llvm-libs-15.0.7-3.amzn2023.0.1.aarch64              21/23 
+  Verifying        : make-1:4.3-5.amzn2023.0.2.aarch64                    22/23 
+  Verifying        : zlib-devel-1.2.11-33.amzn2023.0.6.aarch64            23/23 
+
+Installed:
+  annobin-docs-12.69-1.amzn2023.0.1.noarch                                      
+  annobin-plugin-gcc-12.69-1.amzn2023.0.1.aarch64                               
+  clang-15.0.7-3.amzn2023.0.4.aarch64                                           
+  clang-libs-15.0.7-3.amzn2023.0.4.aarch64                                      
+  clang-resource-filesystem-15.0.7-3.amzn2023.0.4.aarch64                       
+  cpp-11.5.0-5.amzn2023.0.5.aarch64                                             
+  elfutils-libelf-devel-0.188-3.amzn2023.0.3.aarch64                            
+  gc-8.0.4-5.amzn2023.0.2.aarch64                                               
+  gcc-11.5.0-5.amzn2023.0.5.aarch64                                             
+  gcc-c++-11.5.0-5.amzn2023.0.5.aarch64                                         
+  gcc-plugin-annobin-11.5.0-5.amzn2023.0.5.aarch64                              
+  glibc-devel-2.34-231.amzn2023.0.5.aarch64                                     
+  guile22-2.2.7-2.amzn2023.0.3.aarch64                                          
+  kernel-headers-1:6.1.188-233.393.amzn2023.aarch64                             
+  libbpf-devel-2:1.6.1-3.amzn2023.aarch64                                       
+  libmpc-1.2.1-2.amzn2023.0.2.aarch64                                           
+  libstdc++-devel-11.5.0-5.amzn2023.0.5.aarch64                                 
+  libtool-ltdl-2.4.7-1.amzn2023.0.3.aarch64                                     
+  libxcrypt-devel-4.4.33-7.amzn2023.aarch64                                     
+  llvm-15.0.7-3.amzn2023.0.1.aarch64                                            
+  llvm-libs-15.0.7-3.amzn2023.0.1.aarch64                                       
+  make-1:4.3-5.amzn2023.0.2.aarch64                                             
+  zlib-devel-1.2.11-33.amzn2023.0.6.aarch64                                     
+
+Complete!

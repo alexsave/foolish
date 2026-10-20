@@ -1,0 +1,1 @@
+RUN label=drop_both_xdp_k8_1200 mode=smoke k=8 size=1200 conns=64 warm=0.0 dur=0.0 moves_sent=10000 completed=10000 sent_win=10000 done_win=10000 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=80000 p50_us=202.5 p95_us=1458176.2 p99_us=1500046.6 p999_us=3001039.9 max_us=4500781.7 mean_us=126814.4 client_cpu_us=516466

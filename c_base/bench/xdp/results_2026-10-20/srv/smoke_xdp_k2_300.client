@@ -1,0 +1,1 @@
+RUN label=smoke_xdp_k2_300 mode=smoke k=2 size=300 conns=16 warm=0.0 dur=0.0 moves_sent=10000 completed=10000 sent_win=10000 done_win=10000 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=20000 p50_us=187.1 p95_us=262.9 p99_us=284.6 p999_us=365.0 max_us=420.3 mean_us=189.8 client_cpu_us=63321

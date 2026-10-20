@@ -1,0 +1,328 @@
+$ uname -a
+Linux i-08d8e5af2f4baa69d.ec2.internal 6.18.54-121.166.amzn2023.aarch64 #2 SMP Tue Oct  6 23:12:04 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux
+[rc 0]
+$ head -3 /etc/os-release
+NAME="Amazon Linux"
+VERSION="2023"
+ID="amzn"
+[rc 0]
+$ nproc
+2
+[rc 0]
+$ free -m
+               total        used        free      shared  buff/cache   available
+Mem:             412         131          59           0         220         270
+Swap:            411          47         364
+[rc 0]
+$ ethtool -i ens5
+driver: ena
+version: 2.17.4g
+firmware-version: 
+expansion-rom-version: 
+bus-info: 0000:00:05.0
+supports-statistics: yes
+supports-test: no
+supports-eeprom-access: no
+supports-register-dump: no
+supports-priv-flags: no
+[rc 0]
+$ ethtool -l ens5
+Channel parameters for ens5:
+Pre-set maximums:
+RX:		n/a
+TX:		n/a
+Other:		n/a
+Combined:	2
+Current hardware settings:
+RX:		n/a
+TX:		n/a
+Other:		n/a
+Combined:	2
+[rc 0]
+$ ethtool -c ens5
+Coalesce parameters for ens5:
+Adaptive RX: on  TX: n/a
+stats-block-usecs: n/a
+sample-interval: n/a
+pkt-rate-low: n/a
+pkt-rate-high: n/a
+
+rx-usecs: 20
+rx-frames: n/a
+rx-usecs-irq: n/a
+rx-frames-irq: n/a
+
+tx-usecs: 64
+tx-frames: n/a
+tx-usecs-irq: n/a
+tx-frames-irq: n/a
+
+rx-usecs-low: n/a
+rx-frame-low: n/a
+tx-usecs-low: n/a
+tx-frame-low: n/a
+
+rx-usecs-high: n/a
+rx-frame-high: n/a
+tx-usecs-high: n/a
+tx-frame-high: n/a
+
+CQE mode RX: n/a  TX: n/a
+
+[rc 0]
+$ ethtool -g ens5
+Ring parameters for ens5:
+Pre-set maximums:
+RX:		2048
+RX Mini:	n/a
+RX Jumbo:	n/a
+TX:		1024
+Current hardware settings:
+RX:		1024
+RX Mini:	n/a
+RX Jumbo:	n/a
+TX:		1024
+[rc 0]
+$ ethtool -k ens5 | grep -E 'checksum|segmentation|offload|xdp'
+rx-checksumming: off [fixed]
+tx-checksumming: on
+	tx-checksum-ipv4: on
+	tx-checksum-ip-generic: off [fixed]
+	tx-checksum-ipv6: on
+	tx-checksum-fcoe-crc: off [fixed]
+	tx-checksum-sctp: off [fixed]
+tcp-segmentation-offload: off
+	tx-tcp-segmentation: off [fixed]
+	tx-tcp-ecn-segmentation: off [fixed]
+	tx-tcp-mangleid-segmentation: off [fixed]
+	tx-tcp6-segmentation: off [fixed]
+	tx-tcp-accecn-segmentation: off [fixed]
+generic-segmentation-offload: on
+generic-receive-offload: on
+large-receive-offload: off [fixed]
+rx-vlan-offload: off [fixed]
+tx-vlan-offload: off [fixed]
+tx-fcoe-segmentation: off [fixed]
+tx-gre-segmentation: off [fixed]
+tx-gre-csum-segmentation: off [fixed]
+tx-ipxip4-segmentation: off [fixed]
+tx-ipxip6-segmentation: off [fixed]
+tx-udp_tnl-segmentation: off [fixed]
+tx-udp_tnl-csum-segmentation: off [fixed]
+tx-tunnel-remcsum-segmentation: off [fixed]
+tx-sctp-segmentation: off [fixed]
+tx-esp-segmentation: off [fixed]
+tx-udp-segmentation: off [fixed]
+l2-fwd-offload: off [fixed]
+hw-tc-offload: off [fixed]
+esp-hw-offload: off [fixed]
+esp-tx-csum-hw-offload: off [fixed]
+rx-udp_tunnel-port-offload: off [fixed]
+tls-hw-tx-offload: off [fixed]
+tls-hw-rx-offload: off [fixed]
+macsec-hw-offload: off [fixed]
+hsr-tag-ins-offload: off [fixed]
+hsr-tag-rm-offload: off [fixed]
+hsr-fwd-offload: off [fixed]
+hsr-dup-offload: off [fixed]
+[rc 0]
+$ ip -d link show ens5
+2: ens5: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9001 qdisc mq state UP mode DEFAULT group default qlen 1000
+    link/ether 02:ff:e0:3d:c4:e9 brd ff:ff:ff:ff:ff:ff promiscuity 0 allmulti 0 minmtu 128 maxmtu 9216 addrgenmode eui64 numtxqueues 2 numrxqueues 2 gso_max_size 65536 gso_max_segs 65535 tso_max_size 65536 tso_max_segs 65535 gro_max_size 65536 gso_ipv4_max_size 65536 gro_ipv4_max_size 65536 parentbus pci parentdev 0000:00:05.0 
+    altname enp0s5
+    altname eni-0ebe570247c9d3b6d
+    altname device-number-0.0
+[rc 0]
+$ ip -6 addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 state UNKNOWN qlen 1000
+    inet6 ::1/128 scope host noprefixroute 
+       valid_lft forever preferred_lft forever
+2: ens5: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9001 state UP qlen 1000
+    inet6 2600:1f18:e01:9f00:9702:3de4:e510:b45e/128 scope global dynamic noprefixroute 
+       valid_lft 443sec preferred_lft 133sec
+    inet6 fe80::ff:e0ff:fe3d:c4e9/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+[rc 0]
+$ ip -6 route
+2600:1f18:e01:9f00::/64 dev ens5 proto ra metric 512 pref medium
+fe80::/64 dev ens5 proto kernel metric 256 pref medium
+default via fe80::ff:f0ff:fec7:e41d dev ens5 proto ra metric 512 expires 1792sec pref medium
+[rc 0]
+$ ip -6 neigh
+fe80::ff:f0ff:fec7:e41d dev ens5 lladdr 02:ff:f0:c7:e4:1d router REACHABLE 
+2600:1f18:e01:9f00:52a:af17:dcbd:2d27 dev ens5 lladdr 02:ff:e5:c4:41:a1 REACHABLE 
+[rc 0]
+$ modinfo ena | head -20
+filename:       /lib/modules/6.18.54-121.166.amzn2023.aarch64/kernel/drivers/amazon/net/ena/ena.ko.zst
+version:        2.17.4g
+license:        GPL
+description:    Elastic Network Adapter (ENA)
+author:         Amazon.com, Inc. or its affiliates
+srcversion:     EA52E126053A75A85409EE1
+alias:          pci:v00001D0Fd0000EC21sv*sd*bc*sc*i*
+alias:          pci:v00001D0Fd0000EC20sv*sd*bc*sc*i*
+alias:          pci:v00001D0Fd00001EC2sv*sd*bc*sc*i*
+alias:          pci:v00001D0Fd00000EC2sv*sd*bc*sc*i*
+alias:          pci:v00001D0Fd00000051sv*sd*bc*sc*i*
+depends:        
+intree:         Y
+name:           ena
+vermagic:       6.18.54-121.166.amzn2023.aarch64 SMP mod_unload modversions aarch64
+sig_id:         PKCS#7
+signer:         Amazon Linux Kernel Signing Key
+sig_key:        49:43:E9:D6:BD:BD:02:57:D4:41:7B:50:48:50:9B:80:00:21:1F:1C
+sig_hashalgo:   sha256
+signature:      73:69:BC:8A:AC:4C:6A:EC:FB:1F:3D:48:42:98:2A:91:18:F7:19:B3:
+[rc 0]
+$ grep -E 'CONFIG_XDP_SOCKETS|CONFIG_BPF_JIT=|CONFIG_NET_RX_BUSY_POLL|CONFIG_IRQ_TIME|CONFIG_HZ=|CONFIG_NO_HZ_FULL|CONFIG_VIRT_CPU|CONFIG_ENA' /boot/config-$(uname -r)
+CONFIG_NO_HZ_FULL=y
+CONFIG_BPF_JIT=y
+CONFIG_VIRT_CPU_ACCOUNTING=y
+CONFIG_VIRT_CPU_ACCOUNTING_GEN=y
+# CONFIG_IRQ_TIME_ACCOUNTING is not set
+CONFIG_HZ=100
+CONFIG_XDP_SOCKETS=y
+# CONFIG_XDP_SOCKETS_DIAG is not set
+CONFIG_NET_RX_BUSY_POLL=y
+[rc 0]
+$ grep -iE 'ena|ens5|CPU' /proc/interrupts
+           CPU0       CPU1       
+ 55:         10         88 ITS-PCI-MSIX-0000:00:05.0   0 Edge      ena-mgmnt@pci:0000:00:05.0
+ 56:       4029       4159 ITS-PCI-MSIX-0000:00:05.0   1 Edge      ens5-Tx-Rx-0
+ 57:      12087        485 ITS-PCI-MSIX-0000:00:05.0   2 Edge      ens5-Tx-Rx-1
+IPI2:         0          0       CPU stop interrupts
+IPI3:         0          0       CPU stop NMIs
+IPI6:         0          0       CPU backtrace interrupts
+[rc 0]
+$ for i in $(grep -iE "ens5|ena" /proc/interrupts | cut -d: -f1); do echo "irq $i -> cpus $(cat /proc/irq/$i/smp_affinity_list)"; done
+irq 55 -> cpus 1
+irq 56 -> cpus 0
+irq 57 -> cpus 1
+[rc 0]
+$ systemctl is-active irqbalance
+active
+[rc 0]
+$ ls /sys/kernel/tracing/events/power
+cpu_frequency
+cpu_frequency_limits
+cpu_idle
+cpu_idle_miss
+dev_pm_qos_add_request
+dev_pm_qos_remove_request
+dev_pm_qos_update_request
+device_pm_callback_end
+device_pm_callback_start
+enable
+filter
+guest_halt_poll_ns
+pm_qos_add_request
+pm_qos_remove_request
+pm_qos_update_flags
+pm_qos_update_request
+pm_qos_update_target
+psci_domain_idle_enter
+psci_domain_idle_exit
+pstate_sample
+suspend_resume
+wakeup_source_activate
+wakeup_source_deactivate
+[rc 0]
+$ ls /sys/devices/system/cpu/cpu0/cpuidle 2>&1 | head
+ls: cannot access '/sys/devices/system/cpu/cpu0/cpuidle': No such file or directory
+[rc 0]
+$ ethtool -S ens5 | head -80
+NIC statistics:
+     total_resets: 0
+     reset_fail: 0
+     tx_timeout: 0
+     wd_expired: 0
+     admin_q_pause: 0
+     bad_tx_req_id: 0
+     bad_rx_req_id: 0
+     bad_rx_desc_num: 0
+     missing_intr: 0
+     suspected_poll_starvation: 0
+     missing_tx_cmpl: 0
+     rx_desc_malformed: 0
+     tx_desc_malformed: 0
+     invalid_state: 0
+     os_netdev_wd: 0
+     missing_admin_interrupt: 0
+     admin_to: 0
+     device_request_reset: 0
+     missing_first_intr: 0
+     suspend: 0
+     resume: 0
+     interface_down: 0
+     interface_up: 1
+     bw_in_allowance_exceeded: 0
+     bw_out_allowance_exceeded: 0
+     pps_allowance_exceeded: 0
+     conntrack_allowance_exceeded: 0
+     linklocal_allowance_exceeded: 0
+     conntrack_allowance_available: 153898
+     ena_admin_q_aborted_cmd: 0
+     ena_admin_q_submitted_cmd: 23
+     ena_admin_q_completed_cmd: 23
+     ena_admin_q_out_of_space: 0
+     ena_admin_q_no_completion: 0
+     num_of_active_io_queues: 2
+     queue_0_tx_tx_poll: 8189
+     queue_0_tx_doorbells: 5750
+     queue_0_tx_unmask_interrupt: 8189
+     queue_0_tx_lost_interrupt: 0
+     queue_0_tx_cnt: 5756
+     queue_0_tx_bytes: 556227
+     queue_0_tx_queue_stop: 0
+     queue_0_tx_queue_wakeup: 0
+     queue_0_tx_dma_mapping_err: 0
+     queue_0_tx_linearize: 0
+     queue_0_tx_linearize_failed: 0
+     queue_0_tx_napi_comp: 8189
+     queue_0_tx_prepare_ctx_err: 0
+     queue_0_tx_bad_req_id: 0
+     queue_0_tx_llq_buffer_copy: 0
+     queue_0_tx_missed_tx: 0
+     queue_0_tx_pending_timedout_pkt: 0
+     queue_0_tx_xsk_cnt: 0
+     queue_0_tx_xsk_bytes: 0
+     queue_0_tx_xsk_need_wakeup_set: 0
+     queue_0_tx_xsk_wakeup_request: 0
+     queue_0_rx_cnt: 6879
+     queue_0_rx_bytes: 42297038
+     queue_0_rx_rx_copybreak_pkt: 813
+     queue_0_rx_csum_good: 0
+     queue_0_rx_refil_partial: 0
+     queue_0_rx_csum_bad: 0
+     queue_0_rx_page_alloc_fail: 0
+     queue_0_rx_skb_alloc_fail: 0
+     queue_0_rx_dma_mapping_err: 0
+     queue_0_rx_bad_desc_num: 0
+     queue_0_rx_bp_invocations_cnt: 0
+     queue_0_rx_bad_req_id: 0
+     queue_0_rx_empty_rx_ring: 0
+     queue_0_rx_csum_unchecked: 0
+     queue_0_rx_xdp_aborted: 0
+     queue_0_rx_xdp_drop: 0
+     queue_0_rx_xdp_pass: 0
+     queue_0_rx_xdp_tx: 0
+     queue_0_rx_xdp_invalid: 0
+     queue_0_rx_xdp_redirect: 0
+     queue_0_rx_pp_alloc_fast: 13623
+     queue_0_rx_pp_alloc_slow: 81
+     queue_0_rx_pp_alloc_slow_hi_ord: 0
+[rc 0]
+$ cat /proc/cmdline
+BOOT_IMAGE=(hd0,gpt1)/boot/vmlinuz-6.18.54-121.166.amzn2023.aarch64 root=UUID=5d27868f-ee91-45c2-800f-b6123d65bf87 ro console=tty0 console=ttyS0,115200n8 nvme_core.io_timeout=4294967295 rd.emergency=poweroff rd.shell=0 selinux=1 security=selinux quiet numa_cma=1:64M
+[rc 0]
+$ rpm -q libbpf clang gcc kernel
+libbpf-1.6.1-3.amzn2023.aarch64
+clang-15.0.7-3.amzn2023.0.4.aarch64
+gcc-11.5.0-5.amzn2023.0.5.aarch64
+package kernel is not installed
+[rc 1]
+$ mount | grep -E "bpf|tracefs"
+bpf on /sys/fs/bpf type bpf (rw,nosuid,nodev,noexec,relatime,mode=700)
+tracefs on /sys/kernel/tracing type tracefs (rw,nosuid,nodev,noexec,relatime,seclabel)
+[rc 0]
+ORIG_MTU 9001 MAXQ 2 IF ens5

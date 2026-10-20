@@ -1,0 +1,1 @@
+RUN label=hum_k2_s300_w20_xdp_r3 mode=hum k=2 size=300 conns=300 warm=10.0 dur=45.0 moves_sent=5500 completed=5500 sent_win=4496 done_win=4496 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=11000 p50_us=202.9 p95_us=269.6 p99_us=295.7 p999_us=331.6 max_us=444.5 mean_us=207.4 client_cpu_us=139175

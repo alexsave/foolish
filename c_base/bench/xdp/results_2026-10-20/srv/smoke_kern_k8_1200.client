@@ -1,0 +1,1 @@
+RUN label=smoke_kern_k8_1200 mode=smoke k=8 size=1200 conns=64 warm=0.0 dur=0.0 moves_sent=10001 completed=10001 sent_win=10001 done_win=10001 lost=0 dups=0 gaps=0 badbytes=0 badmeta=0 send_fail=0 frames=80008 p50_us=271.4 p95_us=318.9 p99_us=345.2 p999_us=422.5 max_us=510.1 mean_us=272.0 client_cpu_us=226325

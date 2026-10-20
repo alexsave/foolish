@@ -266,7 +266,8 @@ static void snapshot(char *out, size_t cap) {
     for (char *l = strtok(f, "\n"); l; l = strtok(NULL, "\n")) {
       int c;
       unsigned long long v[10] = {0};
-      if (sscanf(l, "cpu%d %llu %llu %llu %llu %llu %llu %llu %llu", &c, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]) == 9)
+      if (l[0] == 'c' && l[1] == 'p' && l[2] == 'u' && l[3] >= '0' && l[3] <= '9' && /* not the aggregate "cpu  " line: %d skips spaces */
+          sscanf(l, "cpu%d %llu %llu %llu %llu %llu %llu %llu %llu", &c, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]) == 9)
         sb(&s, " c%d_user=%llu c%d_nice=%llu c%d_sys=%llu c%d_idle=%llu c%d_iowait=%llu c%d_irq=%llu c%d_softirq=%llu c%d_steal=%llu",
            c, v[0], c, v[1], c, v[2], c, v[3], c, v[4], c, v[5], c, v[6], c, v[7]);
       else if (!strncmp(l, "ctxt ", 5)) sb(&s, " ctxt=%s", l + 5);

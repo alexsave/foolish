@@ -1,0 +1,9 @@
+cmd /var/tmp/xs/bin/xsrv xdp --if ens5 --port 7000 --ctl 7100 --spin 20 --ip6 2600:1f18:e01:9f00:9702:3de4:e510:b45e --gw-mac 02:ff:e5:c4:41:a1
+peer 2600:1f18:e01:9f00:52a:af17:dcbd:2d27 neigh mac 02:ff:e5:c4:41:a1
+network answered after 0.01 s
+XSK q=0 zerocopy bind: ok
+XSK q=1 zerocopy bind: ok
+XDP queues=2 zc=1 gw_mac=given kick=sendto drop_rx=0 drop_tx=0
+READY backend=xdp port=7000 spin_us=20 spin_iters=4450 ns_per_iter=4.494 idle_tp=yes idle_filtered=1 tp_sys=0
+dmesg:
+
