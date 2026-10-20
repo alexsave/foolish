@@ -18401,6 +18401,183 @@ static void test_delta_cast_rebuilds_the_board_cast(void) {
           "delta casts: a lobby edit or a deal is a board cast, and nearly every commit of a game in play goes as a delta");
 }
 
+// A delta the client cannot rebuild - or one that rebuilds to a board the server
+// did not have - opens nothing: the slot holds no push, and the host is told to
+// fetch the game (CLIENT_E_BEHIND, CLIENT_E_DIVERGED), or that the bytes are not
+// a delta at all (CLIENT_E_PUSH). Never a partial board.
+static uint8_t dr_board[3][CLIENT_BOARD_KEEP_MAX], dr_ident[4096], dr_bad[1024], dr_board2[CLIENT_BOARD_KEEP_MAX];
+static int dr_board_len[3], dr_ident_len;
+static Game dr_game;
+
+static int dr_open(const uint8_t *p, int n, const uint8_t *board, int board_len) {
+    const int rc = client_cast_open(&ct, p, n, dr_ident, dr_ident_len, board, board_len);
+    if (rc != CLIENT_OK && (ct.open || client_push_next(&ct) != CLIENT_E_ORDER)) return 99;   // a refusal left a push open
+    return rc;
+}
+
+// Plays two-seat games until seat 0's delta is one `want` asks for: one that
+// reveals two or more of seat 0's draws (want 0), or one of seat 1's card moves
+// (want 1). Keeps seat 0's boards of the last two versions and seat 1's of the
+// last one (dr_board[0], [2], [1]) and the identity; the delta into dl_delta.
+// Its length, or 0 when none was played.
+static int dr_find(int want) {
+    uint8_t w[128];
+    char id[16];
+    TableCommit c;
+    for (int g = 0; g < 200; g++) {
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) tb_seed[i] = (uint8_t)cb_rand(256);
+        if (!wv_deal(&wv_row, 2, 0) || wv_load(&wv_row) != TABLE_OK) return 0;
+        for (int viewer = 0; viewer < 2; viewer++) {
+            const int n = table_envelope(&tb, RS("g"), viewer, wv_row.version, ct_env, sizeof(ct_env));
+            client_adopt_envelope(&ct, ct_env, n);
+            dr_board_len[viewer] = client_board_keep(&ct, dr_board[viewer], sizeof(dr_board[0]));
+            if (viewer == 0) dr_ident_len = client_identity(&ct, dr_ident, sizeof(dr_ident));
+        }
+        dr_board_len[2] = 0;
+        for (int step = 0; step < 400; step++) {
+            if (wv_load(&wv_row) != TABLE_OK || tb_game.status != GAME_STATUS_PLAYING) break;
+            const int wl = dl_human_move(&tb_game, 0, id, sizeof(id), w, sizeof(w));
+            if (wl <= 0 || table_act(&tb, id, (int)strlen(id), w, wl, -1, 0) != TABLE_APPLIED || wv_commit(&wv_row, "g", &c) < 0) break;
+            const int dn = table_cast_delta(&tb, 0, wv_row.version, table_public_check(&tb), dl_delta, sizeof(dl_delta));
+            EvwDelta d;
+            if (dn > 0 && evwire_delta_read(dl_delta, dn, &d) == 0 && dr_board_len[2] > 0
+                && (want == 0 ? d.n_reveal >= 2 : d.moves[0] == 1 && d.moves[3] > 0)) return dn;
+            // Not the one: read it, and keep the boards it leaves.
+            memcpy(dr_board[2], dr_board[0], (size_t)dr_board_len[0]);
+            dr_board_len[2] = dr_board_len[0];
+            for (int viewer = 0; viewer < 2; viewer++) {
+                const int n = table_cast_delta(&tb, viewer, wv_row.version, table_public_check(&tb), dr_bad, sizeof(dr_bad));
+                if (dl_read_open(client_cast_open(&ct, dr_bad, n, dr_ident, dr_ident_len, dr_board[viewer], dr_board_len[viewer])) != CLIENT_OK) return 0;
+                dr_board_len[viewer] = client_board_keep(&ct, dr_board[viewer], sizeof(dr_board[0]));
+            }
+        }
+    }
+    return 0;
+}
+
+static void test_delta_cast_refusals(void) {
+    cb_rng = 0x0de17a5u;
+    client_init(&ct, &ct_slot);
+    client_delta_attach(&ct, &dl_store);
+    int dn = dr_find(0);
+    const int found = dn > 0;
+    CHECK(found, "delta refusals: a move whose delta reveals two of seat 0's draws was played");
+    if (!found) return;
+    EvwDelta d;
+    evwire_delta_read(dl_delta, dn, &d);
+    const int reveal_at = (int)(d.reveal - dl_delta);
+
+    CHECK(dl_read_open(dr_open(dl_delta, dn, dr_board[0], dr_board_len[0])) == CLIENT_OK, "delta refusals: the delta itself reads");
+
+    // The board it is rebuilt on.
+    CHECK(dr_open(dl_delta, dn, dr_board[2], dr_board_len[2]) == CLIENT_E_BEHIND, "delta refusals: a kept board two versions back is behind");
+    CHECK(dr_open(dl_delta, dn, dr_board[1], dr_board_len[1]) == CLIENT_E_BEHIND, "delta refusals: another seat's board is behind");
+    CHECK(dr_open(dl_delta, dn, dr_board[0], 0) == CLIENT_E_BEHIND && dr_open(dl_delta, dn, 0, 0) == CLIENT_E_BEHIND,
+          "delta refusals: no kept board is behind");
+    memcpy(dr_board2, dr_board[0], (size_t)dr_board_len[0]);
+    dr_board2[0] ^= 1;
+    CHECK(dr_open(dl_delta, dn, dr_board2, dr_board_len[0]) == CLIENT_E_BEHIND, "delta refusals: a kept board of another version is behind");
+    CHECK(dr_open(dl_delta, dn, dr_board[0], dr_board_len[0] - 1) == CLIENT_E_BEHIND, "delta refusals: a kept board cut short is behind");
+    {
+        const int il = dr_ident_len;
+        dr_ident_len = 0;
+        CHECK(dr_open(dl_delta, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_BEHIND, "delta refusals: a delta with no identity is behind");
+        dr_ident_len = il;
+        client_delta_attach(&ct, 0);
+        CHECK(dr_open(dl_delta, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_BEHIND, "delta refusals: a slot with no delta storage is behind");
+        client_delta_attach(&ct, &dl_store);
+    }
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[5] = EVW_DELTA_KERNEL + 1;
+    CHECK(dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_BEHIND, "delta refusals: another kernel's delta is behind, applied to nothing");
+
+    // What it rebuilds to.
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[dn - 1] ^= 0x80;
+    CHECK(dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_DIVERGED, "delta refusals: a check off by one bit diverges");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[reveal_at - 1]--;
+    memmove(dr_bad + reveal_at + d.n_reveal - 1, dr_bad + reveal_at + d.n_reveal, 4);
+    CHECK(dr_open(dr_bad, dn - 1, dr_board[0], dr_board_len[0]) == CLIENT_E_DIVERGED, "delta refusals: a reveal list one short diverges");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[reveal_at - 1]++;
+    memmove(dr_bad + reveal_at + d.n_reveal + 1, dr_bad + reveal_at + d.n_reveal, 4);
+    dr_bad[reveal_at + d.n_reveal] = dr_bad[reveal_at];
+    CHECK(dr_open(dr_bad, dn + 1, dr_board[0], dr_board_len[0]) == CLIENT_E_DIVERGED, "delta refusals: a reveal list one long diverges");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    { const uint8_t x = dr_bad[reveal_at]; dr_bad[reveal_at] = dr_bad[reveal_at + 1]; dr_bad[reveal_at + 1] = x; }
+    CHECK(dr_bad[reveal_at] == dl_delta[reveal_at] || dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_DIVERGED,
+          "delta refusals: two reveals swapped diverge (the hand's order is the board's)");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[7] ^= EVW_DELTA_FINAL;
+    CHECK(dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_DIVERGED, "delta refusals: a game-over transition the moves did not make diverges");
+    // The bytes themselves.
+    int cut_refused = 0;
+    for (int cut = 1; cut < dn; cut++) cut_refused += dr_open(dl_delta, dn - cut, dr_board[0], dr_board_len[0]) == CLIENT_E_PUSH;
+    CHECK(cut_refused == dn - 1, "delta refusals: a delta cut short by any number of bytes is not a delta");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[dn] = 0;
+    CHECK(dr_open(dr_bad, dn + 1, dr_board[0], dr_board_len[0]) == CLIENT_E_PUSH, "delta refusals: a byte past the check is not a delta");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[7] |= 0x80;
+    CHECK(dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_PUSH, "delta refusals: an unknown flag is not a delta");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[8] = 0;
+    CHECK(dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_PUSH, "delta refusals: a delta of no moves is not a delta");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[10]++;
+    CHECK(dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_PUSH, "delta refusals: a move whose length is not its frame's is not a delta");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[reveal_at] = 52;
+    CHECK(dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_PUSH, "delta refusals: a reveal that is not a card is not a delta");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[6] = EVW_SEAT_NONE;
+    CHECK(dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_PUSH, "delta refusals: the spectators' delta reveals nothing");
+
+    // The two questions a host asks of any cast.
+    uint32_t v = 0;
+    CHECK(evwire_cast_version(dl_delta, dn, &v) == EVW_CAST_DELTA && v == wv_row.version, "delta refusals: a delta names its version");
+    CHECK(evwire_cast_over(dl_delta, dn) == 0 && evwire_cast_over(dl_delta, dn - 1) == EVW_EPARSE, "delta refusals: a delta says whether the game is over");
+    memcpy(dr_bad, dl_delta, (size_t)dn);
+    dr_bad[7] |= EVW_DELTA_OVER;
+    CHECK(evwire_cast_over(dr_bad, dn) == 1, "delta refusals: and says so from its flags");
+    const int cl = table_cast(&tb, RS("g"), 0, wv_row.version, dl_cast, sizeof(dl_cast));
+    CHECK(evwire_cast_version(dl_cast, cl, &v) == EVW_CAST_FORMAT && v == wv_row.version && evwire_cast_over(dl_cast, cl) == 0,
+          "delta refusals: a board cast answers both too");
+
+    // The actor's hand: seat 1's hidden cards all named, so the move's card has no place to go.
+    dn = dr_find(1);
+    CHECK(dn > 0 && evwire_delta_read(dl_delta, dn, &d) == 0, "delta refusals: a card move of seat 1 was played");
+    CHECK(dl_read_open(dr_open(dl_delta, dn, dr_board[0], dr_board_len[0])) == CLIENT_OK, "delta refusals: and its delta reads");
+    {
+        CHECK(state_get(&dr_game, dr_board[0] + 5, dr_board_len[0] - 5, 1) == GAME_VALID, "delta refusals: the kept board reads");
+        uint64_t used = 0;
+        for (int i = 0; i < dr_game.players[0].hand_count; i++) used |= 1ull << wire_from_card(dr_game.players[0].hand[i]);
+        for (int i = 0; i < dr_game.num_battles; i++) {
+            used |= 1ull << wire_from_card(dr_game.table_battles[i].attack);
+            if (!card_is_none(dr_game.table_battles[i].defense)) used |= 1ull << wire_from_card(dr_game.table_battles[i].defense);
+        }
+        if (dr_game.has_flipped) used |= 1ull << wire_from_card(dr_game.flipped);
+        for (int k = 0; k < d.moves[3]; k++) used |= 1ull << d.moves[4 + k];   // the move's own cards
+        // Seat 1's hand bytes in the kept board (view.c state_put: 16 fixed bytes,
+        // the stock, the battles, then per seat status, awaiting, count, cards),
+        // each written as a real card nobody can see anywhere.
+        const int bl = dr_board_len[0];
+        memcpy(dr_board2, dr_board[0], (size_t)bl);
+        int q = 5 + 16 + dr_game.deck_count + 1 + 2 * dr_game.num_battles;
+        q += 3 + dr_game.players[0].hand_count + 3;
+        int id_next = 0;
+        const int min_v = min_value_for(2);
+        for (int i = 0; i < dr_game.players[1].hand_count; i++) {
+            while (id_next < 52 && (((used >> id_next) & 1) || card_of_id(id_next).value < min_v)) id_next++;
+            dr_board2[q + i] = (uint8_t)id_next++;
+        }
+        CHECK(d.moves[0] == 1 && d.moves[3] > 0 && id_next <= 52, "delta refusals: the move plays seat 1's cards");
+        CHECK(dr_open(dl_delta, dn, dr_board2, bl) == CLIENT_E_DIVERGED, "delta refusals: an actor hand with no room for the move's cards diverges");
+    }
+
+}
+
 // THE ACTION REQUEST'S DOOR (was e2e/awire_codec.test.ts; the bytes are pinned
 // by test_table_request_encode_and_response_decode): what the client writes,
 // with and without an intent, the server reads back, and a body that is not a
@@ -20087,6 +20264,7 @@ int main(void) {
     test_every_push_is_leak_free_and_mirrors_the_commit();
     test_every_envelope_and_push_of_whole_games_reads_as_the_table();
     test_delta_cast_rebuilds_the_board_cast();
+    test_delta_cast_refusals();
     test_action_request_door();
     test_ask_body_runs_for_the_caller();
     test_doors_survive_hostile_bytes();
