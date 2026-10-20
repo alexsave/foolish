@@ -79,7 +79,23 @@ static void seq_note(int64_t v) {
     if (g_nseq < 64) g_seq[g_nseq++] = v;
 }
 
+// A finished game's replay job (table_ops.h CB_FINALIZE_JOB): queued here and run after the request
+// that queued it, as the job pool would (call), unless a test holds them; g_fin_refuse makes the start
+// fail (the commit then makes the replay itself).
+static char g_fin_jobs[8][CB_GAME_ID_MAX + 1];
+static int g_n_fin_jobs;
+static bool g_fin_hold, g_fin_refuse;
+static void run_fin_jobs(void) {
+    for (int i = 0; i < g_n_fin_jobs; i++) T_EQ_INT(cb_table_finalize_job(&g_ctx, g_fin_jobs[i]), CB_OK);
+    g_n_fin_jobs = 0;
+}
+
 static int kick_recorder(cb_ctx *ctx, const char *job, const char *game_id) {
+    if (strcmp(job, CB_FINALIZE_JOB) == 0) {
+        if (g_fin_refuse || g_n_fin_jobs == 8) return CB_E_STATE;
+        snprintf(g_fin_jobs[g_n_fin_jobs++], sizeof g_fin_jobs[0], "%s", game_id);
+        return CB_OK;
+    }
     seq_note(-1);
     g_kicks++;
     snprintf(g_kicked, sizeof g_kicked, "%s", game_id);
@@ -156,6 +172,8 @@ static void setup(int n_bots) {
     cb_fanout_observer = fan_observer;
     memset(&g_fan, 0, sizeof g_fan);
     g_kicks = 0;
+    g_n_fin_jobs = 0;
+    g_fin_hold = g_fin_refuse = false;
     cb_limits_reset();
     g_kicked[0] = 0;
     g_nseq = 0;
@@ -190,6 +208,10 @@ static void call(const char *method, const char *fn, const char *bearer, const c
     cb_res_init(&res);
     cb_handle(&g_ctx, &req, &res);
     T_CHECK(cb_section_pooled_is_clean());   // every request leaves the worker's section as calloc made it
+    if (!g_fin_hold) {
+        run_fin_jobs();
+        T_CHECK(cb_section_pooled_is_clean());
+    }
     out->status = res.status;
     out->len = res.body.len < sizeof out->body ? res.body.len : sizeof out->body;
     if (out->len) memcpy(out->body, res.body.p, out->len);
@@ -765,6 +787,73 @@ static void a_new_account_plays_unrated(void) {
     T_EQ_INT((int)(cb_edge_marks(CB_EDGE_BOARD) - board0), 0);
     T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);   // the replay is still kept
     cb_edge_flush(g_ctx.cfg);
+}
+
+// Two humans play the dealt game to its end.
+static void play_to_the_end(const char *gid) {
+    reply r;
+    for (int moves = 0; status_of(gid) == GAME_STATUS_PLAYING && moves < 3000; moves++)
+        if (!any_human_move(gid, &r)) break;
+    T_EQ_INT(status_of(gid), GAME_STATUS_GAME_OVER);
+}
+
+// The commit that ends a game does not make its replay: it queues the job (table_ops.h
+// CB_FINALIZE_JOB), and whoever needs the replay before the job ran makes it first, once. Each case
+// on a fresh store (the dashboard read that names a new game cannot tell two apart on a still clock).
+static void a_finished_games_replay_is_a_job(void) {
+    setup(0);
+    char gid[CB_GAME_ID_MAX + 1];
+    reply r;
+    g_fin_hold = true;
+    two_humans_dealt(gid);
+    play_to_the_end(gid);
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 0);   // not by the commit
+    T_EQ_INT(g_n_fin_jobs, 1);
+    T_EQ_STR(g_fin_jobs[0], gid);
+    T_EQ_INT(g_kicks, 0);                           // not a bot kick
+    // A reader of the replay makes it, once: the job then finds nothing to do.
+    T_CHECK(cb_table_finalize_wait(&g_ctx, gid));
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
+    T_CHECK(!cb_table_finalize_wait(&g_ctx, gid));
+    run_fin_jobs();
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
+
+    // The next operation on the game makes it first: a rematch (ASK_CONTINUE) turns the table back
+    // into a lobby and empties its session log, and the replay was made from the log before.
+    setup(0);
+    g_fin_hold = true;
+    two_humans_dealt(gid);
+    play_to_the_end(gid);
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 0);
+    meta("A", ASK_CONTINUE, gid, NULL, &r);
+    T_EQ_INT(r.status, 200);
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
+    T_CHECK(status_of(gid) != GAME_STATUS_GAME_OVER);
+    snap_seen seen = { 0, 0 };
+    cb_snapshot_query q = { .viewer_id = UID_B, .game_id = gid };
+    T_EQ_INT(CB_ROWS_CALL(g_store, snapshots_query, &q, count_snap, &seen), 1);
+    T_CHECK(seen.moves > 0);
+    run_fin_jobs();
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
+
+    // A player's history makes every pending replay of theirs.
+    setup(0);
+    g_fin_hold = true;
+    two_humans_dealt(gid);
+    play_to_the_end(gid);
+    T_EQ_INT(cb_table_finalize_user(&g_ctx, UID_C), 0);   // not Carol's game
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 0);
+    T_EQ_INT(cb_table_finalize_user(&g_ctx, UID_B), 1);
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
+    T_EQ_INT(cb_table_finalize_user(&g_ctx, UID_B), 0);
+
+    // A job that cannot start: the commit makes the replay itself.
+    setup(0);
+    g_fin_hold = g_fin_refuse = true;
+    two_humans_dealt(gid);
+    play_to_the_end(gid);
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
+    T_CHECK(!cb_table_finalize_wait(&g_ctx, gid));
 }
 
 static void a_finished_game_writes_a_snapshot_and_ratings(void) {
@@ -2331,7 +2420,9 @@ static void the_bot_loop_drives_until_a_human_owes_a_move(void) {
     cb_rating_row rb;
     T_EQ_INT(tm_rating(g_store, tm_bot_id(g_store, 0), &rb), CB_OK);
     T_EQ_INT(rb.games_played, 1);
-    // The snapshot, whenever the kernel can encode this session (log_encodable).
+    // The snapshot, whenever the kernel can encode this session (log_encodable), by the job the
+    // drive's ending commit queued.
+    run_fin_jobs();
     T_EQ_INT(tm_hooks_of(g_store)->snapshots, log_encodable(gid) ? 1 : 0);
 }
 
@@ -2535,6 +2626,7 @@ int main(void) {
     T_RUN(a_lost_fence_is_an_error_not_a_retry);
     T_RUN(a_lost_delete_is_an_error);
     T_RUN(a_finished_game_writes_a_snapshot_and_ratings);
+    T_RUN(a_finished_games_replay_is_a_job);
     T_RUN(a_new_account_plays_unrated);
     T_RUN(add_bot_never_picks_a_seated_bot);
     T_RUN(bump_is_moot_and_seated_only);

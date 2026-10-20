@@ -14,6 +14,8 @@
 #include "foolish_app.h"
 #include "fanout.h"
 
+#include "cbase/provider.h"
+#include "jobs.h"
 #include "util/clock.h"
 #include "util/err.h"
 #include "../../../../shared/c/hex/hex.h"
@@ -501,6 +503,136 @@ out:
     free(logs);
 }
 
+// ---- the replay of a finished game: a job -------------------------------------------------------
+//
+// THE RULE: the commit that ends a game does not make its replay (finalize_game reads the session
+// log, re-encodes it and writes a snapshot row: milliseconds, and the tables). It queues the job
+// CB_FINALIZE_JOB on the job pool and returns, so a move that ends a game costs the loop what any
+// move does. Until the job has run the game is PENDING, and whoever needs its replay makes it
+// first, under the game's lock, so it is made exactly once and before anything that could undo
+// what it reads:
+//   - the next operation on the game (cb_table_run): a leave that deletes the game deletes its log;
+//   - a read of the replay (cb_table_finalize_wait, GET /v1/replay) and of a player's replays
+//     (cb_table_finalize_user, GET /v1/history): the reader finds it as if it had been made by
+//     the commit (the clients ask for it once, at the end of the game).
+// Only where one process makes every write (provider.h CB_PROV_ONE_PROCESS) and jobs run in it:
+// elsewhere the reader may be another process, so the commit makes it as it always did,
+// as it does when the job cannot be started. A crash before the job ran loses the replay, as a
+// crash inside finalize_game always could; a clean stop runs every queued job (pool.h).
+typedef struct fin_entry {
+    struct fin_entry *next;
+    char              gid[CB_GAME_ID_MAX + 1];
+    int64_t           version;                 // the version that ended it
+    int               n_humans;
+    cb_uuid           humans[CB_MAX_SEATS];    // whose replay it is (cb_table_finalize_user)
+} fin_entry;
+static pthread_mutex_t g_fin_mu = PTHREAD_MUTEX_INITIALIZER;
+static fin_entry *g_fin;
+static atomic_int g_fin_n;   // pending entries: the hot paths read only this
+
+static bool fin_add(const char *gid, int64_t version, const Table *t) {
+    fin_entry *e = calloc(1, sizeof *e);
+    if (!e) return false;
+    cb_strlcpy(e->gid, gid, sizeof e->gid);
+    e->version = version;
+    for (int i = 0; i < t->r.n && e->n_humans < CB_MAX_SEATS; i++)
+        if (seat_is_human(&t->r.seats[i])) seat_id(&t->r.seats[i], e->humans[e->n_humans++]);
+    pthread_mutex_lock(&g_fin_mu);
+    e->next = g_fin;
+    g_fin = e;
+    atomic_fetch_add(&g_fin_n, 1);
+    pthread_mutex_unlock(&g_fin_mu);
+    return true;
+}
+
+// Takes the game's pending entry: true (with the version that ended it) for the one caller that
+// makes the replay.
+static bool fin_take(const char *gid, int64_t *version) {
+    bool found = false;
+    pthread_mutex_lock(&g_fin_mu);
+    for (fin_entry **pp = &g_fin; *pp; pp = &(*pp)->next)
+        if (strcmp((*pp)->gid, gid) == 0) {
+            fin_entry *e = *pp;
+            *pp = e->next;
+            if (version) *version = e->version;
+            free(e);
+            atomic_fetch_sub(&g_fin_n, 1);
+            found = true;
+            break;
+        }
+    pthread_mutex_unlock(&g_fin_mu);
+    return found;
+}
+
+static bool fin_pending(const char *gid) {
+    if (atomic_load(&g_fin_n) == 0) return false;
+    bool found = false;
+    pthread_mutex_lock(&g_fin_mu);
+    for (const fin_entry *e = g_fin; e && !found; e = e->next) found = strcmp(e->gid, gid) == 0;
+    pthread_mutex_unlock(&g_fin_mu);
+    return found;
+}
+
+// The game's replay, when it is pending (the caller holds the game's lock): the row as the commit
+// that ended it left it.
+static void finalize_pending(cb_ctx *ctx, const char *gid) {
+    int64_t version;
+    if (!fin_take(gid, &version)) return;
+    cb_game_row row;
+    int rc = CB_ROWS_CALL(ctx->store, game_get, gid, &row);
+    if (rc != CB_OK) {
+        CB_ERROR("table", "game %s: no replay, its row is unreadable (%s)", gid, cb_strerror(rc));
+        return;
+    }
+    cb_section *s = row.version == version ? cb_section_new() : NULL;
+    if (s) finalize_game(ctx, s, &row);
+    else CB_ERROR("table", "game %s: no replay, v%lld is not the v%lld that ended it", gid, (long long)row.version, (long long)version);
+    cb_section_free(s);
+    cb_game_row_free(&row);
+}
+
+// The commit that ended the game (its lock held): the replay is queued as a job, or made now.
+static void finalize_later(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
+    if (ctx->job_start && ctx->prov && (ctx->prov->flags & CB_PROV_ONE_PROCESS) && fin_add(nrow->id, nrow->version, &s->t)) {
+        if (cb_job_start(ctx, CB_FINALIZE_JOB, nrow->id) == CB_OK) return;
+        CB_WARN("table", "game %s: the replay job did not start: made now", nrow->id);
+        if (!fin_take(nrow->id, NULL)) return;
+    }
+    finalize_game(ctx, s, nrow);
+}
+
+int cb_table_finalize_job(cb_ctx *ctx, const char *gid) {
+    if (!fin_pending(gid)) return CB_OK;   // a reader or the next operation made it already
+    cb_game_lock *lock = cb_table_lock(gid);
+    if (!lock) return CB_E_NOMEM;
+    finalize_pending(ctx, gid);
+    cb_table_unlock(lock);
+    return CB_OK;
+}
+
+bool cb_table_finalize_wait(cb_ctx *ctx, const char *gid) {
+    if (!fin_pending(gid)) return false;
+    cb_game_lock *lock = cb_table_lock(gid);
+    if (!lock) return false;
+    finalize_pending(ctx, gid);
+    cb_table_unlock(lock);
+    return true;
+}
+
+int cb_table_finalize_user(cb_ctx *ctx, const char *uid) {
+    if (atomic_load(&g_fin_n) == 0) return 0;
+    char gids[16][CB_GAME_ID_MAX + 1];
+    int n = 0;
+    pthread_mutex_lock(&g_fin_mu);
+    for (const fin_entry *e = g_fin; e && n < 16; e = e->next)
+        for (int i = 0; i < e->n_humans; i++)
+            if (strcmp(e->humans[i], uid) == 0) { cb_strlcpy(gids[n++], e->gid, sizeof gids[0]); break; }
+    pthread_mutex_unlock(&g_fin_mu);
+    int made = 0;
+    for (int i = 0; i < n; i++) made += cb_table_finalize_wait(ctx, gids[i]);
+    return made;
+}
+
 // ---- the game lock ---------------------------------------------------------------------------
 
 // A game's commits and their pushes happen under the game's own lock: from the row a request reads
@@ -843,9 +975,9 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
             out->ended = c->ended;
             // A rated game moved the leaderboard: the edge's copy goes (edge.h).
             if (gc.n_rated > 0) cb_edge_stale(CB_EDGE_BOARD);
-            // The replay is stored before the push that ends the game, so a
-            // client that asks for it on game over finds it.
-            if (c->ended) finalize_game(ctx, s, &nrow);
+            // The replay: a job, which a client that asks for it on game over waits for
+            // (finalize_later).
+            if (c->ended) finalize_later(ctx, s, &nrow);
             cb_fanout_commit(ctx, &f);
         } else {
             CB_ERROR("table", "game %s: commit failed (%s)", row->id, cb_strerror(rc));
@@ -994,6 +1126,9 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         cb_section_free(s);
         return CB_E_NOMEM;
     }
+    // A game whose replay is still a queued job has it made first: this operation may delete the
+    // game and its log (finalize_later).
+    if (atomic_load(&g_fin_n)) finalize_pending(ctx, op->game_id);
     do {
         cb_game_row row;
         bool kept = false, adopted = false;   // the row's bytes are s->rb's (not freed: row_release)

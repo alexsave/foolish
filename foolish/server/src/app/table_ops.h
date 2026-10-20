@@ -91,6 +91,15 @@ typedef struct cb_game_lock cb_game_lock;
 cb_game_lock *cb_table_lock(const char *gid);
 void cb_table_unlock(cb_game_lock *l);
 
+// THE REPLAY OF A FINISHED GAME is a job (table_ops.c "the replay of a finished game"): the commit
+// that ends a game queues CB_FINALIZE_JOB, which runs cb_table_finalize_job. A reader that needs it
+// makes it first if it is still queued: cb_table_finalize_wait for one game (true when it was
+// pending: read again), cb_table_finalize_user for every pending game `uid` played (how many).
+#define CB_FINALIZE_JOB "game_finalize"
+int  cb_table_finalize_job(cb_ctx *ctx, const char *gid);
+bool cb_table_finalize_wait(cb_ctx *ctx, const char *gid);
+int  cb_table_finalize_user(cb_ctx *ctx, const char *uid);
+
 // Runs one operation with the CAS retry loop. CB_OK (look at out->result for
 // the kernel's answer), CB_E_NOT_FOUND (no such game), CB_E_CONFLICT (lost the
 // CAS CB_TABLE_ATTEMPTS times: "write contention"), CB_E_DB.

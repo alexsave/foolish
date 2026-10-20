@@ -628,6 +628,8 @@ static void h_history(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     if (!caller(ctx, req, res, &u)) return;
     // The caller's own rating (one read by key, not the leaderboard) on a side
     // thread, while this one reads the replays: neither needs the other.
+    // A game the caller just finished whose replay job has not run yet: made now, so it is listed.
+    cb_table_finalize_user(ctx, u.id);
     rating_read rr = { .store = ctx->store, .id = u.id, .mine = TABLE_RATING_NONE };
     cb_store_side side;
     cb_store_side_start(&side, read_rating, &rr);
@@ -672,6 +674,8 @@ static void h_replay(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     // id is the game's or the replay's (the history row's id: its game may be gone).
     cb_snapshot_query q = { .viewer_id = u.id, .limit = 1, .newest_first = true, .ref = gid };
     int rc = CB_ROWS_CALL(ctx->store, snapshots_query, &q, replay_fn, &r);
+    // Not there yet because its job has not run (table_ops.h CB_FINALIZE_JOB): made now, read again.
+    if (rc >= 0 && !r.found && cb_table_finalize_wait(ctx, gid)) rc = CB_ROWS_CALL(ctx->store, snapshots_query, &q, replay_fn, &r);
     if (rc < 0) failed(res, rc);
     else if (!r.found) refuse(res, 404, ASK_WHY_NOT_FOUND, 0);
     else if (r.bad) failed(res, CB_E_NOMEM);
@@ -682,20 +686,20 @@ static void h_replay(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 // ---- routes -----------------------------------------------------------------------------
 
 static const cb_route V1_ROUTES[] = {
-    { "POST", "/v1/auth/signup", CB_ROUTE_POOL, h_signup },
-    { "POST", "/v1/auth/signin", CB_ROUTE_POOL, h_signin },
-    { "POST", "/v1/auth/refresh", CB_ROUTE_POOL, h_refresh },
-    { "POST", "/v1/auth/signout", CB_ROUTE_POOL, h_signout },
-    { "POST", "/v1/auth/password", CB_ROUTE_POOL, h_password },
-    { "GET", "/v1/games", CB_ROUTE_POOL, h_games },
-    { "GET", "/v1/games/*", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_game },
-    { "GET", "/v1/wait/*", CB_ROUTE_POOL, h_wait },
-    { "GET", "/v1/chat/*", CB_ROUTE_POOL, h_chat_get },
-    { "POST", "/v1/chat/*", CB_ROUTE_POOL, h_chat_post },
-    { "GET", "/v1/bots", CB_ROUTE_POOL, h_bots },
-    { "GET", "/v1/leaderboard", CB_ROUTE_POOL, h_board },
-    { "GET", "/v1/history", CB_ROUTE_POOL, h_history },
-    { "GET", "/v1/replay/*", CB_ROUTE_POOL, h_replay },
+    { "POST", "/v1/auth/signup", CB_ROUTE_POOL, h_signup, 0 },
+    { "POST", "/v1/auth/signin", CB_ROUTE_POOL, h_signin, 0 },
+    { "POST", "/v1/auth/refresh", CB_ROUTE_POOL, h_refresh, 0 },
+    { "POST", "/v1/auth/signout", CB_ROUTE_POOL, h_signout, 0 },
+    { "POST", "/v1/auth/password", CB_ROUTE_POOL, h_password, 0 },
+    { "GET", "/v1/games", CB_ROUTE_POOL, h_games, 0 },
+    { "GET", "/v1/games/*", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_game, 0 },
+    { "GET", "/v1/wait/*", CB_ROUTE_POOL, h_wait, 0 },
+    { "GET", "/v1/chat/*", CB_ROUTE_POOL, h_chat_get, 0 },
+    { "POST", "/v1/chat/*", CB_ROUTE_POOL, h_chat_post, 0 },
+    { "GET", "/v1/bots", CB_ROUTE_POOL, h_bots, 0 },
+    { "GET", "/v1/leaderboard", CB_ROUTE_POOL, h_board, 0 },
+    { "GET", "/v1/history", CB_ROUTE_POOL, h_history, 0 },
+    { "GET", "/v1/replay/*", CB_ROUTE_POOL, h_replay, 0 },
 };
 const cb_route_list cb_v1_route_list = { V1_ROUTES, (int)(sizeof V1_ROUTES / sizeof V1_ROUTES[0]) };
 
