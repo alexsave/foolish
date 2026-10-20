@@ -79,7 +79,9 @@ typedef struct {
     const char *path;          // the database's path: segments are <path>-journal.<seq>
     int64_t     game_age_ms;   // a game's oldest waiting move waits at most this long (0: 600000)
     int64_t     game_bytes;    // a game whose waiting moves hold this many bytes is flushed (0: 256 KiB)
-    int64_t     total_bytes;   // every game is flushed once all waiting moves hold this many (0: 64 MiB)
+    // Every game is flushed once all waiting moves hold this many (0: 16 MiB). The default is
+    // the production box's: a t4g.nano has 512 MB for the OS, the server and SQLite's cache.
+    int64_t     total_bytes;
     int64_t     seg_bytes;     // a segment is closed once it holds this many bytes (0: 8 MiB)
     int         txn_moves;     // the waiting moves one flush transaction carries at most; a pass is as
                                // many transactions as it needs, the flush lock given back between them
