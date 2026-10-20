@@ -13,6 +13,7 @@
 #include "rate_limits.h"
 #include "store/backup.h"
 #include "store/journal.h"
+#include "util/clock.h"
 #include "store/store_sql.h"
 #include "awire.h"
 #include "legal.h"
@@ -1874,6 +1875,55 @@ static void a_move_writes_no_table_until_its_game_is_due(void) {
     memset(&g_jo, 0, sizeof g_jo);
 }
 
+// THE TRANSACTION BUDGET: ten games' waiting moves flush as bounded transactions, the oldest
+// games first, the flush lock given back between them: no transaction carries more than
+// txn_moves, and none holds the lock for more than a fraction of the pass (a write around the
+// journal waits one transaction, not the pass). Every move is in the tables after it.
+static void a_flush_is_bounded_transactions(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/txn%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.txn_moves = 40;
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    enum { NG = 10, PER_GAME = 25 };
+    char gid[NG][CB_GAME_ID_MAX + 1];
+    for (int i = 0; i < NG; i++) {
+        cb_limits_reset();   // the create limit is per user and minute
+        g_now += 60000;      // and the newest game is the first one A's list names
+        two_humans_dealt(gid[i]);
+        for (int k = 0; k < i; k++) T_CHECK(strcmp(gid[i], gid[k]) != 0);
+    }
+    move_t m;
+    int played = 0;
+    for (int r = 0; r < PER_GAME; r++)
+        for (int i = 0; i < NG; i++) played += step(s, gid[i], &m) > 0;
+    T_CHECK(played > NG * PER_GAME / 2);
+    uint64_t want[NG];
+    for (int i = 0; i < NG; i++) want[i] = row_hash(s, gid[i]);
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    const long waiting = js.waiting, flushes0 = js.flushes;
+    T_CHECK(waiting > 3 * g_jo.txn_moves);
+    const int64_t t0 = cb_mono_us();
+    T_EQ_INT(cb_journal_flush(s), CB_OK);
+    const int64_t pass_us = cb_mono_us() - t0;
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.waiting, 0);
+    T_CHECK(js.txn_moves_max > 0 && js.txn_moves_max <= g_jo.txn_moves);
+    T_CHECK(js.flushes - flushes0 >= (waiting + g_jo.txn_moves - 1) / g_jo.txn_moves);
+    T_CHECK(js.txn_hold_us_max * 2 < pass_us);
+    close_world(s);
+    // The tables hold every game as the overlay did.
+    memset(&g_jo, 0, sizeof g_jo);
+    s = open_world(path, false, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    for (int i = 0; i < NG; i++) T_CHECK(row_hash(s, gid[i]) == want[i]);
+    cb_store_close(s);
+}
+
 // ---- the dashboard list and the bot scan read the overlay, and flush nothing ----------------
 
 static bool collect_ids(const cb_member_row *r, void *ud) {
@@ -2123,6 +2173,7 @@ int main(void) {
         T_RUN(a_restore_mid_game_holds_every_acknowledged_move);
         T_RUN(every_acknowledged_move_survives_a_sigkill);
         T_RUN(a_move_writes_no_table_until_its_game_is_due);
+        T_RUN(a_flush_is_bounded_transactions);
         T_RUN(the_lists_read_the_overlay_without_a_flush);
         T_RUN(an_admin_write_is_never_written_over);
         T_RUN(mapped_segments_keep_every_committed_batch);
