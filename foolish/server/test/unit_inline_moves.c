@@ -338,7 +338,7 @@ static void a_move_on_a_locked_game_waits_on_the_pool(void) {
     usleep(150000);   // on the pool by now, waiting for the lock
     counters c1 = stats();
     T_CHECK(c1.ok);
-    T_CHECK(c1.took_us < 100000);   // the loop answered: it is not the one waiting
+    T_CHECK(c1.took_us < 500000);   // the loop answered: it is not the one waiting (it would be until the unlock)
     T_EQ_INT((int)(c1.to_pool - c0.to_pool), 1);
     T_CHECK(!atomic_load(&m.done));
     cb_table_unlock(held);
@@ -561,7 +561,7 @@ static void a_drives_commits_are_written_by_the_loop(void) {
 static atomic_int g_admin_in;
 static int slow_admin(void *ud) {
     atomic_store(&g_admin_in, 1);
-    usleep(300000);
+    usleep(1500000);
     return CB_OK;
 }
 static void *admin_thread(void *ud) {
@@ -590,7 +590,7 @@ static void a_held_writer_never_holds_the_loop(void) {
     pthread_create(&th, NULL, move_thread, &m);
     usleep(100000);
     counters c1 = stats();
-    T_CHECK(c1.ok && c1.took_us < 100000);   // the loop answers while the writer is held
+    T_CHECK(c1.ok && c1.took_us < 500000);   // the loop answers while the writer is held (1.5 s)
     T_EQ_INT((int)(c1.to_pool - c0.to_pool), 1);
     T_CHECK(!atomic_load(&m.done));           // the move waits, on the pool
     pthread_join(adm, NULL);
