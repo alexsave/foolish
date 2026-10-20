@@ -7,11 +7,9 @@
 // There is no resident table: each request loads the row, runs ONE kernel
 // section on per-thread scratch (a Game and TableSnaps, about 84 KB), and
 // commits the products with store game_commit at expected_version = the
-// version it loaded. A lost CAS reloads and re-runs, up to CB_TABLE_ATTEMPTS
-// (5, as MAX_ATTEMPTS was). A warm process may cache the rows it just
-// committed (game_cache.ts: PLAYING games only, 256 entries); a stale entry
-// costs one CAS conflict, and a refusal computed from the cache is re-checked
-// on a fresh read before it is answered (freshOnly).
+// version it loaded, under the game's lock. Under serve the row is read from
+// the journal's overlay, the game's one owner in the process (journal.h
+// cb_journal_game_acquire); there is no other cache of rows.
 //
 // THE KERNEL SECTION, in order (server_table.ts names in brackets):
 //   table_init, table_load(state, roster) [load], table_set_deal_seed(hex of
@@ -62,7 +60,6 @@ typedef struct {
     const cb_user *actor;      // whose envelope the reply carries (NULL: none)
     cb_table_fn run;
     void *ud;
-    bool fresh;                // skip the warm cache (delete-account's redactions)
     // A human's action as its awire bytes (the request's): the store's journal codes the
     // move from them (journal.h). NULL: not an action.
     const uint8_t *wire;

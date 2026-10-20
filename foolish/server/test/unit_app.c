@@ -150,7 +150,6 @@ static void setup(int n_bots) {
     tm_add_user(g_store, UID_D, "DAVE");
     cb_app_game_id = cb_game_id_random;
     cb_bots_cycle_observer = NULL;
-    cb_row_cache_clear();
     cb_app_now = fake_now;
     cb_app_sleep = fake_sleep;
     cb_functions_verify = fake_verify;
@@ -503,8 +502,6 @@ static void a_legal_action_applies_and_bumps_the_version(void) {
     T_EQ_INT(g_fan.version, v + 1);
     T_EQ_INT(g_fan.humans, 2);
     T_EQ_INT(g_fan.casts, 2);
-    // A PLAYING row this process committed is cached.
-    T_EQ_INT(cb_row_cache_size(), 1);
 }
 
 static void an_illegal_action_is_rejected_and_commits_nothing(void) {
@@ -744,49 +741,6 @@ static void the_summary_of_a_finished_game(const snap_bytes *c) {
     T_EQ_INT(c->n_players, 2);
 }
 
-// What `wire` by `uid` comes to on a stored board: table_act on a scratch table.
-static int act_on(const cb_game_row *row, const char *uid, const uint8_t *wire, int n) {
-    Game *g = calloc(1, sizeof *g);
-    TableSnaps *snaps = calloc(1, sizeof *snaps);
-    Table t;
-    table_init(&t, g, snaps);
-    int rc = table_load(&t, row->state, (int)row->state_len, row->roster, (int)row->roster_len);
-    if (rc == TABLE_OK) rc = table_act(&t, uid, (int)strlen(uid), wire, n, -1, row->round_epoch);
-    free(g);
-    free(snaps);
-    return rc;
-}
-
-static void a_refusal_from_a_stale_cache_is_rechecked_fresh(void) {
-    setup(0);
-    char gid[CB_GAME_ID_MAX + 1];
-    two_humans_dealt(gid);
-    static const char *const uids[2] = { UID_A, UID_B }, *const bearers[2] = { "A", "B" };
-    bool found = false;
-    for (int i = 0; i < 300 && !found && status_of(gid) == GAME_STATUS_PLAYING; i++) {
-        cb_game_row old = stored(gid);
-        reply r;
-        if (!any_human_move(gid, &r)) { cb_game_row_free(&old); break; }
-        for (int k = 0; k < 2 && !found && old.status == GAME_STATUS_PLAYING; k++) {
-            uint8_t wire[64];
-            int n = pick_move(gid, seat_of(gid, uids[k]), wire, sizeof wire);
-            if (n <= 0 || act_on(&old, uids[k], wire, n) != TABLE_REJECTED) continue;
-            // A move the current board allows and the older one refuses: put
-            // the older row in the cache, as a process that missed a commit has it.
-            found = true;
-            int64_t v = version_of(gid);
-            cb_row_cache_note(&old);
-            action(bearers[k], gid, wire, n, (uint32_t)v, &r);
-            TableResponse resp;
-            T_EQ_INT(table_response_decode(r.body, (int)r.len, &resp), 0);
-            T_EQ_INT(resp.status, TABLE_STATUS_APPLIED);
-            T_EQ_INT(resp.version, v + 1);
-        }
-        cb_game_row_free(&old);
-    }
-    T_CHECK(found);
-}
-
 // Rating farming (M6): a game with a seat whose account is under three days
 // old ends unrated for everyone at it, and the leaderboard is not touched.
 static void a_new_account_plays_unrated(void) {
@@ -860,8 +814,6 @@ static void a_finished_game_writes_a_snapshot_and_ratings(void) {
         cs.n_extras = c.n_extras;
         the_summary_of_a_finished_game(&cs);
     }
-    // The finished game is evicted from the cache: it is read fresh.
-    T_EQ_INT(cb_row_cache_size(), 0);
     // A move on a finished game is MOOT and commits nothing.
     int64_t v = version_of(gid);
     const uint8_t pickup[2] = { AWIRE_PICKUP, 0 };
@@ -2582,7 +2534,6 @@ int main(void) {
     T_RUN(a_stale_intent_is_stale_round);
     T_RUN(a_lost_fence_is_an_error_not_a_retry);
     T_RUN(a_lost_delete_is_an_error);
-    T_RUN(a_refusal_from_a_stale_cache_is_rechecked_fresh);
     T_RUN(a_finished_game_writes_a_snapshot_and_ratings);
     T_RUN(a_new_account_plays_unrated);
     T_RUN(add_bot_never_picks_a_seated_bot);
@@ -2623,7 +2574,6 @@ int main(void) {
     T_RUN(the_scan_windows_follow_the_speedup);
     T_RUN(a_bot_pause_does_not_hold_the_thread);
     T_RUN(the_wall_ceiling_follows_the_speedup);
-    cb_row_cache_clear();
     cb_router_free(g_ctx.router);
     cb_store_close(g_store);
     return T_DONE();

@@ -146,7 +146,6 @@ static void sweep(const char *what, rq *q, int ok, void (*prep)(rq *, int)) {
     if (strcmp(q->method, "GET") == 0) {
         if (prep) prep(q, 0);
         run(q);
-        cb_row_cache_clear();
         drain_pools();
     }
     for (;; k++) {
@@ -157,8 +156,7 @@ static void sweep(const char *what, rq *q, int ok, void (*prep)(rq *, int)) {
         oom_fail_after(k);
         oom_everywhere(g_everywhere);
         run(q);
-        cb_row_cache_clear();   // the one thing a request may keep, and the per-thread pools below, given back
-        drain_pools();
+        drain_pools();   // the per-thread pools below, given back
         long live = g_everywhere ? 0 : oom_live();
         oom_everywhere(false);
         bool failed = oom_failed();

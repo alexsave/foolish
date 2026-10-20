@@ -876,7 +876,6 @@ static void reset_world(uint64_t seed) {
     memset(g_conn, 0, sizeof g_conn);
     for (int i = 0; i < N_CONNS; i++) cb_mqtt_conn_init(&g_conn[i].mq);
     g_steal = 0;
-    cb_row_cache_clear();
     static const char *const EMPTY[] = {   // every row but the bots, children before their parents
         "DELETE FROM chat", "DELETE FROM replay_players", "DELETE FROM replays", "DELETE FROM ratings",
         "DELETE FROM game_bots", "DELETE FROM game_members", "DELETE FROM game_moves", "DELETE FROM games",

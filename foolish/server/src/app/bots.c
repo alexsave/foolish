@@ -59,8 +59,8 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
         // Always fresh, and always with the log: its length seeds every bot
         // decision (bot_drive.h), whatever the seated brains read.
         cb_game_row row;
-        bool cached = false;
-        int rc = cb_row_load(ctx, game_id, false, NULL, &row, &cached);
+        memset(&row, 0, sizeof row);
+        int rc = CB_ROWS_CALL(ctx->store, game_get, game_id, &row);
         if (rc == CB_E_NOT_FOUND) return CYCLE_DONE;
         if (rc != CB_OK) return CYCLE_ERROR;
 
@@ -332,8 +332,8 @@ static int drive_round(cb_ctx *ctx, const char *game_id, bool *settled) {
 // A bot can act on the stored row now (a fresh read).
 static bool due_now(cb_ctx *ctx, const char *game_id) {
     cb_game_row row;
-    bool cached = false;
-    if (cb_row_load(ctx, game_id, false, NULL, &row, &cached) != CB_OK) return false;
+    memset(&row, 0, sizeof row);
+    if (CB_ROWS_CALL(ctx->store, game_get, game_id, &row) != CB_OK) return false;
     cb_section *s = cb_section_new();
     bool due = s && cb_section_load(s, &row) >= 0 && table_bots_due(&s->t);
     cb_section_free(s);

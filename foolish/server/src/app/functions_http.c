@@ -401,7 +401,7 @@ int cb_app_delete_account(cb_ctx *ctx, const char *user_id, int *refused_code, i
     // 2. The name redacted in each, one fresh CAS commit per game.
     rc = CB_OK;
     for (int i = 0; i < l.n && rc == CB_OK; i++) {
-        cb_table_op op = { .game_id = l.ids[i], .run = run_redact, .ud = (void *)user_id, .fresh = true };
+        cb_table_op op = { .game_id = l.ids[i], .run = run_redact, .ud = (void *)user_id };
         cb_table_result r;
         int g = cb_table_run(ctx, &op, &r);
         free(r.envelope);

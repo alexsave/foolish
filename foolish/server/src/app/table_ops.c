@@ -1,5 +1,5 @@
 // table_ops.c - one game operation per request (table_ops.h), and the section
-// and row cache the bot loop shares (app_internal.h).
+// the bot loop shares (app_internal.h).
 //
 // The port of table_io.ts (runTableOp, commitProducts, ratingsFor), finalize.ts,
 // game_cache.ts and the row arithmetic commit_table did in plpgsql, onto the C
@@ -104,95 +104,39 @@ void cb_row_buf_free(cb_row_buf *b) {
     memset(b, 0, sizeof *b);
 }
 
-// ---- the row cache (game_cache.ts) ---------------------------------------------------
+// ---- the row an operation runs on ----------------------------------------------------------
 //
-// Rows this process just committed, PLAYING games only, least recently noted
-// evicted at CB_ROW_CACHE_CAP. Correctness never depends on it: every commit is
-// fenced on the version, so a stale entry costs one conflict and a reload, and
-// a refusal computed from an entry is re-checked fresh (cb_table_run). Unlike
-// the TypeScript cache it also holds the session log, because the C store
-// writes the whole row and the log is appended here, not in SQL.
+// ONE OWNER: under serve the journal's overlay holds every game an operation touched
+// (journal.h cb_journal_game_acquire) and the row is read there, copied into the section's kept
+// buffers (no allocation); a game it does not hold is read from the tables and made resident.
+// With no journal (CBASE_JOURNAL=0, another store) every operation reads the store. There is no
+// other copy of a row in this process: a refusal or a load failure is the game's own answer.
 
 typedef struct {
-    bool        used;
-    uint64_t    tick;
-    cb_game_row row;   // its bytes are rb's
-    cb_row_buf  rb;    // kept across the games the slot holds: a note copies into it
-} cache_entry;
+    cb_row_buf  *rb;
+    cb_game_row *out;
+} row_into;
 
-static pthread_mutex_t g_cache_mu = PTHREAD_MUTEX_INITIALIZER;
-static cache_entry g_cache[CB_ROW_CACHE_CAP];
-static uint64_t g_cache_tick;
-
-static cache_entry *cache_find(const char *id) {
-    for (int i = 0; i < CB_ROW_CACHE_CAP; i++)
-        if (g_cache[i].used && strcmp(g_cache[i].row.id, id) == 0) return &g_cache[i];
-    return NULL;
+static int copy_row(void *ud, const cb_game_row *row) {
+    row_into *w = ud;
+    return row_copy_into(w->out, w->rb, row);
 }
 
-static void cache_evict(cache_entry *e) {
-    cb_row_buf_free(&e->rb);
-    memset(e, 0, sizeof *e);
-}
-
-void cb_row_cache_drop(const char *id) {
-    pthread_mutex_lock(&g_cache_mu);
-    cache_entry *e = cache_find(id);
-    if (e) cache_evict(e);
-    pthread_mutex_unlock(&g_cache_mu);
-}
-
-void cb_row_cache_clear(void) {
-    pthread_mutex_lock(&g_cache_mu);
-    for (int i = 0; i < CB_ROW_CACHE_CAP; i++)
-        if (g_cache[i].used) cache_evict(&g_cache[i]);
-    pthread_mutex_unlock(&g_cache_mu);
-}
-
-int cb_row_cache_size(void) {
-    int n = 0;
-    pthread_mutex_lock(&g_cache_mu);
-    for (int i = 0; i < CB_ROW_CACHE_CAP; i++) n += g_cache[i].used;
-    pthread_mutex_unlock(&g_cache_mu);
-    return n;
-}
-
-void cb_row_cache_note(const cb_game_row *row) {
-    // A lobby or a finished game is edited from everywhere: read it fresh.
-    if (row->status != GAME_STATUS_PLAYING) { cb_row_cache_drop(row->id); return; }
-    pthread_mutex_lock(&g_cache_mu);
-    cache_entry *e = cache_find(row->id);
-    if (!e) {
-        cache_entry *oldest = NULL;
-        for (int i = 0; i < CB_ROW_CACHE_CAP && !e; i++)
-            if (!g_cache[i].used) e = &g_cache[i];
-        if (!e) {
-            for (int i = 0; i < CB_ROW_CACHE_CAP; i++)
-                if (!oldest || g_cache[i].tick < oldest->tick) oldest = &g_cache[i];
-            e = oldest;
-        }
-    }
-    // The slot's buffers take the row (the same game's last row was its size): no allocation.
-    if (row_copy_into(&e->row, &e->rb, row) != CB_OK) cache_evict(e);
-    else {
-        e->used = true;
-        e->tick = ++g_cache_tick;
-    }
-    pthread_mutex_unlock(&g_cache_mu);
-}
-
-int cb_row_load(cb_ctx *ctx, const char *id, bool allow_cache, cb_row_buf *rb, cb_game_row *out, bool *cached) {
-    *cached = false;
-    if (allow_cache && rb) {
-        int rc = CB_E_NOT_FOUND;
-        pthread_mutex_lock(&g_cache_mu);
-        cache_entry *e = cache_find(id);
-        if (e) rc = row_copy_into(out, rb, &e->row);
-        pthread_mutex_unlock(&g_cache_mu);
-        if (rc == CB_OK) { *cached = true; return CB_OK; }
-    }
+// The game's row, under its lock: *kept true when its bytes are rb's (not freed: row_release).
+static int row_acquire(cb_ctx *ctx, const char *id, cb_row_buf *rb, cb_game_row *out, bool *kept) {
     memset(out, 0, sizeof *out);
+    *kept = false;
+    if (cb_journal_of(ctx->store)) {
+        row_into w = { rb, out };
+        int rc = cb_journal_game_acquire(ctx->store, id, copy_row, &w);
+        *kept = rc == CB_OK;
+        return rc;
+    }
     return CB_ROWS_CALL(ctx->store, game_get, id, out);
+}
+
+static void row_release(cb_game_row *row, bool kept) {
+    if (!kept) cb_game_row_free(row);
 }
 
 // ---- the section -----------------------------------------------------------------------
@@ -812,15 +756,13 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         // these pushes nothing else in this process commits the game.
         rc = CB_ROWS_CALL(ctx->store, game_commit, &gc);
         if (rc == CB_E_CONFLICT) {
-            // Somebody committed first: nothing was written.
-            cb_row_cache_drop(row->id);
+            // Somebody committed first: nothing was written (and the journal let its copy go).
             out->lost = true;
             rc = CB_OK;
         } else if (rc == CB_OK) {
             out->version = nrow.version;
             out->needs_bots = c->needs_bots;
             out->ended = c->ended;
-            cb_row_cache_note(&nrow);
             // A rated game moved the leaderboard: the edge's copy goes (edge.h).
             if (gc.n_rated > 0) cb_edge_stale(CB_EDGE_BOARD);
             // The replay is stored before the push that ends the game, so a
@@ -954,17 +896,6 @@ static bool commits_nothing(int rc) {
     return rc == TABLE_MOOT || rc == TABLE_STALE_ROUND || rc == TABLE_REJECTED;
 }
 
-// A row cb_row_load gave: a cached one's bytes are the section's (kept), a stored one's its own.
-static void row_release(cb_game_row *row, bool cached) {
-    if (!cached) cb_game_row_free(row);
-}
-
-// A refusal of the move is only authoritative against a fresh row: an apply
-// from a stale cache corrects itself through the CAS, a refusal never reaches it.
-static bool fresh_only(int rc) {
-    return rc == TABLE_STALE_ROUND || rc == TABLE_REJECTED;
-}
-
 int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
     memset(out, 0, sizeof *out);
     if (!ctx->store) return CB_E_STATE;
@@ -978,17 +909,17 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
     // ONE LOCK: the game's lock is held from the row read to the last push, so in this
     // process nothing moves the row in between and a commit does not lose its fence. The fence
     // (version = expected) stays as the store's own guarantee; a loss is an error, not a retry.
-    // The only second attempt left is the cache's: a refusal or a load failure from a cached
-    // row is rechecked against the stored one.
+    // ONE ATTEMPT: the row is the game's one owner's (row_acquire), so whatever the kernel says
+    // of it is the answer.
     cb_game_lock *lock = cb_table_lock(op->game_id);
     if (!lock) {
         cb_section_free(s);
         return CB_E_NOMEM;
     }
-    for (int attempt = 1; attempt <= 2; attempt++) {
+    do {
         cb_game_row row;
-        bool cached = false;   // the row's bytes are s->rb's (not freed: row_release)
-        int rc = cb_row_load(ctx, op->game_id, !op->fresh && attempt == 1, &s->rb, &row, &cached);
+        bool kept = false;   // the row's bytes are s->rb's (not freed: row_release)
+        int rc = row_acquire(ctx, op->game_id, &s->rb, &row, &kept);
         if (rc != CB_OK) { ret = rc; break; }
         // The deal seed decides a deck nobody may predict: drawn from the CSPRNG, fresh for each
         // attempt of an operation that can deal, and not at all for one that cannot (a move).
@@ -998,8 +929,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         // ---- the kernel section ----
         int lr = cb_section_load(s, &row);
         if (lr < 0) {
-            row_release(&row, cached);
-            if (cached) { cb_row_cache_drop(op->game_id); continue; }
+            row_release(&row, kept);
             // A stored row the kernel refuses: never silently repaired or played on.
             CB_ERROR("table", "game %s does not load (%d, detail %d)", op->game_id, lr, s->t.detail);
             ret = CB_E_STATE;
@@ -1016,12 +946,11 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             if (seat >= 0 && replay_move_raw(seat, op->wire, op->wire_len, &s->mv[0]) == 0) s->n_mv = 1;
         }
         rc = op->run(&s->t, &row, seed, op->ud);
-        if (rc < 0 || (cached && fresh_only(rc))) {
-            if (cached) { cb_row_cache_drop(op->game_id); row_release(&row, cached); continue; }
+        if (rc < 0) {
             out->result = rc;
             out->detail = s->t.detail;
             out->version = row.version;
-            row_release(&row, cached);
+            row_release(&row, kept);
             ret = CB_OK;
             break;
         }
@@ -1034,7 +963,6 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             // not a board, and client_adopt_envelope refuses one (the asker's
             // client takes the empty answer as "the game is gone").
             ret = CB_ROWS_CALL(ctx->store, game_delete, op->game_id, row.version);
-            cb_row_cache_drop(op->game_id);
             if (ret == CB_OK) {
                 out->committed = true;
                 out->version = row.version;
@@ -1047,7 +975,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
                 for (int i = 0; i < s->n_old; i++) snprintf(f.left[f.n_left++], sizeof(cb_uuid), "%s", s->old_humans[i]);
                 cb_fanout_commit(ctx, &f);
             }
-            row_release(&row, cached);
+            row_release(&row, kept);
             break;
         }
 
@@ -1057,20 +985,20 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             out->version = row.version;
             ret = op->no_envelope ? CB_OK
                                   : cb_section_envelope(s, seat >= 0 ? seat : -1, (uint32_t)row.version, &out->envelope, &out->envelope_len);
-            row_release(&row, cached);
+            row_release(&row, kept);
             break;
         }
 
         cb_commit_out co;
         if (op->no_deal && s->t.dealt_now) {
             CB_ERROR("table", "game %s: an operation that cannot deal dealt", op->game_id);
-            row_release(&row, cached);
+            row_release(&row, kept);
             ret = CB_E_STATE;
             break;
         }
         ret = cb_section_commit(ctx, s, &row, op->no_deal ? NULL : seed, op->no_envelope ? NULL : actor, ratings,
                                 &have_ratings, &co);
-        row_release(&row, cached);
+        row_release(&row, kept);
         if (ret != CB_OK) break;
         if (co.lost) { ret = CB_E_CONFLICT; break; }
         out->committed = true;
@@ -1078,8 +1006,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         out->needs_bots = co.needs_bots;
         out->envelope = co.actor_env;
         out->envelope_len = co.actor_env_len;
-        break;
-    }
+    } while (0);
     if (ret == CB_E_CONFLICT)
         CB_ERROR("table", "could not commit game %s: write contention", op->game_id);
     if (ret != CB_OK) {
