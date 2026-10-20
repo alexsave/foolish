@@ -6,22 +6,28 @@
 // the same moment to an append-only segment file in ONE write(), and acknowledged once
 // that write returned: the durability the tables' WAL at synchronous=NORMAL gave (a process
 // crash keeps it, an OS crash may not; opts.sync adds an fdatasync per batch). The game's
-// new row and its moves are held in memory (the overlay) and the store's game reads see
-// them first. Every few seconds, and when enough moves wait, a flush writes every waiting
-// game to the tables in one transaction and deletes the segments it covered.
+// new row and its moves are held in memory (the overlay) and the store's reads see them
+// first: one game by its id, the dashboard list and the bot scan alike.
+//
+// THE FLUSH RULE (its one owner: flush_due): a game's waiting moves go to the tables when
+// the game is written around the journal (its end, a seat change, its delete: below), when
+// its oldest waiting move is opts.game_age_ms old, or when its waiting moves hold
+// opts.game_bytes; every game's go when all the waiting moves together hold
+// opts.total_bytes, at close, and for a reader of the file behind the store (the admin's
+// SQL, an import). A segment is closed once it holds opts.seg_bytes and deleted once
+// every move in it is in the tables and (with a backup attached) in an uploaded copy.
 //
 // Everything else is written at once, as before: a commit that is not one plain human move
-// (a deal, a seat change, the end of a game, a bot's cycle) and a game's delete write that
-// game's waiting moves first, in the same transaction. A read that scans the games table
-// (the bot scan, an import) settles the journal first; that rule's one owner is
-// journal_scan (journal.c).
+// (a deal, a seat change, the end of a game) and a game's delete write that game's waiting
+// moves first, in the same transaction.
 //
 // At start the tables are read and the journal's segments replayed through the kernel
 // (the app's apply), in order, before anything is served; a torn or corrupt batch at a
 // segment's end is dropped (it was never acknowledged). A record the kernel's menu does not
 // confirm refuses the start.
 //
-// SEGMENT FILE <db>-journal.<seq>: "FJNL", u32 LE format (1), u64 LE start ms, then
+// SEGMENT FILE <db>-journal.<seq> (16 digits; a start numbers its first segment from the
+// wall clock's ms, so a number is never reused across restarts): "FJNL", u32 LE format (1), u64 LE start ms, then
 // batches. A BATCH: u8 'J', u8 format (1), u16 LE payload length, u32 LE FNV-1a 32 over
 // those 4 bytes and the payload, then the payload: ONE replay-coder integer (replay.h),
 // coded independently of every other batch, holding
@@ -58,8 +64,10 @@ typedef int (*cb_journal_apply_fn)(void *ud, const cb_game_row *row, const uint8
 
 typedef struct {
     const char *path;          // the database's path: segments are <path>-journal.<seq>
-    int64_t     flush_ms;      // the flush's period (0: 2000)
-    int         flush_moves;   // a flush starts early once this many moves wait (0: 4096)
+    int64_t     game_age_ms;   // a game's oldest waiting move waits at most this long (0: 600000)
+    int64_t     game_bytes;    // a game whose waiting moves hold this many bytes is flushed (0: 256 KiB)
+    int64_t     total_bytes;   // every game is flushed once all waiting moves hold this many (0: 64 MiB)
+    int64_t     seg_bytes;     // a segment is closed once it holds this many bytes (0: 8 MiB)
     bool        sync;          // fdatasync each batch before it is acknowledged
     cb_journal_apply_fn apply;
     void       *apply_ud;
@@ -75,11 +83,15 @@ const cb_rows_ops *cb_journal_rows(void);
 
 // Every acknowledged move into the tables now (store.h cb_store_settle).
 int cb_journal_flush(cb_store *s);
+// The flush rule's periodic check now (the flush thread's tick): the games due, flushed.
+int cb_journal_flush_due(cb_store *s);
 
 typedef struct {
     long batches, writes, records, bytes;   // bytes: every byte written to segments
     long flushes, flushed_games, flushed_moves;
     long recovered;                         // records replayed at the last open
+    long waiting, waiting_bytes;            // moves not in the tables yet, and their bytes
+    long segments;                          // segment files on disk
 } cb_journal_stats;
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 

@@ -74,8 +74,11 @@ out:
 
 // ---- the move journal under `cbase serve` (store/journal.h) -----------------------------
 //
-// CBASE_JOURNAL=0 turns it off (every move commits to the tables, as before);
-// CBASE_JOURNAL_FLUSH_MS is the flush's period (2000); CBASE_JOURNAL_SYNC=1 adds an
+// CBASE_JOURNAL=0 turns it off (every move commits to the tables, as before). The flush
+// rule's three knobs: CBASE_JOURNAL_GAME_AGE_S (600: a game's moves wait at most this long),
+// CBASE_JOURNAL_GAME_BYTES (262144: or until they hold this many bytes) and
+// CBASE_JOURNAL_TOTAL_BYTES (67108864: every game goes once all of them hold this many);
+// CBASE_JOURNAL_SEG_BYTES (8388608) closes a segment; CBASE_JOURNAL_SYNC=1 adds an
 // fdatasync to every batch (a move then survives an OS crash too).
 static long env_long(const char *name, long dflt) {
     const char *v = getenv(name);
@@ -90,8 +93,10 @@ static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
     if (!db || !*db || *db == ':') return CB_OK;   // an in-memory database has nothing to recover into
     cb_journal_opts o = {
         .path = db,
-        .flush_ms = env_long("CBASE_JOURNAL_FLUSH_MS", 2000),
-        .flush_moves = (int)env_long("CBASE_JOURNAL_FLUSH_MOVES", 4096),
+        .game_age_ms = (int64_t)env_long("CBASE_JOURNAL_GAME_AGE_S", 600) * 1000,
+        .game_bytes = env_long("CBASE_JOURNAL_GAME_BYTES", 256 << 10),
+        .total_bytes = env_long("CBASE_JOURNAL_TOTAL_BYTES", 64 << 20),
+        .seg_bytes = env_long("CBASE_JOURNAL_SEG_BYTES", 8 << 20),
         .sync = env_long("CBASE_JOURNAL_SYNC", 0) != 0,
         .apply = cb_table_replay_move,
         .apply_ud = ctx,
