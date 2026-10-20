@@ -84,7 +84,8 @@ static bool octet_body(const cb_http_req *req) {
 static bool verified(cb_ctx *ctx, const cb_http_req *req, cb_user *u, cb_http_res *res, int status) {
     int rc = cb_functions_verify(ctx, req, u);
     if (rc == CB_OK) return true;
-    if (rc == CB_E_AUTH) refusal(res, status, ASK_WHY_AUTH, 0, 0);
+    if (rc == CB_E_WOULD_BLOCK) res->to_pool = true;   // on the loop, the session is the store's to read
+    else if (rc == CB_E_AUTH) refusal(res, status, ASK_WHY_AUTH, 0, 0);
     else refusal(res, rc == CB_E_STATE ? 503 : 500, ASK_WHY_INTERNAL, 0, 0);
     return false;
 }
