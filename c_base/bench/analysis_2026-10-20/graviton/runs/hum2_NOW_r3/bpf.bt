@@ -1,0 +1,5 @@
+
+tracepoint:xfs:xfs_file_buffered_write /pid == $1/ { @w[args->ino] = sum(args->count); }
+tracepoint:writeback:writeback_dirty_folio /pid == $1/ { @d[args->ino] = count(); }
+tracepoint:power:cpu_idle /args->state == 4294967295/ { @x[cpu] = count(); }
+interval:ms:250 { printf("T %llu\n", elapsed); print(@w); print(@d); print(@x); clear(@w); clear(@d); clear(@x); }

@@ -1,0 +1,272 @@
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LISTEN=:::8080
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_STORE=sqlite
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_DB=/var/tmp/cb/data/cbase.sqlite
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_TABLE=cbase
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_IOT_ENDPOINT=
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_CF_DISTRIBUTION=(unset: no edge invalidation)
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_JWT_SECRET=(set)
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_ADMIN_TOKEN=(set)
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_ORIGIN_SECRET=(set)
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_SECRETS_SSM=(unset: secrets from the environment)
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_ALLOWED_ORIGINS=*
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_PUBLIC_URL=http://nano.example
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_REQ_WORKERS=2
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_BOT_WORKERS=1
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_MAX_BODY=1048576
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_JWT_TTL=3600
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_ADMIN_FAIL_LIMIT=10
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_RATED_MIN_AGE=0
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LOG_LEVEL=INFO
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_BOT_SPEEDUP=1
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_DEV=0
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_MAX_CONNS=16384
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LISTEN_BACKLOG=4096
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_INLINE_BUDGET_US=2000
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LIMIT_SIGNIN_IP=(default)
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LIMIT_SIGNIN_NAME=(default)
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LIMIT_SIGNUP_IP=1000000
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LIMIT_SIGNUP_ALL=1000000
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LIMIT_REFRESH_IP=(default)
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LIMIT_PASSWORD_USER=(default)
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LIMIT_CREATE_USER=1000000
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LIMIT_CHAT_USER=1000000
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LIMIT_SUB_USER=1000000
+2026-10-20T12:21:50.590000+00:00 INFO  config: CBASE_LIMIT_BUMP_USER=1000000
+2026-10-20T12:21:50.598000+00:00 INFO  serve: listening on :::8080
+2026-10-20T12:22:17.377000+00:00 INFO  table: game 3d8b2094ac86: replay encoded (v6) to 93+279 bytes
+2026-10-20T12:22:17.606000+00:00 INFO  table: game 5f8bc9ad6b75: replay encoded (v6) to 99+297 bytes
+2026-10-20T12:22:17.670000+00:00 INFO  table: game 03b6acae5d5b: replay encoded (v6) to 98+289 bytes
+2026-10-20T12:22:17.706000+00:00 INFO  table: game 962415fa68df: replay encoded (v6) to 120+316 bytes
+2026-10-20T12:22:17.956000+00:00 INFO  table: game bf22bf205a23: replay encoded (v6) to 120+318 bytes
+2026-10-20T12:22:17.998000+00:00 INFO  table: game 59e0d69fd5f1: replay encoded (v6) to 116+325 bytes
+2026-10-20T12:22:18.014000+00:00 INFO  table: game d2783163792f: replay encoded (v6) to 107+310 bytes
+2026-10-20T12:22:18.020000+00:00 INFO  table: game aecc8fb1855a: replay encoded (v6) to 117+327 bytes
+2026-10-20T12:22:18.029000+00:00 INFO  table: game e1920858eb48: replay encoded (v6) to 102+312 bytes
+2026-10-20T12:22:18.062000+00:00 INFO  table: game 09d71732d9e2: replay encoded (v6) to 112+321 bytes
+2026-10-20T12:22:18.086000+00:00 INFO  table: game 129af87bf98b: replay encoded (v6) to 111+320 bytes
+2026-10-20T12:22:18.106000+00:00 INFO  table: game 196c14c70e55: replay encoded (v6) to 113+323 bytes
+2026-10-20T12:22:18.120000+00:00 INFO  table: game 4c1476c0f43b: replay encoded (v6) to 121+340 bytes
+2026-10-20T12:22:18.124000+00:00 INFO  table: game 1bc0650e4fed: replay encoded (v6) to 137+350 bytes
+2026-10-20T12:22:18.196000+00:00 INFO  table: game 739eacfee3f2: replay encoded (v6) to 124+336 bytes
+2026-10-20T12:22:18.295000+00:00 INFO  table: game 90c76fb9a466: replay encoded (v6) to 127+346 bytes
+2026-10-20T12:22:18.317000+00:00 INFO  table: game 395a6d6b66ab: replay encoded (v6) to 132+356 bytes
+2026-10-20T12:22:18.356000+00:00 INFO  table: game 904aa9731106: replay encoded (v6) to 115+336 bytes
+2026-10-20T12:22:18.454000+00:00 INFO  table: game d1d9d0e47732: replay encoded (v6) to 127+351 bytes
+2026-10-20T12:22:18.544000+00:00 INFO  table: game e27881265efc: replay encoded (v6) to 121+351 bytes
+2026-10-20T12:22:18.570000+00:00 INFO  table: game d05faf7df984: replay encoded (v6) to 124+358 bytes
+2026-10-20T12:22:18.600000+00:00 INFO  table: game 028e75b68e5a: replay encoded (v6) to 120+337 bytes
+2026-10-20T12:22:18.610000+00:00 INFO  table: game 103804550061: replay encoded (v6) to 141+363 bytes
+2026-10-20T12:22:18.618000+00:00 INFO  table: game 734bd3d25f06: replay encoded (v6) to 124+344 bytes
+2026-10-20T12:22:18.734000+00:00 INFO  table: game 3e65ff6801e5: replay encoded (v6) to 127+359 bytes
+2026-10-20T12:22:18.745000+00:00 INFO  table: game f98f93a7da95: replay encoded (v6) to 143+376 bytes
+2026-10-20T12:22:18.939000+00:00 INFO  table: game 62d93ddb3cba: replay encoded (v6) to 130+364 bytes
+2026-10-20T12:22:18.943000+00:00 INFO  table: game 64a0bd582de4: replay encoded (v6) to 148+390 bytes
+2026-10-20T12:22:19.014000+00:00 INFO  table: game 5a8c6b82b177: replay encoded (v6) to 123+362 bytes
+2026-10-20T12:22:19.029000+00:00 INFO  table: game 62902780a5d9: replay encoded (v6) to 108+340 bytes
+2026-10-20T12:22:19.061000+00:00 INFO  table: game 6b70964a4b5f: replay encoded (v6) to 154+388 bytes
+2026-10-20T12:22:19.161000+00:00 INFO  table: game 79dbe78c131f: replay encoded (v6) to 148+382 bytes
+2026-10-20T12:22:19.203000+00:00 INFO  table: game 54e8173d0545: replay encoded (v6) to 119+354 bytes
+2026-10-20T12:22:19.232000+00:00 INFO  table: game c164a7901b4a: replay encoded (v6) to 155+391 bytes
+2026-10-20T12:22:19.259000+00:00 INFO  table: game 4e15568e258f: replay encoded (v6) to 144+382 bytes
+2026-10-20T12:22:19.281000+00:00 INFO  table: game 43515047b512: replay encoded (v6) to 128+369 bytes
+2026-10-20T12:22:19.419000+00:00 INFO  table: game 591bf51036c2: replay encoded (v6) to 137+380 bytes
+2026-10-20T12:22:19.428000+00:00 INFO  table: game f20e3424f5d2: replay encoded (v6) to 153+402 bytes
+2026-10-20T12:22:19.556000+00:00 INFO  table: game 3bca78ee7be9: replay encoded (v6) to 146+402 bytes
+2026-10-20T12:22:19.594000+00:00 INFO  table: game b79146a897bd: replay encoded (v6) to 142+387 bytes
+2026-10-20T12:22:19.830000+00:00 INFO  table: game 2c676f90b50d: replay encoded (v6) to 171+434 bytes
+2026-10-20T12:22:19.841000+00:00 INFO  table: game 7f52e0980c3d: replay encoded (v6) to 150+418 bytes
+2026-10-20T12:22:20.180000+00:00 INFO  table: game 6617eadfc671: replay encoded (v6) to 143+412 bytes
+2026-10-20T12:22:20.481000+00:00 WARN  store: checkpoint: database is locked
+2026-10-20T12:22:20.542000+00:00 INFO  table: game 91375940c41a: replay encoded (v6) to 179+452 bytes
+2026-10-20T12:22:20.677000+00:00 INFO  table: game b34e8562f79d: replay encoded (v6) to 171+448 bytes
+2026-10-20T12:22:20.733000+00:00 INFO  table: game 330cf5f5883f: replay encoded (v6) to 189+471 bytes
+2026-10-20T12:22:21.117000+00:00 INFO  table: game 677c7686e916: replay encoded (v6) to 180+478 bytes
+2026-10-20T12:22:21.129000+00:00 INFO  table: game eb8535dfccc0: replay encoded (v6) to 95+278 bytes
+2026-10-20T12:22:21.195000+00:00 INFO  table: game 12764673c344: replay encoded (v6) to 169+478 bytes
+2026-10-20T12:22:21.214000+00:00 INFO  table: game 032106b4cba3: replay encoded (v6) to 106+292 bytes
+2026-10-20T12:22:21.238000+00:00 INFO  table: game de20ce2e6928: replay encoded (v6) to 84+252 bytes
+2026-10-20T12:22:21.415000+00:00 INFO  table: game 84a337abcc07: replay encoded (v6) to 118+323 bytes
+2026-10-20T12:22:21.533000+00:00 INFO  table: game 7f3014bc48df: replay encoded (v6) to 100+285 bytes
+2026-10-20T12:22:21.884000+00:00 INFO  table: game 119068287ccd: replay encoded (v6) to 123+339 bytes
+2026-10-20T12:22:21.903000+00:00 INFO  table: game d67063fa2310: replay encoded (v6) to 112+310 bytes
+2026-10-20T12:22:21.959000+00:00 INFO  table: game 0a43e3bb40aa: replay encoded (v6) to 113+321 bytes
+2026-10-20T12:22:21.972000+00:00 INFO  table: game 51d9a23c6a6d: replay encoded (v6) to 101+284 bytes
+2026-10-20T12:22:22.001000+00:00 INFO  table: game fa4fde906f17: replay encoded (v6) to 91+276 bytes
+2026-10-20T12:22:22.006000+00:00 INFO  table: game ff9f22c80b0e: replay encoded (v6) to 104+312 bytes
+2026-10-20T12:22:22.033000+00:00 INFO  table: game d6771be38462: replay encoded (v6) to 92+257 bytes
+2026-10-20T12:22:22.089000+00:00 INFO  table: game 511bfb3a0117: replay encoded (v6) to 140+379 bytes
+2026-10-20T12:22:22.203000+00:00 INFO  table: game 1518940f34ba: replay encoded (v6) to 91+278 bytes
+2026-10-20T12:22:22.205000+00:00 INFO  table: game 2aa27b64160e: replay encoded (v6) to 101+301 bytes
+2026-10-20T12:22:22.221000+00:00 INFO  table: game cbe69a6139e3: replay encoded (v6) to 114+332 bytes
+2026-10-20T12:22:22.299000+00:00 INFO  table: game 72991849c155: replay encoded (v6) to 103+304 bytes
+2026-10-20T12:22:22.591000+00:00 INFO  table: game 27cbd5a84dcc: replay encoded (v6) to 140+363 bytes
+2026-10-20T12:22:22.649000+00:00 INFO  table: game 4977f8215a39: replay encoded (v6) to 114+336 bytes
+2026-10-20T12:22:22.823000+00:00 INFO  table: game 52239cbea114: replay encoded (v6) to 100+286 bytes
+2026-10-20T12:22:22.858000+00:00 INFO  table: game c68284438527: replay encoded (v6) to 110+321 bytes
+2026-10-20T12:22:22.915000+00:00 INFO  table: game 48fcd65c5de6: replay encoded (v6) to 150+401 bytes
+2026-10-20T12:22:23.032000+00:00 INFO  table: game c7f53abee0b7: replay encoded (v6) to 110+315 bytes
+2026-10-20T12:22:23.100000+00:00 INFO  table: game 4f72b7ffe4e1: replay encoded (v6) to 147+383 bytes
+2026-10-20T12:22:23.129000+00:00 INFO  table: game a5391afec221: replay encoded (v6) to 155+395 bytes
+2026-10-20T12:22:23.197000+00:00 INFO  table: game c42cb8bb78c9: replay encoded (v6) to 121+343 bytes
+2026-10-20T12:22:23.255000+00:00 INFO  table: game c950d0b5597f: replay encoded (v6) to 133+361 bytes
+2026-10-20T12:22:23.402000+00:00 INFO  table: game 01c3fc63fedf: replay encoded (v6) to 115+324 bytes
+2026-10-20T12:22:23.599000+00:00 INFO  table: game cdb1e5c5b2d0: replay encoded (v6) to 136+385 bytes
+2026-10-20T12:22:23.784000+00:00 INFO  table: game 5b25ef58149d: replay encoded (v6) to 134+373 bytes
+2026-10-20T12:22:23.877000+00:00 INFO  table: game 936f5b418350: replay encoded (v6) to 133+353 bytes
+2026-10-20T12:22:23.888000+00:00 INFO  table: game f0ad03e3253e: replay encoded (v6) to 138+373 bytes
+2026-10-20T12:22:23.925000+00:00 INFO  table: game 62106c4423b3: replay encoded (v6) to 153+400 bytes
+2026-10-20T12:22:24.030000+00:00 INFO  table: game 0207773eda54: replay encoded (v6) to 123+326 bytes
+2026-10-20T12:22:24.232000+00:00 INFO  table: game b8490c0c92bd: replay encoded (v6) to 142+376 bytes
+2026-10-20T12:22:24.333000+00:00 INFO  table: game d0f8828c0106: replay encoded (v6) to 165+433 bytes
+2026-10-20T12:22:24.523000+00:00 INFO  table: game 8b5dacc986ea: replay encoded (v6) to 111+307 bytes
+2026-10-20T12:22:24.682000+00:00 INFO  table: game 13fd73feeac7: replay encoded (v6) to 125+363 bytes
+2026-10-20T12:22:24.797000+00:00 INFO  table: game 23076539f1aa: replay encoded (v6) to 141+376 bytes
+2026-10-20T12:22:24.854000+00:00 INFO  table: game ebbf12f5d7d9: replay encoded (v6) to 124+354 bytes
+2026-10-20T12:22:25.133000+00:00 INFO  table: game 8ac8e7591d8a: replay encoded (v6) to 129+376 bytes
+2026-10-20T12:22:25.187000+00:00 INFO  table: game 14f2150c2544: replay encoded (v6) to 80+243 bytes
+2026-10-20T12:22:25.219000+00:00 INFO  table: game 9afd39e8c3cb: replay encoded (v6) to 155+416 bytes
+2026-10-20T12:22:25.301000+00:00 INFO  table: game a7fa4f9ffa7b: replay encoded (v6) to 115+329 bytes
+2026-10-20T12:22:25.307000+00:00 INFO  table: game 743f87b5c3d0: replay encoded (v6) to 132+395 bytes
+2026-10-20T12:22:25.314000+00:00 INFO  table: game e1c1c25a01b8: replay encoded (v6) to 115+327 bytes
+2026-10-20T12:22:25.577000+00:00 INFO  table: game 45edf8ee66fe: replay encoded (v6) to 107+303 bytes
+2026-10-20T12:22:25.635000+00:00 INFO  table: game 1c82d77efc85: replay encoded (v6) to 173+447 bytes
+2026-10-20T12:22:25.812000+00:00 INFO  table: game 7665eb62c34b: replay encoded (v6) to 151+399 bytes
+2026-10-20T12:22:25.813000+00:00 INFO  table: game c5d838fcbb59: replay encoded (v6) to 133+365 bytes
+2026-10-20T12:22:25.844000+00:00 INFO  table: game 0bcbf95b875b: replay encoded (v6) to 118+320 bytes
+2026-10-20T12:22:25.941000+00:00 INFO  table: game 1333ed37bb4f: replay encoded (v6) to 126+359 bytes
+2026-10-20T12:22:25.987000+00:00 INFO  table: game fe5aa4cebd4c: replay encoded (v6) to 118+320 bytes
+2026-10-20T12:22:26.124000+00:00 INFO  table: game 967e3f7f6d47: replay encoded (v6) to 104+309 bytes
+2026-10-20T12:22:26.152000+00:00 INFO  table: game 185b6d52f629: replay encoded (v6) to 139+358 bytes
+2026-10-20T12:22:26.419000+00:00 INFO  table: game 635ee892f34f: replay encoded (v6) to 115+320 bytes
+2026-10-20T12:22:26.457000+00:00 INFO  table: game 43cf4bcb920b: replay encoded (v6) to 127+348 bytes
+2026-10-20T12:22:26.460000+00:00 INFO  table: game 3454332355f0: replay encoded (v6) to 107+304 bytes
+2026-10-20T12:22:26.511000+00:00 INFO  table: game 85b06e7b5ccd: replay encoded (v6) to 160+445 bytes
+2026-10-20T12:22:26.671000+00:00 INFO  table: game 5e15f5a96e47: replay encoded (v6) to 130+350 bytes
+2026-10-20T12:22:26.689000+00:00 INFO  table: game e7df803021e0: replay encoded (v6) to 139+374 bytes
+2026-10-20T12:22:26.752000+00:00 INFO  table: game 60e9b07c14b0: replay encoded (v6) to 149+397 bytes
+2026-10-20T12:22:26.826000+00:00 INFO  table: game 539658234d46: replay encoded (v6) to 116+328 bytes
+2026-10-20T12:22:26.851000+00:00 INFO  table: game 9ce916acfe16: replay encoded (v6) to 153+377 bytes
+2026-10-20T12:22:27.061000+00:00 INFO  table: game c81561eac5fb: replay encoded (v6) to 170+437 bytes
+2026-10-20T12:22:27.066000+00:00 INFO  table: game 311d7d135ce3: replay encoded (v6) to 126+364 bytes
+2026-10-20T12:22:27.074000+00:00 INFO  table: game 7366925256b1: replay encoded (v6) to 102+294 bytes
+2026-10-20T12:22:27.469000+00:00 INFO  table: game 2f061ad3c4b7: replay encoded (v6) to 104+287 bytes
+2026-10-20T12:22:27.579000+00:00 INFO  table: game 812269382851: replay encoded (v6) to 134+380 bytes
+2026-10-20T12:22:27.583000+00:00 INFO  table: game bf287f4101fa: replay encoded (v6) to 131+349 bytes
+2026-10-20T12:22:27.619000+00:00 INFO  table: game 09e109db0e54: replay encoded (v6) to 144+391 bytes
+2026-10-20T12:22:27.637000+00:00 INFO  table: game a8c7fe14e2d1: replay encoded (v6) to 114+306 bytes
+2026-10-20T12:22:27.670000+00:00 INFO  table: game 15a6b74a19f5: replay encoded (v6) to 146+407 bytes
+2026-10-20T12:22:27.806000+00:00 INFO  table: game 08ef05d808dd: replay encoded (v6) to 128+352 bytes
+2026-10-20T12:22:27.813000+00:00 INFO  table: game 4b8e4fd048f1: replay encoded (v6) to 123+346 bytes
+2026-10-20T12:22:27.971000+00:00 INFO  table: game d029c85dd4b5: replay encoded (v6) to 131+369 bytes
+2026-10-20T12:22:28.175000+00:00 INFO  table: game c0ae2bc05316: replay encoded (v6) to 92+268 bytes
+2026-10-20T12:22:28.451000+00:00 INFO  table: game 0ec9288eaca8: replay encoded (v6) to 153+412 bytes
+2026-10-20T12:22:28.533000+00:00 INFO  table: game 694bf8e5af2d: replay encoded (v6) to 111+332 bytes
+2026-10-20T12:22:28.661000+00:00 INFO  table: game 84d0b35110c3: replay encoded (v6) to 150+402 bytes
+2026-10-20T12:22:28.752000+00:00 INFO  table: game 31aeef1271b8: replay encoded (v6) to 133+377 bytes
+2026-10-20T12:22:28.770000+00:00 INFO  table: game ace41cf0457c: replay encoded (v6) to 167+419 bytes
+2026-10-20T12:22:28.787000+00:00 INFO  table: game 93934582ccd3: replay encoded (v6) to 116+323 bytes
+2026-10-20T12:22:28.933000+00:00 INFO  table: game 77dd83f829f5: replay encoded (v6) to 98+283 bytes
+2026-10-20T12:22:29.103000+00:00 INFO  table: game 597152c25890: replay encoded (v6) to 128+350 bytes
+2026-10-20T12:22:29.201000+00:00 INFO  table: game c9c04834e742: replay encoded (v6) to 125+334 bytes
+2026-10-20T12:22:29.300000+00:00 INFO  table: game 2fcc0d975aa6: replay encoded (v6) to 112+304 bytes
+2026-10-20T12:22:29.335000+00:00 INFO  table: game 45f2dc30eca1: replay encoded (v6) to 104+323 bytes
+2026-10-20T12:22:29.463000+00:00 INFO  table: game b6c6ade27130: replay encoded (v6) to 143+397 bytes
+2026-10-20T12:22:29.660000+00:00 INFO  table: game 3ec3d42b903f: replay encoded (v6) to 114+342 bytes
+2026-10-20T12:22:30.078000+00:00 INFO  table: game c55ea021ee2a: replay encoded (v6) to 111+309 bytes
+2026-10-20T12:22:30.104000+00:00 INFO  table: game 301de78416a2: replay encoded (v6) to 105+294 bytes
+2026-10-20T12:22:30.105000+00:00 INFO  table: game 1fc48553eb5b: replay encoded (v6) to 110+334 bytes
+2026-10-20T12:22:30.244000+00:00 INFO  table: game 8779db41393b: replay encoded (v6) to 139+377 bytes
+2026-10-20T12:22:30.265000+00:00 INFO  table: game 7cf98f9f09d0: replay encoded (v6) to 165+419 bytes
+2026-10-20T12:22:30.362000+00:00 INFO  table: game ef0937d50674: replay encoded (v6) to 109+314 bytes
+2026-10-20T12:22:30.432000+00:00 INFO  table: game 4215d9189898: replay encoded (v6) to 113+316 bytes
+2026-10-20T12:22:30.562000+00:00 INFO  table: game d54ef0fd753e: replay encoded (v6) to 171+446 bytes
+2026-10-20T12:22:30.590000+00:00 INFO  table: game 9bfeea566ded: replay encoded (v6) to 113+331 bytes
+2026-10-20T12:22:30.594000+00:00 INFO  table: game 6cc6b025cb48: replay encoded (v6) to 126+335 bytes
+2026-10-20T12:22:30.606000+00:00 INFO  table: game 6f8eaaa3e76f: replay encoded (v6) to 161+431 bytes
+2026-10-20T12:22:30.726000+00:00 INFO  table: game 22cc09790cf4: replay encoded (v6) to 131+360 bytes
+2026-10-20T12:22:30.863000+00:00 INFO  table: game 1006ea1a4185: replay encoded (v6) to 131+351 bytes
+2026-10-20T12:22:30.958000+00:00 INFO  table: game 452755909db7: replay encoded (v6) to 96+283 bytes
+2026-10-20T12:22:31.151000+00:00 INFO  table: game d57a124019b2: replay encoded (v6) to 149+404 bytes
+2026-10-20T12:22:31.206000+00:00 INFO  table: game df38b6b4f8f3: replay encoded (v6) to 156+425 bytes
+2026-10-20T12:22:31.260000+00:00 INFO  table: game 57aa476229e7: replay encoded (v6) to 133+381 bytes
+2026-10-20T12:22:31.281000+00:00 INFO  table: game 19b61bfbeeb5: replay encoded (v6) to 112+335 bytes
+2026-10-20T12:22:31.325000+00:00 INFO  table: game 8fd4d9b88057: replay encoded (v6) to 156+425 bytes
+2026-10-20T12:22:31.501000+00:00 INFO  table: game d4976625ca1e: replay encoded (v6) to 101+280 bytes
+2026-10-20T12:22:31.518000+00:00 INFO  table: game 1abab5ff9f3a: replay encoded (v6) to 157+440 bytes
+2026-10-20T12:22:31.523000+00:00 INFO  table: game caba07cb4c92: replay encoded (v6) to 143+397 bytes
+2026-10-20T12:22:31.530000+00:00 INFO  table: game 3a5329d5c469: replay encoded (v6) to 91+257 bytes
+2026-10-20T12:22:31.567000+00:00 INFO  table: game 4b3838b33002: replay encoded (v6) to 135+371 bytes
+2026-10-20T12:22:31.624000+00:00 INFO  table: game 7f47fcbf00d3: replay encoded (v6) to 113+324 bytes
+2026-10-20T12:22:31.807000+00:00 INFO  table: game fe22a9e170bd: replay encoded (v6) to 152+387 bytes
+2026-10-20T12:22:31.948000+00:00 INFO  table: game 8cfa490f0a41: replay encoded (v6) to 104+296 bytes
+2026-10-20T12:22:31.974000+00:00 INFO  table: game f7a3276f931a: replay encoded (v6) to 147+390 bytes
+2026-10-20T12:22:32.116000+00:00 INFO  table: game d3e62fe28ad9: replay encoded (v6) to 122+341 bytes
+2026-10-20T12:22:32.158000+00:00 INFO  table: game 6b627002abf7: replay encoded (v6) to 106+298 bytes
+2026-10-20T12:22:32.230000+00:00 INFO  table: game cbbb9bfea907: replay encoded (v6) to 124+365 bytes
+2026-10-20T12:22:32.241000+00:00 INFO  table: game e6be8cce214a: replay encoded (v6) to 93+262 bytes
+2026-10-20T12:22:32.268000+00:00 INFO  table: game 24025cf459ac: replay encoded (v6) to 116+323 bytes
+2026-10-20T12:22:32.340000+00:00 INFO  table: game e1bb1afb6e1c: replay encoded (v6) to 151+408 bytes
+2026-10-20T12:22:32.407000+00:00 INFO  table: game f22e2cd0175b: replay encoded (v6) to 149+387 bytes
+2026-10-20T12:22:32.433000+00:00 INFO  table: game bcd8454b8542: replay encoded (v6) to 103+291 bytes
+2026-10-20T12:22:32.464000+00:00 INFO  table: game a3e1fdee2578: replay encoded (v6) to 76+236 bytes
+2026-10-20T12:22:32.605000+00:00 INFO  table: game 9569f089648b: replay encoded (v6) to 138+381 bytes
+2026-10-20T12:22:32.987000+00:00 INFO  table: game 9818eec539e4: replay encoded (v6) to 100+278 bytes
+2026-10-20T12:22:33.056000+00:00 INFO  table: game 12eef80283e1: replay encoded (v6) to 157+420 bytes
+2026-10-20T12:22:33.213000+00:00 INFO  table: game d8119a824c7b: replay encoded (v6) to 157+422 bytes
+2026-10-20T12:22:33.379000+00:00 INFO  table: game 9a5ea56f424c: replay encoded (v6) to 126+353 bytes
+2026-10-20T12:22:33.556000+00:00 INFO  table: game 47dc8f20f401: replay encoded (v6) to 120+339 bytes
+2026-10-20T12:22:33.752000+00:00 INFO  table: game 3ccf6eda16bd: replay encoded (v6) to 153+428 bytes
+2026-10-20T12:22:34.043000+00:00 INFO  table: game 34765bb9f0f5: replay encoded (v6) to 85+257 bytes
+2026-10-20T12:22:34.165000+00:00 INFO  table: game fb8fbdaceb5c: replay encoded (v6) to 161+414 bytes
+2026-10-20T12:22:34.206000+00:00 INFO  table: game 29c9288f08a4: replay encoded (v6) to 105+310 bytes
+2026-10-20T12:22:34.306000+00:00 INFO  table: game 12e09ad999b0: replay encoded (v6) to 100+296 bytes
+2026-10-20T12:22:34.362000+00:00 INFO  table: game 15883c9b034a: replay encoded (v6) to 160+436 bytes
+2026-10-20T12:22:34.474000+00:00 INFO  table: game d339eb7c3ceb: replay encoded (v6) to 115+332 bytes
+2026-10-20T12:22:34.485000+00:00 INFO  table: game 8776c7502fca: replay encoded (v6) to 110+315 bytes
+2026-10-20T12:22:34.569000+00:00 INFO  table: game 5469779f6180: replay encoded (v6) to 143+388 bytes
+2026-10-20T12:22:34.571000+00:00 INFO  table: game 822a9e8fa240: replay encoded (v6) to 174+462 bytes
+2026-10-20T12:22:34.622000+00:00 INFO  table: game e5ba00e49cc2: replay encoded (v6) to 129+347 bytes
+2026-10-20T12:22:34.706000+00:00 INFO  table: game a4110f619d53: replay encoded (v6) to 104+305 bytes
+2026-10-20T12:22:34.706000+00:00 INFO  table: game 82dd0c14ce01: replay encoded (v6) to 179+430 bytes
+2026-10-20T12:22:34.740000+00:00 INFO  table: game 7e70c68846b5: replay encoded (v6) to 112+315 bytes
+2026-10-20T12:22:34.919000+00:00 INFO  table: game f0343aa63a95: replay encoded (v6) to 145+359 bytes
+2026-10-20T12:22:35.103000+00:00 INFO  table: game 1ab7377cf157: replay encoded (v6) to 139+368 bytes
+2026-10-20T12:22:35.221000+00:00 INFO  table: game b6ea9455bd7f: replay encoded (v6) to 144+366 bytes
+2026-10-20T12:22:35.260000+00:00 INFO  table: game 92f5845375d3: replay encoded (v6) to 101+305 bytes
+2026-10-20T12:22:35.317000+00:00 INFO  table: game f7b37085fbb8: replay encoded (v6) to 158+433 bytes
+2026-10-20T12:22:35.428000+00:00 INFO  table: game 74c2c02e3b33: replay encoded (v6) to 117+323 bytes
+2026-10-20T12:22:35.496000+00:00 INFO  table: game 1dc3e6cc124e: replay encoded (v6) to 91+275 bytes
+2026-10-20T12:22:35.516000+00:00 INFO  table: game 4ac3cf653053: replay encoded (v6) to 111+317 bytes
+2026-10-20T12:22:35.627000+00:00 INFO  table: game 2fc1d9df08c7: replay encoded (v6) to 115+324 bytes
+2026-10-20T12:22:35.852000+00:00 INFO  table: game b54ae5ddbc3d: replay encoded (v6) to 136+385 bytes
+2026-10-20T12:22:36.017000+00:00 INFO  table: game 8786b8f2f129: replay encoded (v6) to 137+375 bytes
+2026-10-20T12:22:36.148000+00:00 INFO  table: game d4c5aec951a9: replay encoded (v6) to 136+358 bytes
+2026-10-20T12:22:36.277000+00:00 INFO  table: game f644cf46caf8: replay encoded (v6) to 119+326 bytes
+2026-10-20T12:22:36.353000+00:00 INFO  table: game 075605474746: replay encoded (v6) to 113+326 bytes
+2026-10-20T12:22:36.360000+00:00 INFO  table: game 1dcd8dcecb54: replay encoded (v6) to 118+337 bytes
+2026-10-20T12:22:36.454000+00:00 INFO  table: game 92d600ea72cd: replay encoded (v6) to 145+410 bytes
+2026-10-20T12:22:36.603000+00:00 INFO  table: game 85ae43548564: replay encoded (v6) to 131+360 bytes
+2026-10-20T12:22:36.608000+00:00 INFO  table: game bce33b5614db: replay encoded (v6) to 128+363 bytes
+2026-10-20T12:22:36.683000+00:00 INFO  table: game e169800032e4: replay encoded (v6) to 109+307 bytes
+2026-10-20T12:22:36.734000+00:00 INFO  table: game b8ee27036951: replay encoded (v6) to 116+342 bytes
+2026-10-20T12:22:36.834000+00:00 INFO  table: game 4e7fb9e5e64f: replay encoded (v6) to 162+429 bytes
+2026-10-20T12:22:36.933000+00:00 INFO  table: game 4e96d9d267f2: replay encoded (v6) to 126+355 bytes
+2026-10-20T12:22:37.003000+00:00 INFO  table: game 64dcae3570f8: replay encoded (v6) to 137+392 bytes
+2026-10-20T12:22:37.181000+00:00 INFO  table: game 2101ece45dd6: replay encoded (v6) to 84+255 bytes
+2026-10-20T12:22:37.215000+00:00 INFO  table: game eb22f39e05ea: replay encoded (v6) to 137+374 bytes
+2026-10-20T12:22:37.275000+00:00 INFO  table: game 88c96d179e66: replay encoded (v6) to 100+290 bytes
+2026-10-20T12:22:37.424000+00:00 INFO  table: game f0c134787e9b: replay encoded (v6) to 125+348 bytes
+2026-10-20T12:22:37.556000+00:00 INFO  table: game 49cb32c80ca8: replay encoded (v6) to 157+401 bytes
+2026-10-20T12:22:37.685000+00:00 INFO  table: game c58f177ce2c7: replay encoded (v6) to 135+376 bytes
+2026-10-20T12:22:37.707000+00:00 INFO  table: game cdd7d5c670a9: replay encoded (v6) to 140+396 bytes
+2026-10-20T12:22:37.798000+00:00 INFO  table: game 6e56ef52fd3c: replay encoded (v6) to 130+349 bytes
+2026-10-20T12:22:37.854000+00:00 INFO  table: game d137fd152aac: replay encoded (v6) to 157+419 bytes
+2026-10-20T12:22:38.030000+00:00 ERROR table: game c98481d0ded6: snapshot failed, keeping the log: replay code refused (-23)
+2026-10-20T12:22:38.126000+00:00 INFO  table: game 9af0c73382f1: replay encoded (v6) to 115+345 bytes
+2026-10-20T12:22:38.374000+00:00 INFO  table: game 1313caf8915b: replay encoded (v6) to 123+344 bytes
+2026-10-20T12:22:38.486000+00:00 INFO  table: game c2b8a62968c2: replay encoded (v6) to 111+320 bytes
+2026-10-20T12:22:38.506000+00:00 INFO  table: game 213abf4dbd41: replay encoded (v6) to 127+354 bytes
+2026-10-20T12:22:42.062000+00:00 INFO  serve: SIGTERM from pid 5646 (python3): draining
+2026-10-20T12:22:42.063000+00:00 INFO  net: inline dispatch: 4 requests on the loop thread, valve tripped 0 times
+2026-10-20T12:22:42.063000+00:00 INFO  store: wal: 348573 frames (1436120760 bytes) over 144372 commits; 381 passes, 41 waited for
+2026-10-20T12:22:42.081000+00:00 INFO  serve: stopped

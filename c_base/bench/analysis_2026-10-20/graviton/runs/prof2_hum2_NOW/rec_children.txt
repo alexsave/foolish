@@ -1,0 +1,1783 @@
+    94.34%     1.46%  [.] cb_loop_run
+            |          
+             --94.06%--cb_loop_run
+                       |          
+                        --69.94%--cb_process_main
+                                  |          
+                                   --58.17%--libc_start_main_stage2
+
+    70.22%     0.00%  [.] cb_process_main
+            |          
+             --58.45%--libc_start_main_stage2
+
+    59.23%     0.68%  [.] ws_frames
+            |
+            ---cb_loop_run
+               |          
+                --36.75%--cb_process_main
+                          |          
+                           --25.74%--libc_start_main_stage2
+
+    58.45%     0.00%  [.] libc_start_main_stage2
+    45.84%     0.00%  [k] el0t_64_sync
+            |          
+             --45.11%--sccp
+                       |          
+                       |--36.14%--__alt_socketcall (inlined)
+                       |          |          
+                       |          |--26.49%--sendto
+                       |          |          send (inlined)
+                       |          |          flush_now
+                       |          |          |          
+                       |          |          |--21.21%--flush (inlined)
+                       |          |          |          ws_frames
+                       |          |          |          cb_loop_run
+                       |          |          |          cb_process_main
+                       |          |          |          libc_start_main_stage2
+                       |          |          |          
+                       |          |           --5.29%--flush_dirty
+                       |          |                     cb_loop_run
+                       |          |                     cb_process_main
+                       |          |                     libc_start_main_stage2
+                       |          |          
+                       |           --9.65%--recvfrom
+                       |                     recv (inlined)
+                       |                     conn_io
+                       |                     conn_io
+                       |                     cb_loop_run
+                       |                     cb_process_main
+                       |                     libc_start_main_stage2
+                       |          
+                        --8.92%--epoll_pwait
+                                  cb_poller_wait
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    45.84%     0.00%  [k] el0t_64_sync_handler
+            |
+            ---el0t_64_sync
+               |          
+                --45.11%--sccp
+                          |          
+                          |--36.14%--__alt_socketcall (inlined)
+                          |          |          
+                          |          |--26.49%--sendto
+                          |          |          send (inlined)
+                          |          |          flush_now
+                          |          |          |          
+                          |          |          |--21.21%--flush (inlined)
+                          |          |          |          ws_frames
+                          |          |          |          cb_loop_run
+                          |          |          |          cb_process_main
+                          |          |          |          libc_start_main_stage2
+                          |          |          |          
+                          |          |           --5.29%--flush_dirty
+                          |          |                     cb_loop_run
+                          |          |                     cb_process_main
+                          |          |                     libc_start_main_stage2
+                          |          |          
+                          |           --9.65%--recvfrom
+                          |                     recv (inlined)
+                          |                     conn_io
+                          |                     conn_io
+                          |                     cb_loop_run
+                          |                     cb_process_main
+                          |                     libc_start_main_stage2
+                          |          
+                           --8.92%--epoll_pwait
+                                     cb_poller_wait
+                                     cb_loop_run
+                                     cb_process_main
+                                     libc_start_main_stage2
+
+    45.38%     1.21%  [k] el0_svc
+            |
+            ---el0t_64_sync_handler
+               el0t_64_sync
+               |          
+                --45.11%--sccp
+                          |          
+                          |--36.14%--__alt_socketcall (inlined)
+                          |          |          
+                          |          |--26.49%--sendto
+                          |          |          send (inlined)
+                          |          |          flush_now
+                          |          |          |          
+                          |          |          |--21.21%--flush (inlined)
+                          |          |          |          ws_frames
+                          |          |          |          cb_loop_run
+                          |          |          |          cb_process_main
+                          |          |          |          libc_start_main_stage2
+                          |          |          |          
+                          |          |           --5.29%--flush_dirty
+                          |          |                     cb_loop_run
+                          |          |                     cb_process_main
+                          |          |                     libc_start_main_stage2
+                          |          |          
+                          |           --9.65%--recvfrom
+                          |                     recv (inlined)
+                          |                     conn_io
+                          |                     conn_io
+                          |                     cb_loop_run
+                          |                     cb_process_main
+                          |                     libc_start_main_stage2
+                          |          
+                           --8.92%--epoll_pwait
+                                     cb_poller_wait
+                                     cb_loop_run
+                                     cb_process_main
+                                     libc_start_main_stage2
+
+    43.98%     0.00%  [k] do_el0_svc
+            |
+            ---el0_svc
+               el0t_64_sync_handler
+               el0t_64_sync
+               |          
+                --43.72%--sccp
+                          |          
+                          |--34.97%--__alt_socketcall (inlined)
+                          |          |          
+                          |          |--26.08%--sendto
+                          |          |          send (inlined)
+                          |          |          flush_now
+                          |          |          |          
+                          |          |          |--20.95%--flush (inlined)
+                          |          |          |          ws_frames
+                          |          |          |          cb_loop_run
+                          |          |          |          cb_process_main
+                          |          |          |          libc_start_main_stage2
+                          |          |          |          
+                          |          |           --5.12%--flush_dirty
+                          |          |                     cb_loop_run
+                          |          |                     cb_process_main
+                          |          |                     libc_start_main_stage2
+                          |          |          
+                          |           --8.89%--recvfrom
+                          |                     recv (inlined)
+                          |                     conn_io
+                          |                     conn_io
+                          |                     cb_loop_run
+                          |                     cb_process_main
+                          |                     libc_start_main_stage2
+                          |          
+                           --8.69%--epoll_pwait
+                                     cb_poller_wait
+                                     cb_loop_run
+                                     cb_process_main
+                                     libc_start_main_stage2
+
+    43.76%     0.07%  [k] el0_svc_common.constprop.0
+            |          
+             --43.74%--do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       |          
+                        --43.47%--sccp
+                                  |          
+                                  |--34.83%--__alt_socketcall (inlined)
+                                  |          |          
+                                  |          |--26.08%--sendto
+                                  |          |          send (inlined)
+                                  |          |          flush_now
+                                  |          |          |          
+                                  |          |          |--20.95%--flush (inlined)
+                                  |          |          |          ws_frames
+                                  |          |          |          cb_loop_run
+                                  |          |          |          cb_process_main
+                                  |          |          |          libc_start_main_stage2
+                                  |          |          |          
+                                  |          |           --5.12%--flush_dirty
+                                  |          |                     cb_loop_run
+                                  |          |                     cb_process_main
+                                  |          |                     libc_start_main_stage2
+                                  |          |          
+                                  |           --8.75%--recvfrom
+                                  |                     recv (inlined)
+                                  |                     conn_io
+                                  |                     conn_io
+                                  |                     cb_loop_run
+                                  |                     cb_process_main
+                                  |                     libc_start_main_stage2
+                                  |          
+                                   --8.58%--epoll_pwait
+                                             cb_poller_wait
+                                             cb_loop_run
+                                             cb_process_main
+                                             libc_start_main_stage2
+
+    43.13%     0.82%  [.] sccp
+            |          
+             --43.05%--sccp
+                       |          
+                       |--34.10%--__alt_socketcall (inlined)
+                       |          |          
+                       |          |--25.06%--sendto
+                       |          |          send (inlined)
+                       |          |          flush_now
+                       |          |          |          
+                       |          |          |--20.02%--flush (inlined)
+                       |          |          |          ws_frames
+                       |          |          |          cb_loop_run
+                       |          |          |          cb_process_main
+                       |          |          |          libc_start_main_stage2
+                       |          |          |          
+                       |          |           --5.04%--flush_dirty
+                       |          |                     cb_loop_run
+                       |          |                     cb_process_main
+                       |          |                     libc_start_main_stage2
+                       |          |          
+                       |           --9.04%--recvfrom
+                       |                     recv (inlined)
+                       |                     conn_io
+                       |                     conn_io
+                       |                     cb_loop_run
+                       |                     cb_process_main
+                       |                     libc_start_main_stage2
+                       |          
+                        --8.89%--epoll_pwait
+                                  cb_poller_wait
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    42.31%     0.31%  [k] invoke_syscall
+            |
+            ---el0_svc_common.constprop.0
+               do_el0_svc
+               el0_svc
+               el0t_64_sync_handler
+               el0t_64_sync
+               |          
+                --42.04%--sccp
+                          |          
+                          |--33.72%--__alt_socketcall (inlined)
+                          |          |          
+                          |          |--25.63%--sendto
+                          |          |          send (inlined)
+                          |          |          flush_now
+                          |          |          |          
+                          |          |          |--20.65%--flush (inlined)
+                          |          |          |          ws_frames
+                          |          |          |          cb_loop_run
+                          |          |          |          cb_process_main
+                          |          |          |          libc_start_main_stage2
+                          |          |          |          
+                          |          |           --4.99%--flush_dirty
+                          |          |                     cb_loop_run
+                          |          |                     cb_process_main
+                          |          |                     libc_start_main_stage2
+                          |          |          
+                          |           --8.09%--recvfrom
+                          |                     recv (inlined)
+                          |                     conn_io
+                          |                     conn_io
+                          |                     cb_loop_run
+                          |                     cb_process_main
+                          |                     libc_start_main_stage2
+                          |          
+                           --8.26%--epoll_pwait
+                                     cb_poller_wait
+                                     cb_loop_run
+                                     cb_process_main
+                                     libc_start_main_stage2
+
+    39.67%     0.68%  [.] pump
+            |          
+             --39.45%--pump
+                       |          
+                        --38.66%--ws_frames
+                                  cb_loop_run
+                                  |          
+                                   --14.54%--cb_process_main
+                                             |          
+                                              --2.77%--libc_start_main_stage2
+
+    36.55%     0.58%  [.] job_run_frame
+            |          
+             --36.13%--job_run_frame
+                       |          
+                        --36.05%--pump
+                                  |          
+                                   --35.47%--ws_frames
+                                             cb_loop_run
+                                             |          
+                                              --11.35%--cb_process_main
+
+    36.36%     0.00%  [.] run_req (inlined)
+            |
+            ---job_run_frame
+               |          
+                --36.28%--pump
+                          |          
+                           --35.70%--ws_frames
+                                     cb_loop_run
+                                     |          
+                                      --11.58%--cb_process_main
+
+    35.53%     0.29%  [.] h_action
+            |          
+             --35.47%--h_action
+                       run_req (inlined)
+                       job_run_frame
+                       pump
+                       |          
+                        --34.88%--ws_frames
+                                  cb_loop_run
+                                  |          
+                                   --10.77%--cb_process_main
+
+    32.02%     0.33%  [.] cb_table_run
+            |          
+             --31.93%--cb_table_run
+                       h_action
+                       run_req (inlined)
+                       job_run_frame
+                       pump
+                       |          
+                        --31.35%--ws_frames
+                                  cb_loop_run
+                                  |          
+                                   --7.23%--cb_process_main
+
+    27.08%     0.18%  [.] flush_now
+            |          
+            |--21.72%--flush (inlined)
+            |          ws_frames
+            |          cb_loop_run
+            |          cb_process_main
+            |          libc_start_main_stage2
+            |          
+             --5.36%--flush_dirty
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+    26.85%     0.00%  [.] send (inlined)
+            |
+            ---flush_now
+               |          
+               |--21.54%--flush (inlined)
+               |          ws_frames
+               |          cb_loop_run
+               |          cb_process_main
+               |          libc_start_main_stage2
+               |          
+                --5.31%--flush_dirty
+                          cb_loop_run
+                          cb_process_main
+                          libc_start_main_stage2
+
+    26.63%     0.00%  [.] __alt_socketcall (inlined)
+            |
+            ---sendto
+               send (inlined)
+               flush_now
+               |          
+               |--21.32%--flush (inlined)
+               |          ws_frames
+               |          cb_loop_run
+               |          cb_process_main
+               |          libc_start_main_stage2
+               |          
+                --5.31%--flush_dirty
+                          cb_loop_run
+                          cb_process_main
+                          libc_start_main_stage2
+
+    25.57%     0.09%  [k] __arm64_sys_sendto
+            |          
+             --25.52%--invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                       |--20.54%--flush (inlined)
+                       |          ws_frames
+                       |          cb_loop_run
+                       |          cb_process_main
+                       |          libc_start_main_stage2
+                       |          
+                        --4.99%--flush_dirty
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    25.42%     0.35%  [k] __sys_sendto
+            |          
+             --25.35%--__arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                       |--20.40%--flush (inlined)
+                       |          ws_frames
+                       |          cb_loop_run
+                       |          cb_process_main
+                       |          libc_start_main_stage2
+                       |          
+                        --4.95%--flush_dirty
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    24.94%     0.74%  [.] cb_section_commit
+            |          
+             --24.88%--cb_section_commit
+                       |          
+                        --24.80%--cb_table_run
+                                  h_action
+                                  run_req (inlined)
+                                  job_run_frame
+                                  pump
+                                  |          
+                                   --24.22%--ws_frames
+                                             cb_loop_run
+
+    24.50%     0.17%  [k] __sock_sendmsg
+            |          
+             --24.48%--__sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                       |--20.05%--flush (inlined)
+                       |          ws_frames
+                       |          cb_loop_run
+                       |          cb_process_main
+                       |          libc_start_main_stage2
+                       |          
+                        --4.43%--flush_dirty
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    23.50%     0.12%  [k] inet6_sendmsg
+            |          
+             --23.39%--__sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                       |--19.36%--flush (inlined)
+                       |          ws_frames
+                       |          cb_loop_run
+                       |          cb_process_main
+                       |          libc_start_main_stage2
+                       |          
+                        --4.03%--flush_dirty
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    23.34%     0.04%  [k] tcp_sendmsg
+            |          
+             --23.30%--inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                       |--19.29%--flush (inlined)
+                       |          ws_frames
+                       |          cb_loop_run
+                       |          cb_process_main
+                       |          libc_start_main_stage2
+                       |          
+                        --4.01%--flush_dirty
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    22.62%     0.85%  [k] tcp_sendmsg_locked
+            |          
+             --22.57%--tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                       |--18.67%--flush (inlined)
+                       |          ws_frames
+                       |          cb_loop_run
+                       |          cb_process_main
+                       |          libc_start_main_stage2
+                       |          
+                        --3.90%--flush_dirty
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    22.36%     0.00%  [.] flush (inlined)
+            |
+            ---ws_frames
+               cb_loop_run
+               cb_process_main
+               libc_start_main_stage2
+
+    22.29%     0.14%  [.] sendto
+            |
+            ---send (inlined)
+               flush_now
+               |          
+               |--17.81%--flush (inlined)
+               |          ws_frames
+               |          cb_loop_run
+               |          cb_process_main
+               |          libc_start_main_stage2
+               |          
+                --4.48%--flush_dirty
+                          cb_loop_run
+                          cb_process_main
+                          libc_start_main_stage2
+
+    17.55%     0.30%  [k] __tcp_push_pending_frames
+            |          
+             --17.27%--tcp_push
+                       tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                       |--14.31%--flush (inlined)
+                       |          ws_frames
+                       |          cb_loop_run
+                       |          cb_process_main
+                       |          libc_start_main_stage2
+                       |          
+                        --2.97%--flush_dirty
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    17.39%     0.07%  [k] tcp_push
+            |          
+             --17.36%--tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                       |--14.39%--flush (inlined)
+                       |          ws_frames
+                       |          cb_loop_run
+                       |          cb_process_main
+                       |          libc_start_main_stage2
+                       |          
+                        --2.97%--flush_dirty
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    16.73%     0.82%  [k] tcp_write_xmit
+            |          
+             --16.68%--__tcp_push_pending_frames
+                       tcp_push
+                       tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                       |--13.80%--flush (inlined)
+                       |          ws_frames
+                       |          cb_loop_run
+                       |          cb_process_main
+                       |          libc_start_main_stage2
+                       |          
+                        --2.88%--flush_dirty
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    13.95%     0.90%  [k] __tcp_transmit_skb
+            |          
+             --13.73%--tcp_write_xmit
+                       __tcp_push_pending_frames
+                       tcp_push
+                       tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                       |--11.34%--flush (inlined)
+                       |          ws_frames
+                       |          cb_loop_run
+                       |          cb_process_main
+                       |          libc_start_main_stage2
+                       |          
+                        --2.38%--flush_dirty
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    11.71%     0.07%  [k] inet6_csk_xmit
+            |          
+             --11.67%--__tcp_transmit_skb
+                       tcp_write_xmit
+                       __tcp_push_pending_frames
+                       tcp_push
+                       tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                        --9.85%--flush (inlined)
+                                  ws_frames
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    11.31%     1.35%  [.] conn_io
+            |          
+             --10.45%--conn_io
+                       |          
+                        --10.39%--conn_io
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+    11.28%     1.34%  [.] cb_poller_wait
+            |
+            ---cb_loop_run
+               cb_process_main
+               libc_start_main_stage2
+
+    10.33%     0.40%  [k] ip6_xmit
+            |
+            ---inet6_csk_xmit
+               __tcp_transmit_skb
+               tcp_write_xmit
+               __tcp_push_pending_frames
+               tcp_push
+               tcp_sendmsg_locked
+               tcp_sendmsg
+               inet6_sendmsg
+               __sock_sendmsg
+               __sys_sendto
+               __arm64_sys_sendto
+               invoke_syscall
+               el0_svc_common.constprop.0
+               do_el0_svc
+               el0_svc
+               el0t_64_sync_handler
+               el0t_64_sync
+               sccp
+               __alt_socketcall (inlined)
+               sendto
+               send (inlined)
+               flush_now
+               |          
+                --8.65%--flush (inlined)
+                          ws_frames
+                          cb_loop_run
+                          cb_process_main
+                          libc_start_main_stage2
+
+     9.93%     0.33%  [.] epoll_pwait
+            |
+            ---cb_poller_wait
+               cb_loop_run
+               cb_process_main
+               libc_start_main_stage2
+
+     9.80%     0.00%  [.] recv (inlined)
+            |
+            ---conn_io
+               conn_io
+               cb_loop_run
+               cb_process_main
+               libc_start_main_stage2
+
+     9.72%     0.00%  [.] __alt_socketcall (inlined)
+            |
+            ---recvfrom
+               recv (inlined)
+               conn_io
+               conn_io
+               cb_loop_run
+               cb_process_main
+               libc_start_main_stage2
+
+     9.71%     0.07%  [k] ip6_output
+            |
+            ---ip6_xmit
+               inet6_csk_xmit
+               __tcp_transmit_skb
+               tcp_write_xmit
+               __tcp_push_pending_frames
+               tcp_push
+               tcp_sendmsg_locked
+               tcp_sendmsg
+               inet6_sendmsg
+               __sock_sendmsg
+               __sys_sendto
+               __arm64_sys_sendto
+               invoke_syscall
+               el0_svc_common.constprop.0
+               do_el0_svc
+               el0_svc
+               el0t_64_sync_handler
+               el0t_64_sync
+               sccp
+               __alt_socketcall (inlined)
+               sendto
+               send (inlined)
+               flush_now
+               |          
+                --8.09%--flush (inlined)
+                          ws_frames
+                          cb_loop_run
+                          cb_process_main
+                          libc_start_main_stage2
+
+     9.47%     0.28%  [k] ip6_finish_output
+            |          
+             --9.44%--ip6_output
+                       ip6_xmit
+                       inet6_csk_xmit
+                       __tcp_transmit_skb
+                       tcp_write_xmit
+                       __tcp_push_pending_frames
+                       tcp_push
+                       tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                        --7.89%--flush (inlined)
+                                  ws_frames
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+     9.16%     1.15%  [k] ip6_finish_output2
+            |
+            ---ip6_finish_output
+               ip6_output
+               ip6_xmit
+               inet6_csk_xmit
+               __tcp_transmit_skb
+               tcp_write_xmit
+               __tcp_push_pending_frames
+               tcp_push
+               tcp_sendmsg_locked
+               tcp_sendmsg
+               inet6_sendmsg
+               __sock_sendmsg
+               __sys_sendto
+               __arm64_sys_sendto
+               invoke_syscall
+               el0_svc_common.constprop.0
+               do_el0_svc
+               el0_svc
+               el0t_64_sync_handler
+               el0t_64_sync
+               sccp
+               __alt_socketcall (inlined)
+               sendto
+               send (inlined)
+               flush_now
+               |          
+                --7.68%--flush (inlined)
+                          ws_frames
+                          cb_loop_run
+                          cb_process_main
+                          libc_start_main_stage2
+
+     7.98%     0.24%  [.] cb_fanout_publish
+            |
+            ---cb_section_commit
+               cb_table_run
+               h_action
+               run_req (inlined)
+               job_run_frame
+               pump
+               |          
+                --7.40%--ws_frames
+                          cb_loop_run
+
+     7.89%     0.00%  [k] __arm64_sys_recvfrom
+            |
+            ---invoke_syscall
+               el0_svc_common.constprop.0
+               do_el0_svc
+               el0_svc
+               el0t_64_sync_handler
+               el0t_64_sync
+               sccp
+               __alt_socketcall (inlined)
+               recvfrom
+               recv (inlined)
+               conn_io
+               conn_io
+               cb_loop_run
+               cb_process_main
+               libc_start_main_stage2
+
+     7.89%     0.08%  [k] neigh_hh_output
+            |          
+             --7.86%--ip6_finish_output2
+                       ip6_finish_output
+                       ip6_output
+                       ip6_xmit
+                       inet6_csk_xmit
+                       __tcp_transmit_skb
+                       tcp_write_xmit
+                       __tcp_push_pending_frames
+                       tcp_push
+                       tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                        --6.42%--flush (inlined)
+                                  ws_frames
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+     7.87%     0.36%  [k] __arm64_sys_epoll_pwait
+            |          
+             --7.76%--invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       epoll_pwait
+                       cb_poller_wait
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     7.70%     0.97%  [k] __dev_queue_xmit
+            |          
+             --7.55%--neigh_hh_output
+                       ip6_finish_output2
+                       ip6_finish_output
+                       ip6_output
+                       ip6_xmit
+                       inet6_csk_xmit
+                       __tcp_transmit_skb
+                       tcp_write_xmit
+                       __tcp_push_pending_frames
+                       tcp_push
+                       tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                        --6.16%--flush (inlined)
+                                  ws_frames
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+     7.65%     0.20%  [k] __sys_recvfrom
+            |          
+             --7.47%--__arm64_sys_recvfrom
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       recvfrom
+                       recv (inlined)
+                       conn_io
+                       conn_io
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     7.45%     0.00%  [.] recvfrom
+            |
+            ---recv (inlined)
+               conn_io
+               conn_io
+               cb_loop_run
+               cb_process_main
+               libc_start_main_stage2
+
+     7.31%     0.10%  [k] do_epoll_wait
+            |          
+             --7.21%--do_epoll_pwait.part.0
+                       __arm64_sys_epoll_pwait
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       epoll_pwait
+                       cb_poller_wait
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     7.31%     0.07%  [k] do_epoll_pwait.part.0
+            |          
+             --7.29%--__arm64_sys_epoll_pwait
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       epoll_pwait
+                       cb_poller_wait
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     7.09%     0.00%  [.] publish (inlined)
+            |          
+            |--4.98%--rt_publish_view
+            |          cb_fanout_publish
+            |          cb_section_commit
+            |          cb_table_run
+            |          h_action
+            |          run_req (inlined)
+            |          job_run_frame
+            |          pump
+            |          |          
+            |           --4.59%--ws_frames
+            |                     cb_loop_run
+            |          
+             --2.12%--rt_publish_cast
+                       cb_fanout_publish
+                       cb_section_commit
+                       cb_table_run
+                       h_action
+                       run_req (inlined)
+                       job_run_frame
+                       pump
+
+     7.07%     0.00%  [.] publish (inlined)
+            |
+            ---publish (inlined)
+               |          
+               |--4.95%--rt_publish_view
+               |          cb_fanout_publish
+               |          cb_section_commit
+               |          cb_table_run
+               |          h_action
+               |          run_req (inlined)
+               |          job_run_frame
+               |          pump
+               |          |          
+               |           --4.56%--ws_frames
+               |                     cb_loop_run
+               |          
+                --2.12%--rt_publish_cast
+                          cb_fanout_publish
+                          cb_section_commit
+                          cb_table_run
+                          h_action
+                          run_req (inlined)
+                          job_run_frame
+                          pump
+
+     6.71%     0.02%  [k] sock_recvmsg
+            |
+            ---__sys_recvfrom
+               __arm64_sys_recvfrom
+               invoke_syscall
+               el0_svc_common.constprop.0
+               do_el0_svc
+               el0_svc
+               el0t_64_sync_handler
+               el0t_64_sync
+               sccp
+               __alt_socketcall (inlined)
+               recvfrom
+               recv (inlined)
+               conn_io
+               conn_io
+               cb_loop_run
+               cb_process_main
+               libc_start_main_stage2
+
+     6.71%     0.56%  [.] j_game_commit
+            |          
+             --6.64%--j_game_commit
+                       |          
+                        --6.62%--cb_section_commit
+                                  cb_table_run
+                                  h_action
+                                  run_req (inlined)
+                                  job_run_frame
+                                  pump
+                                  ws_frames
+                                  cb_loop_run
+
+     6.45%     0.56%  [k] ep_poll
+            |          
+             --6.42%--do_epoll_wait
+                       do_epoll_pwait.part.0
+                       __arm64_sys_epoll_pwait
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       epoll_pwait
+                       cb_poller_wait
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     6.32%     0.76%  [k] __dev_xmit_skb
+            |          
+             --6.22%--__dev_queue_xmit
+                       neigh_hh_output
+                       ip6_finish_output2
+                       ip6_finish_output
+                       ip6_output
+                       ip6_xmit
+                       inet6_csk_xmit
+                       __tcp_transmit_skb
+                       tcp_write_xmit
+                       __tcp_push_pending_frames
+                       tcp_push
+                       tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                        --5.00%--flush (inlined)
+                                  ws_frames
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+     6.00%     0.03%  [.] cb_rt_publish
+            |
+            ---publish (inlined)
+               publish (inlined)
+               |          
+                --4.09%--rt_publish_view
+                          cb_fanout_publish
+                          cb_section_commit
+                          cb_table_run
+                          h_action
+                          run_req (inlined)
+                          job_run_frame
+                          pump
+                          |          
+                           --3.70%--ws_frames
+                                     cb_loop_run
+
+     5.97%     0.00%  [.] deliver (inlined)
+            |
+            ---cb_rt_publish
+               publish (inlined)
+               publish (inlined)
+               |          
+                --4.06%--rt_publish_view
+                          cb_fanout_publish
+                          cb_section_commit
+                          cb_table_run
+                          h_action
+                          run_req (inlined)
+                          job_run_frame
+                          pump
+                          |          
+                           --3.67%--ws_frames
+                                     cb_loop_run
+
+     5.97%     0.44%  [.] local_deliver
+            |
+            ---deliver (inlined)
+               cb_rt_publish
+               publish (inlined)
+               publish (inlined)
+               |          
+                --4.06%--rt_publish_view
+                          cb_fanout_publish
+                          cb_section_commit
+                          cb_table_run
+                          h_action
+                          run_req (inlined)
+                          job_run_frame
+                          pump
+                          |          
+                           --3.67%--ws_frames
+                                     cb_loop_run
+
+     5.82%     0.12%  [k] inet6_recvmsg
+            |          
+             --5.77%--sock_recvmsg
+                       __sys_recvfrom
+                       __arm64_sys_recvfrom
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       recvfrom
+                       recv (inlined)
+                       conn_io
+                       conn_io
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     5.60%     0.13%  [k] tcp_recvmsg
+            |          
+             --5.47%--inet6_recvmsg
+                       sock_recvmsg
+                       __sys_recvfrom
+                       __arm64_sys_recvfrom
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       recvfrom
+                       recv (inlined)
+                       conn_io
+                       conn_io
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     5.60%     0.02%  [.] flush_dirty
+            |
+            ---cb_loop_run
+               cb_process_main
+               libc_start_main_stage2
+
+     5.35%     0.23%  [.] rt_publish_view
+            |          
+             --5.33%--rt_publish_view
+                       |          
+                        --5.21%--cb_fanout_publish
+                                  cb_section_commit
+                                  cb_table_run
+                                  h_action
+                                  run_req (inlined)
+                                  job_run_frame
+                                  pump
+                                  |          
+                                   --4.82%--ws_frames
+                                             cb_loop_run
+
+     5.23%     0.46%  [.] table_commit_products_flags
+            |
+            ---cb_section_commit
+               cb_table_run
+               h_action
+               run_req (inlined)
+               job_run_frame
+               pump
+               ws_frames
+               cb_loop_run
+
+     5.11%     0.00%  [.] loop_append (inlined)
+            |
+            ---j_game_commit
+               cb_section_commit
+               cb_table_run
+               h_action
+               run_req (inlined)
+               job_run_frame
+               pump
+               ws_frames
+               cb_loop_run
+
+     4.97%     0.33%  [k] sch_direct_xmit
+            |          
+             --4.90%--__dev_xmit_skb
+                       __dev_queue_xmit
+                       neigh_hh_output
+                       ip6_finish_output2
+                       ip6_finish_output
+                       ip6_output
+                       ip6_xmit
+                       inet6_csk_xmit
+                       __tcp_transmit_skb
+                       tcp_write_xmit
+                       __tcp_push_pending_frames
+                       tcp_push
+                       tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                        --3.78%--flush (inlined)
+                                  ws_frames
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+     4.82%     0.14%  [.] loop_write
+            |          
+             --4.80%--loop_write
+                       loop_append (inlined)
+                       j_game_commit
+                       cb_section_commit
+                       cb_table_run
+                       h_action
+                       run_req (inlined)
+                       job_run_frame
+                       pump
+                       ws_frames
+                       cb_loop_run
+
+     4.71%     0.81%  [k] tcp_recvmsg_locked
+            |          
+             --4.58%--tcp_recvmsg
+                       inet6_recvmsg
+                       sock_recvmsg
+                       __sys_recvfrom
+                       __arm64_sys_recvfrom
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       recvfrom
+                       recv (inlined)
+                       conn_io
+                       conn_io
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     4.67%     1.83%  [.] pub_deliver
+            |          
+             --4.12%--pub_deliver
+                       local_deliver
+                       deliver (inlined)
+                       cb_rt_publish
+                       publish (inlined)
+                       publish (inlined)
+                       |          
+                        --2.95%--rt_publish_view
+                                  cb_fanout_publish
+                                  cb_section_commit
+                                  cb_table_run
+                                  h_action
+                                  run_req (inlined)
+                                  job_run_frame
+                                  pump
+                                  ws_frames
+                                  cb_loop_run
+
+     4.63%     0.29%  [.] write_batch
+            |          
+             --4.52%--write_batch
+                       |          
+                        --4.33%--loop_write
+                                  loop_append (inlined)
+                                  j_game_commit
+                                  cb_section_commit
+                                  cb_table_run
+                                  h_action
+                                  run_req (inlined)
+                                  job_run_frame
+                                  pump
+                                  ws_frames
+                                  cb_loop_run
+
+     4.15%     0.00%  [.] ws_frames
+            |
+            ---cb_loop_run
+               |          
+                --2.52%--cb_process_main
+
+     3.81%     0.07%  [k] dev_hard_start_xmit
+            |
+            ---sch_direct_xmit
+               __dev_xmit_skb
+               __dev_queue_xmit
+               neigh_hh_output
+               ip6_finish_output2
+               ip6_finish_output
+               ip6_output
+               ip6_xmit
+               inet6_csk_xmit
+               __tcp_transmit_skb
+               tcp_write_xmit
+               __tcp_push_pending_frames
+               tcp_push
+               tcp_sendmsg_locked
+               tcp_sendmsg
+               inet6_sendmsg
+               __sock_sendmsg
+               __sys_sendto
+               __arm64_sys_sendto
+               invoke_syscall
+               el0_svc_common.constprop.0
+               do_el0_svc
+               el0_svc
+               el0t_64_sync_handler
+               el0t_64_sync
+               sccp
+               __alt_socketcall (inlined)
+               sendto
+               send (inlined)
+               flush_now
+               |          
+                --2.92%--flush (inlined)
+                          ws_frames
+                          cb_loop_run
+                          cb_process_main
+                          libc_start_main_stage2
+
+     3.75%     1.73%  [k] ena_start_xmit
+            |          
+             --3.62%--dev_hard_start_xmit
+                       sch_direct_xmit
+                       __dev_xmit_skb
+                       __dev_queue_xmit
+                       neigh_hh_output
+                       ip6_finish_output2
+                       ip6_finish_output
+                       ip6_output
+                       ip6_xmit
+                       inet6_csk_xmit
+                       __tcp_transmit_skb
+                       tcp_write_xmit
+                       __tcp_push_pending_frames
+                       tcp_push
+                       tcp_sendmsg_locked
+                       tcp_sendmsg
+                       inet6_sendmsg
+                       __sock_sendmsg
+                       __sys_sendto
+                       __arm64_sys_sendto
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       sendto
+                       send (inlined)
+                       flush_now
+                       |          
+                        --2.73%--flush (inlined)
+                                  ws_frames
+                                  cb_loop_run
+                                  cb_process_main
+                                  libc_start_main_stage2
+
+     2.91%     0.00%  [.] sendto
+            |
+            ---send (inlined)
+               flush_now
+               |          
+                --2.35%--flush (inlined)
+                          ws_frames
+                          cb_loop_run
+                          cb_process_main
+                          libc_start_main_stage2
+
+     2.80%     0.33%  [.] cb_journal_batch_encode
+            |          
+             --2.74%--cb_journal_batch_encode
+                       write_batch
+                       loop_write
+                       loop_append (inlined)
+                       j_game_commit
+                       cb_section_commit
+                       cb_table_run
+                       h_action
+                       run_req (inlined)
+                       job_run_frame
+                       pump
+                       ws_frames
+                       cb_loop_run
+
+     2.80%     0.00%  [.] sccp
+            |          
+             --2.18%--__alt_socketcall (inlined)
+
+     2.68%     0.39%  [k] ep_send_events
+            |          
+             --2.59%--ep_poll
+                       do_epoll_wait
+                       do_epoll_pwait.part.0
+                       __arm64_sys_epoll_pwait
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       epoll_pwait
+                       cb_poller_wait
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     2.61%     0.10%  [k] schedule_hrtimeout_range
+            |          
+             --2.50%--ep_poll
+                       do_epoll_wait
+                       do_epoll_pwait.part.0
+                       __arm64_sys_epoll_pwait
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       epoll_pwait
+                       cb_poller_wait
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     2.61%     2.57%  [.] memcpy
+     2.60%     0.21%  [k] skb_copy_datagram_iter
+            |          
+             --2.40%--tcp_recvmsg_locked
+                       tcp_recvmsg
+                       inet6_recvmsg
+                       sock_recvmsg
+                       __sys_recvfrom
+                       __arm64_sys_recvfrom
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       recvfrom
+                       recv (inlined)
+                       conn_io
+                       conn_io
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     2.59%     0.51%  [.] table_act
+            |
+            ---cb_table_run
+               h_action
+               run_req (inlined)
+               job_run_frame
+               pump
+               ws_frames
+               cb_loop_run
+               cb_process_main
+
+     2.47%     0.10%  [.] wrap400
+            |
+            ---h_action
+               run_req (inlined)
+               job_run_frame
+               pump
+               ws_frames
+               cb_loop_run
+               cb_process_main
+
+     2.44%     0.29%  [k] schedule_hrtimeout_range_clock
+            |          
+             --2.30%--schedule_hrtimeout_range
+                       ep_poll
+                       do_epoll_wait
+                       do_epoll_pwait.part.0
+                       __arm64_sys_epoll_pwait
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       epoll_pwait
+                       cb_poller_wait
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     2.38%     0.15%  [.] envelope_put
+            |
+            ---table_commit_products_flags
+               cb_section_commit
+               cb_table_run
+               h_action
+               run_req (inlined)
+               job_run_frame
+               pump
+               ws_frames
+               cb_loop_run
+
+     2.36%     0.09%  [k] __skb_datagram_iter
+            |          
+             --2.34%--skb_copy_datagram_iter
+                       tcp_recvmsg_locked
+                       tcp_recvmsg
+                       inet6_recvmsg
+                       sock_recvmsg
+                       __sys_recvfrom
+                       __arm64_sys_recvfrom
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       recvfrom
+                       recv (inlined)
+                       conn_io
+                       conn_io
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+     2.24%     0.02%  [.] rt_publish_cast
+            |
+            ---cb_fanout_publish
+               cb_section_commit
+               cb_table_run
+               h_action
+               run_req (inlined)
+               job_run_frame
+               pump
+               |          
+                --2.05%--ws_frames
+                          cb_loop_run
+
+     2.18%     0.09%  [k] simple_copy_to_iter
+            |          
+             --2.13%--__skb_datagram_iter
+                       skb_copy_datagram_iter
+                       tcp_recvmsg_locked
+                       tcp_recvmsg
+                       inet6_recvmsg
+                       sock_recvmsg
+                       __sys_recvfrom
+                       __arm64_sys_recvfrom
+                       invoke_syscall
+                       el0_svc_common.constprop.0
+                       do_el0_svc
+                       el0_svc
+                       el0t_64_sync_handler
+                       el0t_64_sync
+                       sccp
+                       __alt_socketcall (inlined)
+                       recvfrom
+                       recv (inlined)
+                       conn_io
+                       conn_io
+                       cb_loop_run
+                       cb_process_main
+                       libc_start_main_stage2
+
+
+

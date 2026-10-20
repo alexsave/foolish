@@ -1,0 +1,428 @@
+# started on Tue Oct 20 12:37:45 2026
+
+     1.001087027,0.12,msec,task-clock,123331,100.00,0.000,CPUs utilized
+     1.001087027,110402,,cycles,123331,100.00,0.895,GHz
+     1.001087027,<not supported>,,instructions,0,100.00,,
+     1.001087027,2,,raw_syscalls:sys_enter,123331,100.00,16.217,K/sec
+     1.001087027,2,,context-switches,123331,100.00,16.217,K/sec
+     1.001087027,0,,cpu-migrations,123331,100.00,0.000,/sec
+     2.002257853,1163.84,msec,task-clock,1163842146,100.00,1.164,CPUs utilized
+     2.002257853,2837024434,,cycles,1163851352,100.00,2.438,GHz
+     2.002257853,<not supported>,,instructions,0,100.00,,
+     2.002257853,4507,,raw_syscalls:sys_enter,1163860878,100.00,3.873,K/sec
+     2.002257853,1155,,context-switches,1163869256,100.00,992.403,/sec
+     2.002257853,7,,cpu-migrations,1163877387,100.00,6.015,/sec
+     3.003400462,1994.36,msec,task-clock,1994357884,100.00,1.994,CPUs utilized
+     3.003400462,4939295848,,cycles,1994358491,100.00,2.477,GHz
+     3.003400462,<not supported>,,instructions,0,100.00,,
+     3.003400462,2118,,raw_syscalls:sys_enter,1994358745,100.00,1.062,K/sec
+     3.003400462,486,,context-switches,1994359163,100.00,243.687,/sec
+     3.003400462,0,,cpu-migrations,1994358942,100.00,0.000,/sec
+     4.004554164,1995.67,msec,task-clock,1995667708,100.00,1.996,CPUs utilized
+     4.004554164,4953294402,,cycles,1995667208,100.00,2.482,GHz
+     4.004554164,<not supported>,,instructions,0,100.00,,
+     4.004554164,1352,,raw_syscalls:sys_enter,1995667372,100.00,677.467,/sec
+     4.004554164,247,,context-switches,1995667044,100.00,123.768,/sec
+     4.004554164,0,,cpu-migrations,1995667208,100.00,0.000,/sec
+     5.005706029,1995.38,msec,task-clock,1995383498,100.00,1.995,CPUs utilized
+     5.005706029,4950804820,,cycles,1995383325,100.00,2.481,GHz
+     5.005706029,<not supported>,,instructions,0,100.00,,
+     5.005706029,1461,,raw_syscalls:sys_enter,1995383556,100.00,732.190,/sec
+     5.005706029,319,,context-switches,1995383925,100.00,159.869,/sec
+     5.005706029,0,,cpu-migrations,1995384015,100.00,0.000,/sec
+     6.006848941,2005.33,msec,task-clock,2005332084,100.00,2.005,CPUs utilized
+     6.006848941,5013598215,,cycles,2015348068,100.00,2.500,GHz
+     6.006848941,<not supported>,,instructions,0,100.00,,
+     6.006848941,1460,,raw_syscalls:sys_enter,2015348806,100.00,728.059,/sec
+     6.006848941,251,,context-switches,2015350201,100.00,125.166,/sec
+     6.006848941,1,,cpu-migrations,2015350595,100.00,0.499,/sec
+     7.018017442,2003.52,msec,task-clock,2003519073,100.00,2.004,CPUs utilized
+     7.018017442,4956771213,,cycles,1993503319,100.00,2.474,GHz
+     7.018017442,<not supported>,,instructions,0,100.00,,
+     7.018017442,1463,,raw_syscalls:sys_enter,1993501448,100.00,730.215,/sec
+     7.018017442,253,,context-switches,1993499569,100.00,126.278,/sec
+     7.018017442,1,,cpu-migrations,1993499290,100.00,0.499,/sec
+     8.019163194,1996.23,msec,task-clock,1996230483,100.00,1.996,CPUs utilized
+     8.019163194,4962070772,,cycles,1996230187,100.00,2.486,GHz
+     8.019163194,<not supported>,,instructions,0,100.00,,
+     8.019163194,1398,,raw_syscalls:sys_enter,1996230967,100.00,700.320,/sec
+     8.019163194,230,,context-switches,1996231385,100.00,115.217,/sec
+     8.019163194,0,,cpu-migrations,1996231139,100.00,0.000,/sec
+     9.020302799,1995.54,msec,task-clock,1995538943,100.00,1.996,CPUs utilized
+     9.020302799,4957616015,,cycles,1995539961,100.00,2.484,GHz
+     9.020302799,<not supported>,,instructions,0,100.00,,
+     9.020302799,1476,,raw_syscalls:sys_enter,1995540921,100.00,739.650,/sec
+     9.020302799,253,,context-switches,1995541126,100.00,126.783,/sec
+     9.020302799,0,,cpu-migrations,1995541471,100.00,0.000,/sec
+    10.021454089,1995.98,msec,task-clock,1995983744,100.00,1.996,CPUs utilized
+    10.021454089,4961850583,,cycles,1995982867,100.00,2.486,GHz
+    10.021454089,<not supported>,,instructions,0,100.00,,
+    10.021454089,1427,,raw_syscalls:sys_enter,1995981381,100.00,714.936,/sec
+    10.021454089,237,,context-switches,1995980889,100.00,118.738,/sec
+    10.021454089,1,,cpu-migrations,1995980487,100.00,0.501,/sec
+    11.022602979,1995.65,msec,task-clock,1995648029,100.00,1.996,CPUs utilized
+    11.022602979,4962584279,,cycles,1995648710,100.00,2.487,GHz
+    11.022602979,<not supported>,,instructions,0,100.00,,
+    11.022602979,1621,,raw_syscalls:sys_enter,1995650080,100.00,812.267,/sec
+    11.022602979,245,,context-switches,1995650671,100.00,122.767,/sec
+    11.022602979,0,,cpu-migrations,1995651598,100.00,0.000,/sec
+    12.023758385,1995.96,msec,task-clock,1995958490,100.00,1.996,CPUs utilized
+    12.023758385,4963747461,,cycles,1995957825,100.00,2.487,GHz
+    12.023758385,<not supported>,,instructions,0,100.00,,
+    12.023758385,1477,,raw_syscalls:sys_enter,1995956784,100.00,739.995,/sec
+    12.023758385,237,,context-switches,1995956800,100.00,118.740,/sec
+    12.023758385,0,,cpu-migrations,1995956578,100.00,0.000,/sec
+    13.024907261,1995.45,msec,task-clock,1995452754,100.00,1.995,CPUs utilized
+    13.024907261,4969122797,,cycles,1995452606,100.00,2.490,GHz
+    13.024907261,<not supported>,,instructions,0,100.00,,
+    13.024907261,1464,,raw_syscalls:sys_enter,1995452417,100.00,733.668,/sec
+    13.024907261,232,,context-switches,1995451392,100.00,116.264,/sec
+    13.024907261,1,,cpu-migrations,1995450908,100.00,0.501,/sec
+    14.026042179,1995.07,msec,task-clock,1995065298,100.00,1.995,CPUs utilized
+    14.026042179,4963202775,,cycles,1995066119,100.00,2.488,GHz
+    14.026042179,<not supported>,,instructions,0,100.00,,
+    14.026042179,1652,,raw_syscalls:sys_enter,1995066619,100.00,828.043,/sec
+    14.026042179,253,,context-switches,1995067292,100.00,126.813,/sec
+    14.026042179,1,,cpu-migrations,1995067497,100.00,0.501,/sec
+    15.026890360,1995.14,msec,task-clock,1995141538,100.00,1.995,CPUs utilized
+    15.026890360,4900711092,,cycles,1995142695,100.00,2.456,GHz
+    15.026890360,<not supported>,,instructions,0,100.00,,
+    15.026890360,1438,,raw_syscalls:sys_enter,1995145140,100.00,720.751,/sec
+    15.026890360,229,,context-switches,1995146206,100.00,114.779,/sec
+    15.026890360,0,,cpu-migrations,1995146855,100.00,0.000,/sec
+    16.028041902,1995.61,msec,task-clock,1995608913,100.00,1.996,CPUs utilized
+    16.028041902,4964887826,,cycles,1995607025,100.00,2.488,GHz
+    16.028041902,<not supported>,,instructions,0,100.00,,
+    16.028041902,1623,,raw_syscalls:sys_enter,1995605229,100.00,813.286,/sec
+    16.028041902,254,,context-switches,1995603925,100.00,127.279,/sec
+    16.028041902,0,,cpu-migrations,1995602988,100.00,0.000,/sec
+    17.029188324,1996.16,msec,task-clock,1996161040,100.00,1.996,CPUs utilized
+    17.029188324,4967341091,,cycles,1996161089,100.00,2.488,GHz
+    17.029188324,<not supported>,,instructions,0,100.00,,
+    17.029188324,1412,,raw_syscalls:sys_enter,1996159702,100.00,707.358,/sec
+    17.029188324,221,,context-switches,1996159710,100.00,110.713,/sec
+    17.029188324,0,,cpu-migrations,1996159801,100.00,0.000,/sec
+    18.030319952,1995.80,msec,task-clock,1995797159,100.00,1.996,CPUs utilized
+    18.030319952,4960197024,,cycles,1995797529,100.00,2.485,GHz
+    18.030319952,<not supported>,,instructions,0,100.00,,
+    18.030319952,1748,,raw_syscalls:sys_enter,1995799318,100.00,875.841,/sec
+    18.030319952,253,,context-switches,1995799867,100.00,126.766,/sec
+    18.030319952,1,,cpu-migrations,1995800195,100.00,0.501,/sec
+    19.031455839,1996.79,msec,task-clock,1996791300,100.00,1.997,CPUs utilized
+    19.031455839,4965339056,,cycles,1996791505,100.00,2.487,GHz
+    19.031455839,<not supported>,,instructions,0,100.00,,
+    19.031455839,1414,,raw_syscalls:sys_enter,1996791087,100.00,708.136,/sec
+    19.031455839,226,,context-switches,1996790849,100.00,113.182,/sec
+    19.031455839,0,,cpu-migrations,1996790464,100.00,0.000,/sec
+    20.032605026,1996.27,msec,task-clock,1996272418,100.00,1.996,CPUs utilized
+    20.032605026,4963295116,,cycles,1996272172,100.00,2.486,GHz
+    20.032605026,<not supported>,,instructions,0,100.00,,
+    20.032605026,1529,,raw_syscalls:sys_enter,1996271531,100.00,765.928,/sec
+    20.032605026,235,,context-switches,1996271359,100.00,117.719,/sec
+    20.032605026,0,,cpu-migrations,1996271170,100.00,0.000,/sec
+    21.033774275,1994.29,msec,task-clock,1994291810,100.00,1.994,CPUs utilized
+    21.033774275,4901844951,,cycles,1994294050,100.00,2.458,GHz
+    21.033774275,<not supported>,,instructions,0,100.00,,
+    21.033774275,1704,,raw_syscalls:sys_enter,1994310272,100.00,854.439,/sec
+    21.033774275,276,,context-switches,1994310887,100.00,138.395,/sec
+    21.033774275,1,,cpu-migrations,1994319429,100.00,0.501,/sec
+    22.034993821,1995.35,msec,task-clock,1995346613,100.00,1.995,CPUs utilized
+    22.034993821,4587636111,,cycles,1995344504,100.00,2.299,GHz
+    22.034993821,<not supported>,,instructions,0,100.00,,
+    22.034993821,1387,,raw_syscalls:sys_enter,1995330202,100.00,695.117,/sec
+    22.034993821,228,,context-switches,1995332607,100.00,114.266,/sec
+    22.034993821,0,,cpu-migrations,1995324352,100.00,0.000,/sec
+    23.036213039,1473.76,msec,task-clock,1473757110,100.00,1.474,CPUs utilized
+    23.036213039,3263344130,,cycles,1473747428,100.00,2.214,GHz
+    23.036213039,<not supported>,,instructions,0,100.00,,
+    23.036213039,20051,,raw_syscalls:sys_enter,1473735580,100.00,13.605,K/sec
+    23.036213039,2504,,context-switches,1473723912,100.00,1.699,K/sec
+    23.036213039,18,,cpu-migrations,1473715666,100.00,12.214,/sec
+    24.037381237,0.23,msec,task-clock,228143,100.00,0.000,CPUs utilized
+    24.037381237,333756,,cycles,228143,100.00,1.463,GHz
+    24.037381237,<not supported>,,instructions,0,100.00,,
+    24.037381237,2,,raw_syscalls:sys_enter,228143,100.00,8.766,K/sec
+    24.037381237,2,,context-switches,228143,100.00,8.766,K/sec
+    24.037381237,0,,cpu-migrations,228143,100.00,0.000,/sec
+    25.038557477,1.32,msec,task-clock,1316972,100.00,0.001,CPUs utilized
+    25.038557477,2568078,,cycles,1316972,100.00,1.950,GHz
+    25.038557477,<not supported>,,instructions,0,100.00,,
+    25.038557477,13,,raw_syscalls:sys_enter,1316972,100.00,9.871,K/sec
+    25.038557477,7,,context-switches,1316972,100.00,5.315,K/sec
+    25.038557477,0,,cpu-migrations,1316972,100.00,0.000,/sec
+    26.039733708,6.34,msec,task-clock,6343615,100.00,0.006,CPUs utilized
+    26.039733708,12486352,,cycles,6343615,100.00,1.968,GHz
+    26.039733708,<not supported>,,instructions,0,100.00,,
+    26.039733708,60,,raw_syscalls:sys_enter,6343615,100.00,9.458,K/sec
+    26.039733708,31,,context-switches,6343615,100.00,4.887,K/sec
+    26.039733708,0,,cpu-migrations,6343615,100.00,0.000,/sec
+    27.040922920,3.43,msec,task-clock,3432993,100.00,0.003,CPUs utilized
+    27.040922920,6675188,,cycles,3432993,100.00,1.944,GHz
+    27.040922920,<not supported>,,instructions,0,100.00,,
+    27.040922920,32,,raw_syscalls:sys_enter,3432993,100.00,9.321,K/sec
+    27.040922920,17,,context-switches,3432993,100.00,4.952,K/sec
+    27.040922920,0,,cpu-migrations,3432993,100.00,0.000,/sec
+    28.042115685,9.19,msec,task-clock,9190207,100.00,0.009,CPUs utilized
+    28.042115685,18237909,,cycles,9190207,100.00,1.984,GHz
+    28.042115685,<not supported>,,instructions,0,100.00,,
+    28.042115685,113,,raw_syscalls:sys_enter,9190207,100.00,12.296,K/sec
+    28.042115685,47,,context-switches,9190207,100.00,5.114,K/sec
+    28.042115685,0,,cpu-migrations,9190207,100.00,0.000,/sec
+    29.043257036,19.91,msec,task-clock,19906774,100.00,0.020,CPUs utilized
+    29.043257036,39631905,,cycles,19906774,100.00,1.991,GHz
+    29.043257036,<not supported>,,instructions,0,100.00,,
+    29.043257036,267,,raw_syscalls:sys_enter,19906774,100.00,13.413,K/sec
+    29.043257036,99,,context-switches,19906774,100.00,4.973,K/sec
+    29.043257036,0,,cpu-migrations,19906774,100.00,0.000,/sec
+    30.044425677,12.42,msec,task-clock,12417510,100.00,0.012,CPUs utilized
+    30.044425677,24526837,,cycles,12417510,100.00,1.975,GHz
+    30.044425677,<not supported>,,instructions,0,100.00,,
+    30.044425677,159,,raw_syscalls:sys_enter,12417510,100.00,12.804,K/sec
+    30.044425677,64,,context-switches,12417510,100.00,5.154,K/sec
+    30.044425677,0,,cpu-migrations,12417510,100.00,0.000,/sec
+    31.045597404,9.51,msec,task-clock,9509351,100.00,0.010,CPUs utilized
+    31.045597404,18773670,,cycles,9509351,100.00,1.974,GHz
+    31.045597404,<not supported>,,instructions,0,100.00,,
+    31.045597404,107,,raw_syscalls:sys_enter,9509351,100.00,11.252,K/sec
+    31.045597404,46,,context-switches,9509351,100.00,4.837,K/sec
+    31.045597404,0,,cpu-migrations,9509351,100.00,0.000,/sec
+    32.046786952,15.39,msec,task-clock,15386542,100.00,0.015,CPUs utilized
+    32.046786952,30490547,,cycles,15386542,100.00,1.982,GHz
+    32.046786952,<not supported>,,instructions,0,100.00,,
+    32.046786952,175,,raw_syscalls:sys_enter,15386542,100.00,11.374,K/sec
+    32.046786952,72,,context-switches,15386542,100.00,4.679,K/sec
+    32.046786952,0,,cpu-migrations,15386542,100.00,0.000,/sec
+    33.048001616,12.77,msec,task-clock,12767795,100.00,0.013,CPUs utilized
+    33.048001616,25355495,,cycles,12767795,100.00,1.986,GHz
+    33.048001616,<not supported>,,instructions,0,100.00,,
+    33.048001616,153,,raw_syscalls:sys_enter,12767795,100.00,11.983,K/sec
+    33.048001616,63,,context-switches,12767795,100.00,4.934,K/sec
+    33.048001616,0,,cpu-migrations,12767795,100.00,0.000,/sec
+    34.049156145,10.81,msec,task-clock,10812667,100.00,0.011,CPUs utilized
+    34.049156145,21326959,,cycles,10812667,100.00,1.972,GHz
+    34.049156145,<not supported>,,instructions,0,100.00,,
+    34.049156145,128,,raw_syscalls:sys_enter,10812667,100.00,11.838,K/sec
+    34.049156145,58,,context-switches,10812667,100.00,5.364,K/sec
+    34.049156145,0,,cpu-migrations,10812667,100.00,0.000,/sec
+    35.050333943,12.18,msec,task-clock,12176891,100.00,0.012,CPUs utilized
+    35.050333943,24377224,,cycles,12176891,100.00,2.002,GHz
+    35.050333943,<not supported>,,instructions,0,100.00,,
+    35.050333943,144,,raw_syscalls:sys_enter,12176891,100.00,11.826,K/sec
+    35.050333943,64,,context-switches,12176891,100.00,5.256,K/sec
+    35.050333943,0,,cpu-migrations,12176891,100.00,0.000,/sec
+    36.051484903,8.78,msec,task-clock,8775323,100.00,0.009,CPUs utilized
+    36.051484903,17451272,,cycles,8775323,100.00,1.989,GHz
+    36.051484903,<not supported>,,instructions,0,100.00,,
+    36.051484903,102,,raw_syscalls:sys_enter,8775323,100.00,11.624,K/sec
+    36.051484903,45,,context-switches,8775323,100.00,5.128,K/sec
+    36.051484903,0,,cpu-migrations,8775323,100.00,0.000,/sec
+    37.052638357,9.96,msec,task-clock,9961545,100.00,0.010,CPUs utilized
+    37.052638357,19600518,,cycles,9961545,100.00,1.968,GHz
+    37.052638357,<not supported>,,instructions,0,100.00,,
+    37.052638357,118,,raw_syscalls:sys_enter,9961545,100.00,11.846,K/sec
+    37.052638357,55,,context-switches,9961545,100.00,5.521,K/sec
+    37.052638357,0,,cpu-migrations,9961545,100.00,0.000,/sec
+    38.053786723,14.40,msec,task-clock,14403263,100.00,0.014,CPUs utilized
+    38.053786723,28771814,,cycles,14403263,100.00,1.998,GHz
+    38.053786723,<not supported>,,instructions,0,100.00,,
+    38.053786723,171,,raw_syscalls:sys_enter,14403263,100.00,11.872,K/sec
+    38.053786723,75,,context-switches,14403263,100.00,5.207,K/sec
+    38.053786723,0,,cpu-migrations,14403263,100.00,0.000,/sec
+    39.054957252,12.21,msec,task-clock,12207641,100.00,0.012,CPUs utilized
+    39.054957252,24271115,,cycles,12207641,100.00,1.988,GHz
+    39.054957252,<not supported>,,instructions,0,100.00,,
+    39.054957252,145,,raw_syscalls:sys_enter,12207641,100.00,11.878,K/sec
+    39.054957252,64,,context-switches,12207641,100.00,5.243,K/sec
+    39.054957252,0,,cpu-migrations,12207641,100.00,0.000,/sec
+    40.056110099,12.18,msec,task-clock,12175979,100.00,0.012,CPUs utilized
+    40.056110099,24415982,,cycles,12175979,100.00,2.005,GHz
+    40.056110099,<not supported>,,instructions,0,100.00,,
+    40.056110099,157,,raw_syscalls:sys_enter,12175979,100.00,12.894,K/sec
+    40.056110099,67,,context-switches,12175979,100.00,5.503,K/sec
+    40.056110099,0,,cpu-migrations,12175979,100.00,0.000,/sec
+    41.056925500,15.39,msec,task-clock,15386580,100.00,0.015,CPUs utilized
+    41.056925500,30682065,,cycles,15386580,100.00,1.994,GHz
+    41.056925500,<not supported>,,instructions,0,100.00,,
+    41.056925500,191,,raw_syscalls:sys_enter,15386580,100.00,12.413,K/sec
+    41.056925500,84,,context-switches,15386580,100.00,5.459,K/sec
+    41.056925500,1,,cpu-migrations,15386580,100.00,64.992,/sec
+    42.058107910,13.19,msec,task-clock,13192577,100.00,0.013,CPUs utilized
+    42.058107910,26026242,,cycles,13192577,100.00,1.973,GHz
+    42.058107910,<not supported>,,instructions,0,100.00,,
+    42.058107910,147,,raw_syscalls:sys_enter,13192577,100.00,11.143,K/sec
+    42.058107910,69,,context-switches,13192577,100.00,5.230,K/sec
+    42.058107910,3,,cpu-migrations,13192577,100.00,227.401,/sec
+    43.059264313,15.17,msec,task-clock,15174600,100.00,0.015,CPUs utilized
+    43.059264313,30030877,,cycles,15174600,100.00,1.979,GHz
+    43.059264313,<not supported>,,instructions,0,100.00,,
+    43.059264313,165,,raw_syscalls:sys_enter,15174600,100.00,10.873,K/sec
+    43.059264313,75,,context-switches,15174600,100.00,4.942,K/sec
+    43.059264313,0,,cpu-migrations,15174600,100.00,0.000,/sec
+    44.060450474,13.87,msec,task-clock,13872773,100.00,0.014,CPUs utilized
+    44.060450474,27584726,,cycles,13872773,100.00,1.988,GHz
+    44.060450474,<not supported>,,instructions,0,100.00,,
+    44.060450474,151,,raw_syscalls:sys_enter,13872773,100.00,10.885,K/sec
+    44.060450474,71,,context-switches,13872773,100.00,5.118,K/sec
+    44.060450474,0,,cpu-migrations,13872773,100.00,0.000,/sec
+    45.061638826,13.28,msec,task-clock,13281242,100.00,0.013,CPUs utilized
+    45.061638826,26533625,,cycles,13281242,100.00,1.998,GHz
+    45.061638826,<not supported>,,instructions,0,100.00,,
+    45.061638826,153,,raw_syscalls:sys_enter,13281242,100.00,11.520,K/sec
+    45.061638826,68,,context-switches,13281242,100.00,5.120,K/sec
+    45.061638826,0,,cpu-migrations,13281242,100.00,0.000,/sec
+    46.062823511,14.29,msec,task-clock,14294594,100.00,0.014,CPUs utilized
+    46.062823511,28191750,,cycles,14294594,100.00,1.972,GHz
+    46.062823511,<not supported>,,instructions,0,100.00,,
+    46.062823511,160,,raw_syscalls:sys_enter,14294594,100.00,11.193,K/sec
+    46.062823511,75,,context-switches,14294594,100.00,5.247,K/sec
+    46.062823511,0,,cpu-migrations,14294594,100.00,0.000,/sec
+    47.064003067,15.48,msec,task-clock,15481858,100.00,0.015,CPUs utilized
+    47.064003067,30957881,,cycles,15481858,100.00,2.000,GHz
+    47.064003067,<not supported>,,instructions,0,100.00,,
+    47.064003067,169,,raw_syscalls:sys_enter,15481858,100.00,10.916,K/sec
+    47.064003067,78,,context-switches,15481858,100.00,5.038,K/sec
+    47.064003067,0,,cpu-migrations,15481858,100.00,0.000,/sec
+    48.065183633,14.81,msec,task-clock,14812480,100.00,0.015,CPUs utilized
+    48.065183633,29489841,,cycles,14812480,100.00,1.991,GHz
+    48.065183633,<not supported>,,instructions,0,100.00,,
+    48.065183633,172,,raw_syscalls:sys_enter,14812480,100.00,11.612,K/sec
+    48.065183633,78,,context-switches,14812480,100.00,5.266,K/sec
+    48.065183633,0,,cpu-migrations,14812480,100.00,0.000,/sec
+    49.066371008,10.73,msec,task-clock,10734597,100.00,0.011,CPUs utilized
+    49.066371008,21381376,,cycles,10734597,100.00,1.992,GHz
+    49.066371008,<not supported>,,instructions,0,100.00,,
+    49.066371008,124,,raw_syscalls:sys_enter,10734597,100.00,11.551,K/sec
+    49.066371008,55,,context-switches,10734597,100.00,5.124,K/sec
+    49.066371008,0,,cpu-migrations,10734597,100.00,0.000,/sec
+    50.067545190,12.83,msec,task-clock,12834998,100.00,0.013,CPUs utilized
+    50.067545190,25561254,,cycles,12834998,100.00,1.992,GHz
+    50.067545190,<not supported>,,instructions,0,100.00,,
+    50.067545190,139,,raw_syscalls:sys_enter,12834998,100.00,10.830,K/sec
+    50.067545190,67,,context-switches,12834998,100.00,5.220,K/sec
+    50.067545190,0,,cpu-migrations,12834998,100.00,0.000,/sec
+    51.068723573,11.93,msec,task-clock,11931681,100.00,0.012,CPUs utilized
+    51.068723573,23659375,,cycles,11931681,100.00,1.983,GHz
+    51.068723573,<not supported>,,instructions,0,100.00,,
+    51.068723573,128,,raw_syscalls:sys_enter,11931681,100.00,10.728,K/sec
+    51.068723573,61,,context-switches,11931681,100.00,5.112,K/sec
+    51.068723573,0,,cpu-migrations,11931681,100.00,0.000,/sec
+    52.069911597,13.41,msec,task-clock,13407536,100.00,0.013,CPUs utilized
+    52.069911597,26538446,,cycles,13407536,100.00,1.979,GHz
+    52.069911597,<not supported>,,instructions,0,100.00,,
+    52.069911597,145,,raw_syscalls:sys_enter,13407536,100.00,10.815,K/sec
+    52.069911597,65,,context-switches,13407536,100.00,4.848,K/sec
+    52.069911597,0,,cpu-migrations,13407536,100.00,0.000,/sec
+    53.070806697,18.17,msec,task-clock,18168474,100.00,0.018,CPUs utilized
+    53.070806697,33690066,,cycles,18168474,100.00,1.854,GHz
+    53.070806697,<not supported>,,instructions,0,100.00,,
+    53.070806697,401,,raw_syscalls:sys_enter,18168474,100.00,22.071,K/sec
+    53.070806697,163,,context-switches,18168474,100.00,8.972,K/sec
+    53.070806697,0,,cpu-migrations,18168474,100.00,0.000,/sec
+    54.071950881,16.45,msec,task-clock,16445497,100.00,0.016,CPUs utilized
+    54.071950881,32885669,,cycles,16445497,100.00,2.000,GHz
+    54.071950881,<not supported>,,instructions,0,100.00,,
+    54.071950881,192,,raw_syscalls:sys_enter,16445497,100.00,11.675,K/sec
+    54.071950881,84,,context-switches,16445497,100.00,5.108,K/sec
+    54.071950881,1,,cpu-migrations,16445497,100.00,60.807,/sec
+    55.073119705,12.01,msec,task-clock,12006136,100.00,0.012,CPUs utilized
+    55.073119705,23581605,,cycles,12006136,100.00,1.964,GHz
+    55.073119705,<not supported>,,instructions,0,100.00,,
+    55.073119705,131,,raw_syscalls:sys_enter,12006136,100.00,10.911,K/sec
+    55.073119705,63,,context-switches,12006136,100.00,5.247,K/sec
+    55.073119705,1,,cpu-migrations,12006136,100.00,83.291,/sec
+    56.074283671,13.20,msec,task-clock,13196095,100.00,0.013,CPUs utilized
+    56.074283671,26313289,,cycles,13196095,100.00,1.994,GHz
+    56.074283671,<not supported>,,instructions,0,100.00,,
+    56.074283671,144,,raw_syscalls:sys_enter,13196095,100.00,10.912,K/sec
+    56.074283671,68,,context-switches,13196095,100.00,5.153,K/sec
+    56.074283671,0,,cpu-migrations,13196095,100.00,0.000,/sec
+    57.075452200,19.01,msec,task-clock,19007693,100.00,0.019,CPUs utilized
+    57.075452200,36931214,,cycles,19007693,100.00,1.943,GHz
+    57.075452200,<not supported>,,instructions,0,100.00,,
+    57.075452200,195,,raw_syscalls:sys_enter,19007693,100.00,10.259,K/sec
+    57.075452200,92,,context-switches,19007693,100.00,4.840,K/sec
+    57.075452200,0,,cpu-migrations,19007693,100.00,0.000,/sec
+    58.076626677,14.16,msec,task-clock,14155146,100.00,0.014,CPUs utilized
+    58.076626677,28333969,,cycles,14155146,100.00,2.002,GHz
+    58.076626677,<not supported>,,instructions,0,100.00,,
+    58.076626677,160,,raw_syscalls:sys_enter,14155146,100.00,11.303,K/sec
+    58.076626677,74,,context-switches,14155146,100.00,5.228,K/sec
+    58.076626677,0,,cpu-migrations,14155146,100.00,0.000,/sec
+    59.076906432,11.24,msec,task-clock,11235961,100.00,0.011,CPUs utilized
+    59.076906432,22276887,,cycles,11235961,100.00,1.983,GHz
+    59.076906432,<not supported>,,instructions,0,100.00,,
+    59.076906432,125,,raw_syscalls:sys_enter,11235961,100.00,11.125,K/sec
+    59.076906432,61,,context-switches,11235961,100.00,5.429,K/sec
+    59.076906432,0,,cpu-migrations,11235961,100.00,0.000,/sec
+    60.078064159,14.06,msec,task-clock,14059305,100.00,0.014,CPUs utilized
+    60.078064159,27854303,,cycles,14059305,100.00,1.981,GHz
+    60.078064159,<not supported>,,instructions,0,100.00,,
+    60.078064159,153,,raw_syscalls:sys_enter,14059305,100.00,10.882,K/sec
+    60.078064159,72,,context-switches,14059305,100.00,5.121,K/sec
+    60.078064159,0,,cpu-migrations,14059305,100.00,0.000,/sec
+    61.079208003,16.52,msec,task-clock,16515477,100.00,0.017,CPUs utilized
+    61.079208003,32724301,,cycles,16515477,100.00,1.981,GHz
+    61.079208003,<not supported>,,instructions,0,100.00,,
+    61.079208003,177,,raw_syscalls:sys_enter,16515477,100.00,10.717,K/sec
+    61.079208003,87,,context-switches,16515477,100.00,5.268,K/sec
+    61.079208003,0,,cpu-migrations,16515477,100.00,0.000,/sec
+    62.080356482,15.35,msec,task-clock,15345274,100.00,0.015,CPUs utilized
+    62.080356482,30174633,,cycles,15345274,100.00,1.966,GHz
+    62.080356482,<not supported>,,instructions,0,100.00,,
+    62.080356482,160,,raw_syscalls:sys_enter,15345274,100.00,10.427,K/sec
+    62.080356482,77,,context-switches,15345274,100.00,5.018,K/sec
+    62.080356482,0,,cpu-migrations,15345274,100.00,0.000,/sec
+    63.081522874,13.12,msec,task-clock,13115453,100.00,0.013,CPUs utilized
+    63.081522874,26127514,,cycles,13115453,100.00,1.992,GHz
+    63.081522874,<not supported>,,instructions,0,100.00,,
+    63.081522874,144,,raw_syscalls:sys_enter,13115453,100.00,10.979,K/sec
+    63.081522874,68,,context-switches,13115453,100.00,5.185,K/sec
+    63.081522874,0,,cpu-migrations,13115453,100.00,0.000,/sec
+    64.082660276,13.38,msec,task-clock,13381459,100.00,0.013,CPUs utilized
+    64.082660276,26542781,,cycles,13381459,100.00,1.984,GHz
+    64.082660276,<not supported>,,instructions,0,100.00,,
+    64.082660276,146,,raw_syscalls:sys_enter,13381459,100.00,10.911,K/sec
+    64.082660276,68,,context-switches,13381459,100.00,5.082,K/sec
+    64.082660276,0,,cpu-migrations,13381459,100.00,0.000,/sec
+    65.083822926,15.49,msec,task-clock,15486528,100.00,0.015,CPUs utilized
+    65.083822926,30924576,,cycles,15486528,100.00,1.997,GHz
+    65.083822926,<not supported>,,instructions,0,100.00,,
+    65.083822926,167,,raw_syscalls:sys_enter,15486528,100.00,10.784,K/sec
+    65.083822926,81,,context-switches,15486528,100.00,5.230,K/sec
+    65.083822926,2,,cpu-migrations,15486528,100.00,129.145,/sec
+    66.085011792,15.33,msec,task-clock,15332422,100.00,0.015,CPUs utilized
+    66.085011792,30509261,,cycles,15332422,100.00,1.990,GHz
+    66.085011792,<not supported>,,instructions,0,100.00,,
+    66.085011792,170,,raw_syscalls:sys_enter,15332422,100.00,11.088,K/sec
+    66.085011792,80,,context-switches,15332422,100.00,5.218,K/sec
+    66.085011792,0,,cpu-migrations,15332422,100.00,0.000,/sec
+    67.086190310,14.48,msec,task-clock,14476447,100.00,0.014,CPUs utilized
+    67.086190310,28752794,,cycles,14476447,100.00,1.986,GHz
+    67.086190310,<not supported>,,instructions,0,100.00,,
+    67.086190310,161,,raw_syscalls:sys_enter,14476447,100.00,11.122,K/sec
+    67.086190310,76,,context-switches,14476447,100.00,5.250,K/sec
+    67.086190310,0,,cpu-migrations,14476447,100.00,0.000,/sec
+    68.086939142,15.20,msec,task-clock,15203618,100.00,0.015,CPUs utilized
+    68.086939142,30162597,,cycles,15203618,100.00,1.984,GHz
+    68.086939142,<not supported>,,instructions,0,100.00,,
+    68.086939142,183,,raw_syscalls:sys_enter,15203618,100.00,12.037,K/sec
+    68.086939142,87,,context-switches,15203618,100.00,5.722,K/sec
+    68.086939142,0,,cpu-migrations,15203618,100.00,0.000,/sec
+    69.088122780,1.97,msec,task-clock,1971075,100.00,0.002,CPUs utilized
+    69.088122780,3813678,,cycles,1971075,100.00,1.935,GHz
+    69.088122780,<not supported>,,instructions,0,100.00,,
+    69.088122780,20,,raw_syscalls:sys_enter,1971075,100.00,10.147,K/sec
+    69.088122780,11,,context-switches,1971075,100.00,5.581,K/sec
+    69.088122780,1,,cpu-migrations,1971075,100.00,507.337,/sec
+    70.089308052,0.20,msec,task-clock,201254,100.00,0.000,CPUs utilized
+    70.089308052,328194,,cycles,201254,100.00,1.631,GHz
+    70.089308052,<not supported>,,instructions,0,100.00,,
+    70.089308052,2,,raw_syscalls:sys_enter,201254,100.00,9.938,K/sec
+    70.089308052,2,,context-switches,201254,100.00,9.938,K/sec
+    70.089308052,0,,cpu-migrations,201254,100.00,0.000,/sec
+    70.478618952,18.39,msec,task-clock,18392167,100.00,0.018,CPUs utilized
+    70.478618952,30977667,,cycles,18392167,100.00,1.684,GHz
+    70.478618952,<not supported>,,instructions,0,100.00,,
+    70.478618952,2643,,raw_syscalls:sys_enter,18392167,100.00,143.702,K/sec
+    70.478618952,310,,context-switches,18392167,100.00,16.855,K/sec
+    70.478618952,1,,cpu-migrations,18392167,100.00,54.371,/sec

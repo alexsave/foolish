@@ -1,0 +1,3 @@
+total 784
+454342 -rw-r--r--. 1 root root 802816 Oct 20 13:03 cbase.sqlite
+454340 -rw-------. 1 root root      0 Oct 20 13:02 cbase.sqlite.serve-lock
