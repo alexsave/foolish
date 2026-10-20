@@ -457,13 +457,14 @@ static void h_delete_account(cb_ctx *ctx, const cb_http_req *req, cb_http_res *r
 
 // Every method reaches the handler, as it reached the edge function: the
 // method rules are the functions' own (delete-account's 405), and the
-// router answers OPTIONS (DESIGN.md "Binary surface"). A move runs on the loop
-// thread when the server lets it (router.h CB_ROUTE_INLINE): its budget there is
-// 5 ms, room for a deal (a shuffle and a whole-commit journal record) on the
-// nano; a plain move takes well under one.
+// router answers OPTIONS (DESIGN.md "Binary surface"). A move's home is the loop
+// thread (router.h CB_ROUTE_INLINE | CB_ROUTE_HOME): the valve never sends it to
+// the pool, where it is slower for everyone; only the pass budget and its own
+// to_pool do. Its budget there is 5 ms of CPU, room for a deal (a shuffle and a
+// whole-commit journal record) on the nano; a plain move takes well under one.
 static const cb_route FUNCTION_ROUTES[] = {
     { "*", "/v1/create", CB_ROUTE_POOL, h_create, 0 },
-    { "*", "/v1/action", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_action, 5000 },
+    { "*", "/v1/action", CB_ROUTE_POOL | CB_ROUTE_INLINE | CB_ROUTE_HOME, h_action, 5000 },
     { "*", "/v1/meta", CB_ROUTE_POOL, h_meta, 0 },
     { "*", "/v1/account/delete", CB_ROUTE_POOL, h_delete_account, 0 },
 };
