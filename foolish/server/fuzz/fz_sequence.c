@@ -261,7 +261,7 @@ static void check_envelope(const char *uid, const uint8_t *p, size_t n, const ch
 static void check_cast(const char *uid, const char *gid, const uint8_t *p, size_t n) {
     int want = uid ? seat_of_user(gid, uid) : -1;
     client_init(&g_c, &g_slot);
-    int rc = client_cast_open(&g_c, p, (int)n, NULL, 0);
+    int rc = client_cast_open(&g_c, p, (int)n, NULL, 0, NULL, 0);
     FZ_CHECK(rc == CLIENT_OK);
     for (int i = 0; i < 512; i++) {
         int r = client_push_next(&g_c);

@@ -14,6 +14,7 @@
 
 static ClientTable g_c;
 static ClientSlot g_slot;
+static ClientDelta g_delta;
 
 static void read_push(void) {
     for (int i = 0; i < 256; i++) {
@@ -32,6 +33,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     const uint8_t *pb = fz_bytes(&in, fz_left(&in), &pl);
     uint8_t *ident = fz_dup(ib, il), *p = fz_dup(pb, pl);
     client_init(&g_c, &g_slot);
+    client_delta_attach(&g_c, &g_delta);
     static uint8_t kept[4096];
     int kept_len = 0;
     switch (mode % 5) {
@@ -47,12 +49,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             FZ_CHECK(kept_len >= 0);
             int at = client_identity_at(&g_c);
             FZ_CHECK(at >= -1 && at <= (int)pl);
-            // A cast against the identity the envelope gave.
-            if (kept_len > 0 && il > 0 && client_cast_open(&g_c, ident, (int)il, kept, kept_len) == CLIENT_OK) read_push();
+            // The board to keep for a delta, from the envelope just read.
+            static uint8_t board[CLIENT_BOARD_KEEP_MAX];
+            const int board_len = client_board_keep(&g_c, board, sizeof board);
+            FZ_CHECK(board_len > 5 && board_len <= (int)sizeof board);
+            // A cast against the identity and the board the envelope gave: a
+            // hostile delta is rebuilt on a real board, and refused or read whole.
+            if (kept_len > 0 && il > 0 && client_cast_open(&g_c, ident, (int)il, kept, kept_len, board, board_len) == CLIENT_OK) read_push();
         }
         break;
     case 1:
-        if (client_cast_open(&g_c, p, (int)pl, ident, (int)il) == CLIENT_OK) read_push();
+        if (client_cast_open(&g_c, p, (int)pl, ident, (int)il, 0, 0) == CLIENT_OK) read_push();
         break;
     case 2: case 3:
         if (client_push_open(&g_c, p, (int)pl, mode % 5 == 3, ident, (int)il, fz_u8(&in)) == CLIENT_OK) read_push();

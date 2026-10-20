@@ -40,6 +40,21 @@ static void scope_open(Table *t, int actor) {
     t->actor = (int8_t)actor;
     t->log_start = t->g->num_logs;
     t->reject = 0;
+    t->n_moves = 0;
+}
+
+_Static_assert(EVW_DELTA_MAX_MOVES == BOT_DRIVE_MAX_ACTIONS, "a delta lists every move a bot cycle can apply");
+_Static_assert(EVW_DELTA_WIRE_MAX >= 2 + 2 * MAX_MOVE_CARDS, "a bot's widest move fits a delta's wire");
+
+// Records a move the operation applied (table.h Table.moves).
+static void move_note(Table *t, int seat, const AwireAction *a) {
+    if (t->n_moves >= EVW_DELTA_MAX_MOVES) return;
+    EvwMove *m = &t->moves[t->n_moves];
+    const int n = awire_encode(a, m->wire, (int)sizeof m->wire);
+    if (n <= 0) return;
+    m->seat = (int8_t)seat;
+    m->wire_len = (uint8_t)n;
+    t->n_moves++;
 }
 
 // ---------- load ----------------------------------------------------------------
@@ -132,6 +147,7 @@ int table_act(Table *t, const char *actor_id, int id_len, const uint8_t *awire, 
         t->reject = engine_last_reject;
         return TABLE_REJECTED;
     }
+    move_note(t, seat, &a);
     t->ended = finalize(t) >= 0;
     return TABLE_APPLIED;
 }
@@ -331,6 +347,41 @@ int table_cast(const Table *t, const char *game_id, int gid_len, int viewer, uin
     if (at < 0) return TABLE_E_CAP;
     const int n = table_push(t, game_id, gid_len, viewer, out + at, cap - at);
     return n < 0 ? n : at + n;
+}
+
+// ---------- the delta cast (table.h) ----------------------------------------------
+
+bool table_cast_delta_ok(const Table *t) {
+    if (!t->loaded || t->n_moves == 0 || t->dealt_now || t->roster_changed || t->rules_changed || t->lobby_event) return false;
+    const Game *g = t->g;
+    // Every record the operation wrote is on the board (none dropped at MAX_LOGS),
+    // and the client's slot holds as many hooks and records as the server's did.
+    return g->num_logs < MAX_LOGS && g->num_logs - t->log_start <= EVW_DELTA_MAX_LOGS && t->snaps->n <= EVW_DELTA_MAX_SNAPS;
+}
+
+uint32_t table_public_check(const Table *t) { return board_check_public(t->g); }
+
+int table_cast_delta(const Table *t, int viewer, uint32_t version, uint32_t public_check, uint8_t *out, int cap) {
+    if (!table_cast_delta_ok(t)) return TABLE_E_WIRE;
+    const Game *g = t->g;
+    if (viewer >= g->num_players || (viewer >= 0 && t->r.seats[viewer].brain_len > 0)) return TABLE_E_NOT_SEATED;
+    // The viewer's own draws, in the order the refill drew them: its DRAW records'
+    // cards (the trump off an empty stock among them), which are what its hand
+    // gained and nobody else's board shows.
+    unsigned char reveal[EVW_DELTA_MAX_REVEAL];
+    int n_reveal = 0;
+    for (int i = t->log_start; viewer >= 0 && i < g->num_logs; i++) {
+        const GameLog *l = &g->logs[i];
+        if (l->log_type != LOG_DRAW || l->player_idx != viewer) continue;
+        for (int k = 0; k < l->num_pairs; k++) {
+            if (n_reveal >= EVW_DELTA_MAX_REVEAL) return TABLE_E_CAP;
+            reveal[n_reveal++] = wire_from_card(l->pairs[k].primary);
+        }
+    }
+    const int flags = (g->status == GAME_STATUS_GAME_OVER ? EVW_DELTA_OVER : 0) | (t->ended ? EVW_DELTA_FINAL : 0);
+    const int n = evwire_delta_put(version, viewer, flags, t->moves, t->n_moves, reveal, n_reveal,
+                                   board_check_fold(public_check, g, viewer), out, cap);
+    return n == EVW_ECAP ? TABLE_E_CAP : n < 0 ? TABLE_E_WIRE : n;
 }
 
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
@@ -1004,6 +1055,14 @@ int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actio
     engine_snap_hook = prev_snap;
     t_capture = 0;
     if (n < 0) return TABLE_E_WIRE;
+    for (int i = 0; i < n; i++) {
+        const LegalMove *lm = &out->actions[i].move;
+        AwireAction a;
+        a.kind = lm->type;   // MOVE_* and AWIRE_* number the kinds alike
+        a.n = lm->n_cards;
+        for (int k = 0; k < lm->n_cards; k++) { a.cards[k] = lm->cards[k]; a.attacks[k] = lm->attack_cards[k]; }
+        move_note(t, out->actions[i].seat, &a);
+    }
     if (n > 0) {
         t->actor = out->actions[n - 1].seat;
         t->ended = finalize(t) >= 0;

@@ -217,6 +217,13 @@ typedef struct {
     // cliff lands on exactly the same append as a full-size instance.
     int16_t  log_cap;
     int16_t  log_virt;
+    // THE LOG ARRAY'S ROOM for a slot that holds fewer than MAX_LOGS records but
+    // must keep EVERY type (the client's delta slot, client_table.c, which
+    // rebuilds one commit's event walk and needs all of its records): log_alloc
+    // drops an append once num_logs reaches it. 0 (the default everywhere else,
+    // and what every import and state_canonical pin) is the full MAX_LOGS. It
+    // sits in what was padding before num_logs, so no field after it moved.
+    int16_t  log_room;
 
     // Logs (append-only).
     int      num_logs;
@@ -353,6 +360,26 @@ uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt);
 // is unchanged), and every other single-threaded caller (tests, iOS, replay
 // tooling) is likewise unaffected — same reasoning as g_seed/g_rand_seed above.
 extern _Thread_local void (*engine_snap_hook)(const Game *g, int tag, int aux);
+
+// THE VIEWER'S OWN DRAWS, handed to an apply that runs on a MASKED board (the
+// client's rebuild of a delta cast, client_table.c). On a masked board every
+// stock card is the same placeholder, so a refill draws the right COUNT and
+// nobody's identities; the viewer's own new cards are the one thing the board
+// cannot know, and the server says them (evwire.h EVW_CAST_DELTA's reveal
+// list). While this points at a list, every card draw_up_to_six draws for
+// `seat` is replaced by the list's next card, in draw order - the trump drawn
+// last off an empty stock included. A draw the list has no card for counts in
+// `missing`, and the caller refuses the rebuild. NULL (the default, and every
+// server and bot path) costs one test per refill draw. Thread-local for the
+// reason engine_snap_hook is.
+typedef struct {
+    int         seat;
+    const Card *cards;
+    int         n;
+    int         at;        // cards used so far
+    int         missing;   // draws for `seat` past the list's end
+} EngineReveal;
+extern _Thread_local EngineReveal *engine_reveal;
 
 // EVERY HOOK OF ONE DEAL: one ENGINE_HOOK_DEAL per dealt card (deal_initial
 // goes round the table a card at a time), then START_MAGIC, FLIPPED and

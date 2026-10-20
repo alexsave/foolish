@@ -1448,17 +1448,9 @@ static int envelope_over(const uint8_t *env, uint32_t len) {
     return env && env_header_read(env, (int)len, &h) && h.state_len > 0 && env[h.state_at] == GAME_STATUS_GAME_OVER;
 }
 
-// Whether the cast at p (evwire.h: its header, then the as3 push) ends on a
-// board whose game is over (the sequence's final board, whose first byte is
-// the status, view.c state_put).
-static int cast_over(const uint8_t *p, uint32_t len) {
-    uint32_t v;
-    int at = evwire_cast_header_get(p, (int)len, &v);
-    const unsigned char *fin = NULL;
-    int fin_len = 0;
-    return at > 0 && evwire_read(p + at, (int)len - at, NULL, &fin, &fin_len, NULL, NULL) >= 0 && fin_len > 0 &&
-           fin[0] == GAME_STATUS_GAME_OVER;
-}
+// Whether the cast at p (evwire.h, a board cast or a delta) ends on a board
+// whose game is over.
+static int cast_over(const uint8_t *p, uint32_t len) { return evwire_cast_over(p, (int)len) == 1; }
 
 // The jitter of one wait, below NC_QUIET_JITTER_MS: from the clock, the user
 // and the game, so clients that heard the same push at the same moment differ.

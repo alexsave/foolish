@@ -431,3 +431,97 @@ int evwire_cast_header_get(const unsigned char *buf, int len, uint32_t *version)
     if (version) *version = le_get_u32(buf + 1);
     return EVW_CAST_HEADER_BYTES;
 }
+
+// ---------- the delta cast (evwire.h EVW_CAST_DELTA) -------------------------------
+
+int evwire_moves_put(const EvwMove *moves, int n, unsigned char *out, int cap) {
+    if (!moves || n < 1 || n > EVW_DELTA_MAX_MOVES || !out) return EVW_EBADARG;
+    int at = 0;
+    if (cap < 1) return EVW_ECAP;
+    out[at++] = (unsigned char)n;
+    for (int i = 0; i < n; i++) {
+        const EvwMove *m = &moves[i];
+        if (m->seat < 0 || m->seat >= MAX_PLAYERS || m->wire_len < 2 || m->wire_len > EVW_DELTA_WIRE_MAX) return EVW_EBADARG;
+        if (at + 2 + m->wire_len > cap) return EVW_ECAP;
+        out[at++] = (unsigned char)m->seat;
+        out[at++] = m->wire_len;
+        for (int k = 0; k < m->wire_len; k++) out[at++] = m->wire[k];
+    }
+    return at;
+}
+
+#define EVW_DELTA_HEAD 9   // format, u32 version, kernel, viewer, flags; the move count is the list's
+
+int evwire_delta_put(uint32_t version, int viewer, int flags, const EvwMove *moves, int n_moves,
+                     const unsigned char *reveal, int n_reveal, uint32_t check, unsigned char *out, int cap) {
+    if (!out || (flags & ~EVW_DELTA_FLAGS) || viewer >= MAX_PLAYERS || n_reveal < 0 || n_reveal > EVW_DELTA_MAX_REVEAL
+        || (n_reveal > 0 && (!reveal || viewer < 0))) return EVW_EBADARG;
+    if (cap < EVW_DELTA_HEAD) return EVW_ECAP;
+    out[0] = EVW_CAST_DELTA;
+    le_put_u32(out + 1, version);
+    out[5] = EVW_DELTA_KERNEL;
+    out[6] = viewer < 0 ? EVW_SEAT_NONE : (unsigned char)viewer;
+    out[7] = (unsigned char)flags;
+    int at = 8;
+    const int m = evwire_moves_put(moves, n_moves, out + at, cap - at);
+    if (m < 0) return m;
+    at += m;
+    if (at + 1 + n_reveal + 4 > cap) return EVW_ECAP;
+    out[at++] = (unsigned char)n_reveal;
+    for (int i = 0; i < n_reveal; i++) {
+        if (reveal[i] > 51) return EVW_EBADARG;
+        out[at++] = reveal[i];
+    }
+    le_put_u32(out + at, check);
+    return at + 4;
+}
+
+int evwire_delta_read(const unsigned char *buf, int len, EvwDelta *out) {
+    if (!buf || !out || len < 8 + 1 + 1 + 4 || buf[0] != EVW_CAST_DELTA) return EVW_EPARSE;
+    out->version = le_get_u32(buf + 1);
+    out->kernel = buf[5];
+    out->viewer = buf[6] == EVW_SEAT_NONE ? -1 : buf[6];
+    out->flags = buf[7];
+    if (out->viewer >= MAX_PLAYERS || (out->flags & ~EVW_DELTA_FLAGS)) return EVW_EPARSE;
+    int at = 8;
+    out->n_moves = buf[at++];
+    if (out->n_moves < 1 || out->n_moves > EVW_DELTA_MAX_MOVES) return EVW_EPARSE;
+    out->moves = buf + at;
+    for (int i = 0; i < out->n_moves; i++) {
+        if (at + 2 > len) return EVW_EPARSE;
+        const int seat = buf[at], wl = buf[at + 1];
+        at += 2;
+        // A whole awire frame and nothing else: the frame's own length must be
+        // the one the list gives it.
+        if (seat >= MAX_PLAYERS || wl < 2 || wl > EVW_DELTA_WIRE_MAX || at + wl > len
+            || awire_frame_len(buf + at, wl) != wl) return EVW_EPARSE;
+        at += wl;
+    }
+    if (at + 1 > len) return EVW_EPARSE;
+    out->n_reveal = buf[at++];
+    if (out->n_reveal > EVW_DELTA_MAX_REVEAL || (out->n_reveal > 0 && out->viewer < 0) || at + out->n_reveal + 4 != len)
+        return EVW_EPARSE;
+    out->reveal = buf + at;
+    for (int i = 0; i < out->n_reveal; i++) if (out->reveal[i] > 51) return EVW_EPARSE;
+    at += out->n_reveal;
+    out->check = le_get_u32(buf + at);
+    return 0;
+}
+
+int evwire_cast_version(const unsigned char *buf, int len, uint32_t *version) {
+    if (!buf || len < EVW_CAST_HEADER_BYTES || (buf[0] != EVW_CAST_FORMAT && buf[0] != EVW_CAST_DELTA)) return EVW_EPARSE;
+    if (version) *version = le_get_u32(buf + 1);
+    return buf[0];
+}
+
+int evwire_cast_over(const unsigned char *buf, int len) {
+    EvwDelta d;
+    if (len > 0 && buf && buf[0] == EVW_CAST_DELTA)
+        return evwire_delta_read(buf, len, &d) == 0 ? (d.flags & EVW_DELTA_OVER) != 0 : EVW_EPARSE;
+    uint32_t v;
+    const int at = evwire_cast_header_get(buf, len, &v);
+    const unsigned char *fin = 0;
+    int fin_len = 0;
+    if (at < 0 || evwire_read(buf + at, len - at, 0, &fin, &fin_len, 0, 0) < 0 || fin_len < 1) return EVW_EPARSE;
+    return fin[0] == GAME_STATUS_GAME_OVER;
+}

@@ -74,6 +74,25 @@ void state_canonical(Game *g);
 // caller cannot reintroduce the over-read by not knowing it had to.
 int state_measure(const unsigned char *p, int len);
 
+// ---------- THE BOARD CHECK: is a client's rebuilt board the server's? ----------
+//
+// A delta cast (evwire.h EVW_CAST_DELTA) carries the moves and not the board,
+// and the client rebuilds the board by applying them. This 32-bit check of the
+// board the viewer would have been sent tells the client whether it got there:
+// FNV-1a 32 over state_put(g, VIEW_SPECTATOR) - the public board, the same for
+// every viewer, so a server computes it once per commit - folded with the bytes
+// the viewer's own board adds to it: its hand, card by card, and its awaiting
+// byte. Those are exactly the bytes state_put(g, viewer) writes differently, so
+// two boards with the same check are, short of a collision, the same viewer's
+// board. It is a divergence detector for a deterministic computation, not a
+// security property. Both sides call these, and nothing else may compute it.
+uint32_t board_check_public(const Game *g);
+// `public_check` (board_check_public of g) with the viewer's own bytes folded in;
+// the public check unchanged for a spectator (viewer < 0).
+uint32_t board_check_fold(uint32_t public_check, const Game *g, int viewer);
+// Both at once.
+uint32_t board_check(const Game *g, int viewer);
+
 // THE import: decode the layout and adopt it into `g` only if it is valid
 // (game.h game_validate). Returns GAME_VALID, or a negative GAME_INVALID_*
 // reason with `g` left exactly as it was. Every path that takes a state from

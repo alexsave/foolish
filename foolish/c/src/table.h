@@ -189,6 +189,12 @@ typedef struct {
     // the state blob; unrated (n 0) for a game that is not over or was not rated.
     // Every envelope of a rated, finished table carries it (table_envelope).
     GameRatings ratings;
+    // THE MOVES THE LAST OPERATION APPLIED, as action wires in the order they
+    // applied: table_act's one, or a bot cycle's (the silent goods it bundled and
+    // the move that ended it). 0 for anything that is not a move. What a delta
+    // cast carries (table_cast_delta).
+    uint8_t     n_moves;
+    EvwMove     moves[EVW_DELTA_MAX_MOVES];
     // The preferred moves the last table_bot_drive was offered (BotDrivePref).
     int8_t      n_prefs;
     BotDrivePref prefs[MAX_PLAYERS];
@@ -473,6 +479,23 @@ int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uin
 // the callers that hold a version of their own (iOS, the fixtures).
 int table_cast(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
                uint8_t *out, int cap);
+
+// ---- the delta cast (evwire.h EVW_CAST_DELTA) ----------------------------------
+//
+// THE ONE ANSWER to which casts a commit's viewers may be sent as deltas: the
+// last operation applied moves (table_act, table_bot_drive) and did nothing a
+// move cannot do - no deal, no roster or rules change, no lobby event - and it
+// fits the client's rebuild slot (EVW_DELTA_MAX_SNAPS hooks, EVW_DELTA_MAX_LOGS
+// records, none dropped). Otherwise every viewer gets table_cast.
+bool table_cast_delta_ok(const Table *t);
+// The public half of every viewer's board check (view.h board_check_public of the
+// committed board): one per commit, handed to each table_cast_delta.
+uint32_t table_public_check(const Table *t);
+// One viewer's delta cast for the last operation (seat, or -1): the moves, the
+// viewer's own draws, and the check of the board table_cast would have sent it,
+// carrying `version`. Its length, TABLE_E_CAP, TABLE_E_NOT_SEATED for a bot or
+// no seat, or TABLE_E_WIRE when table_cast_delta_ok says no.
+int table_cast_delta(const Table *t, int viewer, uint32_t version, uint32_t public_check, uint8_t *out, int cap);
 
 // ---- the bot cycle (docs/C_GAME_SHAPE_MIGRATION.md 2.7) ------------------------
 //
