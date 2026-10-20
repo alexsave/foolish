@@ -101,9 +101,9 @@ typedef struct {
     cb_uuid  prev_bots[CB_MAX_SEATS];
     // Moves the journal may hold (journal.h): set only for a commit that is one human move
     // or one bot cycle and nothing else (the roster, the status and the seed unchanged, no
-    // rating, no new session log), as the moves the kernel's menu names at the boards they
-    // were played on. A store with no journal ignores them.
-    const struct ReplayMove *moves;
+    // rating, no new session log), as the commit's move list (table.h Table.moves: each
+    // move's seat and awire bytes). A store with no journal ignores them.
+    const struct EvwMove *moves;
     int      n_moves;
     bool     moves_by_bots;
     // The new row decoded (table.h TableResident: what the kernel's table holds after the

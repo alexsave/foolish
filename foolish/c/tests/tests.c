@@ -18194,7 +18194,7 @@ static uint8_t dl_cast[1 << 16], dl_delta[1024], dl_keep[CLIENT_BOARD_KEEP_MAX];
 
 typedef struct {
     long commits, delta_commits, board_commits, viewers, rebuilt, bot_cycles, reveals, ends, draws_to_viewer, rematch_commits, check_cards, check_awaiting;
-    long bytes_board, bytes_delta;
+    long bytes_board, bytes_delta, lists;
     int  ok;
 } DlCounts;
 
@@ -18247,6 +18247,19 @@ static void dl_cast_all(DlCounts *k, uint32_t bots) {
     const uint32_t pub = delta ? table_public_check(&tb) : 0;
     k->commits++;
     if (delta) k->delta_commits++; else k->board_commits++;
+    if (tb.n_moves > 0) {   // the move list both ways (the delta's and the server journal's record)
+        uint8_t list[1 + EVW_DELTA_MAX_MOVES * (2 + EVW_DELTA_WIRE_MAX)];
+        EvwMove back[EVW_DELTA_MAX_MOVES];
+        int n_back = 0;
+        const int w = evwire_moves_put(tb.moves, tb.n_moves, list, sizeof(list));
+        const int r = w > 0 ? evwire_moves_read(list, w, back, EVW_DELTA_MAX_MOVES, &n_back) : -1;
+        bool same = r == w && n_back == tb.n_moves;
+        for (int i = 0; same && i < n_back; i++)
+            same = back[i].seat == tb.moves[i].seat && back[i].wire_len == tb.moves[i].wire_len &&
+                   memcmp(back[i].wire, tb.moves[i].wire, back[i].wire_len) == 0;
+        if (!same) { fprintf(stderr, "  commit %u: the move list does not read back (%d of %d)\n", version, r, w); k->ok = 0; return; }
+        k->lists++;
+    }
     for (int viewer = -1; viewer < tb.r.n && k->ok; viewer++) {
         if (viewer >= 0 && ((bots >> viewer) & 1u)) continue;
         const int v = viewer + 1;
@@ -18395,6 +18408,7 @@ static void test_delta_cast_rebuilds_the_board_cast(void) {
            k.commits, k.delta_commits, k.board_commits, k.viewers, k.rebuilt, k.bot_cycles, k.draws_to_viewer, k.reveals,
            k.ends, k.bytes_board, k.bytes_delta);
     CHECK(k.ok, "delta casts: every delta rebuilds the board cast's sequence byte for byte, for every viewer, and keeps its board");
+    CHECK(k.lists >= k.delta_commits, "delta casts: every commit's move list reads back as written (evwire_moves_read)");
     CHECK(k.delta_commits > 200000 && k.rebuilt > 900000 && k.bot_cycles > 50000 && k.draws_to_viewer > 4000 && k.ends > 1000
           && k.rematch_commits > 200 && k.check_cards > 500000 && k.check_awaiting > 100000, "delta casts: enough commits, bot cycles, draws, game ends and rematches were rebuilt");
     CHECK(k.board_commits >= k.rematch_commits + 100 && k.delta_commits > 50 * k.board_commits,

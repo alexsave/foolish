@@ -1,9 +1,10 @@
 // journal.h - the move journal: `cbase serve`'s write-behind in front of the SQL tables
 // (c_base/DESIGN.md "The move journal").
 //
-// A plain human move does not write the tables. It is coded (replay_move.h: the kernel menu's
-// index on the replay codec's coder) into a record, appended with every other record of
-// the same moment straight into an append-only segment file's mapped pages (no system
+// A plain human move does not write the tables. It is written as a fixed record (its seat and
+// awire bytes: the commit's move list, table.h Table.moves, the delta cast's own) into a batch,
+// appended with every other record of the same moment straight into an append-only segment
+// file's mapped pages (no system
 // call), and acknowledged once the batch's header, stored last, commits it: the durability
 // the tables' WAL at synchronous=NORMAL gave (a process crash keeps the page cache, an OS
 // crash may not; opts.sync adds an msync per batch). The game's
@@ -29,27 +30,27 @@
 //
 // At start the tables are read and the journal's segments replayed through the kernel
 // (the app's apply), in order, before anything is served; a torn or corrupt batch at a
-// segment's end is dropped (it was never acknowledged). A record the kernel's menu does not
-// confirm refuses the start.
+// segment's end is dropped (it was never acknowledged). A record the kernel does not apply
+// (a move it refuses, a cycle the drive does not play again) refuses the start.
 //
 // SEGMENT FILE <db>-journal.<seq> (16 digits; a start numbers its first segment from the
-// wall clock's ms, so a number is never reused across restarts): "FJNL", u32 LE format (1), u64 LE start ms, then
-// batches. A BATCH: u8 'J', u8 format (1), u16 LE payload length, u32 LE FNV-1a 32 over
-// those 4 bytes and the payload, then the payload: ONE replay-coder integer (replay.h),
-// coded independently of every other batch, holding
-//   n           varint, the records
-//   base        varint, zigzag(the batch's earliest ms - the segment's start ms)
-//   per record: slot    uniform over N + 1, N = the slots the segment named so far; N
-//                       names a new game: its code's length uniform over
-//                       CB_GAME_ID_MAX + 1, each byte uniform over 256, and its version
-//                       before the move as a varint
-//               (old)   uniform over 2: 0 the move follows the slot's last one, 1 a varint
-//                       version follows (the game was written around the journal between)
-//               ms      varint, the move's ms - base
-//               kind    uniform over 2: 0 a human's move, 1 a bot cycle, then the cycle's
-//                       moves less one, uniform over BOT_DRIVE_MAX_ACTIONS
-//               moves   replay_move_code each, on the board the one before it left
-// A FULL RECORD (one whole commit): u8 'R', u8 format (1), u16 0, u32 LE FNV-1a 32 over the
+// wall clock's ms, so a number is never reused across restarts): "FJNL", u32 LE format (2), u64 LE start ms, then
+// batches. A segment of another format refuses the start: a deploy stops the old server, whose
+// close flushes every move into the tables and deletes its segments, before the new one opens.
+// A BATCH: u8 'J', u8 format (2), u16 LE payload length, u32 LE CRC-32C over those 4 bytes
+// and the payload (shared/c/crc32c), then the payload, fixed fields and no coder:
+//   u8  n               the records, 1..CB_JOURNAL_BATCH_MAX
+//   i32 LE base         the batch's earliest ms - the segment's start ms
+//   per record:
+//     u8  flags         1 a bot cycle (else one human move), 2 a new game, 4 a version follows
+//     new game (2):     u8 id length, the id; it takes the segment's next slot
+//     else:             u16 LE slot, a game the segment named before
+//     (2 or 4)          u32 LE version before the commit; without it the record follows the
+//                       slot's last one (4: the game was written around the journal between)
+//     u32 LE ms         the record's ms - base
+//     the moves         evwire.h THE MOVE LIST: u8 n, then { u8 seat, u8 wire length, the
+//                       awire bytes } per move (one for a human's move, a cycle's in order)
+// A FULL RECORD (one whole commit): u8 'R', u8 format (2), u16 0, u32 LE CRC-32C over the
 // payload length and the payload, u32 LE payload length, then the payload: u8 id length, the
 // id, i64 LE base version, i64 LE ms, u8 flags (1 clears the session log, 2 has a deal seed,
 // 4 needs bots, 8 rated), i8 status, i64 LE log_from, round_epoch and created_at, the 32-byte seed when
@@ -62,7 +63,7 @@
 #define CB_JOURNAL_H
 
 #include "store/rows_foolish.h"
-#include "replay_move.h"
+#include "evwire.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -170,12 +171,13 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 // ---- the batch codec (pure; unit_journal) ------------------------------------------------
 // One record: one commit of one game, a human's move or a bot cycle's moves.
 typedef struct cb_jmove {
-    char       game[CB_GAME_ID_MAX + 1];
-    int64_t    base_version;   // the game's version before the commit
-    int64_t    now_ms;
-    bool       bots;           // a bot drive's cycle (bot_drive.h), else one human move
-    int        n_mv;           // 1 for a human's; 1..BOT_DRIVE_MAX_ACTIONS for a cycle's
-    ReplayMove mv[BOT_DRIVE_MAX_ACTIONS];
+    char           game[CB_GAME_ID_MAX + 1];
+    int64_t        base_version;   // the game's version before the commit
+    int64_t        now_ms;
+    bool           bots;           // a bot drive's cycle (bot_drive.h), else one human move
+    int            n_mv;           // 1 for a human's; 1..EVW_DELTA_MAX_MOVES for a cycle's
+    const EvwMove *mv;             // the moves: the commit's own (table.h Table.moves, borrowed
+                                   // until the record is written), or a decoder's store
 } cb_jmove;
 
 // A segment's slot table: the games it named, in order.
@@ -185,13 +187,18 @@ void cb_jslots_free(cb_jslots *t);
 int cb_jslots_count(const cb_jslots *t);
 
 #define CB_JOURNAL_BATCH_HDR 8
-// One batch of n moves (n <= CB_JOURNAL_BATCH_MAX) into out, the slot table brought
-// forward. Its length, or a negative CB_E_* (nothing is consumed from t then).
 #define CB_JOURNAL_BATCH_MAX 64
-int cb_journal_batch_encode(cb_jslots *t, int64_t seg_start_ms, const cb_jmove *m, int n, uint8_t *out, int cap);
-// The batch at in: its moves into out (cap of them), *used its length. The count, or -1
-// for a batch that is torn (runs past len) or corrupt (header, checksum or payload).
+// The most one record's payload takes: flags, a new game's id, a version, the ms, a cycle's moves.
+#define CB_JOURNAL_RECORD_MAX (1 + 1 + CB_GAME_ID_MAX + 4 + 4 + 1 + EVW_DELTA_MAX_MOVES * (2 + EVW_DELTA_WIRE_MAX))
+// The most one batch takes, its header too.
+#define CB_JOURNAL_BATCH_BYTES (CB_JOURNAL_BATCH_HDR + 1 + 4 + CB_JOURNAL_BATCH_MAX * CB_JOURNAL_RECORD_MAX)
+// One batch of the n records m[0..n) (n <= CB_JOURNAL_BATCH_MAX) into out, the slot table
+// brought forward. Its length, or a negative CB_E_* (nothing is consumed from t then).
+int cb_journal_batch_encode(cb_jslots *t, int64_t seg_start_ms, const cb_jmove *const *m, int n, uint8_t *out, int cap);
+// The batch at in: its records into out (cap of them), each one's moves into mv[i] (out[i].mv
+// points there), *used its length. The count, or -1 for a batch that is torn (runs past len)
+// or corrupt (header, checksum or payload).
 int cb_journal_batch_decode(cb_jslots *t, int64_t seg_start_ms, const uint8_t *in, size_t len, size_t *used,
-                            cb_jmove *out, int cap);
+                            cb_jmove *out, EvwMove (*mv)[EVW_DELTA_MAX_MOVES], int cap);
 
 #endif

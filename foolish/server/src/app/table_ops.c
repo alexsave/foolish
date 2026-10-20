@@ -245,7 +245,6 @@ static pthread_once_t g_section_once = PTHREAD_ONCE_INIT;
 static bool           g_section_key_ok;
 static void section_release(cb_section *s) {   // the section and what it keeps
     if (!s) return;
-    free(s->walk);
     free(s->fin);
     cb_row_buf_free(&s->rb);
     free(s);
@@ -908,7 +907,9 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // encodes the row only when something reads it (journal.c row_refresh). The kernel's own
     // flags decide it before the products (whatever else could disqualify the commit comes with
     // an end or a deal: then the row is written after all, below).
-    unsigned pflags = cb_journal_of(ctx->store) && s->n_mv > 0 && !t->ended && !t->dealt_now && !t->roster_changed &&
+    // The kernel's move list holds every move the operation applied (it is the journal's record).
+    const bool moved = s->moves_want > 0 && t->n_moves == s->moves_want;
+    unsigned pflags = cb_journal_of(ctx->store) && moved && !t->ended && !t->dealt_now && !t->roster_changed &&
                               row->status == GAME_STATUS_PLAYING && t->g->status == GAME_STATUS_PLAYING
                           ? TABLE_PRODUCTS_NO_ROW
                           : 0;
@@ -932,15 +933,14 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     cb_game_row nrow;
     cb_game_commit gc;
     section_row(s, row, dealt_seed, now, &nrow, &gc);
-    // A plain human move (journal.h): the store may hold it in its journal. Its menu
-    // index was taken at the board before the move (cb_table_run); anything a move does
-    // besides moving the board goes to the tables at once.
-    if (s->n_mv > 0 && !c->ended && !c->dealt_now && !gc.log_clear && gc.n_rated == 0 && !c->roster_changed &&
+    // A plain move or bot cycle (journal.h): the store may hold it in its journal, as the
+    // kernel's move list; anything a move does besides moving the board goes to the tables at once.
+    if (moved && !c->ended && !c->dealt_now && !gc.log_clear && gc.n_rated == 0 && !c->roster_changed &&
         row->status == GAME_STATUS_PLAYING && nrow.status == GAME_STATUS_PLAYING)
     {
-        gc.moves = s->mv;
-        gc.n_moves = s->n_mv;
-        gc.moves_by_bots = s->mv_bots;
+        gc.moves = t->moves;
+        gc.n_moves = t->n_moves;
+        gc.moves_by_bots = s->moves_bots;
     } else if (pflags) {
         // Not plain after all: the tables are written now, so the products carry the row.
         rc = table_commit_products(t, s->gid, gid_len, next, board_now, c, s->arena, sizeof s->arena);
@@ -1075,26 +1075,6 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
 
 // ---- the journal's replay (journal.h cb_journal_apply_fn) ------------------------------------
 
-// The section's scratch board for a bot cycle's moves (replay_move_drive_walk plays on it),
-// a copy of its board; NULL when out of memory.
-static Game *walk_board(cb_section *s) {
-    if (!s->walk && !(s->walk = malloc(sizeof *s->walk))) return NULL;
-    memcpy(s->walk, &s->g, sizeof *s->walk);
-    return s->walk;
-}
-
-int cb_bots_journal_moves_before(cb_section *s, Game **board, uint32_t *base, uint32_t *off) {
-    table_drive_seeding(&s->t, base, off);
-    *board = walk_board(s);
-    return *board ? CB_OK : CB_E_NOMEM;
-}
-
-void cb_bots_journal_moves_after(cb_section *s, Game *board, uint32_t base, uint32_t off, BotDriveOut *drv) {
-    s->n_mv = 0;
-    s->mv_bots = true;
-    if (drv->n > 0 && replay_move_drive_walk(board, base, off, drv->n, drv->actions, s->mv, true) == 0) s->n_mv = drv->n;
-}
-
 int cb_table_replay_move(void *ud, const cb_game_row *row, const uint8_t *session_log, size_t session_log_len,
                          const struct cb_jmove *m, cb_game_row *out, uint8_t **log, size_t *log_len) {
     cb_ctx *ctx = ud;
@@ -1109,38 +1089,37 @@ int cb_table_replay_move(void *ud, const cb_game_row *row, const uint8_t *sessio
         goto out;
     }
     if (!m->bots) {
-        // The menu at this board must be the one the move was coded on (the check the
-        // journal's own bytes cannot make): anything else is a board the move was not
-        // played on, and the start is refused.
-        uint8_t wire[REPLAY_MOVE_WIRE_MAX];
-        const ReplayMove *mv = &m->mv[0];
-        int n = replay_move_wire(&s->g, mv, wire, (int)sizeof wire);
-        if (n < 0 || mv->seat >= s->t.r.n) {
-            CB_ERROR("table", "game %s: the journal's move at version %lld does not fit the board (%d)", row->id,
-                     (long long)row->version, n);
+        // The human's move as it was sent: its seat's player acts it again on the board the
+        // record follows, and the kernel refuses a move that board does not allow.
+        const EvwMove *mv = &m->mv[0];
+        if (mv->seat < 0 || mv->seat >= s->t.r.n) {
+            CB_ERROR("table", "game %s: the journal's move at version %lld names seat %d of %d", row->id,
+                     (long long)row->version, mv->seat, s->t.r.n);
             goto out;
         }
         const RosterSeat *seat = &s->t.r.seats[mv->seat];
-        kr = table_act(&s->t, (const char *)seat->id, (int)seat->id_len, wire, n, -1, row->round_epoch);
+        kr = table_act(&s->t, (const char *)seat->id, (int)seat->id_len, mv->wire, mv->wire_len, -1, row->round_epoch);
         if (kr != TABLE_APPLIED) {
             CB_ERROR("table", "game %s: the journal's move at version %lld is refused (%d)", row->id, (long long)row->version, kr);
             goto out;
         }
     } else {
-        // The cycle again, its choices handed to the drive as the moves it applied: the
-        // drive reuses each (no search) under its own seeding, and must apply exactly them.
+        // The cycle again, its moves handed to the drive as the ones it applied: the drive
+        // reuses each (no search) under its own seeding, and must apply exactly them.
         kr = table_set_session_log(&s->t, session_log, (int)session_log_len);
-        uint32_t base, off;
-        table_drive_seeding(&s->t, &base, &off);
-        Game *board = kr >= 0 ? walk_board(s) : NULL;
         BotDriveOut want, drv;
         memset(&want, 0, sizeof want);
-        uint8_t prefs[1024];
-        int pl = -1;
-        if (board && replay_move_drive_walk(board, base, off, m->n_mv, want.actions, (ReplayMove *)m->mv, false) == 0) {
-            want.n = m->n_mv;
-            pl = table_drive_prefs(&s->t, &want, prefs, sizeof prefs);
+        for (int i = 0; kr >= 0 && i < m->n_mv; i++) {
+            AwireAction a;
+            if (!awire_decode(m->mv[i].wire, m->mv[i].wire_len, &a) || a.n > MAX_MOVE_CARDS) { kr = -1; break; }
+            BotDriveAction *w = &want.actions[want.n++];
+            w->seat = m->mv[i].seat;
+            w->move.type = (int8_t)a.kind;   // AWIRE_* and MOVE_* number the kinds alike (table.c move_note)
+            w->move.n_cards = (int8_t)a.n;
+            for (int k = 0; k < a.n; k++) { w->move.cards[k] = a.cards[k]; w->move.attack_cards[k] = a.attacks[k]; }
         }
+        uint8_t prefs[1024];
+        const int pl = kr < 0 ? -1 : table_drive_prefs(&s->t, &want, prefs, sizeof prefs);
         kr = pl < 0 ? -1 : table_bot_drive(&s->t, prefs, pl, 0, &drv);
         bool same = kr == m->n_mv;
         for (int i = 0; same && i < m->n_mv; i++) {
@@ -1244,16 +1223,10 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             ret = CB_E_STATE;
             break;
         }
-        // The move as the store's journal holds it (journal.h): its seat and its awire bytes,
-        // coded raw (replay_move.h REPLAY_MOVE_RAW). Not its menu index: finding that enumerated
-        // the whole menu at the board on every move; the replay checks the board instead. Only a
-        // store with a journal asks.
-        s->n_mv = 0;
-        s->mv_bots = false;
-        if (op->wire && actor && cb_journal_of(ctx->store)) {
-            int seat = table_seat_of(&s->t, actor, (int)strlen(actor));
-            if (seat >= 0 && replay_move_raw(seat, op->wire, op->wire_len, &s->mv[0]) == 0) s->n_mv = 1;
-        }
+        // A human's action applies one move: the kernel lists it (Table.moves), and the store's
+        // journal holds that list (journal.h).
+        s->moves_want = op->wire && actor ? 1 : 0;
+        s->moves_bots = false;
         rc = op->run(&s->t, &row, seed, op->ud);
         if (rc < 0) {
             out->result = rc;
