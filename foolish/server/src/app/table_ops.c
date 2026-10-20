@@ -1015,9 +1015,14 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // section loaded from the new row would hold, its RNG base from the new row's seed too.
     TableResident res;
     if (rc == CB_OK && cb_journal_of(ctx->store)) {
-        char hex[2 * CB_SEED_LEN + 1] = "";
-        if (nrow.has_seed) hex_encode(nrow.seed, CB_SEED_LEN, hex, sizeof hex);
-        table_set_deal_seed(t, hex, (int)strlen(hex));
+        // The RNG base is the seed's. A plain move (gc.moves) keeps its game's seed, and the table
+        // already holds that seed's base (cb_section_load, or table_adopt from its resident): only
+        // every other commit (a deal, a lobby, a seat) derives it again - not every move.
+        if (!gc.moves) {
+            char hex[2 * CB_SEED_LEN + 1] = "";
+            if (nrow.has_seed) hex_encode(nrow.seed, CB_SEED_LEN, hex, sizeof hex);
+            table_set_deal_seed(t, hex, (int)strlen(hex));
+        }
         table_resident(t, &c->clock, &res);
         gc.resident = &res;
     }

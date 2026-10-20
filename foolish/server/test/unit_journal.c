@@ -2162,6 +2162,51 @@ static void a_flush_is_bounded_transactions(void) {
     cb_limits_reset();
 }
 
+// THE RESIDENT'S RNG BASE IS ITS ROW'S SEED'S: a deal through the journal, and every move after
+// it, leave a resident whose mid-game RNG base is the one a load of the row derives (table_ops.c
+// derives it again only for a commit that is not a plain move).
+typedef struct { uint32_t base; bool held; } base_seen;
+static int resident_base(void *ud, const cb_game_row *row, const struct TableResident *res) {
+    base_seen *b = ud;
+    b->held = res != NULL;
+    if (res) b->base = res->rng_base;
+    return CB_OK;
+}
+static uint32_t row_base(cb_store *s, const char *gid) {
+    cb_game_row row = stored(s, gid);
+    char hex[2 * CB_SEED_LEN + 1] = "";
+    for (int i = 0; row.has_seed && i < CB_SEED_LEN; i++) snprintf(hex + 2 * i, 3, "%02x", row.seed[i]);
+    Game *g = calloc(1, sizeof *g);
+    TableSnaps *sn = calloc(1, sizeof *sn);
+    Table t;
+    table_init(&t, g, sn);
+    table_set_deal_seed(&t, hex, (int)strlen(hex));
+    free(g);
+    free(sn);
+    cb_game_row_free(&row);
+    return t.rng_base;
+}
+static void the_residents_rng_base_is_its_rows(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/base%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    move_t m;
+    int checked = 0;
+    for (int i = 0; i < 12; i++) {
+        base_seen b = { 0, false };
+        T_EQ_INT(cb_journal_game_acquire(s, gid, resident_base, &b), CB_OK);
+        if (b.held) { T_EQ_INT((long)b.base, (long)row_base(s, gid)); checked++; }
+        if (step(s, gid, &m) <= 0) break;
+    }
+    T_CHECK(checked >= 2);
+    close_world(s);
+}
+
 // THE FLUSH THREAD HAS NO TICK: with nothing waiting it sleeps until told, so an idle box wakes
 // it never; a move that begins waiting sets its alarm (one wake), and the move is flushed at its
 // age (one more).
@@ -2454,6 +2499,7 @@ int main(void) {
         T_RUN(a_move_writes_no_table_until_its_game_is_due);
         T_RUN(a_flush_is_bounded_transactions);
         T_RUN(the_flush_thread_has_no_tick);
+        T_RUN(the_residents_rng_base_is_its_rows);
         T_RUN(the_lists_read_the_overlay_without_a_flush);
         T_RUN(an_admin_write_is_never_written_over);
         T_RUN(mapped_segments_keep_every_committed_batch);
