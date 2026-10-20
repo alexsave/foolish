@@ -787,11 +787,12 @@ static void a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused(void) {
     // which flushes and forgets the overlay, so the next move reads this row).
     cb_game_row row = stored(s, gid);
     T_CHECK(row.state_len > 2 && row.status == GAME_STATUS_PLAYING);
-    char *sql = malloc(2 * row.state_len + 128);
-    int at = sprintf(sql, "UPDATE games SET state = X'");
+    const size_t cap = 2 * row.state_len + 128;
+    char *sql = malloc(cap);
+    int at = snprintf(sql, cap, "UPDATE games SET state = X'");
     for (size_t i = 0; i < row.state_len; i++)
-        at += sprintf(sql + at, "%02x", i == 1 ? row.state[i] & (uint8_t)~0x01 : row.state[i]);   // STATE_BLOB_FLAG_DETERMINISTIC
-    sprintf(sql + at, "' WHERE id = '%s'", gid);
+        at += snprintf(sql + at, cap - (size_t)at, "%02x", i == 1 ? row.state[i] & (uint8_t)~0x01 : row.state[i]);   // STATE_BLOB_FLAG_DETERMINISTIC
+    snprintf(sql + at, cap - (size_t)at, "' WHERE id = '%s'", gid);
     T_CHECK(cb_store_admin_query(s, sql, true, no_row, NULL) >= 0);
     free(sql);
     cb_game_row_free(&row);
