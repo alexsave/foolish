@@ -115,7 +115,9 @@ Object.defineProperty(dom.window, 'innerHeight', { value: 800, configurable: tru
 
 // ---- the server: the C Table, answering when the case says so ---------------------
 
-interface Push { gid: string; version: number; bytes: Uint8Array; seq: string }
+// `board`: the same commit's board cast, which a delta-casting run delivers in
+// place of a delta that does not follow the page's last delivery (see deliver).
+interface Push { gid: string; version: number; bytes: Uint8Array; board: Uint8Array; seq: string }
 
 class Server {
     state: Uint8Array;
@@ -167,7 +169,7 @@ class Server {
         const p = t.commit(this.gid, this.version + 1, 1_700_000_000_000);
         assert.ok(typeof p !== 'number', `commit products: ${p}`);
         const seats = t.seats();
-        const pushes: [string, Uint8Array][] = [];
+        const pushes: [string, Uint8Array, Uint8Array][] = [];
         // THE ADAPTER'S GATE, and not `nEvents > 0` alone: a `good` flies no
         // card, so it emits no event, and that lone test threw its push away
         // (the server's fan-out, c_base/src/app/fanout.h). A
@@ -177,17 +179,17 @@ class Server {
             for (let s = 0; s < seats.length; s++) {
                 if (seats[s].brain) continue;
                 const d = DELTA_CASTS ? t.castDelta(s, this.version + 1) : L.TABLE_E_WIRE;
-                const b = d instanceof Uint8Array ? d : t.cast(this.gid, s, this.version + 1);
+                const b = t.cast(this.gid, s, this.version + 1);
                 assert.ok(b instanceof Uint8Array, `push: ${b}`);
-                pushes.push([seats[s].id, b]);
+                pushes.push([seats[s].id, d instanceof Uint8Array ? d : b, b]);
             }
         }
         this.state = p.state;
         this.roster = p.roster;
         this.version += 1;
-        for (const [id, bytes] of pushes) {
+        for (const [id, bytes, boardCast] of pushes) {
             const q = this.outbox.get(id) ?? [];
-            q.push({ gid: this.gid, version: this.version, bytes, seq: `${this.gid}-${++this.n}` });
+            q.push({ gid: this.gid, version: this.version, bytes, board: boardCast, seq: `${this.gid}-${++this.n}` });
             this.outbox.set(id, q);
         }
         return { rc, reject: 0 };
@@ -536,8 +538,19 @@ async function deliver(stage: Stage, label: string, push?: Push): Promise<void> 
     const s = server!;
     const p = push ?? s.take(ME);
     assert.ok((fb.held.get(`game:${s.gid}`) ?? 0) > 0, `${label}: the page holds the game's stream`);
-    await stage.step(label, () => { s.heard = Math.max(s.heard, p.version); fb.push.cast(s.gid, p.bytes); });
+    // A DELTA FOLLOWS THE BOARD THE PAGE LAST HEARD, and only that board: the
+    // real transport hands the page nothing else (netclient.c NW_WS_CAST drops a
+    // cast that does not follow the last and fetches the game). This harness
+    // delivers out of order, twice, and skips the pushes the old server did not
+    // send, so a delta that does not follow the page's last delivery goes as the
+    // board cast of the same commit - the frames are the rebuild's to keep.
+    const bytes = DELTA_CASTS && p.version !== s.heard + 1 ? p.board : p.bytes;
+    if (bytes[0] === V.EVW_CAST_DELTA) deltasDelivered++;
+    await stage.step(label, () => { s.heard = Math.max(s.heard, p.version); fb.push.cast(s.gid, bytes); });
 }
+let deltasDelivered = 0;
+// A delta-casting run that delivered no delta proved nothing about the rebuild.
+after(() => { if (DELTA_CASTS) assert.ok(deltasDelivered > 30, `deltas delivered: ${deltasDelivered}`); });
 
 const traceText = (frames: Frame[]): string =>
     frames.map((f) => `${f.t} ${createHash('sha256').update(f.html).digest('hex').slice(0, 24)} ${f.label}`).join('\n') + '\n';
@@ -948,7 +961,7 @@ test('my own good turns my badge as I tap it, and the confirmation finds nothing
         assert.equal(scaleOf(s, 1), 1, 'and turns nothing: the coin never moves again');
 
         const mine = srv.take(ME);
-        assert.equal(mine.bytes[3], 0, 'my own push carries no events - there was no card to fly');
+        assert.equal(mine.board[3], 0, 'my own push carries no events - there was no card to fly');
         await deliver(s, 'push: my own good, confirmed', mine);
         await s.advance(300);
         assert.equal(markOf(s, 1), 'check', 'the push confirms what is already on screen');
@@ -1011,7 +1024,7 @@ test('another player\'s good is the whole stream: the badge turns on its own pus
         assert.equal(markOf(s, 2), 'sword', 'Boris is an attacker to begin with');
         await s.step('Boris says good on the server', () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
         const good = srv.take(ME);
-        assert.equal(good.bytes[3], 0, 'his push carries no events at all - there is no card to fly');
+        assert.equal(good.board[3], 0, 'his push carries no events at all - there is no card to fly');
         assert.equal(markOf(s, 2), 'sword', 'and nothing on my screen has moved yet: the push has not been delivered');
         await deliver(s, 'push: Boris says good', good);
         // THE BADGE TURNS, it does not snap. A coin flip is one thing with two
@@ -1063,7 +1076,7 @@ test('a second good in a row is not eaten as a duplicate of the first', async ()
 
         await s.step('Boris says good on the server', () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
         const first = srv.take(ME);
-        assert.equal(first.bytes[3], 0, 'his push carries no events');
+        assert.equal(first.board[3], 0, 'his push carries no events');
         await deliver(s, 'push: Boris says good', first);
         await s.advance(260);
         assert.equal(markOf(s, 2), 'check', 'Boris wears his check');
@@ -1073,7 +1086,7 @@ test('a second good in a row is not eaten as a duplicate of the first', async ()
         // survive.
         await s.step('Carl says good on the server', () => { srv.act(CARL, encodeAction({ kind: 'good' })); });
         const second = srv.take(ME);
-        assert.equal(second.bytes[3], 0, 'his push carries no events either - the same shape as the first');
+        assert.equal(second.board[3], 0, 'his push carries no events either - the same shape as the first');
         await deliver(s, 'push: Carl says good', second);
         assert.equal(markOf(s, 3), 'sword', 'the old face is still up as it lands');
         await s.advance(90);
@@ -1147,7 +1160,7 @@ test('a good that lands while a card of mine is still in the air turns the badge
         await s.step('Boris says good on the server, behind my cover',
             () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
         const good = srv.take(ME);
-        assert.equal(good.bytes[3], 0, 'his push carries no events - there is no card to fly');
+        assert.equal(good.board[3], 0, 'his push carries no events - there is no card to fly');
         assert.ok(probe.anim.isAnimating, 'and my own cover is still in the air as it arrives');
         await deliver(s, 'push: Boris says good, mid-flight', good);
         await s.advance(210);
@@ -1491,7 +1504,7 @@ test('a run the kernel refuses to plan lands at once, and the next push still pl
     // ONE REFUSED PLAN MUST NOT WEDGE THE QUEUE (the lobby-join stall of
     // 2026-10-13: anim_build_plan refused a run, the throw left the run open with
     // no frame asked for, and the page played nothing for the rest of the
-    // session). A run longer than the kernel plans (ANIM_MAX_STEPS) is refused
+    // session). A run far longer than the kernel plans (anim_plan.h ANIM_MAX_STEPS) is refused
     // today; it lands at once on the board it carries, and Boris's next card
     // flies as it always did. Take the try out of useAnimationRun's tick and his
     // card never leaves his hand.
@@ -1503,7 +1516,7 @@ test('a run the kernel refuses to plan lands at once, and the next push still pl
         await s.step('a run too long to plan', () => {
             animationFeed.publish({
                 type: 'animation_sequence',
-                events: Array.from({ length: V.ANIM_MAX_STEPS + 1 }, () => ({ type: 'magic_transition' as const, game_state: here })),
+                events: Array.from({ length: 1000 }, () => ({ type: 'magic_transition' as const, game_state: here })),
                 game: here,
             });
         });
