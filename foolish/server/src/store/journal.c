@@ -253,6 +253,7 @@ struct cb_journal {
     bool            thr_started, stop, kick;
     // a backup attached (the backup hooks below): no segment at or after backup_mark is deleted
     bool            pinned;
+    bool            restored;      // the database is a restored copy (store.h CB_STORE_RESTORED_SUFFIX)
     uint64_t        backup_mark;
     // bumped by an exclusive section (an admin write): a record whose base was read before it is refused
     atomic_long     epoch;
@@ -993,6 +994,72 @@ static int j_games_get_views(cb_store *s, const char *const *ids, int n, cb_game
 
 const cb_rows_ops *cb_journal_rows(void) { return &J_OPS; }
 
+// ---- an admin's write, and the backup ------------------------------------------------------
+
+// THE ADMIN RULE (store.h cb_store_admin_query): every waiting move into the tables, no
+// move acknowledged while fn runs, and then the overlay forgotten and the epoch bumped, so
+// no row the journal held before fn (nor a record whose base was read before it) is ever
+// written over what fn wrote.
+static int j_exclusive(cb_store *s, int (*fn)(void *ud), void *ud) {
+    cb_journal *j = cb_journal_of(s);
+    pthread_mutex_lock(&j->flush_mu);
+    writer_hold(j);
+    int rc = flush_locked(j, true, true);
+    if (rc == CB_OK) {
+        rc = fn(ud);
+        pthread_mutex_lock(&j->ov_mu);
+        for (int b = 0; b < OV_BUCKETS; b++)
+            while (j->buckets[b]) ov_unlink(j, &j->buckets[b]);
+        pthread_mutex_unlock(&j->ov_mu);
+        atomic_fetch_add(&j->epoch, 1);
+    }
+    writer_release(j);
+    pthread_mutex_unlock(&j->flush_mu);
+    return rc;
+}
+
+static int j_backup_mark(cb_store *s, uint64_t *mark) {
+    cb_journal *j = cb_journal_of(s);
+    pthread_mutex_lock(&j->flush_mu);
+    j->pinned = true;
+    pthread_mutex_lock(&j->ov_mu);
+    *mark = low_water(j);
+    pthread_mutex_unlock(&j->ov_mu);
+    pthread_mutex_unlock(&j->flush_mu);
+    return CB_OK;
+}
+
+static int j_backup_files(cb_store *s, uint64_t mark, cb_store_file **out, int *n) {
+    cb_journal *j = cb_journal_of(s);
+    *out = NULL;
+    *n = 0;
+    pthread_mutex_lock(&j->seg_mu);
+    int rc = CB_OK;
+    cb_store_file *f = malloc(sizeof *f * (size_t)(j->n_segs ? j->n_segs : 1));
+    if (!f) rc = CB_E_NOMEM;
+    char path[1200];
+    for (int i = 0; rc == CB_OK && i < j->n_segs; i++) {
+        if (j->segs[i] < mark) continue;
+        seg_path(j, j->segs[i], path, sizeof path);
+        struct stat st;
+        if (stat(path, &st) != 0 || st.st_size == 0) continue;   // opened, nothing written yet
+        snprintf(f[*n].suffix, sizeof f[*n].suffix, "%s", path + strlen(j->o.path));
+        f[(*n)++].size = (int64_t)st.st_size;
+    }
+    pthread_mutex_unlock(&j->seg_mu);
+    if (rc == CB_OK) *out = f;
+    else free(f);
+    return rc;
+}
+
+static void j_backup_release(cb_store *s, uint64_t mark) {
+    cb_journal *j = cb_journal_of(s);
+    pthread_mutex_lock(&j->flush_mu);
+    if (mark > j->backup_mark) j->backup_mark = mark;
+    trim(j);
+    pthread_mutex_unlock(&j->flush_mu);
+}
+
 // ---- open: recovery ------------------------------------------------------------------------
 
 static int seq_cmp(const void *a, const void *b) {
@@ -1071,6 +1138,14 @@ static int recover_move(cb_journal *j, const cb_jmove *m, char *err, size_t cap)
         return rc;
     }
     if (cur.version > m->base_version) { cb_game_row_free(&cur); return CB_OK; }
+    if (cur.version != m->base_version && j->restored) {
+        // A restored copy: a write that went to the tables after the copy was taken is not
+        // in it, so this game's records from here on have nothing to continue from.
+        CB_WARN(MOD, "game %s is at version %lld in the restored copy and its next record is from %lld: skipped",
+                m->game, (long long)cur.version, (long long)m->base_version);
+        cb_game_row_free(&cur);
+        return CB_OK;
+    }
     if (cur.version != m->base_version) {
         snprintf(err, cap, "journal: game %s is at version %lld and the journal's next move is from %lld: a move is missing",
                  m->game, (long long)cur.version, (long long)m->base_version);
@@ -1146,6 +1221,11 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
     return rc;
 }
 
+static const char *restored_marker(const cb_journal *j, char *out, size_t cap) {
+    snprintf(out, cap, "%s" CB_STORE_RESTORED_SUFFIX, j->o.path);
+    return out;
+}
+
 static void journal_free(cb_journal *j) {
     if (!j) return;
     if (j->fd >= 0) close(j->fd);
@@ -1197,6 +1277,8 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
         J_OPS.game_import = j_game_import;
     }
 
+    char marker[1200];
+    j->restored = access(restored_marker(j, marker, sizeof marker), F_OK) == 0;
     uint64_t *segs = NULL;
     int n = 0;
     int rc = list_segments(j, &segs, &n);
@@ -1238,6 +1320,11 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     if (j->recovered) CB_INFO(MOD, "recovered %ld move(s) from the journal", (long)j->recovered);
     s->app_state = j;
     s->app_settle = cb_journal_flush;
+    s->app_exclusive = j_exclusive;
+    s->app_backup_mark = j_backup_mark;
+    s->app_backup_files = j_backup_files;
+    s->app_backup_release = j_backup_release;
+    if (j->restored) (void)unlink(restored_marker(j, marker, sizeof marker));   // replayed and in the tables
     return CB_OK;
 }
 
@@ -1260,6 +1347,10 @@ void cb_journal_close(cb_store *s) {
             wal, waiting);
     s->app_state = NULL;
     s->app_settle = NULL;
+    s->app_exclusive = NULL;
+    s->app_backup_mark = NULL;
+    s->app_backup_files = NULL;
+    s->app_backup_release = NULL;
     journal_free(j);
 }
 
