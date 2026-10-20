@@ -297,4 +297,30 @@ int evwire_serialize(const EvSnap *snaps, int n_snaps,
                      int append_final_transition,
                      unsigned char *out, int cap);
 
+// THE SHARED SEQUENCE: every seat's sequence of one action, from one walk. A
+// seat's sequence is the spectator's with the viewer byte set and, in a few
+// spans, the bytes that seat sees itself: its own hand and awaiting byte in
+// every snapshot (view.h state_put_seats) and the cards dealt or drawn to it.
+// evwire_serialize_holes writes evwire_serialize(..., VIEW_SPECTATOR, ...)'s
+// bytes at `out` and fills `holes`: each span where a seat's bytes differ, the
+// seat's bytes in holes->own at the same offsets (own is the caller's, `cap`
+// bytes; its other bytes are not written). Returns the length, or -1 (cap, or
+// more spans than holes->cap). evwire_seat_patch turns a copy of those bytes
+// into seat `seat`'s sequence, byte for byte evwire_serialize's for that seat.
+typedef struct { int off, len, seat; } EvwHole;
+typedef struct {
+    EvwHole       *h;     // the caller's, cap entries
+    int            n, cap;
+    unsigned char *own;   // the caller's, as long as the sequence's buffer
+} EvwHoles;
+// The most spans a sequence can have: every seat in every snapshot (255 events
+// and the trailer) and one card span per event.
+#define EVW_HOLES_MAX (257 * (MAX_PLAYERS + 1))
+int evwire_serialize_holes(const EvSnap *snaps, int n_snaps,
+                           const GameLog *logs, int n_logs,
+                           const Game *final_g, int actor,
+                           int append_final_transition,
+                           unsigned char *out, int cap, EvwHoles *holes);
+void evwire_seat_patch(unsigned char *seq, const EvwHoles *holes, int seat);
+
 #endif

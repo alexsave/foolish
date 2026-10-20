@@ -304,15 +304,19 @@ static BoardClock next_clock(const Table *t, const OpStream *s, bool shown, int6
     return c;
 }
 
-int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uint8_t *out, int cap) {
+// table_push, or with `holes` the spectator's push and what makes it each seat's
+// (evwire_serialize_holes; viewer is then -1).
+static int push_put(const Table *t, const char *game_id, int gid_len, int viewer, uint8_t *out, int cap, EvwHoles *holes) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     const Game *g = t->g;
     if (viewer >= g->num_players || (viewer >= 0 && t->r.seats[viewer].brain_len > 0)) return TABLE_E_NOT_SEATED;
     EvSnap refs[MAX_SNAPS];
     const int n_snaps = snap_refs(t, refs);
-    const int seq = evwire_serialize(refs, n_snaps, g->logs + t->log_start, g->num_logs - t->log_start, g,
-                                     viewer >= 0 ? viewer : VIEW_SPECTATOR, t->actor,
-                                     (t->ended || t->lobby_event) ? 1 : 0, out, cap);
+    const GameLog *logs = g->logs + t->log_start;
+    const int n_logs = g->num_logs - t->log_start, fin = (t->ended || t->lobby_event) ? 1 : 0;
+    const int seq = holes ? evwire_serialize_holes(refs, n_snaps, logs, n_logs, g, t->actor, fin, out, cap, holes)
+                          : evwire_serialize(refs, n_snaps, logs, n_logs, g, viewer >= 0 ? viewer : VIEW_SPECTATOR,
+                                             t->actor, fin, out, cap);
     if (seq < 0 || seq + 1 > cap) return TABLE_E_CAP;
     // The trailer rides a push that changed the roster, and one that changed the
     // rules, which the trailer is the only block to carry (roster.h, format 2).
@@ -325,12 +329,30 @@ int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uin
     return seq + 1 + tr;
 }
 
+int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uint8_t *out, int cap) {
+    return push_put(t, game_id, gid_len, viewer, out, cap, 0);
+}
+
 int table_cast(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
                uint8_t *out, int cap) {
     const int at = evwire_cast_header_put(version, out, cap);
     if (at < 0) return TABLE_E_CAP;
     const int n = table_push(t, game_id, gid_len, viewer, out + at, cap - at);
     return n < 0 ? n : at + n;
+}
+
+int table_casts(const Table *t, const char *game_id, int gid_len, uint32_t version,
+                uint8_t *out, int cap, TableCasts *c) {
+    const int at = evwire_cast_header_put(version, out, cap);
+    if (at < 0) return TABLE_E_CAP;
+    c->at = at;
+    c->holes.own = c->own + at;   // the sequence's offsets are the push's; own is the cast's
+    const int n = push_put(t, game_id, gid_len, -1, out + at, cap - at, &c->holes);
+    return n < 0 ? n : at + n;
+}
+
+void table_cast_seat(const TableCasts *c, uint8_t *cast, int seat) {
+    evwire_seat_patch(cast + c->at, &c->holes, seat);
 }
 
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,

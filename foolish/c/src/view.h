@@ -28,6 +28,16 @@
 // Returns bytes written.
 int state_put(const Game *g, int viewer, unsigned char *out);
 
+// THE SPECTATOR'S BOARD AND EVERY SEAT'S, IN ONE WRITE. A seat's state_put
+// differs from the spectator's only in that seat's own block (its awaiting byte
+// and its hand), at the same offsets and the same length: so this writes
+// state_put(g, VIEW_SPECTATOR) at `out` and, for each seat i, the block as seat
+// i sees it into `own` at spans[i].off for spans[i].len bytes (own's other
+// bytes are not written). Seat v's board is out with own's span v copied in.
+// Returns bytes written at out, as state_put.
+typedef struct { int off, len; } StateSeatSpan;
+int state_put_seats(const Game *g, unsigned char *out, unsigned char *own, StateSeatSpan spans[MAX_PLAYERS]);
+
 // The board's flags byte, at this offset (after status, num_players,
 // power_suit, first_attacker, defender and the u16 discard count): bit 0 is
 // has_flipped, and the bits above it are Game.rules, shifted up by one. It was

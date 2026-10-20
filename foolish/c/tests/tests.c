@@ -14455,6 +14455,157 @@ static void test_table_ask_runs_every_kind(void) {
     TB_REFUSED(table_ask(&tb, RS("a"), RS("Alice"), &a, 0, tb_seed), TABLE_E_WIRE, "a kind that is not one is malformed");
 }
 
+// EVERY VIEWER'S CAST FROM ONE WALK (table.h table_casts): at every operation of
+// whole all-human games of 2 to 8 seats, lobby and deal included, the shared
+// cast is table_cast's spectator cast byte for byte, and each seat's patched
+// copy is table_cast's for that seat byte for byte.
+static uint8_t tc_skel[1 << 16], tc_own[1 << 16], tc_ref[1 << 16], tc_seat[1 << 16];
+static EvwHole tc_holes[EVW_HOLES_MAX];
+static int tc_card_holes, tc_seat_holes;
+
+static int tc_casts_match(uint32_t version) {
+    TableCasts c = { { tc_holes, 0, EVW_HOLES_MAX, 0 }, tc_own, 0 };
+    const int n = table_casts(&tb, RS("g"), version, tc_skel, sizeof(tc_skel), &c);
+    const int rn = table_cast(&tb, RS("g"), -1, version, tc_ref, sizeof(tc_ref));
+    if (n <= 0 || n != rn || memcmp(tc_skel, tc_ref, (size_t)n) != 0) {
+        fprintf(stderr, "  the shared cast (%d bytes) is not the spectator's (%d)\n", n, rn);
+        return 0;
+    }
+    // A card span opens on a hidden card; a seat's opens on its awaiting byte, 0 to a spectator.
+    for (int i = 0; i < c.holes.n; i++) {
+        if (tc_skel[c.at + c.holes.h[i].off] == WIRE_CARD_HIDDEN) tc_card_holes++;
+        else tc_seat_holes++;
+    }
+    for (int s = 0; s < tb.r.n; s++) {
+        if (tb.r.seats[s].brain_len) continue;   // a bot's seat has no viewer
+        memcpy(tc_seat, tc_skel, (size_t)n);
+        table_cast_seat(&c, tc_seat, s);
+        const int sn = table_cast(&tb, RS("g"), s, version, tc_ref, sizeof(tc_ref));
+        if (sn != n || memcmp(tc_seat, tc_ref, (size_t)n) != 0) {
+            fprintf(stderr, "  seat %d of %d: its patched cast differs from its own\n", s, tb.r.n);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int tc_commit(uint32_t version) {
+    TableCommit c;
+    const int n = table_commit_products(&tb, RS("g"), version, 1700000000000LL + version, &c, tb_arena, sizeof(tb_arena));
+    if (n < 0) return n;
+    tb_store_state(&c);
+    memcpy(tb_roster, tb_arena + c.roster.off, (size_t)c.roster.len);
+    return table_load(&tb, tb_state, tb_state_len, tb_roster, c.roster.len);
+}
+
+// One operation of a random game: `rc` is its result; an applied one (TABLE_OK,
+// TABLE_APPLIED) is checked at the version it commits, and committed.
+static int tc_ops, tc_kinds[8], tc_same;
+static uint32_t tc_v;
+static void tc_step(int kind, int rc) {
+    if (!tc_same || (rc != TABLE_OK && rc != TABLE_APPLIED)) return;
+    tc_kinds[kind]++;
+    tc_ops++;
+    tc_same &= tc_casts_match(tc_v);
+    tc_same &= tc_commit(tc_v++) == TABLE_OK;
+}
+
+// EVERY VIEWER'S CAST FROM ONE WALK (table.h table_casts), byte for byte: at
+// every operation of 1000 random tables (the coverage corpus: 20) of 2 to 8
+// seats, humans and bots, the shared cast is table_cast's spectator cast and
+// each human seat's patched copy is table_cast's for that seat. The operations
+// are every kind a table commits: create, join, add-bot, leave, retitle, the
+// rules (the roster trailer rides those pushes), ready and its deal, uniformly
+// random legal moves, and a rematch's continue and second deal.
+static void test_table_casts_are_every_viewers_cast(void) {
+    enum { K_LOBBY, K_RULES, K_DEAL, K_MOVE, K_END, K_CONTINUE, K_BOT, K_LEAVE };
+#ifdef COVERAGE_CORPUS
+    enum { GAMES = 20 };
+#else
+    enum { GAMES = 1000 };
+#endif
+    uint64_t rng = 0x5eed0fca575ULL;
+    int games = 0, refused_small = 0;
+    tc_ops = 0;
+    tc_same = 1;
+    memset(tc_kinds, 0, sizeof(tc_kinds));
+    tc_card_holes = tc_seat_holes = 0;
+    for (int gi = 0; gi < GAMES && tc_same; gi++) {
+        const int np = 2 + (int)(rng_u32(&rng) % 7);
+        const int n_bots = (int)(rng_u32(&rng) % (uint32_t)np);   // at least one human
+        tb_seed_fill(gi);
+        table_init(&tb, &tb_game, &tb_snaps);
+        tc_v = 1;
+        char id[8], name[16];
+        tc_step(K_LOBBY, table_create(&tb, RS("h-0"), RS("Seat 0")));
+        // A human who joins and leaves again first, now and then.
+        if (rng_u32(&rng) % 4 == 0) {
+            tc_step(K_LOBBY, table_join(&tb, RS("h-x"), RS("Passer")));
+            tc_step(K_LEAVE, table_leave(&tb, RS("h-x"), RS("h-x")));
+        }
+        for (int i = 1; i < np - n_bots; i++) {
+            snprintf(id, sizeof(id), "h-%d", i);
+            snprintf(name, sizeof(name), "Seat %d", i);
+            tc_step(K_LOBBY, table_join(&tb, id, (int)strlen(id), name, (int)strlen(name)));
+        }
+        if (rng_u32(&rng) % 3 == 0) tc_step(K_LOBBY, table_retitle(&tb, RS("h-0"), RS("Friday night")));
+        if (rng_u32(&rng) % 2 == 0) tc_step(K_RULES, table_set_rules(&tb, RS("h-0"), 0));
+        for (int i = 0; i < n_bots; i++) {
+            snprintf(id, sizeof(id), "b-%d", i);
+            snprintf(name, sizeof(name), "Bot %d", i);
+            tc_step(K_BOT, table_add_bot(&tb, RS("h-0"), id, (int)strlen(id), name, (int)strlen(name), RS("random"), tb_seed));
+        }
+        for (int round = 0; round < 2 && tc_same; round++) {
+            for (int i = 0; i < np - n_bots && tb_game.status == GAME_STATUS_WAITING; i++) {
+                snprintf(id, sizeof(id), "h-%d", i);
+                const int rc = table_ready(&tb, id, (int)strlen(id), tb_seed);
+                tc_step(tb_game.status == GAME_STATUS_PLAYING ? K_DEAL : K_LOBBY, rc);
+            }
+            if (!refused_small && tb_game.status == GAME_STATUS_PLAYING) {
+                TableCasts c = { { tc_holes, 0, 1, 0 }, tc_own, 0 };
+                refused_small = table_casts(&tb, RS("g"), tc_v, tc_skel, sizeof(tc_skel), &c) == TABLE_E_CAP;
+            }
+            for (int guard = 0; guard < 5000 && tc_same && tb_game.status == GAME_STATUS_PLAYING; guard++) {
+                int seats[MAX_PLAYERS], k = 0;
+                for (int s = 0; s < np; s++) if (should_bot_act(&tb_game, s)) seats[k++] = s;
+                if (!k) break;
+                const int seat = seats[rng_u32(&rng) % (uint32_t)k];
+                calculate_legal_moves(&tb_game, seat, &tb_moves);
+                int w = 0;
+                for (int i = 0; i < tb_moves.n; i++) w += tb_moves.moves[i].type != MOVE_WAIT;
+                if (!w) break;
+                int want = (int)(rng_u32(&rng) % (uint32_t)w);
+                const LegalMove *m = NULL;
+                for (int i = 0; i < tb_moves.n && !m; i++)
+                    if (tb_moves.moves[i].type != MOVE_WAIT && want-- == 0) m = &tb_moves.moves[i];
+                AwireAction a;
+                memset(&a, 0, sizeof(a));
+                a.kind = m->type; a.n = m->n_cards;
+                for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+                const int wl = awire_encode(&a, tb_buf, sizeof(tb_buf));
+                const RosterSeat *rs = &tb.r.seats[seat];
+                const int rc = table_act(&tb, (const char *)rs->id, rs->id_len, tb_buf, wl, -1, 0);
+                tc_step(tb.ended ? K_END : K_MOVE, rc);
+            }
+            if (round == 0 && tb_game.status == GAME_STATUS_GAME_OVER && rng_u32(&rng) % 2 == 0)
+                tc_step(K_CONTINUE, table_continue(&tb, RS("h-0")));
+            else
+                break;
+        }
+        games++;
+    }
+    CHECK(tc_same, "every viewer's cast is the shared cast patched for it, at every operation");
+    char what[256];
+    snprintf(what, sizeof(what), "over whole random tables (%d operations) of every kind: lobby %d, rules %d, deals %d, "
+             "moves %d, ends %d, continues %d, bots %d, leaves %d", tc_ops, tc_kinds[K_LOBBY], tc_kinds[K_RULES],
+             tc_kinds[K_DEAL], tc_kinds[K_MOVE], tc_kinds[K_END], tc_kinds[K_CONTINUE], tc_kinds[K_BOT], tc_kinds[K_LEAVE]);
+    CHECK(games == GAMES && tc_ops > GAMES * 20 && tc_kinds[K_LOBBY] && tc_kinds[K_RULES] && tc_kinds[K_DEAL] &&
+          tc_kinds[K_MOVE] && tc_kinds[K_END] && tc_kinds[K_CONTINUE] && tc_kinds[K_BOT] && tc_kinds[K_LEAVE], what);
+    printf("  %s\n", what);
+    CHECK(tc_card_holes > 0 && tc_seat_holes > 0, "with dealt and drawn cards and hands among the patched spans");
+    CHECK(refused_small, "and more spans than the caller's table holds is refused, not overrun");
+}
+
 // A CAST (evwire.h) is what a realtime message carries: the version and the as3
 // push in one run of bytes, read by the client with nothing beside them.
 static void test_table_cast_carries_its_version(void) {
@@ -19825,6 +19976,7 @@ int main(void) {
     test_ask_round_trips();
     test_table_ask_runs_every_kind();
     test_table_cast_carries_its_version();
+    test_table_casts_are_every_viewers_cast();
     test_lobby_can_set_rules();
     test_table_set_rules();
     test_table_bots_never_transfer_under_podkidnoy();

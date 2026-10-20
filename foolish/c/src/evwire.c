@@ -2,6 +2,7 @@
 #include "view.h"
 #include "../wasm/wire.h"
 #include "../../../shared/c/le_bytes.h"
+#include <string.h>
 
 // Emission state threaded through the per-event writers. `fail` latches on
 // the first overflow so callers can bail with -1 (the buffer is bounds-
@@ -14,7 +15,17 @@ typedef struct {
     int fail;
     int viewer;
     int n_events; // backpatched into the header
+    EvwHoles *holes; // evwire_serialize_holes: where each seat's sequence differs (else NULL)
 } Emit;
+
+// A span of the sequence that seat `seat` sees otherwise, its bytes already in
+// holes->own at the same offset. Only a span whose bytes do differ is kept.
+static void hole_add(Emit *e, int off, int len, int seat) {
+    EvwHoles *h = e->holes;
+    if (len <= 0 || memcmp(e->out + off, h->own + off, (size_t)len) == 0) return;
+    if (h->n == h->cap) { e->fail = 1; return; }
+    h->h[h->n++] = (EvwHole){ off, len, seat };
+}
 
 static void put_u8(Emit *e, unsigned char b) {
     if (e->fail || e->len + 1 > e->cap) { e->fail = 1; return; }
@@ -27,9 +38,18 @@ static void put_u8(Emit *e, unsigned char b) {
 
 static void put_snapshot(Emit *e, const Game *g) {
     if (e->fail || e->len + 2 + EVW_SNAP_MAX > e->cap) { e->fail = 1; return; }
-    const int n = state_put(g, e->viewer, e->out + e->len + 2);
+    const int at = e->len + 2;
+    if (!e->holes) {
+        const int n = state_put(g, e->viewer, e->out + at);
+        le_put_u16(e->out + e->len, (uint16_t)n);
+        e->len += 2 + n;
+        return;
+    }
+    StateSeatSpan spans[MAX_PLAYERS];
+    const int n = state_put_seats(g, e->out + at, e->holes->own + at, spans);
     le_put_u16(e->out + e->len, (uint16_t)n);
     e->len += 2 + n;
+    for (int i = 0; i < g->num_players && i < MAX_PLAYERS; i++) hole_add(e, at + spans[i].off, spans[i].len, i);
 }
 
 // Shared event header + card list. `mask_cards` implements the DEAL/REFILL
@@ -46,8 +66,15 @@ static void put_event(Emit *e, int type, int seat, int msg, int from, int to,
     put_u8(e, (unsigned char)to);
     put_u8(e, (unsigned char)((has_target ? 1 : 0) | (has_battle ? 2 : 0)));
     put_u8(e, (unsigned char)n_cards);
+    const int cards_at = e->len;
     for (int i = 0; i < n_cards; i++) {
         put_u8(e, mask_cards ? (unsigned char)WIRE_CARD_HIDDEN : wire_from_card(cards[i]));
+    }
+    // A masked card list is masked for every viewer but the event's seat (the
+    // walk's rule: DEAL and REFILL), which sees the cards themselves.
+    if (e->holes && mask_cards && seat >= 0 && !e->fail) {
+        for (int i = 0; i < n_cards; i++) e->holes->own[cards_at + i] = wire_from_card(cards[i]);
+        hole_add(e, cards_at, n_cards, seat);
     }
     if (has_target) put_u8(e, wire_from_card(target));
     if (has_battle) put_u8(e, (unsigned char)battle);
@@ -247,12 +274,13 @@ void evwire_walk(const EvSnap *snaps, int n_snaps,
     }
 }
 
-int evwire_serialize(const EvSnap *snaps, int n_snaps,
+static int serialize(const EvSnap *snaps, int n_snaps,
                      const GameLog *logs, int n_logs,
                      const Game *final_g, int viewer, int actor,
                      int append_final_transition,
-                     unsigned char *out, int cap) {
-    Emit e = { out, cap, 0, 0, viewer, 0 };
+                     unsigned char *out, int cap, EvwHoles *holes) {
+    Emit e = { out, cap, 0, 0, viewer, 0, holes };
+    if (holes) holes->n = 0;
     put_u8(&e, EVWIRE_FORMAT_VERSION);
     put_u8(&e, viewer < 0 ? EVW_SEAT_NONE : (unsigned char)viewer);
     put_u8(&e, actor < 0 ? EVW_SEAT_NONE : (unsigned char)actor);
@@ -276,6 +304,29 @@ int evwire_serialize(const EvSnap *snaps, int n_snaps,
     if (e.fail || e.n_events > 255) return -1;
     out[count_at] = (unsigned char)e.n_events;
     return e.len;
+}
+
+int evwire_serialize(const EvSnap *snaps, int n_snaps,
+                     const GameLog *logs, int n_logs,
+                     const Game *final_g, int viewer, int actor,
+                     int append_final_transition,
+                     unsigned char *out, int cap) {
+    return serialize(snaps, n_snaps, logs, n_logs, final_g, viewer, actor, append_final_transition, out, cap, 0);
+}
+
+int evwire_serialize_holes(const EvSnap *snaps, int n_snaps,
+                           const GameLog *logs, int n_logs,
+                           const Game *final_g, int actor,
+                           int append_final_transition,
+                           unsigned char *out, int cap, EvwHoles *holes) {
+    if (!holes || !holes->own || (!holes->h && holes->cap > 0)) return -1;
+    return serialize(snaps, n_snaps, logs, n_logs, final_g, VIEW_SPECTATOR, actor, append_final_transition, out, cap, holes);
+}
+
+void evwire_seat_patch(unsigned char *seq, const EvwHoles *holes, int seat) {
+    seq[1] = (unsigned char)seat;   // the header's viewer byte
+    for (int i = 0; i < holes->n; i++)
+        if (holes->h[i].seat == seat) memcpy(seq + holes->h[i].off, holes->own + holes->h[i].off, (size_t)holes->h[i].len);
 }
 
 // ---------- the reader ------------------------------------------------------

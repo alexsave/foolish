@@ -245,6 +245,7 @@ static bool           g_section_key_ok;
 static void section_release(cb_section *s) {   // the section and what it keeps
     if (!s) return;
     free(s->walk);
+    free(s->fin);
     cb_row_buf_free(&s->rb);
     free(s);
 }
@@ -380,36 +381,47 @@ int cb_section_envelope(cb_section *s, int viewer, uint32_t version, uint8_t **o
     return *out ? CB_OK : CB_E_NOMEM;
 }
 
-// One viewer's cast for the last operation. It is written into the section's arena past
-// everything written there so far (the products and the casts before it), so it lives as long as
-// the section and costs no allocation (*owned false). Only when the arena's rest is too small
-// (a deal's push carries every snapshot's events) is it built in a per-thread 64 KB scratch and
-// malloc'd at its own size (*owned true: the caller frees it).
-static int section_cast(cb_section *s, int viewer, uint32_t version, const uint8_t **out, size_t *out_len, bool *owned) {
-    enum { CAST_CAP = 64 * 1024 };
-    *owned = false;
-    const int at = s->arena_hw, room = (int)sizeof s->arena - at;
-    // The kernel's writers are cursors: a cast that fits wrote [at, at + n) and nothing past it;
-    // one that did not may have written its whole room, which cb_section_free then zeroes.
-    int n = room > 0 ? table_cast(&s->t, s->gid, (int)strlen(s->gid), viewer, version, s->arena + at, room) : -1;
-    if (n >= 0) {
+// The casts of the last operation, every viewer's from ONE walk of its events (table.h
+// table_casts): the spectator's is built once in a per-thread scratch, and each human seat's is
+// a copy of it with that seat's own bytes patched in (table_cast_seat). Each is placed in the
+// section's arena past everything written there so far (the products and the casts before it), so
+// it lives as long as the section and costs no allocation (*owned false). Only when the arena's
+// rest is too small (a deal's push carries every snapshot's events) is it malloc'd at its own size
+// (*owned true: the caller frees it).
+static int cast_place(cb_section *s, const uint8_t *cast, int n, const uint8_t **out, size_t *out_len, bool *owned) {
+    const int at = s->arena_hw;
+    uint8_t *d;
+    if ((int)sizeof s->arena - at >= n) {
+        d = s->arena + at;
         s->arena_hw = at + n;
-        *out = s->arena + at;
-        *out_len = (size_t)n;
-        return CB_OK;
+        *owned = false;
+    } else {
+        if (!(d = malloc(n ? (size_t)n : 1))) return CB_E_NOMEM;
+        *owned = true;
     }
-    if (room > 0) s->arena_hw = (int)sizeof s->arena;
-    static _Thread_local uint8_t buf[CAST_CAP];
-    n = table_cast(&s->t, s->gid, (int)strlen(s->gid), viewer, version, buf, CAST_CAP);
-    if (n < 0) {
-        CB_ERROR("table", "game %s: cast for viewer %d refused (%d)", s->gid, viewer, n);
-        return CB_E_STATE;
-    }
-    uint8_t *d = dup_bytes(buf, (size_t)n);
+    memcpy(d, cast, (size_t)n);
     *out = d;
     *out_len = (size_t)n;
-    *owned = true;
-    return d ? CB_OK : CB_E_NOMEM;
+    return CB_OK;
+}
+
+static int section_casts(cb_section *s, uint32_t version, cb_fanout *f, bool *cast_owned, bool *spectator_owned) {
+    enum { CAST_CAP = 64 * 1024 };
+    static _Thread_local uint8_t skel[CAST_CAP], own[CAST_CAP];
+    static _Thread_local EvwHole holes[EVW_HOLES_MAX];
+    TableCasts c = { .holes = { holes, 0, EVW_HOLES_MAX, NULL }, .own = own, .at = 0 };
+    const int n = table_casts(&s->t, s->gid, (int)strlen(s->gid), version, skel, CAST_CAP, &c);
+    if (n < 0) {
+        CB_ERROR("table", "game %s: casts refused (%d)", s->gid, n);
+        return CB_E_STATE;
+    }
+    int rc = cast_place(s, skel, n, &f->spectator_cast, &f->spectator_cast_len, spectator_owned);
+    for (int i = 0; i < s->t.r.n && rc == CB_OK; i++) {
+        if (!f->seats[i].user_id[0]) continue;   // a bot's seat: no viewer
+        rc = cast_place(s, skel, n, &f->seats[i].cast, &f->seats[i].cast_len, &cast_owned[i]);
+        if (rc == CB_OK) table_cast_seat(&c, (uint8_t *)f->seats[i].cast, i);
+    }
+    return rc;
 }
 
 static bool seat_is_human(const RosterSeat *seat) { return seat->brain_len == 0; }
@@ -475,21 +487,20 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
         why = "no session log: nothing to encode a replay from";
         goto out;
     }
-    code = malloc(CODE_CAP);
-    scratch = malloc(SCRATCH_CAP);
-    extras = malloc(EXTRAS_CAP);
-    if (!code || !scratch || !extras) { why = "out of memory"; goto out; }
+    // The section's kept scratch (one allocation per thread, not three per game end).
+    if (!s->fin && !(s->fin = malloc(CODE_CAP + SCRATCH_CAP + EXTRAS_CAP))) { why = "out of memory"; goto out; }
+    code = s->fin;
+    scratch = code + CODE_CAP;
+    extras = scratch + SCRATCH_CAP;
     table_init(&s->t, &s->g, &s->snaps);
     if ((rc = table_load(&s->t, nrow->state, (int)nrow->state_len, nrow->roster, (int)nrow->roster_len)) < 0) {
         why = "does not load";
         goto out;
     }
+    // The extras read the roster and the log, never the board (table_replay_extras takes the
+    // Table const), so the board table_replay_code replays is still the loaded one.
     int n_extras = table_replay_extras(&s->t, logs, (int)logs_len, extras, EXTRAS_CAP);
     if (n_extras < 0) { rc = n_extras; why = "replay extras refused"; goto out; }
-    if ((rc = table_load(&s->t, nrow->state, (int)nrow->state_len, nrow->roster, (int)nrow->roster_len)) < 0) {
-        why = "does not load";
-        goto out;
-    }
     int n_code = table_replay_code(&s->t, nrow->seed, CB_SEED_LEN, logs, (int)logs_len,
                                    code, CODE_CAP, scratch, SCRATCH_CAP);
     if (n_code < 0) { rc = n_code; why = "replay code refused"; goto out; }
@@ -510,9 +521,6 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     if ((rc = CB_ROWS_CALL(ctx->store, snapshot_put, &snap)) != CB_OK) why = "snapshot_put failed";
 out:
     if (why) CB_ERROR("table", "game %s: snapshot failed, keeping the log: %s (%d)", nrow->id, why, rc);
-    free(code);
-    free(scratch);
-    free(extras);
     free(logs);
 }
 
@@ -954,7 +962,7 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     f.updated_at = now;
     f.n_seats = t->r.n;
     // The fan-out borrows: the envelopes are the products' in the arena, the casts go into the
-    // arena after them (section_cast), and the section outlives the publishing (a deferred
+    // arena after them (section_casts), and the section outlives the publishing (a deferred
     // fan-out copies what it holds, fanout.c cb_after_fanout). A cast the arena could not hold
     // is malloc'd (cast_owned) and freed below.
     bool cast_owned[CB_MAX_SEATS] = { false }, spectator_owned = false;
@@ -965,9 +973,8 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         seat_id(seat, f.seats[i].user_id);
         f.seats[i].envelope = A + c->views[i].off;
         f.seats[i].envelope_len = (size_t)c->views[i].len;
-        rc = section_cast(s, i, next, &f.seats[i].cast, &f.seats[i].cast_len, &cast_owned[i]);
     }
-    if (rc == CB_OK) rc = section_cast(s, -1, next, &f.spectator_cast, &f.spectator_cast_len, &spectator_owned);
+    if (rc == CB_OK) rc = section_casts(s, next, &f, cast_owned, &spectator_owned);
     for (int i = 0; i < f.n_seats; i++) {
         if (!f.seats[i].user_id[0]) continue;
         if (!in_list(s->old_humans, s->n_old, f.seats[i].user_id)) cb_strlcpy(f.joined[f.n_joined++], f.seats[i].user_id, sizeof(cb_uuid));

@@ -8,10 +8,31 @@ static int hand_visible(int viewer, int seat) {
     return viewer == VIEW_UNMASKED || viewer == seat;
 }
 
+// One seat's block after its status byte: the awaiting byte, the hand count and
+// the hand, as `visible` (the viewer's own seat, or unmasked) shows them. Returns
+// the end. The one writer of these bytes for every viewer (state_put_rules).
+static unsigned char *put_seat(const Game *g, int i, int visible, unsigned char *q) {
+    const Player *pl = &g->players[i];
+    *q++ = (unsigned char)((visible && game_seat_awaiting(g, i)) ? 1 : 0);
+    *q++ = (unsigned char)pl->hand_count;
+    // Same hoist as the deck loop: a hidden hand (every seat except the
+    // viewer, on a masked push) is one memset instead of a per-card branch.
+    if (visible) {
+        for (int j = 0; j < pl->hand_count; j++) *q++ = wire_from_card(pl->hand[j]);
+    } else if (pl->hand_count > 0) {
+        memset(q, (unsigned char)WIRE_CARD_HIDDEN, (size_t)pl->hand_count);
+        q += pl->hand_count;
+    }
+    return q;
+}
+
 // The board, with `rules` as the rules it names. state_put names the game's
 // own; the durable blob names none, because its flag byte is the rules' one
-// owner in a row (state_blob_put_at below).
-static int state_put_rules(const Game *g, int viewer, int rules, unsigned char *out) {
+// owner in a row (state_blob_put_at below). With `own` (state_put_seats), each
+// seat the viewer does not see is also written as that seat sees itself, into
+// `own` at the same offsets, and spans[i] says where (len 0: no such bytes).
+static int state_put_rules_own(const Game *g, int viewer, int rules, unsigned char *out,
+                               unsigned char *own, StateSeatSpan *spans) {
     const int unmasked = (viewer == VIEW_UNMASKED);
     unsigned char *q = out;
     *q++ = (unsigned char)g->status;
@@ -57,18 +78,14 @@ static int state_put_rules(const Game *g, int viewer, int rules, unsigned char *
         *q++ = wire_from_card(b->defense);
     }
     for (int i = 0; i < g->num_players; i++) {
-        const Player *pl = &g->players[i];
         const int visible = hand_visible(viewer, i);
-        *q++ = (unsigned char)pl->status;
-        *q++ = (unsigned char)((visible && game_seat_awaiting(g, i)) ? 1 : 0);
-        *q++ = (unsigned char)pl->hand_count;
-        // Same hoist as the deck loop: a hidden hand (every seat except the
-        // viewer, on a masked push) is one memset instead of a per-card branch.
-        if (visible) {
-            for (int j = 0; j < pl->hand_count; j++) *q++ = wire_from_card(pl->hand[j]);
-        } else if (pl->hand_count > 0) {
-            memset(q, (unsigned char)WIRE_CARD_HIDDEN, (size_t)pl->hand_count);
-            q += pl->hand_count;
+        *q++ = (unsigned char)g->players[i].status;
+        unsigned char *at = q;
+        q = put_seat(g, i, visible, q);
+        if (own) {
+            spans[i].off = (int)(at - out);
+            spans[i].len = visible ? 0 : (int)(q - at);
+            if (!visible) put_seat(g, i, 1, own + (at - out));
         }
     }
     *q++ = (unsigned char)g->num_eliminated;
@@ -77,7 +94,11 @@ static int state_put_rules(const Game *g, int viewer, int rules, unsigned char *
 }
 
 int state_put(const Game *g, int viewer, unsigned char *out) {
-    return state_put_rules(g, viewer, g->rules, out);
+    return state_put_rules_own(g, viewer, g->rules, out, 0, 0);
+}
+
+int state_put_seats(const Game *g, unsigned char *out, unsigned char *own, StateSeatSpan spans[MAX_PLAYERS]) {
+    return state_put_rules_own(g, VIEW_SPECTATOR, g->rules, out, own, spans);
 }
 
 // A state card byte, decoded EXACTLY: 0..51 is that card, and every other byte
@@ -274,7 +295,7 @@ int state_blob_put_rated_at(const Game *g, const BoardClock *clk, const GameRati
     out[1] = (unsigned char)flag;
     // The board inside names no rules: the flag above is the row's one owner of
     // them, and a row stays the bytes every v4 reader already reads.
-    const int n = STATE_BLOB_HEADER + state_put_rules(g, VIEW_UNMASKED, 0, out + STATE_BLOB_HEADER);
+    const int n = STATE_BLOB_HEADER + state_put_rules_own(g, VIEW_UNMASKED, 0, out + STATE_BLOB_HEADER, 0, 0);
     if (format == STATE_BLOB_FORMAT_V2) return n;
     put_clock(out + n, clk ? clk->shown_ms : 0);
     put_clock(out + n + 6, clk ? clk->settles_ms : 0);

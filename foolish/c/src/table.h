@@ -474,6 +474,21 @@ int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uin
 int table_cast(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
                uint8_t *out, int cap);
 
+// EVERY VIEWER'S CAST FROM ONE WALK (evwire.h, the shared sequence): writes the
+// spectator's cast (table_cast(-1)'s bytes) at `out` and returns its length, or
+// a TABLE_E_*; table_cast_seat then turns a copy of those bytes into a human
+// seat's cast, byte for byte table_cast's for that seat. The caller gives `c`
+// its spans (holes.h, holes.cap: EVW_HOLES_MAX never runs out) and own (`cap`
+// bytes); what table_casts writes there is table_cast_seat's to read.
+typedef struct {
+    EvwHoles       holes;
+    unsigned char *own;
+    int            at;    // the push's offset in the cast (the header's length)
+} TableCasts;
+int table_casts(const Table *t, const char *game_id, int gid_len, uint32_t version,
+                uint8_t *out, int cap, TableCasts *c);
+void table_cast_seat(const TableCasts *c, uint8_t *cast, int seat);
+
 // ---- the bot cycle (docs/C_GAME_SHAPE_MIGRATION.md 2.7) ------------------------
 //
 // One cycle as a server runs it, after table_load: the deal seed, the row's
