@@ -7,7 +7,7 @@
 // operation so any thread may run one (DESIGN.md "Kernel thread safety"). A
 // section is loaded from a stored row, an operation runs on section->t, and
 // cb_section_commit turns what it did into one CAS commit plus everything a
-// winning commit owes: the cache, the end of the game, the fan-out.
+// winning commit owes: the end of the game, the fan-out.
 #ifndef CB_APP_INTERNAL_H
 #define CB_APP_INTERNAL_H
 
@@ -35,9 +35,7 @@ extern void (*cb_app_sleep)(int64_t ms);
 void cb_game_id_random(char out[CB_GAME_ID_MAX + 1]);
 extern void (*cb_app_game_id)(char out[CB_GAME_ID_MAX + 1]);
 
-// ---- the per-process row cache (game_cache.ts) ------------------------------------
-
-#define CB_ROW_CACHE_CAP 256
+// ---- kept buffers ---------------------------------------------------------------
 
 // Byte buffers a row's fields are copied into, kept and grown, never shrunk: a row copied
 // again into the same buffers allocates nothing.
@@ -47,18 +45,9 @@ typedef struct {
 } cb_row_buf;
 void cb_row_buf_free(cb_row_buf *b);
 
-// A row: this process's cache when allowed and warm (*cached set: its bytes are copied into
-// `rb`, which owns them, so the row is NOT cb_game_row_free'd), else the store (the row owns
-// its bytes). `rb` is required when allow_cache. CB_OK, CB_E_NOT_FOUND, or the store's error.
-int  cb_row_load(cb_ctx *ctx, const char *id, bool allow_cache, cb_row_buf *rb, cb_game_row *out, bool *cached);
-// After a winning commit: a PLAYING row is remembered, any other is evicted.
-void cb_row_cache_note(const cb_game_row *row);
-void cb_row_cache_drop(const char *id);
-void cb_row_cache_clear(void);
 void cb_section_drain(void);        // frees the thread's kept section (a leak-counting test)
 void cb_rows_batch_drain(void);     // frees the thread's kept commit batch (a leak-counting test)
 void cb_table_lock_drain(void);     // frees the game locks no thread holds (a leak-counting test)
-int  cb_row_cache_size(void);
 
 // ---- the section ------------------------------------------------------------------
 
@@ -89,7 +78,7 @@ typedef struct cb_section {
     // The bot cycle's scratch board (cb_bots_journal_moves_before), made on first use and kept
     // with the section: freed with it (cb_section_free of an unpooled one, or the thread's exit).
     Game       *walk;
-    cb_row_buf  rb;               // the loaded row's bytes on a cache hit (cb_row_load); kept with the section, not zeroed
+    cb_row_buf  rb;               // the loaded row's bytes, the journal's copy (row_acquire); kept with the section, not zeroed
 } cb_section;
 
 cb_section *cb_section_new(void);
@@ -129,8 +118,8 @@ typedef struct {
 // was loaded at): the products (rated when the kernel wants ratings, from
 // `ratings` when *have_ratings, else read from the store into it), the new row
 // (logs appended or reset, round_epoch, the deal seed when `dealt_seed` and the
-// operation dealt), the CAS. On a win: the cache, the snapshot when the game
-// ended, the fan-out. CB_OK (look at out->lost), or CB_E_STATE / the store's
+// operation dealt), the CAS. On a win: the snapshot when the game ended, the
+// fan-out. CB_OK (look at out->lost), or CB_E_STATE / the store's
 // error.
 int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const uint8_t *dealt_seed,
                       const char *actor_id, int32_t ratings[CB_MAX_SEATS], bool *have_ratings,

@@ -72,6 +72,7 @@ static void add_user(cb_store *s, const char *id, const char *name) {
 static cb_journal_opts g_jo;
 static bool last_batch(const char *db, char *seg, size_t cap, long *off);
 static void crash_copy(const char *path, const char *copy);
+static bool no_row(int n, const char *const *names, const char *const *values, void *ud);
 
 static cb_store *open_world(const char *path, bool journal, char *err, size_t cap) {
     cb_store *s = NULL;
@@ -88,7 +89,6 @@ static cb_store *open_world(const char *path, bool journal, char *err, size_t ca
     g_ctx.job_start = no_job;
     g_ctx.router = cb_router_new();
     cb_functions_routes(&g_ctx);
-    cb_row_cache_clear();
     cb_app_now = fake_now;
     cb_app_sleep = fake_sleep;
     cb_functions_verify = fake_verify;
@@ -110,7 +110,6 @@ static cb_store *open_world(const char *path, bool journal, char *err, size_t ca
 static void close_world(cb_store *s) {
     cb_journal_close(s);
     cb_store_close(s);
-    cb_row_cache_clear();
 }
 
 // ---- requests (unit_app.c's) --------------------------------------------------------------
@@ -777,24 +776,19 @@ static void a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused(void) {
     meta("A", ASK_ADD_BOT, gid, &r);
     meta("A", ASK_ADD_BOT, gid, &r);
     meta("A", ASK_START, gid, &r);
-    // A board from before the seed-dealt deck: a draw takes the draw stream's next number.
+    // A board from before the seed-dealt deck: a draw takes the draw stream's next number. The
+    // row is rewritten the one way a write may go behind the journal: an admin's (THE ADMIN RULE,
+    // which flushes and forgets the overlay, so the next move reads this row).
     cb_game_row row = stored(s, gid);
     T_CHECK(row.state_len > 2 && row.status == GAME_STATUS_PLAYING);
-    sqlite3 *db = NULL;
-    T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
-    sqlite3_stmt *st = NULL;
-    uint8_t *state = malloc(row.state_len);
-    memcpy(state, row.state, row.state_len);
-    state[1] &= (uint8_t)~0x01;   // STATE_BLOB_FLAG_DETERMINISTIC
-    sqlite3_prepare_v2(db, "UPDATE games SET state = ?1 WHERE id = ?2", -1, &st, NULL);
-    sqlite3_bind_blob(st, 1, state, (int)row.state_len, SQLITE_STATIC);
-    sqlite3_bind_text(st, 2, gid, -1, SQLITE_STATIC);
-    T_EQ_INT(sqlite3_step(st), SQLITE_DONE);
-    sqlite3_finalize(st);
-    sqlite3_close(db);
-    free(state);
+    char *sql = malloc(2 * row.state_len + 128);
+    int at = sprintf(sql, "UPDATE games SET state = X'");
+    for (size_t i = 0; i < row.state_len; i++)
+        at += sprintf(sql + at, "%02x", i == 1 ? row.state[i] & (uint8_t)~0x01 : row.state[i]);   // STATE_BLOB_FLAG_DETERMINISTIC
+    sprintf(sql + at, "' WHERE id = '%s'", gid);
+    T_CHECK(cb_store_admin_query(s, sql, true, no_row, NULL) >= 0);
+    free(sql);
     cb_game_row_free(&row);
-    cb_row_cache_clear();
     const bool was = g_bots;
     g_bots = true;
     move_t m;
@@ -1092,6 +1086,165 @@ static void an_admin_write_is_never_written_over(void) {
     close_world(s);
 }
 
+// ---- one owner: the overlay is the only copy of a game in the process --------------------------
+
+static long table_reads(cb_store *s) {
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    return js.table_reads;
+}
+
+static int ask_status(const reply *r) {   // 200: the ask committed or answered
+    return r->status;
+}
+
+// THE GAME STAYS RESIDENT ACROSS A WRITE AROUND THE JOURNAL (a join, the deal): the next
+// operation reads it from the overlay, never from the tables. Only the first operation on a
+// game made by another path (the create) reads the tables, once.
+static void a_deal_and_its_moves_read_no_table(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/resident%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    reply r;
+    call("create", "A", NULL, 0, &r);
+    char gid[CB_GAME_ID_MAX + 1] = "";
+    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    const long reads0 = table_reads(s);
+    if (g_bots) meta("A", ASK_ADD_BOT, gid, &r);
+    else meta("B", ASK_JOIN, gid, &r);
+    T_EQ_INT(table_reads(s) - reads0, 1);   // the created game, read once and resident from here on
+    if (g_bots) meta("A", ASK_START, gid, &r);
+    else { meta("A", ASK_START, gid, &r); meta("B", ASK_START, gid, &r); }
+    T_EQ_INT(ask_status(&r), 200);
+    T_EQ_INT(version_of(s, gid) > 0, 1);   // dealt and playing
+    move_t m;
+    int moves = 0;
+    for (; moves < 12 && step(s, gid, &m) > 0; moves++) {}
+    T_EQ_INT(moves, 12);
+    T_EQ_INT(table_reads(s) - reads0, 1);
+    // A view on another connection reads the overlay too: the newest version.
+    cb_view_row v;
+    T_EQ_INT(cb_table_view(&g_ctx, gid, UID_A, &v), CB_OK);
+    T_EQ_INT(v.version, version_of(s, gid));
+    cb_view_row_free(&v);
+    T_EQ_INT(table_reads(s) - reads0, 1);
+    close_world(s);
+}
+
+// A RESIDENT THE TABLES CONTRADICT IS DROPPED, NEVER BUILT ON: a write the journal did not
+// see (here a raw UPDATE; in production nothing but the admin's, which forgets the overlay
+// itself) makes the next write around the journal lose its fence, and the game leaves the
+// overlay, so the operation after it reads the tables' row and lands.
+static void a_resident_the_tables_contradict_is_dropped(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/contradict.sqlite", g_dir);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    reply r;
+    call("create", "A", NULL, 0, &r);
+    char gid[CB_GAME_ID_MAX + 1] = "";
+    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    meta("B", ASK_JOIN, gid, &r);
+    T_EQ_INT(ask_status(&r), 200);
+    const int64_t v = -version_of(s, gid);   // a lobby: version_of answers it negated
+    sqlite3 *db = NULL;
+    T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
+    char sql[160];
+    snprintf(sql, sizeof sql, "UPDATE games SET version = version + 1 WHERE id = '%s'", gid);
+    T_EQ_INT(sqlite3_exec(db, sql, NULL, NULL, NULL), SQLITE_OK);
+    sqlite3_close(db);
+    const long reads0 = table_reads(s);
+    meta("A", ASK_START, gid, &r);   // fenced on v, the tables hold v + 1: refused, and the copy goes
+    T_CHECK(ask_status(&r) != 200);
+    meta("A", ASK_START, gid, &r);   // read from the tables (v + 1), and committed on it
+    T_EQ_INT(ask_status(&r), 200);
+    T_EQ_INT(table_reads(s) - reads0, 1);
+    T_EQ_INT(-version_of(s, gid), v + 2);
+    close_world(s);
+}
+
+// THE RESIDENCY CAP: past opts.max_games the least recently touched idle games leave at the
+// flush thread's pass, and a game with moves waiting never does.
+static void the_overlay_keeps_at_most_its_cap(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/cap.sqlite", g_dir);
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.max_games = 4;
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) { memset(&g_jo, 0, sizeof g_jo); return; }
+    enum { N = 8 };
+    char gids[N][CB_GAME_ID_MAX + 1];
+    for (int i = 0; i < N; i++) {
+        g_now += 1000;
+        two_humans_dealt(gids[i]);
+    }
+    move_t m;
+    // A move waits in the two oldest games: they stay, whatever else leaves.
+    g_now += 1000;
+    T_CHECK(step(s, gids[0], &m) > 0);
+    T_CHECK(step(s, gids[1], &m) > 0);
+    T_EQ_INT(cb_journal_flush_due(s), CB_OK);   // the flush thread's pass (it may have run already: kicked)
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.games, 4);
+    T_EQ_INT(js.waiting, 2);
+    long reads = table_reads(s);
+    T_CHECK(step(s, gids[0], &m) > 0);   // resident: no read
+    T_CHECK(step(s, gids[1], &m) > 0);
+    T_EQ_INT(table_reads(s) - reads, 0);
+    memset(&g_jo, 0, sizeof g_jo);
+    close_world(s);
+}
+
+// NO SECOND OWNER (R7): no server source keeps a copy of a game's row beside the overlay. The
+// row cache that lived in table_ops.c is gone, whole: no source names it.
+static bool source_names(const char *path, const char *const *words, int n) {
+    FILE *f = fopen(path, "r");
+    if (!f) return false;
+    char line[1024];
+    bool hit = false;
+    while (!hit && fgets(line, sizeof line, f))
+        for (int i = 0; i < n && !hit; i++)
+            if (strstr(line, words[i])) { fprintf(stderr, "%s names %s: %s", path, words[i], line); hit = true; }
+    fclose(f);
+    return hit;
+}
+
+static void no_row_cache_beside_the_overlay(void) {
+    char dir[512];
+    snprintf(dir, sizeof dir, "%s", __FILE__);   // .../foolish/server/test/unit_journal.c
+    char *cut = strstr(dir, "/test/unit_journal.c");
+    T_CHECK(cut != NULL);
+    if (!cut) return;
+    *cut = 0;
+    static const char *const WORDS[] = { "cb_row_cache", "CB_ROW_CACHE", "g_cache", "cb_row_load", "store_forget" };
+    static const char *const SUBS[] = { "src/app", "src/store" };
+    int files = 0;
+    for (int d = 0; d < 2; d++) {
+        char sub[600];
+        snprintf(sub, sizeof sub, "%s/%s", dir, SUBS[d]);
+        DIR *dp = opendir(sub);
+        T_CHECK(dp != NULL);
+        struct dirent *e;
+        while (dp && (e = readdir(dp))) {
+            const size_t n = strlen(e->d_name);
+            if (n < 3 || (strcmp(e->d_name + n - 2, ".c") != 0 && strcmp(e->d_name + n - 2, ".h") != 0)) continue;
+            char f[900];
+            snprintf(f, sizeof f, "%s/%s", sub, e->d_name);
+            files++;
+            T_CHECK(!source_names(f, WORDS, 5));
+        }
+        if (dp) closedir(dp);
+    }
+    T_CHECK(files > 10);
+}
+
 // ---- the flush rule: a move writes no table until its game is due --------------------------
 
 static int count_segments(const char *path) {
@@ -1371,9 +1524,7 @@ static void a_restore_mid_game_holds_every_acknowledged_move(void) {
     T_CHECK(access(marker, F_OK) == 0);
     cb_backup_stop(bk);
     cb_store *live = s;
-    // (one store at a time: the row cache is the process's)
     cb_journal_close(live);
-    cb_row_cache_clear();
     cb_store *r = open_world(rpath, true, err, sizeof err);
     T_CHECK(r != NULL);
     if (!r) { fprintf(stderr, "restore: %s\n", err); cb_store_close(live); return; }
@@ -1453,7 +1604,12 @@ int main(void) {
     T_RUN(a_move_allocates_almost_nothing);
     T_RUN(a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused);
     T_RUN(a_cycle_walk_draws_as_the_drive_did);
+    T_RUN(a_resident_the_tables_contradict_is_dropped);
+    T_RUN(the_overlay_keeps_at_most_its_cap);
+    T_RUN(no_row_cache_beside_the_overlay);
     for (int b = 0; b < 2; b++) {
+        g_bots = b;
+        T_RUN(a_deal_and_its_moves_read_no_table);
         g_bots = b;
         T_RUN(the_flush_writes_the_rows_per_move_commits_write);
         T_RUN(a_restore_mid_game_holds_every_acknowledged_move);

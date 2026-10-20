@@ -70,6 +70,7 @@ typedef struct {
     int64_t     total_bytes;   // every game is flushed once all waiting moves hold this many (0: 64 MiB)
     int64_t     seg_bytes;     // a segment is closed once it holds this many bytes (0: 8 MiB)
     bool        sync;          // msync each batch before it is acknowledged
+    int         max_games;     // games the overlay keeps resident; past it the least recently used idle ones go (0: 4096)
     cb_journal_apply_fn apply;
     void       *apply_ud;
 } cb_journal_opts;
@@ -82,6 +83,19 @@ void cb_journal_close(cb_store *s);
 cb_journal *cb_journal_of(const cb_store *s);   // NULL: none installed
 const cb_rows_ops *cb_journal_rows(void);
 
+// THE GAME'S ONE OWNER under serve: the overlay holds every game an operation touched (its
+// acknowledged row; the tables lag it by the waiting moves), so an operation reads its game
+// here and nowhere else. fn runs under the overlay's lock with the game's row (borrowed: it
+// copies what it keeps); a game the overlay does not hold is read from the tables and made
+// resident first. ONLY UNDER THE GAME'S LOCK (app/table_ops.c cb_table_lock): a row read
+// from the tables is made resident only because no commit of the game can land between the
+// read and the insert. CB_OK or fn's result, CB_E_NOT_FOUND for no such game, or the tables'
+// error. A resident game leaves when it is idle (IDLE_EVICT_MS, nothing waiting), when over
+// opts.max_games the least recently used idle ones do (at the flush thread's next pass),
+// and on an admin's write (THE ADMIN RULE).
+typedef int (*cb_journal_game_fn)(void *ud, const cb_game_row *row);
+int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, void *ud);
+
 // Every acknowledged move into the tables now (store.h cb_store_settle).
 int cb_journal_flush(cb_store *s);
 // The flush rule's periodic check now (the flush thread's tick): the games due, flushed.
@@ -93,6 +107,8 @@ typedef struct {
     long recovered;                         // records replayed at the last open
     long waiting, waiting_bytes;            // moves not in the tables yet, and their bytes
     long segments;                          // segment files on disk
+    long games;                             // games resident in the overlay
+    long table_reads;                       // games read from the tables to be made resident
 } cb_journal_stats;
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 

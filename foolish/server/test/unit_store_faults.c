@@ -108,7 +108,6 @@ static void sweep_rc(const char *what, rq *q, int ok, void (*prep)(rq *, int), i
         run(q);
         bool failed = fs_failed();
         fs_off();
-        cb_row_cache_clear();
         if (!failed) break;
         failures++;
         bool right = g_status >= 500 && (rc != CB_E_BUSY || g_status != 503 || g_retry[0] == '1');
