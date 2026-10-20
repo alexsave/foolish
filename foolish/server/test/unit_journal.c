@@ -1457,7 +1457,17 @@ static void crafted_whole_commits_recover_or_refuse(void) {
     // The journal's own checks of its arguments.
     s = open_world(path, false, err, sizeof err);
     cb_journal_opts bad = { 0 };
+    T_EQ_INT(cb_journal_open(NULL, &bad, err, sizeof err), CB_E_INVALID);
+    T_EQ_INT(cb_journal_open(s, NULL, err, sizeof err), CB_E_INVALID);
+    T_EQ_INT(cb_journal_open(s, &bad, err, sizeof err), CB_E_INVALID);   // no path
+    bad.path = "";
     T_EQ_INT(cb_journal_open(s, &bad, err, sizeof err), CB_E_INVALID);
+    bad.path = path;
+    T_EQ_INT(cb_journal_open(s, &bad, err, sizeof err), CB_E_INVALID);   // no apply
+    bad.apply = cb_table_replay_move;
+    bad.apply_ud = &g_ctx;
+    T_EQ_INT(cb_journal_open(s, &bad, err, sizeof err), CB_OK);
+    T_EQ_INT(cb_journal_open(s, &bad, err, sizeof err), CB_E_INVALID);   // one is installed already
     close_world(s);
     static uint8_t fr[4096];
     struct { const char *id; int idl; int64_t base; uint8_t flags; uint32_t sl, claim; int tail; bool opens; } c[] = {
