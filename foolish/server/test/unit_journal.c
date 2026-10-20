@@ -22,6 +22,8 @@
 #include "../../../shared/c/rng.h"
 
 #include <dirent.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <sqlite3.h>
 #include <stdio.h>
@@ -749,44 +751,154 @@ static void the_lists_read_the_overlay_without_a_flush(void) {
 
 // ---- a backup mid-game ----------------------------------------------------------------------
 
+// A bucket in a directory: one file per key.
+static int g_bucket_puts, g_db_puts;
 static int file_put(void *ud, const char *key, const char *path) {
-    char cmd[1200];
+    char cmd[1400];
+    g_bucket_puts++;
+    g_db_puts += !strstr(key, "-journal.") && !strstr(key, ".manifest");
     snprintf(cmd, sizeof cmd, "cp '%s' '%s/%s'", path, (const char *)ud, key);
     return system(cmd) == 0 ? CB_OK : CB_E_IO;
 }
+static int file_get(void *ud, const char *key, const char *path) {
+    char src[1200], cmd[2600];
+    snprintf(src, sizeof src, "%s/%s", (const char *)ud, key);
+    if (access(src, F_OK) != 0) return CB_E_NOT_FOUND;
+    snprintf(cmd, sizeof cmd, "cp '%s' '%s'", src, path);
+    return system(cmd) == 0 ? CB_OK : CB_E_IO;
+}
+static int file_del(void *ud, const char *key) {
+    char src[1200];
+    snprintf(src, sizeof src, "%s/%s", (const char *)ud, key);
+    return unlink(src) == 0 || errno == ENOENT ? CB_OK : CB_E_IO;
+}
 
-static void a_backup_mid_game_holds_every_acknowledged_move(void) {
-    char path[320], err[256] = "";
+// THE RESTORE DRILL: backups mid-game with no flush between them (the database goes up
+// once, the segments after it as they grow), the disk lost, and a restore that replays the
+// segments onto the copy holds every acknowledged move. Segments go only after a flush AND
+// an upload of the copy that holds it.
+static void a_restore_mid_game_holds_every_acknowledged_move(void) {
+    char path[320], err[256] = "", bucket[320], key[64], rpath[320];
     snprintf(path, sizeof path, "%s/live%d.sqlite", g_dir, g_bots);
+    snprintf(bucket, sizeof bucket, "%s/bucket%d", g_dir, g_bots);
+    snprintf(key, sizeof key, "backup%d.sqlite", g_bots);
+    T_EQ_INT(mkdir(bucket, 0700), 0);
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.seg_bytes = 64;   // several segments
     cb_store *s = open_world(path, true, err, sizeof err);
     T_CHECK(s != NULL);
     if (!s) return;
-    g_cfg.db_path[0] = 0;
     snprintf(g_cfg.db_path, sizeof g_cfg.db_path, "%s", path);
     char gid[CB_GAME_ID_MAX + 1];
     two_humans_dealt(gid);
     move_t m;
     int64_t v = -1;
+    for (int i = 0; i < 6 && (v = step(s, gid, &m)) > 0; i++) {}
+    cb_blob blob = { file_put, file_get, bucket, file_del };
+    cb_backup *bk = cb_backup_start(&g_ctx, &blob, key, 0);
+    T_CHECK(bk != NULL);
+    const unsigned long wal0 = cb_store_local_wal_frames(s);
+    g_bucket_puts = 0;
+    T_EQ_INT(cb_backup_once(bk), 1);   // the copy, the segments, the manifest
+    const int first_puts = g_bucket_puts;
+    T_CHECK(first_puts >= 3);
     for (int i = 0; i < 12 && (v = step(s, gid, &m)) > 0; i++) {}
     T_CHECK(v > 0);
-    uint64_t h = row_hash(s, gid);
-    cb_blob blob = { file_put, NULL, g_dir };
-    cb_backup *bk = cb_backup_start(&g_ctx, &blob, g_bots ? "backup1.sqlite" : "backup0.sqlite", 0);
-    T_CHECK(bk != NULL);
+    g_bucket_puts = g_db_puts = 0;
+    T_EQ_INT(cb_backup_once(bk), 1);   // only what grew, and the manifest: the database did not change
+    T_EQ_INT(g_db_puts, 0);
+    char dbobj[400];
+    snprintf(dbobj, sizeof dbobj, "%s/%s", bucket, key);
+    T_CHECK(g_bucket_puts >= 2);
+    for (int i = 0; i < 3 && (v = step(s, gid, &m)) > 0; i++) {}
+    T_CHECK(v > 0);
     T_EQ_INT(cb_backup_once(bk), 1);
+    const uint64_t h = row_hash(s, gid);
+    // No flush happened: every move of the game is in the segments alone.
+    T_EQ_INT((long)cb_store_local_wal_frames(s), (long)wal0);
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.flushes, 0);
+    T_CHECK(js.segments >= 3);
+
+    // The disk is lost (the live files stay where they are, unread): a restore beside them.
+    snprintf(rpath, sizeof rpath, "%s/restored%d.sqlite", g_dir, g_bots);
+    T_EQ_INT(cb_backup_restore(&blob, key, rpath), CB_OK);
+    char marker[400];
+    snprintf(marker, sizeof marker, "%s" CB_STORE_RESTORED_SUFFIX, rpath);
+    T_CHECK(access(marker, F_OK) == 0);
     cb_backup_stop(bk);
-    close_world(s);
-    // The copy alone, opened with no journal: the game at the last acknowledged move.
-    char copy[320];
-    snprintf(copy, sizeof copy, "%s/backup%d.sqlite", g_dir, g_bots);
-    s = open_world(copy, false, err, sizeof err);
-    T_CHECK(s != NULL);
-    if (!s) return;
-    cb_game_row row = stored(s, gid);
+    cb_store *live = s;
+    // (one store at a time: the row cache is the process's)
+    cb_journal_close(live);
+    cb_row_cache_clear();
+    cb_store *r = open_world(rpath, true, err, sizeof err);
+    T_CHECK(r != NULL);
+    if (!r) { fprintf(stderr, "restore: %s\n", err); cb_store_close(live); return; }
+    T_CHECK(access(marker, F_OK) != 0);   // replayed: the next start is an ordinary one
+    cb_game_row row = stored(r, gid);
     T_EQ_INT(row.version, v);
     cb_game_row_free(&row);
-    T_CHECK(row_hash(s, gid) == h);
+    T_CHECK(row_hash(r, gid) == h);
+    close_world(r);
+
+    // A copy that lacks a write the segments continue from (here: its game set one version
+    // back): an ordinary start refuses it (a move is missing), a restored one skips the game.
+    char rpath2[320], marker2[400];
+    snprintf(rpath2, sizeof rpath2, "%s/restored%db.sqlite", g_dir, g_bots);
+    snprintf(marker2, sizeof marker2, "%s" CB_STORE_RESTORED_SUFFIX, rpath2);
+    T_EQ_INT(cb_backup_restore(&blob, key, rpath2), CB_OK);
+    sqlite3 *db = NULL;
+    char sql[200];
+    snprintf(sql, sizeof sql, "UPDATE games SET version = version - 1 WHERE id = '%s'", gid);
+    T_EQ_INT(sqlite3_open(rpath2, &db), SQLITE_OK);
+    T_EQ_INT(sqlite3_exec(db, sql, NULL, NULL, NULL), SQLITE_OK);
+    sqlite3_close(db);
+    T_EQ_INT(unlink(marker2), 0);
+    r = open_world(rpath2, true, err, sizeof err);
+    T_CHECK(r == NULL);
+    if (r) close_world(r);
+    FILE *mk = fopen(marker2, "wb");
+    if (mk) fclose(mk);
+    r = open_world(rpath2, true, err, sizeof err);
+    T_CHECK(r != NULL);
+    if (r) {
+        T_CHECK(version_of(r, gid) < v);
+        close_world(r);
+    }
+    cb_store_close(live);
+
+    // Pinned: a flush does not delete what the last uploaded copy needs; the next upload does.
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.seg_bytes = 1;   // a segment per batch
+    s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    snprintf(g_cfg.db_path, sizeof g_cfg.db_path, "%s", path);
+    two_humans_dealt(gid);   // a new game: the first may be near its end
+    bk = cb_backup_start(&g_ctx, &blob, key, 0);
+    T_EQ_INT(cb_backup_once(bk), 1);
+    for (int i = 0; i < 6 && (v = step(s, gid, &m)) > 0; i++) {}
+    T_EQ_INT(cb_backup_once(bk), 1);
+    cb_journal_stats_get(s, &js);
+    const long segs = js.segments;
+    T_CHECK(segs >= 3);
+    T_EQ_INT(cb_journal_flush(s), CB_OK);
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.segments, segs);       // flushed, not uploaded: kept
+    T_EQ_INT(cb_backup_once(bk), 1);   // the copy that holds the flush goes up
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.segments, 1);
+    // and the bucket no longer holds the segments its manifest stopped naming
+    int left = 0;
+    DIR *d = opendir(bucket);
+    struct dirent *e;
+    while (d && (e = readdir(d))) left += strstr(e->d_name, "-journal.") != NULL;
+    if (d) closedir(d);
+    T_CHECK(left <= 1);
+    cb_backup_stop(bk);
     close_world(s);
+    memset(&g_jo, 0, sizeof g_jo);
 }
 
 int main(void) {
@@ -799,7 +911,7 @@ int main(void) {
     for (int b = 0; b < 2; b++) {
         g_bots = b;
         T_RUN(the_flush_writes_the_rows_per_move_commits_write);
-        T_RUN(a_backup_mid_game_holds_every_acknowledged_move);
+        T_RUN(a_restore_mid_game_holds_every_acknowledged_move);
         T_RUN(every_acknowledged_move_survives_a_sigkill);
         T_RUN(a_move_writes_no_table_until_its_game_is_due);
         T_RUN(the_lists_read_the_overlay_without_a_flush);
