@@ -179,6 +179,9 @@ typedef struct {
 // encode refuses an invalid roster and otherwise returns ROSTER_BYTES.
 int      roster_decode(Roster *r, const uint8_t *p, int len);
 int      roster_encode(const Roster *r, uint8_t *out, int cap);
+// The same for a roster the caller has just validated (roster_validate, ROSTER_OK) and not
+// changed since: the products of one operation validate once and write it several times.
+int      roster_encode_validated(const Roster *r, uint8_t *out, int cap);
 
 // Every rule a Roster keeps: n range; each seated id 1..36 bytes of UTF-8 with
 // no NUL; each name <= 64 bytes of UTF-8; each brain <= 23 bytes of printable
@@ -236,6 +239,9 @@ int      roster_trailer_write(const Roster *r, const char *game_id, int gid_len,
 // with roster_bot_mask(r).
 int      roster_trailer_write_ai(const Roster *r, const char *game_id, int gid_len, int status,
                                  uint32_t good_mask, uint32_t ai_mask, int passing, uint8_t *out, int cap);
+// roster_trailer_write_ai for a roster validated as roster_encode_validated says.
+int      roster_trailer_write_validated(const Roster *r, const char *game_id, int gid_len, int status,
+                                        uint32_t good_mask, uint32_t ai_mask, int passing, uint8_t *out, int cap);
 
 // Reads a trailer at p, format 1 or 2. game_id must hold ROSTER_GAME_ID_MAX + 1
 // bytes. The trailer carries is_ai, not a brain, so the seats come back with no

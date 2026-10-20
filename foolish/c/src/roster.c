@@ -106,6 +106,10 @@ static void emit(uint8_t *at, const char *src, uint8_t len) {
 int roster_encode(const Roster *r, uint8_t *out, int cap) {
     const int v = roster_validate(r);
     if (v != ROSTER_OK) return v;
+    return roster_encode_validated(r, out, cap);
+}
+
+int roster_encode_validated(const Roster *r, uint8_t *out, int cap) {
     if (!out || cap < ROSTER_BYTES) return ROSTER_E_CAP;
     memset(out, 0, ROSTER_BYTES);
     out[0] = ROSTER_FORMAT_VERSION;
@@ -281,6 +285,11 @@ int roster_trailer_write_ai(const Roster *r, const char *game_id, int gid_len, i
                             uint32_t good_mask, uint32_t ai_mask, int passing, uint8_t *out, int cap) {
     const int v = roster_validate(r);
     if (v != ROSTER_OK) return v;
+    return roster_trailer_write_validated(r, game_id, gid_len, status, good_mask, ai_mask, passing, out, cap);
+}
+
+int roster_trailer_write_validated(const Roster *r, const char *game_id, int gid_len, int status,
+                                   uint32_t good_mask, uint32_t ai_mask, int passing, uint8_t *out, int cap) {
     if (gid_len < 0 || gid_len > ROSTER_GAME_ID_MAX || (gid_len > 0 && !game_id)) return ROSTER_E_GAME_ID;
     if (status < 0 || status > 2) return ROSTER_E_STATUS;
     if ((good_mask >> r->n) != 0) return ROSTER_E_GOOD;
