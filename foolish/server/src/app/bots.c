@@ -111,7 +111,8 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
         cpu->compute_ms += (double)drive_ms;
         cpu->cycles += 1;
         if (drive_ms > cpu->max_ms) cpu->max_ms = drive_ms;
-        CB_INFO("bots", "game %s cycle %d: drove %d action(s) in %lldms (stop %d)", game_id, cycle, drv.n,
+        // Every cycle: a debug line (an INFO line per cycle was a write to the journal per bot move).
+        CB_DEBUG("bots", "game %s cycle %d: drove %d action(s) in %lldms (stop %d)", game_id, cycle, drv.n,
                 (long long)drive_ms, drv.stop);
         if (drv.n == 0) {
             // table_bots_due said a bot could act and the drive found none:
