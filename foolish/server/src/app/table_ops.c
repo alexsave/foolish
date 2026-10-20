@@ -69,13 +69,16 @@ static int row_copy(cb_game_row *dst, const cb_game_row *src) {
     return CB_OK;
 }
 
-// Copies `n` bytes into a kept buffer, grown when it is too small.
+// Copies `n` bytes into a kept buffer, grown when it is too small, with room to spare: a game's
+// state blob grows and shrinks a little with the hands, and a grow per move would be a realloc
+// per move.
 static int buf_put(uint8_t **p, size_t *cap, const uint8_t *src, size_t n) {
     if (n > *cap || !*p) {
-        uint8_t *q = realloc(*p, n ? n : 1);
+        const size_t want = n < 512 ? 512 : n + n / 2;
+        uint8_t *q = realloc(*p, want);
         if (!q) return CB_E_NOMEM;
         *p = q;
-        *cap = n ? n : 1;
+        *cap = want;
     }
     if (n) memcpy(*p, src, n);
     return CB_OK;

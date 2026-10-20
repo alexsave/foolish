@@ -1,5 +1,6 @@
 // unit_journal.c - the move journal (store/journal.h): the batch codec, a torn or corrupt tail,
 // recovery after a SIGKILL, the flush's rows against per-move commits, and a backup mid-game.
+#include "oom.h"
 #include "t.h"
 #include "app/app_internal.h"
 #include "app/foolish_app.h"
@@ -472,6 +473,43 @@ static void a_move_off_its_board_is_refused(void) {
     free(g);
     free(snaps);
     cb_game_row_free(&row);
+    close_world(s);
+}
+
+// ---- a move allocates (almost) nothing --------------------------------------------------------
+
+// A human's move, from the request to the journal's acknowledgement, on the thread that runs it.
+// What it may still allocate: the journal's own copy of the move's log delta (the overlay keeps
+// it), and this HTTP response's header and body buffers, grown from nothing (a socket's reply
+// keeps them with its job, rt_local.c). Every other copy is a kept buffer: the section's row
+// buffers, the cache slot's, the arena's casts and envelopes, the spare game locks.
+#define MOVE_ALLOCS_MAX 5
+static void a_move_allocates_almost_nothing(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/allocs.sqlite", g_dir);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    move_t m;
+    int most = -1, played = 0;
+    for (int i = 0; i < 16 && next_move(s, gid, &m); i++) {
+        if (i < 4) { T_CHECK(play(gid, &m) > 0); continue; }   // the kept buffers grow first
+        if (!OOM_AVAILABLE) { play(gid, &m); continue; }
+        oom_fail_after(1L << 40);
+        int64_t v = play(gid, &m);
+        int n = (int)oom_count();
+        oom_off();
+        T_CHECK(v > 0);
+        if (n > most) most = n;
+        played++;
+    }
+    if (OOM_AVAILABLE) {
+        T_CHECK(played >= 4);
+        if (most > MOVE_ALLOCS_MAX) fprintf(stderr, "     a move allocated %d blocks (at most %d)\n", most, MOVE_ALLOCS_MAX);
+        T_CHECK(most <= MOVE_ALLOCS_MAX);
+    }
     close_world(s);
 }
 
@@ -1412,6 +1450,7 @@ int main(void) {
     T_RUN(a_batch_round_trips);
     T_RUN(a_torn_or_corrupt_tail_drops_only_itself);
     T_RUN(a_move_off_its_board_is_refused);
+    T_RUN(a_move_allocates_almost_nothing);
     T_RUN(a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused);
     T_RUN(a_cycle_walk_draws_as_the_drive_did);
     for (int b = 0; b < 2; b++) {
