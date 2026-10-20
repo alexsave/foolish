@@ -144,11 +144,12 @@ static void h_action(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     memcpy(gid, req->body + q.gid_off, q.gid_len);
     gid[q.gid_len] = 0;
     act_ud a = { &u, req->body + q.wire_off, q.wire_len, q.has_intent ? (int64_t)q.intent : -1 };
-    cb_table_op op = { gid, &u, run_act, &a, false, a.wire, a.wire_len };
+    // The answer is the result alone (table_action_response): no envelope is built for it.
+    cb_table_op op = { .game_id = gid, .actor = &u, .run = run_act, .ud = &a, .wire = a.wire, .wire_len = a.wire_len,
+                       .no_envelope = true };
     cb_table_result r;
     int rc = cb_table_run(ctx, &op, &r);
     if (rc != CB_OK) { run_failure(res, rc); return; }
-    free(r.envelope);
     if (r.result < 0) {
         if (r.result == TABLE_E_WIRE) refusal(res, 400, ASK_WHY_MALFORMED, 0, 0);
         else refusal(res, 400, ASK_WHY_REFUSED, r.result, r.detail);
@@ -246,7 +247,7 @@ static void h_meta(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
         return;
     }
     ask_ud a = { &u, &ask, &bots, false };
-    cb_table_op op = { gid, &u, run_ask, &a, false, NULL, 0 };
+    cb_table_op op = { .game_id = gid, .actor = &u, .run = run_ask, .ud = &a };
     cb_table_result r;
     int rc = cb_table_run(ctx, &op, &r);
     free(bots.rows);
@@ -399,7 +400,7 @@ int cb_app_delete_account(cb_ctx *ctx, const char *user_id, int *refused_code, i
     // 2. The name redacted in each, one fresh CAS commit per game.
     rc = CB_OK;
     for (int i = 0; i < l.n && rc == CB_OK; i++) {
-        cb_table_op op = { l.ids[i], NULL, run_redact, (void *)user_id, true, NULL, 0 };
+        cb_table_op op = { .game_id = l.ids[i], .run = run_redact, .ud = (void *)user_id, .fresh = true };
         cb_table_result r;
         int g = cb_table_run(ctx, &op, &r);
         free(r.envelope);

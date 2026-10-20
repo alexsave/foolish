@@ -67,6 +67,9 @@ typedef struct {
     // move from them (journal.h). NULL: not an action.
     const uint8_t *wire;
     int            wire_len;
+    // The caller reads no envelope (an action answers its result only): none is built,
+    // out->envelope stays NULL. The actor still names the seat that acts.
+    bool no_envelope;
 } cb_table_op;
 
 typedef struct {

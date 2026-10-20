@@ -1040,13 +1040,14 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             int seat = actor ? table_seat_of(&s->t, actor, (int)strlen(actor)) : -1;
             out->needs_bots = table_bots_due(&s->t);
             out->version = row.version;
-            ret = cb_section_envelope(s, seat >= 0 ? seat : -1, (uint32_t)row.version, &out->envelope, &out->envelope_len);
+            ret = op->no_envelope ? CB_OK
+                                  : cb_section_envelope(s, seat >= 0 ? seat : -1, (uint32_t)row.version, &out->envelope, &out->envelope_len);
             row_release(&row, cached);
             break;
         }
 
         cb_commit_out co;
-        ret = cb_section_commit(ctx, s, &row, seed, actor, ratings, &have_ratings, &co);
+        ret = cb_section_commit(ctx, s, &row, seed, op->no_envelope ? NULL : actor, ratings, &have_ratings, &co);
         row_release(&row, cached);
         if (ret != CB_OK) break;
         if (co.lost) { ret = CB_E_CONFLICT; break; }
