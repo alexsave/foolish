@@ -304,6 +304,8 @@ struct cb_journal {
     atomic_long     batches, writes, records, bytes, flushes, flushed_games, flushed_moves, recovered, table_reads, log_reads;
     atomic_long     loop_writes;   // writes made on the loop's thread
     atomic_long     loop_seg_opens;   // seg_open on the loop's thread (a wait for seg_mu, a file made)
+    atomic_long     txn_moves_max;    // the most waiting moves one flush transaction carried
+    atomic_long     txn_hold_us_max;  // the longest a flush transaction held the flush lock
 };
 
 cb_journal *cb_journal_of(const cb_store *s) { return s && s->app_settle == cb_journal_flush ? s->app_state : NULL; }
@@ -1133,33 +1135,56 @@ static bool flush_due(const cb_journal *j, const jgame *g, bool all, int64_t now
     return g->n_moves > 0 && (all || now - g->first_ms >= j->o.game_age_ms || g->bytes >= j->o.game_bytes);
 }
 
-// Every game due, copied (ov_mu held): rows and the move lists (the logs stay the overlay's;
-// only a flush frees them, and the flush lock is held).
-static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now) {
+static int first_ms_cmp(const void *a, const void *b) {
+    const int64_t x = (*(jgame *const *)a)->first_ms, y = (*(jgame *const *)b)->first_ms;
+    return x < y ? -1 : x > y;
+}
+
+// One transaction's worth of the games due, copied (ov_mu held): rows and the move lists (the
+// logs stay the overlay's; only a flush frees them, and the flush lock is held). THE
+// TRANSACTION BUDGET (its one owner): the oldest waiting games first, while their waiting moves
+// together stay within opts.txn_moves (one game bigger than that goes alone: its moves and its
+// row are one write). Only games that waited since before the pass began (first_ms <= pass_ms)
+// are taken, so a pass ends under a steady stream of moves. *more: due games were left for the
+// next transaction.
+static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now, int64_t pass_ms, bool *more) {
     memset(sn, 0, sizeof *sn);
+    *more = false;
     int n = 0;
     for (int b = 0; b < OV_BUCKETS; b++)
-        for (jgame *g = j->buckets[b]; g; g = g->next) n += flush_due(j, g, all, now);
+        for (jgame *g = j->buckets[b]; g; g = g->next) n += flush_due(j, g, all, now) && g->first_ms <= pass_ms;
     if (!n) return CB_OK;
+    jgame **due = malloc((size_t)n * sizeof *due);
+    if (!due) return CB_E_NOMEM;
+    int k = 0;
+    for (int b = 0; b < OV_BUCKETS; b++)
+        for (jgame *g = j->buckets[b]; g; g = g->next)
+            if (flush_due(j, g, all, now) && g->first_ms <= pass_ms) due[k++] = g;
+    qsort(due, (size_t)n, sizeof *due, first_ms_cmp);
+    long budget = 0;
+    for (k = 0; k < n && (k == 0 || budget + due[k]->n_moves <= j->o.txn_moves); k++) budget += due[k]->n_moves;
+    *more = k < n;
+    n = k;
     sn->f = calloc((size_t)n, sizeof *sn->f);
     sn->rows = calloc((size_t)n, sizeof *sn->rows);
     sn->seats = calloc((size_t)n, sizeof *sn->seats);
-    if (!sn->f || !sn->rows || !sn->seats) { snapshot_free(sn); return CB_E_NOMEM; }
-    for (int b = 0; b < OV_BUCKETS; b++)
-        for (jgame *g = j->buckets[b]; g; g = g->next) {
-            if (!flush_due(j, g, all, now)) continue;
-            cb_game_move *m = malloc((size_t)g->n_moves * sizeof *m);
-            // R4: the rows the flush writes are the residents' encodes, made now.
-            if (!m || row_refresh(g) != CB_OK || row_dup(&sn->rows[sn->n], &g->row) != CB_OK) {
-                free(m);
-                snapshot_free(sn);
-                return CB_E_NOMEM;
-            }
-            memcpy(m, g->moves, (size_t)g->n_moves * sizeof *m);
-            sn->f[sn->n] = (cb_game_flush){ &sn->rows[sn->n], g->sql_version, m, g->n_moves, false, 0, 0, NULL, NULL };
-            flush_seats(g, &sn->f[sn->n], &sn->seats[sn->n]);
-            sn->n++;
+    if (!sn->f || !sn->rows || !sn->seats) { free(due); snapshot_free(sn); return CB_E_NOMEM; }
+    for (int i = 0; i < n; i++) {
+        jgame *g = due[i];
+        cb_game_move *m = malloc((size_t)g->n_moves * sizeof *m);
+        // R4: the rows the flush writes are the residents' encodes, made now.
+        if (!m || row_refresh(g) != CB_OK || row_dup(&sn->rows[sn->n], &g->row) != CB_OK) {
+            free(m);
+            free(due);
+            snapshot_free(sn);
+            return CB_E_NOMEM;
         }
+        memcpy(m, g->moves, (size_t)g->n_moves * sizeof *m);
+        sn->f[sn->n] = (cb_game_flush){ &sn->rows[sn->n], g->sql_version, m, g->n_moves, false, 0, 0, NULL, NULL };
+        flush_seats(g, &sn->f[sn->n], &sn->seats[sn->n]);
+        sn->n++;
+    }
+    free(due);
     return CB_OK;
 }
 
@@ -1221,16 +1246,15 @@ static void ov_evict(cb_journal *j, int64_t now) {
     free(idle);
 }
 
-// The games due into the tables in one transaction, then the segments trimmed. flush_mu is
-// held; the writer is held for the snapshot (a move after it is in a later segment) unless
-// the caller holds it already.
-static int flush_locked(cb_journal *j, bool all, bool writer_held) {
+// ONE TRANSACTION of a flush pass (flush_mu held): the next games due within the budget
+// (snapshot_take), written, then the residency rule and the segments trimmed. The writer is held
+// for the snapshot (a move after it is in a later segment) unless the caller holds it already.
+static int flush_txn(cb_journal *j, bool all, int64_t pass_ms, bool writer_held, bool *more) {
     if (!writer_held) writer_hold(j);
     snapshot sn;
     const int64_t now = cb_mono_ms();
     pthread_mutex_lock(&j->ov_mu);
-    if (j->w_bytes >= j->o.total_bytes) all = true;
-    int rc = snapshot_take(j, &sn, all, now);
+    int rc = snapshot_take(j, &sn, all, now, pass_ms, more);
     const uint64_t snap_seg = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
     pthread_mutex_unlock(&j->ov_mu);
     if (!writer_held) writer_release(j);
@@ -1250,22 +1274,52 @@ static int flush_locked(cb_journal *j, bool all, bool writer_held) {
             atomic_fetch_add(&j->flushes, 1);
             atomic_fetch_add(&j->flushed_games, sn.n);
             atomic_fetch_add(&j->flushed_moves, moves);
+            long top = atomic_load(&j->txn_moves_max);
+            while (moves > top && !atomic_compare_exchange_weak(&j->txn_moves_max, &top, moves)) {}
         }
     } else {
+        *more = false;
         CB_ERROR(MOD, "flush failed (%s): the moves stay in the journal and the next flush retries", cb_strerror(rc));
     }
     snapshot_free(&sn);
     return rc;
 }
 
-static int flush_some(cb_journal *j, bool all) {
-    pthread_mutex_lock(&j->flush_mu);
-    int rc = flush_locked(j, all, false);
-    pthread_mutex_unlock(&j->flush_mu);
+// A FLUSH PASS: the games due when it began, as bounded transactions (flush_txn), with the flush
+// lock given back between them so a write around the journal (a delete, a rated end) or a log
+// read waits at most one transaction, never a whole pass. With `all` (a settle, the close, or
+// every waiting move together over total_bytes when the pass began) every game waiting then.
+static int flush_pass(cb_journal *j, bool all) {
+    const int64_t pass_ms = cb_mono_ms();
+    pthread_mutex_lock(&j->ov_mu);
+    if (j->w_bytes >= j->o.total_bytes) all = true;
+    pthread_mutex_unlock(&j->ov_mu);
+    int rc;
+    bool more;
+    do {
+        pthread_mutex_lock(&j->flush_mu);
+        const int64_t t0 = cb_mono_us();
+        rc = flush_txn(j, all, pass_ms, false, &more);
+        const long held = (long)(cb_mono_us() - t0);
+        pthread_mutex_unlock(&j->flush_mu);
+        long top = atomic_load(&j->txn_hold_us_max);
+        while (held > top && !atomic_compare_exchange_weak(&j->txn_hold_us_max, &top, held)) {}
+    } while (rc == CB_OK && more);
     return rc;
 }
 
-static int flush_all(cb_journal *j) { return flush_some(j, true); }
+// Every waiting move, with the flush lock and the writer already held (an exclusive section:
+// nothing is acknowledged meanwhile, so the transactions end).
+static int flush_held(cb_journal *j) {
+    const int64_t pass_ms = cb_mono_ms();
+    int rc;
+    bool more;
+    do rc = flush_txn(j, true, pass_ms, true, &more);
+    while (rc == CB_OK && more);
+    return rc;
+}
+
+static int flush_all(cb_journal *j) { return flush_pass(j, true); }
 
 int cb_journal_flush(cb_store *s) {
     cb_journal *j = cb_journal_of(s);
@@ -1274,7 +1328,7 @@ int cb_journal_flush(cb_store *s) {
 
 int cb_journal_flush_due(cb_store *s) {
     cb_journal *j = cb_journal_of(s);
-    return j ? flush_some(j, false) : CB_OK;
+    return j ? flush_pass(j, false) : CB_OK;
 }
 
 static void *flusher(void *ud) {
@@ -1299,7 +1353,7 @@ static void *flusher(void *ud) {
         const bool tell = j->head && !j->writing && loop_writes(j);   // records the loop left for want of it
         pthread_mutex_unlock(&j->mu);
         if (tell) loop_tell(j);
-        if (flush) (void)flush_some(j, false);
+        if (flush) (void)flush_pass(j, false);
         pthread_mutex_lock(&j->mu);
     }
     pthread_mutex_unlock(&j->mu);
@@ -1768,7 +1822,7 @@ static int j_exclusive(cb_store *s, int (*fn)(void *ud), void *ud) {
     cb_journal *j = cb_journal_of(s);
     pthread_mutex_lock(&j->flush_mu);
     writer_hold(j);
-    int rc = flush_locked(j, true, true);
+    int rc = flush_held(j);
     if (rc == CB_OK) {
         rc = fn(ud);
         pthread_mutex_lock(&j->ov_mu);
@@ -2074,6 +2128,7 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     if (j->o.game_age_ms <= 0) j->o.game_age_ms = 600000;
     if (j->o.game_bytes <= 0) j->o.game_bytes = 256 << 10;
     if (j->o.total_bytes <= 0) j->o.total_bytes = 64 << 20;
+    if (j->o.txn_moves <= 0) j->o.txn_moves = 2000;
     if (j->o.seg_bytes <= 0) j->o.seg_bytes = 8 << 20;
     if (j->o.max_games <= 0) j->o.max_games = OV_MAX_GAMES;
     snprintf(j->prefix, sizeof j->prefix, "%s-journal.", o->path);
@@ -2111,14 +2166,10 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
         uint64_t next = (uint64_t)cb_now_ms();
         if (n && segs[n - 1] + 1 > next) next = segs[n - 1] + 1;
         j->seg_seq = next - 1;
-        // Everything recovered goes into the tables before anything is served, and the
+        // Everything recovered goes into the tables before anything is served (in bounded
+        // transactions, as any flush: nothing else runs yet, so no lock is wanted), and the
         // segments with it.
-        snapshot sn;
-        pthread_mutex_lock(&j->ov_mu);
-        rc = snapshot_take(j, &sn, true, cb_mono_ms());
-        pthread_mutex_unlock(&j->ov_mu);
-        if (rc == CB_OK && sn.n) rc = cb_rows_sql_flush(s, sn.f, sn.n, NULL, NULL, 0);
-        snapshot_free(&sn);
+        rc = flush_held(j);
         if (rc != CB_OK) snprintf(err, cap, "journal: the recovered moves do not write (%s)", cb_strerror(rc));
     }
     if (rc == CB_OK) {
@@ -2198,4 +2249,6 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     out->log_reads = j->log_reads;
     out->loop_writes = j->loop_writes;
     out->loop_seg_opens = j->loop_seg_opens;
+    out->txn_moves_max = j->txn_moves_max;
+    out->txn_hold_us_max = j->txn_hold_us_max;
 }

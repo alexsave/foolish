@@ -15,7 +15,8 @@
 // its oldest waiting move is opts.game_age_ms old, or when its waiting moves hold
 // opts.game_bytes; every game's go when all the waiting moves together hold
 // opts.total_bytes, at close, and for a reader of the file behind the store (the admin's
-// SQL, an import). A segment is closed once it holds opts.seg_bytes and deleted once
+// SQL, an import). A flush is bounded transactions of at most opts.txn_moves waiting moves,
+// the oldest games first, the flush lock given back between them. A segment is closed once it holds opts.seg_bytes and deleted once
 // every move in it is in the tables and (with a backup attached) in an uploaded copy.
 //
 // Every other commit but one that rates (a deal, a seat change, a lobby edit, an unrated end)
@@ -80,6 +81,9 @@ typedef struct {
     int64_t     game_bytes;    // a game whose waiting moves hold this many bytes is flushed (0: 256 KiB)
     int64_t     total_bytes;   // every game is flushed once all waiting moves hold this many (0: 64 MiB)
     int64_t     seg_bytes;     // a segment is closed once it holds this many bytes (0: 8 MiB)
+    int         txn_moves;     // the waiting moves one flush transaction carries at most; a pass is as
+                               // many transactions as it needs, the flush lock given back between them
+                               // (0: 2000; one game with more goes alone)
     bool        sync;          // msync each batch before it is acknowledged
     int         max_games;     // games the overlay keeps resident; past it the least recently used idle ones go (0: 4096)
     // The network loop (net/loop.h), or NULL. ON ITS THREAD THE JOURNAL NEVER WAITS: an operation
@@ -143,6 +147,8 @@ typedef struct {
     long log_reads;                         // session logs read from the tables (the rest was the overlay's)
     long loop_writes;                       // of the writes, made on the network loop's thread
     long loop_seg_opens;                    // segments opened on it by a wait (none: loop_write rotates at once or not at all)
+    long txn_moves_max;                     // the most waiting moves one flush transaction carried
+    long txn_hold_us_max;                   // the longest one held the flush lock (a write around the journal's worst wait)
 } cb_journal_stats;
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 
