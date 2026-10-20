@@ -260,6 +260,28 @@ static void check_envelope(const char *uid, const uint8_t *p, size_t n, const ch
 // A cast for `uid` (NULL: the spectators') of game gid.
 static void check_cast(const char *uid, const char *gid, const uint8_t *p, size_t n) {
     int want = uid ? seat_of_user(gid, uid) : -1;
+    if (n > 0 && p[0] == EVW_CAST_DELTA) {
+        // A delta (evwire.h EVW_CAST_DELTA) names no board: it is the moves, which
+        // every seat saw played, and the viewer's own draws. So it is this user's
+        // own (or the spectators', which reveal nothing), and every card it
+        // reveals is one the stored hand of that seat holds.
+        EvwDelta d;
+        FZ_CHECK(evwire_delta_read(p, (int)n, &d) == 0);
+        FZ_CHECK(d.viewer == want);
+        FZ_CHECK(d.kernel == EVW_DELTA_KERNEL);
+        note_version(gid, strlen(gid), d.version);
+        Table t;
+        int64_t sv;
+        if (d.n_reveal > 0 && stored_table(gid, &t, &sv) && sv == (int64_t)d.version) {
+            const Player *pl = &t.g->players[want];
+            for (int i = 0; i < d.n_reveal; i++) {
+                bool held = false;
+                for (int k = 0; k < pl->hand_count && !held; k++) held = card_eq(pl->hand[k], card_of_id(d.reveal[i]));
+                FZ_CHECK(held);
+            }
+        }
+        return;
+    }
     client_init(&g_c, &g_slot);
     int rc = client_cast_open(&g_c, p, (int)n, NULL, 0, NULL, 0);
     FZ_CHECK(rc == CLIENT_OK);
@@ -954,6 +976,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     fz_in in = fz_in_of(data, size);
     uint64_t seed = fz_u32(&in);
     reset_world(seed);
+    g_cfg.cast_delta = (seed & 1) != 0;   // half the runs cast moves as deltas (config.h CBASE_CAST_DELTA)
     for (int step = 0; step < 48 && fz_left(&in); step++) {
         int user = 0;
         uint8_t op = fz_u8(&in);

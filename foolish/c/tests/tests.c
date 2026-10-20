@@ -18193,7 +18193,7 @@ static int dl_ident_len[MAX_PLAYERS + 1];
 static uint8_t dl_cast[1 << 16], dl_delta[1024], dl_keep[CLIENT_BOARD_KEEP_MAX];
 
 typedef struct {
-    long commits, delta_commits, board_commits, viewers, rebuilt, bot_cycles, reveals, ends, draws_to_viewer, rematch_commits;
+    long commits, delta_commits, board_commits, viewers, rebuilt, bot_cycles, reveals, ends, draws_to_viewer, rematch_commits, check_cards, check_awaiting;
     long bytes_board, bytes_delta;
     int  ok;
 } DlCounts;
@@ -18262,6 +18262,31 @@ static void dl_cast_all(DlCounts *k, uint32_t bots) {
             if (evwire_delta_read(dl_delta, nd, &d) != 0 || d.viewer != viewer || d.version != version) { k->ok = 0; return; }
             k->reveals += d.n_reveal;
             k->draws_to_viewer += d.n_reveal > 0;
+            // The check sees what the viewer's board adds to the public one: a
+            // hand card changed, or the viewer's own awaiting byte turned on.
+            if (viewer >= 0) {
+                static _Alignas(8) unsigned char head[offsetof(Game, logs)];
+                Game *h = (Game *)(void *)head;
+                memcpy(head, &tb_game, sizeof(head));
+                Player *me = &h->players[viewer];
+                if (me->hand_count > 0) {
+                    me->hand[0] = card_of_id((wire_from_card(me->hand[0]) + 1) % 52);
+                    k->check_cards++;
+                    if (board_check(h, viewer) == d.check) { fprintf(stderr, "  the check missed a hand card\n"); k->ok = 0; return; }
+                    me->hand[0] = tb_game.players[viewer].hand[0];
+                }
+                // Only the viewer's own byte moves: nothing public does.
+                if (!game_seat_awaiting(h, viewer) && viewer != h->defender && me->status == PLAYER_STATUS_IN
+                    && !((h->good_players_mask >> viewer) & 1u)) {
+                    me->awaiting_attack = true;
+                    if (board_check_public(h) != board_check_public(&tb_game) || board_check(h, viewer) == board_check(&tb_game, viewer)) {
+                        fprintf(stderr, "  commit %u viewer %d: the check missed the viewer's awaiting byte\n", version, viewer);
+                        k->ok = 0;
+                        return;
+                    }
+                    k->check_awaiting++;
+                }
+            }
             const int rc = client_cast_open(&ct, dl_delta, nd, dl_ident[v], dl_ident_len[v], dc_board[v], dc_board_len[v]);
             if (rc != CLIENT_OK) {
                 fprintf(stderr, "  commit %u viewer %d: the delta did not rebuild (%d, detail %d)\n", version, viewer, rc, ct.detail);
@@ -18371,7 +18396,7 @@ static void test_delta_cast_rebuilds_the_board_cast(void) {
            k.ends, k.bytes_board, k.bytes_delta);
     CHECK(k.ok, "delta casts: every delta rebuilds the board cast's sequence byte for byte, for every viewer, and keeps its board");
     CHECK(k.delta_commits > 200000 && k.rebuilt > 900000 && k.bot_cycles > 50000 && k.draws_to_viewer > 4000 && k.ends > 1000
-          && k.rematch_commits > 200, "delta casts: enough commits, bot cycles, draws, game ends and rematches were rebuilt");
+          && k.rematch_commits > 200 && k.check_cards > 500000 && k.check_awaiting > 100000, "delta casts: enough commits, bot cycles, draws, game ends and rematches were rebuilt");
     CHECK(k.board_commits >= k.rematch_commits + 100 && k.delta_commits > 50 * k.board_commits,
           "delta casts: a lobby edit or a deal is a board cast, and nearly every commit of a game in play goes as a delta");
 }

@@ -15,6 +15,12 @@
 // the table's identity - opaque bytes the kernel writes - is kept per game id
 // from every envelope and roster-carrying push this reads, and handed back to
 // read the next push for that game.
+//
+// THE KEPT BOARD. A delta cast (c/src/evwire.h EVW_CAST_DELTA) carries a move,
+// not a board: the kernel rebuilds the board from the one it last read for that
+// game. So beside the identity, the board the kernel says to keep
+// (client_board_keep, opaque bytes again) is kept per game id from every
+// envelope and cast this reads, and handed back with the next cast.
 
 import type { WebExports } from '../gen/exports.web.ts';
 import * as V from '../gen/view_layout.bots.ts';
@@ -74,6 +80,7 @@ export class ClientTable {
     private readonly ex: WebExports;
     private mem: V.Mem;
     private readonly identities = new Map<string, Uint8Array>();
+    private readonly boards = new Map<string, Uint8Array>();
     private refusal = 0;
 
     constructor(ex: WebExports) {
@@ -101,10 +108,12 @@ export class ClientTable {
         return null;
     }
 
-    /** Keeps the identity the last read took from its input: the roster trailer, already in those bytes. */
+    /** Keeps the identity the last read took from its input (the roster trailer, already in those bytes), and the board it left. */
     private keepIdentity(gameId: string, input: Uint8Array): void {
         const at = this.ex.wasm_client_identity_at();
         if (gameId && at >= 0) this.identities.set(gameId, input.slice(at));
+        const n = gameId ? this.ex.wasm_client_board_keep() : 0;
+        if (n > 0) this.boards.set(gameId, this.out(n));
     }
 
     /** The CLIENT_E_* of the last refusal, and the kernel's detail behind it. */
@@ -130,12 +139,13 @@ export class ClientTable {
 
     /** A realtime push (evwire as2, or as3 with its flags byte), or null when it does not read whole. A push that carries a roster names its seats itself. */
     readPush(bytes: Uint8Array, opts: PushIdentity & { as3: boolean; version?: number }): PushRead | null {
-        return this.read(bytes, opts, (n) => this.ex.wasm_client_push_open(bytes.length, n, opts.as3 ? 1 : 0, opts.version ?? 0));
+        return this.read(bytes, opts, NO_BYTES, (n) => this.ex.wasm_client_push_open(bytes.length, n, opts.as3 ? 1 : 0, opts.version ?? 0));
     }
 
-    /** A realtime message whole (evwire.h, the cast: the committed version, then the as3 push), or null when it does not read whole. */
+    /** A realtime message whole (evwire.h, the cast: the committed version, then the as3 push or the moves of a delta), or null when it does not read whole. */
     readCast(bytes: Uint8Array, opts: PushIdentity = {}): PushRead | null {
-        return this.read(bytes, opts, (n) => this.ex.wasm_client_cast_open(bytes.length, n));
+        const board = opts.gameId ? this.boards.get(opts.gameId) ?? NO_BYTES : NO_BYTES;
+        return this.read(bytes, opts, board, (n) => this.ex.wasm_client_cast_open(bytes.length, n, board.length));
     }
 
     /** The version a cast's header names, or null for bytes that have no such header: what to fetch at least, when the cast itself did not read. */
@@ -146,11 +156,11 @@ export class ClientTable {
     }
 
     /** Every step and the committed board of the push or cast `open` opens from `bytes` and the identity's length. */
-    private read(bytes: Uint8Array, opts: PushIdentity, open: (identityLen: number) => number): PushRead | null {
+    private read(bytes: Uint8Array, opts: PushIdentity, board: Uint8Array, open: (identityLen: number) => number): PushRead | null {
         const identity = opts.identity instanceof Uint8Array ? opts.identity
             : opts.identity === 'none' || !opts.gameId ? new Uint8Array(0)
             : this.identities.get(opts.gameId) ?? new Uint8Array(0);
-        if (!this.put(bytes, identity)) return this.refused(V.CLIENT_E_PUSH);
+        if (!this.put(bytes, identity, board)) return this.refused(V.CLIENT_E_PUSH);
         let rc = open(identity.length);
         if (rc !== V.CLIENT_OK) return this.refused(rc);
         const m = this.m();

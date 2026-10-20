@@ -327,6 +327,11 @@ export class ServerTable {
         return this.out(this.ex.wasm_table_cast(...this.put(gameId), viewer, version));
     }
 
+    /** table_cast_delta: one viewer's delta cast for the last operation (c/src/evwire.h EVW_CAST_DELTA), or TABLE_E_WIRE for a commit that goes as the board cast. */
+    castDelta(viewer: number, version: number): Uint8Array | number {
+        return this.out(this.ex.wasm_table_cast_delta(viewer, version));
+    }
+
     /**
      * table_rate: rates the game the last operation ended, from the seats'
      * ratings by seat (TABLE_RATING_NONE for a seat that has none). Between the

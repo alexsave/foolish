@@ -37,6 +37,7 @@
 #include "replay_steps.h"
 #include "auth/auth.h"
 #include "table.h"
+#include "client_table.h"
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
@@ -112,8 +113,36 @@ typedef struct {
 } fan_seen;
 static fan_seen g_fan;
 
+// THE CLIENTS OF THE CASTS, when a test asks for them (g_cast_read): each seat
+// and the spectators read every cast through the kernel's client as a page does,
+// keeping the identity and the board it leaves for the next one, so a delta cast
+// is rebuilt on the board the last cast left and must read.
+typedef struct {
+    bool on;
+    int  deltas, boards, refused;
+    struct { ClientTable c; ClientSlot slot; ClientDelta d; uint8_t ident[4096], board[CLIENT_BOARD_KEEP_MAX];
+             int ident_len, board_len; } who[CB_MAX_SEATS + 1];
+} cast_reading;
+static cast_reading g_cast_read;
+
+static void cast_read_one(int w, const uint8_t *p, size_t n) {
+    typeof(g_cast_read.who[0]) *r = &g_cast_read.who[w];
+    if (!r->c.g) { client_init(&r->c, &r->slot); client_delta_attach(&r->c, &r->d); }
+    if (n > 0 && p[0] == EVW_CAST_DELTA) g_cast_read.deltas++; else g_cast_read.boards++;
+    int rc = client_cast_open(&r->c, p, (int)n, r->ident, r->ident_len, r->board, r->board_len), k = 0;
+    while (rc == CLIENT_OK && (k = client_push_next(&r->c)) == 1) { }
+    if (rc == CLIENT_OK) rc = k != 0 ? k : client_push_final(&r->c);
+    if (rc != CLIENT_OK) { g_cast_read.refused++; return; }
+    r->ident_len = client_identity(&r->c, r->ident, sizeof r->ident);
+    r->board_len = client_board_keep(&r->c, r->board, sizeof r->board);
+}
+
 static void fan_observer(const cb_fanout *f) {
     seq_note(f->version);
+    if (g_cast_read.on) {
+        for (int i = 0; i < f->n_seats; i++) if (f->seats[i].cast) cast_read_one(i, f->seats[i].cast, f->seats[i].cast_len);
+        if (f->spectator_cast) cast_read_one(CB_MAX_SEATS, f->spectator_cast, f->spectator_cast_len);
+    }
     fan_seen s;
     memset(&s, 0, sizeof s);
     s.count = g_fan.count + 1;
@@ -1546,6 +1575,48 @@ static void every_commit_is_cast(void) {
     T_CHECK(rearranged > 0);
 }
 
+// CBASE_CAST_DELTA: the same whole game with the flag on. Every commit that only
+// moved reaches both seats and the spectators as a delta, every other one (the
+// create, the join, the deal) as the board cast, and every one of them - read in
+// order through the kernel's client the way a page reads them, each delta on the
+// board the cast before it left - reads, to the game's end.
+static void every_commit_is_cast_as_a_delta(void) {
+    setup(0);
+    g_cfg.cast_delta = true;
+    memset(&g_cast_read, 0, sizeof g_cast_read);
+    g_cast_read.on = true;
+    char gid[CB_GAME_ID_MAX + 1];
+    reply r;
+    create_game(gid, &r);
+    meta("B", ASK_JOIN, gid, NULL, &r);
+    meta("A", ASK_START, gid, NULL, &r);
+    meta("B", ASK_START, gid, NULL, &r);
+    T_EQ_INT(status_of(gid), GAME_STATUS_PLAYING);
+    const int setup_boards = g_cast_read.boards;
+    static const char *const uids[2] = { UID_A, UID_B }, *const bearers[2] = { "A", "B" };
+    int commits = 0;
+    for (int step = 0; step < 4000 && status_of(gid) == GAME_STATUS_PLAYING; step++) {
+        const int k = step % 2, seat = seat_of(gid, uids[k]);
+        const int64_t v = version_of(gid);
+        uint8_t wire[64];
+        int n = pick_move(gid, seat, wire, sizeof wire);
+        if (n <= 0) continue;
+        action(bearers[k], gid, wire, n, (uint32_t)v, &r);
+        if (version_of(gid) != v + 1) continue;
+        commits++;
+        T_EQ_INT(g_fan.casts, 2);
+        T_CHECK(g_fan.spectator_cast);
+    }
+    T_EQ_INT(status_of(gid), GAME_STATUS_GAME_OVER);
+    T_CHECK(commits > 20);
+    T_EQ_INT(g_cast_read.refused, 0);
+    T_EQ_INT(g_cast_read.boards, setup_boards);       // every move went as a delta
+    T_EQ_INT(g_cast_read.deltas, 3 * commits);        // two seats and the spectators
+    T_CHECK(setup_boards >= 3 * 3);                    // the create, the join, the deal: board casts
+    g_cast_read.on = false;
+    g_cfg.cast_delta = false;
+}
+
 // ---- answer first (app/after.h) ---------------------------------------------------------------
 
 // Under Lambda an HTTP invocation answers before it publishes: with the window
@@ -2681,6 +2752,7 @@ int main(void) {
     T_RUN(game_ids_are_wide_and_old_ones_work);
     T_RUN(a_goods_only_commit_is_broadcast);
     T_RUN(every_commit_is_cast);
+    T_RUN(every_commit_is_cast_as_a_delta);
     T_RUN(a_bump_wakes_the_bots);
     T_RUN(continue_returns_a_clean_lobby);
     T_RUN(a_stranger_changes_nothing);

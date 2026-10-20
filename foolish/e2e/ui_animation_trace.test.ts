@@ -74,6 +74,11 @@ const overlayMisses: string[] = [];
 
 const GOLDEN_DIR = new URL('./fixtures/ui_anim/', import.meta.url);
 const UPDATE = process.env.UPDATE_UI_ANIM === '1';
+// UI_ANIM_CASTS=delta: every commit that may go as a delta cast (c/src/evwire.h
+// EVW_CAST_DELTA) is pushed as one, as the server does with CBASE_CAST_DELTA=1,
+// and the page's kernel rebuilds it. The goldens are the same goldens: a frame
+// that differs is a bug in the rebuild (ui_animation_trace_delta.test.ts).
+const DELTA_CASTS = process.env.UI_ANIM_CASTS === 'delta';
 const DUMP = process.env.UI_ANIM_DUMP;
 
 // ---- jsdom -------------------------------------------------------------------------
@@ -171,7 +176,8 @@ class Server {
         if (p.nEvents > 0 || p.goodsChanged) {
             for (let s = 0; s < seats.length; s++) {
                 if (seats[s].brain) continue;
-                const b = t.cast(this.gid, s, this.version + 1);
+                const d = DELTA_CASTS ? t.castDelta(s, this.version + 1) : L.TABLE_E_WIRE;
+                const b = d instanceof Uint8Array ? d : t.cast(this.gid, s, this.version + 1);
                 assert.ok(b instanceof Uint8Array, `push: ${b}`);
                 pushes.push([seats[s].id, b]);
             }
