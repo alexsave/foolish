@@ -69,7 +69,12 @@ test('feed: it republishes its own game\'s casts, and lets the stream go on unmo
     const cast = new Uint8Array([1, 2, 3]);
     fb.push.cast(GAME_ID, cast);
     fb.push.cast('other1', new Uint8Array([9]));
-    assert.deepEqual(published, [{ cast, game_id: GAME_ID }], 'its own game\'s cast republished with its game id, and nothing else');
+    // A delta cast (c/src/evwire.h EVW_CAST_DELTA) is bytes like any other: the
+    // kernel's client tells the formats apart, not the feed.
+    const delta = new Uint8Array([0xC2, 8, 0, 0, 0]);
+    fb.push.cast(GAME_ID, delta);
+    assert.deepEqual(published, [{ cast, game_id: GAME_ID }, { cast: delta, game_id: GAME_ID }],
+                     'its own game\'s casts republished with its game id, whatever their format, and nothing else');
     off();
     await view.unmount();
     assert.equal(fb.held.get(`game:${GAME_ID}`), undefined, 'let go on unmount');
