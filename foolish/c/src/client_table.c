@@ -399,6 +399,9 @@ static int delta_rebuild(ClientTable *c, const EvwDelta *d, const uint8_t *board
     const bool ended = delta_finalize(g, c->ai_mask);
     // Every draw the server revealed was drawn, none past them, every hook and
     // record held; the end is the one the server says; and the board is its board.
+    // The counts are exact where the check is a 32-bit detector: a reveal left
+    // over changes no board (only the count sees it), and a draw past the list
+    // would leave a placeholder the check would most likely, not certainly, see.
     if (rv.at != rv.n || rv.missing || st->overflow || g->num_logs > EVW_DELTA_MAX_LOGS
         || ended != ((d->flags & EVW_DELTA_FINAL) != 0)
         || (g->status == GAME_STATUS_GAME_OVER) != ((d->flags & EVW_DELTA_OVER) != 0)
@@ -432,9 +435,9 @@ int client_cast_open(ClientTable *c, const uint8_t *p, int len, const uint8_t *i
         if (evwire_delta_read(p, len, &d) != 0) return CLIENT_E_PUSH;
         int status = 0;
         c->has_roster = false;
-        int rc = identity_len > 0 ? identity_read(c, identity, identity_len, &status, CLIENT_E_IDENTITY) : CLIENT_E_BEHIND;
+        int rc = identity_len > 0 ? identity_read(c, identity, identity_len, &status, CLIENT_E_IDENTITY) : CLIENT_OK;
         if (rc != CLIENT_OK) return rc;
-        c->has_roster = true;
+        c->has_roster = identity_len > 0;
         if ((rc = delta_rebuild(c, &d, board, board_len)) != CLIENT_OK) return rc;
         return client_push_open(c, c->delta->seq, c->delta->seq_len, 1, identity, identity_len, d.version);
     }
