@@ -751,7 +751,12 @@ static void game_scenario(void) {
     const char *ht = cb_buf_cstr(&hr.body), *in = strstr(ht, " inline="), *tr = strstr(ht, " tripped=");
     fprintf(stderr, "smoke: %s", ht);
     T_CHECK(in && atoll(in + 8) > 0);
+#ifndef CB_INSTRUMENTED
+    // A time budget: held by the optimized build only (ASan's and coverage's run several times slower).
     T_CHECK(tr && atoll(tr + 9) == 0);
+#else
+    T_CHECK(tr != NULL);
+#endif
     tc_response_free(&hr);
 
     // The view, then a restart on the same database: the same view.
