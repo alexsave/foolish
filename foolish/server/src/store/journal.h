@@ -84,17 +84,26 @@ cb_journal *cb_journal_of(const cb_store *s);   // NULL: none installed
 const cb_rows_ops *cb_journal_rows(void);
 
 // THE GAME'S ONE OWNER under serve: the overlay holds every game an operation touched (its
-// acknowledged row; the tables lag it by the waiting moves), so an operation reads its game
+// acknowledged state; the tables lag it by the waiting moves), so an operation reads its game
 // here and nowhere else. fn runs under the overlay's lock with the game's row (borrowed: it
-// copies what it keeps); a game the overlay does not hold is read from the tables and made
-// resident first. ONLY UNDER THE GAME'S LOCK (app/table_ops.c cb_table_lock): a row read
+// copies what it keeps) and, when the overlay holds the game decoded, its resident (table.h
+// TableResident: the operation adopts a copy, and then must not read the row's state and
+// roster bytes, which may be stale until encoded; the columns are always the game's). With
+// res NULL the row's bytes are the game's: the caller decodes them and may hand the result
+// back (cb_journal_game_decoded). A game the overlay does not hold is read from the tables
+// and made resident first. ONLY UNDER THE GAME'S LOCK (app/table_ops.c cb_table_lock): a row read
 // from the tables is made resident only because no commit of the game can land between the
 // read and the insert. CB_OK or fn's result, CB_E_NOT_FOUND for no such game, or the tables'
 // error. A resident game leaves when it is idle (IDLE_EVICT_MS, nothing waiting), when over
 // opts.max_games the least recently used idle ones do (at the flush thread's next pass),
 // and on an admin's write (THE ADMIN RULE).
-typedef int (*cb_journal_game_fn)(void *ud, const cb_game_row *row);
+struct TableResident;
+typedef int (*cb_journal_game_fn)(void *ud, const cb_game_row *row, const struct TableResident *res);
 int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, void *ud);
+// The game decoded from the row acquire gave at `version` (its bytes, res NULL): kept as its
+// resident if the game is still at that version, so the next operation adopts instead of
+// decoding. Under the game's lock.
+void cb_journal_game_decoded(cb_store *s, const char *id, int64_t version, const struct TableResident *res);
 
 // Every acknowledged move into the tables now (store.h cb_store_settle).
 int cb_journal_flush(cb_store *s);

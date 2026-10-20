@@ -181,6 +181,14 @@ int state_get(Game *g, const unsigned char *p, int len, int masked) {
     return clamped ? GAME_INVALID_COUNT : GAME_VALID;
 }
 
+void state_canonical(Game *g) {
+    if (!g->has_flipped) { g->flipped.suit = 0; g->flipped.value = 0; }
+    for (int i = 0; i < g->num_players && i < MAX_PLAYERS; i++) g->players[i].awaiting_attack = game_seat_awaiting(g, i);
+    g->num_logs = 0;
+    g->log_cap = 0;
+    g->log_virt = 0;
+}
+
 int state_measure(const unsigned char *p, int len) {
     // status, num_players, power_suit, first_attacker, defender, u16 discard,
     // has_flipped, flipped, u32 good mask, has_good_timestamp, then u16 deck_count.

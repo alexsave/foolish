@@ -106,6 +106,10 @@ typedef struct {
     const struct ReplayMove *moves;
     int      n_moves;
     bool     moves_by_bots;
+    // The new row decoded (table.h TableResident: what the kernel's table holds after the
+    // commit), for a store that keeps games in memory (the journal: the next operation adopts
+    // it instead of decoding the row). NULL: none. A store with no journal ignores it.
+    const struct TableResident *resident;
 } cb_game_commit;
 
 // A dashboard entry: a game a user sits at.

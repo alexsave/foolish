@@ -16,6 +16,7 @@
 #include "store/store_sql.h"
 #include "awire.h"
 #include "legal.h"
+#include "bot_roster.h"
 #include "roster.h"
 #include "table.h"
 #include "util/err.h"
@@ -1134,6 +1135,65 @@ static void a_deal_and_its_moves_read_no_table(void) {
     close_world(s);
 }
 
+// R1 AND R3 THROUGH THE SERVER: a refused move (REJECTED, a stale round) leaves the game exactly
+// as it was, the row read after it is byte for byte the row read before; a committed move is
+// seen by the next read on any path, its bytes the new board's (the resident's encode, made
+// when read), its version the new one.
+static void a_refusal_changes_nothing_and_a_move_is_read_at_once(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/refusal%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    move_t m;
+    int refusals = 0, moves = 0;
+    for (int i = 0; i < 40; i++) {
+        cb_game_row before = stored(s, gid);
+        if (before.status != GAME_STATUS_PLAYING) { cb_game_row_free(&before); break; }
+        // A pickup by whoever is not defending, at the current round: refused by the kernel.
+        reply r;
+        const uint8_t pickup[2] = { AWIRE_PICKUP, 0 };
+        action(i % 2 ? "B" : "A", gid, pickup, 2, (uint32_t)before.version, &r);
+        TableResponse resp;
+        if (r.status == 200 && table_response_decode(r.body, (int)r.len, &resp) == 0 && resp.status != TABLE_STATUS_APPLIED) {
+            refusals++;
+            cb_game_row after = stored(s, gid);
+            T_EQ_INT(after.version, before.version);
+            T_CHECK(after.state_len == before.state_len && memcmp(after.state, before.state, before.state_len) == 0);
+            T_CHECK(after.roster_len == before.roster_len && memcmp(after.roster, before.roster, before.roster_len) == 0);
+            cb_game_row_free(&after);
+        }
+        int64_t v = step(s, gid, &m);
+        if (v > 0 && m.n > 0) {
+            moves++;
+            cb_game_row after = stored(s, gid);
+            T_EQ_INT(after.version, v);
+            T_CHECK(after.state_len != before.state_len || memcmp(after.state, before.state, before.state_len) != 0);
+            cb_game_row_free(&after);
+        }
+        cb_game_row_free(&before);
+        if (v < 0) break;
+    }
+    T_CHECK(refusals > 3);
+    T_CHECK(moves > 3);
+    // R4: a flush with no read since the last move writes the resident's encode, not the bytes
+    // the last read left in the row's buffers.
+    if (next_move(s, gid, &m) && play(gid, &m) > 0) {
+        T_EQ_INT(cb_journal_flush(s), CB_OK);
+        cb_game_row tables, held = stored(s, gid);
+        memset(&tables, 0, sizeof tables);
+        T_EQ_INT(cb_rows_sql.game_get(s, gid, &tables), CB_OK);
+        T_EQ_INT(tables.version, held.version);
+        T_CHECK(tables.state_len == held.state_len && memcmp(tables.state, held.state, held.state_len) == 0);
+        cb_game_row_free(&tables);
+        cb_game_row_free(&held);
+    }
+    close_world(s);
+}
+
 // A RESIDENT THE TABLES CONTRADICT IS DROPPED, NEVER BUILT ON: a write the journal did not
 // see (here a raw UPDATE; in production nothing but the admin's, which forgets the overlay
 // itself) makes the next write around the journal lose its fence, and the game leaves the
@@ -1243,6 +1303,169 @@ static void no_row_cache_beside_the_overlay(void) {
         if (dp) closedir(dp);
     }
     T_CHECK(files > 10);
+}
+
+// ---- the resident is the row (R3, T9) -------------------------------------------------------
+//
+// Random games played twice in step, on the kernel directly: once the way the server plays
+// them (each operation on a table ADOPTED from the last one's resident), once the way a load
+// of the stored row and the journal's recovery do (each on a table LOADED from the resident's
+// encoded row). After every operation the two tables are the same board field by field, their
+// products are the same bytes, and the resident's encode is the products' row exactly.
+
+typedef struct {
+    Game       *g;
+    TableSnaps *sn;
+    Table       t;
+} ktable;
+
+static void kt_open(ktable *k) {
+    k->g = calloc(1, sizeof *k->g);
+    k->sn = calloc(1, sizeof *k->sn);
+    table_init(&k->t, k->g, k->sn);
+}
+
+static void kt_close(ktable *k) {
+    free(k->g);
+    free(k->sn);
+}
+
+static bool card_same(Card a, Card b) { return a.suit == b.suit && a.value == b.value; }
+
+// Every field an operation can read, within its counts (state_get leaves the rest alone).
+static bool same_board(const Table *a, const Table *b) {
+    const Game *x = a->g, *y = b->g;
+    bool same = x->status == y->status && x->num_players == y->num_players && x->power_suit == y->power_suit &&
+                x->first_attacker == y->first_attacker && x->defender == y->defender && x->num_battles == y->num_battles &&
+                x->deck_count == y->deck_count && x->discard_pile_length == y->discard_pile_length &&
+                x->has_flipped == y->has_flipped && x->deterministic_deck == y->deterministic_deck && x->rules == y->rules &&
+                card_same(x->flipped, y->flipped) && x->num_eliminated == y->num_eliminated &&
+                x->good_players_mask == y->good_players_mask && x->has_good_timestamp == y->has_good_timestamp &&
+                x->log_cap == y->log_cap && x->log_virt == y->log_virt && x->num_logs == y->num_logs;
+    for (int i = 0; same && i < x->deck_count; i++) same = card_same(x->deck[i], y->deck[i]);
+    for (int i = 0; same && i < x->num_battles; i++)
+        same = card_same(x->table_battles[i].attack, y->table_battles[i].attack) &&
+               card_same(x->table_battles[i].defense, y->table_battles[i].defense);
+    for (int i = 0; same && i < x->num_eliminated; i++) same = x->elimination_order[i] == y->elimination_order[i];
+    for (int p = 0; same && p < x->num_players; p++) {
+        const Player *u = &x->players[p], *v = &y->players[p];
+        same = u->status == v->status && u->hand_count == v->hand_count && u->awaiting_attack == v->awaiting_attack &&
+               u->strategy_key == v->strategy_key;
+        for (int i = 0; same && i < u->hand_count; i++) same = card_same(u->hand[i], v->hand[i]);
+    }
+    uint8_t ra[ROSTER_BYTES], rb[ROSTER_BYTES];
+    same = same && roster_encode(&a->r, ra, sizeof ra) == ROSTER_BYTES && roster_encode(&b->r, rb, sizeof rb) == ROSTER_BYTES &&
+           memcmp(ra, rb, sizeof ra) == 0;
+    same = same && memcmp(&a->clock, &b->clock, sizeof a->clock) == 0 && a->ratings.n == b->ratings.n &&
+           a->rng_base == b->rng_base;
+    return same;
+}
+
+// The fastest linked brains that read no session log (the drive is not handed one here).
+static int kt_brains(const char *keys[2]) {
+    int n = 0;
+    for (int i = 0; i < bot_roster_count() && n < 2; i++) {
+        const BotRosterEntry *e = bot_roster_at(i);
+        if (bot_roster_linked(i) && !e->uses_logs && e->tier > 0 && e->tier <= 3) keys[n++] = e->key;
+    }
+    return n;
+}
+
+static void the_resident_is_the_row(void) {
+    const char *brains[2];
+    T_EQ_INT(kt_brains(brains), 2);
+    enum { ARENA = 128 * 1024 };
+    uint8_t *aa = malloc(ARENA), *ab = malloc(ARENA), state[4096], roster[ROSTER_BYTES + 8];
+    static const char GID[] = "0123456789ab";
+    uint64_t rng = 99;
+    int ops = 0, games = 0;
+    for (; games < 40 && ops < 1500; games++) {
+        // A lobby: the human, two bots of the two brains, dealt by the human's ready.
+        ktable a, b;
+        kt_open(&a);
+        kt_open(&b);
+        uint8_t seed[32];
+        for (int i = 0; i < 32; i++) seed[i] = (uint8_t)rng_u32(&rng);
+        char hex[65];
+        for (int i = 0; i < 32; i++) snprintf(hex + 2 * i, 3, "%02x", seed[i]);
+        T_EQ_INT(table_create(&a.t, UID_A, (int)strlen(UID_A), "ALICE", 5), TABLE_OK);
+        table_add_bot(&a.t, UID_A, (int)strlen(UID_A), "b0000000-0000-4000-8000-000000000001", 36, "%one", 4, brains[0],
+                      (int)strlen(brains[0]), seed);
+        if (games % 2) table_add_bot(&a.t, UID_A, (int)strlen(UID_A), "b0000000-0000-4000-8000-000000000002", 36, "%two", 4,
+                                     brains[1], (int)strlen(brains[1]), seed);
+        T_CHECK(table_ready(&a.t, UID_A, (int)strlen(UID_A), seed) >= 0);
+        table_set_deal_seed(&a.t, hex, 64);
+        TableCommit ca;
+        int64_t now = 1760000000000LL;
+        uint32_t version = 3;
+        T_CHECK(table_commit_products(&a.t, GID, 12, version, now, &ca, aa, ARENA) > 0);
+        TableResident res;
+        table_resident(&a.t, &ca.clock, &res);
+        while (ops < 1500) {
+            // The server's table and the load's.
+            table_init(&a.t, a.g, a.sn);
+            T_EQ_INT(table_adopt(&a.t, &res), TABLE_OK);
+            int sl = 0, rl = 0;
+            T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl, roster, sizeof roster, &rl), TABLE_OK);
+            table_init(&b.t, b.g, b.sn);
+            T_EQ_INT(table_load(&b.t, state, sl, roster, rl), TABLE_OK);
+            table_set_deal_seed(&b.t, hex, 64);
+            if (!same_board(&a.t, &b.t)) { T_CHECK(!"adopted and loaded boards differ"); break; }
+            if (a.g->status != GAME_STATUS_PLAYING) break;
+            // One operation on both: the human's random legal move, else a bot cycle.
+            int ra = -1, rb = -1;
+            LegalMoves *moves = calloc(1, sizeof *moves);
+            calculate_legal_moves(a.g, 0, moves);
+            int k = 0;
+            for (int i = 0; i < moves->n; i++) k += moves->moves[i].type != MOVE_WAIT;
+            if (k > 0) {
+                int want = (int)(rng_u32(&rng) % (uint32_t)k);
+                uint8_t wire[64];
+                int n = 0;
+                for (int i = 0; i < moves->n; i++) {
+                    const LegalMove *m = &moves->moves[i];
+                    if (m->type == MOVE_WAIT || want--) continue;
+                    AwireAction w;
+                    memset(&w, 0, sizeof w);
+                    w.kind = m->type;
+                    w.n = m->n_cards;
+                    for (int c = 0; c < m->n_cards; c++) { w.cards[c] = m->cards[c]; w.attacks[c] = m->attack_cards[c]; }
+                    n = awire_encode(&w, wire, sizeof wire);
+                    break;
+                }
+                ra = table_act(&a.t, UID_A, (int)strlen(UID_A), wire, n, -1, 0);
+                rb = table_act(&b.t, UID_A, (int)strlen(UID_A), wire, n, -1, 0);
+            } else if (table_bots_due(&a.t)) {
+                BotDriveOut da, db;
+                ra = table_bot_drive(&a.t, NULL, 0, 0, &da);
+                rb = table_bot_drive(&b.t, NULL, 0, 0, &db);
+            }
+            free(moves);
+            T_EQ_INT(ra, rb);
+            if (ra < 0) break;
+            ops++;
+            version++;
+            now += 1500;
+            const int na = table_commit_products(&a.t, GID, 12, version, now, &ca, aa, ARENA);
+            TableCommit cb;
+            const int nb = table_commit_products(&b.t, GID, 12, version, now, &cb, ab, ARENA);
+            T_EQ_INT(na, nb);
+            if (na <= 0 || na != nb || memcmp(aa, ab, (size_t)na) != 0) { T_CHECK(!"the products differ"); break; }
+            // T9: the resident's encode is the products' row, byte for byte.
+            table_resident(&a.t, &ca.clock, &res);
+            T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl, roster, sizeof roster, &rl), TABLE_OK);
+            if (sl != ca.state.len || memcmp(state, aa + ca.state.off, (size_t)sl) != 0 || rl != ca.roster.len ||
+                memcmp(roster, aa + ca.roster.off, (size_t)rl) != 0) {
+                T_CHECK(!"the resident's encode is not the products' row");
+                break;
+            }
+        }
+        kt_close(&a);
+        kt_close(&b);
+    }
+    T_CHECK(ops >= 1000);
+    free(aa);
+    free(ab);
 }
 
 // ---- the flush rule: a move writes no table until its game is due --------------------------
@@ -1604,12 +1827,14 @@ int main(void) {
     T_RUN(a_move_allocates_almost_nothing);
     T_RUN(a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused);
     T_RUN(a_cycle_walk_draws_as_the_drive_did);
+    T_RUN(the_resident_is_the_row);
     T_RUN(a_resident_the_tables_contradict_is_dropped);
     T_RUN(the_overlay_keeps_at_most_its_cap);
     T_RUN(no_row_cache_beside_the_overlay);
     for (int b = 0; b < 2; b++) {
         g_bots = b;
         T_RUN(a_deal_and_its_moves_read_no_table);
+        T_RUN(a_refusal_changes_nothing_and_a_move_is_read_at_once);
         g_bots = b;
         T_RUN(the_flush_writes_the_rows_per_move_commits_write);
         T_RUN(a_restore_mid_game_holds_every_acknowledged_move);
