@@ -63,6 +63,10 @@ typedef struct {
     cb_table_fn run;
     void *ud;
     bool fresh;                // skip the warm cache (delete-account's redactions)
+    // A human's action as its awire bytes (the request's): the store's journal codes the
+    // move from them (journal.h). NULL: not an action.
+    const uint8_t *wire;
+    int            wire_len;
 } cb_table_op;
 
 typedef struct {

@@ -1,0 +1,107 @@
+// journal.h - the move journal: `cbase serve`'s write-behind in front of the SQL tables
+// (c_base/DESIGN.md "The move journal").
+//
+// A plain human move does not write the tables. It is coded (replay_move.h: the kernel menu's
+// index on the replay codec's coder) into a record, appended with every other record of
+// the same moment to an append-only segment file in ONE write(), and acknowledged once
+// that write returned: the durability the tables' WAL at synchronous=NORMAL gave (a process
+// crash keeps it, an OS crash may not; opts.sync adds an fdatasync per batch). The game's
+// new row and its moves are held in memory (the overlay) and the store's game reads see
+// them first. Every few seconds, and when enough moves wait, a flush writes every waiting
+// game to the tables in one transaction and deletes the segments it covered.
+//
+// Everything else is written at once, as before: a commit that is not one plain human move
+// (a deal, a seat change, the end of a game, a bot's cycle) and a game's delete write that
+// game's waiting moves first, in the same transaction. A read that scans the games table
+// (the bot scan, an import) settles the journal first; that rule's one owner is
+// journal_scan (journal.c).
+//
+// At start the tables are read and the journal's segments replayed through the kernel
+// (the app's apply), in order, before anything is served; a torn or corrupt batch at a
+// segment's end is dropped (it was never acknowledged). A record the kernel's menu does not
+// confirm refuses the start.
+//
+// SEGMENT FILE <db>-journal.<seq>: "FJNL", u32 LE format (1), u64 LE start ms, then
+// batches. A BATCH: u8 'J', u8 format (1), u16 LE payload length, u32 LE FNV-1a 32 over
+// those 4 bytes and the payload, then the payload: ONE replay-coder integer (replay.h),
+// coded independently of every other batch, holding
+//   n           varint, the records
+//   base        varint, zigzag(the batch's earliest ms - the segment's start ms)
+//   per record: slot    uniform over N + 1, N = the slots the segment named so far; N
+//                       names a new game: its code's length uniform over
+//                       CB_GAME_ID_MAX + 1, each byte uniform over 256, and its version
+//                       before the move as a varint
+//               (old)   uniform over 2: 0 the move follows the slot's last one, 1 a varint
+//                       version follows (the game was written around the journal between)
+//               ms      varint, the move's ms - base
+//               move    replay_move_code
+#ifndef CB_JOURNAL_H
+#define CB_JOURNAL_H
+
+#include "store/rows_foolish.h"
+#include "replay_move.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+typedef struct cb_journal cb_journal;
+
+// Replays one move at start: `row` is the game as it stood before it, `now_ms` the move's
+// time. Fills *out (owned byte fields) with the row the commit wrote and *log with the
+// session-log records it appended (malloc'd, may be NULL with len 0). CB_OK, or anything
+// else to refuse the start.
+typedef int (*cb_journal_apply_fn)(void *ud, const cb_game_row *row, int64_t now_ms, const ReplayMove *mv,
+                                   cb_game_row *out, uint8_t **log, size_t *log_len);
+
+typedef struct {
+    const char *path;          // the database's path: segments are <path>-journal.<seq>
+    int64_t     flush_ms;      // the flush's period (0: 2000)
+    int         flush_moves;   // a flush starts early once this many moves wait (0: 4096)
+    bool        sync;          // fdatasync each batch before it is acknowledged
+    cb_journal_apply_fn apply;
+    void       *apply_ud;
+} cb_journal_opts;
+
+// Recovers the segments into the tables and installs the journal on s (cb_rows_of then
+// answers the journal's operations). CB_OK, or why the store must not be served (err).
+int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap);
+// Flushes everything, deletes the segments and uninstalls. Nothing may commit meanwhile.
+void cb_journal_close(cb_store *s);
+cb_journal *cb_journal_of(const cb_store *s);   // NULL: none installed
+const cb_rows_ops *cb_journal_rows(void);
+
+// Every acknowledged move into the tables now (store.h cb_store_settle).
+int cb_journal_flush(cb_store *s);
+
+typedef struct {
+    long batches, writes, records, bytes;   // bytes: every byte written to segments
+    long flushes, flushed_games, flushed_moves;
+    long recovered;                         // records replayed at the last open
+} cb_journal_stats;
+void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
+
+// ---- the batch codec (pure; unit_journal) ------------------------------------------------
+typedef struct {
+    char       game[CB_GAME_ID_MAX + 1];
+    int64_t    base_version;   // the game's version before the move
+    int64_t    now_ms;
+    ReplayMove mv;
+} cb_jmove;
+
+// A segment's slot table: the games it named, in order.
+typedef struct cb_jslots cb_jslots;
+cb_jslots *cb_jslots_new(void);
+void cb_jslots_free(cb_jslots *t);
+int cb_jslots_count(const cb_jslots *t);
+
+#define CB_JOURNAL_BATCH_HDR 8
+// One batch of n moves (n <= CB_JOURNAL_BATCH_MAX) into out, the slot table brought
+// forward. Its length, or a negative CB_E_* (nothing is consumed from t then).
+#define CB_JOURNAL_BATCH_MAX 64
+int cb_journal_batch_encode(cb_jslots *t, int64_t seg_start_ms, const cb_jmove *m, int n, uint8_t *out, int cap);
+// The batch at in: its moves into out (cap of them), *used its length. The count, or -1
+// for a batch that is torn (runs past len) or corrupt (header, checksum or payload).
+int cb_journal_batch_decode(cb_jslots *t, int64_t seg_start_ms, const uint8_t *in, size_t len, size_t *used,
+                            cb_jmove *out, int cap);
+
+#endif

@@ -590,6 +590,48 @@ static int sql_game_delete(cb_store *s, const char *id, int64_t expected) {
     return cb_sql_write(s, delete_step, &o);
 }
 
+typedef struct {
+    const cb_game_flush  *f;
+    int                   n;
+    const cb_game_commit *c;
+    const char           *del_id;
+    int64_t               del_version;
+} flush_op;
+
+static int flush_step(cb_sql *x, void *ud) {
+    flush_op *o = ud;
+    for (int i = 0; i < o->n; i++) {
+        const cb_game_flush *f = &o->f[i];
+        stmt_t *s = cb_sql_stmt(x, S_GAME_CAS);
+        if (!s) return CB_E_DB;
+        game_bind(s, f->row, f->row->last_commit_at);
+        b_i64(s, G_EXPECTED, f->sql_version);
+        int rc = cb_sql_run(x, s, "journal flush");
+        if (rc != CB_OK) return rc;
+        if (cb_sql_changes(x) == 0) {
+            CB_ERROR("store", "journal flush: game %s is not at version %lld in the tables", f->row->id,
+                     (long long)f->sql_version);
+            return CB_E_CONFLICT;
+        }
+        for (int k = 0; k < f->n_moves; k++)
+            if ((rc = moves_write(x, f->row->id, false, f->moves[k].seq, f->moves[k].log, f->moves[k].len)) != CB_OK) return rc;
+    }
+    if (o->c) return commit_step(x, (void *)o->c);
+    if (o->del_id) {
+        delete_op d = { o->del_id, o->del_version };
+        return delete_step(x, &d);
+    }
+    return CB_OK;
+}
+
+int cb_rows_sql_flush(cb_store *s, const cb_game_flush *f, int n, const cb_game_commit *c, const char *del_id,
+                      int64_t del_version) {
+    flush_op o = { f, n, c, del_id, del_version };
+    if (n == 0 && !c && !del_id) return CB_OK;
+    return cb_sql_write(s, flush_step, &o);
+}
+
+
 // ---- membership and the startup scan -----------------------------------------------------------
 
 typedef struct {
