@@ -5,6 +5,7 @@
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
+#include "util/str.h"
 #include "roster.h"
 #include "../../../../shared/c/fnv.h"
 #include "../../../../shared/c/num_parse.h"
@@ -944,7 +945,7 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     jrec r;
     memset(&r, 0, sizeof r);
     r.epoch = epoch;
-    snprintf(r.m.game, sizeof r.m.game, "%s", row->id);
+    cb_strlcpy(r.m.game, row->id, sizeof r.m.game);
     r.m.base_version = c->expected_version;
     r.m.now_ms = row->updated_at;
     r.m.bots = c->moves_by_bots;

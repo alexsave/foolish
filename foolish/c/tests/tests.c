@@ -10712,6 +10712,15 @@ static void test_table_commit_products(void) {
     CHECK(c.status == GAME_STATUS_PLAYING && c.fool == -1 && c.num_players == 3 && c.needs_bots,
           "status, fool and needs_bots are the board's");
     CHECK(n == c.spectator.off + c.spectator.len, "the arena ends with the spectator envelope");
+    // The products validate the roster once and then write it unchecked (the row's and every
+    // envelope's trailer): a roster that broke a rule since the load is still refused.
+    {
+        const Roster keep = tb.r;
+        tb.r.seats[1].name[0] = (char)0xff;   // not UTF-8
+        CHECK(table_commit_products(&tb, RS("g-1"), 7, 0x010203040506LL, &c, tb_arena, sizeof(tb_arena)) == TABLE_E_ROSTER,
+              "the products refuse a roster that no longer validates");
+        tb.r = keep;
+    }
 
     uint8_t w[8];
     char fa_id[8];

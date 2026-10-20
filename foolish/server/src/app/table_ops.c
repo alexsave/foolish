@@ -323,7 +323,7 @@ bool cb_section_pooled_is_clean(void) {
 }
 
 int cb_section_load(cb_section *s, const cb_game_row *row) {
-    snprintf(s->gid, sizeof s->gid, "%s", row->id);
+    cb_strlcpy(s->gid, row->id, sizeof s->gid);
     table_init(&s->t, &s->g, &s->snaps);
     int rc = table_load(&s->t, row->state, (int)row->state_len, row->roster, (int)row->roster_len);
     if (rc < 0) return rc;
@@ -395,7 +395,9 @@ static int section_cast(cb_section *s, int viewer, uint32_t version, const uint8
 static bool seat_is_human(const RosterSeat *seat) { return seat->brain_len == 0; }
 
 static void seat_id(const RosterSeat *seat, cb_uuid out) {
-    snprintf(out, sizeof(cb_uuid), "%.*s", (int)seat->id_len, seat->id);
+    // A length-known copy (an id is a few dozen bytes; snprintf's format walk cost more than it).
+    const size_t n = seat->id_len < CB_UUID_LEN ? (size_t)seat->id_len : CB_UUID_LEN;
+    cb_strncpy0(out, sizeof(cb_uuid), (const char *)seat->id, n);
 }
 
 // ---- the end of a game (finalize.ts) ------------------------------------------------------
@@ -631,7 +633,7 @@ static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *de
     const bool waiting = c->status == GAME_STATUS_WAITING;
     cb_game_row *const np = nrow_out;
     memset(np, 0, sizeof *np);
-    snprintf(np->id, sizeof np->id, "%s", row->id);
+    cb_strlcpy(np->id, row->id, sizeof np->id);
     np->status = c->status;
     np->state = (uint8_t *)A + c->state.off;
     np->state_len = (size_t)c->state.len;
@@ -785,7 +787,7 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     for (int i = 0; i < s->n_old; i++) {
         bool still = false;
         for (int j = 0; j < f.n_seats; j++) if (strcmp(f.seats[j].user_id, s->old_humans[i]) == 0) still = true;
-        if (!still) snprintf(f.left[f.n_left++], sizeof(cb_uuid), "%s", s->old_humans[i]);
+        if (!still) cb_strlcpy(f.left[f.n_left++], s->old_humans[i], sizeof(cb_uuid));
     }
     if (rc == CB_OK && actor_id) {
         int seat = table_seat_of(t, actor_id, (int)strlen(actor_id));

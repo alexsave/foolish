@@ -204,8 +204,17 @@ static const GameRatings *table_stamp(const Table *t) {
     return t->g->status == GAME_STATUS_GAME_OVER && t->ratings.n > 0 ? &t->ratings : 0;
 }
 
+// One viewer's envelope; `validated`: the roster passed roster_validate in this products call.
+static int envelope_put(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
+                        uint8_t *out, int cap, bool validated);
+
 int table_envelope(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
                    uint8_t *out, int cap) {
+    return envelope_put(t, game_id, gid_len, viewer, version, out, cap, false);
+}
+
+static int envelope_put(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
+                        uint8_t *out, int cap, bool validated) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     const Game *g = t->g;
     if (viewer >= g->num_players) viewer = -1;
@@ -215,8 +224,11 @@ int table_envelope(const Table *t, const char *game_id, int gid_len, int viewer,
     const int view_len = 2 + state_put(g, viewer >= 0 ? viewer : VIEW_SPECTATOR, out + view_at + 2);
     env_header_set_view_len(out, view_at, view_len);
     const int at = view_at + view_len;
-    const int n = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask, game_pass_allowed(g),
-                                       out + at, cap - at);
+    const int status = game_status_byte(g), passing = game_pass_allowed(g);
+    const int n = validated ? roster_trailer_write_validated(&t->r, game_id, gid_len, status, g->good_players_mask,
+                                                             roster_bot_mask(&t->r), passing, out + at, cap - at)
+                            : roster_trailer_write(&t->r, game_id, gid_len, status, g->good_players_mask, passing,
+                                                   out + at, cap - at);
     if (n < 0) return n == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     return at + n;
 }
@@ -375,7 +387,11 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     out->clock = clock;
     at += out->state.len;
 
-    const int rl = roster_encode(&t->r, arena + at, cap - at);
+    // The roster is validated ONCE here, then written as the row's and as every envelope's
+    // trailer (it validated per write: 2 + the human seats times per move).
+    const int rv = roster_validate(&t->r);
+    if (rv != ROSTER_OK) return TABLE_E_ROSTER;
+    const int rl = roster_encode_validated(&t->r, arena + at, cap - at);
     if (rl < 0) return rl == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     out->roster.off = at;
     out->roster.len = rl;
@@ -402,13 +418,13 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
 
     for (int s = 0; s < g->num_players; s++) {
         if (t->r.seats[s].brain_len > 0) continue;
-        const int n = table_envelope(t, game_id, gid_len, s, next_version, arena + at, cap - at);
+        const int n = envelope_put(t, game_id, gid_len, s, next_version, arena + at, cap - at, true);
         if (n < 0) return n;
         out->views[s].off = at;
         out->views[s].len = n;
         at += n;
     }
-    const int n = table_envelope(t, game_id, gid_len, -1, next_version, arena + at, cap - at);
+    const int n = envelope_put(t, game_id, gid_len, -1, next_version, arena + at, cap - at, true);
     if (n < 0) return n;
     out->spectator.off = at;
     out->spectator.len = n;

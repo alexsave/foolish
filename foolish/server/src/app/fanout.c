@@ -108,12 +108,12 @@ void cb_fanout_publish(cb_ctx *ctx, const cb_fanout *f) {
         if (!f->seats[i].user_id[0]) continue;   // a bot has no client
         cb_view_row row;
         memset(&row, 0, sizeof row);
-        snprintf(row.game_id, sizeof row.game_id, "%s", f->game_id);
-        snprintf(row.player_id, sizeof row.player_id, "%s", f->seats[i].user_id);
+        cb_strlcpy(row.game_id, f->game_id, sizeof row.game_id);
+        cb_strlcpy(row.player_id, f->seats[i].user_id, sizeof row.player_id);
         row.view = (uint8_t *)f->seats[i].envelope;
         row.view_len = f->seats[i].envelope_len;
         row.version = f->version;
-        snprintf(row.status, sizeof row.status, "%s", f->status);
+        cb_strlcpy(row.status, f->status, sizeof row.status);
         row.updated_at = f->updated_at;
         rt_publish_view(rt, f->seats[i].user_id, &row, false);
     }
@@ -121,8 +121,8 @@ void cb_fanout_publish(cb_ctx *ctx, const cb_fanout *f) {
         // The seat is gone: the view with no envelope.
         cb_view_row row;
         memset(&row, 0, sizeof row);
-        snprintf(row.game_id, sizeof row.game_id, "%s", f->game_id);
-        snprintf(row.player_id, sizeof row.player_id, "%s", f->left[i]);
+        cb_strlcpy(row.game_id, f->game_id, sizeof row.game_id);
+        cb_strlcpy(row.player_id, f->left[i], sizeof row.player_id);
         rt_publish_view(rt, f->left[i], &row, true);
     }
     for (int i = 0; i < f->n_seats; i++) {
