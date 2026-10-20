@@ -1496,46 +1496,51 @@ static void meta_ask(const char *bearer, const TableAsk *a, reply *out) {
 // spectators as a cast at that version, the quiet ones by name included.
 static void every_commit_is_cast(void) {
     setup(0);
-    char gid[CB_GAME_ID_MAX + 1];
-    reply r;
-    create_game(gid, &r);
-    meta("B", ASK_JOIN, gid, NULL, &r);
-    meta("A", ASK_START, gid, NULL, &r);
-    meta("B", ASK_START, gid, NULL, &r);
-    T_EQ_INT(status_of(gid), GAME_STATUS_PLAYING);
     static const char *const uids[2] = { UID_A, UID_B }, *const bearers[2] = { "A", "B" };
     cb_section *s = cb_section_new();
-    int commits = 0, quiet_goods = 0, rearranged = 0;
-    for (int step = 0; step < 4000 && status_of(gid) == GAME_STATUS_PLAYING; step++) {
-        const int k = step % 2, seat = seat_of(gid, uids[k]);
-        const int64_t v = version_of(gid);
-        const int fans = g_fan.count;
-        bool quiet;
-        TableAsk ask;
-        if (step % 7 == 3 && reversed_hand_ask(gid, seat, &ask)) {
-            quiet = shows_nothing(s, gid, uids[k], NULL, 0, &ask);
-            meta_ask(bearers[k], &ask, &r);
-            if (version_of(gid) == v + 1) rearranged += quiet;
-        } else {
-            uint8_t wire[64];
-            int n = pick_move(gid, seat, wire, sizeof wire);
-            if (n <= 0) continue;
-            quiet = shows_nothing(s, gid, uids[k], wire, n, NULL);
-            action(bearers[k], gid, wire, n, (uint32_t)v, &r);
-            if (version_of(gid) == v + 1) quiet_goods += quiet && AWIRE_GOOD == wire[0];
+    int commits = 0, quiet_goods = 0, rearranged = 0, games = 0;
+    // The deal is the crypto's: a game may hold no quiet Good, so games are played until both
+    // kinds of quiet commit were (a game holds them more often than not).
+    for (; games < 8 && (!quiet_goods || !rearranged); games++) {
+        char gid[CB_GAME_ID_MAX + 1];
+        reply r;
+        cb_limits_reset();
+        create_game(gid, &r);
+        meta("B", ASK_JOIN, gid, NULL, &r);
+        meta("A", ASK_START, gid, NULL, &r);
+        meta("B", ASK_START, gid, NULL, &r);
+        T_EQ_INT(status_of(gid), GAME_STATUS_PLAYING);
+        for (int step = 0; step < 4000 && status_of(gid) == GAME_STATUS_PLAYING; step++) {
+            const int k = step % 2, seat = seat_of(gid, uids[k]);
+            const int64_t v = version_of(gid);
+            const int fans = g_fan.count;
+            bool quiet;
+            TableAsk ask;
+            if (step % 7 == 3 && reversed_hand_ask(gid, seat, &ask)) {
+                quiet = shows_nothing(s, gid, uids[k], NULL, 0, &ask);
+                meta_ask(bearers[k], &ask, &r);
+                if (version_of(gid) == v + 1) rearranged += quiet;
+            } else {
+                uint8_t wire[64];
+                int n = pick_move(gid, seat, wire, sizeof wire);
+                if (n <= 0) continue;
+                quiet = shows_nothing(s, gid, uids[k], wire, n, NULL);
+                action(bearers[k], gid, wire, n, (uint32_t)v, &r);
+                if (version_of(gid) == v + 1) quiet_goods += quiet && AWIRE_GOOD == wire[0];
+            }
+            if (version_of(gid) != v + 1) continue;
+            commits++;
+            T_EQ_INT(g_fan.count, fans + 1);
+            T_EQ_INT(g_fan.version, v + 1);
+            T_EQ_INT(g_fan.humans, 2);
+            T_EQ_INT(g_fan.casts, 2);
+            T_CHECK(g_fan.spectator_cast);
         }
-        if (version_of(gid) != v + 1) continue;
-        commits++;
-        T_EQ_INT(g_fan.count, fans + 1);
-        T_EQ_INT(g_fan.version, v + 1);
-        T_EQ_INT(g_fan.humans, 2);
-        T_EQ_INT(g_fan.casts, 2);
-        T_CHECK(g_fan.spectator_cast);
+        T_EQ_INT(status_of(gid), GAME_STATUS_GAME_OVER);
     }
     cb_section_free(s);
-    T_EQ_INT(status_of(gid), GAME_STATUS_GAME_OVER);
     T_CHECK(commits > 20);
-    // The game must have held the commits the old rule left uncast, or this
+    // The games must have held the commits the old rule left uncast, or this
     // proves nothing about them.
     T_CHECK(quiet_goods > 0);
     T_CHECK(rearranged > 0);
