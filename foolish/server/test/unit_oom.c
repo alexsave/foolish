@@ -19,6 +19,7 @@
 #include "rate_limits.h"
 
 #include "app/app_internal.h"
+#include "app/pushes.h"
 #include "app/table_ops.h"
 #include "auth/auth.h"
 #include "boot.h"
@@ -117,6 +118,8 @@ static bool g_everywhere;
 static void drain_pools(void) {
     cb_section_drain();
     cb_rows_batch_drain();
+    cb_pushes_drain();
+    cb_table_lock_drain();
     cb_auth_forget_sessions(g_ctx.auth);   // the sessions held live: a cache, refilled by one read
     cb_store_local_release(g_ctx.store);   // before the pools: the statements' blocks go back to them
     cb_store_local_drain();

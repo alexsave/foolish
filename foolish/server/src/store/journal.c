@@ -248,6 +248,7 @@ struct cb_journal {
     pthread_cond_t  cv;            // the writers: a batch written, the writer free (waiters: how many wait)
     pthread_cond_t  fcv;           // the flush thread: a kick, a segment to make ahead, the stop
     int             waiters;
+    cb_jmove        ms[CB_JOURNAL_BATCH_MAX];   // the writer's (held): one batch's moves as coded
     jrec           *head, *tail;
     bool            writing;
     jseg            cur, next;     // the open segment, and the one made ahead
@@ -523,8 +524,8 @@ static void write_batch(cb_journal *j, jrec *list) {
     // write(). A segment is closed once it holds seg_bytes, or when this write might not fit
     // (or after a failed one, below); a batch's time is coded against its segment's start,
     // so one a clock jump put out of reach starts a segment of its own too.
-    cb_jmove *ms = malloc(sizeof *ms * (size_t)(n < CB_JOURNAL_BATCH_MAX ? n : CB_JOURNAL_BATCH_MAX));
-    int rc = ms ? CB_OK : CB_E_NOMEM;
+    cb_jmove *const ms = j->ms;
+    int rc = CB_OK;
     const size_t need = write_need(n);
     size_t len = 0;
     int frames = 0;
@@ -570,7 +571,6 @@ static void write_batch(cb_journal *j, jrec *list) {
         memset(at, 0, len);
         if (seg_open(j, need) != CB_OK) seg_finish(&j->cur, (size_t)j->seg_len);   // the next write tries again
     }
-    free(ms);
     pthread_mutex_lock(&j->ov_mu);
     bool due = false;
     for (jrec *r = list; r; r = r->next) {

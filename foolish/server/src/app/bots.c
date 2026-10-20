@@ -60,7 +60,7 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
         // decision (bot_drive.h), whatever the seated brains read.
         cb_game_row row;
         bool cached = false;
-        int rc = cb_row_load(ctx, game_id, false, &row, &cached);
+        int rc = cb_row_load(ctx, game_id, false, NULL, &row, &cached);
         if (rc == CB_E_NOT_FOUND) return CYCLE_DONE;
         if (rc != CB_OK) return CYCLE_ERROR;
 
@@ -332,7 +332,7 @@ static int drive_round(cb_ctx *ctx, const char *game_id, bool *settled) {
 static bool due_now(cb_ctx *ctx, const char *game_id) {
     cb_game_row row;
     bool cached = false;
-    if (cb_row_load(ctx, game_id, false, &row, &cached) != CB_OK) return false;
+    if (cb_row_load(ctx, game_id, false, NULL, &row, &cached) != CB_OK) return false;
     cb_section *s = cb_section_new();
     bool due = s && cb_section_load(s, &row) >= 0 && table_bots_due(&s->t);
     cb_section_free(s);

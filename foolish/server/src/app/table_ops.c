@@ -69,6 +69,38 @@ static int row_copy(cb_game_row *dst, const cb_game_row *src) {
     return CB_OK;
 }
 
+// Copies `n` bytes into a kept buffer, grown when it is too small.
+static int buf_put(uint8_t **p, size_t *cap, const uint8_t *src, size_t n) {
+    if (n > *cap || !*p) {
+        uint8_t *q = realloc(*p, n ? n : 1);
+        if (!q) return CB_E_NOMEM;
+        *p = q;
+        *cap = n ? n : 1;
+    }
+    if (n) memcpy(*p, src, n);
+    return CB_OK;
+}
+
+// A row whose byte fields are copies in `b`'s buffers (b owns them, the row borrows).
+static int row_copy_into(cb_game_row *dst, cb_row_buf *b, const cb_game_row *src) {
+    if (buf_put(&b->state, &b->state_cap, src->state, src->state_len) != CB_OK ||
+        buf_put(&b->roster, &b->roster_cap, src->roster, src->roster_len) != CB_OK ||
+        (src->logs_len && buf_put(&b->logs, &b->logs_cap, src->logs, src->logs_len) != CB_OK))
+        return CB_E_NOMEM;
+    *dst = *src;
+    dst->state = b->state;
+    dst->roster = b->roster;
+    dst->logs = src->logs_len ? b->logs : NULL;
+    return CB_OK;
+}
+
+void cb_row_buf_free(cb_row_buf *b) {
+    free(b->state);
+    free(b->roster);
+    free(b->logs);
+    memset(b, 0, sizeof *b);
+}
+
 // ---- the row cache (game_cache.ts) ---------------------------------------------------
 //
 // Rows this process just committed, PLAYING games only, least recently noted
@@ -81,7 +113,8 @@ static int row_copy(cb_game_row *dst, const cb_game_row *src) {
 typedef struct {
     bool        used;
     uint64_t    tick;
-    cb_game_row row;
+    cb_game_row row;   // its bytes are rb's
+    cb_row_buf  rb;    // kept across the games the slot holds: a note copies into it
 } cache_entry;
 
 static pthread_mutex_t g_cache_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -95,7 +128,7 @@ static cache_entry *cache_find(const char *id) {
 }
 
 static void cache_evict(cache_entry *e) {
-    cb_game_row_free(&e->row);
+    cb_row_buf_free(&e->rb);
     memset(e, 0, sizeof *e);
 }
 
@@ -124,8 +157,6 @@ int cb_row_cache_size(void) {
 void cb_row_cache_note(const cb_game_row *row) {
     // A lobby or a finished game is edited from everywhere: read it fresh.
     if (row->status != GAME_STATUS_PLAYING) { cb_row_cache_drop(row->id); return; }
-    cb_game_row copy;
-    if (row_copy(&copy, row) != CB_OK) { cb_row_cache_drop(row->id); return; }
     pthread_mutex_lock(&g_cache_mu);
     cache_entry *e = cache_find(row->id);
     if (!e) {
@@ -138,20 +169,22 @@ void cb_row_cache_note(const cb_game_row *row) {
             e = oldest;
         }
     }
-    if (e->used) cache_evict(e);
-    e->used = true;
-    e->tick = ++g_cache_tick;
-    e->row = copy;
+    // The slot's buffers take the row (the same game's last row was its size): no allocation.
+    if (row_copy_into(&e->row, &e->rb, row) != CB_OK) cache_evict(e);
+    else {
+        e->used = true;
+        e->tick = ++g_cache_tick;
+    }
     pthread_mutex_unlock(&g_cache_mu);
 }
 
-int cb_row_load(cb_ctx *ctx, const char *id, bool allow_cache, cb_game_row *out, bool *cached) {
+int cb_row_load(cb_ctx *ctx, const char *id, bool allow_cache, cb_row_buf *rb, cb_game_row *out, bool *cached) {
     *cached = false;
-    if (allow_cache) {
+    if (allow_cache && rb) {
         int rc = CB_E_NOT_FOUND;
         pthread_mutex_lock(&g_cache_mu);
         cache_entry *e = cache_find(id);
-        if (e) rc = row_copy(out, &e->row);
+        if (e) rc = row_copy_into(out, rb, &e->row);
         pthread_mutex_unlock(&g_cache_mu);
         if (rc == CB_OK) { *cached = true; return CB_OK; }
     }
@@ -205,6 +238,7 @@ static bool           g_section_key_ok;
 static void section_release(cb_section *s) {   // the section and what it keeps
     if (!s) return;
     free(s->walk);
+    cb_row_buf_free(&s->rb);
     free(s);
 }
 static void section_at_exit(void *p) { section_release(p); }   // a thread ends with nothing out
@@ -326,20 +360,36 @@ int cb_section_envelope(cb_section *s, int viewer, uint32_t version, uint8_t **o
     return *out ? CB_OK : CB_E_NOMEM;
 }
 
-// One viewer's cast for the last operation, malloc'd at its own size. It is
-// built in a per-thread 64 KB scratch (generous: a deal's push carries every
-// snapshot's events) instead of a 64 KB malloc and free per viewer per move.
-static int section_cast(cb_section *s, int viewer, uint32_t version, uint8_t **out, size_t *out_len) {
+// One viewer's cast for the last operation. It is written into the section's arena past
+// everything written there so far (the products and the casts before it), so it lives as long as
+// the section and costs no allocation (*owned false). Only when the arena's rest is too small
+// (a deal's push carries every snapshot's events) is it built in a per-thread 64 KB scratch and
+// malloc'd at its own size (*owned true: the caller frees it).
+static int section_cast(cb_section *s, int viewer, uint32_t version, const uint8_t **out, size_t *out_len, bool *owned) {
     enum { CAST_CAP = 64 * 1024 };
+    *owned = false;
+    const int at = s->arena_hw, room = (int)sizeof s->arena - at;
+    // The kernel's writers are cursors: a cast that fits wrote [at, at + n) and nothing past it;
+    // one that did not may have written its whole room, which cb_section_free then zeroes.
+    int n = room > 0 ? table_cast(&s->t, s->gid, (int)strlen(s->gid), viewer, version, s->arena + at, room) : -1;
+    if (n >= 0) {
+        s->arena_hw = at + n;
+        *out = s->arena + at;
+        *out_len = (size_t)n;
+        return CB_OK;
+    }
+    if (room > 0) s->arena_hw = (int)sizeof s->arena;
     static _Thread_local uint8_t buf[CAST_CAP];
-    int n = table_cast(&s->t, s->gid, (int)strlen(s->gid), viewer, version, buf, CAST_CAP);
+    n = table_cast(&s->t, s->gid, (int)strlen(s->gid), viewer, version, buf, CAST_CAP);
     if (n < 0) {
         CB_ERROR("table", "game %s: cast for viewer %d refused (%d)", s->gid, viewer, n);
         return CB_E_STATE;
     }
-    *out = dup_bytes(buf, (size_t)n);
+    uint8_t *d = dup_bytes(buf, (size_t)n);
+    *out = d;
     *out_len = (size_t)n;
-    return *out ? CB_OK : CB_E_NOMEM;
+    *owned = true;
+    return d ? CB_OK : CB_E_NOMEM;
 }
 
 static bool seat_is_human(const RosterSeat *seat) { return seat->brain_len == 0; }
@@ -462,14 +512,25 @@ struct cb_game_lock {
 };
 static pthread_mutex_t g_locks_mu = PTHREAD_MUTEX_INITIALIZER;
 static cb_game_lock *g_locks[LOCK_BUCKETS];
+// Entries no thread holds, kept (their mutexes initialized) for the next game a thread locks: a
+// move used to calloc one and free it. Up to LOCK_SPARE_KEEP of them (g_locks_mu).
+#define LOCK_SPARE_KEEP 64
+static cb_game_lock *g_lock_spare;
+static int g_n_lock_spare;
 
 cb_game_lock *cb_table_lock(const char *gid) {
     uint32_t b = fnv1a32_str(FNV32_OFFSET, gid) % LOCK_BUCKETS;
     pthread_mutex_lock(&g_locks_mu);
     cb_game_lock *l = g_locks[b];
     while (l && strcmp(l->id, gid) != 0) l = l->next;
-    if (!l && (l = calloc(1, sizeof *l)) != NULL) {
+    if (!l && g_lock_spare) {
+        l = g_lock_spare;
+        g_lock_spare = l->next;
+        g_n_lock_spare--;
+    } else if (!l && (l = calloc(1, sizeof *l)) != NULL) {
         pthread_mutex_init(&l->mu, NULL);
+    }
+    if (l && l->users == 0) {
         l->bucket = b;
         cb_strlcpy(l->id, gid, sizeof l->id);
         l->next = g_locks[b];
@@ -481,6 +542,18 @@ cb_game_lock *cb_table_lock(const char *gid) {
     return l;
 }
 
+void cb_table_lock_drain(void) {
+    pthread_mutex_lock(&g_locks_mu);
+    while (g_lock_spare) {
+        cb_game_lock *l = g_lock_spare;
+        g_lock_spare = l->next;
+        pthread_mutex_destroy(&l->mu);
+        free(l);
+    }
+    g_n_lock_spare = 0;
+    pthread_mutex_unlock(&g_locks_mu);
+}
+
 void cb_table_unlock(cb_game_lock *l) {
     if (!l) return;
     pthread_mutex_unlock(&l->mu);
@@ -489,8 +562,14 @@ void cb_table_unlock(cb_game_lock *l) {
         cb_game_lock **pp = &g_locks[l->bucket];
         while (*pp != l) pp = &(*pp)->next;
         *pp = l->next;
-        pthread_mutex_destroy(&l->mu);
-        free(l);
+        if (g_n_lock_spare < LOCK_SPARE_KEEP) {
+            l->next = g_lock_spare;
+            g_lock_spare = l;
+            g_n_lock_spare++;
+        } else {
+            pthread_mutex_destroy(&l->mu);
+            free(l);
+        }
     }
     pthread_mutex_unlock(&g_locks_mu);
 }
@@ -684,25 +763,21 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     f.status = cb_table_status_label(c->status);
     f.updated_at = now;
     f.n_seats = t->r.n;
+    // The fan-out borrows: the envelopes are the products' in the arena, the casts go into the
+    // arena after them (section_cast), and the section outlives the publishing (a deferred
+    // fan-out copies what it holds, fanout.c cb_after_fanout). A cast the arena could not hold
+    // is malloc'd (cast_owned) and freed below.
+    bool cast_owned[CB_MAX_SEATS] = { false }, spectator_owned = false;
     rc = CB_OK;
     for (int i = 0; i < t->r.n && rc == CB_OK; i++) {
         const RosterSeat *seat = &t->r.seats[i];
         if (!seat_is_human(seat)) continue;
         seat_id(seat, f.seats[i].user_id);
-        f.seats[i].envelope = dup_bytes(A + c->views[i].off, (size_t)c->views[i].len);
+        f.seats[i].envelope = A + c->views[i].off;
         f.seats[i].envelope_len = (size_t)c->views[i].len;
-        if (!f.seats[i].envelope) rc = CB_E_NOMEM;
-        if (rc == CB_OK) {
-            uint8_t *cast = NULL;
-            rc = section_cast(s, i, next, &cast, &f.seats[i].cast_len);
-            f.seats[i].cast = cast;
-        }
+        rc = section_cast(s, i, next, &f.seats[i].cast, &f.seats[i].cast_len, &cast_owned[i]);
     }
-    if (rc == CB_OK) {
-        uint8_t *cast = NULL;
-        rc = section_cast(s, -1, next, &cast, &f.spectator_cast_len);
-        f.spectator_cast = cast;
-    }
+    if (rc == CB_OK) rc = section_cast(s, -1, next, &f.spectator_cast, &f.spectator_cast_len, &spectator_owned);
     for (int i = 0; i < f.n_seats; i++) {
         if (!f.seats[i].user_id[0]) continue;
         if (!in_list(s->old_humans, s->n_old, f.seats[i].user_id)) cb_strlcpy(f.joined[f.n_joined++], f.seats[i].user_id, sizeof(cb_uuid));
@@ -719,11 +794,8 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         out->actor_env_len = (size_t)e.len;
         if (!out->actor_env) rc = CB_E_NOMEM;
     }
-    // The committed row survives the section: finalize reloads the table.
-    cb_game_row kept;
-    memset(&kept, 0, sizeof kept);
-    if (rc == CB_OK) rc = row_copy(&kept, &nrow);
-
+    // nrow's bytes are the arena's, which nothing below writes (finalize_game reloads the
+    // table from them and writes only the Table and the board): the cache and finalize read them.
     if (rc == CB_OK) {
         // The caller holds the game's lock (cb_table_lock): from the row it read to
         // these pushes nothing else in this process commits the game.
@@ -737,24 +809,21 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
             out->version = nrow.version;
             out->needs_bots = c->needs_bots;
             out->ended = c->ended;
-            cb_row_cache_note(&kept);
+            cb_row_cache_note(&nrow);
             // A rated game moved the leaderboard: the edge's copy goes (edge.h).
             if (gc.n_rated > 0) cb_edge_stale(CB_EDGE_BOARD);
             // The replay is stored before the push that ends the game, so a
             // client that asks for it on game over finds it.
-            if (c->ended) finalize_game(ctx, s, &kept);
+            if (c->ended) finalize_game(ctx, s, &nrow);
             cb_fanout_commit(ctx, &f);
         } else {
             CB_ERROR("table", "game %s: commit failed (%s)", row->id, cb_strerror(rc));
         }
     }
 
-    cb_game_row_free(&kept);
-    for (int i = 0; i < CB_MAX_SEATS; i++) {
-        free((void *)f.seats[i].envelope);
-        free((void *)f.seats[i].cast);
-    }
-    free((void *)f.spectator_cast);
+    for (int i = 0; i < CB_MAX_SEATS; i++)
+        if (cast_owned[i]) free((void *)f.seats[i].cast);
+    if (spectator_owned) free((void *)f.spectator_cast);
     if ((rc != CB_OK || out->lost) && out->actor_env) {
         free(out->actor_env);
         out->actor_env = NULL;
@@ -874,6 +943,11 @@ static bool commits_nothing(int rc) {
     return rc == TABLE_MOOT || rc == TABLE_STALE_ROUND || rc == TABLE_REJECTED;
 }
 
+// A row cb_row_load gave: a cached one's bytes are the section's (kept), a stored one's its own.
+static void row_release(cb_game_row *row, bool cached) {
+    if (!cached) cb_game_row_free(row);
+}
+
 // A refusal of the move is only authoritative against a fresh row: an apply
 // from a stale cache corrects itself through the CAS, a refusal never reaches it.
 static bool fresh_only(int rc) {
@@ -902,8 +976,8 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
     }
     for (int attempt = 1; attempt <= 2; attempt++) {
         cb_game_row row;
-        bool cached = false;
-        int rc = cb_row_load(ctx, op->game_id, !op->fresh && attempt == 1, &row, &cached);
+        bool cached = false;   // the row's bytes are s->rb's (not freed: row_release)
+        int rc = cb_row_load(ctx, op->game_id, !op->fresh && attempt == 1, &s->rb, &row, &cached);
         if (rc != CB_OK) { ret = rc; break; }
         uint8_t seed[CB_SEED_LEN];
         cb_random_bytes(seed, sizeof seed);
@@ -911,7 +985,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         // ---- the kernel section ----
         int lr = cb_section_load(s, &row);
         if (lr < 0) {
-            cb_game_row_free(&row);
+            row_release(&row, cached);
             if (cached) { cb_row_cache_drop(op->game_id); continue; }
             // A stored row the kernel refuses: never silently repaired or played on.
             CB_ERROR("table", "game %s does not load (%d, detail %d)", op->game_id, lr, s->t.detail);
@@ -928,11 +1002,11 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         }
         rc = op->run(&s->t, &row, seed, op->ud);
         if (rc < 0 || (cached && fresh_only(rc))) {
-            if (cached) { cb_row_cache_drop(op->game_id); cb_game_row_free(&row); continue; }
+            if (cached) { cb_row_cache_drop(op->game_id); row_release(&row, cached); continue; }
             out->result = rc;
             out->detail = s->t.detail;
             out->version = row.version;
-            cb_game_row_free(&row);
+            row_release(&row, cached);
             ret = CB_OK;
             break;
         }
@@ -958,7 +1032,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
                 for (int i = 0; i < s->n_old; i++) snprintf(f.left[f.n_left++], sizeof(cb_uuid), "%s", s->old_humans[i]);
                 cb_fanout_commit(ctx, &f);
             }
-            cb_game_row_free(&row);
+            row_release(&row, cached);
             break;
         }
 
@@ -967,13 +1041,13 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             out->needs_bots = table_bots_due(&s->t);
             out->version = row.version;
             ret = cb_section_envelope(s, seat >= 0 ? seat : -1, (uint32_t)row.version, &out->envelope, &out->envelope_len);
-            cb_game_row_free(&row);
+            row_release(&row, cached);
             break;
         }
 
         cb_commit_out co;
         ret = cb_section_commit(ctx, s, &row, seed, actor, ratings, &have_ratings, &co);
-        cb_game_row_free(&row);
+        row_release(&row, cached);
         if (ret != CB_OK) break;
         if (co.lost) { ret = CB_E_CONFLICT; break; }
         out->committed = true;
