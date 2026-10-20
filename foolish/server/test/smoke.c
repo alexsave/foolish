@@ -32,7 +32,6 @@
 // the game, the crash's lease expiry and the idle human's rest each take
 // seconds. unit_app holds production's values and the division itself.
 #include "t.h"
-#include "lib_store_backend.h"
 
 #include "lib_client.h"
 #include "lib_proc.h"
@@ -63,6 +62,7 @@
 #include "../../../shared/c/clock.h"
 
 #define SMOKE_SPEEDUP 20
+#define SMOKE_ADMIN_TOKEN "smoke-admin-token-0123456789abcdef0123"   // the console's: live_game reads through it
 static const char *g_bin;
 static tp_child g_child;
 static int g_port;
@@ -76,7 +76,7 @@ static void start_server(void) {
     static char speedup[48];
     snprintf(speedup, sizeof speedup, "CBASE_BOT_SPEEDUP=%d", SMOKE_SPEEDUP);
     char *env[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", envdb, "CBASE_JWT_SECRET=smoke-secret-smoke-secret-smoke-secret",
-                    "CBASE_RATED_MIN_AGE=0", speedup, NULL };
+                    "CBASE_RATED_MIN_AGE=0", speedup, "CBASE_ADMIN_TOKEN=" SMOKE_ADMIN_TOKEN, NULL };
     char *argv[] = { (char *)g_bin, "serve", NULL };
     g_port = 0;
     T_EQ_INT(tp_start(&g_child, argv, env), 0);
@@ -403,48 +403,49 @@ static void ws_for(listener *l, smoke_user *u, const char *topic) {
     l->fd = -1;
 }
 
-// The game's row as the server stored it: from the database file itself, or
-// (CBASE_STORE=dynamo, `make check-dynamo`) from the server's DynamoDB table.
-// The store the server under test writes, opened beside it (the same
-// DynamoDB table, or the same SQLite file in WAL mode). Kept open.
-static cb_store *db_store(void) {
-    static cb_store *st;
-    if (st) return st;
-    if (tsb_dynamo()) {
-        const char *t = getenv("CBASE_TABLE");
-        if (cb_store_open_dynamo(t && *t ? t : "cbase", &st) != CB_OK) st = NULL;
-    } else {
-        char path[512];
-        snprintf(path, sizeof path, "%s/cbase.sqlite", g_dbdir);
-        if (cb_store_open_sqlite(path, &st) != CB_OK) st = NULL;
-    }
-    return st;
-}
+// The game's row as the server holds it NOW: the console's game panel (admin_panels.c
+// api_game), which reads the store through the move journal's overlay (journal.h: "the
+// store's reads see them first") and never flushes it. Not the database file: under the
+// journal a plain move or a bot cycle does not write the tables until the flush rule says
+// so (game end, 10 min, 256 KiB), so the file's row is minutes behind a game in play.
+// The panel's answer is the console's JSON (DESIGN.md "Where JSON is tolerated"); this
+// reads three keys from it. at (may be NULL) gets updated_at, the scan's staleness clock:
+// only a commit moves it (serve keeps a bot drive's lease in memory, app/bots.c).
+typedef struct {
+    int64_t needs_bots, version;
+    char    at[40];
+} live_row;
 
-static bool db_game(const char *gid, int64_t *needs_bots, int64_t *version) {
-    cb_store *st = db_store();
-    cb_game_row g;
-    if (!st || CB_ROWS_CALL(st, game_get, gid, &g) != CB_OK) return false;
-    *needs_bots = g.needs_bots;
-    *version = g.version;
-    cb_game_row_free(&g);
+static bool json_int(const char *js, const char *key, int64_t *out) {
+    const char *p = strstr(js, key);
+    if (!p) return false;
+    p += strlen(key);
+    if (strncmp(p, "true", 4) == 0) { *out = 1; return true; }
+    if (strncmp(p, "false", 5) == 0) { *out = 0; return true; }
+    char *e;
+    long long v = strtoll(p, &e, 10);
+    if (e == p) return false;
+    *out = v;
     return true;
 }
 
-// The scan's staleness clock: the game row's updated_at, which only a commit moves (serve keeps a bot
-// drive's lease in memory, app/bots.c); -2 when the game cannot be read.
-static int64_t db_scan_clock(const char *gid) {
-    cb_store *st = db_store();
-    cb_game_row g;
-    if (!st || CB_ROWS_CALL(st, game_get, gid, &g) != CB_OK) return -2;
-    int64_t at = g.updated_at;
-    cb_game_row_free(&g);
-    return at;
+static bool live_game(const char *gid, live_row *g) {
+    char path[96];
+    snprintf(path, sizeof path, "/admin/api/game?id=%s", gid);
+    tc_response r;
+    if (tc_http(g_port, "GET", path, "Authorization: Bearer " SMOKE_ADMIN_TOKEN "\r\n", NULL, 0, &r) != 0) return false;
+    const char *js = cb_buf_cstr(&r.body);
+    bool ok = r.status == 200 && json_int(js, "\"needs_bots\":", &g->needs_bots) && json_int(js, "\"version\":", &g->version);
+    const char *at = ok ? strstr(js, "\"updated_at\":\"") : NULL;
+    if (ok && at) snprintf(g->at, sizeof g->at, "%.*s", (int)strcspn(at + 14, "\""), at + 14);
+    else if (ok) snprintf(g->at, sizeof g->at, "null");
+    tc_response_free(&r);
+    return ok;
 }
 
 // THE IDLE HUMAN (production, 2026-10-17: 1,037 of 1,149 bot cycles in a week
 // drove nothing). One human against one bot; the human owes the move and walks
-// away. No bot can act, so the stored row must not say the bots are owed one,
+// away. No bot can act, so the server's row must not say the bots are owed one,
 // and serve's heartbeat (a scan every CB_BOT_SCAN_EVERY_MS, a game stale after
 // CB_BOT_STALE_MS, both over SMOKE_SPEEDUP) must never start a drive for it:
 // nothing is committed (the version and the row's updated_at stay), across two
@@ -478,26 +479,29 @@ static void an_idle_human_turn_is_never_kicked(void) {
     }
     T_CHECK(owes);
     // While D deliberates a bot may still act (an attacker throws in or says
-    // good), paced: the bots are done when the stored row says no
+    // good), paced: the bots are done when the server's row says no
     // bot owes a move (needs_bots). Not "the version held for longer than a
     // pace": a starved bot pool holds the version too (it failed once that
     // way with the server frozen for 12 s, a bot's move still to come).
-    int64_t nb = -1, v0 = -1, v1 = -1;
-    while (db_game(gid, &nb, &v0) && nb != 0 && mono_ms() - t0 < 120000) {
-        struct timespec ts = { 0, 200 * 1000000 };
+    live_row g0 = { -1, -1, "" }, g1 = { -1, -1, "" };
+    const int64_t t1 = mono_ms();
+    while (live_game(gid, &g0) && g0.needs_bots != 0 && mono_ms() - t1 < 30000) {
+        struct timespec ts = { 0, 50 * 1000000 };
         nanosleep(&ts, NULL);
     }
-    T_CHECK(db_game(gid, &nb, &v0));
-    T_EQ_INT(nb, 0);
-    const int64_t clock0 = db_scan_clock(gid);
+    T_CHECK(live_game(gid, &g0));
+    T_EQ_INT(g0.needs_bots, 0);
     // Two scans past the staleness window, and a fifth of one more (production's 22 s).
     const int64_t rest = (CB_BOT_STALE_MS + 2 * CB_BOT_SCAN_EVERY_MS + 2000) / SMOKE_SPEEDUP;
     cb_sleep_ms(rest);
-    T_CHECK(db_game(gid, &nb, &v1));
-    T_EQ_INT(v1, v0);
-    T_EQ_INT(db_scan_clock(gid), clock0);
-    fprintf(stderr, "smoke: an idle human's turn rested %lld ms at version %lld, scan clock %lld -> %lld\n", (long long)rest,
-            (long long)v0, (long long)clock0, (long long)db_scan_clock(gid));
+    T_CHECK(live_game(gid, &g1));
+    T_EQ_INT(g1.version, g0.version);
+    T_CHECK(strcmp(g1.at, g0.at) == 0);   // the scan clock: no commit, no lease written to the row
+    int64_t seen = -1;
+    T_CHECK(game_view(&D, gid, &seen, NULL));   // and what D's client reads agrees
+    T_EQ_INT(seen, g0.version);
+    fprintf(stderr, "smoke: an idle human's turn rested %lld ms at version %lld, scan clock %s -> %s\n", (long long)rest,
+            (long long)g0.version, g0.at, g1.at);
     cb_buf_free(&env);
     free(sc);
 }
@@ -549,7 +553,7 @@ static void game_scenario(void) {
     // that leaves the bot to act wakes it). Not by bumping: a bump is a
     // seated player's nudge, limited (rate_limits.h), not a way to poll.
     //
-    // Once, when neither human has a move and the stored row says the bots owe
+    // Once, when neither human has a move and the server's row says the bots owe
     // one, the server is KILLED (no drain) and started again on the same file,
     // and nobody moves: only serve's heartbeat (the scan) can restart the
     // drive, and only once the dead process's lease has run out. The
@@ -595,7 +599,11 @@ static void game_scenario(void) {
                 int bn = ask_encode(&ra, body, sizeof body);
                 T_EQ_INT(bn > 0 ? call(&A, NC_DO_ASK, NULL, body, bn, -1) : -1, 200);
                 rearranged = true;
-                continue;   // the board moved on: read it again
+                // The board moved on: read it again. A commit like a move, so no crash this round:
+                // a rearrangement is written around the journal (journal.h), and the kill is meant
+                // to land on moves only the journal holds, which the restart must recover.
+                moved = true;
+                continue;
             }
             uint8_t wire[64];
             int n = choose_move(sc, &env, wire, sizeof wire, &rng);
@@ -614,16 +622,23 @@ static void game_scenario(void) {
         drain_ws(LB, 0, 0);
         drain_ws(LC, 0, 0);
         if (!answered) break;   // the server stopped answering: the asserts below say so
-        int64_t nb = 0, ver = 0;
+        live_row pre = { 0, 0, "" };
         if (!moved && !crashed && moves >= 4 && crash_tries < 5 && status == GAME_STATUS_PLAYING
-            && db_game(gid, &nb, &ver) && nb) {
+            && live_game(gid, &pre) && pre.needs_bots) {
             crash_tries++;
             tp_stop(&g_child, SIGKILL, 5000);
             close(LA->fd);
             close(LB->fd);
             close(LC->fd);
-            bool owed = db_game(gid, &nb, &ver) && nb;
+            // The row the new process rebuilt from the tables and the journal, read before the
+            // scan can be due (a commit at most a stale window ago): no acknowledged move is lost,
+            // and it still owes the bots' move unless a bot moved before the kill landed.
             start_server();
+            live_row rec = { 0, -1, "" };
+            T_CHECK(live_game(gid, &rec));
+            T_CHECK(rec.version >= pre.version);
+            const int64_t ver = pre.version;
+            const bool owed = rec.needs_bots && rec.version == ver;
             SUBSCRIBE();
             if (!owed) continue;   // the bot moved before the kill landed: try again later
             crashed = true;
