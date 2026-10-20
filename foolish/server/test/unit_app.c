@@ -1624,6 +1624,53 @@ static void every_commit_is_cast_as_a_delta(void) {
     g_cast_read.on = false;
 }
 
+// NO SPECTATORS, NO SPECTATORS' CAST: a transport that knows no one watches the game
+// (realtime.h cb_rt_room_heard) gets the seats' casts and no spectators' cast, board or delta;
+// once someone watches, the next commit casts to the room again.
+static bool g_room_watched;
+static int  g_watch_delivered;
+static int quiet_deliver(cb_rt *rt, const cb_rt_to *to, const uint8_t *frame, size_t len) {
+    if (to->family == CB_RT_WATCH) g_watch_delivered++;
+    return 0;
+}
+static bool quiet_room_heard(cb_rt *rt, const char *doc) { return g_room_watched; }
+static const cb_rt_transport QUIET_T = { .name = "quiet", .deliver = quiet_deliver, .room_heard = quiet_room_heard };
+
+static void no_spectators_no_spectator_cast(void) {
+    setup(0);
+    cb_rt rt = { &QUIET_T, &g_ctx, NULL };
+    g_ctx.rt = &rt;
+    g_room_watched = false;
+    g_watch_delivered = 0;
+    char gid[CB_GAME_ID_MAX + 1];
+    reply r;
+    create_game(gid, &r);
+    meta("B", ASK_JOIN, gid, NULL, &r);
+    meta("A", ASK_START, gid, NULL, &r);
+    meta("B", ASK_START, gid, NULL, &r);
+    T_EQ_INT(status_of(gid), GAME_STATUS_PLAYING);
+    T_CHECK(!g_fan.spectator_cast);
+    static const char *const uids[2] = { UID_A, UID_B }, *const bearers[2] = { "A", "B" };
+    int quiet = 0, heard = 0;
+    for (int step = 0; step < 4000 && status_of(gid) == GAME_STATUS_PLAYING && heard < 3; step++) {
+        const int k = step % 2, seat = seat_of(gid, uids[k]);
+        const int64_t v = version_of(gid);
+        uint8_t wire[64];
+        int n = pick_move(gid, seat, wire, sizeof wire);
+        if (n <= 0) continue;
+        g_room_watched = quiet >= 3;
+        action(bearers[k], gid, wire, n, (uint32_t)v, &r);
+        if (version_of(gid) != v + 1) continue;
+        T_EQ_INT(g_fan.casts, 2);
+        T_EQ_INT(g_fan.spectator_cast, g_room_watched);
+        if (g_room_watched) heard++; else quiet++;
+    }
+    T_EQ_INT(quiet, 3);
+    T_EQ_INT(heard, 3);
+    T_EQ_INT(g_watch_delivered, 3);   // only the watched commits reached the room
+    g_ctx.rt = NULL;
+}
+
 // ---- answer first (app/after.h) ---------------------------------------------------------------
 
 // Under Lambda an HTTP invocation answers before it publishes: with the window
@@ -2760,6 +2807,7 @@ int main(void) {
     T_RUN(a_goods_only_commit_is_broadcast);
     T_RUN(every_commit_is_cast);
     T_RUN(every_commit_is_cast_as_a_delta);
+    T_RUN(no_spectators_no_spectator_cast);
     T_RUN(a_bump_wakes_the_bots);
     T_RUN(continue_returns_a_clean_lobby);
     T_RUN(a_stranger_changes_nothing);

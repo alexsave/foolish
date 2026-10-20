@@ -17,6 +17,7 @@
 #include "cbase/provider.h"
 #include "jobs.h"
 #include "net/loop.h"
+#include "realtime/realtime.h"
 #include "util/clock.h"
 #include "util/err.h"
 #include "../../../../shared/c/hex/hex.h"
@@ -992,7 +993,11 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         f.seats[i].envelope_len = (size_t)c->views[i].len;
         rc = section_cast(s, &ck, i, next, &f.seats[i].cast, &f.seats[i].cast_len, &cast_owned[i]);
     }
-    if (rc == CB_OK) rc = section_cast(s, &ck, -1, next, &f.spectator_cast, &f.spectator_cast_len, &spectator_owned);
+    // The spectators' cast, unless the hub knows no one watches the game (cb_rt_room_heard: on the
+    // loop it can tell; a page that opens later reads the game whole, and a delta that arrives
+    // past a skipped version is refused by the client's version gate and refetched).
+    if (rc == CB_OK && cb_rt_room_heard(ctx->rt, row->id))
+        rc = section_cast(s, &ck, -1, next, &f.spectator_cast, &f.spectator_cast_len, &spectator_owned);
     for (int i = 0; i < f.n_seats; i++) {
         if (!f.seats[i].user_id[0]) continue;
         if (!in_list(s->old_humans, s->n_old, f.seats[i].user_id)) cb_strlcpy(f.joined[f.n_joined++], f.seats[i].user_id, sizeof(cb_uuid));
