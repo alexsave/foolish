@@ -97,7 +97,8 @@ static bool within(cb_http_res *res, cb_limit_kind kind, const char *key, bool a
 // A store or app failure: 404 for a game that is not there, 503 BUSY for a
 // store throttled past its backoff (the client sends a read again), else the server's.
 static void failed(cb_http_res *res, int rc) {
-    if (rc == CB_E_NOT_FOUND) refuse(res, 404, ASK_WHY_NOT_FOUND, 0);
+    if (rc == CB_E_WOULD_BLOCK) res->to_pool = true;   // run inline, it would have waited: again on the pool
+    else if (rc == CB_E_NOT_FOUND) refuse(res, 404, ASK_WHY_NOT_FOUND, 0);
     else if (rc == CB_E_BUSY) cb_v1_busy(res);
     else if (rc == CB_E_STATE) refuse(res, 503, ASK_WHY_INTERNAL, 0);
     else {

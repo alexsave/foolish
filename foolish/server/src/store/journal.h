@@ -82,6 +82,10 @@ typedef struct {
     int64_t     seg_bytes;     // a segment is closed once it holds this many bytes (0: 8 MiB)
     bool        sync;          // msync each batch before it is acknowledged
     int         max_games;     // games the overlay keeps resident; past it the least recently used idle ones go (0: 4096)
+    // The network loop (net/loop.h), or NULL. ON ITS THREAD THE JOURNAL NEVER WAITS: an operation
+    // that would (a read or write of the tables, a write around the journal) returns
+    // CB_E_WOULD_BLOCK having done nothing, and the request runs again on the pool.
+    struct cb_loop *loop;
     cb_journal_apply_fn apply;
     void       *apply_ud;
 } cb_journal_opts;

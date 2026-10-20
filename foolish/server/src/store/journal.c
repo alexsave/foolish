@@ -2,6 +2,7 @@
 #include "store/journal.h"
 #include "store/store_sql.h"
 
+#include "net/loop.h"
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
@@ -302,6 +303,10 @@ struct cb_journal {
 };
 
 cb_journal *cb_journal_of(const cb_store *s) { return s && s->app_settle == cb_journal_flush ? s->app_state : NULL; }
+
+// On the network loop's thread (journal.h opts.loop), where nothing may wait: every read or write
+// of the tables below returns CB_E_WOULD_BLOCK there instead, before it has done anything.
+static bool on_loop(const cb_journal *j) { return j->o.loop && cb_loop_on_thread(j->o.loop); }
 
 static jgame **ov_slot(cb_journal *j, const char *id) {
     jgame **p = &j->buckets[fnv1a32_str(FNV32_OFFSET, id) & (OV_BUCKETS - 1)];
@@ -1132,7 +1137,9 @@ static int ov_get(cb_journal *j, const char *id, cb_game_row *out) {
 
 static int j_game_get(cb_store *s, const char *id, cb_game_row *out) {
     memset(out, 0, sizeof *out);
-    int rc = ov_get(cb_journal_of(s), id, out);
+    cb_journal *j = cb_journal_of(s);
+    int rc = ov_get(j, id, out);
+    if (rc == CB_E_NOT_FOUND && on_loop(j)) return CB_E_WOULD_BLOCK;   // the tables' read waits on the disk
     return rc == CB_E_NOT_FOUND ? cb_rows_sql.game_get(s, id, out) : rc;
 }
 
@@ -1149,6 +1156,7 @@ int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, 
             return rc;
         }
         pthread_mutex_unlock(&j->ov_mu);
+        if (on_loop(j)) return CB_E_WOULD_BLOCK;   // the tables' read waits on the disk
         // Not resident: the tables' row, made resident unless an admin's write (THE ADMIN
         // RULE) came between the read and the insert, which reads again.
         const long epoch = atomic_load(&j->epoch);
@@ -1261,6 +1269,7 @@ static int j_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **
 // game's lock, so no move of it is in flight.
 static int around(cb_store *s, const char *id, const cb_game_commit *c, const char *del_id, int64_t del_version) {
     cb_journal *j = cb_journal_of(s);
+    if (on_loop(j)) return CB_E_WOULD_BLOCK;   // a write of the tables, behind the flush's lock
     pthread_mutex_lock(&j->flush_mu);
     pthread_mutex_lock(&j->ov_mu);
     jgame *g = *ov_slot(j, id);
@@ -1335,6 +1344,7 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     int64_t held = g ? g->row.version : -1;
     pthread_mutex_unlock(&j->ov_mu);
     if (held < 0) {
+        if (on_loop(j)) return CB_E_WOULD_BLOCK;   // not resident: the fence is the tables' to read
         cb_game_row cur;
         int rc = cb_rows_sql.game_get(s, row->id, &cur);
         if (rc != CB_OK) return rc;

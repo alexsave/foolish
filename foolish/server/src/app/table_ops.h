@@ -89,6 +89,9 @@ typedef struct {
 // its pushes share it): NULL when out of memory. cb_table_unlock gives it back.
 typedef struct cb_game_lock cb_game_lock;
 cb_game_lock *cb_table_lock(const char *gid);
+// The lock if no other thread holds it, at once: NULL with *busy when one does (NULL without it:
+// out of memory). What the loop thread takes, which must never wait.
+cb_game_lock *cb_table_trylock(const char *gid, bool *busy);
 void cb_table_unlock(cb_game_lock *l);
 
 // THE REPLAY OF A FINISHED GAME is a job (table_ops.c "the replay of a finished game"): the commit
