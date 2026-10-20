@@ -13,7 +13,6 @@
 
 #include "store/rows_foolish.h"
 #include "table_ops.h"
-#include "replay_move.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -65,21 +64,17 @@ typedef struct cb_section {
     cb_uuid     old_humans[CB_MAX_SEATS];
     int         n_old_bots;
     cb_uuid     old_bots[CB_MAX_SEATS];
-    // The operation's moves as the kernel's menu names each at the board before it
-    // (replay_move.h), taken by cb_table_run for a human's action and by the bot cycle
-    // for its drive: what the store's journal holds instead of writing the tables
-    // (journal.h). Cleared with the section.
-    int         n_mv;      // 0: none; 1 a human's move; up to BOT_DRIVE_MAX_ACTIONS a bot cycle's
-    bool        mv_bots;
-    ReplayMove  mv[BOT_DRIVE_MAX_ACTIONS];
+    // The moves the operation applied, as the store's journal holds them instead of writing
+    // the tables (journal.h): the kernel's own list (table.h Table.moves, the delta cast's), which
+    // must hold `moves_want` of them - 1 for a human's action (cb_table_run), the drive's count
+    // for a bot cycle (bots.c), 0 for any other operation. Cleared with the section.
+    int         moves_want;
+    bool        moves_bots;
     uint8_t     arena[CB_ARENA_BYTES];
     int         arena_hw;         // bytes of the arena a products call may have written (cb_section_free zeroes that prefix)
     bool        in_use, pooled;   // cb_section_new's own: the worker thread's reusable one, and whether it is handed out
-    // The bot cycle's scratch board (cb_bots_journal_moves_before), made on first use and kept
-    // with the section: freed with it (cb_section_free of an unpooled one, or the thread's exit).
-    Game       *walk;
     // The game end's replay scratch (finalize_game: the code, the decode gate's scratch and the
-    // extras, 3.25 MB), made on first use and kept with the section like `walk`: a job thread
+    // extras, 3.25 MB), made on first use and kept with the section: a job thread
     // that finalizes allocates it once, not per finished game.
     uint8_t    *fin;
     cb_row_buf  rb;               // the loaded row's bytes, the journal's copy (row_acquire); kept with the section, not zeroed
@@ -109,10 +104,6 @@ void cb_row_release(cb_game_row *row, bool kept);
 int cb_section_envelope(cb_section *s, int viewer, uint32_t version, uint8_t **out, size_t *out_len);
 
 // The journal's replay of one move at start (journal.h cb_journal_apply_fn; ud is the cb_ctx).
-// The bot cycle's moves for the journal: the board and seeding before the drive, then the
-// moves the drive applied coded into the section (s->mv, s->n_mv).
-int cb_bots_journal_moves_before(cb_section *s, Game **board, uint32_t *base, uint32_t *off);
-void cb_bots_journal_moves_after(cb_section *s, Game *board, uint32_t base, uint32_t off, BotDriveOut *drv);
 struct cb_jmove;
 int cb_table_replay_move(void *ud, const cb_game_row *row, const uint8_t *session_log, size_t session_log_len,
                          const struct cb_jmove *m, cb_game_row *out, uint8_t **log, size_t *log_len);

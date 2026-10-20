@@ -89,11 +89,6 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
         }
         if (cb_bots_cycle_observer) cb_bots_cycle_observer(game_id, attempt, log_len, prefs_len);
         BotDriveOut drv;
-        // The journal codes the cycle's moves on the board the drive starts from (journal.h).
-        Game *jboard = NULL;
-        uint32_t jbase = 0, joff = 0;
-        s->n_mv = 0;
-        const bool journal = cb_journal_of(ctx->store) && cb_bots_journal_moves_before(s, &jboard, &jbase, &joff) == CB_OK;
         const int64_t t0 = cb_mono_ms();
         kr = table_bot_drive(&s->t, prefs, prefs_len, 0, &drv);
         const int64_t drive_ms = cb_mono_ms() - t0;
@@ -116,7 +111,9 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
             CYCLE_OUT(CYCLE_DONE);
         }
 
-        if (journal) cb_bots_journal_moves_after(s, jboard, jbase, joff, &drv);
+        // The journal holds the cycle as the kernel listed its moves (journal.h).
+        s->moves_want = drv.n;
+        s->moves_bots = true;
         int pl = table_drive_prefs(&s->t, &drv, prefs, sizeof prefs);
         prefs_len = pl > 0 ? pl : 0;
         // The drive was computed from a row read without the game's lock (octogen takes milliseconds,

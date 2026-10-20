@@ -337,8 +337,8 @@ _Static_assert(EVW_CAST_DELTA != EVW_CAST_FORMAT && EVW_CAST_DELTA != EVWIRE_FOR
 #define EVW_DELTA_MAX_SNAPS   24
 #define EVW_DELTA_MAX_LOGS    32
 
-// One move as a delta (and, one day, a journal record) lists it.
-typedef struct {
+// One move as a delta and the server's journal record list it.
+typedef struct EvwMove {
     int8_t  seat;
     uint8_t wire_len;
     uint8_t wire[EVW_DELTA_WIRE_MAX];
@@ -362,6 +362,13 @@ typedef struct {
 // EVW_ECAP, or EVW_EBADARG for a list that is not one (0 or too many moves, a
 // wire that is empty or too long).
 int evwire_moves_put(const EvwMove *moves, int n, unsigned char *out, int cap);
+// THE MOVE LIST, read: the list at buf (len bytes at most), each move checked
+// as evwire_moves_put writes one (a seat below MAX_PLAYERS, a whole awire frame
+// of the length the list gives it). Its moves into out (cap of them; out NULL
+// only checks) and their count into *n. Bytes the list takes, or EVW_EPARSE.
+// The one reader of a commit's moves: the delta cast and the server's journal
+// record both carry this list.
+int evwire_moves_read(const unsigned char *buf, int len, EvwMove *out, int cap, int *n);
 
 // A whole delta: the header, the move list, the reveal list, the check. Bytes
 // written, EVW_ECAP, or EVW_EBADARG.

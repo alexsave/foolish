@@ -13,6 +13,10 @@
 #include "rate_limits.h"
 #include "store/backup.h"
 #include "store/journal.h"
+#include "../../../shared/c/crc32c/crc32c.h"
+
+// The segment format journal.c writes (journal.h SEGMENT FILE).
+#define JOURNAL_FORMAT 2
 #include "util/clock.h"
 #include "store/store_sql.h"
 #include "awire.h"
@@ -303,52 +307,69 @@ static uint64_t row_hash(cb_store *s, const char *gid) {
 
 // ---- the codec -----------------------------------------------------------------------------
 
-static void random_move(uint64_t *rng, ReplayMove *m) {
+// A random awire frame (awire.h) for a random seat: what a move list holds.
+static void random_move(uint64_t *rng, EvwMove *m) {
     memset(m, 0, sizeof *m);
-    m->seat = (int)(rng_u32(rng) % MAX_PLAYERS);
-    m->menu_n = (int)(rng_u32(rng) % 200);
-    m->index = (int)(rng_u32(rng) % (uint32_t)(m->menu_n + 1));
-    if (m->index == m->menu_n) {
-        m->wire_len = (int)(rng_u32(rng) % 12);
-        for (int i = 0; i < m->wire_len; i++) m->wire[i] = (uint8_t)rng_u32(rng);
+    m->seat = (int8_t)(rng_u32(rng) % MAX_PLAYERS);
+    AwireAction a;
+    memset(&a, 0, sizeof a);
+    a.kind = (int)(rng_u32(rng) % 5);
+    a.n = a.kind == AWIRE_PICKUP || a.kind == AWIRE_GOOD ? 0 : 1 + (int)(rng_u32(rng) % 6);
+    for (int i = 0; i < a.n; i++) {
+        a.cards[i] = card_of_id((int)(rng_u32(rng) % 52));
+        a.attacks[i] = card_of_id((int)(rng_u32(rng) % 52));
     }
+    const int n = awire_encode(&a, m->wire, (int)sizeof m->wire);
+    T_CHECK(n >= 2);
+    m->wire_len = (uint8_t)n;
 }
 
 static bool same_move(const cb_jmove *a, const cb_jmove *b) {
     bool same = strcmp(a->game, b->game) == 0 && a->base_version == b->base_version && a->now_ms == b->now_ms &&
                 a->bots == b->bots && a->n_mv == b->n_mv;
     for (int k = 0; same && k < a->n_mv; k++) {
-        const ReplayMove *x = &a->mv[k], *y = &b->mv[k];
-        same = x->seat == y->seat && x->menu_n == y->menu_n && x->index == y->index && x->wire_len == y->wire_len &&
-               memcmp(x->wire, y->wire, (size_t)x->wire_len) == 0;
+        const EvwMove *x = &a->mv[k], *y = &b->mv[k];
+        same = x->seat == y->seat && x->wire_len == y->wire_len && memcmp(x->wire, y->wire, x->wire_len) == 0;
     }
     return same;
 }
 
 enum { NB = 3, PER = 20 };
 static cb_jmove g_in[NB][PER];
+static EvwMove g_in_mv[NB][PER][EVW_DELTA_MAX_MOVES];
+static size_t g_want[NB];   // each batch's length as journal.h lays a batch out
 
 // NB batches of PER moves over 5 games (one jumps its version), encoded back to back into buf.
 static size_t encode_batches(uint8_t *buf, size_t cap, size_t ends[NB]) {
     static const char *const games[] = { "a1b2c3d4e5f6", "0123456789ab", "ffeeddccbbaa", "abc123", "9f9f9f9f9f9f" };
     int64_t ver[5] = { 7, 100, 3, 55555, 1 };
+    bool named[5] = { false };
     uint64_t rng = 99;
     cb_jslots *t = cb_jslots_new();
     size_t len = 0;
     for (int b = 0; b < NB; b++) {
+        const cb_jmove *ptr[PER];
+        g_want[b] = CB_JOURNAL_BATCH_HDR + 1 + 4;
         for (int i = 0; i < PER; i++) {
             cb_jmove *m = &g_in[b][i];
             memset(m, 0, sizeof *m);
             int k = (int)(rng_u32(&rng) % 5);
             snprintf(m->game, sizeof m->game, "%s", games[k]);
-            if (b == 1 && i == 3 && k == 2) ver[k] += 40;   // the game was written around the journal between
+            bool jumped = false;
+            if (b == 1 && i == 3 && k == 2) ver[k] += 40, jumped = true;   // the game was written around the journal between
             m->base_version = ver[k]++;
             m->now_ms = 1760000000000LL + b * 5000 + (int64_t)(rng_u32(&rng) % 3000);
             m->bots = rng_u32(&rng) % 3 == 0;   // a third are bot cycles of 1..9 moves
-            m->n_mv = m->bots ? 1 + (int)(rng_u32(&rng) % BOT_DRIVE_MAX_ACTIONS) : 1;
-            for (int q = 0; q < m->n_mv; q++) random_move(&rng, &m->mv[q]);
+            m->n_mv = m->bots ? 1 + (int)(rng_u32(&rng) % EVW_DELTA_MAX_MOVES) : 1;
+            for (int q = 0; q < m->n_mv; q++) random_move(&rng, &g_in_mv[b][i][q]);
+            m->mv = g_in_mv[b][i];
+            ptr[i] = m;
+            // flags, then a new game's id and version or the slot (and a jump's version), the ms, the list
+            g_want[b] += 1 + (named[k] ? 2 + (jumped ? 4 : 0) : 1 + strlen(games[k]) + 4) + 4 + 1;
+            for (int q = 0; q < m->n_mv; q++) g_want[b] += 2 + m->mv[q].wire_len;
+            named[k] = true;
         }
-        int n = cb_journal_batch_encode(t, 1760000000000LL - 10, g_in[b], PER, buf + len, (int)(cap - len));
+        int n = cb_journal_batch_encode(t, 1760000000000LL - 10, ptr, PER, buf + len, (int)(cap - len));
         T_CHECK(n > CB_JOURNAL_BATCH_HDR);
         len += n > 0 ? (size_t)n : 0;
         ends[b] = len;
@@ -361,12 +382,13 @@ static size_t encode_batches(uint8_t *buf, size_t cap, size_t ends[NB]) {
 // Decodes buf as far as it goes: the moves read, checked against g_in in order.
 static int decode_all(const uint8_t *buf, size_t len) {
     cb_jslots *t = cb_jslots_new();
-    cb_jmove out[CB_JOURNAL_BATCH_MAX];
+    static cb_jmove out[CB_JOURNAL_BATCH_MAX];
+    static EvwMove mv[CB_JOURNAL_BATCH_MAX][EVW_DELTA_MAX_MOVES];
     size_t at = 0;
     int total = 0;
     while (at < len) {
         size_t used = 0;
-        int n = cb_journal_batch_decode(t, 1760000000000LL - 10, buf + at, len - at, &used, out, CB_JOURNAL_BATCH_MAX);
+        int n = cb_journal_batch_decode(t, 1760000000000LL - 10, buf + at, len - at, &used, out, mv, CB_JOURNAL_BATCH_MAX);
         if (n < 0) break;
         for (int i = 0; i < n; i++, total++) T_CHECK(same_move(&out[i], &g_in[total / PER][total % PER]));
         at += used;
@@ -376,18 +398,72 @@ static int decode_all(const uint8_t *buf, size_t len) {
 }
 
 static void a_batch_round_trips(void) {
-    static uint8_t buf[3 * 9000];
+    static uint8_t buf[3 * 16000];
     size_t ends[NB];
     size_t len = encode_batches(buf, sizeof buf, ends);
     T_EQ_INT(decode_all(buf, len), NB * PER);
-    // A move costs a few bytes: under 6 bytes a coded move, a batch's header included.
-    int moves = 0;
-    for (int i = 0; i < PER; i++) moves += g_in[1][i].n_mv;
-    T_CHECK(ends[1] - ends[0] < (size_t)(6 * moves));
+    // Each batch is exactly the fixed layout journal.h gives: nothing coded, nothing padded.
+    for (int b = 0; b < NB; b++) T_EQ_INT((int)(ends[b] - (b ? ends[b - 1] : 0)), (int)g_want[b]);
+}
+
+// A batch whose checksum holds but whose payload runs past its last record (a byte more, the
+// length and the CRC-32C made to match) is not a batch: the decoder reads it whole or not at all.
+static void a_batch_with_bytes_past_its_records_is_refused(void) {
+    static uint8_t buf[3 * 16000], bad[16000];
+    size_t ends[NB];
+    encode_batches(buf, sizeof buf, ends);
+    const size_t n = ends[0], plen = n - CB_JOURNAL_BATCH_HDR;
+    memcpy(bad, buf, n);
+    bad[n] = 0;
+    bad[2] = (uint8_t)(plen + 1), bad[3] = (uint8_t)((plen + 1) >> 8);
+    const uint32_t sum = crc32c(crc32c(0, bad, 4), bad + CB_JOURNAL_BATCH_HDR, plen + 1);
+    for (int i = 0; i < 4; i++) bad[4 + i] = (uint8_t)(sum >> (8 * i));
+    T_EQ_INT(decode_all(bad, n + 1), 0);
+    T_EQ_INT(decode_all(buf, n), PER);   // the batch as written reads
+}
+
+// A batch that does not fit its room is refused whole: the slot table is as it was, so the
+// next batch names the same games the same way.
+static void a_refused_batch_consumes_nothing(void) {
+    uint64_t rng = 7;
+    static EvwMove mv[2][EVW_DELTA_MAX_MOVES];
+    cb_jmove m[2];
+    memset(m, 0, sizeof m);
+    snprintf(m[0].game, sizeof m[0].game, "a1b2c3d4e5f6");
+    snprintf(m[1].game, sizeof m[1].game, "0123456789ab");
+    for (int i = 0; i < 2; i++) {
+        m[i].base_version = 10 + i;
+        m[i].now_ms = 1760000000500LL;
+        m[i].n_mv = 1;
+        random_move(&rng, &mv[i][0]);
+        m[i].mv = mv[i];
+    }
+    const cb_jmove *ptr[2] = { &m[0], &m[1] };
+    cb_jslots *t = cb_jslots_new(), *fresh = cb_jslots_new();
+    uint8_t a[512], b[512];
+    // Room for the first record only: refused, nothing named.
+    const int whole = cb_journal_batch_encode(fresh, 1760000000000LL, ptr, 2, b, sizeof b);
+    T_CHECK(whole > 0);
+    T_EQ_INT(cb_journal_batch_encode(t, 1760000000000LL, ptr, 2, a, whole - 1), CB_E_FULL);
+    T_EQ_INT(cb_jslots_count(t), 0);
+    // A game the table held keeps its next version too.
+    const cb_jmove *one[1] = { &m[0] };
+    cb_jslots_free(fresh);
+    fresh = cb_jslots_new();
+    T_CHECK(cb_journal_batch_encode(t, 1760000000000LL, one, 1, a, sizeof a) > 0);
+    T_CHECK(cb_journal_batch_encode(fresh, 1760000000000LL, one, 1, b, sizeof b) > 0);
+    m[0].base_version++;
+    const int w2 = cb_journal_batch_encode(fresh, 1760000000000LL, ptr, 2, b, sizeof b);
+    T_EQ_INT(cb_journal_batch_encode(t, 1760000000000LL, ptr, 2, a, w2 - 1), CB_E_FULL);
+    T_EQ_INT(cb_jslots_count(t), 1);
+    T_EQ_INT(cb_journal_batch_encode(t, 1760000000000LL, ptr, 2, a, sizeof a), w2);
+    T_CHECK(memcmp(a, b, (size_t)w2) == 0);   // the same bytes a table that never saw the refusal writes
+    cb_jslots_free(t);
+    cb_jslots_free(fresh);
 }
 
 static void a_torn_or_corrupt_tail_drops_only_itself(void) {
-    static uint8_t buf[3 * 9000];
+    static uint8_t buf[3 * 16000];
     size_t ends[NB];
     size_t len = encode_batches(buf, sizeof buf, ends);
     // Cut in the middle of the last batch: the two before it are whole.
@@ -413,68 +489,40 @@ static void a_move_off_its_board_is_refused(void) {
     char gid[CB_GAME_ID_MAX + 1];
     two_humans_dealt(gid);
     cb_game_row row = stored(s, gid);
-    Game *g = calloc(1, sizeof *g);
-    TableSnaps *snaps = calloc(1, sizeof *snaps);
-    Table t;
-    table_init(&t, g, snaps);
-    T_EQ_INT(table_load(&t, row.state, (int)row.state_len, row.roster, (int)row.roster_len), TABLE_OK);
     int seat = -1, n = 0;
-    uint8_t wire[64], back[REPLAY_MOVE_WIRE_MAX];
+    uint8_t wire[64];
     for (int k = 0; k < 2 && n <= 0; k++) n = pick_move(&row, seat = k, wire, sizeof wire);
     T_CHECK(n > 0);
-    ReplayMove m;
-    T_EQ_INT(replay_move_of(g, seat, wire, n, &m), 0);
-    T_CHECK(m.menu_n > 0);
-    // On its own board it names the move it was made from.
-    int k = replay_move_wire(g, &m, back, sizeof back);
-    AwireAction x, y;
-    T_CHECK(k > 0 && awire_decode(back, k, &x) && awire_decode(wire, n, &y) && x.kind == y.kind && x.n == y.n);
-    // A board whose menu is not the one it was coded against refuses it.
-    m.menu_n++;
-    T_EQ_INT(replay_move_wire(g, &m, back, sizeof back), -REPLAY_ENOTINMENU);
-
-    // A live move is coded raw (no menu looked up): it codes and decodes to its own bytes,
-    // and on its board it names them.
-    ReplayMove raw, dec;
-    T_EQ_INT(replay_move_raw(seat, wire, n, &raw), 0);
-    T_EQ_INT(raw.menu_n, REPLAY_MOVE_RAW);
-    ReplayCoder c;
-    uint8_t code[64];
-    T_EQ_INT(replay_coder_begin_encode(&c), 0);
-    T_EQ_INT(replay_move_code(&c, &raw), 0);
-    int code_len = replay_coder_finish(&c, code, sizeof code);
-    T_CHECK(code_len > 0);
-    T_EQ_INT(replay_coder_begin_decode(&c, code, code_len), 0);
-    memset(&dec, 0, sizeof dec);
-    T_EQ_INT(replay_move_code(&c, &dec), 0);
-    T_CHECK(dec.seat == seat && dec.menu_n == REPLAY_MOVE_RAW && dec.wire_len == n && memcmp(dec.wire, wire, (size_t)n) == 0);
-    k = replay_move_wire(g, &dec, back, sizeof back);
-    T_CHECK(k == n && memcmp(back, wire, (size_t)n) == 0);
-    // Its board check: the seat must have a move there. The other seat, with none, is refused.
-    int other = 1 - seat;
-    if (pick_move(&row, other, back, sizeof back) <= 0) {
-        dec.seat = other;
-        T_EQ_INT(replay_move_wire(g, &dec, back, sizeof back), -REPLAY_ENOTINMENU);
+    EvwMove mv;
+    memset(&mv, 0, sizeof mv);
+    mv.seat = (int8_t)seat;
+    mv.wire_len = (uint8_t)n;
+    memcpy(mv.wire, wire, (size_t)n);
+    cb_jmove m;
+    memset(&m, 0, sizeof m);
+    snprintf(m.game, sizeof m.game, "%s", gid);
+    m.base_version = row.version;
+    m.now_ms = row.updated_at + 1000;
+    m.n_mv = 1;
+    m.mv = &mv;
+    // On its own board the record is the move: the commit at the next version.
+    cb_game_row out;
+    uint8_t *log = NULL;
+    size_t log_len = 0;
+    T_EQ_INT(cb_table_replay_move(&g_ctx, &row, NULL, 0, &m, &out, &log, &log_len), CB_OK);
+    T_EQ_INT(out.version, row.version + 1);
+    cb_game_row_free(&out);
+    free(log);
+    // The other seat, whose move it is not, is refused: the kernel acts it and says no.
+    if (pick_move(&row, 1 - seat, wire, sizeof wire) <= 0) {
+        mv.seat = (int8_t)(1 - seat);
+        T_CHECK(cb_table_replay_move(&g_ctx, &row, NULL, 0, &m, &out, &log, &log_len) != CB_OK);
+        mv.seat = (int8_t)seat;
     }
-    // No index is coded for it: 64 raw moves in one coder are smaller than the same moves as
-    // the index form's escape (an index over a menu of REPLAY_MOVE_MENU_CAP, about 10 bits each).
-    ReplayMove esc = raw;
-    esc.menu_n = esc.index = REPLAY_MOVE_MENU_CAP;
-    int lens[2];
-    for (int form = 0; form < 2; form++) {
-        static uint8_t batch[64 * 16];
-        T_EQ_INT(replay_coder_begin_encode(&c), 0);
-        for (int i = 0; i < 64; i++) {
-            ReplayMove one = form ? esc : raw;
-            T_EQ_INT(replay_move_code(&c, &one), 0);
-        }
-        lens[form] = replay_coder_finish(&c, batch, sizeof batch);
-    }
-    T_CHECK(lens[0] > 0 && lens[0] + 64 < lens[1]);
-    // A malformed frame is not coded.
-    T_EQ_INT(replay_move_raw(seat, wire, 0, &raw), -REPLAY_EINPUT);
-    free(g);
-    free(snaps);
+    // A seat past the roster names no player.
+    mv.seat = MAX_PLAYERS - 1;
+    T_CHECK(cb_table_replay_move(&g_ctx, &row, NULL, 0, &m, &out, &log, &log_len) != CB_OK);
+    free(log);
     cb_game_row_free(&row);
     close_world(s);
 }
@@ -950,6 +998,9 @@ static int cut_a_cycle(const char *copy) {
     // Frame by frame: a whole commit's record (journal.h, 'R') copied as it is, each batch decoded
     // and coded again, the first bot cycle of two moves or more cut by one.
     cb_jmove *ms = calloc(64, sizeof *ms);
+    EvwMove (*mv)[EVW_DELTA_MAX_MOVES] = calloc(64, sizeof *mv);
+    const cb_jmove *ptr[64];
+    for (int i = 0; i < 64; i++) ptr[i] = &ms[i];
     int cut = 0;
     cb_jslots *t = cb_jslots_new(), *t2 = cb_jslots_new();
     memcpy(out, buf, 16);
@@ -961,17 +1012,18 @@ static int cut_a_cycle(const char *copy) {
             w += used;
             continue;
         }
-        int k = cb_journal_batch_decode(t, start, buf + at, len - at, &used, ms, 64);
+        int k = cb_journal_batch_decode(t, start, buf + at, len - at, &used, ms, mv, 64);
         if (k < 0) break;
         for (int i = 0; i < k && !cut; i++)
             if (ms[i].bots && ms[i].n_mv >= 2) { ms[i].n_mv--; cut = 1; }
-        int enc = cb_journal_batch_encode(t2, start, ms, k, out + w, (int)(sizeof out - w));
+        int enc = cb_journal_batch_encode(t2, start, ptr, k, out + w, (int)(sizeof out - w));
         T_CHECK(enc > 0);
         if (enc > 0) w += (size_t)enc;
     }
     cb_jslots_free(t);
     cb_jslots_free(t2);
     free(ms);
+    free(mv);
     f = fopen(seg, "wb");
     if (f) { fwrite(out, 1, w, f); fclose(f); }
     return cut;
@@ -1037,81 +1089,6 @@ static void a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused(void) {
     s = open_world(cut, true, err, sizeof err);
     T_CHECK(s == NULL);
     if (s) close_world(s);
-}
-
-
-// A cycle across a draw on a legacy-deck board (a draw takes the draw stream's next number):
-// the walk that codes it and the walk that decodes it each seed every apply as the drive did,
-// so both draw the cards the drive drew, whatever the stream held before.
-static void a_cycle_walk_draws_as_the_drive_did(void) {
-    char path[320], err[256] = "";
-    snprintf(path, sizeof path, "%s/walk.sqlite", g_dir);
-    cb_store *s = open_world(path, false, err, sizeof err);
-    T_CHECK(s != NULL);
-    if (!s) return;
-    const bool was = g_bots;
-    g_bots = false;
-    char gid[CB_GAME_ID_MAX + 1];
-    two_humans_dealt(gid);
-    g_bots = was;
-    cb_game_row row = stored(s, gid);
-    Game *g0 = calloc(1, sizeof *g0), *w = calloc(1, sizeof *w), *e = calloc(1, sizeof *e);
-    TableSnaps *snaps = calloc(1, sizeof *snaps);
-    LegalMoves *moves = calloc(1, sizeof *moves);
-    Table t;
-    table_init(&t, g0, snaps);
-    T_EQ_INT(table_load(&t, row.state, (int)row.state_len, row.roster, (int)row.roster_len), TABLE_OK);
-    g0->deterministic_deck = false;
-    const uint32_t base = 0x5eed1234u, off = 7;
-    int drew = 0, tries = 0;
-    for (; !drew && tries < 50; tries++) {
-        // A cycle of nine moves by whoever has one, applied as the drive applies (seeded).
-        *w = *g0;
-        BotDriveAction acts[BOT_DRIVE_MAX_ACTIONS], back[BOT_DRIVE_MAX_ACTIONS];
-        ReplayMove mv[BOT_DRIVE_MAX_ACTIONS];
-        memset(acts, 0, sizeof acts);
-        int n = 0;
-        for (; n < BOT_DRIVE_MAX_ACTIONS; n++) {
-            int seat = -1, pick = -1;
-            for (int p = 0; p < w->num_players && seat < 0; p++) {
-                calculate_legal_moves(w, p, moves);
-                int k = 0;
-                for (int i = 0; i < moves->n; i++) k += moves->moves[i].type != MOVE_WAIT;
-                if (!k) continue;
-                int want = (int)(rng_u32(&g_rng) % (uint32_t)k);
-                for (int i = 0; i < moves->n && pick < 0; i++)
-                    if (moves->moves[i].type != MOVE_WAIT && !want--) pick = i;
-                seat = p;
-            }
-            if (seat < 0) break;
-            acts[n].seat = (int8_t)seat;
-            acts[n].move = moves->moves[pick];
-            const int deck = w->deck_count;
-            bot_drive_seed_decision(w, base, off, BOT_DRIVE_PHASE_APPLY);
-            T_CHECK(legal_move_apply(w, seat, &acts[n].move));
-            if (w->deck_count < deck && n + 1 < BOT_DRIVE_MAX_ACTIONS) drew = 1;
-            if (game_done(w) >= 0) { n++; break; }
-        }
-        if (!drew) continue;
-        *e = *g0;
-        (void)game_random();   // the stream holds something else now
-        T_EQ_INT(replay_move_drive_walk(e, base, off, n, acts, mv, true), 0);
-        for (int i = 0; i < 5; i++) (void)game_random();
-        *e = *g0;
-        T_EQ_INT(replay_move_drive_walk(e, base, off, n, back, mv, false), 0);
-        bool same = true;
-        for (int i = 0; i < n && same; i++) {
-            same = back[i].seat == acts[i].seat && back[i].move.type == acts[i].move.type &&
-                   back[i].move.n_cards == acts[i].move.n_cards;
-            for (int c = 0; same && c < acts[i].move.n_cards; c++) same = card_eq(back[i].move.cards[c], acts[i].move.cards[c]);
-        }
-        T_CHECK(same);
-        T_EQ_INT(e->deck_count, w->deck_count);
-    }
-    T_CHECK(drew);
-    free(g0); free(w); free(e); free(snaps); free(moves);
-    cb_game_row_free(&row);
-    close_world(s);
 }
 
 
@@ -1247,9 +1224,10 @@ typedef struct {
 
 static void *racer(void *ud) {
     racer_t *r = ud;
-    ReplayMove mv;
+    EvwMove mv;
     memset(&mv, 0, sizeof mv);
-    mv.menu_n = 2;
+    mv.wire[0] = AWIRE_PICKUP;   // a whole frame: kind, no cards
+    mv.wire_len = 2;
     cb_game_commit c;
     memset(&c, 0, sizeof c);
     c.row = &r->row;
@@ -1643,21 +1621,22 @@ static size_t full_frame(uint8_t *out, const char *id, int idl, int64_t base, ui
     le(q, 0, 4), q += 4;   // log
     memset(q, 0, (size_t)tail), q += tail;
     const uint32_t plen = (uint32_t)(q - out - 12);
-    out[0] = 'R', out[1] = 1, out[2] = out[3] = 0;
+    out[0] = 'R', out[1] = JOURNAL_FORMAT, out[2] = out[3] = 0;
     le(out + 8, plen, 4);
-    le(out + 4, fnv1a32(fnv1a32(FNV32_OFFSET, out + 8, 4), out + 12, plen), 4);
+    le(out + 4, crc32c(crc32c(0, out + 8, 4), out + 12, plen), 4);
     return 12 + plen;
 }
 
-static void write_segment(const char *db, const uint8_t *frames, size_t n) {
+static void write_segment_as(const char *db, const uint8_t *frames, size_t n, uint32_t format) {
     char seg[600];
     snprintf(seg, sizeof seg, "%s-journal.%016llu", db, 1000ULL);
     FILE *f = fopen(seg, "wb");
     uint8_t h[16] = { 'F', 'J', 'N', 'L' };
-    le(h + 4, 1, 4);
+    le(h + 4, format, 4);
     le(h + 8, 1760000000000ULL, 8);
     if (f) { fwrite(h, 1, 16, f); fwrite(frames, 1, n, f); fclose(f); }
 }
+static void write_segment(const char *db, const uint8_t *frames, size_t n) { write_segment_as(db, frames, n, JOURNAL_FORMAT); }
 
 static void crafted_whole_commits_recover_or_refuse(void) {
     char path[320], err[256] = "";
@@ -1712,6 +1691,23 @@ static void crafted_whole_commits_recover_or_refuse(void) {
         T_EQ_INT(-version_of(s, gid), 1);   // the game as the tables hold it
         close_world(s);
     }
+    // A segment another format wrote (an older server's, its moves acknowledged) is never
+    // skipped: the start is refused, and says how to get past it.
+    char db[340];
+    snprintf(db, sizeof db, "%s/crafted_old.sqlite", g_dir);
+    crash_copy(path, db);
+    const size_t n = full_frame(fr, gid, -1, 1, 0, 4, 4, 0);
+    write_segment_as(db, fr, n, JOURNAL_FORMAT - 1);
+    err[0] = 0;
+    s = open_world(db, true, err, sizeof err);
+    T_CHECK(s == NULL);
+    if (s) close_world(s);
+    T_CHECK(strstr(err, "stop the server that wrote it cleanly") != NULL);
+    // The same segment in this format is read.
+    write_segment(db, fr, n);
+    s = open_world(db, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (s) { T_EQ_INT(-version_of(s, gid), 2); close_world(s); }   // its commit adopted (a lobby status)
 }
 
 // THE RESIDENCY CAP: past opts.max_games the least recently touched idle games leave at the
@@ -2474,11 +2470,12 @@ int main(void) {
     snprintf(g_dir, sizeof g_dir, "%s/unit_journal.XXXXXX", tmp && *tmp ? tmp : "/tmp");
     if (!mkdtemp(g_dir)) return 1;
     T_RUN(a_batch_round_trips);
+    T_RUN(a_refused_batch_consumes_nothing);
+    T_RUN(a_batch_with_bytes_past_its_records_is_refused);
     T_RUN(a_torn_or_corrupt_tail_drops_only_itself);
     T_RUN(a_move_off_its_board_is_refused);
     T_RUN(a_move_allocates_almost_nothing);
     T_RUN(a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused);
-    T_RUN(a_cycle_walk_draws_as_the_drive_did);
     T_RUN(the_resident_is_the_row);
     T_RUN(a_resident_the_tables_contradict_is_dropped);
     T_RUN(the_overlay_keeps_at_most_its_cap);

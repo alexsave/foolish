@@ -450,6 +450,30 @@ int evwire_moves_put(const EvwMove *moves, int n, unsigned char *out, int cap) {
     return at;
 }
 
+int evwire_moves_read(const unsigned char *buf, int len, EvwMove *out, int cap, int *n) {
+    if (!buf || !n || len < 1) return EVW_EPARSE;
+    const int count = buf[0];
+    if (count < 1 || count > EVW_DELTA_MAX_MOVES || (out && count > cap)) return EVW_EPARSE;
+    int at = 1;
+    for (int i = 0; i < count; i++) {
+        if (at + 2 > len) return EVW_EPARSE;
+        const int seat = buf[at], wl = buf[at + 1];
+        at += 2;
+        // A whole awire frame and nothing else: the frame's own length must be
+        // the one the list gives it.
+        if (seat >= MAX_PLAYERS || wl < 2 || wl > EVW_DELTA_WIRE_MAX || at + wl > len
+            || awire_frame_len(buf + at, wl) != wl) return EVW_EPARSE;
+        if (out) {
+            out[i].seat = (int8_t)seat;
+            out[i].wire_len = (uint8_t)wl;
+            for (int k = 0; k < wl; k++) out[i].wire[k] = buf[at + k];
+        }
+        at += wl;
+    }
+    *n = count;
+    return at;
+}
+
 #define EVW_DELTA_HEAD 9   // format, u32 version, kernel, viewer, flags; the move count is the list's
 
 int evwire_delta_put(uint32_t version, int viewer, int flags, const EvwMove *moves, int n_moves,
@@ -484,19 +508,10 @@ int evwire_delta_read(const unsigned char *buf, int len, EvwDelta *out) {
     out->flags = buf[7];
     if (out->viewer >= MAX_PLAYERS || (out->flags & ~EVW_DELTA_FLAGS)) return EVW_EPARSE;
     int at = 8;
-    out->n_moves = buf[at++];
-    if (out->n_moves < 1 || out->n_moves > EVW_DELTA_MAX_MOVES) return EVW_EPARSE;
-    out->moves = buf + at;
-    for (int i = 0; i < out->n_moves; i++) {
-        if (at + 2 > len) return EVW_EPARSE;
-        const int seat = buf[at], wl = buf[at + 1];
-        at += 2;
-        // A whole awire frame and nothing else: the frame's own length must be
-        // the one the list gives it.
-        if (seat >= MAX_PLAYERS || wl < 2 || wl > EVW_DELTA_WIRE_MAX || at + wl > len
-            || awire_frame_len(buf + at, wl) != wl) return EVW_EPARSE;
-        at += wl;
-    }
+    const int list = evwire_moves_read(buf + at, len - at, NULL, 0, &out->n_moves);
+    if (list < 0) return EVW_EPARSE;
+    out->moves = buf + at + 1;
+    at += list;
     if (at + 1 > len) return EVW_EPARSE;
     out->n_reveal = buf[at++];
     if (out->n_reveal > EVW_DELTA_MAX_REVEAL || (out->n_reveal > 0 && out->viewer < 0) || at + out->n_reveal + 4 != len)

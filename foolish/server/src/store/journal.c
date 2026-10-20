@@ -12,6 +12,7 @@
 #include "roster.h"
 #include "table.h"
 #include "../../../../shared/c/clock.h"
+#include "../../../../shared/c/crc32c/crc32c.h"
 #include "../../../../shared/c/fnv.h"
 #include "../../../../shared/c/num_parse.h"
 
@@ -30,7 +31,7 @@
 #define MOD "journal"
 #define SEG_MAGIC "FJNL"
 #define SEG_HDR 16
-#define FORMAT 1
+#define FORMAT 2   // 2: the fixed record and CRC-32C (1: the replay coder and FNV-1a)
 #define BATCH_MAGIC 'J'
 #define FULL_MAGIC 'R'           // a whole commit (journal.h "A FULL RECORD")
 #define FULL_HDR 12
@@ -75,8 +76,10 @@ static void hash_put(cb_jslots *t, int slot) {
     t->hash[h] = slot + 1;
 }
 
+#define SLOT_MAX 0xFFFF   // a record names a slot in a u16
+
 static int slot_add(cb_jslots *t, const char *id, int64_t next) {
-    if (t->n + 1 >= REPLAY_CODER_MAX_N) return CB_E_FULL;
+    if (t->n >= SLOT_MAX) return CB_E_FULL;
     if (t->n == t->cap) {
         int cap = t->cap ? t->cap * 2 : 64;
         void *a = realloc(t->ids, (size_t)cap * sizeof *t->ids), *b = a ? realloc(t->next, (size_t)cap * sizeof *t->next) : NULL;
@@ -102,9 +105,6 @@ static int slot_add(cb_jslots *t, const char *id, int64_t next) {
 
 // ---- the batch codec -----------------------------------------------------------------------
 
-static uint32_t zigzag(int64_t v) { return (uint32_t)((v << 1) ^ (v >> 63)); }
-static int64_t unzigzag(uint32_t z) { return (int64_t)(z >> 1) ^ -(int64_t)(z & 1); }
-
 static void put_u16(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 static void put_u32(uint8_t *p, uint32_t v) { for (int i = 0; i < 4; i++) p[i] = (uint8_t)(v >> (8 * i)); }
 static void put_u64(uint8_t *p, uint64_t v) { for (int i = 0; i < 8; i++) p[i] = (uint8_t)(v >> (8 * i)); }
@@ -112,100 +112,135 @@ static uint32_t get_u16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[
 static uint32_t get_u32(const uint8_t *p) { uint32_t v = 0; for (int i = 3; i >= 0; i--) v = v << 8 | p[i]; return v; }
 static uint64_t get_u64(const uint8_t *p) { uint64_t v = 0; for (int i = 7; i >= 0; i--) v = v << 8 | p[i]; return v; }
 
+// A frame's checksum: CRC-32C over its 4 header bytes and its payload.
 static uint32_t batch_sum(const uint8_t *hdr, const uint8_t *payload, size_t n) {
-    return fnv1a32(fnv1a32(FNV32_OFFSET, hdr, 4), payload, n);
+    return crc32c(crc32c(0, hdr, 4), payload, n);
 }
 
-int cb_journal_batch_encode(cb_jslots *t, int64_t seg_start_ms, const cb_jmove *m, int n, uint8_t *out, int cap) {
-    if (n < 1 || n > CB_JOURNAL_BATCH_MAX || cap < CB_JOURNAL_BATCH_HDR) return CB_E_INVALID;
-    int64_t base = m[0].now_ms;
-    for (int i = 1; i < n; i++) if (m[i].now_ms < base) base = m[i].now_ms;
+#define REC_BOTS 1   // a bot cycle
+#define REC_NEW  2   // a game the segment has not named: its id follows
+#define REC_VER  4   // a version follows: the record does not follow the slot's last one
+
+_Static_assert(CB_JOURNAL_BATCH_BYTES - CB_JOURNAL_BATCH_HDR <= 0xFFFF, "a batch's payload length is a u16");
+
+int cb_journal_batch_encode(cb_jslots *t, int64_t seg_start_ms, const cb_jmove *const *m, int n, uint8_t *out, int cap) {
+    if (n < 1 || n > CB_JOURNAL_BATCH_MAX || cap < CB_JOURNAL_BATCH_HDR + 5) return CB_E_INVALID;
+    int64_t base = m[0]->now_ms;
+    for (int i = 1; i < n; i++) if (m[i]->now_ms < base) base = m[i]->now_ms;
     const int64_t rel = base - seg_start_ms;
     if (rel > INT32_MAX || rel < INT32_MIN) return CB_E_INVALID;   // a segment lives seconds: the caller starts a new one
-    ReplayCoder c;
-    if (replay_coder_begin_encode(&c) != 0) return CB_E_NOMEM;
-    replay_coder_varint(&c, (uint32_t)n);
-    replay_coder_varint(&c, zigzag(rel));
-    for (int i = 0; i < n && !c.err; i++) {
-        const cb_jmove *r = &m[i];
-        if (r->base_version < 0 || r->base_version > UINT32_MAX - 1 || r->now_ms - base > UINT32_MAX) return CB_E_INVALID;
-        const int N = t->n;
-        int slot = slot_find(t, r->game);
-        replay_coder_uniform(&c, N + 1, slot >= 0 ? slot : N);
-        if (slot < 0) {
-            const int len = (int)strlen(r->game);
-            if (len < 1 || len > CB_GAME_ID_MAX) return CB_E_INVALID;
-            replay_coder_uniform(&c, CB_GAME_ID_MAX + 1, len);
-            for (int k = 0; k < len; k++) replay_coder_uniform(&c, 256, (uint8_t)r->game[k]);
-            replay_coder_varint(&c, (uint32_t)r->base_version);
-            if ((slot = slot_add(t, r->game, r->base_version)) < 0) return slot;
-        } else {
-            const bool follows = t->next[slot] == r->base_version;
-            replay_coder_uniform(&c, 2, follows ? 0 : 1);
-            if (!follows) replay_coder_varint(&c, (uint32_t)r->base_version);
-        }
-        t->next[slot] = r->base_version + 1;
-        replay_coder_varint(&c, (uint32_t)(r->now_ms - base));
-        if (r->n_mv < 1 || r->n_mv > (r->bots ? BOT_DRIVE_MAX_ACTIONS : 1)) return CB_E_INVALID;
-        replay_coder_uniform(&c, 2, r->bots ? 1 : 0);
-        if (r->bots) replay_coder_uniform(&c, BOT_DRIVE_MAX_ACTIONS, r->n_mv - 1);
-        for (int k = 0; k < r->n_mv; k++) {
-            ReplayMove mv = r->mv[k];
-            replay_move_code(&c, &mv);
-        }
+    // Checked whole before the slot table moves: a refused batch consumes nothing.
+    for (int i = 0; i < n; i++) {
+        const cb_jmove *r = m[i];
+        const size_t len = strlen(r->game);
+        if (len < 1 || len > CB_GAME_ID_MAX || r->base_version < 0 || r->base_version > UINT32_MAX - 1 ||
+            r->now_ms - base > UINT32_MAX || !r->mv || r->n_mv < 1 || r->n_mv > (r->bots ? EVW_DELTA_MAX_MOVES : 1))
+            return CB_E_INVALID;
     }
-    int len = replay_coder_finish(&c, out + CB_JOURNAL_BATCH_HDR, cap - CB_JOURNAL_BATCH_HDR);
-    if (len < 0 || len > 0xFFFF) return CB_E_FULL;
+    uint8_t *const p = out + CB_JOURNAL_BATCH_HDR;
+    const int room = cap - CB_JOURNAL_BATCH_HDR;
+    // What the batch changes in the slot table, undone if it is refused.
+    const int n0 = t->n;
+    int undo_slot[CB_JOURNAL_BATCH_MAX];
+    int64_t undo_next[CB_JOURNAL_BATCH_MAX];
+    int n_undo = 0;
+    int at = 0;
+    p[at++] = (uint8_t)n;
+    put_u32(p + at, (uint32_t)(int32_t)rel), at += 4;
+    int rc = CB_OK;
+    for (int i = 0; i < n && rc == CB_OK; i++) {
+        const cb_jmove *r = m[i];
+        int slot = slot_find(t, r->game);
+        const bool fresh = slot < 0, follows = !fresh && t->next[slot] == r->base_version;
+        const int idl = (int)strlen(r->game);
+        if (at + 1 + (fresh ? 1 + idl : 2) + (follows ? 0 : 4) + 4 > room) { rc = CB_E_FULL; break; }
+        p[at++] = (uint8_t)((r->bots ? REC_BOTS : 0) | (fresh ? REC_NEW : 0) | (!fresh && !follows ? REC_VER : 0));
+        if (fresh) {
+            if ((slot = slot_add(t, r->game, r->base_version)) < 0) { rc = slot; break; }
+            p[at++] = (uint8_t)idl;
+            memcpy(p + at, r->game, (size_t)idl), at += idl;
+        } else {
+            put_u16(p + at, (uint32_t)slot), at += 2;
+            undo_slot[n_undo] = slot;
+            undo_next[n_undo++] = t->next[slot];
+        }
+        if (!follows) put_u32(p + at, (uint32_t)r->base_version), at += 4;
+        t->next[slot] = r->base_version + 1;
+        put_u32(p + at, (uint32_t)(r->now_ms - base)), at += 4;
+        const int w = evwire_moves_put(r->mv, r->n_mv, p + at, room - at);
+        if (w < 0) rc = w == EVW_ECAP ? CB_E_FULL : CB_E_INVALID;
+        else at += w;
+    }
+    if (rc != CB_OK) {   // the slots this batch named go with it, and the others' versions come back
+        while (n_undo > 0) n_undo--, t->next[undo_slot[n_undo]] = undo_next[n_undo];
+        t->n = n0;
+        memset(t->hash, 0, (size_t)t->hcap * sizeof *t->hash);
+        for (int i = 0; i < t->n; i++) hash_put(t, i);
+        return rc;
+    }
     // THE COMMIT MARKER: the header goes after the payload, and its magic byte last (a
     // release store), so a segment's mapped pages cut anywhere before it hold a zero where
     // the batch's magic would be, which recovery reads as the segment's end.
     uint8_t h[4] = { BATCH_MAGIC, FORMAT, 0, 0 };
-    put_u16(h + 2, (uint32_t)len);
-    put_u32(out + 4, batch_sum(h, out + CB_JOURNAL_BATCH_HDR, (size_t)len));
-    put_u16(out + 2, (uint32_t)len);
+    put_u16(h + 2, (uint32_t)at);
+    put_u32(out + 4, batch_sum(h, p, (size_t)at));
+    put_u16(out + 2, (uint32_t)at);
     out[1] = FORMAT;
     __atomic_store_n(&out[0], (uint8_t)BATCH_MAGIC, __ATOMIC_RELEASE);
-    return CB_JOURNAL_BATCH_HDR + len;
+    return CB_JOURNAL_BATCH_HDR + at;
 }
 
 int cb_journal_batch_decode(cb_jslots *t, int64_t seg_start_ms, const uint8_t *in, size_t len, size_t *used,
-                            cb_jmove *out, int cap) {
+                            cb_jmove *out, EvwMove (*mv)[EVW_DELTA_MAX_MOVES], int cap) {
     if (len < CB_JOURNAL_BATCH_HDR || in[0] != BATCH_MAGIC || in[1] != FORMAT) return -1;
     const size_t plen = get_u16(in + 2);
     if (CB_JOURNAL_BATCH_HDR + plen > len) return -1;   // torn
     if (get_u32(in + 4) != batch_sum(in, in + CB_JOURNAL_BATCH_HDR, plen)) return -1;
-    ReplayCoder c;
-    if (replay_coder_begin_decode(&c, in + CB_JOURNAL_BATCH_HDR, (int)plen) != 0) return -1;
-    const uint32_t n = replay_coder_varint(&c, 0);
-    const int64_t base = seg_start_ms + unzigzag(replay_coder_varint(&c, 0));
-    if (c.err || n < 1 || n > (uint32_t)cap || n > CB_JOURNAL_BATCH_MAX) return -1;
-    for (uint32_t i = 0; i < n; i++) {
+    const uint8_t *p = in + CB_JOURNAL_BATCH_HDR;
+    const int end = (int)plen;
+    if (end < 5) return -1;
+    const int n = p[0];
+    const int64_t base = seg_start_ms + (int32_t)get_u32(p + 1);
+    if (n < 1 || n > cap || n > CB_JOURNAL_BATCH_MAX) return -1;
+    int at = 5;
+    for (int i = 0; i < n; i++) {
         cb_jmove *r = &out[i];
         memset(r, 0, sizeof *r);
-        const int N = t->n;
-        int slot = replay_coder_uniform(&c, N + 1, -1);
-        if (c.err) return -1;
-        if (slot == N) {
-            const int idlen = replay_coder_uniform(&c, CB_GAME_ID_MAX + 1, -1);
-            if (idlen < 1) return -1;
-            for (int k = 0; k < idlen; k++) r->game[k] = (char)replay_coder_uniform(&c, 256, -1);
-            if (c.err || (int)strlen(r->game) != idlen) return -1;
-            r->base_version = replay_coder_varint(&c, 0);
-            if (c.err || slot_find(t, r->game) >= 0 || (slot = slot_add(t, r->game, r->base_version)) < 0) return -1;
+        if (at + 1 > end) return -1;
+        const int flags = p[at++];
+        if (flags & ~(REC_BOTS | REC_NEW | REC_VER) || (flags & REC_NEW && flags & REC_VER)) return -1;
+        int slot;
+        if (flags & REC_NEW) {
+            if (at + 1 > end) return -1;
+            const int idl = p[at++];
+            if (idl < 1 || idl > CB_GAME_ID_MAX || at + idl + 4 > end) return -1;
+            memcpy(r->game, p + at, (size_t)idl), at += idl;
+            if ((int)strlen(r->game) != idl || slot_find(t, r->game) >= 0) return -1;
+            r->base_version = get_u32(p + at), at += 4;
+            if ((slot = slot_add(t, r->game, r->base_version)) < 0) return -1;
         } else {
+            if (at + 2 > end) return -1;
+            slot = (int)get_u16(p + at), at += 2;
+            if (slot >= t->n) return -1;
             snprintf(r->game, sizeof r->game, "%s", t->ids[slot]);
-            r->base_version = replay_coder_uniform(&c, 2, -1) ? replay_coder_varint(&c, 0) : t->next[slot];
+            r->base_version = t->next[slot];
+            if (flags & REC_VER) {
+                if (at + 4 > end) return -1;
+                r->base_version = get_u32(p + at), at += 4;
+            }
         }
         t->next[slot] = r->base_version + 1;
-        r->now_ms = base + replay_coder_varint(&c, 0);
-        r->bots = replay_coder_uniform(&c, 2, -1) != 0;
-        r->n_mv = r->bots ? replay_coder_uniform(&c, BOT_DRIVE_MAX_ACTIONS, -1) + 1 : 1;
-        for (int k = 0; k < r->n_mv; k++)
-            if (replay_move_code(&c, &r->mv[k]) != 0) return -1;
+        if (at + 4 > end) return -1;
+        r->now_ms = base + get_u32(p + at), at += 4;
+        r->bots = flags & REC_BOTS;
+        const int w = evwire_moves_read(p + at, end - at, mv[i], EVW_DELTA_MAX_MOVES, &r->n_mv);
+        if (w < 0 || (!r->bots && r->n_mv != 1)) return -1;
+        r->mv = mv[i];
+        at += w;
     }
-    if (c.err || !replay_coder_exhausted(&c)) return -1;
+    if (at != end) return -1;
     *used = CB_JOURNAL_BATCH_HDR + plen;
-    return (int)n;
+    return n;
 }
 
 // ---- the overlay: each journaled game's acknowledged state ----------------------------------
@@ -305,7 +340,7 @@ struct cb_journal {
     pthread_cond_t  cv;            // the writers: a batch written, the writer free (waiters: how many wait)
     pthread_cond_t  fcv;           // the flush thread: a kick, a segment to make ahead, the stop
     int             waiters;
-    cb_jmove        ms[CB_JOURNAL_BATCH_MAX];   // the writer's (held): one batch's moves as coded
+    const cb_jmove *ms[CB_JOURNAL_BATCH_MAX];   // the writer's (held): one batch's records, borrowed
     jrec           *head, *tail;
     bool            writing;
     size_t          prepare_need;  // the loop's write waits for a segment this big (mu): the flush thread makes it
@@ -710,8 +745,16 @@ static size_t seg_size(const cb_journal *j, size_t need) {
     return (z + pg - 1) / pg * pg;
 }
 
-static size_t write_need(int n) {   // the most a write of n records takes, its segment header too
-    return SEG_HDR + (size_t)(n / CB_JOURNAL_BATCH_MAX + 1) * (CB_JOURNAL_BATCH_HDR + REPLAY_MAX_INT_BYTES);
+static size_t write_need(int n) {   // the most a write of n records of any size takes, its segment header too
+    return SEG_HDR + (size_t)(n / CB_JOURNAL_BATCH_MAX + 1) * CB_JOURNAL_BATCH_BYTES;
+}
+
+// The most one move record takes in a batch: its fields with a new game's id and a version,
+// and its move list.
+static size_t record_need(const cb_jmove *m) {
+    size_t n = 1 + 1 + strlen(m->game) + 4 + 4 + 1;
+    for (int i = 0; i < m->n_mv; i++) n += 2 + m->mv[i].wire_len;
+    return n;
 }
 
 // The next segment made ahead, so the writer's rotation only swaps maps (the flush thread's
@@ -942,16 +985,16 @@ static bool rotates(const cb_journal *j, size_t need, int64_t first) {
 // earliest record's time: a whole commit is its own frame, and each one may cut a run of moves
 // into another batch.
 static size_t batch_need(const jrec *list, bool only_ok, int64_t *first) {
-    int n = 0, n_full = 0;
-    size_t full_bytes = 0;
+    size_t need = SEG_HDR;
     *first = INT64_MAX;
     for (const jrec *r = list; r; r = r->next) {
         if (only_ok && r->rc != CB_OK) continue;
-        n++;
-        if (r->full) n_full++, full_bytes += full_size(r);
+        // A move record counts a batch's header of its own: the most a run cut by whole
+        // commits and the batch limit can take.
+        need += r->full ? full_size(r) : CB_JOURNAL_BATCH_HDR + 5 + record_need(&r->m);
         if (r->m.now_ms < *first) *first = r->m.now_ms;
     }
-    return write_need(n - n_full) + (size_t)n_full * (CB_JOURNAL_BATCH_HDR + REPLAY_MAX_INT_BYTES) + full_bytes;
+    return need;
 }
 
 // Codes and writes one batch of records (the writer is held, j->mu is not). Each record's rc set.
@@ -969,7 +1012,7 @@ static void write_batch(cb_journal *j, jrec *list) {
     // write(). A segment is closed once it holds seg_bytes, or when this write might not fit
     // (or after a failed one, below); a batch's time is coded against its segment's start,
     // so one a clock jump put out of reach starts a segment of its own too.
-    cb_jmove *const ms = j->ms;
+    const cb_jmove **const ms = j->ms;
     int rc = CB_OK;
     int64_t first;
     const size_t need = batch_need(list, true, &first);
@@ -995,7 +1038,7 @@ static void write_batch(cb_journal *j, jrec *list) {
             continue;
         }
         int k = 0;
-        for (; r && k < CB_JOURNAL_BATCH_MAX && !(r->rc == CB_OK && r->full); r = r->next) if (r->rc == CB_OK) ms[k++] = r->m;
+        for (; r && k < CB_JOURNAL_BATCH_MAX && !(r->rc == CB_OK && r->full); r = r->next) if (r->rc == CB_OK) ms[k++] = &r->m;
         if (!k) continue;
         int w = cb_journal_batch_encode(j->slots, j->seg_start, ms, k, at + len, (int)(room - len));
         if (w < 0) rc = w;
@@ -1853,10 +1896,10 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     cb_strlcpy(r.m.game, row->id, sizeof r.m.game);
     r.m.base_version = c->expected_version;
     r.m.now_ms = row->updated_at;
-    if (plain) {
+    if (plain) {   // the moves borrowed: this thread waits for the record's write
         r.m.bots = c->moves_by_bots;
         r.m.n_mv = c->n_moves;
-        memcpy(r.m.mv, c->moves, (size_t)c->n_moves * sizeof *c->moves);
+        r.m.mv = c->moves;
     } else {
         r.full = true;
         r.clear = c->log_clear;
@@ -2390,7 +2433,15 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
         free(buf);
         return CB_OK;
     }
-    if (len < SEG_HDR || memcmp(buf, SEG_MAGIC, 4) != 0 || get_u32(buf + 4) != FORMAT) {
+    if (len >= SEG_HDR && memcmp(buf, SEG_MAGIC, 4) == 0 && get_u32(buf + 4) != FORMAT) {
+        // Another format's moves (an older server's): never skipped, they were acknowledged.
+        // The older server flushes every move and deletes its segments when it stops cleanly.
+        snprintf(err, cap, "journal: %s is format %u, this server reads %d: stop the server that wrote it cleanly (its close flushes) and start again",
+                 path, (unsigned)get_u32(buf + 4), FORMAT);
+        free(buf);
+        return CB_E_STATE;
+    }
+    if (len < SEG_HDR || memcmp(buf, SEG_MAGIC, 4) != 0) {
         // A segment cut before its header was whole was never written to.
         CB_WARN(MOD, "%s has no whole header (%zu bytes): skipped", path, len);
         free(buf);
@@ -2399,7 +2450,8 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
     const int64_t start = (int64_t)get_u64(buf + 8);
     cb_jslots *t = cb_jslots_new();
     cb_jmove *ms = malloc(sizeof *ms * CB_JOURNAL_BATCH_MAX);
-    if (!t || !ms) rc = CB_E_NOMEM;
+    EvwMove (*mv)[EVW_DELTA_MAX_MOVES] = malloc(sizeof *mv * CB_JOURNAL_BATCH_MAX);
+    if (!t || !ms || !mv) rc = CB_E_NOMEM;
     size_t at = SEG_HDR;
     while (rc == CB_OK && at < len && buf[at] != 0) {   // a zero magic: the mapped segment's unwritten rest
         if (buf[at] == FULL_MAGIC) {
@@ -2415,7 +2467,7 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
             continue;
         }
         size_t used = 0;
-        int n = cb_journal_batch_decode(t, start, buf + at, len - at, &used, ms, CB_JOURNAL_BATCH_MAX);
+        int n = cb_journal_batch_decode(t, start, buf + at, len - at, &used, ms, mv, CB_JOURNAL_BATCH_MAX);
         if (n < 0) {
             // A batch cut short by the crash, or one that does not check: it was never
             // acknowledged, and nothing after it was written.
@@ -2427,6 +2479,7 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
     }
     cb_jslots_free(t);
     free(ms);
+    free(mv);
     free(buf);
     return rc;
 }
