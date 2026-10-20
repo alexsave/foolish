@@ -26,6 +26,7 @@
 
 #include "awire.h"
 #include "replay.h"
+#include "bot_drive.h"
 
 #include <stdint.h>
 
@@ -57,5 +58,18 @@ int replay_move_code(ReplayCoder *c, ReplayMove *m);
 // menu for m's seat is not menu_n long (the board is not the one the move was
 // coded on), -REPLAY_EINPUT for a bad index or wire, -REPLAY_ECAP for no scratch.
 int replay_move_wire(const Game *g, const ReplayMove *m, uint8_t *wire, int cap);
+
+// ---- a bot drive's cycle -----------------------------------------------------
+//
+// A cycle (bot_drive.h) applies up to BOT_DRIVE_MAX_ACTIONS moves, each on the
+// board the one before it left. This walks them on `g`, a scratch copy of the
+// board the drive started from (it is played on), with the drive's own seeding
+// before each move (bot_drive_seed_decision's APPLY phase, from the table's
+// rng_base and the session log's length at the drive), so every board is the
+// one the drive saw. encode: acts[0..n) in, each move's code into mv. decode:
+// mv[0..n) in, the moves they name into acts (seat and move). 0, or
+// -REPLAY_E*: a move off its board's menu, or one the engine refuses.
+int replay_move_drive_walk(Game *g, uint32_t rng_base, uint32_t log_offset, int n, BotDriveAction *acts,
+                           ReplayMove *mv, bool encode);
 
 #endif

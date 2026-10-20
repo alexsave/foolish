@@ -66,11 +66,13 @@ typedef struct cb_section {
     cb_uuid     old_humans[CB_MAX_SEATS];
     int         n_old_bots;
     cb_uuid     old_bots[CB_MAX_SEATS];
-    // The operation's move as the kernel's menu names it at the board before it
-    // (replay_move.h), taken by cb_table_run for a human's action: what the store's
-    // journal holds instead of writing the tables (journal.h). Cleared with the section.
-    bool        have_mv;
-    ReplayMove  mv;
+    // The operation's moves as the kernel's menu names each at the board before it
+    // (replay_move.h), taken by cb_table_run for a human's action and by the bot cycle
+    // for its drive: what the store's journal holds instead of writing the tables
+    // (journal.h). Cleared with the section.
+    int         n_mv;      // 0: none; 1 a human's move; up to BOT_DRIVE_MAX_ACTIONS a bot cycle's
+    bool        mv_bots;
+    ReplayMove  mv[BOT_DRIVE_MAX_ACTIONS];
     uint8_t     arena[CB_ARENA_BYTES];
     int         arena_hw;         // bytes of the arena a products call may have written (cb_section_free zeroes that prefix)
     bool        in_use, pooled;   // cb_section_new's own: the worker thread's reusable one, and whether it is handed out
@@ -91,8 +93,13 @@ int cb_section_load(cb_section *s, const cb_game_row *row);
 int cb_section_envelope(cb_section *s, int viewer, uint32_t version, uint8_t **out, size_t *out_len);
 
 // The journal's replay of one move at start (journal.h cb_journal_apply_fn; ud is the cb_ctx).
-int cb_table_replay_move(void *ud, const cb_game_row *row, int64_t now, const ReplayMove *mv, cb_game_row *out,
-                         uint8_t **log, size_t *log_len);
+// The bot cycle's moves for the journal: the board and seeding before the drive, then the
+// moves the drive applied coded into the section (s->mv, s->n_mv).
+int cb_bots_journal_moves_before(cb_section *s, Game **board, uint32_t *base, uint32_t *off);
+void cb_bots_journal_moves_after(cb_section *s, Game *board, uint32_t base, uint32_t off, BotDriveOut *drv);
+struct cb_jmove;
+int cb_table_replay_move(void *ud, const cb_game_row *row, const uint8_t *session_log, size_t session_log_len,
+                         const struct cb_jmove *m, cb_game_row *out, uint8_t **log, size_t *log_len);
 
 // What a commit attempt came to.
 typedef struct {

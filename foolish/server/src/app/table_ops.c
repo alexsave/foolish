@@ -646,10 +646,14 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // A plain human move (journal.h): the store may hold it in its journal. Its menu
     // index was taken at the board before the move (cb_table_run); anything a move does
     // besides moving the board goes to the tables at once.
-    if (s->have_mv && !c->ended && !c->dealt_now && !gc.log_clear && gc.n_rated == 0 &&
+    if (s->n_mv > 0 && !c->ended && !c->dealt_now && !gc.log_clear && gc.n_rated == 0 &&
         row->status == GAME_STATUS_PLAYING && nrow.status == GAME_STATUS_PLAYING &&
         row->roster_len == nrow.roster_len && memcmp(row->roster, nrow.roster, nrow.roster_len) == 0)
-        gc.move = &s->mv;
+    {
+        gc.moves = s->mv;
+        gc.n_moves = s->n_mv;
+        gc.moves_by_bots = s->mv_bots;
+    }
 
     // ---- everything the aftermath needs, copied out of the section ----------------
     // EVERY COMMIT IS CAST, one per human seat and one for the spectators, at
@@ -756,44 +760,98 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
 
 // ---- the journal's replay (journal.h cb_journal_apply_fn) ------------------------------------
 
-int cb_table_replay_move(void *ud, const cb_game_row *row, int64_t now, const ReplayMove *mv, cb_game_row *out,
-                         uint8_t **log, size_t *log_len) {
+// A scratch board per thread for the bot cycle's moves (replay_move_drive_walk plays on it).
+static _Thread_local Game *t_walk;
+static Game *walk_board(const Game *from) {
+    if (!t_walk && !(t_walk = malloc(sizeof *t_walk))) return NULL;
+    memcpy(t_walk, from, sizeof *t_walk);
+    return t_walk;
+}
+
+int cb_bots_journal_moves_before(cb_section *s, Game **board, uint32_t *base, uint32_t *off) {
+    table_drive_seeding(&s->t, base, off);
+    *board = walk_board(&s->g);
+    return *board ? CB_OK : CB_E_NOMEM;
+}
+
+void cb_bots_journal_moves_after(cb_section *s, Game *board, uint32_t base, uint32_t off, BotDriveOut *drv) {
+    s->n_mv = 0;
+    s->mv_bots = true;
+    if (drv->n > 0 && replay_move_drive_walk(board, base, off, drv->n, drv->actions, s->mv, true) == 0) s->n_mv = drv->n;
+}
+
+int cb_table_replay_move(void *ud, const cb_game_row *row, const uint8_t *session_log, size_t session_log_len,
+                         const struct cb_jmove *m, cb_game_row *out, uint8_t **log, size_t *log_len) {
     cb_ctx *ctx = ud;
     memset(out, 0, sizeof *out);
     *log = NULL;
     *log_len = 0;
     cb_section *s = cb_section_new();
     if (!s) return CB_E_NOMEM;
-    int rc = CB_E_STATE;
-    uint8_t wire[REPLAY_MOVE_WIRE_MAX];
-    int kr = cb_section_load(s, row), n = -1;
-    // The menu at this board must be the one the move was coded on (the check the
-    // journal's own bytes cannot make): anything else is a board the move was not
-    // played on, and the start is refused.
-    if (kr >= 0) n = replay_move_wire(&s->g, mv, wire, (int)sizeof wire);
-    if (kr < 0 || n < 0 || mv->seat >= s->t.r.n) {
-        CB_ERROR("table", "game %s: the journal's move at version %lld does not fit the board (load %d, menu %d)", row->id,
-                 (long long)row->version, kr, n);
+    int rc = CB_E_STATE, kr = cb_section_load(s, row);
+    if (kr < 0) {
+        CB_ERROR("table", "game %s: the journal's base row at version %lld does not load (%d)", row->id, (long long)row->version, kr);
         goto out;
     }
-    const RosterSeat *seat = &s->t.r.seats[mv->seat];
-    kr = table_act(&s->t, (const char *)seat->id, (int)seat->id_len, wire, n, -1, row->round_epoch);
-    if (kr != TABLE_APPLIED) {
-        CB_ERROR("table", "game %s: the journal's move at version %lld is refused (%d)", row->id, (long long)row->version, kr);
-        goto out;
+    if (!m->bots) {
+        // The menu at this board must be the one the move was coded on (the check the
+        // journal's own bytes cannot make): anything else is a board the move was not
+        // played on, and the start is refused.
+        uint8_t wire[REPLAY_MOVE_WIRE_MAX];
+        const ReplayMove *mv = &m->mv[0];
+        int n = replay_move_wire(&s->g, mv, wire, (int)sizeof wire);
+        if (n < 0 || mv->seat >= s->t.r.n) {
+            CB_ERROR("table", "game %s: the journal's move at version %lld does not fit the board (%d)", row->id,
+                     (long long)row->version, n);
+            goto out;
+        }
+        const RosterSeat *seat = &s->t.r.seats[mv->seat];
+        kr = table_act(&s->t, (const char *)seat->id, (int)seat->id_len, wire, n, -1, row->round_epoch);
+        if (kr != TABLE_APPLIED) {
+            CB_ERROR("table", "game %s: the journal's move at version %lld is refused (%d)", row->id, (long long)row->version, kr);
+            goto out;
+        }
+    } else {
+        // The cycle again, its choices handed to the drive as the moves it applied: the
+        // drive reuses each (no search) under its own seeding, and must apply exactly them.
+        kr = table_set_session_log(&s->t, session_log, (int)session_log_len);
+        uint32_t base, off;
+        table_drive_seeding(&s->t, &base, &off);
+        Game *board = kr >= 0 ? walk_board(&s->g) : NULL;
+        BotDriveOut want, drv;
+        memset(&want, 0, sizeof want);
+        uint8_t prefs[1024];
+        int pl = -1;
+        if (board && replay_move_drive_walk(board, base, off, m->n_mv, want.actions, (ReplayMove *)m->mv, false) == 0) {
+            want.n = m->n_mv;
+            pl = table_drive_prefs(&s->t, &want, prefs, sizeof prefs);
+        }
+        kr = pl < 0 ? -1 : table_bot_drive(&s->t, prefs, pl, 0, &drv);
+        bool same = kr == m->n_mv;
+        for (int i = 0; same && i < m->n_mv; i++) {
+            const LegalMove *a = &drv.actions[i].move, *b = &want.actions[i].move;
+            same = drv.actions[i].seat == want.actions[i].seat && a->type == b->type && a->n_cards == b->n_cards;
+            for (int k = 0; same && k < a->n_cards; k++)
+                same = card_eq(a->cards[k], b->cards[k]) && (a->type != MOVE_COVER || card_eq(a->attack_cards[k], b->attack_cards[k]));
+        }
+        if (!same) {
+            CB_ERROR("table", "game %s: the journal's bot cycle at version %lld does not replay (%d of %d moves)", row->id,
+                     (long long)row->version, kr, m->n_mv);
+            goto out;
+        }
     }
-    const int64_t board_now = cb_bots_board_now(ctx, row->created_at, now);
+    const int64_t board_now = cb_bots_board_now(ctx, row->created_at, m->now_ms);
     kr = table_commit_products(&s->t, s->gid, (int)strlen(s->gid), (uint32_t)(row->version + 1), board_now, &s->c, s->arena,
                                sizeof s->arena);
     arena_note(s, kr);
     if (kr < 0 || s->c.wants_ratings || s->c.ended) {
-        CB_ERROR("table", "game %s: the journal's move at version %lld does not commit as a plain move (%d)", row->id,
+        CB_ERROR("table", "game %s: the journal's commit at version %lld is not a plain one (%d)", row->id,
                  (long long)row->version, kr);
         goto out;
     }
     cb_game_row nrow;
     cb_game_commit gc;
-    section_row(s, row, NULL, now, &nrow, &gc);
+    section_row(s, row, NULL, m->now_ms, &nrow, &gc);
     rc = row_copy(out, &nrow);
     if (rc == CB_OK && gc.log_add_len) {
         if (!(*log = dup_bytes(gc.log_add, gc.log_add_len))) rc = CB_E_NOMEM;
@@ -857,10 +915,11 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         }
         // The move as the kernel's menu names it, at the board before it: what the store's
         // journal holds (journal.h). Only a store with a journal asks.
-        s->have_mv = false;
+        s->n_mv = 0;
+        s->mv_bots = false;
         if (op->wire && actor && cb_journal_of(ctx->store)) {
             int seat = table_seat_of(&s->t, actor, (int)strlen(actor));
-            s->have_mv = seat >= 0 && replay_move_of(&s->g, seat, op->wire, op->wire_len, &s->mv) == 0;
+            if (seat >= 0 && replay_move_of(&s->g, seat, op->wire, op->wire_len, &s->mv[0]) == 0) s->n_mv = 1;
         }
         rc = op->run(&s->t, &row, seed, op->ud);
         if (rc < 0 || (cached && fresh_only(rc))) {

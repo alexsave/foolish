@@ -135,8 +135,13 @@ int cb_journal_batch_encode(cb_jslots *t, int64_t seg_start_ms, const cb_jmove *
         }
         t->next[slot] = r->base_version + 1;
         replay_coder_varint(&c, (uint32_t)(r->now_ms - base));
-        ReplayMove mv = r->mv;
-        replay_move_code(&c, &mv);
+        if (r->n_mv < 1 || r->n_mv > (r->bots ? BOT_DRIVE_MAX_ACTIONS : 1)) return CB_E_INVALID;
+        replay_coder_uniform(&c, 2, r->bots ? 1 : 0);
+        if (r->bots) replay_coder_uniform(&c, BOT_DRIVE_MAX_ACTIONS, r->n_mv - 1);
+        for (int k = 0; k < r->n_mv; k++) {
+            ReplayMove mv = r->mv[k];
+            replay_move_code(&c, &mv);
+        }
     }
     int len = replay_coder_finish(&c, out + CB_JOURNAL_BATCH_HDR, cap - CB_JOURNAL_BATCH_HDR);
     if (len < 0 || len > 0xFFFF) return CB_E_FULL;
@@ -177,7 +182,10 @@ int cb_journal_batch_decode(cb_jslots *t, int64_t seg_start_ms, const uint8_t *i
         }
         t->next[slot] = r->base_version + 1;
         r->now_ms = base + replay_coder_varint(&c, 0);
-        if (replay_move_code(&c, &r->mv) != 0) return -1;
+        r->bots = replay_coder_uniform(&c, 2, -1) != 0;
+        r->n_mv = r->bots ? replay_coder_uniform(&c, BOT_DRIVE_MAX_ACTIONS, -1) + 1 : 1;
+        for (int k = 0; k < r->n_mv; k++)
+            if (replay_move_code(&c, &r->mv[k]) != 0) return -1;
     }
     if (c.err || !replay_coder_exhausted(&c)) return -1;
     *used = CB_JOURNAL_BATCH_HDR + plen;
@@ -604,8 +612,8 @@ static int j_game_get(cb_store *s, const char *id, cb_game_row *out) {
 
 // The tables' log (every move up to sql_version), then the overlay's: the flush lock keeps a
 // flush from moving moves between the two while they are read.
-static int j_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
-    cb_journal *j = cb_journal_of(s);
+static int logs_of(cb_journal *j, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
+    cb_store *s = j->s;
     pthread_mutex_lock(&j->flush_mu);
     int rc = cb_rows_sql.game_logs(s, id, log_from, out, out_len);
     pthread_mutex_lock(&j->ov_mu);
@@ -632,6 +640,10 @@ static int j_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **
         *out_len = 0;
     }
     return rc;
+}
+
+static int j_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
+    return logs_of(cb_journal_of(s), id, log_from, out, out_len);
 }
 
 // A write of one game around the journal: its waiting moves first, in the same transaction,
@@ -665,7 +677,7 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     cb_journal *j = cb_journal_of(s);
     if (!c || !c->row) return CB_E_INVALID;
     const cb_game_row *row = c->row;
-    if (!c->move) return around(s, row->id, c, NULL, 0);
+    if (!c->moves || c->n_moves < 1 || c->n_moves > BOT_DRIVE_MAX_ACTIONS) return around(s, row->id, c, NULL, 0);
     // The fence the tables would apply: the game's acknowledged version is the expected one.
     pthread_mutex_lock(&j->ov_mu);
     jgame *g = *ov_slot(j, row->id);
@@ -684,7 +696,9 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     snprintf(r.m.game, sizeof r.m.game, "%s", row->id);
     r.m.base_version = c->expected_version;
     r.m.now_ms = row->updated_at;
-    r.m.mv = *c->move;
+    r.m.bots = c->moves_by_bots;
+    r.m.n_mv = c->n_moves;
+    memcpy(r.m.mv, c->moves, (size_t)c->n_moves * sizeof *c->moves);
     if (row_dup(&r.row, row) != CB_OK) return CB_E_NOMEM;
     if (c->log_add_len && !(r.log = dup_bytes(c->log_add, c->log_add_len))) {
         cb_game_row_free(&r.row);
@@ -828,7 +842,11 @@ static int recover_move(cb_journal *j, const cb_jmove *m, char *err, size_t cap)
     jrec r;
     memset(&r, 0, sizeof r);
     r.m = *m;
-    rc = j->o.apply(j->o.apply_ud, &cur, m->now_ms, &m->mv, &r.row, &r.log, &r.log_len);
+    uint8_t *slog = NULL;
+    size_t slog_len = 0;
+    if (m->bots) rc = logs_of(j, m->game, cur.log_from, &slog, &slog_len);   // a bot's moves are seeded from it
+    if (rc == CB_OK) rc = j->o.apply(j->o.apply_ud, &cur, slog, slog_len, m, &r.row, &r.log, &r.log_len);
+    free(slog);
     cb_game_row_free(&cur);
     if (rc == CB_OK && r.row.version != m->base_version + 1) rc = CB_E_STATE;
     if (rc != CB_OK) {

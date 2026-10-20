@@ -906,6 +906,11 @@ static void table_drive_seed(const Game *g, int seat, int phase) {
     bot_drive_seed_decision(g, t_drive_base, t_drive_log_offset, phase);
 }
 
+void table_drive_seeding(const Table *t, uint32_t *rng_base, uint32_t *log_offset) {
+    *rng_base = t->rng_base;
+    *log_offset = (uint32_t)(t->log_len - t->g->num_logs);   // table_bot_drive's, after its scope_open
+}
+
 int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actions, BotDriveOut *out) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     if (!out || prefs_len < 0 || (prefs_len > 0 && !prefs)) return TABLE_E_WIRE;
