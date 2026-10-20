@@ -614,7 +614,19 @@ static int flush_step(cb_sql *x, void *ud) {
             return CB_E_CONFLICT;
         }
         for (int k = 0; k < f->n_moves; k++)
-            if ((rc = moves_write(x, f->row->id, false, f->moves[k].seq, f->moves[k].log, f->moves[k].len)) != CB_OK) return rc;
+            if ((rc = moves_write(x, f->row->id, f->moves[k].clear, f->moves[k].seq, f->moves[k].log, f->moves[k].len)) != CB_OK)
+                return rc;
+        if (f->seats) {   // the stored seats brought to the row's
+            cb_game_commit c;
+            memset(&c, 0, sizeof c);
+            c.row = f->row;
+            c.n_humans = f->n_humans < CB_MAX_SEATS ? f->n_humans : CB_MAX_SEATS;
+            c.n_bots = f->n_bots < CB_MAX_SEATS ? f->n_bots : CB_MAX_SEATS;
+            memcpy(c.humans, f->humans, (size_t)c.n_humans * sizeof(cb_uuid));
+            memcpy(c.bots, f->bots, (size_t)c.n_bots * sizeof(cb_uuid));
+            seats_t st;
+            if ((rc = read_seats(x, f->row->id, &st)) != CB_OK || (rc = seats_to(x, &c, &st)) != CB_OK) return rc;
+        }
     }
     if (o->c) return commit_step(x, (void *)o->c);
     if (o->del_id) {

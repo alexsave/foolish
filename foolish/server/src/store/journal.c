@@ -28,6 +28,8 @@
 #define SEG_HDR 16
 #define FORMAT 1
 #define BATCH_MAGIC 'J'
+#define FULL_MAGIC 'R'           // a whole commit (journal.h "A FULL RECORD")
+#define FULL_HDR 12
 #define OV_BUCKETS 1024
 #define OV_MAX_GAMES 4096       // opts.max_games' default
 #define IDLE_EVICT_MS 60000
@@ -226,6 +228,12 @@ typedef struct jgame {
     uint64_t      first_seg;     // a segment at or before the one holding its oldest waiting move
     int           n_humans;      // the humans its roster seats (the dashboard list's members)
     cb_uuid       humans[CB_MAX_SEATS];
+    int           n_bots;        // and its bots
+    cb_uuid       bots[CB_MAX_SEATS];
+    // A waiting commit changed the seats (a whole commit: journal.h): the flush brings the
+    // tables' to these. seats_seq: the newest such commit's version.
+    bool          seats_dirty;
+    int64_t       seats_seq;
 } jgame;
 
 static long move_bytes(const cb_game_move *m) { return (long)(sizeof *m + m->len); }
@@ -245,6 +253,8 @@ typedef struct jrec {
     cb_jmove     m;
     cb_game_row  row;           // the new row (the caller's bytes: ov_apply copies them; only its columns with res)
     const TableResident *res;   // the new game decoded (the caller's), or NULL (a recovered move: row's bytes)
+    bool         full;          // a whole commit (FULL_MAGIC): the row's bytes are written, not m's moves
+    bool         clear;         // (full) it clears the session log first
     uint8_t     *log;
     size_t       log_len;
     int          rc;
@@ -406,16 +416,18 @@ static int row_assign(jgame *g, const cb_game_row *src) {
 
 // The humans a roster seats (the dashboard list's members).
 static void humans_of(jgame *g, const Roster *ro) {
-    g->n_humans = 0;
-    for (int i = 0; i < ro->n && g->n_humans < CB_MAX_SEATS; i++)
-        if (ro->seats[i].brain_len == 0)
-            snprintf(g->humans[g->n_humans++], sizeof g->humans[0], "%.*s", (int)ro->seats[i].id_len, (const char *)ro->seats[i].id);
+    g->n_humans = g->n_bots = 0;
+    for (int i = 0; i < ro->n && i < CB_MAX_SEATS; i++) {
+        const bool human = ro->seats[i].brain_len == 0;
+        snprintf(human ? g->humans[g->n_humans++] : g->bots[g->n_bots++], sizeof(cb_uuid), "%.*s", (int)ro->seats[i].id_len,
+                 (const char *)ro->seats[i].id);
+    }
 }
 
 static void humans_of_roster(jgame *g, const uint8_t *roster, size_t len) {
     Roster ro;
     if (roster_decode(&ro, roster, (int)len) == ROSTER_OK) humans_of(g, &ro);
-    else g->n_humans = 0;
+    else g->n_humans = g->n_bots = 0;
 }
 
 // A game made resident at *p (ov_mu held, *p empty): `row` as the tables hold it (and its
@@ -470,7 +482,13 @@ static int ov_apply(cb_journal *j, jrec *r) {
     // recovered row's bytes go into the game's own buffers, grown only when a row outgrows them:
     // no allocation per move either way.
     if (game_set(g, &r->row, r->res) != CB_OK) return CB_E_NOMEM;
-    g->moves[g->n_moves] = (cb_game_move){ r->row.version, r->log, r->log_len };
+    if (r->full) {   // a whole commit may seat or unseat anyone: the flush brings the tables' seats
+        if (r->res) humans_of(g, &r->res->r);
+        else humans_of_roster(g, r->row.roster, r->row.roster_len);
+        g->seats_dirty = true;
+        g->seats_seq = r->row.version;
+    }
+    g->moves[g->n_moves] = (cb_game_move){ r->row.version, r->log, r->log_len, r->full && r->clear };
     const long b = move_bytes(&g->moves[g->n_moves++]);
     r->log = NULL;
     g->touched_ms = now;
@@ -610,6 +628,103 @@ static int seg_open(cb_journal *j, size_t need) {
     return rc;
 }
 
+// ---- a full record: one whole commit (journal.h) --------------------------------------------
+
+static void put_i64(uint8_t *p, int64_t v) { put_u64(p, (uint64_t)v); }
+static int64_t get_i64(const uint8_t *p) { return (int64_t)get_u64(p); }
+
+static size_t full_size(const jrec *r) {
+    return FULL_HDR + 1 + strlen(r->m.game) + 8 * 2 + 1 + 1 + 8 * 3 + (r->row.has_seed ? CB_SEED_LEN : 0) + 12 +
+           r->row.state_len + r->row.roster_len + r->log_len;
+}
+
+// r as a full record at out (cap bytes): its length, or CB_E_FULL. The header goes last, its
+// magic byte a release store: the commit marker, as a batch's.
+static int full_encode(const jrec *r, uint8_t *out, size_t cap) {
+    const size_t n = full_size(r);
+    if (n > cap || n - FULL_HDR > UINT32_MAX) return CB_E_FULL;
+    uint8_t *q = out + FULL_HDR;
+    const size_t idl = strlen(r->m.game);
+    const cb_game_row *w = &r->row;
+    *q++ = (uint8_t)idl;
+    memcpy(q, r->m.game, idl), q += idl;
+    put_i64(q, r->m.base_version), q += 8;
+    put_i64(q, r->m.now_ms), q += 8;
+    *q++ = (uint8_t)((r->clear ? 1 : 0) | (w->has_seed ? 2 : 0) | (w->needs_bots ? 4 : 0));
+    *q++ = (uint8_t)(int8_t)w->status;
+    put_i64(q, w->log_from), q += 8;
+    put_i64(q, w->round_epoch), q += 8;
+    put_i64(q, w->created_at), q += 8;
+    if (w->has_seed) memcpy(q, w->seed, CB_SEED_LEN), q += CB_SEED_LEN;
+    put_u32(q, (uint32_t)w->state_len), q += 4;
+    if (w->state_len) memcpy(q, w->state, w->state_len), q += w->state_len;
+    put_u32(q, (uint32_t)w->roster_len), q += 4;
+    if (w->roster_len) memcpy(q, w->roster, w->roster_len), q += w->roster_len;
+    put_u32(q, (uint32_t)r->log_len), q += 4;
+    if (r->log_len) memcpy(q, r->log, r->log_len), q += r->log_len;
+    const uint32_t plen = (uint32_t)(n - FULL_HDR);
+    uint8_t h[4];
+    put_u32(h, plen);
+    put_u32(out + 8, plen);
+    put_u32(out + 4, batch_sum(h, out + FULL_HDR, plen));
+    out[2] = out[3] = 0;
+    out[1] = FORMAT;
+    __atomic_store_n(&out[0], (uint8_t)FULL_MAGIC, __ATOMIC_RELEASE);
+    return (int)n;
+}
+
+// The full record at in: *r's game, versions, row (its byte fields point into in) and log.
+// Its length, or -1 for one that is torn or corrupt.
+static long full_decode(const uint8_t *in, size_t len, jrec *r) {
+    memset(r, 0, sizeof *r);
+    if (len < FULL_HDR || in[0] != FULL_MAGIC || in[1] != FORMAT) return -1;
+    const uint32_t plen = get_u32(in + 8);
+    if (plen > len - FULL_HDR || get_u32(in + 4) != batch_sum(in + 8, in + FULL_HDR, plen)) return -1;
+    const uint8_t *q = in + FULL_HDR, *end = q + plen;
+#define NEED(k) do { if ((size_t)(end - q) < (size_t)(k)) return -1; } while (0)
+    NEED(1);
+    const size_t idl = *q++;
+    if (idl < 1 || idl > CB_GAME_ID_MAX) return -1;
+    NEED(idl + 8 * 2 + 2 + 8 * 3);
+    memcpy(r->m.game, q, idl), q += idl;
+    if (strlen(r->m.game) != idl) return -1;
+    r->m.base_version = get_i64(q), q += 8;
+    r->m.now_ms = get_i64(q), q += 8;
+    const uint8_t flags = *q++;
+    cb_game_row *w = &r->row;
+    cb_strlcpy(w->id, r->m.game, sizeof w->id);
+    w->status = (int8_t)*q++;
+    w->log_from = get_i64(q), q += 8;
+    w->round_epoch = get_i64(q), q += 8;
+    w->created_at = get_i64(q), q += 8;
+    r->clear = flags & 1;
+    w->has_seed = flags & 2;
+    w->needs_bots = flags & 4;
+    if (w->has_seed) {
+        NEED(CB_SEED_LEN);
+        memcpy(w->seed, q, CB_SEED_LEN);
+        q += CB_SEED_LEN;
+    }
+    size_t n[3];
+    const uint8_t *p[3];
+    for (int i = 0; i < 3; i++) {
+        NEED(4);
+        n[i] = get_u32(q), q += 4;
+        NEED(n[i]);
+        p[i] = q, q += n[i];
+    }
+    if (q != end) return -1;
+#undef NEED
+    w->state = (uint8_t *)p[0], w->state_len = n[0];
+    w->roster = (uint8_t *)p[1], w->roster_len = n[1];
+    r->log = (uint8_t *)p[2], r->log_len = n[2];
+    w->version = r->m.base_version + 1;
+    w->updated_at = w->last_commit_at = r->m.now_ms;
+    w->seats_exact = true;
+    r->full = true;
+    return (long)(FULL_HDR + plen);
+}
+
 // Codes and writes one batch of records (the writer is held, j->mu is not). Each record's rc set.
 static void write_batch(cb_journal *j, jrec *list) {
     // A record whose base version was read before an exclusive section (an admin write) is
@@ -627,7 +742,12 @@ static void write_batch(cb_journal *j, jrec *list) {
     // so one a clock jump put out of reach starts a segment of its own too.
     cb_jmove *const ms = j->ms;
     int rc = CB_OK;
-    const size_t need = write_need(n);
+    // A whole commit is its own frame, and each one may cut a run of moves into another batch.
+    int n_full = 0;
+    size_t full_bytes = 0;
+    for (jrec *r = list; r; r = r->next)
+        if (r->rc == CB_OK && r->full) n_full++, full_bytes += full_size(r);
+    const size_t need = write_need(n - n_full) + (size_t)n_full * (CB_JOURNAL_BATCH_HDR + REPLAY_MAX_INT_BYTES) + full_bytes;
     size_t len = 0;
     int frames = 0;
     int64_t first = INT64_MAX;
@@ -645,9 +765,17 @@ static void write_batch(cb_journal *j, jrec *list) {
         len = SEG_HDR;
     }
     for (jrec *r = list; rc == CB_OK && r;) {
+        if (r->rc != CB_OK) { r = r->next; continue; }
+        if (r->full) {
+            int w = full_encode(r, at + len, room - len);
+            if (w < 0) rc = w;
+            else len += (size_t)w, frames++;
+            r = r->next;
+            continue;
+        }
         int k = 0;
-        for (; r && k < CB_JOURNAL_BATCH_MAX; r = r->next) if (r->rc == CB_OK) ms[k++] = r->m;
-        if (!k) break;
+        for (; r && k < CB_JOURNAL_BATCH_MAX && !(r->rc == CB_OK && r->full); r = r->next) if (r->rc == CB_OK) ms[k++] = r->m;
+        if (!k) continue;
         int w = cb_journal_batch_encode(j->slots, j->seg_start, ms, k, at + len, (int)(room - len));
         if (w < 0) rc = w;
         else len += (size_t)w, frames++;
@@ -777,8 +905,13 @@ static void trim(cb_journal *j) {
 }
 
 typedef struct {
+    cb_uuid humans[CB_MAX_SEATS], bots[CB_MAX_SEATS];
+} seats_copy;
+
+typedef struct {
     cb_game_flush *f;
     cb_game_row   *rows;
+    seats_copy    *seats;
     int            n;
 } snapshot;
 
@@ -789,7 +922,21 @@ static void snapshot_free(snapshot *sn) {
     }
     free(sn->f);
     free(sn->rows);
+    free(sn->seats);
     memset(sn, 0, sizeof *sn);
+}
+
+// The seats a flush of g brings the tables to, when a waiting commit changed them (ov_mu held,
+// or the game's lock and the flush lock). The copy is the caller's.
+static void flush_seats(const jgame *g, cb_game_flush *f, seats_copy *c) {
+    if (!g->seats_dirty) return;
+    memcpy(c->humans, g->humans, sizeof c->humans);
+    memcpy(c->bots, g->bots, sizeof c->bots);
+    f->seats = true;
+    f->n_humans = g->n_humans;
+    f->n_bots = g->n_bots;
+    f->humans = (const cb_uuid *)c->humans;
+    f->bots = (const cb_uuid *)c->bots;
 }
 
 // THE FLUSH RULE: a game whose oldest waiting move is game_age_ms old, or whose waiting moves
@@ -809,7 +956,8 @@ static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now) {
     if (!n) return CB_OK;
     sn->f = calloc((size_t)n, sizeof *sn->f);
     sn->rows = calloc((size_t)n, sizeof *sn->rows);
-    if (!sn->f || !sn->rows) { snapshot_free(sn); return CB_E_NOMEM; }
+    sn->seats = calloc((size_t)n, sizeof *sn->seats);
+    if (!sn->f || !sn->rows || !sn->seats) { snapshot_free(sn); return CB_E_NOMEM; }
     for (int b = 0; b < OV_BUCKETS; b++)
         for (jgame *g = j->buckets[b]; g; g = g->next) {
             if (!flush_due(j, g, all, now)) continue;
@@ -821,7 +969,8 @@ static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now) {
                 return CB_E_NOMEM;
             }
             memcpy(m, g->moves, (size_t)g->n_moves * sizeof *m);
-            sn->f[sn->n] = (cb_game_flush){ &sn->rows[sn->n], g->sql_version, m, g->n_moves };
+            sn->f[sn->n] = (cb_game_flush){ &sn->rows[sn->n], g->sql_version, m, g->n_moves, false, 0, 0, NULL, NULL };
+            flush_seats(g, &sn->f[sn->n], &sn->seats[sn->n]);
             sn->n++;
         }
     return CB_OK;
@@ -842,6 +991,7 @@ static void ov_flushed(cb_journal *j, jgame *g, const cb_game_flush *f, uint64_t
     j->w_bytes -= b;
     j->n_waiting -= k;
     g->sql_version = f->row->version;
+    if (g->seats_dirty && g->seats_seq <= f->row->version) g->seats_dirty = false;   // in the tables now
     if (g->n_moves) {
         g->first_seg = snap_seg;
         g->first_ms = now;
@@ -1026,6 +1176,17 @@ int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, 
     }
 }
 
+void cb_journal_game_created(cb_store *s, const cb_game_row *row, const TableResident *res) {
+    cb_journal *j = cb_journal_of(s);
+    if (!j) return;
+    pthread_mutex_lock(&j->ov_mu);
+    jgame **p = ov_slot(j, row->id);
+    if (!*p) (void)ov_insert(j, p, row, res);   // out of memory: the first operation reads the tables
+    const bool over = j->n_games > j->o.max_games;
+    pthread_mutex_unlock(&j->ov_mu);
+    if (over) kick_flusher(j);
+}
+
 void cb_journal_game_decoded(cb_store *s, const char *id, int64_t version, const TableResident *res) {
     cb_journal *j = cb_journal_of(s);
     if (!j) return;
@@ -1092,7 +1253,11 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
     // g is stable here: an entry is freed only under the flush lock (held), and only a move
     // of this game (its lock is the caller's) changes it.
     cb_game_flush f = { 0 };
-    if (g) f = (cb_game_flush){ &g->row, g->sql_version, g->moves, g->n_moves };
+    seats_copy sc;
+    if (g) {
+        f = (cb_game_flush){ &g->row, g->sql_version, g->moves, g->n_moves, false, 0, 0, NULL, NULL };
+        flush_seats(g, &f, &sc);
+    }
     int rc = cb_rows_sql_flush(s, &f, g && g->n_moves ? 1 : 0, c, del_id, del_version);
     pthread_mutex_lock(&j->ov_mu);
     bool over = false;
@@ -1115,8 +1280,9 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
                 g->sql_version = c->row->version;
                 g->touched_ms = cb_mono_ms();
                 // The commit's seats are the stored ones now.
-                g->n_humans = 0;
+                g->n_humans = g->n_bots = 0;
                 for (int i = 0; i < c->n_humans && i < CB_MAX_SEATS; i++) memcpy(g->humans[g->n_humans++], c->humans[i], sizeof(cb_uuid));
+                for (int i = 0; i < c->n_bots && i < CB_MAX_SEATS; i++) memcpy(g->bots[g->n_bots++], c->bots[i], sizeof(cb_uuid));
             }
             over = j->n_games > j->o.max_games;
         }
@@ -1135,7 +1301,12 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     cb_journal *j = cb_journal_of(s);
     if (!c || !c->row) return CB_E_INVALID;
     const cb_game_row *row = c->row;
-    if (!c->moves || c->n_moves < 1 || c->n_moves > BOT_DRIVE_MAX_ACTIONS) return around(s, row->id, c, NULL, 0);
+    const bool plain = c->moves && c->n_moves >= 1 && c->n_moves <= BOT_DRIVE_MAX_ACTIONS;
+    // EVERY COMMIT THROUGH THE JOURNAL but one that rates: a plain move as its moves, any other
+    // (a deal, a lobby edit, an unrated end) whole (a full record). A rating writes rows other
+    // readers of the tables see (the leaderboard, a profile, the next game's rating): it goes
+    // to the tables at once, around the journal, with the game's waiting commits.
+    if (!plain && (c->n_rated > 0 || !row->state || !row->roster)) return around(s, row->id, c, NULL, 0);
     // The fence the tables would apply: the game's acknowledged version is the expected one,
     // read in this epoch (an exclusive section after it refuses the record: write_batch).
     const long epoch = atomic_load(&j->epoch);
@@ -1157,9 +1328,14 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     cb_strlcpy(r.m.game, row->id, sizeof r.m.game);
     r.m.base_version = c->expected_version;
     r.m.now_ms = row->updated_at;
-    r.m.bots = c->moves_by_bots;
-    r.m.n_mv = c->n_moves;
-    memcpy(r.m.mv, c->moves, (size_t)c->n_moves * sizeof *c->moves);
+    if (plain) {
+        r.m.bots = c->moves_by_bots;
+        r.m.n_mv = c->n_moves;
+        memcpy(r.m.mv, c->moves, (size_t)c->n_moves * sizeof *c->moves);
+    } else {
+        r.full = true;
+        r.clear = c->log_clear;
+    }
     r.row = *row;   // read by ov_apply while this thread waits in append
     r.res = c->resident;
     if (c->log_add_len && !(r.log = dup_bytes(c->log_add, c->log_add_len))) return CB_E_NOMEM;
@@ -1170,6 +1346,38 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
 }
 
 static int j_game_delete(cb_store *s, const char *id, int64_t expected) { return around(s, id, NULL, id, expected); }
+
+// Membership, the overlay's for a game it holds (a whole commit seats and unseats before the
+// tables hear of it), else the tables'.
+static int j_is_member(cb_store *s, const char *game_id, const char *user_id) {
+    cb_journal *j = cb_journal_of(s);
+    pthread_mutex_lock(&j->ov_mu);
+    const jgame *g = *ov_slot(j, game_id);
+    int rc = -1;
+    if (g) {
+        rc = 0;
+        for (int i = 0; i < g->n_humans && !rc; i++) rc = strcmp(g->humans[i], user_id) == 0;
+    }
+    pthread_mutex_unlock(&j->ov_mu);
+    return rc >= 0 ? rc : cb_rows_sql.is_member(s, game_id, user_id);
+}
+
+static int j_game_members(cb_store *s, const char *game_id, cb_name_fn fn, void *ud) {
+    cb_journal *j = cb_journal_of(s);
+    cb_uuid humans[CB_MAX_SEATS];
+    int n = -1;
+    pthread_mutex_lock(&j->ov_mu);
+    const jgame *g = *ov_slot(j, game_id);
+    if (g) memcpy(humans, g->humans, sizeof humans), n = g->n_humans;
+    pthread_mutex_unlock(&j->ov_mu);
+    if (n < 0) return cb_rows_sql.game_members(s, game_id, fn, ud);
+    int out = 0;
+    for (int i = 0; i < n; i++) {
+        out++;
+        if (!fn(humans[i], ud)) break;
+    }
+    return out;
+}
 
 // THE SCAN RULE: a read over the games table (not one game by its id) reads the tables and
 // then the overlay, which wins for every game it holds; the flush lock keeps a flush from
@@ -1522,6 +1730,42 @@ static int recover_move(cb_journal *j, const cb_jmove *m, char *err, size_t cap)
     return rc;
 }
 
+// One recovered whole commit onto its game: the row it wrote becomes the game's (no kernel
+// run: the record is the commit's result), from the base it was written on. A commit the
+// tables already hold is skipped.
+static int recover_full(cb_journal *j, jrec *r, char *err, size_t cap) {
+    cb_game_row cur;
+    int rc = ov_get(j, r->m.game, &cur);
+    if (rc == CB_E_NOT_FOUND) rc = cb_rows_sql.game_get(j->s, r->m.game, &cur);
+    if (rc == CB_E_NOT_FOUND) return CB_OK;   // deleted since: its commits went with it
+    if (rc != CB_OK) {
+        snprintf(err, cap, "journal: game %s does not read (%s)", r->m.game, cb_strerror(rc));
+        return rc;
+    }
+    const int64_t at = cur.version;
+    cb_game_row_free(&cur);
+    if (at > r->m.base_version) return CB_OK;
+    if (at != r->m.base_version) {
+        if (j->restored) {
+            CB_WARN(MOD, "game %s is at version %lld in the restored copy and its next record is from %lld: skipped",
+                    r->m.game, (long long)at, (long long)r->m.base_version);
+            return CB_OK;
+        }
+        snprintf(err, cap, "journal: game %s is at version %lld and the journal's next commit is from %lld: a commit is missing",
+                 r->m.game, (long long)at, (long long)r->m.base_version);
+        return CB_E_STATE;
+    }
+    // The log is the overlay's once applied; the record's bytes are the segment buffer's.
+    if (r->log_len && !(r->log = dup_bytes(r->log, r->log_len))) return CB_E_NOMEM;
+    if (!r->log_len) r->log = NULL;
+    pthread_mutex_lock(&j->ov_mu);
+    rc = ov_apply(j, r);
+    pthread_mutex_unlock(&j->ov_mu);
+    free(r->log);
+    if (rc == CB_OK) atomic_fetch_add(&j->recovered, 1);
+    return rc;
+}
+
 static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
     char path[1200];
     seg_path(j, seq, path, sizeof path);
@@ -1548,6 +1792,17 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
     if (!t || !ms) rc = CB_E_NOMEM;
     size_t at = SEG_HDR;
     while (rc == CB_OK && at < len && buf[at] != 0) {   // a zero magic: the mapped segment's unwritten rest
+        if (buf[at] == FULL_MAGIC) {
+            jrec r;
+            const long used = full_decode(buf + at, len - at, &r);
+            if (used < 0) {
+                CB_WARN(MOD, "%s: %zu bytes at %zu are not a whole record: dropped", path, len - at, at);
+                break;
+            }
+            rc = recover_full(j, &r, err, cap);
+            at += (size_t)used;
+            continue;
+        }
         size_t used = 0;
         int n = cb_journal_batch_decode(t, start, buf + at, len - at, &used, ms, CB_JOURNAL_BATCH_MAX);
         if (n < 0) {
@@ -1622,6 +1877,8 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
         J_OPS.games_get_views = j_games_get_views;
         J_OPS.games_needing_bots = j_games_needing_bots;
         J_OPS.game_import = j_game_import;
+        J_OPS.is_member = j_is_member;
+        J_OPS.game_members = j_game_members;
     }
 
     char marker[1200];

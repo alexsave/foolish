@@ -347,18 +347,23 @@ extern const cb_rows_ops  cb_rows_sql;       // on the SQL store (rows_sql.c)
 
 // ---- the journal's flush (rows_sql.c; journal.h says when) --------------------------------
 // One game's acknowledged state brought into the tables: its row as it now is, fenced on
-// the version the tables hold (sql_version), and its moves since then (game_moves rows at
-// their seq), in order.
+// the version the tables hold (sql_version), its commits since then (game_moves rows at their
+// seq, in order; a commit that cleared the session log - a deal, a lobby - clears the stored
+// one first) and, when a commit since changed them, its seats (brought to humans and bots).
 typedef struct {
     int64_t        seq;
     const uint8_t *log;
     size_t         len;
+    bool           clear;
 } cb_game_move;
 typedef struct {
     const cb_game_row  *row;
     int64_t             sql_version;
     const cb_game_move *moves;
     int                 n_moves;
+    bool                seats;
+    int                 n_humans, n_bots;
+    const cb_uuid      *humans, *bots;
 } cb_game_flush;
 // ONE transaction: every f[i] written, then the commit c (NULL: none) or the delete of
 // del_id at del_version (NULL: none). CB_E_CONFLICT when a table's version is not the
