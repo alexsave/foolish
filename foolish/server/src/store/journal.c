@@ -11,6 +11,7 @@
 #include "util/str.h"
 #include "roster.h"
 #include "table.h"
+#include "../../../../shared/c/clock.h"
 #include "../../../../shared/c/fnv.h"
 #include "../../../../shared/c/num_parse.h"
 
@@ -36,7 +37,6 @@
 #define OV_BUCKETS 1024
 #define OV_MAX_GAMES 4096       // opts.max_games' default
 #define IDLE_EVICT_MS 60000
-#define TICK_MS 1000            // the flush thread checks the flush rule this often
 
 // ---- the slot table ------------------------------------------------------------------------
 
@@ -329,7 +329,14 @@ struct cb_journal {
     // the flush: one at a time, and every write of a journaled game around the journal
     pthread_mutex_t flush_mu;
     pthread_t       thr;
-    bool            thr_started, stop, kick, prepare;
+    bool            thr_started, stop, kick, prepare, rearm;
+    // THE FLUSH THREAD HAS NO TICK: it sleeps until the oldest waiting game is game_age_ms old
+    // (armed_ms, cb_mono_ms; INT64_MAX: nothing waits, it sleeps until told), or a kick, a segment
+    // to make, a rearm (ov_apply: a game began waiting before armed_ms), the stop. An idle box
+    // wakes nobody (OPTIMIZED_DESIGN.md 4.3 E4).
+    int64_t         armed_ms;      // (ov_mu)
+    bool            rearm_wanted;  // (ov_mu) ov_apply asks write_batch to rearm the flush thread
+    atomic_long     flusher_wakes;
     // a backup attached (the backup hooks below): no segment at or after backup_mark is deleted
     bool            pinned;
     bool            restored;      // the database is a restored copy (store.h CB_STORE_RESTORED_SUFFIX)
@@ -599,6 +606,7 @@ static int ov_apply(cb_journal *j, jrec *r) {
     if (!g->n_moves) {
         g->first_ms = now;
         g->first_seg = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
+        if (now + j->o.game_age_ms < j->armed_ms) j->rearm_wanted = true;   // the flush thread sleeps past its age
     }
     // The resident is the game's now (a 2 KB copy; the row's bytes are encoded when read), or a
     // recovered row's bytes go into the game's own buffers, grown only when a row outgrows them:
@@ -1024,8 +1032,16 @@ static void write_batch(cb_journal *j, jrec *list) {
         if (g && game_full(j, g)) due = true;
     }
     if (j->w_bytes >= j->o.total_bytes) due = true;
+    const bool rearm = j->rearm_wanted && !due;
+    j->rearm_wanted = false;
     pthread_mutex_unlock(&j->ov_mu);
-    if (due) kick_flusher(j);   // the flush thread applies the rule now rather than at its next tick
+    if (due) kick_flusher(j);   // the flush thread applies the rule now
+    else if (rearm) {           // a game began waiting before the flush thread's alarm: it sets the alarm again
+        pthread_mutex_lock(&j->mu);
+        j->rearm = true;
+        pthread_cond_signal(&j->fcv);
+        pthread_mutex_unlock(&j->mu);
+    }
 }
 
 // ---- the writer ----------------------------------------------------------------------------
@@ -1547,22 +1563,38 @@ int cb_journal_flush_due(cb_store *s) {
     return j ? flush_pass(j, false) : CB_OK;
 }
 
+// When the oldest waiting game is due by its age (ov_mu held): cb_mono_ms, or INT64_MAX.
+static int64_t next_due_ms(const cb_journal *j) {
+    int64_t at = INT64_MAX;
+    for (int b = 0; b < OV_BUCKETS; b++)
+        for (const jgame *g = j->buckets[b]; g; g = g->next)
+            if (g->n_moves && g->first_ms + j->o.game_age_ms < at) at = g->first_ms + j->o.game_age_ms;
+    return at;
+}
+
 static void *flusher(void *ud) {
     cb_journal *j = ud;
-    const int64_t tick = j->o.game_age_ms < TICK_MS ? j->o.game_age_ms : TICK_MS;
     pthread_mutex_lock(&j->mu);
     while (!j->stop) {
-        // Until the tick or a batch that made a game (or all of them) due.
-        struct timespec ts;
-        clock_gettime(CLOCK_REALTIME, &ts);
-        int64_t ns = ts.tv_nsec + (tick % 1000) * 1000000;
-        ts.tv_sec += (time_t)(tick / 1000 + ns / 1000000000);
-        ts.tv_nsec = (long)(ns % 1000000000);
+        // The alarm: the oldest waiting game's age, or none.
+        pthread_mutex_unlock(&j->mu);
+        pthread_mutex_lock(&j->ov_mu);
+        const int64_t due_at = j->armed_ms = next_due_ms(j);
+        pthread_mutex_unlock(&j->ov_mu);
+        pthread_mutex_lock(&j->mu);
         int w = 0;
-        while (!j->stop && !j->kick && !j->prepare && (w = pthread_cond_timedwait(&j->fcv, &j->mu, &ts)) != ETIMEDOUT) {}
+        if (due_at == INT64_MAX) {
+            while (!j->stop && !j->kick && !j->prepare && !j->rearm) pthread_cond_wait(&j->fcv, &j->mu);
+        } else {
+            struct timespec ts;
+            int64_t in = due_at - cb_mono_ms();
+            host_deadline_after_ms(&ts, in > 0 ? in : 0);
+            while (!j->stop && !j->kick && !j->prepare && !j->rearm && (w = pthread_cond_timedwait(&j->fcv, &j->mu, &ts)) != ETIMEDOUT) {}
+        }
         if (j->stop) break;
+        atomic_fetch_add(&j->flusher_wakes, 1);
         const bool flush = j->kick || w == ETIMEDOUT;
-        j->kick = j->prepare = false;
+        j->kick = j->prepare = j->rearm = false;
         pthread_mutex_unlock(&j->mu);
         prepare_next(j);   // the next segment, made ahead of the rotation that takes it
         pthread_mutex_lock(&j->mu);
@@ -2563,4 +2595,5 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     out->loop_seg_opens = j->loop_seg_opens;
     out->txn_moves_max = j->txn_moves_max;
     out->txn_hold_us_max = j->txn_hold_us_max;
+    out->flusher_wakes = j->flusher_wakes;
 }

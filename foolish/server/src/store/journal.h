@@ -163,6 +163,7 @@ typedef struct {
     long loop_seg_opens;                    // segments opened on it by a wait (none: loop_write rotates at once or not at all)
     long txn_moves_max;                     // the most waiting moves one flush transaction carried
     long txn_hold_us_max;                   // the longest one held the flush lock (a write around the journal's worst wait)
+    long flusher_wakes;                     // times the flush thread woke (no tick: an idle box wakes it never)
 } cb_journal_stats;
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 
