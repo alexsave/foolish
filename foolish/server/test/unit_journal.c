@@ -708,6 +708,71 @@ static void the_flush_writes_the_rows_per_move_commits_write(void) {
 }
 
 
+// A flush that races the moves: with game_bytes 1 every move kicks the flush thread, which writes
+// what its snapshot took while later moves keep landing in the game's log buffer, so a flush
+// often takes a prefix and leaves the rest waiting (ov_flushed's cut). After every move the game
+// reads as the plain store's did after the same move, and the tables end the same.
+static void a_flush_racing_the_moves_leaves_every_log_whole(void) {
+    char pa[320], pb[320], err[256] = "";
+    snprintf(pa, sizeof pa, "%s/rplain%d.sqlite", g_dir, g_bots);
+    snprintf(pb, sizeof pb, "%s/rjournaled%d.sqlite", g_dir, g_bots);
+    cb_store *a = open_world(pa, false, err, sizeof err);
+    T_CHECK(a != NULL);
+    if (!a) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    cb_game_row dealt = stored(a, gid);
+    close_world(a);
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.game_bytes = 1;
+    cb_store *b = open_world(pb, true, err, sizeof err);
+    T_CHECK(b != NULL);
+    if (!b) { cb_game_row_free(&dealt); return; }
+    cb_uuid humans[2], bots[CB_MAX_SEATS];
+    snprintf(humans[0], sizeof humans[0], "%s", UID_A);
+    snprintf(humans[1], sizeof humans[1], "%s", UID_B);
+    int n_bots = 0;
+    Roster ro;
+    T_EQ_INT(roster_decode(&ro, dealt.roster, (int)dealt.roster_len), ROSTER_OK);
+    for (int i = 0; i < ro.n; i++)
+        if (ro.seats[i].brain_len) snprintf(bots[n_bots++], sizeof bots[0], "%.*s", (int)ro.seats[i].id_len, (const char *)ro.seats[i].id);
+    T_EQ_INT(CB_ROWS_CALL(b, game_import, &dealt, humans, g_bots ? 1 : 2, bots, n_bots), CB_OK);
+    close_world(b);
+    cb_game_row_free(&dealt);
+    const int64_t t0 = g_now;
+    move_t ms[40];
+    uint64_t want[40];
+    int n = 0;
+    a = open_world(pa, false, err, sizeof err);
+    for (; n < 40 && step(a, gid, &ms[n]) > 0; n++) want[n] = row_hash(a, gid);
+    close_world(a);
+    g_now = t0;
+    b = open_world(pb, true, err, sizeof err);
+    T_CHECK(b != NULL);
+    if (!b) { memset(&g_jo, 0, sizeof g_jo); return; }
+    int same = 0;
+    for (int i = 0; i < n; i++) {
+        T_CHECK(play(gid, &ms[i]) > 0);
+        same += row_hash(b, gid) == want[i];
+    }
+    T_EQ_INT(same, n);
+    cb_journal_stats js;
+    cb_journal_stats_get(b, &js);
+    T_CHECK(js.flushes > 0);
+    T_EQ_INT(cb_journal_flush(b), CB_OK);
+    close_world(b);
+    uint64_t ga, ma, gb, mb;
+    int na, nb;
+    sql_dump(pa, gid, &ga, &ma, &na);
+    sql_dump(pb, gid, &gb, &mb, &nb);
+    T_CHECK(gb == ga);
+    T_CHECK(mb == ma);
+    T_EQ_INT(nb, na);
+    T_CHECK(n > 10);
+    memset(&g_jo, 0, sizeof g_jo);
+}
+
+
 
 
 // ---- a bot cycle on a legacy-deck board, and a cycle the drive would not repeat --------------
@@ -2180,6 +2245,7 @@ int main(void) {
         T_RUN(a_lobby_and_its_deal_write_no_table);
         g_bots = b;
         T_RUN(the_flush_writes_the_rows_per_move_commits_write);
+        T_RUN(a_flush_racing_the_moves_leaves_every_log_whole);
         T_RUN(a_restore_mid_game_holds_every_acknowledged_move);
         T_RUN(every_acknowledged_move_survives_a_sigkill);
         T_RUN(a_move_writes_no_table_until_its_game_is_due);
