@@ -8,6 +8,7 @@
 // loop, and the new row's bookkeeping columns.
 #include <stddef.h>
 #include "app_internal.h"
+#include "store/journal.h"
 #include "bots.h"
 #include "edge.h"
 #include "foolish_app.h"
@@ -535,6 +536,82 @@ static bool in_list(const cb_uuid *list, int n, const char *id) {
     return false;
 }
 
+// The new row a commit writes, and the commit that writes it, from the section's products:
+// commit_table's arithmetic, moved here. The row's byte fields point into the section's
+// arena. The commit and the journal's replay (cb_table_replay_move) both come here.
+static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *dealt_seed, int64_t now,
+                        cb_game_row *nrow_out, cb_game_commit *gp) {
+    const Table *t = &s->t;
+    const TableCommit *c = &s->c;
+    const uint8_t *A = s->arena;
+    const bool waiting = c->status == GAME_STATUS_WAITING;
+    cb_game_row *const np = nrow_out;
+    memset(np, 0, sizeof *np);
+    snprintf(np->id, sizeof np->id, "%s", row->id);
+    np->status = c->status;
+    np->state = (uint8_t *)A + c->state.off;
+    np->state_len = (size_t)c->state.len;
+    np->roster = (uint8_t *)A + c->roster.off;
+    np->roster_len = (size_t)c->roster.len;
+    np->needs_bots = c->needs_bots;
+    np->version = row->version + 1;
+    np->created_at = row->created_at;
+    np->updated_at = now;
+    np->last_commit_at = now;
+    np->seats_exact = true;   // the commit writes the seats the new roster holds
+    // The deal seed: none in a lobby; the fresh one when this operation dealt;
+    // else the stored one.
+    if (!waiting && c->dealt_now && dealt_seed) {
+        np->has_seed = true;
+        memcpy(np->seed, dealt_seed, CB_SEED_LEN);
+    } else if (!waiting && row->has_seed) {
+        np->has_seed = true;
+        memcpy(np->seed, row->seed, CB_SEED_LEN);
+    }
+    // The session log: a deal replaces it, a lobby empties it, anything else
+    // appends this operation's records. The store appends the delta (a LOG# item
+    // at the new version); the row only says where the session's log starts.
+    const bool log_clear = c->logs_reset || waiting;
+    np->log_from = log_clear ? np->version : row->log_from;
+    if (waiting && !c->logs_reset) np->log_from = np->version;
+    // The round guard's epoch: 0 on a deal or in a lobby, the new version when
+    // this operation closed a round, else unchanged.
+    np->round_epoch = (c->logs_reset || waiting) ? 0 : c->closed_round ? row->version + 1 : row->round_epoch;
+
+    memset(gp, 0, sizeof *gp);
+    gp->row = np;
+    gp->log_clear = log_clear;
+    if (!(waiting && !c->logs_reset) && c->logs.len > 0) {
+        gp->log_add = (uint8_t *)A + c->logs.off;
+        gp->log_add_len = (size_t)c->logs.len;
+    }
+    gp->expected_version = row->version;
+    // The loaded row's seats, when it vouches that they are the stored ones
+    // (store.h cb_game_commit prev_known): the store skips reading them.
+    gp->prev_known = row->seats_exact;
+    gp->prev_needs_bots = row->needs_bots;
+    gp->n_prev_humans = s->n_old;
+    memcpy(gp->prev_humans, s->old_humans, sizeof gp->prev_humans);
+    gp->n_prev_bots = s->n_old_bots;
+    memcpy(gp->prev_bots, s->old_bots, sizeof gp->prev_bots);
+    for (int i = 0; i < t->r.n; i++) {
+        const RosterSeat *seat = &t->r.seats[i];
+        if (seat_is_human(seat)) seat_id(seat, gp->humans[gp->n_humans++]);
+        else seat_id(seat, gp->bots[gp->n_bots++]);
+    }
+    if (c->n_rated > 0) {
+        gp->n_rated = t->r.n;
+        for (int i = 0; i < t->r.n; i++) {
+            seat_id(&t->r.seats[i], gp->rated_ids[i]);
+            gp->rated_is_bot[i] = !seat_is_human(&t->r.seats[i]);
+            gp->rating_delta[i] = c->rating_delta[i];
+            snprintf(gp->rated_names[i], sizeof gp->rated_names[i], "%.*s",
+                     (int)t->r.seats[i].name_len, t->r.seats[i].name);
+        }
+    }
+
+}
+
 int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const uint8_t *dealt_seed,
                       const char *actor_id, int32_t ratings[CB_MAX_SEATS], bool *have_ratings,
                       cb_commit_out *out) {
@@ -562,74 +639,17 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         return CB_E_STATE;
     }
 
-    // ---- the new row: commit_table's arithmetic, moved here -------------------
-    const uint8_t *A = s->arena;
-    const bool waiting = c->status == GAME_STATUS_WAITING;
     cb_game_row nrow;
-    memset(&nrow, 0, sizeof nrow);
-    snprintf(nrow.id, sizeof nrow.id, "%s", row->id);
-    nrow.status = c->status;
-    nrow.state = (uint8_t *)A + c->state.off;
-    nrow.state_len = (size_t)c->state.len;
-    nrow.roster = (uint8_t *)A + c->roster.off;
-    nrow.roster_len = (size_t)c->roster.len;
-    nrow.needs_bots = c->needs_bots;
-    nrow.version = row->version + 1;
-    nrow.created_at = row->created_at;
-    nrow.updated_at = now;
-    nrow.last_commit_at = now;
-    nrow.seats_exact = true;   // the commit writes the seats the new roster holds
-    // The deal seed: none in a lobby; the fresh one when this operation dealt;
-    // else the stored one.
-    if (!waiting && c->dealt_now && dealt_seed) {
-        nrow.has_seed = true;
-        memcpy(nrow.seed, dealt_seed, CB_SEED_LEN);
-    } else if (!waiting && row->has_seed) {
-        nrow.has_seed = true;
-        memcpy(nrow.seed, row->seed, CB_SEED_LEN);
-    }
-    // The session log: a deal replaces it, a lobby empties it, anything else
-    // appends this operation's records. The store appends the delta (a LOG# item
-    // at the new version); the row only says where the session's log starts.
-    const bool log_clear = c->logs_reset || waiting;
-    nrow.log_from = log_clear ? nrow.version : row->log_from;
-    if (waiting && !c->logs_reset) nrow.log_from = nrow.version;
-    // The round guard's epoch: 0 on a deal or in a lobby, the new version when
-    // this operation closed a round, else unchanged.
-    nrow.round_epoch = (c->logs_reset || waiting) ? 0 : c->closed_round ? row->version + 1 : row->round_epoch;
-
     cb_game_commit gc;
-    memset(&gc, 0, sizeof gc);
-    gc.row = &nrow;
-    gc.log_clear = log_clear;
-    if (!(waiting && !c->logs_reset) && c->logs.len > 0) {
-        gc.log_add = (uint8_t *)A + c->logs.off;
-        gc.log_add_len = (size_t)c->logs.len;
-    }
-    gc.expected_version = row->version;
-    // The loaded row's seats, when it vouches that they are the stored ones
-    // (store.h cb_game_commit prev_known): the store skips reading them.
-    gc.prev_known = row->seats_exact;
-    gc.prev_needs_bots = row->needs_bots;
-    gc.n_prev_humans = s->n_old;
-    memcpy(gc.prev_humans, s->old_humans, sizeof gc.prev_humans);
-    gc.n_prev_bots = s->n_old_bots;
-    memcpy(gc.prev_bots, s->old_bots, sizeof gc.prev_bots);
-    for (int i = 0; i < t->r.n; i++) {
-        const RosterSeat *seat = &t->r.seats[i];
-        if (seat_is_human(seat)) seat_id(seat, gc.humans[gc.n_humans++]);
-        else seat_id(seat, gc.bots[gc.n_bots++]);
-    }
-    if (c->n_rated > 0) {
-        gc.n_rated = t->r.n;
-        for (int i = 0; i < t->r.n; i++) {
-            seat_id(&t->r.seats[i], gc.rated_ids[i]);
-            gc.rated_is_bot[i] = !seat_is_human(&t->r.seats[i]);
-            gc.rating_delta[i] = c->rating_delta[i];
-            snprintf(gc.rated_names[i], sizeof gc.rated_names[i], "%.*s",
-                     (int)t->r.seats[i].name_len, t->r.seats[i].name);
-        }
-    }
+    section_row(s, row, dealt_seed, now, &nrow, &gc);
+    const uint8_t *A = s->arena;
+    // A plain human move (journal.h): the store may hold it in its journal. Its menu
+    // index was taken at the board before the move (cb_table_run); anything a move does
+    // besides moving the board goes to the tables at once.
+    if (s->have_mv && !c->ended && !c->dealt_now && !gc.log_clear && gc.n_rated == 0 &&
+        row->status == GAME_STATUS_PLAYING && nrow.status == GAME_STATUS_PLAYING &&
+        row->roster_len == nrow.roster_len && memcmp(row->roster, nrow.roster, nrow.roster_len) == 0)
+        gc.move = &s->mv;
 
     // ---- everything the aftermath needs, copied out of the section ----------------
     // EVERY COMMIT IS CAST, one per human seat and one for the spectators, at
@@ -734,6 +754,57 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     return rc;
 }
 
+// ---- the journal's replay (journal.h cb_journal_apply_fn) ------------------------------------
+
+int cb_table_replay_move(void *ud, const cb_game_row *row, int64_t now, const ReplayMove *mv, cb_game_row *out,
+                         uint8_t **log, size_t *log_len) {
+    cb_ctx *ctx = ud;
+    memset(out, 0, sizeof *out);
+    *log = NULL;
+    *log_len = 0;
+    cb_section *s = cb_section_new();
+    if (!s) return CB_E_NOMEM;
+    int rc = CB_E_STATE;
+    uint8_t wire[REPLAY_MOVE_WIRE_MAX];
+    int kr = cb_section_load(s, row), n = -1;
+    // The menu at this board must be the one the move was coded on (the check the
+    // journal's own bytes cannot make): anything else is a board the move was not
+    // played on, and the start is refused.
+    if (kr >= 0) n = replay_move_wire(&s->g, mv, wire, (int)sizeof wire);
+    if (kr < 0 || n < 0 || mv->seat >= s->t.r.n) {
+        CB_ERROR("table", "game %s: the journal's move at version %lld does not fit the board (load %d, menu %d)", row->id,
+                 (long long)row->version, kr, n);
+        goto out;
+    }
+    const RosterSeat *seat = &s->t.r.seats[mv->seat];
+    kr = table_act(&s->t, (const char *)seat->id, (int)seat->id_len, wire, n, -1, row->round_epoch);
+    if (kr != TABLE_APPLIED) {
+        CB_ERROR("table", "game %s: the journal's move at version %lld is refused (%d)", row->id, (long long)row->version, kr);
+        goto out;
+    }
+    const int64_t board_now = cb_bots_board_now(ctx, row->created_at, now);
+    kr = table_commit_products(&s->t, s->gid, (int)strlen(s->gid), (uint32_t)(row->version + 1), board_now, &s->c, s->arena,
+                               sizeof s->arena);
+    arena_note(s, kr);
+    if (kr < 0 || s->c.wants_ratings || s->c.ended) {
+        CB_ERROR("table", "game %s: the journal's move at version %lld does not commit as a plain move (%d)", row->id,
+                 (long long)row->version, kr);
+        goto out;
+    }
+    cb_game_row nrow;
+    cb_game_commit gc;
+    section_row(s, row, NULL, now, &nrow, &gc);
+    rc = row_copy(out, &nrow);
+    if (rc == CB_OK && gc.log_add_len) {
+        if (!(*log = dup_bytes(gc.log_add, gc.log_add_len))) rc = CB_E_NOMEM;
+        else *log_len = gc.log_add_len;
+    }
+out:
+    cb_section_free(s);
+    if (rc != CB_OK) cb_game_row_free(out);
+    return rc;
+}
+
 // ---- one operation (runTableOp) ---------------------------------------------------------
 
 static bool commits_nothing(int rc) {
@@ -783,6 +854,13 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             CB_ERROR("table", "game %s does not load (%d, detail %d)", op->game_id, lr, s->t.detail);
             ret = CB_E_STATE;
             break;
+        }
+        // The move as the kernel's menu names it, at the board before it: what the store's
+        // journal holds (journal.h). Only a store with a journal asks.
+        s->have_mv = false;
+        if (op->wire && actor && cb_journal_of(ctx->store)) {
+            int seat = table_seat_of(&s->t, actor, (int)strlen(actor));
+            s->have_mv = seat >= 0 && replay_move_of(&s->g, seat, op->wire, op->wire_len, &s->mv) == 0;
         }
         rc = op->run(&s->t, &row, seed, op->ud);
         if (rc < 0 || (cached && fresh_only(rc))) {

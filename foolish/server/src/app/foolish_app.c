@@ -11,10 +11,15 @@
 #include "v1_http.h"
 
 #include "store/rows_foolish.h"
+#include "store/journal.h"
+#include "store/store_sql.h"
+#include "app_internal.h"
+#include "config.h"
 
 #include "table.h"
 #include "util/clock.h"
 #include "util/err.h"
+#include "../../../../shared/c/num_parse.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,6 +72,35 @@ out:
     return rc;
 }
 
+// ---- the move journal under `cbase serve` (store/journal.h) -----------------------------
+//
+// CBASE_JOURNAL=0 turns it off (every move commits to the tables, as before);
+// CBASE_JOURNAL_FLUSH_MS is the flush's period (2000); CBASE_JOURNAL_SYNC=1 adds an
+// fdatasync to every batch (a move then survives an OS crash too).
+static long env_long(const char *name, long dflt) {
+    const char *v = getenv(name);
+    if (!v || !*v) return dflt;
+    int64_t n;
+    return num_parse_i64(v, strlen(v), 0, INT32_MAX, &n) ? (long)n : dflt;
+}
+
+static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
+    if (!env_long("CBASE_JOURNAL", 1) || !ctx->store || !cb_store_is_sql(ctx->store)) return CB_OK;
+    const char *db = ctx->cfg ? ctx->cfg->db_path : NULL;
+    if (!db || !*db || *db == ':') return CB_OK;   // an in-memory database has nothing to recover into
+    cb_journal_opts o = {
+        .path = db,
+        .flush_ms = env_long("CBASE_JOURNAL_FLUSH_MS", 2000),
+        .flush_moves = (int)env_long("CBASE_JOURNAL_FLUSH_MOVES", 4096),
+        .sync = env_long("CBASE_JOURNAL_SYNC", 0) != 0,
+        .apply = cb_table_replay_move,
+        .apply_ud = ctx,
+    };
+    return cb_journal_open(ctx->store, &o, err, cap);
+}
+
+static void foolish_serve_close(cb_ctx *ctx) { cb_journal_close(ctx->store); }
+
 static const cb_route_list *const FOOLISH_ROUTES[] = { &cb_functions_route_list, &cb_v1_route_list,
                                                        &cb_unfurl_route_list };
 
@@ -95,6 +129,8 @@ const cb_app cb_foolish_app = {
     .admin_calls = cb_foolish_admin_calls,
     .n_admin_calls = 3,
     .admin_count = cb_admin_games_needing_bots,
+    .serve_open = foolish_serve_open,
+    .serve_close = foolish_serve_close,
 };
 
 // foolish is the app every binary of this build serves (cbase/app.h).

@@ -99,6 +99,11 @@ typedef struct {
     cb_uuid  prev_humans[CB_MAX_SEATS];
     int      n_prev_bots;
     cb_uuid  prev_bots[CB_MAX_SEATS];
+    // A move the journal may hold (journal.h): set only for a commit that is one human
+    // move and nothing else (the roster, the status and the seed unchanged, no rating, no
+    // new session log), as the move the kernel's menu names at the board it was played on.
+    // A store with no journal ignores it.
+    const struct ReplayMove *move;
 } cb_game_commit;
 
 // A dashboard entry: a game a user sits at.
@@ -333,6 +338,27 @@ const cb_rows_ops *cb_rows_of(const cb_store *s);
 // account (a signup's rating row; a delete's seats, chat and rating row).
 extern const cb_rows_ops  cb_rows_foolish;   // over the items (DynamoDB)
 extern const cb_rows_ops  cb_rows_sql;       // on the SQL store (rows_sql.c)
+
+// ---- the journal's flush (rows_sql.c; journal.h says when) --------------------------------
+// One game's acknowledged state brought into the tables: its row as it now is, fenced on
+// the version the tables hold (sql_version), and its moves since then (game_moves rows at
+// their seq), in order.
+typedef struct {
+    int64_t        seq;
+    const uint8_t *log;
+    size_t         len;
+} cb_game_move;
+typedef struct {
+    const cb_game_row  *row;
+    int64_t             sql_version;
+    const cb_game_move *moves;
+    int                 n_moves;
+} cb_game_flush;
+// ONE transaction: every f[i] written, then the commit c (NULL: none) or the delete of
+// del_id at del_version (NULL: none). CB_E_CONFLICT when a table's version is not the
+// one fenced on (nothing is written), else as the write it ends with.
+int cb_rows_sql_flush(cb_store *s, const cb_game_flush *f, int n, const cb_game_commit *c, const char *del_id,
+                      int64_t del_version);
 extern const cb_store_app cb_foolish_store;  // rows_sql.c
 // The account hooks over the items (cb_store_app signup_txn, delete_keys, delete_txn).
 int cb_rows_item_signup_txn(cb_store *s, const cb_user_row *u, const cb_iwrite *acct, int n, int *failed);

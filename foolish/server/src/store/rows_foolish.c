@@ -26,6 +26,7 @@
 // hang off is gone, so a crash between the two leaves orphans no reader can
 // reach.
 #include "store/rows_foolish.h"
+#include "store/journal.h"
 
 #include "store/store_priv.h"
 #include "store/store_sql.h"
@@ -1695,6 +1696,7 @@ static const cb_rows_ops NO_ROWS;
 
 const cb_rows_ops *cb_rows_of(const cb_store *s) {
     if (!s || !s->app) return &NO_ROWS;
+    if (cb_journal_of(s)) return cb_journal_rows();   // `cbase serve`'s move journal (journal.h)
     const void *t = cb_store_is_sql(s) && s->app->sql_rows ? s->app->sql_rows : s->app->rows;
     return t ? (const cb_rows_ops *)t : &NO_ROWS;
 }

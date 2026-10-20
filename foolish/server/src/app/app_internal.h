@@ -13,6 +13,7 @@
 
 #include "store/rows_foolish.h"
 #include "table_ops.h"
+#include "replay_move.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -65,6 +66,11 @@ typedef struct cb_section {
     cb_uuid     old_humans[CB_MAX_SEATS];
     int         n_old_bots;
     cb_uuid     old_bots[CB_MAX_SEATS];
+    // The operation's move as the kernel's menu names it at the board before it
+    // (replay_move.h), taken by cb_table_run for a human's action: what the store's
+    // journal holds instead of writing the tables (journal.h). Cleared with the section.
+    bool        have_mv;
+    ReplayMove  mv;
     uint8_t     arena[CB_ARENA_BYTES];
     int         arena_hw;         // bytes of the arena a products call may have written (cb_section_free zeroes that prefix)
     bool        in_use, pooled;   // cb_section_new's own: the worker thread's reusable one, and whether it is handed out
@@ -83,6 +89,10 @@ int cb_section_load(cb_section *s, const cb_game_row *row);
 // One viewer's envelope of the loaded table at `version` (viewer -1: the
 // spectator), malloc'd. CB_OK or CB_E_STATE.
 int cb_section_envelope(cb_section *s, int viewer, uint32_t version, uint8_t **out, size_t *out_len);
+
+// The journal's replay of one move at start (journal.h cb_journal_apply_fn; ud is the cb_ctx).
+int cb_table_replay_move(void *ud, const cb_game_row *row, int64_t now, const ReplayMove *mv, cb_game_row *out,
+                         uint8_t **log, size_t *log_len);
 
 // What a commit attempt came to.
 typedef struct {
