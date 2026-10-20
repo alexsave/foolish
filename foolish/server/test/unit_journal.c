@@ -2162,6 +2162,45 @@ static void a_flush_is_bounded_transactions(void) {
     cb_limits_reset();
 }
 
+// THE FLUSH THREAD HAS NO TICK: with nothing waiting it sleeps until told, so an idle box wakes
+// it never; a move that begins waiting sets its alarm (one wake), and the move is flushed at its
+// age (one more).
+static void the_flush_thread_has_no_tick(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/tick%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.game_age_ms = 200;
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    cb_journal_stats js;
+    for (int i = 0; i < 100; i++) {   // the deal's records flushed at their age
+        cb_journal_stats_get(s, &js);
+        if (!js.waiting) break;
+        usleep(20000);
+    }
+    T_EQ_INT(js.waiting, 0);
+    usleep(50000);
+    cb_journal_stats_get(s, &js);
+    const long w0 = js.flusher_wakes;
+    usleep(1200000);   // idle: nothing waits
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.flusher_wakes - w0, 0);
+    move_t m;
+    T_CHECK(step(s, gid, &m) > 0);
+    for (int i = 0; i < 100; i++) {
+        cb_journal_stats_get(s, &js);
+        if (!js.waiting) break;
+        usleep(20000);
+    }
+    T_EQ_INT(js.waiting, 0);
+    T_CHECK(js.flusher_wakes - w0 >= 1 && js.flusher_wakes - w0 <= 3);
+    close_world(s);
+    memset(&g_jo, 0, sizeof g_jo);
+}
+
 // ---- the dashboard list and the bot scan read the overlay, and flush nothing ----------------
 
 static bool collect_ids(const cb_member_row *r, void *ud) {
@@ -2414,6 +2453,7 @@ int main(void) {
         T_RUN(every_acknowledged_move_survives_a_sigkill);
         T_RUN(a_move_writes_no_table_until_its_game_is_due);
         T_RUN(a_flush_is_bounded_transactions);
+        T_RUN(the_flush_thread_has_no_tick);
         T_RUN(the_lists_read_the_overlay_without_a_flush);
         T_RUN(an_admin_write_is_never_written_over);
         T_RUN(mapped_segments_keep_every_committed_batch);
