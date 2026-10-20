@@ -1451,6 +1451,19 @@ static void the_resident_is_the_row(void) {
             const int nb = table_commit_products(&b.t, GID, 12, version, now, &cb, ab, ARENA);
             T_EQ_INT(na, nb);
             if (na <= 0 || na != nb || memcmp(aa, ab, (size_t)na) != 0) { T_CHECK(!"the products differ"); break; }
+            // The products with no row (a plain move's) are the same products less the row.
+            TableCommit cn;
+            const int nn = table_commit_products_flags(&a.t, GID, 12, version, now, TABLE_PRODUCTS_NO_ROW, &cn, ab, ARENA);
+            bool same = nn > 0 && cn.state.len == 0 && cn.roster.len == 0 && memcmp(&cn.clock, &ca.clock, sizeof cn.clock) == 0 &&
+                        cn.status == ca.status && cn.needs_bots == ca.needs_bots && cn.ended == ca.ended &&
+                        cn.closed_round == ca.closed_round && cn.logs_reset == ca.logs_reset && cn.n_events == ca.n_events &&
+                        cn.roster_changed == ca.roster_changed && cn.logs.len == ca.logs.len &&
+                        memcmp(ab + cn.logs.off, aa + ca.logs.off, (size_t)ca.logs.len) == 0 &&
+                        cn.spectator.len == ca.spectator.len &&
+                        memcmp(ab + cn.spectator.off, aa + ca.spectator.off, (size_t)ca.spectator.len) == 0;
+            for (int v = 0; same && v < MAX_PLAYERS; v++)
+                same = cn.views[v].len == ca.views[v].len && memcmp(ab + cn.views[v].off, aa + ca.views[v].off, (size_t)ca.views[v].len) == 0;
+            if (!same) { T_CHECK(!"the products with no row are not the products less the row"); break; }
             // T9: the resident's encode is the products' row, byte for byte.
             table_resident(&a.t, &ca.clock, &res);
             T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl, roster, sizeof roster, &rl), TABLE_OK);

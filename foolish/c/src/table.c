@@ -335,7 +335,13 @@ int table_cast(const Table *t, const char *game_id, int gid_len, int viewer, uin
 
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap) {
+    return table_commit_products_flags(t, game_id, gid_len, next_version, now_ms, 0, out, arena, cap);
+}
+
+int table_commit_products_flags(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
+                                int64_t now_ms, unsigned flags, TableCommit *out, uint8_t *arena, int cap) {
     memset(out, 0, sizeof(*out));
+    const bool row = !(flags & TABLE_PRODUCTS_NO_ROW);
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     const Game *g = t->g;
     int at = 0;
@@ -377,22 +383,26 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     out->n_events = (uint8_t)(n_events > 255 ? 255 : n_events);
     const BoardClock clock = next_clock(t, &stream, n_events > 0 || out->goods_changed, now_ms);
 
-    if (cap - at < TABLE_STATE_MAX) return TABLE_E_CAP;
-    out->state.off = at;
-    out->state.len = state_blob_put_rated_at(g, &clock, table_stamp(t), STATE_BLOB_FORMAT, arena + at);
-    if (out->state.len == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
     out->clock = clock;
-    at += out->state.len;
+    if (row) {
+        if (cap - at < TABLE_STATE_MAX) return TABLE_E_CAP;
+        out->state.off = at;
+        out->state.len = state_blob_put_rated_at(g, &clock, table_stamp(t), STATE_BLOB_FORMAT, arena + at);
+        if (out->state.len == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
+        at += out->state.len;
+    }
 
     // The roster is validated ONCE here, then written as the row's and as every envelope's
     // trailer (it validated per write: 2 + the human seats times per move).
     const int rv = roster_validate(&t->r);
     if (rv != ROSTER_OK) return TABLE_E_ROSTER;
-    const int rl = roster_encode_validated(&t->r, arena + at, cap - at);
-    if (rl < 0) return rl == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
-    out->roster.off = at;
-    out->roster.len = rl;
-    at += rl;
+    if (row) {
+        const int rl = roster_encode_validated(&t->r, arena + at, cap - at);
+        if (rl < 0) return rl == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
+        out->roster.off = at;
+        out->roster.len = rl;
+        at += rl;
+    }
 
     // This operation's records, each stamped with the one clock value, DRAW
     // identities masked (view.c log_record_put).

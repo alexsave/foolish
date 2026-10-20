@@ -412,6 +412,13 @@ typedef struct {
 // rule the kernel has): nothing is to be committed.
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap);
+// The same with `flags`. TABLE_PRODUCTS_NO_ROW: no state blob and no roster for the row
+// (TableCommit.state and .roster stay empty; the clock, the logs, the envelopes and every flag
+// are as without it), for a host that keeps the game as a resident and encodes its row only
+// when the row is read (table_resident_encode gives exactly the bytes left out).
+#define TABLE_PRODUCTS_NO_ROW 0x1u
+int table_commit_products_flags(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
+                                int64_t now_ms, unsigned flags, TableCommit *out, uint8_t *arena, int cap);
 
 // ---- the resident game --------------------------------------------------------
 //
