@@ -757,7 +757,11 @@ static void a_flush_racing_the_moves_leaves_every_log_whole(void) {
     }
     T_EQ_INT(same, n);
     cb_journal_stats js;
-    cb_journal_stats_get(b, &js);
+    for (int i = 0; i < 300; i++) {   // the kicked flush thread ran: the condition, however long the way
+        cb_journal_stats_get(b, &js);
+        if (js.flushes > 0) break;
+        usleep(10000);
+    }
     T_CHECK(js.flushes > 0);
     T_EQ_INT(cb_journal_flush(b), CB_OK);
     close_world(b);
@@ -1995,9 +1999,7 @@ static void a_flush_is_bounded_transactions(void) {
     cb_journal_stats_get(s, &js);
     const long waiting = js.waiting, flushes0 = js.flushes;
     T_CHECK(waiting > 3 * g_jo.txn_moves);
-    const int64_t t0 = cb_mono_us();
     T_EQ_INT(cb_journal_flush(s), CB_OK);
-    const int64_t pass_us = cb_mono_us() - t0;
     cb_journal_stats_get(s, &js);
     T_EQ_INT(js.waiting, 0);
     T_CHECK(js.txn_moves_max > 0 && js.txn_moves_max <= g_jo.txn_moves);
@@ -2005,7 +2007,7 @@ static void a_flush_is_bounded_transactions(void) {
     // (How long a transaction held the lock is the stats' to report, not this test's to time: under
     // a sanitizer on a loaded runner one descheduled transaction can take most of a pass. The
     // count and the size of the transactions are what the budget owns.)
-    T_CHECK(js.txn_hold_us_max > 0 && js.txn_hold_us_max <= pass_us);
+    T_CHECK(js.txn_hold_us_max > 0);   // (a maximum since the open: the setup's flushes count too)
     close_world(s);
     // The tables hold every game as the overlay did.
     memset(&g_jo, 0, sizeof g_jo);
