@@ -298,7 +298,7 @@ struct cb_journal {
     // bumped by an exclusive section (an admin write): a record whose base was read before it is refused
     atomic_long     epoch;
     // stats
-    atomic_long     batches, writes, records, bytes, flushes, flushed_games, flushed_moves, recovered, table_reads;
+    atomic_long     batches, writes, records, bytes, flushes, flushed_games, flushed_moves, recovered, table_reads, log_reads;
 };
 
 cb_journal *cb_journal_of(const cb_store *s) { return s && s->app_settle == cb_journal_flush ? s->app_state : NULL; }
@@ -1176,6 +1176,18 @@ int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, 
     }
 }
 
+int cb_journal_game_peek(cb_store *s, const char *id, cb_journal_game_fn fn, void *ud) {
+    cb_journal *j = cb_journal_of(s);
+    if (!j) return CB_E_NOT_FOUND;
+    pthread_mutex_lock(&j->ov_mu);
+    jgame *g = *ov_slot(j, id);
+    int rc = CB_E_NOT_FOUND;
+    if (g && g->res_valid) rc = fn(ud, &g->row, &g->res);
+    else if (g && (rc = row_refresh(g)) == CB_OK) rc = fn(ud, &g->row, NULL);
+    pthread_mutex_unlock(&j->ov_mu);
+    return rc;
+}
+
 void cb_journal_game_created(cb_store *s, const cb_game_row *row, const TableResident *res) {
     cb_journal *j = cb_journal_of(s);
     if (!j) return;
@@ -1204,7 +1216,15 @@ void cb_journal_game_decoded(cb_store *s, const char *id, int64_t version, const
 static int logs_of(cb_journal *j, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
     cb_store *s = j->s;
     pthread_mutex_lock(&j->flush_mu);
-    int rc = cb_rows_sql.game_logs(s, id, log_from, out, out_len);
+    // The tables hold nothing of a session the overlay began after their version (a deal not
+    // flushed yet, and every move since): the overlay alone answers, with no read.
+    pthread_mutex_lock(&j->ov_mu);
+    const jgame *held = *ov_slot(j, id);
+    const bool overlay_only = held && log_from > held->sql_version;
+    pthread_mutex_unlock(&j->ov_mu);
+    int rc = CB_OK;
+    if (overlay_only) *out = NULL, *out_len = 0;
+    else rc = cb_rows_sql.game_logs(s, id, log_from, out, out_len), atomic_fetch_add(&j->log_reads, 1);
     pthread_mutex_lock(&j->ov_mu);
     jgame *g = rc == CB_OK && log_from > 0 ? *ov_slot(j, id) : NULL;
     size_t add = 0;
@@ -1979,4 +1999,5 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     pthread_mutex_unlock(&j->seg_mu);
     out->recovered = j->recovered;
     out->table_reads = j->table_reads;
+    out->log_reads = j->log_reads;
 }

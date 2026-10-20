@@ -155,8 +155,31 @@ static int game_acquire(cb_ctx *ctx, const char *id, cb_section *s, cb_game_row 
     return CB_ROWS_CALL(ctx->store, game_get, id, out);
 }
 
-static void row_release(cb_game_row *row, bool kept) {
+void cb_row_release(cb_game_row *row, bool kept) {
     if (!kept) cb_game_row_free(row);
+}
+
+int cb_section_read(cb_ctx *ctx, const char *id, cb_section *s, cb_game_row *row, bool *kept) {
+    memset(row, 0, sizeof *row);
+    *kept = false;
+    row_into w = { s, row, false };
+    int rc = cb_journal_game_peek(ctx->store, id, take_game, &w);
+    if (rc == CB_OK) *kept = true;
+    else if (rc != CB_E_NOT_FOUND || (rc = CB_ROWS_CALL(ctx->store, game_get, id, row)) != CB_OK) return rc;
+    if (w.adopted) {
+        cb_strlcpy(s->gid, id, sizeof s->gid);
+        section_seats(s);
+        return CB_OK;
+    }
+    const int kr = cb_section_load(s, row);
+    if (kr < 0) {
+        CB_ERROR("table", "game %s: load refused (%d)", id, kr);
+        cb_row_release(row, *kept);
+        *kept = false;
+        memset(row, 0, sizeof *row);
+        return CB_E_STATE;
+    }
+    return CB_OK;
 }
 
 // ---- the section -----------------------------------------------------------------------
@@ -295,7 +318,11 @@ bool cb_section_pooled_is_clean(void) {
     return true;
 }
 
+static atomic_long g_section_loads;
+long cb_section_loads(void) { return atomic_load_explicit(&g_section_loads, memory_order_relaxed); }
+
 int cb_section_load(cb_section *s, const cb_game_row *row) {
+    atomic_fetch_add_explicit(&g_section_loads, 1, memory_order_relaxed);
     cb_strlcpy(s->gid, row->id, sizeof s->gid);
     table_init(&s->t, &s->g, &s->snaps);
     int rc = table_load(&s->t, row->state, (int)row->state_len, row->roster, (int)row->roster_len);
@@ -985,7 +1012,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             cb_journal_game_decoded(ctx->store, op->game_id, row.version, &res);
         }
         if (lr < 0) {
-            row_release(&row, kept);
+            cb_row_release(&row, kept);
             // A stored row the kernel refuses: never silently repaired or played on.
             CB_ERROR("table", "game %s does not load (%d, detail %d)", op->game_id, lr, s->t.detail);
             ret = CB_E_STATE;
@@ -1006,7 +1033,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             out->result = rc;
             out->detail = s->t.detail;
             out->version = row.version;
-            row_release(&row, kept);
+            cb_row_release(&row, kept);
             ret = CB_OK;
             break;
         }
@@ -1031,7 +1058,7 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
                 for (int i = 0; i < s->n_old; i++) snprintf(f.left[f.n_left++], sizeof(cb_uuid), "%s", s->old_humans[i]);
                 cb_fanout_commit(ctx, &f);
             }
-            row_release(&row, kept);
+            cb_row_release(&row, kept);
             break;
         }
 
@@ -1041,20 +1068,20 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
             out->version = row.version;
             ret = op->no_envelope ? CB_OK
                                   : cb_section_envelope(s, seat >= 0 ? seat : -1, (uint32_t)row.version, &out->envelope, &out->envelope_len);
-            row_release(&row, kept);
+            cb_row_release(&row, kept);
             break;
         }
 
         cb_commit_out co;
         if (op->no_deal && s->t.dealt_now) {
             CB_ERROR("table", "game %s: an operation that cannot deal dealt", op->game_id);
-            row_release(&row, kept);
+            cb_row_release(&row, kept);
             ret = CB_E_STATE;
             break;
         }
         ret = cb_section_commit(ctx, s, &row, op->no_deal ? NULL : seed, op->no_envelope ? NULL : actor, ratings,
                                 &have_ratings, &co);
-        row_release(&row, kept);
+        cb_row_release(&row, kept);
         if (ret != CB_OK) break;
         if (co.lost) { ret = CB_E_CONFLICT; break; }
         out->committed = true;

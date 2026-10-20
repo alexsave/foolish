@@ -90,6 +90,15 @@ bool cb_section_logs_poisoned(void);     // Game.logs is filled with 0xAA, not l
 // hex, "" for none), and the old humans noted. The kernel's result (< 0 a
 // stored row the kernel refuses).
 int cb_section_load(cb_section *s, const cb_game_row *row);
+long cb_section_loads(void);   // how many rows cb_section_load decoded (a test's count: an adopted game decodes none)
+
+// The game read WITHOUT its lock (a bot drive's read: its commit is fenced) into the section:
+// under serve the overlay's resident adopted (or its row's bytes loaded), else the store's row
+// loaded. *kept: the row's bytes are the section's (s->rb, or none when adopted), so it is
+// released with cb_row_release, never freed. CB_OK, CB_E_NOT_FOUND, CB_E_STATE for a row the
+// kernel refuses (logged), or the store's error.
+int  cb_section_read(cb_ctx *ctx, const char *id, cb_section *s, cb_game_row *row, bool *kept);
+void cb_row_release(cb_game_row *row, bool kept);
 
 // One viewer's envelope of the loaded table at `version` (viewer -1: the
 // spectator), malloc'd. CB_OK or CB_E_STATE.
