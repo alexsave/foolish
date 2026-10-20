@@ -744,6 +744,16 @@ static void game_scenario(void) {
     rp = nc_replay_read(g_status, g_body, g_len);
     T_CHECK(rp && rp->moves_len > 0);
 
+    // Normal play never trips the inline valve (net/server.h): the moves ran on the loop thread,
+    // and nothing the game did (its deal, its end, the rating, the replay job) stalled it.
+    tc_response hr;
+    T_EQ_INT(tc_http(g_port, "GET", "/health", NULL, NULL, 0, &hr), 0);
+    const char *ht = cb_buf_cstr(&hr.body), *in = strstr(ht, " inline="), *tr = strstr(ht, " tripped=");
+    fprintf(stderr, "smoke: %s", ht);
+    T_CHECK(in && atoll(in + 8) > 0);
+    T_CHECK(tr && atoll(tr + 9) == 0);
+    tc_response_free(&hr);
+
     // The view, then a restart on the same database: the same view.
     int64_t v1 = -1, v2 = -2;
     cb_buf env2;
