@@ -5,6 +5,7 @@
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
+#include "roster.h"
 #include "../../../../shared/c/fnv.h"
 #include "../../../../shared/c/num_parse.h"
 
@@ -26,6 +27,7 @@
 #define BATCH_MAGIC 'J'
 #define OV_BUCKETS 1024
 #define IDLE_EVICT_MS 60000
+#define TICK_MS 1000            // the flush thread checks the flush rule this often
 
 // ---- the slot table ------------------------------------------------------------------------
 
@@ -200,12 +202,20 @@ typedef struct jgame {
     int64_t       sql_version;   // the version the tables hold
     cb_game_move *moves;         // the moves since sql_version, in order (each log owned)
     int           n_moves, cap_moves;
+    long          bytes;         // what the waiting moves hold (move_bytes each)
     int64_t       touched_ms;    // cb_mono_ms of its last move
+    int64_t       first_ms;      // cb_mono_ms of its oldest waiting move
+    uint64_t      first_seg;     // a segment at or before the one holding its oldest waiting move
+    int           n_humans;      // the humans its roster seats (the dashboard list's members)
+    cb_uuid       humans[CB_MAX_SEATS];
 } jgame;
+
+static long move_bytes(const cb_game_move *m) { return (long)(sizeof *m + m->len); }
 
 // A move waiting for its batch's write.
 typedef struct jrec {
     struct jrec *next;
+    long         epoch;         // the journal's epoch when its base version was read
     cb_jmove     m;
     cb_game_row  row;           // the new row (owned)
     uint8_t     *log;
@@ -225,18 +235,27 @@ struct cb_journal {
     bool            writing;
     int             fd;
     uint64_t        seg_seq;       // the open segment's number
-    uint64_t        first_seq;     // the oldest segment on disk
+    pthread_mutex_t seg_mu;
+    uint64_t       *segs;          // the segments on disk, oldest first
+    int             n_segs, cap_segs;
     int64_t         seg_start;
     off_t           seg_len;
     cb_jslots      *slots;
     // the overlay
     pthread_mutex_t ov_mu;
     jgame          *buckets[OV_BUCKETS];
+    int             n_games;       // in the overlay, waiting or not
     long            n_waiting;     // moves not in the tables yet
+    long            w_bytes;       // their bytes
     // the flush: one at a time, and every write of a journaled game around the journal
     pthread_mutex_t flush_mu;
     pthread_t       thr;
     bool            thr_started, stop, kick;
+    // a backup attached (the backup hooks below): no segment at or after backup_mark is deleted
+    bool            pinned;
+    uint64_t        backup_mark;
+    // bumped by an exclusive section (an admin write): a record whose base was read before it is refused
+    atomic_long     epoch;
     // stats
     atomic_long     batches, writes, records, bytes, flushes, flushed_games, flushed_moves, recovered;
 };
@@ -281,7 +300,15 @@ static int ov_apply(cb_journal *j, jrec *r) {
     if (!g) {
         if (!(g = calloc(1, sizeof *g))) return CB_E_NOMEM;
         g->sql_version = r->m.base_version;
+        // A journaled move never changes the seats: the roster's humans hold while it is here.
+        Roster ro;
+        if (roster_decode(&ro, r->row.roster, (int)r->row.roster_len) == ROSTER_OK)
+            for (int i = 0; i < ro.n && g->n_humans < CB_MAX_SEATS; i++)
+                if (ro.seats[i].brain_len == 0)
+                    snprintf(g->humans[g->n_humans++], sizeof g->humans[0], "%.*s", (int)ro.seats[i].id_len,
+                             (const char *)ro.seats[i].id);
         *p = g;
+        j->n_games++;
     }
     if (g->n_moves == g->cap_moves) {
         int cap = g->cap_moves ? g->cap_moves * 2 : 8;
@@ -290,20 +317,30 @@ static int ov_apply(cb_journal *j, jrec *r) {
         g->moves = m;
         g->cap_moves = cap;
     }
-    g->moves[g->n_moves++] = (cb_game_move){ r->row.version, r->log, r->log_len };
+    const int64_t now = cb_mono_ms();
+    if (!g->n_moves) {
+        g->first_ms = now;
+        g->first_seg = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
+    }
+    g->moves[g->n_moves] = (cb_game_move){ r->row.version, r->log, r->log_len };
+    const long b = move_bytes(&g->moves[g->n_moves++]);
     r->log = NULL;
     cb_game_row_free(&g->row);
     g->row = r->row;
     memset(&r->row, 0, sizeof r->row);
-    g->touched_ms = cb_mono_ms();
+    g->touched_ms = now;
+    g->bytes += b;
+    j->w_bytes += b;
     j->n_waiting++;
     return CB_OK;
 }
 
 // ---- segments ------------------------------------------------------------------------------
 
+static int segs_add(cb_journal *j, uint64_t seq);
+
 static void seg_path(const cb_journal *j, uint64_t seq, char *out, size_t cap) {
-    snprintf(out, cap, "%s%010llu", j->prefix, (unsigned long long)seq);
+    snprintf(out, cap, "%s%016llu", j->prefix, (unsigned long long)seq);
 }
 
 static bool write_all(int fd, const uint8_t *p, size_t n) {
@@ -328,7 +365,8 @@ static int seg_open(cb_journal *j, uint64_t seq) {
         return CB_E_IO;
     }
     cb_jslots *t = cb_jslots_new();
-    if (!t) {
+    if (!t || segs_add(j, seq) != CB_OK) {
+        cb_jslots_free(t);
         close(fd);
         unlink(path);
         return CB_E_NOMEM;
@@ -337,7 +375,7 @@ static int seg_open(cb_journal *j, uint64_t seq) {
     cb_jslots_free(j->slots);
     j->fd = fd;
     j->slots = t;
-    j->seg_seq = seq;
+    __atomic_store_n(&j->seg_seq, seq, __ATOMIC_RELAXED);   // ov_apply and the low-water mark read it
     j->seg_start = 0;
     j->seg_len = 0;
     return CB_OK;
@@ -345,20 +383,29 @@ static int seg_open(cb_journal *j, uint64_t seq) {
 
 // Codes and writes one batch of records (the writer is held, j->mu is not). Each record's rc set.
 static void write_batch(cb_journal *j, jrec *list) {
+    // A record whose base version was read before an exclusive section (an admin write) is
+    // refused: the tables may hold another game now. Its caller reads again (a conflict).
+    const long epoch = atomic_load(&j->epoch);
     int n = 0;
-    for (jrec *r = list; r; r = r->next) n++;
+    for (jrec *r = list; r; r = r->next) {
+        r->rc = r->epoch == epoch ? CB_OK : CB_E_CONFLICT;
+        n += r->rc == CB_OK;
+    }
+    if (!n) return;
     // A batch is at most CB_JOURNAL_BATCH_MAX moves; more go as several, in the same write.
     const size_t cap = SEG_HDR + (size_t)(n / CB_JOURNAL_BATCH_MAX + 1) * (CB_JOURNAL_BATCH_HDR + REPLAY_MAX_INT_BYTES);
     uint8_t *buf = malloc(cap);
     cb_jmove *ms = malloc(sizeof *ms * (size_t)(n < CB_JOURNAL_BATCH_MAX ? n : CB_JOURNAL_BATCH_MAX));
-    int rc = buf && ms && j->fd >= 0 ? CB_OK : j->fd < 0 ? CB_E_IO : CB_E_NOMEM;
+    int rc = buf && ms ? CB_OK : CB_E_NOMEM;
     size_t len = 0;
     int frames = 0;
-    int64_t first = list->m.now_ms;
-    for (jrec *r = list; r; r = r->next) if (r->m.now_ms < first) first = r->m.now_ms;
-    // A batch's time is coded against its segment's start: one a clock jump put out of
-    // reach starts a segment of its own.
-    if (rc == CB_OK && j->seg_len > 0 && (first - j->seg_start > INT32_MAX / 2 || first - j->seg_start < INT32_MIN / 2) &&
+    int64_t first = INT64_MAX;
+    for (jrec *r = list; r; r = r->next) if (r->rc == CB_OK && r->m.now_ms < first) first = r->m.now_ms;
+    // A segment is closed once it is seg_bytes long (or after a failed write, below); a
+    // batch's time is coded against its segment's start, so one a clock jump put out of
+    // reach starts a segment of its own too.
+    if (rc == CB_OK && (j->fd < 0 || j->seg_len >= j->o.seg_bytes ||
+                        (j->seg_len > 0 && (first - j->seg_start > INT32_MAX / 2 || first - j->seg_start < INT32_MIN / 2))) &&
         seg_open(j, j->seg_seq + 1) != CB_OK)
         rc = CB_E_IO;
     if (rc == CB_OK && j->seg_len == 0) {
@@ -370,7 +417,8 @@ static void write_batch(cb_journal *j, jrec *list) {
     }
     for (jrec *r = list; rc == CB_OK && r;) {
         int k = 0;
-        for (; r && k < CB_JOURNAL_BATCH_MAX; r = r->next) ms[k++] = r->m;
+        for (; r && k < CB_JOURNAL_BATCH_MAX; r = r->next) if (r->rc == CB_OK) ms[k++] = r->m;
+        if (!k) break;
         int w = cb_journal_batch_encode(j->slots, j->seg_start, ms, k, buf + len, (int)(cap - len));
         if (w < 0) rc = w;
         else len += (size_t)w, frames++;
@@ -389,26 +437,30 @@ static void write_batch(cb_journal *j, jrec *list) {
         atomic_fetch_add(&j->writes, 1);
         atomic_fetch_add(&j->records, n);
         atomic_fetch_add(&j->bytes, (long)len);
-    } else {
+    } else if (j->fd >= 0) {
         // Nothing of this batch is acknowledged: the segment is cut back to its last whole
         // batch, and the slot table that may have moved on goes with a new segment.
-        if (j->fd >= 0 && ftruncate(j->fd, j->seg_len) != 0) CB_ERROR(MOD, "ftruncate: %s", strerror(errno));
-        if (j->fd >= 0) (void)lseek(j->fd, j->seg_len, SEEK_SET);
+        if (ftruncate(j->fd, j->seg_len) != 0) CB_ERROR(MOD, "ftruncate: %s", strerror(errno));
+        (void)lseek(j->fd, j->seg_len, SEEK_SET);
         if (seg_open(j, j->seg_seq + 1) != CB_OK) {
-            if (j->fd >= 0) close(j->fd);
-            j->fd = -1;   // every later move fails until a flush opens one
+            close(j->fd);
+            j->fd = -1;   // the next batch tries to open one
         }
     }
     free(buf);
     free(ms);
     pthread_mutex_lock(&j->ov_mu);
+    bool due = false;
     for (jrec *r = list; r; r = r->next) {
+        if (r->rc != CB_OK) continue;
         r->rc = rc;
         if (rc == CB_OK && (r->rc = ov_apply(j, r)) != CB_OK) CB_ERROR(MOD, "game %s: overlay out of memory", r->m.game);
+        jgame *g = rc == CB_OK ? *ov_slot(j, r->m.game) : NULL;
+        if (g && g->bytes >= j->o.game_bytes) due = true;
     }
-    const bool full = j->n_waiting >= j->o.flush_moves;
+    if (j->w_bytes >= j->o.total_bytes) due = true;
     pthread_mutex_unlock(&j->ov_mu);
-    if (full) {
+    if (due) {   // the flush thread applies the rule now rather than at its next tick
         pthread_mutex_lock(&j->mu);
         j->kick = true;
         pthread_cond_broadcast(&j->cv);
@@ -459,13 +511,51 @@ static void writer_release(cb_journal *j) {
     pthread_mutex_unlock(&j->mu);
 }
 
+// The segments on disk (seg_mu): seg_open adds, delete_segments_before takes away.
+static int segs_add(cb_journal *j, uint64_t seq) {
+    pthread_mutex_lock(&j->seg_mu);
+    int rc = CB_OK;
+    if (j->n_segs == j->cap_segs) {
+        int cap = j->cap_segs ? j->cap_segs * 2 : 16;
+        uint64_t *p = realloc(j->segs, (size_t)cap * sizeof *p);
+        if (!p) rc = CB_E_NOMEM;
+        else j->segs = p, j->cap_segs = cap;
+    }
+    if (rc == CB_OK) j->segs[j->n_segs++] = seq;
+    pthread_mutex_unlock(&j->seg_mu);
+    return rc;
+}
+
 static void delete_segments_before(cb_journal *j, uint64_t seq) {
     char path[1200];
-    for (uint64_t k = j->first_seq; k < seq; k++) {
-        seg_path(j, k, path, sizeof path);
+    pthread_mutex_lock(&j->seg_mu);
+    int k = 0;
+    for (; k < j->n_segs && j->segs[k] < seq; k++) {
+        seg_path(j, j->segs[k], path, sizeof path);
         (void)unlink(path);
     }
-    if (seq > j->first_seq) j->first_seq = seq;
+    memmove(j->segs, j->segs + k, (size_t)(j->n_segs - k) * sizeof *j->segs);
+    j->n_segs -= k;
+    pthread_mutex_unlock(&j->seg_mu);
+}
+
+// The low-water mark: no waiting move is in a segment before it (ov_mu held).
+static uint64_t low_water(cb_journal *j) {
+    uint64_t m = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
+    for (int b = 0; b < OV_BUCKETS; b++)
+        for (jgame *g = j->buckets[b]; g; g = g->next)
+            if (g->n_moves && g->first_seg < m) m = g->first_seg;
+    return m;
+}
+
+// THE TRIM RULE: a segment goes once every move in it is in the tables and, with a backup
+// attached, once a copy that needs it no longer is the last one uploaded (flush_mu held).
+static void trim(cb_journal *j) {
+    pthread_mutex_lock(&j->ov_mu);
+    uint64_t lw = low_water(j);
+    pthread_mutex_unlock(&j->ov_mu);
+    if (j->pinned && j->backup_mark < lw) lw = j->backup_mark;
+    delete_segments_before(j, lw);
 }
 
 typedef struct {
@@ -484,20 +574,27 @@ static void snapshot_free(snapshot *sn) {
     memset(sn, 0, sizeof *sn);
 }
 
-// Every game with moves waiting, copied (ov_mu held): rows and the move lists (the logs stay
-// the overlay's; only a flush frees them, and the flush lock is held).
-static int snapshot_take(cb_journal *j, snapshot *sn) {
+// THE FLUSH RULE: a game whose oldest waiting move is game_age_ms old, or whose waiting moves
+// hold game_bytes, is due; with `all` (every waiting move together over total_bytes, a
+// settle, the close) every game with a move waiting is.
+static bool flush_due(const cb_journal *j, const jgame *g, bool all, int64_t now) {
+    return g->n_moves > 0 && (all || now - g->first_ms >= j->o.game_age_ms || g->bytes >= j->o.game_bytes);
+}
+
+// Every game due, copied (ov_mu held): rows and the move lists (the logs stay the overlay's;
+// only a flush frees them, and the flush lock is held).
+static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now) {
     memset(sn, 0, sizeof *sn);
     int n = 0;
     for (int b = 0; b < OV_BUCKETS; b++)
-        for (jgame *g = j->buckets[b]; g; g = g->next) n += g->n_moves > 0;
+        for (jgame *g = j->buckets[b]; g; g = g->next) n += flush_due(j, g, all, now);
     if (!n) return CB_OK;
     sn->f = calloc((size_t)n, sizeof *sn->f);
     sn->rows = calloc((size_t)n, sizeof *sn->rows);
     if (!sn->f || !sn->rows) { snapshot_free(sn); return CB_E_NOMEM; }
     for (int b = 0; b < OV_BUCKETS; b++)
         for (jgame *g = j->buckets[b]; g; g = g->next) {
-            if (!g->n_moves) continue;
+            if (!flush_due(j, g, all, now)) continue;
             cb_game_move *m = malloc((size_t)g->n_moves * sizeof *m);
             if (!m || row_dup(&sn->rows[sn->n], &g->row) != CB_OK) { free(m); snapshot_free(sn); return CB_E_NOMEM; }
             memcpy(m, g->moves, (size_t)g->n_moves * sizeof *m);
@@ -507,50 +604,65 @@ static int snapshot_take(cb_journal *j, snapshot *sn) {
     return CB_OK;
 }
 
-// The tables now hold f: its moves leave the game (ov_mu held).
-static void ov_flushed(cb_journal *j, jgame *g, const cb_game_flush *f) {
+// The tables now hold f: its moves leave the game (ov_mu held). A move that came after the
+// snapshot is in snap_seg or later.
+static void ov_flushed(cb_journal *j, jgame *g, const cb_game_flush *f, uint64_t snap_seg, int64_t now) {
     int k = 0;
-    while (k < g->n_moves && g->moves[k].seq <= f->row->version) free((void *)g->moves[k++].log);
+    long b = 0;
+    for (; k < g->n_moves && g->moves[k].seq <= f->row->version; k++) {
+        b += move_bytes(&g->moves[k]);
+        free((void *)g->moves[k].log);
+    }
     memmove(g->moves, g->moves + k, (size_t)(g->n_moves - k) * sizeof *g->moves);
     g->n_moves -= k;
+    g->bytes -= b;
+    j->w_bytes -= b;
     j->n_waiting -= k;
     g->sql_version = f->row->version;
+    if (g->n_moves) {
+        g->first_seg = snap_seg;
+        g->first_ms = now;
+    }
 }
 
-// Every acknowledged move into the tables, and the segments that held them deleted.
-static int flush_all(cb_journal *j) {
-    pthread_mutex_lock(&j->flush_mu);
-    writer_hold(j);
+static void ov_unlink(cb_journal *j, jgame **p) {
+    jgame *g = *p;
+    *p = g->next;
+    j->n_waiting -= g->n_moves;
+    j->w_bytes -= g->bytes;
+    j->n_games--;
+    game_free(g);
+}
+
+// The games due into the tables in one transaction, then the segments trimmed. flush_mu is
+// held; the writer is held for the snapshot (a move after it is in a later segment) unless
+// the caller holds it already.
+static int flush_locked(cb_journal *j, bool all, bool writer_held) {
+    if (!writer_held) writer_hold(j);
     snapshot sn;
+    const int64_t now = cb_mono_ms();
     pthread_mutex_lock(&j->ov_mu);
-    int rc = snapshot_take(j, &sn);
+    if (j->w_bytes >= j->o.total_bytes) all = true;
+    int rc = snapshot_take(j, &sn, all, now);
+    const uint64_t snap_seg = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
     pthread_mutex_unlock(&j->ov_mu);
-    // The segments up to here hold nothing the snapshot does not: a new one takes the moves
-    // that come during the transaction.
-    uint64_t cut = 0;
-    if (rc == CB_OK && (j->seg_len > 0 || j->fd < 0)) {
-        if (seg_open(j, j->seg_seq + 1) == CB_OK) cut = j->seg_seq;
-        else rc = CB_E_IO;
-    }
-    writer_release(j);
+    if (!writer_held) writer_release(j);
     if (rc == CB_OK && sn.n) rc = cb_rows_sql_flush(j->s, sn.f, sn.n, NULL, NULL, 0);
     if (rc == CB_OK) {
         long moves = 0;
-        const int64_t now = cb_mono_ms();
         pthread_mutex_lock(&j->ov_mu);
         for (int i = 0; i < sn.n; i++) {
             jgame *g = *ov_slot(j, sn.rows[i].id);
-            if (g) ov_flushed(j, g, &sn.f[i]);
+            if (g) ov_flushed(j, g, &sn.f[i], snap_seg, now);
             moves += sn.f[i].n_moves;
         }
         for (int b = 0; b < OV_BUCKETS; b++)   // a game idle and in the tables leaves the overlay
             for (jgame **p = &j->buckets[b]; *p;) {
-                jgame *g = *p;
-                if (!g->n_moves && now - g->touched_ms > IDLE_EVICT_MS) { *p = g->next; game_free(g); }
-                else p = &g->next;
+                if (!(*p)->n_moves && now - (*p)->touched_ms > IDLE_EVICT_MS) ov_unlink(j, p);
+                else p = &(*p)->next;
             }
         pthread_mutex_unlock(&j->ov_mu);
-        if (cut) delete_segments_before(j, cut);
+        trim(j);
         if (sn.n) {
             atomic_fetch_add(&j->flushes, 1);
             atomic_fetch_add(&j->flushed_games, sn.n);
@@ -560,30 +672,44 @@ static int flush_all(cb_journal *j) {
         CB_ERROR(MOD, "flush failed (%s): the moves stay in the journal and the next flush retries", cb_strerror(rc));
     }
     snapshot_free(&sn);
+    return rc;
+}
+
+static int flush_some(cb_journal *j, bool all) {
+    pthread_mutex_lock(&j->flush_mu);
+    int rc = flush_locked(j, all, false);
     pthread_mutex_unlock(&j->flush_mu);
     return rc;
 }
+
+static int flush_all(cb_journal *j) { return flush_some(j, true); }
 
 int cb_journal_flush(cb_store *s) {
     cb_journal *j = cb_journal_of(s);
     return j ? flush_all(j) : CB_OK;
 }
 
+int cb_journal_flush_due(cb_store *s) {
+    cb_journal *j = cb_journal_of(s);
+    return j ? flush_some(j, false) : CB_OK;
+}
+
 static void *flusher(void *ud) {
     cb_journal *j = ud;
+    const int64_t tick = j->o.game_age_ms < TICK_MS ? j->o.game_age_ms : TICK_MS;
     pthread_mutex_lock(&j->mu);
     while (!j->stop) {
-        // Until the period is up or enough moves wait (the batches' broadcasts wake it too).
+        // Until the tick or a batch that made a game (or all of them) due.
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
-        int64_t ns = ts.tv_nsec + (j->o.flush_ms % 1000) * 1000000;
-        ts.tv_sec += (time_t)(j->o.flush_ms / 1000 + ns / 1000000000);
+        int64_t ns = ts.tv_nsec + (tick % 1000) * 1000000;
+        ts.tv_sec += (time_t)(tick / 1000 + ns / 1000000000);
         ts.tv_nsec = (long)(ns % 1000000000);
         while (!j->stop && !j->kick && pthread_cond_timedwait(&j->cv, &j->mu, &ts) != ETIMEDOUT) {}
         if (j->stop) break;
         j->kick = false;
         pthread_mutex_unlock(&j->mu);
-        (void)flush_all(j);
+        (void)flush_some(j, false);
         pthread_mutex_lock(&j->mu);
     }
     pthread_mutex_unlock(&j->mu);
@@ -662,12 +788,9 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
     int rc = cb_rows_sql_flush(s, &f, g && g->n_moves ? 1 : 0, c, del_id, del_version);
     if (rc == CB_OK && g) {
         pthread_mutex_lock(&j->ov_mu);
-        jgame **p = ov_slot(j, id);
-        *p = g->next;
-        j->n_waiting -= g->n_moves;
         atomic_fetch_add(&j->flushed_moves, g->n_moves);
+        ov_unlink(j, ov_slot(j, id));
         pthread_mutex_unlock(&j->ov_mu);
-        game_free(g);
     }
     pthread_mutex_unlock(&j->flush_mu);
     return rc;
@@ -678,7 +801,9 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     if (!c || !c->row) return CB_E_INVALID;
     const cb_game_row *row = c->row;
     if (!c->moves || c->n_moves < 1 || c->n_moves > BOT_DRIVE_MAX_ACTIONS) return around(s, row->id, c, NULL, 0);
-    // The fence the tables would apply: the game's acknowledged version is the expected one.
+    // The fence the tables would apply: the game's acknowledged version is the expected one,
+    // read in this epoch (an exclusive section after it refuses the record: write_batch).
+    const long epoch = atomic_load(&j->epoch);
     pthread_mutex_lock(&j->ov_mu);
     jgame *g = *ov_slot(j, row->id);
     int64_t held = g ? g->row.version : -1;
@@ -693,6 +818,7 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     if (held != c->expected_version) return CB_E_CONFLICT;
     jrec r;
     memset(&r, 0, sizeof r);
+    r.epoch = epoch;
     snprintf(r.m.game, sizeof r.m.game, "%s", row->id);
     r.m.base_version = c->expected_version;
     r.m.now_ms = row->updated_at;
@@ -713,19 +839,130 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
 
 static int j_game_delete(cb_store *s, const char *id, int64_t expected) { return around(s, id, NULL, id, expected); }
 
-// THE SCAN RULE: a read over the games table (not one game by its id) settles the journal
-// first. Its one owner: every scan of the tables the journal can be ahead of comes here.
+// THE SCAN RULE: a read over the games table (not one game by its id) reads the tables and
+// then the overlay, which wins for every game it holds; the flush lock keeps a flush from
+// moving a game between the two reads. A reader that cannot (an import) settles first.
 static int journal_scan(cb_store *s) { return flush_all(cb_journal_of(s)); }
 
-static int j_games_needing_bots(cb_store *s, int64_t stale_before, int64_t active_after, int limit, cb_name_fn fn,
-                                void *ud) {
-    int rc = journal_scan(s);
-    return rc != CB_OK ? rc : cb_rows_sql.games_needing_bots(s, stale_before, active_after, limit, fn, ud);
+typedef struct {
+    char (*ids)[CB_GAME_ID_MAX + 1];
+    int  n, cap;
+} idvec;
+
+static bool idvec_add(const char *name, void *ud) {
+    idvec *v = ud;
+    if (v->n == v->cap) {
+        int cap = v->cap ? v->cap * 2 : 64;
+        void *p = realloc(v->ids, (size_t)cap * sizeof *v->ids);
+        if (!p) return false;
+        v->ids = p;
+        v->cap = cap;
+    }
+    snprintf(v->ids[v->n++], sizeof v->ids[0], "%s", name);
+    return true;
 }
 
+// The bot scan: the tables' games the overlay does not hold (asked for `limit` more than the
+// overlay holds, so its games dropped leave `limit`), then the overlay's that match, at most
+// `limit` in all. The order is the tables' then the overlay's: the scan is the safety net
+// behind the kicks, and its limit a cap.
+static int j_games_needing_bots(cb_store *s, int64_t stale_before, int64_t active_after, int limit, cb_name_fn fn,
+                                void *ud) {
+    cb_journal *j = cb_journal_of(s);
+    idvec v = { 0 };
+    pthread_mutex_lock(&j->flush_mu);
+    pthread_mutex_lock(&j->ov_mu);
+    const int held = j->n_games;
+    pthread_mutex_unlock(&j->ov_mu);
+    int rc = cb_rows_sql.games_needing_bots(s, stale_before, active_after, limit > 0 ? limit + held : limit, idvec_add, &v);
+    int out = 0;
+    if (rc >= 0) {
+        rc = CB_OK;
+        pthread_mutex_lock(&j->ov_mu);
+        int k = 0;
+        for (int i = 0; i < v.n; i++)
+            if (!*ov_slot(j, v.ids[i])) memmove(v.ids[k++], v.ids[i], sizeof v.ids[0]);
+        v.n = k;
+        for (int b = 0; b < OV_BUCKETS; b++)
+            for (jgame *g = j->buckets[b]; g; g = g->next)
+                if (g->row.needs_bots && g->row.updated_at < stale_before && g->row.last_commit_at > active_after &&
+                    !idvec_add(g->row.id, &v))
+                    rc = CB_E_NOMEM;
+        pthread_mutex_unlock(&j->ov_mu);
+    }
+    pthread_mutex_unlock(&j->flush_mu);
+    for (int i = 0; rc == CB_OK && i < v.n && (limit <= 0 || out < limit); i++) {
+        out++;
+        if (!fn(v.ids[i], ud)) break;
+    }
+    free(v.ids);
+    return rc == CB_OK ? out : rc;
+}
+
+typedef struct {
+    cb_member_row *rows;
+    int            n, cap;
+} memvec;
+
+static bool memvec_add(const cb_member_row *r, void *ud) {
+    memvec *v = ud;
+    if (v->n == v->cap) {
+        int cap = v->cap ? v->cap * 2 : 32;
+        void *p = realloc(v->rows, (size_t)cap * sizeof *v->rows);
+        if (!p) return false;
+        v->rows = p;
+        v->cap = cap;
+    }
+    v->rows[v->n++] = *r;
+    return true;
+}
+
+static int member_cmp(const void *a, const void *b) {   // the tables' ORDER BY updated_at DESC, game_id
+    const cb_member_row *x = a, *y = b;
+    if (x->updated_at != y->updated_at) return x->updated_at > y->updated_at ? -1 : 1;
+    return strcmp(x->game_id, y->game_id);
+}
+
+// The dashboard list: the tables' newest `limit`, each game the overlay holds at its
+// overlay time, and every overlay game the user sits at added (a move only makes a game
+// newer, so a game the tables leave out of their newest `limit` and the overlay does not
+// hold is not among the newest), sorted and cut to `limit`.
 static int j_games_of_user(cb_store *s, const char *user, int limit, cb_member_fn fn, void *ud) {
-    int rc = journal_scan(s);
-    return rc != CB_OK ? rc : cb_rows_sql.games_of_user(s, user, limit, fn, ud);
+    cb_journal *j = cb_journal_of(s);
+    memvec v = { 0 };
+    pthread_mutex_lock(&j->flush_mu);
+    int rc = cb_rows_sql.games_of_user(s, user, limit, memvec_add, &v);
+    if (rc >= 0) {
+        rc = CB_OK;
+        pthread_mutex_lock(&j->ov_mu);
+        for (int b = 0; rc == CB_OK && b < OV_BUCKETS; b++)
+            for (jgame *g = j->buckets[b]; rc == CB_OK && g; g = g->next) {
+                bool sits = false;
+                for (int h = 0; h < g->n_humans && !sits; h++) sits = strcmp(g->humans[h], user) == 0;
+                if (!sits) continue;
+                int i = 0;
+                while (i < v.n && strcmp(v.rows[i].game_id, g->row.id) != 0) i++;
+                if (i < v.n) v.rows[i].updated_at = g->row.updated_at;
+                else {
+                    cb_member_row m;
+                    snprintf(m.game_id, sizeof m.game_id, "%s", g->row.id);
+                    m.updated_at = g->row.updated_at;
+                    if (!memvec_add(&m, &v)) rc = CB_E_NOMEM;
+                }
+            }
+        pthread_mutex_unlock(&j->ov_mu);
+    }
+    pthread_mutex_unlock(&j->flush_mu);
+    int out = 0;
+    if (rc == CB_OK) {
+        if (v.n > 1) qsort(v.rows, (size_t)v.n, sizeof *v.rows, member_cmp);
+        for (int i = 0; i < v.n && (limit <= 0 || out < limit); i++) {
+            out++;
+            if (!fn(&v.rows[i], ud)) break;
+        }
+    }
+    free(v.rows);
+    return rc == CB_OK ? out : rc;
 }
 
 static int j_game_import(cb_store *s, const cb_game_row *g, const cb_uuid *humans, int n_humans, const cb_uuid *bots,
@@ -783,7 +1020,8 @@ static int list_segments(const cb_journal *j, uint64_t **out, int *n) {
     while ((e = readdir(d))) {
         if (strncmp(e->d_name, name, nl) != 0) continue;
         const char *num = e->d_name + nl;
-        if (strlen(num) != 10 || strspn(num, "0123456789") != 10) continue;
+        const size_t nd = strlen(num);   // 16 digits; 10 before 2026-10-20
+        if (nd < 10 || nd > 18 || strspn(num, "0123456789") != nd) continue;
         if (*n == cap) {
             cap = cap ? cap * 2 : 16;
             uint64_t *p = realloc(*out, (size_t)cap * sizeof *p);
@@ -791,7 +1029,7 @@ static int list_segments(const cb_journal *j, uint64_t **out, int *n) {
             *out = p;
         }
         int64_t v;
-        if (!num_parse_i64(num, 10, 0, INT64_MAX, &v)) continue;
+        if (!num_parse_i64(num, nd, 0, INT64_MAX, &v)) continue;
         (*out)[(*n)++] = (uint64_t)v;
     }
     closedir(d);
@@ -922,6 +1160,8 @@ static void journal_free(cb_journal *j) {
     pthread_cond_destroy(&j->cv);
     pthread_mutex_destroy(&j->ov_mu);
     pthread_mutex_destroy(&j->flush_mu);
+    pthread_mutex_destroy(&j->seg_mu);
+    free(j->segs);
     free(j);
 }
 
@@ -934,14 +1174,17 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     if (!j) return CB_E_NOMEM;
     j->s = s;
     j->o = *o;
-    if (j->o.flush_ms <= 0) j->o.flush_ms = 2000;
-    if (j->o.flush_moves <= 0) j->o.flush_moves = 4096;
+    if (j->o.game_age_ms <= 0) j->o.game_age_ms = 600000;
+    if (j->o.game_bytes <= 0) j->o.game_bytes = 256 << 10;
+    if (j->o.total_bytes <= 0) j->o.total_bytes = 64 << 20;
+    if (j->o.seg_bytes <= 0) j->o.seg_bytes = 8 << 20;
     j->fd = -1;
     snprintf(j->prefix, sizeof j->prefix, "%s-journal.", o->path);
     pthread_mutex_init(&j->mu, NULL);
     pthread_cond_init(&j->cv, NULL);
     pthread_mutex_init(&j->ov_mu, NULL);
     pthread_mutex_init(&j->flush_mu, NULL);
+    pthread_mutex_init(&j->seg_mu, NULL);
     if (!J_OPS.game_get) {
         J_OPS = cb_rows_sql;
         J_OPS.game_get = j_game_get;
@@ -958,15 +1201,19 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     int n = 0;
     int rc = list_segments(j, &segs, &n);
     if (rc != CB_OK) snprintf(err, cap, "journal: the directory of %s does not list", o->path);
+    for (int i = 0; rc == CB_OK && i < n; i++) rc = segs_add(j, segs[i]);
     for (int i = 0; rc == CB_OK && i < n; i++) rc = recover_segment(j, segs[i], err, cap);
     if (rc == CB_OK) {
-        j->first_seq = n ? segs[0] : 1;
-        j->seg_seq = n ? segs[n - 1] : 0;
+        // The first new segment's number is the wall clock's ms (past every old one): a
+        // number is never used twice, so a backup's copy of a segment is never another's.
+        uint64_t next = (uint64_t)cb_now_ms();
+        if (n && segs[n - 1] + 1 > next) next = segs[n - 1] + 1;
+        j->seg_seq = next - 1;
         // Everything recovered goes into the tables before anything is served, and the
         // segments with it.
         snapshot sn;
         pthread_mutex_lock(&j->ov_mu);
-        rc = snapshot_take(j, &sn);
+        rc = snapshot_take(j, &sn, true, cb_mono_ms());
         pthread_mutex_unlock(&j->ov_mu);
         if (rc == CB_OK && sn.n) rc = cb_rows_sql_flush(s, sn.f, sn.n, NULL, NULL, 0);
         snapshot_free(&sn);
@@ -974,12 +1221,7 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     }
     if (rc == CB_OK) {
         for (int b = 0; b < OV_BUCKETS; b++)
-            while (j->buckets[b]) {
-                jgame *g = j->buckets[b];
-                j->buckets[b] = g->next;
-                game_free(g);
-            }
-        j->n_waiting = 0;
+            while (j->buckets[b]) ov_unlink(j, &j->buckets[b]);
         if ((rc = seg_open(j, j->seg_seq + 1)) != CB_OK) snprintf(err, cap, "journal: no segment can be made beside %s", o->path);
     }
     if (rc == CB_OK) delete_segments_before(j, j->seg_seq);
@@ -1007,11 +1249,15 @@ void cb_journal_close(cb_store *s) {
     pthread_cond_broadcast(&j->cv);
     pthread_mutex_unlock(&j->mu);
     if (j->thr_started) pthread_join(j->thr, NULL);
+    const unsigned long wal = cb_store_local_wal_frames(s);   // what the moves cost the tables before the close's flush
+    const long waiting = j->n_waiting;
     int rc = flush_all(j);
     if (rc == CB_OK) delete_segments_before(j, j->seg_seq + 1);
     else CB_ERROR(MOD, "the last flush failed (%s): the segments stay for the next start", cb_strerror(rc));
-    CB_INFO(MOD, "%ld record(s) in %ld batch(es), %ld write(s), %ld byte(s); %ld flush(es) of %ld move(s)",
-            (long)j->records, (long)j->batches, (long)j->writes, (long)j->bytes, (long)j->flushes, (long)j->flushed_moves);
+    CB_INFO(MOD, "%ld record(s) in %ld batch(es), %ld write(s), %ld byte(s); %ld flush(es) of %ld move(s); "
+            "%lu WAL frame(s) before the close's flush of %ld move(s)",
+            (long)j->records, (long)j->batches, (long)j->writes, (long)j->bytes, (long)j->flushes, (long)j->flushed_moves,
+            wal, waiting);
     s->app_state = NULL;
     s->app_settle = NULL;
     journal_free(j);
@@ -1028,5 +1274,12 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     out->flushes = j->flushes;
     out->flushed_games = j->flushed_games;
     out->flushed_moves = j->flushed_moves;
+    pthread_mutex_lock(&j->ov_mu);
+    out->waiting = j->n_waiting;
+    out->waiting_bytes = j->w_bytes;
+    pthread_mutex_unlock(&j->ov_mu);
+    pthread_mutex_lock(&j->seg_mu);
+    out->segments = j->n_segs;
+    pthread_mutex_unlock(&j->seg_mu);
     out->recovered = j->recovered;
 }

@@ -21,6 +21,7 @@
 #include "../../../shared/c/fnv.h"
 #include "../../../shared/c/rng.h"
 
+#include <dirent.h>
 #include <signal.h>
 #include <sqlite3.h>
 #include <stdio.h>
@@ -64,6 +65,8 @@ static void add_user(cb_store *s, const char *id, const char *name) {
     CB_STORE_CALL(s, user_create, &u);
 }
 
+static cb_journal_opts g_jo;
+
 static cb_store *open_world(const char *path, bool journal, char *err, size_t cap) {
     cb_store *s = NULL;
     if (cb_store_open_sqlite(path, &s) != CB_OK) return NULL;
@@ -85,8 +88,11 @@ static cb_store *open_world(const char *path, bool journal, char *err, size_t ca
     cb_functions_verify = fake_verify;
     cb_limits_reset();
     if (journal) {
-        cb_journal_opts o = { .path = path, .flush_ms = 3600000, .flush_moves = 1 << 30, .apply = cb_table_replay_move,
-                              .apply_ud = &g_ctx };
+        cb_journal_opts o = g_jo;   // a test's flush rule, else nothing is due for an hour
+        if (!o.game_age_ms) o.game_age_ms = 3600000;
+        o.path = path;
+        o.apply = cb_table_replay_move;
+        o.apply_ud = &g_ctx;
         if (cb_journal_open(s, &o, err, cap) != CB_OK) {
             cb_store_close(s);
             return NULL;
@@ -595,6 +601,152 @@ static void the_flush_writes_the_rows_per_move_commits_write(void) {
     close_world(b);
 }
 
+
+// ---- the flush rule: a move writes no table until its game is due --------------------------
+
+static int count_segments(const char *path) {
+    int n = 0;
+    char seg[400];
+    DIR *d = opendir(g_dir);
+    struct dirent *e;
+    const char *base = strrchr(path, '/') + 1;
+    snprintf(seg, sizeof seg, "%s-journal.", base);
+    while (d && (e = readdir(d))) n += strncmp(e->d_name, seg, strlen(seg)) == 0;
+    if (d) closedir(d);
+    return n;
+}
+
+static void a_move_writes_no_table_until_its_game_is_due(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/rule%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.seg_bytes = 1;   // a segment per batch: the trim rule shows in the file count
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    const unsigned long wal0 = cb_store_local_wal_frames(s);
+    move_t m;
+    int moves = 0;
+    for (; moves < 10 && step(s, gid, &m) > 0; moves++) {}
+    T_CHECK(moves == 10);
+    // No frame of the tables' WAL for ten moves, and the tick finds nothing due.
+    T_EQ_INT((long)cb_store_local_wal_frames(s), (long)wal0);
+    T_EQ_INT(cb_journal_flush_due(s), CB_OK);
+    T_EQ_INT((long)cb_store_local_wal_frames(s), (long)wal0);
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.waiting, js.records);
+    T_EQ_INT(js.flushes, 0);
+    T_CHECK(js.segments >= 10);   // every segment holds a waiting move: none is trimmed
+    T_EQ_INT(count_segments(path), js.segments);
+    close_world(s);
+
+    // A game whose waiting moves hold game_bytes is due at the next tick; the segments
+    // it was the last waiter in go with it, the open one stays.
+    g_jo.game_bytes = 1;
+    s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    T_CHECK(step(s, gid, &m) > 0);
+    T_CHECK(step(s, gid, &m) > 0);
+    T_EQ_INT(cb_journal_flush_due(s), CB_OK);   // (the flush thread, kicked, may have been first)
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.waiting, 0);
+    T_EQ_INT(js.segments, 1);
+    T_EQ_INT(count_segments(path), 1);
+    close_world(s);
+
+    // One whose oldest waiting move is game_age_ms old is due.
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.game_age_ms = 30;
+    s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    T_CHECK(step(s, gid, &m) > 0);
+    cb_journal_stats_get(s, &js);
+    const long flushes0 = js.flushes;
+    usleep(60000);
+    T_EQ_INT(cb_journal_flush_due(s), CB_OK);
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.waiting, 0);
+    T_CHECK(js.flushes > flushes0);
+    close_world(s);
+
+    // Every game once all the waiting moves hold total_bytes.
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.total_bytes = 1;
+    s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    T_CHECK(step(s, gid, &m) > 0);
+    T_EQ_INT(cb_journal_flush_due(s), CB_OK);
+    cb_journal_stats_get(s, &js);
+    T_EQ_INT(js.waiting, 0);
+    close_world(s);
+    memset(&g_jo, 0, sizeof g_jo);
+}
+
+// ---- the dashboard list and the bot scan read the overlay, and flush nothing ----------------
+
+static bool collect_ids(const cb_member_row *r, void *ud) {
+    char (*ids)[CB_GAME_ID_MAX + 1] = ud;
+    int i = 0;
+    while (ids[i][0]) i++;
+    if (i < 3) snprintf(ids[i], sizeof ids[i], "%s", r->game_id);
+    return true;
+}
+
+typedef struct { char ids[64][CB_GAME_ID_MAX + 1]; int n; } names_t;
+static bool collect_name(const char *name, void *ud) {
+    names_t *v = ud;
+    if (v->n < 64) snprintf(v->ids[v->n++], sizeof v->ids[0], "%s", name);
+    return true;
+}
+static int name_cmp(const void *a, const void *b) { return strcmp(a, b); }
+
+static void the_lists_read_the_overlay_without_a_flush(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/lists%d.sqlite", g_dir, g_bots);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char g1[CB_GAME_ID_MAX + 1], g2[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(g1);
+    g_now += 10000;
+    two_humans_dealt(g2);   // the newer in the tables
+    T_CHECK(strcmp(g1, g2) != 0);
+    g_now += 10000;
+    move_t m;
+    // g1 is the newer now, in the overlay alone; with a bot, it stops where the bot is to move.
+    if (!next_move(s, g1, &m)) T_CHECK(step(s, g1, &m) > 0);
+    for (int i = 0; i < (g_bots ? 40 : 3) && next_move(s, g1, &m); i++) T_CHECK(play(g1, &m) > 0);
+    const unsigned long wal0 = cb_store_local_wal_frames(s);
+    char top[4][CB_GAME_ID_MAX + 1];
+    memset(top, 0, sizeof top);
+    T_EQ_INT(CB_ROWS_CALL(s, games_of_user, UID_A, 1, collect_ids, top), 1);
+    T_CHECK(strcmp(top[0], g1) == 0);
+    memset(top, 0, sizeof top);
+    T_EQ_INT(CB_ROWS_CALL(s, games_of_user, UID_A, 5, collect_ids, top), 2);
+    T_CHECK(strcmp(top[0], g1) == 0 && strcmp(top[1], g2) == 0);
+    // The bot scan answers what the tables answer once flushed.
+    names_t before = { 0 }, after = { 0 };
+    T_CHECK(CB_ROWS_CALL(s, games_needing_bots, INT64_MAX, 0, 50, collect_name, &before) >= 0);
+    T_EQ_INT((long)cb_store_local_wal_frames(s), (long)wal0);
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    T_CHECK(js.waiting > 0);
+    T_EQ_INT(cb_journal_flush(s), CB_OK);
+    T_CHECK(cb_rows_sql.games_needing_bots(s, INT64_MAX, 0, 50, collect_name, &after) >= 0);
+    qsort(before.ids, (size_t)before.n, sizeof before.ids[0], name_cmp);
+    qsort(after.ids, (size_t)after.n, sizeof after.ids[0], name_cmp);
+    T_EQ_INT(before.n, after.n);
+    T_CHECK(memcmp(before.ids, after.ids, sizeof before.ids[0] * (size_t)before.n) == 0);
+    if (g_bots) T_CHECK(after.n > 0);
+    close_world(s);
+}
+
 // ---- a backup mid-game ----------------------------------------------------------------------
 
 static int file_put(void *ud, const char *key, const char *path) {
@@ -649,6 +801,8 @@ int main(void) {
         T_RUN(the_flush_writes_the_rows_per_move_commits_write);
         T_RUN(a_backup_mid_game_holds_every_acknowledged_move);
         T_RUN(every_acknowledged_move_survives_a_sigkill);
+        T_RUN(a_move_writes_no_table_until_its_game_is_due);
+        T_RUN(the_lists_read_the_overlay_without_a_flush);
     }
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
