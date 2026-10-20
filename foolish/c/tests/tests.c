@@ -18527,6 +18527,20 @@ static void test_delta_cast_refusals(void) {
     memcpy(dr_bad, dl_delta, (size_t)dn);
     dr_bad[10]++;
     CHECK(dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_PUSH, "delta refusals: a move whose length is not its frame's is not a delta");
+    // The reader refuses it itself (evwire.h: a delta reads WHOLE, every move a
+    // whole awire frame), before anything decodes the move: the client's
+    // awire_decode is a second gate, on the cards.
+    {
+        // One byte more in the first move's wire, and its length says so: every
+        // count adds up, and only the frame's own length disagrees.
+        const int wl = dl_delta[10], tail = 11 + wl;
+        memcpy(dr_bad, dl_delta, (size_t)tail);
+        dr_bad[10] = (uint8_t)(wl + 1);
+        dr_bad[tail] = 0;
+        memcpy(dr_bad + tail + 1, dl_delta + tail, (size_t)(dn - tail));
+        CHECK(evwire_delta_read(dr_bad, dn + 1, &d) == EVW_EPARSE && evwire_delta_read(dl_delta, dn, &d) == 0,
+              "delta refusals: the reader itself refuses a move whose length is not its frame's");
+    }
     memcpy(dr_bad, dl_delta, (size_t)dn);
     dr_bad[reveal_at] = 52;
     CHECK(dr_open(dr_bad, dn, dr_board[0], dr_board_len[0]) == CLIENT_E_PUSH, "delta refusals: a reveal that is not a card is not a delta");
