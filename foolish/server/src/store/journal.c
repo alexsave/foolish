@@ -1386,7 +1386,7 @@ static void ov_flushed(cb_journal *j, jgame *g, const cb_game_flush *f, uint64_t
     // The flushed deltas are the buffer's prefix: the rest moves down to its start. An emptied
     // buffer is freed (a game between flushes holds no log memory).
     const size_t cut = k < g->n_moves ? g->moves[k].off : g->logs_len;
-    memmove(g->moves, g->moves + k, (size_t)(g->n_moves - k) * sizeof *g->moves);
+    if (k) memmove(g->moves, g->moves + k, (size_t)(g->n_moves - k) * sizeof *g->moves);
     g->n_moves -= k;
     for (int i = 0; i < g->n_moves; i++) g->moves[i].off -= (uint32_t)cut;
     if (!g->n_moves) {   // and the move array goes with it: a game between flushes holds neither
@@ -1406,7 +1406,7 @@ static void ov_flushed(cb_journal *j, jgame *g, const cb_game_flush *f, uint64_t
         ratings_flushed(j, g->rated[r].r);
         free(g->rated[r].r);
     }
-    memmove(g->rated, g->rated + r, (size_t)(g->n_rated - r) * sizeof *g->rated);
+    if (r) memmove(g->rated, g->rated + r, (size_t)(g->n_rated - r) * sizeof *g->rated);   // (rated is NULL until one)
     g->n_rated -= r;
     g->bytes -= b;
     j->w_bytes -= b;
