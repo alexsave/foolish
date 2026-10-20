@@ -71,7 +71,8 @@ static void add_user(cb_store *s, const char *id, const char *name) {
 }
 
 static cb_journal_opts g_jo;
-static bool last_batch(const char *db, char *seg, size_t cap, long *off);
+static bool last_frame(const char *db, int magic, char *seg, size_t cap, long *off);
+#define last_batch(db, seg, cap, off) last_frame((db), 'J', (seg), (cap), (off))
 static void crash_copy(const char *path, const char *copy);
 static bool no_row(int n, const char *const *names, const char *const *values, void *ud);
 static bool game_gone(cb_store *s, const char *gid);
@@ -519,7 +520,9 @@ static void a_move_allocates_almost_nothing(void) {
 typedef struct { int64_t version; uint64_t hash; } ack_t;
 
 // The child: plays until killed, reporting each acknowledged move's version and the game's hash.
-static void child_play(const char *path, const char *gid, int fd) {
+// With `hold` >= 0 it waits on that pipe after each report, so a kill lands between two steps
+// (a bot drive commits each cycle: killed mid-drive, the game is at a version nobody reported).
+static void child_play(const char *path, const char *gid, int fd, int hold) {
     char err[256];
     cb_store *s = open_world(path, true, err, sizeof err);
     if (!s) _exit(3);
@@ -528,6 +531,8 @@ static void child_play(const char *path, const char *gid, int fd) {
     while ((v = step(s, gid, &m)) > 0) {
         ack_t a = { v, row_hash(s, gid) };
         if (write(fd, &a, sizeof a) != sizeof a) _exit(4);
+        char go;
+        if (hold >= 0 && read(hold, &go, 1) != 1) _exit(0);
     }
     _exit(0);
 }
@@ -547,21 +552,31 @@ static void every_acknowledged_move_survives_a_sigkill(void) {
         cb_game_row_free(&r0);
         close_world(s);
 
-        int p[2];
+        int p[2], q[2];
         T_EQ_INT(pipe(p), 0);
+        T_EQ_INT(pipe(q), 0);
+        // Odd rounds kill anywhere; even ones between two steps, so the recovered game is the
+        // last one reported and its hash is compared every time.
+        const bool held = round % 2 == 0;
         pid_t pid = fork();
         if (pid == 0) {
             close(p[0]);
-            child_play(path, gid, p[1]);
+            close(q[1]);
+            child_play(path, gid, p[1], held ? q[0] : -1);
         }
         close(p[1]);
+        close(q[0]);
         // Kill it after a few acknowledgements, at a different point each round.
         ack_t last = { v0, 0 }, a;
         const int want = 3 + round * 4;
         int got = 0;
         static ack_t acks[4096];
-        while (got < want && read(p[0], &a, sizeof a) == sizeof a) acks[got++] = last = a;
+        while (got < want && read(p[0], &a, sizeof a) == sizeof a) {
+            acks[got++] = last = a;
+            if (held && got < want && write(q[1], "g", 1) != 1) break;
+        }
         kill(pid, SIGKILL);
+        close(q[1]);
         int st;
         waitpid(pid, &st, 0);
         while (read(p[0], &a, sizeof a) == sizeof a && got < 4096) acks[got++] = last = a;   // what it said before it died
@@ -591,6 +606,7 @@ static void every_acknowledged_move_survives_a_sigkill(void) {
         // bot, one more drive, whose cycles each commit, may have been under way).
         T_CHECK(row.version >= last.version);
         if (!g_bots) T_CHECK(row.version <= last.version + 1);
+        if (held) T_EQ_INT(row.version, last.version);
         uint64_t h = row_hash(s, gid);
         for (int i = 0; i < got; i++)
             if (acks[i].version == row.version) { T_CHECK(acks[i].hash == h); compared++; }
@@ -908,7 +924,9 @@ static void a_cycle_walk_draws_as_the_drive_did(void) {
 // whose commit marker (its header's magic, stored last) never landed is not there ----------
 
 // The newest segment of `db` that holds a batch, and the offset of its last batch.
-static bool last_batch(const char *db, char *seg, size_t cap, long *off) {
+// The newest segment's last frame of kind `magic` ('J' a batch, 'R' a whole commit), walking
+// every frame (a batch: 8 + its u16 length; a whole commit: 12 + its u32 length).
+static bool last_frame(const char *db, int magic, char *seg, size_t cap, long *off) {
     const char *base = strrchr(db, '/') + 1;
     char pre[300], best[400] = "";
     snprintf(pre, sizeof pre, "%s-journal.", base);
@@ -926,11 +944,11 @@ static bool last_batch(const char *db, char *seg, size_t cap, long *off) {
     if (!best[0]) return false;
     snprintf(seg, cap, "%s/%s", g_dir, best);
     FILE *f = fopen(seg, "rb");
-    uint8_t h[8];
+    uint8_t h[12];
     long at = 16, last = -1;
-    while (f && fseek(f, at, SEEK_SET) == 0 && fread(h, 1, 8, f) == 8 && h[0] == 'J') {
-        last = at;
-        at += 8 + (long)(h[2] | h[3] << 8);
+    while (f && fseek(f, at, SEEK_SET) == 0 && fread(h, 1, 12, f) >= 8 && (h[0] == 'J' || h[0] == 'R')) {
+        if (h[0] == magic) last = at;
+        at += h[0] == 'J' ? 8 + (long)(h[2] | h[3] << 8) : 12 + (long)((uint32_t)h[8] | (uint32_t)h[9] << 8 | (uint32_t)h[10] << 16 | (uint32_t)h[11] << 24);
     }
     if (f) fclose(f);
     *off = last;
@@ -1246,6 +1264,14 @@ static void a_resident_the_tables_contradict_is_dropped(void) {
     close_world(s);
 }
 
+static int no_game(void *ud, const cb_game_row *row, const struct TableResident *res) { return CB_OK; }
+
+static bool count_name(const char *name, void *ud) {
+    (void)name;
+    (*(int *)ud)++;
+    return true;
+}
+
 // EVERY COMMIT BUT A RATING THROUGH THE JOURNAL: the join, the readies and the deal write no
 // table (each is a whole record in the segment), membership reads the overlay, and a crash
 // after the deal's record or after the moves on it recovers the game, its seats into the tables.
@@ -1269,6 +1295,10 @@ static void a_lobby_and_its_deal_write_no_table(void) {
     } else {
         meta("B", ASK_JOIN, gid, &r);
         T_EQ_INT(CB_ROWS_CALL(s, is_member, gid, UID_B), 1);   // seated before the tables hear of it
+        T_EQ_INT(CB_ROWS_CALL(s, is_member, gid, "cccccccc-0000-4000-8000-000000000003"), 0);
+        int members = 0;
+        T_EQ_INT(CB_ROWS_CALL(s, game_members, gid, count_name, &members), 2);
+        T_EQ_INT(members, 2);
         meta("A", ASK_START, gid, &r);
         meta("B", ASK_START, gid, &r);
     }
@@ -1292,9 +1322,72 @@ static void a_lobby_and_its_deal_write_no_table(void) {
         T_CHECK(s != NULL);
         if (!s) continue;
         T_CHECK(row_hash(s, gid) == want[i]);
-        // Recovered into the tables, seats and all.
+        // Recovered into the tables, seats and all; the overlay holds nothing after a start, so the
+        // store's membership reads are the tables'.
         T_EQ_INT(cb_rows_sql.is_member(s, gid, UID_A), 1);
         if (!g_bots) T_EQ_INT(cb_rows_sql.is_member(s, gid, UID_B), 1);
+        T_EQ_INT(CB_ROWS_CALL(s, is_member, gid, UID_A), 1);
+        int members = 0;
+        T_EQ_INT(CB_ROWS_CALL(s, game_members, gid, count_name, &members), g_bots ? 1 : 2);
+        // An import writes the tables behind the overlay: the resident copy goes with it, and the
+        // next read is the imported row.
+        T_EQ_INT(cb_journal_game_acquire(s, gid, no_game, NULL), CB_OK);   // resident now
+        cb_game_row row = stored(s, gid);
+        T_CHECK(row.version > 0);
+        row.created_at = 777;
+        cb_uuid humans[1];
+        snprintf(humans[0], sizeof humans[0], "%s", UID_A);
+        T_EQ_INT(CB_ROWS_CALL(s, game_import, &row, (const cb_uuid *)humans, 1, NULL, 0), CB_OK);
+        cb_game_row_free(&row);
+        row = stored(s, gid);
+        T_EQ_INT(row.created_at, 777);
+        cb_game_row_free(&row);
+        close_world(s);
+    }
+}
+
+// A WHOLE COMMIT THAT IS NOT WHOLE IS DROPPED: a crash in the middle of a full record's write
+// (its payload cut short) or a record that does not check (a flipped byte) was never
+// acknowledged: recovery stops before it, at the game the record before it left.
+static void a_torn_or_corrupt_whole_commit_is_dropped(void) {
+    for (int kind = 0; kind < 2; kind++) {
+        char path[320], copy[320], err[256] = "";
+        snprintf(path, sizeof path, "%s/tornfull%d.sqlite", g_dir, kind);
+        snprintf(copy, sizeof copy, "%s/tornfull%d_crash.sqlite", g_dir, kind);
+        memset(&g_jo, 0, sizeof g_jo);
+        cb_store *s = open_world(path, true, err, sizeof err);
+        T_CHECK(s != NULL);
+        if (!s) return;
+        reply r;
+        call("create", "A", NULL, 0, &r);
+        char gid[CB_GAME_ID_MAX + 1] = "";
+        cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+        meta("B", ASK_JOIN, gid, &r);
+        const uint64_t h_join = row_hash(s, gid);
+        const int64_t v_join = -version_of(s, gid);
+        meta("A", ASK_START, gid, &r);   // the last whole commit in the segment
+        T_EQ_INT(-version_of(s, gid), v_join + 1);
+        crash_copy(path, copy);
+        close_world(s);
+        char seg[700];
+        long off = 0;
+        T_CHECK(last_frame(copy, 'R', seg, sizeof seg, &off));
+        if (kind == 0) {   // the payload's last byte: the checksum refuses it
+            FILE *f = fopen(seg, "rb");
+            uint8_t h[128] = { 0 };
+            if (f) { fseek(f, off, SEEK_SET); T_CHECK(fread(h, 1, sizeof h, f) == sizeof h); fclose(f); }
+            // journal.h A FULL RECORD: the id, two i64, the flags, the status, three i64, the seed
+            // when flagged, then the state blob's u32 length: a byte of the board.
+            const long flags_at = 12 + 1 + h[12] + 16;
+            const long state_at = flags_at + 2 + 24 + ((h[flags_at] & 2) ? 32 : 0) + 4;
+            poke(seg, off + state_at + 3, 0x5A);
+        }
+        else poke(seg, off + 11, 0x40);                 // the length past the file's end: torn
+        s = open_world(copy, true, err, sizeof err);
+        T_CHECK(s != NULL);
+        if (!s) continue;
+        T_EQ_INT(-version_of(s, gid), v_join);
+        T_CHECK(row_hash(s, gid) == h_join);
         close_world(s);
     }
 }
@@ -1915,6 +2008,7 @@ int main(void) {
     T_RUN(the_resident_is_the_row);
     T_RUN(a_resident_the_tables_contradict_is_dropped);
     T_RUN(the_overlay_keeps_at_most_its_cap);
+    T_RUN(a_torn_or_corrupt_whole_commit_is_dropped);
     T_RUN(no_row_cache_beside_the_overlay);
     for (int b = 0; b < 2; b++) {
         g_bots = b;
