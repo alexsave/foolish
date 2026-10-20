@@ -102,7 +102,8 @@ void cb_fanout_publish(cb_ctx *ctx, const cb_fanout *f) {
         return;
     }
     // One batch (realtime.h): every push of the commit goes out at once, each
-    // user's view before its cast.
+    // user's view and then its cast, one after the other (a transport finds the
+    // user's hearers once for both: rt_local.c's last walk).
     cb_rt_batch_begin(rt);
     for (int i = 0; i < f->n_seats; i++) {
         if (!f->seats[i].user_id[0]) continue;   // a bot has no client
@@ -116,6 +117,7 @@ void cb_fanout_publish(cb_ctx *ctx, const cb_fanout *f) {
         cb_strlcpy(row.status, f->status, sizeof row.status);
         row.updated_at = f->updated_at;
         rt_publish_view(rt, f->seats[i].user_id, &row, false);
+        if (f->seats[i].cast) rt_publish_cast(rt, f->seats[i].user_id, f->game_id, f->version, f->seats[i].cast, f->seats[i].cast_len);
     }
     for (int i = 0; i < f->n_left; i++) {
         // The seat is gone: the view with no envelope.
@@ -124,10 +126,6 @@ void cb_fanout_publish(cb_ctx *ctx, const cb_fanout *f) {
         cb_strlcpy(row.game_id, f->game_id, sizeof row.game_id);
         cb_strlcpy(row.player_id, f->left[i], sizeof row.player_id);
         rt_publish_view(rt, f->left[i], &row, true);
-    }
-    for (int i = 0; i < f->n_seats; i++) {
-        if (!f->seats[i].user_id[0] || !f->seats[i].cast) continue;
-        rt_publish_cast(rt, f->seats[i].user_id, f->game_id, f->version, f->seats[i].cast, f->seats[i].cast_len);
     }
     if (f->spectator_cast) rt_publish_cast(rt, NULL, f->game_id, f->version, f->spectator_cast, f->spectator_cast_len);
     cb_rt_batch_end(rt);
