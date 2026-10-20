@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -147,10 +148,15 @@ int cb_journal_batch_encode(cb_jslots *t, int64_t seg_start_ms, const cb_jmove *
     }
     int len = replay_coder_finish(&c, out + CB_JOURNAL_BATCH_HDR, cap - CB_JOURNAL_BATCH_HDR);
     if (len < 0 || len > 0xFFFF) return CB_E_FULL;
-    out[0] = BATCH_MAGIC;
-    out[1] = FORMAT;
+    // THE COMMIT MARKER: the header goes after the payload, and its magic byte last (a
+    // release store), so a segment's mapped pages cut anywhere before it hold a zero where
+    // the batch's magic would be, which recovery reads as the segment's end.
+    uint8_t h[4] = { BATCH_MAGIC, FORMAT, 0, 0 };
+    put_u16(h + 2, (uint32_t)len);
+    put_u32(out + 4, batch_sum(h, out + CB_JOURNAL_BATCH_HDR, (size_t)len));
     put_u16(out + 2, (uint32_t)len);
-    put_u32(out + 4, batch_sum(out, out + CB_JOURNAL_BATCH_HDR, (size_t)len));
+    out[1] = FORMAT;
+    __atomic_store_n(&out[0], (uint8_t)BATCH_MAGIC, __ATOMIC_RELEASE);
     return CB_JOURNAL_BATCH_HDR + len;
 }
 
@@ -212,6 +218,14 @@ typedef struct jgame {
 
 static long move_bytes(const cb_game_move *m) { return (long)(sizeof *m + m->len); }
 
+// A segment file, mapped.
+typedef struct {
+    int      fd;
+    uint8_t *map;
+    size_t   size;
+    uint64_t seq;
+} jseg;
+
 // A move waiting for its batch's write.
 typedef struct jrec {
     struct jrec *next;
@@ -233,7 +247,7 @@ struct cb_journal {
     pthread_cond_t  cv;
     jrec           *head, *tail;
     bool            writing;
-    int             fd;
+    jseg            cur, next;     // the open segment, and the one made ahead
     uint64_t        seg_seq;       // the open segment's number
     pthread_mutex_t seg_mu;
     uint64_t       *segs;          // the segments on disk, oldest first
@@ -250,7 +264,7 @@ struct cb_journal {
     // the flush: one at a time, and every write of a journaled game around the journal
     pthread_mutex_t flush_mu;
     pthread_t       thr;
-    bool            thr_started, stop, kick;
+    bool            thr_started, stop, kick, prepare;
     // a backup attached (the backup hooks below): no segment at or after backup_mark is deleted
     bool            pinned;
     bool            restored;      // the database is a restored copy (store.h CB_STORE_RESTORED_SUFFIX)
@@ -344,42 +358,126 @@ static void seg_path(const cb_journal *j, uint64_t seq, char *out, size_t cap) {
     snprintf(out, cap, "%s%016llu", j->prefix, (unsigned long long)seq);
 }
 
-static bool write_all(int fd, const uint8_t *p, size_t n) {
-    while (n) {
-        ssize_t w = write(fd, p, n);
-        if (w < 0 && errno == EINTR) continue;
-        if (w <= 0) return false;
-        p += w;
-        n -= (size_t)w;
-    }
-    return true;
-}
-
-// A new, empty segment after the open one (closed); its header goes with its first batch,
-// which gives it its start time. The writer is held.
-static int seg_open(cb_journal *j, uint64_t seq) {
+// A segment file of `size` bytes, its blocks allocated (a mapped page past the disk's room
+// would be a SIGBUS mid-append; here it is ENOSPC at creation) and mapped shared.
+static int seg_make(cb_journal *j, uint64_t seq, size_t size, jseg *out) {
     char path[1200];
     seg_path(j, seq, path, sizeof path);
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    memset(out, 0, sizeof *out);
+    int fd = open(path, O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     if (fd < 0) {
         CB_ERROR(MOD, "open %s: %s", path, strerror(errno));
         return CB_E_IO;
     }
-    cb_jslots *t = cb_jslots_new();
-    if (!t || segs_add(j, seq) != CB_OK) {
-        cb_jslots_free(t);
+    int e = 0;
+#if defined(__linux__)
+    e = posix_fallocate(fd, 0, (off_t)size);
+#elif defined(F_PREALLOCATE)
+    fstore_t fs = { F_ALLOCATECONTIG | F_ALLOCATEALL, F_PEOFPOSMODE, 0, (off_t)size, 0 };
+    if (fcntl(fd, F_PREALLOCATE, &fs) != 0) {
+        fs.fst_flags = F_ALLOCATEALL;
+        if (fcntl(fd, F_PREALLOCATE, &fs) != 0) e = errno;
+    }
+    if (!e && ftruncate(fd, (off_t)size) != 0) e = errno;
+#else
+    if (ftruncate(fd, (off_t)size) != 0) e = errno;
+#endif
+    void *m = e ? MAP_FAILED : mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (!e && m == MAP_FAILED) e = errno;
+    if (e) {
+        CB_ERROR(MOD, "%s: %zu bytes do not allocate and map (%s)", path, size, strerror(e));
         close(fd);
         unlink(path);
-        return CB_E_NOMEM;
+        return e == ENOSPC ? CB_E_FULL : CB_E_IO;
     }
-    if (j->fd >= 0) close(j->fd);
-    cb_jslots_free(j->slots);
-    j->fd = fd;
-    j->slots = t;
-    __atomic_store_n(&j->seg_seq, seq, __ATOMIC_RELAXED);   // ov_apply and the low-water mark read it
-    j->seg_start = 0;
-    j->seg_len = 0;
+    *out = (jseg){ .fd = fd, .map = m, .size = size, .seq = seq };
     return CB_OK;
+}
+
+// A finished segment: cut to the bytes it holds and unmapped.
+static void seg_finish(jseg *g, size_t used) {
+    if (!g->map) return;
+    munmap(g->map, g->size);
+    if (ftruncate(g->fd, (off_t)used) != 0) CB_WARN(MOD, "ftruncate: %s", strerror(errno));
+    close(g->fd);
+    memset(g, 0, sizeof *g);
+}
+
+static void seg_drop(cb_journal *j, jseg *g) {   // made, never written to
+    if (!g->map) return;
+    char path[1200];
+    seg_path(j, g->seq, path, sizeof path);
+    munmap(g->map, g->size);
+    close(g->fd);
+    unlink(path);
+    memset(g, 0, sizeof *g);
+}
+
+// The bytes a segment is made with: seg_bytes and room for the largest write past it.
+static size_t seg_size(const cb_journal *j, size_t need) {
+    size_t z = (size_t)j->o.seg_bytes + need;
+    const size_t pg = 65536;
+    return (z + pg - 1) / pg * pg;
+}
+
+static size_t write_need(int n) {   // the most a write of n records takes, its segment header too
+    return SEG_HDR + (size_t)(n / CB_JOURNAL_BATCH_MAX + 1) * (CB_JOURNAL_BATCH_HDR + REPLAY_MAX_INT_BYTES);
+}
+
+// The next segment made ahead, so the writer's rotation only swaps maps (the flush thread's
+// tick and a rotation's kick; seg_mu held by the caller).
+static void prepare_next_locked(cb_journal *j) {
+    const uint64_t seq = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED) + 1;
+    if (j->next.map && j->next.seq == seq) return;
+    seg_drop(j, &j->next);
+    (void)seg_make(j, seq, seg_size(j, write_need(CB_JOURNAL_BATCH_MAX)), &j->next);
+}
+
+static void prepare_next(cb_journal *j) {
+    pthread_mutex_lock(&j->seg_mu);
+    prepare_next_locked(j);
+    pthread_mutex_unlock(&j->seg_mu);
+}
+
+// The open segment finished and the next one (made ahead, or now) open, able to take `need`
+// bytes; its header goes with its first batch, which gives it its start time. The writer is held.
+static int seg_open(cb_journal *j, size_t need) {
+    pthread_mutex_lock(&j->seg_mu);
+    const uint64_t seq = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED) + 1;
+    int rc = CB_OK;
+    if (!j->next.map || j->next.seq != seq || j->next.size < need) {
+        seg_drop(j, &j->next);
+        rc = seg_make(j, seq, seg_size(j, need), &j->next);
+    }
+    cb_jslots *t = rc == CB_OK ? cb_jslots_new() : NULL;
+    if (rc == CB_OK && !t) rc = CB_E_NOMEM;
+    if (rc == CB_OK && j->n_segs == j->cap_segs) {
+        int cap = j->cap_segs ? j->cap_segs * 2 : 16;
+        uint64_t *p = realloc(j->segs, (size_t)cap * sizeof *p);
+        if (!p) rc = CB_E_NOMEM;
+        else j->segs = p, j->cap_segs = cap;
+    }
+    if (rc == CB_OK) {
+        seg_finish(&j->cur, (size_t)j->seg_len);
+        j->cur = j->next;
+        memset(&j->next, 0, sizeof j->next);
+        j->segs[j->n_segs++] = seq;
+        cb_jslots_free(j->slots);
+        j->slots = t;
+        __atomic_store_n(&j->seg_seq, seq, __ATOMIC_RELAXED);   // ov_apply and the low-water mark read it
+        j->seg_start = 0;
+        __atomic_store_n(&j->seg_len, 0, __ATOMIC_RELEASE);
+    } else {
+        cb_jslots_free(t);
+    }
+    pthread_mutex_unlock(&j->seg_mu);
+    if (rc == CB_OK) {   // the flush thread makes the one after
+        pthread_mutex_lock(&j->mu);
+        j->prepare = true;
+        pthread_cond_broadcast(&j->cv);
+        pthread_mutex_unlock(&j->mu);
+    }
+    return rc;
 }
 
 // Codes and writes one batch of records (the writer is held, j->mu is not). Each record's rc set.
@@ -393,26 +491,26 @@ static void write_batch(cb_journal *j, jrec *list) {
         n += r->rc == CB_OK;
     }
     if (!n) return;
-    // A batch is at most CB_JOURNAL_BATCH_MAX moves; more go as several, in the same write.
-    const size_t cap = SEG_HDR + (size_t)(n / CB_JOURNAL_BATCH_MAX + 1) * (CB_JOURNAL_BATCH_HDR + REPLAY_MAX_INT_BYTES);
-    uint8_t *buf = malloc(cap);
+    // The batches are coded straight into the open segment's mapped pages: no buffer, no
+    // write(). A segment is closed once it holds seg_bytes, or when this write might not fit
+    // (or after a failed one, below); a batch's time is coded against its segment's start,
+    // so one a clock jump put out of reach starts a segment of its own too.
     cb_jmove *ms = malloc(sizeof *ms * (size_t)(n < CB_JOURNAL_BATCH_MAX ? n : CB_JOURNAL_BATCH_MAX));
-    int rc = buf && ms ? CB_OK : CB_E_NOMEM;
+    int rc = ms ? CB_OK : CB_E_NOMEM;
+    const size_t need = write_need(n);
     size_t len = 0;
     int frames = 0;
     int64_t first = INT64_MAX;
     for (jrec *r = list; r; r = r->next) if (r->rc == CB_OK && r->m.now_ms < first) first = r->m.now_ms;
-    // A segment is closed once it is seg_bytes long (or after a failed write, below); a
-    // batch's time is coded against its segment's start, so one a clock jump put out of
-    // reach starts a segment of its own too.
-    if (rc == CB_OK && (j->fd < 0 || j->seg_len >= j->o.seg_bytes ||
-                        (j->seg_len > 0 && (first - j->seg_start > INT32_MAX / 2 || first - j->seg_start < INT32_MIN / 2))) &&
-        seg_open(j, j->seg_seq + 1) != CB_OK)
-        rc = CB_E_IO;
+    if (rc == CB_OK && (!j->cur.map || j->seg_len >= j->o.seg_bytes || (size_t)j->seg_len + need > j->cur.size ||
+                        (j->seg_len > 0 && (first - j->seg_start > INT32_MAX / 2 || first - j->seg_start < INT32_MIN / 2))))
+        rc = seg_open(j, need);
+    uint8_t *at = rc == CB_OK ? j->cur.map + j->seg_len : NULL;
+    const size_t room = rc == CB_OK ? j->cur.size - (size_t)j->seg_len : 0;
     if (rc == CB_OK && j->seg_len == 0) {
-        memcpy(buf, SEG_MAGIC, 4);
-        put_u32(buf + 4, FORMAT);
-        put_u64(buf + 8, (uint64_t)first);
+        put_u32(at + 4, FORMAT);
+        put_u64(at + 8, (uint64_t)first);
+        memcpy(at, SEG_MAGIC, 4);
         j->seg_start = first;
         len = SEG_HDR;
     }
@@ -420,35 +518,30 @@ static void write_batch(cb_journal *j, jrec *list) {
         int k = 0;
         for (; r && k < CB_JOURNAL_BATCH_MAX; r = r->next) if (r->rc == CB_OK) ms[k++] = r->m;
         if (!k) break;
-        int w = cb_journal_batch_encode(j->slots, j->seg_start, ms, k, buf + len, (int)(cap - len));
+        int w = cb_journal_batch_encode(j->slots, j->seg_start, ms, k, at + len, (int)(room - len));
         if (w < 0) rc = w;
         else len += (size_t)w, frames++;
     }
-    if (rc == CB_OK && !write_all(j->fd, buf, len)) {
-        CB_ERROR(MOD, "write: %s", strerror(errno));
-        rc = CB_E_IO;
-    }
-    if (rc == CB_OK && j->o.sync && fdatasync(j->fd) != 0) {
-        CB_ERROR(MOD, "fdatasync: %s", strerror(errno));
-        rc = CB_E_IO;
+    if (rc == CB_OK && j->o.sync) {   // the pages to the disk too: an OS crash keeps the move
+        const uintptr_t pg = (uintptr_t)sysconf(_SC_PAGESIZE), a = (uintptr_t)at & ~(pg - 1);
+        if (msync((void *)a, (uintptr_t)at + len - a, MS_SYNC) != 0) {
+            CB_ERROR(MOD, "msync: %s", strerror(errno));
+            rc = CB_E_IO;
+        }
     }
     if (rc == CB_OK) {
-        j->seg_len += (off_t)len;
+        __atomic_store_n(&j->seg_len, j->seg_len + (off_t)len, __ATOMIC_RELEASE);   // the backup reads it
         atomic_fetch_add(&j->batches, frames);
         atomic_fetch_add(&j->writes, 1);
         atomic_fetch_add(&j->records, n);
         atomic_fetch_add(&j->bytes, (long)len);
-    } else if (j->fd >= 0) {
-        // Nothing of this batch is acknowledged: the segment is cut back to its last whole
-        // batch, and the slot table that may have moved on goes with a new segment.
-        if (ftruncate(j->fd, j->seg_len) != 0) CB_ERROR(MOD, "ftruncate: %s", strerror(errno));
-        (void)lseek(j->fd, j->seg_len, SEEK_SET);
-        if (seg_open(j, j->seg_seq + 1) != CB_OK) {
-            close(j->fd);
-            j->fd = -1;   // the next batch tries to open one
-        }
+    } else if (at) {
+        // Nothing of this write is acknowledged: whatever it put past the segment's last
+        // whole batch is zeroed (a batch committed before the failure would replay without an
+        // acknowledgement), and the slot table that may have moved on goes with a new segment.
+        memset(at, 0, len);
+        if (seg_open(j, need) != CB_OK) seg_finish(&j->cur, (size_t)j->seg_len);   // the next write tries again
     }
-    free(buf);
     free(ms);
     pthread_mutex_lock(&j->ov_mu);
     bool due = false;
@@ -706,11 +799,14 @@ static void *flusher(void *ud) {
         int64_t ns = ts.tv_nsec + (tick % 1000) * 1000000;
         ts.tv_sec += (time_t)(tick / 1000 + ns / 1000000000);
         ts.tv_nsec = (long)(ns % 1000000000);
-        while (!j->stop && !j->kick && pthread_cond_timedwait(&j->cv, &j->mu, &ts) != ETIMEDOUT) {}
+        int w = 0;
+        while (!j->stop && !j->kick && !j->prepare && (w = pthread_cond_timedwait(&j->cv, &j->mu, &ts)) != ETIMEDOUT) {}
         if (j->stop) break;
-        j->kick = false;
+        const bool flush = j->kick || w == ETIMEDOUT;
+        j->kick = j->prepare = false;
         pthread_mutex_unlock(&j->mu);
-        (void)flush_some(j, false);
+        prepare_next(j);   // the next segment, made ahead of the rotation that takes it
+        if (flush) (void)flush_some(j, false);
         pthread_mutex_lock(&j->mu);
     }
     pthread_mutex_unlock(&j->mu);
@@ -1041,10 +1137,14 @@ static int j_backup_files(cb_store *s, uint64_t mark, cb_store_file **out, int *
     for (int i = 0; rc == CB_OK && i < j->n_segs; i++) {
         if (j->segs[i] < mark) continue;
         seg_path(j, j->segs[i], path, sizeof path);
+        // The open segment's file is its mapped size: what it holds is seg_len. A finished
+        // one was cut to what it holds.
         struct stat st;
-        if (stat(path, &st) != 0 || st.st_size == 0) continue;   // opened, nothing written yet
+        const int64_t size = j->segs[i] == j->cur.seq && j->cur.map ? (int64_t)__atomic_load_n(&j->seg_len, __ATOMIC_ACQUIRE)
+                             : stat(path, &st) == 0 ? (int64_t)st.st_size : 0;
+        if (size == 0) continue;   // nothing written yet
         snprintf(f[*n].suffix, sizeof f[*n].suffix, "%s", path + strlen(j->o.path));
-        f[(*n)++].size = (int64_t)st.st_size;
+        f[(*n)++].size = size;
     }
     pthread_mutex_unlock(&j->seg_mu);
     if (rc == CB_OK) *out = f;
@@ -1188,7 +1288,7 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
         snprintf(err, cap, "journal: %s does not read", path);
         return rc;
     }
-    if (len == 0) {   // opened, never written to
+    if (len == 0 || buf[0] == 0) {   // made (ahead, or mapped), never written to
         free(buf);
         return CB_OK;
     }
@@ -1203,7 +1303,7 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
     cb_jmove *ms = malloc(sizeof *ms * CB_JOURNAL_BATCH_MAX);
     if (!t || !ms) rc = CB_E_NOMEM;
     size_t at = SEG_HDR;
-    while (rc == CB_OK && at < len) {
+    while (rc == CB_OK && at < len && buf[at] != 0) {   // a zero magic: the mapped segment's unwritten rest
         size_t used = 0;
         int n = cb_journal_batch_decode(t, start, buf + at, len - at, &used, ms, CB_JOURNAL_BATCH_MAX);
         if (n < 0) {
@@ -1228,7 +1328,8 @@ static const char *restored_marker(const cb_journal *j, char *out, size_t cap) {
 
 static void journal_free(cb_journal *j) {
     if (!j) return;
-    if (j->fd >= 0) close(j->fd);
+    seg_finish(&j->cur, (size_t)j->seg_len);
+    seg_drop(j, &j->next);
     cb_jslots_free(j->slots);
     for (int b = 0; b < OV_BUCKETS; b++)
         while (j->buckets[b]) {
@@ -1258,7 +1359,6 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     if (j->o.game_bytes <= 0) j->o.game_bytes = 256 << 10;
     if (j->o.total_bytes <= 0) j->o.total_bytes = 64 << 20;
     if (j->o.seg_bytes <= 0) j->o.seg_bytes = 8 << 20;
-    j->fd = -1;
     snprintf(j->prefix, sizeof j->prefix, "%s-journal.", o->path);
     pthread_mutex_init(&j->mu, NULL);
     pthread_cond_init(&j->cv, NULL);
@@ -1304,7 +1404,7 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     if (rc == CB_OK) {
         for (int b = 0; b < OV_BUCKETS; b++)
             while (j->buckets[b]) ov_unlink(j, &j->buckets[b]);
-        if ((rc = seg_open(j, j->seg_seq + 1)) != CB_OK) snprintf(err, cap, "journal: no segment can be made beside %s", o->path);
+        if ((rc = seg_open(j, write_need(1))) != CB_OK) snprintf(err, cap, "journal: no segment can be made beside %s", o->path);
     }
     if (rc == CB_OK) delete_segments_before(j, j->seg_seq);
     free(segs);

@@ -69,6 +69,8 @@ static void add_user(cb_store *s, const char *id, const char *name) {
 }
 
 static cb_journal_opts g_jo;
+static bool last_batch(const char *db, char *seg, size_t cap, long *off);
+static void crash_copy(const char *path, const char *copy);
 
 static cb_store *open_world(const char *path, bool journal, char *err, size_t cap) {
     cb_store *s = NULL;
@@ -486,16 +488,19 @@ static void every_acknowledged_move_survives_a_sigkill(void) {
         close(p[0]);
         T_CHECK(WIFSIGNALED(st) || (WIFEXITED(st) && WEXITSTATUS(st) == 0));
 
-        // A torn half-batch at the tail, as a crash in the middle of a write leaves it: dropped.
-        char seg[400];
-        for (int k = 9999; k >= 1; k--) {
-            snprintf(seg, sizeof seg, "%s-journal.%010d", path, k);
-            if (access(seg, F_OK) == 0) {
-                FILE *f = fopen(seg, "ab");
+        // A torn half-batch past the last whole one, as a crash in the middle of a batch's
+        // header leaves it: dropped.
+        char seg[700];
+        long off = 0;
+        if (last_batch(path, seg, sizeof seg, &off)) {
+            FILE *f = fopen(seg, "r+b");
+            uint8_t hd[4];
+            if (f && fseek(f, off, SEEK_SET) == 0 && fread(hd, 1, 4, f) == 4) {
                 static const uint8_t torn[5] = { 'J', 1, 40, 0, 7 };
-                if (f) { fwrite(torn, 1, sizeof torn, f); fclose(f); }
-                break;
+                fseek(f, off + 8 + (hd[2] | hd[3] << 8), SEEK_SET);
+                fwrite(torn, 1, sizeof torn, f);
             }
+            if (f) fclose(f);
         }
 
         s = open_world(path, true, err, sizeof err);
@@ -636,7 +641,13 @@ static int cut_a_cycle(const char *copy) {
     DIR *d = opendir(g_dir);
     struct dirent *e;
     while (d && (e = readdir(d)))
-        if (strncmp(e->d_name, pre, strlen(pre)) == 0) snprintf(seg, sizeof seg, "%s/%s", g_dir, e->d_name);
+        if (strncmp(e->d_name, pre, strlen(pre)) == 0) {   // the one written to (not the one made ahead)
+            char p[700];
+            snprintf(p, sizeof p, "%s/%s", g_dir, e->d_name);
+            FILE *x = fopen(p, "rb");
+            if (x && fgetc(x) == 'F') snprintf(seg, sizeof seg, "%s", p);
+            if (x) fclose(x);
+        }
     if (d) closedir(d);
     FILE *f = fopen(seg, "rb");
     if (!f) return 0;
@@ -809,6 +820,91 @@ static void a_cycle_walk_draws_as_the_drive_did(void) {
     close_world(s);
 }
 
+
+// ---- mapped segments: a crash keeps every committed batch across rotations, and a batch
+// whose commit marker (its header's magic, stored last) never landed is not there ----------
+
+// The newest segment of `db` that holds a batch, and the offset of its last batch.
+static bool last_batch(const char *db, char *seg, size_t cap, long *off) {
+    const char *base = strrchr(db, '/') + 1;
+    char pre[300], best[400] = "";
+    snprintf(pre, sizeof pre, "%s-journal.", base);
+    DIR *d = opendir(g_dir);
+    struct dirent *e;
+    while (d && (e = readdir(d)))
+        if (strncmp(e->d_name, pre, strlen(pre)) == 0 && strcmp(e->d_name, best) > 0) {
+            char p[700];
+            snprintf(p, sizeof p, "%s/%s", g_dir, e->d_name);
+            FILE *x = fopen(p, "rb");
+            if (x && fgetc(x) == 'F') snprintf(best, sizeof best, "%s", e->d_name);
+            if (x) fclose(x);
+        }
+    if (d) closedir(d);
+    if (!best[0]) return false;
+    snprintf(seg, cap, "%s/%s", g_dir, best);
+    FILE *f = fopen(seg, "rb");
+    uint8_t h[8];
+    long at = 16, last = -1;
+    while (f && fseek(f, at, SEEK_SET) == 0 && fread(h, 1, 8, f) == 8 && h[0] == 'J') {
+        last = at;
+        at += 8 + (long)(h[2] | h[3] << 8);
+    }
+    if (f) fclose(f);
+    *off = last;
+    return last > 0;
+}
+
+static void poke(const char *path, long off, uint8_t v) {
+    FILE *f = fopen(path, "r+b");
+    if (f) { fseek(f, off, SEEK_SET); fputc(v, f); fclose(f); }
+}
+
+static void mapped_segments_keep_every_committed_batch(void) {
+    char path[320], a[320], b[320], c[320], err[256] = "", seg[700];
+    snprintf(path, sizeof path, "%s/mapped%d.sqlite", g_dir, g_bots);
+    snprintf(a, sizeof a, "%s/mapped%d_a.sqlite", g_dir, g_bots);
+    snprintf(b, sizeof b, "%s/mapped%d_b.sqlite", g_dir, g_bots);
+    snprintf(c, sizeof c, "%s/mapped%d_c.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.seg_bytes = 1;   // a full segment at every batch: each rotates
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    move_t m;
+    int64_t v[12];
+    uint64_t h[12];
+    int n = 0;
+    for (; n < 12 && (v[n] = step(s, gid, &m)) > 0; n++) h[n] = row_hash(s, gid);
+    T_CHECK(n == 12);
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    T_CHECK(js.segments >= 12);
+    crash_copy(path, a);
+    crash_copy(path, b);
+    crash_copy(path, c);
+    close_world(s);
+    memset(&g_jo, 0, sizeof g_jo);
+    // Every batch, across every rotation.
+    s = open_world(a, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (s) { T_EQ_INT(version_of(s, gid), v[n - 1]); T_CHECK(row_hash(s, gid) == h[n - 1]); close_world(s); }
+    // The last batch's payload and header written, its magic not: the move before it.
+    long off = 0;
+    T_CHECK(last_batch(b, seg, sizeof seg, &off));
+    poke(seg, off, 0);
+    s = open_world(b, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (s) { T_EQ_INT(version_of(s, gid), v[n - 2]); T_CHECK(row_hash(s, gid) == h[n - 2]); close_world(s); }
+    // A torn header (its checksum not the payload's): the same.
+    T_CHECK(last_batch(c, seg, sizeof seg, &off));
+    poke(seg, off + 4, 0x5a);
+    s = open_world(c, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (s) { T_EQ_INT(version_of(s, gid), v[n - 2]); close_world(s); }
+}
+
 // ---- THE ADMIN RULE: an admin's write is never written over by what the journal held ---------
 
 static bool no_row(int n, const char *const *names, const char *const *values, void *ud) { return true; }
@@ -949,7 +1045,8 @@ static void a_move_writes_no_table_until_its_game_is_due(void) {
     T_EQ_INT(js.waiting, js.records);
     T_EQ_INT(js.flushes, 0);
     T_CHECK(js.segments >= 10);   // every segment holds a waiting move: none is trimmed
-    T_EQ_INT(count_segments(path), js.segments);
+    const int on_disk = count_segments(path);   // and the next one, made ahead
+    T_CHECK(on_disk == js.segments || on_disk == js.segments + 1);
     close_world(s);
 
     // A game whose waiting moves hold game_bytes is due at the next tick; the segments
@@ -964,7 +1061,7 @@ static void a_move_writes_no_table_until_its_game_is_due(void) {
     cb_journal_stats_get(s, &js);
     T_EQ_INT(js.waiting, 0);
     T_EQ_INT(js.segments, 1);
-    T_EQ_INT(count_segments(path), 1);
+    T_CHECK(count_segments(path) <= 2);
     close_world(s);
 
     // One whose oldest waiting move is game_age_ms old is due.
@@ -1127,6 +1224,20 @@ static void a_restore_mid_game_holds_every_acknowledged_move(void) {
     cb_journal_stats_get(s, &js);
     T_EQ_INT(js.flushes, 0);
     T_CHECK(js.segments >= 3);
+    // What went up is what the segments hold, not the mapped files' full size.
+    {
+        DIR *bd = opendir(bucket);
+        struct dirent *be;
+        long up = 0;
+        while (bd && (be = readdir(bd))) {
+            char bp[1400];
+            struct stat bst;
+            snprintf(bp, sizeof bp, "%s/%s", bucket, be->d_name);
+            if (strstr(be->d_name, "-journal.") && stat(bp, &bst) == 0) up += (long)bst.st_size;
+        }
+        if (bd) closedir(bd);
+        T_CHECK(up > 0 && up < 4096);
+    }
 
     // The disk is lost (the live files stay where they are, unread): a restore beside them.
     snprintf(rpath, sizeof rpath, "%s/restored%d.sqlite", g_dir, g_bots);
@@ -1225,6 +1336,7 @@ int main(void) {
         T_RUN(a_move_writes_no_table_until_its_game_is_due);
         T_RUN(the_lists_read_the_overlay_without_a_flush);
         T_RUN(an_admin_write_is_never_written_over);
+        T_RUN(mapped_segments_keep_every_committed_batch);
     }
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
