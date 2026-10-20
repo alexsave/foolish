@@ -90,11 +90,10 @@ static void start_server(void) {
     // limit (rate_limits.h, L7) is raised past the matrix's count of them, and
     // its fresh accounts are rated at once (CBASE_RATED_MIN_AGE, M6): it reads the leaderboard.
     char *mem[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", "CBASE_JWT_SECRET=" SECRET, "CBASE_ADMIN_TOKEN=" ADMIN,
-                    "CBASE_DB=:memory:", "CBASE_REQ_WORKERS=4", "CBASE_ADMIN_FAIL_LIMIT=100000", "CBASE_RATED_MIN_AGE=0",
-                    "CBASE_CAST_DELTA=1", NULL };
+                    "CBASE_DB=:memory:", "CBASE_REQ_WORKERS=4", "CBASE_ADMIN_FAIL_LIMIT=100000", "CBASE_RATED_MIN_AGE=0", NULL };
     // Under dynamo the store and table come from the environment the lane exported.
     char *dyn[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", "CBASE_JWT_SECRET=" SECRET, "CBASE_ADMIN_TOKEN=" ADMIN,
-                    "CBASE_REQ_WORKERS=4", "CBASE_ADMIN_FAIL_LIMIT=100000", "CBASE_RATED_MIN_AGE=0", "CBASE_CAST_DELTA=1", NULL };
+                    "CBASE_REQ_WORKERS=4", "CBASE_ADMIN_FAIL_LIMIT=100000", "CBASE_RATED_MIN_AGE=0", NULL };
     char *argv[] = { (char *)g_bin, "serve", NULL };
     T_EQ_INT(tp_start(&g_child, argv, tsb_dynamo() ? dyn : mem), 0);
     T_EQ_INT(tp_wait_line(&g_child, "listening on", 20000, line, sizeof line), 0);
@@ -1072,7 +1071,7 @@ static void hidden_card_game(void) {
     T_CHECK(crosschecks > 10);
     T_CHECK(sA.n_cast > 0 && sE.n_cast > 0 && sC.n_cast > 0 && sB.n_view > 0);
     T_CHECK(!sA.leak && !sB.leak && !sE.leak && !sC.leak && !sD.leak);
-    // CBASE_CAST_DELTA=1: every move reached the game's sockets as a delta, rebuilt
+    // CBASE_CAST_DELTA, on by default: every move reached the game's sockets as a delta, rebuilt
     // on the board the cast before it left and judged like a board cast; none was
     // ever behind the board its socket kept.
     fprintf(stderr, "matrix: deltas rebuilt A %d E %d C %d, behind %d %d %d\n", sA.rd->deltas, sE.rd->deltas, sC.rd->deltas,
