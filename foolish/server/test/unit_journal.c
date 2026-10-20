@@ -240,7 +240,6 @@ static int64_t play(const char *gid, const move_t *m) {
     reply r;
     action(m->bearer, gid, m->wire, m->n, m->intent, &r);
     TableResponse resp;
-    if (getenv("JDEBUG") && r.status != 200) fprintf(stderr, "play: status %d len %zu\n", r.status, r.len);
     if (r.status != 200 || table_response_decode(r.body, (int)r.len, &resp) != 0 || resp.status != TABLE_STATUS_APPLIED) return -1;
     return resp.version;
 }
@@ -349,6 +348,42 @@ static void a_torn_or_corrupt_tail_drops_only_itself(void) {
     // And in its checksum.
     buf[ends[0] + 5] ^= 0x01;
     T_EQ_INT(decode_all(buf, len), PER);
+}
+
+// ---- a move checks the board it is replayed on ---------------------------------------------
+
+static void a_move_off_its_board_is_refused(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/board.sqlite", g_dir);
+    cb_store *s = open_world(path, false, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    cb_game_row row = stored(s, gid);
+    Game *g = calloc(1, sizeof *g);
+    TableSnaps *snaps = calloc(1, sizeof *snaps);
+    Table t;
+    table_init(&t, g, snaps);
+    T_EQ_INT(table_load(&t, row.state, (int)row.state_len, row.roster, (int)row.roster_len), TABLE_OK);
+    int seat = -1, n = 0;
+    uint8_t wire[64], back[REPLAY_MOVE_WIRE_MAX];
+    for (int k = 0; k < 2 && n <= 0; k++) n = pick_move(&row, seat = k, wire, sizeof wire);
+    T_CHECK(n > 0);
+    ReplayMove m;
+    T_EQ_INT(replay_move_of(g, seat, wire, n, &m), 0);
+    T_CHECK(m.menu_n > 0);
+    // On its own board it names the move it was made from.
+    int k = replay_move_wire(g, &m, back, sizeof back);
+    AwireAction x, y;
+    T_CHECK(k > 0 && awire_decode(back, k, &x) && awire_decode(wire, n, &y) && x.kind == y.kind && x.n == y.n);
+    // A board whose menu is not the one it was coded against refuses it.
+    m.menu_n++;
+    T_EQ_INT(replay_move_wire(g, &m, back, sizeof back), -REPLAY_ENOTINMENU);
+    free(g);
+    free(snaps);
+    cb_game_row_free(&row);
+    close_world(s);
 }
 
 // ---- recovery after a SIGKILL ---------------------------------------------------------------
@@ -565,9 +600,10 @@ int main(void) {
     if (!mkdtemp(g_dir)) return 1;
     T_RUN(a_batch_round_trips);
     T_RUN(a_torn_or_corrupt_tail_drops_only_itself);
+    T_RUN(a_move_off_its_board_is_refused);
     T_RUN(the_flush_writes_the_rows_per_move_commits_write);
     T_RUN(a_backup_mid_game_holds_every_acknowledged_move);
-    if (!getenv("JSKIPKILL")) T_RUN(every_acknowledged_move_survives_a_sigkill);
+    T_RUN(every_acknowledged_move_survives_a_sigkill);
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
     (void)system(cmd);
