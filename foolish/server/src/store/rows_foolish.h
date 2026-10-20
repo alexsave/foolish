@@ -350,11 +350,22 @@ extern const cb_rows_ops  cb_rows_sql;       // on the SQL store (rows_sql.c)
 // the version the tables hold (sql_version), its commits since then (game_moves rows at their
 // seq, in order; a commit that cleared the session log - a deal, a lobby - clears the stored
 // one first) and, when a commit since changed them, its seats (brought to humans and bots).
+// A rated end's rating changes, as a journaled commit carries them to the flush (the same fields
+// as cb_game_commit's n_rated..rated_names, applied the same way), stamped `at`.
+typedef struct {
+    int      n;
+    cb_uuid  ids[CB_MAX_SEATS];
+    bool     is_bot[CB_MAX_SEATS];
+    int32_t  delta[CB_MAX_SEATS];
+    char     names[CB_MAX_SEATS][CB_USERNAME_MAX + 1];
+    int64_t  at;
+} cb_game_rated;
 typedef struct {
     int64_t        seq;
     const uint8_t *log;
     size_t         len;
     bool           clear;
+    const cb_game_rated *rated;   // the commit rated the game (a journaled rated end), else NULL
 } cb_game_move;
 typedef struct {
     const cb_game_row  *row;

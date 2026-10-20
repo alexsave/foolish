@@ -782,17 +782,34 @@ static bool accounts_old_enough(cb_ctx *ctx, const Table *t, int64_t now) {
     return true;
 }
 
-// The seats' ratings into `ratings` (TABLE_RATING_NONE for none). false when
+// The seats' ratings into `ratings` (TABLE_RATING_NONE for none); *have false when
 // they cannot be read, or an account is too new to be rated against
 // (accounts_old_enough): the game then ends unrated, as ratingsFor's null did.
-static bool read_ratings(cb_ctx *ctx, const Table *t, int32_t ratings[CB_MAX_SEATS]) {
-    if (!accounts_old_enough(ctx, t, cb_app_now())) return false;
+// Under serve they are the journal's (THE RATINGS' ONE OWNER, journal.h
+// cb_journal_seat_ratings): read there with no table read when the seats are
+// held, so a rated end runs on the loop. CB_E_WOULD_BLOCK on the loop when the
+// tables must be read (nothing done), else CB_OK.
+static int read_ratings(cb_ctx *ctx, const Table *t, int32_t ratings[CB_MAX_SEATS], bool *have) {
     cb_uuid ids[CB_MAX_SEATS];
     const char *ptrs[CB_MAX_SEATS];
     for (int i = 0; i < t->r.n; i++) { seat_id(&t->r.seats[i], ids[i]); ptrs[i] = ids[i]; }
+    *have = false;
+    if (cb_journal_of(ctx->store)) {
+        const int64_t min_age_ms = (int64_t)(ctx->cfg ? ctx->cfg->rated_min_age_s : 72 * 3600) * 1000;
+        bool old = false;
+        const int rc = cb_journal_seat_ratings(ctx->store, ptrs, t->r.n, cb_app_now(), min_age_ms, ratings, &old);
+        if (rc == CB_E_WOULD_BLOCK) return rc;
+        if (rc != CB_OK) CB_WARN("table", "seat ratings unreadable (%s): the game ends unrated", cb_strerror(rc));
+        else if (!old) CB_INFO("table", "an account is under %lld s old: the game ends unrated", (long long)(min_age_ms / 1000));
+        *have = rc == CB_OK && old;
+        return CB_OK;
+    }
+    if (on_loop(ctx)) return CB_E_WOULD_BLOCK;   // the tables' (and so is their write): never on the loop
+    if (!accounts_old_enough(ctx, t, cb_app_now())) return CB_OK;
     int rc = CB_ROWS_CALL(ctx->store, ratings_for, ptrs, t->r.n, ratings);
     if (rc != CB_OK) CB_WARN("table", "seat ratings unreadable (%s): the game ends unrated", cb_strerror(rc));
-    return rc == CB_OK;
+    *have = rc == CB_OK;
+    return CB_OK;
 }
 
 static bool in_list(const cb_uuid *list, int n, const char *id) {
@@ -898,10 +915,8 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     arena_note(s, rc);
     if (rc >= 0 && c->wants_ratings) {
         // The kernel rates the game inside the section that ends it. Its products
-        // are const, so the C host rates and asks for them again: no re-run. The
-        // ratings are the tables' (and so is their write): never on the loop.
-        if (!*have_ratings && on_loop(ctx)) return CB_E_WOULD_BLOCK;
-        if (!*have_ratings) *have_ratings = read_ratings(ctx, t, ratings);
+        // are const, so the C host rates and asks for them again: no re-run.
+        if (!*have_ratings && read_ratings(ctx, t, ratings, have_ratings) == CB_E_WOULD_BLOCK) return CB_E_WOULD_BLOCK;
         if (*have_ratings) {
             table_rate(t, ratings, t->r.n);
             rc = table_commit_products(t, s->gid, gid_len, next, board_now, c, s->arena, sizeof s->arena);
@@ -1018,8 +1033,16 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
             out->version = nrow.version;
             out->needs_bots = c->needs_bots;
             out->ended = c->ended;
-            // A rated game moved the leaderboard: the edge's copy goes (edge.h).
-            if (gc.n_rated > 0) cb_edge_stale(CB_EDGE_BOARD);
+            // A rated game moved the leaderboard: the edge's copy goes (edge.h). A journaled
+            // one moves the tables at its flush, which marks it then (journal.c).
+            if (gc.n_rated > 0 && !cb_journal_of(ctx->store)) cb_edge_stale(CB_EDGE_BOARD);
+            // The seats' ratings held from the seating on (a join, a deal: the pool), so the
+            // end rates on the loop with no table read (journal.h cb_journal_seat_ratings).
+            if (!gc.moves && cb_journal_of(ctx->store) && !on_loop(ctx) && nrow.status != GAME_STATUS_GAME_OVER) {
+                int32_t held[CB_MAX_SEATS];
+                bool have;
+                (void)read_ratings(ctx, t, held, &have);
+            }
             // The replay: a job, which a client that asks for it on game over waits for
             // (finalize_later).
             if (c->ended) finalize_later(ctx, s, &nrow);

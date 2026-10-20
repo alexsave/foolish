@@ -2,6 +2,8 @@
 #include "store/journal.h"
 #include "store/store_sql.h"
 
+#include "app/foolish_app.h"   // CB_EDGE_BOARD: a flushed rated end moved the leaderboard
+#include "edge.h"
 #include "net/loop.h"
 #include "util/clock.h"
 #include "util/err.h"
@@ -234,6 +236,10 @@ typedef struct jgame {
     // one allocation per move: no malloc on the move path and no allocator header per delta.
     uint8_t      *logs;
     size_t        logs_len, logs_cap;
+    // The waiting rated ends (a game rates once per session, so a few at most), each owned, by the
+    // version of the commit that rated: the flush writes its rating rows with that commit.
+    struct { int64_t seq; cb_game_rated *r; } *rated;
+    int           n_rated, cap_rated;
     long          bytes;         // what the waiting moves hold (move_bytes each)
     size_t        state_cap, roster_cap;   // row.state's and row.roster's buffers
     int64_t       touched_ms;    // cb_mono_ms of its last move
@@ -269,10 +275,26 @@ typedef struct jrec {
     bool         full;          // a whole commit (FULL_MAGIC): the row's bytes are written, not m's moves
     bool         clear;         // (full) it clears the session log first
     const uint8_t *log;         // the commit's log delta (the caller's: ov_apply copies it)
+    const cb_game_rated *rated; // (full) the commit rated the game: its rating changes (the caller's), else NULL
     size_t       log_len;
     int          rc;
     bool         done;
 } jrec;
+
+// THE RATINGS' ONE OWNER under serve: a seat's rating and its account's age, as the tables hold
+// them plus every rated end the journal acknowledged and has not flushed yet. A rated end reads
+// its seats here (cb_journal_seat_ratings), so it runs on the loop with no table read, and its
+// changes land here at its commit (ov_apply) and in the tables at its game's flush. An entry is
+// read from the tables only when absent (off the loop), and goes only when nothing of it waits
+// (pending 0) and it is idle (ov_evict), or at an admin's write.
+typedef struct jrating {
+    struct jrating *next;
+    cb_uuid  id;
+    int32_t  rating;       // TABLE_RATING_NONE: no rating row
+    int64_t  created_ms;   // the account's created_at; 0: no account (a bot, or deleted)
+    int      pending;      // waiting rated ends that change it
+    int64_t  touched_ms;
+} jrating;
 
 struct cb_journal {
     cb_store       *s;
@@ -302,6 +324,8 @@ struct cb_journal {
     int             n_games;       // in the overlay, waiting or not
     long            n_waiting;     // moves not in the tables yet
     long            w_bytes;       // their bytes
+    jrating        *ratings[OV_BUCKETS];   // (ov_mu) THE RATINGS' ONE OWNER, above
+    int             n_ratings;
     // the flush: one at a time, and every write of a journaled game around the journal
     pthread_mutex_t flush_mu;
     pthread_t       thr;
@@ -332,7 +356,60 @@ static jgame **ov_slot(cb_journal *j, const char *id) {
     return p;
 }
 
+static jrating **rating_slot(cb_journal *j, const char *id) {
+    jrating **p = &j->ratings[fnv1a32_str(FNV32_OFFSET, id) & (OV_BUCKETS - 1)];
+    while (*p && strcmp((*p)->id, id) != 0) p = &(*p)->next;
+    return p;
+}
+
+// A rated end's changes, applied where the next rated end reads them (ov_mu held): the same
+// arithmetic as the tables' write (rows_sql.c rate_rows: max(0, rating + delta); a seat with no
+// row starts at TABLE_RATING_START), once per id. An id the cache does not hold was read through
+// it by the commit's own operation moments before (an entry goes only after IDLE_EVICT_MS idle):
+// none is the tables' alone, and is read from them after the flush.
+static void ratings_apply(cb_journal *j, const cb_game_rated *r, int64_t now) {
+    for (int i = 0; i < r->n; i++) {
+        bool dup = false;
+        for (int k = 0; k < i; k++) dup |= strcmp(r->ids[k], r->ids[i]) == 0;
+        jrating *e = dup ? NULL : *rating_slot(j, r->ids[i]);
+        if (!e) continue;
+        const int32_t base = e->rating == TABLE_RATING_NONE ? TABLE_RATING_START : e->rating;
+        if (e->rating == TABLE_RATING_NONE && !r->is_bot[i] && !e->created_ms) { e->pending++; continue; }   // no user: no row made
+        const int64_t v = (int64_t)base + r->delta[i];
+        e->rating = v < 0 ? 0 : (int32_t)v;
+        e->pending++;
+        e->touched_ms = now;
+    }
+}
+
+// A rated end is in the tables now: its entries may go (ov_mu held).
+static void ratings_flushed(cb_journal *j, const cb_game_rated *r) {
+    for (int i = 0; i < r->n; i++) {
+        bool dup = false;
+        for (int k = 0; k < i; k++) dup |= strcmp(r->ids[k], r->ids[i]) == 0;
+        jrating *e = dup ? NULL : *rating_slot(j, r->ids[i]);
+        if (e && e->pending > 0) e->pending--;
+    }
+}
+
+// Every entry with nothing waiting that is idle (`all`: every one; ov_mu held).
+static void ratings_evict(cb_journal *j, int64_t now, bool all) {
+    for (int b = 0; b < OV_BUCKETS; b++)
+        for (jrating **p = &j->ratings[b]; *p;) {
+            jrating *e = *p;
+            if (all || (!e->pending && now - e->touched_ms > IDLE_EVICT_MS)) {
+                *p = e->next;
+                free(e);
+                j->n_ratings--;
+            } else {
+                p = &e->next;
+            }
+        }
+}
+
 static void game_free(jgame *g) {
+    for (int i = 0; i < g->n_rated; i++) free(g->rated[i].r);
+    free(g->rated);
     cb_game_row_free(&g->row);
     free(g->logs);
     free(g->moves);
@@ -506,6 +583,18 @@ static int ov_apply(cb_journal *j, jrec *r) {
         g->logs = q;
         g->logs_cap = cap;
     }
+    cb_game_rated *rated = NULL;
+    if (r->rated) {
+        if (g->n_rated == g->cap_rated) {
+            const int cap = g->cap_rated ? g->cap_rated * 2 : 2;
+            void *q = realloc(g->rated, (size_t)cap * sizeof *g->rated);
+            if (!q) return CB_E_NOMEM;
+            g->rated = q;
+            g->cap_rated = cap;
+        }
+        if (!(rated = malloc(sizeof *rated))) return CB_E_NOMEM;
+        *rated = *r->rated;
+    }
     const int64_t now = cb_mono_ms();
     if (!g->n_moves) {
         g->first_ms = now;
@@ -514,7 +603,12 @@ static int ov_apply(cb_journal *j, jrec *r) {
     // The resident is the game's now (a 2 KB copy; the row's bytes are encoded when read), or a
     // recovered row's bytes go into the game's own buffers, grown only when a row outgrows them:
     // no allocation per move either way.
-    if (game_set(g, &r->row, r->res) != CB_OK) return CB_E_NOMEM;
+    if (game_set(g, &r->row, r->res) != CB_OK) { free(rated); return CB_E_NOMEM; }
+    if (rated) {   // THE RATINGS' ONE OWNER takes the changes now; the tables at the flush
+        g->rated[g->n_rated].seq = r->row.version;
+        g->rated[g->n_rated++].r = rated;
+        ratings_apply(j, rated, now);
+    }
     if (r->full) {   // a whole commit may seat or unseat anyone: the flush brings the tables' seats
         if (r->res) humans_of(g, &r->res->r);
         else humans_of_roster(g, r->row.roster, r->row.roster_len);
@@ -532,10 +626,11 @@ static int ov_apply(cb_journal *j, jrec *r) {
     return CB_OK;
 }
 
-// A game whose waiting moves hold game_bytes: part of THE FLUSH RULE (flush_due), and the
+// A game whose waiting moves hold game_bytes, or that holds a rated end (the leaderboard and the
+// profiles read the tables: the flush follows at once): part of THE FLUSH RULE (flush_due), and the
 // writer's reason to kick the flush thread at once. (The transaction a flush writes is bounded
 // apart, by its one owner snapshot_take: no cap on a game's move count is wanted beside it.)
-static bool game_full(const cb_journal *j, const jgame *g) { return g->bytes >= j->o.game_bytes; }
+static bool game_full(const cb_journal *j, const jgame *g) { return g->bytes >= j->o.game_bytes || g->n_rated > 0; }
 
 // ---- segments ------------------------------------------------------------------------------
 
@@ -691,9 +786,17 @@ static int seg_open(cb_journal *j, size_t need) {
 static void put_i64(uint8_t *p, int64_t v) { put_u64(p, (uint64_t)v); }
 static int64_t get_i64(const uint8_t *p) { return (int64_t)get_u64(p); }
 
+// A rated end's block (flag 8, after the log): u8 n, then per rated seat u8 id length, the id, u8
+// 1 for a bot, i32 LE delta, u8 name length, the name. Its time is the record's ms.
+static size_t rated_size(const cb_game_rated *g) {
+    size_t n = 1;
+    for (int i = 0; g && i < g->n; i++) n += 1 + strlen(g->ids[i]) + 1 + 4 + 1 + strlen(g->names[i]);
+    return g ? n : 0;
+}
+
 static size_t full_size(const jrec *r) {
     return FULL_HDR + 1 + strlen(r->m.game) + 8 * 2 + 1 + 1 + 8 * 3 + (r->row.has_seed ? CB_SEED_LEN : 0) + 12 +
-           r->row.state_len + r->row.roster_len + r->log_len;
+           r->row.state_len + r->row.roster_len + r->log_len + rated_size(r->rated);
 }
 
 // r as a full record at out (cap bytes): its length, or CB_E_FULL. The header goes last, its
@@ -708,7 +811,7 @@ static int full_encode(const jrec *r, uint8_t *out, size_t cap) {
     memcpy(q, r->m.game, idl), q += idl;
     put_i64(q, r->m.base_version), q += 8;
     put_i64(q, r->m.now_ms), q += 8;
-    *q++ = (uint8_t)((r->clear ? 1 : 0) | (w->has_seed ? 2 : 0) | (w->needs_bots ? 4 : 0));
+    *q++ = (uint8_t)((r->clear ? 1 : 0) | (w->has_seed ? 2 : 0) | (w->needs_bots ? 4 : 0) | (r->rated ? 8 : 0));
     *q++ = (uint8_t)(int8_t)w->status;
     put_i64(q, w->log_from), q += 8;
     put_i64(q, w->round_epoch), q += 8;
@@ -720,6 +823,19 @@ static int full_encode(const jrec *r, uint8_t *out, size_t cap) {
     if (w->roster_len) memcpy(q, w->roster, w->roster_len), q += w->roster_len;
     put_u32(q, (uint32_t)r->log_len), q += 4;
     if (r->log_len) memcpy(q, r->log, r->log_len), q += r->log_len;
+    if (r->rated) {
+        const cb_game_rated *g = r->rated;
+        *q++ = (uint8_t)g->n;
+        for (int i = 0; i < g->n; i++) {
+            const size_t il = strlen(g->ids[i]), nl = strlen(g->names[i]);
+            *q++ = (uint8_t)il;
+            memcpy(q, g->ids[i], il), q += il;
+            *q++ = g->is_bot[i] ? 1 : 0;
+            put_u32(q, (uint32_t)g->delta[i]), q += 4;
+            *q++ = (uint8_t)nl;
+            memcpy(q, g->names[i], nl), q += nl;
+        }
+    }
     const uint32_t plen = (uint32_t)(n - FULL_HDR);
     uint8_t h[4];
     put_u32(h, plen);
@@ -731,9 +847,10 @@ static int full_encode(const jrec *r, uint8_t *out, size_t cap) {
     return (int)n;
 }
 
-// The full record at in: *r's game, versions, row (its byte fields point into in) and log.
-// Its length, or -1 for one that is torn or corrupt.
-static long full_decode(const uint8_t *in, size_t len, jrec *r) {
+// The full record at in: *r's game, versions, row (its byte fields point into in) and log, and a
+// rated end's changes into *rated (r->rated then points at it). Its length, or -1 for one that is
+// torn or corrupt.
+static long full_decode(const uint8_t *in, size_t len, jrec *r, cb_game_rated *rated) {
     memset(r, 0, sizeof *r);
     if (len < FULL_HDR || in[0] != FULL_MAGIC || in[1] != FORMAT) return -1;
     const uint32_t plen = get_u32(in + 8);
@@ -770,6 +887,29 @@ static long full_decode(const uint8_t *in, size_t len, jrec *r) {
         n[i] = get_u32(q), q += 4;
         NEED(n[i]);
         p[i] = q, q += n[i];
+    }
+    if (flags & 8) {
+        memset(rated, 0, sizeof *rated);
+        NEED(1);
+        rated->n = *q++;
+        if (rated->n < 1 || rated->n > CB_MAX_SEATS) return -1;
+        for (int i = 0; i < rated->n; i++) {
+            NEED(1);
+            const size_t il = *q++;
+            if (il < 1 || il >= sizeof rated->ids[i]) return -1;
+            NEED(il + 1 + 4 + 1);
+            memcpy(rated->ids[i], q, il), q += il;
+            if (strlen(rated->ids[i]) != il) return -1;
+            rated->is_bot[i] = *q++ != 0;
+            rated->delta[i] = (int32_t)get_u32(q), q += 4;
+            const size_t nl = *q++;
+            if (nl >= sizeof rated->names[i]) return -1;
+            NEED(nl);
+            memcpy(rated->names[i], q, nl), q += nl;
+            if (strlen(rated->names[i]) != nl) return -1;
+        }
+        rated->at = r->m.now_ms;
+        r->rated = rated;
     }
     if (q != end) return -1;
 #undef NEED
@@ -1176,7 +1316,12 @@ static cb_game_move *moves_for_flush(const jgame *g, bool copy) {
         logs = b;
     }
     for (int i = 0; i < g->n_moves; i++)
-        m[i] = (cb_game_move){ g->moves[i].seq, logs + g->moves[i].off, g->moves[i].len, g->moves[i].clear };
+        m[i] = (cb_game_move){ g->moves[i].seq, logs + g->moves[i].off, g->moves[i].len, g->moves[i].clear, NULL };
+    // A rated end's changes ride its commit (g's own: freed only by a flush, under the flush lock).
+    for (int k = 0, i = 0; k < g->n_rated; k++) {
+        while (i < g->n_moves && g->moves[i].seq < g->rated[k].seq) i++;
+        if (i < g->n_moves && g->moves[i].seq == g->rated[k].seq) m[i].rated = g->rated[k].r;
+    }
     return m;
 }
 
@@ -1255,6 +1400,14 @@ static void ov_flushed(cb_journal *j, jgame *g, const cb_game_flush *f, uint64_t
         memmove(g->logs, g->logs + cut, g->logs_len - cut);
         g->logs_len -= cut;
     }
+    // The rated ends among them: in the tables now, and their entries free to go.
+    int r = 0;
+    for (; r < g->n_rated && g->rated[r].seq <= f->row->version; r++) {
+        ratings_flushed(j, g->rated[r].r);
+        free(g->rated[r].r);
+    }
+    memmove(g->rated, g->rated + r, (size_t)(g->n_rated - r) * sizeof *g->rated);
+    g->n_rated -= r;
     g->bytes -= b;
     j->w_bytes -= b;
     j->n_waiting -= k;
@@ -1285,6 +1438,7 @@ static int touched_cmp(const void *a, const void *b) {
 // waiting leaves; then, while more than max_games are resident, the least recently touched
 // with nothing waiting do. A game with waiting moves never leaves (only a flush takes them).
 static void ov_evict(cb_journal *j, int64_t now) {
+    ratings_evict(j, now, false);
     for (int b = 0; b < OV_BUCKETS; b++)
         for (jgame **p = &j->buckets[b]; *p;) {
             if (!(*p)->n_moves && now - (*p)->touched_ms > IDLE_EVICT_MS) ov_unlink(j, p);
@@ -1314,7 +1468,13 @@ static int flush_txn(cb_journal *j, bool all, int64_t pass_ms, bool writer_held,
     const uint64_t snap_seg = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
     pthread_mutex_unlock(&j->ov_mu);
     if (!writer_held) writer_release(j);
+    bool rated = false;   // (the snapshot's ratings are the games', alive until ov_flushed below)
+    for (int i = 0; i < sn.n; i++)
+        for (int k = 0; k < sn.f[i].n_moves; k++) rated |= sn.f[i].moves[k].rated != NULL;
     if (rc == CB_OK && sn.n) rc = cb_rows_sql_flush(j->s, sn.f, sn.n, NULL, NULL, 0);
+    // The leaderboard moved in the tables just now: the edge's copy goes (edge.h). A commit written
+    // straight to the tables marks it itself (table_ops.c); a journaled rated end marks it here.
+    if (rc == CB_OK && rated) cb_edge_stale(CB_EDGE_BOARD);
     if (rc == CB_OK) {
         long moves = 0;
         pthread_mutex_lock(&j->ov_mu);
@@ -1587,7 +1747,9 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
         f = (cb_game_flush){ &g->row, g->sql_version, moves, g->n_moves, false, 0, 0, NULL, NULL };
         flush_seats(g, &f, &sc);
     }
+    const bool rated = g && g->n_rated > 0;   // its waiting rated ends go with it
     int rc = cb_rows_sql_flush(s, &f, g && g->n_moves ? 1 : 0, c, del_id, del_version);
+    if (rc == CB_OK && rated) cb_edge_stale(CB_EDGE_BOARD);
     pthread_mutex_lock(&j->ov_mu);
     bool over = false;
     if (rc == CB_OK) {
@@ -1632,11 +1794,11 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     if (!c || !c->row) return CB_E_INVALID;
     const cb_game_row *row = c->row;
     const bool plain = c->moves && c->n_moves >= 1 && c->n_moves <= BOT_DRIVE_MAX_ACTIONS;
-    // EVERY COMMIT THROUGH THE JOURNAL but one that rates: a plain move as its moves, any other
-    // (a deal, a lobby edit, an unrated end) whole (a full record). A rating writes rows other
-    // readers of the tables see (the leaderboard, a profile, the next game's rating): it goes
-    // to the tables at once, around the journal, with the game's waiting commits.
-    if (!plain && (c->n_rated > 0 || !row->state || !row->roster)) return around(s, row->id, c, NULL, 0);
+    // EVERY COMMIT THROUGH THE JOURNAL: a plain move as its moves, any other (a deal, a lobby
+    // edit, an end, a rated one too) whole (a full record). A rated end's changes ride its record:
+    // THE RATINGS' ONE OWNER (jrating) takes them at once, and the game is due at once, so the
+    // tables' readers (the leaderboard, a profile) see them one flush later.
+    if (!plain && (!row->state || !row->roster)) return around(s, row->id, c, NULL, 0);
     // The fence the tables would apply: the game's acknowledged version is the expected one,
     // read in this epoch (an exclusive section after it refuses the record: write_batch).
     const long epoch = atomic_load(&j->epoch);
@@ -1666,6 +1828,17 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     } else {
         r.full = true;
         r.clear = c->log_clear;
+    }
+    cb_game_rated rated;
+    if (!plain && c->n_rated > 0) {
+        memset(&rated, 0, sizeof rated);
+        rated.n = c->n_rated < CB_MAX_SEATS ? c->n_rated : CB_MAX_SEATS;
+        memcpy(rated.ids, c->rated_ids, sizeof rated.ids);
+        memcpy(rated.is_bot, c->rated_is_bot, sizeof rated.is_bot);
+        memcpy(rated.delta, c->rating_delta, sizeof rated.delta);
+        memcpy(rated.names, c->rated_names, sizeof rated.names);
+        rated.at = row->updated_at;
+        r.rated = &rated;
     }
     r.row = *row;   // read by ov_apply while this thread waits in append
     r.res = c->resident;
@@ -1871,6 +2044,83 @@ static int j_games_get_views(cb_store *s, const char *const *ids, int n, cb_game
 
 const cb_rows_ops *cb_journal_rows(void) { return &J_OPS; }
 
+// ---- the seats' ratings (THE RATINGS' ONE OWNER) ------------------------------------------------
+
+int cb_journal_seat_ratings(cb_store *s, const char *const *ids, int n, int64_t now_ms, int64_t min_age_ms,
+                            int32_t *ratings, bool *old_enough) {
+    cb_journal *j = cb_journal_of(s);
+    if (!j || n < 0 || n > CB_MAX_SEATS) return CB_E_INVALID;
+    const int64_t now = cb_mono_ms();
+    bool miss[CB_MAX_SEATS] = { false }, any = false;
+    pthread_mutex_lock(&j->ov_mu);
+    for (int i = 0; i < n; i++) {
+        jrating *e = *rating_slot(j, ids[i]);
+        if (e) e->touched_ms = now;
+        else miss[i] = any = true;
+    }
+    pthread_mutex_unlock(&j->ov_mu);
+    if (any) {
+        if (on_loop(j)) return CB_E_WOULD_BLOCK;   // the tables' to read
+        // The misses from the tables (outside every lock), then held unless an entry came meanwhile:
+        // that one is newer (it may carry a rated end the tables do not have yet).
+        const char *mids[CB_MAX_SEATS];
+        int32_t mr[CB_MAX_SEATS];
+        int64_t mc[CB_MAX_SEATS];
+        int m = 0;
+        for (int i = 0; i < n; i++) if (miss[i]) mids[m++] = ids[i];
+        int rc = cb_rows_of(s)->ratings_for(s, mids, m, mr);
+        for (int i = 0; rc == CB_OK && i < m; i++) {
+            cb_user_row u;
+            const int ur = CB_STORE_CALL(s, user_get, mids[i], &u);
+            if (ur == CB_E_NOT_FOUND) mc[i] = 0;   // a bot, or an account deleted: no age to keep
+            else if (ur != CB_OK) rc = ur;
+            else mc[i] = u.created_at > 0 ? u.created_at : 1;
+        }
+        if (rc != CB_OK) return rc;
+        pthread_mutex_lock(&j->ov_mu);
+        for (int i = 0; i < m; i++) {
+            jrating **p = rating_slot(j, mids[i]);
+            if (*p) continue;
+            jrating *e = calloc(1, sizeof *e);
+            if (!e) { rc = CB_E_NOMEM; break; }
+            cb_strlcpy(e->id, mids[i], sizeof e->id);
+            e->rating = mr[i];
+            e->created_ms = mc[i];
+            e->touched_ms = now;
+            *p = e;
+            j->n_ratings++;
+        }
+        pthread_mutex_unlock(&j->ov_mu);
+        if (rc != CB_OK) return rc;
+    }
+    pthread_mutex_lock(&j->ov_mu);
+    bool old = true;
+    int rc = CB_OK;
+    for (int i = 0; i < n; i++) {
+        const jrating *e = *rating_slot(j, ids[i]);
+        if (!e) { rc = CB_E_WOULD_BLOCK; break; }   // went between the read and here: unreachable within IDLE_EVICT_MS
+        ratings[i] = e->rating;
+        if (e->created_ms && min_age_ms > 0 && now_ms - e->created_ms < min_age_ms) old = false;
+    }
+    pthread_mutex_unlock(&j->ov_mu);
+    *old_enough = old;
+    return rc;
+}
+
+// An account's delete names its rating row with NULL (functions_http.c cb_app_delete_account):
+// its entry no longer has an account behind it, as a read of the tables would find.
+static int j_rating_set_username(cb_store *s, const char *user_id, const char *username) {
+    cb_journal *j = cb_journal_of(s);
+    const int rc = cb_rows_sql.rating_set_username(s, user_id, username);
+    if (!username) {
+        pthread_mutex_lock(&j->ov_mu);
+        jrating *e = *rating_slot(j, user_id);
+        if (e) e->created_ms = 0;
+        pthread_mutex_unlock(&j->ov_mu);
+    }
+    return rc;
+}
+
 // ---- an admin's write, and the backup ------------------------------------------------------
 
 // THE ADMIN RULE (store.h cb_store_admin_query): every waiting move into the tables, no
@@ -1887,6 +2137,7 @@ static int j_exclusive(cb_store *s, int (*fn)(void *ud), void *ud) {
         pthread_mutex_lock(&j->ov_mu);
         for (int b = 0; b < OV_BUCKETS; b++)
             while (j->buckets[b]) ov_unlink(j, &j->buckets[b]);
+        ratings_evict(j, 0, true);   // fn may have written ratings or accounts: read them again
         pthread_mutex_unlock(&j->ov_mu);
         atomic_fetch_add(&j->epoch, 1);
     }
@@ -2121,7 +2372,8 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
     while (rc == CB_OK && at < len && buf[at] != 0) {   // a zero magic: the mapped segment's unwritten rest
         if (buf[at] == FULL_MAGIC) {
             jrec r;
-            const long used = full_decode(buf + at, len - at, &r);
+            cb_game_rated rated;
+            const long used = full_decode(buf + at, len - at, &r, &rated);
             if (used < 0) {
                 CB_WARN(MOD, "%s: %zu bytes at %zu are not a whole record: dropped", path, len - at, at);
                 break;
@@ -2163,6 +2415,7 @@ static void journal_free(cb_journal *j) {
             j->buckets[b] = g->next;
             game_free(g);
         }
+    ratings_evict(j, 0, true);
     pthread_mutex_destroy(&j->mu);
     pthread_cond_destroy(&j->cv);
     pthread_cond_destroy(&j->fcv);
@@ -2207,6 +2460,7 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
         J_OPS.game_import = j_game_import;
         J_OPS.is_member = j_is_member;
         J_OPS.game_members = j_game_members;
+        J_OPS.rating_set_username = j_rating_set_username;
     }
 
     char marker[1200];
@@ -2232,6 +2486,7 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     if (rc == CB_OK) {
         for (int b = 0; b < OV_BUCKETS; b++)
             while (j->buckets[b]) ov_unlink(j, &j->buckets[b]);
+        ratings_evict(j, 0, true);   // (none is held during recovery; the tables have them all now)
         if ((rc = seg_open(j, write_need(1))) != CB_OK) snprintf(err, cap, "journal: no segment can be made beside %s", o->path);
     }
     if (rc == CB_OK) delete_segments_before(j, j->seg_seq);

@@ -779,6 +779,131 @@ static void a_flush_racing_the_moves_leaves_every_log_whole(void) {
 
 
 
+// The seats' ratings as the tables hold them (no journal in between), by the game's roster.
+static int table_ratings(cb_store *s, const char *gid, int32_t out[CB_MAX_SEATS]) {
+    cb_game_row row;
+    if (cb_rows_sql.game_get(s, gid, &row) != CB_OK) return -1;
+    Roster ro;
+    int n = -1;
+    if (roster_decode(&ro, row.roster, (int)row.roster_len) == ROSTER_OK) {
+        cb_uuid ids[CB_MAX_SEATS];
+        const char *p[CB_MAX_SEATS];
+        for (int i = 0; i < ro.n; i++) {
+            snprintf(ids[i], sizeof ids[i], "%.*s", (int)ro.seats[i].id_len, (const char *)ro.seats[i].id);
+            p[i] = ids[i];
+        }
+        n = cb_rows_sql.ratings_for(s, p, ro.n, out) == CB_OK ? ro.n : -1;
+    }
+    cb_game_row_free(&row);
+    return n;
+}
+
+// A RATED END IS A JOURNAL RECORD (journal.h): the game's ending move commits with the tables
+// write-locked by another connection (a write around the journal would wait 5 s and fail), so
+// nothing of it reaches SQLite before its answer; the process dies at once, and the recovery
+// writes the end's rating rows from the record: the tables then hold the same ratings and the
+// same game as the same moves committed straight to the tables.
+static void a_rated_end_is_a_journal_record(void) {
+    char pa[320], pb[320], err[256] = "";
+    snprintf(pa, sizeof pa, "%s/rated_plain%d.sqlite", g_dir, g_bots);
+    snprintf(pb, sizeof pb, "%s/rated_journaled%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *a = open_world(pa, false, err, sizeof err);
+    T_CHECK(a != NULL);
+    if (!a) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    cb_game_row dealt = stored(a, gid);
+    close_world(a);
+    cb_store *b = open_world(pb, true, err, sizeof err);
+    T_CHECK(b != NULL);
+    if (!b) { cb_game_row_free(&dealt); return; }
+    cb_uuid humans[2], bots[CB_MAX_SEATS];
+    snprintf(humans[0], sizeof humans[0], "%s", UID_A);
+    snprintf(humans[1], sizeof humans[1], "%s", UID_B);
+    int n_bots = 0;
+    Roster ro;
+    T_EQ_INT(roster_decode(&ro, dealt.roster, (int)dealt.roster_len), ROSTER_OK);
+    for (int i = 0; i < ro.n; i++)
+        if (ro.seats[i].brain_len) snprintf(bots[n_bots++], sizeof bots[0], "%.*s", (int)ro.seats[i].id_len, (const char *)ro.seats[i].id);
+    T_EQ_INT(CB_ROWS_CALL(b, game_import, &dealt, humans, g_bots ? 1 : 2, bots, n_bots), CB_OK);
+    close_world(b);
+    cb_game_row_free(&dealt);
+    // The game played to its end on the tables alone: the reference.
+    const int64_t t0 = g_now;
+    const uint64_t rng0 = g_rng;
+    static move_t ms[3000];
+    int n = 0;
+    a = open_world(pa, false, err, sizeof err);
+    int32_t r0[CB_MAX_SEATS], want[CB_MAX_SEATS];
+    const int seats = table_ratings(a, gid, r0);
+    // Every step until the game is over (a bot's drive may be the one that ends it: its step
+    // answers no version, so the loop asks the game).
+    while (n < 3000 && version_of(a, gid) > 0) (void)step(a, gid, &ms[n++]);
+    T_EQ_INT(version_of(a, gid) < 0, 1);          // over
+    T_EQ_INT(table_ratings(a, gid, want), seats);
+    uint64_t want_hash = row_hash(a, gid);
+    close_world(a);
+    T_CHECK(seats == 2 && n > 4);
+    bool moved = false;
+    for (int i = 0; i < seats; i++) moved |= want[i] != r0[i];
+    T_CHECK(moved);   // the reference end did rate
+    // The same moves, journaled, in a child that dies the moment the end is answered.
+    g_now = t0;
+    int p[2];
+    T_EQ_INT(pipe(p), 0);
+    const pid_t pid = fork();
+    if (pid == 0) {
+        close(p[0]);
+        cb_store *c = open_world(pb, true, err, sizeof err);
+        if (!c) _exit(3);
+        int k = 0;
+        for (; k < n - 1; k++) (void)play(gid, &ms[k]);
+        if (version_of(c, gid) <= 0) _exit(4);
+        sqlite3 *db = NULL;
+        if (sqlite3_open(pb, &db) != SQLITE_OK || sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL) != SQLITE_OK) _exit(5);
+        (void)play(gid, &ms[k]);   // the end: applied with the tables locked
+        const int64_t v = -version_of(c, gid);
+        int32_t held[CB_MAX_SEATS] = { 0 };
+        bool old = false;
+        const char *ids[2] = { UID_A, g_bots ? bots[0] : UID_B };
+        const int rc = cb_journal_seat_ratings(c, ids, 2, g_now, 0, held, &old);
+        const int64_t ok = v > 0 && rc == CB_OK ? 1 : 0;
+        if (write(p[1], &ok, sizeof ok) != sizeof ok || write(p[1], held, sizeof held) != sizeof held) _exit(6);
+        raise(SIGKILL);
+        _exit(7);
+    }
+    close(p[1]);
+    int64_t ok = 0;
+    int32_t held[CB_MAX_SEATS] = { 0 };
+    T_CHECK(read(p[0], &ok, sizeof ok) == sizeof ok && read(p[0], held, sizeof held) == sizeof held);
+    close(p[0]);
+    int st;
+    waitpid(pid, &st, 0);
+    T_CHECK(WIFSIGNALED(st));
+    T_EQ_INT(ok, 1);
+    // The ratings the next end reads were the end's at once (the seats in roster order: A first).
+    for (int i = 0; i < seats; i++) T_EQ_INT(held[i], want[i]);
+    // Recovery writes the end, its ratings with it.
+    b = open_world(pb, true, err, sizeof err);
+    T_CHECK(b != NULL);
+    if (!b) { fprintf(stderr, "reopen: %s\n", err); return; }
+    cb_journal_stats js;
+    cb_journal_stats_get(b, &js);
+    T_CHECK(js.recovered >= 1);
+    close_world(b);
+    b = open_world(pb, false, err, sizeof err);
+    T_CHECK(b != NULL);
+    if (!b) return;
+    int32_t got[CB_MAX_SEATS];
+    T_EQ_INT(table_ratings(b, gid, got), seats);
+    for (int i = 0; i < seats; i++) T_EQ_INT(got[i], want[i]);
+    T_CHECK(row_hash(b, gid) == want_hash);
+    close_world(b);
+    g_rng = rng0;
+    memset(&g_jo, 0, sizeof g_jo);
+}
+
 // ---- a bot cycle on a legacy-deck board, and a cycle the drive would not repeat --------------
 
 // The crash's files as they are now (the database copied, every segment beside the copy).
@@ -2268,6 +2393,7 @@ int main(void) {
         g_bots = b;
         T_RUN(the_flush_writes_the_rows_per_move_commits_write);
         T_RUN(a_flush_racing_the_moves_leaves_every_log_whole);
+        T_RUN(a_rated_end_is_a_journal_record);
         T_RUN(a_restore_mid_game_holds_every_acknowledged_move);
         T_RUN(every_acknowledged_move_survives_a_sigkill);
         T_RUN(a_move_writes_no_table_until_its_game_is_due);
