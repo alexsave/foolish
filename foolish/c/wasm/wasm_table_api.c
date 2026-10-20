@@ -321,12 +321,14 @@ int wasm_card_list_parse(int len, int cap, int battles) {
 // the event through sdk/ts/gen/view_layout.bots.ts snapshots.
 
 static ClientSlot  g_client_slot;
+static ClientDelta g_client_delta;
 static ClientTable g_client;
 static int         g_client_ready;
 
 static ClientTable *client(void) {
     if (!g_client_ready) {
         client_init(&g_client, &g_client_slot);
+        client_delta_attach(&g_client, &g_client_delta);
         g_client_ready = 1;
     }
     return &g_client;
@@ -555,21 +557,27 @@ int wasm_client_refusal_decode(int len) {
     return ask_refusal_decode(io, len, &g_refusal);
 }
 
-// io = [cast][identity]: a realtime message's payload whole (evwire.h). The
-// cast must stay in the IO buffer until push_final, as a push does.
-int wasm_client_cast_open(int len, int identity_len) {
-    const unsigned char *io = inputs(len + identity_len);
-    if (!io || len < 0 || identity_len < 0) return CLIENT_E_PUSH;
-    return client_cast_open(client(), io, len, io + len, identity_len);
+// io = [cast][identity][kept board]: a realtime message's payload whole
+// (evwire.h), the identity and the board kept for its game (client_board_keep,
+// 0 bytes for none). A board cast must stay in the IO buffer until push_final, as
+// a push does; a delta cast is rebuilt into the slot's own storage.
+int wasm_client_cast_open(int len, int identity_len, int board_len) {
+    const unsigned char *io = inputs(len + identity_len + board_len);
+    if (!io || len < 0 || identity_len < 0 || board_len < 0) return CLIENT_E_PUSH;
+    return client_cast_open(client(), io, len, io + len, identity_len, io + len + identity_len, board_len);
 }
 
-// io = [cast] -> the version its header names, or -1 for a payload that has no
-// header this build reads. For the host that could not read a cast's boards and
-// must fetch the game instead: it asks for at least this version.
+// -> io = the board to keep for the game the slot last read (client_board_keep):
+// its length, 0 for none.
+int wasm_client_board_keep(void) { return client_board_keep(client(), wasm_io_ptr(), wasm_io_cap()); }
+
+// io = [cast] -> the version it names, or -1 for a payload that is not a cast
+// this build reads. For the host that could not read a cast and must fetch the
+// game instead: it asks for at least this version.
 double wasm_client_cast_version(int len) {
     const unsigned char *io = inputs(len);
     uint32_t version = 0;
-    if (!io || evwire_cast_header_get(io, len, &version) < 0) return -1;
+    if (!io || evwire_cast_version(io, len, &version) < 0) return -1;
     return (double)version;
 }
 

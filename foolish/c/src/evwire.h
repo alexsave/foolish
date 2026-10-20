@@ -29,6 +29,7 @@
 #define CNITRO_EVWIRE_H
 
 #include "game.h"
+#include "awire.h"
 
 #define EVWIRE_FORMAT_VERSION 1
 
@@ -283,6 +284,103 @@ int evwire_cast_header_put(uint32_t version, unsigned char *out, int cap);
 // Reads it: EVW_CAST_HEADER_BYTES (the offset of the as3 push), or EVW_EPARSE
 // for a payload too short to hold one or a format this build does not read.
 int evwire_cast_header_get(const unsigned char *buf, int len, uint32_t *version);
+
+// ---------- the delta cast: the moves, not the boards --------------------------
+//
+// A cast of a commit that only MOVED (a human's move, a bot cycle's moves: no
+// deal, no lobby edit, no rules) need not carry a board at all. The client's
+// kernel holds the board the last cast left (client_table.h client_board_keep)
+// and the engine is deterministic on a masked board once it is told the two
+// things a masked board cannot know: the cards each move plays (the action wire
+// names them) and the cards the viewer itself draws. So a delta carries those
+// and a check, and the client rebuilds from them the very evwire sequence the
+// board cast would have carried (client_cast_open), byte for byte, before
+// anything reads it:
+//
+//   u8  EVW_CAST_DELTA           0xC2
+//   u32 LE version               the committed games.version (as EVW_CAST_FORMAT)
+//   u8  EVW_DELTA_KERNEL         the rules the moves are applied under: a client
+//                                whose kernel is not this one refuses the delta
+//                                before applying anything, and fetches the game
+//   u8  viewer                   seat, 0xFF the spectators
+//   u8  flags                    EVW_DELTA_OVER: the game is over after this
+//                                commit; EVW_DELTA_FINAL: the sequence ends with
+//                                the game-over transition (evwire_serialize's
+//                                append_final_transition). Any other bit is refused.
+//   u8  n_moves                  1..EVW_DELTA_MAX_MOVES, then each move:
+//     u8 seat, u8 wire_len, wire_len bytes of awire (awire.h): what table_act or
+//     the bot cycle applied, in order
+//   u8  n_reveal                 the viewer's own drawn cards, in draw order,
+//   n_reveal x u8 wire cards     the trump drawn off an empty stock among them
+//                                (0 for the spectators)
+//   u32 LE check                 view.h board_check of the viewer's final board
+//
+// The deal, the lobby, a rearranged hand and the rematch are not moves, and
+// keep the board cast. So does a commit too big for the client's rebuild slot
+// (EVW_DELTA_MAX_SNAPS hooks, EVW_DELTA_MAX_LOGS records): the server asks
+// table_cast_delta_ok, the one owner of which commits go which way.
+#define EVW_CAST_DELTA        0xC2
+_Static_assert(EVW_CAST_DELTA != EVW_CAST_FORMAT && EVW_CAST_DELTA != EVWIRE_FORMAT_VERSION, "the cast formats are told apart by their first byte");
+// BUMP THIS WHENEVER A RULE CHANGES what a move does to a board (game.c), so a
+// tab still running the last kernel refuses the next one's deltas instead of
+// rebuilding a board the server never had.
+#define EVW_DELTA_KERNEL      1
+#define EVW_DELTA_OVER        0x01
+#define EVW_DELTA_FINAL       0x02
+#define EVW_DELTA_FLAGS       (EVW_DELTA_OVER | EVW_DELTA_FINAL)
+#define EVW_DELTA_MAX_MOVES   (MAX_PLAYERS + 1)   // bot_drive.h BOT_DRIVE_MAX_ACTIONS
+#define EVW_DELTA_WIRE_MAX    (2 + 2 * AWIRE_MAX_CARDS)   // awire.h: kind, n, n cards, n attacks
+#define EVW_DELTA_MAX_REVEAL  (2 * CARDS_PER_PLAYER)
+// What one commit may hold for its delta to be rebuilt: the hooks it fired and
+// the log records it wrote (the client's slot holds this many; a mid-game
+// action's measured worst is 12 hooks, game.h MAX_SNAPS).
+#define EVW_DELTA_MAX_SNAPS   24
+#define EVW_DELTA_MAX_LOGS    32
+
+// One move as a delta (and, one day, a journal record) lists it.
+typedef struct {
+    int8_t  seat;
+    uint8_t wire_len;
+    uint8_t wire[EVW_DELTA_WIRE_MAX];
+} EvwMove;
+
+// A delta as read: everything borrowed from the caller's buffer.
+typedef struct {
+    uint32_t version;
+    int      kernel;
+    int      viewer;     // seat, or -1
+    int      flags;
+    int      n_moves;
+    const unsigned char *moves;   // n_moves x { seat, wire_len, wire }
+    int      n_reveal;
+    const unsigned char *reveal;  // wire cards
+    uint32_t check;
+} EvwDelta;
+
+// THE MOVE LIST, written: u8 n, then { u8 seat, u8 wire_len, wire } per move.
+// The one writer of a commit's moves; a delta embeds it. Bytes written, or
+// EVW_ECAP, or EVW_EBADARG for a list that is not one (0 or too many moves, a
+// wire that is empty or too long).
+int evwire_moves_put(const EvwMove *moves, int n, unsigned char *out, int cap);
+
+// A whole delta: the header, the move list, the reveal list, the check. Bytes
+// written, EVW_ECAP, or EVW_EBADARG.
+int evwire_delta_put(uint32_t version, int viewer, int flags, const EvwMove *moves, int n_moves,
+                     const unsigned char *reveal, int n_reveal, uint32_t check, unsigned char *out, int cap);
+
+// Reads a delta WHOLE: every count bounded, every move's wire a whole awire
+// frame, no byte left over. 0, or EVW_EPARSE. A delta of another kernel reads
+// (out->kernel says so): what to do about it is the reader's.
+int evwire_delta_read(const unsigned char *buf, int len, EvwDelta *out);
+
+// THE VERSION A CAST NAMES, whichever format it is: the format byte
+// (EVW_CAST_FORMAT or EVW_CAST_DELTA), or EVW_EPARSE for bytes that are not a
+// cast. What a host that could not read a cast fetches at least.
+int evwire_cast_version(const unsigned char *buf, int len, uint32_t *version);
+
+// Whether a cast ends on a board whose game is over: 1, 0, or EVW_EPARSE. A
+// board cast says it in its final board's status byte; a delta in its flags.
+int evwire_cast_over(const unsigned char *buf, int len);
 
 // Serialize the full sequence for `viewer` (seat index, or VIEW_SPECTATOR).
 // `logs`/`n_logs` are THIS action's kernel logs (the resident game's fresh

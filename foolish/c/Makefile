@@ -1144,7 +1144,7 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_ask_ptr -Wl,--export=wasm_client_ask_encode \
   -Wl,--export=wasm_client_ask_apply \
   -Wl,--export=wasm_client_refusal_ptr -Wl,--export=wasm_client_refusal_decode \
-  -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version \
+  -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version -Wl,--export=wasm_client_board_keep \
   -Wl,--export=wasm_client_plan_step_ptr -Wl,--export=wasm_client_plan_step -Wl,--export=wasm_client_plan
 
 # A replay's recorded decision as the Oracle imports it, and a code at a glance

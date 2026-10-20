@@ -137,6 +137,7 @@ static int identity_read(ClientTable *c, const uint8_t *p, int len, int *status,
 
 int client_adopt_envelope(ClientTable *c, const uint8_t *p, int len) {
     c->open = false;
+    c->keepable = false;
     c->detail = 0;
     // The header, the island skip and the view's bounds are view.h's, shared
     // with the writer (table.c table_envelope) so the two cannot drift.
@@ -167,12 +168,14 @@ int client_adopt_envelope(ClientTable *c, const uint8_t *p, int len) {
         memcpy(c->view.rating_delta, stamp.delta, sizeof(stamp.delta));
         for (int s = 0; s < stamp.n; s++) c->view.rating_after[s] = stamp.before[s] + stamp.delta[s];
     }
+    c->keepable = true;
     return CLIENT_OK;
 }
 
 int client_adopt_board(ClientTable *c, const Game *g, int viewer) {
     unsigned char buf[24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS];
     c->open = false;
+    c->keepable = false;
     c->detail = 0;
     if (g->num_players < 1 || g->num_players > MAX_PLAYERS || viewer >= g->num_players) return CLIENT_E_MISMATCH;
     const int n = state_put(g, viewer < 0 ? VIEW_SPECTATOR : viewer, buf);
@@ -187,6 +190,7 @@ int client_adopt_board(ClientTable *c, const Game *g, int viewer) {
 
 int client_adopt_state(ClientTable *c, const uint8_t *p, int len, int viewer) {
     c->open = false;
+    c->keepable = false;
     c->detail = 0;
     if (!p || len < 0 || viewer >= MAX_PLAYERS) return CLIENT_E_FORMAT;
     const int rc = board_import(c, p, len);
@@ -230,6 +234,7 @@ static void push_check(void *ctx, int index, const EvwRead *ev) {
 int client_push_open(ClientTable *c, const uint8_t *p, int len, int as3,
                      const uint8_t *identity, int identity_len, uint32_t version) {
     c->open = false;
+    c->keepable = false;
     c->detail = 0;
     if (!p || len < 4) return CLIENT_E_PUSH;
     int seq = len, flags = 0, block = 0, rc, status = 0;
@@ -284,8 +289,155 @@ static Card event_card(unsigned b) {
     return card_of_id((int)b);
 }
 
-int client_cast_open(ClientTable *c, const uint8_t *p, int len, const uint8_t *identity, int identity_len) {
+// ---------- the delta cast --------------------------------------------------------
+
+void client_delta_attach(ClientTable *c, ClientDelta *d) { c->delta = d; }
+
+int client_board_keep(const ClientTable *c, uint8_t *out, int cap) {
+    if (!c->keepable) return 0;
+    if (!out || cap < CLIENT_BOARD_KEEP_MAX) return CLIENT_E_CAP;
+    const int viewer = c->view.my_seat;
+    le_put_u32(out, c->version);
+    out[4] = viewer < 0 ? EVW_SEAT_NONE : (uint8_t)viewer;
+    return 5 + state_put(c->g, viewer < 0 ? VIEW_SPECTATOR : viewer, out + 5);
+}
+
+// The delta's snapshot store, as table.c table_snap fills the server's: the
+// log-free Game prefix per hook. A hook past the store refuses the rebuild
+// (never dropped: the sequence would then not be the server's).
+static _Thread_local ClientDelta *t_delta;
+
+static void delta_snap(const Game *g, int tag, int aux) {
+    ClientDelta *d = t_delta;
+    if (!d) return;
+    if (d->n_snaps >= EVW_DELTA_MAX_SNAPS) { d->overflow = true; return; }
+    memcpy(d->slot[d->n_snaps].bytes, g, CLIENT_DELTA_SNAP_BYTES);
+    d->tag[d->n_snaps] = tag;
+    d->aux[d->n_snaps] = aux;
+    d->n_snaps++;
+}
+
+static bool is_placeholder(Card x) { return x.suit == 0 && x.value == 1; }   // view.c card_from_wire_masked
+
+// Another seat's cards into its hidden hand: each card the move plays that the
+// hand does not hold already (a card it picked up or drew face up this commit)
+// takes a placeholder's place. The server vouched for the cards; the masked
+// board could not know them. 0, or -1 when the hand has too few placeholders.
+static int patch_hand(Player *p, const AwireAction *a) {
+    for (int i = 0; i < a->n; i++) {
+        bool held = false;
+        for (int k = 0; k < p->hand_count && !held; k++) held = card_eq(p->hand[k], a->cards[i]);
+        if (held) continue;
+        int k = 0;
+        while (k < p->hand_count && !is_placeholder(p->hand[k])) k++;
+        if (k == p->hand_count) return -1;
+        p->hand[k] = a->cards[i];
+    }
+    return 0;
+}
+
+// The kernel's end of a game, as table.c finalize ends it: GAME_OVER, the bots
+// (the identity's) parked READY and the humans IDLE. Whether it ended.
+static bool delta_finalize(Game *g, uint32_t bots) {
+    if (game_done(g) < 0) return false;
+    g->status = GAME_STATUS_GAME_OVER;
+    for (int i = 0; i < g->num_players; i++)
+        g->players[i].status = ((bots >> i) & 1u) ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+    return true;
+}
+
+// The delta `d` applied to the kept board: the sequence the server's board cast
+// would have carried, into c->delta->seq. CLIENT_OK, or a refusal.
+static int delta_rebuild(ClientTable *c, const EvwDelta *d, const uint8_t *board, int board_len) {
+    ClientDelta *st = c->delta;
+    if (!st || d->kernel != EVW_DELTA_KERNEL) return CLIENT_E_BEHIND;
+    // The kept board: this viewer's, at the version the delta follows.
+    if (!board || board_len < 5 || le_get_u32(board) != d->version - 1u
+        || (board[4] == EVW_SEAT_NONE ? -1 : (int)board[4]) != d->viewer) return CLIENT_E_BEHIND;
+    // Who is a bot is the identity's (finalize parks them), and so are the rules.
+    if (!c->has_roster) return CLIENT_E_BEHIND;
+    Game *g = (Game *)(void *)st->game;
+    int v = state_get(g, board + 5, board_len - 5, 1);
+    if (v == GAME_VALID) v = game_validate(g, GAME_VALIDATE_MASKED);
+    if (v != GAME_VALID) { c->detail = v; return CLIENT_E_BEHIND; }
+    if (d->viewer >= g->num_players || c->r.n != g->num_players || g->status != GAME_STATUS_PLAYING) return CLIENT_E_BEHIND;
+    // Draws pop the stock's top (every stock card is the same placeholder), the
+    // module's generator is never read, and every record lands in the slot.
+    g->deterministic_deck = true;
+    g->log_room = EVW_DELTA_MAX_LOGS + 1;
+    g->num_logs = 0;
+
+    Card reveal[EVW_DELTA_MAX_REVEAL];
+    for (int i = 0; i < d->n_reveal; i++) reveal[i] = card_of_id(d->reveal[i]);
+    EngineReveal rv = { d->viewer, reveal, d->n_reveal, 0, 0 };
+
+    st->n_snaps = 0;
+    st->overflow = false;
+    void (*const prev_hook)(const Game *, int, int) = engine_snap_hook;
+    EngineReveal *const prev_reveal = engine_reveal;
+    t_delta = st;
+    engine_snap_hook = delta_snap;
+    engine_reveal = d->viewer >= 0 ? &rv : 0;
+    int rc = CLIENT_OK, actor = -1;
+    const unsigned char *m = d->moves;
+    for (int i = 0; i < d->n_moves && rc == CLIENT_OK; i++) {
+        const int seat = m[0], wl = m[1];
+        AwireAction a;
+        if (!awire_decode(m + 2, wl, &a) || seat >= g->num_players) { rc = CLIENT_E_PUSH; break; }
+        m += 2 + wl;
+        if (seat != d->viewer && a.kind != AWIRE_PICKUP && a.kind != AWIRE_GOOD && patch_hand(&g->players[seat], &a) != 0) {
+            rc = CLIENT_E_DIVERGED;
+            break;
+        }
+        if (!awire_apply(g, seat, &a)) { rc = CLIENT_E_DIVERGED; break; }
+        actor = seat;
+    }
+    engine_snap_hook = prev_hook;
+    engine_reveal = prev_reveal;
+    t_delta = 0;
+    if (rc != CLIENT_OK) return rc;
+    const bool ended = delta_finalize(g, c->ai_mask);
+    // Every draw the server revealed was drawn, none past them, every hook and
+    // record held; the end is the one the server says; and the board is its board.
+    if (rv.at != rv.n || rv.missing || st->overflow || g->num_logs > EVW_DELTA_MAX_LOGS
+        || ended != ((d->flags & EVW_DELTA_FINAL) != 0)
+        || (g->status == GAME_STATUS_GAME_OVER) != ((d->flags & EVW_DELTA_OVER) != 0)
+        || board_check(g, d->viewer) != d->check) return CLIENT_E_DIVERGED;
+
+    EvSnap refs[EVW_DELTA_MAX_SNAPS];
+    for (int i = 0; i < st->n_snaps; i++) {
+        refs[i].g = (const Game *)(const void *)st->slot[i].bytes;
+        refs[i].tag = st->tag[i];
+        refs[i].aux = st->aux[i];
+    }
+    // table.c table_push's call, byte for byte: the operation's records, the
+    // committed board, the last move's seat, the game-over transition; then the
+    // as3 flags byte of a commit that changed no roster.
+    const int n = evwire_serialize(refs, st->n_snaps, g->logs, g->num_logs, g, d->viewer >= 0 ? d->viewer : VIEW_SPECTATOR,
+                                   actor, ended ? 1 : 0, st->seq, CLIENT_DELTA_SEQ_MAX - 1);
+    if (n < 0) return CLIENT_E_DIVERGED;
+    st->seq[n] = 0;
+    st->seq_len = n + 1;
+    return CLIENT_OK;
+}
+
+int client_cast_open(ClientTable *c, const uint8_t *p, int len, const uint8_t *identity, int identity_len,
+                     const uint8_t *board, int board_len) {
     uint32_t version = 0;
+    if (p && len > 0 && p[0] == EVW_CAST_DELTA) {
+        c->open = false;
+        c->keepable = false;
+        c->detail = 0;
+        EvwDelta d;
+        if (evwire_delta_read(p, len, &d) != 0) return CLIENT_E_PUSH;
+        int status = 0;
+        c->has_roster = false;
+        int rc = identity_len > 0 ? identity_read(c, identity, identity_len, &status, CLIENT_E_IDENTITY) : CLIENT_E_BEHIND;
+        if (rc != CLIENT_OK) return rc;
+        c->has_roster = true;
+        if ((rc = delta_rebuild(c, &d, board, board_len)) != CLIENT_OK) return rc;
+        return client_push_open(c, c->delta->seq, c->delta->seq_len, 1, identity, identity_len, d.version);
+    }
     const int at = evwire_cast_header_get(p, len, &version);
     if (at < 0) {
         c->open = false;
@@ -320,6 +472,7 @@ int client_push_next(ClientTable *c) {
     const int snap_len = le_get_u16(q + at);
     at += 2;
     const int rc = board_import(c, q + at, snap_len);
+    c->keepable = false;
     if (rc != CLIENT_OK) { c->open = false; return rc; }
     c->at += at + snap_len;
     c->index++;
@@ -333,6 +486,7 @@ int client_push_final(ClientTable *c) {
     const int rc = board_import(c, c->final, c->final_len);
     if (rc != CLIENT_OK) return rc;
     view_fill(c, c->viewer, c->g->status);
+    c->keepable = true;
     return CLIENT_OK;
 }
 

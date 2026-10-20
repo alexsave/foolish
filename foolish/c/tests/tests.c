@@ -14469,25 +14469,25 @@ static void test_table_cast_carries_its_version(void) {
     CHECK(table_cast(&tb, RS("g-7"), 0, 9, ct_env2, EVW_CAST_HEADER_BYTES - 1) == TABLE_E_CAP
           && table_cast(&tb, RS("g-7"), 0, 9, ct_env2, cl - 1) == TABLE_E_CAP, "a buffer too small for either part is refused");
 
-    int k = 0, rc = client_cast_open(&ct, ct_env, cl, 0, 0);
+    int k = 0, rc = client_cast_open(&ct, ct_env, cl, 0, 0, 0, 0);
     while (rc == CLIENT_OK && (k = client_push_next(&ct)) == 1) { }
     CHECK(rc == CLIENT_OK && k == 0 && client_push_final(&ct) == CLIENT_OK && ct.view.version == 0x01020304u
           && ct.view.num_players == 3, "the client reads the cast whole, and the board carries the header's version");
     // The join's push carries the roster; where the client says it is must be
     // an offset into the CAST, which is what the host holds.
-    CHECK(client_cast_open(&ct, ct_env, cl, 0, 0) == CLIENT_OK && client_identity_at(&ct) > EVW_CAST_HEADER_BYTES, "the identity is found in the cast");
+    CHECK(client_cast_open(&ct, ct_env, cl, 0, 0, 0, 0) == CLIENT_OK && client_identity_at(&ct) > EVW_CAST_HEADER_BYTES, "the identity is found in the cast");
     {
         const int at = client_identity_at(&ct);
         client_push_open(&ct, ct_push, pl, 1, 0, 0, 1);
         CHECK(at == client_identity_at(&ct) + EVW_CAST_HEADER_BYTES, "at the push's offset moved past the header");
     }
-    ct_env[0] = EVW_CAST_FORMAT + 1;
-    CHECK(client_cast_open(&ct, ct_env, cl, 0, 0) == CLIENT_E_PUSH, "an unknown cast format is refused");
+    ct_env[0] = EVW_CAST_DELTA + 1;
+    CHECK(client_cast_open(&ct, ct_env, cl, 0, 0, 0, 0) == CLIENT_E_PUSH, "an unknown cast format is refused");
     ct_env[0] = EVW_CAST_FORMAT;
-    CHECK(client_cast_open(&ct, ct_env, EVW_CAST_HEADER_BYTES - 1, 0, 0) == CLIENT_E_PUSH
-          && client_cast_open(&ct, ct_env, EVW_CAST_HEADER_BYTES + 3, 0, 0) == CLIENT_E_PUSH
-          && client_cast_open(&ct, ct_env, cl / 2, 0, 0) == CLIENT_E_PUSH, "a cast cut short is refused");
-    CHECK(client_cast_open(&ct, ct_push, pl, 0, 0) == CLIENT_E_PUSH, "a bare push is not a cast");
+    CHECK(client_cast_open(&ct, ct_env, EVW_CAST_HEADER_BYTES - 1, 0, 0, 0, 0) == CLIENT_E_PUSH
+          && client_cast_open(&ct, ct_env, EVW_CAST_HEADER_BYTES + 3, 0, 0, 0, 0) == CLIENT_E_PUSH
+          && client_cast_open(&ct, ct_env, cl / 2, 0, 0, 0, 0) == CLIENT_E_PUSH, "a cast cut short is refused");
+    CHECK(client_cast_open(&ct, ct_push, pl, 0, 0, 0, 0) == CLIENT_E_PUSH, "a bare push is not a cast");
     {
         uint32_t v = 7;
         CHECK(evwire_cast_header_get(ct_push, pl, &v) == EVW_EPARSE && v == 7,
@@ -18178,6 +18178,204 @@ static void test_every_envelope_and_push_of_whole_games_reads_as_the_table(void)
           "whole games: an envelope whose trailer is cut by any number of bytes is refused, and the whole one reads");
 }
 
+// ---- the delta cast (evwire.h EVW_CAST_DELTA, client_table.h client_cast_open) ----
+//
+// A delta carries a commit's moves, the viewer's own draws and a check, and the
+// client rebuilds from them, on the board it kept, the sequence the board cast
+// would have carried. These tests hold the rebuild to the board cast BYTE FOR
+// BYTE, and say what a delta the client cannot rebuild does instead.
+
+static ClientDelta dl_store;
+static uint8_t dc_board[MAX_PLAYERS + 1][CLIENT_BOARD_KEEP_MAX];
+static int dc_board_len[MAX_PLAYERS + 1];
+static uint8_t dl_ident[MAX_PLAYERS + 1][4096];
+static int dl_ident_len[MAX_PLAYERS + 1];
+static uint8_t dl_cast[1 << 16], dl_delta[1024], dl_keep[CLIENT_BOARD_KEEP_MAX];
+
+typedef struct {
+    long commits, delta_commits, board_commits, viewers, rebuilt, bot_cycles, reveals, ends, draws_to_viewer, rematch_commits;
+    long bytes_board, bytes_delta;
+    int  ok;
+} DlCounts;
+
+// Reads the open push to its end; CLIENT_OK or the refusal.
+static int dl_read_open(int rc) {
+    int k;
+    if (rc != CLIENT_OK) return rc;
+    while ((k = client_push_next(&ct)) == 1) { }
+    return k != 0 ? k : client_push_final(&ct);
+}
+
+// The viewer's kept identity and board, from the slot's last read.
+static void dl_keep_from_slot(int v) {
+    dl_ident_len[v] = client_identity(&ct, dl_ident[v], sizeof(dl_ident[0]));
+    dc_board_len[v] = client_board_keep(&ct, dc_board[v], sizeof(dc_board[0]));
+}
+
+// A move a human seat can send, drawn with cb_rand: the wire into `w`, the seat's
+// roster id into `id`. Its length, 0 when no human has one.
+static int dl_human_move(const Game *g, uint32_t bots, char *id, int id_cap, uint8_t *w, int cap) {
+    int counts[MAX_PLAYERS], total = 0;
+    for (int s = 0; s < g->num_players; s++) {
+        counts[s] = 0;
+        if (g->players[s].status != PLAYER_STATUS_IN || ((bots >> s) & 1u)) continue;
+        calculate_legal_moves(g, s, &tb_moves);
+        for (int i = 0; i < tb_moves.n; i++) counts[s] += tb_moves.moves[i].type <= MOVE_GOOD;
+        total += counts[s];
+    }
+    if (total == 0) return 0;
+    int r = cb_rand(total), s = 0;
+    while (r >= counts[s]) r -= counts[s++];
+    calculate_legal_moves(g, s, &tb_moves);
+    for (int i = 0; i < tb_moves.n; i++) {
+        if (tb_moves.moves[i].type > MOVE_GOOD || r-- != 0) continue;
+        snprintf(id, (size_t)id_cap, "id-%d", s);
+        return wv_wire(&tb_moves.moves[i], w, cap);
+    }
+    return 0;
+}
+
+// One committed operation, cast to every human viewer and the spectators both
+// ways: the board cast read as the board cast, and - when the kernel says the
+// commit may go as a delta - the delta rebuilt on the board the viewer kept,
+// whose sequence must be the board cast's bytes, and whose final board is kept
+// for the next one. Only a commit the client could not have rebuilt keeps the
+// board cast's board.
+static void dl_cast_all(DlCounts *k, uint32_t bots) {
+    const uint32_t version = wv_row.version;
+    const bool delta = table_cast_delta_ok(&tb);
+    const uint32_t pub = delta ? table_public_check(&tb) : 0;
+    k->commits++;
+    if (delta) k->delta_commits++; else k->board_commits++;
+    for (int viewer = -1; viewer < tb.r.n && k->ok; viewer++) {
+        if (viewer >= 0 && ((bots >> viewer) & 1u)) continue;
+        const int v = viewer + 1;
+        const int n1 = table_cast(&tb, RS("g"), viewer, version, dl_cast, sizeof(dl_cast));
+        if (n1 <= 0) { fprintf(stderr, "  commit %u viewer %d: no board cast (%d)\n", version, viewer, n1); k->ok = 0; return; }
+        k->viewers++;
+        if (delta) {
+            k->bytes_board += n1;
+            const int nd = table_cast_delta(&tb, viewer, version, pub, dl_delta, sizeof(dl_delta));
+            if (nd <= 0) { fprintf(stderr, "  commit %u viewer %d: no delta (%d)\n", version, viewer, nd); k->ok = 0; return; }
+            k->bytes_delta += nd;
+            EvwDelta d;
+            if (evwire_delta_read(dl_delta, nd, &d) != 0 || d.viewer != viewer || d.version != version) { k->ok = 0; return; }
+            k->reveals += d.n_reveal;
+            k->draws_to_viewer += d.n_reveal > 0;
+            const int rc = client_cast_open(&ct, dl_delta, nd, dl_ident[v], dl_ident_len[v], dc_board[v], dc_board_len[v]);
+            if (rc != CLIENT_OK) {
+                fprintf(stderr, "  commit %u viewer %d: the delta did not rebuild (%d, detail %d)\n", version, viewer, rc, ct.detail);
+                k->ok = 0;
+                return;
+            }
+            if (dl_store.seq_len != n1 - EVW_CAST_HEADER_BYTES
+                || memcmp(dl_store.seq, dl_cast + EVW_CAST_HEADER_BYTES, (size_t)(n1 - EVW_CAST_HEADER_BYTES)) != 0) {
+                fprintf(stderr, "  commit %u viewer %d: the rebuilt sequence (%d B) is not the board cast's (%d B)\n", version,
+                        viewer, dl_store.seq_len, n1 - EVW_CAST_HEADER_BYTES);
+                k->ok = 0;
+                return;
+            }
+            if (dl_read_open(CLIENT_OK) != CLIENT_OK || ct.view.version != version) { k->ok = 0; return; }
+            const int kl = client_board_keep(&ct, dl_keep, sizeof(dl_keep));
+            // The board cast, read the old way, keeps the very same board.
+            if (dl_read_open(client_cast_open(&ct, dl_cast, n1, dl_ident[v], dl_ident_len[v], 0, 0)) != CLIENT_OK
+                || client_board_keep(&ct, dc_board[v], sizeof(dc_board[0])) != kl || memcmp(dl_keep, dc_board[v], (size_t)kl) != 0) {
+                fprintf(stderr, "  commit %u viewer %d: the delta's kept board is not the board cast's\n", version, viewer);
+                k->ok = 0;
+                return;
+            }
+            memcpy(dc_board[v], dl_keep, (size_t)kl);   // the chain runs on the delta's own boards
+            dc_board_len[v] = kl;
+            k->rebuilt++;
+        } else {
+            const int rc = dl_read_open(client_cast_open(&ct, dl_cast, n1, dl_ident[v], dl_ident_len[v], 0, 0));
+            if (rc != CLIENT_OK) { fprintf(stderr, "  commit %u viewer %d: the board cast does not read (%d)\n", version, viewer, rc); k->ok = 0; return; }
+            dl_keep_from_slot(v);
+        }
+    }
+}
+
+// THE GATE: over 1,000 random games of 2 to 8 seats, humans and "random" bots,
+// every commit cast to every human seat and the spectators - as the board cast,
+// and as a delta wherever table_cast_delta_ok allows one - the client's rebuilt
+// sequence is byte for byte the board cast's (every event, every snapshot, the
+// final board), its kept board is the board cast's, and the next delta runs on
+// it. Then the check itself: every byte a viewer's board adds to the public one
+// moves it.
+static void test_delta_cast_rebuilds_the_board_cast(void) {
+    DlCounts k;
+    memset(&k, 0, sizeof(k));
+    k.ok = 1;
+    uint8_t w[128];
+    char id[16], ab[2 * FOOLISH_SEED_LEN + 1];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) memcpy(ab + 2 * i, "ab", 2);
+    TableCommit c;
+    cb_rng = 0xde17a0c5u;
+    client_init(&ct, &ct_slot);
+    client_delta_attach(&ct, &dl_store);
+    for (int g = 0; g < 1000 && k.ok; g++) {
+        const int np = 2 + g % 7;
+        // No bots, the odd seats, every seat but the first: a bot cycle is a commit too.
+        const uint32_t bots = g % 3 == 0 ? 0 : g % 3 == 1 ? wv_odd_bots(np) : ((1u << np) - 1u) & ~1u;
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) tb_seed[i] = (uint8_t)cb_rand(256);
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) snprintf(tb_seed_hex + 2 * i, 3, "%02x", tb_seed[i]);
+        if (!wv_deal(&wv_row, np, bots) || wv_load(&wv_row) != TABLE_OK) { k.ok = 0; break; }
+        for (int viewer = -1; viewer < np; viewer++) {
+            const int n = table_envelope(&tb, RS("g"), viewer, wv_row.version, ct_env, sizeof(ct_env));
+            if (client_adopt_envelope(&ct, ct_env, n) != CLIENT_OK) { k.ok = 0; break; }
+            dl_keep_from_slot(viewer + 1);
+        }
+        // Every tenth table plays a rematch: the finished game's lobby, every
+        // human ready again and the new deal are board casts, and the next
+        // game's deltas run on the boards they left.
+        const int games = g % 10 == 0 ? 2 : 1;
+        for (int step = 0, played = 0; step < 1600 && k.ok; step++) {
+            if (wv_load(&wv_row) != TABLE_OK) { k.ok = 0; break; }
+            if (tb_game.status == GAME_STATUS_GAME_OVER) {
+                if (++played == games) break;
+                if (table_continue(&tb, RS("id-0")) != TABLE_OK || wv_commit(&wv_row, "g", &c) < 0) { k.ok = 0; break; }
+                dl_cast_all(&k, bots);
+                for (int s = 0; s < np && k.ok; s++) {
+                    if ((bots >> s) & 1u) continue;
+                    snprintf(id, sizeof(id), "id-%d", s);
+                    for (int i = 0; i < FOOLISH_SEED_LEN; i++) tb_seed[i] = (uint8_t)cb_rand(256);
+                    if (wv_load(&wv_row) != TABLE_OK || table_ready(&tb, id, (int)strlen(id), tb_seed) != TABLE_OK
+                        || wv_commit(&wv_row, "g", &c) < 0) { k.ok = 0; break; }
+                    game_set_seed(1);
+                    k.rematch_commits++;
+                    dl_cast_all(&k, bots);
+                }
+                continue;
+            }
+            table_set_deal_seed(&tb, ab, 2 * FOOLISH_SEED_LEN);
+            int drove = 0;
+            if (table_bots_due(&tb)) {
+                const int d = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+                if (d < 0) { k.ok = 0; break; }
+                drove = d > 0;
+                k.bot_cycles += drove;
+            }
+            if (!drove) {
+                const int wl = dl_human_move(&tb_game, bots, id, sizeof(id), w, sizeof(w));
+                if (wl <= 0) break;
+                if (table_act(&tb, id, (int)strlen(id), w, wl, -1, 0) != TABLE_APPLIED) { k.ok = 0; break; }
+            }
+            if (wv_commit(&wv_row, "g", &c) < 0) { k.ok = 0; break; }
+            dl_cast_all(&k, bots);
+            k.ends += c.ended;
+        }
+    }
+    printf("  delta casts: %ld commits (%ld as deltas, %ld board casts), %ld viewer casts, %ld rebuilt, %ld bot cycles,"
+           " %ld deltas reveal %ld cards, %ld games ended; cast bytes %ld board vs %ld delta on the delta commits' viewers\n",
+           k.commits, k.delta_commits, k.board_commits, k.viewers, k.rebuilt, k.bot_cycles, k.draws_to_viewer, k.reveals,
+           k.ends, k.bytes_board, k.bytes_delta);
+    CHECK(k.ok, "delta casts: every delta rebuilds the board cast's sequence byte for byte, for every viewer, and keeps its board");
+    CHECK(k.delta_commits > 200000 && k.rebuilt > 900000 && k.bot_cycles > 50000 && k.draws_to_viewer > 4000 && k.ends > 1000
+          && k.rematch_commits > 200, "delta casts: enough commits, bot cycles, draws, game ends and rematches were rebuilt");
+    CHECK(k.board_commits >= k.rematch_commits + 100 && k.delta_commits > 50 * k.board_commits,
+          "delta casts: a lobby edit or a deal is a board cast, and nearly every commit of a game in play goes as a delta");
+}
+
 // THE ACTION REQUEST'S DOOR (was e2e/awire_codec.test.ts; the bytes are pinned
 // by test_table_request_encode_and_response_decode): what the client writes,
 // with and without an intent, the server reads back, and a body that is not a
@@ -19863,6 +20061,7 @@ int main(void) {
     test_every_viewer_reads_the_committed_board();
     test_every_push_is_leak_free_and_mirrors_the_commit();
     test_every_envelope_and_push_of_whole_games_reads_as_the_table();
+    test_delta_cast_rebuilds_the_board_cast();
     test_action_request_door();
     test_ask_body_runs_for_the_caller();
     test_doors_survive_hostile_bytes();

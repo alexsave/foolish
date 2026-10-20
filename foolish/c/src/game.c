@@ -95,6 +95,7 @@ static int deal_index(int n) {
 // duration, so both sides carry the qualifier.
 _Thread_local void (*engine_snap_hook)(const Game *g, int tag, int aux) = 0;
 _Thread_local int engine_last_reject = ENGINE_REJECT_NONE;
+_Thread_local EngineReveal *engine_reveal = 0;
 #ifdef CD_PASS_PROBE
 _Thread_local long game_pass_probe = 0;   // test-only; see game.h
 #endif
@@ -456,7 +457,10 @@ static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
             || g->num_logs >= g->log_cap;
     } else {
         // Should never happen at MAX_LOGS=512 for sane games. Drop silently.
-        drop = g->num_logs >= MAX_LOGS;
+        // A slot with less room than that (log_room, game.h) drops at its own
+        // end; a room past MAX_LOGS is no room at all, never an overrun.
+        const int room = g->log_room > 0 && g->log_room < MAX_LOGS ? g->log_room : MAX_LOGS;
+        drop = g->num_logs >= room;
     }
     if (drop) {
         // _Thread_local (Stage 5): this IS live on the server's concurrent
@@ -866,6 +870,11 @@ static void draw_up_to_six(Game *g, int seat) {
     while (g->players[seat].hand_count < CARDS_PER_PLAYER) {
         Card c;
         if (!draw_card(g, &c)) break;
+        EngineReveal *rv = engine_reveal;
+        if (rv && seat == rv->seat) {
+            if (rv->at < rv->n) c = rv->cards[rv->at++];
+            else rv->missing++;
+        }
         g->players[seat].hand[g->players[seat].hand_count++] = c;
         drawn[n_drawn++] = c;
     }

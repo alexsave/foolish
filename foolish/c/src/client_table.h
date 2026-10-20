@@ -36,6 +36,7 @@
 #include "awire.h"
 #include "ask.h"
 #include "anim_plan.h"
+#include "evwire.h"
 #include <stddef.h>
 
 #define CLIENT_OK           0
@@ -48,6 +49,8 @@
 #define CLIENT_E_ORDER    (-207)  // push_next / push_final with no push open
 #define CLIENT_E_CAP      (-208)  // an output buffer is too small
 #define CLIENT_E_MOVE     (-209)  // an action wire that is not a move, or a hand order that is not one
+#define CLIENT_E_BEHIND   (-210)  // a delta cast this slot cannot rebuild: no kept board at the version before it, no identity, another kernel's rules, or no delta storage
+#define CLIENT_E_DIVERGED (-211)  // a delta cast rebuilt to a board the server did not have: the engine refused a move, a draw went unrevealed, or the check differs
 
 // One seat as the viewer sees it. `hand_count` is every seat's; the cards are
 // the viewer's own only (TableView.my_hand).
@@ -261,13 +264,47 @@ typedef struct {
     uint32_t  version;
     int32_t   identity_at;  // where in the last read input its roster trailer began, -1 for none
     bool      open;
+    bool      keepable;     // the slot holds a board client_board_keep may write: the last read was an envelope or a push's final
     ClientRulesSlot rules;  // scratch: the board a gate, a rotation or a reset reads as a game
+    struct ClientDelta *delta;  // client_delta_attach: where a delta cast is rebuilt, NULL for none
 } ClientTable;
 
 // The slot's storage: a Game prefix, which is all a masked import writes.
 typedef struct { _Alignas(8) unsigned char bytes[offsetof(Game, logs)]; } ClientSlot;
 
 void client_init(ClientTable *c, ClientSlot *slot);
+
+// ---------- the delta cast (evwire.h EVW_CAST_DELTA) ---------------------------------
+//
+// What a delta is rebuilt in: the kept board as a game with room for one commit's
+// log records, the hook snapshots its moves fire, and the evwire sequence they
+// make, which then opens exactly as a board cast's push does (client_push_open)
+// and stays here until push_final. Host storage, like the slot: a host that reads
+// deltas attaches one (client_delta_attach); one that does not refuses them as
+// CLIENT_E_BEHIND and fetches the game instead.
+#define CLIENT_DELTA_SNAP_BYTES offsetof(Game, num_logs)
+#define CLIENT_DELTA_SEQ_MAX 8192
+typedef struct ClientDelta {
+    _Alignas(8) unsigned char game[offsetof(Game, logs) + (EVW_DELTA_MAX_LOGS + 1) * sizeof(GameLog)];
+    int n_snaps;
+    bool overflow;              // a hook past EVW_DELTA_MAX_SNAPS: the rebuild is refused
+    int tag[EVW_DELTA_MAX_SNAPS];
+    int aux[EVW_DELTA_MAX_SNAPS];
+    struct { _Alignas(8) unsigned char bytes[CLIENT_DELTA_SNAP_BYTES]; } slot[EVW_DELTA_MAX_SNAPS];
+    int seq_len;                // the rebuilt sequence (the as3 push a board cast would have carried)
+    unsigned char seq[CLIENT_DELTA_SEQ_MAX];
+} ClientDelta;
+
+void client_delta_attach(ClientTable *c, ClientDelta *d);
+
+// THE BOARD TO KEEP for this table's next delta: the version and the viewer the
+// slot's last read was of, and that viewer's masked board (view.c state_put), as
+// opaque bytes a host keeps per game beside its identity and hands back to
+// client_cast_open. Written after a successful client_push_final or
+// client_adopt_envelope and before anything else reads into the slot; 0 when the
+// slot's last read was neither (nothing to keep), or CLIENT_E_CAP.
+#define CLIENT_BOARD_KEEP_MAX (5 + 24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS)
+int client_board_keep(const ClientTable *c, uint8_t *out, int cap);
 
 // A response envelope (table.h table_envelope) into the view and the slot. The
 // view's status is the roster trailer's (the row's column); its seats, game id
@@ -304,7 +341,21 @@ int client_push_open(ClientTable *c, const uint8_t *p, int len, int as3,
 // header's, so a host is told nothing beside the bytes. Everything else is
 // client_push_open's, and so are the refusals; a payload whose header does not
 // read is CLIENT_E_PUSH.
-int client_cast_open(ClientTable *c, const uint8_t *p, int len, const uint8_t *identity, int identity_len);
+//
+// A DELTA CAST (EVW_CAST_DELTA) is rebuilt first: `board` is what
+// client_board_keep wrote for this game (len 0 for none), and it must be the
+// viewer's board at the version before the delta's. Its moves are applied to it
+// - each other seat's cards written into its hidden hand first, the viewer's own
+// draws from the delta's reveal list - the hooks they fire captured as the
+// server's table_act does, and the sequence the server's board cast would have
+// carried serialized into the attached ClientDelta and checked against the
+// delta's board check. Then it opens like any cast. CLIENT_E_BEHIND for a delta
+// this slot cannot rebuild (no board, a board of another version or viewer, no
+// identity, another kernel, no ClientDelta) and CLIENT_E_DIVERGED for one that
+// rebuilt to another board: both mean "fetch the game", and neither leaves a
+// push open. A malformed delta is CLIENT_E_PUSH.
+int client_cast_open(ClientTable *c, const uint8_t *p, int len, const uint8_t *identity, int identity_len,
+                     const uint8_t *board, int board_len);
 
 // The next step into ClientTable.event and its board into the view: 1, or 0
 // when every step has been read, or a refusal.

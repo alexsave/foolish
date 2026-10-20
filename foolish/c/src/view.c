@@ -1,6 +1,7 @@
 #include "view.h"
 #include "../wasm/wire.h"
 #include "../../../shared/c/le_bytes.h"
+#include "../../../shared/c/fnv.h"
 #include <string.h>   // memset — the hidden-run fill in state_put (see below)
 
 // Whether the hand of seat `seat` is visible to `viewer`.
@@ -78,6 +79,26 @@ static int state_put_rules(const Game *g, int viewer, int rules, unsigned char *
 
 int state_put(const Game *g, int viewer, unsigned char *out) {
     return state_put_rules(g, viewer, g->rules, out);
+}
+
+// ---------- the board check (view.h) ---------------------------------------------
+
+uint32_t board_check_public(const Game *g) {
+    unsigned char buf[24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS];
+    const int n = state_put(g, VIEW_SPECTATOR, buf);
+    return fnv1a32(FNV32_OFFSET, buf, (size_t)n);
+}
+
+uint32_t board_check_fold(uint32_t public_check, const Game *g, int viewer) {
+    if (viewer < 0 || viewer >= g->num_players) return public_check;
+    const Player *pl = &g->players[viewer];
+    uint32_t h = public_check;
+    for (int j = 0; j < pl->hand_count; j++) h = fnv1a32_step(h, wire_from_card(pl->hand[j]));
+    return fnv1a32_step(h, game_seat_awaiting(g, viewer) ? 1u : 0u);
+}
+
+uint32_t board_check(const Game *g, int viewer) {
+    return board_check_fold(board_check_public(g), g, viewer);
 }
 
 // A state card byte, decoded EXACTLY: 0..51 is that card, and every other byte
@@ -178,6 +199,7 @@ int state_get(Game *g, const unsigned char *p, int len, int masked) {
     // slots ever set log_cap (see game.h). Re-pin defensively per marshal.
     g->log_cap = 0;
     g->log_virt = 0;
+    g->log_room = 0;
     return clamped ? GAME_INVALID_COUNT : GAME_VALID;
 }
 
@@ -187,6 +209,7 @@ void state_canonical(Game *g) {
     g->num_logs = 0;
     g->log_cap = 0;
     g->log_virt = 0;
+    g->log_room = 0;
 }
 
 int state_measure(const unsigned char *p, int len) {
