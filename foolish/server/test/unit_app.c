@@ -14,6 +14,7 @@
 #include "rate_limits.h"
 
 #include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <unistd.h>
 #include <time.h>
@@ -36,6 +37,7 @@
 #include "replay_steps.h"
 #include "auth/auth.h"
 #include "table.h"
+#include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
 #include "util/uuid.h"
@@ -1674,11 +1676,16 @@ typedef struct { const char *gid, *uid, *bearer; int applied, errors; } hammer_a
 static void *hammer(void *p) {
     hammer_arg *a = p;
     g_rng = (uint64_t)(uintptr_t)a->uid;
-    for (int i = 0; i < 150; i++) {
+    // 150 moves tried, not 150 looks: a look that finds no move for this seat (the other
+    // thread owes one) does not count, or a thread that starts first, or a busy machine that
+    // starves the other, spends every look before the other moves once and tries nothing.
+    const int64_t deadline = cb_mono_ms() + 30000;
+    for (int tries = 0; tries < 150 && cb_mono_ms() < deadline && status_of(a->gid) == GAME_STATUS_PLAYING;) {
         int seat = seat_of(a->gid, a->uid);
         uint8_t wire[64];
         int n = seat >= 0 ? pick_move(a->gid, seat, wire, sizeof wire) : 0;
-        if (n <= 0) continue;
+        if (n <= 0) { sched_yield(); continue; }
+        tries++;
         reply r;
         action(a->bearer, a->gid, wire, n, (uint32_t)version_of(a->gid), &r);
         TableResponse resp;
