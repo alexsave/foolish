@@ -21,6 +21,12 @@
 //            ordered differently, a menu cut at the cap), which is followed by
 //            its awire bytes (awire.h): a varint length and each byte uniform
 //            over 256.
+//   menu_n == REPLAY_MOVE_RAW (a live human's move, replay_move_raw): no menu
+//            was enumerated, no index is coded, the awire bytes follow at once.
+//            The board's check moves to the replay: the seat must have a move
+//            there (replay_move_wire), and the host applies the move, which
+//            the engine refuses off the board. A few bytes more per move, and
+//            no menu enumeration (exponential in a wide attack hand) on a move.
 #ifndef CNITRO_REPLAY_MOVE_H
 #define CNITRO_REPLAY_MOVE_H
 
@@ -33,6 +39,8 @@
 // The menu a move is looked up in is enumerated up to this many moves, on both
 // sides: a move past it is coded whole (the escape).
 #define REPLAY_MOVE_MENU_CAP 1024
+// menu_n's value for a move coded raw (no menu looked up).
+#define REPLAY_MOVE_RAW (REPLAY_MOVE_MENU_CAP + 1)
 // The longest awire frame: kind, n, n cards and n attacks.
 #define REPLAY_MOVE_WIRE_MAX (2 + 2 * AWIRE_MAX_CARDS)
 
@@ -49,6 +57,10 @@ typedef struct ReplayMove {
 // scratch.
 int replay_move_of(const Game *g, int seat, const uint8_t *wire, int wire_len, ReplayMove *out);
 
+// The move `wire` by `seat`, coded raw (REPLAY_MOVE_RAW): no board, no menu. 0, or
+// -REPLAY_EINPUT for a malformed frame or seat.
+int replay_move_raw(int seat, const uint8_t *wire, int wire_len, ReplayMove *out);
+
 // Codes m (encode) or reads it into m (decode). 0, or -REPLAY_E* (also left in
 // c->err).
 int replay_move_code(ReplayCoder *c, ReplayMove *m);
@@ -56,7 +68,8 @@ int replay_move_code(ReplayCoder *c, ReplayMove *m);
 // The awire frame m names on board g: its bytes into wire (cap >=
 // REPLAY_MOVE_WIRE_MAX), returning their length; -REPLAY_ENOTINMENU when g's
 // menu for m's seat is not menu_n long (the board is not the one the move was
-// coded on), -REPLAY_EINPUT for a bad index or wire, -REPLAY_ECAP for no scratch.
+// coded on; for a raw move, when the seat has no move at g), -REPLAY_EINPUT for a bad index
+// or wire, -REPLAY_ECAP for no scratch.
 int replay_move_wire(const Game *g, const ReplayMove *m, uint8_t *wire, int cap);
 
 // ---- a bot drive's cycle -----------------------------------------------------
