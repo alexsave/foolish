@@ -1069,7 +1069,7 @@ static void delete_segments_before(cb_journal *j, uint64_t seq) {
         seg_path(j, j->segs[k], path, sizeof path);
         (void)unlink(path);
     }
-    memmove(j->segs, j->segs + k, (size_t)(j->n_segs - k) * sizeof *j->segs);
+    if (k) memmove(j->segs, j->segs + k, (size_t)(j->n_segs - k) * sizeof *j->segs);   // (segs is NULL before the first)
     j->n_segs -= k;
     pthread_mutex_unlock(&j->seg_mu);
 }

@@ -1888,6 +1888,10 @@ static void a_flush_is_bounded_transactions(void) {
     T_CHECK(s != NULL);
     if (!s) return;
     enum { NG = 10, PER_GAME = 25 };
+    // The tests after this one play the games the shared move stream and clock give them: both
+    // are put back at the end.
+    const uint64_t rng0 = g_rng;
+    const int64_t now0 = g_now;
     char gid[NG][CB_GAME_ID_MAX + 1];
     for (int i = 0; i < NG; i++) {
         cb_limits_reset();   // the create limit is per user and minute
@@ -1922,6 +1926,9 @@ static void a_flush_is_bounded_transactions(void) {
     if (!s) return;
     for (int i = 0; i < NG; i++) T_CHECK(row_hash(s, gid[i]) == want[i]);
     cb_store_close(s);
+    g_rng = rng0;
+    g_now = now0;
+    cb_limits_reset();
 }
 
 // ---- the dashboard list and the bot scan read the overlay, and flush nothing ----------------
