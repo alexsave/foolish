@@ -41,7 +41,7 @@ SG=$(aws ec2 create-security-group --group-name "cbase-perf-temp-xdp-sg-$SUF" --
 rec SG "$SG"
 aws ec2 create-tags --resources "$SG" --tags "Key=Name,Value=cbase-perf-temp-xdp-sg-$SUF"
 aws ec2 authorize-security-group-ingress --group-id "$SG" --ip-permissions "IpProtocol=-1,UserIdGroupPairs=[{GroupId=$SG}]" >/dev/null
-aws ec2 authorize-security-group-egress --group-id "$SG" --ip-permissions 'IpProtocol=-1,Ipv6Ranges=[{CidrIpv6=::/0}]' >/dev/null
+aws ec2 authorize-security-group-egress --group-id "$SG" --ip-permissions 'IpProtocol=-1,Ipv6Ranges=[{CidrIpv6=::/0}]' >/dev/null 2>&1 || true  # an IPv6-native VPC's new SG already has it
 aws ec2 revoke-security-group-egress --group-id "$SG" --ip-permissions 'IpProtocol=-1,IpRanges=[{CidrIp=0.0.0.0/0}]' >/dev/null || true
 
 mkdir -p "$TMP/pkg/port/arch"
