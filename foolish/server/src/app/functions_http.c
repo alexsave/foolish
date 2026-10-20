@@ -144,9 +144,10 @@ static void h_action(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     memcpy(gid, req->body + q.gid_off, q.gid_len);
     gid[q.gid_len] = 0;
     act_ud a = { &u, req->body + q.wire_off, q.wire_len, q.has_intent ? (int64_t)q.intent : -1 };
-    // The answer is the result alone (table_action_response): no envelope is built for it.
+    // The answer is the result alone (table_action_response): no envelope is built for it, and
+    // a move never deals, so no deal seed is drawn.
     cb_table_op op = { .game_id = gid, .actor = &u, .run = run_act, .ud = &a, .wire = a.wire, .wire_len = a.wire_len,
-                       .no_envelope = true };
+                       .no_envelope = true, .no_deal = true };
     cb_table_result r;
     int rc = cb_table_run(ctx, &op, &r);
     if (rc != CB_OK) { run_failure(res, rc); return; }

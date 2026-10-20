@@ -979,8 +979,10 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         bool cached = false;   // the row's bytes are s->rb's (not freed: row_release)
         int rc = cb_row_load(ctx, op->game_id, !op->fresh && attempt == 1, &s->rb, &row, &cached);
         if (rc != CB_OK) { ret = rc; break; }
-        uint8_t seed[CB_SEED_LEN];
-        cb_random_bytes(seed, sizeof seed);
+        // The deal seed decides a deck nobody may predict: drawn from the CSPRNG, fresh for each
+        // attempt of an operation that can deal, and not at all for one that cannot (a move).
+        uint8_t seed[CB_SEED_LEN] = { 0 };
+        if (!op->no_deal) cb_random_bytes(seed, sizeof seed);
 
         // ---- the kernel section ----
         int lr = cb_section_load(s, &row);
@@ -1047,7 +1049,14 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         }
 
         cb_commit_out co;
-        ret = cb_section_commit(ctx, s, &row, seed, op->no_envelope ? NULL : actor, ratings, &have_ratings, &co);
+        if (op->no_deal && s->t.dealt_now) {
+            CB_ERROR("table", "game %s: an operation that cannot deal dealt", op->game_id);
+            row_release(&row, cached);
+            ret = CB_E_STATE;
+            break;
+        }
+        ret = cb_section_commit(ctx, s, &row, op->no_deal ? NULL : seed, op->no_envelope ? NULL : actor, ratings,
+                                &have_ratings, &co);
         row_release(&row, cached);
         if (ret != CB_OK) break;
         if (co.lost) { ret = CB_E_CONFLICT; break; }
