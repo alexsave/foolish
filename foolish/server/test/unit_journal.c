@@ -607,6 +607,208 @@ static void the_flush_writes_the_rows_per_move_commits_write(void) {
 
 
 
+
+// ---- a bot cycle on a legacy-deck board, and a cycle the drive would not repeat --------------
+
+// The crash's files as they are now (the database copied, every segment beside the copy).
+static void crash_copy(const char *path, const char *copy) {
+    T_EQ_INT(cb_backup_copy(path, copy), CB_OK);
+    const char *base = strrchr(path, '/') + 1, *cbase = strrchr(copy, '/') + 1;
+    char pre[300];
+    snprintf(pre, sizeof pre, "%s-journal.", base);
+    DIR *d = opendir(g_dir);
+    struct dirent *e;
+    while (d && (e = readdir(d)))
+        if (strncmp(e->d_name, pre, strlen(pre)) == 0) {
+            char cmd[1600];
+            snprintf(cmd, sizeof cmd, "cp '%s/%s' '%s/%s%s'", g_dir, e->d_name, g_dir, cbase, e->d_name + strlen(base));
+            T_EQ_INT(system(cmd), 0);
+        }
+    if (d) closedir(d);
+}
+
+// Rewrites the copy's one segment with its first bot cycle of two or more moves cut by its
+// last move. 1 when one was cut.
+static int cut_a_cycle(const char *copy) {
+    const char *cbase = strrchr(copy, '/') + 1;
+    char pre[300], seg[700] = "";
+    snprintf(pre, sizeof pre, "%s-journal.", cbase);
+    DIR *d = opendir(g_dir);
+    struct dirent *e;
+    while (d && (e = readdir(d)))
+        if (strncmp(e->d_name, pre, strlen(pre)) == 0) snprintf(seg, sizeof seg, "%s/%s", g_dir, e->d_name);
+    if (d) closedir(d);
+    FILE *f = fopen(seg, "rb");
+    if (!f) return 0;
+    static uint8_t buf[1 << 20], out[1 << 20];
+    size_t len = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    int64_t start = 0;
+    for (int i = 7; i >= 0; i--) start = start << 8 | buf[8 + i];
+    cb_jmove *ms = calloc(8192, sizeof *ms);
+    int n = 0, cut = 0;
+    cb_jslots *t = cb_jslots_new();
+    for (size_t at = 16, used = 0; at < len && n < 8192 - 64; at += used) {
+        int k = cb_journal_batch_decode(t, start, buf + at, len - at, &used, ms + n, 64);
+        if (k < 0) break;
+        n += k;
+    }
+    cb_jslots_free(t);
+    for (int i = 0; i < n && !cut; i++)
+        if (ms[i].bots && ms[i].n_mv >= 2) { ms[i].n_mv--; cut = 1; }
+    t = cb_jslots_new();
+    memcpy(out, buf, 16);
+    size_t w = 16;
+    for (int i = 0; i < n; i += 64) {
+        int k = cb_journal_batch_encode(t, start, ms + i, n - i < 64 ? n - i : 64, out + w, (int)(sizeof out - w));
+        T_CHECK(k > 0);
+        if (k > 0) w += (size_t)k;
+    }
+    cb_jslots_free(t);
+    free(ms);
+    f = fopen(seg, "wb");
+    if (f) { fwrite(out, 1, w, f); fclose(f); }
+    return cut;
+}
+
+static void a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused(void) {
+    char path[320], copy[320], cut[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/legacy.sqlite", g_dir);
+    snprintf(copy, sizeof copy, "%s/legacy_copy.sqlite", g_dir);
+    snprintf(cut, sizeof cut, "%s/legacy_cut.sqlite", g_dir);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    // A, two bots: a bot's cycle can end a bout (a draw) and the other bot act after it.
+    reply r;
+    char gid[CB_GAME_ID_MAX + 1] = "";
+    call("create", "A", NULL, 0, &r);
+    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    meta("A", ASK_ADD_BOT, gid, &r);
+    meta("A", ASK_ADD_BOT, gid, &r);
+    meta("A", ASK_START, gid, &r);
+    // A board from before the seed-dealt deck: a draw takes the draw stream's next number.
+    cb_game_row row = stored(s, gid);
+    T_CHECK(row.state_len > 2 && row.status == GAME_STATUS_PLAYING);
+    sqlite3 *db = NULL;
+    T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
+    sqlite3_stmt *st = NULL;
+    uint8_t *state = malloc(row.state_len);
+    memcpy(state, row.state, row.state_len);
+    state[1] &= (uint8_t)~0x01;   // STATE_BLOB_FLAG_DETERMINISTIC
+    sqlite3_prepare_v2(db, "UPDATE games SET state = ?1 WHERE id = ?2", -1, &st, NULL);
+    sqlite3_bind_blob(st, 1, state, (int)row.state_len, SQLITE_STATIC);
+    sqlite3_bind_text(st, 2, gid, -1, SQLITE_STATIC);
+    T_EQ_INT(sqlite3_step(st), SQLITE_DONE);
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    free(state);
+    cb_game_row_free(&row);
+    cb_row_cache_clear();
+    const bool was = g_bots;
+    g_bots = true;
+    move_t m;
+    int steps = 0;
+    for (; steps < 20 && step(s, gid, &m) > 0; steps++) {}
+    g_bots = was;
+    T_CHECK(steps > 10);
+    const uint64_t h = row_hash(s, gid);
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    T_CHECK(js.waiting > 0 && js.flushes == 0);
+    crash_copy(path, copy);
+    crash_copy(path, cut);
+    close_world(s);
+    // The crash's files recover the game the live process held.
+    s = open_world(copy, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (s) {
+        T_CHECK(row_hash(s, gid) == h);
+        close_world(s);
+    }
+    // A cycle record one move short: the drive, handed its moves, goes on to the next, and
+    // the start refuses the record rather than write a game the journal did not hold.
+    T_EQ_INT(cut_a_cycle(cut), 1);
+    s = open_world(cut, true, err, sizeof err);
+    T_CHECK(s == NULL);
+    if (s) close_world(s);
+}
+
+
+// A cycle across a draw on a legacy-deck board (a draw takes the draw stream's next number):
+// the walk that codes it and the walk that decodes it each seed every apply as the drive did,
+// so both draw the cards the drive drew, whatever the stream held before.
+static void a_cycle_walk_draws_as_the_drive_did(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/walk.sqlite", g_dir);
+    cb_store *s = open_world(path, false, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    const bool was = g_bots;
+    g_bots = false;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    g_bots = was;
+    cb_game_row row = stored(s, gid);
+    Game *g0 = calloc(1, sizeof *g0), *w = calloc(1, sizeof *w), *e = calloc(1, sizeof *e);
+    TableSnaps *snaps = calloc(1, sizeof *snaps);
+    LegalMoves *moves = calloc(1, sizeof *moves);
+    Table t;
+    table_init(&t, g0, snaps);
+    T_EQ_INT(table_load(&t, row.state, (int)row.state_len, row.roster, (int)row.roster_len), TABLE_OK);
+    g0->deterministic_deck = false;
+    const uint32_t base = 0x5eed1234u, off = 7;
+    int drew = 0, tries = 0;
+    for (; !drew && tries < 50; tries++) {
+        // A cycle of nine moves by whoever has one, applied as the drive applies (seeded).
+        *w = *g0;
+        BotDriveAction acts[BOT_DRIVE_MAX_ACTIONS], back[BOT_DRIVE_MAX_ACTIONS];
+        ReplayMove mv[BOT_DRIVE_MAX_ACTIONS];
+        memset(acts, 0, sizeof acts);
+        int n = 0;
+        for (; n < BOT_DRIVE_MAX_ACTIONS; n++) {
+            int seat = -1, pick = -1;
+            for (int p = 0; p < w->num_players && seat < 0; p++) {
+                calculate_legal_moves(w, p, moves);
+                int k = 0;
+                for (int i = 0; i < moves->n; i++) k += moves->moves[i].type != MOVE_WAIT;
+                if (!k) continue;
+                int want = (int)(rng_u32(&g_rng) % (uint32_t)k);
+                for (int i = 0; i < moves->n && pick < 0; i++)
+                    if (moves->moves[i].type != MOVE_WAIT && !want--) pick = i;
+                seat = p;
+            }
+            if (seat < 0) break;
+            acts[n].seat = (int8_t)seat;
+            acts[n].move = moves->moves[pick];
+            const int deck = w->deck_count;
+            bot_drive_seed_decision(w, base, off, BOT_DRIVE_PHASE_APPLY);
+            T_CHECK(legal_move_apply(w, seat, &acts[n].move));
+            if (w->deck_count < deck && n + 1 < BOT_DRIVE_MAX_ACTIONS) drew = 1;
+            if (game_done(w) >= 0) { n++; break; }
+        }
+        if (!drew) continue;
+        *e = *g0;
+        (void)game_random();   // the stream holds something else now
+        T_EQ_INT(replay_move_drive_walk(e, base, off, n, acts, mv, true), 0);
+        for (int i = 0; i < 5; i++) (void)game_random();
+        *e = *g0;
+        T_EQ_INT(replay_move_drive_walk(e, base, off, n, back, mv, false), 0);
+        bool same = true;
+        for (int i = 0; i < n && same; i++) {
+            same = back[i].seat == acts[i].seat && back[i].move.type == acts[i].move.type &&
+                   back[i].move.n_cards == acts[i].move.n_cards;
+            for (int c = 0; same && c < acts[i].move.n_cards; c++) same = card_eq(back[i].move.cards[c], acts[i].move.cards[c]);
+        }
+        T_CHECK(same);
+        T_EQ_INT(e->deck_count, w->deck_count);
+    }
+    T_CHECK(drew);
+    free(g0); free(w); free(e); free(snaps); free(moves);
+    cb_game_row_free(&row);
+    close_world(s);
+}
+
 // ---- THE ADMIN RULE: an admin's write is never written over by what the journal held ---------
 
 static bool no_row(int n, const char *const *names, const char *const *values, void *ud) { return true; }
@@ -1013,6 +1215,8 @@ int main(void) {
     T_RUN(a_batch_round_trips);
     T_RUN(a_torn_or_corrupt_tail_drops_only_itself);
     T_RUN(a_move_off_its_board_is_refused);
+    T_RUN(a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused);
+    T_RUN(a_cycle_walk_draws_as_the_drive_did);
     for (int b = 0; b < 2; b++) {
         g_bots = b;
         T_RUN(the_flush_writes_the_rows_per_move_commits_write);
