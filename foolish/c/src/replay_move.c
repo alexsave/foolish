@@ -93,3 +93,47 @@ int replay_move_wire(const Game *g, const ReplayMove *m, uint8_t *wire, int cap)
     int len = awire_encode(&a, wire, cap);
     return len > 0 ? len : -REPLAY_EINPUT;
 }
+
+// awire's frame of a menu move. 0: none fits.
+static int wire_of(const LegalMove *m, uint8_t *wire, int cap) {
+    AwireAction a;
+    return action_of(m, &a) ? awire_encode(&a, wire, cap) : 0;
+}
+
+int replay_move_drive_walk(Game *g, uint32_t rng_base, uint32_t log_offset, int n, BotDriveAction *acts,
+                           ReplayMove *mv, bool encode) {
+    if (n < 0 || n > BOT_DRIVE_MAX_ACTIONS) return -REPLAY_EINPUT;
+    void (*const prev)(const Game *, int, int) = engine_snap_hook;
+    engine_snap_hook = 0;   // a scratch board records nothing
+    int rc = 0;
+    for (int k = 0; rc == 0 && k < n; k++) {
+        uint8_t wire[REPLAY_MOVE_WIRE_MAX];
+        int len;
+        if (encode) {
+            len = wire_of(&acts[k].move, wire, sizeof wire);
+            rc = len > 0 ? replay_move_of(g, acts[k].seat, wire, len, &mv[k]) : -REPLAY_EINPUT;
+        } else {
+            AwireAction a;
+            len = replay_move_wire(g, &mv[k], wire, sizeof wire);
+            if (len < 0) rc = len;
+            else if (!awire_decode(wire, len, &a)) rc = -REPLAY_EINPUT;
+            else {
+                memset(&acts[k], 0, sizeof acts[k]);
+                acts[k].seat = (int8_t)mv[k].seat;
+                acts[k].move.type = (int8_t)a.kind;
+                acts[k].move.n_cards = (int8_t)a.n;
+                for (int c = 0; c < a.n && c < MAX_MOVE_CARDS; c++) {
+                    acts[k].move.cards[c] = a.cards[c];
+                    if (a.kind == AWIRE_COVER) acts[k].move.attack_cards[c] = a.attacks[c];
+                }
+                if (a.n > MAX_MOVE_CARDS) rc = -REPLAY_EINPUT;
+            }
+        }
+        if (rc) break;
+        bot_drive_seed_decision(g, rng_base, log_offset, BOT_DRIVE_PHASE_APPLY);
+        if (!legal_move_apply(g, acts[k].seat, &acts[k].move)) rc = -REPLAY_ENOTINMENU;
+        else if (game_done(g) >= 0) game_settle_status(g);
+    }
+    engine_snap_hook = prev;
+    return rc;
+}

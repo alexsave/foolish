@@ -5,6 +5,7 @@
 #include "app/foolish_app.h"
 #include "app/functions_http.h"
 #include "app/table_ops.h"
+#include "app/bots.h"
 #include "cbase/provider.h"
 #include "handler.h"
 #include "net/router.h"
@@ -36,6 +37,9 @@ static cb_config g_cfg;
 static cb_ctx g_ctx;
 static int64_t g_now = 1760000000000LL;
 static int64_t fake_now(void) { return g_now; }
+static void fake_sleep(int64_t ms) { g_now += ms; }
+// Each test runs twice: two humans, and one human against a bot (whose cycles the journal holds too).
+static bool g_bots;
 static int no_job(cb_ctx *ctx, const char *job, const char *game_id) { return CB_OK; }
 
 static int fake_verify(cb_ctx *ctx, const struct cb_http_req *req, cb_user *out) {
@@ -77,6 +81,7 @@ static cb_store *open_world(const char *path, bool journal, char *err, size_t ca
     cb_functions_routes(&g_ctx);
     cb_row_cache_clear();
     cb_app_now = fake_now;
+    cb_app_sleep = fake_sleep;
     cb_functions_verify = fake_verify;
     cb_limits_reset();
     if (journal) {
@@ -158,12 +163,17 @@ static bool first_game(const cb_view_row *row, void *ud) {
     return false;
 }
 
-// A 2-human game dealt on the world's store.
+// A game dealt on the world's store: A and B, or A and a bot (g_bots).
 static void two_humans_dealt(char gid[CB_GAME_ID_MAX + 1]) {
     reply r;
     call("create", "A", NULL, 0, &r);
     gid[0] = 0;
     cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    if (g_bots) {
+        meta("A", ASK_ADD_BOT, gid, &r);
+        meta("A", ASK_START, gid, &r);
+        return;
+    }
     meta("B", ASK_JOIN, gid, &r);
     meta("A", ASK_START, gid, &r);
     meta("B", ASK_START, gid, &r);
@@ -224,7 +234,7 @@ static bool next_move(cb_store *s, const char *gid, move_t *m) {
     static const char *const uids[2] = { UID_A, UID_B }, *const bearers[2] = { "A", "B" };
     cb_game_row row = stored(s, gid);
     bool ok = false;
-    for (int k = 0; k < 2 && !ok && row.status == GAME_STATUS_PLAYING; k++) {
+    for (int k = 0; k < (g_bots ? 1 : 2) && !ok && row.status == GAME_STATUS_PLAYING; k++) {
         int seat = seat_of(&row, uids[k]);
         if (seat < 0 || (m->n = pick_move(&row, seat, m->wire, sizeof m->wire)) <= 0) continue;
         m->bearer = bearers[k];
@@ -235,7 +245,25 @@ static bool next_move(cb_store *s, const char *gid, move_t *m) {
     return ok;
 }
 
+static int64_t version_of(cb_store *s, const char *gid) {
+    cb_game_row row = stored(s, gid);
+    int64_t v = row.status == GAME_STATUS_PLAYING ? row.version : -row.version;
+    cb_game_row_free(&row);
+    return v;
+}
+
+// One step of the game: a human's move when one has a move, else a bot drive (to the next
+// human move). m->n == 0 marks a drive. The version after it, or -1 when the game is over.
+static int64_t play(const char *gid, const move_t *m);
+static int64_t step(cb_store *s, const char *gid, move_t *m) {
+    if (next_move(s, gid, m)) return play(gid, m);
+    m->n = 0;
+    if (!g_bots || version_of(s, gid) < 0) return -1;
+    return cb_bots_drive(&g_ctx, gid) == CB_OK ? version_of(s, gid) : -1;
+}
+
 static int64_t play(const char *gid, const move_t *m) {
+    if (m->n == 0) return cb_bots_drive(&g_ctx, gid) == CB_OK ? version_of(g_ctx.store, gid) : -1;
     g_now += 1237;
     reply r;
     action(m->bearer, gid, m->wire, m->n, m->intent, &r);
@@ -272,9 +300,14 @@ static void random_move(uint64_t *rng, ReplayMove *m) {
 }
 
 static bool same_move(const cb_jmove *a, const cb_jmove *b) {
-    return strcmp(a->game, b->game) == 0 && a->base_version == b->base_version && a->now_ms == b->now_ms &&
-           a->mv.seat == b->mv.seat && a->mv.menu_n == b->mv.menu_n && a->mv.index == b->mv.index &&
-           a->mv.wire_len == b->mv.wire_len && memcmp(a->mv.wire, b->mv.wire, (size_t)a->mv.wire_len) == 0;
+    bool same = strcmp(a->game, b->game) == 0 && a->base_version == b->base_version && a->now_ms == b->now_ms &&
+                a->bots == b->bots && a->n_mv == b->n_mv;
+    for (int k = 0; same && k < a->n_mv; k++) {
+        const ReplayMove *x = &a->mv[k], *y = &b->mv[k];
+        same = x->seat == y->seat && x->menu_n == y->menu_n && x->index == y->index && x->wire_len == y->wire_len &&
+               memcmp(x->wire, y->wire, (size_t)x->wire_len) == 0;
+    }
+    return same;
 }
 
 enum { NB = 3, PER = 20 };
@@ -296,7 +329,9 @@ static size_t encode_batches(uint8_t *buf, size_t cap, size_t ends[NB]) {
             if (b == 1 && i == 3 && k == 2) ver[k] += 40;   // the game was written around the journal between
             m->base_version = ver[k]++;
             m->now_ms = 1760000000000LL + b * 5000 + (int64_t)(rng_u32(&rng) % 3000);
-            random_move(&rng, &m->mv);
+            m->bots = rng_u32(&rng) % 3 == 0;   // a third are bot cycles of 1..9 moves
+            m->n_mv = m->bots ? 1 + (int)(rng_u32(&rng) % BOT_DRIVE_MAX_ACTIONS) : 1;
+            for (int q = 0; q < m->n_mv; q++) random_move(&rng, &m->mv[q]);
         }
         int n = cb_journal_batch_encode(t, 1760000000000LL - 10, g_in[b], PER, buf + len, (int)(cap - len));
         T_CHECK(n > CB_JOURNAL_BATCH_HDR);
@@ -330,8 +365,10 @@ static void a_batch_round_trips(void) {
     size_t ends[NB];
     size_t len = encode_batches(buf, sizeof buf, ends);
     T_EQ_INT(decode_all(buf, len), NB * PER);
-    // A move costs a few bytes: 20 moves of 5 games under a 9-byte-per-move bound, headers included.
-    T_CHECK(ends[1] - ends[0] < 9 * PER);
+    // A move costs a few bytes: under 6 bytes a coded move, a batch's header included.
+    int moves = 0;
+    for (int i = 0; i < PER; i++) moves += g_in[1][i].n_mv;
+    T_CHECK(ends[1] - ends[0] < (size_t)(6 * moves));
 }
 
 static void a_torn_or_corrupt_tail_drops_only_itself(void) {
@@ -396,9 +433,8 @@ static void child_play(const char *path, const char *gid, int fd) {
     cb_store *s = open_world(path, true, err, sizeof err);
     if (!s) _exit(3);
     move_t m;
-    while (next_move(s, gid, &m)) {
-        int64_t v = play(gid, &m);
-        if (v < 0) continue;
+    int64_t v;
+    while ((v = step(s, gid, &m)) > 0) {
         ack_t a = { v, row_hash(s, gid) };
         if (write(fd, &a, sizeof a) != sizeof a) _exit(4);
     }
@@ -409,7 +445,7 @@ static void every_acknowledged_move_survives_a_sigkill(void) {
     int compared = 0;
     for (int round = 0; round < 6; round++) {
         char path[320], err[256] = "";
-        snprintf(path, sizeof path, "%s/k%d.sqlite", g_dir, round);
+        snprintf(path, sizeof path, "%s/k%d%d.sqlite", g_dir, g_bots, round);
         cb_store *s = open_world(path, true, err, sizeof err);
         T_CHECK(s != NULL);
         if (!s) return;
@@ -503,8 +539,8 @@ static void sql_dump(const char *path, const char *gid, uint64_t *games, uint64_
 
 static void the_flush_writes_the_rows_per_move_commits_write(void) {
     char pa[320], pb[320], err[256] = "";
-    snprintf(pa, sizeof pa, "%s/plain.sqlite", g_dir);
-    snprintf(pb, sizeof pb, "%s/journaled.sqlite", g_dir);
+    snprintf(pa, sizeof pa, "%s/plain%d.sqlite", g_dir, g_bots);
+    snprintf(pb, sizeof pb, "%s/journaled%d.sqlite", g_dir, g_bots);
     // The game, dealt on the plain store, and the same row imported into the journaled one.
     cb_store *a = open_world(pa, false, err, sizeof err);
     T_CHECK(a != NULL);
@@ -519,7 +555,14 @@ static void the_flush_writes_the_rows_per_move_commits_write(void) {
     cb_uuid humans[2];
     snprintf(humans[0], sizeof humans[0], "%s", UID_A);
     snprintf(humans[1], sizeof humans[1], "%s", UID_B);
-    T_EQ_INT(CB_ROWS_CALL(b, game_import, &dealt, humans, 2, NULL, 0), CB_OK);
+    cb_uuid bots[CB_MAX_SEATS];
+    int n_bots = 0;
+    Roster ro;
+    T_EQ_INT(roster_decode(&ro, dealt.roster, (int)dealt.roster_len), ROSTER_OK);
+    for (int i = 0; i < ro.n; i++)
+        if (ro.seats[i].brain_len) snprintf(bots[n_bots++], sizeof bots[0], "%.*s", (int)ro.seats[i].id_len, (const char *)ro.seats[i].id);
+    const int64_t v_dealt = dealt.version;
+    T_EQ_INT(CB_ROWS_CALL(b, game_import, &dealt, humans, g_bots ? 1 : 2, bots, n_bots), CB_OK);
     close_world(b);
     cb_game_row_free(&dealt);
     // The same moves at the same times on each, one store open at a time (the row cache is the process's).
@@ -527,7 +570,7 @@ static void the_flush_writes_the_rows_per_move_commits_write(void) {
     move_t ms[40];
     int n = 0;
     a = open_world(pa, false, err, sizeof err);
-    for (; n < 40 && next_move(a, gid, &ms[n]); n++) T_CHECK(play(gid, &ms[n]) > 0);
+    for (; n < 40 && step(a, gid, &ms[n]) > 0; n++) {}
     uint64_t ha = row_hash(a, gid);
     close_world(a);
     g_now = t0;
@@ -542,7 +585,7 @@ static void the_flush_writes_the_rows_per_move_commits_write(void) {
     T_CHECK(gb != ga);
     cb_journal_stats js;
     cb_journal_stats_get(b, &js);
-    T_EQ_INT(js.records, n);
+    T_EQ_INT(js.records, version_of(b, gid) - v_dealt);   // every commit since the deal, bot cycles too
     T_EQ_INT(cb_journal_flush(b), CB_OK);
     sql_dump(pb, gid, &gb, &mb, &nb);
     T_CHECK(gb == ga);
@@ -562,7 +605,7 @@ static int file_put(void *ud, const char *key, const char *path) {
 
 static void a_backup_mid_game_holds_every_acknowledged_move(void) {
     char path[320], err[256] = "";
-    snprintf(path, sizeof path, "%s/live.sqlite", g_dir);
+    snprintf(path, sizeof path, "%s/live%d.sqlite", g_dir, g_bots);
     cb_store *s = open_world(path, true, err, sizeof err);
     T_CHECK(s != NULL);
     if (!s) return;
@@ -572,18 +615,18 @@ static void a_backup_mid_game_holds_every_acknowledged_move(void) {
     two_humans_dealt(gid);
     move_t m;
     int64_t v = -1;
-    for (int i = 0; i < 12 && next_move(s, gid, &m); i++) v = play(gid, &m);
+    for (int i = 0; i < 12 && (v = step(s, gid, &m)) > 0; i++) {}
     T_CHECK(v > 0);
     uint64_t h = row_hash(s, gid);
     cb_blob blob = { file_put, NULL, g_dir };
-    cb_backup *bk = cb_backup_start(&g_ctx, &blob, "backup.sqlite", 0);
+    cb_backup *bk = cb_backup_start(&g_ctx, &blob, g_bots ? "backup1.sqlite" : "backup0.sqlite", 0);
     T_CHECK(bk != NULL);
     T_EQ_INT(cb_backup_once(bk), 1);
     cb_backup_stop(bk);
     close_world(s);
     // The copy alone, opened with no journal: the game at the last acknowledged move.
     char copy[320];
-    snprintf(copy, sizeof copy, "%s/backup.sqlite", g_dir);
+    snprintf(copy, sizeof copy, "%s/backup%d.sqlite", g_dir, g_bots);
     s = open_world(copy, false, err, sizeof err);
     T_CHECK(s != NULL);
     if (!s) return;
@@ -601,9 +644,12 @@ int main(void) {
     T_RUN(a_batch_round_trips);
     T_RUN(a_torn_or_corrupt_tail_drops_only_itself);
     T_RUN(a_move_off_its_board_is_refused);
-    T_RUN(the_flush_writes_the_rows_per_move_commits_write);
-    T_RUN(a_backup_mid_game_holds_every_acknowledged_move);
-    T_RUN(every_acknowledged_move_survives_a_sigkill);
+    for (int b = 0; b < 2; b++) {
+        g_bots = b;
+        T_RUN(the_flush_writes_the_rows_per_move_commits_write);
+        T_RUN(a_backup_mid_game_holds_every_acknowledged_move);
+        T_RUN(every_acknowledged_move_survives_a_sigkill);
+    }
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
     (void)system(cmd);

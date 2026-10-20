@@ -34,7 +34,9 @@
 //               (old)   uniform over 2: 0 the move follows the slot's last one, 1 a varint
 //                       version follows (the game was written around the journal between)
 //               ms      varint, the move's ms - base
-//               move    replay_move_code
+//               kind    uniform over 2: 0 a human's move, 1 a bot cycle, then the cycle's
+//                       moves less one, uniform over BOT_DRIVE_MAX_ACTIONS
+//               moves   replay_move_code each, on the board the one before it left
 #ifndef CB_JOURNAL_H
 #define CB_JOURNAL_H
 
@@ -46,12 +48,13 @@
 
 typedef struct cb_journal cb_journal;
 
-// Replays one move at start: `row` is the game as it stood before it, `now_ms` the move's
-// time. Fills *out (owned byte fields) with the row the commit wrote and *log with the
+// Replays one record at start: `row` is the game as it stood before it (a bot cycle also gets
+// the game's session log, which seeds its moves), m the record. Fills *out (owned byte fields) with the row the commit wrote and *log with the
 // session-log records it appended (malloc'd, may be NULL with len 0). CB_OK, or anything
 // else to refuse the start.
-typedef int (*cb_journal_apply_fn)(void *ud, const cb_game_row *row, int64_t now_ms, const ReplayMove *mv,
-                                   cb_game_row *out, uint8_t **log, size_t *log_len);
+struct cb_jmove;
+typedef int (*cb_journal_apply_fn)(void *ud, const cb_game_row *row, const uint8_t *session_log, size_t session_log_len,
+                                   const struct cb_jmove *m, cb_game_row *out, uint8_t **log, size_t *log_len);
 
 typedef struct {
     const char *path;          // the database's path: segments are <path>-journal.<seq>
@@ -81,11 +84,14 @@ typedef struct {
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 
 // ---- the batch codec (pure; unit_journal) ------------------------------------------------
-typedef struct {
+// One record: one commit of one game, a human's move or a bot cycle's moves.
+typedef struct cb_jmove {
     char       game[CB_GAME_ID_MAX + 1];
-    int64_t    base_version;   // the game's version before the move
+    int64_t    base_version;   // the game's version before the commit
     int64_t    now_ms;
-    ReplayMove mv;
+    bool       bots;           // a bot drive's cycle (bot_drive.h), else one human move
+    int        n_mv;           // 1 for a human's; 1..BOT_DRIVE_MAX_ACTIONS for a cycle's
+    ReplayMove mv[BOT_DRIVE_MAX_ACTIONS];
 } cb_jmove;
 
 // A segment's slot table: the games it named, in order.

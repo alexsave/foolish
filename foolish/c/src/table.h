@@ -467,6 +467,12 @@ int table_set_session_log(Table *t, const uint8_t *log, int len);
 // malformed prefs blob, TABLE_E_NOT_LOADED.
 int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actions, BotDriveOut *out);
 
+// The seeding table_bot_drive gives each decision of its next cycle on the loaded
+// board (the deal seed's base and the session log's length past the board's
+// records): what a host replaying that cycle's moves elsewhere seeds with
+// (replay_move.h replay_move_drive_walk). Ask before the drive.
+void table_drive_seeding(const Table *t, uint32_t *rng_base, uint32_t *log_offset);
+
 // The preferred moves to offer a retry of this cycle: the ones the drive was
 // offered, overlaid with what it applied (one per seat, the latest winning).
 // Returns the blob's length, or TABLE_E_CAP.
