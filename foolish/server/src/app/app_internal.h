@@ -76,6 +76,9 @@ typedef struct cb_section {
     uint8_t     arena[CB_ARENA_BYTES];
     int         arena_hw;         // bytes of the arena a products call may have written (cb_section_free zeroes that prefix)
     bool        in_use, pooled;   // cb_section_new's own: the worker thread's reusable one, and whether it is handed out
+    // The bot cycle's scratch board (cb_bots_journal_moves_before), made on first use and kept
+    // with the section: freed with it (cb_section_free of an unpooled one, or the thread's exit).
+    Game       *walk;
 } cb_section;
 
 cb_section *cb_section_new(void);

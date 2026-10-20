@@ -202,13 +202,18 @@ static bool logs_poisoned(void) {
 static pthread_key_t  g_section_key;
 static pthread_once_t g_section_once = PTHREAD_ONCE_INIT;
 static bool           g_section_key_ok;
-static void section_at_exit(void *p) { free(p); }   // a thread ends with nothing out
+static void section_release(cb_section *s) {   // the section and what it keeps
+    if (!s) return;
+    free(s->walk);
+    free(s);
+}
+static void section_at_exit(void *p) { section_release(p); }   // a thread ends with nothing out
 static void section_key_make(void) { g_section_key_ok = pthread_key_create(&g_section_key, section_at_exit) == 0; }
 
 // Frees the calling thread's kept section (not while one is out). For a leak-counting test.
 void cb_section_drain(void) {
     if (t_section && !t_section->in_use) {
-        free(t_section);
+        section_release(t_section);
         t_section = NULL;
         if (g_section_key_ok) pthread_setspecific(g_section_key, NULL);
     }
@@ -255,7 +260,7 @@ static void arena_note(cb_section *s, int rc) {
 
 void cb_section_free(cb_section *s) {
     if (!s) return;
-    if (!s->pooled) { free(s); return; }
+    if (!s->pooled) { section_release(s); return; }
     // calloc's zeros back: the board, the table through the commit, and the
     // arena prefix the products wrote (the rest was never written).
     memset(&s->g, 0, offsetof(Game, logs));   // every field but the log array (see t_section)
@@ -760,17 +765,17 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
 
 // ---- the journal's replay (journal.h cb_journal_apply_fn) ------------------------------------
 
-// A scratch board per thread for the bot cycle's moves (replay_move_drive_walk plays on it).
-static _Thread_local Game *t_walk;
-static Game *walk_board(const Game *from) {
-    if (!t_walk && !(t_walk = malloc(sizeof *t_walk))) return NULL;
-    memcpy(t_walk, from, sizeof *t_walk);
-    return t_walk;
+// The section's scratch board for a bot cycle's moves (replay_move_drive_walk plays on it),
+// a copy of its board; NULL when out of memory.
+static Game *walk_board(cb_section *s) {
+    if (!s->walk && !(s->walk = malloc(sizeof *s->walk))) return NULL;
+    memcpy(s->walk, &s->g, sizeof *s->walk);
+    return s->walk;
 }
 
 int cb_bots_journal_moves_before(cb_section *s, Game **board, uint32_t *base, uint32_t *off) {
     table_drive_seeding(&s->t, base, off);
-    *board = walk_board(&s->g);
+    *board = walk_board(s);
     return *board ? CB_OK : CB_E_NOMEM;
 }
 
@@ -817,7 +822,7 @@ int cb_table_replay_move(void *ud, const cb_game_row *row, const uint8_t *sessio
         kr = table_set_session_log(&s->t, session_log, (int)session_log_len);
         uint32_t base, off;
         table_drive_seeding(&s->t, &base, &off);
-        Game *board = kr >= 0 ? walk_board(&s->g) : NULL;
+        Game *board = kr >= 0 ? walk_board(s) : NULL;
         BotDriveOut want, drv;
         memset(&want, 0, sizeof want);
         uint8_t prefs[1024];
