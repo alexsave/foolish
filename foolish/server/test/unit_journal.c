@@ -1398,6 +1398,92 @@ static void a_torn_or_corrupt_whole_commit_is_dropped(void) {
     }
 }
 
+// WHOLE COMMITS AS RECOVERY READS THEM, made by hand: a record whose fields do not add up is
+// dropped with what follows it (it was never acknowledged), one for a game that is gone or
+// that the tables already hold past it is skipped, and one that continues from a version the
+// tables have not reached refuses the start.
+static void le(uint8_t *p, uint64_t v, int n) { for (int i = 0; i < n; i++) p[i] = (uint8_t)(v >> (8 * i)); }
+
+// One 'R' frame at out: its length. idl < 0: the id's real length; tail: extra payload bytes.
+static size_t full_frame(uint8_t *out, const char *id, int idl, int64_t base, uint8_t flags, uint32_t state_len,
+                         uint32_t state_claim, int tail) {
+    uint8_t *q = out + 12;
+    const size_t n = strlen(id);
+    *q++ = (uint8_t)(idl < 0 ? (int)n : idl);
+    memcpy(q, id, n), q += n;
+    le(q, (uint64_t)base, 8), q += 8;
+    le(q, 1760000000000ULL, 8), q += 8;
+    *q++ = flags;
+    *q++ = 0;   // status: a lobby
+    for (int i = 0; i < 3; i++) le(q, 0, 8), q += 8;
+    if (flags & 2) memset(q, 7, 32), q += 32;
+    le(q, state_claim, 4), q += 4;
+    memset(q, 0, state_len), q += state_len;
+    le(q, 0, 4), q += 4;   // roster
+    le(q, 0, 4), q += 4;   // log
+    memset(q, 0, (size_t)tail), q += tail;
+    const uint32_t plen = (uint32_t)(q - out - 12);
+    out[0] = 'R', out[1] = 1, out[2] = out[3] = 0;
+    le(out + 8, plen, 4);
+    le(out + 4, fnv1a32(fnv1a32(FNV32_OFFSET, out + 8, 4), out + 12, plen), 4);
+    return 12 + plen;
+}
+
+static void write_segment(const char *db, const uint8_t *frames, size_t n) {
+    char seg[600];
+    snprintf(seg, sizeof seg, "%s-journal.%016llu", db, 1000ULL);
+    FILE *f = fopen(seg, "wb");
+    uint8_t h[16] = { 'F', 'J', 'N', 'L' };
+    le(h + 4, 1, 4);
+    le(h + 8, 1760000000000ULL, 8);
+    if (f) { fwrite(h, 1, 16, f); fwrite(frames, 1, n, f); fclose(f); }
+}
+
+static void crafted_whole_commits_recover_or_refuse(void) {
+    char path[320], err[256] = "";
+    // A game the tables hold at version 1 (created, one lobby edit), no journal.
+    snprintf(path, sizeof path, "%s/crafted.sqlite", g_dir);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, false, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    reply r;
+    call("create", "A", NULL, 0, &r);
+    char gid[CB_GAME_ID_MAX + 1] = "";
+    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    meta("B", ASK_JOIN, gid, &r);
+    T_EQ_INT(-version_of(s, gid), 1);
+    close_world(s);
+    // The journal's own checks of its arguments.
+    s = open_world(path, false, err, sizeof err);
+    cb_journal_opts bad = { 0 };
+    T_EQ_INT(cb_journal_open(s, &bad, err, sizeof err), CB_E_INVALID);
+    close_world(s);
+    static uint8_t fr[4096];
+    struct { const char *id; int idl; int64_t base; uint8_t flags; uint32_t sl, claim; int tail; bool opens; } c[] = {
+        { "aaaaaaaaaaaa", 0, 0, 0, 4, 4, 0, true },          // an empty id: dropped
+        { "aaaaaaaaaaaa", 17, 0, 0, 4, 4, 0, true },         // an id past CB_GAME_ID_MAX: dropped
+        { "aaaaaaaaaaaa", 13, 0, 0, 4, 4, 0, true },         // an id one byte longer than written: dropped
+        { "aaaaaaaaaaaa", -1, 0, 0, 4, 400, 0, true },       // a state longer than the record: dropped
+        { gid, -1, 1, 0, 4, 4, 3, true },                    // bytes past the last field (else a commit that fits): dropped
+        { "aaaaaaaaaaaa", -1, 0, 2, 4, 4, 0, true },         // a game that is gone (seeded): skipped
+        { gid, -1, 0, 0, 4, 4, 0, true },                    // a commit the tables hold already: skipped
+        { gid, -1, 5, 0, 4, 4, 0, false },                   // from a version the tables have not reached: refused
+    };
+    for (size_t i = 0; i < sizeof c / sizeof c[0]; i++) {
+        char db[340];
+        snprintf(db, sizeof db, "%s/crafted%zu.sqlite", g_dir, i);
+        crash_copy(path, db);
+        const size_t n = full_frame(fr, c[i].id, c[i].idl, c[i].base, c[i].flags, c[i].sl, c[i].claim, c[i].tail);
+        write_segment(db, fr, n);
+        s = open_world(db, true, err, sizeof err);
+        T_EQ_INT(s != NULL, c[i].opens);
+        if (!s) continue;
+        T_EQ_INT(-version_of(s, gid), 1);   // the game as the tables hold it
+        close_world(s);
+    }
+}
+
 // THE RESIDENCY CAP: past opts.max_games the least recently touched idle games leave at the
 // flush thread's pass, and a game with moves waiting never does.
 static void the_overlay_keeps_at_most_its_cap(void) {
@@ -2015,6 +2101,7 @@ int main(void) {
     T_RUN(a_resident_the_tables_contradict_is_dropped);
     T_RUN(the_overlay_keeps_at_most_its_cap);
     T_RUN(a_torn_or_corrupt_whole_commit_is_dropped);
+    T_RUN(crafted_whole_commits_recover_or_refuse);
     T_RUN(no_row_cache_beside_the_overlay);
     for (int b = 0; b < 2; b++) {
         g_bots = b;
