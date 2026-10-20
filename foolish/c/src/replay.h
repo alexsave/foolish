@@ -408,4 +408,37 @@ typedef struct {
 int replay_decode_atoms_v6(const unsigned char *in, int in_len,
                            ReplayHeader *hdr, ReplayAtomSink sink, void *ctx);
 
+// ---------- the coder, for a host's own stream -----------------------------
+//
+// The exact rANS coder every code above is cut with, for a host that codes a
+// stream of its own (c_base's move journal): a choice is an index into a menu
+// of n options (uniform), costing log2(n) bits and nothing for n == 1. Choices
+// are recorded by an encode and pushed in reverse at finish, so a decode pops
+// them in the order they were coded. The state is per thread (the codec's
+// scratch): one encode or decode at a time on a thread. n must stay at or below
+// REPLAY_CODER_MAX_N (the coder's integer arithmetic), and a finished integer at
+// or below REPLAY_MAX_INT_BYTES, or the call fails with REPLAY_ECAP.
+#define REPLAY_CODER_MAX_N (1 << 20)
+struct ReplayBn;
+typedef struct ReplayCoder {
+    bool encode;
+    int n_rec;               // encode: choices recorded so far
+    struct ReplayBn *x;      // decode: the shrinking integer
+    int err;                 // the first REPLAY_E* hit; every later call codes nothing
+} ReplayCoder;
+// 0, or -REPLAY_ECAP (no scratch, or an integer over REPLAY_MAX_INT_BYTES).
+int replay_coder_begin_encode(ReplayCoder *c);
+int replay_coder_begin_decode(ReplayCoder *c, const unsigned char *in, int len);
+// Encode: codes `chosen` (0 <= chosen < n) and returns it. Decode: returns the
+// choice read (`chosen` ignored). On an error both return 0 and set c->err.
+int replay_coder_uniform(ReplayCoder *c, int n, int chosen);
+// v6's varint (7 bits per 256-way choice): encode codes v, decode returns it.
+uint32_t replay_coder_varint(ReplayCoder *c, uint32_t v);
+// Encode only: the integer's bytes (big-endian, 0 bytes when every choice was
+// 0), or -REPLAY_E*.
+int replay_coder_finish(ReplayCoder *c, unsigned char *out, int cap);
+// Decode only: every bit of the integer was read (a stream with bytes left over
+// is not the stream that was coded).
+bool replay_coder_exhausted(const ReplayCoder *c);
+
 #endif

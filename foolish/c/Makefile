@@ -69,7 +69,7 @@ CFLAGS += -DCD_PASS_PROBE
 
 # The engine + all heuristic / Monte-Carlo bots: the kernel, as a host that
 # serves games links it (c_base reads it through print-kernel).
-KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/replay.c src/replay_steps.c \
+KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/replay.c src/replay_move.c src/replay_steps.c \
             src/replay_extras.c src/view.c src/awire.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \

@@ -84,7 +84,7 @@ int replay_stat_max_bn = 0;
 #define STAT_MAX(v, x) do { } while (0)
 #endif
 
-typedef struct { int n; uint32_t l[BN_CAP]; } Bn;
+typedef struct ReplayBn { int n; uint32_t l[BN_CAP]; } Bn;
 #ifdef CD_WASM_OVERLAY
 // M8: g_bn aliases into solve_ws (see wasm_overlay.h). Written-before-read every
 // call (bn_zero / bn_from_bytes_be / coder_finish set .n before any read).
@@ -211,12 +211,9 @@ static bool coder_scratch_ready(void) {
 }
 #endif
 
-typedef struct {
-    bool encode;
-    int n_rec;  // encode: choices recorded so far
-    Bn *x;      // decode: the shrinking integer
-    int err;
-} Coder;
+// The coder's state is replay.h's ReplayCoder: a host codes its own stream on it
+// (replay_coder_*, below), and every field means what it means here.
+typedef ReplayCoder Coder;
 
 static int coder_code(Coder *c, const uint32_t *w, int len, int chosen) {
     if (c->err) return 0;
@@ -946,6 +943,45 @@ static void code_varint(Coder *c, uint32_t *val) {
         *val = v;
     }
 }
+
+/* ----------------------- the coder, for a host's stream -------------------- */
+// replay.h "the coder, for a host's own stream". The same primitives the code
+// above is cut with, so a host never carries a second entropy coder.
+
+int replay_coder_begin_encode(ReplayCoder *c) {
+    memset(c, 0, sizeof *c);
+    c->encode = true;
+    return coder_scratch_ready() ? 0 : -REPLAY_ECAP;
+}
+
+int replay_coder_begin_decode(ReplayCoder *c, const unsigned char *in, int len) {
+    memset(c, 0, sizeof *c);
+    if (len < 0 || len > REPLAY_MAX_INT_BYTES) return -REPLAY_ECAP;
+    if (!coder_scratch_ready()) return -REPLAY_ECAP;
+    if (!bn_from_bytes_be(&g_bn, in, len)) return -REPLAY_ECAP;
+    c->x = &g_bn;
+    return 0;
+}
+
+int replay_coder_uniform(ReplayCoder *c, int n, int chosen) {
+    if (!c->err && n > REPLAY_CODER_MAX_N) c->err = REPLAY_ECAP;
+    return coder_uniform(c, n, chosen);
+}
+
+uint32_t replay_coder_varint(ReplayCoder *c, uint32_t v) {
+    code_varint(c, &v);
+    return v;
+}
+
+int replay_coder_finish(ReplayCoder *c, unsigned char *out, int cap) {
+    if (c->err) return -c->err;
+    if (!c->encode) return -REPLAY_EINPUT;
+    if (!coder_finish(c, &g_bn)) return -REPLAY_ECAP;
+    int len = bn_to_bytes_be(&g_bn, out, cap);
+    return len < 0 ? -REPLAY_ECAP : len;
+}
+
+bool replay_coder_exhausted(const ReplayCoder *c) { return !c->encode && c->x && bn_is_zero(c->x); }
 
 /* ------------------------------ info source ------------------------------ */
 // Encode-side reader over the action stream, from either of two sources:
