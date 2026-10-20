@@ -150,7 +150,7 @@ function memLimits(wasm: Uint8Array): { min: number; max: number | null } {
     throw new Error('no memory section');
 }
 
-test("web.wasm declared INITIAL memory is 26 pages", () => {
+test("web.wasm declared INITIAL memory is 27 pages", () => {
     // A LINKER FACT, not a second budget. wasm-ld keeps a static only if
     // something an export reaches refers to it, so dropping the bot bridge and
     // the C Table from the browser's export list drops their buffers with their
@@ -185,10 +185,19 @@ test("web.wasm declared INITIAL memory is 26 pages", () => {
     // may cut a packet across messages, and a pushed message's payload is read
     // where it lies until the next feed. g_frame stays for the envelope a
     // refetch answer hands out as an event.
+    //
+    // 27, RAISED from 26 on purpose: the browser rebuilds a delta cast
+    // (c/src/evwire.h EVW_CAST_DELTA) into the board cast the server no longer
+    // sends, in the slot's ClientDelta (c/src/client_table.h), 32,160 B at the
+    // web's caps: the kept board as a game with room for one commit's 33 log
+    // records (5,132 B), the 24 hook snapshots its moves may fire (18,624 B:
+    // the Game prefix the event walk reads, 776 B each with MAX_BATTLES 64) and
+    // the rebuilt sequence (8,192 B). It buys every move's cast at about a
+    // tenth of the bytes, for every tab and the server.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/web.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 26,
-        `web.wasm initial memory is ${min} pages (${min * PAGE} B); expected 26. `
+    assert.equal(min, 27,
+        `web.wasm initial memory is ${min} pages (${min * PAGE} B); expected 27. `
         + 'Up means the browser\'s link started keeping a static it used to drop - look at what '
         + 'was added to c/Makefile WASM_WEB_NAMES, because an export is a GC root and roots the '
         + 'data its code reads. Down means something was freed: lower this pin in the same commit.');
