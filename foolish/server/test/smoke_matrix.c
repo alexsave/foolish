@@ -1100,6 +1100,7 @@ static void hidden_card_game(void) {
     T_CHECK(g_a.status == 200 && g_a.len == TABLE_RESP_BYTES && table_response_decode(g_a.body, g_a.len, &tr) == 0 &&
             tr.status == TABLE_STATUS_MOOT);
     close(sA.fd); close(sB.fd); close(sC.fd); close(sD.fd);
+    free(sA.rd); free(sC.rd);
     // E keeps a socket open across the deletion below.
     g_deleted_sock = sE;
 }
@@ -1302,6 +1303,8 @@ static void account_deletion(void) {
     if (heard_after) fprintf(stderr, "deletion: the deleted user's open stream heard %d more frames\n", heard_after);
     T_EQ_INT(heard_after, 0);
     close(sE->fd);
+    free(sE->rd);
+    sE->rd = NULL;
     // A new socket with the same, still unexpired, token is refused at CONNECT.
     sock again_s;
     ws_open(&again_s, "deleted user", 1, G3, true);
