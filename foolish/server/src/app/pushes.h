@@ -28,6 +28,9 @@ extern const cb_topic_family *const cb_foolish_topics[4];
 
 // CB_RT_VIEWS: NW_WS_VIEW {game, version, envelope}; `gone` sends the view
 // with no envelope (the seat is no longer the user's).
+// Frees the calling thread's kept push buffer (a leak-counting test).
+void cb_pushes_drain(void);
+
 void rt_publish_view(cb_rt *rt, const char *user_id, const cb_view_row *row, bool gone);
 // CB_RT_SEAT for user_id, or CB_RT_WATCH when it is NULL: NW_WS_CAST {game, version, cast}.
 void rt_publish_cast(cb_rt *rt, const char *user_id, const char *game_id, int64_t version, const uint8_t *cast, size_t len);

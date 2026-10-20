@@ -2,6 +2,8 @@
 // publish builds its netwire.h frame once and hands it to the stream.
 #include "pushes.h"
 
+#include <pthread.h>
+
 #include "netwire.h"
 #include "../../../../shared/c/stream_frame.h"
 #include "realtime/stream_mqtt.h"
@@ -9,6 +11,7 @@
 #include "util/log.h"
 #include "util/str.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,20 +28,43 @@ const cb_topic_family cb_fam_watch = { "watch", "s/{doc}" };
 const cb_topic_family cb_fam_chat = { "chat", "u/{user}/m/{doc}" };
 const cb_topic_family *const cb_foolish_topics[4] = { &cb_fam_views, &cb_fam_seat, &cb_fam_watch, &cb_fam_chat };
 
+// The thread's push buffer, on the heap so that it goes with the thread: a _Thread_local has no
+// destructor in C, the key's destructor frees it (as table_ops.c's section).
+static _Thread_local cb_buf *t_push;
+static pthread_key_t  g_push_key;
+static pthread_once_t g_push_once = PTHREAD_ONCE_INIT;
+static bool           g_push_key_ok;
+static void push_at_exit(void *p) { cb_buf_free(p); free(p); }
+static void push_key_make(void) { g_push_key_ok = pthread_key_create(&g_push_key, push_at_exit) == 0; }
+
+void cb_pushes_drain(void) {
+    if (!t_push) return;
+    if (g_push_key_ok) pthread_setspecific(g_push_key, NULL);
+    push_at_exit(t_push);
+    t_push = NULL;
+}
+
 // The frame, encoded once, to each of `to[0..n)`.
 static void publish(cb_rt *rt, const cb_rt_to *to, int n, const NwFrame *f) {
     if (!rt || !rt->t) return;
     size_t cap = 96 + (size_t)f->blob.len + (f->kind == NW_WS_CHAT ? NW_CHAT_MAX + 2 * NW_ID_MAX : 0);
-    cb_buf b;
-    cb_buf_init(&b);
-    int len = cb_buf_reserve(&b, cap) ? nw_frame_encode(f, b.p, (int)cap) : -1;
+    // The thread's own buffer, kept between pushes (a malloc and a free per push before): every
+    // transport copies the frame before cb_rt_publish returns (a held batch too, realtime.c hold).
+    // One far larger than usual is not kept.
+    if (!t_push && (t_push = calloc(1, sizeof *t_push)) != NULL) {
+        pthread_once(&g_push_once, push_key_make);
+        if (g_push_key_ok) pthread_setspecific(g_push_key, t_push);
+    }
+    cb_buf *b = t_push;
+    if (b) cb_buf_reset(b);
+    int len = b && cb_buf_reserve(b, cap) ? nw_frame_encode(f, b->p, (int)cap) : -1;
     if (len < 0) {
         CB_ERROR("realtime", "a push of kind %d for game %.*s was not written (%d)", f->kind, (int)f->gid_len, f->gid, len);
         cb_rt_failures_add(n);
     } else {
-        cb_rt_publish(rt, to, n, b.p, (size_t)len);
+        cb_rt_publish(rt, to, n, b->p, (size_t)len);
     }
-    cb_buf_free(&b);
+    if (b && (b->oom || b->cap > 64 * 1024)) cb_buf_free(b);
 }
 
 static void frame_gid(NwFrame *f, const char *game_id) {
