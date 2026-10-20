@@ -386,13 +386,24 @@ int cb_section_envelope(cb_section *s, int viewer, uint32_t version, uint8_t **o
 // the section and costs no allocation (*owned false). Only when the arena's rest is too small
 // (a deal's push carries every snapshot's events) is it built in a per-thread 64 KB scratch and
 // malloc'd at its own size (*owned true: the caller frees it).
-static int section_cast(cb_section *s, int viewer, uint32_t version, const uint8_t **out, size_t *out_len, bool *owned) {
+//
+// `delta`: the commit goes as delta casts (config.h CBASE_CAST_DELTA, when the kernel's
+// table_cast_delta_ok allows it), each with the commit's one `public_check`.
+typedef struct { bool delta; uint32_t public_check; } cast_kind;
+
+static int cast_write(cb_section *s, const cast_kind *k, int viewer, uint32_t version, uint8_t *out, int cap) {
+    return k->delta ? table_cast_delta(&s->t, viewer, version, k->public_check, out, cap)
+                    : table_cast(&s->t, s->gid, (int)strlen(s->gid), viewer, version, out, cap);
+}
+
+static int section_cast(cb_section *s, const cast_kind *k, int viewer, uint32_t version, const uint8_t **out,
+                        size_t *out_len, bool *owned) {
     enum { CAST_CAP = 64 * 1024 };
     *owned = false;
     const int at = s->arena_hw, room = (int)sizeof s->arena - at;
     // The kernel's writers are cursors: a cast that fits wrote [at, at + n) and nothing past it;
     // one that did not may have written its whole room, which cb_section_free then zeroes.
-    int n = room > 0 ? table_cast(&s->t, s->gid, (int)strlen(s->gid), viewer, version, s->arena + at, room) : -1;
+    int n = room > 0 ? cast_write(s, k, viewer, version, s->arena + at, room) : -1;
     if (n >= 0) {
         s->arena_hw = at + n;
         *out = s->arena + at;
@@ -401,7 +412,7 @@ static int section_cast(cb_section *s, int viewer, uint32_t version, const uint8
     }
     if (room > 0) s->arena_hw = (int)sizeof s->arena;
     static _Thread_local uint8_t buf[CAST_CAP];
-    n = table_cast(&s->t, s->gid, (int)strlen(s->gid), viewer, version, buf, CAST_CAP);
+    n = cast_write(s, k, viewer, version, buf, CAST_CAP);
     if (n < 0) {
         CB_ERROR("table", "game %s: cast for viewer %d refused (%d)", s->gid, viewer, n);
         return CB_E_STATE;
@@ -955,6 +966,8 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // fan-out copies what it holds, fanout.c cb_after_fanout). A cast the arena could not hold
     // is malloc'd (cast_owned) and freed below.
     bool cast_owned[CB_MAX_SEATS] = { false }, spectator_owned = false;
+    cast_kind ck = { ctx->cfg && ctx->cfg->cast_delta && table_cast_delta_ok(t), 0 };
+    if (ck.delta) ck.public_check = table_public_check(t);
     rc = CB_OK;
     for (int i = 0; i < t->r.n && rc == CB_OK; i++) {
         const RosterSeat *seat = &t->r.seats[i];
@@ -962,9 +975,9 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         seat_id(seat, f.seats[i].user_id);
         f.seats[i].envelope = A + c->views[i].off;
         f.seats[i].envelope_len = (size_t)c->views[i].len;
-        rc = section_cast(s, i, next, &f.seats[i].cast, &f.seats[i].cast_len, &cast_owned[i]);
+        rc = section_cast(s, &ck, i, next, &f.seats[i].cast, &f.seats[i].cast_len, &cast_owned[i]);
     }
-    if (rc == CB_OK) rc = section_cast(s, -1, next, &f.spectator_cast, &f.spectator_cast_len, &spectator_owned);
+    if (rc == CB_OK) rc = section_cast(s, &ck, -1, next, &f.spectator_cast, &f.spectator_cast_len, &spectator_owned);
     for (int i = 0; i < f.n_seats; i++) {
         if (!f.seats[i].user_id[0]) continue;
         if (!in_list(s->old_humans, s->n_old, f.seats[i].user_id)) cb_strlcpy(f.joined[f.n_joined++], f.seats[i].user_id, sizeof(cb_uuid));

@@ -109,6 +109,7 @@ static inline int64_t I64(double d) { return (int64_t)d; }
     E(P, wasm_table_ask_ptr, 0, ()) \
     E(I, wasm_table_bot_drive, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_table_cast, 3, (I64(a[0]), I64(a[1]), a[2])) \
+    E(I, wasm_table_cast_delta, 2, (I64(a[0]), a[1])) \
     E(I, wasm_table_commit_products, 3, (I64(a[0]), a[1], a[2])) \
     E(P, wasm_table_commit_ptr, 0, ()) \
     E(I, wasm_table_continue, 1, (I64(a[0]))) \

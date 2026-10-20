@@ -90,10 +90,11 @@ static void start_server(void) {
     // limit (rate_limits.h, L7) is raised past the matrix's count of them, and
     // its fresh accounts are rated at once (CBASE_RATED_MIN_AGE, M6): it reads the leaderboard.
     char *mem[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", "CBASE_JWT_SECRET=" SECRET, "CBASE_ADMIN_TOKEN=" ADMIN,
-                    "CBASE_DB=:memory:", "CBASE_REQ_WORKERS=4", "CBASE_ADMIN_FAIL_LIMIT=100000", "CBASE_RATED_MIN_AGE=0", NULL };
+                    "CBASE_DB=:memory:", "CBASE_REQ_WORKERS=4", "CBASE_ADMIN_FAIL_LIMIT=100000", "CBASE_RATED_MIN_AGE=0",
+                    "CBASE_CAST_DELTA=1", NULL };
     // Under dynamo the store and table come from the environment the lane exported.
     char *dyn[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", "CBASE_JWT_SECRET=" SECRET, "CBASE_ADMIN_TOKEN=" ADMIN,
-                    "CBASE_REQ_WORKERS=4", "CBASE_ADMIN_FAIL_LIMIT=100000", "CBASE_RATED_MIN_AGE=0", NULL };
+                    "CBASE_REQ_WORKERS=4", "CBASE_ADMIN_FAIL_LIMIT=100000", "CBASE_RATED_MIN_AGE=0", "CBASE_CAST_DELTA=1", NULL };
     char *argv[] = { (char *)g_bin, "serve", NULL };
     T_EQ_INT(tp_start(&g_child, argv, tsb_dynamo() ? dyn : mem), 0);
     T_EQ_INT(tp_wait_line(&g_child, "listening on", 20000, line, sizeof line), 0);
@@ -321,11 +322,63 @@ static void cast_event(void *ud, int index, const EvwRead *ev) {
     if (ev->snap_len && !board_hides(ev->snap, ev->snap_len, c->viewer, NULL, NULL, c->what)) c->ok = false;
 }
 
-// A cast (NW_WS_CAST's blob) for `viewer`.
-static bool cast_hides(const uint8_t *p, int len, int viewer, const char *what) {
+// A socket's kernel client, as a page holds one: what it reads every cast with,
+// and the identity and the board it keeps for the next (client_table.h), so a
+// delta cast (evwire.h EVW_CAST_DELTA) is rebuilt on the board the cast before it
+// left. The rebuilt sequence is judged exactly as a board cast's bytes are.
+typedef struct {
+    ClientTable c;
+    ClientSlot slot;
+    ClientDelta d;
+    uint8_t ident[4096], board[CLIENT_BOARD_KEEP_MAX];
+    int ident_len, board_len;
+    int deltas, behind;   // deltas rebuilt and judged; deltas it had no board for
+} cast_reader;
+
+static cast_reader *reader_new(void) {
+    cast_reader *r = calloc(1, sizeof *r);
+    T_CHECK(r != NULL);
+    if (r) { client_init(&r->c, &r->slot); client_delta_attach(&r->c, &r->d); }
+    return r;
+}
+
+// Reads the open push to its end and keeps what it leaves.
+static int reader_finish(cast_reader *r, int rc) {
+    int k = 0;
+    while (rc == CLIENT_OK && (k = client_push_next(&r->c)) == 1) { }
+    if (rc == CLIENT_OK) rc = k != 0 ? k : client_push_final(&r->c);
+    if (rc != CLIENT_OK) return rc;
+    if (r->c.has_roster) r->ident_len = client_identity(&r->c, r->ident, sizeof r->ident);
+    r->board_len = client_board_keep(&r->c, r->board, sizeof r->board);
+    return CLIENT_OK;
+}
+
+static bool cast_seq_hides(const uint8_t *seq, int seq_len, int viewer, const char *what);
+
+// A delta for `viewer`: what it names and reveals, then the sequence the socket's
+// client rebuilds from it. A delta the client holds no board for is counted
+// (the page would fetch the game), never judged a leak.
+static bool delta_hides(cast_reader *r, const uint8_t *p, int len, int viewer, const char *what) {
+    EvwDelta d;
+    if (evwire_delta_read(p, len, &d) != 0) { fprintf(stderr, "%s: the delta does not read\n", what); return false; }
+    if (d.viewer != viewer) { fprintf(stderr, "%s: a delta for viewer %d, want %d\n", what, d.viewer, viewer); return false; }
+    if (!r) return true;
+    int rc = client_cast_open(&r->c, p, len, r->ident, r->ident_len, r->board, r->board_len);
+    if (rc == CLIENT_E_BEHIND) { r->behind++; return true; }
+    if (rc != CLIENT_OK) { fprintf(stderr, "%s: the delta does not rebuild (%d)\n", what, rc); return false; }
+    if (!cast_seq_hides(r->d.seq, r->d.seq_len - 1, viewer, what)) return false;
+    if ((rc = reader_finish(r, CLIENT_OK)) != CLIENT_OK) { fprintf(stderr, "%s: the rebuilt delta does not read (%d)\n", what, rc); return false; }
+    r->deltas++;
+    return true;
+}
+
+// A cast (NW_WS_CAST's blob) for `viewer`; `r` the socket's client, or NULL.
+static bool cast_hides(cast_reader *r, const uint8_t *p, int len, int viewer, const char *what) {
+    if (len > 0 && p[0] == EVW_CAST_DELTA) return delta_hides(r, p, len, viewer, what);
     uint32_t v;
     int off = evwire_cast_header_get(p, len, &v);
     if (off < 0) { fprintf(stderr, "%s: no cast header\n", what); return false; }
+    if (r && reader_finish(r, client_cast_open(&r->c, p, len, r->ident, r->ident_len, NULL, 0)) != CLIENT_OK) r->board_len = 0;
     int seq_len, flags, block;
     if (evwire_as3_split(p + off, len - off, &seq_len, &flags, &block) != 0) { fprintf(stderr, "%s: not an as3 push\n", what); return false; }
     cast_check c = { viewer, true, what };
@@ -334,6 +387,18 @@ static bool cast_hides(const uint8_t *p, int len, int viewer, const char *what) 
     int fin_len = 0;
     if (evwire_read(p + off, seq_len, &h, &fin, &fin_len, cast_event, &c) < 0) { fprintf(stderr, "%s: the events do not read\n", what); return false; }
     if (h.viewer != viewer) { fprintf(stderr, "%s: a cast for viewer %d, want %d\n", what, h.viewer, viewer); return false; }
+    if (fin_len && !board_hides(fin, fin_len, viewer, NULL, NULL, what)) c.ok = false;
+    return c.ok;
+}
+
+// A rebuilt sequence (the as3 push without its flags byte), judged as a board cast's.
+static bool cast_seq_hides(const uint8_t *seq, int seq_len, int viewer, const char *what) {
+    cast_check c = { viewer, true, what };
+    EvwHeader h;
+    const unsigned char *fin = NULL;
+    int fin_len = 0;
+    if (evwire_read(seq, seq_len, &h, &fin, &fin_len, cast_event, &c) < 0) { fprintf(stderr, "%s: the rebuilt events do not read\n", what); return false; }
+    if (h.viewer != viewer) { fprintf(stderr, "%s: a rebuilt cast for viewer %d, want %d\n", what, h.viewer, viewer); return false; }
     if (fin_len && !board_hides(fin, fin_len, viewer, NULL, NULL, what)) c.ok = false;
     return c.ok;
 }
@@ -357,6 +422,7 @@ typedef struct {
     int  n_view, n_cast, n_chat, n_pong, n_other_game;
     bool leak;            // a packet it should never have had
     bool closed;          // the server closed it (a CLOSE frame)
+    cast_reader *rd;      // its kernel client (sock_prime), NULL for none
     int  close_code;
     uint16_t next_id;
 } sock;
@@ -385,7 +451,7 @@ static void judge_publish(sock *s, const uint8_t *p, int len) {
         s->n_cast++;
         int viewer = f->kind == NW_WS_CAST ? s->seat : -1;   // a seat cast goes only to the user, the spectators' to its watchers
         if (!game_ok) { s->n_other_game++; s->leak = true; }
-        else if (!cast_hides(f->blob.p, (int)f->blob.len, viewer, what)) s->leak = true;
+        else if (!cast_hides(s->rd, f->blob.p, (int)f->blob.len, viewer, what)) s->leak = true;
     } else if (f->kind == NW_WS_CHAT) {
         s->n_chat++;
         if (!s->may_chat || !game_ok) s->leak = true;
@@ -547,6 +613,24 @@ static bool view_of(const user *u, const char *gid, int seat, cardset *own, card
     char what[64];
     snprintf(what, sizeof what, "%s's GET game", u->name);
     return envelope_hides(env.p, (int)env.len, seat, own, seen, version, what);
+}
+
+// The socket's kernel client, primed as a page is when it opens the game: the
+// game's envelope as `u` reads it, its identity and its board kept, so the casts
+// after it - deltas included - are read on it.
+static void sock_prime(sock *s, const user *u) {
+    char path[64];
+    snprintf(path, sizeof path, "/v1/games/%s", s->gid);
+    T_EQ_INT(http("GET", path, u->auth, NULL, 0, NULL), 200);
+    uint32_t v;
+    NwBlob env;
+    T_EQ_INT(nw_view_decode(g_a.body, g_a.len, &v, &env), NW_OK);
+    if (!s->rd) s->rd = reader_new();
+    if (!s->rd) return;
+    T_EQ_INT(client_adopt_envelope(&s->rd->c, env.p, (int)env.len), CLIENT_OK);
+    s->rd->ident_len = client_identity(&s->rd->c, s->rd->ident, sizeof s->rd->ident);
+    s->rd->board_len = client_board_keep(&s->rd->c, s->rd->board, sizeof s->rd->board);
+    T_CHECK(s->rd->ident_len > 0 && s->rd->board_len > 0);
 }
 
 // Every game in u's list is one u sits at (judged as `seat` for `gid`, which
@@ -900,6 +984,9 @@ static void hidden_card_game(void) {
     int refused = mq_hold(&sA, NW_SUB_GAME, G) + mq_hold(&sB, NW_SUB_GAMES, NULL) + mq_hold(&sE, NW_SUB_GAME, G) +
                   mq_hold(&sE, NW_SUB_CHAT, G) + mq_hold(&sC, NW_SUB_GAME, G) + mq_hold(&sD, NW_SUB_GAMES, NULL);
     T_EQ_INT(refused, 0);
+    sock_prime(&sA, &A);
+    sock_prime(&sE, &E);
+    sock_prime(&sC, &C);
     T_EQ_INT(meta(&A, ASK_START, G, NULL, NULL), 200);
     T_EQ_INT(meta(&B, ASK_START, G, NULL, NULL), 200);
     T_EQ_INT(meta(&E, ASK_START, G, NULL, NULL), 200);
@@ -983,6 +1070,13 @@ static void hidden_card_game(void) {
     T_CHECK(crosschecks > 10);
     T_CHECK(sA.n_cast > 0 && sE.n_cast > 0 && sC.n_cast > 0 && sB.n_view > 0);
     T_CHECK(!sA.leak && !sB.leak && !sE.leak && !sC.leak && !sD.leak);
+    // CBASE_CAST_DELTA=1: every move reached the game's sockets as a delta, rebuilt
+    // on the board the cast before it left and judged like a board cast; none was
+    // ever behind the board its socket kept.
+    fprintf(stderr, "matrix: deltas rebuilt A %d E %d C %d, behind %d %d %d\n", sA.rd->deltas, sE.rd->deltas, sC.rd->deltas,
+            sA.rd->behind, sE.rd->behind, sC.rd->behind);
+    T_CHECK(sA.rd->deltas > moves / 2 && sE.rd->deltas > moves / 2 && sC.rd->deltas > moves / 2);
+    T_EQ_INT(sA.rd->behind + sE.rd->behind + sC.rd->behind, 0);
     // D sits at none of it and heard none of it.
     T_EQ_INT(sD.n_view + sD.n_cast + sD.n_chat, 0);
     // The finished game: its replay is the seats', not D's.

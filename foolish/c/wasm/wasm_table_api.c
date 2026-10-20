@@ -617,3 +617,11 @@ int wasm_table_cast(int gid_len, int viewer, double version) {
     if (take_gid(gid_len, gid) != 0) return TABLE_E_WIRE;
     return table_cast(table(), gid, gid_len, viewer, u32_of(version), wasm_io_ptr(), wasm_io_cap());
 }
+
+// -> io = one viewer's delta cast for the last operation (table_cast_delta), or
+// TABLE_E_WIRE for a commit that goes as the board cast (table_cast_delta_ok).
+int wasm_table_cast_delta(int viewer, double version) {
+    Table *t = table();
+    if (!table_cast_delta_ok(t)) return TABLE_E_WIRE;
+    return table_cast_delta(t, viewer, u32_of(version), table_public_check(t), wasm_io_ptr(), wasm_io_cap());
+}
