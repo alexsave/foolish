@@ -3,9 +3,10 @@
 //
 // A plain human move does not write the tables. It is coded (replay_move.h: the kernel menu's
 // index on the replay codec's coder) into a record, appended with every other record of
-// the same moment to an append-only segment file in ONE write(), and acknowledged once
-// that write returned: the durability the tables' WAL at synchronous=NORMAL gave (a process
-// crash keeps it, an OS crash may not; opts.sync adds an fdatasync per batch). The game's
+// the same moment straight into an append-only segment file's mapped pages (no system
+// call), and acknowledged once the batch's header, stored last, commits it: the durability
+// the tables' WAL at synchronous=NORMAL gave (a process crash keeps the page cache, an OS
+// crash may not; opts.sync adds an msync per batch). The game's
 // new row and its moves are held in memory (the overlay) and the store's reads see them
 // first: one game by its id, the dashboard list and the bot scan alike.
 //
@@ -68,7 +69,7 @@ typedef struct {
     int64_t     game_bytes;    // a game whose waiting moves hold this many bytes is flushed (0: 256 KiB)
     int64_t     total_bytes;   // every game is flushed once all waiting moves hold this many (0: 64 MiB)
     int64_t     seg_bytes;     // a segment is closed once it holds this many bytes (0: 8 MiB)
-    bool        sync;          // fdatasync each batch before it is acknowledged
+    bool        sync;          // msync each batch before it is acknowledged
     cb_journal_apply_fn apply;
     void       *apply_ud;
 } cb_journal_opts;
