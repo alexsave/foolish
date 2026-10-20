@@ -451,7 +451,9 @@ static void judge_publish(sock *s, const uint8_t *p, int len) {
         s->n_cast++;
         int viewer = f->kind == NW_WS_CAST ? s->seat : -1;   // a seat cast goes only to the user, the spectators' to its watchers
         if (!game_ok) { s->n_other_game++; s->leak = true; }
-        else if (!cast_hides(s->rd, f->blob.p, (int)f->blob.len, viewer, what)) s->leak = true;
+        // The socket's client reads its own viewer's casts and no other: a seated
+        // page ignores the spectators' cast of the same move (netclient.c NW_WS_CAST).
+        else if (!cast_hides(viewer == s->seat ? s->rd : NULL, f->blob.p, (int)f->blob.len, viewer, what)) s->leak = true;
     } else if (f->kind == NW_WS_CHAT) {
         s->n_chat++;
         if (!s->may_chat || !game_ok) s->leak = true;
