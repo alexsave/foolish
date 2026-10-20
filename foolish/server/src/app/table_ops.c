@@ -1120,6 +1120,12 @@ int cb_table_create(cb_ctx *ctx, const cb_user *u, cb_table_result *out) {
             continue;
         }
         if (ret != CB_OK) break;
+        if (cb_journal_of(ctx->store)) {   // resident from the start: its first operation reads no table
+            TableResident res;
+            table_set_deal_seed(&s->t, "", 0);   // a lobby: no deal seed (cb_section_load's "")
+            table_resident(&s->t, &c->clock, &res);
+            cb_journal_game_created(ctx->store, &row, &res);
+        }
         out->committed = true;
         out->version = 0;
         out->envelope = dup_bytes(s->arena + c->views[0].off, (size_t)c->views[0].len);

@@ -74,6 +74,7 @@ static cb_journal_opts g_jo;
 static bool last_batch(const char *db, char *seg, size_t cap, long *off);
 static void crash_copy(const char *path, const char *copy);
 static bool no_row(int n, const char *const *names, const char *const *values, void *ud);
+static bool game_gone(cb_store *s, const char *gid);
 
 static cb_store *open_world(const char *path, bool journal, char *err, size_t cap) {
     cb_store *s = NULL;
@@ -735,26 +736,30 @@ static int cut_a_cycle(const char *copy) {
     fclose(f);
     int64_t start = 0;
     for (int i = 7; i >= 0; i--) start = start << 8 | buf[8 + i];
-    cb_jmove *ms = calloc(8192, sizeof *ms);
-    int n = 0, cut = 0;
-    cb_jslots *t = cb_jslots_new();
-    for (size_t at = 16, used = 0; at < len && n < 8192 - 64; at += used) {
-        int k = cb_journal_batch_decode(t, start, buf + at, len - at, &used, ms + n, 64);
-        if (k < 0) break;
-        n += k;
-    }
-    cb_jslots_free(t);
-    for (int i = 0; i < n && !cut; i++)
-        if (ms[i].bots && ms[i].n_mv >= 2) { ms[i].n_mv--; cut = 1; }
-    t = cb_jslots_new();
+    // Frame by frame: a whole commit's record (journal.h, 'R') copied as it is, each batch decoded
+    // and coded again, the first bot cycle of two moves or more cut by one.
+    cb_jmove *ms = calloc(64, sizeof *ms);
+    int cut = 0;
+    cb_jslots *t = cb_jslots_new(), *t2 = cb_jslots_new();
     memcpy(out, buf, 16);
     size_t w = 16;
-    for (int i = 0; i < n; i += 64) {
-        int k = cb_journal_batch_encode(t, start, ms + i, n - i < 64 ? n - i : 64, out + w, (int)(sizeof out - w));
-        T_CHECK(k > 0);
-        if (k > 0) w += (size_t)k;
+    for (size_t at = 16, used = 0; at < len && buf[at]; at += used) {
+        if (buf[at] == 'R') {
+            used = 12 + ((size_t)buf[at + 8] | (size_t)buf[at + 9] << 8 | (size_t)buf[at + 10] << 16 | (size_t)buf[at + 11] << 24);
+            memcpy(out + w, buf + at, used);
+            w += used;
+            continue;
+        }
+        int k = cb_journal_batch_decode(t, start, buf + at, len - at, &used, ms, 64);
+        if (k < 0) break;
+        for (int i = 0; i < k && !cut; i++)
+            if (ms[i].bots && ms[i].n_mv >= 2) { ms[i].n_mv--; cut = 1; }
+        int enc = cb_journal_batch_encode(t2, start, ms, k, out + w, (int)(sizeof out - w));
+        T_CHECK(enc > 0);
+        if (enc > 0) w += (size_t)enc;
     }
     cb_jslots_free(t);
+    cb_jslots_free(t2);
     free(ms);
     f = fopen(seg, "wb");
     if (f) { fwrite(out, 1, w, f); fclose(f); }
@@ -790,6 +795,9 @@ static void a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused(void) {
     T_CHECK(cb_store_admin_query(s, sql, true, no_row, NULL) >= 0);
     free(sql);
     cb_game_row_free(&row);
+    cb_journal_stats js0;
+    cb_journal_stats_get(s, &js0);
+    const long flushes0 = js0.flushes;   // the admin's write flushed the lobby's commits
     const bool was = g_bots;
     g_bots = true;
     move_t m;
@@ -800,7 +808,7 @@ static void a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused(void) {
     const uint64_t h = row_hash(s, gid);
     cb_journal_stats js;
     cb_journal_stats_get(s, &js);
-    T_CHECK(js.waiting > 0 && js.flushes == 0);
+    T_CHECK(js.waiting > 0 && js.flushes == flushes0);   // the moves are in the journal alone
     crash_copy(path, copy);
     crash_copy(path, cut);
     close_world(s);
@@ -1099,9 +1107,8 @@ static int ask_status(const reply *r) {   // 200: the ask committed or answered
     return r->status;
 }
 
-// THE GAME STAYS RESIDENT ACROSS A WRITE AROUND THE JOURNAL (a join, the deal): the next
-// operation reads it from the overlay, never from the tables. Only the first operation on a
-// game made by another path (the create) reads the tables, once.
+// THE GAME IS RESIDENT FROM ITS CREATE ON (a join, the deal, its moves): every operation reads
+// it from the overlay, never from the tables.
 static void a_deal_and_its_moves_read_no_table(void) {
     char path[320], err[256] = "";
     snprintf(path, sizeof path, "%s/resident%d.sqlite", g_dir, g_bots);
@@ -1116,7 +1123,7 @@ static void a_deal_and_its_moves_read_no_table(void) {
     const long reads0 = table_reads(s);
     if (g_bots) meta("A", ASK_ADD_BOT, gid, &r);
     else meta("B", ASK_JOIN, gid, &r);
-    T_EQ_INT(table_reads(s) - reads0, 1);   // the created game, read once and resident from here on
+    T_EQ_INT(table_reads(s) - reads0, 0);   // resident from its create on
     if (g_bots) meta("A", ASK_START, gid, &r);
     else { meta("A", ASK_START, gid, &r); meta("B", ASK_START, gid, &r); }
     T_EQ_INT(ask_status(&r), 200);
@@ -1125,13 +1132,13 @@ static void a_deal_and_its_moves_read_no_table(void) {
     int moves = 0;
     for (; moves < 12 && step(s, gid, &m) > 0; moves++) {}
     T_EQ_INT(moves, 12);
-    T_EQ_INT(table_reads(s) - reads0, 1);
+    T_EQ_INT(table_reads(s) - reads0, 0);
     // A view on another connection reads the overlay too: the newest version.
     cb_view_row v;
     T_EQ_INT(cb_table_view(&g_ctx, gid, UID_A, &v), CB_OK);
     T_EQ_INT(v.version, version_of(s, gid));
     cb_view_row_free(&v);
-    T_EQ_INT(table_reads(s) - reads0, 1);
+    T_EQ_INT(table_reads(s) - reads0, 0);
     close_world(s);
 }
 
@@ -1196,8 +1203,9 @@ static void a_refusal_changes_nothing_and_a_move_is_read_at_once(void) {
 
 // A RESIDENT THE TABLES CONTRADICT IS DROPPED, NEVER BUILT ON: a write the journal did not
 // see (here a raw UPDATE; in production nothing but the admin's, which forgets the overlay
-// itself) makes the next write around the journal lose its fence, and the game leaves the
-// overlay, so the operation after it reads the tables' row and lands.
+// itself) makes the next write around the journal (a delete: the last seat leaving) lose its
+// fence, and the game leaves the overlay, so the operation after it reads the tables' row
+// and lands.
 static void a_resident_the_tables_contradict_is_dropped(void) {
     char path[320], err[256] = "";
     snprintf(path, sizeof path, "%s/contradict.sqlite", g_dir);
@@ -1209,9 +1217,9 @@ static void a_resident_the_tables_contradict_is_dropped(void) {
     call("create", "A", NULL, 0, &r);
     char gid[CB_GAME_ID_MAX + 1] = "";
     cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
-    meta("B", ASK_JOIN, gid, &r);
+    meta("A", ASK_SET_RULES, gid, &r);   // resident, its commit in the journal (the table goes podkidnoy)
     T_EQ_INT(ask_status(&r), 200);
-    const int64_t v = -version_of(s, gid);   // a lobby: version_of answers it negated
+    T_EQ_INT(cb_journal_flush(s), CB_OK);   // and in the tables
     sqlite3 *db = NULL;
     T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
     char sql[160];
@@ -1219,13 +1227,66 @@ static void a_resident_the_tables_contradict_is_dropped(void) {
     T_EQ_INT(sqlite3_exec(db, sql, NULL, NULL, NULL), SQLITE_OK);
     sqlite3_close(db);
     const long reads0 = table_reads(s);
-    meta("A", ASK_START, gid, &r);   // fenced on v, the tables hold v + 1: refused, and the copy goes
+    meta("A", ASK_EXIT, gid, &r);   // the last seat: the delete is fenced on the resident's version, which the tables refuse
     T_CHECK(ask_status(&r) != 200);
-    meta("A", ASK_START, gid, &r);   // read from the tables (v + 1), and committed on it
+    meta("A", ASK_EXIT, gid, &r);   // read from the tables, and deleted there
     T_EQ_INT(ask_status(&r), 200);
     T_EQ_INT(table_reads(s) - reads0, 1);
-    T_EQ_INT(-version_of(s, gid), v + 2);
+    T_CHECK(game_gone(s, gid));
     close_world(s);
+}
+
+// EVERY COMMIT BUT A RATING THROUGH THE JOURNAL: the join, the readies and the deal write no
+// table (each is a whole record in the segment), membership reads the overlay, and a crash
+// after the deal's record or after the moves on it recovers the game, its seats into the tables.
+static void a_lobby_and_its_deal_write_no_table(void) {
+    char path[320], after_deal[320], after_moves[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/lobby%d.sqlite", g_dir, g_bots);
+    snprintf(after_deal, sizeof after_deal, "%s/lobby%d_deal.sqlite", g_dir, g_bots);
+    snprintf(after_moves, sizeof after_moves, "%s/lobby%d_moves.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    reply r;
+    call("create", "A", NULL, 0, &r);
+    char gid[CB_GAME_ID_MAX + 1] = "";
+    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    const unsigned long wal0 = cb_store_local_wal_frames(s);
+    if (g_bots) {
+        meta("A", ASK_ADD_BOT, gid, &r);
+        meta("A", ASK_START, gid, &r);
+    } else {
+        meta("B", ASK_JOIN, gid, &r);
+        T_EQ_INT(CB_ROWS_CALL(s, is_member, gid, UID_B), 1);   // seated before the tables hear of it
+        meta("A", ASK_START, gid, &r);
+        meta("B", ASK_START, gid, &r);
+    }
+    T_EQ_INT(ask_status(&r), 200);
+    T_CHECK(version_of(s, gid) > 0);   // dealt
+    T_EQ_INT((long)cb_store_local_wal_frames(s), (long)wal0);
+    const uint64_t h_deal = row_hash(s, gid);
+    crash_copy(path, after_deal);
+    move_t m;
+    int moves = 0;
+    for (; moves < 8 && step(s, gid, &m) > 0; moves++) {}
+    T_EQ_INT(moves, 8);
+    T_EQ_INT((long)cb_store_local_wal_frames(s), (long)wal0);
+    const uint64_t h_moves = row_hash(s, gid);
+    crash_copy(path, after_moves);
+    close_world(s);
+    const char *copies[2] = { after_deal, after_moves };
+    const uint64_t want[2] = { h_deal, h_moves };
+    for (int i = 0; i < 2; i++) {
+        s = open_world(copies[i], true, err, sizeof err);
+        T_CHECK(s != NULL);
+        if (!s) continue;
+        T_CHECK(row_hash(s, gid) == want[i]);
+        // Recovered into the tables, seats and all.
+        T_EQ_INT(cb_rows_sql.is_member(s, gid, UID_A), 1);
+        if (!g_bots) T_EQ_INT(cb_rows_sql.is_member(s, gid, UID_B), 1);
+        close_world(s);
+    }
 }
 
 // THE RESIDENCY CAP: past opts.max_games the least recently touched idle games leave at the
@@ -1244,6 +1305,7 @@ static void the_overlay_keeps_at_most_its_cap(void) {
         g_now += 1000;
         two_humans_dealt(gids[i]);
     }
+    T_EQ_INT(cb_journal_flush(s), CB_OK);   // the lobbies' and deals' whole commits into the tables: every game idle
     move_t m;
     // A move waits in the two oldest games: they stay, whatever else leaves.
     g_now += 1000;
@@ -1749,7 +1811,7 @@ static void a_restore_mid_game_holds_every_acknowledged_move(void) {
             if (strstr(be->d_name, "-journal.") && stat(bp, &bst) == 0) up += (long)bst.st_size;
         }
         if (bd) closedir(bd);
-        T_CHECK(up > 0 && up < 4096);
+        T_CHECK(up > 0 && up < 32768);   // the moves' bytes and the lobby's whole commits (a row each)
     }
 
     // The disk is lost (the live files stay where they are, unread): a restore beside them.
@@ -1848,6 +1910,7 @@ int main(void) {
         g_bots = b;
         T_RUN(a_deal_and_its_moves_read_no_table);
         T_RUN(a_refusal_changes_nothing_and_a_move_is_read_at_once);
+        T_RUN(a_lobby_and_its_deal_write_no_table);
         g_bots = b;
         T_RUN(the_flush_writes_the_rows_per_move_commits_write);
         T_RUN(a_restore_mid_game_holds_every_acknowledged_move);

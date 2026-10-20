@@ -18,9 +18,12 @@
 // SQL, an import). A segment is closed once it holds opts.seg_bytes and deleted once
 // every move in it is in the tables and (with a backup attached) in an uploaded copy.
 //
-// Everything else is written at once, as before: a commit that is not one plain human move
-// (a deal, a seat change, the end of a game) and a game's delete write that game's waiting
-// moves first, in the same transaction.
+// Every other commit but one that rates (a deal, a seat change, a lobby edit, an unrated end)
+// is journaled WHOLE, as a full record (below): the overlay keeps its row and seats, the
+// store's membership reads see them, and the flush writes the row, its session-log changes
+// and the seats. A commit that rates and a game's delete are written at once, around the
+// journal, with that game's waiting commits first in the same transaction (a rating is read
+// by the leaderboard, a profile and the next game's rating straight from the tables).
 //
 // At start the tables are read and the journal's segments replayed through the kernel
 // (the app's apply), in order, before anything is served; a torn or corrupt batch at a
@@ -44,6 +47,14 @@
 //               kind    uniform over 2: 0 a human's move, 1 a bot cycle, then the cycle's
 //                       moves less one, uniform over BOT_DRIVE_MAX_ACTIONS
 //               moves   replay_move_code each, on the board the one before it left
+// A FULL RECORD (one whole commit): u8 'R', u8 format (1), u16 0, u32 LE FNV-1a 32 over the
+// payload length and the payload, u32 LE payload length, then the payload: u8 id length, the
+// id, i64 LE base version, i64 LE ms, u8 flags (1 clears the session log, 2 has a deal seed,
+// 4 needs bots), i8 status, i64 LE log_from, round_epoch and created_at, the 32-byte seed when
+// flagged, then u32 LE length + bytes each of the state blob, the roster and the session-log
+// records it appended. Recovery adopts its row as the game's (no kernel run: the record is
+// the commit's result) when the game is at its base version. It names no slot: a move after
+// it codes its version (the "old" bit).
 #ifndef CB_JOURNAL_H
 #define CB_JOURNAL_H
 
@@ -104,6 +115,9 @@ int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, 
 // resident if the game is still at that version, so the next operation adopts instead of
 // decoding. Under the game's lock.
 void cb_journal_game_decoded(cb_store *s, const char *id, int64_t version, const struct TableResident *res);
+// A game the tables just created (row, as written) made resident with its decoded state, so
+// its first operation reads no table. Nobody else knows the id yet: no lock is needed.
+void cb_journal_game_created(cb_store *s, const cb_game_row *row, const struct TableResident *res);
 
 // Every acknowledged move into the tables now (store.h cb_store_settle).
 int cb_journal_flush(cb_store *s);
