@@ -203,6 +203,11 @@ static void serve(void) {
     g_ctx.server = cb_server_new(&g_ctx, &o);
     T_EQ_INT(cb_server_listen(g_ctx.server, "127.0.0.1", 0, &g_port), CB_OK);
     pthread_create(&g_loop_thr, NULL, run_loop, NULL);
+    // Served once the loop runs: until then the journal writes a commit on the committing thread
+    // (there is no loop to hand it to), which a test counting the loop's writes would see - a bot
+    // that moves first drives on this thread before any request needs the loop.
+    for (int i = 0; i < 5000 && !cb_loop_running(g_ctx.loop); i++) usleep(1000);
+    T_CHECK(cb_loop_running(g_ctx.loop));
 }
 
 static void drain_post(cb_loop *l, void *ud) { cb_server_drain(g_ctx.server, 2000); }

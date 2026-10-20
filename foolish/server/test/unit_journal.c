@@ -1055,6 +1055,9 @@ static void mapped_segments_keep_every_committed_batch(void) {
             h[n] = row_hash(s, gid);
             single = n > 0 && v[n] == v[n - 1] + 1;
         }
+        // A step that ended the game wrote its end last (a whole record, past the batch cut
+        // below): that game is dealt again too.
+        if (version_of(s, gid) <= 0) single = false;
     }
     T_CHECK(n >= 12 && single);
     cb_journal_stats js;
@@ -1254,35 +1257,41 @@ static void a_refusal_changes_nothing_and_a_move_is_read_at_once(void) {
     T_CHECK(s != NULL);
     if (!s) return;
     char gid[CB_GAME_ID_MAX + 1];
-    two_humans_dealt(gid);
     move_t m;
     int refusals = 0, moves = 0;
-    for (int i = 0; i < 40; i++) {
-        cb_game_row before = stored(s, gid);
-        if (before.status != GAME_STATUS_PLAYING) { cb_game_row_free(&before); break; }
-        // A pickup by whoever is not defending, at the current round: refused by the kernel.
-        reply r;
-        const uint8_t pickup[2] = { AWIRE_PICKUP, 0 };
-        action(i % 2 ? "B" : "A", gid, pickup, 2, (uint32_t)before.version, &r);
-        TableResponse resp;
-        if (r.status == 200 && table_response_decode(r.body, (int)r.len, &resp) == 0 && resp.status != TABLE_STATUS_APPLIED) {
-            refusals++;
-            cb_game_row after = stored(s, gid);
-            T_EQ_INT(after.version, before.version);
-            T_CHECK(after.state_len == before.state_len && memcmp(after.state, before.state, before.state_len) == 0);
-            T_CHECK(after.roster_len == before.roster_len && memcmp(after.roster, before.roster, before.roster_len) == 0);
-            cb_game_row_free(&after);
+    // The deal is the crypto's: a game may end before four refusals were tried, so games are
+    // dealt until both counts are reached.
+    for (int game = 0; game < 6 && (refusals <= 3 || moves <= 3); game++) {
+        cb_limits_reset();
+        g_now += 60000;
+        two_humans_dealt(gid);
+        for (int i = 0; i < 40; i++) {
+            cb_game_row before = stored(s, gid);
+            if (before.status != GAME_STATUS_PLAYING) { cb_game_row_free(&before); break; }
+            // A pickup by whoever is not defending, at the current round: refused by the kernel.
+            reply r;
+            const uint8_t pickup[2] = { AWIRE_PICKUP, 0 };
+            action(i % 2 ? "B" : "A", gid, pickup, 2, (uint32_t)before.version, &r);
+            TableResponse resp;
+            if (r.status == 200 && table_response_decode(r.body, (int)r.len, &resp) == 0 && resp.status != TABLE_STATUS_APPLIED) {
+                refusals++;
+                cb_game_row after = stored(s, gid);
+                T_EQ_INT(after.version, before.version);
+                T_CHECK(after.state_len == before.state_len && memcmp(after.state, before.state, before.state_len) == 0);
+                T_CHECK(after.roster_len == before.roster_len && memcmp(after.roster, before.roster, before.roster_len) == 0);
+                cb_game_row_free(&after);
+            }
+            int64_t v = step(s, gid, &m);
+            if (v > 0 && m.n > 0) {
+                moves++;
+                cb_game_row after = stored(s, gid);
+                T_EQ_INT(after.version, v);
+                T_CHECK(after.state_len != before.state_len || memcmp(after.state, before.state, before.state_len) != 0);
+                cb_game_row_free(&after);
+            }
+            cb_game_row_free(&before);
+            if (v < 0) break;
         }
-        int64_t v = step(s, gid, &m);
-        if (v > 0 && m.n > 0) {
-            moves++;
-            cb_game_row after = stored(s, gid);
-            T_EQ_INT(after.version, v);
-            T_CHECK(after.state_len != before.state_len || memcmp(after.state, before.state, before.state_len) != 0);
-            cb_game_row_free(&after);
-        }
-        cb_game_row_free(&before);
-        if (v < 0) break;
     }
     T_CHECK(refusals > 3);
     T_CHECK(moves > 3);
@@ -1964,11 +1973,22 @@ static void a_flush_is_bounded_transactions(void) {
         two_humans_dealt(gid[i]);
         for (int k = 0; k < i; k++) T_CHECK(strcmp(gid[i], gid[k]) != 0);
     }
+    // Each game's waiting records kept under the budget (a bot's step is a drive of several
+    // cycles, each a record), so the one game the budget lets go alone over it never comes up:
+    // every transaction carries at most txn_moves.
     move_t m;
-    int played = 0;
+    int played = 0, recs[NG] = { 0 };
     for (int r = 0; r < PER_GAME; r++)
-        for (int i = 0; i < NG; i++) played += step(s, gid[i], &m) > 0;
-    T_CHECK(played > NG * PER_GAME / 2);
+        for (int i = 0; i < NG; i++) {
+            if (recs[i] >= g_jo.txn_moves / 2) continue;
+            cb_journal_stats a, b;
+            cb_journal_stats_get(s, &a);
+            played += step(s, gid[i], &m) > 0;
+            cb_journal_stats_get(s, &b);
+            recs[i] += (int)(b.records - a.records);
+        }
+    for (int i = 0; i < NG; i++) T_CHECK(recs[i] + 4 <= g_jo.txn_moves);   // (a deal's records came before)
+    T_CHECK(played > NG * PER_GAME / 4);
     uint64_t want[NG];
     for (int i = 0; i < NG; i++) want[i] = row_hash(s, gid[i]);
     cb_journal_stats js;
