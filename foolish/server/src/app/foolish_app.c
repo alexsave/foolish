@@ -99,6 +99,7 @@ static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
         .total_bytes = env_long("CBASE_JOURNAL_TOTAL_BYTES", 64 << 20),
         .seg_bytes = env_long("CBASE_JOURNAL_SEG_BYTES", 8 << 20),
         .sync = env_long("CBASE_JOURNAL_SYNC", 0) != 0,
+        .loop = ctx->loop,
         .apply = cb_table_replay_move,
         .apply_ud = ctx,
     };

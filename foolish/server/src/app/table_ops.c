@@ -16,6 +16,7 @@
 
 #include "cbase/provider.h"
 #include "jobs.h"
+#include "net/loop.h"
 #include "util/clock.h"
 #include "util/err.h"
 #include "../../../../shared/c/hex/hex.h"
@@ -43,6 +44,18 @@ _Static_assert(MAX_LOG_PAIRS >= MAX_DECK,
 
 int64_t (*cb_app_now)(void) = cb_now_ms;
 void (*cb_app_sleep)(int64_t ms) = cb_sleep_ms;
+// THE LOOP NEVER WAITS. An operation may run on the network loop's thread (a CB_ROUTE_INLINE
+// route, router.h); there every step that would wait returns CB_E_WOULD_BLOCK before it has
+// changed anything, and the request runs again on the pool (http.h cb_http_res.to_pool). Each
+// guard sits where the wait would be:
+//   - a store without the journal: every read and write is the store's (cb_table_run, cb_table_view);
+//   - the game's lock held by another thread (a bot drive's commit, a pooled request): trylock;
+//   - a finished game whose replay job has not run (finalize_pending reads the log and writes);
+//   - a commit that rates (read_ratings reads the accounts, and the rating write goes around the
+//     journal): cb_section_commit;
+//   - the journal's own (journal.h opts.loop): a game not resident, a write around it (a delete).
+static bool on_loop(const cb_ctx *ctx) { return ctx->loop && cb_loop_on_thread(ctx->loop); }
+
 void cb_game_id_random(char out[CB_GAME_ID_MAX + 1]) {
     uint8_t raw[CB_GAME_ID_HEX / 2];
     cb_random_bytes(raw, sizeof raw);
@@ -657,7 +670,8 @@ static cb_game_lock *g_locks[LOCK_BUCKETS];
 static cb_game_lock *g_lock_spare;
 static int g_n_lock_spare;
 
-cb_game_lock *cb_table_lock(const char *gid) {
+// The game's entry, made or found, with this caller counted as a user (g_locks_mu).
+static cb_game_lock *lock_entry(const char *gid) {
     uint32_t b = fnv1a32_str(FNV32_OFFSET, gid) % LOCK_BUCKETS;
     pthread_mutex_lock(&g_locks_mu);
     cb_game_lock *l = g_locks[b];
@@ -677,8 +691,41 @@ cb_game_lock *cb_table_lock(const char *gid) {
     }
     if (l) l->users++;
     pthread_mutex_unlock(&g_locks_mu);
+    return l;
+}
+
+// This caller no longer uses the entry: the last one out unlinks it (to the spares).
+static void lock_entry_put(cb_game_lock *l) {
+    pthread_mutex_lock(&g_locks_mu);
+    if (--l->users == 0) {
+        cb_game_lock **pp = &g_locks[l->bucket];
+        while (*pp != l) pp = &(*pp)->next;
+        *pp = l->next;
+        if (g_n_lock_spare < LOCK_SPARE_KEEP) {
+            l->next = g_lock_spare;
+            g_lock_spare = l;
+            g_n_lock_spare++;
+        } else {
+            pthread_mutex_destroy(&l->mu);
+            free(l);
+        }
+    }
+    pthread_mutex_unlock(&g_locks_mu);
+}
+
+cb_game_lock *cb_table_lock(const char *gid) {
+    cb_game_lock *l = lock_entry(gid);
     if (l) pthread_mutex_lock(&l->mu);
     return l;
+}
+
+cb_game_lock *cb_table_trylock(const char *gid, bool *busy) {
+    *busy = false;
+    cb_game_lock *l = lock_entry(gid);
+    if (!l || pthread_mutex_trylock(&l->mu) == 0) return l;
+    *busy = true;
+    lock_entry_put(l);
+    return NULL;
 }
 
 void cb_table_lock_drain(void) {
@@ -696,21 +743,7 @@ void cb_table_lock_drain(void) {
 void cb_table_unlock(cb_game_lock *l) {
     if (!l) return;
     pthread_mutex_unlock(&l->mu);
-    pthread_mutex_lock(&g_locks_mu);
-    if (--l->users == 0) {
-        cb_game_lock **pp = &g_locks[l->bucket];
-        while (*pp != l) pp = &(*pp)->next;
-        *pp = l->next;
-        if (g_n_lock_spare < LOCK_SPARE_KEEP) {
-            l->next = g_lock_spare;
-            g_lock_spare = l;
-            g_n_lock_spare++;
-        } else {
-            pthread_mutex_destroy(&l->mu);
-            free(l);
-        }
-    }
-    pthread_mutex_unlock(&g_locks_mu);
+    lock_entry_put(l);
 }
 
 // ---- the commit ---------------------------------------------------------------------------
@@ -857,7 +890,9 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     arena_note(s, rc);
     if (rc >= 0 && c->wants_ratings) {
         // The kernel rates the game inside the section that ends it. Its products
-        // are const, so the C host rates and asks for them again: no re-run.
+        // are const, so the C host rates and asks for them again: no re-run. The
+        // ratings are the tables' (and so is their write): never on the loop.
+        if (!*have_ratings && on_loop(ctx)) return CB_E_WOULD_BLOCK;
         if (!*have_ratings) *have_ratings = read_ratings(ctx, t, ratings);
         if (*have_ratings) {
             table_rate(t, ratings, t->r.n);
@@ -979,7 +1014,7 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
             // (finalize_later).
             if (c->ended) finalize_later(ctx, s, &nrow);
             cb_fanout_commit(ctx, &f);
-        } else {
+        } else if (rc != CB_E_WOULD_BLOCK) {   // on the loop: nothing written, it runs again on the pool
             CB_ERROR("table", "game %s: commit failed (%s)", row->id, cb_strerror(rc));
         }
     }
@@ -1121,14 +1156,27 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
     // (version = expected) stays as the store's own guarantee; a loss is an error, not a retry.
     // ONE ATTEMPT: the row is the game's one owner's (row_acquire), so whatever the kernel says
     // of it is the answer.
-    cb_game_lock *lock = cb_table_lock(op->game_id);
+    const bool no_wait = on_loop(ctx);
+    if (no_wait && !cb_journal_of(ctx->store)) {
+        cb_section_free(s);
+        return CB_E_WOULD_BLOCK;
+    }
+    bool busy = false;
+    cb_game_lock *lock = no_wait ? cb_table_trylock(op->game_id, &busy) : cb_table_lock(op->game_id);
     if (!lock) {
         cb_section_free(s);
-        return CB_E_NOMEM;
+        return busy ? CB_E_WOULD_BLOCK : CB_E_NOMEM;
     }
     // A game whose replay is still a queued job has it made first: this operation may delete the
     // game and its log (finalize_later).
-    if (atomic_load(&g_fin_n)) finalize_pending(ctx, op->game_id);
+    if (atomic_load(&g_fin_n) && fin_pending(op->game_id)) {
+        if (no_wait) {
+            cb_table_unlock(lock);
+            cb_section_free(s);
+            return CB_E_WOULD_BLOCK;
+        }
+        finalize_pending(ctx, op->game_id);
+    }
     do {
         cb_game_row row;
         bool kept = false, adopted = false;   // the row's bytes are s->rb's (not freed: row_release)
@@ -1353,6 +1401,7 @@ static int view_of_row(cb_section *s, const cb_game_row *row, const char *viewer
 int cb_table_view(cb_ctx *ctx, const char *game_id, const char *viewer_id, cb_view_row *out) {
     memset(out, 0, sizeof *out);
     if (!ctx->store) return CB_E_STATE;
+    if (on_loop(ctx) && !cb_journal_of(ctx->store)) return CB_E_WOULD_BLOCK;   // the store's read (THE LOOP NEVER WAITS)
     cb_game_row row;
     memset(&row, 0, sizeof row);
     int rc = CB_ROWS_CALL(ctx->store, game_get, game_id, &row);
