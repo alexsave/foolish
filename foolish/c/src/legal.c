@@ -202,8 +202,12 @@ typedef struct {
     int covers_n;
     Card covers[MAX_HAND_SIZE]; // cards in defender hand that can cover this attack
     int8_t cover_hand_idx[MAX_HAND_SIZE]; // hand index of each cover (dedup key)
+    uint64_t cover_mask;   // the same hand indices as bits (covers_fit)
     Card attack_card;      // the actual card on the table
 } CoverOption;
+
+_Static_assert(MAX_HAND_SIZE <= 64, "CoverOption.cover_mask holds one bit per hand slot");
+_Static_assert(MAX_BATTLES <= 127, "a hand card's owner (covers_fit) is an int8_t option index");
 
 static void emit_cover_combo(MoveOut *out,
                              const CoverOption *const *opts, int n_opts,
@@ -233,28 +237,57 @@ static void emit_cover_combo(MoveOut *out,
     }
 }
 
-static void choose_attack_subset(const Game *g, const Player *defender,
-                                 const int *uncovered_battles, int n_uncovered,
-                                 const CoverOption *all_opts,
+// WHICH ATTACKS CAN BE COVERED TOGETHER. A set of attacks has a cover move only when each can
+// get its own card (a matching of attacks to distinct hand cards), and then so does every subset
+// of it. owner[h] is the option that holds hand card h in a matching of the attacks picked so
+// far (-1: free); this tries to give option `a` a card too, moving earlier holders along an
+// augmenting path (Kuhn). On failure owner is left as it was.
+static bool covers_fit(const CoverOption *all_opts, int a, int8_t *owner, uint64_t *seen) {
+    for (uint64_t m = all_opts[a].cover_mask & ~*seen; m; m &= m - 1) {
+        const int h = __builtin_ctzll(m);
+        if (*seen & (1ull << h)) continue;   // taken by a deeper try since m was read
+        *seen |= 1ull << h;
+        if (owner[h] < 0 || covers_fit(all_opts, owner[h], owner, seen)) {
+            owner[h] = (int8_t)a;
+            return true;
+        }
+    }
+    return false;
+}
+
+// The k-subsets of the uncovered attacks, in combination order, each handed to emit_cover_combo.
+// Two prunes, neither of which changes the menu or its order, since each skips only subsets that
+// emit nothing:
+//   - a full menu (out->n == out->cap) stops the whole enumeration, as push_move would drop
+//     every move after it anyway;
+//   - an attack that cannot join the ones picked so far (covers_fit) is never picked, so no
+//     superset of an uncoverable set is walked.
+// Without them the walk was every k-subset whatever came of it: about 4x per two more attacks on
+// the table, a second at 26 attacks with a full menu and two with a hand that covers few of them
+// (a short menu), on the server's one request worker (tests/legal_cover_test.c).
+static void choose_attack_subset(const CoverOption *all_opts, int n_uncovered,
                                  int start, int k_left,
                                  int *picked, int picked_n,
-                                 MoveOut *out) {
+                                 int8_t *owner, MoveOut *out) {
+    if (out->n >= out->cap) return;
     if (k_left == 0) {
         // Reference the picked options by pointer - copying each CoverOption
         // (a couple hundred bytes) per enumerated subset was pure overhead.
         const CoverOption *opts[MAX_BATTLES];
         for (int i = 0; i < picked_n; i++) opts[i] = &all_opts[picked[i]];
-        // Skip if any picked attack has no covers.
-        for (int i = 0; i < picked_n; i++) if (opts[i]->covers_n == 0) return;
         int chosen[MAX_BATTLES];
         bool used[MAX_HAND_SIZE] = { false };
         emit_cover_combo(out, opts, picked_n, chosen, 0, used);
         return;
     }
     for (int i = start; i <= n_uncovered - k_left; i++) {
+        int8_t kept[MAX_HAND_SIZE];
+        memcpy(kept, owner, sizeof kept);
+        uint64_t seen = 0;
+        if (!covers_fit(all_opts, i, owner, &seen)) continue;   // owner unchanged
         picked[picked_n] = i;
-        choose_attack_subset(g, defender, uncovered_battles, n_uncovered,
-                             all_opts, i + 1, k_left - 1, picked, picked_n + 1, out);
+        choose_attack_subset(all_opts, n_uncovered, i + 1, k_left - 1, picked, picked_n + 1, owner, out);
+        memcpy(owner, kept, sizeof kept);
     }
 }
 
@@ -272,19 +305,22 @@ static void calc_cover_moves(const Game *g, const Player *defender, MoveOut *out
         opts[i].attack_idx = uncovered_battles[i];
         opts[i].attack_card = b->attack;
         opts[i].covers_n = 0;
+        opts[i].cover_mask = 0;
         for (int j = 0; j < defender->hand_count; j++) {
             if (can_cover(b->attack, defender->hand[j], g->power_suit)) {
                 opts[i].cover_hand_idx[opts[i].covers_n] = (int8_t)j;
+                opts[i].cover_mask |= 1ull << j;
                 opts[i].covers[opts[i].covers_n++] = defender->hand[j];
             }
         }
     }
 
     int picked[MAX_BATTLES];
+    int8_t owner[MAX_HAND_SIZE];
+    memset(owner, -1, sizeof owner);
     int k_max = n_uncovered < MAX_MOVE_CARDS ? n_uncovered : MAX_MOVE_CARDS;
     for (int k = 1; k <= k_max; k++) {
-        choose_attack_subset(g, defender, uncovered_battles, n_uncovered,
-                             opts, 0, k, picked, 0, out);
+        choose_attack_subset(opts, n_uncovered, 0, k, picked, 0, owner, out);
     }
 }
 
