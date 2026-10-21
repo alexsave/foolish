@@ -553,6 +553,12 @@ static void a_legal_action_applies_and_bumps_the_version(void) {
     T_EQ_INT(g_fan.version, v + 1);
     T_EQ_INT(g_fan.humans, 2);
     T_EQ_INT(g_fan.casts, 2);
+    // A plain move seats and unseats no one: on a store with no journal its commit still carries
+    // the seats (the store writes the membership from them), and nobody joined or left.
+    T_EQ_INT(g_fan.joined, 0);
+    T_EQ_INT(g_fan.left, 0);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_A), 1);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_B), 1);
 }
 
 static void an_illegal_action_is_rejected_and_commits_nothing(void) {
@@ -1131,6 +1137,9 @@ static void commits_hand_over_their_seats(void) {
     T_EQ_INT(r.status, 200);
     T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_B), 0);
     T_EQ_INT(CB_ROWS_CALL(g_store, is_member, gid, UID_A), 1);
+    T_EQ_INT(g_fan.left, 1);   // the commit's own diff of the seats: B's view goes
+    T_EQ_STR(g_fan.first_left, UID_B);
+    T_EQ_INT(g_fan.joined, 0);
     T_EQ_INT(h->prev_given - given, 3);
 
     T_EQ_INT(tm_forget_seats(g_store, gid), CB_OK);
