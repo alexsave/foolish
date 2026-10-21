@@ -26,7 +26,7 @@ final class StaleBranchTests: XCTestCase {
 
     // 2p, turn 7, round 1 — the same §8.2 gate fixture the turn-loop tests use.
     private let fixtureHex =
-        "f7020002efcdab89674523010800000200020000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7020004416e6e300104416e6e310800f72719e90cb7ee031bd6af74a3a23a"
+        "f7020002efcdab89674523010800000200020000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7020004416e6e300104416e6e31080001160bfd262e4eebc37f5185633815""bb"
 
     private func bytes(_ hex: String) -> Data {
         var d = Data(); var i = hex.startIndex

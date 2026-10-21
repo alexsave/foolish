@@ -734,6 +734,13 @@ static void start_game_reset(Game *g) {
     }
 }
 
+// Is a non-Ace left in the stock? The flip's one question (start_game_dealt).
+static bool stock_holds_a_non_ace(const Game *g) {
+    for (int i = 0; i < g->deck_count; i++)
+        if (g->deck[i].value != ACE_VALUE) return true;
+    return false;
+}
+
 // Everything downstream of "the deck is sitting there in pop order": the deal,
 // the flip, the opening seats. Split out of start_game so a rebuilt deck runs
 // the identical path (start_game_with_deck) — the alternative was a second
@@ -752,11 +759,21 @@ static void start_game_dealt(Game *g) {
     SNAP(g, ENGINE_HOOK_START_MAGIC, -1);
     deal_initial(g);
 
-    // Flip a non-Ace.
+    // THE TRUMP RULE. An Ace is not turned while a non-Ace is left to turn
+    // instead: it goes back on the stock and the flip draws again (the house
+    // rule "туз колоду не ведёт", the Ace does not lead the deck). When
+    // the stock holds Aces only, the rule is moot and the Ace is the trump, as
+    // in standard Durak. Only an 8-seat table gets there (48 of 52 dealt, and 1
+    // deal in C(52,4) = 270,725 leaves the four Aces); the stock's contents say
+    // so, so nothing here counts seats. Every path agrees: the seeded shuffle,
+    // the random draw and the rebuilt deck all reach this one loop, and the
+    // replay's trump alphabet is the whole deck (replay.c trump_alphabet).
+    // Before this rule the loop never ended on a stock of Aces: `cbase serve`'s
+    // request worker spun in it holding the table.
     Card f;
     while (true) {
         if (!draw_card(g, &f)) break;
-        if (f.value == ACE_VALUE) {
+        if (f.value == ACE_VALUE && stock_holds_a_non_ace(g)) {
             // push back to deck; same as TS (no shuffle, but draw picks random)
             g->deck[g->deck_count++] = f;
             continue;
