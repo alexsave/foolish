@@ -60,6 +60,7 @@
 #include <unistd.h>
 #include "../../../shared/c/rng.h"
 #include "../../../shared/c/clock.h"
+#include "../../../shared/c/fnv.h"
 
 #define SMOKE_SPEEDUP 20
 #define SMOKE_ADMIN_TOKEN "smoke-admin-token-0123456789abcdef0123"   // the console's: live_game reads through it
@@ -776,6 +777,137 @@ static void game_scenario(void) {
     free(sc);
 }
 
+// ---- kills at any moment lose no acknowledged move --------------------------------------
+//
+// THE JOURNAL'S PROMISE, as production meets it (journal.h): a move is acknowledged once its batch
+// is in the segment's pages, and a process killed at any moment keeps every acknowledged move. Here
+// three tables play at once, a human against two bots, two humans against a bot and two humans
+// alone; the humans move, which wakes the bots, and the server is SIGKILLed a few moves in, at
+// whatever point the bots' drives have reached. Every version a client was told (a move's answer,
+// a read) must be there after the restart, and the version a human last read must read again as
+// the same envelope, byte for byte. The games go on after each restart (a recovered board the kernel
+// would not take refuses the next move), and an ended one is dealt again.
+typedef struct {
+    char        gid[32];
+    smoke_user *h[2];
+    int         nh, bots;
+    int64_t     acked;   // the highest version any client was told
+    int64_t     seen_v;  // the version h[0] last read, and its envelope's hash
+    uint64_t    seen_hash;
+    bool        over;
+} crash_game;
+
+static bool crash_deal(crash_game *g, smoke_client *sc, cb_buf *env) {
+    if (call(g->h[0], NC_DO_CREATE, NULL, NULL, 0, -1) != 200) return false;
+    client_init(&sc->c, &sc->slot);
+    if (client_adopt_envelope(&sc->c, g_body, g_len) < 0) return false;
+    snprintf(g->gid, sizeof g->gid, "%.*s", (int)sc->c.gid_len, sc->c.gid);
+    bool ok = true;
+    for (int k = 1; k < g->nh; k++) ok &= ask(g->h[k], ASK_JOIN, g->gid, env) == 200;
+    for (int b = 0; b < g->bots; b++) ok &= ask(g->h[0], ASK_ADD_BOT, g->gid, env) == 200;
+    for (int k = 0; k < g->nh; k++) ok &= ask(g->h[k], ASK_START, g->gid, env) == 200;
+    g->acked = g->seen_v = -1;
+    g->over = false;
+    return ok;
+}
+
+// h[k]'s read of the game, noted. false when it does not read.
+static bool crash_read(crash_game *g, int k, smoke_client *sc, cb_buf *env) {
+    int64_t v;
+    if (!game_view(g->h[k], g->gid, &v, env)) return false;
+    if (v > g->acked) g->acked = v;
+    if (k == 0) {
+        g->seen_v = v;
+        g->seen_hash = fnv1a64(FNV64_OFFSET, env->p, env->len);
+    }
+    client_init(&sc->c, &sc->slot);
+    if (client_adopt_envelope(&sc->c, env->p, (int)env->len) < 0) return false;
+    g->over = sc->c.view.status != GAME_STATUS_PLAYING;
+    return true;
+}
+
+static void kills_lose_no_acknowledged_move(void) {
+    smoke_user U[3];
+    for (int i = 0; i < 3; i++) {
+        char name[16];
+        snprintf(name, sizeof name, "SMOKEK%d", i);
+        if (signup(&U[i], name) != 0) { T_CHECK(0); return; }
+    }
+    crash_game G[3] = {
+        { .h = { &U[0] }, .nh = 1, .bots = 2 },
+        { .h = { &U[1], &U[2] }, .nh = 2, .bots = 1 },
+        { .h = { &U[2], &U[0] }, .nh = 2, .bots = 0 },
+    };
+    smoke_client *sc = calloc(1, sizeof *sc);
+    cb_buf env;
+    cb_buf_init(&env);
+    for (int i = 0; i < 3; i++) T_CHECK(crash_deal(&G[i], sc, &env));
+    // CBASE_SMOKE_KILLS rounds (8; more to hunt a rare loss).
+    const char *kv = getenv("CBASE_SMOKE_KILLS");
+    const int rounds = kv && atoi(kv) > 0 ? atoi(kv) : 8;
+    uint64_t rng = 0x5eed;
+    int kills = 0, same = 0, ahead = 0, moves = 0, deals = 3;
+    for (int round = 0; round < rounds; round++) {
+        // A few human moves, anywhere: each one wakes the bots of its table.
+        const int want = 1 + (int)(rng_u32(&rng) % 6);
+        for (int made = 0, tries = 0; made < want && tries < 400; tries++) {
+            crash_game *g = &G[rng_u32(&rng) % 3];
+            const int k = (int)(rng_u32(&rng) % (uint32_t)g->nh);
+            if (g->over) {
+                T_CHECK(crash_deal(g, sc, &env));
+                deals++;
+                continue;
+            }
+            if (!crash_read(g, k, sc, &env)) { T_CHECK(0); continue; }
+            uint8_t wire[64];
+            const int n = choose_move(sc, &env, wire, sizeof wire, &rng);
+            if (n <= 0) {   // not this human's turn: the bots' maybe, a moment for them
+                cb_sleep_ms(5);
+                continue;
+            }
+            const int64_t at = sc->c.view.version;
+            T_EQ_INT(call(g->h[k], NC_DO_PLAY, g->gid, wire, n, at), 200);
+            const NcAction *a = nc_action_read(g_status, g_body, g_len);
+            T_CHECK(a != NULL);
+            if (a && a->status == TABLE_STATUS_APPLIED && (int64_t)a->version > g->acked) g->acked = a->version;
+            made++;
+            moves++;
+        }
+        // The kill up to 400 ms after the last move's answer, while the bots it woke play (their
+        // pace is production's over SMOKE_SPEEDUP), wherever their drives are: on even rounds at
+        // once after what h[0] reads then (their commits so far acknowledged, the envelope compared).
+        cb_sleep_ms(rng_u32(&rng) % 400);
+        if (round % 2 == 0)
+            for (int i = 0; i < 3; i++) if (!G[i].over) (void)crash_read(&G[i], 0, sc, &env);
+        (void)tp_stop(&g_child, SIGKILL, 5000);   // a killed child has no exit status
+        kills++;
+        start_server();
+        if (g_port <= 0) break;
+        for (int i = 0; i < 3; i++) {
+            crash_game *g = &G[i];
+            const int64_t acked = g->acked, seen_v = g->seen_v;
+            const uint64_t seen_hash = g->seen_hash;
+            T_CHECK(crash_read(g, 0, sc, &env));
+            if (g->seen_v < acked)
+                fprintf(stderr, "smoke: game %s is at version %lld after the kill, and version %lld was acknowledged\n", g->gid,
+                        (long long)g->seen_v, (long long)acked);
+            T_CHECK(g->seen_v >= acked);
+            ahead += g->seen_v > acked;   // the bots committed after the last answer, before the kill
+            if (round % 2 == 0 && g->seen_v == seen_v) {
+                T_CHECK(g->seen_hash == seen_hash);
+                same++;
+            }
+        }
+    }
+    fprintf(stderr, "smoke: %d kills over %d human moves in %d deals; %d reads after a kill matched the last one before it, %d were ahead of it\n",
+            kills, moves, deals, same, ahead);
+    T_EQ_INT(kills, rounds);
+    T_CHECK(moves >= 8);
+    T_CHECK(same > 0);
+    cb_buf_free(&env);
+    free(sc);
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) { fprintf(stderr, "usage: smoke <path to cbase>\n"); return 2; }
     g_bin = argv[1];
@@ -785,6 +917,7 @@ int main(int argc, char **argv) {
     const char *game = getenv("CBASE_SMOKE_GAME");
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(an_idle_human_turn_is_never_kicked);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(game_scenario);
+    if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(kills_lose_no_acknowledged_move);
     else printf("NOTE smoke: the game scenario is off (CBASE_SMOKE_GAME=0)\n");
     T_RUN(drains_on_sigterm);
     if (g_dbdir[0]) {
