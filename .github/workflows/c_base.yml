@@ -71,16 +71,16 @@ jobs:
       - name: unit tests and smokes with every loop on io_uring
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" test-uring
 
-  # macOS: the same suite on the development platform, linked against Apple's system SQLite. It is a
-  # check of its own, not one the deploy waits on: nothing ships for macOS, and a defect of Apple's
-  # library (2026-10-19: its purgeable page cache keeps blocks unit_oom counts) must not hold the
-  # Linux binary back. Its result still shows on every run.
+  # macOS: the same suite on the development platform, linked against Homebrew's SQLite (upstream's,
+  # as on Linux and in production; Apple's system one has its own page cache, c_base/Makefile). It is
+  # a check of its own, not one the deploy waits on: nothing ships for macOS. Its result still shows
+  # on every run.
   check_macos:
     name: make check (macos-latest)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
-      - run: brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+      - run: brew list openssl@3 sqlite >/dev/null 2>&1 || brew install openssl@3 sqlite
       - name: build
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)"
       - name: unit tests and both smoke lanes

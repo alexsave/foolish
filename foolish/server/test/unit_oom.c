@@ -183,8 +183,9 @@ static void sweep(const char *what, rq *q, int ok, void (*prep)(rq *, int)) {
         if (k > 20000) { T_CHECK(!"the sweep did not end"); break; }
     }
     // The run with every allocation: the request's own answer, nothing kept.
-    if (g_status != ok) fprintf(stderr, "     %s: unfailed run answered %d, want %d\n", what, g_status, ok);
-    T_CHECK(g_status == ok || (g_ok_alt && g_status == g_ok_alt));
+    bool answered = g_status == ok || (g_ok_alt && g_status == g_ok_alt);
+    if (!answered) fprintf(stderr, "     %s: unfailed run answered %d, want %d\n", what, g_status, ok);
+    T_CHECK(answered);
     if (OOM_AVAILABLE && !g_everywhere) T_CHECK(failures > 0);
     if (wrong) fprintf(stderr, "     %s: %d of %d failed allocations answered as the caller's fault\n", what, wrong, failures);
     if (leaks) fprintf(stderr, "     %s: %d of %d failed allocations leaked\n", what, leaks, failures);
