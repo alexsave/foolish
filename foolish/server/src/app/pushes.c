@@ -85,7 +85,11 @@ void rt_publish_view(cb_rt *rt, const char *user_id, const cb_view_row *row, boo
         f.blob.p = row->view;
         f.blob.len = (uint32_t)row->view_len;
     }
-    cb_rt_to to = { CB_RT_VIEWS, user_id, NULL };
+    // A connection in the game's room (the page showing it) follows the game by its casts and holds
+    // a view of it back (netclient.c): it is not sent one. The user's other connections - the
+    // dashboard's list, the iOS app, which never joins a room - get it. A seat's last view (gone)
+    // goes to every connection.
+    cb_rt_to to = { CB_RT_VIEWS, user_id, NULL, gone ? NULL : row->game_id };
     publish(rt, &to, 1, &f);
 }
 
@@ -98,7 +102,7 @@ void rt_publish_cast(cb_rt *rt, const char *user_id, const char *game_id, int64_
     f.version = (uint32_t)version;
     f.blob.p = cast;
     f.blob.len = (uint32_t)len;
-    cb_rt_to to = { user_id ? CB_RT_SEAT : CB_RT_WATCH, user_id, game_id };
+    cb_rt_to to = { user_id ? CB_RT_SEAT : CB_RT_WATCH, user_id, game_id, NULL };
     publish(rt, &to, 1, &f);
 }
 
@@ -113,7 +117,7 @@ void rt_publish_chat(cb_rt *rt, const char *game_id, const cb_chat_row *row, con
     cb_rt_to to[CB_MAX_SEATS];
     int k = 0;
     for (int i = 0; i < n && i < CB_MAX_SEATS; i++)
-        if (members[i][0]) to[k++] = (cb_rt_to){ CB_RT_CHAT, members[i], game_id };
+        if (members[i][0]) to[k++] = (cb_rt_to){ CB_RT_CHAT, members[i], game_id, NULL };
     publish(rt, to, k, &f);
 }
 
