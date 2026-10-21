@@ -645,7 +645,9 @@ static void a_humans_move_during_a_drive_commits_on_one_worker_each(void) {
     cb_fanout_observer = race_on_commit;
     cb_bots_cycle_observer = race_on_cycle;
     int pooled = 0, inline_raced = 0;
-    for (int round = 0; round < 400 && (pooled < 2 || inline_raced < 2); round++) {
+    // Raced until each way landed twice and a fenced drive drove again (whether a bot is still due
+    // after the human's move is the deal's: a race may leave it nothing to retry).
+    for (int round = 0; round < 2000 && (pooled < 2 || inline_raced < 2 || atomic_load(&g_race_attempts) < 1); round++) {
         cb_game_row row;
         T_EQ_INT(CB_ROWS_CALL(g_ctx.store, game_get, gid, &row), CB_OK);
         const bool playing = row.status == GAME_STATUS_PLAYING;
@@ -666,7 +668,7 @@ static void a_humans_move_during_a_drive_commits_on_one_worker_each(void) {
             else if (bots_due_at(gid)) { drive_job d = { gid, false, 0 }; drive_run(&d); }
             continue;
         }
-        const int when = pooled <= inline_raced ? 1 : 2;
+        const int when = pooled < 2 && pooled <= inline_raced ? 1 : 2;
         atomic_store(&g_race_when, when);
         const counters c0 = stats();
         drive_job d = { .gid = gid };
