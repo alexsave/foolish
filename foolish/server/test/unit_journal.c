@@ -2225,7 +2225,7 @@ static void the_flush_thread_has_no_tick(void) {
     T_EQ_INT(js.waiting, 0);
     usleep(50000);
     cb_journal_stats_get(s, &js);
-    const long w0 = js.flusher_wakes;
+    const long w0 = js.flusher_wakes, f0 = js.flushes;
     usleep(1200000);   // idle: nothing waits
     cb_journal_stats_get(s, &js);
     T_EQ_INT(js.flusher_wakes - w0, 0);
@@ -2237,7 +2237,12 @@ static void the_flush_thread_has_no_tick(void) {
         usleep(20000);
     }
     T_EQ_INT(js.waiting, 0);
-    T_CHECK(js.flusher_wakes - w0 >= 1 && js.flusher_wakes - w0 <= 3);
+    // Each time the game began waiting costs at most two wakes (its alarm set, its age reached),
+    // and each ends in a flush: a bot drive whose cycles outlast game_age_ms (a sanitizer's pace)
+    // is flushed between them and waits again.
+    const long flushes = js.flushes - f0, wakes = js.flusher_wakes - w0;
+    T_CHECK(flushes >= 1);
+    T_CHECK(wakes >= 1 && wakes <= 2 * flushes);
     close_world(s);
     memset(&g_jo, 0, sizeof g_jo);
 }
