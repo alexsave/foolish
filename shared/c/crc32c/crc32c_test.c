@@ -7,6 +7,7 @@
 #include <string.h>
 #include "../test/check.h"
 #include "crc32c.h"
+#include "../rng.h"
 
 int main(void)
 {
@@ -26,8 +27,8 @@ int main(void)
 
     TEST("crc32c: the instructions are the table, at every length and offset");
     uint8_t r[300];
-    uint32_t x = 2463534242u;
-    for (size_t i = 0; i < sizeof r; i++) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; r[i] = (uint8_t)x; }
+    uint64_t rng = 2463534242u;
+    for (size_t i = 0; i < sizeof r; i++) r[i] = (uint8_t)rng_u32(&rng);
     int same = 0, total = 0;
     for (size_t off = 0; off < 9; off++)
         for (size_t n = 0; off + n <= sizeof r; n += 1 + n / 16, total++)
