@@ -66,6 +66,12 @@ CFLAGS += -DCD_LEAFBOOK
 # search plays the transfer at a podkidnoy table. Native builds only - the
 # tests, coverage and asan builds below carry it too, and no shipped module does.
 CFLAGS += -DCD_PASS_PROBE
+# The snapshot store's loud check (src/snap_room.h): a hook a full store drops
+# fails these suites and tools instead of passing quietly. Native builds only -
+# the asan and coverage builds below carry it too - and no shipped build does:
+# there the drop is the store's designed behaviour, and an assert would take the
+# whole server down.
+CFLAGS += -DENGINE_SNAP_ASSERT
 
 # The engine + all heuristic / Monte-Carlo bots: the kernel, as a host that
 # serves games links it (c_base reads it through print-kernel).
@@ -261,7 +267,7 @@ hand-contract-test: build/hand_contract_test
 ASAN_CFLAGS := -ffp-contract=off -fsanitize=address,undefined -fno-sanitize=object-size \
                -fno-omit-frame-pointer -fno-sanitize-recover=undefined \
                -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DCD_LEAFBOOK \
-               -DCD_PASS_PROBE
+               -DCD_PASS_PROBE -DENGINE_SNAP_ASSERT
 .PHONY: tests-asan
 build/cnitro_tests_asan: $(call c_objs,build/obj/asan,$(CORE_SRC) tests/tests.c)
 	$(CC) $(ASAN_CFLAGS) $^ -o $@ -lm
@@ -1793,7 +1799,7 @@ wasm-fm-exp-test: wasm-cc-check build/fm_exp_native_bits build/fm_exp_test_O3.wa
 # runtime. Objects (and their .gcno/.gcda) land in covbuild/ where gcovr finds
 # them recursively. Tune the floors with COV_LINE_MIN / COV_BRANCH_MIN.
 COV_CC         ?= gcc
-COV_FLAGS      := -O0 -g -ffp-contract=off --coverage -fprofile-update=atomic -Isrc -I../../c_base/core/test -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE -DCOVERAGE_CORPUS
+COV_FLAGS      := -O0 -g -ffp-contract=off --coverage -fprofile-update=atomic -Isrc -I../../c_base/core/test -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE -DCOVERAGE_CORPUS -DENGINE_SNAP_ASSERT
 COV_LINE_MIN   ?= 90
 COV_BRANCH_MIN ?= 74
 # THE WHOLE SHIPPED KERNEL, not three files of it.

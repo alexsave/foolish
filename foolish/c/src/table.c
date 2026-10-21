@@ -18,6 +18,19 @@
 // engine_snap_hook is (game.h): two games' operations on two threads.
 static _Thread_local TableSnaps *t_capture;
 
+// THE WIDEST WINDOW BUT THE DEAL. An operation is a deal (ENGINE_DEAL_HOOKS, game.h), a human's
+// one action (table_act), or a bot cycle (table_bot_drive): any number of silent goods, which fire
+// no hook (handle_good fires only in a round transition, and a good that makes one is not silent,
+// bot_drive.c classify), and then at most one visible action. The action that fires the most is a
+// cover that empties the defender's hand: a COVER per card, the DISCARD, a DRAW per seat
+// (refill_player_hands visits each once), the defender's OUT and the DEFENDER_MOVE. Its cards come
+// from a menu (MAX_MOVE_CARDS) or off the wire (AWIRE_MAX_CARDS). Every other action fires fewer:
+// a pickup, PICKUP and the draws; a good that ends the bout, MAGIC_TRANSITION, TRASH and the draws.
+// So no window drops a hook, whatever the board: MAX_SNAPS holds the widest (snap_room.h).
+#define TABLE_COVER_CARDS_MAX (MAX_MOVE_CARDS > AWIRE_MAX_CARDS ? MAX_MOVE_CARDS : AWIRE_MAX_CARDS)
+#define TABLE_ACTION_HOOKS_MAX (TABLE_COVER_CARDS_MAX + 1 + MAX_PLAYERS + 2)
+_Static_assert(MAX_SNAPS >= TABLE_ACTION_HOOKS_MAX, "MAX_SNAPS cannot hold one action's hooks");
+
 static void table_snap(const Game *g, int tag, int aux) {
     TableSnaps *s = t_capture;
     if (!s) return;
