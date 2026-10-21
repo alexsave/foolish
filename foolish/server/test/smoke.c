@@ -686,6 +686,9 @@ static void game_scenario(void) {
     T_CHECK(LA->n_cast > 0);
     T_CHECK(LC->n_cast > 0);
     T_CHECK(LB->n_view > 0);
+    // A's connection follows the game in its room (its casts): it is sent no view of it
+    // (realtime.h quiet_room), as B's, in no room, is sent every one.
+    T_EQ_INT(LA->n_view, 0);
     T_EQ_INT(LA->refused + LB->refused + LC->refused, 0);
     for (int i = 1; i < LA->n_cast; i++) T_CHECK(LA->cast_v[i] > LA->cast_v[i - 1]);
     for (int i = 1; i < LC->n_cast; i++) T_CHECK(LC->cast_v[i] > LC->cast_v[i - 1]);
