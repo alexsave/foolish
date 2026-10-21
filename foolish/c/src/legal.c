@@ -456,6 +456,35 @@ static int moves_into(const Game *g, int bot_idx, LegalMove *moves, int cap,
     return out.n;
 }
 
+// calc_moves' answer to "is the menu empty", branch by branch, from the move each branch is sure
+// to emit when it emits anything. Any change to calc_moves changes this too: tests.c
+// test_legal_any_is_a_nonempty_menu holds them equal over random games and random boards.
+bool legal_any(const Game *g, int bot_idx) {
+    if (g->status != GAME_STATUS_PLAYING) return false;
+    if (bot_idx < 0 || bot_idx >= g->num_players) return false;
+    const Player *p = &g->players[bot_idx];
+    if (p->status != PLAYER_STATUS_IN) return false;
+    if (g->num_battles < 0) return false;   // (a corrupt board: no branch of the menu)
+    if (g->num_battles == 0) {
+        // The first attack (calc_first_attack_moves): a single card of a real value, when the
+        // defender holds a card to meet it (emit_attack: defender_cards >= 1).
+        if (bot_idx != g->first_attacker || g->players[g->defender].hand_count < 1) return false;
+        for (int i = 0; i < p->hand_count; i++)
+            if (p->hand[i].value >= 1 && p->hand[i].value <= ACE_VALUE) return true;
+        return false;
+    }
+    if (bot_idx == g->defender) {
+        // THE COVER BRANCH: an uncovered attack offers the pickup (whatever the covers and the
+        // transfers); a table with every attack covered offers nothing (no cover is wanted, and a
+        // transfer needs an uncovered table).
+        for (int i = 0; i < g->num_battles; i++)
+            if (card_is_none(g->table_battles[i].defense)) return true;
+        return false;
+    }
+    // An attacker who has not said good: good is always on its menu.
+    return (g->good_players_mask & (1u << bot_idx)) == 0;
+}
+
 void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
     out->n = moves_into(g, bot_idx, out->moves, MAX_LEGAL_MOVES, calc_cover_moves);
 }

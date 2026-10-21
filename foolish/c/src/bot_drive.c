@@ -7,6 +7,7 @@
 #include "legal.h"
 #include "../../../shared/c/rng.h"
 #include "../../../shared/c/fnv.h"
+#include <string.h>
 
 // ---------- pacing ---------------------------------------------------------
 
@@ -92,11 +93,19 @@ static int seat_can_act(const Game *g, int seat, uint32_t human_mask, LegalMoves
     return lm->n > 0;
 }
 
+// seat_can_act's answer without the menu (legal.h legal_any): for a question that reads nothing
+// else of it - which seats are eligible - so no combinatorial enumeration runs per commit.
+static int seat_may_act(const Game *g, int seat, uint32_t human_mask) {
+    if (human_mask & (1u << seat)) return 0;
+    if (!should_bot_act(g, seat)) return 0;
+    return legal_any(g, seat);
+}
+
 uint32_t bot_drive_eligible_mask(const Game *g, uint32_t human_mask) {
     if (!g || game_done(g) >= 0) return 0;
     uint32_t mask = 0;
     for (int seat = 0; seat < g->num_players; seat++)
-        if (seat_can_act(g, seat, human_mask, &g_scratch)) mask |= (1u << seat);
+        if (seat_may_act(g, seat, human_mask)) mask |= (1u << seat);
     return mask;
 }
 
@@ -273,7 +282,7 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions,
     int order[MAX_PLAYERS];
     int n_order = 0;
     for (int seat = 0; seat < g->num_players; seat++)
-        if (seat_can_act(g, seat, human_mask, &g_scratch)) order[n_order++] = seat;
+        if (seat_may_act(g, seat, human_mask)) order[n_order++] = seat;
 
     if (n_order == 0) { out->stop = BOT_STOP_NO_ELIGIBLE; return 0; }
 
@@ -301,7 +310,19 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions,
         }
         if (idx < 0 || idx >= g_scratch.n) continue;
 
-        LegalMove move = g_scratch.moves[idx];
+        // The move as the action records it: its own cards and nothing else. A menu entry's slots past
+        // n_cards (and a non-cover's attack_cards) hold whatever an earlier enumeration left in the
+        // scratch, so a copy of the entry would make the action's bytes depend on what was enumerated
+        // before it, not on the move: the same row would drive byte-different cycles on two tables.
+        const LegalMove *pick = &g_scratch.moves[idx];
+        LegalMove move;
+        memset(&move, 0, sizeof move);
+        move.type = pick->type;
+        move.n_cards = pick->n_cards;
+        for (int k = 0; k < pick->n_cards && k < MAX_MOVE_CARDS; k++) {
+            move.cards[k] = pick->cards[k];
+            if (pick->type == MOVE_COVER) move.attack_cards[k] = pick->attack_cards[k];
+        }
         BoardMark before = mark(g);
         // Per-DECISION, not per-cycle, and after the search: a strategy's
         // rollouts refill scratch games off the draw stream, so this both
