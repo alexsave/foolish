@@ -3,6 +3,7 @@
 As of 2026-10-21.
 Numbers come from the PR bodies, commit messages and session notes, not from new runs.
 Unless marked "nano", they are from the local rig (Docker on the Mac, arm64), where "µs/move" is server CPU per move.
+Nano figures before the Graviton pass of 2026-10-21 were measured with hardware perf events attached, which on a nano cost about 28 µs per context switch, so at human pace they overstate the server by roughly that much per move; the Graviton pass is the first clean nano measurement.
 
 From the first VM build on main (5d5ef505b) to today's main (284f0dc4f), the server went from 181 to 67 µs per move at human pace and from 59.7 to 36.0 µs at saturation.
 Two-player throughput rose from 16.7k to 27.7k moves/s, sat2 p99 fell from 56 to 20 ms, and syscalls per move at human pace fell from 21 to 4.
@@ -18,7 +19,7 @@ The top rows are wall time spent waiting on network services, and the lower rows
 | Lambda + DynamoDB, before #372 | about 55 ms | 15-17 ms p50 for the DynamoDB TransactWriteItems, plus five IoT publishes in a row at 7.8 ms each |
 | Lambda + DynamoDB, after #372 | about 10 ms | 2.4 ms for a single conditional UpdateItem, plus one push batch sent in parallel (about 8 ms) |
 | VM at cutover (#391), SQLite group commit | under 1 ms | move p99 0.8-0.9 ms; 182 µs of server CPU per move on the nano |
-| Today's main, the whole server | about 100 µs or less | move p99 0.40 ms; 67 µs/move on the rig and 84 µs on the nano (NOW build); most of it is kernel TCP, network interrupts and waking the CPU |
+| Today's main, the whole server | about 30-100 µs | move p99 0.23 ms at human pace; 30 µs/move on the nano at hum2 and 45 at saturation, 67 on the rig; most of it is kernel TCP, network interrupts and waking the CPU |
 | Today's main, our own code at saturation | about 15-20 µs | the user-space share of sat2's 36 µs/move |
 | The game work itself, warm | about 1 µs | rules, journal record and outputs; the rules' apply alone is 250-300 ns |
 
@@ -150,7 +151,19 @@ The new resident state is handed over by swapping two buffers instead of a 2 KB 
 `legal_any` answers the bot drive's question directly instead of building every legal move.
 The change also fixed a kernel bug in which a bot's recorded move carried leftover bytes.
 
-## Decided by the Graviton pass (pending)
+## Decided by the Graviton pass (2026-10-21)
 
-The CPU knob (#416, `CBASE_LOOP_CPU` / `CBASE_BG_CPU`) and io_uring (#400, `CBASE_IO_URING`) are both off by default.
-The nano run will say whether either should ship, and what that run shows will be added here.
+**The Graviton pass.**
+58 runs on ten t4g.nano boxes, with BASE (5d5ef505b), NOW (4aa1c22e3) and MAIN (284f0dc4f) paired on the same box, and no hardware perf events attached.
+Server CPU per move on the nano went from 116 to 29.8 µs at hum2, 107 to 45.1 at sat2, 315 to 96.8 at hum8 and 197 to 48.9 at sat8, BASE to MAIN.
+At sat2 MAIN served 27.3k moves/s with a move p99 of 18.4 ms, against BASE's 11.6k and 61.8 ms, and no run lost a push.
+The nano came within 0 to 25% of the rig at saturation, not the 3 to 5 times slower that was predicted.
+
+**#425 The CPU knob on by default.**
+With nothing set, the loop thread is pinned to the lowest allowed CPU and every other thread to the next one; `off` unpins and a number pins by hand.
+On the nano it raised sat2 throughput by 12 to 18% and cut move p99 by 20 to 30% in every paired run, with zero thread migrations.
+A confirmation on a fresh nano with the shipped default gave 38.1k against 31.9k moves/s and a p99 of 12.1 against 16.1 ms at sat2.
+The gain is throughput and tail latency, not CPU per move.
+
+**io_uring stays off.**
+It cut syscalls per move from 6.4 to 4.8 and box CPU from 50.3 to 47.1 µs, but throughput did not move, so the epoll loop stays the default (#400, `CBASE_IO_URING`).
