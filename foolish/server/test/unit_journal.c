@@ -76,8 +76,8 @@ static void add_user(cb_store *s, const char *id, const char *name) {
 }
 
 static cb_journal_opts g_jo;
-static bool last_frame(const char *db, int magic, char *seg, size_t cap, long *off);
-#define last_batch(db, seg, cap, off) last_frame((db), 'J', (seg), (cap), (off))
+static bool last_frame(const char *db, int magic, char *seg, size_t cap, long *off, long *end);
+#define last_batch(db, seg, cap, off) last_frame((db), 'J', (seg), (cap), (off), NULL)
 static void crash_copy(const char *path, const char *copy);
 static bool no_row(int n, const char *const *names, const char *const *values, void *ud);
 static bool game_gone(cb_store *s, const char *gid);
@@ -272,17 +272,19 @@ static int64_t version_of(cb_store *s, const char *gid) {
 }
 
 // One step of the game: a human's move when one has a move, else a bot drive (to the next
-// human move). m->n == 0 marks a drive. The version after it, or -1 when the game is over.
+// human move). m->n == 0 marks a drive. The version after it, or -1 when nothing was played (the
+// game is over). A step that ends the game played: its version is positive too, a drive's as a
+// human move's, so a caller that records the steps records the last one.
 static int64_t play(const char *gid, const move_t *m);
 static int64_t step(cb_store *s, const char *gid, move_t *m) {
     if (next_move(s, gid, m)) return play(gid, m);
     m->n = 0;
     if (!g_bots || version_of(s, gid) < 0) return -1;
-    return cb_bots_drive(&g_ctx, gid) == CB_OK ? version_of(s, gid) : -1;
+    return play(gid, m);
 }
 
 static int64_t play(const char *gid, const move_t *m) {
-    if (m->n == 0) return cb_bots_drive(&g_ctx, gid) == CB_OK ? version_of(g_ctx.store, gid) : -1;
+    if (m->n == 0) return cb_bots_drive(&g_ctx, gid) == CB_OK ? llabs(version_of(g_ctx.store, gid)) : -1;
     g_now += 1237;
     reply r;
     action(m->bearer, gid, m->wire, m->n, m->intent, &r);
@@ -632,18 +634,15 @@ static void every_acknowledged_move_survives_a_sigkill(void) {
         close(p[0]);
         T_CHECK(WIFSIGNALED(st) || (WIFEXITED(st) && WEXITSTATUS(st) == 0));
 
-        // A torn half-batch past the last whole one, as a crash in the middle of a batch's
-        // header leaves it: dropped.
+        // A torn half-batch past the last whole frame, as a crash in the middle of a batch's
+        // header leaves it: dropped. Past the last FRAME, a batch or a whole commit (the game's
+        // end is one): a crash tears only what was never acknowledged.
         char seg[700];
-        long off = 0;
-        if (last_batch(path, seg, sizeof seg, &off)) {
+        long off = 0, end = 0;
+        if (last_frame(path, 'J', seg, sizeof seg, &off, &end)) {
             FILE *f = fopen(seg, "r+b");
-            uint8_t hd[4];
-            if (f && fseek(f, off, SEEK_SET) == 0 && fread(hd, 1, 4, f) == 4) {
-                static const uint8_t torn[5] = { 'J', 1, 40, 0, 7 };
-                fseek(f, off + 8 + (hd[2] | hd[3] << 8), SEEK_SET);
-                fwrite(torn, 1, sizeof torn, f);
-            }
+            static const uint8_t torn[5] = { 'J', 1, 40, 0, 7 };
+            if (f && fseek(f, end, SEEK_SET) == 0) fwrite(torn, 1, sizeof torn, f);
             if (f) fclose(f);
         }
 
@@ -742,10 +741,11 @@ static void the_flush_writes_the_rows_per_move_commits_write(void) {
     int na, nb;
     sql_dump(pa, gid, &ga, &ma, &na);
     sql_dump(pb, gid, &gb, &mb, &nb);
-    T_CHECK(gb != ga);
+    // (unless the steps ended the game: an end is due at once, journal.h, so it is in the tables already)
+    if (version_of(b, gid) > 0) T_CHECK(gb != ga);
     cb_journal_stats js;
     cb_journal_stats_get(b, &js);
-    T_EQ_INT(js.records, version_of(b, gid) - v_dealt);   // every commit since the deal, bot cycles too
+    T_EQ_INT(js.records, llabs(version_of(b, gid)) - v_dealt);   // every commit since the deal, bot cycles and an end too
     T_EQ_INT(cb_journal_flush(b), CB_OK);
     sql_dump(pb, gid, &gb, &mb, &nb);
     T_CHECK(gb == ga);
@@ -1031,43 +1031,55 @@ static int cut_a_cycle(const char *copy) {
 
 static void a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused(void) {
     char path[320], copy[320], cut[320], err[256] = "";
-    snprintf(path, sizeof path, "%s/legacy.sqlite", g_dir);
-    snprintf(copy, sizeof copy, "%s/legacy_copy.sqlite", g_dir);
-    snprintf(cut, sizeof cut, "%s/legacy_cut.sqlite", g_dir);
-    cb_store *s = open_world(path, true, err, sizeof err);
+    char gid[CB_GAME_ID_MAX + 1] = "";
+    cb_store *s = NULL;
+    long flushes0 = 0;
+    int steps = 0;
+    // A game whose steps END it is no use here: its end is a rated one, due at once (journal.h),
+    // so the flush thread writes its moves to the tables and the copies hold no record to cut.
+    // Such a deal is put away and another dealt, each in a world of its own.
+    for (int deal = 0; deal < 8; deal++) {
+        snprintf(path, sizeof path, "%s/legacy%d.sqlite", g_dir, deal);
+        snprintf(copy, sizeof copy, "%s/legacy%d_copy.sqlite", g_dir, deal);
+        snprintf(cut, sizeof cut, "%s/legacy%d_cut.sqlite", g_dir, deal);
+        s = open_world(path, true, err, sizeof err);
+        T_CHECK(s != NULL);
+        if (!s) return;
+        // A, two bots: a bot's cycle can end a bout (a draw) and the other bot act after it.
+        reply r;
+        call("create", "A", NULL, 0, &r);
+        cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+        meta("A", ASK_ADD_BOT, gid, &r);
+        meta("A", ASK_ADD_BOT, gid, &r);
+        meta("A", ASK_START, gid, &r);
+        // A board from before the seed-dealt deck: a draw takes the draw stream's next number. The
+        // row is rewritten the one way a write may go behind the journal: an admin's (THE ADMIN RULE,
+        // which flushes and forgets the overlay, so the next move reads this row).
+        cb_game_row row = stored(s, gid);
+        T_CHECK(row.state_len > 2 && row.status == GAME_STATUS_PLAYING);
+        const size_t cap = 2 * row.state_len + 128;
+        char *sql = malloc(cap);
+        int at = snprintf(sql, cap, "UPDATE games SET state = X'");
+        for (size_t i = 0; i < row.state_len; i++)
+            at += snprintf(sql + at, cap - (size_t)at, "%02x", i == 1 ? row.state[i] & (uint8_t)~0x01 : row.state[i]);   // STATE_BLOB_FLAG_DETERMINISTIC
+        snprintf(sql + at, cap - (size_t)at, "' WHERE id = '%s'", gid);
+        T_CHECK(cb_store_admin_query(s, sql, true, no_row, NULL) >= 0);
+        free(sql);
+        cb_game_row_free(&row);
+        cb_journal_stats js0;
+        cb_journal_stats_get(s, &js0);
+        flushes0 = js0.flushes;   // the admin's write flushed the lobby's commits
+        const bool was = g_bots;
+        g_bots = true;
+        move_t m;
+        for (steps = 0; steps < 20 && step(s, gid, &m) > 0; steps++) {}
+        g_bots = was;
+        if (version_of(s, gid) > 0) break;
+        close_world(s);
+        s = NULL;
+    }
     T_CHECK(s != NULL);
     if (!s) return;
-    // A, two bots: a bot's cycle can end a bout (a draw) and the other bot act after it.
-    reply r;
-    char gid[CB_GAME_ID_MAX + 1] = "";
-    call("create", "A", NULL, 0, &r);
-    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
-    meta("A", ASK_ADD_BOT, gid, &r);
-    meta("A", ASK_ADD_BOT, gid, &r);
-    meta("A", ASK_START, gid, &r);
-    // A board from before the seed-dealt deck: a draw takes the draw stream's next number. The
-    // row is rewritten the one way a write may go behind the journal: an admin's (THE ADMIN RULE,
-    // which flushes and forgets the overlay, so the next move reads this row).
-    cb_game_row row = stored(s, gid);
-    T_CHECK(row.state_len > 2 && row.status == GAME_STATUS_PLAYING);
-    const size_t cap = 2 * row.state_len + 128;
-    char *sql = malloc(cap);
-    int at = snprintf(sql, cap, "UPDATE games SET state = X'");
-    for (size_t i = 0; i < row.state_len; i++)
-        at += snprintf(sql + at, cap - (size_t)at, "%02x", i == 1 ? row.state[i] & (uint8_t)~0x01 : row.state[i]);   // STATE_BLOB_FLAG_DETERMINISTIC
-    snprintf(sql + at, cap - (size_t)at, "' WHERE id = '%s'", gid);
-    T_CHECK(cb_store_admin_query(s, sql, true, no_row, NULL) >= 0);
-    free(sql);
-    cb_game_row_free(&row);
-    cb_journal_stats js0;
-    cb_journal_stats_get(s, &js0);
-    const long flushes0 = js0.flushes;   // the admin's write flushed the lobby's commits
-    const bool was = g_bots;
-    g_bots = true;
-    move_t m;
-    int steps = 0;
-    for (; steps < 20 && step(s, gid, &m) > 0; steps++) {}
-    g_bots = was;
     T_CHECK(steps > 10);
     const uint64_t h = row_hash(s, gid);
     cb_journal_stats js;
@@ -1098,7 +1110,7 @@ static void a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused(void) {
 // The newest segment of `db` that holds a batch, and the offset of its last batch.
 // The newest segment's last frame of kind `magic` ('J' a batch, 'R' a whole commit), walking
 // every frame (a batch: 8 + its u16 length; a whole commit: 12 + its u32 length).
-static bool last_frame(const char *db, int magic, char *seg, size_t cap, long *off) {
+static bool last_frame(const char *db, int magic, char *seg, size_t cap, long *off, long *end) {
     const char *base = strrchr(db, '/') + 1;
     char pre[300], best[400] = "";
     snprintf(pre, sizeof pre, "%s-journal.", base);
@@ -1124,6 +1136,7 @@ static bool last_frame(const char *db, int magic, char *seg, size_t cap, long *o
     }
     if (f) fclose(f);
     *off = last;
+    if (end) *end = at;   // past the last frame of either kind
     return last > 0;
 }
 
@@ -1575,7 +1588,7 @@ static void a_torn_or_corrupt_whole_commit_is_dropped(void) {
         close_world(s);
         char seg[700];
         long off = 0;
-        T_CHECK(last_frame(copy, 'R', seg, sizeof seg, &off));
+        T_CHECK(last_frame(copy, 'R', seg, sizeof seg, &off, NULL));
         if (kind == 0) {   // the payload's last byte: the checksum refuses it
             FILE *f = fopen(seg, "rb");
             uint8_t h[128] = { 0 };
