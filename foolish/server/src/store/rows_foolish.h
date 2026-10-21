@@ -82,8 +82,13 @@ typedef struct {
     bool     moves_by_bots;
     // The new row decoded (table.h TableResident: what the kernel's table holds after the
     // commit), for a store that keeps games in memory (the journal: the next operation adopts
-    // it instead of decoding the row). NULL: none. A store with no journal ignores it.
-    const struct TableResident *resident;
+    // it instead of decoding the row), in the caller's buffer, which the store may TAKE: it puts
+    // its own old buffer (or NULL) in its place (journal.c res_take). NULL: none. A store with no
+    // journal ignores it.
+    struct TableResident **resident;
+    // The game as the journal holds it for this operation (journal.h THE HOLD), or NULL: the
+    // store finds it by the row's id.
+    struct cb_jhold *held;
     // The counts of the lists below. Membership: the humans and bots the roster seats now
     // (anyone not listed is removed). Ratings: by seat id, applied as rating = max(0, rating +
     // delta), games_played + 1, previous_elo = the old rating; a human with no rating row gets

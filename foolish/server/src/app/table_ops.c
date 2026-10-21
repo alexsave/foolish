@@ -159,7 +159,7 @@ static int game_acquire(cb_ctx *ctx, const char *id, cb_section *s, cb_game_row 
     *kept = *adopted = false;
     if (cb_journal_of(ctx->store)) {
         row_into w = { s, out, false };
-        int rc = cb_journal_game_acquire(ctx->store, id, take_game, &w);
+        int rc = cb_journal_game_acquire(ctx->store, id, take_game, &w, &s->held);
         *kept = rc == CB_OK;
         *adopted = rc == CB_OK && w.adopted;
         if (*adopted) {
@@ -247,6 +247,7 @@ static void section_release(cb_section *s) {   // the section and what it keeps
     if (!s) return;
     free(s->fin);
     cb_row_buf_free(&s->rb);
+    free(s->res);
     free(s);
 }
 static void section_at_exit(void *p) { section_release(p); }   // a thread ends with nothing out
@@ -1035,7 +1036,7 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // table from them and writes only the Table and the board): the cache and finalize read them.
     // The game as the commit leaves it, decoded, for a store that keeps it (the journal): what a
     // section loaded from the new row would hold, its RNG base from the new row's seed too.
-    TableResident res;
+    if (rc == CB_OK && cb_journal_of(ctx->store) && !s->res && !(s->res = malloc(sizeof *s->res))) rc = CB_E_NOMEM;
     if (rc == CB_OK && cb_journal_of(ctx->store)) {
         // The RNG base is the seed's. A plain move (gc.moves) keeps its game's seed, and the table
         // already holds that seed's base (cb_section_load, or table_adopt from its resident): only
@@ -1045,8 +1046,9 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
             if (nrow.has_seed) hex_encode(nrow.seed, CB_SEED_LEN, hex, sizeof hex);
             table_set_deal_seed(t, hex, (int)strlen(hex));
         }
-        table_resident(t, &c->clock, &res);
-        gc.resident = &res;
+        table_resident(t, &c->clock, s->res);
+        gc.resident = &s->res;   // the journal takes it, and gives the game's old buffer back
+        gc.held = s->held;
     }
     if (rc == CB_OK) {
         // The caller holds the game's lock (cb_table_lock): from the row it read to
@@ -1313,6 +1315,8 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
         out->envelope = NULL;
         out->envelope_len = 0;
     }
+    cb_journal_game_release(ctx->store, s->held);   // (THE HOLD) before the lock goes
+    s->held = NULL;
     cb_table_unlock(lock);
     cb_section_free(s);
     return ret;

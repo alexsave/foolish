@@ -121,9 +121,16 @@ const cb_rows_ops *cb_journal_rows(void);
 // error. A resident game leaves when it is idle (IDLE_EVICT_MS, nothing waiting), when over
 // opts.max_games the least recently used idle ones do (at the flush thread's next pass),
 // and on an admin's write (THE ADMIN RULE).
+//
+// THE HOLD: with `held` non-NULL, a game the overlay holds is also held for the caller (*held, else
+// NULL: not resident, or fn failed) until cb_journal_game_release: never evicted meanwhile, and a
+// commit that names it (cb_game_commit.held) is fenced and applied in place, with no lookup by id.
+// Unlinked while held (a conflict, an admin's write), it is freed by the release.
 struct TableResident;
+typedef struct cb_jhold cb_jhold;
 typedef int (*cb_journal_game_fn)(void *ud, const cb_game_row *row, const struct TableResident *res);
-int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, void *ud);
+int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, void *ud, cb_jhold **held);
+void cb_journal_game_release(cb_store *s, cb_jhold *held);   // NULL: nothing
 // The game decoded from the row acquire gave at `version` (its bytes, res NULL): kept as its
 // resident if the game is still at that version, so the next operation adopts instead of
 // decoding. Under the game's lock.
@@ -165,11 +172,19 @@ typedef struct {
     long txn_moves_max;                     // the most waiting moves one flush transaction carried
     long txn_hold_us_max;                   // the longest one held the flush lock (a write around the journal's worst wait)
     long flusher_wakes;                     // times the flush thread woke (no tick: an idle box wakes it never)
+    long lookups;                           // games found by id in the overlay (a human's move: one, its acquire; THE HOLD)
 } cb_journal_stats;
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
-// A resident game's stamps (THE JOURNAL'S TIME, journal.c j_mono): its last operation's and its
-// oldest waiting move's (0: none waits). CB_OK, or CB_E_NOT_FOUND when the overlay does not hold it.
-int cb_journal_game_stamps(const cb_store *s, const char *id, int64_t *touched_ms, int64_t *first_ms);
+// What the overlay holds of a game, for a test: its stamps (THE JOURNAL'S TIME, journal.c j_mono:
+// its last operation's, its oldest waiting move's or 0), its decoded game's buffer (compared, never
+// read: NULL when it has none) and the holds on it (THE HOLD). CB_OK, or CB_E_NOT_FOUND when the
+// overlay does not hold it. Not counted in the stats' lookups.
+typedef struct {
+    int64_t     touched_ms, first_ms;
+    const void *resident;
+    int         held;
+} cb_journal_game_facts;
+int cb_journal_game_info(const cb_store *s, const char *id, cb_journal_game_facts *out);
 
 // ---- the batch codec (pure; unit_journal) ------------------------------------------------
 // One record: one commit of one game, a human's move or a bot cycle's moves.
