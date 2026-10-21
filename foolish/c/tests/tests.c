@@ -1372,6 +1372,87 @@ static void test_legal_defender_all_covered(void) {
     CHECK(moves.n == 0, "legal: defender has no moves on a fully-covered table");
 }
 
+// legal_any is EXACTLY "the menu is not empty" (legal.h): the bot drive's eligibility asks it
+// instead of building the menu. Held over every seat (and seats past the table) of every state
+// of random games at every table size, both rule sets, and of random crafted boards that reach
+// the corners no game does (a corrupt value, an empty defender, a negative battle count).
+static LegalMove g_any_menu[MAX_LEGAL_MOVES];
+static void make_seeded_game(Game *g, int n_players, int seed);
+
+static int any_mismatch(const Game *g, int *n_true, int *n_false) {
+    int bad = 0;
+    for (int seat = -1; seat <= MAX_PLAYERS; seat++) {
+        const bool want = legal_moves_into(g, seat, g_any_menu, MAX_LEGAL_MOVES) > 0;
+        const bool got = legal_any(g, seat);
+        if (got != want) {
+            if (bad++ == 0)
+                fprintf(stderr, "legal_any(seat %d) = %d, the menu has %s (battles %d, defender %d, first %d)\n", seat, got,
+                        want ? "moves" : "none", g->num_battles, g->defender, g->first_attacker);
+        }
+        if (want) (*n_true)++;
+        else (*n_false)++;
+    }
+    return bad;
+}
+
+static Card any_card(uint64_t *r) {
+    // Mostly real cards, sometimes a value no deck holds (0, 14, 15).
+    Card c = { (int8_t)(rng_u32(r) % NUM_SUITS), (int8_t)(1 + rng_u32(r) % ACE_VALUE) };
+    if (rng_u32(r) % 16 == 0) c.value = (int8_t)(rng_u32(r) % 3 == 0 ? 0 : 14 + rng_u32(r) % 2);
+    return c;
+}
+
+static void test_legal_any_is_a_nonempty_menu(void) {
+    int bad = 0, n_true = 0, n_false = 0, states = 0, def_uncovered = 0;
+    // Random games: every state, every seat.
+    for (int np = 2; np <= 6; np++)
+        for (int seed = 0; seed < 40; seed++) {
+            Game g;
+            make_seeded_game(&g, np, seed * 11 + np);
+            if (seed & 1) g.rules |= GAME_RULE_NO_PASS;
+            BotPlay bp;
+            bot_play_init(&bp, &g, 2000, BOT_PLAY_SHUFFLE, NULL);
+            for (int idx; (idx = bot_play_next(&bp)) >= 0;) {
+                bad += any_mismatch(&g, &n_true, &n_false);
+                states++;
+                bot_play_apply(&bp, random_strategy_choose(&g, idx, &bp.moves, NULL));
+            }
+            bad += any_mismatch(&g, &n_true, &n_false);   // the end: nobody has a move
+        }
+    // Random crafted boards.
+    uint64_t r = 0x5EEDA11ULL;
+    for (int it = 0; it < 20000; it++) {
+        Game g;
+        memset(&g, 0, sizeof g);
+        const int np = 2 + (int)(rng_u32(&r) % 5);
+        g.num_players = (int8_t)np;
+        g.status = rng_u32(&r) % 10 ? GAME_STATUS_PLAYING : (int8_t)(rng_u32(&r) % 3);
+        g.power_suit = (int8_t)(rng_u32(&r) % NUM_SUITS);
+        g.rules = rng_u32(&r) % 2 ? GAME_RULE_NO_PASS : 0;
+        g.first_attacker = (int8_t)(rng_u32(&r) % (uint32_t)np);
+        g.defender = (int8_t)((g.first_attacker + 1 + rng_u32(&r) % (uint32_t)(np - 1)) % np);
+        g.good_players_mask = rng_u32(&r) & ((1u << np) - 1);
+        for (int i = 0; i < np; i++) {
+            Player *p = &g.players[i];
+            p->status = rng_u32(&r) % 8 ? PLAYER_STATUS_IN : (int8_t)(rng_u32(&r) % 4);
+            p->hand_count = (int8_t)(rng_u32(&r) % 9);
+            for (int k = 0; k < p->hand_count; k++) p->hand[k] = any_card(&r);
+        }
+        const uint32_t nb = rng_u32(&r) % 8;
+        g.num_battles = nb == 7 ? -1 : (int8_t)nb;
+        for (int b = 0; b < g.num_battles; b++) {
+            g.table_battles[b].attack = any_card(&r);
+            g.table_battles[b].defense = rng_u32(&r) % 2 ? CARD_NONE : any_card(&r);
+            if (card_is_none(g.table_battles[b].defense) && g.status == GAME_STATUS_PLAYING) def_uncovered++;
+        }
+        bad += any_mismatch(&g, &n_true, &n_false);
+        states++;
+    }
+    CHECK(bad == 0, "legal_any equals a non-empty legal menu on every seat of every board");
+    CHECK(states > 20000 && n_true > 1000 && n_false > 1000 && def_uncovered > 1000,
+          "legal_any: the boards reach both answers, and uncovered tables");
+}
+
 static void test_legal_pass_blocked_variants(void) {
     LegalMoves moves;
     // Two uncovered attacks of DIFFERENT values -> pass is not offered.
@@ -20199,6 +20280,7 @@ int main(void) {
     test_legal_attacker_good_and_no_match();
     test_legal_defender_cover_pickup_pass();
     test_legal_defender_all_covered();
+    test_legal_any_is_a_nonempty_menu();
     test_legal_pass_blocked_variants();
     test_legal_lite_greedy_cover();
 

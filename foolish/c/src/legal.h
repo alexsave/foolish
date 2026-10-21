@@ -62,6 +62,13 @@ bool legal_move_apply(Game *g, int seat, const LegalMove *m);
 // that cast produced.
 int legal_moves_into(const Game *g, int bot_idx, LegalMove *moves, int cap);
 
+// Whether `bot_idx` has ANY legal move: exactly `legal_moves_into(g, bot_idx, ...) > 0`, without
+// building the menu (whose cover and attack enumerations are combinatorial). O(hand + battles):
+// it answers from the one move each branch of the menu always offers when it offers any - the
+// first attacker's single card, the defender's pickup, the attacker's good. The bot drive asks it
+// of every bot seat on every commit (bot_drive_eligible_mask). tests.c pins the equality.
+bool legal_any(const Game *g, int bot_idx);
+
 // Faster variant for use inside Monte Carlo simulations where every player
 // plays a deterministic policy (handwritten). Skips the combinatorial cover
 // enumeration — emits one greedy lowest-cost full-cover move instead, which
