@@ -167,6 +167,9 @@ typedef struct {
     long flusher_wakes;                     // times the flush thread woke (no tick: an idle box wakes it never)
 } cb_journal_stats;
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
+// A resident game's stamps (THE JOURNAL'S TIME, journal.c j_mono): its last operation's and its
+// oldest waiting move's (0: none waits). CB_OK, or CB_E_NOT_FOUND when the overlay does not hold it.
+int cb_journal_game_stamps(const cb_store *s, const char *id, int64_t *touched_ms, int64_t *first_ms);
 
 // ---- the batch codec (pure; unit_journal) ------------------------------------------------
 // One record: one commit of one game, a human's move or a bot cycle's moves.

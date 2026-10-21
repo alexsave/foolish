@@ -817,10 +817,23 @@ static bool in_list(const cb_uuid *list, int n, const char *id) {
     return false;
 }
 
+// A plain move or bot cycle (journal.h): one human move or one bot cycle and nothing else - the
+// roster, the status and the seed unchanged, no rating, no new session log. Only the section's
+// products decide it (after table_commit_products).
+static bool section_plain(const cb_section *s, const cb_game_row *row) {
+    const TableCommit *c = &s->c;
+    const bool moved = s->moves_want > 0 && s->t.n_moves == s->moves_want;
+    return moved && !c->ended && !c->dealt_now && !c->logs_reset && c->n_rated == 0 && !c->roster_changed &&
+           row->status == GAME_STATUS_PLAYING && c->status == GAME_STATUS_PLAYING;
+}
+
 // The new row a commit writes, and the commit that writes it, from the section's products:
 // commit_table's arithmetic, moved here. The row's byte fields point into the section's
 // arena. The commit and the journal's replay (cb_table_replay_move) both come here.
-static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *dealt_seed, int64_t now,
+// `lists`: the commit's seat and rating lists are filled. Without them only its scalar head is
+// written (CB_GAME_COMMIT_HEAD, every count 0): for a plain move into the journal, which records
+// it as its moves and never reads a list, and for the replay, which reads the row and the log.
+static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *dealt_seed, int64_t now, bool lists,
                         cb_game_row *nrow_out, cb_game_commit *gp) {
     const Table *t = &s->t;
     const TableCommit *c = &s->c;
@@ -859,7 +872,7 @@ static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *de
     // this operation closed a round, else unchanged.
     np->round_epoch = (c->logs_reset || waiting) ? 0 : c->closed_round ? row->version + 1 : row->round_epoch;
 
-    memset(gp, 0, sizeof *gp);
+    memset(gp, 0, lists ? sizeof *gp : CB_GAME_COMMIT_HEAD);
     gp->row = np;
     gp->log_clear = log_clear;
     if (!(waiting && !c->logs_reset) && c->logs.len > 0) {
@@ -867,6 +880,7 @@ static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *de
         gp->log_add_len = (size_t)c->logs.len;
     }
     gp->expected_version = row->version;
+    if (!lists) return;
     // The loaded row's seats, when it vouches that they are the stored ones
     // (store.h cb_game_commit prev_known): the store skips reading them.
     gp->prev_known = row->seats_exact;
@@ -890,7 +904,6 @@ static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *de
                      (int)t->r.seats[i].name_len, t->r.seats[i].name);
         }
     }
-
 }
 
 int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const uint8_t *dealt_seed,
@@ -932,14 +945,15 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         return CB_E_STATE;
     }
 
+    // A plain move or bot cycle: the store may hold it in its journal, as the kernel's move list;
+    // anything a move does besides moving the board goes to the tables at once. Into the journal
+    // the commit carries no seat lists (it records the moves; the seats did not change); a store
+    // without one is given them always (rows_foolish.c writes the membership from them).
+    const bool plain = section_plain(s, row);
     cb_game_row nrow;
     cb_game_commit gc;
-    section_row(s, row, dealt_seed, now, &nrow, &gc);
-    // A plain move or bot cycle (journal.h): the store may hold it in its journal, as the
-    // kernel's move list; anything a move does besides moving the board goes to the tables at once.
-    if (moved && !c->ended && !c->dealt_now && !gc.log_clear && gc.n_rated == 0 && !c->roster_changed &&
-        row->status == GAME_STATUS_PLAYING && nrow.status == GAME_STATUS_PLAYING)
-    {
+    section_row(s, row, dealt_seed, now, !(plain && cb_journal_of(ctx->store)), &nrow, &gc);
+    if (plain) {
         gc.moves = t->moves;
         gc.n_moves = t->n_moves;
         gc.moves_by_bots = s->moves_bots;
@@ -951,7 +965,7 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
             CB_ERROR("table", "game %s: no commit products (%d)", s->gid, rc);
             return CB_E_STATE;
         }
-        section_row(s, row, dealt_seed, now, &nrow, &gc);
+        section_row(s, row, dealt_seed, now, true, &nrow, &gc);
     }
     const uint8_t *A = s->arena;
 
@@ -1000,11 +1014,12 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // past a skipped version is refused by the client's version gate and refetched).
     if (rc == CB_OK && cb_rt_room_heard(ctx->rt, row->id))
         rc = section_cast(s, &ck, -1, next, &f.spectator_cast, &f.spectator_cast_len, &spectator_owned);
-    for (int i = 0; i < f.n_seats; i++) {
+    // Who joined and who left: a plain commit's roster is the loaded one (section_seats), so none.
+    for (int i = 0; !plain && i < f.n_seats; i++) {
         if (!f.seats[i].user_id[0]) continue;
         if (!in_list(s->old_humans, s->n_old, f.seats[i].user_id)) cb_strlcpy(f.joined[f.n_joined++], f.seats[i].user_id, sizeof(cb_uuid));
     }
-    for (int i = 0; i < s->n_old; i++) {
+    for (int i = 0; !plain && i < s->n_old; i++) {
         bool still = false;
         for (int j = 0; j < f.n_seats; j++) if (strcmp(f.seats[j].user_id, s->old_humans[i]) == 0) still = true;
         if (!still) cb_strlcpy(f.left[f.n_left++], s->old_humans[i], sizeof(cb_uuid));
@@ -1147,7 +1162,7 @@ int cb_table_replay_move(void *ud, const cb_game_row *row, const uint8_t *sessio
     }
     cb_game_row nrow;
     cb_game_commit gc;
-    section_row(s, row, NULL, m->now_ms, &nrow, &gc);
+    section_row(s, row, NULL, m->now_ms, false, &nrow, &gc);
     rc = row_copy(out, &nrow);
     if (rc == CB_OK && gc.log_add_len) {
         if (!(*log = dup_bytes(gc.log_add, gc.log_add_len))) rc = CB_E_NOMEM;

@@ -277,8 +277,8 @@ typedef struct jgame {
     int           n_rated, cap_rated;
     long          bytes;         // what the waiting moves hold (move_bytes each)
     size_t        state_cap, roster_cap;   // row.state's and row.roster's buffers
-    int64_t       touched_ms;    // cb_mono_ms of its last move
-    int64_t       first_ms;      // cb_mono_ms of its oldest waiting move
+    int64_t       touched_ms;    // j_mono of its last move
+    int64_t       first_ms;      // j_mono of its oldest waiting move
     uint64_t      first_seg;     // a segment at or before the one holding its oldest waiting move
     int           n_humans;      // the humans its roster seats (the dashboard list's members)
     cb_uuid       humans[CB_MAX_SEATS];
@@ -391,6 +391,12 @@ cb_journal *cb_journal_of(const cb_store *s) { return s && s->app_settle == cb_j
 // On the network loop's thread (journal.h opts.loop), where nothing may wait: every read or write
 // of the tables below returns CB_E_WOULD_BLOCK there instead, before it has done anything.
 static bool on_loop(const cb_journal *j) { return j->o.loop && cb_loop_on_thread(j->o.loop); }
+
+// THE JOURNAL'S TIME for what it stamps on a game or a rating (touched_ms, first_ms): on the
+// loop's thread the loop's own stamp of this pass (net/loop.h cb_loop_now, the same monotonic
+// clock), so a move made there reads no clock for the journal; elsewhere cb_mono_ms. A stamp is
+// at most one pass old, and only ever earlier: a game is due or idle that much sooner.
+static int64_t j_mono(const cb_journal *j) { return on_loop(j) ? cb_loop_now(j->o.loop) : cb_mono_ms(); }
 
 static jgame **ov_slot(cb_journal *j, const char *id) {
     jgame **p = &j->buckets[fnv1a32_str(FNV32_OFFSET, id) & (OV_BUCKETS - 1)];
@@ -579,7 +585,7 @@ static jgame *ov_insert(cb_journal *j, jgame **p, const cb_game_row *row, const 
     if (!g) return NULL;
     if (game_set(g, row, res) != CB_OK) { game_free(g); return NULL; }
     g->sql_version = row->version;
-    g->touched_ms = cb_mono_ms();
+    g->touched_ms = j_mono(j);
     if (res) humans_of(g, &res->r);
     else humans_of_roster(g, row->roster, row->roster_len);
     *p = g;
@@ -637,7 +643,7 @@ static int ov_apply(cb_journal *j, jrec *r) {
         if (!(rated = malloc(sizeof *rated))) return CB_E_NOMEM;
         *rated = *r->rated;
     }
-    const int64_t now = cb_mono_ms();
+    const int64_t now = j_mono(j);
     if (!g->n_moves) {
         g->first_ms = now;
         g->first_seg = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
@@ -1685,7 +1691,7 @@ int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, 
         pthread_mutex_lock(&j->ov_mu);
         jgame *g = *ov_slot(j, id);
         if (g) {
-            g->touched_ms = cb_mono_ms();
+            g->touched_ms = j_mono(j);
             int rc = g->res_valid ? fn(ud, &g->row, &g->res) : fn(ud, &g->row, NULL);
             pthread_mutex_unlock(&j->ov_mu);
             return rc;
@@ -1848,7 +1854,7 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
                 g->res_valid = c->resident != NULL;
                 if (c->resident) g->res = *c->resident;
                 g->sql_version = c->row->version;
-                g->touched_ms = cb_mono_ms();
+                g->touched_ms = j_mono(j);
                 // The commit's seats are the stored ones now.
                 g->n_humans = g->n_bots = 0;
                 for (int i = 0; i < c->n_humans && i < CB_MAX_SEATS; i++) memcpy(g->humans[g->n_humans++], c->humans[i], sizeof(cb_uuid));
@@ -2129,7 +2135,7 @@ int cb_journal_seat_ratings(cb_store *s, const char *const *ids, int n, int64_t 
                             int32_t *ratings, bool *old_enough) {
     cb_journal *j = cb_journal_of(s);
     if (!j || n < 0 || n > CB_MAX_SEATS) return CB_E_INVALID;
-    const int64_t now = cb_mono_ms();
+    const int64_t now = j_mono(j);
     bool miss[CB_MAX_SEATS] = { false }, any = false;
     pthread_mutex_lock(&j->ov_mu);
     for (int i = 0; i < n; i++) {
@@ -2624,6 +2630,19 @@ void cb_journal_close(cb_store *s) {
     s->app_backup_files = NULL;
     s->app_backup_release = NULL;
     journal_free(j);
+}
+
+int cb_journal_game_stamps(const cb_store *s, const char *id, int64_t *touched_ms, int64_t *first_ms) {
+    cb_journal *j = cb_journal_of(s);
+    if (!j) return CB_E_STATE;
+    pthread_mutex_lock(&j->ov_mu);
+    const jgame *g = *ov_slot(j, id);
+    if (g) {
+        *touched_ms = g->touched_ms;
+        *first_ms = g->n_moves ? g->first_ms : 0;
+    }
+    pthread_mutex_unlock(&j->ov_mu);
+    return g ? CB_OK : CB_E_NOT_FOUND;
 }
 
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {

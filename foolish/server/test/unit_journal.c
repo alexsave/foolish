@@ -13,6 +13,7 @@
 #include "rate_limits.h"
 #include "store/backup.h"
 #include "store/journal.h"
+#include "net/loop.h"
 #include "../../../shared/c/crc32c/crc32c.h"
 
 // The segment format journal.c writes (journal.h SEGMENT FILE).
@@ -2260,6 +2261,88 @@ static void the_flush_thread_has_no_tick(void) {
     memset(&g_jo, 0, sizeof g_jo);
 }
 
+// ---- THE JOURNAL'S TIME: on the loop, the loop's stamp ------------------------------------
+
+typedef struct {
+    cb_store     *s;
+    const char   *gid;
+    const move_t *m;
+    int           phase;   // 0: the move, 1: an acquire
+    int64_t       stamp, mono, touched, first, version;
+    int           rc;
+    atomic_int    done;
+} loop_probe;
+
+static int acquire_nothing(void *ud, const cb_game_row *row, const TableResident *res) { return CB_OK; }
+
+static void probe_on_loop(cb_loop *l, void *ud) {
+    loop_probe *p = ud;
+    p->stamp = cb_loop_now(l);
+    // The pass grows old before the journal is asked: a clock read would not give the stamp.
+    while (cb_mono_ms() < p->stamp + 20) usleep(5000);
+    if (p->phase == 0) p->version = play(p->gid, p->m);
+    else p->rc = cb_journal_game_acquire(p->s, p->gid, acquire_nothing, NULL);
+    p->mono = cb_mono_ms();
+    p->rc |= cb_journal_game_stamps(p->s, p->gid, &p->touched, &p->first);
+    atomic_store(&p->done, 1);
+}
+
+static void *loop_thread(void *ud) {
+    cb_loop_run(ud);
+    return NULL;
+}
+
+static void probe(cb_loop *l, loop_probe *p) {
+    atomic_store(&p->done, 0);
+    T_EQ_INT(cb_loop_post(l, probe_on_loop, p), CB_OK);
+    for (int i = 0; i < 1000 && !atomic_load(&p->done); i++) usleep(5000);
+    T_CHECK(atomic_load(&p->done));
+}
+
+// A move made on the network loop's thread reads no clock for the journal (P16): the game's stamps
+// are the loop's pass stamp (cb_loop_now), taken here well before the move, not the time it ran.
+// Both stamping points: the operation's acquire, and the record's apply (ov_apply).
+static void a_move_on_the_loop_reads_no_clock_for_the_journal(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/loopclock.sqlite", g_dir);
+    cb_loop *l = cb_loop_new();
+    T_CHECK(l != NULL);
+    if (!l) return;
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.loop = l;
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) { cb_loop_free(l); return; }
+    g_ctx.loop = l;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);   // before the loop runs: written on this thread
+    T_EQ_INT(cb_journal_flush(s), CB_OK);   // nothing waits: the move on the loop is the oldest
+    move_t m;
+    T_CHECK(next_move(s, gid, &m));
+    pthread_t thr;
+    pthread_create(&thr, NULL, loop_thread, l);
+    for (int i = 0; i < 5000 && !cb_loop_running(l); i++) usleep(1000);
+    loop_probe p = { .s = s, .gid = gid, .m = &m, .phase = 0 };
+    probe(l, &p);
+    T_CHECK(p.version > 0);
+    T_EQ_INT(p.rc, CB_OK);
+    T_CHECK(p.mono >= p.stamp + 20);
+    T_EQ_INT(p.touched, p.stamp);   // the apply's
+    T_EQ_INT(p.first, p.stamp);
+    loop_probe q = { .s = s, .gid = gid, .phase = 1 };
+    probe(l, &q);
+    T_EQ_INT(q.rc, CB_OK);
+    T_CHECK(q.mono >= q.stamp + 20);
+    T_EQ_INT(q.touched, q.stamp);   // the acquire's
+    T_EQ_INT(q.first, p.stamp);     // the move still waits
+    cb_loop_stop(l);
+    pthread_join(thr, NULL);
+    g_ctx.loop = NULL;
+    close_world(s);
+    cb_loop_free(l);
+    memset(&g_jo, 0, sizeof g_jo);
+}
+
 // ---- the dashboard list and the bot scan read the overlay, and flush nothing ----------------
 
 static bool collect_ids(const cb_member_row *r, void *ud) {
@@ -2500,6 +2583,7 @@ int main(void) {
     T_RUN(a_torn_or_corrupt_whole_commit_is_dropped);
     T_RUN(crafted_whole_commits_recover_or_refuse);
     T_RUN(no_row_cache_beside_the_overlay);
+    T_RUN(a_move_on_the_loop_reads_no_clock_for_the_journal);
     for (int b = 0; b < 2; b++) {
         g_bots = b;
         T_RUN(a_deal_and_its_moves_read_no_table);

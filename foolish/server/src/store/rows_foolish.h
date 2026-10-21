@@ -21,6 +21,8 @@
 #ifndef CB_ROWS_FOOLISH_H
 #define CB_ROWS_FOOLISH_H
 
+#include <stddef.h>
+
 #include "store/store.h"
 
 #define CB_GAME_ID_MAX   16    // games.id is 12 hex (app_internal.h CB_GAME_ID_HEX), 6 for older games
@@ -71,34 +73,6 @@ typedef struct {
     const uint8_t *log_add;  size_t log_add_len;
     bool     log_clear;
     int64_t  expected_version;
-    int      n_humans;
-    cb_uuid  humans[CB_MAX_SEATS];
-    int      n_bots;
-    cb_uuid  bots[CB_MAX_SEATS];
-    // Ratings: by seat id, applied as rating = max(0, rating + delta),
-    // games_played + 1, previous_elo = the old rating. A human with no rating
-    // row gets one (from TABLE_RATING_START) if the user exists. n_rated 0: none.
-    int      n_rated;
-    cb_uuid  rated_ids[CB_MAX_SEATS];
-    bool     rated_is_bot[CB_MAX_SEATS];
-    int32_t  rating_delta[CB_MAX_SEATS];
-    // The names the leaderboard shows for the rated humans, by rated index.
-    char     rated_names[CB_MAX_SEATS][CB_USERNAME_MAX + 1];
-    // The seats the row at expected_version holds (its roster's humans and
-    // bots), given when that row's seats_exact was true: the fence makes them
-    // the stored seats whenever the commit lands, and DynamoDB writes the
-    // difference without first reading them (one Query less, under the
-    // game's order lock). prev_known false: the store reads them.
-    // prev_needs_bots is that row's needs_bots, read only with prev_known:
-    // false there means the game has no SCAN marker, so on DynamoDB a commit
-    // that writes no seat, no rating and needs_bots false is one conditional
-    // UpdateItem instead of a transaction (store_dynamo.c, DESIGN.md "Store").
-    bool     prev_known;
-    bool     prev_needs_bots;
-    int      n_prev_humans;
-    cb_uuid  prev_humans[CB_MAX_SEATS];
-    int      n_prev_bots;
-    cb_uuid  prev_bots[CB_MAX_SEATS];
     // Moves the journal may hold (journal.h): set only for a commit that is one human move
     // or one bot cycle and nothing else (the roster, the status and the seed unchanged, no
     // rating, no new session log), as the commit's move list (table.h Table.moves: each
@@ -110,7 +84,49 @@ typedef struct {
     // commit), for a store that keeps games in memory (the journal: the next operation adopts
     // it instead of decoding the row). NULL: none. A store with no journal ignores it.
     const struct TableResident *resident;
+    // The counts of the lists below. Membership: the humans and bots the roster seats now
+    // (anyone not listed is removed). Ratings: by seat id, applied as rating = max(0, rating +
+    // delta), games_played + 1, previous_elo = the old rating; a human with no rating row gets
+    // one (from TABLE_RATING_START) if the user exists; n_rated 0: none.
+    int      n_humans, n_bots, n_rated;
+    // The seats the row at expected_version holds (its roster's humans and bots), given when
+    // that row's seats_exact was true: the fence makes them the stored seats whenever the
+    // commit lands, and DynamoDB writes the difference without first reading them (one Query
+    // less, under the game's order lock). prev_known false: the store reads them.
+    // prev_needs_bots is that row's needs_bots, read only with prev_known: false there means
+    // the game has no SCAN marker, so on DynamoDB a commit that writes no seat, no rating and
+    // needs_bots false is one conditional UpdateItem instead of a transaction (store_dynamo.c,
+    // DESIGN.md "Store").
+    bool     prev_known;
+    bool     prev_needs_bots;
+    int      n_prev_humans, n_prev_bots;
+    // THE LISTS, LAST: every field above is a scalar, so a journaled plain move (moves set,
+    // which the journal records as its moves and never reads a list of) zeroes the commit only
+    // up to `humans` and leaves 2 KB of lists unwritten (app/table_ops.c section_row,
+    // CB_GAME_COMMIT_HEAD). Every count above is then 0. A field added must go above `humans`
+    // unless it is a list read only with its count.
+    cb_uuid  humans[CB_MAX_SEATS];
+    cb_uuid  bots[CB_MAX_SEATS];
+    cb_uuid  rated_ids[CB_MAX_SEATS];
+    bool     rated_is_bot[CB_MAX_SEATS];
+    int32_t  rating_delta[CB_MAX_SEATS];
+    // The names the leaderboard shows for the rated humans, by rated index.
+    char     rated_names[CB_MAX_SEATS][CB_USERNAME_MAX + 1];
+    cb_uuid  prev_humans[CB_MAX_SEATS];
+    cb_uuid  prev_bots[CB_MAX_SEATS];
 } cb_game_commit;
+// The scalar head of a commit (above): what a journaled plain move zeroes.
+#define CB_GAME_COMMIT_HEAD offsetof(cb_game_commit, humans)
+// Nothing but the lists from `humans` on: they fill that span exactly, and prev_bots is the last
+// field (up to the tail padding).
+#define CB_GC_LIST(f) sizeof(((cb_game_commit *)0)->f)
+_Static_assert(offsetof(cb_game_commit, prev_bots) + CB_GC_LIST(prev_bots) - CB_GAME_COMMIT_HEAD ==
+                   CB_GC_LIST(humans) + CB_GC_LIST(bots) + CB_GC_LIST(rated_ids) + CB_GC_LIST(rated_is_bot) +
+                       CB_GC_LIST(rating_delta) + CB_GC_LIST(rated_names) + CB_GC_LIST(prev_humans) + CB_GC_LIST(prev_bots),
+               "cb_game_commit: only the lists after humans");
+_Static_assert(sizeof(cb_game_commit) - offsetof(cb_game_commit, prev_bots) - CB_GC_LIST(prev_bots) < _Alignof(cb_game_commit),
+               "cb_game_commit: prev_bots must be the last field");
+#undef CB_GC_LIST
 
 // A dashboard entry: a game a user sits at.
 typedef struct {
