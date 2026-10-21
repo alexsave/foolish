@@ -7,6 +7,22 @@ Unless marked "nano", they are from the local rig (Docker on the Mac, arm64), wh
 From the first VM build on main (5d5ef505b) to today's main (284f0dc4f), the server went from 181 to 67 µs per move at human pace and from 59.7 to 36.0 µs at saturation.
 Two-player throughput rose from 16.7k to 27.7k moves/s, sat2 p99 fell from 56 to 20 ms, and syscalls per move at human pace fell from 21 to 4.
 
+## The orders of magnitude
+
+A move's server cost fell by about four orders of magnitude, from tens of milliseconds to about a microsecond for the game work itself.
+The top rows are wall time spent waiting on network services, and the lower rows are CPU time, because once the waits were gone CPU was all that was left.
+
+| Stage | A move costs | What it is |
+|---|---|---|
+| Lambda + DynamoDB, before #372 | about 55 ms | 15-17 ms p50 for the DynamoDB TransactWriteItems, plus five IoT publishes in a row at 7.8 ms each |
+| Lambda + DynamoDB, after #372 | about 10 ms | 2.4 ms for a single conditional UpdateItem, plus one push batch sent in parallel (about 8 ms) |
+| VM at cutover (#391), SQLite group commit | under 1 ms | move p99 0.8-0.9 ms; 182 µs of server CPU per move on the nano |
+| Today's main, the whole server | about 100 µs or less | move p99 0.40 ms; 67 µs/move on the rig and 84 µs on the nano (NOW build); most of it is kernel TCP, network interrupts and waking the CPU |
+| Today's main, our own code at saturation | about 15-20 µs | the user-space share of sat2's 36 µs/move |
+| The game work itself, warm | about 1 µs | rules, journal record and outputs; the rules' apply alone is 250-300 ns |
+
+The Lambda rows come from #365 and #372: #365 also cut Lambda's server CPU from about 440 to about 300 µs per move, but the move's time was the network waits.
+
 ## The VM path (built 2026-10-18 and 2026-10-19, shipped in #391)
 
 **One process on a t4g.nano instead of Lambda and DynamoDB.**
