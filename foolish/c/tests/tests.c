@@ -20546,6 +20546,7 @@ int main(void) {
     test_a_withdrawn_good_leaves_no_trace();
     test_good_round_transition();
     test_short_log_instance();
+    test_world_clone_honours_the_log_cap();
     test_should_bot_act_edges();
     test_next_player_and_game_done_edges();
     test_legal_not_playing();
