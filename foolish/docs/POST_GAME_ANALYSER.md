@@ -40,7 +40,7 @@ The pipeline, in the order the handoff laid it out.
 
 **Rebuild.**
 A v6 code is hidden-state-lossless, so the whole game is rebuilt through the real engine: `replay_deal_v6` gives the deck and the recorded actions, `replay_deal_start` deals it under the code's rules and checks the rebuilt deal against the recorded opener, `replay_action_apply` plays each action.
-"v6" throughout this document is the DECODER FAMILY, not the version byte: codes are cut under version 10 today, and `docs/REPLAY_FORMAT6_HIDDEN_STATE.md` says so at its top.
+"v6" throughout this document is the DECODER FAMILY, not the version byte: codes are cut under version 11 today, and `docs/REPLAY_FORMAT6_HIDDEN_STATE.md` says so at its top.
 There is no second deck rebuild and no second ROUND_END translation; the analyser branches the same game the replay screen shows.
 A ROUND_END is a decision for every attacker still to declare (throw in, or close the bout), taken in seat order before the transition.
 

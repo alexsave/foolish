@@ -11,7 +11,7 @@ out=$("$bin" --code="https://foolish.cards/$code")
 total=$(printf '%s\n' "$out" | sed -n 's/^total events: //p')
 events=$(printf '%s\n' "$out" | grep -c '^# *[0-9]')
 first=$(printf '%s\n' "$out" | grep -m1 '^# *[0-9]' | awk '{print $3}')
-if ! printf '%s\n' "$out" | grep -q 'format 10$' || [ -z "$total" ] || [ "$events" != "$total" ] || [ "$first" != game_start ]; then
+if ! printf '%s\n' "$out" | grep -q 'format 11$' || [ -z "$total" ] || [ "$events" != "$total" ] || [ "$first" != game_start ]; then
     echo "replay_cli_decode: header or stream wrong (total=$total events=$events first=$first)" >&2
     printf '%s\n' "$out" | head -8 >&2
     exit 1

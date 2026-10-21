@@ -118,13 +118,26 @@
 // games it never deals - so what it actually bought was the RISK that a share
 // silently encoded a different, guessed game. An honest failure beats that.
 //
-// So exactly one version decodes. Every code carrying 5, 6, 7, 8 or 9 - and
+//   11: AN ACE CAN BE THE TRUMP. game.c's flip turned an Ace back while a
+//      non-Ace was left; at 8 seats a stock of the four Aces left nothing
+//      else, and the flip spun for good. Now the Ace is turned there, so the
+//      header's trump symbol is coded over the whole deck (52 or 36 cards)
+//      instead of the deck without its Aces (48 or 32). Nothing else moved, but
+//      the coder is mixed-radix: a v10 code read with the new radix decodes to
+//      different symbols from the trump on, silently, so the number changed.
+//      Stored replays were transcoded once by a migration tool that is not part
+//      of this kernel (foolish/server/migrate/replay_v11.c), and so were the
+//      tutorial's code and the test fixtures: the same games, so nothing built
+//      on them moved. Codes held anywhere else (shared links, iMessage
+//      threads, saved replays on a phone) stopped decoding, by decision.
+//
+// So exactly one version decodes. Every code carrying 5 through 10 - and
 // every unknown future number - is REJECTED at decode with REPLAY_EVERSION and
 // the version in replay_last_error_detail(), which is the whole point: a loud
 // "this was played under older rules" beats a quiet fiction. Nothing bridges
 // them. The fix is to play a new game, and for the tutorial's frozen code, to
 // re-cut it (npx tsx e2e/gen_tutorial_game.ts).
-#define REPLAY_FORMAT_VERSION_V10 10
+#define REPLAY_FORMAT_VERSION_V11 11
 #define REPLAY_VERSION_ALPHABET 16
 // Hard guard: a malformed integer must never hang (mirrors core.ts MAX_ATOMS).
 #define REPLAY_MAX_ATOMS 20000

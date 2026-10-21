@@ -154,7 +154,7 @@ are still perevodnoy only, because their rules would have to survive
 `games.state`.
 A `variant` config on `games` threaded through `refill_deck` and the handlers
 is straightforward.
-The codec half of this is **done**: the replay format is at v10, and the
+The codec half of this is **done**: the replay format is at v11, and the
 iMessage wire already carries a rules byte (`MSG_VARIANT_PASS`, FMSG formats
 5/6 - see `docs/PODKIDNOY.md`).
 What is left is the online path: `games.state` has to carry the variant so a

@@ -1619,6 +1619,136 @@ static void test_deal_wide_permutation(void) {
     }
 }
 
+// THE FOUR-ACES STOCK. An 8-seat game deals 48 of its 52 cards, and the flip
+// redraws an Ace while a non-Ace is left. When the 4 cards left are the 4 Aces
+// (1 deal in C(52,4) = 270,725), the redraw loop used to never end: `cbase
+// serve`'s request worker spun in it for good, holding the table (Graviton
+// sat8, 2026-10-21). Now the Ace is turned (game.c, THE TRUMP RULE). This seed
+// is the first one whose shuffle leaves exactly that stock.
+// Every four-Aces test runs under this alarm: the bug was a loop that never
+// returned, so without it a regression is a hung suite, not a failure.
+static const char *g_spin_test = "?";
+static void deal_spin_guard(int sig) {
+    (void)sig;
+    static const char a[] = "FAIL ", b[] = ": still dealing or playing after its alarm\n";
+    (void)!write(2, a, sizeof a - 1);
+    (void)!write(2, g_spin_test, strlen(g_spin_test));
+    (void)!write(2, b, sizeof b - 1);
+    _exit(1);
+}
+static void spin_guard_arm(const char *test, unsigned seconds) {
+    g_spin_test = test;
+    signal(SIGALRM, deal_spin_guard);
+    alarm(seconds);
+}
+static void spin_guard_disarm(void) {
+    alarm(0);
+    signal(SIGALRM, SIG_DFL);
+}
+static int deal_cards_conserved(const Game *g, int deck_size) {
+    int seen[64]; memset(seen, 0, sizeof seen);
+    int total = 0, dup = 0;
+    for (int p = 0; p < g->num_players; p++)
+        for (int i = 0; i < g->players[p].hand_count; i++) {
+            int id = g->players[p].hand[i].suit * 16 + g->players[p].hand[i].value;
+            if (id < 0 || id >= 64 || seen[id]) dup = 1; else { seen[id] = 1; total++; }
+        }
+    for (int i = 0; i < g->deck_count; i++) {
+        int id = g->deck[i].suit * 16 + g->deck[i].value;
+        if (id < 0 || id >= 64 || seen[id]) dup = 1; else { seen[id] = 1; total++; }
+    }
+    if (g->has_flipped) {
+        int id = g->flipped.suit * 16 + g->flipped.value;
+        if (id < 0 || id >= 64 || seen[id]) dup = 1; else { seen[id] = 1; total++; }
+    }
+    return !dup && total == deck_size;
+}
+// Every deal that ended before the four-Aces fix deals byte for byte the same
+// after it: the flip's rule differs from the old loop only on a stock of Aces.
+// The digests are of 300 seeded and 300 legacy (game_set_seed) deals at every
+// table size from 2 to 8, taken on the kernel before the fix (main 284f0dc4f).
+#define DEAL_DIGEST_SEEDED 0x3af2a5b479fcc86dULL
+#define DEAL_DIGEST_LEGACY 0x9738d05978fbf7deULL
+static void test_deals_before_the_four_aces_fix_are_unchanged(void) {
+    uint64_t seeded = FNV64_OFFSET, legacy = FNV64_OFFSET;
+    unsigned char fp[512];
+    Game *g = calloc(1, sizeof *g);
+    for (int np = 2; np <= 8; np++)
+        for (int t = 0; t < 300; t++) {
+            unsigned char seed[32];
+            for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 29 + t * 7 + np);
+            seed[0] = (unsigned char)t; seed[1] = (unsigned char)(t >> 8);
+            memset(g, 0, sizeof *g);
+            g->num_players = np;
+            for (int i = 0; i < np; i++) g->players[i].status = PLAYER_STATUS_READY;
+            game_set_deal_seed_bytes(seed, 32);
+            start_game(g);
+            seeded = fnv1a64(seeded, fp, (size_t)deal_fingerprint(g, fp));
+
+            memset(g, 0, sizeof *g);
+            g->num_players = np;
+            for (int i = 0; i < np; i++) g->players[i].status = PLAYER_STATUS_READY;
+            game_set_seed((uint32_t)(t * 8 + np));
+            start_game(g);
+            legacy = fnv1a64(legacy, fp, (size_t)deal_fingerprint(g, fp));
+        }
+    free(g);
+    game_set_seed(42);
+    if (seeded != DEAL_DIGEST_SEEDED || legacy != DEAL_DIGEST_LEGACY)
+        fprintf(stderr, "deal digests: seeded 0x%016llxULL legacy 0x%016llxULL\n",
+                (unsigned long long)seeded, (unsigned long long)legacy);
+    CHECK(seeded == DEAL_DIGEST_SEEDED, "seeded deals at 2-8 seats are byte-identical to the pre-fix kernel's");
+    CHECK(legacy == DEAL_DIGEST_LEGACY, "legacy deals at 2-8 seats are byte-identical to the pre-fix kernel's");
+}
+
+static void test_an_eight_seat_deal_that_leaves_four_aces_ends(void) {
+    unsigned char seed[32] = { 0x92, 0xc2, 0x0a };   // the rest zero
+    // The precondition, so the test cannot pass by the seed drifting away from
+    // the case: this seed's shuffle puts the four Aces at the bottom.
+    {
+        DealRng r; deal_rng_seed(&r, seed);
+        int v[52], k = 0;
+        for (int s = 0; s < 4; s++) for (int x = 1; x <= ACE_VALUE; x++) v[k++] = x;
+        for (int i = 51; i > 0; i--) {
+            int j = (int)deal_rng_bounded(&r, (uint32_t)(i + 1));
+            int t = v[i]; v[i] = v[j]; v[j] = t;
+        }
+        CHECK(v[48] == ACE_VALUE && v[49] == ACE_VALUE && v[50] == ACE_VALUE && v[51] == ACE_VALUE,
+              "the seed's shuffle leaves the four Aces as the 8-seat stock");
+    }
+    spin_guard_arm("test_an_eight_seat_deal_that_leaves_four_aces_ends", 5);
+    Game *g = calloc(1, sizeof *g);
+    g->num_players = 8;
+    for (int i = 0; i < 8; i++) g->players[i].status = PLAYER_STATUS_READY;
+    game_set_deal_seed_bytes(seed, 32);
+    start_game(g);
+    int six = 1;
+    for (int i = 0; i < 8; i++) six &= g->players[i].hand_count == CARDS_PER_PLAYER;
+    CHECK(six, "four-Aces deal: every seat holds six");
+    CHECK(g->has_flipped, "four-Aces deal: a trump is turned");
+    CHECK(g->flipped.value == ACE_VALUE && g->deck_count == 3,
+          "four-Aces seed: nothing but Aces is left, so an Ace is the trump and 3 stay in the stock");
+    CHECK(deal_cards_conserved(g, 52), "four-Aces deal: the 52 cards are each in one place");
+
+    // The rebuilt-deck path (start_game_with_deck) pops the supplied order, so a
+    // deck whose last four are the Aces is the same stock without a seed.
+    Card deck[52];
+    int k = 0;
+    for (int s = 0; s < 4; s++) for (int v = 1; v < ACE_VALUE; v++) deck[k++] = (Card){ (int8_t)s, (int8_t)v };
+    for (int s = 0; s < 4; s++) deck[k++] = (Card){ (int8_t)s, (int8_t)ACE_VALUE };
+    memset(g, 0, sizeof *g);
+    g->num_players = 8;
+    for (int i = 0; i < 8; i++) g->players[i].status = PLAYER_STATUS_READY;
+    start_game_with_deck(g, deck, 52);
+    CHECK(g->has_flipped, "four-Aces rebuilt deck: a trump is turned");
+    CHECK(g->flipped.value == ACE_VALUE && g->deck_count == 3,
+          "four-Aces rebuilt deck: the same rule turns an Ace and 3 stay in the stock");
+    CHECK(deal_cards_conserved(g, 52), "four-Aces rebuilt deck: the 52 cards are each in one place");
+    free(g);
+    spin_guard_disarm();
+    game_set_seed(42);
+}
+
 // deal_rng_bounded is free of modulo bias: n=7 (not a power of two) stays
 // uniform where a naive `u32 % 7` would over-weight the low buckets.
 static void test_deal_rng_unbiased(void) {
@@ -2468,6 +2598,7 @@ static void rs_check_conservation(const RsTestCtx *c, int np, const char *what) 
 // A seeded game played to the end with the handwritten bot, plus the seed that
 // dealt it (replay_encode_v6_from_game re-derives the deal from it).
 static bool rs_play_seeded_rules(Game *g, int np, int seed, unsigned char *seed_out, int8_t rules);
+static bool rs_play_out(Game *g, int np);
 static bool rs_play_seeded(Game *g, int np, int seed, unsigned char *seed_out) {
     return rs_play_seeded_rules(g, np, seed, seed_out, 0);
 }
@@ -2485,7 +2616,11 @@ static bool rs_play_seeded_rules(Game *g, int np, int seed, unsigned char *seed_
     g->rules = rules;
     for (int i = 0; i < np; i++) g->players[i].status = PLAYER_STATUS_READY;
     start_game(g);
+    return rs_play_out(g, np);
+}
 
+// A dealt game played to the end with the handwritten bot.
+static bool rs_play_out(Game *g, int np) {
     static LegalMoves moves;
     for (int guard = 0; guard < 20000 && game_done(g) < 0; guard++) {
         bool acted = false;
@@ -4178,10 +4313,11 @@ static void test_replay_v6_refuses_an_overflowed_log(void) {
     CHECK(r == -REPLAY_ETOOLONG, "a full log buffer refuses as ETOOLONG, not EINPUT");
 }
 
-// EVERY RETIRED VERSION IS REFUSED, LOUDLY. The codec has had ten formats and
+// EVERY RETIRED VERSION IS REFUSED, LOUDLY. The codec has had eleven formats and
 // exactly one of them decodes; the others are not merely unsupported, they
 // describe games this kernel would not play (the deal order changed under 5..8,
-// and 9 hid the deal and had its hands retrodicted by complement). A code
+// 9 hid the deal and had its hands retrodicted by complement, and 10's trump
+// symbol had no Aces, so its bytes read as 11 are another game). A code
 // carrying one of those numbers must come back as REPLAY_EVERSION with the
 // version in the detail - never as a quietly different game, and never as some
 // other error that sends a reader hunting through the coder.
@@ -4199,7 +4335,7 @@ static void test_replay_refuses_every_retired_version(void) {
     static unsigned char out[1 << 16];
     char msg[160];
     for (int v = 0; v < REPLAY_VERSION_ALPHABET; v++) {
-        if (v == REPLAY_FORMAT_VERSION_V10) continue;
+        if (v == REPLAY_FORMAT_VERSION_V11) continue;
         const unsigned char code[1] = { (unsigned char)v };
 
         int r = replay_decode(code, 1, out, (int)sizeof out);
@@ -4238,8 +4374,58 @@ static void test_replay_refuses_every_retired_version(void) {
     CHECK(enc > 0, "the played game has a code");
     if (enc <= 0) return;
     int dec = replay_decode(real, enc, out, (int)sizeof out);
-    CHECK(dec > 0, "a v10 code still decodes");
-    CHECK(dec > 0 && out[0] == REPLAY_FORMAT_VERSION_V10, "and says so");
+    CHECK(dec > 0, "a v11 code still decodes");
+    CHECK(dec > 0 && out[0] == REPLAY_FORMAT_VERSION_V11, "and says so");
+}
+
+// AN ACE TRUMP RECORDS AND REPLAYS. The four-Aces seed (test_an_eight_seat_
+// deal_that_leaves_four_aces_ends) turns an Ace, so its game is one the old
+// trump alphabet could not hold: the encoder refused it with REPLAY_EHEADER.
+// Played to the end, the game must encode, decode to a header naming that Ace,
+// and rebuild through replay_steps (whose rebuilt deck puts the Ace on top of
+// three Aces, so the same flip rule turns it again) with every card conserved.
+//
+// MUTATION-CHECKED: replay.c trump_alphabet back to `v < ACE_VALUE` fails "the
+// four-Aces game encodes" (-REPLAY_EHEADER); game.c's flip back to the unbounded
+// loop trips the alarm, naming this test (the first four-Aces deal main runs).
+static void test_a_four_aces_game_round_trips_its_replay(void) {
+    static Game g;
+    static unsigned char code[1 << 16], out[1 << 16];
+    unsigned char seed[FOOLISH_SEED_LEN] = { 0x92, 0xc2, 0x0a };   // the rest zero
+    game_set_seed(1);
+    random_strategy_set_seed(1);
+    game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
+    memset(&g, 0, sizeof g);
+    g.num_players = 8;
+    for (int i = 0; i < 8; i++) g.players[i].status = PLAYER_STATUS_READY;
+    spin_guard_arm("test_a_four_aces_game_round_trips_its_replay", 20);
+    start_game(&g);
+    CHECK(g.has_flipped && g.flipped.value == ACE_VALUE, "the four-Aces seed turns an Ace");
+    const int trump_id = g.flipped.suit * 13 + (ACE_VALUE - 1);
+    CHECK(rs_play_out(&g, 8), "the four-Aces game plays out");
+
+    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 30, code, (int)sizeof code);
+    char msg[96];
+    snprintf(msg, sizeof msg, "the four-Aces game encodes (got %d)", enc);
+    CHECK(enc > 0, msg);
+    if (enc <= 0) { spin_guard_disarm(); game_set_seed(42); return; }
+
+    ReplayHeader hdr;
+    memset(&hdr, 0, sizeof hdr);
+    CHECK(replay_decode_atoms_v6(code, enc, &hdr, 0, 0) == REPLAY_EOK, "the four-Aces code decodes");
+    CHECK(hdr.version == REPLAY_FORMAT_VERSION_V11, "the four-Aces code is v11");
+    CHECK(hdr.trump_id == trump_id, "the decoded trump is the Ace the deal turned");
+    CHECK(hdr.n == 8 && hdr.fool == game_done(&g), "the decoded game has 8 seats and the played fool");
+    CHECK(replay_decode(code, enc, out, (int)sizeof out) > 0, "the four-Aces code decodes to its log");
+
+    static RsTestCtx ctx;
+    memset(&ctx, 0, sizeof ctx);
+    CHECK(replay_steps_v6(code, enc, VIEW_SPECTATOR, 0, rs_test_sink, &ctx) == REPLAY_EOK,
+          "the four-Aces code rebuilds through replay_steps");
+    CHECK(ctx.n_deals > 0, "the rebuilt game deals");
+    rs_check_conservation(&ctx, 8, "the rebuilt four-Aces game conserves its 52 cards");
+    spin_guard_disarm();
+    game_set_seed(42);
 }
 
 // ANY BYTES, ANY READER: an answer or the codec's own refusal (was
@@ -11974,8 +12160,11 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // stamp are the whole of that one - a deal's envelopes did not move. Both
     // moved when a dealt hand became ascending (game.c deal_initial): the
     // envelopes carry the hands in their new order, and the bots, reading
-    // hands in that order, played different games.
-    static const uint64_t golden[2] = { 0x56a752e11fc9bd4cULL, 0xb5f5c29cf53142ebULL };
+    // hands in that order, played different games. [1] moved alone when the
+    // replay format went to 11 (the trump symbol's alphabet gained the Aces):
+    // the same logs, and each code is its v10 self with the version and trump
+    // symbols re-radixed.
+    static const uint64_t golden[2] = { 0x56a752e11fc9bd4cULL, 0xee92c4ae62c7e2d8ULL };
     uint64_t hc = FNV64_OFFSET;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         for (int seed_k = 1; seed_k <= 3; seed_k++) {
@@ -13367,6 +13556,45 @@ static int tb_extras_args(const Roster *r, const uint8_t *log, int len, uint8_t 
     memcpy(out + times_at, &first, 8);
     out[times_at + 8] = (uint8_t)((n_times - 1) & 0xff); out[times_at + 9] = (uint8_t)((n_times - 1) >> 8);
     return w;
+}
+
+// THE FOUR-ACES DEAL AS THE SERVER MAKES IT, AND EVERY READ AFTER IT. The server
+// deals through table_ready, stores the row, and from then on only loads it:
+// each bot cycle (and, after a restart, the journal: a deal is a full record its
+// recovery adopts without running the kernel, and a plain move's replay loads
+// the stored row and applies the move) reads the stored stock and never flips
+// again. So the one place a stock of four Aces could wedge `cbase serve` is the
+// deal itself. This deals the four-Aces seed at 8 seats through table_ready under
+// an alarm, reloads the row the way every later read does, plays it to its end
+// one cycle at a time, and cuts its replay code from the finished row and its
+// session log, which must name the Ace as the trump.
+//
+// MUTATION-CHECKED: game.c's flip loop back to `f.value == ACE_VALUE` alone (the
+// unbounded loop) trips the alarm ("still dealing").
+static void test_a_four_aces_table_deals_and_plays_out(void) {
+    static TbRow row;
+    const uint8_t seed[FOOLISH_SEED_LEN] = { 0x92, 0xc2, 0x0a };   // the rest zero
+    char hex[2 * FOOLISH_SEED_LEN + 1];
+    tb_seed_hex_of(seed, hex);
+    spin_guard_arm("test_a_four_aces_table_deals_and_plays_out", 20);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(tb_row_deal(&row, &tb, 8, "random", seed), "four-Aces table: table_ready deals it");
+    CHECK(table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK, "four-Aces table: the dealt row loads");
+    CHECK(tb_game.has_flipped && tb_game.flipped.value == ACE_VALUE && tb_game.deck_count == 3,
+          "four-Aces table: the stored row holds an Ace trump over a stock of three Aces");
+    const int trump_id = tb_game.flipped.suit * 13 + (ACE_VALUE - 1);
+    const TbPlayed p = tb_row_play(&row, &tb, hex);
+    CHECK(p.ended, "four-Aces table: the game is played to its end, cycle by cycle");
+    CHECK(table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK, "four-Aces table: the finished row loads");
+    const int n = table_replay_code(&tb, seed, FOOLISH_SEED_LEN, row.log, row.log_len, tb_code, sizeof(tb_code),
+                                    tb_scratch, sizeof(tb_scratch));
+    CHECK(n > 0, "four-Aces table: the finished game has a replay code");
+    ReplayHeader hdr;
+    memset(&hdr, 0, sizeof hdr);
+    CHECK(n > 0 && replay_decode_atoms_v6(tb_code, n, &hdr, NULL, NULL) == REPLAY_EOK && hdr.trump_id == trump_id
+          && hdr.fool == row.fool, "four-Aces table: the code decodes to the Ace trump and the table's fool");
+    spin_guard_disarm();
+    game_set_seed(42);
 }
 
 static void test_table_replay_code_and_extras(void) {
@@ -17440,7 +17668,7 @@ static int tb_cards_on_board(const Game *g) {
 }
 
 // The table deals the settled deck at every width (2..5 seats 36 cards, 6+ 52,
-// never an ace face up), and random bots-only games through the server's cycle
+// an ace face up only over a stock of aces), and random bots-only games through the server's cycle
 // conserve every card at every commit and end with one fool. Random play can
 // reach a legal cycle that never ends, so a finishing game is drawn by retry,
 // not by a longer cap. Was e2e/wasm_engine.test.ts.
@@ -17456,7 +17684,10 @@ static void test_table_deals_the_deck_and_random_games_conserve_it(void) {
             CHECK(tb_row_deal(&row, &tb, np, "random", seed), "a seeded random table deals");
             CHECK(table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK, "the dealt row loads");
             CHECK(tb_cards_on_board(&tb_game) == want, np >= 6 ? "6+ seats deal 52 cards" : "2..5 seats deal 36 cards");
-            CHECK(!tb_game.has_flipped || tb_game.flipped.value != ACE_VALUE, "the face-up trump is never an ace");
+            int stock_non_ace = 0;
+            for (int i = 0; i < tb_game.deck_count; i++) stock_non_ace |= tb_game.deck[i].value != ACE_VALUE;
+            CHECK(!tb_game.has_flipped || tb_game.flipped.value != ACE_VALUE || !stock_non_ace,
+                  "the face-up trump is an ace only when the stock holds nothing else");
         }
         int finished = 0;
         for (int attempt = 0; attempt < 12 && !finished; attempt++) {
@@ -19113,9 +19344,11 @@ static void test_doors_survive_hostile_bytes(void) {
 // A replay code's atom count is the sender's number, and a code whose integer
 // runs out decodes every later choice as the first option: a game that never
 // ends. replay.h's REPLAY_MAX_ATOMS guard was declared for exactly this and
-// applied nowhere, so this 155-byte link (c_base's unfurl fuzzer found it, as
+// applied nowhere, so a 155-byte link (c_base's unfurl fuzzer found it, as
 // the /m/ payload of a link preview) decoded for ever, on the server and in
-// the iMessage extension alike. It must be refused at once.
+// the iMessage extension alike. It must be refused at once. (Its body was
+// transcoded to replay format 11 when the trump alphabet gained the Aces; the
+// rest of the integer, the endless part, is the fuzzer's.)
 static void hang_guard(int sig) {
     (void)sig;
     static const char m[] = "FAIL test_a_replay_code_that_never_ends_is_refused: still decoding after 20 s\n";
@@ -19124,7 +19357,7 @@ static void hang_guard(int sig) {
 }
 static void test_a_replay_code_that_never_ends_is_refused(void) {
     static const char LINK[] =
-        "64BQAAXPZWVYSZ2FE0MAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZeLGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAACGQQHILXUF22CYACCK2N7B2WIHQT6BY6DAADULZ36CMVMNO";
+        "64BQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAACGQQHILXUF22CYACCK2N7B2WIHQT6BY6DAAD6CEA55IMP5Q";
     static unsigned char blob[8192];
     const int n = b32_decode(LINK, blob, (int)sizeof blob);
     CHECK(n > 0, "the link's base32 decodes");
@@ -20191,6 +20424,7 @@ int main(void) {
     test_evwire_read_refuses_a_malformed_sequence();
     test_evwire_frames_settlement_cut();
     test_replay_refuses_every_retired_version();
+    test_a_four_aces_game_round_trips_its_replay();
     test_replay_v6_refuses_an_overflowed_log();
     test_bot_drive_preferred();
     test_b32_long_input();
@@ -20215,6 +20449,8 @@ int main(void) {
     test_whole_game_reproducible();
     test_deal_wide_reproducible();
     test_deal_wide_permutation();
+    test_deals_before_the_four_aces_fix_are_unchanged();
+    test_an_eight_seat_deal_that_leaves_four_aces_ends();
     test_deal_rng_unbiased();
     test_deal_rng_seed_at();
     test_start_game();
@@ -20420,6 +20656,7 @@ int main(void) {
     test_table_bots_only_game_replays_from_its_seed();
     test_table_bot_drive_ignores_other_tables();
     test_table_replay_code_and_extras();
+    test_a_four_aces_table_deals_and_plays_out();
     test_table_session_log_is_load_bearing_for_octogen();
     test_table_state_blob_round_trips_every_reachable_state();
     // Ported from the e2e suite's bots_test.wasm files (the C Table and the bots).

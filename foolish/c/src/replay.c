@@ -1480,13 +1480,13 @@ static void run_replay_v6(RModel *m, Coder *c, Src *s, uint32_t n_atoms) {
 
 /* ------------------------- header & entry points ------------------------- */
 
-// The flipped card is redrawn while it is an ace (start_game), so aces are
-// not in the trump alphabet.
+// The cards the flip can turn: the whole deck, Aces included (game.c's trump
+// rule turns an Ace when the stock holds nothing else).
 static int trump_alphabet(int n, int8_t *out) {
     int min_v = min_value_for(n);
     int cnt = 0;
     for (int suit = 0; suit < 4; suit++)
-        for (int v = min_v; v < ACE_VALUE; v++) out[cnt++] = (int8_t)(suit * 13 + (v - 1));
+        for (int v = min_v; v <= ACE_VALUE; v++) out[cnt++] = (int8_t)(suit * 13 + (v - 1));
     return cnt;
 }
 
@@ -1536,19 +1536,19 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
     const int derived = reveal_lowest_trump_seat(reveals, n_reveals, n, trump_id);
     const int forced  = (derived >= 0 && derived != fa) ? 1 : 0;
 
-    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V10);
+    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V11);
     // THE PASS-MODE BIT, right after the version symbol: 1 perevodnoy, 0
     // podkidnoy. It has to come before anything else the model touches, because
     // it decides the MENU every later symbol is an index into. The decoder reads
     // it back below and hands it to the same model_init.
     coder_uniform(&c, 2, pass_allowed ? 1 : 0);
     coder_uniform(&c, 7, n - 2);
-    int8_t alpha[48];
+    int8_t alpha[52];
     int alen = trump_alphabet(n, alpha);
     int t = -1;
     for (int i = 0; i < alen; i++)
         if (alpha[i] == trump_id) { t = i; break; }
-    if (t < 0) return -REPLAY_EHEADER;  // trump not in alphabet (incl. aces)
+    if (t < 0) return -REPLAY_EHEADER;  // not a card of this table's deck
     coder_uniform(&c, alen, t);
     coder_uniform(&c, n, fa);
     coder_uniform(&c, 2, forced);
@@ -1767,14 +1767,15 @@ static int decode_impl(const unsigned char *in, int in_len,
     c.encode = false;
     c.x = &g_bn;
 
-    // EXACTLY ONE VERSION DECODES (replay.h). Versions 5 through 9 are all
-    // refused rather than re-read: the deal-order fix means the game those
-    // bytes describe is not the game this kernel would play, and 9 hid the deal
-    // besides. Refusing is the point - a loud "this was played under older
+    // EXACTLY ONE VERSION DECODES (replay.h). Versions 5 through 10 are all
+    // refused rather than re-read: the deal-order fix means the game 5 through 9
+    // describe is not the game this kernel would play, 9 hid the deal besides,
+    // and 10's trump symbol has another radix (no Aces), so its bytes read under
+    // 11 would be a different game. Refusing is the point - a loud "this was played under older
     // rules" beats a quiet fiction - and the version travels in the detail so
     // the message can name it.
     int version = coder_uniform(&c, REPLAY_VERSION_ALPHABET, -1);
-    if (version != REPLAY_FORMAT_VERSION_V10) {
+    if (version != REPLAY_FORMAT_VERSION_V11) {
         g_err_detail = version;
         g_err.version = version;
         return -REPLAY_EVERSION;
@@ -1784,7 +1785,7 @@ static int decode_impl(const unsigned char *in, int in_len,
     int pass_allowed = coder_uniform(&c, 2, -1);
     if (c.err) return -c.err;
     int n = coder_uniform(&c, 7, -1) + 2;
-    int8_t alpha[48];
+    int8_t alpha[52];
     int alen = trump_alphabet(n, alpha);
     int trump_id = alpha[coder_uniform(&c, alen, -1)];
     int first_attacker = coder_uniform(&c, n, -1);

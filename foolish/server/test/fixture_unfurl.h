@@ -19,7 +19,9 @@
 // route was written to say, which is what the C route says.
 //
 // The TS route is to be deleted (docs/VERCEL.md 4(a)), so these strings are the
-// contract from here on, not something to regenerate.
+// contract from here on, not something to regenerate. The payloads were
+// re-made once by unfurl_payloads.c when the replay format went to 11 (each
+// body the same game, its trump symbol re-radixed); the tags did not move.
 #ifndef CB_FIXTURE_UNFURL_H
 #define CB_FIXTURE_UNFURL_H
 
@@ -33,7 +35,7 @@ typedef struct {
 
 static const unfurl_golden UNFURL_GOLDENS[] = {
     { "live3_turn10",
-      "164BAAAXPZWVYSZ2FEMAQUAAAAMAACAAAAAAAAAAAAB45Q4QGIEGTPUYCYGO7W3FMXSF6X6DZ2JBGEIECGFLQTTAPDA3YQAYAARAW43RQAECEC3TOGEBAIQLONYZAUAABFFI5UW7PGCLPT557FT5VRUAT63L7U",
+      "164BAAAXPZWVYSZ2FEMAQUAAAAMAACAAAAAAAAAAAAB45Q4QGIEGTPUYCYGO7W3FMXSF6X6DZ2JBGEIECGFLQTTAPDA3YQAYAARAW43RQAECEC3TOGEBAIQLONYZAUAABJZ6BLJ3NC2U5SNVXCKNMH2QWOWZLW",
       {
         "<title>Ann0 vs Ann1 vs Ann2 - turn 10</title>",
         "<meta name=\"description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
@@ -47,7 +49,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
       } },
     { "live2_turn12",
-      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAABCBNZXDAAIEIFXG4MIMAAORPELHMIP3JSVRVYNCLZKPZI",
+      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAABCBNZXDAAIEIFXG4MIMAAQLVA4UJZR2WZAH4POWVIPZRM",
       {
         "<title>Ann0 vs Ann1 - turn 12</title>",
         "<meta name=\"description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
@@ -61,7 +63,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
       } },
     { "finished4",
-      "164CQAA3AMAAAAAAAAAAGIAAAAQARCAAAAAAAAAAAABWTQDY4VZ3DQESIKDXCZOXBJZ74DHQBQ6APK2GNTHYLDASS2D7CDZBUAACAABCBNRSXQAIEJVUXEYICAVFG63TBOMBQKUDSNF4WCZAAANYNS267ZJJ2V4KZWCHHEOHOKBLE57Q7DBSKGRNXDVU66QKH3IUEWR7TF4GNZIC2DTCGMGUCPLLM7Q7I265PU",
+      "164CQAA3AMAAAAAAAAAAGIAAAAQARCAAAAAAAAAAAABWTQDY4VZ3DQESIKDXCZOXBJZ74DHQBQ6APK2GNTHYLDASS2D7CDZBUAACAABCBNRSXQAIEJVUXEYICAVFG63TBOMBQKUDSNF4WCZAAAPPPJGK3YOPCAT4E42QEBAAMDJQRRXPC7NYTPLTOAELS2KLQ2VWVJMHRSTXHQNDFMBOPFXOSZIY2TPDF6KY7W",
       {
         "<title>Alex vs Mira vs Jonas vs Priya - a finished Durak game</title>",
         "<meta name=\"description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
@@ -117,7 +119,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
       } },
     { "names_html",
-      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAACR4MI7EC3TOHQXWEPQBCFKG63JAEYQCESTFOJZHSIRAE5FCODAADULZCZ3CD62MVMNODIS6KT6K",
+      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAACR4MI7EC3TOHQXWEPQBCFKG63JAEYQCESTFOJZHSIRAE5FCODAAEC5IHFCOMOVWIB7D3VVKD6ML",
       {
         "<title>&lt;b&gt;Ann&lt;/b&gt; vs Tom &amp; &quot;Jerry&quot; &#x27;J&#x27; - turn 12</title>",
         "<meta name=\"description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
@@ -131,7 +133,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
       } },
     { "names_utf8",
-      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAACGQQHILXUF22CYACCK2N7B2WIHQT6BY6DAADULZCZ3CD62MVMNODIS6KT6K",
+      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAACGQQHILXUF22CYACCK2N7B2WIHQT6BY6DAAEC5IHFCOMOVWIB7D3VVKD6ML",
       {
         "<title>\320\201\320\273\320\272\320\260 vs Zo\303\253 \360\237\203\217 - turn 12</title>",
         "<meta name=\"description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
@@ -145,7 +147,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
       } },
     { "names_bad_utf8",
-      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAAA2BQBBACA2D4KBAYAA5C6IWOYQ7WTFLDLQ2EXSU7SQ",
+      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAAA2BQBBACA2D4KBAYABAXKBZITTDVNSAPY65NKQ7TCY",
       {
         "<title>A\357\277\275B vs C\357\277\275 - turn 12</title>",
         "<meta name=\"description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
@@ -159,7 +161,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
       } },
     { "names_one_empty",
-      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAAAABANBG6YQMAAORPELHMIP3JSVRVYNCLZKPZI",
+      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAAAABANBG6YQMAAQLVA4UJZR2WZAH4POWVIPZRM",
       {
         "<title>2 players - turn 12</title>",
         "<meta name=\"description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
@@ -173,7 +175,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
       } },
     { "share_suffix",
-      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAABCBNZXDAAIEIFXG4MIMAAORPELHMIP3JSVRVYNCLZKPZI-ABCDEFGH",
+      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAABCBNZXDAAIEIFXG4MIMAAQLVA4UJZR2WZAH4POWVIPZRM-ABCDEFGH",
       {
         "<title>Ann0 vs Ann1 - turn 12</title>",
         "<meta name=\"description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
@@ -187,7 +189,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
       } },
     { "lowercase",
-      "164cqaaxpzwvysz2femaqyaaaaiaaeaaaaaaaaaaaaapjtbxdsoqyngc3zelghgemhrqh2t7cezzad43ff27hzco3m7gfknasaabaabcbnzxdaaieifxg4mimaaorpelhmip3jsvrvynclzkpzi",
+      "164cqaaxpzwvysz2femaqyaaaaiaaeaaaaaaaaaaaaapjtbxdsoqyngc3zelghgemhrqh2t7cezzad43ff27hzco3m7gfknasaabaabcbnzxdaaieifxg4mimaaqlva4ujzr2wzah4powvipzrm",
       {
         "<title>Ann0 vs Ann1 - turn 12</title>",
         "<meta name=\"description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
@@ -201,7 +203,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
       } },
     { "percent_blanks",
-      "%20%0A164BAAAXPZWVYSZ2FEMAQUAAAAMAACAAAAAAAAAAAAB45Q4QGIEGTPUYCYGO7W3FMXSF6X6DZ2JBGEIECGFLQTTAPDA3YQAYAARAW43RQAECEC3TOGEBAIQLONYZAUAABFFI5UW7PGCLPT557FT5VRUAT63L7U%20",
+      "%20%0A164BAAAXPZWVYSZ2FEMAQUAAAAMAACAAAAAAAAAAAAB45Q4QGIEGTPUYCYGO7W3FMXSF6X6DZ2JBGEIECGFLQTTAPDA3YQAYAARAW43RQAECEC3TOGEBAIQLONYZAUAABJZ6BLJ3NC2U5SNVXCKNMH2QWOWZLW%20",
       {
         "<title>Ann0 vs Ann1 vs Ann2 - turn 10</title>",
         "<meta name=\"description\" content=\"A Durak game in iMessage. Foolish turns a message thread into a card table.\"/>",
@@ -229,7 +231,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"Foolish turns a message thread into a card table.\"/>",
       } },
     { "other_version",
-      "264BAAAXPZWVYSZ2FEMAQUAAAAMAACAAAAAAAAAAAAB45Q4QGIEGTPUYCYGO7W3FMXSF6X6DZ2JBGEIECGFLQTTAPDA3YQAYAARAW43RQAECEC3TOGEBAIQLONYZAUAABFFI5UW7PGCLPT557FT5VRUAT63L7U",
+      "264BAAAXPZWVYSZ2FEMAQUAAAAMAACAAAAAAAAAAAAB45Q4QGIEGTPUYCYGO7W3FMXSF6X6DZ2JBGEIECGFLQTTAPDA3YQAYAARAW43RQAECEC3TOGEBAIQLONYZAUAABJZ6BLJ3NC2U5SNVXCKNMH2QWOWZLW",
       {
         "<title>A Durak game in iMessage</title>",
         "<meta name=\"description\" content=\"Foolish turns a message thread into a card table.\"/>",
@@ -285,7 +287,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"Foolish turns a message thread into a card table.\"/>",
       } },
     { "bad_utf8_escape",
-      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAABCBNZXDAAIEIFXG4MIMAAORPELHMIP3JSVRVYNCLZKPZI%FF",
+      "164CQAAXPZWVYSZ2FEMAQYAAAAIAAEAAAAAAAAAAAAAPJTBXDSOQYNGC3ZELGHGEMHRQH2T7CEZZAD43FF27HZCO3M7GFKNASAABAABCBNZXDAAIEIFXG4MIMAAQLVA4UJZR2WZAH4POWVIPZRM%FF",
       {
         "<title>A Durak game in iMessage</title>",
         "<meta name=\"description\" content=\"Foolish turns a message thread into a card table.\"/>",
@@ -299,7 +301,7 @@ static const unfurl_golden UNFURL_GOLDENS[] = {
         "<meta name=\"twitter:description\" content=\"Foolish turns a message thread into a card table.\"/>",
       } },
     { "replay_refuses",
-      "164BAAAXPZWVYSZ2FEMAQUAAAAMAAEAAAAAAAAAAAAB45Q4QGIEGTPUYCYGO7W3FMXSF6X6DZ2JBGEIECGFLQTTAPDA3YQAYAARAW43RQAECEC3TOGEBAIQLONYZAUAABFFI5UW7PGCLPT557FT5VRUAT63L7U",
+      "164BAAAXPZWVYSZ2FEMAQUAAAAMAAEAAAAAAAAAAAAB45Q4QGIEGTPUYCYGO7W3FMXSF6X6DZ2JBGEIECGFLQTTAPDA3YQAYAARAW43RQAECEC3TOGEBAIQLONYZAUAABJZ6BLJ3NC2U5SNVXCKNMH2QWOWZLW",
       {
         "<title>A Durak game in iMessage</title>",
         "<meta name=\"description\" content=\"Foolish turns a message thread into a card table.\"/>",

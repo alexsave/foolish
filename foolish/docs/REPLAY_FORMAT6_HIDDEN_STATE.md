@@ -1,11 +1,13 @@
 # Replay Format 6 — hidden-state-lossless, partial-game codec
 
-> **The version byte is now 10.** This format's wire is unchanged, but its
-> number has moved twice for additions (7: pass-mode bit, 8: forced-opening bit)
-> and once for a RULES fix (10: the deal order), which retired 5 through 8
+> **The version byte is now 11.** This format's wire is unchanged, but its
+> number has moved twice for additions (7: pass-mode bit, 8: forced-opening bit),
+> once for a RULES fix (10: the deal order), which retired 5 through 8
 > outright - a code cut before it decodes into a game the kernel would no longer
-> play, so it is refused instead. Read "v6" below as the decoder family, not the
-> byte. See `docs/DEAL_ORDER.md`.
+> play, so it is refused instead - and once for the trump (11: an 8-seat stock of
+> four Aces turns an Ace, so the header's trump symbol is coded over the whole
+> deck, not the deck without its Aces). Only 11 decodes. Read "v6" below as the
+> decoder family, not the byte. See `docs/DEAL_ORDER.md` and `c/src/replay.h`.
 
 **Status: shipped end to end, including the producer.** C codec + native test,
 wasm exports (rules.wasm + bots.wasm), TS encode/decode bridge, view.ts

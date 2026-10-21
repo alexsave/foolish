@@ -287,7 +287,7 @@ static int replay_sweep(void) {
             // its predecessors outright, and dropping the retrodiction line took
             // 9 with them (replay.h) - so a fresh encode must be 10 and nothing
             // else.
-            if ((unsigned char)buf[0] != REPLAY_FORMAT_VERSION_V10) {   // version is byte[0]
+            if ((unsigned char)buf[0] != REPLAY_FORMAT_VERSION_V11) {   // version is byte[0]
                 printf("FAIL sweep v6 version p=%d seed=%d got=%d\n", players, s,
                        (unsigned char)buf[0]);
                 return 1;

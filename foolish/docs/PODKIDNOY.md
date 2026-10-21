@@ -160,7 +160,7 @@ A build that predates them refuses a format it does not know (`MSG_EFORMAT`)
 instead of quietly dealing a different game.
 
 **The header carries the rules even though the body already does.**
-A v10 body names its own pass mode, and for a LIVE bubble that would be enough.
+A v11 body names its own pass mode, and for a LIVE bubble that would be enough.
 A WAITING lobby has no body at all - the deal alone is its state - so the one
 place a lobby's rules can live is the header, and the lobby is exactly where
 they are chosen.

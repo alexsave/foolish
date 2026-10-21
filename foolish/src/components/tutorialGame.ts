@@ -33,7 +33,7 @@
 // real engine (C_CORE_CONSOLIDATION.md A5), which the retrodiction line cannot
 // do - it hides the deal, so there is no deck to rebuild and its hands are a
 // guess.
-export const TUTORIAL_MOVES_CODE = 'ORVZLRYH45QGAFKIDQKYJK6C7XSOPDWVXI6R7PWBHHL7SFHTSSNA';
+export const TUTORIAL_MOVES_CODE = 'QL4QQ77I4RGGYF7RD6MDKQJ3LWQYJAFQOGCMHNUZMEJPQN4SA2NQ';
 
 // Seat names; index 0 is the learner.
 export const TUTORIAL_NAMES = ['You', 'Vera', 'Boris'];

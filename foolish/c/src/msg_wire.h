@@ -44,7 +44,7 @@
 //
 // THE BODY is a v6-family replay code (replay.h) - the codec that already
 // ships. "v6" here is the DECODER FAMILY, not the version byte the producer
-// writes: today's encoder stamps 10 (REPLAY_FORMAT_VERSION_V10), which is v6
+// writes: today's encoder stamps 11 (REPLAY_FORMAT_VERSION_V11), which is v6
 // plus a pass-mode bit, a forced-opening bit and the corrected deal order, and
 // every entry point that reads one is still named _v6 because it accepts the
 // whole line. What this file counts - atoms - is the same in any of them. It
@@ -262,7 +262,7 @@
 // podkidnoy, the throw-in game with no transfer at all (game.h
 // GAME_RULE_NO_PASS). Every other bit stays reserved and must be 0.
 //
-// WHY THE HEADER CARRIES THE RULES WHEN THE BODY ALREADY DOES. A v10 code names
+// WHY THE HEADER CARRIES THE RULES WHEN THE BODY ALREADY DOES. A v11 code names
 // its own pass mode (replay.h), and for a LIVE bubble that would be enough. A
 // WAITING lobby has no body at all - the deal alone is the state - so the one
 // place a lobby's rules can live is the header, and the lobby is exactly where
