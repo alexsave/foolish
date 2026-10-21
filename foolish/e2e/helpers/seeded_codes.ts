@@ -17,8 +17,7 @@
 // playBotTable, sweep oracle_mode_b for new indices of the same shape, and
 // re-record the match history golden. When the replay format went to 11 (the
 // trump symbol's alphabet gained the Aces) they were transcoded instead, the
-// same games with their version and trump symbols re-radixed
-// (foolish/server/migrate/replay_v11.c), so nothing built on them moved.
+// same games with their version and trump symbols re-radixed, so nothing built on them moved.
 
 import { readFileSync } from 'node:fs';
 import { replaySummary } from '../../sdk/ts/wasm/bots.ts';

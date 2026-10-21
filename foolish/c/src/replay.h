@@ -126,7 +126,7 @@
 //      the coder is mixed-radix: a v10 code read with the new radix decodes to
 //      different symbols from the trump on, silently, so the number changed.
 //      Stored replays were transcoded once by a migration tool that is not part
-//      of this kernel (foolish/server/migrate/replay_v11.c), and so were the
+//      of this kernel (since deleted), and so were the
 //      tutorial's code and the test fixtures: the same games, so nothing built
 //      on them moved. Codes held anywhere else (shared links, iMessage
 //      threads, saved replays on a phone) stopped decoding, by decision.
