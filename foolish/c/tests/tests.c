@@ -841,6 +841,41 @@ static void test_attack_rejects(void) {
     CHECK_REJECT(handle_attack(&g, 0, &c7s, 1), ENGINE_REJECT_DEFENDER_CAPACITY, "attack: defender capacity");
 }
 
+// THE BATTLE ARRAY'S CAP (game.h GAME_LEGAL_BATTLES_MAX). A legal table never holds more than 26
+// battles, so no legal attack or transfer reaches MAX_BATTLES; a board no game reaches (a corrupt
+// row, a hostile marshal, a bot's sampled world) can, and its attack or transfer is refused
+// rather than written past table_battles[]. One battle short of the cap, with every capacity
+// rule satisfied: two cards would be one too many.
+static void test_attack_and_pass_stop_at_the_battle_cap(void) {
+    Card a = { SUIT_SPADES, 7 }, b = { SUIT_HEARTS, 7 };
+    Game g; setup_playing_2p(&g);
+    g.num_battles = MAX_BATTLES - 1;
+    for (int i = 0; i < g.num_battles; i++) g.table_battles[i] = (Battle){ { SUIT_CLUBS, 7 }, { SUIT_CLUBS, 9 } };
+    g.players[0].hand[0] = a;
+    g.players[0].hand[1] = b;
+    g.players[0].hand_count = 2;
+    g.players[1].hand_count = MAX_HAND_SIZE;   // room for any number of uncovered attacks
+    CHECK_REJECT(handle_attack(&g, 0, (Card[]){ a, b }, 2), ENGINE_REJECT_DEFENDER_CAPACITY,
+                 "attack: two more battles than table_battles holds is refused");
+    CHECK(g.num_battles == MAX_BATTLES - 1 && g.players[0].hand_count == 2, "attack: the refused board is untouched");
+    CHECK(handle_attack(&g, 0, &a, 1) && g.num_battles == MAX_BATTLES, "attack: one more, to the cap, is taken");
+
+    // The transfer: every battle uncovered and of the passed value, the next seat with room for all.
+    setup_playing_2p(&g);
+    g.num_battles = MAX_BATTLES - 1;
+    for (int i = 0; i < g.num_battles; i++) g.table_battles[i] = (Battle){ { SUIT_CLUBS, 7 }, CARD_NONE };
+    g.players[1].hand[0] = a;
+    g.players[1].hand[1] = b;
+    g.players[1].hand_count = 2;
+    g.players[0].hand_count = MAX_HAND_SIZE;
+    if (MAX_HAND_SIZE >= MAX_BATTLES + 1) {   // a 64-battle build is held by the next seat's hand already
+        CHECK_REJECT(handle_pass(&g, 1, (Card[]){ a, b }, 2), ENGINE_REJECT_PASS_CAPACITY,
+                     "pass: two more battles than table_battles holds is refused");
+        CHECK(g.num_battles == MAX_BATTLES - 1 && g.players[1].hand_count == 2 && g.defender == 1,
+              "pass: the refused board is untouched");
+    }
+}
+
 static void test_cover_rejects_and_success(void) {
     Card cov9 = { SUIT_SPADES, 9 }, cov6 = { SUIT_SPADES, 6 };
     Card atk7 = { SUIT_SPADES, 7 };
@@ -20500,6 +20535,7 @@ int main(void) {
     // Reject-matrix & edge-path coverage.
     test_deal_order();
     test_attack_rejects();
+    test_attack_and_pass_stop_at_the_battle_cap();
     test_cover_rejects_and_success();
     test_cover_clears_hand_round_advance();
     test_cover_clears_hand_wins();

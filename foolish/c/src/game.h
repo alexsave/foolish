@@ -13,10 +13,21 @@
                                   // configurable (see card.h).
 #define MAX_HAND_SIZE  64         // generous; pickup can stack many cards.
 #ifndef MAX_BATTLES
-#define MAX_BATTLES    32         // build parameter; WASM uses 64 (a defender
-                                  // holding 33+ cards can legally face 33+
-                                  // simultaneous attacks).
+#define MAX_BATTLES    32         // build parameter; the shipped builds use 64
 #endif
+// THE MOST BATTLES A LEGAL TABLE HOLDS. Every battle's attack is its own card, a
+// covered one's cover too, and every uncovered attack is matched by a card in
+// the defender's hand: an attack is refused past the defender's hand
+// (ENGINE_REJECT_DEFENDER_CAPACITY), a transfer past the next defender's
+// (ENGINE_REJECT_PASS_CAPACITY), and a cover takes one of each. So a table of b
+// battles holds 2b of the deck's cards, and b is at most half the full deck: 26.
+// handle_attack and handle_pass write table_battles[] by this rule, so no
+// build may be narrower than it; the cap check they also make is for a board
+// no legal game reaches (a corrupt row, a hostile marshal, a bot's sampled
+// world), which it refuses instead of writing past the array.
+#define GAME_DECK_CARDS_MAX   (NUM_SUITS * (ACE_VALUE - MIN_VALUE_LARGE + 1))
+#define GAME_LEGAL_BATTLES_MAX (GAME_DECK_CARDS_MAX / 2)
+_Static_assert(MAX_BATTLES >= GAME_LEGAL_BATTLES_MAX, "MAX_BATTLES is narrower than a legal table");
 #define MAX_DECK       64         // 36 for 2p, with slack.
 #ifndef MAX_LOGS
 #define MAX_LOGS       1024       // build parameter, sized on p99 — NOT on max.

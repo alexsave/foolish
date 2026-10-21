@@ -1012,6 +1012,8 @@ bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards) {
     int uncovered = count_uncovered(g);
     int defender_cards = g->players[g->defender].hand_count;
     if (defender_cards < uncovered + n_cards) REJECT(ENGINE_REJECT_DEFENDER_CAPACITY);
+    // A legal table never gets here (game.h GAME_LEGAL_BATTLES_MAX): a board no game reaches does.
+    if (g->num_battles + n_cards > MAX_BATTLES) REJECT(ENGINE_REJECT_DEFENDER_CAPACITY);
 
     // Apply.
     for (int i = 0; i < n_cards; i++) {
@@ -1205,6 +1207,8 @@ bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
 
     int next = get_next_player_index(g, g->defender);
     if (g->players[next].hand_count < n_cards + g->num_battles) REJECT(ENGINE_REJECT_PASS_CAPACITY);
+    // A legal table never gets here (game.h GAME_LEGAL_BATTLES_MAX): a board no game reaches does.
+    if (g->num_battles + n_cards > MAX_BATTLES) REJECT(ENGINE_REJECT_PASS_CAPACITY);
 
     GAME_PASS_PROBE_HIT();
     for (int i = 0; i < n_cards; i++) {
