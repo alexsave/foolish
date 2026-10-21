@@ -70,6 +70,9 @@ typedef struct cb_section {
     // for a bot cycle (bots.c), 0 for any other operation. Cleared with the section.
     int         moves_want;
     bool        moves_bots;
+    // The game as the journal holds it for this operation (journal.h THE HOLD: cb_table_run's
+    // acquire, released before its unlock), or NULL. Cleared with the section.
+    struct cb_jhold *held;
     uint8_t     arena[CB_ARENA_BYTES];
     int         arena_hw;         // bytes of the arena a products call may have written (cb_section_free zeroes that prefix)
     bool        in_use, pooled;   // cb_section_new's own: the worker thread's reusable one, and whether it is handed out
@@ -78,6 +81,10 @@ typedef struct cb_section {
     // that finalizes allocates it once, not per finished game.
     uint8_t    *fin;
     cb_row_buf  rb;               // the loaded row's bytes, the journal's copy (row_acquire); kept with the section, not zeroed
+    // The buffer a commit decodes the new game into (table_resident) for the journal, which takes
+    // it and hands its old one back (rows_foolish.h cb_game_commit.resident): made on first use,
+    // kept with the section, not zeroed.
+    TableResident *res;
 } cb_section;
 
 cb_section *cb_section_new(void);

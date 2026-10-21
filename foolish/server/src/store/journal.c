@@ -252,12 +252,21 @@ typedef struct {
     bool     clear;      // (a whole commit) it clears the session log first
 } jmove;
 
-typedef struct jgame {
-    struct jgame *next;
+typedef struct cb_jhold {
+    struct cb_jhold *next;
     // THE GAME, decoded (table.h TableResident): valid when res_valid. An operation adopts a
-    // copy (table_adopt), and only a committed operation replaces it (R1: copy-on-apply).
-    TableResident res;
+    // copy (table_adopt), and only a committed operation replaces it (R1: copy-on-apply), by
+    // handing its own buffer over (game_set: the two are swapped, no copy). The game's own
+    // buffer, allocated at its first resident, or NULL.
+    TableResident *res;
     bool          res_valid;
+    // THE HOLD: operations that hold the game (cb_journal_game_acquire's `held`, under the game's
+    // lock: at most one at a time in practice). A held game is never evicted (ov_evict); unlinked
+    // while held (a conflict, an admin's write, an import) it is `gone`, out of the buckets, and
+    // freed by its last release instead (ov_unlink, cb_journal_game_release). Both under ov_mu;
+    // `gone` is read without it by the holder's fence (j_game_commit).
+    int           held;
+    atomic_bool   gone;
     // The newest acknowledged row (no logs). Its columns are always this game's; its state and
     // roster bytes are when row_fresh, else the resident's encode is due (row_refresh) before
     // anything reads them (R3).
@@ -306,7 +315,9 @@ typedef struct jrec {
     long         epoch;         // the journal's epoch when its base version was read
     cb_jmove     m;
     cb_game_row  row;           // the new row (the caller's bytes: ov_apply copies them; only its columns with res)
-    const TableResident *res;   // the new game decoded (the caller's), or NULL (a recovered move: row's bytes)
+    TableResident **res;        // the new game decoded (the caller's buffer, taken by ov_apply: res_take), or
+                                // NULL (a recovered move: row's bytes)
+    jgame       *g;             // the game its operation holds (THE HOLD), or NULL: ov_apply looks it up
     bool         full;          // a whole commit (FULL_MAGIC): the row's bytes are written, not m's moves
     bool         clear;         // (full) it clears the session log first
     const uint8_t *log;         // the commit's log delta (the caller's: ov_apply copies it)
@@ -384,6 +395,7 @@ struct cb_journal {
     atomic_long     loop_seg_opens;   // seg_open on the loop's thread (a wait for seg_mu, a file made)
     atomic_long     txn_moves_max;    // the most waiting moves one flush transaction carried
     atomic_long     txn_hold_us_max;  // the longest a flush transaction held the flush lock
+    long            lookups;          // games looked up by id in the overlay (ov_slot: under ov_mu, or at the open alone)
 };
 
 cb_journal *cb_journal_of(const cb_store *s) { return s && s->app_settle == cb_journal_flush ? s->app_state : NULL; }
@@ -399,6 +411,7 @@ static bool on_loop(const cb_journal *j) { return j->o.loop && cb_loop_on_thread
 static int64_t j_mono(const cb_journal *j) { return on_loop(j) ? cb_loop_now(j->o.loop) : cb_mono_ms(); }
 
 static jgame **ov_slot(cb_journal *j, const char *id) {
+    j->lookups++;
     jgame **p = &j->buckets[fnv1a32_str(FNV32_OFFSET, id) & (OV_BUCKETS - 1)];
     while (*p && strcmp((*p)->row.id, id) != 0) p = &(*p)->next;
     return p;
@@ -456,6 +469,7 @@ static void ratings_evict(cb_journal *j, int64_t now, bool all) {
 }
 
 static void game_free(jgame *g) {
+    free(g->res);
     for (int i = 0; i < g->n_rated; i++) free(g->rated[i].r);
     free(g->rated);
     cb_game_row_free(&g->row);
@@ -524,7 +538,7 @@ static int row_refresh(jgame *g) {
         g->roster_cap = ROSTER_BYTES;
     }
     int sl = 0, rl = 0;
-    if (table_resident_encode(&g->res, g->row.state, (int)g->state_cap, &sl, g->row.roster, (int)g->roster_cap, &rl) != TABLE_OK)
+    if (table_resident_encode(g->res, g->row.state, (int)g->state_cap, &sl, g->row.roster, (int)g->roster_cap, &rl) != TABLE_OK)
         return CB_E_STATE;
     g->row.state_len = (size_t)sl;
     g->row.roster_len = (size_t)rl;
@@ -532,13 +546,30 @@ static int row_refresh(jgame *g) {
     return CB_OK;
 }
 
+// THE RESIDENT HANDED OVER: the caller's decoded game (*res, a buffer the caller owns) becomes the
+// game's, and the game's old buffer (or NULL) the caller's: a swap, where a 2 KB copy was. The
+// caller keeps whatever comes back for its next commit (app/table_ops.c cb_section.res).
+static void res_take(jgame *g, TableResident **res) {
+    TableResident *old = g->res;
+    g->res = *res;
+    *res = old;
+    g->res_valid = true;
+}
+
+// A decoded game copied in (the caller keeps its own: cb_journal_game_decoded, _created).
+static int res_copy(jgame *g, const TableResident *src) {
+    if (!g->res && !(g->res = malloc(sizeof *g->res))) return CB_E_NOMEM;
+    *g->res = *src;
+    g->res_valid = true;
+    return CB_OK;
+}
+
 // The game becomes `src` and, when given, its resident (both acknowledged together): with a
-// resident only the columns are copied and the bytes encoded when read; without one the bytes
-// are copied and the next operation decodes them.
-static int game_set(jgame *g, const cb_game_row *src, const TableResident *res) {
-    if (res) {
-        g->res = *res;
-        g->res_valid = true;
+// resident (taken: res_take) only the columns are copied and the bytes encoded when read;
+// without one the bytes are copied and the next operation decodes them.
+static int game_set(jgame *g, const cb_game_row *src, TableResident **res) {
+    if (res && *res) {
+        res_take(g, res);
         g->row_fresh = false;
         row_set_columns(g, src);
         return CB_OK;
@@ -579,14 +610,14 @@ static void humans_of_roster(jgame *g, const uint8_t *roster, size_t len) {
 }
 
 // A game made resident at *p (ov_mu held, *p empty): `row` as the tables hold it (and its
-// resident when the caller has one).
-static jgame *ov_insert(cb_journal *j, jgame **p, const cb_game_row *row, const TableResident *res) {
+// resident when the caller has one: taken, res_take).
+static jgame *ov_insert(cb_journal *j, jgame **p, const cb_game_row *row, TableResident **res) {
     jgame *g = calloc(1, sizeof *g);
     if (!g) return NULL;
     if (game_set(g, row, res) != CB_OK) { game_free(g); return NULL; }
     g->sql_version = row->version;
     g->touched_ms = j_mono(j);
-    if (res) humans_of(g, &res->r);
+    if (g->res_valid) humans_of(g, &g->res->r);
     else humans_of_roster(g, row->roster, row->roster_len);
     *p = g;
     j->n_games++;
@@ -603,17 +634,22 @@ static void kick_flusher(cb_journal *j) {
 
 // A record's row and log become the game's (ov_mu held). Both are copied: the log onto the end
 // of the game's log buffer.
-static int ov_apply(cb_journal *j, jrec *r) {
-    jgame **p = ov_slot(j, r->m.game), *g = *p;
+static int ov_apply(cb_journal *j, jrec *r, jgame **applied) {
+    *applied = NULL;
+    // The game its operation holds (THE HOLD: no lookup), unless it went meanwhile.
+    jgame *g = r->g && !atomic_load_explicit(&r->g->gone, memory_order_relaxed) ? r->g : NULL;
     if (!g) {
-        // A game no operation read first (recovery, or one evicted between its read and its
-        // commit): its base is the tables'. A journaled move never changes the seats.
-        if (!(g = calloc(1, sizeof *g))) return CB_E_NOMEM;
-        g->sql_version = r->m.base_version;
-        if (r->res) humans_of(g, &r->res->r);
-        else humans_of_roster(g, r->row.roster, r->row.roster_len);
-        *p = g;
-        j->n_games++;
+        jgame **p = ov_slot(j, r->m.game);
+        if (!(g = *p)) {
+            // A game no operation read first (recovery, or one evicted between its read and its
+            // commit): its base is the tables'. A journaled move never changes the seats.
+            if (!(g = calloc(1, sizeof *g))) return CB_E_NOMEM;
+            g->sql_version = r->m.base_version;
+            if (r->res && *r->res) humans_of(g, &(*r->res)->r);
+            else humans_of_roster(g, r->row.roster, r->row.roster_len);
+            *p = g;
+            j->n_games++;
+        }
     }
     if (g->n_moves == g->cap_moves) {
         int cap = g->cap_moves ? g->cap_moves * 2 : 8;
@@ -649,9 +685,9 @@ static int ov_apply(cb_journal *j, jrec *r) {
         g->first_seg = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
         if (now + j->o.game_age_ms < j->armed_ms) j->rearm_wanted = true;   // the flush thread sleeps past its age
     }
-    // The resident is the game's now (a 2 KB copy; the row's bytes are encoded when read), or a
-    // recovered row's bytes go into the game's own buffers, grown only when a row outgrows them:
-    // no allocation per move either way.
+    // The resident is the game's now (handed over: res_take; the row's bytes are encoded when
+    // read), or a recovered row's bytes go into the game's own buffers, grown only when a row
+    // outgrows them: no allocation per move either way.
     if (game_set(g, &r->row, r->res) != CB_OK) { free(rated); return CB_E_NOMEM; }
     if (rated) {   // THE RATINGS' ONE OWNER takes the changes now; the tables at the flush
         g->rated[g->n_rated].seq = r->row.version;
@@ -659,11 +695,12 @@ static int ov_apply(cb_journal *j, jrec *r) {
         ratings_apply(j, rated, now);
     }
     if (r->full) {   // a whole commit may seat or unseat anyone: the flush brings the tables' seats
-        if (r->res) humans_of(g, &r->res->r);
+        if (r->res && g->res_valid) humans_of(g, &g->res->r);   // (taken: the game's own now)
         else humans_of_roster(g, r->row.roster, r->row.roster_len);
         g->seats_dirty = true;
         g->seats_seq = r->row.version;
     }
+    *applied = g;
     g->moves[g->n_moves] = (jmove){ r->row.version, (uint32_t)g->logs_len, (uint32_t)r->log_len, r->full && r->clear };
     if (r->log_len) memcpy(g->logs + g->logs_len, r->log, r->log_len);
     g->logs_len += r->log_len;
@@ -1076,8 +1113,8 @@ static void write_batch(cb_journal *j, jrec *list) {
     for (jrec *r = list; r; r = r->next) {
         if (r->rc != CB_OK) continue;
         r->rc = rc;
-        if (rc == CB_OK && (r->rc = ov_apply(j, r)) != CB_OK) CB_ERROR(MOD, "game %s: overlay out of memory", r->m.game);
-        jgame *g = rc == CB_OK ? *ov_slot(j, r->m.game) : NULL;
+        jgame *g = NULL;
+        if (rc == CB_OK && (r->rc = ov_apply(j, r, &g)) != CB_OK) CB_ERROR(MOD, "game %s: overlay out of memory", r->m.game);
         if (g && game_full(j, g)) due = true;
     }
     if (j->w_bytes >= j->o.total_bytes) due = true;
@@ -1490,6 +1527,11 @@ static void ov_unlink(cb_journal *j, jgame **p) {
     j->n_waiting -= g->n_moves;
     j->w_bytes -= g->bytes;
     j->n_games--;
+    if (g->held) {   // THE HOLD: its last release frees it
+        g->next = NULL;
+        atomic_store_explicit(&g->gone, true, memory_order_relaxed);
+        return;
+    }
     game_free(g);
 }
 
@@ -1498,15 +1540,17 @@ static int touched_cmp(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-// THE RESIDENCY RULE (ov_mu and flush_mu held; a jgame is freed only under both, so a holder of
-// flush_mu may keep a pointer to one across ov_mu): a game idle IDLE_EVICT_MS with nothing
-// waiting leaves; then, while more than max_games are resident, the least recently touched
-// with nothing waiting do. A game with waiting moves never leaves (only a flush takes them).
+// THE RESIDENCY RULE (ov_mu and flush_mu held; a jgame in the buckets is unlinked only under
+// both, so a holder of flush_mu may keep a pointer to one across ov_mu; a gone one is freed by
+// its last release under ov_mu alone, never in the buckets): a game idle IDLE_EVICT_MS with
+// nothing waiting leaves; then, while more than max_games are resident, the least recently
+// touched with nothing waiting do. A game with waiting moves never leaves (only a flush takes
+// them), nor one an operation holds (THE HOLD).
 static void ov_evict(cb_journal *j, int64_t now) {
     ratings_evict(j, now, false);
     for (int b = 0; b < OV_BUCKETS; b++)
         for (jgame **p = &j->buckets[b]; *p;) {
-            if (!(*p)->n_moves && now - (*p)->touched_ms > IDLE_EVICT_MS) ov_unlink(j, p);
+            if (!(*p)->n_moves && !(*p)->held && now - (*p)->touched_ms > IDLE_EVICT_MS) ov_unlink(j, p);
             else p = &(*p)->next;
         }
     if (j->n_games <= j->o.max_games) return;
@@ -1515,7 +1559,7 @@ static void ov_evict(cb_journal *j, int64_t now) {
     int n = 0;
     for (int b = 0; b < OV_BUCKETS; b++)
         for (jgame *g = j->buckets[b]; g; g = g->next)
-            if (!g->n_moves) idle[n++] = g;
+            if (!g->n_moves && !g->held) idle[n++] = g;
     qsort(idle, (size_t)n, sizeof *idle, touched_cmp);
     for (int i = 0; i < n && j->n_games > j->o.max_games; i++) ov_unlink(j, ov_slot(j, idle[i]->row.id));
     free(idle);
@@ -1684,7 +1728,16 @@ static int j_game_get(cb_store *s, const char *id, cb_game_row *out) {
     return rc == CB_E_NOT_FOUND ? cb_rows_sql.game_get(s, id, out) : rc;
 }
 
-int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, void *ud) {
+// The game held (THE HOLD) when the caller asks and fn took it.
+static void hold(jgame *g, int rc, cb_jhold **held) {
+    if (held && rc == CB_OK && g) {
+        g->held++;
+        *held = g;
+    }
+}
+
+int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, void *ud, cb_jhold **held) {
+    if (held) *held = NULL;
     cb_journal *j = cb_journal_of(s);
     if (!j) return CB_E_STATE;
     for (;;) {
@@ -1692,7 +1745,8 @@ int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, 
         jgame *g = *ov_slot(j, id);
         if (g) {
             g->touched_ms = j_mono(j);
-            int rc = g->res_valid ? fn(ud, &g->row, &g->res) : fn(ud, &g->row, NULL);
+            int rc = g->res_valid ? fn(ud, &g->row, g->res) : fn(ud, &g->row, NULL);
+            hold(g, rc, held);
             pthread_mutex_unlock(&j->ov_mu);
             return rc;
         }
@@ -1715,14 +1769,23 @@ int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, 
         jgame **p = ov_slot(j, id);
         g = *p ? *p : ov_insert(j, p, &row, NULL);
         const bool over = j->n_games > j->o.max_games;
-        if (g && g->res_valid) rc = fn(ud, &g->row, &g->res);
+        if (g && g->res_valid) rc = fn(ud, &g->row, g->res);
         else if (g && row_refresh(g) == CB_OK) rc = fn(ud, &g->row, NULL);
-        else rc = fn(ud, &row, NULL);   // out of memory: served from the read, not resident
+        else rc = fn(ud, &row, NULL), g = NULL;   // out of memory: served from the read, not resident
+        hold(g, rc, held);
         pthread_mutex_unlock(&j->ov_mu);
         cb_game_row_free(&row);
         if (over) kick_flusher(j);
         return rc;
     }
+}
+
+void cb_journal_game_release(cb_store *s, cb_jhold *h) {
+    cb_journal *j = cb_journal_of(s);
+    if (!j || !h) return;
+    pthread_mutex_lock(&j->ov_mu);
+    if (--h->held == 0 && atomic_load_explicit(&h->gone, memory_order_relaxed)) game_free(h);
+    pthread_mutex_unlock(&j->ov_mu);
 }
 
 int cb_journal_game_peek(cb_store *s, const char *id, cb_journal_game_fn fn, void *ud) {
@@ -1731,7 +1794,7 @@ int cb_journal_game_peek(cb_store *s, const char *id, cb_journal_game_fn fn, voi
     pthread_mutex_lock(&j->ov_mu);
     jgame *g = *ov_slot(j, id);
     int rc = CB_E_NOT_FOUND;
-    if (g && g->res_valid) rc = fn(ud, &g->row, &g->res);
+    if (g && g->res_valid) rc = fn(ud, &g->row, g->res);
     else if (g && (rc = row_refresh(g)) == CB_OK) rc = fn(ud, &g->row, NULL);
     pthread_mutex_unlock(&j->ov_mu);
     return rc;
@@ -1742,7 +1805,10 @@ void cb_journal_game_created(cb_store *s, const cb_game_row *row, const TableRes
     if (!j) return;
     pthread_mutex_lock(&j->ov_mu);
     jgame **p = ov_slot(j, row->id);
-    if (!*p) (void)ov_insert(j, p, row, res);   // out of memory: the first operation reads the tables
+    // Its bytes, and the decoded game copied (the caller keeps its own); out of memory: the first
+    // operation reads the tables, or decodes the bytes.
+    jgame *g = *p ? NULL : ov_insert(j, p, row, NULL);
+    if (g && res) (void)res_copy(g, res);
     const bool over = j->n_games > j->o.max_games;
     pthread_mutex_unlock(&j->ov_mu);
     if (over) kick_flusher(j);
@@ -1753,10 +1819,8 @@ void cb_journal_game_decoded(cb_store *s, const char *id, int64_t version, const
     if (!j) return;
     pthread_mutex_lock(&j->ov_mu);
     jgame *g = *ov_slot(j, id);
-    if (g && !g->res_valid && g->row.version == version) {   // the row it was decoded from is still the game's
-        g->res = *res;
-        g->res_valid = true;   // row_fresh stays: the bytes it was decoded from are its encode
-    }
+    if (g && !g->res_valid && g->row.version == version)   // the row it was decoded from is still the game's
+        (void)res_copy(g, res);   // row_fresh stays: the bytes it was decoded from are its encode
     pthread_mutex_unlock(&j->ov_mu);
 }
 
@@ -1851,8 +1915,8 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
             else {
                 // The commit's bytes are written; its resident is the same game decoded.
                 g->row_fresh = true;
-                g->res_valid = c->resident != NULL;
-                if (c->resident) g->res = *c->resident;
+                g->res_valid = false;
+                if (c->resident && *c->resident) res_take(g, c->resident);
                 g->sql_version = c->row->version;
                 g->touched_ms = j_mono(j);
                 // The commit's seats are the stored ones now.
@@ -1885,12 +1949,20 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     // tables' readers (the leaderboard, a profile) see them one flush later.
     if (!plain && (!row->state || !row->roster)) return around(s, row->id, c, NULL, 0);
     // The fence the tables would apply: the game's acknowledged version is the expected one,
-    // read in this epoch (an exclusive section after it refuses the record: write_batch).
+    // read in this epoch (an exclusive section after it refuses the record: write_batch). A game
+    // its operation holds (THE HOLD) is read in place: only that operation commits it (it holds
+    // the game's lock), so its version is the one it adopted unless the game went meanwhile.
     const long epoch = atomic_load(&j->epoch);
-    pthread_mutex_lock(&j->ov_mu);
-    jgame *g = *ov_slot(j, row->id);
-    int64_t held = g ? g->row.version : -1;
-    pthread_mutex_unlock(&j->ov_mu);
+    jgame *g = c->held && !atomic_load_explicit(&c->held->gone, memory_order_relaxed) ? c->held : NULL;
+    int64_t held = -1;
+    if (g) {
+        held = g->row.version;
+    } else {
+        pthread_mutex_lock(&j->ov_mu);
+        const jgame *f = *ov_slot(j, row->id);
+        held = f ? f->row.version : -1;
+        pthread_mutex_unlock(&j->ov_mu);
+    }
     if (held < 0) {
         if (on_loop(j)) return CB_E_WOULD_BLOCK;   // not resident: the fence is the tables' to read
         cb_game_row cur;
@@ -1927,6 +1999,7 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     }
     r.row = *row;   // read by ov_apply while this thread waits in append
     r.res = c->resident;
+    r.g = g;
     r.log = c->log_add_len ? c->log_add : NULL;   // copied by ov_apply while this thread waits
     r.log_len = c->log_add_len;
     return on_loop(j) ? loop_append(j, &r) : append(j, &r);
@@ -2387,8 +2460,9 @@ static int recover_move(cb_journal *j, const cb_jmove *m, char *err, size_t cap)
         free(mlog);
         return rc;
     }
+    jgame *g;
     pthread_mutex_lock(&j->ov_mu);
-    rc = ov_apply(j, &r);
+    rc = ov_apply(j, &r, &g);
     pthread_mutex_unlock(&j->ov_mu);
     cb_game_row_free(&r.row);
     free(mlog);
@@ -2422,8 +2496,9 @@ static int recover_full(cb_journal *j, jrec *r, char *err, size_t cap) {
         return CB_E_STATE;
     }
     // The record's bytes are the segment buffer's: ov_apply copies its log.
+    jgame *g;
     pthread_mutex_lock(&j->ov_mu);
-    rc = ov_apply(j, r);
+    rc = ov_apply(j, r, &g);
     pthread_mutex_unlock(&j->ov_mu);
     if (rc == CB_OK) atomic_fetch_add(&j->recovered, 1);
     return rc;
@@ -2632,14 +2707,19 @@ void cb_journal_close(cb_store *s) {
     journal_free(j);
 }
 
-int cb_journal_game_stamps(const cb_store *s, const char *id, int64_t *touched_ms, int64_t *first_ms) {
+int cb_journal_game_info(const cb_store *s, const char *id, cb_journal_game_facts *out) {
+    memset(out, 0, sizeof *out);
     cb_journal *j = cb_journal_of(s);
     if (!j) return CB_E_STATE;
     pthread_mutex_lock(&j->ov_mu);
+    const long n = j->lookups;
     const jgame *g = *ov_slot(j, id);
+    j->lookups = n;   // (not counted: an observer's)
     if (g) {
-        *touched_ms = g->touched_ms;
-        *first_ms = g->n_moves ? g->first_ms : 0;
+        out->touched_ms = g->touched_ms;
+        out->first_ms = g->n_moves ? g->first_ms : 0;
+        out->resident = g->res_valid ? g->res : NULL;
+        out->held = g->held;
     }
     pthread_mutex_unlock(&j->ov_mu);
     return g ? CB_OK : CB_E_NOT_FOUND;
@@ -2660,6 +2740,7 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     out->waiting = j->n_waiting;
     out->waiting_bytes = j->w_bytes;
     out->games = j->n_games;
+    out->lookups = j->lookups;
     pthread_mutex_unlock(&j->ov_mu);
     pthread_mutex_lock(&j->seg_mu);
     out->segments = j->n_segs;

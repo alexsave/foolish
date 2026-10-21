@@ -1549,7 +1549,7 @@ static void a_lobby_and_its_deal_write_no_table(void) {
         T_EQ_INT(CB_ROWS_CALL(s, game_members, gid, count_name, &members), g_bots ? 1 : 2);
         // An import writes the tables behind the overlay: the resident copy goes with it, and the
         // next read is the imported row.
-        T_EQ_INT(cb_journal_game_acquire(s, gid, no_game, NULL), CB_OK);   // resident now
+        T_EQ_INT(cb_journal_game_acquire(s, gid, no_game, NULL, NULL), CB_OK);   // resident now
         cb_game_row row = stored(s, gid);
         T_CHECK(row.version > 0);
         row.created_at = 777;
@@ -2209,7 +2209,7 @@ static void the_residents_rng_base_is_its_rows(void) {
     int checked = 0;
     for (int i = 0; i < 12; i++) {
         base_seen b = { 0, false };
-        T_EQ_INT(cb_journal_game_acquire(s, gid, resident_base, &b), CB_OK);
+        T_EQ_INT(cb_journal_game_acquire(s, gid, resident_base, &b, NULL), CB_OK);
         if (b.held) { T_EQ_INT((long)b.base, (long)row_base(s, gid)); checked++; }
         if (step(s, gid, &m) <= 0) break;
     }
@@ -2261,6 +2261,114 @@ static void the_flush_thread_has_no_tick(void) {
     memset(&g_jo, 0, sizeof g_jo);
 }
 
+// ---- THE HOLD and the resident handed over ------------------------------------------------
+
+static long lookups(cb_store *s) {
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    return js.lookups;
+}
+
+static cb_journal_game_facts facts(cb_store *s, const char *gid, int *rc) {
+    cb_journal_game_facts f;
+    *rc = cb_journal_game_info(s, gid, &f);
+    return f;
+}
+
+// A human's move finds its game by id once (its acquire): the commit's fence and the record's
+// apply use the game its operation holds (P13), and the operation lets it go.
+static void a_move_finds_its_game_by_id_once(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/once%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    for (int i = 0; i < 6; i++) {
+        move_t m;
+        if (!next_move(s, gid, &m)) break;   // (a bot's turn: next_move answers only for a human)
+        const long l0 = lookups(s);
+        T_CHECK(play(gid, &m) > 0);
+        T_EQ_INT(lookups(s) - l0, 1);
+        int rc;
+        const cb_journal_game_facts f = facts(s, gid, &rc);
+        T_EQ_INT(rc, CB_OK);
+        T_EQ_INT(f.held, 0);   // released with the operation
+    }
+    close_world(s);
+}
+
+// The new game decoded is handed over, not copied (P15): the game takes the commit's buffer and
+// the committing thread's section takes the game's old one, so two moves on one thread swap the
+// same two buffers back and forth.
+static void the_resident_is_handed_over_not_copied(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/swap%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    const void *seen[3];
+    int rc, n = 0;
+    move_t m;
+    seen[n++] = facts(s, gid, &rc).resident;
+    T_EQ_INT(rc, CB_OK);
+    T_CHECK(seen[0] != NULL);
+    while (n < 3 && next_move(s, gid, &m)) {
+        T_CHECK(play(gid, &m) > 0);
+        seen[n++] = facts(s, gid, &rc).resident;
+    }
+    T_EQ_INT(n, 3);
+    T_CHECK(seen[1] != NULL && seen[1] != seen[0]);   // the commit's buffer is the game's now
+    T_CHECK(seen[2] == seen[0]);                      // and the game's old one came back to the section
+    close_world(s);
+}
+
+static int hold_nothing(void *ud, const cb_game_row *row, const TableResident *res) { return CB_OK; }
+static int no_body(void *ud) { return 0; }
+
+// THE HOLD: a held game is never evicted (over the overlay's cap the idle games that are not held
+// leave), and one unlinked while held (an admin's write) is freed by its release, not before.
+static void a_held_game_stays_and_a_gone_one_waits_for_its_release(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/hold%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.max_games = 1;
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) { memset(&g_jo, 0, sizeof g_jo); return; }
+    char a[CB_GAME_ID_MAX + 1], b[CB_GAME_ID_MAX + 1];
+    g_now += 1000;
+    two_humans_dealt(a);
+    T_EQ_INT(cb_journal_flush(s), CB_OK);
+    cb_jhold *h = NULL;
+    T_EQ_INT(cb_journal_game_acquire(s, a, hold_nothing, NULL, &h), CB_OK);
+    T_CHECK(h != NULL);
+    int rc;
+    T_EQ_INT(facts(s, a, &rc).held, 1);
+    g_now += 1000;
+    two_humans_dealt(b);   // over the cap: a, the least recently touched, would go first
+    T_EQ_INT(cb_journal_flush(s), CB_OK);
+    (void)facts(s, a, &rc);
+    T_EQ_INT(rc, CB_OK);   // held: stays
+    (void)facts(s, b, &rc);
+    T_EQ_INT(rc, CB_E_NOT_FOUND);
+    // An admin's write unlinks every game: the held one is gone, and lives until its release.
+    T_CHECK(s->app_exclusive(s, no_body, NULL) >= 0);
+    (void)facts(s, a, &rc);
+    T_EQ_INT(rc, CB_E_NOT_FOUND);
+    cb_journal_game_release(s, h);   // frees it (ASan: no leak, no use after free)
+    // Played on, the game is read from the tables again.
+    move_t m;
+    if (next_move(s, a, &m)) T_CHECK(play(a, &m) > 0);
+    memset(&g_jo, 0, sizeof g_jo);
+    close_world(s);
+}
+
 // ---- THE JOURNAL'S TIME: on the loop, the loop's stamp ------------------------------------
 
 typedef struct {
@@ -2281,9 +2389,12 @@ static void probe_on_loop(cb_loop *l, void *ud) {
     // The pass grows old before the journal is asked: a clock read would not give the stamp.
     while (cb_mono_ms() < p->stamp + 20) usleep(5000);
     if (p->phase == 0) p->version = play(p->gid, p->m);
-    else p->rc = cb_journal_game_acquire(p->s, p->gid, acquire_nothing, NULL);
+    else p->rc = cb_journal_game_acquire(p->s, p->gid, acquire_nothing, NULL, NULL);
     p->mono = cb_mono_ms();
-    p->rc |= cb_journal_game_stamps(p->s, p->gid, &p->touched, &p->first);
+    cb_journal_game_facts f;
+    p->rc |= cb_journal_game_info(p->s, p->gid, &f);
+    p->touched = f.touched_ms;
+    p->first = f.first_ms;
     atomic_store(&p->done, 1);
 }
 
@@ -2603,7 +2714,11 @@ int main(void) {
         T_RUN(an_admin_write_is_never_written_over);
         T_RUN(mapped_segments_keep_every_committed_batch);
         T_RUN(a_deleted_game_stays_deleted);
+        T_RUN(a_move_finds_its_game_by_id_once);
+        T_RUN(a_held_game_stays_and_a_gone_one_waits_for_its_release);
     }
+    g_bots = false;   // humans only: a bot drive commits once per cycle, some cycles to a step
+    T_RUN(the_resident_is_handed_over_not_copied);
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
     if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", g_dir);
