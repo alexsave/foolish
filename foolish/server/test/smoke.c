@@ -829,7 +829,7 @@ static bool crash_read(crash_game *g, int k, smoke_client *sc, cb_buf *env) {
 static void kills_lose_no_acknowledged_move(void) {
     smoke_user U[3];
     for (int i = 0; i < 3; i++) {
-        char name[16];
+        char name[24];   // room for any int (GCC's format-truncation check)
         snprintf(name, sizeof name, "SMOKEK%d", i);
         if (signup(&U[i], name) != 0) { T_CHECK(0); return; }
     }
