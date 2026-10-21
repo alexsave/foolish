@@ -1904,10 +1904,14 @@ static void the_resident_is_the_row(void) {
             T_EQ_INT(table_adopt(&a.t, &res), TABLE_OK);
             int sl = 0, rl = 0;
             T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl, roster, sizeof roster, &rl), TABLE_OK);
+            memset(b.g, 0, offsetof(Game, logs));   // the load's board starts from zeros, as a section's does (cb_section_free)
             table_init(&b.t, b.g, b.sn);
             T_EQ_INT(table_load(&b.t, state, sl, roster, rl), TABLE_OK);
             table_set_deal_seed(&b.t, hex, 64);
             if (!same_board(&a.t, &b.t)) { T_CHECK(!"adopted and loaded boards differ"); break; }
+            // Byte for byte, too: the slots past every count. A sanitizer cannot tell a stale card in
+            // hand[hand_count] from a zero (both are initialized), so this is the one check that can.
+            if (memcmp(a.g, b.g, offsetof(Game, logs)) != 0) { T_CHECK(!"adopted and loaded boards differ in bytes past the counts"); break; }
             if (a.g->status != GAME_STATUS_PLAYING) break;
             // One operation on both: the human's random legal move, else a bot cycle.
             int ra = -1, rb = -1;
