@@ -210,6 +210,24 @@ void state_canonical(Game *g) {
     g->log_cap = 0;
     g->log_virt = 0;
     g->log_room = 0;
+    // THE SLOTS PAST EVERY COUNT ARE ZERO, as a load into a zeroed Game leaves them. A working
+    // board keeps the last drawn card in deck[deck_count], the swept bout in
+    // table_battles[num_battles] and the played card in hand[hand_count]; a resident that carried
+    // them would be the one board in the process that differs from its own row's load, by bytes
+    // no sanitizer sees (they are initialized), so a read past a count would play differently on
+    // the two paths. (players[num_players..] and elimination_order[num_eliminated..] are never
+    // written by play, so nothing is cleared there; unit_journal the_resident_is_the_row compares
+    // the whole head byte for byte and would see one.)
+    const int np = g->num_players < 0 ? 0 : g->num_players > MAX_PLAYERS ? MAX_PLAYERS : g->num_players;
+    const int dc = g->deck_count < 0 ? 0 : g->deck_count > MAX_DECK ? MAX_DECK : g->deck_count;
+    const int nb = g->num_battles < 0 ? 0 : g->num_battles > MAX_BATTLES ? MAX_BATTLES : g->num_battles;
+    memset(g->deck + dc, 0, (size_t)(MAX_DECK - dc) * sizeof g->deck[0]);
+    memset(g->table_battles + nb, 0, (size_t)(MAX_BATTLES - nb) * sizeof g->table_battles[0]);
+    for (int i = 0; i < np; i++) {
+        Player *p = &g->players[i];
+        const int hc = p->hand_count < 0 ? 0 : p->hand_count > MAX_HAND_SIZE ? MAX_HAND_SIZE : p->hand_count;
+        memset(p->hand + hc, 0, (size_t)(MAX_HAND_SIZE - hc) * sizeof p->hand[0]);
+    }
 }
 
 int state_measure(const unsigned char *p, int len) {
