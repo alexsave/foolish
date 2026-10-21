@@ -409,6 +409,63 @@ static void ws_matrix(void) {
     cb_buf_free(&m);
 }
 
+// THE INBOX (rt_local.h CB_RT_INBOX_MAX): a socket that floods empty frames behind a REQ, all in one
+// write, so they queue while its REQ is on the one request worker. Each empty frame used to cost a
+// frame of heap and nothing against the cap: 100000 of them grew the server by about 100 MB, on a
+// 512 MB machine. Now the socket is closed at the frame cap, the server stays small, and everyone
+// else is served.
+static long rss_kb(pid_t pid) {
+    char path[64], line[256];
+    snprintf(path, sizeof path, "/proc/%d/status", (int)pid);
+    FILE *f = fopen(path, "r");
+    long kb = -1;
+    if (f) {
+        while (fgets(line, sizeof line, f))
+            if (strncmp(line, "VmRSS:", 6) == 0) { kb = atol(line + 6); break; }
+        fclose(f);
+        return kb;
+    }
+    snprintf(line, sizeof line, "ps -o rss= -p %d", (int)pid);
+    if (!(f = popen(line, "r"))) return -1;
+    if (fgets(line, sizeof line, f)) kb = atol(line);
+    pclose(f);
+    return kb;
+}
+
+static void a_flood_ends_only_its_socket(void) {
+    signal(SIGPIPE, SIG_IGN);
+    cb_buf m;
+    cb_buf_init(&m);
+    int other = ws_open_as(OWNER);
+    T_EQ_INT(ws_hello(other, g_token[OWNER], &m), SF_READY);
+    const long before = rss_kb(g_child.pid);
+    T_CHECK(before > 0);
+    int fd = ws_open_as(STRANGER);
+    T_EQ_INT(ws_hello(fd, g_token[STRANGER], &m), SF_READY);
+    uint8_t rb[64];
+    int rn = sf_put_req(rb, sizeof rb, 1, SF_METH_GET, "/ready", 6, (const uint8_t *)"", 0);
+    T_CHECK(rn > 0);
+    T_CHECK(tc_ws_send_burst(fd, rb, (size_t)rn, 100000, 0) >= 0);
+    // Closed (1008), or reset with the rest of the burst unread: either way it ends.
+    int got = 0;
+    for (int i = 0; i < 4 && (got = ws_next(fd, 1000, &m)) > 0; i++) {}   // the REPLY to /ready may come first
+    T_CHECK(got == -1 || (got == 0 && m.len == 0));
+    if (got == -1) T_EQ_INT(m.len == 2 ? (m.p[0] << 8) | m.p[1] : -1, 1008);
+    close(fd);
+    const long after = rss_kb(g_child.pid);
+    fprintf(stderr, "  flood: server rss %ld KB -> %ld KB\n", before, after);
+    T_CHECK(after > 0 && after - before < 16 * 1024);
+    // Everyone else is served: the other socket's REQ is answered.
+    rn = sf_put_req(rb, sizeof rb, 2, SF_METH_GET, "/ready", 6, (const uint8_t *)"", 0);
+    T_EQ_INT(tc_ws_send(other, CB_WS_OP_BIN, rb, (size_t)rn), 0);
+    T_EQ_INT(ws_next(other, 3000, &m), SF_REPLY);
+    sf_frame rf;
+    T_EQ_INT(sf_parse(m.p, m.len, &rf), 0);
+    T_EQ_INT(rf.id, 2);
+    close(other);
+    cb_buf_free(&m);
+}
+
 // rate_limits.h and auth.h over real HTTP (H1): an address's sign-ups run out, and
 // guessing one account's password locks it, after which even the right
 // password is answered 429 TOO_MANY.
@@ -462,6 +519,7 @@ int main(int argc, char **argv) {
     T_RUN(setup_world);
     T_RUN(matrix);
     T_RUN(ws_matrix);
+    T_RUN(a_flood_ends_only_its_socket);
     T_RUN(limits_hold);
     T_RUN(stops);
     return T_DONE();
