@@ -485,7 +485,9 @@ The lesson is sharper than "keep artifacts fresh": a gate that cannot ask the re
 
 The honest residual bottleneck of a serverless deployment is *"database round trips, not compute"*: stateless functions reload state per request.
 A stateful native server deletes that problem.
-This repo built one (`server/impls/native`), and it was retired on 2026-10-17 (PR #332; the last tree is in git at `56ad0609`): the deployed backend is the stateless kind, c_base on Lambda and DynamoDB, so what follows is the variant and the lessons from running it, not what ships.
+This repo built one twice.
+The first (`server/impls/native`) was retired on 2026-10-17 (PR #332; the last tree is in git at `56ad0609`) while the backend ran on Lambda and DynamoDB.
+The second is what ships: since the VM cutover of 2026-10-19 (#391) production is one `cbase serve` process on a t4g.nano with SQLite on local disk.
 One long-lived process holds hot entities in RAM as the struct, single-writer per entity:
 
 ```
@@ -498,6 +500,33 @@ The database is demoted to a durability log: append, snapshot periodically, repl
 Two lessons from actually running one here.
 First, **the crash-recovery path must round-trip everything the decision depends on**: a recovered game came back with every seat a default brain and its seeded deck drawing at random, because the state codec carried neither the seat kinds nor the deck mode.
 Second, a self-test that runs at startup is worth its weight, and a self-test nothing watches is not: this server's had been failing since an unrelated kernel change, so the process exited before it opened a socket, and nothing noticed because nothing asserted that it had started.
+
+**What it measured.**
+Each step down the ladder removed a whole layer of waiting, and once the network waits were gone CPU was all that was left (CBASE_SPEEDUPS.md has one paragraph per change):
+
+| Backend | A move costs |
+|---|---|
+| Supabase edge function + PostgREST | about 450 ms warm, over 1.3 s cold |
+| Lambda + DynamoDB | about 55 ms, then 10 ms after one conditional write per move |
+| One process on a VM, SQLite group commit | p99 under 1 ms |
+| The same process after the moves below | about 30 µs of server CPU per move on the nano at human pace, 45 µs at saturation |
+| The game work inside it | about a microsecond |
+
+At saturation one t4g.nano (2 burstable Graviton2 vCPUs, 512 MB, about $3 a month) served about 38k moves a second at a 12 ms p99 with no lost pushes, and by estimate about 2.2k a second indefinitely once its CPU credits run out (its baseline is 10% of one vCPU).
+
+**The moves that got it there, any app can take.**
+1. **Nothing on the move path leaves the process.** No database read, no network hop, no other thread to wait on: the move runs inline on the event loop.
+2. **Acknowledge on the log, not the database.** A move is acked once it is appended to an mmap'd journal with a CRC; SQLite is written at game end or on a timer, in bounded batches, off the loop.
+3. **Group the durable writes.** Concurrent commits share one transaction and one WAL sync, and checkpoints run on their own thread.
+4. **Send deltas, not boards.** A broadcast carries the moves, and each client's copy of the kernel rebuilds the board byte for byte.
+5. **One send per connection per loop pass.** Frames queue and flush once at the end of the pass.
+6. **Allocate nothing per move.** Per-thread scratch reset by zeroing only what was touched, free lists for pooled requests, buffers swapped instead of copied.
+7. **Give the loop a core.** On two vCPUs, pinning the loop to one and every background thread to the other was worth 12 to 22% more throughput and 20 to 30% less p99, at no CPU cost.
+
+**The single process is also a single point of failure, so rare inputs matter.**
+One worker thread serving every table means a one-in-a-million input that spins it stops the service.
+This repo shipped such a bug for five months: an eight-seat deal that leaves only Aces in the stock spun the "never turn an Ace" loop forever, 1 in 270,725 deals, and it surfaced only under a load test.
+The lesson generalizes: every loop whose exit depends on data or randomness needs a bound you can prove, every fixed buffer is sized for the worst case rather than p99, and anything that reads client input counts frames and bytes, not only bytes.
 
 ### Build order (each phase independently testable)
 
