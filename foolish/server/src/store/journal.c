@@ -1542,13 +1542,17 @@ static int flush_txn(cb_journal *j, bool all, int64_t pass_ms, bool writer_held,
             if (g) ov_flushed(j, g, &sn.f[i], snap_seg, now);
             moves += sn.f[i].n_moves;
         }
-        ov_evict(j, now);
-        pthread_mutex_unlock(&j->ov_mu);
-        trim(j);
+        // Counted with the moves it took out of the waiting ones, under the same lock: a reader of
+        // the stats (cb_journal_stats_get) that sees them gone sees the flush that took them.
         if (sn.n) {
             atomic_fetch_add(&j->flushes, 1);
             atomic_fetch_add(&j->flushed_games, sn.n);
             atomic_fetch_add(&j->flushed_moves, moves);
+        }
+        ov_evict(j, now);
+        pthread_mutex_unlock(&j->ov_mu);
+        trim(j);
+        if (sn.n) {
             long top = atomic_load(&j->txn_moves_max);
             while (moves > top && !atomic_compare_exchange_weak(&j->txn_moves_max, &top, moves)) {}
         }
@@ -2630,10 +2634,10 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     out->writes = j->writes;
     out->records = j->records;
     out->bytes = j->bytes;
+    pthread_mutex_lock(&j->ov_mu);   // the flush counts and the waiting moves as one moment (flush_txn)
     out->flushes = j->flushes;
     out->flushed_games = j->flushed_games;
     out->flushed_moves = j->flushed_moves;
-    pthread_mutex_lock(&j->ov_mu);
     out->waiting = j->n_waiting;
     out->waiting_bytes = j->w_bytes;
     out->games = j->n_games;
