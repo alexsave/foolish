@@ -173,6 +173,10 @@ typedef struct {
     bool        ended;          // this operation finished the game
     bool        dealt_now;      // this operation dealt (the session log restarts)
     bool        roster_changed; // this operation edited the roster
+    // THE ROSTER IS KNOWN VALID: it came from a load or a resident (both validated) and no roster
+    // edit has touched it since (every edit clears it). The products validate it only when this
+    // is false. A host never writes `r` itself: a roster changes through the table_* edits.
+    bool        roster_valid;
     bool        rules_changed;  // this operation changed the game's rules (table_set_rules)
     bool        lobby_event;    // this operation is a lobby edit its pushes announce
     bool        pre_has_flip;   // the face-up trump before the operation (DRAW privacy)
@@ -423,6 +427,10 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
 // are as without it), for a host that keeps the game as a resident and encodes its row only
 // when the row is read (table_resident_encode gives exactly the bytes left out).
 #define TABLE_PRODUCTS_NO_ROW 0x1u
+// TABLE_PRODUCTS_NO_SPECTATOR_VIEW: no spectator envelope (TableCommit.spectator stays empty),
+// for a host that never sends one for this operation (the server's plain move: its actor is
+// seated and its pushes are the seats' envelopes and casts).
+#define TABLE_PRODUCTS_NO_SPECTATOR_VIEW 0x2u
 int table_commit_products_flags(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                                 int64_t now_ms, unsigned flags, TableCommit *out, uint8_t *arena, int cap);
 

@@ -906,12 +906,14 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // A plain move's products need no row: the journal keeps the game as its resident and
     // encodes the row only when something reads it (journal.c row_refresh). The kernel's own
     // flags decide it before the products (whatever else could disqualify the commit comes with
-    // an end or a deal: then the row is written after all, below).
+    // an end or a deal: then the row is written after all, below). Nor a spectator envelope:
+    // the fan-out sends the seats' envelopes and casts, and a move's actor is seated (its
+    // answer is its seat's envelope).
     // The kernel's move list holds every move the operation applied (it is the journal's record).
     const bool moved = s->moves_want > 0 && t->n_moves == s->moves_want;
     unsigned pflags = cb_journal_of(ctx->store) && moved && !t->ended && !t->dealt_now && !t->roster_changed &&
                               row->status == GAME_STATUS_PLAYING && t->g->status == GAME_STATUS_PLAYING
-                          ? TABLE_PRODUCTS_NO_ROW
+                          ? TABLE_PRODUCTS_NO_ROW | TABLE_PRODUCTS_NO_SPECTATOR_VIEW
                           : 0;
     int rc = table_commit_products_flags(t, s->gid, gid_len, next, board_now, pflags, c, s->arena, sizeof s->arena);
     arena_note(s, rc);
