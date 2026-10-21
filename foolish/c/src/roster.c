@@ -264,16 +264,13 @@ int roster_redact(Roster *r, const char *id, int id_len, const char *name, int n
 
 // ---------- the envelope trailer ----------------------------------------------
 
-// A writer that counts past its cap instead of stopping, so one pass both
-// writes and sizes; a short buffer is then refused whole.
-typedef struct { uint8_t *p; int at, cap; } TW;
-
-static void tw_u8(TW *w, int v) { if (w->at < w->cap) w->p[w->at] = (uint8_t)v; w->at++; }
-// A length prefix (u16 when `wide`, else u8), then the bytes.
-static void tw_blob(TW *w, int wide, const char *b, int n) {
-    tw_u8(w, n & 0xff);
-    if (wide) tw_u8(w, (n >> 8) & 0xff);
-    for (int i = 0; i < n; i++) tw_u8(w, (uint8_t)b[i]);
+// The trailer is sized first and refused whole when it does not fit; then every byte is a plain
+// store (a length prefix, u16 when `wide`, then the bytes copied).
+static uint8_t *put_blob(uint8_t *p, int wide, const char *b, int n) {
+    *p++ = (uint8_t)(n & 0xff);
+    if (wide) *p++ = (uint8_t)((n >> 8) & 0xff);
+    if (n > 0) memcpy(p, b, (size_t)n);
+    return p + n;
 }
 
 int roster_trailer_write(const Roster *r, const char *game_id, int gid_len, int status,
@@ -296,30 +293,35 @@ int roster_trailer_write_validated(const Roster *r, const char *game_id, int gid
     if (passing != 0 && passing != 1) return ROSTER_E_RULES;
     if (!out || cap < 0) return ROSTER_E_CAP;
 
-    TW w = { out, 0, cap };
+    int need = 1 + 2 + gid_len + 2 + r->title_len + 1 + 1 + 1 + 1 + (passing ? 0 : 1);   // + n_good, has_ts, the rules byte
     int n_good = 0;
+    for (int s = 0; s < r->n; s++) {
+        need += 2 + r->seats[s].name_len + 2 + r->seats[s].id_len + 1;
+        if ((good_mask >> s) & 1u) need += 2 + r->seats[s].id_len, n_good++;
+    }
+    if (need > cap) return ROSTER_E_CAP;
+    uint8_t *p = out;
     // The oldest format that can carry the table (roster.h): a passing table is
     // the format 1 trailer it always was.
-    tw_u8(&w, passing ? ROSTER_TRAILER_FORMAT_V1 : ROSTER_TRAILER_FORMAT_V2);
-    tw_blob(&w, 1, game_id, gid_len);
-    tw_blob(&w, 1, r->title, r->title_len);
-    tw_u8(&w, status);
-    tw_u8(&w, r->n);
+    *p++ = passing ? ROSTER_TRAILER_FORMAT_V1 : ROSTER_TRAILER_FORMAT_V2;
+    p = put_blob(p, 1, game_id, gid_len);
+    p = put_blob(p, 1, r->title, r->title_len);
+    *p++ = (uint8_t)status;
+    *p++ = (uint8_t)r->n;
     for (int s = 0; s < r->n; s++) {
-        tw_u8(&w, s);
-        tw_blob(&w, 0, r->seats[s].name, r->seats[s].name_len);
+        *p++ = (uint8_t)s;
+        p = put_blob(p, 0, r->seats[s].name, r->seats[s].name_len);
     }
     for (int s = 0; s < r->n; s++) {
-        tw_blob(&w, 1, r->seats[s].id, r->seats[s].id_len);
-        tw_u8(&w, (int)((ai_mask >> s) & 1u));
-        n_good += (good_mask >> s) & 1u;
+        p = put_blob(p, 1, r->seats[s].id, r->seats[s].id_len);
+        *p++ = (uint8_t)((ai_mask >> s) & 1u);
     }
-    tw_u8(&w, n_good);
+    *p++ = (uint8_t)n_good;
     for (int s = 0; s < r->n; s++)
-        if ((good_mask >> s) & 1u) tw_blob(&w, 1, r->seats[s].id, r->seats[s].id_len);
-    tw_u8(&w, 0);   // has_ts
-    if (!passing) tw_u8(&w, 0);   // the rules byte: podkidnoy, ROSTER_TRAILER_PASSING clear
-    return w.at > cap ? ROSTER_E_CAP : w.at;
+        if ((good_mask >> s) & 1u) p = put_blob(p, 1, r->seats[s].id, r->seats[s].id_len);
+    *p++ = 0;   // has_ts
+    if (!passing) *p++ = 0;   // the rules byte: podkidnoy, ROSTER_TRAILER_PASSING clear
+    return (int)(p - out);
 }
 
 typedef struct { const uint8_t *p; int at, len; } TR;

@@ -10712,15 +10712,8 @@ static void test_table_commit_products(void) {
     CHECK(c.status == GAME_STATUS_PLAYING && c.fool == -1 && c.num_players == 3 && c.needs_bots,
           "status, fool and needs_bots are the board's");
     CHECK(n == c.spectator.off + c.spectator.len, "the arena ends with the spectator envelope");
-    // The products validate the roster once and then write it unchecked (the row's and every
-    // envelope's trailer): a roster that broke a rule since the load is still refused.
-    {
-        const Roster keep = tb.r;
-        tb.r.seats[1].name[0] = (char)0xff;   // not UTF-8
-        CHECK(table_commit_products(&tb, RS("g-1"), 7, 0x010203040506LL, &c, tb_arena, sizeof(tb_arena)) == TABLE_E_ROSTER,
-              "the products refuse a roster that no longer validates");
-        tb.r = keep;
-    }
+    // The products validate the roster only after a roster edit (Table.roster_valid): a load
+    // vouches for it, and a host never writes tb.r itself (test_products_validate_an_edited_roster).
 
     uint8_t w[8];
     char fa_id[8];
@@ -18415,6 +18408,116 @@ static void test_delta_cast_rebuilds_the_board_cast(void) {
           "delta casts: a lobby edit or a deal is a board cast, and nearly every commit of a game in play goes as a delta");
 }
 
+// THE OUTPUTS' BYTES DID NOT MOVE (APPLY_RECORD_FLOOR.md P1, P2, P4, P22): over 400 random games
+// of 2 to 8 seats, humans and "random" bots, every commit's products - the row's state and
+// roster, the session-log records, every human seat's envelope and the spectator's - fold into
+// one digest, which is the one the kernel gave before the trailer was written once per commit,
+// the roster stopped being validated per move, and the trailer writer stopped checking per byte.
+// And the products a plain move asks for (TABLE_PRODUCTS_NO_ROW | NO_SPECTATOR_VIEW) are the
+// same envelopes byte for byte, with no spectator envelope and no row.
+static uint8_t po_arena2[sizeof(tb_arena)];
+#define PRODUCTS_DIGEST_GOLDEN 0xd0f12e4eu   // taken on main at 893ab6490, before these changes
+static void test_products_are_the_bytes_they_were(void) {
+    uint8_t w[128];
+    char id[16], ab[2 * FOOLISH_SEED_LEN + 1];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) memcpy(ab + 2 * i, "ab", 2);
+    TableCommit c, c2;
+    uint32_t h = FNV32_OFFSET;
+    long commits = 0, plain_same = 0, plain_checked = 0;
+    cb_rng = 0x0b7e5u;
+    for (int g = 0; g < 400; g++) {
+        const int np = 2 + g % 7;
+        const uint32_t bots = g % 3 == 0 ? 0 : g % 3 == 1 ? wv_odd_bots(np) : ((1u << np) - 1u) & ~1u;
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) tb_seed[i] = (uint8_t)cb_rand(256);
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) snprintf(tb_seed_hex + 2 * i, 3, "%02x", tb_seed[i]);
+        if (!wv_deal(&wv_row, np, bots)) break;
+        const int games = g % 10 == 0 ? 2 : 1;
+        for (int step = 0, played = 0; step < 1600; step++) {
+            if (wv_load(&wv_row) != TABLE_OK) break;
+            if (tb_game.status == GAME_STATUS_GAME_OVER) {
+                if (++played == games) break;
+                if (table_continue(&tb, RS("id-0")) != TABLE_OK) break;
+                // A lobby edit (the roster changed, so it is validated again) before the rematch's deal.
+                if (table_retitle(&tb, RS("id-0"), RS("again")) != TABLE_OK) break;
+            } else {
+                table_set_deal_seed(&tb, ab, 2 * FOOLISH_SEED_LEN);
+                int drove = 0;
+                if (table_bots_due(&tb)) {
+                    const int d = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+                    if (d < 0) break;
+                    drove = d > 0;
+                }
+                if (!drove) {
+                    const int wl = dl_human_move(&tb_game, bots, id, sizeof(id), w, sizeof(w));
+                    if (wl <= 0) break;
+                    if (table_act(&tb, id, (int)strlen(id), w, wl, -1, 0) != TABLE_APPLIED) break;
+                }
+                // The plain move's products, first (they read the table and change nothing).
+                const int64_t now = 1700000000000LL + (int64_t)wv_row.version * 1000;
+                if (table_commit_products_flags(&tb, RS("g"), wv_row.version + 1, now, TABLE_PRODUCTS_NO_ROW | TABLE_PRODUCTS_NO_SPECTATOR_VIEW,
+                                                &c2, po_arena2, (int)sizeof(po_arena2)) >= 0) {
+                    plain_checked++;
+                    if (table_commit_products(&tb, RS("g"), wv_row.version + 1, now, &c, tb_arena, sizeof(tb_arena)) >= 0) {
+                        bool same = c2.spectator.len == 0 && c2.state.len == 0 && c2.roster.len == 0;
+                        for (int s = 0; s < np && same; s++)
+                            same = c.views[s].len == c2.views[s].len
+                                   && memcmp(tb_arena + c.views[s].off, po_arena2 + c2.views[s].off, (size_t)c.views[s].len) == 0;
+                        plain_same += same;
+                    }
+                }
+            }
+            if (wv_commit(&wv_row, "g", &c) < 0) break;
+            commits++;
+            h = tb_fold(h, tb_arena + c.state.off, c.state.len);
+            h = tb_fold(h, tb_arena + c.roster.off, c.roster.len);
+            h = tb_fold(h, tb_arena + c.logs.off, c.logs.len);
+            for (int s = 0; s < np; s++) h = tb_fold(h, tb_arena + c.views[s].off, c.views[s].len);
+            h = tb_fold(h, tb_arena + c.spectator.off, c.spectator.len);
+            // Each envelope is also table_envelope's for that viewer (the trailer written on its own).
+            for (int v = -1; v < np; v++) {
+                if (v >= 0 && ((bots >> v) & 1u)) continue;
+                const Span e = v < 0 ? c.spectator : c.views[v];
+                const int n = table_envelope(&tb, RS("g"), v, wv_row.version, po_arena2, (int)sizeof(po_arena2));
+                if (n != e.len || memcmp(po_arena2, tb_arena + e.off, (size_t)n) != 0) { h ^= 0xdeadu; }
+            }
+        }
+    }
+    printf("  products: %ld commits, digest %08x; %ld of %ld plain-move products the same envelopes\n", commits, h, plain_same, plain_checked);
+    CHECK(commits > 80000, "products: enough commits");
+    CHECK(h == PRODUCTS_DIGEST_GOLDEN, "products: every commit's bytes are the ones the kernel wrote before (state, roster, logs, envelopes)");
+    CHECK(plain_checked > 50000 && plain_same == plain_checked,
+          "products: a plain move's products (no row, no spectator envelope) are the same seat envelopes");
+}
+
+// THE ROSTER IS VALIDATED ONLY WHEN IT MAY HAVE CHANGED (Table.roster_valid): a loaded table's
+// products trust it (a host never writes t->r: here one does, to see what the products read), and
+// each roster edit - a lobby edit, a seat unseated, a name redacted - has them validate it again.
+static void test_products_validate_an_edited_roster(void) {
+    TableCommit c;
+    for (int edit = 0; edit < 3; edit++) {
+        Game lobby;
+        memset(&lobby, 0, sizeof(lobby));
+        lobby.num_players = 3;
+        game_reset_to_lobby(&lobby, 0);
+        Roster r;
+        tb_roster_for(3, 0, "random", tb_roster2);
+        CHECK(roster_decode(&r, tb_roster2, ROSTER_BYTES) == ROSTER_OK, "roster_valid: the lobby's roster");
+        table_init(&tb, &tb_game, &tb_snaps);
+        CHECK(table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf)) > 0, "roster_valid: the lobby loads");
+        tb.r.seats[2].name[0] = (char)0xff;   // no longer UTF-8: roster_validate refuses it
+        CHECK(table_commit_products(&tb, RS("g"), 2, 1700000000000LL, &c, tb_arena, sizeof(tb_arena)) >= 0,
+              "roster_valid: a loaded table's products do not validate its roster again");
+        int rc = edit == 0 ? table_retitle(&tb, RS("id-0"), RS("a title"))
+                 : edit == 1 ? table_leave(&tb, RS("id-1"), RS("id-1"))
+                             : table_redact(&tb, RS("id-1"), RS("someone"));
+        CHECK(rc == TABLE_OK, "roster_valid: the edit applies");
+        CHECK(table_commit_products(&tb, RS("g"), 2, 1700000000000LL, &c, tb_arena, sizeof(tb_arena)) == TABLE_E_ROSTER,
+              edit == 0 ? "roster_valid: after a lobby edit the products validate the roster (and refuse it)"
+              : edit == 1 ? "roster_valid: after a seat leaves the products validate the roster (and refuse it)"
+                          : "roster_valid: after a redaction the products validate the roster (and refuse it)");
+    }
+}
+
 // A delta the client cannot rebuild - or one that rebuilds to a board the server
 // did not have - opens nothing: the slot holds no push, and the host is told to
 // fetch the game (CLIENT_E_BEHIND, CLIENT_E_DIVERGED), or that the bytes are not
@@ -20292,6 +20395,8 @@ int main(void) {
     test_every_push_is_leak_free_and_mirrors_the_commit();
     test_every_envelope_and_push_of_whole_games_reads_as_the_table();
     test_delta_cast_rebuilds_the_board_cast();
+    test_products_are_the_bytes_they_were();
+    test_products_validate_an_edited_roster();
     test_delta_cast_refusals();
     test_action_request_door();
     test_ask_body_runs_for_the_caller();

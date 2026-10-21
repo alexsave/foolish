@@ -97,6 +97,7 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     if (v != 1) return v == 0 ? TABLE_E_STATE_VERSION : v;
     for (int s = 0; s < r.n; s++) t->g->players[s].strategy_key = kinds[s];
     t->r = r;
+    t->roster_valid = true;   // roster_decode validated it
     scope_open(t, -1);
     // The state blob carries no session log, so until the host hands one over
     // (table_set_session_log) the row's log is what the board holds: nothing.
@@ -217,17 +218,18 @@ static const GameRatings *table_stamp(const Table *t) {
     return t->g->status == GAME_STATUS_GAME_OVER && t->ratings.n > 0 ? &t->ratings : 0;
 }
 
-// One viewer's envelope; `validated`: the roster passed roster_validate in this products call.
+// One viewer's envelope. `trailer`: the roster trailer already written for this table (the
+// products write it once and copy it into every envelope), or NULL to write it here.
 static int envelope_put(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
-                        uint8_t *out, int cap, bool validated);
+                        uint8_t *out, int cap, const uint8_t *trailer, int trailer_len);
 
 int table_envelope(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
                    uint8_t *out, int cap) {
-    return envelope_put(t, game_id, gid_len, viewer, version, out, cap, false);
+    return envelope_put(t, game_id, gid_len, viewer, version, out, cap, NULL, 0);
 }
 
 static int envelope_put(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
-                        uint8_t *out, int cap, bool validated) {
+                        uint8_t *out, int cap, const uint8_t *trailer, int trailer_len) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     const Game *g = t->g;
     if (viewer >= g->num_players) viewer = -1;
@@ -237,11 +239,13 @@ static int envelope_put(const Table *t, const char *game_id, int gid_len, int vi
     const int view_len = 2 + state_put(g, viewer >= 0 ? viewer : VIEW_SPECTATOR, out + view_at + 2);
     env_header_set_view_len(out, view_at, view_len);
     const int at = view_at + view_len;
-    const int status = game_status_byte(g), passing = game_pass_allowed(g);
-    const int n = validated ? roster_trailer_write_validated(&t->r, game_id, gid_len, status, g->good_players_mask,
-                                                             roster_bot_mask(&t->r), passing, out + at, cap - at)
-                            : roster_trailer_write(&t->r, game_id, gid_len, status, g->good_players_mask, passing,
-                                                   out + at, cap - at);
+    if (trailer) {
+        if (cap - at < trailer_len) return TABLE_E_CAP;
+        memcpy(out + at, trailer, (size_t)trailer_len);
+        return at + trailer_len;
+    }
+    const int n = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask, game_pass_allowed(g),
+                                       out + at, cap - at);
     if (n < 0) return n == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     return at + n;
 }
@@ -443,10 +447,10 @@ int table_commit_products_flags(const Table *t, const char *game_id, int gid_len
         at += out->state.len;
     }
 
-    // The roster is validated ONCE here, then written as the row's and as every envelope's
-    // trailer (it validated per write: 2 + the human seats times per move).
-    const int rv = roster_validate(&t->r);
-    if (rv != ROSTER_OK) return TABLE_E_ROSTER;
+    // The roster is validated here only when it is not known valid (Table.roster_valid: a load or
+    // a resident vouches for it until an edit), then written as the row's and as every envelope's
+    // trailer: a plain move validates nothing.
+    if (!t->roster_valid && roster_validate(&t->r) != ROSTER_OK) return TABLE_E_ROSTER;
     if (row) {
         const int rl = roster_encode_validated(&t->r, arena + at, cap - at);
         if (rl < 0) return rl == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
@@ -474,19 +478,26 @@ int table_commit_products_flags(const Table *t, const char *game_id, int gid_len
     if (out->logs.len == 0) out->logs.off = 0;
     if (out->logs_reset) out->closed_round = false;
 
+    // The trailer is the same for every viewer: written once, copied into each envelope.
+    uint8_t trailer[ROSTER_TRAILER_MAX];
+    const int tl = roster_trailer_write_validated(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask,
+                                                  roster_bot_mask(&t->r), game_pass_allowed(g), trailer, (int)sizeof trailer);
+    if (tl < 0) return tl == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     for (int s = 0; s < g->num_players; s++) {
         if (t->r.seats[s].brain_len > 0) continue;
-        const int n = envelope_put(t, game_id, gid_len, s, next_version, arena + at, cap - at, true);
+        const int n = envelope_put(t, game_id, gid_len, s, next_version, arena + at, cap - at, trailer, tl);
         if (n < 0) return n;
         out->views[s].off = at;
         out->views[s].len = n;
         at += n;
     }
-    const int n = envelope_put(t, game_id, gid_len, -1, next_version, arena + at, cap - at, true);
-    if (n < 0) return n;
-    out->spectator.off = at;
-    out->spectator.len = n;
-    at += n;
+    if (!(flags & TABLE_PRODUCTS_NO_SPECTATOR_VIEW)) {
+        const int n = envelope_put(t, game_id, gid_len, -1, next_version, arena + at, cap - at, trailer, tl);
+        if (n < 0) return n;
+        out->spectator.off = at;
+        out->spectator.len = n;
+        at += n;
+    }
     return at;
 }
 
@@ -508,6 +519,7 @@ static void lobby_edit(Table *t, int roster_changed) {
     scope_open(t, -1);
     t->lobby_event = true;
     t->roster_changed = roster_changed != 0;
+    if (roster_changed) t->roster_valid = false;
 }
 
 // Deals the lobby from `seed` (FOOLISH_SEED_LEN bytes), capturing the deal's
@@ -737,6 +749,7 @@ int table_redact(Table *t, const char *user_id, int id_len, const char *name, in
     t->r = r;
     scope_open(t, -1);
     t->roster_changed = true;
+    t->roster_valid = false;
     return TABLE_OK;
 }
 
@@ -892,6 +905,7 @@ int table_adopt(Table *t, const TableResident *res) {
     memcpy(t->g, res->head, TABLE_HEAD_BYTES);
     t->g->num_logs = 0;   // the board carries no log (table_load's rule)
     t->r = res->r;
+    t->roster_valid = true;   // a resident is made only from a table the kernel loaded or committed
     t->clock = res->clock;
     t->ratings = res->ratings;
     t->rng_base = res->rng_base;
