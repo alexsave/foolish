@@ -9,11 +9,12 @@ Two-player throughput rose from 16.7k to 27.7k moves/s, sat2 p99 fell from 56 to
 
 ## The orders of magnitude
 
-A move's server cost fell by about four orders of magnitude, from tens of milliseconds to about a microsecond for the game work itself.
+A request's server cost fell by five to six orders of magnitude: from hundreds of milliseconds on Supabase to about a microsecond for the game work itself.
 The top rows are wall time spent waiting on network services, and the lower rows are CPU time, because once the waits were gone CPU was all that was left.
 
 | Stage | A move costs | What it is |
 |---|---|---|
+| Supabase edge functions + PostgREST (to Sep 2026) | about 450 ms warm, over 1.3 s cold | production log of an edge function in July 2026 (#41): JWT verify 88 ms warm / 565 ms cold, then the PostgREST call 370 ms warm / 753 ms cold, in sequence. A cold isolate, recycled about every 15 s, added a ~760 ms floor. The SQL itself ran in 0.07 ms, and a 4-seat `commit_table` took 3.5-3.8 ms against local PostgREST |
 | Lambda + DynamoDB, before #372 | about 55 ms | 15-17 ms p50 for the DynamoDB TransactWriteItems, plus five IoT publishes in a row at 7.8 ms each |
 | Lambda + DynamoDB, after #372 | about 10 ms | 2.4 ms for a single conditional UpdateItem, plus one push batch sent in parallel (about 8 ms) |
 | VM at cutover (#391), SQLite group commit | under 1 ms | move p99 0.8-0.9 ms; 182 µs of server CPU per move on the nano |
@@ -21,6 +22,8 @@ The top rows are wall time spent waiting on network services, and the lower rows
 | Today's main, our own code at saturation | about 15-20 µs | the user-space share of sat2's 36 µs/move |
 | The game work itself, warm | about 1 µs | rules, journal record and outputs; the rules' apply alone is 250-300 ns |
 
+The Supabase row is from a list read's edge function, `get_my_games`, because that is the call that was timed in production; a move went through the same kind of edge function with the same JWT check and the same PostgREST hop, plus the `commit_table` transaction.
+The Supabase sources are commits 4d9e5874, 10658d3b and 9dab342e0, and c_base/docs/DIRECT_DYNAMO.md.
 The Lambda rows come from #365 and #372: #365 also cut Lambda's server CPU from about 440 to about 300 µs per move, but the move's time was the network waits.
 
 ## The VM path (built 2026-10-18 and 2026-10-19, shipped in #391)
