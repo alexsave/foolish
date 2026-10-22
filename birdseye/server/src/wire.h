@@ -18,7 +18,8 @@
 //                            be_w_table on every change, [BE_F_EVENT] be_w_event as each happens,
 //                            [BE_F_OPS] the same report GET /metrics answers, once a second,
 //                            [BE_F_RESULT] be_w_result as a league game is rated, [BE_F_BOT]
-//                            be_w_bot when a bot's standing changes
+//                            be_w_bot when a bot's standing changes, [BE_F_TOUR] be_w_tour
+//   GET /be/tournament       be_w_tour: the stored tournament (state BE_TOUR_IDLE when none)
 #ifndef BIRDSEYE_WIRE_H
 #define BIRDSEYE_WIRE_H
 
@@ -205,8 +206,53 @@ typedef struct {
     uint8_t  mode;         // BE_MODE_*
 } be_w_league;
 
-#define BE_MODE_LEAGUE 1
-#define BE_MODE_MIXED  2
+#define BE_MODE_LEAGUE     1
+#define BE_MODE_MIXED      2
+#define BE_MODE_TOURNAMENT 3
+
+// ---- the tournament (tournament.h) -----------------------------------------------------------------
+//
+// 48 bots, single elimination, two-player best-of-five matches, seeded by the server's ratings: the
+// 32 lower seeds play an opening round (17 v 48 ... 32 v 33), whose winners meet the 16 top seeds in
+// the round of 32. Every game is a real rated server game; a match is won by the first to three
+// games the other was the fool of (a drawn game is played again).
+
+#define BE_TOUR_PLAYERS 48
+#define BE_TOUR_ROUNDS  6     // opening, 32, 16, quarter, semi, final
+#define BE_TOUR_MATCHES 47
+#define BE_TOUR_NONE    255   // no bot (yet), no winner (yet)
+#define BE_TOUR_WIN     3     // games to win a match
+
+#define BE_TOUR_IDLE    0     // no tournament
+#define BE_TOUR_RUNNING 1
+#define BE_TOUR_DONE    2
+
+typedef struct {
+    uint8_t  round;          // 0 the opening round .. 5 the final
+    uint8_t  slot;           // its place in the round, top to bottom
+    uint8_t  a, b;           // league bot indices (GET /be/league's order), BE_TOUR_NONE until known
+    uint8_t  seed_a, seed_b; // 1..48, 0 until known
+    uint8_t  wins_a, wins_b;
+    uint8_t  games;          // games played, draws included
+    uint8_t  winner;         // a or b once decided, else BE_TOUR_NONE
+    uint8_t  live;           // a game of this match is in play
+    uint8_t  gid_len;        // the game in play (or the last one)
+    char     gid[BE_GID];
+    int64_t  done_ms;        // when it was decided (wall clock), 0 before
+} be_w_match;
+
+typedef struct {
+    uint32_t hash;
+    uint8_t  state;          // BE_TOUR_*
+    uint8_t  dropped;        // the bot left out of 48 (league index), BE_TOUR_NONE before a draw
+    uint8_t  champion;       // BE_TOUR_NONE until the final is won
+    uint8_t  n_matches;
+    int32_t  seed_rating[BE_TOUR_PLAYERS];   // each seed's server rating when the field was drawn
+    uint8_t  seed_bot[BE_TOUR_PLAYERS];      // seed i+1's league bot index
+    int64_t  started_ms, finished_ms;
+    uint32_t games;          // games played in the tournament
+    be_w_match matches[BE_TOUR_MATCHES];
+} be_w_tour;
 
 // POST /be/session (dev mode only): the site's token for the stream's HELLO, a session of a fixed
 // site account on this process's own store, made through the platform's auth.
@@ -225,6 +271,7 @@ typedef struct {
 #define BE_F_OPS   3
 #define BE_F_RESULT 4
 #define BE_F_BOT    5
+#define BE_F_TOUR   6   // the whole be_w_tour, on every change
 
 // The layout hash structgen printed for this header, compiled in (the Makefile).
 #ifndef BIRDSEYE_WIRE_HASH

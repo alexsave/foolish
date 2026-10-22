@@ -79,6 +79,19 @@ static void league_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     free(buf);
 }
 
+// ---- GET /be/tournament ----------------------------------------------------------------------
+
+static void tournament_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    void *buf = NULL;
+    size_t n = be_tour_snapshot(&buf);
+    if (!n) {
+        cb_router_error(res, 500, "no memory");
+        return;
+    }
+    answer(res, buf, n);
+    free(buf);
+}
+
 // ---- POST /be/session (dev mode) --------------------------------------------------------------
 //
 // The site's token for the stream's HELLO: a session of one fixed account on this process's own
@@ -124,5 +137,6 @@ static const cb_route ROUTES[] = {
     { "GET", "/be/table/*", CB_ROUTE_POOL, table_get, 0 },
     { "POST", "/be/session", CB_ROUTE_POOL, session_post, 0 },
     { "GET", "/be/league", CB_ROUTE_POOL, league_get, 0 },
+    { "GET", "/be/tournament", CB_ROUTE_POOL, tournament_get, 0 },
 };
-const cb_route_list be_route_list = { ROUTES, 4 };
+const cb_route_list be_route_list = { ROUTES, 5 };

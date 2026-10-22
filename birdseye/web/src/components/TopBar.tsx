@@ -26,12 +26,13 @@ interface Props {
   onView: (v: View) => void;
   games: number;
   gamesPerMin: number | null;
+  tour: boolean;
 }
 
 export type Filter = 'all' | 'playing' | 'lobby' | 'over';
-export type View = 'league' | 'tables';
+export type View = 'league' | 'tournament' | 'tables';
 
-export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompact, view, onView, games, gamesPerMin }: Props) {
+export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompact, view, onView, games, gamesPerMin, tour }: Props) {
   const status =
     state === 'open' ? { cls: 'dot-green', text: 'live' }
     : state === 'connecting' ? { cls: 'dot-amber', text: 'connecting...' }
@@ -56,12 +57,17 @@ export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompac
           <button type="button" className={`tab${view === 'league' ? ' on' : ''}`} onClick={() => onView('league')}>
             League <span className="num">{games}</span>
           </button>
+          {tour && (
+            <button type="button" className={`tab${view === 'tournament' ? ' on' : ''}`} onClick={() => onView('tournament')}>
+              Tournament
+            </button>
+          )}
           <button type="button" className={`tab${view === 'tables' ? ' on' : ''}`} onClick={() => onView('tables')}>
             Tables <span className="num">{counts.all}</span>
           </button>
         </nav>
       )}
-      {view !== 'league' && (
+      {view === 'tables' || view === null ? (
         <nav className="tabs" aria-label="table filter">
           {tabs.map((t) => (
             <button key={t.key} type="button" className={`tab${filter === t.key ? ' on' : ''}`} onClick={() => onFilter(t.key)}>
@@ -69,8 +75,8 @@ export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompac
             </button>
           ))}
         </nav>
-      )}
-      {view !== 'league' && (
+      ) : null}
+      {(view === 'tables' || view === null) && (
       <button type="button" className={`density${compact ? ' on' : ''}`} onClick={() => onCompact(!compact)} title="smaller cards: more tables on one screen">
         <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
           <rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor" />
