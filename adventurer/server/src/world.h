@@ -125,9 +125,8 @@ static inline float adv_world_all_m(const adv_world *w, int type) {
 static inline float adv_world_all_region_m(const adv_world *w, uint16_t region, int type) {
     return (float)(atomic_load_explicit((_Atomic uint64_t *)&w->all_region_cm[(size_t)region * ADV_T_N + type], memory_order_relaxed) / 100.0);
 }
-// The ADV_TOP_N most-travelled segments of a type (by distinct users, then length) into out:
-// how many were written (fewer when fewer segments have a user). A scan of every segment.
-#define ADV_TOP_N 10
+// The ADV_TOP_N (wire.h) most-travelled segments of a type (by distinct users, then length)
+// into out: how many were written (fewer when fewer segments have a user). A scan of every segment.
 typedef struct { uint32_t seg; uint16_t users; } adv_top_seg;
 uint32_t adv_world_top(const adv_world *w, int type, adv_top_seg out[ADV_TOP_N]);
 

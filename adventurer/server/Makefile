@@ -1,7 +1,7 @@
 # adventurer/server: wandrer.earth rebuilt as a second product on c_base (../DESIGN.md).
 #
 #   make              build/adventurer (`adventurer serve`), build/adv-import, build/adv-gen,
-#                     build/adv-wiregen and the generated web decoder (../web/src/gen/wire.ts)
+#                     and the web's generated decoder (../web/src/gen/wire.ts, layout_hash.ts)
 #   make test         every unit test (test/unit_*.c), each its own program
 #   make check        test, then the smoke (a real server, a real upload, a real tile)
 #   make check-asan   the same, every object rebuilt under ASan + UBSan
@@ -57,15 +57,20 @@ LIB_SRC := $(PLATFORM_SRC) $(SHARED_SRC) $(GEN_SRC) $(APP_SRC)
 PLATFORM_INC := -I$(CB)/core/include -I$(CB)/core/src -I$(CB)/providers/local/src -I$(CB)/providers/aws/src -I$(C_ROOT)/shared/c
 INC := $(PLATFORM_INC) -Isrc -Itest -Ifuzz -I$(CB)/core/test
 CFLAGS = -std=gnu11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wshadow -Wvla \
-         $(INC) $(SQLITE_CFLAGS) $(OPENSSL_CFLAGS) -pthread
+         $(INC) $(SQLITE_CFLAGS) $(OPENSSL_CFLAGS) -pthread $(OBJ_FLAGS_$*)
+# THE WIRE'S LAYOUT HASH (structgen, below) is compiled into wire.c alone, read from the file the
+# generator wrote, so the server's copy is the generator's and never retyped; the file is in the
+# variant's flag stamp, so a new hash rebuilds the objects (shared/tools/c_rules.mk).
+OBJ_FLAGS_src/wire = -DADV_WIRE_HASH=$$(cat $(B)/layout/wire.hash)
+WIRE_HASH_FILE := $(B)/layout/wire.hash
 LDLIBS := $(SQLITE_LDFLAGS) $(OPENSSL_LDFLAGS) -lsqlite3 -lssl -lcrypto -lz -lpthread -lm
 
 SAN := -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer
 ASAN_CFLAGS = $(filter-out -O2,$(CFLAGS)) -O1 $(SAN) -DCB_INSTRUMENTED -DADV_INSTRUMENTED
 
 include $(C_ROOT)/shared/tools/c_rules.mk
-$(eval $(call C_VARIANT,$(B)/obj/rel,CC,CFLAGS))
-$(eval $(call C_VARIANT,$(B)/obj/asan,CC,ASAN_CFLAGS))
+$(eval $(call C_VARIANT,$(B)/obj/rel,CC,CFLAGS,$(WIRE_HASH_FILE)))
+$(eval $(call C_VARIANT,$(B)/obj/asan,CC,ASAN_CFLAGS,$(WIRE_HASH_FILE)))
 
 # The platform's schema and console, and the product's schema, embedded as c_base embeds them.
 $(B)/embed: $(CB)/tools/embed.c
@@ -101,7 +106,6 @@ prog = $(eval $(call PROG,$(1),$(2),$(3),$(4),$(5)))
 $(call prog,$(B),$(B)/obj/rel,adventurer,tools/main_serve.c,CFLAGS)
 $(call prog,$(B),$(B)/obj/rel,adv-import,tools/import_main.c,CFLAGS)
 $(call prog,$(B),$(B)/obj/rel,adv-gen,$(sort $(wildcard gen/*.c)),CFLAGS)
-$(call prog,$(B),$(B)/obj/rel,adv-wiregen,tools/wiregen.c,CFLAGS)
 $(call prog,$(B),$(B)/obj/rel,adv-bench,tools/bench_match.c,CFLAGS)
 $(call prog,$(B)/asan,$(B)/obj/asan,adventurer,tools/main_serve.c,ASAN_CFLAGS)
 $(call prog,$(B)/asan,$(B)/obj/asan,adv-import,tools/import_main.c,ASAN_CFLAGS)
@@ -109,15 +113,39 @@ $(call prog,$(B)/asan,$(B)/obj/asan,adv-gen,$(sort $(wildcard gen/*.c)),ASAN_CFL
 $(foreach u,$(UNITS) $(SMOKES),$(call prog,$(B)/test,$(B)/obj/rel,$(u),test/$(u).c $(TLIB_SRC),CFLAGS))
 $(foreach u,$(UNITS) $(SMOKES),$(call prog,$(B)/asan/test,$(B)/obj/asan,$(u),test/$(u).c $(TLIB_SRC),ASAN_CFLAGS))
 
-# The web's decoder of the binary surface (src/wire.h), written by the C compiler's own
-# offsetof and sizeof, so no TypeScript ever spells a byte offset by hand.
-WIRE_TS := ../web/src/gen/wire.ts
-$(WIRE_TS): $(B)/adv-wiregen
+# THE WEB'S DECODER of the binary surface (src/wire.h) is structgen's (shared/tools/structgen,
+# libclang): it reads the structs under this build's flags for this host and writes the readers
+# (../web/src/gen/wire.ts) and the layout hash (layout_hash.ts), which is also what wire.c is
+# compiled with (above). No TypeScript spells a byte offset, and a page built from another layout
+# refuses the bytes. The hash file is remade on every make that needs it and rewritten only when
+# it changes, as foolish's c/Makefile does; the modules are copied only when their content moved.
+include $(C_ROOT)/shared/tools/gen_tools.mk
+WIRE_TS ?= ../web/src/gen/wire.ts
+WIRE_HASH_TS := $(dir $(WIRE_TS))layout_hash.ts
+# The host's own layout (the server is native and the browser reads its bytes), so the host's
+# triple and, on macOS, the SDK's headers, which libclang does not find by itself (as -isystem:
+# the probe keeps the include and define flags of a build line and drops the rest, sg_clang.c).
+SG_HOST_TRIPLE := $(shell $(CC) -dumpmachine)
+ifeq ($(UNAME),Darwin)
+  SG_SYSROOT := -isystem $(shell xcrun --show-sdk-path)/usr/include
+endif
+SG_WIRE_ROOTS := adv_w_list adv_w_user_def adv_w_user adv_w_region adv_w_user_stats adv_w_region_progress adv_w_leader \
+                 adv_w_leaders adv_w_activity adv_w_accepted adv_w_ops adv_w_top_road adv_w_everyone
+SG_WIRE_ARGS := --header src/wire.h --header src/trace.h --header src/match.h \
+                $(foreach r,$(SG_WIRE_ROOTS),--root $(r) --snapshot $(r)) \
+                --count adv_w_user_def.name=name_len --count adv_w_user.name=name_len --count adv_w_region.name=name_len \
+                --count adv_w_top_road.name=name_len \
+                --const ADV_W_KIND_ --const ADV_W_NAME --const ADV_AF_ --const ADV_UK_ --const ADV_ACH_N --const ADV_TOP_N \
+                --const ADV_T_ --const ADV_HC_ --const ADV_NO_REGION --const ADV_ACT_ --const ADV_MATCH_RJ_ --const ADV_NAME_MAX
+$(WIRE_HASH_FILE): $(STRUCTGEN) FORCE
 	@mkdir -p $(@D)
-	$(B)/adv-wiregen > $@.new && { cmp -s $@.new $@ || mv $@.new $@; }; rm -f $@.new
+	@$(STRUCTGEN) --cwd . $(SG_WIRE_ARGS) --build 'adv=$(strip $(INC) $(SG_SYSROOT))' --target $(SG_HOST_TRIPLE) --print-hash \
+	  --ts $@.ts --hash-ts $@.hash.ts > $@.new && \
+	  { cmp -s $@.new $@ || { echo "wire layout: $$(cat $@ 2>/dev/null || echo none) -> $$(cat $@.new)"; mv $@.new $@; }; } && rm -f $@.new && \
+	  $(call gen_sync,$@.ts,$(WIRE_TS)) && $(call gen_sync,$@.hash.ts,$(WIRE_HASH_TS))
 
 .PHONY: all test smoke check test-asan smoke-asan check-asan clean graph import fuzz fuzz-smoke
-all: $(B)/adventurer $(B)/adv-import $(B)/adv-gen $(B)/adv-wiregen $(B)/adv-bench $(WIRE_TS)
+all: $(WIRE_HASH_FILE) $(B)/adventurer $(B)/adv-import $(B)/adv-gen $(B)/adv-bench
 import: $(B)/adv-import
 
 # Every test program is its own process; they run CHECK_JOBS at a time, each to its own log,

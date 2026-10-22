@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { EVERYONE, USER_KIND, type FeedState, type WUser } from '../api';
 
 // The composite of every user, as a row of the picker (api.ts EVERYONE).
-const EVERYONE_ROW: WUser = { id: EVERYONE, kind: 0, nameLen: 8, nActivities: 0, version: 0, uniqueM: [0, 0, 0], homeLat: 0, homeLon: 0, name: 'Everyone' };
+const EVERYONE_ROW: WUser = { id: EVERYONE, kind: 0, pad: 0, nActivities: 0, version: 0, uniqueM: [0, 0, 0], homeLat: 0, homeLon: 0, name: 'Everyone' };
 
 function Compass() {
   return (

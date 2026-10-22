@@ -1,8 +1,9 @@
-// wire.c - wire.h: the layout hash the answers carry.
-#include "wire_table.h"
+// wire.c - wire.h: the layout hash the answers carry, structgen's for this build (the Makefile
+// compiles this file alone with -DADV_WIRE_HASH=<the hash it printed>).
+#include "wire.h"
 
-uint32_t adv_wire_hash(void) {
-    static uint32_t h;
-    if (!h) h = adv_wire_table_hash();
-    return h;
-}
+#ifndef ADV_WIRE_HASH
+#error "ADV_WIRE_HASH is the Makefile's to pass: build through it (make -C adventurer/server)"
+#endif
+
+uint32_t adv_wire_hash(void) { return ADV_WIRE_HASH; }

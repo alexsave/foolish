@@ -1,39 +1,70 @@
 // api.ts - the browser's side of wire.h: fetch the binary endpoints, decode them with the
-// generated decoder, open the feed WebSocket. Nothing here knows a byte offset.
+// generated readers (structgen's, from the C structs themselves), open the feed WebSocket.
+// Nothing here knows a byte offset: a record is read by its generated reader at the offset
+// its generated size says, and a page built from another layout refuses the bytes.
+import { LAYOUT_HASH } from './gen/layout_hash';
 import {
-  readList,
-  readWActivity,
-  readWLeaders,
-  readWOps,
-  readWRegion,
-  readWEveryone,
-  readWRegionProgress,
-  readWTopRoad,
-  readWUser,
-  readWUserStats,
-  SIZE,
-  WIRE_HASH,
-  type WActivity,
-  type WEveryone,
-  type WLeader,
-  type WOps,
-  type WRegion,
-  type WRegionProgress,
-  type WTopRoad,
-  type WUser,
-  type WUserStats,
+  ADV_W_KIND_ACTIVITY,
+  ADV_W_KIND_OPS,
+  adv_w_activity_get_kind,
+  adv_w_activity_SIZE,
+  adv_w_everyone_SIZE,
+  adv_w_leaders_SIZE,
+  adv_w_list_SIZE,
+  adv_w_ops_SIZE,
+  adv_w_region_progress_SIZE,
+  adv_w_region_SIZE,
+  adv_w_top_road_SIZE,
+  adv_w_user_SIZE,
+  adv_w_user_stats_SIZE,
+  memOf,
+  readadv_w_activity,
+  readadv_w_everyone,
+  readadv_w_leaders,
+  readadv_w_list,
+  readadv_w_ops,
+  readadv_w_region,
+  readadv_w_region_progress,
+  readadv_w_top_road,
+  readadv_w_user,
+  readadv_w_user_stats,
+  type adv_w_activity_Snap,
+  type adv_w_everyone_Snap,
+  type adv_w_leader_Snap,
+  type adv_w_ops_Snap,
+  type adv_w_region_progress_Snap,
+  type adv_w_region_Snap,
+  type adv_w_top_road_Snap,
+  type adv_w_user_Snap,
+  type adv_w_user_stats_Snap,
+  type Mem,
 } from './gen/wire';
 
-export type {
-  WActivity,
-  WEveryone,
-  WLeader,
-  WOps,
-  WRegion,
-  WRegionProgress,
-  WTopRoad,
-  WUser,
-  WUserStats,
+// The records as the page holds them: the generated snapshots, with the 64-bit fields (an
+// instant in ms, a byte count) widened from bigint to number, which holds them for a few
+// hundred thousand years.
+type Widened<T, K extends keyof T> = Omit<T, K> & { readonly [P in K]: number };
+export type WUser = adv_w_user_Snap;
+export type WRegion = adv_w_region_Snap;
+export type WRegionProgress = adv_w_region_progress_Snap;
+export type WLeader = adv_w_leader_Snap;
+export type WTopRoad = adv_w_top_road_Snap;
+export type WEveryone = adv_w_everyone_Snap;
+export type WUserStats = Widened<adv_w_user_stats_Snap, 'firstActivityMs' | 'lastActivityMs'>;
+export type WActivity = Widened<adv_w_activity_Snap, 'atMs'>;
+export type WOps = Widened<adv_w_ops_Snap, 'atMs' | 'journalBytes'>;
+
+const readWUserStats = (m: Mem, p: number): WUserStats => {
+  const r = readadv_w_user_stats(m, p);
+  return { ...r, firstActivityMs: Number(r.firstActivityMs), lastActivityMs: Number(r.lastActivityMs) };
+};
+const readWActivity = (m: Mem, p: number): WActivity => {
+  const r = readadv_w_activity(m, p);
+  return { ...r, atMs: Number(r.atMs) };
+};
+const readWOps = (m: Mem, p: number): WOps => {
+  const r = readadv_w_ops(m, p);
+  return { ...r, atMs: Number(r.atMs), journalBytes: Number(r.journalBytes) };
 };
 
 // The user id that is nobody: the composite of everyone's coverage (GET /adv/everyone).
@@ -76,17 +107,20 @@ export class WireMismatch extends Error {
 }
 
 function checkHash(hash: number): void {
-  if (hash !== WIRE_HASH) throw new WireMismatch();
+  if (hash !== LAYOUT_HASH) throw new WireMismatch();
 }
 
-// readList throws its own message on a mismatch; fold it into the one class.
-function wrapList<T>(f: () => T): T {
-  try {
-    return f();
-  } catch (e) {
-    if (e instanceof Error && /wire layout mismatch/.test(e.message)) throw new WireMismatch();
-    throw e;
-  }
+// A list answer (adv_w_list, then n records of `size` bytes each): the head's hash checked, the
+// records read by `read` at the offsets the generated sizes give, never past the bytes received.
+function readList<T>(buf: ArrayBuffer, size: number, read: (m: Mem, p: number) => T): T[] {
+  if (buf.byteLength < adv_w_list_SIZE) throw new Error('list: short answer');
+  const m = memOf(buf);
+  const head = readadv_w_list(m, 0);
+  checkHash(head.hash);
+  const n = Math.min(head.n, Math.floor((buf.byteLength - adv_w_list_SIZE) / size));
+  const out: T[] = [];
+  for (let i = 0; i < n; i++) out.push(read(m, adv_w_list_SIZE + i * size));
+  return out;
 }
 
 async function fetchBytes(path: string, signal?: AbortSignal): Promise<ArrayBuffer> {
@@ -97,12 +131,12 @@ async function fetchBytes(path: string, signal?: AbortSignal): Promise<ArrayBuff
 
 export async function getUsers(signal?: AbortSignal): Promise<WUser[]> {
   const buf = await fetchBytes('/adv/users', signal);
-  return wrapList(() => readList(buf, SIZE.WUser, readWUser));
+  return readList(buf, adv_w_user_SIZE, readadv_w_user);
 }
 
 export async function getRegions(signal?: AbortSignal): Promise<WRegion[]> {
   const buf = await fetchBytes('/adv/regions', signal);
-  return wrapList(() => readList(buf, SIZE.WRegion, readWRegion));
+  return readList(buf, adv_w_region_SIZE, readadv_w_region);
 }
 
 export interface UserDetail {
@@ -112,13 +146,13 @@ export interface UserDetail {
 
 export async function getUser(id: number, signal?: AbortSignal): Promise<UserDetail> {
   const buf = await fetchBytes(`/adv/user/${id}`, signal);
-  if (buf.byteLength < SIZE.WUserStats) throw new Error('user: short answer');
-  const dv = new DataView(buf);
-  const stats = readWUserStats(dv, 0);
+  if (buf.byteLength < adv_w_user_stats_SIZE) throw new Error('user: short answer');
+  const m = memOf(buf);
+  const stats = readWUserStats(m, 0);
   checkHash(stats.hash);
-  const n = Math.min(stats.nRegions, Math.floor((buf.byteLength - SIZE.WUserStats) / SIZE.WRegionProgress));
+  const n = Math.min(stats.nRegions, Math.floor((buf.byteLength - adv_w_user_stats_SIZE) / adv_w_region_progress_SIZE));
   const progress: WRegionProgress[] = [];
-  for (let i = 0; i < n; i++) progress.push(readWRegionProgress(dv, SIZE.WUserStats + i * SIZE.WRegionProgress));
+  for (let i = 0; i < n; i++) progress.push(readadv_w_region_progress(m, adv_w_user_stats_SIZE + i * adv_w_region_progress_SIZE));
   return { stats, progress };
 }
 
@@ -131,11 +165,11 @@ export interface Leaders {
 
 export async function getLeaders(region: number, signal?: AbortSignal): Promise<Leaders> {
   const buf = await fetchBytes(`/adv/leaders/${region}`, signal);
-  if (buf.byteLength < SIZE.WLeaders) throw new Error('leaders: short answer');
-  const head = readWLeaders(new DataView(buf), 0);
+  if (buf.byteLength < adv_w_leaders_SIZE) throw new Error('leaders: short answer');
+  const head = readadv_w_leaders(memOf(buf), 0);
   checkHash(head.hash);
   // Nine records per table, index type*3+rank, into rows per type.
-  const rows = (flat: WLeader[]): WLeader[][] => [0, 1, 2].map((t) => flat.slice(t * 3, t * 3 + 3));
+  const rows = (flat: readonly WLeader[]): WLeader[][] => [0, 1, 2].map((t) => flat.slice(t * 3, t * 3 + 3));
   return { region: head.region, month: rows(head.month), year: rows(head.year) };
 }
 
@@ -148,22 +182,24 @@ export interface Everyone {
 }
 export async function getEveryone(signal?: AbortSignal): Promise<Everyone> {
   const buf = await fetchBytes('/adv/everyone', signal);
-  const dv = new DataView(buf);
-  const stats = readWEveryone(dv, 0);
+  if (buf.byteLength < adv_w_everyone_SIZE) throw new Error('everyone: short answer');
+  const m = memOf(buf);
+  const stats = readadv_w_everyone(m, 0);
   checkHash(stats.hash);
+  const n = Math.min(stats.nTop, Math.floor((buf.byteLength - adv_w_everyone_SIZE) / adv_w_top_road_SIZE));
   const top: WTopRoad[] = [];
-  for (let i = 0; i < stats.nTop; i++) top.push(readWTopRoad(dv, SIZE.WEveryone + i * SIZE.WTopRoad));
+  for (let i = 0; i < n; i++) top.push(readadv_w_top_road(m, adv_w_everyone_SIZE + i * adv_w_top_road_SIZE));
   return { stats, top };
 }
 export async function getEveryoneRegions(signal?: AbortSignal): Promise<WRegionProgress[]> {
   const buf = await fetchBytes('/adv/everyone/regions', signal);
-  return wrapList(() => readList(buf, SIZE.WRegionProgress, readWRegionProgress));
+  return readList(buf, adv_w_region_progress_SIZE, readadv_w_region_progress);
 }
 
 export async function getOps(signal?: AbortSignal): Promise<WOps> {
   const buf = await fetchBytes('/adv/ops', signal);
-  if (buf.byteLength < SIZE.WOps) throw new Error('ops: short answer');
-  const ops = readWOps(new DataView(buf), 0);
+  if (buf.byteLength < adv_w_ops_SIZE) throw new Error('ops: short answer');
+  const ops = readWOps(memOf(buf), 0);
   checkHash(ops.hash);
   return ops;
 }
@@ -213,14 +249,15 @@ export function openFeed(h: FeedHandlers): () => void {
     sock.onmessage = (ev: MessageEvent) => {
       if (sock !== ws || !(ev.data instanceof ArrayBuffer)) return;
       const buf = ev.data;
-      if (buf.byteLength < 1) return;
-      const dv = new DataView(buf);
-      const kind = dv.getUint8(0);
+      if (buf.byteLength < adv_w_activity_SIZE) return;
+      const m = memOf(buf);
+      // Both frames put their kind first (wire.h pins it), so the activity's accessor reads it.
+      const kind = adv_w_activity_get_kind(m, 0);
       try {
-        if (kind === 1 && buf.byteLength >= SIZE.WActivity) {
-          h.onActivity(readWActivity(dv, 0));
-        } else if (kind === 2 && buf.byteLength >= SIZE.WOps) {
-          const ops = readWOps(dv, 0);
+        if (kind === ADV_W_KIND_ACTIVITY) {
+          h.onActivity(readWActivity(m, 0));
+        } else if (kind === ADV_W_KIND_OPS && buf.byteLength >= adv_w_ops_SIZE) {
+          const ops = readWOps(m, 0);
           checkHash(ops.hash);
           h.onOps(ops);
         }

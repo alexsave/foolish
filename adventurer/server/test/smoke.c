@@ -190,7 +190,7 @@ int main(int argc, char **argv) {
     memcpy(&lb1, r.body.p, sizeof lb1);
     tc_response_free(&r);
     // The row crosses both regions: whichever holds the ride's start names user 1 first on the bike board.
-    bool on_board = (lb.month[ADV_T_BIKE][0].user == 1) || (lb1.month[ADV_T_BIKE][0].user == 1);
+    bool on_board = (lb.month[ADV_T_BIKE * 3].user == 1) || (lb1.month[ADV_T_BIKE * 3].user == 1);   // [type * 3 + rank]
     T_CHECK(on_board);
     // Tiles: the z16 tile of the row's middle, for user 1, with traveled features; a second ask with the ETag is 304.
     adv_pt mid = fg_crossing(&g_opts, 4, 3);

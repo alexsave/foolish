@@ -1,8 +1,8 @@
 // wire.h - THE BINARY SURFACE the web reads: fixed little-endian layouts, no JSON. The C compiler
-// owns every offset: tools/wiregen.c prints the TypeScript decoder (web/src/gen/wire.ts) from
-// offsetof and sizeof over these structs, and ADV_WIRE_HASH (sg-style, from the same tool) is
-// the first field of every answer so a page built from an older layout refuses instead of
-// misreading.
+// owns every offset: structgen (shared/tools/structgen, through libclang, run by the Makefile)
+// writes the TypeScript readers (web/src/gen/wire.ts) from these structs and the layout hash
+// they were read under, which wire.c is compiled with (ADV_WIRE_HASH) and which is the first
+// field of every answer, so a page built from an older layout refuses instead of misreading.
 //
 //   GET  /adv/ops                      adv_w_ops
 //   GET  /adv/regions                  adv_w_list (n) then n x adv_w_region
@@ -24,6 +24,7 @@
 
 #include "graph.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define ADV_W_KIND_ACTIVITY 1
@@ -107,13 +108,14 @@ typedef struct {
     uint32_t     hash;
     uint16_t     region;
     uint16_t     pad;
-    adv_w_leader month[ADV_T_N][3];
-    adv_w_leader year[ADV_T_N][3];
+    adv_w_leader month[ADV_T_N * 3];   // [type * 3 + rank]: one table, as a reader walks it
+    adv_w_leader year[ADV_T_N * 3];
 } adv_w_leaders;
 
 // EVERYONE: the union of every user's coverage (GET /adv/everyone): the length anyone has per
 // type against the graph's, the segments anyone has, and the most-travelled roads, ADV_TOP_N
 // per type in a row (type 0's first), each by distinct users then length.
+#define ADV_TOP_N 10
 typedef struct {
     uint32_t seg;
     uint16_t users;       // distinct users of the road's type (capped at 65535)
@@ -210,12 +212,13 @@ _Static_assert(sizeof(adv_w_leaders) == 152, "adv_w_leaders");
 _Static_assert(sizeof(adv_w_activity) == 72, "adv_w_activity");
 _Static_assert(sizeof(adv_w_accepted) == 16, "adv_w_accepted");
 _Static_assert(sizeof(adv_w_ops) == 144, "adv_w_ops");
+// A feed frame is told apart by its first byte: both kinds put `kind` there.
+_Static_assert(offsetof(adv_w_activity, kind) == 0 && offsetof(adv_w_ops, kind) == 0, "a feed frame's kind is its first byte");
 _Static_assert(sizeof(adv_w_top_road) == 88, "adv_w_top_road");
 _Static_assert(sizeof(adv_w_everyone) == 64, "adv_w_everyone");
 
-// The layout hash the generated decoder checks (tools/wiregen.c computes it over every field's
-// name, offset and size and prints the constant it used; wire.c holds the same computation so
-// the server's copy is the compiler's, never retyped).
+// The layout hash the generated decoder checks: structgen's, over every root's fields and the
+// constants, compiled into wire.c from the file the generator wrote (the Makefile), never retyped.
 uint32_t adv_wire_hash(void);
 
 #endif

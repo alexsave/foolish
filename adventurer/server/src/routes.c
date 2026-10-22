@@ -209,6 +209,8 @@ static void leaders_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     out.hash = adv_wire_hash();
     out.region = (uint16_t)id;
     uint32_t mk = adv_month_key(cb_now_ms()), yk = adv_year_key(cb_now_ms());
+    // The board's [type][rank] tables are the wire's [type * 3 + rank]: the same bytes.
+    _Static_assert(sizeof out.month == sizeof b.month && sizeof out.year == sizeof b.year, "leaders tables");
     if (b.month_key == mk) memcpy(out.month, b.month, sizeof out.month);
     if (b.year_key == yk) memcpy(out.year, b.year, sizeof out.year);
     cb_res_send(res, 200, OCTETS, &out, sizeof out);
