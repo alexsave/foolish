@@ -166,7 +166,7 @@ typedef struct {
     char     name[BE_NAME];
     uint8_t  key_len;      // the strategy family (GET /v1/bots strategy_key)
     char     key[BE_BOT_KEY];
-    uint8_t  seated;       // at a live league table now
+    uint8_t  seated;       // live league tables it sits at now
     int32_t  rating;       // the server's: the last stamp's before + delta, or the leaderboard's
     int32_t  start_rating; // the server's when this league first saw the bot
     uint32_t games;        // the server's games_played

@@ -1,18 +1,46 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getMetrics, getTables, openStream, perS, WireMismatch, type Metrics, type StreamState, type WEvent, type WTable } from './api';
-import { BE_PHASE_GONE, BE_PHASE_LOBBY, BE_PHASE_OVER, BE_PHASE_PLAYING } from './gen/wire';
+import {
+  getLeague,
+  getMetrics,
+  getTables,
+  openStream,
+  perS,
+  WireMismatch,
+  type League,
+  type Metrics,
+  type StreamState,
+  type WEvent,
+  type WResult,
+  type WTable,
+} from './api';
+import { BE_MODE_LEAGUE, BE_PHASE_GONE, BE_PHASE_LOBBY, BE_PHASE_OVER, BE_PHASE_PLAYING } from './gen/wire';
 import { Feed } from './components/Feed';
+import { buildSeries, EloChart, Families, Standings, botName } from './components/League';
 import { Ops } from './components/Ops';
-import { TableCard } from './components/TableCard';
 import { TableDetail } from './components/TableDetail';
-import { TopBar, type Filter } from './components/TopBar';
+import { TableGrid } from './components/TableGrid';
+import { TopBar, type Filter, type View } from './components/TopBar';
 
 const FEED_CAP = 200;
 const TABLE_EVENTS_CAP = 64;
 const SPARK_N = 60;
 const LIST_RETRY_MS = 2000;
+
+// The results after the last one `l` holds, appended in order (a stream result already in the
+// snapshot, or one older, is dropped).
+function mergeResults(l: League | null, add: WResult[]): League | null {
+  if (!l) return l;
+  let last = l.results.length ? l.results[l.results.length - 1].seq : 0;
+  const more: WResult[] = [];
+  for (const r of [...add].sort((a, b) => a.seq - b.seq)) {
+    if (r.seq <= last) continue;
+    more.push(r);
+    last = r.seq;
+  }
+  return more.length ? { ...l, results: [...l.results, ...more] } : l;
+}
 
 export function App() {
   const [fatal, setFatal] = useState<string | null>(null);
@@ -54,6 +82,35 @@ export function App() {
   }, []);
   const [now, setNow] = useState(() => Date.now());
 
+  // ---- the league: the standings and every rated game, from GET /be/league and then the stream.
+  const [league, setLeague] = useState<League | null>(null);
+  const [flash, setFlash] = useState<Map<number, number>>(() => new Map());
+  const [focus, setFocus] = useState<number | null>(null);
+  const [hoverBot, setHoverBot] = useState<number | null>(null);
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+  const [view, setViewState] = useState<View>('league');
+  // The results the stream carried lately: a snapshot that was answered before they landed is
+  // completed with them, so no result falls between the read and the stream.
+  const recent = useRef<WResult[]>([]);
+  const loadLeague = useCallback(async () => {
+    try {
+      const l = await getLeague();
+      setLeague(mergeResults(l, recent.current));
+    } catch (e) {
+      if (e instanceof WireMismatch) setFatal(e.message);
+    }
+  }, []);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('view');
+    if (q === 'tables' || q === 'league') setViewState(q);
+  }, []);
+  const setView = useCallback((v: View) => {
+    setViewState(v);
+    const u = new URL(window.location.href);
+    u.searchParams.set('view', v);
+    window.history.replaceState(null, '', u.toString());
+  }, []);
+
   // The "ago" columns tick without a new frame.
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -93,6 +150,11 @@ export function App() {
     };
   }, []);
 
+  // The league read again each time the stream opens: a result missed while it was down is in it.
+  useEffect(() => {
+    if (state === 'open') loadLeague();
+  }, [state, loadLeague]);
+
   useEffect(() => {
     const close = openStream({
       onState: setState,
@@ -105,6 +167,27 @@ export function App() {
           const next = s.length >= SPARK_N ? s.slice(s.length - SPARK_N + 1) : s.slice();
           next.push(perS(o, 'moves'));
           return next;
+        });
+      },
+      onResult: (r) => {
+        recent.current.push(r);
+        if (recent.current.length > 256) recent.current.splice(0, recent.current.length - 256);
+        setLeague((l) => mergeResults(l, [r]));
+        setFlash((f) => {
+          const next = new Map(f);
+          const t = performance.now();
+          for (const b of r.bot) next.set(b, t);
+          return next;
+        });
+      },
+      onBot: (b) => {
+        setLeague((l) => {
+          if (!l) return l;
+          const i = l.bots.findIndex((x) => x.id === b.id);
+          if (i < 0) return l;
+          const bots = l.bots.slice();
+          bots[i] = b;
+          return { ...l, bots };
         });
       },
       onTable: (t) => {
@@ -226,11 +309,82 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [back]);
 
+  const isLeague = league?.mode === BE_MODE_LEAGUE;
+  const showLeague = isLeague && view === 'league' && !selected;
+  const series = useMemo(() => (league ? buildSeries(league.bots, league.results) : []), [league]);
+  const lastResult = league && league.results.length ? league.results[league.results.length - 1] : null;
+  const liveTables = useMemo(() => rows.filter((t) => t.phase !== BE_PHASE_GONE), [rows]);
+  const toggleFamily = useCallback((k: string) => {
+    setHidden((h) => {
+      const next = new Set(h);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  }, []);
+
   return (
     <div className="app">
-      <TopBar state={state} ops={ops} filter={filter} onFilter={setFilter} counts={counts} compact={compact} onCompact={setCompact} />
+      <TopBar
+        state={state}
+        ops={ops}
+        filter={filter}
+        onFilter={setFilter}
+        counts={counts}
+        compact={compact}
+        onCompact={setCompact}
+        view={isLeague ? (selected ? 'tables' : view) : null}
+        onView={(v) => {
+          if (selected) back();
+          setView(v);
+        }}
+        games={league?.results.length ?? 0}
+      />
       {fatal ? (
         <div className="banner">{fatal}</div>
+      ) : showLeague && league ? (
+        <div className="grid league-grid">
+          <div className="col col-main">
+            <section className="card chart-card">
+              <div className="chart-head">
+                <div>
+                  <h2 className="card-title">Ratings</h2>
+                  <div className="chart-sub">
+                    The game server&apos;s rating of each of its {league.bots.length} bots after every rated league game, as each game&apos;s rating stamp says.
+                  </div>
+                </div>
+                {lastResult && (
+                  <div className="last-game num" key={lastResult.seq}>
+                    <span className="label">Game {lastResult.seq}</span>
+                    <span>
+                      {lastResult.bot.length}p {lastResult.podkidnoy ? 'podkidnoy' : 'classic'}
+                      {lastResult.fool >= 0 && league.bots[lastResult.bot[lastResult.fool]] && (
+                        <>
+                          {' '}&middot; fool <b>{botName(league.bots[lastResult.bot[lastResult.fool]])}</b>{' '}
+                          <span className="neg">{lastResult.delta[lastResult.fool]}</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <Families bots={league.bots} hidden={hidden} onToggle={toggleFamily} />
+              <EloChart bots={league.bots} results={league.results} series={series} flash={flash} focus={focus} hidden={hidden} onHover={setHoverBot} />
+            </section>
+            <div className="section-head">
+              <h2 className="card-title">At the tables now</h2>
+              <span className="faint num">{liveTables.length} tables</span>
+            </div>
+            {liveTables.length === 0 ? (
+              <div className="card empty-grid">{state === 'open' ? 'The league is seating its first tables...' : 'Connecting to birdseye...'}</div>
+            ) : (
+              <TableGrid tables={liveTables} compact={true} now={now} onSelect={select} />
+            )}
+          </div>
+          <div className="col col-side">
+            <Standings bots={league.bots} flash={flash} focus={focus} hover={hoverBot} onFocus={setFocus} now={now} />
+          </div>
+        </div>
       ) : (
         <div className="grid">
           <div className="col col-main">
@@ -248,11 +402,7 @@ export function App() {
                 {state === 'open' ? (tables.size === 0 ? 'No tables yet: the sim is signing its players up.' : 'No tables in this view.') : 'Connecting to birdseye...'}
               </div>
             ) : (
-              <div className={`tgrid${compact ? ' compact' : ''}`}>
-                {shown.map((t) => (
-                  <TableCard key={t.gid} table={t} now={now} selected={false} onSelect={select} />
-                ))}
-              </div>
+              <TableGrid tables={shown} compact={compact} now={now} onSelect={select} />
             )}
           </div>
           <div className="col col-side">

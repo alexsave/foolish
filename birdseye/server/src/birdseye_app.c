@@ -10,6 +10,7 @@
 // The league's:
 //   BE_ADMIN_TOKEN   the game server's CBASE_ADMIN_TOKEN (its dev-only POST /dev/bot_table)
 //   BE_LEAGUE_TABLES live league tables at once (default 10)
+//   BE_LEAGUE_PER_BOT tables one bot may sit at at once (default 1)
 //   BE_LEAGUE_FILE   the rated games' history (default ../data/league.bin; "" keeps none)
 //   BE_PODKIDNOY     percent of tables under podkidnoy rules (default 20 mixed, 30 league)
 //   BE_SEED          the seed (default 1)
@@ -137,6 +138,7 @@ static int be_serve_open(cb_ctx *ctx, char *err, size_t cap) {
         const char *file = getenv("BE_LEAGUE_FILE");
         snprintf(o.file, sizeof o.file, "%s", file ? file : "../data/league.bin");
         o.tables = (int)env_long("BE_LEAGUE_TABLES", 10, 1, 64);
+        o.tables_per_bot = (int)env_long("BE_LEAGUE_PER_BOT", 1, 1, 8);
         o.podkidnoy = (int)env_long("BE_PODKIDNOY", 30, 0, 100);
         o.seed = (uint64_t)env_long("BE_SEED", 1, 0, INT32_MAX);
         if ((rc = be_league_start(&o, err, cap)) != CB_OK) return rc;

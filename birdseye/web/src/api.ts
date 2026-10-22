@@ -4,15 +4,22 @@
 // here spells a byte offset: the readers are structgen's, the frames are stream_frame.h's.
 import {
   memOf,
+  readbe_w_bot,
   readbe_w_detail,
   readbe_w_event,
+  readbe_w_league,
+  readbe_w_result,
   readbe_w_list,
   readbe_w_session,
   readbe_w_table,
+  BE_F_BOT,
   BE_F_EVENT,
   BE_F_OPS,
+  BE_F_RESULT,
   BE_F_TABLE,
   type Mem,
+  type be_w_bot_Snap,
+  type be_w_result_Snap,
   type be_w_card_Snap,
   type be_w_detail_Snap,
   type be_w_event_Snap,
@@ -34,6 +41,15 @@ export type WDetail = be_w_detail_Snap;
 export type WEvent = be_w_event_Snap;
 export type WTable = be_w_table_Snap;
 export type MetricRow = cb_metric_row_Snap;
+export type WBot = be_w_bot_Snap;
+export type WResult = be_w_result_Snap;
+
+// GET /be/league: the mode birdseye runs in, every bot's standing, every rated league game.
+export interface League {
+  mode: number;
+  bots: WBot[];
+  results: WResult[];
+}
 
 // The platform's metrics report (c_base/core/src/metrics.h): the header and every row by name,
 // the platform's own rows (requests, errors_5xx, http_conns, ws_conns) among them.
@@ -97,6 +113,17 @@ export async function getDetail(gid: string, signal?: AbortSignal): Promise<WDet
   return readbe_w_detail(m, 0);
 }
 
+export async function getLeague(signal?: AbortSignal): Promise<League> {
+  const m = memOf(await fetchBytes('/be/league', { signal }));
+  const h = readbe_w_league(m, 0);
+  checkHash(h.hash);
+  const bots: WBot[] = [];
+  for (let i = 0; i < h.nBots; i++) bots.push(readbe_w_bot(m, h.botsAt + i * h.botSize));
+  const results: WResult[] = [];
+  for (let i = 0; i < h.nResults; i++) results.push(readbe_w_result(m, h.resultsAt + i * h.resultSize));
+  return { mode: h.mode, bots, results };
+}
+
 export async function getMetrics(signal?: AbortSignal): Promise<Metrics> {
   return readMetrics(memOf(await fetchBytes('/metrics', { signal })), 0);
 }
@@ -121,12 +148,16 @@ async function getSession(): Promise<string> {
 }
 
 // ---- the stream --------------------------------------------------------------------------------
+// 'closed' is a socket that dropped and is being opened again (a restart of birdseye): the page
+// says "reconnecting", grey, not an alarm; 'connecting' is the first open.
 export type StreamState = 'connecting' | 'open' | 'closed';
 
 export interface StreamHandlers {
   onTable: (t: WTable) => void;
   onEvent: (e: WEvent) => void;
   onOps: (o: Metrics) => void;
+  onResult: (r: WResult) => void;
+  onBot: (b: WBot) => void;
   onState: (s: StreamState) => void;
   onError: (e: Error) => void;
 }
@@ -176,6 +207,9 @@ export function openStream(h: StreamHandlers): () => void {
   let ping: ReturnType<typeof setInterval> | null = null;
   let delay = 1000;
   let stopped = false;
+  // Once the stream has been open, every later attempt is a reconnect: the page stays grey
+  // ("reconnecting") through a restart instead of flickering back to "connecting".
+  let everOpen = false;
 
   const schedule = () => {
     if (stopped) return;
@@ -185,7 +219,7 @@ export function openStream(h: StreamHandlers): () => void {
 
   const connect = async () => {
     if (stopped) return;
-    h.onState('connecting');
+    h.onState(everOpen ? 'closed' : 'connecting');
     let codec: Codec;
     let token: string;
     try {
@@ -220,6 +254,7 @@ export function openStream(h: StreamHandlers): () => void {
           // The socket's own frame: READY once, then the SUB's REPLY, PONGs.
           if (!ready) {
             ready = true;
+            everOpen = true;
             delay = 1000;
             sock.send(outFrame(codec, codec.w.sfw_sub(1, NW_SUB_GAME, putIn(codec, utf8.encode(ROOM)), 0)));
             h.onState('open');
@@ -238,6 +273,12 @@ export function openStream(h: StreamHandlers): () => void {
             break;
           case BE_F_OPS:
             h.onOps(readMetrics(codec.mem, at));
+            break;
+          case BE_F_RESULT:
+            h.onResult(readbe_w_result(codec.mem, at));
+            break;
+          case BE_F_BOT:
+            h.onBot(readbe_w_bot(codec.mem, at));
             break;
           default:
             break;

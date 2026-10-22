@@ -203,6 +203,10 @@ input {
   background: #ef4444;
 }
 
+.dot-grey {
+  background: #9ca3af;
+}
+
 .btn-sm {
   height: 26px;
   padding: 0 10px;
@@ -346,50 +350,49 @@ input {
   border-color: #fff;
 }
 
-.tgrid.compact {
-  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
-  gap: 8px;
-}
-
-.tgrid.compact .tcard {
+.compact .tcard {
   padding: 8px 8px 6px;
   gap: 6px;
 }
 
-.tgrid.compact .felt {
+.compact .felt {
   min-height: 50px;
   padding: 4px;
   grid-template-columns: 34px minmax(0, 1fr) 22px;
 }
 
-.tgrid.compact .tcard-foot,
-.tgrid.compact .seat-stack,
-.tgrid.compact .seat .mark-good,
-.tgrid.compact .seat .mark-out {
+.compact .tcard-foot,
+.compact .seat-stack,
+.compact .seat .mark-good,
+.compact .seat .mark-out {
   display: none;
 }
 
-.tgrid.compact .seats {
+.compact .seats {
   gap: 2px;
 }
 
-.tgrid.compact .seat {
+.compact .seat {
   grid-template-columns: minmax(0, 1fr) auto auto;
   height: 20px;
   padding: 0 5px;
   font-size: 11px;
 }
 
-.tgrid.compact .seat-marks {
+.compact .seat-marks {
   min-width: 0;
 }
 
-.tgrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 12px;
-  align-content: start;
-  align-items: start;
+.mgrid {
+  display: flex;
+  align-items: flex-start;
+}
+
+.mcol {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .tcard {
@@ -1146,4 +1149,315 @@ input {
   color: var(--faint);
   font-size: 11px;
   text-align: right;
+}
+
+.mcol > div > * {
+  width: 100%;
+}
+
+/* ---- the league ------------------------------------------------------------------------------ */
+:root {
+  --chart-grid: #eef0f3;
+  --chart-axis: #8a919c;
+}
+
+.pos {
+  color: #107a46;
+}
+
+.neg {
+  color: #b42318;
+}
+
+.r {
+  text-align: right;
+}
+
+.b {
+  font-weight: 600;
+}
+
+.fam-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+}
+
+.league-grid {
+  grid-template-columns: minmax(0, 1fr) 420px;
+}
+
+.league-grid .col-side .standings-card {
+  flex: 1;
+  min-height: 0;
+}
+
+.chart-card {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 12px;
+}
+
+.chart-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.chart-head .card-title {
+  margin-bottom: 2px;
+}
+
+.chart-sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.last-game {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 12px;
+  white-space: nowrap;
+  animation: last-game-in 1.2s ease-out;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+@keyframes last-game-in {
+  from {
+    background: #fff4d6;
+  }
+  to {
+    background: transparent;
+  }
+}
+
+.chart-wrap {
+  position: relative;
+  height: clamp(300px, calc(100vh - 420px), 560px);
+  min-height: 300px;
+}
+
+.chart-wrap canvas {
+  display: block;
+}
+
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+  padding: 6px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.chart-tip .fam-dot {
+  margin-right: 5px;
+}
+
+.chart-tip .num {
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.families {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 2px 12px;
+  margin: 0 -6px;
+}
+
+.family {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px 60px;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+}
+
+.family:hover {
+  background: #f6f7f9;
+}
+
+.family.off {
+  opacity: 0.35;
+}
+
+.family-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.family-bar {
+  height: 6px;
+  background: #f1f3f5;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.family-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s ease;
+}
+
+.family-avg {
+  text-align: right;
+  font-weight: 600;
+}
+
+.family-games {
+  text-align: right;
+  font-size: 11px;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0 2px -8px;
+}
+
+.section-head .card-title {
+  margin: 0;
+}
+
+.standings-card {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+
+.standings-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.standings-cols,
+.standing {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 46px 38px 44px 38px;
+  align-items: center;
+  gap: 6px;
+}
+
+.standings-cols {
+  padding: 0 8px 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+}
+
+.standings-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -8px;
+  padding: 4px 0;
+}
+
+.standing {
+  width: calc(100% - 16px);
+  margin: 0 8px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  transition: background 1.2s ease;
+}
+
+.standing:hover {
+  background: #f6f7f9;
+}
+
+.standing.on {
+  background: #eef3fd;
+}
+
+.standing.up {
+  background: #e6f6ee;
+  transition: none;
+}
+
+.standing.down {
+  background: #fdecea;
+  transition: none;
+}
+
+.standing-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.standing-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex: none;
+  box-shadow: 0 0 0 2px #dcfce7;
+}
+
+@media (max-width: 1100px) {
+  .league-grid {
+    grid-template-columns: 1fr;
+  }
+  .league-grid .col-side .standings-card {
+    max-height: 720px;
+  }
+}
+
+@media (max-width: 640px) {
+  .grid {
+    padding: 16px;
+  }
+  .chart-head {
+    flex-direction: column;
+  }
+  .last-game {
+    align-items: flex-start;
+    padding: 0;
+  }
 }
