@@ -57,6 +57,38 @@ static int apply(adv_world *w, uint32_t user, uint8_t type, int64_t start_ms, ad
     return rc;
 }
 
+// The top roads of the combined view, each a name in a region (lib_fakegraph: a horizontal
+// street is "Row j", a vertical one unnamed and a road of its own): by users, then by the length
+// anyone has; a road's length is its segments' in ITS region, counted once each, its users the
+// most any of its segments has, and its seg one with that many.
+static void check_top_roads(adv_world *w, const adv_graph *g) {
+    adv_top_seg top[ADV_TOP_N];
+    uint32_t nt = adv_world_top(w, ADV_T_ALL, top);
+    T_CHECK(nt == ADV_TOP_N);
+    for (uint32_t i = 0; i < nt; i++) {
+        T_CHECK(top[i].users == 1 || top[i].users == 2);
+        if (i > 0) T_CHECK(top[i].users < top[i - 1].users || (top[i].users == top[i - 1].users && top[i].len_m <= top[i - 1].len_m));
+        const adv_seg *sg = &g->segs[top[i].seg];
+        T_CHECK(atomic_load(&w->all[top[i].seg].users[ADV_T_ALL]) == top[i].users);
+        float want = 0;
+        uint32_t segs = 0;
+        uint16_t most = 0;
+        for (uint32_t k = 0; k < g->h->n_segs; k++) {
+            uint16_t u16 = atomic_load(&w->all[k].users[ADV_T_ALL]);
+            if (g->segs[k].region != sg->region || !u16) continue;
+            bool same = sg->name ? g->segs[k].name == sg->name : k == top[i].seg;
+            if (!same) continue;
+            want += g->segs[k].len_m;
+            segs++;
+            if (u16 > most) most = u16;
+        }
+        T_CHECK_MSG(fabs(top[i].len_m - want) < 0.01 && top[i].n_segs == segs, "road %u: len %f want %f segs %u want %u", i, top[i].len_m, want, top[i].n_segs, segs);
+        if (sg->name) T_CHECK(segs > 1);
+        T_CHECK_MSG(most == top[i].users, "road %u: users %u most %u", i, top[i].users, most);
+    }
+    T_CHECK(top[0].users == 2 && g->segs[top[0].seg].name != 0);
+}
+
 static void test_apply(adv_graph *g) {
     adv_world w;
     T_CHECK(adv_world_init(&w, g) == CB_OK);
@@ -126,17 +158,12 @@ static void test_apply(adv_graph *g) {
         T_CHECK(fabs(adv_world_all_m(&w, ADV_T_BIKE) - len) < 0.05 && fabs(adv_world_all_region_m(&w, 0, ADV_T_BIKE) - len) < 0.05);
         T_CHECK(fabs(adv_world_all_region_m(&w, 0, ADV_T_ALL) - adv_world_all_m(&w, ADV_T_ALL)) < 0.01 && adv_world_all_region_m(&w, 1, ADV_T_ALL) == 0);
         T_CHECK_MSG(atomic_load(&w.all_version) == 2, "version %u", atomic_load(&w.all_version));
-        // The top roads: the longest of the two-user segments first, each with 2, then the
-        // one-user ones; by bike only user 1's.
+        // The top roads (check_top_roads): every West row has a two-user segment, so the rows come
+        // first with 2, then the unnamed columns' segments.
+        check_top_roads(&w, g);
         adv_top_seg top[ADV_TOP_N];
-        uint32_t nt = adv_world_top(&w, ADV_T_ALL, top);
-        T_CHECK(nt == ADV_TOP_N);
-        for (uint32_t i = 0; i < nt; i++) {
-            T_CHECK(top[i].users == (i < two ? 2 : 1));
-            if (i > 0 && top[i].users == top[i - 1].users) T_CHECK(g->segs[top[i].seg].len_m <= g->segs[top[i - 1].seg].len_m);
-        }
-        nt = adv_world_top(&w, ADV_T_BIKE, top);
-        T_CHECK(nt == (n < ADV_TOP_N ? n : ADV_TOP_N) && top[0].users == 1);
+        uint32_t nt = adv_world_top(&w, ADV_T_BIKE, top);
+        T_CHECK(nt >= 1 && nt <= ADV_TOP_N && top[0].users == 1);
         adv_world w0;
         T_CHECK(adv_world_init(&w0, g) == CB_OK);
         T_CHECK(adv_world_top(&w0, ADV_T_ALL, top) == 0);
@@ -167,6 +194,7 @@ static void test_apply(adv_graph *g) {
     uint32_t n3 = region_hits(g, 1, h, 4096, 0.5);
     T_CHECK(apply(&w, 1, ADV_ACT_BIKE, next_month, h, n3, &a, 4) == CB_OK);
     T_CHECK(u->n_rp == 2 && u->rp[1].region == 1 && u->rp[1].month_key == adv_month_key(next_month));
+    check_top_roads(&w, g);   // a row now runs through both regions: two roads, one per region
     T_CHECK(adv_world_rank(&w, 1, false, ADV_T_BIKE, 1) == 1);
     adv_board b;
     adv_world_board_copy(&w, 0, &b);

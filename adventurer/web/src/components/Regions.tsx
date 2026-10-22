@@ -51,7 +51,9 @@ export function Regions({ type, onType, progress, regionsById, usersById, onFly,
   return (
     <section className="card">
       <div className="regions-head">
-        <h2 className="card-title">Regions</h2>
+        <h2 className="card-title">
+          Regions <span className="faint" title="Ordered by kilometres covered in the mode shown, most first">by km</span>
+        </h2>
         <div className="tabs" role="tablist">
           {[0, 1, 2].map((t) => (
             <button

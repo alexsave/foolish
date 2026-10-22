@@ -1,11 +1,13 @@
 'use client';
 
 import {
+  countCompact,
   dateText,
   EVERYONE,
   HIGHWAY_CLASS,
   int,
   km,
+  kmCompact,
   miles,
   pct,
   points,
@@ -41,14 +43,11 @@ function EveryoneCard({ everyone, type, regionsById, onFly }: Omit<Props, 'user'
       </div>
       <div className="bignums">
         {[0, 1, 2].map((t) => (
-          <div className="bignum" key={t}>
+          <div className="bignum" key={t} title={s ? `${km(s.traveledM[t])} of ${km(s.totalM[t], 0)} km; ${int(s.segs[t])} of ${int(s.segsTotal[t])} segments` : undefined}>
             <div className="label">{TYPE_LABEL[t]}</div>
-            <div className="value num">
-              {s ? km(s.traveledM[t]) : '-'}
-              <small>km</small>
-            </div>
-            <div className="sub num">{s ? `${pct(s.traveledM[t], s.totalM[t]).toFixed(1)}% of ${km(s.totalM[t], 0)} km` : ''}</div>
-            {t === 2 && s && <div className="points num">{int(s.segs[t])} of {int(s.segsTotal[t])} segs</div>}
+            <div className="value num compact">{s ? kmCompact(s.traveledM[t]) : '-'}</div>
+            <div className="sub num">{s ? `${pct(s.traveledM[t], s.totalM[t]).toFixed(1)}% of ${kmCompact(s.totalM[t])}` : ''}</div>
+            <div className="sub num">{s ? `${countCompact(s.segs[t])} / ${countCompact(s.segsTotal[t])} segs` : ''}</div>
           </div>
         ))}
       </div>
@@ -63,7 +62,7 @@ function EveryoneCard({ everyone, type, regionsById, onFly }: Omit<Props, 'user'
             <li key={`${r.seg}-${i}`}>
               <button type="button" className="toproad" onClick={() => onFly(r.cLat, r.cLon)} title="Go there">
                 <span className="rank num">{i + 1}</span>
-                <span className="who">
+                <span className="who" title={`${r.name || HIGHWAY_CLASS[r.hclass] || 'road'}, ${regionsById.get(r.region)?.name ?? ''}: ${km(r.lenM)} km travelled`}>
                   {r.name || <i>{HIGHWAY_CLASS[r.hclass] ?? 'road'}</i>}
                   <span className="faint"> {regionsById.get(r.region)?.name ?? ''}</span>
                 </span>

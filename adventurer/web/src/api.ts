@@ -297,6 +297,19 @@ export function openFeed(h: FeedHandlers): () => void {
 // ---- formatting ------------------------------------------------------------------------------
 const M_PER_MILE = 1609.344;
 
+// A length for a tight card: "412 km", "1.68k km", "41.5k km".
+export function kmCompact(m: number): string {
+  const k = m / 1000;
+  if (k < 1000) return `${k < 100 ? k.toFixed(1) : k.toFixed(0)} km`;
+  return `${(k / 1000).toFixed(k < 10000 ? 2 : 1)}k km`;
+}
+// A count for a tight card: "22.3k", "554k", "1.2M".
+export function countCompact(n: number): string {
+  if (n < 10000) return int(n);
+  if (n < 1000000) return `${(n / 1000).toFixed(n < 100000 ? 1 : 0)}k`;
+  return `${(n / 1000000).toFixed(1)}M`;
+}
+
 export function km(m: number, digits = 1): string {
   return (m / 1000).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }

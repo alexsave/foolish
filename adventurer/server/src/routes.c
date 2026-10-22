@@ -525,7 +525,7 @@ static void everyone_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) 
             r->seg = top[i].seg;
             r->users = top[i].users;
             r->region = sg->region;
-            r->len_m = sg->len_m;
+            r->len_m = top[i].len_m;   // the road's: every segment of the name in the region anyone has
             adv_pt mid = adv_seg_at(g, top[i].seg, 0.5);
             r->c_lat = mid.lat;
             r->c_lon = mid.lon;

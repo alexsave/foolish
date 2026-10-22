@@ -125,9 +125,12 @@ static inline float adv_world_all_m(const adv_world *w, int type) {
 static inline float adv_world_all_region_m(const adv_world *w, uint16_t region, int type) {
     return (float)(atomic_load_explicit((_Atomic uint64_t *)&w->all_region_cm[(size_t)region * ADV_T_N + type], memory_order_relaxed) / 100.0);
 }
-// The ADV_TOP_N (wire.h) most-travelled segments of a type (by distinct users, then length)
-// into out: how many were written (fewer when fewer segments have a user). A scan of every segment.
-typedef struct { uint32_t seg; uint16_t users; } adv_top_seg;
+// The ADV_TOP_N (wire.h) most-travelled ROADS of a type into out: a road is every segment of one
+// name in one region (an unnamed segment is a road of its own), its users the most any of its
+// segments has, its length the length of its segments anyone has, its seg the segment with the
+// most users (where a map flies to). Ordered by users, then length. How many were written (fewer
+// when fewer roads have a user). A scan of every segment and a table of the roads anyone has.
+typedef struct { uint32_t seg; uint16_t users; uint16_t n_segs; float len_m; } adv_top_seg;
 uint32_t adv_world_top(const adv_world *w, int type, adv_top_seg out[ADV_TOP_N]);
 
 // The super-unique view of a user: segments only this user has travelled (owner == id), their

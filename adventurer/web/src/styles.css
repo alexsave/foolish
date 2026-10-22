@@ -1022,3 +1022,9 @@ input {
   white-space: nowrap;
   font-weight: 500;
 }
+
+/* Everyone's card: whole numbers that fit the three columns at any size. */
+.bignum .value.compact {
+  font-size: 19px;
+  letter-spacing: -0.01em;
+}

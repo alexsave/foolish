@@ -277,27 +277,65 @@ void adv_world_board_copy(adv_world *w, uint16_t region, adv_board *out) {
     pthread_mutex_unlock(&w->boards_lock);
 }
 
+// The roads anyone has, keyed by (name, region) for a named segment and by the segment for an
+// unnamed one, in open addressing sized for them; the top list is then an insertion over the table.
+typedef struct { uint64_t key; adv_top_seg road; } road_slot;
+
+static uint64_t road_key(const adv_graph *g, uint32_t seg) {
+    const adv_seg *s = &g->segs[seg];
+    if (s->name == 0) return (uint64_t)seg + 1;                           // its own road
+    return (1ull << 63) | ((uint64_t)s->name << 16) | (uint64_t)s->region;   // a name in a region
+}
+
 uint32_t adv_world_top(const adv_world *w, int type, adv_top_seg out[ADV_TOP_N]) {
-    uint32_t n = 0;
     const adv_graph *g = w->g;
+    uint32_t have = atomic_load_explicit((_Atomic uint32_t *)&w->all_segs[type], memory_order_relaxed);
+    if (!have) return 0;
+    uint64_t cap = 16;
+    while (cap < (uint64_t)have * 2) cap *= 2;
+    road_slot *t = calloc(cap, sizeof *t);
+    if (!t) return 0;
     for (uint32_t i = 0; i < g->h->n_segs; i++) {
         uint16_t users = atomic_load_explicit(&w->all[i].users[type], memory_order_relaxed);
         if (!users) continue;
-        float len = g->segs[i].len_m;
-        // Does it beat the last of the list (or is the list short)? Then insert in order.
+        uint64_t key = road_key(g, i);
+        uint64_t k = (key * 0x9E3779B97F4A7C15ull) >> 20;
+        for (;;) {
+            road_slot *slot = &t[k & (cap - 1)];
+            if (!slot->key) {
+                slot->key = key;
+                slot->road.seg = i;
+                slot->road.users = users;
+                slot->road.n_segs = 1;
+                slot->road.len_m = g->segs[i].len_m;
+                break;
+            }
+            if (slot->key == key) {
+                if (users > slot->road.users) { slot->road.users = users; slot->road.seg = i; }
+                if (slot->road.n_segs != UINT16_MAX) slot->road.n_segs++;
+                slot->road.len_m += g->segs[i].len_m;
+                break;
+            }
+            k++;
+        }
+    }
+    uint32_t n = 0;
+    for (uint64_t i = 0; i < cap; i++) {
+        if (!t[i].key) continue;
+        const adv_top_seg *r = &t[i].road;
         if (n == ADV_TOP_N) {
             const adv_top_seg *last = &out[ADV_TOP_N - 1];
-            if (users < last->users || (users == last->users && len <= g->segs[last->seg].len_m)) continue;
+            if (r->users < last->users || (r->users == last->users && r->len_m <= last->len_m)) continue;
             n--;
         }
         uint32_t k = n;
-        while (k > 0 && (users > out[k - 1].users || (users == out[k - 1].users && len > g->segs[out[k - 1].seg].len_m))) {
+        while (k > 0 && (r->users > out[k - 1].users || (r->users == out[k - 1].users && r->len_m > out[k - 1].len_m))) {
             out[k] = out[k - 1];
             k--;
         }
-        out[k].seg = i;
-        out[k].users = users;
+        out[k] = *r;
         n++;
     }
+    free(t);
     return n;
 }
