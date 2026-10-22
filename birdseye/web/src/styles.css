@@ -357,7 +357,8 @@ input {
 }
 
 .tgrid.compact .felt {
-  height: 50px;
+  min-height: 50px;
+  padding: 4px;
   grid-template-columns: 34px minmax(0, 1fr) 22px;
 }
 
@@ -369,9 +370,7 @@ input {
 }
 
 .tgrid.compact .seats {
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: 4px;
+  gap: 2px;
 }
 
 .tgrid.compact .seat {
@@ -379,8 +378,6 @@ input {
   height: 20px;
   padding: 0 5px;
   font-size: 11px;
-  flex: 1 1 45%;
-  min-width: 0;
 }
 
 .tgrid.compact .seat-marks {
@@ -442,7 +439,7 @@ input {
   grid-template-columns: 44px minmax(0, 1fr) 26px;
   align-items: center;
   gap: 6px;
-  height: 64px;
+  min-height: 64px;
   padding: 6px;
   border-radius: 6px;
   background: radial-gradient(ellipse at center, #358a5c 0%, var(--felt) 55%, var(--felt-dark) 100%);
