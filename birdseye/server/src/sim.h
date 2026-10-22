@@ -5,8 +5,6 @@
 #ifndef BE_SIM_H
 #define BE_SIM_H
 
-#include "wire.h"
-
 #include <stddef.h>
 #include <stdint.h>
 
@@ -32,7 +30,8 @@ int  be_sim_start(const be_sim_opts *o, char *err, size_t cap);
 // Stops the threads (every player leaves its table first, as far as a few seconds allow).
 void be_sim_stop(void);
 
-// The ops record now (any thread).
-void be_ops_fill(be_w_ops *out);
+// Writes the sim's gauges into the registry (be_metrics.h): the tables, the players, the sockets,
+// the game server's memory and CPU. Called before each report (the ops timer, once a second).
+void be_sim_gauges(void);
 
 #endif

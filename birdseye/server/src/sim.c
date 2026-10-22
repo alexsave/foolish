@@ -18,8 +18,9 @@
 // then rematch (ASK_CONTINUE) or leave (ASK_EXIT; the last one out deletes the table).
 #include "sim.h"
 
-#include "metrics.h"
+#include "be_metrics.h"
 #include "util/clock.h"
+#include "util/metrics.h"
 #include "util/err.h"
 #include "util/log.h"
 #include "util/str.h"
@@ -142,7 +143,6 @@ static sim_thread   g_threads[BE_SIM_MAX_THREADS];
 static atomic_bool  g_stop;
 static atomic_uint  g_sockets, g_seated, g_bots_seated;
 static atomic_ullong g_hostile_seq;
-static int64_t      g_started_ms;
 static char         g_bot_ids[MAX_BOT_IDS][NW_ID_MAX + 1];
 static char         g_bot_keys[MAX_BOT_IDS][NW_KEY_MAX + 1];
 static char         g_bot_names[MAX_BOT_IDS][NW_NAME_MAX + 1];
@@ -151,7 +151,6 @@ static pthread_mutex_t g_ready_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_ready_cv = PTHREAD_COND_INITIALIZER;
 static int          g_n_ready;
 static uint64_t     g_server_cpu_us, g_server_cpu_at_us;
-static uint32_t     g_server_cpu_cpct;
 
 static const char *const FIRST_NAMES[NAME_POOL] = {
     "Anya", "Boris", "Clara", "Dmitri", "Elena", "Felix", "Greta", "Hugo", "Irina", "Jonas", "Katya", "Leon",
@@ -208,7 +207,7 @@ static bool send_req(player *p, int kind, int meth, const char *path, const uint
         return false;
     }
     ws_send(p, frame, (size_t)len);
-    be_rate_add(&be_m.reqs, 1);
+    cb_metrics_rate(be_mx, BE_M_REQS, cb_now_ms(), 1);
     return true;
 }
 
@@ -462,7 +461,7 @@ static void refetch(player *p) {
     snprintf(path, sizeof path, "/v1/games/%s", p->table->gid);
     if (send_req(p, R_VIEW, SF_METH_GET, path, NULL, 0, 0, 0)) {
         p->refetching = true;
-        atomic_fetch_add(&be_m.n_resyncs, 1);
+        cb_metrics_add(be_mx, BE_M_RESYNCS, 1);
         event_at(p->table, BE_EV_RESYNC, p->ct.view.my_seat, NULL, 0, p->ct.view.version, 0, 0);
     }
 }
@@ -486,7 +485,7 @@ static void apply_cast(player *p, const uint8_t *cast, int n, uint32_t version, 
     }
     push_events(p, p->table);
     rc = client_push_final(&p->ct);
-    be_hist_add(&be_m.cast, (uint64_t)(cb_mono_us() - t0));
+    cb_metrics_observe(be_mx, BE_M_CAST_DECODE, (uint64_t)(cb_mono_us() - t0));
     if (rc < 0) {
         refetch(p);
         return;
@@ -494,7 +493,7 @@ static void apply_cast(player *p, const uint8_t *cast, int n, uint32_t version, 
     if (p->ct.view.version > p->table->version) p->table->version = p->ct.view.version;
     p->table->last_change_ms = now_ms;
     if (p->wait_t0_us && p->ct.view.version > p->wait_v) {
-        be_hist_add(&be_m.push, (uint64_t)(cb_mono_us() - p->wait_t0_us));
+        cb_metrics_observe(be_mx, BE_M_MOVE_PUSH, (uint64_t)(cb_mono_us() - p->wait_t0_us));
         p->wait_t0_us = 0;
     }
     report(p, now_ms);
@@ -612,13 +611,12 @@ static void send_move(sim_thread *th, player *p, int64_t now_ms) {
     int len = table_request_encode(buf, sizeof buf, gid_len, n, true, intent);
     if (len <= 0) return;
     if (!send_req(p, R_ACTION, SF_METH_POST, "/v1/action", buf, (size_t)len, hostile, intent)) return;
-    if (hostile) atomic_fetch_add(&be_m.n_hostile, 1);
+    if (hostile) cb_metrics_add(be_mx, BE_M_HOSTILE, 1);
     else {
         p->played_v = intent;
         p->wait_t0_us = cb_mono_us();
         p->wait_v = intent;
-        atomic_fetch_add(&be_m.n_moves, 1);
-        be_rate_add(&be_m.moves, 1);
+        cb_metrics_rate(be_mx, BE_M_MOVES, cb_now_ms(), 1);
         t->moves++;
     }
 }
@@ -641,12 +639,12 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
     sim_table *t = p->table;
     switch (q.kind) {
     case R_ACTION: {
-        be_hist_add(&be_m.act, dt);
+        cb_metrics_observe(be_mx, BE_M_MOVE_ACK, dt);
         TableResponse r;
         bool applied = f->status == 200 && table_response_decode(f->body, (int)f->body_len, &r) == 0 && r.status == TABLE_STATUS_APPLIED;
         if (q.hostile) {
             if (applied) {
-                atomic_fetch_add(&be_m.n_hostile_accepted, 1);
+                cb_metrics_add(be_mx, BE_M_HOSTILE_TAKEN, 1);
                 CB_WARN("birdseye", "%s: a hostile move of kind %d was APPLIED at %s (status %d)", p->name, q.hostile, t ? t->gid : "?", f->status);
             }
             if (t) hostile_event(t, p->ct.view.my_seat, q.hostile, !applied);
@@ -658,7 +656,7 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
             bool raced = f->status == 200 && table_response_decode(f->body, (int)f->body_len, &r) == 0 &&
                          (r.status == TABLE_STATUS_MOOT || (r.status == TABLE_STATUS_REJECTED && r.reject_code == TABLE_REJECT_STALE_ROUND));
             if (!raced) {
-                atomic_fetch_add(&be_m.n_refused, 1);
+                cb_metrics_add(be_mx, BE_M_REFUSED, 1);
                 if (t) event_at(t, BE_EV_REFUSED, p->ct.view.my_seat, NULL, 0, q.intent, dt, 1);
             }
             p->played_v = 0;   // try again on the next board
@@ -673,7 +671,7 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
         break;
     }
     case R_CREATE:
-        be_hist_add(&be_m.req, dt);
+        cb_metrics_observe(be_mx, BE_M_REQ, dt);
         if (f->status == 200 && t) {
             adopt_env(p, f->body, (int)f->body_len, now_ms);
             if (p->have && p->ct.gid_len > 0 && p->ct.gid_len <= NW_GID_MAX) {
@@ -701,7 +699,7 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
     case R_ASK:
     case R_START:
     case R_CONTINUE:
-        be_hist_add(&be_m.req, dt);
+        cb_metrics_observe(be_mx, BE_M_REQ, dt);
         if (f->status == 200) adopt_env(p, f->body, (int)f->body_len, now_ms);
         else {
             AskRefusal why;
@@ -713,7 +711,7 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
         if (t) t->step_pending = false;
         break;
     case R_VIEW:
-        be_hist_add(&be_m.req, dt);
+        cb_metrics_observe(be_mx, BE_M_REQ, dt);
         p->refetching = false;
         if (f->status == 200) {
             uint32_t version;
@@ -722,7 +720,7 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
         } else if (f->status == 404 && t) t->state = P_LEAVING;
         break;
     case R_EXIT:
-        be_hist_add(&be_m.req, dt);
+        cb_metrics_observe(be_mx, BE_M_REQ, dt);
         if (t) t->exits_pending--;
         break;
     default: break;
@@ -732,8 +730,9 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
 // ---- frames in --------------------------------------------------------------------------------
 
 static void on_message(sim_thread *th, player *p, const uint8_t *msg, size_t n, int64_t now_ms) {
-    be_rate_add(&be_m.pushes, 1);
-    be_rate_add(&be_m.push_bytes, n);
+    int64_t wall = cb_now_ms();
+    cb_metrics_rate(be_mx, BE_M_PUSHES, wall, 1);
+    cb_metrics_rate(be_mx, BE_M_PUSH_BYTES, wall, n);
     sf_frame f;
     if (sf_parse(msg, n, &f) == 0) {
         if (f.kind == SF_REPLY) on_reply(th, p, &f, now_ms);
@@ -948,7 +947,7 @@ static void table_tick(sim_thread *th, sim_table *t, int64_t now_ms) {
             for (int i = 0; i < t->n_humans; i++) player_of(th, t->humans[i])->state = P_PLAYING;
             if (!t->dealt_ms) t->dealt_ms = now_ms;
         } else if (now_ms - t->last_change_ms > STALL_MS) {
-            atomic_fetch_add(&be_m.n_stalls, 1);
+            cb_metrics_add(be_mx, BE_M_STALLS, 1);
             event_at(t, BE_EV_STALL, -1, NULL, 0, t->version, 0, 0);
             t->state = P_LEAVING;
         }
@@ -963,14 +962,13 @@ static void table_tick(sim_thread *th, sim_table *t, int64_t now_ms) {
         if (over) {
             t->state = P_OVER;
             t->over_ms = now_ms;
-            atomic_fetch_add(&be_m.n_games, 1);
-            be_rate_add(&be_m.games, 1);
-            if (t->dealt_ms) be_hist_add(&be_m.game_s, (uint64_t)((now_ms - t->dealt_ms) / 1000));
+            cb_metrics_rate(be_mx, BE_M_GAMES, cb_now_ms(), 1);
+            if (t->dealt_ms) cb_metrics_observe(be_mx, BE_M_GAME_S, (uint64_t)((now_ms - t->dealt_ms) / 1000));
             event_at(t, BE_EV_OVER, creator->have ? creator->ct.view.fool : -1, NULL, 0, t->version, 0, 0);
             t->rematch = (int)rnd(&th->rng, 100) < g_o.rematch;
             for (int i = 0; i < t->n_humans; i++) player_of(th, t->humans[i])->state = P_OVER;
         } else if (now_ms - t->last_change_ms > STALL_MS) {
-            atomic_fetch_add(&be_m.n_stalls, 1);
+            cb_metrics_add(be_mx, BE_M_STALLS, 1);
             event_at(t, BE_EV_STALL, -1, NULL, 0, t->version, 0, 0);
             CB_WARN("birdseye", "table %s stalled at v%u: leaving it", t->gid, t->version);
             t->state = P_LEAVING;
@@ -1166,7 +1164,6 @@ int be_sim_start(const be_sim_opts *o, char *err, size_t cap) {
     }
     if (o->threads > o->players) g_o.threads = o->players;
     atomic_store(&g_stop, false);
-    g_started_ms = cb_now_ms();
     g_n_ready = 0;
     int per = o->players / g_o.threads, extra = o->players % g_o.threads;
     int tables_per = o->tables / g_o.threads, tables_extra = o->tables % g_o.threads;
@@ -1235,54 +1232,25 @@ void be_sim_stop(void) {
     }
 }
 
-void be_ops_fill(be_w_ops *o) {
-    memset(o, 0, sizeof *o);
-    int64_t now_ms = cb_now_ms();
-    o->hash = be_wire_hash();
-    o->uptime_s = (uint32_t)((now_ms - g_started_ms) / 1000);
+void be_sim_gauges(void) {
     be_world_lock(&be_world_g);
-    o->tables_live = be_world_g.live;
-    o->tables_lobby = be_world_g.lobby;
-    o->tables_playing = be_world_g.playing;
+    uint32_t live = be_world_g.live, lobby = be_world_g.lobby, playing = be_world_g.playing;
     be_world_unlock(&be_world_g);
-    o->games_total = (uint32_t)atomic_load(&be_m.n_games);
-    o->moves_total = (uint32_t)atomic_load(&be_m.n_moves);
-    o->refused_total = (uint32_t)atomic_load(&be_m.n_refused);
-    o->hostile_total = (uint32_t)atomic_load(&be_m.n_hostile);
-    o->hostile_accepted = (uint32_t)atomic_load(&be_m.n_hostile_accepted);
-    o->resyncs_total = (uint32_t)atomic_load(&be_m.n_resyncs);
-    o->stalls_total = (uint32_t)atomic_load(&be_m.n_stalls);
-    o->players = (uint32_t)g_o.players;
-    o->players_seated = atomic_load(&g_seated);
-    o->sockets = atomic_load(&g_sockets);
-    o->bots_seated = atomic_load(&g_bots_seated);
-    o->threads = (uint32_t)g_o.threads;
-    o->server_rss_mb = g_o.server_pid ? be_rss_mb(g_o.server_pid) : 0;
-    o->self_rss_mb = be_rss_mb(0);
+    cb_metrics_set(be_mx, BE_M_TABLES_LIVE, live);
+    cb_metrics_set(be_mx, BE_M_TABLES_LOBBY, lobby);
+    cb_metrics_set(be_mx, BE_M_TABLES_PLAYING, playing);
+    cb_metrics_set(be_mx, BE_M_PLAYERS, (uint64_t)g_o.players);
+    cb_metrics_set(be_mx, BE_M_PLAYERS_SEATED, atomic_load(&g_seated));
+    cb_metrics_set(be_mx, BE_M_SOCKETS, atomic_load(&g_sockets));
+    cb_metrics_set(be_mx, BE_M_BOTS_SEATED, atomic_load(&g_bots_seated));
+    cb_metrics_set(be_mx, BE_M_THREADS, (uint64_t)g_o.threads);
     if (g_o.server_pid) {
-        // CPU over the window since the last fill (the ops timer's second).
-        uint64_t cpu = be_cpu_us(g_o.server_pid), at = (uint64_t)cb_mono_us();
+        cb_metrics_set(be_mx, BE_M_SERVER_RSS_MB, cb_rss_mb(g_o.server_pid));
+        // CPU over the window since the last reading (the ops timer's second).
+        uint64_t cpu = cb_cpu_us(g_o.server_pid), at = (uint64_t)cb_mono_us();
         if (g_server_cpu_at_us && at > g_server_cpu_at_us && cpu >= g_server_cpu_us)
-            g_server_cpu_cpct = (uint32_t)((cpu - g_server_cpu_us) * 10000 / (at - g_server_cpu_at_us));
+            cb_metrics_set(be_mx, BE_M_SERVER_CPU_CPCT, (cpu - g_server_cpu_us) * 10000 / (at - g_server_cpu_at_us));
         g_server_cpu_us = cpu;
         g_server_cpu_at_us = at;
-        o->server_cpu_cpct = g_server_cpu_cpct;
     }
-    o->games_per_s = be_rate_per_s(&be_m.games);
-    o->moves_per_s = be_rate_per_s(&be_m.moves);
-    o->pushes_per_s = be_rate_per_s(&be_m.pushes);
-    o->push_bytes_per_s = be_rate_per_s(&be_m.push_bytes);
-    o->req_per_s = be_rate_per_s(&be_m.reqs);
-    o->act_p50_us = be_hist_pct(&be_m.act, 50);
-    o->act_p99_us = be_hist_pct(&be_m.act, 99);
-    o->act_max_us = (uint32_t)atomic_load(&be_m.act.max);
-    o->push_p50_us = be_hist_pct(&be_m.push, 50);
-    o->push_p99_us = be_hist_pct(&be_m.push, 99);
-    o->cast_p50_us = be_hist_pct(&be_m.cast, 50);
-    o->cast_p99_us = be_hist_pct(&be_m.cast, 99);
-    o->req_p50_us = be_hist_pct(&be_m.req, 50);
-    o->req_p99_us = be_hist_pct(&be_m.req, 99);
-    o->game_p50_s = be_hist_pct(&be_m.game_s, 50);
-    o->game_p99_s = be_hist_pct(&be_m.game_s, 99);
-    o->act_n = (uint32_t)atomic_load(&be_m.act.n);
 }

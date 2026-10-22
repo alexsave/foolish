@@ -16,6 +16,7 @@
 //   BE_REMATCH       percent of finished games that rematch (default 30)
 #include "cbase/app.h"
 
+#include "be_metrics.h"
 #include "metrics.h"
 #include "net/loop.h"
 #include "realtime/realtime.h"
@@ -35,6 +36,22 @@
 _Static_assert(BE_SF_V == SF_V, "wire.h BE_SF_V must be stream_frame.h's SF_V");
 
 static cb_ctx *g_ctx;
+cb_metrics *be_mx;
+
+// THE NAMES, in be_metrics.h's order (the enum indexes this table).
+const cb_metric_def be_metric_defs[BE_M_N] = {
+    { "move_ack_us", CB_METRIC_HIST },      { "move_push_us", CB_METRIC_HIST },  { "cast_decode_us", CB_METRIC_HIST },
+    { "req_us", CB_METRIC_HIST },           { "game_s", CB_METRIC_HIST },
+    { "moves", CB_METRIC_RATE },            { "games", CB_METRIC_RATE },         { "pushes", CB_METRIC_RATE },
+    { "push_bytes", CB_METRIC_RATE },       { "reqs", CB_METRIC_RATE },
+    { "refused", CB_METRIC_COUNTER },       { "hostile", CB_METRIC_COUNTER },    { "hostile_taken", CB_METRIC_COUNTER },
+    { "resyncs", CB_METRIC_COUNTER },       { "stalls", CB_METRIC_COUNTER },
+    { "tables_live", CB_METRIC_GAUGE },     { "tables_lobby", CB_METRIC_GAUGE }, { "tables_playing", CB_METRIC_GAUGE },
+    { "players", CB_METRIC_GAUGE },         { "players_seated", CB_METRIC_GAUGE }, { "sockets", CB_METRIC_GAUGE },
+    { "bots_seated", CB_METRIC_GAUGE },     { "threads", CB_METRIC_GAUGE },      { "server_rss_mb", CB_METRIC_GAUGE },
+    { "server_cpu_cpct", CB_METRIC_GAUGE },
+};
+
 static const cb_topic_family BE_FAMILY = { "birdseye", "s/{doc}" };
 static const cb_topic_family *const BE_TOPICS[] = { &BE_FAMILY };
 #define BE_ROOM "all"
@@ -53,16 +70,20 @@ static long env_long(const char *name, long dflt, long lo, long hi) {
     return num_parse_i64(v, strlen(v), lo, hi, &n) ? (long)n : dflt;
 }
 
-// The ops frame, once a second on the loop thread (loop-thread delivery is immediate).
+// The numbers, once a second on the loop thread: the gauges written, then the platform's
+// report pushed to the room as it answers GET /metrics (loop-thread delivery is immediate).
 static void ops_tick(cb_loop *l, void *ud) {
-    if (cb_rt_room_heard(g_ctx->rt, BE_ROOM)) {
-        uint8_t frame[2 + sizeof(be_w_ops)];
-        frame[0] = BE_SF_V;
-        frame[1] = BE_F_OPS;
-        be_w_ops o;
-        be_ops_fill(&o);
-        memcpy(frame + 2, &o, sizeof o);
-        be_publish(frame, sizeof frame);
+    be_sim_gauges();
+    if (cb_rt_room_heard(g_ctx->rt, BE_ROOM) && g_ctx->metrics) {
+        size_t size = cb_metrics_report_size(g_ctx->metrics);
+        uint8_t *frame = malloc(2 + size);
+        if (frame) {
+            frame[0] = BE_SF_V;
+            frame[1] = BE_F_OPS;
+            size_t n = cb_metrics_report(g_ctx->metrics, g_ctx, cb_now_ms(), frame + 2, size);
+            if (n) be_publish(frame, 2 + n);
+            free(frame);
+        }
     }
     be_world_lock(&be_world_g);
     be_world_prune(&be_world_g);
@@ -74,6 +95,7 @@ static void ops_arm(cb_loop *l, void *ud) { cb_loop_timer(l, 1000, ops_tick, ud)
 
 static int be_serve_open(cb_ctx *ctx, char *err, size_t cap) {
     g_ctx = ctx;
+    be_mx = ctx->metrics;
     if (be_world_init(&be_world_g, BE_WORLD_MAX_TABLES) != 0) {
         snprintf(err, cap, "birdseye: no memory for the world");
         return CB_E_NOMEM;
@@ -112,6 +134,7 @@ static void be_serve_close(cb_ctx *ctx) {
     be_sim_stop();
     be_world_g.publish = NULL;
     be_world_free(&be_world_g);
+    be_mx = NULL;
     g_ctx = NULL;
 }
 
@@ -125,6 +148,8 @@ static const cb_app BE_APP = {
     .n_topics = 1,
     .serve_open = be_serve_open,
     .serve_close = be_serve_close,
+    .metrics = be_metric_defs,
+    .n_metrics = BE_M_N,
 };
 
 const cb_app *const cb_main_app = &BE_APP;

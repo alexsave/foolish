@@ -101,9 +101,9 @@ build/gen/console_html.c: $(CB)/core/src/admin/console.html build/embed
 STRUCTGEN := $(C_ROOT)/shared/tools/structgen/build/structgen
 WIRE_TS   := ../web/src/gen/wire.ts
 SG_ARGS := --cwd src --header wire.h --build 'be=-std=gnu11' \
-           --root be_w_card --root be_w_seat --root be_w_table --root be_w_event --root be_w_hand --root be_w_detail --root be_w_ops --root be_w_list --root be_w_session \
+           --root be_w_card --root be_w_seat --root be_w_table --root be_w_event --root be_w_hand --root be_w_detail --root be_w_list --root be_w_session \
            --snapshot be_w_card --snapshot be_w_seat --snapshot be_w_table --snapshot be_w_event --snapshot be_w_hand --snapshot be_w_detail \
-           --snapshot be_w_ops --snapshot be_w_list --snapshot be_w_session --snapshot-only \
+           --snapshot be_w_list --snapshot be_w_session --snapshot-only \
            --count be_w_seat.name=name_len --count be_w_seat.brain=brain_len --count be_w_table.gid=gid_len \
            --count be_w_table.attack=num_battles --count be_w_table.defense=num_battles --count be_w_table.seats=num_players \
            --count be_w_event.gid=gid_len --count be_w_event.cards=n_cards --count be_w_hand.cards=n --count be_w_detail.events=n_events --count be_w_session.token=token_len \
@@ -121,6 +121,17 @@ $(WIRE_TS): $(WIRE_HASH_FILE)
 	@mkdir -p $(@D)
 	cp build/gen/wire.ts $@
 	cp build/gen/wire_hash.ts $(dir $@)wire_hash.ts
+
+# The platform's metrics report (c_base/core/src/metrics.h), read by the site with a reader
+# structgen writes from the platform's own header: the rows are found by name (be_metrics.h).
+METRICS_TS := ../web/src/gen/metrics.ts
+$(METRICS_TS): $(CB)/core/src/metrics.h $(STRUCTGEN)
+	@mkdir -p $(@D)
+	$(STRUCTGEN) --cwd $(CB)/core/src --header metrics.h --build 'be=-std=gnu11 -I../include -I. -I../../../shared/c' \
+	  --root cb_metrics_hdr --root cb_metric_row --snapshot cb_metrics_hdr --snapshot cb_metric_row \
+	  --fields cb_metrics_hdr=version,n_rows,n_platform,row_size,at_ms,uptime_s,rss_mb,cpu_us,pid,SIZE \
+	  --fields cb_metric_row=kind,name_len,index,total,per_s,p50,p90,p99,max,name,SIZE --count cb_metric_row.name=name_len \
+	  --const CB_METRIC_ --const CB_METRICS_WIRE --const CB_METRICS_N_ --ts $@.new && mv $@.new $@
 
 # ---- the site's stream codec, in wasm ----------------------------------------------------------
 # wasm/sf_wasm.c wraps shared/c/stream_frame.h's own writers and parser (the one owner of the
@@ -175,7 +186,7 @@ $(call c_objs,build/obj/rel,$(APP_SRC) tools/main_serve.c $(TEST_SRC)): | $(WIRE
 $(call c_objs,build/obj/asan,$(APP_SRC) tools/main_serve.c $(TEST_SRC)): | $(WIRE_HASH_FILE)
 
 .PHONY: all test smoke check test-asan smoke-asan check-asan clean
-all: build/birdseye $(WIRE_TS) $(SF_WASM) $(SF_WASM_TS)
+all: build/birdseye $(WIRE_TS) $(METRICS_TS) $(SF_WASM) $(SF_WASM_TS)
 
 CHECK_JOBS ?= 4
 RUN_ALL_SH = mkdir -p build/logs && printf '%s\0' $(2) | xargs -0 -P $(CHECK_JOBS) -n 1 sh -c \

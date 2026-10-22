@@ -7,7 +7,6 @@ import {
   readbe_w_detail,
   readbe_w_event,
   readbe_w_list,
-  readbe_w_ops,
   readbe_w_session,
   readbe_w_table,
   BE_F_EVENT,
@@ -17,17 +16,43 @@ import {
   type be_w_card_Snap,
   type be_w_detail_Snap,
   type be_w_event_Snap,
-  type be_w_ops_Snap,
   type be_w_table_Snap,
 } from './gen/wire';
 import { LAYOUT_HASH } from './gen/wire_hash';
+import {
+  cb_metrics_hdr_SIZE,
+  readcb_metric_row,
+  readcb_metrics_hdr,
+  CB_METRICS_WIRE_VERSION,
+  type cb_metric_row_Snap,
+  type cb_metrics_hdr_Snap,
+} from './gen/metrics';
 import type { SfWasm } from './gen/sf_wasm';
 
 export type WCard = be_w_card_Snap;
 export type WDetail = be_w_detail_Snap;
 export type WEvent = be_w_event_Snap;
-export type WOps = be_w_ops_Snap;
 export type WTable = be_w_table_Snap;
+export type MetricRow = cb_metric_row_Snap;
+
+// The platform's metrics report (c_base/core/src/metrics.h): the header and every row by name,
+// the platform's own rows (requests, errors_5xx, http_conns, ws_conns) among them.
+export interface Metrics {
+  hdr: cb_metrics_hdr_Snap;
+  rows: Map<string, MetricRow>;
+}
+
+// The rows follow the header back to back, each hdr.rowSize bytes (the platform's own sizeof).
+function readMetrics(m: Mem, at: number): Metrics {
+  const hdr = readcb_metrics_hdr(m, at);
+  if (hdr.version !== CB_METRICS_WIRE_VERSION) throw new WireMismatch();
+  const rows = new Map<string, MetricRow>();
+  for (let i = 0; i < hdr.nRows; i++) {
+    const r = readcb_metric_row(m, at + cb_metrics_hdr_SIZE + i * hdr.rowSize);
+    rows.set(r.name, r);
+  }
+  return { hdr, rows };
+}
 
 // The birdseye process's origin. The page is served by Next, the data comes from here,
 // cross-origin (the platform answers CORS), so every URL is absolute.
@@ -72,11 +97,20 @@ export async function getDetail(gid: string, signal?: AbortSignal): Promise<WDet
   return readbe_w_detail(m, 0);
 }
 
-export async function getOps(signal?: AbortSignal): Promise<WOps> {
-  const m = memOf(await fetchBytes('/be/ops', { signal }));
-  const ops = readbe_w_ops(m, 0);
-  checkHash(ops.hash);
-  return ops;
+export async function getMetrics(signal?: AbortSignal): Promise<Metrics> {
+  return readMetrics(memOf(await fetchBytes('/metrics', { signal })), 0);
+}
+
+// A row's numbers with a default for a name the report does not carry (an older build).
+export function metric(ms: Metrics | null, name: string): MetricRow | null {
+  return ms?.rows.get(name) ?? null;
+}
+export function gauge(ms: Metrics | null, name: string): number {
+  const r = metric(ms, name);
+  return r ? Number(r.total) : 0;
+}
+export function perS(ms: Metrics | null, name: string): number {
+  return metric(ms, name)?.perS ?? 0;
 }
 
 async function getSession(): Promise<string> {
@@ -92,7 +126,7 @@ export type StreamState = 'connecting' | 'open' | 'closed';
 export interface StreamHandlers {
   onTable: (t: WTable) => void;
   onEvent: (e: WEvent) => void;
-  onOps: (o: WOps) => void;
+  onOps: (o: Metrics) => void;
   onState: (s: StreamState) => void;
   onError: (e: Error) => void;
 }
@@ -202,12 +236,9 @@ export function openStream(h: StreamHandlers): () => void {
           case BE_F_EVENT:
             h.onEvent(readbe_w_event(codec.mem, at));
             break;
-          case BE_F_OPS: {
-            const o = readbe_w_ops(codec.mem, at);
-            checkHash(o.hash);
-            h.onOps(o);
+          case BE_F_OPS:
+            h.onOps(readMetrics(codec.mem, at));
             break;
-          }
           default:
             break;
         }

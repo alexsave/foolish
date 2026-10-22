@@ -1,9 +1,9 @@
 'use client';
 
-import { int, uptime, usToText, secondsText, type WOps } from '../api';
+import { gauge, int, metric, perS, uptime, usToText, secondsText, type Metrics } from '../api';
 
 interface Props {
-  ops: WOps | null;
+  ops: Metrics | null;
   spark: number[];
 }
 
@@ -51,37 +51,39 @@ export function Ops({ ops, spark }: Props) {
       ) : (
         <>
           <div className="tiles">
-            <Tile label="Moves/s" value={ops.movesPerS.toFixed(1)} />
-            <Tile label="Games/min" value={(ops.gamesPerS * 60).toFixed(1)} />
-            <Tile label="Pushes/s" value={ops.pushesPerS.toFixed(0)} />
-            <Tile label="Move ack p50" value={usToText(ops.actP50Us)} />
-            <Tile label="Move ack p99" value={usToText(ops.actP99Us)} />
-            <Tile label="Move ack max" value={usToText(ops.actMaxUs)} />
-            <Tile label="Move to push p50" value={usToText(ops.pushP50Us)} />
-            <Tile label="Move to push p99" value={usToText(ops.pushP99Us)} />
-            <Tile label="Cast decode p99" value={usToText(ops.castP99Us)} />
-            <Tile label="Other req p50" value={usToText(ops.reqP50Us)} />
-            <Tile label="Other req p99" value={usToText(ops.reqP99Us)} />
-            <Tile label="Push bytes/s" value={(ops.pushBytesPerS / 1024).toFixed(0)} unit="KB" />
-            <Tile label="Server RSS" value={int(ops.serverRssMb)} unit="MB" />
-            <Tile label="Server CPU" value={(ops.serverCpuCpct / 100).toFixed(2)} unit="% of a core" />
-            <Tile label="Sim RSS" value={int(ops.selfRssMb)} unit="MB" />
-            <Tile label="Tables live" value={int(ops.tablesLive)} />
-            <Tile label="Playing / lobby" value={`${int(ops.tablesPlaying)} / ${int(ops.tablesLobby)}`} />
-            <Tile label="Games done" value={int(ops.gamesTotal)} />
-            <Tile label="Players seated" value={`${int(ops.playersSeated)} / ${int(ops.players)}`} />
-            <Tile label="Bots seated" value={int(ops.botsSeated)} />
-            <Tile label="Sockets" value={int(ops.sockets)} />
-            <Tile label="Moves" value={int(ops.movesTotal)} />
-            <Tile label="Refused" value={int(ops.refusedTotal)} bad={ops.refusedTotal > 0} />
-            <Tile label="Hostile / taken" value={`${int(ops.hostileTotal)} / ${int(ops.hostileAccepted)}`} bad={ops.hostileAccepted > 0} />
-            <Tile label="Resyncs" value={int(ops.resyncsTotal)} />
-            <Tile label="Stalls" value={int(ops.stallsTotal)} bad={ops.stallsTotal > 0} />
-            <Tile label="Game p50 / p99" value={`${secondsText(ops.gameP50S)} / ${secondsText(ops.gameP99S)}`} />
-            <Tile label="Uptime" value={uptime(ops.uptimeS)} />
+            <Tile label="Moves/s" value={perS(ops, 'moves').toFixed(1)} />
+            <Tile label="Games/min" value={(perS(ops, 'games') * 60).toFixed(1)} />
+            <Tile label="Pushes/s" value={perS(ops, 'pushes').toFixed(0)} />
+            <Tile label="Move ack p50" value={usToText(metric(ops, 'move_ack_us')?.p50 ?? 0)} />
+            <Tile label="Move ack p99" value={usToText(metric(ops, 'move_ack_us')?.p99 ?? 0)} />
+            <Tile label="Move ack max" value={usToText(Number(metric(ops, 'move_ack_us')?.max ?? 0n))} />
+            <Tile label="Move to push p50" value={usToText(metric(ops, 'move_push_us')?.p50 ?? 0)} />
+            <Tile label="Move to push p99" value={usToText(metric(ops, 'move_push_us')?.p99 ?? 0)} />
+            <Tile label="Cast decode p99" value={usToText(metric(ops, 'cast_decode_us')?.p99 ?? 0)} />
+            <Tile label="Other req p50" value={usToText(metric(ops, 'req_us')?.p50 ?? 0)} />
+            <Tile label="Other req p99" value={usToText(metric(ops, 'req_us')?.p99 ?? 0)} />
+            <Tile label="Push bytes/s" value={(perS(ops, 'push_bytes') / 1024).toFixed(0)} unit="KB" />
+            <Tile label="Server RSS" value={int(gauge(ops, 'server_rss_mb'))} unit="MB" />
+            <Tile label="Server CPU" value={(gauge(ops, 'server_cpu_cpct') / 100).toFixed(2)} unit="% of a core" />
+            <Tile label="Sim RSS" value={int(ops.hdr.rssMb)} unit="MB" />
+            <Tile label="Tables live" value={int(gauge(ops, 'tables_live'))} />
+            <Tile label="Playing / lobby" value={`${int(gauge(ops, 'tables_playing'))} / ${int(gauge(ops, 'tables_lobby'))}`} />
+            <Tile label="Games done" value={int(Number(metric(ops, 'games')?.total ?? 0n))} />
+            <Tile label="Players seated" value={`${int(gauge(ops, 'players_seated'))} / ${int(gauge(ops, 'players'))}`} />
+            <Tile label="Bots seated" value={int(gauge(ops, 'bots_seated'))} />
+            <Tile label="Sockets" value={int(gauge(ops, 'sockets'))} />
+            <Tile label="Moves" value={int(Number(metric(ops, 'moves')?.total ?? 0n))} />
+            <Tile label="Refused" value={int(gauge(ops, 'refused'))} bad={gauge(ops, 'refused') > 0} />
+            <Tile label="Hostile / taken" value={`${int(gauge(ops, 'hostile'))} / ${int(gauge(ops, 'hostile_taken'))}`} bad={gauge(ops, 'hostile_taken') > 0} />
+            <Tile label="Resyncs" value={int(gauge(ops, 'resyncs'))} />
+            <Tile label="Stalls" value={int(gauge(ops, 'stalls'))} bad={gauge(ops, 'stalls') > 0} />
+            <Tile label="Game p50 / p99" value={`${secondsText(metric(ops, 'game_s')?.p50 ?? 0)} / ${secondsText(metric(ops, 'game_s')?.p99 ?? 0)}`} />
+            <Tile label="Uptime" value={uptime(ops.hdr.uptimeS)} />
           </div>
           <div className="ops-note">
-            Latencies are measured by the fake humans: a move&apos;s request out to its reply in, and to the mover&apos;s own cast of it; {int(ops.actN)} moves so far.
+            Latencies are measured by the fake humans: a move&apos;s request out to its reply in, and to the mover&apos;s own cast of it;{' '}
+            {int(Number(metric(ops, 'move_ack_us')?.total ?? 0n))} moves so far. The platform&apos;s own rows: {int(Number(metric(ops, 'requests')?.total ?? 0n))} requests,{' '}
+            {int(gauge(ops, 'ws_conns'))} stream sockets.
           </div>
         </>
       )}
