@@ -3,6 +3,7 @@
 #include "foolish_app.h"
 
 #include "admin_panels.h"
+#include "dev_bot_table.h"
 
 #include "app_internal.h"
 #include "bots.h"
@@ -119,6 +120,8 @@ static bool log_converted(const char *old_id, const char *new_id, void *ud) {
 // store/game_id.h's is rewritten in the tables (rows_foolish.h cb_rows_sql_convert_game_ids), one
 // transaction, before anything is served. With nothing to rewrite it is one read.
 static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
+    // DEV-ONLY (dev_bot_table.h): routed under CBASE_DEV=1 alone; this runs before the routes are.
+    cb_dev_bot_table_enable(ctx->cfg && ctx->cfg->dev);
     if (!ctx->store || !cb_store_is_sql(ctx->store)) return CB_OK;
     int rc = journal_open(ctx, err, cap);
     int bad = 0;
@@ -137,7 +140,7 @@ static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
 static void foolish_serve_close(cb_ctx *ctx) { cb_journal_close(ctx->store); }
 
 static const cb_route_list *const FOOLISH_ROUTES[] = { &cb_functions_route_list, &cb_v1_route_list,
-                                                       &cb_unfurl_route_list };
+                                                       &cb_unfurl_route_list, &cb_dev_bot_table_route_list };
 
 // The bot drive, started by a kick (bots.h cb_bots_kick), and the scan that
 // catches a lost one: EventBridge's literal "scan" under Lambda. A finished

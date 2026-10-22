@@ -222,7 +222,7 @@ $(call prog,build/asan,build/obj/asan,build/obj/asan-kernel,cbase,$(MAIN_SERVE),
 $(call prog,build/asan,build/obj/asan,build/obj/asan-kernel,bootstrap,$(MAIN_LAMBDA),ASAN_CB_CFLAGS)
 $(foreach u,$(UNITS),$(call prog,build/test,build/obj/cbase,build/obj/kernel,$(u),$(call tsrc,$(u)) $(TLIB_SRC),CB_CFLAGS))
 $(foreach u,$(UNITS),$(call prog,build/asan/test,build/obj/asan,build/obj/asan-kernel,$(u),$(call tsrc,$(u)) $(TLIB_SRC),ASAN_CB_CFLAGS))
-$(foreach s,smoke smoke_lambda smoke_lambda_after smoke_authz smoke_matrix smoke_boot,$(call prog,build/test,build/obj/cbase,build/obj/kernel,$(s),$(call tsrc,$(s)) $(TLIB_SRC),CB_CFLAGS))
+$(foreach s,smoke smoke_lambda smoke_lambda_after smoke_authz smoke_matrix smoke_boot smoke_dev_bot_table,$(call prog,build/test,build/obj/cbase,build/obj/kernel,$(s),$(call tsrc,$(s)) $(TLIB_SRC),CB_CFLAGS))
 # The session routes' differential proof (core/test/auth_diff.c): run by tools/auth_route_diff.sh
 # against a base binary, never by check (it needs a second build).
 $(call prog,build/test,build/obj/cbase,build/obj/kernel,auth_diff,core/test/auth_diff.c $(TLIB_SRC),CB_CFLAGS)
@@ -237,7 +237,7 @@ BENCH_SRC := $(filter-out bench/unit_%.c $(BENCH_DYNAMO),$(sort $(foreach r,$(BE
 $(call prog,build,build/obj/cbase,build/obj/kernel,cbase-bench,$(BENCH_SRC),CB_CFLAGS)
 $(call prog,build/test,build/obj/cbase,build/obj/kernel,unit_bench,bench/unit_bench.c bench/bench_stats.c,CB_CFLAGS)
 $(call prog,build/asan/test,build/obj/asan,build/obj/asan-kernel,unit_bench,bench/unit_bench.c bench/bench_stats.c,ASAN_CB_CFLAGS)
-$(foreach s,smoke smoke_lambda smoke_lambda_after smoke_authz smoke_matrix smoke_boot,$(call prog,build/asan/test,build/obj/asan,build/obj/asan-kernel,$(s),$(call tsrc,$(s)) $(TLIB_SRC),ASAN_CB_CFLAGS))
+$(foreach s,smoke smoke_lambda smoke_lambda_after smoke_authz smoke_matrix smoke_boot smoke_dev_bot_table,$(call prog,build/asan/test,build/obj/asan,build/obj/asan-kernel,$(s),$(call tsrc,$(s)) $(TLIB_SRC),ASAN_CB_CFLAGS))
 
 
 # THE CLIENT (client/, CLIENT_DESIGN.md): its own small build, its unit tests natively and under
@@ -278,10 +278,11 @@ UNIT_RUNS = $(addprefix $(1)/,$(UNITS)) $(1)/unit_bench
 SMOKE_RUNS = '$(1)/test/smoke $(1)/cbase' \
              '$(1)/test/smoke_matrix $(1)/cbase' \
              '$(1)/test/smoke_authz $(1)/cbase' \
+             '$(1)/test/smoke_dev_bot_table $(1)/cbase' \
              '$(1)/test/smoke_boot $(1)/cbase $(1)/bootstrap' \
              '$(1)/test/smoke_lambda $(1)/bootstrap' \
              '$(1)/test/smoke_lambda_after $(1)/bootstrap'
-SMOKE_PROGS = $(1)/cbase $(1)/bootstrap $(addprefix $(1)/test/,smoke smoke_matrix smoke_authz smoke_boot smoke_lambda smoke_lambda_after)
+SMOKE_PROGS = $(1)/cbase $(1)/bootstrap $(addprefix $(1)/test/,smoke smoke_matrix smoke_authz smoke_dev_bot_table smoke_boot smoke_lambda smoke_lambda_after)
 
 # shared/c's tests of what c_base links from there (shared/tools/shared_tests.mk),
 # in c_base's own flags and sanitized variant.
