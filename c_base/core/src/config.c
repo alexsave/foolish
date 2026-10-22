@@ -172,6 +172,12 @@ int cb_config_from_env(cb_config *c, char *err, size_t cap) {
     c->inline_budget_us = (int)v;
     if (!num("CBASE_IO_URING", 0, 0, 1, &v, err, cap)) return CB_E_INVALID;
     c->io_uring = v == 1;
+    if (!copy(c->tls_cert, sizeof c->tls_cert, "CBASE_TLS_CERT", env("CBASE_TLS_CERT", ""), err, cap)) return CB_E_INVALID;
+    if (!copy(c->tls_key, sizeof c->tls_key, "CBASE_TLS_KEY", env("CBASE_TLS_KEY", ""), err, cap)) return CB_E_INVALID;
+    if (!c->tls_cert[0] != !c->tls_key[0]) {
+        snprintf(err, cap, "CBASE_TLS_CERT and CBASE_TLS_KEY go together: set both or neither");
+        return CB_E_INVALID;
+    }
     if (!num("CBASE_CAST_DELTA", 1, 0, 1, &v, err, cap)) return CB_E_INVALID;
     c->cast_delta = v == 1;
     for (int i = 0; i < CB_CONFIG_LIMITS; i++) {
@@ -239,6 +245,7 @@ void cb_config_each(const cb_config *c, cb_config_fn fn, void *ud) {
     snprintf(b, sizeof b, "%d", c->inline_budget_us);
     fn("CBASE_INLINE_BUDGET_US", b, false, ud);
     fn("CBASE_IO_URING", c->io_uring ? "1" : "0", false, ud);
+    fn("CBASE_TLS_CERT", c->tls_cert[0] ? c->tls_cert : "(unset: plaintext)", false, ud);
     fn("CBASE_CAST_DELTA", c->cast_delta ? "1" : "0", false, ud);
     for (int i = 0; i < CB_CONFIG_LIMITS; i++) {
         if (c->limit_burst[i]) snprintf(b, sizeof b, "%d", c->limit_burst[i]);

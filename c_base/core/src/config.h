@@ -125,6 +125,10 @@ typedef struct {
     // CHAT_USER 30/min, SUB_USER 120/min, BUMP_USER 30/min. The admin one is
     // CBASE_ADMIN_FAIL_LIMIT above.
     int  limit_burst[CB_CONFIG_LIMITS];
+    // CBASE_TLS_CERT and CBASE_TLS_KEY: PEM files; both set, the listener speaks TLS itself
+    // (net/tls.h); neither, plaintext (TLS in front, or none). Last, so no field before them moves.
+    char tls_cert[512];
+    char tls_key[512];
 } cb_config;
 
 // Reads the environment into cfg. CB_OK, or CB_E_INVALID with a sentence in err.

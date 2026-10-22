@@ -21,6 +21,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "net/tls.h"
+
 enum { C_HTTP, C_BUSY, C_WS };
 
 // A connection. A WebSocket is a connection in state C_WS, so cb_ws is this struct.
@@ -60,6 +62,8 @@ struct cb_ws {
     bool parked;                 // its request waits for cb_server_wake or its deadline (no thread holds it)
     char park_key[48];
     int64_t park_deadline;       // loop ms, set by the first park of a request
+    // Last, so no field before it moves: a plaintext build's code is the code it was.
+    cb_tls_conn *tls;            // the connection's TLS (net/tls.h); NULL on a plaintext server
 };
 typedef struct cb_ws conn;
 
@@ -116,6 +120,7 @@ struct cb_server {
     uint64_t wake_seq;           // bumped by every cb_server_wake: a handler that read before it must not park
     _Atomic int64_t sends;       // send() calls made (cb_server_sends)
     _Atomic int64_t sweeps;      // sweeps run (cb_server_sweeps)
+    cb_tls *tls;                 // TLS on the listener (cb_server_set_tls); last, so no field before it moves
 };
 
 static void conn_close(conn *c);
@@ -206,8 +211,11 @@ static bool written(conn *c) {
     return true;
 }
 
+static bool tls_flush(conn *c) __attribute__((noinline));
+
 // Writes what it can with send(2). Returns false when the connection was closed.
 static bool flush_now(conn *c) {
+    if (c->tls) return tls_flush(c);
     while (c->out.len) {
         // Counted before the call: a peer that has read what it sent may look at the count at once.
         atomic_fetch_add_explicit(&c->srv->sends, 1, memory_order_relaxed);
@@ -241,6 +249,7 @@ static void sent(cb_loop *l, void *ud, long res);
 
 // Batched: the connection's queued bytes to the loop (flush_dirty, last in the pass).
 static void send_queued(conn *c) {
+    if (c->tls) { flush_now(c); return; }   // TLS writes through OpenSSL: never a batched send
     if (c->sending) return;   // its result comes first after the wait, and marks it dirty again if needed
     if (c->wblocked) { want(c); return; }   // the socket is full: once it is writable (conn_io)
     if (!c->out.len) { written(c); return; }
@@ -755,6 +764,7 @@ static void conn_free(conn *c) {
     cb_buf_free(&c->msg);
     cb_res_free(&c->res);
     if (c->job) job_put(c->srv, c->job);
+    cb_tls_conn_free(c->tls);
     free(c->query);
     free(c);
 }
@@ -804,8 +814,11 @@ static void conn_close(conn *c) {
     if (!s->reap_timer) s->reap_timer = cb_loop_timer(s->ctx->loop, 0, reap, s);
 }
 
+static void tls_io(cb_loop *l, int fd, int ev, conn *c) __attribute__((noinline));
+
 static void conn_io(cb_loop *l, int fd, int ev, void *ud) {
     conn *c = ud;
+    if (c->tls) { tls_io(l, fd, ev, c); return; }
     if (ev & CB_EV_WRITE) {
         c->wblocked = false;   // (batched) room again: flush_dirty sends what waited
         if (!flush(c)) return;
@@ -846,6 +859,73 @@ static void conn_io(cb_loop *l, int fd, int ev, void *ud) {
     }
 }
 
+// ---- TLS (net/tls.h): the same reads and writes through OpenSSL ----------------------------
+
+// The socket events a TLS connection waits for: what OpenSSL asked for (a handshake or a record
+// needs the other direction), else the plaintext rule (want).
+static void __attribute__((noinline)) tls_want(conn *c, int tls_want) {
+    if (c->dead) return;
+    if (!tls_want) { want(c); return; }
+    int ev = tls_want == CB_TLS_WANT_WRITE ? CB_EV_WRITE : CB_EV_READ;
+    if (c->out.len) ev |= CB_EV_WRITE;
+    if (c->state != C_BUSY && !c->close_after && !c->upgrade_after) ev |= CB_EV_READ;
+    cb_loop_set(loop_of(c), c->fd, ev);
+}
+
+static bool tls_flush(conn *c) {
+    int w_want = 0;
+    while (c->out.len) {
+        atomic_fetch_add_explicit(&c->srv->sends, 1, memory_order_relaxed);
+        ssize_t w = cb_tls_write(c->tls, c->out.p, c->out.len, &w_want);
+        if (w > 0) { cb_buf_consume(&c->out, (size_t)w); continue; }
+        if (w == CB_TLS_WANT) { tls_want(c, w_want); return true; }
+        conn_close(c);
+        return false;
+    }
+    return written(c);
+}
+
+static void tls_io(cb_loop *l, int fd, int ev, conn *c) {
+    if (ev & CB_EV_WRITE) {
+        if (c->out.len && !tls_flush(c)) return;
+    }
+    if (!(ev & (CB_EV_READ | CB_EV_ERR)) && cb_tls_ready(c->tls)) return;
+    if (c->state == C_BUSY) {
+        if (ev & CB_EV_ERR) { cb_loop_remove(l, fd); close(fd); c->fd = -1; c->dead = true; }
+        return;
+    }
+    int r_want = 0;
+    for (;;) {
+        ssize_t r = cb_tls_read(c->tls, g_rd, sizeof g_rd, &r_want);
+        if (r > 0) {
+            buf_take(c, &c->in);
+            cb_buf_append(&c->in, g_rd, (size_t)r);
+            if (c->in.oom) { conn_close(c); return; }
+            c->in.p[c->in.len] = 0;
+            c->last_active = cb_loop_now(l);
+            c->ping_sent = false;
+            size_t limit = c->state == C_WS ? CB_WS_MAX_MESSAGE + 64 : CB_HTTP_MAX_HEAD + (size_t)c->srv->o.max_body;
+            if (c->in.len > limit) {
+                if (c->state == C_WS) { cb_ws_close(c, 1009); return; }
+                respond_now(c, 413, "Content Too Large");
+                flush(c);
+                return;
+            }
+            continue;   // a record at a time: read until OpenSSL has nothing more
+        }
+        if (r == CB_TLS_WANT) break;
+        conn_close(c);   // the peer closed, or the TLS failed
+        return;
+    }
+    // the handshake may have queued bytes to send (OpenSSL writes them itself); wait as it asked
+    if (c->in.len) {
+        if (c->state == C_WS) ws_frames(c);
+        else conn_try_parse(c);
+        if (c->dead) return;
+    }
+    tls_want(c, r_want == CB_TLS_WANT_WRITE ? CB_TLS_WANT_WRITE : 0);
+}
+
 static void on_accept(cb_loop *l, int lfd, int ev, void *ud) {
     cb_server *s = ud;
     for (;;) {
@@ -880,6 +960,7 @@ static void on_accept(cb_loop *l, int lfd, int ev, void *ud) {
         if (!c) { close(fd); continue; }
         c->srv = s;
         c->fd = fd;
+        if (s->tls && !(c->tls = cb_tls_conn_new(s->tls, fd))) { close(fd); free(c); continue; }
         c->id = ++s->next_id;
         c->msg_op = -1;
         c->last_active = cb_loop_now(l);
@@ -949,6 +1030,8 @@ static void sweep(cb_loop *l, void *ud) {
     }
     s->sweep_timer = s->all ? cb_loop_timer(l, 1000, sweep, s) : 0;
 }
+
+void cb_server_set_tls(cb_server *s, cb_tls *tls) { s->tls = tls; }
 
 cb_server *cb_server_new(cb_ctx *ctx, const cb_server_opts *opts) {
     cb_server *s = calloc(1, sizeof *s);

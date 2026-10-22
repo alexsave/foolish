@@ -31,6 +31,7 @@
 #include "ctx.h"
 #include "net/loop.h"
 #include "net/server.h"
+#include "net/tls.h"
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
@@ -178,7 +179,13 @@ int cb_process_main(const cb_provider *prov, const cb_app *app, int argc, char *
             CB_WARN("serve", "fd limit %llu is below CBASE_MAX_CONNS+64: the process runs out of fds before the cap", (unsigned long long)rl.rlim_cur);
     }
     o.backlog = cfg.listen_backlog;
+    cb_tls *tls = NULL;
+    if (cfg.tls_cert[0]) {
+        if (cb_tls_new(cfg.tls_cert, cfg.tls_key, &tls, err, sizeof err) != CB_OK) { CB_ERROR("serve", "%s", err); return 1; }
+        CB_INFO("serve", "TLS on the listener: %s", cfg.tls_cert);
+    }
     ctx.server = cb_server_new(&ctx, &o);
+    if (ctx.server && tls) cb_server_set_tls(ctx.server, tls);
     int port = 0;
     if (!ctx.server || cb_server_listen(ctx.server, cfg.listen_host, cfg.listen_port, &port) != CB_OK) return 1;
 
@@ -222,6 +229,7 @@ int cb_process_main(const cb_provider *prov, const cb_app *app, int argc, char *
     cb_pool_free(ctx.req_pool);
     cb_pool_free(ctx.job_pool);
     cb_server_free(ctx.server);
+    cb_tls_free(tls);   // after every connection that used it
     cb_unboot(&ctx);
     cb_loop_free(ctx.loop);
     CB_INFO("serve", "stopped");

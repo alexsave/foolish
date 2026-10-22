@@ -46,6 +46,10 @@ void cb_server_opts_default(cb_server_opts *o);
 
 // Uses ctx->loop, ctx->router and ctx->req_pool, and counts into ctx->stats.
 cb_server *cb_server_new(cb_ctx *ctx, const cb_server_opts *opts);
+// TLS on the listener (net/tls.h; CBASE_TLS_CERT and _KEY), before cb_server_listen; the server does
+// not own it (free it after cb_server_free). Never called: plaintext.
+struct cb_tls;
+void cb_server_set_tls(cb_server *s, struct cb_tls *tls);
 // Binds and listens. *bound_port gets the port (useful with port 0).
 // CB_OK, or CB_E_IO (the log says why).
 int cb_server_listen(cb_server *s, const char *host, int port, int *bound_port);
