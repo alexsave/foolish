@@ -81,6 +81,12 @@ int be_board_event_kind(const PushEvent *e) {
     }
 }
 
+bool be_move_raced(const TableResponse *r, uint32_t intent) {
+    if (r->status == TABLE_STATUS_MOOT) return true;
+    if (r->status != TABLE_STATUS_REJECTED) return false;
+    return r->reject_code == TABLE_REJECT_STALE_ROUND || r->version > intent;
+}
+
 // ---- the bots ----------------------------------------------------------------------------------
 
 static be_bot g_bots[BE_BOTS_MAX];

@@ -463,11 +463,16 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
             break;
         }
         if (!applied) {
-            // A race (the board moved while the move was on its way) is the game's own business;
-            // anything else refused is a finding.
-            bool raced = f->status == 200 && table_response_decode(f->body, (int)f->body_len, &r) == 0 &&
-                         (r.status == TABLE_STATUS_MOOT || (r.status == TABLE_STATUS_REJECTED && r.reject_code == TABLE_REJECT_STALE_ROUND));
+            // A race (the board moved while the move was on its way: the server answered at a later
+            // version than the move was made on, a pass that made this seat the defender among them)
+            // is the game's own business; a move refused on the very board it was made on is a finding.
+            bool raced = f->status == 200 && table_response_decode(f->body, (int)f->body_len, &r) == 0 && be_move_raced(&r, q.intent);
             if (!raced) {
+                AskRefusal why = { 0, 0, 0 };
+                bool told = f->status != 200 && ask_refusal_decode(f->body, (int)f->body_len, &why) == ASK_OK;
+                bool resp = f->status == 200 && table_response_decode(f->body, (int)f->body_len, &r) == 0;
+                CB_WARN("birdseye", "%s: a move at %s on v%u was refused: HTTP %d, response %d reject %d, why %d code %d", p->c.name,
+                        t ? t->gid : "?", q.intent, f->status, resp ? r.status : -1, resp ? r.reject_code : -1, told ? why.why : -1, why.code);
                 cb_metrics_add(be_mx, BE_M_REFUSED, 1);
                 if (t) event_at(t, BE_EV_REFUSED, p->ct.view.my_seat, NULL, 0, q.intent, dt, 1);
             }
@@ -724,7 +729,12 @@ static void table_tick(sim_thread *th, sim_table *t, int64_t now_ms) {
         if (playing) {
             t->state = P_PLAYING;
             for (int i = 0; i < t->n_humans; i++) player_of(th, t->humans[i])->state = P_PLAYING;
-            if (!t->dealt_ms) t->dealt_ms = now_ms;
+            // The deal is shown once: from the push that dealt, or, when the seat read the dealt
+            // board whole (its START reply came after the deal's cast), here.
+            if (!t->dealt_ms) {
+                t->dealt_ms = now_ms;
+                event_at(t, BE_EV_DEALT, -1, NULL, 0, t->version, 0, 0);
+            }
         } else if (now_ms - t->last_change_ms > STALL_MS) {
             cb_metrics_add(be_mx, BE_M_STALLS, 1);
             event_at(t, BE_EV_STALL, -1, NULL, 0, t->version, 0, 0);

@@ -184,7 +184,8 @@ int main(int argc, char **argv) {
     cb_buf in;
     cb_buf_init(&in);
     int64_t until = cb_mono_ms() + GAME_WAIT_MS;
-    while (cb_mono_ms() < until && (n_over == 0 || n_ops == 0)) {
+    // Until a game is over and a deal was heard (under ASan the first deals land before the stream opens).
+    while (cb_mono_ms() < until && (n_over == 0 || n_ops == 0 || n_dealt == 0)) {
         cb_buf_reset(&in);
         int op = tc_ws_recv(fd, 5000, &in);
         if (op == CB_WS_OP_PING) continue;
