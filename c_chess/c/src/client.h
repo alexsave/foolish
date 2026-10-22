@@ -1,0 +1,132 @@
+/* client.h - the client side of c_chess's protocol, in C: one connection's state, the frames it
+ * sends (shared/c/stream_frame.h's HELLO, SUB and REQ around wire.h's bodies) and what it makes of
+ * the frames it receives. The browser runs it as wasm and the load generator runs it natively, so
+ * the bots play over exactly the protocol a person does, and the page holds no game logic: it hands
+ * this the socket's bytes, takes the bytes to send, and draws cc_view.
+ *
+ * It mirrors the game it is in or watching (a cc_game of its own), so legal moves, the board and
+ * the move list are known at once, and a move is shown before the server answers; the server's
+ * state push confirms or corrects it.
+ *
+ * No I/O, no allocation, no clock: the host passes `now` (its own milliseconds, any origin) to the
+ * calls that need time. */
+#ifndef C_CHESS_CLIENT_H
+#define C_CHESS_CLIENT_H
+
+#include "game.h"
+#include "wire.h"
+
+#include <stddef.h>
+#include <stdint.h>
+
+#define CC_OUT_CAP 8192        /* bytes of frames waiting to be sent */
+#define CC_PENDING 64          /* requests in flight */
+#define CC_TOKEN_MAX 2048
+
+/* Events since the host last took them (cc_client_events): what changed. */
+enum {
+    CC_EV_READY = 1 << 0,      /* the socket was accepted (HELLO answered) */
+    CC_EV_GAME = 1 << 1,       /* the game shown changed: a move, a clock, an offer, the end */
+    CC_EV_START = 1 << 2,      /* a game of ours began (cc_client.start_game) */
+    CC_EV_LOBBY = 1 << 3,
+    CC_EV_SEEK = 1 << 4,       /* our seek is waiting (no game yet) */
+    CC_EV_CHALLENGE = 1 << 5,  /* a challenge of ours was made (cc_client.challenge_id) */
+    CC_EV_ERROR = 1 << 6,      /* a request was refused (cc_client.err) */
+    CC_EV_AUTH = 1 << 7,       /* a sign-in or sign-up answered (cc_client.auth_status) */
+    CC_EV_OVER = 1 << 8,       /* the game shown has just ended */
+    CC_EV_MOVED = 1 << 9,      /* the other side moved in the game shown */
+};
+
+/* What a request was, to read its answer. */
+enum { CC_RQ_NONE, CC_RQ_SEEK, CC_RQ_UNSEEK, CC_RQ_MOVE, CC_RQ_ACT, CC_RQ_SNAP, CC_RQ_LOBBY, CC_RQ_CHALLENGE, CC_RQ_ACCEPT, CC_RQ_SUB };
+
+typedef struct { uint32_t id; uint8_t kind; uint8_t pad[3]; uint32_t game; } cc_pending;
+
+typedef struct {
+    /* the socket */
+    uint8_t   out[CC_OUT_CAP];
+    uint32_t  out_len;
+    uint32_t  out_head;        /* where cc_client_next_out reads next */
+    uint32_t  next_id;
+    cc_pending pend[CC_PENDING];
+    uint8_t   ready;
+    uint8_t   pad0[3];
+    uint32_t  events;
+    /* the account */
+    char      token[CC_TOKEN_MAX + 1];
+    uint16_t  token_len;
+    char      user_id[CW_UUID + 1];
+    char      name[CW_NAME + 1];
+    char      refresh[CW_REFRESH + 1];
+    uint32_t  token_expires_in;
+    int32_t   auth_status;     /* the last sign-in's HTTP status */
+    uint8_t   auth_code;       /* and its cw_err code */
+    /* the game shown */
+    uint32_t  game;            /* 0: none */
+    int8_t    color;           /* ours, or -1 watching */
+    uint8_t   synced;          /* the snapshot arrived */
+    uint8_t   base_rated[2];
+    cc_game   g;
+    char      names[2][CW_NAME + 1];
+    int16_t   rating[2], diff[2];
+    uint8_t   rematch_offer;
+    uint8_t   clock_running;
+    uint32_t  next_game;
+    uint32_t  left_ms[2];      /* as of left_at */
+    int64_t   left_at;
+    char      san[CC_MAX_PLY][8];
+    uint16_t  confirmed_ply;   /* the server's ply (ours may be one ahead while a move is in flight) */
+    /* our own move in flight, for the load generator's timing */
+    int64_t   move_sent_at;
+    uint16_t  move_sent_ply;
+    /* other answers */
+    uint32_t  start_game;      /* CC_EV_START */
+    uint8_t   start_color;
+    uint32_t  challenge_id;    /* CC_EV_CHALLENGE */
+    cw_err    err;             /* CC_EV_ERROR */
+    uint16_t  err_status;
+    cw_lobby  lobby;           /* CC_EV_LOBBY */
+    uint32_t  moves_sent, moves_confirmed, pushes;
+} cc_client;
+
+void cc_client_init(cc_client *c);
+/* The next frame to send (one WebSocket binary message): its length, 0 when none. *p stays valid
+ * until the next call into the client. */
+size_t cc_client_next_out(cc_client *c, const uint8_t **p);
+/* One frame the socket received. */
+void cc_client_in(cc_client *c, const uint8_t *p, size_t n, int64_t now);
+uint32_t cc_client_events(cc_client *c);   /* and clears them */
+
+/* ---- the account (HTTP: the host posts the body and hands back the answer) ---- */
+/* The body of POST /c/auth into out (sizeof(cw_auth_req)). */
+void cc_client_auth_body(const char *name, const char *password, int mode, cw_auth_req *out);
+/* The answer of POST /c/auth or /c/refresh: its status and bytes (CC_EV_AUTH). */
+void cc_client_auth_answer(cc_client *c, int status, const uint8_t *p, size_t n);
+void cc_client_refresh_body(const cc_client *c, cw_refresh_req *out);
+/* Queues HELLO with the access token: the first frame of every connection. */
+void cc_client_hello(cc_client *c);
+
+/* ---- requests ---- */
+void cc_client_seek(cc_client *c, int base_s, int inc_s, int rated);
+void cc_client_unseek(cc_client *c);
+void cc_client_challenge(cc_client *c, int base_s, int inc_s, int rated);
+void cc_client_accept(cc_client *c, uint32_t challenge);
+void cc_client_lobby(cc_client *c);           /* SUB to the lobby and ask for it now */
+void cc_client_lobby_leave(cc_client *c);
+/* Shows a game: SUB to its room and ask for its snapshot; our color in it is found from the names. */
+void cc_client_open(cc_client *c, uint32_t game);
+void cc_client_close_game(cc_client *c);
+/* Plays a move in the game shown: CC_OK (sent, and shown at once), or the rules' refusal. */
+int  cc_client_move(cc_client *c, int from, int to, int promo, int64_t now);
+void cc_client_act(cc_client *c, int act);
+
+/* ---- what to draw ---- */
+/* A side's clock now. */
+int64_t cc_client_clock(const cc_client *c, int color, int64_t now);
+/* The squares the piece on `from` may move to, as a bitboard (0 when it is not ours to move). */
+uint64_t cc_client_targets(const cc_client *c, int from);
+/* Whether moving from -> to is a promotion (the page asks which piece). */
+int  cc_client_is_promotion(const cc_client *c, int from, int to);
+int  cc_client_my_turn(const cc_client *c);
+
+#endif
