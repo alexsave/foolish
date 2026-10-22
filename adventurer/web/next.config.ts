@@ -9,6 +9,8 @@ const nextConfig: NextConfig = {
   // 127.0.0.1 is not localhost to it: without this the page served at 127.0.0.1:5711 never
   // hydrates (no error, just a dead shell).
   allowedDevOrigins: ['127.0.0.1'],
+  // The dev build's floating "N" button sits over the regions card; the page is the product.
+  devIndicators: false,
 };
 
 export default nextConfig;

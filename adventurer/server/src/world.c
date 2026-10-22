@@ -277,13 +277,14 @@ void adv_world_board_copy(adv_world *w, uint16_t region, adv_board *out) {
     pthread_mutex_unlock(&w->boards_lock);
 }
 
-// The roads anyone has, keyed by (name, region) for a named segment and by the segment for an
-// unnamed one, in open addressing sized for them; the top list is then an insertion over the table.
+// The roads anyone has, keyed by (name, region), in open addressing sized for them; the top list
+// is then an insertion over the table. An UNNAMED segment is no road of this list: a park path or
+// a service way has nothing to call it by (a type is not a name), so it is left out.
 typedef struct { uint64_t key; adv_top_seg road; } road_slot;
 
 static uint64_t road_key(const adv_graph *g, uint32_t seg) {
     const adv_seg *s = &g->segs[seg];
-    if (s->name == 0) return (uint64_t)seg + 1;                           // its own road
+    (void)seg;
     return (1ull << 63) | ((uint64_t)s->name << 16) | (uint64_t)s->region;   // a name in a region
 }
 
@@ -297,7 +298,7 @@ uint32_t adv_world_top(const adv_world *w, int type, adv_top_seg out[ADV_TOP_N])
     if (!t) return 0;
     for (uint32_t i = 0; i < g->h->n_segs; i++) {
         uint16_t users = atomic_load_explicit(&w->all[i].users[type], memory_order_relaxed);
-        if (!users) continue;
+        if (!users || g->segs[i].name == 0) continue;
         uint64_t key = road_key(g, i);
         uint64_t k = (key * 0x9E3779B97F4A7C15ull) >> 20;
         for (;;) {

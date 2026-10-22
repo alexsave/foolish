@@ -7,9 +7,9 @@ interface Props {
   spark: number[];
 }
 
-function Tile({ label, value, unit }: { label: string; value: string; unit?: string }) {
+function Tile({ label, value, unit, title }: { label: string; value: string; unit?: string; title?: string }) {
   return (
-    <div className="tile">
+    <div className="tile" title={title}>
       <div className="label">{label}</div>
       <div className="value num">
         {value}
@@ -17,6 +17,19 @@ function Tile({ label, value, unit }: { label: string; value: string; unit?: str
       </div>
     </div>
   );
+}
+
+// THE SIMULATED TIME the uploads so far stand for: the generator posts activities far faster than
+// people ride, so the map after an hour of it is months of a real city. A person who rides, runs
+// or walks three times a week (Strava's typical active user) makes 156 activities a year.
+const ACTS_PER_USER_YEAR = 156;
+function simulated(activities: number, users: number): string {
+  if (users <= 0) return '-';
+  const days = (activities / (users * ACTS_PER_USER_YEAR)) * 365;
+  if (days < 14) return `${days.toFixed(days < 2 ? 1 : 0)} days`;
+  if (days < 61) return `${(days / 7).toFixed(0)} weeks`;
+  if (days < 730) return `${(days / 30.4).toFixed(0)} months`;
+  return `${(days / 365).toFixed(1)} years`;
 }
 
 // The last 60 s of uploads/s as a filled line; the baseline is zero so bursts read as area.
@@ -64,17 +77,20 @@ export function Ops({ ops, spark }: Props) {
           <Tile label="Journal" value={mb(ops.journalBytes)} unit="MB" />
           <Tile label="Users" value={int(ops.users)} />
           <Tile label="Activities" value={int(ops.activities)} />
+          <Tile
+            label="Simulated time"
+            value={simulated(ops.activities, ops.users)}
+            title={`The activities so far are what ${int(ops.users)} people make in this long, each active three times a week: the generator runs far faster than life, so the map is not an hour of a real city.`}
+          />
           <Tile label="Rejected" value={int(ops.rejected)} />
-          <Tile label="Feed conns" value={int(ops.feedConns)} />
-          <Tile label="HTTP conns" value={int(ops.httpConns)} />
+          <Tile label="Feed / HTTP" value={`${int(ops.feedConns)} / ${int(ops.httpConns)}`} />
           <Tile label="Threads" value={int(ops.threads)} />
           <Tile label="Graph segments" value={int(ops.segs)} />
           <Tile label="Graph km" value={int(Math.round(ops.totalLenKm[2]))} />
           <Tile label="Regions" value={int(ops.regions)} />
           <Tile label="Uptime" value={uptime(ops.uptimeS)} />
           <Tile label="Replayed at start" value={int(ops.recovered)} />
-          <Tile label="Graph km bike" value={int(Math.round(ops.totalLenKm[0]))} />
-          <Tile label="Graph km foot" value={int(Math.round(ops.totalLenKm[1]))} />
+          <Tile label="Bike / foot km" value={`${(ops.totalLenKm[0] / 1000).toFixed(0)}k / ${(ops.totalLenKm[1] / 1000).toFixed(0)}k`} />
         </div>
       )}
     </section>

@@ -9,9 +9,11 @@
 #
 # Knobs, all environment variables:
 #   ADV_PORT (8711), WEB_PORT (5711)   the server's and Next's ports
-#   GEN_ARGS                           the generator's arguments (default: 20 users whose maps
-#                                      visibly grow, no backfill; the load shape is
-#                                      "--users 3000 --rate 5 --threads 2 --backfill-users 40 --backfill-size 400")
+#   GEN_ARGS                           the generator's arguments (default: 600 users living where New
+#                                      Yorkers live, 8 uploads/s, six "regulars" taking a fifth of them
+#                                      so a few maps grow fast enough to watch, no backfill; the load
+#                                      shape is "--users 3000 --rate 5 --threads 2 --backfill-users 40
+#                                      --backfill-size 400")
 #   FRESH=1                            move the journal aside (to $DATA/journal-<stamp>/) so every
 #                                      user starts with an empty map; the server does not do this
 #                                      by itself, and a journal from another graph must not be replayed
@@ -37,7 +39,7 @@ WEB_PORT=${WEB_PORT:-5711}
 GRAPH=${GRAPH:-$DATA/region.graph}
 DB=${DB:-$DATA/adventurer.sqlite}
 PBF=${PBF:-$DATA/region.osm.pbf}
-GEN_ARGS=${GEN_ARGS:---users 20 --rate 5 --threads 2 --backfill-users 0}
+GEN_ARGS=${GEN_ARGS:---users 600 --rate 8 --threads 2 --backfill-users 0 --regulars 6 --regular-share 0.2}
 FRESH=${FRESH:-0}
 mkdir -p "$RUN_DIR"
 

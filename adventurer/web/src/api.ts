@@ -6,7 +6,7 @@ import { LAYOUT_HASH } from './gen/layout_hash';
 import {
   ADV_W_KIND_ACTIVITY,
   ADV_W_KIND_OPS,
-  adv_w_activity_get_kind,
+  ADV_W_V,
   adv_w_activity_SIZE,
   adv_w_everyone_SIZE,
   adv_w_leaders_SIZE,
@@ -39,6 +39,23 @@ import {
   type adv_w_user_stats_Snap,
   type Mem,
 } from './gen/wire';
+import {
+  readsf_bare_hdr,
+  readsf_reply_hdr,
+  SF_HELLO,
+  SF_PONG,
+  SF_READY,
+  SF_REPLY,
+  SF_SUB,
+  SF_V,
+  SF_WHAT_ROOM,
+  sf_bare_hdr_SIZE,
+  sf_hello_hdr_SIZE,
+  sf_reply_hdr_SIZE,
+  sf_sub_hdr_SIZE,
+  writesf_hello_hdr,
+  writesf_sub_hdr,
+} from './gen/stream_frame';
 
 // The records as the page holds them: the generated snapshots, with the 64-bit fields (an
 // instant in ms, a byte count) widened from bigint to number, which holds them for a few
@@ -227,8 +244,30 @@ export interface FeedHandlers {
   onError: (e: Error) => void;
 }
 
-// Opens /adv/feed and keeps it open: a close reconnects with backoff (1 s doubling to 15 s,
-// reset by a frame). Returns the closer.
+// THE FEED ROOM (server feed.h ADV_FEED_ROOM) on the platform's anonymous socket.
+const FEED_ROOM = 'feed';
+const SUB_ID = 1;
+
+// The two frames the page says (shared/c/stream_frame.h), their heads written by the generated
+// writers: an empty HELLO (no token: the anonymous socket), and a SUB of the feed room.
+function helloFrame(): ArrayBuffer {
+  const b = new ArrayBuffer(sf_hello_hdr_SIZE);
+  writesf_hello_hdr(memOf(b), 0, { v: SF_V, kind: SF_HELLO, n: 0 });
+  return b;
+}
+function subFrame(room: string): ArrayBuffer {
+  const gid = new TextEncoder().encode(room);
+  const b = new ArrayBuffer(sf_sub_hdr_SIZE + gid.length);
+  const m = memOf(b);
+  writesf_sub_hdr(m, 0, { v: SF_V, kind: SF_SUB, id: SUB_ID, what: SF_WHAT_ROOM, n: gid.length });
+  m.u8.set(gid, sf_sub_hdr_SIZE);
+  return b;
+}
+
+// Opens the platform's anonymous socket (GET /ws/public), says HELLO, SUBs the feed room and
+// keeps it open: a close reconnects with backoff (1 s doubling to 15 s, reset by the SUB's
+// answer). A frame that is the platform's (READY, REPLY, PONG) is told from a feed push by its
+// second byte. Returns the closer.
 export function openFeed(h: FeedHandlers): () => void {
   let ws: WebSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -238,25 +277,35 @@ export function openFeed(h: FeedHandlers): () => void {
   const connect = () => {
     if (stopped) return;
     h.onState('connecting');
-    const sock = new WebSocket(`${WS_SERVER}/adv/feed`);
+    const sock = new WebSocket(`${WS_SERVER}/ws/public`);
     sock.binaryType = 'arraybuffer';
     ws = sock;
     sock.onopen = () => {
       if (sock !== ws) return;
-      delay = 1000;
-      h.onState('open');
+      sock.send(helloFrame());
     };
     sock.onmessage = (ev: MessageEvent) => {
       if (sock !== ws || !(ev.data instanceof ArrayBuffer)) return;
       const buf = ev.data;
-      if (buf.byteLength < adv_w_activity_SIZE) return;
+      if (buf.byteLength < sf_bare_hdr_SIZE) return;
       const m = memOf(buf);
-      // Both frames put their kind first (wire.h pins it), so the activity's accessor reads it.
-      const kind = adv_w_activity_get_kind(m, 0);
+      const head = readsf_bare_hdr(m, 0);
+      if (head.v !== SF_V) return;
       try {
-        if (kind === ADV_W_KIND_ACTIVITY) {
+        if (head.kind === SF_READY) {
+          sock.send(subFrame(FEED_ROOM));
+        } else if (head.kind === SF_REPLY) {
+          if (buf.byteLength < sf_reply_hdr_SIZE) return;
+          const r = readsf_reply_hdr(m, 0);
+          if (r.id !== SUB_ID) return;
+          if (r.status !== 200) throw new Error(`feed: the server refused the subscription (${r.status})`);
+          delay = 1000;
+          h.onState('open');
+        } else if (head.kind === SF_PONG) {
+          // (the page sends no PING: the server's WebSocket pings keep the socket)
+        } else if (head.kind === ADV_W_KIND_ACTIVITY && head.v === ADV_W_V && buf.byteLength >= adv_w_activity_SIZE) {
           h.onActivity(readWActivity(m, 0));
-        } else if (kind === ADV_W_KIND_OPS && buf.byteLength >= adv_w_ops_SIZE) {
+        } else if (head.kind === ADV_W_KIND_OPS && head.v === ADV_W_V && buf.byteLength >= adv_w_ops_SIZE) {
           const ops = readWOps(m, 0);
           checkHash(ops.hash);
           h.onOps(ops);
@@ -297,11 +346,11 @@ export function openFeed(h: FeedHandlers): () => void {
 // ---- formatting ------------------------------------------------------------------------------
 const M_PER_MILE = 1609.344;
 
-// A length for a tight card: "412 km", "1.68k km", "41.5k km".
-export function kmCompact(m: number): string {
+// A length in km for a tight card, the unit left to the caller: "41.2", "412", "1.68k", "41.5k".
+export function kmNumber(m: number): string {
   const k = m / 1000;
-  if (k < 1000) return `${k < 100 ? k.toFixed(1) : k.toFixed(0)} km`;
-  return `${(k / 1000).toFixed(k < 10000 ? 2 : 1)}k km`;
+  if (k < 1000) return k < 100 ? k.toFixed(1) : k.toFixed(0);
+  return `${(k / 1000).toFixed(k < 10000 ? 2 : 1)}k`;
 }
 // A count for a tight card: "22.3k", "554k", "1.2M".
 export function countCompact(n: number): string {

@@ -539,14 +539,18 @@ input {
 
 .region-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px 6px;
   font-size: 11px;
   color: var(--muted);
 }
 
+/* The length keeps one line; the chips and the achievements wrap below it when the column is
+   narrow, never the numbers. */
 .region-meta .len {
-  flex: 1;
+  flex: 1 0 auto;
+  white-space: nowrap;
 }
 
 .ach {
@@ -572,6 +576,7 @@ input {
 }
 
 .chip {
+  white-space: nowrap;
   padding: 0 5px;
   border-radius: 3px;
   font-size: 10px;
@@ -1027,4 +1032,42 @@ input {
 .bignum .value.compact {
   font-size: 19px;
   letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+/* Every line of a card is one line: the full numbers are in the card's tooltip. */
+.bignum .sub {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The region list's order, said and chosen above the list. */
+.sortbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: -2px 0 6px;
+  font-size: 11px;
+}
+
+.sortbar .faint {
+  margin-right: 2px;
+}
+
+.sortopt {
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 1px 7px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sortopt.active {
+  border-color: var(--border);
+  background: #f1f3f5;
+  color: var(--text);
 }

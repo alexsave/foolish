@@ -4,10 +4,9 @@ import {
   countCompact,
   dateText,
   EVERYONE,
-  HIGHWAY_CLASS,
   int,
   km,
-  kmCompact,
+  kmNumber,
   miles,
   pct,
   points,
@@ -45,9 +44,12 @@ function EveryoneCard({ everyone, type, regionsById, onFly }: Omit<Props, 'user'
         {[0, 1, 2].map((t) => (
           <div className="bignum" key={t} title={s ? `${km(s.traveledM[t])} of ${km(s.totalM[t], 0)} km; ${int(s.segs[t])} of ${int(s.segsTotal[t])} segments` : undefined}>
             <div className="label">{TYPE_LABEL[t]}</div>
-            <div className="value num compact">{s ? kmCompact(s.traveledM[t]) : '-'}</div>
-            <div className="sub num">{s ? `${pct(s.traveledM[t], s.totalM[t]).toFixed(1)}% of ${kmCompact(s.totalM[t])}` : ''}</div>
-            <div className="sub num">{s ? `${countCompact(s.segs[t])} / ${countCompact(s.segsTotal[t])} segs` : ''}</div>
+            <div className="value num compact">
+              {s ? kmNumber(s.traveledM[t]) : '-'}
+              <small>km</small>
+            </div>
+            <div className="sub num">{s ? `${pct(s.traveledM[t], s.totalM[t]).toFixed(1)}% done` : ''}</div>
+            <div className="sub num">{s ? `${countCompact(s.segs[t])} segs` : ''}</div>
           </div>
         ))}
       </div>
@@ -62,8 +64,8 @@ function EveryoneCard({ everyone, type, regionsById, onFly }: Omit<Props, 'user'
             <li key={`${r.seg}-${i}`}>
               <button type="button" className="toproad" onClick={() => onFly(r.cLat, r.cLon)} title="Go there">
                 <span className="rank num">{i + 1}</span>
-                <span className="who" title={`${r.name || HIGHWAY_CLASS[r.hclass] || 'road'}, ${regionsById.get(r.region)?.name ?? ''}: ${km(r.lenM)} km travelled`}>
-                  {r.name || <i>{HIGHWAY_CLASS[r.hclass] ?? 'road'}</i>}
+                <span className="who" title={`${r.name}, ${regionsById.get(r.region)?.name ?? ''}: ${km(r.lenM)} km travelled`}>
+                  {r.name}
                   <span className="faint"> {regionsById.get(r.region)?.name ?? ''}</span>
                 </span>
                 <span className="num muted">{int(r.users)} {r.users === 1 ? 'user' : 'users'}</span>

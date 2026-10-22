@@ -30,15 +30,22 @@ interface Props {
   everyone?: boolean;
 }
 
+// The order of the list: by the share of the region done (the number each row shows largest), or
+// by the kilometres done; both in the mode shown, most first, the name breaking ties.
+type SortKey = 'pct' | 'km';
+const SORT_LABEL: Record<SortKey, string> = { pct: '% done', km: 'km done' };
+
 export function Regions({ type, onType, progress, regionsById, usersById, onFly, onFatal, everyone }: Props) {
   const [all, setAll] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>('pct');
 
   const rows = useMemo(() => {
     const list = (progress ?? []).filter((p) => regionsById.has(p.region));
-    list.sort((a, b) => b.lenM[2] - a.lenM[2]);
+    const key = (p: WRegionProgress) => (sortKey === 'km' ? p.lenM[type] : pct(p.lenM[type], regionsById.get(p.region)!.lenM[type]));
+    list.sort((a, b) => key(b) - key(a) || regionsById.get(a.region)!.name.localeCompare(regionsById.get(b.region)!.name));
     return list;
-  }, [progress, regionsById]);
+  }, [progress, regionsById, sortKey, type]);
   const shown = all ? rows : rows.slice(0, TOP_N);
 
   const click = (p: WRegionProgress) => {
@@ -51,9 +58,7 @@ export function Regions({ type, onType, progress, regionsById, usersById, onFly,
   return (
     <section className="card">
       <div className="regions-head">
-        <h2 className="card-title">
-          Regions <span className="faint" title="Ordered by kilometres covered in the mode shown, most first">by km</span>
-        </h2>
+        <h2 className="card-title">Regions</h2>
         <div className="tabs" role="tablist">
           {[0, 1, 2].map((t) => (
             <button
@@ -68,6 +73,22 @@ export function Regions({ type, onType, progress, regionsById, usersById, onFly,
             </button>
           ))}
         </div>
+      </div>
+      <div className="sortbar" role="radiogroup" aria-label="Sort regions">
+        <span className="faint">Sorted by</span>
+        {(['pct', 'km'] as SortKey[]).map((k) => (
+          <button
+            key={k}
+            type="button"
+            role="radio"
+            aria-checked={sortKey === k}
+            className={`sortopt${sortKey === k ? ' active' : ''}`}
+            title={`Most ${SORT_LABEL[k]} first, ${TYPE_LABEL[type].toLowerCase()}`}
+            onClick={() => setSortKey(k)}
+          >
+            {SORT_LABEL[k]}
+          </button>
+        ))}
       </div>
       {!progress ? (
         <div className="empty">Loading progress...</div>
@@ -94,7 +115,9 @@ export function Regions({ type, onType, progress, regionsById, usersById, onFly,
                 }}
               >
                 <div className="region-top">
-                  <span className="region-name">{r.name}</span>
+                  <span className="region-name" title={r.name}>
+                    {r.name}
+                  </span>
                   <span className="region-pct num">{percent.toFixed(1)}%</span>
                 </div>
                 <div className={`bar t${type}`}>
@@ -104,12 +127,7 @@ export function Regions({ type, onType, progress, regionsById, usersById, onFly,
                   <span className="len num">
                     {km(p.lenM[type])} / {km(r.lenM[type])} km
                   </span>
-                  {p.rankMonth[type] >= 1 && p.rankMonth[type] <= 3 && (
-                    <span className="chip">#{p.rankMonth[type]} this month</span>
-                  )}
-                  {p.rankYear[type] >= 1 && p.rankYear[type] <= 3 && (
-                    <span className="chip">#{p.rankYear[type]} this year</span>
-                  )}
+                  <BestRank month={p.rankMonth[type]} year={p.rankYear[type]} />
                   {!everyone && (
                     <span className="ach" title="Achievements: 25 / 50 / 75 / 90 / 99 percent">
                       {ACH_PCT.map((v, i) => (
@@ -140,6 +158,22 @@ export function Regions({ type, onType, progress, regionsById, usersById, onFly,
         </div>
       )}
     </section>
+  );
+}
+
+// The one board standing worth a badge on the row: the better of this month's and this year's
+// rank (the month's on a tie, being the more recent); the popover has both boards in full.
+function BestRank({ month, year }: { month: number; year: number }) {
+  const m = month >= 1 && month <= 3 ? month : 99;
+  const y = year >= 1 && year <= 3 ? year : 99;
+  if (m === 99 && y === 99) return null;
+  const useMonth = m <= y;
+  const rank = useMonth ? m : y;
+  const when = useMonth ? 'month' : 'year';
+  return (
+    <span className="chip" title={`#${rank} in this region this ${when}${!useMonth || y === 99 ? '' : `; #${y} this year`}`}>
+      #{rank} {when}
+    </span>
   );
 }
 

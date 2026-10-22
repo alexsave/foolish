@@ -8,10 +8,14 @@ There is no Strava: `adv-gen` plays a few thousand fake users riding, running an
 ## Build and run
 
 ```
-adventurer/tools/run.sh          # builds, downloads the Rhode Island extract once, imports it, starts all three
-open http://127.0.0.1:5711/      # the site (the server is http://127.0.0.1:8711, the feed ws://127.0.0.1:8711/adv/feed)
+adventurer/tools/run.sh          # builds, downloads the New York extract once, imports it, starts all three
+open http://127.0.0.1:5711/      # the site (the server is http://127.0.0.1:8711, the feed ws://127.0.0.1:8711/ws/public)
 adventurer/tools/run.sh stop
 ```
+
+One command starts the New York version: the graph of the five boroughs with Nassau, Westchester, Hudson and Bergen (graph v4, with each region's population), and 600 fake users whose homes follow where New Yorkers live, eight uploads a second, six "regulars" taking a fifth of them so a few maps grow fast enough to watch.
+The generator runs far faster than life: the ops panel's "Simulated time" says how many months of riding the uploads so far stand for, at three activities a week a person.
+After a change of graph, start with `FRESH=1` (the journal of another graph must not be replayed).
 
 Needs what c_base needs (`brew install openssl@3 sqlite` on macOS; `build-essential libssl-dev libsqlite3-dev zlib1g-dev` on Ubuntu), plus `node` for the site.
 `run.sh` keeps PIDs and logs under `adventurer/data/run/` and stops only what it started.
@@ -19,7 +23,7 @@ Needs what c_base needs (`brew install openssl@3 sqlite` on macOS; `build-essent
 By hand:
 
 ```
-make -C adventurer/server                 # build/adventurer, build/adv-import, build/adv-gen, build/adv-wiregen, web/src/gen/wire.ts
+make -C adventurer/server                 # build/adventurer, build/adv-import, build/adv-gen, build/adv-bench, web/src/gen/wire.ts and stream_frame.ts (structgen)
 adventurer/tools/fetch_osm.sh             # adventurer/data/region.osm.pbf (Geofabrik; another URL as the first argument)
 make -C adventurer/server graph           # adventurer/data/region.graph
 cd adventurer/server && CBASE_DEV=1 CBASE_LISTEN=127.0.0.1:8711 CBASE_DB=../data/adventurer.sqlite ADV_GRAPH=../data/region.graph build/adventurer serve
@@ -43,7 +47,7 @@ adventurer/server/src     the product: graph.h (the file), match.h (the matcher)
                           journal.h (SQLite), work.h (the queue and workers), mvt.h (tiles), wire.h (the binary surface),
                           routes.c, feed.c, adventurer_app.c (the cb_app), pbf.h + osm_tags.h + import.h (the importer),
                           fake.h (the fake world the generator and its test share)
-adventurer/server/tools   main_serve.c, import_main.c, wiregen.c
+adventurer/server/tools   main_serve.c, import_main.c, bench_match.c
 adventurer/server/gen     adv-gen: the HTTP client and the scheduler
 adventurer/server/test    unit_*.c, smoke.c, lib_fakegraph (a synthetic street grid through the real builder)
 adventurer/server/fuzz    fz_*.c
