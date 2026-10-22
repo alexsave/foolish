@@ -175,6 +175,8 @@ static void game_reset(cc_client *c, uint32_t game) {
     c->rematch_offer = 0;
     c->clock_running = 0;
     c->move_sent_at = 0;
+    c->premove = CH_MOVE_NONE;
+    c->turn_seen_at = 0;
 }
 
 void cc_client_open(cc_client *c, uint32_t game) {
@@ -218,7 +220,8 @@ int cc_client_move(cc_client *c, int from, int to, int promo, int64_t now) {
     if (c->g.pos.stm != c->color) return CC_E_TURN;
     ch_move m = CH_MOVE(from, to, promo);
     if (!ch_is_legal(&c->g.pos, m)) return CC_E_ILLEGAL;
-    cw_move_req q = { c->game, c->g.ply, m };
+    int64_t think = c->turn_seen_at ? now - c->turn_seen_at : -1;
+    cw_move_req q = { c->game, c->g.ply, m, think < 0 || think > 3600000 ? 0xffffffffu : (uint32_t)think };
     if (!req(c, CC_RQ_MOVE, SF_METH_POST, "/c/move", &q, sizeof q, c->game)) return CC_E_STATE;
     /* the clock as the server will see it: ours stops, theirs starts */
     int64_t mine = cc_client_clock(c, c->color, now);
@@ -233,6 +236,41 @@ int cc_client_move(cc_client *c, int from, int to, int promo, int64_t now) {
     c->moves_sent++;
     c->events |= CC_EV_GAME;
     return CC_OK;
+}
+
+int cc_client_premove(cc_client *c, int from, int to, int promo) {
+    if (!c->game || !c->synced || c->color < 0 || cc_game_over(&c->g) || c->g.pos.stm == c->color) return CC_E_STATE;
+    if (!(cc_client_premove_targets(c, from) & (1ULL << to))) return CC_E_ILLEGAL;
+    c->premove = CH_MOVE(from, to, promo);
+    c->events |= CC_EV_GAME;
+    return CC_OK;
+}
+
+void cc_client_premove_cancel(cc_client *c) {
+    if (c->premove) c->events |= CC_EV_GAME;
+    c->premove = CH_MOVE_NONE;
+}
+
+uint64_t cc_client_premove_targets(const cc_client *c, int from) {
+    if (!c->synced || c->color < 0 || cc_game_over(&c->g) || from < 0 || from > 63) return 0;
+    int col, t = ch_piece_at(&c->g.pos, from, &col);
+    if (t < 0 || col != c->color) return 0;
+    chess_pos p = c->g.pos;
+    p.stm = (uint8_t)c->color;
+    p.ep = CH_NO_SQ;
+    ch_moves ms;
+    ch_pseudo(&p, &ms);
+    uint64_t out = 0;
+    for (int i = 0; i < ms.n; i++)
+        if (CH_FROM(ms.m[i]) == from) out |= 1ULL << CH_TO(ms.m[i]);
+    if (t == CH_PAWN) {   /* a pawn may premove a capture onto a square the other side may yet occupy */
+        int fwd = c->color == CH_WHITE ? 8 : -8, r = from / 8, f = from % 8;
+        if (r + (c->color == CH_WHITE ? 1 : -1) >= 0 && r + (c->color == CH_WHITE ? 1 : -1) <= 7) {
+            if (f > 0) out |= 1ULL << (from + fwd - 1);
+            if (f < 7) out |= 1ULL << (from + fwd + 1);
+        }
+    }
+    return out;
 }
 
 void cc_client_act(cc_client *c, int act) {
@@ -289,6 +327,8 @@ static void take_snapshot(cc_client *c, const uint8_t *p, size_t n, int64_t now)
     for (int k = 0; k < 2; k++)
         if (c->name[0] && strcmp(c->names[k], c->name) == 0) c->color = (int8_t)k;
     c->synced = 1;
+    c->turn_seen_at = c->color == c->g.pos.stm ? now : 0;
+    c->premove = CH_MOVE_NONE;
     c->events |= CC_EV_GAME;
 }
 
@@ -298,10 +338,14 @@ static void take_state(cc_client *c, const uint8_t *p, size_t n, int64_t now) {
     memcpy(&s, p, sizeof s);
     if (s.game != c->game || !c->synced) return;
     c->pushes++;
-    bool was_over = cc_game_over(&c->g);
+    bool was_over = cc_game_over(&c->g), premove_due = false;
     if (s.ply == c->g.ply + 1) {   /* the other side's move (or ours, from another socket) */
         if (mirror_move(c, (ch_move)s.move) != CC_OK) { resync(c); return; }
-        if (c->color >= 0 && (s.ply & 1) == (c->color == CH_WHITE ? 0 : 1)) c->events |= CC_EV_MOVED;
+        if (c->color >= 0 && (s.ply & 1) == (c->color == CH_WHITE ? 0 : 1)) {
+            c->events |= CC_EV_MOVED;
+            c->turn_seen_at = now;
+            premove_due = true;
+        }
     } else if (s.ply > c->g.ply + 1) { resync(c); return; }
     else if (s.ply < c->g.ply) {
         /* our move is in flight and this is older news: take the offers, keep the board */
@@ -325,6 +369,11 @@ static void take_state(cc_client *c, const uint8_t *p, size_t n, int64_t now) {
     }
     c->events |= CC_EV_GAME;
     if (!was_over && cc_game_over(&c->g)) c->events |= CC_EV_OVER;
+    if (premove_due && c->premove) {
+        ch_move m = c->premove;
+        c->premove = CH_MOVE_NONE;
+        cc_client_move(c, CH_FROM(m), CH_TO(m), CH_PROMO(m), now);   /* which refuses it unless legal now */
+    }
 }
 
 static void take_reply(cc_client *c, const sf_frame *f, int64_t now) {

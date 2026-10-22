@@ -16,6 +16,10 @@ export interface BoardProps {
   onMove?: (from: number, to: number, promo: number) => void;
   /** the color whose pieces may be picked up (0 white, 1 black) */
   mover?: number;
+  /** a premove shown (from, to), and what clicking an empty square does to it */
+  premoveFrom?: number;
+  premoveTo?: number;
+  onCancelPremove?: () => void;
 }
 
 const FILES = 'abcdefgh';
@@ -68,7 +72,7 @@ export default function Board(p: BoardProps) {
       pick(sq);
       setDrag({ from: sq, x: e.clientX, y: e.clientY });
       (e.target as Element).setPointerCapture?.(e.pointerId);
-    } else { setSel(null); setLegal(new Set()); }
+    } else { setSel(null); setLegal(new Set()); p.onCancelPremove?.(); }
   };
   const move = (e: React.PointerEvent) => { if (drag) setDrag({ ...drag, x: e.clientX, y: e.clientY }); };
   const up = (e: React.PointerEvent) => {
@@ -87,6 +91,7 @@ export default function Board(p: BoardProps) {
     const v = p.board[sq];
     const cls = ['sq', light ? 'l' : 'd'];
     if (sq === p.lastFrom || sq === p.lastTo) cls.push('last');
+    if (sq === p.premoveFrom || sq === p.premoveTo) cls.push('pre');
     if (sq === sel) cls.push('sel');
     if (sq === p.checkSq) cls.push('check');
     if (legal.has(sq)) cls.push(v ? 'cap' : 'dot');
@@ -103,7 +108,7 @@ export default function Board(p: BoardProps) {
   return (
     <div className="board-wrap">
       <div ref={ref} className="board" onPointerDown={down} onPointerMove={move} onPointerUp={up}
-           onContextMenu={(e) => e.preventDefault()}>
+           onContextMenu={(e) => { e.preventDefault(); p.onCancelPremove?.(); setSel(null); setLegal(new Set()); }}>
         {cells}
         {drag && rect && (
           <div className={`pc ghost p${p.board[drag.from]}`}

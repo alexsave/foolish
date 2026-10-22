@@ -28,6 +28,10 @@ open(p, 'w').write(s.replace(a, b))
 PY
   then echo "SKIP (text not found exactly once): $file: $from"; mv "$file.mutant-orig" "$file"; bad=$((bad+1)); continue; fi
   obj=$(basename "$file" .c).o
+  # the mutant's own object goes first too: one built from the original in this same second would
+  # look newer than the mutant to make's one-second clock
+  find build/obj -name "$obj" -delete
+  rm -f build/c_chess build/chessbench build/test/unit_* build/test/smoke* build/asan/c_chess build/asan/chessbench build/asan/test/*
   if ! make -s -j4 $targets > /tmp/cc-mutant.log 2>&1; then
     echo "INVALID (does not compile): $file: $from -> $to"; bad=$((bad+1))
   elif bash -c "$test" > /tmp/cc-mutant.log 2>&1; then

@@ -11,6 +11,7 @@ void cc_game_new(cc_game *g, int32_t base_ms, int32_t inc_ms, int64_t now) {
     g->base_ms = base_ms;
     g->inc_ms = inc_ms;
     g->left_ms[0] = g->left_ms[1] = base_ms;
+    g->lag_quota[0] = g->lag_quota[1] = CC_LAG_QUOTA_START;
     g->turn_at = now;
     g->created_at = now;
     g->rep[0] = g->pos.key;
@@ -41,9 +42,18 @@ static void flag(cc_game *g, int64_t now) {
     else end(g, CC_FLAG, loser ^ 1, now);
 }
 
-static bool flagged(const cc_game *g, int64_t now) {
-    return cc_game_clock_running(g) && g->left_ms[g->pos.stm] - (now - g->turn_at) <= 0;
+/* The side to move's time is gone, `credit` ms of the elapsed time given back. */
+static bool flagged_with(const cc_game *g, int64_t now, int64_t credit) {
+    return cc_game_clock_running(g) && g->left_ms[g->pos.stm] - (now - g->turn_at - credit) <= 0;
 }
+
+/* The grace the flag waits for: the side's lag quota, at most CC_LAG_GRACE_MAX. */
+static int64_t grace(const cc_game *g) {
+    int32_t q = g->lag_quota[g->pos.stm];
+    return q < CC_LAG_GRACE_MAX ? q : CC_LAG_GRACE_MAX;
+}
+
+static bool flagged(const cc_game *g, int64_t now) { return flagged_with(g, now, grace(g)); }
 
 /* Threefold: the current key appears twice more among the positions since the last irreversible
  * move, with the same side to move (every second ply back). */
@@ -56,15 +66,26 @@ static bool threefold(const cc_game *g) {
     return false;
 }
 
-int cc_game_move(cc_game *g, int color, int ply, ch_move m, int64_t now) {
+int cc_game_move(cc_game *g, int color, int ply, ch_move m, int64_t now) { return cc_game_move_lag(g, color, ply, m, now, -1); }
+
+int cc_game_move_lag(cc_game *g, int color, int ply, ch_move m, int64_t now, int32_t think_ms) {
     if (cc_game_over(g)) return CC_E_OVER;
     if (color != g->pos.stm) return CC_E_TURN;
     if (ply != g->ply) return CC_E_PLY;
     if (!ch_is_legal(&g->pos, m)) return CC_E_ILLEGAL;
-    if (flagged(g, now)) { flag(g, now); return CC_E_OVER; }
+    /* the network's share of the elapsed time, given back from the quota */
+    int64_t elapsed = now - g->turn_at, credit = 0;
+    if (think_ms >= 0 && cc_game_clock_running(g)) {
+        int64_t lag = elapsed - think_ms;
+        if (lag < 0) lag = 0;
+        credit = lag < g->lag_quota[color] ? lag : g->lag_quota[color];
+    }
+    if (flagged_with(g, now, credit)) { flag(g, now); return CC_E_OVER; }
     if (cc_game_clock_running(g)) {
-        g->left_ms[color] -= now - g->turn_at;
+        g->left_ms[color] -= elapsed - credit;
         g->left_ms[color] += g->inc_ms;
+        int64_t q = g->lag_quota[color] - credit + CC_LAG_QUOTA_GAIN;
+        g->lag_quota[color] = (int32_t)(q > CC_LAG_QUOTA_MAX ? CC_LAG_QUOTA_MAX : q);
     }
     chess_pos next;
     ch_make(&g->pos, m, &next);
@@ -84,6 +105,12 @@ int cc_game_move(cc_game *g, int color, int ply, ch_move m, int64_t now) {
     return CC_OK;
 }
 
+int64_t cc_game_until(const cc_game *g, int64_t now) {
+    if (cc_game_over(g)) return -1;
+    int64_t t = g->ply < 2 ? CC_FIRST_MOVE_MS - (now - g->turn_at) : g->left_ms[g->pos.stm] + grace(g) - (now - g->turn_at);
+    return t < 0 ? 0 : t;
+}
+
 bool cc_game_tick(cc_game *g, int64_t now, int64_t *next_ms) {
     bool ended = false;
     if (!cc_game_over(g)) {
@@ -94,12 +121,7 @@ bool cc_game_tick(cc_game *g, int64_t now, int64_t *next_ms) {
             ended = true;
         }
     }
-    if (next_ms) {
-        if (cc_game_over(g)) *next_ms = -1;
-        else if (g->ply < 2) *next_ms = CC_FIRST_MOVE_MS - (now - g->turn_at);
-        else *next_ms = g->left_ms[g->pos.stm] - (now - g->turn_at);
-        if (next_ms && *next_ms < 0 && !cc_game_over(g)) *next_ms = 0;
-    }
+    if (next_ms) *next_ms = cc_game_until(g, now);
     return ended;
 }
 

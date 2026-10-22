@@ -109,9 +109,11 @@ function Game() {
       <Board
         board={b.board} flipped={flipped} lastFrom={b.lastFrom} lastTo={b.lastTo} checkSq={b.checkSq}
         mover={mine ? v.color : undefined}
-        targets={mine && !over && shown === null ? (from) => net.k!.targets(from) : null}
+        targets={mine && !over && shown === null ? (from) => net.k!.targets(from, v.myTurn === 0) : null}
         isPromotion={(f, t) => net.k!.isPromotion(f, t)}
-        onMove={(f, t, p) => net.run((k) => k.move(f, t, p, performance.now()))}
+        onMove={(f, t, p) => net.run((k) => (v.myTurn ? k.move(f, t, p, performance.now()) : k.premove(f, t, p)))}
+        premoveFrom={v.premoveFrom} premoveTo={v.premoveTo}
+        onCancelPremove={() => net.run((k) => k.premoveCancel())}
       />
       <div className="side">
         <Player v={v} color={top} bottom={false} />

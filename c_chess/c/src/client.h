@@ -76,6 +76,10 @@ typedef struct {
     int64_t   left_at;
     char      san[CC_MAX_PLY][8];
     uint16_t  confirmed_ply;   /* the server's ply (ours may be one ahead while a move is in flight) */
+    /* when the position became ours to move, by the host's clock (the move's thinking time) */
+    int64_t   turn_seen_at;
+    /* a premove: played the moment the other side's move arrives, if it is legal then */
+    ch_move   premove;
     /* our own move in flight, for the load generator's timing */
     int64_t   move_sent_at;
     uint16_t  move_sent_ply;
@@ -118,6 +122,12 @@ void cc_client_open(cc_client *c, uint32_t game);
 void cc_client_close_game(cc_client *c);
 /* Plays a move in the game shown: CC_OK (sent, and shown at once), or the rules' refusal. */
 int  cc_client_move(cc_client *c, int from, int to, int promo, int64_t now);
+/* A premove while the other side thinks: CC_OK when kept (it replaces any earlier one). */
+int  cc_client_premove(cc_client *c, int from, int to, int promo);
+void cc_client_premove_cancel(cc_client *c);
+/* The squares a premove from `from` may go to (the piece's moves on the current board as if it
+ * were ours to move; whether it is legal is decided when it is played). */
+uint64_t cc_client_premove_targets(const cc_client *c, int from);
 void cc_client_act(cc_client *c, int act);
 
 /* ---- what to draw ---- */

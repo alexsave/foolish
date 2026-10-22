@@ -73,6 +73,10 @@ EXPORT(cv_act) void cv_act(int act) { cc_client_act(&C, act); }
 /* ---- what to draw ---- */
 EXPORT(cv_targets_lo) uint32_t cv_targets_lo(int from) { return (uint32_t)cc_client_targets(&C, from); }
 EXPORT(cv_targets_hi) uint32_t cv_targets_hi(int from) { return (uint32_t)(cc_client_targets(&C, from) >> 32); }
+EXPORT(cv_premove) int cv_premove(int from, int to, int promo) { return cc_client_premove(&C, from, to, promo); }
+EXPORT(cv_premove_cancel) void cv_premove_cancel(void) { cc_client_premove_cancel(&C); }
+EXPORT(cv_premove_targets_lo) uint32_t cv_premove_targets_lo(int from) { return (uint32_t)cc_client_premove_targets(&C, from); }
+EXPORT(cv_premove_targets_hi) uint32_t cv_premove_targets_hi(int from) { return (uint32_t)(cc_client_premove_targets(&C, from) >> 32); }
 EXPORT(cv_is_promotion) int cv_is_promotion(int from, int to) { return cc_client_is_promotion(&C, from, to); }
 
 static void copy_name(char *dst, const char *src) {
@@ -94,6 +98,8 @@ EXPORT(cv_view) const CvView *cv_view(double now) {
     V.clock_running = C.clock_running;
     V.draw_offer = C.g.draw_offer;
     V.rematch_offer = C.rematch_offer;
+    V.premove_from = C.premove ? (uint8_t)CH_FROM(C.premove) : CV_NO_SQ;
+    V.premove_to = C.premove ? (uint8_t)CH_TO(C.premove) : CV_NO_SQ;
     V.ply = C.g.ply;
     V.base_s = C.g.base_ms / 1000 > 0xffff ? 0xffff : (uint16_t)(C.g.base_ms / 1000);
     V.inc_s = (uint8_t)(C.g.inc_ms / 1000);

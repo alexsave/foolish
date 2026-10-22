@@ -30,6 +30,10 @@ interface Exports {
   cv_targets_lo(from: number): number;
   cv_targets_hi(from: number): number;
   cv_is_promotion(from: number, to: number): number;
+  cv_premove(from: number, to: number, promo: number): number;
+  cv_premove_cancel(): void;
+  cv_premove_targets_lo(from: number): number;
+  cv_premove_targets_hi(from: number): number;
   cv_view(now: number): number;
   cv_moves(): number;
   cv_lobby_view(): number;
@@ -83,10 +87,13 @@ export class Kernel {
   close(): void { this.x.cv_close(); }
   move(from: number, to: number, promo: number, now: number): number { return this.x.cv_move(from, to, promo, now); }
   act(a: number): void { this.x.cv_act(a); }
-  /** The squares the piece on `from` may move to. */
-  targets(from: number): Set<number> {
+  premove(from: number, to: number, promo: number): number { return this.x.cv_premove(from, to, promo); }
+  premoveCancel(): void { this.x.cv_premove_cancel(); }
+  /** The squares the piece on `from` may move to (now, or as a premove while the other side thinks). */
+  targets(from: number, premove = false): Set<number> {
     const s = new Set<number>();
-    const lo = this.x.cv_targets_lo(from) >>> 0, hi = this.x.cv_targets_hi(from) >>> 0;
+    const lo = (premove ? this.x.cv_premove_targets_lo(from) : this.x.cv_targets_lo(from)) >>> 0;
+    const hi = (premove ? this.x.cv_premove_targets_hi(from) : this.x.cv_targets_hi(from)) >>> 0;
     for (let i = 0; i < 32; i++) {
       if (lo & (1 << i)) s.add(i);
       if (hi & (1 << i)) s.add(32 + i);

@@ -35,3 +35,10 @@ server/src/journal.c ::: if (sqlite3_step(st) == SQLITE_ROW) cc_state_next_game_
 c/src/client.c ::: if (mirror_move(c, (ch_move)s.move) != CC_OK) { resync(c); return; } ::: if (0) { } ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 c/src/client.c ::: c->g.left_ms[0] = c->g.left_ms[1] = INT64_MAX / 4; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 c/src/client.c ::: if (c->name[0] && strcmp(c->names[k], c->name) == 0) c->color = (int8_t)k; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+c/src/game.c ::: credit = lag < g->lag_quota[color] ? lag : g->lag_quota[color]; ::: credit = lag; ::: build/test/unit_game ::: build/test/unit_game
+c/src/game.c ::: g->lag_quota[color] = (int32_t)(q > CC_LAG_QUOTA_MAX ? CC_LAG_QUOTA_MAX : q); ::: g->lag_quota[color] = (int32_t)q; ::: build/test/unit_game ::: build/test/unit_game
+c/src/game.c ::: return q < CC_LAG_GRACE_MAX ? q : CC_LAG_GRACE_MAX; ::: return q < CC_LAG_GRACE_MAX ? q * 0 : 0; ::: build/test/unit_game ::: build/test/unit_game
+c/src/client.c ::: if (!ch_is_legal(&c->g.pos, m)) return CC_E_ILLEGAL; ::: (void)0; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: int64_t think = c->turn_seen_at ? now - c->turn_seen_at : -1; ::: int64_t think = -1; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: if (f > 0) out |= 1ULL << (from + fwd - 1); ::: (void)0; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: else if (s.ply > c->g.ply + 1) { resync(c); return; } ::: else if (s.ply > c->g.ply + 1) { return; } ::: build/test/unit_client ::: build/test/unit_client

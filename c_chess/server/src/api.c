@@ -233,7 +233,8 @@ static void h_move(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     else if ((color = cc_color_of(l, cc_player_get(u.id))) < 0) { status = 403; code = CW_E_NOT_PLAYER; }
     else {
         bool was_over = cc_game_over(&l->g);
-        rc = cc_game_move(&l->g, color, q.ply, (ch_move)q.move, now);
+        int32_t think = q.think_ms > 3600000u ? -1 : (int32_t)q.think_ms;   /* past an hour: unknown */
+        rc = cc_game_move_lag(&l->g, color, q.ply, (ch_move)q.move, now, think);
         if (rc == CC_OK) { cc_journal_move(l); cc_live_changed(l, now); }
         else {
             if (!was_over && cc_game_over(&l->g)) cc_live_changed(l, now);   /* the move came after the flag */

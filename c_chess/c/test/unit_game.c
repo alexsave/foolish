@@ -104,11 +104,35 @@ static void clock(void) {
     CHECK(cc_game_left(&g, CH_BLACK, 35000) == 57000, "black's running time %lld", (long long)cc_game_left(&g, CH_BLACK, 35000));
     CHECK(cc_game_left(&g, CH_WHITE, 35000) == 55000, "white's time ran while black's turn");
 
-    TEST("the flag by tick");
+    TEST("the flag by tick, after the grace");
     CHECK(!cc_game_tick(&g, 40000, &next), "flagged early");
-    CHECK(next == 60000 - 8000, "next %lld", (long long)next);
-    CHECK(cc_game_tick(&g, 92000, &next), "no flag at black's 60 s");
+    CHECK(next == 60000 + 1000 - 8000, "next %lld", (long long)next);   /* black's 52 s and a 1 s grace */
+    CHECK(!cc_game_tick(&g, 92999, &next), "flagged inside the grace");
+    CHECK(cc_game_tick(&g, 93000, &next), "no flag after black's 60 s and the grace");
     CHECK(g.status == CC_FLAG && g.winner == CH_WHITE && next == -1, "status %d winner %d next %lld", g.status, g.winner, (long long)next);
+
+    TEST("lag: the network's share is given back from the quota");
+    cc_game_new(&g, 60000, 0, 0);
+    play(&g, "e2e4 e7e5", 0);                                       /* the clock runs from 2000 */
+    CHECK(cc_game_move_lag(&g, CH_WHITE, 2, mv(&g, "g1f3"), 7000, 4600) == CC_OK, "move");
+    CHECK(g.left_ms[0] == 60000 - 4600, "white left %lld: 400 ms of lag not given back", (long long)g.left_ms[0]);
+    CHECK(g.lag_quota[0] == 1000 - 400 + CC_LAG_QUOTA_GAIN, "quota %d", g.lag_quota[0]);
+    CHECK(cc_game_move_lag(&g, CH_BLACK, 3, mv(&g, "b8c6"), 12000, 0) == CC_OK, "move");   /* claims 0 ms of thought */
+    CHECK(g.left_ms[1] == 60000 - 5000 + 1000, "black left %lld: more than the quota given back", (long long)g.left_ms[1]);
+    CHECK(g.lag_quota[1] == CC_LAG_QUOTA_GAIN, "quota %d", g.lag_quota[1]);
+    cc_game_new(&g, 60000, 0, 0);
+    play(&g, "e2e4 e7e5", 0);
+    static const char *const quiet[] = { "g1f3", "g8f6", "b1c3", "b8c6", "a2a3", "a7a6", "h2h3", "h7h6",
+                                          "b2b3", "b7b6", "g2g3", "g7g6", "d2d3", "d7d6", "c1d2", "c8d7" };
+    for (int i = 0; i < 16; i++)   /* no lag at all: the quota refills to its cap and no further */
+        CHECK(cc_game_move_lag(&g, g.pos.stm, g.ply, mv(&g, quiet[i]), 4000 + i * 2000, 2000) == CC_OK, "%s", quiet[i]);
+    CHECK(g.lag_quota[0] == CC_LAG_QUOTA_MAX, "white's quota %d", g.lag_quota[0]);
+    TEST("lag: a move in flight beats the server's flag");
+    cc_game_new(&g, 10000, 0, 0);
+    play(&g, "e2e4 e7e5", 0);                                       /* white's 10 s run from 2000 */
+    CHECK(!cc_game_tick(&g, 12500, NULL), "flagged inside the grace");
+    CHECK(cc_game_move_lag(&g, CH_WHITE, 2, mv(&g, "g1f3"), 12500, 9800) == CC_OK, "the late-arriving move refused");
+    CHECK(g.left_ms[0] == 200, "white left %lld", (long long)g.left_ms[0]);
 
     TEST("the flag on a late move");
     cc_game_new(&g, 10000, 0, 0);
@@ -123,12 +147,12 @@ static void clock(void) {
     cc_game_new(&g, 10000, 0, 0);
     play(&g, "e2e4 e7e5", 0);
     ch_from_fen(&g.pos, "4k3/8/8/8/8/8/8/R3K3 b - - 0 2");   /* black flags; white has a rook */
-    cc_game_tick(&g, 2000 + 10000, NULL);
+    cc_game_tick(&g, 2000 + 10000 + 1000, NULL);   /* after the grace */
     CHECK(g.status == CC_FLAG && g.winner == CH_WHITE, "status %d", g.status);
     cc_game_new(&g, 10000, 0, 0);
     play(&g, "e2e4 e7e5", 0);
     ch_from_fen(&g.pos, "4k3/8/8/8/8/8/8/N3K3 b - - 0 2");   /* white has only a knight */
-    cc_game_tick(&g, 2000 + 10000, NULL);
+    cc_game_tick(&g, 2000 + 10000 + 1000, NULL);
     CHECK(g.status == CC_DRAW_FLAG_MATERIAL && g.winner == CC_NO_WINNER, "status %d", g.status);
 
     TEST("first move abort");

@@ -56,6 +56,8 @@ int  ch_to_fen(const chess_pos *p, char *out);
 int  ch_to_fen_board(const chess_pos *p, char *out);
 
 void ch_legal(const chess_pos *p, ch_moves *out);
+/* The moves the pieces make, the king's safety not considered (a premove's targets). */
+void ch_pseudo(const chess_pos *p, ch_moves *out);
 bool ch_in_check(const chess_pos *p);
 void ch_make(const chess_pos *p, ch_move m, chess_pos *out);   /* m must be legal */
 bool ch_is_legal(const chess_pos *p, ch_move m);

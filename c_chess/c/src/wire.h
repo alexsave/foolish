@@ -67,7 +67,8 @@ typedef struct {
 typedef struct { uint16_t base_s; uint8_t inc_s; uint8_t rated; } cw_seek;
 typedef struct { uint32_t game; uint8_t color; uint8_t pad[3]; } cw_seek_ans;   /* game 0: waiting */
 typedef struct { uint32_t id; } cw_id;
-typedef struct { uint32_t game; uint16_t ply; uint16_t move; } cw_move_req;
+/* think_ms: the mover's own time on the move, by its clock (lag compensation, game.h); 0xffffffff unknown */
+typedef struct { uint32_t game; uint16_t ply; uint16_t move; uint32_t think_ms; } cw_move_req;
 typedef struct { uint32_t game; uint8_t act; uint8_t pad[3]; } cw_act_req;
 typedef struct { uint8_t code; int8_t rc; uint8_t pad[2]; } cw_err;   /* rc: game.h's cc_move_rc */
 
@@ -159,7 +160,7 @@ _Static_assert(sizeof(cw_auth_req) == 96, "cw_auth_req");
 _Static_assert(sizeof(cw_session) == 128, "cw_session");
 _Static_assert(sizeof(cw_seek) == 4, "cw_seek");
 _Static_assert(sizeof(cw_seek_ans) == 8, "cw_seek_ans");
-_Static_assert(sizeof(cw_move_req) == 8, "cw_move_req");
+_Static_assert(sizeof(cw_move_req) == 12, "cw_move_req");
 _Static_assert(sizeof(cw_act_req) == 8, "cw_act_req");
 _Static_assert(sizeof(cw_state) == 36, "cw_state");
 _Static_assert(sizeof(cw_start) == 8, "cw_start");

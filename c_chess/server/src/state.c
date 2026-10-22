@@ -224,9 +224,8 @@ static void heap_put(cc_live *l, int64_t at) {
 
 static void schedule(cc_live *l, int64_t now) {
     /* when the game could next end by itself (it must not end here: the caller has pushed its state) */
-    if (cc_game_over(&l->g)) { heap_remove(l); return; }
-    int64_t next = l->g.ply < 2 ? CC_FIRST_MOVE_MS - (now - l->g.turn_at) : l->g.left_ms[l->g.pos.stm] - (now - l->g.turn_at);
-    if (next < 0) next = 0;
+    int64_t next = cc_game_until(&l->g, now);
+    if (next < 0) { heap_remove(l); return; }
     bool wake = heap_n == 0 || now + next < HEAP[0]->timer_at;
     heap_put(l, now + next);
     if (wake) pthread_cond_signal(&clock_cond);

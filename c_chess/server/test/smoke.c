@@ -294,7 +294,7 @@ static void after_the_game(void) {
     // a move in the finished game, over HTTP: refused by the rules
     char hdr[2200];
     bearer(white_of(&A, &B), hdr, sizeof hdr);
-    cw_move_req q = { g_game, 4, CH_MOVE(12, 28, 0) };
+    cw_move_req q = { g_game, 4, CH_MOVE(12, 28, 0), 0xffffffffu };
     T_EQ_INT(tc_http(g_port, "POST", "/c/move", hdr, &q, sizeof q, &r), 0);
     T_EQ_INT(r.status, 409);
     cw_err e;

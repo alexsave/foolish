@@ -65,6 +65,8 @@ void ch_init(void) {
     inited = 1;
 }
 
+static void pseudo(const chess_pos *p, ch_moves *out);
+
 static inline uint64_t ray(int d, int s, uint64_t occ) {
     uint64_t a = RAY[d][s], b = a & occ;
     if (b) a ^= RAY[d][d < 4 ? lsb(b) : msb(b)];
@@ -255,6 +257,8 @@ int ch_to_fen(const chess_pos *p, char *out) {
 static void add_targets(ch_moves *out, int from, uint64_t t) {
     while (t) { int to = lsb(t); t &= t - 1; out->m[out->n++] = CH_MOVE(from, to, 0); }
 }
+
+void ch_pseudo(const chess_pos *p, ch_moves *out) { pseudo(p, out); }
 
 static void pseudo(const chess_pos *p, ch_moves *out) {
     int us = p->stm, them = us ^ 1;

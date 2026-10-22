@@ -110,7 +110,8 @@ h2 { font-size: 17px; }
 .sq { position: relative; }
 .sq.l { background: var(--sq-l); }
 .sq.d { background: var(--sq-d); }
-.sq.last::before, .sq.sel::before { content: ""; position: absolute; inset: 0; }
+.sq.last::before, .sq.sel::before, .sq.pre::before { content: ""; position: absolute; inset: 0; }
+.sq.pre::before { background: rgba(40, 90, 200, 0.45); }
 .sq.last::before { background: var(--last); }
 .sq.sel::before { background: var(--sel); }
 .sq.check { background: radial-gradient(ellipse at center, #ff0000 0%, #e70000 25%, rgba(169, 0, 0, 0) 89%); }

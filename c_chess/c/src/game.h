@@ -18,6 +18,17 @@
 #define CC_FIRST_MOVE_MS 30000    /* time to make one's first move before the game is aborted */
 #define CC_REP_RING 128           /* repetition keys kept: more than the 100 plies a fifty-move draw allows */
 
+/* LAG. A move reports how long its player thought (the client's own clock, from seeing the position
+ * to sending the move); the rest of the time the server counts is the network's, and is given back
+ * from a quota: it starts at CC_LAG_QUOTA_START, a move adds CC_LAG_QUOTA_GAIN, it never exceeds
+ * CC_LAG_QUOTA_MAX, and what is given back is taken from it. A client that lies about its thinking
+ * gains at most the quota. The flag waits for the same quota (at most CC_LAG_GRACE_MAX) so a move
+ * in flight is not beaten by the server's own clock. */
+#define CC_LAG_QUOTA_START 1000
+#define CC_LAG_QUOTA_GAIN 150
+#define CC_LAG_QUOTA_MAX 2000
+#define CC_LAG_GRACE_MAX 1000
+
 enum cc_status {
     CC_PLAYING = 1,
     CC_MATE = 2,
@@ -52,6 +63,7 @@ typedef struct {
     uint8_t   draw_offer;           /* bit 1 << color: that side offers a draw */
     uint8_t   pad[3];
     int32_t   base_ms, inc_ms;      /* the time control */
+    int32_t   lag_quota[2];         /* ms of network lag each side may still be given back */
     int64_t   left_ms[2];           /* each side's remaining time as of turn_at */
     int64_t   turn_at;              /* when the side to move's turn began */
     int64_t   created_at;
@@ -69,10 +81,15 @@ int64_t cc_game_left(const cc_game *g, int color, int64_t now);
  * replayed). On CC_OK the game may have ended by it (g->status). A move whose mover's time has
  * already run out ends the game on the flag instead, and answers CC_E_OVER. */
 int  cc_game_move(cc_game *g, int color, int ply, ch_move m, int64_t now);
-/* Ends the game when a clock has run out or a first move was not made in time; true when the
- * game ended by this call. The time until the next thing that could end the game is in *next_ms
+/* The same, with the mover's own thinking time (ms; < 0: unknown, nothing given back). */
+int  cc_game_move_lag(cc_game *g, int color, int ply, ch_move m, int64_t now, int32_t think_ms);
+/* Ends the game when a clock has run out (past the side's grace) or a first move was not made in
+ * time; true when the game ended by this call. The time until the next thing that could end the game is in *next_ms
  * (-1 when nothing runs). */
 bool cc_game_tick(cc_game *g, int64_t now, int64_t *next_ms);
+/* How long until the game could end by itself (a flag, past its grace, or the first-move abort):
+ * ms, 0 when due, -1 when it is over. Reads only. */
+int64_t cc_game_until(const cc_game *g, int64_t now);
 int  cc_game_resign(cc_game *g, int color, int64_t now);
 /* Abort: allowed before each side has made a move. */
 int  cc_game_abort(cc_game *g, int color, int64_t now);

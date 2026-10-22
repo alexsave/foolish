@@ -23,7 +23,8 @@ typedef struct {
     uint8_t  synced, ready, status;
     uint8_t  winner, stm, my_turn, clock_running;
     uint8_t  last_from, last_to, check_sq, draw_offer;
-    uint8_t  rematch_offer, rated, inc_s, pad0;
+    uint8_t  rematch_offer, rated, inc_s, premove_from;   /* premove_from/to: CV_NO_SQ when none */
+    uint8_t  premove_to, pad2[3];
     uint16_t ply, base_s;
     uint32_t clock_ms[2];
     int16_t  rating[2], diff[2];
