@@ -1319,7 +1319,9 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out) {
 
 // ---- create ---------------------------------------------------------------------------------
 
-int cb_table_create(cb_ctx *ctx, const cb_user *u, cb_table_result *out) {
+int cb_table_create(cb_ctx *ctx, const cb_user *u, cb_table_result *out) { return cb_table_create_id(ctx, u, out, NULL); }
+
+int cb_table_create_id(cb_ctx *ctx, const cb_user *u, cb_table_result *out, char gid_out[CB_GAME_ID_MAX + 1]) {
     memset(out, 0, sizeof *out);
     if (!ctx->store) return CB_E_STATE;
     cb_section *s = cb_section_new();
@@ -1386,6 +1388,7 @@ int cb_table_create(cb_ctx *ctx, const cb_user *u, cb_table_result *out) {
         f.n_joined = 1;
         snprintf(f.joined[0], sizeof(cb_uuid), "%s", u->id);
         cb_fanout_commit(ctx, &f);
+        if (gid_out) snprintf(gid_out, CB_GAME_ID_MAX + 1, "%s", s->gid);
         break;
     }
     if (ret == CB_E_CONFLICT) CB_ERROR("table", "create: no free game id in %d draws", CB_TABLE_ID_DRAWS);
