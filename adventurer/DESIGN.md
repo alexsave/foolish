@@ -33,8 +33,8 @@ A fake world (adv-gen) stands in for Strava: 3000 deterministic users of five ki
 |---|---|---|
 | CPU per ~5k-point activity | 5-20 ms | matcher alone on real roads: mean 1.21 ms, p50 0.98, p90 2.3, p99 5.3, max 7.3 (adv-bench, 1000 rides, 4425 points each, 263 ns per point); server match + merge: p50 1.3 ms, p99 5 ms (live, hostile uploads included) |
 | z14 tile | 0.1-0.5 ms | user tiles over downtown Providence: p50 0.47 ms wall, max 1.24 (39 KB median, 213 KB max); rural: 0.23 ms; server-side render histogram over every zoom: p50 56 us, p99 1.5 ms |
-| Upload to points visible | under 1 s | live uploads at 4.4/s: p50 4.1 ms, p99 25 ms (arrival to the feed frame, after the stats were updated) |
-| RSS | | 55 MB serving 3000 users and 15,000 activities; 144 MB with 3000 uploads queued |
+| Upload to points visible | under 1 s | live uploads at 4.4/s on the final build: p50 1.0 ms, p99 7.2 ms (arrival to the feed frame, after the stats were updated; 4.1 / 25 ms on the first matcher) |
+| RSS | | 35 MB serving 3000 users and 2,000 activities, 55 MB at 15,000; 144 MB with 3000 uploads queued |
 | Throughput | | 3000 uploads accepted in 3.1 s (1013/s; 44 refused 503 at the lane cap and retried); 18,677 activities processed in 63 s (295/s) on 2 matcher threads during the backfill flood below |
 | Backfill beside live | backfill never adds tile or live latency | 12 users' histories (18,000 uploads, 1 GB) posted in 35 s while live uploads kept arriving at 4.4/s: live upload-to-visible p50 3.1 ms, p99 16 ms; activity CPU p50 1.28 ms, p99 5.1 ms; RSS peaked at 197 MB with the backfill lane holding 140 MB of bodies |
 | Matcher accuracy | | recall 0.989 mean (0.825 worst ride), precision 0.991 on real roads; 0.9995 / 0.996 on the synthetic grid; the live average over every scored upload 98% |
