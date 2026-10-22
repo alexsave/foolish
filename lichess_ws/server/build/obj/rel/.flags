@@ -1,2 +1,0 @@
-Apple clang version 21.0.0 (clang-2100.3.34.2)
-cc -std=gnu11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wshadow -Wvla -I../../c_base/core/include -I../../c_base/core/src -I../../c_base/providers/local/src -I../../c_base/providers/aws/src -I../../shared/c -Isrc -Itest -I../../c_base/core/test -I/opt/homebrew/opt/sqlite/include -I/opt/homebrew/opt/openssl@3/include -pthread 

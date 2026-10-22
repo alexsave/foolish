@@ -48,6 +48,11 @@ INC := $(PLATFORM_INC) -Isrc -Itest -I$(CB)/core/test
 CFLAGS = -std=gnu11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wshadow -Wvla \
          $(INC) $(SQLITE_CFLAGS) $(OPENSSL_CFLAGS) -pthread
 LDLIBS := $(SQLITE_LDFLAGS) $(OPENSSL_LDFLAGS) -lsqlite3 -lssl -lcrypto -lz -lpthread -lm
+# STATIC=1: a statically linked binary (tools/build_linux.sh links one on Alpine, musl, for the
+# lichess mono container and for a Linux host).
+ifeq ($(STATIC),1)
+  LDLIBS += -static
+endif
 
 SAN := -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer
 ASAN_CFLAGS = $(filter-out -O2,$(CFLAGS)) -O1 $(SAN) -DCB_INSTRUMENTED

@@ -345,7 +345,7 @@ static void fake_lila(const char *chan, size_t clen, const char *msg, size_t n, 
     }
     if (n > 5 && memcmp(msg, "ping ", 5) == 0) {
         fake_pings++;
-        cb_buf_printf(&out, "pong %s", msg + 5);
+        cb_buf_printf(&out, "pong %.*s", (int)(n - 5), msg + 5);
         resp_publish(redis, strcmp(chan, "site-in") == 0 ? "site-out" : "r-out", cb_buf_cstr(&out), out.len);
         return;
     }
