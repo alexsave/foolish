@@ -1,8 +1,9 @@
 #!/bin/bash
 # mutation_check.sh - breaks the code each test covers, one mutation at a time, and confirms the
-# test goes red for it, then restores the file from a copy (never from git) and touches it, so the
-# next build recompiles it (a restored file with its old mtime left the mutated object in place
-# once, and a later test ran against it). Run from lichess_ws/server with Redis and MongoDB up
+# test goes red for it, then restores the file from a copy (never from git) and removes its object,
+# so the next build recompiles it whatever the clock says (a restored file with its old mtime left
+# the mutated object in place once, and make's one-second mtime granularity let a mutation made
+# within the second of the previous build go unbuilt: two tests looked green that were not). Run from lichess_ws/server with Redis and MongoDB up
 # (the smoke needs them). Prints one line per mutation; exits 1 when one stayed green.
 set -u
 cd "$(dirname "$0")/.."
@@ -11,15 +12,18 @@ mutate() {   # <file> <test program> <sed expression (-E)> <label>
   local f=$1 t=$2 expr=$3 label=$4
   cp "$f" "$f.orig"
   sed -i '' -E "$expr" "$f"
+  rm -f "build/obj/rel/${f%.c}.o"   # make's 1 s mtime granularity cannot tell a file mutated, built, restored and
+                                     # mutated again within one second from its object: drop the object instead
   if cmp -s "$f" "$f.orig"; then echo "MUTATION NOT APPLIED: $label"; fail=1; mv "$f.orig" "$f" && touch "$f"; return; fi
   local out rc
-  if ! out=$(make -j4 "build/test/$t" build/lws 2>&1); then
+  if ! out=$(perl -e 'alarm shift; exec ' 600 make -j4 "build/test/$t" build/lws 2>&1); then   # a build is bounded: one spun for 12 minutes once
     echo "red (did not compile): $label"
   else
     if [ "$t" = smoke ]; then out=$(build/test/smoke build/lws build/wsbench 2>&1); rc=$?; else out=$(build/test/$t 2>&1); rc=$?; fi
     if [ $rc -ne 0 ]; then echo "red: $label ($(echo "$out" | grep -c '^FAIL') failing checks)"; else echo "STILL GREEN: $label"; fail=1; fi
   fi
   mv "$f.orig" "$f" && touch "$f"
+  rm -f "build/obj/rel/${f%.c}.o"
 }
 # unit_json_wire
 mutate src/json_wire.c unit_json_wire 's/return n == 4 \|\| strchr\("qrbnk", u\[4\]\) != NULL;/return true;/' "uci promotion letter unchecked"

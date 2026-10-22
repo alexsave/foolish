@@ -38,6 +38,9 @@ static void test_parse(void) {
     parse("{\"t\":\"move\",\"d\":{\"from\":\"g1\",\"to\":\"f3\"}}", &m); T_CHECK(m.kind == CO_ROUND_MOVE && strcmp(m.uci, "g1f3") == 0);
     parse("{\"t\":\"move\",\"d\":{\"from\":\"a7\",\"to\":\"a8\",\"promotion\":\"n\"}}", &m); T_CHECK(m.kind == CO_ROUND_MOVE && strcmp(m.uci, "a7a8n") == 0);
     parse("{\"t\":\"move\",\"d\":{\"u\":\"e2e9\"}}", &m); T_CHECK(m.kind == CO_UNEXPECTED);
+    parse("{\"t\":\"move\",\"d\":{\"u\":\"e7e8x\"}}", &m); T_CHECK(m.kind == CO_UNEXPECTED);   // not a promotion piece
+    parse("{\"t\":\"move\",\"d\":{\"u\":\"e2e4\",\"s\":\"zz\"}}", &m); T_CHECK(m.kind == CO_ROUND_MOVE && m.has_mt && m.mt_centis == 35 * 36 + 35);
+    parse("{\"t\":\"move\",\"d\":{\"u\":\"e2e4\",\"s\":\"1g\"}}", &m); T_CHECK(m.kind == CO_ROUND_MOVE && m.has_mt && m.mt_centis == 52);
     parse("{\"t\":\"move\",\"d\":{\"u\":\"e2e4e5\"}}", &m); T_CHECK(m.kind == CO_UNEXPECTED);
     parse("{\"t\":\"move\",\"d\":{\"b\":1}}", &m); T_CHECK(m.kind == CO_UNEXPECTED);
     parse("{\"t\":\"move\",\"d\":\"e2e4\"}", &m); T_CHECK(m.kind == CO_UNEXPECTED);

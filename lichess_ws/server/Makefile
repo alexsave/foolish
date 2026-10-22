@@ -87,6 +87,7 @@ prog = $(eval $(call PROG,$(1),$(2),$(3),$(4),$(5)))
 
 $(call prog,build,build/obj/rel,lws,tools/main_serve.c,CFLAGS)
 $(call prog,build,build/obj/rel,wsbench,tools/wsbench.c,CFLAGS)
+$(call prog,build,build/obj/rel,dropin,tools/dropin.c $(TLIB_SRC),CFLAGS)
 $(call prog,build/asan,build/obj/asan,lws,tools/main_serve.c,ASAN_CFLAGS)
 $(call prog,build/asan,build/obj/asan,wsbench,tools/wsbench.c,ASAN_CFLAGS)
 $(foreach u,$(UNITS) $(SMOKES),$(call prog,build/test,build/obj/rel,$(u),test/$(u).c $(TLIB_SRC),CFLAGS))

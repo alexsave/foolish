@@ -170,7 +170,12 @@ int main(int argc, char **argv) {
     T_CHECK(tr_wait(sub, 3000, "lobby-in", "connect/sris", &m) == 0 && got(&m, "connect/sris sri0lobbycar"));
     close(carol);
 
-    // 4. the round: alice plays white, an anonymous watcher, lila (this test) on Redis
+    // 4. the round: alice plays white, an anonymous watcher, lila (this test) on Redis.
+    // First the challenge that became this game versions its own events under the same id on the
+    // challenge channel (lila does: a challenge's id is its game's): that room is not the game's,
+    // so the players below still get the game's crowd and the mover still loses the dests.
+    T_CHECK(tr_publish(pub, "chal-out", "tell/room/version smokegm1 1 - {\"t\":\"reload\",\"d\":null}") == 0);
+    T_CHECK(tr_publish(pub, "chal-out", "tell/room/version smokegm1 2 - {\"t\":\"reload\",\"d\":null}") == 0);
     T_CHECK(tc_ws_open(port, "/play/smokegm1wwww/v6?sri=sri0bob0001", COOKIE_BOB) < 0);    // bob is not white
     T_CHECK(tc_ws_open(port, "/play/smokegm1wwww/v6?sri=sri0anon001", NULL) < 0);          // nor is anyone anonymous
     T_CHECK(tc_ws_open(port, "/play/nogame00wwww/v6?sri=sri0anon002", NULL) < 0);          // no such game

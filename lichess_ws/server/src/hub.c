@@ -111,8 +111,21 @@ static void flush_critical(void) {
 
 // ---- rooms ------------------------------------------------------------------------------------
 
+// A game and a room of another kind may share an id (a challenge becomes the game of the same id,
+// and lila versions the challenge's events on chal-out while it versions the game's on r-out), as
+// lila-ws keeps History.round and History.room apart: the rooms that are not games are keyed with
+// a leading '@'.
+static const char *room_key(const char *id, bool round, char key[LWS_ROOM_MAX + 1]) {
+    if (round) return id;
+    key[0] = '@';
+    cb_strlcpy(key + 1, id, LWS_ROOM_MAX);
+    return key;
+}
+
 static lws_room *room_get(const char *id, bool create, bool round) {
-    lws_room *r = smap_get(&H.rooms, id);
+    char kb[LWS_ROOM_MAX + 1];
+    const char *key = room_key(id, round, kb);
+    lws_room *r = smap_get(&H.rooms, key);
     if (r || !create) return r;
     r = calloc(1, sizeof *r);
     if (!r) return NULL;
@@ -120,7 +133,7 @@ static lws_room *room_get(const char *id, bool create, bool round) {
     r->round = round;
     lnode_init(&r->members);
     smap_init(&r->users);
-    if (!smap_put(&H.rooms, id, r)) { free(r); return NULL; }
+    if (!smap_put(&H.rooms, key, r)) { free(r); return NULL; }
     return r;
 }
 
@@ -128,7 +141,8 @@ static void event_free(lws_event *e) { free(e->full); free(e->nodests); memset(e
 
 static void room_free_if_empty(lws_room *r) {
     if (r->n_members || r->hist_n || r->n_fen || r->players[0] || r->players[1] || r->crowd_dirty) return;
-    smap_del(&H.rooms, r->id);
+    char kb[LWS_ROOM_MAX + 1];
+    smap_del(&H.rooms, room_key(r->id, r->round, kb));
     smap_free(&r->users);
     free(r->fen_watchers);
     for (int i = 0; i < LWS_HIST; i++) event_free(&r->hist[i]);
@@ -970,12 +984,14 @@ static void send_versions(void) {
     cb_buf_free(&csv);
 }
 
-static void room_stop(const char *id) {
-    lws_room *r = room_get(id, false, false);
+// A game's stop (on the round channels) forgets its history and closes its sockets (4010); a
+// room's stop forgets its history.
+static void room_stop(const char *id, bool round) {
+    lws_room *r = room_get(id, false, round);
     if (!r) return;
     for (int i = 0; i < LWS_HIST; i++) event_free(&r->hist[i]);
     r->hist_n = r->hist_head = 0;
-    LNODE_EACH(&r->members, it, nx) cb_ws_close(LNODE_OWNER(it, lws_conn, n_room)->ws, 4010);
+    if (round) LNODE_EACH(&r->members, it, nx) cb_ws_close(LNODE_OWNER(it, lws_conn, n_room)->ws, 4010);
     room_free_if_empty(r);
 }
 
@@ -1044,7 +1060,7 @@ static void on_redis(const char *chan, size_t clen, const char *msg, size_t n, v
     case LO_TELL_ROOM_USER: {
         lo_str(m.arg[0], a0, sizeof a0);
         lo_str(m.arg[1], a1, sizeof a1);
-        lws_room *r = room_get(a0, false, false);
+        lws_room *r = room_get(a0, false, round_chan);
         if (!r) return;
         cb_buf_append(b, m.arg[2].p, m.arg[2].n);
         users_tell(a1, b, K_ROUND, r, false);
@@ -1052,7 +1068,7 @@ static void on_redis(const char *chan, size_t clen, const char *msg, size_t n, v
     }
     case LO_TELL_ROOM_USERS: {
         lo_str(m.arg[0], a0, sizeof a0);
-        lws_room *r = room_get(a0, false, false);
+        lws_room *r = room_get(a0, false, round_chan);
         if (!r) return;
         cb_buf_append(b, m.arg[2].p, m.arg[2].n);
         tell_users_csv(m.arg[1], b, K_ROUND, r, false);
@@ -1113,7 +1129,7 @@ static void on_redis(const char *chan, size_t clen, const char *msg, size_t n, v
     }
     case LO_TELL_ROOM: {
         lo_str(m.arg[0], a0, sizeof a0);
-        lws_room *r = room_get(a0, false, false);
+        lws_room *r = room_get(a0, false, round_chan);
         if (!r) return;
         cb_buf_append(b, m.arg[1].p, m.arg[1].n);
         room_publish(r, b);
@@ -1123,7 +1139,7 @@ static void on_redis(const char *chan, size_t clen, const char *msg, size_t n, v
     case LO_TELL_ROOM_CHAT: room_version(&m, true); return;
     case LO_ROOM_STOP:
         lo_str(m.arg[0], a0, sizeof a0);
-        room_stop(a0);
+        room_stop(a0, round_chan);
         return;
     case LO_R_RESYNC_PLAYER:
         lo_str(m.arg[0], a0, sizeof a0);

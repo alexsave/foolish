@@ -587,7 +587,13 @@ int main(int argc, char **argv) {
                u_after.user_s - u_before.user_s, u_after.sys_s - u_before.sys_s, 100.0 * cpu / secs, msgs ? cpu * 1e6 / (double)msgs : 0.0, msgs);
     }
     resp_free(redis);
-    for (int i = 0; i < n_clients; i++) { if (clients[i].fd >= 0) close(clients[i].fd); cb_buf_free(&clients[i].in); cb_buf_free(&clients[i].out); }
+    // Close with a reset, not a FIN: 10k sockets in TIME_WAIT would hold the Mac's 16k ephemeral
+    // ports for 30 s, and the next run (the other server's) would find no port to connect from.
+    struct linger lg = { .l_onoff = 1, .l_linger = 0 };
+    for (int i = 0; i < n_clients; i++) {
+        if (clients[i].fd >= 0) { setsockopt(clients[i].fd, SOL_SOCKET, SO_LINGER, &lg, sizeof lg); close(clients[i].fd); }
+        cb_buf_free(&clients[i].in); cb_buf_free(&clients[i].out);
+    }
     free(clients); free(games);
     cb_loop_free(L);
     return 0;
