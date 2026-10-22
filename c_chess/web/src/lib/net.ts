@@ -1,8 +1,8 @@
 // net.ts - the page's one connection: the account (kept between visits), the /ws socket, and the
 // kernel's view of it, as a store React subscribes to. The bytes go between the socket and the
 // kernel untouched; what they mean is the kernel's.
-import { CC_EV_GAME, CC_EV_LOBBY, CW_AUTH_SIGNIN, CW_AUTH_SIGNUP } from '@/gen/web_layout';
-import type { CvLobby_Snap, CvMoves_Snap, CvView_Snap } from '@/gen/web_layout';
+import { CC_EV_GAME, CC_EV_LOBBY, CC_EV_TV, CW_AUTH_SIGNIN, CW_AUTH_SIGNUP } from '@/gen/web_layout';
+import type { CvLobby_Snap, CvMoves_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
 import { Kernel, loadKernel } from './kernel';
 
 const SESSION_KEY = 'cc.session';
@@ -15,6 +15,7 @@ export interface Snapshot {
   view: CvView_Snap | null;
   moves: CvMoves_Snap | null;
   lobby: CvLobby_Snap | null;
+  tv: CvTv_Snap | null;
   /** events since the store last published, OR-ed (cleared by `consume`) */
   events: number;
 }
@@ -45,7 +46,7 @@ class Net {
   k: Kernel | null = null;
   private ws: WebSocket | null = null;
   private listeners = new Set<() => void>();
-  private snap: Snapshot = { phase: 'loading', view: null, moves: null, lobby: null, events: 0 };
+  private snap: Snapshot = { phase: 'loading', view: null, moves: null, lobby: null, tv: null, events: 0 };
   private started = false;
   private wantLobby = false;
   private wantGame = 0;
@@ -80,7 +81,13 @@ class Net {
       patch.moves = this.k.moves();
     }
     if (view.events & CC_EV_LOBBY) patch.lobby = this.k.lobbyView();
+    if (view.events & CC_EV_TV) patch.tv = this.k.tv(performance.now());
     this.publish(patch);
+  }
+
+  /** The live games' clocks, read again (the lobby's once-a-second tick). */
+  tickTv(): void {
+    if (this.k && this.snap.tv?.n) this.publish({ tv: this.k.tv(performance.now()) });
   }
 
   /** Only the clocks moved: a cheap view for the animation frame. */

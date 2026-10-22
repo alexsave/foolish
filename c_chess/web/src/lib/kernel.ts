@@ -1,8 +1,8 @@
 // kernel.ts - the browser's kernel (c/wasm/web.c, built to /chess.wasm): loads it, checks its
 // layout against the generated readers, and names its exports. Every rule and every protocol byte
 // is in there; this file only moves bytes in and out of its io buffer.
-import { memOf, readCvGames, readCvLobby, readCvMoves, readCvProfile, readCvView } from '@/gen/web_layout';
-import type { CvGames_Snap, CvLobby_Snap, CvMoves_Snap, CvProfile_Snap, CvView_Snap } from '@/gen/web_layout';
+import { memOf, readCvGames, readCvLobby, readCvMoves, readCvProfile, readCvTop, readCvTv, readCvView } from '@/gen/web_layout';
+import type { CvGames_Snap, CvLobby_Snap, CvMoves_Snap, CvProfile_Snap, CvTop_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
 import { LAYOUT_HASH } from '@/gen/web_layout_hash';
 
 interface Exports {
@@ -40,6 +40,8 @@ interface Exports {
   cv_board_at(ply: number): number;
   cv_profile(n: number): number;
   cv_games(n: number): number;
+  cv_tv(now: number): number;
+  cv_top(n: number): number;
 }
 
 export class Kernel {
@@ -108,6 +110,10 @@ export class Kernel {
   boardAt(ply: number): CvView_Snap { return readCvView(memOf(this.x.memory.buffer), this.x.cv_board_at(ply)); }
   /** GET /c/user/<name>'s answer, read. */
   profile(body: Uint8Array): CvProfile_Snap { return readCvProfile(memOf(this.x.memory.buffer), this.x.cv_profile(this.put(body))); }
+  /** The lobby's live games, their clocks as of now. */
+  tv(now: number): CvTv_Snap { return readCvTv(memOf(this.x.memory.buffer), this.x.cv_tv(now)); }
+  /** GET /c/top's answer, read. */
+  top(body: Uint8Array): CvTop_Snap { return readCvTop(memOf(this.x.memory.buffer), this.x.cv_top(this.put(body))); }
   /** GET /c/games/<name>'s answer, read. */
   games(body: Uint8Array): CvGames_Snap { return readCvGames(memOf(this.x.memory.buffer), this.x.cv_games(this.put(body))); }
 }

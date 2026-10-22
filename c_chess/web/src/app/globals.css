@@ -100,6 +100,18 @@ h2 { font-size: 17px; }
 .link-box { display: flex; gap: 8px; margin-top: 10px; }
 .link-box input { flex: 1; font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
 
+.minis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.minis.wide { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.mini { display: flex; flex-direction: column; gap: 6px; padding: 10px; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+.mini:hover { border-color: var(--accent); text-decoration: none; }
+.mini-board { box-shadow: none; border-radius: 3px; }
+.mini-who { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.mini-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-clock { font: 600 13px/1 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; padding: 3px 6px; border-radius: 4px; background: var(--bg); }
+.mini-clock.on { background: var(--clock-on); color: #fff; }
+.leaders { border-top: 1px solid var(--line); }
+
 /* ---- the game ---- */
 .game { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
 .board-wrap { width: min(100%, calc(100vh - 140px)); max-width: 720px; }

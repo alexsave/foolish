@@ -351,6 +351,26 @@ static void h_lobby(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     answer(res, 200, buf, (size_t)n);
 }
 
+static void h_tv(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    static cw_tv tv;   /* under cc_lock */
+    uint8_t buf[sizeof tv];
+    pthread_mutex_lock(&cc_lock);
+    int n = cc_tv_fill(&tv, CW_TV_MAX, cc_mono());
+    memcpy(buf, &tv, (size_t)n);
+    pthread_mutex_unlock(&cc_lock);
+    answer(res, 200, buf, (size_t)n);
+}
+
+static void h_top(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    static cw_top top;   /* under cc_lock */
+    uint8_t buf[sizeof top];
+    pthread_mutex_lock(&cc_lock);
+    int n = cc_top_fill(&top);
+    memcpy(buf, &top, (size_t)n);
+    pthread_mutex_unlock(&cc_lock);
+    answer(res, 200, buf, (size_t)n);
+}
+
 static void tail_name(const char *path, const char *prefix, char *out) {
     size_t n = strlen(prefix), i = 0;
     out[0] = 0;
@@ -469,6 +489,8 @@ static const cb_route ROUTES[] = {
     { "POST", "/c/act", GAME_ROUTE, h_act, 500 },
     { "GET", "/c/game/*", GAME_ROUTE, h_game, 500 },
     { "GET", "/c/lobby", GAME_ROUTE, h_lobby, 500 },
+    { "GET", "/c/tv", GAME_ROUTE, h_tv, 500 },
+    { "GET", "/c/top", GAME_ROUTE, h_top, 500 },
     { "GET", "/c/user/*", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_user, 500 },
     { "GET", "/c/games/*", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_games, 500 },
     { "GET", "/c/pgn/*", CB_ROUTE_POOL, h_pgn, 0 },

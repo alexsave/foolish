@@ -35,10 +35,11 @@ enum {
     CC_EV_AUTH = 1 << 7,       /* a sign-in or sign-up answered (cc_client.auth_status) */
     CC_EV_OVER = 1 << 8,       /* the game shown has just ended */
     CC_EV_MOVED = 1 << 9,      /* the other side moved in the game shown */
+    CC_EV_TV = 1 << 10,        /* the lobby's live games changed (cc_client.tv) */
 };
 
 /* What a request was, to read its answer. */
-enum { CC_RQ_NONE, CC_RQ_SEEK, CC_RQ_UNSEEK, CC_RQ_MOVE, CC_RQ_ACT, CC_RQ_SNAP, CC_RQ_LOBBY, CC_RQ_CHALLENGE, CC_RQ_ACCEPT, CC_RQ_SUB };
+enum { CC_RQ_NONE, CC_RQ_SEEK, CC_RQ_UNSEEK, CC_RQ_MOVE, CC_RQ_ACT, CC_RQ_SNAP, CC_RQ_LOBBY, CC_RQ_CHALLENGE, CC_RQ_ACCEPT, CC_RQ_SUB, CC_RQ_TV };
 
 typedef struct { uint32_t id; uint8_t kind; uint8_t pad[3]; uint32_t game; } cc_pending;
 
@@ -90,6 +91,8 @@ typedef struct {
     cw_err    err;             /* CC_EV_ERROR */
     uint16_t  err_status;
     cw_lobby  lobby;           /* CC_EV_LOBBY */
+    cw_tv     tv;              /* CC_EV_TV */
+    int64_t   tv_at;           /* when it arrived (its clocks are as of then) */
     uint32_t  moves_sent, moves_confirmed, pushes;
 } cc_client;
 

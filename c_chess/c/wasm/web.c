@@ -16,6 +16,8 @@ static CvMoves M;
 static CvLobby L;
 static CvProfile P;
 static CvGames G;
+static CvTv T;
+static CvTop TOP;
 
 EXPORT(cv_layout_hash) uint32_t cv_layout_hash(void) { return SG_LAYOUT_HASH; }
 EXPORT(io_ptr) uint8_t *io_ptr(void) { return IO; }
@@ -222,4 +224,43 @@ EXPORT(cv_games) const CvGames *cv_games(uint32_t n) {
         copy_fixed(o->opponent, r.opponent, CW_NAME);
     }
     return &G;
+}
+
+EXPORT(cv_tv) const CvTv *cv_tv(double now) {
+    T.n = C.tv.n > CV_TV ? CV_TV : C.tv.n;
+    for (int i = 0; i < T.n; i++) {
+        const cw_tv_game *g = &C.tv.games[i];
+        CvTvGame *o = &T.games[i];
+        o->game = g->game; o->ply = g->ply; o->base_s = g->base_s; o->inc_s = g->inc_s; o->status = g->status; o->stm = g->stm;
+        o->clock_running = g->clock_running; o->last_from = g->last_from; o->last_to = g->last_to;
+        for (int c = 0; c < 2; c++) {
+            o->rating[c] = g->rating[c];
+            int64_t t = g->left_ms[c];
+            if (g->clock_running && g->stm == c) t -= (int64_t)now - C.tv_at;
+            o->clock_ms[c] = t < 0 ? 0 : (uint32_t)t;
+        }
+        copy_fixed(o->white, g->name[0], CW_NAME);
+        copy_fixed(o->black, g->name[1], CW_NAME);
+        for (int sq = 0; sq < 64; sq++) o->board[sq] = (uint8_t)((g->board[sq / 2] >> (sq & 1 ? 4 : 0)) & 15);
+    }
+    return &T;
+}
+
+/* io holds GET /c/top's n bytes. */
+EXPORT(cv_top) const CvTop *cv_top(uint32_t n) {
+    memset(&TOP, 0, sizeof TOP);
+    if (n < 8) return &TOP;
+    uint16_t cnt;
+    memcpy(&cnt, IO, 2);
+    if (cnt > CW_TOP_MAX || n != 8 + (size_t)cnt * sizeof(cw_top_row)) return &TOP;
+    TOP.n = cnt;
+    for (int i = 0; i < cnt; i++) {
+        cw_top_row r;
+        memcpy(&r, IO + 8 + (size_t)i * sizeof r, sizeof r);
+        copy_fixed(TOP.rows[i].name, r.name, CW_NAME);
+        TOP.rows[i].rating = r.rating;
+        TOP.rows[i].rd = r.rd;
+        TOP.rows[i].games = r.games;
+    }
+    return &TOP;
 }

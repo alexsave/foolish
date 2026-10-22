@@ -159,6 +159,17 @@ void cc_client_accept(cc_client *c, uint32_t challenge) {
 void cc_client_lobby(cc_client *c) {
     sub(c, SF_SUB, "lobby");
     req(c, CC_RQ_LOBBY, SF_METH_GET, "/c/lobby", NULL, 0, 0);
+    req(c, CC_RQ_TV, SF_METH_GET, "/c/tv", NULL, 0, 0);
+}
+
+static void take_tv(cc_client *c, const uint8_t *p, size_t n, int64_t now) {
+    if (n < 8 || n > sizeof c->tv) return;
+    uint16_t k;
+    memcpy(&k, p + 2, 2);
+    if (k > CW_TV_MAX || n != 8 + (size_t)k * sizeof(cw_tv_game)) return;
+    memcpy(&c->tv, p, n);
+    c->tv_at = now;
+    c->events |= CC_EV_TV;
 }
 
 void cc_client_lobby_leave(cc_client *c) { sub(c, SF_UNSUB, "lobby"); }
@@ -411,6 +422,9 @@ static void take_reply(cc_client *c, const sf_frame *f, int64_t now) {
     case CC_RQ_SNAP:
         if (game == c->game) take_snapshot(c, f->body, f->body_len, now);
         return;
+    case CC_RQ_TV:
+        take_tv(c, f->body, f->body_len, now);
+        return;
     case CC_RQ_LOBBY:
         if (f->body_len >= 12 && f->body_len <= sizeof c->lobby) {
             memcpy(&c->lobby, f->body, f->body_len);
@@ -435,6 +449,7 @@ void cc_client_in(cc_client *c, const uint8_t *p, size_t n, int64_t now) {
             c->events |= CC_EV_START;
             return;
         }
+        case CW_P_TV: take_tv(c, p, n, now); return;
         case CW_P_LOBBY:
             if (n >= 12 && n <= sizeof c->lobby) { memcpy(&c->lobby, p, n); c->events |= CC_EV_LOBBY; }
             return;

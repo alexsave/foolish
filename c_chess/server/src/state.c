@@ -232,10 +232,11 @@ static void schedule(cc_live *l, int64_t now) {
 }
 
 static void sweep(int64_t now);
+static void tv_tick(int64_t now);
 
 static void *clock_main(void *ud) {
     (void)ud;
-    int64_t next_sweep = cc_mono() + 10000;
+    int64_t next_sweep = cc_mono() + 10000, next_tv = cc_mono() + 1000;
     pthread_mutex_lock(&cc_lock);
     while (!clock_stop) {
         int64_t now = cc_mono();
@@ -247,7 +248,9 @@ static void *clock_main(void *ud) {
             else heap_remove(l);
         }
         if (now >= next_sweep) { sweep(now); next_sweep = now + 10000; }
-        int64_t until = heap_n && HEAP[0]->timer_at < next_sweep ? HEAP[0]->timer_at : next_sweep;
+        if (now >= next_tv) { tv_tick(now); next_tv = now + 1000; }
+        int64_t soon = next_sweep < next_tv ? next_sweep : next_tv;
+        int64_t until = heap_n && HEAP[0]->timer_at < soon ? HEAP[0]->timer_at : soon;
         /* the condition variable waits on the wall clock: the wait is the monotonic distance */
         int64_t wait_ms = until - now;
         if (wait_ms < 1) wait_ms = 1;
@@ -455,6 +458,91 @@ cc_challenge *cc_challenge_get(uint32_t id, int64_t now) {
 void cc_challenge_drop(uint32_t id) {
     for (cc_challenge **pp = (cc_challenge **)&CHAL.b[hash_u32(id) & CHAL.mask]; *pp; pp = &(*pp)->next)
         if ((*pp)->id == id) { cc_challenge *c = *pp; *pp = c->next; free(c); CHAL.n--; return; }
+}
+
+/* ---- the lobby's live games ---- */
+
+static void tv_game(const cc_live *l, cw_tv_game *t, int64_t now) {
+    memset(t, 0, sizeof *t);
+    t->game = l->id;
+    t->ply = l->g.ply;
+    t->base_s = (uint16_t)(l->g.base_ms / 1000);
+    t->inc_s = (uint8_t)(l->g.inc_ms / 1000);
+    t->status = l->g.status;
+    t->stm = l->g.pos.stm;
+    t->clock_running = cc_game_clock_running(&l->g);
+    t->last_from = t->last_to = 64;
+    if (l->g.ply) { t->last_from = (uint8_t)CH_FROM(l->g.moves[l->g.ply - 1]); t->last_to = (uint8_t)CH_TO(l->g.moves[l->g.ply - 1]); }
+    for (int c = 0; c < 2; c++) {
+        t->rating[c] = l->rating0[c];
+        t->left_ms[c] = (uint32_t)cc_game_left(&l->g, c, now);
+        memcpy(t->name[c], l->p[c]->name, strnlen(l->p[c]->name, CW_NAME));
+    }
+    for (int sq = 0; sq < 64; sq++) t->board[sq / 2] |= (uint8_t)(l->g.pos.sq[sq] << (sq & 1 ? 4 : 0));
+}
+
+int cc_tv_fill(cw_tv *tv, int max, int64_t now) {
+    if (max > CW_TV_MAX) max = CW_TV_MAX;
+    const cc_live *best[CW_TV_MAX];
+    int keys[CW_TV_MAX], n = 0;
+    for (uint32_t i = 0; i <= LIVE.mask; i++)
+        for (const cc_live *l = LIVE.b[i]; l; l = l->next) {
+            if (cc_game_over(&l->g)) continue;
+            int key = l->rating0[0] + l->rating0[1];
+            if (n == max && key <= keys[n - 1]) continue;
+            int j = n < max ? n++ : n - 1;   /* insert, the lowest falling off */
+            while (j > 0 && keys[j - 1] < key) { keys[j] = keys[j - 1]; best[j] = best[j - 1]; j--; }
+            keys[j] = key;
+            best[j] = l;
+        }
+    memset(tv, 0, 8);
+    tv->v = CW_V;
+    tv->kind = CW_P_TV;
+    tv->n = (uint16_t)n;
+    for (int i = 0; i < n; i++) tv_game(best[i], &tv->games[i], now);
+    return 8 + n * (int)sizeof(cw_tv_game);
+}
+
+static cw_tv TV_SENT;
+static int tv_sent_len;
+
+static void tv_tick(int64_t now) {
+    if (!cc_push_lobby_heard()) { tv_sent_len = 0; return; }
+    static cw_tv tv;
+    int n = cc_tv_fill(&tv, CW_TV_MAX, now);
+    if (n == tv_sent_len && memcmp(&tv, &TV_SENT, (size_t)n) == 0) return;
+    memcpy(&TV_SENT, &tv, (size_t)n);
+    tv_sent_len = n;
+    cc_push_lobby((const uint8_t *)&tv, (size_t)n);
+}
+
+/* ---- the leaderboard ---- */
+
+int cc_top_fill(cw_top *top) {
+    const cc_player *best[CW_TOP_MAX];
+    double keys[CW_TOP_MAX];
+    int n = 0;
+    for (uint32_t i = 0; i <= P_ID.mask; i++)
+        for (const cc_player *p = P_ID.b[i]; p; p = p->next) {
+            if (!p->games) continue;
+            double key = p->r.rating;
+            if (n == CW_TOP_MAX && key <= keys[n - 1]) continue;
+            int j = n < CW_TOP_MAX ? n++ : n - 1;
+            while (j > 0 && keys[j - 1] < key) { keys[j] = keys[j - 1]; best[j] = best[j - 1]; j--; }
+            keys[j] = key;
+            best[j] = p;
+        }
+    memset(top, 0, 8);
+    top->n = (uint16_t)n;
+    for (int i = 0; i < n; i++) {
+        cw_top_row *r = &top->rows[i];
+        memset(r, 0, sizeof *r);
+        memcpy(r->name, best[i]->name, strnlen(best[i]->name, CW_NAME));
+        r->rating = (int16_t)cc_rating_int(&best[i]->r);
+        r->rd = (uint16_t)(best[i]->r.deviation + 0.5);
+        r->games = best[i]->games;
+    }
+    return 8 + n * (int)sizeof(cw_top_row);
 }
 
 /* Finished games leave memory after a while (they stay in the journal); challenges past their time

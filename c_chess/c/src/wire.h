@@ -25,7 +25,11 @@
  *   pushes
  *     CW_P_STATE  cw_state  to the game's room (players and spectators): every change of a game
  *     CW_P_START  cw_start  to a user: a game of yours began (seek paired, challenge accepted, rematch)
- *     CW_P_LOBBY  cw_lobby  to the lobby room: the open seeks */
+ *     CW_P_LOBBY  cw_lobby  to the lobby room: the open seeks
+ *     CW_P_TV     cw_tv     to the lobby room, at most once a second when it changed: the games in play
+ *                           with the highest ratings, each with its board
+ *     GET /c/tv           -                    -> cw_tv
+ *     GET /c/top          -                    -> cw_top: the leaderboard */
 #ifndef C_CHESS_WIRE_H
 #define C_CHESS_WIRE_H
 
@@ -37,7 +41,9 @@
 #define CW_POINTS_MAX 200   /* rating points a profile lists */
 #define CW_LIST_MAX 50      /* games a game list holds */
 
-enum { CW_P_STATE = 1, CW_P_START = 2, CW_P_LOBBY = 3, CW_SNAP = 4 };
+enum { CW_P_STATE = 1, CW_P_START = 2, CW_P_LOBBY = 3, CW_SNAP = 4, CW_P_TV = 5 };
+#define CW_TV_MAX 24
+#define CW_TOP_MAX 50
 
 /* cw_act_req.act */
 enum { CW_A_RESIGN = 1, CW_A_ABORT = 2, CW_A_DRAW = 3, CW_A_DRAW_DECLINE = 4, CW_A_REMATCH = 5, CW_A_REMATCH_DECLINE = 6 };
@@ -133,6 +139,24 @@ typedef struct {
     char     name[2][CW_NAME];
 } cw_snap;
 
+/* A game in play as the lobby shows it: the board as 32 bytes, two squares a byte (low nibble the
+ * even square), each square 0 empty or 1 + piece + 8 * color as the kernel numbers them. */
+typedef struct {
+    uint32_t game;
+    uint16_t ply, base_s;
+    uint8_t  inc_s, status, stm, clock_running;
+    uint8_t  last_from, last_to;   /* 64: none */
+    int16_t  rating[2];
+    uint8_t  pad[2];
+    uint32_t left_ms[2];
+    char     name[2][CW_NAME];
+    uint8_t  board[32];
+} cw_tv_game;
+typedef struct { uint8_t v, kind; uint16_t n; uint32_t pad; cw_tv_game games[CW_TV_MAX]; } cw_tv;
+
+typedef struct { char name[CW_NAME]; int16_t rating; uint16_t rd; uint32_t games; } cw_top_row;
+typedef struct { uint16_t n; uint8_t pad[6]; cw_top_row rows[CW_TOP_MAX]; } cw_top;
+
 typedef struct {
     char     name[CW_NAME];
     int16_t  rating;
@@ -159,6 +183,8 @@ typedef struct { uint16_t n; uint8_t pad[6]; cw_game_row rows[CW_LIST_MAX]; } cw
 _Static_assert(sizeof(cw_auth_req) == 96, "cw_auth_req");
 _Static_assert(sizeof(cw_session) == 128, "cw_session");
 _Static_assert(sizeof(cw_seek) == 4, "cw_seek");
+_Static_assert(sizeof(cw_tv_game) == 100, "cw_tv_game");
+_Static_assert(sizeof(cw_top_row) == 28, "cw_top_row");
 _Static_assert(sizeof(cw_seek_ans) == 8, "cw_seek_ans");
 _Static_assert(sizeof(cw_move_req) == 12, "cw_move_req");
 _Static_assert(sizeof(cw_act_req) == 8, "cw_act_req");

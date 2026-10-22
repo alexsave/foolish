@@ -95,6 +95,11 @@ cc_challenge *cc_challenge_add(cc_player *p, const cw_seek *tc, int64_t now_mono
 cc_challenge *cc_challenge_get(uint32_t id, int64_t now_mono);
 void       cc_challenge_drop(uint32_t id);
 
+/* The games in play with the highest ratings (at most max): the frame's length. */
+int        cc_tv_fill(cw_tv *tv, int max, int64_t now_mono);
+/* The leaderboard: players with a game, by rating: the frame's length. */
+int        cc_top_fill(cw_top *top);
+
 /* Counters for the lobby frame and /c/stats. */
 uint32_t   cc_games_live(void);
 

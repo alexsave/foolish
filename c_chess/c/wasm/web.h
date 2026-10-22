@@ -79,6 +79,26 @@ typedef struct {
 } CvGameRow;
 typedef struct { uint16_t n; uint16_t pad[3]; CvGameRow rows[CV_ROWS]; } CvGames;
 
+/* The lobby's live games, unpacked; clocks as of the view. */
+#define CV_TV 24
+typedef struct {
+    uint32_t game;
+    uint16_t ply, base_s;
+    uint8_t  inc_s, status, stm, clock_running;
+    uint8_t  last_from, last_to;
+    int16_t  rating[2];
+    uint8_t  pad[2];
+    uint32_t clock_ms[2];
+    char     white[CV_NAME];
+    char     black[CV_NAME];
+    uint8_t  board[64];
+} CvTvGame;
+typedef struct { uint16_t n; uint16_t pad; CvTvGame games[CV_TV]; } CvTv;
+
+#define CV_TOP 50
+typedef struct { char name[CV_NAME]; int16_t rating; uint16_t rd; uint32_t games; } CvTopRow;
+typedef struct { uint16_t n; uint16_t pad; CvTopRow rows[CV_TOP]; } CvTop;
+
 /* The account to keep between visits: what the page stores (as the raw answer bytes it got). */
 typedef struct { char name[CV_NAME]; uint8_t has_token; uint8_t pad[3]; } CvMe;
 
