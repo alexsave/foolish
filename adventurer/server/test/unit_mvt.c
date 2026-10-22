@@ -326,19 +326,27 @@ static void test_writer(d_tile *t) {
         many[2 * i] = i * 37;
         many[2 * i + 1] = -i * 41;
     }
+    // The feature is dropped and counted; the tile is still a tile, its layer empty.
     adv_mvt_init(&w, scratch, 64);
     adv_mvt_layer_begin(&w, "roads", keys, 2);
     adv_mvt_feature_line(&w, 1, tb, many, 100);
     adv_mvt_layer_end(&w);
-    T_CHECK(adv_mvt_finish(&w, &out) == CB_E_FULL);
-    // Overflow at layer_end: each layer fits the layer half, the two together not the tile half.
+    len = adv_mvt_finish(&w, &out);
+    T_CHECK_MSG(len > 0 && w.dropped == 1, "len=%d dropped=%u", len, w.dropped);
+    d_decode(out, (size_t)len, t);
+    T_CHECK(!t->err && t->n_layers == 1 && t->l[0].n_features == 0);
+    // Overflow at layer_end: each layer fits the layer half, the two together not the tile half:
+    // the second layer is left out whole, with its feature counted.
     adv_mvt_init(&w, scratch, 256);
     for (int k = 0; k < 2; k++) {
         adv_mvt_layer_begin(&w, "roads", keys, 2);
         adv_mvt_feature_line(&w, 1, tb, many, 20);
         adv_mvt_layer_end(&w);
     }
-    T_CHECK(adv_mvt_finish(&w, &out) == CB_E_FULL);
+    len = adv_mvt_finish(&w, &out);
+    T_CHECK_MSG(len > 0 && w.dropped == 2, "len=%d dropped=%u", len, w.dropped);
+    d_decode(out, (size_t)len, t);
+    T_CHECK(!t->err && t->n_layers == 1 && t->l[0].n_features == 1);
     // ... and one of them alone does fit, so the refusal above was the second's.
     adv_mvt_init(&w, scratch, 256);
     adv_mvt_layer_begin(&w, "roads", keys, 2);

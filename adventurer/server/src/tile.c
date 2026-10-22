@@ -314,6 +314,7 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
         }
         adv_mvt_layer_end(&w);
     }
+    s->dropped = w.dropped;
     return adv_mvt_finish(&w, out);
 }
 

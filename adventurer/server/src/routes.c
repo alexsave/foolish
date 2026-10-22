@@ -24,7 +24,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../../../shared/c/num_parse.h"
+
 #define OCTETS "application/octet-stream"
+
+static long env_mb(const char *name, long dflt) {
+    const char *v = getenv(name);
+    if (!v || !*v) return dflt;
+    int64_t n;
+    return num_parse_i64(v, strlen(v), 0, 65536, &n) ? (long)n : dflt;
+}
 #define MVT    "application/vnd.mapbox-vector-tile"
 
 static bool ready(cb_http_res *res) {
@@ -315,23 +324,115 @@ static bool not_modified(const cb_http_req *req, cb_http_res *res, const char *e
     return true;
 }
 
+// A render that left features out for want of scratch is logged (once in a while, not per tile).
+static void note_dropped(const adv_tile_scratch *s, const adv_tile_req *tr) {
+    static atomic_uint logged;
+    if (s->dropped && atomic_fetch_add(&logged, 1) % 100 == 0)
+        CB_WARN("adv", "tile %d/%u/%u: %u features left out (scratch %u MiB)", tr->z, tr->x, tr->y, s->dropped, (unsigned)(ADV_TILE_SCRATCH >> 20));
+}
+
+// THE BASE TILE CACHE: the roads layer depends on the graph alone, so a base tile is rendered
+// once and kept; a z11 city tile is half a megabyte and 10 ms, and the map asks for the same
+// low-zoom tiles from every visitor. Open addressing over the tile's key, bounded by bytes
+// (ADV_BASE_CACHE_MB, 64): past the cap a rover frees entries until the new one fits. The
+// lock is tried on the loop thread (a miss renders on the pool).
+#define BT_SLOTS 8192
+#define BT_PROBE 8
+typedef struct {
+    uint64_t key;    // 1 + (z << 58 | x << 29 | y); 0: empty
+    uint8_t *bytes;
+    uint32_t len;
+} bt_entry;
+static bt_entry g_bt[BT_SLOTS];
+static size_t g_bt_bytes, g_bt_cap;
+static uint32_t g_bt_rover;
+static pthread_mutex_t g_bt_mu = PTHREAD_MUTEX_INITIALIZER;
+static atomic_ullong g_bt_hits, g_bt_misses;
+
+static uint64_t bt_key(const adv_tile_req *t) { return 1 + ((uint64_t)t->z << 58 | (uint64_t)t->x << 29 | (uint64_t)t->y); }
+static uint32_t bt_slot(uint64_t key) { return (uint32_t)((key * 0x9E3779B97F4A7C15ull) >> 40) % BT_SLOTS; }
+
+// Under the lock: the entry for key, or NULL.
+static bt_entry *bt_find(uint64_t key) {
+    uint32_t s = bt_slot(key);
+    for (int i = 0; i < BT_PROBE; i++) {
+        bt_entry *e = &g_bt[(s + i) % BT_SLOTS];
+        if (e->key == key) return e;
+    }
+    return NULL;
+}
+
+static void bt_free(bt_entry *e) {
+    g_bt_bytes -= e->len;
+    free(e->bytes);
+    memset(e, 0, sizeof *e);
+}
+
+// Under the lock: keeps a copy of the tile (best effort: no memory, no entry).
+static void bt_put(uint64_t key, const uint8_t *bytes, uint32_t len) {
+    if (!g_bt_cap) g_bt_cap = (size_t)env_mb("ADV_BASE_CACHE_MB", 64) << 20;
+    if (len > g_bt_cap / 4) return;
+    while (g_bt_bytes + len > g_bt_cap) {   // the rover frees whatever it meets
+        bt_entry *e = &g_bt[g_bt_rover++ % BT_SLOTS];
+        if (e->key) bt_free(e);
+    }
+    uint32_t s = bt_slot(key);
+    bt_entry *at = NULL;
+    for (int i = 0; i < BT_PROBE && !at; i++)
+        if (!g_bt[(s + i) % BT_SLOTS].key) at = &g_bt[(s + i) % BT_SLOTS];
+    if (!at) {   // every probe slot taken: the first gives way
+        at = &g_bt[s];
+        bt_free(at);
+    }
+    at->bytes = malloc(len ? len : 1);
+    if (!at->bytes) { memset(at, 0, sizeof *at); return; }
+    memcpy(at->bytes, bytes, len);
+    at->key = key;
+    at->len = len;
+    g_bt_bytes += len;
+}
+
 static void base_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     if (!ready(res)) return;
     adv_tile_req tr = { .roads = true, .type = ADV_T_ALL };
     if (!parse_zxy_mvt(req->path + strlen("/adv/base/"), &tr.z, &tr.x, &tr.y)) { cb_router_error(res, 404, "not a tile"); return; }
+    if (tr.z > ADV_TILE_MAX_ZOOM || tr.x >> tr.z || tr.y >> tr.z) { cb_router_error(res, 404, "not a tile"); return; }
     char etag[64];
     snprintf(etag, sizeof etag, "\"base.%08x\"", adv_srv.graph.h->crc);
     static const char CACHE[] = "public, max-age=3600";
     if (not_modified(req, res, etag, CACHE)) return;
+    bool on_loop = ctx->loop && cb_loop_on_thread(ctx->loop);
+    uint64_t key = bt_key(&tr);
+    if (on_loop) {
+        if (pthread_mutex_trylock(&g_bt_mu) != 0) { res->to_pool = true; return; }
+    } else {
+        pthread_mutex_lock(&g_bt_mu);
+    }
+    bt_entry *e = bt_find(key);
+    if (e) {
+        tile_answer(res, e->bytes, (int)e->len, etag, CACHE);
+        pthread_mutex_unlock(&g_bt_mu);
+        atomic_fetch_add(&g_bt_hits, 1);
+        adv_rate_add(&adv_m.tiles, cb_now_ms(), 1);
+        atomic_fetch_add(&adv_m.tiles_total, 1);
+        return;
+    }
+    pthread_mutex_unlock(&g_bt_mu);
+    if (on_loop) { res->to_pool = true; return; }   // a render is the pool's: the loop keeps serving
     adv_tile_scratch *s = tile_scratch();
     if (!s) { cb_router_error(res, 500, "no memory"); return; }
     int64_t t0 = cb_mono_us();
     const uint8_t *bytes;
     int n = adv_tile_render(&adv_srv.graph, &tr, 0, NULL, NULL, s, &bytes);
     if (n < 0) { cb_router_error(res, n == CB_E_INVALID ? 404 : 500, cb_strerror(n)); return; }
+    note_dropped(s, &tr);
     adv_hist_add(&adv_m.tile, (uint64_t)(cb_mono_us() - t0));
     adv_rate_add(&adv_m.tiles, cb_now_ms(), 1);
     atomic_fetch_add(&adv_m.tiles_total, 1);
+    atomic_fetch_add(&g_bt_misses, 1);
+    pthread_mutex_lock(&g_bt_mu);
+    if (!bt_find(key)) bt_put(key, bytes, (uint32_t)n);
+    pthread_mutex_unlock(&g_bt_mu);
     tile_answer(res, bytes, n, etag, CACHE);
 }
 
@@ -364,6 +465,7 @@ static void user_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     int n = adv_tile_render(&adv_srv.graph, &tr, id, &u->cov, (const uint32_t *)w->owners, s, &bytes);
     pthread_mutex_unlock(l);
     if (n < 0) { cb_router_error(res, n == CB_E_INVALID ? 404 : 500, cb_strerror(n)); return; }
+    note_dropped(s, &tr);
     adv_hist_add(&adv_m.tile, (uint64_t)(cb_mono_us() - t0));
     adv_rate_add(&adv_m.tiles, cb_now_ms(), 1);
     atomic_fetch_add(&adv_m.tiles_total, 1);

@@ -26,7 +26,7 @@
 #define ADV_TILE_SHAPE_ZOOM      13   // full shapes from here up (end points only below)
 #define ADV_TILE_UNTRAVELED_ZOOM 11
 #define ADV_TILE_MAX_ZOOM        18
-#define ADV_TILE_SCRATCH         (2u << 20)   // bytes one tile's writer may use
+#define ADV_TILE_SCRATCH         (8u << 20)   // bytes one tile's writer may use (a z11 city tile is 0.5 MB)
 #define ADV_MVT_MAX_TAGS         4
 
 // ---- the writer -----------------------------------------------------------------------------
@@ -40,10 +40,15 @@ typedef struct {
     int      n_keys;
     int      n_values;     // integer values 0..n_values-1 declared so far (value i encodes int i)
     uint32_t n_features;
-    bool     full;         // a write did not fit: the tile is refused (CB_E_FULL at finish)
+    bool     full;         // the writer disagreed with itself (a bug): the tile is refused (CB_E_FULL at finish)
+    uint32_t dropped;      // features and layers that did not fit the scratch: the tile is served without them
 } adv_mvt;
 
-// scratch[0..cap) is split between the tile and the layer in progress.
+// scratch[0..cap) is split between the tile and the layer in progress. WHAT DOES NOT FIT IS
+// DROPPED, never refused: a feature past the layer's half, or a layer past the tile's half, is
+// left out and counted in `dropped`, so a tile over its scratch is still a tile (the map draws
+// most of the roads instead of nothing); finish answers CB_E_FULL only for the writer's own
+// disagreement with its sizes, which is a bug and not an input.
 void adv_mvt_init(adv_mvt *w, uint8_t *scratch, size_t cap);
 // keys[0..n_keys) are the layer's tag names; a feature's tag i is the integer value tags[i]
 // (0..ADV_MVT_MAX_VALUE), or a negative value for "no such tag".
@@ -73,6 +78,7 @@ typedef struct {
     uint32_t *stamp;      // n_segs of them
     uint32_t  n_segs;
     uint32_t  gen;        // the current visit
+    uint32_t  dropped;    // what the last render left out for want of scratch (adv_mvt dropped)
     adv_pt    pts[ADV_SEG_MAX_PTS];
     int32_t   xy[ADV_SEG_MAX_PTS * 2];
 } adv_tile_scratch;

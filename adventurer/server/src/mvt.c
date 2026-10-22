@@ -50,9 +50,11 @@ typedef struct {
     size_t  *len;
 } out_t;
 
+// Room for `need` more bytes in a buffer of cap holding len: false (and counted) when not.
 static bool reserve(adv_mvt *w, size_t len, size_t cap, size_t need) {
-    if (w->full || need > cap - len) {
-        w->full = true;
+    if (w->full) return false;
+    if (need > cap - len) {
+        w->dropped++;
         return false;
     }
     return true;
@@ -210,7 +212,12 @@ void adv_mvt_layer_end(adv_mvt *w) {
     body += 1 + varint_len(MVT_VERSION);
     body += w->llen;
     size_t total = 1 + varint_len(body) + body;
-    if (!reserve(w, w->len, w->cap, total)) return;
+    if (!reserve(w, w->len, w->cap, total)) {   // the whole layer is left out
+        w->dropped += w->n_features;
+        w->name = NULL;
+        w->llen = 0;
+        return;
+    }
     out_t o = { w->buf, &w->len };
     size_t at = w->len;
     o.p[(*o.len)++] = PB_TILE_LAYER;
