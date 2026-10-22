@@ -718,7 +718,30 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
         cells[c].off = cell_off[c];
         cells[c].n = cell_count[c];
     }
-    // 6. Regions.
+    // 6. Regions. One with no segment (a town every road of which lies in its villages, a county
+    // across the fence) is left out of the file: nothing can be explored there, so it would be a
+    // name with a denominator of zero. The kept ones are renumbered in order.
+    uint32_t n_regions_out = 0;
+    {
+        uint32_t *renum = malloc((size_t)(b->n_regions ? b->n_regions : 1) * sizeof *renum);
+        uint8_t *used = calloc(b->n_regions ? b->n_regions : 1, 1);
+        if (!renum || !used) { free(renum); free(used); rc = CB_E_NOMEM; goto out; }
+        for (uint32_t i = 0; i < n_segs; i++)
+            if (out_segs[i].region != ADV_NO_REGION) used[out_segs[i].region] = 1;
+        for (uint32_t i = 0; i < b->n_regions; i++) renum[i] = used[i] ? n_regions_out++ : ADV_NO_REGION;
+        for (uint32_t i = 0; i < n_segs; i++)
+            if (out_segs[i].region != ADV_NO_REGION) out_segs[i].region = (uint16_t)renum[out_segs[i].region];
+        // The builder's own list is compacted the same way, so the loops below read the kept ones.
+        uint32_t k = 0;
+        for (uint32_t i = 0; i < b->n_regions; i++) {
+            if (!used[i]) { free(b->regions[i].rings); continue; }
+            b->regions[k++] = b->regions[i];
+        }
+        b->stats.regions_empty = b->n_regions - n_regions_out;
+        b->n_regions = n_regions_out;
+        free(renum);
+        free(used);
+    }
     regions = calloc(b->n_regions ? b->n_regions : 1, sizeof *regions);
     if (!regions) { rc = CB_E_NOMEM; goto out; }
     for (uint32_t i = 0; i < b->n_regions; i++) {

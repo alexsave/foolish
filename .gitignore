@@ -109,3 +109,6 @@ shared/tools/layout_probe/ios/build/
 shared/swift/BubbleDataKit/build/
 shared/swift/BubbleDataKit/.build/
 shared/swift/BubbleDataKit/.swiftpm/
+adventurer/web-exp/
+adventurer/data-exp/
+adventurer/server/build-exp/

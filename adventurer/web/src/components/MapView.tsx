@@ -132,8 +132,10 @@ export function MapView({ userId, type, coverageVersion, regions, fly, onHome, c
     const map = new maplibregl.Map({
       container: container.current,
       style: style(),
-      center: fromHash ? [fromHash.lng, fromHash.lat] : [0, 20],
-      zoom: fromHash ? fromHash.zoom : 1.5,
+      // Until the regions arrive and the map fits them: the city, not the world (the first
+      // tiles then are the ones every visitor wants).
+      center: fromHash ? [fromHash.lng, fromHash.lat] : [-73.95, 40.73],
+      zoom: fromHash ? fromHash.zoom : 10,
       attributionControl: false,
       maxZoom: 19,
       hash: 'map',

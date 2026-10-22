@@ -22,6 +22,9 @@
 
 C_ROOT := ../..
 CB     := $(C_ROOT)/c_base
+# Every output goes under $(B): `make B=build-exp DATA=../data-exp graph` builds and imports beside
+# a running server without touching what it runs from (the live site is watched while work goes on).
+B      ?= build
 UNAME  := $(shell uname)
 .DEFAULT_GOAL := all
 
@@ -45,7 +48,7 @@ PLATFORM_ROOTS := $(CB)/core/src $(CB)/providers/local/src $(CB)/providers/aws/s
 PLATFORM_MAINS := $(CB)/providers/local/src/main_serve.c $(CB)/providers/aws/src/main_lambda.c
 PLATFORM_SRC := $(sort $(filter-out $(PLATFORM_MAINS),$(foreach r,$(PLATFORM_ROOTS),$(wildcard $(r)/*.c $(r)/*/*.c))))
 SHARED_SRC := $(C_ROOT)/shared/c/b64/b64.c $(C_ROOT)/shared/c/hex/hex.c $(C_ROOT)/shared/c/crc32c/crc32c.c $(C_ROOT)/shared/c/mqtt/mqtt.c $(C_ROOT)/shared/c/sha256.c
-GEN_SRC := build/gen/schema_sql.c build/gen/console_html.c build/gen/adv_schema_sql.c
+GEN_SRC := $(B)/gen/schema_sql.c $(B)/gen/console_html.c $(B)/gen/adv_schema_sql.c
 # The product: src/ and its one directory level, but for the mains under tools/ and gen/.
 APP_SRC := $(sort $(wildcard src/*.c src/*/*.c))
 LIB_SRC := $(PLATFORM_SRC) $(SHARED_SRC) $(GEN_SRC) $(APP_SRC)
@@ -60,22 +63,22 @@ SAN := -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-fr
 ASAN_CFLAGS = $(filter-out -O2,$(CFLAGS)) -O1 $(SAN) -DCB_INSTRUMENTED -DADV_INSTRUMENTED
 
 include $(C_ROOT)/shared/tools/c_rules.mk
-$(eval $(call C_VARIANT,build/obj/rel,CC,CFLAGS))
-$(eval $(call C_VARIANT,build/obj/asan,CC,ASAN_CFLAGS))
+$(eval $(call C_VARIANT,$(B)/obj/rel,CC,CFLAGS))
+$(eval $(call C_VARIANT,$(B)/obj/asan,CC,ASAN_CFLAGS))
 
 # The platform's schema and console, and the product's schema, embedded as c_base embeds them.
-build/embed: $(CB)/tools/embed.c
+$(B)/embed: $(CB)/tools/embed.c
 	@mkdir -p $(@D)
 	$(CC) -O2 -Wall -Wextra -Werror $< -o $@
-build/gen/schema_sql.c: $(CB)/providers/local/sql/schema.sql build/embed
+$(B)/gen/schema_sql.c: $(CB)/providers/local/sql/schema.sql $(B)/embed
 	@mkdir -p $(@D)
-	build/embed $< cbase_schema_sql > $@.new && mv $@.new $@
-build/gen/console_html.c: $(CB)/core/src/admin/console.html build/embed
+	$(B)/embed $< cbase_schema_sql > $@.new && mv $@.new $@
+$(B)/gen/console_html.c: $(CB)/core/src/admin/console.html $(B)/embed
 	@mkdir -p $(@D)
-	build/embed $< cbase_console_html > $@.new && mv $@.new $@
-build/gen/adv_schema_sql.c: sql/schema.sql build/embed
+	$(B)/embed $< cbase_console_html > $@.new && mv $@.new $@
+$(B)/gen/adv_schema_sql.c: sql/schema.sql $(B)/embed
 	@mkdir -p $(@D)
-	build/embed $< adv_schema_sql > $@.new && mv $@.new $@
+	$(B)/embed $< adv_schema_sql > $@.new && mv $@.new $@
 
 TEST_SRC := $(sort $(wildcard test/*.c))
 # The platform's test client and child-process helpers (c_base/core/test), linked into every test
@@ -94,33 +97,33 @@ $(1)/$(3): $$(call c_objs,$(2),$(4) $$(LIB_SRC))
 endef
 prog = $(eval $(call PROG,$(1),$(2),$(3),$(4),$(5)))
 
-$(call prog,build,build/obj/rel,adventurer,tools/main_serve.c,CFLAGS)
-$(call prog,build,build/obj/rel,adv-import,tools/import_main.c,CFLAGS)
-$(call prog,build,build/obj/rel,adv-gen,$(sort $(wildcard gen/*.c)),CFLAGS)
-$(call prog,build,build/obj/rel,adv-wiregen,tools/wiregen.c,CFLAGS)
-$(call prog,build,build/obj/rel,adv-bench,tools/bench_match.c,CFLAGS)
-$(call prog,build/asan,build/obj/asan,adventurer,tools/main_serve.c,ASAN_CFLAGS)
-$(call prog,build/asan,build/obj/asan,adv-import,tools/import_main.c,ASAN_CFLAGS)
-$(call prog,build/asan,build/obj/asan,adv-gen,$(sort $(wildcard gen/*.c)),ASAN_CFLAGS)
-$(foreach u,$(UNITS) $(SMOKES),$(call prog,build/test,build/obj/rel,$(u),test/$(u).c $(TLIB_SRC),CFLAGS))
-$(foreach u,$(UNITS) $(SMOKES),$(call prog,build/asan/test,build/obj/asan,$(u),test/$(u).c $(TLIB_SRC),ASAN_CFLAGS))
+$(call prog,$(B),$(B)/obj/rel,adventurer,tools/main_serve.c,CFLAGS)
+$(call prog,$(B),$(B)/obj/rel,adv-import,tools/import_main.c,CFLAGS)
+$(call prog,$(B),$(B)/obj/rel,adv-gen,$(sort $(wildcard gen/*.c)),CFLAGS)
+$(call prog,$(B),$(B)/obj/rel,adv-wiregen,tools/wiregen.c,CFLAGS)
+$(call prog,$(B),$(B)/obj/rel,adv-bench,tools/bench_match.c,CFLAGS)
+$(call prog,$(B)/asan,$(B)/obj/asan,adventurer,tools/main_serve.c,ASAN_CFLAGS)
+$(call prog,$(B)/asan,$(B)/obj/asan,adv-import,tools/import_main.c,ASAN_CFLAGS)
+$(call prog,$(B)/asan,$(B)/obj/asan,adv-gen,$(sort $(wildcard gen/*.c)),ASAN_CFLAGS)
+$(foreach u,$(UNITS) $(SMOKES),$(call prog,$(B)/test,$(B)/obj/rel,$(u),test/$(u).c $(TLIB_SRC),CFLAGS))
+$(foreach u,$(UNITS) $(SMOKES),$(call prog,$(B)/asan/test,$(B)/obj/asan,$(u),test/$(u).c $(TLIB_SRC),ASAN_CFLAGS))
 
 # The web's decoder of the binary surface (src/wire.h), written by the C compiler's own
 # offsetof and sizeof, so no TypeScript ever spells a byte offset by hand.
 WIRE_TS := ../web/src/gen/wire.ts
-$(WIRE_TS): build/adv-wiregen
+$(WIRE_TS): $(B)/adv-wiregen
 	@mkdir -p $(@D)
-	build/adv-wiregen > $@.new && mv $@.new $@
+	$(B)/adv-wiregen > $@.new && { cmp -s $@.new $@ || mv $@.new $@; }; rm -f $@.new
 
 .PHONY: all test smoke check test-asan smoke-asan check-asan clean graph import fuzz fuzz-smoke
-all: build/adventurer build/adv-import build/adv-gen build/adv-wiregen build/adv-bench $(WIRE_TS)
-import: build/adv-import
+all: $(B)/adventurer $(B)/adv-import $(B)/adv-gen $(B)/adv-wiregen $(B)/adv-bench $(WIRE_TS)
+import: $(B)/adv-import
 
 # Every test program is its own process; they run CHECK_JOBS at a time, each to its own log,
 # every one runs even when another fails, and the target names each that did.
 CHECK_JOBS ?= $(shell getconf _NPROCESSORS_ONLN)
-RUN_ALL_SH = mkdir -p build/logs && printf '%s\0' $(2) | xargs -0 -P $(CHECK_JOBS) -n 1 sh -c \
-  'log=build/logs/$$(echo "$$0" | tr " /=" "___").log; if eval "$$0" > $$log 2>&1; then cat $$log; else cat $$log; echo "FAILED: $$0"; exit 1; fi' \
+RUN_ALL_SH = mkdir -p $(B)/logs && printf '%s\0' $(2) | xargs -0 -P $(CHECK_JOBS) -n 1 sh -c \
+  'log=$(B)/logs/$$(echo "$$0" | tr " /=" "___").log; if eval "$$0" > $$log 2>&1; then cat $$log; else cat $$log; echo "FAILED: $$0"; exit 1; fi' \
   || { echo "$(1) FAILED"; exit 1; }
 define RUN_ALL
 	@$(call RUN_ALL_SH,$(1),$(2))
@@ -129,18 +132,18 @@ UNIT_RUNS  = $(addprefix $(1)/test/,$(UNITS))
 SMOKE_RUNS = $(foreach s,$(SMOKES),'$(1)/test/$(s) $(1)/adventurer $(1)/adv-gen')
 SMOKE_PROGS = $(1)/adventurer $(1)/adv-gen $(addprefix $(1)/test/,$(SMOKES))
 
-test: $(call UNIT_RUNS,build)
-	$(call RUN_ALL,UNIT TESTS,$(call UNIT_RUNS,build))
-smoke: $(call SMOKE_PROGS,build)
-	$(call RUN_ALL,SMOKE,$(call SMOKE_RUNS,build))
-check: $(call UNIT_RUNS,build) $(call SMOKE_PROGS,build)
-	$(call RUN_ALL,CHECK,$(call SMOKE_RUNS,build) $(call UNIT_RUNS,build))
-test-asan: $(call UNIT_RUNS,build/asan)
-	$(call RUN_ALL,ASAN UNIT TESTS,$(call UNIT_RUNS,build/asan))
-smoke-asan: $(call SMOKE_PROGS,build/asan)
-	$(call RUN_ALL,ASAN SMOKE,$(call SMOKE_RUNS,build/asan))
-check-asan: $(call UNIT_RUNS,build/asan) $(call SMOKE_PROGS,build/asan)
-	$(call RUN_ALL,ASAN CHECK,$(call SMOKE_RUNS,build/asan) $(call UNIT_RUNS,build/asan))
+test: $(call UNIT_RUNS,$(B))
+	$(call RUN_ALL,UNIT TESTS,$(call UNIT_RUNS,$(B)))
+smoke: $(call SMOKE_PROGS,$(B))
+	$(call RUN_ALL,SMOKE,$(call SMOKE_RUNS,$(B)))
+check: $(call UNIT_RUNS,$(B)) $(call SMOKE_PROGS,$(B))
+	$(call RUN_ALL,CHECK,$(call SMOKE_RUNS,$(B)) $(call UNIT_RUNS,$(B)))
+test-asan: $(call UNIT_RUNS,$(B)/asan)
+	$(call RUN_ALL,ASAN UNIT TESTS,$(call UNIT_RUNS,$(B)/asan))
+smoke-asan: $(call SMOKE_PROGS,$(B)/asan)
+	$(call RUN_ALL,ASAN SMOKE,$(call SMOKE_RUNS,$(B)/asan))
+check-asan: $(call UNIT_RUNS,$(B)/asan) $(call SMOKE_PROGS,$(B)/asan)
+	$(call RUN_ALL,ASAN CHECK,$(call SMOKE_RUNS,$(B)/asan) $(call UNIT_RUNS,$(B)/asan))
 
 # ---- the graph -------------------------------------------------------------------------------
 DATA ?= ../data
@@ -152,8 +155,8 @@ graph: $(GRAPH)
 # fence keeps exactly them). Regions are the boroughs and NY's towns and cities (admin_level 7)
 # with the villages (8) inside the towns, and NJ's municipalities (8); a road is its innermost's.
 IMPORT_ARGS ?= --admin-levels 7,8 --within "6:New York County,Kings County,Queens County,Bronx County,Richmond County,Nassau County,Westchester County,Hudson County,Bergen County"
-$(GRAPH): build/adv-import $(PBF)
-	build/adv-import $(PBF) $@ $(IMPORT_ARGS)
+$(GRAPH): $(B)/adv-import $(PBF)
+	$(B)/adv-import $(PBF) $@ $(IMPORT_ARGS)
 
 # ---- fuzz (c_base/fuzz/fuzz.mk's shape, for adventurer's own targets) -------------------------
 ifeq ($(UNAME),Darwin)
@@ -164,23 +167,23 @@ endif
 FUZZ_TIME ?= 20
 FUZZ_SAN := -fsanitize=address,undefined,fuzzer-no-link -fno-sanitize-recover=undefined -fno-omit-frame-pointer
 FUZZ_CFLAGS = $(filter-out -O2,$(CFLAGS)) -O1 $(FUZZ_SAN) -DCB_INSTRUMENTED -DADV_INSTRUMENTED
-$(eval $(call C_VARIANT,build/obj/fuzz,FUZZ_CC,FUZZ_CFLAGS))
+$(eval $(call C_VARIANT,$(B)/obj/fuzz,FUZZ_CC,FUZZ_CFLAGS))
 FUZZ_SRC := $(sort $(wildcard fuzz/fz_*.c))
 FUZZ_TARGETS := $(sort $(patsubst fz_%.c,%,$(notdir $(FUZZ_SRC))))
 define FUZZ_PROG
-build/fuzz/$(1): $$(call c_objs,build/obj/fuzz,fuzz/fz_$(1).c $$(LIB_SRC))
+$(B)/fuzz/$(1): $$(call c_objs,$(B)/obj/fuzz,fuzz/fz_$(1).c $$(LIB_SRC))
 	@mkdir -p $$(@D)
 	@echo "  LINK $$@"
 	@$$(FUZZ_CC) $$(FUZZ_CFLAGS) -fsanitize=fuzzer $$^ -o $$@ $$(LDLIBS)
 endef
 $(foreach t,$(FUZZ_TARGETS),$(eval $(call FUZZ_PROG,$(t))))
-fuzz: $(addprefix build/fuzz/,$(FUZZ_TARGETS))
+fuzz: $(addprefix $(B)/fuzz/,$(FUZZ_TARGETS))
 fuzz-smoke: fuzz
 	@set -e; for t in $(FUZZ_TARGETS); do \
-	  mkdir -p build/fuzz-corpus/$$t build/fuzz-crashes/$$t fuzz/corpus/$$t; \
+	  mkdir -p $(B)/fuzz-corpus/$$t $(B)/fuzz-crashes/$$t fuzz/corpus/$$t; \
 	  echo "fuzz $$t for $(FUZZ_TIME)s"; \
-	  build/fuzz/$$t -max_total_time=$(FUZZ_TIME) -max_len=65536 -artifact_prefix=build/fuzz-crashes/$$t/ build/fuzz-corpus/$$t fuzz/corpus/$$t 2> build/fuzz-$$t.log || { tail -40 build/fuzz-$$t.log; exit 1; }; \
-	  tail -1 build/fuzz-$$t.log; done
+	  $(B)/fuzz/$$t -max_total_time=$(FUZZ_TIME) -max_len=65536 -artifact_prefix=$(B)/fuzz-crashes/$$t/ $(B)/fuzz-corpus/$$t fuzz/corpus/$$t 2> $(B)/fuzz-$$t.log || { tail -40 $(B)/fuzz-$$t.log; exit 1; }; \
+	  tail -1 $(B)/fuzz-$$t.log; done
 
 clean:
-	rm -rf build
+	rm -rf $(B)

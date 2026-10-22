@@ -301,9 +301,10 @@ static void test_import(const char *pbf_path) {
     T_CHECK_MSG(rc == CB_OK, "open: %s", err);
     if (rc != CB_OK) return;
     T_CHECK(g.h->n_segs == 3);
-    T_CHECK(g.h->n_regions == 2);
+    // "Elsewhere" closed (a ring far from every road) and is not in the file: no segment is its.
+    T_CHECK_MSG(st.build.regions == 1 && st.build.regions_empty == 1, "regions %u empty %u", st.build.regions, st.build.regions_empty);
+    T_CHECK(g.h->n_regions == 1);
     T_CHECK(strcmp(g.regions[0].name, "Testville") == 0 && g.regions[0].level == 8);
-    T_CHECK(strcmp(g.regions[1].name, "Elsewhere") == 0 && g.regions[1].n_segs == 0);
     T_CHECK_MSG(g.regions[0].n_segs == 2, "n_segs=%u", g.regions[0].n_segs);
     const adv_seg *res = seg_of_class(&g, ADV_HC_RESIDENTIAL), *foot = seg_of_class(&g, ADV_HC_FOOTWAY), *cyc = seg_of_class(&g, ADV_HC_CYCLEWAY);
     T_CHECK(res && foot && cyc);
@@ -347,26 +348,17 @@ static void test_import(const char *pbf_path) {
     T_CHECK(g.h->n_regions == 1 && strcmp(g.regions[0].name, "Testshire") == 0 && g.regions[0].n_segs == 2 && g.regions[0].level == 6);
     adv_graph_close(&g);
     // Levels 7 and 8 together: the town and the village share one ring, and the village (the
-    // innermost) gets the roads; the town is there with none.
+    // innermost) gets the roads; the town, left with none, is not in the file.
     o.admin_levels = (1u << 7) | (1u << 8);
     rc = adv_import(pbf_path, graph_path, &o, &st, err, sizeof err);
     T_CHECK_MSG(rc == CB_OK, "rc=%d err=%s", rc, err);
     T_CHECK_MSG(st.relations_wanted == 4, "%llu", (unsigned long long)st.relations_wanted);
+    T_CHECK_MSG(st.build.regions_empty == 2, "empty %u", st.build.regions_empty);   // Testtown and Elsewhere
     T_CHECK(adv_graph_open(graph_path, &g, err, sizeof err) == CB_OK);
-    T_CHECK_MSG(g.h->n_regions == 3, "n_regions=%u", g.h->n_regions);
-    {
-        const adv_region *town = NULL, *village = NULL;
-        for (uint32_t i = 0; i < g.h->n_regions; i++) {
-            if (strcmp(g.regions[i].name, "Testtown") == 0) town = &g.regions[i];
-            if (strcmp(g.regions[i].name, "Testville") == 0) village = &g.regions[i];
-        }
-        T_CHECK(town && village);
-        if (town && village) {
-            T_CHECK_MSG(town->level == 7 && town->n_segs == 0, "town level %u n_segs %u", town->level, town->n_segs);
-            T_CHECK_MSG(village->level == 8 && village->n_segs == 2, "village level %u n_segs %u", village->level, village->n_segs);
-        }
-        T_CHECK(g.h->n_segs == 3);   // the cycleway outside every region is still in the graph
-    }
+    T_CHECK_MSG(g.h->n_regions == 1, "n_regions=%u", g.h->n_regions);
+    T_CHECK(strcmp(g.regions[0].name, "Testville") == 0 && g.regions[0].level == 8 && g.regions[0].n_segs == 2);
+    for (uint32_t i = 0; i < g.h->n_segs; i++) T_CHECK(g.segs[i].region == 0 || g.segs[i].region == ADV_NO_REGION);
+    T_CHECK(g.h->n_segs == 3);   // the cycleway outside every region is still in the graph
     adv_graph_close(&g);
     // Level 7 alone: the town gets them.
     o.admin_levels = 1u << 7;

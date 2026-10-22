@@ -154,7 +154,8 @@ bool adv_cells_of_box(const adv_graph *g, adv_pt min, adv_pt max, uint32_t *i0, 
 // by midpoint, builds the nodes and the cell index and writes the file. Regions are rings (a
 // region may have several: islands); a point is inside a region when inside an odd number of
 // its rings (holes are rings too), and when inside several regions it belongs to the one with
-// the highest level (the first added, among equals).
+// the highest level (the first added, among equals). A region no segment belongs to is left out
+// of the file.
 typedef struct adv_build adv_build;
 adv_build *adv_build_new(const char *source);
 void       adv_build_free(adv_build *b);
@@ -173,6 +174,7 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap);
 typedef struct {
     uint32_t segs, nodes, deltas, cells, regions, cell_segs;
     uint32_t segs_unregioned;   // left out by adv_build_only_regioned
+    uint32_t regions_empty;     // regions left out for holding no segment
     double   total_len_m[ADV_T_N];
 } adv_build_stats;
 void adv_build_stats_get(const adv_build *b, adv_build_stats *out);
