@@ -60,7 +60,8 @@ PLATFORM_ROOTS := $(CB)/core/src $(CB)/providers/local/src $(CB)/providers/aws/s
 PLATFORM_MAINS := $(CB)/providers/local/src/main_serve.c $(CB)/providers/aws/src/main_lambda.c
 PLATFORM_SRC := $(sort $(filter-out $(PLATFORM_MAINS),$(foreach r,$(PLATFORM_ROOTS),$(wildcard $(r)/*.c $(r)/*/*.c))))
 # The shared helpers the platform needs that the kernel's own list does not already bring.
-SHARED_SRC := $(filter-out $(KERNEL_SRC),$(C_ROOT)/shared/c/b64/b64.c $(C_ROOT)/shared/c/hex/hex.c $(C_ROOT)/shared/c/crc32c/crc32c.c $(C_ROOT)/shared/c/mqtt/mqtt.c $(C_ROOT)/shared/c/sha256.c)
+SHARED_SRC := $(filter-out $(KERNEL_SRC),$(C_ROOT)/shared/c/b64/b64.c $(C_ROOT)/shared/c/hex/hex.c $(C_ROOT)/shared/c/crc32c/crc32c.c $(C_ROOT)/shared/c/mqtt/mqtt.c $(C_ROOT)/shared/c/sha256.c \
+              $(C_ROOT)/shared/c/stats/hist.c $(C_ROOT)/shared/c/proc.c)
 GEN_SRC := build/gen/schema_sql.c build/gen/console_html.c
 # The tests' blocking HTTP and WebSocket client (c_base/core/test): the sim's sign-up and its sockets.
 CLIENT_SRC := $(CB)/core/test/lib_client.c
