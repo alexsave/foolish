@@ -6,11 +6,27 @@
 #include "cbase/app.h"
 #include "ctx.h"
 #include "graph.h"
+#include "metrics.h"
 #include "net/router.h"
 #include "work.h"
 #include "world.h"
 
 #include <stdint.h>
+
+// WHAT THE SERVER COUNTS, as the platform's metrics registry holds it (c_base metrics.h): the
+// table is adventurer_app.c's ADV_METRICS in this order, and every update names its row here.
+// Histograms are microseconds. The platform adds its own rows (requests, connections) and
+// serves the lot at GET /metrics; the ops frame (wire.h adv_w_ops) reads the same registry.
+enum {
+    ADV_M_ACT_CPU,     // hist: match + merge per activity
+    ADV_M_TILE,        // hist: one tile render
+    ADV_M_E2E,         // hist: a live upload's arrival to its feed frame
+    ADV_M_ACTS,        // rate: activities processed
+    ADV_M_TILES,       // rate: tiles answered (rendered or cached)
+    ADV_M_TILES_304,   // counter: tiles answered not-modified
+    ADV_M_FEED_CONNS,  // gauge: open feed sockets
+    ADV_M_N
+};
 
 typedef struct {
     cb_ctx    *ctx;

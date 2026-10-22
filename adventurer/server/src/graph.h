@@ -30,7 +30,7 @@
 #include <stdint.h>
 
 #define ADV_GRAPH_MAGIC   0x46524741u   // "AGRF"
-#define ADV_GRAPH_VERSION 2
+#define ADV_GRAPH_VERSION 3
 #define ADV_CELL_ZOOM     16
 #define ADV_MASK_BITS     16
 #define ADV_SEG_MAX_PTS   256      // shape points of one segment (the importer splits longer runs)
@@ -69,6 +69,7 @@ typedef struct {
     uint8_t  hclass;                                // ADV_HC_*
     uint8_t  flags;                                 // ADV_SEGF_*
     uint8_t  pad;
+    uint32_t name;                                  // into names (adv_seg_name); 0 for none
 } adv_seg;
 
 typedef struct {
@@ -100,10 +101,12 @@ typedef struct {
 typedef struct {
     uint32_t magic, version;
     uint32_t n_segs, n_deltas, n_nodes, n_adj, n_cell_segs, n_regions;
+    uint32_t n_names_bytes;                                  // the names blob, at least the one NUL of name 0
+    uint32_t pad;
     uint32_t cell_zoom, cell_x0, cell_y0, cells_w, cells_h;   // the grid: tile (x0+i, y0+j) is cells[j*w+i]
     uint32_t crc;                                            // CRC-32C of everything after this header
     int32_t  min_lat, min_lon, max_lat, max_lon;
-    uint64_t off_segs, off_deltas, off_nodes, off_adj, off_cells, off_cell_segs, off_regions;
+    uint64_t off_segs, off_deltas, off_nodes, off_adj, off_cells, off_cell_segs, off_regions, off_names;
     uint64_t file_size;
     double   total_len_m[ADV_T_N];
     char     source[64];   // what it was built from, for the logs and the page
@@ -118,6 +121,7 @@ typedef struct {
     const adv_cell      *cells;
     const uint32_t      *cell_segs;
     const adv_region    *regions;
+    const char          *names;    // n_names_bytes of NUL-terminated strings; names[0] is ""
     void  *map;
     size_t map_len;
 } adv_graph;
@@ -129,6 +133,8 @@ void adv_graph_close(adv_graph *g);
 // The same checks over bytes already in memory (a test's, a builder's): CB_OK or CB_E_INVALID.
 int  adv_graph_check(const void *p, size_t n, char *err, size_t cap);
 
+// The segment's road name ("" for none): a C string in the mapping, checked at open.
+static inline const char *adv_seg_name(const adv_graph *g, uint32_t seg) { return g->names + g->segs[seg].name; }
 // The segment's shape points into out (cap >= n_pts; ADV_SEG_MAX_PTS always suffices). n_pts.
 int  adv_seg_points(const adv_graph *g, uint32_t seg, adv_pt *out, int cap);
 // The point `frac` (0..1) of the way along the segment, by length.
@@ -159,8 +165,12 @@ bool adv_cells_of_box(const adv_graph *g, adv_pt min, adv_pt max, uint32_t *i0, 
 typedef struct adv_build adv_build;
 adv_build *adv_build_new(const char *source);
 void       adv_build_free(adv_build *b);
-// A way of n >= 2 points. Consecutive duplicate nodes are dropped. CB_OK, CB_E_NOMEM, CB_E_INVALID.
-int adv_build_add_way(adv_build *b, const int64_t *node_ids, const adv_pt *pts, int n, uint8_t access, uint8_t hclass, uint8_t flags);
+// A way of n >= 2 points, with its road name (NULL or "" for none; cut to ADV_NAME_MAX bytes
+// on a UTF-8 boundary; a name already seen is stored once). Consecutive duplicate nodes are
+// dropped. CB_OK, CB_E_NOMEM, CB_E_INVALID.
+#define ADV_NAME_MAX 64
+int adv_build_add_way(adv_build *b, const int64_t *node_ids, const adv_pt *pts, int n, uint8_t access, uint8_t hclass, uint8_t flags,
+                      const char *name);
 // A region by name and level, 1..ADV_REGION_MAX_LEVEL (the same name at the same level twice is
 // the same region: islands of one town): its index, or a CB_E_*.
 int adv_build_region(adv_build *b, const char *name, int level);
@@ -173,6 +183,7 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap);
 // What finish built, for the logs.
 typedef struct {
     uint32_t segs, nodes, deltas, cells, regions, cell_segs;
+    uint32_t names, names_bytes;   // distinct road names, and the blob's size
     uint32_t segs_unregioned;   // left out by adv_build_only_regioned
     uint32_t regions_empty;     // regions left out for holding no segment
     double   total_len_m[ADV_T_N];

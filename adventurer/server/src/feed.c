@@ -1,7 +1,7 @@
 // feed.c - feed.h.
 #include "feed.h"
 
-#include "metrics.h"
+#include "server.h"
 #include "net/loop.h"
 #include "net/router.h"
 #include "net/ws.h"
@@ -24,6 +24,7 @@ static void on_open(cb_ws *ws, void *ud) {
     }
     g_conns[g_n++] = ws;
     atomic_store(&g_count, (unsigned)g_n);
+    cb_metrics_set(adv_srv.ctx ? adv_srv.ctx->metrics : NULL, ADV_M_FEED_CONNS, (uint64_t)g_n);
 }
 
 static void on_message(cb_ws *ws, int opcode, const uint8_t *data, size_t len, void *ud) {
@@ -38,6 +39,7 @@ static void on_close(cb_ws *ws, void *ud) {
             break;
         }
     atomic_store(&g_count, (unsigned)g_n);
+    cb_metrics_set(adv_srv.ctx ? adv_srv.ctx->metrics : NULL, ADV_M_FEED_CONNS, (uint64_t)g_n);
 }
 
 static const cb_ws_handlers FEED_WS = { on_open, on_message, on_close };

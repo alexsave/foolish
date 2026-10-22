@@ -116,7 +116,7 @@ static const tnode dense_nodes[] = {
 // off, so the reader's rounding is checked too.
 static const tnode plain_nodes[] = { { 6, LAT0 + 300000, LON0 + 20000 }, { 7, LAT0 + 300000, LON0 + 40000 } };
 static const tway ways[] = {
-    { 10, { "highway", "residential", "oneway", "yes", NULL }, { 1, 2, 3 }, 3 },
+    { 10, { "highway", "residential", "oneway", "yes", "name", "Main Street", NULL }, { 1, 2, 3 }, 3 },
     { 11, { "highway", "footway", "bicycle", "yes", NULL }, { 4, 5 }, 2 },
     { 12, { "highway", "cycleway", NULL }, { 6, 7 }, 2 },
     { 13, { "highway", "motorway", NULL }, { 8, 9 }, 2 },
@@ -310,6 +310,7 @@ static void test_import(const char *pbf_path) {
     T_CHECK(res && foot && cyc);
     T_CHECK(!seg_of_class(&g, ADV_HC_MOTORWAY) && !seg_of_class(&g, ADV_HC_SERVICE));
     if (res) {
+        T_CHECK(strcmp(adv_seg_name(&g, (uint32_t)(res - g.segs)), "Main Street") == 0);
         T_CHECK(res->access == (ADV_ACC_BIKE | ADV_ACC_FOOT));
         T_CHECK(res->flags == ADV_SEGF_ONEWAY);
         T_CHECK(res->region == 0);
@@ -327,6 +328,7 @@ static void test_import(const char *pbf_path) {
         T_CHECK(foot->region == 0);
     }
     if (cyc) {
+        T_CHECK(strcmp(adv_seg_name(&g, (uint32_t)(cyc - g.segs)), "") == 0);   // unnamed: name 0
         T_CHECK(cyc->access == (ADV_ACC_BIKE | ADV_ACC_FOOT));
         T_CHECK_MSG(cyc->region == ADV_NO_REGION, "region=%u", cyc->region);
         // The plain nodes' rounding: unit*100+51 nanodegrees is the next unit up, -51 the one

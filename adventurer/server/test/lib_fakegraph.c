@@ -37,7 +37,10 @@ void fg_tmp_path(char *out, size_t cap, const char *tag) {
 static int64_t node_id(int i, int j) { return (int64_t)j * 100000 + i + 1; }
 
 // One street between two crossings, with interior shape points every shape_m.
+// Horizontal streets are "Row <j>", vertical ones unnamed: both kinds of segment in every graph.
 static int add_street(adv_build *b, const fg_opts *o, int i0, int j0, int i1, int j1, uint8_t access, uint8_t hclass) {
+    char name[16] = "";
+    if (j0 == j1) snprintf(name, sizeof name, "Row %d", j0);
     adv_pt a = fg_crossing(o, i0, j0), c = fg_crossing(o, i1, j1);
     int64_t ids[256];
     adv_pt pts[256];
@@ -56,7 +59,7 @@ static int add_street(adv_build *b, const fg_opts *o, int i0, int j0, int i1, in
     }
     ids[n] = node_id(i1, j1);
     pts[n++] = c;
-    return adv_build_add_way(b, ids, pts, n, access, hclass, 0);
+    return adv_build_add_way(b, ids, pts, n, access, hclass, 0, name[0] ? name : NULL);
 }
 
 int fg_build(const fg_opts *o_in, const char *path, adv_graph *g) {

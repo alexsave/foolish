@@ -1,10 +1,10 @@
 // unit_world.c - the world's apply (coverage, totals, regions, achievements, boards, owners), the
-// journal's round trip (what recovery rebuilds equals what the live path built), and the metrics.
+// journal's round trip (what recovery rebuilds equals what the live path built).
 #include "coverage.h"
 #include "journal.h"
 #include "mvt.h"
 #include "lib_fakegraph.h"
-#include "metrics.h"
+#include "server.h"
 #include "store/store.h"
 #include "t.h"
 #include "trace.h"
@@ -200,27 +200,6 @@ static void test_journal(adv_graph *g) {
     unlink(wal);
 }
 
-static void test_metrics(void) {
-    adv_hist h;
-    memset(&h, 0, sizeof h);
-    T_CHECK(adv_hist_pct(&h, 50) == 0);
-    for (int i = 1; i <= 100; i++) adv_hist_add(&h, (uint64_t)i * 100);   // 100 us .. 10 ms
-    uint32_t p50 = adv_hist_pct(&h, 50), p99 = adv_hist_pct(&h, 99), p100 = adv_hist_pct(&h, 100);
-    T_CHECK_MSG(p50 >= 4096 && p50 <= 5120, "p50 %u", p50);      // 5000 us is in [4096, 5120)
-    T_CHECK_MSG(p99 >= 8192 && p99 <= 10240, "p99 %u", p99);     // 9900 us is in [8192, 10240)
-    T_CHECK(p100 >= p99 && p99 >= p50);
-    adv_hist_add(&h, 0);
-    adv_hist_add(&h, UINT64_MAX);
-    T_CHECK(adv_hist_pct(&h, 100) > 1000000000u);
-    adv_rate r;
-    memset(&r, 0, sizeof r);
-    int64_t now = 1760000000000LL;
-    for (int s = 1; s <= 9; s++) adv_rate_add(&r, now - s * 1000, 5);   // 5 a second for the last 9 whole seconds
-    adv_rate_add(&r, now, 100);                                          // the current second does not count
-    T_CHECK_MSG(fabs(adv_rate_per_s(&r, now) - 5) < 0.01, "rate %f", adv_rate_per_s(&r, now));
-    T_CHECK(adv_rate_per_s(&r, now + 20000) == 0);
-    T_CHECK(adv_rss_mb() > 0);
-}
 
 int main(void) {
     fg_opts o = { .cols = 6, .rows = 5, .regions = true, .foot_only_rows = true };
@@ -231,7 +210,6 @@ int main(void) {
     test_apply(&g);
     test_boards(&g);
     test_journal(&g);
-    test_metrics();
     adv_graph_close(&g);
     unlink(path);
     return t_done("unit_world");

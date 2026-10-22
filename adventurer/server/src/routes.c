@@ -6,10 +6,10 @@
 // the loop thread (the loop's CPU, never the workers') when the user's lock is free, and sent to
 // the pool when a merge holds it, so a backfill in progress never adds to a tile's latency.
 #include "server.h"
+#include "../../../shared/c/proc.h"
 
 #include "feed.h"
 #include "journal.h"
-#include "metrics.h"
 #include "mvt.h"
 #include "net/loop.h"
 #include "trace.h"
@@ -229,15 +229,16 @@ void adv_ops_fill(adv_w_ops *o) {
     o->activities = (uint32_t)atomic_load(&w->activities);
     o->rejected = (uint32_t)atomic_load(&w->rejected);
     if (adv_srv.work) adv_work_depths(adv_srv.work, &o->queue_live, &o->queue_backfill);
-    o->act_per_s = adv_rate_per_s(&adv_m.acts, now);
-    o->tiles_per_s = adv_rate_per_s(&adv_m.tiles, now);
-    o->act_cpu_p50_us = adv_hist_pct(&adv_m.act_cpu, 50);
-    o->act_cpu_p99_us = adv_hist_pct(&adv_m.act_cpu, 99);
-    o->tile_p50_us = adv_hist_pct(&adv_m.tile, 50);
-    o->tile_p99_us = adv_hist_pct(&adv_m.tile, 99);
-    o->e2e_p50_us = adv_hist_pct(&adv_m.e2e, 50);
-    o->e2e_p99_us = adv_hist_pct(&adv_m.e2e, 99);
-    o->rss_mb = adv_rss_mb();
+    const cb_metrics *m = adv_srv.ctx ? adv_srv.ctx->metrics : NULL;
+    o->act_per_s = cb_metrics_per_s(m, ADV_M_ACTS, now);
+    o->tiles_per_s = cb_metrics_per_s(m, ADV_M_TILES, now);
+    o->act_cpu_p50_us = cb_metrics_pct(m, ADV_M_ACT_CPU, 50);
+    o->act_cpu_p99_us = cb_metrics_pct(m, ADV_M_ACT_CPU, 99);
+    o->tile_p50_us = cb_metrics_pct(m, ADV_M_TILE, 50);
+    o->tile_p99_us = cb_metrics_pct(m, ADV_M_TILE, 99);
+    o->e2e_p50_us = cb_metrics_pct(m, ADV_M_E2E, 50);
+    o->e2e_p99_us = cb_metrics_pct(m, ADV_M_E2E, 99);
+    o->rss_mb = proc_rss_mb(0);
     o->feed_conns = adv_feed_conns();
     o->http_conns = (uint32_t)atomic_load(&adv_srv.ctx->stats.http_conns);
     o->journal_bytes = adv_journal_bytes(adv_srv.db_path);
@@ -321,7 +322,7 @@ static bool not_modified(const cb_http_req *req, cb_http_res *res, const char *e
     cb_res_status(res, 304);
     cb_res_header(res, "ETag", etag);
     cb_res_header(res, "Cache-Control", cache);
-    atomic_fetch_add(&adv_m.tiles_304, 1);
+    cb_metrics_add(adv_srv.ctx->metrics, ADV_M_TILES_304, 1);
     return true;
 }
 
@@ -414,8 +415,7 @@ static void base_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
         tile_answer(res, e->bytes, (int)e->len, etag, CACHE);
         pthread_mutex_unlock(&g_bt_mu);
         atomic_fetch_add(&g_bt_hits, 1);
-        adv_rate_add(&adv_m.tiles, cb_now_ms(), 1);
-        atomic_fetch_add(&adv_m.tiles_total, 1);
+        cb_metrics_rate(ctx->metrics, ADV_M_TILES, cb_now_ms(), 1);
         return;
     }
     pthread_mutex_unlock(&g_bt_mu);
@@ -427,9 +427,8 @@ static void base_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     int n = adv_tile_render(&adv_srv.graph, &tr, 0, NULL, NULL, s, &bytes);
     if (n < 0) { cb_router_error(res, n == CB_E_INVALID ? 404 : 500, cb_strerror(n)); return; }
     note_dropped(s, &tr);
-    if (n > 0) adv_hist_add(&adv_m.tile, (uint64_t)(cb_mono_us() - t0));   // an empty tile (the sea) is no measure of a render
-    adv_rate_add(&adv_m.tiles, cb_now_ms(), 1);
-    atomic_fetch_add(&adv_m.tiles_total, 1);
+    if (n > 0) cb_metrics_observe(ctx->metrics, ADV_M_TILE, (uint64_t)(cb_mono_us() - t0));   // an empty tile (the sea) is no measure of a render
+    cb_metrics_rate(ctx->metrics, ADV_M_TILES, cb_now_ms(), 1);
     atomic_fetch_add(&g_bt_misses, 1);
     pthread_mutex_lock(&g_bt_mu);
     if (!bt_find(key)) bt_put(key, bytes, (uint32_t)n);
@@ -467,9 +466,8 @@ static void user_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     pthread_mutex_unlock(l);
     if (n < 0) { cb_router_error(res, n == CB_E_INVALID ? 404 : 500, cb_strerror(n)); return; }
     note_dropped(s, &tr);
-    if (n > 0) adv_hist_add(&adv_m.tile, (uint64_t)(cb_mono_us() - t0));   // an empty tile (the sea) is no measure of a render
-    adv_rate_add(&adv_m.tiles, cb_now_ms(), 1);
-    atomic_fetch_add(&adv_m.tiles_total, 1);
+    if (n > 0) cb_metrics_observe(ctx->metrics, ADV_M_TILE, (uint64_t)(cb_mono_us() - t0));   // an empty tile (the sea) is no measure of a render
+    cb_metrics_rate(ctx->metrics, ADV_M_TILES, cb_now_ms(), 1);
     tile_answer(res, bytes, n, etag, CACHE);
 }
 

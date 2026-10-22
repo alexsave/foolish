@@ -16,6 +16,7 @@ typedef struct {
     int64_t  id;
     uint64_t ref_off;
     uint32_t n_refs;
+    uint32_t name;   // into imp.names; 0 for none
     uint8_t  keep;   // KEEP_* bits
     uint8_t  access, hclass, flags;
 } way_rec;
@@ -37,6 +38,7 @@ typedef struct {
     int64_t  *refs;  uint64_t n_refs, cap_refs;
     rel_rec  *rels;  uint64_t n_rels, cap_rels;
     mem_rec  *mems;  uint64_t n_mems, cap_mems;
+    char     *names; uint64_t n_names, cap_names;   // every road's name, NUL-terminated, in order ([0] is "")
     uint32_t *order;         // way indices sorted by id, for the member lookup
     int64_t  *need;          // sorted, unique node ids the kept ways name
     adv_pt   *pts;           // the coordinates of need[i]
@@ -85,6 +87,24 @@ static int on_way(void *ud, int64_t id, const pbf_tag *tags, int n_tags, const i
     uint8_t access = 0, hclass = 0, flags = 0;
     bool road = osm_way_road(tags, n_tags, &access, &hclass, &flags);
     if (road) m->st->roads_kept++;
+    uint32_t name = 0;
+    const char *nm = road ? osm_way_name(tags, n_tags) : NULL;
+    if (nm) {
+        size_t nl = strlen(nm);
+        if (nl > ADV_NAME_MAX) nl = ADV_NAME_MAX;   // the builder cuts it on a character boundary
+        if (m->n_names == 0) {   // [0] is the empty name
+            int rc0 = GROW(m, names, 1, ADV_IMPORT_MAX_REFS);
+            if (rc0 != CB_OK) return rc0;
+            m->names[m->n_names++] = 0;
+        }
+        int rc1 = GROW(m, names, nl + 1, ADV_IMPORT_MAX_REFS);
+        if (rc1 != CB_OK) return rc1 == CB_E_FULL ? fail(m, rc1, "too many road names") : rc1;
+        if (m->n_names + nl + 1 > UINT32_MAX) return fail(m, CB_E_FULL, "too many road names");
+        name = (uint32_t)m->n_names;
+        memcpy(m->names + m->n_names, nm, nl);
+        m->names[m->n_names + nl] = 0;
+        m->n_names += nl + 1;
+    }
     // Every way is remembered (id, where its refs are) until the relations have been read,
     // since a boundary's member ways are not roads and are only known as members afterwards.
     int rc;
@@ -95,6 +115,7 @@ static int on_way(void *ud, int64_t id, const pbf_tag *tags, int n_tags, const i
     w->ref_off = m->n_refs;
     w->n_refs = (uint32_t)n_refs;
     w->keep = road ? KEEP_ROAD : 0;
+    w->name = name;
     w->access = access;
     w->hclass = hclass;
     w->flags = flags;
@@ -507,7 +528,7 @@ static int build(imp *m, adv_build *b, const char *pbf_path, const adv_import_op
             if (pts[k].lon < min_lon) min_lon = pts[k].lon;
             if (pts[k].lon > max_lon) max_lon = pts[k].lon;
         }
-        if ((rc = adv_build_add_way(b, refs, pts, (int)w->n_refs, w->access, w->hclass, w->flags)) != CB_OK) {
+        if ((rc = adv_build_add_way(b, refs, pts, (int)w->n_refs, w->access, w->hclass, w->flags, w->name ? m->names + w->name : NULL)) != CB_OK) {
             fail(m, rc, "the builder refused a way");
             goto out;
         }
@@ -601,7 +622,7 @@ int adv_import(const char *pbf_path, const char *graph_path, const adv_import_op
     st.s_build = now_s() - t0;
 out:
     adv_build_free(b);
-    free(m.ways); free(m.refs); free(m.rels); free(m.mems); free(m.order); free(m.need); free(m.pts); free(m.have);
+    free(m.ways); free(m.refs); free(m.rels); free(m.mems); free(m.order); free(m.need); free(m.pts); free(m.have); free(m.names);
     if (rc == CB_E_NOMEM && cap && !err[0]) snprintf(err, cap, "import: out of memory");
     if (rc != CB_OK && cap && !err[0]) snprintf(err, cap, "import: %s", cb_strerror(rc));
     if (stats) *stats = st;

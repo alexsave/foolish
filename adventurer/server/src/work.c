@@ -4,7 +4,7 @@
 #include "feed.h"
 #include "journal.h"
 #include "match.h"
-#include "metrics.h"
+#include "server.h"
 #include "trace.h"
 #include "util/clock.h"
 #include "util/err.h"
@@ -134,7 +134,7 @@ static void process(adv_work *wk, adv_match_scratch *scratch, item *it) {
         ev.e2e_us = (uint32_t)(cb_mono_us() - it->arrival_us);
         atomic_fetch_add(&wk->w->rejected, 1);
         adv_work_depths(wk, &ev.queue_live, &ev.queue_backfill);
-        adv_hist_add(&adv_m.act_cpu, ev.cpu_us);
+        cb_metrics_observe(wk->ctx->metrics, ADV_M_ACT_CPU, ev.cpu_us);
         adv_feed_publish(wk->ctx, &ev, sizeof ev);
         return;
     }
@@ -197,10 +197,10 @@ static void process(adv_work *wk, adv_match_scratch *scratch, item *it) {
     ev.cpu_us = r.cpu_us;
     ev.e2e_us = (uint32_t)(cb_mono_us() - it->arrival_us);
     adv_work_depths(wk, &ev.queue_live, &ev.queue_backfill);
-    adv_hist_add(&adv_m.act_cpu, ev.cpu_us);
+    cb_metrics_observe(wk->ctx->metrics, ADV_M_ACT_CPU, ev.cpu_us);
     // "Uploaded to visible" is a live upload's number: a backfill waits its turn by design.
-    if (!it->backfill) adv_hist_add(&adv_m.e2e, ev.e2e_us);
-    adv_rate_add(&adv_m.acts, cb_now_ms(), 1);
+    if (!it->backfill) cb_metrics_observe(wk->ctx->metrics, ADV_M_E2E, ev.e2e_us);
+    cb_metrics_rate(wk->ctx->metrics, ADV_M_ACTS, cb_now_ms(), 1);
     adv_feed_publish(wk->ctx, &ev, sizeof ev);
 }
 

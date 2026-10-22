@@ -82,8 +82,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, ", fence of %llu boundaries: %llu regions outside it, %u segments outside every region", (unsigned long long)st.fences,
                 (unsigned long long)st.regions_outside, st.build.segs_unregioned);
     if (st.build.regions_empty) fprintf(stderr, ", %u regions with no road left out", st.build.regions_empty);
-    fprintf(stderr, "\n  graph: %u segments, %u nodes, %u deltas, %u cells (%u entries), %u regions\n", st.build.segs, st.build.nodes,
-            st.build.deltas, st.build.cells, st.build.cell_segs, st.build.regions);
+    fprintf(stderr, "\n  graph: %u segments, %u nodes, %u deltas, %u cells (%u entries), %u regions, %u road names (%u KB)\n", st.build.segs,
+            st.build.nodes, st.build.deltas, st.build.cells, st.build.cell_segs, st.build.regions, st.build.names, st.build.names_bytes >> 10);
     fprintf(stderr, "  km: bike %.1f, foot %.1f, all %.1f\n", st.build.total_len_m[ADV_T_BIKE] / 1000, st.build.total_len_m[ADV_T_FOOT] / 1000,
             st.build.total_len_m[ADV_T_ALL] / 1000);
     // Open what was written (the check a server will run) and sum it by class and region.

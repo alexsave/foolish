@@ -55,7 +55,7 @@ static int street(adv_build *b, int i0, int j0, int i1, int j1) {
     }
     ids[n] = (int64_t)j1 * 100000 + i1 + 1;
     pts[n++] = c;
-    return adv_build_add_way(b, ids, pts, n, ADV_ACC_BIKE | ADV_ACC_FOOT, ADV_HC_RESIDENTIAL, 0);
+    return adv_build_add_way(b, ids, pts, n, ADV_ACC_BIKE | ADV_ACC_FOOT, ADV_HC_RESIDENTIAL, 0, NULL);
 }
 
 int LLVMFuzzerInitialize(int *argc, char ***argv) {

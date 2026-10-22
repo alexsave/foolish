@@ -46,7 +46,7 @@ int adv_graph_check(const void *p, size_t n, char *err, size_t cap) {
     if (!section_ok(h.off_segs, h.n_segs, sizeof(adv_seg), n) || !section_ok(h.off_deltas, h.n_deltas, sizeof(adv_delta), n) ||
         !section_ok(h.off_nodes, h.n_nodes, sizeof(adv_node), n) || !section_ok(h.off_adj, h.n_adj, 4, n) ||
         !section_ok(h.off_cells, n_cells, sizeof(adv_cell), n) || !section_ok(h.off_cell_segs, h.n_cell_segs, 4, n) ||
-        !section_ok(h.off_regions, h.n_regions, sizeof(adv_region), n))
+        !section_ok(h.off_regions, h.n_regions, sizeof(adv_region), n) || !section_ok(h.off_names, h.n_names_bytes, 1, n))
         return fail(err, cap, "a section runs past the file");
     if (h.off_segs < sizeof h) return fail(err, cap, "a section overlaps the header");
     uint32_t crc = crc32c(0, (const uint8_t *)p + sizeof h, n - sizeof h);
@@ -63,6 +63,7 @@ int adv_graph_check(const void *p, size_t n, char *err, size_t cap) {
         if ((uint64_t)s->shape_off + s->n_pts - 1 > h.n_deltas) return fail(err, cap, "a segment's shape runs past the deltas");
         if (s->node_a >= h.n_nodes || s->node_b >= h.n_nodes) return fail(err, cap, "a segment names a node that is not there");
         if (s->region != ADV_NO_REGION && s->region >= h.n_regions) return fail(err, cap, "a segment names a region that is not there");
+        if (s->name >= h.n_names_bytes) return fail(err, cap, "a segment's name is past the names");
         if (s->hclass >= ADV_HC_N) return fail(err, cap, "a segment's class");
         if (!(s->len_m >= 0 && s->len_m <= ADV_SEG_MAX_LEN_M * 1.01f)) return fail(err, cap, "a segment's length");
         if (s->min_lat > s->max_lat || s->min_lon > s->max_lon) return fail(err, cap, "a segment's box");
@@ -85,6 +86,8 @@ int adv_graph_check(const void *p, size_t n, char *err, size_t cap) {
     const adv_region *regions = (const adv_region *)(b + h.off_regions);
     for (uint32_t i = 0; i < h.n_regions; i++)
         if (!memchr(regions[i].name, 0, ADV_REGION_NAME)) return fail(err, cap, "a region's name is not terminated");
+    // Name 0 is "" and the blob ends in a NUL, so every offset under n_names_bytes reads a C string.
+    if (h.n_names_bytes < 1 || b[h.off_names] != 0 || b[h.off_names + h.n_names_bytes - 1] != 0) return fail(err, cap, "the names are not terminated");
     return CB_OK;
 }
 
@@ -98,6 +101,7 @@ static void graph_point(adv_graph *g, const void *p) {
     g->cells = (const adv_cell *)(b + g->h->off_cells);
     g->cell_segs = (const uint32_t *)(b + g->h->off_cell_segs);
     g->regions = (const adv_region *)(b + g->h->off_regions);
+    g->names = (const char *)(b + g->h->off_names);
 }
 
 int adv_graph_open(const char *path, adv_graph *g, char *err, size_t cap) {
@@ -236,6 +240,7 @@ bool adv_cells_of_box(const adv_graph *g, adv_pt min, adv_pt max, uint32_t *i0, 
 typedef struct {
     uint32_t pt_off, n;
     uint8_t  access, hclass, flags;
+    uint32_t name;   // into names
 } bway;
 
 typedef struct {
@@ -267,6 +272,12 @@ struct adv_build {
     uint32_t  n_regions, cap_regions;
     int64_t   next_synthetic;   // node ids the densifier makes up (negative, never OSM's)
     bool      only_regioned;    // adv_build_only_regioned
+    // The names: one blob, each distinct name once, found again through an open-addressing
+    // table of offsets (0 empty) over the name's FNV-1a hash.
+    char     *names;
+    uint32_t  n_names, cap_names, n_distinct;
+    uint32_t *name_slots;
+    uint32_t  n_slots;
     adv_build_stats stats;
 };
 
@@ -288,7 +299,60 @@ adv_build *adv_build_new(const char *source) {
     if (!b) return NULL;
     snprintf(b->source, sizeof b->source, "%s", source ? source : "");
     b->next_synthetic = INT64_MIN + 1;
+    b->names = calloc(1, 1024);   // names[0] is "": the unnamed road
+    if (!b->names) { free(b); return NULL; }
+    b->cap_names = 1024;
+    b->n_names = 1;
     return b;
+}
+
+static uint32_t name_hash(const char *s, size_t n) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < n; i++) { h ^= (uint8_t)s[i]; h *= 16777619u; }
+    return h;
+}
+
+// The offset of name s[0..n) in the blob, added when new: 0 for an empty name, or a CB_E_*.
+static int64_t name_intern(adv_build *b, const char *s, size_t n) {
+    if (n == 0) return 0;
+    if (b->n_distinct * 2 >= b->n_slots) {   // half full: double the table
+        uint32_t ns = b->n_slots ? b->n_slots * 2 : 1024;
+        uint32_t *t = calloc(ns, sizeof *t);
+        if (!t) return CB_E_NOMEM;
+        for (uint32_t i = 0; i < b->n_slots; i++) {
+            uint32_t off = b->name_slots[i];
+            if (!off) continue;
+            uint32_t k = name_hash(b->names + off, strlen(b->names + off)) & (ns - 1);
+            while (t[k]) k = (k + 1) & (ns - 1);
+            t[k] = off;
+        }
+        free(b->name_slots);
+        b->name_slots = t;
+        b->n_slots = ns;
+    }
+    uint32_t k = name_hash(s, n) & (b->n_slots - 1);
+    for (;;) {
+        uint32_t off = b->name_slots[k];
+        if (!off) break;
+        if (strlen(b->names + off) == n && memcmp(b->names + off, s, n) == 0) return off;
+        k = (k + 1) & (b->n_slots - 1);
+    }
+    if ((uint64_t)b->n_names + n + 1 > UINT32_MAX) return CB_E_FULL;
+    if (b->n_names + n + 1 > b->cap_names) {
+        uint32_t nc = b->cap_names;
+        while (nc < b->n_names + n + 1) nc *= 2;
+        char *nn = realloc(b->names, nc);
+        if (!nn) return CB_E_NOMEM;
+        b->names = nn;
+        b->cap_names = nc;
+    }
+    uint32_t off = b->n_names;
+    memcpy(b->names + off, s, n);
+    b->names[off + n] = 0;
+    b->n_names += (uint32_t)n + 1;
+    b->name_slots[k] = off;
+    b->n_distinct++;
+    return off;
 }
 
 void adv_build_free(adv_build *b) {
@@ -300,6 +364,8 @@ void adv_build_free(adv_build *b) {
     free(b->ring_pts);
     for (uint32_t i = 0; i < b->n_regions; i++) free(b->regions[i].rings);
     free(b->regions);
+    free(b->names);
+    free(b->name_slots);
     free(b);
 }
 
@@ -316,10 +382,19 @@ static int push_pt(adv_build *b, int64_t id, adv_pt p) {
     return CB_OK;
 }
 
-int adv_build_add_way(adv_build *b, const int64_t *node_ids, const adv_pt *pts, int n, uint8_t access, uint8_t hclass, uint8_t flags) {
+int adv_build_add_way(adv_build *b, const int64_t *node_ids, const adv_pt *pts, int n, uint8_t access, uint8_t hclass, uint8_t flags,
+                      const char *name) {
     if (n < 2 || hclass >= ADV_HC_N) return CB_E_INVALID;
     for (int i = 0; i < n; i++)
         if (!adv_pt_valid(pts[i])) return CB_E_INVALID;
+    // The name first, so a refusal leaves no half-added way behind: cut to fit on a character boundary.
+    size_t nl = name ? strlen(name) : 0;
+    if (nl > ADV_NAME_MAX) {
+        nl = ADV_NAME_MAX;
+        while (nl > 0 && ((unsigned char)name[nl] & 0xC0) == 0x80) nl--;
+    }
+    int64_t name_off = name_intern(b, name, nl);
+    if (name_off < 0) return (int)name_off;
     GROW(b->ways, b->n_ways, b->cap_ways, 1);
     uint32_t off = b->n_pts;
     adv_pt prev = pts[0];
@@ -345,7 +420,7 @@ int adv_build_add_way(adv_build *b, const int64_t *node_ids, const adv_pt *pts, 
         b->n_pts = off;
         return CB_OK;
     }
-    bway w = { off, count, access, hclass, flags };
+    bway w = { off, count, access, hclass, flags, (uint32_t)name_off };
     b->ways[b->n_ways++] = w;
     return CB_OK;
 }
@@ -630,6 +705,7 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
         o->access = w->access;
         o->hclass = w->hclass;
         o->flags = w->flags;
+        o->name = w->name;
         for (uint32_t k = s->from + 1; k <= s->to; k++) {
             int64_t dlat = (int64_t)b->pts[k].lat - b->pts[k - 1].lat, dlon = (int64_t)b->pts[k].lon - b->pts[k - 1].lon;
             if (dlat < INT16_MIN || dlat > INT16_MAX || dlon < INT16_MIN || dlon > INT16_MAX) {
@@ -798,6 +874,7 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
     h.n_adj = n_adj;
     h.n_cell_segs = (uint32_t)n_cell_segs;
     h.n_regions = b->n_regions;
+    h.n_names_bytes = b->n_names;
     h.cell_zoom = ADV_CELL_ZOOM;
     h.cell_x0 = cx0;
     h.cell_y0 = cy0;
@@ -814,6 +891,7 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
     h.off_cells = at; at = ALIGN8(at + n_cells * sizeof(adv_cell));
     h.off_cell_segs = at; at = ALIGN8(at + n_cell_segs * 4);
     h.off_regions = at; at = ALIGN8(at + (uint64_t)b->n_regions * sizeof(adv_region));
+    h.off_names = at; at = ALIGN8(at + (uint64_t)b->n_names);
     h.file_size = at;
     if ((rc = ob_put(&ob, &h, sizeof h)) != CB_OK || (rc = ob_pad(&ob)) != CB_OK) goto out;
     if ((rc = ob_put(&ob, out_segs, (size_t)n_segs * sizeof(adv_seg))) != CB_OK || (rc = ob_pad(&ob)) != CB_OK) goto out;
@@ -823,6 +901,7 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
     if ((rc = ob_put(&ob, cells, (size_t)n_cells * sizeof(adv_cell))) != CB_OK || (rc = ob_pad(&ob)) != CB_OK) goto out;
     if ((rc = ob_put(&ob, cell_segs, (size_t)n_cell_segs * 4)) != CB_OK || (rc = ob_pad(&ob)) != CB_OK) goto out;
     if ((rc = ob_put(&ob, regions, (size_t)b->n_regions * sizeof(adv_region))) != CB_OK || (rc = ob_pad(&ob)) != CB_OK) goto out;
+    if ((rc = ob_put(&ob, b->names, b->n_names)) != CB_OK || (rc = ob_pad(&ob)) != CB_OK) goto out;
     if (ob.n != at) { rc = finish_fail(err, cap, "layout arithmetic", CB_E_STATE); goto out; }
     h.crc = crc32c(0, ob.p + sizeof h, ob.n - sizeof h);
     memcpy(ob.p, &h, sizeof h);
@@ -849,6 +928,8 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
     b->stats.cells = (uint32_t)n_cells;
     b->stats.regions = b->n_regions;
     b->stats.cell_segs = (uint32_t)n_cell_segs;
+    b->stats.names = b->n_distinct;
+    b->stats.names_bytes = b->n_names;
     for (int t = 0; t < ADV_T_N; t++) b->stats.total_len_m[t] = total[t];
 out:
     free(is_node); free(node_of_pt); free(uses); free(segs); free(node_pt); free(node_renum);

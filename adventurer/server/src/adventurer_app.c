@@ -11,7 +11,6 @@
 
 #include "feed.h"
 #include "journal.h"
-#include "metrics.h"
 #include "server.h"
 #include "store/store.h"
 #include "store/store_sql.h"
@@ -88,6 +87,14 @@ static void adv_serve_close(cb_ctx *ctx) {
 
 static const cb_route_list *const ADV_ROUTES[] = { &adv_route_list, &adv_feed_route_list };
 
+// server.h's ADV_M_* rows, in that order.
+static const cb_metric_def ADV_METRICS[ADV_M_N] = {
+    [ADV_M_ACT_CPU] = { "act_cpu_us", CB_METRIC_HIST },  [ADV_M_TILE] = { "tile_us", CB_METRIC_HIST },
+    [ADV_M_E2E] = { "e2e_us", CB_METRIC_HIST },          [ADV_M_ACTS] = { "activities", CB_METRIC_RATE },
+    [ADV_M_TILES] = { "tiles", CB_METRIC_RATE },         [ADV_M_TILES_304] = { "tiles_304", CB_METRIC_COUNTER },
+    [ADV_M_FEED_CONNS] = { "feed_conns", CB_METRIC_GAUGE },
+};
+
 static const cb_app ADV_APP = {
     .name = "adventurer",
     .routes = ADV_ROUTES,
@@ -95,6 +102,8 @@ static const cb_app ADV_APP = {
     .store = &ADV_STORE,
     .serve_open = adv_serve_open,
     .serve_close = adv_serve_close,
+    .metrics = ADV_METRICS,
+    .n_metrics = ADV_M_N,
 };
 
 const cb_app *const cb_main_app = &ADV_APP;

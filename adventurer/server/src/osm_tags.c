@@ -94,6 +94,12 @@ bool osm_way_road(const pbf_tag *tags, int n_tags, uint8_t *access, uint8_t *hcl
     return true;
 }
 
+const char *osm_way_name(const pbf_tag *tags, int n_tags) {
+    const char *nm = tag(tags, n_tags, "name:en");
+    if (!nm || !*nm) nm = tag(tags, n_tags, "name");
+    return nm && *nm ? nm : NULL;
+}
+
 // Copies s into out[cap], cut on a UTF-8 character boundary so a cut name is still valid text.
 static void copy_name(char *out, size_t cap, const char *s) {
     size_t n = strlen(s);
