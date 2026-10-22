@@ -632,6 +632,98 @@ static bool watcher_up(int64_t now_ms) {
     return g_w.ws >= 0;
 }
 
+// ---- the tables in play across a restart -------------------------------------------------------
+//
+// A stop leaves the league's tables playing on the game server (bots cannot leave a dealt game),
+// and the server finishes and rates them. So a stop writes the live tables to <file>.live, and the
+// next start watches them again: a game still in play is shown and rated as any other, one that
+// ended meanwhile is read once and its rating stamp recorded. Without this the server's ratings
+// would move by games the history never saw.
+//   "BELV", u32 version 1, u32 n, then n x { u8 gid_len, gid[BE_GID], u8 n, u8 podkidnoy, u8 bot[8] }
+
+typedef struct {
+    uint8_t gid_len;
+    char    gid[BE_GID];
+    uint8_t n, podkidnoy;
+    uint8_t bot[BE_SEATS];
+} live_rec;
+
+#define LIVE_MAGIC 0x564C4542u   // "BELV"
+
+static void live_path(char *out, size_t cap) { snprintf(out, cap, "%s.live", g_o.file); }
+
+static void live_save(void) {
+    if (!g_o.file[0]) return;
+    char path[600];
+    live_path(path, sizeof path);
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    uint32_t n = 0;
+    for (int i = 0; i < g_n_tables; i++)
+        if (g_tables[i].state != L_FREE && g_tables[i].state != L_DONE) n++;
+    uint32_t head[3] = { LIVE_MAGIC, 1, n };
+    fwrite(head, sizeof head, 1, f);
+    for (int i = 0; i < g_n_tables; i++) {
+        const lg_table *t = &g_tables[i];
+        if (t->state == L_FREE || t->state == L_DONE) continue;
+        live_rec r;
+        memset(&r, 0, sizeof r);
+        r.gid_len = (uint8_t)t->gid_len;
+        memcpy(r.gid, t->gid, (size_t)t->gid_len);
+        r.n = (uint8_t)t->n;
+        r.podkidnoy = (uint8_t)t->podkidnoy;
+        for (int k = 0; k < t->n; k++) r.bot[k] = (uint8_t)t->bots[k];
+        fwrite(&r, sizeof r, 1, f);
+    }
+    fclose(f);
+    CB_INFO("birdseye", "league: %u tables in play kept in %s", n, path);
+}
+
+// The tables the last stop left in play, taken up again (before the watcher's socket opens: it
+// hears and reads each of them as it comes up). The file is removed once read.
+static void live_load(int64_t now_ms) {
+    if (!g_o.file[0]) return;
+    char path[600];
+    live_path(path, sizeof path);
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    uint32_t head[3];
+    int taken = 0;
+    if (fread(head, sizeof head, 1, f) == 1 && head[0] == LIVE_MAGIC && head[1] == 1) {
+        live_rec r;
+        for (uint32_t k = 0; k < head[2] && fread(&r, sizeof r, 1, f) == 1; k++) {
+            lg_table *t = NULL;
+            for (int i = 0; i < g_n_tables && !t; i++)
+                if (g_tables[i].state == L_FREE) t = &g_tables[i];
+            bool ok = t && r.gid_len > 0 && r.gid_len <= BE_GID && r.n >= 2 && r.n <= BE_SEATS;
+            for (int b = 0; ok && b < r.n; b++) ok = r.bot[b] < g_n_bots;
+            if (!ok) continue;
+            t->gid_len = r.gid_len;
+            memcpy(t->gid, r.gid, r.gid_len);
+            t->gid[t->gid_len] = 0;
+            t->n = r.n;
+            t->podkidnoy = r.podkidnoy;
+            for (int b = 0; b < r.n; b++) t->bots[b] = r.bot[b];
+            t->state = L_WATCH;
+            t->have = t->refetching = false;
+            t->dealt_ms = 0;
+            t->created_ms = t->last_change_ms = now_ms;
+            set_seated(t, true);
+            be_world_lock(&be_world_g);
+            be_table *bt = be_world_open(&be_world_g, t->gid, t->gid_len);
+            if (bt) {
+                bt->w.n_seats = r.n;
+                bt->w.podkidnoy = r.podkidnoy;
+            }
+            be_world_unlock(&be_world_g);
+            taken++;
+        }
+    }
+    fclose(f);
+    remove(path);
+    if (taken) CB_INFO("birdseye", "league: %d tables the last run left in play, watched again", taken);
+}
+
 static void *league_main(void *arg) {
     (void)arg;
     int64_t next_create = 0, next_board = cb_mono_ms() + BOARD_EVERY_MS;
@@ -713,6 +805,7 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
     bots_from_roster();
     read_board(false);
     file_open();
+    live_load(cb_mono_ms());
     CB_INFO("birdseye", "league: %d bots, %d tables at once, up to %d a bot, podkidnoy %d%%, against %s", g_n_bots, g_n_tables, g_o.tables_per_bot, g_o.podkidnoy, o->server);
     atomic_store(&g_stop, false);
     if (pthread_create(&g_tid, NULL, league_main, NULL) != 0) {
@@ -728,6 +821,7 @@ void be_league_stop(void) {
     atomic_store(&g_stop, true);
     pthread_join(g_tid, NULL);
     g_started = false;
+    live_save();
     for (int i = 0; i < g_n_tables; i++) {
         free(g_tables[i].ct);
         free(g_tables[i].slot);

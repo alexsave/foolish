@@ -32,7 +32,7 @@ const FLASH_MS = 6000;
 // Each bot's line: its rating before its first league game at x 0, then after each of its games at
 // that game's sequence number, then held to the latest game.
 export interface Series {
-  pts: Float64Array;   // x0, y0, x1, y1, ...
+  pts: Float64Array; // x0, y0, x1, y1, ...
   n: number;
 }
 
@@ -52,9 +52,9 @@ interface ChartProps {
   bots: WBot[];
   results: WResult[];
   series: Series[];
-  flash: Map<number, number>;   // bot index -> when its last game landed (performance.now)
-  focus: number | null;          // a bot picked in the standings
-  hidden: Set<string>;           // families switched off
+  flash: Map<number, number>; // bot index -> when its last game landed (performance.now)
+  focus: number | null; // a bot picked in the standings
+  hidden: Set<string>; // families switched off
   onHover: (bot: number | null) => void;
 }
 
@@ -71,7 +71,11 @@ export function EloChart({ bots, results, series, flash, focus, hidden, onHover 
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 800, h: 420 });
-  const [hover, setHover] = useState<{ bot: number; x: number; y: number } | null>(null);
+  const [hover, setHover] = useState<{
+    bot: number;
+    x: number;
+    y: number;
+  } | null>(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -99,7 +103,8 @@ export function EloChart({ bots, results, series, flash, focus, hidden, onHover 
 
   const lastSeq = results.length ? results[results.length - 1].seq : 0;
   const view = useMemo(() => {
-    let lo = Infinity, hi = -Infinity;
+    let lo = Infinity,
+      hi = -Infinity;
     for (let i = 0; i < series.length; i++) {
       if (hidden.has(bots[i]?.key ?? '')) continue;
       const p = series[i].pts;
@@ -108,8 +113,15 @@ export function EloChart({ bots, results, series, flash, focus, hidden, onHover 
         if (p[k] > hi) hi = p[k];
       }
     }
-    if (!isFinite(lo)) { lo = 900; hi = 1100; }
-    if (hi - lo < 40) { const mid = (hi + lo) / 2; lo = mid - 20; hi = mid + 20; }
+    if (!isFinite(lo)) {
+      lo = 900;
+      hi = 1100;
+    }
+    if (hi - lo < 40) {
+      const mid = (hi + lo) / 2;
+      lo = mid - 20;
+      hi = mid + 20;
+    }
     const pad = (hi - lo) * 0.06;
     return { x1: Math.max(1, lastSeq), y0: lo - pad, y1: hi + pad };
   }, [series, bots, hidden, lastSeq]);
@@ -209,9 +221,7 @@ export function EloChart({ bots, results, series, flash, focus, hidden, onHover 
     }
     g.globalAlpha = 1;
     // Labels at the right edge for the lit and focused lines, kept apart vertically.
-    const labels = strong
-      .map((i) => ({ i, y: toY(series[i].pts[series[i].pts.length - 1]) }))
-      .sort((a, b) => a.y - b.y);
+    const labels = strong.map((i) => ({ i, y: toY(series[i].pts[series[i].pts.length - 1]) })).sort((a, b) => a.y - b.y);
     let lastY = -1e9;
     g.textAlign = 'left';
     g.textBaseline = 'middle';
@@ -233,7 +243,8 @@ export function EloChart({ bots, results, series, flash, focus, hidden, onHover 
 
   const onMove = (e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const mx = e.clientX - rect.left,
+      my = e.clientY - rect.top;
     if (mx < PAD.l || mx > size.w - PAD.r + 4) {
       setHover(null);
       onHover(null);
@@ -241,14 +252,18 @@ export function EloChart({ bots, results, series, flash, focus, hidden, onHover 
     }
     const x = ((mx - PAD.l) / (size.w - PAD.l - PAD.r)) * view.x1;
     // The line nearest the pointer at this x: each bot's rating there (its last game at or before x).
-    let best = -1, bestD = 14;
+    let best = -1,
+      bestD = 14;
     for (let i = 0; i < series.length; i++) {
       if (hidden.has(bots[i]?.key ?? '')) continue;
       const p = series[i].pts;
       let y = p[1];
       for (let k = 0; k < p.length && p[k] <= x; k += 2) y = p[k + 1];
       const d = Math.abs(toY(y) - my);
-      if (d < bestD) { bestD = d; best = i; }
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
     }
     const h = best >= 0 ? { bot: best, x: mx, y: my } : null;
     setHover(h);
@@ -257,10 +272,24 @@ export function EloChart({ bots, results, series, flash, focus, hidden, onHover 
 
   const hb = hover ? bots[hover.bot] : null;
   return (
-    <div className="chart-wrap" ref={wrap} onMouseMove={onMove} onMouseLeave={() => { setHover(null); onHover(null); }}>
+    <div
+      className="chart-wrap"
+      ref={wrap}
+      onMouseMove={onMove}
+      onMouseLeave={() => {
+        setHover(null);
+        onHover(null);
+      }}
+    >
       <canvas ref={canvas} style={{ width: size.w, height: size.h }} aria-label="every bot's rating after every rated league game" />
       {hb && hover && (
-        <div className="chart-tip" style={{ left: Math.min(hover.x + 12, size.w - 190), top: Math.max(4, hover.y - 44) }}>
+        <div
+          className="chart-tip"
+          style={{
+            left: Math.min(hover.x + 12, size.w - 190),
+            top: Math.max(4, hover.y - 44),
+          }}
+        >
           <span className="fam-dot" style={{ background: familyColor(hb.key) }} />
           <b>{botName(hb)}</b> <span className="muted">{hb.key}</span>
           <div className="num">
@@ -298,7 +327,9 @@ export function Standings({ bots, flash, focus, hover, onFocus, now }: Standings
         <span className="r">Rating</span>
         <span className="r">Last</span>
         <span className="r">Games</span>
-        <span className="r" title="share of its league games it was the fool of">Fool</span>
+        <span className="r" title="share of its league games it was the fool of">
+          Fool
+        </span>
       </div>
       <div className="standings-list">
         {rows.map(({ b, i }, rank) => {
@@ -306,7 +337,13 @@ export function Standings({ bots, flash, focus, hover, onFocus, now }: Standings
           const cls = `standing${lit ? (b.lastDelta >= 0 ? ' up' : ' down') : ''}${focus === i || hover === i ? ' on' : ''}`;
           const foolPct = b.leagueGames ? Math.round((100 * b.fools) / b.leagueGames) : null;
           return (
-            <button type="button" key={b.id} className={cls} onClick={() => onFocus(focus === i ? null : i)} title={`${botName(b)} (${b.key}): ${b.games} rated games on the server, ${b.firsts} times first out in the league`}>
+            <button
+              type="button"
+              key={b.id}
+              className={cls}
+              onClick={() => onFocus(focus === i ? null : i)}
+              title={`${botName(b)} (${b.key}): ${b.games} rated games on the server, ${b.firsts} times first out in the league`}
+            >
               <span className="num faint">{rank + 1}</span>
               <span className="standing-name">
                 <span className="fam-dot" style={{ background: familyColor(b.key) }} />
@@ -314,7 +351,10 @@ export function Standings({ bots, flash, focus, hover, onFocus, now }: Standings
                 {b.seated ? <span className="playing-dot" title="at a table now" /> : null}
               </span>
               <span className="num r b">{b.rating}</span>
-              <span className={`num r ${b.lastDelta > 0 ? 'pos' : b.lastDelta < 0 ? 'neg' : 'faint'}`} title={b.lastMs ? `${ago(Number(b.lastMs), now)} ago` : ''}>
+              <span
+                className={`num r ${b.lastDelta > 0 ? 'pos' : b.lastDelta < 0 ? 'neg' : 'faint'}`}
+                title={b.lastMs ? `${ago(Number(b.lastMs), now)} ago` : ''}
+              >
                 {b.leagueGames ? (b.lastDelta > 0 ? `+${b.lastDelta}` : String(b.lastDelta)) : '-'}
               </span>
               <span className="num r">{int(b.leagueGames)}</span>
@@ -347,7 +387,8 @@ export function Families({ bots, hidden, onToggle }: FamiliesProps) {
       m.set(b.key, f);
     }
     const keys = [...m.keys()].sort((a, b) => {
-      const ia = FAMILY_ORDER.indexOf(a), ib = FAMILY_ORDER.indexOf(b);
+      const ia = FAMILY_ORDER.indexOf(a),
+        ib = FAMILY_ORDER.indexOf(b);
       return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
     });
     return keys.map((k) => ({ key: k, ...m.get(k)! }));
@@ -358,7 +399,13 @@ export function Families({ bots, hidden, onToggle }: FamiliesProps) {
         const avg = f.sum / f.n;
         const off = hidden.has(f.key);
         return (
-          <button type="button" key={f.key} className={`family${off ? ' off' : ''}`} onClick={() => onToggle(f.key)} title={off ? 'show this family on the chart' : `${f.key}: average rating of its ${f.n} bots (click to hide its lines)`}>
+          <button
+            type="button"
+            key={f.key}
+            className={`family${off ? ' off' : ''}`}
+            onClick={() => onToggle(f.key)}
+            title={off ? 'show this family on the chart' : `${f.key}: average rating of its ${f.n} bots (click to hide its lines)`}
+          >
             <span className="family-name">
               <span className="fam-dot" style={{ background: familyColor(f.key) }} />
               {f.key}
