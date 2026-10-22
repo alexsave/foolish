@@ -20,6 +20,7 @@
 #include "rate_limits.h"
 #include "v1_http.h"
 #include "auth/auth.h"
+#include "net/refuse.h"
 #include "net/router.h"
 #include "realtime/realtime.h"
 #include "util/clock.h"
@@ -64,12 +65,12 @@ static void octets(cb_http_res *res, const uint8_t *body, size_t n) {
 // run on the loop thread, goes to the pool, http.h to_pool): a game that is not there is
 // the client's (NOT_FOUND, 400), anything else the server's (INTERNAL, 500;
 // "write contention" included, as runTableOp's thrown Error was).
-// A store throttled past its backoff is 503 BUSY (v1_http.h cb_v1_busy); the
+// A store throttled past its backoff is 503 BUSY (net/refuse.h cb_refuse_busy); the
 // clients send only reads again, since a write may have landed before it.
 static void run_failure(cb_http_res *res, int rc) {
     if (rc == CB_E_WOULD_BLOCK) res->to_pool = true;   // run inline, it would have waited: again on the pool
     else if (rc == CB_E_NOT_FOUND) refusal(res, 400, ASK_WHY_NOT_FOUND, 0, 0);
-    else if (rc == CB_E_BUSY) cb_v1_busy(res);
+    else if (rc == CB_E_BUSY) cb_refuse_busy(res);
     else refusal(res, 500, ASK_WHY_INTERNAL, 0, 0);
 }
 
@@ -242,7 +243,7 @@ static void h_meta(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     // often (rate_limits.h).
     int retry;
     if (ask.kind == ASK_BUMP && !cb_limit_take(CB_LIMIT_BUMP_USER, u.id, cb_now_ms(), &retry)) {
-        cb_v1_limited(res, retry, false);
+        cb_refuse_limited(res, retry, false);
         return;
     }
     bot_list bots = { 0, 0, NULL };
@@ -281,7 +282,7 @@ static void h_create(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     if (!verified(ctx, req, &u, res, 400)) return;
     if (!account_lives(ctx, &u, res)) return;
     int retry;
-    if (!cb_limit_take(CB_LIMIT_CREATE_USER, u.id, cb_now_ms(), &retry)) { cb_v1_limited(res, retry, false); return; }
+    if (!cb_limit_take(CB_LIMIT_CREATE_USER, u.id, cb_now_ms(), &retry)) { cb_refuse_limited(res, retry, false); return; }
     cb_table_result r;
     int rc = cb_table_create(ctx, &u, &r);
     if (rc != CB_OK) {
