@@ -19,11 +19,13 @@ interface Props {
   filter: Filter;
   onFilter: (f: Filter) => void;
   counts: { all: number; playing: number; lobby: number; over: number };
+  compact: boolean;
+  onCompact: (c: boolean) => void;
 }
 
 export type Filter = 'all' | 'playing' | 'lobby' | 'over';
 
-export function TopBar({ state, ops, filter, onFilter, counts }: Props) {
+export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompact }: Props) {
   const status =
     state === 'open' ? { cls: 'dot-green', text: 'live' }
     : state === 'connecting' ? { cls: 'dot-amber', text: 'connecting...' }
@@ -50,6 +52,15 @@ export function TopBar({ state, ops, filter, onFilter, counts }: Props) {
           </button>
         ))}
       </nav>
+      <button type="button" className={`density${compact ? ' on' : ''}`} onClick={() => onCompact(!compact)} title="smaller cards: more tables on one screen">
+        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+          <rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor" />
+          <rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor" />
+          <rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor" />
+          <rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor" />
+        </svg>
+        Compact
+      </button>
       <div className="topbar-right">
         {ops && (
           <span className="topbar-stat num">
