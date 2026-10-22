@@ -50,7 +50,7 @@ static int start_birdseye(tp_child *c, const char *bin, int game_port, pid_t gam
     snprintf(server, sizeof server, "BE_SERVER=127.0.0.1:%d", game_port);
     snprintf(spid, sizeof spid, "BE_SERVER_PID=%d", (int)game_pid);
     char *env[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", "CBASE_LOG_LEVEL=info", db,
-                    "CBASE_JWT_SECRET=smoke-secret-smoke-secret-smoke-secret", server, spid,
+                    "CBASE_JWT_SECRET=smoke-secret-smoke-secret-smoke-secret", server, spid, "BE_MODE=mixed",
                     "BE_PLAYERS=4", "BE_TABLES=2", "BE_THREADS=2", "BE_THINK_MS=20-80", "BE_SEED=3",
                     "BE_BOT_SHARE=50", "BE_PODKIDNOY=50", "BE_HOSTILE_EVERY=10", "BE_REMATCH=50", NULL };
     char *argv[] = { (char *)bin, "serve", NULL };

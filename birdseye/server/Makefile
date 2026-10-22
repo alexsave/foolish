@@ -103,6 +103,9 @@ STRUCTGEN := $(C_ROOT)/shared/tools/structgen/build/structgen
 WIRE_TS   := ../web/src/gen/wire.ts
 SG_ARGS := --cwd src --header wire.h --build 'be=-std=gnu11' \
            --root be_w_card --root be_w_seat --root be_w_table --root be_w_event --root be_w_hand --root be_w_detail --root be_w_list --root be_w_session \
+           --root be_w_bot --root be_w_result --root be_w_league --snapshot be_w_bot --snapshot be_w_result --snapshot be_w_league \
+           --count be_w_bot.id=id_len --count be_w_bot.name=name_len --count be_w_bot.key=key_len --count be_w_result.gid=gid_len \
+           --count be_w_result.bot=n --count be_w_result.before=n --count be_w_result.after=n --count be_w_result.delta=n \
            --snapshot be_w_card --snapshot be_w_seat --snapshot be_w_table --snapshot be_w_event --snapshot be_w_hand --snapshot be_w_detail \
            --snapshot be_w_list --snapshot be_w_session --snapshot-only \
            --count be_w_seat.name=name_len --count be_w_seat.brain=brain_len --count be_w_table.gid=gid_len \
