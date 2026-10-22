@@ -79,5 +79,5 @@ Missing against Wandrer: no Garmin or Strava connector, no pretty basemap (our o
 - A rejected upload's activity id is reused after a restart (it was never journaled).
 - z11 and z12 base tiles of the city core are 300-650 KB; a client cache (the ETag is the graph's CRC) makes that a one-time cost.
 - A low-zoom base tile (z8: every cell of the grid, majors only) is rendered once per graph and served from the cache after; the first visitor pays about 10 ms for it.
-- `next dev` writes an AGENTS.md into web/ (gitignored); the production build is untested in this session.
+- `next dev` writes an AGENTS.md into web/ (gitignored) and draws its own "N" dev indicator at the page's bottom left; the production build is untested in this session.
 - Super-unique is per segment: a sixteenth of a segment another user touched makes the whole segment shared.
