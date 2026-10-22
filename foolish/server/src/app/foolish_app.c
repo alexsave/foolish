@@ -3,6 +3,7 @@
 #include "foolish_app.h"
 
 #include "admin_panels.h"
+#include "dev_bot_table.h"
 
 #include "app_internal.h"
 #include "bots.h"
@@ -90,6 +91,8 @@ static long env_long(const char *name, long dflt) {
 }
 
 static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
+    // DEV-ONLY (dev_bot_table.h): routed under CBASE_DEV=1 alone; this runs before the routes are.
+    cb_dev_bot_table_enable(ctx->cfg && ctx->cfg->dev);
     if (!env_long("CBASE_JOURNAL", 1) || !ctx->store || !cb_store_is_sql(ctx->store)) return CB_OK;
     const char *db = ctx->cfg ? ctx->cfg->db_path : NULL;
     if (!db || !*db || *db == ':') return CB_OK;   // an in-memory database has nothing to recover into
@@ -111,7 +114,7 @@ static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
 static void foolish_serve_close(cb_ctx *ctx) { cb_journal_close(ctx->store); }
 
 static const cb_route_list *const FOOLISH_ROUTES[] = { &cb_functions_route_list, &cb_v1_route_list,
-                                                       &cb_unfurl_route_list };
+                                                       &cb_unfurl_route_list, &cb_dev_bot_table_route_list };
 
 // The bot drive, started by a kick (bots.h cb_bots_kick), and the scan that
 // catches a lost one: EventBridge's literal "scan" under Lambda. A finished
