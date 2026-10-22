@@ -59,6 +59,12 @@ int64_t cb_bots_board_now(const cb_ctx *ctx, int64_t created_at, int64_t now_ms)
 // so the ask after the sleep, on the same board, answers 0. At k 1 the
 // kernel's answer at now_ms, unchanged.
 int64_t cb_bots_wait_ms(const cb_ctx *ctx, const Table *t, int64_t created_at, int64_t now_ms);
+// DEV-ONLY (config.h CBASE_BOT_THINK_MS; 0 whenever it is unset, so production never waits here):
+// how much longer a bot thinks before it acts on game `game_id` at `version`: the think time,
+// min..max drawn from a hash of the game and the version (a re-ask agrees), counted from the move a
+// viewer was last shown (the board's clock), less what has passed. 0 once it has.
+int64_t cb_bots_think_ms(const cb_ctx *ctx, const Table *t, const char *game_id, int64_t version, int64_t created_at,
+                         int64_t now_ms);
 
 // Drives one game's bots until done or out of budget (see above). Blocks.
 // CB_OK (including "someone else holds the lease"), CB_E_NOT_FOUND, CB_E_DB.

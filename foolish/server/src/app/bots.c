@@ -75,6 +75,7 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
             CYCLE_OUT(CYCLE_DONE);
         }
         int64_t wait = cb_bots_wait_ms(ctx, &s->t, row.created_at, cb_app_now());
+        if (wait <= 0) wait = cb_bots_think_ms(ctx, &s->t, game_id, row.version, row.created_at, cb_app_now());   // dev-only
         if (wait > 0) { *delay_ms = wait; CYCLE_OUT(CYCLE_AGAIN); }
         // The stored session log, whole (the belief brains read it): the LOG# items since the deal.
         if (CB_ROWS_CALL(ctx->store, game_logs, game_id, row.log_from, &logs, &logs_len) != CB_OK) {
@@ -158,6 +159,24 @@ int64_t cb_bots_wait_ms(const cb_ctx *ctx, const Table *t, int64_t created_at, i
     const int64_t k = speedup(ctx);
     const int64_t wait = table_bot_wait_ms(t, cb_bots_board_now(ctx, created_at, now_ms));
     return wait > 0 ? (wait + k - 1) / k : 0;
+}
+
+int64_t cb_bots_think_ms(const cb_ctx *ctx, const Table *t, const char *game_id, int64_t version, int64_t created_at,
+                         int64_t now_ms) {
+    const cb_config *c = ctx ? ctx->cfg : NULL;
+    if (!c || c->bot_think_max_ms <= 0) return 0;
+    const int64_t shown = t->clock.shown_ms;
+    if (shown <= 0) return 0;
+    // FNV-1a of the game id and the version: the same think for every ask at one version.
+    uint64_t h = 1469598103934665603ull;
+    for (const char *p = game_id; *p; p++) h = (h ^ (uint8_t)*p) * 1099511628211ull;
+    for (int i = 0; i < 8; i++) h = (h ^ (uint8_t)(version >> (8 * i))) * 1099511628211ull;
+    const int64_t span = (int64_t)c->bot_think_max_ms - c->bot_think_min_ms + 1;
+    const int64_t think = c->bot_think_min_ms + (int64_t)(h % (uint64_t)span);
+    const int64_t wait = shown + think - cb_bots_board_now(ctx, created_at, now_ms);
+    if (wait <= 0) return 0;
+    const int64_t k = speedup(ctx);
+    return (wait + k - 1) / k;
 }
 
 // ---- the lease: in memory under serve, the store's item elsewhere ---------------------------

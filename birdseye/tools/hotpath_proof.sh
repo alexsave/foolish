@@ -45,7 +45,7 @@ for f in $ALL; do
     # c_base's command is relative to c_base/: a foolish file is ../foolish/..., a core file core/...
     rel=${f#c_base/}; [ "$rel" = "$f" ] && rel="../$f"
     (cd "$OUT/$side/tree/c_base" && $CMD -c "$rel" -o "$OUT/$side/$name.o")
-    /usr/bin/objdump -d --no-show-raw-insn --no-addresses "$OUT/$side/$name.o" | sed -E '/file format/d; s/<[^>]*\+0x[0-9a-f]+>//; s/0x[0-9a-f]+//g' > "$OUT/$side/$name.dis"
+    /usr/bin/objdump -d --no-show-raw-insn --no-addresses "$OUT/$side/$name.o" | sed -E '/file format/d; /^<.*>:$/!s/ *<[^>]*>//g; s/0x[0-9a-f]+//g' > "$OUT/$side/$name.dis"
   done
   if diff -q "$OUT/old/$name.dis" "$OUT/new/$name.dis" > /dev/null; then
     n_same=$((n_same + 1))
