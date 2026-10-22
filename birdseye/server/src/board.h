@@ -10,6 +10,7 @@
 
 #include "client_table.h"
 #include "netwire.h"
+#include "table.h"
 #include "world.h"
 
 #include <stdbool.h>
@@ -22,6 +23,12 @@ void be_board_fill(be_world *w, be_table *bt, const TableView *v, int n_seats, u
 
 // The feed's kind (BE_EV_*) of a push step, 0 for a step the feed does not show.
 int be_board_event_kind(const PushEvent *e);
+
+// A move the server did not apply, answered 200 with `r`, made on version `intent`: true when that
+// is a race (the board moved while the move was on its way: a moot move, a stale round, or a
+// refusal at a later version than the move was made on, a pass that made the mover the defender
+// among them), false when the server refused the move on the very board it was made on (a finding).
+bool be_move_raced(const TableResponse *r, uint32_t intent);
 
 #define BE_BOTS_MAX 64
 typedef struct {
