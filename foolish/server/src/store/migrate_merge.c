@@ -1,7 +1,8 @@
 // migrate_merge.c - the transform step of cbase-export (migrate_merge.h).
 #include "store/migrate_merge.h"
 
-#include "app/v1_http.h"
+#include "app/foolish_app.h"
+#include "auth/auth_http.h"
 #include "auth/names.h"
 #include "roster.h"
 #include "store/store.h"
@@ -22,7 +23,7 @@ typedef struct {
 
 typedef struct {
     unsigned char from[16], to[16];
-    char          from_email[CB_V1_EMAIL_BYTES], to_email[CB_V1_EMAIL_BYTES];
+    char          from_email[CB_EMAIL_MAX + 1], to_email[CB_EMAIL_MAX + 1];
 } remap;
 
 typedef struct {
@@ -123,11 +124,11 @@ static bool load_accounts(ctx *c) {
     return !c->fail;
 }
 
-static void email_now(const acct *u, char out[CB_V1_EMAIL_BYTES]) {
+static void email_now(const acct *u, char out[CB_EMAIL_MAX + 1]) {
     char canon[512];
     int n = cb_name_case(u->name, strlen(u->name), canon, sizeof canon);
     if (n < 0) { memcpy(canon, u->name, strlen(u->name) + 1); n = (int)strlen(u->name); }
-    cb_v1_email_of(canon, (size_t)n, out);
+    cb_auth_name_email(cb_foolish_app.account_domain, canon, (size_t)n, out);
 }
 
 static void text_of(const unsigned char *id, char out[CB_UUID_LEN + 1]) { cb_uuid_unpack(id, out); }
@@ -274,7 +275,7 @@ static void body(ctx *c, unsigned flags) {
     memcpy(sorted, c->a, (size_t)c->n * sizeof *sorted);
     qsort(sorted, (size_t)c->n, sizeof *sorted, by_key);
     qsort(c->a, (size_t)c->n, sizeof *c->a, by_id);
-    char em[CB_V1_EMAIL_BYTES];
+    char em[CB_EMAIL_MAX + 1];
     for (int i = 0; i < c->n; i++) {   // informational: accounts whose email is not today's transform
         if (!sorted[i].name[0]) continue;
         email_now(&sorted[i], em);
@@ -337,7 +338,7 @@ static void body(ctx *c, unsigned flags) {
         }
         for (int i = 0; i < ng; i++) {
             acct *k = grp[i].kept, *nw = grp[i].newest;
-            char email[CB_V1_EMAIL_BYTES];
+            char email[CB_EMAIL_MAX + 1];
             email_now(k, email);
             // sign-in failures are counted by email: the kept account's old one and each merged-away one go
             sqlite3_stmt *u = prep(c, "UPDATE users SET password_hash = ?2, email = ?3 WHERE id = ?1");

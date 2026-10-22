@@ -12,6 +12,8 @@
 #include "app/table_ops.h"
 #include "app/v1_http.h"
 #include "auth/auth.h"
+#include "auth/auth_http.h"
+#include "app/foolish_app.h"
 #include "handler.h"
 #include "lib_store_backend.h"
 #include "app/app_internal.h"
@@ -36,6 +38,8 @@
 #define JWT_SECRET "unit-v1-secret-unit-v1-secret-unit-v1-secret"
 
 static cb_ctx g_ctx;
+// The app: only its account domain (the platform's /v1/auth reads it); no jobs, so a kick runs nothing.
+static const cb_app g_app = { .name = "unit-v1", .account_domain = "foolish.cards" };
 static const char *g_peer;     // the socket's address, NULL for none (not limited)
 static cb_config g_cfg;
 static char g_db[512];
@@ -67,6 +71,7 @@ static void setup(void) {
     g_ctx.cfg = &g_cfg;
     g_ctx.prov = &cb_provider_local;
     g_ctx.version = "test";
+    g_ctx.app = &g_app;
     const char *tmp = getenv("TMPDIR");
     snprintf(g_db, sizeof g_db, "%s/cbase-v1-%d.sqlite", tmp && *tmp ? tmp : "/tmp", (int)getpid());
     unlink(g_db);
@@ -76,6 +81,7 @@ static void setup(void) {
     g_ctx.rt = &g_rt;
     g_ctx.router = cb_router_new();
     T_EQ_INT(cb_functions_routes(&g_ctx), CB_OK);
+    T_EQ_INT(cb_auth_routes(&g_ctx), CB_OK);
     T_EQ_INT(cb_v1_routes(&g_ctx), CB_OK);
     nc_reset();
     g_now = cb_now_ms();
@@ -168,10 +174,10 @@ static void as(const uint8_t *blob, int n) { T_EQ_INT(nc_session_load(blob, n), 
 // ---- tests ----------------------------------------------------------------------------
 
 static void the_email_is_the_clients_derivation(void) {
-    char e[CB_V1_EMAIL_BYTES];
-    cb_v1_email_of("ALICE", 5, e);
+    char e[CB_EMAIL_MAX + 1];
+    T_EQ_INT(cb_auth_name_email(cb_foolish_app.account_domain, "ALICE", 5, e), 30);
     T_EQ_STR(e, "e7dcee3cc63d170b@foolish.cards");   // hashlib.sha256(b"ALICE").hexdigest()[:16]
-    cb_v1_email_of("\xc3\x84LICE", 6, e);              // UTF-8 bytes as given, never re-cased here
+    cb_auth_name_email(cb_foolish_app.account_domain, "\xc3\x84LICE", 6, e);   // UTF-8 bytes as given, never re-cased here
     T_EQ_STR(e, "9077030be756b4fe@foolish.cards");
 }
 

@@ -141,6 +141,8 @@ const cb_app cb_foolish_app = {
     .admin_count = cb_admin_games_needing_bots,
     .serve_open = foolish_serve_open,
     .serve_close = foolish_serve_close,
+    // Every account's email since the first backend: hex(SHA-256(NAME))[:16]@foolish.cards.
+    .account_domain = "foolish.cards",
 };
 
 // foolish is the app every binary of this build serves (cbase/app.h).

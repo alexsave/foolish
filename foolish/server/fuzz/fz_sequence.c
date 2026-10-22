@@ -45,6 +45,7 @@
 #include "app/table_ops.h"
 #include "app/v1_http.h"
 #include "auth/auth.h"
+#include "auth/auth_http.h"
 #include "auth/jwt.h"
 #include "handler.h"
 #include "net/router.h"
@@ -96,6 +97,8 @@ static const char *const UNAME[N_USERS] = { "ANN", "BOB", "CAT", "DAN" };
 static const char *const BOT_ID[2] = { "b0000000-0000-4000-8000-000000000001", "b0000000-0000-4000-8000-000000000002" };
 
 static cb_ctx g_ctx;
+// The app: only its account domain (the platform's /v1/auth reads it); no jobs, so a kick runs nothing.
+static const cb_app g_app = { .name = "fz-sequence", .account_domain = "foolish.cards" };
 static cb_config g_cfg;
 static cb_store *g_store;
 static const cb_store_ops *g_real;      // the store's ops
@@ -961,7 +964,8 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
     g_ctx.rt = &g_rt;
     g_ctx.job_start = fz_kick;
     g_ctx.router = cb_router_new();
-    if (cb_functions_routes(&g_ctx) != CB_OK || cb_v1_routes(&g_ctx) != CB_OK) abort();
+    g_ctx.app = &g_app;
+    if (cb_functions_routes(&g_ctx) != CB_OK || cb_auth_routes(&g_ctx) != CB_OK || cb_v1_routes(&g_ctx) != CB_OK) abort();
     cb_auth_now = fz_now;
     cb_app_now = fz_now;
     cb_app_sleep = fz_sleep;

@@ -3,7 +3,7 @@
 // MERGE_CASE_DUPLICATES: accounts whose names compare equal (auth/names.h cb_name_key) are one person.
 // Each group merges into its OLDEST account (created_at, then id): it keeps its id, history and display
 // name, takes the password_hash of the NEWEST, and its email becomes the CURRENT transform of its name
-// (v1_http.h cb_v1_email_of of cb_name_case: sign-in upper-cases whatever is typed, so any spelling
+// (auth_http.h cb_auth_name_email of cb_name_case, under foolish_app.c's account domain: sign-in upper-cases whatever is typed, so any spelling
 // reaches it). Every reference to a merged-away id moves to the kept id: game_members, games.roster
 // (through the kernel's roster codec), replays.players, replay_players, chat. Sessions, refresh tokens,
 // ratings and sign-in failures of the merged-away accounts are dropped. A game (or replay) left with
