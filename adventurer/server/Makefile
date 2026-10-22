@@ -172,7 +172,7 @@ $(foreach t,$(FUZZ_TARGETS),$(eval $(call FUZZ_PROG,$(t))))
 fuzz: $(addprefix build/fuzz/,$(FUZZ_TARGETS))
 fuzz-smoke: fuzz
 	@set -e; for t in $(FUZZ_TARGETS); do \
-	  mkdir -p build/fuzz-corpus/$$t build/fuzz-crashes/$$t; \
+	  mkdir -p build/fuzz-corpus/$$t build/fuzz-crashes/$$t fuzz/corpus/$$t; \
 	  echo "fuzz $$t for $(FUZZ_TIME)s"; \
 	  build/fuzz/$$t -max_total_time=$(FUZZ_TIME) -max_len=65536 -artifact_prefix=build/fuzz-crashes/$$t/ build/fuzz-corpus/$$t fuzz/corpus/$$t 2> build/fuzz-$$t.log || { tail -40 build/fuzz-$$t.log; exit 1; }; \
 	  tail -1 build/fuzz-$$t.log; done
