@@ -139,9 +139,18 @@ int main(void) {
     ch_from_fen(&p, "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3");
     ch_legal(&p, &ms);
     CHECK(ch_in_check(&p) && ms.n == 0, "%s", "");
+    CHECK(!ch_has_legal(&p), "%s", "a legal move in mate");
     ch_from_fen(&p, "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1");
     ch_legal(&p, &ms);
     CHECK(!ch_in_check(&p) && ms.n == 0, "%s", "");
+    CHECK(!ch_has_legal(&p), "%s", "a legal move in stalemate");
+    /* in check with one way out: a pinned piece's moves are pseudo-legal and illegal */
+    ch_from_fen(&p, "4k3/8/8/8/8/8/3r4/r3K3 w - - 0 1");   /* only Kxd2 */
+    CHECK(ch_has_legal(&p), "%s", "Kxd2 not found");
+    CHECK(ch_is_legal(&p, CH_MOVE(4, 11, 0)), "%s", "Kxd2 refused");
+    CHECK(!ch_is_legal(&p, CH_MOVE(4, 5, 0)), "%s", "Kf1 into the rook's rank accepted");
+    ch_from_fen(&p, "4k3/4r3/8/8/8/8/4B3/4K3 w - - 0 1");   /* the bishop is pinned */
+    CHECK(!ch_is_legal(&p, CH_MOVE(12, 19, 0)), "%s", "a pinned bishop moved");
 
     /* insufficient material */
     const struct { const char *fen; bool both; bool white_alone; } MAT[] = {

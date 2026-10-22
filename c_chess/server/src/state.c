@@ -149,6 +149,12 @@ static void live_insert(cc_live *l) {
 
 uint32_t cc_games_live(void) { return n_playing; }
 
+/* Every game in memory (under cc_lock). */
+void cc_live_each(void (*fn)(cc_live *l, void *ud), void *ud) {
+    for (uint32_t i = 0; i <= LIVE.mask; i++)
+        for (cc_live *l = LIVE.b[i]; l; l = l->next) fn(l, ud);
+}
+
 int cc_color_of(const cc_live *l, const cc_player *p) {
     if (l->p[0] == p) return CH_WHITE;
     if (l->p[1] == p) return CH_BLACK;
@@ -157,48 +163,72 @@ int cc_color_of(const cc_live *l, const cc_player *p) {
 
 /* ---- the clock thread: a min-heap of (deadline, game, gen) ---- */
 
-typedef struct { int64_t at; uint32_t game, gen; } tentry;
-static tentry *HEAP;
+/* An indexed min-heap of the games whose clock can end them, one entry a game (cc_live.timer_at and
+ * .heap_idx, which is 1 + its index, 0 when not in the heap): a move moves the game's entry instead
+ * of adding one, so the heap holds the games in play and nothing stale. */
+static cc_live **HEAP;
 static uint32_t heap_n, heap_cap;
 static pthread_cond_t clock_cond = PTHREAD_COND_INITIALIZER;
 static pthread_t clock_thread;
 static bool clock_stop, clock_started;
 
-static void heap_push(tentry e) {
-    if (heap_n == heap_cap) {
-        uint32_t c = heap_cap ? heap_cap * 2 : 1024;
-        tentry *h = realloc(HEAP, c * sizeof *h);
-        if (!h) return;
-        HEAP = h; heap_cap = c;
-    }
-    uint32_t i = heap_n++;
-    while (i && HEAP[(i - 1) / 2].at > e.at) { HEAP[i] = HEAP[(i - 1) / 2]; i = (i - 1) / 2; }
-    HEAP[i] = e;
+static inline void heap_set(uint32_t i, cc_live *l) { HEAP[i] = l; l->heap_idx = i + 1; }
+
+static void heap_up(uint32_t i) {
+    cc_live *l = HEAP[i];
+    while (i && HEAP[(i - 1) / 2]->timer_at > l->timer_at) { heap_set(i, HEAP[(i - 1) / 2]); i = (i - 1) / 2; }
+    heap_set(i, l);
 }
 
-static tentry heap_pop(void) {
-    tentry top = HEAP[0], last = HEAP[--heap_n];
-    uint32_t i = 0;
+static void heap_down(uint32_t i) {
+    cc_live *l = HEAP[i];
     for (;;) {
         uint32_t c = 2 * i + 1;
         if (c >= heap_n) break;
-        if (c + 1 < heap_n && HEAP[c + 1].at < HEAP[c].at) c++;
-        if (HEAP[c].at >= last.at) break;
-        HEAP[i] = HEAP[c];
+        if (c + 1 < heap_n && HEAP[c + 1]->timer_at < HEAP[c]->timer_at) c++;
+        if (HEAP[c]->timer_at >= l->timer_at) break;
+        heap_set(i, HEAP[c]);
         i = c;
     }
-    if (heap_n) HEAP[i] = last;
-    return top;
+    heap_set(i, l);
+}
+
+static void heap_remove(cc_live *l) {
+    if (!l->heap_idx) return;
+    uint32_t i = l->heap_idx - 1;
+    l->heap_idx = 0;
+    cc_live *last = HEAP[--heap_n];
+    if (i == heap_n) return;
+    heap_set(i, last);
+    heap_up(i);
+    heap_down(last->heap_idx - 1);
+}
+
+static void heap_put(cc_live *l, int64_t at) {
+    if (l->heap_idx) {
+        int64_t was = l->timer_at;
+        l->timer_at = at;
+        if (at < was) heap_up(l->heap_idx - 1); else heap_down(l->heap_idx - 1);
+        return;
+    }
+    if (heap_n == heap_cap) {
+        uint32_t c = heap_cap ? heap_cap * 2 : 1024;
+        cc_live **h = realloc(HEAP, c * sizeof *h);
+        if (!h) return;
+        HEAP = h; heap_cap = c;
+    }
+    l->timer_at = at;
+    heap_set(heap_n, l);
+    heap_up(heap_n++);
 }
 
 static void schedule(cc_live *l, int64_t now) {
     /* when the game could next end by itself (it must not end here: the caller has pushed its state) */
-    if (cc_game_over(&l->g)) return;
+    if (cc_game_over(&l->g)) { heap_remove(l); return; }
     int64_t next = l->g.ply < 2 ? CC_FIRST_MOVE_MS - (now - l->g.turn_at) : l->g.left_ms[l->g.pos.stm] - (now - l->g.turn_at);
     if (next < 0) next = 0;
-    l->timer_gen++;
-    bool wake = heap_n == 0 || now + next < HEAP[0].at;
-    heap_push((tentry){ now + next, l->id, l->timer_gen });
+    bool wake = heap_n == 0 || now + next < HEAP[0]->timer_at;
+    heap_put(l, now + next);
     if (wake) pthread_cond_signal(&clock_cond);
 }
 
@@ -210,16 +240,15 @@ static void *clock_main(void *ud) {
     pthread_mutex_lock(&cc_lock);
     while (!clock_stop) {
         int64_t now = cc_mono();
-        while (heap_n && HEAP[0].at <= now) {
-            tentry e = heap_pop();
-            cc_live *l = cc_live_get(e.game);
-            if (!l || l->timer_gen != e.gen || cc_game_over(&l->g)) continue;
+        while (heap_n && HEAP[0]->timer_at <= now) {
+            cc_live *l = HEAP[0];
             int64_t nx;
-            if (cc_game_tick(&l->g, now, &nx)) cc_live_changed(l, now);
-            else if (nx >= 0) heap_push((tentry){ now + nx, l->id, l->timer_gen });
+            if (cc_game_tick(&l->g, now, &nx)) cc_live_changed(l, now);   /* over: out of the heap */
+            else if (nx >= 0) heap_put(l, now + nx);
+            else heap_remove(l);
         }
         if (now >= next_sweep) { sweep(now); next_sweep = now + 10000; }
-        int64_t until = heap_n && HEAP[0].at < next_sweep ? HEAP[0].at : next_sweep;
+        int64_t until = heap_n && HEAP[0]->timer_at < next_sweep ? HEAP[0]->timer_at : next_sweep;
         /* the condition variable waits on the wall clock: the wait is the monotonic distance */
         int64_t wait_ms = until - now;
         if (wait_ms < 1) wait_ms = 1;
@@ -293,7 +322,7 @@ void cc_live_changed(cc_live *l, int64_t now) {
     cw_state s;
     cc_state_fill(l, &s, now);
     cc_push_room_game(l->id, (const uint8_t *)&s, sizeof s);
-    if (!cc_game_over(&l->g)) schedule(l, now);
+    schedule(l, now);
 }
 
 cc_live *cc_live_start(cc_player *white, cc_player *black, const cw_seek *tc, int64_t now) {

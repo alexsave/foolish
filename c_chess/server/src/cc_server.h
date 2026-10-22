@@ -39,7 +39,8 @@ typedef struct cc_live {
     int16_t    rating0[2];             /* the ratings when the game began */
     int16_t    diff[2];
     uint32_t   next_game;              /* the rematch */
-    uint32_t   timer_gen;              /* the clock thread's entry for this game that still counts */
+    uint32_t   heap_idx;               /* 1 + its place in the clock thread's heap; 0: not there */
+    int64_t    timer_at;               /* mono ms: when its clock could next end it */
     int64_t    started_at;             /* ms since the epoch */
     int64_t    evict_at;               /* mono ms: a finished game leaves memory after this */
     struct cc_live *next;              /* the id map's chain */
@@ -62,7 +63,7 @@ typedef struct cc_challenge {
 
 #define CC_SEEK_TTL_MS 30000           /* a seek lives this long unless sent again */
 #define CC_CHALLENGE_TTL_MS (30 * 60 * 1000)
-#define CC_FINISHED_KEEP_MS (10 * 60 * 1000)
+#define CC_FINISHED_KEEP_MS (60 * 1000)   /* then a finished game is read from the journal */
 #define CC_SEEKS_MAX 4096
 
 extern pthread_mutex_t cc_lock;

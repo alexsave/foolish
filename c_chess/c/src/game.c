@@ -74,9 +74,7 @@ int cc_game_move(cc_game *g, int color, int ply, ch_move m, int64_t now) {
     g->rep[g->ply % CC_REP_RING] = g->pos.key;
     g->turn_at = now;
     g->draw_offer &= (uint8_t)(1u << color);   /* the mover's own offer stands; the other's is declined */
-    ch_moves legal;
-    ch_legal(&g->pos, &legal);
-    if (legal.n == 0) {
+    if (!ch_has_legal(&g->pos)) {
         if (ch_in_check(&g->pos)) end(g, CC_MATE, color, now);
         else end(g, CC_STALEMATE, CC_NO_WINNER, now);
     } else if (ch_insufficient(&g->pos)) end(g, CC_DRAW_MATERIAL, CC_NO_WINNER, now);

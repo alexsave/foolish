@@ -4,11 +4,17 @@
 #include "store/store_sql.h"
 #include "util/err.h"
 #include "util/log.h"
+#include "util/clock.h"
 
 #include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 const char *const cc_sql_stmts[CC_SQL_N] = {
     [CC_SQL_PLAYER_PUT] = "INSERT OR REPLACE INTO cc_players (id, name, r, d, v, games, wins, losses, draws, last_at) "
@@ -16,12 +22,9 @@ const char *const cc_sql_stmts[CC_SQL_N] = {
     [CC_SQL_PLAYERS_ALL] = "SELECT id, name, r, d, v, games, wins, losses, draws, last_at FROM cc_players",
     [CC_SQL_GAME_START] = "INSERT OR REPLACE INTO cc_games (id, white, black, base_s, inc_s, rated, status, winner, started_at, ended_at, "
                           "r_w, r_b, d_w, d_b, moves) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 2, ?7, 0, ?8, ?9, 0, 0, NULL)",
-    [CC_SQL_MOVE_PUT] = "INSERT OR REPLACE INTO cc_moves (game, ply, move, left_ms) VALUES (?1, ?2, ?3, ?4)",
     [CC_SQL_GAME_END] = "UPDATE cc_games SET status = ?2, winner = ?3, ended_at = ?4, d_w = ?5, d_b = ?6, moves = ?7 WHERE id = ?1",
-    [CC_SQL_MOVES_DEL] = "DELETE FROM cc_moves WHERE game = ?1",
     [CC_SQL_POINT_PUT] = "INSERT INTO cc_points (player, at, rating) VALUES (?1, ?2, ?3)",
     [CC_SQL_GAMES_PLAYING] = "SELECT id, white, black, base_s, inc_s, rated, started_at, r_w, r_b FROM cc_games WHERE status = 1",
-    [CC_SQL_MOVES_OF] = "SELECT move, left_ms FROM cc_moves WHERE game = ?1 ORDER BY ply",
     [CC_SQL_GAME_MAX] = "SELECT COALESCE(MAX(id), 0) FROM cc_games",
     [CC_SQL_GAME_GET] = "SELECT white, black, base_s, inc_s, rated, status, winner, started_at, ended_at, r_w, r_b, d_w, d_b, moves "
                         "FROM cc_games WHERE id = ?1",
@@ -32,7 +35,7 @@ const char *const cc_sql_stmts[CC_SQL_N] = {
 
 /* ---- the records ---- */
 
-enum { J_PLAYER, J_GAME_START, J_MOVE, J_GAME_END, J_POINT };
+enum { J_PLAYER, J_GAME_START, J_GAME_END, J_POINT };
 
 typedef struct jrec {
     struct jrec *next;
@@ -40,7 +43,6 @@ typedef struct jrec {
     union {
         cc_player player;   /* the fields that are written; the chains are not read */
         struct { uint32_t id; char w[CB_UUID_LEN + 1], b[CB_UUID_LEN + 1]; int base_s, inc_s, rated; int64_t at; int r0[2]; } start;
-        struct { uint32_t game; int ply, move; int64_t left; } move;
         struct { uint32_t id; int status, winner, d[2]; int64_t at; int n; uint16_t moves[CC_MAX_PLY]; } end;
         struct { char id[CB_UUID_LEN + 1]; int64_t at; int rating; } point;
     } u;
@@ -54,7 +56,18 @@ static struct {
     jrec           *head, *tail;
     bool            running, stop;
     uint64_t        queued, committed, commits;
-} J = { .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER, .done_cv = PTHREAD_COND_INITIALIZER };
+    /* the moves file */
+    int             mfd;
+    char            mpath[1100];
+    uint8_t        *mbuf;          /* records handed over and not yet written */
+    size_t          mlen, mcap;
+    uint64_t        mqueued, mwritten;   /* bytes */
+    int             sync_ms, batch_us;
+} J = { .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER, .done_cv = PTHREAD_COND_INITIALIZER, .mfd = -1 };
+
+/* A move record: the game, the ply it was played at, the move, the mover's time after it. */
+typedef struct { uint32_t game; uint16_t ply, move; int32_t left_ms; } mrec;
+_Static_assert(sizeof(mrec) == 12, "mrec");
 
 static void enqueue(jrec *r) {
     if (!J.running) { free(r); return; }   /* no store (a test without one): nothing to keep */
@@ -97,14 +110,33 @@ void cc_journal_game_start(const cc_live *l) {
 }
 
 void cc_journal_move(const cc_live *l) {
-    jrec *r = rec(J_MOVE);
-    if (!r) return;
+    if (J.mfd < 0) return;
     int ply = l->g.ply - 1;
-    r->u.move.game = l->id;
-    r->u.move.ply = ply;
-    r->u.move.move = l->g.moves[ply];
-    r->u.move.left = l->g.left_ms[ply & 1];   /* the mover's time after the move */
-    enqueue(r);
+    int64_t left = l->g.left_ms[ply & 1];
+    mrec r = { l->id, (uint16_t)ply, l->g.moves[ply], (int32_t)(left > INT32_MAX ? INT32_MAX : left) };
+    pthread_mutex_lock(&J.mu);
+    if (J.mlen + sizeof r > J.mcap) {
+        size_t c = J.mcap ? J.mcap * 2 : 1 << 16;
+        uint8_t *nb = realloc(J.mbuf, c);
+        if (!nb) { pthread_mutex_unlock(&J.mu); CB_ERROR("cc", "journal: out of memory, a move is lost"); return; }
+        J.mbuf = nb;
+        J.mcap = c;
+    }
+    bool first = J.mlen == 0;
+    memcpy(J.mbuf + J.mlen, &r, sizeof r);
+    J.mlen += sizeof r;
+    J.mqueued += sizeof r;
+    if (first) pthread_cond_signal(&J.cv);   /* the writer sleeps only on an empty buffer */
+    pthread_mutex_unlock(&J.mu);
+}
+
+static void write_all(int fd, const uint8_t *p, size_t n) {
+    while (n) {
+        ssize_t k = write(fd, p, n);
+        if (k < 0) { if (errno == EINTR) continue; CB_ERROR("cc", "journal: the moves file refused a write: %s", strerror(errno)); return; }
+        p += k;
+        n -= (size_t)k;
+    }
 }
 
 void cc_journal_game_end(const cc_live *l, int64_t wall) {
@@ -134,7 +166,6 @@ void cc_journal_point(const cc_player *p, int64_t wall) {
 
 static int write_one(cb_sql *x, const jrec *r) {
     sqlite3_stmt *st;
-    int rc;
     switch (r->kind) {
     case J_PLAYER: {
         const cc_player *p = &r->u.player;
@@ -163,13 +194,6 @@ static int write_one(cb_sql *x, const jrec *r) {
         sqlite3_bind_int(st, 8, r->u.start.r0[0]);
         sqlite3_bind_int(st, 9, r->u.start.r0[1]);
         return cb_sql_run(x, st, "cc game start");
-    case J_MOVE:
-        if (!(st = cb_sql_stmt(x, CC_SQL_MOVE_PUT))) return CB_E_DB;
-        sqlite3_bind_int64(st, 1, r->u.move.game);
-        sqlite3_bind_int(st, 2, r->u.move.ply);
-        sqlite3_bind_int(st, 3, r->u.move.move);
-        sqlite3_bind_int64(st, 4, r->u.move.left);
-        return cb_sql_run(x, st, "cc move");
     case J_GAME_END:
         if (!(st = cb_sql_stmt(x, CC_SQL_GAME_END))) return CB_E_DB;
         sqlite3_bind_int64(st, 1, r->u.end.id);
@@ -179,10 +203,7 @@ static int write_one(cb_sql *x, const jrec *r) {
         sqlite3_bind_int(st, 5, r->u.end.d[0]);
         sqlite3_bind_int(st, 6, r->u.end.d[1]);
         sqlite3_bind_blob(st, 7, r->u.end.moves, r->u.end.n * 2, SQLITE_STATIC);
-        if ((rc = cb_sql_run(x, st, "cc game end")) != CB_OK) return rc;
-        if (!(st = cb_sql_stmt(x, CC_SQL_MOVES_DEL))) return CB_E_DB;
-        sqlite3_bind_int64(st, 1, r->u.end.id);
-        return cb_sql_run(x, st, "cc moves del");
+        return cb_sql_run(x, st, "cc game end");
     case J_POINT:
         if (!(st = cb_sql_stmt(x, CC_SQL_POINT_PUT))) return CB_E_DB;
         cb_sql_bind_uuid(st, 1, r->u.point.id);
@@ -203,30 +224,74 @@ static int write_batch(cb_sql *x, void *ud) {
 
 static void *writer_main(void *ud) {
     (void)ud;
+    int64_t last_sync = cb_mono_ms();
+    bool dirty = false;
+    uint8_t *spare = NULL;
+    size_t spare_cap = 0;
     pthread_mutex_lock(&J.mu);
     for (;;) {
-        while (!J.head && !J.stop) pthread_cond_wait(&J.cv, &J.mu);
-        if (!J.head && J.stop) break;
+        while (!J.head && !J.mlen && !J.stop) {
+            if (!dirty) { pthread_cond_wait(&J.cv, &J.mu); continue; }
+            /* moves were written and not yet synced: wait at most until the sync is due */
+            int64_t due = last_sync + J.sync_ms - cb_mono_ms();
+            if (due <= 0) break;
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_nsec += (long)(due % 1000) * 1000000;
+            ts.tv_sec += due / 1000 + ts.tv_nsec / 1000000000;
+            ts.tv_nsec %= 1000000000;
+            pthread_cond_timedwait(&J.cv, &J.mu, &ts);
+        }
+        if (!J.head && !J.mlen && J.stop && !dirty) break;
+        if (!J.head && J.mlen && !J.stop && J.batch_us) {
+            /* moves alone: let a few milliseconds of them gather into one write */
+            pthread_mutex_unlock(&J.mu);
+            usleep((useconds_t)J.batch_us);
+            pthread_mutex_lock(&J.mu);
+        }
         jrec *batch = J.head;
         uint64_t n = 0;
         for (jrec *r = batch; r; r = r->next) n++;
         J.head = J.tail = NULL;
+        /* the moves: swap buffers, so the state keeps appending while this one is written */
+        uint8_t *moves = J.mbuf;
+        size_t mlen = J.mlen, mcap = J.mcap;
+        J.mbuf = spare;
+        J.mcap = spare_cap;
+        J.mlen = 0;
         pthread_mutex_unlock(&J.mu);
-        int rc = cb_sql_write(J.ctx->store, write_batch, batch);
-        if (rc != CB_OK) CB_ERROR("cc", "journal: a commit of %llu records failed: %s", (unsigned long long)n, cb_strerror(rc));
-        while (batch) { jrec *nx = batch->next; free(batch); batch = nx; }
+        if (mlen && J.mfd >= 0) { write_all(J.mfd, moves, mlen); dirty = true; }
+        spare = moves;
+        spare_cap = mcap;
+        if (batch) {
+            int rc = cb_sql_write(J.ctx->store, write_batch, batch);
+            if (rc != CB_OK) CB_ERROR("cc", "journal: a commit of %llu records failed: %s", (unsigned long long)n, cb_strerror(rc));
+            while (batch) { jrec *nx = batch->next; free(batch); batch = nx; }
+        }
+        if (dirty && (cb_mono_ms() - last_sync >= J.sync_ms || J.stop)) {
+            if (J.mfd >= 0) fsync(J.mfd);
+            last_sync = cb_mono_ms();
+            dirty = false;
+        }
         pthread_mutex_lock(&J.mu);
         J.committed += n;
-        J.commits++;
+        J.mwritten += mlen;
+        if (n) J.commits++;
         pthread_cond_broadcast(&J.done_cv);
     }
     pthread_mutex_unlock(&J.mu);
+    free(spare);
     return NULL;
 }
 
 int cc_journal_start(cb_ctx *ctx) {
     J.ctx = ctx;
     J.stop = false;
+    const char *v = getenv("CC_JOURNAL_SYNC_MS");
+    J.sync_ms = v && *v ? atoi(v) : 100;
+    v = getenv("CC_JOURNAL_BATCH_US");
+    J.batch_us = v && *v ? atoi(v) : 2000;
+    if (J.sync_ms < 0) J.sync_ms = 0;
     if (!ctx->store || !cb_store_is_sql(ctx->store)) return CB_OK;
     if (pthread_create(&J.thread, NULL, writer_main, NULL) != 0) return CB_E_NOMEM;
     J.running = true;
@@ -235,8 +300,8 @@ int cc_journal_start(cb_ctx *ctx) {
 
 void cc_journal_sync(void) {
     pthread_mutex_lock(&J.mu);
-    uint64_t want = J.queued;
-    while (J.running && J.committed < want) pthread_cond_wait(&J.done_cv, &J.mu);
+    uint64_t want = J.queued, mwant = J.mqueued;
+    while (J.running && (J.committed < want || J.mwritten < mwant)) pthread_cond_wait(&J.done_cv, &J.mu);
     pthread_mutex_unlock(&J.mu);
 }
 
@@ -248,6 +313,10 @@ void cc_journal_stop(void) {
     pthread_mutex_unlock(&J.mu);
     pthread_join(J.thread, NULL);
     J.running = false;
+    if (J.mfd >= 0) { fsync(J.mfd); close(J.mfd); J.mfd = -1; }
+    free(J.mbuf);
+    J.mbuf = NULL;
+    J.mlen = J.mcap = 0;
 }
 
 void cc_journal_counts(uint64_t *queued, uint64_t *committed, uint64_t *commits) {
@@ -310,20 +379,7 @@ static int recover_fn(cb_sql *x, void *ud) {
         l->started_at = sqlite3_column_int64(st, 6);
         l->rating0[0] = (int16_t)sqlite3_column_int(st, 7);
         l->rating0[1] = (int16_t)sqlite3_column_int(st, 8);
-        sqlite3_stmt *ms = cb_sql_stmt(x, CC_SQL_MOVES_OF);
-        if (!ms) { free(l); sqlite3_reset(st); return CB_E_DB; }
-        sqlite3_bind_int64(ms, 1, l->id);
-        int64_t left[2] = { l->g.base_ms, l->g.base_ms };
-        while (sqlite3_step(ms) == SQLITE_ROW) {
-            int mover = l->g.pos.stm;
-            if (cc_game_move(&l->g, mover, l->g.ply, (ch_move)sqlite3_column_int(ms, 0), now) != CC_OK) break;
-            left[mover] = sqlite3_column_int64(ms, 1);
-        }
-        sqlite3_reset(ms);
-        /* the clocks as the last moves left them; the side to move's turn starts again now */
-        l->g.left_ms[0] = left[0];
-        l->g.left_ms[1] = left[1];
-        l->g.turn_at = now;
+        l->g.turn_at = now;   /* its moves come from the moves file (replay_moves) */
         cc_live_recovered(l, now);
         c->games++;
     }
@@ -331,14 +387,77 @@ static int recover_fn(cb_sql *x, void *ud) {
     return CB_OK;
 }
 
+/* The moves file onto the games in play (each record at its ply; any other is stale: a game that
+ * ended, or a ply already applied). The mover's time is the record's. */
+static uint32_t replay_moves(int fd, int64_t now) {
+    uint32_t applied = 0;
+    mrec buf[4096];
+    ssize_t k;
+    size_t carry = 0;
+    while ((k = read(fd, (uint8_t *)buf + carry, sizeof buf - carry)) > 0) {
+        size_t n = (carry + (size_t)k) / sizeof(mrec);
+        for (size_t i = 0; i < n; i++) {
+            cc_live *l = cc_live_get(buf[i].game);
+            if (!l || cc_game_over(&l->g) || buf[i].ply != l->g.ply) continue;
+            int mover = l->g.pos.stm;
+            if (cc_game_move(&l->g, mover, l->g.ply, (ch_move)buf[i].move, l->g.turn_at) != CC_OK) continue;
+            l->g.left_ms[mover] = buf[i].left_ms;
+            l->g.turn_at = now;
+            applied++;
+        }
+        carry = (carry + (size_t)k) % sizeof(mrec);
+        if (carry) memmove(buf, (uint8_t *)buf + n * sizeof(mrec), carry);
+    }
+    return applied;
+}
+
+void cc_live_each(void (*fn)(cc_live *l, void *ud), void *ud);
+
+typedef struct { int fd; uint8_t buf[1 << 16]; size_t len; } rewrite_ctx;
+
+static void rewrite_one(cc_live *l, void *ud) {
+    rewrite_ctx *w = ud;
+    if (cc_game_over(&l->g)) return;
+    for (int p = 0; p < l->g.ply; p++) {
+        /* only the last move of each side carries a time the replay keeps */
+        int64_t left = p >= l->g.ply - 2 ? l->g.left_ms[p & 1] : 0;
+        mrec r = { l->id, (uint16_t)p, l->g.moves[p], (int32_t)(left > INT32_MAX ? INT32_MAX : left) };
+        if (w->len + sizeof r > sizeof w->buf) { write_all(w->fd, w->buf, w->len); w->len = 0; }
+        memcpy(w->buf + w->len, &r, sizeof r);
+        w->len += sizeof r;
+    }
+}
+
 int cc_journal_recover(cb_ctx *ctx, char *err, size_t cap) {
     if (!ctx->store || !cb_store_is_sql(ctx->store)) return CB_OK;
     recover_ctx c = { 0 };
     pthread_mutex_lock(&cc_lock);
     int rc = cb_sql_read(ctx->store, recover_fn, &c);
+    if (rc != CB_OK) {
+        pthread_mutex_unlock(&cc_lock);
+        snprintf(err, cap, "c_chess: the journal does not read back: %s", cb_strerror(rc));
+        return rc;
+    }
+    /* the moves file: replayed onto the games just read, then rewritten with only their moves */
+    snprintf(J.mpath, sizeof J.mpath, "%s-moves", ctx->cfg ? ctx->cfg->db_path : "c_chess.sqlite");
+    uint32_t applied = 0;
+    int fd = open(J.mpath, O_RDONLY);
+    if (fd >= 0) { applied = replay_moves(fd, cc_mono()); close(fd); }
+    char tmp[1200];
+    snprintf(tmp, sizeof tmp, "%s.new", J.mpath);
+    static rewrite_ctx w;
+    w.fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (w.fd < 0) { pthread_mutex_unlock(&cc_lock); snprintf(err, cap, "c_chess: cannot write %s: %s", tmp, strerror(errno)); return CB_E_IO; }
+    w.len = 0;
+    cc_live_each(rewrite_one, &w);
+    if (w.len) write_all(w.fd, w.buf, w.len);
+    fsync(w.fd);
+    close(w.fd);
     pthread_mutex_unlock(&cc_lock);
-    if (rc != CB_OK) { snprintf(err, cap, "c_chess: the journal does not read back: %s", cb_strerror(rc)); return rc; }
-    CB_INFO("cc", "journal: %u players, %u games in play recovered", c.players, c.games);
+    if (rename(tmp, J.mpath) != 0) { snprintf(err, cap, "c_chess: cannot replace %s: %s", J.mpath, strerror(errno)); return CB_E_IO; }
+    J.mfd = open(J.mpath, O_WRONLY | O_APPEND | O_CLOEXEC);
+    if (J.mfd < 0) { snprintf(err, cap, "c_chess: cannot open %s: %s", J.mpath, strerror(errno)); return CB_E_IO; }
+    CB_INFO("cc", "journal: %u players, %u games in play recovered, %u moves replayed", c.players, c.games, applied);
     return CB_OK;
 }
 

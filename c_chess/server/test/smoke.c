@@ -338,10 +338,12 @@ static void rematch(void) {
     play_line(white_of(&A, &B), black_of(&A, &B), third, 1);
 }
 
-// The server stops and starts in the middle of the rematch: the game is there, two plies in.
+// The server is killed (SIGKILL: no clean stop) in the middle of the rematch and starts again: the
+// game is there, three plies in, its clocks as they were.
 static void restart(void) {
     close(A.fd); close(B.fd); close(C.fd);
-    T_EQ_INT(tp_stop(&g_child, SIGTERM, 10000), 0);
+    usleep(300 * 1000);   // the journal's writer hands the last move to the kernel within a few ms
+    T_EQ_INT(tp_stop(&g_child, SIGKILL, 10000), -1);   // -1: ended by the signal, not an exit
     start_server();
     // the tokens still verify (the same secret): sign back in
     connect_ws(&A);

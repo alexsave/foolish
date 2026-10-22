@@ -19,11 +19,8 @@ CREATE TABLE IF NOT EXISTS cc_games (
 CREATE INDEX IF NOT EXISTS cc_games_white ON cc_games (white, id);
 CREATE INDEX IF NOT EXISTS cc_games_black ON cc_games (black, id);
 CREATE INDEX IF NOT EXISTS cc_games_playing ON cc_games (status) WHERE status = 1;
--- the moves of games in play (a finished game's are in cc_games.moves and these rows are deleted)
-CREATE TABLE IF NOT EXISTS cc_moves (
-    game INTEGER NOT NULL, ply INTEGER NOT NULL, move INTEGER NOT NULL, left_ms INTEGER NOT NULL,
-    PRIMARY KEY (game, ply)
-) WITHOUT ROWID;
+-- the moves of games in play are not here: they are appended to a flat file beside the database
+-- (journal.c, "<db>-moves"), and a finished game's moves land in cc_games.moves
 CREATE TABLE IF NOT EXISTS cc_points (
     player BLOB NOT NULL, at INTEGER NOT NULL, rating INTEGER NOT NULL
 );

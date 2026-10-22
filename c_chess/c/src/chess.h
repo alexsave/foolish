@@ -59,6 +59,7 @@ void ch_legal(const chess_pos *p, ch_moves *out);
 bool ch_in_check(const chess_pos *p);
 void ch_make(const chess_pos *p, ch_move m, chess_pos *out);   /* m must be legal */
 bool ch_is_legal(const chess_pos *p, ch_move m);
+bool ch_has_legal(const chess_pos *p);   /* any legal move at all (stops at the first) */
 uint64_t ch_perft(const chess_pos *p, int depth);
 
 /* UCI: "e2e4", "e7e8q"; castling may also be given as the king taking its own rook ("e1h1").

@@ -1,7 +1,17 @@
-/* journal.h - SQLite behind the in-memory state: a writer thread takes the records the state hands
- * it (under cc_lock, never waiting) and commits every record queued since its last commit in one
- * transaction (c_base's group commit, store_sql.h). A crash loses at most the records of the commit
- * in flight. At start the players and the games in play are read back (cc_journal_recover).
+/* journal.h - the disk behind the in-memory state, two parts, both written by one thread that the
+ * state hands records to (under cc_lock, never waiting):
+ *
+ *   SQLite   players, a game's start and its end (with its moves), rating points: every record
+ *            queued since the last commit in one transaction (c_base's group commit, store_sql.h)
+ *   the moves file  "<db>-moves": each move of a game in play as a fixed 12-byte record, appended
+ *            with one write() per batch (moves gather for CC_JOURNAL_BATCH_US, default 2000) and
+ *            fsync'd every CC_JOURNAL_SYNC_MS (default 100). A process crash loses at most the
+ *            gathering window's moves; a power loss at most the sync window's.
+ *            A move as a SQLite row cost the server most of its CPU at 60,000 moves a second (the
+ *            profile in DESIGN.md); as a record in a file it is a memcpy.
+ *
+ * At start the players and the games in play are read back, the moves file replayed onto them and
+ * then rewritten with only their moves (cc_journal_recover).
  *
  * The reads of what is no longer in memory (a finished game, a profile's history) block on the
  * store, so they run on the request pool only. */
@@ -15,12 +25,9 @@ enum {
     CC_SQL_PLAYER_PUT,
     CC_SQL_PLAYERS_ALL,
     CC_SQL_GAME_START,
-    CC_SQL_MOVE_PUT,
     CC_SQL_GAME_END,
-    CC_SQL_MOVES_DEL,
     CC_SQL_POINT_PUT,
     CC_SQL_GAMES_PLAYING,
-    CC_SQL_MOVES_OF,
     CC_SQL_GAME_MAX,
     CC_SQL_GAME_GET,
     CC_SQL_GAMES_OF,

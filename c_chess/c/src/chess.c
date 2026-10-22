@@ -347,10 +347,28 @@ void ch_legal(const chess_pos *p, ch_moves *out) {
     }
 }
 
+/* One move's legality without generating the others' legality: it must be among the pseudo-legal
+ * moves (cheap: no make), and only it is made to see the king safe. */
 bool ch_is_legal(const chess_pos *p, ch_move m) {
-    ch_moves ms;
-    ch_legal(p, &ms);
-    for (int i = 0; i < ms.n; i++) if (ms.m[i] == m) return true;
+    ch_moves ps;
+    pseudo(p, &ps);
+    for (int i = 0; i < ps.n; i++) {
+        if (ps.m[i] != m) continue;
+        chess_pos q;
+        ch_make(p, m, &q);
+        return leaves_king_safe(&q);
+    }
+    return false;
+}
+
+bool ch_has_legal(const chess_pos *p) {
+    ch_moves ps;
+    pseudo(p, &ps);
+    chess_pos q;
+    for (int i = 0; i < ps.n; i++) {
+        ch_make(p, ps.m[i], &q);
+        if (leaves_king_safe(&q)) return true;
+    }
     return false;
 }
 

@@ -41,6 +41,7 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <libproc.h>
+#include <mach/mach_time.h>
 #endif
 
 static struct {
@@ -391,9 +392,12 @@ static bool proc_usage(pid_t pid, uint64_t *rss, uint64_t *user_us, uint64_t *sy
 #ifdef __APPLE__
     struct rusage_info_v2 ri;
     if (proc_pid_rusage(pid, RUSAGE_INFO_V2, (rusage_info_t *)&ri) != 0) return false;
+    /* the times are mach absolute time units, not nanoseconds (125/3 ns each on Apple silicon) */
+    static mach_timebase_info_data_t tb;
+    if (!tb.denom) mach_timebase_info(&tb);
     *rss = ri.ri_resident_size;
-    *user_us = ri.ri_user_time / 1000;
-    *sys_us = ri.ri_system_time / 1000;
+    *user_us = ri.ri_user_time * tb.numer / tb.denom / 1000;
+    *sys_us = ri.ri_system_time * tb.numer / tb.denom / 1000;
     return true;
 #else
     char p[64];
