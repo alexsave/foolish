@@ -229,6 +229,29 @@ static bool class_drawn(int z, uint8_t hclass) {
     return hclass <= ADV_HC_TERTIARY;
 }
 
+// A LOW-ZOOM USER TILE WALKS THE COVERAGE, NOT THE CELLS: a z8 tile of the state is every cell
+// of the grid (30,000 lists) for a handful of travelled segments, 25 ms; the user's sorted
+// entries are a few thousand bbox tests. The cell walk stays for the zooms where a tile is a
+// few cells and the untraveled layer (every segment) needs them anyway.
+typedef struct {
+    const adv_cov *cov;
+    const walk    *wk;
+    uint32_t       i;
+} cov_walk;
+
+static bool cov_walk_next(cov_walk *c, uint32_t *seg) {
+    const adv_graph *g = c->wk->g;
+    while (c->i < c->cov->n) {
+        uint32_t id = c->cov->e[c->i++].seg;
+        if (id >= g->h->n_segs) continue;
+        const adv_seg *sg = &g->segs[id];
+        if (sg->max_lat < c->wk->min_lat || sg->min_lat > c->wk->max_lat || sg->max_lon < c->wk->min_lon || sg->min_lon > c->wk->max_lon) continue;
+        *seg = id;
+        return true;
+    }
+    return false;
+}
+
 int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, const adv_cov *cov,
                     const uint32_t *owners, adv_tile_scratch *s, const uint8_t **out) {
     if (!g || !req || !s || !out || !s->bytes) return CB_E_INVALID;
@@ -273,10 +296,12 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
         }
         adv_mvt_layer_end(&w);
     }
+    bool by_cov = cov && req->z < ADV_TILE_UNTRAVELED_ZOOM;
     if (req->traveled) {
         adv_mvt_layer_begin(&w, "traveled", KEYS_CT, 2);
-        walk_begin(&wk);
-        while (walk_next(&wk, &seg)) {
+        cov_walk cw = { cov, &wk, 0 };
+        if (!by_cov) walk_begin(&wk);
+        while (by_cov ? cov_walk_next(&cw, &seg) : walk_next(&wk, &seg)) {
             uint16_t mask = cov ? adv_cov_mask(cov, seg, req->type) : 0;
             if (!mask) continue;
             shape_load(g, req, s, seg, &sh);
@@ -311,8 +336,9 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
     if (req->unique) {
         adv_mvt_layer_begin(&w, "unique", KEYS_C, 1);
         if (owners && user != 0) {
-            walk_begin(&wk);
-            while (walk_next(&wk, &seg)) {
+            cov_walk cw = { cov, &wk, 0 };
+            if (!by_cov) walk_begin(&wk);
+            while (by_cov ? cov_walk_next(&cw, &seg) : walk_next(&wk, &seg)) {
                 if (owners[seg] != user) continue;
                 shape_load(g, req, s, seg, &sh);
                 if (sh.n < 2) continue;
