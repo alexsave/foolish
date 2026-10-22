@@ -326,11 +326,73 @@ input {
 }
 
 /* ---- the table grid ------------------------------------------------------------------------- */
+.density {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.density.on {
+  background: #fff;
+  color: var(--navy);
+  border-color: #fff;
+}
+
+.tgrid.compact {
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  gap: 8px;
+}
+
+.tgrid.compact .tcard {
+  padding: 8px 8px 6px;
+  gap: 6px;
+}
+
+.tgrid.compact .felt {
+  height: 50px;
+  grid-template-columns: 34px minmax(0, 1fr) 22px;
+}
+
+.tgrid.compact .tcard-foot,
+.tgrid.compact .seat-stack,
+.tgrid.compact .seat .mark-good,
+.tgrid.compact .seat .mark-out {
+  display: none;
+}
+
+.tgrid.compact .seats {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tgrid.compact .seat {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  height: 20px;
+  padding: 0 5px;
+  font-size: 11px;
+  flex: 1 1 45%;
+  min-width: 0;
+}
+
+.tgrid.compact .seat-marks {
+  min-width: 0;
+}
+
 .tgrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
   gap: 12px;
   align-content: start;
+  align-items: start;
 }
 
 .tcard {

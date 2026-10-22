@@ -29,6 +29,29 @@ export function App() {
   const pending = useRef<WEvent[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
+  // Compact cards (more tables on one screen): a per-viewer choice, kept in the browser.
+  const [compact, setCompactState] = useState(false);
+  useEffect(() => {
+    // ?compact=1 in the URL wins (a link, a screenshot); else the viewer's last choice.
+    const q = new URLSearchParams(window.location.search).get('compact');
+    if (q !== null) {
+      setCompactState(q === '1');
+      return;
+    }
+    try {
+      setCompactState(window.localStorage.getItem('birdseye.compact') === '1');
+    } catch {
+      // storage blocked: the default stands
+    }
+  }, []);
+  const setCompact = useCallback((c: boolean) => {
+    setCompactState(c);
+    try {
+      window.localStorage.setItem('birdseye.compact', c ? '1' : '0');
+    } catch {
+      // the choice just does not survive a reload
+    }
+  }, []);
   const [now, setNow] = useState(() => Date.now());
 
   // The "ago" columns tick without a new frame.
@@ -205,7 +228,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TopBar state={state} ops={ops} filter={filter} onFilter={setFilter} counts={counts} />
+      <TopBar state={state} ops={ops} filter={filter} onFilter={setFilter} counts={counts} compact={compact} onCompact={setCompact} />
       {fatal ? (
         <div className="banner">{fatal}</div>
       ) : (
@@ -225,7 +248,7 @@ export function App() {
                 {state === 'open' ? (tables.size === 0 ? 'No tables yet: the sim is signing its players up.' : 'No tables in this view.') : 'Connecting to birdseye...'}
               </div>
             ) : (
-              <div className="tgrid">
+              <div className={`tgrid${compact ? ' compact' : ''}`}>
                 {shown.map((t) => (
                   <TableCard key={t.gid} table={t} now={now} selected={false} onSelect={select} />
                 ))}
