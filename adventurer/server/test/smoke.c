@@ -192,6 +192,18 @@ int main(int argc, char **argv) {
     check_user_stats(port, 1, 1, truth_m, &st);
     // The ride's 8 segments, plus a sixteenth or two of the cross streets at the crossings.
     T_CHECK_MSG(st.version == 1 && st.n_regions >= 1 && st.n_super_unique_segs >= 8 && st.n_super_unique_segs <= 12, "su %u", st.n_super_unique_segs);
+    // Everyone's tile of the ride's middle, and its version, before user 2's upload (the cache
+    // check below).
+    char all_path[128], all_etag[128] = "", all_etag2[128] = "";
+    {
+        adv_pt m0 = fg_crossing(&g_opts, 4, 3);
+        uint32_t ax, ay;
+        adv_tile_of(m0, 16, &ax, &ay);
+        snprintf(all_path, sizeof all_path, "/adv/everyone/16/%u/%u.mvt?t=all", ax, ay);
+        T_CHECK(fetch(port, all_path, &r) == 0 && r.status == 200 && r.body.len > 20);
+        T_CHECK(tc_header(&r, "ETag", all_etag, sizeof all_etag) != NULL);
+        tc_response_free(&r);
+    }
     // The same ride by user 2 on foot: credited to foot, and the segments stop being unique.
     n = make_trace(3, 0, 8, 2, ADV_ACT_WALK, &g, body, sizeof body, &truth_m);
     T_CHECK(tc_http(port, "POST", "/adv/upload", "Content-Type: application/octet-stream\r\n", body, n, &r) == 0 && r.status == 202);
@@ -199,6 +211,17 @@ int main(int argc, char **argv) {
     T_CHECK(feed_activity(ws, 2, &ev, 20) && !(ev.flags & ADV_AF_REJECTED) && ev.new_m[ADV_T_FOOT] > 0 && ev.new_m[ADV_T_BIKE] == 0);
     check_user_stats(port, 1, 1, truth_m, &st);
     T_CHECK(st.n_super_unique_segs == 0);
+    // EVERYONE'S TILE CACHE (routes.c): the composite moved, but the kept tile is young, so it is
+    // what is served, with its own version's ETag; once it is older than the window the tile is
+    // rendered again at the new version.
+    T_CHECK(fetch(port, all_path, &r) == 0 && r.status == 200);
+    T_CHECK(tc_header(&r, "ETag", all_etag2, sizeof all_etag2) != NULL && strcmp(all_etag, all_etag2) == 0);
+    tc_response_free(&r);
+    usleep(5300 * 1000);
+    T_CHECK(fetch(port, all_path, &r) == 0 && r.status == 200);
+    T_CHECK(tc_header(&r, "ETag", all_etag2, sizeof all_etag2) != NULL);
+    T_CHECK_MSG(strcmp(all_etag, all_etag2) != 0, "everyone's tile still %s after the window", all_etag2);
+    tc_response_free(&r);
     // Leaders of the region the row is in: both users on the combined board.
     T_CHECK(fetch(port, "/adv/leaders/0", &r) == 0 && r.status == 200 && r.body.len == sizeof(adv_w_leaders));
     adv_w_leaders lb;

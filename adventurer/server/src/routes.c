@@ -338,65 +338,85 @@ static void note_dropped(const adv_tile_scratch *s, const adv_tile_req *tr) {
         CB_WARN("adv", "tile %d/%u/%u: %u features left out (scratch %u MiB)", tr->z, tr->x, tr->y, s->dropped, (unsigned)(ADV_TILE_SCRATCH >> 20));
 }
 
-// THE BASE TILE CACHE: the roads layer depends on the graph alone, so a base tile is rendered
-// once and kept; a z11 city tile is half a megabyte and 10 ms, and the map asks for the same
-// low-zoom tiles from every visitor. Open addressing over the tile's key, bounded by bytes
-// (ADV_BASE_CACHE_MB, 64): past the cap a rover frees entries until the new one fits. The
-// lock is tried on the loop thread (a miss renders on the pool).
-#define BT_SLOTS 8192
-#define BT_PROBE 8
+// TILE CACHES: a tile kept by its (z, x, y, type) with the version it was rendered at and when.
+// Open addressing, bounded by bytes: past the cap a rover frees entries until the new one fits.
+// Two of them:
+//   BASE      the roads layer depends on the graph alone, so a base tile is rendered once and
+//             kept (ADV_BASE_CACHE_MB, 64): the map asks every visitor for the same low tiles.
+//   EVERYONE  the composite changes with every upload, so its tile is kept with the composite's
+//             version and served for up to EVERYONE_STALE_MS after it was made even when the
+//             version has moved on (its ETag says the version it is): a tile is then rendered at
+//             most once per that window whatever the number of viewers (ADV_EVERYONE_CACHE_MB, 64).
+// The lock is tried on the loop thread (a miss renders on the pool).
+#define TC_SLOTS 8192
+#define TC_PROBE 8
+#define EVERYONE_STALE_MS 5000
 typedef struct {
-    uint64_t key;    // 1 + (z << 58 | x << 29 | y); 0: empty
+    uint64_t key;      // tc_key; 0: empty
     uint8_t *bytes;
     uint32_t len;
-} bt_entry;
-static bt_entry g_bt[BT_SLOTS];
-static size_t g_bt_bytes, g_bt_cap;
-static uint32_t g_bt_rover;
-static pthread_mutex_t g_bt_mu = PTHREAD_MUTEX_INITIALIZER;
-static atomic_ullong g_bt_hits, g_bt_misses;
+    uint32_t version;
+    int64_t  at_ms;
+} tc_entry;
+typedef struct {
+    tc_entry        e[TC_SLOTS];
+    size_t          bytes, cap;
+    uint32_t        rover;
+    pthread_mutex_t mu;
+    const char     *cap_env;
+} tcache;
+static tcache g_base = { .mu = PTHREAD_MUTEX_INITIALIZER, .cap_env = "ADV_BASE_CACHE_MB" };
+static tcache g_all = { .mu = PTHREAD_MUTEX_INITIALIZER, .cap_env = "ADV_EVERYONE_CACHE_MB" };
 
-static uint64_t bt_key(const adv_tile_req *t) { return 1 + ((uint64_t)t->z << 58 | (uint64_t)t->x << 29 | (uint64_t)t->y); }
-static uint32_t bt_slot(uint64_t key) { return (uint32_t)((key * 0x9E3779B97F4A7C15ull) >> 40) % BT_SLOTS; }
+// z (5 bits), type (2), x and y (27 each: zoom 18 needs 18): never 0.
+static uint64_t tc_key(const adv_tile_req *t) {
+    return 1 + ((uint64_t)t->z << 56 | (uint64_t)(t->type & 3) << 54 | (uint64_t)t->x << 27 | (uint64_t)t->y);
+}
+static uint32_t tc_slot(uint64_t key) { return (uint32_t)((key * 0x9E3779B97F4A7C15ull) >> 40) % TC_SLOTS; }
 
 // Under the lock: the entry for key, or NULL.
-static bt_entry *bt_find(uint64_t key) {
-    uint32_t s = bt_slot(key);
-    for (int i = 0; i < BT_PROBE; i++) {
-        bt_entry *e = &g_bt[(s + i) % BT_SLOTS];
+static tc_entry *tc_find(tcache *c, uint64_t key) {
+    uint32_t s = tc_slot(key);
+    for (int i = 0; i < TC_PROBE; i++) {
+        tc_entry *e = &c->e[(s + i) % TC_SLOTS];
         if (e->key == key) return e;
     }
     return NULL;
 }
 
-static void bt_free(bt_entry *e) {
-    g_bt_bytes -= e->len;
+static void tc_free(tcache *c, tc_entry *e) {
+    c->bytes -= e->len;
     free(e->bytes);
     memset(e, 0, sizeof *e);
 }
 
-// Under the lock: keeps a copy of the tile (best effort: no memory, no entry).
-static void bt_put(uint64_t key, const uint8_t *bytes, uint32_t len) {
-    if (!g_bt_cap) g_bt_cap = (size_t)env_mb("ADV_BASE_CACHE_MB", 64) << 20;
-    if (len > g_bt_cap / 4) return;
-    while (g_bt_bytes + len > g_bt_cap) {   // the rover frees whatever it meets
-        bt_entry *e = &g_bt[g_bt_rover++ % BT_SLOTS];
-        if (e->key) bt_free(e);
+// Under the lock: keeps a copy of the tile, replacing the key's entry (best effort: no memory,
+// no entry).
+static void tc_put(tcache *c, uint64_t key, const uint8_t *bytes, uint32_t len, uint32_t version, int64_t at_ms) {
+    if (!c->cap) c->cap = (size_t)env_mb(c->cap_env, 64) << 20;
+    if (len > c->cap / 4) return;
+    tc_entry *old = tc_find(c, key);
+    if (old) tc_free(c, old);
+    while (c->bytes + len > c->cap) {   // the rover frees whatever it meets
+        tc_entry *e = &c->e[c->rover++ % TC_SLOTS];
+        if (e->key) tc_free(c, e);
     }
-    uint32_t s = bt_slot(key);
-    bt_entry *at = NULL;
-    for (int i = 0; i < BT_PROBE && !at; i++)
-        if (!g_bt[(s + i) % BT_SLOTS].key) at = &g_bt[(s + i) % BT_SLOTS];
+    uint32_t s = tc_slot(key);
+    tc_entry *at = NULL;
+    for (int i = 0; i < TC_PROBE && !at; i++)
+        if (!c->e[(s + i) % TC_SLOTS].key) at = &c->e[(s + i) % TC_SLOTS];
     if (!at) {   // every probe slot taken: the first gives way
-        at = &g_bt[s];
-        bt_free(at);
+        at = &c->e[s];
+        tc_free(c, at);
     }
     at->bytes = malloc(len ? len : 1);
     if (!at->bytes) { memset(at, 0, sizeof *at); return; }
     memcpy(at->bytes, bytes, len);
     at->key = key;
     at->len = len;
-    g_bt_bytes += len;
+    at->version = version;
+    at->at_ms = at_ms;
+    c->bytes += len;
 }
 
 static void base_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
@@ -409,21 +429,20 @@ static void base_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     static const char CACHE[] = "public, max-age=3600";
     if (not_modified(req, res, etag, CACHE)) return;
     bool on_loop = ctx->loop && cb_loop_on_thread(ctx->loop);
-    uint64_t key = bt_key(&tr);
+    uint64_t key = tc_key(&tr);
     if (on_loop) {
-        if (pthread_mutex_trylock(&g_bt_mu) != 0) { res->to_pool = true; return; }
+        if (pthread_mutex_trylock(&g_base.mu) != 0) { res->to_pool = true; return; }
     } else {
-        pthread_mutex_lock(&g_bt_mu);
+        pthread_mutex_lock(&g_base.mu);
     }
-    bt_entry *e = bt_find(key);
+    tc_entry *e = tc_find(&g_base, key);
     if (e) {
         tile_answer(res, e->bytes, (int)e->len, etag, CACHE);
-        pthread_mutex_unlock(&g_bt_mu);
-        atomic_fetch_add(&g_bt_hits, 1);
+        pthread_mutex_unlock(&g_base.mu);
         cb_metrics_rate(ctx->metrics, ADV_M_TILES, cb_now_ms(), 1);
         return;
     }
-    pthread_mutex_unlock(&g_bt_mu);
+    pthread_mutex_unlock(&g_base.mu);
     if (on_loop) { res->to_pool = true; return; }   // a render is the pool's: the loop keeps serving
     adv_tile_scratch *s = tile_scratch();
     if (!s) { cb_router_error(res, 500, "no memory"); return; }
@@ -434,10 +453,9 @@ static void base_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     note_dropped(s, &tr);
     if (n > 0) cb_metrics_observe(ctx->metrics, ADV_M_TILE, (uint64_t)(cb_mono_us() - t0));   // an empty tile (the sea) is no measure of a render
     cb_metrics_rate(ctx->metrics, ADV_M_TILES, cb_now_ms(), 1);
-    atomic_fetch_add(&g_bt_misses, 1);
-    pthread_mutex_lock(&g_bt_mu);
-    if (!bt_find(key)) bt_put(key, bytes, (uint32_t)n);
-    pthread_mutex_unlock(&g_bt_mu);
+    pthread_mutex_lock(&g_base.mu);
+    if (!tc_find(&g_base, key)) tc_put(&g_base, key, bytes, (uint32_t)n, 0, 0);
+    pthread_mutex_unlock(&g_base.mu);
     tile_answer(res, bytes, n, etag, CACHE);
 }
 
@@ -575,7 +593,21 @@ static void everyone_sub(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) 
     if (!s) { cb_router_error(res, 500, "no memory"); return; }
     static const char CACHE[] = "private, max-age=2";
     char etag[64];
-    snprintf(etag, sizeof etag, "\"all.%u.%d\"", atomic_load_explicit(&w->all_version, memory_order_relaxed), tr.type);
+    const uint32_t version = atomic_load_explicit(&w->all_version, memory_order_relaxed);
+    const int64_t now = cb_now_ms();
+    const uint64_t key = tc_key(&tr);
+    // The kept tile, when it is this version's or young enough (TILE CACHES above).
+    pthread_mutex_lock(&g_all.mu);
+    tc_entry *e = tc_find(&g_all, key);
+    if (e && (e->version == version || now - e->at_ms < EVERYONE_STALE_MS)) {
+        snprintf(etag, sizeof etag, "\"all.%u.%d\"", e->version, tr.type);
+        if (!not_modified(req, res, etag, CACHE)) tile_answer(res, e->bytes, (int)e->len, etag, CACHE);
+        pthread_mutex_unlock(&g_all.mu);
+        cb_metrics_rate(ctx->metrics, ADV_M_TILES, now, 1);
+        return;
+    }
+    pthread_mutex_unlock(&g_all.mu);
+    snprintf(etag, sizeof etag, "\"all.%u.%d\"", version, tr.type);
     if (not_modified(req, res, etag, CACHE)) return;
     // No lock: the words are atomics, and a tile a frame behind an apply is the next tile's.
     // A full-city low-zoom walk is a few milliseconds: not the loop's (CB_ROUTE_INLINE's budget
@@ -587,6 +619,9 @@ static void everyone_sub(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) 
     note_dropped(s, &tr);
     if (n > 0) cb_metrics_observe(ctx->metrics, ADV_M_TILE, (uint64_t)(cb_mono_us() - t0));
     cb_metrics_rate(ctx->metrics, ADV_M_TILES, cb_now_ms(), 1);
+    pthread_mutex_lock(&g_all.mu);
+    tc_put(&g_all, key, bytes, (uint32_t)n, version, now);
+    pthread_mutex_unlock(&g_all.mu);
     tile_answer(res, bytes, n, etag, CACHE);
 }
 
