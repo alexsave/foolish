@@ -12,6 +12,10 @@ export const viewport: Viewport = { width: 'device-width', initialScale: 1 };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        {/* the kernel is needed before anything is interactive: fetched beside the scripts, not after them */}
+        <link rel="preload" href="/chess.wasm" as="fetch" type="application/wasm" crossOrigin="anonymous" />
+      </head>
       <body>
         <Top />
         <main>{children}</main>

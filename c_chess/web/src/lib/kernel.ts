@@ -110,7 +110,7 @@ let loading: Promise<Kernel> | null = null;
 export function loadKernel(): Promise<Kernel> {
   if (!loading) {
     loading = (async () => {
-      const res = await fetch('/chess.wasm');
+      const res = await fetch('/chess.wasm');   // matches the layout's preload (cors, same-origin credentials)
       const { instance } = await WebAssembly.instantiateStreaming(res, {});
       const x = instance.exports as unknown as Exports;
       if ((x.cv_layout_hash() >>> 0) !== (LAYOUT_HASH >>> 0)) throw new Error('chess.wasm and the page were built from different headers');

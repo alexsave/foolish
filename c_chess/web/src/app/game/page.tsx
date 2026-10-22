@@ -30,7 +30,7 @@ function Player({ v, color, bottom }: { v: CvView_Snap; color: number; bottom: b
   return (
     <div className={`panel player ${turn ? 'turn' : ''}`} style={{ order: bottom ? 3 : 1 }}>
       <div className="who">
-        <Link className="name" href={`/user?name=${encodeURIComponent(name)}`} style={{ color: 'inherit' }}>{name || '...'}</Link>
+        <Link prefetch={false} className="name" href={`/user?name=${encodeURIComponent(name)}`} style={{ color: 'inherit' }}>{name || '...'}</Link>
         <span className="rt">
           {v.rating[color] || ''}
           {d !== 0 && <span className={d > 0 ? 'up' : 'down'}> {d > 0 ? '+' : ''}{d}</span>}
@@ -158,8 +158,8 @@ function Game() {
               {!over && v.ply >= 2 && <button className="btn" disabled={myOffer} onClick={() => act(CW_A_DRAW)}>{myOffer ? 'Draw offered' : 'Offer draw'}</button>}
               {!over && v.ply >= 2 && <button className="btn warn" onClick={() => act(CW_A_RESIGN)}>Resign</button>}
               {over && !v.nextGame && <button className="btn primary" disabled={myRematch} onClick={() => act(CW_A_REMATCH)}>{myRematch ? 'Rematch offered' : 'Rematch'}</button>}
-              {over && v.nextGame !== 0 && <Link className="btn primary" href={`/game?id=${v.nextGame}`}>Go to the rematch</Link>}
-              {over && <Link className="btn" href="/">New opponent</Link>}
+              {over && v.nextGame !== 0 && <Link prefetch={false} className="btn primary" href={`/game?id=${v.nextGame}`}>Go to the rematch</Link>}
+              {over && <Link prefetch={false} className="btn" href="/">New opponent</Link>}
               <a className="btn" href={`/c/pgn/${id}`}>PGN</a>
             </div>
           )}

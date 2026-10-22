@@ -68,7 +68,7 @@ function User() {
               const won = r.winner === r.color, drawn = r.winner === 2;
               return (
                 <tr key={r.game} className="click" onClick={() => (location.href = `/game?id=${r.game}`)}>
-                  <td><Link href={`/user?name=${encodeURIComponent(r.opponent)}`} onClick={(e) => e.stopPropagation()}>{r.opponent}</Link></td>
+                  <td><Link prefetch={false} href={`/user?name=${encodeURIComponent(r.opponent)}`} onClick={(e) => e.stopPropagation()}>{r.opponent}</Link></td>
                   <td>{tc(r.baseS, r.incS)}{r.rated ? '' : ' casual'}</td>
                   <td className={drawn ? '' : won ? 'up' : 'down'}>{score(r.status, r.winner)}</td>
                   <td className={r.diff > 0 ? 'up' : r.diff < 0 ? 'down' : 'muted'}>{r.diff > 0 ? '+' : ''}{r.rated ? r.diff : ''}</td>
