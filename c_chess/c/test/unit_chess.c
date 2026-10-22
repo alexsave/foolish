@@ -126,6 +126,10 @@ int main(void) {
     ch_from_fen(&a, "rnbqkbnr/ppp1pppp/8/8/3pP3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
     ch_from_fen(&b, "rnbqkbnr/ppp1pppp/8/8/3pP3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1");
     CHECK(a.key != b.key, "%s", "");
+    /* a FEN's en-passant square that no pawn can use is the same position as without it */
+    ch_from_fen(&a, "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
+    ch_from_fen(&b, "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1");
+    CHECK(a.key == b.key, "%s", "an unusable en-passant square changed the key");
     ch_from_fen(&b, "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
     ch_startpos(&a);
     CHECK(a.key != b.key, "%s", "");   /* the side to move counts */

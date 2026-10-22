@@ -207,9 +207,12 @@ static void ratings(void) {
     g2_player a = cc_rating_new(), c = cc_rating_new();
     cc_rate(&a, &c, 0.5);
     CHECK(cc_rating_int(&a) == 1500 && cc_rating_int(&c) == 1500, "a draw between equals moved them");
-    g2_player lo = { 1500, 10, 0.5 }, hi = { 1500, 10, 0.5 };
+    g2_player lo = { 1500, 10, 0.0001 }, hi = { 1500, 10, 0.0001 };   /* a deviation the update keeps under the floor */
     cc_rate(&lo, &hi, 0.5);
-    CHECK(lo.deviation >= CC_RD_MIN && lo.volatility <= CC_VOL_MAX, "unclamped %.2f %.3f", lo.deviation, lo.volatility);
+    CHECK(lo.deviation == CC_RD_MIN, "deviation %.2f not clamped to the floor", lo.deviation);
+    g2_player wild = { 1500, 200, 0.5 }, calm = { 1500, 200, 0.06 };
+    cc_rate(&wild, &calm, 1.0);
+    CHECK(wild.volatility == CC_VOL_MAX, "volatility %.3f not clamped", wild.volatility);
 }
 
 static void pgn(void) {
@@ -227,6 +230,20 @@ static void pgn(void) {
         "1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0\n";
     STREQ(out, want);
     CHECK(n == strlen(want), "length %zu", n);
+    /* a long game wraps its moves at 80 columns */
+    cc_game_new(&g, 300000, 3000, 0);
+    play(&g, "e2e4 e7e5 d2d4 d7d5 c2c4 c7c5 b2b3 b7b6 a2a3 a7a6 h2h3 h7h6 g2g3 g7g6 f2f3 f7f6 "
+             "c1d2 c8d7 f1e2 f8e7 d1c2 d8c7 b1c3 b8c6", 0);
+    n = cc_pgn(&in, g.moves, g.ply, out, sizeof out);
+    const char *moves = strstr(out, "\n\n") + 2;
+    int lines = 0;
+    for (const char *l = moves; *l; lines++) {
+        const char *e = strchr(l, '\n');
+        CHECK(e && e - l <= 80, "a line of %d columns", e ? (int)(e - l) : -1);
+        if (!e) break;
+        l = e + 1;
+    }
+    CHECK(lines >= 2, "%d lines: not wrapped", lines);
     char small[16];
     CHECK(cc_pgn(&in, g.moves, g.ply, small, sizeof small) == n && strlen(small) == sizeof small - 1, "truncation");
     STREQ(cc_result_str(CC_PLAYING, CC_NO_WINNER), "*");

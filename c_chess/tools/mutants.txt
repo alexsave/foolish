@@ -1,0 +1,34 @@
+# kernel: the rules
+c/src/chess.c ::: && !attacked(p, 4, them) && !attacked(p, 5, them) && !attacked(p, 6, them) ::: && !attacked(p, 4, them) && !attacked(p, 6, them) ::: build/test/unit_chess ::: build/test/unit_chess
+c/src/chess.c ::: for (int pr = CH_QUEEN; pr >= CH_KNIGHT; pr--) ::: for (int pr = CH_QUEEN; pr >= CH_BISHOP; pr--) ::: build/test/unit_chess ::: build/test/unit_chess
+c/src/chess.c ::: if (to == p->ep) take(o, them, CH_PAWN, to + (us == CH_WHITE ? -8 : 8)); ::: if (to == p->ep) take(o, them, CH_PAWN, to); ::: build/test/unit_chess ::: build/test/unit_chess
+c/src/chess.c ::: else if (!same_rank) *o++ = (char)('1' + from / 8); ::: else if (!same_rank) *o++ = (char)('a' + from % 8); ::: build/test/unit_chess ::: build/test/unit_chess
+c/src/chess.c ::: if (CH_TO(ms.m[i]) == p->ep && (p->bb[p->stm][CH_PAWN] & BIT(CH_FROM(ms.m[i])))) { ep = true; break; } ::: if (1) { ep = true; break; } ::: build/test/unit_chess ::: build/test/unit_chess
+c/src/chess.c ::: if (ep_capturable(p)) k ^= Z_EP[p->ep & 7]; ::: if (p->ep != CH_NO_SQ) k ^= Z_EP[p->ep & 7]; ::: build/test/unit_chess ::: build/test/unit_chess
+c/src/chess.c ::: return !(bi & LIGHT) || !(bi & ~LIGHT); ::: return !(bi & LIGHT); ::: build/test/unit_chess ::: build/test/unit_chess
+# kernel: the game
+c/src/game.c ::: if (g->rep[(g->ply - d) % CC_REP_RING] == k && ++seen >= 3) return true; ::: if (g->rep[(g->ply - d) % CC_REP_RING] == k && ++seen >= 2) return true; ::: build/test/unit_game ::: build/test/unit_game
+# equivalent: the odd plies hold the other side to move, whose keys never match (Z_STM): for (int d = 2; d <= back; d += 2) -> d = 1, d += 1
+c/src/game.c ::: else if (g->pos.halfmove >= 100) ::: else if (g->pos.halfmove >= 99) ::: build/test/unit_game ::: build/test/unit_game
+c/src/game.c ::: g->left_ms[color] += g->inc_ms; ::: (void)0; ::: build/test/unit_game ::: build/test/unit_game
+c/src/game.c ::: if (ch_insufficient_for(&g->pos, loser ^ 1)) ::: if (ch_insufficient_for(&g->pos, loser)) ::: build/test/unit_game ::: build/test/unit_game
+c/src/game.c ::: g->draw_offer &= (uint8_t)(1u << color); ::: (void)0; ::: build/test/unit_game ::: build/test/unit_game
+c/src/game.c ::: bool cc_game_clock_running(const cc_game *g) { return g->status == CC_PLAYING && g->ply >= 2; } ::: bool cc_game_clock_running(const cc_game *g) { return g->status == CC_PLAYING && g->ply >= 1; } ::: build/test/unit_game ::: build/test/unit_game
+c/src/game.c ::: if (g->ply >= 2) return CC_E_STATE; ::: if (g->ply >= 3) return CC_E_STATE; ::: build/test/unit_game ::: build/test/unit_game
+# equivalent: the Illinois step's halving only speeds convergence to the same root (else fA /= 2.0 -> 1.5)
+# and delta * 0.9 moves the volatility by less than the paper's printed precision
+c/src/glicko2.c ::: double mu_new = mu + phi_new * phi_new * sum; ::: double mu_new = mu + phi_new * sum; ::: build/test/unit_game ::: build/test/unit_game
+c/src/rating.c ::: if (p.deviation < CC_RD_MIN) p.deviation = CC_RD_MIN; ::: (void)0; ::: build/test/unit_game ::: build/test/unit_game
+c/src/pgn.c ::: if (*s == '"' || *s == '\\') put(o, "\\", 1); ::: (void)0; ::: build/test/unit_game ::: build/test/unit_game
+c/src/pgn.c ::: col + 1 + (size_t)k > 80) ::: col + 1 + (size_t)k > 800) ::: build/test/unit_game ::: build/test/unit_game
+# the server and the client, through the smoke
+server/src/state.c ::: cc_rate(&l->p[0]->r, &l->p[1]->r, cc_game_white_score(g)); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/state.c ::: return a->base_s == b->base_s && a->inc_s == b->inc_s && a->rated == b->rated; ::: return a->rated == b->rated; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: else if (c->who == p) { status = 409; code = CW_E_SELF; } ::: else if (0) { } ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: cc_live *n = cc_live_start(l->p[1], l->p[0], &tc, now);   /* colors swap */ ::: cc_live *n = cc_live_start(l->p[0], l->p[1], &tc, now); ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: CW_E_NOT_PLAYER; }\n    else {\n        bool was_over = cc_game_over(&l->g);\n        rc = cc_game_move ::: CW_E_NOT_PLAYER; }\n    if (l) {\n        bool was_over = cc_game_over(&l->g);\n        color = l->g.pos.stm;\n        rc = cc_game_move ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/journal.c ::: l->g.left_ms[0] = left[0]; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/journal.c ::: if (sqlite3_step(st) == SQLITE_ROW) cc_state_next_game_id((uint32_t)sqlite3_column_int64(st, 0)); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+c/src/client.c ::: if (mirror_move(c, (ch_move)s.move) != CC_OK) { resync(c); return; } ::: if (0) { } ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+c/src/client.c ::: c->g.left_ms[0] = c->g.left_ms[1] = INT64_MAX / 4; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+c/src/client.c ::: if (c->name[0] && strcmp(c->names[k], c->name) == 0) c->color = (int8_t)k; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess

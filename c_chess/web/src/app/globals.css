@@ -86,6 +86,9 @@ h2 { font-size: 17px; }
 .pair .t { font-size: 24px; font-weight: 600; }
 .pair .k { font-size: 13px; color: var(--muted); }
 .pair.waiting { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.seg button { border: none; background: none; color: var(--muted); padding: 6px 14px; font-weight: 600; font-size: 14px; }
+.seg button.on { background: var(--accent); color: var(--accent-ink); }
 .row { display: flex; gap: 10px; align-items: center; }
 .seeks { width: 100%; border-collapse: collapse; font-size: 14px; }
 .seeks td, .seeks th { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); }

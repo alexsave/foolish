@@ -309,7 +309,7 @@ static void after_the_game(void) {
     tc_response_free(&r);
 }
 
-static uint32_t g_rematch;
+static uint32_t g_rematch, g_last;
 
 static void rematch(void) {
     cc_client_act(&A.c, CW_A_REMATCH);
@@ -333,6 +333,9 @@ static void rematch(void) {
     T_CHECK(pump(&B, CC_EV_GAME, 3000));
     static const char *const two[] = { "e2e4", "c7c5" };
     play_line(white_of(&A, &B), black_of(&A, &B), two, 2);
+    usleep(400 * 1000);   // white thinks: its clock runs (black's first move started it)
+    static const char *const third[] = { "g1f3" };
+    play_line(white_of(&A, &B), black_of(&A, &B), third, 1);
 }
 
 // The server stops and starts in the middle of the rematch: the game is there, two plies in.
@@ -349,11 +352,14 @@ static void restart(void) {
     A.seen = B.seen = 0;
     T_CHECK(pump(&A, CC_EV_GAME, 3000));
     T_CHECK(pump(&B, CC_EV_GAME, 3000));
-    T_EQ_INT(A.c.g.ply, 2);
+    T_EQ_INT(A.c.g.ply, 3);
     T_EQ_INT(A.c.g.status, CC_PLAYING);
     T_EQ_STR(A.c.san[1], "c5");
-    static const char *const more[] = { "g1f3" };
-    play_line(white_of(&A, &B), black_of(&A, &B), more, 1);
+    // the clocks as the journal left them: white's 400 ms of thought are spent, black's time untouched
+    T_CHECK(A.c.left_ms[CH_WHITE] <= 59600 && A.c.left_ms[CH_WHITE] >= 50000);
+    T_CHECK(A.c.left_ms[CH_BLACK] > 59000);
+    static const char *const more[] = { "d7d6" };
+    play_line(black_of(&A, &B), white_of(&A, &B), more, 1);
     // and resigns
     player *b = black_of(&A, &B);
     cc_client_act(&b->c, CW_A_RESIGN);
@@ -386,6 +392,7 @@ static void challenge_abort_flag(void) {
     T_CHECK(pump(&C, CC_EV_START, 3000));
     T_CHECK(pump(&A, CC_EV_START, 3000));
     uint32_t g = C.c.start_game;
+    T_CHECK(g > g_rematch);   // ids go on from the journal's after a restart, never reused
     cc_client_accept(&B.c, ch);   // taken: gone
     B.seen = 0;
     T_CHECK(pump(&B, CC_EV_ERROR, 3000));
@@ -414,6 +421,7 @@ static void challenge_abort_flag(void) {
     cc_client_open(&C.c, C.c.start_game);
     C.seen = 0;
     T_CHECK(pump(&C, CC_EV_GAME, 3000));
+    g_last = C.c.start_game;
     cc_client_act(&C.c, CW_A_ABORT);
     flush(&C);
     C.seen = 0;
@@ -427,6 +435,19 @@ static void stats_and_site(void) {
     T_EQ_INT(r.status, 200);
     T_CHECK(strstr(cb_buf_cstr(&r.body), "games_live 0\n") != NULL);
     tc_response_free(&r);
+    // a restart with no game in play: new games still number on from the journal's last
+    close(A.fd); close(B.fd); close(C.fd);
+    T_EQ_INT(tp_stop(&g_child, SIGTERM, 10000), 0);
+    start_server();
+    connect_ws(&A);
+    connect_ws(&C);
+    cc_client_challenge(&A.c, 300, 0, 0);
+    A.seen = 0;
+    T_CHECK(pump(&A, CC_EV_CHALLENGE, 3000));
+    cc_client_accept(&C.c, A.c.challenge_id);
+    C.seen = 0;
+    T_CHECK(pump(&C, CC_EV_START, 3000));
+    T_CHECK(C.c.start_game > g_last);
     // no CC_WEB_DIR: the site's route answers 404
     T_EQ_INT(tc_http(g_port, "GET", "/", NULL, NULL, 0, &r), 0);
     T_EQ_INT(r.status, 404);

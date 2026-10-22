@@ -16,6 +16,11 @@
 # NO FILE LISTS TO EDIT: every unit_*.c under c/test and server/test is a test program, every
 # lib_*.c under server/test is linked into the server's.
 
+# NO BUILT-IN RULES: make tries to remake every included .d file, and its built-in implicit rules
+# (RCS, SCCS, yacc, ...) only make that search over a thousand dependency files longer.
+MAKEFLAGS += --no-builtin-rules
+.SUFFIXES:
+
 C_ROOT := ..
 CB     := $(C_ROOT)/c_base
 UNAME  := $(shell uname)

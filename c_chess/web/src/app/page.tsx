@@ -46,9 +46,10 @@ export default function Lobby() {
       <section>
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
           <h1>Quick pairing</h1>
-          <label className="row muted" style={{ fontSize: 14 }}>
-            <input type="checkbox" checked={rated} onChange={(e) => setRated(e.target.checked)} /> Rated
-          </label>
+          <div className="seg" role="radiogroup" aria-label="mode">
+            <button role="radio" aria-checked={rated} className={rated ? 'on' : ''} onClick={() => setRated(true)}>Rated</button>
+            <button role="radio" aria-checked={!rated} className={!rated ? 'on' : ''} onClick={() => setRated(false)}>Casual</button>
+          </div>
         </div>
         <div className="pairs">
           {QUICK.map(([b, i, k]) => {
@@ -77,7 +78,8 @@ export default function Lobby() {
       </section>
       <aside className="panel">
         <div className="stats">
-          <span><b>{lobby?.games ?? 0}</b> games in play</span>
+          <span><b>{lobby?.games ?? 0}</b> {lobby?.games === 1 ? 'game' : 'games'} in play</span>
+          <span><b>{lobby?.n ?? 0}</b> {lobby?.n === 1 ? 'seek' : 'seeks'} waiting</span>
           <span><b>{lobby?.players ?? 0}</b> players</span>
         </div>
         <table className="seeks">
