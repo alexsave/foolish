@@ -33,6 +33,7 @@ cd adventurer/web && npm install && NEXT_PUBLIC_ADV_SERVER=http://127.0.0.1:8711
 make -C adventurer/server check        # every unit test and the end-to-end smoke (a real server, uploads, tiles, a restart)
 make -C adventurer/server check-asan   # the same under ASan + UBSan
 make -C adventurer/server fuzz-smoke   # the PBF reader, the trace parser + matcher, the tile request (libFuzzer, Homebrew LLVM on macOS)
+adventurer/server/build/adv-bench adventurer/data/region.graph 1000   # the matcher on real roads, in process: CPU per ride, recall, precision
 ```
 
 ## Layout
