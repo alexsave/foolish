@@ -20,6 +20,9 @@
 // (ADV_SEGF_*) say how. False: not a highway, a kind we skip, or nobody may use it.
 bool osm_way_road(const pbf_tag *tags, int n_tags, uint8_t *access, uint8_t *hclass, uint8_t *flags);
 
+// The way's road name (name:en preferred, else name), or NULL.
+const char *osm_way_name(const pbf_tag *tags, int n_tags);
+
 // The admin_level of a named boundary=administrative relation when bit admin_level of `levels`
 // is set (bit 8 for towns, bits 7 and 8 for boroughs and villages both), else 0; the name
 // (name:en preferred, else name) is copied into name[], cut to fit ADV_REGION_NAME on a UTF-8

@@ -4,6 +4,8 @@
 #include "graph.h"
 #include "lib_fakegraph.h"
 #include "t.h"
+
+#include "crc32c/crc32c.h"
 #include "trace.h"
 #include "util/err.h"
 
@@ -96,6 +98,29 @@ static void test_graph(void) {
     T_CHECK_MSG(fabs(west_all - g.h->total_len_m[ADV_T_ALL]) < 1, "regions %f total %f", west_all, g.h->total_len_m[ADV_T_ALL]);
     T_CHECK(g.h->total_len_m[ADV_T_FOOT] > g.h->total_len_m[ADV_T_BIKE]);
     T_CHECK(strcmp(g.regions[0].name, "West") == 0 && strcmp(g.regions[1].name, "East") == 0);
+    // Names: a horizontal street is "Row <j>" (one blob entry however many segments share it),
+    // a vertical one unnamed (name 0, the empty string at the blob's start).
+    {
+        uint32_t named = 0, unnamed = 0, offsets[64] = { 0 }, n_off = 0;
+        for (uint32_t i = 0; i < g.h->n_segs; i++) {
+            const adv_seg *s = &g.segs[i];
+            const char *nm = adv_seg_name(&g, i);
+            bool horizontal = g.nodes[s->node_a].lat == g.nodes[s->node_b].lat;
+            if (horizontal) {
+                named++;
+                T_CHECK_MSG(strncmp(nm, "Row ", 4) == 0, "name '%s'", nm);
+                bool seen = false;
+                for (uint32_t k = 0; k < n_off; k++) if (offsets[k] == s->name) seen = true;
+                if (!seen && n_off < 64) offsets[n_off++] = s->name;
+            } else {
+                unnamed++;
+                T_CHECK_MSG(s->name == 0 && nm[0] == 0, "name '%s'", nm);
+            }
+        }
+        T_CHECK(named > 0 && unnamed > 0);
+        T_CHECK_MSG(n_off == (uint32_t)o.rows + 1, "%u distinct names for %d rows", n_off, o.rows + 1);
+        T_CHECK(g.h->n_names_bytes == 1 + n_off * 6);   // "Row N\0" each, after the empty name
+    }
     // Hilbert order: the first and last segments are far apart, neighbours close.
     adv_frame f = adv_frame_at(g.h->min_lat);
     double sum_adjacent = 0;
@@ -120,6 +145,25 @@ static void test_graph(void) {
         buf[g.h->off_segs + 20] ^= 0x40;
         T_CHECK(adv_graph_check(buf, g.map_len, err, sizeof err) == CB_E_INVALID);
         T_CHECK(adv_graph_check(buf, g.map_len - 1, err, sizeof err) == CB_E_INVALID);
+        buf[g.h->off_segs + 20] ^= 0x40;
+        // The names must read as C strings whatever the file says: a blob whose last byte is not
+        // a NUL, and a segment naming an offset past the blob, each refuse even with the CRC
+        // made right again (a wrong file must refuse, never read past its end).
+        adv_graph_hdr *hd = (adv_graph_hdr *)buf;
+        uint8_t *names = buf + hd->off_names;
+        uint8_t last = names[hd->n_names_bytes - 1];
+        names[hd->n_names_bytes - 1] = 'x';
+        hd->crc = crc32c(0, buf + sizeof *hd, g.map_len - sizeof *hd);
+        T_CHECK(adv_graph_check(buf, g.map_len, err, sizeof err) == CB_E_INVALID);
+        names[hd->n_names_bytes - 1] = last;
+        adv_seg *s0 = (adv_seg *)(buf + hd->off_segs);
+        uint32_t keep = s0->name;
+        s0->name = hd->n_names_bytes;
+        hd->crc = crc32c(0, buf + sizeof *hd, g.map_len - sizeof *hd);
+        T_CHECK(adv_graph_check(buf, g.map_len, err, sizeof err) == CB_E_INVALID);
+        s0->name = keep;
+        hd->crc = crc32c(0, buf + sizeof *hd, g.map_len - sizeof *hd);
+        T_CHECK(adv_graph_check(buf, g.map_len, err, sizeof err) == CB_OK);
         free(buf);
     }
     // Masks of a run.
@@ -251,7 +295,13 @@ static void test_long_way(void) {
         pts[i].lon = a.lon;
     }
     adv_build *b = adv_build_new("long");
-    T_CHECK(adv_build_add_way(b, ids, pts, N, ADV_ACC_BIKE | ADV_ACC_FOOT, ADV_HC_PRIMARY, 0) == CB_OK);
+    // A name past ADV_NAME_MAX is cut on a character boundary: 63 ASCII bytes then a 2-byte char
+    // (bytes 63..64), then more: a cut at 64 would split the character, so it is cut at 63.
+    char longname[80];
+    memset(longname, 'a', 63);
+    memcpy(longname + 63, "\xC3\xA9\xC3\xA9zzz", 7);
+    longname[70] = 0;
+    T_CHECK(adv_build_add_way(b, ids, pts, N, ADV_ACC_BIKE | ADV_ACC_FOOT, ADV_HC_PRIMARY, 0, longname) == CB_OK);
     char path[512], err[256] = "";
     fg_tmp_path(path, sizeof path, "unit_graph_long");
     int rc = adv_build_finish(b, path, err, sizeof err);
@@ -260,6 +310,10 @@ static void test_long_way(void) {
     if (rc != CB_OK) return;
     adv_graph g;
     T_CHECK(adv_graph_open(path, &g, err, sizeof err) == CB_OK);
+    for (uint32_t i = 0; i < g.h->n_segs; i++) {
+        const char *nm = adv_seg_name(&g, i);
+        T_CHECK_MSG(strlen(nm) == 63 && memcmp(nm, longname, 63) == 0, "name %zu bytes", strlen(nm));
+    }
     double total = 0;
     for (uint32_t i = 0; i < g.h->n_segs; i++) {
         T_CHECK_MSG(g.segs[i].len_m <= ADV_SEG_MAX_LEN_M, "seg %u len %f", i, g.segs[i].len_m);
