@@ -28,7 +28,13 @@
 #include "util/log.h"
 #include "util/pool.h"
 
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
+#include <stdatomic.h>
+#include <stdio.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <stdlib.h>
@@ -159,10 +165,51 @@ static void close_now(int fd) {
     close(fd);
 }
 
+// DIAGNOSTICS (temporary, for CI): why a socket could not be opened.
+static void why_no_socket(void) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)g_port);
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int rc = connect(fd, (struct sockaddr *)&sa, sizeof sa), e = errno;
+    fprintf(stderr, "DIAG connect rc %d errno %d (%s); ws_conns %d http_conns %d\n", rc, e, strerror(e),
+            atomic_load(&g_ctx.stats.ws_conns), atomic_load(&g_ctx.stats.http_conns));
+    if (rc == 0) {
+        static const char req[] = "GET /ws/public HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                                  "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+        ssize_t w = write(fd, req, sizeof req - 1);
+        char buf[256] = { 0 };
+        struct pollfd p = { fd, POLLIN, 0 };
+        int pr = poll(&p, 1, 5000);
+        ssize_t r = pr > 0 ? recv(fd, buf, sizeof buf - 1, 0) : -1;
+        fprintf(stderr, "DIAG write %zd poll %d recv %zd errno %d: %.80s\n", w, pr, r, errno, buf);
+    }
+    close(fd);
+    FILE *f = fopen("/proc/net/sockstat", "r");
+    char line[256];
+    while (f && fgets(line, sizeof line, f)) fprintf(stderr, "DIAG %s", line);
+    if (f) fclose(f);
+    int states[16] = { 0 };
+    f = fopen("/proc/net/tcp", "r");
+    while (f && fgets(line, sizeof line, f)) {
+        unsigned st;
+        if (sscanf(line, "%*s %*s %*s %x", &st) == 1 && st < 16) states[st]++;
+    }
+    if (f) fclose(f);
+    fprintf(stderr, "DIAG tcp states: est %d synsent %d synrecv %d finwait1 %d finwait2 %d timewait %d close %d closewait %d lastack %d\n",
+            states[1], states[2], states[3], states[4], states[5], states[6], states[7], states[8], states[9]);
+    f = fopen("/proc/sys/net/ipv4/ip_local_port_range", "r");
+    if (f && fgets(line, sizeof line, f)) fprintf(stderr, "DIAG port range %s", line);
+    if (f) fclose(f);
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     start_once();
     fz_in in = fz_in_of(data, size);
     int fd = tc_ws_open(g_port, "/ws/public", NULL);
+    if (fd < 0) why_no_socket();
     FZ_CHECK(fd >= 0);
     // A user's push, from this thread: an anonymous socket is never one of the user's.
     const cb_rt_to to = { .family = &fam_mine, .user_id = U1 };
