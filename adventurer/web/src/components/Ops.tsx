@@ -73,7 +73,8 @@ export function Ops({ ops, spark }: Props) {
           <Tile label="Regions" value={int(ops.regions)} />
           <Tile label="Uptime" value={uptime(ops.uptimeS)} />
           <Tile label="Replayed at start" value={int(ops.recovered)} />
-          <Tile label="Graph km bike / foot" value={`${int(Math.round(ops.totalLenKm[0]))} / ${int(Math.round(ops.totalLenKm[1]))}`} />
+          <Tile label="Graph km bike" value={int(Math.round(ops.totalLenKm[0]))} />
+          <Tile label="Graph km foot" value={int(Math.round(ops.totalLenKm[1]))} />
         </div>
       )}
     </section>

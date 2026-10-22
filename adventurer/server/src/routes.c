@@ -426,7 +426,7 @@ static void base_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     int n = adv_tile_render(&adv_srv.graph, &tr, 0, NULL, NULL, s, &bytes);
     if (n < 0) { cb_router_error(res, n == CB_E_INVALID ? 404 : 500, cb_strerror(n)); return; }
     note_dropped(s, &tr);
-    adv_hist_add(&adv_m.tile, (uint64_t)(cb_mono_us() - t0));
+    if (n > 0) adv_hist_add(&adv_m.tile, (uint64_t)(cb_mono_us() - t0));   // an empty tile (the sea) is no measure of a render
     adv_rate_add(&adv_m.tiles, cb_now_ms(), 1);
     atomic_fetch_add(&adv_m.tiles_total, 1);
     atomic_fetch_add(&g_bt_misses, 1);
@@ -466,7 +466,7 @@ static void user_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     pthread_mutex_unlock(l);
     if (n < 0) { cb_router_error(res, n == CB_E_INVALID ? 404 : 500, cb_strerror(n)); return; }
     note_dropped(s, &tr);
-    adv_hist_add(&adv_m.tile, (uint64_t)(cb_mono_us() - t0));
+    if (n > 0) adv_hist_add(&adv_m.tile, (uint64_t)(cb_mono_us() - t0));   // an empty tile (the sea) is no measure of a render
     adv_rate_add(&adv_m.tiles, cb_now_ms(), 1);
     atomic_fetch_add(&adv_m.tiles_total, 1);
     tile_answer(res, bytes, n, etag, CACHE);
