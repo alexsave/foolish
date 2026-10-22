@@ -72,6 +72,11 @@ typedef struct cb_ws_handlers {
     // Called exactly once, whatever closed it (peer, error, cb_ws_close,
     // shutdown). After it returns the cb_ws is freed: drop every pointer to it.
     void (*on_close)(cb_ws *ws, void *ud);
+    // A PONG from the peer, with its payload, unmasked (RFC 6455 5.5.3: the payload of the
+    // PING it answers). NULL: pongs are only liveness, which the server counts by itself. An
+    // endpoint that times its peer sends a PING with the clock in it (cb_ws_send, CB_WS_OP_PING)
+    // and reads the clock back here (lichess's round socket does).
+    void (*on_pong)(cb_ws *ws, const uint8_t *data, size_t len, void *ud);
 } cb_ws_handlers;
 
 // Inside a CB_ROUTE_LOOP handler: validates the upgrade request (GET, Upgrade:

@@ -59,7 +59,7 @@ static void ws_msg(cb_ws *ws, int op, const uint8_t *d, size_t n, void *ud) {
     }
     cb_ws_send(ws, op, d, n);
 }
-static const cb_ws_handlers WS = { NULL, ws_msg, NULL };
+static const cb_ws_handlers WS = { .on_message = ws_msg };
 static void h_ws(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { cb_ws_upgrade(q, s, &WS, NULL); }
 
 static void *run(void *arg) {

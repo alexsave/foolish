@@ -121,7 +121,7 @@ static int upgrade_with(const char *offered, const char *protocol, cb_http_res *
     r.headers[r.n_headers++] = (cb_http_header){ "Sec-WebSocket-Version", "13" };
     r.headers[r.n_headers++] = (cb_http_header){ "Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==" };
     if (offered) r.headers[r.n_headers++] = (cb_http_header){ "Sec-WebSocket-Protocol", offered };
-    static const cb_ws_handlers none = { NULL, NULL, NULL };
+    static const cb_ws_handlers none = { 0 };
     cb_res_init(res);
     return cb_ws_upgrade_protocol(&r, res, &none, NULL, protocol);
 }

@@ -47,7 +47,7 @@ static void ws_msg(cb_ws *ws, int op, const uint8_t *d, size_t n, void *ud) {
 }
 static void ws_open(cb_ws *ws, void *ud) { cb_ws_send_text(ws, "hello", 5); }
 static void ws_close(cb_ws *ws, void *ud) { atomic_fetch_add(&g_closed, 1); }
-static const cb_ws_handlers WS = { ws_open, ws_msg, ws_close };
+static const cb_ws_handlers WS = { .on_open = ws_open, .on_message = ws_msg, .on_close = ws_close };
 
 static void h_ws(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { cb_ws_upgrade(q, s, &WS, NULL); }
 

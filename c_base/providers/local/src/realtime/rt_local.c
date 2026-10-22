@@ -710,7 +710,7 @@ static void on_close(cb_ws *ws, void *ud) {
     if (c) lconn_free(L, c);   // a job still out finds nothing and frees itself
 }
 
-static const cb_ws_handlers WS_HUB = { on_open, on_message, on_close };
+static const cb_ws_handlers WS_HUB = { .on_open = on_open, .on_message = on_message, .on_close = on_close };
 
 // ---- publishing ------------------------------------------------------------------------
 

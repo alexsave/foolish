@@ -673,7 +673,7 @@ static bool ws_frames(conn *c) {
             cb_buf_consume(&c->in, (size_t)n);
             return flush(c);
         } else if (f.opcode == CB_WS_OP_PONG) {
-            // nothing to do
+            if (!c->closing && c->h && c->h->on_pong) c->h->on_pong(c, payload, (size_t)f.len, c->ud);
         } else {
             if (f.opcode != CB_WS_OP_CONT) {
                 if (c->msg_op != -1) { cb_ws_close(c, 1002); return false; }
