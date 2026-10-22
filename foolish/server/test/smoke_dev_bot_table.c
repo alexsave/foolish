@@ -318,6 +318,8 @@ static void think_time_paces_the_bots(void) {
     T_CHECK(moved <= 6);   // at a think's pace, not the kernel's 300 ms
 }
 static void three_bots_podkidnoy(void) { bot_only_game(2, 3, 0); }
+// A full table: the house can seat seven, the first bot seats the eighth.
+static void eight_bots_classic(void) { bot_only_game(5, 8, 1); }
 
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s build/cbase\n", argv[0]); return 2; }
@@ -326,6 +328,7 @@ int main(int argc, char **argv) {
     T_RUN(gate_and_bytes);
     T_RUN(two_bots_classic);
     T_RUN(three_bots_podkidnoy);
+    T_RUN(eight_bots_classic);
     T_RUN(think_time_paces_the_bots);
     tp_stop(&g_dev.child, 15, 10000);
     return T_DONE();
