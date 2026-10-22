@@ -108,8 +108,19 @@ struct adv_match_scratch {
     hent     *heap;       // HEAP_CAP
     uint32_t  heap_n;
     adv_hit  *hits;       // ADV_MATCH_MAX_HITS
+    // THE ROUTE CACHE: what a local search found for a pair of segments (its node-to-node
+    // length, the ends it used, the segments passed whole, or that it found nothing), kept
+    // across the samples of one match. Candidates persist for many samples at 15 m spacing,
+    // so the same pairs are priced again and again; the along-the-segment parts are added
+    // fresh for each sample's projections. A route found for one projection is a route, if
+    // not always the shortest, for the next: the fast paths price the pairs that matter.
+    uint32_t *rc_a, *rc_b, *rc_gen, *rc_path;   // RC_SLOTS each (rc_path: RC_SLOTS * PATH_MAX)
+    float    *rc_node;                          // RC_SLOTS
+    uint8_t  *rc_ok, *rc_ea, *rc_eb, *rc_pn;    // RC_SLOTS each
+    uint32_t  rc_cur;
     adv_pt    segpts[ADV_SEG_MAX_PTS];
 };
+#define RC_SLOTS 4096
 
 const char *adv_match_reason(int rc) {
     switch (rc) {
@@ -144,6 +155,10 @@ static size_t scratch_bytes(void) {
     at += 2 * (((size_t)DD_SLOTS * sizeof(uint32_t) + 15) & ~(size_t)15);
     at += ((size_t)NS_SLOTS * sizeof(nslot) + 15) & ~(size_t)15;
     at += ((size_t)HEAP_CAP * sizeof(hent) + 15) & ~(size_t)15;
+    at += 3 * (((size_t)RC_SLOTS * sizeof(uint32_t) + 15) & ~(size_t)15);
+    at += ((size_t)RC_SLOTS * PATH_MAX * sizeof(uint32_t) + 15) & ~(size_t)15;
+    at += ((size_t)RC_SLOTS * sizeof(float) + 15) & ~(size_t)15;
+    at += 4 * (((size_t)RC_SLOTS + 15) & ~(size_t)15);
     at += ((size_t)ADV_MATCH_MAX_HITS * sizeof(adv_hit) + 15) & ~(size_t)15;
     return at;
 }
@@ -165,12 +180,22 @@ adv_match_scratch *adv_match_scratch_new(void) {
     CARVE(s->ns, nslot, NS_SLOTS);
     CARVE(s->heap, hent, HEAP_CAP);
     CARVE(s->hits, adv_hit, ADV_MATCH_MAX_HITS);
+    CARVE(s->rc_a, uint32_t, RC_SLOTS);
+    CARVE(s->rc_b, uint32_t, RC_SLOTS);
+    CARVE(s->rc_gen, uint32_t, RC_SLOTS);
+    CARVE(s->rc_path, uint32_t, (size_t)RC_SLOTS * PATH_MAX);
+    CARVE(s->rc_node, float, RC_SLOTS);
+    CARVE(s->rc_ok, uint8_t, RC_SLOTS);
+    CARVE(s->rc_ea, uint8_t, RC_SLOTS);
+    CARVE(s->rc_eb, uint8_t, RC_SLOTS);
+    CARVE(s->rc_pn, uint8_t, RC_SLOTS);
     if (at > total) {   // the mirror above drifted from the carving: refuse rather than overrun
         free(base);
         return NULL;
     }
     // Generation 0 is "never used" in both tables; the counters start at 1.
     s->dd_cur = 1;
+    s->rc_cur = 1;
     s->ns_cur = 1;
     return s;
 }
@@ -355,6 +380,13 @@ static bool local_search(const adv_graph *g, adv_match_scratch *s, uint32_t a, d
     return false;   // a cycle in the predecessors: impossible, but bounded
 }
 
+// The cache slot of the pair (a, b): its index, and whether it holds this match's answer for it.
+static uint32_t rc_find(const adv_match_scratch *s, uint32_t a, uint32_t b, bool *hit) {
+    uint32_t i = hash32(a * 2654435761u ^ (b + 0x9E3779B9u)) & (RC_SLOTS - 1);
+    *hit = s->rc_gen[i] == s->rc_cur && s->rc_a[i] == a && s->rc_b[i] == b;
+    return i;
+}
+
 // ---- candidates ------------------------------------------------------------------------------
 
 // The projection of p onto seg: the distance, and in *frac where along the segment by length.
@@ -390,15 +422,32 @@ static int gather(const adv_graph *g, adv_match_scratch *s, const adv_frame *f, 
     // edge of the extract is still a road, and a fix a few metres outside the file's bounding box
     // still belongs to it (the segment bounding boxes below reject what is really far).
     uint32_t tx, ty, ci, cj;
-    adv_tile_of(p, ADV_CELL_ZOOM, &tx, &ty);
+    double fx, fy;
+    adv_tile_frac(p, ADV_CELL_ZOOM, &fx, &fy);
+    tx = (uint32_t)fx;
+    ty = (uint32_t)fy;
     const adv_graph_hdr *h = g->h;
     if (tx + 1 < h->cell_x0 || ty + 1 < h->cell_y0 || tx > h->cell_x0 + h->cells_w || ty > h->cell_y0 + h->cells_h) return 0;
     ci = tx < h->cell_x0 ? 0 : tx - h->cell_x0 >= h->cells_w ? h->cells_w - 1 : tx - h->cell_x0;
     cj = ty < h->cell_y0 ? 0 : ty - h->cell_y0 >= h->cells_h ? h->cells_h - 1 : ty - h->cell_y0;
+    // A NEIGHBOUR CELL ONLY WHEN THE RADIUS REACHES INTO IT: a cell is about 600 m and the
+    // radius 35, so most samples need their own cell alone (the nine-cell walk was a third of
+    // a match). A cell is square in metres here (Web Mercator keeps the aspect), so the width
+    // in metres is one longitude unit's worth times the tile's width in units; a clamped point
+    // (outside the grid) takes every neighbour.
+    double cell_m = (360.0 * ADV_DEG / (double)(1u << ADV_CELL_ZOOM)) * f->mx;
+    int di0 = -1, di1 = 1, dj0 = -1, dj1 = 1;
+    if (tx - h->cell_x0 == ci && ty - h->cell_y0 == cj) {
+        double ex = (fx - (double)tx) * cell_m, ey = (fy - (double)ty) * cell_m;
+        di0 = ex < radius ? -1 : 0;
+        di1 = cell_m - ex < radius ? 1 : 0;
+        dj0 = ey < radius ? -1 : 0;
+        dj1 = cell_m - ey < radius ? 1 : 0;
+    }
     dd_next(s);
     int nc = 0;
-    for (int dj = -1; dj <= 1; dj++) {
-        for (int di = -1; di <= 1; di++) {
+    for (int dj = dj0; dj <= dj1; dj++) {
+        for (int di = di0; di <= di1; di++) {
             int64_t ii = (int64_t)ci + di, jj = (int64_t)cj + dj;
             if (ii < 0 || jj < 0) continue;
             uint32_t n;
@@ -586,6 +635,10 @@ void adv_match(const adv_graph *g, const adv_trace_pt *pts, uint32_t n, uint8_t 
     if (rlon < 0) rlon = ADV_LON_MAX;
     const float off_emit = (float)((o.cand_radius_m / EMIT_M) * (o.cand_radius_m / EMIT_M) + 1.0);
     s->arena_n = 0;
+    if (++s->rc_cur == 0) {   // the route cache's generation wrapped: clear the stamps, as dd_next does
+        memset(s->rc_gen, 0, (size_t)RC_SLOTS * sizeof(uint32_t));
+        s->rc_cur = 1;
+    }
     uint32_t n_searches = 0, n_jumps = 0, n_fast = 0, n_offroad = 0;
     for (uint32_t i = 0; i < ns; i++) {
         if (i % ADV_MATCH_BUDGET_EVERY == 0 && cb_thread_cpu_us() - cpu0 > o.cpu_budget_us) {
@@ -653,9 +706,41 @@ void adv_match(const adv_graph *g, const adv_trace_pt *pts, uint32_t n, uint8_t 
                             if (rr < r) { r = rr; ea = x; eb = y; }
                         }
                     }
-                    if (r == DBL_MAX) continue;   // not adjacent: the slow path below
+                    uint32_t mid = NONE;
+                    if (r == DBL_MAX) {
+                        // TWO HOPS: a's end x and b's end y joined by one segment that has both as
+                        // its ends. Samples 15 m apart skip a short segment at every crossing (the
+                        // stub between two intersections, the crossing itself), and on real roads
+                        // that was a fifth of all transitions, each a heap search; here it is a
+                        // walk of one node's adjacency.
+                        for (int x = 0; x < 2 && mid == NONE; x++) {
+                            uint32_t na = x ? sa->node_b : sa->node_a;
+                            const adv_node *nd = &g->nodes[na];
+                            for (uint32_t q = 0; q < nd->n_adj && mid == NONE; q++) {
+                                uint32_t m = g->adj[nd->adj_off + q];
+                                if (m == a || m == b) continue;
+                                const adv_seg *sm = &g->segs[m];
+                                uint32_t other = sm->node_a == na ? sm->node_b : sm->node_a;
+                                if (sm->node_a != na && sm->node_b != na) continue;
+                                for (int y = 0; y < 2; y++) {
+                                    uint32_t nb = y ? sb->node_b : sb->node_a;
+                                    if (nb != other || nb == na) continue;
+                                    double rr = along_to_end(g, a, fa, x) + sm->len_m + along_to_end(g, b, fb, y);
+                                    if (rr < r) { r = rr; ea = x; eb = y; mid = m; }
+                                }
+                            }
+                        }
+                        if (mid == NONE) continue;   // not within two hops: the slow path below
+                    }
                     route = r;
-                    kind = MK(TR_ADJ, ea, eb);
+                    kind = mid == NONE ? MK(TR_ADJ, ea, eb) : MK(TR_PATH, ea, eb);
+                    if (mid != NONE) {
+                        fast[k] = 1;
+                        n_fast++;
+                        float c = ps[k].cost + (float)(fabs(route - straight) / TRANS_M);
+                        if (c < best) { best = c; best_pred = (uint8_t)k; best_kind = kind; best_n = 1; s->best_path[0] = mid; }
+                        continue;
+                    }
                 }
                 fast[k] = 1;
                 n_fast++;
@@ -670,10 +755,35 @@ void adv_match(const adv_graph *g, const adv_trace_pt *pts, uint32_t n, uint8_t 
                 double fa = pc[k].frac, route;
                 uint8_t pn = 0;
                 int ea = 0, eb = 0;
-                n_searches++;
                 float c;
                 uint8_t kind;
-                if (local_search(g, s, a, fa, b, fb, 3 * straight + 200, &route, s->cur_path, &pn, &ea, &eb)) {
+                bool hit, found;
+                uint32_t ri = rc_find(s, a, b, &hit);
+                if (hit) {
+                    found = s->rc_ok[ri];
+                    if (found) {
+                        ea = s->rc_ea[ri];
+                        eb = s->rc_eb[ri];
+                        pn = s->rc_pn[ri];
+                        route = along_to_end(g, a, fa, ea) + s->rc_node[ri] + along_to_end(g, b, fb, eb);
+                        memcpy(s->cur_path, s->rc_path + (size_t)ri * PATH_MAX, (size_t)pn * sizeof(uint32_t));
+                    }
+                } else {
+                    n_searches++;
+                    found = local_search(g, s, a, fa, b, fb, 3 * straight + 200, &route, s->cur_path, &pn, &ea, &eb);
+                    s->rc_gen[ri] = s->rc_cur;
+                    s->rc_a[ri] = a;
+                    s->rc_b[ri] = b;
+                    s->rc_ok[ri] = found;
+                    if (found) {
+                        s->rc_ea[ri] = (uint8_t)ea;
+                        s->rc_eb[ri] = (uint8_t)eb;
+                        s->rc_pn[ri] = pn;
+                        s->rc_node[ri] = (float)(route - along_to_end(g, a, fa, ea) - along_to_end(g, b, fb, eb));
+                        memcpy(s->rc_path + (size_t)ri * PATH_MAX, s->cur_path, (size_t)pn * sizeof(uint32_t));
+                    }
+                }
+                if (found) {
                     c = ps[k].cost + (float)(fabs(route - straight) / TRANS_M);
                     kind = MK(TR_PATH, ea, eb);
                 } else {

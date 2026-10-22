@@ -41,6 +41,14 @@ void adv_tile_of(adv_pt p, int z, uint32_t *x, uint32_t *y) {
     *y = (uint32_t)fy;
 }
 
+void adv_tile_frac(adv_pt p, int z, double *fx, double *fy) {
+    double mx, my;
+    mercator(p, &mx, &my);
+    double n = (double)(1u << z);
+    *fx = mx * n;
+    *fy = my * n;
+}
+
 static double tile_lat(double my) {   // mercator y (0..1) to degrees
     double n = M_PI - 2.0 * M_PI * my;
     return 180.0 / M_PI * atan(0.5 * (exp(n) - exp(-n)));

@@ -54,6 +54,8 @@ double adv_point_seg_m(const adv_frame *f, adv_pt p, adv_pt a, adv_pt b, double 
 
 // The tile at zoom z holding p (x, y in 0..2^z-1).
 void adv_tile_of(adv_pt p, int z, uint32_t *x, uint32_t *y);
+// The same as fractions: floor is the tile, the rest where in it (a point near an edge).
+void adv_tile_frac(adv_pt p, int z, double *fx, double *fy);
 // The tile's bounds in int32 units: *min is its south-west corner, *max its north-east.
 void adv_tile_bounds(int z, uint32_t x, uint32_t y, adv_pt *min, adv_pt *max);
 // p in the tile's extent coordinates (0..ADV_MVT_EXTENT inside the tile; may fall outside it).
