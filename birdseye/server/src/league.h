@@ -20,6 +20,7 @@
 #ifndef BE_LEAGUE_H
 #define BE_LEAGUE_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -31,6 +32,8 @@ typedef struct {
     int      tables_per_bot;   // tables one bot may sit at at once (a server bot is an account, not a person)
     int      podkidnoy;        // percent of tables under podkidnoy rules
     uint64_t seed;
+    bool     tournament;       // play the stored tournament (or draw one) instead of league tables
+    char     tour_file[512];   // the tournament's file; "" keeps none
 } be_league_opts;
 
 // The mode birdseye runs in (wire.h BE_MODE_*), set by birdseye_app.c at open.
@@ -44,6 +47,8 @@ void be_league_gauges(void);
 // GET /be/league: be_w_league, the bots, the results (wire.h), in a buffer the caller frees.
 // The bytes, or 0 when out of memory.
 size_t be_league_snapshot(void **out, uint8_t mode);
+// GET /be/tournament: the stored tournament (wire.h be_w_tour) in a buffer the caller frees.
+size_t be_tour_snapshot(void **out);
 
 // The seat count of a new table: 2 to 8, weighted toward two-player games, given how many bots
 // are free (never more seats than that) and a random draw r in [0, 1000). 0 when fewer than two are free.

@@ -9,6 +9,7 @@ import {
   readbe_w_event,
   readbe_w_league,
   readbe_w_result,
+  readbe_w_tour,
   readbe_w_list,
   readbe_w_session,
   readbe_w_table,
@@ -17,7 +18,9 @@ import {
   BE_F_OPS,
   BE_F_RESULT,
   BE_F_TABLE,
+  BE_F_TOUR,
   type Mem,
+  type be_w_tour_Snap,
   type be_w_bot_Snap,
   type be_w_result_Snap,
   type be_w_card_Snap,
@@ -43,6 +46,7 @@ export type WTable = be_w_table_Snap;
 export type MetricRow = cb_metric_row_Snap;
 export type WBot = be_w_bot_Snap;
 export type WResult = be_w_result_Snap;
+export type WTour = be_w_tour_Snap;
 
 // GET /be/league: the mode birdseye runs in, every bot's standing, every rated league game.
 export interface League {
@@ -124,6 +128,13 @@ export async function getLeague(signal?: AbortSignal): Promise<League> {
   return { mode: h.mode, bots, results };
 }
 
+export async function getTournament(signal?: AbortSignal): Promise<WTour> {
+  const m = memOf(await fetchBytes('/be/tournament', { signal }));
+  const t = readbe_w_tour(m, 0);
+  checkHash(t.hash);
+  return t;
+}
+
 export async function getMetrics(signal?: AbortSignal): Promise<Metrics> {
   return readMetrics(memOf(await fetchBytes('/metrics', { signal })), 0);
 }
@@ -158,6 +169,7 @@ export interface StreamHandlers {
   onOps: (o: Metrics) => void;
   onResult: (r: WResult) => void;
   onBot: (b: WBot) => void;
+  onTour: (t: WTour) => void;
   onState: (s: StreamState) => void;
   onError: (e: Error) => void;
 }
@@ -279,6 +291,9 @@ export function openStream(h: StreamHandlers): () => void {
             break;
           case BE_F_BOT:
             h.onBot(readbe_w_bot(codec.mem, at));
+            break;
+          case BE_F_TOUR:
+            h.onTour(readbe_w_tour(codec.mem, at));
             break;
           default:
             break;

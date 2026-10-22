@@ -4,7 +4,9 @@
 //
 // Settings, beside the platform's CBASE_* (config.h):
 //   BE_MODE          "league" (the default): the server's bots play each other at tables of their own
-//                    (league.h); "mixed": fake humans play each other and some bots (sim.h)
+//                    (league.h); "tournament": they play the stored tournament, or a new one when
+//                    none is running (tournament.h); "mixed": fake humans and some bots (sim.h)
+//   BE_TOURNAMENT_FILE the tournament's file (default ../data/tournament.bin), shown in every mode
 //   BE_SERVER        the game server, host:port (default 127.0.0.1:8811)
 //   BE_SERVER_PID    its pid, for the RSS and CPU in the ops frame (0: unknown)
 // The league's:
@@ -89,7 +91,7 @@ static long env_long(const char *name, long dflt, long lo, long hi) {
 // report pushed to the room as it answers GET /metrics (loop-thread delivery is immediate).
 static void ops_tick(cb_loop *l, void *ud) {
     be_gauges_common(g_server_pid);
-    if (be_mode == BE_MODE_LEAGUE) be_league_gauges();
+    if (be_mode != BE_MODE_MIXED) be_league_gauges();
     else be_sim_gauges();
     if (cb_rt_room_heard(g_ctx->rt, BE_ROOM) && g_ctx->metrics) {
         size_t size = cb_metrics_report_size(g_ctx->metrics);
@@ -123,13 +125,14 @@ static int be_serve_open(cb_ctx *ctx, char *err, size_t cap) {
     g_server_pid = (int)env_long("BE_SERVER_PID", 0, 0, INT32_MAX);
     const char *mode = getenv("BE_MODE");
     if (!mode || !*mode || strcmp(mode, "league") == 0) be_mode = BE_MODE_LEAGUE;
+    else if (strcmp(mode, "tournament") == 0) be_mode = BE_MODE_TOURNAMENT;
     else if (strcmp(mode, "mixed") == 0) be_mode = BE_MODE_MIXED;
     else {
-        snprintf(err, cap, "birdseye: BE_MODE='%s' is neither league nor mixed", mode);
+        snprintf(err, cap, "birdseye: BE_MODE='%s' is not league, tournament or mixed", mode);
         return CB_E_INVALID;
     }
     int rc;
-    if (be_mode == BE_MODE_LEAGUE) {
+    if (be_mode == BE_MODE_LEAGUE || be_mode == BE_MODE_TOURNAMENT) {
         be_league_opts o;
         memset(&o, 0, sizeof o);
         snprintf(o.server, sizeof o.server, "%s", server);
@@ -137,7 +140,10 @@ static int be_serve_open(cb_ctx *ctx, char *err, size_t cap) {
         snprintf(o.admin_token, sizeof o.admin_token, "%s", tok ? tok : "");
         const char *file = getenv("BE_LEAGUE_FILE");
         snprintf(o.file, sizeof o.file, "%s", file ? file : "../data/league.bin");
-        o.tables = (int)env_long("BE_LEAGUE_TABLES", 10, 1, 64);
+        o.tournament = be_mode == BE_MODE_TOURNAMENT;
+        const char *tf = getenv("BE_TOURNAMENT_FILE");
+        snprintf(o.tour_file, sizeof o.tour_file, "%s", tf ? tf : "../data/tournament.bin");
+        o.tables = (int)env_long("BE_LEAGUE_TABLES", o.tournament ? 16 : 10, 1, 64);
         o.tables_per_bot = (int)env_long("BE_LEAGUE_PER_BOT", 1, 1, 8);
         o.podkidnoy = (int)env_long("BE_PODKIDNOY", 30, 0, 100);
         o.seed = (uint64_t)env_long("BE_SEED", 1, 0, INT32_MAX);
@@ -171,7 +177,7 @@ static int be_serve_open(cb_ctx *ctx, char *err, size_t cap) {
 }
 
 static void be_serve_close(cb_ctx *ctx) {
-    if (be_mode == BE_MODE_LEAGUE) be_league_stop();
+    if (be_mode != BE_MODE_MIXED) be_league_stop();
     else be_sim_stop();
     be_world_g.publish = NULL;
     be_world_free(&be_world_g);

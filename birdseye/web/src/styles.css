@@ -1473,3 +1473,131 @@ input {
     padding: 0;
   }
 }
+
+/* ---- the tournament --------------------------------------------------------------------------- */
+.tour-page {
+  padding: 16px;
+  height: calc(100vh - var(--topbar));
+  min-height: 620px;
+  display: flex;
+}
+
+.tour-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bracket {
+  position: relative;
+  flex: 1;
+  min-height: 560px;
+}
+
+.bk-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.bk-lines path {
+  fill: none;
+  stroke: #d5d9e0;
+  stroke-width: 1.2;
+}
+
+.bk-round {
+  position: absolute;
+  top: 0;
+  font-size: 10px;
+}
+
+.bk-match {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.bk-match.live {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 2px #dcfce7;
+}
+
+.bk-side {
+  display: grid;
+  grid-template-columns: 18px 8px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px 0 5px;
+}
+
+.bk-side + .bk-side {
+  border-top: 1px solid #f0f2f5;
+}
+
+.bk-side.won {
+  font-weight: 600;
+  background: #f3f8f4;
+}
+
+.bk-side.lost {
+  color: var(--faint);
+}
+
+.bk-seed {
+  font-size: 10px;
+  color: var(--faint);
+  text-align: right;
+}
+
+.bk-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bk-wins {
+  text-align: right;
+  font-weight: 600;
+}
+
+.fam-dot.empty {
+  background: #e5e7eb;
+}
+
+.bk-champion {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.bk-champion.crowned {
+  border: 1px solid var(--gold);
+  background: #fffaeb;
+  color: #8a6a12;
+}
+
+.bk-champ-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}

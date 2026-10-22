@@ -8,6 +8,7 @@
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
+#include "tournament.h"
 #include "world.h"
 
 #include "ask.h"
@@ -52,6 +53,7 @@ typedef struct {
     int          rating_tries;
     int64_t      created_ms, dealt_ms, last_change_ms, over_ms, retry_ms;
     uint32_t     moves;
+    int          match;   // the tournament match this game is of, -1 a league game
 } lg_table;
 
 static be_league_opts g_o;
@@ -70,6 +72,7 @@ static atomic_uint    g_seated;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static be_w_bot       g_bots[BE_LEAGUE_BOTS];
 static int            g_n_bots;
+static be_w_tour      g_tour;           // the stored tournament (BE_TOUR_IDLE: none)
 static be_w_result   *g_results;
 static uint32_t       g_n_results, g_cap_results;
 static FILE          *g_file;
@@ -308,7 +311,10 @@ static void set_seated(lg_table *t, bool seated) {
     else atomic_fetch_sub(&g_seated, (unsigned)t->n);
 }
 
+static void tour_game_over(lg_table *t, bool played, uint8_t fool_bot, int64_t now_ms);
+
 static void table_close(lg_table *t) {
+    tour_game_over(t, false, BE_TOUR_NONE, cb_now_ms());   // a tournament game given up: its match asks again
     if (g_w.ws >= 0) be_client_sub(&g_w, t->gid, t->gid_len, true);
     be_world_lock(&be_world_g);
     be_table *bt = be_world_find(&be_world_g, t->gid, t->gid_len);
@@ -376,6 +382,7 @@ static void rated(lg_table *t, int64_t now_ms) {
     pthread_mutex_unlock(&g_mu);
     file_append(&r);
     publish(&be_world_g, BE_F_RESULT, &r, sizeof r);
+    tour_game_over(t, true, r.fool >= 0 && r.fool < r.n ? r.bot[r.fool] : BE_TOUR_NONE, r.at_ms);
     for (int i = 0; i < nc; i++) publish(&be_world_g, BE_F_BOT, &copies[i], sizeof copies[i]);
 }
 
@@ -459,6 +466,109 @@ static void advance(lg_table *t, int64_t now_ms) {
 }
 
 // Picks the bots and asks the game server for the table. false when nothing could be started.
+static bool table_open(lg_table *t, const int *seat_bots, int n, bool podkidnoy, int match, int64_t now_ms);
+
+// ---- the tournament (tournament.h) ---------------------------------------------------------------
+
+static const char *g_ids[BE_LEAGUE_BOTS];
+
+static void tour_ids(void) {
+    for (int i = 0; i < g_n_bots; i++) g_ids[i] = g_bots[i].id;
+}
+
+// The bracket changed: kept (the file) and shown (the stream). Under g_mu.
+static void tour_changed(void) {
+    if (g_o.tour_file[0] && !be_tour_save(&g_tour, g_o.tour_file, g_ids, g_n_bots))
+        CB_WARN("birdseye", "tournament: cannot write %s", g_o.tour_file);
+    be_world *w = &be_world_g;
+    if (!w->publish) return;
+    uint8_t *frame = malloc(2 + sizeof g_tour);
+    if (!frame) return;
+    frame[0] = BE_SF_V;
+    frame[1] = BE_F_TOUR;
+    memcpy(frame + 2, &g_tour, sizeof g_tour);
+    w->publish(frame, 2 + sizeof g_tour);
+    free(frame);
+}
+
+// A tournament table that is over (rated: `played`, `fool_bot` its fool) or given up (not played).
+static void tour_game_over(lg_table *t, bool played, uint8_t fool_bot, int64_t now_ms) {
+    if (t->match < 0) return;
+    pthread_mutex_lock(&g_mu);
+    if (be_tour_result(&g_tour, t->match, played, fool_bot, now_ms)) {
+        if (g_tour.state == BE_TOUR_DONE && g_tour.champion != BE_TOUR_NONE)
+            CB_INFO("birdseye", "tournament: %.*s is the champion, after %u games", g_bots[g_tour.champion].name_len,
+                    g_bots[g_tour.champion].name, g_tour.games);
+        tour_changed();
+    }
+    pthread_mutex_unlock(&g_mu);
+    t->match = -1;
+}
+
+// The next tournament game, on a free table: false when none can start now.
+static bool tour_new(int64_t now_ms) {
+    lg_table *t = NULL;
+    for (int i = 0; i < g_n_tables && !t; i++)
+        if (g_tables[i].state == L_FREE) t = &g_tables[i];
+    if (!t) return false;
+    uint8_t seats[2];
+    pthread_mutex_lock(&g_mu);
+    int m = be_tour_next(&g_tour, seats);
+    pthread_mutex_unlock(&g_mu);
+    if (m < 0) return false;
+    int bots[2] = { seats[0], seats[1] };
+    if (!table_open(t, bots, 2, false, m, now_ms)) return false;
+    pthread_mutex_lock(&g_mu);
+    be_tour_started(&g_tour, m, t->gid, t->gid_len);
+    tour_changed();
+    pthread_mutex_unlock(&g_mu);
+    return true;
+}
+
+// At start: the stored bracket; in tournament mode a running one goes on and a finished or missing
+// one is drawn afresh from the server's ratings now.
+static void tour_open(int64_t now_wall) {
+    tour_ids();
+    memset(&g_tour, 0, sizeof g_tour);
+    g_tour.hash = be_wire_hash();
+    bool have = g_o.tour_file[0] && be_tour_load(&g_tour, g_o.tour_file, g_ids, g_n_bots);
+    if (!have) {
+        memset(&g_tour, 0, sizeof g_tour);
+        g_tour.hash = be_wire_hash();
+        g_tour.champion = g_tour.dropped = BE_TOUR_NONE;
+    }
+    if (!g_o.tournament) return;
+    // A game the last run had in play is not trusted to be watched again: its match asks anew.
+    for (int i = 0; i < BE_TOUR_MATCHES; i++) g_tour.matches[i].live = 0;
+    if (!have || g_tour.state != BE_TOUR_RUNNING) {
+        int32_t rating[BE_LEAGUE_BOTS];
+        bool random[BE_LEAGUE_BOTS];
+        for (int i = 0; i < g_n_bots; i++) {
+            rating[i] = g_bots[i].rating;
+            random[i] = g_bots[i].key_len == 6 && memcmp(g_bots[i].key, "random", 6) == 0;
+        }
+        if (!be_tour_draw(&g_tour, rating, random, g_n_bots, now_wall)) {
+            CB_WARN("birdseye", "tournament: %d bots: a draw needs 49", g_n_bots);
+            return;
+        }
+        CB_INFO("birdseye", "tournament: drawn, 48 bots; left out %.*s (rating %d), top seed %.*s (%d)",
+                g_bots[g_tour.dropped].name_len, g_bots[g_tour.dropped].name, g_bots[g_tour.dropped].rating,
+                g_bots[g_tour.seed_bot[0]].name_len, g_bots[g_tour.seed_bot[0]].name, g_tour.seed_rating[0]);
+    } else CB_INFO("birdseye", "tournament: going on, %u games played", g_tour.games);
+    tour_changed();
+}
+
+size_t be_tour_snapshot(void **out) {
+    be_w_tour *copy = malloc(sizeof *copy);
+    if (!copy) return 0;
+    pthread_mutex_lock(&g_mu);
+    *copy = g_tour;
+    pthread_mutex_unlock(&g_mu);
+    copy->hash = be_wire_hash();
+    *out = copy;
+    return sizeof *copy;
+}
+
 static bool table_new(int64_t now_ms) {
     lg_table *t = NULL;
     for (int i = 0; i < g_n_tables && !t; i++)
@@ -489,14 +599,18 @@ static bool table_new(int64_t now_ms) {
         int j = (int)rnd((uint32_t)i + 1);
         int f = free_idx[i]; free_idx[i] = free_idx[j]; free_idx[j] = f;
     }
-    bool podkidnoy = (int)rnd(100) < g_o.podkidnoy;
+    return table_open(t, free_idx, n, (int)rnd(100) < g_o.podkidnoy, -1, now_ms);
+}
+
+// Asks the game server for a table of these bots, in this seat order, and starts watching it.
+static bool table_open(lg_table *t, const int *seat_bots, int n, bool podkidnoy, int match, int64_t now_ms) {
     uint8_t body[3 + MAX_PLAYERS * (1 + BE_BOT_ID)];
     size_t at = 0;
     body[at++] = 1;   // dev_bot_table.h DEV_BOT_TABLE_FORMAT
     body[at++] = podkidnoy ? 0 : 1;
     body[at++] = (uint8_t)n;
     for (int i = 0; i < n; i++) {
-        const be_w_bot *b = &g_bots[free_idx[i]];
+        const be_w_bot *b = &g_bots[seat_bots[i]];
         body[at++] = b->id_len;
         memcpy(body + at, b->id, b->id_len);
         at += b->id_len;
@@ -531,7 +645,8 @@ static bool table_new(int64_t now_ms) {
     tc_response_free(&r);
     t->n = n;
     t->podkidnoy = podkidnoy;
-    for (int i = 0; i < n; i++) t->bots[i] = free_idx[i];
+    for (int i = 0; i < n; i++) t->bots[i] = seat_bots[i];
+    t->match = match;
     t->state = L_WATCH;
     t->created_ms = t->last_change_ms = now_ms;
     set_seated(t, true);
@@ -653,7 +768,7 @@ typedef struct {
 static void live_path(char *out, size_t cap) { snprintf(out, cap, "%s.live", g_o.file); }
 
 static void live_save(void) {
-    if (!g_o.file[0]) return;
+    if (!g_o.file[0] || g_o.tournament) return;   // a tournament asks its matches' games anew
     char path[600];
     live_path(path, sizeof path);
     FILE *f = fopen(path, "wb");
@@ -705,6 +820,7 @@ static void live_load(int64_t now_ms) {
             t->podkidnoy = r.podkidnoy;
             for (int b = 0; b < r.n; b++) t->bots[b] = r.bot[b];
             t->state = L_WATCH;
+            t->match = -1;
             t->have = t->refetching = false;
             t->dealt_ms = 0;
             t->created_ms = t->last_change_ms = now_ms;
@@ -739,7 +855,10 @@ static void *league_main(void *arg) {
             table_tick(&g_tables[i], now_ms);
             if (g_tables[i].state != L_FREE) live++;
         }
-        if (live < g_o.tables && now_ms >= next_create) {
+        if (g_o.tournament) {
+            // Every match that can play starts its game at once (the bots-only pace is quick).
+            while (live < g_o.tables && tour_new(now_ms)) live++;
+        } else if (live < g_o.tables && now_ms >= next_create) {
             next_create = now_ms + (table_new(now_ms) ? CREATE_GAP_MS : 5000);
         }
         if (now_ms >= next_board) {
@@ -805,7 +924,8 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
     bots_from_roster();
     read_board(false);
     file_open();
-    live_load(cb_mono_ms());
+    tour_open(cb_now_ms());
+    if (!g_o.tournament) live_load(cb_mono_ms());
     CB_INFO("birdseye", "league: %d bots, %d tables at once, up to %d a bot, podkidnoy %d%%, against %s", g_n_bots, g_n_tables, g_o.tables_per_bot, g_o.podkidnoy, o->server);
     atomic_store(&g_stop, false);
     if (pthread_create(&g_tid, NULL, league_main, NULL) != 0) {

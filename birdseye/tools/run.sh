@@ -9,7 +9,9 @@
 #
 # Ports: the game server on $GAME_PORT (8811), birdseye on $BE_PORT (8812), Next on $WEB_PORT
 # (5811). BE_MODE picks what birdseye plays: "league" (the default: the server's bots against each
-# other at tables of their own, BE_LEAGUE_TABLES at once) or "mixed" (fake humans and some bots).
+# other at tables of their own, BE_LEAGUE_TABLES at once), "tournament" (the stored tournament goes
+# on, or a new one is drawn when none is running; the site shows the last one in every mode), or
+# "mixed" (fake humans and some bots).
 # The other knobs are the BE_* variables birdseye/server/src/birdseye_app.c lists (BE_PLAYERS,
 # BE_TABLES, BE_THREADS, BE_THINK_MS, BE_BOT_SHARE, BE_PODKIDNOY, BE_HOSTILE_EVERY, BE_REMATCH,
 # BE_SEED); WEB=0 leaves the site out.
@@ -32,6 +34,13 @@ BE_DB=${BE_DB:-$BE/data/birdseye.sqlite}
 JWT_SECRET=${JWT_SECRET:-birdseye-local-dev-jwt-secret-0123456789abcdef}
 ADMIN_TOKEN=${ADMIN_TOKEN:-birdseye-local-dev-admin-token-0123456789abcdef}
 mkdir -p "$RUN_DIR" "$BE/data"
+# A tournament plays at the kernel's own bots-only pace (300 ms a move) on 16 tables; the league at a
+# human's pace (a dev-only think time of 1.5 to 5 s) on 40.
+if [ "${BE_MODE:-league}" = tournament ]; then
+    THINK_DEFAULT=""; TABLES_DEFAULT=16
+else
+    THINK_DEFAULT="1500-5000"; TABLES_DEFAULT=40
+fi
 
 stop_one() {
     local name=$1 pidfile="$RUN_DIR/$1.pid"
@@ -85,7 +94,7 @@ wait_listening() {
         CBASE_LIMIT_SIGNUP_IP=1000000 CBASE_LIMIT_SIGNUP_ALL=1000000 CBASE_LIMIT_SIGNIN_IP=1000000 \
         CBASE_LIMIT_CREATE_USER=1000000 CBASE_LIMIT_BUMP_USER=1000000 CBASE_LIMIT_SUB_USER=1000000 CBASE_LIMIT_CHAT_USER=1000000 \
         CBASE_MAX_CONNS=16384 CBASE_LISTEN_BACKLOG=4096 CBASE_BOT_SPEEDUP=${GAME_BOT_SPEEDUP:-1} \
-        CBASE_BOT_THINK_MS=${GAME_BOT_THINK_MS:-1500-5000} \
+        CBASE_BOT_THINK_MS=${GAME_BOT_THINK_MS-$THINK_DEFAULT} \
         exec build/cbase serve
 ) > "$RUN_DIR/game.log" 2>&1 &
 echo $! > "$RUN_DIR/game.pid"
@@ -96,7 +105,7 @@ wait_listening "$RUN_DIR/game.log" "the game server"
     CBASE_DEV=1 CBASE_LISTEN=127.0.0.1:$BE_PORT CBASE_DB="$BE_DB" CBASE_LOG_LEVEL=${BE_LOG_LEVEL:-info} \
         CBASE_JWT_SECRET="$JWT_SECRET" CBASE_JWT_TTL=604800 CBASE_LIMIT_SIGNIN_IP=1000000 CBASE_LIMIT_SUB_USER=1000000 \
         BE_SERVER=127.0.0.1:$GAME_PORT BE_SERVER_PID=$(cat "$RUN_DIR/game.pid") \
-        BE_MODE=${BE_MODE:-league} BE_LEAGUE_TABLES=${BE_LEAGUE_TABLES:-40} BE_LEAGUE_PER_BOT=${BE_LEAGUE_PER_BOT:-4} BE_ADMIN_TOKEN="$ADMIN_TOKEN" BE_LEAGUE_FILE="${BE_LEAGUE_FILE:-$BE/data/league.bin}" \
+        BE_MODE=${BE_MODE:-league} BE_LEAGUE_TABLES=${BE_LEAGUE_TABLES:-$TABLES_DEFAULT} BE_LEAGUE_PER_BOT=${BE_LEAGUE_PER_BOT:-4} BE_ADMIN_TOKEN="$ADMIN_TOKEN" BE_LEAGUE_FILE="${BE_LEAGUE_FILE:-$BE/data/league.bin}" BE_TOURNAMENT_FILE="${BE_TOURNAMENT_FILE:-$BE/data/tournament.bin}" \
         exec build/birdseye serve
 ) > "$RUN_DIR/birdseye.log" 2>&1 &
 echo $! > "$RUN_DIR/birdseye.pid"

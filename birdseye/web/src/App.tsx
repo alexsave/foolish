@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getLeague,
+  getTournament,
   getMetrics,
   getTables,
   openStream,
@@ -14,8 +15,10 @@ import {
   type WEvent,
   type WResult,
   type WTable,
+  type WTour,
 } from './api';
-import { BE_MODE_LEAGUE, BE_PHASE_GONE, BE_PHASE_LOBBY, BE_PHASE_OVER, BE_PHASE_PLAYING } from './gen/wire';
+import { BE_MODE_MIXED, BE_MODE_TOURNAMENT, BE_TOUR_IDLE, BE_PHASE_GONE, BE_PHASE_LOBBY, BE_PHASE_OVER, BE_PHASE_PLAYING } from './gen/wire';
+import { Bracket, tourSummary } from './components/Bracket';
 import { Feed } from './components/Feed';
 import { buildSeries, EloChart, Families, Standings, botName } from './components/League';
 import { Ops } from './components/Ops';
@@ -84,6 +87,7 @@ export function App() {
 
   // ---- the league: the standings and every rated game, from GET /be/league and then the stream.
   const [league, setLeague] = useState<League | null>(null);
+  const [tour, setTour] = useState<WTour | null>(null);
   const [flash, setFlash] = useState<Map<number, number>>(() => new Map());
   const [focus, setFocus] = useState<number | null>(null);
   const [hoverBot, setHoverBot] = useState<number | null>(null);
@@ -94,15 +98,18 @@ export function App() {
   const recent = useRef<WResult[]>([]);
   const loadLeague = useCallback(async () => {
     try {
-      const l = await getLeague();
+      const [l, t] = await Promise.all([getLeague(), getTournament()]);
       setLeague(mergeResults(l, recent.current));
+      setTour(t);
+      // Birdseye playing a tournament opens on the bracket unless the URL says otherwise.
+      if (l.mode === BE_MODE_TOURNAMENT && !new URLSearchParams(window.location.search).get('view')) setViewState('tournament');
     } catch (e) {
       if (e instanceof WireMismatch) setFatal(e.message);
     }
   }, []);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get('view');
-    if (q === 'tables' || q === 'league') setViewState(q);
+    if (q === 'tables' || q === 'league' || q === 'tournament') setViewState(q);
   }, []);
   const setView = useCallback((v: View) => {
     setViewState(v);
@@ -180,6 +187,7 @@ export function App() {
           return next;
         });
       },
+      onTour: (t) => setTour(t),
       onBot: (b) => {
         setLeague((l) => {
           if (!l) return l;
@@ -312,7 +320,9 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [back]);
 
-  const isLeague = league?.mode === BE_MODE_LEAGUE;
+  const isLeague = league !== null && league.mode !== BE_MODE_MIXED;
+  const hasTour = tour !== null && tour.state !== BE_TOUR_IDLE;
+  const showTour = isLeague && hasTour && view === 'tournament' && !selected;
   const showLeague = isLeague && view === 'league' && !selected;
   const series = useMemo(() => (league ? buildSeries(league.bots, league.results) : []), [league]);
   // Rated games a minute over the last ten minutes (or since the first of them): a one-second rate
@@ -357,10 +367,23 @@ export function App() {
           setView(v);
         }}
         games={league?.results.length ?? 0}
+        tour={hasTour}
         gamesPerMin={gamesPerMin}
       />
       {fatal ? (
         <div className="banner">{fatal}</div>
+      ) : showTour && league && tour ? (
+        <div className="tour-page">
+          <section className="card tour-card">
+            <div className="chart-head">
+              <div>
+                <h2 className="card-title">Tournament</h2>
+                <div className="chart-sub">{tourSummary(tour, league.bots)}</div>
+              </div>
+            </div>
+            <Bracket tour={tour} bots={league.bots} />
+          </section>
+        </div>
       ) : showLeague && league ? (
         <div className="grid league-grid">
           <div className="col col-main">
