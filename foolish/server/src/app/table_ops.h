@@ -111,6 +111,8 @@ int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out);
 // /functions/v1/create: a new lobby with `u` seated, at a fresh 6-hex id
 // (CB_TABLE_ID_DRAWS tries). out->envelope is the creator's.
 int cb_table_create(cb_ctx *ctx, const cb_user *u, cb_table_result *out);
+// The same, and the new game's id into gid_out (NULL: not wanted) on CB_OK.
+int cb_table_create_id(cb_ctx *ctx, const cb_user *u, cb_table_result *out, char gid_out[CB_GAME_ID_MAX + 1]);
 
 // One viewer's envelope of a stored game at its stored version, for PostgREST's
 // player_views (viewer_id seated) and spectator_views (viewer_id NULL). This is
