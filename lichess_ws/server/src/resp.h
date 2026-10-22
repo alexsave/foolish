@@ -17,6 +17,7 @@ typedef void (*resp_msg_fn)(const char *chan, size_t clen, const char *msg, size
 typedef void (*resp_state_fn)(bool up, void *ud);
 
 resp_client *resp_new(cb_loop *l, const char *host, int port, resp_msg_fn on_msg, resp_state_fn on_state, void *ud);
+// After the loop has stopped (cb_loop_run has returned, so a queued publish flush has run).
 void         resp_free(resp_client *c);
 // Starts connecting; on_state(true) follows once up. Called once.
 void         resp_start(resp_client *c);

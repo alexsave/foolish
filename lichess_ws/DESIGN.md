@@ -102,23 +102,96 @@ Redis 8 from Homebrew on 9679, MongoDB 7.0 in Docker on 27117 (read by both only
 Each race (`tools/race.sh`) warms lila-ws up for 30 s under the same workload first, then runs the measured pass against lila-ws, then against ours, each with 15 s of warm-up traffic before `duration` seconds of measurement.
 The server's RSS and CPU time come from `proc_pid_rusage` on its pid over the measured window; "CPU per message" divides that by the client frames sent and received in the window.
 
-RESULTS_TABLES
+The workload of each configuration (`tools/race_all.sh`); every socket pings every 2 s, as a browser does:
+
+| config | sockets | traffic |
+|---|---|---|
+| A | 2,000 | 200 games with 2 watchers each, 1,000 site, 200 lobby; a move every 2 s per game |
+| B | 8,500 | 1,000 games with 2 watchers, 4,000 site, 500 lobby; a move every 2 s per game |
+| C | 11,500 | 1,500 games with 2 watchers, 5,000 site, 500 lobby |
+| D | 2,000 | 500 games with 2 watchers, a move every 200 ms per game |
+| E | 4,000 | 2,000 games, no watchers, a move every 120 ms per game (each player at 4 moves/s, under the round socket's 100 per 20 s rate limit that both servers enforce) |
+| F | 12,000 | 6,000 games at E's rate: 25,000 moves/s offered, more than the one-thread load generator delivers, so this is saturation |
+
+Columns: moves/s achieved; move relay latency (the mover's `move` frame to its own `move` event back, through the server, Redis, the fake lila and back) and the same for each watcher; ping round trip; the server's RSS at the end of the window; its CPU (user + system) over the 60 s window as a share of one core; and that CPU divided by every client frame sent and received in the window.
+Latencies are exact: wsbench keeps every sample and sorts (nearest rank), so the shared StatHist (8 buckets per octave, up to 9% error) is not used here.
+
+**lila-ws on the JVM's default flags** (OpenJDK 21: G1, max heap 4 GB), F after the publish fix below:
+
+| config | server | sockets | moves/s | mover p50/p99/p999 ms | watcher p50/p99/p999 ms | ping p50/p99/p999 ms | RSS MB | CPU % core | CPU us/msg | load before/after |
+|---|---|---|---|---|---|---|---|---|---|---|
+| A | lila-ws | 2000 | 89 | 1.1 / 5.0 / 15.4 | 1.9 / 5.5 / 15.5 | 1.3 / 4.0 / 8.4 | 305 | 12 | 41.5 | 3.82 / 2.67 |
+| A | ours | 2000 | 90 | 1.0 / 3.8 / 34.1 | 1.0 / 3.8 / 34.1 | 0.4 / 2.3 / 2.9 | 12 | 2 | 7.6 | 2.54 / 1.37 |
+| B | lila-ws | 8500 | 387 | 1.7 / 7.2 / 23.8 | 2.5 / 9.6 / 23.9 | 2.2 / 6.3 / 10.7 | 367 | 22 | 16.3 | 3.10 / 4.54 |
+| B | ours | 8500 | 386 | 2.3 / 9.5 / 12.3 | 2.3 / 9.5 / 12.3 | 1.9 / 6.9 / 8.5 | 33 | 4 | 3.0 | 4.50 / 2.88 |
+| C | lila-ws | 11500 | 562 | 1.8 / 11.1 / 25.6 | 2.5 / 12.7 / 34.5 | 2.1 / 7.7 / 17.4 | 316 | 31 | 15.7 | 5.03 / 5.38 |
+| C | ours | 11500 | 563 | 2.4 / 11.0 / 13.9 | 2.4 / 11.1 / 13.9 | 2.0 / 9.7 / 15.4 | 42 | 7 | 3.7 | 5.38 / 8.41 |
+| D | lila-ws | 2000 | 1958 | 8.3 / 22.3 / 29.5 | 9.2 / 23.4 / 29.8 | 0.9 / 7.4 / 11.2 | 391 | 45 | 36.5 | 9.06 / 6.90 |
+| D | ours | 2000 | 1991 | 6.2 / 19.9 / 23.6 | 6.2 / 19.9 / 23.6 | 0.5 / 4.8 / 8.4 | 18 | 7 | 5.4 | 6.43 / 4.01 |
+| E | lila-ws | 4000 | 8419 | 26.6 / 45.0 / 70.4 | - | 1.1 / 23.2 / 55.1 | 512 | 92 | 30.1 | 7.77 / 9.94 |
+| E | ours | 4000 | 8422 | 28.5 / 45.3 / 52.0 | - | 1.1 / 22.9 / 26.7 | 39 | 23 | 7.5 | 9.31 / 4.41 |
+| F | lila-ws | 12000 | 19397 | 31.8 / 119.7 / 199.9 | - | 6.7 / 59.9 / 123.4 | 769 | 194 | 25.5 | 6.64 / 12.66 |
+| F | ours | 12000 | 23040 | 11.7 / 50.2 / 76.7 | - | 2.6 / 21.4 / 33.2 | 91 | 43 | 5.0 | 12.66 / 4.29 |
+
+**lila-ws tuned**: `-XX:+UseZGC -XX:+ZGenerational -Xms2g -Xmx2g` (the low-pause collector, a fixed heap), a fresh JVM warmed by the same 30 s pass; ours rerun beside it:
+
+| config | server | sockets | moves/s | mover p50/p99/p999 ms | watcher p50/p99/p999 ms | ping p50/p99/p999 ms | RSS MB | CPU % core | CPU us/msg | load before/after |
+|---|---|---|---|---|---|---|---|---|---|---|
+| A | lila-ws | 2000 | 92 | 1.3 / 3.9 / 6.8 | 2.0 / 4.5 / 10.7 | 1.3 / 3.5 / 6.6 | 461 | 14 | 46.8 | 3.08 / 2.88 |
+| A | ours | 2000 | 89 | 0.7 / 2.9 / 17.2 | 0.7 / 2.9 / 17.2 | 0.2 / 1.2 / 6.8 | 10 | 3 | 8.5 | 3.05 / 3.98 |
+| B | lila-ws | 8500 | 388 | 2.0 / 9.0 / 19.5 | 2.6 / 10.2 / 21.5 | 1.9 / 7.4 / 15.3 | 559 | 32 | 23.0 | 7.86 / 5.22 |
+| B | ours | 8500 | 387 | 1.7 / 8.8 / 15.5 | 1.7 / 9.0 / 15.5 | 0.9 / 4.9 / 10.1 | 28 | 8 | 6.0 | 5.22 / 3.37 |
+| C | lila-ws | 11500 | 560 | 4.5 / 24.3 / 34.4 | 5.1 / 25.5 / 37.0 | 2.8 / 13.4 / 19.4 | 575 | 38 | 19.5 | 4.89 / 5.68 |
+| C | ours | 11500 | 561 | 2.6 / 15.0 / 23.6 | 2.6 / 15.0 / 23.6 | 1.9 / 8.5 / 14.8 | 38 | 11 | 5.6 | 5.68 / 4.98 |
+| D | lila-ws | 2000 | 1888 | 15.4 / 34.1 / 39.9 | 16.7 / 35.2 / 40.3 | 1.2 / 15.0 / 26.9 | 748 | 41 | 34.1 | 3.83 / 6.21 |
+| D | ours | 2000 | 1957 | 8.1 / 23.8 / 45.3 | 8.5 / 24.2 / 45.3 | 0.5 / 8.7 / 14.6 | 15 | 14 | 11.1 | 6.35 / 4.68 |
+| E | lila-ws | 4000 | 8872 | 9.5 / 58.9 / 93.6 | - | 1.9 / 33.7 / 61.3 | 1045 | 109 | 34.3 | 8.41 / 12.10 |
+| E | ours | 4000 | 8477 | 20.6 / 56.6 / 106.0 | - | 1.2 / 30.4 / 71.7 | 35 | 28 | 9.3 | 11.45 / 6.90 |
+| F | lila-ws | 12000 | 19522 | 30.7 / 109.0 / 197.9 | - | 6.6 / 57.6 / 155.4 | 1970 | 200 | 26.1 | 7.73 / 12.24 |
+| F | ours | 12000 | 22460 | 13.9 / 59.9 / 115.8 | - | 3.2 / 26.0 / 44.7 | 84 | 44 | 5.1 | 11.66 / 8.33 |
+
+**The profile and the fix.** `sample` of ours under F (20 s, `/usr/bin/sample`) put about 90% of the loop thread in the kernel (`sendto` 5,765 samples, `kevent` 2,274, `recvfrom` 2,170 of about 11,500); the largest share that was ours to change was `resp_publish`, which flushed every Redis line with its own `send` (1,430 samples, a tenth of the loop), and the next was `vfprintf` under the RESP bulk header.
+`resp.c` now queues a line and posts one flush per loop pass (one `send` for every move a pass read), and writes the `$<n>` header by hand.
+F before that change (the same flags, the load generator's own publishes unbatched too):
+
+| JVM | server | moves/s | mover p50/p99/p999 ms | RSS MB | CPU % core | CPU us/msg |
+|---|---|---|---|---|---|---|
+| default | lila-ws | 20,512 | 20.6 / 149.4 / 268.0 | 678 | 228 | 28.7 |
+| default | ours | 22,475 | 14.7 / 63.2 / 112.2 | 87 | 53 | 6.3 |
+| ZGC | lila-ws | 20,000 | 21.3 / 204.3 / 437.4 | 1,902 | 227 | 29.2 |
+| ZGC | ours | 23,124 | 11.8 / 44.6 / 67.5 | 87 | 50 | 5.8 |
+
+The fix took ours from 6.3 to 5.0 us per message (20% less CPU) at the same throughput.
+The load generator shares `resp.c`, so its fake lila's publishes were batched as well; both servers were rerun on it, which is why lila-ws's F rows moved too (its p50 went up and its p99 came down: the fake lila now answers in bursts).
 
 ### 4.1 Reading the numbers
 
-READING
+- **CPU per message is the headline: 3 to 7 times less.** Across every configuration and both JVM settings ours spends 3.0 to 11.1 us of CPU per client frame and lila-ws 16 to 47 us. At saturation (F) ours carries 23,000 moves/s and 4.8 million frames a minute on 43% of one core; lila-ws carries 19,400 to 20,500 moves/s on 194 to 228% (two cores and more, on Netty's thread pool).
+- **Memory is 7 to 46 times less.** Ours ends at 10 to 91 MB (3 to 8 KB per socket, the kernel's socket buffers included in the RSS); lila-ws sits at 300 to 770 MB on default flags and 460 MB to 2 GB with the fixed 2 GB ZGC heap, whatever the socket count, because the heap is sized by the collector, not by the sockets. Its per-socket increment is not measurable against that floor, so the comparison that holds is the total.
+- **Throughput at saturation: ours is ahead by 15 to 18%** (F: 23,000 against 19,400 to 20,500 moves/s), and in F the load generator, not ours, is the limit: ours had more than half a core idle.
+- **Tail latency at saturation: ours is 2 to 4 times lower.** F mover p99 50 to 60 ms against 109 to 204 ms; p999 77 to 116 ms against 198 to 437 ms. ZGC did not help lila-ws's tail here; its p99 got worse than on G1.
+- **Latency below saturation is a draw, and mostly not the server's.** In A to D both servers answer in 1 to 15 ms at p50 and a few tens of ms at p99, and the difference between them is smaller than the run-to-run noise (B and C on default flags have lila-ws ahead at p50 by 0.6 ms; on the ZGC rerun ours is ahead by 0.3 to 1.9 ms). The relay crosses Redis twice and the one-thread fake lila, and the shared Mac's load average was 3 to 14 during the runs (the load generator and the JVM themselves are most of it), so a fraction of a millisecond at p50 is not a finding either way.
+- **E is a load generator measurement.** At 8,400 moves/s the one wsbench thread carries 30,000 frames/s plus the fake lila and is the queue both servers sit behind: their p50 differs by run (26.6 and 28.5 ms on default, 9.5 and 20.6 on ZGC). The server columns of E (CPU per message, RSS) are still good; its latency columns are not.
+- **Per-box projection.** Per core of an M1, from F: ours about 53,000 moves/s (23,000 at 43%) and lila-ws about 10,000 (19,400 at 194%). Per GB: ours about 130,000 sockets per GB of RSS (7.6 KB each at F, 3.9 KB at B), lila-ws about 16,000 to 37,000 on default flags (its total RSS over its sockets), or about 6,000 with a 2 GB ZGC heap. Lichess plays about 5 to 10 million games a day, roughly 4,000 to 8,000 moves/s on average with a peak of perhaps three times that; that is half a core of ours today, and the socket count of 100,000 concurrent players is under 1 GB. The caveat that matters at world scale: ours runs its sockets on one loop thread, so one process tops out near one core (about 50,000 moves/s with this mix); past that it is several processes behind `SO_REUSEPORT` or per-region boxes, which lila-ws does not need because Netty already spreads over cores. Linux's io_uring path in c_base (untested for this product) is the next lever, since the profile is 90% syscalls.
 
 ### 4.2 Where lila-ws wins
 
-WHERE_THEIRS_WINS
+- **It uses every core without being asked.** Netty spreads sockets over a thread pool; ours is one loop thread per process, and scaling past one core means running more processes (and splitting the user and room state between them, which lila-ws keeps in one heap).
+- **Median latency at light load.** On default flags lila-ws was 0.6 ms ahead at p50 in B and C (its I/O is spread over threads, so a burst of pings does not queue behind one loop); this did not reproduce on the ZGC rerun and is within the noise, but it was measured and is reported.
+- **Ping round trip on its own was never decisively worse** for lila-ws below saturation.
+- **Breadth and maturity.** lila-ws serves every socket lichess has (tournaments, simuls, studies, teams, swiss, racer, challenges, the eval cache, the friend list, bearer auth, mobile) and has run lichess for years; ours covers site, api, lobby and round only (section 5), was validated by one played game through real lila, and has never seen a real browser or production traffic.
+- **Observability.** lila-ws ships Kamon metrics to InfluxDB and Prometheus; ours has `/lws/stats` and c_base's admin console.
 
 ## 5. Not built, and open gaps
 
 - The sockets and features SCOPE.md 3.1 left out (tournament, simul, study, team, swiss, challenge and racer rooms; eval cache; friend list; bearer auth; mobile `load=true`; `seenAt`; the block check on watch).
 - A browser session against the drop-in (the Chrome extension was not available); the protocol-level drop-in game stands in.
 - Running on Linux at scale: the Linux binary ran inside the mono container for the drop-in, but the race is macOS; c_base's io_uring and epoll paths are Linux-only and untested here for this product.
-- The lila-ws race is against a stock JVM configuration; lichess's production flags are not published in the repo, and a tuned JVM (a bigger young generation, ZGC) would move lila-ws's p99 but not its memory per connection or its CPU per message by much.
+- lichess's production JVM flags are not in lila-ws's repository (its `build.sbt` sets only `-Dconfig.override_with_env_vars=true` for the package); the race used the JVM's defaults and a ZGC run with a fixed 2 GB heap, and ZGC moved neither lila-ws's CPU per message nor its tail at saturation in its favour.
+- The race is on one shared Mac with the load generator, Redis and both servers on the same eight cores; a Linux box with the load generator elsewhere would give cleaner latencies.
 
 ## 6. Next
 
-SCOPE.md's order: round (the move engine, clocks, finish and Glicko-2) behind the same `r-in`/`r-out` protocol, raced through Redis against real lila's round; then game storage and export; then puzzles.
+The lichess-compatible track stops here, by the owner's decision (2026-10-22): this race is its result and the baseline for what follows.
+The next work departs from lichess's protocol entirely: `c_chess/` on the `c-chess` branch, a chess site designed from scratch on c_base for speed (one process, in-memory games, binary wire, the rules in C for the server and, as wasm, for the browser), measured against these numbers.
+SCOPE.md's ranking (round, game storage and export, puzzles) is left as written for whoever resumes compatibility work.

@@ -15,8 +15,10 @@ want B && tools/race.sh B --games 1000 --watchers 2 --site 4000 --lobby 500 --mo
 want C && tools/race.sh C --games 1500 --watchers 2 --site 5000 --lobby 500 --move-ms 2000 --ping-ms 2000 --duration "$D" --warmup "$W" --connect-rate 400
 # D: the move path at speed: 500 games moving every 200 ms, 2 watchers, no site traffic (2000 sockets, 2500 moves/s offered)
 want D && tools/race.sh D --games 500 --watchers 2 --site 0 --lobby 0 --move-ms 200 --ping-ms 2000 --duration "$D" --warmup "$W"
-# E: the move path flat out: 1000 games moving every 50 ms (20000 moves/s offered), no watchers, no site
-want E && tools/race.sh E --games 1000 --watchers 0 --site 0 --lobby 0 --move-ms 50 --ping-ms 2000 --duration "$D" --warmup "$W"
-# F: saturation: 2000 games moving every 25 ms (80000 moves/s offered, more than either server or the one-thread load generator can carry), no watchers
-want F && tools/race.sh F --games 2000 --watchers 0 --site 0 --lobby 0 --move-ms 25 --ping-ms 2000 --duration "$D" --warmup "$W"
+# E: the move path at volume: 2000 games, each player moving every 240 ms (under the round socket's 100 moves per 20 s
+# rate limit that both servers enforce), no watchers, no site (4000 sockets, 8300 moves/s offered)
+want E && tools/race.sh E --games 2000 --watchers 0 --site 0 --lobby 0 --move-ms 120 --ping-ms 2000 --duration "$D" --warmup "$W"
+# F: saturation: 6000 games at the same per-socket rate (12000 sockets, 25000 moves/s offered, more than the
+# one-thread load generator can carry, so the server's CPU per message is the number to read)
+want F && tools/race.sh F --games 6000 --watchers 0 --site 0 --lobby 0 --move-ms 120 --ping-ms 2000 --duration "$D" --warmup "$W" --connect-rate 400
 exit 0
