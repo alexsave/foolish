@@ -4,3 +4,5 @@ web/.next/
 web/out/
 web/src/gen/
 web/public/chess.wasm
+src/app/pieces.css
+web/tsconfig.tsbuildinfo

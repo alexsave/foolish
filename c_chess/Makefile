@@ -128,5 +128,30 @@ test-asan: $(call UNIT_RUNS,build/asan)
 check-asan: $(call UNIT_RUNS,build/asan) $(call SMOKE_PROGS,build/asan)
 	$(call RUN_ALL,ASAN CHECK,$(call SMOKE_RUNS,build/asan) $(call UNIT_RUNS,build/asan))
 
+# ---- the browser's kernel (c/wasm/web.c) and the page's readers of its structs ----
+# The MVP feature set plus bulk memory and sign extension (-mcpu=mvp: an older Safari refuses more),
+# -O3 for the move generator; the module is stamped with the layout's hash, which the page checks.
+include $(C_ROOT)/shared/tools/gen_tools.mk
+include $(C_ROOT)/shared/tools/wasm_cc.mk
+WEB_FLAGS   := -isystem $(C_ROOT)/shared/c/wasm/include -Ic/src -Ic/wasm -I$(C_ROOT)/shared/c
+WEB_SG_ARGS := --cwd . --header c/wasm/web.h --root CvView --root CvMoves --root CvLobby --root CvProfile --root CvGames \
+               --snapshot CvView --snapshot CvMoves --snapshot CvLobby --snapshot CvProfile --snapshot CvGames --snapshot-only --const CV_ --const CC_EV_ --const CW_A_ --const CC_ --const CW_E_ --const CW_AUTH_ --const CH_ --build 'web=$(WEB_FLAGS)'
+WEB_GEN     := web/src/gen
+WEB_WASM_SRC := c/src/chess.c c/src/game.c c/src/client.c c/wasm/web.c $(C_ROOT)/shared/c/wasm/libc.c
+WEB_WASM    := web/public/chess.wasm
+
+gen: $(STRUCTGEN)
+	@mkdir -p build $(WEB_GEN)
+	@$(STRUCTGEN) $(WEB_SG_ARGS) --ts $(WEB_GEN)/web_layout.ts --hash-ts $(WEB_GEN)/web_layout_hash.ts --print-hash > build/web_layout.hash
+
+wasm: gen
+	@mkdir -p $(dir $(WEB_WASM))
+	$(WASM_CC) --target=wasm32 -mcpu=mvp -mbulk-memory -msign-ext -O3 -nostdlib -ffreestanding \
+	  -mno-nontrapping-fptoint -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter $(WEB_FLAGS) \
+	  -DSG_LAYOUT_HASH=$$(cat build/web_layout.hash) \
+	  -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=262144 -Wl,--strip-all \
+	  $(WEB_WASM_SRC) -o $(WEB_WASM)
+	@echo "built $(WEB_WASM) ($$(wc -c < $(WEB_WASM)) B, $$(gzip -9 -c $(WEB_WASM) | wc -c) B gz), layout $$(cat build/web_layout.hash)"
+
 clean:
 	rm -rf build

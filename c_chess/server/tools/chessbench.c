@@ -1,1 +1,510 @@
-int main(void){return 0;}
+// chessbench.c - c_chess's load generator, and its house bot: N bots, each with its own account and
+// socket, seek, get paired with each other, and play real games over the real protocol through the
+// same client a browser runs (c/src/client.c): every move legal, every clock real.
+//
+//   chessbench [--port 8900] [--bots 100] [--tc 180+2] [--think 200] [--spread 200] [--watchers 0]
+//              [--duration 60] [--warmup 10] [--pid <server pid>] [--accounts <file>] [--connect-rate 200]
+//              [--rated 1] [--forever]
+//
+// THE NUMBERS (after the warm-up, for `duration` seconds):
+//   move round trip   a bot's move sent to the server's state push of that ply back on its own socket
+//   move relay        a bot's move sent to its opponent's socket receiving it (the other side of the board)
+//   games and moves per second; the server's RSS and CPU (from --pid), hence CPU per move
+// Every sample is kept and sorted: the percentiles are exact (nearest rank).
+//
+// THE ACCOUNTS. Signing up is bcrypt on the server (about 60 ms each), so the bots' sessions are kept
+// in --accounts (default build/bench_accounts.bin) and reused while their tokens live; run the server
+// with a long CBASE_JWT_TTL for long runs.
+//
+// --forever with --bots 1 is the house bot a person can play: it seeks the time control, plays its
+// moves after `think` ms, and seeks again when a game ends.
+#include "client.h"
+
+#include "net/loop.h"
+#include "net/ws.h"
+#include "util/clock.h"
+#include "util/err.h"
+#include "util/str.h"
+
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#ifdef __APPLE__
+#include <libproc.h>
+#endif
+
+static struct {
+    int port, bots, base, inc, think, spread, watchers, duration, warmup, connect_rate, rated;
+    pid_t pid;
+    bool forever, quiet;
+    const char *accounts, *prefix;
+} O = { .port = 8900, .bots = 100, .base = 180, .inc = 2, .think = 200, .spread = 200, .duration = 60, .warmup = 10,
+        .connect_rate = 200, .rated = 1, .accounts = "build/bench_accounts.bin", .prefix = "bot" };
+
+static cb_loop *L;
+
+/* ---- samples ---- */
+typedef struct { uint32_t *v; size_t n, cap; } samples;
+static void sample(samples *s, int64_t us) {
+    if (s->n == s->cap) { s->cap = s->cap ? s->cap * 2 : 4096; s->v = realloc(s->v, s->cap * sizeof *s->v); }
+    s->v[s->n++] = us < 0 ? 0 : (uint32_t)us;
+}
+static int cmp_u32(const void *a, const void *b) { uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b; return x < y ? -1 : x > y; }
+static uint32_t pct(const samples *s, double p) {
+    if (!s->n) return 0;
+    size_t i = (size_t)(p * (double)s->n);
+    return s->v[i >= s->n ? s->n - 1 : i];
+}
+
+/* ---- the bots ---- */
+typedef struct bot {
+    cc_client c;
+    int       idx;
+    char      name[CW_NAME + 1], password[24];
+    uint8_t   session[sizeof(cw_session) + CC_TOKEN_MAX];
+    size_t    session_len;
+    int       fd, state;       /* 0 none, 1 connecting, 2 upgrading, 3 open */
+    cb_buf    in, out;
+    uint64_t  move_timer;
+    int64_t   sent_us;         /* our move in flight: when it left */
+    uint16_t  sent_ply;
+    uint32_t  sent_game;
+    int64_t   last_sent_us;    /* the same, kept after our own confirmation (the relay's start) */
+    uint32_t  playing;         /* the game we are in */
+    bool      watcher;
+} bot;
+
+static bot *B;
+static bool measuring, stopping;
+static samples rt_us, relay_us;
+static long moves_measured, games_measured, games_ended, errors;
+static long bytes_in, bytes_out, frames_in, frames_out;
+static int n_open;
+
+/* game id -> the two bots, for the relay timing (open addressing, ids are dense) */
+#define GAME_SLOTS (1 << 20)
+static int32_t *GAME_BOT;   /* [2 * slot] */
+
+static int64_t now_us(void) { return cb_mono_us(); }
+static int64_t now_ms_d(void) { return cb_mono_ms(); }
+
+static void bot_close(bot *b) {
+    if (b->fd >= 0) { cb_loop_remove(L, b->fd); close(b->fd); b->fd = -1; if (b->state == 3) n_open--; }
+    b->state = 0;
+}
+
+static void bot_flush(bot *b) {
+    const uint8_t *f;
+    size_t n;
+    while ((n = cc_client_next_out(&b->c, &f)) > 0) {
+        uint8_t hdr[14], mask[4];
+        uint32_t r = (uint32_t)rand();
+        memcpy(mask, &r, 4);
+        size_t hl = cb_ws_frame_header(hdr, true, CB_WS_OP_BIN, n, mask);
+        cb_buf_append(&b->out, hdr, hl);
+        size_t at = b->out.len;
+        cb_buf_append(&b->out, f, n);
+        cb_ws_unmask(b->out.p + at, n, mask);
+        frames_out++;
+    }
+    while (b->out.len && b->fd >= 0 && b->state >= 2) {
+        ssize_t k = send(b->fd, b->out.p, b->out.len, MSG_DONTWAIT);
+        if (k < 0) { if (errno == EAGAIN || errno == EWOULDBLOCK) break; if (errno == EINTR) continue; bot_close(b); return; }
+        bytes_out += k;
+        cb_buf_consume(&b->out, (size_t)k);
+    }
+    if (b->fd >= 0) cb_loop_set(L, b->fd, CB_EV_READ | (b->out.len ? CB_EV_WRITE : 0));
+}
+
+static void seek(bot *b) {
+    if (stopping) return;
+    cc_client_seek(&b->c, O.base, O.inc, O.rated);
+    bot_flush(b);
+}
+
+static void play_move(cb_loop *l, void *ud) {
+    bot *b = ud;
+    b->move_timer = 0;
+    if (b->state != 3 || !cc_client_my_turn(&b->c)) return;
+    ch_moves ms;
+    ch_legal(&b->c.g.pos, &ms);
+    if (!ms.n) return;
+    /* a little better than random: a capture or a check half the time when there is one */
+    ch_move m = ms.m[rand() % ms.n];
+    if (rand() & 1)
+        for (int i = 0; i < ms.n; i++)
+            if (b->c.g.pos.sq[CH_TO(ms.m[i])]) { m = ms.m[i]; break; }
+    int64_t t = now_us();
+    if (cc_client_move(&b->c, CH_FROM(m), CH_TO(m), CH_PROMO(m), now_ms_d()) == CC_OK) {
+        b->sent_us = t;
+        b->last_sent_us = t;
+        b->sent_ply = b->c.g.ply;
+        b->sent_game = b->c.game;
+        bot_flush(b);
+    }
+}
+
+static void schedule_move(bot *b) {
+    if (b->move_timer || !cc_client_my_turn(&b->c)) return;
+    int d = O.think + (O.spread ? rand() % O.spread : 0);
+    b->move_timer = cb_loop_timer(L, d, play_move, b);
+}
+
+static void on_events(bot *b, uint32_t ev) {
+    if (ev & CC_EV_READY) {
+        if (b->watcher) return;
+        if (b->playing) { cc_client_open(&b->c, b->playing); bot_flush(b); }
+        else seek(b);
+    }
+    if (ev & CC_EV_ERROR) errors++;
+    if (ev & CC_EV_START) {
+        uint32_t g = b->c.start_game;
+        if (b->playing != g) {
+            b->playing = g;
+            GAME_BOT[2 * (g % GAME_SLOTS) + b->c.start_color] = b->idx;
+            cc_client_open(&b->c, g);
+            bot_flush(b);
+            /* the watchers follow the first games they hear of */
+            for (int i = 0, w = 0; i < O.bots && w < O.watchers && b->c.start_color == 0; i++) {
+                bot *x = &B[i];
+                if (x->watcher && !x->c.game && x->state == 3) { cc_client_open(&x->c, g); bot_flush(x); w++; }
+            }
+        }
+    }
+    if (ev & CC_EV_GAME) {
+        cc_client *c = &b->c;
+        /* our move came back */
+        if (b->sent_us && c->game == b->sent_game && c->confirmed_ply >= b->sent_ply) {
+            if (measuring) { sample(&rt_us, now_us() - b->sent_us); moves_measured++; }
+            b->sent_us = 0;
+        }
+        if (c->synced && !cc_game_over(&c->g)) schedule_move(b);
+    }
+    if (ev & CC_EV_MOVED) {
+        /* the opponent's move arrived: its send time is on the opponent's bot */
+        uint32_t g = b->c.game;
+        int other = GAME_BOT[2 * (g % GAME_SLOTS) + (b->c.color ^ 1)];
+        if (other >= 0 && other < O.bots) {
+            bot *o = &B[other];
+            if (measuring && o->sent_game == g && o->sent_ply == b->c.g.ply && o->last_sent_us) { sample(&relay_us, now_us() - o->last_sent_us); o->last_sent_us = 0; }
+        }
+    }
+    if (ev & CC_EV_OVER) {
+        if (b->watcher) { cc_client_close_game(&b->c); bot_flush(b); return; }
+        if (b->c.color == 0) { games_ended++; if (measuring) games_measured++; }
+        b->playing = 0;
+        cc_client_close_game(&b->c);
+        bot_flush(b);
+        if (O.forever || !stopping) seek(b);
+    }
+}
+
+static void bot_frames(bot *b) {
+    for (;;) {
+        cb_ws_frame f;
+        int n = cb_ws_frame_parse(b->in.p, b->in.len, CB_WS_MAX_MESSAGE, &f);
+        if (n == 0) return;
+        if (n < 0) { bot_close(b); return; }
+        uint8_t *payload = b->in.p + f.header_len;
+        frames_in++;
+        if (f.opcode == CB_WS_OP_BIN) {
+            cc_client_in(&b->c, payload, (size_t)f.len, now_ms_d());
+            on_events(b, cc_client_events(&b->c));
+        } else if (f.opcode == CB_WS_OP_PING) {
+            uint8_t hdr[14], mask[4] = { 1, 2, 3, 4 };
+            size_t hl = cb_ws_frame_header(hdr, true, CB_WS_OP_PONG, f.len, mask);
+            cb_buf_append(&b->out, hdr, hl);
+            size_t at = b->out.len;
+            cb_buf_append(&b->out, payload, (size_t)f.len);
+            cb_ws_unmask(b->out.p + at, (size_t)f.len, mask);
+        } else if (f.opcode == CB_WS_OP_CLOSE) { bot_close(b); return; }
+        cb_buf_consume(&b->in, (size_t)n);
+    }
+}
+
+static void bot_io(cb_loop *l, int fd, int events, void *ud) {
+    bot *b = ud;
+    if (b->state == 1) {
+        int err = 0;
+        socklen_t el = sizeof err;
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &el);
+        if (err) { bot_close(b); return; }
+        b->state = 2;
+    }
+    if (events & CB_EV_ERR) { bot_close(b); return; }
+    if (events & CB_EV_READ) {
+        for (;;) {
+            if (!cb_buf_reserve(&b->in, 16384)) { bot_close(b); return; }
+            ssize_t k = recv(fd, b->in.p + b->in.len, 16384, MSG_DONTWAIT);
+            if (k < 0) { if (errno == EAGAIN || errno == EWOULDBLOCK) break; if (errno == EINTR) continue; bot_close(b); return; }
+            if (k == 0) { bot_close(b); return; }
+            bytes_in += k;
+            b->in.len += (size_t)k;
+            b->in.p[b->in.len] = 0;
+            if ((size_t)k < 16384) break;
+        }
+        if (b->state == 2) {
+            char *end = strstr((char *)b->in.p, "\r\n\r\n");
+            if (!end) return;
+            if (strncmp((char *)b->in.p, "HTTP/1.1 101", 12) != 0) { fprintf(stderr, "upgrade refused: %.60s\n", (char *)b->in.p); bot_close(b); return; }
+            cb_buf_consume(&b->in, (size_t)(end + 4 - (char *)b->in.p));
+            b->state = 3;
+            n_open++;
+            cc_client_hello(&b->c);
+        }
+        if (b->state == 3) bot_frames(b);
+    }
+    if (b->fd >= 0) bot_flush(b);
+}
+
+static int bot_connect(bot *b) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    int one = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons((uint16_t)O.port) };
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int rc = connect(fd, (struct sockaddr *)&a, sizeof a);
+    if (rc < 0 && errno != EINPROGRESS) { close(fd); return -1; }
+    b->fd = fd;
+    b->state = 1;
+    cb_buf_reset(&b->out);
+    cb_buf_reset(&b->in);
+    cb_buf_printf(&b->out, "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
+                           "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nUser-Agent: chessbench\r\n\r\n");
+    return cb_loop_add(L, fd, CB_EV_WRITE | CB_EV_READ, bot_io, b) == CB_OK ? 0 : -1;
+}
+
+static void reconnect_tick(cb_loop *l, void *ud);
+static int next_connect;
+static void connect_tick(cb_loop *l, void *ud) {
+    int per = O.connect_rate / 10 + 1;
+    for (int k = 0; k < per && next_connect < O.bots; k++, next_connect++) bot_connect(&B[next_connect]);
+    if (next_connect < O.bots) cb_loop_timer(L, 100, connect_tick, NULL);
+    else cb_loop_timer(L, 1000, reconnect_tick, NULL);
+}
+/* A bot whose socket closed comes back (a token refused is fatal: say so). */
+static void reconnect_tick(cb_loop *l, void *ud) {
+    if (stopping) return;
+    for (int i = 0; i < O.bots; i++)
+        if (B[i].fd < 0 && B[i].state == 0) bot_connect(&B[i]);
+    cb_loop_timer(L, 1000, reconnect_tick, NULL);
+}
+
+/* ---- accounts (blocking HTTP, before the loop) ---- */
+
+static int http_post(const char *path, const void *body, size_t n, uint8_t *out, size_t cap, size_t *out_n) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons((uint16_t)O.port) };
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (connect(fd, (struct sockaddr *)&a, sizeof a) != 0) { close(fd); return -1; }
+    char head[256];
+    int hl = snprintf(head, sizeof head, "POST %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", path, n);
+    if (write(fd, head, (size_t)hl) != hl || write(fd, body, n) != (ssize_t)n) { close(fd); return -1; }
+    static __thread char buf[16384];
+    size_t got = 0;
+    ssize_t k;
+    while ((k = read(fd, buf + got, sizeof buf - 1 - got)) > 0) got += (size_t)k;
+    close(fd);
+    buf[got] = 0;
+    int status = 0;
+    if (sscanf(buf, "HTTP/1.1 %d", &status) != 1) return -1;
+    char *body_at = strstr(buf, "\r\n\r\n");
+    if (!body_at) return -1;
+    body_at += 4;
+    *out_n = got - (size_t)(body_at - buf);
+    if (*out_n > cap) return -1;
+    memcpy(out, body_at, *out_n);
+    return status;
+}
+
+static int next_account;
+static pthread_mutex_t acct_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static void *account_worker(void *ud) {
+    (void)ud;
+    for (;;) {
+        pthread_mutex_lock(&acct_mu);
+        int i = next_account++;
+        pthread_mutex_unlock(&acct_mu);
+        if (i >= O.bots) return NULL;
+        bot *b = &B[i];
+        if (b->session_len) continue;
+        cw_auth_req q;
+        int st = 0;
+        for (int mode = CW_AUTH_SIGNIN; mode <= CW_AUTH_SIGNIN + 1 && st != 200; mode++) {
+            cc_client_auth_body(b->name, b->password, mode == CW_AUTH_SIGNIN ? CW_AUTH_SIGNIN : CW_AUTH_SIGNUP, &q);
+            st = http_post("/c/auth", &q, sizeof q, b->session, sizeof b->session, &b->session_len);
+        }
+        if (st != 200) { fprintf(stderr, "account %s: %d\n", b->name, st); b->session_len = 0; }
+    }
+}
+
+static void accounts(void) {
+    FILE *f = fopen(O.accounts, "rb");
+    int loaded = 0;
+    if (f) {
+        uint32_t n;
+        while (fread(&n, 4, 1, f) == 1) {
+            char name[CW_NAME + 1] = { 0 };
+            uint32_t len;
+            if (fread(name, CW_NAME, 1, f) != 1 || fread(&len, 4, 1, f) != 1 || len > sizeof B[0].session) break;
+            uint8_t tmp[sizeof B[0].session];
+            if (fread(tmp, len, 1, f) != 1) break;
+            if (n < (uint32_t)O.bots && strcmp(name, B[n].name) == 0) { memcpy(B[n].session, tmp, len); B[n].session_len = len; loaded++; }
+        }
+        fclose(f);
+    }
+    int64_t t0 = now_ms_d();
+    pthread_t th[8];
+    for (int i = 0; i < 8; i++) pthread_create(&th[i], NULL, account_worker, NULL);
+    for (int i = 0; i < 8; i++) pthread_join(th[i], NULL);
+    if (!O.quiet) fprintf(stderr, "accounts: %d reused, %d signed in or up in %lld ms\n", loaded, O.bots - loaded, (long long)(now_ms_d() - t0));
+    if ((f = fopen(O.accounts, "wb"))) {
+        for (uint32_t i = 0; i < (uint32_t)O.bots; i++) {
+            uint32_t len = (uint32_t)B[i].session_len;
+            if (!len) continue;
+            char name[CW_NAME] = { 0 };
+            memcpy(name, B[i].name, strlen(B[i].name));
+            fwrite(&i, 4, 1, f); fwrite(name, CW_NAME, 1, f); fwrite(&len, 4, 1, f); fwrite(B[i].session, len, 1, f);
+        }
+        fclose(f);
+    }
+    for (int i = 0; i < O.bots; i++) cc_client_auth_answer(&B[i].c, 200, B[i].session, B[i].session_len);
+}
+
+/* ---- the server's numbers ---- */
+static bool proc_usage(pid_t pid, uint64_t *rss, uint64_t *user_us, uint64_t *sys_us) {
+    if (!pid) return false;
+#ifdef __APPLE__
+    struct rusage_info_v2 ri;
+    if (proc_pid_rusage(pid, RUSAGE_INFO_V2, (rusage_info_t *)&ri) != 0) return false;
+    *rss = ri.ri_resident_size;
+    *user_us = ri.ri_user_time / 1000;
+    *sys_us = ri.ri_system_time / 1000;
+    return true;
+#else
+    char p[64];
+    snprintf(p, sizeof p, "/proc/%d/stat", (int)pid);
+    FILE *f = fopen(p, "r");
+    if (!f) return false;
+    unsigned long ut = 0, st = 0;
+    long rss_pages = 0;
+    int ok = fscanf(f, "%*d %*s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %lu %lu %*d %*d %*d %*d %*d %*d %*u %*u %ld", &ut, &st, &rss_pages);
+    fclose(f);
+    long hz = sysconf(_SC_CLK_TCK);
+    *rss = (uint64_t)rss_pages * (uint64_t)sysconf(_SC_PAGESIZE);
+    *user_us = ut * 1000000ULL / (uint64_t)hz;
+    *sys_us = st * 1000000ULL / (uint64_t)hz;
+    return ok == 3;
+#endif
+}
+
+static uint64_t rss0, u0, s0, rss_open;
+static int64_t t_measure;
+static long moves_at_start;
+
+static void stop_tick(cb_loop *l, void *ud) { stopping = true; cb_loop_stop(L); }
+static void measure_tick(cb_loop *l, void *ud) {
+    measuring = true;
+    t_measure = now_ms_d();
+    proc_usage(O.pid, &rss_open, &u0, &s0);
+    if (!O.quiet) fprintf(stderr, "measuring for %d s: %d sockets open, %ld games ended in the warm-up\n", O.duration, n_open, games_ended);
+    cb_loop_timer(L, O.duration * 1000, stop_tick, NULL);
+}
+
+static void on_sigint(int s) { (void)s; stopping = true; if (L) cb_loop_stop(L); }
+
+int main(int argc, char **argv) {
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : "";
+        if (!strcmp(a, "--port")) O.port = atoi(v), i++;
+        else if (!strcmp(a, "--bots")) O.bots = atoi(v), i++;
+        else if (!strcmp(a, "--tc")) { sscanf(v, "%d+%d", &O.base, &O.inc); i++; }
+        else if (!strcmp(a, "--think")) O.think = atoi(v), i++;
+        else if (!strcmp(a, "--spread")) O.spread = atoi(v), i++;
+        else if (!strcmp(a, "--watchers")) O.watchers = atoi(v), i++;
+        else if (!strcmp(a, "--duration")) O.duration = atoi(v), i++;
+        else if (!strcmp(a, "--warmup")) O.warmup = atoi(v), i++;
+        else if (!strcmp(a, "--pid")) O.pid = (pid_t)atoi(v), i++;
+        else if (!strcmp(a, "--accounts")) O.accounts = v, i++;
+        else if (!strcmp(a, "--prefix")) O.prefix = v, i++;
+        else if (!strcmp(a, "--connect-rate")) O.connect_rate = atoi(v), i++;
+        else if (!strcmp(a, "--rated")) O.rated = atoi(v), i++;
+        else if (!strcmp(a, "--forever")) O.forever = true;
+        else if (!strcmp(a, "--quiet")) O.quiet = true;
+        else { fprintf(stderr, "chessbench: unknown option %s\n", a); return 2; }
+    }
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGINT, on_sigint);
+    signal(SIGTERM, on_sigint);
+    srand((unsigned)getpid());
+    ch_init();
+    int total = O.bots + O.watchers;
+    B = calloc((size_t)total, sizeof *B);
+    GAME_BOT = malloc(sizeof *GAME_BOT * 2 * GAME_SLOTS);
+    if (!B || !GAME_BOT) { fprintf(stderr, "chessbench: out of memory\n"); return 1; }
+    memset(GAME_BOT, 0xff, sizeof *GAME_BOT * 2 * GAME_SLOTS);
+    for (int i = 0; i < total; i++) {
+        bot *b = &B[i];
+        cc_client_init(&b->c);
+        b->idx = i;
+        b->fd = -1;
+        b->watcher = i >= O.bots;
+        snprintf(b->name, sizeof b->name, "%s%d", O.prefix, i);
+        snprintf(b->password, sizeof b->password, "bench-pw-%d-x", i);
+        cb_buf_init(&b->in);
+        cb_buf_init(&b->out);
+    }
+    int players = O.bots;
+    O.bots = total;   /* the accounts and sockets of the watchers too */
+    accounts();
+    O.bots = players;
+    if (!O.quiet) fprintf(stderr, "chessbench: %d bots playing %d+%d %s, think %d..%d ms, %d watchers, port %d\n", O.bots, O.base, O.inc,
+                          O.rated ? "rated" : "casual", O.think, O.think + O.spread, O.watchers, O.port);
+    uint64_t dummy;
+    proc_usage(O.pid, &rss0, &dummy, &dummy);
+    L = cb_loop_new();
+    int keep = O.bots;
+    O.bots = total;
+    next_connect = 0;
+    cb_loop_timer(L, 0, connect_tick, NULL);
+    if (!O.forever) cb_loop_timer(L, O.warmup * 1000 + total * 1000 / (O.connect_rate ? O.connect_rate : 1), measure_tick, NULL);
+    cb_loop_run(L);
+    O.bots = keep;
+    if (O.forever) return 0;
+    double secs = (double)(now_ms_d() - t_measure) / 1000.0;
+    uint64_t rss1 = 0, u1 = 0, s1 = 0;
+    bool have = proc_usage(O.pid, &rss1, &u1, &s1);
+    qsort(rt_us.v, rt_us.n, sizeof *rt_us.v, cmp_u32);
+    qsort(relay_us.v, relay_us.n, sizeof *relay_us.v, cmp_u32);
+    printf("chessbench: %d bots, %d+%d, think %d..%d ms, %d watchers\n", O.bots, O.base, O.inc, O.think, O.think + O.spread, O.watchers);
+    printf("sockets open %d; measured %.1f s: moves %ld (%.0f/s), games ended %ld (%.1f/s), refusals %ld\n", n_open, secs, moves_measured,
+           moves_measured / secs, games_measured, games_measured / secs, errors);
+    printf("move round trip (us): n %zu p50 %u p90 %u p99 %u p999 %u max %u\n", rt_us.n, pct(&rt_us, 0.5), pct(&rt_us, 0.9), pct(&rt_us, 0.99),
+           pct(&rt_us, 0.999), rt_us.n ? rt_us.v[rt_us.n - 1] : 0);
+    printf("move relay      (us): n %zu p50 %u p90 %u p99 %u p999 %u max %u\n", relay_us.n, pct(&relay_us, 0.5), pct(&relay_us, 0.9),
+           pct(&relay_us, 0.99), pct(&relay_us, 0.999), relay_us.n ? relay_us.v[relay_us.n - 1] : 0);
+    printf("frames out %ld in %ld, bytes out %ld in %ld\n", frames_out, frames_in, bytes_out, bytes_in);
+    if (have) {
+        double cpu = (double)((u1 - u0) + (s1 - s0));
+        printf("server pid %d: rss %.1f MB before the bots, %.1f MB with them connected, %.1f MB at the end (%.2f KB per socket); "
+               "cpu user %.2f s sys %.2f s = %.1f%% of one core, %.1f us per move\n", (int)O.pid, rss0 / 1048576.0, rss_open / 1048576.0,
+               rss1 / 1048576.0, n_open ? (double)(rss1 - rss0) / 1024.0 / n_open : 0, (u1 - u0) / 1e6, (s1 - s0) / 1e6, cpu / 1e4 / secs,
+               moves_measured ? cpu / (double)moves_measured : 0);
+    }
+    (void)moves_at_start;
+    return 0;
+}

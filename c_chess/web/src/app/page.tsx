@@ -1,0 +1,97 @@
+'use client';
+// The lobby: quick pairing by time control, the open seeks, a challenge link.
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { CC_EV_CHALLENGE, CC_EV_START } from '@/gen/web_layout';
+import { net } from '@/lib/net';
+import { tc, useNet } from '@/lib/use';
+
+const QUICK: [number, number, string][] = [
+  [60, 0, 'Bullet'], [120, 1, 'Bullet'], [180, 0, 'Blitz'],
+  [180, 2, 'Blitz'], [300, 0, 'Blitz'], [300, 3, 'Blitz'],
+  [600, 0, 'Rapid'], [600, 5, 'Rapid'], [900, 10, 'Rapid'],
+];
+
+export default function Lobby() {
+  const s = useNet();
+  const router = useRouter();
+  const [waiting, setWaiting] = useState<string | null>(null);
+  const [rated, setRated] = useState(true);
+  const [link, setLink] = useState<string | null>(null);
+
+  useEffect(() => { net.lobby(true); return () => net.lobby(false); }, []);
+  useEffect(() => {
+    const e = net.consume();
+    if ((e & CC_EV_START) && s.view?.startGame) router.push(`/game?id=${s.view.startGame}`);
+    if ((e & CC_EV_CHALLENGE) && s.view?.challengeId) setLink(`${location.origin}/join?c=${s.view.challengeId}`);
+  }, [s.events, s.view, router]);
+  // a waiting seek is sent again before the server's 30 s are up
+  useEffect(() => {
+    if (!waiting) return;
+    const [b, i] = waiting.split('+').map(Number);
+    const t = setInterval(() => net.run((k) => k.seek(b, i, rated)), 20000);
+    return () => clearInterval(t);
+  }, [waiting, rated]);
+
+  const seek = (b: number, i: number) => {
+    const key = `${b}+${i}`;
+    if (waiting === key) { setWaiting(null); net.run((k) => k.unseek()); return; }
+    setWaiting(key);
+    net.run((k) => k.seek(b, i, rated));
+  };
+  const lobby = s.lobby;
+  const me = s.view?.me;
+  return (
+    <div className="lobby">
+      <section>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+          <h1>Quick pairing</h1>
+          <label className="row muted" style={{ fontSize: 14 }}>
+            <input type="checkbox" checked={rated} onChange={(e) => setRated(e.target.checked)} /> Rated
+          </label>
+        </div>
+        <div className="pairs">
+          {QUICK.map(([b, i, k]) => {
+            const key = `${b}+${i}`;
+            return (
+              <button key={key} className={`pair ${waiting === key ? 'waiting' : ''}`} onClick={() => seek(b, i)}>
+                <span className="t">{tc(b, i)}</span>
+                <span className="k">{waiting === key ? 'Waiting for an opponent...' : k}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="panel" style={{ marginTop: 24, padding: 16 }}>
+          <h2>Play a friend</h2>
+          <div className="row">
+            <span className="muted" style={{ fontSize: 14 }}>A link anyone can open to play you, 5+3 casual.</span>
+            <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => net.run((k) => k.challenge(300, 3, false))}>Create link</button>
+          </div>
+          {link && (
+            <div className="link-box">
+              <input readOnly value={link} onFocus={(e) => e.target.select()} />
+              <button className="btn primary" onClick={() => navigator.clipboard?.writeText(link)}>Copy</button>
+            </div>
+          )}
+        </div>
+      </section>
+      <aside className="panel">
+        <div className="stats">
+          <span><b>{lobby?.games ?? 0}</b> games in play</span>
+          <span><b>{lobby?.players ?? 0}</b> players</span>
+        </div>
+        <table className="seeks">
+          <thead><tr><th>Player</th><th>Rating</th><th>Time</th><th>Mode</th></tr></thead>
+          <tbody>
+            {(lobby?.seeks ?? []).slice(0, lobby?.n ?? 0).map((r) => (
+              <tr key={r.id} className={r.name === me ? '' : 'click'} onClick={() => r.name !== me && net.run((k) => k.seek(r.baseS, r.incS, r.rated === 1))}>
+                <td>{r.name}</td><td>{r.rating}</td><td>{tc(r.baseS, r.incS)}</td><td>{r.rated ? 'Rated' : 'Casual'}</td>
+              </tr>
+            ))}
+            {!lobby?.n && <tr><td colSpan={4} className="muted" style={{ padding: 24, textAlign: 'center' }}>No one is waiting. Pick a time to be first.</td></tr>}
+          </tbody>
+        </table>
+      </aside>
+    </div>
+  );
+}

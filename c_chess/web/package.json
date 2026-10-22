@@ -1,0 +1,24 @@
+{
+  "name": "c-chess-web",
+  "private": true,
+  "//": "The c_chess site: a static export (out/) the c_chess server serves from memory. The rules and the protocol are C (../c), compiled to public/chess.wasm by `make wasm` (a build output, never committed); this side moves bytes and draws.",
+  "scripts": {
+    "wasm": "make -s -C .. wasm && node scripts/pieces.mjs",
+    "predev": "npm run wasm",
+    "dev": "next dev -p 3100",
+    "prebuild": "npm run wasm",
+    "build": "next build && node scripts/gzip.mjs out",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.4.0"
+  }
+}
