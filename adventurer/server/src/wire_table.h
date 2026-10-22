@@ -52,7 +52,7 @@ static const adv_wire_field ADV_WIRE_FIELDS[] = {
     F(adv_w_user, n_activities, WK_U32, 4), F(adv_w_user, version, WK_U32, 4), F(adv_w_user, unique_m, WK_F32, 4),
     F(adv_w_user, home_lat, WK_I32, 4), F(adv_w_user, home_lon, WK_I32, 4), F(adv_w_user, name, WK_STR, 1),
 
-    F(adv_w_region, id, WK_U16, 2), F(adv_w_region, name_len, WK_U8, 1), F(adv_w_region, len_m, WK_F32, 4),
+    F(adv_w_region, id, WK_U16, 2), F(adv_w_region, name_len, WK_U8, 1), F(adv_w_region, level, WK_U8, 1), F(adv_w_region, len_m, WK_F32, 4),
     F(adv_w_region, c_lat, WK_I32, 4), F(adv_w_region, c_lon, WK_I32, 4), F(adv_w_region, min_lat, WK_I32, 4),
     F(adv_w_region, min_lon, WK_I32, 4), F(adv_w_region, max_lat, WK_I32, 4), F(adv_w_region, max_lon, WK_I32, 4),
     F(adv_w_region, name, WK_STR, 1),

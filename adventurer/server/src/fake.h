@@ -50,11 +50,14 @@ typedef struct {
 } fake_user;
 
 // The user (seed, id): kind (35% commuter, 25% explorer, 15% runner, 15% walker, 10% tourist), a
-// home that is the first point of a random segment the kind can travel, a two-part name. The
-// def has name_len set and the name NUL-terminated. home_seg out may be NULL.
+// home that is the first point of a random street the kind can travel (fake_home_class when one
+// is found in 192 draws), a two-part name. The def has name_len set and the name NUL-terminated.
+// home_seg out may be NULL.
 void fake_user_def(const adv_graph *g, uint64_t seed, uint32_t id, adv_w_user_def *def, uint32_t *home_seg);
 // Users 1..n into out[0..n).
 void fake_users_make(const adv_graph *g, uint32_t n, uint64_t seed, adv_w_user_def *out);
+// A highway class people live on: residential, living street, tertiary, unclassified.
+bool fake_home_class(uint8_t hclass);
 // A user's play-time state from its definition: the def, the home node, nothing visited.
 void fake_user_init(const adv_graph *g, fake_user *u, uint64_t seed, uint32_t id);
 bool fake_user_visited(const fake_user *u, uint32_t seg);

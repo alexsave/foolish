@@ -11,9 +11,10 @@
 // the matcher's transitions. The CELL INDEX is a dense grid of Web Mercator tiles at
 // ADV_CELL_ZOOM over the file's bounding box; each cell lists (ascending) every segment whose
 // bounding box touches it, so a point's candidates are its cell and the eight around it, and a
-// z14 tile is 16 cells. A REGION is a named area (an OSM administrative boundary); a segment
-// belongs to the region its midpoint falls in, and the region carries its road length per
-// activity type, the denominators of the explorer achievements.
+// z14 tile is 16 cells. A REGION is a named area (an OSM administrative boundary) with a LEVEL
+// (OSM's admin_level); a segment belongs to the innermost region its midpoint falls in (the
+// highest level: a village inside a town is the village's), and the region carries its road
+// length per activity type, the denominators of the explorer achievements.
 //
 // FILE LAYOUT (little-endian, every section 8-byte aligned): adv_graph_hdr, then the sections at
 // the header's offsets. The CRC-32C in the header is over every byte after the header; open
@@ -29,7 +30,7 @@
 #include <stdint.h>
 
 #define ADV_GRAPH_MAGIC   0x46524741u   // "AGRF"
-#define ADV_GRAPH_VERSION 1
+#define ADV_GRAPH_VERSION 2
 #define ADV_CELL_ZOOM     16
 #define ADV_MASK_BITS     16
 #define ADV_SEG_MAX_PTS   256      // shape points of one segment (the importer splits longer runs)
@@ -40,6 +41,7 @@
 #define ADV_NO_REGION     0xFFFFu
 #define ADV_MAX_SEGS      (1u << 24)   // 16M segments: a continent-sized extract still indexes in u32
 #define ADV_MAX_REGIONS   4096
+#define ADV_REGION_MAX_LEVEL 31
 
 // Access bits (which activity types score a segment) and the activity types, as indices into
 // the per-type arrays everywhere: 0 bike, 1 foot, 2 combined (either).
@@ -91,6 +93,8 @@ typedef struct {
     uint32_t n_segs;
     int32_t  c_lat, c_lon;            // a point inside (its label)
     int32_t  min_lat, min_lon, max_lat, max_lon;
+    uint16_t level;                   // OSM admin_level (1..ADV_REGION_MAX_LEVEL); the higher, the more local
+    uint16_t pad;
 } adv_region;
 
 typedef struct {
@@ -149,20 +153,26 @@ bool adv_cells_of_box(const adv_graph *g, adv_pt min, adv_pt max, uint32_t *i0, 
 // splits ways at shared nodes into segments, orders them on the Hilbert curve, assigns regions
 // by midpoint, builds the nodes and the cell index and writes the file. Regions are rings (a
 // region may have several: islands); a point is inside a region when inside an odd number of
-// its rings (holes are rings too).
+// its rings (holes are rings too), and when inside several regions it belongs to the one with
+// the highest level (the first added, among equals).
 typedef struct adv_build adv_build;
 adv_build *adv_build_new(const char *source);
 void       adv_build_free(adv_build *b);
 // A way of n >= 2 points. Consecutive duplicate nodes are dropped. CB_OK, CB_E_NOMEM, CB_E_INVALID.
 int adv_build_add_way(adv_build *b, const int64_t *node_ids, const adv_pt *pts, int n, uint8_t access, uint8_t hclass, uint8_t flags);
-// A region by name (the same name twice is the same region): its index, or a CB_E_*.
-int adv_build_region(adv_build *b, const char *name);
+// A region by name and level, 1..ADV_REGION_MAX_LEVEL (the same name at the same level twice is
+// the same region: islands of one town): its index, or a CB_E_*.
+int adv_build_region(adv_build *b, const char *name, int level);
 int adv_build_region_ring(adv_build *b, int region, const adv_pt *ring, int n);
+// When on, a segment whose midpoint is in no region is left out of the file (the graph is then
+// exactly the union of its regions). Off by default: such a segment is kept with ADV_NO_REGION.
+void adv_build_only_regioned(adv_build *b, bool on);
 // Everything into the file at path (written whole, then renamed into place). CB_OK or a CB_E_*.
 int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap);
 // What finish built, for the logs.
 typedef struct {
     uint32_t segs, nodes, deltas, cells, regions, cell_segs;
+    uint32_t segs_unregioned;   // left out by adv_build_only_regioned
     double   total_len_m[ADV_T_N];
 } adv_build_stats;
 void adv_build_stats_get(const adv_build *b, adv_build_stats *out);

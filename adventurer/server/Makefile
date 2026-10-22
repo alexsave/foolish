@@ -147,8 +147,13 @@ DATA ?= ../data
 PBF  ?= $(DATA)/region.osm.pbf
 GRAPH ?= $(DATA)/region.graph
 graph: $(GRAPH)
+# THE REGION'S SHAPE: New York City's five boroughs with Nassau, Westchester, Hudson and Bergen
+# around them (../tools/fetch_osm.sh cuts the extract to a box around those nine counties, and the
+# fence keeps exactly them). Regions are the boroughs and NY's towns and cities (admin_level 7)
+# with the villages (8) inside the towns, and NJ's municipalities (8); a road is its innermost's.
+IMPORT_ARGS ?= --admin-levels 7,8 --within "6:New York County,Kings County,Queens County,Bronx County,Richmond County,Nassau County,Westchester County,Hudson County,Bergen County"
 $(GRAPH): build/adv-import $(PBF)
-	build/adv-import $(PBF) $@
+	build/adv-import $(PBF) $@ $(IMPORT_ARGS)
 
 # ---- fuzz (c_base/fuzz/fuzz.mk's shape, for adventurer's own targets) -------------------------
 ifeq ($(UNAME),Darwin)

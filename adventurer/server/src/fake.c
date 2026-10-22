@@ -78,6 +78,10 @@ static void user_rng(fake_rng *r, uint64_t seed, uint32_t id) {
     fake_rng_seed(r, splitmix64(seed) ^ ((uint64_t)id * 0xD6E8FEB86659FD93ull));
 }
 
+bool fake_home_class(uint8_t hclass) {
+    return hclass == ADV_HC_RESIDENTIAL || hclass == ADV_HC_LIVING || hclass == ADV_HC_TERTIARY || hclass == ADV_HC_UNCLASSIFIED;
+}
+
 void fake_user_def(const adv_graph *g, uint64_t seed, uint32_t id, adv_w_user_def *def, uint32_t *home_seg) {
     fake_rng r;
     user_rng(&r, seed, id);
@@ -85,17 +89,19 @@ void fake_user_def(const adv_graph *g, uint64_t seed, uint32_t id, adv_w_user_de
     def->id = id;
     double k = fake_rng_unit(&r);
     def->kind = k < 0.35 ? ADV_UK_COMMUTER : k < 0.60 ? ADV_UK_EXPLORER : k < 0.75 ? ADV_UK_RUNNER : k < 0.90 ? ADV_UK_WALKER : ADV_UK_TOURIST;
-    // Home: the first point of a segment the kind can travel, so the first route has a way out.
-    // A few random draws almost always find one; the scan is for a graph that is nearly all of
-    // one access, and is bounded by the segment count.
+    // Home: the first point of a street the kind can travel, so the first route has a way out,
+    // and a street people live on (residential, living street, tertiary or unclassified: not a
+    // park path, a service road or a highway). A few random draws almost always find one; then
+    // any segment of the right access; the scan is for a graph that is nearly all of one access,
+    // and is bounded by the segment count.
     uint8_t access = fake_act_access(fake_kind_act(def->kind));
     uint32_t seg = 0;
     if (g->h->n_segs > 0) {
         seg = fake_rng_below(&r, g->h->n_segs);
-        bool ok = (g->segs[seg].access & access) != 0;
-        for (int tries = 0; !ok && tries < 64; tries++) {
+        bool ok = (g->segs[seg].access & access) != 0 && fake_home_class(g->segs[seg].hclass);
+        for (int tries = 0; !ok && tries < 256; tries++) {
             seg = fake_rng_below(&r, g->h->n_segs);
-            ok = (g->segs[seg].access & access) != 0;
+            ok = (g->segs[seg].access & access) != 0 && (tries < 192 ? fake_home_class(g->segs[seg].hclass) : true);
         }
         for (uint32_t i = 0; !ok && i < g->h->n_segs; i++) {
             uint32_t s = (seg + i) % g->h->n_segs;

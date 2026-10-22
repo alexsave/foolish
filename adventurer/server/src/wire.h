@@ -59,7 +59,7 @@ typedef struct {
 typedef struct {
     uint16_t id;
     uint8_t  name_len;
-    uint8_t  pad;
+    uint8_t  level;                // OSM admin_level (graph.h adv_region)
     float    len_m[ADV_T_N];
     int32_t  c_lat, c_lon;
     int32_t  min_lat, min_lon, max_lat, max_lon;

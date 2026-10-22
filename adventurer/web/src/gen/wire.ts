@@ -2,7 +2,7 @@
 // Every offset and size below is the C compiler's. The server stamps WIRE_HASH into every answer;
 // a page whose hash differs was built from another layout and must refuse the bytes.
 
-export const WIRE_HASH = 0xcd0edc6d;
+export const WIRE_HASH = 0x53e9a69c;
 
 export const SIZE = {
   WList: 8,
@@ -83,6 +83,7 @@ export function readWUser(dv: DataView, off: number): WUser {
 export interface WRegion {
   id: number;
   nameLen: number;
+  level: number;
   lenM: number[];
   cLat: number;
   cLon: number;
@@ -97,6 +98,7 @@ export function readWRegion(dv: DataView, off: number): WRegion {
   return {
     id: dv.getUint16(off + 0, true),
     nameLen: dv.getUint8(off + 2),
+    level: dv.getUint8(off + 3),
     lenM: [dv.getFloat32(off + 4, true), dv.getFloat32(off + 8, true), dv.getFloat32(off + 12, true)],
     cLat: dv.getInt32(off + 16, true),
     cLon: dv.getInt32(off + 20, true),

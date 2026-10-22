@@ -105,16 +105,16 @@ static void copy_name(char *out, size_t cap, const char *s) {
     out[n] = 0;
 }
 
-bool osm_relation_region(const pbf_tag *tags, int n_tags, int admin_level_wanted, char name[ADV_REGION_NAME]) {
-    if (!is(tag(tags, n_tags, "boundary"), "administrative")) return false;
+int osm_relation_region(const pbf_tag *tags, int n_tags, uint32_t levels, char name[ADV_REGION_NAME]) {
+    if (!is(tag(tags, n_tags, "boundary"), "administrative")) return 0;
     const char *lvl = tag(tags, n_tags, "admin_level");
-    if (!lvl || !*lvl) return false;
+    if (!lvl || !*lvl) return 0;
     char *end;
     long l = strtol(lvl, &end, 10);
-    if (*end || l != admin_level_wanted) return false;
+    if (*end || l < 1 || l > ADV_REGION_MAX_LEVEL || !(levels & (1u << l))) return 0;
     const char *nm = tag(tags, n_tags, "name:en");
     if (!nm || !*nm) nm = tag(tags, n_tags, "name");
-    if (!nm || !*nm) return false;
+    if (!nm || !*nm) return 0;
     copy_name(name, ADV_REGION_NAME, nm);
-    return true;
+    return (int)l;
 }

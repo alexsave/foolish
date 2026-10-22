@@ -245,6 +245,7 @@ typedef struct {
 
 typedef struct {
     char     name[ADV_REGION_NAME];
+    int      level;
     uint32_t ring_off, n_rings;   // rings are appended in order, so a region's are contiguous only
                                   // when added together; the builder keeps a list instead
     uint32_t *rings;
@@ -265,6 +266,7 @@ struct adv_build {
     bregion  *regions;
     uint32_t  n_regions, cap_regions;
     int64_t   next_synthetic;   // node ids the densifier makes up (negative, never OSM's)
+    bool      only_regioned;    // adv_build_only_regioned
     adv_build_stats stats;
 };
 
@@ -348,17 +350,20 @@ int adv_build_add_way(adv_build *b, const int64_t *node_ids, const adv_pt *pts, 
     return CB_OK;
 }
 
-int adv_build_region(adv_build *b, const char *name) {
-    if (!name || !*name || strlen(name) >= ADV_REGION_NAME) return CB_E_INVALID;
+int adv_build_region(adv_build *b, const char *name, int level) {
+    if (!name || !*name || strlen(name) >= ADV_REGION_NAME || level < 1 || level > ADV_REGION_MAX_LEVEL) return CB_E_INVALID;
     for (uint32_t i = 0; i < b->n_regions; i++)
-        if (strcmp(b->regions[i].name, name) == 0) return (int)i;
+        if (b->regions[i].level == level && strcmp(b->regions[i].name, name) == 0) return (int)i;
     if (b->n_regions >= ADV_MAX_REGIONS) return CB_E_FULL;
     GROW(b->regions, b->n_regions, b->cap_regions, 1);
     bregion *r = &b->regions[b->n_regions];
     memset(r, 0, sizeof *r);
     snprintf(r->name, sizeof r->name, "%s", name);
+    r->level = level;
     return (int)b->n_regions++;
 }
+
+void adv_build_only_regioned(adv_build *b, bool on) { b->only_regioned = on; }
 
 int adv_build_region_ring(adv_build *b, int region, const adv_pt *ring, int n) {
     if (region < 0 || (uint32_t)region >= b->n_regions || n < 3) return CB_E_INVALID;
@@ -398,15 +403,19 @@ static bool ring_contains(const adv_build *b, const bring *r, adv_pt p) {
     return in;
 }
 
+// The innermost region holding p: of those whose rings contain it an odd number of times, the
+// one with the highest level, and among equals the first added.
 static int region_of(const adv_build *b, adv_pt p) {
+    int best = -1;
     for (uint32_t i = 0; i < b->n_regions; i++) {
         const bregion *r = &b->regions[i];
+        if (best >= 0 && r->level <= b->regions[best].level) continue;
         int crossings = 0;
         for (uint32_t k = 0; k < r->n_ring_ids; k++)
             if (ring_contains(b, &b->rings[r->rings[k]], p)) crossings++;
-        if (crossings & 1) return (int)i;
+        if (crossings & 1) best = (int)i;
     }
-    return -1;
+    return best;
 }
 
 // A node id's uses across every way: sorted, so a run of equal ids is one node.
@@ -574,7 +583,8 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
                 s.hkey = adv_hilbert_xy2d(1u << ADV_CELL_ZOOM, cx, cy);
                 int r = region_of(b, s.mid);
                 s.region = r < 0 ? ADV_NO_REGION : (uint16_t)r;
-                segs[n_segs++] = s;
+                if (r < 0 && b->only_regioned) b->stats.segs_unregioned++;
+                else segs[n_segs++] = s;
                 if (n_segs > ADV_MAX_SEGS) { rc = finish_fail(err, cap, "too many segments", CB_E_FULL); goto out; }
                 start = at;
                 len = 0;
@@ -714,6 +724,7 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
     for (uint32_t i = 0; i < b->n_regions; i++) {
         adv_region *r = &regions[i];
         memcpy(r->name, b->regions[i].name, ADV_REGION_NAME);
+        r->level = (uint16_t)b->regions[i].level;
         r->min_lat = r->min_lon = INT32_MAX;
         r->max_lat = r->max_lon = INT32_MIN;
         for (uint32_t k = 0; k < b->regions[i].n_ring_ids; k++) {

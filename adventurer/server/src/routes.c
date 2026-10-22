@@ -131,6 +131,7 @@ static void regions_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
         memset(&r, 0, sizeof r);
         r.id = (uint16_t)i;
         r.name_len = (uint8_t)strnlen(rg->name, ADV_REGION_NAME - 1);
+        r.level = (uint8_t)rg->level;
         for (int t = 0; t < ADV_T_N; t++) r.len_m[t] = rg->len_m[t];
         r.c_lat = rg->c_lat; r.c_lon = rg->c_lon;
         r.min_lat = rg->min_lat; r.min_lon = rg->min_lon; r.max_lat = rg->max_lat; r.max_lon = rg->max_lon;

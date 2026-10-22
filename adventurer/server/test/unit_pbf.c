@@ -126,11 +126,17 @@ static const tway ways[] = {
     { 22, { "boundary", "administrative", NULL }, { 100, 103, 102 }, 3 },   // reversed against 21
     { 23, { NULL }, { 200, 201 }, 2 },
     { 24, { NULL }, { 202, 203 }, 2 },
+    { 25, { NULL }, { 201, 202 }, 2 },
+    { 26, { NULL }, { 203, 200 }, 2 },
 };
 static const trel rels[] = {
     { 1, { "type", "boundary", "boundary", "administrative", "admin_level", "8", "name", "Testville", NULL }, { 21, 22 }, { "outer", "outer" }, 2 },
     { 2, { "boundary", "administrative", "admin_level", "8", "name", "Nowhere", NULL }, { 23, 24 }, { "outer", "" }, 2 },
     { 3, { "boundary", "administrative", "admin_level", "6", "name", "Testshire", NULL }, { 21, 22 }, { "outer", "outer" }, 2 },
+    // The same ring again one level up (a town coterminous with its village), and a closed ring
+    // far away (another county's town): what --admin-levels 7,8 and --within sort out.
+    { 4, { "boundary", "administrative", "admin_level", "7", "name", "Testtown", NULL }, { 21, 22 }, { "outer", "outer" }, 2 },
+    { 5, { "boundary", "administrative", "admin_level", "8", "name", "Elsewhere", NULL }, { 23, 25, 24, 26 }, { "outer", "outer", "outer", "outer" }, 4 },
 };
 #define N_DENSE ((int)(sizeof dense_nodes / sizeof dense_nodes[0]))
 #define N_PLAIN ((int)(sizeof plain_nodes / sizeof plain_nodes[0]))
@@ -278,14 +284,14 @@ static void test_import(const char *pbf_path) {
     if (rc != CB_OK) return;
     T_CHECK_MSG(st.ways_read == N_WAYS, "%llu", (unsigned long long)st.ways_read);
     T_CHECK_MSG(st.roads_kept == 4, "%llu", (unsigned long long)st.roads_kept);
-    T_CHECK_MSG(st.member_ways == 4, "%llu", (unsigned long long)st.member_ways);
+    T_CHECK_MSG(st.member_ways == 6, "%llu", (unsigned long long)st.member_ways);
     T_CHECK_MSG(st.ways_dropped == 1, "%llu", (unsigned long long)st.ways_dropped);
     T_CHECK_MSG(st.nodes_read == N_DENSE + N_PLAIN, "%llu", (unsigned long long)st.nodes_read);
     T_CHECK_MSG(st.nodes_needed == 16, "%llu", (unsigned long long)st.nodes_needed);
     T_CHECK_MSG(st.nodes_kept == 15, "%llu", (unsigned long long)st.nodes_kept);
     T_CHECK(st.relations_read == N_RELS);
-    T_CHECK_MSG(st.relations_wanted == 2, "%llu", (unsigned long long)st.relations_wanted);
-    T_CHECK_MSG(st.rings_closed == 1, "%llu", (unsigned long long)st.rings_closed);
+    T_CHECK_MSG(st.relations_wanted == 3, "%llu", (unsigned long long)st.relations_wanted);
+    T_CHECK_MSG(st.rings_closed == 2, "%llu", (unsigned long long)st.rings_closed);
     // "Nowhere": two member ways that never meet, so each starts a chain that stays open.
     T_CHECK_MSG(st.rings_dropped == 2, "%llu", (unsigned long long)st.rings_dropped);
     T_CHECK(!st.fallback_used);
@@ -295,8 +301,9 @@ static void test_import(const char *pbf_path) {
     T_CHECK_MSG(rc == CB_OK, "open: %s", err);
     if (rc != CB_OK) return;
     T_CHECK(g.h->n_segs == 3);
-    T_CHECK(g.h->n_regions == 1);
-    T_CHECK(strcmp(g.regions[0].name, "Testville") == 0);
+    T_CHECK(g.h->n_regions == 2);
+    T_CHECK(strcmp(g.regions[0].name, "Testville") == 0 && g.regions[0].level == 8);
+    T_CHECK(strcmp(g.regions[1].name, "Elsewhere") == 0 && g.regions[1].n_segs == 0);
     T_CHECK_MSG(g.regions[0].n_segs == 2, "n_segs=%u", g.regions[0].n_segs);
     const adv_seg *res = seg_of_class(&g, ADV_HC_RESIDENTIAL), *foot = seg_of_class(&g, ADV_HC_FOOTWAY), *cyc = seg_of_class(&g, ADV_HC_CYCLEWAY);
     T_CHECK(res && foot && cyc);
@@ -331,16 +338,67 @@ static void test_import(const char *pbf_path) {
     }
     adv_graph_close(&g);
     // admin_level 6: the county relation, built from the same two ways.
-    o.admin_level = 6;
+    o.admin_levels = 1u << 6;
     rc = adv_import(pbf_path, graph_path, &o, &st, err, sizeof err);
     T_CHECK_MSG(rc == CB_OK, "rc=%d err=%s", rc, err);
     T_CHECK(st.relations_wanted == 1 && st.rings_closed == 1 && st.rings_dropped == 0);
     T_CHECK(st.member_ways == 2);
     T_CHECK(adv_graph_open(graph_path, &g, err, sizeof err) == CB_OK);
-    T_CHECK(g.h->n_regions == 1 && strcmp(g.regions[0].name, "Testshire") == 0 && g.regions[0].n_segs == 2);
+    T_CHECK(g.h->n_regions == 1 && strcmp(g.regions[0].name, "Testshire") == 0 && g.regions[0].n_segs == 2 && g.regions[0].level == 6);
     adv_graph_close(&g);
+    // Levels 7 and 8 together: the town and the village share one ring, and the village (the
+    // innermost) gets the roads; the town is there with none.
+    o.admin_levels = (1u << 7) | (1u << 8);
+    rc = adv_import(pbf_path, graph_path, &o, &st, err, sizeof err);
+    T_CHECK_MSG(rc == CB_OK, "rc=%d err=%s", rc, err);
+    T_CHECK_MSG(st.relations_wanted == 4, "%llu", (unsigned long long)st.relations_wanted);
+    T_CHECK(adv_graph_open(graph_path, &g, err, sizeof err) == CB_OK);
+    T_CHECK_MSG(g.h->n_regions == 3, "n_regions=%u", g.h->n_regions);
+    {
+        const adv_region *town = NULL, *village = NULL;
+        for (uint32_t i = 0; i < g.h->n_regions; i++) {
+            if (strcmp(g.regions[i].name, "Testtown") == 0) town = &g.regions[i];
+            if (strcmp(g.regions[i].name, "Testville") == 0) village = &g.regions[i];
+        }
+        T_CHECK(town && village);
+        if (town && village) {
+            T_CHECK_MSG(town->level == 7 && town->n_segs == 0, "town level %u n_segs %u", town->level, town->n_segs);
+            T_CHECK_MSG(village->level == 8 && village->n_segs == 2, "village level %u n_segs %u", village->level, village->n_segs);
+        }
+        T_CHECK(g.h->n_segs == 3);   // the cycleway outside every region is still in the graph
+    }
+    adv_graph_close(&g);
+    // Level 7 alone: the town gets them.
+    o.admin_levels = 1u << 7;
+    rc = adv_import(pbf_path, graph_path, &o, &st, err, sizeof err);
+    T_CHECK_MSG(rc == CB_OK, "rc=%d err=%s", rc, err);
+    T_CHECK(adv_graph_open(graph_path, &g, err, sizeof err) == CB_OK);
+    T_CHECK(g.h->n_regions == 1 && strcmp(g.regions[0].name, "Testtown") == 0 && g.regions[0].n_segs == 2 && g.regions[0].level == 7);
+    adv_graph_close(&g);
+    // The fence: level-8 regions within the level-6 "Testshire". Testville is inside it,
+    // Elsewhere (a closed ring far away) is not and is dropped, and the cycleway outside every
+    // kept region leaves the graph with it.
+    o.admin_levels = 1u << 8;
+    o.within_level = 6;
+    o.within_names = "Nosuch, Testshire ,Other";
+    rc = adv_import(pbf_path, graph_path, &o, &st, err, sizeof err);
+    T_CHECK_MSG(rc == CB_OK, "rc=%d err=%s", rc, err);
+    T_CHECK_MSG(st.fences == 1, "fences=%llu", (unsigned long long)st.fences);
+    T_CHECK_MSG(st.regions_outside == 1, "outside=%llu", (unsigned long long)st.regions_outside);
+    T_CHECK_MSG(st.rings_closed == 2 && st.rings_dropped == 2, "closed %llu dropped %llu", (unsigned long long)st.rings_closed, (unsigned long long)st.rings_dropped);
+    T_CHECK_MSG(st.build.segs == 2 && st.build.segs_unregioned == 1, "segs %u unregioned %u", st.build.segs, st.build.segs_unregioned);
+    T_CHECK(adv_graph_open(graph_path, &g, err, sizeof err) == CB_OK);
+    T_CHECK(g.h->n_segs == 2 && g.h->n_regions == 1 && strcmp(g.regions[0].name, "Testville") == 0 && g.regions[0].n_segs == 2);
+    T_CHECK(!seg_of_class(&g, ADV_HC_CYCLEWAY));
+    adv_graph_close(&g);
+    // A fence that names no boundary of the extract is refused, not silently everything.
+    o.within_names = "Nosuch";
+    rc = adv_import(pbf_path, graph_path, &o, &st, err, sizeof err);
+    T_CHECK_MSG(rc == CB_E_NOT_FOUND, "rc=%d err=%s", rc, err);
+    o.within_level = 0;
+    o.within_names = NULL;
     // admin_level 5: nothing, so the fallback region holds every road.
-    o.admin_level = 5;
+    o.admin_levels = 1u << 5;
     o.fallback_region = "Everywhere";
     rc = adv_import(pbf_path, graph_path, &o, &st, err, sizeof err);
     T_CHECK_MSG(rc == CB_OK, "rc=%d err=%s", rc, err);
@@ -463,21 +521,25 @@ static void test_tags(void) {
     // Relations.
     char name[ADV_REGION_NAME];
     pbf_tag r1[] = { { "boundary", "administrative" }, { "admin_level", "8" }, { "name", "Warwick" }, { "name:en", "Warwick (en)" } };
-    T_CHECK(osm_relation_region(r1, 4, 8, name) && strcmp(name, "Warwick (en)") == 0);
-    T_CHECK(osm_relation_region(r1, 3, 8, name) && strcmp(name, "Warwick") == 0);
-    T_CHECK(!osm_relation_region(r1, 4, 6, name));
-    T_CHECK(!osm_relation_region(r1, 2, 8, name));   // no name
+    T_CHECK(osm_relation_region(r1, 4, 1u << 8, name) == 8 && strcmp(name, "Warwick (en)") == 0);
+    T_CHECK(osm_relation_region(r1, 3, 1u << 8, name) == 8 && strcmp(name, "Warwick") == 0);
+    T_CHECK(osm_relation_region(r1, 3, (1u << 7) | (1u << 8), name) == 8);
+    T_CHECK(!osm_relation_region(r1, 4, 1u << 6, name));
+    T_CHECK(!osm_relation_region(r1, 4, (1u << 6) | (1u << 7), name));
+    T_CHECK(!osm_relation_region(r1, 2, 1u << 8, name));   // no name
     pbf_tag r2[] = { { "boundary", "postal_code" }, { "admin_level", "8" }, { "name", "02886" } };
-    T_CHECK(!osm_relation_region(r2, 3, 8, name));
+    T_CHECK(!osm_relation_region(r2, 3, 1u << 8, name));
     pbf_tag r3[] = { { "boundary", "administrative" }, { "admin_level", "8x" }, { "name", "X" } };
-    T_CHECK(!osm_relation_region(r3, 3, 8, name));
+    T_CHECK(!osm_relation_region(r3, 3, 1u << 8, name));
+    pbf_tag r5[] = { { "boundary", "administrative" }, { "admin_level", "40" }, { "name", "X" } };
+    T_CHECK(!osm_relation_region(r5, 3, 0xFFFFFFFFu, name));   // past ADV_REGION_MAX_LEVEL
     // A long name is cut to fit, on a character boundary: 46 ASCII bytes then a 2-byte char.
     char longname[80];
     memset(longname, 'a', 46);
     memcpy(longname + 46, "\xC3\xA9\xC3\xA9zzz", 7);
     longname[53] = 0;
     pbf_tag r4[] = { { "boundary", "administrative" }, { "admin_level", "8" }, { "name", longname } };
-    T_CHECK(osm_relation_region(r4, 3, 8, name));
+    T_CHECK(osm_relation_region(r4, 3, 1u << 8, name) == 8);
     T_CHECK_MSG(strlen(name) == 46, "len=%zu", strlen(name));   // the 2-byte char at 46..47 would not fit whole
 }
 
