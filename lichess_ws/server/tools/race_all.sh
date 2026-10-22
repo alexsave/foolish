@@ -5,13 +5,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 D=${DURATION:-60}; W=${WARMUP:-15}
+ONLY=${ONLY:-A B C D E F}
+want() { case " $ONLY " in *" $1 "*) return 0 ;; esac; return 1; }
 # A: a quiet site: 200 games with 2 watchers each, 1000 site sockets, 200 lobby sockets (2000 sockets)
-tools/race.sh A --games 200 --watchers 2 --site 1000 --lobby 200 --move-ms 2000 --ping-ms 2000 --duration "$D" --warmup "$W"
+want A && tools/race.sh A --games 200 --watchers 2 --site 1000 --lobby 200 --move-ms 2000 --ping-ms 2000 --duration "$D" --warmup "$W"
 # B: a busy site: 1000 games, 4000 site, 500 lobby (8500 sockets), moves every 2 s
-tools/race.sh B --games 1000 --watchers 2 --site 4000 --lobby 500 --move-ms 2000 --ping-ms 2000 --duration "$D" --warmup "$W"
+want B && tools/race.sh B --games 1000 --watchers 2 --site 4000 --lobby 500 --move-ms 2000 --ping-ms 2000 --duration "$D" --warmup "$W"
 # C: many sockets: 1500 games, 5000 site, 500 lobby (11500 sockets)
-tools/race.sh C --games 1500 --watchers 2 --site 5000 --lobby 500 --move-ms 2000 --ping-ms 2000 --duration "$D" --warmup "$W" --connect-rate 400
+want C && tools/race.sh C --games 1500 --watchers 2 --site 5000 --lobby 500 --move-ms 2000 --ping-ms 2000 --duration "$D" --warmup "$W" --connect-rate 400
 # D: the move path at speed: 500 games moving every 200 ms, 2 watchers, no site traffic (2000 sockets, 2500 moves/s offered)
-tools/race.sh D --games 500 --watchers 2 --site 0 --lobby 0 --move-ms 200 --ping-ms 2000 --duration "$D" --warmup "$W"
+want D && tools/race.sh D --games 500 --watchers 2 --site 0 --lobby 0 --move-ms 200 --ping-ms 2000 --duration "$D" --warmup "$W"
 # E: the move path flat out: 1000 games moving every 50 ms (20000 moves/s offered), no watchers, no site
-tools/race.sh E --games 1000 --watchers 0 --site 0 --lobby 0 --move-ms 50 --ping-ms 2000 --duration "$D" --warmup "$W"
+want E && tools/race.sh E --games 1000 --watchers 0 --site 0 --lobby 0 --move-ms 50 --ping-ms 2000 --duration "$D" --warmup "$W"
+# F: saturation: 2000 games moving every 25 ms (80000 moves/s offered, more than either server or the one-thread load generator can carry), no watchers
+want F && tools/race.sh F --games 2000 --watchers 0 --site 0 --lobby 0 --move-ms 25 --ping-ms 2000 --duration "$D" --warmup "$W"
+exit 0

@@ -10,7 +10,8 @@
 // THE WORKLOAD. G games, each with two logged-in players on /play sockets moving in turn every
 // move-ms (the next move goes move-ms after the previous move's event arrived), W anonymous
 // watchers per game on /watch sockets, S site sockets pinging every ping-ms, L lobby sockets
-// pinging too. The fake lila subscribes to r-in:0..15, site-in and lobby-in, answers each r/move
+// pinging too; every socket, players and watchers included, pings every ping-ms as a browser does
+// (both servers stop a socket that has not pinged for 30 s). The fake lila subscribes to r-in:0..15, site-in and lobby-in, answers each r/move
 // with `r/ver <game> <v> <W|B> move <~300 bytes of JSON: uci, san, fen, ply, dests, clock>`, each
 // `ping` with `pong`, and keeps lila's boot handshake.
 //
@@ -84,8 +85,9 @@ typedef struct client {
     game   *game;
     int     color;        // players
     int     idx;
-    int64_t ping_sent_us; // site/lobby: the ping in flight (0 none)
-    uint64_t timer;
+    int64_t ping_sent_us; // the ping in flight (0 none)
+    uint64_t timer;       // a player: the next move
+    uint64_t ping_timer;  // every socket: the next ping
     int64_t opened_ms;
     int     events;       // frames received
 } client;
@@ -125,6 +127,7 @@ static void client_close(client *c) {
     c->state = 3;
     n_closed++;
     if (c->timer) { cb_loop_cancel(L, c->timer); c->timer = 0; }
+    if (c->ping_timer) { cb_loop_cancel(L, c->ping_timer); c->ping_timer = 0; }
 }
 
 static void client_want(client *c) {
@@ -170,16 +173,16 @@ static void send_ping(cb_loop *l, void *ud);
 static void on_text(client *c, const char *s, size_t n) {
     int64_t now = now_us();
     c->events++;
-    if (c->role == R_SITE || c->role == R_LOBBY) {
-        if ((n == 1 && s[0] == '0') || (n > 8 && memcmp(s, "{\"t\":\"n\"", 8) == 0)) {
-            if (c->ping_sent_us) {
-                pongs_recv++;
-                if (measuring) hist_add(&h_ping, (uint64_t)(now - c->ping_sent_us));
-                c->ping_sent_us = 0;
-            }
+    // every socket pings, as a browser's does (lila-ws's broom stops a socket silent for 30 s)
+    if ((n == 1 && s[0] == '0') || (n > 8 && memcmp(s, "{\"t\":\"n\"", 8) == 0)) {
+        if (c->ping_sent_us) {
+            pongs_recv++;
+            if (measuring) hist_add(&h_ping, (uint64_t)(now - c->ping_sent_us));
+            c->ping_sent_us = 0;
         }
         return;
     }
+    if (c->role == R_SITE || c->role == R_LOBBY) return;
     // a round socket: a move event {"t":"move","v":N,...
     if (n > 20 && memcmp(s, "{\"t\":\"move\",\"v\":", 16) == 0) {
         int v = atoi(s + 16);
@@ -252,8 +255,8 @@ static void client_io(cb_loop *l, int fd, int events, void *ud) {
             c->state = 2;
             c->opened_ms = cb_mono_ms();
             n_open++;
-            if (c->role == R_SITE || c->role == R_LOBBY) c->timer = cb_loop_timer(L, O.ping_ms / 2 + rand() % O.ping_ms, send_ping, c);
-            else if (c->role == R_PLAYER && c->color == 0 && !c->timer) c->timer = cb_loop_timer(L, 1000 + rand() % O.move_ms, send_move, c);
+            c->ping_timer = cb_loop_timer(L, O.ping_ms / 2 + rand() % O.ping_ms, send_ping, c);
+            if (c->role == R_PLAYER && c->color == 0 && !c->timer) c->timer = cb_loop_timer(L, 1000 + rand() % O.move_ms, send_move, c);
         }
         if (c->state == 2) client_frames(c);
     }
@@ -302,14 +305,14 @@ static void send_move(cb_loop *l, void *ud) {
 
 static void send_ping(cb_loop *l, void *ud) {
     client *c = ud;
-    c->timer = 0;
+    c->ping_timer = 0;
     if (c->state != 2 || done_flag) return;
     if (!c->ping_sent_us) {
         c->ping_sent_us = now_us();
         pings_sent++;
         client_send_text(c, "p", 1);
     }
-    c->timer = cb_loop_timer(L, O.ping_ms, send_ping, c);
+    c->ping_timer = cb_loop_timer(L, O.ping_ms, send_ping, c);
 }
 
 // ---- the fake lila ----
