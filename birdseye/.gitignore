@@ -1,0 +1,4 @@
+data/
+server/build/
+web/src/gen/
+web/public/sf.wasm
