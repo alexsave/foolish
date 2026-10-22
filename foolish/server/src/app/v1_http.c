@@ -7,8 +7,8 @@
 #include "../../../../shared/c/num_parse.h"
 
 #include "auth/auth.h"
-#include "auth/names.h"
 #include "rate_limits.h"
+#include "net/refuse.h"
 #include "net/router.h"
 #include "pushes.h"
 #include "realtime/realtime.h"
@@ -20,8 +20,6 @@
 
 #include "ask.h"
 #include "netwire.h"
-#include "../../../../shared/c/sha256.h"
-#include "../../../../shared/c/hex/hex.h"
 #include "replay_extras.h"
 
 #include <stdio.h>
@@ -29,17 +27,32 @@
 #include <string.h>
 
 #define OCTETS "application/octet-stream"
-#define ACCOUNT_DOMAIN "foolish.cards"
 #define CHAT_PAGE 100
 #define BOARD_TOP 100
 #define HISTORY_PAGE 50
 
-void cb_v1_email_of(const char *name, size_t len, char out[CB_V1_EMAIL_BYTES]) {
-    uint8_t d[SHA256_DIGEST_LEN];
-    sha256(name, len, d);
-    hex_encode(d, 8, out, CB_V1_EMAIL_BYTES);
-    snprintf(out + 16, CB_V1_EMAIL_BYTES - 16, "@%s", ACCOUNT_DOMAIN);
-}
+// The platform's numbers (cbase/auth_wire.h, which the platform's /v1/auth routes speak) are the
+// kernel's: one set of bytes, read by one client library.
+_Static_assert(NW_V1 == CBW_V && NW_SIGNUP == CBW_SIGNUP && NW_SIGNIN == CBW_SIGNIN && NW_REFRESH == CBW_REFRESH &&
+                   NW_SIGNOUT == CBW_SIGNOUT && NW_PASSWORD == CBW_PASSWORD && NW_SESSION == CBW_SESSION,
+               "netwire's platform kinds are cbase/auth_wire.h's");
+_Static_assert(NW_SCOPE_LOCAL == CBW_SCOPE_LOCAL && NW_SCOPE_GLOBAL == CBW_SCOPE_GLOBAL, "sign-out scopes");
+_Static_assert(NW_ACCESS_MAX == CBW_ACCESS_MAX && NW_REFRESH_MAX == CBW_REFRESH_MAX && NW_ID_MAX == CBW_ID_MAX &&
+                   NW_NAME_MAX == CBW_NAME_MAX && NW_PASSWORD_MAX == CBW_PASSWORD_MAX,
+               "the session's bounds");
+_Static_assert(NW_ACCOUNT_E_BAD_LOGIN == CBW_ACCOUNT_E_BAD_LOGIN && NW_ACCOUNT_E_EXISTS == CBW_ACCOUNT_E_EXISTS &&
+                   NW_ACCOUNT_E_WEAK_PASSWORD == CBW_ACCOUNT_E_WEAK_PASSWORD &&
+                   NW_ACCOUNT_E_LONG_PASSWORD == CBW_ACCOUNT_E_LONG_PASSWORD &&
+                   NW_ACCOUNT_E_BAD_NAME == CBW_ACCOUNT_E_BAD_NAME && NW_ACCOUNT_E_BAD_REFRESH == CBW_ACCOUNT_E_BAD_REFRESH &&
+                   NW_ACCOUNT_E_REFRESH_USED == CBW_ACCOUNT_E_REFRESH_USED &&
+                   NW_ACCOUNT_E_SAME_PASSWORD == CBW_ACCOUNT_E_SAME_PASSWORD && NW_ACCOUNT_E_TOO_MANY == CBW_ACCOUNT_E_TOO_MANY,
+               "the account refusals");
+_Static_assert(ASK_REFUSAL_FORMAT == CBW_REFUSAL_FORMAT && ASK_REFUSAL_BYTES == CBW_REFUSAL_BYTES && ASK_WHY_AUTH == CBW_WHY_AUTH &&
+                   ASK_WHY_MALFORMED == CBW_WHY_MALFORMED && ASK_WHY_REFUSED == CBW_WHY_REFUSED &&
+                   ASK_WHY_NOT_FOUND == CBW_WHY_NOT_FOUND && ASK_WHY_INTERNAL == CBW_WHY_INTERNAL &&
+                   ASK_WHY_METHOD == CBW_WHY_METHOD && ASK_WHY_ACCOUNT == CBW_WHY_ACCOUNT &&
+                   ASK_WHY_FORBIDDEN == CBW_WHY_FORBIDDEN && ASK_WHY_BUSY == CBW_WHY_BUSY,
+               "the kernel's refusal is the platform's");
 
 // ---- replies ---------------------------------------------------------------------------
 
@@ -53,13 +66,7 @@ void cb_v1_email_of(const char *name, size_t len, char out[CB_V1_EMAIL_BYTES]) {
 #define CC_BOTS    "public, max-age=0, s-maxage=86400"   // a day: bots change only when seeded
 #define CC_BOARD   "public, max-age=0, s-maxage=3600"    // an hour: a rated game invalidates it
 
-static void refuse(cb_http_res *res, int status, int why, int code) {
-    AskRefusal r = { (uint8_t)why, code, 0 };
-    uint8_t body[ASK_REFUSAL_BYTES];
-    int n = ask_refusal_encode(&r, body, sizeof body);
-    cb_res_header(res, "Cache-Control", CC_PRIVATE);
-    cb_res_send(res, status, OCTETS, body, n > 0 ? (size_t)n : 0);
-}
+static void refuse(cb_http_res *res, int status, int why, int code) { cb_refuse(res, status, why, code); }
 
 static void reply(cb_http_res *res, const char *cache, const void *p, size_t n) {
     cb_res_header(res, "Cache-Control", cache);
@@ -72,25 +79,12 @@ static void reply(cb_http_res *res, const char *cache, const void *p, size_t n) 
 
 static void octets(cb_http_res *res, const void *p, size_t n) { reply(res, CC_PRIVATE, p, n); }
 
-void cb_v1_busy(cb_http_res *res) {
-    cb_res_header(res, "Retry-After", "1");
-    refuse(res, 503, ASK_WHY_BUSY, 0);
-}
-
-void cb_v1_limited(cb_http_res *res, int retry_s, bool account) {
-    char ra[16];
-    snprintf(ra, sizeof ra, "%d", retry_s > 0 ? retry_s : 1);
-    cb_res_header(res, "Retry-After", ra);
-    if (account) refuse(res, 429, ASK_WHY_ACCOUNT, NW_ACCOUNT_E_TOO_MANY);
-    else refuse(res, 429, ASK_WHY_BUSY, 0);
-}
-
 // One from key's bucket of `kind`, or false with the 429 answered.
 static bool within(cb_http_res *res, cb_limit_kind kind, const char *key, bool account) {
     int retry;
     if (cb_limit_take(kind, key, cb_now_ms(), &retry)) return true;
     CB_INFO("v1", "rate limit %s: %s", cb_limit_rules[kind].name, key);
-    cb_v1_limited(res, retry, account);
+    cb_refuse_limited(res, retry, account);
     return false;
 }
 
@@ -99,7 +93,7 @@ static bool within(cb_http_res *res, cb_limit_kind kind, const char *key, bool a
 static void failed(cb_http_res *res, int rc) {
     if (rc == CB_E_WOULD_BLOCK) res->to_pool = true;   // run inline, it would have waited: again on the pool
     else if (rc == CB_E_NOT_FOUND) refuse(res, 404, ASK_WHY_NOT_FOUND, 0);
-    else if (rc == CB_E_BUSY) cb_v1_busy(res);
+    else if (rc == CB_E_BUSY) cb_refuse_busy(res);
     else if (rc == CB_E_STATE) refuse(res, 503, ASK_WHY_INTERNAL, 0);
     else {
         CB_ERROR("v1", "request failed: %s", cb_strerror(rc));
@@ -140,142 +134,6 @@ static bool path_id(const cb_http_req *req, cb_http_res *res, const char *prefix
     return true;
 }
 
-// A NUL-terminated copy of a length-counted field; false when it holds a NUL
-// (a C string cannot say it, and no password or name has one).
-static bool cstr(const char *p, size_t n, char *out, size_t cap) {
-    if (n >= cap || memchr(p, 0, n)) return false;
-    memcpy(out, p, n);
-    out[n] = 0;
-    return true;
-}
-
-// ---- auth -------------------------------------------------------------------------------
-
-static int account_code(int rc) {
-    switch (rc) {
-    case CB_AUTH_E_EXISTS: return NW_ACCOUNT_E_EXISTS;
-    case CB_AUTH_E_BAD_LOGIN: return NW_ACCOUNT_E_BAD_LOGIN;
-    case CB_AUTH_E_WEAK_PASSWORD: return NW_ACCOUNT_E_WEAK_PASSWORD;
-    case CB_AUTH_E_LONG_PASSWORD: return NW_ACCOUNT_E_LONG_PASSWORD;
-    case CB_AUTH_E_BAD_USERNAME: return NW_ACCOUNT_E_BAD_NAME;
-    case CB_AUTH_E_BAD_EMAIL: return NW_ACCOUNT_E_BAD_NAME;   // the email is the name's
-    case CB_AUTH_E_BAD_REFRESH: return NW_ACCOUNT_E_BAD_REFRESH;
-    case CB_AUTH_E_REFRESH_USED: return NW_ACCOUNT_E_REFRESH_USED;
-    case CB_AUTH_E_SAME_PASSWORD: return NW_ACCOUNT_E_SAME_PASSWORD;
-    case CB_AUTH_E_TOO_MANY: return NW_ACCOUNT_E_TOO_MANY;
-    default: return 0;
-    }
-}
-
-static void auth_failed(cb_http_res *res, int rc) {
-    int code = account_code(rc);
-    if (code) refuse(res, code == NW_ACCOUNT_E_EXISTS ? 409 : code == NW_ACCOUNT_E_TOO_MANY ? 429 : 400, ASK_WHY_ACCOUNT, code);
-    else if (rc == CB_E_NOT_FOUND) refuse(res, 401, ASK_WHY_AUTH, 0);   // the account behind the token is gone
-    else failed(res, rc);
-}
-
-static void send_session(cb_http_res *res, const cb_session *s) {
-    NwSession w;
-    memset(&w, 0, sizeof w);
-    size_t n = strlen(s->access_token);
-    size_t rn = strlen(s->refresh_token), un = strlen(s->user.id), nn = strlen(s->user.username);
-    if (n > NW_ACCESS_MAX || rn > NW_REFRESH_MAX || un > NW_ID_MAX || nn > NW_NAME_MAX) { failed(res, CB_E_NOMEM); return; }
-    w.access_len = (uint16_t)n;
-    memcpy(w.access, s->access_token, n);
-    w.refresh_len = (uint8_t)rn;
-    memcpy(w.refresh, s->refresh_token, rn);
-    w.expires_at_ms = s->expires_at > 0 ? (uint64_t)s->expires_at * 1000 : 0;
-    w.user_id_len = (uint8_t)un;
-    memcpy(w.user_id, s->user.id, un);
-    w.username_len = (uint8_t)nn;
-    memcpy(w.username, s->user.username, nn);
-    uint8_t body[NW_ACCESS_MAX + NW_REFRESH_MAX + NW_ID_MAX + NW_NAME_MAX + 32];
-    int len = nw_session_encode(&w, body, sizeof body);
-    if (len < 0) { failed(res, CB_E_NOMEM); return; }
-    octets(res, body, (size_t)len);
-}
-
-static void h_credentials(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, uint8_t kind) {
-    if (!ctx->auth) { refuse(res, 503, ASK_WHY_INTERNAL, 0); return; }
-    NwRequest q;
-    if (!request_of(req, res, kind, &q)) return;
-    char name[NW_NAME_MAX + 1], pw[NW_PASSWORD_MAX + 1], email[CB_V1_EMAIL_BYTES];
-    if (!cstr(q.name, q.name_len, name, sizeof name) || !cstr(q.password, q.password_len, pw, sizeof pw)) {
-        refuse(res, 400, ASK_WHY_MALFORMED, 0);
-        return;
-    }
-    // The case step of the canonical name (auth/names.h) for both routes: the
-    // account is the one the name's bytes derive, so "alice" is "ALICE" as
-    // every client has always sent it. Not UTF-8: no account has that name.
-    char canon[NW_NAME_MAX * 2 + 8];
-    int cn = cb_name_case(q.name, q.name_len, canon, sizeof canon);
-    if (cn < 0 || cn > NW_NAME_MAX) {
-        memset(pw, 0, sizeof pw);
-        auth_failed(res, kind == NW_SIGNUP ? CB_AUTH_E_BAD_USERNAME : CB_AUTH_E_BAD_LOGIN);
-        return;
-    }
-    cb_v1_email_of(canon, (size_t)cn, email);
-    // The limits before any work: an address's attempts, an account's
-    // guesses, and every sign-up this container makes (rate_limits.h).
-    char ip[96];
-    cb_viewer_key(ctx, req, ip, sizeof ip);
-    if (kind == NW_SIGNUP ? !within(res, CB_LIMIT_SIGNUP_IP, ip, true) || !within(res, CB_LIMIT_SIGNUP_ALL, "*", true)
-                          : !within(res, CB_LIMIT_SIGNIN_IP, ip, true) || !within(res, CB_LIMIT_SIGNIN_NAME, email, true)) {
-        memset(pw, 0, sizeof pw);
-        return;
-    }
-    cb_session s;
-    int rc = kind == NW_SIGNUP ? cb_auth_signup(ctx->auth, email, pw, canon, &s) : cb_auth_signin(ctx->auth, email, pw, &s);
-    memset(pw, 0, sizeof pw);
-    if (rc != CB_OK) auth_failed(res, rc);
-    else send_session(res, &s);
-}
-
-static void h_signup(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) { h_credentials(ctx, req, res, NW_SIGNUP); }
-static void h_signin(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) { h_credentials(ctx, req, res, NW_SIGNIN); }
-
-static void h_refresh(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
-    if (!ctx->auth) { refuse(res, 503, ASK_WHY_INTERNAL, 0); return; }
-    NwRequest q;
-    if (!request_of(req, res, NW_REFRESH, &q)) return;
-    char tok[NW_REFRESH_MAX + 1];
-    if (!cstr(q.refresh, q.refresh_len, tok, sizeof tok)) { refuse(res, 400, ASK_WHY_MALFORMED, 0); return; }
-    char ip[96];
-    cb_viewer_key(ctx, req, ip, sizeof ip);
-    if (!within(res, CB_LIMIT_REFRESH_IP, ip, true)) return;
-    cb_session s;
-    int rc = cb_auth_refresh(ctx->auth, tok, &s);
-    if (rc != CB_OK) auth_failed(res, rc);
-    else send_session(res, &s);
-}
-
-static void h_signout(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
-    cb_user u;
-    if (!caller(ctx, req, res, &u)) return;
-    NwRequest q;
-    if (!request_of(req, res, NW_SIGNOUT, &q)) return;
-    int rc = cb_auth_logout(ctx->auth, &u, q.scope == NW_SCOPE_GLOBAL ? CB_LOGOUT_GLOBAL : CB_LOGOUT_LOCAL);
-    if (rc != CB_OK) auth_failed(res, rc);
-    else cb_res_status(res, 204);
-}
-
-static void h_password(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
-    cb_user u;
-    if (!caller(ctx, req, res, &u)) return;
-    NwRequest q;
-    if (!request_of(req, res, NW_PASSWORD, &q)) return;
-    if (!within(res, CB_LIMIT_PASSWORD_USER, u.id, true)) return;
-    char cur[NW_PASSWORD_MAX + 1], pw[NW_PASSWORD_MAX + 1];
-    if (!cstr(q.password, q.password_len, cur, sizeof cur) || !cstr(q.new_password, q.new_password_len, pw, sizeof pw)) {
-        refuse(res, 400, ASK_WHY_MALFORMED, 0);
-        return;
-    }
-    int rc = cb_auth_change_password(ctx->auth, &u, cur, pw);
-    memset(cur, 0, sizeof cur);
-    memset(pw, 0, sizeof pw);
-    if (rc != CB_OK) auth_failed(res, rc);
-    else cb_res_status(res, 204);
-}
 
 // ---- views ------------------------------------------------------------------------------
 
@@ -687,11 +545,6 @@ static void h_replay(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 // ---- routes -----------------------------------------------------------------------------
 
 static const cb_route V1_ROUTES[] = {
-    { "POST", "/v1/auth/signup", CB_ROUTE_POOL, h_signup, 0 },
-    { "POST", "/v1/auth/signin", CB_ROUTE_POOL, h_signin, 0 },
-    { "POST", "/v1/auth/refresh", CB_ROUTE_POOL, h_refresh, 0 },
-    { "POST", "/v1/auth/signout", CB_ROUTE_POOL, h_signout, 0 },
-    { "POST", "/v1/auth/password", CB_ROUTE_POOL, h_password, 0 },
     { "GET", "/v1/games", CB_ROUTE_POOL, h_games, 0 },
     { "GET", "/v1/games/*", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_game, 0 },
     { "GET", "/v1/wait/*", CB_ROUTE_POOL, h_wait, 0 },
