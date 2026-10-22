@@ -45,6 +45,8 @@ typedef struct {
     uint64_t nodes_kept;         // of those, found in the file
     uint64_t relations_read;
     uint64_t relations_wanted;   // osm_relation_region accepted
+    uint64_t bike_routes;        // route=bicycle relations
+    uint64_t bike_route_ways;    // roads flagged ADV_SEGF_BIKEROUTE as their members
     uint64_t fences;             // within_level boundaries named in within_names and closed
     uint64_t regions_outside;    // wanted relations dropped for lying outside every fence
     uint64_t rings_closed, rings_dropped;

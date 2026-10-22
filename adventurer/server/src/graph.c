@@ -251,6 +251,7 @@ typedef struct {
 typedef struct {
     char     name[ADV_REGION_NAME];
     int      level;
+    uint32_t population;
     uint32_t ring_off, n_rings;   // rings are appended in order, so a region's are contiguous only
                                   // when added together; the builder keeps a list instead
     uint32_t *rings;
@@ -439,6 +440,12 @@ int adv_build_region(adv_build *b, const char *name, int level) {
 }
 
 void adv_build_only_regioned(adv_build *b, bool on) { b->only_regioned = on; }
+
+int adv_build_region_population(adv_build *b, int region, uint32_t population) {
+    if (region < 0 || (uint32_t)region >= b->n_regions) return CB_E_INVALID;
+    b->regions[region].population = population;
+    return CB_OK;
+}
 
 int adv_build_region_ring(adv_build *b, int region, const adv_pt *ring, int n) {
     if (region < 0 || (uint32_t)region >= b->n_regions || n < 3) return CB_E_INVALID;
@@ -824,6 +831,7 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
         adv_region *r = &regions[i];
         memcpy(r->name, b->regions[i].name, ADV_REGION_NAME);
         r->level = (uint16_t)b->regions[i].level;
+        r->population = b->regions[i].population;
         r->min_lat = r->min_lon = INT32_MAX;
         r->max_lat = r->max_lon = INT32_MIN;
         for (uint32_t k = 0; k < b->regions[i].n_ring_ids; k++) {

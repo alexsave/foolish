@@ -130,13 +130,16 @@ static const tway ways[] = {
     { 26, { NULL }, { 203, 200 }, 2 },
 };
 static const trel rels[] = {
-    { 1, { "type", "boundary", "boundary", "administrative", "admin_level", "8", "name", "Testville", NULL }, { 21, 22 }, { "outer", "outer" }, 2 },
+    { 1, { "type", "boundary", "boundary", "administrative", "admin_level", "8", "name", "Testville", "population", "12,345", NULL }, { 21, 22 }, { "outer", "outer" }, 2 },
     { 2, { "boundary", "administrative", "admin_level", "8", "name", "Nowhere", NULL }, { 23, 24 }, { "outer", "" }, 2 },
     { 3, { "boundary", "administrative", "admin_level", "6", "name", "Testshire", NULL }, { 21, 22 }, { "outer", "outer" }, 2 },
     // The same ring again one level up (a town coterminous with its village), and a closed ring
     // far away (another county's town): what --admin-levels 7,8 and --within sort out.
     { 4, { "boundary", "administrative", "admin_level", "7", "name", "Testtown", NULL }, { 21, 22 }, { "outer", "outer" }, 2 },
     { 5, { "boundary", "administrative", "admin_level", "8", "name", "Elsewhere", NULL }, { 23, 25, 24, 26 }, { "outer", "outer", "outer", "outer" }, 4 },
+    // A signed cycle route over Main Street and a boundary way (not a road: nothing to flag), and
+    // a way the file does not have.
+    { 6, { "type", "route", "route", "bicycle", "name", "Test Greenway", NULL }, { 10, 21, 77 }, { "", "", "" }, 3 },
 };
 #define N_DENSE ((int)(sizeof dense_nodes / sizeof dense_nodes[0]))
 #define N_PLAIN ((int)(sizeof plain_nodes / sizeof plain_nodes[0]))
@@ -290,6 +293,8 @@ static void test_import(const char *pbf_path) {
     T_CHECK_MSG(st.nodes_needed == 16, "%llu", (unsigned long long)st.nodes_needed);
     T_CHECK_MSG(st.nodes_kept == 15, "%llu", (unsigned long long)st.nodes_kept);
     T_CHECK(st.relations_read == N_RELS);
+    T_CHECK_MSG(st.bike_routes == 1 && st.bike_route_ways == 1, "%llu routes, %llu ways", (unsigned long long)st.bike_routes,
+                (unsigned long long)st.bike_route_ways);
     T_CHECK_MSG(st.relations_wanted == 3, "%llu", (unsigned long long)st.relations_wanted);
     T_CHECK_MSG(st.rings_closed == 2, "%llu", (unsigned long long)st.rings_closed);
     // "Nowhere": two member ways that never meet, so each starts a chain that stays open.
@@ -305,6 +310,7 @@ static void test_import(const char *pbf_path) {
     T_CHECK_MSG(st.build.regions == 1 && st.build.regions_empty == 1, "regions %u empty %u", st.build.regions, st.build.regions_empty);
     T_CHECK(g.h->n_regions == 1);
     T_CHECK(strcmp(g.regions[0].name, "Testville") == 0 && g.regions[0].level == 8);
+    T_CHECK_MSG(g.regions[0].population == 12345, "population %u", g.regions[0].population);
     T_CHECK_MSG(g.regions[0].n_segs == 2, "n_segs=%u", g.regions[0].n_segs);
     const adv_seg *res = seg_of_class(&g, ADV_HC_RESIDENTIAL), *foot = seg_of_class(&g, ADV_HC_FOOTWAY), *cyc = seg_of_class(&g, ADV_HC_CYCLEWAY);
     T_CHECK(res && foot && cyc);
@@ -312,7 +318,7 @@ static void test_import(const char *pbf_path) {
     if (res) {
         T_CHECK(strcmp(adv_seg_name(&g, (uint32_t)(res - g.segs)), "Main Street") == 0);
         T_CHECK(res->access == (ADV_ACC_BIKE | ADV_ACC_FOOT));
-        T_CHECK(res->flags == ADV_SEGF_ONEWAY);
+        T_CHECK_MSG(res->flags == (ADV_SEGF_ONEWAY | ADV_SEGF_BIKEROUTE), "flags %u", res->flags);
         T_CHECK(res->region == 0);
         T_CHECK_MSG(res->n_pts == 3, "n_pts=%u", res->n_pts);
         // 2 x 0.002 deg of longitude at 41.8 N: 2 x 166 m.
@@ -535,6 +541,25 @@ static void test_tags(void) {
     pbf_tag r4[] = { { "boundary", "administrative" }, { "admin_level", "8" }, { "name", longname } };
     T_CHECK(osm_relation_region(r4, 3, 1u << 8, name) == 8);
     T_CHECK_MSG(strlen(name) == 46, "len=%zu", strlen(name));   // the 2-byte char at 46..47 would not fit whole
+    // The population tag (fake.h THE WORLD reads it): digits, or digits grouped by threes.
+    static const struct { const char *v; uint32_t want; } pops[] = {
+        { "1694251", 1694251 }, { "1,694,251", 1694251 }, { "1.694.251", 1694251 }, { "1 694 251", 1694251 }, { "12", 12 },
+        { "0", 0 }, { "", 0 }, { "approx 5000", 0 }, { "1.2e6", 0 }, { "1,69,4251", 0 }, { "1,6942", 0 }, { ",123", 0 },
+        { "123,", 0 }, { "12,34,567", 0 }, { "1234,567", 0 }, { "4000000001", 0 }, { "4000000000", 4000000000u }, { "99999999999999999999", 0 }, { "-5", 0 },
+    };
+    for (size_t i = 0; i < sizeof pops / sizeof pops[0]; i++) {
+        pbf_tag t[] = { { "boundary", "administrative" }, { "population", pops[i].v } };
+        T_CHECK_MSG(osm_population(t, 2) == pops[i].want, "\"%s\" -> %u", pops[i].v, osm_population(t, 2));
+    }
+    pbf_tag nopop[] = { { "boundary", "administrative" } };
+    T_CHECK(osm_population(nopop, 1) == 0);
+    // A signed cycle route, and what is not one.
+    pbf_tag br[] = { { "type", "route" }, { "route", "bicycle" }, { "name", "Hudson River Greenway" } };
+    T_CHECK(osm_relation_bike_route(br, 3));
+    pbf_tag hr[] = { { "type", "route" }, { "route", "hiking" } };
+    T_CHECK(!osm_relation_bike_route(hr, 2));
+    pbf_tag nb[] = { { "type", "network" }, { "route", "bicycle" } };
+    T_CHECK(!osm_relation_bike_route(nb, 2));
 }
 
 int main(void) {

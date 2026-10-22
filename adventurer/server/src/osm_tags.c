@@ -111,6 +111,30 @@ static void copy_name(char *out, size_t cap, const char *s) {
     out[n] = 0;
 }
 
+uint32_t osm_population(const pbf_tag *tags, int n_tags) {
+    const char *v = tag(tags, n_tags, "population");
+    if (!v || !*v) return 0;
+    uint64_t n = 0;
+    int digits = 0, group = -1;   // digits since the last separator (-1: no separator yet)
+    for (const char *p = v; *p; p++) {
+        if (*p >= '0' && *p <= '9') {
+            n = n * 10 + (uint64_t)(*p - '0');
+            if (n > 4000000000u) return 0;
+            digits++;
+            if (group >= 0) group++;
+        } else if ((*p == ',' || *p == '.' || *p == ' ') && digits > 0 && (group < 0 ? digits <= 3 : group == 3)) {
+            group = 0;   // a thousands separator: three digits must follow each one
+        } else {
+            return 0;
+        }
+    }
+    return digits > 0 && (group < 0 || group == 3) ? (uint32_t)n : 0;
+}
+
+bool osm_relation_bike_route(const pbf_tag *tags, int n_tags) {
+    return is(tag(tags, n_tags, "type"), "route") && is(tag(tags, n_tags, "route"), "bicycle");
+}
+
 int osm_relation_region(const pbf_tag *tags, int n_tags, uint32_t levels, char name[ADV_REGION_NAME]) {
     if (!is(tag(tags, n_tags, "boundary"), "administrative")) return 0;
     const char *lvl = tag(tags, n_tags, "admin_level");

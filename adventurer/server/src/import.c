@@ -26,6 +26,7 @@ typedef struct {
     uint64_t mem_off;
     uint32_t n_mem;
     uint8_t  level;   // the region's admin_level, or 0 for a fence (import.h within_level)
+    uint32_t population;   // its population= tag, 0 for none
 } rel_rec;
 
 typedef struct {
@@ -38,6 +39,7 @@ typedef struct {
     int64_t  *refs;  uint64_t n_refs, cap_refs;
     rel_rec  *rels;  uint64_t n_rels, cap_rels;
     mem_rec  *mems;  uint64_t n_mems, cap_mems;
+    int64_t  *bike;  uint64_t n_bike, cap_bike;     // way ids of signed cycle routes' members
     char     *names; uint64_t n_names, cap_names;   // every road's name, NUL-terminated, in order ([0] is "")
     uint32_t *order;         // way indices sorted by id, for the member lookup
     int64_t  *need;          // sorted, unique node ids the kept ways name
@@ -143,18 +145,28 @@ static int on_relation(void *ud, int64_t id, const pbf_tag *tags, int n_tags, co
     imp *m = ud;
     (void)id;
     m->st->relations_read++;
+    int rc;
+    if (osm_relation_bike_route(tags, n_tags)) {
+        m->st->bike_routes++;
+        for (int i = 0; i < n_members; i++) {
+            if (members[i].type != PBF_M_WAY) continue;
+            if ((rc = GROW(m, bike, 1, ADV_IMPORT_MAX_MEMBERS)) != CB_OK) return rc == CB_E_FULL ? fail(m, rc, "too many cycle route members") : rc;
+            m->bike[m->n_bike++] = members[i].id;
+        }
+        return CB_OK;
+    }
     char name[ADV_REGION_NAME];
     int level = osm_relation_region(tags, n_tags, m->admin_levels, name);
     if (level) m->st->relations_wanted++;
     else if (m->within_level && osm_relation_region(tags, n_tags, 1u << m->within_level, name) && name_listed(m->within_names, name)) level = 0;
     else return CB_OK;
-    int rc;
     if ((rc = GROW(m, rels, 1, ADV_IMPORT_MAX_MEMBERS)) != CB_OK) return rc == CB_E_FULL ? fail(m, rc, "too many relations") : rc;
     rel_rec *r = &m->rels[m->n_rels++];
     memcpy(r->name, name, sizeof name);
     r->mem_off = m->n_mems;
     r->n_mem = 0;
     r->level = (uint8_t)level;
+    r->population = level ? osm_population(tags, n_tags) : 0;
     for (int i = 0; i < n_members; i++) {
         if (members[i].type != PBF_M_WAY) continue;
         const char *role = members[i].role;
@@ -226,6 +238,14 @@ static int settle_pass1(imp *m) {
         if (w >= 0) {
             if (!m->ways[w].keep) m->st->member_ways++;
             m->ways[w].keep |= KEEP_MEMBER;
+        }
+    }
+    // The signed cycle routes' member ways: flagged, when they are roads.
+    for (uint64_t i = 0; i < m->n_bike; i++) {
+        int64_t w = way_find(m, m->bike[i]);
+        if (w >= 0 && (m->ways[w].keep & KEEP_ROAD) && !(m->ways[w].flags & ADV_SEGF_BIKEROUTE)) {
+            m->ways[w].flags |= ADV_SEGF_BIKEROUTE;
+            m->st->bike_route_ways++;
         }
     }
     // Compact ways and refs in place: insertion order is ref_off order, so a forward walk
@@ -479,6 +499,7 @@ static int add_relation(imp *m, adv_build *b, const rel_rec *r, ring_scratch *s,
     if (f && !fence_holds(f, s)) { m->st->regions_outside++; return CB_OK; }
     int region = adv_build_region(b, r->name, r->level);
     if (region < 0) return region;
+    if (r->population && (rc = adv_build_region_population(b, region, r->population)) != CB_OK) return rc;
     for (uint64_t k = 0; k < s->n_rings; k++) {
         if (s->rings[k].n > INT32_MAX) return CB_E_FULL;
         if ((rc = adv_build_region_ring(b, region, s->pts + s->rings[k].off, (int)s->rings[k].n)) != CB_OK) return rc;
@@ -622,7 +643,7 @@ int adv_import(const char *pbf_path, const char *graph_path, const adv_import_op
     st.s_build = now_s() - t0;
 out:
     adv_build_free(b);
-    free(m.ways); free(m.refs); free(m.rels); free(m.mems); free(m.order); free(m.need); free(m.pts); free(m.have); free(m.names);
+    free(m.ways); free(m.refs); free(m.rels); free(m.mems); free(m.bike); free(m.order); free(m.need); free(m.pts); free(m.have); free(m.names);
     if (rc == CB_E_NOMEM && cap && !err[0]) snprintf(err, cap, "import: out of memory");
     if (rc != CB_OK && cap && !err[0]) snprintf(err, cap, "import: %s", cb_strerror(rc));
     if (stats) *stats = st;

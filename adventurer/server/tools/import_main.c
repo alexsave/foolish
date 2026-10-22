@@ -73,6 +73,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "  pass 1 %.2fs: %llu ways read, %llu roads, %llu boundary-only ways, %llu relations read, %llu wanted\n",
             st.s_pass1, (unsigned long long)st.ways_read, (unsigned long long)st.roads_kept, (unsigned long long)st.member_ways,
             (unsigned long long)st.relations_read, (unsigned long long)st.relations_wanted);
+    fprintf(stderr, "  cycle routes: %llu route=bicycle relations, %llu roads flagged as their members\n", (unsigned long long)st.bike_routes,
+            (unsigned long long)st.bike_route_ways);
     fprintf(stderr, "  pass 2 %.2fs: %llu nodes read, %llu needed, %llu kept\n", st.s_pass2, (unsigned long long)st.nodes_read,
             (unsigned long long)st.nodes_needed, (unsigned long long)st.nodes_kept);
     fprintf(stderr, "  build  %.2fs: %llu roads dropped (a node missing), rings %llu closed %llu dropped%s", st.s_build,
@@ -102,6 +104,13 @@ int main(int argc, char **argv) {
     for (uint32_t i = 0; i < g.h->n_regions; i++)
         fprintf(stderr, "%s %s (%u) %.1f", i ? "," : "", g.regions[i].name, g.regions[i].level, g.regions[i].len_m[ADV_T_ALL] / 1000);
     fprintf(stderr, " (km)\n");
+    uint64_t pop = 0;
+    uint32_t with_pop = 0;
+    for (uint32_t i = 0; i < g.h->n_regions; i++) {
+        pop += g.regions[i].population;
+        with_pop += g.regions[i].population > 0;
+    }
+    fprintf(stderr, "  population: %u of %u regions tagged, %llu people\n", with_pop, g.h->n_regions, (unsigned long long)pop);
     fprintf(stderr, "  file: %llu bytes\n", (unsigned long long)g.h->file_size);
     adv_graph_close(&g);
     struct rusage ru;

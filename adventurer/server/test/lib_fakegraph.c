@@ -84,10 +84,13 @@ int fg_build(const fg_opts *o_in, const char *path, adv_graph *g) {
         int32_t mid_lon = (sw.lon + ne.lon) / 2;
         adv_pt west[4] = { { sw.lat - pad_lat, sw.lon - pad_lon }, { sw.lat - pad_lat, mid_lon }, { ne.lat + pad_lat, mid_lon }, { ne.lat + pad_lat, sw.lon - pad_lon } };
         adv_pt east[4] = { { sw.lat - pad_lat, mid_lon }, { sw.lat - pad_lat, ne.lon + pad_lon }, { ne.lat + pad_lat, ne.lon + pad_lon }, { ne.lat + pad_lat, mid_lon } };
-        int w = adv_build_region(b, "West", 8), e = adv_build_region(b, "East", 8);
+        adv_pt whole[4] = { { sw.lat - pad_lat, sw.lon - pad_lon }, { sw.lat - pad_lat, ne.lon + pad_lon }, { ne.lat + pad_lat, ne.lon + pad_lon }, { ne.lat + pad_lat, sw.lon - pad_lon } };
+        int w = adv_build_region(b, "West", 8), e = o.nested ? adv_build_region(b, "Whole", 7) : adv_build_region(b, "East", 8);
         if (w < 0 || e < 0) rc = CB_E_STATE;
         if (rc == CB_OK) rc = adv_build_region_ring(b, w, west, 4);
-        if (rc == CB_OK) rc = adv_build_region_ring(b, e, east, 4);
+        if (rc == CB_OK) rc = adv_build_region_ring(b, e, o.nested ? whole : east, 4);
+        if (rc == CB_OK && o.pop_west) rc = adv_build_region_population(b, w, o.pop_west);
+        if (rc == CB_OK && o.pop_east) rc = adv_build_region_population(b, e, o.pop_east);
     }
     char err[256] = "";
     if (rc == CB_OK) rc = adv_build_finish(b, path, err, sizeof err);

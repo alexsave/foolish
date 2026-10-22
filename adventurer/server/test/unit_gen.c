@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 static const fg_opts GRID = { .cols = 12, .rows = 12, .regions = true, .foot_only_rows = true };
+static fake_world W;   // the world of the graph under test (main)
 
 // The node a leg leaves from and arrives at.
 static uint32_t leg_from(const adv_graph *g, const fake_leg *l) { return l->reversed ? g->segs[l->seg].node_b : g->segs[l->seg].node_a; }
@@ -23,10 +24,10 @@ static uint32_t leg_to(const adv_graph *g, const fake_leg *l) { return l->revers
 static void test_users(const adv_graph *g) {
     enum { N = 2000 };
     adv_w_user_def *a = calloc(N, sizeof *a), *b = calloc(N, sizeof *b);
-    fake_users_make(g, N, 7, a);
-    fake_users_make(g, N, 7, b);
+    fake_users_make(&W, N, 7, a);
+    fake_users_make(&W, N, 7, b);
     T_CHECK(memcmp(a, b, N * sizeof *a) == 0);   // deterministic: a restart posts the same roster
-    fake_users_make(g, N, 8, b);
+    fake_users_make(&W, N, 8, b);
     T_CHECK(memcmp(a, b, N * sizeof *a) != 0);   // and the seed matters
     uint32_t kinds[8] = { 0 };
     bool bad = false;
@@ -45,12 +46,13 @@ static void test_users(const adv_graph *g) {
         if (!on_node) bad = true;
     }
     T_CHECK(!bad);
-    T_CHECK_MSG(kinds[ADV_UK_COMMUTER] > 0.30 * N && kinds[ADV_UK_COMMUTER] < 0.40 * N, "commuters %u", kinds[ADV_UK_COMMUTER]);
-    T_CHECK_MSG(kinds[ADV_UK_EXPLORER] > 0.20 * N && kinds[ADV_UK_EXPLORER] < 0.30 * N, "explorers %u", kinds[ADV_UK_EXPLORER]);
+    // No population tag: every region is a suburb (30% commuters, 35% explorers, 10% tourists).
+    T_CHECK_MSG(kinds[ADV_UK_COMMUTER] > 0.25 * N && kinds[ADV_UK_COMMUTER] < 0.35 * N, "commuters %u", kinds[ADV_UK_COMMUTER]);
+    T_CHECK_MSG(kinds[ADV_UK_EXPLORER] > 0.30 * N && kinds[ADV_UK_EXPLORER] < 0.40 * N, "explorers %u", kinds[ADV_UK_EXPLORER]);
     T_CHECK_MSG(kinds[ADV_UK_TOURIST] > 0.06 * N && kinds[ADV_UK_TOURIST] < 0.14 * N, "tourists %u", kinds[ADV_UK_TOURIST]);
     // fake_user_init agrees with the roster and finds the home node.
     fake_user *u = malloc(sizeof *u);
-    fake_user_init(g, u, 7, 17);
+    fake_user_init(&W, u, 7, 17);
     T_CHECK(memcmp(&u->def, &a[16], sizeof u->def) == 0);
     T_CHECK(u->home_node < g->h->n_nodes && g->nodes[u->home_node].lat == u->def.home_lat && g->nodes[u->home_node].lon == u->def.home_lon);
     T_CHECK(u->n_visited == 0 && !fake_user_visited(u, 3));
@@ -77,8 +79,10 @@ static void test_routes(const adv_graph *g) {
     fake_rng r;
     fake_rng_seed(&r, 3);
     uint32_t foot_routes_on_footpath = 0, foot_routes = 0, bike_routes = 0, checked_no_repeat = 0;
-    for (uint32_t id = 1; id <= 60; id++) {
-        fake_user_init(g, u, 11, id);
+    // 150 users: the road pull (a run seeks the footpaths) makes a loop on this small grid repeat
+    // a segment more often, and the mask checks below want routes that do not.
+    for (uint32_t id = 1; id <= 150; id++) {
+        fake_user_init(&W, u, 11, id);
         uint8_t act = fake_kind_act(u->def.kind);
         // Targets on a 1.4 km grid: real ones (20 km) would circle it; 2-6 km shows every rule.
         double target = fake_rng_range(&r, 2000, 6000);
@@ -152,7 +156,7 @@ static void test_routes(const adv_graph *g) {
     double re_explorer = 0, re_commuter = 0;
     for (uint32_t id = 1; id <= 20; id++) {
         for (int kind = 0; kind < 2; kind++) {
-            fake_user_init(g, u, 5, id);
+            fake_user_init(&W, u, 5, id);
             u->def.kind = kind ? ADV_UK_COMMUTER : ADV_UK_EXPLORER;
             fake_route(g, u, &r, ADV_ACT_BIKE, 4000, ro);
             fake_route(g, u, &r, ADV_ACT_BIKE, 4000, ro2);
@@ -163,7 +167,7 @@ static void test_routes(const adv_graph *g) {
     }
     T_CHECK_MSG(re_commuter > re_explorer + 0.2, "reuse commuter %f explorer %f", re_commuter, re_explorer);
     // A target longer than the grid can give in 2048 legs is capped, never a hang.
-    fake_user_init(g, u, 5, 1);
+    fake_user_init(&W, u, 5, 1);
     u->def.kind = ADV_UK_TOURIST;
     fake_route(g, u, &r, ADV_ACT_BIKE, 1e9, ro);
     T_CHECK(ro->capped && ro->n == FAKE_ROUTE_MAX_SEGS);
@@ -193,7 +197,7 @@ static void test_sampler(const adv_graph *g) {
     adv_trace_pt *pts = malloc(sizeof *pts * ADV_TRACE_MAX_PTS);
     fake_rng r;
     fake_rng_seed(&r, 9);
-    fake_user_init(g, u, 5, 2);
+    fake_user_init(&W, u, 5, 2);
     u->def.kind = ADV_UK_TOURIST;
     adv_frame f = adv_frame_at(u->def.home_lat);
     fake_noise quiet;
@@ -274,7 +278,7 @@ static void test_sampler(const adv_graph *g) {
     // The whole activity round-trips through the codec with its truth.
     fake_act *a = malloc(sizeof *a);
     uint8_t *body = malloc(FAKE_BODY_CAP);
-    fake_user_init(g, u, 5, 3);
+    fake_user_init(&W, u, 5, 3);
     T_CHECK(fake_activity(g, u, &r, 1700000000000LL, ADV_TRF_BACKFILL, NULL, ro, a));
     T_CHECK(a->hdr.user == 3 && a->hdr.gen_id == 1 && a->hdr.n_points == a->n_pts && a->n_truth == ro->n_truth && a->n_truth > 0);
     T_CHECK(a->hdr.type == fake_kind_act(u->def.kind));
@@ -310,7 +314,7 @@ static void test_hostile(const adv_graph *g) {
     uint8_t *body = malloc(FAKE_BODY_CAP);
     fake_rng r;
     fake_rng_seed(&r, 21);
-    fake_user_init(g, u, 5, 4);
+    fake_user_init(&W, u, 5, 4);
     for (int kind = 1; kind <= FAKE_HOSTILE_N; kind++) {
         T_CHECK_MSG(fake_hostile(g, kind, u, &r, 1700000000000LL, ro, a), "kind %d builds", kind);
         T_CHECK(a->hostile == kind && a->truncate == FAKE_HOSTILE[kind].truncate && FAKE_HOSTILE[kind].name[0]);
@@ -399,15 +403,118 @@ static void test_hostile(const adv_graph *g) {
     free(body);
 }
 
+// THE WORLD: homes follow population. On the grid's two near-equal halves (about 10 km of
+// streets lived on each), West tagged with 90,000 people and East with 3,000: a region's share of
+// homes is its share of the people, 90/93; West's density puts it in the city (urbanity 1, more
+// runners and walkers), East's in the suburbs (0). Untagged, the halves split
+// evenly. And an activity starts at an attractor (a footpath of the grid) as often as fake.c
+// says for a city runner.
+static void test_world(void) {
+    static const fg_opts POP = { .cols = 12, .rows = 12, .regions = true, .foot_only_rows = true, .pop_west = 90000, .pop_east = 3000 };
+    char path[512];
+    fg_tmp_path(path, sizeof path, "unit_gen_pop");
+    adv_graph g;
+    T_CHECK(fg_build(&POP, path, &g) == 0);
+    fake_world w;
+    T_CHECK((fake_world_init(&w, &g)) == (CB_OK));
+    T_CHECK((w.n_tagged) == (2));
+    int west = g.regions[0].name[0] == 'W' ? 0 : 1, east = 1 - west;
+    T_CHECK_MSG(w.region_density[west] > FAKE_DENSITY_CITY && w.region_density[east] < FAKE_DENSITY_SUBURB, "densities %f %f",
+                w.region_density[west], w.region_density[east]);
+    T_CHECK(w.region_urban[west] == 1.0f && w.region_urban[east] == 0.0f);
+    enum { N = 4000 };
+    uint32_t in_west = 0, foot_west = 0, foot_east = 0, n_east = 0;
+    for (uint32_t id = 1; id <= N; id++) {
+        adv_w_user_def d;
+        uint32_t seg;
+        float urban;
+        fake_user_def(&w, 3, id, &d, &seg, &urban);
+        bool is_west = g.segs[seg].region == west;
+        in_west += is_west;
+        n_east += !is_west;
+        T_CHECK(urban == (is_west ? 1.0f : 0.0f));
+        bool foot = d.kind == ADV_UK_RUNNER || d.kind == ADV_UK_WALKER;
+        if (is_west) foot_west += foot;
+        else foot_east += foot;
+    }
+    T_CHECK_MSG(fabs(in_west / (double)N - 90.0 / 93.0) < 0.015, "%u of %u homes in West", in_west, N);
+    T_CHECK_MSG(foot_west > 0.50 * in_west && foot_west < 0.60 * in_west, "city runners and walkers %u of %u", foot_west, in_west);
+    T_CHECK_MSG(foot_east < 0.35 * n_east, "suburb runners and walkers %u of %u", foot_east, n_east);
+    // Starts: a city runner's activities start on a footpath about 0.7 of the time.
+    fake_user *u = malloc(sizeof *u);
+    fake_route_out *ro = malloc(sizeof *ro);
+    fake_act *a = malloc(sizeof *a);
+    uint32_t id = 1, tried = 0;
+    for (; id < 400; id++) {
+        fake_user_init(&w, u, 3, id);
+        if (u->urban == 1.0f && u->def.kind == ADV_UK_RUNNER) break;
+    }
+    T_CHECK(id < 400);
+    fake_rng r;
+    fake_rng_seed(&r, 99);
+    uint32_t away = 0;
+    for (int i = 0; i < 400; i++) {
+        if (!fake_activity(&g, u, &r, 1700000000000LL, 0, NULL, ro, a)) continue;
+        tried++;
+        uint32_t from = ro->leg[0].reversed ? g.segs[ro->leg[0].seg].node_b : g.segs[ro->leg[0].seg].node_a;
+        away += from != u->home_node;
+    }
+    T_CHECK_MSG(tried > 300 && away > 0.55 * tried && away < 0.85 * tried, "%u of %u started away from home", away, tried);
+    free(u);
+    free(ro);
+    free(a);
+    fake_world_free(&w);
+    adv_graph_close(&g);
+    unlink(path);
+    // Nested: "Whole" (level 7, 100,000 people) holds West (level 8, 90,000); Whole's own streets
+    // are the east half, its own people 10,000, so West has 90 of every 100 homes, not 90 of 190.
+    static const fg_opts NEST = { .cols = 12, .rows = 12, .regions = true, .foot_only_rows = true, .pop_west = 90000, .pop_east = 100000,
+                                  .nested = true };
+    fg_tmp_path(path, sizeof path, "unit_gen_nest");
+    T_CHECK(fg_build(&NEST, path, &g) == 0);
+    T_CHECK(fake_world_init(&w, &g) == CB_OK);
+    west = g.regions[0].name[0] == 'W' ? 0 : 1;
+    in_west = 0;
+    for (uint32_t i = 1; i <= N; i++) {
+        adv_w_user_def d;
+        uint32_t seg;
+        fake_user_def(&w, 3, i, &d, &seg, NULL);
+        in_west += g.segs[seg].region == west;
+    }
+    T_CHECK_MSG(fabs(in_west / (double)N - 0.90) < 0.015, "nested: %u of %u homes in West", in_west, N);
+    fake_world_free(&w);
+    adv_graph_close(&g);
+    unlink(path);
+    // Untagged: homes follow street length, half and half.
+    fg_tmp_path(path, sizeof path, "unit_gen_flat");
+    T_CHECK(fg_build(&GRID, path, &g) == 0);
+    T_CHECK((fake_world_init(&w, &g)) == (CB_OK));
+    T_CHECK((w.n_tagged) == (0));
+    in_west = 0;
+    for (uint32_t i = 1; i <= N; i++) {
+        adv_w_user_def d;
+        uint32_t seg;
+        fake_user_def(&w, 3, i, &d, &seg, NULL);
+        in_west += g.segs[seg].region == west;
+    }
+    T_CHECK_MSG(in_west > 0.40 * N && in_west < 0.60 * N, "untagged: %u of %u homes in West", in_west, N);
+    fake_world_free(&w);
+    adv_graph_close(&g);
+    unlink(path);
+}
+
 int main(void) {
     char path[512];
     fg_tmp_path(path, sizeof path, "unit_gen");
     adv_graph g;
     T_CHECK(fg_build(&GRID, path, &g) == 0);
+    T_CHECK((fake_world_init(&W, &g)) == (CB_OK));
+    test_world();
     test_users(&g);
     test_routes(&g);
     test_sampler(&g);
     test_hostile(&g);
+    fake_world_free(&W);
     adv_graph_close(&g);
     unlink(path);
     return t_done("unit_gen");

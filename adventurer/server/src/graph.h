@@ -30,7 +30,7 @@
 #include <stdint.h>
 
 #define ADV_GRAPH_MAGIC   0x46524741u   // "AGRF"
-#define ADV_GRAPH_VERSION 3
+#define ADV_GRAPH_VERSION 4   // 4: a region's population; a way of a bicycle route relation flagged
 #define ADV_CELL_ZOOM     16
 #define ADV_MASK_BITS     16
 #define ADV_SEG_MAX_PTS   256      // shape points of one segment (the importer splits longer runs)
@@ -55,7 +55,8 @@ enum {
     ADV_HC_CYCLEWAY, ADV_HC_FOOTWAY, ADV_HC_PATH, ADV_HC_PEDESTRIAN, ADV_HC_STEPS, ADV_HC_OTHER,
     ADV_HC_N
 };
-#define ADV_SEGF_ONEWAY 0x1
+#define ADV_SEGF_ONEWAY    0x1
+#define ADV_SEGF_BIKEROUTE 0x2   // the way is a member of an OSM route=bicycle relation (a signed route)
 
 typedef struct {
     int32_t  lat, lon;                              // the first shape point
@@ -96,6 +97,7 @@ typedef struct {
     int32_t  min_lat, min_lon, max_lat, max_lon;
     uint16_t level;                   // OSM admin_level (1..ADV_REGION_MAX_LEVEL); the higher, the more local
     uint16_t pad;
+    uint32_t population;              // the boundary's OSM population= tag; 0 when it has none
 } adv_region;
 
 typedef struct {
@@ -175,6 +177,8 @@ int adv_build_add_way(adv_build *b, const int64_t *node_ids, const adv_pt *pts, 
 // the same region: islands of one town): its index, or a CB_E_*.
 int adv_build_region(adv_build *b, const char *name, int level);
 int adv_build_region_ring(adv_build *b, int region, const adv_pt *ring, int n);
+// The region's population (its boundary's population= tag): kept with the region, 0 for unknown.
+int adv_build_region_population(adv_build *b, int region, uint32_t population);
 // When on, a segment whose midpoint is in no region is left out of the file (the graph is then
 // exactly the union of its regions). Off by default: such a segment is kept with ADV_NO_REGION.
 void adv_build_only_regioned(adv_build *b, bool on);

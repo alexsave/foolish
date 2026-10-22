@@ -36,7 +36,9 @@ int main(int argc, char **argv) {
     adv_hit *truth = calloc(ADV_TRACE_MAX_TRUTH, sizeof *truth);
     adv_match_scratch *s = adv_match_scratch_new();
     if (!users || !route || !act || !cpu || !truth || !s) { fprintf(stderr, "no memory\n"); return 1; }
-    for (int i = 0; i < n_users; i++) fake_user_init(&g, &users[i], seed, (uint32_t)i + 1);
+    fake_world w;
+    if (fake_world_init(&w, &g) != CB_OK) { fprintf(stderr, "no memory\n"); return 1; }
+    for (int i = 0; i < n_users; i++) fake_user_init(&w, &users[i], seed, (uint32_t)i + 1);
     fake_rng r;
     fake_rng_seed(&r, seed * 7919 + 17);
     double acc_sum = 0, recall_min = 1, prec_sum = 0;

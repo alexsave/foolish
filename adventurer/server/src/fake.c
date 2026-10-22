@@ -2,8 +2,10 @@
 #include "fake.h"
 
 #include "coverage.h"
+#include "util/err.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -79,38 +81,152 @@ static void user_rng(fake_rng *r, uint64_t seed, uint32_t id) {
 }
 
 bool fake_home_class(uint8_t hclass) {
-    return hclass == ADV_HC_RESIDENTIAL || hclass == ADV_HC_LIVING || hclass == ADV_HC_TERTIARY || hclass == ADV_HC_UNCLASSIFIED;
+    return hclass == ADV_HC_RESIDENTIAL || hclass == ADV_HC_LIVING || hclass == ADV_HC_TERTIARY || hclass == ADV_HC_UNCLASSIFIED ||
+           hclass == ADV_HC_SECONDARY;
 }
 
-void fake_user_def(const adv_graph *g, uint64_t seed, uint32_t id, adv_w_user_def *def, uint32_t *home_seg) {
+// ---- the world --------------------------------------------------------------------------------
+// What a run or walk seeks: the paths of parks and greenways (the importer drops sidewalks and
+// crossings, so a footway left is one of those), pedestrian streets, tracks, cycleways a foot may
+// use. What a ride seeks: cycleways and signed cycle routes.
+static bool foot_attractor(const adv_seg *s) {
+    return (s->access & ADV_ACC_FOOT) && (s->hclass == ADV_HC_FOOTWAY || s->hclass == ADV_HC_PATH || s->hclass == ADV_HC_PEDESTRIAN ||
+                                          s->hclass == ADV_HC_TRACK || s->hclass == ADV_HC_CYCLEWAY);
+}
+static bool bike_attractor(const adv_seg *s) {
+    return (s->access & ADV_ACC_BIKE) && (s->hclass == ADV_HC_CYCLEWAY || (s->flags & ADV_SEGF_BIKEROUTE));
+}
+
+float fake_urbanity(double density) {
+    if (!(density > FAKE_DENSITY_SUBURB)) return 0;
+    if (density >= FAKE_DENSITY_CITY) return 1;
+    return (float)(log(density / FAKE_DENSITY_SUBURB) / log(FAKE_DENSITY_CITY / FAKE_DENSITY_SUBURB));
+}
+
+void fake_world_free(fake_world *w) {
+    free(w->home_cum);
+    free(w->foot_cum);
+    free(w->bike_cum);
+    free(w->region_urban);
+    free(w->region_density);
+    memset(w, 0, sizeof *w);
+}
+
+int fake_world_init(fake_world *w, const adv_graph *g) {
+    memset(w, 0, sizeof *w);
+    w->g = g;
+    uint32_t ns = g->h->n_segs, nr = g->h->n_regions;
+    w->home_cum = malloc((ns ? ns : 1) * sizeof *w->home_cum);
+    w->foot_cum = malloc((ns ? ns : 1) * sizeof *w->foot_cum);
+    w->bike_cum = malloc((ns ? ns : 1) * sizeof *w->bike_cum);
+    w->region_urban = calloc(nr ? nr : 1, sizeof *w->region_urban);
+    w->region_density = calloc(nr ? nr : 1, sizeof *w->region_density);
+    double *home_km = calloc(nr ? nr : 1, sizeof *home_km);
+    if (!w->home_cum || !w->foot_cum || !w->bike_cum || !w->region_urban || !w->region_density || !home_km) {
+        free(home_km);
+        fake_world_free(w);
+        return CB_E_NOMEM;
+    }
+    for (uint32_t i = 0; i < ns; i++)
+        if (fake_home_class(g->segs[i].hclass) && g->segs[i].region < nr) home_km[g->segs[i].region] += g->segs[i].len_m / 1000.0;
+    // NESTED REGIONS: a town's population counts the people of the villages inside it, whose
+    // streets are the villages' (a segment is its innermost region's). So a region's own people
+    // are its tag less the tags of the regions of a higher level nested in it, a region being
+    // nested in the smallest one of a lower level whose box holds its box (the file keeps boxes,
+    // not rings: a box test, right for the towns and villages of New York, where they were seen).
+    // Never below a tenth of the tag, should the boxes mislead.
+    double *own = calloc(nr ? nr : 1, sizeof *own);
+    if (!own) {
+        free(home_km);
+        fake_world_free(w);
+        return CB_E_NOMEM;
+    }
+    for (uint32_t r = 0; r < nr; r++) own[r] = g->regions[r].population;
+    for (uint32_t v = 0; v < nr; v++) {
+        const adv_region *rv = &g->regions[v];
+        if (!rv->population) continue;
+        uint32_t best = nr;
+        double best_area = 0;
+        for (uint32_t t = 0; t < nr; t++) {
+            const adv_region *rt = &g->regions[t];
+            if (t == v || rt->level >= rv->level || !rt->population) continue;
+            if (rv->min_lat < rt->min_lat || rv->max_lat > rt->max_lat || rv->min_lon < rt->min_lon || rv->max_lon > rt->max_lon) continue;
+            double area = ((double)rt->max_lat - rt->min_lat) * ((double)rt->max_lon - rt->min_lon);
+            if (best == nr || area < best_area) { best = t; best_area = area; }
+        }
+        if (best < nr) own[best] -= rv->population;
+    }
+    for (uint32_t r = 0; r < nr; r++)
+        if (own[r] < 0.1 * g->regions[r].population) own[r] = 0.1 * g->regions[r].population;
+    // The density of a region with no tag (or none of whose streets are lived on) is the mean of
+    // those with one; with no tag anywhere, every region's is the same and homes follow length.
+    double pop = 0, km = 0;
+    for (uint32_t r = 0; r < nr; r++)
+        if (g->regions[r].population && home_km[r] > 0) {
+            pop += own[r];
+            km += home_km[r];
+            w->n_tagged++;
+        }
+    const double mean = km > 0 ? pop / km : FAKE_DENSITY_SUBURB;
+    for (uint32_t r = 0; r < nr; r++) {
+        double d = g->regions[r].population && home_km[r] > 0 ? own[r] / home_km[r] : mean;
+        w->region_density[r] = (float)d;
+        w->region_urban[r] = fake_urbanity(d);
+    }
+    double h = 0, f = 0, b = 0;
+    for (uint32_t i = 0; i < ns; i++) {
+        const adv_seg *s = &g->segs[i];
+        if (fake_home_class(s->hclass) && (s->access & (ADV_ACC_BIKE | ADV_ACC_FOOT)))
+            h += s->len_m * (s->region < nr ? w->region_density[s->region] : mean);
+        if (foot_attractor(s)) f += s->len_m;
+        if (bike_attractor(s)) b += s->len_m;
+        w->home_cum[i] = h;
+        w->foot_cum[i] = f;
+        w->bike_cum[i] = b;
+    }
+    free(home_km);
+    free(own);
+    return CB_OK;
+}
+
+// The segment a uniform draw over a running sum falls in (the first whose sum passes it), or
+// FAKE_NO_SEG when the sum is empty.
+static uint32_t cum_pick(const double *cum, uint32_t n, double x) {
+    if (n == 0 || !(cum[n - 1] > 0)) return FAKE_NO_SEG;
+    double t = x * cum[n - 1];
+    uint32_t lo = 0, hi = n - 1;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (cum[mid] > t) hi = mid;
+        else lo = mid + 1;
+    }
+    return lo;
+}
+
+void fake_user_def(const fake_world *w, uint64_t seed, uint32_t id, adv_w_user_def *def, uint32_t *home_seg, float *urban) {
+    const adv_graph *g = w->g;
     fake_rng r;
     user_rng(&r, seed, id);
     memset(def, 0, sizeof *def);
     def->id = id;
-    double k = fake_rng_unit(&r);
-    def->kind = k < 0.35 ? ADV_UK_COMMUTER : k < 0.60 ? ADV_UK_EXPLORER : k < 0.75 ? ADV_UK_RUNNER : k < 0.90 ? ADV_UK_WALKER : ADV_UK_TOURIST;
-    // Home: the first point of a street the kind can travel, so the first route has a way out,
-    // and a street people live on (residential, living street, tertiary or unclassified: not a
-    // park path, a service road or a highway). A few random draws almost always find one; then
-    // any segment of the right access; the scan is for a graph that is nearly all of one access,
-    // and is bounded by the segment count.
+    // Home first: the street, by the world's weights (any segment when nothing is lived on).
+    uint32_t seg = cum_pick(w->home_cum, g->h->n_segs, fake_rng_unit(&r));
+    if (seg == FAKE_NO_SEG) seg = g->h->n_segs ? fake_rng_below(&r, g->h->n_segs) : 0;
+    float u = g->h->n_segs && g->segs[seg].region < g->h->n_regions ? w->region_urban[g->segs[seg].region] : 0;
+    // Then the kind, by how urban home is.
+    double k = fake_rng_unit(&r), v = u;
+    double c_commuter = 0.30, c_explorer = c_commuter + 0.35 * (1 - v) + 0.10 * v, c_runner = c_explorer + 0.15 * (1 - v) + 0.32 * v,
+           c_walker = c_runner + 0.10 * (1 - v) + 0.23 * v;
+    def->kind = k < c_commuter ? ADV_UK_COMMUTER : k < c_explorer ? ADV_UK_EXPLORER : k < c_runner ? ADV_UK_RUNNER : k < c_walker ? ADV_UK_WALKER : ADV_UK_TOURIST;
+    // A home the kind cannot leave (a footway for a rider): the next segment it can.
     uint8_t access = fake_act_access(fake_kind_act(def->kind));
-    uint32_t seg = 0;
-    if (g->h->n_segs > 0) {
-        seg = fake_rng_below(&r, g->h->n_segs);
-        bool ok = (g->segs[seg].access & access) != 0 && fake_home_class(g->segs[seg].hclass);
-        for (int tries = 0; !ok && tries < 256; tries++) {
-            seg = fake_rng_below(&r, g->h->n_segs);
-            ok = (g->segs[seg].access & access) != 0 && (tries < 192 ? fake_home_class(g->segs[seg].hclass) : true);
-        }
-        for (uint32_t i = 0; !ok && i < g->h->n_segs; i++) {
-            uint32_t s = (seg + i) % g->h->n_segs;
-            if (g->segs[s].access & access) { seg = s; ok = true; }
-        }
+    for (uint32_t i = 0; g->h->n_segs && i < g->h->n_segs && !(g->segs[seg].access & access); i++) seg = (seg + 1) % g->h->n_segs;
+    if (g->h->n_segs) {
         def->home_lat = g->segs[seg].lat;
         def->home_lon = g->segs[seg].lon;
     }
     if (home_seg) *home_seg = seg;
+    if (urban) *urban = u;
     int n = snprintf(def->name, sizeof def->name, "%s%s %s%s", FIRST_A[fake_rng_below(&r, 16)], FIRST_B[fake_rng_below(&r, 16)],
                      LAST_A[fake_rng_below(&r, 16)], LAST_B[fake_rng_below(&r, 16)]);
     if (n < 0) n = 0;
@@ -118,14 +234,17 @@ void fake_user_def(const adv_graph *g, uint64_t seed, uint32_t id, adv_w_user_de
     def->name_len = (uint8_t)n;
 }
 
-void fake_users_make(const adv_graph *g, uint32_t n, uint64_t seed, adv_w_user_def *out) {
-    for (uint32_t i = 0; i < n; i++) fake_user_def(g, seed, i + 1, &out[i], NULL);
+void fake_users_make(const fake_world *w, uint32_t n, uint64_t seed, adv_w_user_def *out) {
+    for (uint32_t i = 0; i < n; i++) fake_user_def(w, seed, i + 1, &out[i], NULL, NULL);
 }
 
-void fake_user_init(const adv_graph *g, fake_user *u, uint64_t seed, uint32_t id) {
+void fake_user_init(const fake_world *w, fake_user *u, uint64_t seed, uint32_t id) {
+    const adv_graph *g = w->g;
     memset(u, 0, sizeof *u);
-    fake_user_def(g, seed, id, &u->def, &u->home_seg);
+    u->w = w;
+    fake_user_def(w, seed, id, &u->def, &u->home_seg, &u->urban);
     u->home_node = g->h->n_segs > 0 ? g->segs[u->home_seg].node_a : 0;
+    u->start_node = u->home_node;
     for (uint32_t i = 0; i < FAKE_VISITED_CAP; i++) u->visited[i] = FAKE_NO_SEG;
 }
 
@@ -181,6 +300,15 @@ static double node_dist_m(const adv_graph *g, const adv_frame *f, uint32_t a, ui
     return adv_dist_m(f, pa, pb);
 }
 
+// How much a road draws a type, beside the kind's taste for new or known roads: a ride favours
+// cycleways and signed routes (the bridges' paths, the greenways), a run or walk the paths and
+// footways, and both shun the primary roads and trunks a person would rather not share.
+static double road_pull(const adv_seg *s, uint8_t act) {
+    if (s->hclass == ADV_HC_TRUNK || s->hclass == ADV_HC_PRIMARY) return 0.4;
+    if (act == ADV_ACT_BIKE) return bike_attractor(s) ? 3.0 : s->hclass == ADV_HC_SECONDARY ? 0.8 : 1.0;
+    return foot_attractor(s) ? 3.0 : 1.0;
+}
+
 // The next leg out of `node`: among the node's segments the type may use, not the one just
 // travelled unless nothing else is, weighted by the kind and (homeward) by whether the far end
 // is nearer home. False at a dead end with no way back.
@@ -191,7 +319,7 @@ static bool choose_leg(const adv_graph *g, const fake_user *u, fake_rng *r, uint
     bool rev[ADV_NODE_MAX_ADJ];
     double w[ADV_NODE_MAX_ADJ];
     int n = 0;
-    double sum = 0, d_cur = homeward ? node_dist_m(g, f, node, u->home_node) : 0;
+    double sum = 0, d_cur = homeward ? node_dist_m(g, f, node, u->start_node) : 0;
     uint32_t n_adj = nd->n_adj < ADV_NODE_MAX_ADJ ? nd->n_adj : ADV_NODE_MAX_ADJ;
     for (uint32_t k = 0; k < n_adj; k++) {
         uint32_t seg = g->adj[nd->adj_off + k];
@@ -205,10 +333,11 @@ static bool choose_leg(const adv_graph *g, const fake_user *u, fake_rng *r, uint
         case ADV_UK_TOURIST: wt = 1.0; break;                     // anywhere
         default: wt = seen ? 0.15 : 1.0; break;                   // explorer, runner, walker: new roads
         }
+        wt *= road_pull(&g->segs[seg], act);
         if (homeward) {
             uint32_t far = rv ? g->segs[seg].node_a : g->segs[seg].node_b;
-            wt *= node_dist_m(g, f, far, u->home_node) < d_cur ? 4.0 : 0.3;
-            if (far == u->home_node) wt *= 4.0;
+            wt *= node_dist_m(g, f, far, u->start_node) < d_cur ? 4.0 : 0.3;
+            if (far == u->start_node) wt *= 4.0;
         }
         cand[n] = seg;
         rev[n] = rv;
@@ -268,16 +397,16 @@ void fake_route(const adv_graph *g, fake_user *u, fake_rng *r, uint8_t act, doub
     out->stuck = out->capped = false;
     out->f0 = fake_rng_unit(r) * 0.5;
     out->f1 = 0.5 + fake_rng_unit(r) * 0.5;
-    if (g->h->n_nodes == 0 || u->home_node >= g->h->n_nodes) return;
-    adv_frame f = adv_frame_at(g->nodes[u->home_node].lat);
-    uint32_t node = u->home_node, prev = FAKE_NO_SEG;
+    if (g->h->n_nodes == 0 || u->start_node >= g->h->n_nodes) return;
+    adv_frame f = adv_frame_at(g->nodes[u->start_node].lat);
+    uint32_t node = u->start_node, prev = FAKE_NO_SEG;
     double acc = 0;
     while (out->n < FAKE_ROUTE_MAX_SEGS) {
         // Head home once home is about as far as the budget left (a loop that returns, not one
         // that races back from half way); a loop that closes past 80% of the target is done.
         double remaining = target_m - acc;
-        bool homeward = acc >= target_m * 0.5 && node_dist_m(g, &f, node, u->home_node) >= 0.7 * remaining;
-        if (acc >= target_m * 0.8 && node == u->home_node && out->n > 0) break;
+        bool homeward = acc >= target_m * 0.5 && node_dist_m(g, &f, node, u->start_node) >= 0.7 * remaining;
+        if (acc >= target_m * 0.8 && node == u->start_node && out->n > 0) break;
         fake_leg leg;
         if (!choose_leg(g, u, r, act, node, prev, homeward, &f, &leg)) {
             out->stuck = true;
@@ -463,10 +592,47 @@ uint32_t fake_sample(const adv_graph *g, const fake_route_out *route, uint8_t ac
 }
 
 // ---- an activity ----------------------------------------------------------------------------
+// THE DISTANCE an activity aims at, by kind and urbanity: a city commute is short, a suburban
+// road ride long; runs and walks are much the same everywhere.
+static double target_for(const fake_user *u, fake_rng *r, uint8_t act) {
+    const double v = u->urban;
+    if (act != ADV_ACT_BIKE) return fake_target_m(r, act);
+    if (u->def.kind == ADV_UK_COMMUTER) return fake_rng_range(r, 6000 + 8000 * (1 - v), 14000 + 16000 * (1 - v));
+    return fake_rng_range(r, 18000 + 12000 * (1 - v), 35000 + 15000 * (1 - v));   // at most 50 km: under 10k points
+}
+
+// THE START: home, or an attractor within reach - for a run or a walk a path or footway within
+// FAKE_FOOT_REACH_M of home, with probability 0.2 + 0.5 x urbanity (city people run in the park);
+// for an explorer's or a tourist's ride a cycleway or signed route within FAKE_BIKE_REACH_M, with
+// probability 0.3. The attractor is drawn by length over the whole world and kept when in reach,
+// up to 96 draws, so a big park near home pulls far harder than a stray path.
+#define FAKE_FOOT_REACH_M 5000.0
+#define FAKE_BIKE_REACH_M 12000.0
+static uint32_t pick_start(const fake_user *u, fake_rng *r, uint8_t act) {
+    const fake_world *w = u->w;
+    if (!w) return u->home_node;
+    const adv_graph *g = w->g;
+    double p = act == ADV_ACT_BIKE ? (u->def.kind == ADV_UK_EXPLORER || u->def.kind == ADV_UK_TOURIST ? 0.3 : 0.0) : 0.2 + 0.5 * u->urban;
+    if (fake_rng_unit(r) >= p) return u->home_node;
+    const double *cum = act == ADV_ACT_BIKE ? w->bike_cum : w->foot_cum;
+    const double reach = act == ADV_ACT_BIKE ? FAKE_BIKE_REACH_M : FAKE_FOOT_REACH_M;
+    adv_pt home = { u->def.home_lat, u->def.home_lon };
+    adv_frame f = adv_frame_at(home.lat);
+    for (int tries = 0; tries < 96; tries++) {
+        uint32_t seg = cum_pick(cum, g->h->n_segs, fake_rng_unit(r));
+        if (seg == FAKE_NO_SEG) break;
+        adv_pt at = { g->segs[seg].lat, g->segs[seg].lon };
+        if (adv_dist_m(&f, home, at) <= reach) return g->segs[seg].node_a;
+    }
+    return u->home_node;
+}
+
 static bool good_activity(const adv_graph *g, fake_user *u, fake_rng *r, int64_t start_ms, uint8_t flags,
                           const fake_noise *noise, fake_route_out *route, fake_act *a) {
     uint8_t act = fake_kind_act(u->def.kind);
-    fake_route(g, u, r, act, fake_target_m(r, act), route);
+    u->start_node = pick_start(u, r, act);
+    fake_route(g, u, r, act, target_for(u, r, act), route);
+    u->start_node = u->home_node;
     memset(&a->hdr, 0, sizeof a->hdr);
     a->n_pts = 0;
     a->n_truth = 0;

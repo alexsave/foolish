@@ -21,6 +21,9 @@ typedef struct {
     adv_pt sw;                // 0,0: a default in a flat part of the world (lat 41.8, lon -71.4)
     bool   regions;           // two regions down the middle
     bool   foot_only_rows;    // every other east-west street is foot-only (a footpath)
+    uint32_t pop_west, pop_east;   // the two regions' populations (0: untagged)
+    bool   nested;            // East is instead "Whole", level 7, over the whole grid (West, level 8,
+                              // inside it): a town whose population counts its village's people
 } fg_opts;
 
 // Builds the grid into `path` (the caller's temporary file; fg_tmp_path makes one) and opens it

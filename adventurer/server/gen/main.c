@@ -4,7 +4,11 @@
 //
 //   adv-gen <graph> [--server 127.0.0.1:8711] [--users 3000] [--rate 5] [--threads 4] [--seed 1]
 //           [--backfill-users 20] [--backfill-size 400] [--backfill-every 60] [--hostile-every 50]
-//           [--duration 0] [--once N]
+//           [--duration 0] [--once N] [--regulars 0] [--regular-share 0.25]
+//
+// Homes, kinds and distances follow where people live (fake.h THE WORLD). --regulars N makes
+// users 1..N take --regular-share of the live uploads between them, so a few maps grow fast
+// enough to watch while the rest fill the city slowly.
 //
 // Every user's state (its visited set, its activity counter) is behind its own mutex: a live
 // thread picks a random user with a trylock and moves on when the backfill thread holds it, so
@@ -34,15 +38,17 @@
 typedef struct {
     const char *graph;
     const char *server;
-    uint32_t users, threads, backfill_users, backfill_size, backfill_every, hostile_every, duration, once;
-    double rate;
+    uint32_t users, threads, backfill_users, backfill_size, backfill_every, hostile_every, duration, once, regulars;
+    double rate, regular_share;
     uint64_t seed;
 } cfg_t;
 
 static cfg_t CFG = { .server = "127.0.0.1:8711", .users = 3000, .threads = 4, .backfill_users = 20, .backfill_size = 400,
-                     .backfill_every = 60, .hostile_every = 50, .rate = 5, .seed = 1 };
+                     .backfill_every = 60, .hostile_every = 50, .rate = 5, .seed = 1,
+                     .regular_share = 0.25 };
 
 static adv_graph G;
+static fake_world W;
 static fake_user *USERS;
 static pthread_mutex_t *USER_LOCKS;
 static volatile sig_atomic_t STOP;
@@ -136,7 +142,8 @@ static bool upload(worker_t *w, size_t len) {
 // A random user whose lock is free, locked; or NULL after a few tries (the backfill holds them).
 static fake_user *pick_user(worker_t *w) {
     for (int tries = 0; tries < 8; tries++) {
-        uint32_t i = fake_rng_below(&w->rng, CFG.users);
+        uint32_t i = CFG.regulars && fake_rng_unit(&w->rng) < CFG.regular_share ? fake_rng_below(&w->rng, CFG.regulars)
+                                                                                : fake_rng_below(&w->rng, CFG.users);
         if (pthread_mutex_trylock(&USER_LOCKS[i]) == 0) return &USERS[i];
     }
     return NULL;
@@ -220,7 +227,7 @@ static void *backfill_main(void *arg) {
 static void post_roster(worker_t *w) {
     adv_w_user_def *defs = malloc((size_t)CFG.users * sizeof *defs);
     if (!defs) exit(2);
-    fake_users_make(&G, CFG.users, CFG.seed, defs);
+    fake_users_make(&W, CFG.users, CFG.seed, defs);
     size_t batch_cap = sizeof(adv_w_list) + (size_t)ROSTER_BATCH * sizeof(adv_w_user_def);
     uint8_t *buf = malloc(batch_cap);
     if (!buf) exit(2);
@@ -277,7 +284,7 @@ static bool arg_u32(const char *v, uint32_t *out) {
 static void usage(void) {
     fprintf(stderr, "usage: adv-gen <graph> [--server host:port] [--users N] [--rate per_s] [--threads N] [--seed N]\n"
                     "               [--backfill-users N] [--backfill-size N] [--backfill-every s] [--hostile-every N]\n"
-                    "               [--duration s] [--once N]\n");
+                    "               [--duration s] [--once N] [--regulars N] [--regular-share f]\n");
     exit(2);
 }
 
@@ -299,6 +306,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--hostile-every")) ok = arg_u32(v, &CFG.hostile_every);
         else if (!strcmp(a, "--duration")) ok = arg_u32(v, &CFG.duration);
         else if (!strcmp(a, "--once")) ok = arg_u32(v, &CFG.once);
+        else if (!strcmp(a, "--regulars")) ok = arg_u32(v, &CFG.regulars);
+        else if (!strcmp(a, "--regular-share")) { CFG.regular_share = atof(v); ok = CFG.regular_share >= 0 && CFG.regular_share <= 1; }
         else usage();
         if (!ok) usage();
     }
@@ -311,6 +320,12 @@ int main(int argc, char **argv) {
     fprintf(stderr, "adv-gen: graph %s: %u segments, %u nodes, %.0f km; %u users, %.1f uploads/s on %u threads, seed %llu\n",
             CFG.graph, G.h->n_segs, G.h->n_nodes, G.h->total_len_m[ADV_T_ALL] / 1000, CFG.users, CFG.rate, CFG.threads,
             (unsigned long long)CFG.seed);
+    if (CFG.regulars > CFG.users) CFG.regulars = CFG.users;
+    if ((rc = fake_world_init(&W, &G)) != CB_OK) {
+        fprintf(stderr, "adv-gen: no memory for the world\n");
+        return 2;
+    }
+    fprintf(stderr, "adv-gen: world: %u of %u regions carry a population\n", W.n_tagged, G.h->n_regions);
     USERS = malloc((size_t)CFG.users * sizeof *USERS);
     USER_LOCKS = malloc((size_t)CFG.users * sizeof *USER_LOCKS);
     if (!USERS || !USER_LOCKS) {
@@ -318,8 +333,26 @@ int main(int argc, char **argv) {
         return 2;
     }
     for (uint32_t i = 0; i < CFG.users; i++) {
-        fake_user_init(&G, &USERS[i], CFG.seed, i + 1);
+        fake_user_init(&W, &USERS[i], CFG.seed, i + 1);
         pthread_mutex_init(&USER_LOCKS[i], NULL);
+    }
+    // Where the roster lives, for the log: the eight regions with the most homes.
+    if (G.h->n_regions) {
+        uint32_t *homes = calloc(G.h->n_regions, sizeof *homes);
+        for (uint32_t i = 0; homes && i < CFG.users; i++)
+            if (G.segs[USERS[i].home_seg].region < G.h->n_regions) homes[G.segs[USERS[i].home_seg].region]++;
+        fprintf(stderr, "adv-gen: homes:");
+        for (int k = 0; homes && k < 8; k++) {
+            uint32_t best = 0;
+            for (uint32_t r = 1; r < G.h->n_regions; r++)
+                if (homes[r] > homes[best]) best = r;
+            if (!homes[best]) break;
+            fprintf(stderr, "%s %s %.1f%% (pop %u, urban %.2f)", k ? "," : "", G.regions[best].name, 100.0 * homes[best] / CFG.users,
+                    G.regions[best].population, W.region_urban[best]);
+            homes[best] = 0;
+        }
+        fprintf(stderr, "\n");
+        free(homes);
     }
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
