@@ -38,7 +38,8 @@ A fake world (adv-gen) stands in for Strava: 3000 deterministic users of five ki
 | Throughput | | 3000 uploads accepted in 3.1 s (1013/s; 44 refused 503 at the lane cap and retried); 18,677 activities processed in 63 s (295/s) on 2 matcher threads during the backfill flood below |
 | Backfill beside live | backfill never adds tile or live latency | 12 users' histories (18,000 uploads, 1 GB) posted in 35 s while live uploads kept arriving at 4.4/s: live upload-to-visible p50 3.1 ms, p99 16 ms; activity CPU p50 1.28 ms, p99 5.1 ms; RSS peaked at 197 MB with the backfill lane holding 140 MB of bodies |
 | Matcher accuracy | | recall 0.980 mean (0.709 worst ride), precision 0.981 on real roads; 0.9995 / 0.996 on the synthetic grid; the live average over every scored upload 97.8% |
-| Recovery | | 19,640 activities replayed from the journal in 146 ms (7.4 us each) |
+| Recovery | | 39,609 activities replayed from the journal in 423 ms (10.7 us each) at start |
+| Low-zoom user tile | | a z8 tile of the whole state for a 400-ride user: 1.0 ms (5.7 ms when it walked every cell of the grid) |
 | Journal | | about 1.8 KB per activity on disk |
 
 Timings are as taken: the live figures came during a window with the load average between 2 and 4; figures taken while a parallel replay analysis held the load at 13-15 were discarded.
@@ -75,5 +76,6 @@ Missing against Wandrer: no Garmin or Strava connector, no pretty basemap (our o
 - The worst ride in the bench matched 71% of its truth: not yet looked at.
 - A rejected upload's activity id is reused after a restart (it was never journaled).
 - z11 and z12 base tiles of the city core are 300-650 KB; a client cache (the ETag is the graph's CRC) makes that a one-time cost.
+- A low-zoom base tile (z8: every cell of the grid, majors only) is rendered once per graph and served from the cache after; the first visitor pays about 10 ms for it.
 - `next dev` writes an AGENTS.md into web/ (gitignored); the production build is untested in this session.
 - Super-unique is per segment: a sixteenth of a segment another user touched makes the whole segment shared.

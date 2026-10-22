@@ -42,6 +42,9 @@ int main(int argc, char **argv) {
     double acc_sum = 0, recall_min = 1, prec_sum = 0;
     uint64_t points = 0, samples = 0, fast = 0, searches = 0, jumps = 0, hits = 0, matched_cm = 0;
     int made = 0, rejected = 0;
+    // The three worst rides by recall, for a look at what the matcher misses.
+    struct { double recall, prec; int i; uint8_t type, kind; uint32_t pts, samples, offroad, spikes, searches, jumps, hits; float truth_m, matched_m; } worst[3];
+    for (int k = 0; k < 3; k++) { worst[k].recall = 2; worst[k].i = -1; }
     int64_t wall0 = cb_mono_us();
     for (int i = 0; i < n_act; i++) {
         fake_user *u = &users[fake_rng_below(&r, (uint32_t)n_users)];
@@ -64,6 +67,14 @@ int main(int argc, char **argv) {
         acc_sum += recall;
         prec_sum += prec;
         if (recall < recall_min) recall_min = recall;
+        for (int k = 0; k < 3; k++)
+            if (recall < worst[k].recall) {
+                for (int m = 2; m > k; m--) worst[m] = worst[m - 1];
+                worst[k].recall = recall; worst[k].prec = prec; worst[k].i = i; worst[k].type = act->hdr.type; worst[k].kind = u->def.kind;
+                worst[k].pts = act->n_pts; worst[k].samples = res.n_samples; worst[k].offroad = res.n_offroad; worst[k].spikes = res.n_spikes;
+                worst[k].searches = res.n_searches; worst[k].jumps = res.n_jumps; worst[k].hits = res.n_hits; worst[k].truth_m = truth_m; worst[k].matched_m = res.matched_m;
+                break;
+            }
     }
     int64_t wall = cb_mono_us() - wall0;
     qsort(cpu, (size_t)made, sizeof *cpu, cmp_u32);
@@ -80,6 +91,11 @@ int main(int argc, char **argv) {
            fast + searches ? 100.0 * (double)fast / (double)(fast + searches) : 0, (unsigned long long)searches, (unsigned long long)jumps,
            ok ? (double)hits / ok : 0);
     printf("  wall %.2f s for the generator and the matcher together\n", (double)wall / 1e6);
+    for (int k = 0; k < 3; k++)
+        if (worst[k].i >= 0)
+            printf("  worst %d: ride %d type %u kind %u: recall %.3f precision %.3f, %u pts %u samples %u off-road %u spikes, %u searches %u jumps, %u hits, truth %.0f m matched %.0f m\n",
+                   k + 1, worst[k].i, worst[k].type, worst[k].kind, worst[k].recall, worst[k].prec, worst[k].pts, worst[k].samples, worst[k].offroad,
+                   worst[k].spikes, worst[k].searches, worst[k].jumps, worst[k].hits, worst[k].truth_m, worst[k].matched_m);
     adv_match_scratch_free(s);
     free(users); free(route); free(act); free(cpu); free(truth);
     adv_graph_close(&g);
