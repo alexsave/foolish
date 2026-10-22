@@ -237,9 +237,44 @@ static void test_trace(void) {
     T_CHECK(adv_trace_write(buf, 10, &h, pts, NULL, 0) == 0);
 }
 
+// A straight way far longer than ADV_SEG_MAX_LEN_M: the builder splits it so every segment is
+// under the cap (its own check refuses the file otherwise) and nothing is lost.
+static void test_long_way(void) {
+    enum { N = 31 };
+    int64_t ids[N];
+    adv_pt pts[N];
+    adv_pt a = { (int32_t)(41.8 * ADV_DEG), (int32_t)(-71.4 * ADV_DEG) };
+    adv_frame f = adv_frame_at(a.lat);
+    for (int i = 0; i < N; i++) {
+        ids[i] = 1000 + i;
+        pts[i].lat = (int32_t)(a.lat + i * 300 / f.my);   // 300 m apart: 9 km in all
+        pts[i].lon = a.lon;
+    }
+    adv_build *b = adv_build_new("long");
+    T_CHECK(adv_build_add_way(b, ids, pts, N, ADV_ACC_BIKE | ADV_ACC_FOOT, ADV_HC_PRIMARY, 0) == CB_OK);
+    char path[512], err[256] = "";
+    fg_tmp_path(path, sizeof path, "unit_graph_long");
+    int rc = adv_build_finish(b, path, err, sizeof err);
+    T_CHECK_MSG(rc == CB_OK, "finish: %s", err);
+    adv_build_free(b);
+    if (rc != CB_OK) return;
+    adv_graph g;
+    T_CHECK(adv_graph_open(path, &g, err, sizeof err) == CB_OK);
+    double total = 0;
+    for (uint32_t i = 0; i < g.h->n_segs; i++) {
+        T_CHECK_MSG(g.segs[i].len_m <= ADV_SEG_MAX_LEN_M, "seg %u len %f", i, g.segs[i].len_m);
+        total += g.segs[i].len_m;
+    }
+    T_CHECK_MSG(g.h->n_segs == 5, "n_segs=%u", g.h->n_segs);   // 6 edges of 300 m fit a segment: 5 of them
+    T_CHECK_MSG(fabs(total - 9000) < 5, "total=%f", total);
+    adv_graph_close(&g);
+    unlink(path);
+}
+
 int main(void) {
     test_geo();
     test_graph();
+    test_long_way();
     test_coverage();
     test_trace();
     return t_done("unit_graph");

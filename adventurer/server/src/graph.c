@@ -514,19 +514,25 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
         double len = 0;
         for (uint32_t i = start + 1; i <= end; i++) {
             double d = adv_dist_m(&f, b->pts[i - 1], b->pts[i]);
-            bool cut = is_node[i] || i == end;
-            if (!cut && (len + d > ADV_SEG_MAX_LEN_M || i - start + 1 >= ADV_SEG_MAX_PTS)) {
-                // Make this interior point a node of its own.
-                if (node_of_pt[i] == UINT32_MAX) { node_of_pt[i] = n_nodes; node_pt[n_nodes++] = i; }
-                is_node[i] = 1;
+            uint32_t at = i;   // where this segment ends, when it does
+            bool cut = is_node[i] || i == end || i - start + 1 >= ADV_SEG_MAX_PTS;
+            if (len + d > ADV_SEG_MAX_LEN_M && i - 1 > start) {
+                // The edge into i would take the segment past the length cap: it ends at i-1
+                // instead (at least one edge in, so a real segment), the edge opens the next
+                // one, and i is looked at again from there. A lone edge past the cap cannot
+                // happen: the densifier keeps every edge under 500 m.
+                at = i - 1;
                 cut = true;
+                d = 0;
+                i--;
+            }
+            if (cut && !is_node[at]) {
+                // Make this interior point a node of its own.
+                if (node_of_pt[at] == UINT32_MAX) { node_of_pt[at] = n_nodes; node_pt[n_nodes++] = at; }
+                is_node[at] = 1;
             }
             len += d;
             if (cut) {
-                if (len > ADV_SEG_MAX_LEN_M) {
-                    // One edge longer than the cap (a densified straight line): the densifier
-                    // kept every edge under 3.6 km, so split at the point before and accept.
-                }
                 if (n_segs == cap_segs) {
                     uint32_t nc = cap_segs ? cap_segs * 2 : 4096;
                     bseg *ns = realloc(segs, (size_t)nc * sizeof *ns);
@@ -538,13 +544,13 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
                 memset(&s, 0, sizeof s);
                 s.way = w;
                 s.from = start;
-                s.to = i;
+                s.to = at;
                 s.node_a = node_of_pt[start];
-                s.node_b = node_of_pt[i];
+                s.node_b = node_of_pt[at];
                 s.len_m = (float)len;
                 s.min_lat = s.max_lat = b->pts[start].lat;
                 s.min_lon = s.max_lon = b->pts[start].lon;
-                for (uint32_t k = start + 1; k <= i; k++) {
+                for (uint32_t k = start + 1; k <= at; k++) {
                     if (b->pts[k].lat < s.min_lat) s.min_lat = b->pts[k].lat;
                     if (b->pts[k].lat > s.max_lat) s.max_lat = b->pts[k].lat;
                     if (b->pts[k].lon < s.min_lon) s.min_lon = b->pts[k].lon;
@@ -552,8 +558,8 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
                 }
                 // The midpoint by length.
                 double want = len / 2, acc = 0;
-                s.mid = b->pts[i];
-                for (uint32_t k = start + 1; k <= i; k++) {
+                s.mid = b->pts[at];
+                for (uint32_t k = start + 1; k <= at; k++) {
                     double dd = adv_dist_m(&f, b->pts[k - 1], b->pts[k]);
                     if (acc + dd >= want) {
                         double t = dd > 0 ? (want - acc) / dd : 0;
@@ -570,7 +576,7 @@ int adv_build_finish(adv_build *b, const char *path, char *err, size_t cap) {
                 s.region = r < 0 ? ADV_NO_REGION : (uint16_t)r;
                 segs[n_segs++] = s;
                 if (n_segs > ADV_MAX_SEGS) { rc = finish_fail(err, cap, "too many segments", CB_E_FULL); goto out; }
-                start = i;
+                start = at;
                 len = 0;
             }
         }
