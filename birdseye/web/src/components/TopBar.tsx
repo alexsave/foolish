@@ -1,6 +1,6 @@
 'use client';
 
-import { type StreamState, type WOps } from '../api';
+import { gauge, metric, perS, type Metrics, type StreamState } from '../api';
 
 function Eye() {
   return (
@@ -15,7 +15,7 @@ function Eye() {
 
 interface Props {
   state: StreamState;
-  ops: WOps | null;
+  ops: Metrics | null;
   filter: Filter;
   onFilter: (f: Filter) => void;
   counts: { all: number; playing: number; lobby: number; over: number };
@@ -53,7 +53,8 @@ export function TopBar({ state, ops, filter, onFilter, counts }: Props) {
       <div className="topbar-right">
         {ops && (
           <span className="topbar-stat num">
-            <b>{ops.movesPerS.toFixed(1)}</b> moves/s &middot; <b>{ops.playersSeated}</b> seated &middot; ack p99 <b>{(ops.actP99Us / 1000).toFixed(1)}</b> ms
+            <b>{perS(ops, 'moves').toFixed(1)}</b> moves/s &middot; <b>{gauge(ops, 'players_seated')}</b> seated &middot; ack p99{' '}
+            <b>{((metric(ops, 'move_ack_us')?.p99 ?? 0) / 1000).toFixed(1)}</b> ms
           </span>
         )}
         <span className="conn">

@@ -9,6 +9,7 @@
 #include "net/ws.h"
 #include "t.h"
 #include "util/clock.h"
+#include "be_metrics.h"
 #include "wire.h"
 #include "../../../shared/c/stream_frame.h"
 
@@ -60,6 +61,33 @@ static int start_birdseye(tp_child *c, const char *bin, int game_port, pid_t gam
 static int g_port;
 
 static int fetch(const char *path, tc_response *r) { return tc_http(g_port, "GET", path, NULL, NULL, 0, r); }
+
+// The platform's report (GET /metrics, or a BE_F_OPS push's body): its header, and the row of
+// `name` into *row (false when the report has none). A report that is not one fails checks.
+static bool report_row(const uint8_t *p, size_t len, const char *name, cb_metrics_hdr *hdr, cb_metric_row *row) {
+    if (len < sizeof *hdr) return false;
+    memcpy(hdr, p, sizeof *hdr);
+    T_EQ_INT(hdr->version, CB_METRICS_WIRE_VERSION);
+    T_EQ_INT(hdr->row_size, sizeof(cb_metric_row));
+    T_EQ_INT(len, sizeof *hdr + (size_t)hdr->n_rows * sizeof(cb_metric_row));
+    T_EQ_INT(hdr->n_platform, CB_METRICS_N_PLATFORM);
+    T_EQ_INT(hdr->n_rows, CB_METRICS_N_PLATFORM + BE_M_N);
+    for (uint32_t i = 0; i < hdr->n_rows && sizeof *hdr + (i + 1) * sizeof *row <= len; i++) {
+        memcpy(row, p + sizeof *hdr + i * sizeof *row, sizeof *row);
+        if (row->name_len == strlen(name) && memcmp(row->name, name, row->name_len) == 0) return true;
+    }
+    return false;
+}
+
+static uint64_t report_total(const uint8_t *p, size_t len, const char *name) {
+    cb_metrics_hdr h;
+    cb_metric_row r;
+    if (!report_row(p, len, name, &h, &r)) {
+        T_CHECK(!"a row the report must carry is missing");
+        return 0;
+    }
+    return r.total;
+}
 
 static void session_token(char *out, size_t cap) {
     tc_response r;
@@ -131,15 +159,15 @@ int main(int argc, char **argv) {
     tc_response r;
     T_CHECK(fetch("/health", &r) == 0 && r.status == 200);
     tc_response_free(&r);
-    // The ops record before anything was played: the configuration, no games.
-    T_CHECK(fetch("/be/ops", &r) == 0 && r.status == 200 && r.body.len == sizeof(be_w_ops));
-    be_w_ops ops;
-    memcpy(&ops, r.body.p, sizeof ops);
+    // The report before anything was played: the platform's rows first, then birdseye's names.
+    T_CHECK(fetch("/metrics", &r) == 0 && r.status == 200);
+    cb_metrics_hdr hdr;
+    cb_metric_row row;
+    T_CHECK(report_row(r.body.p, r.body.len, "requests", &hdr, &row) && row.index == 0 && row.kind == CB_METRIC_COUNTER);
+    T_CHECK(report_row(r.body.p, r.body.len, "hostile_taken", &hdr, &row) && row.kind == CB_METRIC_COUNTER && row.total == 0);
+    T_CHECK(report_row(r.body.p, r.body.len, "move_ack_us", &hdr, &row) && row.kind == CB_METRIC_HIST && row.index == BE_M_MOVE_ACK);
+    T_CHECK(hdr.pid > 0 && hdr.rss_mb > 0);
     tc_response_free(&r);
-    T_EQ_INT(ops.hash, be_wire_hash());
-    T_EQ_INT(ops.players, PLAYERS);
-    T_EQ_INT(ops.threads, 2);
-    T_EQ_INT(ops.hostile_accepted, 0);
 
     char token[BE_TOKEN_MAX + 1];
     session_token(token, sizeof token);
@@ -166,10 +194,10 @@ int main(int argc, char **argv) {
         }
         if (!sf_is_push(in.p, in.len)) continue;   // a PONG, a late reply
         const uint8_t *p = in.p;
-        if (p[1] == BE_F_OPS && in.len == 2 + sizeof(be_w_ops)) {
-            be_w_ops o;
-            memcpy(&o, p + 2, sizeof o);
-            if (o.hash == be_wire_hash()) n_ops++; else n_bad++;
+        if (p[1] == BE_F_OPS) {
+            cb_metrics_hdr h;
+            cb_metric_row rw;
+            if (report_row(p + 2, in.len - 2, "tables_live", &h, &rw) && rw.kind == CB_METRIC_GAUGE) n_ops++; else n_bad++;
         } else if (p[1] == BE_F_TABLE && in.len == 2 + sizeof(be_w_table)) {
             be_w_table t;
             memcpy(&t, p + 2, sizeof t);
@@ -247,24 +275,28 @@ int main(int argc, char **argv) {
     T_CHECK(fetch("/be/table/nope", &r) == 0 && r.status == 404);
     tc_response_free(&r);
 
-    // The ops record after: games finished, moves taken, nothing refused, nothing hostile taken,
-    // the server's memory read through its pid.
-    T_CHECK(fetch("/be/ops", &r) == 0 && r.status == 200 && r.body.len == sizeof(be_w_ops));
-    memcpy(&ops, r.body.p, sizeof ops);
+    // The report after: games finished, moves taken, nothing refused, nothing hostile taken,
+    // the server's memory read through its pid, the platform's own rows alive.
+    T_CHECK(fetch("/metrics", &r) == 0 && r.status == 200);
+    const uint8_t *rp = r.body.p;
+    size_t rl = r.body.len;
+    T_CHECK(report_total(rp, rl, "games") >= 1);
+    T_CHECK(report_total(rp, rl, "moves") > 10);
+    T_EQ_INT(report_total(rp, rl, "refused"), 0);
+    T_EQ_INT(report_total(rp, rl, "hostile_taken"), 0);
+    T_CHECK(report_total(rp, rl, "hostile") >= 1);
+    T_EQ_INT(report_total(rp, rl, "stalls"), 0);
+    T_EQ_INT(report_total(rp, rl, "sockets"), PLAYERS);
+    T_EQ_INT(report_total(rp, rl, "players"), PLAYERS);
+    T_EQ_INT(report_total(rp, rl, "threads"), 2);
+    T_CHECK(report_row(rp, rl, "move_ack_us", &hdr, &row) && row.total > 10 && row.p50 > 0 && row.p99 >= row.p50 && row.max >= row.p99);
+    T_CHECK(report_row(rp, rl, "move_push_us", &hdr, &row) && row.p50 > 0);
+    T_CHECK(report_row(rp, rl, "moves", &hdr, &row) && row.kind == CB_METRIC_RATE);
+    T_CHECK(report_total(rp, rl, "server_rss_mb") > 0);
+    T_CHECK(report_total(rp, rl, "requests") >= 5);   // this process's HTTP requests: the ones above
+    T_CHECK(report_row(rp, rl, "ws_conns", &hdr, &row) && row.kind == CB_METRIC_GAUGE);   // the stream closed above: 0
+    T_CHECK(hdr.rss_mb > 0 && hdr.uptime_s >= 1);
     tc_response_free(&r);
-    T_CHECK(ops.games_total >= 1);
-    T_CHECK(ops.moves_total > 10);
-    T_EQ_INT(ops.refused_total, 0);
-    T_EQ_INT(ops.hostile_accepted, 0);
-    T_CHECK(ops.hostile_total >= 1);
-    T_EQ_INT(ops.stalls_total, 0);
-    T_EQ_INT(ops.sockets, PLAYERS);
-    T_CHECK(ops.act_n > 10);
-    T_CHECK(ops.act_p50_us > 0 && ops.act_p99_us >= ops.act_p50_us && ops.act_max_us >= ops.act_p99_us);
-    T_CHECK(ops.push_p50_us > 0);
-    T_CHECK(ops.server_rss_mb > 0);
-    T_CHECK(ops.self_rss_mb > 0);
-    T_CHECK(ops.uptime_s >= 1);
 
     // A clean stop: the players leave their tables and the process exits 0.
     T_EQ_INT(tp_stop(&be, SIGTERM, 15000), 0);

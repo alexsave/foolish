@@ -1,11 +1,11 @@
 // routes.c - routes.h. Every answer is a fixed little-endian layout written by memcpy of the C
 // struct; the hash in each head is be_wire_hash(). The handlers run on the request pool: they
-// take the world's lock, and the session route runs bcrypt.
+// take the world's lock, and the session route runs bcrypt. The numbers are the platform's
+// GET /metrics (be_metrics.h), not a route of this file.
 #include "routes.h"
 
 #include "auth/auth.h"
 #include "net/router.h"
-#include "sim.h"
 #include "util/err.h"
 #include "util/log.h"
 #include "wire.h"
@@ -63,14 +63,6 @@ static void table_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     free(d);
 }
 
-// ---- GET /be/ops -----------------------------------------------------------------------------
-
-static void ops_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
-    be_w_ops o;
-    be_ops_fill(&o);
-    answer(res, &o, sizeof o);
-}
-
 // ---- POST /be/session (dev mode) --------------------------------------------------------------
 //
 // The site's token for the stream's HELLO: a session of one fixed account on this process's own
@@ -114,7 +106,6 @@ static void session_post(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) 
 static const cb_route ROUTES[] = {
     { "GET", "/be/tables", CB_ROUTE_POOL, tables_get, 0 },
     { "GET", "/be/table/*", CB_ROUTE_POOL, table_get, 0 },
-    { "GET", "/be/ops", CB_ROUTE_POOL, ops_get, 0 },
     { "POST", "/be/session", CB_ROUTE_POOL, session_post, 0 },
 };
-const cb_route_list be_route_list = { ROUTES, 4 };
+const cb_route_list be_route_list = { ROUTES, 3 };

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getOps, getTables, openStream, WireMismatch, type StreamState, type WEvent, type WOps, type WTable } from './api';
+import { getMetrics, getTables, openStream, perS, WireMismatch, type Metrics, type StreamState, type WEvent, type WTable } from './api';
 import { BE_PHASE_GONE, BE_PHASE_LOBBY, BE_PHASE_OVER, BE_PHASE_PLAYING } from './gen/wire';
 import { Feed } from './components/Feed';
 import { Ops } from './components/Ops';
@@ -21,7 +21,7 @@ export function App() {
   const [versions, setVersions] = useState<Map<string, number>>(() => new Map());
   const [events, setEvents] = useState<WEvent[]>([]);
   const [byTable, setByTable] = useState<Map<string, WEvent[]>>(() => new Map());
-  const [ops, setOps] = useState<WOps | null>(null);
+  const [ops, setOps] = useState<Metrics | null>(null);
   const [spark, setSpark] = useState<number[]>([]);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
@@ -43,7 +43,7 @@ export function App() {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const load = async () => {
       try {
-        const [list, o] = await Promise.all([getTables(), getOps()]);
+        const [list, o] = await Promise.all([getTables(), getMetrics()]);
         if (!live) return;
         setTables((prev) => {
           const next = new Map(prev);
@@ -80,7 +80,7 @@ export function App() {
         setOps(o);
         setSpark((s) => {
           const next = s.length >= SPARK_N ? s.slice(s.length - SPARK_N + 1) : s.slice();
-          next.push(o.movesPerS);
+          next.push(perS(o, 'moves'));
           return next;
         });
       },

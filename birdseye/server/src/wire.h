@@ -8,12 +8,13 @@
 //   GET /be/tables           be_w_list, then n x be_w_table (every table the sim holds: live and
 //                            recently finished)
 //   GET /be/table/<gid>      be_w_detail (the table, every known hand, the last events)
-//   GET /be/ops              be_w_ops
+//   GET /metrics             the platform's report of what birdseye counts (c_base/core/src/metrics.h
+//                            cb_metrics_hdr then cb_metric_row x n; the names are be_metrics.h's)
 //   POST /be/session         be_w_session: a token for the stream (dev mode)
 //   GET /ws (the platform's stream, shared/c/stream_frame.h): HELLO with that token, then SUB
 //                            what NW_SUB_GAME, room "all"; every push is one frame: [BE_F_TABLE]
 //                            be_w_table on every change, [BE_F_EVENT] be_w_event as each happens,
-//                            [BE_F_OPS] be_w_ops once a second
+//                            [BE_F_OPS] the same report GET /metrics answers, once a second
 #ifndef BIRDSEYE_WIRE_H
 #define BIRDSEYE_WIRE_H
 
@@ -136,46 +137,6 @@ typedef struct {
     uint8_t    n_events;
     be_w_event events[BE_EVENTS];      // oldest first
 } be_w_detail;
-
-typedef struct {
-    uint32_t hash;
-    uint32_t uptime_s;
-    uint32_t tables_live;        // lobby + playing + over, still on the server
-    uint32_t tables_lobby;
-    uint32_t tables_playing;
-    uint32_t games_total;        // games finished since start
-    uint32_t moves_total;        // moves the sim sent
-    uint32_t refused_total;      // legitimate moves the server refused
-    uint32_t hostile_total;
-    uint32_t hostile_accepted;   // hostile moves the server took (each one is a finding)
-    uint32_t resyncs_total;      // games refetched after a cast could not be applied
-    uint32_t stalls_total;
-    uint32_t players;            // fake humans
-    uint32_t players_seated;
-    uint32_t sockets;            // open /ws sockets to the game server
-    uint32_t bots_seated;
-    uint32_t threads;
-    uint32_t server_rss_mb;      // the game server's resident set (0 when unknown)
-    uint32_t self_rss_mb;        // this process's
-    uint32_t server_cpu_cpct;    // the game server's CPU over the last second, hundredths of a percent of one core
-    float    games_per_s;
-    float    moves_per_s;
-    float    pushes_per_s;       // frames heard on every socket
-    float    push_bytes_per_s;
-    float    req_per_s;          // requests sent (moves, asks, creates, reads)
-    uint32_t act_p50_us;         // a move: request out to reply in
-    uint32_t act_p99_us;
-    uint32_t act_max_us;
-    uint32_t push_p50_us;        // a move: request out to the mover's own cast of it in
-    uint32_t push_p99_us;
-    uint32_t cast_p50_us;        // a cast's arrival to applied on the client table (decode cost)
-    uint32_t cast_p99_us;
-    uint32_t req_p50_us;         // every request that is not a move (asks, creates, reads)
-    uint32_t req_p99_us;
-    uint32_t game_p50_s;         // a finished game's length, deal to fool
-    uint32_t game_p99_s;
-    uint32_t act_n;              // samples behind the move percentiles
-} be_w_ops;
 
 typedef struct {
     uint32_t hash;
