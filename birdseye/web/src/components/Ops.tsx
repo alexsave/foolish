@@ -52,7 +52,7 @@ export function Ops({ ops, spark }: Props) {
         <>
           <div className="tiles">
             <Tile label="Moves/s" value={ops.movesPerS.toFixed(1)} />
-            <Tile label="Games/s" value={ops.gamesPerS.toFixed(2)} />
+            <Tile label="Games/min" value={(ops.gamesPerS * 60).toFixed(1)} />
             <Tile label="Pushes/s" value={ops.pushesPerS.toFixed(0)} />
             <Tile label="Move ack p50" value={usToText(ops.actP50Us)} />
             <Tile label="Move ack p99" value={usToText(ops.actP99Us)} />

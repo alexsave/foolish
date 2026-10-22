@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ago,
   getDetail,
@@ -78,7 +78,15 @@ export function TableDetail({ gid, live, version, events, now, onBack }: Props) 
   const seatsLen = t.seats.length;
   const hands = detail?.hands ?? [];
   const pcls = t.phase === BE_PHASE_PLAYING ? 'pill-green' : t.phase === BE_PHASE_OVER ? 'pill-amber' : t.phase === BE_PHASE_GONE ? 'pill-grey' : 'pill-blue';
-  const merged = events.length ? events : (detail?.events ?? []).slice().reverse();
+  // The stream's events (newest first) over the detail's tail (oldest first): the tail fills in
+  // what happened before the page opened, the stream what happened since.
+  const merged = useMemo(() => {
+    const tail = (detail?.events ?? []).slice().reverse();
+    if (!events.length) return tail;
+    const newest = tail.length ? tail[0].atMs : 0n;
+    const fresh = events.filter((e) => e.atMs > newest);
+    return [...fresh, ...tail];
+  }, [events, detail]);
   const length = t.finishedMs > 0n && t.createdMs > 0n ? Number(t.finishedMs - t.createdMs) / 1000 : 0;
 
   return (
@@ -138,7 +146,7 @@ export function TableDetail({ gid, live, version, events, now, onBack }: Props) 
                   {!bot && <span className="pill pill-blue">sim</span>}
                 </span>
                 <span className="dseat-marks">
-                  {i === t.firstAttacker && t.phase === BE_PHASE_PLAYING && <Sword />}
+                  {i === t.firstAttacker && i !== t.defender && t.phase === BE_PHASE_PLAYING && <Sword />}
                   {i === t.defender && t.phase === BE_PHASE_PLAYING && <Shield />}
                   {(s.flags & BE_SEAT_GOOD) !== 0 && <span className="mark mark-good">good</span>}
                   {(s.flags & BE_SEAT_FOOL) !== 0 && <span className="mark mark-fool">fool</span>}

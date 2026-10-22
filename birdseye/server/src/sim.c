@@ -449,7 +449,7 @@ static void push_events(player *p, sim_table *t) {
         }
         if (kind == BE_EV_DEALT) {
             if (t->dealt_ms == 0) {
-                t->dealt_ms = cb_now_ms();
+                t->dealt_ms = cb_mono_ms();   // the sim's own clock, like every t->*_ms
                 event_at(t, kind, -1, NULL, 0, p->ct.version, 0, 0);
             }
         } else if (kind) event_at(t, kind, e->seat, e->cards, e->n_cards, p->ct.version, 0, 0);
