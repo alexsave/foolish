@@ -35,7 +35,8 @@ A fake world (adv-gen) stands in for Strava: 3000 deterministic users of five ki
 | z14 tile | 0.1-0.5 ms | user tiles over downtown Providence: p50 0.47 ms wall, max 1.24 (39 KB median, 213 KB max); rural: 0.23 ms; server-side render histogram over every zoom: p50 56 us, p99 1.5 ms |
 | Upload to points visible | under 1 s | live uploads at 4.4/s: p50 4.1 ms, p99 25 ms (arrival to the feed frame, after the stats were updated) |
 | RSS | | 55 MB serving 3000 users and 15,000 activities; 144 MB with 3000 uploads queued |
-| Throughput | | 3000 uploads accepted in 3.1 s (1013/s; 44 refused 503 at the lane cap and retried); drained at about 250/s on 2 matcher threads with the first matcher, about 400/s with the tuned one |
+| Throughput | | 3000 uploads accepted in 3.1 s (1013/s; 44 refused 503 at the lane cap and retried); 18,677 activities processed in 63 s (295/s) on 2 matcher threads during the backfill flood below |
+| Backfill beside live | backfill never adds tile or live latency | 12 users' histories (18,000 uploads, 1 GB) posted in 35 s while live uploads kept arriving at 4.4/s: live upload-to-visible p50 3.1 ms, p99 16 ms; activity CPU p50 1.28 ms, p99 5.1 ms; RSS peaked at 197 MB with the backfill lane holding 140 MB of bodies |
 | Matcher accuracy | | recall 0.980 mean (0.709 worst ride), precision 0.981 on real roads; 0.9995 / 0.996 on the synthetic grid; the live average over every scored upload 97.8% |
 | Recovery | | 19,640 activities replayed from the journal in 146 ms (7.4 us each) |
 | Journal | | about 1.8 KB per activity on disk |
