@@ -9,7 +9,7 @@
 #include <stddef.h>
 
 // Field kinds: how the decoder reads the bytes.
-enum { WK_U8, WK_U16, WK_U32, WK_I32, WK_F32, WK_I64, WK_U64, WK_STR };
+enum { WK_U8, WK_U16, WK_U32, WK_I32, WK_F32, WK_I64, WK_U64, WK_STR, WK_REC };   // WK_REC: an array of `rec` records, `elem` bytes each
 
 typedef struct {
     const char *strct;   // "adv_w_user"
@@ -17,6 +17,7 @@ typedef struct {
     size_t      off, size;
     int         kind;
     size_t      elem;    // one element's size (size / elem = the array's length; 1 for a scalar)
+    const char *rec;     // WK_REC: the record struct's name
 } adv_wire_field;
 
 typedef struct {
@@ -24,7 +25,8 @@ typedef struct {
     size_t      size;
 } adv_wire_struct;
 
-#define F(S, f, k, e) { #S, #f, offsetof(S, f), sizeof(((S *)0)->f), k, e }
+#define F(S, f, k, e) { #S, #f, offsetof(S, f), sizeof(((S *)0)->f), k, e, NULL }
+#define R(S, f, rec) { #S, #f, offsetof(S, f), sizeof(((S *)0)->f), WK_REC, sizeof(rec), #rec }
 
 static const adv_wire_struct ADV_WIRE_STRUCTS[] = {
     { "adv_w_list", sizeof(adv_w_list) },
@@ -68,10 +70,8 @@ static const adv_wire_field ADV_WIRE_FIELDS[] = {
 
     F(adv_w_leader, user, WK_U32, 4), F(adv_w_leader, m, WK_F32, 4),
     F(adv_w_leaders, hash, WK_U32, 4), F(adv_w_leaders, region, WK_U16, 2),
-    // The two 3x3 leader tables are read as 9 adv_w_leader records each (an array of structs: the
-    // decoder reads `elem`-sized records at off + i*elem).
-    { "adv_w_leaders", "month", offsetof(adv_w_leaders, month), sizeof(((adv_w_leaders *)0)->month), WK_U64, sizeof(adv_w_leader) },
-    { "adv_w_leaders", "year", offsetof(adv_w_leaders, year), sizeof(((adv_w_leaders *)0)->year), WK_U64, sizeof(adv_w_leader) },
+    // The two 3x3 leader tables: nine adv_w_leader records each, index type*3+rank.
+    R(adv_w_leaders, month, adv_w_leader), R(adv_w_leaders, year, adv_w_leader),
 
     F(adv_w_activity, kind, WK_U8, 1), F(adv_w_activity, type, WK_U8, 1), F(adv_w_activity, flags, WK_U8, 1),
     F(adv_w_activity, reason, WK_U8, 1), F(adv_w_activity, user, WK_U32, 4), F(adv_w_activity, activity, WK_U32, 4),
@@ -94,6 +94,7 @@ static const adv_wire_field ADV_WIRE_FIELDS[] = {
     F(adv_w_ops, threads, WK_U32, 4), F(adv_w_ops, recovered, WK_U32, 4),
 };
 #undef F
+#undef R
 
 #define ADV_WIRE_N_STRUCTS (sizeof ADV_WIRE_STRUCTS / sizeof ADV_WIRE_STRUCTS[0])
 #define ADV_WIRE_N_FIELDS (sizeof ADV_WIRE_FIELDS / sizeof ADV_WIRE_FIELDS[0])
@@ -108,6 +109,7 @@ static inline uint32_t adv_wire_table_hash(void) {
     for (size_t i = 0; i < ADV_WIRE_N_FIELDS; i++) {
         const adv_wire_field *f = &ADV_WIRE_FIELDS[i];
         MIXS(f->strct); MIXS(f->field); MIX(f->off); MIX(f->size); MIX(f->kind); MIX(f->elem);
+        if (f->rec) MIXS(f->rec);
     }
 #undef MIX
 #undef MIXS

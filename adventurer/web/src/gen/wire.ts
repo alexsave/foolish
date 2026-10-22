@@ -2,7 +2,7 @@
 // Every offset and size below is the C compiler's. The server stamps WIRE_HASH into every answer;
 // a page whose hash differs was built from another layout and must refuse the bytes.
 
-export const WIRE_HASH = 0x68b54ccf;
+export const WIRE_HASH = 0xcd0edc6d;
 
 export const SIZE = {
   WList: 8,
@@ -173,16 +173,16 @@ export function readWLeader(dv: DataView, off: number): WLeader {
 export interface WLeaders {
   hash: number;
   region: number;
-  month: number[];
-  year: number[];
+  month: WLeader[];
+  year: WLeader[];
 }
 
 export function readWLeaders(dv: DataView, off: number): WLeaders {
   return {
     hash: dv.getUint32(off + 0, true),
     region: dv.getUint16(off + 4, true),
-    month: [Number(dv.getBigUint64(off + 8, true)), Number(dv.getBigUint64(off + 16, true)), Number(dv.getBigUint64(off + 24, true)), Number(dv.getBigUint64(off + 32, true)), Number(dv.getBigUint64(off + 40, true)), Number(dv.getBigUint64(off + 48, true)), Number(dv.getBigUint64(off + 56, true)), Number(dv.getBigUint64(off + 64, true)), Number(dv.getBigUint64(off + 72, true))],
-    year: [Number(dv.getBigUint64(off + 80, true)), Number(dv.getBigUint64(off + 88, true)), Number(dv.getBigUint64(off + 96, true)), Number(dv.getBigUint64(off + 104, true)), Number(dv.getBigUint64(off + 112, true)), Number(dv.getBigUint64(off + 120, true)), Number(dv.getBigUint64(off + 128, true)), Number(dv.getBigUint64(off + 136, true)), Number(dv.getBigUint64(off + 144, true))],
+    month: Array.from({ length: 9 }, (_, i) => readWLeader(dv, off + 8 + i * 8)),
+    year: Array.from({ length: 9 }, (_, i) => readWLeader(dv, off + 80 + i * 8)),
   };
 }
 

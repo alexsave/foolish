@@ -71,7 +71,7 @@ int main(void) {
             if (strcmp(f->strct, sn) != 0) continue;
             size_t count = f->size / f->elem;
             if (f->kind == WK_STR) printf("  %s: string;\n", camel(f->field));
-            else if (f->kind == WK_U64 && f->elem > 8) printf("  %s: WLeader[];\n", camel(f->field));
+            else if (f->kind == WK_REC) printf("  %s: %s[];\n", camel(f->field), type_name(f->rec));
             else if (count > 1) printf("  %s: number[];\n", camel(f->field));
             else printf("  %s: number;\n", camel(f->field));
         }
@@ -87,8 +87,9 @@ int main(void) {
             if (f->kind == WK_STR) {
                 // A char[N] whose length is the struct's name_len field when it has one, else to the first NUL.
                 printf("    %s: str(dv, off + %zu, nameLen(dv, off, %zu, %zu)),\n", camel(f->field), f->off, f->off, f->size);
-            } else if (f->kind == WK_U64 && f->elem > 8) {
-                printf("    %s: Array.from({ length: %zu }, (_, i) => readWLeader(dv, off + %zu + i * %zu)),\n", camel(f->field), count, f->off, f->elem);
+            } else if (f->kind == WK_REC) {
+                printf("    %s: Array.from({ length: %zu }, (_, i) => read%s(dv, off + %zu + i * %zu)),\n", camel(f->field), count,
+                       type_name(f->rec), f->off, f->elem);
             } else if (count > 1) {
                 printf("    %s: [", camel(f->field));
                 for (size_t k = 0; k < count; k++) {

@@ -1,0 +1,7 @@
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+# written by next dev on every run (node_modules/next/dist/server/lib/generate-agent-files.js)
+AGENTS.md
