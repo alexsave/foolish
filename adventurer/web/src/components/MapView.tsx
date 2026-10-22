@@ -48,6 +48,14 @@ function scaled(width: number): ExpressionSpecification {
 // every move, so the source starts hidden and gets its template when a user is selected.
 const BLANK_USER = `${baseTileUrl()}?none`;
 
+function parseHash(h: string): { zoom: number; lat: number; lng: number } | null {
+  const m = /map=(-?[\d.]+)\/(-?[\d.]+)\/(-?[\d.]+)/.exec(h);
+  if (!m) return null;
+  const zoom = Number(m[1]), lat = Number(m[2]), lng = Number(m[3]);
+  if (!Number.isFinite(zoom) || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 85 || Math.abs(lng) > 180) return null;
+  return { zoom, lat, lng };
+}
+
 function style(): StyleSpecification {
   return {
     version: 8,
@@ -79,7 +87,7 @@ function style(): StyleSpecification {
         source: 'user',
         'source-layer': 'untraveled',
         layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
-        paint: { 'line-color': COLOR.untraveled, 'line-width': scaled(2.2), 'line-opacity': 0.6 },
+        paint: { 'line-color': COLOR.untraveled, 'line-width': scaled(1.7), 'line-opacity': 0.55 },
       },
       {
         id: USER_LAYER.traveled,
@@ -111,17 +119,24 @@ export function MapView({ userId, type, coverageVersion, regions, fly, onHome, c
   const [ready, setReady] = useState(false);
   const [visible, setVisible] = useState<Record<Layer, boolean>>({ traveled: true, untraveled: true, unique: true });
   const fitted = useRef(false);
+  const initialView = useRef<{ zoom: number; lat: number; lng: number } | null | undefined>(undefined);
 
   useEffect(() => {
     if (!container.current || mapRef.current) return;
+    // The view the URL names (#map=zoom/lat/lng, what MapLibre writes) wins over the fit to the
+    // regions, so a place can be shared and a reload keeps it. Parsed once and kept in a ref: a
+    // removed map clears the hash, and React's strict mode mounts the effect twice in development.
+    if (initialView.current === undefined) initialView.current = parseHash(window.location.hash);
+    const fromHash = initialView.current;
+    fitted.current = fromHash !== null;
     const map = new maplibregl.Map({
       container: container.current,
       style: style(),
-      center: [0, 20],
-      zoom: 1.5,
+      center: fromHash ? [fromHash.lng, fromHash.lat] : [0, 20],
+      zoom: fromHash ? fromHash.zoom : 1.5,
       attributionControl: false,
       maxZoom: 19,
-      hash: 'map',   // the view in the URL, so a place can be shared and a page reload keeps it
+      hash: 'map',
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     map.addControl(
@@ -178,10 +193,6 @@ export function MapView({ userId, type, coverageVersion, regions, fly, onHome, c
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || fitted.current || !regions || regions.length === 0) return;
-    if (window.location.hash.includes('map=')) {   // a view the URL already names wins over the fit
-      fitted.current = true;
-      return;
-    }
     const b = regionsBounds(regions);
     if (!b) return;
     fitted.current = true;
