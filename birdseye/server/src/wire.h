@@ -157,7 +157,7 @@ typedef struct {
     uint32_t threads;
     uint32_t server_rss_mb;      // the game server's resident set (0 when unknown)
     uint32_t self_rss_mb;        // this process's
-    uint32_t server_cpu_pct;     // the game server's CPU over the last second, percent of one core
+    uint32_t server_cpu_cpct;    // the game server's CPU over the last second, hundredths of a percent of one core
     float    games_per_s;
     float    moves_per_s;
     float    pushes_per_s;       // frames heard on every socket

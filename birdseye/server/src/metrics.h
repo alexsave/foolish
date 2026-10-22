@@ -1,5 +1,5 @@
-// metrics.h - the sim's own numbers: fixed log-scale histograms (four buckets per octave of
-// microseconds, so a percentile is read in one pass with no sorting and no allocation) and
+// metrics.h - the sim's own numbers: fixed log-scale histograms (eight buckets per octave of
+// microseconds, about 9% apart, so a percentile is read in one pass with no sorting and no allocation) and
 // per-second rates. Every counter is a relaxed atomic: the player threads write, the ops frame
 // reads once a second.
 //
@@ -13,7 +13,8 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
-#define BE_HIST_BUCKETS 128   // 4 per octave: 1 us .. 2^32 us
+#define BE_HIST_PER_OCTAVE 8
+#define BE_HIST_BUCKETS (32 * BE_HIST_PER_OCTAVE)   // 1 us .. 2^32 us
 #define BE_RATE_SLOTS   10    // one per second
 
 typedef struct {

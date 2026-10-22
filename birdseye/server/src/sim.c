@@ -151,7 +151,7 @@ static pthread_mutex_t g_ready_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_ready_cv = PTHREAD_COND_INITIALIZER;
 static int          g_n_ready;
 static uint64_t     g_server_cpu_us, g_server_cpu_at_us;
-static uint32_t     g_server_cpu_pct;
+static uint32_t     g_server_cpu_cpct;
 
 static const char *const FIRST_NAMES[NAME_POOL] = {
     "Anya", "Boris", "Clara", "Dmitri", "Elena", "Felix", "Greta", "Hugo", "Irina", "Jonas", "Katya", "Leon",
@@ -1263,10 +1263,10 @@ void be_ops_fill(be_w_ops *o) {
         // CPU over the window since the last fill (the ops timer's second).
         uint64_t cpu = be_cpu_us(g_o.server_pid), at = (uint64_t)cb_mono_us();
         if (g_server_cpu_at_us && at > g_server_cpu_at_us && cpu >= g_server_cpu_us)
-            g_server_cpu_pct = (uint32_t)((cpu - g_server_cpu_us) * 100 / (at - g_server_cpu_at_us));
+            g_server_cpu_cpct = (uint32_t)((cpu - g_server_cpu_us) * 10000 / (at - g_server_cpu_at_us));
         g_server_cpu_us = cpu;
         g_server_cpu_at_us = at;
-        o->server_cpu_pct = g_server_cpu_pct;
+        o->server_cpu_cpct = g_server_cpu_cpct;
     }
     o->games_per_s = be_rate_per_s(&be_m.games);
     o->moves_per_s = be_rate_per_s(&be_m.moves);
