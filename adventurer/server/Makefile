@@ -51,7 +51,7 @@ APP_SRC := $(sort $(wildcard src/*.c src/*/*.c))
 LIB_SRC := $(PLATFORM_SRC) $(SHARED_SRC) $(GEN_SRC) $(APP_SRC)
 
 PLATFORM_INC := -I$(CB)/core/include -I$(CB)/core/src -I$(CB)/providers/local/src -I$(CB)/providers/aws/src -I$(C_ROOT)/shared/c
-INC := $(PLATFORM_INC) -Isrc -Itest -Ifuzz
+INC := $(PLATFORM_INC) -Isrc -Itest -Ifuzz -I$(CB)/core/test
 CFLAGS = -std=gnu11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wshadow -Wvla \
          $(INC) $(SQLITE_CFLAGS) $(OPENSSL_CFLAGS) -pthread
 LDLIBS := $(SQLITE_LDFLAGS) $(OPENSSL_LDFLAGS) -lsqlite3 -lssl -lcrypto -lz -lpthread -lm
@@ -78,7 +78,9 @@ build/gen/adv_schema_sql.c: sql/schema.sql build/embed
 	build/embed $< adv_schema_sql > $@.new && mv $@.new $@
 
 TEST_SRC := $(sort $(wildcard test/*.c))
-TLIB_SRC := $(sort $(wildcard test/lib_*.c))
+# The platform's test client and child-process helpers (c_base/core/test), linked into every test
+# as they are into c_base's own: the smoke drives a real server through them.
+TLIB_SRC := $(sort $(wildcard test/lib_*.c)) $(CB)/core/test/lib_client.c $(CB)/core/test/lib_proc.c
 UNIT_SRC := $(sort $(wildcard test/unit_*.c))
 UNITS    := $(sort $(basename $(notdir $(UNIT_SRC))))
 SMOKES   := $(sort $(basename $(notdir $(wildcard test/smoke*.c))))
