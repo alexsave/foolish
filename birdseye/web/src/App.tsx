@@ -274,10 +274,13 @@ export function App() {
   const shown = useMemo(
     () =>
       rows.filter((t) =>
-        filter === 'all' ? t.phase !== BE_PHASE_GONE
-        : filter === 'playing' ? t.phase === BE_PHASE_PLAYING
-        : filter === 'lobby' ? t.phase === BE_PHASE_LOBBY
-        : t.phase === BE_PHASE_OVER || t.phase === BE_PHASE_GONE,
+        filter === 'all'
+          ? t.phase !== BE_PHASE_GONE
+          : filter === 'playing'
+            ? t.phase === BE_PHASE_PLAYING
+            : filter === 'lobby'
+              ? t.phase === BE_PHASE_LOBBY
+              : t.phase === BE_PHASE_OVER || t.phase === BE_PHASE_GONE,
       ),
     [rows, filter],
   );
@@ -312,6 +315,21 @@ export function App() {
   const isLeague = league?.mode === BE_MODE_LEAGUE;
   const showLeague = isLeague && view === 'league' && !selected;
   const series = useMemo(() => (league ? buildSeries(league.bots, league.results) : []), [league]);
+  // Rated games a minute over the last ten minutes (or since the first of them): a one-second rate
+  // of something that happens a few times a minute reads 0 most seconds.
+  const gamesPerMin = useMemo(() => {
+    if (!league || league.results.length === 0) return null;
+    const from = now - 600000;
+    let n = 0, first = now;
+    for (let i = league.results.length - 1; i >= 0; i--) {
+      const at = Number(league.results[i].atMs);
+      if (at < from) break;
+      n++;
+      first = at;
+    }
+    const span = Math.max(60000, now - Math.max(from, first));
+    return (n * 60000) / span;
+  }, [league, now]);
   const lastResult = league && league.results.length ? league.results[league.results.length - 1] : null;
   const liveTables = useMemo(() => rows.filter((t) => t.phase !== BE_PHASE_GONE), [rows]);
   const toggleFamily = useCallback((k: string) => {
@@ -339,6 +357,7 @@ export function App() {
           setView(v);
         }}
         games={league?.results.length ?? 0}
+        gamesPerMin={gamesPerMin}
       />
       {fatal ? (
         <div className="banner">{fatal}</div>
@@ -350,7 +369,8 @@ export function App() {
                 <div>
                   <h2 className="card-title">Ratings</h2>
                   <div className="chart-sub">
-                    The game server&apos;s rating of each of its {league.bots.length} bots after every rated league game, as each game&apos;s rating stamp says.
+                    The game server&apos;s rating of each of its {league.bots.length} bots after every rated league game, as each game&apos;s rating
+                    stamp says.
                   </div>
                 </div>
                 {lastResult && (
@@ -360,7 +380,8 @@ export function App() {
                       {lastResult.bot.length}p {lastResult.podkidnoy ? 'podkidnoy' : 'classic'}
                       {lastResult.fool >= 0 && league.bots[lastResult.bot[lastResult.fool]] && (
                         <>
-                          {' '}&middot; fool <b>{botName(league.bots[lastResult.bot[lastResult.fool]])}</b>{' '}
+                          {' '}
+                          &middot; fool <b>{botName(league.bots[lastResult.bot[lastResult.fool]])}</b>{' '}
                           <span className="neg">{lastResult.delta[lastResult.fool]}</span>
                         </>
                       )}
@@ -369,7 +390,15 @@ export function App() {
                 )}
               </div>
               <Families bots={league.bots} hidden={hidden} onToggle={toggleFamily} />
-              <EloChart bots={league.bots} results={league.results} series={series} flash={flash} focus={focus} hidden={hidden} onHover={setHoverBot} />
+              <EloChart
+                bots={league.bots}
+                results={league.results}
+                series={series}
+                flash={flash}
+                focus={focus}
+                hidden={hidden}
+                onHover={setHoverBot}
+              />
             </section>
             <div className="section-head">
               <h2 className="card-title">At the tables now</h2>
@@ -399,14 +428,18 @@ export function App() {
               />
             ) : shown.length === 0 ? (
               <div className="card empty-grid">
-                {state === 'open' ? (tables.size === 0 ? 'No tables yet: the sim is signing its players up.' : 'No tables in this view.') : 'Connecting to birdseye...'}
+                {state === 'open'
+                  ? tables.size === 0
+                    ? 'No tables yet: the sim is signing its players up.'
+                    : 'No tables in this view.'
+                  : 'Connecting to birdseye...'}
               </div>
             ) : (
               <TableGrid tables={shown} compact={compact} now={now} onSelect={select} />
             )}
           </div>
           <div className="col col-side">
-            <Ops ops={ops} spark={spark} />
+            <Ops ops={ops} spark={spark} league={isLeague} />
             <Feed rows={events} tables={tables} onSelect={select} paused={paused} onTogglePause={togglePause} state={state} now={now} />
           </div>
         </div>

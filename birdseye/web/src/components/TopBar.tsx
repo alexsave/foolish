@@ -25,12 +25,13 @@ interface Props {
   view: View | null;
   onView: (v: View) => void;
   games: number;
+  gamesPerMin: number | null;
 }
 
 export type Filter = 'all' | 'playing' | 'lobby' | 'over';
 export type View = 'league' | 'tables';
 
-export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompact, view, onView, games }: Props) {
+export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompact, view, onView, games, gamesPerMin }: Props) {
   const status =
     state === 'open' ? { cls: 'dot-green', text: 'live' }
     : state === 'connecting' ? { cls: 'dot-amber', text: 'connecting...' }
@@ -85,7 +86,7 @@ export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompac
           <span className="topbar-stat num">
             {view !== null ? (
               <>
-                <b>{perS(ops, 'moves').toFixed(1)}</b> moves/s &middot; <b>{(perS(ops, 'games') * 60).toFixed(1)}</b> games/min &middot;{' '}
+                <b>{perS(ops, 'moves').toFixed(1)}</b> moves/s &middot; <b>{(gamesPerMin ?? perS(ops, 'games') * 60).toFixed(1)}</b> games/min &middot;{' '}
                 <b>{gauge(ops, 'bots_seated')}</b> bots seated &middot; server CPU <b>{(gauge(ops, 'server_cpu_cpct') / 100).toFixed(1)}</b>%
               </>
             ) : (

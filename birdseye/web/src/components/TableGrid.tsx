@@ -17,8 +17,10 @@ interface Props {
   onSelect: (gid: string) => void;
 }
 
-const GAP = 12, GAP_COMPACT = 8;
-const MIN_COL = 250, MIN_COL_COMPACT = 196;
+const GAP = 12,
+  GAP_COMPACT = 8;
+const MIN_COL = 250,
+  MIN_COL_COMPACT = 196;
 
 // Before a card has been measured: its height from its seats.
 function guess(t: WTable, compact: boolean): number {

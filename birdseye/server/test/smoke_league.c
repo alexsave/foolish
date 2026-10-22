@@ -226,6 +226,26 @@ int main(int argc, char **argv) {
     uint32_t before_restart = L.h.n_results;
     free(L.results);
 
+    // The tables in play as birdseye stops: the next run takes them up and records their results.
+    char playing[16][BE_GID + 1];
+    int n_playing = 0;
+    int64_t until1 = cb_mono_ms() + 30000;   // between two games a moment may have none in play
+    while (n_playing == 0 && cb_mono_ms() < until1) {
+        tc_response tr;
+        if (tc_http(g_port, "GET", "/be/tables", NULL, NULL, 0, &tr) == 0 && tr.status == 200 && tr.body.len >= sizeof(be_w_list)) {
+            be_w_list head;
+            memcpy(&head, tr.body.p, sizeof head);
+            for (uint32_t i = 0; i < head.n && n_playing < 16; i++) {
+                be_w_table t;
+                memcpy(&t, tr.body.p + head.first + i * head.size, sizeof t);
+                if (t.phase == BE_PHASE_PLAYING) snprintf(playing[n_playing++], BE_GID + 1, "%.*s", (int)t.gid_len, t.gid);
+            }
+        }
+        tc_response_free(&tr);
+        if (n_playing == 0) usleep(50000);
+    }
+    T_CHECK(n_playing >= 1);
+
     // A restart keeps the history (the file), in order.
     T_EQ_INT(tp_stop(&be, SIGTERM, 15000), 0);
     g_port = start_birdseye(&be, argv[1]);
@@ -233,6 +253,23 @@ int main(int argc, char **argv) {
     T_CHECK(get_league(&L));
     T_CHECK(L.h.n_results >= before_restart);
     free(L.results);
+    // Every game that was in play at the stop is rated into the history after the restart.
+    int found = 0;
+    int64_t until2 = cb_mono_ms() + 120000;
+    while (cb_mono_ms() < until2 && found < n_playing) {
+        usleep(300000);
+        if (!get_league(&L)) continue;
+        found = 0;
+        for (int k = 0; k < n_playing; k++)
+            for (uint32_t i = 0; i < L.h.n_results; i++)
+                if (L.results[i].gid_len == strlen(playing[k]) && memcmp(L.results[i].gid, playing[k], L.results[i].gid_len) == 0) {
+                    found++;
+                    break;
+                }
+        free(L.results);
+    }
+    fprintf(stderr, "smoke_league: %d of %d tables in play at the stop rated after the restart\n", found, n_playing);
+    T_EQ_INT(found, n_playing);
 
     T_EQ_INT(tp_stop(&be, SIGTERM, 15000), 0);
     T_EQ_INT(tp_stop(&game, SIGTERM, 15000), 0);

@@ -666,7 +666,7 @@ input {
 
 .seat {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px auto;
+  grid-template-columns: minmax(0, 1fr) 52px auto;
   align-items: center;
   gap: 6px;
   height: 22px;
@@ -713,6 +713,11 @@ input {
   gap: 4px;
   font-size: 11px;
   color: var(--muted);
+}
+
+.seat-hand b {
+  min-width: 14px;
+  text-align: right;
 }
 
 .seat-stack {
@@ -1041,6 +1046,13 @@ input {
   letter-spacing: -0.01em;
   margin-top: 1px;
   white-space: nowrap;
+}
+
+.tile .value.long {
+  font-size: 12px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tile .value small {
