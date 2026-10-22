@@ -95,6 +95,7 @@ The machinery of a server's own numbers, lifted from two apps on c_base. Each mu
 | hist.c pct's clamp to the max removed | killed: "p99 of 1..100 reads 100 ... clamped to the max" |
 | hist.c pct's rank interpolation flattened to the bucket's floor | killed: "within 1% of the nearest-rank truth on a uniform spread" |
 | hist.c pct's p100 branch (the max itself) removed | killed: "p100 is the outlier" |
+| hist.c the bucket holding the max not ended at the max (interpolated across its whole width) | killed: "within 1% of the nearest-rank truth on a uniform spread" (p99 of 1000..200000 read 1.00% high) |
 | hist.c the max CAS removed | killed: "max 100" |
 | hist.c bucket 0's floor 1 (the fuzzer's find: a p99 of 1 over nothing but zeros) | killed: "bucket 0 holds 0 and 1: its floor is 0" |
 | hist.c per_s counts a slot whose second is not the one asked | killed: "ten seconds of silence: 0" |
