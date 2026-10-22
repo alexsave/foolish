@@ -39,12 +39,17 @@ typedef struct {
     char     dir[400];
 } server;
 
+static const char *g_think;   // CBASE_BOT_THINK_MS for the next dev server, NULL none
+
 static bool start(server *s, bool dev) {
     if (tp_tempdir(s->dir, sizeof s->dir) != 0) return false;
     static char envdb[2][512];
     snprintf(envdb[dev], sizeof envdb[dev], "CBASE_DB=%s/cbase.sqlite", s->dir);
+    static char think[64];
+    snprintf(think, sizeof think, "CBASE_BOT_THINK_MS=%s", g_think ? g_think : "");
     char *dev_env[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", envdb[1], "CBASE_JWT_SECRET=devbot-secret-devbot-secret-devbot-secret",
-                        "CBASE_ADMIN_TOKEN=" ADMIN, "CBASE_BOT_SPEEDUP=100", "CBASE_RATED_MIN_AGE=0", NULL };
+                        "CBASE_ADMIN_TOKEN=" ADMIN, g_think ? "CBASE_BOT_SPEEDUP=1" : "CBASE_BOT_SPEEDUP=100", "CBASE_RATED_MIN_AGE=0",
+                        g_think ? think : NULL, NULL };
     char *prod_env[] = { "CBASE_LISTEN=127.0.0.1:0", envdb[0], "CBASE_JWT_SECRET=devbot-secret-devbot-secret-devbot-secret",
                          "CBASE_PUBLIC_URL=http://127.0.0.1", "CBASE_ADMIN_TOKEN=" ADMIN, NULL };
     char *argv[] = { (char *)g_bin, "serve", NULL };
@@ -283,6 +288,35 @@ static void bot_only_game(int first, int n, int passing) {
 }
 
 static void two_bots_classic(void) { bot_only_game(0, 2, 1); }
+
+// CBASE_BOT_THINK_MS (dev-only): a bot thinks 1.0 to 1.2 s after each move it was shown, so a
+// table of bots alone moves a few times in four seconds instead of every 300 ms (the kernel's
+// bots-only pace: some 13 moves in the same time).
+static void think_time_paces_the_bots(void) {
+    tp_stop(&g_dev.child, 15, 10000);
+    g_think = "1000-1200";
+    T_CHECK(start(&g_dev, true));
+    char ids[2][NW_ID_MAX + 1];
+    T_EQ_INT(bots(&g_dev, ids, 2), 2);
+    uint8_t b[256];
+    size_t n = body_for(b, 1, 2, ids);
+    cb_buf out;
+    cb_buf_init(&out);
+    T_EQ_INT(req(&g_dev, "POST", "/dev/bot_table", ADMIN, b, n, &out), 200);
+    char gid[64] = { 0 };
+    if (out.len >= 2 && out.p[0] == out.len - 1) memcpy(gid, out.p + 1, out.p[0]);
+    cb_buf_free(&out);
+    static ClientTable c;
+    static ClientSlot slot;
+    T_CHECK(game_view(gid, &c, &slot));
+    uint32_t v0 = c.view.version;
+    usleep(4500000);
+    T_CHECK(game_view(gid, &c, &slot));
+    uint32_t moved = c.view.version - v0;
+    fprintf(stderr, "think: %u commits in 4.5 s\n", moved);
+    T_CHECK(moved >= 2);   // it does move
+    T_CHECK(moved <= 6);   // at a think's pace, not the kernel's 300 ms
+}
 static void three_bots_podkidnoy(void) { bot_only_game(2, 3, 0); }
 
 int main(int argc, char **argv) {
@@ -292,6 +326,7 @@ int main(int argc, char **argv) {
     T_RUN(gate_and_bytes);
     T_RUN(two_bots_classic);
     T_RUN(three_bots_podkidnoy);
+    T_RUN(think_time_paces_the_bots);
     tp_stop(&g_dev.child, 15, 10000);
     return T_DONE();
 }

@@ -207,6 +207,24 @@ int cb_config_from_env(cb_config *c, char *err, size_t cap) {
     c->rated_min_age_s = (int)v;
     if (!num("CBASE_BOT_SPEEDUP", 1, 1, 100, &v, err, cap)) return CB_E_INVALID;
     c->bot_speedup = (int)v;
+    c->bot_think_min_ms = c->bot_think_max_ms = 0;
+    const char *think = getenv("CBASE_BOT_THINK_MS");
+    if (think && *think) {
+        const char *dash = strchr(think, '-');
+        int64_t lo = -1, hi = -1;
+        bool ok = dash && num_parse_i64(think, (size_t)(dash - think), 1, 600000, &lo) &&
+                  num_parse_i64(dash + 1, strlen(dash + 1), 1, 600000, &hi) && lo <= hi;
+        if (!ok) {
+            snprintf(err, cap, "CBASE_BOT_THINK_MS=%s is not min-max milliseconds (1..600000, min <= max)", think);
+            return CB_E_INVALID;
+        }
+        if (!c->dev) {
+            snprintf(err, cap, "CBASE_BOT_THINK_MS is a development knob: it needs CBASE_DEV=1");
+            return CB_E_INVALID;
+        }
+        c->bot_think_min_ms = (int)lo;
+        c->bot_think_max_ms = (int)hi;
+    }
     if (!num("CBASE_MAX_CONNS", 16384, 1, 1000000, &v, err, cap)) return CB_E_INVALID;
     c->max_conns = (int)v;
     if (!num("CBASE_LISTEN_BACKLOG", 512, 1, 65535, &v, err, cap)) return CB_E_INVALID;
@@ -274,6 +292,9 @@ void cb_config_each(const cb_config *c, cb_config_fn fn, void *ud) {
     fn("CBASE_LOG_LEVEL", cb_log_level_name(c->log_level), false, ud);
     snprintf(b, sizeof b, "%d", c->bot_speedup);
     fn("CBASE_BOT_SPEEDUP", b, false, ud);
+    if (c->bot_think_max_ms) snprintf(b, sizeof b, "%d-%d", c->bot_think_min_ms, c->bot_think_max_ms);
+    else snprintf(b, sizeof b, "(unset)");
+    fn("CBASE_BOT_THINK_MS", b, false, ud);
     fn("CBASE_DEV", c->dev ? "1" : "0", false, ud);
     snprintf(b, sizeof b, "%d", c->max_conns);
     fn("CBASE_MAX_CONNS", b, false, ud);

@@ -143,6 +143,13 @@ typedef struct {
     char apple_private_key[2048];
     char apple_redirect_uri[512];
     char apple_issuer[256];
+    // Last in the struct, so no other field moves (the hotpath proof compares disassembly).
+    // CBASE_BOT_THINK_MS "min-max" (unset: 0, 0): DEV-ONLY (refused without CBASE_DEV=1). A bot
+    // waits at least a think time in min..max after the move a viewer was last shown, drawn per
+    // (game, version) so a re-ask agrees (app/bots.h cb_bots_think_ms), on top of the kernel's own
+    // pace. The kernel paces a table with no human at 300 ms a move; a load simulator watching
+    // tables of bots alone (birdseye's league) sets this to see them at a human's pace.
+    int  bot_think_min_ms, bot_think_max_ms;
 } cb_config;
 
 // Reads the environment into cfg. CB_OK, or CB_E_INVALID with a sentence in err.
