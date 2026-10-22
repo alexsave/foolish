@@ -64,6 +64,8 @@ typedef struct {
     uint32_t  n_offroad;    // samples with no candidate
     uint32_t  n_spikes;     // points dropped as spikes
     uint32_t  n_searches;   // local searches run (the slow path)
+    uint32_t  n_fast;       // transitions priced by arithmetic (same segment, or a shared node)
+    uint32_t  n_jumps;      // searches that found no route: priced as a jump
     uint32_t  cpu_us;       // thread CPU the match took
 } adv_match_result;
 
