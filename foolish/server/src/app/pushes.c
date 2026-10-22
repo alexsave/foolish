@@ -22,10 +22,10 @@ _Static_assert(CB_RT_TOKEN_MAX == NW_ACCESS_MAX, "stream_mqtt.h CB_RT_TOKEN_MAX 
 // The socket's own frames (stream_frame.h) and the pushes (netwire.h) share one kind byte.
 _Static_assert(NW_WS_SPECT < SF_HELLO && NW_WS_CHAT < SF_HELLO && NW_V1 == SF_V, "push kinds below the socket's own");
 
-const cb_topic_family cb_fam_views = { "views", "u/{user}/v" };
-const cb_topic_family cb_fam_seat = { "seat", "u/{user}/c/{doc}" };
-const cb_topic_family cb_fam_watch = { "watch", "s/{doc}" };
-const cb_topic_family cb_fam_chat = { "chat", "u/{user}/m/{doc}" };
+const cb_topic_family cb_fam_views = { .name = "views", .pattern = "u/{user}/v" };
+const cb_topic_family cb_fam_seat = { .name = "seat", .pattern = "u/{user}/c/{doc}" };
+const cb_topic_family cb_fam_watch = { .name = "watch", .pattern = "s/{doc}" };
+const cb_topic_family cb_fam_chat = { .name = "chat", .pattern = "u/{user}/m/{doc}" };
 const cb_topic_family *const cb_foolish_topics[4] = { &cb_fam_views, &cb_fam_seat, &cb_fam_watch, &cb_fam_chat };
 
 // The thread's push buffer, on the heap so that it goes with the thread: a _Thread_local has no
