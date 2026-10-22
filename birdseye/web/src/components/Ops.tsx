@@ -64,7 +64,7 @@ export function Ops({ ops, spark }: Props) {
             <Tile label="Other req p99" value={usToText(ops.reqP99Us)} />
             <Tile label="Push bytes/s" value={(ops.pushBytesPerS / 1024).toFixed(0)} unit="KB" />
             <Tile label="Server RSS" value={int(ops.serverRssMb)} unit="MB" />
-            <Tile label="Server CPU" value={int(ops.serverCpuPct)} unit="%" />
+            <Tile label="Server CPU" value={(ops.serverCpuCpct / 100).toFixed(2)} unit="% of a core" />
             <Tile label="Sim RSS" value={int(ops.selfRssMb)} unit="MB" />
             <Tile label="Tables live" value={int(ops.tablesLive)} />
             <Tile label="Playing / lobby" value={`${int(ops.tablesPlaying)} / ${int(ops.tablesLobby)}`} />

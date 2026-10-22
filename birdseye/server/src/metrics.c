@@ -16,19 +16,19 @@
 
 be_metrics be_m;
 
-// Bucket of a microsecond value: 4 per octave, so bucket = 4*log2(us) rounded down over the
-// quarter-octave grid; 0 and 1 us land in bucket 0.
+// Bucket of a microsecond value: BE_HIST_PER_OCTAVE per octave, so bucket = log2(us) times that,
+// rounded down over the grid; 0 and 1 us land in bucket 0.
 static int bucket_of(uint64_t us) {
     if (us < 2) return 0;
-    int lg = 63 - __builtin_clzll(us);                 // floor(log2)
-    uint64_t frac = (us << 2) >> lg;                   // 4..7: the quarter within the octave
-    int b = lg * 4 + (int)(frac & 3);
+    int lg = 63 - __builtin_clzll(us);                                // floor(log2)
+    uint64_t frac = (us << 3) >> lg;                                  // 8..15: the eighth within the octave
+    int b = lg * BE_HIST_PER_OCTAVE + (int)(frac & (BE_HIST_PER_OCTAVE - 1));
     return b >= BE_HIST_BUCKETS ? BE_HIST_BUCKETS - 1 : b;
 }
 
 static uint32_t bucket_floor(int b) {
-    int lg = b / 4, q = b % 4;
-    uint64_t v = ((uint64_t)(4 + q) << lg) >> 2;
+    int lg = b / BE_HIST_PER_OCTAVE, q = b % BE_HIST_PER_OCTAVE;
+    uint64_t v = ((uint64_t)(BE_HIST_PER_OCTAVE + q) << lg) >> 3;
     return v > UINT32_MAX ? UINT32_MAX : (uint32_t)v;
 }
 
