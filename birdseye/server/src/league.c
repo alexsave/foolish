@@ -10,6 +10,7 @@
 #include "util/log.h"
 #include "world.h"
 
+#include "ask.h"
 #include "client_table.h"
 #include "netwire.h"
 #include "../../../shared/c/rng.h"
@@ -296,7 +297,9 @@ static void set_seated(lg_table *t, bool seated) {
     pthread_mutex_lock(&g_mu);
     be_w_bot copies[MAX_PLAYERS];
     for (int i = 0; i < t->n; i++) {
-        g_bots[t->bots[i]].seated = seated;
+        uint8_t *n = &g_bots[t->bots[i]].seated;
+        if (seated) (*n)++;
+        else if (*n) (*n)--;
         copies[i] = g_bots[t->bots[i]];
     }
     pthread_mutex_unlock(&g_mu);
@@ -466,8 +469,9 @@ static bool table_new(int64_t now_ms) {
     uint32_t key[BE_LEAGUE_BOTS];
     pthread_mutex_lock(&g_mu);
     for (int i = 0; i < g_n_bots; i++)
-        if (!g_bots[i].seated) {
-            key[nf] = (g_bots[i].league_games << 12) | rnd(4096);
+        if (g_bots[i].seated < g_o.tables_per_bot) {
+            // Fewest league games first, then the fewest tables now, then at random.
+            key[nf] = (g_bots[i].league_games << 16) | ((uint32_t)g_bots[i].seated << 12) | rnd(4096);
             free_idx[nf++] = i;
         }
     pthread_mutex_unlock(&g_mu);
@@ -505,8 +509,11 @@ static bool table_new(int64_t now_ms) {
     cb_metrics_observe(be_mx, BE_M_REQ_CREATE, (uint64_t)(cb_mono_us() - t0));
     bool ok = r.status == 200 && r.body.len >= 2 && r.body.p[0] == r.body.len - 1 && r.body.p[0] <= NW_GID_MAX;
     if (!ok) {
-        CB_WARN("birdseye", "league: POST /dev/bot_table answered %d (%zu bytes)%s", r.status, r.body.len,
-                r.status == 404 ? ": the game server is not in dev mode, or not this branch's" : "");
+        AskRefusal why = { 0, 0, 0 };
+        bool told = r.status != 200 && ask_refusal_decode(r.body.p, (int)r.body.len, &why) == ASK_OK;
+        CB_WARN("birdseye", "league: POST /dev/bot_table (%d seats) answered %d%s, why %d code %d detail %d", n, r.status,
+                r.status == 404 ? " (the game server is not in dev mode, or not this branch's)" : "", told ? why.why : -1, why.code,
+                why.detail);
         tc_response_free(&r);
         return false;
     }
@@ -668,6 +675,7 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
         snprintf(err, cap, "birdseye: the league needs BE_ADMIN_TOKEN (the game server's CBASE_ADMIN_TOKEN)");
         return CB_E_INVALID;
     }
+    if (g_o.tables_per_bot < 1) g_o.tables_per_bot = 1;
     g_rng = (o->seed + 7) * 0x9E3779B97F4A7C15ull;
     g_n_tables = o->tables;
     g_tables = calloc((size_t)g_n_tables, sizeof *g_tables);
@@ -705,7 +713,7 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
     bots_from_roster();
     read_board(false);
     file_open();
-    CB_INFO("birdseye", "league: %d bots, %d tables at once, podkidnoy %d%%, against %s", g_n_bots, g_n_tables, g_o.podkidnoy, o->server);
+    CB_INFO("birdseye", "league: %d bots, %d tables at once, up to %d a bot, podkidnoy %d%%, against %s", g_n_bots, g_n_tables, g_o.tables_per_bot, g_o.podkidnoy, o->server);
     atomic_store(&g_stop, false);
     if (pthread_create(&g_tid, NULL, league_main, NULL) != 0) {
         snprintf(err, cap, "birdseye: cannot start the league");

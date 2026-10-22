@@ -28,6 +28,7 @@ typedef struct {
     char     admin_token[128]; // the game server's CBASE_ADMIN_TOKEN (POST /dev/bot_table)
     char     file[512];        // the history file; "" keeps none
     int      tables;           // live league tables at once
+    int      tables_per_bot;   // tables one bot may sit at at once (a server bot is an account, not a person)
     int      podkidnoy;        // percent of tables under podkidnoy rules
     uint64_t seed;
 } be_league_opts;

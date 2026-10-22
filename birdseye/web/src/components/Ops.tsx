@@ -19,6 +19,13 @@ function Tile({ label, value, unit, bad }: { label: string; value: string; unit?
   );
 }
 
+// A latency's p50 and p99 in one tile ("-" before the first sample).
+function pair(ops: Metrics, name: string): string {
+  const r = metric(ops, name);
+  if (!r || Number(r.total) === 0) return '-';
+  return `${usToText(r.p50)} / ${usToText(r.p99)}`;
+}
+
 // The last 60 s of moves/s as a filled line; the baseline is zero so bursts read as area.
 function Sparkline({ values }: { values: number[] }) {
   const w = 120, h = 28;
@@ -60,8 +67,9 @@ export function Ops({ ops, spark }: Props) {
             <Tile label="Move to push p50" value={usToText(metric(ops, 'move_push_us')?.p50 ?? 0)} />
             <Tile label="Move to push p99" value={usToText(metric(ops, 'move_push_us')?.p99 ?? 0)} />
             <Tile label="Cast decode p99" value={usToText(metric(ops, 'cast_decode_us')?.p99 ?? 0)} />
-            <Tile label="Other req p50" value={usToText(metric(ops, 'req_us')?.p50 ?? 0)} />
-            <Tile label="Other req p99" value={usToText(metric(ops, 'req_us')?.p99 ?? 0)} />
+            <Tile label="Create p50 / p99" value={pair(ops, 'req_create_us')} />
+            <Tile label="Ask p50 / p99" value={pair(ops, 'req_ask_us')} />
+            <Tile label="Read p50 / p99" value={pair(ops, 'req_read_us')} />
             <Tile label="Push bytes/s" value={(perS(ops, 'push_bytes') / 1024).toFixed(0)} unit="KB" />
             <Tile label="Server RSS" value={int(gauge(ops, 'server_rss_mb'))} unit="MB" />
             <Tile label="Server CPU" value={(gauge(ops, 'server_cpu_cpct') / 100).toFixed(2)} unit="% of a core" />
