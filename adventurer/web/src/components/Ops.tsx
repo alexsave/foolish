@@ -52,7 +52,7 @@ export function Ops({ ops, spark }: Props) {
         <div className="tiles">
           <Tile label="Uploads/s" value={ops.actPerS.toFixed(1)} />
           <Tile label="Tiles/s" value={ops.tilesPerS.toFixed(1)} />
-          <Tile label="Queue live / backfill" value={`${int(ops.queueLive)} / ${int(ops.queueBackfill)}`} />
+          <Tile label="Queued live / backfill" value={`${int(ops.queueLive)} / ${int(ops.queueBackfill)}`} />
           <Tile label="Activity CPU p50" value={usToText(ops.actCpuP50Us)} />
           <Tile label="Activity CPU p99" value={usToText(ops.actCpuP99Us)} />
           <Tile label="Accuracy avg" value={`${(ops.accuracyAvg * 100).toFixed(1)}`} unit="%" />
@@ -72,8 +72,8 @@ export function Ops({ ops, spark }: Props) {
           <Tile label="Graph km" value={int(Math.round(ops.totalLenKm[2]))} />
           <Tile label="Regions" value={int(ops.regions)} />
           <Tile label="Uptime" value={uptime(ops.uptimeS)} />
-          <Tile label="Recovered at start" value={int(ops.recovered)} />
-          <Tile label="Bike / foot km" value={`${int(Math.round(ops.totalLenKm[0]))} / ${int(Math.round(ops.totalLenKm[1]))}`} />
+          <Tile label="Replayed at start" value={int(ops.recovered)} />
+          <Tile label="Graph km bike / foot" value={`${int(Math.round(ops.totalLenKm[0]))} / ${int(Math.round(ops.totalLenKm[1]))}`} />
         </div>
       )}
     </section>

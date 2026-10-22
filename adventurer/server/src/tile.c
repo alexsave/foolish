@@ -222,6 +222,13 @@ static bool type_allows(uint8_t access, int type) {
 
 static int32_t clamp32(int64_t v) { return v < INT32_MIN ? INT32_MIN : v > INT32_MAX ? INT32_MAX : (int32_t)v; }
 
+// Which classes a zoom draws (mvt.h): the majors below the mid zoom, the streets below the full one.
+static bool class_drawn(int z, uint8_t hclass) {
+    if (z >= ADV_TILE_FULL_ZOOM) return true;
+    if (z >= ADV_TILE_MID_ZOOM) return (ADV_TILE_MID_CLASSES >> hclass) & 1u;
+    return hclass <= ADV_HC_TERTIARY;
+}
+
 int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, const adv_cov *cov,
                     const uint32_t *owners, adv_tile_scratch *s, const uint8_t **out) {
     if (!g || !req || !s || !out || !s->bytes) return CB_E_INVALID;
@@ -257,7 +264,7 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
         walk_begin(&wk);
         while (walk_next(&wk, &seg)) {
             const adv_seg *sg = &g->segs[seg];
-            if (req->z < ADV_TILE_FULL_ZOOM && sg->hclass > ADV_HC_TERTIARY) continue;
+            if (!class_drawn(req->z, sg->hclass)) continue;
             shape_load(g, req, s, seg, &sh);
             if (sh.n < 2) continue;
             if (ends_only && sh.cum[sh.n - 1] < SPECK_UNITS) continue;
@@ -289,6 +296,7 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
             while (walk_next(&wk, &seg)) {
                 const adv_seg *sg = &g->segs[seg];
                 if (!type_allows(sg->access, req->type)) continue;
+                if (!class_drawn(req->z, sg->hclass)) continue;   // the red of a city at z11 is its streets
                 uint16_t mask = (uint16_t)(~(cov ? adv_cov_mask(cov, seg, req->type) : 0) & 0xFFFF);
                 if (!mask) continue;
                 shape_load(g, req, s, seg, &sh);

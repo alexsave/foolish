@@ -4,8 +4,9 @@
 // THE WRITER is a protobuf encoder for the one message shape MVT needs (Tile > Layer > Feature,
 // LINESTRING geometries, integer tag values), over a caller-owned scratch: nothing is allocated
 // per tile. THE RENDERER walks the tile's cells of the graph once and emits up to four layers:
-//   roads       every segment (the base map: grey); below ADV_TILE_FULL_ZOOM the major classes
-//               only, and shapes reduced to their end points below ADV_TILE_SHAPE_ZOOM
+//   roads       every segment (the base map: grey); the streets but not the service roads and
+//               paths below ADV_TILE_FULL_ZOOM, the majors alone below ADV_TILE_MID_ZOOM, and
+//               shapes reduced to their end points below ADV_TILE_SHAPE_ZOOM
 //   traveled    the sixteenths the user's coverage (of the requested type) holds
 //   untraveled  the sixteenths it does not, of segments the type may score; only at or above
 //               ADV_TILE_UNTRAVELED_ZOOM (below it the whole region's roads would be red)
@@ -22,7 +23,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ADV_TILE_FULL_ZOOM       11   // every class drawn from here up (majors only below)
+#define ADV_TILE_FULL_ZOOM       13   // every class drawn from here up
+#define ADV_TILE_MID_ZOOM        11   // from here up the streets too (ADV_TILE_MID_CLASSES); majors alone below
+// The classes a mid-zoom tile (ADV_TILE_MID_ZOOM .. ADV_TILE_FULL_ZOOM-1) carries, as a bit per
+// ADV_HC_*: everything down to unclassified streets and cycleways, not the service roads, tracks,
+// footways, paths and steps that triple a city tile's bytes without changing its picture.
+#define ADV_TILE_MID_CLASSES ((1u << (ADV_HC_UNCLASSIFIED + 1)) - 1 | 1u << ADV_HC_CYCLEWAY | 1u << ADV_HC_LIVING)
 #define ADV_TILE_SHAPE_ZOOM      13   // full shapes from here up (end points only below)
 #define ADV_TILE_UNTRAVELED_ZOOM 11
 #define ADV_TILE_MAX_ZOOM        18

@@ -934,10 +934,9 @@ input {
 
 .tile .label {
   font-size: 10px;
+  line-height: 1.2;
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-height: 24px;
 }
 
 .tile .value {
