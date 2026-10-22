@@ -19,7 +19,8 @@
 #                                      a second instance beside the live one: `B=build-exp DATA=../data-exp
 #                                      WEB=web-exp ADV_PORT=8712 WEB_PORT=5712 run.sh` builds, imports and
 #                                      serves without touching what the live ports run from (the web copy:
-#                                      `cp -R web web-exp` minus node_modules, which may be a symlink)
+#                                      web/ minus .next, with node_modules cloned by `cp -Rc`: Next
+#                                      refuses a symlinked one)
 #   RUN_DIR ($DATA/run), GRAPH ($DATA/region.graph), DB ($DATA/adventurer.sqlite), PBF ($DATA/region.osm.pbf)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
