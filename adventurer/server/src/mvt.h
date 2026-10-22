@@ -35,6 +35,7 @@ typedef struct {
     size_t   cap, len;
     uint8_t *lbuf;         // the current layer's features, moved into buf at layer_end
     size_t   lcap, llen;
+    const char *name;      // the current layer's, written ahead of its features at layer_end
     const char *const *keys;
     int      n_keys;
     int      n_values;     // integer values 0..n_values-1 declared so far (value i encodes int i)

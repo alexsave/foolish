@@ -159,6 +159,12 @@ int adv_world_apply(adv_world *w, adv_user *u, const adv_result *r, adv_applied 
     if (new_m[ADV_T_ALL] <= 0 && new_m[type] <= 0) return CB_OK;   // nothing new: the stats above were enough
     u->version++;
     uint32_t mk = adv_month_key(r->start_ms), yk = adv_year_key(r->start_ms);
+    // The regions this apply touched, so the boards of the others are left alone (a record of an
+    // older month must not reset a board it is not on).
+    enum { TOUCH_MAX = 64 };
+    uint16_t touched[TOUCH_MAX];
+    uint32_t n_touched = 0;
+    bool touched_all = false;
     // Per region: the new length of each hit goes to its segment's region.
     for (uint32_t i = 0; i < r->n_hits; i++) {
         const adv_cov_delta *d = &deltas[i];
@@ -173,6 +179,12 @@ int adv_world_apply(adv_world *w, adv_user *u, const adv_result *r, adv_applied 
         if (s->region == ADV_NO_REGION) continue;
         adv_rprog *p = rprog_of(u, s->region);
         if (!p) return CB_E_NOMEM;
+        bool known = false;
+        for (uint32_t k = 0; k < n_touched && !known; k++) known = touched[k] == s->region;
+        if (!known) {
+            if (n_touched < TOUCH_MAX) touched[n_touched++] = s->region;
+            else touched_all = true;
+        }
         if (p->month_key != mk) { memset(p->month_m, 0, sizeof p->month_m); p->month_key = mk; }
         if (p->year_key != yk) { memset(p->year_m, 0, sizeof p->year_m); p->year_key = yk; }
         float add[ADV_T_N] = { adv_mask_len_m(d->new_mask[0], s->len_m), adv_mask_len_m(d->new_mask[1], s->len_m),
@@ -187,7 +199,9 @@ int adv_world_apply(adv_world *w, adv_user *u, const adv_result *r, adv_applied 
     pthread_mutex_lock(&w->boards_lock);
     for (uint32_t k = 0; k < u->n_rp; k++) {
         adv_rprog *p = &u->rp[k];
-        if (p->month_key != mk && p->year_key != yk) continue;   // untouched this apply (or an old period)
+        bool mine = touched_all;
+        for (uint32_t t = 0; t < n_touched && !mine; t++) mine = touched[t] == p->region;
+        if (!mine) continue;
         const adv_region *reg = &g->regions[p->region];
         for (int t = 0; t < ADV_T_N; t++) {
             if (reg->len_m[t] > 0) {
