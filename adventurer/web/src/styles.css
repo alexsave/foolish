@@ -965,3 +965,60 @@ input {
 .tile.wide .value {
   font-size: 12px;
 }
+
+/* Everyone's card: the most-travelled roads, each a button that flies the map there. */
+.card-sub {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.toproads {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.toproads li {
+  border-top: 1px solid #f1f3f5;
+}
+
+.toproads li:first-child {
+  border-top: 0;
+}
+
+.toproad {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 5px 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.toproad:hover {
+  background: #f4f6f9;
+}
+
+.toproad .rank {
+  color: var(--faint);
+  width: 16px;
+}
+
+.toproad .who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}

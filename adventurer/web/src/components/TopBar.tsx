@@ -1,7 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { USER_KIND, type FeedState, type WUser } from '../api';
+import { EVERYONE, USER_KIND, type FeedState, type WUser } from '../api';
+
+// The composite of every user, as a row of the picker (api.ts EVERYONE).
+const EVERYONE_ROW: WUser = { id: EVERYONE, kind: 0, nameLen: 8, nActivities: 0, version: 0, uniqueM: [0, 0, 0], homeLat: 0, homeLon: 0, name: 'Everyone' };
 
 function Compass() {
   return (
@@ -28,9 +31,12 @@ export function TopBar({ users, selected, onSelect, feedState, connecting }: Pro
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
-  const current = selected !== null ? users.find((u) => u.id === selected) ?? null : null;
+  const current = selected === EVERYONE ? EVERYONE_ROW : selected !== null ? users.find((u) => u.id === selected) ?? null : null;
 
-  const sorted = useMemo(() => users.slice().sort((a, b) => b.nActivities - a.nActivities || a.name.localeCompare(b.name)), [users]);
+  const sorted = useMemo(
+    () => [EVERYONE_ROW, ...users.slice().sort((a, b) => b.nActivities - a.nActivities || a.name.localeCompare(b.name))],
+    [users],
+  );
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = q
@@ -129,8 +135,8 @@ export function TopBar({ users, selected, onSelect, feedState, connecting }: Pro
                   onMouseEnter={() => setActive(i)}
                 >
                   <span className="name">{u.name}</span>
-                  <span className="pill pill-grey">{USER_KIND[u.kind] ?? 'user'}</span>
-                  <span className="count num">{u.nActivities}</span>
+                  <span className="pill pill-grey">{u.id === EVERYONE ? 'all users' : USER_KIND[u.kind] ?? 'user'}</span>
+                  <span className="count num">{u.id === EVERYONE ? '' : u.nActivities}</span>
                 </button>
               ))}
             </div>

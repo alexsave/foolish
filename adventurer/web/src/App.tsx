@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  EVERYONE,
+  getEveryone,
+  getEveryoneRegions,
   getOps,
   getRegions,
   getUser,
@@ -11,10 +14,12 @@ import {
   WireMismatch,
   type FeedState,
   type TypeIdx,
+  type Everyone,
   type UserDetail,
   type WActivity,
   type WOps,
   type WRegion,
+  type WRegionProgress,
   type WUser,
 } from './api';
 import { TopBar } from './components/TopBar';
@@ -99,15 +104,28 @@ export function App() {
   const [userId, setUserId] = useState<number | null>(null);
   useEffect(() => {
     if (userId !== null || !users.data || users.data.length === 0) return;
+    // ?user=<id> in the URL (0: everyone) beats the stored choice: a link to a map.
+    const fromUrl = new URLSearchParams(window.location.search).get('user');
+    if (fromUrl !== null && /^\d+$/.test(fromUrl)) {
+      const id = Number(fromUrl);
+      if (id === EVERYONE || users.data.some((u) => u.id === id)) {
+        setUserId(id);
+        return;
+      }
+    }
     const stored = readStored(USER_KEY);
     const found = stored !== null ? users.data.find((u) => u.id === Number(stored)) : undefined;
     if (found) {
       setUserId(found.id);
       return;
     }
+    // The explorer with the most activities: an explorer seeks roads it has not seen, so its map
+    // visibly grows on a live page; a walker re-walks its block. Else whoever has the most.
     let best = users.data[0];
     for (const u of users.data) if (u.nActivities > best.nActivities) best = u;
-    setUserId(best.id);
+    let explorer: WUser | null = null;
+    for (const u of users.data) if (u.kind === 2 && (!explorer || u.nActivities > explorer.nActivities)) explorer = u;
+    setUserId(explorer && explorer.nActivities > 0 ? explorer.id : best.id);
   }, [users.data, userId]);
 
   const selectUser = useCallback((id: number) => {
@@ -128,11 +146,23 @@ export function App() {
     writeStored(TYPE_KEY, String(t));
   }, []);
 
+  const everyone = userId === EVERYONE;
   const userLoader = useCallback(
-    (signal: AbortSignal) => (userId === null ? Promise.reject(new Error('no user')) : getUser(userId, signal)),
+    (signal: AbortSignal) => (userId === null || userId === EVERYONE ? Promise.reject(new Error('no user')) : getUser(userId, signal)),
     [userId],
   );
   const detail = useRetrying<UserDetail>(userLoader, userId ?? 'none', onFatal);
+  // The composite: its totals and top roads, and what anyone has per region (the Regions panel's rows).
+  const everyoneLoader = useCallback(
+    (signal: AbortSignal) => (everyone ? getEveryone(signal) : Promise.reject(new Error('not everyone'))),
+    [everyone],
+  );
+  const everyoneData = useRetrying<Everyone>(everyoneLoader, everyone ? 'everyone' : 'none', onFatal);
+  const everyoneRegionsLoader = useCallback(
+    (signal: AbortSignal) => (everyone ? getEveryoneRegions(signal) : Promise.reject(new Error('not everyone'))),
+    [everyone],
+  );
+  const everyoneRegions = useRetrying<WRegionProgress[]>(everyoneRegionsLoader, everyone ? 'everyone-regions' : 'none', onFatal);
 
   const usersById = useMemo(() => {
     const m = new Map<number, WUser>();
@@ -160,6 +190,8 @@ export function App() {
   const userIdRef = useRef<number | null>(null);
   userIdRef.current = userId;
   const refreshDetail = detail.refresh;
+  const refreshEveryone = everyoneData.refresh;
+  const refreshEveryoneRegions = everyoneRegions.refresh;
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -186,13 +218,18 @@ export function App() {
             return next.length > FEED_CAP ? next.slice(0, FEED_CAP) : next;
           });
         }
-        if (a.user === userIdRef.current && !(a.flags & AF_REJECTED)) {
+        // Everyone's map grows with every user's upload; a user's with its own.
+        const all = userIdRef.current === EVERYONE;
+        if ((all || a.user === userIdRef.current) && !(a.flags & AF_REJECTED)) {
           setCoverageVersion((v) => v + 1);
           // The stats card follows the tiles, a little later and coalesced under a burst.
           if (refreshTimer.current) clearTimeout(refreshTimer.current);
           refreshTimer.current = setTimeout(() => {
             refreshTimer.current = null;
-            refreshDetail();
+            if (all) {
+              refreshEveryone();
+              refreshEveryoneRegions();
+            } else refreshDetail();
           }, 1500);
         }
       },
@@ -201,7 +238,7 @@ export function App() {
       close();
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
-  }, [refreshDetail]);
+  }, [refreshDetail, refreshEveryone, refreshEveryoneRegions]);
 
   const togglePause = useCallback(() => {
     setPaused((p) => {
@@ -223,6 +260,9 @@ export function App() {
     if (!user) return;
     setFly({ kind: 'point', lat: user.homeLat, lon: user.homeLon, zoom: 14, seq: Date.now() });
   }, [user]);
+  const flyToPoint = useCallback((lat: number, lon: number) => {
+    setFly({ kind: 'point', lat, lon, zoom: 16, seq: Date.now() });
+  }, []);
 
   const live = ops ?? opsFirst.data;
   const connecting = !users.data || !regions.data;
@@ -241,11 +281,19 @@ export function App() {
       ) : (
         <div className="grid">
           <div className="col">
-            <StatsCard user={user} detail={detail.data && detail.data.stats.id === userId ? detail.data : null} />
+            <StatsCard
+              user={user}
+              detail={detail.data && detail.data.stats.id === userId ? detail.data : null}
+              everyone={everyone ? everyoneData.data : null}
+              type={type}
+              regionsById={regionsById}
+              onFly={flyToPoint}
+            />
             <Regions
               type={type}
               onType={setType}
-              progress={detail.data && detail.data.stats.id === userId ? detail.data.progress : null}
+              progress={everyone ? everyoneRegions.data : detail.data && detail.data.stats.id === userId ? detail.data.progress : null}
+              everyone={everyone}
               regionsById={regionsById}
               usersById={usersById}
               onFly={flyToRegion}

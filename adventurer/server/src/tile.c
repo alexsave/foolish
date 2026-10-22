@@ -21,6 +21,7 @@
 #include "util/err.h"
 
 #include <math.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -29,6 +30,7 @@
 
 static const char *const KEYS_C[] = { "c" };
 static const char *const KEYS_CT[] = { "c", "t" };
+static const char *const KEYS_CTN[] = { "c", "t", "n" };
 
 int adv_tile_scratch_init(adv_tile_scratch *s, const adv_graph *g) {
     memset(s, 0, sizeof *s);
@@ -296,20 +298,33 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
         }
         adv_mvt_layer_end(&w);
     }
-    bool by_cov = cov && req->z < ADV_TILE_UNTRAVELED_ZOOM;
+    // Everyone's tile walks the cells at every zoom (the union is every segment anyone has, not
+    // a user's short list) and, below the untraveled floor, draws the classes the roads layer
+    // draws two zooms higher (streets from z9, the majors below), as a region-wide tile of
+    // every alley would be the whole city painted; from z11 up everything, like a user's.
+    const adv_all_seg *all = req->all;
+    bool by_cov = cov && !all && req->z < ADV_TILE_UNTRAVELED_ZOOM;
+    bool majors = all && req->z < ADV_TILE_UNTRAVELED_ZOOM;
+    int all_z = req->z + 2;
     if (req->traveled) {
-        adv_mvt_layer_begin(&w, "traveled", KEYS_CT, 2);
+        adv_mvt_layer_begin(&w, "traveled", all ? KEYS_CTN : KEYS_CT, all ? 3 : 2);
         cov_walk cw = { cov, &wk, 0 };
         if (!by_cov) walk_begin(&wk);
         while (by_cov ? cov_walk_next(&cw, &seg) : walk_next(&wk, &seg)) {
-            uint16_t mask = cov ? adv_cov_mask(cov, seg, req->type) : 0;
+            uint16_t mask = all ? atomic_load_explicit(&all[seg].mask[req->type], memory_order_relaxed) : cov ? adv_cov_mask(cov, seg, req->type) : 0;
             if (!mask) continue;
+            if (majors && !class_drawn(all_z, g->segs[seg].hclass)) continue;
             shape_load(g, req, s, seg, &sh);
             if (sh.n < 2) continue;
             tags[0] = g->segs[seg].hclass;
             tags[1] = req->type;
+            if (all) {
+                uint16_t n_users = atomic_load_explicit(&all[seg].users[req->type], memory_order_relaxed);
+                tags[2] = n_users > ADV_MVT_MAX_VALUE ? ADV_MVT_MAX_VALUE : n_users;
+            }
             emit_mask(&w, s, &sh, seg, mask, ends_only, tags);
         }
+        tags[2] = -1;
         adv_mvt_layer_end(&w);
     }
     if (req->untraveled) {
@@ -322,7 +337,8 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
                 const adv_seg *sg = &g->segs[seg];
                 if (!type_allows(sg->access, req->type)) continue;
                 if (!class_drawn(req->z, sg->hclass)) continue;   // the red of a city at z11 is its streets
-                uint16_t mask = (uint16_t)(~(cov ? adv_cov_mask(cov, seg, req->type) : 0) & 0xFFFF);
+                uint16_t have = all ? atomic_load_explicit(&all[seg].mask[req->type], memory_order_relaxed) : cov ? adv_cov_mask(cov, seg, req->type) : 0;
+                uint16_t mask = (uint16_t)(~have & 0xFFFF);
                 if (!mask) continue;
                 shape_load(g, req, s, seg, &sh);
                 if (sh.n < 2) continue;
@@ -335,7 +351,17 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
     }
     if (req->unique) {
         adv_mvt_layer_begin(&w, "unique", KEYS_C, 1);
-        if (owners && user != 0) {
+        if (all) {   // what exactly one person has
+            walk_begin(&wk);
+            while (walk_next(&wk, &seg)) {
+                if (atomic_load_explicit(&all[seg].users[req->type], memory_order_relaxed) != 1) continue;
+                if (majors && !class_drawn(all_z, g->segs[seg].hclass)) continue;
+                shape_load(g, req, s, seg, &sh);
+                if (sh.n < 2) continue;
+                tags[0] = g->segs[seg].hclass;
+                emit_whole(&w, s, &sh, ends_only, seg, tags);
+            }
+        } else if (owners && user != 0) {
             cov_walk cw = { cov, &wk, 0 };
             if (!by_cov) walk_begin(&wk);
             while (by_cov ? cov_walk_next(&cw, &seg) : walk_next(&wk, &seg)) {

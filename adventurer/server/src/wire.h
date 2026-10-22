@@ -9,6 +9,9 @@
 //   GET  /adv/users                    adv_w_list (n) then n x adv_w_user
 //   GET  /adv/user/<id>                adv_w_user_stats then n_regions x adv_w_region_progress
 //   GET  /adv/leaders/<region>         adv_w_leaders
+//   GET  /adv/everyone                 adv_w_everyone then n_top x adv_w_top_road (the composite)
+//   GET  /adv/everyone/regions         adv_w_list (n) then n x adv_w_region_progress (everyone's, per region)
+//   GET  /adv/everyone/<z>/<x>/<y>.mvt?t=bike|foot|all   MVT of everyone's coverage, ETag "all.<version>.<t>" 
 //   GET  /adv/feed (WebSocket)         binary frames: adv_w_activity (kind 1) or adv_w_ops (kind 2)
 //   GET  /adv/tile/<uid>/<z>/<x>/<y>.mvt?t=bike|foot|all   MVT (mvt.h), ETag "<uid>.<version>.<t>"
 //   GET  /adv/base/<z>/<x>/<y>.mvt     MVT, the roads layer alone
@@ -108,6 +111,33 @@ typedef struct {
     adv_w_leader year[ADV_T_N][3];
 } adv_w_leaders;
 
+// EVERYONE: the union of every user's coverage (GET /adv/everyone): the length anyone has per
+// type against the graph's, the segments anyone has, and the most-travelled roads, ADV_TOP_N
+// per type in a row (type 0's first), each by distinct users then length.
+typedef struct {
+    uint32_t seg;
+    uint16_t users;       // distinct users of the road's type (capped at 65535)
+    uint16_t region;      // or ADV_NO_REGION
+    float    len_m;
+    int32_t  c_lat, c_lon;   // its midpoint
+    uint8_t  hclass;
+    uint8_t  name_len;
+    uint8_t  type;        // ADV_T_*: which list this row is in
+    uint8_t  pad;
+    char     name[ADV_NAME_MAX];   // the road's name, "" for none
+} adv_w_top_road;
+
+typedef struct {
+    uint32_t hash;
+    uint32_t version;         // the composite's version (the everyone tiles' ETag)
+    uint32_t users;           // users defined
+    uint32_t n_top;           // adv_w_top_road records that follow
+    float    traveled_m[ADV_T_N];
+    float    total_m[ADV_T_N];   // the graph's, the denominator
+    uint32_t segs[ADV_T_N];      // segments anyone has
+    uint32_t segs_total[ADV_T_N];
+} adv_w_everyone;
+
 // One processed upload, as the feed announces it (kind ADV_W_KIND_ACTIVITY).
 #define ADV_AF_BACKFILL 0x1
 #define ADV_AF_REJECTED 0x2
@@ -166,6 +196,8 @@ typedef struct {
     float    total_len_km[ADV_T_N];
     uint32_t threads;
     uint32_t recovered;           // activities replayed from the journal at start
+    uint32_t everyone_version;    // the composite's version: changed means its tiles are stale
+    float    everyone_m[ADV_T_N]; // the length anyone has, per type
 } adv_w_ops;
 
 _Static_assert(sizeof(adv_w_list) == 8, "adv_w_list");
@@ -177,7 +209,9 @@ _Static_assert(sizeof(adv_w_region_progress) == 52, "adv_w_region_progress");
 _Static_assert(sizeof(adv_w_leaders) == 152, "adv_w_leaders");
 _Static_assert(sizeof(adv_w_activity) == 72, "adv_w_activity");
 _Static_assert(sizeof(adv_w_accepted) == 16, "adv_w_accepted");
-_Static_assert(sizeof(adv_w_ops) == 128, "adv_w_ops");
+_Static_assert(sizeof(adv_w_ops) == 144, "adv_w_ops");
+_Static_assert(sizeof(adv_w_top_road) == 88, "adv_w_top_road");
+_Static_assert(sizeof(adv_w_everyone) == 64, "adv_w_everyone");
 
 // The layout hash the generated decoder checks (tools/wiregen.c computes it over every field's
 // name, offset and size and prints the constant it used; wire.c holds the same computation so

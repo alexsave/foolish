@@ -11,6 +11,7 @@
 #include "util/err.h"
 
 #include <math.h>
+#include <stdatomic.h>
 #include <unistd.h>
 
 // ---- a protobuf reader ----------------------------------------------------------------------
@@ -523,6 +524,113 @@ static void tile_range(const adv_graph *g, int z, uint32_t *x0, uint32_t *y0, ui
     adv_tile_of(se, z, x1, y1);
 }
 
+// EVERYONE'S TILE: hand-made words over the grid. Segment A (0) has one user with every
+// sixteenth, segment B (1) three users on its first half, segment C (2) two bike users on its
+// second half and nobody on foot, the rest nobody. In the combined view: traveled is A whole
+// (n 1), B's first half (n 3), C's second half (n 2); untraveled is B's second half, C's first
+// half and every other segment whole; unique is A alone. On foot, C is nobody's: untraveled whole.
+static bool type_allows_test(uint8_t access, int type) {
+    if (type == ADV_T_ALL) return access != 0;
+    return (access & (type == ADV_T_BIKE ? ADV_ACC_BIKE : ADV_ACC_FOOT)) != 0;
+}
+
+static void test_everyone(d_tile *t) {
+    fg_opts o = { .cols = 4, .rows = 3, .block_m = 120, .shape_m = 40, .regions = false };
+    char path[512];
+    fg_tmp_path(path, sizeof path, "unit_mvt_all");
+    adv_graph g;
+    T_CHECK(fg_build(&o, path, &g) == 0);
+    adv_all_seg *all = calloc(g.h->n_segs, sizeof *all);
+    for (int ty = 0; ty < ADV_T_N; ty++) { atomic_store(&all[0].mask[ty], 0xFFFF); atomic_store(&all[0].users[ty], 1); }
+    for (int ty = 0; ty < ADV_T_N; ty++) { atomic_store(&all[1].mask[ty], 0x00FF); atomic_store(&all[1].users[ty], 3); }
+    atomic_store(&all[2].mask[ADV_T_BIKE], 0xFF00); atomic_store(&all[2].users[ADV_T_BIKE], 2);
+    atomic_store(&all[2].mask[ADV_T_ALL], 0xFF00); atomic_store(&all[2].users[ADV_T_ALL], 2);
+    ctx c = { .g = &g, .cov = NULL, .owners = NULL, .user = 0, .t = t };
+    T_CHECK(adv_tile_scratch_init(&c.s, &g) == CB_OK);
+    uint32_t x0, y0, x1, y1;
+    tile_range(&g, 16, &x0, &y0, &x1, &y1);
+    for (int type = 0; type < ADV_T_N; type++) {
+        int seen_a = 0, seen_b = 0, seen_c = 0;
+        for (uint32_t y = y0; y <= y1; y++)
+            for (uint32_t x = x0; x <= x1; x++) {
+                adv_tile_req r = { .z = 16, .x = x, .y = y, .type = type, .roads = true, .traveled = true, .untraveled = true, .unique = true, .all = all };
+                const uint8_t *out;
+                int len = adv_tile_render(&g, &r, 0, NULL, NULL, &c.s, &out);
+                T_CHECK(len >= 0);
+                if (len <= 0) continue;
+                d_decode(out, (size_t)len, t);
+                T_CHECK(!t->err && t->n_layers == 4);
+                const d_layer *roads = d_find(t, "roads"), *trav = d_find(t, "traveled"), *untrav = d_find(t, "untraveled"), *uniq = d_find(t, "unique");
+                T_CHECK(roads && trav && untrav && uniq);
+                if (!roads || !trav || !untrav || !uniq) continue;
+                T_CHECK(trav->n_keys == 3 && strcmp(trav->keys[2], "n") == 0);
+                for (int i = 0; i < 4; i++) check_layer_sane(&t->l[i]);
+                int64_t b[4];
+                grown_bounds(16, x, y, b);
+                for (uint32_t sg = 0; sg < g.h->n_segs; sg++) {
+                    if (!seg_in(&g.segs[sg], b)) continue;
+                    uint16_t mask = atomic_load(&all[sg].mask[type]);
+                    uint16_t users = atomic_load(&all[sg].users[type]);
+                    const d_feat *fa = d_feature_by_id(trav, (uint64_t)sg * 16), *fb = d_feature_by_id(trav, (uint64_t)sg * 16 + 8);
+                    const d_feat *ua = d_feature_by_id(untrav, (uint64_t)sg * 16), *ub = d_feature_by_id(untrav, (uint64_t)sg * 16 + 8);
+                    const d_feat *un = d_feature_by_id(uniq, sg);
+                    // A full mask is one run from bit 0; a half is one run from bit 0 or bit 8.
+                    T_CHECK_MSG((fa != NULL) == ((mask & 1) != 0), "seg %u type %d traveled from 0", sg, type);
+                    T_CHECK_MSG((fb != NULL) == (mask == 0xFF00), "seg %u type %d traveled from 8", sg, type);
+                    T_CHECK((ua != NULL) == ((mask & 1) == 0 && type_allows_test(g.segs[sg].access, type)));
+                    T_CHECK((ub != NULL) == (mask == 0x00FF));
+                    T_CHECK_MSG((un != NULL) == (users == 1), "seg %u type %d unique", sg, type);
+                    const d_feat *f = fa ? fa : fb;
+                    if (f) {
+                        T_CHECK_MSG(tag_value(trav, f, "n") == users, "seg %u n %d want %u", sg, tag_value(trav, f, "n"), users);
+                        T_CHECK(tag_value(trav, f, "t") == type && tag_value(trav, f, "c") == g.segs[sg].hclass);
+                    }
+                    if (sg == 0 && fa) seen_a++;
+                    if (sg == 1 && fa) seen_b++;
+                    if (sg == 2 && fb) seen_c++;
+                }
+            }
+        T_CHECK(seen_a > 0 && seen_b > 0);
+        T_CHECK((seen_c > 0) == (type != ADV_T_FOOT));
+    }
+    // A low zoom: the cells are walked and only the majors drawn, as end points: a primary
+    // segment somebody has shows, a residential one (A) does not.
+    {
+        uint32_t prim = UINT32_MAX;
+        for (uint32_t sg = 0; sg < g.h->n_segs && prim == UINT32_MAX; sg++) if (g.segs[sg].hclass == ADV_HC_PRIMARY) prim = sg;
+        T_CHECK(prim != UINT32_MAX && g.segs[0].hclass == ADV_HC_RESIDENTIAL);
+        atomic_store(&all[prim].mask[ADV_T_ALL], 0xFFFF);
+        atomic_store(&all[prim].users[ADV_T_ALL], 1);
+        adv_tile_req r = { .z = 8, .type = ADV_T_ALL, .traveled = true, .unique = true, .all = all };
+        adv_pt mid = adv_seg_at(&g, 0, 0.5);
+        adv_tile_of(mid, 8, &r.x, &r.y);
+        const uint8_t *out;
+        int len = adv_tile_render(&g, &r, 0, NULL, NULL, &c.s, &out);
+        T_CHECK(len > 0);
+        d_decode(out, (size_t)len, t);
+        const d_layer *trav = d_find(t, "traveled"), *uniq = d_find(t, "unique");
+        T_CHECK(trav && uniq);
+        if (trav && uniq) {
+            const d_feat *fp = d_feature_by_id(trav, (uint64_t)prim * 16);
+            T_CHECK(fp && fp->n_pts == 2 && tag_value(trav, fp, "n") == 1);
+            T_CHECK(d_feature_by_id(trav, 0) == NULL);
+            T_CHECK(d_feature_by_id(uniq, prim) != NULL && d_feature_by_id(uniq, 0) == NULL);
+        }
+        // Two zooms up (z9, the roads layer's z11 rule): the residential street shows too.
+        r.z = 9;
+        adv_tile_of(mid, 9, &r.x, &r.y);
+        len = adv_tile_render(&g, &r, 0, NULL, NULL, &c.s, &out);
+        T_CHECK(len > 0);
+        d_decode(out, (size_t)len, t);
+        trav = d_find(t, "traveled");
+        T_CHECK(trav && d_feature_by_id(trav, 0) != NULL && d_feature_by_id(trav, (uint64_t)prim * 16) != NULL);
+    }
+    adv_tile_scratch_free(&c.s);
+    free(all);
+    adv_graph_close(&g);
+    unlink(path);
+}
+
 static void test_renderer(d_tile *t) {
     fg_opts o = { .cols = 8, .rows = 8, .block_m = 120, .shape_m = 40, .regions = true };
     char path[512];
@@ -793,6 +901,7 @@ int main(void) {
     d_tile *t = d_tile_new();
     test_writer(t);
     test_renderer(t);
+    test_everyone(t);
     test_parse();
     test_timing();
     for (int i = 0; i < D_MAX_LAYERS; i++) free(t->l[i].f);

@@ -26,9 +26,11 @@ interface Props {
   usersById: Map<number, WUser>;
   onFly: (r: WRegion) => void;
   onFatal: (e: Error) => void;
+  // The composite's rows: what anyone has per region; no achievements or ranks to light up.
+  everyone?: boolean;
 }
 
-export function Regions({ type, onType, progress, regionsById, usersById, onFly, onFatal }: Props) {
+export function Regions({ type, onType, progress, regionsById, usersById, onFly, onFatal, everyone }: Props) {
   const [all, setAll] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
 
@@ -68,7 +70,7 @@ export function Regions({ type, onType, progress, regionsById, usersById, onFly,
       {!progress ? (
         <div className="empty">Loading progress...</div>
       ) : rows.length === 0 ? (
-        <div className="empty">No regions covered yet.</div>
+        <div className="empty">{everyone ? 'Nobody has been anywhere yet.' : 'No regions covered yet.'}</div>
       ) : (
         <div className="region-list">
           {shown.map((p) => {
@@ -106,13 +108,15 @@ export function Regions({ type, onType, progress, regionsById, usersById, onFly,
                   {p.rankYear[type] >= 1 && p.rankYear[type] <= 3 && (
                     <span className="chip">#{p.rankYear[type]} this year</span>
                   )}
-                  <span className="ach" title="Achievements: 25 / 50 / 75 / 90 / 99 percent">
-                    {ACH_PCT.map((v, i) => (
-                      <b key={v} className={ach & (1 << i) ? 'lit' : ''}>
-                        {v}
-                      </b>
-                    ))}
-                  </span>
+                  {!everyone && (
+                    <span className="ach" title="Achievements: 25 / 50 / 75 / 90 / 99 percent">
+                      {ACH_PCT.map((v, i) => (
+                        <b key={v} className={ach & (1 << i) ? 'lit' : ''}>
+                          {v}
+                        </b>
+                      ))}
+                    </span>
+                  )}
                 </div>
                 {openId === p.region && (
                   <LeadersPopover

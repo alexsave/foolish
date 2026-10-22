@@ -6,29 +6,38 @@ import {
   readWLeaders,
   readWOps,
   readWRegion,
+  readWEveryone,
   readWRegionProgress,
+  readWTopRoad,
   readWUser,
   readWUserStats,
   SIZE,
   WIRE_HASH,
   type WActivity,
+  type WEveryone,
   type WLeader,
   type WOps,
   type WRegion,
   type WRegionProgress,
+  type WTopRoad,
   type WUser,
   type WUserStats,
 } from './gen/wire';
 
 export type {
   WActivity,
+  WEveryone,
   WLeader,
   WOps,
   WRegion,
   WRegionProgress,
+  WTopRoad,
   WUser,
   WUserStats,
 };
+
+// The user id that is nobody: the composite of everyone's coverage (GET /adv/everyone).
+export const EVERYONE = 0;
 
 // The C server's origin. The page is served by Next, the data comes from here, cross-origin
 // (the server answers CORS), so every URL the browser or MapLibre fetches is absolute.
@@ -130,6 +139,27 @@ export async function getLeaders(region: number, signal?: AbortSignal): Promise<
   return { region: head.region, month: rows(head.month), year: rows(head.year) };
 }
 
+// Everyone's coverage: the totals per type and the most-travelled roads (ADV_TOP_N per type, in
+// type order), and per region what anyone has (the shape of a user's progress, achievements and
+// ranks left zero).
+export interface Everyone {
+  stats: WEveryone;
+  top: WTopRoad[];
+}
+export async function getEveryone(signal?: AbortSignal): Promise<Everyone> {
+  const buf = await fetchBytes('/adv/everyone', signal);
+  const dv = new DataView(buf);
+  const stats = readWEveryone(dv, 0);
+  checkHash(stats.hash);
+  const top: WTopRoad[] = [];
+  for (let i = 0; i < stats.nTop; i++) top.push(readWTopRoad(dv, SIZE.WEveryone + i * SIZE.WTopRoad));
+  return { stats, top };
+}
+export async function getEveryoneRegions(signal?: AbortSignal): Promise<WRegionProgress[]> {
+  const buf = await fetchBytes('/adv/everyone/regions', signal);
+  return wrapList(() => readList(buf, SIZE.WRegionProgress, readWRegionProgress));
+}
+
 export async function getOps(signal?: AbortSignal): Promise<WOps> {
   const buf = await fetchBytes('/adv/ops', signal);
   if (buf.byteLength < SIZE.WOps) throw new Error('ops: short answer');
@@ -146,6 +176,9 @@ export function baseTileUrl(): string {
 
 export function userTileUrl(user: number, type: TypeIdx, version: number): string {
   return `${SERVER}/adv/tile/${user}/{z}/{x}/{y}.mvt?t=${TYPE_PARAM[type]}&v=${version}`;
+}
+export function everyoneTileUrl(type: TypeIdx, version: number): string {
+  return `${SERVER}/adv/everyone/{z}/{x}/{y}.mvt?t=${TYPE_PARAM[type]}&v=${version}`;
 }
 
 // ---- the feed ---------------------------------------------------------------------------------

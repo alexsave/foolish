@@ -12,7 +12,10 @@
 //               ADV_TILE_UNTRAVELED_ZOOM (below it the whole region's roads would be red)
 //   unique      the segments only this user has travelled (super-unique)
 // Each feature carries tag "c" (the highway class) for the style's line widths, and the
-// traveled/untraveled features "t" (0/1) so a style may vary by type later.
+// traveled/untraveled features "t" (the type) so a style may vary by type later. EVERYONE'S
+// TILE (adv_tile_req.all) draws the union of every user's coverage instead: traveled carries
+// "n", how many distinct users have the segment (capped at ADV_MVT_MAX_VALUE, the heat),
+// untraveled is what nobody has, and unique is what exactly one person has.
 #ifndef ADV_MVT_H
 #define ADV_MVT_H
 
@@ -74,6 +77,7 @@ typedef struct {
     int      type;            // ADV_T_BIKE, ADV_T_FOOT or ADV_T_ALL: which coverage view
     bool     roads;           // the base layer
     bool     traveled, untraveled, unique;
+    const adv_all_seg *all;   // everyone's words (n_segs of them): the composite instead of a user's cov
 } adv_tile_req;
 
 // Per-thread scratch for the renderer: the writer's bytes and a visited stamp per segment (a

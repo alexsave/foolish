@@ -37,6 +37,16 @@ typedef struct {
     uint16_t pad;
 } adv_cov_delta;
 
+// EVERYONE'S COVERAGE, per segment: the union of every user's masks and how many distinct users
+// have any bit of the type, so a composite map and its heat are read straight from the words.
+// Written by every apply under relaxed atomics (a segment's words are touched by any user's
+// merge), read by the tiles and the stats without a lock: a frame late, never wrong. The user
+// count saturates at 65535.
+typedef struct {
+    _Atomic uint16_t mask[ADV_T_N];
+    _Atomic uint16_t users[ADV_T_N];
+} adv_all_seg;
+
 void adv_cov_init(adv_cov *c);
 void adv_cov_free(adv_cov *c);
 // The user's mask for a segment, by type (ADV_T_ALL: the OR); 0 when the segment is not covered.

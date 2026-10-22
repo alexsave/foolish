@@ -84,6 +84,15 @@ typedef struct adv_world {
     atomic_uint      n_users;
     pthread_mutex_t  user_locks[ADV_USER_LOCKS];
     _Atomic uint32_t *owners;       // per segment: 0, a user id, ADV_OWNER_MANY (mvt.h)
+    // EVERYONE (coverage.h adv_all_seg): the union and the user counts per segment, the length
+    // nobody had before per type in centimetres (an integer, so an atomic add), the same per
+    // region, how many segments have any user per type, and a version bumped by every apply
+    // that changed any of it (the composite tiles' ETag).
+    adv_all_seg     *all;
+    _Atomic uint64_t all_cm[ADV_T_N];
+    _Atomic uint64_t *all_region_cm;   // n_regions x ADV_T_N
+    _Atomic uint32_t all_segs[ADV_T_N];
+    atomic_uint      all_version;
     adv_board       *boards;        // per region
     pthread_mutex_t  boards_lock;
     atomic_uint      next_activity; // the next activity id
@@ -108,6 +117,19 @@ pthread_mutex_t *adv_world_user_lock(adv_world *w, uint32_t id);
 // caller holds it; apply takes the boards lock itself). *out the new length per type. CB_OK,
 // CB_E_NOT_FOUND for no such user, CB_E_NOMEM.
 int adv_world_apply(adv_world *w, adv_user *u, const adv_result *r, adv_applied *out);
+
+// Everyone's length per type in metres, and a region's.
+static inline float adv_world_all_m(const adv_world *w, int type) {
+    return (float)(atomic_load_explicit((_Atomic uint64_t *)&w->all_cm[type], memory_order_relaxed) / 100.0);
+}
+static inline float adv_world_all_region_m(const adv_world *w, uint16_t region, int type) {
+    return (float)(atomic_load_explicit((_Atomic uint64_t *)&w->all_region_cm[(size_t)region * ADV_T_N + type], memory_order_relaxed) / 100.0);
+}
+// The ADV_TOP_N most-travelled segments of a type (by distinct users, then length) into out:
+// how many were written (fewer when fewer segments have a user). A scan of every segment.
+#define ADV_TOP_N 10
+typedef struct { uint32_t seg; uint16_t users; } adv_top_seg;
+uint32_t adv_world_top(const adv_world *w, int type, adv_top_seg out[ADV_TOP_N]);
 
 // The super-unique view of a user: segments only this user has travelled (owner == id), their
 // length, from the coverage (under the user's lock).

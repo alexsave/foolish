@@ -9,7 +9,7 @@ import maplibregl, {
   type StyleSpecification,
   type VectorTileSource,
 } from 'maplibre-gl';
-import { baseTileUrl, deg, HIGHWAY_CLASS, userTileUrl, type TypeIdx, type WRegion } from '../api';
+import { baseTileUrl, deg, EVERYONE, everyoneTileUrl, HIGHWAY_CLASS, userTileUrl, type TypeIdx, type WRegion } from '../api';
 
 export type FlyTarget =
   | { kind: 'bbox'; minLat: number; minLon: number; maxLat: number; maxLon: number; seq: number }
@@ -38,6 +38,16 @@ const ROAD_WIDTH: ExpressionSpecification = [
   11, ['*', CLASS_WIDTH, 0.4],
   14, CLASS_WIDTH,
   18, ['*', CLASS_WIDTH, 4],
+];
+
+// Everyone's traveled roads are shaded by how many distinct users have them (tag "n"): one is
+// the pale end, thirty and more the hot end.
+const HEAT: ExpressionSpecification = [
+  'interpolate', ['linear'], ['get', 'n'],
+  1, '#9ec5ff',
+  3, '#2f6fe4',
+  10, '#1b2a8a',
+  30, '#7a0b4e',
 ];
 
 function scaled(width: number): ExpressionSpecification {
@@ -152,7 +162,8 @@ export function MapView({ userId, type, coverageVersion, regions, fly, onHome, c
       const f = e.features && e.features[0];
       if (!f) return;
       const c = Number(f.properties?.c);
-      const which = f.layer.id === USER_LAYER.traveled ? 'traveled' : 'untraveled';
+      const n = f.properties?.n;
+      const which = f.layer.id !== USER_LAYER.traveled ? 'untraveled' : n === undefined ? 'traveled' : `traveled by ${n}`;
       map.getCanvas().style.cursor = 'pointer';
       popup.setLngLat(e.lngLat).setHTML(`<b>${HIGHWAY_CLASS[c] ?? 'road'}</b> <span style="color:#6b7280">${which}</span>`).addTo(map);
     };
@@ -187,7 +198,9 @@ export function MapView({ userId, type, coverageVersion, regions, fly, onHome, c
       for (const l of LAYERS) map.setLayoutProperty(USER_LAYER[l], 'visibility', 'none');
       return;
     }
-    src.setTiles([userTileUrl(userId, type, coverageVersion)]);
+    const all = userId === EVERYONE;
+    src.setTiles([all ? everyoneTileUrl(type, coverageVersion) : userTileUrl(userId, type, coverageVersion)]);
+    map.setPaintProperty(USER_LAYER.traveled, 'line-color', all ? HEAT : COLOR.traveled);
     for (const l of LAYERS) map.setLayoutProperty(USER_LAYER[l], 'visibility', visible[l] ? 'visible' : 'none');
   }, [ready, userId, type, coverageVersion, visible]);
 
@@ -224,7 +237,7 @@ export function MapView({ userId, type, coverageVersion, regions, fly, onHome, c
                 onChange={(e) => setVisible((v) => ({ ...v, [l]: e.target.checked }))}
               />
               <span className="swatch" style={{ background: COLOR[l] }} />
-              {l}
+              {userId === EVERYONE && l === 'unique' ? 'one person' : userId === EVERYONE && l === 'traveled' ? 'traveled (heat)' : l}
             </label>
           ))}
         </div>

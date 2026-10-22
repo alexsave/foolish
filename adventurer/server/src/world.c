@@ -16,7 +16,9 @@ int adv_world_init(adv_world *w, const adv_graph *g) {
     w->users = calloc(w->max_users, sizeof *w->users);
     w->owners = calloc(g->h->n_segs ? g->h->n_segs : 1, sizeof *w->owners);
     w->boards = calloc(g->h->n_regions ? g->h->n_regions : 1, sizeof *w->boards);
-    if (!w->users || !w->owners || !w->boards) {
+    w->all = calloc(g->h->n_segs ? g->h->n_segs : 1, sizeof *w->all);
+    w->all_region_cm = calloc((size_t)(g->h->n_regions ? g->h->n_regions : 1) * ADV_T_N, sizeof *w->all_region_cm);
+    if (!w->users || !w->owners || !w->boards || !w->all || !w->all_region_cm) {
         adv_world_free(w);
         return CB_E_NOMEM;
     }
@@ -36,6 +38,8 @@ void adv_world_free(adv_world *w) {
     free(w->users);
     free(w->owners);
     free(w->boards);
+    free(w->all);
+    free(w->all_region_cm);
     memset(w, 0, sizeof *w);
 }
 
@@ -166,6 +170,7 @@ int adv_world_apply(adv_world *w, adv_user *u, const adv_result *r, adv_applied 
     uint32_t n_touched = 0;
     bool touched_all = false;
     // Per region: the new length of each hit goes to its segment's region.
+    bool all_changed = false;
     for (uint32_t i = 0; i < r->n_hits; i++) {
         const adv_cov_delta *d = &deltas[i];
         if (!d->new_mask[ADV_T_ALL] && !d->new_mask[type]) continue;
@@ -175,6 +180,27 @@ int adv_world_apply(adv_world *w, adv_user *u, const adv_result *r, adv_applied 
             uint32_t cur = atomic_load_explicit(&w->owners[d->seg], memory_order_relaxed);
             if (cur == 0) atomic_compare_exchange_strong(&w->owners[d->seg], &cur, u->id);
             if (cur != 0 && cur != u->id) atomic_store_explicit(&w->owners[d->seg], ADV_OWNER_MANY, memory_order_relaxed);
+        }
+        // Everyone: per type, whether this user is new to the segment (every bit it holds now
+        // was set by this merge), and the bits nobody had (the ones not in the union before).
+        adv_all_seg *a = &w->all[d->seg];
+        for (int t = 0; t < ADV_T_N; t++) {
+            uint16_t nb = d->new_mask[t];
+            if (!nb) continue;
+            uint16_t after = adv_cov_mask(&u->cov, d->seg, t);
+            if ((uint16_t)(after & ~nb) == 0) {
+                uint16_t cnt = atomic_load_explicit(&a->users[t], memory_order_relaxed);
+                if (cnt != UINT16_MAX && atomic_fetch_add_explicit(&a->users[t], 1, memory_order_relaxed) == 0)
+                    atomic_fetch_add_explicit(&w->all_segs[t], 1, memory_order_relaxed);
+                all_changed = true;
+            }
+            uint16_t fresh = (uint16_t)(nb & ~atomic_fetch_or_explicit(&a->mask[t], nb, memory_order_relaxed));
+            if (fresh) {
+                uint64_t cm = (uint64_t)(adv_mask_len_m(fresh, s->len_m) * 100.0f + 0.5f);
+                atomic_fetch_add_explicit(&w->all_cm[t], cm, memory_order_relaxed);
+                if (s->region != ADV_NO_REGION) atomic_fetch_add_explicit(&w->all_region_cm[(size_t)s->region * ADV_T_N + t], cm, memory_order_relaxed);
+                all_changed = true;
+            }
         }
         if (s->region == ADV_NO_REGION) continue;
         adv_rprog *p = rprog_of(u, s->region);
@@ -195,6 +221,7 @@ int adv_world_apply(adv_world *w, adv_user *u, const adv_result *r, adv_applied 
             p->year_m[t] += add[t];
         }
     }
+    if (all_changed) atomic_fetch_add_explicit(&w->all_version, 1, memory_order_relaxed);
     // Achievements and boards, once per touched region (the progress records are few).
     pthread_mutex_lock(&w->boards_lock);
     for (uint32_t k = 0; k < u->n_rp; k++) {
@@ -248,4 +275,29 @@ void adv_world_board_copy(adv_world *w, uint16_t region, adv_board *out) {
     pthread_mutex_lock(&w->boards_lock);
     *out = w->boards[region];
     pthread_mutex_unlock(&w->boards_lock);
+}
+
+uint32_t adv_world_top(const adv_world *w, int type, adv_top_seg out[ADV_TOP_N]) {
+    uint32_t n = 0;
+    const adv_graph *g = w->g;
+    for (uint32_t i = 0; i < g->h->n_segs; i++) {
+        uint16_t users = atomic_load_explicit(&w->all[i].users[type], memory_order_relaxed);
+        if (!users) continue;
+        float len = g->segs[i].len_m;
+        // Does it beat the last of the list (or is the list short)? Then insert in order.
+        if (n == ADV_TOP_N) {
+            const adv_top_seg *last = &out[ADV_TOP_N - 1];
+            if (users < last->users || (users == last->users && len <= g->segs[last->seg].len_m)) continue;
+            n--;
+        }
+        uint32_t k = n;
+        while (k > 0 && (users > out[k - 1].users || (users == out[k - 1].users && len > g->segs[out[k - 1].seg].len_m))) {
+            out[k] = out[k - 1];
+            k--;
+        }
+        out[k].seg = i;
+        out[k].users = users;
+        n++;
+    }
+    return n;
 }

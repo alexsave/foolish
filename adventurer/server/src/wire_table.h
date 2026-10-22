@@ -40,6 +40,8 @@ static const adv_wire_struct ADV_WIRE_STRUCTS[] = {
     { "adv_w_activity", sizeof(adv_w_activity) },
     { "adv_w_accepted", sizeof(adv_w_accepted) },
     { "adv_w_ops", sizeof(adv_w_ops) },
+    { "adv_w_top_road", sizeof(adv_w_top_road) },
+    { "adv_w_everyone", sizeof(adv_w_everyone) },
 };
 
 static const adv_wire_field ADV_WIRE_FIELDS[] = {
@@ -91,7 +93,17 @@ static const adv_wire_field ADV_WIRE_FIELDS[] = {
     F(adv_w_ops, e2e_p99_us, WK_U32, 4), F(adv_w_ops, rss_mb, WK_U32, 4), F(adv_w_ops, feed_conns, WK_U32, 4),
     F(adv_w_ops, http_conns, WK_U32, 4), F(adv_w_ops, journal_bytes, WK_U64, 8), F(adv_w_ops, accuracy_avg, WK_F32, 4),
     F(adv_w_ops, segs, WK_U32, 4), F(adv_w_ops, regions, WK_U32, 4), F(adv_w_ops, total_len_km, WK_F32, 4),
-    F(adv_w_ops, threads, WK_U32, 4), F(adv_w_ops, recovered, WK_U32, 4),
+    F(adv_w_ops, threads, WK_U32, 4), F(adv_w_ops, recovered, WK_U32, 4), F(adv_w_ops, everyone_version, WK_U32, 4),
+    F(adv_w_ops, everyone_m, WK_F32, 4),
+
+    F(adv_w_top_road, seg, WK_U32, 4), F(adv_w_top_road, users, WK_U16, 2), F(adv_w_top_road, region, WK_U16, 2),
+    F(adv_w_top_road, len_m, WK_F32, 4), F(adv_w_top_road, c_lat, WK_I32, 4), F(adv_w_top_road, c_lon, WK_I32, 4),
+    F(adv_w_top_road, hclass, WK_U8, 1), F(adv_w_top_road, name_len, WK_U8, 1), F(adv_w_top_road, type, WK_U8, 1),
+    F(adv_w_top_road, name, WK_STR, 1),
+
+    F(adv_w_everyone, hash, WK_U32, 4), F(adv_w_everyone, version, WK_U32, 4), F(adv_w_everyone, users, WK_U32, 4),
+    F(adv_w_everyone, n_top, WK_U32, 4), F(adv_w_everyone, traveled_m, WK_F32, 4), F(adv_w_everyone, total_m, WK_F32, 4),
+    F(adv_w_everyone, segs, WK_U32, 4), F(adv_w_everyone, segs_total, WK_U32, 4),
 };
 #undef F
 #undef R

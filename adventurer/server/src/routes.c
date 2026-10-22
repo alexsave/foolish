@@ -250,7 +250,10 @@ void adv_ops_fill(adv_w_ops *o) {
     for (int t = 0; t < ADV_T_N; t++) o->total_len_km[t] = adv_srv.graph.h ? (float)(adv_srv.graph.h->total_len_m[t] / 1000) : 0;
     o->threads = (uint32_t)(adv_srv.work ? adv_work_threads(adv_srv.work) : 0) + 2;
     o->recovered = adv_srv.recovered;
+    o->everyone_version = atomic_load_explicit(&w->all_version, memory_order_relaxed);
+    for (int t = 0; t < ADV_T_N; t++) o->everyone_m[t] = adv_world_all_m(w, t);
 }
+
 
 static void ops_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     if (!ready(res)) return;
@@ -471,6 +474,120 @@ static void user_tile(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     tile_answer(res, bytes, n, etag, CACHE);
 }
 
+// ---- GET /adv/everyone, /adv/everyone/regions, /adv/everyone/<z>/<x>/<y>.mvt ------------------
+
+// Segments a type may score, counted once per graph.
+static uint32_t segs_scoreable(int type) {
+    static uint32_t n[ADV_T_N];
+    static atomic_bool done;
+    if (!atomic_load(&done)) {
+        const adv_graph *g = &adv_srv.graph;
+        uint32_t c[ADV_T_N] = { 0, 0, 0 };
+        for (uint32_t i = 0; i < g->h->n_segs; i++) {
+            uint8_t a = g->segs[i].access;
+            if (a & ADV_ACC_BIKE) c[ADV_T_BIKE]++;
+            if (a & ADV_ACC_FOOT) c[ADV_T_FOOT]++;
+            if (a) c[ADV_T_ALL]++;
+        }
+        memcpy(n, c, sizeof n);   // the same numbers from every thread: a racy write is harmless
+        atomic_store(&done, true);
+    }
+    return n[type];
+}
+
+static void everyone_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    if (!ready(res)) return;
+    const adv_graph *g = &adv_srv.graph;
+    adv_world *w = &adv_srv.world;
+    adv_w_everyone e;
+    memset(&e, 0, sizeof e);
+    e.hash = adv_wire_hash();
+    e.version = atomic_load_explicit(&w->all_version, memory_order_relaxed);
+    e.users = atomic_load(&w->n_users);
+    for (int t = 0; t < ADV_T_N; t++) {
+        e.traveled_m[t] = adv_world_all_m(w, t);
+        e.total_m[t] = (float)g->h->total_len_m[t];
+        e.segs[t] = atomic_load_explicit(&w->all_segs[t], memory_order_relaxed);
+        e.segs_total[t] = segs_scoreable(t);
+    }
+    // The top roads of every type, in a row: a scan of the segments per type, a few ms at most.
+    adv_w_top_road rows[ADV_T_N * ADV_TOP_N];
+    uint32_t n_rows = 0;
+    for (int t = 0; t < ADV_T_N; t++) {
+        adv_top_seg top[ADV_TOP_N];
+        uint32_t n = adv_world_top(w, t, top);
+        for (uint32_t i = 0; i < n; i++) {
+            adv_w_top_road *r = &rows[n_rows++];
+            memset(r, 0, sizeof *r);
+            const adv_seg *sg = &g->segs[top[i].seg];
+            r->seg = top[i].seg;
+            r->users = top[i].users;
+            r->region = sg->region;
+            r->len_m = sg->len_m;
+            adv_pt mid = adv_seg_at(g, top[i].seg, 0.5);
+            r->c_lat = mid.lat;
+            r->c_lon = mid.lon;
+            r->hclass = sg->hclass;
+            r->type = (uint8_t)t;
+            const char *nm = adv_seg_name(g, top[i].seg);
+            size_t nl = strnlen(nm, ADV_NAME_MAX - 1);
+            memcpy(r->name, nm, nl);
+            r->name_len = (uint8_t)nl;
+        }
+    }
+    e.n_top = n_rows;
+    cb_buf_append(&res->body, &e, sizeof e);
+    cb_buf_append(&res->body, rows, (size_t)n_rows * sizeof rows[0]);
+    res->status = 200;
+    cb_res_header(res, "Content-Type", OCTETS);
+    cb_res_header(res, "Cache-Control", "no-store");
+}
+
+static void everyone_regions(cb_http_res *res) {
+    const adv_graph *g = &adv_srv.graph;
+    adv_world *w = &adv_srv.world;
+    adv_w_list head = { adv_wire_hash(), g->h->n_regions };
+    cb_buf_append(&res->body, &head, sizeof head);
+    for (uint32_t i = 0; i < g->h->n_regions; i++) {
+        adv_w_region_progress p;
+        memset(&p, 0, sizeof p);
+        p.region = (uint16_t)i;
+        for (int t = 0; t < ADV_T_N; t++) p.len_m[t] = adv_world_all_region_m(w, (uint16_t)i, t);
+        cb_buf_append(&res->body, &p, sizeof p);
+    }
+    res->status = 200;
+    cb_res_header(res, "Content-Type", OCTETS);
+    cb_res_header(res, "Cache-Control", "no-store");
+}
+
+static void everyone_sub(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    if (!ready(res)) return;
+    const char *rest = req->path + strlen("/adv/everyone/");
+    if (strcmp(rest, "regions") == 0) { everyone_regions(res); return; }
+    adv_tile_req tr = { .traveled = true, .untraveled = true, .unique = true };
+    if (!parse_zxy_mvt(rest, &tr.z, &tr.x, &tr.y)) { cb_router_error(res, 404, "not a tile"); return; }
+    tr.type = type_of_query(req);
+    adv_world *w = &adv_srv.world;
+    tr.all = w->all;
+    adv_tile_scratch *s = tile_scratch();
+    if (!s) { cb_router_error(res, 500, "no memory"); return; }
+    static const char CACHE[] = "private, max-age=2";
+    char etag[64];
+    snprintf(etag, sizeof etag, "\"all.%u.%d\"", atomic_load_explicit(&w->all_version, memory_order_relaxed), tr.type);
+    if (not_modified(req, res, etag, CACHE)) return;
+    // No lock: the words are atomics, and a tile a frame behind an apply is the next tile's.
+    // A full-city low-zoom walk is a few milliseconds: not the loop's (CB_ROUTE_INLINE's budget
+    // sends a long run to the pool, and the walk is bounded by the tile's cells either way).
+    int64_t t0 = cb_mono_us();
+    const uint8_t *bytes;
+    int n = adv_tile_render(&adv_srv.graph, &tr, 0, NULL, NULL, s, &bytes);
+    if (n < 0) { cb_router_error(res, n == CB_E_INVALID ? 404 : 500, cb_strerror(n)); return; }
+    note_dropped(s, &tr);
+    if (n > 0) cb_metrics_observe(ctx->metrics, ADV_M_TILE, (uint64_t)(cb_mono_us() - t0));
+    cb_metrics_rate(ctx->metrics, ADV_M_TILES, cb_now_ms(), 1);
+    tile_answer(res, bytes, n, etag, CACHE);
+}
+
 static const cb_route ROUTES[] = {
     { "POST", "/adv/users", CB_ROUTE_POOL, users_post, 0 },
     { "GET", "/adv/users", CB_ROUTE_POOL, users_get, 0 },
@@ -479,6 +596,8 @@ static const cb_route ROUTES[] = {
     { "GET", "/adv/leaders/*", CB_ROUTE_POOL, leaders_get, 0 },
     { "GET", "/adv/ops", CB_ROUTE_POOL, ops_get, 0 },
     { "POST", "/adv/upload", CB_ROUTE_POOL, upload_post, 0 },
+    { "GET", "/adv/everyone", CB_ROUTE_POOL, everyone_get, 0 },
+    { "GET", "/adv/everyone/*", CB_ROUTE_POOL, everyone_sub, 0 },
     { "GET", "/adv/base/*", CB_ROUTE_INLINE | CB_ROUTE_HOME, base_tile, 4000 },
     { "GET", "/adv/tile/*", CB_ROUTE_INLINE | CB_ROUTE_HOME, user_tile, 4000 },
 };

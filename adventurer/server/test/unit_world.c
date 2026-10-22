@@ -99,6 +99,69 @@ static void test_apply(adv_graph *g) {
     T_CHECK(su_n == 0 && su_m == 0);
     adv_world_super_unique(&w, u2, &su_n, &su_m);
     T_CHECK_MSG(su_n == n2 - n, "su %u n2 %u n %u", su_n, n2, n);
+    // Everyone: the union is the whole West region (user 2 ran all of it), on foot every segment
+    // has one user, by bike the 30% user 1 rode, combined two users where both went and one
+    // elsewhere; the combined length is the region's, the bike length user 1's ride, and each
+    // apply that added something bumped the version (the repeat ride did not).
+    {
+        uint32_t one = 0, two = 0, bike1 = 0, foot1 = 0;
+        for (uint32_t i = 0; i < g->h->n_segs; i++) {
+            if (g->segs[i].region != 0) {
+                T_CHECK(atomic_load(&w.all[i].users[ADV_T_ALL]) == 0 && atomic_load(&w.all[i].mask[ADV_T_ALL]) == 0);
+                continue;
+            }
+            uint16_t ua = atomic_load(&w.all[i].users[ADV_T_ALL]), ub = atomic_load(&w.all[i].users[ADV_T_BIKE]), uf = atomic_load(&w.all[i].users[ADV_T_FOOT]);
+            T_CHECK(atomic_load(&w.all[i].mask[ADV_T_ALL]) == 0xFFFF && atomic_load(&w.all[i].mask[ADV_T_FOOT]) == 0xFFFF);
+            T_CHECK(uf == 1 && (ua == 1 || ua == 2) && ub == (ua == 2 ? 1 : 0));
+            T_CHECK(atomic_load(&w.all[i].mask[ADV_T_BIKE]) == (ub ? 0xFFFF : 0));
+            if (ua == 1) one++; else two++;
+            bike1 += ub;
+            foot1 += uf;
+        }
+        T_CHECK_MSG(two == n && one + two == n2, "two %u one %u n %u n2 %u", two, one, n, n2);
+        T_CHECK(bike1 == n && foot1 == n2);
+        T_CHECK(atomic_load(&w.all_segs[ADV_T_ALL]) == n2 && atomic_load(&w.all_segs[ADV_T_BIKE]) == n && atomic_load(&w.all_segs[ADV_T_FOOT]) == n2);
+        T_CHECK_MSG(fabs(adv_world_all_m(&w, ADV_T_ALL) - g->regions[0].len_m[ADV_T_ALL]) < 0.05, "all %f region %f", adv_world_all_m(&w, ADV_T_ALL),
+                    g->regions[0].len_m[ADV_T_ALL]);
+        T_CHECK(fabs(adv_world_all_m(&w, ADV_T_BIKE) - len) < 0.05 && fabs(adv_world_all_region_m(&w, 0, ADV_T_BIKE) - len) < 0.05);
+        T_CHECK(fabs(adv_world_all_region_m(&w, 0, ADV_T_ALL) - adv_world_all_m(&w, ADV_T_ALL)) < 0.01 && adv_world_all_region_m(&w, 1, ADV_T_ALL) == 0);
+        T_CHECK_MSG(atomic_load(&w.all_version) == 2, "version %u", atomic_load(&w.all_version));
+        // The top roads: the longest of the two-user segments first, each with 2, then the
+        // one-user ones; by bike only user 1's.
+        adv_top_seg top[ADV_TOP_N];
+        uint32_t nt = adv_world_top(&w, ADV_T_ALL, top);
+        T_CHECK(nt == ADV_TOP_N);
+        for (uint32_t i = 0; i < nt; i++) {
+            T_CHECK(top[i].users == (i < two ? 2 : 1));
+            if (i > 0 && top[i].users == top[i - 1].users) T_CHECK(g->segs[top[i].seg].len_m <= g->segs[top[i - 1].seg].len_m);
+        }
+        nt = adv_world_top(&w, ADV_T_BIKE, top);
+        T_CHECK(nt == (n < ADV_TOP_N ? n : ADV_TOP_N) && top[0].users == 1);
+        adv_world w0;
+        T_CHECK(adv_world_init(&w0, g) == CB_OK);
+        T_CHECK(adv_world_top(&w0, ADV_T_ALL, top) == 0);
+        adv_world_free(&w0);
+        // A user is counted once per segment and type however many times it adds bits there:
+        // user 1 bikes the first half of an East segment nobody has, user 2 bikes it whole (two
+        // users, the union full), then user 1 bikes it whole: new bits for user 1, nothing new
+        // for anyone, so the count stays 2, the length stays, and the version does not move.
+        uint32_t y = UINT32_MAX;
+        for (uint32_t i = 0; i < g->h->n_segs && y == UINT32_MAX; i++)
+            if (g->segs[i].region == 1 && (g->segs[i].access & ADV_ACC_BIKE) && atomic_load(&w.all[i].users[ADV_T_ALL]) == 0) y = i;
+        T_CHECK(y != UINT32_MAX);
+        uint32_t v0 = atomic_load(&w.all_version);
+        adv_hit half = { y, 0x00FF, 0 }, whole = { y, 0xFFFF, 0 };
+        T_CHECK(apply(&w, 1, ADV_ACT_BIKE, T0 + 5000, &half, 1, &a, 10) == CB_OK);
+        T_CHECK(atomic_load(&w.all[y].users[ADV_T_BIKE]) == 1 && atomic_load(&w.all[y].mask[ADV_T_BIKE]) == 0x00FF && atomic_load(&w.all_version) == v0 + 1);
+        T_CHECK(apply(&w, 2, ADV_ACT_BIKE, T0 + 6000, &whole, 1, &a, 11) == CB_OK);
+        T_CHECK(atomic_load(&w.all[y].users[ADV_T_BIKE]) == 2 && atomic_load(&w.all[y].mask[ADV_T_BIKE]) == 0xFFFF && atomic_load(&w.all_version) == v0 + 2);
+        float before = adv_world_all_m(&w, ADV_T_BIKE);
+        T_CHECK(apply(&w, 1, ADV_ACT_BIKE, T0 + 7000, &whole, 1, &a, 12) == CB_OK);
+        T_CHECK(a.new_m[ADV_T_BIKE] > 0);   // new to user 1
+        T_CHECK_MSG(atomic_load(&w.all[y].users[ADV_T_BIKE]) == 2 && atomic_load(&w.all[y].users[ADV_T_ALL]) == 2, "users %u", atomic_load(&w.all[y].users[ADV_T_BIKE]));
+        T_CHECK(adv_world_all_m(&w, ADV_T_BIKE) == before);
+        T_CHECK_MSG(atomic_load(&w.all_version) == v0 + 2, "version %u want %u", atomic_load(&w.all_version), v0 + 2);
+    }
     // A new month resets the month sums and the month board, the year keeps counting.
     int64_t next_month = T0 + 40LL * 86400000;
     uint32_t n3 = region_hits(g, 1, h, 4096, 0.5);
@@ -184,6 +247,16 @@ static void test_journal(adv_graph *g) {
         T_CHECK(a->first_ms == b->first_ms && a->last_ms == b->last_ms);
     }
     for (uint32_t i = 0; i < g->h->n_segs; i++) T_CHECK(atomic_load(&w.owners[i]) == atomic_load(&w2.owners[i]));
+    // Everyone's words, the sums and the version come back the same from the journal.
+    for (uint32_t i = 0; i < g->h->n_segs; i++)
+        for (int t = 0; t < ADV_T_N; t++)
+            T_CHECK(atomic_load(&w.all[i].mask[t]) == atomic_load(&w2.all[i].mask[t]) && atomic_load(&w.all[i].users[t]) == atomic_load(&w2.all[i].users[t]));
+    for (int t = 0; t < ADV_T_N; t++) {
+        T_CHECK(atomic_load(&w.all_cm[t]) == atomic_load(&w2.all_cm[t]) && atomic_load(&w.all_segs[t]) == atomic_load(&w2.all_segs[t]));
+        T_CHECK(atomic_load(&w.all_region_cm[t]) == atomic_load(&w2.all_region_cm[t]) && atomic_load(&w.all_region_cm[ADV_T_N + t]) == atomic_load(&w2.all_region_cm[ADV_T_N + t]));
+    }
+    T_CHECK(atomic_load(&w.all_version) == atomic_load(&w2.all_version) && atomic_load(&w.all_version) > 0);
+    T_CHECK(atomic_load(&w.all_cm[ADV_T_ALL]) > 0);
     adv_board b1, b2;
     adv_world_board_copy(&w, 0, &b1);
     adv_world_board_copy(&w2, 0, &b2);
