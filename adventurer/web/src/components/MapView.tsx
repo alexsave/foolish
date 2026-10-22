@@ -121,6 +121,7 @@ export function MapView({ userId, type, coverageVersion, regions, fly, onHome, c
       zoom: 1.5,
       attributionControl: false,
       maxZoom: 19,
+      hash: 'map',   // the view in the URL, so a place can be shared and a page reload keeps it
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     map.addControl(
@@ -177,6 +178,10 @@ export function MapView({ userId, type, coverageVersion, regions, fly, onHome, c
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || fitted.current || !regions || regions.length === 0) return;
+    if (window.location.hash.includes('map=')) {   // a view the URL already names wins over the fit
+      fitted.current = true;
+      return;
+    }
     const b = regionsBounds(regions);
     if (!b) return;
     fitted.current = true;

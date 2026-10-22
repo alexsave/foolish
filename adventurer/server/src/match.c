@@ -457,6 +457,33 @@ static uint32_t downsample(adv_match_scratch *s, const adv_trace_pt *pts, uint32
         double d = hypot(x - lx, y - ly);
         if (d > max_speed * dt + SPIKE_SLACK_M) {   // farther than anyone moves: a spike, not a move
             (*spikes)++;
+            // A BAD FIRST FIX: a receiver's first position is often its last one, kilometres away.
+            // When the only kept point is the first and the next two points agree with this one
+            // (each within the speed bound of the last), it is the first point that was the
+            // outlier: the trace starts here instead, and the first point is the spike.
+            if (kept == 1 && i >= 1 && i + 2 < n) {
+                bool chain = true;
+                double px = x, py = y;
+                uint32_t pt = pts[i].t_ms;
+                for (uint32_t k = i + 1; k <= i + 2 && chain; k++) {
+                    double kx = ((double)pts[k].lon - o.lon) * f->mx, ky = ((double)pts[k].lat - o.lat) * f->my;
+                    double kdt = pts[k].t_ms >= pt ? (pts[k].t_ms - pt) / 1000.0 : 0;
+                    chain = hypot(kx - px, ky - py) <= max_speed * kdt + SPIKE_SLACK_M;
+                    px = kx;
+                    py = ky;
+                    pt = pts[k].t_ms;
+                }
+                if (chain) {
+                    s->smp[0].x = x;
+                    s->smp[0].y = y;
+                    s->smp[0].p.lat = pts[i].lat;
+                    s->smp[0].p.lon = pts[i].lon;
+                    s->smp[0].t_ms = pts[i].t_ms;
+                    lx = x;
+                    ly = y;
+                    lt = pts[i].t_ms;
+                }
+            }
             continue;
         }
         uint32_t dt_ms = pts[i].t_ms >= lt ? pts[i].t_ms - lt : 0;

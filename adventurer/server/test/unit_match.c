@@ -505,12 +505,40 @@ static void test_hostile(adv_match_scratch *s) {
     unlink(path);
 }
 
+// A receiver's first fix is often its last position, kilometres from the ride: the trace must
+// start at the second point, not lose the first minutes to the speed bound.
+static void test_first_fix(adv_match_scratch *s) {
+    fg_opts o = { .cols = 12, .rows = 12, .block_m = 120, .shape_m = 40 };
+    char path[512];
+    fg_tmp_path(path, sizeof path, "unit_match_f");
+    adv_graph g;
+    T_CHECK(fg_build(&o, path, &g) == 0);
+    static walk w;
+    rng r = rng_seed(4242);
+    walk_make(&g, &r, ADV_ACC_BIKE, 40, &w);
+    uint32_t nt = walk_truth(&w, TRUTH);
+    float truth_m = adv_hits_len_m(&g, TRUTH, nt);
+    uint32_t n = gen_trace(&g, &w, &r, 6, TR, ADV_TRACE_MAX_PTS);
+    adv_frame f = adv_frame_at(TR[0].lat);
+    TR[0].lat += (int32_t)(3000 / f.my);   // 3 km north of where the ride starts
+    adv_match_result res;
+    adv_match(&g, TR, n, ADV_ACT_BIKE, NULL, s, &res);
+    T_CHECK_MSG(res.rc == ADV_MATCH_OK, "first fix: %s", adv_match_reason(res.rc));
+    T_CHECK_MSG(res.n_spikes <= 2, "first fix: %u spikes (the outlier alone is one)", res.n_spikes);
+    float common = adv_hits_common_m(&g, TRUTH, nt, res.hits, res.n_hits);
+    double recall = truth_m > 0 ? common / truth_m : 0;
+    T_CHECK_MSG(recall >= 0.99, "first fix: recall %.4f (%u samples, %u spikes)", recall, res.n_samples, res.n_spikes);
+    adv_graph_close(&g);
+    unlink(path);
+}
+
 int main(void) {
     adv_match_scratch *s = adv_match_scratch_new();
     T_CHECK(s != NULL);
     if (!s) return 1;
     test_walks(s);
     test_hostile(s);
+    test_first_fix(s);
     adv_match_scratch_free(s);
     return t_done("unit_match");
 }
