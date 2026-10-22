@@ -1,0 +1,6 @@
+build/
+web/node_modules/
+web/.next/
+web/out/
+web/src/gen/
+web/public/chess.wasm
