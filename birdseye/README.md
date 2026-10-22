@@ -1,11 +1,14 @@
 # birdseye
 
-A birds-eye view of foolish: a simulator that plays many games of foolish at once through the real server, and a site that shows every live table at a glance.
+A birds-eye view of foolish: the server's 49 bots playing each other through the real server (a league at a human's pace, and tournaments), and a site that shows every live table, every bot's rating over time and the tournament bracket at a glance.
+The earlier mixed mode (fake humans and some bots) is still there as `BE_MODE=mixed`.
 One C process (`birdseye serve`) runs the fake humans, keeps every table as one fixed binary row, and publishes each change through c_base realtime; a Next.js site draws the tables, the numbers and a feed, with a click-through to watch one table play out.
 Nothing in foolish's server changes: the fake humans are ordinary clients on `/v1` and `/ws`, speaking the kernel's own codecs.
 [DESIGN.md](DESIGN.md) has the design and the measured numbers.
 
 ## Build and run
+
+One command brings back the league and the stored tournament view:
 
 ```
 birdseye/tools/run.sh            # builds, then starts the game server, birdseye and the site
@@ -17,7 +20,16 @@ birdseye/tools/run.sh stop
 Needs what c_base needs (`brew install openssl@3 sqlite` on macOS), Homebrew LLVM for structgen and the wasm (`/opt/homebrew/opt/llvm`), and `node` for the site.
 `run.sh` keeps PIDs and logs under `birdseye/data/run/` and stops only what it started; the two SQLite files live under `birdseye/data/`.
 The sim's size is `BE_PLAYERS` (fake humans, default 60), `BE_TABLES` (tables kept live, default half the players), `BE_THREADS`; the rest of the knobs (think time, bots, podkidnoy, hostile moves, rematches, the seed) are listed at the top of `server/src/birdseye_app.c`.
-`WEB=0 birdseye/tools/run.sh` leaves the site out.
+`WEB=0 birdseye/tools/run.sh` leaves the site out; `WEB_DEV=1` runs `next dev` instead of the production build.
+
+### The league, the tournament
+
+- The league (the default, `BE_MODE=league`): `BE_LEAGUE_TABLES` tables (40) of bots alone, made by the game server's dev-only `POST /dev/bot_table` (foolish/server/src/app/dev_bot_table.h), each bot at up to `BE_LEAGUE_PER_BOT` (4) at once, sizes 2 to 8, 30% podkidnoy, played at a human's pace by the server's dev-only `CBASE_BOT_THINK_MS=1500-5000`.
+  Every finished game's rating stamp is a result in `data/league.bin`; the site's League view draws every bot's rating after every game.
+- A tournament: `BE_MODE=tournament birdseye/tools/run.sh` goes on with the stored tournament, or draws a new one when the last one is finished (or none exists): 48 of the 49 bots (the lowest-rated random one sits out), seeded by the server's ratings, single elimination, two-player best of five, the 16 top seeds straight into the round of 32.
+  It plays at the kernel's own bots-only pace (300 ms a move) on 16 tables and takes about a quarter of an hour; the bracket is kept in `data/tournament.bin` and every mode's site shows it under Tournament.
+  To start a new tournament while one is running, stop, remove `birdseye/data/tournament.bin`, and run the command again.
+- Both routes the server needs are dev-only (refused or not routed without `CBASE_DEV=1`); the kernel is unchanged. `birdseye/tools/hotpath_proof.sh` shows the move and push path compiles to the same instructions as before them.
 
 By hand:
 
@@ -35,6 +47,7 @@ Nothing here touches AWS or any real secret.
 ```
 make -C birdseye/server check        # every unit test and the smoke (a real game server, a real sim, a game played to its fool, the stream heard)
 make -C birdseye/server check-asan   # the same under ASan + UBSan
+make -C c_base build/test/smoke_dev_bot_table build/test/unit_bots_think   # the dev-only server routes and knob
 ```
 
 Every test was mutation-checked when written: the rule it covers was broken, the test went red for that assertion, the rule was restored (see DESIGN.md).

@@ -78,12 +78,19 @@ Real: the game server (the deployed binary, its protocol, its bots, its rate lim
 Simplified: the fake humans share one process and one IP; think times are uniform; the handwritten brain plays every human seat (the belief bots cannot play a masked board); a table's humans come from one thread; only the sim's own tables are shown (a table made by a real client against the same server is not in the world, since birdseye learns tables from its players, not from the server); the site's token is a fixed dev account on birdseye's own store, until the platform's anonymous public-family subscription lands.
 Missing: chat, ratings and the leaderboard, replays, sign-out and account deletion (the accounts accumulate in the game's SQLite file across runs and are signed into again by name), a spectator-only watcher of someone else's table.
 
+## The league and the tournament (2026-10-22, second session)
+
+Bots alone at a table cannot be dealt by any client request (the kernel deals only for a seated asker), so the game server has a dev-only `POST /dev/bot_table` (routed only under `CBASE_DEV=1`, behind the admin token) that runs the lobby's own kernel calls: a house account seats the bots, leaves, and the first bot readies (or seats the eighth), which deals.
+The kernel paces bots-only tables at 300 ms a move, so the server also has a dev-only `CBASE_BOT_THINK_MS=min-max`: a bot waits a think time drawn per (game, version) after the last shown move.
+`birdseye/tools/hotpath_proof.sh` compiles every server source before and after and compares each function's disassembly: the move and push path (functions_http.c, pushes.c, fanout.c, the journal, the store) is identical; bots.c's drive differs by the one added call.
+The league (league.c) watches every table as one spectator account and records each finished game's rating stamp (before, after, delta by seat) as a result; the site draws them.
+The tournament (tournament.c) is bookkeeping over the same engine; its bracket lives in its own file and is shown in every mode.
+Measured with 40 league tables at the think pace: the game server at about 5% of a core (the gauge's ten-second window checked against the process's CPU time over the same ten seconds: 4.97% vs 5.03%, 4.77% vs 4.70%), birdseye about 1%; with 16 tournament tables at the bots-only pace about 13%.
+
 ## Known gaps
 
-- Unfinished at the stop (2026-10-22 12:15): the 400-player measurement; the game server's CPU gauge is a one-second window and read wildly different values at 12:08 and 12:09 (13% and 1% of a core), so it needs a steady ten-second window checked against `ps -o %cpu`; the grid leaves white bands when cards of different heights share a row (a masonry or equal-height layout is wanted); the page shows a red "offline" during a restart where a grey "reconnecting" is wanted; the "other request" latency deserves its own rows (create, ask, read) rather than one.
-- The metrics rebase is done: the branch sits on `cbase-app-lifts` head eabe12738 and uses the registry and `shared/c/stats`, `shared/c/proc.h`; the earlier copies are deleted.
-
-- The histogram's four buckets per octave make a p50 read up to 19% low; a 60 s game reads as 56 s.
-- A player whose socket closes signs in again and reads its game whole, but a table whose creator vanished mid-setup is given up after a minute.
-- A restart of birdseye while a table is in play leaves that table on the game server until its humans' sessions time out (the sim exits its tables on a clean stop, not on a kill).
-- `next dev` draws its own "N" dev indicator at the page's bottom left; the production build is untested.
+- A restart of the game server while league tables play leaves them on the server; birdseye takes its own tables up again across its own restart (`league.bin.live`), but a tournament's game in play at a stop is played again rather than watched (the server still rates the abandoned one, so the league history can hold a game the bracket does not).
+- Bots that have never played are missing from the server's leaderboard, so on a fresh server the league shows their rating as 0 until their first game (the first stamp says the real one).
+- The league's games/min in the top bar counts rated results over ten minutes; the platform's one-second rate of games is shown in Numbers only.
+- The histogram's four buckets per octave make a p50 read up to 19% low.
+- The 400-player mixed-mode measurement was never finished.

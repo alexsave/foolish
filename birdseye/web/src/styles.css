@@ -1493,7 +1493,7 @@ input {
 .bracket {
   position: relative;
   flex: 1;
-  min-height: 560px;
+  min-height: 640px;
 }
 
 .bk-lines {
@@ -1536,7 +1536,7 @@ input {
   grid-template-columns: 18px 8px minmax(0, 1fr) 14px;
   align-items: center;
   gap: 5px;
-  height: 20px;
+  height: 18px;
   padding: 0 7px 0 5px;
 }
 
