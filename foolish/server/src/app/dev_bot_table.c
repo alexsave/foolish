@@ -57,15 +57,27 @@ static int run_seat(Table *t, const cb_game_row *row, const uint8_t seed[32], vo
     const int hl = (int)strlen(DEV_HOUSE_ID);
     int rc = table_set_rules(t, DEV_HOUSE_ID, hl, p->passing);
     if (rc < 0) return rc;   // TABLE_MOOT: the rules the lobby already has
-    for (int i = 0; i < p->n; i++) {
+    // The house holds a seat while it seats bots, so it seats at most MAX_PLAYERS - 1 of them.
+    const int by_house = p->n < MAX_PLAYERS ? p->n : MAX_PLAYERS - 1;
+    for (int i = 0; i < by_house; i++) {
         const cb_bot_row *b = p->bot[i];
         rc = table_add_bot(t, DEV_HOUSE_ID, hl, b->id, (int)strlen(b->id), b->nickname, (int)strlen(b->nickname),
                            b->strategy_key, (int)strlen(b->strategy_key), seed);
         if (rc < 0) return rc;
     }
     if ((rc = table_leave(t, DEV_HOUSE_ID, hl, DEV_HOUSE_ID, hl)) < 0) return rc;
-    // Every seat is a READY bot now; the kernel deals on a ready, and the first bot says it.
-    return table_ready(t, p->bot[0]->id, (int)strlen(p->bot[0]->id), seed);
+    // Every seat is a READY bot now. The first bot seats the rest (a full table: the eighth), the
+    // last of which deals; with none left it readies, which deals. Either is the kernel's deal.
+    const char *first = p->bot[0]->id;
+    const int fl = (int)strlen(first);
+    if (by_house == p->n) return table_ready(t, first, fl, seed);
+    for (int i = by_house; i < p->n; i++) {
+        const cb_bot_row *b = p->bot[i];
+        rc = table_add_bot(t, first, fl, b->id, (int)strlen(b->id), b->nickname, (int)strlen(b->nickname), b->strategy_key,
+                           (int)strlen(b->strategy_key), seed);
+        if (rc < 0) return rc;
+    }
+    return rc;
 }
 
 static void h_bot_table(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {

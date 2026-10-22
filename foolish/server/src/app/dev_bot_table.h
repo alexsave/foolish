@@ -10,9 +10,10 @@
 //
 // WHAT IT DOES, all through table_ops.h like any request: cb_table_create seats a house account
 // (DEV_HOUSE_ID, never a real user), then ONE cb_table_run on that lobby: table_set_rules,
-// table_add_bot for each bot named (the house is not ready, so nothing deals yet), table_leave
-// of the house (the lobby is now only bots, every one READY), and table_ready by the first bot,
-// which is the kernel's deal. The commit kicks the bot loop (bots.h) exactly as a deal from
+// table_add_bot for each bot named (the house is not ready, so nothing deals yet; at most seven,
+// since the house holds a seat), table_leave of the house (the lobby is now only bots, every one
+// READY), then the first bot seats an eighth if one was asked for (that add deals) or readies
+// (that ready deals). The commit kicks the bot loop (bots.h) exactly as a deal from
 // /v1/meta does; from there the game is the ordinary one: bot_drive at the kernel's own pace,
 // table_rate through the commit, the replay job.
 //
