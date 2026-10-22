@@ -57,7 +57,15 @@ bool osm_way_road(const pbf_tag *tags, int n_tags, uint8_t *access, uint8_t *hcl
     case ADV_HC_PATH:   // path and bridleway: bikes when signed in
         if (is(bicycle, "yes") || is(bicycle, "designated")) acc |= ADV_ACC_BIKE;
         break;
-    case ADV_HC_FOOTWAY:
+    case ADV_HC_FOOTWAY: {
+        // A sidewalk or a crossing is the street beside it drawn again a few metres over: the
+        // same ground twice, and a matcher's trap (a runner on the street was matched onto the
+        // sidewalk for whole stretches). The street carries the foot access; these are skipped.
+        const char *footway = tag(tags, n_tags, "footway");
+        if (in3(footway, "sidewalk", "crossing", "traffic_island")) return false;
+        if (is(bicycle, "yes") || is(bicycle, "designated")) acc |= ADV_ACC_BIKE;
+        break;
+    }
     case ADV_HC_PEDESTRIAN:   // bikes only where allowed by name (steps: never)
         if (is(bicycle, "yes") || is(bicycle, "designated")) acc |= ADV_ACC_BIKE;
         break;

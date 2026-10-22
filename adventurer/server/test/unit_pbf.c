@@ -416,6 +416,10 @@ static bool road(const char *const *kv, uint8_t *acc, uint8_t *hc, uint8_t *fl) 
 static void test_tags(void) {
     uint8_t acc, hc, fl;
     T_CHECK(!ROAD("highway", "motorway"));
+    // Sidewalks and crossings duplicate the street beside them: not roads of their own.
+    T_CHECK(!ROAD("highway", "footway", "footway", "sidewalk"));
+    T_CHECK(!ROAD("highway", "footway", "footway", "crossing"));
+    T_CHECK(ROAD("highway", "footway", "footway", "yes") && acc == ADV_ACC_FOOT && hc == ADV_HC_FOOTWAY);
     T_CHECK(!ROAD("highway", "motorway_link", "bicycle", "yes"));
     T_CHECK(ROAD("highway", "trunk") && acc == ADV_ACC_BIKE && hc == ADV_HC_TRUNK && fl == 0);
     T_CHECK(!ROAD("highway", "trunk", "bicycle", "no"));

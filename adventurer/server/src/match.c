@@ -42,6 +42,12 @@
 #define TRANS_M   15.0    // metres of route detour that cost 1
 #define JUMP_M    400.0   // the detour a failed search is charged
 #define JUMP_PEN  2.0f
+// THE SWITCH PENALTY: leaving a segment costs this on top of the detour, staying nothing. A
+// sidewalk and its street share every crossing node, so without it a switch between them cost
+// nothing and GPS noise picked one at each crossing: the three worst rides of a thousand on
+// Rhode Island were runs matched 70% onto the parallel footway. The true path pays it once per
+// segment, any flip-flop twice.
+#define SWITCH_PEN 0.3f
 #define OFF_PEN   3.0
 #define OFF_PER_M 0.01
 #define SPIKE_SLACK_M  50.0   // what a point may move beyond max_speed * dt before it is a spike
@@ -737,14 +743,14 @@ void adv_match(const adv_graph *g, const adv_trace_pt *pts, uint32_t n, uint8_t 
                     if (mid != NONE) {
                         fast[k] = 1;
                         n_fast++;
-                        float c = ps[k].cost + (float)(fabs(route - straight) / TRANS_M);
+                        float c = ps[k].cost + (float)(fabs(route - straight) / TRANS_M) + SWITCH_PEN;
                         if (c < best) { best = c; best_pred = (uint8_t)k; best_kind = kind; best_n = 1; s->best_path[0] = mid; }
                         continue;
                     }
                 }
                 fast[k] = 1;
                 n_fast++;
-                float c = ps[k].cost + (float)(fabs(route - straight) / TRANS_M);
+                float c = ps[k].cost + (float)(fabs(route - straight) / TRANS_M) + (kind == TR_SAME ? 0 : SWITCH_PEN);
                 if (c < best) { best = c; best_pred = (uint8_t)k; best_kind = kind; best_n = 0; }
             }
             // The slow path: a bounded search, skipped when the predecessor is already dearer
@@ -784,7 +790,7 @@ void adv_match(const adv_graph *g, const adv_trace_pt *pts, uint32_t n, uint8_t 
                     }
                 }
                 if (found) {
-                    c = ps[k].cost + (float)(fabs(route - straight) / TRANS_M);
+                    c = ps[k].cost + (float)(fabs(route - straight) / TRANS_M) + SWITCH_PEN;
                     kind = MK(TR_PATH, ea, eb);
                 } else {
                     n_jumps++;
