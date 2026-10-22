@@ -124,6 +124,10 @@ typedef struct {
     const uint32_t      *cell_segs;
     const adv_region    *regions;
     const char          *names;    // n_names_bytes of NUL-terminated strings; names[0] is ""
+    // THE CELL BOXES, built at open: for each entry of cell_segs, its segment's box as min_lat,
+    // max_lat, min_lon, max_lon, so a walk of a cell tests boxes in one sequential run instead of
+    // reaching into a 48-byte segment record per entry (most entries are rejected by the box).
+    int32_t *cell_boxes;
     void  *map;
     size_t map_len;
 } adv_graph;

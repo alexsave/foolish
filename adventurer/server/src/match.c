@@ -458,10 +458,14 @@ static int gather(const adv_graph *g, adv_match_scratch *s, const adv_frame *f, 
             if (ii < 0 || jj < 0) continue;
             uint32_t n;
             const uint32_t *list = adv_cell_list(g, (uint32_t)ii, (uint32_t)jj, &n);
+            if (!n) continue;
+            const int32_t *box = g->cell_boxes + 4 * (size_t)(list - g->cell_segs);   // graph.h THE CELL BOXES
+            const int32_t lat0 = p.lat - rlat, lat1 = p.lat + rlat, lon0 = p.lon - rlon, lon1 = p.lon + rlon;
             for (uint32_t k = 0; k < n; k++) {
+                const int32_t *bx = box + 4 * k;
+                if (bx[1] < lat0 || bx[0] > lat1 || bx[3] < lon0 || bx[2] > lon1) continue;
                 uint32_t seg = list[k];
                 const adv_seg *sg = &g->segs[seg];
-                if (sg->max_lat < p.lat - rlat || sg->min_lat > p.lat + rlat || sg->max_lon < p.lon - rlon || sg->min_lon > p.lon + rlon) continue;
                 if (!(sg->access & access)) continue;
                 if (dd_seen(s, seg)) continue;
                 double fr, d = project(g, s, f, p, seg, &fr);

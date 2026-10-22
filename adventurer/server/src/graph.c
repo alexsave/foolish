@@ -144,11 +144,26 @@ int adv_graph_open(const char *path, adv_graph *g, char *err, size_t cap) {
     g->map = m;
     g->map_len = (size_t)st.st_size;
     graph_point(g, m);
+    g->cell_boxes = malloc((size_t)(g->h->n_cell_segs ? g->h->n_cell_segs : 1) * 4 * sizeof *g->cell_boxes);
+    if (!g->cell_boxes) {
+        adv_graph_close(g);
+        if (cap) snprintf(err, cap, "graph: no memory for the cell boxes");
+        return CB_E_NOMEM;
+    }
+    for (uint32_t k = 0; k < g->h->n_cell_segs; k++) {
+        const adv_seg *s = &g->segs[g->cell_segs[k]];
+        int32_t *b4 = g->cell_boxes + 4 * (size_t)k;
+        b4[0] = s->min_lat;
+        b4[1] = s->max_lat;
+        b4[2] = s->min_lon;
+        b4[3] = s->max_lon;
+    }
     return CB_OK;
 }
 
 void adv_graph_close(adv_graph *g) {
     if (g->map) munmap(g->map, g->map_len);
+    free(g->cell_boxes);
     memset(g, 0, sizeof *g);
 }
 

@@ -103,12 +103,13 @@ static bool walk_next(walk *w, uint32_t *seg) {
             walk_cell(w);
             continue;
         }
+        // The box first, from the cell boxes (graph.h: a sequential run, not a segment record).
+        const int32_t *bx = w->g->cell_boxes + 4 * (size_t)(w->list - w->g->cell_segs + w->k);
         uint32_t id = w->list[w->k++];
+        if (bx[1] < w->min_lat || bx[0] > w->max_lat || bx[3] < w->min_lon || bx[2] > w->max_lon) continue;
         if (id >= w->s->n_segs) continue;   // the file's indexes were checked at open; a reader still never faults
         if (w->s->stamp[id] == w->s->gen) continue;
         w->s->stamp[id] = w->s->gen;
-        const adv_seg *sg = &w->g->segs[id];
-        if (sg->max_lat < w->min_lat || sg->min_lat > w->max_lat || sg->max_lon < w->min_lon || sg->min_lon > w->max_lon) continue;
         *seg = id;
         return true;
     }
