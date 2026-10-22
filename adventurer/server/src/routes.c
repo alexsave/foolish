@@ -221,6 +221,7 @@ static void leaders_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 
 void adv_ops_fill(adv_w_ops *o) {
     memset(o, 0, sizeof *o);
+    o->v = ADV_W_V;
     o->kind = ADV_W_KIND_OPS;
     o->hash = adv_wire_hash();
     int64_t now = cb_now_ms();
@@ -269,13 +270,12 @@ static void ops_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 
 static void upload_post(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     if (!ready(res)) return;
-    int64_t arrival = cb_mono_us();
     adv_trace t;
     if (adv_trace_parse(req->body, req->body_len, &t) != CB_OK) { cb_router_error(res, 400, "not a trace"); return; }
     if (!adv_world_user(&adv_srv.world, t.hdr.user)) { cb_router_error(res, 404, "no such user"); return; }
     adv_w_accepted a = { adv_wire_hash(), 0, 0, 0 };
-    int rc = adv_work_enqueue(adv_srv.work, req->body, req->body_len, (t.hdr.flags & ADV_TRF_BACKFILL) != 0, arrival,
-                              &a.activity, &a.queue_live, &a.queue_backfill);
+    int rc = adv_work_enqueue(adv_srv.work, req->body, req->body_len, (t.hdr.flags & ADV_TRF_BACKFILL) != 0, &a.activity,
+                              &a.queue_live, &a.queue_backfill);
     if (rc == CB_E_FULL) {
         cb_res_header(res, "Retry-After", "1");
         cb_router_error(res, 503, "queue full");

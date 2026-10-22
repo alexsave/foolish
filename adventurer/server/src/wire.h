@@ -12,7 +12,9 @@
 //   GET  /adv/everyone                 adv_w_everyone then n_top x adv_w_top_road (the composite)
 //   GET  /adv/everyone/regions         adv_w_list (n) then n x adv_w_region_progress (everyone's, per region)
 //   GET  /adv/everyone/<z>/<x>/<y>.mvt?t=bike|foot|all   MVT of everyone's coverage, ETag "all.<version>.<t>" 
-//   GET  /adv/feed (WebSocket)         binary frames: adv_w_activity (kind 1) or adv_w_ops (kind 2)
+//   GET  /ws/public (WebSocket)        the platform's anonymous socket (feed.h): after an empty HELLO
+//                                      and a SUB of room "feed", pushes adv_w_activity (kind 1) and
+//                                      adv_w_ops (kind 2), each starting [SF_V][kind] as a push must
 //   GET  /adv/tile/<uid>/<z>/<x>/<y>.mvt?t=bike|foot|all   MVT (mvt.h), ETag "<uid>.<version>.<t>"
 //   GET  /adv/base/<z>/<x>/<y>.mvt     MVT, the roads layer alone
 //   POST /adv/upload                   adv_trace (trace.h); answers adv_w_accepted
@@ -23,10 +25,15 @@
 #define ADV_WIRE_H
 
 #include "graph.h"
+#include "stream_frame.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
+// A feed push starts [ADV_W_V][kind], as the platform's stream frames do (shared/c/stream_frame.h
+// SF_V; a push's kind is outside the platform's SF_HELLO..SF_PONG), so a page tells a push from a
+// READY or a REPLY by its second byte.
+#define ADV_W_V             1
 #define ADV_W_KIND_ACTIVITY 1
 #define ADV_W_KIND_OPS      2
 #define ADV_W_NAME          32
@@ -145,10 +152,10 @@ typedef struct {
 #define ADV_AF_REJECTED 0x2
 #define ADV_AF_TRUTH    0x4   // accuracy and false_m mean something
 typedef struct {
+    uint8_t  v;           // ADV_W_V
     uint8_t  kind;
     uint8_t  type;        // ADV_ACT_*
     uint8_t  flags;       // ADV_AF_*
-    uint8_t  reason;      // ADV_MATCH_* when rejected
     uint32_t user;
     uint32_t activity;    // the server's id (the journal's row)
     uint32_t gen_id;
@@ -161,7 +168,8 @@ typedef struct {
     uint32_t e2e_us;      // the upload's arrival to this frame
     uint32_t queue_live;  // uploads waiting, each lane
     uint32_t queue_backfill;
-    uint32_t pad;
+    uint8_t  reason;      // ADV_MATCH_* when rejected
+    uint8_t  pad[3];
     int64_t  at_ms;
 } adv_w_activity;
 
@@ -174,8 +182,9 @@ typedef struct {
 
 // The server's operating numbers (GET /adv/ops, and every second on the feed as kind 2).
 typedef struct {
+    uint8_t  v;                   // ADV_W_V
     uint8_t  kind;
-    uint8_t  pad[3];
+    uint8_t  pad[2];
     uint32_t hash;
     int64_t  at_ms;
     uint32_t uptime_s;
@@ -212,8 +221,10 @@ _Static_assert(sizeof(adv_w_leaders) == 152, "adv_w_leaders");
 _Static_assert(sizeof(adv_w_activity) == 72, "adv_w_activity");
 _Static_assert(sizeof(adv_w_accepted) == 16, "adv_w_accepted");
 _Static_assert(sizeof(adv_w_ops) == 144, "adv_w_ops");
-// A feed frame is told apart by its first byte: both kinds put `kind` there.
-_Static_assert(offsetof(adv_w_activity, kind) == 0 && offsetof(adv_w_ops, kind) == 0, "a feed frame's kind is its first byte");
+// A feed push is told apart by its first two bytes: both kinds put `v` and `kind` there.
+_Static_assert(offsetof(adv_w_activity, v) == 0 && offsetof(adv_w_ops, v) == 0 && offsetof(adv_w_activity, kind) == 1 &&
+               offsetof(adv_w_ops, kind) == 1, "a feed push is [v][kind]");
+_Static_assert(ADV_W_KIND_ACTIVITY < SF_HELLO && ADV_W_KIND_OPS < SF_HELLO && ADV_W_V == SF_V, "a feed push is a stream push");
 _Static_assert(sizeof(adv_w_top_road) == 88, "adv_w_top_road");
 _Static_assert(sizeof(adv_w_everyone) == 64, "adv_w_everyone");
 

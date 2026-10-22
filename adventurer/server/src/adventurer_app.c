@@ -85,7 +85,9 @@ static void adv_serve_close(cb_ctx *ctx) {
     adv_graph_close(&adv_srv.graph);
 }
 
-static const cb_route_list *const ADV_ROUTES[] = { &adv_route_list, &adv_feed_route_list };
+static const cb_route_list *const ADV_ROUTES[] = { &adv_route_list };
+// The live feed's one family (feed.h): anonymous, so GET /ws/public is served.
+static const cb_topic_family *const ADV_TOPICS[] = { &adv_fam_feed };
 
 // server.h's ADV_M_* rows, in that order.
 static const cb_metric_def ADV_METRICS[ADV_M_N] = {
@@ -98,7 +100,9 @@ static const cb_metric_def ADV_METRICS[ADV_M_N] = {
 static const cb_app ADV_APP = {
     .name = "adventurer",
     .routes = ADV_ROUTES,
-    .n_route_lists = 2,
+    .n_route_lists = 1,
+    .topics = ADV_TOPICS,
+    .n_topics = 1,
     .store = &ADV_STORE,
     .serve_open = adv_serve_open,
     .serve_close = adv_serve_close,

@@ -4,6 +4,7 @@
 //
 //   build/test/smoke build/adventurer build/adv-gen
 #include "coverage.h"
+#include "feed.h"
 #include "graph.h"
 #include "lib_client.h"
 #include "lib_fakegraph.h"
@@ -97,7 +98,7 @@ static bool feed_activity(int ws, uint32_t user, adv_w_activity *out, int tries)
         cb_buf_init(&fr);
         int op = tc_ws_recv(ws, 15000, &fr);
         if (op < 0) { cb_buf_free(&fr); return false; }
-        if (op == CB_WS_OP_BIN && fr.len == sizeof(adv_w_activity) && fr.p[0] == ADV_W_KIND_ACTIVITY) {
+        if (op == CB_WS_OP_BIN && fr.len == sizeof(adv_w_activity) && fr.p[0] == ADV_W_V && fr.p[1] == ADV_W_KIND_ACTIVITY) {
             memcpy(out, fr.p, sizeof *out);
             cb_buf_free(&fr);
             if (out->user == user) return true;
@@ -106,6 +107,25 @@ static bool feed_activity(int ws, uint32_t user, adv_w_activity *out, int tries)
         cb_buf_free(&fr);
     }
     return false;
+}
+
+// The feed as a page opens it: the platform's anonymous socket, an empty HELLO (READY), a SUB of
+// the feed room (REPLY 200).
+static int open_feed(int port) {
+    int ws = tc_ws_open(port, "/ws/public", NULL);
+    if (ws < 0) return -1;
+    uint8_t b[64];
+    cb_buf fr;
+    cb_buf_init(&fr);
+    bool ok = tc_ws_send(ws, CB_WS_OP_BIN, b, (size_t)sf_put_hello(b, sizeof b, "", 0)) == 0 &&
+              tc_ws_recv(ws, 5000, &fr) == CB_WS_OP_BIN && fr.len == 2 && fr.p[1] == SF_READY;
+    cb_buf_reset(&fr);
+    sf_frame f;
+    ok = ok && tc_ws_send(ws, CB_WS_OP_BIN, b, (size_t)sf_put_sub(b, sizeof b, SF_SUB, 7, SF_WHAT_ROOM, ADV_FEED_ROOM, strlen(ADV_FEED_ROOM))) == 0 &&
+         tc_ws_recv(ws, 5000, &fr) == CB_WS_OP_BIN && sf_parse(fr.p, fr.len, &f) == 0 && f.kind == SF_REPLY && f.id == 7 && f.status == 200;
+    cb_buf_free(&fr);
+    if (!ok) { close(ws); return -1; }
+    return ws;
 }
 
 int main(int argc, char **argv) {
@@ -148,7 +168,7 @@ int main(int argc, char **argv) {
     T_CHECK(strcmp(rg0.name, "West") == 0 && rg0.len_m[ADV_T_ALL] > 0);
     tc_response_free(&r);
     // The feed, then an upload along row 3 from crossing 0 to 8 (8 segments, 960 m).
-    int ws = tc_ws_open(port, "/adv/feed", NULL);
+    int ws = open_feed(port);
     T_CHECK(ws >= 0);
     static uint8_t body[1 << 20];
     float truth_m;
@@ -234,10 +254,15 @@ int main(int argc, char **argv) {
         tc_response_free(&r);
         T_CHECK(feed_activity(ws, 2, &ev, 20) && (ev.flags & ADV_AF_REJECTED) && ev.reason == 1 && ev.gen_id == 5);
     }
-    T_CHECK(fetch(port, "/adv/ops", &r) == 0 && r.status == 200);
-    memcpy(&ops, r.body.p, sizeof ops);
+    // The feed's watchers are counted on the loop once a second (feed.c): wait for the count.
+    for (int k = 0; k < 40; k++) {
+        T_CHECK(fetch(port, "/adv/ops", &r) == 0 && r.status == 200);
+        memcpy(&ops, r.body.p, sizeof ops);
+        tc_response_free(&r);
+        if (ops.feed_conns == 1) break;
+        usleep(100000);
+    }
     T_CHECK(ops.users == 2 && ops.activities == 2 && ops.rejected == 1 && ops.feed_conns == 1 && ops.act_cpu_p99_us > 0 && ops.tile_p50_us > 0);
-    tc_response_free(&r);
     close(ws);
     // Restart: the journal rebuilds both users, the one accepted ride each, and the ownership.
     T_CHECK(tp_stop(&c, SIGTERM, 15000) == 0);
