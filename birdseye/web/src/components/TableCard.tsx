@@ -24,7 +24,7 @@ function Seat({ s, index, table }: { s: WTable['seats'][number]; index: number; 
   const bot = (s.flags & BE_SEAT_BOT) !== 0;
   const good = (s.flags & BE_SEAT_GOOD) !== 0;
   const defender = index === table.defender && table.phase === BE_PHASE_PLAYING;
-  const lead = index === table.firstAttacker && table.phase === BE_PHASE_PLAYING;
+  const lead = index === table.firstAttacker && !defender && table.phase === BE_PHASE_PLAYING;
   const cls = `seat${toMove ? ' to-move' : ''}${out ? ' out' : ''}${fool ? ' fool' : ''}`;
   const stack = Math.min(s.handCount, 8);
   return (
@@ -153,8 +153,7 @@ export function TableCard({ table: t, now, selected, onSelect }: Props) {
       </div>
       <div className="tcard-foot">
         <span className="tcard-last">{lastLine(t)}</span>
-        <span className="tcard-nums num">
-          {t.moves > 0 && <span title="moves this game">{t.moves} mv</span>}
+        <span className="tcard-nums num" title={`${t.moves} moves this game`}>
           {t.lastActUs > 0 && <span title="the last move's request-to-reply latency">{usToText(t.lastActUs)}</span>}
           <span>{ago(Number(t.changedMs), now)}</span>
         </span>

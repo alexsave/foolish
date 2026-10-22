@@ -8,6 +8,7 @@
 #ifdef __APPLE__
 #include <libproc.h>
 #include <mach/mach.h>
+#include <mach/mach_time.h>
 #include <sys/resource.h>
 #else
 #include <stdio.h>
@@ -113,8 +114,12 @@ uint64_t be_cpu_us(int pid) {
     }
     struct proc_taskinfo ti;
     if (proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &ti, sizeof ti) != (int)sizeof ti) return 0;
-    // Mach absolute time units on Apple silicon are nanoseconds (timebase 1/1).
-    return (ti.pti_total_user + ti.pti_total_system) / 1000;
+    // The times are in Mach absolute time units (24 MHz ticks on Apple silicon, nanoseconds on
+    // Intel): the timebase says how many nanoseconds one is.
+    static mach_timebase_info_data_t tb;
+    if (tb.denom == 0) mach_timebase_info(&tb);
+    uint64_t ns = (ti.pti_total_user + ti.pti_total_system) * tb.numer / tb.denom;
+    return ns / 1000;
 #else
     char path[64];
     snprintf(path, sizeof path, "/proc/%d/stat", pid == 0 ? (int)getpid() : pid);
