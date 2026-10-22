@@ -284,6 +284,10 @@ uint64_t cc_client_premove_targets(const cc_client *c, int from) {
     return out;
 }
 
+void cc_client_read(cc_client *c, const char *path, uint32_t tag) {
+    req(c, CC_RQ_READ, SF_METH_GET, path, NULL, 0, tag);   /* the tag rides in the request's game slot */
+}
+
 void cc_client_act(cc_client *c, int act) {
     if (!c->game) return;
     cw_act_req q = { c->game, (uint8_t)act, { 0, 0, 0 } };
@@ -393,6 +397,15 @@ static void take_reply(cc_client *c, const sf_frame *f, int64_t now) {
     int kind = p->kind;
     uint32_t game = p->game;
     p->id = 0;
+    if (kind == CC_RQ_READ) {   /* any status: the page reads the answer it asked for */
+        c->read_tag = game;
+        c->read_status = f->status;
+        c->read_len = f->body_len > CC_READ_CAP ? 0 : (uint32_t)f->body_len;
+        if (c->read_len) memcpy(c->read_buf, f->body, c->read_len);
+        else if (f->body_len) c->read_status = 507;   /* too large to keep */
+        c->events |= CC_EV_READ;
+        return;
+    }
     if (f->status != 200 && kind != CC_RQ_SUB) {
         memset(&c->err, 0, sizeof c->err);
         if (f->body_len >= sizeof c->err) memcpy(&c->err, f->body, sizeof c->err);

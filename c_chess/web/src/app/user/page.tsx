@@ -39,11 +39,11 @@ function User() {
     if (!name) return;
     let gone = false;
     (async () => {
-      const a = await net.fetchApi(`/c/user/${encodeURIComponent(name)}`);
+      const a = await net.read(`/c/user/${encodeURIComponent(name)}`);
       if (gone) return;
       if (a.status !== 200) { setMissing(true); return; }
       setP(net.k!.profile(a.body));
-      const b = await net.fetchApi(`/c/games/${encodeURIComponent(name)}`);
+      const b = await net.read(`/c/games/${encodeURIComponent(name)}`);
       if (!gone && b.status === 200) setG(net.k!.games(b.body));
     })();
     return () => { gone = true; };

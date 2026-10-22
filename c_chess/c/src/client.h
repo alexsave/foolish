@@ -36,10 +36,12 @@ enum {
     CC_EV_OVER = 1 << 8,       /* the game shown has just ended */
     CC_EV_MOVED = 1 << 9,      /* the other side moved in the game shown */
     CC_EV_TV = 1 << 10,        /* the lobby's live games changed (cc_client.tv) */
+    CC_EV_READ = 1 << 11,      /* a read asked by cc_client_read answered (cc_client.read_*) */
 };
 
 /* What a request was, to read its answer. */
-enum { CC_RQ_NONE, CC_RQ_SEEK, CC_RQ_UNSEEK, CC_RQ_MOVE, CC_RQ_ACT, CC_RQ_SNAP, CC_RQ_LOBBY, CC_RQ_CHALLENGE, CC_RQ_ACCEPT, CC_RQ_SUB, CC_RQ_TV };
+enum { CC_RQ_NONE, CC_RQ_SEEK, CC_RQ_UNSEEK, CC_RQ_MOVE, CC_RQ_ACT, CC_RQ_SNAP, CC_RQ_LOBBY, CC_RQ_CHALLENGE, CC_RQ_ACCEPT, CC_RQ_SUB, CC_RQ_TV, CC_RQ_READ };
+#define CC_READ_CAP 16384   /* the largest answer a read keeps (a profile with its points, a game list) */
 
 typedef struct { uint32_t id; uint8_t kind; uint8_t pad[3]; uint32_t game; } cc_pending;
 
@@ -94,6 +96,11 @@ typedef struct {
     cw_tv     tv;              /* CC_EV_TV */
     int64_t   tv_at;           /* when it arrived (its clocks are as of then) */
     uint32_t  moves_sent, moves_confirmed, pushes;
+    /* the last read's answer (CC_EV_READ): the tag it was asked with, its status, its bytes */
+    uint32_t  read_tag;
+    uint16_t  read_status;
+    uint32_t  read_len;
+    uint8_t   read_buf[CC_READ_CAP];
 } cc_client;
 
 void cc_client_init(cc_client *c);
@@ -132,6 +139,9 @@ void cc_client_premove_cancel(cc_client *c);
  * were ours to move; whether it is legal is decided when it is played). */
 uint64_t cc_client_premove_targets(const cc_client *c, int from);
 void cc_client_act(cc_client *c, int act);
+/* A GET over the socket (a profile, a game list, the leaderboard): the answer arrives as
+ * CC_EV_READ with this tag. Everything after sign-in goes over the one authenticated socket. */
+void cc_client_read(cc_client *c, const char *path, uint32_t tag);
 
 /* ---- what to draw ---- */
 /* A side's clock now. */

@@ -49,6 +49,45 @@ EXPORT(cv_refresh_body) uint32_t cv_refresh_body(void) {
 EXPORT(cv_auth_answer) void cv_auth_answer(int status, uint32_t n) { cc_client_auth_answer(&C, status, IO, n); }
 EXPORT(cv_hello) void cv_hello(void) { cc_client_hello(&C); }
 
+/* A new guest from the random bytes in io (at least 32): the record into io, its length. */
+EXPORT(cv_guest_new) uint32_t cv_guest_new(void) {
+    static const char abc[] = "abcdefghijkmnpqrstuvwxyz23456789";
+    CvGuest g;
+    memset(&g, 0, sizeof g);
+    memcpy(g.name, "guest-", 6);
+    for (int i = 0; i < 6; i++) g.name[6 + i] = abc[IO[i] % 32];
+    for (int i = 0; i < 20; i++) g.password[i] = abc[IO[6 + i] % 32];
+    memcpy(IO, &g, sizeof g);
+    return sizeof g;
+}
+EXPORT(cv_guest_size) uint32_t cv_guest_size(void) { return sizeof(CvGuest); }
+/* io holds a guest record: the POST /c/auth body for it into io, its length. */
+EXPORT(cv_guest_auth_body) uint32_t cv_guest_auth_body(int mode) {
+    CvGuest g;
+    memcpy(&g, IO, sizeof g);
+    g.name[CV_NAME - 1] = 0;
+    g.password[CV_GUEST_PW - 1] = 0;
+    cw_auth_req q;
+    cc_client_auth_body(g.name, g.password, mode, &q);
+    memcpy(IO, &q, sizeof q);
+    memset(&g, 0, sizeof g);
+    return sizeof q;
+}
+
+/* A GET over the socket; the answer comes as CC_EV_READ (cv_read_take). io holds the path. */
+EXPORT(cv_read) void cv_read(uint32_t path_len, uint32_t tag) {
+    char path[300];
+    if (path_len >= sizeof path) return;
+    memcpy(path, IO, path_len);
+    path[path_len] = 0;
+    cc_client_read(&C, path, tag);
+}
+/* The last read's answer into io: its length. */
+EXPORT(cv_read_take) uint32_t cv_read_take(void) {
+    memcpy(IO, C.read_buf, C.read_len);
+    return C.read_len;
+}
+
 /* ---- the socket ---- */
 EXPORT(cv_in) void cv_in(uint32_t n, double now) { cc_client_in(&C, IO, n, (int64_t)now); }
 /* The next frame to send, copied into io: its length, 0 when none. */
@@ -123,6 +162,8 @@ EXPORT(cv_view) const CvView *cv_view(double now) {
     V.start_game = C.start_game;
     V.start_color = C.start_color;
     V.challenge_id = C.challenge_id;
+    V.read_tag = C.read_tag;
+    V.read_status = C.read_status;
     V.err_status = C.err_status;
     V.err_code = C.err.code;
     V.err_rc = C.err.rc;

@@ -35,6 +35,9 @@ typedef struct {
     uint16_t err_status;
     uint16_t pad1;
     uint32_t challenge_id;
+    uint32_t read_tag;        /* the last read's (CC_EV_READ) */
+    uint16_t read_status;
+    uint16_t pad3;
     uint8_t  board[64];
     char     white[CV_NAME];
     char     black[CV_NAME];
@@ -99,7 +102,9 @@ typedef struct { uint16_t n; uint16_t pad; CvTvGame games[CV_TV]; } CvTv;
 typedef struct { char name[CV_NAME]; int16_t rating; uint16_t rd; uint32_t games; } CvTopRow;
 typedef struct { uint16_t n; uint16_t pad; CvTopRow rows[CV_TOP]; } CvTop;
 
-/* The account to keep between visits: what the page stores (as the raw answer bytes it got). */
-typedef struct { char name[CV_NAME]; uint8_t has_token; uint8_t pad[3]; } CvMe;
+/* A guest's account, made at the first visit and kept by the page as these bytes (base64 in
+ * localStorage): its name and password, NUL-padded. The page never reads inside it. */
+#define CV_GUEST_PW 32
+typedef struct { char name[CV_NAME]; char password[CV_GUEST_PW]; } CvGuest;
 
 #endif

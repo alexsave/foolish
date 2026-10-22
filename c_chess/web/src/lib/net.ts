@@ -1,7 +1,7 @@
 // net.ts - the page's one connection: the account (kept between visits), the /ws socket, and the
 // kernel's view of it, as a store React subscribes to. The bytes go between the socket and the
 // kernel untouched; what they mean is the kernel's.
-import { CC_EV_GAME, CC_EV_LOBBY, CC_EV_TV, CW_AUTH_SIGNIN, CW_AUTH_SIGNUP } from '@/gen/web_layout';
+import { CC_EV_GAME, CC_EV_LOBBY, CC_EV_READ, CC_EV_TV, CW_AUTH_SIGNIN, CW_AUTH_SIGNUP } from '@/gen/web_layout';
 import type { CvLobby_Snap, CvMoves_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
 import { Kernel, loadKernel } from './kernel';
 
@@ -33,13 +33,6 @@ function store(key: string, value: string | null): void {
 }
 function load(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
-}
-
-function randomWord(n: number): string {
-  const a = new Uint8Array(n);
-  crypto.getRandomValues(a);
-  const abc = 'abcdefghijkmnpqrstuvwxyz23456789';
-  return Array.from(a, (x) => abc[x % abc.length]).join('');
 }
 
 class Net {
@@ -82,6 +75,10 @@ class Net {
     }
     if (view.events & CC_EV_LOBBY) patch.lobby = this.k.lobbyView();
     if (view.events & CC_EV_TV) patch.tv = this.k.tv(performance.now());
+    if (view.events & CC_EV_READ) {
+      const done = this.reads.get(view.readTag);
+      if (done) { this.reads.delete(view.readTag); done({ status: view.readStatus, body: this.k.readTake() }); }
+    }
     this.publish(patch);
   }
 
@@ -149,16 +146,21 @@ class Net {
     this.connect();
   }
 
-  /** A first visit plays at once as a guest: an account made with a random name and password. */
+  /** A first visit plays at once as a guest: an account with a random name and password, kept as
+   * the kernel's opaque record (base64 in localStorage). */
   private async guest(): Promise<void> {
-    let g = load(GUEST_KEY);
-    if (!g) {
-      g = JSON.stringify({ name: 'guest-' + randomWord(6), password: randomWord(20) });
-      store(GUEST_KEY, g);
-    }
-    const { name, password } = JSON.parse(g) as { name: string; password: string };
-    let st = await this.auth(name, password, CW_AUTH_SIGNIN);
-    if (st !== 200) st = await this.auth(name, password, CW_AUTH_SIGNUP);
+    const k = this.k!;
+    let g: Uint8Array | null = null;
+    try { const kept = load(GUEST_KEY); if (kept) g = unb64(kept); } catch { g = null; }   // an older format: a new guest
+    if (!g || !k.isGuest(g)) { g = k.guestNew(); store(GUEST_KEY, b64(g)); }
+    const auth = async (mode: number) => {
+      const r = await this.post('/c/auth', k.guestAuthBody(g, mode));
+      k.authAnswer(r.status, r.body);
+      if (r.status === 200) store(SESSION_KEY, b64(r.body));
+      return r.status;
+    };
+    let st = await auth(CW_AUTH_SIGNIN);
+    if (st !== 200) st = await auth(CW_AUTH_SIGNUP);
     if (st !== 200) {   // the name was taken meanwhile: another
       store(GUEST_KEY, null);
       await this.guest();
@@ -237,11 +239,19 @@ class Net {
     this.flush();
   }
 
-  /** A GET of the API over HTTP (the pages that read the journal): its status and bytes. */
-  async fetchApi(path: string): Promise<{ status: number; body: Uint8Array }> {
+  private reads = new Map<number, (r: { status: number; body: Uint8Array }) => void>();
+  private nextRead = 1;
+
+  /** A GET over the socket (the one sign-in, the one TLS handshake): its status and bytes. Waits
+   * for the socket when it is not up yet. */
+  async read(path: string): Promise<{ status: number; body: Uint8Array }> {
     if (!this.k) await this.ready();
-    const res = await fetch(server() + path);
-    return { status: res.status, body: new Uint8Array(await res.arrayBuffer()) };
+    while (this.snap.phase !== 'online') await new Promise((r) => setTimeout(r, 50));
+    const tag = this.nextRead++;
+    return new Promise((done) => {
+      this.reads.set(tag, done);
+      this.run((k) => k.read(path, tag));
+    });
   }
 
   /** Runs fn against the kernel, then sends what it queued and publishes what changed. */

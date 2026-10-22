@@ -280,6 +280,19 @@ static void after_the_game(void) {
     T_EQ_INT(gl.rows[0].ply, 4);
     T_EQ_STR(gl.rows[0].opponent, black_of(&A, &B) == &A ? "bob" : "alice");
     tc_response_free(&r);
+    // the same read over the socket (what the page does: no HTTP after sign-in)
+    snprintf(path, sizeof path, "/c/user/%s", b->c.name);
+    cc_client_read(&C.c, path, 77);
+    C.seen = 0;
+    T_CHECK(pump(&C, CC_EV_READ, 3000));
+    T_EQ_INT(C.c.read_tag, 77);
+    T_EQ_INT(C.c.read_status, 200);
+    T_EQ_INT((int)C.c.read_len, (int)(sizeof(cw_profile) + sizeof(cw_point)));
+    cc_client_read(&C.c, "/c/user/nobody", 78);
+    C.seen = 0;
+    T_CHECK(pump(&C, CC_EV_READ, 3000));
+    T_EQ_INT(C.c.read_tag, 78);
+    T_EQ_INT(C.c.read_status, 404);
     T_EQ_INT(tc_http(g_port, "GET", "/c/user/nobody", NULL, NULL, 0, &r), 0);
     T_EQ_INT(r.status, 404);
     tc_response_free(&r);

@@ -10,7 +10,7 @@ export default function Leaders({ limit }: { limit: number }) {
   useEffect(() => {
     let gone = false;
     const load = async () => {
-      const r = await net.fetchApi('/c/top');
+      const r = await net.read('/c/top');
       if (!gone && r.status === 200) setTop(net.k!.top(r.body));
     };
     void load();

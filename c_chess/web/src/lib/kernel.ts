@@ -41,6 +41,11 @@ interface Exports {
   cv_profile(n: number): number;
   cv_games(n: number): number;
   cv_tv(now: number): number;
+  cv_guest_new(): number;
+  cv_guest_size(): number;
+  cv_guest_auth_body(mode: number): number;
+  cv_read(pathLen: number, tag: number): void;
+  cv_read_take(): number;
   cv_top(n: number): number;
 }
 
@@ -69,6 +74,27 @@ export class Kernel {
     return this.take(this.x.cv_auth_body(a.length, b.length, mode));
   }
   refreshBody(): Uint8Array { return this.take(this.x.cv_refresh_body()); }
+  /** A new guest account record (opaque bytes the page keeps), from fresh random bytes. */
+  guestNew(): Uint8Array {
+    const r = new Uint8Array(32);
+    crypto.getRandomValues(r);
+    this.put(r);
+    return this.take(this.x.cv_guest_new());
+  }
+  /** Whether kept bytes are a guest record of this kernel's layout. */
+  isGuest(g: Uint8Array): boolean { return g.length === this.x.cv_guest_size(); }
+  /** The POST /c/auth body for a kept guest record. */
+  guestAuthBody(guest: Uint8Array, mode: number): Uint8Array {
+    this.put(guest);
+    return this.take(this.x.cv_guest_auth_body(mode));
+  }
+  /** A GET over the socket; its answer comes back as a CC_EV_READ with this tag. */
+  read(path: string, tag: number): void {
+    const p = new TextEncoder().encode(path);
+    this.put(p);
+    this.x.cv_read(p.length, tag);
+  }
+  readTake(): Uint8Array { return this.take(this.x.cv_read_take()); }
   authAnswer(status: number, body: Uint8Array): void { this.x.cv_auth_answer(status, this.put(body)); }
   hello(): void { this.x.cv_hello(); }
   in(frame: Uint8Array, now: number): void { this.x.cv_in(this.put(frame), now); }
