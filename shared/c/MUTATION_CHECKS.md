@@ -84,3 +84,19 @@ Killed: 64-bit prime, 64-bit offset, 32-bit prime, 32-bit offset, xor and multip
 | sha256 K[0] changed | killed: "one call, 0 bytes" |
 | sha256 buffer flush at 65 | killed by a hang (the run times out) |
 | sha256 `c->bitlen = bits` removed | equivalent (the length bytes are taken from the local `bits`) |
+
+## stats/hist_test.c, proc_test.c (2026-10-22)
+
+The machinery of a server's own numbers, lifted from two apps on c_base. Each mutant was applied to the working file, the test rebuilt and run, and the file restored by the reverse edit; c_base's fuzz target over the registry (fz_metrics.c) found the two defects named below before any mutation was tried.
+
+| Mutant | Result |
+|---|---|
+| hist.c bucket fraction `* 4` made `* 2` | killed: "3" (stat_hist_bucket(3) == 6) |
+| hist.c pct answers the next bucket's floor | killed: "p50 of 1..100 is bucket [48, 56)" |
+| hist.c the max CAS removed | killed: "max 100" |
+| hist.c bucket 0's floor 1 (the fuzzer's find: a p99 of 1 over nothing but zeros) | killed: "bucket 0 holds 0 and 1: its floor is 0" |
+| hist.c per_s counts a slot whose second is not the one asked | killed: "ten seconds of silence: 0" |
+| hist.c a slot taken over by a new second not reset | killed: "a reused slot was reset" |
+| hist.c slot_of made a plain `%` (the fuzzer's find: second -2 indexes before the array) | killed: "and holds its count" (the out-of-bounds write lands in count[8]; the per_s assertions alone survive, since the wrong slot reads back consistently, so the slot is checked by name) |
+| proc.c rss answers 0 for pid 0 | killed: "this process: at least a megabyte" |
+| proc.c cpu_us for pid 0 answers a thousandth | killed: "the reading moved by at least 5 ms of work" |
