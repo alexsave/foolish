@@ -164,6 +164,20 @@ static void test_graph(void) {
         s0->name = keep;
         hd->crc = crc32c(0, buf + sizeof *hd, g.map_len - sizeof *hd);
         T_CHECK(adv_graph_check(buf, g.map_len, err, sizeof err) == CB_OK);
+        // A segment's last shape point that is not its end node refuses (a tile draws a segment
+        // below the shape zoom as its two nodes), and so does a first point that is not node_a.
+        adv_delta *d = (adv_delta *)(buf + hd->off_deltas) + s0->shape_off + s0->n_pts - 2;
+        d->dlat++;
+        hd->crc = crc32c(0, buf + sizeof *hd, g.map_len - sizeof *hd);
+        T_CHECK(adv_graph_check(buf, g.map_len, err, sizeof err) == CB_E_INVALID);
+        T_CHECK(strstr(err, "ends") != NULL);
+        d->dlat--;
+        s0->lon++;
+        hd->crc = crc32c(0, buf + sizeof *hd, g.map_len - sizeof *hd);
+        T_CHECK(adv_graph_check(buf, g.map_len, err, sizeof err) == CB_E_INVALID);
+        s0->lon--;
+        hd->crc = crc32c(0, buf + sizeof *hd, g.map_len - sizeof *hd);
+        T_CHECK(adv_graph_check(buf, g.map_len, err, sizeof err) == CB_OK);
         free(buf);
     }
     // Masks of a run.

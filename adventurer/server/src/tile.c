@@ -40,7 +40,7 @@ int adv_tile_scratch_init(adv_tile_scratch *s, const adv_graph *g) {
     // calloc(0) may return NULL, which would read as no memory: a graph with no segment still
     // gets a scratch it can render empty tiles from.
     s->stamp = calloc(s->n_segs ? s->n_segs : 1, sizeof *s->stamp);
-    if (!s->bytes || !s->stamp) {
+    if (!s->bytes || !s->stamp || adv_mvt_lines_init(&s->lines, ADV_TILE_GROUP_LINES, ADV_TILE_GROUP_PTS, ADV_TILE_SCRATCH / 2) != CB_OK) {
         adv_tile_scratch_free(s);
         return CB_E_NOMEM;
     }
@@ -50,6 +50,7 @@ int adv_tile_scratch_init(adv_tile_scratch *s, const adv_graph *g) {
 void adv_tile_scratch_free(adv_tile_scratch *s) {
     free(s->bytes);
     free(s->stamp);
+    adv_mvt_lines_free(&s->lines);
     memset(s, 0, sizeof *s);
 }
 
@@ -129,7 +130,30 @@ typedef struct {
 // (the fourth derivative grows as sec^5; at 85, Mercator's own edge, it would reach 0.3
 // units). One sin and one log per segment instead of one per point: the exact projection
 // was half of a tile's time before this.
-static void shape_load(const adv_graph *g, const adv_tile_req *r, adv_tile_scratch *s, uint32_t seg, shape *sh) {
+//
+// BELOW THE SHAPE ZOOM a line is drawn as its two end points, so its runs (a mask's sixteenths)
+// are placed along that chord too, and nothing past the ends is needed: the last point is the
+// node the segment ends at (the importer puts node_b at the last shape point; graph.c checks it
+// at open), and both project through the tile's frame (geo.h adv_tile_frame: no transcendental
+// per segment; exactly below its zoom).
+static void shape_load(const adv_graph *g, const adv_tile_req *r, adv_tile_scratch *s, const adv_tile_frame *tf, bool ends_only,
+                       uint32_t seg, shape *sh) {
+    if (ends_only) {
+        const adv_seg *sg = &g->segs[seg];
+        if (sg->n_pts < 2) { sh->n = 0; return; }
+        adv_pt a = { sg->lat, sg->lon }, b = { g->nodes[sg->node_b].lat, g->nodes[sg->node_b].lon };
+        if (r->z >= ADV_TILE_FRAME_MIN_ZOOM) {
+            adv_tile_frame_project(tf, a, &sh->px[0], &sh->py[0]);
+            adv_tile_frame_project(tf, b, &sh->px[1], &sh->py[1]);
+        } else {
+            adv_tile_project(r->z, r->x, r->y, a, &sh->px[0], &sh->py[0]);
+            adv_tile_project(r->z, r->x, r->y, b, &sh->px[1], &sh->py[1]);
+        }
+        sh->n = 2;
+        sh->cum[0] = 0;
+        sh->cum[1] = hypot(sh->px[1] - sh->px[0], sh->py[1] - sh->py[0]);
+        return;
+    }
     int n = adv_seg_points(g, seg, s->pts, ADV_SEG_MAX_PTS);
     sh->n = n < 2 ? 0 : n;   // the file holds 2..ADV_SEG_MAX_PTS; anything else draws nothing
     if (sh->n == 0) return;
@@ -280,17 +304,23 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
     if (!adv_cells_of_box(g, gmin, gmax, &wk.i0, &wk.j0, &wk.i1, &wk.j1)) return adv_mvt_finish(&w, out);
 
     bool ends_only = req->z < ADV_TILE_SHAPE_ZOOM;
+    adv_tile_frame tf;
+    adv_tile_frame_init(&tf, req->z, req->x, req->y);
+    // A layer is thousands of lines (tens of thousands below the shape zoom), and a feature's
+    // header, id and tags were most of its bytes: one MULTILINESTRING per tag tuple (mvt.h,
+    // grouped) instead of a feature each, at every zoom.
+    adv_mvt_lines *grp = req->ungrouped ? NULL : &s->lines;
     shape sh;
     uint32_t seg;
     int tags[ADV_MVT_MAX_TAGS] = { -1, -1, -1, -1 };
 
     if (req->roads) {
-        adv_mvt_layer_begin(&w, "roads", KEYS_C, 1);
+        adv_mvt_layer_begin_grouped(&w, "roads", KEYS_C, 1, grp);
         walk_begin(&wk);
         while (walk_next(&wk, &seg)) {
             const adv_seg *sg = &g->segs[seg];
             if (!class_drawn(req->z, sg->hclass)) continue;
-            shape_load(g, req, s, seg, &sh);
+            shape_load(g, req, s, &tf, ends_only, seg, &sh);
             if (sh.n < 2) continue;
             if (ends_only && sh.cum[sh.n - 1] < SPECK_UNITS) continue;
             tags[0] = sg->hclass;
@@ -307,14 +337,14 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
     bool majors = all && req->z < ADV_TILE_UNTRAVELED_ZOOM;
     int all_z = req->z + 2;
     if (req->traveled) {
-        adv_mvt_layer_begin(&w, "traveled", all ? KEYS_CTN : KEYS_CT, all ? 3 : 2);
+        adv_mvt_layer_begin_grouped(&w, "traveled", all ? KEYS_CTN : KEYS_CT, all ? 3 : 2, grp);
         cov_walk cw = { cov, &wk, 0 };
         if (!by_cov) walk_begin(&wk);
         while (by_cov ? cov_walk_next(&cw, &seg) : walk_next(&wk, &seg)) {
             uint16_t mask = all ? atomic_load_explicit(&all[seg].mask[req->type], memory_order_relaxed) : cov ? adv_cov_mask(cov, seg, req->type) : 0;
             if (!mask) continue;
             if (majors && !class_drawn(all_z, g->segs[seg].hclass)) continue;
-            shape_load(g, req, s, seg, &sh);
+            shape_load(g, req, s, &tf, ends_only, seg, &sh);
             if (sh.n < 2) continue;
             tags[0] = g->segs[seg].hclass;
             tags[1] = req->type;
@@ -328,7 +358,7 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
         adv_mvt_layer_end(&w);
     }
     if (req->untraveled) {
-        adv_mvt_layer_begin(&w, "untraveled", KEYS_CT, 2);
+        adv_mvt_layer_begin_grouped(&w, "untraveled", KEYS_CT, 2, grp);
         // Below the floor the layer is present and empty: the style still finds it, and a
         // region-wide tile is not painted red whole.
         if (req->z >= ADV_TILE_UNTRAVELED_ZOOM) {
@@ -340,7 +370,7 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
                 uint16_t have = all ? atomic_load_explicit(&all[seg].mask[req->type], memory_order_relaxed) : cov ? adv_cov_mask(cov, seg, req->type) : 0;
                 uint16_t mask = (uint16_t)(~have & 0xFFFF);
                 if (!mask) continue;
-                shape_load(g, req, s, seg, &sh);
+                shape_load(g, req, s, &tf, ends_only, seg, &sh);
                 if (sh.n < 2) continue;
                 tags[0] = sg->hclass;
                 tags[1] = req->type;
@@ -350,13 +380,13 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
         adv_mvt_layer_end(&w);
     }
     if (req->unique) {
-        adv_mvt_layer_begin(&w, "unique", KEYS_C, 1);
+        adv_mvt_layer_begin_grouped(&w, "unique", KEYS_C, 1, grp);
         if (all) {   // what exactly one person has
             walk_begin(&wk);
             while (walk_next(&wk, &seg)) {
                 if (atomic_load_explicit(&all[seg].users[req->type], memory_order_relaxed) != 1) continue;
                 if (majors && !class_drawn(all_z, g->segs[seg].hclass)) continue;
-                shape_load(g, req, s, seg, &sh);
+                shape_load(g, req, s, &tf, ends_only, seg, &sh);
                 if (sh.n < 2) continue;
                 tags[0] = g->segs[seg].hclass;
                 emit_whole(&w, s, &sh, ends_only, seg, tags);
@@ -366,7 +396,7 @@ int adv_tile_render(const adv_graph *g, const adv_tile_req *req, uint32_t user, 
             if (!by_cov) walk_begin(&wk);
             while (by_cov ? cov_walk_next(&cw, &seg) : walk_next(&wk, &seg)) {
                 if (owners[seg] != user) continue;
-                shape_load(g, req, s, seg, &sh);
+                shape_load(g, req, s, &tf, ends_only, seg, &sh);
                 if (sh.n < 2) continue;
                 tags[0] = g->segs[seg].hclass;
                 emit_whole(&w, s, &sh, ends_only, seg, tags);

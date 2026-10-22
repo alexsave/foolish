@@ -15,6 +15,7 @@
 
 #include "util/err.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 // Field tags: (number << 3) | wire type, 0 a varint and 2 length-delimited.
@@ -94,7 +95,44 @@ void adv_mvt_init(adv_mvt *w, uint8_t *scratch, size_t cap) {
     w->lcap = cap - w->cap;
 }
 
+int adv_mvt_lines_init(adv_mvt_lines *l, uint32_t cap_lines, uint32_t cap_pts, size_t cap_geom) {
+    memset(l, 0, sizeof *l);
+    l->line_off = malloc((size_t)cap_lines * sizeof *l->line_off);
+    l->line_n = malloc((size_t)cap_lines * sizeof *l->line_n);
+    l->line_group = malloc((size_t)cap_lines * sizeof *l->line_group);
+    l->order = malloc((size_t)cap_lines * sizeof *l->order);
+    l->pts = malloc((size_t)cap_pts * 2 * sizeof *l->pts);
+    l->geom = malloc(cap_geom);
+    if (!l->line_off || !l->line_n || !l->line_group || !l->order || !l->pts || !l->geom) {
+        adv_mvt_lines_free(l);
+        return CB_E_NOMEM;
+    }
+    l->cap_lines = cap_lines;
+    l->cap_pts = cap_pts;
+    l->cap_geom = cap_geom;
+    return CB_OK;
+}
+
+void adv_mvt_lines_free(adv_mvt_lines *l) {
+    free(l->line_off);
+    free(l->line_n);
+    free(l->line_group);
+    free(l->order);
+    free(l->pts);
+    free(l->geom);
+    memset(l, 0, sizeof *l);
+}
+
+void adv_mvt_layer_begin_grouped(adv_mvt *w, const char *name, const char *const *keys, int n_keys, adv_mvt_lines *lines) {
+    adv_mvt_layer_begin(w, name, keys, n_keys);
+    if (!lines || !lines->cap_lines) return;   // no room to group in: an ordinary layer
+    w->grouped = lines;
+    lines->n_lines = lines->n_pts = lines->n_groups = 0;
+    memset(lines->hkey, 0, sizeof lines->hkey);
+}
+
 void adv_mvt_layer_begin(adv_mvt *w, const char *name, const char *const *keys, int n_keys) {
+    w->grouped = NULL;
     w->name = name;
     w->keys = keys;
     w->n_keys = n_keys < 0 ? 0 : n_keys > ADV_MVT_MAX_TAGS ? ADV_MVT_MAX_TAGS : n_keys;
@@ -138,10 +176,146 @@ static void geometry(const int32_t *xy, int n, geom_t *g) {
     }
 }
 
+// The layer's tag values, clamped as a feature's are, into v[ADV_MVT_MAX_TAGS] (-1: no tag).
+static void clamp_tags(const adv_mvt *w, const int *tags, int *v) {
+    for (int i = 0; i < ADV_MVT_MAX_TAGS; i++) {
+        v[i] = i < w->n_keys && tags ? tags[i] : -1;
+        if (v[i] > ADV_MVT_MAX_VALUE) v[i] = ADV_MVT_MAX_VALUE;
+        if (v[i] < 0) v[i] = -1;
+    }
+}
+
+// A grouped layer's line: its distinct points kept, under its tag tuple's group.
+static void group_line(adv_mvt *w, const int *tags, const int32_t *xy, int n) {
+    adv_mvt_lines *l = w->grouped;
+    int v[ADV_MVT_MAX_TAGS];
+    clamp_tags(w, tags, v);
+    // The tuple as a key: four values of -1..255, nine bits each, plus one so no key is 0.
+    uint64_t key = 1;
+    for (int i = 0; i < ADV_MVT_MAX_TAGS; i++) key += (uint64_t)(v[i] + 1) << (9 * i + 1);
+    uint32_t h = (uint32_t)((key * 0x9E3779B97F4A7C15ull) >> 40) & (2 * ADV_MVT_GROUPS - 1);
+    while (l->hkey[h] && l->hkey[h] != key) h = (h + 1) & (2 * ADV_MVT_GROUPS - 1);
+    uint32_t gi;
+    if (l->hkey[h]) gi = l->hval[h];
+    else {
+        if (l->n_groups == ADV_MVT_GROUPS) { w->dropped++; return; }   // the table is half full at most: the probe ends
+        gi = l->n_groups++;
+        memcpy(l->group_tags[gi], v, sizeof v);
+        l->hkey[h] = key;
+        l->hval[h] = (uint16_t)gi;
+    }
+    if (l->n_lines == l->cap_lines || (uint64_t)l->n_pts + (uint64_t)n > l->cap_pts) { w->dropped++; return; }
+    uint32_t off = l->n_pts, m = 0;
+    for (int i = 0; i < n; i++) {
+        int32_t x = xy[2 * i], y = xy[2 * i + 1];
+        if (m > 0 && x == l->pts[2 * (off + m - 1)] && y == l->pts[2 * (off + m - 1) + 1]) continue;   // as geometry() dedups
+        l->pts[2 * (off + m)] = x;
+        l->pts[2 * (off + m) + 1] = y;
+        m++;
+    }
+    if (m < 2) return;   // a speck
+    l->line_off[l->n_lines] = off;
+    l->line_n[l->n_lines] = (uint16_t)m;
+    l->line_group[l->n_lines] = (uint16_t)gi;
+    l->n_lines++;
+    l->n_pts += m;
+}
+
+// One group's geometry into o, once: per line MoveTo(1) and LineTo(m-1), the cursor carried
+// from each line's last point to the next line's first. Its length.
+static size_t group_geometry(const adv_mvt_lines *l, const uint32_t *lines, uint32_t n, out_t o) {
+    size_t start = *o.len;
+    int32_t cx = 0, cy = 0;
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t li = lines[k], off = l->line_off[li], m = l->line_n[li];
+        const int32_t *p = l->pts + 2 * (size_t)off;
+        put_varint(o, command(CMD_MOVE_TO, 1));
+        for (uint32_t i = 0; i < m; i++) {
+            if (i == 1) put_varint(o, command(CMD_LINE_TO, m - 1));
+            put_varint(o, zigzag((int64_t)p[2 * i] - cx));
+            put_varint(o, zigzag((int64_t)p[2 * i + 1] - cy));
+            cx = p[2 * i];
+            cy = p[2 * i + 1];
+        }
+    }
+    return *o.len - start;
+}
+
+// The grouped layer's features, one per tag tuple, into lbuf (adv_mvt_layer_end then writes the
+// layer as for any other).
+static void group_flush(adv_mvt *w) {
+    adv_mvt_lines *l = w->grouped;
+    w->grouped = NULL;
+    // The lines by group, each group's in the order they came (a counting sort).
+    memset(l->group_count, 0, sizeof l->group_count);
+    for (uint32_t i = 0; i < l->n_lines; i++) l->group_count[l->line_group[i] + 1]++;
+    for (uint32_t gi = 0; gi < l->n_groups; gi++) l->group_count[gi + 1] += l->group_count[gi];
+    uint32_t at[ADV_MVT_GROUPS];
+    memcpy(at, l->group_count, sizeof at);
+    for (uint32_t i = 0; i < l->n_lines; i++) l->order[at[l->line_group[i]]++] = i;
+    for (uint32_t gi = 0; gi < l->n_groups; gi++) {
+        const uint32_t *lines = l->order + l->group_count[gi];
+        uint32_t n = l->group_count[gi + 1] - l->group_count[gi];
+        if (!n) continue;
+        const int *v = l->group_tags[gi];
+        size_t tags_len = 0;
+        int n_tags = 0, max_value = -1;
+        for (int i = 0; i < w->n_keys; i++) {
+            if (v[i] < 0) continue;
+            tags_len += varint_len((uint64_t)i) + varint_len((uint64_t)v[i]);
+            if (v[i] > max_value) max_value = v[i];
+            n_tags++;
+        }
+        // The geometry is encoded once into the group buffer, then sized around and copied. Its
+        // worst case (a point two zigzag varints of five bytes, a line two command words more)
+        // must fit the buffer; a group past it could not fit a layer either, and is dropped.
+        uint64_t worst = 0;
+        for (uint32_t k = 0; k < n; k++) worst += (uint64_t)l->line_n[lines[k]] * 10 + 10;
+        if (worst > l->cap_geom) {
+            w->dropped += n;
+            continue;
+        }
+        size_t geom_len = 0;
+        group_geometry(l, lines, n, (out_t){ l->geom, &geom_len });
+        size_t body = 2 + 1 + varint_len(geom_len) + geom_len;
+        if (n_tags) body += 1 + varint_len(tags_len) + tags_len;
+        size_t total = 1 + varint_len(body) + body;
+        if (!reserve(w, w->llen, w->lcap, total)) {
+            w->dropped += n - 1;   // reserve counted one
+            continue;
+        }
+        out_t o = { w->lbuf, &w->llen };
+        size_t start = w->llen;
+        o.p[(*o.len)++] = PB_LAYER_FEATURE;
+        put_varint(o, body);
+        if (n_tags) {
+            o.p[(*o.len)++] = PB_FEATURE_TAGS;
+            put_varint(o, tags_len);
+            for (int i = 0; i < w->n_keys; i++) {
+                if (v[i] < 0) continue;
+                put_varint(o, (uint64_t)i);
+                put_varint(o, (uint64_t)v[i]);
+            }
+        }
+        o.p[(*o.len)++] = PB_FEATURE_TYPE;
+        o.p[(*o.len)++] = MVT_LINESTRING;
+        o.p[(*o.len)++] = PB_FEATURE_GEOM;
+        put_varint(o, geom_len);
+        put_bytes(o, l->geom, geom_len);
+        if (w->llen - start != total) w->full = true;
+        if (max_value + 1 > w->n_values) w->n_values = max_value + 1;
+        w->n_features++;
+    }
+}
+
 void adv_mvt_feature_line(adv_mvt *w, uint64_t id, const int *tags, const int32_t *xy, int n) {
     if (w->full || n < 2) return;
     if (n > ADV_SEG_MAX_PTS) {
         w->full = true;   // not a shape this file can hold: a caller's bug, surfaced as a refused tile
+        return;
+    }
+    if (w->grouped) {
+        group_line(w, tags, xy, n);
         return;
     }
     geom_t g;
@@ -199,6 +373,8 @@ void adv_mvt_feature_line(adv_mvt *w, uint64_t id, const int *tags, const int32_
 }
 
 void adv_mvt_layer_end(adv_mvt *w) {
+    if (w->grouped && !w->full) group_flush(w);
+    w->grouped = NULL;
     if (w->full || !w->name) return;
     size_t name_len = strlen(w->name);
     size_t body = 1 + varint_len(name_len) + name_len;

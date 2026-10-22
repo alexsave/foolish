@@ -68,6 +68,19 @@ int adv_graph_check(const void *p, size_t n, char *err, size_t cap) {
         if (!(s->len_m >= 0 && s->len_m <= ADV_SEG_MAX_LEN_M * 1.01f)) return fail(err, cap, "a segment's length");
         if (s->min_lat > s->max_lat || s->min_lon > s->max_lon) return fail(err, cap, "a segment's box");
     }
+    // A segment's ends ARE its nodes (a tile below the shape zoom draws a segment as its two
+    // nodes, tile.c, without decoding the shape): the first point is node_a's, the last node_b's.
+    const adv_delta *deltas = (const adv_delta *)(b + h.off_deltas);
+    for (uint32_t i = 0; i < h.n_segs; i++) {
+        const adv_seg *s = &segs[i];
+        int64_t lat = s->lat, lon = s->lon;
+        for (uint32_t k = 0; k + 1 < s->n_pts; k++) {
+            lat += deltas[s->shape_off + k].dlat;
+            lon += deltas[s->shape_off + k].dlon;
+        }
+        if (s->lat != nodes[s->node_a].lat || s->lon != nodes[s->node_a].lon || lat != nodes[s->node_b].lat || lon != nodes[s->node_b].lon)
+            return fail(err, cap, "a segment's ends are not its nodes");
+    }
     for (uint32_t i = 0; i < h.n_nodes; i++) {
         if (nodes[i].n_adj > ADV_NODE_MAX_ADJ || (uint64_t)nodes[i].adj_off + nodes[i].n_adj > h.n_adj)
             return fail(err, cap, "a node's adjacency");

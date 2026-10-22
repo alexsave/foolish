@@ -73,6 +73,17 @@ static void pb_skip(pb *r, uint32_t wt) {
 #define D_MAX_FEATURES 8192
 #define D_MAX_PTS      64
 #define D_MAX_LAYERS   4
+#define D_MAX_LINES    (1 << 18)
+
+// One line of a feature as decoded: a grouped feature (a MULTILINESTRING) has many. Its feature,
+// its point count, its two ends, and a hash of every point, so two encodings of the same lines
+// compare equal however the features hold them.
+typedef struct {
+    int      feat;
+    int      n;
+    int32_t  x0, y0, x1, y1;
+    uint64_t h;
+} d_line;
 
 typedef struct {
     uint64_t id;
@@ -81,7 +92,9 @@ typedef struct {
     uint32_t tags[2 * ADV_MVT_MAX_TAGS];    // key, value, key, value...
     int      n_pts;                         // decoded; xy holds the first D_MAX_PTS
     int32_t  xy[2 * D_MAX_PTS];
-    bool     geom_ok;                       // one MoveTo of 1 then one LineTo of n_pts-1
+    bool     geom_ok;                       // pairs of (MoveTo of 1, LineTo of k >= 1): one pair is a line
+    int      n_lines;                       // the pairs: 1 for a LINESTRING, more for a grouped feature
+    bool     has_id;
 } d_feat;
 
 typedef struct {
@@ -93,6 +106,8 @@ typedef struct {
     int      extent, version;
     int      n_features;
     d_feat  *f;
+    int      n_lines;
+    d_line  *lines;                         // every line of every feature, in order
 } d_layer;
 
 typedef struct {
@@ -103,23 +118,38 @@ typedef struct {
 
 static d_tile *d_tile_new(void) {
     d_tile *t = calloc(1, sizeof *t);
-    for (int i = 0; i < D_MAX_LAYERS; i++) t->l[i].f = calloc(D_MAX_FEATURES, sizeof(d_feat));
+    for (int i = 0; i < D_MAX_LAYERS; i++) {
+        t->l[i].f = calloc(D_MAX_FEATURES, sizeof(d_feat));
+        t->l[i].lines = calloc(D_MAX_LINES, sizeof(d_line));
+    }
     return t;
 }
 
 static int64_t unzigzag(uint64_t v) { return (int64_t)(v >> 1) ^ -(int64_t)(v & 1); }
 
-static void d_geometry(pb g, d_feat *f) {
+static void d_geometry(pb g, d_feat *f, d_layer *l, int feat, bool *err) {
     int32_t cx = 0, cy = 0;
     int cmds = 0;
     f->n_pts = 0;
+    f->n_lines = 0;
     f->geom_ok = true;
+    d_line *ln = NULL;
     while (g.at < g.n && !g.err) {
         uint64_t c = pb_varint(&g);
         uint32_t id = (uint32_t)(c & 7), count = (uint32_t)(c >> 3);
-        if (cmds == 0 && !(id == 1 && count == 1)) f->geom_ok = false;
-        if (cmds == 1 && id != 2) f->geom_ok = false;
-        if (cmds >= 2) f->geom_ok = false;
+        // Even commands are a MoveTo of one point, odd ones a LineTo of at least one.
+        if (cmds % 2 == 0 && !(id == 1 && count == 1)) f->geom_ok = false;
+        if (cmds % 2 == 1 && !(id == 2 && count >= 1)) f->geom_ok = false;
+        if (cmds % 2 == 0) {
+            if (l->n_lines >= D_MAX_LINES) *err = true;
+            else {
+                ln = &l->lines[l->n_lines++];
+                memset(ln, 0, sizeof *ln);
+                ln->feat = feat;
+                ln->h = 1469598103934665603ull;
+            }
+            f->n_lines++;
+        }
         cmds++;
         for (uint32_t k = 0; k < count && !g.err; k++) {
             // MVT parameters are 32-bit: a wider varint is a wrong encoding, not a big delta.
@@ -132,9 +162,17 @@ static void d_geometry(pb g, d_feat *f) {
                 f->xy[2 * f->n_pts + 1] = cy;
             }
             f->n_pts++;
+            if (ln) {
+                if (ln->n == 0) { ln->x0 = cx; ln->y0 = cy; }
+                ln->x1 = cx;
+                ln->y1 = cy;
+                ln->h = (ln->h ^ (uint32_t)cx) * 1099511628211ull;
+                ln->h = (ln->h ^ (uint32_t)cy) * 1099511628211ull;
+                ln->n++;
+            }
         }
     }
-    if (g.err || cmds != 2) f->geom_ok = false;
+    if (g.err || cmds < 2 || cmds % 2) f->geom_ok = false;
 }
 
 static void d_feature(pb r, d_layer *l, bool *err) {
@@ -146,7 +184,10 @@ static void d_feature(pb r, d_layer *l, bool *err) {
     memset(f, 0, sizeof *f);
     uint32_t field, wt;
     while (pb_tag(&r, &field, &wt)) {
-        if (field == 1 && wt == 0) f->id = pb_varint(&r);
+        if (field == 1 && wt == 0) {
+            f->id = pb_varint(&r);
+            f->has_id = true;
+        }
         else if (field == 3 && wt == 0) f->type = (int)pb_varint(&r);
         else if (field == 2 && wt == 2) {
             pb t = pb_sub(&r);
@@ -158,7 +199,7 @@ static void d_feature(pb r, d_layer *l, bool *err) {
             }
             if (k % 2 || t.err) *err = true;
             f->n_tags = k / 2;
-        } else if (field == 4 && wt == 2) d_geometry(pb_sub(&r), f);
+        } else if (field == 4 && wt == 2) d_geometry(pb_sub(&r), f, l, l->n_features - 1, err);
         else pb_skip(&r, wt);
     }
     if (r.err) *err = true;
@@ -202,8 +243,10 @@ static void d_layer_read(pb r, d_layer *l, bool *err) {
 static void d_decode(const uint8_t *p, size_t n, d_tile *t) {
     for (int i = 0; i < D_MAX_LAYERS; i++) {
         d_feat *f = t->l[i].f;
+        d_line *ln = t->l[i].lines;
         memset(&t->l[i], 0, sizeof t->l[i]);
         t->l[i].f = f;
+        t->l[i].lines = ln;
     }
     t->n_layers = 0;
     t->err = false;
@@ -240,17 +283,24 @@ static double d_length(const d_feat *f) {
     return len;
 }
 
-// Every feature a linestring, decodable, with an id no other feature of the layer has.
+// Every feature a linestring (one line, with an id no other feature of the layer has) or a
+// grouped multilinestring (no id, a tag list no other feature of the layer has), decodable.
 static void check_layer_sane(const d_layer *l) {
     T_CHECK(l->extent == ADV_MVT_EXTENT && l->version == 2);
     for (int i = 0; i < l->n_features; i++) {
         const d_feat *f = &l->f[i];
-        T_CHECK_MSG(f->type == 2 && f->geom_ok && f->n_pts >= 2, "%s feature %d id %llu type %d ok %d pts %d",
+        T_CHECK_MSG(f->type == 2 && f->geom_ok && f->n_pts >= 2 * f->n_lines && f->n_lines >= 1, "%s feature %d id %llu type %d ok %d pts %d",
                     l->name, i, (unsigned long long)f->id, f->type, f->geom_ok, f->n_pts);
+        T_CHECK_MSG(f->has_id || f->n_lines >= 1, "%s feature %d", l->name, i);
+        if (f->has_id) T_CHECK_MSG(f->n_lines == 1, "%s feature %d: an id on %d lines", l->name, i, f->n_lines);
         for (int t = 0; t < f->n_tags; t++)
             T_CHECK((int)f->tags[2 * t] < l->n_keys && (int)f->tags[2 * t + 1] < l->n_values);
-        for (int j = i + 1; j < l->n_features; j++)
-            T_CHECK_MSG(l->f[j].id != f->id, "%s: id %llu twice", l->name, (unsigned long long)f->id);
+        for (int j = i + 1; j < l->n_features; j++) {
+            if (f->has_id && l->f[j].has_id) T_CHECK_MSG(l->f[j].id != f->id, "%s: id %llu twice", l->name, (unsigned long long)f->id);
+            if (!f->has_id && !l->f[j].has_id)
+                T_CHECK_MSG(f->n_tags != l->f[j].n_tags || memcmp(f->tags, l->f[j].tags, (size_t)f->n_tags * 2 * sizeof f->tags[0]) != 0,
+                            "%s: features %d and %d group the same tags", l->name, i, j);
+        }
     }
 }
 
@@ -431,14 +481,21 @@ typedef struct {
     d_tile          *t;
 } ctx;
 
-// Renders one tile with every layer and decodes it: its length, or a negative.
-static int render(ctx *c, int z, uint32_t x, uint32_t y, int type, bool with_cov) {
-    adv_tile_req r = { .z = z, .x = x, .y = y, .type = type, .roads = true, .traveled = true, .untraveled = true, .unique = true };
+// Renders one tile with every layer and decodes it: its length, or a negative. render_u: with
+// a feature per line below the shape zoom too (the grouped layers' reference).
+static int render_g(ctx *c, int z, uint32_t x, uint32_t y, int type, bool with_cov, bool ungrouped) {
+    adv_tile_req r = { .z = z, .x = x, .y = y, .type = type, .roads = true, .traveled = true, .untraveled = true, .unique = true,
+                       .ungrouped = ungrouped };
     const uint8_t *out;
     int len = adv_tile_render(c->g, &r, c->user, with_cov ? c->cov : NULL, c->owners, &c->s, &out);
     if (len > 0) d_decode(out, (size_t)len, c->t);
     return len;
 }
+// The checks by segment id read the per-line reference (ungrouped): test_grouped holds the served,
+// grouped tiles to it line for line.
+static int render(ctx *c, int z, uint32_t x, uint32_t y, int type, bool with_cov) { return render_g(c, z, x, y, type, with_cov, true); }
+static int render_u(ctx *c, int z, uint32_t x, uint32_t y, int type, bool with_cov) { return render_g(c, z, x, y, type, with_cov, true); }
+static int render_grouped(ctx *c, int z, uint32_t x, uint32_t y, int type, bool with_cov) { return render_g(c, z, x, y, type, with_cov, false); }
 
 // One z16 tile checked layer by layer against the oracle.
 static void check_z16_tile(ctx *c, uint32_t x, uint32_t y, int type) {
@@ -553,7 +610,8 @@ static void test_everyone(d_tile *t) {
         int seen_a = 0, seen_b = 0, seen_c = 0;
         for (uint32_t y = y0; y <= y1; y++)
             for (uint32_t x = x0; x <= x1; x++) {
-                adv_tile_req r = { .z = 16, .x = x, .y = y, .type = type, .roads = true, .traveled = true, .untraveled = true, .unique = true, .all = all };
+                adv_tile_req r = { .z = 16, .x = x, .y = y, .type = type, .roads = true, .traveled = true, .untraveled = true, .unique = true, .all = all,
+                                   .ungrouped = true };
                 const uint8_t *out;
                 int len = adv_tile_render(&g, &r, 0, NULL, NULL, &c.s, &out);
                 T_CHECK(len >= 0);
@@ -601,7 +659,7 @@ static void test_everyone(d_tile *t) {
         T_CHECK(prim != UINT32_MAX && g.segs[0].hclass == ADV_HC_RESIDENTIAL);
         atomic_store(&all[prim].mask[ADV_T_ALL], 0xFFFF);
         atomic_store(&all[prim].users[ADV_T_ALL], 1);
-        adv_tile_req r = { .z = 8, .type = ADV_T_ALL, .traveled = true, .unique = true, .all = all };
+        adv_tile_req r = { .z = 8, .type = ADV_T_ALL, .traveled = true, .unique = true, .all = all, .ungrouped = true };
         adv_pt mid = adv_seg_at(&g, 0, 0.5);
         adv_tile_of(mid, 8, &r.x, &r.y);
         const uint8_t *out;
@@ -629,6 +687,237 @@ static void test_everyone(d_tile *t) {
     free(all);
     adv_graph_close(&g);
     unlink(path);
+}
+
+// THE GROUPED LAYERS ARE THE SAME LINES: at every zoom every tile of a grid, for each
+// coverage view, a user's and everyone's, decodes to the same lines under the same tags whether
+// its layers are grouped (a MULTILINESTRING per tag tuple) or not (a feature per line); and the
+// grouped tile is the smaller.
+typedef struct { uint64_t tags, h; int32_t x0, y0, x1, y1; int n; } line_key;
+static int line_key_cmp(const void *a, const void *b) { return memcmp(a, b, sizeof(line_key)); }
+static int layer_lines(const d_layer *l, line_key *out) {
+    for (int i = 0; i < l->n_lines; i++) {
+        const d_line *ln = &l->lines[i];
+        const d_feat *f = &l->f[ln->feat];
+        line_key k;
+        memset(&k, 0, sizeof k);
+        for (int t = 0; t < f->n_tags; t++) k.tags = k.tags * 1000003u + f->tags[2 * t] * 257u + (uint64_t)l->values[f->tags[2 * t + 1]] + 1;
+        k.h = ln->h;
+        k.x0 = ln->x0; k.y0 = ln->y0; k.x1 = ln->x1; k.y1 = ln->y1;
+        k.n = ln->n;
+        out[i] = k;
+    }
+    qsort(out, (size_t)l->n_lines, sizeof *out, line_key_cmp);
+    return l->n_lines;
+}
+static void test_grouped(d_tile *t) {
+    fg_opts o = { .cols = 10, .rows = 10, .block_m = 120, .shape_m = 40, .regions = true };
+    char path[512];
+    fg_tmp_path(path, sizeof path, "unit_mvt_grouped");
+    adv_graph g;
+    T_CHECK(fg_build(&o, path, &g) == 0);
+    adv_cov cov;
+    build_coverage(&g, &cov);
+    uint32_t *owners = calloc(g.h->n_segs, sizeof *owners);
+    for (uint32_t s = 0; s < g.h->n_segs; s += 4) owners[s] = 42;
+    adv_all_seg *all = calloc(g.h->n_segs, sizeof *all);
+    for (uint32_t s = 0; s < g.h->n_segs; s++)
+        for (int ty = 0; ty < ADV_T_N; ty++) {
+            atomic_store(&all[s].mask[ty], (uint16_t)(s % 3 == 0 ? 0xFFFF : s % 3 == 1 ? 0x0FF0 : 0));
+            atomic_store(&all[s].users[ty], (uint16_t)(s % 3 == 2 ? 0 : 1 + s % 5));
+        }
+    ctx c = { .g = &g, .cov = &cov, .owners = owners, .user = 42, .t = t };
+    T_CHECK(adv_tile_scratch_init(&c.s, &g) == CB_OK);
+    d_tile *u = d_tile_new();
+    line_key *a = malloc(D_MAX_LINES * sizeof *a), *b = malloc(D_MAX_LINES * sizeof *b);
+    int tiles = 0, lines = 0;
+    size_t bytes_g = 0, bytes_u = 0;
+    // From z4, where a 120 m street is under a unit of the extent and most lines are specks the
+    // writer must drop in both encodings, past the shape zoom (whole shapes) to z16.
+    for (int z = 4; z <= 16; z++)
+        for (int everyone = 0; everyone < 2; everyone++)
+            for (int type = 0; type < ADV_T_N; type++) {
+                uint32_t x0, y0, x1, y1;
+                tile_range(&g, z, &x0, &y0, &x1, &y1);
+                for (uint32_t y = y0; y <= y1; y++)
+                    for (uint32_t x = x0; x <= x1; x++) {
+                        adv_tile_req r = { .z = z, .x = x, .y = y, .type = type, .roads = true, .traveled = true, .untraveled = true,
+                                           .unique = true, .all = everyone ? all : NULL };
+                        const uint8_t *out;
+                        int lg = adv_tile_render(&g, &r, 42, everyone ? NULL : &cov, everyone ? NULL : owners, &c.s, &out);
+                        T_CHECK(lg > 0);
+                        if (lg <= 0) continue;
+                        d_decode(out, (size_t)lg, t);
+                        r.ungrouped = true;
+                        int lu = adv_tile_render(&g, &r, 42, everyone ? NULL : &cov, everyone ? NULL : owners, &c.s, &out);
+                        T_CHECK(lu > 0);
+                        if (lu <= 0) continue;
+                        d_decode(out, (size_t)lu, u);
+                        T_CHECK(!t->err && !u->err && t->n_layers == 4 && u->n_layers == 4);
+                        bytes_g += (size_t)lg;
+                        bytes_u += (size_t)lu;
+                        for (int i = 0; i < 4 && i < t->n_layers; i++) {
+                            check_layer_sane(&t->l[i]);
+                            T_CHECK(strcmp(t->l[i].name, u->l[i].name) == 0);
+                            int na = layer_lines(&t->l[i], a), nb = layer_lines(&u->l[i], b);
+                            T_CHECK_MSG(na == nb, "z%d %u/%u %s: %d grouped lines, %d ungrouped", z, x, y, t->l[i].name, na, nb);
+                            if (na == nb) T_CHECK_MSG(memcmp(a, b, (size_t)na * sizeof *a) == 0, "z%d %u/%u %s: the lines differ", z, x, y, t->l[i].name);
+                            for (int k = 0; k < t->l[i].n_features; k++) T_CHECK(!t->l[i].f[k].has_id);
+                            lines += na;
+                        }
+                        tiles++;
+                    }
+            }
+    T_CHECK(tiles > 20 && lines > 1000);
+    T_CHECK_MSG(bytes_g * 10 < bytes_u * 7, "grouped %zu bytes, ungrouped %zu", bytes_g, bytes_u);
+    printf("grouped layers: %d tiles, %d lines, %zu bytes grouped vs %zu a feature each\n", tiles, lines, bytes_g, bytes_u);
+    for (int k = 0; k < D_MAX_LAYERS; k++) { free(u->l[k].f); free(u->l[k].lines); }
+    free(u);
+    free(a);
+    free(b);
+    adv_tile_scratch_free(&c.s);
+    adv_cov_free(&cov);
+    free(owners);
+    free(all);
+    adv_graph_close(&g);
+    unlink(path);
+}
+
+// THE TILE FRAME (geo.h): from its zoom up, a point of the tile, its grown edge or 2 km past it
+// projects within 0.005 extent units of the exact Mercator at 41 N and 0.01 at 70 N (measured:
+// 0.0010 and 0.0018).
+static void test_tile_frame(void) {
+    static const double lats[2] = { 40.75, 70.0 }, bound[2] = { 0.005, 0.01 };
+    double worst[2] = { 0, 0 };
+    uint64_t rng = 88172645463325252ull;
+    for (int k = 0; k < 2; k++)
+        for (int z = ADV_TILE_FRAME_MIN_ZOOM; z <= ADV_TILE_MAX_ZOOM; z++) {
+            adv_pt c = { (int32_t)(lats[k] * ADV_DEG), (int32_t)(-73.98 * ADV_DEG) };
+            uint32_t tx, ty;
+            adv_tile_of(c, z, &tx, &ty);
+            adv_tile_frame f;
+            adv_tile_frame_init(&f, z, tx, ty);
+            adv_pt mn, mx;
+            adv_tile_bounds(z, tx, ty, &mn, &mx);
+            // The tile grown by a sixteenth and by 2 km (0.018 degrees of latitude, 0.05 of longitude at 70 N).
+            double glat = (mx.lat - mn.lat) / 16.0 + 0.018 * ADV_DEG, glon = (mx.lon - mn.lon) / 16.0 + 0.053 * ADV_DEG;
+            for (int i = 0; i < 2000; i++) {
+                rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
+                double u = (double)(rng & 0xFFFFFF) / 0xFFFFFF, v = (double)((rng >> 24) & 0xFFFFFF) / 0xFFFFFF;
+                adv_pt p = { (int32_t)(mn.lat - glat + u * (mx.lat - mn.lat + 2 * glat)), (int32_t)(mn.lon - glon + v * (mx.lon - mn.lon + 2 * glon)) };
+                double ex, ey, fx, fy;
+                adv_tile_project(z, tx, ty, p, &ex, &ey);
+                adv_tile_frame_project(&f, p, &fx, &fy);
+                double e = hypot(fx - ex, fy - ey);
+                if (e > worst[k]) worst[k] = e;
+            }
+        }
+    T_CHECK_MSG(worst[0] < bound[0], "41 N: %f units", worst[0]);
+    T_CHECK_MSG(worst[1] < bound[1], "70 N: %f units", worst[1]);
+    printf("tile frame: worst %.5f units at 41 N, %.5f at 70 N (z%d..z%d)\n", worst[0], worst[1], ADV_TILE_FRAME_MIN_ZOOM, ADV_TILE_MAX_ZOOM);
+}
+
+// BELOW THE FRAME'S ZOOM the end points are projected exactly: a grid at 60 N far from the
+// middle latitude of its z2 tile, where the frame's series would be off by tens of units.
+static void test_low_zoom_exact(d_tile *t) {
+    fg_opts o = { .cols = 3, .rows = 3, .block_m = 1900, .shape_m = -1, .sw = { 60 * ADV_DEG, 10 * ADV_DEG } };
+    char path[512];
+    fg_tmp_path(path, sizeof path, "unit_mvt_low");
+    adv_graph g;
+    T_CHECK(fg_build(&o, path, &g) == 0);
+    adv_tile_scratch s;
+    T_CHECK(adv_tile_scratch_init(&s, &g) == CB_OK);
+    adv_tile_req r = { .z = 2, .type = ADV_T_ALL, .roads = true, .ungrouped = true };
+    adv_pt p0 = { g.segs[0].lat, g.segs[0].lon };
+    adv_tile_of(p0, 2, &r.x, &r.y);
+    const uint8_t *out;
+    int len = adv_tile_render(&g, &r, 0, NULL, NULL, &s, &out);
+    T_CHECK(len > 0);
+    d_decode(out, (size_t)len, t);
+    const d_layer *roads = d_find(t, "roads");
+    int checked = 0;
+    double worst = 0;
+    for (int i = 0; roads && i < roads->n_features; i++) {
+        const d_feat *f = &roads->f[i];
+        if (!f->has_id || f->id >= g.h->n_segs || f->n_pts != 2) continue;
+        adv_pt pts[ADV_SEG_MAX_PTS];
+        int n = adv_seg_points(&g, (uint32_t)f->id, pts, ADV_SEG_MAX_PTS);
+        double ax, ay, bx, by;
+        adv_tile_project(2, r.x, r.y, pts[0], &ax, &ay);
+        adv_tile_project(2, r.x, r.y, pts[n - 1], &bx, &by);
+        double e = fmax(hypot(f->xy[0] - ax, f->xy[1] - ay), hypot(f->xy[2] - bx, f->xy[3] - by));
+        if (e > worst) worst = e;
+        checked++;
+    }
+    T_CHECK_MSG(checked > 0 && worst <= 0.75, "z2: %d lines checked, worst %f units from exact", checked, worst);
+    adv_tile_scratch_free(&s);
+    adv_graph_close(&g);
+    unlink(path);
+}
+
+// A GROUPED LAYER'S LIMITS: lines past the line or point room, tag tuples past ADV_MVT_GROUPS
+// and a group whose geometry could pass its buffer are dropped and counted, and what fits is
+// still a valid tile.
+static void test_grouped_caps(d_tile *t) {
+    static uint8_t buf[1 << 20];
+    static const char *const keys[] = { "c", "n" };
+    adv_mvt_lines l;
+    T_CHECK(adv_mvt_lines_init(&l, 4, 6, 128) == CB_OK);
+    adv_mvt w;
+    adv_mvt_init(&w, buf, sizeof buf);
+    adv_mvt_layer_begin_grouped(&w, "g", keys, 2, &l);
+    int32_t xy[6] = { 0, 0, 10, 0, 10, 10 };
+    int tags[2] = { 1, 2 };
+    adv_mvt_feature_line(&w, 1, tags, xy, 2);   // 2 points
+    adv_mvt_feature_line(&w, 2, tags, xy, 3);   // 3: 5 of 6
+    adv_mvt_feature_line(&w, 3, tags, xy, 2);   // 7 points: past the point room
+    T_CHECK_MSG((w.dropped) == (1), "%u", (unsigned)(w.dropped));
+    adv_mvt_feature_line(&w, 4, tags, xy, 1 + 0);   // one point: no line, nothing kept, nothing dropped
+    T_CHECK_MSG((w.dropped) == (1), "%u", (unsigned)(w.dropped));
+    adv_mvt_layer_end(&w);
+    const uint8_t *out;
+    int len = adv_mvt_finish(&w, &out);
+    T_CHECK(len > 0);
+    d_decode(out, (size_t)len, t);
+    T_CHECK_MSG(!t->err && t->n_layers == 1 && t->l[0].n_features == 1 && t->l[0].n_lines == 2, "err %d layers %d features %d lines %d", t->err, t->n_layers, t->l[0].n_features, t->l[0].n_lines);
+    check_layer_sane(&t->l[0]);
+
+    // The lines' room and the points' room; then a geometry over its buffer.
+    adv_mvt_init(&w, buf, sizeof buf);
+    adv_mvt_layer_begin_grouped(&w, "g", keys, 2, &l);
+    for (int i = 0; i < 5; i++) adv_mvt_feature_line(&w, (uint64_t)i, tags, xy, 1 + 1);
+    T_CHECK_MSG((w.dropped) == (2), "%u", (unsigned)(w.dropped));   // the fourth line passes the 6 points, the fifth the 4 lines
+    adv_mvt_layer_end(&w);
+    T_CHECK(adv_mvt_finish(&w, &out) > 0);
+    adv_mvt_lines_free(&l);
+    T_CHECK(adv_mvt_lines_init(&l, 64, 128, 40) == CB_OK);
+    adv_mvt_init(&w, buf, sizeof buf);
+    adv_mvt_layer_begin_grouped(&w, "g", keys, 2, &l);
+    for (int i = 0; i < 3; i++) adv_mvt_feature_line(&w, (uint64_t)i, tags, xy, 2);   // 3 x (2 x 10 + 10) = 90 > 40
+    tags[0] = 5;
+    adv_mvt_feature_line(&w, 9, tags, xy, 2);   // another group, 30 <= 40: kept
+    adv_mvt_layer_end(&w);
+    T_CHECK_MSG((w.dropped) == (3), "%u", (unsigned)(w.dropped));
+    len = adv_mvt_finish(&w, &out);
+    T_CHECK(len > 0);
+    d_decode(out, (size_t)len, t);
+    T_CHECK(!t->err && t->l[0].n_features == 1 && t->l[0].n_lines == 1);
+    adv_mvt_lines_free(&l);
+    // Groups past ADV_MVT_GROUPS.
+    T_CHECK(adv_mvt_lines_init(&l, ADV_MVT_GROUPS + 8, 2 * (ADV_MVT_GROUPS + 8), 1 << 16) == CB_OK);
+    adv_mvt_init(&w, buf, sizeof buf);
+    adv_mvt_layer_begin_grouped(&w, "g", keys, 2, &l);
+    for (int i = 0; i < ADV_MVT_GROUPS + 5; i++) {
+        int tg[2] = { i % 256, i / 256 };
+        adv_mvt_feature_line(&w, (uint64_t)i, tg, xy, 2);
+    }
+    T_CHECK_MSG((w.dropped) == (5), "%u", (unsigned)(w.dropped));
+    adv_mvt_layer_end(&w);
+    len = adv_mvt_finish(&w, &out);
+    T_CHECK(len > 0);
+    d_decode(out, (size_t)len, t);
+    T_CHECK(!t->err && t->l[0].n_features == ADV_MVT_GROUPS);
+    adv_mvt_lines_free(&l);
 }
 
 static void test_renderer(d_tile *t) {
@@ -714,12 +1003,15 @@ static void test_renderer(d_tile *t) {
         int features = 0;
         for (uint32_t y = y0; y <= y1; y++)
             for (uint32_t x = x0; x <= x1; x++) {
-                int len = render(&c, 12, x, y, ADV_T_ALL, true);
+                int len = render_grouped(&c, 12, x, y, ADV_T_ALL, true);
                 T_CHECK(len > 0 && !t->err && t->n_layers == 4);
                 for (int i = 0; i < t->n_layers; i++) {
                     check_layer_sane(&t->l[i]);
                     for (int k = 0; k < t->l[i].n_features; k++) {
-                        T_CHECK_MSG(t->l[i].f[k].n_pts == 2, "z12 %s pts %d", t->l[i].name, t->l[i].f[k].n_pts);
+                        // Grouped: no ids, and every line of the feature its two end points.
+                        T_CHECK(!t->l[i].f[k].has_id);
+                        T_CHECK_MSG(t->l[i].f[k].n_pts == 2 * t->l[i].f[k].n_lines, "z12 %s pts %d lines %d", t->l[i].name,
+                                    t->l[i].f[k].n_pts, t->l[i].f[k].n_lines);
                         features++;
                     }
                 }
@@ -735,7 +1027,7 @@ static void test_renderer(d_tile *t) {
         int primaries = 0, traveled = 0;
         for (uint32_t y = y0; y <= y1; y++)
             for (uint32_t x = x0; x <= x1; x++) {
-                int len = render(&c, 10, x, y, ADV_T_ALL, true);
+                int len = render_u(&c, 10, x, y, ADV_T_ALL, true);
                 T_CHECK(len > 0 && !t->err && t->n_layers == 4);
                 const d_layer *roads = d_find(t, "roads"), *un = d_find(t, "untraveled"), *trav = d_find(t, "traveled");
                 T_CHECK(roads && un && trav);
@@ -863,11 +1155,11 @@ static void test_timing(void) {
             d_tile *t = d_tile_new();
             d_decode(out, (size_t)len, t);
             T_CHECK(!t->err && t->n_layers == 4);
-            roads = t->l[0].n_features;
-            trav = t->l[1].n_features;
-            untrav = t->l[2].n_features;
+            roads = t->l[0].n_lines;   // lines: the served tile groups them into a feature per tag tuple
+            trav = t->l[1].n_lines;
+            untrav = t->l[2].n_lines;
             for (int k = 0; k < 4; k++) check_layer_sane(&t->l[k]);
-            for (int k = 0; k < 4; k++) free(t->l[k].f);
+            for (int k = 0; k < 4; k++) { free(t->l[k].f); free(t->l[k].lines); }
             free(t);
         }
     }
@@ -899,12 +1191,16 @@ static void test_timing(void) {
 
 int main(void) {
     d_tile *t = d_tile_new();
+    test_tile_frame();
+    test_low_zoom_exact(t);
     test_writer(t);
     test_renderer(t);
     test_everyone(t);
+    test_grouped(t);
+    test_grouped_caps(t);
     test_parse();
     test_timing();
-    for (int i = 0; i < D_MAX_LAYERS; i++) free(t->l[i].f);
+    for (int i = 0; i < D_MAX_LAYERS; i++) { free(t->l[i].f); free(t->l[i].lines); }
     free(t);
     return t_done("unit_mvt");
 }

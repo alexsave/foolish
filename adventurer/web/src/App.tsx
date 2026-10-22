@@ -34,6 +34,8 @@ const TYPE_KEY = 'adventurer.type';
 const FEED_CAP = 200;
 const SPARK_N = 60;
 const LIST_RETRY_MS = 2000;
+// How often Everyone's map and card catch up with the uploads (App: the refresh throttle).
+const EVERYONE_REFRESH_MS = 10000;
 
 // Polls `load` until it answers, then stops; a failure retries every LIST_RETRY_MS. The hook
 // reruns when `key` changes (the user id, say) and ignores answers to a stale key.
@@ -193,6 +195,8 @@ export function App() {
   const refreshEveryone = everyoneData.refresh;
   const refreshEveryoneRegions = everyoneRegions.refresh;
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const everyoneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastEveryoneBump = useRef(0);
 
   useEffect(() => {
     const close = openFeed({
@@ -220,16 +224,29 @@ export function App() {
         }
         // Everyone's map grows with every user's upload; a user's with its own.
         const all = userIdRef.current === EVERYONE;
-        if ((all || a.user === userIdRef.current) && !(a.flags & AF_REJECTED)) {
+        if (all && !(a.flags & AF_REJECTED)) {
+          // EVERYONE'S TILES ARE REFETCHED AT MOST EVERY EVERYONE_REFRESH_MS: every visible
+          // tile is refetched on a version bump, and at eight uploads a second a bump per upload
+          // was a hundred city tiles a second for one viewer. One timer, never pushed back, so a
+          // steady stream still refreshes (a debounce reset by every upload never fired).
+          if (!everyoneTimer.current) {
+            const wait = Math.max(0, lastEveryoneBump.current + EVERYONE_REFRESH_MS - Date.now());
+            everyoneTimer.current = setTimeout(() => {
+              everyoneTimer.current = null;
+              lastEveryoneBump.current = Date.now();
+              if (userIdRef.current !== EVERYONE) return;
+              setCoverageVersion((v) => v + 1);
+              refreshEveryone();
+              refreshEveryoneRegions();
+            }, wait);
+          }
+        } else if (a.user === userIdRef.current && !(a.flags & AF_REJECTED)) {
           setCoverageVersion((v) => v + 1);
           // The stats card follows the tiles, a little later and coalesced under a burst.
           if (refreshTimer.current) clearTimeout(refreshTimer.current);
           refreshTimer.current = setTimeout(() => {
             refreshTimer.current = null;
-            if (all) {
-              refreshEveryone();
-              refreshEveryoneRegions();
-            } else refreshDetail();
+            refreshDetail();
           }, 1500);
         }
       },
@@ -237,6 +254,8 @@ export function App() {
     return () => {
       close();
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      if (everyoneTimer.current) clearTimeout(everyoneTimer.current);
+      everyoneTimer.current = null;
     };
   }, [refreshDetail, refreshEveryone, refreshEveryoneRegions]);
 

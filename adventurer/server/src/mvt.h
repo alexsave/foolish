@@ -39,6 +39,33 @@
 #define ADV_MVT_MAX_TAGS         4
 
 // ---- the writer -----------------------------------------------------------------------------
+// A GROUPED LAYER's lines wait here until the layer ends, and then every line of one tag tuple
+// is written as ONE feature, a MULTILINESTRING (MoveTo, LineTo per line, the cursor running on
+// from line to line): no id, one tag list, one header for thousands of lines. Below the shape
+// zoom a city tile is tens of thousands of two-point lines, and their feature headers and ids
+// were most of its bytes and of its time. The caller owns the arrays (adv_tile_scratch).
+#define ADV_MVT_GROUPS 1024   // distinct tag tuples one grouped layer may hold
+typedef struct {
+    uint32_t *line_off;    // per line: its first point in pts
+    uint16_t *line_n;      // per line: its points
+    uint16_t *line_group;  // per line: its tag tuple
+    uint32_t *order;       // the lines sorted by group, at layer end
+    int32_t  *pts;         // x, y pairs
+    uint8_t  *geom;        // one group's geometry as it is encoded (10 bytes a point at most)
+    size_t    cap_geom;    // a group whose worst case passes it is dropped (no layer could hold it)
+    uint32_t  cap_lines, cap_pts;
+    uint32_t  n_lines, n_pts;
+    uint32_t  n_groups;
+    int       group_tags[ADV_MVT_GROUPS][4];
+    uint32_t  group_count[ADV_MVT_GROUPS + 1];
+    uint64_t  hkey[2 * ADV_MVT_GROUPS];   // tag tuple -> group, open addressing (0: empty)
+    uint16_t  hval[2 * ADV_MVT_GROUPS];
+} adv_mvt_lines;
+// CB_OK or CB_E_NOMEM: room for cap_lines lines of cap_pts points in all, and one group's
+// geometry of cap_geom bytes (the writer's layer half is the most any group could use).
+int  adv_mvt_lines_init(adv_mvt_lines *l, uint32_t cap_lines, uint32_t cap_pts, size_t cap_geom);
+void adv_mvt_lines_free(adv_mvt_lines *l);
+
 typedef struct {
     uint8_t *buf;          // the tile being written
     size_t   cap, len;
@@ -51,6 +78,7 @@ typedef struct {
     uint32_t n_features;
     bool     full;         // the writer disagreed with itself (a bug): the tile is refused (CB_E_FULL at finish)
     uint32_t dropped;      // features and layers that did not fit the scratch: the tile is served without them
+    adv_mvt_lines *grouped;   // the current layer is grouped (adv_mvt_layer_begin_grouped)
 } adv_mvt;
 
 // scratch[0..cap) is split between the tile and the layer in progress. WHAT DOES NOT FIT IS
@@ -63,6 +91,11 @@ void adv_mvt_init(adv_mvt *w, uint8_t *scratch, size_t cap);
 // (0..ADV_MVT_MAX_VALUE), or a negative value for "no such tag".
 #define ADV_MVT_MAX_VALUE 255
 void adv_mvt_layer_begin(adv_mvt *w, const char *name, const char *const *keys, int n_keys);
+// The same, grouped: adv_mvt_feature_line keeps its line in `lines` (the id is not written) and
+// adv_mvt_layer_end writes one MULTILINESTRING feature per tag tuple, in the order the tuples
+// first appeared, its lines in the order they came. A line past the arrays' room, or a tuple past
+// ADV_MVT_GROUPS, is dropped and counted.
+void adv_mvt_layer_begin_grouped(adv_mvt *w, const char *name, const char *const *keys, int n_keys, adv_mvt_lines *lines);
 // One LINESTRING of n >= 2 points in extent coordinates (geo.h adv_tile_project, rounded).
 void adv_mvt_feature_line(adv_mvt *w, uint64_t id, const int *tags, const int32_t *xy, int n);
 void adv_mvt_layer_end(adv_mvt *w);
@@ -75,6 +108,8 @@ typedef struct {
     int      z;
     uint32_t x, y;
     int      type;            // ADV_T_BIKE, ADV_T_FOOT or ADV_T_ALL: which coverage view
+    bool     ungrouped;       // a feature per line, with its id (the tests' reference for the
+                              // grouped layers; nothing serves it)
     bool     roads;           // the base layer
     bool     traveled, untraveled, unique;
     const adv_all_seg *all;   // everyone's words (n_segs of them): the composite instead of a user's cov
@@ -91,7 +126,10 @@ typedef struct {
     uint32_t  dropped;    // what the last render left out for want of scratch (adv_mvt dropped)
     adv_pt    pts[ADV_SEG_MAX_PTS];
     int32_t   xy[ADV_SEG_MAX_PTS * 2];
+    adv_mvt_lines lines;  // a grouped layer's lines (below the shape zoom every layer is grouped)
 } adv_tile_scratch;
+#define ADV_TILE_GROUP_LINES (1u << 18)   // lines a grouped layer may hold (a z10 city tile: 100k)
+#define ADV_TILE_GROUP_PTS   (1u << 19)   // and their points (a z13 city tile: 40k)
 int  adv_tile_scratch_init(adv_tile_scratch *s, const adv_graph *g);   // CB_OK or CB_E_NOMEM
 void adv_tile_scratch_free(adv_tile_scratch *s);
 

@@ -72,6 +72,24 @@ void adv_tile_project(int z, uint32_t x, uint32_t y, adv_pt p, double *px, doubl
     *py = (my * n - (double)y) * ADV_MVT_EXTENT;
 }
 
+void adv_tile_frame_init(adv_tile_frame *f, int z, uint32_t x, uint32_t y) {
+    adv_pt mn, mx;
+    adv_tile_bounds(z, x, y, &mn, &mx);
+    adv_pt mid = { (int32_t)(((int64_t)mn.lat + mx.lat) / 2), (int32_t)(((int64_t)mn.lon + mx.lon) / 2) };
+    f->lat0 = mid.lat;
+    f->lon0 = mid.lon;
+    adv_tile_project(z, x, y, mid, &f->px0, &f->py0);
+    double scale = (double)(1u << z) * ADV_MVT_EXTENT;   // extent units across the world
+    f->ux = scale / (360.0 * ADV_DEG);
+    f->rad = M_PI / 180.0 / ADV_DEG;
+    double phi = (double)mid.lat * f->rad, sec = 1.0 / cos(phi), tn = tan(phi);
+    // y = 1/2 - asinh(tan phi) / 2pi, so y1 = -sec / 2pi, y2 = y1 tan, y3 = y1 (1 + 2 tan^2).
+    double k = -scale / (2.0 * M_PI) * sec;
+    f->c1 = k;
+    f->c2 = k * tn / 2.0;
+    f->c3 = k * (1.0 + 2.0 * tn * tn) / 6.0;
+}
+
 double adv_tile_m_per_unit(int z, uint32_t y) {
     double n = (double)(1u << z);
     double lat = tile_lat(((double)y + 0.5) / n);

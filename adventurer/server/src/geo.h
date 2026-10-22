@@ -60,6 +60,24 @@ void adv_tile_frac(adv_pt p, int z, double *fx, double *fy);
 void adv_tile_bounds(int z, uint32_t x, uint32_t y, adv_pt *min, adv_pt *max);
 // p in the tile's extent coordinates (0..ADV_MVT_EXTENT inside the tile; may fall outside it).
 void adv_tile_project(int z, uint32_t x, uint32_t y, adv_pt p, double *px, double *py);
+// A TILE FRAME: Web Mercator about the tile's middle latitude, so a point projects with
+// multiplies and adds and no transcendental: x is linear in longitude (exact), y is the series
+// to the third derivative of asinh(tan) at the middle. From ADV_TILE_FRAME_MIN_ZOOM up the
+// remainder over the tile, its grown edge and a 2 km segment past it stays under 0.002 extent
+// units at 41 N and at 70 N alike (unit_mvt measures it; the fourth derivative grows as sec^5
+// tan, which a smaller zoom's wider tile meets first); below, the caller projects exactly.
+#define ADV_TILE_FRAME_MIN_ZOOM 8
+typedef struct {
+    double lat0, lon0;         // the middle, in int32 units
+    double px0, py0;           // its extent coordinates
+    double ux, rad, c1, c2, c3;
+} adv_tile_frame;
+void adv_tile_frame_init(adv_tile_frame *f, int z, uint32_t x, uint32_t y);
+static inline void adv_tile_frame_project(const adv_tile_frame *f, adv_pt p, double *px, double *py) {
+    double d = ((double)p.lat - f->lat0) * f->rad;
+    *px = f->px0 + ((double)p.lon - f->lon0) * f->ux;
+    *py = f->py0 + d * (f->c1 + d * (f->c2 + d * f->c3));
+}
 // Metres per extent unit at this tile (its height over 4096).
 double adv_tile_m_per_unit(int z, uint32_t y);
 
