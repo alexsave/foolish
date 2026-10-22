@@ -15,7 +15,9 @@ enum {
     BE_M_MOVE_ACK,       // a move: request out to reply in
     BE_M_MOVE_PUSH,      // a move: request out to the mover's own cast of it in
     BE_M_CAST_DECODE,    // a cast's arrival to applied on the client table
-    BE_M_REQ,            // every request that is not a move (asks, creates, reads)
+    BE_M_REQ_CREATE,     // a table's creation: /v1/create (mixed), /dev/bot_table (league)
+    BE_M_REQ_ASK,        // a lobby ask: rules, a bot, a join, start, a rematch, an exit
+    BE_M_REQ_READ,       // a game read whole (GET /v1/games/<id>)
     BE_M_GAME_S,         // a finished game's length, deal to fool, in SECONDS
     // rates, per second
     BE_M_MOVES,
@@ -39,7 +41,7 @@ enum {
     BE_M_BOTS_SEATED,
     BE_M_THREADS,
     BE_M_SERVER_RSS_MB,
-    BE_M_SERVER_CPU_CPCT,   // the game server's CPU over the last second, hundredths of a percent of one core
+    BE_M_SERVER_CPU_CPCT,   // the game server's CPU over the last ten seconds, hundredths of a percent of one core
     BE_M_N
 };
 

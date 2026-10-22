@@ -19,8 +19,9 @@
 #include "sim.h"
 
 #include "be_metrics.h"
+#include "board.h"
+#include "client.h"
 #include "util/clock.h"
-#include "../../../shared/c/proc.h"
 #include "util/err.h"
 #include "util/log.h"
 #include "util/str.h"
@@ -50,9 +51,6 @@
 #include <unistd.h>
 
 #define REQ_TIMEOUT_MS   15000
-#define IN_CAP_START     (16 * 1024)
-#define IN_CAP_MAX       CB_WS_MAX_MESSAGE
-#define PEND_MAX         8
 #define LINGER_MS        6000     // after the fool is known, before leaving or a rematch
 #define IDLE_MIN_MS      1500     // between a player's games
 #define IDLE_MAX_MS      6000
@@ -60,7 +58,6 @@
 #define RECONNECT_MS     2000
 #define RANDOM_MOVE_PCT  15       // moves taken at random off the menu, so games differ
 #define MAX_BOT_IDS      32
-#define PING_MS          30000
 #define NAME_POOL        24
 
 // ---- the players ------------------------------------------------------------------------------
@@ -71,21 +68,9 @@ enum { R_CREATE = 1, R_ASK, R_ACTION, R_VIEW, R_EXIT, R_START, R_CONTINUE };
 typedef struct sim_table sim_table;
 
 typedef struct {
-    uint32_t id;
-    uint8_t  kind;      // R_*
-    uint8_t  hostile;   // BE_HOSTILE_* for a hostile action, 0 otherwise
-    uint32_t intent;    // an action's version
-    int64_t  t0_us;
-} pending;
-
-typedef struct {
     int       index, thread;
-    char      name[32], password[40], uid[NW_ID_MAX + 1];
-    char      token[NW_ACCESS_MAX + 1];
-    int       ws;                 // -1 closed
-    uint8_t  *in;
-    size_t    in_len, in_cap;
-    int64_t   next_ping_ms, reopen_ms;
+    be_client c;                  // the account and its socket (client.h)
+    int64_t   reopen_ms;
     // the game
     sim_table *table;
     ClientSlot  slot;
@@ -97,9 +82,6 @@ typedef struct {
     int64_t   think_due_ms;       // -1 none
     int64_t   idle_until_ms;
     bool      ready_sent, subscribed, refetching;
-    uint32_t  req_seq;
-    pending   pend[PEND_MAX];
-    int       n_pend;
     // the move in flight, for the push latency: its send time and the version it was made on
     int64_t   wait_t0_us;
     uint32_t  wait_v;
@@ -112,7 +94,7 @@ struct sim_table {
     int       gid_len;
     int       n_seats, n_bots, n_humans;
     int       humans[MAX_PLAYERS];   // player indices, the creator first
-    int       bots[MAX_PLAYERS];     // bot ids to seat, by index into g_bot_ids
+    int       bots[MAX_PLAYERS];     // bots to seat, by index into g_bot_pool
     bool      podkidnoy;
     int       state;                 // P_SETUP .. P_LEAVING, from the creator's point of view
     int       step;                  // setup: the next ask (rules, then bots, then joins)
@@ -141,17 +123,14 @@ static be_sim_opts  g_o;
 static int          g_port;
 static sim_thread   g_threads[BE_SIM_MAX_THREADS];
 static atomic_bool  g_stop;
-static atomic_uint  g_sockets, g_seated, g_bots_seated;
+static atomic_uint  g_seated, g_bots_seated;
 static atomic_ullong g_hostile_seq;
-static char         g_bot_ids[MAX_BOT_IDS][NW_ID_MAX + 1];
-static char         g_bot_keys[MAX_BOT_IDS][NW_KEY_MAX + 1];
-static char         g_bot_names[MAX_BOT_IDS][NW_NAME_MAX + 1];
+// The bots the mixed sim seats: indices into board.h's roster, the kinds it picks (fetch_bots).
+static int          g_bot_pool[MAX_BOT_IDS];
 static int          g_n_bots;
 static pthread_mutex_t g_ready_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_ready_cv = PTHREAD_COND_INITIALIZER;
 static int          g_n_ready;
-static uint64_t     g_server_cpu_us, g_server_cpu_at_us;
-
 static const char *const FIRST_NAMES[NAME_POOL] = {
     "Anya", "Boris", "Clara", "Dmitri", "Elena", "Felix", "Greta", "Hugo", "Irina", "Jonas", "Katya", "Leon",
     "Mila", "Nikita", "Olga", "Pavel", "Rosa", "Sasha", "Tamara", "Ulrik", "Vera", "Wanda", "Yuri", "Zoya",
@@ -164,51 +143,11 @@ static void nap_ms(int ms) {
 
 static uint32_t rnd(uint64_t *rng, uint32_t n) { return n ? rng_u32(rng) % n : 0; }
 
-static be_w_card wcard(Card c) {
-    be_w_card w = { (int8_t)c.suit, (int8_t)c.value };
-    return w;
-}
+// ---- the socket (client.h) ----------------------------------------------------------------------
 
-// ---- the socket ---------------------------------------------------------------------------------
-
-static void ws_send(player *p, const void *bytes, size_t n) {
-    if (p->ws < 0) return;
-    if (tc_ws_send(p->ws, CB_WS_OP_BIN, bytes, n) != 0) {
-        close(p->ws);
-        p->ws = -1;
-        atomic_fetch_sub(&g_sockets, 1);
-    }
-}
-
-static pending *pend_add(player *p, int kind, uint8_t hostile, uint32_t intent) {
-    if (p->n_pend >= PEND_MAX) {
-        // The oldest is forgotten: its reply, if it ever comes, is counted as unknown.
-        memmove(p->pend, p->pend + 1, (size_t)(PEND_MAX - 1) * sizeof p->pend[0]);
-        p->n_pend = PEND_MAX - 1;
-    }
-    pending *q = &p->pend[p->n_pend++];
-    q->id = ++p->req_seq;
-    q->kind = (uint8_t)kind;
-    q->hostile = hostile;
-    q->intent = intent;
-    q->t0_us = cb_mono_us();
-    return q;
-}
-
-// One request on the socket: the HTTP route's method, path and body, answered by a REPLY.
 static bool send_req(player *p, int kind, int meth, const char *path, const uint8_t *body, size_t n, uint8_t hostile,
                      uint32_t intent) {
-    if (p->ws < 0) return false;
-    pending *q = pend_add(p, kind, hostile, intent);
-    uint8_t frame[SF_PATH_MAX + 9 + 512];
-    int len = sf_put_req(frame, sizeof frame, q->id, (uint8_t)meth, path, strlen(path), body, n);
-    if (len < 0) {
-        p->n_pend--;
-        return false;
-    }
-    ws_send(p, frame, (size_t)len);
-    cb_metrics_rate(be_mx, BE_M_REQS, cb_now_ms(), 1);
-    return true;
+    return be_client_req(&p->c, kind, meth, path, body, n, hostile, intent);
 }
 
 static bool send_ask(player *p, int kind, const TableAsk *a, int req_kind) {
@@ -226,71 +165,20 @@ static void ask_init(TableAsk *a, int kind, const sim_table *t) {
 }
 
 static void send_sub(player *p, const sim_table *t, bool unsub) {
-    uint8_t frame[SF_GID_MAX + 8];
-    int n = sf_put_sub(frame, sizeof frame, unsub ? SF_UNSUB : SF_SUB, ++p->req_seq, NW_SUB_GAME, t->gid, (size_t)t->gid_len);
-    if (n > 0) ws_send(p, frame, (size_t)n);
+    be_client_sub(&p->c, t->gid, t->gid_len, unsub);
     p->subscribed = !unsub;
 }
 
-// ---- sign-up and the stream ---------------------------------------------------------------------
-
-// POST /v1/auth/signup, or signin when the name is taken (a rerun on the same store). Blocking,
-// once per player at start and again when a socket's token is refused.
-static bool sign_in(player *p) {
-    for (int attempt = 0; attempt < 2; attempt++) {
-        NwRequest q;
-        memset(&q, 0, sizeof q);
-        q.kind = attempt == 0 ? NW_SIGNUP : NW_SIGNIN;
-        q.name_len = (uint8_t)strlen(p->name);
-        memcpy(q.name, p->name, q.name_len);
-        q.password_len = (uint8_t)strlen(p->password);
-        memcpy(q.password, p->password, q.password_len);
-        uint8_t body[256];
-        int n = nw_request_encode(&q, body, sizeof body);
-        if (n <= 0) return false;
-        tc_response r;
-        int rc = tc_http(g_port, "POST", attempt == 0 ? "/v1/auth/signup" : "/v1/auth/signin",
-                         "Content-Type: application/octet-stream\r\n", body, (size_t)n, &r);
-        NwSession ses;
-        bool ok = rc == 0 && r.status == 200 && nw_session_decode(r.body.p, (int)r.body.len, &ses) == NW_OK;
-        int status = rc == 0 ? r.status : -1;
-        tc_response_free(&r);
-        if (ok) {
-            snprintf(p->token, sizeof p->token, "%.*s", (int)ses.access_len, ses.access);
-            snprintf(p->uid, sizeof p->uid, "%.*s", (int)ses.user_id_len, ses.user_id);
-            return true;
-        }
-        if (attempt == 0 && status == 409) continue;   // taken: sign in
-        CB_WARN("birdseye", "%s: %s answered %d", p->name, attempt == 0 ? "signup" : "signin", status);
-        if (status == 429) nap_ms(1000);
-        return false;
-    }
-    return false;
-}
-
-// Opens /ws and says HELLO; the READY comes back on the socket like any frame.
+// Opens the socket; a player at a table hears its room again.
 static bool open_stream(player *p) {
-    p->ws = tc_ws_open(g_port, "/ws", NULL);
-    if (p->ws < 0) return false;
-    atomic_fetch_add(&g_sockets, 1);
-    p->in_len = 0;
-    uint8_t frame[SF_TOKEN_MAX + 4];
-    int n = sf_put_hello(frame, sizeof frame, p->token, strlen(p->token));
-    if (n < 0) return false;
-    ws_send(p, frame, (size_t)n);
-    p->next_ping_ms = cb_mono_ms() + PING_MS;
     p->subscribed = false;
+    if (!be_client_open(&p->c, g_port)) return false;
     if (p->table && p->table->gid_len) send_sub(p, p->table, false);
-    return p->ws >= 0;
+    return p->c.ws >= 0;
 }
 
 static void close_stream(player *p) {
-    if (p->ws >= 0) {
-        close(p->ws);
-        p->ws = -1;
-        atomic_fetch_sub(&g_sockets, 1);
-    }
-    p->n_pend = 0;
+    be_client_close(&p->c);
     p->subscribed = false;
 }
 
@@ -307,7 +195,7 @@ static void event_at(sim_table *t, int kind, int seat, const Card *cards, int n_
     e.refused = (uint8_t)refused;
     if (n_cards > BE_EVENT_CARDS) n_cards = BE_EVENT_CARDS;
     e.n_cards = (uint8_t)n_cards;
-    for (int i = 0; i < n_cards; i++) e.cards[i] = wcard(cards[i]);
+    for (int i = 0; i < n_cards; i++) e.cards[i] = (be_w_card){ cards[i].suit, cards[i].value };
     e.version = version;
     e.lat_us = lat_us;
     e.at_ms = cb_now_ms();
@@ -320,12 +208,6 @@ static void event_at(sim_table *t, int kind, int seat, const Card *cards, int n_
 static void hostile_event(sim_table *t, int seat, int kind, int refused) {
     Card c = { 0, (int8_t)kind };
     event_at(t, BE_EV_HOSTILE, seat, &c, 1, t->version, 0, refused);
-}
-
-static bool all_covered(const TableView *v) {
-    for (int i = 0; i < v->num_battles; i++)
-        if (card_is_none(v->battles[i].defense)) return false;
-    return true;
 }
 
 // The row from this player's view (the creator reports the board; every human reports its hand).
@@ -344,61 +226,9 @@ static void report(player *p, int64_t now_ms) {
         be_w_hand *h = &bt->hands[v->my_seat];
         int n = v->my_hand_count > BE_HAND ? BE_HAND : v->my_hand_count;
         h->n = (uint8_t)n;
-        for (int i = 0; i < n; i++) h->cards[i] = wcard(v->my_hand[i]);
+        for (int i = 0; i < n; i++) h->cards[i] = (be_w_card){ v->my_hand[i].suit, v->my_hand[i].value };
     }
-    if (reporter) {
-        be_w_table *w = &bt->w;
-        w->n_seats = (uint8_t)t->n_seats;
-        w->num_players = (uint8_t)v->num_players;
-        w->podkidnoy = (uint8_t)!v->passing;
-        w->power_suit = v->power_suit;
-        w->has_flipped = (uint8_t)v->has_flipped;
-        w->flipped = wcard(v->flipped);
-        w->first_attacker = v->first_attacker;
-        w->defender = v->defender;
-        w->fool = v->fool;
-        int nb = v->num_battles > BE_BATTLES ? BE_BATTLES : v->num_battles;
-        w->num_battles = (uint8_t)nb;
-        for (int i = 0; i < nb; i++) {
-            w->attack[i] = wcard(v->battles[i].attack);
-            w->defense[i] = wcard(v->battles[i].defense);
-        }
-        w->deck_count = v->deck_count;
-        w->discard_count = v->discard_pile_length;
-        w->version = v->version;
-        w->moves = t->moves;
-        bool covered = all_covered(v);
-        for (int i = 0; i < v->num_players && i < BE_SEATS; i++) {
-            const ViewSeat *s = &v->seats[i];
-            be_w_seat *ws = &w->seats[i];
-            int nl = s->name_len > BE_NAME ? BE_NAME : s->name_len;
-            ws->name_len = (uint8_t)nl;
-            memcpy(ws->name, s->name, (size_t)nl);
-            ws->status = (uint8_t)s->status;
-            ws->hand_count = (uint8_t)(s->hand_count < 0 ? 0 : s->hand_count);
-            ws->flags = s->is_ai ? BE_SEAT_BOT : BE_SEAT_HUMAN_SIM;
-            if (v->good_mask & (1u << i)) ws->flags |= BE_SEAT_GOOD;
-            if (s->status == PLAYER_STATUS_OUT) ws->flags |= BE_SEAT_OUT;
-            if (v->fool == i) ws->flags |= BE_SEAT_FOOL;
-            if (turn_may_act(v->status, s->status, i, v->num_battles, covered, v->first_attacker, v->defender, v->good_mask))
-                ws->flags |= BE_SEAT_TO_MOVE;
-            ws->brain_len = 0;
-            if (s->is_ai) {
-                // The seat's name is the bot's nickname; its strategy key is what GET /v1/bots said.
-                for (int b = 0; b < g_n_bots; b++)
-                    if (strcmp(g_bot_names[b], s->name) == 0) {
-                        size_t kl = strlen(g_bot_keys[b]);
-                        if (kl > sizeof ws->brain) kl = sizeof ws->brain;
-                        ws->brain_len = (uint8_t)kl;
-                        memcpy(ws->brain, g_bot_keys[b], kl);
-                        break;
-                    }
-            }
-        }
-        uint8_t phase = v->status == GAME_STATUS_PLAYING ? BE_PHASE_PLAYING : v->status == GAME_STATUS_GAME_OVER ? BE_PHASE_OVER : BE_PHASE_LOBBY;
-        if (bt->w.phase != BE_PHASE_GONE) be_world_set_phase(&be_world_g, bt, phase);
-        be_world_changed(&be_world_g, bt);
-    }
+    if (reporter) be_board_fill(&be_world_g, bt, v, t->n_seats, t->moves);
     be_world_unlock(&be_world_g);
 }
 
@@ -418,7 +248,7 @@ static void adopt_env(player *p, const uint8_t *env, int n, int64_t now_ms) {
     client_init(&p->ct, &p->slot);
     client_delta_attach(&p->ct, p->delta);
     if (client_adopt_envelope(&p->ct, env, n) < 0) {
-        CB_WARN("birdseye", "%s: an envelope of %d bytes was refused (%d)", p->name, n, p->ct.detail);
+        CB_WARN("birdseye", "%s: an envelope of %d bytes was refused (%d)", p->c.name, n, p->ct.detail);
         return;
     }
     p->have = true;
@@ -436,16 +266,7 @@ static void push_events(player *p, sim_table *t) {
     while ((rc = client_push_next(&p->ct)) == 1) {
         if (!reporter) continue;
         const PushEvent *e = &p->ct.event;
-        int kind = 0;
-        switch (e->type) {
-        case EVW_T_DEAL: kind = BE_EV_DEALT; break;
-        case EVW_T_ATTACK_PASS: kind = e->msg == EVW_MSG_PASSED ? BE_EV_PASS : BE_EV_ATTACK; break;
-        case EVW_T_COVER: kind = BE_EV_COVER; break;
-        case EVW_T_PICKUP: kind = BE_EV_PICKUP; break;
-        case EVW_T_DISCARD: kind = BE_EV_GOOD; break;
-        case EVW_T_OUT: kind = BE_EV_OUT; break;
-        default: break;
-        }
+        int kind = be_board_event_kind(e);
         if (kind == BE_EV_DEALT) {
             if (t->dealt_ms == 0) {
                 t->dealt_ms = cb_mono_ms();   // the sim's own clock, like every t->*_ms
@@ -456,7 +277,7 @@ static void push_events(player *p, sim_table *t) {
 }
 
 static void refetch(player *p) {
-    if (!p->table || p->refetching || p->ws < 0) return;
+    if (!p->table || p->refetching || p->c.ws < 0) return;
     char path[96];
     snprintf(path, sizeof path, "/v1/games/%s", p->table->gid);
     if (send_req(p, R_VIEW, SF_METH_GET, path, NULL, 0, 0, 0)) {
@@ -478,7 +299,7 @@ static void apply_cast(player *p, const uint8_t *cast, int n, uint32_t version, 
     int rc = client_cast_open(&p->ct, cast, n, ident, il, board, bl);
     if (rc < 0) {
         if (version > p->ct.view.version) {
-            CB_DEBUG("birdseye", "%s: cast v%u on v%u refused (%d, detail %d): refetching", p->name, version, p->ct.view.version, rc, p->ct.detail);
+            CB_DEBUG("birdseye", "%s: cast v%u on v%u refused (%d, detail %d): refetching", p->c.name, version, p->ct.view.version, rc, p->ct.detail);
             refetch(p);   // a gap or a divergence; a stale cast is dropped
         }
         return;
@@ -624,17 +445,8 @@ static void send_move(sim_thread *th, player *p, int64_t now_ms) {
 // ---- replies -------------------------------------------------------------------------------------
 
 static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_ms) {
-    pending q;
-    bool found = false;
-    for (int i = 0; i < p->n_pend; i++)
-        if (p->pend[i].id == f->id) {
-            q = p->pend[i];
-            memmove(p->pend + i, p->pend + i + 1, (size_t)(p->n_pend - i - 1) * sizeof p->pend[0]);
-            p->n_pend--;
-            found = true;
-            break;
-        }
-    if (!found) return;   // a subscription's reply, or one forgotten
+    be_pending q;
+    if (!be_client_take(&p->c, f->id, &q)) return;   // a subscription's reply, or one forgotten
     uint32_t dt = (uint32_t)(cb_mono_us() - q.t0_us);
     sim_table *t = p->table;
     switch (q.kind) {
@@ -645,7 +457,7 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
         if (q.hostile) {
             if (applied) {
                 cb_metrics_add(be_mx, BE_M_HOSTILE_TAKEN, 1);
-                CB_WARN("birdseye", "%s: a hostile move of kind %d was APPLIED at %s (status %d)", p->name, q.hostile, t ? t->gid : "?", f->status);
+                CB_WARN("birdseye", "%s: a hostile move of kind %d was APPLIED at %s (status %d)", p->c.name, q.hostile, t ? t->gid : "?", f->status);
             }
             if (t) hostile_event(t, p->ct.view.my_seat, q.hostile, !applied);
             break;
@@ -671,7 +483,7 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
         break;
     }
     case R_CREATE:
-        cb_metrics_observe(be_mx, BE_M_REQ, dt);
+        cb_metrics_observe(be_mx, BE_M_REQ_CREATE, dt);
         if (f->status == 200 && t) {
             adopt_env(p, f->body, (int)f->body_len, now_ms);
             if (p->have && p->ct.gid_len > 0 && p->ct.gid_len <= NW_GID_MAX) {
@@ -691,7 +503,7 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
                 report(p, now_ms);
             } else t->state = P_LEAVING;
         } else if (t) {
-            CB_WARN("birdseye", "%s: create answered %d", p->name, f->status);
+            CB_WARN("birdseye", "%s: create answered %d", p->c.name, f->status);
             t->state = P_LEAVING;
         }
         t->step_pending = false;
@@ -699,19 +511,19 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
     case R_ASK:
     case R_START:
     case R_CONTINUE:
-        cb_metrics_observe(be_mx, BE_M_REQ, dt);
+        cb_metrics_observe(be_mx, BE_M_REQ_ASK, dt);
         if (f->status == 200) adopt_env(p, f->body, (int)f->body_len, now_ms);
         else {
             AskRefusal why;
             int w = ask_refusal_decode(f->body, (int)f->body_len, &why) == ASK_OK ? why.why : -1;
-            CB_WARN("birdseye", "%s: an ask (%d) at %s answered %d, why %d code %d", p->name, q.kind, t ? t->gid : "?", f->status, w,
+            CB_WARN("birdseye", "%s: an ask (%d) at %s answered %d, why %d code %d", p->c.name, q.kind, t ? t->gid : "?", f->status, w,
                     w >= 0 ? why.code : 0);
             if (t && q.kind == R_ASK && t->state == P_SETUP) t->state = P_LEAVING;   // a setup that fails ends the table
         }
         if (t) t->step_pending = false;
         break;
     case R_VIEW:
-        cb_metrics_observe(be_mx, BE_M_REQ, dt);
+        cb_metrics_observe(be_mx, BE_M_REQ_READ, dt);
         p->refetching = false;
         if (f->status == 200) {
             uint32_t version;
@@ -720,7 +532,7 @@ static void on_reply(sim_thread *th, player *p, const sf_frame *f, int64_t now_m
         } else if (f->status == 404 && t) t->state = P_LEAVING;
         break;
     case R_EXIT:
-        cb_metrics_observe(be_mx, BE_M_REQ, dt);
+        cb_metrics_observe(be_mx, BE_M_REQ_ASK, dt);
         if (t) t->exits_pending--;
         break;
     default: break;
@@ -754,51 +566,17 @@ static void on_message(sim_thread *th, player *p, const uint8_t *msg, size_t n, 
     // NW_WS_SPECT: the spectators' cast, dropped while seated (the web's rule); NW_WS_CHAT: none sent.
 }
 
+typedef struct { sim_thread *th; player *p; int64_t now_ms; } msg_ctx;
+
+static void on_socket_message(void *ud, const uint8_t *msg, size_t n) {
+    msg_ctx *m = ud;
+    on_message(m->th, m->p, msg, n, m->now_ms);
+}
+
 static void read_socket(sim_thread *th, player *p, int64_t now_ms) {
-    if (p->in_len == p->in_cap) {
-        if (p->in_cap >= IN_CAP_MAX) {
-            close_stream(p);
-            return;
-        }
-        size_t cap = p->in_cap * 2;
-        uint8_t *b = realloc(p->in, cap);
-        if (!b) {
-            close_stream(p);
-            return;
-        }
-        p->in = b;
-        p->in_cap = cap;
-    }
-    ssize_t r = recv(p->ws, p->in + p->in_len, p->in_cap - p->in_len, 0);
-    if (r <= 0) {
-        if (r < 0 && (errno == EINTR || errno == EAGAIN)) return;
-        close_stream(p);
-        return;
-    }
-    p->in_len += (size_t)r;
-    size_t off = 0;
-    for (;;) {
-        cb_ws_frame f;
-        int n = cb_ws_frame_parse(p->in + off, p->in_len - off, IN_CAP_MAX, &f);
-        if (n < 0) {
-            close_stream(p);
-            return;
-        }
-        if (n == 0) break;
-        uint8_t *pl = p->in + off + f.header_len;
-        if (f.masked) cb_ws_unmask(pl, (size_t)f.len, f.mask);
-        if (f.opcode == CB_WS_OP_PING) tc_ws_send(p->ws, CB_WS_OP_PONG, pl, (size_t)f.len);
-        else if (f.opcode == CB_WS_OP_CLOSE) {
-            close_stream(p);
-            return;
-        } else if (f.opcode == CB_WS_OP_BIN) on_message(th, p, pl, (size_t)f.len, now_ms);
-        off += (size_t)n;
-        if (p->ws < 0) return;
-    }
-    if (off) {
-        memmove(p->in, p->in + off, p->in_len - off);
-        p->in_len -= off;
-    }
+    msg_ctx m = { th, p, now_ms };
+    be_client_read(&p->c, on_socket_message, &m);
+    if (p->c.ws < 0) p->subscribed = false;
 }
 
 // ---- tables ----------------------------------------------------------------------------------------
@@ -811,7 +589,7 @@ static int bot_pick(sim_thread *th) {
 static int idle_players(sim_thread *th) {
     int n = 0;
     for (int i = 0; i < th->n_players; i++)
-        if (th->players[i].state == P_IDLE && th->players[i].ws >= 0 && th->players[i].idle_until_ms <= cb_mono_ms()) n++;
+        if (th->players[i].state == P_IDLE && th->players[i].c.ws >= 0 && th->players[i].idle_until_ms <= cb_mono_ms()) n++;
     return n;
 }
 
@@ -843,7 +621,7 @@ static bool table_new(sim_thread *th, int64_t now_ms) {
     int k = 0;
     for (int i = 0; i < th->n_players && k < humans; i++) {
         player *p = &th->players[i];
-        if (p->state != P_IDLE || p->ws < 0 || p->idle_until_ms > now_ms) continue;
+        if (p->state != P_IDLE || p->c.ws < 0 || p->idle_until_ms > now_ms) continue;
         t->humans[k++] = p->index;
         p->table = t;
         p->state = P_SETUP;
@@ -869,7 +647,7 @@ static void table_free(sim_thread *th, sim_table *t, int64_t now_ms) {
     for (int i = 0; i < t->n_humans; i++) {
         player *p = player_of(th, t->humans[i]);
         if (p->table != t) continue;
-        if (p->subscribed && p->ws >= 0 && t->gid_len) send_sub(p, t, true);
+        if (p->subscribed && p->c.ws >= 0 && t->gid_len) send_sub(p, t, true);
         p->table = NULL;
         p->have = false;
         p->state = P_IDLE;
@@ -900,8 +678,9 @@ static void table_setup(sim_thread *th, sim_table *t, int64_t now_ms) {
         ask_init(&a, ASK_ADD_BOT, t);
         int id = t->bots[b];
         if (id >= 0) {
-            a.bot_len = (uint8_t)strlen(g_bot_ids[id]);
-            memcpy(a.bot, g_bot_ids[id], a.bot_len);
+            const char *bid = be_bots_at(g_bot_pool[id])->id;
+            a.bot_len = (uint8_t)strlen(bid);
+            memcpy(a.bot, bid, a.bot_len);
         }
         t->step_pending = send_ask(creator, ASK_ADD_BOT, &a, R_ASK);
         if (t->step_pending) atomic_fetch_add(&g_bots_seated, 1);
@@ -910,7 +689,7 @@ static void table_setup(sim_thread *th, sim_table *t, int64_t now_ms) {
     int j = b - t->n_bots + 1;   // the joiner: humans[1..]
     if (j < t->n_humans) {
         player *p = player_of(th, t->humans[j]);
-        if (p->ws < 0) { t->state = P_LEAVING; return; }
+        if (p->c.ws < 0) { t->state = P_LEAVING; return; }
         send_sub(p, t, false);
         ask_init(&a, ASK_JOIN, t);
         t->step_pending = send_ask(p, ASK_JOIN, &a, R_ASK);
@@ -925,7 +704,7 @@ static void table_tick(sim_thread *th, sim_table *t, int64_t now_ms) {
     player *creator = player_of(th, t->humans[0]);
     switch (t->state) {
     case P_SETUP:
-        if (creator->ws < 0) { t->state = P_LEAVING; break; }
+        if (creator->c.ws < 0) { t->state = P_LEAVING; break; }
         table_setup(th, t, now_ms);
         if (now_ms - t->created_ms > 60000) t->state = P_LEAVING;   // a setup that never completes
         break;
@@ -936,7 +715,7 @@ static void table_tick(sim_thread *th, sim_table *t, int64_t now_ms) {
             player *p = player_of(th, t->humans[i]);
             if (!p->have) continue;
             if (p->ct.view.status == GAME_STATUS_PLAYING) playing = true;
-            if (!p->ready_sent && p->ct.view.num_players >= t->n_seats && p->ws >= 0) {
+            if (!p->ready_sent && p->ct.view.num_players >= t->n_seats && p->c.ws >= 0) {
                 TableAsk a;
                 ask_init(&a, ASK_START, t);
                 p->ready_sent = send_ask(p, ASK_START, &a, R_START);
@@ -977,7 +756,7 @@ static void table_tick(sim_thread *th, sim_table *t, int64_t now_ms) {
     }
     case P_OVER:
         if (now_ms - t->over_ms < LINGER_MS) break;
-        if (t->rematch && creator->ws >= 0) {
+        if (t->rematch && creator->c.ws >= 0) {
             TableAsk a;
             ask_init(&a, ASK_CONTINUE, t);
             if (send_ask(creator, ASK_CONTINUE, &a, R_CONTINUE)) {
@@ -1000,7 +779,7 @@ static void table_tick(sim_thread *th, sim_table *t, int64_t now_ms) {
         t->exits_pending = 0;
         for (int i = 0; i < t->n_humans; i++) {
             player *p = player_of(th, t->humans[i]);
-            if (p->ws < 0) continue;
+            if (p->c.ws < 0) continue;
             TableAsk a;
             ask_init(&a, ASK_EXIT, t);
             if (send_ask(p, ASK_EXIT, &a, R_EXIT)) t->exits_pending++;
@@ -1019,18 +798,13 @@ static void table_tick(sim_thread *th, sim_table *t, int64_t now_ms) {
 
 // A player's own clock: a move after its think time, a ping, a socket to reopen.
 static void player_tick(sim_thread *th, player *p, int64_t now_ms) {
-    if (p->ws < 0) {
+    if (p->c.ws < 0) {
         if (now_ms < p->reopen_ms) return;
         p->reopen_ms = now_ms + RECONNECT_MS;
-        if (sign_in(p) && open_stream(p) && p->table && p->table->gid_len) refetch(p);
+        if (be_client_sign_in(&p->c, g_port) && open_stream(p) && p->table && p->table->gid_len) refetch(p);
         return;
     }
-    if (now_ms >= p->next_ping_ms) {
-        uint8_t pg[2];
-        int n = sf_put_bare(pg, sizeof pg, SF_PING);
-        ws_send(p, pg, (size_t)n);
-        p->next_ping_ms = now_ms + PING_MS;
-    }
+    be_client_ping(&p->c, now_ms);
     if (p->state != P_PLAYING || !p->have || !p->table) return;
     const TableView *v = &p->ct.view;
     if (v->status != GAME_STATUS_PLAYING) return;
@@ -1053,43 +827,25 @@ static void player_tick(sim_thread *th, player *p, int64_t now_ms) {
 static void thread_signup(sim_thread *th) {
     for (int i = 0; i < th->n_players && !atomic_load(&g_stop); i++) {
         player *p = &th->players[i];
-        for (int tries = 0; tries < 5 && !sign_in(p); tries++) nap_ms(500);
-        if (p->token[0]) open_stream(p);
+        for (int tries = 0; tries < 5 && !be_client_sign_in(&p->c, g_port); tries++) nap_ms(500);
+        if (p->c.token[0]) open_stream(p);
     }
 }
 
-// GET /v1/bots, as the lobby's picker reads it: the server's bots by strategy key.
+// GET /v1/bots (board.h's roster, every bot), and the kinds the mixed sim seats.
 static void fetch_bots(player *p) {
-    char headers[NW_ACCESS_MAX + 64];
-    snprintf(headers, sizeof headers, "Authorization: Bearer %s\r\n", p->token);
-    tc_response r;
-    if (tc_http(g_port, "GET", "/v1/bots", headers, NULL, 0, &r) != 0 || r.status != 200) {
-        CB_WARN("birdseye", "GET /v1/bots answered %d: no bots will be seated", r.status);
-        tc_response_free(&r);
-        return;
-    }
-    int n = nw_list_open(r.body.p, (int)r.body.len, NW_BOTS);
+    int n = be_bots_fetch(g_port, p->c.token);
     static const char *const WANTED[] = { "handwritten", "robusta", "cordite", "firecracker" };
-    for (int i = 0; i < n && g_n_bots < MAX_BOT_IDS; i++) {
-        NwBot b;
-        if (nw_get_bot(r.body.p, (int)r.body.len, i, &b) != NW_OK) break;
-        bool want = false;
+    for (int i = 0; i < n && g_n_bots < MAX_BOT_IDS; i++)
         for (size_t k = 0; k < sizeof WANTED / sizeof *WANTED; k++)
-            if (b.key_len == strlen(WANTED[k]) && memcmp(b.key, WANTED[k], b.key_len) == 0) want = true;
-        if (!want) continue;
-        snprintf(g_bot_ids[g_n_bots], sizeof g_bot_ids[0], "%.*s", (int)b.id_len, b.id);
-        snprintf(g_bot_keys[g_n_bots], sizeof g_bot_keys[0], "%.*s", (int)b.key_len, b.key);
-        snprintf(g_bot_names[g_n_bots], sizeof g_bot_names[0], "%.*s", (int)b.nickname_len, b.nickname);
-        g_n_bots++;
-    }
-    tc_response_free(&r);
+            if (strcmp(be_bots_at(i)->key, WANTED[k]) == 0) g_bot_pool[g_n_bots++] = i;
     CB_INFO("birdseye", "bots: %d of %d on the server are the kinds the sim seats", g_n_bots, n);
 }
 
 static void *thread_main(void *arg) {
     sim_thread *th = arg;
     thread_signup(th);
-    if (th->index == 0 && th->n_players > 0 && th->players[0].token[0]) fetch_bots(&th->players[0]);
+    if (th->index == 0 && th->n_players > 0 && th->players[0].c.token[0]) fetch_bots(&th->players[0]);
     // Every thread's sign-ups done before any table is made, so the bot list is complete.
     pthread_mutex_lock(&g_ready_mu);
     g_n_ready++;
@@ -1111,8 +867,8 @@ static void *thread_main(void *arg) {
             player *p = &th->players[i];
             player_tick(th, p, now_ms);
             if (p->think_due_ms >= 0 && p->think_due_ms < next) next = p->think_due_ms;
-            if (p->ws >= 0) {
-                th->fds[nfd].fd = p->ws;
+            if (p->c.ws >= 0) {
+                th->fds[nfd].fd = p->c.ws;
                 th->fds[nfd].events = POLLIN;
                 th->fds[nfd].revents = 0;
                 nfd++;
@@ -1130,9 +886,9 @@ static void *thread_main(void *arg) {
         int k = 0;
         for (int i = 0; i < th->n_players; i++) {
             player *p = &th->players[i];
-            if (p->ws < 0) continue;
+            if (p->c.ws < 0) continue;
             // fds[k] is this player's: the list was built in player order over open sockets.
-            if (th->fds[k].fd == p->ws && (th->fds[k].revents & (POLLIN | POLLHUP | POLLERR))) read_socket(th, p, now_ms);
+            if (th->fds[k].fd == p->c.ws && (th->fds[k].revents & (POLLIN | POLLHUP | POLLERR))) read_socket(th, p, now_ms);
             k++;
         }
     }
@@ -1144,7 +900,7 @@ static void *thread_main(void *arg) {
             player *p = player_of(th, t->humans[h]);
             TableAsk a;
             ask_init(&a, ASK_EXIT, t);
-            if (p->ws >= 0) send_ask(p, ASK_EXIT, &a, R_EXIT);
+            if (p->c.ws >= 0) send_ask(p, ASK_EXIT, &a, R_EXIT);
         }
     }
     nap_ms(300);
@@ -1187,21 +943,20 @@ int be_sim_start(const be_sim_opts *o, char *err, size_t cap) {
             player *p = &th->players[i];
             p->index = next_index++;
             p->thread = t;
-            p->ws = -1;
             p->think_due_ms = -1;
             p->rng = th->rng ^ ((uint64_t)(p->index + 1) * 0xBF58476D1CE4E5B9ull);
-            p->in_cap = IN_CAP_START;
-            p->in = malloc(p->in_cap);
             p->delta = calloc(1, sizeof *p->delta);
-            if (!p->in || !p->delta) {
+            // Names: a first name from the pool, the seed and the index, upper-cased as the hosts do.
+            char buf[32], name[32], password[40];
+            snprintf(buf, sizeof buf, "%s%llX%d", FIRST_NAMES[p->index % NAME_POOL], (unsigned long long)(o->seed & 0xFFF), p->index);
+            size_t k = 0;
+            for (; buf[k]; k++) name[k] = (char)(buf[k] >= 'a' && buf[k] <= 'z' ? buf[k] - 32 : buf[k]);
+            name[k] = 0;
+            snprintf(password, sizeof password, "birdseye-pass-%llu", (unsigned long long)o->seed);
+            if (!be_client_init(&p->c, name, password) || !p->delta) {
                 snprintf(err, cap, "birdseye: no memory for %d players", o->players);
                 return CB_E_NOMEM;
             }
-            // Names: a first name from the pool, the seed and the index, upper-cased as the hosts do.
-            char buf[32];
-            snprintf(buf, sizeof buf, "%s%llX%d", FIRST_NAMES[p->index % NAME_POOL], (unsigned long long)(o->seed & 0xFFF), p->index);
-            for (size_t k = 0; buf[k]; k++) p->name[k] = (char)(buf[k] >= 'a' && buf[k] <= 'z' ? buf[k] - 32 : buf[k]);
-            snprintf(p->password, sizeof p->password, "birdseye-pass-%llu", (unsigned long long)o->seed);
         }
     }
     for (int t = 0; t < g_o.threads; t++)
@@ -1222,7 +977,7 @@ void be_sim_stop(void) {
         sim_thread *th = &g_threads[t];
         if (th->tid) pthread_join(th->tid, NULL);
         for (int i = 0; i < th->n_players; i++) {
-            free(th->players[i].in);
+            be_client_free(&th->players[i].c);
             free(th->players[i].delta);
         }
         free(th->players);
@@ -1233,24 +988,8 @@ void be_sim_stop(void) {
 }
 
 void be_sim_gauges(void) {
-    be_world_lock(&be_world_g);
-    uint32_t live = be_world_g.live, lobby = be_world_g.lobby, playing = be_world_g.playing;
-    be_world_unlock(&be_world_g);
-    cb_metrics_set(be_mx, BE_M_TABLES_LIVE, live);
-    cb_metrics_set(be_mx, BE_M_TABLES_LOBBY, lobby);
-    cb_metrics_set(be_mx, BE_M_TABLES_PLAYING, playing);
     cb_metrics_set(be_mx, BE_M_PLAYERS, (uint64_t)g_o.players);
     cb_metrics_set(be_mx, BE_M_PLAYERS_SEATED, atomic_load(&g_seated));
-    cb_metrics_set(be_mx, BE_M_SOCKETS, atomic_load(&g_sockets));
     cb_metrics_set(be_mx, BE_M_BOTS_SEATED, atomic_load(&g_bots_seated));
     cb_metrics_set(be_mx, BE_M_THREADS, (uint64_t)g_o.threads);
-    if (g_o.server_pid) {
-        cb_metrics_set(be_mx, BE_M_SERVER_RSS_MB, proc_rss_mb(g_o.server_pid));
-        // CPU over the window since the last reading (the ops timer's second).
-        uint64_t cpu = proc_cpu_us(g_o.server_pid), at = (uint64_t)cb_mono_us();
-        if (g_server_cpu_at_us && at > g_server_cpu_at_us && cpu >= g_server_cpu_us)
-            cb_metrics_set(be_mx, BE_M_SERVER_CPU_CPCT, (cpu - g_server_cpu_us) * 10000 / (at - g_server_cpu_at_us));
-        g_server_cpu_us = cpu;
-        g_server_cpu_at_us = at;
-    }
 }
