@@ -12,7 +12,7 @@ import { botName, familyColor } from './League';
 const ROUNDS = ['Opening round', 'Round of 32', 'Round of 16', 'Quarterfinals', 'Semifinals', 'Final'];
 const ROUND_SIZE = [16, 16, 8, 4, 2, 1];
 const ROUND_AT = [0, 16, 32, 40, 44, 46];
-const BOX_H = 42;
+const BOX_H = 38;
 const HEAD_H = 28;
 
 interface Props {
@@ -54,7 +54,7 @@ export function Bracket({ tour, bots }: Props) {
   const cols = 7; // six rounds and the champion
   const gap = 22;
   const colW = Math.max(150, (size.w - gap * (cols - 1)) / cols);
-  const rowH = Math.max(BOX_H + 4, (size.h - HEAD_H) / 16);
+  const rowH = Math.max(BOX_H + 2, (size.h - HEAD_H) / 16);
   const x = (r: number) => r * (colW + gap);
   const y = (r: number, s: number) => HEAD_H + center(r, s) * rowH;
 
