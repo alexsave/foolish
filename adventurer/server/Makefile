@@ -98,6 +98,7 @@ $(call prog,build,build/obj/rel,adventurer,tools/main_serve.c,CFLAGS)
 $(call prog,build,build/obj/rel,adv-import,tools/import_main.c,CFLAGS)
 $(call prog,build,build/obj/rel,adv-gen,$(sort $(wildcard gen/*.c)),CFLAGS)
 $(call prog,build,build/obj/rel,adv-wiregen,tools/wiregen.c,CFLAGS)
+$(call prog,build,build/obj/rel,adv-bench,tools/bench_match.c,CFLAGS)
 $(call prog,build/asan,build/obj/asan,adventurer,tools/main_serve.c,ASAN_CFLAGS)
 $(call prog,build/asan,build/obj/asan,adv-import,tools/import_main.c,ASAN_CFLAGS)
 $(call prog,build/asan,build/obj/asan,adv-gen,$(sort $(wildcard gen/*.c)),ASAN_CFLAGS)
@@ -112,7 +113,7 @@ $(WIRE_TS): build/adv-wiregen
 	build/adv-wiregen > $@.new && mv $@.new $@
 
 .PHONY: all test smoke check test-asan smoke-asan check-asan clean graph import fuzz fuzz-smoke
-all: build/adventurer build/adv-import build/adv-gen build/adv-wiregen $(WIRE_TS)
+all: build/adventurer build/adv-import build/adv-gen build/adv-wiregen build/adv-bench $(WIRE_TS)
 import: build/adv-import
 
 # Every test program is its own process; they run CHECK_JOBS at a time, each to its own log,
