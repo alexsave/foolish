@@ -16,7 +16,7 @@ mutate() {   # <file> <test program> <sed expression (-E)> <label>
                                      # mutated again within one second from its object: drop the object instead
   if cmp -s "$f" "$f.orig"; then echo "MUTATION NOT APPLIED: $label"; fail=1; mv "$f.orig" "$f" && touch "$f"; return; fi
   local out rc
-  if ! out=$(perl -e 'alarm shift; exec ' 600 make -j4 "build/test/$t" build/lws 2>&1); then   # a build is bounded: one spun for 12 minutes once
+  if ! out=$(perl -e 'alarm shift; exec @ARGV' 600 make -j4 "build/test/$t" build/lws 2>&1); then   # a build is bounded: one spun for 12 minutes once
     echo "red (did not compile): $label"
   else
     if [ "$t" = smoke ]; then out=$(build/test/smoke build/lws build/wsbench 2>&1); rc=$?; else out=$(build/test/$t 2>&1); rc=$?; fi
