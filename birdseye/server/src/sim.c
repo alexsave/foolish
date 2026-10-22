@@ -20,7 +20,7 @@
 
 #include "be_metrics.h"
 #include "util/clock.h"
-#include "util/metrics.h"
+#include "../../../shared/c/proc.h"
 #include "util/err.h"
 #include "util/log.h"
 #include "util/str.h"
@@ -1245,9 +1245,9 @@ void be_sim_gauges(void) {
     cb_metrics_set(be_mx, BE_M_BOTS_SEATED, atomic_load(&g_bots_seated));
     cb_metrics_set(be_mx, BE_M_THREADS, (uint64_t)g_o.threads);
     if (g_o.server_pid) {
-        cb_metrics_set(be_mx, BE_M_SERVER_RSS_MB, cb_rss_mb(g_o.server_pid));
+        cb_metrics_set(be_mx, BE_M_SERVER_RSS_MB, proc_rss_mb(g_o.server_pid));
         // CPU over the window since the last reading (the ops timer's second).
-        uint64_t cpu = cb_cpu_us(g_o.server_pid), at = (uint64_t)cb_mono_us();
+        uint64_t cpu = proc_cpu_us(g_o.server_pid), at = (uint64_t)cb_mono_us();
         if (g_server_cpu_at_us && at > g_server_cpu_at_us && cpu >= g_server_cpu_us)
             cb_metrics_set(be_mx, BE_M_SERVER_CPU_CPCT, (cpu - g_server_cpu_us) * 10000 / (at - g_server_cpu_at_us));
         g_server_cpu_us = cpu;

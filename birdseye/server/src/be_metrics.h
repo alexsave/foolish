@@ -3,8 +3,8 @@
 // (be_metric_defs, in this order), updated by index from the player threads and the ops timer,
 // reported by the platform (GET /metrics, and the BE_F_OPS push once a second) in its own fixed
 // layout, which the site decodes with the reader structgen writes from the platform's header.
-// Nothing of the machinery lives here: the histogram, the rate ring, the counters and the
-// process readers are the platform's (util/metrics.h).
+// Nothing of the machinery lives here: the histogram and the rate ring are shared/c/stats/hist.h,
+// the process readers shared/c/proc.h, the registry the platform's.
 #ifndef BE_METRICS_H
 #define BE_METRICS_H
 
