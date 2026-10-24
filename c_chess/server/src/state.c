@@ -3,6 +3,7 @@
 #include "cc_server.h"
 #include "journal.h"
 #include "pushes.h"
+#include "ai.h"
 
 #include "realtime/realtime.h"
 #include "util/clock.h"
@@ -325,6 +326,7 @@ void cc_live_changed(cc_live *l, int64_t now) {
     cc_state_fill(l, &s, now);
     cc_push_room_game(l->id, (const uint8_t *)&s, sizeof s);
     schedule(l, now);
+    cc_ai_maybe_move(l, now);
 }
 
 cc_live *cc_live_start(cc_player *white, cc_player *black, const cw_seek *tc, int64_t now) {
@@ -345,6 +347,7 @@ cc_live *cc_live_start(cc_player *white, cc_player *black, const cw_seek *tc, in
         cw_start st = { CW_V, CW_P_START, (uint8_t)c, 0, l->id };
         cc_push_user(l->p[c]->id, (const uint8_t *)&st, sizeof st);
     }
+    cc_ai_maybe_move(l, now);   /* the computer as white opens */
     return l;
 }
 

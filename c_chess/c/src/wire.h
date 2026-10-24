@@ -15,6 +15,7 @@
  *     POST /c/unseek     (none)                -> (none)
  *     POST /c/challenge  cw_seek               -> cw_id (the challenge, for the link /c/<id>)
  *     POST /c/accept     cw_id (challenge)     -> cw_id (the game)
+ *     POST /c/ai         cw_ai_req             -> cw_id (a casual game against the computer)
  *     POST /c/move       cw_move_req           -> (none): 200, or 409 with a cw_err
  *     POST /c/act        cw_act_req            -> (none)
  *     GET  /c/game/<id>  -                     -> cw_snap + its moves
@@ -73,6 +74,8 @@ typedef struct {
 typedef struct { uint16_t base_s; uint8_t inc_s; uint8_t rated; } cw_seek;
 typedef struct { uint32_t game; uint8_t color; uint8_t pad[3]; } cw_seek_ans;   /* game 0: waiting */
 typedef struct { uint32_t id; } cw_id;
+/* color: 0 white, 1 black, 2 either (by lot); level 1..8 */
+typedef struct { uint16_t base_s; uint8_t inc_s; uint8_t level; uint8_t color; uint8_t pad[3]; } cw_ai_req;
 /* think_ms: the mover's own time on the move, by its clock (lag compensation, game.h); 0xffffffff unknown */
 typedef struct { uint32_t game; uint16_t ply; uint16_t move; uint32_t think_ms; } cw_move_req;
 typedef struct { uint32_t game; uint8_t act; uint8_t pad[3]; } cw_act_req;
@@ -183,6 +186,7 @@ typedef struct { uint16_t n; uint8_t pad[6]; cw_game_row rows[CW_LIST_MAX]; } cw
 _Static_assert(sizeof(cw_auth_req) == 96, "cw_auth_req");
 _Static_assert(sizeof(cw_session) == 128, "cw_session");
 _Static_assert(sizeof(cw_seek) == 4, "cw_seek");
+_Static_assert(sizeof(cw_ai_req) == 8, "cw_ai_req");
 _Static_assert(sizeof(cw_tv_game) == 100, "cw_tv_game");
 _Static_assert(sizeof(cw_top_row) == 28, "cw_top_row");
 _Static_assert(sizeof(cw_seek_ans) == 8, "cw_seek_ans");

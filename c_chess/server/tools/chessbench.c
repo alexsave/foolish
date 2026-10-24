@@ -26,6 +26,9 @@
 #include "util/err.h"
 #include "util/str.h"
 
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -33,6 +36,7 @@
 #include <netinet/tcp.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,10 +51,11 @@
 static struct {
     int port, bots, base, inc, think, spread, watchers, duration, warmup, connect_rate, rated;
     pid_t pid;
-    bool forever, quiet;
-    const char *accounts, *prefix;
+    bool forever, quiet, tls, resume;
+    int handshakes, threads;
+    const char *accounts, *prefix, *groups;
 } O = { .port = 8900, .bots = 100, .base = 180, .inc = 2, .think = 200, .spread = 200, .duration = 60, .warmup = 10,
-        .connect_rate = 200, .rated = 1, .accounts = "build/bench_accounts.bin", .prefix = "bot" };
+        .connect_rate = 200, .rated = 1, .resume = true, .threads = 4, .accounts = "build/bench_accounts.bin", .prefix = "bot" };
 
 static cb_loop *L;
 
@@ -83,7 +88,14 @@ typedef struct bot {
     int64_t   last_sent_us;    /* the same, kept after our own confirmation (the relay's start) */
     uint32_t  playing;         /* the game we are in */
     bool      watcher;
+    SSL      *ssl;             /* --tls: the socket's TLS */
 } bot;
+
+/* --tls: one client context; the first session a bot gets is offered by every later connect, as a
+ * browser's reconnects resume (--resume 0: never). */
+static SSL_CTX *TLS_CTX;
+static SSL_SESSION *TLS_SESS;
+static long tls_full, tls_resumed;
 
 static bot *B;
 static bool measuring, stopping;
@@ -100,8 +112,36 @@ static int64_t now_us(void) { return cb_mono_us(); }
 static int64_t now_ms_d(void) { return cb_mono_ms(); }
 
 static void bot_close(bot *b) {
+    if (b->ssl) { SSL_free(b->ssl); b->ssl = NULL; ERR_clear_error(); }
     if (b->fd >= 0) { cb_loop_remove(L, b->fd); close(b->fd); b->fd = -1; if (b->state == 3) n_open--; }
     b->state = 0;
+}
+
+/* send or SSL_write: the bytes moved, 0 for "not now", -1 failed */
+static ssize_t bot_send(bot *b, const void *p, size_t n) {
+    if (!b->ssl) {
+        ssize_t k = send(b->fd, p, n, MSG_DONTWAIT);
+        if (k < 0) return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? 0 : -1;
+        return k;
+    }
+    int k = SSL_write(b->ssl, p, (int)n);
+    if (k > 0) return k;
+    int e = SSL_get_error(b->ssl, k);
+    return e == SSL_ERROR_WANT_WRITE || e == SSL_ERROR_WANT_READ ? 0 : -1;
+}
+
+/* recv or SSL_read: the bytes, 0 closed, -2 "nothing now", -1 failed */
+static ssize_t bot_recv(bot *b, void *p, size_t n) {
+    if (!b->ssl) {
+        ssize_t k = recv(b->fd, p, n, MSG_DONTWAIT);
+        if (k < 0) return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? -2 : -1;
+        return k;
+    }
+    int k = SSL_read(b->ssl, p, (int)n);
+    if (k > 0) return k;
+    int e = SSL_get_error(b->ssl, k);
+    if (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) return -2;
+    return e == SSL_ERROR_ZERO_RETURN ? 0 : -1;
 }
 
 static void bot_flush(bot *b) {
@@ -118,9 +158,10 @@ static void bot_flush(bot *b) {
         cb_ws_unmask(b->out.p + at, n, mask);
         frames_out++;
     }
-    while (b->out.len && b->fd >= 0 && b->state >= 2) {
-        ssize_t k = send(b->fd, b->out.p, b->out.len, MSG_DONTWAIT);
-        if (k < 0) { if (errno == EAGAIN || errno == EWOULDBLOCK) break; if (errno == EINTR) continue; bot_close(b); return; }
+    while (b->out.len && b->fd >= 0 && b->state >= 2 && b->state != 4) {
+        ssize_t k = bot_send(b, b->out.p, b->out.len);
+        if (k < 0) { bot_close(b); return; }
+        if (k == 0) break;
         bytes_out += k;
         cb_buf_consume(&b->out, (size_t)k);
     }
@@ -241,18 +282,39 @@ static void bot_io(cb_loop *l, int fd, int events, void *ud) {
         getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &el);
         if (err) { bot_close(b); return; }
         b->state = 2;
+        if (TLS_CTX) {
+            b->ssl = SSL_new(TLS_CTX);
+            SSL_set_fd(b->ssl, fd);
+            SSL_set_tlsext_host_name(b->ssl, "localhost");
+            if (O.resume && TLS_SESS) SSL_set_session(b->ssl, TLS_SESS);
+            b->state = 4;
+        }
+    }
+    if (b->state == 4) {   /* the TLS handshake */
+        int r = SSL_connect(b->ssl);
+        if (r != 1) {
+            int e = SSL_get_error(b->ssl, r);
+            if (e == SSL_ERROR_WANT_READ) { cb_loop_set(L, fd, CB_EV_READ); return; }
+            if (e == SSL_ERROR_WANT_WRITE) { cb_loop_set(L, fd, CB_EV_READ | CB_EV_WRITE); return; }
+            bot_close(b);
+            return;
+        }
+        if (SSL_session_reused(b->ssl)) tls_resumed++; else tls_full++;
+        b->state = 2;
+        bot_flush(b);   /* the upgrade request */
+        return;
     }
     if (events & CB_EV_ERR) { bot_close(b); return; }
     if (events & CB_EV_READ) {
         for (;;) {
             if (!cb_buf_reserve(&b->in, 16384)) { bot_close(b); return; }
-            ssize_t k = recv(fd, b->in.p + b->in.len, 16384, MSG_DONTWAIT);
-            if (k < 0) { if (errno == EAGAIN || errno == EWOULDBLOCK) break; if (errno == EINTR) continue; bot_close(b); return; }
-            if (k == 0) { bot_close(b); return; }
+            ssize_t k = bot_recv(b, b->in.p + b->in.len, 16384);
+            if (k == -2) break;
+            if (k <= 0) { bot_close(b); return; }
             bytes_in += k;
             b->in.len += (size_t)k;
             b->in.p[b->in.len] = 0;
-            if ((size_t)k < 16384) break;
+            if ((size_t)k < 16384 && !b->ssl) break;   /* TLS: read until OpenSSL has nothing more */
         }
         if (b->state == 2) {
             char *end = strstr((char *)b->in.p, "\r\n\r\n");
@@ -261,6 +323,7 @@ static void bot_io(cb_loop *l, int fd, int events, void *ud) {
             cb_buf_consume(&b->in, (size_t)(end + 4 - (char *)b->in.p));
             b->state = 3;
             n_open++;
+            if (b->ssl && !TLS_SESS) TLS_SESS = SSL_get1_session(b->ssl);   /* its tickets came before this answer */
             cc_client_hello(&b->c);
         }
         if (b->state == 3) bot_frames(b);
@@ -313,11 +376,20 @@ static int http_post(const char *path, const void *body, size_t n, uint8_t *out,
     if (connect(fd, (struct sockaddr *)&a, sizeof a) != 0) { close(fd); return -1; }
     char head[256];
     int hl = snprintf(head, sizeof head, "POST %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", path, n);
-    if (write(fd, head, (size_t)hl) != hl || write(fd, body, n) != (ssize_t)n) { close(fd); return -1; }
     static __thread char buf[16384];
     size_t got = 0;
     ssize_t k;
-    while ((k = read(fd, buf + got, sizeof buf - 1 - got)) > 0) got += (size_t)k;
+    if (TLS_CTX) {
+        SSL *s = SSL_new(TLS_CTX);
+        SSL_set_fd(s, fd);
+        if (SSL_connect(s) != 1 || SSL_write(s, head, hl) != hl || SSL_write(s, body, (int)n) != (int)n) { SSL_free(s); close(fd); ERR_clear_error(); return -1; }
+        while ((k = SSL_read(s, buf + got, (int)(sizeof buf - 1 - got))) > 0) got += (size_t)k;
+        SSL_free(s);
+        ERR_clear_error();
+    } else {
+        if (write(fd, head, (size_t)hl) != hl || write(fd, body, n) != (ssize_t)n) { close(fd); return -1; }
+        while ((k = read(fd, buf + got, sizeof buf - 1 - got)) > 0) got += (size_t)k;
+    }
     close(fd);
     buf[got] = 0;
     int status = 0;
@@ -429,6 +501,72 @@ static void measure_tick(cb_loop *l, void *ud) {
     cb_loop_timer(L, O.duration * 1000, stop_tick, NULL);
 }
 
+/* --handshakes N: TLS connections with one request each (connect, handshake, GET /health, close) from --threads
+ * blocking threads, full or resumed (--resume), and the server's CPU per handshake. */
+static atomic_long hs_left, hs_done, hs_resumed, hs_failed;
+static void *hs_worker(void *ud) {
+    (void)ud;
+    SSL_SESSION *sess = NULL;
+    while (atomic_fetch_sub(&hs_left, 1) > 0) {
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+        struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons((uint16_t)O.port) };
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (connect(fd, (struct sockaddr *)&a, sizeof a) != 0) { close(fd); atomic_fetch_add(&hs_failed, 1); continue; }
+        if (!TLS_CTX) {   /* the same connection and request in plaintext: the baseline TLS adds to */
+            static const char rq[] = "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+            char b[512];
+            if (write(fd, rq, sizeof rq - 1) > 0) { while (read(fd, b, sizeof b) > 0) {} atomic_fetch_add(&hs_done, 1); }
+            else atomic_fetch_add(&hs_failed, 1);
+            close(fd);
+            continue;
+        }
+        SSL *s = SSL_new(TLS_CTX);
+        SSL_set_fd(s, fd);
+        if (O.resume && sess) SSL_set_session(s, sess);
+        if (SSL_connect(s) == 1) {
+            atomic_fetch_add(&hs_done, 1);
+            if (SSL_session_reused(s)) atomic_fetch_add(&hs_resumed, 1);
+            /* one small request on it, as a page's first one: its answer comes after TLS 1.3's tickets,
+             * and with --resume the newest ticket is the one the next connection offers (a ticket
+             * is for one use) */
+            static const char rq[] = "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+            char b[512];
+            if (SSL_write(s, rq, (int)sizeof rq - 1) > 0)
+                while (SSL_read(s, b, sizeof b) > 0) {}
+            if (O.resume) {
+                if (sess) SSL_SESSION_free(sess);
+                sess = SSL_get1_session(s);
+            }
+            SSL_shutdown(s);
+        } else atomic_fetch_add(&hs_failed, 1);
+        SSL_free(s);
+        ERR_clear_error();
+        close(fd);
+    }
+    if (sess) SSL_SESSION_free(sess);
+    return NULL;
+}
+
+static int handshake_bench(void) {
+    atomic_store(&hs_left, O.handshakes);
+    uint64_t rss0_, u0_ = 0, s0_ = 0, u1_ = 0, s1_ = 0, rss1_;
+    proc_usage(O.pid, &rss0_, &u0_, &s0_);
+    int64_t t0 = now_ms_d();
+    pthread_t th[64];
+    int n = O.threads < 1 ? 1 : O.threads > 64 ? 64 : O.threads;
+    for (int i = 0; i < n; i++) pthread_create(&th[i], NULL, hs_worker, NULL);
+    for (int i = 0; i < n; i++) pthread_join(th[i], NULL);
+    double secs = (double)(now_ms_d() - t0) / 1000.0;
+    bool have = proc_usage(O.pid, &rss1_, &u1_, &s1_);
+    long done = atomic_load(&hs_done), res = atomic_load(&hs_resumed);
+    printf("handshakes: %ld (%ld resumed, %ld failed) from %d threads in %.2f s = %.0f/s\n", done, res, atomic_load(&hs_failed), n, secs, done / secs);
+    if (have && done) {
+        double cpu = (double)((u1_ - u0_) + (s1_ - s0_));
+        printf("server: cpu %.2f s = %.1f us per handshake, %.0f handshakes per second per core\n", cpu / 1e6, cpu / done, done / (cpu / 1e6));
+    }
+    return 0;
+}
+
 static void on_sigint(int s) { (void)s; stopping = true; if (L) cb_loop_stop(L); }
 
 int main(int argc, char **argv) {
@@ -449,6 +587,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--rated")) O.rated = atoi(v), i++;
         else if (!strcmp(a, "--forever")) O.forever = true;
         else if (!strcmp(a, "--quiet")) O.quiet = true;
+        else if (!strcmp(a, "--tls")) O.tls = true;
+        else if (!strcmp(a, "--groups")) O.groups = v, i++;   /* TLS key exchange groups, e.g. X25519 (default: OpenSSL's, X25519MLKEM768 first) */
+        else if (!strcmp(a, "--resume")) O.resume = atoi(v) != 0, i++;
+        else if (!strcmp(a, "--handshakes")) O.handshakes = atoi(v), i++;
+        else if (!strcmp(a, "--threads")) O.threads = atoi(v), i++;
         else { fprintf(stderr, "chessbench: unknown option %s\n", a); return 2; }
     }
     signal(SIGPIPE, SIG_IGN);
@@ -456,6 +599,13 @@ int main(int argc, char **argv) {
     signal(SIGTERM, on_sigint);
     srand((unsigned)getpid());
     ch_init();
+    if (O.tls) {
+        TLS_CTX = SSL_CTX_new(TLS_client_method());
+        SSL_CTX_set_min_proto_version(TLS_CTX, TLS1_3_VERSION);
+        SSL_CTX_set_session_cache_mode(TLS_CTX, SSL_SESS_CACHE_CLIENT);
+        if (O.groups && SSL_CTX_set1_groups_list(TLS_CTX, O.groups) != 1) { fprintf(stderr, "chessbench: bad --groups %s\n", O.groups); return 2; }
+    }
+    if (O.handshakes) return handshake_bench();
     int total = O.bots + O.watchers;
     B = calloc((size_t)total, sizeof *B);
     GAME_BOT = malloc(sizeof *GAME_BOT * 2 * GAME_SLOTS);
@@ -502,6 +652,7 @@ int main(int argc, char **argv) {
     printf("move relay      (us): n %zu p50 %u p90 %u p99 %u p999 %u max %u\n", relay_us.n, pct(&relay_us, 0.5), pct(&relay_us, 0.9),
            pct(&relay_us, 0.99), pct(&relay_us, 0.999), relay_us.n ? relay_us.v[relay_us.n - 1] : 0);
     printf("frames out %ld in %ld, bytes out %ld in %ld\n", frames_out, frames_in, bytes_out, bytes_in);
+    if (TLS_CTX) printf("tls: %ld full and %ld resumed handshakes by the bots\n", tls_full, tls_resumed);
     if (have) {
         double cpu = (double)((u1 - u0) + (s1 - s0));
         printf("server pid %d: rss %.1f MB before the bots, %.1f MB with them connected, %.1f MB at the end (%.2f KB per socket); "

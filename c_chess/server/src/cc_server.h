@@ -35,7 +35,7 @@ typedef struct cc_live {
     uint8_t    rated;
     uint8_t    rematch_offer;
     uint8_t    finished;               /* cc_finish ran (ratings, journal) */
-    uint8_t    pad;
+    uint8_t    ai_pending;             /* the computer's search for this ply is in flight (ai.h) */
     int16_t    rating0[2];             /* the ratings when the game began */
     int16_t    diff[2];
     uint32_t   next_game;              /* the rematch */

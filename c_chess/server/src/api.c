@@ -7,6 +7,8 @@
 #include "journal.h"
 #include "pgn.h"
 #include "pushes.h"
+#include "ai.h"
+#include "engine.h"
 
 #include "auth/auth.h"
 #include "net/loop.h"
@@ -219,6 +221,26 @@ static void h_accept(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     else answer(res, 200, &a, sizeof a);
 }
 
+static void h_ai(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    cb_user u;
+    if (!me(ctx, req, res, &u)) return;
+    cw_ai_req q;
+    if (req->body_len != sizeof q) { refuse(res, 400, CW_E_BAD, 0); return; }
+    memcpy(&q, req->body, sizeof q);
+    cw_seek tc = { q.base_s, q.inc_s, 0 };
+    if (!valid_tc(&tc) || q.level < 1 || q.level > CC_AI_LEVELS || q.color > 2) { refuse(res, 400, CW_E_BAD, 0); return; }
+    if (!cc_engine_available()) { refuse(res, 503, CW_E_BUSY, 0); return; }
+    pthread_mutex_lock(&cc_lock);
+    int64_t now = cc_mono();
+    cc_player *p = player(&u), *ai = cc_ai_player(q.level);
+    int color = q.color == 2 ? (int)(now & 1) : q.color;
+    cc_live *g = p && ai ? cc_live_start(color == 0 ? p : ai, color == 0 ? ai : p, &tc, now) : NULL;
+    cw_id a = { g ? g->id : 0 };
+    pthread_mutex_unlock(&cc_lock);
+    if (!a.id) refuse(res, 503, CW_E_BUSY, 0);
+    else answer(res, 200, &a, sizeof a);
+}
+
 static void h_move(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
     if (!me(ctx, req, res, &u)) return;
@@ -267,7 +289,7 @@ static void h_act(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
         case CW_A_DRAW_DECLINE: rc = cc_game_draw_decline(&l->g, color); break;
         case CW_A_REMATCH:
             if (!cc_game_over(&l->g) || l->next_game) rc = CC_E_STATE;
-            else if (l->rematch_offer & (1u << (color ^ 1))) {
+            else if ((l->rematch_offer & (1u << (color ^ 1))) || cc_ai_level(l->p[color ^ 1])) {   /* the computer agrees at once */
                 cw_seek tc = { (uint16_t)(l->g.base_ms / 1000), (uint8_t)(l->g.inc_ms / 1000), l->rated, };
                 cc_live *n = cc_live_start(l->p[1], l->p[0], &tc, now);   /* colors swap */
                 if (!n) rc = CC_E_STATE;
@@ -470,9 +492,15 @@ static void h_stats(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     pthread_mutex_lock(&cc_lock);
     uint32_t live = cc_games_live();
     pthread_mutex_unlock(&cc_lock);
-    char out[256];
-    snprintf(out, sizeof out, "games_live %u\njournal_queued %llu\njournal_committed %llu\njournal_commits %llu\n", live,
-             (unsigned long long)q, (unsigned long long)c, (unsigned long long)k);
+    uint64_t es, en, aa, ar;
+    uint32_t eq, eb;
+    cc_engine_counts(&es, &en, &eq, &eb);
+    cc_ai_counts(&aa, &ar);
+    char out[512];
+    snprintf(out, sizeof out, "games_live %u\njournal_queued %llu\njournal_committed %llu\njournal_commits %llu\n"
+             "engine_searches %llu\nengine_nodes %llu\nengine_queued %u\nengine_busy %u\nai_asked %llu\nai_refused %llu\n", live,
+             (unsigned long long)q, (unsigned long long)c, (unsigned long long)k, (unsigned long long)es, (unsigned long long)en, eq, eb,
+             (unsigned long long)aa, (unsigned long long)ar);
     cb_res_text(res, 200, out);
 }
 
@@ -486,6 +514,7 @@ static const cb_route ROUTES[] = {
     { "POST", "/c/challenge", GAME_ROUTE, h_challenge, 500 },
     { "POST", "/c/accept", GAME_ROUTE, h_accept, 500 },
     { "POST", "/c/move", GAME_ROUTE, h_move, 500 },
+    { "POST", "/c/ai", GAME_ROUTE, h_ai, 500 },
     { "POST", "/c/act", GAME_ROUTE, h_act, 500 },
     { "GET", "/c/game/*", GAME_ROUTE, h_game, 500 },
     { "GET", "/c/lobby", GAME_ROUTE, h_lobby, 500 },

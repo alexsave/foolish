@@ -76,6 +76,43 @@ A move is acknowledged before it is on disk.
 A process crash loses at most the moves of the 2 ms gathering window (the smoke kills the server with SIGKILL mid-game and finds the game, its moves and its clocks); a power loss at most the 100 ms between `fsync`s.
 lichess's round, for comparison, writes a game in play to MongoDB on a 30 s debounce, and at once only when its status changes.
 
+## 3.3 With TLS
+
+c_base now terminates TLS itself (`c_base/core/src/net/tls.c`, OpenSSL 3 on the loop thread, non-blocking): set `CBASE_TLS_CERT` and `CBASE_TLS_KEY` and the listener speaks only TLS 1.2+ (ECDHE with AES-GCM or ChaCha20 on 1.2; TLS 1.3 preferring AES-128-GCM), with session tickets for resumption and close_notify on every close (a client that sees a bare EOF throws its session away).
+With it off nothing changes in foolish's code: the per-function disassembly proof (`tools/hotpath_proof.sh`) finds every function of `server.c` identical but the six that gained their TLS branch (a load and a branch on the connection's `tls` pointer in `flush_now` and `conn_io`, one on the batched path of `flush_dirty`, the connection's creation in `on_accept`, its close_notify in `conn_close`, its release in `conn_free`).
+The page uses it the WebSocket way: one sign-in over HTTPS, then one `wss` socket that carries every action and every read (seeks, moves, offers, profiles, the leaderboard), so a session costs one TLS handshake, not one per request.
+
+The same three loads with and without TLS, back to back under the quiet lock (the load generator speaks TLS too, on its one thread):
+
+| config | | moves/s | round trip p50 / p99 | server CPU per move | RSS per socket |
+|---|---|---|---|---|---|
+| A: 2,000 sockets, blitz pace | plain | 499 | 0.18 / 0.74 ms | 45.6 us | 4.5 KB |
+| | TLS | 499 | 0.30 / 1.06 ms | 84.2 us | 22.5 KB |
+| B: 10,000 sockets | plain | 1,250 | 0.32 / 2.71 ms | 42.6 us | 3.0 KB |
+| | TLS | 1,247 | 0.44 / 3.75 ms | 54.4 us | 22.8 KB |
+| C: flat out | plain | 71,594 | 6.0 / 18.0 ms | 13.2 us | |
+| | TLS | 48,866 | 11.5 / 39.7 ms | 16.8 us | |
+
+Connections, one request each (`chessbench --handshakes`: connect, handshake, `GET /health`, close), from 6 threads, the server's CPU per connection:
+
+| | server CPU per connection | connections per second per core |
+|---|---|---|
+| plaintext | 13.4 us | 74,660 |
+| TLS 1.3, full handshake, X25519MLKEM768 (OpenSSL's default and what browsers offer) | 300 us | 3,336 |
+| TLS 1.3, resumed (PSK with a fresh key exchange) | 237 us | 4,220 |
+| TLS 1.3, full, X25519 only | 227 us | 4,406 |
+| TLS 1.3, resumed, X25519 only | 176 us | 5,699 |
+
+Reading it, honestly:
+
+- **The bulk cost is small, the handshake is not.** Per move TLS adds 3.6 us at saturation (13.2 to 16.8, +27%) and 10 to 40 us at low rates, where each move's few records pay OpenSSL's per-record overhead; the AES itself (`aes_v8_encrypt`) is under 1% of the profile, the rest is OpenSSL's record layer and its allocations.
+  A connection costs 230 to 300 us of server CPU against 13 us in plaintext: the profile is the key exchange (ML-KEM's NTT and Keccak, X25519's field arithmetic).
+  A resumed handshake saves only a fifth, because TLS 1.3 resumption still does a fresh key exchange for forward secrecy.
+  That is why the site's one-socket pattern matters: a player pays one handshake per visit, so at lichess's scale (a few thousand new connections a second at peak) TLS is about one core of handshakes, and the moves themselves barely notice it.
+- **Flat-out throughput fell from 71,600 to 48,900 moves a second** in this run, but that is the one-thread load generator doing the client side of every TLS record for 2,000 sockets; the server stayed under one core (82%) and its CPU per move rose 27%.
+- **Memory is the real cost: about 18 KB more per socket** (OpenSSL's connection, its record layer and its buffers), so 10,000 sockets take 230 MB instead of 30 MB. At 150,000 sockets that is 3.4 GB on one box; shrinking OpenSSL's per-connection state (or a lighter TLS stack) is the next lever if memory, not CPU, becomes the limit.
+- The latency at low load rises by about 0.1 ms at the median and 0.3 to 1 ms at p99.
+
 ## 4. The page
 
 Measured by `scratchpad/cc/perf.mjs` (Chrome over CDP, cold cache, the lobby; "ready" is the socket accepted, which on a first visit includes making the guest account, a bcrypt on the server):

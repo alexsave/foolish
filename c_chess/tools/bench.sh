@@ -5,7 +5,8 @@
 #   tools/bench.sh <label> [chessbench args...]      (from c_chess/; results in build/bench/<label>.txt)
 #
 # Environment: PORT (8901), BENCH_DB (the server's database, kept: the bots' accounts live there),
-# ACCOUNTS (the bots' cached sessions), PROFILE=1 (also `sample` the server for 20 s mid-run).
+# ACCOUNTS (the bots' cached sessions), PROFILE=1 (also `sample` the server for 20 s mid-run),
+# TLS=1 (the server terminates TLS with the scratchpad's self-signed certificate; the bots speak it).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 label=$1; shift
@@ -20,11 +21,15 @@ cleanup() { rm -f "$LOCK"; [ -n "$server" ] && kill "$server" 2>/dev/null || tru
 trap cleanup EXIT
 [ "${NOLOCK:-0}" = 1 ] || echo "$$ c_chess bench $label, started $(date)" > "$LOCK"
 cp build/c_chess "$S/cc/c_chess-bench"
-CBASE_DEV=1 CBASE_LISTEN=127.0.0.1:$PORT CBASE_DB=$BENCH_DB CBASE_JWT_SECRET=bench-secret-bench-secret-bench-0123 CBASE_JWT_TTL=604800 \
+tls_env=(); tls_arg=()
+if [ "${TLS:-0}" = 1 ]; then
+  tls_env=(CBASE_TLS_CERT="$S/cc/tls/cert.pem" CBASE_TLS_KEY="$S/cc/tls/key.pem"); tls_arg=(--tls)
+fi
+env ${tls_env[@]+"${tls_env[@]}"} CBASE_DEV=1 CBASE_LISTEN=127.0.0.1:$PORT CBASE_DB=$BENCH_DB CBASE_JWT_SECRET=bench-secret-bench-secret-bench-0123 CBASE_JWT_TTL=604800 \
   CBASE_ADMIN_TOKEN=bench-admin-token-0123456789abcdef0123 CBASE_LOG_LEVEL=warn CBASE_REQ_WORKERS=${WORKERS:-4} CBASE_MAX_CONNS=40000 \
   "$S/cc/c_chess-bench" serve > "$S/cc/bench-server.log" 2>&1 &
 server=$!
-for i in $(seq 1 50); do curl -sf "http://127.0.0.1:$PORT/health" > /dev/null && break; sleep 0.2; done
+for i in $(seq 1 50); do curl -skf "http$([ "${TLS:-0}" = 1 ] && echo s)://127.0.0.1:$PORT/health" > /dev/null && break; sleep 0.2; done
 out=build/bench/$label.txt
 {
   echo "== $label"
@@ -32,6 +37,6 @@ out=build/bench/$label.txt
   if [ "${PROFILE:-0}" = 1 ]; then
     ( sleep "${PROFILE_AT:-40}"; /usr/bin/sample "$server" 20 -file "build/bench/$label.sample.txt" > /dev/null 2>&1 ) &
   fi
-  build/chessbench --port "$PORT" --pid "$server" --accounts "$ACCOUNTS" --quiet "$@"
+  build/chessbench --port "$PORT" --pid "$server" --accounts "$ACCOUNTS" --quiet ${tls_arg[@]+"${tls_arg[@]}"} "$@"
   echo "after:  $(uptime)"
 } | tee "$out"

@@ -3,7 +3,8 @@
  * clock thread start, and the site is loaded, all before the first request is served.
  *
  * Settings, beside the platform's CBASE_* (config.h):
- *   CC_WEB_DIR   the built site (web/out); unset: no site, the API alone */
+ *   CC_WEB_DIR   the built site (web/out); unset: no site, the API alone
+ *   CC_ENGINE    the Stockfish executable (engine.h, with CC_ENGINES and the rest); unset: no computer */
 #include "cbase/app.h"
 
 #include "api.h"
@@ -11,6 +12,7 @@
 #include "journal.h"
 #include "pushes.h"
 #include "web.h"
+#include "engine.h"
 
 #include "store/store.h"
 #include "util/err.h"
@@ -36,11 +38,13 @@ static int cc_serve_open(cb_ctx *ctx, char *err, size_t cap) {
     if ((rc = cc_journal_start(ctx)) != CB_OK) { snprintf(err, cap, "c_chess: the journal's writer did not start"); return rc; }
     if (cc_state_start_clock() != 0) { snprintf(err, cap, "c_chess: the clock thread did not start"); return CB_E_NOMEM; }
     cc_web_load(getenv("CC_WEB_DIR"));
+    if ((rc = cc_engine_start()) != CB_OK) { snprintf(err, cap, "c_chess: the engine did not start (CC_ENGINE)"); return rc; }
     return CB_OK;
 }
 
 static void cc_serve_close(cb_ctx *ctx) {
     (void)ctx;
+    cc_engine_stop();    /* no answer arrives after this */
     cc_state_free();     /* the clock thread first: it may still queue a finish */
     cc_journal_stop();   /* then everything queued is committed */
     cc_web_free();
