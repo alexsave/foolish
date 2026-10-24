@@ -32,7 +32,7 @@
  *     CW_P_TV     cw_tv     to the lobby room, at most once a second when it changed: the games in play
  *                           with the highest ratings, each with its board
  *     GET /c/tv           -                    -> cw_tv
- *     GET /c/top          -                    -> cw_top: the leaderboard
+ *     GET /c/top/<speed>  -                    -> cw_top: the leaderboard of a speed (rating.h CC_BULLET..)
  *     GET /c/puzzle/next  -                    -> cw_puzzle: one near the asker's puzzle rating
  *     POST /c/puzzle/result cw_puzzle_req      -> cw_puzzle_done: both ratings after it */
 #ifndef C_CHESS_WIRE_H
@@ -45,7 +45,8 @@
 #define CW_V 1
 #define CW_NAME 20          /* a username's bytes, NUL-padded (names are 3..20 of [A-Za-z0-9_-]) */
 #define CW_LOBBY_MAX 64     /* seeks a lobby frame lists */
-#define CW_POINTS_MAX 200   /* rating points a profile lists */
+#define CW_POINTS_SPEED 150 /* rating points a profile lists, the latest of each speed */
+#define CW_POINTS_MAX (4 * CW_POINTS_SPEED)
 #define CW_LIST_MAX 50      /* games a game list holds */
 
 enum { CW_P_STATE = 1, CW_P_START = 2, CW_P_LOBBY = 3, CW_SNAP = 4, CW_P_TV = 5, CW_P_EVAL = 6 };
@@ -180,18 +181,22 @@ typedef struct {
 typedef struct { uint8_t v, kind; uint16_t n; uint32_t pad; cw_tv_game games[CW_TV_MAX]; } cw_tv;
 
 typedef struct { char name[CW_NAME]; int16_t rating; uint16_t rd; uint32_t games; } cw_top_row;
-typedef struct { uint16_t n; uint8_t pad[6]; cw_top_row rows[CW_TOP_MAX]; } cw_top;
+typedef struct { uint16_t n; uint8_t speed; uint8_t pad[5]; cw_top_row rows[CW_TOP_MAX]; } cw_top;   /* games: rated, of the speed */
 
 typedef struct {
     char     name[CW_NAME];
-    int16_t  rating;
-    uint16_t rd;
-    uint32_t games, wins, losses, draws;
+    int16_t  rating[4];        /* by speed (rating.h) */
+    uint16_t rd[4];
+    uint32_t rated[4];         /* rated games of each speed */
+    uint32_t games, wins, losses, draws;   /* every game, rated or not */
+    int16_t  puzzle;           /* the puzzle rating */
+    uint16_t puzzle_rd;
+    uint32_t puzzles_tried, puzzles_solved;
     uint16_t n_points;
     uint8_t  pad[2];
-    /* then n_points cw_point */
+    /* then n_points cw_point, by speed, oldest first in each */
 } cw_profile;
-typedef struct { int64_t at; int16_t rating; uint8_t pad[6]; } cw_point;
+typedef struct { int64_t at; int16_t rating; uint8_t speed; uint8_t pad[5]; } cw_point;
 
 typedef struct {
     uint32_t game;
@@ -220,7 +225,7 @@ _Static_assert(sizeof(cw_start) == 8, "cw_start");
 _Static_assert(sizeof(cw_seek_row) == 32, "cw_seek_row");
 _Static_assert(sizeof(cw_lobby) == 12 + 32 * CW_LOBBY_MAX, "cw_lobby");
 _Static_assert(sizeof(cw_snap) == 96, "cw_snap");
-_Static_assert(sizeof(cw_profile) == 44, "cw_profile");
+_Static_assert(sizeof(cw_profile) == 88, "cw_profile");
 _Static_assert(sizeof(cw_point) == 16, "cw_point");
 _Static_assert(sizeof(cw_game_row) == 48, "cw_game_row");
 

@@ -14,6 +14,11 @@
 #define CC_TAU 0.5
 #define CC_PROVISIONAL_RD 110.0   /* a rating with a deviation at or above this shows a "?" */
 
+/* A rating per speed, as lichess sorts time controls: by the game's estimated length, the base
+ * plus 40 increments (a 40-move game), under 3 minutes bullet, under 8 blitz, under 25 rapid. */
+enum { CC_BULLET, CC_BLITZ, CC_RAPID, CC_CLASSICAL, CC_SPEEDS };
+int cc_speed(int base_s, int inc_s);
+
 g2_player cc_rating_new(void);
 /* Both players' ratings after a game white scored `white_score` in (1, 0.5, 0). */
 void cc_rate(g2_player *white, g2_player *black, double white_score);

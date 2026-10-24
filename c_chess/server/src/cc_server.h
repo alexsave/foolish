@@ -21,7 +21,8 @@
 typedef struct cc_player {
     char      id[CB_UUID_LEN + 1];
     char      name[CW_NAME + 1];
-    g2_player r;
+    g2_player r[CC_SPEEDS];            /* by speed (rating.h) */
+    uint32_t  rated[CC_SPEEDS];        /* rated games of each speed */
     uint32_t  games, wins, losses, draws;
     int64_t   last_at;                 /* the last rated game's end, ms since the epoch */
     g2_player pz;                      /* the puzzle rating (puzzles.h) */
@@ -41,6 +42,7 @@ typedef struct cc_live {
     uint8_t    rematch_offer;
     uint8_t    finished;               /* cc_finish ran (ratings, journal) */
     uint8_t    ai_pending;             /* the computer's search for this ply is in flight (ai.h) */
+    uint8_t    speed;                  /* its rating's (rating.h), from the time control */
     int16_t    rating0[2];             /* the ratings when the game began */
     int16_t    diff[2];
     uint32_t   next_game;              /* the rematch */
@@ -102,8 +104,8 @@ void       cc_challenge_drop(uint32_t id);
 
 /* The games in play with the highest ratings (at most max): the frame's length. */
 int        cc_tv_fill(cw_tv *tv, int max, int64_t now_mono);
-/* The leaderboard: players with a game, by rating: the frame's length. */
-int        cc_top_fill(cw_top *top);
+/* The leaderboard of a speed: players with a rated game of it, by rating: the frame's length. */
+int        cc_top_fill(cw_top *top, int speed);
 
 /* Counters for the lobby frame and /c/stats. */
 uint32_t   cc_games_live(void);

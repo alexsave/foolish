@@ -3,6 +3,11 @@
 
 #include <math.h>
 
+int cc_speed(int base_s, int inc_s) {
+    int est = base_s + 40 * inc_s;
+    return est < 180 ? CC_BULLET : est < 480 ? CC_BLITZ : est < 1500 ? CC_RAPID : CC_CLASSICAL;
+}
+
 g2_player cc_rating_new(void) { return (g2_player){ CC_RATING_START, CC_RD_START, CC_VOL_START }; }
 
 static g2_player clamp(g2_player p) {
