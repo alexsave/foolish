@@ -42,3 +42,5 @@ c/src/client.c ::: if (!ch_is_legal(&c->g.pos, m)) return CC_E_ILLEGAL; ::: (voi
 c/src/client.c ::: int64_t think = c->turn_seen_at ? now - c->turn_seen_at : -1; ::: int64_t think = -1; ::: build/test/unit_client ::: build/test/unit_client
 c/src/client.c ::: if (f > 0) out |= 1ULL << (from + fwd - 1); ::: (void)0; ::: build/test/unit_client ::: build/test/unit_client
 c/src/client.c ::: else if (s.ply > c->g.ply + 1) { resync(c); return; } ::: else if (s.ply > c->g.ply + 1) { return; } ::: build/test/unit_client ::: build/test/unit_client
+server/src/web.c ::: if (len == 0 || p[0] != '/' || dot_segment(p, len)) { ::: if (len == 0 || strstr(p, "..") || dot_segment(p, len)) { ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/web.c ::: if (p[i] == '.' && p[i + 1] == '.' && (i == 0 || p[i - 1] == '/') && (i + 2 == len || p[i + 2] == '/')) return true; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess

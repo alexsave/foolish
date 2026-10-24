@@ -445,6 +445,49 @@ static void challenge_abort_flag(void) {
     T_EQ_INT(C.c.g.status, CC_ABORTED);
 }
 
+// The site from CC_WEB_DIR: a page without its .html, a framework chunk whose name holds two dots,
+// gzip when asked, the hashed assets cached for a year, and no way out of the tree.
+static void site(void) {
+    char web[500], f[600];
+    snprintf(web, sizeof web, "%s/web", g_dbdir);
+    snprintf(f, sizeof f, "mkdir -p '%s/_next/static/chunks' && printf '<h1>hi</h1>' > '%s/index.html' && printf 'game' > '%s/game.html' "
+             "&& printf 'chunk' > '%s/_next/static/chunks/0sf..t3v.js' && printf 'secret' > '%s/../secret.txt'", web, web, web, web, web);
+    T_EQ_INT(system(f), 0);
+    tp_stop(&g_child, SIGTERM, 10000);
+    char line[512];
+    static char envdb[512], envweb[600];
+    snprintf(envdb, sizeof envdb, "CBASE_DB=%s/cbase.sqlite", g_dbdir);
+    snprintf(envweb, sizeof envweb, "CC_WEB_DIR=%s", web);
+    char *env[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", envdb, "CBASE_JWT_SECRET=smoke-secret-smoke-secret-smoke-secret",
+                    "CBASE_ADMIN_TOKEN=smoke-admin-token-0123456789abcdef0123", "CBASE_LOG_LEVEL=info", envweb, NULL };
+    char *argv[] = { (char *)g_bin, "serve", NULL };
+    T_EQ_INT(tp_start(&g_child, argv, env), 0);
+    T_EQ_INT(tp_wait_line(&g_child, "listening on", 20000, line, sizeof line), 0);
+    const char *colon = strrchr(line, ':');
+    g_port = colon ? atoi(colon + 1) : 0;
+    tc_response r;
+    char v[128];
+    T_EQ_INT(tc_http(g_port, "GET", "/", NULL, NULL, 0, &r), 0);
+    T_EQ_INT(r.status, 200);
+    T_EQ_STR(cb_buf_cstr(&r.body), "<h1>hi</h1>");
+    tc_response_free(&r);
+    T_EQ_INT(tc_http(g_port, "GET", "/game?id=3", NULL, NULL, 0, &r), 0);
+    T_EQ_INT(r.status, 200);
+    T_EQ_STR(cb_buf_cstr(&r.body), "game");
+    T_EQ_STR(tc_header(&r, "cache-control", v, sizeof v), "no-cache");
+    tc_response_free(&r);
+    T_EQ_INT(tc_http(g_port, "GET", "/_next/static/chunks/0sf..t3v.js", NULL, NULL, 0, &r), 0);
+    T_EQ_INT(r.status, 200);
+    T_EQ_STR(tc_header(&r, "cache-control", v, sizeof v), "public, max-age=31536000, immutable");
+    tc_response_free(&r);
+    const char *out[] = { "/../secret.txt", "/_next/../../secret.txt", "/.." };
+    for (int i = 0; i < 3; i++) {
+        T_EQ_INT(tc_http(g_port, "GET", out[i], NULL, NULL, 0, &r), 0);
+        T_EQ_INT(r.status, 400);
+        tc_response_free(&r);
+    }
+}
+
 // No CC_ENGINE: a game against the computer is refused as unavailable.
 static void no_engine(void) {
     cc_client_ai(&A.c, 300, 0, 3, 0);
@@ -539,6 +582,7 @@ int main(int argc, char **argv) {
     T_RUN(challenge_abort_flag);
     T_RUN(stats_and_site);
     T_RUN(no_engine);
+    T_RUN(site);
     if (getenv("CC_TEST_ENGINE")) with_engine(getenv("CC_TEST_ENGINE"));
     tp_stop(&g_child, SIGTERM, 10000);
     return T_DONE();
