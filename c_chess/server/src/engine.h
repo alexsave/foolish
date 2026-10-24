@@ -27,6 +27,8 @@ typedef struct {
     int      mate;       /* moves to mate from the side to move's view (+ it mates), 0 when none */
     int      npv;
     ch_move  pv[16];     /* the principal variation, best first */
+    int      nmulti;     /* with ask.multipv > 1: the best lines' first moves and scores, best first */
+    struct { ch_move move; int score_cp, mate; } multi[4];
 } cc_engine_answer;
 
 typedef void (*cc_engine_fn)(void *ud, const cc_engine_answer *a);
@@ -38,6 +40,8 @@ typedef struct {
     int            movetime_ms;
     int            depth;      /* 0: no depth limit */
     uint64_t       nodes;      /* 0: no node limit */
+    int            multipv;    /* lines to keep (1..4; 0 means 1) */
+    const char    *fen;        /* NULL: the start position; else the position the moves start from */
 } cc_engine_ask;
 
 int  cc_engine_start(void);    /* CB_OK, or CB_OK with no engine when CC_ENGINE is unset */

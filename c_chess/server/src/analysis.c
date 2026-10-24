@@ -80,7 +80,7 @@ static void h_eval(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     ud->key = g.pos.key;
     ud->ply = q.n;
     ud->stm = g.pos.stm;
-    cc_engine_ask ask = { moves, q.n, 20, EVAL_CAP_MS, 0, EVAL_NODES };
+    cc_engine_ask ask = { moves, q.n, 20, EVAL_CAP_MS, 0, EVAL_NODES, 1, NULL };
     if (cc_engine_search(&ask, answered, ud) != CB_OK) {
         free(ud);
         pthread_mutex_lock(&cc_lock);

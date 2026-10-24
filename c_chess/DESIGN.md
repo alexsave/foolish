@@ -148,7 +148,20 @@ Its hits are in `/c/stats` (`ai_cache_hits`).
 
 **The analysis board is the server's engine, not the browser's.** Stockfish's own makefile has a `wasm32` target, but it builds with `NNUE_EMBEDDING_OFF`: the page would fetch Stockfish 19's network at run time, and that network is 110 MB, against a page of 172 KB.
 The server's engines and the eval cache answer instead: the page sends the moves that reach the position it shows (`POST /c/eval` on the socket), the answer (white's score, mate, depth, the best line) comes back as a 48-byte push, and every position asked once is answered from memory after that.
-A browser engine stays the right design for unlimited private analysis once a small network can be used (Stockfish 17's small net was about 6 MB); that is a later step.
+A browser engine stays the right design for unlimited private analysis once a small network can be used (Stockfish 17's small net was about 6 MB); that is a later step, and the numbers below say when it pays.
+
+What an analysed position costs the server (Stockfish 19's own `bench` over its 49 positions, one M1 performance core; an efficiency core is about 5.5 times slower):
+
+| search | nodes per position | CPU per position | positions per core per day |
+|---|---|---|---|
+| depth 10 | 9,200 | 7.3 ms | 11.8 million |
+| depth 14 | 80,000 | 58 ms | 1.5 million |
+| depth 18 | 613,000 | 460 ms | 188,000 |
+| depth 22 | 1.9 million | 1.52 s | 57,000 |
+| 400,000 nodes (the site's setting, about depth 17) | 400,000 | 300 ms | 288,000 |
+
+At lichess's scale (5 million games a day, about 70 positions a game: 350 million positions a day), if every game were analysed on the server at the site's setting, that is 105 million core-seconds a day, about 1,200 cores running all day; if one game in ten is, 120 cores; the eval cache takes the shared openings off the top (perhaps a fifth of positions).
+Answering the positions players actually click on is cheap; analysing whole games for everyone is not, and that is the threshold at which a browser engine with a small network (zero server cost, a one-time download of a few MB) should take over.
 
 ## 4. The page
 

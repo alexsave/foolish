@@ -142,10 +142,12 @@ static void begin(engine *g, job *j) {
     g->busy = j;
     g->started_us = cb_mono_us();
     memset(&g->last, 0, sizeof g->last);
-    size_t cap = 160 + (size_t)j->ask.n * 6;
+    size_t cap = 300 + (size_t)j->ask.n * 6;
     char *cmd = malloc(cap);
     if (!cmd) return;
-    int o = snprintf(cmd, cap, "setoption name Skill Level value %d\nposition startpos%s", j->ask.skill, j->ask.n ? " moves" : "");
+    int mpv = j->ask.multipv < 1 ? 1 : j->ask.multipv > 4 ? 4 : j->ask.multipv;
+    int o = snprintf(cmd, cap, "setoption name Skill Level value %d\nsetoption name MultiPV value %d\nposition %s%s%s", j->ask.skill, mpv,
+                     j->ask.fen ? "fen " : "startpos", j->ask.fen ? j->ask.fen : "", j->ask.n ? " moves" : "");
     for (int i = 0; i < j->ask.n; i++) {
         ch_move m = j->moves[i];
         cmd[o++] = ' ';
@@ -198,10 +200,30 @@ static void line(engine *g, char *s) {
         char *t = strstr(s, " depth ");
         if (t) g->last.depth = atoi(t + 7);
         if (strstr(s, " lowerbound") || strstr(s, " upperbound")) return;   /* a bound, not a score */
+        char *mp = strstr(s, " multipv ");
+        int rank = mp ? atoi(mp + 9) : 1;
+        if (rank >= 2 && rank <= 4) {   /* a second-best line: its first move and score only */
+            char *sc = strstr(s, " score cp "), *sm = strstr(s, " score mate "), *pv = strstr(s, " pv ");
+            if (!pv) return;
+            int k = rank - 1;
+            if (g->last.nmulti < rank) g->last.nmulti = rank;
+            g->last.multi[k].mate = sm ? atoi(sm + 12) : 0;
+            g->last.multi[k].score_cp = sc ? atoi(sc + 10) : (g->last.multi[k].mate > 0 ? 30000 : -30000);
+            char mv[8] = { 0 };
+            sscanf(pv + 4, "%7s", mv);
+            g->last.multi[k].move = parse_uci_move(mv);
+            return;
+        }
         if ((t = strstr(s, " score cp "))) { g->last.score_cp = atoi(t + 10); g->last.mate = 0; }
         else if ((t = strstr(s, " score mate "))) { int m = atoi(t + 12); g->last.mate = m; g->last.score_cp = m > 0 ? 30000 - 2 * m : -30000 - 2 * m; }
         if ((t = strstr(s, " nodes "))) g->last.nodes = strtoull(t + 7, NULL, 10);
         if ((t = strstr(s, " pv "))) {
+            char first[8] = { 0 };
+            sscanf(t + 4, "%7s", first);
+            g->last.multi[0].move = parse_uci_move(first);
+            g->last.multi[0].score_cp = g->last.score_cp;
+            g->last.multi[0].mate = g->last.mate;
+            if (g->last.nmulti < 1) g->last.nmulti = 1;
             g->last.npv = 0;
             for (char *m = strtok(t + 4, " "); m && g->last.npv < 16; m = strtok(NULL, " ")) {
                 ch_move mv = parse_uci_move(m);

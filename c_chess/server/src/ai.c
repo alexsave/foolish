@@ -98,7 +98,7 @@ void cc_ai_maybe_move(cc_live *l, int64_t now) {
     ud->ply = l->g.ply;
     ud->level = (uint8_t)level;
     ud->key = key;
-    cc_engine_ask ask = { l->g.moves, l->g.ply, LEVEL[level].skill, AI_CAP_MS, 0, LEVEL[level].nodes };
+    cc_engine_ask ask = { l->g.moves, l->g.ply, LEVEL[level].skill, AI_CAP_MS, 0, LEVEL[level].nodes, 1, NULL };
     asked++;
     if (cc_engine_search(&ask, answered, ud) != CB_OK) { refused++; free(ud); return; }
     l->ai_pending = 1;
