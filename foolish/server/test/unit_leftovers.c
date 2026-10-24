@@ -6,11 +6,11 @@
 #include "cbase/provider.h"
 
 #include "app/bots.h"
-#include "aws/https.h"
+#include "net/https.h"
 #include "aws/runtime_api.h"
 #include "aws_json.h"
 #include "store/rows_foolish.h"
-#include "lib_aws_tls.h"
+#include "lib_tls.h"
 #include "../../../shared/c/b64/b64.h"
 #include "util/err.h"
 #include "util/json.h"
