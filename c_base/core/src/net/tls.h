@@ -35,6 +35,9 @@ cb_tls_conn *cb_tls_conn_new(cb_tls *t, int fd);   // NULL out of memory
 void         cb_tls_conn_free(cb_tls_conn *c);
 ssize_t      cb_tls_read(cb_tls_conn *c, void *buf, size_t n, int *want);
 ssize_t      cb_tls_write(cb_tls_conn *c, const void *buf, size_t n, int *want);
+// Sends close_notify (once, best effort, never waiting): a peer that saw the connection end without
+// it treats the session as truncated and will not resume it.
+void         cb_tls_shutdown(cb_tls_conn *c);
 // Whether the handshake is done, and whether it resumed a session (after it is done).
 int          cb_tls_ready(const cb_tls_conn *c);
 int          cb_tls_resumed(const cb_tls_conn *c);

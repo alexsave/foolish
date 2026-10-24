@@ -121,6 +121,12 @@ ssize_t cb_tls_write(cb_tls_conn *c, const void *buf, size_t n, int *want) {
     return outcome(c, SSL_write(c->ssl, buf, n > 0x7fffffff ? 0x7fffffff : (int)n), want);
 }
 
+void cb_tls_shutdown(cb_tls_conn *c) {
+    if (!c || !SSL_is_init_finished(c->ssl)) return;
+    SSL_shutdown(c->ssl);   /* writes close_notify if the socket takes it; the answer is not awaited */
+    ERR_clear_error();
+}
+
 int cb_tls_ready(const cb_tls_conn *c) { return SSL_is_init_finished(c->ssl); }
 int cb_tls_resumed(const cb_tls_conn *c) { return SSL_session_reused(c->ssl); }
 

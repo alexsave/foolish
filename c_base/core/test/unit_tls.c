@@ -267,6 +267,27 @@ static void resumption(void) {
         close(fd);
     }
     SSL_SESSION_free(sess);
+    // the server closing the connection (Connection: close) sends close_notify, so the session stays
+    // resumable: a client that saw a bare EOF would drop it
+    s = tls_connect(cc, NULL, &fd);
+    T_CHECK(s != NULL);
+    if (s) {
+        const char *bye = "POST /echo HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 1\r\n\r\nz";
+        ssl_write_all(s, bye, strlen(bye));
+        T_EQ_INT(read_response(s, buf, sizeof buf, 0), 1);
+        char tail[16];
+        T_EQ_INT(SSL_read(s, tail, sizeof tail), 0);
+        T_EQ_INT(SSL_get_error(s, 0), SSL_ERROR_ZERO_RETURN);   // close_notify, not a truncation
+        sess = SSL_get1_session(s);
+        T_CHECK(sess && SSL_SESSION_is_resumable(sess));
+        SSL_shutdown(s);   // ours back: freed without it, the client's own library drops the session
+        SSL_free(s);
+        close(fd);
+        s = tls_connect(cc, sess, &fd);
+        T_CHECK(s && SSL_session_reused(s));
+        if (s) { SSL_free(s); close(fd); }
+        SSL_SESSION_free(sess);
+    }
     SSL_CTX_free(cc);
     long long full, resumed, failed;
     cb_tls_counts(g_tls, &full, &resumed, &failed);

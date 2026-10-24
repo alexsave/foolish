@@ -790,6 +790,7 @@ static void conn_close(conn *c) {
     cb_server *s = c->srv;
     if (c->buried) return;
     if (c->fd >= 0) {
+        if (c->tls) cb_tls_shutdown(c->tls);
         cb_loop_remove(s->ctx->loop, c->fd);
         close(c->fd);
         c->fd = -1;
