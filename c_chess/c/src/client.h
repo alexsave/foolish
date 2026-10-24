@@ -125,6 +125,9 @@ void cc_client_seek(cc_client *c, int base_s, int inc_s, int rated);
 void cc_client_unseek(cc_client *c);
 void cc_client_challenge(cc_client *c, int base_s, int inc_s, int rated);
 void cc_client_accept(cc_client *c, uint32_t challenge);
+/* A casual game against the computer at a level 1..8, as white (0), black (1) or either (2):
+ * CC_EV_START with the game. */
+void cc_client_ai(cc_client *c, int base_s, int inc_s, int level, int color);
 void cc_client_lobby(cc_client *c);           /* SUB to the lobby and ask for it now */
 void cc_client_lobby_leave(cc_client *c);
 /* Shows a game: SUB to its room and ask for its snapshot; our color in it is found from the names. */

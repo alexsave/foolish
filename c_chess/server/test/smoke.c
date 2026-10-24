@@ -444,6 +444,57 @@ static void challenge_abort_flag(void) {
     T_EQ_INT(C.c.g.status, CC_ABORTED);
 }
 
+// No CC_ENGINE: a game against the computer is refused as unavailable.
+static void no_engine(void) {
+    cc_client_ai(&A.c, 300, 0, 3, 0);
+    A.seen = 0;
+    T_CHECK(pump(&A, CC_EV_ERROR, 3000));
+    T_EQ_INT(A.c.err_status, 503);
+}
+
+// With CC_TEST_ENGINE (a Stockfish executable): a server with it, and a game against level 1 played
+// to its end, the computer answering every move.
+static void with_engine(const char *engine) {
+    tp_stop(&g_child, SIGTERM, 10000);
+    char line[512];
+    static char envdb[512], enveng[700];
+    snprintf(envdb, sizeof envdb, "CBASE_DB=%s/cbase.sqlite", g_dbdir);
+    snprintf(enveng, sizeof enveng, "CC_ENGINE=%s", engine);
+    char *env[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", envdb, "CBASE_JWT_SECRET=smoke-secret-smoke-secret-smoke-secret",
+                    "CBASE_ADMIN_TOKEN=smoke-admin-token-0123456789abcdef0123", "CBASE_LOG_LEVEL=info", enveng, "CC_ENGINES=1", NULL };
+    char *argv[] = { (char *)g_bin, "serve", NULL };
+    T_EQ_INT(tp_start(&g_child, argv, env), 0);
+    T_EQ_INT(tp_wait_line(&g_child, "listening on", 20000, line, sizeof line), 0);
+    const char *colon = strrchr(line, ':');
+    g_port = colon ? atoi(colon + 1) : 0;
+    close(A.fd);
+    connect_ws(&A);
+    cc_client_ai(&A.c, 600, 0, 1, 1);   // we are black: the computer opens
+    A.seen = 0;
+    T_CHECK(pump(&A, CC_EV_START, 5000));
+    cc_client_open(&A.c, A.c.start_game);
+    A.seen = 0;
+    T_CHECK(pump(&A, CC_EV_GAME, 3000));
+    T_EQ_INT(A.c.color, CH_BLACK);
+    T_CHECK(A.c.g.ply == 1 || pump(&A, CC_EV_MOVED, 5000));   // its first move
+    T_EQ_INT(A.c.g.ply, 1);
+    int moves = 0;
+    while (!cc_game_over(&A.c.g) && moves < 400) {
+        if (!cc_client_my_turn(&A.c)) { A.seen = 0; if (!pump(&A, CC_EV_MOVED | CC_EV_OVER, 10000)) break; continue; }
+        ch_moves ms;
+        ch_legal(&A.c.g.pos, &ms);
+        ch_move m = ms.m[rand() % ms.n];
+        T_EQ_INT(cc_client_move(&A.c, CH_FROM(m), CH_TO(m), CH_PROMO(m), now_ms()), CC_OK);
+        flush(&A);
+        moves++;
+    }
+    drain(&A);
+    T_CHECK(cc_game_over(&A.c.g));
+    // random moves against even the weakest level lose
+    T_CHECK(A.c.g.status == CC_MATE ? A.c.g.winner == CH_WHITE : true);
+    fprintf(stderr, "  against Stockfish-1: %d plies, status %d winner %d\n", A.c.g.ply, A.c.g.status, A.c.g.winner);
+}
+
 static void stats_and_site(void) {
     tc_response r;
     T_EQ_INT(tc_http(g_port, "GET", "/c/stats", NULL, NULL, 0, &r), 0);
@@ -483,6 +534,8 @@ int main(int argc, char **argv) {
     T_RUN(restart);
     T_RUN(challenge_abort_flag);
     T_RUN(stats_and_site);
+    T_RUN(no_engine);
+    if (getenv("CC_TEST_ENGINE")) with_engine(getenv("CC_TEST_ENGINE"));
     tp_stop(&g_child, SIGTERM, 10000);
     return T_DONE();
 }

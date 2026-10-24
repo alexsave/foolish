@@ -104,6 +104,7 @@ EXPORT(cv_seek) void cv_seek(int base_s, int inc_s, int rated) { cc_client_seek(
 EXPORT(cv_unseek) void cv_unseek(void) { cc_client_unseek(&C); }
 EXPORT(cv_challenge) void cv_challenge(int base_s, int inc_s, int rated) { cc_client_challenge(&C, base_s, inc_s, rated); }
 EXPORT(cv_accept) void cv_accept(uint32_t id) { cc_client_accept(&C, id); }
+EXPORT(cv_ai) void cv_ai(int base_s, int inc_s, int level, int color) { cc_client_ai(&C, base_s, inc_s, level, color); }
 EXPORT(cv_lobby) void cv_lobby(void) { cc_client_lobby(&C); }
 EXPORT(cv_lobby_leave) void cv_lobby_leave(void) { cc_client_lobby_leave(&C); }
 EXPORT(cv_open) void cv_open(uint32_t game) { cc_client_open(&C, game); }

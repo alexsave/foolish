@@ -21,6 +21,7 @@ interface Exports {
   cv_unseek(): void;
   cv_challenge(base: number, inc: number, rated: number): void;
   cv_accept(id: number): void;
+  cv_ai(base: number, inc: number, level: number, color: number): void;
   cv_lobby(): void;
   cv_lobby_leave(): void;
   cv_open(game: number): void;
@@ -109,6 +110,7 @@ export class Kernel {
   unseek(): void { this.x.cv_unseek(); }
   challenge(base: number, inc: number, rated: boolean): void { this.x.cv_challenge(base, inc, rated ? 1 : 0); }
   accept(id: number): void { this.x.cv_accept(id); }
+  ai(base: number, inc: number, level: number, color: number): void { this.x.cv_ai(base, inc, level, color); }
   lobby(): void { this.x.cv_lobby(); }
   lobbyLeave(): void { this.x.cv_lobby_leave(); }
   open(game: number): void { this.x.cv_open(game); }

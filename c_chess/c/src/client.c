@@ -156,6 +156,11 @@ void cc_client_accept(cc_client *c, uint32_t challenge) {
     req(c, CC_RQ_ACCEPT, SF_METH_POST, "/c/accept", &q, sizeof q, 0);
 }
 
+void cc_client_ai(cc_client *c, int base_s, int inc_s, int level, int color) {
+    cw_ai_req q = { (uint16_t)base_s, (uint8_t)inc_s, (uint8_t)level, (uint8_t)color, { 0, 0, 0 } };
+    req(c, CC_RQ_ACCEPT, SF_METH_POST, "/c/ai", &q, sizeof q, 0);   /* answered as an accept is: the game's id */
+}
+
 void cc_client_lobby(cc_client *c) {
     sub(c, SF_SUB, "lobby");
     req(c, CC_RQ_LOBBY, SF_METH_GET, "/c/lobby", NULL, 0, 0);
