@@ -99,6 +99,7 @@ prog = $(eval $(call PROG,$(1),$(2),$(3),$(4),$(5)))
 
 $(call prog,build,build/obj/rel,c_chess,server/tools/main_serve.c $(SERVER_SRC),CFLAGS)
 $(call prog,build,build/obj/rel,chessbench,server/tools/chessbench.c $(SERVER_SRC),CFLAGS)
+$(call prog,build,build/obj/rel,puzzlegen,server/tools/puzzlegen.c $(SERVER_SRC),CFLAGS)
 $(call prog,build/asan,build/obj/asan,c_chess,server/tools/main_serve.c $(SERVER_SRC),ASAN_CFLAGS)
 $(call prog,build/asan,build/obj/asan,chessbench,server/tools/chessbench.c $(SERVER_SRC),ASAN_CFLAGS)
 $(foreach u,$(KTESTS),$(call prog,build/test,build/obj/rel,$(u),c/test/$(u).c $(KERNEL_SRC),CFLAGS))
@@ -107,7 +108,7 @@ $(foreach u,$(STESTS) $(SMOKES),$(call prog,build/test,build/obj/rel,$(u),server
 $(foreach u,$(STESTS) $(SMOKES),$(call prog,build/asan/test,build/obj/asan,$(u),server/test/$(u).c $(TLIB_SRC) $(SERVER_SRC),ASAN_CFLAGS))
 
 .PHONY: all test smoke check test-asan check-asan kernel-test clean wasm gen
-all: build/c_chess build/chessbench
+all: build/c_chess build/chessbench build/puzzlegen
 
 CHECK_JOBS ?= 4
 RUN_ALL_SH = mkdir -p build/logs && printf '%s\0' $(2) | xargs -0 -P $(CHECK_JOBS) -n 1 sh -c \
@@ -139,10 +140,10 @@ check-asan: $(call UNIT_RUNS,build/asan) $(call SMOKE_PROGS,build/asan)
 include $(C_ROOT)/shared/tools/gen_tools.mk
 include $(C_ROOT)/shared/tools/wasm_cc.mk
 WEB_FLAGS   := -isystem $(C_ROOT)/shared/c/wasm/include -Ic/src -Ic/wasm -I$(C_ROOT)/shared/c
-WEB_SG_ARGS := --cwd . --header c/wasm/web.h --root CvView --root CvMoves --root CvLobby --root CvProfile --root CvGames --root CvTv --root CvTop --root CvEval \
-               --snapshot CvView --snapshot CvMoves --snapshot CvLobby --snapshot CvProfile --snapshot CvGames --snapshot CvTv --snapshot CvTop --snapshot CvEval --snapshot-only --const CV_ --const CC_EV_ --const CW_A_ --const CC_ --const CW_E_ --const CW_AUTH_ --const CH_ --build 'web=$(WEB_FLAGS)'
+WEB_SG_ARGS := --cwd . --header c/wasm/web.h --root CvView --root CvMoves --root CvLobby --root CvProfile --root CvGames --root CvTv --root CvTop --root CvEval --root CvPuzzle \
+               --snapshot CvView --snapshot CvMoves --snapshot CvLobby --snapshot CvProfile --snapshot CvGames --snapshot CvTv --snapshot CvTop --snapshot CvEval --snapshot CvPuzzle --snapshot-only --const CV_ --const CC_EV_ --const CW_A_ --const CC_ --const CW_E_ --const CW_AUTH_ --const CH_ --const CP_ --build 'web=$(WEB_FLAGS)'
 WEB_GEN     := web/src/gen
-WEB_WASM_SRC := c/src/chess.c c/src/game.c c/src/client.c c/wasm/web.c $(C_ROOT)/shared/c/wasm/libc.c
+WEB_WASM_SRC := c/src/chess.c c/src/game.c c/src/client.c c/src/puzzle.c c/wasm/web.c $(C_ROOT)/shared/c/wasm/libc.c
 WEB_WASM    := web/public/chess.wasm
 
 gen: $(STRUCTGEN)

@@ -1,5 +1,6 @@
 /* journal.c - see journal.h. */
 #include "journal.h"
+#include "puzzles.h"
 
 #include "store/store_sql.h"
 #include "util/err.h"
@@ -17,9 +18,9 @@
 #include <unistd.h>
 
 const char *const cc_sql_stmts[CC_SQL_N] = {
-    [CC_SQL_PLAYER_PUT] = "INSERT OR REPLACE INTO cc_players (id, name, r, d, v, games, wins, losses, draws, last_at) "
-                          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-    [CC_SQL_PLAYERS_ALL] = "SELECT id, name, r, d, v, games, wins, losses, draws, last_at FROM cc_players",
+    [CC_SQL_PLAYER_PUT] = "INSERT OR REPLACE INTO cc_players (id, name, r, d, v, games, wins, losses, draws, last_at, pr, pd, pv, pz_tried, pz_solved) "
+                          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+    [CC_SQL_PLAYERS_ALL] = "SELECT id, name, r, d, v, games, wins, losses, draws, last_at, pr, pd, pv, pz_tried, pz_solved FROM cc_players",
     [CC_SQL_GAME_START] = "INSERT OR REPLACE INTO cc_games (id, white, black, base_s, inc_s, rated, status, winner, started_at, ended_at, "
                           "r_w, r_b, d_w, d_b, moves) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 2, ?7, 0, ?8, ?9, 0, 0, NULL)",
     [CC_SQL_GAME_END] = "UPDATE cc_games SET status = ?2, winner = ?3, ended_at = ?4, d_w = ?5, d_b = ?6, moves = ?7, left_w = ?8, left_b = ?9 WHERE id = ?1",
@@ -30,12 +31,14 @@ const char *const cc_sql_stmts[CC_SQL_N] = {
                         "FROM cc_games WHERE id = ?1",
     [CC_SQL_GAMES_OF] = "SELECT id, white, black, base_s, inc_s, rated, status, winner, ended_at, d_w, d_b, length(moves) / 2 FROM cc_games "
                         "WHERE (white = ?1 OR black = ?1) AND status > 1 ORDER BY id DESC LIMIT 50",
+    [CC_SQL_PUZZLE_PUT] = "INSERT OR REPLACE INTO cc_puzzles (id, r, d, v, plays) VALUES (?1, ?2, ?3, ?4, ?5)",
+    [CC_SQL_PUZZLES_ALL] = "SELECT id, r, d, v, plays FROM cc_puzzles",
     [CC_SQL_POINTS_OF] = "SELECT at, rating FROM (SELECT at, rating FROM cc_points WHERE player = ?1 ORDER BY at DESC LIMIT ?2) ORDER BY at",
 };
 
 /* ---- the records ---- */
 
-enum { J_PLAYER, J_GAME_START, J_GAME_END, J_POINT };
+enum { J_PLAYER, J_GAME_START, J_GAME_END, J_POINT, J_PUZZLE };
 
 typedef struct jrec {
     struct jrec *next;
@@ -45,6 +48,7 @@ typedef struct jrec {
         struct { uint32_t id; char w[CB_UUID_LEN + 1], b[CB_UUID_LEN + 1]; int base_s, inc_s, rated; int64_t at; int r0[2]; } start;
         struct { uint32_t id; int status, winner, d[2]; int64_t at, left[2]; int n; uint16_t moves[CC_MAX_PLY]; } end;
         struct { char id[CB_UUID_LEN + 1]; int64_t at; int rating; } point;
+        struct { uint32_t id, plays; g2_player r; } puzzle;
     } u;
 } jrec;
 
@@ -164,6 +168,15 @@ void cc_journal_point(const cc_player *p, int64_t wall) {
     enqueue(r);
 }
 
+void cc_journal_puzzle(uint32_t id, const g2_player *g, uint32_t plays) {
+    jrec *r = rec(J_PUZZLE);
+    if (!r) return;
+    r->u.puzzle.id = id;
+    r->u.puzzle.plays = plays;
+    r->u.puzzle.r = *g;
+    enqueue(r);
+}
+
 /* ---- the writer ---- */
 
 static int write_one(cb_sql *x, const jrec *r) {
@@ -182,6 +195,11 @@ static int write_one(cb_sql *x, const jrec *r) {
         sqlite3_bind_int64(st, 8, p->losses);
         sqlite3_bind_int64(st, 9, p->draws);
         sqlite3_bind_int64(st, 10, p->last_at);
+        sqlite3_bind_double(st, 11, p->pz.rating);
+        sqlite3_bind_double(st, 12, p->pz.deviation);
+        sqlite3_bind_double(st, 13, p->pz.volatility);
+        sqlite3_bind_int64(st, 14, p->pz_tried);
+        sqlite3_bind_int64(st, 15, p->pz_solved);
         return cb_sql_run(x, st, "cc player put");
     }
     case J_GAME_START:
@@ -214,6 +232,14 @@ static int write_one(cb_sql *x, const jrec *r) {
         sqlite3_bind_int64(st, 2, r->u.point.at);
         sqlite3_bind_int(st, 3, r->u.point.rating);
         return cb_sql_run(x, st, "cc point");
+    case J_PUZZLE:
+        if (!(st = cb_sql_stmt(x, CC_SQL_PUZZLE_PUT))) return CB_E_DB;
+        sqlite3_bind_int64(st, 1, r->u.puzzle.id);
+        sqlite3_bind_double(st, 2, r->u.puzzle.r.rating);
+        sqlite3_bind_double(st, 3, r->u.puzzle.r.deviation);
+        sqlite3_bind_double(st, 4, r->u.puzzle.r.volatility);
+        sqlite3_bind_int64(st, 5, r->u.puzzle.plays);
+        return cb_sql_run(x, st, "cc puzzle");
     }
     return CB_E_INVALID;
 }
@@ -360,8 +386,17 @@ static int recover_fn(cb_sql *x, void *ud) {
         p.losses = (uint32_t)sqlite3_column_int64(st, 7);
         p.draws = (uint32_t)sqlite3_column_int64(st, 8);
         p.last_at = sqlite3_column_int64(st, 9);
+        p.pz = (g2_player){ sqlite3_column_double(st, 10), sqlite3_column_double(st, 11), sqlite3_column_double(st, 12) };
+        p.pz_tried = (uint32_t)sqlite3_column_int64(st, 13);
+        p.pz_solved = (uint32_t)sqlite3_column_int64(st, 14);
         if (!cc_player_recovered(&p)) { sqlite3_reset(st); return CB_E_NOMEM; }
         c->players++;
+    }
+    sqlite3_reset(st);
+    if (!(st = cb_sql_stmt(x, CC_SQL_PUZZLES_ALL))) return CB_E_DB;
+    while (sqlite3_step(st) == SQLITE_ROW) {   /* onto the puzzles loaded from the file; the rest are gone */
+        g2_player r = { sqlite3_column_double(st, 1), sqlite3_column_double(st, 2), sqlite3_column_double(st, 3) };
+        cc_puzzle_recovered((uint32_t)sqlite3_column_int64(st, 0), &r, (uint32_t)sqlite3_column_int64(st, 4));
     }
     sqlite3_reset(st);
     if (!(st = cb_sql_stmt(x, CC_SQL_GAME_MAX))) return CB_E_DB;

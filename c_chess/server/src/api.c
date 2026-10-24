@@ -22,20 +22,22 @@
 
 #define OCTETS "application/octet-stream"
 
-static void answer(cb_http_res *res, int status, const void *p, size_t n) {
+void cc_api_answer(cb_http_res *res, int status, const void *p, size_t n) {
     cb_res_send(res, status, OCTETS, p, n);
     cb_res_header(res, "Cache-Control", "no-store");
 }
 
-static void refuse(cb_http_res *res, int status, int code, int rc) {
+void cc_api_refuse(cb_http_res *res, int status, int code, int rc) {
     cw_err e = { (uint8_t)code, (int8_t)rc, { 0, 0 } };
-    answer(res, status, &e, sizeof e);
+    cc_api_answer(res, status, &e, sizeof e);
 }
+#define answer cc_api_answer
+#define refuse cc_api_refuse
 
 static bool on_loop(cb_ctx *ctx) { return ctx->loop && cb_loop_on_thread(ctx->loop); }
 
 /* The verified caller and its player (made on first sight), or false with 401 answered. */
-static bool me(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, cb_user *u) {
+bool cc_api_caller(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, cb_user *u) {
     if (!ctx->auth) { refuse(res, 503, CW_E_BUSY, 0); return false; }
     memset(u, 0, sizeof *u);
     int rc = cb_auth_verify_bearer(ctx->auth, req, u);
@@ -44,6 +46,7 @@ static bool me(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, cb_user *u
     return true;
 }
 
+#define me cc_api_caller
 static cc_player *player(const cb_user *u) { return cc_player_of(u->id, u->username); }
 
 /* The number after the route's prefix: "/c/game/123" -> 123; 0 for none. */

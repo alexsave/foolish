@@ -5,7 +5,9 @@ CREATE TABLE IF NOT EXISTS cc_players (
     name TEXT NOT NULL,
     r REAL NOT NULL, d REAL NOT NULL, v REAL NOT NULL,
     games INTEGER NOT NULL, wins INTEGER NOT NULL, losses INTEGER NOT NULL, draws INTEGER NOT NULL,
-    last_at INTEGER NOT NULL
+    last_at INTEGER NOT NULL,
+    pr REAL NOT NULL, pd REAL NOT NULL, pv REAL NOT NULL,   -- the puzzle rating
+    pz_tried INTEGER NOT NULL, pz_solved INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS cc_games (
     id INTEGER PRIMARY KEY,
@@ -26,3 +28,9 @@ CREATE TABLE IF NOT EXISTS cc_points (
     player BLOB NOT NULL, at INTEGER NOT NULL, rating INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS cc_points_player ON cc_points (player, at);
+-- a puzzle's rating as people solve it (the puzzles themselves are a file: CC_PUZZLES, puzzle.h);
+-- the id is the record's (puzzles.c: a hash of its position and line, so a regenerated file keeps
+-- the ratings of the puzzles it kept)
+CREATE TABLE IF NOT EXISTS cc_puzzles (
+    id INTEGER PRIMARY KEY, r REAL NOT NULL, d REAL NOT NULL, v REAL NOT NULL, plays INTEGER NOT NULL
+);

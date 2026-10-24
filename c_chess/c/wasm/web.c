@@ -2,6 +2,7 @@
  * One client per page. The page moves bytes and draws: io_ptr() is a buffer it fills with what the
  * socket or a fetch received before calling in a function, and reads what to send from after one. */
 #include "client.h"
+#include "puzzle.h"
 #include "web.h"
 
 #include <string.h>
@@ -340,4 +341,107 @@ EXPORT(cv_eval) const CvEval *cv_eval(void) {
         p = q;
     }
     return &EV;
+}
+
+/* ---- puzzles: solved here, on the kernel's board; the server hands them out and rates them ---- */
+
+static cp_solve PS;
+static CvPuzzle PV;
+
+static void puzzle_fill(ch_move last) {
+    PV.state = (uint8_t)PS.state;
+    PV.at = (uint8_t)PS.at;
+    PV.n = PS.p.n;
+    if (last != CH_MOVE_NONE) { PV.last_from = (uint8_t)CH_FROM(last); PV.last_to = (uint8_t)CH_TO(last); }
+    PV.hint_from = PS.at >= 1 && PS.at < PS.p.n ? (uint8_t)CH_FROM(PS.p.moves[PS.at]) : CV_NO_SQ;
+    PV.check_sq = CV_NO_SQ;
+    if (ch_in_check(&PS.pos)) {
+        uint64_t k = PS.pos.bb[PS.pos.stm][CH_KING];
+        if (k) PV.check_sq = (uint8_t)__builtin_ctzll(k);
+    }
+    for (int sq = 0; sq < 64; sq++) {
+        int col, t = ch_piece_at(&PS.pos, sq, &col);
+        PV.board[sq] = t < 0 ? 0 : (uint8_t)(1 + t + 8 * col);
+    }
+}
+
+/* Asks for the next puzzle (GET /c/puzzle/next): CC_EV_READ with this tag, then cv_puzzle_load. */
+EXPORT(cv_puzzle_ask) void cv_puzzle_ask(uint32_t tag) { cc_client_read(&C, "/c/puzzle/next", tag); }
+
+/* io holds the answer's n bytes (cw_puzzle). */
+EXPORT(cv_puzzle_load) const CvPuzzle *cv_puzzle_load(uint32_t n) {
+    memset(&PV, 0, sizeof PV);
+    PV.last_from = PV.last_to = PV.check_sq = PV.hint_from = CV_NO_SQ;
+    cw_puzzle w;
+    if (n != sizeof w) return &PV;
+    memcpy(&w, IO, sizeof w);
+    if (cp_begin(&PS, &w.p) != 0) return &PV;
+    PV.ok = 1;
+    PV.id = w.p.id;
+    PV.themes = w.p.themes;
+    PV.rating = w.rating; PV.rd = w.rd;
+    PV.puzzle_rating = w.p.rating; PV.puzzle_rd = w.p.rd;
+    PV.tried = w.tried; PV.solved = w.solved; PV.plays = w.plays;
+    PV.color = (uint8_t)PS.pos.stm;
+    puzzle_fill(w.p.moves[0]);
+    return &PV;
+}
+
+EXPORT(cv_puzzle) const CvPuzzle *cv_puzzle(void) { return &PV; }
+
+/* The solver's move: the state after it (the reply, if any, is played and is the last move). */
+EXPORT(cv_puzzle_try) int cv_puzzle_try(int from, int to, int promo) {
+    if (!PV.ok) return CP_FAILED;
+    ch_move m = CH_MOVE(from, to, promo);
+    int st = cp_try(&PS, m);
+    if (st == CP_FAILED) { puzzle_fill(CH_MOVE_NONE); return st; }
+    puzzle_fill(PS.last[1] != CH_MOVE_NONE ? PS.last[1] : m);
+    return st;
+}
+
+/* The squares the piece on `from` may go to while solving. */
+static uint64_t puzzle_targets(int from) {
+    if (!PV.ok || PS.state != CP_SOLVING) return 0;
+    ch_moves ms;
+    ch_legal(&PS.pos, &ms);
+    uint64_t t = 0;
+    for (int i = 0; i < ms.n; i++) if (CH_FROM(ms.m[i]) == from) t |= 1ull << CH_TO(ms.m[i]);
+    return t;
+}
+EXPORT(cv_puzzle_targets_lo) uint32_t cv_puzzle_targets_lo(int from) { return (uint32_t)puzzle_targets(from); }
+EXPORT(cv_puzzle_targets_hi) uint32_t cv_puzzle_targets_hi(int from) { return (uint32_t)(puzzle_targets(from) >> 32); }
+EXPORT(cv_puzzle_is_promotion) int cv_puzzle_is_promotion(int from, int to) {
+    if (!PV.ok) return 0;
+    int col, t = ch_piece_at(&PS.pos, from, &col);
+    return t == CH_PAWN && (to / 8 == 7 || to / 8 == 0);
+}
+
+/* Shows the line's next move: 1, or 0 at its end. */
+EXPORT(cv_puzzle_reveal) int cv_puzzle_reveal(void) {
+    ch_move m;
+    if (!PV.ok || !cp_reveal(&PS, &m)) return 0;
+    puzzle_fill(m);
+    return 1;
+}
+
+/* Says how it went (POST /c/puzzle/result): CC_EV_READ with this tag, then cv_puzzle_done. */
+EXPORT(cv_puzzle_send) void cv_puzzle_send(int win, uint32_t tag) {
+    cw_puzzle_req q = { PV.id, (uint8_t)(win != 0), { 0, 0, 0 } };
+    cc_client_post(&C, "/c/puzzle/result", &q, sizeof q, tag);
+}
+
+/* io holds that answer's n bytes (cw_puzzle_done). */
+EXPORT(cv_puzzle_done) const CvPuzzle *cv_puzzle_done(uint32_t n) {
+    cw_puzzle_done d;
+    if (n != sizeof d) return &PV;
+    memcpy(&d, IO, sizeof d);
+    PV.done = 1;
+    PV.before = d.before;
+    PV.after = d.after;
+    PV.rating = d.after;
+    PV.rd = d.rd;
+    PV.puzzle_rating = d.puzzle;
+    PV.tried = d.tried;
+    PV.solved = d.solved;
+    return &PV;
 }

@@ -111,6 +111,19 @@ typedef struct {
     char     line[96];         /* "Nf3 Nc6 Bb5 a6", as far as it fits */
 } CvEval;
 
+/* A puzzle being solved (the kernel's cp_solve), and where the solver stands. */
+typedef struct {
+    uint32_t id;
+    uint8_t  ok, state, color, themes;   /* ok: one is loaded; state: CP_SOLVING, CP_SOLVED, CP_FAILED */
+    uint8_t  last_from, last_to, check_sq, hint_from;   /* hint_from: the next move's piece, CV_NO_SQ at the end */
+    uint8_t  at, n, done, pad;           /* done: the result was answered (before and after hold it) */
+    int16_t  rating, puzzle_rating;      /* the solver's, the puzzle's */
+    uint16_t rd, puzzle_rd;
+    uint32_t tried, solved, plays;
+    int16_t  before, after;
+    uint8_t  board[64];
+} CvPuzzle;
+
 /* A guest's account, made at the first visit and kept by the page as these bytes (base64 in
  * localStorage): its name and password, NUL-padded. The page never reads inside it. */
 #define CV_GUEST_PW 32

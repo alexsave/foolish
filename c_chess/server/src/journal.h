@@ -32,6 +32,8 @@ enum {
     CC_SQL_GAME_GET,
     CC_SQL_GAMES_OF,
     CC_SQL_POINTS_OF,
+    CC_SQL_PUZZLE_PUT,
+    CC_SQL_PUZZLES_ALL,
     CC_SQL_N
 };
 extern const char *const cc_sql_stmts[CC_SQL_N];
@@ -45,6 +47,7 @@ void cc_journal_game_start(const cc_live *l);
 void cc_journal_move(const cc_live *l);            /* the last ply of l */
 void cc_journal_game_end(const cc_live *l, int64_t wall);
 void cc_journal_point(const cc_player *p, int64_t wall);
+void cc_journal_puzzle(uint32_t id, const g2_player *r, uint32_t plays);
 /* Records queued and committed since start, for /c/stats and the tests. */
 void cc_journal_counts(uint64_t *queued, uint64_t *committed, uint64_t *commits);
 /* Blocks until everything queued before the call is committed (the tests, a clean stop). */

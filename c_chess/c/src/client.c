@@ -293,6 +293,10 @@ void cc_client_read(cc_client *c, const char *path, uint32_t tag) {
     req(c, CC_RQ_READ, SF_METH_GET, path, NULL, 0, tag);   /* the tag rides in the request's game slot */
 }
 
+void cc_client_post(cc_client *c, const char *path, const void *body, size_t n, uint32_t tag) {
+    req(c, CC_RQ_READ, SF_METH_POST, path, body, n, tag);
+}
+
 void cc_client_eval(cc_client *c, int ply) {
     if (ply < 0 || ply > c->g.ply) return;
     uint8_t body[sizeof(cw_eval_req) + CC_MAX_PLY * 2];

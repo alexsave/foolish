@@ -147,6 +147,8 @@ void cc_client_act(cc_client *c, int act);
 /* A GET over the socket (a profile, a game list, the leaderboard): the answer arrives as
  * CC_EV_READ with this tag. Everything after sign-in goes over the one authenticated socket. */
 void cc_client_read(cc_client *c, const char *path, uint32_t tag);
+/* A POST over the socket whose answer is read like a read's (CC_EV_READ with this tag). */
+void cc_client_post(cc_client *c, const char *path, const void *body, size_t n, uint32_t tag);
 /* Asks the engine about the position after the first `ply` moves of the game shown: CC_EV_EVAL. */
 void cc_client_eval(cc_client *c, int ply);
 

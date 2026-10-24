@@ -32,9 +32,13 @@
  *     CW_P_TV     cw_tv     to the lobby room, at most once a second when it changed: the games in play
  *                           with the highest ratings, each with its board
  *     GET /c/tv           -                    -> cw_tv
- *     GET /c/top          -                    -> cw_top: the leaderboard */
+ *     GET /c/top          -                    -> cw_top: the leaderboard
+ *     GET /c/puzzle/next  -                    -> cw_puzzle: one near the asker's puzzle rating
+ *     POST /c/puzzle/result cw_puzzle_req      -> cw_puzzle_done: both ratings after it */
 #ifndef C_CHESS_WIRE_H
 #define C_CHESS_WIRE_H
+
+#include "puzzle.h"
 
 #include <stdint.h>
 
@@ -219,5 +223,25 @@ _Static_assert(sizeof(cw_snap) == 96, "cw_snap");
 _Static_assert(sizeof(cw_profile) == 44, "cw_profile");
 _Static_assert(sizeof(cw_point) == 16, "cw_point");
 _Static_assert(sizeof(cw_game_row) == 48, "cw_game_row");
+
+/* A puzzle for the asker, with where the asker stands: its puzzle rating and counts. Only the
+ * puzzle handed out last may be answered (POST /c/puzzle/result), once. */
+typedef struct {
+    int16_t   rating;          /* the asker's puzzle rating */
+    uint16_t  rd;
+    uint32_t  tried, solved;
+    uint32_t  plays;           /* the puzzle's */
+    cp_puzzle p;               /* its rating and rd are the puzzle's now */
+} cw_puzzle;
+typedef struct { uint32_t id; uint8_t win; uint8_t pad[3]; } cw_puzzle_req;
+typedef struct {
+    int16_t  before, after;    /* the asker's puzzle rating */
+    int16_t  puzzle;           /* the puzzle's after */
+    uint16_t rd;
+    uint32_t tried, solved;
+} cw_puzzle_done;
+_Static_assert(sizeof(cw_puzzle) == 144, "cw_puzzle");
+_Static_assert(sizeof(cw_puzzle_req) == 8, "cw_puzzle_req");
+_Static_assert(sizeof(cw_puzzle_done) == 16, "cw_puzzle_done");
 
 #endif

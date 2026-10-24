@@ -4,7 +4,8 @@
  *
  * Settings, beside the platform's CBASE_* (config.h):
  *   CC_WEB_DIR   the built site (web/out); unset: no site, the API alone
- *   CC_ENGINE    the Stockfish executable (engine.h, with CC_ENGINES and the rest); unset: no computer */
+ *   CC_ENGINE    the Stockfish executable (engine.h, with CC_ENGINES and the rest); unset: no computer
+ *   CC_PUZZLES   the puzzle file (puzzle.h, from tools/puzzlegen); unset: no puzzles */
 #include "cbase/app.h"
 
 #include "api.h"
@@ -14,6 +15,7 @@
 #include "web.h"
 #include "analysis.h"
 #include "engine.h"
+#include "puzzles.h"
 
 #include "store/store.h"
 #include "util/err.h"
@@ -34,7 +36,9 @@ static const cb_store_app CC_STORE = {
 static int cc_serve_open(cb_ctx *ctx, char *err, size_t cap) {
     if (cc_state_init(ctx) != 0) { snprintf(err, cap, "c_chess: no memory for the state"); return CB_E_NOMEM; }
     cc_pushes_init(ctx);
-    int rc = cc_journal_recover(ctx, err, cap);
+    int rc = cc_puzzles_load(getenv("CC_PUZZLES"), err, cap);   /* before recovery: it rates them */
+    if (rc != CB_OK) return rc;
+    rc = cc_journal_recover(ctx, err, cap);
     if (rc != CB_OK) return rc;
     if ((rc = cc_journal_start(ctx)) != CB_OK) { snprintf(err, cap, "c_chess: the journal's writer did not start"); return rc; }
     if (cc_state_start_clock() != 0) { snprintf(err, cap, "c_chess: the clock thread did not start"); return CB_E_NOMEM; }
@@ -49,15 +53,16 @@ static void cc_serve_close(cb_ctx *ctx) {
     cc_state_free();     /* the clock thread first: it may still queue a finish */
     cc_journal_stop();   /* then everything queued is committed */
     cc_web_free();
+    cc_puzzles_free();
 }
 
-static const cb_route_list *const CC_ROUTES[] = { &cc_api_routes, &cc_analysis_routes, &cc_web_routes };
+static const cb_route_list *const CC_ROUTES[] = { &cc_api_routes, &cc_analysis_routes, &cc_puzzle_routes, &cc_web_routes };
 static const cb_topic_family *const CC_TOPICS[] = { &cc_fam_room, &cc_fam_user };
 
 static const cb_app CC_APP = {
     .name = "c_chess",
     .routes = CC_ROUTES,
-    .n_route_lists = 3,
+    .n_route_lists = 4,
     .topics = CC_TOPICS,
     .n_topics = 2,
     .store = &CC_STORE,

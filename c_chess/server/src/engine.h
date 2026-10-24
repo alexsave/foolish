@@ -9,7 +9,9 @@
  * cache. DESIGN.md has the measurements behind the choice.
  *
  * Settings: CC_ENGINE (the stockfish executable; unset: no engine), CC_ENGINES (processes, default 2),
- * CC_ENGINE_HASH_MB (per process, default 16), CC_ENGINE_QUEUE (searches waiting, default 256). */
+ * CC_ENGINE_HASH_MB (per process, default 16), CC_ENGINE_QUEUE (searches waiting, default 256),
+ * CC_ENGINE_FOREGROUND (set: no background priority or CPU set, for an offline tool such as the
+ * puzzle generator). */
 #ifndef C_CHESS_ENGINE_H
 #define C_CHESS_ENGINE_H
 

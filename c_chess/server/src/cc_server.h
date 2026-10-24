@@ -24,6 +24,11 @@ typedef struct cc_player {
     g2_player r;
     uint32_t  games, wins, losses, draws;
     int64_t   last_at;                 /* the last rated game's end, ms since the epoch */
+    g2_player pz;                      /* the puzzle rating (puzzles.h) */
+    uint32_t  pz_tried, pz_solved;
+    uint32_t  pz_open;                 /* the puzzle handed out and not yet answered; 0: none */
+    uint32_t  pz_seen[16];             /* the last puzzles handed out, not handed out again soon */
+    uint8_t   pz_seen_at;
     struct cc_player *next;            /* the id map's chain */
     struct cc_player *next_name;       /* the name map's chain */
 } cc_player;

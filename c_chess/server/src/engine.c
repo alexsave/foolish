@@ -88,6 +88,7 @@ static int spawn(engine *g) {
         int devnull = open("/dev/null", O_WRONLY);
         if (devnull >= 0) dup2(devnull, 2);
         for (int fd = 3; fd < 1024; fd++) close(fd);
+        if (getenv("CC_ENGINE_FOREGROUND")) goto exec;   /* an offline tool (puzzle generation): full speed */
         setpriority(PRIO_PROCESS, 0, 19);   /* the lowest: the move path never waits for an engine */
 #ifdef __APPLE__
         /* nice is not enough on macOS (8 engines at nice 19 took the move path's p99 from 0.8 to
@@ -105,6 +106,7 @@ static int spawn(engine *g) {
             sched_setaffinity(0, sizeof set, &set);
         }
 #endif
+    exec:
         execl(E.path, E.path, (char *)NULL);
         _exit(127);
     }

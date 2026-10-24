@@ -108,6 +108,7 @@ cc_player *cc_player_of(const char *id, const char *name) {
     snprintf(p->id, sizeof p->id, "%s", id);
     snprintf(p->name, sizeof p->name, "%s", name);
     p->r = cc_rating_new();
+    p->pz = cc_rating_new();
     player_insert(p);
     cc_journal_player(p);
     return p;
