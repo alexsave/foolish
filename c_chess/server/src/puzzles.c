@@ -1,7 +1,8 @@
-/* puzzles.c - see puzzles.h. The puzzles sit in an array in the file's order; an order by rating
- * (kept sorted as ratings move: a rating moves a little, so a puzzle moves a few places) finds the
- * ones near a player's rating, and an open-addressed map finds a puzzle by id. 128 bytes a puzzle
- * plus 40 of rating, order and map: 100,000 puzzles are 17 MB. */
+/* puzzles.c - see puzzles.h. The puzzles sit in an array in the file's order; buckets of ten
+ * rating points hold their indices (a rating that moves is a swap-remove and a push, whatever the
+ * distance: a sorted order cost 4.4 us an attempt at 100,000 puzzles, shifting thousands of places
+ * when a new puzzle's rating jumped), and an open-addressed map finds a puzzle by id. 128 bytes a
+ * puzzle plus 40 of rating, bucket and map: 100,000 puzzles are 17 MB. */
 #include "puzzles.h"
 #include "api.h"
 #include "journal.h"
@@ -18,11 +19,36 @@ static struct {
     cp_puzzle *p;
     g2_player *r;
     uint32_t  *plays;
-    uint32_t  *order;   /* puzzle indices by rating */
-    uint32_t  *pos;     /* a puzzle's place in order */
+    uint16_t  *bk;      /* a puzzle's bucket */
+    uint32_t  *pos;     /* and its place in it */
     uint32_t  *map;     /* 1 + index, by id; 0 empty */
     uint32_t   n, mask;
+    struct { uint32_t *ix, n, cap; } b[400];   /* ratings 0..3999 by tens, the ends clamped */
 } Z;
+
+#define NB 400
+static int bucket_of(double r) { int b = (int)(r / 10); return b < 0 ? 0 : b >= NB ? NB - 1 : b; }
+
+static bool bucket_push(int b, uint32_t i) {
+    if (Z.b[b].n == Z.b[b].cap) {
+        uint32_t c = Z.b[b].cap ? Z.b[b].cap * 2 : 16;
+        uint32_t *nx = realloc(Z.b[b].ix, c * sizeof *nx);
+        if (!nx) return false;
+        Z.b[b].ix = nx;
+        Z.b[b].cap = c;
+    }
+    Z.bk[i] = (uint16_t)b;
+    Z.pos[i] = Z.b[b].n;
+    Z.b[b].ix[Z.b[b].n++] = i;
+    return true;
+}
+
+static void bucket_drop(uint32_t i) {
+    int b = Z.bk[i];
+    uint32_t last = Z.b[b].ix[--Z.b[b].n];
+    Z.b[b].ix[Z.pos[i]] = last;
+    Z.pos[last] = Z.pos[i];
+}
 
 /* A puzzle's id: its position and line hashed (FNV-1a), never 0. */
 static uint32_t pz_id(const cp_puzzle *p) {
@@ -42,13 +68,9 @@ static int64_t find(uint32_t id) {
     }
 }
 
-static int by_rating(const void *a, const void *b) {
-    double x = Z.r[*(const uint32_t *)a].rating, y = Z.r[*(const uint32_t *)b].rating;
-    return x < y ? -1 : x > y;
-}
-
 void cc_puzzles_free(void) {
-    free(Z.p); free(Z.r); free(Z.plays); free(Z.order); free(Z.pos); free(Z.map);
+    free(Z.p); free(Z.r); free(Z.plays); free(Z.bk); free(Z.pos); free(Z.map);
+    for (int b = 0; b < NB; b++) free(Z.b[b].ix);
     memset(&Z, 0, sizeof Z);
 }
 
@@ -69,11 +91,11 @@ int cc_puzzles_load(const char *path, char *err, size_t cap) {
     Z.p = malloc((size_t)count * sizeof *Z.p + 1);
     Z.r = malloc((size_t)count * sizeof *Z.r + 1);
     Z.plays = calloc((size_t)count + 1, sizeof *Z.plays);
-    Z.order = malloc((size_t)count * sizeof *Z.order + 1);
+    Z.bk = malloc((size_t)count * sizeof *Z.bk + 1);
     Z.pos = malloc((size_t)count * sizeof *Z.pos + 1);
     Z.map = calloc(slots, sizeof *Z.map);
     Z.mask = slots - 1;
-    if (!Z.p || !Z.r || !Z.plays || !Z.order || !Z.pos || !Z.map) { snprintf(err, cap, "c_chess: no memory for %u puzzles", count); rc = CB_E_NOMEM; goto out; }
+    if (!Z.p || !Z.r || !Z.plays || !Z.bk || !Z.pos || !Z.map) { snprintf(err, cap, "c_chess: no memory for %u puzzles", count); rc = CB_E_NOMEM; goto out; }
     uint32_t bad = 0, dup = 0;
     for (uint32_t i = 0; i < count; i++) {
         cp_puzzle q;
@@ -88,9 +110,8 @@ int cc_puzzles_load(const char *path, char *err, size_t cap) {
         Z.r[Z.n] = (g2_player){ q.rating, q.rd ? q.rd : CC_RD_START, CC_VOL_START };
         Z.p[Z.n++] = q;
     }
-    for (uint32_t i = 0; i < Z.n; i++) Z.order[i] = i;
-    qsort(Z.order, Z.n, sizeof *Z.order, by_rating);
-    for (uint32_t i = 0; i < Z.n; i++) Z.pos[Z.order[i]] = i;
+    for (uint32_t i = 0; i < Z.n; i++)
+        if (!bucket_push(bucket_of(Z.r[i].rating), i)) { snprintf(err, cap, "c_chess: no memory for %u puzzles", count); rc = CB_E_NOMEM; goto out; }
     CB_INFO("cc", "puzzles: %u from %s (%u refused, %u repeated)", Z.n, path, bad, dup);
     rc = CB_OK;
 out:
@@ -101,30 +122,23 @@ out:
 
 uint32_t cc_puzzles_count(void) { return Z.n; }
 
-bool cc_puzzles_ordered(void) {
-    for (uint32_t i = 0; i + 1 < Z.n; i++)
-        if (Z.r[Z.order[i]].rating > Z.r[Z.order[i + 1]].rating || Z.pos[Z.order[i]] != i) return false;
+bool cc_puzzles_bucketed(void) {
+    uint32_t total = 0;
+    for (int b = 0; b < NB; b++) total += Z.b[b].n;
+    if (total != Z.n) return false;
+    for (uint32_t i = 0; i < Z.n; i++)
+        if (Z.bk[i] != bucket_of(Z.r[i].rating) || Z.b[Z.bk[i]].ix[Z.pos[i]] != i) return false;
     return true;
-}
-
-/* After puzzle i's rating moved: back into its place in the order. */
-static void resort(uint32_t i) {
-    uint32_t at = Z.pos[i];
-    while (at > 0 && Z.r[Z.order[at - 1]].rating > Z.r[i].rating) {
-        Z.order[at] = Z.order[at - 1]; Z.pos[Z.order[at]] = at; at--;
-    }
-    while (at + 1 < Z.n && Z.r[Z.order[at + 1]].rating < Z.r[i].rating) {
-        Z.order[at] = Z.order[at + 1]; Z.pos[Z.order[at]] = at; at++;
-    }
-    Z.order[at] = i;
-    Z.pos[i] = at;
 }
 
 static void set_rating(uint32_t i, const g2_player *r) {
     Z.r[i] = *r;
     Z.p[i].rating = (int16_t)cc_rating_int(r);
     Z.p[i].rd = (uint16_t)(r->deviation + 0.5);
-    resort(i);
+    int b = bucket_of(r->rating), was = Z.bk[i];
+    if (b == was) return;
+    bucket_drop(i);
+    if (!bucket_push(b, i)) bucket_push(was, i);   /* no memory to grow the new bucket: the old one has room */
 }
 
 void cc_puzzle_recovered(uint32_t id, const g2_player *r, uint32_t plays) {
@@ -139,25 +153,30 @@ static bool seen(const cc_player *p, uint32_t id) {
     return false;
 }
 
-#define PICK_SPREAD 24   /* a pick is one of the puzzles this many places either side of the rating */
+#define PICK_NEAR 32   /* a pick is among at least this many puzzles nearest the rating */
 
 const cp_puzzle *cc_puzzle_pick(cc_player *p, uint32_t *plays, uint32_t seed) {
     if (!Z.n) return NULL;
-    uint32_t lo = 0, hi = Z.n;   /* the first puzzle rated at or above the player */
-    while (lo < hi) {
-        uint32_t mid = (lo + hi) / 2;
-        if (Z.r[Z.order[mid]].rating < p->pz.rating) lo = mid + 1; else hi = mid;
+    int c = bucket_of(p->pz.rating), lo = c, hi = c;
+    uint32_t near = Z.b[c].n;
+    while (near < PICK_NEAR && (lo > 0 || hi < NB - 1)) {   /* widen a bucket each side until enough */
+        if (lo > 0) near += Z.b[--lo].n;
+        if (hi < NB - 1) near += Z.b[++hi].n;
     }
     int64_t i = -1;
     for (int t = 0; t < 32 && i < 0; t++) {
         seed = mix(seed + (uint32_t)t);
-        int64_t at = (int64_t)lo + (int64_t)(seed % (2 * PICK_SPREAD + 1)) - PICK_SPREAD;
-        if (at < 0) at = 0;
-        if (at >= Z.n) at = Z.n - 1;
-        uint32_t k = Z.order[at];
-        if (!seen(p, Z.p[k].id)) i = k;
+        uint32_t k = seed % near;
+        int b = lo;
+        while (k >= Z.b[b].n) k -= Z.b[b++].n;
+        uint32_t x = Z.b[b].ix[k];
+        if (!seen(p, Z.p[x].id)) i = x;
     }
-    if (i < 0) i = Z.order[lo < Z.n ? lo : Z.n - 1];   /* fewer puzzles than the player has seen lately */
+    if (i < 0) {   /* fewer puzzles near than the player has seen lately */
+        int b = lo;
+        while (!Z.b[b].n) b++;
+        i = Z.b[b].ix[0];
+    }
     p->pz_open = Z.p[i].id;
     p->pz_seen[p->pz_seen_at++ & 15] = Z.p[i].id;
     *plays = Z.plays[i];

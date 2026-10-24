@@ -163,6 +163,35 @@ What an analysed position costs the server (Stockfish 19's own `bench` over its 
 At lichess's scale (5 million games a day, about 70 positions a game: 350 million positions a day), if every game were analysed on the server at the site's setting, that is 105 million core-seconds a day, about 1,200 cores running all day; if one game in ten is, 120 cores; the eval cache takes the shared openings off the top (perhaps a fifth of positions).
 Answering the positions players actually click on is cheap; analysing whole games for everyone is not, and that is the threshold at which a browser engine with a small network (zero server cost, a one-time download of a few MB) should take over.
 
+## 3.5 Puzzles
+
+**Made offline from the engine's own blunders** (`server/tools/puzzlegen.c`).
+Two weakened Stockfish players (Skill Level 1 to 9, 3,000 to 23,000 nodes a move) play each other; after every move a quick look (50,000 nodes) asks whether the side to move is suddenly winning (at least +250, where a moment before it was at most +150).
+A candidate gets a deep look (300,000 nodes, MultiPV 2), and its line is kept move by move only while the solver's move is the only good one (mate, or at least 250 centipawns better than the second best); the defender's replies are the engine's best.
+A line of one move is kept only when it mates.
+One puzzle a game: after a blunder the rest of a game is lopsided.
+Cost: about 10 games and 70 engine-seconds on a performance core per puzzle (50 puzzles from 485 games in 14 minutes on 4 engines).
+That is affordable for a starting set and slow for lichess's 5 million; the cheaper source is the site's own games, where only the scan and the deep look run (about 2.5 s a game), which is the next step once there are games to mine.
+
+**The file is the puzzles; the database holds only what people did to them.** A puzzle is a fixed 128-byte record (`c/src/puzzle.h`: the FEN, up to 12 moves, a rating), read into memory at start (`CC_PUZZLES`).
+Its id is a hash of its position and line, so a regenerated file keeps the ratings of the puzzles it kept; the ratings and play counts are journaled (`cc_puzzles`), and each player's puzzle rating sits beside the game rating (`cc_players`).
+A 32-bit id collides about once in 9,000 puzzles at a million (113 of 1,000,000 dropped as repeats); a 64-bit id is the change if the set grows that far.
+
+**The browser solves; the server hands out and rates.** The page's kernel (`cp_solve`, as wasm) checks each move against the line (any mating move counts), plays the reply, and says how it went once; the server accepts one answer per puzzle handed out, then moves both Glicko-2 ratings (the puzzle is the opponent).
+A try costs the server nothing; an attempt is two socket requests.
+The pick: puzzles live in buckets of ten rating points, and a pick is a random one of at least the 32 nearest the player's puzzle rating that is not among the last 16 it was shown.
+
+| puzzles in memory | load | server memory | CPU per attempt (pick, answer, both ratings, rebucket) |
+|---|---|---|---|
+| 1,000 | 1 ms | 2.4 MB (the whole process) | 397 ns |
+| 100,000 | 71 ms | 19.8 MB | 474 ns |
+| 1,000,000 | 805 ms | 172 MB | 763 ns |
+
+(`puzzlegen --bench`, one performance core, under the quiet lock.) The first version kept a sorted order and shifted a puzzle to its place when its rating moved: 4.4 us an attempt at 100,000, because a new puzzle's rating jumps by hundreds of points across thousands of places; buckets made it a swap and a push.
+At lichess's puzzle traffic (on the order of a million attempts an hour at peak) that is under a quarter of a millisecond of CPU a second, beside the socket's own cost of the two requests.
+
+The puzzles page: 175 KB over 25 requests (the site's runtime, shared with every page), first contentful paint 132 ms local and 276 ms on the 4G profile; the puzzle is on the board at 246 ms (local, then a 600 ms pause before the opponent's move is played, on purpose).
+
 ## 4. The page
 
 Measured by `scratchpad/cc/perf.mjs` (Chrome over CDP, cold cache, the lobby; "ready" is the socket accepted, which on a first visit includes making the guest account, a bcrypt on the server):
@@ -191,4 +220,4 @@ What this does not include yet: TLS on the socket (a few microseconds a frame wi
 
 ## 6. Not built yet
 
-Premoves and lag compensation, the live games and leaderboard in the lobby, the engine (Stockfish as child processes for play against the computer, the eval cache, browser-side analysis), puzzles, arenas, chat.
+Arenas, chat with moderation, ratings and leaderboards per time control, a browser engine with a small network for private analysis, Linux measurements of the engine isolation.

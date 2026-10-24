@@ -61,19 +61,18 @@ c/src/puzzle.c ::: ch_make(&s->pos, s->p.moves[s->at], &q);\n    s->pos = q;\n  
 # server: puzzles
 server/src/puzzles.c ::: if (cp_begin(&s, &q) != 0) { bad++; continue; } ::: (void)s; (void)bad; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
 server/src/puzzles.c ::: if (find(q.id) >= 0) { dup++; continue; } ::: (void)0; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
-server/src/puzzles.c ::: qsort(Z.order, Z.n, sizeof *Z.order, by_rating); ::: (void)by_rating; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
-server/src/puzzles.c ::: while (at > 0 && Z.r[Z.order[at - 1]].rating > Z.r[i].rating) { ::: while (0) { ::: build/test/unit_puzzles ::: build/test/unit_puzzles
-server/src/puzzles.c ::: while (at + 1 < Z.n && Z.r[Z.order[at + 1]].rating < Z.r[i].rating) { ::: while (0) { ::: build/test/unit_puzzles ::: build/test/unit_puzzles
-server/src/puzzles.c ::: if (Z.r[Z.order[mid]].rating < p->pz.rating) lo = mid + 1; else hi = mid; ::: if (Z.r[Z.order[mid]].rating > p->pz.rating) lo = mid + 1; else hi = mid; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: if (b == was) return;\n    bucket_drop(i); ::: return;\n    bucket_drop(i); ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: Z.pos[last] = Z.pos[i]; ::: (void)0; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: if (lo > 0) near += Z.b[--lo].n; ::: if (lo > 0) --lo; ::: build/asan/test/unit_puzzles ::: build/asan/test/unit_puzzles
+server/src/puzzles.c ::: while (near < PICK_NEAR && ::: while (near < 1 && ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: if (!seen(p, Z.p[x].id)) i = x; ::: (void)seen; i = x; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
 server/src/puzzles.c ::: p->pz_seen[p->pz_seen_at++ & 15] = Z.p[i].id; ::: (void)0; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: if (id != p->pz_open || i < 0) return false; ::: if (i < 0) return false; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
 server/src/puzzles.c ::: p->pz_open = 0;\n    out->before ::: out->before ::: build/test/unit_puzzles ::: build/test/unit_puzzles
 server/src/puzzles.c ::: cc_rate(&p->pz, &z, win ? 1.0 : 0.0); ::: cc_rate(&p->pz, &z, 1.0); ::: build/test/unit_puzzles ::: build/test/unit_puzzles
 server/src/puzzles.c ::: set_rating((uint32_t)i, &z);\n    Z.plays[i]++; ::: Z.plays[i]++; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
 server/src/puzzles.c ::: if (win) p->pz_solved++; ::: p->pz_solved++; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
 server/src/puzzles.c ::: Z.plays[i] = plays;\n    set_rating((uint32_t)i, r); ::: Z.plays[i] = plays; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
-server/src/puzzles.c ::: if (id != p->pz_open || i < 0) return false; ::: if (i < 0) return false; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
-server/src/puzzles.c ::: if (!seen(p, Z.p[k].id)) i = k; ::: (void)seen; i = k; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
-server/src/puzzles.c ::: if (at >= Z.n) at = Z.n - 1; ::: (void)0; ::: build/asan/test/unit_puzzles ::: build/asan/test/unit_puzzles
 server/src/puzzles.c ::: cc_journal_puzzle(id, &z, Z.plays[i]); ::: (void)0; ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
 server/src/journal.c ::: p.pz_tried = (uint32_t)sqlite3_column_int64(st, 13); ::: (void)0; ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
 server/src/journal.c ::: sqlite3_bind_double(st, 11, p->pz.rating); ::: sqlite3_bind_double(st, 11, 1500); ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench

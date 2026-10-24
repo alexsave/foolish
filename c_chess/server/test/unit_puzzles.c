@@ -57,7 +57,7 @@ static void loading(void) {
     TEST("a file read");
     CHECK(cc_puzzles_load(g_path, err, sizeof err) == CB_OK, "%s", err);
     CHECK(cc_puzzles_count() == N, "count %u", cc_puzzles_count());
-    CHECK(cc_puzzles_ordered(), "not in order after the load");
+    CHECK(cc_puzzles_bucketed(), "not bucketed after the load");
     TEST("not a puzzle file");
     CHECK(cc_puzzles_load("/etc/hosts", err, sizeof err) != CB_OK, "read /etc/hosts");
     CHECK(cc_puzzles_count() == 0, "count %u", cc_puzzles_count());
@@ -89,8 +89,8 @@ static void picking(void) {
         lo.pz_open = hi.pz_open = 0;
         memset(lo.pz_seen, 0, sizeof lo.pz_seen);
         memset(hi.pz_seen, 0, sizeof hi.pz_seen);
-        CHECK(cc_puzzle_pick(&lo, &plays, t)->rating <= 500 + 10 * 25, "low");
-        CHECK(cc_puzzle_pick(&hi, &plays, t)->rating >= 2500 - 10 * 25, "high");
+        CHECK(cc_puzzle_pick(&lo, &plays, t)->rating <= 500 + 10 * 35, "low");
+        CHECK(cc_puzzle_pick(&hi, &plays, t)->rating >= 2500 - 10 * 35, "high");
     }
 }
 
@@ -114,13 +114,13 @@ static void answering(void) {
     CHECK(d.after < d.before && d.puzzle > pr, "a loss: %d -> %d, the puzzle %d -> %d", d.before, d.after, pr, d.puzzle);
     CHECK(d.tried == 2 && d.solved == 1, "counts %u %u", d.tried, d.solved);
 
-    TEST("the order holds as ratings move");
+    TEST("the buckets hold as ratings move");
     for (int t = 0; t < 400; t++) {
         cc_player q = fresh(800 + (t * 37) % 1400);
         const cp_puzzle *y = cc_puzzle_pick(&q, &plays, (uint32_t)t);
         cc_puzzle_result(&q, y->id, t % 3 != 0, &d);
     }
-    CHECK(cc_puzzles_ordered(), "out of order after 400 answers");
+    CHECK(cc_puzzles_bucketed(), "not bucketed after 400 answers");
 
     TEST("a journaled rating lands on its puzzle");
     g2_player r = { 2222, 60, 0.06 };
@@ -134,9 +134,9 @@ static void answering(void) {
         if (y->id == id) { seen_it = true; CHECK(y->rating == 2222 && plays == 9, "rating %d plays %u", y->rating, plays); }
     }
     CHECK(seen_it, "the recovered puzzle is not near its new rating");
-    CHECK(cc_puzzles_ordered(), "out of order after recovery");
+    CHECK(cc_puzzles_bucketed(), "not bucketed after recovery");
     cc_puzzle_recovered(12345, &r, 1);   // a puzzle the file no longer has: nothing
-    CHECK(cc_puzzles_ordered(), "out of order after an unknown id");
+    CHECK(cc_puzzles_bucketed(), "not bucketed after an unknown id");
 }
 
 int main(void) {

@@ -5,11 +5,17 @@
 //
 //   CC_ENGINE=<stockfish> puzzlegen <out.bin> <count> [engines]
 //   puzzlegen --show <file>            each puzzle as its FEN and its line in SAN
+//   puzzlegen --bench <file> <n>       the server's cost of a puzzle: n copies of the file's puzzles
+//                                      loaded, then a pick and an answer per attempt, timed
 //
 // The engines run in the foreground (an offline tool). The output is puzzle.h's file.
 #include "engine.h"
 #include "puzzle.h"
 #include "game.h"
+#include "puzzles.h"
+
+#include <sys/resource.h>
+#include <unistd.h>
 
 #include "util/err.h"
 
@@ -179,8 +185,64 @@ static int show(const char *path) {
     return 0;
 }
 
+static double now_s(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + t.tv_nsec / 1e9; }
+
+static int bench(const char *path, int copies) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { perror(path); return 1; }
+    char magic[8];
+    uint32_t count;
+    if (fread(magic, 8, 1, f) != 1 || fread(&count, 4, 1, f) != 1 || !count) { fclose(f); return 1; }
+    cp_puzzle *src = malloc(sizeof *src * count);
+    count = (uint32_t)fread(src, sizeof *src, count, f);
+    fclose(f);
+    char out[] = "/tmp/puzzlegen_bench_XXXXXX";
+    int fd = mkstemp(out);
+    FILE *o = fdopen(fd, "wb");
+    uint32_t n = count * (uint32_t)copies;
+    fwrite(PUZZLE_FILE_MAGIC, 8, 1, o);
+    fwrite(&n, 4, 1, o);
+    for (int c = 0; c < copies; c++)
+        for (uint32_t i = 0; i < count; i++) {
+            cp_puzzle p = src[i];
+            char *last = strrchr(p.fen, ' ');   /* another move number: another id, the same puzzle */
+            snprintf(last + 1, sizeof p.fen - (size_t)(last + 1 - p.fen), "%d", 1 + c);
+            p.rating = (int16_t)(800 + (c * 7 + (int)i * 13) % 1800);
+            fwrite(&p, sizeof p, 1, o);
+        }
+    fclose(o);
+    char err[256];
+    struct rusage r0, r1;
+    getrusage(RUSAGE_SELF, &r0);
+    double t0 = now_s();
+    if (cc_puzzles_load(out, err, sizeof err) != CB_OK) { fprintf(stderr, "%s\n", err); return 1; }
+    double t1 = now_s();
+    getrusage(RUSAGE_SELF, &r1);
+    unlink(out);
+    printf("load: %u puzzles in %.0f ms, max RSS %.1f MB\n", cc_puzzles_count(), (t1 - t0) * 1000, r1.ru_maxrss / 1048576.0);
+    enum { PLAYERS = 1000, ROUNDS = 1000000 };
+    cc_player *pl = calloc(PLAYERS, sizeof *pl);
+    for (int i = 0; i < PLAYERS; i++) { pl[i].pz = cc_rating_new(); pl[i].pz.rating = 800 + i * 1.6; }
+    uint32_t plays, seed = 1;
+    cw_puzzle_done d;
+    double a = now_s();
+    for (int k = 0; k < ROUNDS; k++) {
+        cc_player *p = &pl[k % PLAYERS];
+        const cp_puzzle *z = cc_puzzle_pick(p, &plays, seed += 2654435761u);
+        cc_puzzle_result(p, z->id, (seed >> 7) & 1, &d);
+    }
+    double b = now_s();
+    printf("attempt (pick + answer + both ratings + rebucket): %.0f ns, %u puzzles, %d players; buckets %s\n",
+           (b - a) / ROUNDS * 1e9, cc_puzzles_count(), PLAYERS, cc_puzzles_bucketed() ? "consistent" : "BROKEN");
+    cc_puzzles_free();
+    free(pl);
+    free(src);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     ch_init();
+    if (argc == 4 && strcmp(argv[1], "--bench") == 0) return bench(argv[2], atoi(argv[3]));
     if (argc == 3 && strcmp(argv[1], "--show") == 0) return show(argv[2]);
     if (argc < 3) { fprintf(stderr, "usage: CC_ENGINE=<stockfish> puzzlegen <out.bin> <count> [engines]\n"); return 2; }
     setenv("CC_ENGINE_FOREGROUND", "1", 1);
