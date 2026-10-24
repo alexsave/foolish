@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { CvTvGame_Snap } from '@/gen/web_layout';
 
 function clock(ms: number): string {
-  const s = Math.ceil(ms / 1000);
+  const s = Math.floor(ms / 1000);   // floored, like the game page's
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 

@@ -14,8 +14,9 @@ import { tc, useNet } from '@/lib/use';
 import { resultLine, score } from '@/lib/words';
 
 function clockText(ms: number): string {
+  // floored, as the time a player still has: 9:59.6 reads 9:59, never 10:00
   if (ms < 10000) return (Math.floor(ms / 100) / 10).toFixed(1);
-  const s = Math.ceil(ms / 1000);
+  const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   const mm = h ? String(m).padStart(2, '0') : String(m);
   return `${h ? h + ':' : ''}${mm}:${String(sec).padStart(2, '0')}`;

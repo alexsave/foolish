@@ -490,6 +490,9 @@ static void with_engine(const char *engine) {
     }
     drain(&A);
     T_CHECK(cc_game_over(&A.c.g));
+    // the computer is charged for its thinking like any player (from black's first move on)
+    T_CHECK(A.c.left_ms[CH_WHITE] < 600000);
+    T_CHECK(A.c.left_ms[CH_WHITE] > 500000);
     // random moves against even the weakest level lose
     T_CHECK(A.c.g.status == CC_MATE ? A.c.g.winner == CH_WHITE : true);
     fprintf(stderr, "  against Stockfish-1: %d plies, status %d winner %d\n", A.c.g.ply, A.c.g.status, A.c.g.winner);
