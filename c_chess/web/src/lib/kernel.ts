@@ -1,8 +1,8 @@
 // kernel.ts - the browser's kernel (c/wasm/web.c, built to /chess.wasm): loads it, checks its
 // layout against the generated readers, and names its exports. Every rule and every protocol byte
 // is in there; this file only moves bytes in and out of its io buffer.
-import { memOf, readCvEval, readCvGames, readCvLobby, readCvMoves, readCvProfile, readCvTop, readCvTv, readCvView } from '@/gen/web_layout';
-import type { CvEval_Snap, CvGames_Snap, CvLobby_Snap, CvMoves_Snap, CvProfile_Snap, CvTop_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
+import { memOf, readCvEval, readCvGames, readCvLobby, readCvMoves, readCvProfile, readCvPuzzle, readCvTop, readCvTv, readCvView } from '@/gen/web_layout';
+import type { CvEval_Snap, CvGames_Snap, CvLobby_Snap, CvMoves_Snap, CvProfile_Snap, CvPuzzle_Snap, CvTop_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
 import { LAYOUT_HASH } from '@/gen/web_layout_hash';
 
 interface Exports {
@@ -50,6 +50,18 @@ interface Exports {
   cv_read(pathLen: number, tag: number): void;
   cv_read_take(): number;
   cv_top(n: number): number;
+  cv_puzzle_ask(tag: number): void;
+  cv_puzzle_load(n: number): number;
+  cv_puzzle(): number;
+  cv_puzzle_begin(): number;
+  cv_puzzle_try(from: number, to: number, promo: number): number;
+  cv_puzzle_reply(): number;
+  cv_puzzle_targets_lo(from: number): number;
+  cv_puzzle_targets_hi(from: number): number;
+  cv_puzzle_is_promotion(from: number, to: number): number;
+  cv_puzzle_reveal(): number;
+  cv_puzzle_send(win: number, tag: number): void;
+  cv_puzzle_done(n: number): number;
 }
 
 export class Kernel {
@@ -123,14 +135,8 @@ export class Kernel {
   premoveCancel(): void { this.x.cv_premove_cancel(); }
   /** The squares the piece on `from` may move to (now, or as a premove while the other side thinks). */
   targets(from: number, premove = false): Set<number> {
-    const s = new Set<number>();
-    const lo = (premove ? this.x.cv_premove_targets_lo(from) : this.x.cv_targets_lo(from)) >>> 0;
-    const hi = (premove ? this.x.cv_premove_targets_hi(from) : this.x.cv_targets_hi(from)) >>> 0;
-    for (let i = 0; i < 32; i++) {
-      if (lo & (1 << i)) s.add(i);
-      if (hi & (1 << i)) s.add(32 + i);
-    }
-    return s;
+    return squares(premove ? this.x.cv_premove_targets_lo(from) : this.x.cv_targets_lo(from),
+                   premove ? this.x.cv_premove_targets_hi(from) : this.x.cv_targets_hi(from));
   }
   isPromotion(from: number, to: number): boolean { return this.x.cv_is_promotion(from, to) !== 0; }
   view(now: number): CvView_Snap { return readCvView(memOf(this.x.memory.buffer), this.x.cv_view(now)); }
@@ -148,8 +154,33 @@ export class Kernel {
   evaluation(): CvEval_Snap { return readCvEval(memOf(this.x.memory.buffer), this.x.cv_eval()); }
   /** GET /c/top's answer, read. */
   top(body: Uint8Array): CvTop_Snap { return readCvTop(memOf(this.x.memory.buffer), this.x.cv_top(this.put(body))); }
+  /** Puzzles: solved on the kernel's board (puzzle.h), handed out and rated by the server. */
+  puzzleAsk(tag: number): void { this.x.cv_puzzle_ask(tag); }
+  puzzleLoad(body: Uint8Array): CvPuzzle_Snap { return this.pz(this.x.cv_puzzle_load(this.put(body))); }
+  puzzle(): CvPuzzle_Snap { return this.pz(this.x.cv_puzzle()); }
+  /** The opponent's move that sets the puzzle, played after its position was shown. */
+  puzzleBegin(): CvPuzzle_Snap { return this.pz(this.x.cv_puzzle_begin()); }
+  puzzleTry(from: number, to: number, promo: number): CvPuzzle_Snap { this.x.cv_puzzle_try(from, to, promo); return this.puzzle(); }
+  puzzleReply(): CvPuzzle_Snap { return this.pz(this.x.cv_puzzle_reply()); }
+  puzzleTargets(from: number): Set<number> { return squares(this.x.cv_puzzle_targets_lo(from), this.x.cv_puzzle_targets_hi(from)); }
+  puzzleIsPromotion(from: number, to: number): boolean { return this.x.cv_puzzle_is_promotion(from, to) !== 0; }
+  /** The line's next move shown: false at its end. */
+  puzzleReveal(): boolean { return this.x.cv_puzzle_reveal() !== 0; }
+  puzzleSend(win: boolean, tag: number): void { this.x.cv_puzzle_send(win ? 1 : 0, tag); }
+  puzzleDone(body: Uint8Array): CvPuzzle_Snap { return this.pz(this.x.cv_puzzle_done(this.put(body))); }
+  private pz(p: number): CvPuzzle_Snap { return readCvPuzzle(memOf(this.x.memory.buffer), p); }
   /** GET /c/games/<name>'s answer, read. */
   games(body: Uint8Array): CvGames_Snap { return readCvGames(memOf(this.x.memory.buffer), this.x.cv_games(this.put(body))); }
+}
+
+/** A bitboard's two halves as a set of squares. */
+function squares(lo: number, hi: number): Set<number> {
+  const s = new Set<number>();
+  for (let i = 0; i < 32; i++) {
+    if ((lo >>> 0) & (1 << i)) s.add(i);
+    if ((hi >>> 0) & (1 << i)) s.add(32 + i);
+  }
+  return s;
 }
 
 let loading: Promise<Kernel> | null = null;

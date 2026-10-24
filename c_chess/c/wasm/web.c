@@ -348,22 +348,24 @@ EXPORT(cv_eval) const CvEval *cv_eval(void) {
 static cp_solve PS;
 static CvPuzzle PV;
 
-static void puzzle_fill(ch_move last) {
+/* The view of a position: the board, the last move, the check. */
+static void puzzle_fill_pos(const chess_pos *pos, ch_move last) {
     PV.state = (uint8_t)PS.state;
     PV.at = (uint8_t)PS.at;
     PV.n = PS.p.n;
     if (last != CH_MOVE_NONE) { PV.last_from = (uint8_t)CH_FROM(last); PV.last_to = (uint8_t)CH_TO(last); }
     PV.hint_from = PS.at >= 1 && PS.at < PS.p.n ? (uint8_t)CH_FROM(PS.p.moves[PS.at]) : CV_NO_SQ;
     PV.check_sq = CV_NO_SQ;
-    if (ch_in_check(&PS.pos)) {
-        uint64_t k = PS.pos.bb[PS.pos.stm][CH_KING];
+    if (ch_in_check(pos)) {
+        uint64_t k = pos->bb[pos->stm][CH_KING];
         if (k) PV.check_sq = (uint8_t)__builtin_ctzll(k);
     }
     for (int sq = 0; sq < 64; sq++) {
-        int col, t = ch_piece_at(&PS.pos, sq, &col);
+        int col, t = ch_piece_at(pos, sq, &col);
         PV.board[sq] = t < 0 ? 0 : (uint8_t)(1 + t + 8 * col);
     }
 }
+static void puzzle_fill(ch_move last) { puzzle_fill_pos(&PS.pos, last); }
 
 /* Asks for the next puzzle (GET /c/puzzle/next): CC_EV_READ with this tag, then cv_puzzle_load. */
 EXPORT(cv_puzzle_ask) void cv_puzzle_ask(uint32_t tag) { cc_client_read(&C, "/c/puzzle/next", tag); }
@@ -383,25 +385,50 @@ EXPORT(cv_puzzle_load) const CvPuzzle *cv_puzzle_load(uint32_t n) {
     PV.puzzle_rating = w.p.rating; PV.puzzle_rd = w.p.rd;
     PV.tried = w.tried; PV.solved = w.solved; PV.plays = w.plays;
     PV.color = (uint8_t)PS.pos.stm;
-    puzzle_fill(w.p.moves[0]);
+    PV.wrong_sq = CV_NO_SQ;
+    chess_pos before;
+    ch_from_fen(&before, w.p.fen);   /* cp_begin read it: it is good */
+    puzzle_fill_pos(&before, CH_MOVE_NONE);
+    PV.intro = 1;
+    return &PV;
+}
+
+/* The opponent's move that sets the puzzle, drawn after the position it was played in. */
+EXPORT(cv_puzzle_begin) const CvPuzzle *cv_puzzle_begin(void) {
+    if (PV.intro) { PV.intro = 0; puzzle_fill(PS.p.moves[0]); }
     return &PV;
 }
 
 EXPORT(cv_puzzle) const CvPuzzle *cv_puzzle(void) { return &PV; }
 
-/* The solver's move: the state after it (the reply, if any, is played and is the last move). */
+/* The solver's move: the state after it. A right move with a reply to come is drawn alone
+ * (reply_pending); cv_puzzle_reply then draws the reply, which the kernel has already played. */
 EXPORT(cv_puzzle_try) int cv_puzzle_try(int from, int to, int promo) {
-    if (!PV.ok) return CP_FAILED;
+    if (!PV.ok || PV.intro) return CP_FAILED;
     ch_move m = CH_MOVE(from, to, promo);
+    chess_pos before = PS.pos;
     int st = cp_try(&PS, m);
-    if (st == CP_FAILED) { puzzle_fill(CH_MOVE_NONE); return st; }
-    puzzle_fill(PS.last[1] != CH_MOVE_NONE ? PS.last[1] : m);
+    if (st == CP_FAILED) {   /* the wrong move stays on the board, marked, until the solution is shown */
+        chess_pos after;
+        if (ch_is_legal(&before, m)) { ch_make(&before, m, &after); puzzle_fill_pos(&after, m); PV.wrong_sq = (uint8_t)CH_TO(m); }
+        else puzzle_fill(CH_MOVE_NONE);
+        return st;
+    }
+    if (PS.last[1] == CH_MOVE_NONE) { puzzle_fill(m); return st; }
+    chess_pos mid;
+    ch_make(&before, m, &mid);
+    puzzle_fill_pos(&mid, m);
+    PV.reply_pending = 1;
     return st;
+}
+EXPORT(cv_puzzle_reply) const CvPuzzle *cv_puzzle_reply(void) {
+    if (PV.reply_pending) { PV.reply_pending = 0; puzzle_fill(PS.last[1]); }
+    return &PV;
 }
 
 /* The squares the piece on `from` may go to while solving. */
 static uint64_t puzzle_targets(int from) {
-    if (!PV.ok || PS.state != CP_SOLVING) return 0;
+    if (!PV.ok || PV.intro || PS.state != CP_SOLVING) return 0;
     ch_moves ms;
     ch_legal(&PS.pos, &ms);
     uint64_t t = 0;
@@ -420,6 +447,7 @@ EXPORT(cv_puzzle_is_promotion) int cv_puzzle_is_promotion(int from, int to) {
 EXPORT(cv_puzzle_reveal) int cv_puzzle_reveal(void) {
     ch_move m;
     if (!PV.ok || !cp_reveal(&PS, &m)) return 0;
+    PV.wrong_sq = CV_NO_SQ;
     puzzle_fill(m);
     return 1;
 }

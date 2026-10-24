@@ -22,6 +22,8 @@ export interface BoardProps {
   bestFrom?: number;
   bestTo?: number;
   premoveTo?: number;
+  /** a wrong answer's square (a puzzle), marked */
+  wrongSq?: number;
   onCancelPremove?: () => void;
 }
 
@@ -98,6 +100,7 @@ export default function Board(p: BoardProps) {
     if (sq === p.bestFrom || sq === p.bestTo) cls.push('best');
     if (sq === sel) cls.push('sel');
     if (sq === p.checkSq) cls.push('check');
+    if (sq === p.wrongSq) cls.push('wrong');
     if (legal.has(sq)) cls.push(v ? 'cap' : 'dot');
     const dragging = drag && drag.from === sq;
     cells.push(

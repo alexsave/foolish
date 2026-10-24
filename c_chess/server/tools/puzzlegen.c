@@ -164,6 +164,15 @@ static int show(const char *path) {
             ch_make(&a, p.moves[k], &b);
             a = b;
         }
+        if (getenv("PUZZLEGEN_UCI")) {   /* for a script: the board the solver first sees, and the line in UCI */
+            chess_pos c, d;
+            ch_from_fen(&c, p.fen);
+            ch_make(&c, p.moves[0], &d);
+            char fen[100];
+            ch_to_fen_board(&d, fen);
+            printf("  %s |", fen);
+            for (int k = 1; k < p.n; k++) { char u[6]; u[ch_uci(p.moves[k], u)] = 0; printf(" %s", u); }
+        }
         printf("\n");
     }
     fclose(f);

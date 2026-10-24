@@ -248,13 +248,16 @@ class Net {
 
   /** A GET over the socket (the one sign-in, the one TLS handshake): its status and bytes. Waits
    * for the socket when it is not up yet. */
-  async read(path: string): Promise<{ status: number; body: Uint8Array }> {
+  read(path: string): Promise<{ status: number; body: Uint8Array }> { return this.request((k, tag) => k.read(path, tag)); }
+
+  /** Any request over the socket whose answer comes back as a read's (CC_EV_READ with the tag). */
+  async request(ask: (k: Kernel, tag: number) => void): Promise<{ status: number; body: Uint8Array }> {
     if (!this.k) await this.ready();
     while (this.snap.phase !== 'online') await new Promise((r) => setTimeout(r, 50));
     const tag = this.nextRead++;
     return new Promise((done) => {
       this.reads.set(tag, done);
-      this.run((k) => k.read(path, tag));
+      this.run((k) => ask(k, tag));
     });
   }
 

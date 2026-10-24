@@ -203,3 +203,22 @@ h2 { font-size: 17px; }
   main { padding: 12px; }
   .top { padding: 0 12px; gap: 14px; }
 }
+
+/* puzzles */
+.sq.wrong::before { content: ""; position: absolute; inset: 0; background: rgba(200, 50, 40, 0.5); }
+.empty { padding: 24px; }
+.pz { display: flex; flex-direction: column; }
+.pz-say { display: flex; gap: 12px; align-items: center; padding: 16px; border-bottom: 1px solid var(--line); }
+.pz-say b { font-size: 16px; }
+.pz-say .muted { font-size: 14px; margin-top: 2px; }
+.pz-dot { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--muted); flex: none; }
+.pz-dot.w { background: #f4f2ee; }
+.pz-dot.b { background: #2b2a27; }
+.pz-mark { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; flex: none; }
+.pz-say.ok .pz-mark { background: #3fa45f; }
+.pz-say.bad .pz-mark { background: var(--warn); }
+.pz-rows { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; font-size: 14px; }
+.pz-rows .row { justify-content: space-between; }
+.pz-rows .up { color: #3fa45f; }
+.pz-rows .down { color: var(--warn); }
+.pz .actions { border-top: 1px solid var(--line); }

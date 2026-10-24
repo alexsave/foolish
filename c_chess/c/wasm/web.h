@@ -116,7 +116,9 @@ typedef struct {
     uint32_t id;
     uint8_t  ok, state, color, themes;   /* ok: one is loaded; state: CP_SOLVING, CP_SOLVED, CP_FAILED */
     uint8_t  last_from, last_to, check_sq, hint_from;   /* hint_from: the next move's piece, CV_NO_SQ at the end */
-    uint8_t  at, n, done, pad;           /* done: the result was answered (before and after hold it) */
+    uint8_t  at, n, done, reply_pending; /* done: the result was answered (before and after hold it) */
+    uint8_t  intro, wrong_sq, pad[2];    /* intro: the position before the opponent's move is drawn
+                                          * (cv_puzzle_begin plays it); wrong_sq: where a wrong move went */
     int16_t  rating, puzzle_rating;      /* the solver's, the puzzle's */
     uint16_t rd, puzzle_rd;
     uint32_t tried, solved, plays;
