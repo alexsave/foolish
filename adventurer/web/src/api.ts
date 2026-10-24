@@ -1,7 +1,9 @@
-// api.ts - the browser's side of wire.h: fetch the binary endpoints, decode them with the
-// generated readers (structgen's, from the C structs themselves), open the feed WebSocket.
-// Nothing here knows a byte offset: a record is read by its generated reader at the offset
-// its generated size says, and a page built from another layout refuses the bytes.
+// api.ts - the browser's side of wire.h: the binary endpoints read and the feed heard through the
+// platform's client (c_base/client: one client in wasm over the anonymous socket, GET /ws/public),
+// each record decoded by the generated readers (structgen's, from the C structs themselves).
+// Nothing here knows a byte offset, of the protocol or of a record: a record is read by its
+// generated reader at the offset its generated size says, and a page built from another layout
+// refuses the bytes.
 import { LAYOUT_HASH } from './gen/layout_hash';
 import {
   ADV_W_KIND_ACTIVITY,
@@ -39,23 +41,7 @@ import {
   type adv_w_user_stats_Snap,
   type Mem,
 } from './gen/wire';
-import {
-  readsf_bare_hdr,
-  readsf_reply_hdr,
-  SF_HELLO,
-  SF_PONG,
-  SF_READY,
-  SF_REPLY,
-  SF_SUB,
-  SF_V,
-  SF_WHAT_ROOM,
-  sf_bare_hdr_SIZE,
-  sf_hello_hdr_SIZE,
-  sf_reply_hdr_SIZE,
-  sf_sub_hdr_SIZE,
-  writesf_hello_hdr,
-  writesf_sub_hdr,
-} from './gen/stream_frame';
+import { CbClient, CBC_ROOM } from './gen/cbase/socket.ts';
 
 // The records as the page holds them: the generated snapshots, with the 64-bit fields (an
 // instant in ms, a byte count) widened from bigint to number, which holds them for a few
@@ -90,7 +76,6 @@ export const EVERYONE = 0;
 // The C server's origin. The page is served by Next, the data comes from here, cross-origin
 // (the server answers CORS), so every URL the browser or MapLibre fetches is absolute.
 export const SERVER = (process.env.NEXT_PUBLIC_ADV_SERVER ?? 'http://127.0.0.1:8711').replace(/\/+$/, '');
-const WS_SERVER = SERVER.replace(/^http/, 'ws');
 
 // ADV_T_* of graph.h: the index into every per-type triple.
 export type TypeIdx = 0 | 1 | 2;
@@ -140,10 +125,36 @@ function readList<T>(buf: ArrayBuffer, size: number, read: (m: Mem, p: number) =
   return out;
 }
 
+// THE CLIENT: one for the page, anonymous (it never signs in), on the server's origin. It reads over
+// HTTP (an anonymous socket carries no requests) with the platform's retries, and holds the feed room
+// on the socket. The feed's handlers are whoever has the feed open (openFeed).
+let feed: FeedHandlers | null = null;
+let opened: Promise<CbClient> | null = null;
+function client(): Promise<CbClient> {
+  opened ??= CbClient.open({
+    wasm: '/cbase_client.wasm',
+    server: SERVER,
+    anonymous: true,
+    // 'open' is the feed room's SUB going live, not the socket's READY.
+    onState: (s) => { if (s !== 'open') feed?.onState(s); },
+    onSubLive: () => feed?.onState('open'),
+    onSubRefused: (_what, _room, status) => feed?.onError(new Error(`feed: the server refused the subscription (${status})`)),
+    onPush: (kind, frame) => feedPush(kind, frame),
+  });
+  return opened;
+}
+
+// A read through the client; an aborted one rejects at once and its answer is dropped.
 async function fetchBytes(path: string, signal?: AbortSignal): Promise<ArrayBuffer> {
-  const res = await fetch(SERVER + path, { signal, cache: 'no-store' });
-  if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
-  return res.arrayBuffer();
+  const c = await client();
+  const got = c.get(path);
+  if (!signal) return got;
+  if (signal.aborted) throw new DOMException('aborted', 'AbortError');
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new DOMException('aborted', 'AbortError'));
+    signal.addEventListener('abort', abort, { once: true });
+    got.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
 }
 
 export async function getUsers(signal?: AbortSignal): Promise<WUser[]> {
@@ -244,103 +255,53 @@ export interface FeedHandlers {
   onError: (e: Error) => void;
 }
 
-// THE FEED ROOM (server feed.h ADV_FEED_ROOM) on the platform's anonymous socket.
+// THE FEED ROOM (server feed.h ADV_FEED_ROOM), held on the platform's anonymous socket.
 const FEED_ROOM = 'feed';
-const SUB_ID = 1;
 
-// The two frames the page says (shared/c/stream_frame.h), their heads written by the generated
-// writers: an empty HELLO (no token: the anonymous socket), and a SUB of the feed room.
-function helloFrame(): ArrayBuffer {
-  const b = new ArrayBuffer(sf_hello_hdr_SIZE);
-  writesf_hello_hdr(memOf(b), 0, { v: SF_V, kind: SF_HELLO, n: 0 });
-  return b;
-}
-function subFrame(room: string): ArrayBuffer {
-  const gid = new TextEncoder().encode(room);
-  const b = new ArrayBuffer(sf_sub_hdr_SIZE + gid.length);
-  const m = memOf(b);
-  writesf_sub_hdr(m, 0, { v: SF_V, kind: SF_SUB, id: SUB_ID, what: SF_WHAT_ROOM, n: gid.length });
-  m.u8.set(gid, sf_sub_hdr_SIZE);
-  return b;
-}
-
-// Opens the platform's anonymous socket (GET /ws/public), says HELLO, SUBs the feed room and
-// keeps it open: a close reconnects with backoff (1 s doubling to 15 s, reset by the SUB's
-// answer). A frame that is the platform's (READY, REPLY, PONG) is told from a feed push by its
-// second byte. Returns the closer.
-export function openFeed(h: FeedHandlers): () => void {
-  let ws: WebSocket | null = null;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let delay = 1000;
-  let stopped = false;
-
-  const connect = () => {
-    if (stopped) return;
-    h.onState('connecting');
-    const sock = new WebSocket(`${WS_SERVER}/ws/public`);
-    sock.binaryType = 'arraybuffer';
-    ws = sock;
-    sock.onopen = () => {
-      if (sock !== ws) return;
-      sock.send(helloFrame());
-    };
-    sock.onmessage = (ev: MessageEvent) => {
-      if (sock !== ws || !(ev.data instanceof ArrayBuffer)) return;
-      const buf = ev.data;
-      if (buf.byteLength < sf_bare_hdr_SIZE) return;
-      const m = memOf(buf);
-      const head = readsf_bare_hdr(m, 0);
-      if (head.v !== SF_V) return;
-      try {
-        if (head.kind === SF_READY) {
-          sock.send(subFrame(FEED_ROOM));
-        } else if (head.kind === SF_REPLY) {
-          if (buf.byteLength < sf_reply_hdr_SIZE) return;
-          const r = readsf_reply_hdr(m, 0);
-          if (r.id !== SUB_ID) return;
-          if (r.status !== 200) throw new Error(`feed: the server refused the subscription (${r.status})`);
-          delay = 1000;
-          h.onState('open');
-        } else if (head.kind === SF_PONG) {
-          // (the page sends no PING: the server's WebSocket pings keep the socket)
-        } else if (head.kind === ADV_W_KIND_ACTIVITY && head.v === ADV_W_V && buf.byteLength >= adv_w_activity_SIZE) {
-          h.onActivity(readWActivity(m, 0));
-        } else if (head.kind === ADV_W_KIND_OPS && head.v === ADV_W_V && buf.byteLength >= adv_w_ops_SIZE) {
-          const ops = readWOps(m, 0);
-          checkHash(ops.hash);
-          h.onOps(ops);
-        }
-      } catch (e) {
-        h.onError(e instanceof Error ? e : new Error(String(e)));
-        if (e instanceof WireMismatch) {
-          stopped = true;
-          sock.close();
-        }
-      }
-    };
-    sock.onclose = () => {
-      if (sock !== ws) return;
-      ws = null;
-      h.onState('closed');
-      if (stopped) return;
-      timer = setTimeout(connect, delay);
-      delay = Math.min(delay * 2, 15000);
-    };
-    sock.onerror = () => {
-      // onclose follows and schedules the retry.
-    };
-  };
-
-  connect();
-  return () => {
-    stopped = true;
-    if (timer) clearTimeout(timer);
-    if (ws) {
-      const s = ws;
-      ws = null;
-      s.close();
+// A feed push, as the client hands it: the whole frame, [SF_V][kind] then the record, which carries
+// those two bytes as its own first fields (wire.h), so it is read from 0.
+function feedPush(kind: number, frame: ArrayBuffer): void {
+  const h = feed;
+  if (!h) return;
+  try {
+    const m = memOf(frame);
+    if (kind === ADV_W_KIND_ACTIVITY && frame.byteLength >= adv_w_activity_SIZE) {
+      const a = readWActivity(m, 0);
+      if (a.v === ADV_W_V) h.onActivity(a);
+    } else if (kind === ADV_W_KIND_OPS && frame.byteLength >= adv_w_ops_SIZE) {
+      const ops = readWOps(m, 0);
+      if (ops.v !== ADV_W_V) return;
+      checkHash(ops.hash);
+      h.onOps(ops);
     }
+  } catch (e) {
+    h.onError(e instanceof Error ? e : new Error(String(e)));
+    if (e instanceof WireMismatch) stopFeed?.();
+  }
+}
+let stopFeed: (() => void) | null = null;
+
+// Holds the feed room until the returned closer is called. The platform's client keeps it: it says
+// HELLO, SUBs the room after READY, pings, and on a close reopens after its jittered wait and holds
+// the room again; onState says 'open' when the room's SUB goes live.
+export function openFeed(h: FeedHandlers): () => void {
+  feed = h;
+  let release: (() => void) | null = null;
+  let stopped = false;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    if (feed === h) feed = null;
+    if (stopFeed === stop) stopFeed = null;
+    release?.();
   };
+  stopFeed = stop;
+  h.onState('connecting');
+  client().then(
+    (c) => { if (!stopped) release = c.hold(CBC_ROOM, FEED_ROOM); },
+    (e) => h.onError(e instanceof Error ? e : new Error(String(e))),
+  );
+  return stop;
 }
 
 // ---- formatting ------------------------------------------------------------------------------

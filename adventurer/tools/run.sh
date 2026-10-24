@@ -79,7 +79,7 @@ stop_one server
 
 # The decoder the web copy reads is written by this build, so a wire change reaches the pages this
 # instance serves and no other's.
-make -s -C "$ADV/server" -j4 B="$B" WIRE_TS="$WEB_DIR/src/gen/wire.ts" SF_TS="$WEB_DIR/src/gen/stream_frame.ts" all
+make -s -C "$ADV/server" -j4 B="$B" WIRE_TS="$WEB_DIR/src/gen/wire.ts" CBC_TS_OUT="$WEB_DIR/src/gen/cbase" CBC_WASM_OUT="$WEB_DIR/public/cbase_client.wasm" all
 if [ ! -f "$GRAPH" ]; then
     [ -f "$PBF" ] || DATA="$DATA" "$HERE/fetch_osm.sh"
     make -s -C "$ADV/server" B="$B" DATA="$DATA" PBF="$PBF" GRAPH="$GRAPH" graph

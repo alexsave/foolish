@@ -23,7 +23,7 @@ Needs what c_base needs (`brew install openssl@3 sqlite` on macOS; `build-essent
 By hand:
 
 ```
-make -C adventurer/server                 # build/adventurer, build/adv-import, build/adv-gen, build/adv-bench, web/src/gen/wire.ts and stream_frame.ts (structgen)
+make -C adventurer/server                 # build/adventurer, build/adv-import, build/adv-gen, build/adv-bench, web/src/gen/wire.ts (structgen) and the platform client (web/src/gen/cbase, web/public/cbase_client.wasm)
 adventurer/tools/fetch_osm.sh             # adventurer/data/region.osm.pbf (Geofabrik; another URL as the first argument)
 make -C adventurer/server graph           # adventurer/data/region.graph
 cd adventurer/server && CBASE_DEV=1 CBASE_LISTEN=127.0.0.1:8711 CBASE_DB=../data/adventurer.sqlite ADV_GRAPH=../data/region.graph build/adventurer serve

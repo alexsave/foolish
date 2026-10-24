@@ -6,3 +6,5 @@ next-env.d.ts
 # written by next dev on every run (node_modules/next/dist/server/lib/generate-agent-files.js)
 AGENTS.md
 src/gen/
+# the platform client's module (make -C server cbase-client)
+public/cbase_client.wasm

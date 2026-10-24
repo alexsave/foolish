@@ -144,23 +144,19 @@ $(WIRE_HASH_FILE): $(STRUCTGEN) FORCE
 	  { cmp -s $@.new $@ || { echo "wire layout: $$(cat $@ 2>/dev/null || echo none) -> $$(cat $@.new)"; mv $@.new $@; }; } && rm -f $@.new && \
 	  $(call gen_sync,$@.ts,$(WIRE_TS)) && $(call gen_sync,$@.hash.ts,$(WIRE_HASH_TS))
 
-# THE PLATFORM'S STREAM FRAMES (shared/c/stream_frame.h), for the page's feed socket: the heads
-# of HELLO and SUB written, of REPLY read, by code structgen generates from the packed structs the
-# hub's own parser is held to (stream_frame_test.c), so the page spells no byte offset of them
-# either and needs no wasm. No layout hash: the frames carry their own version byte (SF_V).
-SF_TS ?= ../web/src/gen/stream_frame.ts
-SG_SF_ROOTS := sf_bare_hdr sf_hello_hdr sf_sub_hdr sf_reply_hdr
-SG_SF_ARGS := --header $(C_ROOT)/shared/c/stream_frame.h $(foreach r,$(SG_SF_ROOTS),--root $(r) --snapshot $(r)) \
-              --writer sf_hello_hdr --writer sf_sub_hdr \
-              --const SF_V --const SF_HELLO --const SF_READY --const SF_SUB --const SF_UNSUB --const SF_REQ --const SF_REPLY \
-              --const SF_PING --const SF_PONG --const SF_WHAT_ROOM --const SF_TOKEN_MAX --const SF_GID_MAX
-$(B)/layout/stream_frame.stamp: $(STRUCTGEN) $(C_ROOT)/shared/c/stream_frame.h FORCE
-	@mkdir -p $(@D)
-	@$(STRUCTGEN) --cwd . $(SG_SF_ARGS) --build 'sf=$(strip $(INC) $(SG_SYSROOT))' --target $(SG_HOST_TRIPLE) --ts $@.ts && \
-	  $(call gen_sync,$@.ts,$(SF_TS)) && touch $@
+# THE PLATFORM'S CLIENT (c_base/client, c_base/docs/CLIENT_DESIGN.md), for the page's feed and its
+# reads: the module (one c_base client in wasm: the socket's frames, the room, ping, the jittered
+# reconnect, the reads' retries), its structgen-generated layout and exports, and the shim that
+# holds the browser's socket, fetch and timer, written by c_base/client's own make into the web's
+# generated directory, and the module into its public/. The page spells no byte of the protocol.
+CBC_TS_OUT   ?= $(abspath ../web/src/gen/cbase)
+CBC_WASM_OUT ?= $(abspath ../web/public/cbase_client.wasm)
+.PHONY: cbase-client
+cbase-client:
+	@$(MAKE) -s -C $(C_ROOT)/c_base/client ts TS_OUT=$(CBC_TS_OUT) WASM_OUT=$(CBC_WASM_OUT)
 
 .PHONY: all test smoke check test-asan smoke-asan check-asan clean graph import fuzz fuzz-smoke
-all: $(WIRE_HASH_FILE) $(B)/layout/stream_frame.stamp $(B)/adventurer $(B)/adv-import $(B)/adv-gen $(B)/adv-bench
+all: $(WIRE_HASH_FILE) cbase-client $(B)/adventurer $(B)/adv-import $(B)/adv-gen $(B)/adv-bench
 import: $(B)/adv-import
 
 # Every test program is its own process; they run CHECK_JOBS at a time, each to its own log,
