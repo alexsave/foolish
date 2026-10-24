@@ -1416,10 +1416,11 @@ static void admin_reads(void) {
     cb_store *s = open_fresh();
     // The collections are the tables, by name.
     names_t n = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, admin_collections, collect_name, &n), 13);
+    T_EQ_INT(CB_STORE_CALL(s, admin_collections, collect_name, &n), 15);
     T_EQ_STR(n.ids[0], "bots");
     T_EQ_STR(n.ids[5], "games");
-    T_EQ_STR(n.ids[12], "users");
+    T_EQ_STR(n.ids[6], "identities");
+    T_EQ_STR(n.ids[14], "users");
 
     // Pages of 20 over the 49 bots: 20, 20, 9, and the cursor runs out.
     rows_t r = { 0 };
