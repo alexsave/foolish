@@ -777,6 +777,124 @@ static void user_delete_cascades(void) {
     cb_store_close(s);
 }
 
+// ---- identities and one-time claims (store.h cb_identity_row, once_claim) ---------------------
+
+static cb_identity_row mkident(int idp, const char *sub, const char *user_id, int64_t at) {
+    cb_identity_row r = { 0 };
+    r.idp = idp;
+    snprintf(r.subject, sizeof r.subject, "%s", sub);
+    snprintf(r.user_id, sizeof r.user_id, "%s", user_id);
+    snprintf(r.client_id, sizeof r.client_id, "com.example.app");
+    snprintf(r.email, sizeof r.email, "x7k2@privaterelay.appleid.com");
+    r.email_verified = true;
+    r.private_email = true;
+    snprintf(r.grant, sizeof r.grant, "00112233445566778899aabbccddeeff");
+    r.created_at = r.updated_at = at;
+    return r;
+}
+
+static bool count_ident(const cb_identity_row *r, void *ud) {
+    (void)r;
+    (*(int *)ud)++;
+    return true;
+}
+
+static void identities_round_trip(void) {
+    cb_store *s = open_fresh();
+    cb_user_row a = mkuser("ia@x.io", "IA", 1), b = mkuser("ib@x.io", "IB", 1);
+    T_EQ_INT(CB_STORE_CALL(s, user_create, &a), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, user_create, &b), CB_OK);
+    cb_identity_row r = mkident(1, "001234.sub.one", a.id, 5), got;
+    T_EQ_INT(CB_STORE_CALL(s, identity_put, &r, true), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, identity_put, &r, true), CB_E_CONFLICT);   // fresh: already there
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 1, "001234.sub.one", &got), CB_OK);
+    T_EQ_INT(got.idp, 1);
+    T_EQ_STR(got.subject, "001234.sub.one");
+    T_EQ_STR(got.user_id, a.id);
+    T_EQ_STR(got.client_id, "com.example.app");
+    T_EQ_STR(got.email, "x7k2@privaterelay.appleid.com");
+    T_CHECK(got.email_verified && got.private_email);
+    T_EQ_STR(got.grant, "00112233445566778899aabbccddeeff");
+    T_EQ_INT(got.created_at, 5);
+    T_EQ_INT(got.updated_at, 5);
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 2, "001234.sub.one", &got), CB_E_NOT_FOUND);   // another provider
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 1, "001234.sub.on", &got), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 1, "", &got), CB_E_NOT_FOUND);
+    // Replaced whole when not fresh.
+    snprintf(r.email, sizeof r.email, "ada@example.com");
+    r.private_email = false;
+    r.grant[0] = 0;
+    r.updated_at = 9;
+    T_EQ_INT(CB_STORE_CALL(s, identity_put, &r, false), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 1, "001234.sub.one", &got), CB_OK);
+    T_EQ_STR(got.email, "ada@example.com");
+    T_CHECK(!got.private_email);
+    T_EQ_STR(got.grant, "");
+    T_EQ_INT(got.updated_at, 9);
+    // A user's identities.
+    cb_identity_row r2 = mkident(1, "001234.sub.two", a.id, 6);
+    T_EQ_INT(CB_STORE_CALL(s, identity_put, &r2, true), CB_OK);
+    int n = 0;
+    T_EQ_INT(CB_STORE_CALL(s, identities_of, a.id, count_ident, &n), 2);
+    T_EQ_INT(n, 2);
+    n = 0;
+    T_EQ_INT(CB_STORE_CALL(s, identities_of, b.id, count_ident, &n), 0);
+    T_EQ_INT(n, 0);
+    // Refused shapes.
+    cb_identity_row bad = mkident(1, "", a.id, 1);
+    T_EQ_INT(CB_STORE_CALL(s, identity_put, &bad, true), CB_E_INVALID);
+    bad = mkident(1, "s", "not-a-uuid", 1);
+    T_EQ_INT(CB_STORE_CALL(s, identity_put, &bad, true), CB_E_INVALID);
+    T_EQ_INT(CB_STORE_CALL(s, identities_of, "not-a-uuid", count_ident, &n), CB_E_INVALID);
+    // The account and its identity in one write.
+    cb_user_row c = mkuser("ic@x.io", "IC", 2);
+    cb_identity_row r3 = mkident(1, "001234.sub.three", c.id, 2);
+    T_EQ_INT(CB_STORE_CALL(s, user_create_identity, &c, &r3), CB_OK);
+    cb_user_row cu;
+    T_EQ_INT(CB_STORE_CALL(s, user_get, c.id, &cu), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 1, "001234.sub.three", &got), CB_OK);
+    T_EQ_STR(got.user_id, c.id);
+    // A taken email: neither is written.
+    cb_user_row d = mkuser("ic@x.io", "ID", 3);
+    cb_identity_row r4 = mkident(1, "001234.sub.four", d.id, 3);
+    T_EQ_INT(CB_STORE_CALL(s, user_create_identity, &d, &r4), CB_E_CONFLICT);
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 1, "001234.sub.four", &got), CB_E_NOT_FOUND);
+    // A taken identity: neither is written.
+    cb_user_row e = mkuser("ie@x.io", "IE", 3);
+    cb_identity_row r5 = mkident(1, "001234.sub.one", e.id, 3);
+    T_EQ_INT(CB_STORE_CALL(s, user_create_identity, &e, &r5), CB_E_CONFLICT);
+    T_EQ_INT(CB_STORE_CALL(s, user_get, e.id, &cu), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_STORE_CALL(s, user_by_email, "ie@x.io", &cu), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 1, "001234.sub.one", &got), CB_OK);
+    T_EQ_STR(got.user_id, a.id);
+    // An identity for another user than the account: refused.
+    cb_identity_row r6 = mkident(1, "001234.sub.six", a.id, 3);
+    T_EQ_INT(CB_STORE_CALL(s, user_create_identity, &e, &r6), CB_E_INVALID);
+    // The account's delete takes its identities.
+    T_EQ_INT(CB_STORE_CALL(s, user_delete, a.id), CB_OK);
+    n = 0;
+    T_EQ_INT(CB_STORE_CALL(s, identities_of, a.id, count_ident, &n), 0);
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 1, "001234.sub.one", &got), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 1, "001234.sub.two", &got), CB_E_NOT_FOUND);
+    T_EQ_INT(CB_STORE_CALL(s, identity_get, 1, "001234.sub.three", &got), CB_OK);   // another account's stays
+    cb_store_close(s);
+}
+
+static void once_claims(void) {
+    cb_store *s = open_fresh();
+    const char *k1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const char *k2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    int64_t t = 1790000000000LL;
+    T_EQ_INT(CB_STORE_CALL(s, once_claim, k1, t + 1000, t), CB_OK);
+    T_EQ_INT(CB_STORE_CALL(s, once_claim, k1, t + 1000, t + 500), CB_E_CONFLICT);
+    T_EQ_INT(CB_STORE_CALL(s, once_claim, k1, t + 5000, t + 999), CB_E_CONFLICT);
+    T_EQ_INT(CB_STORE_CALL(s, once_claim, k2, t + 1000, t + 500), CB_OK);   // another key
+    T_EQ_INT(CB_STORE_CALL(s, once_claim, k1, t + 3000, t + 1000), CB_OK);  // past its time: claimed again
+    T_EQ_INT(CB_STORE_CALL(s, once_claim, k1, t + 3000, t + 2000), CB_E_CONFLICT);
+    T_EQ_INT(CB_STORE_CALL(s, once_claim, "short", t + 1000, t), CB_E_INVALID);
+    cb_store_close(s);
+}
+
 // ---- the lease -----------------------------------------------------------------------
 
 static void lease_semantics(void) {
@@ -1854,6 +1972,8 @@ int main(void) {
     T_RUN(membership_follows_commits);
     T_RUN(game_delete_cascades);
     T_RUN(user_delete_cascades);
+    T_RUN(identities_round_trip);
+    T_RUN(once_claims);
     if (tsb_dynamo()) T_RUN(lease_semantics);   // the SQL store keeps no lease (serve: app/bots.c, in memory)
     T_RUN(games_needing_bots_windows);
     if (tsb_dynamo()) T_RUN(bots_idle_semantics);
