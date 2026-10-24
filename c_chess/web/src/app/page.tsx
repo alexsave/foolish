@@ -21,6 +21,8 @@ export default function Lobby() {
   const [waiting, setWaiting] = useState<string | null>(null);
   const [rated, setRated] = useState(true);
   const [link, setLink] = useState<string | null>(null);
+  const [level, setLevel] = useState(3);
+  const [side, setSide] = useState(2);   // 0 white, 1 black, 2 either
 
   useEffect(() => { net.lobby(true); return () => net.lobby(false); }, []);
   // the live games' clocks tick between the server's once-a-second updates
@@ -79,6 +81,25 @@ export default function Lobby() {
               <button className="btn primary" onClick={() => navigator.clipboard?.writeText(link)}>Copy</button>
             </div>
           )}
+        </div>
+        <div className="panel" style={{ marginTop: 16, padding: 16 }}>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <h2 style={{ margin: 0 }}>Play the computer</h2>
+            <div className="seg" role="radiogroup" aria-label="your color">
+              {['White', 'Either', 'Black'].map((t, i) => {
+                const v = i === 0 ? 0 : i === 1 ? 2 : 1;
+                return <button key={t} role="radio" aria-checked={side === v} className={side === v ? 'on' : ''} onClick={() => setSide(v)}>{t}</button>;
+              })}
+            </div>
+          </div>
+          <div className="row" style={{ marginTop: 12, gap: 8 }}>
+            <div className="levels" role="radiogroup" aria-label="level">
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((l) => (
+                <button key={l} role="radio" aria-checked={level === l} className={`lvl ${level === l ? 'on' : ''}`} onClick={() => setLevel(l)}>{l}</button>
+              ))}
+            </div>
+            <button className="btn primary" style={{ marginLeft: 'auto' }} onClick={() => net.run((k) => k.ai(600, 0, level, side))}>Play level {level}, 10+0</button>
+          </div>
         </div>
         <div className="row" style={{ justifyContent: 'space-between', margin: '28px 0 12px' }}>
           <h2 style={{ margin: 0 }}>Live games</h2>

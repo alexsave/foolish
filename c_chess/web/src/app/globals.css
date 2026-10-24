@@ -89,6 +89,10 @@ h2 { font-size: 17px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
 .seg button { border: none; background: none; color: var(--muted); padding: 6px 14px; font-weight: 600; font-size: 14px; }
 .seg button.on { background: var(--accent); color: var(--accent-ink); }
+.levels { display: flex; gap: 6px; }
+.lvl { width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-weight: 600; }
+.lvl:hover { border-color: var(--accent); }
+.lvl.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .row { display: flex; gap: 10px; align-items: center; }
 .seeks { width: 100%; border-collapse: collapse; font-size: 14px; }
 .seeks td, .seeks th { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); }

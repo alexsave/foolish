@@ -30,9 +30,11 @@ function Player({ v, color, bottom }: { v: CvView_Snap; color: number; bottom: b
   return (
     <div className={`panel player ${turn ? 'turn' : ''}`} style={{ order: bottom ? 3 : 1 }}>
       <div className="who">
-        <Link prefetch={false} className="name" href={`/user?name=${encodeURIComponent(name)}`} style={{ color: 'inherit' }}>{name || '...'}</Link>
+        {name.startsWith('Stockfish-')
+          ? <span className="name">Stockfish <span className="muted" style={{ fontWeight: 500 }}>level {name.slice(10)}</span></span>
+          : <Link prefetch={false} className="name" href={`/user?name=${encodeURIComponent(name)}`} style={{ color: 'inherit' }}>{name || '...'}</Link>}
         <span className="rt">
-          {v.rating[color] || ''}
+          {name.startsWith('Stockfish-') ? 'computer' : v.rating[color] || ''}
           {d !== 0 && <span className={d > 0 ? 'up' : 'down'}> {d > 0 ? '+' : ''}{d}</span>}
         </span>
       </div>
