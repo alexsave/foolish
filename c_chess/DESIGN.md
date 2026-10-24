@@ -187,8 +187,9 @@ The pick: puzzles live in buckets of ten rating points, and a pick is a random o
 | 100,000 | 71 ms | 19.8 MB | 474 ns |
 | 1,000,000 | 805 ms | 172 MB | 763 ns |
 
-(`puzzlegen --bench`, one performance core, under the quiet lock.) The first version kept a sorted order and shifted a puzzle to its place when its rating moved: 4.4 us an attempt at 100,000, because a new puzzle's rating jumps by hundreds of points across thousands of places; buckets made it a swap and a push.
-At lichess's puzzle traffic (on the order of a million attempts an hour at peak) that is under a quarter of a millisecond of CPU a second, beside the socket's own cost of the two requests.
+(`puzzlegen --bench`, one performance core, under the quiet lock.)
+The first version kept a sorted order and shifted a puzzle to its place when its rating moved: 4.4 us an attempt at 100,000, because a new puzzle's rating jumps by hundreds of points across thousands of places; buckets made it a swap and a push.
+A million attempts an hour (an assumed figure; lichess does not publish its puzzle traffic) would be about 0.2 ms of CPU a second, beside the socket's own cost of the two requests.
 
 The puzzles page: 175 KB over 25 requests (the site's runtime, shared with every page), first contentful paint 132 ms local and 276 ms on the 4G profile; the puzzle is on the board at 246 ms (local, then a 600 ms pause before the opponent's move is played, on purpose).
 
