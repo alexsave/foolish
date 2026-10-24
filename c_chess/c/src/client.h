@@ -37,6 +37,7 @@ enum {
     CC_EV_MOVED = 1 << 9,      /* the other side moved in the game shown */
     CC_EV_TV = 1 << 10,        /* the lobby's live games changed (cc_client.tv) */
     CC_EV_READ = 1 << 11,      /* a read asked by cc_client_read answered (cc_client.read_*) */
+    CC_EV_EVAL = 1 << 12,      /* the engine's view of a position arrived (cc_client.eval) */
 };
 
 /* What a request was, to read its answer. */
@@ -97,6 +98,7 @@ typedef struct {
     int64_t   tv_at;           /* when it arrived (its clocks are as of then) */
     uint32_t  moves_sent, moves_confirmed, pushes;
     /* the last read's answer (CC_EV_READ): the tag it was asked with, its status, its bytes */
+    cw_eval   eval;            /* CC_EV_EVAL */
     uint32_t  read_tag;
     uint16_t  read_status;
     uint32_t  read_len;
@@ -145,6 +147,8 @@ void cc_client_act(cc_client *c, int act);
 /* A GET over the socket (a profile, a game list, the leaderboard): the answer arrives as
  * CC_EV_READ with this tag. Everything after sign-in goes over the one authenticated socket. */
 void cc_client_read(cc_client *c, const char *path, uint32_t tag);
+/* Asks the engine about the position after the first `ply` moves of the game shown: CC_EV_EVAL. */
+void cc_client_eval(cc_client *c, int ply);
 
 /* ---- what to draw ---- */
 /* A side's clock now. */

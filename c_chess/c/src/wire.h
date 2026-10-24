@@ -16,6 +16,7 @@
  *     POST /c/challenge  cw_seek               -> cw_id (the challenge, for the link /c/<id>)
  *     POST /c/accept     cw_id (challenge)     -> cw_id (the game)
  *     POST /c/ai         cw_ai_req             -> cw_id (a casual game against the computer)
+ *     POST /c/eval       cw_eval_req + moves   -> (none): the answer is pushed (CW_P_EVAL)
  *     POST /c/move       cw_move_req           -> (none): 200, or 409 with a cw_err
  *     POST /c/act        cw_act_req            -> (none)
  *     GET  /c/game/<id>  -                     -> cw_snap + its moves
@@ -27,6 +28,7 @@
  *     CW_P_STATE  cw_state  to the game's room (players and spectators): every change of a game
  *     CW_P_START  cw_start  to a user: a game of yours began (seek paired, challenge accepted, rematch)
  *     CW_P_LOBBY  cw_lobby  to the lobby room: the open seeks
+ *     CW_P_EVAL   cw_eval   to a user: the engine's view of a position it asked about (POST /c/eval)
  *     CW_P_TV     cw_tv     to the lobby room, at most once a second when it changed: the games in play
  *                           with the highest ratings, each with its board
  *     GET /c/tv           -                    -> cw_tv
@@ -42,7 +44,8 @@
 #define CW_POINTS_MAX 200   /* rating points a profile lists */
 #define CW_LIST_MAX 50      /* games a game list holds */
 
-enum { CW_P_STATE = 1, CW_P_START = 2, CW_P_LOBBY = 3, CW_SNAP = 4, CW_P_TV = 5 };
+enum { CW_P_STATE = 1, CW_P_START = 2, CW_P_LOBBY = 3, CW_SNAP = 4, CW_P_TV = 5, CW_P_EVAL = 6 };
+#define CW_PV_MAX 12
 #define CW_TV_MAX 24
 #define CW_TOP_MAX 50
 
@@ -74,6 +77,21 @@ typedef struct {
 typedef struct { uint16_t base_s; uint8_t inc_s; uint8_t rated; } cw_seek;
 typedef struct { uint32_t game; uint8_t color; uint8_t pad[3]; } cw_seek_ans;   /* game 0: waiting */
 typedef struct { uint32_t id; } cw_id;
+/* a position as the game that reached it: this, then n u16 moves from the start */
+typedef struct { uint16_t n; uint8_t pad[2]; } cw_eval_req;
+/* The engine's view of a position: white's view (score in centipawns, + good for white; mate in
+ * moves, + white mates, 0 none), the depth it reached, and its best line. */
+typedef struct {
+    uint8_t  v, kind;          /* CW_V, CW_P_EVAL */
+    uint16_t ply;              /* the position: the moves asked about */
+    uint8_t  depth;
+    int8_t   mate;
+    int16_t  score;
+    uint64_t key;              /* the position's Zobrist key */
+    uint8_t  npv;
+    uint8_t  pad[7];
+    uint16_t pv[CW_PV_MAX];
+} cw_eval;
 /* color: 0 white, 1 black, 2 either (by lot); level 1..8 */
 typedef struct { uint16_t base_s; uint8_t inc_s; uint8_t level; uint8_t color; uint8_t pad[3]; } cw_ai_req;
 /* think_ms: the mover's own time on the move, by its clock (lag compensation, game.h); 0xffffffff unknown */
@@ -187,6 +205,7 @@ _Static_assert(sizeof(cw_auth_req) == 96, "cw_auth_req");
 _Static_assert(sizeof(cw_session) == 128, "cw_session");
 _Static_assert(sizeof(cw_seek) == 4, "cw_seek");
 _Static_assert(sizeof(cw_ai_req) == 8, "cw_ai_req");
+_Static_assert(sizeof(cw_eval) == 48, "cw_eval");
 _Static_assert(sizeof(cw_tv_game) == 100, "cw_tv_game");
 _Static_assert(sizeof(cw_top_row) == 28, "cw_top_row");
 _Static_assert(sizeof(cw_seek_ans) == 8, "cw_seek_ans");

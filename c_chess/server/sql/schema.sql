@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS cc_games (
     status INTEGER NOT NULL, winner INTEGER NOT NULL,
     started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL,
     r_w INTEGER NOT NULL, r_b INTEGER NOT NULL, d_w INTEGER NOT NULL, d_b INTEGER NOT NULL,
+    left_w INTEGER NOT NULL DEFAULT 0, left_b INTEGER NOT NULL DEFAULT 0,   -- the clocks at the end, ms
     moves BLOB                     -- u16 per ply, little-endian; NULL while the game is in play
 );
 CREATE INDEX IF NOT EXISTS cc_games_white ON cc_games (white, id);

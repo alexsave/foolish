@@ -22,11 +22,11 @@ const char *const cc_sql_stmts[CC_SQL_N] = {
     [CC_SQL_PLAYERS_ALL] = "SELECT id, name, r, d, v, games, wins, losses, draws, last_at FROM cc_players",
     [CC_SQL_GAME_START] = "INSERT OR REPLACE INTO cc_games (id, white, black, base_s, inc_s, rated, status, winner, started_at, ended_at, "
                           "r_w, r_b, d_w, d_b, moves) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 2, ?7, 0, ?8, ?9, 0, 0, NULL)",
-    [CC_SQL_GAME_END] = "UPDATE cc_games SET status = ?2, winner = ?3, ended_at = ?4, d_w = ?5, d_b = ?6, moves = ?7 WHERE id = ?1",
+    [CC_SQL_GAME_END] = "UPDATE cc_games SET status = ?2, winner = ?3, ended_at = ?4, d_w = ?5, d_b = ?6, moves = ?7, left_w = ?8, left_b = ?9 WHERE id = ?1",
     [CC_SQL_POINT_PUT] = "INSERT INTO cc_points (player, at, rating) VALUES (?1, ?2, ?3)",
     [CC_SQL_GAMES_PLAYING] = "SELECT id, white, black, base_s, inc_s, rated, started_at, r_w, r_b FROM cc_games WHERE status = 1",
     [CC_SQL_GAME_MAX] = "SELECT COALESCE(MAX(id), 0) FROM cc_games",
-    [CC_SQL_GAME_GET] = "SELECT white, black, base_s, inc_s, rated, status, winner, started_at, ended_at, r_w, r_b, d_w, d_b, moves "
+    [CC_SQL_GAME_GET] = "SELECT white, black, base_s, inc_s, rated, status, winner, started_at, ended_at, r_w, r_b, d_w, d_b, moves, left_w, left_b "
                         "FROM cc_games WHERE id = ?1",
     [CC_SQL_GAMES_OF] = "SELECT id, white, black, base_s, inc_s, rated, status, winner, ended_at, d_w, d_b, length(moves) / 2 FROM cc_games "
                         "WHERE (white = ?1 OR black = ?1) AND status > 1 ORDER BY id DESC LIMIT 50",
@@ -43,7 +43,7 @@ typedef struct jrec {
     union {
         cc_player player;   /* the fields that are written; the chains are not read */
         struct { uint32_t id; char w[CB_UUID_LEN + 1], b[CB_UUID_LEN + 1]; int base_s, inc_s, rated; int64_t at; int r0[2]; } start;
-        struct { uint32_t id; int status, winner, d[2]; int64_t at; int n; uint16_t moves[CC_MAX_PLY]; } end;
+        struct { uint32_t id; int status, winner, d[2]; int64_t at, left[2]; int n; uint16_t moves[CC_MAX_PLY]; } end;
         struct { char id[CB_UUID_LEN + 1]; int64_t at; int rating; } point;
     } u;
 } jrec;
@@ -148,6 +148,8 @@ void cc_journal_game_end(const cc_live *l, int64_t wall) {
     r->u.end.d[0] = l->diff[0];
     r->u.end.d[1] = l->diff[1];
     r->u.end.at = wall;
+    r->u.end.left[0] = l->g.left_ms[0];
+    r->u.end.left[1] = l->g.left_ms[1];
     r->u.end.n = l->g.ply;
     for (int i = 0; i < l->g.ply; i++) r->u.end.moves[i] = l->g.moves[i];   /* stored little-endian (every target is) */
     enqueue(r);
@@ -203,6 +205,8 @@ static int write_one(cb_sql *x, const jrec *r) {
         sqlite3_bind_int(st, 5, r->u.end.d[0]);
         sqlite3_bind_int(st, 6, r->u.end.d[1]);
         sqlite3_bind_blob(st, 7, r->u.end.moves, r->u.end.n * 2, SQLITE_STATIC);
+        sqlite3_bind_int64(st, 8, r->u.end.left[0]);
+        sqlite3_bind_int64(st, 9, r->u.end.left[1]);
         return cb_sql_run(x, st, "cc game end");
     case J_POINT:
         if (!(st = cb_sql_stmt(x, CC_SQL_POINT_PUT))) return CB_E_DB;
@@ -492,6 +496,8 @@ static int game_get_fn(cb_sql *x, void *ud) {
     int mn = sqlite3_column_bytes(st, 13) / 2;
     if (mn > CC_MAX_PLY) mn = CC_MAX_PLY;
     s.ply = (uint16_t)mn;
+    s.left_ms[0] = (uint32_t)sqlite3_column_int64(st, 14);
+    s.left_ms[1] = (uint32_t)sqlite3_column_int64(st, 15);
     size_t need = sizeof s + (size_t)mn * 2;
     if (need > g->cap) { sqlite3_reset(st); return CB_E_FULL; }
     memcpy(g->out, &s, sizeof s);

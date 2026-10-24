@@ -389,6 +389,7 @@ static void restart(void) {
     T_CHECK(pump(&C, CC_EV_GAME, 3000));
     T_EQ_INT(C.c.g.status, CC_MATE);
     T_EQ_INT(C.c.g.ply, 4);
+    T_CHECK(C.c.left_ms[0] > 0 && C.c.left_ms[1] > 0);   // the clocks it ended with, from the journal
 }
 
 static void challenge_abort_flag(void) {

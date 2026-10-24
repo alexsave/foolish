@@ -102,6 +102,15 @@ typedef struct { uint16_t n; uint16_t pad; CvTvGame games[CV_TV]; } CvTv;
 typedef struct { char name[CV_NAME]; int16_t rating; uint16_t rd; uint32_t games; } CvTopRow;
 typedef struct { uint16_t n; uint16_t pad; CvTopRow rows[CV_TOP]; } CvTop;
 
+/* The engine's view of a position of the game shown (white's view), its line in SAN. */
+typedef struct {
+    uint16_t ply;
+    int16_t  score;            /* centipawns, + good for white */
+    int8_t   mate;             /* moves, + white mates, 0 none */
+    uint8_t  depth, best_from, best_to;   /* best_*: CV_NO_SQ when none */
+    char     line[96];         /* "Nf3 Nc6 Bb5 a6", as far as it fits */
+} CvEval;
+
 /* A guest's account, made at the first visit and kept by the page as these bytes (base64 in
  * localStorage): its name and password, NUL-padded. The page never reads inside it. */
 #define CV_GUEST_PW 32

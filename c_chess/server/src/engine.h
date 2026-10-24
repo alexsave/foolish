@@ -24,6 +24,9 @@ typedef struct {
     int      depth;
     uint64_t nodes;
     int      time_ms;
+    int      mate;       /* moves to mate from the side to move's view (+ it mates), 0 when none */
+    int      npv;
+    ch_move  pv[16];     /* the principal variation, best first */
 } cc_engine_answer;
 
 typedef void (*cc_engine_fn)(void *ud, const cc_engine_answer *a);

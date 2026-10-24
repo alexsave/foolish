@@ -18,6 +18,9 @@ export interface BoardProps {
   mover?: number;
   /** a premove shown (from, to), and what clicking an empty square does to it */
   premoveFrom?: number;
+  /** the engine's best move, outlined */
+  bestFrom?: number;
+  bestTo?: number;
   premoveTo?: number;
   onCancelPremove?: () => void;
 }
@@ -92,6 +95,7 @@ export default function Board(p: BoardProps) {
     const cls = ['sq', light ? 'l' : 'd'];
     if (sq === p.lastFrom || sq === p.lastTo) cls.push('last');
     if (sq === p.premoveFrom || sq === p.premoveTo) cls.push('pre');
+    if (sq === p.bestFrom || sq === p.bestTo) cls.push('best');
     if (sq === sel) cls.push('sel');
     if (sq === p.checkSq) cls.push('check');
     if (legal.has(sq)) cls.push(v ? 'cap' : 'dot');

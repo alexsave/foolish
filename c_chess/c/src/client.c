@@ -293,6 +293,15 @@ void cc_client_read(cc_client *c, const char *path, uint32_t tag) {
     req(c, CC_RQ_READ, SF_METH_GET, path, NULL, 0, tag);   /* the tag rides in the request's game slot */
 }
 
+void cc_client_eval(cc_client *c, int ply) {
+    if (ply < 0 || ply > c->g.ply) return;
+    uint8_t body[sizeof(cw_eval_req) + CC_MAX_PLY * 2];
+    cw_eval_req q = { (uint16_t)ply, { 0, 0 } };
+    memcpy(body, &q, sizeof q);
+    memcpy(body + sizeof q, c->g.moves, (size_t)ply * 2);
+    req(c, CC_RQ_NONE, SF_METH_POST, "/c/eval", body, sizeof q + (size_t)ply * 2, 0);
+}
+
 void cc_client_act(cc_client *c, int act) {
     if (!c->game) return;
     cw_act_req q = { c->game, (uint8_t)act, { 0, 0, 0 } };
@@ -468,6 +477,9 @@ void cc_client_in(cc_client *c, const uint8_t *p, size_t n, int64_t now) {
             return;
         }
         case CW_P_TV: take_tv(c, p, n, now); return;
+        case CW_P_EVAL:
+            if (n == sizeof c->eval) { memcpy(&c->eval, p, n); c->events |= CC_EV_EVAL; }
+            return;
         case CW_P_LOBBY:
             if (n >= 12 && n <= sizeof c->lobby) { memcpy(&c->lobby, p, n); c->events |= CC_EV_LOBBY; }
             return;

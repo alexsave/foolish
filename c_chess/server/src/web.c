@@ -111,11 +111,20 @@ static bool accepts_gzip(const cb_http_req *req) {
     return ae && strstr(ae, "gzip");
 }
 
+/* A ".." path segment (a way out of the site's tree). Two dots inside a name are fine: the
+ * framework's chunk names have them ("0sf..t3v.psx1.js"). The paths only ever match the files read
+ * at start, so this is a belt beside the table, not the only guard. */
+static bool dot_segment(const char *p, size_t len) {
+    for (size_t i = 0; i + 1 < len; i++)
+        if (p[i] == '.' && p[i + 1] == '.' && (i == 0 || p[i - 1] == '/') && (i + 2 == len || p[i + 2] == '/')) return true;
+    return false;
+}
+
 static void h_web(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     (void)ctx;
     const char *p = req->path;
     size_t len = strcspn(p, "?#");
-    if (len == 0 || strstr(p, "..")) { cb_res_text(res, 400, "bad path\n"); return; }
+    if (len == 0 || p[0] != '/' || dot_segment(p, len)) { cb_res_text(res, 400, "bad path\n"); return; }
     wfile *w = NULL;
     if (len == 1) w = find("/index.html", 11);
     else if (!(w = find(p, len))) {

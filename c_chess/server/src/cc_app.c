@@ -12,6 +12,7 @@
 #include "journal.h"
 #include "pushes.h"
 #include "web.h"
+#include "analysis.h"
 #include "engine.h"
 
 #include "store/store.h"
@@ -50,13 +51,13 @@ static void cc_serve_close(cb_ctx *ctx) {
     cc_web_free();
 }
 
-static const cb_route_list *const CC_ROUTES[] = { &cc_api_routes, &cc_web_routes };
+static const cb_route_list *const CC_ROUTES[] = { &cc_api_routes, &cc_analysis_routes, &cc_web_routes };
 static const cb_topic_family *const CC_TOPICS[] = { &cc_fam_room, &cc_fam_user };
 
 static const cb_app CC_APP = {
     .name = "c_chess",
     .routes = CC_ROUTES,
-    .n_route_lists = 2,
+    .n_route_lists = 3,
     .topics = CC_TOPICS,
     .n_topics = 2,
     .store = &CC_STORE,

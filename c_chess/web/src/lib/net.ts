@@ -1,8 +1,8 @@
 // net.ts - the page's one connection: the account (kept between visits), the /ws socket, and the
 // kernel's view of it, as a store React subscribes to. The bytes go between the socket and the
 // kernel untouched; what they mean is the kernel's.
-import { CC_EV_GAME, CC_EV_LOBBY, CC_EV_READ, CC_EV_TV, CW_AUTH_SIGNIN, CW_AUTH_SIGNUP } from '@/gen/web_layout';
-import type { CvLobby_Snap, CvMoves_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
+import { CC_EV_EVAL, CC_EV_GAME, CC_EV_LOBBY, CC_EV_READ, CC_EV_TV, CW_AUTH_SIGNIN, CW_AUTH_SIGNUP } from '@/gen/web_layout';
+import type { CvEval_Snap, CvLobby_Snap, CvMoves_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
 import { Kernel, loadKernel } from './kernel';
 
 const SESSION_KEY = 'cc.session';
@@ -16,6 +16,7 @@ export interface Snapshot {
   moves: CvMoves_Snap | null;
   lobby: CvLobby_Snap | null;
   tv: CvTv_Snap | null;
+  eval: CvEval_Snap | null;
   /** events since the store last published, OR-ed (cleared by `consume`) */
   events: number;
 }
@@ -39,7 +40,7 @@ class Net {
   k: Kernel | null = null;
   private ws: WebSocket | null = null;
   private listeners = new Set<() => void>();
-  private snap: Snapshot = { phase: 'loading', view: null, moves: null, lobby: null, tv: null, events: 0 };
+  private snap: Snapshot = { phase: 'loading', view: null, moves: null, lobby: null, tv: null, eval: null, events: 0 };
   private started = false;
   private wantLobby = false;
   private wantGame = 0;
@@ -75,6 +76,7 @@ class Net {
     }
     if (view.events & CC_EV_LOBBY) patch.lobby = this.k.lobbyView();
     if (view.events & CC_EV_TV) patch.tv = this.k.tv(performance.now());
+    if (view.events & CC_EV_EVAL) patch.eval = this.k.evaluation();
     if (view.events & CC_EV_READ) {
       const done = this.reads.get(view.readTag);
       if (done) { this.reads.delete(view.readTag); done({ status: view.readStatus, body: this.k.readTake() }); }
@@ -152,15 +154,17 @@ class Net {
     const k = this.k!;
     let g: Uint8Array | null = null;
     try { const kept = load(GUEST_KEY); if (kept) g = unb64(kept); } catch { g = null; }   // an older format: a new guest
-    if (!g || !k.isGuest(g)) { g = k.guestNew(); store(GUEST_KEY, b64(g)); }
+    let fresh = false;
+    if (!g || !k.isGuest(g)) { g = k.guestNew(); store(GUEST_KEY, b64(g)); fresh = true; }
     const auth = async (mode: number) => {
       const r = await this.post('/c/auth', k.guestAuthBody(g, mode));
       k.authAnswer(r.status, r.body);
       if (r.status === 200) store(SESSION_KEY, b64(r.body));
       return r.status;
     };
-    let st = await auth(CW_AUTH_SIGNIN);
-    if (st !== 200) st = await auth(CW_AUTH_SIGNUP);
+    // a guest just made has no account yet: sign up first (a sign-in would be refused first)
+    let st = await auth(fresh ? CW_AUTH_SIGNUP : CW_AUTH_SIGNIN);
+    if (st !== 200) st = await auth(fresh ? CW_AUTH_SIGNIN : CW_AUTH_SIGNUP);
     if (st !== 200) {   // the name was taken meanwhile: another
       store(GUEST_KEY, null);
       await this.guest();

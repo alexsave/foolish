@@ -22,6 +22,21 @@ function clockText(ms: number): string {
   return `${h ? h + ':' : ''}${mm}:${String(sec).padStart(2, '0')}`;
 }
 
+function evalText(score: number, mate: number): string {
+  if (mate) return `${mate > 0 ? '+' : '-'}M${Math.abs(mate)}`;
+  return `${score >= 0 ? '+' : ''}${(score / 100).toFixed(1)}`;
+}
+
+// The evaluation as a bar beside the board: white's share, mate filling it.
+function EvalBar({ e, flipped }: { e: { score: number; mate: number } | null; flipped: boolean }) {
+  const white = !e ? 50 : e.mate ? (e.mate > 0 ? 100 : 0) : 50 + 50 * (2 / (1 + Math.exp(-0.004 * e.score)) - 1);
+  return (
+    <div className={`evalbar ${flipped ? 'flip' : ''}`} aria-label="evaluation">
+      <div className="evalbar-w" style={{ height: `${white}%` }} />
+    </div>
+  );
+}
+
 function Player({ v, color, bottom }: { v: CvView_Snap; color: number; bottom: boolean }) {
   const name = color === 0 ? v.white : v.black;
   const ms = v.clockMs[color];
@@ -50,6 +65,7 @@ function Game() {
   const router = useRouter();
   const [flip, setFlip] = useState(false);
   const [shown, setShown] = useState<number | null>(null);   // null: the live position
+  const [analyse, setAnalyse] = useState(false);
   const movesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -80,6 +96,14 @@ function Game() {
   useEffect(() => { movesRef.current?.scrollTo({ top: movesRef.current.scrollHeight }); }, [ply]);
 
   const past = useMemo(() => (shown !== null && net.k ? net.k.boardAt(shown) : null), [shown, ply]);
+  // the analysis follows the position shown (asked again whenever it changes)
+  const at = shown ?? ply;
+  const canAnalyse = !!v && v.synced === 1 && (v.status !== CC_PLAYING || v.color < 0);
+  useEffect(() => {
+    if (!analyse || !canAnalyse) return;
+    const t = setTimeout(() => net.run((k) => k.evalAsk(at)), 250);   // stepping through moves asks once it stops
+    return () => clearTimeout(t);
+  }, [analyse, canAnalyse, at]);
 
   if (!id) return <p className="muted">No game here.</p>;
   if (!v || v.game !== id || !v.synced) return <p className="muted">Loading the game...</p>;
@@ -109,8 +133,12 @@ function Game() {
 
   return (
     <div className="game" data-my-turn={v.myTurn}>
+      <div className="board-row">
+      {analyse && canAnalyse && <EvalBar e={s.eval && s.eval.ply === at ? s.eval : null} flipped={flipped} />}
       <Board
         board={b.board} flipped={flipped} lastFrom={b.lastFrom} lastTo={b.lastTo} checkSq={b.checkSq}
+        bestFrom={analyse && canAnalyse && s.eval?.ply === at ? s.eval.bestFrom : undefined}
+        bestTo={analyse && canAnalyse && s.eval?.ply === at ? s.eval.bestTo : undefined}
         mover={mine ? v.color : undefined}
         targets={mine && !over && shown === null ? (from) => net.k!.targets(from, v.myTurn === 0) : null}
         isPromotion={(f, t) => net.k!.isPromotion(f, t)}
@@ -118,6 +146,7 @@ function Game() {
         premoveFrom={v.premoveFrom} premoveTo={v.premoveTo}
         onCancelPremove={() => net.run((k) => k.premoveCancel())}
       />
+      </div>
       <div className="side">
         <Player v={v} color={top} bottom={false} />
         <div className="panel" style={{ order: 2 }}>
@@ -132,7 +161,15 @@ function Game() {
             <button className="btn" onClick={() => step((shown ?? ply) + 1)} aria-label="forward">›</button>
             <button className="btn" onClick={() => setShown(null)} aria-label="last">»</button>
             <button className="btn" onClick={() => setFlip(!flip)} aria-label="flip">⇅</button>
+            {canAnalyse && <button className={`btn wide ${analyse ? 'primary' : ''}`} onClick={() => setAnalyse(!analyse)} aria-label="analysis">Analysis</button>}
           </div>
+          {analyse && canAnalyse && (
+            <div className="analysis">
+              {s.eval && s.eval.ply === at
+                ? <><b>{evalText(s.eval.score, s.eval.mate)}</b> <span className="muted">depth {s.eval.depth}</span><div className="line">{s.eval.line}</div></>
+                : <span className="muted">Thinking...</span>}
+            </div>
+          )}
           {over && (
             <div className="result">
               <div className="sc">{score(v.status, v.winner)}</div>

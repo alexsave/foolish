@@ -306,3 +306,38 @@ EXPORT(cv_top) const CvTop *cv_top(uint32_t n) {
     }
     return &TOP;
 }
+
+static CvEval EV;
+
+EXPORT(cv_eval_ask) void cv_eval_ask(int ply) { cc_client_eval(&C, ply); }
+
+/* The last answer, its line written out in SAN from its position. */
+EXPORT(cv_eval) const CvEval *cv_eval(void) {
+    memset(&EV, 0, sizeof EV);
+    const cw_eval *e = &C.eval;
+    EV.ply = e->ply;
+    EV.score = e->score;
+    EV.mate = e->mate;
+    EV.depth = e->depth;
+    EV.best_from = EV.best_to = CV_NO_SQ;
+    if (e->v != CW_V || e->ply > C.g.ply) return &EV;
+    chess_pos p, q;
+    ch_startpos(&p);
+    for (int i = 0; i < e->ply; i++) { ch_make(&p, C.g.moves[i], &q); p = q; }
+    if (p.key != e->key) return &EV;   /* an answer about another game's position */
+    size_t o = 0;
+    for (int i = 0; i < e->npv && i < CW_PV_MAX; i++) {
+        ch_move m = e->pv[i];
+        if (!ch_is_legal(&p, m)) break;
+        if (i == 0) { EV.best_from = (uint8_t)CH_FROM(m); EV.best_to = (uint8_t)CH_TO(m); }
+        char san[8];
+        int n = ch_san(&p, m, san);
+        if (o + (size_t)n + 2 >= sizeof EV.line) break;
+        if (o) EV.line[o++] = ' ';
+        memcpy(EV.line + o, san, (size_t)n);
+        o += (size_t)n;
+        ch_make(&p, m, &q);
+        p = q;
+    }
+    return &EV;
+}

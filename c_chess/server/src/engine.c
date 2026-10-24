@@ -186,6 +186,8 @@ static void finish(engine *g, ch_move best) {
     free(j);
 }
 
+static ch_move parse_uci_move(const char *s);
+
 static void line(engine *g, char *s) {
     if (!g->ready) {
         if (strcmp(s, "readyok") == 0) g->ready = true;
@@ -195,9 +197,18 @@ static void line(engine *g, char *s) {
     if (strncmp(s, "info ", 5) == 0) {
         char *t = strstr(s, " depth ");
         if (t) g->last.depth = atoi(t + 7);
-        if ((t = strstr(s, " score cp "))) g->last.score_cp = atoi(t + 10);
-        else if ((t = strstr(s, " score mate "))) { int m = atoi(t + 12); g->last.score_cp = m > 0 ? 30000 - 2 * m : -30000 - 2 * m; }
+        if (strstr(s, " lowerbound") || strstr(s, " upperbound")) return;   /* a bound, not a score */
+        if ((t = strstr(s, " score cp "))) { g->last.score_cp = atoi(t + 10); g->last.mate = 0; }
+        else if ((t = strstr(s, " score mate "))) { int m = atoi(t + 12); g->last.mate = m; g->last.score_cp = m > 0 ? 30000 - 2 * m : -30000 - 2 * m; }
         if ((t = strstr(s, " nodes "))) g->last.nodes = strtoull(t + 7, NULL, 10);
+        if ((t = strstr(s, " pv "))) {
+            g->last.npv = 0;
+            for (char *m = strtok(t + 4, " "); m && g->last.npv < 16; m = strtok(NULL, " ")) {
+                ch_move mv = parse_uci_move(m);
+                if (mv == CH_MOVE_NONE) break;
+                g->last.pv[g->last.npv++] = mv;
+            }
+        }
     } else if (strncmp(s, "bestmove ", 9) == 0) {
         char mv[8] = { 0 };
         sscanf(s + 9, "%7s", mv);
