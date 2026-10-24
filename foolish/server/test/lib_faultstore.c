@@ -219,6 +219,26 @@ static int w_user_import(cb_store *s, const cb_user_row *u) {
     if (take()) return atomic_load(&g_rc);
     return IN(s)->ops->user_import ? IN(s)->ops->user_import(IN(s), u) : CB_E_NOTIMPL;
 }
+static int w_identity_get(cb_store *s, int idp, const char *subject, cb_identity_row *out) {
+    if (take()) return atomic_load(&g_rc);
+    return IN(s)->ops->identity_get ? IN(s)->ops->identity_get(IN(s), idp, subject, out) : CB_E_NOTIMPL;
+}
+static int w_identity_put(cb_store *s, const cb_identity_row *r, bool fresh) {
+    if (take()) return atomic_load(&g_rc);
+    return IN(s)->ops->identity_put ? IN(s)->ops->identity_put(IN(s), r, fresh) : CB_E_NOTIMPL;
+}
+static int w_identities_of(cb_store *s, const char *user_id, cb_identity_fn fn, void *ud) {
+    if (take()) return atomic_load(&g_rc);
+    return IN(s)->ops->identities_of ? IN(s)->ops->identities_of(IN(s), user_id, fn, ud) : CB_E_NOTIMPL;
+}
+static int w_user_create_identity(cb_store *s, const cb_user_row *u, const cb_identity_row *r) {
+    if (take()) return atomic_load(&g_rc);
+    return IN(s)->ops->user_create_identity ? IN(s)->ops->user_create_identity(IN(s), u, r) : CB_E_NOTIMPL;
+}
+static int w_once_claim(cb_store *s, const char *key, int64_t expires_at, int64_t now_ms) {
+    if (take()) return atomic_load(&g_rc);
+    return IN(s)->ops->once_claim ? IN(s)->ops->once_claim(IN(s), key, expires_at, now_ms) : CB_E_NOTIMPL;
+}
 static int w_rating_import(cb_store *s, const cb_rating_row *r) {
     if (take()) return atomic_load(&g_rc);
     return cb_rows_of(IN(s))->rating_import ? cb_rows_of(IN(s))->rating_import(IN(s), r) : CB_E_NOTIMPL;
@@ -301,6 +321,11 @@ static const cb_store_ops FAULT_OPS = {
     .admin_browse = w_admin_browse,
     .admin_query = w_admin_query,
     .user_import = w_user_import,
+    .identity_get = w_identity_get,
+    .identity_put = w_identity_put,
+    .identities_of = w_identities_of,
+    .user_create_identity = w_user_create_identity,
+    .once_claim = w_once_claim,
     .item_get = w_item_get,
     .item_write = w_item_write,
     .item_txn = w_item_txn,
@@ -347,10 +372,10 @@ static const cb_store_app FAULT_APP = { .rows = &FAULT_ROWS };
 // Every operation of store.h and of rows_foolish.h is wrapped above. An
 // operation added there and not here would be left NULL (CB_E_NOTIMPL to
 // whatever calls it through this store), so each table's size is held to its
-// count: store.h's name, close and 28 operations; rows_foolish.h's 29. The
+// count: store.h's name, close and 33 operations; rows_foolish.h's 29. The
 // account hooks are the wrapped store's (its user_create and user_delete run
 // them), so this store has none of its own.
-_Static_assert(sizeof(cb_store_ops) == (size_t)(28 + 2) * sizeof(void *),
+_Static_assert(sizeof(cb_store_ops) == (size_t)(33 + 2) * sizeof(void *),
                "store.h has an operation lib_faultstore.c does not wrap: add its w_ wrapper and its line in FAULT_OPS");
 _Static_assert(sizeof(cb_rows_ops) == (size_t)29 * sizeof(void *),
                "rows_foolish.h has an operation lib_faultstore.c does not wrap: add its w_ wrapper and its line in FAULT_ROWS");
