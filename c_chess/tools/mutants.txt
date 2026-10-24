@@ -44,3 +44,36 @@ c/src/client.c ::: if (f > 0) out |= 1ULL << (from + fwd - 1); ::: (void)0; ::: 
 c/src/client.c ::: else if (s.ply > c->g.ply + 1) { resync(c); return; } ::: else if (s.ply > c->g.ply + 1) { return; } ::: build/test/unit_client ::: build/test/unit_client
 server/src/web.c ::: if (len == 0 || p[0] != '/' || dot_segment(p, len)) { ::: if (len == 0 || strstr(p, "..") || dot_segment(p, len)) { ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/web.c ::: if (p[i] == '.' && p[i + 1] == '.' && (i == 0 || p[i - 1] == '/') && (i + 2 == len || p[i + 2] == '/')) return true; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+# kernel: puzzles
+c/src/puzzle.c ::: return ch_in_check(&q) && !ch_has_legal(&q); ::: return ch_in_check(&q); ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: return ch_in_check(&q) && !ch_has_legal(&q); ::: return false; ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: if (!ch_is_legal(p, played)) return false; ::: (void)0; ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: if (!ch_is_legal(&a, p->moves[i])) return -1; ::: (void)0; ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: if (p->n < 2 || p->n > CP_MOVES) return -1; ::: if (p->n < 2) return -1; ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: if (p->n < 2 || p->n > CP_MOVES) return -1; ::: if (p->n > CP_MOVES) return -1; ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: if (!cp_accepts(&s->pos, s->p.moves[s->at], m)) { s->state = CP_FAILED; return s->state; } ::: if (!cp_accepts(&s->pos, s->p.moves[s->at], m)) { s->state = CP_FAILED; ch_make(&s->pos, m, &s->pos); return s->state; } ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: s->last[1] = s->p.moves[s->at + 1];\n    ch_make(&s->pos, s->last[1], &q);\n    s->pos = q; ::: s->last[1] = s->p.moves[s->at + 1]; ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: if (m != s->p.moves[s->at] || s->at + 1 >= s->p.n) { ::: if (s->at + 1 >= s->p.n) { ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: if (s->state != CP_SOLVING) return s->state; ::: (void)0; ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: if (s->at < 1 || s->at >= s->p.n) return false; ::: if (s->at < 1) return false; ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: *played = s->p.moves[s->at++]; ::: *played = s->p.moves[s->at]; ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+c/src/puzzle.c ::: ch_make(&s->pos, s->p.moves[s->at], &q);\n    s->pos = q;\n    *played ::: (void)q;\n    *played ::: build/test/unit_puzzle ::: build/test/unit_puzzle
+# server: puzzles
+server/src/puzzles.c ::: if (cp_begin(&s, &q) != 0) { bad++; continue; } ::: (void)s; (void)bad; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: if (find(q.id) >= 0) { dup++; continue; } ::: (void)0; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: qsort(Z.order, Z.n, sizeof *Z.order, by_rating); ::: (void)by_rating; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: while (at > 0 && Z.r[Z.order[at - 1]].rating > Z.r[i].rating) { ::: while (0) { ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: while (at + 1 < Z.n && Z.r[Z.order[at + 1]].rating < Z.r[i].rating) { ::: while (0) { ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: if (Z.r[Z.order[mid]].rating < p->pz.rating) lo = mid + 1; else hi = mid; ::: if (Z.r[Z.order[mid]].rating > p->pz.rating) lo = mid + 1; else hi = mid; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: p->pz_seen[p->pz_seen_at++ & 15] = Z.p[i].id; ::: (void)0; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: p->pz_open = 0;\n    out->before ::: out->before ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: cc_rate(&p->pz, &z, win ? 1.0 : 0.0); ::: cc_rate(&p->pz, &z, 1.0); ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: set_rating((uint32_t)i, &z);\n    Z.plays[i]++; ::: Z.plays[i]++; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: if (win) p->pz_solved++; ::: p->pz_solved++; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: Z.plays[i] = plays;\n    set_rating((uint32_t)i, r); ::: Z.plays[i] = plays; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: if (id != p->pz_open || i < 0) return false; ::: if (i < 0) return false; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: if (!seen(p, Z.p[k].id)) i = k; ::: (void)seen; i = k; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
+server/src/puzzles.c ::: if (at >= Z.n) at = Z.n - 1; ::: (void)0; ::: build/asan/test/unit_puzzles ::: build/asan/test/unit_puzzles
+server/src/puzzles.c ::: cc_journal_puzzle(id, &z, Z.plays[i]); ::: (void)0; ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
+server/src/journal.c ::: p.pz_tried = (uint32_t)sqlite3_column_int64(st, 13); ::: (void)0; ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
+server/src/journal.c ::: sqlite3_bind_double(st, 11, p->pz.rating); ::: sqlite3_bind_double(st, 11, 1500); ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench

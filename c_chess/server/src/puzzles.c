@@ -101,6 +101,12 @@ out:
 
 uint32_t cc_puzzles_count(void) { return Z.n; }
 
+bool cc_puzzles_ordered(void) {
+    for (uint32_t i = 0; i + 1 < Z.n; i++)
+        if (Z.r[Z.order[i]].rating > Z.r[Z.order[i + 1]].rating || Z.pos[Z.order[i]] != i) return false;
+    return true;
+}
+
 /* After puzzle i's rating moved: back into its place in the order. */
 static void resort(uint32_t i) {
     uint32_t at = Z.pos[i];
@@ -160,7 +166,7 @@ const cp_puzzle *cc_puzzle_pick(cc_player *p, uint32_t *plays, uint32_t seed) {
 
 bool cc_puzzle_result(cc_player *p, uint32_t id, bool win, cw_puzzle_done *out) {
     int64_t i = find(id);
-    if (!id || id != p->pz_open || i < 0) return false;
+    if (id != p->pz_open || i < 0) return false;   /* no puzzle has id 0, so none open can't match */
     p->pz_open = 0;
     out->before = (int16_t)cc_rating_int(&p->pz);
     g2_player z = Z.r[i];

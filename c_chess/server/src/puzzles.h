@@ -19,6 +19,8 @@ void cc_puzzles_free(void);
 /* Recovery: a puzzle's journaled rating (ignored when the file no longer has it). */
 void cc_puzzle_recovered(uint32_t id, const g2_player *r, uint32_t plays);
 uint32_t cc_puzzles_count(void);
+/* For the tests: whether the order by rating is in order. */
+bool cc_puzzles_ordered(void);
 
 /* ---- under cc_lock ---- */
 /* The puzzle to hand p: near its puzzle rating, not among the last it saw; NULL when none. */

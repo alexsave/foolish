@@ -50,6 +50,12 @@ static void solves(void) {
     while (k < CP_MOVES && cp_reveal(&s, &shown[k])) k++;
     CHECK(k == 3 && shown[0] == p.moves[1] && shown[1] == p.moves[2] && shown[2] == p.moves[3], "shown %d", k);
     CHECK(s.state == CP_FAILED, "a shown line stays failed");
+    {
+        chess_pos a, b;
+        ch_from_fen(&a, p.fen);
+        for (int i = 0; i < p.n; i++) { ch_make(&a, p.moves[i], &b); a = b; }
+        CHECK(s.pos.key == a.key, "the board after the shown line is not the line's end");
+    }
     cp_begin(&s, &p);
     cp_try(&s, u(&s.pos, "d7d5"));
     CHECK(cp_reveal(&s, &shown[0]) && shown[0] == p.moves[3], "after a right move, the next is the solver's");

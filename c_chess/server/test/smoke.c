@@ -1,10 +1,11 @@
 // smoke.c - the real server, played over its real socket by the real client (c/src/client.c):
 // accounts, seeks and the lobby, a whole game to mate with a spectator, the ratings, profile,
 // history and PGN, a refused move, a rematch, a restart in the middle of a game, a challenge link,
-// an abort and a flag.
+// an abort and a flag, and puzzles handed out, answered and rated, across a restart.
 //
 //   build/test/smoke build/c_chess build/chessbench
 #include "client.h"
+#include "puzzle.h"
 #include "t.h"
 #include "lib_client.h"
 #include "lib_proc.h"
@@ -28,15 +29,20 @@ static int64_t now_ms(void) {
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+static char g_puzzles[600];   // CC_PUZZLES=<file>, once the puzzles test has written one
+static char g_puzzles_line[512];
+
 static void start_server(void) {
     char line[512];
     static char envdb[512];
     snprintf(envdb, sizeof envdb, "CBASE_DB=%s/cbase.sqlite", g_dbdir);
     char *env[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", envdb, "CBASE_JWT_SECRET=smoke-secret-smoke-secret-smoke-secret",
-                    "CBASE_ADMIN_TOKEN=smoke-admin-token-0123456789abcdef0123", "CBASE_LOG_LEVEL=info", NULL };
+                    "CBASE_ADMIN_TOKEN=smoke-admin-token-0123456789abcdef0123", "CBASE_LOG_LEVEL=info",
+                    g_puzzles[0] ? g_puzzles : NULL, NULL };
     char *argv[] = { (char *)g_bin, "serve", NULL };
     g_port = 0;
     T_EQ_INT(tp_start(&g_child, argv, env), 0);
+    if (g_puzzles[0]) T_EQ_INT(tp_wait_line(&g_child, "puzzles:", 20000, g_puzzles_line, sizeof g_puzzles_line), 0);
     T_EQ_INT(tp_wait_line(&g_child, "listening on", 20000, line, sizeof line), 0);
     const char *colon = strrchr(line, ':');
     g_port = colon ? atoi(colon + 1) : 0;
@@ -567,6 +573,115 @@ static void stats_and_site(void) {
     tc_response_free(&r);
 }
 
+// A puzzle record from a FEN and a UCI line (the generator's file format, puzzle.h).
+static cp_puzzle puzzle_of(const char *fen, const char *line) {
+    cp_puzzle p;
+    memset(&p, 0, sizeof p);
+    snprintf(p.fen, sizeof p.fen, "%s", fen);
+    chess_pos a, b;
+    T_EQ_INT(ch_from_fen(&a, fen), 0);
+    char buf[256];
+    snprintf(buf, sizeof buf, "%s", line);
+    for (char *t = strtok(buf, " "); t; t = strtok(NULL, " ")) {
+        ch_move m = ch_parse_uci(&a, t, strlen(t));
+        p.moves[p.n++] = m;
+        if (m != CH_MOVE_NONE) { ch_make(&a, m, &b); a = b; }
+    }
+    p.rating = 1500;
+    p.rd = 350;
+    return p;
+}
+
+static bool puzzle_next(player *p, cw_puzzle *out) {
+    cc_client_read(&p->c, "/c/puzzle/next", 90);
+    p->seen = 0;
+    if (!pump(p, CC_EV_READ, 3000) || p->c.read_status != 200 || p->c.read_len != sizeof *out) return false;
+    memcpy(out, p->c.read_buf, sizeof *out);
+    return true;
+}
+
+static int puzzle_answer(player *p, uint32_t id, int win, cw_puzzle_done *out) {
+    cw_puzzle_req q = { id, (uint8_t)win, { 0, 0, 0 } };
+    cc_client_post(&p->c, "/c/puzzle/result", &q, sizeof q, 91);
+    p->seen = 0;
+    if (!pump(p, CC_EV_READ, 3000)) return -1;
+    if (p->c.read_status == 200 && p->c.read_len == sizeof *out) memcpy(out, p->c.read_buf, sizeof *out);
+    return p->c.read_status;
+}
+
+static void puzzles(void) {
+    // before any file: none to hand out
+    close(A.fd);
+    connect_ws(&A);
+    cw_puzzle z;
+    T_CHECK(!puzzle_next(&A, &z));
+    T_EQ_INT(A.c.read_status, 404);
+    // a file of three, an illegal line and a repeat of the first
+    cp_puzzle recs[5] = {
+        puzzle_of("r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", "f3g5 d7d5 e4d5 f6d5"),
+        puzzle_of("6k1/p4ppp/8/8/8/8/5PPP/3RR1K1 b - - 0 1", "a7a6 d1d8"),
+        puzzle_of("4k3/8/8/8/8/8/8/3QK3 b - - 0 1", "e8f8 d1d7 f8g8 d7e8"),
+        puzzle_of("6k1/p4ppp/8/8/8/8/5PPP/3RR1K1 b - - 0 1", "a7a6 d1d8"),
+        puzzle_of("6k1/p4ppp/8/8/8/8/5PPP/3RR1K1 b - - 0 1", "a7a6 d1d8"),
+    };
+    recs[3].moves[1] = CH_MOVE(3, 63, 0);   // Rd1-h8: no such move
+    char path[500];
+    snprintf(path, sizeof path, "%s/puzzles.bin", g_dbdir);
+    FILE *f = fopen(path, "wb");
+    T_CHECK(f != NULL);
+    uint32_t n = 5;
+    fwrite(PUZZLE_FILE_MAGIC, 8, 1, f);
+    fwrite(&n, 4, 1, f);
+    fwrite(recs, sizeof recs, 1, f);
+    fclose(f);
+    snprintf(g_puzzles, sizeof g_puzzles, "CC_PUZZLES=%s", path);
+    close(A.fd); close(C.fd);
+    T_EQ_INT(tp_stop(&g_child, SIGTERM, 10000), 0);
+    start_server();
+    T_CHECK(strstr(g_puzzles_line, "puzzles: 3 from") != NULL && strstr(g_puzzles_line, "(1 refused, 1 repeated)") != NULL);
+    connect_ws(&A);
+    // one handed out, at the new puzzle rating
+    T_CHECK(puzzle_next(&A, &z));
+    T_EQ_INT(z.rating, 1500);
+    T_EQ_INT((int)z.tried, 0);
+    cp_solve s;
+    T_EQ_INT(cp_begin(&s, &z.p), 0);
+    // only that one may be answered, and once
+    cw_puzzle_done d;
+    T_EQ_INT(puzzle_answer(&A, z.p.id ^ 1, 1, &d), 409);
+    T_EQ_INT(puzzle_answer(&A, z.p.id, 1, &d), 200);
+    T_EQ_INT(d.before, 1500);
+    T_CHECK(d.after > 1500);
+    T_CHECK(d.puzzle < 1500);   // the puzzle lost
+    T_EQ_INT((int)d.tried, 1);
+    T_EQ_INT((int)d.solved, 1);
+    T_EQ_INT(puzzle_answer(&A, z.p.id, 1, &d), 409);
+    // the next is another one (the last ones seen are not handed out again while others are near)
+    cw_puzzle z2;
+    T_CHECK(puzzle_next(&A, &z2));
+    T_CHECK(z2.p.id != z.p.id);
+    T_EQ_INT(z2.rating, d.after);
+    cw_puzzle_done d2;
+    T_EQ_INT(puzzle_answer(&A, z2.p.id, 0, &d2), 200);
+    T_CHECK(d2.after < d.after);
+    T_EQ_INT((int)d2.tried, 2);
+    T_EQ_INT((int)d2.solved, 1);
+    // a restart keeps both ratings
+    close(A.fd);
+    T_EQ_INT(tp_stop(&g_child, SIGTERM, 10000), 0);
+    start_server();
+    connect_ws(&A);
+    bool found = false;
+    for (int i = 0; i < 30 && !found; i++) {
+        cw_puzzle y;
+        T_CHECK(puzzle_next(&A, &y));
+        T_EQ_INT(y.rating, d2.after);
+        T_EQ_INT((int)y.tried, 2);
+        if (y.p.id == z.p.id) { found = true; T_EQ_INT(y.p.rating, d.puzzle); T_EQ_INT((int)y.plays, 1); }
+    }
+    T_CHECK(found);
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: smoke <c_chess>\n"); return 2; }
     signal(SIGPIPE, SIG_IGN);
@@ -583,6 +698,7 @@ int main(int argc, char **argv) {
     T_RUN(stats_and_site);
     T_RUN(no_engine);
     T_RUN(site);
+    T_RUN(puzzles);
     if (getenv("CC_TEST_ENGINE")) with_engine(getenv("CC_TEST_ENGINE"));
     tp_stop(&g_child, SIGTERM, 10000);
     return T_DONE();
