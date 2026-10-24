@@ -492,15 +492,15 @@ static void h_stats(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     pthread_mutex_lock(&cc_lock);
     uint32_t live = cc_games_live();
     pthread_mutex_unlock(&cc_lock);
-    uint64_t es, en, aa, ar;
+    uint64_t es, en, aa, ar, ah;
     uint32_t eq, eb;
     cc_engine_counts(&es, &en, &eq, &eb);
-    cc_ai_counts(&aa, &ar);
+    cc_ai_counts(&aa, &ar, &ah);
     char out[512];
     snprintf(out, sizeof out, "games_live %u\njournal_queued %llu\njournal_committed %llu\njournal_commits %llu\n"
-             "engine_searches %llu\nengine_nodes %llu\nengine_queued %u\nengine_busy %u\nai_asked %llu\nai_refused %llu\n", live,
+             "engine_searches %llu\nengine_nodes %llu\nengine_queued %u\nengine_busy %u\nai_asked %llu\nai_refused %llu\nai_cache_hits %llu\n", live,
              (unsigned long long)q, (unsigned long long)c, (unsigned long long)k, (unsigned long long)es, (unsigned long long)en, eq, eb,
-             (unsigned long long)aa, (unsigned long long)ar);
+             (unsigned long long)aa, (unsigned long long)ar, (unsigned long long)ah);
     cb_res_text(res, 200, out);
 }
 

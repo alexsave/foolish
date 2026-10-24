@@ -89,6 +89,11 @@ static int spawn(engine *g) {
         if (devnull >= 0) dup2(devnull, 2);
         for (int fd = 3; fd < 1024; fd++) close(fd);
         setpriority(PRIO_PROCESS, 0, 19);   /* the lowest: the move path never waits for an engine */
+#ifdef __APPLE__
+        /* nice is not enough on macOS (8 engines at nice 19 took the move path's p99 from 0.8 to
+         * 22 ms): background QoS keeps the engines on the efficiency cores and off the loop's */
+        setpriority(PRIO_DARWIN_PROCESS, 0, PRIO_DARWIN_BG);
+#endif
 #ifdef __linux__
         const char *cpus = getenv("CC_ENGINE_CPUS");   /* "4-7": the background CPU set */
         if (cpus && *cpus) {

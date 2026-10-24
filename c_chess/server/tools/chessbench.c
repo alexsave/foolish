@@ -52,7 +52,7 @@ static struct {
     int port, bots, base, inc, think, spread, watchers, duration, warmup, connect_rate, rated;
     pid_t pid;
     bool forever, quiet, tls, resume;
-    int handshakes, threads;
+    int handshakes, threads, ai;
     const char *accounts, *prefix, *groups;
 } O = { .port = 8900, .bots = 100, .base = 180, .inc = 2, .think = 200, .spread = 200, .duration = 60, .warmup = 10,
         .connect_rate = 200, .rated = 1, .resume = true, .threads = 4, .accounts = "build/bench_accounts.bin", .prefix = "bot" };
@@ -170,6 +170,7 @@ static void bot_flush(bot *b) {
 
 static void seek(bot *b) {
     if (stopping) return;
+    if (O.ai) { cc_client_ai(&b->c, O.base, O.inc, O.ai, 2); bot_flush(b); return; }   /* --ai L: against the computer */
     cc_client_seek(&b->c, O.base, O.inc, O.rated);
     bot_flush(b);
 }
@@ -467,7 +468,9 @@ static bool proc_usage(pid_t pid, uint64_t *rss, uint64_t *user_us, uint64_t *sy
     /* the times are mach absolute time units, not nanoseconds (125/3 ns each on Apple silicon) */
     static mach_timebase_info_data_t tb;
     if (!tb.denom) mach_timebase_info(&tb);
-    *rss = ri.ri_resident_size;
+    /* the physical footprint (dirty memory, compressed included), not the resident size: macOS
+     * compresses and purges idle pages, so a resident size can fall while memory is in use */
+    *rss = ri.ri_phys_footprint;
     *user_us = ri.ri_user_time * tb.numer / tb.denom / 1000;
     *sys_us = ri.ri_system_time * tb.numer / tb.denom / 1000;
     return true;
@@ -588,6 +591,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--forever")) O.forever = true;
         else if (!strcmp(a, "--quiet")) O.quiet = true;
         else if (!strcmp(a, "--tls")) O.tls = true;
+        else if (!strcmp(a, "--ai")) O.ai = atoi(v), i++;
         else if (!strcmp(a, "--groups")) O.groups = v, i++;   /* TLS key exchange groups, e.g. X25519 (default: OpenSSL's, X25519MLKEM768 first) */
         else if (!strcmp(a, "--resume")) O.resume = atoi(v) != 0, i++;
         else if (!strcmp(a, "--handshakes")) O.handshakes = atoi(v), i++;

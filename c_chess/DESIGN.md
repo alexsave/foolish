@@ -113,6 +113,39 @@ Reading it, honestly:
 - **Memory is the real cost: about 18 KB more per socket** (OpenSSL's connection, its record layer and its buffers), so 10,000 sockets take 230 MB instead of 30 MB. At 150,000 sockets that is 3.4 GB on one box; shrinking OpenSSL's per-connection state (or a lighter TLS stack) is the next lever if memory, not CPU, becomes the limit.
 - The latency at low load rises by about 0.1 ms at the median and 0.3 to 1 ms at p99.
 
+## 3.4 Stockfish on c_base
+
+**The choice: Stockfish as child processes speaking UCI over pipes** (`server/src/engine.c`), a fixed pool of them run by one manager thread with `poll()`, in front of them a bounded queue (refusal past it, not growth), each search's answer handed back under the state's lock (`server/src/ai.c`).
+Built from the official sf_19 tag with its own makefile (scratchpad, not this repository): 1.43 million nodes a second on one M1 performance core.
+
+Why not in-process, measured:
+
+- **Memory does not favour it.** Stockfish 19 keeps its 110 MB network in system-wide shared memory, so a second process does not load a second copy: `vmmap` of a running engine shows the network as a clean shared mapping and about 45 MB of its own dirty memory (16 MB of it the hash table, the rest search state; on macOS a further 110 MB of freed malloc pages stay counted until the system needs them). In-process would share the same network and still need a hash and search state per searcher.
+- **Isolation favours the process.** A crash or a stuck search is a restarted child; in-process it is the server. The pipe costs a few microseconds per search, against searches of milliseconds to seconds.
+- **Licensing is not a factor** (Alex: c_chess may be GPLv3); a subprocess keeps c_chess's own code separate anyway.
+
+**The move path must not feel the engines.** Bench A (2,000 sockets, 500 moves a second) with Stockfish searching flat out on the same 8-core machine:
+
+| engines busy | how they run | move round trip p50 / p99 / p999 |
+|---|---|---|
+| none | | 0.18 / 0.74 / 4.4 ms |
+| 8 | nice 19 | 21.7 ms at p99 |
+| 6 | nice 19 | 0.95 / 13.9 / 20.3 ms |
+| 4 | nice 19 | 0.23 / 2.9 / 9.2 ms |
+| 8 | macOS background QoS (`PRIO_DARWIN_BG`: the efficiency cores) | 0.22 / 0.80 / 4.0 ms |
+| 6 | background QoS | 0.21 / 0.73 / 2.7 ms |
+| 4 | background QoS | 0.22 / 0.70 / 1.3 ms |
+| 8, the server's own pool, 24 bots playing level 8 | background QoS | 0.22 / 0.88 / 1.9 ms |
+| 4, the server's own pool, 16 bots playing level 8 | background QoS | 0.24 / 0.88 / 2.2 ms |
+
+On macOS `nice` does not protect the loop; background QoS does, because it keeps the engines off the performance cores the loop runs on, so the engines now set it on themselves.
+The price is engine speed: an efficiency core does 258,000 nodes a second, a fifth of a performance core, and four of them share their cluster (217,000 each).
+That is why a level is a node budget, not a time: level 8 is a million nodes whatever core it lands on (0.7 s on a performance core, 4 to 5 s on an efficiency core), and a 5 s cap only bounds a starved search.
+On Linux the same isolation is the CPU set: the engines pin themselves to `CC_ENGINE_CPUS` (c_base's CPU knob keeps the loop on its own core) and run at full speed; this has not been measured on Linux yet.
+
+**The eval cache.** A position answered at a level is answered again from memory (Zobrist key mixed with the level, 2^20 slots, 16 MB), so the openings that every game passes through cost one search.
+Its hits are in `/c/stats` (`ai_cache_hits`).
+
 ## 4. The page
 
 Measured by `scratchpad/cc/perf.mjs` (Chrome over CDP, cold cache, the lobby; "ready" is the socket accepted, which on a first visit includes making the guest account, a bcrypt on the server):

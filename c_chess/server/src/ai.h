@@ -15,7 +15,7 @@ int        cc_ai_level(const cc_player *p);
  * flight for this ply, one is queued; its answer is played when it arrives (if the game is still
  * at that ply). */
 void       cc_ai_maybe_move(cc_live *l, int64_t now);
-/* Searches asked and refused (a full queue), for /c/stats. */
-void       cc_ai_counts(uint64_t *asked, uint64_t *refused);
+/* Searches asked, refused (a full queue), and moves answered from the eval cache, for /c/stats. */
+void       cc_ai_counts(uint64_t *asked, uint64_t *refused, uint64_t *cache_hits);
 
 #endif
