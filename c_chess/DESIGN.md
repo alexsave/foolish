@@ -146,6 +146,10 @@ On Linux the same isolation is the CPU set: the engines pin themselves to `CC_EN
 **The eval cache.** A position answered at a level is answered again from memory (Zobrist key mixed with the level, 2^20 slots, 16 MB), so the openings that every game passes through cost one search.
 Its hits are in `/c/stats` (`ai_cache_hits`).
 
+**The analysis board is the server's engine, not the browser's.** Stockfish's own makefile has a `wasm32` target, but it builds with `NNUE_EMBEDDING_OFF`: the page would fetch Stockfish 19's network at run time, and that network is 110 MB, against a page of 172 KB.
+The server's engines and the eval cache answer instead: the page sends the moves that reach the position it shows (`POST /c/eval` on the socket), the answer (white's score, mate, depth, the best line) comes back as a 48-byte push, and every position asked once is answered from memory after that.
+A browser engine stays the right design for unlimited private analysis once a small network can be used (Stockfish 17's small net was about 6 MB); that is a later step.
+
 ## 4. The page
 
 Measured by `scratchpad/cc/perf.mjs` (Chrome over CDP, cold cache, the lobby; "ready" is the socket accepted, which on a first visit includes making the guest account, a bcrypt on the server):
