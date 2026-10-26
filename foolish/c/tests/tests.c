@@ -11527,6 +11527,13 @@ static void test_table_leave_and_bots(void) {
     CHECK(table_leave(&tb, RS("c"), RS("c")) == TABLE_OK && tb.r.n == 1, "a player leaves");
     CHECK(table_leave(&tb, RS("a"), RS("a")) == TABLE_EMPTY && tb.r.n == 0 && tb_game.num_players == 0,
           "the last seat leaving empties the table");
+    // the last human leaving a lobby that still seats bots empties it too: nobody is left to deal it
+    tb_lobby();
+    CHECK(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed) == TABLE_OK
+          && table_leave(&tb, RS("b"), RS("b")) == TABLE_OK && table_leave(&tb, RS("c"), RS("c")) == TABLE_OK
+          && tb.r.n == 2, "two humans leave; a human and a bot stay");
+    CHECK(table_leave(&tb, RS("a"), RS("a")) == TABLE_EMPTY && tb.r.n == 1 && tb_game.status == GAME_STATUS_WAITING,
+          "the last human leaving a lobby of bots empties the table, undealt");
 
     // a bot that makes every seat ready deals, with the roster change on the push
     tb_lobby();

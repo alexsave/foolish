@@ -614,11 +614,13 @@ int table_join(Table *t, const char *actor_id, int id_len, const char *name, int
     return TABLE_OK;
 }
 
-// Removes a seat from both halves of the table.
+// Removes a seat from both halves of the table. A lobby with no human left is
+// empty even with bots seated: nobody can ready, edit or deal it, so the host
+// deletes the row (a bots-only lobby used to linger, dealt by no one).
 static int unseat(Table *t, int seat) {
     roster_seat_remove(&t->r, seat);
     game_lobby_unseat(t->g, seat);
-    if (t->r.n == 0) return TABLE_EMPTY;
+    if (roster_bot_mask(&t->r) == (1u << t->r.n) - 1u) return TABLE_EMPTY;
     lobby_edit(t, 1);
     return TABLE_OK;
 }
