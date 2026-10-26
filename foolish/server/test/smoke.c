@@ -911,6 +911,37 @@ static void kills_lose_no_acknowledged_move(void) {
     free(sc);
 }
 
+// The last human leaving a lobby that still seats a bot deletes it, as a client sees it: a lobby
+// of bots alone can never be readied, edited or dealt, so a kept row would linger for good.
+static void a_lobby_left_to_its_bots_is_deleted(void) {
+    smoke_user L;
+    T_EQ_INT(signup(&L, "SMOKEL"), 0);
+    T_EQ_INT(call(&L, NC_DO_CREATE, NULL, NULL, 0, -1), 200);
+    smoke_client *sc = calloc(1, sizeof *sc);
+    client_init(&sc->c, &sc->slot);
+    T_CHECK(client_adopt_envelope(&sc->c, g_body, g_len) >= 0);
+    char gid[32];
+    snprintf(gid, sizeof gid, "%.*s", (int)sc->c.gid_len, sc->c.gid);
+    cb_buf env;
+    cb_buf_init(&env);
+    T_EQ_INT(ask(&L, ASK_ADD_BOT, gid, &env), 200);
+    TableAsk a;
+    memset(&a, 0, sizeof a);
+    a.kind = ASK_EXIT;
+    a.gid_len = (uint8_t)strlen(gid);
+    memcpy(a.gid, gid, a.gid_len);
+    a.player_len = (uint8_t)strlen(L.id);
+    memcpy(a.player, L.id, a.player_len);
+    uint8_t body[ASK_BYTES_MAX];
+    int n = ask_encode(&a, body, sizeof body);
+    T_EQ_INT(n > 0 ? call(&L, NC_DO_ASK, NULL, body, n, -1) : -1, 200);
+    int64_t seen = -1;
+    T_CHECK(!game_view(&L, gid, &seen, NULL));   // the row is gone: no view for anybody
+    T_EQ_INT(call(&L, NC_DO_OPEN_GAME, gid, NULL, 0, -1), 404);
+    cb_buf_free(&env);
+    free(sc);
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) { fprintf(stderr, "usage: smoke <path to cbase>\n"); return 2; }
     g_bin = argv[1];
@@ -919,6 +950,7 @@ int main(int argc, char **argv) {
     if (g_port > 0) T_RUN(unfurl);
     const char *game = getenv("CBASE_SMOKE_GAME");
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(an_idle_human_turn_is_never_kicked);
+    if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_lobby_left_to_its_bots_is_deleted);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(game_scenario);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(kills_lose_no_acknowledged_move);
     else printf("NOTE smoke: the game scenario is off (CBASE_SMOKE_GAME=0)\n");
