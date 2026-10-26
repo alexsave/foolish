@@ -98,7 +98,7 @@ static const char *const BOT_ID[2] = { "b0000000-0000-4000-8000-000000000001", "
 
 static cb_ctx g_ctx;
 // The app: only its account domain (the platform's /v1/auth reads it); no jobs, so a kick runs nothing.
-static const cb_app g_app = { .name = "fz-sequence", .account_domain = "foolish.cards" };
+static const cb_app g_main = { .name = "fz-sequence", .account_domain = "foolish.cards" };
 static cb_config g_cfg;
 static cb_store *g_store;
 static const cb_store_ops *g_real;      // the store's ops
@@ -964,7 +964,7 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
     g_ctx.rt = &g_rt;
     g_ctx.job_start = fz_kick;
     g_ctx.router = cb_router_new();
-    g_ctx.app = &g_app;
+    g_ctx.app = &g_main;
     if (cb_functions_routes(&g_ctx) != CB_OK || cb_auth_routes(&g_ctx) != CB_OK || cb_v1_routes(&g_ctx) != CB_OK) abort();
     cb_auth_now = fz_now;
     cb_app_now = fz_now;
