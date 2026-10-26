@@ -41,7 +41,7 @@
 #define TABLE_REJECTED        1   // the kernel refused the move; Table.reject holds the ENGINE_REJECT_*
 #define TABLE_MOOT            2   // a no-op: a move on a game already over, a ready on a game already dealt
 #define TABLE_STALE_ROUND     3   // the move was composed before the current round began
-#define TABLE_EMPTY           4   // the last seat left the lobby: the host deletes the row
+#define TABLE_EMPTY           4   // the last human left the lobby (bots or not): the host deletes the row
 #define TABLE_E_STATE_VERSION (-101)  // the state blob's format byte is not one this kernel reads
 #define TABLE_E_ROSTER        (-102)  // the durable roster was refused; Table.detail holds the ROSTER_E_*
 #define TABLE_E_MISMATCH      (-103)  // the state's seat count is not the roster's
@@ -271,7 +271,7 @@ bool table_bots_need_logs(const Table *t);
 int table_create(Table *t, const char *actor_id, int id_len, const char *name, int name_len);
 int table_join(Table *t, const char *actor_id, int id_len, const char *name, int name_len);
 // Removes the human `target_id` (the actor themself, or another human). The
-// last seat leaving returns TABLE_EMPTY; the host deletes the row.
+// last human leaving returns TABLE_EMPTY, bots seated or not; the host deletes the row.
 int table_leave(Table *t, const char *actor_id, int id_len, const char *target_id, int target_len);
 // Seats a bot READY; deals when that makes every seat ready.
 int table_add_bot(Table *t, const char *actor_id, int id_len, const char *bot_id, int bot_len,
