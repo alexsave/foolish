@@ -143,7 +143,7 @@ server/src/arenas.c ::: if (a->status == CC_ARENA_RUNNING && wall >= a->ends_at)
 server/src/arenas.c ::: *ap = a->pl[--a->n];\n        return CW_E_NONE; ::: ap->withdrawn = 1;\n        return CW_E_NONE; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/arenas.c ::: if (ap) ap->withdrawn = 0; ::: if (ap) (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/arenas.c ::: if (mine >= CC_ARENA_PER_CREATOR) return CW_E_ARENA_TOO_MANY; ::: (void)mine; ::: build/test/unit_arenas ::: build/test/unit_arenas
-server/src/arenas.c ::: if (by && strncmp(by->name, "guest-", 6) == 0) return CW_E_ARENA_GUEST; ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (by && cc_name_guest(by->name)) return CW_E_ARENA_GUEST; ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/arenas.c ::: if (a->score != b->score) return a->score > b->score ? -1 : 1; ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/arenas.c ::: return a->score > b->score ? -1 : 1;\n    int ra = rating_of(SORT_A, a), rb = rating_of(SORT_A, b);\n    if (ra != rb) return ra > rb ? -1 : 1; ::: return a->score > b->score ? -1 : 1;\n    int ra = rating_of(SORT_A, a), rb = rating_of(SORT_A, b);\n    if (ra != rb && 0) return ra > rb ? -1 : 1; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/arenas.c ::: have = a && !a->creator[0] && a->status == CC_ARENA_UPCOMING ::: have = a && !a->creator[0] && a->status == CC_ARENA_FINISHED ::: build/test/unit_arenas ::: build/test/unit_arenas
