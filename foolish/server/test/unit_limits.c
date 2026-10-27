@@ -6,6 +6,9 @@
 
 #include "config.h"
 #include "rate_limits.h"
+#include "util/err.h"
+
+#include <stdlib.h>
 
 static void burst_then_refill(void) {
     cb_limits_reset();
@@ -53,6 +56,53 @@ static void a_flood_of_keys_stays_bounded(void) {
         if (i % 50 == 0) cb_limit_take(CB_LIMIT_CHAT_USER, "victim", 100 + i / 1000, NULL);
     }
     T_CHECK(!cb_limit_take(CB_LIMIT_CHAT_USER, "victim", 200, NULL));
+}
+
+// The id-miss rule (app/misses.h): 30 an address, a whole refill over 5 minutes. It is taken
+// on a miss only, so a peek before a lookup takes nothing, and a peek that is refused says
+// when to come back as a take's refusal does.
+static void id_misses_are_peeked_then_taken(void) {
+    cb_limits_reset();
+    const cb_limit_rule *r = &cb_limit_rules[CB_LIMIT_ID_MISS_IP];
+    T_EQ_INT(r->burst, 30);
+    T_EQ_INT((int)(r->window_ms / 1000), 300);
+    const int64_t t0 = 5000000;
+    int retry = -1;
+    for (int i = 0; i < 3 * r->burst; i++) T_CHECK(cb_limit_peek(CB_LIMIT_ID_MISS_IP, "203.0.113.5", t0, &retry));
+    T_EQ_INT(retry, 0);   // allowed: no wait
+    for (int i = 0; i < r->burst; i++) T_CHECK(cb_limit_take(CB_LIMIT_ID_MISS_IP, "203.0.113.5", t0, NULL));
+    T_CHECK(!cb_limit_peek(CB_LIMIT_ID_MISS_IP, "203.0.113.5", t0, &retry));
+    const int per_s = (int)(r->window_ms / r->burst / 1000);   // 10 s a miss
+    T_EQ_INT(retry, per_s + 1);
+    int took = -1;
+    T_CHECK(!cb_limit_take(CB_LIMIT_ID_MISS_IP, "203.0.113.5", t0, &took));
+    T_EQ_INT(took, retry);
+    T_CHECK(cb_limit_peek(CB_LIMIT_ID_MISS_IP, "203.0.113.6", t0, NULL));   // another address
+    T_CHECK(cb_limit_peek(CB_LIMIT_ID_MISS_IP, "203.0.113.5", t0 + per_s * 1000, NULL));
+}
+
+// CBASE_LIMIT_ID_MISS_IP (config.h) sets the burst at boot; 0 (unset) keeps the rule's own.
+static void id_miss_burst_is_a_setting(void) {
+    cb_config cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cb_limits_configure(&cfg);
+    T_EQ_INT(cb_limit_rules[CB_LIMIT_ID_MISS_IP].burst, 30);
+    cfg.limit_burst[CB_LIMIT_ID_MISS_IP] = 3;
+    cb_limits_configure(&cfg);
+    T_EQ_INT(cb_limit_rules[CB_LIMIT_ID_MISS_IP].burst, 3);
+    T_EQ_INT(cb_limit_rules[CB_LIMIT_BUMP_USER].burst, 30);   // its neighbours keep theirs
+    T_EQ_INT(cb_limit_rules[CB_LIMIT_ADMIN_FAIL_IP].burst, 10);
+    cb_limits_reset();
+    for (int i = 0; i < 3; i++) T_CHECK(cb_limit_take(CB_LIMIT_ID_MISS_IP, "203.0.113.7", 0, NULL));
+    T_CHECK(!cb_limit_take(CB_LIMIT_ID_MISS_IP, "203.0.113.7", 0, NULL));
+    cb_limit_rules[CB_LIMIT_ID_MISS_IP].burst = 30;
+    // The environment's name for it, in its kind's slot.
+    T_EQ_STR(cb_config_limit_names[CB_LIMIT_ID_MISS_IP], "CBASE_LIMIT_ID_MISS_IP");
+    char err[256];
+    setenv("CBASE_LIMIT_ID_MISS_IP", "7", 1);
+    T_EQ_INT(cb_config_from_env(&cfg, err, sizeof err), CB_OK);
+    T_EQ_INT(cfg.limit_burst[CB_LIMIT_ID_MISS_IP], 7);
+    unsetenv("CBASE_LIMIT_ID_MISS_IP");
 }
 
 static void viewer_key(const char *mode_header, const cb_provider *mode, const char *peer, const char *want) {
@@ -127,6 +177,8 @@ int main(void) {
     T_RUN(burst_then_refill);
     T_RUN(keys_and_kinds_are_apart);
     T_RUN(a_flood_of_keys_stays_bounded);
+    T_RUN(id_misses_are_peeked_then_taken);
+    T_RUN(id_miss_burst_is_a_setting);
     T_RUN(the_viewer_address);
     T_RUN(the_viewer_address_behind_cloudfront);
     return T_DONE();
