@@ -189,8 +189,8 @@ c/src/chat.c ::: { "shit", ANY }, ::: { "zzzz", ANY }, ::: build/test/unit_chat 
 c/src/chat.c ::: { "ass", WHOLE }, ::: { "ass", ANY }, ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: { "cunt", START }, ::: { "cunt", ANY }, ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: if (k && out[k - 1].c == s[i]) ::: if (0 && out[k - 1].c == s[i]) ::: build/test/unit_chat ::: build/test/unit_chat
-c/src/chat.c ::: if (w[at + j].c != st[j].c || w[at + j].n < st[j].n) return false; ::: if (w[at + j].c != st[j].c) return false; ::: build/test/unit_chat ::: build/test/unit_chat
-c/src/chat.c ::: if (BANNED[b].where == WHOLE && ns != nw) continue; ::: (void)0; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (j >= nw || w[j].c != c || w[j].n < k) return false; ::: if (j >= nw || w[j].c != c || w[j].n < k * 0) return false; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: (BANNED[b].where != WHOLE || end == nw) ::: (BANNED[b].where != WHOLE || 1) ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: if (control(c)) return CC_CHAT_CONTROL; ::: if (control(c) && 0) return CC_CHAT_CONTROL; ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: (c >= 0x202a && c <= 0x202e) ::: (c >= 0x202b && c <= 0x202e) ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: (c >= 0x7f && c <= 0x9f) ::: (c >= 0x7f && c <= 0x80) ::: build/test/unit_chat ::: build/test/unit_chat
@@ -253,3 +253,5 @@ server/src/api.c ::: "chat_lines %llu ::: "chat_linez %llu ::: build/c_chess bui
 server/src/journal.c ::: l->g.left_ms[mover] = INT64_MAX / 4;   /* the rules alone decide here */ ::: (void)0; ::: build/test/unit_journal ::: build/test/unit_journal
 server/src/journal.c ::: { l->g.left_ms[mover] = was; continue; } ::: { (void)was; continue; } ::: build/test/unit_journal ::: build/test/unit_journal
 server/src/journal.c ::: int64_t left = p >= l->g.ply - 2 ? l->g.left_ms[p & 1] : 0; ::: int64_t left = 0; ::: build/test/unit_journal ::: build/test/unit_journal
+c/src/chat.c ::: if (!(has & (1u << (BANNED[b].stem[0] - 'a')))) continue; ::: if (has & (1u << (BANNED[b].stem[0] - 'a'))) continue; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: int last = BANNED[b].where == ANY ? nw - 1 : 0; ::: int last = 0; ::: build/test/unit_chat ::: build/test/unit_chat

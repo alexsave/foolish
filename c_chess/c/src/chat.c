@@ -89,25 +89,31 @@ static int runs_of(const char *s, int n, run *out) {
     return k;
 }
 
-static int slen(const char *s) { int n = 0; while (s[n]) n++; return n; }
-
-/* Whether the stem's runs sit in the word's at `at`: each letter the same, at least as many. */
-static bool runs_at(const run *w, const run *st, int ns, int at) {
-    for (int j = 0; j < ns; j++)
-        if (w[at + j].c != st[j].c || w[at + j].n < st[j].n) return false;
+/* Whether a stem (as spelled) sits in the word's runs from run `at`: each of its runs the same
+ * letter as the word's, the word's at least as long. *end: the word's run after it. The stem's runs
+ * are read off its letters as it goes, so a wrong first letter costs one comparison. */
+static bool stem_at(const run *w, int nw, const char *st, int at, int *end) {
+    int j = at;
+    for (const char *s = st; *s; j++) {
+        char c = *s;
+        int k = 0;
+        while (*s == c) { s++; k++; }
+        if (j >= nw || w[j].c != c || w[j].n < k) return false;
+    }
+    *end = j;
     return true;
 }
 
 static bool word_banned(const char *w, int n) {
-    run wr[CC_CHAT_MAX], sr[16];
-    int nw = runs_of(w, n, wr);
+    run wr[CC_CHAT_MAX];
+    int nw = runs_of(w, n, wr), end;
+    uint32_t has = 0;   /* the word's letters: a stem is tried only when its first letter is among them */
+    for (int i = 0; i < nw; i++) has |= 1u << (wr[i].c - 'a');
     for (int b = 0; b < N_BANNED; b++) {
-        int ns = runs_of(BANNED[b].stem, slen(BANNED[b].stem), sr);
-        if (ns > nw) continue;
-        int last = BANNED[b].where == ANY ? nw - ns : 0;
-        if (BANNED[b].where == WHOLE && ns != nw) continue;
+        if (!(has & (1u << (BANNED[b].stem[0] - 'a')))) continue;
+        int last = BANNED[b].where == ANY ? nw - 1 : 0;
         for (int at = 0; at <= last; at++)
-            if (runs_at(wr, sr, ns, at)) return true;
+            if (stem_at(wr, nw, BANNED[b].stem, at, &end) && (BANNED[b].where != WHOLE || end == nw)) return true;
     }
     return false;
 }
