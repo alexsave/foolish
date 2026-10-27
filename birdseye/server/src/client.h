@@ -15,7 +15,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define BE_PEND_MAX  8
+// Requests a client keeps track of at once. The league's watcher reads every table it opens (up to
+// BE_LEAGUE_TABLES, 16 at once at a tournament's start), so it must hold more than a player does: at
+// 8, half the first reads' replies were forgotten and their tables given up as never seen.
+#define BE_PEND_MAX  64
 #define BE_PING_MS   30000
 
 // A request on its way: what it was (the owner's kind) and when it left.

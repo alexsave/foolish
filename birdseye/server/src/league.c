@@ -700,7 +700,13 @@ static bool table_open(lg_table *t, const int *seat_bots, int n, bool podkidnoy,
 static void table_tick(lg_table *t, int64_t now_ms) {
     switch (t->state) {
     case L_WATCH:
-        if (!t->have && now_ms - t->created_ms > FIRST_VIEW_MS) {
+        if (!t->have && t->human && now_ms - t->created_ms > FIRST_VIEW_MS) {
+            // A human's table is never given up for a slow first read: he sits in it (a table given
+            // up would stay on his dashboard, a lobby nobody plays). It is read again instead.
+            CB_WARN("birdseye", "league: no view of %s (a human's) came yet: reading it again", t->gid);
+            t->created_ms = now_ms;
+            fetch_view(t);
+        } else if (!t->have && now_ms - t->created_ms > FIRST_VIEW_MS) {
             CB_WARN("birdseye", "league: no view of %s came: giving it up", t->gid);
             table_close(t);
         }

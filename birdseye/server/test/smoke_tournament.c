@@ -232,6 +232,9 @@ int main(int argc, char **argv) {
     }
     free(L.results);
 
+    // Every table's first view came (16 opened at once at the start): none was given up unseen.
+    char gave_up[512];
+    T_CHECK(tp_wait_line(&be, "no view of", 10, gave_up, sizeof gave_up) != 0);
     // Restarted in league mode: the same bracket, from its file.
     T_EQ_INT(tp_stop(&be, SIGTERM, 15000), 0);
     g_mode = "BE_MODE=league";
