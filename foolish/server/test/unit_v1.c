@@ -337,8 +337,11 @@ static int hr_skip;
 
 // A game's code is the text the share URL carries: the store keeps it as it is. A code the generator
 // draws comes back from the dashboard and opens by its path; so does an all-digit code with a leading
-// zero (a store that took it for a number would hand back "12345").
+// zero (a store that took it for a number would hand back "12345"). A code of any other shape names
+// no game (store/game_id.h): a game a legacy 12-character draw made does not open by its path, nor
+// its chat, nor its replay.
 static void digits_code(char out[CB_GAME_ID_MAX + 1]) { cb_strlcpy(out, "012345", CB_GAME_ID_MAX + 1); }
+static void legacy_code(char out[CB_GAME_ID_MAX + 1]) { cb_strlcpy(out, "a1b2c3d4e5f6", CB_GAME_ID_MAX + 1); }
 
 static void game_codes_round_trip(void) {
     setup();
@@ -354,17 +357,39 @@ static void game_codes_round_trip(void) {
     g_seen = 0;
     CB_ROWS_CALL(g_ctx.store, games_of_user, uid, 0, second_game, codes[0]);
     CB_ROWS_CALL(g_ctx.store, games_of_user, uid, 1, first_game, codes[1]);
-    // One of the two is the digits, the other the generator's (CB_GAME_ID_HEX lowercase hex).
+    // One of the two is the digits, the other the generator's (CB_GAME_ID_LEN of CB_GAME_ID_ALPHABET).
     int d = strcmp(codes[0], "012345") == 0 ? 0 : 1;
     T_EQ_STR(codes[d], "012345");
     const char *drawn = codes[1 - d];
-    T_EQ_INT((int)strlen(drawn), CB_GAME_ID_HEX);
-    T_EQ_INT((int)strspn(drawn, "0123456789abcdef"), CB_GAME_ID_HEX);
+    T_EQ_INT((int)strlen(drawn), CB_GAME_ID_LEN);
+    T_EQ_INT((int)strspn(drawn, CB_GAME_ID_ALPHABET), CB_GAME_ID_LEN);
     for (int i = 0; i < 2; i++) {
         T_EQ_INT(call(b_game, codes[i]), 200);
         const NcGameRow *row = nc_view_read(g_status, g_body, g_len);
         T_CHECK(row != NULL);
     }
+    // The legacy game is stored (the create takes no id from the request), and nothing opens it.
+    cb_app_game_id = legacy_code;
+    T_EQ_INT(call(b_create, NULL), 200);
+    cb_app_game_id = cb_game_id_random;
+    T_EQ_INT(CB_ROWS_CALL(g_ctx.store, is_member, "a1b2c3d4e5f6", uid), 1);
+    T_EQ_INT(call(b_game, "a1b2c3d4e5f6"), 404);
+    T_EQ_INT(nc_status_read(g_status, g_body, g_len), ASK_WHY_NOT_FOUND);
+    T_EQ_INT(call(b_chats, "a1b2c3d4e5f6"), 404);
+    // A replay of it, which its id would otherwise open.
+    cb_snapshot_row sn;
+    memset(&sn, 0, sizeof sn);
+    cb_uuid_v4(sn.id);
+    cb_strlcpy(sn.game_id, "a1b2c3d4e5f6", sizeof sn.game_id);
+    sn.n_players = 1;
+    cb_strlcpy(sn.player_ids[0], uid, sizeof sn.player_ids[0]);
+    uint8_t moves[] = { 1, 2, 3 };
+    sn.moves = moves;
+    sn.moves_len = sizeof moves;
+    sn.created_at = 1700000000000;
+    T_EQ_INT(CB_ROWS_CALL(g_ctx.store, snapshot_put, &sn), CB_OK);
+    T_EQ_INT(call(b_replay, sn.id), 200);
+    T_EQ_INT(call(b_replay, "a1b2c3d4e5f6"), 404);
     teardown();
 }
 

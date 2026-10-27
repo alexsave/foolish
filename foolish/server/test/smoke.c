@@ -32,6 +32,7 @@
 // the game, the crash's lease expiry and the idle human's rest each take
 // seconds. unit_app holds production's values and the division itself.
 #include "t.h"
+#include "store/game_id.h"
 
 #include "lib_client.h"
 #include "lib_proc.h"
@@ -526,7 +527,7 @@ static void game_scenario(void) {
     T_CHECK(client_adopt_envelope(&sc->c, g_body, g_len) >= 0);
     char gid[32];
     snprintf(gid, sizeof gid, "%.*s", (int)sc->c.gid_len, sc->c.gid);
-    T_EQ_INT(strlen(gid), 12);   // app_internal.h CB_GAME_ID_HEX (finding L3)
+    T_CHECK(cb_game_id_ok(gid, strlen(gid)));   // store/game_id.h
 
     // A hears its own seat's casts, B its views (the games list), C the
     // spectators' casts. Together they cover fanout.c's three pushes.

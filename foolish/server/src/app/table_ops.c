@@ -57,11 +57,6 @@ void (*cb_app_sleep)(int64_t ms) = cb_sleep_ms;
 //   - the journal's own (journal.h opts.loop): a game not resident, a write around it (a delete).
 static bool on_loop(const cb_ctx *ctx) { return ctx->loop && cb_loop_on_thread(ctx->loop); }
 
-void cb_game_id_random(char out[CB_GAME_ID_MAX + 1]) {
-    uint8_t raw[CB_GAME_ID_HEX / 2];
-    cb_random_bytes(raw, sizeof raw);
-    hex_encode(raw, sizeof raw, out, CB_GAME_ID_MAX + 1);
-}
 void (*cb_app_game_id)(char out[CB_GAME_ID_MAX + 1]) = cb_game_id_random;
 
 // ---- byte helpers ------------------------------------------------------------------
@@ -1331,8 +1326,8 @@ int cb_table_create(cb_ctx *ctx, const cb_user *u, cb_table_result *out) {
     if (!s) return CB_E_NOMEM;
     int ret = CB_E_CONFLICT;
     for (int draw = 1; draw <= CB_TABLE_ID_DRAWS; draw++) {
-        // A fresh random id (app_internal.h CB_GAME_ID_HEX); a draw that names
-        // a game that exists is refused by the store, and we draw again.
+        // A fresh random id (store/game_id.h); a draw that names a game that
+        // exists is refused by the store, and we draw again.
         cb_app_game_id(s->gid);
         table_init(&s->t, &s->g, &s->snaps);
         int rc = table_create(&s->t, u->id, (int)strlen(u->id), u->username, (int)strlen(u->username));

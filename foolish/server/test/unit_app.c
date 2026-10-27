@@ -430,7 +430,7 @@ static void create_answers_the_seat_0_envelope(void) {
     create_game(gid, &r);
     T_EQ_INT(r.status, 200);
     T_EQ_STR(r.ctype, OCT);
-    T_EQ_INT(strlen(gid), 12);   // app_internal.h CB_GAME_ID_HEX (finding L3)
+    T_CHECK(cb_game_id_ok(gid, strlen(gid)));   // store/game_id.h
     EnvHeader h;
     T_CHECK(env_header_read(r.body, (int)r.len, &h));
     T_EQ_INT(h.seat, 0);
@@ -1367,39 +1367,63 @@ static char g_taken[CB_GAME_ID_MAX + 1];
 static int g_taken_draws, g_draws;
 static void colliding_id(char out[CB_GAME_ID_MAX + 1]) {
     if (g_draws++ < g_taken_draws) snprintf(out, CB_GAME_ID_MAX + 1, "%s", g_taken);
-    else snprintf(out, CB_GAME_ID_MAX + 1, "fedcba987654");
+    else snprintf(out, CB_GAME_ID_MAX + 1, "fedcba");
 }
 
-// A game id is CB_GAME_ID_HEX lowercase hex (48 bits, finding L3), fresh
-// every draw; a six-character id from before still names its game.
-static void game_ids_are_wide_and_old_ones_work(void) {
+// THE GAME ID RULE (store/game_id.h): a drawn id is CB_GAME_ID_LEN characters of
+// CB_GAME_ID_ALPHABET, every character of the alphabet comes up, and the check takes exactly
+// that shape. A game a legacy 12-character draw made is stored (the create takes no id from the
+// request), and no ask or action reaches it: its id names no game.
+static void legacy_id(char out[CB_GAME_ID_MAX + 1]) { snprintf(out, CB_GAME_ID_MAX + 1, "a1b2c3d4e5f6"); }
+
+static void game_ids_are_six_and_no_other_shape_is_read(void) {
     setup(0);
-    char seen[64][CB_GAME_ID_MAX + 1];
+    bool used[256] = { false };
     for (int i = 0; i < 64; i++) {
-        cb_game_id_random(seen[i]);
-        T_EQ_INT(strlen(seen[i]), CB_GAME_ID_HEX);
-        for (const char *p = seen[i]; *p; p++) T_CHECK((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f'));
-        for (int j = 0; j < i; j++) T_CHECK(strcmp(seen[i], seen[j]) != 0);
+        char id[CB_GAME_ID_MAX + 1];
+        cb_game_id_random(id);
+        T_EQ_INT(strlen(id), CB_GAME_ID_LEN);
+        T_CHECK(cb_game_id_ok(id, strlen(id)));
+        for (const char *p = id; *p; p++) used[(uint8_t)*p] = true;
     }
+    // 384 characters over 16: one missing is a broken draw (a chance of about 3e-10 otherwise).
+    for (const char *a = CB_GAME_ID_ALPHABET; *a; a++) T_CHECK(used[(uint8_t)*a]);
+    T_CHECK(cb_game_id_ok("abc123", 6));
+    T_CHECK(cb_game_id_ok("000000", 6));
+    T_CHECK(!cb_game_id_ok("ABC123", 6));         // the QR's upper case is lowered by the client
+    T_CHECK(!cb_game_id_ok("abc12", 5));
+    T_CHECK(!cb_game_id_ok("abc1234", 7));
+    T_CHECK(!cb_game_id_ok("abcg23", 6));
+    T_CHECK(!cb_game_id_ok("abc\0" "23", 6));
+    T_CHECK(!cb_game_id_ok("a1b2c3d4e5f6", 12));  // the legacy width
+    T_CHECK(!cb_game_id_ok(NULL, 6));
     reply r;
     char gid[CB_GAME_ID_MAX + 1];
     create_game(gid, &r);
     T_EQ_INT(r.status, 200);
-    T_EQ_INT(strlen(gid), CB_GAME_ID_HEX);
-    // An old six-character game: made under the old width, it still loads and takes asks.
-    g_draws = 0;
-    g_taken_draws = 0;
-    cb_app_game_id = colliding_id;
-    snprintf(g_taken, sizeof g_taken, "abc123");
-    g_taken_draws = 1;
+    T_EQ_INT(strlen(gid), CB_GAME_ID_LEN);
+    cb_app_game_id = legacy_id;
     call("POST", "create", "C", NULL, NULL, 0, &r);
+    cb_app_game_id = cb_game_id_random;
     T_EQ_INT(r.status, 200);
     cb_view_row v;
-    T_EQ_INT(cb_table_view(&g_ctx, "abc123", UID_C, &v), CB_OK);
+    T_EQ_INT(cb_table_view(&g_ctx, "a1b2c3d4e5f6", UID_C, &v), CB_OK);
     cb_view_row_free(&v);
-    meta("D", ASK_JOIN, "abc123", NULL, &r);
+    meta("D", ASK_JOIN, "a1b2c3d4e5f6", NULL, &r);
+    T_EQ_INT(r.status, 400);
+    T_EQ_INT(refusal_why(&r, NULL), ASK_WHY_NOT_FOUND);
+    meta("C", ASK_START, "a1b2c3d4e5f6", NULL, &r);
+    T_EQ_INT(r.status, 400);
+    T_EQ_INT(refusal_why(&r, NULL), ASK_WHY_NOT_FOUND);
+    AwireAction pick = { .kind = AWIRE_PICKUP };
+    uint8_t wire[16];
+    action("C", "a1b2c3d4e5f6", wire, awire_encode(&pick, wire, (int)sizeof wire), 0, &r);
+    T_EQ_INT(r.status, 400);
+    T_EQ_INT(refusal_why(&r, NULL), ASK_WHY_NOT_FOUND);
+    T_EQ_INT(CB_ROWS_CALL(g_store, is_member, "a1b2c3d4e5f6", UID_D), 0);
+    // The game's own six-character id still answers.
+    meta("D", ASK_JOIN, gid, NULL, &r);
     T_EQ_INT(r.status, 200);
-    cb_app_game_id = cb_game_id_random;
 }
 
 static int games_of(const char *uid) {
@@ -1421,10 +1445,10 @@ static void a_taken_game_id_is_drawn_again(void) {
     T_EQ_INT(g_draws, 3);
     char gid[CB_GAME_ID_MAX + 1];
     cb_table_views_of_user(&g_ctx, UID_B, 1, first_game, gid);
-    T_EQ_STR(gid, "fedcba987654");
+    T_EQ_STR(gid, "fedcba");
     // The answer names the stored game, and A's game is untouched.
     cb_view_row v;
-    T_EQ_INT(cb_table_view(&g_ctx, "fedcba987654", UID_B, &v), CB_OK);
+    T_EQ_INT(cb_table_view(&g_ctx, "fedcba", UID_B, &v), CB_OK);
     T_EQ_MEM(r.body, r.len, v.view, v.view_len);
     cb_view_row_free(&v);
     T_EQ_INT(CB_ROWS_CALL(g_store, is_member, g_taken, UID_B), 0);
@@ -2817,7 +2841,7 @@ int main(void) {
     T_RUN(a_kick_leaves_the_move_to_the_drive_holding_the_lease);
     T_RUN(a_move_made_while_the_lease_is_held_is_driven);
     T_RUN(a_taken_game_id_is_drawn_again);
-    T_RUN(game_ids_are_wide_and_old_ones_work);
+    T_RUN(game_ids_are_six_and_no_other_shape_is_read);
     T_RUN(a_goods_only_commit_is_broadcast);
     T_RUN(every_commit_is_cast);
     T_RUN(every_commit_is_cast_as_a_delta);

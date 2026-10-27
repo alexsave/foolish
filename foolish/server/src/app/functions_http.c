@@ -146,7 +146,8 @@ static void h_action(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
         return;
     }
     char gid[CB_GAME_ID_MAX + 1];
-    if (q.gid_len > CB_GAME_ID_MAX) { refusal(res, 400, ASK_WHY_NOT_FOUND, 0, 0); return; }
+    // An id of any other shape names no game (store/game_id.h): the answer a missing game gets.
+    if (!cb_game_id_ok((const char *)req->body + q.gid_off, q.gid_len)) { refusal(res, 400, ASK_WHY_NOT_FOUND, 0, 0); return; }
     memcpy(gid, req->body + q.gid_off, q.gid_len);
     gid[q.gid_len] = 0;
     act_ud a = { &u, req->body + q.wire_off, q.wire_len, q.has_intent ? (int64_t)q.intent : -1 };
@@ -234,7 +235,7 @@ static void h_meta(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
         return;
     }
     char gid[CB_GAME_ID_MAX + 1];
-    if (ask.gid_len > CB_GAME_ID_MAX) { refusal(res, 400, ASK_WHY_NOT_FOUND, 0, 0); return; }
+    if (!cb_game_id_ok(ask.gid, ask.gid_len)) { refusal(res, 400, ASK_WHY_NOT_FOUND, 0, 0); return; }
     memcpy(gid, ask.gid, ask.gid_len);
     gid[ask.gid_len] = 0;
     if (ask.kind == ASK_JOIN && !account_lives(ctx, &u, res)) return;
