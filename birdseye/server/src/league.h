@@ -53,6 +53,11 @@ typedef struct {
 // tables a bot sits at at once: never a human's row.
 bool be_league_may_seat(const char *key, int key_len, int seated, int per_bot);
 
+// How many of a table's `n` seats (`rows`, rows of the bot list) are bots: every seat but the human's
+// row (`human_row`, -1 none). The "bots seated" gauge counts these; the human's own row still counts
+// the tables he sits at (the site's at-a-table dot).
+int be_league_bot_seats(const int *rows, int n, int human_row);
+
 // The mode birdseye runs in (wire.h BE_MODE_*), set by birdseye_app.c at open.
 extern uint8_t be_mode;
 

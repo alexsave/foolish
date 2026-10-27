@@ -14,7 +14,19 @@ static void the_league_never_seats_the_human(void) {
     T_CHECK(be_league_may_seat("humanoid", 8, 0, 1));
 }
 
+// The "bots seated" gauge counts bots: a seat of the human's row is not one.
+static void the_human_is_not_a_seated_bot(void) {
+    const int two[] = {3, 48};
+    T_CHECK(be_league_bot_seats(two, 2, 48) == 1);    // the human's table: one bot
+    T_CHECK(be_league_bot_seats(two, 2, -1) == 2);    // no human in the field
+    T_CHECK(be_league_bot_seats(two, 2, 7) == 2);     // a human elsewhere
+    const int four[] = {0, 1, 2, 5};
+    T_CHECK(be_league_bot_seats(four, 4, 0) == 3);    // row 0 is a real row, not "none"
+    T_CHECK(be_league_bot_seats(four, 0, 0) == 0);
+}
+
 int main(void) {
     T_RUN(the_league_never_seats_the_human);
+    T_RUN(the_human_is_not_a_seated_bot);
     return T_DONE();
 }

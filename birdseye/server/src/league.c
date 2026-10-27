@@ -307,8 +307,9 @@ static void set_seated(lg_table *t, bool seated) {
     }
     pthread_mutex_unlock(&g_mu);
     for (int i = 0; i < t->n; i++) publish(&be_world_g, BE_F_BOT, &copies[i], sizeof copies[i]);
-    if (seated) atomic_fetch_add(&g_seated, (unsigned)t->n);
-    else atomic_fetch_sub(&g_seated, (unsigned)t->n);
+    unsigned bots = (unsigned)be_league_bot_seats(t->bots, t->n, g_human);
+    if (seated) atomic_fetch_add(&g_seated, bots);
+    else atomic_fetch_sub(&g_seated, bots);
 }
 
 static void tour_game_over(lg_table *t, bool played, uint8_t fool_bot, int64_t now_ms);
@@ -590,6 +591,12 @@ size_t be_tour_snapshot(void **out) {
     copy->hash = be_wire_hash();
     *out = copy;
     return sizeof *copy;
+}
+
+int be_league_bot_seats(const int *rows, int n, int human_row) {
+    int bots = 0;
+    for (int i = 0; i < n; i++) bots += human_row < 0 || rows[i] != human_row;
+    return bots;
 }
 
 bool be_league_may_seat(const char *key, int key_len, int seated, int per_bot) {
