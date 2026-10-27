@@ -25,11 +25,11 @@ c/src/pgn.c ::: if (*s == '"' || *s == '\\') put(o, "\\", 1); ::: (void)0; ::: b
 c/src/pgn.c ::: col + 1 + (size_t)k > 80) ::: col + 1 + (size_t)k > 800) ::: build/test/unit_game ::: build/test/unit_game
 # the server and the client, through the smoke
 server/src/journal.c ::: if (mlen && J.mfd >= 0) { write_all(J.mfd, moves, mlen); dirty = true; } ::: if (0) { dirty = true; } ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
-server/src/state.c ::: cc_rate(&l->p[0]->r, &l->p[1]->r, cc_game_white_score(g)); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/state.c ::: cc_rate(&l->p[0]->r[k], &l->p[1]->r[k], cc_game_white_score(g)); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/state.c ::: return a->base_s == b->base_s && a->inc_s == b->inc_s && a->rated == b->rated; ::: return a->rated == b->rated; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/api.c ::: else if (c->who == p) { status = 409; code = CW_E_SELF; } ::: else if (0) { } ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/api.c ::: cc_live *n = cc_live_start(l->p[1], l->p[0], &tc, now);   /* colors swap */ ::: cc_live *n = cc_live_start(l->p[0], l->p[1], &tc, now); ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
-server/src/api.c ::: CW_E_NOT_PLAYER; }\n    else {\n        bool was_over = cc_game_over(&l->g);\n        rc = cc_game_move ::: CW_E_NOT_PLAYER; }\n    if (l) {\n        bool was_over = cc_game_over(&l->g);\n        color = l->g.pos.stm;\n        rc = cc_game_move ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: CW_E_NOT_PLAYER; }\n    else {\n        bool was_over = cc_game_over(&l->g);\n        int32_t think ::: CW_E_NOT_PLAYER; }\n    if (l) {\n        bool was_over = cc_game_over(&l->g);\n        color = l->g.pos.stm;\n        int32_t think ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/journal.c ::: l->g.left_ms[mover] = buf[i].left_ms; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/journal.c ::: if (sqlite3_step(st) == SQLITE_ROW) cc_state_next_game_id((uint32_t)sqlite3_column_int64(st, 0)); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 c/src/client.c ::: if (mirror_move(c, (ch_move)s.move) != CC_OK) { resync(c); return; } ::: if (0) { } ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
@@ -74,8 +74,8 @@ server/src/puzzles.c ::: set_rating((uint32_t)i, &z);\n    Z.plays[i]++; ::: Z.p
 server/src/puzzles.c ::: if (win) p->pz_solved++; ::: p->pz_solved++; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
 server/src/puzzles.c ::: Z.plays[i] = plays;\n    set_rating((uint32_t)i, r); ::: Z.plays[i] = plays; ::: build/test/unit_puzzles ::: build/test/unit_puzzles
 server/src/puzzles.c ::: cc_journal_puzzle(id, &z, Z.plays[i]); ::: (void)0; ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
-server/src/journal.c ::: p.pz_tried = (uint32_t)sqlite3_column_int64(st, 13); ::: (void)0; ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
-server/src/journal.c ::: sqlite3_bind_double(st, 11, p->pz.rating); ::: sqlite3_bind_double(st, 11, 1500); ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
+server/src/journal.c ::: p.pz_tried = (uint32_t)sqlite3_column_int64(st, 10); ::: (void)0; ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
+server/src/journal.c ::: sqlite3_bind_double(st, 8, p->pz.rating); ::: sqlite3_bind_double(st, 8, 1500); ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
 # kernel: speeds
 c/src/speed.c ::: int est = base_s + 40 * inc_s; ::: int est = base_s + 39 * inc_s; ::: build/test/unit_game ::: build/test/unit_game
 c/src/speed.c ::: return est < 180 ? CC_BULLET ::: return est <= 180 ? CC_BULLET ::: build/test/unit_game ::: build/test/unit_game
