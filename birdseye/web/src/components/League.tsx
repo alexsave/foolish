@@ -18,7 +18,12 @@ const FAMILY_COLOR: Record<string, string> = {
   blackpowder: '#374151',
   cordite: '#1a9a5a',
   octogen: '#8b3fc9',
+  human: '#d6336c', // a person in the field (birdseye BE_HUMAN_NAME), not a strategy family
 };
+export const HUMAN_KEY = 'human';
+export function isHuman(b: WBot | null | undefined): boolean {
+  return b?.key === HUMAN_KEY;
+}
 export function familyColor(key: string): string {
   return FAMILY_COLOR[key] ?? '#6b7280';
 }

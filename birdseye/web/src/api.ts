@@ -78,6 +78,9 @@ function readMetrics(m: Mem, at: number): Metrics {
 // cross-origin (the platform answers CORS), so every URL is absolute.
 export const SERVER = (process.env.NEXT_PUBLIC_BE_SERVER ?? 'http://127.0.0.1:8812').replace(/\/+$/, '');
 const WS_SERVER = SERVER.replace(/^http/, 'ws');
+// The real foolish web UI a human in the tournament plays his games in (run.sh BE_HUMAN=1), "" when
+// none: his live match links to <PLAY_URL>/<game id>.
+export const PLAY_URL = (process.env.NEXT_PUBLIC_BE_PLAY_URL ?? '').replace(/\/+$/, '');
 
 // netwire.h NW_SUB_GAME: a room on the hub. The one room birdseye publishes to is "all".
 const NW_SUB_GAME = 2;

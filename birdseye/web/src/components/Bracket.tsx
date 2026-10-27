@@ -5,9 +5,9 @@
 // bracket's own (a match sits between the two it is fed by); this file only draws.
 
 import { useLayoutEffect, useRef, useState } from 'react';
-import type { WBot, WTour } from '../api';
+import { PLAY_URL, type WBot, type WTour } from '../api';
 import { BE_TOUR_DONE, BE_TOUR_NONE, BE_TOUR_RUNNING, BE_TOUR_WIN } from '../gen/wire';
-import { botName, familyColor } from './League';
+import { botName, familyColor, isHuman } from './League';
 
 const ROUNDS = ['Opening round', 'Round of 32', 'Round of 16', 'Quarterfinals', 'Semifinals', 'Final'];
 const ROUND_SIZE = [16, 16, 8, 4, 2, 1];
@@ -27,13 +27,25 @@ function center(round: number, slot: number): number {
   return slot * span + span / 2;
 }
 
-function Side({ bot, seed, wins, won, lost, bots }: { bot: number; seed: number; wins: number; won: boolean; lost: boolean; bots: WBot[] }) {
+// `play`: the game this side's human plays now (his live match), linked to the web UI.
+function Side({ bot, seed, wins, won, lost, bots, play }: { bot: number; seed: number; wins: number; won: boolean; lost: boolean; bots: WBot[]; play: string }) {
   const b = bot === BE_TOUR_NONE ? null : bots[bot];
+  const you = isHuman(b);
   return (
-    <div className={`bk-side${won ? ' won' : ''}${lost ? ' lost' : ''}`}>
+    <div className={`bk-side${won ? ' won' : ''}${lost ? ' lost' : ''}${you ? ' you' : ''}`}>
       <span className="bk-seed num">{seed || ''}</span>
       {b ? <span className="fam-dot" style={{ background: familyColor(b.key) }} /> : <span className="fam-dot empty" />}
       <span className="bk-name">{b ? botName(b) : <span className="faint">to be decided</span>}</span>
+      {you ? (
+        <span className="bk-tags">
+          <span className="bk-you">you</span>
+          {play && PLAY_URL ? (
+            <a className="bk-play" href={`${PLAY_URL}/${play}`} target="_blank" rel="noreferrer" title="play this game in the foolish web UI">
+              play
+            </a>
+          ) : null}
+        </span>
+      ) : null}
       <span className="bk-wins num">{b ? wins : ''}</span>
     </div>
   );
@@ -100,8 +112,8 @@ export function Bracket({ tour, bots }: Props) {
             style={{ left: x(r), top, width: colW, height: BOX_H }}
             title={`${ROUNDS[r]}: ${m.games} game${m.games === 1 ? '' : 's'} played${m.games > m.winsA + m.winsB ? `, ${m.games - m.winsA - m.winsB} drawn` : ''}; first to ${BE_TOUR_WIN}`}
           >
-            <Side bot={m.a} seed={m.seedA} wins={m.winsA} won={decided && m.winner === m.a} lost={decided && m.winner !== m.a} bots={bots} />
-            <Side bot={m.b} seed={m.seedB} wins={m.winsB} won={decided && m.winner === m.b} lost={decided && m.winner !== m.b} bots={bots} />
+            <Side bot={m.a} seed={m.seedA} wins={m.winsA} won={decided && m.winner === m.a} lost={decided && m.winner !== m.a} bots={bots} play={m.live ? m.gid : ''} />
+            <Side bot={m.b} seed={m.seedB} wins={m.winsB} won={decided && m.winner === m.b} lost={decided && m.winner !== m.b} bots={bots} play={m.live ? m.gid : ''} />
           </div>
         );
       })}
@@ -135,5 +147,7 @@ export function tourSummary(tour: WTour, bots: WBot[]): string {
     tour.state === BE_TOUR_DONE
       ? `Finished: ${tour.games} rated games, ${decided} matches`
       : `${decided} of 47 matches decided, ${live} in play, ${tour.games} rated games`;
-  return `48 of ${bots.length} bots, single elimination, best of five, seeded by the server's ratings. ${head}.${left ? ` ${left}.` : ''}`;
+  const human = tour.seedBot.slice(0, 48).map((i) => bots[i]).find(isHuman);
+  const field = human ? `47 bots and ${botName(human)}` : `48 of ${bots.length} bots`;
+  return `${field}, single elimination, best of five, seeded by the server's ratings. ${head}.${left ? ` ${left}.` : ''}`;
 }
