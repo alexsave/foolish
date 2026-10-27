@@ -14,12 +14,12 @@ On top of it, about 2,500 lines of C:
 |---|---|---|
 | the rules | `c/src/chess.c` | bitboards, legal moves (perft-checked), FEN, UCI, SAN, insufficient material, Zobrist keys |
 | a game | `c/src/game.c` | the clock (from Black's first move), every ending, offers, the first-move abort |
-| ratings | `c/src/glicko2.c`, `rating.c` | Glicko-2 from Glickman's paper, one rating period a game, the site's bounds |
+| ratings | `c/src/glicko2.c`, `rating.c`, `speed.c` | Glicko-2 from Glickman's paper, one rating period a game, the site's bounds; a game's speed from its time control |
 | the wire | `c/src/wire.h` | fixed-layout request and push bodies, sizes pinned by `_Static_assert` |
 | the client | `c/src/client.c` | the protocol's client side: the frames it sends, a mirror of the game it shows |
-| state | `server/src/state.c` | players, live games, seeks, challenges, the clock thread, the finish (ratings) |
+| state | `server/src/state.c` | players (a rating per speed), live games, seeks, challenges, the clock thread, the finish (ratings), the leaderboards |
 | routes | `server/src/api.c` | sign-up and sign-in, seek, challenge, accept, move, act, the reads |
-| journal | `server/src/journal.c` | SQLite for players, game starts and ends, rating points; a flat file for moves |
+| journal | `server/src/journal.c` | SQLite for players, their ratings (a row a speed), game starts and ends, rating points; a flat file for moves |
 | the site | `server/src/web.c` | the Next.js export, read into memory at start, served with gzip twins |
 
 The browser runs `c/src/chess.c`, `game.c` and `client.c` compiled to wasm (`c/wasm/web.c`, 24 KB, 10 KB gzipped).
@@ -193,6 +193,24 @@ A million attempts an hour (an assumed figure; lichess does not publish its puzz
 
 The puzzles page: 175 KB over 25 requests (the site's runtime, shared with every page), first contentful paint 132 ms local and 276 ms on the 4G profile; the puzzle is on the board at 246 ms (local, then a 600 ms pause before the opponent's move is played, on purpose).
 
+## 3.6 Ratings per speed
+
+**A rating per speed, as lichess keeps them.** A game's speed is its estimated length, the base plus 40 increments (`c/src/speed.c`): under 3 minutes bullet, under 8 blitz, under 25 rapid, else classical.
+lichess splits off UltraBullet (under 30 seconds) as a fifth speed; here it counts as bullet, since the site offers no time control that short.
+A player holds four Glicko-2 ratings and four counts of rated games in memory (`cc_player.r[]`, `.rated[]`); a rated game moves only its own speed's pair, and the puzzle rating stays apart.
+Everything that shows a rating shows the one of the game's speed: the state push, the snapshot, TV, and a seek's row (the seeker's rating at the speed of the time control sought).
+The leaderboard is one per speed (`GET /c/top/<speed>`): the players with a rated game of it, by its rating, each with its count; ranking walks the players in memory as before.
+A player new to a speed starts at 1500 with a deviation of 350 and shows a "?" until the deviation falls under 110; lichess also hides provisional players from its leaderboards and asks for recent activity, which is a refinement left for when there are enough players to fill them.
+
+**The journal keeps a rating a row.** `cc_ratings (player, speed)` holds the rating, deviation, volatility and rated games of a speed a player has played, written after each rated game of it; a speed never played has no row and reads back as the start rating.
+The player row keeps the record and the puzzle rating; `cc_points` gains the speed.
+Old databases do not open: the columns moved, and there is no production database to carry over (Alex: shipped data is not frozen).
+
+**A profile read stays bounded.** A profile carries the four ratings, the puzzle rating and the latest 150 points of each speed (`CW_POINTS_SPEED`): at most 9.7 KB.
+The points are read on the request pool as one walk of the index `(player, speed, at)` a speed, newest first and stopped at 150, then put in speed order.
+The first version used a window (`ROW_NUMBER() OVER (PARTITION BY speed ...)`) over all of a player's points: 18 ms for a player with 20,000 points (one table of a million points), against 0.4 ms for the four bounded walks, which cost the same at any history.
+The browser's kernel marks where each speed's run of points starts and how long it is, so the page draws a graph a speed without sorting anything.
+
 ## 4. The page
 
 Measured by `scratchpad/cc/perf.mjs` (Chrome over CDP, cold cache, the lobby; "ready" is the socket accepted, which on a first visit includes making the guest account, a bcrypt on the server):
@@ -221,4 +239,4 @@ What this does not include yet: TLS on the socket (a few microseconds a frame wi
 
 ## 6. Not built yet
 
-Arenas, chat with moderation, ratings and leaderboards per time control, a browser engine with a small network for private analysis, Linux measurements of the engine isolation.
+Arenas, chat with moderation, a browser engine with a small network for private analysis, Linux measurements of the engine isolation.
