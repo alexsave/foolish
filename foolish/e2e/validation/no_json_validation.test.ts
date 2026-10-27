@@ -66,6 +66,10 @@ const ALLOWED: Allowed[] = [
         file: 'foolish/offlinefun/sw.js', count: 1,
         why: 'Throwaway debugging output: the service worker\'s own error log in localStorage, same as ErrorBoundary.',
     },
+    {
+        file: 'c_base/client/swift/Example/Sources/FakeApple.swift', count: 1,
+        why: 'Not shipped: the example app\'s test seam reads c_base\'s fake Apple /mint, whose answer is Apple\'s own JSON shape (Apple forces it); no app links the example, and the client itself reads no JSON.',
+    },
 ];
 
 /** Source with its comments blanked, line structure kept: // to end of line, and block comments. Strings are left alone, so a "//" inside one (a URL) must not start a comment. */
