@@ -28,17 +28,31 @@ const char *const cc_sql_stmts[CC_SQL_N] = {
     [CC_SQL_RATING_PUT] = "INSERT OR REPLACE INTO cc_ratings (player, speed, r, d, v, games) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     [CC_SQL_RATINGS_ALL] = "SELECT player, speed, r, d, v, games FROM cc_ratings",
     [CC_SQL_GAME_START] = "INSERT OR REPLACE INTO cc_games (id, white, black, base_s, inc_s, rated, status, winner, started_at, ended_at, "
-                          "r_w, r_b, d_w, d_b, moves) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 2, ?7, 0, ?8, ?9, 0, 0, NULL)",
+                          "r_w, r_b, d_w, d_b, arena, moves) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 2, ?7, 0, ?8, ?9, 0, 0, ?10, NULL)",
     [CC_SQL_GAME_END] = "UPDATE cc_games SET status = ?2, winner = ?3, ended_at = ?4, d_w = ?5, d_b = ?6, moves = ?7, left_w = ?8, left_b = ?9 WHERE id = ?1",
     [CC_SQL_POINT_PUT] = "INSERT INTO cc_points (player, speed, at, rating) VALUES (?1, ?2, ?3, ?4)",
-    [CC_SQL_GAMES_PLAYING] = "SELECT id, white, black, base_s, inc_s, rated, started_at, r_w, r_b FROM cc_games WHERE status = 1",
+    [CC_SQL_GAMES_PLAYING] = "SELECT id, white, black, base_s, inc_s, rated, started_at, r_w, r_b, arena FROM cc_games WHERE status = 1",
     [CC_SQL_GAME_MAX] = "SELECT COALESCE(MAX(id), 0) FROM cc_games",
-    [CC_SQL_GAME_GET] = "SELECT white, black, base_s, inc_s, rated, status, winner, started_at, ended_at, r_w, r_b, d_w, d_b, moves, left_w, left_b "
+    [CC_SQL_GAME_GET] = "SELECT white, black, base_s, inc_s, rated, status, winner, started_at, ended_at, r_w, r_b, d_w, d_b, moves, left_w, left_b, arena "
                         "FROM cc_games WHERE id = ?1",
     [CC_SQL_GAMES_OF] = "SELECT id, white, black, base_s, inc_s, rated, status, winner, ended_at, d_w, d_b, length(moves) / 2 FROM cc_games "
                         "WHERE (white = ?1 OR black = ?1) AND status > 1 ORDER BY id DESC LIMIT 50",
     [CC_SQL_PUZZLE_PUT] = "INSERT OR REPLACE INTO cc_puzzles (id, r, d, v, plays) VALUES (?1, ?2, ?3, ?4, ?5)",
     [CC_SQL_PUZZLES_ALL] = "SELECT id, r, d, v, plays FROM cc_puzzles",
+    [CC_SQL_ARENA_PUT] = "INSERT OR REPLACE INTO cc_arenas (id, name, creator, base_s, inc_s, rated, status, starts_at, ends_at, n_players, games) "
+                         "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+    [CC_SQL_ARENA_PLAYER_PUT] = "INSERT OR REPLACE INTO cc_arena_players (arena, player, score, games, streak, rank, rating, withdrawn, white, black) "
+                                "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    [CC_SQL_ARENA_PLAYER_DEL] = "DELETE FROM cc_arena_players WHERE arena = ?1 AND player = ?2",
+    /* what a restart brings back: the upcoming and running arenas, and the finished ones of the last hour */
+    [CC_SQL_ARENAS_OPEN] = "SELECT id, name, creator, base_s, inc_s, rated, status, starts_at, ends_at, games FROM cc_arenas "
+                           "WHERE status < 2 UNION SELECT id, name, creator, base_s, inc_s, rated, status, starts_at, ends_at, games "
+                           "FROM cc_arenas WHERE status = 2 AND ends_at > ?1",
+    [CC_SQL_ARENA_PLAYERS] = "SELECT player, score, games, streak, rank, rating, withdrawn, white, black FROM cc_arena_players "
+                             "WHERE arena = ?1 ORDER BY rank LIMIT ?2",
+    [CC_SQL_ARENA_MAX] = "SELECT COALESCE(MAX(id), 0) FROM cc_arenas",
+    [CC_SQL_ARENA_GET] = "SELECT name, creator, base_s, inc_s, rated, status, starts_at, ends_at, n_players, games FROM cc_arenas WHERE id = ?1",
+    [CC_SQL_ARENA_PLAYER_GET] = "SELECT score, games, streak, rank, withdrawn FROM cc_arena_players WHERE arena = ?1 AND player = ?2",
     /* the latest ?2 of each speed, by speed, oldest first in each (rowid breaks a tie of the same
      * ms): one bounded walk of the index a speed, so a read costs the same at 20 games or 20,000
      * (a window over all of a player's points took 18 ms at 20,000, these walks 0.4 ms) */
@@ -48,7 +62,7 @@ const char *const cc_sql_stmts[CC_SQL_N] = {
 
 /* ---- the records ---- */
 
-enum { J_PLAYER, J_RATING, J_GAME_START, J_GAME_END, J_POINT, J_PUZZLE };
+enum { J_PLAYER, J_RATING, J_GAME_START, J_GAME_END, J_POINT, J_PUZZLE, J_ARENA, J_ARENA_PLAYER, J_ARENA_GONE };
 
 typedef struct jrec {
     struct jrec *next;
@@ -56,10 +70,12 @@ typedef struct jrec {
     union {
         cc_player player;   /* the fields that are written; the chains are not read */
         struct { char id[CB_UUID_LEN + 1]; int speed; uint32_t games; g2_player r; } rating;
-        struct { uint32_t id; char w[CB_UUID_LEN + 1], b[CB_UUID_LEN + 1]; int base_s, inc_s, rated; int64_t at; int r0[2]; } start;
+        struct { uint32_t id, arena; char w[CB_UUID_LEN + 1], b[CB_UUID_LEN + 1]; int base_s, inc_s, rated; int64_t at; int r0[2]; } start;
         struct { uint32_t id; int status, winner, d[2]; int64_t at, left[2]; int n; uint16_t moves[CC_MAX_PLY]; } end;
         struct { char id[CB_UUID_LEN + 1]; int speed; int64_t at; int rating; } point;
         struct { uint32_t id, plays; g2_player r; } puzzle;
+        struct { uint32_t id, n, games; char name[CW_ARENA_NAME + 1], creator[CB_UUID_LEN + 1]; int base_s, inc_s, rated, status; int64_t starts_at, ends_at; } arena;
+        struct { uint32_t arena; char id[CB_UUID_LEN + 1]; int score, games, streak, rank, rating, withdrawn, white, black; } ap;
     } u;
 } jrec;
 
@@ -121,6 +137,7 @@ void cc_journal_game_start(const cc_live *l) {
     r->u.start.at = l->started_at;
     r->u.start.r0[0] = l->rating0[0];
     r->u.start.r0[1] = l->rating0[1];
+    r->u.start.arena = l->arena;
     enqueue(r);
 }
 
@@ -199,6 +216,47 @@ void cc_journal_puzzle(uint32_t id, const g2_player *g, uint32_t plays) {
     enqueue(r);
 }
 
+void cc_journal_arena(const cc_arena *a) {
+    jrec *r = rec(J_ARENA);
+    if (!r) return;
+    r->u.arena.id = a->id;
+    r->u.arena.n = a->n;
+    r->u.arena.games = a->games;
+    memcpy(r->u.arena.name, a->name, sizeof r->u.arena.name);
+    memcpy(r->u.arena.creator, a->creator, sizeof r->u.arena.creator);
+    r->u.arena.base_s = a->tc.base_s;
+    r->u.arena.inc_s = a->tc.inc_s;
+    r->u.arena.rated = a->tc.rated;
+    r->u.arena.status = a->status;
+    r->u.arena.starts_at = a->starts_at;
+    r->u.arena.ends_at = a->ends_at;
+    enqueue(r);
+}
+
+void cc_journal_arena_player(const cc_arena *a, const cc_arena_player *ap) {
+    jrec *r = rec(J_ARENA_PLAYER);
+    if (!r) return;
+    r->u.ap.arena = a->id;
+    memcpy(r->u.ap.id, ap->p->id, sizeof r->u.ap.id);
+    r->u.ap.score = ap->score;
+    r->u.ap.games = ap->games;
+    r->u.ap.streak = ap->streak;
+    r->u.ap.rank = ap->rank;
+    r->u.ap.rating = cc_rating_int(&ap->p->r[a->speed]);
+    r->u.ap.withdrawn = ap->withdrawn;
+    r->u.ap.white = ap->white;
+    r->u.ap.black = ap->black;
+    enqueue(r);
+}
+
+void cc_journal_arena_player_gone(const cc_arena *a, const cc_player *p) {
+    jrec *r = rec(J_ARENA_GONE);
+    if (!r) return;
+    r->u.ap.arena = a->id;
+    memcpy(r->u.ap.id, p->id, sizeof r->u.ap.id);
+    enqueue(r);
+}
+
 /* ---- the writer ---- */
 
 static int write_one(cb_sql *x, const jrec *r) {
@@ -241,6 +299,7 @@ static int write_one(cb_sql *x, const jrec *r) {
         sqlite3_bind_int64(st, 7, r->u.start.at);
         sqlite3_bind_int(st, 8, r->u.start.r0[0]);
         sqlite3_bind_int(st, 9, r->u.start.r0[1]);
+        sqlite3_bind_int64(st, 10, r->u.start.arena);
         return cb_sql_run(x, st, "cc game start");
     case J_GAME_END:
         if (!(st = cb_sql_stmt(x, CC_SQL_GAME_END))) return CB_E_DB;
@@ -269,6 +328,38 @@ static int write_one(cb_sql *x, const jrec *r) {
         sqlite3_bind_double(st, 4, r->u.puzzle.r.volatility);
         sqlite3_bind_int64(st, 5, r->u.puzzle.plays);
         return cb_sql_run(x, st, "cc puzzle");
+    case J_ARENA:
+        if (!(st = cb_sql_stmt(x, CC_SQL_ARENA_PUT))) return CB_E_DB;
+        sqlite3_bind_int64(st, 1, r->u.arena.id);
+        sqlite3_bind_text(st, 2, r->u.arena.name, -1, SQLITE_STATIC);
+        cb_sql_bind_uuid(st, 3, r->u.arena.creator[0] ? r->u.arena.creator : NULL);
+        sqlite3_bind_int(st, 4, r->u.arena.base_s);
+        sqlite3_bind_int(st, 5, r->u.arena.inc_s);
+        sqlite3_bind_int(st, 6, r->u.arena.rated);
+        sqlite3_bind_int(st, 7, r->u.arena.status);
+        sqlite3_bind_int64(st, 8, r->u.arena.starts_at);
+        sqlite3_bind_int64(st, 9, r->u.arena.ends_at);
+        sqlite3_bind_int64(st, 10, r->u.arena.n);
+        sqlite3_bind_int64(st, 11, r->u.arena.games);
+        return cb_sql_run(x, st, "cc arena");
+    case J_ARENA_PLAYER:
+        if (!(st = cb_sql_stmt(x, CC_SQL_ARENA_PLAYER_PUT))) return CB_E_DB;
+        sqlite3_bind_int64(st, 1, r->u.ap.arena);
+        cb_sql_bind_uuid(st, 2, r->u.ap.id);
+        sqlite3_bind_int(st, 3, r->u.ap.score);
+        sqlite3_bind_int(st, 4, r->u.ap.games);
+        sqlite3_bind_int(st, 5, r->u.ap.streak);
+        sqlite3_bind_int(st, 6, r->u.ap.rank);
+        sqlite3_bind_int(st, 7, r->u.ap.rating);
+        sqlite3_bind_int(st, 8, r->u.ap.withdrawn);
+        sqlite3_bind_int(st, 9, r->u.ap.white);
+        sqlite3_bind_int(st, 10, r->u.ap.black);
+        return cb_sql_run(x, st, "cc arena player");
+    case J_ARENA_GONE:
+        if (!(st = cb_sql_stmt(x, CC_SQL_ARENA_PLAYER_DEL))) return CB_E_DB;
+        sqlite3_bind_int64(st, 1, r->u.ap.arena);
+        cb_sql_bind_uuid(st, 2, r->u.ap.id);
+        return cb_sql_run(x, st, "cc arena player gone");
     }
     return CB_E_INVALID;
 }
@@ -392,11 +483,79 @@ cc_player *cc_player_recovered(const cc_player *in);
 void cc_live_recovered(cc_live *l, int64_t now);
 void cc_state_next_game_id(uint32_t id);
 
-typedef struct { int rc; uint32_t players, ratings, games; char err[160]; } recover_ctx;
+typedef struct { int rc; uint32_t players, ratings, games, arenas; char err[160]; } recover_ctx;
 
 static void col_text(sqlite3_stmt *st, int c, char *out, size_t cap) {
     const unsigned char *s = sqlite3_column_text(st, c);
     snprintf(out, cap, "%s", s ? (const char *)s : "");
+}
+
+static void arena_of_row(sqlite3_stmt *st, cc_arena *a) {
+    memset(a, 0, sizeof *a);
+    col_text(st, 0, a->name, sizeof a->name);
+    cb_sql_col_uuid(st, 1, a->creator);
+    a->tc.base_s = (uint16_t)sqlite3_column_int(st, 2);
+    a->tc.inc_s = (uint8_t)sqlite3_column_int(st, 3);
+    a->tc.rated = (uint8_t)sqlite3_column_int(st, 4);
+    a->speed = (uint8_t)cc_speed(a->tc.base_s, a->tc.inc_s);
+    a->status = (uint8_t)sqlite3_column_int(st, 5);
+    a->starts_at = sqlite3_column_int64(st, 6);
+    a->ends_at = sqlite3_column_int64(st, 7);
+}
+
+/* The upcoming and running arenas and the ones finished in the last hour, with their players, after
+ * the players and the games in play (whose arena games are joined back up). */
+static int recover_arenas(cb_sql *x, recover_ctx *c) {
+    sqlite3_stmt *st = cb_sql_stmt(x, CC_SQL_ARENA_MAX);
+    if (!st) return CB_E_DB;
+    if (sqlite3_step(st) == SQLITE_ROW) cc_arena_next_id((uint32_t)sqlite3_column_int64(st, 0));
+    sqlite3_reset(st);
+    if (!(st = cb_sql_stmt(x, CC_SQL_ARENAS_OPEN))) return CB_E_DB;
+    sqlite3_bind_int64(st, 1, cc_wall() - CC_ARENA_KEEP_MS);
+    uint32_t ids[CC_ARENA_SLOTS];
+    int n = 0;
+    while (n < CC_ARENA_SLOTS && sqlite3_step(st) == SQLITE_ROW) {
+        cc_arena a;
+        memset(&a, 0, sizeof a);
+        a.id = (uint32_t)sqlite3_column_int64(st, 0);
+        col_text(st, 1, a.name, sizeof a.name);
+        cb_sql_col_uuid(st, 2, a.creator);
+        a.tc.base_s = (uint16_t)sqlite3_column_int(st, 3);
+        a.tc.inc_s = (uint8_t)sqlite3_column_int(st, 4);
+        a.tc.rated = (uint8_t)sqlite3_column_int(st, 5);
+        a.speed = (uint8_t)cc_speed(a.tc.base_s, a.tc.inc_s);
+        a.status = (uint8_t)sqlite3_column_int(st, 6);
+        a.starts_at = sqlite3_column_int64(st, 7);
+        a.ends_at = sqlite3_column_int64(st, 8);
+        a.games = (uint32_t)sqlite3_column_int64(st, 9);
+        if (cc_arena_recovered(&a)) ids[n++] = a.id;
+    }
+    sqlite3_reset(st);
+    if (!(st = cb_sql_stmt(x, CC_SQL_ARENA_PLAYERS))) return CB_E_DB;
+    for (int i = 0; i < n; i++) {
+        cc_arena *a = cc_arena_get(ids[i]);
+        sqlite3_bind_int64(st, 1, ids[i]);
+        sqlite3_bind_int64(st, 2, -1);
+        while (a && sqlite3_step(st) == SQLITE_ROW) {
+            char id[CB_UUID_LEN + 1];
+            cb_sql_col_uuid(st, 0, id);
+            cc_arena_player ap;
+            memset(&ap, 0, sizeof ap);
+            if (!(ap.p = cc_player_get(id))) continue;   /* a player row that never committed */
+            ap.score = (uint16_t)sqlite3_column_int(st, 1);
+            ap.games = (uint16_t)sqlite3_column_int(st, 2);
+            ap.streak = (uint8_t)sqlite3_column_int(st, 3);
+            ap.rank = (uint16_t)sqlite3_column_int(st, 4);
+            ap.withdrawn = (uint8_t)sqlite3_column_int(st, 6);
+            ap.white = (uint16_t)sqlite3_column_int(st, 7);
+            ap.black = (uint16_t)sqlite3_column_int(st, 8);
+            cc_arena_player_recovered(a, &ap);
+        }
+        sqlite3_reset(st);
+        c->arenas++;
+    }
+    cc_arena_games_recovered();
+    return CB_OK;
 }
 
 static int recover_fn(cb_sql *x, void *ud) {
@@ -460,12 +619,13 @@ static int recover_fn(cb_sql *x, void *ud) {
         l->started_at = sqlite3_column_int64(st, 6);
         l->rating0[0] = (int16_t)sqlite3_column_int(st, 7);
         l->rating0[1] = (int16_t)sqlite3_column_int(st, 8);
+        l->arena = (uint32_t)sqlite3_column_int64(st, 9);
         l->g.turn_at = now;   /* its moves come from the moves file (replay_moves) */
         cc_live_recovered(l, now);
         c->games++;
     }
     sqlite3_reset(st);
-    return CB_OK;
+    return recover_arenas(x, c);
 }
 
 /* The moves file onto the games in play (each record at its ply; any other is stale: a game that
@@ -538,7 +698,7 @@ int cc_journal_recover(cb_ctx *ctx, char *err, size_t cap) {
     if (rename(tmp, J.mpath) != 0) { snprintf(err, cap, "c_chess: cannot replace %s: %s", J.mpath, strerror(errno)); return CB_E_IO; }
     J.mfd = open(J.mpath, O_WRONLY | O_APPEND | O_CLOEXEC);
     if (J.mfd < 0) { snprintf(err, cap, "c_chess: cannot open %s: %s", J.mpath, strerror(errno)); return CB_E_IO; }
-    CB_INFO("cc", "journal: %u players (%u ratings), %u games in play recovered, %u moves replayed", c.players, c.ratings, c.games, applied);
+    CB_INFO("cc", "journal: %u players (%u ratings), %u games in play, %u arenas recovered, %u moves replayed", c.players, c.ratings, c.games, c.arenas, applied);
     return CB_OK;
 }
 
@@ -575,6 +735,7 @@ static int game_get_fn(cb_sql *x, void *ud) {
     s.ply = (uint16_t)mn;
     s.left_ms[0] = (uint32_t)sqlite3_column_int64(st, 14);
     s.left_ms[1] = (uint32_t)sqlite3_column_int64(st, 15);
+    s.arena = (uint32_t)sqlite3_column_int64(st, 16);
     size_t need = sizeof s + (size_t)mn * 2;
     if (need > g->cap) { sqlite3_reset(st); return CB_E_FULL; }
     memcpy(g->out, &s, sizeof s);
@@ -671,4 +832,102 @@ int cc_db_points_of(cb_store *s, const cc_player *p, cw_point *out, int per_spee
     points_read r = { p->id, out, per_speed, 0 };
     int rc = cb_sql_read(s, points_fn, &r);
     return rc == CB_OK ? r.n : rc;
+}
+
+typedef struct {
+    uint32_t id;
+    const char *me;
+    int64_t wall;
+    uint8_t *out;
+    int len;
+    char creator[CB_UUID_LEN + 1];
+    char ids[CW_ARENA_ROWS][CB_UUID_LEN + 1];
+} arena_read;
+
+static int arena_get_fn(cb_sql *x, void *ud) {
+    arena_read *r = ud;
+    sqlite3_stmt *st = cb_sql_stmt(x, CC_SQL_ARENA_GET);
+    if (!st) return CB_E_DB;
+    sqlite3_bind_int64(st, 1, r->id);
+    if (sqlite3_step(st) != SQLITE_ROW) { sqlite3_reset(st); r->len = 0; return CB_OK; }
+    cc_arena a;
+    arena_of_row(st, &a);
+    cw_arena_hdr h;
+    memset(&h, 0, sizeof h);
+    h.v = CW_V;
+    h.kind = CW_P_ARENA;
+    h.status = a.status;
+    h.speed = a.speed;
+    h.id = r->id;
+    h.base_s = a.tc.base_s;
+    h.inc_s = a.tc.inc_s;
+    h.rated = a.tc.rated;
+    int np = sqlite3_column_int(st, 8);
+    h.n_players = (uint16_t)(np > 0xffff ? 0xffff : np);
+    h.games = (uint32_t)sqlite3_column_int64(st, 9);
+    h.now = r->wall;
+    h.starts_at = a.starts_at;
+    h.ends_at = a.ends_at;
+    memcpy(h.name, a.name, strnlen(a.name, CW_ARENA_NAME));
+    memcpy(r->creator, a.creator, sizeof r->creator);
+    sqlite3_reset(st);
+    if (!(st = cb_sql_stmt(x, CC_SQL_ARENA_PLAYERS))) return CB_E_DB;
+    sqlite3_bind_int64(st, 1, r->id);
+    sqlite3_bind_int64(st, 2, CW_ARENA_ROWS);
+    int k = 0;
+    while (k < CW_ARENA_ROWS && sqlite3_step(st) == SQLITE_ROW) {
+        cw_arena_row w;
+        memset(&w, 0, sizeof w);
+        cb_sql_col_uuid(st, 0, r->ids[k]);
+        w.score = (uint16_t)sqlite3_column_int(st, 1);
+        w.games = (uint16_t)sqlite3_column_int(st, 2);
+        w.fire = cc_arena_on_fire(sqlite3_column_int(st, 3));
+        w.rank = (uint16_t)sqlite3_column_int(st, 4);
+        w.rating = (int16_t)sqlite3_column_int(st, 5);
+        w.withdrawn = (uint8_t)sqlite3_column_int(st, 6);
+        memcpy(r->out + sizeof h + (size_t)k * sizeof w, &w, sizeof w);
+        k++;
+    }
+    sqlite3_reset(st);
+    h.n_rows = (uint16_t)k;
+    if (r->me && r->me[0]) {
+        if (!(st = cb_sql_stmt(x, CC_SQL_ARENA_PLAYER_GET))) return CB_E_DB;
+        sqlite3_bind_int64(st, 1, r->id);
+        cb_sql_bind_uuid(st, 2, r->me);
+        if (sqlite3_step(st) == SQLITE_ROW) {
+            h.me_score = (uint16_t)sqlite3_column_int(st, 0);
+            h.me_games = (uint16_t)sqlite3_column_int(st, 1);
+            h.me_fire = cc_arena_on_fire(sqlite3_column_int(st, 2));
+            h.me_rank = (uint16_t)sqlite3_column_int(st, 3);
+            h.me_in = sqlite3_column_int(st, 4) ? CW_ARENA_WITHDRAWN : CW_ARENA_IN;
+        }
+        sqlite3_reset(st);
+    }
+    memcpy(r->out, &h, sizeof h);
+    r->len = (int)(sizeof h + (size_t)k * sizeof(cw_arena_row));
+    return CB_OK;
+}
+
+int cc_db_arena(cb_store *s, uint32_t id, const char *me_id, int64_t wall, uint8_t *out) {
+    arena_read *r = calloc(1, sizeof *r);
+    if (!r) return CB_E_NOMEM;
+    r->id = id;
+    r->me = me_id;
+    r->wall = wall;
+    r->out = out;
+    int rc = cb_sql_read(s, arena_get_fn, r);
+    int len = rc == CB_OK ? r->len : rc;
+    if (len > 0) {   /* the names, from the players in memory */
+        cw_arena_hdr *h = (cw_arena_hdr *)(void *)out;
+        pthread_mutex_lock(&cc_lock);
+        const cc_player *by = r->creator[0] ? cc_player_get(r->creator) : NULL;
+        if (by) memcpy(h->by, by->name, strnlen(by->name, CW_NAME));
+        for (int k = 0; k < h->n_rows; k++) {
+            const cc_player *p = cc_player_get(r->ids[k]);
+            if (p) memcpy(out + sizeof *h + (size_t)k * sizeof(cw_arena_row), p->name, strnlen(p->name, CW_NAME));
+        }
+        pthread_mutex_unlock(&cc_lock);
+    }
+    free(r);
+    return len;
 }

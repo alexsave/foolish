@@ -35,10 +35,19 @@
  *     GET /c/tv           -                    -> cw_tv
  *     GET /c/top/<speed>  -                    -> cw_top: the leaderboard of a speed (speed.h CC_BULLET..)
  *     GET /c/puzzle/next  -                    -> cw_puzzle: one near the asker's puzzle rating
- *     POST /c/puzzle/result cw_puzzle_req      -> cw_puzzle_done: both ratings after it */
+ *     POST /c/puzzle/result cw_puzzle_req      -> cw_puzzle_done: both ratings after it
+ *   arenas (arena.h has the rules)
+ *     POST /c/arena          cw_arena_req      -> cw_arena_hdr + rows: the new arena (signed-up users, not guests)
+ *     POST /c/arena/join     cw_id (arena)     -> cw_arena_hdr + rows (a withdrawn player comes back)
+ *     POST /c/arena/withdraw cw_id (arena)     -> cw_arena_hdr + rows
+ *     GET  /c/arena/<id>     -                 -> cw_arena_hdr + its top rows, and the asker's own place
+ *     GET  /c/arenas         -                 -> cw_arena_list: running, upcoming, finished in the last hour
+ *     CW_P_ARENA  cw_arena_hdr + rows  to the arena's room ("a<id>"), at most once a second when the
+ *                 standings changed (no asker: the me_ fields are zero) */
 #ifndef C_CHESS_WIRE_H
 #define C_CHESS_WIRE_H
 
+#include "arena.h"
 #include "puzzle.h"
 #include "speed.h"
 
@@ -51,7 +60,7 @@
 #define CW_POINTS_MAX (CC_SPEEDS * CW_POINTS_SPEED)
 #define CW_LIST_MAX 50      /* games a game list holds */
 
-enum { CW_P_STATE = 1, CW_P_START = 2, CW_P_LOBBY = 3, CW_SNAP = 4, CW_P_TV = 5, CW_P_EVAL = 6 };
+enum { CW_P_STATE = 1, CW_P_START = 2, CW_P_LOBBY = 3, CW_SNAP = 4, CW_P_TV = 5, CW_P_EVAL = 6, CW_P_ARENA = 7 };
 #define CW_PV_MAX 12
 #define CW_TV_MAX 24
 #define CW_TOP_MAX 50
@@ -68,6 +77,11 @@ enum { CW_E_NONE = 0, CW_E_NO_GAME = 1, CW_E_NOT_PLAYER = 2, CW_E_RULES = 3, CW_
 enum { CW_AUTH_SIGNUP = 1, CW_AUTH_SIGNIN = 2 };
 /* cw_err.code of a refused sign-up or sign-in */
 enum { CW_E_NAME_TAKEN = 20, CW_E_BAD_LOGIN = 21, CW_E_WEAK_PASSWORD = 22, CW_E_BAD_NAME = 23, CW_E_TOO_MANY = 24, CW_E_EXPIRED = 25 };
+/* cw_err.code of a refused arena request: no such arena (404), it is over (409), already in it (409),
+ * not in it (409), a guest may not make one (403), too many (429 for a creator's own, 503 for the
+ * site's), a name arena.h refuses (400) */
+enum { CW_E_ARENA_NONE = 30, CW_E_ARENA_OVER = 31, CW_E_ARENA_JOINED = 32, CW_E_ARENA_NOT_JOINED = 33, CW_E_ARENA_GUEST = 34,
+       CW_E_ARENA_TOO_MANY = 35, CW_E_ARENA_NAME = 36 };
 
 typedef struct { char name[CW_NAME]; char password[CW_PASSWORD]; uint8_t mode; uint8_t pad[3]; } cw_auth_req;
 typedef struct { char refresh[CW_REFRESH]; } cw_refresh_req;
@@ -162,7 +176,8 @@ typedef struct {
     int16_t  diff[2];
     uint32_t next_game;
     uint8_t  clock_running;
-    uint8_t  pad[7];
+    uint8_t  pad[3];
+    uint32_t arena;            /* the arena that made the game; 0: none */
     int64_t  started_at;       /* ms since the epoch */
     char     name[2][CW_NAME];
 } cw_snap;
@@ -250,5 +265,77 @@ typedef struct {
 _Static_assert(sizeof(cw_puzzle) == 144, "cw_puzzle");
 _Static_assert(sizeof(cw_puzzle_req) == 8, "cw_puzzle_req");
 _Static_assert(sizeof(cw_puzzle_done) == 16, "cw_puzzle_done");
+
+/* ---- arenas ---- */
+#define CW_ARENA_NAME 32     /* an arena's name, NUL-padded (arena.h: 3..30 bytes) */
+#define CW_ARENA_ROWS 100    /* the standings a frame lists: the top of the arena */
+#define CW_ARENAS_MAX 128    /* arenas a list holds (the server keeps no more in memory) */
+enum { CW_ARENA_OUT = 0, CW_ARENA_IN = 1, CW_ARENA_WITHDRAWN = 2 };   /* cw_arena_hdr.me_in */
+
+/* duration_s: CC_ARENA_DURATION_MIN..MAX; start_in_s: 0..CC_ARENA_START_MAX */
+typedef struct {
+    uint16_t base_s;
+    uint8_t  inc_s, rated;
+    uint32_t start_in_s;
+    uint32_t duration_s;
+    char     name[CW_ARENA_NAME];
+} cw_arena_req;
+
+/* An arena and its standings: this, then n_rows cw_arena_row by rank (score, then rating). The
+ * me_ fields are the asker's own place (a read or an answer; zero in a push), so a player below
+ * the top rows still learns it. */
+typedef struct {
+    uint8_t  v, kind;          /* CW_V, CW_P_ARENA */
+    uint8_t  status, speed;    /* arena.h CC_ARENA_UPCOMING..; speed.h */
+    uint32_t id;
+    uint16_t base_s;
+    uint8_t  inc_s, rated;
+    uint16_t n_players;        /* joined, the withdrawn too */
+    uint16_t n_rows;
+    uint16_t playing;          /* players in a game of the arena now */
+    uint8_t  me_in, me_fire;   /* CW_ARENA_OUT..; the asker is on a streak */
+    uint32_t games;            /* games the arena has made */
+    int64_t  now;              /* the server's clock when this was made (ms since the epoch): the
+                                * countdowns are read against it, not the reader's clock */
+    int64_t  starts_at, ends_at;   /* ms since the epoch */
+    uint16_t me_rank, me_score, me_games;
+    uint8_t  pad[2];
+    char     name[CW_ARENA_NAME];
+    char     by[CW_NAME];      /* who made it; empty: the site's schedule */
+    uint8_t  pad2[4];
+} cw_arena_hdr;
+
+typedef struct {
+    char     name[CW_NAME];
+    uint16_t score, games;
+    uint16_t rank;             /* 1.. */
+    int16_t  rating;           /* of the arena's speed */
+    uint8_t  fire;             /* on a streak: a win scores double */
+    uint8_t  withdrawn, playing;
+    uint8_t  pad;
+} cw_arena_row;
+
+typedef struct {
+    uint32_t id;
+    uint8_t  status, speed;
+    uint16_t base_s;
+    uint8_t  inc_s, rated;
+    uint16_t n_players;
+    uint8_t  pad[4];
+    int64_t  starts_at, ends_at;
+    char     name[CW_ARENA_NAME];
+    char     winner[CW_NAME];  /* a finished arena's first place */
+    uint8_t  pad2[4];
+} cw_arena_item;
+/* running first, then upcoming by start, then finished, latest first */
+typedef struct { uint16_t n; uint8_t pad[6]; int64_t now; cw_arena_item rows[CW_ARENAS_MAX]; } cw_arena_list;
+
+_Static_assert(sizeof(cw_arena_req) == 44, "cw_arena_req");
+_Static_assert(sizeof(cw_arena_hdr) == 112, "cw_arena_hdr");
+_Static_assert(sizeof(cw_arena_row) == 32, "cw_arena_row");
+_Static_assert(sizeof(cw_arena_item) == 88, "cw_arena_item");
+_Static_assert(sizeof(cw_arena_list) == 16 + 88 * CW_ARENAS_MAX, "cw_arena_list");
+_Static_assert(CW_ARENA_NAME > CC_ARENA_NAME_MAX, "a name and its NUL");
+#define CW_ARENA_FRAME_MAX (sizeof(cw_arena_hdr) + CW_ARENA_ROWS * sizeof(cw_arena_row))
 
 #endif

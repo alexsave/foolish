@@ -4,6 +4,7 @@
 #include "journal.h"
 #include "pushes.h"
 #include "ai.h"
+#include "arenas.h"
 
 #include "realtime/realtime.h"
 #include "util/clock.h"
@@ -238,7 +239,7 @@ static void tv_tick(int64_t now);
 
 static void *clock_main(void *ud) {
     (void)ud;
-    int64_t next_sweep = cc_mono() + 10000, next_tv = cc_mono() + 1000;
+    int64_t next_sweep = cc_mono() + 10000, next_tv = cc_mono() + 1000, next_arena = cc_mono() + 1000;
     pthread_mutex_lock(&cc_lock);
     while (!clock_stop) {
         int64_t now = cc_mono();
@@ -251,7 +252,9 @@ static void *clock_main(void *ud) {
         }
         if (now >= next_sweep) { sweep(now); next_sweep = now + 10000; }
         if (now >= next_tv) { tv_tick(now); next_tv = now + 1000; }
+        if (now >= next_arena) { cc_arena_tick(now, cc_wall()); next_arena = now + CC_ARENA_TICK_MS; }
         int64_t soon = next_sweep < next_tv ? next_sweep : next_tv;
+        if (next_arena < soon) soon = next_arena;
         int64_t until = heap_n && HEAP[0]->timer_at < soon ? HEAP[0]->timer_at : soon;
         /* the condition variable waits on the wall clock: the wait is the monotonic distance */
         int64_t wait_ms = until - now;
@@ -295,6 +298,7 @@ static void finish(cc_live *l, int64_t now) {
     if (l->finished) return;
     l->finished = 1;
     n_playing--;
+    for (int c = 0; c < 2; c++) if (l->p[c]->playing) l->p[c]->playing--;
     l->evict_at = now + CC_FINISHED_KEEP_MS;
     cc_game *g = &l->g;
     bool counts = g->status != CC_ABORTED;
@@ -322,6 +326,7 @@ static void finish(cc_live *l, int64_t now) {
     }
     for (int c = 0; c < 2; c++) cc_journal_player(l->p[c]);
     cc_journal_game_end(l, wall);
+    if (l->arena) cc_arena_game_over(l, now);   /* after the ratings: the standings show the new ones */
 }
 
 void cc_live_changed(cc_live *l, int64_t now) {
@@ -334,9 +339,14 @@ void cc_live_changed(cc_live *l, int64_t now) {
 }
 
 cc_live *cc_live_start(cc_player *white, cc_player *black, const cw_seek *tc, int64_t now) {
+    return cc_live_start_in(white, black, tc, 0, now);
+}
+
+cc_live *cc_live_start_in(cc_player *white, cc_player *black, const cw_seek *tc, uint32_t arena, int64_t now) {
     cc_live *l = calloc(1, sizeof *l);
     if (!l) return NULL;
     l->id = next_game_id++;
+    l->arena = arena;
     cc_game_new(&l->g, (int32_t)tc->base_s * 1000, (int32_t)tc->inc_s * 1000, now);
     l->p[0] = white;
     l->p[1] = black;
@@ -346,6 +356,7 @@ cc_live *cc_live_start(cc_player *white, cc_player *black, const cw_seek *tc, in
     l->started_at = cc_wall();
     live_insert(l);
     n_playing++;
+    for (int c = 0; c < 2; c++) l->p[c]->playing++;
     cc_journal_game_start(l);
     schedule(l, now);
     for (int c = 0; c < 2; c++) {
@@ -360,8 +371,12 @@ cc_live *cc_live_start(cc_player *white, cc_player *black, const cw_seek *tc, in
 void cc_live_recovered(cc_live *l, int64_t now) {
     live_insert(l);
     cc_state_next_game_id(l->id);
-    if (!cc_game_over(&l->g)) { n_playing++; schedule(l, now); }
+    if (!cc_game_over(&l->g)) { n_playing++; l->p[0]->playing++; l->p[1]->playing++; schedule(l, now); }
     else l->finished = 1, l->evict_at = now + CC_FINISHED_KEEP_MS;
+}
+
+bool cc_tc_ok(const cw_seek *tc) {
+    return tc->base_s <= 10800 && tc->inc_s <= 180 && tc->base_s + tc->inc_s * 40 >= 15 && tc->rated <= 1;
 }
 
 /* ---- seeks ---- */
@@ -608,4 +623,5 @@ void cc_state_free(void) {
     free(P_ID.b); free(P_NAME.b); free(LIVE.b); free(CHAL.b); free(HEAP);
     memset(&P_ID, 0, sizeof P_ID); memset(&P_NAME, 0, sizeof P_NAME); memset(&LIVE, 0, sizeof LIVE); memset(&CHAL, 0, sizeof CHAL);
     HEAP = NULL; heap_n = heap_cap = 0; n_seeks = 0; n_playing = 0;
+    cc_arena_free();
 }

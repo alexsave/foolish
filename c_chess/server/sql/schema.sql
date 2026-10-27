@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS cc_games (
     started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL,
     r_w INTEGER NOT NULL, r_b INTEGER NOT NULL, d_w INTEGER NOT NULL, d_b INTEGER NOT NULL,
     left_w INTEGER NOT NULL DEFAULT 0, left_b INTEGER NOT NULL DEFAULT 0,   -- the clocks at the end, ms
+    arena INTEGER NOT NULL DEFAULT 0,   -- the arena that made the game (cc_arenas.id); 0: none
     moves BLOB                     -- u16 per ply, little-endian; NULL while the game is in play
 );
 CREATE INDEX IF NOT EXISTS cc_games_white ON cc_games (white, id);
@@ -39,6 +40,22 @@ CREATE INDEX IF NOT EXISTS cc_points_player ON cc_points (player, speed, at);
 -- a puzzle's rating as people solve it (the puzzles themselves are a file: CC_PUZZLES, puzzle.h);
 -- the id is the record's (puzzles.c: a hash of its position and line, so a regenerated file keeps
 -- the ratings of the puzzles it kept)
+-- arenas (server/src/arenas.c): written at their making, start and end; status 0 upcoming, 1
+-- running, 2 finished (c/src/arena.h); creator NULL for the site's schedule
+CREATE TABLE IF NOT EXISTS cc_arenas (
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL, creator BLOB,
+    base_s INTEGER NOT NULL, inc_s INTEGER NOT NULL, rated INTEGER NOT NULL, status INTEGER NOT NULL,
+    starts_at INTEGER NOT NULL, ends_at INTEGER NOT NULL, n_players INTEGER NOT NULL, games INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS cc_arenas_open ON cc_arenas (status, ends_at);
+-- an arena's player, written when it joins, withdraws and after each of its games there; rank and
+-- rating as of then (the end's write holds the final standings)
+CREATE TABLE IF NOT EXISTS cc_arena_players (
+    arena INTEGER NOT NULL, player BLOB NOT NULL,
+    score INTEGER NOT NULL, games INTEGER NOT NULL, streak INTEGER NOT NULL, rank INTEGER NOT NULL,
+    rating INTEGER NOT NULL, withdrawn INTEGER NOT NULL, white INTEGER NOT NULL, black INTEGER NOT NULL,
+    PRIMARY KEY (arena, player)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS cc_puzzles (
     id INTEGER PRIMARY KEY, r REAL NOT NULL, d REAL NOT NULL, v REAL NOT NULL, plays INTEGER NOT NULL
 );

@@ -9,6 +9,7 @@
 #include "pushes.h"
 #include "ai.h"
 #include "engine.h"
+#include "arenas.h"
 
 #include "auth/auth.h"
 #include "net/loop.h"
@@ -50,7 +51,7 @@ bool cc_api_caller(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, cb_use
 static cc_player *player(const cb_user *u) { return cc_player_of(u->id, u->username); }
 
 /* The number after the route's prefix: "/c/game/123" -> 123; 0 for none. */
-static uint32_t tail_id(const char *path, const char *prefix) {
+uint32_t cc_api_tail_id(const char *path, const char *prefix) {
     size_t n = strlen(prefix);
     if (strncmp(path, prefix, n) != 0) return 0;
     uint64_t v = 0;
@@ -62,10 +63,6 @@ static uint32_t tail_id(const char *path, const char *prefix) {
         if (v > UINT32_MAX) return 0;
     }
     return (uint32_t)v;
-}
-
-static bool valid_tc(const cw_seek *tc) {
-    return tc->base_s <= 10800 && tc->inc_s <= 180 && tc->base_s + tc->inc_s * 40 >= 15 && tc->rated <= 1;
 }
 
 /* ---- sign-up, sign-in, refresh ---- */
@@ -161,7 +158,7 @@ static void h_seek(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cw_seek tc;
     if (req->body_len != sizeof tc) { refuse(res, 400, CW_E_BAD, 0); return; }
     memcpy(&tc, req->body, sizeof tc);
-    if (!valid_tc(&tc)) { refuse(res, 400, CW_E_BAD, 0); return; }
+    if (!cc_tc_ok(&tc)) { refuse(res, 400, CW_E_BAD, 0); return; }
     pthread_mutex_lock(&cc_lock);
     cc_player *p = player(&u);
     cc_live *g = NULL;
@@ -188,7 +185,7 @@ static void h_challenge(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cw_seek tc;
     if (req->body_len != sizeof tc) { refuse(res, 400, CW_E_BAD, 0); return; }
     memcpy(&tc, req->body, sizeof tc);
-    if (!valid_tc(&tc)) { refuse(res, 400, CW_E_BAD, 0); return; }
+    if (!cc_tc_ok(&tc)) { refuse(res, 400, CW_E_BAD, 0); return; }
     pthread_mutex_lock(&cc_lock);
     cc_player *p = player(&u);
     cc_challenge *c = p ? cc_challenge_add(p, &tc, cc_mono()) : NULL;
@@ -231,7 +228,7 @@ static void h_ai(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     if (req->body_len != sizeof q) { refuse(res, 400, CW_E_BAD, 0); return; }
     memcpy(&q, req->body, sizeof q);
     cw_seek tc = { q.base_s, q.inc_s, 0 };
-    if (!valid_tc(&tc) || q.level < 1 || q.level > CC_AI_LEVELS || q.color > 2) { refuse(res, 400, CW_E_BAD, 0); return; }
+    if (!cc_tc_ok(&tc) || q.level < 1 || q.level > CC_AI_LEVELS || q.color > 2) { refuse(res, 400, CW_E_BAD, 0); return; }
     if (!cc_engine_available()) { refuse(res, 503, CW_E_BUSY, 0); return; }
     pthread_mutex_lock(&cc_lock);
     int64_t now = cc_mono();
@@ -287,11 +284,11 @@ static void h_act(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
         bool was_over = cc_game_over(&l->g);
         switch (q.act) {
         case CW_A_RESIGN: rc = cc_game_resign(&l->g, color, now); break;
-        case CW_A_ABORT: rc = cc_game_abort(&l->g, color, now); break;
+        case CW_A_ABORT: rc = l->arena ? CC_E_STATE : cc_game_abort(&l->g, color, now); break;   /* an arena game: play or resign */
         case CW_A_DRAW: rc = cc_game_draw(&l->g, color, now); break;
         case CW_A_DRAW_DECLINE: rc = cc_game_draw_decline(&l->g, color); break;
         case CW_A_REMATCH:
-            if (!cc_game_over(&l->g) || l->next_game) rc = CC_E_STATE;
+            if (!cc_game_over(&l->g) || l->next_game || l->arena) rc = CC_E_STATE;   /* the arena pairs its own */
             else if ((l->rematch_offer & (1u << (color ^ 1))) || cc_ai_level(l->p[color ^ 1])) {   /* the computer agrees at once */
                 cw_seek tc = { (uint16_t)(l->g.base_ms / 1000), (uint8_t)(l->g.inc_ms / 1000), l->rated, };
                 cc_live *n = cc_live_start(l->p[1], l->p[0], &tc, now);   /* colors swap */
@@ -340,6 +337,7 @@ static size_t snap_of(const cc_live *l, uint8_t *out, int64_t now) {
     s.next_game = l->next_game;
     s.clock_running = cc_game_clock_running(&l->g);
     s.started_at = l->started_at;
+    s.arena = l->arena;
     memcpy(out, &s, sizeof s);
     memcpy(out + sizeof s, l->g.moves, (size_t)l->g.ply * 2);
     return sizeof s + (size_t)l->g.ply * 2;
@@ -348,7 +346,7 @@ static size_t snap_of(const cc_live *l, uint8_t *out, int64_t now) {
 #define SNAP_MAX (sizeof(cw_snap) + CC_MAX_PLY * 2)
 
 static void h_game(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
-    uint32_t id = tail_id(req->path, "/c/game/");
+    uint32_t id = cc_api_tail_id(req->path, "/c/game/");
     if (!id) { refuse(res, 400, CW_E_BAD, 0); return; }
     uint8_t buf[SNAP_MAX];
     size_t n = 0;
@@ -469,7 +467,7 @@ static void h_games(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 
 static void h_pgn(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     if (on_loop(ctx)) { res->to_pool = true; return; }
-    uint32_t id = tail_id(req->path, "/c/pgn/");
+    uint32_t id = cc_api_tail_id(req->path, "/c/pgn/");
     if (!id) { cb_res_text(res, 400, "no such game\n"); return; }
     uint8_t buf[SNAP_MAX];
     int n = 0;
@@ -511,15 +509,20 @@ static void h_stats(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     pthread_mutex_lock(&cc_lock);
     uint32_t live = cc_games_live();
     pthread_mutex_unlock(&cc_lock);
-    uint64_t es, en, aa, ar, ah;
+    uint64_t es, en, aa, ar, ah, at, atu, atm, ap, apb;
     uint32_t eq, eb;
     cc_engine_counts(&es, &en, &eq, &eb);
     cc_ai_counts(&aa, &ar, &ah);
-    char out[512];
+    pthread_mutex_lock(&cc_lock);
+    cc_arena_counts(&at, &atu, &atm, &ap, &apb);
+    pthread_mutex_unlock(&cc_lock);
+    char out[768];
     snprintf(out, sizeof out, "games_live %u\njournal_queued %llu\njournal_committed %llu\njournal_commits %llu\n"
-             "engine_searches %llu\nengine_nodes %llu\nengine_queued %u\nengine_busy %u\nai_asked %llu\nai_refused %llu\nai_cache_hits %llu\n", live,
+             "engine_searches %llu\nengine_nodes %llu\nengine_queued %u\nengine_busy %u\nai_asked %llu\nai_refused %llu\nai_cache_hits %llu\n"
+             "arena_passes %llu\narena_pass_us %llu\narena_pass_max_us %llu\narena_pushes %llu\narena_push_bytes %llu\n", live,
              (unsigned long long)q, (unsigned long long)c, (unsigned long long)k, (unsigned long long)es, (unsigned long long)en, eq, eb,
-             (unsigned long long)aa, (unsigned long long)ar, (unsigned long long)ah);
+             (unsigned long long)aa, (unsigned long long)ar, (unsigned long long)ah, (unsigned long long)at, (unsigned long long)atu,
+             (unsigned long long)atm, (unsigned long long)ap, (unsigned long long)apb);
     cb_res_text(res, 200, out);
 }
 

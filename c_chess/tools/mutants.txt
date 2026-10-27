@@ -125,3 +125,38 @@ server/src/api.c ::: pr.rated[k] = snap.rated[k]; ::: (void)0; ::: build/c_chess
 server/src/api.c ::: pr.rd[k] = (uint16_t)(snap.r[k].deviation + 0.5); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/api.c ::: pr.puzzle = (int16_t)cc_rating_int(&snap.pz); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/api.c ::: pr.puzzle_rd = (uint16_t)(snap.pz.deviation + 0.5); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+# the server's arenas, through the state and the journal (server/test/unit_arenas.c)
+server/src/arenas.c ::: (n == 2 || fresh(x, &a->pl[FREE[k]])) ::: (1 || fresh(x, &a->pl[FREE[k]])) ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (!ap->withdrawn && !ap->game && !ap->p->playing && now >= ap->rest_until ::: if (!ap->withdrawn && !ap->game && now >= ap->rest_until ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (!ap->withdrawn && !ap->game && !ap->p->playing && now >= ap->rest_until ::: if (!ap->withdrawn && !ap->game && !ap->p->playing ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (!ap->withdrawn && !ap->game && !ap->p->playing && now >= ap->rest_until ::: if (!ap->game && !ap->p->playing && now >= ap->rest_until ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: bool x_white = dx < dy || (dx == dy && (a->games & 1) == 0); ::: bool x_white = dx > dy || (dx == dy && (a->games & 1) == 0); ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: qsort(FREE, n, sizeof *FREE, by_rating); ::: if (0) qsort(FREE, n, sizeof *FREE, by_rating); ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: FREE[out] = FREE[--n]; ::: (void)out; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: ap->score = (uint16_t)(ap->score + cc_arena_points(r, ap->streak, g->ply)); ::: ap->score = (uint16_t)(ap->score + cc_arena_points(r, 0, g->ply)); ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: ap->score = (uint16_t)(ap->score + cc_arena_points(r, ap->streak, g->ply)); ::: ap->score = (uint16_t)(ap->score + cc_arena_points(r, ap->streak, 40)); ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: g->winner == CC_NO_WINNER ? CC_ARENA_DRAW : CC_ARENA_LOSS; ::: g->winner == CC_NO_WINNER ? CC_ARENA_LOSS : CC_ARENA_LOSS; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (g->pos.stm == c) ap->withdrawn = 1; ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (a->status == CC_ARENA_RUNNING) pair(a, now); ::: if (a->status != CC_ARENA_UPCOMING) pair(a, now); ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (a->status == CC_ARENA_UPCOMING && wall >= a->starts_at) { ::: if (a->status == CC_ARENA_UPCOMING && wall > a->starts_at) { ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (a->status == CC_ARENA_RUNNING && wall >= a->ends_at) { ::: if (a->status == CC_ARENA_RUNNING && wall > a->ends_at) { ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: *ap = a->pl[--a->n];\n        return CW_E_NONE; ::: ap->withdrawn = 1;\n        return CW_E_NONE; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (ap) ap->withdrawn = 0; ::: if (ap) (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (mine >= CC_ARENA_PER_CREATOR) return CW_E_ARENA_TOO_MANY; ::: (void)mine; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (by && strncmp(by->name, "guest-", 6) == 0) return CW_E_ARENA_GUEST; ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (a->score != b->score) return a->score > b->score ? -1 : 1; ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: return a->score > b->score ? -1 : 1;\n    int ra = rating_of(SORT_A, a), rb = rating_of(SORT_A, b);\n    if (ra != rb) return ra > rb ? -1 : 1; ::: return a->score > b->score ? -1 : 1;\n    int ra = rating_of(SORT_A, a), rb = rating_of(SORT_A, b);\n    if (ra != rb && 0) return ra > rb ? -1 : 1; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: have = a && !a->creator[0] && a->status == CC_ARENA_UPCOMING ::: have = a && !a->creator[0] && a->status == CC_ARENA_FINISHED ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: int64_t hour = (wall / 3600000 + 1) * 3600000; ::: int64_t hour = wall + 3600000; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: for (uint32_t i = 0; i < a->n; i++) cc_journal_arena_player(a, &a->pl[i]); ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: if (a->status == CC_ARENA_FINISHED) return CW_E_ARENA_OVER; ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: h.me_rank = mine->rank; ::: h.me_rank = 0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/journal.c ::: ap.score = (uint16_t)sqlite3_column_int(st, 1); ::: ap.score = 0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/journal.c ::: cc_arena_games_recovered();\n ::: (void)0;\n ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/journal.c ::: sqlite3_bind_int64(st, 10, r->u.start.arena); ::: sqlite3_bind_int64(st, 10, 0); ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/journal.c ::: if (sqlite3_step(st) == SQLITE_ROW) cc_arena_next_id((uint32_t)sqlite3_column_int64(st, 0)); ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/journal.c ::: h.me_in = sqlite3_column_int(st, 4) ? CW_ARENA_WITHDRAWN : CW_ARENA_IN; ::: h.me_in = CW_ARENA_OUT; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/journal.c ::: "FROM cc_arenas WHERE status = 2 AND ends_at > ?1", ::: "FROM cc_arenas WHERE status = 2", ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/state.c ::: if (l->arena) cc_arena_game_over(l, now); ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/state.c ::: for (int c = 0; c < 2; c++) if (l->p[c]->playing) l->p[c]->playing--; ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/arenas.c ::: for (uint32_t l = 0; l + 1 < nl; l += 2) { ::: for (uint32_t l = 0; 0 && l + 1 < nl; l += 2) { ::: build/test/unit_arenas ::: build/test/unit_arenas

@@ -30,6 +30,7 @@ typedef struct cc_player {
     uint32_t  pz_open;                 /* the puzzle handed out and not yet answered; 0: none */
     uint32_t  pz_seen[16];             /* the last puzzles handed out, not handed out again soon */
     uint8_t   pz_seen_at;
+    uint16_t  playing;                 /* games of theirs in play (an arena pairs only the free) */
     struct cc_player *next;            /* the id map's chain */
     struct cc_player *next_name;       /* the name map's chain */
 } cc_player;
@@ -43,6 +44,7 @@ typedef struct cc_live {
     uint8_t    finished;               /* cc_finish ran (ratings, journal) */
     uint8_t    ai_pending;             /* the computer's search for this ply is in flight (ai.h) */
     uint8_t    speed;                  /* its rating's (rating.h), from the time control */
+    uint32_t   arena;                  /* the arena that made it (arena.h); 0: none */
     int16_t    rating0[2];             /* the ratings when the game began */
     int16_t    diff[2];
     uint32_t   next_game;              /* the rematch */
@@ -88,11 +90,15 @@ cc_live   *cc_live_get(uint32_t id);
 /* A new game between a and b (a white), its clock thread entry and journal record, and the START
  * pushes to both. */
 cc_live   *cc_live_start(cc_player *white, cc_player *black, const cw_seek *tc, int64_t now_mono);
+/* The same, for a game an arena made (its id rides in the game, the journal and the snapshot). */
+cc_live   *cc_live_start_in(cc_player *white, cc_player *black, const cw_seek *tc, uint32_t arena, int64_t now_mono);
 /* After any change to a live game: the state push to its room, its clock entry, and when it has
  * just ended, the finish (ratings, the journal). */
 void       cc_live_changed(cc_live *l, int64_t now_mono);
 void       cc_state_fill(const cc_live *l, cw_state *s, int64_t now_mono);
 int        cc_color_of(const cc_live *l, const cc_player *p);   /* -1: not a player */
+/* A time control the site plays: up to 3 hours plus 3 minutes a move, at least 15 s of play. */
+bool       cc_tc_ok(const cw_seek *tc);
 /* Seeks: pairs with a waiting seek of the same time control from someone else (*game set, the
  * seek gone) or waits; the lobby push follows. */
 int        cc_seek_add(cc_player *p, const cw_seek *tc, int64_t now_mono, cc_live **game);

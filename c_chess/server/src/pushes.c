@@ -22,6 +22,12 @@ void cc_push_room_game(uint32_t game, const uint8_t *frame, size_t n) {
     cb_rt_publish(CTX->rt, &to, 1, frame, n);
 }
 
+void cc_push_room(const char *room, const uint8_t *frame, size_t n) {
+    if (!CTX || !CTX->rt) return;
+    cb_rt_to to = { &cc_fam_room, NULL, room, NULL };
+    cb_rt_publish(CTX->rt, &to, 1, frame, n);
+}
+
 void cc_push_user(const char *user_id, const uint8_t *frame, size_t n) {
     if (!CTX || !CTX->rt) return;
     cb_rt_to to = { &cc_fam_user, user_id, NULL, NULL };

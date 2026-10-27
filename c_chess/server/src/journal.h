@@ -20,6 +20,7 @@
 #define C_CHESS_JOURNAL_H
 
 #include "cc_server.h"
+#include "arenas.h"
 #include "store/store.h"
 
 enum {
@@ -37,6 +38,14 @@ enum {
     CC_SQL_POINTS_OF,
     CC_SQL_PUZZLE_PUT,
     CC_SQL_PUZZLES_ALL,
+    CC_SQL_ARENA_PUT,
+    CC_SQL_ARENA_PLAYER_PUT,
+    CC_SQL_ARENA_PLAYER_DEL,
+    CC_SQL_ARENAS_OPEN,
+    CC_SQL_ARENA_PLAYERS,
+    CC_SQL_ARENA_MAX,
+    CC_SQL_ARENA_GET,
+    CC_SQL_ARENA_PLAYER_GET,
     CC_SQL_N
 };
 extern const char *const cc_sql_stmts[CC_SQL_N];
@@ -53,6 +62,11 @@ void cc_journal_game_end(const cc_live *l, int64_t wall);
 void cc_journal_rating(const cc_player *p, int speed);
 void cc_journal_point(const cc_player *p, int speed, int64_t wall);
 void cc_journal_puzzle(uint32_t id, const g2_player *r, uint32_t plays);
+/* An arena's row (at its making, start and end) and a player's row in it (join, withdraw, each game,
+ * the end); a player who leaves an arena before its start has no row. */
+void cc_journal_arena(const cc_arena *a);
+void cc_journal_arena_player(const cc_arena *a, const cc_arena_player *ap);
+void cc_journal_arena_player_gone(const cc_arena *a, const cc_player *p);
 /* Records queued and committed since start, for /c/stats and the tests. */
 void cc_journal_counts(uint64_t *queued, uint64_t *committed, uint64_t *commits);
 /* Blocks until everything queued before the call is committed (the tests, a clean stop). */
@@ -69,5 +83,9 @@ int  cc_db_games_of(cb_store *s, const cc_player *p, cw_game_list *out);
 /* The rating points of p, the latest per_speed of each speed, by speed and oldest first in each
  * (out holds per_speed * CC_SPEEDS): their count, or a CB_E_*. */
 int  cc_db_points_of(cb_store *s, const cc_player *p, cw_point *out, int per_speed);
+/* An arena no longer in memory as its frame (cw_arena_hdr + its top rows by the final rank), with
+ * me's place (me_id NULL or "": none) into out (CW_ARENA_FRAME_MAX): its length, 0 when there is no
+ * such arena, or a CB_E_*. */
+int  cc_db_arena(cb_store *s, uint32_t id, const char *me_id, int64_t wall, uint8_t *out);
 
 #endif
