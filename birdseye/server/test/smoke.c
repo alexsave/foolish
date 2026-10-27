@@ -11,6 +11,7 @@
 #include "util/clock.h"
 #include "be_metrics.h"
 #include "wire.h"
+#include "store/game_id.h"
 #include "../../../shared/c/stream_frame.h"
 
 #include <signal.h>
@@ -256,6 +257,7 @@ int main(int argc, char **argv) {
 
     // One table's detail: the row again, its hands (a sim seat's hand is known), its events.
     char path[64];
+    T_CHECK(cb_game_id_ok(over_gid, strlen(over_gid)));   // the server's six-character rule, not a wider id
     snprintf(path, sizeof path, "/be/table/%s", over_gid);
     T_CHECK(fetch(path, &r) == 0 && r.status == 200 && r.body.len == sizeof(be_w_detail));
     if (r.body.len == sizeof(be_w_detail)) {
@@ -273,7 +275,13 @@ int main(int argc, char **argv) {
         free(d);
     }
     tc_response_free(&r);
-    T_CHECK(fetch("/be/table/nope", &r) == 0 && r.status == 404);
+    // An id of the rule's shape that names no table is 404; anything else is not a game id (400),
+    // the 12-character ids of before store/game_id.h included.
+    T_CHECK(fetch("/be/table/nope", &r) == 0 && r.status == 400);
+    tc_response_free(&r);
+    T_CHECK(fetch(strcmp(over_gid, "000000") ? "/be/table/000000" : "/be/table/000001", &r) == 0 && r.status == 404);
+    tc_response_free(&r);
+    T_CHECK(fetch("/be/table/2575391948c7", &r) == 0 && r.status == 400);
     tc_response_free(&r);
 
     // The report after: games finished, moves taken, nothing refused, nothing hostile taken,

@@ -65,11 +65,13 @@ SHARED_SRC := $(filter-out $(KERNEL_SRC),$(C_ROOT)/shared/c/b64/b64.c $(C_ROOT)/
 GEN_SRC := build/gen/schema_sql.c build/gen/console_html.c
 # The tests' blocking HTTP and WebSocket client (c_base/core/test): the sim's sign-up and its sockets.
 CLIENT_SRC := $(CB)/core/test/lib_client.c
-APP_SRC := $(sort $(wildcard src/*.c))
+# The game id rule (store/game_id.h), the server's own: wire.h sizes a game id by it, and a
+# GET /be/table/<gid> is checked by it.
+APP_SRC := $(sort $(wildcard src/*.c)) $(C_ROOT)/foolish/server/src/store/game_id.c
 LIB_SRC := $(PLATFORM_SRC) $(SHARED_SRC) $(GEN_SRC) $(CLIENT_SRC) $(APP_SRC)
 
-PLATFORM_INC := -I$(CB)/core/include -I$(CB)/core/src -I$(CB)/providers/local/src -I$(CB)/providers/aws/src -I$(C_ROOT)/shared/c
-INC := $(PLATFORM_INC) -I$(CB)/core/test -I$(KDIR)/src -Isrc -Itest
+PLATFORM_INC := -I$(CB)/core/include -I$(CB)/client/include -I$(CB)/core/src -I$(CB)/providers/local/src -I$(CB)/providers/aws/src -I$(C_ROOT)/shared/c
+INC := $(PLATFORM_INC) -I$(C_ROOT)/foolish/server/src -I$(CB)/core/test -I$(KDIR)/src -Isrc -Itest
 WIRE_HASH_FILE := build/gen/wire.hash
 # The product's flags carry the kernel's capacities (struct sizes) and the wire hash (read from the
 # file structgen wrote, which the variant's flag stamp names so a new hash is a new command line).
@@ -101,7 +103,7 @@ build/gen/console_html.c: $(CB)/core/src/admin/console.html build/embed
 # ---- the web's decoder, by structgen -----------------------------------------------------------
 STRUCTGEN := $(C_ROOT)/shared/tools/structgen/build/structgen
 WIRE_TS   := ../web/src/gen/wire.ts
-SG_ARGS := --cwd src --header wire.h --build 'be=-std=gnu11' \
+SG_ARGS := --cwd src --header wire.h --build 'be=-std=gnu11 -I../../../foolish/server/src' \
            --root be_w_card --root be_w_seat --root be_w_table --root be_w_event --root be_w_hand --root be_w_detail --root be_w_list --root be_w_session \
            --root be_w_bot --root be_w_result --root be_w_league --snapshot be_w_bot --snapshot be_w_result --snapshot be_w_league \
            --root be_w_match --root be_w_tour --snapshot be_w_match --snapshot be_w_tour --count be_w_match.gid=gid_len \
@@ -118,7 +120,7 @@ $(STRUCTGEN):
 # One run writes both: the decoder (to build/gen, copied to the web) and the hash the server is
 # compiled with. The hash file is written only when it changes, so an unchanged layout rebuilds
 # nothing; the decoder is one target with the hash, never two recipes racing under -j.
-$(WIRE_HASH_FILE): src/wire.h $(STRUCTGEN)
+$(WIRE_HASH_FILE): src/wire.h $(C_ROOT)/foolish/server/src/store/game_id.h $(STRUCTGEN)
 	@mkdir -p $(dir $(WIRE_HASH_FILE))
 	$(STRUCTGEN) $(SG_ARGS) --ts build/gen/wire.ts --hash-ts build/gen/wire_hash.ts --print-hash > $(WIRE_HASH_FILE).new
 	@if cmp -s $(WIRE_HASH_FILE).new $(WIRE_HASH_FILE); then rm $(WIRE_HASH_FILE).new; else mv $(WIRE_HASH_FILE).new $(WIRE_HASH_FILE); fi

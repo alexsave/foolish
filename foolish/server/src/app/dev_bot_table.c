@@ -84,6 +84,10 @@ static int run_seat(Table *t, const cb_game_row *row, const uint8_t seed[32], vo
         if ((rc = seat_one(t, p, i, DEV_HOUSE_ID, seed)) < 0) return rc;
     // The title, as a seated player's ASK_UPDATE_NAME sets it (the kernel's title rule decides).
     if (p->title_len && (rc = table_retitle(t, DEV_HOUSE_ID, hl, p->title, p->title_len)) < 0) return rc;
+    // With bots alone left, the leave answers TABLE_EMPTY (the kernel's rule for a lobby no human
+    // can deal), which would have the host delete the row; it never reaches the host, because the
+    // first bot readies or seats the rest below, in this same operation, and that answer is the one
+    // returned. With a human seated it is TABLE_OK and the lobby waits for the human.
     if ((rc = table_leave(t, DEV_HOUSE_ID, hl, DEV_HOUSE_ID, hl)) < 0) return rc;
     // The first seat seats the rest (a full table: the eighth). With every seat a READY bot, the
     // last add deals, or with none left the first bot readies, which deals: the kernel's deal.

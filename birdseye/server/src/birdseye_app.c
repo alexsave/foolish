@@ -77,7 +77,7 @@ const cb_metric_def be_metric_defs[BE_M_N] = {
     { "server_cpu_cpct", CB_METRIC_GAUGE },
 };
 
-static const cb_topic_family BE_FAMILY = { "birdseye", "s/{doc}" };
+static const cb_topic_family BE_FAMILY = { "birdseye", "s/{doc}", false };   // the site signs in (POST /be/session)
 static const cb_topic_family *const BE_TOPICS[] = { &BE_FAMILY };
 #define BE_ROOM "all"
 

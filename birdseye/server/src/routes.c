@@ -5,6 +5,7 @@
 #include "routes.h"
 
 #include "auth/auth.h"
+#include "store/game_id.h"
 #include "net/router.h"
 #include "util/err.h"
 #include "util/log.h"
@@ -46,7 +47,7 @@ static void tables_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 static void table_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     const char *gid = req->path + strlen("/be/table/");
     size_t len = strlen(gid);
-    if (len == 0 || len > BE_GID) {
+    if (!cb_game_id_ok(gid, len)) {
         cb_router_error(res, 400, "not a game id");
         return;
     }

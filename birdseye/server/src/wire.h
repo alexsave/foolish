@@ -25,7 +25,9 @@
 
 #include <stdint.h>
 
-#define BE_GID         16   // a game id (12 hex) and room
+#include "store/game_id.h"   // the game id rule (foolish/server/src/store): its length is BE_GID
+
+#define BE_GID         CB_GAME_ID_LEN   // a game id (store/game_id.h) and its room
 #define BE_NAME        24   // a seat's name as shown
 #define BE_SEATS       8    // the kernel's MAX_PLAYERS
 #define BE_BATTLES     12   // battles the birds-eye shows (a bout never exceeds a hand)
