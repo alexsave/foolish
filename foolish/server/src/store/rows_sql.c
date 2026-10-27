@@ -30,6 +30,18 @@
 
 extern const char cb_foolish_schema_sql[];
 
+// EVERY COLUMN THAT HOLDS A GAME ID (foolish/server/sql/schema.sql): what the game id conversion
+// rewrites (cb_rows_sql_convert_game_ids). A table that gains one must be listed here: unit_journal.c
+// reads the schema's columns and fails on one that is not.
+#define GAME_ID_COLUMNS(X)              \
+    X(GAMES, games, id)                 \
+    X(MOVES, game_moves, game_id)       \
+    X(MEMBERS, game_members, game_id)   \
+    X(SEAT_BOTS, game_bots, game_id)    \
+    X(REPLAYS, replays, game_id)        \
+    X(CHAT, chat, game_id)
+#define GID_ENUM(k, t, c) S_GID_RENAME_##k,
+
 enum {
     S_GAME_GET, S_GAME_EXISTS, S_GAME_INSERT, S_GAME_REPLACE, S_GAME_CAS, S_GAME_DELETE,
     S_MOVES_CLEAR, S_MOVES_ADD, S_MOVES_READ,
@@ -43,6 +55,7 @@ enum {
     S_CHAT_PUT, S_CHAT_LIST,
     S_DEL_MEMBERS, S_DEL_CHAT, S_DEL_RATING, S_DEL_HISTORY,
     S_KEYS_USERS, S_KEYS_BOTS, S_KEYS_RATINGS, S_KEYS_GAMES, S_KEYS_MEMBERS, S_KEYS_SEAT_BOTS, S_KEYS_REPLAYS, S_KEYS_CHAT,
+    S_GID_ALL, S_GID_TAKEN, GAME_ID_COLUMNS(GID_ENUM)
     S__COUNT
 };
 
@@ -218,6 +231,18 @@ static const char *const STMTS[S__COUNT] = {
     [S_KEYS_SEAT_BOTS] = "SELECT game_id FROM game_bots",
     [S_KEYS_REPLAYS] = "SELECT id FROM replays",
     [S_KEYS_CHAT] = "SELECT game_id FROM chat",
+    // The game id conversion: every distinct id any column holds; a row when ?1 names anything in
+    // any of them (each an index's prefix: the primary keys, replays_game); and one rename per
+    // column, ?1 the old id to ?2.
+#define GID_UNION(k, t, c) " UNION SELECT " #c " FROM " #t " WHERE " #c " IS NOT NULL"
+#define GID_EXISTS(k, t, c) " OR EXISTS (SELECT 1 FROM " #t " WHERE " #c " = ?1)"
+#define GID_RENAME(k, t, c) [S_GID_RENAME_##k] = "UPDATE " #t " SET " #c " = ?2 WHERE " #c " = ?1",
+    [S_GID_ALL] = "SELECT NULL WHERE 0" GAME_ID_COLUMNS(GID_UNION),
+    [S_GID_TAKEN] = "SELECT 1 WHERE 0" GAME_ID_COLUMNS(GID_EXISTS),
+    GAME_ID_COLUMNS(GID_RENAME)
+#undef GID_UNION
+#undef GID_EXISTS
+#undef GID_RENAME
 };
 
 // ---- helpers ------------------------------------------------------------------------------
@@ -1266,6 +1291,117 @@ int cb_rows_sql_keys(cb_store *s, cb_rows_key_fn fn, void *ud) {
         if (!fn(CB_ROWS_FAMILIES[((int *)o.fam.rows)[i]], (char *)o.ids.rows + (size_t)i * CB_ROWS_KEY_MAX, ud)) break;
     free(o.ids.rows);
     free(o.fam.rows);
+    return rc;
+}
+
+// ---- THE GAME ID CONVERSION (rows_foolish.h cb_rows_sql_convert_game_ids) -----------------
+
+#define GID_NAME(k, t, c) { #t, #c },
+const char *const CB_ROWS_SQL_GAME_ID_COLUMNS[CB_ROWS_SQL_N_GAME_ID_COLUMNS][2] = { GAME_ID_COLUMNS(GID_NAME) };
+#undef GID_NAME
+#define GID_ONE(k, t, c) +1
+_Static_assert(0 GAME_ID_COLUMNS(GID_ONE) == CB_ROWS_SQL_N_GAME_ID_COLUMNS, "every game id column is counted");
+#undef GID_ONE
+
+// The room an id read for the conversion has: the widest any roster trailer ever carried (the
+// kernel's ROSTER_GAME_ID_MAX). An id that fills it may have been cut, and stops the conversion.
+#define GID_OLD_MAX 64
+
+typedef struct {
+    void (*draw)(char out[CB_GAME_ID_MAX + 1]);
+    vec   old;          // GID_OLD_MAX + 1 each
+    vec   fresh;        // CB_GAME_ID_MAX + 1 each, in step with old
+    bool  write;        // false: count the bad ids only
+} gid_op;
+
+// The ids no reader takes (cb_game_id_ok), into o->old.
+static int gid_collect(cb_sql *x, gid_op *o) {
+    stmt_t *st = cb_sql_stmt(x, S_GID_ALL);
+    int k;
+    while ((k = step_row(x, st, "game ids")) == 1) {
+        char id[GID_OLD_MAX + 1];
+        cb_sql_col_text(st, 0, id, sizeof id);
+        const size_t n = strlen(id);
+        if (cb_game_id_ok(id, n)) continue;
+        if (n == GID_OLD_MAX) {
+            CB_ERROR(MOD, "a game id of %d bytes or more (%.16s...): not converted", GID_OLD_MAX, id);
+            return CB_E_INVALID;
+        }
+        char *slot = vec_push(&o->old);
+        if (!slot) return CB_E_NOMEM;
+        memcpy(slot, id, n + 1);
+    }
+    return k;
+}
+
+// Does `id` name anything in any game id column? 1 yes, 0 no, or a CB_E_*. An id this run handed
+// out is in the columns already (its renames ran), so it is taken too.
+static int gid_taken(cb_sql *x, const char *id) {
+    stmt_t *st = cb_sql_stmt(x, S_GID_TAKEN);
+    if (st) b_text(st, 1, id);
+    return step_row(x, st, "game id taken");
+}
+
+static int gid_step(cb_sql *x, void *ud) {
+    gid_op *o = ud;
+    int rc = gid_collect(x, o);
+    for (int i = 0; rc == CB_OK && o->write && i < o->old.n; i++) {
+        const char *old = (const char *)o->old.rows + (size_t)i * (GID_OLD_MAX + 1);
+        char id[CB_GAME_ID_MAX + 1] = "";
+        rc = CB_E_CONFLICT;
+        for (int d = 0; d < CB_GAME_ID_DRAWS && rc == CB_E_CONFLICT; d++) {
+            o->draw(id);
+            if (!cb_game_id_ok(id, strnlen(id, sizeof id))) return CB_E_INVALID;
+            int t = gid_taken(x, id);
+            rc = t < 0 ? t : t ? CB_E_CONFLICT : CB_OK;
+        }
+        if (rc != CB_OK) {
+            if (rc == CB_E_CONFLICT) CB_ERROR(MOD, "game %s: no free id in %d draws", old, CB_GAME_ID_DRAWS);
+            return rc;
+        }
+        for (int c = S_GID_RENAME_GAMES; rc == CB_OK && c < S_GID_RENAME_GAMES + CB_ROWS_SQL_N_GAME_ID_COLUMNS; c++) {
+            stmt_t *st = cb_sql_stmt(x, c);
+            if (st) {
+                b_text(st, 1, old);
+                b_text(st, 2, id);
+            }
+            rc = cb_sql_run(x, st, STMTS[c]);
+        }
+        char *slot = rc == CB_OK ? vec_push(&o->fresh) : NULL;
+        if (rc == CB_OK && !slot) rc = CB_E_NOMEM;
+        if (slot) memcpy(slot, id, sizeof id);
+    }
+    return rc;
+}
+
+static int gid_run(cb_store *s, gid_op *o, int *n) {
+    o->old.size = GID_OLD_MAX + 1;
+    o->fresh.size = CB_GAME_ID_MAX + 1;
+    if (n) *n = 0;
+    if (!cb_store_is_sql(s)) return CB_E_INVALID;
+    int rc = o->write ? cb_sql_write(s, gid_step, o) : cb_sql_read(s, gid_step, o);
+    if (rc == CB_OK && n) *n = o->old.n;
+    return rc;
+}
+
+int cb_rows_sql_bad_game_ids(cb_store *s, int *n) {
+    gid_op o = { .write = false };
+    int rc = gid_run(s, &o, n);
+    free(o.old.rows);
+    return rc;
+}
+
+int cb_rows_sql_convert_game_ids(cb_store *s, void (*draw)(char out[CB_GAME_ID_MAX + 1]), cb_game_id_seen_fn seen,
+                                 void *ud, int *converted) {
+    if (!draw) return CB_E_INVALID;
+    gid_op o = { .draw = draw, .write = true };
+    int rc = gid_run(s, &o, converted);
+    for (int i = 0; rc == CB_OK && seen && i < o.old.n; i++)
+        if (!seen((const char *)o.old.rows + (size_t)i * (GID_OLD_MAX + 1),
+                  (const char *)o.fresh.rows + (size_t)i * (CB_GAME_ID_MAX + 1), ud))
+            break;
+    free(o.old.rows);
+    free(o.fresh.rows);
     return rc;
 }
 

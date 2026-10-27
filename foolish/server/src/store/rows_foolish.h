@@ -419,6 +419,29 @@ typedef bool (*cb_rows_key_fn)(const char *family, const char *id, void *ud);
 // (CB_E_INVALID: not the SQL store). fn answers false to stop; it may call the store.
 int cb_rows_sql_keys(cb_store *s, cb_rows_key_fn fn, void *ud);
 
+// THE GAME ID CONVERSION (store/game_id.h): every game id the SQL store holds that is not
+// cb_game_id_ok (the 12-hex ids drawn between 2026-10-17 and the rule) rewritten to a fresh
+// id that names nothing in any table, in every table that holds a game id
+// (CB_ROWS_SQL_GAME_ID_COLUMNS: the game's row, its session log, its seats, its replays and
+// its chat), all of it ONE transaction: a crash leaves every id as it was, and a second run
+// finds nothing to do. `draw` draws a candidate (cb_game_id_random; a test's to make one
+// collide); `seen`, when not NULL, hears each old id and its new one after the commit.
+// *converted (may be NULL): how many games were. CB_OK, CB_E_INVALID (not the SQL store,
+// or a draw that is not a game id), CB_E_CONFLICT (no free id in CB_GAME_ID_DRAWS draws), or
+// the store's error, with nothing written. The state blobs, rosters, session logs and
+// replays name no game id (the kernel takes the id as an argument when it builds a view),
+// so the id columns are the whole of it. Run it only where nothing holds a game by id in
+// memory: at the boot, before anything is served (the journal's open leaves its overlay empty).
+#define CB_GAME_ID_DRAWS 64
+typedef bool (*cb_game_id_seen_fn)(const char *old_id, const char *new_id, void *ud);
+int cb_rows_sql_convert_game_ids(cb_store *s, void (*draw)(char out[CB_GAME_ID_MAX + 1]), cb_game_id_seen_fn seen,
+                                 void *ud, int *converted);
+// How many games hold an id the conversion would rewrite (read only): 0 means nothing to do.
+int cb_rows_sql_bad_game_ids(cb_store *s, int *n);
+// The table and column of every game id the SQL store holds: what the conversion rewrites.
+#define CB_ROWS_SQL_N_GAME_ID_COLUMNS 6
+extern const char *const CB_ROWS_SQL_GAME_ID_COLUMNS[CB_ROWS_SQL_N_GAME_ID_COLUMNS][2];
+
 // games_get_views for a store with no round trip to save (SQLite, the tests'
 // memory store): game_get for each id, its log dropped.
 int cb_store_games_get_each(cb_store *s, const char *const *ids, int n, cb_game_fn fn, void *ud);
