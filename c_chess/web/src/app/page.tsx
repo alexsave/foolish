@@ -3,12 +3,41 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { CC_BLITZ, CC_EV_CHALLENGE, CC_EV_START } from '@/gen/web_layout';
+import { CC_ARENA_RUNNING, CC_ARENA_UPCOMING, CC_BLITZ, CC_EV_CHALLENGE, CC_EV_START } from '@/gen/web_layout';
+import { useArenas } from '@/lib/arenas';
 import { net } from '@/lib/net';
 import { tc, useNet } from '@/lib/use';
-import { SPEED_NAME } from '@/lib/words';
+import { SPEED_NAME, clockTime, inWords } from '@/lib/words';
 import MiniBoard from '@/components/MiniBoard';
 import Leaders from '@/components/Leaders';
+
+/** The arenas running and the next to start. */
+function Arenas() {
+  const list = useArenas();
+  const rows = list ? list.rows.slice(0, list.n) : [];
+  const running = rows.filter((a) => a.status === CC_ARENA_RUNNING).slice(0, 3);
+  const next = rows.find((a) => a.status === CC_ARENA_UPCOMING);
+  const shown = next ? [...running, next] : running;
+  return (
+    <div className="lobby-arenas">
+      <div className="row" style={{ justifyContent: 'space-between', padding: '14px 16px 8px' }}>
+        <h2 style={{ margin: 0 }}>Arenas</h2>
+        <Link prefetch={false} href="/arenas" className="muted" style={{ fontSize: 14 }}>All arenas</Link>
+      </div>
+      <ul className="arena-list">
+        {shown.map((a) => (
+          <li key={a.id}>
+            <Link prefetch={false} href={`/arena?id=${a.id}`}>
+              <span><b>{a.name}</b> <span className="muted">{tc(a.baseS, a.incS)}, {a.nPlayers} {a.nPlayers === 1 ? 'player' : 'players'}</span></span>
+              <span className="when">{a.status === CC_ARENA_RUNNING ? `ends ${inWords(a.endsInMs)}` : `${clockTime(a.startsAt)}`}</span>
+            </Link>
+          </li>
+        ))}
+        {list && !shown.length && <li className="muted" style={{ padding: '10px 16px', fontSize: 14 }}>None right now. <Link prefetch={false} href="/arenas">Make one</Link></li>}
+      </ul>
+    </div>
+  );
+}
 
 const QUICK: [number, number][] = [
   [60, 0], [120, 1], [180, 0],
@@ -130,6 +159,7 @@ export default function Lobby() {
             {!lobby?.n && <tr><td colSpan={4} className="muted" style={{ padding: 24, textAlign: 'center' }}>No one is waiting. Pick a time to be first.</td></tr>}
           </tbody>
         </table>
+        <Arenas />
         <Leaders speed={CC_BLITZ} limit={10} />
       </aside>
     </div>

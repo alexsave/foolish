@@ -1,7 +1,8 @@
 // words.ts - what the page says about a game's state and a rating's speed (the numbers are the
 // kernel's, game.h and speed.h).
 import {
-  CC_ABORTED, CC_BLITZ, CC_BULLET, CC_CLASSICAL, CC_RAPID, CC_DRAW_AGREED, CC_DRAW_FIFTY, CC_DRAW_FLAG_MATERIAL, CC_DRAW_MATERIAL, CC_DRAW_MAX_PLY, CC_DRAW_REPETITION,
+  CC_ARENA_FINISHED, CC_ARENA_RUNNING, CC_ARENA_UPCOMING, CW_E_ARENA_GUEST, CW_E_ARENA_JOINED, CW_E_ARENA_NAME, CW_E_ARENA_NONE,
+  CW_E_ARENA_NOT_JOINED, CW_E_ARENA_OVER, CW_E_ARENA_TOO_MANY, CC_ABORTED, CC_BLITZ, CC_BULLET, CC_CLASSICAL, CC_RAPID, CC_DRAW_AGREED, CC_DRAW_FIFTY, CC_DRAW_FLAG_MATERIAL, CC_DRAW_MATERIAL, CC_DRAW_MAX_PLY, CC_DRAW_REPETITION,
   CC_FLAG, CC_MATE, CC_PLAYING, CC_RESIGN, CC_STALEMATE,
 } from '@/gen/web_layout';
 
@@ -32,3 +33,32 @@ export function score(status: number, winner: number): string {
 /** The speeds in the kernel's order (speed.h), and what the page calls them. */
 export const SPEEDS: readonly number[] = [CC_BULLET, CC_BLITZ, CC_RAPID, CC_CLASSICAL];
 export const SPEED_NAME: Readonly<Record<number, string>> = { [CC_BULLET]: 'Bullet', [CC_BLITZ]: 'Blitz', [CC_RAPID]: 'Rapid', [CC_CLASSICAL]: 'Classical' };
+
+/** An arena's status (arena.h), and why a request about one was refused (wire.h CW_E_ARENA_..). */
+export const ARENA_STATUS: Readonly<Record<number, string>> = { [CC_ARENA_UPCOMING]: 'Upcoming', [CC_ARENA_RUNNING]: 'Running', [CC_ARENA_FINISHED]: 'Finished' };
+export const ARENA_REFUSAL: Readonly<Record<number, string>> = {
+  [CW_E_ARENA_NONE]: 'There is no such arena.',
+  [CW_E_ARENA_OVER]: 'This arena is over.',
+  [CW_E_ARENA_JOINED]: 'You are in it already.',
+  [CW_E_ARENA_NOT_JOINED]: 'You are not in it.',
+  [CW_E_ARENA_GUEST]: 'Sign in to make an arena.',
+  [CW_E_ARENA_TOO_MANY]: 'You have four upcoming arenas already.',
+  [CW_E_ARENA_NAME]: 'That name will not do: 3 to 30 letters, digits, spaces, - and _.',
+};
+
+/** "4:05", "1:02:09": a countdown of ms (none below zero). */
+export function countdown(ms: number): string {
+  const t = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  const ss = String(s).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
+/** "in 12 min", "in 1 h 5 min", "now" */
+export function inWords(ms: number): string {
+  const m = Math.round(ms / 60000);
+  if (m <= 0) return 'now';
+  return m < 60 ? `in ${m} min` : `in ${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`;
+}
+
+/** A clock time from ms since the epoch, in the reader's zone: "14:00". */
+export const clockTime = (at: number): string => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

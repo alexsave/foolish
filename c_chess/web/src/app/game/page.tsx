@@ -151,7 +151,7 @@ function Game() {
         <Player v={v} color={top} bottom={false} />
         <div className="panel" style={{ order: 2 }}>
           <div className="row muted" style={{ padding: '10px 14px', fontSize: 13, justifyContent: 'space-between' }}>
-            <span>{tc(v.baseS, v.incS)} {v.rated ? 'Rated' : 'Casual'}</span>
+            <span>{tc(v.baseS, v.incS)} {v.rated ? 'Rated' : 'Casual'}{v.arena ? <>, <Link prefetch={false} href={`/arena?id=${v.arena}`}>arena</Link></> : null}</span>
             {!mine && <span>Spectating</span>}
           </div>
           <div className="moves" ref={movesRef}>{rows}</div>
@@ -196,16 +196,22 @@ function Game() {
           )}
           {mine && (
             <div className="actions">
-              {!over && v.ply < 2 && <button className="btn" onClick={() => act(CW_A_ABORT)}>Abort</button>}
+              {!over && v.ply < 2 && !v.arena && <button className="btn" onClick={() => act(CW_A_ABORT)}>Abort</button>}
               {!over && v.ply >= 2 && <button className="btn" disabled={myOffer} onClick={() => act(CW_A_DRAW)}>{myOffer ? 'Draw offered' : 'Offer draw'}</button>}
-              {!over && v.ply >= 2 && <button className="btn warn" onClick={() => act(CW_A_RESIGN)}>Resign</button>}
-              {over && !v.nextGame && <button className="btn primary" disabled={myRematch} onClick={() => act(CW_A_REMATCH)}>{myRematch ? 'Rematch offered' : 'Rematch'}</button>}
+              {!over && (v.ply >= 2 || v.arena !== 0) && <button className="btn warn" onClick={() => act(CW_A_RESIGN)}>Resign</button>}
+              {over && !v.nextGame && !v.arena && <button className="btn primary" disabled={myRematch} onClick={() => act(CW_A_REMATCH)}>{myRematch ? 'Rematch offered' : 'Rematch'}</button>}
               {over && v.nextGame !== 0 && <Link prefetch={false} className="btn primary" href={`/game?id=${v.nextGame}`}>Go to the rematch</Link>}
-              {over && <Link prefetch={false} className="btn" href="/">New opponent</Link>}
+              {over && !v.arena && <Link prefetch={false} className="btn" href="/">New opponent</Link>}
+              {over && v.arena !== 0 && <Link prefetch={false} className="btn primary" href={`/arena?id=${v.arena}`}>Back to the arena</Link>}
               <a className="btn" href={`/c/pgn/${id}`}>PGN</a>
             </div>
           )}
-          {!mine && <div className="actions"><a className="btn" href={`/c/pgn/${id}`}>PGN</a></div>}
+          {!mine && (
+            <div className="actions">
+              {v.arena !== 0 && <Link prefetch={false} className="btn" href={`/arena?id=${v.arena}`}>Back to the arena</Link>}
+              <a className="btn" href={`/c/pgn/${id}`}>PGN</a>
+            </div>
+          )}
         </div>
         <Player v={v} color={top ^ 1} bottom={true} />
       </div>

@@ -15,6 +15,7 @@ export default function Top() {
       <nav className="nav">
         <Link prefetch={false} href="/" className={on('/')}>Play</Link>
         <Link prefetch={false} href="/puzzles" className={on('/puzzles')}>Puzzles</Link>
+        <Link prefetch={false} href="/arenas" className={path === '/arenas' || path === '/arena' ? 'on' : ''}>Arenas</Link>
         <Link prefetch={false} href="/watch" className={on('/watch')}>Watch</Link>
         <Link prefetch={false} href="/top" className={on('/top')}>Leaderboard</Link>
         {me && <Link prefetch={false} href={`/user?name=${encodeURIComponent(me)}`} className={on('/user')}>Profile</Link>}
