@@ -249,3 +249,7 @@ server/src/api_chat.c ::: if (code != CW_E_NONE) refuse(res, code, why, wait_s);
 server/src/api_chat.c ::: if (code != CW_E_NONE) refuse(res, code, why, wait_s); ::: if (code != CW_E_NONE) refuse(res, code, 0, wait_s); ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/cc_app.c ::: &cc_chat_routes, &cc_analysis_routes ::: &cc_analysis_routes ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/api.c ::: "chat_lines %llu ::: "chat_linez %llu ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+# the moves file across restarts (server/test/unit_journal.c)
+server/src/journal.c ::: l->g.left_ms[mover] = INT64_MAX / 4;   /* the rules alone decide here */ ::: (void)0; ::: build/test/unit_journal ::: build/test/unit_journal
+server/src/journal.c ::: { l->g.left_ms[mover] = was; continue; } ::: { (void)was; continue; } ::: build/test/unit_journal ::: build/test/unit_journal
+server/src/journal.c ::: int64_t left = p >= l->g.ply - 2 ? l->g.left_ms[p & 1] : 0; ::: int64_t left = 0; ::: build/test/unit_journal ::: build/test/unit_journal

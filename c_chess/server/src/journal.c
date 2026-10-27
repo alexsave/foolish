@@ -629,7 +629,9 @@ static int recover_fn(cb_sql *x, void *ud) {
 }
 
 /* The moves file onto the games in play (each record at its ply; any other is stale: a game that
- * ended, or a ply already applied). The mover's time is the record's. */
+ * ended, or a ply already applied). The mover's time is the record's, and the clock does not judge
+ * the replay: a rewritten file (below) keeps a time only on each side's last move and holds 0 on
+ * the others, which as the mover's clock would read as a flag at the first move it runs for. */
 static uint32_t replay_moves(int fd, int64_t now) {
     uint32_t applied = 0;
     mrec buf[4096];
@@ -641,7 +643,9 @@ static uint32_t replay_moves(int fd, int64_t now) {
             cc_live *l = cc_live_get(buf[i].game);
             if (!l || cc_game_over(&l->g) || buf[i].ply != l->g.ply) continue;
             int mover = l->g.pos.stm;
-            if (cc_game_move(&l->g, mover, l->g.ply, (ch_move)buf[i].move, l->g.turn_at) != CC_OK) continue;
+            int64_t was = l->g.left_ms[mover];
+            l->g.left_ms[mover] = INT64_MAX / 4;   /* the rules alone decide here */
+            if (cc_game_move(&l->g, mover, l->g.ply, (ch_move)buf[i].move, l->g.turn_at) != CC_OK) { l->g.left_ms[mover] = was; continue; }
             l->g.left_ms[mover] = buf[i].left_ms;
             l->g.turn_at = now;
             applied++;
