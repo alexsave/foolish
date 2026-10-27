@@ -85,17 +85,17 @@ function Arena() {
               {!a.meListed && a.n >= CV_ARENA_ROWS ? ` (the standings list the top ${CV_ARENA_ROWS})` : ''}
             </span>
           )}
-          {a.meIn === CW_ARENA_IN && a.status === CC_ARENA_UPCOMING && <span className="muted">You are in. Your first game starts with the arena.</span>}
-          {a.meIn === CW_ARENA_IN && a.status === CC_ARENA_RUNNING && <span className="muted">Stay on this page: your next game opens by itself.</span>}
           {err && <span className="err">{err}</span>}
         </div>}
+        {a.meIn === CW_ARENA_IN && a.status === CC_ARENA_UPCOMING && <p className="muted hint">You are in. Your first game starts with the arena.</p>}
+        {a.meIn === CW_ARENA_IN && a.status === CC_ARENA_RUNNING && <p className="muted hint">Stay on this page: your next game opens by itself.</p>}
       </section>
       <section className="panel">
         <table className="seeks standings">
           <thead><tr><th>#</th><th>Player</th><th>Rating</th><th>Games</th><th>Score</th></tr></thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.name} className={`${r.me ? 'me' : ''} ${r.withdrawn ? 'out' : ''}`}>
+              <tr key={r.name} className={`${r.me ? 'mine' : ''} ${r.withdrawn ? 'out' : ''}`}>
                 <td className="muted">{r.rank}</td>
                 <td>
                   <Link prefetch={false} href={`/user?name=${encodeURIComponent(r.name)}`}>{r.name}</Link>
