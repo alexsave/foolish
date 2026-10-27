@@ -15,17 +15,17 @@
 //   * a bot drive holds a lease (lease_acquire/renew/release, 25 s TTL);
 //   * nothing else needs ordering: users, chat and snapshots are single
 //     writes.
-// Game ids are 12 hex characters (6 before). Byte fields are owned by the
-// row struct that holds them (malloc'd by the store, freed by the matching
+// Game ids are store/game_id.h's (THE GAME ID RULE). Byte fields are owned by
+// the row struct that holds them (malloc'd by the store, freed by the matching
 // *_free).
 #ifndef CB_ROWS_FOOLISH_H
 #define CB_ROWS_FOOLISH_H
 
 #include <stddef.h>
 
+#include "store/game_id.h"
 #include "store/store.h"
 
-#define CB_GAME_ID_MAX   16    // games.id is 12 hex (app_internal.h CB_GAME_ID_HEX), 6 for older games
 #define CB_SEED_LEN      32    // == kernel FOOLISH_SEED_LEN
 #define CB_MAX_SEATS     8     // == kernel MAX_PLAYERS
 

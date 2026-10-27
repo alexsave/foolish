@@ -108,8 +108,8 @@ int  cb_table_finalize_user(cb_ctx *ctx, const char *uid);
 // CAS CB_TABLE_ATTEMPTS times: "write contention"), CB_E_DB.
 int cb_table_run(cb_ctx *ctx, const cb_table_op *op, cb_table_result *out);
 
-// /functions/v1/create: a new lobby with `u` seated, at a fresh 6-hex id
-// (CB_TABLE_ID_DRAWS tries). out->envelope is the creator's.
+// /functions/v1/create: a new lobby with `u` seated, at a fresh id
+// (store/game_id.h; CB_TABLE_ID_DRAWS tries). out->envelope is the creator's.
 int cb_table_create(cb_ctx *ctx, const cb_user *u, cb_table_result *out);
 
 // One viewer's envelope of a stored game at its stored version, for PostgREST's

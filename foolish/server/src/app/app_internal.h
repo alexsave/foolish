@@ -24,14 +24,8 @@
 // kernel's pacing costs no wall time.
 extern int64_t (*cb_app_now)(void);
 extern void (*cb_app_sleep)(int64_t ms);
-// A new game's id: CB_GAME_ID_HEX lowercase hex characters of CSPRNG bytes
-// (cb_game_id_random). Security finding L3: the old six characters (24 bits)
-// let a script find live lobbies by asking for ids; 48 bits do not, and a
-// code a friend types stays short. Ids already handed out keep working: no
-// reader assumes a width (the kernel allows 64 bytes, the store CB_GAME_ID_MAX).
+// A new game's id: cb_game_id_random (store/game_id.h, THE GAME ID RULE).
 // A test points it at a fixed sequence to make an id collide.
-#define CB_GAME_ID_HEX 12
-void cb_game_id_random(char out[CB_GAME_ID_MAX + 1]);
 extern void (*cb_app_game_id)(char out[CB_GAME_ID_MAX + 1]);
 
 // ---- kept buffers ---------------------------------------------------------------

@@ -89,13 +89,10 @@ export function bytesToBigint(b: Uint8Array): bigint {
  * consider a /r/ namespace before replay URLs are shared publicly).
  * -------------------------------------------------------------------------- */
 
+// A game id is 6 characters (foolish/server/src/store/game_id.h, the server's
+// one rule), so any segment past 7 is a replay code.
 const LEGACY_MAX_LEN = 7;
-// A game id is 12 hex characters since c_base widened them (security finding
-// L3; 6 before, which the length rule above keeps): any case, since the
-// lobby's QR link is upper-cased. A replay code is never 12 hex characters of
-// a real game (its header alone is longer).
-const GAME_ID = /^[0-9a-f]{12}$/i;
 
 export function classifyPathSegment(seg: string): "shortcode" | "replay" {
-  return seg.length <= LEGACY_MAX_LEN || GAME_ID.test(seg) ? "shortcode" : "replay";
+  return seg.length > LEGACY_MAX_LEN ? "replay" : "shortcode";
 }

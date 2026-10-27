@@ -134,6 +134,16 @@ static bool path_id(const cb_http_req *req, cb_http_res *res, const char *prefix
     return true;
 }
 
+// The game id after `prefix` in the path (store/game_id.h cb_game_id_ok: anything else names no
+// game), or false with the 404 a game that is not there answers.
+static bool path_game(const cb_http_req *req, cb_http_res *res, const char *prefix, char out[CB_GAME_ID_MAX + 1]) {
+    const char *id = req->path + strlen(prefix);
+    size_t n = strlen(id);
+    if (!cb_game_id_ok(id, n)) { refuse(res, 404, ASK_WHY_NOT_FOUND, 0); return false; }
+    memcpy(out, id, n + 1);
+    return true;
+}
+
 
 // ---- views ------------------------------------------------------------------------------
 
@@ -196,7 +206,7 @@ static void h_games(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 static void h_wait(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
     char gid[CB_GAME_ID_MAX + 1], vs[16];
-    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/wait/", gid, sizeof gid, CB_GAME_ID_MAX)) return;
+    if (!caller(ctx, req, res, &u) || !path_game(req, res, "/v1/wait/", gid)) return;
     int64_t after = -1;
     if (cb_http_query_get(req, "v", vs, sizeof vs) && !num_parse_i64_cstr(vs, 0, INT32_MAX, &after)) { refuse(res, 400, ASK_WHY_MALFORMED, 0); return; }
     cb_view_row v;
@@ -225,7 +235,7 @@ static void h_wait(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 static void h_game(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
     char gid[CB_GAME_ID_MAX + 1];
-    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/games/", gid, sizeof gid, CB_GAME_ID_MAX)) return;
+    if (!caller(ctx, req, res, &u) || !path_game(req, res, "/v1/games/", gid)) return;
     cb_view_row v;
     memset(&v, 0, sizeof v);
     // The caller's own view when they sit at the game, else the spectators'.
@@ -246,8 +256,8 @@ static void h_game(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 
 // The game in the path and whether the caller sits at it (*member), or false
 // with the refusal answered.
-static bool chat_of(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, cb_user *u, char *gid, size_t cap, bool *member) {
-    if (!caller(ctx, req, res, u) || !path_id(req, res, "/v1/chat/", gid, cap, CB_GAME_ID_MAX)) return false;
+static bool chat_of(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, cb_user *u, char gid[CB_GAME_ID_MAX + 1], bool *member) {
+    if (!caller(ctx, req, res, u) || !path_game(req, res, "/v1/chat/", gid)) return false;
     int m = CB_ROWS_CALL(ctx->store, is_member, gid, u->id);
     if (m < 0) { failed(res, m); return false; }
     *member = m == 1;
@@ -266,7 +276,7 @@ static void h_chat_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
     char gid[CB_GAME_ID_MAX + 1];
     bool member;
-    if (!chat_of(ctx, req, res, &u, gid, sizeof gid, &member)) return;
+    if (!chat_of(ctx, req, res, &u, gid, &member)) return;
     list l;
     list_begin(&l, NW_LIST_HEAD_BYTES);
     // Someone who does not sit at the game sees no messages, as chat_messages'
@@ -290,7 +300,7 @@ static bool member_fn(const char *id, void *ud) {
 static void h_chat_post(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
     char gid[CB_GAME_ID_MAX + 1];
-    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/chat/", gid, sizeof gid, CB_GAME_ID_MAX)) return;
+    if (!caller(ctx, req, res, &u) || !path_game(req, res, "/v1/chat/", gid)) return;
     // Who sits at the game: the caller must, and each of them hears the
     // message on their own topic (realtime.h). Read before anything is
     // written, so a failed read stores nothing.
@@ -524,8 +534,9 @@ static bool replay_fn(const cb_snapshot_row *s, void *ud) {
 
 static void h_replay(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
-    char gid[CB_UUID_LEN + 1];   // a game's id (up to CB_GAME_ID_MAX) or a replay's (a uuid)
+    char gid[CB_UUID_LEN + 1];   // a game's id (store/game_id.h) or a replay's (a uuid)
     if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/replay/", gid, sizeof gid, CB_UUID_LEN)) return;
+    if (!cb_game_id_ok(gid, strlen(gid)) && !cb_uuid_valid(gid, strlen(gid))) { refuse(res, 404, ASK_WHY_NOT_FOUND, 0); return; }
     replay r;
     cb_buf_init(&r.body);
     r.found = r.bad = false;

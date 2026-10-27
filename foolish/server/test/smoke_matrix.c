@@ -37,6 +37,7 @@
 // other players' replays no longer name them, and their open stream hears
 // nothing more.
 #include "../../../shared/c/rng.h"
+#include "store/game_id.h"
 #include "t.h"
 #include "lib_client.h"
 #include "lib_proc.h"
@@ -693,11 +694,11 @@ static void setup_users(void) {
     // D's own lobby: what D's reads may show, and what nobody else's may.
     T_EQ_INT(http("POST", "/v1/create", D.auth, NULL, 0, OCTETS), 200);
     gid_of_envelope(g_a.body, g_a.len, G2, sizeof G2);
-    T_EQ_INT(strlen(G2), 12);
+    T_CHECK(cb_game_id_ok(G2, strlen(G2)));
     // A's game: B and E join, nobody has started.
     T_EQ_INT(http("POST", "/v1/create", A.auth, NULL, 0, OCTETS), 200);
     gid_of_envelope(g_a.body, g_a.len, G, sizeof G);
-    T_EQ_INT(strlen(G), 12);
+    T_CHECK(cb_game_id_ok(G, strlen(G)));
     T_EQ_INT(meta(&B, ASK_JOIN, G, NULL, NULL), 200);
     T_EQ_INT(meta(&E, ASK_JOIN, G, NULL, NULL), 200);
 }
