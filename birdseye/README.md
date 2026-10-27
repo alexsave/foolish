@@ -37,7 +37,7 @@ The sim's size is `BE_PLAYERS` (fake humans, default 60), `BE_TABLES` (tables ke
   Your games deal when you press Ready, and wait for you as long as you like (no stall limit applies to a human's table); the bots' matches go on at their own pace meanwhile, and the next round starts once yours is decided.
   A stored bracket that is still running is not redrawn: stop and delete `birdseye/data/tournament.bin` for a fresh draw with you in it.
 - The gauntlet: `BE_HUMAN=1 BE_MODE=gauntlet birdseye/tools/run.sh`.
-  You against one bot of each of the seven brains, one at a time, weakest first: at the start of every run each brain's highest-rated bot is taken by the server's ratings and the rungs are ordered by that rating.
+  You against one bot of each of the seven brains, one at a time, weakest first by the kernel roster's strength tiers (foolish/c/src/bot_roster.c: random, handwritten, robusta, firecracker, blackpowder, cordite, octogen); at the start of every run each brain's highest-rated bot by the server's ratings is its rung's opponent.
   Each rung is a two-player best of five in a locked lobby titled like "Gauntlet 2/7: Madrid 2 - Game 1 of 5" (the lobby's title rule allows 50 characters); each next game opens as a new table on your dashboard, eight seconds after the last one ends.
   Win a rung and you climb; lose one and the run is over, and the best run (the highest rung reached) is kept.
   A new run starts from rung 1 at the next start, or by `POST /be/gauntlet/new` with the admin token (409 while a run is going on).
