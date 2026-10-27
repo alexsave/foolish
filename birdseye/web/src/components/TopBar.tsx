@@ -93,7 +93,7 @@ export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompac
             {view !== null ? (
               <>
                 <b>{perS(ops, 'moves').toFixed(1)}</b> moves/s &middot; <b>{(gamesPerMin ?? perS(ops, 'games') * 60).toFixed(1)}</b> games/min &middot;{' '}
-                <b>{gauge(ops, 'bots_seated')}</b> bots seated &middot; server CPU <b>{(gauge(ops, 'server_cpu_cpct') / 100).toFixed(1)}</b>%
+                <b>{gauge(ops, 'bots_seated')}</b> {gauge(ops, 'bots_seated') === 1 ? 'bot' : 'bots'} seated &middot; server CPU <b>{(gauge(ops, 'server_cpu_cpct') / 100).toFixed(1)}</b>%
               </>
             ) : (
               <>
