@@ -26,6 +26,7 @@
 #include "roster.h"
 #include "table.h"
 #include "util/err.h"
+#include "util/str.h"
 #include "../../../shared/c/fnv.h"
 #include "../../../shared/c/rng.h"
 
@@ -2692,8 +2693,12 @@ static void a_restore_mid_game_holds_every_acknowledged_move(void) {
 static int g_legacy_n;
 static char g_legacy_last[CB_GAME_ID_MAX + 1];
 static void legacy_draw(char out[CB_GAME_ID_MAX + 1]) {
-    snprintf(out, CB_GAME_ID_MAX + 1, "%010x%02x", 0xa1b2c3d4u, g_legacy_n++);
-    snprintf(g_legacy_last, sizeof g_legacy_last, "%s", out);
+    static const char hex[] = "0123456789abcdef";
+    memcpy(out, "00a1b2c3d4", 10);
+    out[10] = hex[(g_legacy_n >> 4) & 15];
+    out[11] = hex[g_legacy_n++ & 15];
+    out[12] = 0;
+    memcpy(g_legacy_last, out, 13);
 }
 
 static void six_5e(char out[CB_GAME_ID_MAX + 1]) { snprintf(out, CB_GAME_ID_MAX + 1, "5e5e5e"); }
@@ -2789,13 +2794,13 @@ static void id_by_hash(cb_store *s, const char *path, uint64_t h, char out[CB_GA
     T_EQ_INT(sqlite3_prepare_v2(db, "SELECT id FROM games", -1, &st, NULL), SQLITE_OK);
     char ids[32][CB_GAME_ID_MAX + 1];
     int n = 0;
-    while (st && sqlite3_step(st) == SQLITE_ROW && n < 32) snprintf(ids[n++], sizeof ids[0], "%s", (const char *)sqlite3_column_text(st, 0));
+    while (st && sqlite3_step(st) == SQLITE_ROW && n < 32) cb_strlcpy(ids[n++], (const char *)sqlite3_column_text(st, 0), sizeof ids[0]);
     sqlite3_finalize(st);
     sqlite3_close(db);
     for (int i = 0; i < n; i++)
         if (row_hash(s, ids[i]) == h) {
             T_CHECK(out[0] == 0);   // one game per hash
-            snprintf(out, CB_GAME_ID_MAX + 1, "%s", ids[i]);
+            memcpy(out, ids[i], sizeof ids[i]);
         }
 }
 
