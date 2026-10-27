@@ -6,9 +6,11 @@
 // the smallest QR code (version 1, error correction M, alphanumeric mode: upper-case
 // letters, digits and a few symbols; the lobby's QR upper-cases the link for it). Seven
 // characters or more push the code to version 2. That is the owner's decision, and the id
-// is not a secret: what slows a script that guesses ids is rate limiting
-// (c_base/core/src/rate_limits.h), not the width. (Today those limits cover create, chat,
-// subscriptions and bumps; a lookup or a join by id is not limited yet.)
+// is not a secret: what slows a script that guesses ids is rate limiting, not the width.
+// app/misses.h is that rule: every lookup, join, move or ask by id that misses (an id of the
+// wrong shape, no such game, a game the caller does not sit at, a join refused) costs the
+// asking address one of 30 a 5-minute window refills, and an address with none left is
+// answered about its own games only.
 //
 // The pair below is the whole rule. Widening the alphabet later (lower-case letters, say,
 // which the QR shows upper-cased) is a one-line change to CB_GAME_ID_ALPHABET: the draw,

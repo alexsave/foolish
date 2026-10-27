@@ -7,6 +7,7 @@
 #include "../../../../shared/c/num_parse.h"
 
 #include "auth/auth.h"
+#include "misses.h"
 #include "rate_limits.h"
 #include "net/refuse.h"
 #include "net/router.h"
@@ -120,20 +121,6 @@ static bool request_of(const cb_http_req *req, cb_http_res *res, uint8_t kind, N
     return true;
 }
 
-// The id after `prefix` in the path, or false with 404.
-static bool path_id(const cb_http_req *req, cb_http_res *res, const char *prefix, char *out, size_t cap, size_t max) {
-    const char *id = req->path + strlen(prefix);
-    size_t n = strlen(id);
-    bool ok = n > 0 && n < cap && n <= max;
-    for (size_t i = 0; ok && i < n; i++) {
-        char c = id[i];
-        ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
-    }
-    if (!ok) { refuse(res, 404, ASK_WHY_NOT_FOUND, 0); return false; }
-    memcpy(out, id, n + 1);
-    return true;
-}
-
 // The game id after `prefix` in the path (store/game_id.h cb_game_id_ok: anything else names no
 // game), or false with the 404 a game that is not there answers.
 static bool path_game(const cb_http_req *req, cb_http_res *res, const char *prefix, char out[CB_GAME_ID_MAX + 1]) {
@@ -141,6 +128,40 @@ static bool path_game(const cb_http_req *req, cb_http_res *res, const char *pref
     size_t n = strlen(id);
     if (!cb_game_id_ok(id, n)) { refuse(res, 404, ASK_WHY_NOT_FOUND, 0); return false; }
     memcpy(out, id, n + 1);
+    return true;
+}
+
+// The same for a lookup by id (misses.h), where an id of any other shape is a miss: false with
+// the 404 answered, or the 429 for an address with no misses left.
+static bool lookup_game(const cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, const char *prefix,
+                        char out[CB_GAME_ID_MAX + 1]) {
+    const char *id = req->path + strlen(prefix);
+    size_t n = strlen(id);
+    if (!cb_game_id_ok(id, n)) {
+        if (cb_miss_take(ctx, req, res)) refuse(res, 404, ASK_WHY_NOT_FOUND, 0);
+        return false;
+    }
+    memcpy(out, id, n + 1);
+    return true;
+}
+
+// The game's view for the caller into *v: their own when they sit at it (*seated), else the
+// spectators', which an address with no misses left is refused (misses.h) and which, when the
+// game is not there, is a miss. True with *v to free; false with the answer given.
+static bool view_of(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res, const char *gid, const char *uid,
+                    cb_view_row *v, bool *seated) {
+    memset(v, 0, sizeof *v);
+    *seated = true;
+    int rc = cb_table_view(ctx, gid, uid, v);
+    if (rc == CB_E_NOT_FOUND) {
+        *seated = false;
+        cb_view_row_free(v);
+        memset(v, 0, sizeof *v);
+        if (!cb_miss_may_look(ctx, req, res)) return false;
+        rc = cb_table_view(ctx, gid, NULL, v);
+        if (rc == CB_E_NOT_FOUND && !cb_miss_take(ctx, req, res)) { cb_view_row_free(v); return false; }
+    }
+    if (rc != CB_OK) { cb_view_row_free(v); failed(res, rc); return false; }
     return true;
 }
 
@@ -206,15 +227,12 @@ static void h_games(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 static void h_wait(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
     char gid[CB_GAME_ID_MAX + 1], vs[16];
-    if (!caller(ctx, req, res, &u) || !path_game(req, res, "/v1/wait/", gid)) return;
+    if (!caller(ctx, req, res, &u) || !lookup_game(ctx, req, res, "/v1/wait/", gid)) return;
     int64_t after = -1;
     if (cb_http_query_get(req, "v", vs, sizeof vs) && !num_parse_i64_cstr(vs, 0, INT32_MAX, &after)) { refuse(res, 400, ASK_WHY_MALFORMED, 0); return; }
     cb_view_row v;
-    memset(&v, 0, sizeof v);
-    bool seated = true;
-    int rc = cb_table_view(ctx, gid, u.id, &v);
-    if (rc == CB_E_NOT_FOUND) { seated = false; cb_view_row_free(&v); memset(&v, 0, sizeof v); rc = cb_table_view(ctx, gid, NULL, &v); }
-    if (rc != CB_OK) { cb_view_row_free(&v); failed(res, rc); return; }
+    bool seated;
+    if (!view_of(ctx, req, res, gid, u.id, &v, &seated)) return;
     if (v.version > after) {
         size_t cap = 16 + v.view_len;
         uint8_t *body = malloc(cap);
@@ -235,13 +253,10 @@ static void h_wait(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 static void h_game(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
     char gid[CB_GAME_ID_MAX + 1];
-    if (!caller(ctx, req, res, &u) || !path_game(req, res, "/v1/games/", gid)) return;
+    if (!caller(ctx, req, res, &u) || !lookup_game(ctx, req, res, "/v1/games/", gid)) return;
     cb_view_row v;
-    memset(&v, 0, sizeof v);
-    // The caller's own view when they sit at the game, else the spectators'.
-    int rc = cb_table_view(ctx, gid, u.id, &v);
-    if (rc == CB_E_NOT_FOUND) { cb_view_row_free(&v); memset(&v, 0, sizeof v); rc = cb_table_view(ctx, gid, NULL, &v); }
-    if (rc != CB_OK) { cb_view_row_free(&v); failed(res, rc); return; }
+    bool seated;
+    if (!view_of(ctx, req, res, gid, u.id, &v, &seated)) return;
     size_t cap = 16 + v.view_len;
     uint8_t *body = malloc(cap);
     NwBlob env = { v.view, (uint32_t)v.view_len };
@@ -534,9 +549,14 @@ static bool replay_fn(const cb_snapshot_row *s, void *ud) {
 
 static void h_replay(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_user u;
-    char gid[CB_UUID_LEN + 1];   // a game's id (store/game_id.h) or a replay's (a uuid)
-    if (!caller(ctx, req, res, &u) || !path_id(req, res, "/v1/replay/", gid, sizeof gid, CB_UUID_LEN)) return;
-    if (!cb_game_id_ok(gid, strlen(gid)) && !cb_uuid_valid(gid, strlen(gid))) { refuse(res, 404, ASK_WHY_NOT_FOUND, 0); return; }
+    if (!caller(ctx, req, res, &u)) return;
+    // A game's id (store/game_id.h) or a replay's (a uuid); anything else is a miss (misses.h).
+    const char *gid = req->path + strlen("/v1/replay/");
+    const size_t n = strlen(gid);
+    if (!cb_game_id_ok(gid, n) && !cb_uuid_valid(gid, n)) {
+        if (cb_miss_take(ctx, req, res)) refuse(res, 404, ASK_WHY_NOT_FOUND, 0);
+        return;
+    }
     replay r;
     cb_buf_init(&r.body);
     r.found = r.bad = false;
@@ -546,8 +566,10 @@ static void h_replay(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     int rc = CB_ROWS_CALL(ctx->store, snapshots_query, &q, replay_fn, &r);
     // Not there yet because its job has not run (table_ops.h CB_FINALIZE_JOB): made now, read again.
     if (rc >= 0 && !r.found && cb_table_finalize_wait(ctx, gid)) rc = CB_ROWS_CALL(ctx->store, snapshots_query, &q, replay_fn, &r);
+    // Only the caller's own replays are ever answered, so a limited address is still answered
+    // these; a miss costs one as anywhere (misses.h).
     if (rc < 0) failed(res, rc);
-    else if (!r.found) refuse(res, 404, ASK_WHY_NOT_FOUND, 0);
+    else if (!r.found) { if (cb_miss_take(ctx, req, res)) refuse(res, 404, ASK_WHY_NOT_FOUND, 0); }
     else if (r.bad) failed(res, CB_E_NOMEM);
     else octets(res, r.body.p, r.body.len);
     cb_buf_free(&r.body);
