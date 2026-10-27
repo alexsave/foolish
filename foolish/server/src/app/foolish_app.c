@@ -20,6 +20,7 @@
 #include "table.h"
 #include "util/clock.h"
 #include "util/err.h"
+#include "util/log.h"
 #include "../../../../shared/c/num_parse.h"
 
 #include <stdio.h>
@@ -89,8 +90,8 @@ static long env_long(const char *name, long dflt) {
     return num_parse_i64(v, strlen(v), 0, INT32_MAX, &n) ? (long)n : dflt;
 }
 
-static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
-    if (!env_long("CBASE_JOURNAL", 1) || !ctx->store || !cb_store_is_sql(ctx->store)) return CB_OK;
+static int journal_open(cb_ctx *ctx, char *err, size_t cap) {
+    if (!env_long("CBASE_JOURNAL", 1)) return CB_OK;
     const char *db = ctx->cfg ? ctx->cfg->db_path : NULL;
     if (!db || !*db || *db == ':') return CB_OK;   // an in-memory database has nothing to recover into
     cb_journal_opts o = {
@@ -106,6 +107,31 @@ static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
         .apply_ud = ctx,
     };
     return cb_journal_open(ctx->store, &o, err, cap);
+}
+
+static bool log_converted(const char *old_id, const char *new_id, void *ud) {
+    CB_INFO("store", "game %s is now game %s", old_id, new_id);
+    return true;
+}
+
+// THE BOOT: the journal is opened, which puts a crash's segments into the tables and leaves its
+// overlay holding no game (journal.h cb_journal_open), and then any game id that is not
+// store/game_id.h's is rewritten in the tables (rows_foolish.h cb_rows_sql_convert_game_ids), one
+// transaction, before anything is served. With nothing to rewrite it is one read.
+static int foolish_serve_open(cb_ctx *ctx, char *err, size_t cap) {
+    if (!ctx->store || !cb_store_is_sql(ctx->store)) return CB_OK;
+    int rc = journal_open(ctx, err, cap);
+    int bad = 0;
+    if (rc == CB_OK && (rc = cb_rows_sql_bad_game_ids(ctx->store, &bad)) != CB_OK)
+        snprintf(err, cap, "reading the game ids: %s", cb_strerror(rc));
+    if (rc != CB_OK || bad == 0) return rc;
+    int n = 0;
+    if ((rc = cb_rows_sql_convert_game_ids(ctx->store, cb_game_id_random, log_converted, NULL, &n)) != CB_OK) {
+        snprintf(err, cap, "converting %d game ids to the %d-character form: %s", bad, CB_GAME_ID_LEN, cb_strerror(rc));
+        return rc;
+    }
+    CB_INFO("store", "converted %d game ids to the %d-character form", n, CB_GAME_ID_LEN);
+    return CB_OK;
 }
 
 static void foolish_serve_close(cb_ctx *ctx) { cb_journal_close(ctx->store); }

@@ -344,7 +344,7 @@ static size_t g_want[NB];   // each batch's length as journal.h lays a batch out
 
 // NB batches of PER moves over 5 games (one jumps its version), encoded back to back into buf.
 static size_t encode_batches(uint8_t *buf, size_t cap, size_t ends[NB]) {
-    static const char *const games[] = { "a1b2c3d4e5f6", "0123456789ab", "ffeeddccbbaa", "abc123", "9f9f9f9f9f9f" };
+    static const char *const games[] = { "a1b2c3", "012345", "ffeedd", "abc123", "9f9f9f" };
     int64_t ver[5] = { 7, 100, 3, 55555, 1 };
     bool named[5] = { false };
     uint64_t rng = 99;
@@ -432,8 +432,8 @@ static void a_refused_batch_consumes_nothing(void) {
     static EvwMove mv[2][EVW_DELTA_MAX_MOVES];
     cb_jmove m[2];
     memset(m, 0, sizeof m);
-    snprintf(m[0].game, sizeof m[0].game, "a1b2c3d4e5f6");
-    snprintf(m[1].game, sizeof m[1].game, "0123456789ab");
+    snprintf(m[0].game, sizeof m[0].game, "a1b2c3");
+    snprintf(m[1].game, sizeof m[1].game, "012345");
     for (int i = 0; i < 2; i++) {
         m[i].base_version = 10 + i;
         m[i].now_ms = 1760000000500LL;
@@ -1684,12 +1684,12 @@ static void crafted_whole_commits_recover_or_refuse(void) {
     close_world(s);
     static uint8_t fr[4096];
     struct { const char *id; int idl; int64_t base; uint8_t flags; uint32_t sl, claim; int tail; bool opens; } c[] = {
-        { "aaaaaaaaaaaa", 0, 0, 0, 4, 4, 0, true },          // an empty id: dropped
-        { "aaaaaaaaaaaa", 17, 0, 0, 4, 4, 0, true },         // an id past CB_GAME_ID_MAX: dropped
-        { "aaaaaaaaaaaa", 13, 0, 0, 4, 4, 0, true },         // an id one byte longer than written: dropped
-        { "aaaaaaaaaaaa", -1, 0, 0, 4, 400, 0, true },       // a state longer than the record: dropped
+        { "aaaaaa", 0, 0, 0, 4, 4, 0, true },                // an empty id: dropped
+        { "aaaaaa", 17, 0, 0, 4, 4, 0, true },               // an id past CB_GAME_ID_MAX: dropped
+        { "aaaaaa", 7, 0, 0, 4, 4, 0, true },                // an id one byte longer than written: dropped
+        { "aaaaaa", -1, 0, 0, 4, 400, 0, true },             // a state longer than the record: dropped
         { gid, -1, 1, 0, 4, 4, 3, true },                    // bytes past the last field (else a commit that fits): dropped
-        { "aaaaaaaaaaaa", -1, 0, 2, 4, 4, 0, true },         // a game that is gone (seeded): skipped
+        { "aaaaaa", -1, 0, 2, 4, 4, 0, true },               // a game that is gone (seeded): skipped
         { gid, -1, 0, 0, 4, 4, 0, true },                    // a commit the tables hold already: skipped
         { gid, -1, 5, 0, 4, 4, 0, false },                   // from a version the tables have not reached: refused
     };
@@ -1873,7 +1873,7 @@ static void the_resident_is_the_row(void) {
     T_EQ_INT(kt_brains(brains), 2);
     enum { ARENA = 128 * 1024 };
     uint8_t *aa = malloc(ARENA), *ab = malloc(ARENA), state[4096], roster[ROSTER_BYTES + 8];
-    static const char GID[] = "0123456789ab";
+    static const char GID[] = "012345";
     uint64_t rng = 99;
     int ops = 0, games = 0;
     for (; games < 40 && ops < 1500; games++) {
@@ -1895,7 +1895,7 @@ static void the_resident_is_the_row(void) {
         TableCommit ca;
         int64_t now = 1760000000000LL;
         uint32_t version = 3;
-        T_CHECK(table_commit_products(&a.t, GID, 12, version, now, &ca, aa, ARENA) > 0);
+        T_CHECK(table_commit_products(&a.t, GID, (int)sizeof GID - 1, version, now, &ca, aa, ARENA) > 0);
         TableResident res;
         table_resident(&a.t, &ca.clock, &res);
         while (ops < 1500) {
@@ -1947,14 +1947,14 @@ static void the_resident_is_the_row(void) {
             ops++;
             version++;
             now += 1500;
-            const int na = table_commit_products(&a.t, GID, 12, version, now, &ca, aa, ARENA);
+            const int na = table_commit_products(&a.t, GID, (int)sizeof GID - 1, version, now, &ca, aa, ARENA);
             TableCommit cb;
-            const int nb = table_commit_products(&b.t, GID, 12, version, now, &cb, ab, ARENA);
+            const int nb = table_commit_products(&b.t, GID, (int)sizeof GID - 1, version, now, &cb, ab, ARENA);
             T_EQ_INT(na, nb);
             if (na <= 0 || na != nb || memcmp(aa, ab, (size_t)na) != 0) { T_CHECK(!"the products differ"); break; }
             // The products with no row (a plain move's) are the same products less the row.
             TableCommit cn;
-            const int nn = table_commit_products_flags(&a.t, GID, 12, version, now, TABLE_PRODUCTS_NO_ROW, &cn, ab, ARENA);
+            const int nn = table_commit_products_flags(&a.t, GID, (int)sizeof GID - 1, version, now, TABLE_PRODUCTS_NO_ROW, &cn, ab, ARENA);
             bool same = nn > 0 && cn.state.len == 0 && cn.roster.len == 0 && memcmp(&cn.clock, &ca.clock, sizeof cn.clock) == 0 &&
                         cn.status == ca.status && cn.needs_bots == ca.needs_bots && cn.ended == ca.ended &&
                         cn.closed_round == ca.closed_round && cn.logs_reset == ca.logs_reset && cn.n_events == ca.n_events &&
@@ -2681,6 +2681,433 @@ static void a_restore_mid_game_holds_every_acknowledged_move(void) {
     memset(&g_jo, 0, sizeof g_jo);
 }
 
+// ---- THE GAME ID CONVERSION (rows_foolish.h cb_rows_sql_convert_game_ids) at the boot ----------
+//
+// Games made with the 12-character ids of 2026-10-17 (the create's draw is a seam; HTTP refuses
+// those ids, so their asks and moves run in process, as the routes would run them), the process
+// killed with moves waiting in the journal, and its files booted through the app's own serve_open:
+// every game id becomes a fresh six-character one, in every table, and every game still reads,
+// plays on and replays under it.
+
+static int g_legacy_n;
+static char g_legacy_last[CB_GAME_ID_MAX + 1];
+static void legacy_draw(char out[CB_GAME_ID_MAX + 1]) {
+    snprintf(out, CB_GAME_ID_MAX + 1, "%010x%02x", 0xa1b2c3d4u, g_legacy_n++);
+    snprintf(g_legacy_last, sizeof g_legacy_last, "%s", out);
+}
+
+static void six_5e(char out[CB_GAME_ID_MAX + 1]) { snprintf(out, CB_GAME_ID_MAX + 1, "5e5e5e"); }
+
+static void user_of(const char *bearer, cb_user *u) {
+    memset(u, 0, sizeof *u);
+    const bool a = strcmp(bearer, "A") == 0;
+    snprintf(u->id, sizeof u->id, "%s", a ? UID_A : UID_B);
+    snprintf(u->username, sizeof u->username, "%s", a ? "ALICE" : "BOB");
+}
+
+typedef struct { const cb_user *u; TableAsk ask; } direct_ask_t;
+static int run_direct_ask(Table *t, const cb_game_row *row, const uint8_t seed[32], void *ud) {
+    const direct_ask_t *a = ud;
+    return table_ask(t, a->u->id, (int)strlen(a->u->id), a->u->username, (int)strlen(a->u->username), &a->ask, NULL, seed);
+}
+// An ask by `bearer`, as the meta route runs it (functions_http.c run_ask), without the route.
+static int direct_meta(const char *bearer, int kind, const char *gid) {
+    cb_user u;
+    user_of(bearer, &u);
+    direct_ask_t a = { &u, { 0 } };
+    a.ask.kind = (uint8_t)kind;
+    a.ask.gid_len = (uint8_t)strlen(gid);
+    memcpy(a.ask.gid, gid, a.ask.gid_len);
+    cb_table_op op = { .game_id = gid, .actor = &u, .run = run_direct_ask, .ud = &a };
+    cb_table_result r;
+    int rc = cb_table_run(&g_ctx, &op, &r);
+    free(r.envelope);
+    return rc == CB_OK && r.result >= 0 ? 0 : -1;
+}
+
+typedef struct { const cb_user *u; const move_t *m; } direct_act_t;
+static int run_direct_act(Table *t, const cb_game_row *row, const uint8_t seed[32], void *ud) {
+    const direct_act_t *a = ud;
+    return table_act(t, a->u->id, (int)strlen(a->u->id), a->m->wire, a->m->n, a->m->intent, row->round_epoch);
+}
+// A move, as the action route runs it (functions_http.c h_action), without the route: true when applied.
+static bool direct_action(const char *gid, const move_t *m) {
+    cb_user u;
+    user_of(m->bearer, &u);
+    direct_act_t a = { &u, m };
+    g_now += 1237;
+    cb_table_op op = { .game_id = gid, .actor = &u, .run = run_direct_act, .ud = &a, .wire = m->wire,
+                       .wire_len = m->n, .no_envelope = true, .no_deal = true };
+    cb_table_result r;
+    int rc = cb_table_run(&g_ctx, &op, &r);
+    free(r.envelope);
+    return rc == CB_OK && r.committed && r.result >= 0;
+}
+
+// A legacy game, A and B seated, dealt when `deal`.
+static void legacy_game(char gid[CB_GAME_ID_MAX + 1], bool deal) {
+    reply r;
+    call("create", "A", NULL, 0, &r);   // the create takes no id from the request: the seam's
+    T_EQ_INT(r.status, 200);
+    snprintf(gid, CB_GAME_ID_MAX + 1, "%s", g_legacy_last);
+    T_EQ_INT((int)strlen(gid), 12);
+    T_EQ_INT(direct_meta("B", ASK_JOIN, gid), 0);
+    if (!deal) return;
+    T_EQ_INT(direct_meta("A", ASK_START, gid), 0);
+    T_EQ_INT(direct_meta("B", ASK_START, gid), 0);
+}
+
+// Every distinct value of every game id column (CB_ROWS_SQL_GAME_ID_COLUMNS), through a connection
+// of its own: how many, and how many are not cb_game_id_ok.
+static int column_ids(const char *path, int *bad) {
+    sqlite3 *db = NULL;
+    int n = 0;
+    *bad = 0;
+    T_EQ_INT(sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL), SQLITE_OK);
+    for (int c = 0; c < CB_ROWS_SQL_N_GAME_ID_COLUMNS; c++) {
+        char q[200];
+        snprintf(q, sizeof q, "SELECT DISTINCT %s FROM %s WHERE %s IS NOT NULL", CB_ROWS_SQL_GAME_ID_COLUMNS[c][1],
+                 CB_ROWS_SQL_GAME_ID_COLUMNS[c][0], CB_ROWS_SQL_GAME_ID_COLUMNS[c][1]);
+        sqlite3_stmt *st = NULL;
+        T_EQ_INT(sqlite3_prepare_v2(db, q, -1, &st, NULL), SQLITE_OK);
+        while (st && sqlite3_step(st) == SQLITE_ROW) {
+            n++;
+            *bad += !cb_game_id_ok((const char *)sqlite3_column_text(st, 0), (size_t)sqlite3_column_bytes(st, 0));
+        }
+        sqlite3_finalize(st);
+    }
+    sqlite3_close(db);
+    return n;
+}
+
+// The id of the game whose row hashes to h, among the stored games ("" for none).
+static void id_by_hash(cb_store *s, const char *path, uint64_t h, char out[CB_GAME_ID_MAX + 1]) {
+    out[0] = 0;
+    sqlite3 *db = NULL;
+    T_EQ_INT(sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL), SQLITE_OK);
+    sqlite3_stmt *st = NULL;
+    T_EQ_INT(sqlite3_prepare_v2(db, "SELECT id FROM games", -1, &st, NULL), SQLITE_OK);
+    char ids[32][CB_GAME_ID_MAX + 1];
+    int n = 0;
+    while (st && sqlite3_step(st) == SQLITE_ROW && n < 32) snprintf(ids[n++], sizeof ids[0], "%s", (const char *)sqlite3_column_text(st, 0));
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    for (int i = 0; i < n; i++)
+        if (row_hash(s, ids[i]) == h) {
+            T_CHECK(out[0] == 0);   // one game per hash
+            snprintf(out, CB_GAME_ID_MAX + 1, "%s", ids[i]);
+        }
+}
+
+// The app's own boot of a store at `path` (foolish_app.c foolish_serve_open, as cbase serve runs it).
+static cb_store *boot_world(const char *path, char *err, size_t cap) {
+    cb_store *s = open_world(path, false, err, cap);
+    if (!s) return NULL;
+    snprintf(g_cfg.db_path, sizeof g_cfg.db_path, "%s", path);
+    if (cb_foolish_app.serve_open(&g_ctx, err, cap) != CB_OK) {
+        cb_store_close(s);
+        return NULL;
+    }
+    return s;
+}
+
+static bool first_snapshot(const cb_snapshot_row *r, void *ud) {
+    cb_snapshot_row *out = ud;
+    memcpy(out->id, r->id, sizeof out->id);
+    snprintf(out->game_id, sizeof out->game_id, "%s", r->game_id);
+    out->moves_len = r->moves_len;
+    out->moves = malloc(r->moves_len ? r->moves_len : 1);
+    if (out->moves && r->moves_len) memcpy(out->moves, r->moves, r->moves_len);
+    return false;
+}
+static cb_snapshot_row replay_of(cb_store *s, const char *gid) {
+    cb_snapshot_row r;
+    memset(&r, 0, sizeof r);
+    cb_snapshot_query q = { .viewer_id = UID_A, .ref = gid, .limit = 1, .newest_first = true };
+    CB_ROWS_CALL(s, snapshots_query, &q, first_snapshot, &r);
+    return r;
+}
+
+static bool count_chat(const cb_chat_row *c, void *ud) {
+    T_EQ_STR(c->message, "see you at the table");
+    ++*(int *)ud;
+    return true;
+}
+static int chats(cb_store *s, const char *gid) {
+    int n = 0;
+    CB_ROWS_CALL(s, chat_list, gid, 50, count_chat, &n);
+    return n;
+}
+
+static bool count_mine(const cb_member_row *m, void *ud) {
+    T_CHECK(cb_game_id_ok(m->game_id, strlen(m->game_id)));
+    ++*(int *)ud;
+    return true;
+}
+
+enum { LOBBY, MID, DONE, SIX, N_KINDS };
+
+static void twelve_character_games_convert_at_the_boot(void) {
+    char path[320], copy[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/legacy.sqlite", g_dir);
+    snprintf(copy, sizeof copy, "%s/legacy_crash.sqlite", g_dir);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[N_KINDS][CB_GAME_ID_MAX + 1];
+    cb_app_game_id = legacy_draw;
+    legacy_game(gid[LOBBY], false);
+    legacy_game(gid[MID], true);
+    legacy_game(gid[DONE], true);
+    cb_app_game_id = six_5e;
+    reply r;
+    call("create", "A", NULL, 0, &r);   // a game of today's shape, which the boot leaves alone
+    cb_app_game_id = cb_game_id_random;
+    snprintf(gid[SIX], sizeof gid[SIX], "5e5e5e");
+    T_CHECK(!game_gone(s, gid[SIX]));
+    // The finished game: played out and its replay made (the job the end queues, run here).
+    move_t m;
+    for (int i = 0; i < 4000 && next_move(s, gid[DONE], &m); i++) T_CHECK(direct_action(gid[DONE], &m));
+    T_CHECK(version_of(s, gid[DONE]) < 0);
+    T_EQ_INT(cb_table_finalize_job(&g_ctx, gid[DONE]), CB_OK);
+    cb_snapshot_row rep = replay_of(s, gid[DONE]);
+    T_EQ_STR(rep.game_id, gid[DONE]);
+    T_CHECK(rep.moves_len > 0);
+    // The game mid-play: a few moves, which the journal holds (nothing is due for an hour), and chat.
+    for (int i = 0; i < 6 && next_move(s, gid[MID], &m); i++) T_CHECK(direct_action(gid[MID], &m));
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    T_CHECK(js.waiting >= 6);
+    cb_chat_row c;
+    memset(&c, 0, sizeof c);
+    cb_uuid_v4(c.id);
+    snprintf(c.game_id, sizeof c.game_id, "%s", gid[MID]);
+    snprintf(c.user_id, sizeof c.user_id, "%s", UID_B);
+    c.message = "see you at the table";
+    c.created_at = g_now;
+    T_EQ_INT(CB_ROWS_CALL(s, chat_put, &c), CB_OK);
+    uint64_t h[N_KINDS];
+    for (int k = 0; k < N_KINDS; k++) h[k] = row_hash(s, gid[k]);
+    // The crash: the files as they are, the moves still waiting in the segments.
+    crash_copy(path, copy);
+    close_world(s);
+
+    // THE BOOT, of the crash's files.
+    s = boot_world(copy, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) { cb_snapshot_row_free(&rep); return; }
+    int bad = -1, n = column_ids(copy, &bad);
+    T_EQ_INT(bad, 0);
+    T_CHECK(n >= N_KINDS);
+    int left = -1;
+    T_EQ_INT(cb_rows_sql_bad_game_ids(s, &left), CB_OK);
+    T_EQ_INT(left, 0);
+    char now[N_KINDS][CB_GAME_ID_MAX + 1];
+    for (int k = 0; k < N_KINDS; k++) {
+        // Each game is there whole (the mid game with every move the journal held), under one new id.
+        id_by_hash(s, copy, h[k], now[k]);
+        T_CHECK(cb_game_id_ok(now[k], strlen(now[k])));
+        if (k != SIX) T_CHECK(game_gone(s, gid[k]));
+        for (int j = 0; j < k; j++) T_CHECK(strcmp(now[j], now[k]) != 0);
+    }
+    T_EQ_STR(now[SIX], gid[SIX]);
+    int mine = 0;
+    CB_ROWS_CALL(s, games_of_user, UID_A, 50, count_mine, &mine);
+    T_EQ_INT(mine, N_KINDS);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, now[LOBBY], UID_B), 1);
+    T_EQ_INT(chats(s, now[MID]), 1);
+    T_EQ_INT(chats(s, gid[MID]), 0);
+    // The replay is the same replay, under the new id.
+    cb_snapshot_row rep2 = replay_of(s, now[DONE]);
+    T_EQ_STR(rep2.id, rep.id);
+    T_EQ_STR(rep2.game_id, now[DONE]);
+    T_EQ_MEM(rep2.moves, rep2.moves_len, rep.moves, rep.moves_len);
+    cb_snapshot_row_free(&rep2);
+    cb_snapshot_row empty = replay_of(s, gid[DONE]);
+    T_EQ_INT((int)empty.moves_len, 0);
+    cb_snapshot_row_free(&empty);
+    // Every game takes its asks and moves through the routes, by its new id; the old one names nothing.
+    meta("A", ASK_START, now[LOBBY], &r);
+    T_EQ_INT(r.status, 200);
+    T_CHECK(next_move(s, now[MID], &m));
+    T_CHECK(play(now[MID], &m) > 0);
+    meta("B", ASK_JOIN, gid[LOBBY], &r);
+    T_EQ_INT(r.status, 400);
+    const uint64_t played = row_hash(s, now[MID]);
+
+    // A SECOND BOOT finds nothing to convert and changes nothing.
+    close_world(s);
+    s = boot_world(copy, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (s) {
+        T_EQ_INT(row_hash(s, now[MID]), played);
+        for (int k = 0; k < N_KINDS; k++) T_CHECK(!game_gone(s, now[k]));
+        T_EQ_INT(chats(s, now[MID]), 1);
+        close_world(s);
+    }
+    cb_snapshot_row_free(&rep);
+}
+
+// The converter on its own: a draw that names a game already there (or one this run handed out)
+// is drawn again; a run that cannot finish writes nothing, the games it had converted included;
+// and a draw that is not a game id stops it.
+static const char *const *g_draws;
+static int g_draw_at;
+static void listed_draw(char out[CB_GAME_ID_MAX + 1]) {
+    snprintf(out, CB_GAME_ID_MAX + 1, "%s", g_draws[g_draw_at] ? g_draws[g_draw_at] : "abcdef");
+    if (g_draws[g_draw_at]) g_draw_at++;
+}
+static void always_taken(char out[CB_GAME_ID_MAX + 1]) { snprintf(out, CB_GAME_ID_MAX + 1, "abcdef"); }
+static void legacy_too(char out[CB_GAME_ID_MAX + 1]) { snprintf(out, CB_GAME_ID_MAX + 1, "abcdef012345"); }
+static void six_abcdef(char out[CB_GAME_ID_MAX + 1]) { snprintf(out, CB_GAME_ID_MAX + 1, "abcdef"); }
+
+typedef struct { int n; char old[4][65], fresh[4][CB_GAME_ID_MAX + 1]; } seen_t;
+static bool note_seen(const char *old_id, const char *new_id, void *ud) {
+    seen_t *s = ud;
+    if (s->n < 4) {
+        snprintf(s->old[s->n], sizeof s->old[0], "%s", old_id);
+        snprintf(s->fresh[s->n], sizeof s->fresh[0], "%s", new_id);
+    }
+    s->n++;
+    return true;
+}
+
+static void the_conversion_draws_again_and_is_all_or_nothing(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/convert.sqlite", g_dir);
+    cb_store *s = open_world(path, false, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    reply r;
+    cb_app_game_id = six_abcdef;
+    call("create", "A", NULL, 0, &r);
+    T_EQ_INT(r.status, 200);
+    cb_app_game_id = legacy_draw;
+    char a[CB_GAME_ID_MAX + 1], b[CB_GAME_ID_MAX + 1];
+    legacy_game(a, false);
+    legacy_game(b, false);
+    cb_app_game_id = cb_game_id_random;
+    const uint64_t ha = row_hash(s, a), hb = row_hash(s, b), hsix = row_hash(s, "abcdef");
+    int n = -1;
+    // No free id: every draw names the six-character game. Nothing is written.
+    T_EQ_INT(cb_rows_sql_convert_game_ids(s, always_taken, NULL, NULL, &n), CB_E_CONFLICT);
+    // A draw that is not a game id stops it, with nothing written.
+    T_EQ_INT(cb_rows_sql_convert_game_ids(s, legacy_too, NULL, NULL, &n), CB_E_INVALID);
+    // The first game converts, the second cannot: the first is rolled back with it.
+    static const char *const one_then_none[] = { "111111", NULL };
+    g_draws = one_then_none;
+    g_draw_at = 0;
+    T_EQ_INT(cb_rows_sql_convert_game_ids(s, listed_draw, NULL, NULL, &n), CB_E_CONFLICT);   // "abcdef" for ever after
+    T_EQ_INT(g_draw_at, 1);
+    T_CHECK(!game_gone(s, a));
+    T_CHECK(!game_gone(s, b));
+    T_CHECK(game_gone(s, "111111"));
+    T_EQ_INT(cb_rows_sql_bad_game_ids(s, &n), CB_OK);
+    T_EQ_INT(n, 2);
+    T_EQ_INT(row_hash(s, a), ha);
+    T_EQ_INT(row_hash(s, b), hb);
+    // Taken draws are drawn again: the six-character game's id, then the first game's new id.
+    static const char *const draws[] = { "abcdef", "222222", "abcdef", "222222", "333333", NULL };
+    g_draws = draws;
+    g_draw_at = 0;
+    seen_t seen = { 0 };
+    T_EQ_INT(cb_rows_sql_convert_game_ids(s, listed_draw, note_seen, &seen, &n), CB_OK);
+    T_EQ_INT(n, 2);
+    T_EQ_INT(g_draw_at, 5);
+    T_EQ_INT(seen.n, 2);
+    T_EQ_STR(seen.fresh[0], "222222");
+    T_EQ_STR(seen.fresh[1], "333333");
+    for (int i = 0; i < 2; i++) T_CHECK(strcmp(seen.old[i], a) == 0 || strcmp(seen.old[i], b) == 0);
+    T_CHECK(strcmp(seen.old[0], seen.old[1]) != 0);
+    T_EQ_INT(row_hash(s, "abcdef"), hsix);
+    const char *na = strcmp(seen.old[0], a) == 0 ? seen.fresh[0] : seen.fresh[1];
+    const char *nb = strcmp(seen.old[0], a) == 0 ? seen.fresh[1] : seen.fresh[0];
+    T_EQ_INT(row_hash(s, na), ha);
+    T_EQ_INT(row_hash(s, nb), hb);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, na, UID_B), 1);
+    T_EQ_INT(CB_ROWS_CALL(s, is_member, a, UID_B), 0);
+    // Nothing left: a second run converts none.
+    T_EQ_INT(cb_rows_sql_convert_game_ids(s, cb_game_id_random, NULL, NULL, &n), CB_OK);
+    T_EQ_INT(n, 0);
+    close_world(s);
+}
+
+// A crash in the middle of the conversion (the process killed between two games' renames) leaves
+// every id as it was: the conversion is one transaction.
+static void kill_on_the_second_draw(char out[CB_GAME_ID_MAX + 1]) {
+    if (g_draw_at++ == 1) raise(SIGKILL);
+    cb_game_id_random(out);
+}
+
+static void a_crash_mid_conversion_converts_nothing(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/killed.sqlite", g_dir);
+    cb_store *s = open_world(path, false, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    cb_app_game_id = legacy_draw;
+    char a[CB_GAME_ID_MAX + 1], b[CB_GAME_ID_MAX + 1];
+    legacy_game(a, true);
+    legacy_game(b, false);
+    cb_app_game_id = cb_game_id_random;
+    const uint64_t ha = row_hash(s, a), hb = row_hash(s, b);
+    close_world(s);
+    pid_t pid = fork();
+    if (pid == 0) {
+        cb_store *c = NULL;
+        if (cb_store_open_sqlite(path, &c) != CB_OK) _exit(3);
+        g_draw_at = 0;
+        int n;
+        cb_rows_sql_convert_game_ids(c, kill_on_the_second_draw, NULL, NULL, &n);
+        _exit(4);   // never: the second draw kills it
+    }
+    int st;
+    waitpid(pid, &st, 0);
+    T_CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGKILL);
+    s = open_world(path, false, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    int n = -1, bad = -1;
+    T_EQ_INT(cb_rows_sql_bad_game_ids(s, &n), CB_OK);
+    T_EQ_INT(n, 2);
+    T_EQ_INT(row_hash(s, a), ha);
+    T_EQ_INT(row_hash(s, b), hb);
+    T_EQ_INT(column_ids(path, &bad) - bad, 0);   // not one id was rewritten
+    T_EQ_INT(cb_rows_sql_convert_game_ids(s, cb_game_id_random, NULL, NULL, &n), CB_OK);
+    T_EQ_INT(n, 2);
+    close_world(s);
+}
+
+// Every column of the schema that holds a game id is one the conversion rewrites: a table that
+// gains one and is not listed (rows_sql.c GAME_ID_COLUMNS) fails here.
+static void the_conversion_knows_every_game_id_column(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/schema.sqlite", g_dir);
+    cb_store *s = open_world(path, false, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    sqlite3 *db = NULL;
+    T_EQ_INT(sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL), SQLITE_OK);
+    sqlite3_stmt *st = NULL;
+    T_EQ_INT(sqlite3_prepare_v2(db, "SELECT m.name, p.name FROM sqlite_master m, pragma_table_info(m.name) p "
+                                    "WHERE m.type = 'table' AND (p.name = 'game_id' OR (m.name = 'games' AND p.name = 'id'))",
+                                -1, &st, NULL), SQLITE_OK);
+    int found = 0;
+    while (st && sqlite3_step(st) == SQLITE_ROW) {
+        const char *t = (const char *)sqlite3_column_text(st, 0), *c = (const char *)sqlite3_column_text(st, 1);
+        bool listed = false;
+        for (int i = 0; i < CB_ROWS_SQL_N_GAME_ID_COLUMNS; i++)
+            listed |= strcmp(CB_ROWS_SQL_GAME_ID_COLUMNS[i][0], t) == 0 && strcmp(CB_ROWS_SQL_GAME_ID_COLUMNS[i][1], c) == 0;
+        if (!listed) fprintf(stderr, "  %s.%s holds a game id and the conversion does not rewrite it\n", t, c);
+        T_CHECK(listed);
+        found++;
+    }
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    T_EQ_INT(found, CB_ROWS_SQL_N_GAME_ID_COLUMNS);
+    close_world(s);
+}
+
 int main(void) {
     const char *tmp = getenv("TMPDIR");
     snprintf(g_dir, sizeof g_dir, "%s/unit_journal.XXXXXX", tmp && *tmp ? tmp : "/tmp");
@@ -2723,6 +3150,10 @@ int main(void) {
     }
     g_bots = false;   // humans only: a bot drive commits once per cycle, some cycles to a step
     T_RUN(the_resident_is_handed_over_not_copied);
+    T_RUN(the_conversion_knows_every_game_id_column);
+    T_RUN(the_conversion_draws_again_and_is_all_or_nothing);
+    T_RUN(a_crash_mid_conversion_converts_nothing);
+    T_RUN(twelve_character_games_convert_at_the_boot);
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
     if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", g_dir);
