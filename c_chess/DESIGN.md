@@ -196,7 +196,7 @@ The puzzles page: 175 KB over 25 requests (the site's runtime, shared with every
 ## 3.6 Ratings per speed
 
 **A rating per speed, as lichess keeps them.** A game's speed is its estimated length, the base plus 40 increments (`c/src/speed.c`): under 3 minutes bullet, under 8 blitz, under 25 rapid, else classical.
-lichess splits off UltraBullet (under 30 seconds) as a fifth speed; here it counts as bullet, since the site offers no time control that short.
+lichess splits off UltraBullet (under 30 seconds) as a fifth speed; here it counts as bullet, since the lobby offers no time control that short (the API takes one down to 15 seconds).
 A player holds four Glicko-2 ratings and four counts of rated games in memory (`cc_player.r[]`, `.rated[]`); a rated game moves only its own speed's pair, and the puzzle rating stays apart.
 Everything that shows a rating shows the one of the game's speed: the state push, the snapshot, TV, and a seek's row (the seeker's rating at the speed of the time control sought).
 The leaderboard is one per speed (`GET /c/top/<speed>`): the players with a rated game of it, by its rating, each with its count; ranking walks the players in memory as before.
