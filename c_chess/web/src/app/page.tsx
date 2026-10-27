@@ -161,7 +161,7 @@ export default function Lobby() {
           </tbody>
         </table>
         <Arenas />
-        <Chat room="lobby" title="Lobby chat" />
+        <Chat room="lobby" />
         <Leaders speed={CC_BLITZ} limit={10} />
       </aside>
     </div>

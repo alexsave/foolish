@@ -48,8 +48,10 @@ export default function Chat({ room, title = 'Chat', className = '' }: { room: s
         {lines.map((l, i) => (
           <div key={`${l.at}-${i}`} className={`chat-line ${l.mine ? 'mine' : ''}`}>
             <span className="t">{clockTime(l.at)}</span>
-            <Link prefetch={false} className="n" href={`/user?name=${encodeURIComponent(l.name)}`}>{l.name}</Link>
-            <span className="x">{l.text}</span>
+            <span className="w">
+              <Link prefetch={false} className="n" href={`/user?name=${encodeURIComponent(l.name)}`}>{l.name}</Link>
+              {l.text}
+            </span>
           </div>
         ))}
         {chat && !lines.length && <div className="chat-empty muted">No one has said anything yet.</div>}

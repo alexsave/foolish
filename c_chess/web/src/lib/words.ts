@@ -72,7 +72,7 @@ export const CHAT_CHECK: Readonly<Record<number, string>> = {
   [CC_CHAT_LONG]: 'Too long: 140 bytes at most.',
   [CC_CHAT_UTF8]: 'That line holds a character chat does not take.',
   [CC_CHAT_CONTROL]: 'That line holds a character chat does not take.',
-  [CV_CHAT_BANNED]: 'Keep it friendly: that word is not allowed here.',
+  [CV_CHAT_BANNED]: 'Keep it friendly: that word is not allowed.',
 };
 export function chatRefusal(code: number, why: number, wait: number): string {
   switch (code) {
