@@ -951,6 +951,131 @@ static void rate_limited_account_routes(void) {
     teardown();
 }
 
+// ---- guessed game ids (app/misses.h) ---------------------------------------------------------
+
+// GET <prefix><id> as the session loaded (the request nc_req_game builds, its path swapped).
+static int get_id(const char *prefix, const char *id) {
+    const NcRequest *b = nc_req_game("000000", 6, g_now);
+    T_CHECK(b != NULL && !b->is_refresh);
+    if (!b) return -1;
+    NcRequest q = *b;
+    q.path_len = (uint8_t)snprintf(q.path, sizeof q.path, "%s%s", prefix, id);
+    return send_req(&q);
+}
+
+// An ask of `kind` at gid as the session loaded.
+static int ask_at(int kind, const char *gid) {
+    TableAsk a;
+    memset(&a, 0, sizeof a);
+    a.kind = (uint8_t)kind;
+    a.gid_len = (uint8_t)strlen(gid);
+    memcpy(a.gid, gid, a.gid_len);
+    uint8_t b[ASK_BYTES_MAX];
+    int n = ask_encode(&a, b, sizeof b);
+    return send_req(nc_req_meta(b, n, g_now));
+}
+
+// A move at gid as the session loaded (the wire is the kernel's to judge, after the seat).
+static int move_at(const char *gid) {
+    static const uint8_t wire[] = { 1, 0, 0, 0 };
+    return send_req(nc_req_action(gid, (int)strlen(gid), wire, (int)sizeof wire, -1, g_now));
+}
+
+static char g_mine[CB_GAME_ID_MAX + 1], g_theirs[CB_GAME_ID_MAX + 1];
+
+// Every way to miss, each the answer it gets while the address has misses left.
+enum { M_GAME, M_WAIT, M_REPLAY, M_JOIN, M_JOIN_REFUSED, M_ASK, M_ASK_NOT_SEATED, M_MOVE, M_MOVE_NOT_SEATED, M_KINDS };
+static const int MISS_STATUS[M_KINDS] = { 404, 404, 404, 400, 400, 400, 400, 400, 400 };
+static const char *const MISS_NAME[M_KINDS] = { "game", "wait", "replay", "join", "join refused", "ask", "ask not seated",
+                                                "move", "move not seated" };
+
+// Miss number i the way `how` misses: an id of the wrong shape on odd i, a well-formed id no
+// game has on even i, or the kernel's refusal at a game that is there.
+static int miss(int how, int i) {
+    const char *none = (i & 1) ? "zz-top" : "abcde0";
+    switch (how) {
+    case M_GAME: return get_id("/v1/games/", none);
+    case M_WAIT: return get_id("/v1/wait/", none);
+    case M_REPLAY: return get_id("/v1/replay/", none);
+    case M_JOIN: return ask_at(ASK_JOIN, none);
+    case M_JOIN_REFUSED: return ask_at(ASK_JOIN, g_mine);   // seated already: the roster refuses it
+    case M_ASK: return ask_at(ASK_START, none);
+    case M_ASK_NOT_SEATED: return ask_at(ASK_START, g_theirs);
+    case M_MOVE: return move_at(none);
+    case M_MOVE_NOT_SEATED: return move_at(g_theirs);
+    }
+    return -1;
+}
+
+// A script walking six-hex game ids for open lobbies: each miss costs its address one of
+// CB_LIMIT_ID_MISS_IP's burst, a game found costs nothing, and an address with none left is
+// answered about its own game only, everything else 429 BUSY with Retry-After whether the game
+// is there or not. Another address is untouched.
+static void guessed_game_ids_are_limited(void) {
+    setup();
+    const char *A = "198.51.100.40", *B = "198.51.100.41";
+    g_peer = A;
+    T_EQ_INT(sign(1, "GUESS", "secret-11"), 0);
+    uint8_t guess[NC_SESSION_BLOB_MAX];
+    int gn = nc_session_save(guess, sizeof guess);
+    char uid[40];
+    snprintf(uid, sizeof uid, "%.36s", nc_session_info()->user_id);
+    T_EQ_INT(call(b_create, NULL), 200);
+    CB_ROWS_CALL(g_ctx.store, games_of_user, uid, 1, first_game, g_mine);
+    g_peer = B;
+    nc_reset();
+    T_EQ_INT(sign(1, "HOST", "secret-11"), 0);
+    uint8_t host[NC_SESSION_BLOB_MAX];
+    int hn = nc_session_save(host, sizeof host);
+    snprintf(uid, sizeof uid, "%.36s", nc_session_info()->user_id);
+    T_EQ_INT(call(b_create, NULL), 200);
+    CB_ROWS_CALL(g_ctx.store, games_of_user, uid, 1, first_game, g_theirs);
+    T_CHECK(g_mine[0] && g_theirs[0] && strcmp(g_mine, g_theirs) != 0);
+    const int b = cb_limit_rules[CB_LIMIT_ID_MISS_IP].burst;
+
+    // Spectating a game whose id you were given is free, however often.
+    g_peer = A;
+    as(guess, gn);
+    for (int i = 0; i < 2 * b; i++) {
+        T_EQ_INT(get_id("/v1/games/", g_theirs), 200);
+        T_EQ_INT(get_id("/v1/wait/", g_theirs), 200);
+    }
+    T_EQ_INT(get_id("/v1/games/", "abcde0"), 404);
+
+    for (int how = 0; how < M_KINDS; how++) {
+        cb_limits_reset();
+        g_peer = A;
+        as(guess, gn);
+        int wrong = 0;
+        for (int i = 0; i < b; i++) wrong += miss(how, i) != MISS_STATUS[how];
+        if (wrong) fprintf(stderr, "%s: %d of %d misses not answered %d\n", MISS_NAME[how], wrong, b, MISS_STATUS[how]);
+        T_EQ_INT(wrong, 0);
+        T_EQ_INT(miss(how, b), 429);
+        T_EQ_INT(nc_status_read(g_status, g_body, g_len), ASK_WHY_BUSY);
+        T_CHECK(atoi(res_header("Retry-After")) > 0);
+        // Its own game still opens, long-polls and moves on as ever ...
+        T_EQ_INT(get_id("/v1/games/", g_mine), 200);
+        T_EQ_INT(get_id("/v1/wait/", g_mine), 200);
+        // ... while a stranger's is refused unread, as a missing one is.
+        T_EQ_INT(get_id("/v1/games/", g_theirs), 429);
+        T_EQ_INT(get_id("/v1/wait/", g_theirs), 429);
+        T_EQ_INT(ask_at(ASK_JOIN, g_theirs), 429);
+        T_EQ_INT(move_at(g_theirs), 429);
+        T_EQ_INT(get_id("/v1/games/", "abcde0"), 429);
+        // Another address is not limited.
+        g_peer = B;
+        as(host, hn);
+        T_EQ_INT(get_id("/v1/games/", "abcde0"), 404);
+        T_EQ_INT(get_id("/v1/games/", g_mine), 200);
+    }
+    // A seated ask runs while the address is limited (it never asks the rule).
+    g_peer = A;
+    as(guess, gn);
+    T_EQ_INT(ask_at(ASK_ADD_BOT, g_mine), 200);
+    g_peer = NULL;
+    teardown();
+}
+
 // ---- a session on the loop's thread ------------------------------------------------------
 
 // An inline request runs on the loop's thread, which never reads the store (net/server.h): a token
@@ -999,6 +1124,7 @@ int main(void) {
     T_RUN(a_session_is_never_read_on_the_loop);
     T_RUN(only_through_the_edge);
     T_RUN(rate_limited_account_routes);
+    T_RUN(guessed_game_ids_are_limited);
     T_RUN(the_email_is_the_clients_derivation);
     T_RUN(accounts);
     T_RUN(without_a_backend);

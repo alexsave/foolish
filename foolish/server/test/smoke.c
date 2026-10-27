@@ -32,6 +32,7 @@
 // the game, the crash's lease expiry and the idle human's rest each take
 // seconds. unit_app holds production's values and the division itself.
 #include "t.h"
+#include "config.h"
 #include "store/game_id.h"
 
 #include "lib_client.h"
@@ -160,6 +161,9 @@ static int64_t mono_ms(void) {
 static int g_status;
 static uint8_t g_body[1 << 20];
 static int g_len;
+static char g_retry_after[16];   // its Retry-After ("" none)
+// Header lines every request carries besides its own ("" none): the edge's, for a server behind it.
+static const char *g_via = "";
 
 // One request over HTTP, as a host's transport sends it.
 #define SMOKE_ANSWER_MS 120000
@@ -168,12 +172,13 @@ static int send_req(const NcRequest *q) {
     g_status = -1;
     g_len = 0;
     if (!q) return -1;
-    char path[NC_PATH_MAX + 1], headers[NC_AUTH_MAX + 128];
+    char path[NC_PATH_MAX + 1], headers[NC_AUTH_MAX + 256];
     memcpy(path, q->path, q->path_len);
     path[q->path_len] = 0;
     int h = 0;
     if (q->auth_len) h += snprintf(headers + h, sizeof headers - (size_t)h, "Authorization: %.*s\r\n", (int)q->auth_len, q->auth);
     if (q->method == NC_POST) h += snprintf(headers + h, sizeof headers - (size_t)h, "Content-Type: application/octet-stream\r\n");
+    h += snprintf(headers + h, sizeof headers - (size_t)h, "%s", g_via);
     headers[h] = 0;
     // A HANG GUARD, NOT A SPEED CLAIM: the answer may take as long as a
     // starved machine makes it. lib_client's 10 s once failed a move the
@@ -187,6 +192,7 @@ static int send_req(const NcRequest *q) {
     close(fd);
     if (rc != 0) return -1;
     g_status = r.status;
+    if (!tc_header(&r, "retry-after", g_retry_after, sizeof g_retry_after)) g_retry_after[0] = 0;
     g_len = r.body.len < sizeof g_body ? (int)r.body.len : 0;
     memcpy(g_body, r.body.p, (size_t)g_len);
     tc_response_free(&r);
@@ -943,12 +949,104 @@ static void a_lobby_left_to_its_bots_is_deleted(void) {
     free(sc);
 }
 
+// ---- guessed game ids (app/misses.h) ---------------------------------------------------------
+//
+// A script walking six-hex ids for open lobbies, against a second server that sits behind the
+// edge (CBASE_ORIGIN_SECRET, which every request here proves), so each request names its
+// viewer's address and two addresses can be told apart over one loopback socket. Address A's
+// first CB_LIMIT_ID_MISS_IP burst (30) of misses are 404s and the 31st is 429 with Retry-After;
+// then A's own game still opens and long-polls while a stranger's is refused, and address B,
+// misses and all, is untouched.
+#define SMOKE_ORIGIN "smoke-origin-secret-0123456789abcdef0123"
+#define SMOKE_VIA(addr) CB_ORIGIN_HEADER ": " SMOKE_ORIGIN "\r\n" CB_VIEWER_HEADER ": " addr "\r\n"
+
+// GET <prefix><id> as u.
+static int get_as(smoke_user *u, const char *prefix, const char *id) {
+    T_EQ_INT(nc_session_load(u->blob, u->blob_len), NW_OK);
+    const NcRequest *b = nc_req_game("000000", 6, cb_now_ms());
+    if (!b || b->is_refresh) { T_CHECK(0); return -1; }
+    NcRequest q = *b;
+    q.path_len = (uint8_t)snprintf(q.path, sizeof q.path, "%s%s", prefix, id);
+    return send_req(&q);
+}
+
+// u's newest game's id, from the dashboard.
+static bool newest_game(smoke_user *u, char gid[CB_GAME_ID_MAX + 1]) {
+    if (call(u, NC_DO_CREATE, NULL, NULL, 0, -1) != 200) return false;
+    smoke_client *sc = calloc(1, sizeof *sc);
+    if (!sc) return false;
+    client_init(&sc->c, &sc->slot);
+    bool ok = client_adopt_envelope(&sc->c, g_body, g_len) >= 0 && sc->c.gid_len <= CB_GAME_ID_MAX;
+    if (ok) snprintf(gid, CB_GAME_ID_MAX + 1, "%.*s", (int)sc->c.gid_len, sc->c.gid);
+    free(sc);
+    return ok;
+}
+
+static void guessed_ids_are_limited_per_address(void) {
+    char dir[400], line[512], envdb[512];
+    if (tp_tempdir(dir, sizeof dir) != 0) { T_CHECK(0); return; }
+    snprintf(envdb, sizeof envdb, "CBASE_DB=%s/cbase.sqlite", dir);
+    char *env[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", envdb, "CBASE_JWT_SECRET=smoke-secret-smoke-secret-smoke-secret",
+                    "CBASE_ORIGIN_SECRET=" SMOKE_ORIGIN, NULL };
+    char *argv[] = { (char *)g_bin, "serve", NULL };
+    tp_child child;
+    T_EQ_INT(tp_start(&child, argv, env), 0);
+    T_EQ_INT(tp_wait_line(&child, "listening on", 20000, line, sizeof line), 0);
+    const char *colon = strrchr(line, ':');
+    const int keep = g_port;
+    g_port = colon ? atoi(colon + 1) : 0;
+    T_CHECK(g_port > 0);
+
+    smoke_user a, b;
+    char mine[CB_GAME_ID_MAX + 1] = "", theirs[CB_GAME_ID_MAX + 1] = "";
+    g_via = SMOKE_VIA("198.51.100.70:40001");
+    T_EQ_INT(signup(&a, "GUESSER"), 0);
+    T_CHECK(newest_game(&a, mine));
+    g_via = SMOKE_VIA("198.51.100.71:40002");
+    T_EQ_INT(signup(&b, "BYSTANDER"), 0);
+    T_CHECK(newest_game(&b, theirs));
+
+    // Address A: a stranger's game found is free, every miss costs one.
+    g_via = SMOKE_VIA("198.51.100.70:40003");
+    T_EQ_INT(get_as(&a, "/v1/games/", theirs), 200);
+    // Ids no game has: walked from f00000, stepping over the two that are games.
+    char guess[8];
+    int next = 0xf00000, missed = 0;
+    for (int i = 0; i < 30; i++) {
+        do snprintf(guess, sizeof guess, "%06x", next++);
+        while (strcmp(guess, mine) == 0 || strcmp(guess, theirs) == 0);
+        missed += get_as(&a, "/v1/games/", guess) == 404;
+    }
+    T_EQ_INT(missed, 30);
+    do snprintf(guess, sizeof guess, "%06x", next++);
+    while (strcmp(guess, mine) == 0 || strcmp(guess, theirs) == 0);
+    T_EQ_INT(get_as(&a, "/v1/games/", guess), 429);
+    T_EQ_INT(nc_status_read(g_status, g_body, g_len), ASK_WHY_BUSY);
+    T_CHECK(atoi(g_retry_after) > 0);
+    // A's own game still opens and long-polls; a stranger's is refused unread.
+    T_EQ_INT(get_as(&a, "/v1/games/", mine), 200);
+    T_EQ_INT(get_as(&a, "/v1/wait/", mine), 200);
+    T_EQ_INT(get_as(&a, "/v1/games/", theirs), 429);
+    // Address B is not limited: its misses are 404s and A's game opens for it.
+    g_via = SMOKE_VIA("[2001:db8:7:7::1]:40004");
+    T_EQ_INT(get_as(&b, "/v1/games/", guess), 404);
+    T_EQ_INT(get_as(&b, "/v1/games/", mine), 200);
+
+    g_via = "";
+    g_port = keep;
+    T_EQ_INT(tp_stop(&child, SIGTERM, 15000), 0);
+    char cmd[512];
+    snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir);
+    if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", dir);
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) { fprintf(stderr, "usage: smoke <path to cbase>\n"); return 2; }
     g_bin = argv[1];
     T_RUN(starts_and_listens);
     if (g_port > 0) T_RUN(health);
     if (g_port > 0) T_RUN(unfurl);
+    T_RUN(guessed_ids_are_limited_per_address);
     const char *game = getenv("CBASE_SMOKE_GAME");
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(an_idle_human_turn_is_never_kicked);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_lobby_left_to_its_bots_is_deleted);
