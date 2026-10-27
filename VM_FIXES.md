@@ -33,8 +33,8 @@ The admin one was already CBASE_ADMIN_FAIL_LIMIT.
 | CBASE_LIMIT_PASSWORD_USER | 5 | 1 h |
 | CBASE_LIMIT_CREATE_USER | 20 | 10 min |
 | CBASE_LIMIT_CHAT_USER | 30 | 1 min |
-| CBASE_LIMIT_SUB_USER | 120 | 1 min |
 | CBASE_LIMIT_BUMP_USER | 30 | 1 min |
+| CBASE_LIMIT_ID_MISS_IP | 30 | 5 min |
 
 What a single-VM deploy should set: the table is per process and a VM is one process for everyone, so SIGNUP_ALL is the whole site's hourly sign-up budget.
 A sign-up costs 60 to 80 ms of CPU (bcrypt cost 10) on a nano, so 600 an hour is about 48 s of CPU an hour: `CBASE_LIMIT_SIGNUP_ALL=600` is safe, and 300 is the cautious figure.
