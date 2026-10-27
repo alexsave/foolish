@@ -239,6 +239,19 @@ static void ratings(void) {
     CHECK(wild.volatility == CC_VOL_MAX, "volatility %.3f not clamped", wild.volatility);
 }
 
+/* A time control's speed, at each boundary of lichess's estimate (base + 40 increments). */
+static void speeds(void) {
+    TEST("speeds");
+    static const struct { int base, inc, speed; } T[] = {
+        { 0, 1, CC_BULLET }, { 60, 0, CC_BULLET }, { 120, 1, CC_BULLET }, { 179, 0, CC_BULLET }, { 139, 1, CC_BULLET },
+        { 180, 0, CC_BLITZ }, { 140, 1, CC_BLITZ }, { 180, 2, CC_BLITZ }, { 300, 3, CC_BLITZ }, { 479, 0, CC_BLITZ }, { 439, 1, CC_BLITZ },
+        { 480, 0, CC_RAPID }, { 440, 1, CC_RAPID }, { 600, 0, CC_RAPID }, { 900, 10, CC_RAPID }, { 1499, 0, CC_RAPID }, { 1459, 1, CC_RAPID },
+        { 1500, 0, CC_CLASSICAL }, { 1460, 1, CC_CLASSICAL }, { 1800, 0, CC_CLASSICAL }, { 10800, 180, CC_CLASSICAL },
+    };
+    for (size_t i = 0; i < sizeof T / sizeof *T; i++)
+        CHECK(cc_speed(T[i].base, T[i].inc) == T[i].speed, "%d+%d: speed %d, want %d", T[i].base, T[i].inc, cc_speed(T[i].base, T[i].inc), T[i].speed);
+}
+
 static void pgn(void) {
     TEST("pgn");
     cc_game g;
@@ -282,6 +295,7 @@ int main(void) {
     clock();
     actions();
     ratings();
+    speeds();
     pgn();
     return report("unit_game");
 }

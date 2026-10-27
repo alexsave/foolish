@@ -1,7 +1,7 @@
 // smoke.c - the real server, played over its real socket by the real client (c/src/client.c):
 // accounts, seeks and the lobby, a whole game to mate with a spectator, the ratings, profile,
 // history and PGN, a refused move, a rematch, a restart in the middle of a game, a challenge link,
-// an abort and a flag, and puzzles handed out, answered and rated, across a restart.
+// an abort and a flag, a rating and a leaderboard per speed, and puzzles handed out, answered and rated, across a restart.
 //
 //   build/test/smoke build/c_chess build/chessbench
 #include "client.h"
@@ -269,10 +269,18 @@ static void after_the_game(void) {
     cw_profile pr;
     T_CHECK(r.body.len == sizeof pr + sizeof(cw_point));
     memcpy(&pr, r.body.p, sizeof pr);
-    T_CHECK(pr.rating > 1500);
+    T_CHECK(pr.rating[CC_BULLET] > 1500);   // 1+0 is bullet
+    T_EQ_INT(pr.rated[CC_BULLET], 1);
+    for (int k = CC_BLITZ; k < CC_SPEEDS; k++) { T_EQ_INT(pr.rating[k], 1500); T_EQ_INT(pr.rd[k], 350); T_EQ_INT(pr.rated[k], 0); }
+    T_EQ_INT(pr.puzzle, 1500);
+    T_EQ_INT(pr.puzzle_rd, 350);
     T_EQ_INT(pr.games, 1);
     T_EQ_INT(pr.wins, 1);
     T_EQ_INT(pr.n_points, 1);
+    cw_point pt;
+    memcpy(&pt, (const uint8_t *)r.body.p + sizeof pr, sizeof pt);
+    T_EQ_INT(pt.speed, CC_BULLET);
+    T_EQ_INT(pt.rating, pr.rating[CC_BULLET]);
     tc_response_free(&r);
     // the history
     snprintf(path, sizeof path, "/c/games/%s", b->c.name);
@@ -449,6 +457,83 @@ static void challenge_abort_flag(void) {
     C.seen = 0;
     T_CHECK(pump(&C, CC_EV_OVER, 3000));
     T_EQ_INT(C.c.g.status, CC_ABORTED);
+}
+
+// A rated blitz game beside the bullet ones: each speed's leaderboard, and a profile with both
+// speeds' ratings and points, read over the socket.
+static void speeds(void) {
+    cc_client_seek(&A.c, 180, 2, 1);   // 3+2: blitz
+    A.seen = 0;
+    T_CHECK(pump(&A, CC_EV_SEEK, 3000));
+    cc_client_seek(&B.c, 180, 2, 1);
+    A.seen = B.seen = 0;
+    T_CHECK(pump(&B, CC_EV_START, 3000));   // B's pump sends its seek
+    T_CHECK(pump(&A, CC_EV_START, 3000));
+    uint32_t g = A.c.start_game;
+    cc_client_open(&A.c, g);
+    cc_client_open(&B.c, g);
+    A.seen = B.seen = 0;
+    T_CHECK(pump(&A, CC_EV_GAME, 3000));
+    T_CHECK(pump(&B, CC_EV_GAME, 3000));
+    player *w = white_of(&A, &B), *b = black_of(&A, &B);
+    static const char *const mate[] = { "f2f3", "e7e5", "g2g4", "d8h4" };
+    play_line(w, b, mate, 4);
+    T_CHECK(pump(w, CC_EV_OVER, 3000));
+    drain(b);
+    T_EQ_INT(b->c.g.winner, CH_BLACK);
+    T_EQ_INT(b->c.diff[CH_BLACK], -w->c.diff[CH_WHITE]);   // both at the start blitz rating
+    // the leaderboards: bullet has the two players of the first games, blitz the two of this one
+    tc_response r;
+    cw_top top;
+    T_EQ_INT(tc_http(g_port, "GET", "/c/top/1", NULL, NULL, 0, &r), 0);
+    T_EQ_INT(r.status, 200);
+    T_EQ_INT((int)r.body.len, 8 + 2 * (int)sizeof(cw_top_row));
+    memcpy(&top, r.body.p, r.body.len);
+    T_EQ_INT(top.speed, CC_BLITZ);
+    T_EQ_STR(top.rows[0].name, b->c.name);
+    T_EQ_INT(top.rows[0].games, 1);
+    T_EQ_INT(top.rows[1].games, 1);
+    tc_response_free(&r);
+    T_EQ_INT(tc_http(g_port, "GET", "/c/top/0", NULL, NULL, 0, &r), 0);
+    T_EQ_INT(r.status, 200);
+    memcpy(&top, r.body.p, r.body.len < sizeof top ? r.body.len : sizeof top);
+    T_EQ_INT(top.speed, CC_BULLET);
+    T_EQ_INT(top.n, 2);   // carol played only casual games
+    T_EQ_INT(top.rows[0].games, 2);
+    tc_response_free(&r);
+    T_EQ_INT(tc_http(g_port, "GET", "/c/top/2", NULL, NULL, 0, &r), 0);
+    T_EQ_INT(r.status, 200);
+    T_EQ_INT((int)r.body.len, 8);
+    tc_response_free(&r);
+    static const char *const bad[] = { "/c/top/4", "/c/top/x", "/c/top/01", "/c/top/", "/c/top" };
+    for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {
+        T_EQ_INT(tc_http(g_port, "GET", bad[i], NULL, NULL, 0, &r), 0);
+        T_EQ_INT(r.status, 404);
+        tc_response_free(&r);
+    }
+    // the winner's profile over the socket: two bullet games and one blitz, the points by speed
+    char path[64];
+    snprintf(path, sizeof path, "/c/user/%s", b->c.name);
+    cc_client_read(&C.c, path, 79);
+    C.seen = 0;
+    T_CHECK(pump(&C, CC_EV_READ, 3000));
+    T_EQ_INT(C.c.read_status, 200);
+    cw_profile pr;
+    memcpy(&pr, C.c.read_buf, sizeof pr);
+    T_EQ_INT((int)C.c.read_len, (int)(sizeof pr + 3 * sizeof(cw_point)));
+    T_EQ_INT(pr.rated[CC_BULLET], 2);
+    T_EQ_INT(pr.rated[CC_BLITZ], 1);
+    T_EQ_INT(pr.rated[CC_RAPID], 0);
+    T_CHECK(pr.rating[CC_BLITZ] > 1500);
+    T_CHECK(pr.rd[CC_BLITZ] < 350);
+    T_EQ_INT(pr.n_points, 3);
+    cw_point pt[3];
+    memcpy(pt, C.c.read_buf + sizeof pr, sizeof pt);
+    T_EQ_INT(pt[0].speed, CC_BULLET);
+    T_EQ_INT(pt[1].speed, CC_BULLET);
+    T_EQ_INT(pt[2].speed, CC_BLITZ);
+    T_EQ_INT(pt[2].rating, pr.rating[CC_BLITZ]);
+    T_EQ_INT(pt[1].rating, pr.rating[CC_BULLET]);
 }
 
 // The site from CC_WEB_DIR: a page without its .html, a framework chunk whose name holds two dots,
@@ -695,6 +780,7 @@ int main(int argc, char **argv) {
     T_RUN(rematch);
     T_RUN(restart);
     T_RUN(challenge_abort_flag);
+    T_RUN(speeds);
     T_RUN(stats_and_site);
     T_RUN(no_engine);
     T_RUN(site);

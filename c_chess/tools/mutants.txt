@@ -76,3 +76,40 @@ server/src/puzzles.c ::: Z.plays[i] = plays;\n    set_rating((uint32_t)i, r); ::
 server/src/puzzles.c ::: cc_journal_puzzle(id, &z, Z.plays[i]); ::: (void)0; ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
 server/src/journal.c ::: p.pz_tried = (uint32_t)sqlite3_column_int64(st, 13); ::: (void)0; ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
 server/src/journal.c ::: sqlite3_bind_double(st, 11, p->pz.rating); ::: sqlite3_bind_double(st, 11, 1500); ::: build/test/smoke build/c_chess build/chessbench ::: build/test/smoke build/c_chess build/chessbench
+# kernel: speeds
+c/src/rating.c ::: int est = base_s + 40 * inc_s; ::: int est = base_s + 39 * inc_s; ::: build/test/unit_game ::: build/test/unit_game
+c/src/rating.c ::: return est < 180 ? CC_BULLET ::: return est <= 180 ? CC_BULLET ::: build/test/unit_game ::: build/test/unit_game
+c/src/rating.c ::: : est < 480 ? CC_BLITZ ::: : est <= 480 ? CC_BLITZ ::: build/test/unit_game ::: build/test/unit_game
+c/src/rating.c ::: : est < 1500 ? CC_RAPID ::: : est <= 1500 ? CC_RAPID ::: build/test/unit_game ::: build/test/unit_game
+# server: ratings per speed
+server/src/state.c ::: int k = l->speed;   /* only the game's speed moves */ ::: int k = CC_BULLET; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: l->p[c]->rated[k]++; ::: (void)0; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: l->speed = (uint8_t)cc_speed(tc->base_s, tc->inc_s); ::: l->speed = CC_BULLET; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: l->rating0[c] = (int16_t)cc_rating_int(&l->p[c]->r[l->speed]); ::: l->rating0[c] = (int16_t)cc_rating_int(&l->p[c]->r[CC_BULLET]); ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: s->rating[c] = (int16_t)cc_rating_int(&l->p[c]->r[l->speed]); ::: s->rating[c] = (int16_t)cc_rating_int(&l->p[c]->r[CC_BULLET]); ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: &SEEKS[i].who->r[cc_speed(r->base_s, r->inc_s)] ::: &SEEKS[i].who->r[CC_BLITZ] ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: if (!p->rated[speed]) continue; ::: if (!p->games) continue; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: double key = p->r[speed].rating; ::: double key = p->r[CC_BULLET].rating; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: top->speed = (uint8_t)speed; ::: (void)0; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: r->rating = (int16_t)cc_rating_int(&best[i]->r[speed]); ::: r->rating = (int16_t)cc_rating_int(&best[i]->r[CC_BULLET]); ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: r->rd = (uint16_t)(best[i]->r[speed].deviation + 0.5); ::: r->rd = (uint16_t)(best[i]->r[CC_BLITZ].deviation + 0.5); ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: r->games = best[i]->rated[speed]; ::: r->games = best[i]->games; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: cc_journal_rating(l->p[c], k); ::: (void)0; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/state.c ::: cc_journal_point(l->p[c], k, wall); ::: cc_journal_point(l->p[c], CC_BULLET, wall); ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/journal.c ::: p->rated[k] = (uint32_t)sqlite3_column_int64(st, 5); ::: (void)0; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/journal.c ::: p->r[k] = (g2_player){ sqlite3_column_double(st, 2) ::: p->r[k] = (g2_player){ 1500 ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/journal.c ::: l->speed = (uint8_t)cc_speed(sqlite3_column_int(st, 3), sqlite3_column_int(st, 4)); ::: (void)0; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/journal.c ::: sqlite3_bind_int(st, 2, r->u.rating.speed); ::: sqlite3_bind_int(st, 2, 0); ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/journal.c ::: r->u.rating.games = p->rated[speed]; ::: r->u.rating.games = 1; ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/journal.c ::: sqlite3_bind_int(st, 2, r->u.point.speed); ::: sqlite3_bind_int(st, 2, 0); ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/journal.c ::: ROW_NUMBER() OVER (PARTITION BY speed ORDER BY at DESC, rowid DESC) ::: ROW_NUMBER() OVER (ORDER BY at DESC, rowid DESC) ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/journal.c ::: ORDER BY at DESC, rowid DESC) AS k ::: ORDER BY at, rowid) AS k ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/journal.c ::: "WHERE k <= ?2 ORDER BY speed, at, o" ::: "WHERE k <= ?2 ORDER BY at, o" ::: build/test/unit_ratings ::: build/test/unit_ratings
+server/src/journal.c ::: pt->speed = (uint8_t)sqlite3_column_int(st, 0); ::: (void)0; ::: build/test/unit_ratings ::: build/test/unit_ratings
+# server: the per-speed reads, through the smoke
+server/src/api.c ::: s[0] >= '0' + CC_SPEEDS ::: s[0] > '0' + CC_SPEEDS ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: (s[1] && s[1] != '?') ::: (0) ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: pr.rated[k] = snap.rated[k]; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: pr.rd[k] = (uint16_t)(snap.r[k].deviation + 0.5); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: pr.puzzle = (int16_t)cc_rating_int(&snap.pz); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: pr.puzzle_rd = (uint16_t)(snap.pz.deviation + 0.5); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
