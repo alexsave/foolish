@@ -50,6 +50,7 @@ interface Exports {
   cv_read(pathLen: number, tag: number): void;
   cv_read_take(): number;
   cv_top(n: number): number;
+  cv_speed(base: number, inc: number): number;
   cv_puzzle_ask(tag: number): void;
   cv_puzzle_load(n: number): number;
   cv_puzzle(): number;
@@ -152,8 +153,10 @@ export class Kernel {
   evalAsk(ply: number): void { this.x.cv_eval_ask(ply); }
   /** Its last answer, with its line in SAN. */
   evaluation(): CvEval_Snap { return readCvEval(memOf(this.x.memory.buffer), this.x.cv_eval()); }
-  /** GET /c/top's answer, read. */
+  /** GET /c/top/<speed>'s answer, read. */
   top(body: Uint8Array): CvTop_Snap { return readCvTop(memOf(this.x.memory.buffer), this.x.cv_top(this.put(body))); }
+  /** A time control's speed (speed.h CC_BULLET..): which rating a game of it moves. */
+  speed(base: number, inc: number): number { return this.x.cv_speed(base, inc); }
   /** Puzzles: solved on the kernel's board (puzzle.h), handed out and rated by the server. */
   puzzleAsk(tag: number): void { this.x.cv_puzzle_ask(tag); }
   puzzleLoad(body: Uint8Array): CvPuzzle_Snap { return this.pz(this.x.cv_puzzle_load(this.put(body))); }

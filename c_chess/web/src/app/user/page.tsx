@@ -1,16 +1,15 @@
 'use client';
-// A profile: the rating, the record, the rating's history as a graph, and the recent games.
+// A profile: a rating per speed and the puzzle rating, the record, each speed's history as a graph,
+// and the recent games.
 import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import type { CvGames_Snap, CvProfile_Snap } from '@/gen/web_layout';
+import type { CvGames_Snap, CvPoint_Snap, CvProfile_Snap } from '@/gen/web_layout';
 import { net } from '@/lib/net';
 import { tc } from '@/lib/use';
-import { score } from '@/lib/words';
+import { SPEEDS, SPEED_NAME, score } from '@/lib/words';
 
-function Graph({ p }: { p: CvProfile_Snap }) {
-  const pts = p.points.slice(0, p.n);
-  if (pts.length < 2) return <p className="muted">The graph starts after two rated games.</p>;
+function Graph({ pts, label }: { pts: readonly CvPoint_Snap[]; label: string }) {
   const W = 520, H = 220, L = 40, B = 20;
   const rs = pts.map((x) => x.rating);
   const lo = Math.floor((Math.min(...rs) - 20) / 50) * 50, hi = Math.ceil((Math.max(...rs) + 20) / 50) * 50;
@@ -21,7 +20,7 @@ function Graph({ p }: { p: CvProfile_Snap }) {
   const ticks = [];
   for (let r = lo; r <= hi; r += Math.max(50, Math.ceil((hi - lo) / 4 / 50) * 50)) ticks.push(r);
   return (
-    <svg className="graph" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="rating history">
+    <svg className="graph" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label}>
       {ticks.map((r) => (
         <g key={r}><line className="grid" x1={L} x2={W} y1={y(r)} y2={y(r)} /><text x={4} y={y(r) + 4}>{r}</text></g>
       ))}
@@ -50,15 +49,34 @@ function User() {
   }, [name]);
   if (missing) return <p className="muted">No player called {name}.</p>;
   if (!p) return <p className="muted">Loading...</p>;
+  // each speed's points are a run the kernel marks (from, count); a graph needs two of them
+  const graphs = SPEEDS.filter((k) => p.count[k] >= 2);
   return (
     <div className="prof">
       <section className="panel" style={{ padding: 20 }}>
         <h1>{p.name}</h1>
-        <div className="row" style={{ gap: 28, alignItems: 'baseline' }}>
-          <span className="big">{p.rating}{p.rd >= 110 ? '?' : ''}</span>
-          <span className="muted">{p.games} games: {p.wins} won, {p.losses} lost, {p.draws} drawn</span>
+        <div className="ratings">
+          {SPEEDS.map((k) => (
+            <div key={k} className={`rcard ${p.rated[k] ? '' : 'none'}`}>
+              <span className="k">{SPEED_NAME[k]}</span>
+              <span className="r">{p.rating[k]}{p.provisional[k] ? '?' : ''}</span>
+              <span className="n">{p.rated[k] ? `${p.rated[k]} ${p.rated[k] === 1 ? 'game' : 'games'}` : 'no games'}</span>
+            </div>
+          ))}
+          <Link prefetch={false} href="/puzzles" className={`rcard puzzle ${p.puzzlesTried ? '' : 'none'}`}>
+            <span className="k">Puzzles</span>
+            <span className="r">{p.puzzle}{p.puzzleProvisional ? '?' : ''}</span>
+            <span className="n">{p.puzzlesTried ? `${p.puzzlesSolved}/${p.puzzlesTried} solved` : 'none tried'}</span>
+          </Link>
         </div>
-        <Graph p={p} />
+        <p className="muted" style={{ margin: '16px 0 0' }}>{p.games} {p.games === 1 ? 'game' : 'games'}: {p.wins} won, {p.losses} lost, {p.draws} drawn</p>
+        {graphs.map((k) => (
+          <div key={k} className="graph-box">
+            <h2>{SPEED_NAME[k]}</h2>
+            <Graph pts={p.points.slice(p.from[k], p.from[k] + p.count[k])} label={`${SPEED_NAME[k]} rating history`} />
+          </div>
+        ))}
+        {!graphs.length && <p className="muted" style={{ marginTop: 16 }}>A speed's graph starts after two rated games of it.</p>}
       </section>
       <section className="panel">
         <table className="seeks">

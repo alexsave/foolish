@@ -3,16 +3,17 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { CC_EV_CHALLENGE, CC_EV_START } from '@/gen/web_layout';
+import { CC_BLITZ, CC_EV_CHALLENGE, CC_EV_START } from '@/gen/web_layout';
 import { net } from '@/lib/net';
 import { tc, useNet } from '@/lib/use';
+import { SPEED_NAME } from '@/lib/words';
 import MiniBoard from '@/components/MiniBoard';
 import Leaders from '@/components/Leaders';
 
-const QUICK: [number, number, string][] = [
-  [60, 0, 'Bullet'], [120, 1, 'Bullet'], [180, 0, 'Blitz'],
-  [180, 2, 'Blitz'], [300, 0, 'Blitz'], [300, 3, 'Blitz'],
-  [600, 0, 'Rapid'], [600, 5, 'Rapid'], [900, 10, 'Rapid'],
+const QUICK: [number, number][] = [
+  [60, 0], [120, 1], [180, 0],
+  [180, 2], [300, 0], [300, 3],
+  [600, 0], [600, 5], [900, 10],
 ];
 
 export default function Lobby() {
@@ -59,8 +60,9 @@ export default function Lobby() {
           </div>
         </div>
         <div className="pairs">
-          {QUICK.map(([b, i, k]) => {
+          {QUICK.map(([b, i]) => {
             const key = `${b}+${i}`;
+            const k = net.k ? SPEED_NAME[net.k.speed(b, i)] : '\u00a0';   // the kernel's speed, once it has loaded
             return (
               <button key={key} className={`pair ${waiting === key ? 'waiting' : ''}`} onClick={() => seek(b, i)}>
                 <span className="t">{tc(b, i)}</span>
@@ -128,7 +130,7 @@ export default function Lobby() {
             {!lobby?.n && <tr><td colSpan={4} className="muted" style={{ padding: 24, textAlign: 'center' }}>No one is waiting. Pick a time to be first.</td></tr>}
           </tbody>
         </table>
-        <Leaders limit={10} />
+        <Leaders speed={CC_BLITZ} limit={10} />
       </aside>
     </div>
   );
