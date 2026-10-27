@@ -16,12 +16,14 @@ On top of it, about 5,000 lines of C:
 | a game | `c/src/game.c` | the clock (from Black's first move), every ending, offers, the first-move abort |
 | ratings | `c/src/glicko2.c`, `rating.c`, `speed.c` | Glicko-2 from Glickman's paper, one rating period a game, the site's bounds; a game's speed from its time control |
 | an arena's rules | `c/src/arena.c` | points, the streak (fire), the 20-ply draw rule, an arena's name |
+| a chat line | `c/src/chat.c` | what a line may hold (UTF-8, no controls, 1 to 140 bytes), the word filter, who is a guest |
 | the wire | `c/src/wire.h` | fixed-layout request and push bodies, sizes pinned by `_Static_assert` |
 | the client | `c/src/client.c` | the protocol's client side: the frames it sends, a mirror of the game it shows |
 | state | `server/src/state.c` | players (a rating per speed), live games, seeks, challenges, the clock thread, the finish (ratings), the leaderboards |
 | arenas | `server/src/arenas.c` | the arena table, pairing, standings pushes, the hourly schedule |
-| routes | `server/src/api.c`, `api_arena.c` | sign-up and sign-in, seek, challenge, accept, move, act, the reads; making, joining and leaving arenas |
-| journal | `server/src/journal.c` | SQLite for players, their ratings (a row a speed), game starts and ends, rating points, arenas and their players; a flat file for moves |
+| chat | `server/src/chats.c` | each room's last 64 lines, who may say what (guests, mutes, the rate, three strikes), the console's mute |
+| routes | `server/src/api.c`, `api_arena.c`, `api_chat.c` | sign-up and sign-in, seek, challenge, accept, move, act, the reads; making, joining and leaving arenas; saying a line and reading a room's |
+| journal | `server/src/journal.c` | SQLite for players (and their mutes), their ratings (a row a speed), game starts and ends, rating points, arenas and their players; a flat file for moves |
 | the site | `server/src/web.c` | the Next.js export, read into memory at start, served with gzip twins |
 
 The browser runs `c/src/chess.c`, `game.c` and `client.c` compiled to wasm (`c/wasm/web.c`, 24 KB, 10 KB gzipped).
@@ -77,6 +79,8 @@ What is left at saturation is the kernel: `sendto`, `recvfrom` and `kevent` on t
 A move is acknowledged before it is on disk.
 A process crash loses at most the moves of the 2 ms gathering window (the smoke kills the server with SIGKILL mid-game and finds the game, its moves and its clocks); a power loss at most the 100 ms between `fsync`s.
 lichess's round, for comparison, writes a game in play to MongoDB on a 30 s debounce, and at once only when its status changes.
+At start the moves file is replayed onto the games in play and rewritten with only their moves, each side's last move carrying its clock.
+Until 2026-10-27 a second restart replayed that rewrite through the rules with 0 as the clock of every earlier move, so the first move the clock ran for read as a flag and every game in play ended at ply 2; the replay now rebuilds the board without letting the clock judge, and `server/test/unit_journal.c` restarts a game four times.
 
 ## 3.3 With TLS
 
@@ -251,6 +255,49 @@ A signed-in player makes arenas too (`POST /c/arena`: 20 s to 12 hours long, sta
 An arena's count of players and of games is not a column: they are counted where they are (`cc_arena_players`, and `cc_games` by a partial index on its arena), since a count kept in the arena's row went stale across a restart in the middle of an arena on the dev server (13 games shown where 17 had been made).
 A restart brings back the upcoming and running arenas and the last hour's finished ones with their players, scores and streaks, and joins their games in play back up, so a running arena goes on pairing (the smoke kills the server in the middle of one).
 
+## 3.8 Chat
+
+**A line belongs to a room the sockets already watch**: a game's (`g<id>`, its players and its spectators in one chat), an arena's (`a<id>`), and the lobby's.
+lichess keeps a game's players and its spectators in two chats; one is enough while the site is small, and the split is a room name away (section 6).
+`POST /c/chat` says a line (`cw_chat_req`: the room and up to 140 bytes) and the server pushes it to the room as `CW_P_CHAT` (184 bytes: the room, the time, who, the text); `GET /c/chat/<room>` answers the room's last 64 lines, oldest first, so a page opened late, or a socket that came back, sees what was said.
+A room exists while what it belongs to is in memory: a game in play or finished in the last minute, an arena upcoming, running or finished in the last hour, and the lobby; a line for any other room is refused, and the state's sweep drops a room's lines with the game or arena.
+
+**Chat is ephemeral.** The lines are rings in memory (`server/src/chats.c`, growing from 4 lines to 64, so a game where two people said gl hf and gg holds 736 bytes) and nothing is journaled: a restart forgets them.
+What a restart keeps is a mute, which is the player's (`cc_players.mute_until`).
+
+**Who may say what.**
+- A signed-up player; not a guest.
+  A guest was a name prefix anyone could sign up with, so the browser's guest sign-up is now its own mode (`CW_AUTH_GUEST`), the only way to a name starting `guest-`, which a plain sign-up refuses; `cc_name_guest` in the kernel is the one guest rule, which arenas use too.
+  A guest's page shows "Sign in to chat" where the input would be.
+- A line is 1 to 140 bytes of well-formed UTF-8 (no overlong form, no surrogate) with no control character: C0, DEL, C1, the line and paragraph separators, and the bidirectional overrides and isolates, which would let a line reorder the page's text after it.
+  A line of spaces is empty.
+  The kernel decides (`cc_chat_valid`), so the page says why before a line is sent.
+- One line a second and 30 a minute (c_base's `CB_LIMIT_CHAT_USER`), a refusal saying how long to wait.
+- No banned word.
+  The filter (`cc_chat_banned`) reads each word lowercased with the usual stand-ins read as letters (0 1 3 4 5 7 @ $ as o i e a s t a s) and matches it, run of letters by run, against a table of stems, each allowed as a whole word only, at a word's start, or anywhere inside one.
+  A repeated letter still matches (`fuuuck`), but a stem's own double letter needs two, so `ass` is caught and `as` is not, and the slur is caught but not Niger; `class`, `cocktail`, `Dickens` and `Scunthorpe` pass.
+  It catches the slurs and the common profanity typed plainly or lightly disguised and is not meant to be exhaustive: spaced-out letters, `f*ck` and look-alike letters from other scripts pass.
+  The page runs the same filter and does not send a line it refuses.
+- Three banned words within ten minutes mute the player for ten (lichess's automatic timeout); the third is answered with the mute and its seconds.
+
+**The console's mute.** `POST /admin/api/mute` (c_base's console token, as every console call) with a `cw_mute_req` (a name and minutes; 0 lifts it) mutes a player for up to a year and answers in plain text, 404 for no such player.
+A mute set by the filter or the console is journaled with the player, so the smoke's mute survives a SIGKILL restart.
+
+**What is not moderated**: no reports or flags by players, no moderator log or history of who was muted, no shadow mute (lichess's troll filter shows a muted troll their own lines), no blocking of one player by another, nothing for other scripts or for spam that keeps within the rate, and no machine learning.
+
+**Refinements to the brief, where the code asked for them.**
+- The push carries its room (the brief's line had none): a socket watches the lobby, a game and an arena at once, and the client keeps each room's lines apart.
+- A refusal is a `cw_chat_err`, `cw_err`'s layout with the seconds to wait after it, since a mute's seconds do not fit `cw_err.rc`.
+- The server's file is `chats.c` and its test `unit_chats.c`, beside the kernel's `chat.c` and `unit_chat.c` (as with arenas).
+- A banned word counts against the rate too, and a line the kernel refuses as text does not.
+- The client keeps three rooms' lines, giving up the one touched longest ago for a fourth, and a log read keeps the lines pushed while it was in flight.
+
+**What it costs.** `chessbench --bots 200 --chat --tc 15+0` for a minute (each bot says gl hf at the start of a game and gg at its end): 600 lines said, 400 refused by the one-a-second floor (a bot's gg and its next game's gl hf land within a second), 200 rooms; the server at 1.8% of a core against 1.9% for the same run without chat, so chat is lost in the noise, and about 0.3 MB more resident for the rooms' rings.
+The filter measured inside the server is 432 ns a line, its two clock reads included; on its own (`cc_chat_banned` in a loop, warm) it is 65 ns for "gl hf", 0.67 us for a 72-byte sentence and 1.9 us for the worst 140 bytes (70 one-letter words), and the validity check 4 to 240 ns.
+The first version measured and split every stem for every word (a quarter of its time in `strlen`, by `sample`): 463 ns, 3.6 us and 15.6 us for the same three lines.
+At a few hundred lines a second the filter is a few hundred microseconds of a core each second.
+`GET /c/stats` counts the lines, the refusals, the rooms and the filter's time (`chat_lines`, `chat_refused`, `chat_rooms`, `chat_filter_ns`).
+
 ## 4. The page
 
 Measured by `scratchpad/cc/perf.mjs` (Chrome over CDP, cold cache, the lobby; "ready" is the socket accepted, which on a first visit includes making the guest account, a bcrypt on the server):
@@ -279,4 +326,9 @@ What this does not include yet: TLS on the socket (a few microseconds a frame wi
 
 ## 6. Not built yet
 
-Berserk in arenas, chat with moderation, a browser engine with a small network for private analysis, Linux measurements of the engine isolation.
+- Berserk in arenas.
+- A chat for a game's players apart from its spectators (lichess's split), and reports, a moderator's log, shadow mutes and blocking (section 3.8).
+- lichess's weighted matching for arena pairing, and standings paged past the top 100 for an arena of thousands.
+- A browser engine with a small network for private analysis.
+- Linux measurements of the engine isolation.
+- Leaderboards that leave out provisional and long-idle players, as lichess's do.

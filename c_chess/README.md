@@ -5,9 +5,9 @@ One C process holds every game in memory and journals to SQLite; moves travel ov
 
 | Folder | What it is |
 | --- | --- |
-| `c/src` | The kernel: chess rules (`chess.c`), a game with its clock and endings (`game.c`), Glicko-2 (`glicko2.c`, `rating.c`), an arena's scoring (`arena.c`), PGN export (`pgn.c`), the wire (`wire.h`) and the protocol client (`client.c`) shared by the browser and the load generator. |
+| `c/src` | The kernel: chess rules (`chess.c`), a game with its clock and endings (`game.c`), Glicko-2 (`glicko2.c`, `rating.c`), an arena's scoring (`arena.c`), a chat line's rules and the word filter (`chat.c`), PGN export (`pgn.c`), the wire (`wire.h`) and the protocol client (`client.c`) shared by the browser and the load generator. |
 | `c/wasm` | The browser's kernel: the client and rules as wasm exports, and the structs the page reads through structgen's generated readers. |
-| `server` | The c_base app: state, arenas, routes, pushes, the SQLite journal, the site served from memory; `tools/chessbench.c` is the load generator and house bot. |
+| `server` | The c_base app: state, arenas, chat, routes, pushes, the SQLite journal, the site served from memory; `tools/chessbench.c` is the load generator and house bot. |
 | `web` | The Next.js site (a static export the server serves). |
 
 ## Build and run
@@ -23,6 +23,10 @@ Bots to play against or to fill an arena:
     build/chessbench --port 8900 --bots 2 --forever --tc 300+3 --think 250 --spread 500 --prefix housebot   # seek and play, forever
     build/chessbench --port 8900 --bots 12 --forever --arena 4 --prefix arenabot                           # join arena 4 and play its pairings
     build/chessbench --port 8900 --bots 200 --arena-make 90 --tc 60+0 --duration 60                        # make a 90 s arena, fill it, measure
+    build/chessbench --port 8900 --bots 6 --forever --tc 180+2 --think 1500 --spread 3000 --chat            # the bots say gl hf and gg in their games
+
+Any of them takes `--chat`: a bot says "gl hf" when a game starts and "gg" when it ends, and the run counts the lines said, refused and heard.
+A player is muted from the console (`CBASE_ADMIN_TOKEN` set): `POST /admin/api/mute` with a `cw_mute_req` (wire.h: the name, then the minutes as a little-endian u32; 0 lifts it), answered in plain text.
 
 ## License
 
