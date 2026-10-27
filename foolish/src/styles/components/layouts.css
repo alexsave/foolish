@@ -50,7 +50,9 @@
   z-index: 10;
   /* The title sits between the back button (top left) and its mirror image, so
      it is centred and never runs under the button: a long title ends in an
-     ellipsis instead. */
+     ellipsis instead. It takes all of that room, editing or not: an input is
+     otherwise 20 characters wide, which cut a longer title on any screen. */
+  width: 100%;
   max-width: calc(100% - 2 * (var(--btn-icon-size) + 18px));
   text-overflow: ellipsis;
 }
@@ -69,7 +71,6 @@
   border-radius: 0;
   text-shadow: 2px 2px 4px rgba(0,0,0,0.9);
   box-shadow: inset 2px 2px 4px rgba(0,0,0,0.4), inset -1px -1px 2px rgba(255,255,255,0.2);
-  width: 100%;
   cursor: text;
 }
 
