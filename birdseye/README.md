@@ -41,6 +41,7 @@ The sim's size is `BE_PLAYERS` (fake humans, default 60), `BE_TABLES` (tables ke
   Each rung is a two-player best of five in a locked lobby titled like "Gauntlet 2/7: Madrid 2 - Game 1 of 5" (the lobby's title rule allows 50 characters); each next game opens as a new table on your dashboard, eight seconds after the last one ends.
   Win a rung and you climb; lose one and the run is over, and the best run (the highest rung reached) is kept.
   A new run starts from rung 1 at the next start, or by `POST /be/gauntlet/new` with the admin token (409 while a run is going on).
+  Eight seconds after each game ends birdseye has the game server delete the finished table (its dev-only `POST /dev/table_drop`, foolish/server/src/app/dev_bot_table.h: the row goes as when its last seat leaves, the replay stays, a game in play is refused), so your dashboard holds only your live lobby.
   The run is kept in `data/gauntlet.bin` (a fixed binary layout); a restart goes on with it and watches the game that was in play again.
   The site's Gauntlet view draws the ladder: each rung's opponent, rating, games and score, your current rung and a "play" link to its live lobby.
 - Both routes the server needs are dev-only (refused or not routed without `CBASE_DEV=1`); the kernel is unchanged. `birdseye/tools/hotpath_proof.sh` shows the move and push path compiles to the same instructions as before them.
