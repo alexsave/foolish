@@ -1,8 +1,8 @@
 // kernel.ts - the browser's kernel (c/wasm/web.c, built to /chess.wasm): loads it, checks its
 // layout against the generated readers, and names its exports. Every rule and every protocol byte
 // is in there; this file only moves bytes in and out of its io buffer.
-import { memOf, readCvEval, readCvGames, readCvLobby, readCvMoves, readCvProfile, readCvPuzzle, readCvTop, readCvTv, readCvView } from '@/gen/web_layout';
-import type { CvEval_Snap, CvGames_Snap, CvLobby_Snap, CvMoves_Snap, CvProfile_Snap, CvPuzzle_Snap, CvTop_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
+import { memOf, readCvArena, readCvArenaList, readCvEval, readCvGames, readCvLobby, readCvMoves, readCvProfile, readCvPuzzle, readCvTop, readCvTv, readCvView } from '@/gen/web_layout';
+import type { CvArena_Snap, CvArenaList_Snap, CvEval_Snap, CvGames_Snap, CvLobby_Snap, CvMoves_Snap, CvProfile_Snap, CvPuzzle_Snap, CvTop_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
 import { LAYOUT_HASH } from '@/gen/web_layout_hash';
 
 interface Exports {
@@ -63,6 +63,15 @@ interface Exports {
   cv_puzzle_reveal(): number;
   cv_puzzle_send(win: number, tag: number): void;
   cv_puzzle_done(n: number): number;
+  cv_arena(now: number): number;
+  cv_arena_read(n: number, now: number): number;
+  cv_arena_watch(id: number): void;
+  cv_arena_unwatch(id: number): void;
+  cv_arena_join(id: number, tag: number): void;
+  cv_arena_withdraw(id: number, tag: number): void;
+  cv_arena_name_ok(n: number): number;
+  cv_arena_create(base: number, inc: number, rated: number, startIn: number, duration: number, n: number, tag: number): void;
+  cv_arena_list(n: number): number;
 }
 
 export class Kernel {
@@ -172,6 +181,25 @@ export class Kernel {
   puzzleSend(win: boolean, tag: number): void { this.x.cv_puzzle_send(win ? 1 : 0, tag); }
   puzzleDone(body: Uint8Array): CvPuzzle_Snap { return this.pz(this.x.cv_puzzle_done(this.put(body))); }
   private pz(p: number): CvPuzzle_Snap { return readCvPuzzle(memOf(this.x.memory.buffer), p); }
+  /** The arena shown (its room's last push or the last answer taken), its countdowns as of now. */
+  arena(now: number): CvArena_Snap { return readCvArena(memOf(this.x.memory.buffer), this.x.cv_arena(now)); }
+  /** The answer of GET /c/arena/<id>, a join or a withdrawal, taken as the arena shown. */
+  arenaRead(body: Uint8Array, now: number): CvArena_Snap { return readCvArena(memOf(this.x.memory.buffer), this.x.cv_arena_read(this.put(body), now)); }
+  arenaWatch(id: number): void { this.x.cv_arena_watch(id); }
+  arenaUnwatch(id: number): void { this.x.cv_arena_unwatch(id); }
+  arenaJoin(id: number, tag: number): void { this.x.cv_arena_join(id, tag); }
+  arenaWithdraw(id: number, tag: number): void { this.x.cv_arena_withdraw(id, tag); }
+  /** Whether an arena may have this name (the kernel's rule, arena.h). */
+  arenaNameOk(name: string): boolean {
+    const b = new TextEncoder().encode(name);
+    return this.x.cv_arena_name_ok(this.put(b)) !== 0;
+  }
+  arenaCreate(base: number, inc: number, rated: boolean, startIn: number, duration: number, name: string, tag: number): void {
+    const b = new TextEncoder().encode(name);
+    this.x.cv_arena_create(base, inc, rated ? 1 : 0, startIn, duration, this.put(b), tag);
+  }
+  /** GET /c/arenas's answer, read. */
+  arenaList(body: Uint8Array): CvArenaList_Snap { return readCvArenaList(memOf(this.x.memory.buffer), this.x.cv_arena_list(this.put(body))); }
   /** GET /c/games/<name>'s answer, read. */
   games(body: Uint8Array): CvGames_Snap { return readCvGames(memOf(this.x.memory.buffer), this.x.cv_games(this.put(body))); }
 }

@@ -519,7 +519,7 @@ int cc_client_arena_take(cc_client *c, const uint8_t *p, size_t n, int64_t now, 
     }
     char me[CW_NAME];
     memset(me, 0, sizeof me);
-    memcpy(me, c->name, strnlen(c->name, CW_NAME));
+    for (int i = 0; i < CW_NAME && c->name[i]; i++) me[i] = c->name[i];   /* (the browser's libc has no strnlen) */
     for (int i = 0; me[0] && i < h.n_rows; i++) {
         cw_arena_row r;
         memcpy(&r, p + sizeof h + (size_t)i * sizeof r, sizeof r);

@@ -165,6 +165,7 @@ EXPORT(cv_view) const CvView *cv_view(double now) {
     V.start_game = C.start_game;
     V.start_color = C.start_color;
     V.challenge_id = C.challenge_id;
+    V.arena = C.game_arena;
     V.read_tag = C.read_tag;
     V.read_status = C.read_status;
     V.err_status = C.err_status;
@@ -330,6 +331,114 @@ EXPORT(cv_top) const CvTop *cv_top(uint32_t n) {
         TOP.rows[i].provisional = provisional(r.rd);
     }
     return &TOP;
+}
+
+/* ---- arenas ---- */
+
+static CvArena AR;
+static CvArenaList AL;
+
+static void copy_n(char *dst, size_t cap, const char *src, size_t n) {
+    memset(dst, 0, cap);
+    size_t k = 0;
+    while (k < n && k < cap - 1 && src[k]) k++;
+    memcpy(dst, src, k);
+}
+
+static int32_t clamp_ms(int64_t v) { return v > INT32_MAX ? INT32_MAX : v < -INT32_MAX ? -INT32_MAX : (int32_t)v; }
+
+/* The arena shown, its countdowns as of now (the page's clock). */
+EXPORT(cv_arena) const CvArena *cv_arena(double now) {
+    memset(&AR, 0, sizeof AR);
+    if (C.arena_len < sizeof(cw_arena_hdr)) return &AR;
+    cw_arena_hdr h;
+    memcpy(&h, C.arena, sizeof h);
+    AR.ok = 1;
+    AR.status = h.status; AR.speed = h.speed; AR.rated = h.rated; AR.id = h.id;
+    AR.base_s = h.base_s; AR.inc_s = h.inc_s; AR.me_in = h.me_in;
+    AR.n_players = h.n_players; AR.n = h.n_rows; AR.playing = h.playing; AR.games = h.games;
+    AR.me_rank = h.me_rank; AR.me_score = h.me_score; AR.me_games = h.me_games; AR.me_fire = h.me_fire;
+    int64_t since = (int64_t)now - C.arena_at;
+    AR.starts_in_ms = clamp_ms(h.starts_at - h.now - since);
+    AR.ends_in_ms = clamp_ms(h.ends_at - h.now - since);
+    AR.starts_at = (double)h.starts_at;
+    AR.ends_at = (double)h.ends_at;
+    copy_n(AR.name, CV_ARENA_NAME, h.name, CW_ARENA_NAME);
+    copy_n(AR.by, CV_NAME, h.by, CW_NAME);
+    for (int i = 0; i < h.n_rows && i < CV_ARENA_ROWS; i++) {
+        cw_arena_row r;
+        memcpy(&r, C.arena + sizeof h + (size_t)i * sizeof r, sizeof r);
+        CvArenaRow *o = &AR.rows[i];
+        copy_n(o->name, CV_NAME, r.name, CW_NAME);
+        o->score = r.score; o->games = r.games; o->rank = r.rank; o->rating = r.rating;
+        o->fire = r.fire; o->withdrawn = r.withdrawn; o->playing = r.playing;
+        o->me = C.name[0] && strcmp(o->name, C.name) == 0;
+        if (o->me) AR.me_listed = 1;
+    }
+    return &AR;
+}
+
+/* io holds the answer of GET /c/arena/<id>, a join or a withdrawal (n bytes): the arena, or ok 0. */
+EXPORT(cv_arena_read) const CvArena *cv_arena_read(uint32_t n, double now) {
+    if (cc_client_arena_take(&C, IO, n, (int64_t)now, 1)) return cv_arena(now);
+    memset(&AR, 0, sizeof AR);
+    if (n == sizeof(cw_err)) AR.err = IO[0];   /* a refusal: cw_err, its code first */
+    return &AR;
+}
+
+static void arena_room(uint32_t id, char *out) {
+    char t[12];
+    int n = 0;
+    do { t[n++] = (char)('0' + id % 10); id /= 10; } while (id);
+    *out++ = 'a';
+    while (n) *out++ = t[--n];
+    *out = 0;
+}
+EXPORT(cv_arena_watch) void cv_arena_watch(uint32_t id) { char r[16]; arena_room(id, r); cc_client_watch(&C, r); }
+EXPORT(cv_arena_unwatch) void cv_arena_unwatch(uint32_t id) { char r[16]; arena_room(id, r); cc_client_unwatch(&C, r); }
+EXPORT(cv_arena_join) void cv_arena_join(uint32_t id, uint32_t tag) { cw_id q = { id }; cc_client_post(&C, "/c/arena/join", &q, sizeof q, tag); }
+EXPORT(cv_arena_withdraw) void cv_arena_withdraw(uint32_t id, uint32_t tag) { cw_id q = { id }; cc_client_post(&C, "/c/arena/withdraw", &q, sizeof q, tag); }
+
+/* io holds a name of n bytes: whether an arena may have it (arena.h). */
+EXPORT(cv_arena_name_ok) int cv_arena_name_ok(uint32_t n) { return n <= CW_ARENA_NAME && cc_arena_name_ok((const char *)IO, n); }
+
+/* io holds the name (n bytes): POST /c/arena, answered as CC_EV_READ with this tag (then cv_arena_read). */
+EXPORT(cv_arena_create) void cv_arena_create(int base_s, int inc_s, int rated, uint32_t start_in_s, uint32_t duration_s, uint32_t n, uint32_t tag) {
+    cw_arena_req q;
+    memset(&q, 0, sizeof q);
+    q.base_s = (uint16_t)base_s;
+    q.inc_s = (uint8_t)inc_s;
+    q.rated = (uint8_t)(rated != 0);
+    q.start_in_s = start_in_s;
+    q.duration_s = duration_s;
+    memcpy(q.name, IO, n < CW_ARENA_NAME ? n : CW_ARENA_NAME);
+    cc_client_post(&C, "/c/arena", &q, sizeof q, tag);
+}
+
+/* io holds GET /c/arenas's n bytes. */
+EXPORT(cv_arena_list) const CvArenaList *cv_arena_list(uint32_t n) {
+    memset(&AL, 0, sizeof AL);
+    if (n < 16) return &AL;
+    uint16_t cnt;
+    int64_t now;
+    memcpy(&cnt, IO, 2);
+    memcpy(&now, IO + 8, 8);
+    if (cnt > CW_ARENAS_MAX || cnt > CV_ARENAS || n != 16 + (size_t)cnt * sizeof(cw_arena_item)) return &AL;
+    AL.n = cnt;
+    for (int i = 0; i < cnt; i++) {
+        cw_arena_item r;
+        memcpy(&r, IO + 16 + (size_t)i * sizeof r, sizeof r);
+        CvArenaItem *o = &AL.rows[i];
+        o->id = r.id; o->status = r.status; o->speed = r.speed; o->inc_s = r.inc_s; o->rated = r.rated;
+        o->base_s = r.base_s; o->n_players = r.n_players;
+        o->starts_in_ms = clamp_ms(r.starts_at - now);
+        o->ends_in_ms = clamp_ms(r.ends_at - now);
+        o->starts_at = (double)r.starts_at;
+        o->ends_at = (double)r.ends_at;
+        copy_n(o->name, CV_ARENA_NAME, r.name, CW_ARENA_NAME);
+        copy_n(o->winner, CV_NAME, r.winner, CW_NAME);
+    }
+    return &AL;
 }
 
 static CvEval EV;

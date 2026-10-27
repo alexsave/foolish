@@ -1,8 +1,8 @@
 // net.ts - the page's one connection: the account (kept between visits), the /ws socket, and the
 // kernel's view of it, as a store React subscribes to. The bytes go between the socket and the
 // kernel untouched; what they mean is the kernel's.
-import { CC_EV_EVAL, CC_EV_GAME, CC_EV_LOBBY, CC_EV_READ, CC_EV_TV, CW_AUTH_SIGNIN, CW_AUTH_SIGNUP } from '@/gen/web_layout';
-import type { CvEval_Snap, CvLobby_Snap, CvMoves_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
+import { CC_EV_ARENA, CC_EV_EVAL, CC_EV_GAME, CC_EV_LOBBY, CC_EV_READ, CC_EV_TV, CW_AUTH_SIGNIN, CW_AUTH_SIGNUP } from '@/gen/web_layout';
+import type { CvArena_Snap, CvEval_Snap, CvLobby_Snap, CvMoves_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
 import { Kernel, loadKernel } from './kernel';
 
 const SESSION_KEY = 'cc.session';
@@ -17,6 +17,8 @@ export interface Snapshot {
   lobby: CvLobby_Snap | null;
   tv: CvTv_Snap | null;
   eval: CvEval_Snap | null;
+  /** the arena watched (net.arena): its standings and countdowns */
+  arena: CvArena_Snap | null;
   /** events since the store last published, OR-ed (cleared by `consume`) */
   events: number;
 }
@@ -40,10 +42,11 @@ class Net {
   k: Kernel | null = null;
   private ws: WebSocket | null = null;
   private listeners = new Set<() => void>();
-  private snap: Snapshot = { phase: 'loading', view: null, moves: null, lobby: null, tv: null, eval: null, events: 0 };
+  private snap: Snapshot = { phase: 'loading', view: null, moves: null, lobby: null, tv: null, eval: null, arena: null, events: 0 };
   private started = false;
   private wantLobby = false;
   private wantGame = 0;
+  private wantArena = 0;
   private backoff = 250;
   private lastPly = -1;
 
@@ -77,6 +80,7 @@ class Net {
     if (view.events & CC_EV_LOBBY) patch.lobby = this.k.lobbyView();
     if (view.events & CC_EV_TV) patch.tv = this.k.tv(performance.now());
     if (view.events & CC_EV_EVAL) patch.eval = this.k.evaluation();
+    if (view.events & CC_EV_ARENA) patch.arena = this.k.arena(performance.now());
     if (view.events & CC_EV_READ) {
       const done = this.reads.get(view.readTag);
       if (done) { this.reads.delete(view.readTag); done({ status: view.readStatus, body: this.k.readTake() }); }
@@ -87,6 +91,11 @@ class Net {
   /** The live games' clocks, read again (the lobby's once-a-second tick). */
   tickTv(): void {
     if (this.k && this.snap.tv?.n) this.publish({ tv: this.k.tv(performance.now()) });
+  }
+
+  /** The arena's countdowns, read again (its page's once-a-second tick). */
+  tickArena(): void {
+    if (this.k && this.snap.arena?.ok) this.publish({ arena: this.k.arena(performance.now()) });
   }
 
   /** Only the clocks moved: a cheap view for the animation frame. */
@@ -193,6 +202,7 @@ class Net {
       this.k!.hello();
       if (this.wantLobby) this.k!.lobby();
       if (this.wantGame) this.k!.open(this.wantGame);
+      if (this.wantArena) this.k!.arenaWatch(this.wantArena);   // a new socket watches nothing until told
       this.flush();
     };
     ws.onmessage = (e) => {
@@ -200,7 +210,12 @@ class Net {
       this.flush();
       const before = this.snap.view?.ready;
       this.refresh();
-      if (!before && this.snap.view?.ready) { accepted = true; this.backoff = 250; this.publish({ phase: 'online' }); }
+      if (!before && this.snap.view?.ready) {
+        accepted = true;
+        this.backoff = 250;
+        this.publish({ phase: 'online' });
+        if (this.wantArena) void this.arenaLoad(this.wantArena);   // what changed while the socket was down
+      }
     };
     ws.onclose = () => {
       if (this.ws !== ws) return;
@@ -241,6 +256,33 @@ class Net {
     this.wantGame = 0;
     this.k?.close();
     this.flush();
+  }
+
+  /** Watches an arena's room and reads it now (0: stops watching). */
+  arena(id: number): void {
+    const was = this.wantArena;
+    this.wantArena = id;
+    if (!this.k) return;
+    if (was && was !== id) this.k.arenaUnwatch(was);
+    if (id) this.k.arenaWatch(id);
+    this.flush();
+    if (!id) this.publish({ arena: null });
+  }
+
+  /** GET /c/arena/<id>, taken as the arena shown: its status (404 when there is none). */
+  async arenaLoad(id: number): Promise<number> {
+    const r = await this.read(`/c/arena/${id}`);
+    if (r.status === 200 && this.wantArena === id) this.publish({ arena: this.k!.arenaRead(r.body, performance.now()) });
+    return r.status;
+  }
+
+  /** A join or a withdrawal; its answer is the arena with our place: the status, and a refusal's
+   * code (CW_E_ARENA_..). */
+  async arenaAct(id: number, join: boolean): Promise<{ status: number; code: number }> {
+    const r = await this.request((k, tag) => (join ? k.arenaJoin(id, tag) : k.arenaWithdraw(id, tag)));
+    const a = this.k!.arenaRead(r.body, performance.now());
+    if (a.ok && this.wantArena === id) this.publish({ arena: a });
+    return { status: r.status, code: a.err };
   }
 
   private reads = new Map<number, (r: { status: number; body: Uint8Array }) => void>();

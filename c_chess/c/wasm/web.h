@@ -35,6 +35,7 @@ typedef struct {
     uint16_t err_status;
     uint16_t pad1;
     uint32_t challenge_id;
+    uint32_t arena;           /* the arena that made the game shown; 0: none */
     uint32_t read_tag;        /* the last read's (CC_EV_READ) */
     uint16_t read_status;
     uint16_t pad3;
@@ -133,6 +134,51 @@ typedef struct {
     int16_t  before, after;
     uint8_t  board[64];
 } CvPuzzle;
+
+/* An arena (a push of its room, or the answer of a read, a join or a withdrawal) and its standings,
+ * the top CV_ARENA_ROWS by score then rating. The countdowns are by the server's clock as of the
+ * frame, run on by the page's clock since: starts_in_ms and ends_in_ms (negative once past). me_*:
+ * the reader's own place (me_in CW_ARENA_OUT, _IN, _WITHDRAWN), known even below the rows shown. */
+#define CV_ARENA_ROWS 100
+#define CV_ARENA_NAME 32
+typedef struct {
+    char     name[CV_NAME];
+    uint16_t score, games, rank;
+    int16_t  rating;
+    uint8_t  fire, withdrawn, playing, me;   /* fire: a win scores double; me: the reader's row */
+} CvArenaRow;
+typedef struct {
+    uint8_t  ok, status, speed, rated;      /* status: arena.h CC_ARENA_UPCOMING.. */
+    uint32_t id;
+    uint16_t base_s;
+    uint8_t  inc_s, me_in;
+    uint16_t n_players, n, playing, me_rank;
+    uint16_t me_score, me_games;
+    uint8_t  me_fire, me_listed;             /* me_listed: the reader's row is among the rows */
+    uint8_t  err;                            /* a refused answer's cw_err code (ok 0): CW_E_ARENA_.. */
+    uint8_t  pad;
+    uint32_t games;
+    int32_t  starts_in_ms, ends_in_ms;
+    uint32_t pad2;
+    double   starts_at, ends_at;             /* ms since the epoch */
+    char     name[CV_ARENA_NAME];
+    char     by[CV_NAME];                    /* who made it; empty: the site */
+    CvArenaRow rows[CV_ARENA_ROWS];
+} CvArena;
+
+/* GET /c/arenas: running first, then upcoming by start, then finished, latest first. */
+#define CV_ARENAS 128
+typedef struct {
+    uint32_t id;
+    uint8_t  status, speed, inc_s, rated;
+    uint16_t base_s, n_players;
+    int32_t  starts_in_ms, ends_in_ms;       /* by the server's clock when it answered */
+    uint32_t pad;
+    double   starts_at, ends_at;
+    char     name[CV_ARENA_NAME];
+    char     winner[CV_NAME];                /* a finished arena's first place */
+} CvArenaItem;
+typedef struct { uint16_t n; uint16_t pad; uint32_t pad2; CvArenaItem rows[CV_ARENAS]; } CvArenaList;
 
 /* A guest's account, made at the first visit and kept by the page as these bytes (base64 in
  * localStorage): its name and password, NUL-padded. The page never reads inside it. */
