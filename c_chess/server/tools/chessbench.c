@@ -308,7 +308,11 @@ static void on_events(bot *b, uint32_t ev) {
             if (measuring && o->sent_game == g && o->sent_ply == b->c.g.ply && o->last_sent_us) { sample(&relay_us, now_us() - o->last_sent_us); o->last_sent_us = 0; }
         }
     }
-    if (ev & CC_EV_OVER) {
+    /* a game that ended while we were away (our socket dropped, the server restarted) shows as
+     * over in the snapshot we read when we come back, and no CC_EV_OVER comes for it */
+    bool ended_away = (ev & CC_EV_GAME) && !(ev & CC_EV_OVER) && b->playing && b->c.game == b->playing && b->c.synced &&
+                      cc_game_over(&b->c.g);
+    if ((ev & CC_EV_OVER) || ended_away) {
         if (b->watcher) { cc_client_close_game(&b->c); bot_flush(b); return; }
         if (b->c.color == 0) { games_ended++; if (measuring) games_measured++; }
         if (O.chat && b->c.game) say(b, b->c.game, "gg");
