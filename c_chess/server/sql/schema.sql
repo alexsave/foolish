@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS cc_players (
     games INTEGER NOT NULL, wins INTEGER NOT NULL, losses INTEGER NOT NULL, draws INTEGER NOT NULL,
     last_at INTEGER NOT NULL,
     pr REAL NOT NULL, pd REAL NOT NULL, pv REAL NOT NULL,   -- the puzzle rating
-    pz_tried INTEGER NOT NULL, pz_solved INTEGER NOT NULL
+    pz_tried INTEGER NOT NULL, pz_solved INTEGER NOT NULL,
+    mute_until INTEGER NOT NULL DEFAULT 0   -- ms since the epoch: no chat before this (chats.h)
 );
 -- a player's rating of a speed (c/src/speed.h: 0 bullet, 1 blitz, 2 rapid, 3 classical), written
 -- after each rated game of it; a speed never rated has no row (the start rating)

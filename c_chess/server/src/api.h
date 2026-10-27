@@ -8,6 +8,9 @@
 #include <stddef.h>
 extern const cb_route_list cc_api_routes;
 extern const cb_route_list cc_arena_routes;   /* api_arena.c */
+extern const cb_route_list cc_chat_routes;    /* api_chat.c */
+#define CC_N_ADMIN_CALLS 1
+extern const cb_admin_call cc_admin_calls[CC_N_ADMIN_CALLS];   /* api_chat.c: the console's mute */
 
 /* For the other route files: the answer as octets (no-store), a refusal (cw_err), and the verified
  * caller (false with the refusal answered). */

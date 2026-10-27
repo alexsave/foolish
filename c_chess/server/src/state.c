@@ -5,6 +5,7 @@
 #include "pushes.h"
 #include "ai.h"
 #include "arenas.h"
+#include "chats.h"
 
 #include "realtime/realtime.h"
 #include "util/clock.h"
@@ -234,7 +235,6 @@ static void schedule(cc_live *l, int64_t now) {
     if (wake) pthread_cond_signal(&clock_cond);
 }
 
-static void sweep(int64_t now);
 static void tv_tick(int64_t now);
 
 static void *clock_main(void *ud) {
@@ -250,7 +250,7 @@ static void *clock_main(void *ud) {
             else if (nx >= 0) heap_put(l, now + nx);
             else heap_remove(l);
         }
-        if (now >= next_sweep) { sweep(now); next_sweep = now + 10000; }
+        if (now >= next_sweep) { cc_state_sweep(now); next_sweep = now + 10000; }
         if (now >= next_tv) { tv_tick(now); next_tv = now + 1000; }
         if (now >= next_arena) { cc_arena_tick(now, cc_wall()); next_arena = now + CC_ARENA_TICK_MS; }
         int64_t soon = next_sweep < next_tv ? next_sweep : next_tv;
@@ -571,7 +571,7 @@ int cc_top_fill(cw_top *top, int speed) {
 
 /* Finished games leave memory after a while (they stay in the journal); challenges past their time
  * go. */
-static void sweep(int64_t now) {
+void cc_state_sweep(int64_t now) {
     for (uint32_t i = 0; i <= LIVE.mask; i++)
         for (cc_live **pp = (cc_live **)&LIVE.b[i]; *pp;) {
             cc_live *l = *pp;
@@ -584,6 +584,7 @@ static void sweep(int64_t now) {
             if (c->expires <= now) { *pp = c->next; CHAL.n--; free(c); }
             else pp = &c->next;
         }
+    cc_chat_sweep();   /* after the games: a game's lines go with it */
     size_t before = n_seeks;
     seeks_expire(now);
     if (n_seeks != before) lobby_changed(now);
@@ -624,4 +625,5 @@ void cc_state_free(void) {
     memset(&P_ID, 0, sizeof P_ID); memset(&P_NAME, 0, sizeof P_NAME); memset(&LIVE, 0, sizeof LIVE); memset(&CHAL, 0, sizeof CHAL);
     HEAP = NULL; heap_n = heap_cap = 0; n_seeks = 0; n_playing = 0;
     cc_arena_free();
+    cc_chat_free();
 }

@@ -34,5 +34,9 @@ bool cc_chat_banned(const char *s, int n);
 /* The normal form the filter reads: n bytes of s into out (n bytes, no NUL), each byte a lowercase
  * letter or a space. */
 void cc_chat_normal(const char *s, int n, char *out);
+/* Whether a name (NUL-terminated) is a guest's: it starts "guest-", in any case. Only the browser's
+ * guest sign-up (wire.h CW_AUTH_GUEST) may take such a name, so a guest may not chat or make an
+ * arena, and a signed-up player is never taken for one. */
+bool cc_name_guest(const char *name);
 
 #endif

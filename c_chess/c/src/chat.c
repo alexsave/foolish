@@ -126,3 +126,13 @@ bool cc_chat_banned(const char *s, int n) {
     }
     return false;
 }
+
+bool cc_name_guest(const char *name) {
+    static const char g[] = "guest-";
+    for (int i = 0; g[i]; i++) {
+        char c = name[i];
+        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+        if (c != g[i]) return false;
+    }
+    return true;
+}

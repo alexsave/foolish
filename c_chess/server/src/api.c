@@ -10,6 +10,7 @@
 #include "ai.h"
 #include "engine.h"
 #include "arenas.h"
+#include "chats.h"
 
 #include "auth/auth.h"
 #include "net/loop.h"
@@ -114,6 +115,9 @@ static void h_auth(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     memcpy(name, q.name, nn); name[nn] = 0;
     memcpy(pw, q.password, pn); pw[pn] = 0;
     if (!valid_name(name, nn)) { refuse(res, 400, CW_E_BAD_NAME, 0); return; }
+    /* "guest-" is the browser's guest sign-up's alone (wire.h CW_AUTH_GUEST), so it says who is a guest */
+    bool guest = cc_name_guest(name);
+    if ((q.mode == CW_AUTH_GUEST && !guest) || (q.mode == CW_AUTH_SIGNUP && guest)) { refuse(res, 400, CW_E_BAD_NAME, 0); return; }
     /* the account's email is the name, lowercased, at a domain nobody mails */
     char email[CW_NAME + 32];
     size_t i = 0;
@@ -121,7 +125,7 @@ static void h_auth(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     snprintf(email + i, sizeof email - i, "@c-chess.invalid");
     cb_session *s = calloc(1, sizeof *s);
     if (!s) { refuse(res, 503, CW_E_BUSY, 0); return; }
-    int rc = q.mode == CW_AUTH_SIGNUP ? cb_auth_signup(ctx->auth, email, pw, name, s)
+    int rc = q.mode == CW_AUTH_SIGNUP || q.mode == CW_AUTH_GUEST ? cb_auth_signup(ctx->auth, email, pw, name, s)
            : q.mode == CW_AUTH_SIGNIN ? cb_auth_signin(ctx->auth, email, pw, s) : CB_E_INVALID;
     if (rc == CB_E_INVALID) refuse(res, 400, CW_E_BAD, 0);
     else if (rc != CB_OK) auth_refused(res, rc);
@@ -515,14 +519,18 @@ static void h_stats(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cc_ai_counts(&aa, &ar, &ah);
     pthread_mutex_lock(&cc_lock);
     cc_arena_counts(&at, &atu, &atm, &ap, &apb);
+    uint64_t cl, cr, cm, cf;
+    cc_chat_counts(&cl, &cr, &cm, &cf);
     pthread_mutex_unlock(&cc_lock);
-    char out[768];
+    char out[1024];
     snprintf(out, sizeof out, "games_live %u\njournal_queued %llu\njournal_committed %llu\njournal_commits %llu\n"
              "engine_searches %llu\nengine_nodes %llu\nengine_queued %u\nengine_busy %u\nai_asked %llu\nai_refused %llu\nai_cache_hits %llu\n"
-             "arena_passes %llu\narena_pass_us %llu\narena_pass_max_us %llu\narena_pushes %llu\narena_push_bytes %llu\n", live,
+             "arena_passes %llu\narena_pass_us %llu\narena_pass_max_us %llu\narena_pushes %llu\narena_push_bytes %llu\n"
+             "chat_lines %llu\nchat_refused %llu\nchat_rooms %llu\nchat_filter_ns %llu\n", live,
              (unsigned long long)q, (unsigned long long)c, (unsigned long long)k, (unsigned long long)es, (unsigned long long)en, eq, eb,
              (unsigned long long)aa, (unsigned long long)ar, (unsigned long long)ah, (unsigned long long)at, (unsigned long long)atu,
-             (unsigned long long)atm, (unsigned long long)ap, (unsigned long long)apb);
+             (unsigned long long)atm, (unsigned long long)ap, (unsigned long long)apb, (unsigned long long)cl, (unsigned long long)cr,
+             (unsigned long long)cm, (unsigned long long)cf);
     cb_res_text(res, 200, out);
 }
 

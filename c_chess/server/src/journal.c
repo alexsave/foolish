@@ -22,9 +22,9 @@
 _Static_assert(CC_SPEEDS == 4, "CC_SQL_POINTS_OF walks each speed");
 
 const char *const cc_sql_stmts[CC_SQL_N] = {
-    [CC_SQL_PLAYER_PUT] = "INSERT OR REPLACE INTO cc_players (id, name, games, wins, losses, draws, last_at, pr, pd, pv, pz_tried, pz_solved) "
-                          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-    [CC_SQL_PLAYERS_ALL] = "SELECT id, name, games, wins, losses, draws, last_at, pr, pd, pv, pz_tried, pz_solved FROM cc_players",
+    [CC_SQL_PLAYER_PUT] = "INSERT OR REPLACE INTO cc_players (id, name, games, wins, losses, draws, last_at, pr, pd, pv, pz_tried, pz_solved, mute_until) "
+                          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+    [CC_SQL_PLAYERS_ALL] = "SELECT id, name, games, wins, losses, draws, last_at, pr, pd, pv, pz_tried, pz_solved, mute_until FROM cc_players",
     [CC_SQL_RATING_PUT] = "INSERT OR REPLACE INTO cc_ratings (player, speed, r, d, v, games) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     [CC_SQL_RATINGS_ALL] = "SELECT player, speed, r, d, v, games FROM cc_ratings",
     [CC_SQL_GAME_START] = "INSERT OR REPLACE INTO cc_games (id, white, black, base_s, inc_s, rated, status, winner, started_at, ended_at, "
@@ -277,6 +277,7 @@ static int write_one(cb_sql *x, const jrec *r) {
         sqlite3_bind_double(st, 10, p->pz.volatility);
         sqlite3_bind_int64(st, 11, p->pz_tried);
         sqlite3_bind_int64(st, 12, p->pz_solved);
+        sqlite3_bind_int64(st, 13, p->mute_until);
         return cb_sql_run(x, st, "cc player put");
     }
     case J_RATING:
@@ -575,6 +576,7 @@ static int recover_fn(cb_sql *x, void *ud) {
         p.pz = (g2_player){ sqlite3_column_double(st, 7), sqlite3_column_double(st, 8), sqlite3_column_double(st, 9) };
         p.pz_tried = (uint32_t)sqlite3_column_int64(st, 10);
         p.pz_solved = (uint32_t)sqlite3_column_int64(st, 11);
+        p.mute_until = sqlite3_column_int64(st, 12);
         if (!cc_player_recovered(&p)) { sqlite3_reset(st); return CB_E_NOMEM; }
         c->players++;
     }

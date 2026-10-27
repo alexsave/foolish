@@ -97,7 +97,7 @@ static cc_arena *make(const cc_player *by, const char *name, size_t nn, const cw
 int cc_arena_create(cc_player *by, const cw_arena_req *q, int64_t wall, cc_arena **out) {
     *out = NULL;
     size_t nn = strnlen(q->name, CW_ARENA_NAME);
-    if (by && strncmp(by->name, "guest-", 6) == 0) return CW_E_ARENA_GUEST;
+    if (by && cc_name_guest(by->name)) return CW_E_ARENA_GUEST;
     if (!cc_arena_name_ok(q->name, nn)) return CW_E_ARENA_NAME;
     cw_seek tc = { q->base_s, q->inc_s, q->rated };
     if (!cc_tc_ok(&tc) || q->duration_s < CC_ARENA_DURATION_MIN || q->duration_s > CC_ARENA_DURATION_MAX || q->start_in_s > CC_ARENA_START_MAX)

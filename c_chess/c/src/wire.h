@@ -43,11 +43,18 @@
  *     GET  /c/arena/<id>     -                 -> cw_arena_hdr + its top rows, and the asker's own place
  *     GET  /c/arenas         -                 -> cw_arena_list: running, upcoming, finished in the last hour
  *     CW_P_ARENA  cw_arena_hdr + rows  to the arena's room ("a<id>"), at most once a second when the
- *                 standings changed (no asker: the me_ fields are zero) */
+ *                 standings changed (no asker: the me_ fields are zero)
+ *   chat (chat.h has what a line may hold and the word filter)
+ *     POST /c/chat          cw_chat_req       -> (none): 200, or a cw_chat_err (signed-up users, not guests)
+ *     GET  /c/chat/<room>   -                 -> cw_chat_log + its lines, oldest first (anyone)
+ *     CW_P_CHAT   cw_chat_line  to the room the line was said in: a game's "g<id>" (players and
+ *                 spectators, one chat), an arena's "a<id>", or "lobby"
+ *     POST /admin/api/mute  cw_mute_req (the console's token) -> text/plain: 200, 404 for no such player */
 #ifndef C_CHESS_WIRE_H
 #define C_CHESS_WIRE_H
 
 #include "arena.h"
+#include "chat.h"
 #include "puzzle.h"
 #include "speed.h"
 
@@ -60,7 +67,7 @@
 #define CW_POINTS_MAX (CC_SPEEDS * CW_POINTS_SPEED)
 #define CW_LIST_MAX 50      /* games a game list holds */
 
-enum { CW_P_STATE = 1, CW_P_START = 2, CW_P_LOBBY = 3, CW_SNAP = 4, CW_P_TV = 5, CW_P_EVAL = 6, CW_P_ARENA = 7 };
+enum { CW_P_STATE = 1, CW_P_START = 2, CW_P_LOBBY = 3, CW_SNAP = 4, CW_P_TV = 5, CW_P_EVAL = 6, CW_P_ARENA = 7, CW_P_CHAT = 8 };
 #define CW_PV_MAX 12
 #define CW_TV_MAX 24
 #define CW_TOP_MAX 50
@@ -74,7 +81,9 @@ enum { CW_E_NONE = 0, CW_E_NO_GAME = 1, CW_E_NOT_PLAYER = 2, CW_E_RULES = 3, CW_
 #define CW_PASSWORD 72      /* bcrypt reads no more */
 #define CW_REFRESH 64
 #define CW_UUID 36
-enum { CW_AUTH_SIGNUP = 1, CW_AUTH_SIGNIN = 2 };
+/* GUEST is the browser's first visit: a sign-up whose name must start "guest-", a prefix a plain
+ * SIGNUP refuses (CW_E_BAD_NAME), so the prefix says who is a guest (chat.h cc_name_guest). */
+enum { CW_AUTH_SIGNUP = 1, CW_AUTH_SIGNIN = 2, CW_AUTH_GUEST = 3 };
 /* cw_err.code of a refused sign-up or sign-in */
 enum { CW_E_NAME_TAKEN = 20, CW_E_BAD_LOGIN = 21, CW_E_WEAK_PASSWORD = 22, CW_E_BAD_NAME = 23, CW_E_TOO_MANY = 24, CW_E_EXPIRED = 25 };
 /* cw_err.code of a refused arena request: no such arena (404), it is over (409), already in it (409),
@@ -337,5 +346,39 @@ _Static_assert(sizeof(cw_arena_item) == 88, "cw_arena_item");
 _Static_assert(sizeof(cw_arena_list) == 16 + 88 * CW_ARENAS_MAX, "cw_arena_list");
 _Static_assert(CW_ARENA_NAME > CC_ARENA_NAME_MAX, "a name and its NUL");
 #define CW_ARENA_FRAME_MAX (sizeof(cw_arena_hdr) + CW_ARENA_ROWS * sizeof(cw_arena_row))
+
+/* ---- chat ---- */
+#define CW_CHAT_MAX CC_CHAT_MAX   /* a line's bytes (chat.h) */
+#define CW_ROOM 12               /* a room's name, NUL-padded: "lobby", "g<id>", "a<id>" (ids are u32) */
+#define CW_CHAT_LOG 64           /* lines a room keeps, and a log holds */
+/* cw_chat_err.code of a refused line: no such room (404), not a line (400: chat.h, its reason in
+ * rc), a guest's (403), too fast (429: a line a second, 30 a minute), a banned word (400), muted
+ * (403). wait_s: the seconds until a muted player may talk again, or until the rate allows. */
+enum { CW_E_CHAT_ROOM = 40, CW_E_CHAT_TEXT = 41, CW_E_CHAT_GUEST = 42, CW_E_CHAT_FAST = 43, CW_E_CHAT_WORDS = 44,
+       CW_E_CHAT_MUTED = 45 };
+
+typedef struct { char room[CW_ROOM]; uint8_t len; uint8_t pad[3]; char text[CW_CHAT_MAX]; } cw_chat_req;
+/* A line said: the push, and each line of a log. */
+typedef struct {
+    uint8_t  v, kind;          /* CW_V, CW_P_CHAT */
+    uint8_t  len;              /* text's bytes */
+    uint8_t  pad;
+    char     room[CW_ROOM];
+    int64_t  at;               /* ms since the epoch, the server's clock */
+    char     name[CW_NAME];    /* who said it */
+    char     text[CW_CHAT_MAX];
+} cw_chat_line;
+typedef struct { uint16_t n; uint8_t pad[6]; } cw_chat_log;   /* then n cw_chat_line */
+/* A refusal of POST /c/chat: cw_err's layout, then the wait. */
+typedef struct { uint8_t code; int8_t rc; uint8_t pad[2]; uint32_t wait_s; } cw_chat_err;
+/* minutes: how long from now; 0 lifts a mute */
+typedef struct { char name[CW_NAME]; uint32_t minutes; } cw_mute_req;
+
+_Static_assert(sizeof(cw_chat_req) == 156, "cw_chat_req");
+_Static_assert(sizeof(cw_chat_line) == 184, "cw_chat_line");
+_Static_assert(sizeof(cw_chat_log) == 8, "cw_chat_log");
+_Static_assert(sizeof(cw_chat_err) == 8, "cw_chat_err");
+_Static_assert(sizeof(cw_mute_req) == 24, "cw_mute_req");
+#define CW_CHAT_LOG_MAX (sizeof(cw_chat_log) + CW_CHAT_LOG * sizeof(cw_chat_line))
 
 #endif

@@ -728,7 +728,7 @@ static void arenas(void) {
     // a guest makes none
     player g;
     cc_client_init(&g.c);
-    T_EQ_INT(auth(&g, "guest-smoke1", "a guest's long password", CW_AUTH_SIGNUP), 200);
+    T_EQ_INT(auth(&g, "guest-smoke1", "a guest's long password", CW_AUTH_GUEST), 200);
     connect_ws(&g);
     T_EQ_INT(ask(&g, "/c/arena", &q, sizeof q), 403);
     cw_err e;

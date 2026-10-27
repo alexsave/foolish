@@ -184,7 +184,7 @@ server/src/journal.c ::: int np = sqlite3_column_int(st, 8); ::: int np = 0; :::
 # kernel: chat (c/test/unit_chat.c)
 c/src/chat.c ::: case '1': c = 'i'; break; ::: case '1': break; ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: case '$': c = 's'; break; ::: case '$': break; ::: build/test/unit_chat ::: build/test/unit_chat
-c/src/chat.c ::: if (c >= 'A' && c <= 'Z') c = (char)(c + 32); ::: (void)0; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (c >= 'A' && c <= 'Z') c = (char)(c + 32);\n        switch (c) { ::: switch (c) { ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: { "shit", ANY }, ::: { "zzzz", ANY }, ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: { "ass", WHOLE }, ::: { "ass", ANY }, ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: { "cunt", START }, ::: { "cunt", ANY }, ::: build/test/unit_chat ::: build/test/unit_chat
@@ -199,3 +199,26 @@ c/src/chat.c ::: || (c >= 0xd800 && c <= 0xdfff)) return CC_CHAT_UTF8; ::: ) ret
 c/src/chat.c ::: if (k && i + k >= n) return CC_CHAT_UTF8; ::: if (k && i + k > n) return CC_CHAT_UTF8; ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: if (n > CC_CHAT_MAX) return CC_CHAT_LONG; ::: if (n > CC_CHAT_MAX + 1) return CC_CHAT_LONG; ::: build/test/unit_chat ::: build/test/unit_chat
 c/src/chat.c ::: return seen ? CC_CHAT_OK : CC_CHAT_EMPTY; ::: return seen ? CC_CHAT_OK : CC_CHAT_OK; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (c >= 'A' && c <= 'Z') c = (char)(c + 32);\n        if (c != g[i]) return false; ::: if (c != g[i]) return false; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: for (int i = 0; g[i]; i++) { ::: for (int i = 0; g[i + 1]; i++) { ::: build/test/unit_chat ::: build/test/unit_chat
+# chat through the state and the journal (server/test/unit_chats.c)
+server/src/chats.c ::: r->head = (uint16_t)((r->head + 1) % r->cap); ::: (void)0; ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: if (r->n == r->cap && r->cap < CW_CHAT_LOG) { ::: if (r->n == r->cap && r->cap < 2 * CW_CHAT_LOG) { ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: &r->l[(r->head + i) % r->cap] ::: &r->l[i] ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: case 'g': return cc_live_get(id) != NULL; ::: case 'g': return true; ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: case 'a': return cc_arena_get(id) != NULL; ::: case 'a': return true; ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: || room[1] < '1' || ::: || room[1] < '0' || ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: else if (cc_name_guest(p->name)) code = CW_E_CHAT_GUEST; ::: else if (0) code = CW_E_CHAT_GUEST; ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: else if (p->mute_until > wall) { ::: else if (0 && p->mute_until > wall) { ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: now - p->chat_at < CC_CHAT_FLOOR_MS) ::: now - p->chat_at < 0) ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: if (!cb_limit_take(CB_LIMIT_CHAT_USER, ::: if (0 && !cb_limit_take(CB_LIMIT_CHAT_USER, ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: now - p->strike_at[0] > CC_CHAT_STRIKE_MS) ::: now - p->strike_at[0] > 2 * CC_CHAT_STRIKE_MS) ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: if (!p->strike_at[0] || now ::: if (now ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: if (bad) { ::: if (bad && 0) { ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: return (uint32_t)((until - now + 999) / 1000); ::: return (uint32_t)((until - now) / 1000); ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: memset(p->strike_at, 0, sizeof p->strike_at);\n    cc_journal_player(p); ::: memset(p->strike_at, 0, sizeof p->strike_at); ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: line.at = wall; ::: line.at = now; ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/chats.c ::: else if ((*why = cc_chat_valid(q->text, q->len)) != CC_CHAT_OK) code = CW_E_CHAT_TEXT; ::: else if ((*why = cc_chat_valid(q->text, q->len)) == 99) code = CW_E_CHAT_TEXT; ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/state.c ::: cc_chat_sweep();   /* after the games ::: (void)0;   /* after the games ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/journal.c ::: sqlite3_bind_int64(st, 13, p->mute_until); ::: sqlite3_bind_int64(st, 13, 0); ::: build/test/unit_chats ::: build/test/unit_chats
+server/src/journal.c ::: p.mute_until = sqlite3_column_int64(st, 12); ::: (void)0; ::: build/test/unit_chats ::: build/test/unit_chats

@@ -61,7 +61,7 @@ static void cc_serve_close(cb_ctx *ctx) {
     cc_puzzles_free();
 }
 
-static const cb_route_list *const CC_ROUTES[] = { &cc_api_routes, &cc_arena_routes, &cc_analysis_routes, &cc_puzzle_routes, &cc_web_routes };
+static const cb_route_list *const CC_ROUTES[] = { &cc_api_routes, &cc_arena_routes, &cc_chat_routes, &cc_analysis_routes, &cc_puzzle_routes, &cc_web_routes };
 static const cb_topic_family *const CC_TOPICS[] = { &cc_fam_room, &cc_fam_user };
 
 static const cb_app CC_APP = {
@@ -71,6 +71,8 @@ static const cb_app CC_APP = {
     .topics = CC_TOPICS,
     .n_topics = 2,
     .store = &CC_STORE,
+    .admin_calls = cc_admin_calls,
+    .n_admin_calls = CC_N_ADMIN_CALLS,
     .serve_open = cc_serve_open,
     .serve_close = cc_serve_close,
 };

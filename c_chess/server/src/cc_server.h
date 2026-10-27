@@ -31,6 +31,9 @@ typedef struct cc_player {
     uint32_t  pz_seen[16];             /* the last puzzles handed out, not handed out again soon */
     uint8_t   pz_seen_at;
     uint16_t  playing;                 /* games of theirs in play (an arena pairs only the free) */
+    int64_t   mute_until;              /* ms since the epoch: no chat before this (chats.h); journaled */
+    int64_t   chat_at;                 /* mono ms: the last line said */
+    int64_t   strike_at[3];            /* mono ms: the last banned words, oldest first (chats.h) */
     struct cc_player *next;            /* the id map's chain */
     struct cc_player *next_name;       /* the name map's chain */
 } cc_player;
@@ -113,6 +116,10 @@ int        cc_tv_fill(cw_tv *tv, int max, int64_t now_mono);
 /* The leaderboard of a speed (0..CC_SPEEDS-1): players with a rated game of it, by its rating: the
  * frame's length. */
 int        cc_top_fill(cw_top *top, int speed);
+
+/* The clock thread's sweep, every 10 s: finished games past their keep leave memory, and their chat
+ * with them; expired challenges and seeks go. */
+void       cc_state_sweep(int64_t now_mono);
 
 /* Counters for the lobby frame and /c/stats. */
 uint32_t   cc_games_live(void);
