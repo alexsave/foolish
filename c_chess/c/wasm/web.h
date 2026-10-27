@@ -180,6 +180,33 @@ typedef struct {
 } CvArenaItem;
 typedef struct { uint16_t n; uint16_t pad; uint32_t pad2; CvArenaItem rows[CV_ARENAS]; } CvArenaList;
 
+/* A room's chat as the client keeps it (a game's "g<id>", an arena's "a<id>", "lobby"), oldest
+ * first. guest: the reader is a guest and may not talk. mine: the reader said the line. */
+#define CV_CHAT_LINES 64
+#define CV_CHAT_TEXT 144     /* a line's 140 bytes of UTF-8 and its NUL */
+#define CV_ROOM 12
+enum { CV_CHAT_BANNED = 16 };   /* cv_chat_check: a banned word (below it: chat.h's CC_CHAT_ reasons) */
+typedef struct {
+    double   at;             /* ms since the epoch, the server's clock */
+    char     name[CV_NAME];
+    uint8_t  mine;
+    uint8_t  pad[3];
+    char     text[CV_CHAT_TEXT];
+    uint32_t pad2;
+} CvChatLine;
+typedef struct {
+    uint16_t   n;
+    uint8_t    guest;
+    uint8_t    pad;
+    uint32_t   pad2;
+    char       room[CV_ROOM];
+    uint32_t   pad3;
+    CvChatLine lines[CV_CHAT_LINES];
+} CvChat;
+/* A line refused (POST /c/chat's cw_chat_err): its code (CW_E_CHAT_..), the kernel's reason for a
+ * text it refuses (CC_CHAT_..), and the seconds to wait for a mute or the rate. */
+typedef struct { uint8_t code, why; uint16_t pad; uint32_t wait_s; } CvChatErr;
+
 /* A guest's account, made at the first visit and kept by the page as these bytes (base64 in
  * localStorage): its name and password, NUL-padded. The page never reads inside it. */
 #define CV_GUEST_PW 32

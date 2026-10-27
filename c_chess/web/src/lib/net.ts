@@ -1,8 +1,8 @@
 // net.ts - the page's one connection: the account (kept between visits), the /ws socket, and the
 // kernel's view of it, as a store React subscribes to. The bytes go between the socket and the
 // kernel untouched; what they mean is the kernel's.
-import { CC_EV_ARENA, CC_EV_EVAL, CC_EV_GAME, CC_EV_LOBBY, CC_EV_READ, CC_EV_TV, CW_AUTH_SIGNIN, CW_AUTH_SIGNUP } from '@/gen/web_layout';
-import type { CvArena_Snap, CvEval_Snap, CvLobby_Snap, CvMoves_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
+import { CC_EV_ARENA, CC_EV_CHAT, CC_EV_EVAL, CC_EV_GAME, CC_EV_LOBBY, CC_EV_READ, CC_EV_TV, CW_AUTH_GUEST, CW_AUTH_SIGNIN, CW_AUTH_SIGNUP } from '@/gen/web_layout';
+import type { CvArena_Snap, CvChatErr_Snap, CvEval_Snap, CvLobby_Snap, CvMoves_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
 import { Kernel, loadKernel } from './kernel';
 
 const SESSION_KEY = 'cc.session';
@@ -19,6 +19,8 @@ export interface Snapshot {
   eval: CvEval_Snap | null;
   /** the arena watched (net.arena): its standings and countdowns */
   arena: CvArena_Snap | null;
+  /** bumped whenever a room's chat changed (net.chatView reads it) */
+  chat: number;
   /** events since the store last published, OR-ed (cleared by `consume`) */
   events: number;
 }
@@ -42,11 +44,12 @@ class Net {
   k: Kernel | null = null;
   private ws: WebSocket | null = null;
   private listeners = new Set<() => void>();
-  private snap: Snapshot = { phase: 'loading', view: null, moves: null, lobby: null, tv: null, eval: null, arena: null, events: 0 };
+  private snap: Snapshot = { phase: 'loading', view: null, moves: null, lobby: null, tv: null, eval: null, arena: null, chat: 0, events: 0 };
   private started = false;
   private wantLobby = false;
   private wantGame = 0;
   private wantArena = 0;
+  private wantChat = new Map<string, number>();   // the rooms whose chat is shown, and by how many panels
   private backoff = 250;
   private lastPly = -1;
 
@@ -81,6 +84,7 @@ class Net {
     if (view.events & CC_EV_TV) patch.tv = this.k.tv(performance.now());
     if (view.events & CC_EV_EVAL) patch.eval = this.k.evaluation();
     if (view.events & CC_EV_ARENA) patch.arena = this.k.arena(performance.now());
+    if (view.events & CC_EV_CHAT) patch.chat = this.snap.chat + 1;
     if (view.events & CC_EV_READ) {
       const done = this.reads.get(view.readTag);
       if (done) { this.reads.delete(view.readTag); done({ status: view.readStatus, body: this.k.readTake() }); }
@@ -172,8 +176,8 @@ class Net {
       return r.status;
     };
     // a guest just made has no account yet: sign up first (a sign-in would be refused first)
-    let st = await auth(fresh ? CW_AUTH_SIGNUP : CW_AUTH_SIGNIN);
-    if (st !== 200) st = await auth(fresh ? CW_AUTH_SIGNIN : CW_AUTH_SIGNUP);
+    let st = await auth(fresh ? CW_AUTH_GUEST : CW_AUTH_SIGNIN);
+    if (st !== 200) st = await auth(fresh ? CW_AUTH_SIGNIN : CW_AUTH_GUEST);
     if (st !== 200) {   // the name was taken meanwhile: another
       store(GUEST_KEY, null);
       await this.guest();
@@ -215,6 +219,8 @@ class Net {
         this.backoff = 250;
         this.publish({ phase: 'online' });
         if (this.wantArena) void this.arenaLoad(this.wantArena);   // what changed while the socket was down
+        for (const room of this.wantChat.keys()) this.k!.chatLog(room);   // and what was said meanwhile
+        this.flush();
       }
     };
     ws.onclose = () => {
@@ -283,6 +289,31 @@ class Net {
     const a = this.k!.arenaRead(r.body, performance.now());
     if (a.ok && this.wantArena === id) this.publish({ arena: a });
     return { status: r.status, code: a.err };
+  }
+
+  /** A chat panel shows a room: its log is read now and on every new socket (the room itself is
+   * watched by the page: the lobby, the game, the arena). Returns the undo. */
+  chatWatch(room: string): () => void {
+    this.wantChat.set(room, (this.wantChat.get(room) ?? 0) + 1);
+    // after the page's own effects (a child's effect runs first): its room is watched before the read
+    const t = setTimeout(() => { if (this.snap.phase === 'online') this.run((k) => k.chatLog(room)); }, 0);
+    return () => {
+      clearTimeout(t);
+      const n = (this.wantChat.get(room) ?? 1) - 1;
+      if (n > 0) this.wantChat.set(room, n); else this.wantChat.delete(room);
+    };
+  }
+
+  /** A room's chat as the kernel keeps it. */
+  chatView(room: string) { return this.k ? this.k.chat(room) : null; }
+
+  /** Whether the server would take a line (0), or why not, before it is sent. */
+  chatCheck(text: string): number { return this.k ? this.k.chatCheck(text) : 0; }
+
+  /** Says a line: 200, or the refusal (its code, reason and wait). */
+  async chatSay(room: string, text: string): Promise<{ status: number; err: CvChatErr_Snap | null }> {
+    const r = await this.request((k, tag) => k.chatSay(room, text, tag));
+    return { status: r.status, err: r.status === 200 ? null : this.k!.chatRefused(r.body) };
   }
 
   private reads = new Map<number, (r: { status: number; body: Uint8Array }) => void>();

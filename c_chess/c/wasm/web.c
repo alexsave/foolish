@@ -2,6 +2,7 @@
  * One client per page. The page moves bytes and draws: io_ptr() is a buffer it fills with what the
  * socket or a fetch received before calling in a function, and reads what to send from after one. */
 #include "client.h"
+#include "chat.h"
 #include "puzzle.h"
 #include "rating.h"
 #include "web.h"
@@ -605,4 +606,69 @@ EXPORT(cv_puzzle_done) const CvPuzzle *cv_puzzle_done(uint32_t n) {
     PV.tried = d.tried;
     PV.solved = d.solved;
     return &PV;
+}
+
+/* ---- chat ---- */
+static CvChat CH;
+static CvChatErr CE;
+
+/* io holds a room's name (n bytes) into room (CW_ROOM): false when it does not fit. */
+static bool io_room(uint32_t n, char *room) {
+    if (n == 0 || n >= CW_ROOM) return false;
+    memset(room, 0, CW_ROOM);
+    memcpy(room, IO, n);
+    return true;
+}
+
+/* io holds a room's name (n bytes): its chat as kept. */
+EXPORT(cv_chat) const CvChat *cv_chat(uint32_t n) {
+    memset(&CH, 0, sizeof CH);
+    CH.guest = C.name[0] && cc_name_guest(C.name);
+    char room[CW_ROOM];
+    if (!io_room(n, room)) return &CH;
+    memcpy(CH.room, room, CW_ROOM);
+    const cc_chat_room *r = cc_client_chat(&C, room);
+    for (int i = 0; r && i < r->n && i < CV_CHAT_LINES; i++) {
+        const cw_chat_line *l = &r->l[i];
+        CvChatLine *o = &CH.lines[i];
+        o->at = (double)l->at;
+        copy_n(o->name, CV_NAME, l->name, CW_NAME);
+        memcpy(o->text, l->text, l->len);
+        o->mine = C.name[0] && strcmp(o->name, C.name) == 0;
+        CH.n++;
+    }
+    return &CH;
+}
+/* io holds a room's name (n bytes): its log read (CC_EV_CHAT when it arrives). */
+EXPORT(cv_chat_log) void cv_chat_log(uint32_t n) {
+    char room[CW_ROOM];
+    if (io_room(n, room)) cc_client_chat_log(&C, room);
+}
+/* io holds the room's name (rn bytes) then the line (tn bytes): POST /c/chat, answered as a read
+ * with this tag (200, or a refusal: cv_chat_refused). */
+EXPORT(cv_chat_say) void cv_chat_say(uint32_t rn, uint32_t tn, uint32_t tag) {
+    char room[CW_ROOM], text[CW_CHAT_MAX + 1];
+    if (!io_room(rn, room) || rn + tn > IO_CAP) return;
+    if (tn > CW_CHAT_MAX + 1) tn = CW_CHAT_MAX + 1;   /* the server says it is too long */
+    memcpy(text, IO + rn, tn);
+    cc_client_chat_say(&C, room, text, tn, tag);
+}
+/* io holds a line (n bytes): 0 when the server would take its text, else why not (CC_CHAT_ for the
+ * line itself, CV_CHAT_BANNED for a banned word), so the page warns before it sends. */
+EXPORT(cv_chat_check) int cv_chat_check(uint32_t n) {
+    if (n > IO_CAP) n = IO_CAP;
+    int v = cc_chat_valid((const char *)IO, (int)n);
+    if (v != CC_CHAT_OK) return v;
+    return cc_chat_banned((const char *)IO, (int)n) ? CV_CHAT_BANNED : 0;
+}
+/* io holds a refusal of POST /c/chat (n bytes): its code, reason and wait (code 0: not one). */
+EXPORT(cv_chat_refused) const CvChatErr *cv_chat_refused(uint32_t n) {
+    memset(&CE, 0, sizeof CE);
+    cw_chat_err e;
+    if (n != sizeof e) return &CE;
+    memcpy(&e, IO, sizeof e);
+    CE.code = e.code;
+    CE.why = (uint8_t)e.rc;
+    CE.wait_s = e.wait_s;
+    return &CE;
 }

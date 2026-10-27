@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react';
 import { net, type Snapshot } from './net';
 
-const SERVER: Snapshot = { phase: 'loading', view: null, moves: null, lobby: null, tv: null, eval: null, arena: null, events: 0 };
+const SERVER: Snapshot = { phase: 'loading', view: null, moves: null, lobby: null, tv: null, eval: null, arena: null, chat: 0, events: 0 };
 
 export function useNet(): Snapshot {
   return useSyncExternalStore(net.subscribe, net.get, () => SERVER);

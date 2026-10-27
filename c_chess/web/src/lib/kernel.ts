@@ -1,8 +1,8 @@
 // kernel.ts - the browser's kernel (c/wasm/web.c, built to /chess.wasm): loads it, checks its
 // layout against the generated readers, and names its exports. Every rule and every protocol byte
 // is in there; this file only moves bytes in and out of its io buffer.
-import { memOf, readCvArena, readCvArenaList, readCvEval, readCvGames, readCvLobby, readCvMoves, readCvProfile, readCvPuzzle, readCvTop, readCvTv, readCvView } from '@/gen/web_layout';
-import type { CvArena_Snap, CvArenaList_Snap, CvEval_Snap, CvGames_Snap, CvLobby_Snap, CvMoves_Snap, CvProfile_Snap, CvPuzzle_Snap, CvTop_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
+import { memOf, readCvArena, readCvArenaList, readCvChat, readCvChatErr, readCvEval, readCvGames, readCvLobby, readCvMoves, readCvProfile, readCvPuzzle, readCvTop, readCvTv, readCvView } from '@/gen/web_layout';
+import type { CvArena_Snap, CvArenaList_Snap, CvChat_Snap, CvChatErr_Snap, CvEval_Snap, CvGames_Snap, CvLobby_Snap, CvMoves_Snap, CvProfile_Snap, CvPuzzle_Snap, CvTop_Snap, CvTv_Snap, CvView_Snap } from '@/gen/web_layout';
 import { LAYOUT_HASH } from '@/gen/web_layout_hash';
 
 interface Exports {
@@ -72,7 +72,14 @@ interface Exports {
   cv_arena_name_ok(n: number): number;
   cv_arena_create(base: number, inc: number, rated: number, startIn: number, duration: number, n: number, tag: number): void;
   cv_arena_list(n: number): number;
+  cv_chat(n: number): number;
+  cv_chat_log(n: number): void;
+  cv_chat_say(rn: number, tn: number, tag: number): void;
+  cv_chat_check(n: number): number;
+  cv_chat_refused(n: number): number;
 }
+
+const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 
 export class Kernel {
   constructor(private readonly x: Exports) {}
@@ -200,6 +207,23 @@ export class Kernel {
   }
   /** GET /c/arenas's answer, read. */
   arenaList(body: Uint8Array): CvArenaList_Snap { return readCvArenaList(memOf(this.x.memory.buffer), this.x.cv_arena_list(this.put(body))); }
+  /** A room's chat as the kernel keeps it ("g<id>", "a<id>", "lobby"), oldest first. */
+  chat(room: string): CvChat_Snap { return readCvChat(memOf(this.x.memory.buffer), this.x.cv_chat(this.put(utf8(room)))); }
+  /** Reads a room's last lines (CC_EV_CHAT when they arrive). */
+  chatLog(room: string): void { this.x.cv_chat_log(this.put(utf8(room))); }
+  /** Says a line in a room: answered as a read with this tag (then chatRefused for a refusal). */
+  chatSay(room: string, text: string, tag: number): void {
+    const r = utf8(room), t = utf8(text);
+    const both = new Uint8Array(r.length + t.length);
+    both.set(r, 0);
+    both.set(t, r.length);
+    this.put(both);
+    this.x.cv_chat_say(r.length, t.length, tag);
+  }
+  /** 0 when the server would take this line's text, else why not (CC_CHAT_.., CV_CHAT_BANNED). */
+  chatCheck(text: string): number { return this.x.cv_chat_check(this.put(utf8(text))); }
+  /** A refusal of a line, read. */
+  chatRefused(body: Uint8Array): CvChatErr_Snap { return readCvChatErr(memOf(this.x.memory.buffer), this.x.cv_chat_refused(this.put(body))); }
   /** GET /c/games/<name>'s answer, read. */
   games(body: Uint8Array): CvGames_Snap { return readCvGames(memOf(this.x.memory.buffer), this.x.cv_games(this.put(body))); }
 }
