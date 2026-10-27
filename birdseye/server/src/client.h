@@ -33,6 +33,7 @@ typedef struct {
 typedef struct {
     char       name[32], password[40];
     char       uid[NW_ID_MAX + 1];
+    char       username[NW_NAME_MAX + 1];   // the account's name as the server spells it (the session's)
     char       token[NW_ACCESS_MAX + 1];
     int        ws;                   // -1 closed
     uint8_t   *in;

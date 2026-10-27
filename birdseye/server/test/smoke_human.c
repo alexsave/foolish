@@ -33,7 +33,8 @@
 #include <unistd.h>
 
 #define ADMIN    "smoke-human-admin-token-0123456789abcdef"
-#define HUMAN    "SMOKEHUMAN"
+#define HUMAN    "SmokeHuman"   // as typed; the server spells it SMOKEHUMAN
+#define HUMAN_AS "SMOKEHUMAN"
 #define PASSWORD "smoke-human-pw-7f3a9c"
 #define STALL_MS 1500
 #define PAUSE_US 4000000   // longer than STALL_MS, in the lobby and mid-game
@@ -268,7 +269,9 @@ int main(int argc, char **argv) {
     T_CHECK(hu > 48);
     T_CHECK(L.bots[hu].key_len == 5 && memcmp(L.bots[hu].key, "human", 5) == 0);
     T_CHECK(L.bots[hu].id_len == strlen(g_h.uid) && memcmp(L.bots[hu].id, g_h.uid, L.bots[hu].id_len) == 0);
-    T_CHECK(L.bots[hu].name_len == strlen(HUMAN) && memcmp(L.bots[hu].name, HUMAN, L.bots[hu].name_len) == 0);
+    char row_name[sizeof L.bots[hu].name + 1] = { 0 };
+    memcpy(row_name, L.bots[hu].name, L.bots[hu].name_len < sizeof L.bots[hu].name ? L.bots[hu].name_len : sizeof L.bots[hu].name);
+    T_EQ_STR(row_name, HUMAN_AS);   // the server's spelling, not the name as typed
     free(L.results);
 
     // Seed 32 is his, and match 0 (32 v 33) is live with a game.
@@ -293,6 +296,7 @@ int main(int argc, char **argv) {
     T_CHECK(me == 0 || me == 1);
     if (me == 0 || me == 1) {
         T_CHECK(!g_ct.view.seats[me].is_ai);
+        T_EQ_STR(g_ct.view.seats[me].name, row_name);   // the bracket's row and his seat agree
         T_CHECK(g_ct.view.seats[me].status != PLAYER_STATUS_READY);
         T_CHECK(g_ct.view.seats[1 - me].is_ai);
         T_EQ_INT(g_ct.view.seats[1 - me].status, PLAYER_STATUS_READY);

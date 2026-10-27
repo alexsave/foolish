@@ -992,15 +992,18 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
             return CB_E_NOMEM;
         }
         bool in = be_client_sign_in(&h, g_port);
-        char uid[sizeof h.uid];
+        char uid[sizeof h.uid], human_as[sizeof h.username];
         snprintf(uid, sizeof uid, "%s", h.uid);
+        // His row's name is the server's spelling of it (sign-in canonicalizes the case), the name
+        // his seat shows at the table; the name as typed only when the session carried none.
+        snprintf(human_as, sizeof human_as, "%s", h.username[0] ? h.username : o->human_name);
         be_client_free(&h);
         if (!in || !uid[0]) {
             snprintf(err, cap, "birdseye: BE_HUMAN_NAME '%s' could not sign up or in on %s (a wrong BE_HUMAN_PASSWORD for a name taken?)",
                      o->human_name, o->server);
             return CB_E_STATE;
         }
-        if (be_bots_add(uid, BE_HUMAN_KEY, o->human_name) < 0) {
+        if (be_bots_add(uid, BE_HUMAN_KEY, human_as) < 0) {
             snprintf(err, cap, "birdseye: no room for the human in the bot list");
             return CB_E_STATE;
         }

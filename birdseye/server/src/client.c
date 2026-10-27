@@ -67,6 +67,7 @@ bool be_client_sign_in(be_client *c, int port) {
         if (ok) {
             snprintf(c->token, sizeof c->token, "%.*s", (int)ses.access_len, ses.access);
             snprintf(c->uid, sizeof c->uid, "%.*s", (int)ses.user_id_len, ses.user_id);
+            snprintf(c->username, sizeof c->username, "%.*s", (int)ses.username_len, ses.username);
             return true;
         }
         if (attempt == 0 && status == 409) continue;   // taken: sign in
