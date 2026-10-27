@@ -43,7 +43,7 @@ const board = (
 ): TableView => ({
     status: GAME_STATUS_PLAYING, powerSuit: 2, firstAttacker: 0, defender: 1, mySeat: -1, fool: -1,
     deckCount: b.deck, discardPileLength: b.discard, hasFlipped: b.flipped !== null, hasGoodTimestamp: false,
-    passing: true, flipped: b.flipped ?? NO_CARD, goodMask: 0, version: 0,
+    passing: true, seatsLocked: false, flipped: b.flipped ?? NO_CARD, goodMask: 0, version: 0,
     battles: row.map(([attack, defense]) => ({ attack, defense: defense ?? NO_CARD })),
     seats: b.hand.map((handCount) => ({ status: PLAYER_STATUS_IN, handCount, awaitingAttack: false, isAi: false, id: '', name: '' })),
     myHand: [], elimination: [], rated: false, ratingKnown: false, ratingDelta: new Array(8).fill(0), ratingBefore: new Array(8).fill(0), ratingAfter: new Array(8).fill(0), gameId: 'g', title: '',

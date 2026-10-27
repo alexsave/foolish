@@ -129,3 +129,26 @@ test('rules box: a spectator cannot move it, and a click sends nothing', async (
     assert.deepEqual(setRulesCalls, [], "a click on a spectator's box sends nothing");
     page.unmount();
 });
+
+// A LOCKED LOBBY (game.h GAME_RULE_SEATS_LOCKED: a tournament match the host built) offers its
+// seat no seat edit at all - no X on any seat, no add-bot row - and the rules box is not its to
+// move; Ready is still there. Who may edit is the kernel's rule (ViewRules.canEditSeats).
+test('a locked lobby: no X, no add-bot row, the rules box disabled, Ready offered', async () => {
+    viewer = ANA;
+    const controls = (c: Element) => ({
+        x: c.querySelectorAll('.btn-remove-player').length,
+        addBot: c.querySelectorAll('.lobby__add-bot-row').length,
+        ready: c.querySelectorAll('.btn-ready').length,
+    });
+    const root = dom.window.document.getElementById('root')!;
+    const open = await render(fixtureView(table(true), 0, 'abcde'));
+    assert.deepEqual(controls(root), { x: 2, addBot: 1, ready: 1 }, 'an open lobby: an X on each seat, the add-bot row, Ready');
+    open.unmount();
+    const locked = fixture().title('Rules').passing(true).seatsLocked()
+        .seats([{ id: ANA, name: 'Ana' }, { id: BO, name: 'Bo' }]).seatStatus(0, IDLE).seatStatus(1, IDLE).build();
+    const page = await render(fixtureView(locked, 0, 'abcde'));
+    assert.deepEqual(controls(root), { x: 0, addBot: 0, ready: 1 }, 'a locked lobby: no X, no add-bot row, Ready still');
+    assert.equal(page.box().checked, true, 'it still reads the passing game');
+    assert.equal(page.box().disabled, true, 'and the box is not the seat\'s to move');
+    page.unmount();
+});

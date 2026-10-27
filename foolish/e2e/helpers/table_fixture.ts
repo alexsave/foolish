@@ -142,7 +142,9 @@ class Builder {
     /** Seats flagged awaiting an attack. */
     awaiting(...seats: number[]): this { this.awaitingSeats = new Set(seats); return this; }
     /** The table's rules (Game.rules, GAME_RULE_*): `passing` false is podkidnoy, the game with no transfer. Default the passing game. */
-    passing(on: boolean): this { this.rulesBits = on ? 0 : L.GAME_RULE_NO_PASS; return this; }
+    passing(on: boolean): this { this.rulesBits = (this.rulesBits & ~L.GAME_RULE_NO_PASS) | (on ? 0 : L.GAME_RULE_NO_PASS); return this; }
+    /** The lobby's seats are the host's, locked (GAME_RULE_SEATS_LOCKED): nobody joins, leaves, adds or removes a bot. */
+    seatsLocked(on = true): this { this.rulesBits = (this.rulesBits & ~L.GAME_RULE_SEATS_LOCKED) | (on ? L.GAME_RULE_SEATS_LOCKED : 0); return this; }
     /** A seed-dealt game: every draw takes the deck's first card (game.c draw_index). */
     deterministic(on = true): this { this.seeded = on; return this; }
 
