@@ -34,6 +34,8 @@ typedef struct {
     uint64_t seed;
     bool     tournament;       // play the stored tournament (or draw one) instead of league tables
     char     tour_file[512];   // the tournament's file; "" keeps none
+    bool     gauntlet;         // the human climbs the gauntlet (gauntlet.h) instead; needs human_name
+    char     gaunt_file[512];  // the gauntlet's file; "" keeps none
     int      stall_ms;         // a game in play nobody moved at for this long is given up (not a human's)
     char     human_name[32];   // a human account in the field ("" none): signed up (or in) at start
     char     human_password[40];
@@ -71,6 +73,13 @@ void be_league_gauges(void);
 size_t be_league_snapshot(void **out, uint8_t mode);
 // GET /be/tournament: the stored tournament (wire.h be_w_tour) in a buffer the caller frees.
 size_t be_tour_snapshot(void **out);
+// GET /be/gauntlet: the gauntlet (wire.h be_w_gauntlet; state BE_GAUNT_IDLE when none) in a buffer
+// the caller frees.
+size_t be_gaunt_snapshot(void **out);
+// POST /be/gauntlet/new: asks the league's thread for a new run from rung 1 (it reads the server's
+// ratings again and draws the ladder). 0 asked, 1 refused because a run is going on, -1 not in
+// gauntlet mode.
+int be_gaunt_request_new(void);
 
 // The seat count of a new table: 2 to 8, weighted toward two-player games, given how many bots
 // are free (never more seats than that) and a random draw r in [0, 1000). 0 when fewer than two are free.

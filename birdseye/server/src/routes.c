@@ -93,6 +93,35 @@ static void tournament_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res
     free(buf);
 }
 
+// ---- GET /be/gauntlet, POST /be/gauntlet/new ---------------------------------------------------
+
+static void gauntlet_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    void *buf = NULL;
+    size_t n = be_gaunt_snapshot(&buf);
+    if (!n) {
+        cb_router_error(res, 500, "no memory");
+        return;
+    }
+    answer(res, buf, n);
+    free(buf);
+}
+
+// A new run from rung 1, behind the game server's admin token (BE_ADMIN_TOKEN, which birdseye holds).
+static void gauntlet_new(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    const char *want = getenv("BE_ADMIN_TOKEN"), *got = cb_http_bearer(req);
+    size_t wn = want ? strlen(want) : 0;
+    unsigned diff = !got || strlen(got) != wn || wn == 0;
+    for (size_t i = 0; !diff && i < wn; i++) diff |= (unsigned char)(want[i] ^ got[i]);
+    if (diff) {
+        cb_router_error(res, 401, "the admin token");
+        return;
+    }
+    int rc = be_gaunt_request_new();
+    if (rc < 0) cb_router_error(res, 404, "not in gauntlet mode");
+    else if (rc > 0) cb_router_error(res, 409, "a run is going on");
+    else res->status = 202;
+}
+
 // ---- POST /be/session (dev mode) --------------------------------------------------------------
 //
 // The site's token for the stream's HELLO: a session of one fixed account on this process's own
@@ -139,5 +168,7 @@ static const cb_route ROUTES[] = {
     { "POST", "/be/session", CB_ROUTE_POOL, session_post, 0 },
     { "GET", "/be/league", CB_ROUTE_POOL, league_get, 0 },
     { "GET", "/be/tournament", CB_ROUTE_POOL, tournament_get, 0 },
+    { "GET", "/be/gauntlet", CB_ROUTE_POOL, gauntlet_get, 0 },
+    { "POST", "/be/gauntlet/new", CB_ROUTE_POOL, gauntlet_new, 0 },
 };
-const cb_route_list be_route_list = { ROUTES, 5 };
+const cb_route_list be_route_list = { ROUTES, sizeof ROUTES / sizeof ROUTES[0] };

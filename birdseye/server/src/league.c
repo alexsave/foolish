@@ -8,6 +8,7 @@
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
+#include "gauntlet.h"
 #include "tournament.h"
 #include "world.h"
 
@@ -74,6 +75,8 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static be_w_bot       g_bots[BE_LEAGUE_BOTS];
 static int            g_n_bots;
 static be_w_tour      g_tour;           // the stored tournament (BE_TOUR_IDLE: none)
+static be_w_gauntlet  g_gaunt;          // the gauntlet (BE_GAUNT_IDLE: none)
+static atomic_bool    g_gaunt_renew;    // POST /be/gauntlet/new asked for a new run
 static be_w_result   *g_results;
 static uint32_t       g_n_results, g_cap_results;
 static FILE          *g_file;
@@ -492,9 +495,16 @@ static void tour_changed(void) {
     free(frame);
 }
 
+static void gaunt_game_over(bool played, uint8_t fool_bot, int64_t now_ms);
+
 // A tournament table that is over (rated: `played`, `fool_bot` its fool) or given up (not played).
 static void tour_game_over(lg_table *t, bool played, uint8_t fool_bot, int64_t now_ms) {
     if (t->match < 0) return;
+    if (g_o.gauntlet) {
+        gaunt_game_over(played, fool_bot, now_ms);
+        t->match = -1;
+        return;
+    }
     pthread_mutex_lock(&g_mu);
     if (be_tour_result(&g_tour, t->match, played, fool_bot, now_ms)) {
         if (g_tour.state == BE_TOUR_DONE && g_tour.champion != BE_TOUR_NONE)
@@ -593,6 +603,168 @@ size_t be_tour_snapshot(void **out) {
     return sizeof *copy;
 }
 
+// ---- the gauntlet (gauntlet.h) -------------------------------------------------------------------
+
+// The gauntlet changed: kept (the file) and shown (the stream). Under g_mu.
+static void gaunt_changed(void) {
+    g_gaunt.hash = be_wire_hash();
+    if (g_o.gaunt_file[0] && !be_gaunt_save(&g_gaunt, g_o.gaunt_file, g_ids, g_n_bots))
+        CB_WARN("birdseye", "gauntlet: cannot write %s", g_o.gaunt_file);
+    be_world *w = &be_world_g;
+    if (!w->publish) return;
+    uint8_t *frame = malloc(2 + sizeof g_gaunt);
+    if (!frame) return;
+    frame[0] = BE_SF_V;
+    frame[1] = BE_F_GAUNT;
+    memcpy(frame + 2, &g_gaunt, sizeof g_gaunt);
+    w->publish(frame, 2 + sizeof g_gaunt);
+    free(frame);
+}
+
+#define BOT_NAME(i) g_bots[i].name_len, g_bots[i].name
+
+static void gaunt_game_over(bool played, uint8_t fool_bot, int64_t now_ms) {
+    pthread_mutex_lock(&g_mu);
+    uint8_t rung = g_gaunt.rung;
+    if (be_gaunt_result(&g_gaunt, played, fool_bot, now_ms)) {
+        if (played) {
+            const be_w_rung *x = &g_gaunt.rungs[rung];
+            CB_INFO("birdseye", "gauntlet: run %u, rung %d v %.*s: game %d %s, %d-%d", g_gaunt.run, rung + 1, BOT_NAME(x->bot), x->games,
+                    fool_bot == x->bot ? "won" : fool_bot == g_gaunt.human ? "lost" : "drawn", x->wins_h, x->wins_b);
+            if (g_gaunt.state == BE_GAUNT_LOST)
+                CB_INFO("birdseye", "gauntlet: run %u over at rung %d (best: rung %d, run %u)", g_gaunt.run, rung + 1, g_gaunt.best_rung, g_gaunt.best_run);
+            else if (g_gaunt.state == BE_GAUNT_WON) CB_INFO("birdseye", "gauntlet: run %u climbed all %d rungs", g_gaunt.run, BE_GAUNT_RUNGS);
+            else if (g_gaunt.rung != rung) CB_INFO("birdseye", "gauntlet: rung %d won: on to rung %d", rung + 1, g_gaunt.rung + 1);
+        }
+        gaunt_changed();
+    }
+    pthread_mutex_unlock(&g_mu);
+}
+
+// The rung's next game, on a free table: false when none can start now.
+static bool gaunt_new(int64_t now_ms) {
+    lg_table *t = NULL;
+    for (int i = 0; i < g_n_tables && !t; i++)
+        if (g_tables[i].state == L_FREE) t = &g_tables[i];
+    if (!t) return false;
+    uint8_t seats[2];
+    pthread_mutex_lock(&g_mu);
+    int r = be_gaunt_next(&g_gaunt, seats);
+    pthread_mutex_unlock(&g_mu);
+    if (r < 0) return false;
+    int bots[2] = { seats[0], seats[1] };
+    if (!table_open(t, bots, 2, false, r, now_ms)) return false;
+    pthread_mutex_lock(&g_mu);
+    be_gaunt_started(&g_gaunt, t->gid, t->gid_len, cb_now_ms());
+    gaunt_changed();
+    pthread_mutex_unlock(&g_mu);
+    return true;
+}
+
+// A new run from rung 1, its ladder drawn from the server's ratings now.
+static void gaunt_renew(int64_t now_wall) {
+    read_board(true);
+    static char keys[BE_LEAGUE_BOTS][BE_BOT_KEY + 1];
+    const char *key[BE_LEAGUE_BOTS];
+    int32_t rating[BE_LEAGUE_BOTS];
+    pthread_mutex_lock(&g_mu);
+    for (int i = 0; i < g_n_bots; i++) {
+        snprintf(keys[i], sizeof keys[i], "%.*s", g_bots[i].key_len, g_bots[i].key);
+        key[i] = keys[i];
+        rating[i] = g_bots[i].rating;
+    }
+    if (!be_gaunt_new_run(&g_gaunt, rating, key, g_n_bots, (uint8_t)g_human, now_wall)) {
+        CB_WARN("birdseye", "gauntlet: a brain has no bot on the game server: no ladder");
+        pthread_mutex_unlock(&g_mu);
+        return;
+    }
+    char ladder[512];
+    int at = 0;
+    for (int r = 0; r < BE_GAUNT_RUNGS && at < (int)sizeof ladder; r++) {
+        const be_w_rung *x = &g_gaunt.rungs[r];
+        at += snprintf(ladder + at, sizeof ladder - (size_t)at, "%s%.*s %d", r ? ", " : "", BOT_NAME(x->bot), x->rating);
+    }
+    CB_INFO("birdseye", "gauntlet: run %u, the ladder: %s", g_gaunt.run, ladder);
+    gaunt_changed();
+    pthread_mutex_unlock(&g_mu);
+}
+
+// The game a run had in play when birdseye stopped is watched again (the human may be in it); a
+// game the server no longer has is given up when its read says so, and the rung asks anew.
+static void gaunt_rewatch(int64_t now_ms) {
+    be_w_rung *x = &g_gaunt.rungs[g_gaunt.rung];
+    lg_table *t = NULL;
+    for (int i = 0; i < g_n_tables && !t; i++)
+        if (g_tables[i].state == L_FREE) t = &g_tables[i];
+    if (!t || !x->gid_len || x->gid_len > NW_GID_MAX) {
+        x->live = 0;
+        return;
+    }
+    t->gid_len = x->gid_len;
+    memcpy(t->gid, x->gid, x->gid_len);
+    t->gid[t->gid_len] = 0;
+    t->n = 2;
+    t->podkidnoy = false;
+    t->bots[0] = g_gaunt.human;
+    t->bots[1] = x->bot;
+    t->state = L_WATCH;
+    t->match = g_gaunt.rung;
+    t->human = true;
+    t->have = t->refetching = false;
+    t->dealt_ms = 0;
+    t->created_ms = t->last_change_ms = now_ms;
+    set_seated(t, true);
+    be_world_lock(&be_world_g);
+    be_table *bt = be_world_open(&be_world_g, t->gid, t->gid_len);
+    if (bt) bt->w.n_seats = 2;
+    be_world_unlock(&be_world_g);
+    CB_INFO("birdseye", "gauntlet: rung %d's game %.*s, in play at the last stop, watched again", g_gaunt.rung + 1, t->gid_len, t->gid);
+}
+
+// At start: the stored run goes on (its game in play watched again); a finished or missing one is
+// followed by a new run.
+static void gaunt_open(int64_t now_wall, int64_t now_ms) {
+    be_gaunt_init(&g_gaunt, (uint8_t)g_human);
+    bool have = g_o.gaunt_file[0] && be_gaunt_load(&g_gaunt, g_o.gaunt_file, g_ids, g_n_bots);
+    if (have && g_gaunt.human != g_human) {
+        CB_WARN("birdseye", "gauntlet: %s is another human's: starting a new record", g_o.gaunt_file);
+        have = false;
+    }
+    if (!have) be_gaunt_init(&g_gaunt, (uint8_t)g_human);
+    if (g_gaunt.state != BE_GAUNT_RUNNING) {
+        gaunt_renew(now_wall);
+        return;
+    }
+    CB_INFO("birdseye", "gauntlet: run %u goes on at rung %d (%d-%d after %d games)", g_gaunt.run, g_gaunt.rung + 1,
+            g_gaunt.rungs[g_gaunt.rung].wins_h, g_gaunt.rungs[g_gaunt.rung].wins_b, g_gaunt.rungs[g_gaunt.rung].games);
+    if (g_gaunt.rungs[g_gaunt.rung].live) gaunt_rewatch(now_ms);
+    pthread_mutex_lock(&g_mu);
+    gaunt_changed();
+    pthread_mutex_unlock(&g_mu);
+}
+
+size_t be_gaunt_snapshot(void **out) {
+    be_w_gauntlet *copy = malloc(sizeof *copy);
+    if (!copy) return 0;
+    pthread_mutex_lock(&g_mu);
+    if (g_o.gauntlet) *copy = g_gaunt;
+    else be_gaunt_init(copy, BE_TOUR_NONE);
+    pthread_mutex_unlock(&g_mu);
+    copy->hash = be_wire_hash();
+    *out = copy;
+    return sizeof *copy;
+}
+
+int be_gaunt_request_new(void) {
+    if (!g_started || !g_o.gauntlet) return -1;
+    pthread_mutex_lock(&g_mu);
+    bool running = g_gaunt.state == BE_GAUNT_RUNNING;
+    pthread_mutex_unlock(&g_mu);
+    if (running) return 1;
+    atomic_store(&g_gaunt_renew, true);
+    return 0;
+}
+
 int be_league_bot_seats(const int *rows, int n, int human_row) {
     int bots = 0;
     for (int i = 0; i < n; i++) bots += human_row < 0 || rows[i] != human_row;
@@ -656,9 +828,15 @@ static bool table_open(lg_table *t, const int *seat_bots, int n, bool podkidnoy,
     }
     // Format 2's title: a tournament game names its match ("Round of 32 - Game 1 of 5").
     if (human && match >= 0) {
-        char title[64];
+        char title[96];
+        int tl;
         pthread_mutex_lock(&g_mu);
-        int tl = be_tour_game_title(&g_tour.matches[match], title, sizeof title);
+        if (g_o.gauntlet) {
+            // "Gauntlet 2/7: Madrid 2 - Game 1 of 5": the bot as the site names it (no "%").
+            const be_w_bot *b = &g_bots[g_gaunt.rungs[match].bot];
+            int skip = b->name_len > 0 && b->name[0] == '%';
+            tl = be_gaunt_game_title(&g_gaunt, b->name + skip, b->name_len - skip, title, sizeof title);
+        } else tl = be_tour_game_title(&g_tour.matches[match], title, sizeof title);
         pthread_mutex_unlock(&g_mu);
         body[at++] = (uint8_t)tl;
         memcpy(body + at, title, (size_t)tl);
@@ -776,6 +954,11 @@ static void on_message(void *ud, const uint8_t *msg, size_t n) {
         if (f.status == 200 && nw_view_decode(f.body, (int)f.body_len, &version, &env) == NW_OK && env.len) {
             adopt(t, env.p, (int)env.len, now_ms);
             advance(t, now_ms);
+        } else if (f.status == 404 && !t->have) {
+            // A game watched again after a restart that the server no longer has (its lobby was
+            // left, or the server's file is another): given up, so its match or rung asks anew.
+            CB_WARN("birdseye", "league: the game server has no game %s: giving it up", t->gid);
+            table_close(t);
         }
         return;
     }
@@ -826,7 +1009,7 @@ typedef struct {
 static void live_path(char *out, size_t cap) { snprintf(out, cap, "%s.live", g_o.file); }
 
 static void live_save(void) {
-    if (!g_o.file[0] || g_o.tournament) return;   // a tournament asks its matches' games anew
+    if (!g_o.file[0] || g_o.tournament || g_o.gauntlet) return;   // a tournament asks its matches' games anew
     char path[600];
     live_path(path, sizeof path);
     FILE *f = fopen(path, "wb");
@@ -916,6 +1099,9 @@ static void *league_main(void *arg) {
         if (g_o.tournament) {
             // Every match that can play starts its game at once (the bots-only pace is quick).
             while (live < g_o.tables && tour_new(now_ms)) live++;
+        } else if (g_o.gauntlet) {
+            if (atomic_exchange(&g_gaunt_renew, false)) gaunt_renew(cb_now_ms());
+            if (live < g_o.tables) gaunt_new(now_ms);
         } else if (live < g_o.tables && now_ms >= next_create) {
             next_create = now_ms + (table_new(now_ms) ? CREATE_GAP_MS : 5000);
         }
@@ -938,6 +1124,10 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
     g_port = colon ? atoi(colon + 1) : 0;
     if (g_port <= 0 || g_port > 65535) {
         snprintf(err, cap, "birdseye: BE_SERVER '%s' names no port", o->server);
+        return CB_E_INVALID;
+    }
+    if (o->gauntlet && !o->human_name[0]) {
+        snprintf(err, cap, "birdseye: the gauntlet needs a human (BE_HUMAN_NAME, BE_HUMAN_PASSWORD)");
         return CB_E_INVALID;
     }
     if (!o->admin_token[0]) {
@@ -1017,7 +1207,8 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
     read_board(false);
     file_open();
     tour_open(cb_now_ms());
-    if (!g_o.tournament) live_load(cb_mono_ms());
+    if (g_o.gauntlet) gaunt_open(cb_now_ms(), cb_mono_ms());
+    else if (!g_o.tournament) live_load(cb_mono_ms());
     CB_INFO("birdseye", "league: %d bots, %d tables at once, up to %d a bot, podkidnoy %d%%, against %s", g_n_bots, g_n_tables, g_o.tables_per_bot, g_o.podkidnoy, o->server);
     atomic_store(&g_stop, false);
     if (pthread_create(&g_tid, NULL, league_main, NULL) != 0) {

@@ -20,6 +20,9 @@
 //                            [BE_F_RESULT] be_w_result as a league game is rated, [BE_F_BOT]
 //                            be_w_bot when a bot's standing changes, [BE_F_TOUR] be_w_tour
 //   GET /be/tournament       be_w_tour: the stored tournament (state BE_TOUR_IDLE when none)
+//   GET /be/gauntlet         be_w_gauntlet: the human's ladder (state BE_GAUNT_IDLE when none);
+//                            [BE_F_GAUNT] on the stream on every change
+//   POST /be/gauntlet/new    a new run from rung 1 (admin token; 409 while a run is going on)
 #ifndef BIRDSEYE_WIRE_H
 #define BIRDSEYE_WIRE_H
 
@@ -211,6 +214,7 @@ typedef struct {
 #define BE_MODE_LEAGUE     1
 #define BE_MODE_MIXED      2
 #define BE_MODE_TOURNAMENT 3
+#define BE_MODE_GAUNTLET   4
 
 // ---- the tournament (tournament.h) -----------------------------------------------------------------
 //
@@ -256,6 +260,54 @@ typedef struct {
     be_w_match matches[BE_TOUR_MATCHES];
 } be_w_tour;
 
+// ---- the gauntlet (gauntlet.h) ---------------------------------------------------------------------
+//
+// One human against one bot of each brain, weakest first: seven rungs, each a two-player best of five
+// (first to BE_TOUR_WIN, the tournament's draw and max-games rules). Win a rung and he climbs; lose
+// one and the run is over. The ladder is drawn at the start of each run from the server's ratings:
+// each brain's highest-rated bot, the rungs in ascending order of that rating.
+
+#define BE_GAUNT_RUNGS 7
+#define BE_GAUNT_GAMES 9      // BE_TOUR_MAX_GAMES: a rung drawn this often goes to the one ahead, else the bot
+
+#define BE_GAUNT_IDLE    0    // no run
+#define BE_GAUNT_RUNNING 1
+#define BE_GAUNT_LOST    2    // a rung was lost: the run is over at `rung`
+#define BE_GAUNT_WON     3    // every rung won
+
+// be_w_rung.result[i]: game i of the rung
+#define BE_GAUNT_G_NONE  0
+#define BE_GAUNT_G_HUMAN 1    // the bot was the fool
+#define BE_GAUNT_G_BOT   2    // the human was the fool
+#define BE_GAUNT_G_DRAW  3
+
+typedef struct {
+    uint8_t    bot;          // league bot index (GET /be/league's order), BE_TOUR_NONE before a draw
+    uint8_t    wins_h, wins_b;
+    uint8_t    games;        // games played, draws included
+    uint8_t    live;         // a game of this rung is in play (or its lobby is open)
+    uint8_t    gid_len;      // the game in play (or the last one)
+    char       gid[BE_GID];
+    uint8_t    result[BE_GAUNT_GAMES];   // BE_GAUNT_G_* per game
+    int32_t    rating;       // the bot's server rating when the ladder was drawn
+    int64_t    started_ms;   // its first game opened (wall clock), 0 before
+    int64_t    done_ms;      // decided, 0 before
+} be_w_rung;
+
+typedef struct {
+    uint32_t  hash;
+    uint8_t   state;         // BE_GAUNT_*
+    uint8_t   human;         // the human's league index, BE_TOUR_NONE when none
+    uint8_t   rung;          // the rung he is on (0..6), or lost at; 7 once every rung is won
+    uint8_t   best_rung;     // the highest rung any run reached, 1..7 (0 before any run)
+    uint8_t   best_won;      // the most rungs one run won, 0..7
+    uint32_t  run;           // this run's number, 1..
+    uint32_t  best_run;      // the run that set best_rung
+    uint32_t  games;         // games played in this run
+    int64_t   started_ms, finished_ms;
+    be_w_rung rungs[BE_GAUNT_RUNGS];
+} be_w_gauntlet;
+
 // POST /be/session (dev mode only): the site's token for the stream's HELLO, a session of a fixed
 // site account on this process's own store, made through the platform's auth.
 #define BE_TOKEN_MAX 2048
@@ -274,6 +326,7 @@ typedef struct {
 #define BE_F_RESULT 4
 #define BE_F_BOT    5
 #define BE_F_TOUR   6   // the whole be_w_tour, on every change
+#define BE_F_GAUNT  7   // the whole be_w_gauntlet, on every change
 
 // The layout hash structgen printed for this header, compiled in (the Makefile).
 #ifndef BIRDSEYE_WIRE_HASH

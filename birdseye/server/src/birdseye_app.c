@@ -6,7 +6,10 @@
 //   BE_MODE          "league" (the default): the server's bots play each other at tables of their own
 //                    (league.h); "tournament": they play the stored tournament, or a new one when
 //                    none is running (tournament.h); "mixed": fake humans and some bots (sim.h)
+//                    "gauntlet": the human (BE_HUMAN_NAME) climbs a ladder of one bot per brain,
+//                    weakest first, a best of five each (gauntlet.h)
 //   BE_TOURNAMENT_FILE the tournament's file (default ../data/tournament.bin), shown in every mode
+//   BE_GAUNTLET_FILE the gauntlet's file (default ../data/gauntlet.bin)
 //   BE_SERVER        the game server, host:port (default 127.0.0.1:8811)
 //   BE_SERVER_PID    its pid, for the RSS and CPU in the ops frame (0: unknown)
 // The league's:
@@ -134,13 +137,14 @@ static int be_serve_open(cb_ctx *ctx, char *err, size_t cap) {
     const char *mode = getenv("BE_MODE");
     if (!mode || !*mode || strcmp(mode, "league") == 0) be_mode = BE_MODE_LEAGUE;
     else if (strcmp(mode, "tournament") == 0) be_mode = BE_MODE_TOURNAMENT;
+    else if (strcmp(mode, "gauntlet") == 0) be_mode = BE_MODE_GAUNTLET;
     else if (strcmp(mode, "mixed") == 0) be_mode = BE_MODE_MIXED;
     else {
-        snprintf(err, cap, "birdseye: BE_MODE='%s' is not league, tournament or mixed", mode);
+        snprintf(err, cap, "birdseye: BE_MODE='%s' is not league, tournament, gauntlet or mixed", mode);
         return CB_E_INVALID;
     }
     int rc;
-    if (be_mode == BE_MODE_LEAGUE || be_mode == BE_MODE_TOURNAMENT) {
+    if (be_mode == BE_MODE_LEAGUE || be_mode == BE_MODE_TOURNAMENT || be_mode == BE_MODE_GAUNTLET) {
         be_league_opts o;
         memset(&o, 0, sizeof o);
         snprintf(o.server, sizeof o.server, "%s", server);
@@ -151,7 +155,10 @@ static int be_serve_open(cb_ctx *ctx, char *err, size_t cap) {
         o.tournament = be_mode == BE_MODE_TOURNAMENT;
         const char *tf = getenv("BE_TOURNAMENT_FILE");
         snprintf(o.tour_file, sizeof o.tour_file, "%s", tf ? tf : "../data/tournament.bin");
-        o.tables = (int)env_long("BE_LEAGUE_TABLES", o.tournament ? 16 : 10, 1, 64);
+        o.gauntlet = be_mode == BE_MODE_GAUNTLET;
+        const char *gf = getenv("BE_GAUNTLET_FILE");
+        snprintf(o.gaunt_file, sizeof o.gaunt_file, "%s", gf ? gf : "../data/gauntlet.bin");
+        o.tables = (int)env_long("BE_LEAGUE_TABLES", o.tournament ? 16 : o.gauntlet ? 1 : 10, 1, 64);
         o.tables_per_bot = (int)env_long("BE_LEAGUE_PER_BOT", 1, 1, 8);
         o.podkidnoy = (int)env_long("BE_PODKIDNOY", 30, 0, 100);
         o.seed = (uint64_t)env_long("BE_SEED", 1, 0, INT32_MAX);
