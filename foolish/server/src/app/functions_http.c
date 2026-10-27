@@ -17,6 +17,7 @@
 #include "app_internal.h"
 #include "edge.h"
 #include "foolish_app.h"
+#include "misses.h"
 #include "rate_limits.h"
 #include "v1_http.h"
 #include "auth/auth.h"
@@ -146,8 +147,12 @@ static void h_action(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
         return;
     }
     char gid[CB_GAME_ID_MAX + 1];
-    // An id of any other shape names no game (store/game_id.h): the answer a missing game gets.
-    if (!cb_game_id_ok((const char *)req->body + q.gid_off, q.gid_len)) { refusal(res, 400, ASK_WHY_NOT_FOUND, 0, 0); return; }
+    // An id of any other shape names no game (store/game_id.h): the answer a missing game gets, and
+    // a miss (misses.h).
+    if (!cb_game_id_ok((const char *)req->body + q.gid_off, q.gid_len)) {
+        if (cb_miss_take(ctx, req, res)) refusal(res, 400, ASK_WHY_NOT_FOUND, 0, 0);
+        return;
+    }
     memcpy(gid, req->body + q.gid_off, q.gid_len);
     gid[q.gid_len] = 0;
     act_ud a = { &u, req->body + q.wire_off, q.wire_len, q.has_intent ? (int64_t)q.intent : -1 };
@@ -157,6 +162,9 @@ static void h_action(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
                        .no_envelope = true, .no_deal = true };
     cb_table_result r;
     int rc = cb_table_run(ctx, &op, &r);
+    // A game that is not there, or one the caller does not sit at, is a miss (misses.h): a move
+    // is never refused before it runs, so play pays nothing for the rule.
+    if ((rc == CB_E_NOT_FOUND || (rc == CB_OK && r.result == TABLE_E_NOT_SEATED)) && !cb_miss_take(ctx, req, res)) return;
     if (rc != CB_OK) { run_failure(res, rc); return; }
     if (r.result < 0) {
         if (r.result == TABLE_E_WIRE) refusal(res, 400, ASK_WHY_MALFORMED, 0, 0);
@@ -235,9 +243,14 @@ static void h_meta(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
         return;
     }
     char gid[CB_GAME_ID_MAX + 1];
-    if (!cb_game_id_ok(ask.gid, ask.gid_len)) { refusal(res, 400, ASK_WHY_NOT_FOUND, 0, 0); return; }
+    if (!cb_game_id_ok(ask.gid, ask.gid_len)) {
+        if (cb_miss_take(ctx, req, res)) refusal(res, 400, ASK_WHY_NOT_FOUND, 0, 0);   // a miss (misses.h)
+        return;
+    }
     memcpy(gid, ask.gid, ask.gid_len);
     gid[ask.gid_len] = 0;
+    // A join is a stranger's game by definition: an address with no misses left may not try one.
+    if (ask.kind == ASK_JOIN && !cb_miss_may_look(ctx, req, res)) return;
     if (ask.kind == ASK_JOIN && !account_lives(ctx, &u, res)) return;
     // A bump starts a bot run (a Lambda invocation and a lease write): only a
     // seated player may ask (the kernel's rule, TABLE_E_NOT_SEATED), and not
@@ -259,6 +272,14 @@ static void h_meta(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_table_result r;
     int rc = cb_table_run(ctx, &op, &r);
     free(bots.rows);
+    // A game that is not there, an ask at one the caller does not sit at, and a join refused are
+    // misses (misses.h).
+    bool miss = rc == CB_E_NOT_FOUND ||
+                (rc == CB_OK && r.result < 0 && (r.result == TABLE_E_NOT_SEATED || ask.kind == ASK_JOIN));
+    if (miss && !cb_miss_take(ctx, req, res)) {
+        if (rc == CB_OK) free(r.envelope);
+        return;
+    }
     if (rc != CB_OK) { run_failure(res, rc); return; }
     if (r.result < 0) {
         free(r.envelope);
