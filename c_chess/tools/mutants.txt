@@ -181,3 +181,21 @@ server/src/api_arena.c ::: case CW_E_ARENA_GUEST: return 403; ::: case CW_E_AREN
 server/src/journal.c ::: a.games = (uint32_t)sqlite3_column_int64(st, 9); ::: a.games = 0; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/journal.c ::: h.games = (uint32_t)sqlite3_column_int64(st, 9); ::: h.games = 0; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/journal.c ::: int np = sqlite3_column_int(st, 8); ::: int np = 0; ::: build/test/unit_arenas ::: build/test/unit_arenas
+# kernel: chat (c/test/unit_chat.c)
+c/src/chat.c ::: case '1': c = 'i'; break; ::: case '1': break; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: case '$': c = 's'; break; ::: case '$': break; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (c >= 'A' && c <= 'Z') c = (char)(c + 32); ::: (void)0; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: { "shit", ANY }, ::: { "zzzz", ANY }, ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: { "ass", WHOLE }, ::: { "ass", ANY }, ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: { "cunt", START }, ::: { "cunt", ANY }, ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (k && out[k - 1].c == s[i]) ::: if (0 && out[k - 1].c == s[i]) ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (w[at + j].c != st[j].c || w[at + j].n < st[j].n) return false; ::: if (w[at + j].c != st[j].c) return false; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (BANNED[b].where == WHOLE && ns != nw) continue; ::: (void)0; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (control(c)) return CC_CHAT_CONTROL; ::: if (control(c) && 0) return CC_CHAT_CONTROL; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: (c >= 0x202a && c <= 0x202e) ::: (c >= 0x202b && c <= 0x202e) ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: (c >= 0x7f && c <= 0x9f) ::: (c >= 0x7f && c <= 0x80) ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (c < min || c > 0x10ffff ::: if (c < min * 0 || c > 0x10ffff ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: || (c >= 0xd800 && c <= 0xdfff)) return CC_CHAT_UTF8; ::: ) return CC_CHAT_UTF8; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (k && i + k >= n) return CC_CHAT_UTF8; ::: if (k && i + k > n) return CC_CHAT_UTF8; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: if (n > CC_CHAT_MAX) return CC_CHAT_LONG; ::: if (n > CC_CHAT_MAX + 1) return CC_CHAT_LONG; ::: build/test/unit_chat ::: build/test/unit_chat
+c/src/chat.c ::: return seen ? CC_CHAT_OK : CC_CHAT_EMPTY; ::: return seen ? CC_CHAT_OK : CC_CHAT_OK; ::: build/test/unit_chat ::: build/test/unit_chat
