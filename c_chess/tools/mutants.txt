@@ -168,3 +168,13 @@ c/src/client.c ::: h.n_rows > CW_ARENA_ROWS || ::: 0 || ::: build/test/unit_clie
 c/src/client.c ::: c->game_arena = s.arena; ::: (void)0; ::: build/test/unit_client ::: build/test/unit_client
 c/src/client.c ::: case CW_P_ARENA: cc_client_arena_take(c, p, n, now, 0); return; ::: case CW_P_ARENA: return; ::: build/test/unit_client ::: build/test/unit_client
 c/src/client.c ::: void cc_client_watch(cc_client *c, const char *room) { sub(c, SF_SUB, room); } ::: void cc_client_watch(cc_client *c, const char *room) { sub(c, SF_UNSUB, room); } ::: build/test/unit_client ::: build/test/unit_client
+# arenas over the real socket (server/test/smoke.c)
+server/src/api_arena.c ::: join_or_withdraw(ctx, req, res, false); } ::: join_or_withdraw(ctx, req, res, true); } ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api_arena.c ::: if (a) n = cc_arena_fill(a, signed_in ? cc_player_get(u.id) : NULL, wall, buf); ::: if (a) n = cc_arena_fill(a, NULL, wall, buf); ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/arenas.c ::: cc_push_room(room, FRAME, n); ::: (void)room; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/state.c ::: if (now >= next_arena) { cc_arena_tick(now, cc_wall()); ::: if (0 && now >= next_arena) { cc_arena_tick(now, cc_wall()); ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/cc_app.c ::: cc_arena_schedule(!sched || strcmp(sched, "0") != 0); ::: cc_arena_schedule(!sched || strcmp(sched, "0") != 0 || 1); ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: case CW_A_ABORT: rc = l->arena ? CC_E_STATE : cc_game_abort(&l->g, color, now); break; ::: case CW_A_ABORT: rc = cc_game_abort(&l->g, color, now); break; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: if (!cc_game_over(&l->g) || l->next_game || l->arena) rc = CC_E_STATE; ::: if (!cc_game_over(&l->g) || l->next_game) rc = CC_E_STATE; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: s.arena = l->arena; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api_arena.c ::: case CW_E_ARENA_GUEST: return 403; ::: case CW_E_ARENA_GUEST: return 400; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess

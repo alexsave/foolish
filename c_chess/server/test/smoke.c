@@ -1,7 +1,9 @@
 // smoke.c - the real server, played over its real socket by the real client (c/src/client.c):
 // accounts, seeks and the lobby, a whole game to mate with a spectator, the ratings, profile,
 // history and PGN, a refused move, a rematch, a restart in the middle of a game, a challenge link,
-// an abort and a flag, a rating and a leaderboard per speed, and puzzles handed out, answered and rated, across a restart.
+// an abort and a flag, a rating and a leaderboard per speed, an arena from its making to its end (pairing,
+// the standings pushed, a restart, a withdrawal, the end), and puzzles handed out, answered and rated,
+// across a restart.
 //
 //   build/test/smoke build/c_chess build/chessbench
 #include "client.h"
@@ -37,7 +39,7 @@ static void start_server(void) {
     static char envdb[512];
     snprintf(envdb, sizeof envdb, "CBASE_DB=%s/cbase.sqlite", g_dbdir);
     char *env[] = { "CBASE_DEV=1", "CBASE_LISTEN=127.0.0.1:0", envdb, "CBASE_JWT_SECRET=smoke-secret-smoke-secret-smoke-secret",
-                    "CBASE_ADMIN_TOKEN=smoke-admin-token-0123456789abcdef0123", "CBASE_LOG_LEVEL=info",
+                    "CBASE_ADMIN_TOKEN=smoke-admin-token-0123456789abcdef0123", "CBASE_LOG_LEVEL=info", "CC_ARENA_SCHEDULE=0",
                     g_puzzles[0] ? g_puzzles : NULL, NULL };
     char *argv[] = { (char *)g_bin, "serve", NULL };
     g_port = 0;
@@ -677,6 +679,182 @@ static cp_puzzle puzzle_of(const char *fen, const char *line) {
     return p;
 }
 
+// A request over p's socket whose answer is read (CC_EV_READ): its status.
+static int ask(player *p, const char *path, const void *body, size_t n) {
+    if (body) cc_client_post(&p->c, path, body, n, 70);
+    else cc_client_read(&p->c, path, 70);
+    p->seen = 0;
+    if (!pump(p, CC_EV_READ, 3000)) return -1;
+    return p->c.read_status;
+}
+
+static cw_arena_hdr arena_of(const player *p) {
+    cw_arena_hdr h;
+    memcpy(&h, p->c.arena, sizeof h);
+    return h;
+}
+
+static cw_arena_row arena_row(const player *p, int i) {
+    cw_arena_row r;
+    memcpy(&r, p->c.arena + sizeof(cw_arena_hdr) + (size_t)i * sizeof r, sizeof r);
+    return r;
+}
+
+// Pumps p until its arena frame satisfies ok, or timeout_ms.
+static bool arena_until(player *p, bool (*ok)(const player *), int timeout_ms) {
+    int64_t end = now_ms() + timeout_ms;
+    while (!ok(p)) {
+        int64_t left = end - now_ms();
+        p->seen = 0;
+        if (left <= 0 || !pump(p, CC_EV_ARENA, (int)left)) return ok(p);
+    }
+    return true;
+}
+
+static bool scored(const player *p) { return arena_of(p).n_rows == 2 && arena_row(p, 0).score == 2 && arena_row(p, 1).games == 1; }
+static bool finished(const player *p) { return arena_of(p).status == CC_ARENA_FINISHED; }
+
+// An arena of 20 s (the shortest) for alice and bob, carol watching its room: the pairing within a
+// second or so of its start, the standings pushed after the game (2 and 0), a restart that brings
+// them back, a withdrawal that stops the pairing, and the end.
+static void arenas(void) {
+    cw_arena_req q;
+    memset(&q, 0, sizeof q);
+    q.base_s = 180;
+    q.rated = 1;
+    q.start_in_s = 1;
+    q.duration_s = CC_ARENA_DURATION_MIN;
+    memcpy(q.name, "Smoke Arena", 11);
+    // a guest makes none
+    player g;
+    cc_client_init(&g.c);
+    T_EQ_INT(auth(&g, "guest-smoke1", "a guest's long password", CW_AUTH_SIGNUP), 200);
+    connect_ws(&g);
+    T_EQ_INT(ask(&g, "/c/arena", &q, sizeof q), 403);
+    cw_err e;
+    memcpy(&e, g.c.read_buf, sizeof e);
+    T_EQ_INT(e.code, CW_E_ARENA_GUEST);
+    close(g.fd);
+    // alice makes it
+    T_EQ_INT(ask(&A, "/c/arena", &q, sizeof q), 200);
+    T_CHECK(cc_client_arena_take(&A.c, A.c.read_buf, A.c.read_len, now_ms(), 1));
+    cw_arena_hdr h = arena_of(&A);
+    uint32_t id = h.id;
+    T_CHECK(id > 0);
+    T_EQ_INT(h.status, CC_ARENA_UPCOMING);
+    T_EQ_STR(h.name, "Smoke Arena");
+    T_EQ_STR(h.by, "alice");
+    T_EQ_INT((int)(h.ends_at - h.starts_at), CC_ARENA_DURATION_MIN * 1000);
+    char room[16], path[32];
+    snprintf(room, sizeof room, "a%u", id);
+    snprintf(path, sizeof path, "/c/arena/%u", id);
+    cc_client_watch(&C.c, room);
+    cw_id j = { id };
+    T_EQ_INT(ask(&A, "/c/arena/join", &j, sizeof j), 200);
+    T_EQ_INT(ask(&A, "/c/arena/join", &j, sizeof j), 409);
+    memcpy(&e, A.c.read_buf, sizeof e);
+    T_EQ_INT(e.code, CW_E_ARENA_JOINED);
+    T_EQ_INT(ask(&B, "/c/arena/join", &j, sizeof j), 200);
+    T_CHECK(cc_client_arena_take(&B.c, B.c.read_buf, B.c.read_len, now_ms(), 1));
+    T_EQ_INT(arena_of(&B).me_in, CW_ARENA_IN);
+    T_EQ_INT(arena_of(&B).n_players, 2);
+    cw_id none = { id + 1000 };
+    T_EQ_INT(ask(&B, "/c/arena/join", &none, sizeof none), 404);
+    // the list holds it
+    T_EQ_INT(ask(&C, "/c/arenas", NULL, 0), 200);
+    static cw_arena_list list;
+    memcpy(&list, C.c.read_buf, C.c.read_len < sizeof list ? C.c.read_len : sizeof list);
+    T_EQ_INT((int)C.c.read_len, 16 + (int)sizeof(cw_arena_item));
+    T_EQ_INT(list.rows[0].id, id);
+    T_EQ_INT(list.rows[0].n_players, 2);
+    // paired within a second or so of the start
+    int64_t asked = now_ms();
+    A.seen = B.seen = 0;
+    T_CHECK(pump(&A, CC_EV_START, 4000));
+    T_CHECK(pump(&B, CC_EV_START, 4000));
+    T_CHECK(now_ms() - asked < 3000);
+    T_EQ_INT(A.c.start_game, B.c.start_game);
+    T_EQ_INT(A.c.start_color ^ B.c.start_color, 1);
+    uint32_t game = A.c.start_game;
+    cc_client_open(&A.c, game);
+    cc_client_open(&B.c, game);
+    A.seen = B.seen = 0;
+    T_CHECK(pump(&A, CC_EV_GAME, 3000));
+    T_CHECK(pump(&B, CC_EV_GAME, 3000));
+    T_EQ_INT(A.c.game_arena, id);
+    // no abort in an arena game: play or resign
+    cc_client_act(&A.c, CW_A_ABORT);
+    A.seen = 0;
+    T_CHECK(pump(&A, CC_EV_ERROR, 3000));
+    T_EQ_INT(A.c.err.code, CW_E_RULES);
+    static const char *const two[] = { "e2e4", "e7e5" };
+    player *w = white_of(&A, &B), *b = black_of(&A, &B);
+    play_line(w, b, two, 2);
+    cc_client_act(&b->c, CW_A_RESIGN);
+    flush(b);
+    w->seen = 0;
+    T_CHECK(pump(w, CC_EV_OVER, 3000));
+    cc_client_act(&w->c, CW_A_REMATCH);   // the arena pairs its own
+    w->seen = 0;
+    T_CHECK(pump(w, CC_EV_ERROR, 3000));
+    T_EQ_INT(w->c.err.code, CW_E_RULES);
+    // the standings pushed to the room: the winner 2, the loser 0
+    T_CHECK(arena_until(&C, scored, 3000));
+    cw_arena_row first = arena_row(&C, 0);
+    T_EQ_STR(first.name, w->c.name);
+    T_EQ_INT(arena_row(&C, 1).score, 0);
+    T_EQ_INT(arena_of(&C).games, 1);
+    T_EQ_INT(arena_of(&C).status, CC_ARENA_RUNNING);
+    // a restart: the arena, its scores and its players back from the journal
+    close(A.fd); close(B.fd); close(C.fd);
+    usleep(300 * 1000);
+    T_EQ_INT(tp_stop(&g_child, SIGKILL, 10000), -1);
+    start_server();
+    connect_ws(&A);
+    connect_ws(&B);
+    connect_ws(&C);
+    cc_client_watch(&C.c, room);
+    T_EQ_INT(ask(w, path, NULL, 0), 200);
+    memcpy(&h, w->c.read_buf, sizeof h);   // the server's own word on our place (the client would find it in the rows too)
+    T_EQ_INT(h.me_in, CW_ARENA_IN);
+    T_EQ_INT(h.me_rank, 1);
+    T_EQ_INT(h.me_score, 2);
+    T_EQ_INT(h.me_games, 1);
+    T_CHECK(cc_client_arena_take(&w->c, w->c.read_buf, w->c.read_len, now_ms(), 1));
+    h = arena_of(w);
+    T_EQ_INT(h.status, CC_ARENA_RUNNING);
+    T_EQ_INT(h.n_rows, 2);
+    T_EQ_INT(h.me_in, CW_ARENA_IN);
+    T_EQ_INT(h.me_rank, 1);
+    T_EQ_INT(h.me_score, 2);
+    T_EQ_INT(arena_row(w, 1).score, 0);
+    // the loser withdraws: nobody is paired (two alone would be paired again after their rest)
+    T_EQ_INT(ask(b, "/c/arena/withdraw", &j, sizeof j), 200);
+    T_CHECK(cc_client_arena_take(&b->c, b->c.read_buf, b->c.read_len, now_ms(), 1));
+    T_EQ_INT(arena_of(b).me_in, CW_ARENA_WITHDRAWN);
+    A.seen = 0;
+    T_CHECK(!pump(&A, CC_EV_START, 4500));
+    // the end, pushed to the room, and read
+    T_CHECK(arena_until(&C, finished, 25000));
+    T_EQ_INT(ask(&C, path, NULL, 0), 200);
+    T_CHECK(cc_client_arena_take(&C.c, C.c.read_buf, C.c.read_len, now_ms(), 1));
+    T_EQ_INT(arena_of(&C).status, CC_ARENA_FINISHED);
+    T_EQ_INT(arena_of(&C).me_in, CW_ARENA_OUT);
+    T_EQ_INT(arena_row(&C, 1).withdrawn, 1);
+    T_EQ_INT(ask(&A, "/c/arena/join", &j, sizeof j), 409);
+    memcpy(&e, A.c.read_buf, sizeof e);
+    T_EQ_INT(e.code, CW_E_ARENA_OVER);
+    T_EQ_INT(ask(&C, "/c/arenas", NULL, 0), 200);
+    memcpy(&list, C.c.read_buf, C.c.read_len < sizeof list ? C.c.read_len : sizeof list);
+    T_EQ_INT(list.rows[0].status, CC_ARENA_FINISHED);
+    T_EQ_STR(list.rows[0].winner, w->c.name);
+    // the stats count the pairing passes
+    tc_response r;
+    T_EQ_INT(tc_http(g_port, "GET", "/c/stats", NULL, NULL, 0, &r), 0);
+    T_CHECK(r.body.len && strstr((const char *)r.body.p, "arena_passes ") != NULL);
+    tc_response_free(&r);
+}
+
 static bool puzzle_next(player *p, cw_puzzle *out) {
     cc_client_read(&p->c, "/c/puzzle/next", 90);
     p->seen = 0;
@@ -781,6 +959,7 @@ int main(int argc, char **argv) {
     T_RUN(restart);
     T_RUN(challenge_abort_flag);
     T_RUN(speeds);
+    T_RUN(arenas);
     T_RUN(stats_and_site);
     T_RUN(no_engine);
     T_RUN(site);
