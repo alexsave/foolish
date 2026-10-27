@@ -28,7 +28,14 @@ The sim's size is `BE_PLAYERS` (fake humans, default 60), `BE_TABLES` (tables ke
   Every finished game's rating stamp is a result in `data/league.bin`; the site's League view draws every bot's rating after every game.
 - A tournament: `BE_MODE=tournament birdseye/tools/run.sh` goes on with the stored tournament, or draws a new one when the last one is finished (or none exists): 48 of the 49 bots (the lowest-rated random one sits out), seeded by the server's ratings, single elimination, two-player best of five, the 16 top seeds straight into the round of 32.
   It plays at the kernel's own bots-only pace (300 ms a move) on 16 tables and takes about a quarter of an hour; the bracket is kept in `data/tournament.bin` and every mode's site shows it under Tournament.
+  Every round is a barrier: no match of the next round starts until every match of this one is decided.
   To start a new tournament while one is running, stop, remove `birdseye/data/tournament.bin`, and run the command again.
+- A tournament with you in it: `BE_HUMAN=1 BE_MODE=tournament birdseye/tools/run.sh`.
+  The first run writes `birdseye/data/human.env` (mode 600, never printed): `BE_HUMAN_NAME=alex` and a generated `BE_HUMAN_PASSWORD`.
+  birdseye signs that account up on the local game server, adds it as one more row of the bot list (key `human`, never seated by the league), and a freshly drawn tournament gives it `BE_HUMAN_SEED` (24) in place of the bot drawn there.
+  `run.sh` also starts the real foolish web UI (`next dev` from `foolish/`) at http://127.0.0.1:3811/: sign in with the name and password in `human.env`; your live game is on the dashboard and linked ("play") from your row in the bracket.
+  Your games deal when you press Ready, and wait for you as long as you like (no stall limit applies to a human's table); the bots' matches go on at their own pace meanwhile, and the next round starts once yours is decided.
+  A stored bracket that is still running is not redrawn: stop and delete `birdseye/data/tournament.bin` for a fresh draw with you in it.
 - Both routes the server needs are dev-only (refused or not routed without `CBASE_DEV=1`); the kernel is unchanged. `birdseye/tools/hotpath_proof.sh` shows the move and push path compiles to the same instructions as before them.
 
 By hand:

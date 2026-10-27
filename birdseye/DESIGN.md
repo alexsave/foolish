@@ -85,7 +85,20 @@ The kernel paces bots-only tables at 300 ms a move, so the server also has a dev
 `birdseye/tools/hotpath_proof.sh` compiles every server source before and after and compares each function's disassembly: the move and push path (functions_http.c, pushes.c, fanout.c, the journal, the store) is identical; bots.c's drive differs by the one added call.
 The league (league.c) watches every table as one spectator account and records each finished game's rating stamp (before, after, delta by seat) as a result; the site draws them.
 The tournament (tournament.c) is bookkeeping over the same engine; its bracket lives in its own file and is shown in every mode.
+Every round is a barrier: no match of round r+1 starts before every match of round r is decided.
 Measured with 40 league tables at the think pace: the game server at about 5% of a core (the gauge's ten-second window checked against the process's CPU time over the same ten seconds: 4.97% vs 5.03%, 4.77% vs 4.70%), birdseye about 1%; with 16 tournament tables at the bots-only pace about 13%.
+
+## A human in the tournament (2026-10-26)
+
+A person can hold one seed and play his matches in the real foolish web UI while the bots play theirs.
+`BE_HUMAN_NAME` and `BE_HUMAN_PASSWORD` name a local account; at start birdseye signs it up (or in) like any of its clients and appends it to the bot list as the last row, key `human`, id the account's user id.
+Being last keeps every index in `league.bin` and `tournament.bin` valid, and both files name rows by id, so the row survives a restart; a seat of his maps to his row (board.c's roster and league.c's list) as a bot's does, so his games are rated results like any other.
+The league never seats him (`be_league_may_seat`); a fresh draw is made from the server's bots alone and then `be_tour_swap_seed` puts him in `BE_HUMAN_SEED` (default 24), in the seed and in the one match that held the bot drawn there, entry rating and all.
+A table with him in a seat goes through the route's format 2 (`u8 2, u8 passing, u8 n, n x {u8 kind, u8 len, id}`, kind 1 for an account): the server seats him UNREADY by his stored username, readies nobody, and deals when he presses Ready, whose commit kicks the bot loop.
+The undealt lobby is watched like any table (the watcher's read of it is a lobby envelope), and his table is exempt from the stall limit (`BE_STALL_MS`, default three minutes, a knob so the smoke can prove the exemption in seconds), in the lobby and between his moves; the game server itself has no turn timer and reaps no lobby.
+Every round is a barrier (`be_tour_next` plays only the lowest round with an undecided match), so the bots finish their round at their own pace and then wait for his match.
+`run.sh` starts the web UI (`next dev -H 127.0.0.1 -p 3811`, `NEXT_PUBLIC_BACKEND_URL` the game server) as a fourth process, and builds the site with `NEXT_PUBLIC_BE_PLAY_URL` so his live match links to `<play url>/<game id>`.
+`test/smoke_human.c` plays a human's game end to end through the same HTTP calls the web UI makes.
 
 ## Known gaps
 
@@ -94,3 +107,5 @@ Measured with 40 league tables at the think pace: the game server at about 5% of
 - The league's games/min in the top bar counts rated results over ten minutes; the platform's one-second rate of games is shown in Numbers only.
 - The histogram's four buckets per octave make a p50 read up to 19% low.
 - The 400-player mixed-mode measurement was never finished.
+- A birdseye restart while the human's match has a game in play asks his match for a new game, and the old table (a lobby, or a game he was playing) stays on his dashboard.
+- In the web UI the human's lobby offers what any lobby does: he could kick the bot, add one, or change the rules; birdseye then watches a table that is not the match it asked for. The lobby is titled "house's Game" (the dev route's house account made it).
