@@ -907,6 +907,26 @@ static bool table_open(lg_table *t, const int *seat_bots, int n, bool podkidnoy,
     return true;
 }
 
+// The game server deletes the finished table (its dev-only POST /dev/table_drop, dev_bot_table.h:
+// the row goes as when its last seat leaves; the replay is kept), so it leaves the human's dashboard
+// and any rematch lobby made of it goes with it. A refusal is logged and the table simply stays.
+static void table_drop(lg_table *t) {
+    uint8_t body[2 + NW_GID_MAX];
+    body[0] = 1;   // DEV_TABLE_DROP_FORMAT
+    body[1] = (uint8_t)t->gid_len;
+    memcpy(body + 2, t->gid, (size_t)t->gid_len);
+    char headers[256];
+    snprintf(headers, sizeof headers, "Authorization: Bearer %s\r\nContent-Type: application/octet-stream\r\n", g_o.admin_token);
+    tc_response r;
+    if (tc_http(g_port, "POST", "/dev/table_drop", headers, body, 2 + (size_t)t->gid_len, &r) != 0) {
+        CB_WARN("birdseye", "league: POST /dev/table_drop %s: no answer", t->gid);
+        return;
+    }
+    if (r.status == 200) CB_INFO("birdseye", "league: %s dropped from the game server (finished)", t->gid);
+    else CB_WARN("birdseye", "league: POST /dev/table_drop %s answered %d", t->gid, r.status);
+    tc_response_free(&r);
+}
+
 static void table_tick(lg_table *t, int64_t now_ms) {
     switch (t->state) {
     case L_WATCH:
@@ -942,6 +962,8 @@ static void table_tick(lg_table *t, int64_t now_ms) {
     case L_DONE:
         if (now_ms - t->over_ms >= LINGER_MS) {
             event_at(t, BE_EV_GONE, -1, NULL, 0, t->have ? t->ct->view.version : 0);
+            // A finished gauntlet game leaves the human's dashboard (its replay stays).
+            if (g_o.gauntlet && t->human) table_drop(t);
             table_close(t);
         }
         break;

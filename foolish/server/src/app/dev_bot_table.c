@@ -189,8 +189,47 @@ static void h_bot_table(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     cb_res_send(res, 200, OCTETS, out, 1 + gl);
 }
 
-static const cb_route DEV_ROUTES[] = { { "*", "/dev/bot_table", CB_ROUTE_POOL, h_bot_table, 0 } };
+// ---- POST /dev/table_drop ------------------------------------------------------------------------
+
+// The table goes as the last seat's leave makes it go (table_ops.h: TABLE_EMPTY deletes the row at
+// its version, clears its members, seats and chat, keeps its replay, and tells every human seated
+// that they left); a game dealt and in play is never dropped.
+static int run_drop(Table *t, const cb_game_row *row, const uint8_t deal_seed[32], void *ud) {
+    (void)t;
+    (void)deal_seed;
+    (void)ud;
+    return row->status == GAME_STATUS_PLAYING ? TABLE_E_FORBIDDEN : TABLE_EMPTY;
+}
+
+static void h_table_drop(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    if (!cb_admin_authorized(ctx, req, res)) return;
+    if (strcmp(req->method, "POST") != 0) { refusal(res, 405, ASK_WHY_METHOD, 0, 0); return; }
+    if (!ctx->store) { refusal(res, 503, ASK_WHY_INTERNAL, 0, 0); return; }
+    const uint8_t *b = (const uint8_t *)req->body;
+    char gid[CB_GAME_ID_MAX + 1];
+    if (req->body_len < 2 || b[0] != DEV_TABLE_DROP_FORMAT || b[1] == 0 || b[1] > CB_GAME_ID_MAX || req->body_len != 2u + b[1]) {
+        refusal(res, 400, ASK_WHY_MALFORMED, 0, 0);
+        return;
+    }
+    memcpy(gid, b + 2, b[1]);
+    gid[b[1]] = 0;
+    cb_table_result r;
+    memset(&r, 0, sizeof r);
+    cb_table_op op = { .game_id = gid, .run = run_drop, .ud = NULL, .no_envelope = true };
+    int rc = cb_table_run(ctx, &op, &r);
+    free(r.envelope);
+    if (rc == CB_E_NOT_FOUND) { cb_res_send(res, 404, OCTETS, NULL, 0); return; }
+    if (rc != CB_OK) { refusal(res, 500, ASK_WHY_INTERNAL, 0, 0); return; }
+    if (r.result < 0) { refusal(res, 400, ASK_WHY_REFUSED, r.result, r.detail); return; }
+    CB_INFO("dev", "table drop: %s deleted", gid);
+    cb_res_send(res, 200, OCTETS, NULL, 0);
+}
+
+static const cb_route DEV_ROUTES[] = {
+    { "*", "/dev/bot_table", CB_ROUTE_POOL, h_bot_table, 0 },
+    { "*", "/dev/table_drop", CB_ROUTE_POOL, h_table_drop, 0 },
+};
 
 cb_route_list cb_dev_bot_table_route_list = { DEV_ROUTES, 0 };
 
-void cb_dev_bot_table_enable(bool dev) { cb_dev_bot_table_route_list.n = dev ? 1 : 0; }
+void cb_dev_bot_table_enable(bool dev) { cb_dev_bot_table_route_list.n = dev ? (int)(sizeof DEV_ROUTES / sizeof DEV_ROUTES[0]) : 0; }

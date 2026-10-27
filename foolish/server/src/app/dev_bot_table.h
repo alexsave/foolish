@@ -45,6 +45,15 @@
 // exactly as format 1 does. With one, NOTHING is readied by the route: every bot sits READY, the
 // human UNREADY, the table stays in its lobby, and the kernel deals when the human presses Start
 // (ASK_START -> table_ready over /v1/meta, whose commit kicks the bot loop as any deal does).
+//
+// POST /dev/table_drop (DEV-ONLY, the same two locks): birdseye's gauntlet clears a finished game
+// of its human's off his dashboard. The table goes exactly as when its last seat leaves: one
+// cb_table_run whose run answers TABLE_EMPTY, so table_ops deletes the row at its version (members,
+// seats, moves and chat with it; the replay is kept, its game id cleared) and tells each human
+// seated that they left. A game dealt and in play is refused.
+//   request   u8 DEV_TABLE_DROP_FORMAT, u8 len, game id
+//   200       empty: deleted;  404 no such game
+//   refusals  400 MALFORMED, 400 REFUSED code TABLE_E_FORBIDDEN (a game in play), 500 INTERNAL
 #ifndef CB_DEV_BOT_TABLE_H
 #define CB_DEV_BOT_TABLE_H
 
@@ -56,12 +65,13 @@
 #define DEV_BOT_TABLE_FORMAT_2 2
 #define DEV_SEAT_BOT   0   // format 2: the id is a bot's (bots_list)
 #define DEV_SEAT_HUMAN 1   // format 2: the id is an account's user id
+#define DEV_TABLE_DROP_FORMAT 1
 #define DEV_HOUSE_ID   "00000000-0000-4000-8000-00000000b075"
 #define DEV_HOUSE_NAME "house"
 
 // Routed in foolish_app.c's list; its n is 0 until cb_dev_bot_table_enable.
 extern cb_route_list cb_dev_bot_table_route_list;
-// Called by serve_open: routes POST /dev/bot_table when `dev` (CBASE_DEV=1), nothing otherwise.
+// Called by serve_open: routes POST /dev/bot_table and /dev/table_drop when `dev` (CBASE_DEV=1), nothing otherwise.
 void cb_dev_bot_table_enable(bool dev);
 
 #endif

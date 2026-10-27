@@ -26,6 +26,7 @@
 #include "table.h"
 #include "wire.h"
 
+#include <sqlite3.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -112,6 +113,37 @@ static int post_new(const char *token) {
     return st;
 }
 
+// The game server's dev-only drop (dev_bot_table.h), as birdseye calls it.
+static int drop_req(const char *gid) {
+    uint8_t body[2 + BE_GID];
+    body[0] = 1;
+    body[1] = (uint8_t)strlen(gid);
+    memcpy(body + 2, gid, body[1]);
+    tc_response r;
+    if (tc_http(g_game_port, "POST", "/dev/table_drop", "Authorization: Bearer " ADMIN "\r\nContent-Type: application/octet-stream\r\n", body,
+                2 + (size_t)body[1], &r) != 0)
+        return -1;
+    int st = r.status;
+    tc_response_free(&r);
+    return st;
+}
+
+// Rows of the game server's file, read beside it (SQLite readers do not disturb its writer).
+static int db_count(const char *sql) {
+    char path[600];
+    snprintf(path, sizeof path, "%s/game.sqlite", g_dir);
+    sqlite3 *db = NULL;
+    int n = -1;
+    if (sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK) {
+        sqlite3_busy_timeout(db, 2000);
+        sqlite3_stmt *st = NULL;
+        if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) == SQLITE_OK && sqlite3_step(st) == SQLITE_ROW) n = sqlite3_column_int(st, 0);
+        sqlite3_finalize(st);
+    }
+    sqlite3_close(db);
+    return n;
+}
+
 // ---- the human, as the web UI talks to the game server ---------------------------------------
 
 static be_client g_h;
@@ -128,6 +160,22 @@ static int human_req(const char *method, const char *path, const void *body, siz
     if (out) cb_buf_append(out, r.body.p, r.body.len);
     tc_response_free(&r);
     return st;
+}
+
+// His dashboard (GET /v1/games, what the web UI lists): how many games it holds, -1 unread.
+static int dashboard_n(void) {
+    cb_buf out;
+    cb_buf_init(&out);
+    int n = human_req("GET", "/v1/games", NULL, 0, &out) == 200 ? nw_list_open(out.p, (int)out.len, NW_GAMES) : -1;
+    cb_buf_free(&out);
+    return n;
+}
+
+// GET /v1/games/<gid> as he would: the status (404 once the game is gone).
+static int game_status(const char *gid) {
+    char path[96];
+    snprintf(path, sizeof path, "/v1/games/%s", gid);
+    return human_req("GET", path, NULL, 0, NULL);
 }
 
 static bool human_view(const char *gid) {
@@ -239,7 +287,16 @@ static bool play_game(const be_w_gauntlet *g, const char *gid, bool to_lose, uin
             *fool = g_ct.view.fool;
             return true;
         }
-        if (g_ct.view.status == GAME_STATUS_PLAYING) human_move(gid, rng, to_lose);
+        if (g_ct.view.status == GAME_STATUS_PLAYING) {
+            // A game in play is never dropped, whoever asks.
+            static bool refused_once;
+            if (!refused_once) {
+                refused_once = true;
+                T_EQ_INT(drop_req(gid), 400);
+                T_EQ_INT(game_status(gid), 200);
+            }
+            human_move(gid, rng, to_lose);
+        }
         usleep(40000);
     }
     return false;
@@ -296,6 +353,8 @@ int main(int argc, char **argv) {
 
     uint64_t rng = 7;
     bool restarted = false, climbed = false, fell = false;
+    int finished = 0;
+    T_EQ_INT(db_count("SELECT count(*) FROM replays"), 0);
     int64_t until = cb_mono_ms() + 420000;
     while (cb_mono_ms() < until && !(climbed && fell)) {
         T_CHECK(live_gid(&g, gid, NULL, 20000));
@@ -317,6 +376,16 @@ int main(int argc, char **argv) {
         T_EQ_INT(y->result[x->games], want);
         T_EQ_INT(y->wins_h, x->wins_h + (want == BE_GAUNT_G_HUMAN));
         T_EQ_INT(y->wins_b, x->wins_b + (want == BE_GAUNT_G_BOT));
+        finished++;
+        // Past the linger, the finished game leaves his dashboard, and its replay stays.
+        t_end = cb_mono_ms() + 20000;
+        while (cb_mono_ms() < t_end && game_status(gid) != 404) usleep(250000);
+        T_EQ_INT(game_status(gid), 404);
+        char q[160];
+        snprintf(q, sizeof q, "SELECT count(*) FROM games WHERE id = '%s'", gid);
+        T_EQ_INT(db_count(q), 0);
+        T_EQ_INT(db_count("SELECT count(*) FROM replays"), finished);
+        T_CHECK(dashboard_n() <= 1);   // at most the next lobby
         fprintf(stderr, "smoke_gauntlet: run %u rung %d game %d: %s, %d-%d\n", g.run, before.rung + 1, y->games,
                 want == BE_GAUNT_G_HUMAN ? "won" : want == BE_GAUNT_G_BOT ? "lost" : "drawn", y->wins_h, y->wins_b);
         if (y->wins_h >= BE_TOUR_WIN) {
