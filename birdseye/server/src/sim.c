@@ -326,32 +326,7 @@ static void apply_cast(player *p, const uint8_t *cast, int n, uint32_t version, 
 // handwritten brain chooses most of the time; a random legal move otherwise.
 static int legal_wire(sim_thread *th, player *p, uint8_t *wire, int cap) {
     if (!p->have) return 0;
-    const TableView *v = &p->ct.view;
-    int seat = v->my_seat;
-    if (seat < 0 || v->status != GAME_STATUS_PLAYING) return 0;
-    LegalMoves *lm = &th->moves;
-    calculate_legal_moves(p->ct.g, seat, lm);
-    int choice = -1;
-    if (rnd(&p->rng, 100) >= RANDOM_MOVE_PCT) {
-        choice = handwritten_prod_strategy_choose(p->ct.g, seat, lm, NULL);
-        if (choice >= 0 && (choice >= lm->n || lm->moves[choice].type == MOVE_WAIT)) choice = -1;
-    }
-    int start = choice >= 0 ? choice : (lm->n ? (int)rnd(&p->rng, (uint32_t)lm->n) : 0);
-    for (int k = 0; k < lm->n; k++) {
-        const LegalMove *m = &lm->moves[(start + k) % lm->n];
-        if (m->type == MOVE_WAIT) continue;
-        AwireAction a;
-        memset(&a, 0, sizeof a);
-        a.kind = m->type;
-        a.n = m->n_cards;
-        for (int i = 0; i < m->n_cards; i++) {
-            a.cards[i] = m->cards[i];
-            a.attacks[i] = m->attack_cards[i];
-        }
-        int n = awire_encode(&a, wire, cap);
-        if (n > 0 && client_validate(&p->ct, &p->ct.view, wire, n) == 0) return n;
-    }
-    return 0;
+    return be_legal_wire(&p->ct, &th->moves, &p->rng, RANDOM_MOVE_PCT, wire, cap);
 }
 
 // A hostile move of `kind` into wire (and the gid to send it for): its length.

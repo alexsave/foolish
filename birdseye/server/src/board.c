@@ -1,8 +1,11 @@
 // board.c - board.h.
 #include "board.h"
 
+#include "awire.h"
 #include "lib_client.h"
+#include "strategy.h"
 #include "util/log.h"
+#include "../../../shared/c/rng.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -87,6 +90,34 @@ bool be_move_raced(const TableResponse *r, uint32_t intent) {
     return r->reject_code == TABLE_REJECT_STALE_ROUND || r->version > intent;
 }
 
+int be_legal_wire(ClientTable *ct, LegalMoves *lm, uint64_t *rng, int random_pct, uint8_t *wire, int cap) {
+    const TableView *v = &ct->view;
+    int seat = v->my_seat;
+    if (seat < 0 || v->status != GAME_STATUS_PLAYING) return 0;
+    calculate_legal_moves(ct->g, seat, lm);
+    int choice = -1;
+    if ((int)(rng_u32(rng) % 100) >= random_pct) {
+        choice = handwritten_prod_strategy_choose(ct->g, seat, lm, NULL);
+        if (choice >= 0 && (choice >= lm->n || lm->moves[choice].type == MOVE_WAIT)) choice = -1;
+    }
+    int start = choice >= 0 ? choice : (lm->n ? (int)(rng_u32(rng) % (uint32_t)lm->n) : 0);
+    for (int k = 0; k < lm->n; k++) {
+        const LegalMove *m = &lm->moves[(start + k) % lm->n];
+        if (m->type == MOVE_WAIT) continue;
+        AwireAction a;
+        memset(&a, 0, sizeof a);
+        a.kind = m->type;
+        a.n = m->n_cards;
+        for (int i = 0; i < m->n_cards; i++) {
+            a.cards[i] = m->cards[i];
+            a.attacks[i] = m->attack_cards[i];
+        }
+        int n = awire_encode(&a, wire, cap);
+        if (n > 0 && client_validate(ct, &ct->view, wire, n) == 0) return n;
+    }
+    return 0;
+}
+
 // ---- the bots ----------------------------------------------------------------------------------
 
 static be_bot g_bots[BE_BOTS_MAX];
@@ -94,6 +125,15 @@ static int    g_n;
 
 int be_bots_n(void) { return g_n; }
 const be_bot *be_bots_at(int i) { return i >= 0 && i < g_n ? &g_bots[i] : NULL; }
+
+int be_bots_add(const char *id, const char *key, const char *name) {
+    if (g_n >= BE_BOTS_MAX) return -1;
+    be_bot *o = &g_bots[g_n];
+    snprintf(o->id, sizeof o->id, "%s", id);
+    snprintf(o->key, sizeof o->key, "%s", key);
+    snprintf(o->name, sizeof o->name, "%s", name);
+    return g_n++;
+}
 
 int be_bots_by_name(const char *name) {
     for (int i = 0; i < g_n; i++)

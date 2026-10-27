@@ -28,7 +28,6 @@
 #include <unistd.h>
 
 #define LINGER_MS        8000     // a finished table stays on the grid this long before it closes
-#define STALL_MS         180000   // a table that has not changed in this long is given up
 #define FIRST_VIEW_MS    15000    // a table whose first envelope never came is given up
 #define CREATE_GAP_MS    1500     // between two new tables, so they do not all deal at once
 #define BOARD_EVERY_MS   60000    // the leaderboard read again
@@ -54,6 +53,7 @@ typedef struct {
     int64_t      created_ms, dealt_ms, last_change_ms, over_ms, retry_ms;
     uint32_t     moves;
     int          match;   // the tournament match this game is of, -1 a league game
+    bool         human;   // a seat is the human's row: made by format 2, never given up for stalling
 } lg_table;
 
 static be_league_opts g_o;
@@ -67,6 +67,7 @@ static lg_table      *g_tables;
 static int            g_n_tables;
 static uint64_t       g_rng;
 static atomic_uint    g_seated;
+static int            g_human = -1;     // the human's row in g_bots (the last), -1 none
 
 // The standings and the history, under one lock (the routes read them from the request pool).
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -244,8 +245,7 @@ static bool read_board(bool publish_changes) {
     for (int i = 0; i < n; i++) {
         NwBoardRow row;
         if (nw_get_board(r.body.p, (int)r.body.len, i, &row) != NW_OK) break;
-        if (!row.is_bot) continue;
-        int b = be_bots_by_id(row.id, row.id_len);
+        int b = be_bots_by_id(row.id, row.id_len);   // a bot's row, or the human's
         if (b < 0 || b >= g_n_bots) continue;
         pthread_mutex_lock(&g_mu);
         be_w_bot *w = &g_bots[b];
@@ -525,6 +525,26 @@ static bool tour_new(int64_t now_ms) {
     return true;
 }
 
+// The human takes `seed` of a fresh draw in place of the bot drawn there (logged: the seed, the bot
+// he replaces, whom he meets first).
+static void human_seat(int seed) {
+    uint8_t old = seed >= 1 && seed <= BE_TOUR_PLAYERS ? g_tour.seed_bot[seed - 1] : BE_TOUR_NONE;
+    if (!be_tour_swap_seed(&g_tour, seed, (uint8_t)g_human)) {
+        CB_WARN("birdseye", "tournament: %.*s cannot take seed %d", g_bots[g_human].name_len, g_bots[g_human].name, seed);
+        return;
+    }
+    char vs[96] = "";
+    for (int i = 0; i < BE_TOUR_MATCHES && !vs[0]; i++) {
+        const be_w_match *m = &g_tour.matches[i];
+        if (m->a != g_human && m->b != g_human) continue;
+        uint8_t o = m->a == g_human ? m->b : m->a;
+        if (o == BE_TOUR_NONE) snprintf(vs, sizeof vs, "the winner of seeds %d v %d", 33 - seed, 32 + seed);
+        else snprintf(vs, sizeof vs, "seed %d %.*s", m->a == g_human ? m->seed_b : m->seed_a, g_bots[o].name_len, g_bots[o].name);
+    }
+    CB_INFO("birdseye", "tournament: %.*s holds seed %d in place of %.*s; first opponent %s", g_bots[g_human].name_len,
+            g_bots[g_human].name, seed, g_bots[old].name_len, g_bots[old].name, vs);
+}
+
 // At start: the stored bracket; in tournament mode a running one goes on and a finished or missing
 // one is drawn afresh from the server's ratings now.
 static void tour_open(int64_t now_wall) {
@@ -541,19 +561,22 @@ static void tour_open(int64_t now_wall) {
     // A game the last run had in play is not trusted to be watched again: its match asks anew.
     for (int i = 0; i < BE_TOUR_MATCHES; i++) g_tour.matches[i].live = 0;
     if (!have || g_tour.state != BE_TOUR_RUNNING) {
+        // The server's bots are drawn; the human (the last row) is not one of them.
+        int n = g_human >= 0 ? g_human : g_n_bots;
         int32_t rating[BE_LEAGUE_BOTS];
         bool random[BE_LEAGUE_BOTS];
-        for (int i = 0; i < g_n_bots; i++) {
+        for (int i = 0; i < n; i++) {
             rating[i] = g_bots[i].rating;
             random[i] = g_bots[i].key_len == 6 && memcmp(g_bots[i].key, "random", 6) == 0;
         }
-        if (!be_tour_draw(&g_tour, rating, random, g_n_bots, now_wall)) {
-            CB_WARN("birdseye", "tournament: %d bots: a draw needs 49", g_n_bots);
+        if (!be_tour_draw(&g_tour, rating, random, n, now_wall)) {
+            CB_WARN("birdseye", "tournament: %d bots: a draw needs 49", n);
             return;
         }
         CB_INFO("birdseye", "tournament: drawn, 48 bots; left out %.*s (rating %d), top seed %.*s (%d)",
                 g_bots[g_tour.dropped].name_len, g_bots[g_tour.dropped].name, g_bots[g_tour.dropped].rating,
                 g_bots[g_tour.seed_bot[0]].name_len, g_bots[g_tour.seed_bot[0]].name, g_tour.seed_rating[0]);
+        if (g_human >= 0) human_seat(g_o.human_seed);
     } else CB_INFO("birdseye", "tournament: going on, %u games played", g_tour.games);
     tour_changed();
 }
@@ -569,6 +592,11 @@ size_t be_tour_snapshot(void **out) {
     return sizeof *copy;
 }
 
+bool be_league_may_seat(const char *key, int key_len, int seated, int per_bot) {
+    if (key_len == (int)strlen(BE_HUMAN_KEY) && memcmp(key, BE_HUMAN_KEY, (size_t)key_len) == 0) return false;
+    return seated < per_bot;
+}
+
 static bool table_new(int64_t now_ms) {
     lg_table *t = NULL;
     for (int i = 0; i < g_n_tables && !t; i++)
@@ -579,7 +607,7 @@ static bool table_new(int64_t now_ms) {
     uint32_t key[BE_LEAGUE_BOTS];
     pthread_mutex_lock(&g_mu);
     for (int i = 0; i < g_n_bots; i++)
-        if (g_bots[i].seated < g_o.tables_per_bot) {
+        if (be_league_may_seat(g_bots[i].key, g_bots[i].key_len, g_bots[i].seated, g_o.tables_per_bot)) {
             // Fewest league games first, then the fewest tables now, then at random.
             key[nf] = (g_bots[i].league_games << 16) | ((uint32_t)g_bots[i].seated << 12) | rnd(4096);
             free_idx[nf++] = i;
@@ -604,13 +632,17 @@ static bool table_new(int64_t now_ms) {
 
 // Asks the game server for a table of these bots, in this seat order, and starts watching it.
 static bool table_open(lg_table *t, const int *seat_bots, int n, bool podkidnoy, int match, int64_t now_ms) {
-    uint8_t body[3 + MAX_PLAYERS * (1 + BE_BOT_ID)];
+    // dev_bot_table.h: format 1 names bots; format 2 (a human seated) names each seat's kind first.
+    bool human = false;
+    for (int i = 0; i < n; i++) human = human || (g_human >= 0 && seat_bots[i] == g_human);
+    uint8_t body[3 + MAX_PLAYERS * (2 + BE_BOT_ID)];
     size_t at = 0;
-    body[at++] = 1;   // dev_bot_table.h DEV_BOT_TABLE_FORMAT
+    body[at++] = human ? 2 : 1;   // DEV_BOT_TABLE_FORMAT_2, DEV_BOT_TABLE_FORMAT
     body[at++] = podkidnoy ? 0 : 1;
     body[at++] = (uint8_t)n;
     for (int i = 0; i < n; i++) {
         const be_w_bot *b = &g_bots[seat_bots[i]];
+        if (human) body[at++] = seat_bots[i] == g_human ? 1 : 0;   // DEV_SEAT_HUMAN, DEV_SEAT_BOT
         body[at++] = b->id_len;
         memcpy(body + at, b->id, b->id_len);
         at += b->id_len;
@@ -647,6 +679,7 @@ static bool table_open(lg_table *t, const int *seat_bots, int n, bool podkidnoy,
     t->podkidnoy = podkidnoy;
     for (int i = 0; i < n; i++) t->bots[i] = seat_bots[i];
     t->match = match;
+    t->human = human;
     t->state = L_WATCH;
     t->created_ms = t->last_change_ms = now_ms;
     set_seated(t, true);
@@ -673,7 +706,9 @@ static void table_tick(lg_table *t, int64_t now_ms) {
         }
         break;
     case L_PLAYING:
-        if (now_ms - t->last_change_ms > STALL_MS) {
+        // A human's game waits for him however long he thinks (in its lobby it is L_WATCH, which
+        // never stalls once its first view came).
+        if (!t->human && now_ms - t->last_change_ms > g_o.stall_ms) {
             cb_metrics_add(be_mx, BE_M_STALLS, 1);
             event_at(t, BE_EV_STALL, -1, NULL, 0, t->have ? t->ct->view.version : 0);
             CB_WARN("birdseye", "league: %s stalled: giving it up", t->gid);
@@ -887,6 +922,11 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
         return CB_E_INVALID;
     }
     if (g_o.tables_per_bot < 1) g_o.tables_per_bot = 1;
+    if (g_o.stall_ms <= 0) g_o.stall_ms = 180000;
+    if (o->human_name[0] && (strlen(o->human_name) >= sizeof g_w.name || strlen(o->human_password) >= sizeof g_w.password)) {
+        snprintf(err, cap, "birdseye: BE_HUMAN_NAME or BE_HUMAN_PASSWORD is too long");
+        return CB_E_INVALID;
+    }
     g_rng = (o->seed + 7) * 0x9E3779B97F4A7C15ull;
     g_n_tables = o->tables;
     g_tables = calloc((size_t)g_n_tables, sizeof *g_tables);
@@ -921,7 +961,33 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
         snprintf(err, cap, "birdseye: the game server at %s lists %d bots: the league needs two", o->server, nb);
         return CB_E_STATE;
     }
+    if (o->human_name[0]) {
+        // The human's account, as any client signs up (or in when the name is taken).
+        be_client h;
+        if (!be_client_init(&h, o->human_name, o->human_password)) {
+            snprintf(err, cap, "birdseye: no memory for the human's account");
+            return CB_E_NOMEM;
+        }
+        bool in = be_client_sign_in(&h, g_port);
+        char uid[sizeof h.uid];
+        snprintf(uid, sizeof uid, "%s", h.uid);
+        be_client_free(&h);
+        if (!in || !uid[0]) {
+            snprintf(err, cap, "birdseye: BE_HUMAN_NAME '%s' could not sign up or in on %s (a wrong BE_HUMAN_PASSWORD for a name taken?)",
+                     o->human_name, o->server);
+            return CB_E_STATE;
+        }
+        if (be_bots_add(uid, BE_HUMAN_KEY, o->human_name) < 0) {
+            snprintf(err, cap, "birdseye: no room for the human in the bot list");
+            return CB_E_STATE;
+        }
+    }
     bots_from_roster();
+    g_human = -1;
+    if (o->human_name[0] && g_n_bots == be_bots_n()) {
+        g_human = g_n_bots - 1;
+        CB_INFO("birdseye", "league: %s is row %d (account %.*s)", o->human_name, g_human, g_bots[g_human].id_len, g_bots[g_human].id);
+    }
     read_board(false);
     file_open();
     tour_open(cb_now_ms());

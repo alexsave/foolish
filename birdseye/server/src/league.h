@@ -34,7 +34,24 @@ typedef struct {
     uint64_t seed;
     bool     tournament;       // play the stored tournament (or draw one) instead of league tables
     char     tour_file[512];   // the tournament's file; "" keeps none
+    int      stall_ms;         // a game in play nobody moved at for this long is given up (not a human's)
+    char     human_name[32];   // a human account in the field ("" none): signed up (or in) at start
+    char     human_password[40];
+    int      human_seed;       // the seed (1..48) a freshly drawn tournament gives the human
 } be_league_opts;
+
+// THE HUMAN. With human_name set, the account is signed up (or in) on the game server at start and
+// becomes one more row of the bot list, the last (key BE_HUMAN_KEY, id the account's user id), so
+// every index the stored files hold stays valid and a seat of his maps to his row like a bot's. The
+// league never seats him (be_league_may_seat); a freshly drawn tournament gives him human_seed in
+// place of the bot drawn there (tournament.h be_tour_swap_seed). His table is made through the
+// dev-only route's format 2 (he sits UNREADY: the game deals when he presses Start in the web UI)
+// and is never given up for stalling, in its lobby or between his moves.
+#define BE_HUMAN_KEY "human"
+
+// Whether the league (not the tournament) may seat this row at one more table, `per_bot` the most
+// tables a bot sits at at once: never a human's row.
+bool be_league_may_seat(const char *key, int key_len, int seated, int per_bot);
 
 // The mode birdseye runs in (wire.h BE_MODE_*), set by birdseye_app.c at open.
 extern uint8_t be_mode;

@@ -16,6 +16,14 @@
 //   BE_LEAGUE_FILE   the rated games' history (default ../data/league.bin; "" keeps none)
 //   BE_PODKIDNOY     percent of tables under podkidnoy rules (default 20 mixed, 30 league)
 //   BE_SEED          the seed (default 1)
+//   BE_STALL_MS      a game in play nobody moved at for this long is given up (default 180000; a
+//                    human's game never is)
+//   BE_HUMAN_NAME    a human account in the field ("" none, the default): signed up (or in) on the
+//                    game server at start, one more row of the bot list (key "human"), never seated
+//                    by the league; in a freshly drawn tournament he holds BE_HUMAN_SEED and plays
+//                    his matches in the real web UI (league.h)
+//   BE_HUMAN_PASSWORD that account's password (8..39 characters)
+//   BE_HUMAN_SEED    his seed, 1..48 (default 24)
 // The mixed sim's:
 //   BE_PLAYERS       fake humans (default 60)
 //   BE_TABLES        tables kept live at once (default BE_PLAYERS / 2)
@@ -147,6 +155,19 @@ static int be_serve_open(cb_ctx *ctx, char *err, size_t cap) {
         o.tables_per_bot = (int)env_long("BE_LEAGUE_PER_BOT", 1, 1, 8);
         o.podkidnoy = (int)env_long("BE_PODKIDNOY", 30, 0, 100);
         o.seed = (uint64_t)env_long("BE_SEED", 1, 0, INT32_MAX);
+        o.stall_ms = (int)env_long("BE_STALL_MS", 180000, 100, INT32_MAX);
+        const char *hn = getenv("BE_HUMAN_NAME"), *hp = getenv("BE_HUMAN_PASSWORD");
+        if (hn && *hn && strlen(hn) >= sizeof o.human_name) {
+            snprintf(err, cap, "birdseye: BE_HUMAN_NAME is longer than %zu characters", sizeof o.human_name - 1);
+            return CB_E_INVALID;
+        }
+        if (hp && strlen(hp) >= sizeof o.human_password) {
+            snprintf(err, cap, "birdseye: BE_HUMAN_PASSWORD is longer than %zu characters", sizeof o.human_password - 1);
+            return CB_E_INVALID;
+        }
+        snprintf(o.human_name, sizeof o.human_name, "%s", hn ? hn : "");
+        snprintf(o.human_password, sizeof o.human_password, "%s", hp ? hp : "");
+        o.human_seed = (int)env_long("BE_HUMAN_SEED", 24, 1, 48);
         if ((rc = be_league_start(&o, err, cap)) != CB_OK) return rc;
     } else {
         be_sim_opts o;

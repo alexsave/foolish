@@ -1,6 +1,6 @@
 // smoke_tournament.c - a whole tournament end to end (tournament.h), at the bots-only pace sped up:
 // 48 bots drawn and seeded, every match played to three wins by real rated server games through the
-// dev-only bot table, the champion crowned, the bracket on the stream and at GET /be/tournament, and
+// dev-only bot table, no round begun before the one below it was decided, the champion crowned, the bracket on the stream and at GET /be/tournament, and
 // the same bracket read back from its file by a birdseye restarted in league mode.
 //
 // (Helpers shared in shape with smoke_league.c.)
@@ -144,6 +144,16 @@ static bool get_tour(be_w_tour *t) {
     return ok;
 }
 
+// The rounds are barriers (tournament.h): no match is live while a match of a lower round is undecided.
+static bool barrier_holds(const be_w_tour *t) {
+    for (int i = 0; i < BE_TOUR_MATCHES; i++) {
+        if (!t->matches[i].live) continue;
+        for (int j = 0; j < BE_TOUR_MATCHES; j++)
+            if (t->matches[j].round < t->matches[i].round && t->matches[j].winner == BE_TOUR_NONE) return false;
+    }
+    return true;
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: smoke_tournament <birdseye> <cbase>\n");
@@ -160,7 +170,7 @@ int main(int argc, char **argv) {
     int fd = open_stream();
     // The bracket on the stream as it changes, until the champion is crowned.
     static be_w_tour t;
-    int n_frames = 0;
+    int n_frames = 0, broken = 0;
     bool done = false;
     cb_buf in;
     cb_buf_init(&in);
@@ -183,6 +193,7 @@ int main(int argc, char **argv) {
         if (in.len != 2 + sizeof t) break;
         memcpy(&t, in.p + 2, sizeof t);
         n_frames++;
+        if (!barrier_holds(&t)) broken++;
         done = t.state == BE_TOUR_DONE;
     }
     cb_buf_free(&in);
@@ -190,6 +201,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "smoke_tournament: %d bracket frames, %u games, champion %d\n", n_frames, t.games, t.champion);
     T_CHECK(done);
     T_CHECK(n_frames > 47);
+    T_EQ_INT(broken, 0);   // on every frame, at the bots' speed
     // Every match decided at three wins (or by the drawn-out rule), each winner sent on.
     uint32_t games = 0;
     int by_wins = 0;

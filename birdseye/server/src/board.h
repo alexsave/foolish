@@ -9,6 +9,7 @@
 #define BE_BOARD_H
 
 #include "client_table.h"
+#include "legal.h"
 #include "netwire.h"
 #include "table.h"
 #include "world.h"
@@ -30,6 +31,13 @@ int be_board_event_kind(const PushEvent *e);
 // among them), false when the server refused the move on the very board it was made on (a finding).
 bool be_move_raced(const TableResponse *r, uint32_t intent);
 
+// A legal move for the seat that holds `ct` (a client table's masked board) into wire, as a fake
+// human (sim.c) or a test's human plays one: the handwritten brain's choice, or with chance
+// `random_pct` percent (drawn from *rng) a random legal move; each candidate is validated by
+// client_validate before it is taken. Its length, or 0 when the seat has nothing to do now.
+// `lm` is the caller's scratch.
+int be_legal_wire(ClientTable *ct, LegalMoves *lm, uint64_t *rng, int random_pct, uint8_t *wire, int cap);
+
 #define BE_BOTS_MAX 64
 typedef struct {
     char id[NW_ID_MAX + 1];
@@ -42,6 +50,9 @@ typedef struct {
 int be_bots_fetch(int port, const char *token);
 int be_bots_n(void);
 const be_bot *be_bots_at(int i);
+// One more row after the server's bots (league.h: the human's account, key "human"): its index, or
+// -1 when the list is full. A later be_bots_fetch drops it.
+int be_bots_add(const char *id, const char *key, const char *name);
 // The bot whose nickname is `name` (a seat's name), or -1.
 int be_bots_by_name(const char *name);
 // The bot whose id is `id`, or -1.
