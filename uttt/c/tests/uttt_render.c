@@ -99,39 +99,18 @@ static void write_ppm(void)
 static UtttPt   pool[400000];
 static UtttPoly polys[120000];
 
-/* `./build/uttt_render rulebook [side] [dump]`
+/* `./build/uttt_render rulebook [side]`
  *
  * The button, ALONE and BLOWN UP, because the only way to know whether a
  * squiggle matches the design document is to look at it. `side` is the size
  * in POINTS the button is built at - 54 is the one that ships, and the image
- * is that shape magnified, not a bigger button.
- *
- * `dump` prints the strokes back as centrelines in point space, recovered
- * from the ribbon (its two halves straddle the sample, one forward and one
- * back), so the port can be diffed against rough.js itself rather than
- * eyeballed. */
+ * is that shape magnified, not a bigger button. */
 static int rulebook(int argc, char **argv)
 {
     float side = argc > 2 ? (float)atof(argv[2]) : 54.f;
-    int   dump = argc > 3 && !strcmp(argv[3], "dump");
 
     UtttDL d; uttt_dl_init(&d, pool, 400000, polys, 120000);
     int rc = uttt_draw_rulebook(&d, side, side);
-
-    if (dump) {
-        for (int i = 0; i < d.n_poly; i++) {
-            const UtttPt *q = &d.pt[d.poly[i].first];
-            int m = d.poly[i].n / 2;
-            for (int k = 0; k + 1 < m; k++) {
-                float ax = (q[k].x + q[2*m-1-k].x) / 2 * side;
-                float ay = (q[k].y + q[2*m-1-k].y) / 2 * side;
-                float bx = (q[k+1].x + q[2*m-2-k].x) / 2 * side;
-                float by = (q[k+1].y + q[2*m-2-k].y) / 2 * side;
-                printf("%.4f %.4f %.4f %.4f\n", ax, ay, bx, by);
-            }
-        }
-        return 0;
-    }
 
     fprintf(stderr, "rulebook at %gpt: polys %d  points %d  overflow %s\n",
             side, d.n_poly, d.n_pt, rc ? "YES" : "no");

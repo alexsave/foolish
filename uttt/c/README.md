@@ -7,7 +7,6 @@ make -C uttt/c asan       the same under ASan + UBSan
 
 make -C uttt/c render     the board, to build/board.png, without Xcode
 ./uttt/c/build/uttt_render rulebook 54   just the door, blown up
-make -C uttt/c rough-diff the pen, held against rough.js itself (needs node)
 make -C uttt/c ios-smoke  every entry point Swift calls, without a Mac
 make -C uttt/c analyse CODE=<code or link>   every ply held against quill
 ```
@@ -22,10 +21,6 @@ sheet stroke for stroke - `uttt_pen.h` argues that at length.
 `uttt_pen.c` is rough.js transcribed into C, `uttt_draw.c` is the board and
 `uttt_rule.c` is the rulebook door, and all three emit filled polygons in a
 unit square that a renderer only has to fill.
-`rough_diff.mjs` is what keeps the transcription honest: it runs the vendored
-rough.js the design document is drawn with and compares it sample by sample
-with what the C emits, which is the only check that can see a drift that still
-looks like a drawing.
 
 The WORDS are the kernel's too, in 25 languages. `uttt_say.c` decides which
 sentence a position says; `i18n/strings_<code>.c` holds each language's
