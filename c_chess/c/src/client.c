@@ -72,6 +72,9 @@ static void sub(cc_client *c, int kind, const char *room) {
     pend_add(c, id, CC_RQ_SUB, 0);
 }
 
+void cc_client_watch(cc_client *c, const char *room) { sub(c, SF_SUB, room); }
+void cc_client_unwatch(cc_client *c, const char *room) { sub(c, SF_UNSUB, room); }
+
 static void room_name(uint32_t game, char *out) {
     char t[12];
     int n = 0;
@@ -188,6 +191,7 @@ static void game_reset(cc_client *c, uint32_t game) {
     memset(c->san, 0, sizeof c->san);
     c->confirmed_ply = 0;
     c->next_game = 0;
+    c->game_arena = 0;
     c->rematch_offer = 0;
     c->clock_running = 0;
     c->move_sent_at = 0;
@@ -340,6 +344,7 @@ static void take_snapshot(cc_client *c, const uint8_t *p, size_t n, int64_t now)
     c->confirmed_ply = c->g.ply;
     c->rematch_offer = s.rematch_offer;
     c->next_game = s.next_game;
+    c->game_arena = s.arena;
     c->clock_running = s.clock_running;
     c->base_rated[0] = (uint8_t)(s.base_s > 255 ? 255 : s.base_s);
     c->base_rated[1] = s.rated;
@@ -487,6 +492,7 @@ void cc_client_in(cc_client *c, const uint8_t *p, size_t n, int64_t now) {
         case CW_P_LOBBY:
             if (n >= 12 && n <= sizeof c->lobby) { memcpy(&c->lobby, p, n); c->events |= CC_EV_LOBBY; }
             return;
+        case CW_P_ARENA: cc_client_arena_take(c, p, n, now, 0); return;
         default: return;
         }
     }
@@ -494,6 +500,43 @@ void cc_client_in(cc_client *c, const uint8_t *p, size_t n, int64_t now) {
     if (sf_parse(p, n, &f) != 0) return;
     if (f.kind == SF_READY) { c->ready = 1; c->events |= CC_EV_READY; }
     else if (f.kind == SF_REPLY) take_reply(c, &f, now);
+}
+
+int cc_client_arena_take(cc_client *c, const uint8_t *p, size_t n, int64_t now, int answer) {
+    cw_arena_hdr h;
+    if (n < sizeof h) return 0;
+    memcpy(&h, p, sizeof h);
+    if (h.v != CW_V || h.kind != CW_P_ARENA || h.n_rows > CW_ARENA_ROWS || n != sizeof h + (size_t)h.n_rows * sizeof(cw_arena_row)) return 0;
+    if (!answer) {   /* a push: our place as we last knew it */
+        cw_arena_hdr was;
+        memcpy(&was, c->arena, sizeof was);
+        bool same = c->arena_len >= sizeof was && was.id == h.id;
+        h.me_in = same ? was.me_in : 0;
+        h.me_fire = same ? was.me_fire : 0;
+        h.me_rank = same ? was.me_rank : 0;
+        h.me_score = same ? was.me_score : 0;
+        h.me_games = same ? was.me_games : 0;
+    }
+    char me[CW_NAME];
+    memset(me, 0, sizeof me);
+    memcpy(me, c->name, strnlen(c->name, CW_NAME));
+    for (int i = 0; me[0] && i < h.n_rows; i++) {
+        cw_arena_row r;
+        memcpy(&r, p + sizeof h + (size_t)i * sizeof r, sizeof r);
+        if (memcmp(r.name, me, CW_NAME) != 0) continue;
+        h.me_in = r.withdrawn ? CW_ARENA_WITHDRAWN : CW_ARENA_IN;
+        h.me_fire = r.fire;
+        h.me_rank = r.rank;
+        h.me_score = r.score;
+        h.me_games = r.games;
+        break;
+    }
+    memcpy(c->arena, &h, sizeof h);
+    memcpy(c->arena + sizeof h, p + sizeof h, n - sizeof h);
+    c->arena_len = (uint32_t)n;
+    c->arena_at = now;
+    c->events |= CC_EV_ARENA;
+    return 1;
 }
 
 /* ---- what to draw ---- */

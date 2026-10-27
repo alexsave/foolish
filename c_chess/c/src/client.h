@@ -38,6 +38,7 @@ enum {
     CC_EV_TV = 1 << 10,        /* the lobby's live games changed (cc_client.tv) */
     CC_EV_READ = 1 << 11,      /* a read asked by cc_client_read answered (cc_client.read_*) */
     CC_EV_EVAL = 1 << 12,      /* the engine's view of a position arrived (cc_client.eval) */
+    CC_EV_ARENA = 1 << 13,     /* an arena's frame arrived (cc_client.arena): its room's push, or an answer taken */
 };
 
 /* What a request was, to read its answer. */
@@ -76,6 +77,7 @@ typedef struct {
     uint8_t   rematch_offer;
     uint8_t   clock_running;
     uint32_t  next_game;
+    uint32_t  game_arena;      /* the arena that made the game shown (its snapshot); 0: none */
     uint32_t  left_ms[2];      /* as of left_at */
     int64_t   left_at;
     char      san[CC_MAX_PLY][8];
@@ -99,6 +101,10 @@ typedef struct {
     uint32_t  moves_sent, moves_confirmed, pushes;
     /* the last read's answer (CC_EV_READ): the tag it was asked with, its status, its bytes */
     cw_eval   eval;            /* CC_EV_EVAL */
+    /* the arena shown (CC_EV_ARENA): cw_arena_hdr then its rows, received at arena_at */
+    uint8_t   arena[CW_ARENA_FRAME_MAX];
+    uint32_t  arena_len;
+    int64_t   arena_at;
     uint32_t  read_tag;
     uint16_t  read_status;
     uint32_t  read_len;
@@ -151,6 +157,14 @@ void cc_client_read(cc_client *c, const char *path, uint32_t tag);
 void cc_client_post(cc_client *c, const char *path, const void *body, size_t n, uint32_t tag);
 /* Asks the engine about the position after the first `ply` moves of the game shown: CC_EV_EVAL. */
 void cc_client_eval(cc_client *c, int ply);
+/* Watches a room by name (an arena's "a<id>": its pushes arrive as CC_EV_ARENA), or stops. A socket
+ * may watch the lobby, a game and a few rooms more (the hub's limit is 32). */
+void cc_client_watch(cc_client *c, const char *room);
+void cc_client_unwatch(cc_client *c, const char *room);
+/* An arena's frame: a push of its room (answer 0) or the answer of GET /c/arena/<id>, a join or a
+ * withdrawal (answer 1). Kept when well formed (CC_EV_ARENA): 1, else 0. A push holds nobody's own
+ * place: the last known of the same arena stays, and the reader's own row, when listed, renews it. */
+int  cc_client_arena_take(cc_client *c, const uint8_t *p, size_t n, int64_t now, int answer);
 
 /* ---- what to draw ---- */
 /* A side's clock now. */

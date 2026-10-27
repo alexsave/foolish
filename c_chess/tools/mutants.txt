@@ -160,3 +160,11 @@ server/src/journal.c ::: "FROM cc_arenas WHERE status = 2 AND ends_at > ?1", :::
 server/src/state.c ::: if (l->arena) cc_arena_game_over(l, now); ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/state.c ::: for (int c = 0; c < 2; c++) if (l->p[c]->playing) l->p[c]->playing--; ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/arenas.c ::: for (uint32_t l = 0; l + 1 < nl; l += 2) { ::: for (uint32_t l = 0; 0 && l + 1 < nl; l += 2) { ::: build/test/unit_arenas ::: build/test/unit_arenas
+# the client's arenas (c/test/unit_client.c)
+c/src/client.c ::: if (!answer) {   /* a push: our place as we last knew it */ ::: if (0) { ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: bool same = c->arena_len >= sizeof was && was.id == h.id; ::: bool same = c->arena_len >= sizeof was; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: if (memcmp(r.name, me, CW_NAME) != 0) continue; ::: if (1) continue; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: h.n_rows > CW_ARENA_ROWS || ::: 0 || ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: c->game_arena = s.arena; ::: (void)0; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: case CW_P_ARENA: cc_client_arena_take(c, p, n, now, 0); return; ::: case CW_P_ARENA: return; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: void cc_client_watch(cc_client *c, const char *room) { sub(c, SF_SUB, room); } ::: void cc_client_watch(cc_client *c, const char *room) { sub(c, SF_UNSUB, room); } ::: build/test/unit_client ::: build/test/unit_client

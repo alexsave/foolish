@@ -4,7 +4,7 @@
 //
 //   chessbench [--port 8900] [--bots 100] [--tc 180+2] [--think 200] [--spread 200] [--watchers 0]
 //              [--duration 60] [--warmup 10] [--pid <server pid>] [--accounts <file>] [--connect-rate 200]
-//              [--rated 1] [--forever]
+//              [--rated 1] [--forever] [--arena <id>]
 //
 // THE NUMBERS (after the warm-up, for `duration` seconds):
 //   move round trip   a bot's move sent to the server's state push of that ply back on its own socket
@@ -18,6 +18,9 @@
 //
 // --forever with --bots 1 is the house bot a person can play: it seeks the time control, plays its
 // moves after `think` ms, and seeks again when a game ends.
+//
+// --arena <id>: the bots join that arena (on every connect: a withdrawn bot comes back) instead of
+// seeking, and play the games the arena pairs them in; a game's end seeks nothing.
 #include "client.h"
 
 #include "net/loop.h"
@@ -53,6 +56,7 @@ static struct {
     pid_t pid;
     bool forever, quiet, tls, resume;
     int handshakes, threads, ai;
+    uint32_t arena;
     const char *accounts, *prefix, *groups;
 } O = { .port = 8900, .bots = 100, .base = 180, .inc = 2, .think = 200, .spread = 200, .duration = 60, .warmup = 10,
         .connect_rate = 200, .rated = 1, .resume = true, .threads = 4, .accounts = "build/bench_accounts.bin", .prefix = "bot" };
@@ -170,6 +174,12 @@ static void bot_flush(bot *b) {
 
 static void seek(bot *b) {
     if (stopping) return;
+    if (O.arena) {   /* --arena: the arena pairs us (a join of a joined bot is refused, harmlessly) */
+        cw_id q = { O.arena };
+        cc_client_post(&b->c, "/c/arena/join", &q, sizeof q, 1);
+        bot_flush(b);
+        return;
+    }
     if (O.ai) { cc_client_ai(&b->c, O.base, O.inc, O.ai, 2); bot_flush(b); return; }   /* --ai L: against the computer */
     cc_client_seek(&b->c, O.base, O.inc, O.rated);
     bot_flush(b);
@@ -248,7 +258,7 @@ static void on_events(bot *b, uint32_t ev) {
         b->playing = 0;
         cc_client_close_game(&b->c);
         bot_flush(b);
-        if (O.forever || !stopping) seek(b);
+        if (!O.arena && (O.forever || !stopping)) seek(b);
     }
 }
 
@@ -592,6 +602,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--quiet")) O.quiet = true;
         else if (!strcmp(a, "--tls")) O.tls = true;
         else if (!strcmp(a, "--ai")) O.ai = atoi(v), i++;
+        else if (!strcmp(a, "--arena")) O.arena = (uint32_t)strtoul(v, NULL, 10), i++;
         else if (!strcmp(a, "--groups")) O.groups = v, i++;   /* TLS key exchange groups, e.g. X25519 (default: OpenSSL's, X25519MLKEM768 first) */
         else if (!strcmp(a, "--resume")) O.resume = atoi(v) != 0, i++;
         else if (!strcmp(a, "--handshakes")) O.handshakes = atoi(v), i++;

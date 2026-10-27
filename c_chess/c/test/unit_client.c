@@ -1,7 +1,8 @@
 // unit_client.c - the client without a server: frames built by hand go in, the frames it sends come
 // out. A snapshot, a move shown before the server answers, the thinking time it reports, the
 // other side's move, a premove played the moment that move arrives (or dropped when it became
-// illegal), and a push from the future asking for the snapshot again.
+// illegal), and a push from the future asking for the snapshot again. An arena: its room watched, its
+// pushes kept, the reader's own place kept across pushes and renewed by its own row.
 #include "client.h"
 #include "stream_frame.h"
 #include "t.h"
@@ -53,6 +54,87 @@ static int drain(cc_client *c, char *path, cw_move_req *mv) {
 
 static ch_move uci(const cc_client *c, const char *s) { return ch_parse_uci(&c->g.pos, s, strlen(s)); }
 
+/* An arena frame: id, then rows of (name, score, rank), with me_ fields when me_rank. */
+static size_t arena_frame(uint8_t *out, uint32_t id, int n, const char *const *names, int me_rank) {
+    cw_arena_hdr h;
+    memset(&h, 0, sizeof h);
+    h.v = CW_V;
+    h.kind = CW_P_ARENA;
+    h.status = CC_ARENA_RUNNING;
+    h.id = id;
+    h.n_rows = (uint16_t)n;
+    h.n_players = 150;
+    if (me_rank) { h.me_in = CW_ARENA_IN; h.me_rank = (uint16_t)me_rank; h.me_score = 3; h.me_games = 2; }
+    memcpy(out, &h, sizeof h);
+    for (int i = 0; i < n; i++) {
+        cw_arena_row r;
+        memset(&r, 0, sizeof r);
+        memcpy(r.name, names[i], strlen(names[i]));
+        r.rank = (uint16_t)(i + 1);
+        r.score = (uint16_t)(20 - i);
+        r.games = 9;
+        r.fire = i == 0;
+        r.withdrawn = i == 2;
+        memcpy(out + sizeof h + (size_t)i * sizeof r, &r, sizeof r);
+    }
+    return sizeof h + (size_t)n * sizeof(cw_arena_row);
+}
+
+static cw_arena_hdr arena_hdr(const cc_client *c) {
+    cw_arena_hdr h;
+    memcpy(&h, c->arena, sizeof h);
+    return h;
+}
+
+static void arenas(void) {
+    cc_client c;
+    cc_client_init(&c);
+    strcpy(c.name, "me");
+    char path[300];
+    TEST("an arena's room is watched by name");
+    cc_client_watch(&c, "a12");
+    const uint8_t *f;
+    size_t n = cc_client_next_out(&c, &f);
+    sf_frame fr;
+    CHECK(n && sf_parse(f, n, &fr) == 0 && fr.kind == SF_SUB && fr.gid_len == 3 && !memcmp(fr.gid, "a12", 3), "a SUB to a12");
+    cc_client_unwatch(&c, "a12");
+    n = cc_client_next_out(&c, &f);
+    CHECK(n && sf_parse(f, n, &fr) == 0 && fr.kind == SF_UNSUB && fr.gid_len == 3, "an UNSUB");
+    drain(&c, path, NULL);
+
+    static uint8_t fb[CW_ARENA_FRAME_MAX + 64];
+    static const char *const top[] = { "ann", "ben", "me" }, *const others[] = { "ann", "ben" };
+    TEST("an answer with our place below the rows shown");
+    n = arena_frame(fb, 12, 2, others, 150);
+    CHECK(cc_client_arena_take(&c, fb, n, 100, 1) == 1, "taken");
+    CHECK((cc_client_events(&c) & CC_EV_ARENA) && c.arena_len == n && c.arena_at == 100, "event, length %u", c.arena_len);
+    CHECK(arena_hdr(&c).me_in == CW_ARENA_IN && arena_hdr(&c).me_rank == 150 && arena_hdr(&c).me_score == 3, "me %u", arena_hdr(&c).me_rank);
+    TEST("a push of the same arena keeps our place");
+    n = arena_frame(fb, 12, 2, others, 0);
+    cc_client_in(&c, fb, n, 200);
+    CHECK((cc_client_events(&c) & CC_EV_ARENA) && c.arena_at == 200, "%s", "the push was not taken");
+    CHECK(arena_hdr(&c).me_in == CW_ARENA_IN && arena_hdr(&c).me_rank == 150 && arena_hdr(&c).me_games == 2, "me %u", arena_hdr(&c).me_rank);
+    TEST("our own row renews it");
+    n = arena_frame(fb, 12, 3, top, 0);
+    cc_client_in(&c, fb, n, 300);
+    CHECK(arena_hdr(&c).me_rank == 3 && arena_hdr(&c).me_score == 18 && arena_hdr(&c).me_games == 9, "me %u score %u", arena_hdr(&c).me_rank, arena_hdr(&c).me_score);
+    CHECK(arena_hdr(&c).me_in == CW_ARENA_WITHDRAWN && !arena_hdr(&c).me_fire, "withdrawn %u fire %u", arena_hdr(&c).me_in, arena_hdr(&c).me_fire);
+    TEST("another arena's push holds no place of ours");
+    n = arena_frame(fb, 13, 2, others, 0);
+    cc_client_in(&c, fb, n, 400);
+    CHECK(arena_hdr(&c).id == 13 && arena_hdr(&c).me_in == CW_ARENA_OUT && !arena_hdr(&c).me_rank, "me %u in %u", arena_hdr(&c).me_rank, arena_hdr(&c).me_in);
+    TEST("a frame of the wrong length or too many rows is dropped");
+    cc_client_events(&c);
+    n = arena_frame(fb, 14, 2, others, 0);
+    CHECK(!cc_client_arena_take(&c, fb, n - 1, 500, 1) && !cc_client_arena_take(&c, fb, n + 32, 500, 1), "a short or long frame taken");
+    cw_arena_hdr bad;
+    memcpy(&bad, fb, sizeof bad);
+    bad.n_rows = CW_ARENA_ROWS + 1;
+    memcpy(fb, &bad, sizeof bad);
+    CHECK(!cc_client_arena_take(&c, fb, sizeof bad + (CW_ARENA_ROWS + 1) * sizeof(cw_arena_row), 500, 1), "101 rows taken");
+    CHECK(!(cc_client_events(&c) & CC_EV_ARENA) && arena_hdr(&c).id == 13, "%s", "a dropped frame changed the arena");
+}
+
 int main(void) {
     cc_client c;
     char path[300];
@@ -71,8 +153,10 @@ int main(void) {
     s.left_ms[0] = s.left_ms[1] = 60000;
     strcpy(s.name[0], "me");
     strcpy(s.name[1], "them");
+    s.arena = 4;
     reply(&c, snap_id, 200, &s, sizeof s, 1000);
     CHECK(c.synced && c.color == CH_WHITE && cc_client_my_turn(&c), "color %d", c.color);
+    CHECK(c.game_arena == 4, "the game's arena %u", c.game_arena);
 
     TEST("our move: shown at once, its thinking time reported");
     CHECK(cc_client_move(&c, 12, 28, 0, 1700) == CC_OK, "e2e4");
@@ -139,5 +223,6 @@ int main(void) {
     CHECK(cc_client_events(&c) & CC_EV_ERROR, "%s", "no error event");
     drain(&c, path, NULL);
     STREQ(path, "/c/game/7");
+    arenas();
     return report("unit_client");
 }
