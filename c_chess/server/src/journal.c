@@ -39,19 +39,21 @@ const char *const cc_sql_stmts[CC_SQL_N] = {
                         "WHERE (white = ?1 OR black = ?1) AND status > 1 ORDER BY id DESC LIMIT 50",
     [CC_SQL_PUZZLE_PUT] = "INSERT OR REPLACE INTO cc_puzzles (id, r, d, v, plays) VALUES (?1, ?2, ?3, ?4, ?5)",
     [CC_SQL_PUZZLES_ALL] = "SELECT id, r, d, v, plays FROM cc_puzzles",
-    [CC_SQL_ARENA_PUT] = "INSERT OR REPLACE INTO cc_arenas (id, name, creator, base_s, inc_s, rated, status, starts_at, ends_at, n_players, games) "
-                         "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+    [CC_SQL_ARENA_PUT] = "INSERT OR REPLACE INTO cc_arenas (id, name, creator, base_s, inc_s, rated, status, starts_at, ends_at) "
+                         "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     [CC_SQL_ARENA_PLAYER_PUT] = "INSERT OR REPLACE INTO cc_arena_players (arena, player, score, games, streak, rank, rating, withdrawn, white, black) "
                                 "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     [CC_SQL_ARENA_PLAYER_DEL] = "DELETE FROM cc_arena_players WHERE arena = ?1 AND player = ?2",
     /* what a restart brings back: the upcoming and running arenas, and the finished ones of the last hour */
-    [CC_SQL_ARENAS_OPEN] = "SELECT id, name, creator, base_s, inc_s, rated, status, starts_at, ends_at, games FROM cc_arenas "
-                           "WHERE status < 2 UNION SELECT id, name, creator, base_s, inc_s, rated, status, starts_at, ends_at, games "
-                           "FROM cc_arenas WHERE status = 2 AND ends_at > ?1",
+    /* an arena's games are counted where they are, cc_games (by its partial index), never kept twice */
+#define ARENA_OPEN_COLS "SELECT id, name, creator, base_s, inc_s, rated, status, starts_at, ends_at, (SELECT COUNT(*) FROM cc_games WHERE arena = a.id) FROM cc_arenas a "
+    [CC_SQL_ARENAS_OPEN] = ARENA_OPEN_COLS "WHERE status < 2 UNION ALL " ARENA_OPEN_COLS "WHERE status = 2 AND ends_at > ?1",
     [CC_SQL_ARENA_PLAYERS] = "SELECT player, score, games, streak, rank, rating, withdrawn, white, black FROM cc_arena_players "
                              "WHERE arena = ?1 ORDER BY rank LIMIT ?2",
     [CC_SQL_ARENA_MAX] = "SELECT COALESCE(MAX(id), 0) FROM cc_arenas",
-    [CC_SQL_ARENA_GET] = "SELECT name, creator, base_s, inc_s, rated, status, starts_at, ends_at, n_players, games FROM cc_arenas WHERE id = ?1",
+    [CC_SQL_ARENA_GET] = "SELECT name, creator, base_s, inc_s, rated, status, starts_at, ends_at, "
+                         "(SELECT COUNT(*) FROM cc_arena_players WHERE arena = ?1), (SELECT COUNT(*) FROM cc_games WHERE arena = ?1) "
+                         "FROM cc_arenas WHERE id = ?1",
     [CC_SQL_ARENA_PLAYER_GET] = "SELECT score, games, streak, rank, withdrawn FROM cc_arena_players WHERE arena = ?1 AND player = ?2",
     /* the latest ?2 of each speed, by speed, oldest first in each (rowid breaks a tie of the same
      * ms): one bounded walk of the index a speed, so a read costs the same at 20 games or 20,000
@@ -74,7 +76,7 @@ typedef struct jrec {
         struct { uint32_t id; int status, winner, d[2]; int64_t at, left[2]; int n; uint16_t moves[CC_MAX_PLY]; } end;
         struct { char id[CB_UUID_LEN + 1]; int speed; int64_t at; int rating; } point;
         struct { uint32_t id, plays; g2_player r; } puzzle;
-        struct { uint32_t id, n, games; char name[CW_ARENA_NAME + 1], creator[CB_UUID_LEN + 1]; int base_s, inc_s, rated, status; int64_t starts_at, ends_at; } arena;
+        struct { uint32_t id; char name[CW_ARENA_NAME + 1], creator[CB_UUID_LEN + 1]; int base_s, inc_s, rated, status; int64_t starts_at, ends_at; } arena;
         struct { uint32_t arena; char id[CB_UUID_LEN + 1]; int score, games, streak, rank, rating, withdrawn, white, black; } ap;
     } u;
 } jrec;
@@ -220,8 +222,6 @@ void cc_journal_arena(const cc_arena *a) {
     jrec *r = rec(J_ARENA);
     if (!r) return;
     r->u.arena.id = a->id;
-    r->u.arena.n = a->n;
-    r->u.arena.games = a->games;
     memcpy(r->u.arena.name, a->name, sizeof r->u.arena.name);
     memcpy(r->u.arena.creator, a->creator, sizeof r->u.arena.creator);
     r->u.arena.base_s = a->tc.base_s;
@@ -339,8 +339,6 @@ static int write_one(cb_sql *x, const jrec *r) {
         sqlite3_bind_int(st, 7, r->u.arena.status);
         sqlite3_bind_int64(st, 8, r->u.arena.starts_at);
         sqlite3_bind_int64(st, 9, r->u.arena.ends_at);
-        sqlite3_bind_int64(st, 10, r->u.arena.n);
-        sqlite3_bind_int64(st, 11, r->u.arena.games);
         return cb_sql_run(x, st, "cc arena");
     case J_ARENA_PLAYER:
         if (!(st = cb_sql_stmt(x, CC_SQL_ARENA_PLAYER_PUT))) return CB_E_DB;

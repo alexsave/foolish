@@ -248,6 +248,7 @@ The top 100 is this site's limit, set by the frame's size; an arena of thousands
 A signed-in player makes arenas too (`POST /c/arena`: 20 s to 12 hours long, starting within a day, at most four upcoming of their own); 20 s is the minimum so the smoke plays a whole arena in half a minute.
 
 **The journal.** `cc_arenas` holds an arena's row, written at its making, its start and its end, and `cc_arena_players` a player's, written at a join, a withdrawal and the end of each of its games, all through the journal's queue; once the last game in play after the end is over, every row is written once more with its final rank.
+An arena's count of players and of games is not a column: they are counted where they are (`cc_arena_players`, and `cc_games` by a partial index on its arena), since a count kept in the arena's row went stale across a restart in the middle of an arena on the dev server (13 games shown where 17 had been made).
 A restart brings back the upcoming and running arenas and the last hour's finished ones with their players, scores and streaks, and joins their games in play back up, so a running arena goes on pairing (the smoke kills the server in the middle of one).
 
 ## 4. The page

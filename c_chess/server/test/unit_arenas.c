@@ -421,6 +421,7 @@ static void restart(void) {
     memcpy(&h, buf, sizeof h);
     CHECK(n == (int)(sizeof h + 5 * sizeof(cw_arena_row)) && h.status == CC_ARENA_FINISHED && h.n_rows == 5, "%d bytes", n);
     CHECK(h.me_in == CW_ARENA_IN && h.me_rank >= 1 && !strcmp(h.by, "ann"), "me %u rank %u by %s", h.me_in, h.me_rank, h.by);
+    CHECK(h.games == g_made && h.n_players == 5, "games %u (made %u), players %u", h.games, g_made, h.n_players);
     for (int i = 0; i < 5 && n > 0; i++) {
         cw_arena_row r;
         memcpy(&r, buf + sizeof h + (size_t)i * sizeof r, sizeof r);
