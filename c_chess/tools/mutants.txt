@@ -23,6 +23,17 @@ c/src/glicko2.c ::: double mu_new = mu + phi_new * phi_new * sum; ::: double mu_
 c/src/rating.c ::: if (p.deviation < CC_RD_MIN) p.deviation = CC_RD_MIN; ::: (void)0; ::: build/test/unit_game ::: build/test/unit_game
 c/src/pgn.c ::: if (*s == '"' || *s == '\\') put(o, "\\", 1); ::: (void)0; ::: build/test/unit_game ::: build/test/unit_game
 c/src/pgn.c ::: col + 1 + (size_t)k > 80) ::: col + 1 + (size_t)k > 800) ::: build/test/unit_game ::: build/test/unit_game
+# kernel: arenas
+c/src/arena.c ::: bool cc_arena_on_fire(int streak) { return streak >= CC_ARENA_FIRE; } ::: bool cc_arena_on_fire(int streak) { return streak > CC_ARENA_FIRE; } ::: build/test/unit_arena ::: build/test/unit_arena
+c/src/arena.c ::: if (result == CC_ARENA_DRAW && plies < CC_ARENA_DRAW_PLIES) return 0; ::: if (result == CC_ARENA_DRAW && plies <= CC_ARENA_DRAW_PLIES) return 0; ::: build/test/unit_arena ::: build/test/unit_arena
+c/src/arena.c ::: if (result == CC_ARENA_DRAW && plies < CC_ARENA_DRAW_PLIES) return 0; ::: (void)0; ::: build/test/unit_arena ::: build/test/unit_arena
+c/src/arena.c ::: int base = result == CC_ARENA_WIN ? 2 : result == CC_ARENA_DRAW ? 1 : 0; ::: int base = result == CC_ARENA_WIN ? 2 : result == CC_ARENA_DRAW ? 2 : 0; ::: build/test/unit_arena ::: build/test/unit_arena
+c/src/arena.c ::: return cc_arena_on_fire(streak) ? 2 * base : base; ::: return base; ::: build/test/unit_arena ::: build/test/unit_arena
+c/src/arena.c ::: if (result != CC_ARENA_WIN) return 0; ::: if (result == CC_ARENA_LOSS) return 0; ::: build/test/unit_arena ::: build/test/unit_arena
+c/src/arena.c ::: return streak < 255 ? streak + 1 : 255; ::: return streak + 1; ::: build/test/unit_arena ::: build/test/unit_arena
+c/src/arena.c ::: s[0] == ' ' || s[n - 1] == ' ') return false; ::: s[0] == ' ') return false; ::: build/test/unit_arena ::: build/test/unit_arena
+c/src/arena.c ::: n > CC_ARENA_NAME_MAX || ::: n > CC_ARENA_NAME_MAX + 1 || ::: build/test/unit_arena ::: build/test/unit_arena
+c/src/arena.c ::: c == '-' || c == '_')) return false; ::: c == '-' || c == '_' || c == '/')) return false; ::: build/test/unit_arena ::: build/test/unit_arena
 # the server and the client, through the smoke
 server/src/journal.c ::: if (mlen && J.mfd >= 0) { write_all(J.mfd, moves, mlen); dirty = true; } ::: if (0) { dirty = true; } ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/state.c ::: cc_rate(&l->p[0]->r[k], &l->p[1]->r[k], cc_game_white_score(g)); ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
