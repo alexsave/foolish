@@ -288,6 +288,7 @@ int main(int argc, char **argv) {
     T_CHECK(human_view(gid));
     T_EQ_INT(g_ct.view.status, GAME_STATUS_WAITING);
     T_EQ_INT(g_ct.view.num_players, 2);
+    T_EQ_STR(g_ct.view.title, "Opening round - Game 1 of 5");   // the match, not "house's Game"
     int me = g_ct.view.my_seat;
     T_CHECK(me == 0 || me == 1);
     if (me == 0 || me == 1) {

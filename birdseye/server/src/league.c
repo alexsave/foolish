@@ -642,7 +642,7 @@ static bool table_open(lg_table *t, const int *seat_bots, int n, bool podkidnoy,
     // dev_bot_table.h: format 1 names bots; format 2 (a human seated) names each seat's kind first.
     bool human = false;
     for (int i = 0; i < n; i++) human = human || (g_human >= 0 && seat_bots[i] == g_human);
-    uint8_t body[3 + MAX_PLAYERS * (2 + BE_BOT_ID)];
+    uint8_t body[3 + MAX_PLAYERS * (2 + BE_BOT_ID) + 1 + 64];
     size_t at = 0;
     body[at++] = human ? 2 : 1;   // DEV_BOT_TABLE_FORMAT_2, DEV_BOT_TABLE_FORMAT
     body[at++] = podkidnoy ? 0 : 1;
@@ -653,6 +653,16 @@ static bool table_open(lg_table *t, const int *seat_bots, int n, bool podkidnoy,
         body[at++] = b->id_len;
         memcpy(body + at, b->id, b->id_len);
         at += b->id_len;
+    }
+    // Format 2's title: a tournament game names its match ("Round of 32 - Game 1 of 5").
+    if (human && match >= 0) {
+        char title[64];
+        pthread_mutex_lock(&g_mu);
+        int tl = be_tour_game_title(&g_tour.matches[match], title, sizeof title);
+        pthread_mutex_unlock(&g_mu);
+        body[at++] = (uint8_t)tl;
+        memcpy(body + at, title, (size_t)tl);
+        at += (size_t)tl;
     }
     char headers[256];
     snprintf(headers, sizeof headers, "Authorization: Bearer %s\r\nContent-Type: application/octet-stream\r\n", g_o.admin_token);

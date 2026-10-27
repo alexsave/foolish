@@ -233,3 +233,16 @@ bool be_tour_load(be_w_tour *t, const char *path, const char *const *ids, int n)
     }
     return true;
 }
+
+static const char *const ROUND_NAME[BE_TOUR_ROUNDS] = {
+    "Opening round", "Round of 32", "Round of 16", "Quarter-final", "Semi-final", "Final",
+};
+
+const char *be_tour_round_name(int r) { return r >= 0 && r < BE_TOUR_ROUNDS ? ROUND_NAME[r] : ""; }
+
+int be_tour_game_title(const be_w_match *m, char *out, int cap) {
+    const int best_of = 2 * BE_TOUR_WIN - 1, game = m->games + 1;
+    int n = game <= best_of ? snprintf(out, (size_t)cap, "%s - Game %d of %d", be_tour_round_name(m->round), game, best_of)
+                            : snprintf(out, (size_t)cap, "%s - Game %d", be_tour_round_name(m->round), game);
+    return n < 0 ? 0 : n >= cap ? cap - 1 : n;
+}

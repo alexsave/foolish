@@ -280,7 +280,36 @@ static void rounds_are_barriers(void) {
     barrier_at(&t, 1, 16, 16, 19);   // the round of 32, the match match 3 fed
 }
 
+// The names of the rounds, and the title a match's game is given.
+static void round_names_and_titles(void) {
+    T_EQ_STR(be_tour_round_name(0), "Opening round");
+    T_EQ_STR(be_tour_round_name(1), "Round of 32");
+    T_EQ_STR(be_tour_round_name(2), "Round of 16");
+    T_EQ_STR(be_tour_round_name(3), "Quarter-final");
+    T_EQ_STR(be_tour_round_name(4), "Semi-final");
+    T_EQ_STR(be_tour_round_name(5), "Final");
+    T_EQ_STR(be_tour_round_name(6), "");
+    T_EQ_STR(be_tour_round_name(-1), "");
+    be_w_match m;
+    memset(&m, 0, sizeof m);
+    char title[64];
+    T_EQ_INT(be_tour_game_title(&m, title, sizeof title), 27);
+    T_EQ_STR(title, "Opening round - Game 1 of 5");
+    m.round = 1;
+    m.games = 4;
+    be_tour_game_title(&m, title, sizeof title);
+    T_EQ_STR(title, "Round of 32 - Game 5 of 5");
+    m.round = 5;
+    m.games = 5;   // a draw replayed past the fifth
+    be_tour_game_title(&m, title, sizeof title);
+    T_EQ_STR(title, "Final - Game 6");
+    char small[6];
+    T_EQ_INT(be_tour_game_title(&m, small, sizeof small), 5);
+    T_EQ_STR(small, "Final");
+}
+
 int main(void) {
+    T_RUN(round_names_and_titles);
     T_RUN(rounds_are_barriers);
     T_RUN(swap_seed_24);
     T_RUN(swap_seed_5);

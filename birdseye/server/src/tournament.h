@@ -49,6 +49,12 @@ bool be_tour_result(be_w_tour *t, int m, bool played, uint8_t fool_bot, int64_t 
 // The match `m` feeds (its winner's next match) and which side, or -1 for the final.
 int  be_tour_feeds(int m, int *side);
 
+// Round r's name (be_w_match.round 0..5): "Opening round" .. "Final"; "" for any other r.
+const char *be_tour_round_name(int r);
+// The title of a match's next game, written into out (NUL-terminated, cut at cap): "<round name> -
+// Game <games + 1> of 5", or "<round name> - Game <n>" past the fifth (draws replayed). Its length.
+int  be_tour_game_title(const be_w_match *m, char *out, int cap);
+
 // The file: be_w_tour behind a head naming the bots by id, in the order the indices mean.
 // load: false when there is none or it is not one this build reads; `ids` maps today's bots.
 bool be_tour_load(be_w_tour *t, const char *path, const char *const *ids, int n);

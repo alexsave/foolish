@@ -56,6 +56,8 @@ typedef struct {
     int  passing;
     int  n;
     bool human;   // any seat is a human's: the route readies nobody
+    int  title_len;   // format 2's title, 0 for the lobby's own ("house's Game")
+    char title[ROSTER_TITLE_MAX + 1];
     seat s[MAX_PLAYERS];
 } seat_plan;
 
@@ -80,6 +82,8 @@ static int run_seat(Table *t, const cb_game_row *row, const uint8_t seed[32], vo
     const int by_house = p->n < MAX_PLAYERS ? p->n : MAX_PLAYERS - 1;
     for (int i = 0; i < by_house; i++)
         if ((rc = seat_one(t, p, i, DEV_HOUSE_ID, seed)) < 0) return rc;
+    // The title, as a seated player's ASK_UPDATE_NAME sets it (the kernel's title rule decides).
+    if (p->title_len && (rc = table_retitle(t, DEV_HOUSE_ID, hl, p->title, p->title_len)) < 0) return rc;
     if ((rc = table_leave(t, DEV_HOUSE_ID, hl, DEV_HOUSE_ID, hl)) < 0) return rc;
     // The first seat seats the rest (a full table: the eighth). With every seat a READY bot, the
     // last add deals, or with none left the first bot readies, which deals: the kernel's deal.
@@ -112,6 +116,14 @@ static bool parse(const uint8_t *b, size_t len, seat_plan *plan, uint8_t kind[MA
         plan->s[i].id[b[at]] = 0;
         at += 1 + (size_t)b[at];
         if (kind[i] == DEV_SEAT_HUMAN) plan->human = true;
+    }
+    // Format 2 may end with a title { u8 len, bytes }: 0 keeps the lobby's own.
+    if (kinds && at < len) {
+        if (b[at] > ROSTER_TITLE_MAX || at + 1 + b[at] != len) return false;
+        plan->title_len = b[at];
+        memcpy(plan->title, b + at + 1, b[at]);
+        plan->title[b[at]] = 0;
+        at = len;
     }
     return at == len;
 }

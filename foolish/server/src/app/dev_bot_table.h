@@ -32,10 +32,14 @@
 // FORMAT 2: A HUMAN AT A TABLE OF BOTS. birdseye's tournament seats one human account (a person
 // playing in the real web UI) against a bot. Each seat names its kind:
 //   request   u8 DEV_BOT_TABLE_FORMAT_2, u8 passing, u8 n (2..MAX_PLAYERS),
-//             n x { u8 kind (DEV_SEAT_BOT, DEV_SEAT_HUMAN), u8 len, id }
+//             n x { u8 kind (DEV_SEAT_BOT, DEV_SEAT_HUMAN), u8 len, id },
+//             then optionally { u8 len, title } (absent or 0: the lobby's own "<creator>'s Game")
 //   200       as format 1
 //   refusals  as format 1, and 400 MALFORMED for a human id that names no account (there is no
 //             AskRefusal for "no such account"; NO_BOT is a bot's, AUTH is the caller's own)
+// A title is set by the house while it is seated, as a seated player's ASK_UPDATE_NAME sets one
+// (table_retitle: the kernel's title rule, 50 characters, refused as REFUSED when it breaks it);
+// over ROSTER_TITLE_MAX bytes the body is MALFORMED.
 // A human seat is seated as ASK_JOIN seats its asker: table_join under the account's stored
 // username, UNREADY. Seats are taken in the order given. With no human seat the table deals
 // exactly as format 1 does. With one, NOTHING is readied by the route: every bot sits READY, the

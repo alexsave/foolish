@@ -431,6 +431,10 @@ static void human_and_bot(void) {
     const uint8_t kinds[2] = { DEV_SEAT_HUMAN, DEV_SEAT_BOT };
     uint8_t b[256];
     size_t bn = body2_for(b, 1, 2, ids, kinds);
+    static const char TITLE[] = "Round of 32 - Game 1 of 5";
+    b[bn++] = (uint8_t)strlen(TITLE);   // format 2's optional title
+    memcpy(b + bn, TITLE, strlen(TITLE));
+    bn += strlen(TITLE);
     cb_buf out;
     cb_buf_init(&out);
     T_EQ_INT(req(&g_dev, "POST", "/dev/bot_table", ADMIN, b, bn, &out), 200);
@@ -445,6 +449,7 @@ static void human_and_bot(void) {
     T_EQ_INT(c.view.status, GAME_STATUS_WAITING);
     T_EQ_INT(c.view.num_players, 2);
     T_EQ_INT(c.view.my_seat, 0);
+    T_EQ_STR(c.view.title, TITLE);   // not "house's Game"
     T_EQ_STR(c.view.seats[0].id, g_user_id);
     T_EQ_STR(c.view.seats[0].name, "DEVBOT_HUMAN");
     T_CHECK(!c.view.seats[0].is_ai);
@@ -504,6 +509,20 @@ static void human_refusals(void) {
     kinds[0] = 2;
     bn = body2_for(b, 1, 2, ids, kinds);
     T_EQ_INT(req(&g_dev, "POST", "/dev/bot_table", ADMIN, b, bn, &out), 400);
+    T_EQ_INT(refusal_why(&out), ASK_WHY_MALFORMED);
+    // A title over ROSTER_TITLE_MAX bytes, and one whose length runs past the body.
+    kinds[0] = DEV_SEAT_HUMAN;
+    uint8_t big[512];
+    size_t gn = body2_for(big, 1, 2, ids, kinds);
+    big[gn++] = ROSTER_TITLE_MAX + 1;
+    memset(big + gn, 'a', ROSTER_TITLE_MAX + 1);
+    gn += ROSTER_TITLE_MAX + 1;
+    T_EQ_INT(req(&g_dev, "POST", "/dev/bot_table", ADMIN, big, gn, &out), 400);
+    T_EQ_INT(refusal_why(&out), ASK_WHY_MALFORMED);
+    gn = body2_for(big, 1, 2, ids, kinds);
+    big[gn++] = 5;
+    big[gn++] = 'a';
+    T_EQ_INT(req(&g_dev, "POST", "/dev/bot_table", ADMIN, big, gn, &out), 400);
     T_EQ_INT(refusal_why(&out), ASK_WHY_MALFORMED);
     cb_buf_free(&out);
 }
