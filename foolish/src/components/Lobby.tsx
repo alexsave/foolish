@@ -538,6 +538,10 @@ export const Lobby = () => {
                 ref={inputRef}
                 className={`lobby__name-input ${isEditingName ? 'lobby__name-input--editing' : ''}`}
                 type="text"
+                // An input is 20 characters wide unless told otherwise, which cut a longer title
+                // ("Opening round - Game 1 of 5") to an ellipsis on any screen; it is as wide as its
+                // title, up to the CSS max-width between the back buttons.
+                size={Math.max(10, Array.from(isEditingName ? editingName : game.title).length + 1)}
                 value={isEditingName ? editingName : game.title}
                 onChange={(e) => isEditingName && setEditingName(e.target.value)}
                 onBlur={isEditingName ? handleSaveName : undefined}
