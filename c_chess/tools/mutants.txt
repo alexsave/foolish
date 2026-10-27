@@ -156,7 +156,7 @@ server/src/journal.c ::: cc_arena_games_recovered();\n ::: (void)0;\n ::: build/
 server/src/journal.c ::: sqlite3_bind_int64(st, 10, r->u.start.arena); ::: sqlite3_bind_int64(st, 10, 0); ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/journal.c ::: if (sqlite3_step(st) == SQLITE_ROW) cc_arena_next_id((uint32_t)sqlite3_column_int64(st, 0)); ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/journal.c ::: h.me_in = sqlite3_column_int(st, 4) ? CW_ARENA_WITHDRAWN : CW_ARENA_IN; ::: h.me_in = CW_ARENA_OUT; ::: build/test/unit_arenas ::: build/test/unit_arenas
-server/src/journal.c ::: "FROM cc_arenas WHERE status = 2 AND ends_at > ?1", ::: "FROM cc_arenas WHERE status = 2", ::: build/test/unit_arenas ::: build/test/unit_arenas
+server/src/journal.c ::: ARENA_OPEN_COLS "WHERE status = 2 AND ends_at > ?1", ::: ARENA_OPEN_COLS "WHERE status = 2 AND ?1 = ?1", ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/state.c ::: if (l->arena) cc_arena_game_over(l, now); ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/state.c ::: for (int c = 0; c < 2; c++) if (l->p[c]->playing) l->p[c]->playing--; ::: (void)0; ::: build/test/unit_arenas ::: build/test/unit_arenas
 server/src/arenas.c ::: for (uint32_t l = 0; l + 1 < nl; l += 2) { ::: for (uint32_t l = 0; 0 && l + 1 < nl; l += 2) { ::: build/test/unit_arenas ::: build/test/unit_arenas
