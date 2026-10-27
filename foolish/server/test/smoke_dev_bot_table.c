@@ -10,14 +10,19 @@
 //     admin token are refused (401); malformed bodies and an unknown bot are refused (400); with
 //     the admin token a table of two bots and one of three deal, play to a fool with nobody human
 //     seated, and are rated: the finished game's stamp, the bots' rows on the leaderboard and
-//     the stamp agree to the point.
+//     the stamp agree to the point. Format 2 seats a signed-up human with a bot: the table waits
+//     in its lobby (the bot READY, the human not, nobody dealt) until the human's own ASK_START
+//     deals it, and then the bot plays; an id that names no account is refused (400).
 #include "t.h"
 
 #include "lib_client.h"
 #include "lib_proc.h"
 
 #include "ask.h"
+#include "awire.h"
 #include "client_table.h"
+#include "legal.h"
+#include "table.h"
 #include "netwire.h"
 #include "util/clock.h"
 
@@ -29,7 +34,10 @@
 #include <unistd.h>
 
 #define ADMIN "dev-bot-table-admin-token-0123456789abcdef"
-#define DEV_BOT_TABLE_FORMAT 1   // dev_bot_table.h's; the test speaks the bytes as a client does
+#define DEV_BOT_TABLE_FORMAT   1   // dev_bot_table.h's; the test speaks the bytes as a client does
+#define DEV_BOT_TABLE_FORMAT_2 2
+#define DEV_SEAT_BOT   0
+#define DEV_SEAT_HUMAN 1
 
 static const char *g_bin;
 
@@ -135,7 +143,9 @@ static void absent_without_dev(void) {
 static server g_dev;
 
 static char g_user_token[NW_ACCESS_MAX + 1];
+static char g_user_id[NW_ID_MAX + 1];
 
+// Signs `name` up as a client does: its access token into g_user_token, its user id into g_user_id.
 static bool signup(const char *name) {
     NwRequest q;
     memset(&q, 0, sizeof q);
@@ -151,7 +161,10 @@ static bool signup(const char *name) {
     static NwSession ss;
     bool ok = n > 0 && req(&g_dev, "POST", "/v1/auth/signup", NULL, b, (size_t)n, &out) == 200 &&
               nw_session_decode(out.p, (int)out.len, &ss) == NW_OK;
-    if (ok) snprintf(g_user_token, sizeof g_user_token, "%.*s", (int)ss.access_len, ss.access);
+    if (ok) {
+        snprintf(g_user_token, sizeof g_user_token, "%.*s", (int)ss.access_len, ss.access);
+        snprintf(g_user_id, sizeof g_user_id, "%.*s", (int)ss.user_id_len, ss.user_id);
+    }
     cb_buf_free(&out);
     return ok;
 }
@@ -321,6 +334,180 @@ static void three_bots_podkidnoy(void) { bot_only_game(2, 3, 0); }
 // A full table: the house can seat seven, the first bot seats the eighth.
 static void eight_bots_classic(void) { bot_only_game(5, 8, 1); }
 
+// ---- format 2: a human at a table of bots ------------------------------------------------
+
+// The format 2 body: each seat its kind, then its id.
+static size_t body2_for(uint8_t *b, int passing, int n, char ids[][NW_ID_MAX + 1], const uint8_t *kinds) {
+    size_t at = 0;
+    b[at++] = DEV_BOT_TABLE_FORMAT_2;
+    b[at++] = (uint8_t)passing;
+    b[at++] = (uint8_t)n;
+    for (int i = 0; i < n; i++) {
+        size_t l = strlen(ids[i]);
+        b[at++] = kinds[i];
+        b[at++] = (uint8_t)l;
+        memcpy(b + at, ids[i], l);
+        at += l;
+    }
+    return at;
+}
+
+// The human's own view of gid over GET /v1/games/<gid>, as the web UI fetches it.
+static bool human_view(const char *gid, ClientTable *c, ClientSlot *slot) {
+    char path[128];
+    snprintf(path, sizeof path, "/v1/games/%s", gid);
+    cb_buf out;
+    cb_buf_init(&out);
+    bool ok = false;
+    uint32_t version;
+    NwBlob env;
+    if (req(&g_dev, "GET", path, g_user_token, NULL, 0, &out) == 200 && nw_view_decode(out.p, (int)out.len, &version, &env) == NW_OK) {
+        client_init(c, slot);
+        ok = client_adopt_envelope(c, env.p, (int)env.len) >= 0;
+    }
+    cb_buf_free(&out);
+    return ok;
+}
+
+// The human's Start (ASK_START over /v1/meta, the lobby's button). The status.
+static int human_start(const char *gid) {
+    TableAsk a;
+    memset(&a, 0, sizeof a);
+    a.kind = ASK_START;
+    a.gid_len = (uint8_t)strlen(gid);
+    memcpy(a.gid, gid, a.gid_len);
+    uint8_t body[ASK_BYTES_MAX];
+    int n = ask_encode(&a, body, sizeof body);
+    cb_buf out;
+    cb_buf_init(&out);
+    int st = n > 0 ? req(&g_dev, "POST", "/v1/meta", g_user_token, body, (size_t)n, &out) : -1;
+    cb_buf_free(&out);
+    return st;
+}
+
+// One legal move of the human's on c's board, as the web UI offers one, over /v1/action. The
+// table's version after it into *version; false when the human has none or it was not applied.
+static bool human_move(const char *gid, ClientTable *c, uint32_t *version) {
+    static LegalMoves moves;
+    const int seat = c->view.my_seat;
+    if (seat < 0 || c->view.status != GAME_STATUS_PLAYING) return false;
+    calculate_legal_moves(c->g, seat, &moves);
+    for (int k = 0; k < moves.n; k++) {
+        const LegalMove *m = &moves.moves[k];
+        if (m->type == MOVE_WAIT) continue;
+        AwireAction a;
+        memset(&a, 0, sizeof a);
+        a.kind = m->type;
+        a.n = m->n_cards;
+        for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+        uint8_t wire[128], buf[256];
+        int wn = awire_encode(&a, wire, sizeof wire);
+        if (wn <= 0 || client_validate(c, &c->view, wire, wn) != 0) continue;
+        int gl = (int)strlen(gid);
+        memcpy(buf, gid, (size_t)gl);
+        memcpy(buf + gl, wire, (size_t)wn);
+        int n = table_request_encode(buf, sizeof buf, gl, wn, true, c->view.version);
+        cb_buf out;
+        cb_buf_init(&out);
+        TableResponse r;
+        bool ok = n > 0 && req(&g_dev, "POST", "/v1/action", g_user_token, buf, (size_t)n, &out) == 200 &&
+                  table_response_decode(out.p, (int)out.len, &r) == 0 && r.status == TABLE_STATUS_APPLIED;
+        if (ok) *version = r.version;
+        cb_buf_free(&out);
+        return ok;
+    }
+    return false;
+}
+
+// One human and one bot: seated in the order given, the bot READY, the human not, the house
+// gone, nothing dealt; the human's Start deals; then the bot plays (a version the human did not
+// commit). Under CBASE_BOT_SPEEDUP=100.
+static void human_and_bot(void) {
+    T_CHECK(signup("DEVBOT_HUMAN"));
+    char roster[2][NW_ID_MAX + 1], ids[2][NW_ID_MAX + 1];
+    T_EQ_INT(bots(&g_dev, roster, 2), 2);
+    snprintf(ids[0], sizeof ids[0], "%s", g_user_id);
+    snprintf(ids[1], sizeof ids[1], "%s", roster[1]);
+    const uint8_t kinds[2] = { DEV_SEAT_HUMAN, DEV_SEAT_BOT };
+    uint8_t b[256];
+    size_t bn = body2_for(b, 1, 2, ids, kinds);
+    cb_buf out;
+    cb_buf_init(&out);
+    T_EQ_INT(req(&g_dev, "POST", "/dev/bot_table", ADMIN, b, bn, &out), 200);
+    char gid[64] = { 0 };
+    T_CHECK(out.len >= 2 && out.p[0] == out.len - 1);
+    if (out.len >= 2 && out.p[0] == out.len - 1) memcpy(gid, out.p + 1, out.p[0]);
+    cb_buf_free(&out);
+    static ClientTable c;
+    static ClientSlot slot;
+    // The lobby, as the human's web UI sees it.
+    T_CHECK(human_view(gid, &c, &slot));
+    T_EQ_INT(c.view.status, GAME_STATUS_WAITING);
+    T_EQ_INT(c.view.num_players, 2);
+    T_EQ_INT(c.view.my_seat, 0);
+    T_EQ_STR(c.view.seats[0].id, g_user_id);
+    T_EQ_STR(c.view.seats[0].name, "DEVBOT_HUMAN");
+    T_CHECK(!c.view.seats[0].is_ai);
+    T_CHECK(c.view.seats[0].status != PLAYER_STATUS_READY);
+    T_EQ_STR(c.view.seats[1].id, ids[1]);
+    T_CHECK(c.view.seats[1].is_ai);
+    T_EQ_INT(c.view.seats[1].status, PLAYER_STATUS_READY);
+    // A moment later still nobody dealt it (no bot loop, no timer readies the human).
+    usleep(300000);
+    T_CHECK(human_view(gid, &c, &slot));
+    T_EQ_INT(c.view.status, GAME_STATUS_WAITING);
+    // The human's Start deals.
+    T_EQ_INT(human_start(gid), 200);
+    T_CHECK(human_view(gid, &c, &slot));
+    T_CHECK(c.view.status == GAME_STATUS_PLAYING || c.view.status == GAME_STATUS_GAME_OVER);
+    T_EQ_INT(c.view.my_seat, 0);
+    T_CHECK(c.view.my_hand_count > 0);
+    // The bot plays: a version past every one the human committed. The human moves whenever it
+    // has a move, as a player would, so a game the human leads goes on too.
+    uint32_t ours = c.view.version;
+    bool bot_moved = false;
+    int64_t until = cb_now_ms() + 15000;
+    while (cb_now_ms() < until && !bot_moved) {
+        if (!human_view(gid, &c, &slot)) { usleep(50000); continue; }
+        if (c.view.version > ours) { bot_moved = true; break; }
+        if (c.view.status != GAME_STATUS_PLAYING) break;
+        uint32_t v;
+        if (human_move(gid, &c, &v)) ours = v;
+        else usleep(50000);
+    }
+    T_CHECK(bot_moved);
+}
+
+// An id that names no account, a bot's id under the human kind, a human's id under the bot kind,
+// and a kind that is neither.
+static void human_refusals(void) {
+    char roster[1][NW_ID_MAX + 1], ids[2][NW_ID_MAX + 1];
+    T_EQ_INT(bots(&g_dev, roster, 1), 1);
+    uint8_t kinds[2] = { DEV_SEAT_HUMAN, DEV_SEAT_BOT };
+    uint8_t b[256];
+    cb_buf out;
+    cb_buf_init(&out);
+    snprintf(ids[0], sizeof ids[0], "00000000-0000-4000-8000-0000000000aa");
+    snprintf(ids[1], sizeof ids[1], "%s", roster[0]);
+    size_t bn = body2_for(b, 1, 2, ids, kinds);
+    T_EQ_INT(req(&g_dev, "POST", "/dev/bot_table", ADMIN, b, bn, &out), 400);
+    T_EQ_INT(refusal_why(&out), ASK_WHY_MALFORMED);
+    snprintf(ids[0], sizeof ids[0], "%s", roster[0]);
+    bn = body2_for(b, 1, 2, ids, kinds);
+    T_EQ_INT(req(&g_dev, "POST", "/dev/bot_table", ADMIN, b, bn, &out), 400);
+    T_EQ_INT(refusal_why(&out), ASK_WHY_MALFORMED);
+    snprintf(ids[0], sizeof ids[0], "%s", g_user_id);
+    kinds[0] = DEV_SEAT_BOT;
+    bn = body2_for(b, 1, 2, ids, kinds);
+    T_EQ_INT(req(&g_dev, "POST", "/dev/bot_table", ADMIN, b, bn, &out), 400);
+    T_EQ_INT(refusal_why(&out), ASK_WHY_NO_BOT);
+    kinds[0] = 2;
+    bn = body2_for(b, 1, 2, ids, kinds);
+    T_EQ_INT(req(&g_dev, "POST", "/dev/bot_table", ADMIN, b, bn, &out), 400);
+    T_EQ_INT(refusal_why(&out), ASK_WHY_MALFORMED);
+    cb_buf_free(&out);
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s build/cbase\n", argv[0]); return 2; }
     g_bin = argv[1];
@@ -329,6 +516,8 @@ int main(int argc, char **argv) {
     T_RUN(two_bots_classic);
     T_RUN(three_bots_podkidnoy);
     T_RUN(eight_bots_classic);
+    T_RUN(human_and_bot);
+    T_RUN(human_refusals);
     T_RUN(think_time_paces_the_bots);
     tp_stop(&g_dev.child, 15, 10000);
     return T_DONE();

@@ -1,4 +1,4 @@
-// dev_bot_table.h - POST /dev/bot_table: a table where EVERY seat is a server bot. DEV-ONLY.
+// dev_bot_table.h - POST /dev/bot_table: a table of server bots (format 2: and humans). DEV-ONLY.
 //
 // WHY IT EXISTS. birdseye (branch foolish-birdseye, never merged) runs a bot league: the 49
 // server bots playing each other at human pace while their ratings move. The kernel cannot deal
@@ -28,6 +28,19 @@
 //   200       u8 gid_len, gid
 //   refusals  ask.h's AskRefusal, as /v1/meta answers them (400 MALFORMED, 400 NO_BOT for an id
 //             that names no bot, 400 REFUSED with the kernel's code, 500 INTERNAL)
+//
+// FORMAT 2: A HUMAN AT A TABLE OF BOTS. birdseye's tournament seats one human account (a person
+// playing in the real web UI) against a bot. Each seat names its kind:
+//   request   u8 DEV_BOT_TABLE_FORMAT_2, u8 passing, u8 n (2..MAX_PLAYERS),
+//             n x { u8 kind (DEV_SEAT_BOT, DEV_SEAT_HUMAN), u8 len, id }
+//   200       as format 1
+//   refusals  as format 1, and 400 MALFORMED for a human id that names no account (there is no
+//             AskRefusal for "no such account"; NO_BOT is a bot's, AUTH is the caller's own)
+// A human seat is seated as ASK_JOIN seats its asker: table_join under the account's stored
+// username, UNREADY. Seats are taken in the order given. With no human seat the table deals
+// exactly as format 1 does. With one, NOTHING is readied by the route: every bot sits READY, the
+// human UNREADY, the table stays in its lobby, and the kernel deals when the human presses Start
+// (ASK_START -> table_ready over /v1/meta, whose commit kicks the bot loop as any deal does).
 #ifndef CB_DEV_BOT_TABLE_H
 #define CB_DEV_BOT_TABLE_H
 
@@ -35,7 +48,10 @@
 
 #include <stdbool.h>
 
-#define DEV_BOT_TABLE_FORMAT 1
+#define DEV_BOT_TABLE_FORMAT   1
+#define DEV_BOT_TABLE_FORMAT_2 2
+#define DEV_SEAT_BOT   0   // format 2: the id is a bot's (bots_list)
+#define DEV_SEAT_HUMAN 1   // format 2: the id is an account's user id
 #define DEV_HOUSE_ID   "00000000-0000-4000-8000-00000000b075"
 #define DEV_HOUSE_NAME "house"
 

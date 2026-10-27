@@ -5,6 +5,7 @@
 #include "bots.h"
 #include "table_ops.h"
 #include "admin/admin.h"
+#include "auth/auth.h"
 #include "store/rows_foolish.h"
 #include "util/err.h"
 #include "util/log.h"
@@ -44,11 +45,28 @@ static bool collect(const cb_bot_row *b, void *ud) {
     return true;
 }
 
+// One seat: a bot (its row) or a human (the account's id and stored username).
 typedef struct {
-    int               passing;
-    int               n;
-    const cb_bot_row *bot[MAX_PLAYERS];
+    const cb_bot_row *bot;   // NULL for a human
+    char              id[CB_UUID_LEN + 1];
+    char              name[CB_USERNAME_MAX + 1];
+} seat;
+
+typedef struct {
+    int  passing;
+    int  n;
+    bool human;   // any seat is a human's: the route readies nobody
+    seat s[MAX_PLAYERS];
 } seat_plan;
+
+// Seats p->s[i]: a bot by `actor` (who must sit), a human as its own ASK_JOIN (UNREADY).
+static int seat_one(Table *t, const seat_plan *p, int i, const char *actor, const uint8_t seed[32]) {
+    const seat *s = &p->s[i];
+    if (!s->bot) return table_join(t, s->id, (int)strlen(s->id), s->name, (int)strlen(s->name));
+    const cb_bot_row *b = s->bot;
+    return table_add_bot(t, actor, (int)strlen(actor), b->id, (int)strlen(b->id), b->nickname, (int)strlen(b->nickname),
+                         b->strategy_key, (int)strlen(b->strategy_key), seed);
+}
 
 // THE LOBBY, as a client's asks would make it, in the one kernel section of one operation.
 static int run_seat(Table *t, const cb_game_row *row, const uint8_t seed[32], void *ud) {
@@ -57,59 +75,73 @@ static int run_seat(Table *t, const cb_game_row *row, const uint8_t seed[32], vo
     const int hl = (int)strlen(DEV_HOUSE_ID);
     int rc = table_set_rules(t, DEV_HOUSE_ID, hl, p->passing);
     if (rc < 0) return rc;   // TABLE_MOOT: the rules the lobby already has
-    // The house holds a seat while it seats bots, so it seats at most MAX_PLAYERS - 1 of them.
+    // The house holds a seat while it seats the others, so it seats at most MAX_PLAYERS - 1. It
+    // is never ready, so nothing deals while it sits.
     const int by_house = p->n < MAX_PLAYERS ? p->n : MAX_PLAYERS - 1;
-    for (int i = 0; i < by_house; i++) {
-        const cb_bot_row *b = p->bot[i];
-        rc = table_add_bot(t, DEV_HOUSE_ID, hl, b->id, (int)strlen(b->id), b->nickname, (int)strlen(b->nickname),
-                           b->strategy_key, (int)strlen(b->strategy_key), seed);
-        if (rc < 0) return rc;
-    }
+    for (int i = 0; i < by_house; i++)
+        if ((rc = seat_one(t, p, i, DEV_HOUSE_ID, seed)) < 0) return rc;
     if ((rc = table_leave(t, DEV_HOUSE_ID, hl, DEV_HOUSE_ID, hl)) < 0) return rc;
-    // Every seat is a READY bot now. The first bot seats the rest (a full table: the eighth), the
-    // last of which deals; with none left it readies, which deals. Either is the kernel's deal.
-    const char *first = p->bot[0]->id;
-    const int fl = (int)strlen(first);
-    if (by_house == p->n) return table_ready(t, first, fl, seed);
-    for (int i = by_house; i < p->n; i++) {
-        const cb_bot_row *b = p->bot[i];
-        rc = table_add_bot(t, first, fl, b->id, (int)strlen(b->id), b->nickname, (int)strlen(b->nickname), b->strategy_key,
-                           (int)strlen(b->strategy_key), seed);
-        if (rc < 0) return rc;
-    }
+    // The first seat seats the rest (a full table: the eighth). With every seat a READY bot, the
+    // last add deals, or with none left the first bot readies, which deals: the kernel's deal.
+    // With a human seated (UNREADY) neither deals: the table waits in its lobby for the human's
+    // Start, and nobody is readied here.
+    const char *first = p->s[0].id;
+    if (by_house == p->n) return p->human ? rc : table_ready(t, first, (int)strlen(first), seed);
+    for (int i = by_house; i < p->n; i++)
+        if ((rc = seat_one(t, p, i, first, seed)) < 0) return rc;
     return rc;
+}
+
+// The body: format 1 (every seat a bot) or format 2 (each seat names its kind) into plan, ids
+// into the plan's seats. false when it is malformed.
+static bool parse(const uint8_t *b, size_t len, seat_plan *plan, uint8_t kind[MAX_PLAYERS]) {
+    if (len < 3 || (b[0] != DEV_BOT_TABLE_FORMAT && b[0] != DEV_BOT_TABLE_FORMAT_2) || b[1] > 1 || b[2] < 2 || b[2] > MAX_PLAYERS)
+        return false;
+    const bool kinds = b[0] == DEV_BOT_TABLE_FORMAT_2;
+    plan->passing = b[1];
+    plan->n = b[2];
+    size_t at = 3;
+    for (int i = 0; i < plan->n; i++) {
+        kind[i] = DEV_SEAT_BOT;
+        if (kinds) {
+            if (at >= len || b[at] > DEV_SEAT_HUMAN) return false;
+            kind[i] = b[at++];
+        }
+        if (at >= len || b[at] == 0 || b[at] > CB_UUID_LEN || at + 1 + b[at] > len) return false;
+        memcpy(plan->s[i].id, b + at + 1, b[at]);
+        plan->s[i].id[b[at]] = 0;
+        at += 1 + (size_t)b[at];
+        if (kind[i] == DEV_SEAT_HUMAN) plan->human = true;
+    }
+    return at == len;
 }
 
 static void h_bot_table(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     if (!cb_admin_authorized(ctx, req, res)) return;
     if (strcmp(req->method, "POST") != 0) { refusal(res, 405, ASK_WHY_METHOD, 0, 0); return; }
-    if (!ctx->store) { refusal(res, 503, ASK_WHY_INTERNAL, 0, 0); return; }
+    if (!ctx->store || !ctx->auth) { refusal(res, 503, ASK_WHY_INTERNAL, 0, 0); return; }
     // The body, read whole: a byte short or past the end is malformed.
-    const uint8_t *b = req->body;
-    size_t len = req->body_len, at = 3;
     seat_plan plan;
     memset(&plan, 0, sizeof plan);
-    char ids[MAX_PLAYERS][CB_UUID_LEN + 1];
-    if (len < 3 || b[0] != DEV_BOT_TABLE_FORMAT || b[1] > 1 || b[2] < 2 || b[2] > MAX_PLAYERS) {
-        refusal(res, 400, ASK_WHY_MALFORMED, 0, 0);
-        return;
-    }
-    plan.passing = b[1];
-    plan.n = b[2];
-    for (int i = 0; i < plan.n; i++) {
-        if (at >= len || b[at] == 0 || b[at] > CB_UUID_LEN || at + 1 + b[at] > len) { refusal(res, 400, ASK_WHY_MALFORMED, 0, 0); return; }
-        memcpy(ids[i], b + at + 1, b[at]);
-        ids[i][b[at]] = 0;
-        at += 1 + (size_t)b[at];
-    }
-    if (at != len) { refusal(res, 400, ASK_WHY_MALFORMED, 0, 0); return; }
+    uint8_t kind[MAX_PLAYERS];
+    if (!parse(req->body, req->body_len, &plan, kind)) { refusal(res, 400, ASK_WHY_MALFORMED, 0, 0); return; }
     bot_rows rows = { 0 };
     int rc = CB_ROWS_CALL(ctx->store, bots_list, collect, &rows);
     if (rc < 0 || rows.oom) { free(rows.rows); refusal(res, 500, ASK_WHY_INTERNAL, 0, 0); return; }
     for (int i = 0; i < plan.n; i++) {
-        for (int j = 0; j < rows.n && !plan.bot[i]; j++)
-            if (strcmp(rows.rows[j].id, ids[i]) == 0) plan.bot[i] = &rows.rows[j];
-        if (!plan.bot[i]) { free(rows.rows); refusal(res, 400, ASK_WHY_NO_BOT, 0, 0); return; }
+        seat *s = &plan.s[i];
+        if (kind[i] == DEV_SEAT_HUMAN) {
+            // An account, by its user id, under the name it signed up with (as ASK_JOIN seats it).
+            cb_user_row u;
+            rc = cb_auth_user_row(ctx->auth, s->id, &u);
+            if (rc == CB_E_NOT_FOUND || (rc == CB_OK && !u.username[0])) { free(rows.rows); refusal(res, 400, ASK_WHY_MALFORMED, 0, 0); return; }
+            if (rc != CB_OK) { free(rows.rows); refusal(res, 500, ASK_WHY_INTERNAL, 0, 0); return; }
+            snprintf(s->name, sizeof s->name, "%s", u.username);
+            continue;
+        }
+        for (int j = 0; j < rows.n && !s->bot; j++)
+            if (strcmp(rows.rows[j].id, s->id) == 0) s->bot = &rows.rows[j];
+        if (!s->bot) { free(rows.rows); refusal(res, 400, ASK_WHY_NO_BOT, 0, 0); return; }
     }
     cb_user house;
     memset(&house, 0, sizeof house);
