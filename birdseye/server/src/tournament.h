@@ -10,6 +10,10 @@
 // Seeds 1..16 get byes into the round of 32; seeds 17..48 open, 17 v 48 .. 32 v 33, and the opening
 // match of seed s feeds the round-of-32 match whose lower seed is s. From the round of 32 on the
 // bracket is the standard one (1 v 32, 16 v 17, ...), so the top two seeds can only meet in the final.
+//
+// Every round is a BARRIER: no match of round r+1 starts until every match of round r is decided,
+// however long the last one takes (a human's match is played at a human's pace); the matches within
+// a round play at once. be_tour_next is the one owner of that rule.
 #ifndef BE_TOURNAMENT_H
 #define BE_TOURNAMENT_H
 
@@ -24,7 +28,15 @@
 // random brain). false when fewer than 49 bots are given (one is always left out).
 bool be_tour_draw(be_w_tour *t, const int32_t *rating, const bool *is_random, int n, int64_t now_ms);
 
-// A match that needs a game now (both players known, undecided, no game in play), or -1. The seats
+// Seat `who` (a league index not in the field, e.g. a human's row) in seed `seed` (1..48) of a
+// freshly drawn bracket: seed_bot[seed-1] and every match that held the replaced bot (the one
+// opening match, or for seeds 1..16 the one round-of-32 match) now hold `who`; the seed's rating
+// stays as drawn. Only before anything is played (state running, no game played, no match live).
+// false, the bracket untouched, otherwise. The replaced bot is simply out of the field.
+bool be_tour_swap_seed(be_w_tour *t, int seed, uint8_t who);
+
+// A match that needs a game now (both players known, undecided, no game in play, of the lowest round
+// that still has an undecided match), or -1. The seats
 // for that game: the higher seed first in odd games, second in even ones.
 int  be_tour_next(const be_w_tour *t, uint8_t seats[2]);
 // The game for match `m` is in play at `gid`.

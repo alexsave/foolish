@@ -174,7 +174,117 @@ static void the_file(void) {
     T_CHECK(!be_tour_load(&back, path, p, N));
 }
 
+// One seed swapped for `who` on a fresh draw: the seed and exactly the matches that held the old bot
+// now hold `who`, the old bot is nowhere, and every other byte of the bracket is as drawn.
+static void swap_checked(int seed, uint8_t who, int want_matches) {
+    field();
+    static be_w_tour t, before;
+    T_CHECK(be_tour_draw(&t, g_rating, g_random, N, 5));
+    before = t;
+    uint8_t old = t.seed_bot[seed - 1];
+    T_CHECK(be_tour_swap_seed(&t, seed, who));
+    T_EQ_INT(t.seed_bot[seed - 1], who);
+    T_EQ_INT(t.seed_rating[seed - 1], before.seed_rating[seed - 1]);
+    for (int s = 0; s < BE_TOUR_PLAYERS; s++) T_CHECK(t.seed_bot[s] != old);
+    int held = 0;
+    static be_w_tour patched;
+    patched = before;
+    patched.seed_bot[seed - 1] = who;
+    for (int i = 0; i < BE_TOUR_MATCHES; i++) {
+        const be_w_match *m = &t.matches[i];
+        T_CHECK(m->a != old && m->b != old);
+        if (before.matches[i].a == old) {
+            T_EQ_INT(m->a, who);
+            patched.matches[i].a = who;
+            held++;
+        }
+        if (before.matches[i].b == old) {
+            T_EQ_INT(m->b, who);
+            patched.matches[i].b = who;
+            held++;
+        }
+    }
+    T_EQ_INT(held, want_matches);
+    T_EQ_MEM(&t, sizeof t, &patched, sizeof patched);
+}
+
+// Seed 24 opens (match 3, against seed 41); seed 5 has a bye into the round of 32.
+static void swap_seed_24(void) { swap_checked(24, N, 1); }
+static void swap_seed_5(void) { swap_checked(5, N, 1); }
+
+// Refused, and the bracket left bit-identical: a game played, a match live, a bad seed, a `who`
+// already in the field, no `who` at all.
+static void swap_refused(void) {
+    field();
+    static be_w_tour t, before;
+    T_CHECK(be_tour_draw(&t, g_rating, g_random, N, 5));
+    before = t;
+    T_CHECK(!be_tour_swap_seed(&t, 0, N));
+    T_CHECK(!be_tour_swap_seed(&t, BE_TOUR_PLAYERS + 1, N));
+    T_CHECK(!be_tour_swap_seed(&t, 24, t.seed_bot[0]));
+    T_CHECK(!be_tour_swap_seed(&t, 24, t.seed_bot[23]));
+    T_CHECK(!be_tour_swap_seed(&t, 24, BE_TOUR_NONE));
+    T_EQ_MEM(&t, sizeof t, &before, sizeof before);
+    uint8_t seats[2];
+    int m = be_tour_next(&t, seats);
+    be_tour_started(&t, m, "abc", 3);
+    before = t;
+    T_CHECK(!be_tour_swap_seed(&t, 24, N));   // a match live
+    T_EQ_MEM(&t, sizeof t, &before, sizeof before);
+    T_CHECK(be_tour_result(&t, m, true, seats[0], 9));
+    before = t;
+    T_CHECK(!be_tour_swap_seed(&t, 24, N));   // a game played
+    T_EQ_MEM(&t, sizeof t, &before, sizeof before);
+}
+
+// Decides match m with its side a the winner (three games, b the fool of each).
+static void decide_a(be_w_tour *t, int m) {
+    for (int g = 0; g < BE_TOUR_WIN; g++) {
+        be_tour_started(t, m, "abc", 3);
+        T_CHECK(be_tour_result(t, m, true, t->matches[m].b, 1));
+    }
+    T_CHECK(t->matches[m].winner == t->matches[m].a);
+}
+
+// Round r is a barrier: with every match of it decided but `last`, nothing of round r+1 starts
+// (though its players are known), nothing at all once `last` is live, and round r+1 opens once it
+// is decided.
+static void barrier_at(be_w_tour *t, int r, int lo, int n, int last) {
+    for (int m = lo; m < lo + n; m++)
+        if (m != last) decide_a(t, m);
+    uint8_t seats[2];
+    int next = be_tour_next(t, seats);
+    T_EQ_INT(next, last);
+    int known = 0;
+    for (int m = lo + n; m < BE_TOUR_MATCHES; m++)
+        if (t->matches[m].round == r + 1 && t->matches[m].a != BE_TOUR_NONE && t->matches[m].b != BE_TOUR_NONE) known++;
+    T_CHECK(known >= 1);   // the next round has matches ready to play, and still none starts
+    be_tour_started(t, last, "hum", 3);
+    T_EQ_INT(be_tour_next(t, seats), -1);
+    // The last game of the round goes on and on: still nothing.
+    T_CHECK(be_tour_result(t, last, true, BE_TOUR_NONE, 1));
+    be_tour_started(t, last, "hum", 3);
+    T_EQ_INT(be_tour_next(t, seats), -1);
+    T_CHECK(be_tour_result(t, last, true, BE_TOUR_NONE, 1));
+    decide_a(t, last);
+    next = be_tour_next(t, seats);
+    T_CHECK(next >= 0);
+    if (next >= 0) T_EQ_INT(t->matches[next].round, r + 1);
+}
+
+static void rounds_are_barriers(void) {
+    field();
+    static be_w_tour t;
+    T_CHECK(be_tour_draw(&t, g_rating, g_random, N, 5));
+    barrier_at(&t, 0, 0, 16, 3);     // the opening round, its match 3 the slow one
+    barrier_at(&t, 1, 16, 16, 19);   // the round of 32, the match match 3 fed
+}
+
 int main(void) {
+    T_RUN(rounds_are_barriers);
+    T_RUN(swap_seed_24);
+    T_RUN(swap_seed_5);
+    T_RUN(swap_refused);
     T_RUN(draw);
     T_RUN(best_of_five);
     T_RUN(upsets);

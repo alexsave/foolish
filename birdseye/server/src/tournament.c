@@ -91,10 +91,31 @@ bool be_tour_draw(be_w_tour *t, const int32_t *rating, const bool *is_random, in
     return true;
 }
 
+bool be_tour_swap_seed(be_w_tour *t, int seed, uint8_t who) {
+    if (t->state != BE_TOUR_RUNNING || t->games != 0 || seed < 1 || seed > BE_TOUR_PLAYERS || who == BE_TOUR_NONE) return false;
+    for (int s = 0; s < BE_TOUR_PLAYERS; s++)
+        if (t->seed_bot[s] == who) return false;
+    for (int i = 0; i < BE_TOUR_MATCHES; i++)
+        if (t->matches[i].live) return false;
+    uint8_t old = t->seed_bot[seed - 1];
+    t->seed_bot[seed - 1] = who;
+    for (int i = 0; i < BE_TOUR_MATCHES; i++) {
+        be_w_match *m = &t->matches[i];
+        if (m->a == old) m->a = who;
+        if (m->b == old) m->b = who;
+    }
+    return true;
+}
+
 int be_tour_next(const be_w_tour *t, uint8_t seats[2]) {
     if (t->state != BE_TOUR_RUNNING) return -1;
+    // The barrier: only the lowest round that still has an undecided match plays.
+    int round = BE_TOUR_ROUNDS;
+    for (int i = 0; i < BE_TOUR_MATCHES && round == BE_TOUR_ROUNDS; i++)
+        if (t->matches[i].winner == BE_TOUR_NONE) round = t->matches[i].round;
     for (int i = 0; i < BE_TOUR_MATCHES; i++) {
         const be_w_match *m = &t->matches[i];
+        if (m->round != round) continue;
         if (m->a == BE_TOUR_NONE || m->b == BE_TOUR_NONE || m->winner != BE_TOUR_NONE || m->live) continue;
         bool hi_a = m->seed_a < m->seed_b;
         uint8_t hi = hi_a ? m->a : m->b, lo = hi_a ? m->b : m->a;
