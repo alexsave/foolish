@@ -28,7 +28,7 @@ export function gauntletSummary(g: WGauntlet, bots: WBot[]): string {
         ? `fell at rung ${g.rung + 1}`
         : `on rung ${g.rung + 1} of ${g.rungs.length}`;
   const best = g.bestRung ? ` Best run: rung ${g.bestRung} reached, ${g.bestWon} won (run ${g.bestRun}).` : '';
-  return `${human} against one bot of each brain, weakest first, best of five a rung. Run ${g.run}: ${where}, ${g.games} games played.${best}`;
+  return `${human} against one bot of each brain, weakest first, best of five a rung. Run ${g.run}: ${where}, ${g.games} ${g.games === 1 ? 'game' : 'games'} played.${best}`;
 }
 
 export function Gauntlet({ g, bots }: Props) {
@@ -48,7 +48,7 @@ export function Gauntlet({ g, bots }: Props) {
           const won = i < g.rung || g.state === BE_GAUNT_WON;
           const lost = g.state === BE_GAUNT_LOST && i === g.rung;
           const ahead = !won && !lost && !current;
-          const status = won ? 'won' : lost ? 'lost' : current ? (r.live ? 'playing' : 'next') : '';
+          const status = won ? 'won' : lost ? 'lost' : current ? 'now' : '';
           return (
             <li key={i} className={`ga-rung${current ? ' current' : ''}${won ? ' won' : ''}${lost ? ' lost' : ''}${ahead ? ' ahead' : ''}`}>
               <span className="ga-no num">{i + 1}</span>

@@ -1779,8 +1779,7 @@ input {
   color: var(--red);
 }
 
-.ga-tag.playing,
-.ga-tag.next {
+.ga-tag.now {
   color: var(--blue);
 }
 
