@@ -133,7 +133,15 @@ static void words(void) {
     CHECK(cc_chat_banned("ok fuck", 2) == false, "ok");
 }
 
+static void guests(void) {
+    TEST("a guest's name starts guest-, in any case");
+    CHECK(cc_name_guest("guest-abc123"), "guest-abc123");
+    CHECK(cc_name_guest("GUEST-x") && cc_name_guest("Guest-"), "any case");
+    CHECK(!cc_name_guest("guest") && !cc_name_guest("guestx-a") && !cc_name_guest("aguest-b") && !cc_name_guest(""), "not a guest");
+}
+
 int main(void) {
+    guests();
     lengths();
     utf8();
     controls();
