@@ -947,6 +947,16 @@ static void rate_limited_account_routes(void) {
         if (sign(0, name, "guess-pass-1") == ASK_WHY_ACCOUNT && nc_error()->code == NW_ACCOUNT_E_TOO_MANY) refused++;
     }
     T_EQ_INT(refused, 1);
+    // On the auth clock: one comes back a window/burst later, and not before.
+    const cb_limit_rule *r = &cb_limit_rules[CB_LIMIT_SIGNIN_IP];
+    g_now += r->window_ms / r->burst - 1;
+    nc_reset();
+    T_EQ_INT(sign(0, "NOBODYX", "guess-pass-1"), ASK_WHY_ACCOUNT);
+    T_EQ_INT(nc_error()->code, NW_ACCOUNT_E_TOO_MANY);
+    g_now += 2;   // past it (by a millisecond, so float rounding cannot say otherwise)
+    nc_reset();
+    T_EQ_INT(sign(0, "NOBODYX", "guess-pass-1"), ASK_WHY_ACCOUNT);
+    T_EQ_INT(nc_error()->code, NW_ACCOUNT_E_BAD_LOGIN);
     g_peer = NULL;
     teardown();
 }
