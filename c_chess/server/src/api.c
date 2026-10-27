@@ -332,7 +332,7 @@ static size_t snap_of(const cc_live *l, uint8_t *out, int64_t now) {
     s.rematch_offer = l->rematch_offer;
     for (int c = 0; c < 2; c++) {
         s.left_ms[c] = (uint32_t)l->g.left_ms[c];
-        s.rating[c] = cc_game_over(&l->g) ? (int16_t)cc_rating_int(&l->p[c]->r) : l->rating0[c];
+        s.rating[c] = cc_game_over(&l->g) ? (int16_t)cc_rating_int(&l->p[c]->r[l->speed]) : l->rating0[c];
         s.diff[c] = l->diff[c];
         memcpy(s.name[c], l->p[c]->name, strnlen(l->p[c]->name, CW_NAME));
     }
@@ -386,11 +386,20 @@ static void h_tv(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     answer(res, 200, buf, (size_t)n);
 }
 
+/* "/c/top/1" -> CC_BLITZ; -1 for anything but one speed's digit. */
+static int top_speed(const char *path) {
+    const char *s = path + strlen("/c/top/");
+    if (strncmp(path, "/c/top/", 7) != 0 || s[0] < '0' || s[0] >= '0' + CC_SPEEDS || (s[1] && s[1] != '?')) return -1;
+    return s[0] - '0';
+}
+
 static void h_top(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     static cw_top top;   /* under cc_lock */
     uint8_t buf[sizeof top];
+    int speed = top_speed(req->path);
+    if (speed < 0) { refuse(res, 404, CW_E_BAD, 0); return; }
     pthread_mutex_lock(&cc_lock);
-    int n = cc_top_fill(&top);
+    int n = cc_top_fill(&top, speed);
     memcpy(buf, &top, (size_t)n);
     pthread_mutex_unlock(&cc_lock);
     answer(res, 200, buf, (size_t)n);
@@ -417,15 +426,22 @@ static void h_user(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
     pthread_mutex_unlock(&cc_lock);
     if (!p) { refuse(res, 404, CW_E_NO_GAME, 0); return; }
     memcpy(pr.name, snap.name, strnlen(snap.name, CW_NAME));
-    pr.rating = (int16_t)cc_rating_int(&snap.r);
-    pr.rd = (uint16_t)(snap.r.deviation + 0.5);
+    for (int k = 0; k < CC_SPEEDS; k++) {
+        pr.rating[k] = (int16_t)cc_rating_int(&snap.r[k]);
+        pr.rd[k] = (uint16_t)(snap.r[k].deviation + 0.5);
+        pr.rated[k] = snap.rated[k];
+    }
+    pr.puzzle = (int16_t)cc_rating_int(&snap.pz);
+    pr.puzzle_rd = (uint16_t)(snap.pz.deviation + 0.5);
+    pr.puzzles_tried = snap.pz_tried;
+    pr.puzzles_solved = snap.pz_solved;
     pr.games = snap.games;
     pr.wins = snap.wins;
     pr.losses = snap.losses;
     pr.draws = snap.draws;
     uint8_t *buf = malloc(sizeof pr + CW_POINTS_MAX * sizeof(cw_point));
     if (!buf) { refuse(res, 503, CW_E_BUSY, 0); return; }
-    int np = ctx->store ? cc_db_points_of(ctx->store, &snap, (cw_point *)(void *)(buf + sizeof pr), CW_POINTS_MAX) : 0;
+    int np = ctx->store ? cc_db_points_of(ctx->store, &snap, (cw_point *)(void *)(buf + sizeof pr), CW_POINTS_SPEED) : 0;
     if (np < 0) np = 0;
     pr.n_points = (uint16_t)np;
     memcpy(buf, &pr, sizeof pr);
@@ -522,7 +538,7 @@ static const cb_route ROUTES[] = {
     { "GET", "/c/game/*", GAME_ROUTE, h_game, 500 },
     { "GET", "/c/lobby", GAME_ROUTE, h_lobby, 500 },
     { "GET", "/c/tv", GAME_ROUTE, h_tv, 500 },
-    { "GET", "/c/top", GAME_ROUTE, h_top, 500 },
+    { "GET", "/c/top/*", GAME_ROUTE, h_top, 500 },
     { "GET", "/c/user/*", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_user, 500 },
     { "GET", "/c/games/*", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_games, 500 },
     { "GET", "/c/pgn/*", CB_ROUTE_POOL, h_pgn, 0 },

@@ -21,7 +21,8 @@
  *     POST /c/act        cw_act_req            -> (none)
  *     GET  /c/game/<id>  -                     -> cw_snap + its moves
  *     GET  /c/lobby      -                     -> cw_lobby
- *     GET  /c/user/<name>                      -> cw_profile + its rating points
+ *     GET  /c/user/<name>                      -> cw_profile + its rating points (the latest
+ *                                                 CW_POINTS_SPEED of each speed)
  *     GET  /c/games/<name>                     -> cw_game_list
  *     GET  /c/pgn/<id>   (HTTP)                -> text/plain PGN
  *   pushes
@@ -32,13 +33,14 @@
  *     CW_P_TV     cw_tv     to the lobby room, at most once a second when it changed: the games in play
  *                           with the highest ratings, each with its board
  *     GET /c/tv           -                    -> cw_tv
- *     GET /c/top/<speed>  -                    -> cw_top: the leaderboard of a speed (rating.h CC_BULLET..)
+ *     GET /c/top/<speed>  -                    -> cw_top: the leaderboard of a speed (speed.h CC_BULLET..)
  *     GET /c/puzzle/next  -                    -> cw_puzzle: one near the asker's puzzle rating
  *     POST /c/puzzle/result cw_puzzle_req      -> cw_puzzle_done: both ratings after it */
 #ifndef C_CHESS_WIRE_H
 #define C_CHESS_WIRE_H
 
 #include "puzzle.h"
+#include "speed.h"
 
 #include <stdint.h>
 
@@ -46,7 +48,7 @@
 #define CW_NAME 20          /* a username's bytes, NUL-padded (names are 3..20 of [A-Za-z0-9_-]) */
 #define CW_LOBBY_MAX 64     /* seeks a lobby frame lists */
 #define CW_POINTS_SPEED 150 /* rating points a profile lists, the latest of each speed */
-#define CW_POINTS_MAX (4 * CW_POINTS_SPEED)
+#define CW_POINTS_MAX (CC_SPEEDS * CW_POINTS_SPEED)
 #define CW_LIST_MAX 50      /* games a game list holds */
 
 enum { CW_P_STATE = 1, CW_P_START = 2, CW_P_LOBBY = 3, CW_SNAP = 4, CW_P_TV = 5, CW_P_EVAL = 6 };
@@ -185,15 +187,15 @@ typedef struct { uint16_t n; uint8_t speed; uint8_t pad[5]; cw_top_row rows[CW_T
 
 typedef struct {
     char     name[CW_NAME];
-    int16_t  rating[4];        /* by speed (rating.h) */
-    uint16_t rd[4];
-    uint32_t rated[4];         /* rated games of each speed */
+    int16_t  rating[CC_SPEEDS];   /* by speed (speed.h) */
+    uint16_t rd[CC_SPEEDS];
+    uint32_t rated[CC_SPEEDS];    /* rated games of each speed */
     uint32_t games, wins, losses, draws;   /* every game, rated or not */
     int16_t  puzzle;           /* the puzzle rating */
     uint16_t puzzle_rd;
     uint32_t puzzles_tried, puzzles_solved;
     uint16_t n_points;
-    uint8_t  pad[2];
+    uint8_t  pad[6];           /* the points start 8-aligned */
     /* then n_points cw_point, by speed, oldest first in each */
 } cw_profile;
 typedef struct { int64_t at; int16_t rating; uint8_t speed; uint8_t pad[5]; } cw_point;

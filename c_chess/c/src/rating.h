@@ -4,6 +4,7 @@
 #define C_CHESS_RATING_H
 
 #include "glicko2.h"
+#include "speed.h"   /* a rating per speed */
 
 #define CC_RATING_START 1500.0
 #define CC_RD_START 350.0
@@ -13,11 +14,6 @@
 #define CC_VOL_MAX 0.1
 #define CC_TAU 0.5
 #define CC_PROVISIONAL_RD 110.0   /* a rating with a deviation at or above this shows a "?" */
-
-/* A rating per speed, as lichess sorts time controls: by the game's estimated length, the base
- * plus 40 increments (a 40-move game), under 3 minutes bullet, under 8 blitz, under 25 rapid. */
-enum { CC_BULLET, CC_BLITZ, CC_RAPID, CC_CLASSICAL, CC_SPEEDS };
-int cc_speed(int base_s, int inc_s);
 
 g2_player cc_rating_new(void);
 /* Both players' ratings after a game white scored `white_score` in (1, 0.5, 0). */

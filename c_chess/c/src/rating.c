@@ -1,4 +1,4 @@
-/* rating.c - see rating.h. */
+/* rating.c - see rating.h and speed.h. */
 #include "rating.h"
 
 #include <math.h>

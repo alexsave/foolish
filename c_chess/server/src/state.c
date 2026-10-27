@@ -107,7 +107,7 @@ cc_player *cc_player_of(const char *id, const char *name) {
     if (!(p = calloc(1, sizeof *p))) return NULL;
     snprintf(p->id, sizeof p->id, "%s", id);
     snprintf(p->name, sizeof p->name, "%s", name);
-    p->r = cc_rating_new();
+    for (int k = 0; k < CC_SPEEDS; k++) p->r[k] = cc_rating_new();
     p->pz = cc_rating_new();
     player_insert(p);
     cc_journal_player(p);
@@ -281,7 +281,7 @@ void cc_state_fill(const cc_live *l, cw_state *s, int64_t now) {
     for (int c = 0; c < 2; c++) {
         s->left_ms[c] = (uint32_t)cc_game_left(&l->g, c, now);
         s->diff[c] = l->diff[c];
-        s->rating[c] = (int16_t)cc_rating_int(&l->p[c]->r);
+        s->rating[c] = (int16_t)cc_rating_int(&l->p[c]->r[l->speed]);
     }
     s->draw_offer = l->g.draw_offer;
     s->rematch_offer = l->rematch_offer;
@@ -309,12 +309,15 @@ static void finish(cc_live *l, int64_t now) {
     }
     int64_t wall = cc_wall();
     if (counts && l->rated && l->p[0] != l->p[1]) {
-        int before[2] = { cc_rating_int(&l->p[0]->r), cc_rating_int(&l->p[1]->r) };
-        cc_rate(&l->p[0]->r, &l->p[1]->r, cc_game_white_score(g));
+        int k = l->speed;   /* only the game's speed moves */
+        int before[2] = { cc_rating_int(&l->p[0]->r[k]), cc_rating_int(&l->p[1]->r[k]) };
+        cc_rate(&l->p[0]->r[k], &l->p[1]->r[k], cc_game_white_score(g));
         for (int c = 0; c < 2; c++) {
-            l->diff[c] = (int16_t)(cc_rating_int(&l->p[c]->r) - before[c]);
+            l->diff[c] = (int16_t)(cc_rating_int(&l->p[c]->r[k]) - before[c]);
+            l->p[c]->rated[k]++;
             l->p[c]->last_at = wall;
-            cc_journal_point(l->p[c], wall);
+            cc_journal_rating(l->p[c], k);
+            cc_journal_point(l->p[c], k, wall);
         }
     }
     for (int c = 0; c < 2; c++) cc_journal_player(l->p[c]);
@@ -338,7 +341,8 @@ cc_live *cc_live_start(cc_player *white, cc_player *black, const cw_seek *tc, in
     l->p[0] = white;
     l->p[1] = black;
     l->rated = tc->rated && white != black;
-    for (int c = 0; c < 2; c++) l->rating0[c] = (int16_t)cc_rating_int(&l->p[c]->r);
+    l->speed = (uint8_t)cc_speed(tc->base_s, tc->inc_s);
+    for (int c = 0; c < 2; c++) l->rating0[c] = (int16_t)cc_rating_int(&l->p[c]->r[l->speed]);
     l->started_at = cc_wall();
     live_insert(l);
     n_playing++;
@@ -388,7 +392,7 @@ int cc_lobby_fill(cw_lobby *lb, int64_t now) {
         r->base_s = SEEKS[i].tc.base_s;
         r->inc_s = SEEKS[i].tc.inc_s;
         r->rated = SEEKS[i].tc.rated;
-        r->rating = (int16_t)cc_rating_int(&SEEKS[i].who->r);
+        r->rating = (int16_t)cc_rating_int(&SEEKS[i].who->r[cc_speed(r->base_s, r->inc_s)]);   /* the seek's speed */
         memcpy(r->name, SEEKS[i].who->name, strnlen(SEEKS[i].who->name, CW_NAME));
     }
     lb->n = (uint16_t)n;
@@ -522,14 +526,14 @@ static void tv_tick(int64_t now) {
 
 /* ---- the leaderboard ---- */
 
-int cc_top_fill(cw_top *top) {
+int cc_top_fill(cw_top *top, int speed) {
     const cc_player *best[CW_TOP_MAX];
     double keys[CW_TOP_MAX];
     int n = 0;
     for (uint32_t i = 0; i <= P_ID.mask; i++)
         for (const cc_player *p = P_ID.b[i]; p; p = p->next) {
-            if (!p->games) continue;
-            double key = p->r.rating;
+            if (!p->rated[speed]) continue;
+            double key = p->r[speed].rating;
             if (n == CW_TOP_MAX && key <= keys[n - 1]) continue;
             int j = n < CW_TOP_MAX ? n++ : n - 1;
             while (j > 0 && keys[j - 1] < key) { keys[j] = keys[j - 1]; best[j] = best[j - 1]; j--; }
@@ -538,13 +542,14 @@ int cc_top_fill(cw_top *top) {
         }
     memset(top, 0, 8);
     top->n = (uint16_t)n;
+    top->speed = (uint8_t)speed;
     for (int i = 0; i < n; i++) {
         cw_top_row *r = &top->rows[i];
         memset(r, 0, sizeof *r);
         memcpy(r->name, best[i]->name, strnlen(best[i]->name, CW_NAME));
-        r->rating = (int16_t)cc_rating_int(&best[i]->r);
-        r->rd = (uint16_t)(best[i]->r.deviation + 0.5);
-        r->games = best[i]->games;
+        r->rating = (int16_t)cc_rating_int(&best[i]->r[speed]);
+        r->rd = (uint16_t)(best[i]->r[speed].deviation + 0.5);
+        r->games = best[i]->rated[speed];
     }
     return 8 + n * (int)sizeof(cw_top_row);
 }

@@ -104,7 +104,8 @@ void       cc_challenge_drop(uint32_t id);
 
 /* The games in play with the highest ratings (at most max): the frame's length. */
 int        cc_tv_fill(cw_tv *tv, int max, int64_t now_mono);
-/* The leaderboard of a speed: players with a rated game of it, by rating: the frame's length. */
+/* The leaderboard of a speed (0..CC_SPEEDS-1): players with a rated game of it, by its rating: the
+ * frame's length. */
 int        cc_top_fill(cw_top *top, int speed);
 
 /* Counters for the lobby frame and /c/stats. */
