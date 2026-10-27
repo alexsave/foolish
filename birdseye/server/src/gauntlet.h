@@ -5,9 +5,10 @@
 // BE_MODE=gauntlet) plays the games as real rated server games at a locked two-seat table of the
 // human's and hands each result here.
 //
-// THE LADDER, drawn at the start of every run from the server's ratings then: for each brain (the
-// strategy keys of BE_GAUNT_BRAINS) its highest-rated bot, the lower row index on a tie; the seven
-// rungs in ascending order of that rating, ties in BE_GAUNT_BRAINS' order.
+// THE LADDER: the rungs are the server's seeded brains in the kernel roster's strength tiers, weakest
+// first (foolish/c/src/bot_roster.c BotRosterEntry.tier, "the road to Moscow"; its one owner). Each
+// rung's bot is drawn at the start of every run from the server's ratings then: the brain's
+// highest-rated bot, the lower row index on a tie.
 //
 // A RUNG is a best of five: the first to BE_TOUR_WIN games the other was the fool of; a drawn game is
 // played again, and a rung drawn BE_GAUNT_GAMES times goes to the one ahead, else to the bot (the
@@ -22,9 +23,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// The brains, by strategy key, in the order that breaks a rating tie.
-#define BE_GAUNT_N_BRAINS BE_GAUNT_RUNGS
-extern const char *const BE_GAUNT_BRAINS[BE_GAUNT_N_BRAINS];
+// The rungs' brains, by strategy key, weakest first: the kernel roster's seeded entries in tier order.
+// Their count (BE_GAUNT_RUNGS when the roster and this header agree; anything else and no run is drawn).
+int  be_gaunt_brains(const char *out[BE_GAUNT_RUNGS]);
 
 // An empty record: no run yet (state IDLE, run 0, no best).
 void be_gaunt_init(be_w_gauntlet *g, uint8_t human);
@@ -33,6 +34,12 @@ void be_gaunt_init(be_w_gauntlet *g, uint8_t human);
 // human's row (never on the ladder). The best run and the run count carry over; everything else is
 // new. false, `g` untouched, when a brain has no bot among the rows.
 bool be_gaunt_new_run(be_w_gauntlet *g, const int32_t *rating, const char *const *key, int n, uint8_t human, int64_t now_ms);
+
+// A run whose rungs above the current one are not yet played and not in the brains' tier order (a
+// ladder an older rule drew) has those rungs put in that order, each keeping its bot and rating;
+// the rungs played and the current one stay. `key` names each league row's brain. true when it
+// changed anything.
+bool be_gaunt_reorder(be_w_gauntlet *g, const char *const *key, int n);
 
 // The rung that needs a game now (the run is going on and no game of it is in play), or -1; the
 // seats for that game, the human first in the rung's odd games.

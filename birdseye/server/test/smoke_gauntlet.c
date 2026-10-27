@@ -1,6 +1,6 @@
 // smoke_gauntlet.c - the gauntlet (gauntlet.h), end to end: a real `cbase serve` (dev mode, the bots
 // sped up) and a real `birdseye serve` in gauntlet mode with a human account. The ladder is the
-// seven brains, one bot each, each its brain's best by the server's ratings, in ascending order; rung
+// seven brains in the roster's tiers, one bot each, each its brain's best by the server's ratings; rung
 // 1's game is a locked two-seat lobby of his titled for the rung; the admin route is refused without
 // the token and while a run is going on; he plays (the handwritten brain's moves on rung 1, then a
 // defender who always picks up, to lose on purpose) game after game in the real lobby, each next game
@@ -275,21 +275,16 @@ int main(int argc, char **argv) {
     T_EQ_INT(g.rung, 0);
     T_EQ_INT(g.human, g_n_bots - 1);
     T_CHECK(key_is(&g_bots[g.human], "human"));
-    bool seen[BE_GAUNT_N_BRAINS] = { false };
+    const char *brains[BE_GAUNT_RUNGS];
+    T_EQ_INT(be_gaunt_brains(brains), BE_GAUNT_RUNGS);
     for (int r = 0; r < BE_GAUNT_RUNGS; r++) {
         const be_w_rung *x = &g.rungs[r];
         T_CHECK(x->bot < g_n_bots);
         if (x->bot >= g_n_bots) continue;
-        int brain = -1;
-        for (int b = 0; b < BE_GAUNT_N_BRAINS; b++)
-            if (key_is(&g_bots[x->bot], BE_GAUNT_BRAINS[b])) brain = b;
-        T_CHECK(brain >= 0);
-        if (brain < 0) continue;
-        T_CHECK(!seen[brain]);
-        seen[brain] = true;
+        // Rung r is the r-th of the roster's tiers, its bot that brain's best by rating.
+        T_CHECK(key_is(&g_bots[x->bot], brains[r]));
         for (int i = 0; i < g_n_bots; i++)
-            if (i != g.human && key_is(&g_bots[i], BE_GAUNT_BRAINS[brain])) T_CHECK(g_bots[i].rating <= x->rating);
-        if (r) T_CHECK(x->rating >= g.rungs[r - 1].rating);
+            if (i != g.human && key_is(&g_bots[i], brains[r])) T_CHECK(g_bots[i].rating <= x->rating);
         fprintf(stderr, "smoke_gauntlet: rung %d: %.*s (%.*s) %d\n", r + 1, g_bots[x->bot].name_len, g_bots[x->bot].name,
                 g_bots[x->bot].key_len, g_bots[x->bot].key, x->rating);
     }

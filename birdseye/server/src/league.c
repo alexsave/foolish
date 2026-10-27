@@ -735,6 +735,21 @@ static void gaunt_open(int64_t now_wall, int64_t now_ms) {
         gaunt_renew(now_wall);
         return;
     }
+    {
+        static char keys[BE_LEAGUE_BOTS][BE_BOT_KEY + 1];
+        const char *key[BE_LEAGUE_BOTS];
+        for (int i = 0; i < g_n_bots; i++) {
+            snprintf(keys[i], sizeof keys[i], "%.*s", g_bots[i].key_len, g_bots[i].key);
+            key[i] = keys[i];
+        }
+        if (be_gaunt_reorder(&g_gaunt, key, g_n_bots)) {
+            char ladder[512];
+            int at = 0;
+            for (int r = 0; r < BE_GAUNT_RUNGS && at < (int)sizeof ladder; r++)
+                at += snprintf(ladder + at, sizeof ladder - (size_t)at, "%s%.*s %d", r ? ", " : "", BOT_NAME(g_gaunt.rungs[r].bot), g_gaunt.rungs[r].rating);
+            CB_INFO("birdseye", "gauntlet: the rungs not yet played put in the roster's tier order: %s", ladder);
+        }
+    }
     CB_INFO("birdseye", "gauntlet: run %u goes on at rung %d (%d-%d after %d games)", g_gaunt.run, g_gaunt.rung + 1,
             g_gaunt.rungs[g_gaunt.rung].wins_h, g_gaunt.rungs[g_gaunt.rung].wins_b, g_gaunt.rungs[g_gaunt.rung].games);
     if (g_gaunt.rungs[g_gaunt.rung].live) gaunt_rewatch(now_ms);

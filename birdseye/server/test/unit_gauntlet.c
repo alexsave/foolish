@@ -10,21 +10,26 @@
 #include <string.h>
 #include <unistd.h>
 
-// 7 brains x 3 bots, then the human (row 21). Row 3b + k is brain b's k-th bot.
+// 7 brains x 3 bots, then the human (row 21). Row 3b + k is brain b's k-th bot, brain b the b-th of
+// the roster's tiers (be_gaunt_brains: random, handwritten, robusta, firecracker, blackpowder,
+// cordite, octogen).
 #define N     22
 #define HUMAN 21
 
 static int32_t g_rating[N];
 static const char *g_key[N];
 
+static const char *g_brain[BE_GAUNT_RUNGS];
+
 // Brain b's bots rated base[b] + 10k for k = 0..2 (so its best is row 3b + 2), with a twist: brain
-// "octogen"'s best is its FIRST row (a tie on rating goes to the lower row), and handwritten is
-// rated below random.
+// 4's best is its FIRST row (a tie on rating goes to the lower row). The ratings are NOT in tier
+// order: the ladder follows the tiers, never the ratings.
 static void field(void) {
     static const int base[7] = { 1100, 1400, 1300, 1500, 1600, 1700, 1000 };
+    T_EQ_INT(be_gaunt_brains(g_brain), BE_GAUNT_RUNGS);
     for (int b = 0; b < 7; b++)
         for (int k = 0; k < 3; k++) {
-            g_key[3 * b + k] = BE_GAUNT_BRAINS[b];
+            g_key[3 * b + k] = g_brain[b];
             g_rating[3 * b + k] = base[b] + 10 * k;
         }
     g_rating[3 * 4 + 0] = g_rating[3 * 4 + 2];   // octogen: rows 12 and 14 tie at the top
@@ -43,23 +48,23 @@ static void ladder(void) {
     T_EQ_INT(g.rung, 0);
     T_EQ_INT(g.best_rung, 1);
     T_EQ_INT(g.best_won, 0);
-    // Weakest first: handwritten 1020, random 1120, robusta 1320, firecracker 1420, blackpowder 1520,
-    // octogen 1620 (row 12, the lower of the tie), cordite 1720.
-    static const int want[7] = { 3 * 6 + 2, 3 * 0 + 2, 3 * 2 + 2, 3 * 1 + 2, 3 * 3 + 2, 3 * 4 + 0, 3 * 5 + 2 };
+    // The roster's tiers, weakest first, whatever the ratings say.
+    static const char *const tiers[7] = { "random", "handwritten", "robusta", "firecracker", "blackpowder", "cordite", "octogen" };
+    for (int r = 0; r < 7; r++) T_EQ_STR(g_brain[r], tiers[r]);
+    // Each rung's bot is its brain's best (brain 4's tie: row 12, the lower).
+    static const int want[7] = { 3 * 0 + 2, 3 * 1 + 2, 3 * 2 + 2, 3 * 3 + 2, 3 * 4 + 0, 3 * 5 + 2, 3 * 6 + 2 };
     for (int r = 0; r < 7; r++) {
         T_EQ_INT(g.rungs[r].bot, want[r]);
         T_EQ_INT(g.rungs[r].rating, g_rating[want[r]]);
         T_EQ_INT(g.rungs[r].games, 0);
         T_EQ_INT(g.rungs[r].live, 0);
     }
-    for (int r = 1; r < 7; r++) T_CHECK(g.rungs[r].rating >= g.rungs[r - 1].rating);
-    // A tie between brains keeps the brains' order: random and firecracker level, random first.
-    g_rating[3 * 1 + 0] = g_rating[3 * 1 + 1] = 1000;
-    g_rating[3 * 1 + 2] = g_rating[3 * 0 + 2];
+    // A new run picks again by the ratings then: brain 1's first bot is its best now.
+    g_rating[3 * 1 + 0] = 5000;
     T_CHECK(be_gaunt_new_run(&g, g_rating, g_key, N, HUMAN, 78));
     T_EQ_INT(g.run, 2);
-    T_EQ_INT(g.rungs[1].bot, 3 * 0 + 2);
-    T_EQ_INT(g.rungs[2].bot, 3 * 1 + 2);
+    T_EQ_INT(g.rungs[1].bot, 3 * 1 + 0);
+    T_EQ_INT(g.rungs[0].bot, 3 * 0 + 2);
     // A brain with no bot: no ladder, the record untouched.
     field();
     g_key[3 * 5 + 0] = g_key[3 * 5 + 1] = g_key[3 * 5 + 2] = "other";
@@ -241,8 +246,50 @@ static void restart(void) {
     T_CHECK(!be_gaunt_load(&back, path, idp, N));   // none
 }
 
+// A ladder an older rule drew (by rating), in the middle of rung 1: the rungs above the current one
+// are put in the tiers' order, the played and the current ones stay; nothing moves once a rung
+// above has been played.
+static void reorder(void) {
+    field();
+    be_w_gauntlet g;
+    be_gaunt_init(&g, HUMAN);
+    T_CHECK(be_gaunt_new_run(&g, g_rating, g_key, N, HUMAN, 1));
+    be_w_gauntlet tiers = g;
+    T_CHECK(!be_gaunt_reorder(&g, g_key, N));   // already in order
+    // The old rule's order: rung 1 the same, the rest shuffled (ratings and all).
+    static const int old[7] = { 0, 6, 3, 2, 1, 5, 4 };
+    for (int r = 0; r < 7; r++) g.rungs[r] = tiers.rungs[old[r]];
+    play(&g, 'w');
+    be_gaunt_started(&g, "abc123", 6, 5);
+    T_CHECK(be_gaunt_reorder(&g, g_key, N));
+    for (int r = 0; r < 7; r++) {
+        T_EQ_INT(g.rungs[r].bot, tiers.rungs[r].bot);
+        T_EQ_INT(g.rungs[r].rating, tiers.rungs[r].rating);
+    }
+    T_EQ_INT(g.rungs[0].games, 1);   // the current rung kept its game and its live table
+    T_EQ_INT(g.rungs[0].live, 1);
+    T_EQ_INT(g.rung, 0);
+    // On rung 2 with rungs 3..7 out of order but rung 2 itself is never moved.
+    be_w_gauntlet h = tiers;
+    h.rung = 1;
+    h.rungs[1] = tiers.rungs[3];
+    h.rungs[3] = tiers.rungs[1];
+    T_CHECK(be_gaunt_reorder(&h, g_key, N));
+    T_EQ_INT(h.rungs[1].bot, tiers.rungs[3].bot);
+    T_EQ_INT(h.rungs[2].bot, tiers.rungs[1].bot);
+    T_EQ_INT(h.rungs[3].bot, tiers.rungs[2].bot);
+    // A rung above that already has a game: left alone.
+    be_w_gauntlet k = tiers;
+    k.rungs[2] = tiers.rungs[4];
+    k.rungs[4] = tiers.rungs[2];
+    k.rungs[4].games = 1;
+    T_CHECK(!be_gaunt_reorder(&k, g_key, N));
+    T_EQ_INT(k.rungs[2].bot, tiers.rungs[4].bot);
+}
+
 int main(void) {
     ladder();
+    reorder();
     climb_and_fall();
     cap();
     titles();

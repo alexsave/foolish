@@ -3,14 +3,33 @@
 
 #include "tournament.h"
 
+#include "bot_roster.h"
+
 #include <stdio.h>
 #include <string.h>
 
 _Static_assert(BE_GAUNT_GAMES == BE_TOUR_MAX_GAMES, "a rung's game cap is the tournament's");
 
-const char *const BE_GAUNT_BRAINS[BE_GAUNT_N_BRAINS] = {
-    "random", "firecracker", "robusta", "blackpowder", "octogen", "cordite", "handwritten",
-};
+// The roster is the kernel's one owner of the brains' strength order; the table is in tier order.
+int be_gaunt_brains(const char *out[BE_GAUNT_RUNGS]) {
+    int n = 0, total = bot_roster_count();
+    for (int i = 0; i < total; i++) {
+        const BotRosterEntry *e = bot_roster_at(i);
+        if (!e || !e->seeded) continue;
+        if (n < BE_GAUNT_RUNGS) out[n] = e->key;
+        n++;
+    }
+    return n;
+}
+
+// A brain's place in the tiers (its index in be_gaunt_brains), or -1.
+static int brain_at(const char *key) {
+    const char *b[BE_GAUNT_RUNGS];
+    int n = be_gaunt_brains(b);
+    for (int i = 0; i < n && i < BE_GAUNT_RUNGS; i++)
+        if (strcmp(b[i], key) == 0) return i;
+    return -1;
+}
 
 // ---- the run -------------------------------------------------------------------------------------
 
@@ -33,23 +52,37 @@ static void best(be_w_gauntlet *g) {
     }
 }
 
+bool be_gaunt_reorder(be_w_gauntlet *g, const char *const *key, int n) {
+    if (g->state != BE_GAUNT_RUNNING) return false;
+    int from = g->rung + 1, tier[BE_GAUNT_RUNGS];
+    for (int r = from; r < BE_GAUNT_RUNGS; r++) {
+        const be_w_rung *x = &g->rungs[r];
+        if (x->games || x->live || x->bot >= n || (tier[r] = brain_at(key[x->bot])) < 0) return false;
+    }
+    bool changed = false;
+    for (int r = from + 1; r < BE_GAUNT_RUNGS; r++) {   // an insertion sort by tier
+        for (int k = r; k > from && tier[k - 1] > tier[k]; k--) {
+            be_w_rung x = g->rungs[k];
+            g->rungs[k] = g->rungs[k - 1];
+            g->rungs[k - 1] = x;
+            int t = tier[k];
+            tier[k] = tier[k - 1];
+            tier[k - 1] = t;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 bool be_gaunt_new_run(be_w_gauntlet *g, const int32_t *rating, const char *const *key, int n, uint8_t human, int64_t now_ms) {
-    int pick[BE_GAUNT_N_BRAINS];
-    for (int b = 0; b < BE_GAUNT_N_BRAINS; b++) {
+    const char *brain[BE_GAUNT_RUNGS];
+    if (be_gaunt_brains(brain) != BE_GAUNT_RUNGS) return false;
+    int pick[BE_GAUNT_RUNGS];
+    for (int b = 0; b < BE_GAUNT_RUNGS; b++) {
         pick[b] = -1;
         for (int i = 0; i < n; i++)
-            if (i != human && strcmp(key[i], BE_GAUNT_BRAINS[b]) == 0 && (pick[b] < 0 || rating[i] > rating[pick[b]])) pick[b] = i;
+            if (i != human && strcmp(key[i], brain[b]) == 0 && (pick[b] < 0 || rating[i] > rating[pick[b]])) pick[b] = i;
         if (pick[b] < 0) return false;
-    }
-    // Ascending by rating; a tie keeps the brains' own order (an insertion sort is stable).
-    int order[BE_GAUNT_N_BRAINS];
-    for (int b = 0; b < BE_GAUNT_N_BRAINS; b++) {
-        int k = b;
-        while (k > 0 && rating[pick[order[k - 1]]] > rating[pick[b]]) {
-            order[k] = order[k - 1];
-            k--;
-        }
-        order[k] = b;
     }
     uint8_t best_rung = g->best_rung, best_won = g->best_won;
     uint32_t best_run = g->best_run, run = g->run;
@@ -61,7 +94,7 @@ bool be_gaunt_new_run(be_w_gauntlet *g, const int32_t *rating, const char *const
     g->state = BE_GAUNT_RUNNING;
     g->started_ms = now_ms;
     for (int r = 0; r < BE_GAUNT_RUNGS; r++) {
-        int b = pick[order[r]];
+        int b = pick[r];
         be_w_rung *x = &g->rungs[r];
         x->bot = (uint8_t)b;
         x->rating = rating[b];
