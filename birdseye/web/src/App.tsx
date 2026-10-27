@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getLeague,
   getTournament,
+  getGauntlet,
   getMetrics,
   getTables,
   openStream,
@@ -16,10 +17,12 @@ import {
   type WResult,
   type WTable,
   type WTour,
+  type WGauntlet,
 } from './api';
-import { BE_MODE_MIXED, BE_MODE_TOURNAMENT, BE_TOUR_IDLE, BE_PHASE_GONE, BE_PHASE_LOBBY, BE_PHASE_OVER, BE_PHASE_PLAYING } from './gen/wire';
+import { BE_GAUNT_IDLE, BE_MODE_GAUNTLET, BE_MODE_MIXED, BE_MODE_TOURNAMENT, BE_TOUR_IDLE, BE_PHASE_GONE, BE_PHASE_LOBBY, BE_PHASE_OVER, BE_PHASE_PLAYING } from './gen/wire';
 import { Bracket, tourSummary } from './components/Bracket';
 import { Feed } from './components/Feed';
+import { Gauntlet } from './components/Gauntlet';
 import { buildSeries, EloChart, Families, Standings, botName } from './components/League';
 import { Ops } from './components/Ops';
 import { TableDetail } from './components/TableDetail';
@@ -88,6 +91,7 @@ export function App() {
   // ---- the league: the standings and every rated game, from GET /be/league and then the stream.
   const [league, setLeague] = useState<League | null>(null);
   const [tour, setTour] = useState<WTour | null>(null);
+  const [gauntlet, setGauntlet] = useState<WGauntlet | null>(null);
   const [flash, setFlash] = useState<Map<number, number>>(() => new Map());
   const [focus, setFocus] = useState<number | null>(null);
   const [hoverBot, setHoverBot] = useState<number | null>(null);
@@ -98,18 +102,22 @@ export function App() {
   const recent = useRef<WResult[]>([]);
   const loadLeague = useCallback(async () => {
     try {
-      const [l, t] = await Promise.all([getLeague(), getTournament()]);
+      const [l, t, g] = await Promise.all([getLeague(), getTournament(), getGauntlet()]);
       setLeague(mergeResults(l, recent.current));
       setTour(t);
-      // Birdseye playing a tournament opens on the bracket unless the URL says otherwise.
-      if (l.mode === BE_MODE_TOURNAMENT && !new URLSearchParams(window.location.search).get('view')) setViewState('tournament');
+      setGauntlet(g);
+      // Birdseye playing a tournament opens on the bracket, the gauntlet on its ladder, unless the
+      // URL says otherwise.
+      const asked = new URLSearchParams(window.location.search).get('view');
+      if (l.mode === BE_MODE_TOURNAMENT && !asked) setViewState('tournament');
+      if (l.mode === BE_MODE_GAUNTLET && !asked) setViewState('gauntlet');
     } catch (e) {
       if (e instanceof WireMismatch) setFatal(e.message);
     }
   }, []);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get('view');
-    if (q === 'tables' || q === 'league' || q === 'tournament') setViewState(q);
+    if (q === 'tables' || q === 'league' || q === 'tournament' || q === 'gauntlet') setViewState(q);
   }, []);
   const setView = useCallback((v: View) => {
     setViewState(v);
@@ -188,6 +196,7 @@ export function App() {
         });
       },
       onTour: (t) => setTour(t),
+      onGauntlet: (g) => setGauntlet(g),
       onBot: (b) => {
         setLeague((l) => {
           if (!l) return l;
@@ -324,6 +333,8 @@ export function App() {
   const hasTour = tour !== null && tour.state !== BE_TOUR_IDLE;
   const showTour = isLeague && hasTour && view === 'tournament' && !selected;
   const showLeague = isLeague && view === 'league' && !selected;
+  const hasGauntlet = gauntlet !== null && gauntlet.state !== BE_GAUNT_IDLE;
+  const showGauntlet = isLeague && hasGauntlet && view === 'gauntlet' && !selected;
   const series = useMemo(() => (league ? buildSeries(league.bots, league.results) : []), [league]);
   // Rated games a minute over the last ten minutes (or since the first of them): a one-second rate
   // of something that happens a few times a minute reads 0 most seconds.
@@ -368,10 +379,15 @@ export function App() {
         }}
         games={league?.results.length ?? 0}
         tour={hasTour}
+        gauntlet={hasGauntlet}
         gamesPerMin={gamesPerMin}
       />
       {fatal ? (
         <div className="banner">{fatal}</div>
+      ) : showGauntlet && league && gauntlet ? (
+        <div className="tour-page">
+          <Gauntlet g={gauntlet} bots={league.bots} />
+        </div>
       ) : showTour && league && tour ? (
         <div className="tour-page">
           <section className="card tour-card">

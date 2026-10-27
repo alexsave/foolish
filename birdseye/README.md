@@ -36,6 +36,13 @@ The sim's size is `BE_PLAYERS` (fake humans, default 60), `BE_TABLES` (tables ke
   `run.sh` also starts the real foolish web UI (`next dev` from `foolish/`) at http://127.0.0.1:3811/: sign in with the name and password in `human.env`; your live game is on the dashboard and linked ("play") from your row in the bracket.
   Your games deal when you press Ready, and wait for you as long as you like (no stall limit applies to a human's table); the bots' matches go on at their own pace meanwhile, and the next round starts once yours is decided.
   A stored bracket that is still running is not redrawn: stop and delete `birdseye/data/tournament.bin` for a fresh draw with you in it.
+- The gauntlet: `BE_HUMAN=1 BE_MODE=gauntlet birdseye/tools/run.sh`.
+  You against one bot of each of the seven brains, one at a time, weakest first: at the start of every run each brain's highest-rated bot is taken by the server's ratings and the rungs are ordered by that rating.
+  Each rung is a two-player best of five in a locked lobby titled like "Gauntlet 2/7: Madrid 2 - Game 1 of 5" (the lobby's title rule allows 50 characters); each next game opens as a new table on your dashboard, eight seconds after the last one ends.
+  Win a rung and you climb; lose one and the run is over, and the best run (the highest rung reached) is kept.
+  A new run starts from rung 1 at the next start, or by `POST /be/gauntlet/new` with the admin token (409 while a run is going on).
+  The run is kept in `data/gauntlet.bin` (a fixed binary layout); a restart goes on with it and watches the game that was in play again.
+  The site's Gauntlet view draws the ladder: each rung's opponent, rating, games and score, your current rung and a "play" link to its live lobby.
 - Both routes the server needs are dev-only (refused or not routed without `CBASE_DEV=1`); the kernel is unchanged. `birdseye/tools/hotpath_proof.sh` shows the move and push path compiles to the same instructions as before them.
 
 By hand:

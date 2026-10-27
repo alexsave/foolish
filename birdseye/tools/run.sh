@@ -11,7 +11,8 @@
 # (5811). BE_MODE picks what birdseye plays: "league" (the default: the server's bots against each
 # other at tables of their own, BE_LEAGUE_TABLES at once), "tournament" (the stored tournament goes
 # on, or a new one is drawn when none is running; the site shows the last one in every mode), or
-# "mixed" (fake humans and some bots).
+# "mixed" (fake humans and some bots), or "gauntlet" (with BE_HUMAN=1: the human against one bot
+# of each brain, weakest first, a best of five each; birdseye/server/src/gauntlet.h).
 # The other knobs are the BE_* variables birdseye/server/src/birdseye_app.c lists (BE_PLAYERS,
 # BE_TABLES, BE_THREADS, BE_THINK_MS, BE_BOT_SHARE, BE_PODKIDNOY, BE_HOSTILE_EVERY, BE_REMATCH,
 # BE_SEED); WEB=0 leaves the site out.
@@ -49,6 +50,10 @@ mkdir -p "$RUN_DIR" "$BE/data"
 # human's pace (a dev-only think time of 1.5 to 5 s) on 40.
 if [ "${BE_MODE:-league}" = tournament ]; then
     THINK_DEFAULT=""; TABLES_DEFAULT=16
+elif [ "${BE_MODE:-league}" = gauntlet ]; then
+    # The gauntlet: one table, the human's, the bot at the kernel's own pace.
+    THINK_DEFAULT=""; TABLES_DEFAULT=1
+    [ "$BE_HUMAN" = 1 ] || { echo "BE_MODE=gauntlet needs BE_HUMAN=1"; exit 2; }
 else
     THINK_DEFAULT="1500-5000"; TABLES_DEFAULT=40
 fi
@@ -140,6 +145,7 @@ wait_listening "$RUN_DIR/game.log" "the game server"
         BE_SERVER=127.0.0.1:$GAME_PORT BE_SERVER_PID=$(cat "$RUN_DIR/game.pid") \
         BE_HUMAN_NAME="$HUMAN_NAME" BE_HUMAN_PASSWORD="$HUMAN_PASSWORD" BE_HUMAN_SEED=${BE_HUMAN_SEED:-24} \
         BE_MODE=${BE_MODE:-league} BE_LEAGUE_TABLES=${BE_LEAGUE_TABLES:-$TABLES_DEFAULT} BE_LEAGUE_PER_BOT=${BE_LEAGUE_PER_BOT:-4} BE_ADMIN_TOKEN="$ADMIN_TOKEN" BE_LEAGUE_FILE="${BE_LEAGUE_FILE:-$BE/data/league.bin}" BE_TOURNAMENT_FILE="${BE_TOURNAMENT_FILE:-$BE/data/tournament.bin}" \
+        BE_GAUNTLET_FILE="${BE_GAUNTLET_FILE:-$BE/data/gauntlet.bin}" \
         exec build/birdseye serve
 ) > "$RUN_DIR/birdseye.log" 2>&1 &
 echo $! > "$RUN_DIR/birdseye.pid"

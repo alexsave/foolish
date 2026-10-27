@@ -27,12 +27,13 @@ interface Props {
   games: number;
   gamesPerMin: number | null;
   tour: boolean;
+  gauntlet: boolean;
 }
 
 export type Filter = 'all' | 'playing' | 'lobby' | 'over';
-export type View = 'league' | 'tournament' | 'tables';
+export type View = 'league' | 'tournament' | 'gauntlet' | 'tables';
 
-export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompact, view, onView, games, gamesPerMin, tour }: Props) {
+export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompact, view, onView, games, gamesPerMin, tour, gauntlet }: Props) {
   const status =
     state === 'open' ? { cls: 'dot-green', text: 'live' }
     : state === 'connecting' ? { cls: 'dot-amber', text: 'connecting...' }
@@ -60,6 +61,11 @@ export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompac
           {tour && (
             <button type="button" className={`tab${view === 'tournament' ? ' on' : ''}`} onClick={() => onView('tournament')}>
               Tournament
+            </button>
+          )}
+          {gauntlet && (
+            <button type="button" className={`tab${view === 'gauntlet' ? ' on' : ''}`} onClick={() => onView('gauntlet')}>
+              Gauntlet
             </button>
           )}
           <button type="button" className={`tab${view === 'tables' ? ' on' : ''}`} onClick={() => onView('tables')}>

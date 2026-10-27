@@ -1643,3 +1643,157 @@ input {
   font-weight: 700;
   color: var(--text);
 }
+
+/* ---- the gauntlet's ladder (Gauntlet.tsx) ----------------------------------------------------- */
+.ga-card {
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+  flex: none;
+  align-self: flex-start;
+}
+
+.ga-ladder {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ga-rung {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 52px 150px 40px 92px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.ga-rung.ahead {
+  color: var(--muted);
+}
+
+.ga-rung.won {
+  background: #f3faf6;
+}
+
+.ga-rung.lost {
+  background: #fdf3f2;
+  border-color: #f5c2bd;
+}
+
+.ga-rung.current {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(47, 111, 228, 0.18);
+}
+
+.ga-no {
+  font-weight: 700;
+  color: var(--muted);
+  text-align: center;
+}
+
+.ga-rung.current .ga-no {
+  color: var(--blue);
+}
+
+.ga-who {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ga-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ga-brain {
+  font-size: 12px;
+}
+
+.ga-rating {
+  text-align: right;
+}
+
+.ga-games {
+  display: flex;
+  gap: 3px;
+}
+
+.ga-game {
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  color: #fff;
+}
+
+.ga-game.won {
+  background: var(--green);
+}
+
+.ga-game.lost {
+  background: var(--red);
+}
+
+.ga-game.drawn {
+  background: var(--faint);
+}
+
+.ga-score {
+  text-align: right;
+  font-weight: 600;
+}
+
+.ga-status {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+
+.ga-tag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.ga-tag.won {
+  color: var(--green);
+}
+
+.ga-tag.lost {
+  color: var(--red);
+}
+
+.ga-tag.playing,
+.ga-tag.next {
+  color: var(--blue);
+}
+
+@media (max-width: 640px) {
+  .ga-rung {
+    grid-template-columns: 22px minmax(0, 1fr) 44px 40px;
+    grid-template-areas: 'no who rating score' '. games games status';
+    row-gap: 4px;
+  }
+  .ga-no { grid-area: no; }
+  .ga-who { grid-area: who; }
+  .ga-rating { grid-area: rating; }
+  .ga-score { grid-area: score; }
+  .ga-games { grid-area: games; }
+  .ga-status { grid-area: status; }
+}
