@@ -65,3 +65,13 @@ test('the lobby title stays between the back button and its mirror image', () =>
     assert.ok(margin >= 10 + 8, `the room beside the button covers its 10px inset and a gap (${margin}px)`);
     assert.equal(style.textOverflow, 'ellipsis', 'a title too long for the room ends in an ellipsis');
 });
+
+test('the lobby title takes all of its room at rest, not an input\'s default 20 characters', () => {
+    // An input is as wide as size=20 unless the stylesheet says otherwise, which
+    // cut "OPENINGROUND2026's Game" to an ellipsis on a 1440 px screen (403 px of
+    // a 1316 px room). The editing state already spans the room; the title at rest
+    // (and on the loading overlay, which draws the same input) does too.
+    const dom = page('<div class="lobby"><input class="lobby__name-input" value="OPENINGROUND2026\'s Game"></div>');
+    const style = dom.window.getComputedStyle(dom.window.document.querySelector('.lobby__name-input')!);
+    assert.equal(style.width, '100%', `the title's width at rest: "${style.width}"`);
+});
