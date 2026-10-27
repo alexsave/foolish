@@ -4,7 +4,7 @@
 //
 //   chessbench [--port 8900] [--bots 100] [--tc 180+2] [--think 200] [--spread 200] [--watchers 0]
 //              [--duration 60] [--warmup 10] [--pid <server pid>] [--accounts <file>] [--connect-rate 200]
-//              [--rated 1] [--forever] [--arena <id>]
+//              [--rated 1] [--forever] [--arena <id>] [--arena-make <seconds> [--arena-name <name>]]
 //
 // THE NUMBERS (after the warm-up, for `duration` seconds):
 //   move round trip   a bot's move sent to the server's state push of that ply back on its own socket
@@ -21,6 +21,9 @@
 //
 // --arena <id>: the bots join that arena (on every connect: a withdrawn bot comes back) instead of
 // seeking, and play the games the arena pairs them in; a game's end seeks nothing.
+// --arena-make <seconds>: the first bot makes an arena of the time control (--tc, --rated) that
+// starts 5 s later and lasts that long, named --arena-name (default "Bench Arena"), and every bot
+// joins it as above; its id is printed.
 #include "client.h"
 
 #include "net/loop.h"
@@ -55,8 +58,9 @@ static struct {
     int port, bots, base, inc, think, spread, watchers, duration, warmup, connect_rate, rated;
     pid_t pid;
     bool forever, quiet, tls, resume;
-    int handshakes, threads, ai;
+    int handshakes, threads, ai, arena_make;
     uint32_t arena;
+    const char *arena_name;
     const char *accounts, *prefix, *groups;
 } O = { .port = 8900, .bots = 100, .base = 180, .inc = 2, .think = 200, .spread = 200, .duration = 60, .warmup = 10,
         .connect_rate = 200, .rated = 1, .resume = true, .threads = 4, .accounts = "build/bench_accounts.bin", .prefix = "bot" };
@@ -92,6 +96,7 @@ typedef struct bot {
     int64_t   last_sent_us;    /* the same, kept after our own confirmation (the relay's start) */
     uint32_t  playing;         /* the game we are in */
     bool      watcher;
+    bool      joined;          /* --arena: our join was sent on this connection */
     SSL      *ssl;             /* --tls: the socket's TLS */
 } bot;
 
@@ -174,9 +179,27 @@ static void bot_flush(bot *b) {
 
 static void seek(bot *b) {
     if (stopping) return;
+    if (O.arena_make && !O.arena) {   /* the arena is not made yet: the first bot makes it, the rest wait */
+        static bool asked;
+        if (b->idx || asked) return;
+        asked = true;
+        cw_arena_req q;
+        memset(&q, 0, sizeof q);
+        q.base_s = (uint16_t)O.base;
+        q.inc_s = (uint8_t)O.inc;
+        q.rated = (uint8_t)O.rated;
+        q.start_in_s = 5;
+        q.duration_s = (uint32_t)O.arena_make;
+        const char *nm = O.arena_name ? O.arena_name : "Bench Arena";
+        memcpy(q.name, nm, strlen(nm) < CW_ARENA_NAME ? strlen(nm) : CW_ARENA_NAME);
+        cc_client_post(&b->c, "/c/arena", &q, sizeof q, 2);
+        bot_flush(b);
+        return;
+    }
     if (O.arena) {   /* --arena: the arena pairs us (a join of a joined bot is refused, harmlessly) */
         cw_id q = { O.arena };
         cc_client_post(&b->c, "/c/arena/join", &q, sizeof q, 1);
+        b->joined = true;
         bot_flush(b);
         return;
     }
@@ -214,7 +237,23 @@ static void schedule_move(bot *b) {
 }
 
 static void on_events(bot *b, uint32_t ev) {
+    if ((ev & CC_EV_READ) && b->c.read_tag == 2 && !O.arena) {   /* --arena-make: the arena made */
+        if (b->c.read_status != 200 || !cc_client_arena_take(&b->c, b->c.read_buf, b->c.read_len, now_ms_d(), 1)) {
+            fprintf(stderr, "chessbench: the arena was refused (%d)\n", b->c.read_status);
+            stopping = true;
+            cb_loop_stop(L);
+            return;
+        }
+        cw_arena_hdr h;
+        memcpy(&h, b->c.arena, sizeof h);
+        O.arena = h.id;
+        printf("arena %u\n", h.id);
+        fflush(stdout);
+        for (int i = 0; i < O.bots; i++)   /* everyone already in waits for it */
+            if (B[i].state == 3 && B[i].c.ready && !B[i].watcher && !B[i].joined) seek(&B[i]);
+    }
     if (ev & CC_EV_READY) {
+        b->joined = false;
         if (b->watcher) return;
         if (b->playing) { cc_client_open(&b->c, b->playing); bot_flush(b); }
         else seek(b);
@@ -603,6 +642,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--tls")) O.tls = true;
         else if (!strcmp(a, "--ai")) O.ai = atoi(v), i++;
         else if (!strcmp(a, "--arena")) O.arena = (uint32_t)strtoul(v, NULL, 10), i++;
+        else if (!strcmp(a, "--arena-make")) O.arena_make = atoi(v), i++;
+        else if (!strcmp(a, "--arena-name")) O.arena_name = v, i++;
         else if (!strcmp(a, "--groups")) O.groups = v, i++;   /* TLS key exchange groups, e.g. X25519 (default: OpenSSL's, X25519MLKEM768 first) */
         else if (!strcmp(a, "--resume")) O.resume = atoi(v) != 0, i++;
         else if (!strcmp(a, "--handshakes")) O.handshakes = atoi(v), i++;
