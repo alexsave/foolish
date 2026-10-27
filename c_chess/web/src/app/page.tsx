@@ -10,6 +10,7 @@ import { tc, useNet } from '@/lib/use';
 import { SPEED_NAME, clockTime, inWords } from '@/lib/words';
 import MiniBoard from '@/components/MiniBoard';
 import Leaders from '@/components/Leaders';
+import Chat from '@/components/Chat';
 
 /** The arenas running and the next to start. */
 function Arenas() {
@@ -160,6 +161,7 @@ export default function Lobby() {
           </tbody>
         </table>
         <Arenas />
+        <Chat room="lobby" title="Lobby chat" />
         <Leaders speed={CC_BLITZ} limit={10} />
       </aside>
     </div>

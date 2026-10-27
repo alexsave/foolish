@@ -5,6 +5,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Board from '@/components/Board';
+import Chat from '@/components/Chat';
 import {
   CC_EV_START, CC_PLAYING, CW_A_ABORT, CW_A_DRAW, CW_A_DRAW_DECLINE, CW_A_REMATCH, CW_A_REMATCH_DECLINE, CW_A_RESIGN,
 } from '@/gen/web_layout';
@@ -214,6 +215,7 @@ function Game() {
           )}
         </div>
         <Player v={v} color={top ^ 1} bottom={true} />
+        <div className="panel" style={{ order: 4 }}><Chat room={`g${id}`} /></div>
       </div>
     </div>
   );

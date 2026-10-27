@@ -4,6 +4,8 @@ import {
   CC_ARENA_FINISHED, CC_ARENA_RUNNING, CC_ARENA_UPCOMING, CW_E_ARENA_GUEST, CW_E_ARENA_JOINED, CW_E_ARENA_NAME, CW_E_ARENA_NONE,
   CW_E_ARENA_NOT_JOINED, CW_E_ARENA_OVER, CW_E_ARENA_TOO_MANY, CC_ABORTED, CC_BLITZ, CC_BULLET, CC_CLASSICAL, CC_RAPID, CC_DRAW_AGREED, CC_DRAW_FIFTY, CC_DRAW_FLAG_MATERIAL, CC_DRAW_MATERIAL, CC_DRAW_MAX_PLY, CC_DRAW_REPETITION,
   CC_FLAG, CC_MATE, CC_PLAYING, CC_RESIGN, CC_STALEMATE,
+  CC_CHAT_CONTROL, CC_CHAT_EMPTY, CC_CHAT_LONG, CC_CHAT_UTF8, CV_CHAT_BANNED,
+  CW_E_CHAT_FAST, CW_E_CHAT_GUEST, CW_E_CHAT_MUTED, CW_E_CHAT_ROOM, CW_E_CHAT_TEXT, CW_E_CHAT_WORDS,
 } from '@/gen/web_layout';
 
 export function resultLine(status: number, winner: number): string {
@@ -62,3 +64,27 @@ export function inWords(ms: number): string {
 
 /** A clock time from ms since the epoch, in the reader's zone: "14:00". */
 export const clockTime = (at: number): string => new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+/** Why a chat line will not go: the kernel's answer before it is sent (cv_chat_check: chat.h's
+ * reasons and a banned word), and the server's refusal after (wire.h CW_E_CHAT_..). */
+export const CHAT_CHECK: Readonly<Record<number, string>> = {
+  [CC_CHAT_EMPTY]: '',
+  [CC_CHAT_LONG]: 'Too long: 140 bytes at most.',
+  [CC_CHAT_UTF8]: 'That line holds a character chat does not take.',
+  [CC_CHAT_CONTROL]: 'That line holds a character chat does not take.',
+  [CV_CHAT_BANNED]: 'Keep it friendly: that word is not allowed here.',
+};
+export function chatRefusal(code: number, why: number, wait: number): string {
+  switch (code) {
+    case CW_E_CHAT_ROOM: return 'This chat has closed.';
+    case CW_E_CHAT_TEXT: return CHAT_CHECK[why] || 'That line will not do.';
+    case CW_E_CHAT_GUEST: return 'Sign in to chat.';
+    case CW_E_CHAT_FAST: return wait <= 1 ? 'Slow down: one line a second.' : `Slow down: wait ${wait} seconds.`;
+    case CW_E_CHAT_WORDS: return CHAT_CHECK[CV_CHAT_BANNED];
+    case CW_E_CHAT_MUTED: {
+      const m = Math.ceil(wait / 60);
+      return `You are muted for ${m === 1 ? 'a minute' : `${m} more minutes`}.`;
+    }
+    default: return 'The line did not go. Try again.';
+  }
+}

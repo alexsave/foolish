@@ -280,3 +280,21 @@ h2.panel-h { font-size: 13px; color: var(--muted); text-transform: uppercase; le
 .pz-rows .up { color: #3fa45f; }
 .pz-rows .down { color: var(--warn); }
 .pz .actions { border-top: 1px solid var(--line); }
+
+/* ---- chat ---- */
+.chat { display: flex; flex-direction: column; min-width: 0; }
+.chat-h { padding: 10px 14px 6px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.chat-lines { height: 200px; overflow-y: auto; padding: 0 14px 6px; font-size: 14px; overscroll-behavior: contain; }
+.chat-line { padding: 2px 0; overflow-wrap: anywhere; line-height: 1.4; }
+.chat-line .t { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; margin-right: 6px; }
+.chat-line .n { font-weight: 600; color: var(--ink); margin-right: 6px; }
+.chat-line.mine .n { color: var(--accent); }
+.chat-empty { padding: 18px 0; text-align: center; font-size: 13px; }
+.chat-in { display: flex; padding: 8px 10px; border-top: 1px solid var(--line); }
+.chat-in input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--ink); padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
+.chat-in input:focus { outline: none; border-color: var(--accent); }
+.chat-in input[aria-invalid] { border-color: var(--warn); }
+.chat-in.guest { justify-content: center; padding: 12px 10px; font-size: 14px; font-weight: 600; }
+.chat-note { padding: 0 14px 10px; font-size: 13px; }
+.lobby .chat { border-top: 1px solid var(--line); }
+.lobby .chat-lines { height: 180px; }

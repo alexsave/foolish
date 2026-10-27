@@ -5,6 +5,7 @@ import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CC_ARENA_FINISHED, CC_ARENA_RUNNING, CC_ARENA_UPCOMING, CC_EV_START, CV_ARENA_ROWS, CW_ARENA_IN, CW_ARENA_OUT, CW_ARENA_WITHDRAWN } from '@/gen/web_layout';
+import Chat from '@/components/Chat';
 import { net } from '@/lib/net';
 import { tc, useNet } from '@/lib/use';
 import { ARENA_REFUSAL, ARENA_STATUS, SPEED_NAME, clockTime, countdown } from '@/lib/words';
@@ -90,6 +91,7 @@ function Arena() {
         {a.meIn === CW_ARENA_IN && a.status === CC_ARENA_UPCOMING && <p className="muted hint">You are in. Your first game starts with the arena.</p>}
         {a.meIn === CW_ARENA_IN && a.status === CC_ARENA_RUNNING && <p className="muted hint">Stay on this page: your next game opens by itself.</p>}
       </section>
+      <section className="panel"><Chat room={`a${id}`} title="Arena chat" /></section>
       <section className="panel">
         <table className="seeks standings">
           <thead><tr><th>#</th><th>Player</th><th>Rating</th><th>Games</th><th>Score</th></tr></thead>
