@@ -297,6 +297,7 @@ int main(int argc, char **argv) {
     if (me == 0 || me == 1) {
         T_CHECK(!g_ct.view.seats[me].is_ai);
         T_EQ_STR(g_ct.view.seats[me].name, row_name);   // the bracket's row and his seat agree
+        T_CHECK(g_ct.view.seats_locked);   // a match's seats are the host's: his lobby offers no edit
         T_CHECK(g_ct.view.seats[me].status != PLAYER_STATUS_READY);
         T_CHECK(g_ct.view.seats[1 - me].is_ai);
         T_EQ_INT(g_ct.view.seats[1 - me].status, PLAYER_STATUS_READY);
