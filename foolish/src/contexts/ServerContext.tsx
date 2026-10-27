@@ -399,9 +399,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (existingPromise) return existingPromise;
         const gamePromise = loadGameInternal(gameId);
         loadGamePromises.current.set(gameId, gamePromise);
-        gamePromise.finally(() => {
-            loadGamePromises.current.delete(gameId);
-        });
+        // Not .finally: its own promise rejected, unhandled, on every failed load.
+        const forget = () => { loadGamePromises.current.delete(gameId); };
+        gamePromise.then(forget, forget);
         return gamePromise;
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -414,7 +414,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const loadView = async (gameId: string): Promise<TableView | null> => {
         try {
             if (!userIdRef.current) return null;
-            const envelope = await backend.view(gameId);
+            const envelope = await backend.view(gameId, !!gamesRef.current[gameId]);
             // Stale: what the page was handed meanwhile is newer, and it holds it.
             if (envelope === 'stale') return gamesRef.current[gameId] ?? null;
             return envelope ? readEnvelope(envelope) : null;

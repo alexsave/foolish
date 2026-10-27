@@ -286,7 +286,7 @@ const void *nc_row(int kind, const uint8_t *body, int len, int i);
 #define NC_DO_PLAY           7   // gid, bytes: the kernel's action wire, intent: the version (-1 none)
 #define NC_DO_ASK            8   // bytes: the kernel's ask -> the asker's envelope
 #define NC_DO_GAMES          9   // -> a list: every view of the user
-#define NC_DO_OPEN_GAME      10  // gid -> the view (version, a_off, a_len); NOT_FOUND for none
+#define NC_DO_OPEN_GAME      10  // gid, flag: 1 when the asker holds no board of it -> the view (version, a_off, a_len); NOT_FOUND for none
 #define NC_DO_CHAT_HISTORY   11  // gid -> a list
 #define NC_DO_SEND_CHAT      12  // gid, bytes: the message
 #define NC_DO_BOTS           13  // -> a list
@@ -299,7 +299,7 @@ const void *nc_row(int kind, const uint8_t *body, int len, int i);
 
 typedef struct {
     uint8_t  kind;                                     // NC_DO_*
-    uint8_t  flag;                                     // SIGN_OUT
+    uint8_t  flag;                                     // SIGN_OUT; OPEN_GAME: the asker holds no board of the game
     uint8_t  gid_len;       char gid[NW_GID_MAX];
     uint8_t  name_len;      char name[NW_NAME_MAX];
     uint8_t  password_len;  char password[NW_PASSWORD_MAX];
@@ -375,7 +375,10 @@ void nc_gate_reset(const char *gid, int gid_len);
 //     animate that one; an empty view, the seat gone, always is);
 //   - an answered view (OPEN_GAME, CREATE, ASK, and this file's own refetches)
 //     applies unless something newer was applied, or an answer or cast at its
-//     very version was (a ticket's NcDone says stale, with no envelope);
+//     very version was (a ticket's NcDone says stale, with no envelope); an
+//     OPEN_GAME whose asker holds no board of the game (flag 1) takes the board
+//     at that very version too, since this book outlives the host's boards (a
+//     web page that mounts after a create holds nothing);
 //   - a move refused over a newer version refetches the game when no push has
 //     caught up NC_RECONCILE_MS later (let go the moment one does, or the host
 //     lets go of the game's stream);

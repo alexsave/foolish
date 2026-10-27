@@ -17,7 +17,9 @@
  *   - straight onto a game's URL, where nothing is known: nothing is drawn;
  *   - from the dashboard into a game that is being played: nothing, because the
  *     board has no title line for a name to hand over to;
- *   - "create new game": nothing until `create` answers, then the name.
+ *   - "create new game": nothing until `create` answers, then the name;
+ *   - and the game page "create new game" lands on shows the lobby, and does
+ *     not bounce back to the dashboard as "not found".
  *
  * The dashboard's ServerProvider and the game page's are two mounts, as they are
  * on the site (ProtectedRoute is per route), so the name really does cross a
@@ -62,10 +64,20 @@ const playerViews = new Map<string, Uint8Array>(); // game id -> the signed-in p
 let viewGate: Gate | null = null;                  // holds the game page's read of its view
 let createGate: Gate | null = null;                // holds `create`'s answer
 let createAnswer: Uint8Array | null = null;
+// The games the kernel's client has applied a board of already, at the version
+// the server answers a read with (a create's answer). Its read of such a game
+// is stale to a page that holds the board, and the board itself to a page that
+// says it holds none (netclient.h NC_DO_OPEN_GAME, the rule's owner; held by
+// server/test/unit_netclient.c a_board_is_news_to_an_asker_that_holds_none).
+const inTheBook = new Set<string>();
 
 const fb = fakeBackend({ user: { id: 'u-me-0000', username: 'ME' } });
 fb.module.games = async () => dashboard;
-fb.module.view = async (gid: string) => { await viewGate?.passed; return playerViews.get(gid) ?? null; };
+fb.module.view = async (gid: string, holds?: boolean) => {
+    await viewGate?.passed;
+    if (inTheBook.has(gid) && holds !== false) return 'stale';
+    return playerViews.get(gid) ?? null;
+};
 fb.module.create = async () => { await createGate?.passed; return createAnswer!; };
 
 let routeGameId = '';
@@ -237,4 +249,46 @@ test('create new game: the overlay is bare until `create` answers, then it is th
     try {
         assertNameOnly(loadingScreen(page.host), 'Brand new', 'the game page');
     } finally { viewGate.open(); viewGate = null; await page.close(); }
+});
+
+// The bug of 2026-10-27: "Create New Game" went to the new game and straight
+// back to the dashboard, every time. `create` answered and the client's book
+// took the board; the game page is a new provider holding no board, and its
+// read at the same version came back stale, which the page took for "not
+// found". The page now tells the client it holds no board, and is handed one.
+test('create new game lands in the new lobby, not back on the dashboard', async () => {
+    dashboard = [];
+    pushed.length = 0;
+    createAnswer = lobbyOf('fresh002', 'Landed');
+    const dash = await open('');
+    try {
+        const button = Array.from(dash.host.querySelectorAll('button')).find((b) => /create/i.test(b.textContent ?? ''));
+        assert.ok(button, 'the dashboard has its create button');
+        button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+        await dash.wait(60);
+        assert.deepEqual(pushed, ['/fresh002'], 'the page is sent to the new game');
+    } finally { await dash.close(); }
+
+    inTheBook.add('fresh002');
+    playerViews.set('fresh002', createAnswer);
+    const page = await open('fresh002');
+    try {
+        await page.wait(120);
+        assert.deepEqual(pushed, ['/fresh002'], 'the game page did not send the player back to the dashboard');
+        assert.equal(page.host.querySelector<HTMLInputElement>('.lobby > input.lobby__name-input')?.value, 'Landed',
+            'the game page shows the new lobby');
+    } finally { inTheBook.delete('fresh002'); await page.close(); }
+});
+
+// A game that is not there sends the page to the dashboard, and the failed load
+// rejects nothing that nobody handles (the load's own .finally used to: an
+// uncaught "Game ... not found" in the console on every such visit, which
+// node:test reports as this test's failure).
+test('a game that is not there: back to the dashboard, with no unhandled rejection', async () => {
+    pushed.length = 0;
+    const page = await open('gone0001');
+    try {
+        await page.wait(120);
+        assert.deepEqual(pushed, ['/dashboard'], 'the page is sent to the dashboard');
+    } finally { await page.close(); }
 });

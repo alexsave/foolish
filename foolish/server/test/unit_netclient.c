@@ -1233,6 +1233,52 @@ static void seat_and_spectator_casts(void) {
     T_CHECK(d && d->why == 0 && d->gid_len == 2 && d->a_len == 0);
 }
 
+// The book outlives a host's boards: the web's dashboard creates a game, and
+// the game's page mounts holding no board of it. Its read answers at the very
+// version the create's answer applied, and was stale, so the page had nothing
+// to show and said the game was not found. An asker that holds no board says
+// so (flag 1) and is handed the board; one that holds it still is not, and
+// nobody is handed an older one.
+static void a_board_is_news_to_an_asker_that_holds_none(void) {
+    signed_in(T0 + 3600000);
+    live(T0);
+    uint8_t b[512];
+    NcIntent create = intent(NC_DO_CREATE, NULL);
+    nc_do(&create, T0);
+    const NcRequest *q = nc_next_request(T0);
+    int n = envelope("newg01", 1, b, sizeof b);
+    const NcDone *d = nc_on_response(id_of(q), 200, b, n, T0);
+    T_CHECK(d && d->why == 0 && d->version == 1 && !d->stale);
+    host_t h;
+    memset(&h, 0, sizeof h);
+    const uint8_t env1[] = { 0xe1 }, env0[] = { 0xe0 };
+    // A host that holds the create's board: stale, as ever.
+    NcIntent open = intent(NC_DO_OPEN_GAME, "newg01");
+    nc_do(&open, T0);
+    q = nc_next_request(T0);
+    T_CHECK(path_is(q, "/v1/games/newg01"));
+    host_answer(&h, id_of(q), 1, env1, 1, T0);
+    T_EQ_INT(h.tickets, 1);
+    T_EQ_INT(h.stale, 1);
+    T_EQ_INT(h.table_len, 0);
+    // A host that holds none (the page that mounted): the board, at that version.
+    open.flag = 1;
+    nc_do(&open, T0);
+    q = nc_next_request(T0);
+    host_answer(&h, id_of(q), 1, env1, 1, T0);
+    T_EQ_INT(h.tickets, 2);
+    T_EQ_INT(h.stale, 1);
+    T_EQ_INT(h.table_v, 1);
+    T_EQ_MEM(h.table, h.table_len, env1, 1);
+    // An older board is no news to anybody.
+    memset(&h, 0, sizeof h);
+    nc_do(&open, T0);
+    q = nc_next_request(T0);
+    host_answer(&h, id_of(q), 0, env0, 1, T0);
+    T_EQ_INT(h.stale, 1);
+    T_EQ_INT(h.table_len, 0);
+}
+
 
 static void the_session_is_told_once(void) {
     nc_reset();
@@ -1973,6 +2019,7 @@ int main(void) {
     T_RUN(a_refused_move_catches_up);
     T_RUN(suback_takes_the_game_whole);
     T_RUN(seat_and_spectator_casts);
+    T_RUN(a_board_is_news_to_an_asker_that_holds_none);
     T_RUN(the_session_is_told_once);
     T_RUN(another_user_starts_the_book_over);
     T_RUN(waiting_intents_keep_their_bytes);

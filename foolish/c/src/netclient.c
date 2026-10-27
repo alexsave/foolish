@@ -618,7 +618,7 @@ static NcDone   g_dropped_out;
 // The book of games and the stream, below.
 static gate *gate_find(const char *gid, int gid_len, int make);
 static uint32_t any_top(const gate *g);
-static int answer_pass(gate *g, uint32_t version, int stamped);
+static int answer_pass(gate *g, uint32_t version, int stamped, int bare);
 static int envelope_names(const uint8_t *p, int len, char *gid, uint8_t *gid_len, uint32_t *version);
 static void events_begin(void);
 static NcEvent *event_add(uint8_t kind);
@@ -945,10 +945,11 @@ static void refresh_answered(int status, const uint8_t *body, int len, int64_t n
 
 // An answered envelope of game `gid` through the book: applied, or stale.
 // `own`: this file's refetch, so it becomes an event (its payload copied to g_frame).
+// `bare`: the asker holds no board of the game (an OPEN_GAME with flag 1).
 static int answer_view(NcDone *d, const char *gid, int gid_len, uint32_t version,
-                       const uint8_t *body, uint32_t off, uint32_t len, int own, int64_t now_ms) {
+                       const uint8_t *body, uint32_t off, uint32_t len, int own, int bare, int64_t now_ms) {
     gate *g = gate_find(gid, gid_len, 1);
-    if (!answer_pass(g, version, envelope_stamped(body + off, len))) { d->stale = 1; heard(gid, gid_len, -1, now_ms); return 0; }
+    if (!answer_pass(g, version, envelope_stamped(body + off, len), bare)) { d->stale = 1; heard(gid, gid_len, -1, now_ms); return 0; }
     seat_learn(g, body + off, len);
     heard(gid, gid_len, envelope_over(body + off, len), now_ms);
     d->version = version;
@@ -1005,7 +1006,7 @@ static void read_answer(NcDone *d, const NcIntent *in, int own, int status, cons
         // The answer says whether the asker now sits there (the envelope's
         // seat), which picks the casts taken from now on: the seat's or the
         // spectators', both of which a game's subscription hears.
-        answer_view(d, gid, gl, version, body, 0, (uint32_t)len, 0, now_ms);
+        answer_view(d, gid, gl, version, body, 0, (uint32_t)len, 0, 0, now_ms);
         // A create's game is heard from now on.
         if (d->kind == NC_DO_CREATE && !g_boards) {
             sub *s = sub_make(NW_SUB_GAME, gid, gl);
@@ -1030,7 +1031,7 @@ static void read_answer(NcDone *d, const NcIntent *in, int own, int status, cons
     }
     case NC_DO_OPEN_GAME: {
         const NcGameRow *r = nc_view_read(status, body, len);
-        if (r) answer_view(d, in->gid, in->gid_len, r->version, body, r->env_off, r->env_len, own, now_ms);
+        if (r) answer_view(d, in->gid, in->gid_len, r->version, body, r->env_off, r->env_len, own, !own && in->flag, now_ms);
         break;
     }
     case NC_DO_REPLAY: {
@@ -1381,14 +1382,18 @@ static int envelope_stamped(const uint8_t *env, uint32_t len) {
 // an envelope is read, and the stream pushes a move before its own answer
 // arrives: the stamp applies once at a version a cast or an answer already
 // holds, and that version is closed to it from then on.
-static int answer_pass(gate *g, uint32_t version, int stamped) {
+// `bare`: the asker holds no board of the game, so a board at the very version
+// the book holds is news to it all the same (the book outlives a page: a web
+// page that mounts after a create holds nothing, and was left with no board at
+// all). An older one is not.
+static int answer_pass(gate *g, uint32_t version, int stamped, int bare) {
     int any = g->has_view || g->has_cast || g->has_answer;
     if (any) {
         uint32_t top = any_top(g);
         if (version < top) return 0;
         // At the top itself only when nothing the table took is there already
         // (a dashboard push the table may not have shown is not).
-        if (version == top) {
+        if (version == top && !bare) {
             if (stamped ? g->has_stamp && g->stamp_v == top
                         : (g->has_cast && g->cast_v == top) || (g->has_answer && g->answer_v == top))
                 return 0;

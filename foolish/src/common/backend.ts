@@ -194,9 +194,11 @@ export async function games(): Promise<Uint8Array[]> {
 /**
  * One game: the caller's view, or the spectators' for a non-member; null for
  * no such game; 'stale' when what the page was handed meanwhile is newer.
+ * `holds`: whether the page holds a board of the game (the client's book
+ * outlives the page, so it is told: netclient.h NC_DO_OPEN_GAME).
  */
-export async function view(gameId: string): Promise<Uint8Array | null | 'stale'> {
-    const a = await ask({ kind: N.NC_DO_OPEN_GAME, gid: gameId }).catch(() => null);
+export async function view(gameId: string, holds: boolean): Promise<Uint8Array | null | 'stale'> {
+    const a = await ask({ kind: N.NC_DO_OPEN_GAME, gid: gameId, flag: holds ? 0 : 1 }).catch(() => null);
     if (!a) return null;
     return a.done.stale ? 'stale' : span(a, a.done.aOff, a.done.aLen);
 }
