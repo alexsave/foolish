@@ -85,6 +85,7 @@ static void view_fill(ClientTable *c, int viewer, int status) {
     view_unrate(v);   // an envelope's stamp is set by the one reader of it (client_adopt_envelope)
     v->version = c->version;
     v->passing = (c->table_rules & GAME_RULE_NO_PASS) == 0;
+    v->seats_locked = !game_lobby_seats_open(c->table_rules);
     for (int s = 0; s < g->num_players; s++) {
         ViewSeat *vs = &v->seats[s];
         vs->is_ai = c->has_roster && ((c->ai_mask >> s) & 1u) != 0;
@@ -121,15 +122,15 @@ static int board_import(ClientTable *c, const uint8_t *p, int len) {
 // slot's roster (a refused read leaves the slot naming no one). CLIENT_OK, or
 // `refusal` with the ROSTER_E_* in detail.
 static int identity_read(ClientTable *c, const uint8_t *p, int len, int *status, int refusal) {
-    int used = 0, gl = 0, passing = 1;
+    int used = 0, gl = 0, rules = ROSTER_TRAILER_PASSING;
     c->has_roster = false;
     c->table_rules = 0;
-    const int rc = roster_trailer_read(&c->r, c->gid, &gl, status, &c->ai_mask, &passing, p, len, &used);
+    const int rc = roster_trailer_read(&c->r, c->gid, &gl, status, &c->ai_mask, &rules, p, len, &used);
     if (rc != ROSTER_OK) { c->detail = rc; return refusal; }
     if (used != len) { c->detail = ROSTER_E_PADDING; return refusal; }
     c->gid_len = (uint8_t)gl;
     c->gid[gl] = 0;
-    c->table_rules = (int8_t)(passing ? 0 : GAME_RULE_NO_PASS);
+    c->table_rules = (int8_t)roster_game_rules(rules);
     return CLIENT_OK;
 }
 
@@ -498,7 +499,7 @@ int client_push_final(ClientTable *c) {
 int client_identity(const ClientTable *c, uint8_t *out, int cap) {
     if (!c->has_roster) return 0;
     const int n = roster_trailer_write_ai(&c->r, c->gid, c->gid_len, 0, 0, c->ai_mask,
-                                          (c->table_rules & GAME_RULE_NO_PASS) == 0, out, cap);
+                                          roster_trailer_rules(c->table_rules), out, cap);
     return n == ROSTER_E_CAP ? CLIENT_E_CAP : n < 0 ? CLIENT_E_IDENTITY : n;
 }
 
@@ -554,8 +555,10 @@ int client_view_rules(const TableView *v, int from_deck, int to_flipped, int tru
     for (int i = 0; covered && i < v->num_battles; i++) covered = !card_is_none(v->battles[i].defense);
     out->can_say_good = me >= 0 && v->status == GAME_STATUS_PLAYING && v->seats[me].status == PLAYER_STATUS_IN
         && me != v->defender && !((v->good_mask >> me) & 1u) && covered;
-    out->can_set_rules = game_lobby_can_set_rules(me, v->status == GAME_STATUS_WAITING) != 0;
-    out->can_join = me < 0 && game_lobby_has_room(n, v->status == GAME_STATUS_WAITING);
+    const bool open = !v->seats_locked;
+    out->can_set_rules = open && game_lobby_can_set_rules(me, v->status == GAME_STATUS_WAITING) != 0;
+    out->can_join = open && me < 0 && game_lobby_has_room(n, v->status == GAME_STATUS_WAITING);
+    out->can_edit_seats = open && me >= 0 && v->status == GAME_STATUS_WAITING;
 
     for (int s = 0; s < n && !out->needs_bots; s++)
         out->needs_bots = seat_needs_bot(v->status, v->seats[s].status, v->seats[s].is_ai);
@@ -631,7 +634,7 @@ static int board_game(ClientTable *c, const TableView *v) {
     memcpy(g->elimination_order, v->elimination, (size_t)v->num_eliminated);
     // The board plays the table's rules, so a gate or a menu on it is the one the
     // server's game would give (no transfer is offered or allowed at podkidnoy).
-    g->rules = (int8_t)(v->passing ? 0 : GAME_RULE_NO_PASS);
+    g->rules = (int8_t)((v->passing ? 0 : GAME_RULE_NO_PASS) | (v->seats_locked ? GAME_RULE_SEATS_LOCKED : 0));
     // A dry run's draws take the stock's top (no random draw, nothing of the
     // module's generator spent) and its log records land in the one slot.
     g->deterministic_deck = true;

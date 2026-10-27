@@ -274,26 +274,27 @@ static uint8_t *put_blob(uint8_t *p, int wide, const char *b, int n) {
 }
 
 int roster_trailer_write(const Roster *r, const char *game_id, int gid_len, int status,
-                         uint32_t good_mask, int passing, uint8_t *out, int cap) {
-    return roster_trailer_write_ai(r, game_id, gid_len, status, good_mask, roster_bot_mask(r), passing, out, cap);
+                         uint32_t good_mask, int rules, uint8_t *out, int cap) {
+    return roster_trailer_write_ai(r, game_id, gid_len, status, good_mask, roster_bot_mask(r), rules, out, cap);
 }
 
 int roster_trailer_write_ai(const Roster *r, const char *game_id, int gid_len, int status,
-                            uint32_t good_mask, uint32_t ai_mask, int passing, uint8_t *out, int cap) {
+                            uint32_t good_mask, uint32_t ai_mask, int rules, uint8_t *out, int cap) {
     const int v = roster_validate(r);
     if (v != ROSTER_OK) return v;
-    return roster_trailer_write_validated(r, game_id, gid_len, status, good_mask, ai_mask, passing, out, cap);
+    return roster_trailer_write_validated(r, game_id, gid_len, status, good_mask, ai_mask, rules, out, cap);
 }
 
 int roster_trailer_write_validated(const Roster *r, const char *game_id, int gid_len, int status,
-                                   uint32_t good_mask, uint32_t ai_mask, int passing, uint8_t *out, int cap) {
+                                   uint32_t good_mask, uint32_t ai_mask, int rules, uint8_t *out, int cap) {
     if (gid_len < 0 || gid_len > ROSTER_GAME_ID_MAX || (gid_len > 0 && !game_id)) return ROSTER_E_GAME_ID;
     if (status < 0 || status > 2) return ROSTER_E_STATUS;
     if ((good_mask >> r->n) != 0) return ROSTER_E_GOOD;
-    if (passing != 0 && passing != 1) return ROSTER_E_RULES;
+    if (rules & ~ROSTER_TRAILER_RULES) return ROSTER_E_RULES;
+    const bool v1 = rules == ROSTER_TRAILER_PASSING;   // the open classic game: format 1
     if (!out || cap < 0) return ROSTER_E_CAP;
 
-    int need = 1 + 2 + gid_len + 2 + r->title_len + 1 + 1 + 1 + 1 + (passing ? 0 : 1);   // + n_good, has_ts, the rules byte
+    int need = 1 + 2 + gid_len + 2 + r->title_len + 1 + 1 + 1 + 1 + (v1 ? 0 : 1);   // + n_good, has_ts, the rules byte
     int n_good = 0;
     for (int s = 0; s < r->n; s++) {
         need += 2 + r->seats[s].name_len + 2 + r->seats[s].id_len + 1;
@@ -303,7 +304,7 @@ int roster_trailer_write_validated(const Roster *r, const char *game_id, int gid
     uint8_t *p = out;
     // The oldest format that can carry the table (roster.h): a passing table is
     // the format 1 trailer it always was.
-    *p++ = passing ? ROSTER_TRAILER_FORMAT_V1 : ROSTER_TRAILER_FORMAT_V2;
+    *p++ = v1 ? ROSTER_TRAILER_FORMAT_V1 : ROSTER_TRAILER_FORMAT_V2;
     p = put_blob(p, 1, game_id, gid_len);
     p = put_blob(p, 1, r->title, r->title_len);
     *p++ = (uint8_t)status;
@@ -320,7 +321,7 @@ int roster_trailer_write_validated(const Roster *r, const char *game_id, int gid
     for (int s = 0; s < r->n; s++)
         if ((good_mask >> s) & 1u) p = put_blob(p, 1, r->seats[s].id, r->seats[s].id_len);
     *p++ = 0;   // has_ts
-    if (!passing) *p++ = 0;   // the rules byte: podkidnoy, ROSTER_TRAILER_PASSING clear
+    if (!v1) *p++ = (uint8_t)rules;   // the rules byte
     return (int)(p - out);
 }
 
@@ -345,7 +346,7 @@ static int tr_blob(TR *t, int wide, int cap, int e, char *dst, uint8_t *len_out)
     return ROSTER_OK;
 }
 
-static int trailer_parse(TR *t, Roster *r, char *gid, uint8_t *gl, int *st, uint32_t *ai, int *passing) {
+static int trailer_parse(TR *t, Roster *r, char *gid, uint8_t *gl, int *st, uint32_t *ai, int *rules) {
     int v, n, flag, format;
     if (!tr_u8(t, &format)) return ROSTER_E_SHORT;
     if (format != ROSTER_TRAILER_FORMAT_V1 && format != ROSTER_TRAILER_FORMAT_V2) return ROSTER_E_VERSION;
@@ -376,27 +377,27 @@ static int trailer_parse(TR *t, Roster *r, char *gid, uint8_t *gl, int *st, uint
     if (!tr_u8(t, &flag)) return ROSTER_E_SHORT;
     if (flag > 1) return ROSTER_E_FLAG;
     if (flag && (t->at += 8) > t->len) return ROSTER_E_SHORT;   // an old server's f64 timestamp
-    *passing = 1;   // format 1: the passing game, all it could ever describe
+    *rules = ROSTER_TRAILER_PASSING;   // format 1: the open passing game, all it could ever describe
     if (format == ROSTER_TRAILER_FORMAT_V2) {
         if (!tr_u8(t, &flag)) return ROSTER_E_SHORT;
-        if (flag & ~ROSTER_TRAILER_PASSING) return ROSTER_E_RULES;   // a rule this kernel cannot honour
-        *passing = flag & ROSTER_TRAILER_PASSING;
+        if (flag & ~ROSTER_TRAILER_RULES) return ROSTER_E_RULES;   // a rule this kernel cannot honour
+        *rules = flag;
     }
     return roster_validate(r);
 }
 
 int roster_trailer_read(Roster *r, char *game_id, int *gid_len, int *status,
-                        uint32_t *ai_mask, int *passing, const uint8_t *p, int len, int *consumed) {
+                        uint32_t *ai_mask, int *rules, const uint8_t *p, int len, int *consumed) {
     char gid[ROSTER_GAME_ID_MAX + 1];
     uint8_t gl = 0;
     int st = 0;
     uint32_t ai = 0;
-    int pass = 1;
+    int rb = ROSTER_TRAILER_PASSING;
     TR t = { p, 0, p ? len : 0 };
     memset(r, 0, sizeof(*r));
-    const int v = trailer_parse(&t, r, gid, &gl, &st, &ai, &pass);
+    const int v = trailer_parse(&t, r, gid, &gl, &st, &ai, &rb);
     if (v != ROSTER_OK) { memset(r, 0, sizeof(*r)); return v; }
-    if (passing) *passing = pass;
+    if (rules) *rules = rb;
     if (game_id) memcpy(game_id, gid, sizeof(gid));
     if (gid_len) *gid_len = gl;
     if (status) *status = st;

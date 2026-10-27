@@ -497,7 +497,7 @@ export const Lobby = () => {
     };
 
     const handleDragStart = (e: React.MouseEvent | React.TouchEvent, index: number) => {
-        if (game?.status !== GAME_STATUS.WAITING) return;
+        if (game?.status !== GAME_STATUS.WAITING || !rulesOf(game).canEditSeats) return;
 
         const target = e.target as HTMLElement;
         if (target.tagName === 'BUTTON' || target.closest('button')) return;
@@ -557,11 +557,12 @@ export const Lobby = () => {
             
             <div className="lobby__players">
                 {localPlayerOrder.map((player: ViewSeat, index: number) => {
-                    // Leaving and kicking are for people seated at the lobby (the
-                    // server refuses anyone else); a spectator gets the join button.
-                    const seated = game.mySeat >= 0;
-                    const showExitButton = game.status === GAME_STATUS.WAITING && seated;
-                    const showRemoveBotButton = !!(player.isAi && game.status === GAME_STATUS.WAITING && seated);
+                    // Leaving and kicking are for people seated at a lobby whose seats
+                    // are open (the kernel's ViewRules.canEditSeats; the server refuses
+                    // anyone else); a spectator gets the join button.
+                    const canEdit = rulesOf(game).canEditSeats;
+                    const showExitButton = canEdit;
+                    const showRemoveBotButton = !!(player.isAi && canEdit);
                     const showXButton = showExitButton || showRemoveBotButton;
 
                     return (
@@ -610,7 +611,7 @@ export const Lobby = () => {
                 boxStyle={useWoodTexture ? buttonTextureStyle : undefined}
             />
 
-            {game.status === GAME_STATUS.WAITING && game.mySeat >= 0 && localPlayerOrder.length < MAX_PLAYERS && (
+            {rulesOf(game).canEditSeats && localPlayerOrder.length < MAX_PLAYERS && (
                 <div className="lobby__add-bot-row">
                     {selectableBots.length > 1 && (
                         <button

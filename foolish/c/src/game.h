@@ -130,10 +130,16 @@ _Static_assert(MAX_BATTLES >= GAME_LEGAL_BATTLES_MAX, "MAX_BATTLES is narrower t
 // also matches the wire (msg_wire.h MSG_VARIANT_NO_PASS), which reserved a
 // variant byte whose 0 has always meant "the classic 36-card game".
 #define GAME_RULE_NO_PASS 0x01
+// SEATS LOCKED: the host built this lobby's seats and they stay as built (a
+// match of birdseye's tournament, made by the dev route). Nobody joins, leaves,
+// is removed, adds a bot, reorders the seats or changes the rules; Ready still
+// deals. Set by the host alone (table_lock_seats), never by an ask, and a
+// rematch's lobby is open again (table_continue).
+#define GAME_RULE_SEATS_LOCKED 0x02
 // Every rule this kernel knows. A Game that names any other bit came from a
 // kernel newer than this one, and is refused (game_validate GAME_INVALID_RULES)
 // rather than played as a game it is not.
-#define GAME_RULES_KNOWN GAME_RULE_NO_PASS
+#define GAME_RULES_KNOWN (GAME_RULE_NO_PASS | GAME_RULE_SEATS_LOCKED)
 
 typedef struct {
     Card attack;
@@ -578,6 +584,12 @@ int game_lobby_reorder(Game *g, const int8_t *perm, int n);
 // (msg_lobby_offered), the online table has no such gate, and a change clears
 // nobody's Ready.
 int game_lobby_can_set_rules(int seat, int waiting);
+
+// MAY ANYONE CHANGE WHO SITS IN THIS LOBBY, OR ITS RULES? Not when Game.rules
+// holds GAME_RULE_SEATS_LOCKED. THE one predicate behind the table's refusals
+// (table_join, _leave, _add_bot, _remove_bot, _reseat, _set_rules) and the
+// lobby view's offers (ViewRules.can_edit_seats, can_join, can_set_rules).
+int game_lobby_seats_open(int rules);
 
 // Set a WAITING game's rules: `passing` 1 the classic passing game, 0 podkidnoy
 // (GAME_RULE_NO_PASS; the boundary sense, docs/PODKIDNOY.md). Returns 1 when the

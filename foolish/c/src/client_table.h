@@ -82,6 +82,9 @@ typedef struct {
     // it too; a board with no identity (client_adopt_state) is the classic game. A
     // board the rules read (client_validate, client_play) plays by it.
     bool     passing;
+    // THE LOBBY'S SEATS ARE LOCKED (game.h GAME_RULE_SEATS_LOCKED, the trailer's
+    // ROSTER_TRAILER_SEATS_LOCKED): the host built them; ViewRules offers no edit.
+    bool     seats_locked;
     Card     flipped;
     uint8_t  gid_len, title_len;
     uint32_t good_mask;       // bit per seat
@@ -131,7 +134,8 @@ typedef struct {
     int8_t  defender_badge;        // the defending seat; -1 none (GAME_SEAT_NONE until the opening names it)
     bool    can_say_good;          // the viewer may say Good and the bout could close on it
     bool    can_set_rules;         // the viewer may change the table's rules: seated, in a lobby that has not dealt (game.h game_lobby_can_set_rules)
-    bool    can_join;              // the viewer may sit down: not seated, in a lobby with a seat left (game.h game_lobby_has_room)
+    bool    can_join;              // the viewer may sit down: not seated, in a lobby with a seat left (game.h game_lobby_has_room), seats open
+    bool    can_edit_seats;        // the viewer may add or remove a bot, leave, or reorder: seated, in a lobby, its seats open (game.h game_lobby_seats_open)
     bool    show_deck_pile;        // the stock has cards left to draw on screen
     bool    show_flipped_slot;     // the trump's slot, kept while a card is on its way into it or out of it
     bool    show_trump_icon;       // stock and trump are gone: the power suit stands in their place

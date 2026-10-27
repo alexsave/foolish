@@ -305,9 +305,10 @@ int state_blob_put_at(const Game *g, const BoardClock *clk, int format, unsigned
 int state_blob_put_rated_at(const Game *g, const BoardClock *clk, const GameRatings *ratings, int format, unsigned char *out) {
     int flag = g->deterministic_deck ? STATE_BLOB_FLAG_DETERMINISTIC : 0;
     if (format == STATE_BLOB_FORMAT_V4 || format == STATE_BLOB_FORMAT_V5) {
-        // The one rule v4 carries; a rules bit beyond it has no flag to go in.
-        if (g->rules & ~GAME_RULE_NO_PASS) return STATE_BLOB_E_RULES;
+        // The rules v4 carries; a rules bit beyond them has no flag to go in.
+        if (g->rules & ~GAME_RULES_KNOWN) return STATE_BLOB_E_RULES;
         if (game_pass_allowed(g)) flag |= STATE_BLOB_FLAG_PASSING;
+        if (g->rules & GAME_RULE_SEATS_LOCKED) flag |= STATE_BLOB_FLAG_LOCKED;
     } else if (g->rules != 0) {
         return STATE_BLOB_E_RULES;   // before v4 a row is the classic game, and this one is not
     }
@@ -377,7 +378,8 @@ int state_blob_load_rated(Game *g, const unsigned char *p, int len, BoardClock *
     g->deterministic_deck = v4 ? (p[1] & STATE_BLOB_FLAG_DETERMINISTIC) != 0 : p[1] != 0;
     // THE one place a row sets the rules: before v4 every row is the classic
     // game, whatever this Game held before it.
-    g->rules = (int8_t)(v4 && !(p[1] & STATE_BLOB_FLAG_PASSING) ? GAME_RULE_NO_PASS : 0);
+    g->rules = (int8_t)((v4 && !(p[1] & STATE_BLOB_FLAG_PASSING) ? GAME_RULE_NO_PASS : 0)
+                        | (v4 && (p[1] & STATE_BLOB_FLAG_LOCKED) ? GAME_RULE_SEATS_LOCKED : 0));
     if (clk) {
         const unsigned char *c = p + STATE_BLOB_HEADER + state_len;
         const int clocked = state_blob_clock_bytes(p[0]) > 0;

@@ -414,6 +414,10 @@ int game_lobby_can_set_rules(int seat, int waiting) {
     return seat >= 0 && waiting;
 }
 
+int game_lobby_seats_open(int rules) {
+    return (rules & GAME_RULE_SEATS_LOCKED) == 0;
+}
+
 int game_lobby_set_rules(Game *g, int passing) {
     if (!g || g->status != GAME_STATUS_WAITING || (passing != 0 && passing != 1)) return 0;
     const int8_t rules = (int8_t)(passing ? g->rules & ~GAME_RULE_NO_PASS : g->rules | GAME_RULE_NO_PASS);

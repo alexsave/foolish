@@ -94,7 +94,9 @@ static int run_seat(Table *t, const cb_game_row *row, const uint8_t seed[32], vo
     // With a human seated (UNREADY) neither deals: the table waits in its lobby for the human's
     // Start, and nobody is readied here.
     const char *first = p->s[0].id;
-    if (by_house == p->n) return p->human ? rc : table_ready(t, first, (int)strlen(first), seed);
+    // A human's table is a match the host built: its seats are locked (game.h
+    // GAME_RULE_SEATS_LOCKED), so the human may Ready and nothing else.
+    if (by_house == p->n) return p->human ? table_lock_seats(t) : table_ready(t, first, (int)strlen(first), seed);
     for (int i = by_house; i < p->n; i++)
         if ((rc = seat_one(t, p, i, first, seed)) < 0) return rc;
     return rc;

@@ -169,7 +169,8 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 // game's row reads PASSING with it.
 #define STATE_BLOB_FLAG_DETERMINISTIC 0x01   // the seed-dealt deck (Game.deterministic_deck)
 #define STATE_BLOB_FLAG_PASSING       0x02   // 1 the classic passing game, 0 podkidnoy (GAME_RULE_NO_PASS)
-#define STATE_BLOB_FLAGS_V4 (STATE_BLOB_FLAG_DETERMINISTIC | STATE_BLOB_FLAG_PASSING)
+#define STATE_BLOB_FLAG_LOCKED        0x04   // the lobby's seats are locked (GAME_RULE_SEATS_LOCKED)
+#define STATE_BLOB_FLAGS_V4 (STATE_BLOB_FLAG_DETERMINISTIC | STATE_BLOB_FLAG_PASSING | STATE_BLOB_FLAG_LOCKED)
 
 // Layout v5: v4, then the game's RATING STAMP (GameRatings below), fixed width,
 // behind the clock. v4 -> v5 has had its expand (#283 read v5 and still wrote

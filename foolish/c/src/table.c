@@ -223,6 +223,7 @@ int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) 
 
 static uint8_t game_status_byte(const Game *g) { return (uint8_t)g->status; }
 
+
 // The rating stamp the loaded table shows and stores: the finished game's, and
 // no stamp at all once the board is anything else. A rematch's lobby
 // (table_continue) is a new game with nothing to show yet, and this is the one
@@ -257,7 +258,7 @@ static int envelope_put(const Table *t, const char *game_id, int gid_len, int vi
         memcpy(out + at, trailer, (size_t)trailer_len);
         return at + trailer_len;
     }
-    const int n = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask, game_pass_allowed(g),
+    const int n = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask, roster_trailer_rules(g->rules),
                                        out + at, cap - at);
     if (n < 0) return n == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     return at + n;
@@ -352,7 +353,7 @@ int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uin
     const bool trailer = t->roster_changed || t->rules_changed;
     out[seq] = trailer ? EVW_AS3_ROSTER : 0;
     if (!trailer) return seq + 1;
-    const int tr = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask, game_pass_allowed(g),
+    const int tr = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask, roster_trailer_rules(g->rules),
                                         out + seq + 1, cap - seq - 1);
     if (tr < 0) return tr == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     return seq + 1 + tr;
@@ -494,7 +495,7 @@ int table_commit_products_flags(const Table *t, const char *game_id, int gid_len
     // The trailer is the same for every viewer: written once, copied into each envelope.
     uint8_t trailer[ROSTER_TRAILER_MAX];
     const int tl = roster_trailer_write_validated(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask,
-                                                  roster_bot_mask(&t->r), game_pass_allowed(g), trailer, (int)sizeof trailer);
+                                                  roster_bot_mask(&t->r), roster_trailer_rules(g->rules), trailer, (int)sizeof trailer);
     if (tl < 0) return tl == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     for (int s = 0; s < g->num_players; s++) {
         if (t->r.seats[s].brain_len > 0) continue;
@@ -607,6 +608,7 @@ int table_create(Table *t, const char *actor_id, int id_len, const char *name, i
 int table_join(Table *t, const char *actor_id, int id_len, const char *name, int name_len) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    if (!game_lobby_seats_open(t->g->rules)) return TABLE_E_FORBIDDEN;
     const int rc = roster_seat_add(&t->r, actor_id, id_len, name, name_len, "", 0);
     if (rc < 0) return roster_refusal(t, rc);
     game_lobby_seat(t->g, STRATEGY_KEY_HUMAN);
@@ -629,6 +631,7 @@ int table_leave(Table *t, const char *actor_id, int id_len, const char *target_i
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
     if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    if (!game_lobby_seats_open(t->g->rules)) return TABLE_E_FORBIDDEN;
     const int seat = roster_seat_of(&t->r, target_id, target_len);
     if (seat < 0) return TABLE_E_NOT_SEATED;
     // A bot is removed as a bot (table_remove_bot), never as a player leaving.
@@ -641,6 +644,7 @@ int table_add_bot(Table *t, const char *actor_id, int id_len, const char *bot_id
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
     if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    if (!game_lobby_seats_open(t->g->rules)) return TABLE_E_FORBIDDEN;
     char key[ROSTER_BRAIN_MAX + 1];
     if (brain_len <= 0 || brain_len > ROSTER_BRAIN_MAX) return TABLE_E_UNKNOWN_BRAIN;
     memcpy(key, brain, (size_t)brain_len);
@@ -659,6 +663,7 @@ int table_remove_bot(Table *t, const char *actor_id, int id_len, const char *bot
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
     if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    if (!game_lobby_seats_open(t->g->rules)) return TABLE_E_FORBIDDEN;
     const int seat = roster_seat_of(&t->r, bot_id, bot_len);
     if (seat < 0 || t->r.seats[seat].brain_len == 0) return TABLE_E_NOT_SEATED;
     return unseat(t, seat);
@@ -680,6 +685,7 @@ int table_reseat(Table *t, const char *actor_id, int id_len, const uint8_t *ids,
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
     if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    if (!game_lobby_seats_open(t->g->rules)) return TABLE_E_FORBIDDEN;
     int8_t perm[MAX_PLAYERS];
     int n = 0, at = 0;
     while (at < ids_len) {
@@ -715,6 +721,7 @@ int table_set_rules(Table *t, const char *actor_id, int id_len, int passing) {
     const int seat = actor_seat(t, actor_id, id_len);
     if (!game_lobby_can_set_rules(seat, t->g->status == GAME_STATUS_WAITING))
         return seat < 0 ? TABLE_E_NOT_SEATED : TABLE_E_NOT_WAITING;
+    if (!game_lobby_seats_open(t->g->rules)) return TABLE_E_FORBIDDEN;
     if (passing != 0 && passing != 1) return TABLE_E_WIRE;
     if (!game_lobby_set_rules(t->g, passing)) return TABLE_MOOT;
     lobby_edit(t, 0);
@@ -733,7 +740,19 @@ int table_continue(Table *t, const char *actor_id, int id_len) {
     // is the same table playing the same game, and any seat may change them in
     // the lobby before it deals (table_set_rules).
     t->g->deterministic_deck = false;
+    // A rematch is the players' own table: the host's lock was for the game it built.
+    t->g->rules &= (int8_t)~GAME_RULE_SEATS_LOCKED;
     lobby_edit(t, 0);
+    return TABLE_OK;
+}
+
+int table_lock_seats(Table *t) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    if (!game_lobby_seats_open(t->g->rules)) return TABLE_MOOT;
+    t->g->rules |= GAME_RULE_SEATS_LOCKED;
+    lobby_edit(t, 0);
+    t->rules_changed = true;   // the push carries the trailer, where a viewer reads the lock
     return TABLE_OK;
 }
 

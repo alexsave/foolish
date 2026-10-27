@@ -10612,7 +10612,7 @@ static void test_roster_trailer(void) {
     CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, &passing, out, n, &consumed) == ROSTER_OK
           && passing == 1, "a format 2 trailer whose rules byte says PASSING reads passing");
     int unknown_refused = 1;
-    for (int bit = 1; bit < 8; bit++) {
+    for (int bit = 2; bit < 8; bit++) {   // bit 1 is ROSTER_TRAILER_SEATS_LOCKED
         out[golden_len] = (uint8_t)(1u << bit);
         if (roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, &passing, out, n, &consumed) != ROSTER_E_RULES) unknown_refused = 0;
     }
@@ -10620,9 +10620,9 @@ static void test_roster_trailer(void) {
     out[golden_len] = 0;
     CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, &passing, out, n - 1, &consumed) == ROSTER_E_SHORT,
           "a format 2 trailer cut before its rules byte is refused");
-    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 0, 2, out, sizeof(out)) == ROSTER_E_RULES
+    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 0, 4, out, sizeof(out)) == ROSTER_E_RULES
           && roster_trailer_write(&r, RS("game-1"), 1, 0, -1, out, sizeof(out)) == ROSTER_E_RULES,
-          "a passing argument that is neither 0 nor 1 writes no trailer");
+          "a rules argument holding a bit beyond ROSTER_TRAILER_RULES writes no trailer");
 }
 
 /* ---------------------- the C Table (src/table.h) ---------------------------- */
@@ -10800,7 +10800,7 @@ static void test_state_blob_v4_carries_the_rules(void) {
           "v3 and v2 writers: neither writes a podkidnoy board");
     {
         Game other = g;
-        other.rules = (int8_t)(GAME_RULE_NO_PASS << 1);   // a rule no format has a bit for yet
+        other.rules = (int8_t)(GAME_RULES_KNOWN + 1);   // a rule no format has a bit for yet
         CHECK(state_blob_put_at(&other, &clk, STATE_BLOB_FORMAT_V4, blob) == STATE_BLOB_E_RULES,
               "v4 writer: a rule v4 has no bit for is refused, not dropped");
     }
@@ -10854,7 +10854,7 @@ static void test_state_blob_v4_carries_the_rules(void) {
     g.rules = GAME_RULE_NO_PASS;
     n = state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V4, blob);
     int unknown_refused = 0;
-    for (int bit = 2; bit < 8; bit++) {
+    for (int bit = 3; bit < 8; bit++) {   // bit 2 is STATE_BLOB_FLAG_LOCKED
         blob[1] = (unsigned char)(STATE_BLOB_FLAG_DETERMINISTIC | (1 << bit));
         memset(&back, 0, sizeof back);
         tb_game.rules = 0;
@@ -10863,7 +10863,7 @@ static void test_state_blob_v4_carries_the_rules(void) {
         if (a != 0 || b != TABLE_E_STATE_VERSION) fprintf(stderr, "  v4 flag bit %d: load %d, table_load %d\n", bit, a, b);
         unknown_refused += a == 0 && back.rules == 0 && back.num_players == 0 && b == TABLE_E_STATE_VERSION && !tb.loaded;
     }
-    CHECK(unknown_refused == 6, "v4: every unknown flag bit makes the row unreadable, and nothing is adopted");
+    CHECK(unknown_refused == 5, "v4: every unknown flag bit makes the row unreadable, and nothing is adopted");
 }
 
 // table_seal: a board a fixture composed field by field comes back as a row
@@ -14950,6 +14950,89 @@ static void test_table_set_rules(void) {
           "set_rules: and its seats read podkidnoy, and may change it");
 }
 
+// THE SEATS LOCK (game.h GAME_RULE_SEATS_LOCKED): the host locks a lobby it built
+// (table_lock_seats, birdseye's tournament tables). Every seat edit and the rules
+// are refused with the table unchanged, Ready still deals; the lock rides the
+// trailer to every viewer, whose ViewRules offer no edit, and the row keeps it.
+// A rematch's lobby is the players' own, open again.
+static void test_table_lock_seats(void) {
+    ViewRules vr;
+    TableCommit c;
+    tb_seed_fill(12);
+    client_init(&ct, &ct_slot);
+
+    tb_lobby();
+    CHECK(sr_view(0, &vr) == CLIENT_OK && !ct.view.seats_locked && vr.can_edit_seats && vr.can_set_rules,
+          "lock: an open lobby offers its seat the edits");
+    CHECK(sr_view(-1, &vr) == CLIENT_OK && vr.can_join && !vr.can_edit_seats, "lock: and a spectator a seat, no edit");
+    CHECK(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed) == TABLE_OK, "lock: a bot sits first");
+    tb.rules_changed = false;
+    CHECK(table_lock_seats(&tb) == TABLE_OK && !game_lobby_seats_open(tb_game.rules) && game_pass_allowed(&tb_game),
+          "lock: the host locks the seats, and the game is still the passing one");
+    CHECK(tb.rules_changed && tb.lobby_event, "lock: its push carries the trailer");
+    TB_REFUSED(table_lock_seats(&tb), TABLE_MOOT, "lock: locking it again changes nothing");
+    TB_REFUSED(table_join(&tb, RS("d"), RS("Dan")), TABLE_E_FORBIDDEN, "lock: nobody joins");
+    TB_REFUSED(table_leave(&tb, RS("b"), RS("b")), TABLE_E_FORBIDDEN, "lock: nobody leaves");
+    TB_REFUSED(table_leave(&tb, RS("a"), RS("c")), TABLE_E_FORBIDDEN, "lock: nobody is removed");
+    TB_REFUSED(table_add_bot(&tb, RS("a"), RS("bot-2"), RS("Rando 2"), RS("random"), tb_seed), TABLE_E_FORBIDDEN,
+               "lock: no bot is added");
+    TB_REFUSED(table_remove_bot(&tb, RS("a"), RS("bot-1")), TABLE_E_FORBIDDEN, "lock: no bot is removed");
+    {
+        static const uint8_t ids[] = { 1, 'b', 1, 'a', 1, 'c', 5, 'b', 'o', 't', '-', '1' };
+        TB_REFUSED(table_reseat(&tb, RS("a"), ids, (int)sizeof ids), TABLE_E_FORBIDDEN, "lock: nobody reorders the seats");
+    }
+    TB_REFUSED(table_set_rules(&tb, RS("a"), 0), TABLE_E_FORBIDDEN, "lock: nobody changes the rules");
+    CHECK(sr_view(0, &vr) == CLIENT_OK && ct.view.seats_locked && ct.view.passing && !vr.can_edit_seats && !vr.can_set_rules,
+          "lock: a seat reads the lock and the passing game, and is offered no edit");
+    CHECK(sr_view(-1, &vr) == CLIENT_OK && ct.view.seats_locked && !vr.can_join, "lock: a spectator is offered no seat");
+    {
+        const int idn = client_identity(&ct, ct_id, sizeof(ct_id));
+        Roster back;
+        char gid[ROSTER_GAME_ID_MAX + 1];
+        int gl = 0, st = 0, rules = 0;
+        uint32_t ai = 0;
+        CHECK(idn > 0 && ct_id[0] == ROSTER_TRAILER_FORMAT_V2
+              && roster_trailer_read(&back, gid, &gl, &st, &ai, &rules, ct_id, idn, 0) == ROSTER_OK
+              && rules == (ROSTER_TRAILER_PASSING | ROSTER_TRAILER_SEATS_LOCKED),
+              "lock: the identity a client keeps is a format 2 trailer naming the passing game, locked");
+    }
+
+    // The row keeps it, and a table that loads the row refuses as before.
+    CHECK(table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0
+          && (tb_arena[c.state.off + 1] & STATE_BLOB_FLAG_LOCKED) && (tb_arena[c.state.off + 1] & STATE_BLOB_FLAG_PASSING),
+          "lock: the lobby's row carries LOCKED and PASSING");
+    memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
+    tb_state_len = c.state.len;
+    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    table_init(&tb, &tb_game, &tb_snaps);
+    tb_game.rules = 0;
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && !game_lobby_seats_open(tb_game.rules)
+          && game_pass_allowed(&tb_game), "lock: a table that loads the row is locked, the passing game");
+    TB_REFUSED(table_leave(&tb, RS("c"), RS("c")), TABLE_E_FORBIDDEN, "lock: and still nobody leaves it");
+
+    // Ready is the one thing left, and it deals.
+    table_ready(&tb, RS("a"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    CHECK(table_ready(&tb, RS("c"), tb_seed) == TABLE_OK && tb.dealt_now && tb_game.status == GAME_STATUS_PLAYING,
+          "lock: the last Ready deals");
+
+    // A REMATCH's lobby is open.
+    unsigned char seed[FOOLISH_SEED_LEN];
+    CHECK(rs_play_seeded(&tb_src, 3, 779, seed), "lock: a game plays out");
+    game_set_seed(1);
+    tb_src.status = GAME_STATUS_GAME_OVER;
+    tb_src.rules = GAME_RULE_SEATS_LOCKED;
+    for (int i = 0; i < 3; i++) tb_src.players[i].status = PLAYER_STATUS_IDLE;
+    tb_state_len = tb_blob(&tb_src, tb_state);
+    tb_roster_for(3, 0, "", tb_roster);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(tb_state_len > 0 && table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK
+          && !game_lobby_seats_open(tb_game.rules), "lock: the finished locked row loads, locked");
+    CHECK(table_continue(&tb, RS("id-1")) == TABLE_OK && tb_game.status == GAME_STATUS_WAITING && game_lobby_seats_open(tb_game.rules)
+          && game_pass_allowed(&tb_game), "lock: its rematch lobby is open, the same passing game");
+    CHECK(sr_view(1, &vr) == CLIENT_OK && !ct.view.seats_locked && vr.can_edit_seats, "lock: and its seats may edit it");
+}
+
 // THE BOTS PLAY THE TABLE'S RULES (bot_drive.c, through calculate_legal_moves,
 // which gates the transfer inside calc_pass_moves): a bots-only podkidnoy table
 // plays to its end without one transfer. The same deals under the classic rules
@@ -16979,7 +17062,7 @@ static void test_masked_board_carries_the_rules(void) {
 
         // A rule this kernel does not know is a board from a newer kernel, and
         // is refused rather than played as the game this kernel knows.
-        b[STATE_FLAGS_AT] |= (unsigned char)(GAME_RULE_NO_PASS << 1) << STATE_FLAG_RULES_SHIFT;
+        b[STATE_FLAGS_AT] |= (unsigned char)(GAME_RULES_KNOWN + 1) << STATE_FLAG_RULES_SHIFT;
         memset(&back, 0, sizeof back);
         CHECK(state_import(&back, b, nb, viewer != VIEW_UNMASKED) == GAME_INVALID_RULES,
               "a board naming an unknown rule is refused as GAME_INVALID_RULES");
@@ -17929,7 +18012,7 @@ static void test_table_load_refuses_a_board_it_could_not_have_made(void) {
           "a podkidnoy board imports as podkidnoy over a classic one");
     ks_dealt(7);
     memcpy(&held, &tb_game, sizeof(held));
-    held.rules = GAME_RULE_NO_PASS << 1;
+    held.rules = GAME_RULES_KNOWN + 1;
     const int ul = state_put(&held, VIEW_UNMASKED, bad);
     const int rl2 = tb_blob(&tb_game, resident);
     CHECK(state_import(&tb_game, bad, ul, 1) == GAME_INVALID_RULES, "a rule this kernel does not know is refused");
@@ -18142,7 +18225,7 @@ static void test_state_blob_formats_read_and_written(void) {
               passing ? "state blob: a passing v4 row is written back the same bytes at the current format"
                       : "state blob: a podkidnoy v4 row is written back the same, still podkidnoy");
     }
-    blob[1] = (uint8_t)(deck | TABLE_STATE_FLAG_PASSING | 0x04);
+    blob[1] = (uint8_t)(deck | TABLE_STATE_FLAG_PASSING | 0x08);
     CHECK(table_load(&tb, blob, n4, bl_row.roster, ROSTER_BYTES) == TABLE_E_STATE_VERSION,
           "state blob: a v4 flag bit this kernel does not know is unreadable");
 }
@@ -20721,6 +20804,7 @@ int main(void) {
     test_table_cast_carries_its_version();
     test_lobby_can_set_rules();
     test_table_set_rules();
+    test_table_lock_seats();
     test_table_bots_never_transfer_under_podkidnoy();
     test_client_reads_every_push_of_a_game();
     test_client_push_steps_and_refusals();

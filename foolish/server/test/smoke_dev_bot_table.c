@@ -369,20 +369,38 @@ static bool human_view(const char *gid, ClientTable *c, ClientSlot *slot) {
     return ok;
 }
 
-// The human's Start (ASK_START over /v1/meta, the lobby's button). The status.
+// One of the human's lobby asks over /v1/meta, as the web UI's lobby sends it (a's kind and
+// fields; the game id is filled in here). The status; a refusal's body into *why when given.
+static int human_ask(const char *gid, TableAsk *a, AskRefusal *why) {
+    a->gid_len = (uint8_t)strlen(gid);
+    memcpy(a->gid, gid, a->gid_len);
+    uint8_t body[ASK_BYTES_MAX];
+    int n = ask_encode(a, body, sizeof body);
+    cb_buf out;
+    cb_buf_init(&out);
+    int st = n > 0 ? req(&g_dev, "POST", "/v1/meta", g_user_token, body, (size_t)n, &out) : -1;
+    if (why && (st < 200 || st > 299) && ask_refusal_decode(out.p, (int)out.len, why) != ASK_OK) memset(why, 0, sizeof *why);
+    cb_buf_free(&out);
+    return st;
+}
+
+// The human's Start (ASK_START, the lobby's button). The status.
 static int human_start(const char *gid) {
     TableAsk a;
     memset(&a, 0, sizeof a);
     a.kind = ASK_START;
-    a.gid_len = (uint8_t)strlen(gid);
-    memcpy(a.gid, gid, a.gid_len);
-    uint8_t body[ASK_BYTES_MAX];
-    int n = ask_encode(&a, body, sizeof body);
-    cb_buf out;
-    cb_buf_init(&out);
-    int st = n > 0 ? req(&g_dev, "POST", "/v1/meta", g_user_token, body, (size_t)n, &out) : -1;
-    cb_buf_free(&out);
-    return st;
+    return human_ask(gid, &a, NULL);
+}
+
+// An ask the locked lobby must refuse: not 2xx, the kernel's TABLE_E_FORBIDDEN.
+static bool human_refused(const char *gid, TableAsk *a) {
+    AskRefusal why;
+    memset(&why, 0, sizeof why);
+    const int st = human_ask(gid, a, &why);
+    if (st >= 200 && st <= 299) return false;
+    if (why.why != ASK_WHY_REFUSED || why.code != TABLE_E_FORBIDDEN)
+        fprintf(stderr, "ask %d: status %d, why %d, code %d\n", a->kind, st, why.why, (int)why.code);
+    return why.why == ASK_WHY_REFUSED && why.code == TABLE_E_FORBIDDEN;
 }
 
 // One legal move of the human's on c's board, as the web UI offers one, over /v1/action. The
@@ -457,10 +475,38 @@ static void human_and_bot(void) {
     T_EQ_STR(c.view.seats[1].id, ids[1]);
     T_CHECK(c.view.seats[1].is_ai);
     T_EQ_INT(c.view.seats[1].status, PLAYER_STATUS_READY);
-    // A moment later still nobody dealt it (no bot loop, no timer readies the human).
+    // Its seats are the host's, locked (game.h GAME_RULE_SEATS_LOCKED): the lobby offers the
+    // human no edit, and the server refuses each one the web UI could send.
+    T_CHECK(c.view.seats_locked);
+    T_CHECK(c.view.passing);
+    ViewRules vr;
+    T_CHECK(client_view_rules(&c.view, 0, 0, 0, &vr) == CLIENT_OK && !vr.can_edit_seats && !vr.can_set_rules && !vr.can_join);
+    TableAsk a;
+    memset(&a, 0, sizeof a);
+    a.kind = ASK_ADD_BOT;   // any bot
+    T_CHECK(human_refused(gid, &a));
+    memset(&a, 0, sizeof a);
+    a.kind = ASK_EXIT;      // the human leaves
+    a.player_len = (uint8_t)strlen(g_user_id);
+    memcpy(a.player, g_user_id, a.player_len);
+    T_CHECK(human_refused(gid, &a));
+    memset(&a, 0, sizeof a);
+    a.kind = ASK_EXIT;      // the bot is removed
+    a.bot_len = (uint8_t)strlen(ids[1]);
+    memcpy(a.bot, ids[1], a.bot_len);
+    T_CHECK(human_refused(gid, &a));
+    memset(&a, 0, sizeof a);
+    a.kind = ASK_SET_RULES;
+    a.passing = 0;
+    T_CHECK(human_refused(gid, &a));
+    // A moment later still nobody dealt it (no bot loop, no timer readies the human), and the
+    // refused asks changed nothing.
     usleep(300000);
     T_CHECK(human_view(gid, &c, &slot));
     T_EQ_INT(c.view.status, GAME_STATUS_WAITING);
+    T_EQ_INT(c.view.num_players, 2);
+    T_CHECK(c.view.passing);
+    T_CHECK(c.view.seats_locked);
     // The human's Start deals.
     T_EQ_INT(human_start(gid), 200);
     T_CHECK(human_view(gid, &c, &slot));

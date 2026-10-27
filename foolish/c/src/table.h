@@ -295,8 +295,13 @@ int table_retitle(Table *t, const char *actor_id, int id_len, const char *title,
 // rematch (table_continue leaves them).
 int table_set_rules(Table *t, const char *actor_id, int id_len, int passing);
 // A finished game back to its lobby (game_reset_to_lobby with the roster's
-// bots), playing the rules the finished game played.
+// bots), playing the rules the finished game played, its seats open again.
 int table_continue(Table *t, const char *actor_id, int id_len);
+// THE HOST locks the lobby's seats (game.h GAME_RULE_SEATS_LOCKED): no ask
+// reaches it. From then on table_join, _leave, _add_bot, _remove_bot, _reseat
+// and _set_rules answer TABLE_E_FORBIDDEN; table_ready still deals. TABLE_MOOT
+// when locked already, TABLE_E_NOT_WAITING once dealt.
+int table_lock_seats(Table *t);
 // The actor's own hand: new card i is old card idx[i]. TABLE_E_WIRE when idx is
 // not a permutation of the hand. No push: nobody else can see a hand's order.
 int table_rearrange_hand(Table *t, const char *actor_id, int id_len, const uint8_t *idx, int n);
