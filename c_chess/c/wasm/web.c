@@ -3,6 +3,7 @@
  * socket or a fetch received before calling in a function, and reads what to send from after one. */
 #include "client.h"
 #include "puzzle.h"
+#include "rating.h"
 #include "web.h"
 
 #include <string.h>
@@ -228,24 +229,45 @@ static void copy_fixed(char *dst, const char *src, size_t n) {
     memcpy(dst, src, k);
 }
 
-/* io holds GET /c/user/<name>'s n bytes (status 200). */
+/* A time control's speed (speed.h): which rating a game of it moves. */
+EXPORT(cv_speed) int cv_speed(int base_s, int inc_s) { return cc_speed(base_s, inc_s); }
+
+static uint8_t provisional(unsigned rd) { return rd >= CC_PROVISIONAL_RD; }
+
+/* io holds GET /c/user/<name>'s n bytes (status 200). The points come by speed, so each speed's
+ * are a run: from[] and count[] say where. */
 EXPORT(cv_profile) const CvProfile *cv_profile(uint32_t n) {
     memset(&P, 0, sizeof P);
     cw_profile pr;
     if (n < sizeof pr) return &P;
     memcpy(&pr, IO, sizeof pr);
-    if (n != sizeof pr + (size_t)pr.n_points * sizeof(cw_point)) return &P;
+    if (pr.n_points > CV_POINTS || n != sizeof pr + (size_t)pr.n_points * sizeof(cw_point)) return &P;
     P.ok = 1;
-    P.rating = pr.rating;
-    P.rd = pr.rd;
+    for (int k = 0; k < CC_SPEEDS; k++) {
+        P.rating[k] = pr.rating[k];
+        P.rd[k] = pr.rd[k];
+        P.rated[k] = pr.rated[k];
+        P.provisional[k] = provisional(pr.rd[k]);
+    }
+    P.puzzle = pr.puzzle;
+    P.puzzle_rd = pr.puzzle_rd;
+    P.puzzle_provisional = provisional(pr.puzzle_rd);
+    P.puzzles_tried = pr.puzzles_tried;
+    P.puzzles_solved = pr.puzzles_solved;
     P.games = pr.games; P.wins = pr.wins; P.losses = pr.losses; P.draws = pr.draws;
     copy_fixed(P.name, pr.name, CW_NAME);
-    P.n = pr.n_points > CV_POINTS ? CV_POINTS : pr.n_points;
+    P.n = pr.n_points;
+    int last = -1;
     for (int i = 0; i < P.n; i++) {
         cw_point pt;
         memcpy(&pt, IO + sizeof pr + (size_t)i * sizeof pt, sizeof pt);
+        if (pt.speed >= CC_SPEEDS || pt.speed < last) { memset(&P, 0, sizeof P); return &P; }   /* not by speed */
+        if (pt.speed != last) P.from[pt.speed] = (uint16_t)i;
+        last = pt.speed;
+        P.count[pt.speed]++;
         P.points[i].at = (double)pt.at;
         P.points[i].rating = pt.rating;
+        P.points[i].speed = pt.speed;
     }
     return &P;
 }
@@ -289,7 +311,7 @@ EXPORT(cv_tv) const CvTv *cv_tv(double now) {
     return &T;
 }
 
-/* io holds GET /c/top's n bytes. */
+/* io holds GET /c/top/<speed>'s n bytes. */
 EXPORT(cv_top) const CvTop *cv_top(uint32_t n) {
     memset(&TOP, 0, sizeof TOP);
     if (n < 8) return &TOP;
@@ -297,6 +319,7 @@ EXPORT(cv_top) const CvTop *cv_top(uint32_t n) {
     memcpy(&cnt, IO, 2);
     if (cnt > CW_TOP_MAX || n != 8 + (size_t)cnt * sizeof(cw_top_row)) return &TOP;
     TOP.n = cnt;
+    TOP.speed = IO[2];
     for (int i = 0; i < cnt; i++) {
         cw_top_row r;
         memcpy(&r, IO + 8 + (size_t)i * sizeof r, sizeof r);
@@ -304,6 +327,7 @@ EXPORT(cv_top) const CvTop *cv_top(uint32_t n) {
         TOP.rows[i].rating = r.rating;
         TOP.rows[i].rd = r.rd;
         TOP.rows[i].games = r.games;
+        TOP.rows[i].provisional = provisional(r.rd);
     }
     return &TOP;
 }

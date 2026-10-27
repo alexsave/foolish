@@ -143,7 +143,7 @@ WEB_FLAGS   := -isystem $(C_ROOT)/shared/c/wasm/include -Ic/src -Ic/wasm -I$(C_R
 WEB_SG_ARGS := --cwd . --header c/wasm/web.h --root CvView --root CvMoves --root CvLobby --root CvProfile --root CvGames --root CvTv --root CvTop --root CvEval --root CvPuzzle \
                --snapshot CvView --snapshot CvMoves --snapshot CvLobby --snapshot CvProfile --snapshot CvGames --snapshot CvTv --snapshot CvTop --snapshot CvEval --snapshot CvPuzzle --snapshot-only --const CV_ --const CC_EV_ --const CW_A_ --const CC_ --const CW_E_ --const CW_AUTH_ --const CH_ --const CP_ --build 'web=$(WEB_FLAGS)'
 WEB_GEN     := web/src/gen
-WEB_WASM_SRC := c/src/chess.c c/src/game.c c/src/client.c c/src/puzzle.c c/wasm/web.c $(C_ROOT)/shared/c/wasm/libc.c
+WEB_WASM_SRC := c/src/chess.c c/src/game.c c/src/client.c c/src/puzzle.c c/src/speed.c c/wasm/web.c $(C_ROOT)/shared/c/wasm/libc.c
 WEB_WASM    := web/public/chess.wasm
 
 gen: $(STRUCTGEN)

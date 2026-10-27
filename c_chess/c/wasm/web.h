@@ -57,14 +57,22 @@ typedef struct {
 } CvSeek;
 typedef struct { uint16_t n; uint16_t pad; uint32_t games, players; CvSeek seeks[CV_SEEKS]; } CvLobby;
 
-/* A profile (GET /c/user/<name>), parsed: its rating history newest last. */
-#define CV_POINTS 200
-typedef struct { double at; int16_t rating; uint16_t pad[3]; } CvPoint;
+/* A profile (GET /c/user/<name>), parsed: a rating per speed (speed.h CC_BULLET..CC_CLASSICAL, in
+ * that order), the puzzle rating, and each speed's history: points[from[k] .. from[k] + count[k]),
+ * oldest first. provisional: the deviation is at or above rating.h's CC_PROVISIONAL_RD (a "?"). */
+#define CV_POINTS 600
+typedef struct { double at; int16_t rating; uint8_t speed; uint8_t pad[5]; } CvPoint;
 typedef struct {
-    uint8_t  ok; uint8_t pad[3];
-    int16_t  rating; uint16_t rd;
+    uint8_t  ok; uint8_t puzzle_provisional; uint8_t pad[2];
+    int16_t  rating[CC_SPEEDS];
+    uint16_t rd[CC_SPEEDS];
+    uint32_t rated[CC_SPEEDS];          /* rated games of each speed */
+    uint8_t  provisional[CC_SPEEDS];
+    uint16_t from[CC_SPEEDS], count[CC_SPEEDS];
     uint32_t games, wins, losses, draws;
-    uint16_t n; uint16_t pad2[3];
+    int16_t  puzzle; uint16_t puzzle_rd;
+    uint32_t puzzles_tried, puzzles_solved;
+    uint16_t n; uint16_t pad2[5];        /* the points start 8-aligned */
     char     name[CV_NAME];
     CvPoint  points[CV_POINTS];
 } CvProfile;
@@ -99,8 +107,8 @@ typedef struct {
 typedef struct { uint16_t n; uint16_t pad; CvTvGame games[CV_TV]; } CvTv;
 
 #define CV_TOP 50
-typedef struct { char name[CV_NAME]; int16_t rating; uint16_t rd; uint32_t games; } CvTopRow;
-typedef struct { uint16_t n; uint16_t pad; CvTopRow rows[CV_TOP]; } CvTop;
+typedef struct { char name[CV_NAME]; int16_t rating; uint16_t rd; uint32_t games; uint8_t provisional; uint8_t pad[3]; } CvTopRow;
+typedef struct { uint16_t n; uint8_t speed; uint8_t pad; CvTopRow rows[CV_TOP]; } CvTop;   /* games: rated, of the speed */
 
 /* The engine's view of a position of the game shown (white's view), its line in SAN. */
 typedef struct {
