@@ -39,13 +39,27 @@ enum {
     CC_EV_READ = 1 << 11,      /* a read asked by cc_client_read answered (cc_client.read_*) */
     CC_EV_EVAL = 1 << 12,      /* the engine's view of a position arrived (cc_client.eval) */
     CC_EV_ARENA = 1 << 13,     /* an arena's frame arrived (cc_client.arena): its room's push, or an answer taken */
+    CC_EV_CHAT = 1 << 14,      /* a room's chat changed (cc_client_chat): a line pushed, or its log read */
 };
 
 /* What a request was, to read its answer. */
-enum { CC_RQ_NONE, CC_RQ_SEEK, CC_RQ_UNSEEK, CC_RQ_MOVE, CC_RQ_ACT, CC_RQ_SNAP, CC_RQ_LOBBY, CC_RQ_CHALLENGE, CC_RQ_ACCEPT, CC_RQ_SUB, CC_RQ_TV, CC_RQ_READ };
+enum { CC_RQ_NONE, CC_RQ_SEEK, CC_RQ_UNSEEK, CC_RQ_MOVE, CC_RQ_ACT, CC_RQ_SNAP, CC_RQ_LOBBY, CC_RQ_CHALLENGE, CC_RQ_ACCEPT, CC_RQ_SUB, CC_RQ_TV, CC_RQ_READ,
+       CC_RQ_CHAT_LOG };
 #define CC_READ_CAP 16384   /* the largest answer a read keeps (a profile with its points, a game list) */
 
-typedef struct { uint32_t id; uint8_t kind; uint8_t pad[3]; uint32_t game; } cc_pending;
+typedef struct { uint32_t id; uint8_t kind; uint8_t pad[3]; uint32_t game; char room[CW_ROOM]; } cc_pending;   /* room: a chat log's */
+
+/* A room's chat as the client keeps it: its last lines, oldest first. The client keeps the rooms it
+ * hears from, at most CC_CHAT_ROOMS (the lobby, the game shown and an arena are watched together at
+ * most); another room takes the slot touched longest ago. */
+#define CC_CHAT_ROOMS 3
+typedef struct {
+    char         room[CW_ROOM];   /* "": a free slot */
+    uint16_t     n;
+    uint8_t      pad[2];
+    uint32_t     used;            /* when last touched (cc_client.chat_seq) */
+    cw_chat_line l[CW_CHAT_LOG];
+} cc_chat_room;
 
 typedef struct {
     /* the socket */
@@ -105,6 +119,9 @@ typedef struct {
     uint8_t   arena[CW_ARENA_FRAME_MAX];
     uint32_t  arena_len;
     int64_t   arena_at;
+    /* the chat of the rooms heard from (CC_EV_CHAT) */
+    cc_chat_room chat[CC_CHAT_ROOMS];
+    uint32_t  chat_seq;
     uint32_t  read_tag;
     uint16_t  read_status;
     uint32_t  read_len;
@@ -165,6 +182,16 @@ void cc_client_unwatch(cc_client *c, const char *room);
  * withdrawal (answer 1). Kept when well formed (CC_EV_ARENA): 1, else 0. A push holds nobody's own
  * place: the last known of the same arena stays, and the reader's own row, when listed, renews it. */
 int  cc_client_arena_take(cc_client *c, const uint8_t *p, size_t n, int64_t now, int answer);
+
+/* ---- chat ---- */
+/* Reads a room's last lines (GET /c/chat/<room>) into its slot: CC_EV_CHAT. Lines pushed while the
+ * read is in flight are kept. */
+void cc_client_chat_log(cc_client *c, const char *room);
+/* Says n bytes of text in a room (POST /c/chat): the answer arrives as a read's does (CC_EV_READ
+ * with this tag: 200, or a cw_chat_err); the line itself comes back as the room's push. */
+void cc_client_chat_say(cc_client *c, const char *room, const char *text, size_t n, uint32_t tag);
+/* A room's chat as kept: NULL when the client has none. */
+const cc_chat_room *cc_client_chat(const cc_client *c, const char *room);
 
 /* ---- what to draw ---- */
 /* A side's clock now. */

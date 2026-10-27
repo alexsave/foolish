@@ -4,7 +4,7 @@
 //
 //   chessbench [--port 8900] [--bots 100] [--tc 180+2] [--think 200] [--spread 200] [--watchers 0]
 //              [--duration 60] [--warmup 10] [--pid <server pid>] [--accounts <file>] [--connect-rate 200]
-//              [--rated 1] [--forever] [--arena <id>] [--arena-make <seconds> [--arena-name <name>]]
+//              [--rated 1] [--forever] [--arena <id>] [--arena-make <seconds> [--arena-name <name>]] [--chat]
 //
 // THE NUMBERS (after the warm-up, for `duration` seconds):
 //   move round trip   a bot's move sent to the server's state push of that ply back on its own socket
@@ -24,6 +24,8 @@
 // --arena-make <seconds>: the first bot makes an arena of the time control (--tc, --rated) that
 // starts 5 s later and lasts that long, named --arena-name (default "Bench Arena"), and every bot
 // joins it as above; its id is printed.
+// --chat: a bot says "gl hf" in its game's room when a game starts and "gg" when it ends (a live chat
+// to look at, and a load test of the chat: lines said and refused, and lines heard, are counted).
 #include "client.h"
 
 #include "net/loop.h"
@@ -57,7 +59,7 @@
 static struct {
     int port, bots, base, inc, think, spread, watchers, duration, warmup, connect_rate, rated;
     pid_t pid;
-    bool forever, quiet, tls, resume;
+    bool forever, quiet, tls, resume, chat;
     int handshakes, threads, ai, arena_make;
     uint32_t arena;
     const char *arena_name;
@@ -111,6 +113,7 @@ static bool measuring, stopping;
 static samples rt_us, relay_us;
 static long moves_measured, games_measured, games_ended, errors;
 static long bytes_in, bytes_out, frames_in, frames_out;
+static long chat_said, chat_refused, chat_heard;   /* --chat, while measuring */
 static int n_open;
 
 /* game id -> the two bots, for the relay timing (open addressing, ids are dense) */
@@ -236,7 +239,20 @@ static void schedule_move(bot *b) {
     b->move_timer = cb_loop_timer(L, d, play_move, b);
 }
 
+/* --chat: a line in the game's room; the answer is a read's, tagged 3. */
+static void say(bot *b, uint32_t game, const char *text) {
+    char room[CW_ROOM];
+    snprintf(room, sizeof room, "g%u", game);
+    cc_client_chat_say(&b->c, room, text, strlen(text), 3);
+    bot_flush(b);
+}
+
 static void on_events(bot *b, uint32_t ev) {
+    if ((ev & CC_EV_READ) && b->c.read_tag == 3 && measuring) {   /* --chat: a line's answer */
+        if (b->c.read_status == 200) chat_said++;
+        else chat_refused++;
+    }
+    if ((ev & CC_EV_CHAT) && measuring) chat_heard++;
     if ((ev & CC_EV_READ) && b->c.read_tag == 2 && !O.arena) {   /* --arena-make: the arena made */
         if (b->c.read_status != 200 || !cc_client_arena_take(&b->c, b->c.read_buf, b->c.read_len, now_ms_d(), 1)) {
             fprintf(stderr, "chessbench: the arena was refused (%d)\n", b->c.read_status);
@@ -266,6 +282,7 @@ static void on_events(bot *b, uint32_t ev) {
             GAME_BOT[2 * (g % GAME_SLOTS) + b->c.start_color] = b->idx;
             cc_client_open(&b->c, g);
             bot_flush(b);
+            if (O.chat) say(b, g, "gl hf");
             /* the watchers follow the first games they hear of */
             for (int i = 0, w = 0; i < O.bots && w < O.watchers && b->c.start_color == 0; i++) {
                 bot *x = &B[i];
@@ -294,6 +311,7 @@ static void on_events(bot *b, uint32_t ev) {
     if (ev & CC_EV_OVER) {
         if (b->watcher) { cc_client_close_game(&b->c); bot_flush(b); return; }
         if (b->c.color == 0) { games_ended++; if (measuring) games_measured++; }
+        if (O.chat && b->c.game) say(b, b->c.game, "gg");
         b->playing = 0;
         cc_client_close_game(&b->c);
         bot_flush(b);
@@ -644,6 +662,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--arena")) O.arena = (uint32_t)strtoul(v, NULL, 10), i++;
         else if (!strcmp(a, "--arena-make")) O.arena_make = atoi(v), i++;
         else if (!strcmp(a, "--arena-name")) O.arena_name = v, i++;
+        else if (!strcmp(a, "--chat")) O.chat = true;
         else if (!strcmp(a, "--groups")) O.groups = v, i++;   /* TLS key exchange groups, e.g. X25519 (default: OpenSSL's, X25519MLKEM768 first) */
         else if (!strcmp(a, "--resume")) O.resume = atoi(v) != 0, i++;
         else if (!strcmp(a, "--handshakes")) O.handshakes = atoi(v), i++;
@@ -708,6 +727,9 @@ int main(int argc, char **argv) {
     printf("move relay      (us): n %zu p50 %u p90 %u p99 %u p999 %u max %u\n", relay_us.n, pct(&relay_us, 0.5), pct(&relay_us, 0.9),
            pct(&relay_us, 0.99), pct(&relay_us, 0.999), relay_us.n ? relay_us.v[relay_us.n - 1] : 0);
     printf("frames out %ld in %ld, bytes out %ld in %ld\n", frames_out, frames_in, bytes_out, bytes_in);
+    if (O.chat)
+        printf("chat: lines said %ld (%.0f/s), refused %ld, heard %ld (%.0f/s)\n", chat_said, chat_said / secs, chat_refused, chat_heard,
+               chat_heard / secs);
     if (TLS_CTX) printf("tls: %ld full and %ld resumed handshakes by the bots\n", tls_full, tls_resumed);
     if (have) {
         double cpu = (double)((u1 - u0) + (s1 - s0));

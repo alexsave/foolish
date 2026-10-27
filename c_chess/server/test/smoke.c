@@ -2,8 +2,9 @@
 // accounts, seeks and the lobby, a whole game to mate with a spectator, the ratings, profile,
 // history and PGN, a refused move, a rematch, a restart in the middle of a game, a challenge link,
 // an abort and a flag, a rating and a leaderboard per speed, an arena from its making to its end (pairing,
-// the standings pushed, a restart, a withdrawal, the end), and puzzles handed out, answered and rated,
-// across a restart.
+// the standings pushed, a restart, a withdrawal, the end), chat (a game's room heard by its players
+// and a spectator, the log, the refusals, the console's mute across a restart, the lobby), and
+// puzzles handed out, answered and rated, across a restart.
 //
 //   build/test/smoke build/c_chess build/chessbench
 #include "client.h"
@@ -856,6 +857,188 @@ static void arenas(void) {
     tc_response_free(&r);
 }
 
+// Says a line in a room over p's socket: the answer's status, its refusal in *e.
+static int say(player *p, const char *room, const char *text, size_t n, cw_chat_err *e) {
+    cc_client_chat_say(&p->c, room, text, n, 71);
+    p->seen = 0;
+    if (!pump(p, CC_EV_READ, 3000)) return -1;
+    memset(e, 0, sizeof *e);
+    if (p->c.read_len == sizeof *e) memcpy(e, p->c.read_buf, sizeof *e);
+    return p->c.read_status;
+}
+
+static int chat_n(const player *p, const char *room) {
+    const cc_chat_room *r = cc_client_chat(&p->c, room);
+    return r ? r->n : 0;
+}
+
+// Pumps p until its chat of room holds n lines, or timeout_ms.
+static bool chat_until(player *p, const char *room, int n, int timeout_ms) {
+    int64_t end = now_ms() + timeout_ms;
+    while (chat_n(p, room) < n) {
+        int64_t left = end - now_ms();
+        p->seen = 0;
+        if (left <= 0 || !pump(p, CC_EV_CHAT, (int)left)) return chat_n(p, room) >= n;
+    }
+    return true;
+}
+
+static const char *last_text(const player *p, const char *room) {
+    const cc_chat_room *r = cc_client_chat(&p->c, room);
+    return r && r->n ? r->l[r->n - 1].text : "";
+}
+
+#define ADMIN "Authorization: Bearer smoke-admin-token-0123456789abcdef0123\r\n"
+
+static int mute(const char *name, uint32_t minutes, const char *headers, char *text, size_t cap) {
+    cw_mute_req q;
+    memset(&q, 0, sizeof q);
+    memcpy(q.name, name, strlen(name));
+    q.minutes = minutes;
+    tc_response r;
+    T_EQ_INT(tc_http(g_port, "POST", "/admin/api/mute", headers, &q, sizeof q, &r), 0);
+    snprintf(text, cap, "%.*s", (int)r.body.len, (const char *)r.body.p);
+    int st = r.status;
+    tc_response_free(&r);
+    return st;
+}
+
+// Chat: alice and bob in a game with carol watching hear each other's lines; a guest may not talk
+// (and only the guest sign-up makes a guest's name); the log; the refusals (too long, a control, a
+// banned word, a second line in the same second, no such room); the console's mute, refused without
+// its token, kept across a restart and lifted; the lobby's chat.
+static void chat(void) {
+    // the guest's name is the guest sign-up's alone
+    player g;
+    cc_client_init(&g.c);
+    T_EQ_INT(auth(&g, "guest-chat3", "a guest's long password", CW_AUTH_SIGNUP), 400);
+    T_EQ_INT(g.c.auth_code, CW_E_BAD_NAME);
+    T_EQ_INT(auth(&g, "notaguest", "a guest's long password", CW_AUTH_GUEST), 400);
+    T_EQ_INT(auth(&g, "guest-chat2", "a guest's long password", CW_AUTH_GUEST), 200);
+    connect_ws(&g);
+    // a casual game, carol watching
+    cc_client_seek(&A.c, 300, 0, 0);
+    flush(&A);
+    A.seen = 0;
+    T_CHECK(pump(&A, CC_EV_SEEK, 3000));
+    cc_client_seek(&B.c, 300, 0, 0);
+    A.seen = B.seen = 0;
+    T_CHECK(pump(&B, CC_EV_START, 3000));
+    T_CHECK(pump(&A, CC_EV_START, 3000));
+    uint32_t game = A.c.start_game;
+    cc_client_open(&A.c, game);
+    cc_client_open(&B.c, game);
+    cc_client_open(&C.c, game);
+    A.seen = B.seen = C.seen = 0;
+    T_CHECK(pump(&A, CC_EV_GAME, 3000));
+    T_CHECK(pump(&B, CC_EV_GAME, 3000));
+    T_CHECK(pump(&C, CC_EV_GAME, 3000));
+    char room[16];
+    snprintf(room, sizeof room, "g%u", game);
+    // a line, pushed to the other player and the spectator
+    cw_chat_err e;
+    T_EQ_INT(say(&A, room, "gl hf", 5, &e), 200);
+    T_CHECK(chat_until(&B, room, 1, 3000));
+    T_CHECK(chat_until(&C, room, 1, 3000));
+    const cc_chat_room *cr = cc_client_chat(&C.c, room);
+    T_EQ_STR(cr->l[0].text, "gl hf");
+    T_EQ_STR(cr->l[0].name, "alice");
+    T_EQ_INT(cr->l[0].len, 5);
+    // a guest's line is refused
+    T_EQ_INT(say(&g, room, "hi", 2, &e), 403);
+    T_EQ_INT(e.code, CW_E_CHAT_GUEST);
+    // the log, read by a socket that heard nothing
+    cc_client_chat_log(&g.c, room);
+    g.seen = 0;
+    T_CHECK(pump(&g, CC_EV_CHAT, 3000));
+    T_EQ_INT(chat_n(&g, room), 1);
+    T_EQ_STR(last_text(&g, room), "gl hf");
+    close(g.fd);
+    tc_response r;
+    char path[32];
+    snprintf(path, sizeof path, "/c/chat/%s", room);
+    T_EQ_INT(tc_http(g_port, "GET", path, NULL, NULL, 0, &r), 0);   // anyone, no account
+    T_EQ_INT(r.status, 200);
+    T_EQ_INT((int)r.body.len, (int)(sizeof(cw_chat_log) + sizeof(cw_chat_line)));
+    tc_response_free(&r);
+    T_EQ_INT(tc_http(g_port, "GET", "/c/chat/g999999", NULL, NULL, 0, &r), 0);
+    T_EQ_INT(r.status, 404);
+    tc_response_free(&r);
+    // refused: too long, a control character, a banned word, no such room
+    char big[CW_CHAT_MAX + 1];
+    memset(big, 'x', sizeof big);
+    T_EQ_INT(say(&B, room, big, sizeof big, &e), 400);
+    T_EQ_INT(e.code, CW_E_CHAT_TEXT);
+    T_EQ_INT(e.rc, CC_CHAT_LONG);
+    T_EQ_INT(say(&B, room, big, CW_CHAT_MAX, &e), 200);   // 140 is fine
+    usleep(1100 * 1000);
+    T_EQ_INT(say(&B, room, "a\x01b", 3, &e), 400);
+    T_EQ_INT(e.code, CW_E_CHAT_TEXT);
+    T_EQ_INT(e.rc, CC_CHAT_CONTROL);
+    T_EQ_INT(say(&B, room, "you fucking idiot", 17, &e), 400);
+    T_EQ_INT(e.code, CW_E_CHAT_WORDS);
+    T_EQ_INT(say(&C, "g999999", "hi", 2, &e), 404);
+    T_EQ_INT(e.code, CW_E_CHAT_ROOM);
+    // one line a second
+    T_EQ_INT(say(&C, room, "nice", 4, &e), 200);
+    T_EQ_INT(say(&C, room, "very nice", 9, &e), 429);
+    T_EQ_INT(e.code, CW_E_CHAT_FAST);
+    T_EQ_INT((int)e.wait_s, 1);
+    T_CHECK(chat_until(&A, room, 3, 3000));   // gl hf, the 140 x's, nice: nothing refused was kept
+    drain(&A);
+    T_EQ_INT(chat_n(&A, room), 3);
+    T_EQ_STR(last_text(&A, room), "nice");
+    // the console mutes bob (its token, or nothing)
+    char text[200];
+    T_EQ_INT(mute("bob", 10, NULL, text, sizeof text), 401);
+    T_EQ_INT(mute("nobody-here", 10, ADMIN, text, sizeof text), 404);
+    T_EQ_INT(mute("bob", 10, ADMIN, text, sizeof text), 200);
+    T_CHECK(strstr(text, "muted bob for 10 minutes") != NULL);
+    usleep(1100 * 1000);
+    T_EQ_INT(say(&B, room, "hello", 5, &e), 403);
+    T_EQ_INT(e.code, CW_E_CHAT_MUTED);
+    T_CHECK(e.wait_s > 590 && e.wait_s <= 600);
+    // the game ends; a restart keeps the mute
+    cc_client_act(&B.c, CW_A_RESIGN);
+    flush(&B);
+    A.seen = 0;
+    T_CHECK(pump(&A, CC_EV_OVER, 3000));
+    close(A.fd); close(B.fd); close(C.fd);
+    usleep(300 * 1000);
+    T_EQ_INT(tp_stop(&g_child, SIGKILL, 10000), -1);
+    start_server();
+    connect_ws(&A);
+    connect_ws(&B);
+    connect_ws(&C);
+    T_EQ_INT(say(&B, "lobby", "am I back", 9, &e), 403);
+    T_EQ_INT(e.code, CW_E_CHAT_MUTED);
+    T_CHECK(e.wait_s > 580 && e.wait_s <= 600);
+    // the lobby's chat: carol says a line, alice in the lobby hears it, the log holds it
+    cc_client_lobby(&A.c);
+    flush(&A);
+    drain(&A);
+    T_EQ_INT(say(&C, "lobby", "anyone for blitz?", 17, &e), 200);
+    T_CHECK(chat_until(&A, "lobby", 1, 3000));
+    T_EQ_STR(last_text(&A, "lobby"), "anyone for blitz?");
+    T_EQ_INT(tc_http(g_port, "GET", "/c/chat/lobby", NULL, NULL, 0, &r), 0);
+    T_EQ_INT(r.status, 200);
+    cw_chat_log h;
+    memcpy(&h, r.body.p, sizeof h);
+    T_EQ_INT(h.n, 1);   // chat is not journaled: the lobby's lines before the restart are gone
+    tc_response_free(&r);
+    // lifted
+    T_EQ_INT(mute("bob", 0, ADMIN, text, sizeof text), 200);
+    T_EQ_STR(text, "unmuted bob\n");
+    T_EQ_INT(say(&B, "lobby", "thanks", 6, &e), 200);
+    T_CHECK(chat_until(&A, "lobby", 2, 3000));
+    cc_client_lobby_leave(&A.c);
+    flush(&A);
+    // the stats count the lines
+    T_EQ_INT(tc_http(g_port, "GET", "/c/stats", NULL, NULL, 0, &r), 0);
+    T_CHECK(r.body.len && strstr((const char *)r.body.p, "chat_lines 2\n") != NULL);
+    tc_response_free(&r);
+}
+
 static bool puzzle_next(player *p, cw_puzzle *out) {
     cc_client_read(&p->c, "/c/puzzle/next", 90);
     p->seen = 0;
@@ -961,6 +1144,7 @@ int main(int argc, char **argv) {
     T_RUN(challenge_abort_flag);
     T_RUN(speeds);
     T_RUN(arenas);
+    T_RUN(chat);
     T_RUN(stats_and_site);
     T_RUN(no_engine);
     T_RUN(site);

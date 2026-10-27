@@ -60,6 +60,7 @@ static uint32_t req(cc_client *c, int kind, int meth, const char *path, const vo
     uint32_t id = c->next_id++;
     out_commit(c, sf_put_req(o, 9 + pn + bn, id, (uint8_t)meth, path, pn, body, bn));
     pend_add(c, id, kind, game);
+    memset(c->pend[id % CC_PENDING].room, 0, CW_ROOM);
     return id;
 }
 
@@ -318,6 +319,9 @@ void cc_client_act(cc_client *c, int act) {
 
 /* ---- what arrives ---- */
 
+static void take_chat(cc_client *c, const uint8_t *p, size_t n);
+static void take_chat_log(cc_client *c, const char *room, const uint8_t *p, size_t n);
+
 static void resync(cc_client *c) {
     char path[24];
     num_path(path, "/c/game/", c->game);
@@ -419,6 +423,8 @@ static void take_reply(cc_client *c, const sf_frame *f, int64_t now) {
     if (p->id != f->id) return;
     int kind = p->kind;
     uint32_t game = p->game;
+    char room[CW_ROOM];
+    memcpy(room, p->room, CW_ROOM);
     p->id = 0;
     if (kind == CC_RQ_READ) {   /* any status: the page reads the answer it asked for */
         c->read_tag = game;
@@ -429,7 +435,7 @@ static void take_reply(cc_client *c, const sf_frame *f, int64_t now) {
         c->events |= CC_EV_READ;
         return;
     }
-    if (f->status != 200 && kind != CC_RQ_SUB) {
+    if (f->status != 200 && kind != CC_RQ_SUB && kind != CC_RQ_CHAT_LOG) {   /* a room gone is no error to show */
         memset(&c->err, 0, sizeof c->err);
         if (f->body_len >= sizeof c->err) memcpy(&c->err, f->body, sizeof c->err);
         c->err_status = f->status;
@@ -460,6 +466,9 @@ static void take_reply(cc_client *c, const sf_frame *f, int64_t now) {
         return;
     case CC_RQ_TV:
         take_tv(c, f->body, f->body_len, now);
+        return;
+    case CC_RQ_CHAT_LOG:
+        take_chat_log(c, room, f->body, f->body_len);
         return;
     case CC_RQ_LOBBY:
         if (f->body_len >= 12 && f->body_len <= sizeof c->lobby) {
@@ -493,6 +502,7 @@ void cc_client_in(cc_client *c, const uint8_t *p, size_t n, int64_t now) {
             if (n >= 12 && n <= sizeof c->lobby) { memcpy(&c->lobby, p, n); c->events |= CC_EV_LOBBY; }
             return;
         case CW_P_ARENA: cc_client_arena_take(c, p, n, now, 0); return;
+        case CW_P_CHAT: take_chat(c, p, n); return;
         default: return;
         }
     }
@@ -537,6 +547,107 @@ int cc_client_arena_take(cc_client *c, const uint8_t *p, size_t n, int64_t now, 
     c->arena_at = now;
     c->events |= CC_EV_ARENA;
     return 1;
+}
+
+/* ---- chat ---- */
+
+/* A room's name as the wire holds it: at most CW_ROOM - 1 bytes and its NUL; false when longer. */
+static bool room_copy(char *out, const char *room) {
+    size_t i = 0;
+    for (; room[i]; i++) {
+        if (i == CW_ROOM - 1) return false;
+        out[i] = room[i];
+    }
+    memset(out + i, 0, CW_ROOM - i);
+    return i > 0;
+}
+
+const cc_chat_room *cc_client_chat(const cc_client *c, const char *room) {
+    char r[CW_ROOM];
+    if (!room_copy(r, room)) return NULL;
+    for (int i = 0; i < CC_CHAT_ROOMS; i++)
+        if (c->chat[i].room[0] && memcmp(c->chat[i].room, r, CW_ROOM) == 0) return &c->chat[i];
+    return NULL;
+}
+
+/* The room's slot, taking a free one or the one touched longest ago (emptied) when it has none. */
+static cc_chat_room *chat_slot(cc_client *c, const char *room) {
+    cc_chat_room *s = (cc_chat_room *)cc_client_chat(c, room);
+    if (!s) {
+        s = &c->chat[0];
+        for (int i = 1; i < CC_CHAT_ROOMS && s->room[0]; i++)
+            if (!c->chat[i].room[0] || c->chat[i].used < s->used) s = &c->chat[i];
+        memset(s, 0, sizeof *s);
+        room_copy(s->room, room);
+    }
+    s->used = ++c->chat_seq;
+    return s;
+}
+
+static void chat_append(cc_chat_room *s, const cw_chat_line *l) {
+    if (s->n == CW_CHAT_LOG) { memmove(s->l, s->l + 1, (CW_CHAT_LOG - 1) * sizeof *s->l); s->n--; }
+    s->l[s->n++] = *l;
+}
+
+/* A line as the wire carries it: its room ended within CW_ROOM, its text no longer than a line. */
+static bool chat_line_ok(const cw_chat_line *l) {
+    return l->v == CW_V && l->kind == CW_P_CHAT && l->len <= CW_CHAT_MAX && l->room[0] && !l->room[CW_ROOM - 1];
+}
+
+static void take_chat(cc_client *c, const uint8_t *p, size_t n) {
+    cw_chat_line l;
+    if (n != sizeof l) return;
+    memcpy(&l, p, sizeof l);
+    if (!chat_line_ok(&l)) return;
+    chat_append(chat_slot(c, l.room), &l);
+    c->events |= CC_EV_CHAT;
+}
+
+/* The log of GET /c/chat/<room>: its lines, then the lines pushed meanwhile that it does not hold. */
+static void take_chat_log(cc_client *c, const char *room, const uint8_t *p, size_t n) {
+    cw_chat_log h;
+    if (n < sizeof h) return;
+    memcpy(&h, p, sizeof h);
+    if (h.n > CW_CHAT_LOG || n != sizeof h + (size_t)h.n * sizeof(cw_chat_line)) return;
+    cc_chat_room *s = chat_slot(c, room);
+    cw_chat_line kept[CW_CHAT_LOG];
+    uint16_t nk = s->n;
+    memcpy(kept, s->l, (size_t)nk * sizeof *kept);
+    s->n = 0;
+    int64_t last = INT64_MIN;
+    for (int i = 0; i < h.n; i++) {
+        cw_chat_line l;
+        memcpy(&l, p + sizeof h + (size_t)i * sizeof l, sizeof l);
+        if (!chat_line_ok(&l)) continue;
+        chat_append(s, &l);
+        last = l.at;
+    }
+    for (int i = 0; i < nk; i++) {   /* pushed after the log was read: newer, and not in it */
+        if (kept[i].at < last) continue;
+        bool in = false;
+        for (int j = 0; j < s->n && !in; j++) in = memcmp(&s->l[j], &kept[i], sizeof kept[i]) == 0;
+        if (!in) chat_append(s, &kept[i]);
+    }
+    c->events |= CC_EV_CHAT;
+}
+
+void cc_client_chat_log(cc_client *c, const char *room) {
+    char r[CW_ROOM], path[8 + CW_ROOM];
+    if (!room_copy(r, room)) return;
+    memcpy(path, "/c/chat/", 8);
+    memcpy(path + 8, r, CW_ROOM);
+    uint32_t id = req(c, CC_RQ_CHAT_LOG, SF_METH_GET, path, NULL, 0, 0);
+    if (id) memcpy(c->pend[id % CC_PENDING].room, r, CW_ROOM);
+}
+
+void cc_client_chat_say(cc_client *c, const char *room, const char *text, size_t n, uint32_t tag) {
+    cw_chat_req q;
+    memset(&q, 0, sizeof q);
+    if (!room_copy(q.room, room)) return;
+    if (n > CW_CHAT_MAX) n = CW_CHAT_MAX + 1;   /* the server says why: too long */
+    q.len = (uint8_t)n;
+    memcpy(q.text, text, n > CW_CHAT_MAX ? CW_CHAT_MAX : n);
+    cc_client_post(c, "/c/chat", &q, sizeof q, tag);
 }
 
 /* ---- what to draw ---- */

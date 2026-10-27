@@ -222,3 +222,30 @@ server/src/chats.c ::: else if ((*why = cc_chat_valid(q->text, q->len)) != CC_CH
 server/src/state.c ::: cc_chat_sweep();   /* after the games ::: (void)0;   /* after the games ::: build/test/unit_chats ::: build/test/unit_chats
 server/src/journal.c ::: sqlite3_bind_int64(st, 13, p->mute_until); ::: sqlite3_bind_int64(st, 13, 0); ::: build/test/unit_chats ::: build/test/unit_chats
 server/src/journal.c ::: p.mute_until = sqlite3_column_int64(st, 12); ::: (void)0; ::: build/test/unit_chats ::: build/test/unit_chats
+# the client's chat (c/test/unit_client.c)
+c/src/client.c ::: case CW_P_CHAT: take_chat(c, p, n); return; ::: case CW_P_CHAT: if (0) take_chat(c, p, n); return; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: if (!c->chat[i].room[0] || c->chat[i].used < s->used) s = &c->chat[i]; ::: if (!c->chat[i].room[0]) s = &c->chat[i]; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: s->used = ++c->chat_seq; ::: s->used = 0; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: { memmove(s->l, s->l + 1, (CW_CHAT_LOG - 1) * sizeof *s->l); s->n--; } ::: { s->n--; } ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: l->len <= CW_CHAT_MAX && ::: 1 && ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: && !l->room[CW_ROOM - 1]; ::: ; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: if (kept[i].at < last) continue; ::: if (kept[i].at < last - last) continue; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: if (!in) chat_append(s, &kept[i]); ::: chat_append(s, &kept[i]); ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: if (h.n > CW_CHAT_LOG || n != sizeof h + (size_t)h.n * sizeof(cw_chat_line)) return; ::: if (h.n > CW_CHAT_LOG) return; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: && kind != CC_RQ_SUB && kind != CC_RQ_CHAT_LOG) { ::: && kind != CC_RQ_SUB) { ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: if (id) memcpy(c->pend[id % CC_PENDING].room, r, CW_ROOM); ::: (void)id; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: if (n > CW_CHAT_MAX) n = CW_CHAT_MAX + 1; ::: if (n > 255) n = CW_CHAT_MAX + 1; ::: build/test/unit_client ::: build/test/unit_client
+c/src/client.c ::: if (i == CW_ROOM - 1) return false; ::: if (i == CW_ROOM) return false; ::: build/test/unit_client ::: build/test/unit_client
+# chat over the real socket (server/test/smoke.c)
+server/src/chats.c ::: cc_push_room(room, (const uint8_t *)&line, sizeof line); ::: (void)line; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api_chat.c ::: else answer(res, 200, buf, len); ::: else answer(res, 200, buf, sizeof(cw_chat_log)); ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: (q.mode == CW_AUTH_SIGNUP && guest)) ::: 0) ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: if ((q.mode == CW_AUTH_GUEST && !guest) || ::: if ( ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: q.mode == CW_AUTH_SIGNUP || q.mode == CW_AUTH_GUEST ? ::: q.mode == CW_AUTH_SIGNUP ? ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/cc_app.c ::: .admin_calls = cc_admin_calls, ::: .admin_calls = NULL, ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api_chat.c ::: if (!p) { cb_res_text(res, 404, ::: if (!p) { cb_res_text(res, 200, ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api_chat.c ::: case CW_E_CHAT_FAST: return 429; ::: case CW_E_CHAT_FAST: return 400; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api_chat.c ::: if (code != CW_E_NONE) refuse(res, code, why, wait_s); ::: if (code != CW_E_NONE) refuse(res, code, why, 0); ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api_chat.c ::: if (code != CW_E_NONE) refuse(res, code, why, wait_s); ::: if (code != CW_E_NONE) refuse(res, code, 0, wait_s); ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/cc_app.c ::: &cc_chat_routes, &cc_analysis_routes ::: &cc_analysis_routes ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/api.c ::: "chat_lines %llu ::: "chat_linez %llu ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess

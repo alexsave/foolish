@@ -2,12 +2,14 @@
 // out. A snapshot, a move shown before the server answers, the thinking time it reports, the
 // other side's move, a premove played the moment that move arrives (or dropped when it became
 // illegal), and a push from the future asking for the snapshot again. An arena: its room watched, its
-// pushes kept, the reader's own place kept across pushes and renewed by its own row.
+// pushes kept, the reader's own place kept across pushes and renewed by its own row. Chat: lines
+// pushed kept per room (three rooms, the one touched longest ago given up), the last 64, a log read
+// merged with the lines pushed while it was in flight, a line said, refusals read as reads.
 #include "client.h"
 #include "stream_frame.h"
 #include "t.h"
 
-static uint8_t buf[4096];
+static uint8_t buf[16 + CW_CHAT_LOG_MAX];
 
 /* The REPLY to the last request the client queued, with body. */
 static void reply(cc_client *c, uint32_t id, int status, const void *body, size_t n, int64_t now) {
@@ -135,6 +137,142 @@ static void arenas(void) {
     CHECK(!(cc_client_events(&c) & CC_EV_ARENA) && arena_hdr(&c).id == 13, "%s", "a dropped frame changed the arena");
 }
 
+static cw_chat_line chat_line(const char *room, const char *who, const char *text, int64_t at) {
+    cw_chat_line l;
+    memset(&l, 0, sizeof l);
+    l.v = CW_V;
+    l.kind = CW_P_CHAT;
+    memcpy(l.room, room, strlen(room));
+    memcpy(l.name, who, strlen(who));
+    l.len = (uint8_t)strlen(text);
+    memcpy(l.text, text, l.len);
+    l.at = at;
+    return l;
+}
+static void push_chat(cc_client *c, const char *room, const char *who, const char *text, int64_t at) {
+    cw_chat_line l = chat_line(room, who, text, at);
+    cc_client_in(c, (const uint8_t *)&l, sizeof l, 0);
+}
+static int chat_n(const cc_client *c, const char *room) {
+    const cc_chat_room *r = cc_client_chat(c, room);
+    return r ? r->n : -1;
+}
+
+static void chats(void) {
+    static cc_client c;
+    cc_client_init(&c);
+    strcpy(c.name, "me");
+    char path[300];
+    TEST("a pushed line is kept in its room's slot");
+    push_chat(&c, "g7", "ann", "gl hf", 100);
+    CHECK(cc_client_events(&c) & CC_EV_CHAT, "%s", "no chat event");
+    const cc_chat_room *r = cc_client_chat(&c, "g7");
+    CHECK(r && r->n == 1 && !strcmp(r->l[0].text, "gl hf") && !strcmp(r->l[0].name, "ann") && r->l[0].at == 100, "the line");
+    CHECK(cc_client_chat(&c, "g8") == NULL && cc_client_chat(&c, "") == NULL && cc_client_chat(&c, "g123456789012") == NULL, "no other room");
+    TEST("three rooms at once; a fourth takes the slot touched longest ago");
+    push_chat(&c, "lobby", "ben", "hi", 110);
+    push_chat(&c, "a3", "cat", "go", 120);
+    push_chat(&c, "g7", "ann", "again", 130);   // g7 touched last: lobby is now the oldest
+    CHECK(chat_n(&c, "g7") == 2 && chat_n(&c, "lobby") == 1 && chat_n(&c, "a3") == 1, "three rooms");
+    push_chat(&c, "g8", "dan", "new", 140);
+    CHECK(chat_n(&c, "g8") == 1 && chat_n(&c, "lobby") == -1 && chat_n(&c, "g7") == 2 && chat_n(&c, "a3") == 1, "lobby given up: %d", chat_n(&c, "lobby"));
+    TEST("a room keeps its last 64 lines");
+    for (int i = 0; i < 65; i++) {
+        char t[16];
+        snprintf(t, sizeof t, "line %d", i);
+        push_chat(&c, "a3", "cat", t, 200 + i);
+    }
+    r = cc_client_chat(&c, "a3");
+    CHECK(r && r->n == CW_CHAT_LOG && !strcmp(r->l[0].text, "line 1") && !strcmp(r->l[63].text, "line 64"), "%s .. %s",
+          r ? r->l[0].text : "-", r ? r->l[63].text : "-");
+    TEST("a line of the wrong length, too long a text, or a room with no end is dropped");
+    cc_client_events(&c);
+    cw_chat_line bad = chat_line("g8", "x", "bad", 300);
+    cc_client_in(&c, (const uint8_t *)&bad, sizeof bad - 1, 0);
+    bad.len = CW_CHAT_MAX + 1;
+    cc_client_in(&c, (const uint8_t *)&bad, sizeof bad, 0);
+    bad = chat_line("g8", "x", "bad", 300);
+    memset(bad.room, 'g', CW_ROOM);
+    cc_client_in(&c, (const uint8_t *)&bad, sizeof bad, 0);
+    CHECK(!(cc_client_events(&c) & CC_EV_CHAT) && chat_n(&c, "g8") == 1, "%d", chat_n(&c, "g8"));
+
+    TEST("a log read: its lines, then those pushed meanwhile that it does not hold");
+    drain(&c, path, NULL);
+    cc_client_chat_log(&c, "g8");
+    uint32_t log_id = c.next_id - 1;
+    drain(&c, path, NULL);
+    STREQ(path, "/c/chat/g8");
+    push_chat(&c, "g8", "eve", "said meanwhile", 500);
+    push_chat(&c, "g8", "eve", "also in the log", 450);
+    static uint8_t lb[CW_CHAT_LOG_MAX];
+    cw_chat_log h = { 3, { 0 } };
+    memcpy(lb, &h, sizeof h);
+    cw_chat_line l0 = chat_line("g8", "ann", "first", 50), l1 = chat_line("g8", "ben", "second", 60),
+                 l2 = chat_line("g8", "eve", "also in the log", 450);
+    memcpy(lb + 8, &l0, sizeof l0);
+    memcpy(lb + 8 + sizeof l0, &l1, sizeof l1);
+    memcpy(lb + 8 + 2 * sizeof l0, &l2, sizeof l2);
+    cc_client_events(&c);
+    reply(&c, log_id, 200, lb, 8 + 3 * sizeof l0, 0);
+    CHECK(cc_client_events(&c) & CC_EV_CHAT, "%s", "no event");
+    r = cc_client_chat(&c, "g8");
+    CHECK(r && r->n == 4, "lines %d", r ? r->n : -1);
+    if (r && r->n == 4)
+        CHECK(!strcmp(r->l[0].text, "first") && !strcmp(r->l[1].text, "second") && !strcmp(r->l[2].text, "also in the log") &&
+              !strcmp(r->l[3].text, "said meanwhile"), "order %s %s %s %s", r->l[0].text, r->l[1].text, r->l[2].text, r->l[3].text);
+    TEST("a log for a room the client has not heard takes a slot");
+    cc_client_chat_log(&c, "lobby");
+    log_id = c.next_id - 1;
+    drain(&c, path, NULL);
+    h.n = 1;
+    memcpy(lb, &h, sizeof h);
+    cw_chat_line ll = chat_line("lobby", "ann", "welcome", 10);
+    memcpy(lb + 8, &ll, sizeof ll);
+    reply(&c, log_id, 200, lb, 8 + sizeof ll, 0);
+    CHECK(chat_n(&c, "lobby") == 1, "lobby %d", chat_n(&c, "lobby"));
+    TEST("a log of the wrong length is dropped; a room gone is no error");
+    cc_client_chat_log(&c, "lobby");
+    log_id = c.next_id - 1;
+    drain(&c, path, NULL);
+    cc_client_events(&c);
+    reply(&c, log_id, 200, lb, 8 + sizeof ll - 1, 0);
+    CHECK(chat_n(&c, "lobby") == 1 && !(cc_client_events(&c) & CC_EV_CHAT), "%s", "a short log was taken");
+    cc_client_chat_log(&c, "g99");
+    log_id = c.next_id - 1;
+    drain(&c, path, NULL);
+    cw_chat_err ce = { CW_E_CHAT_ROOM, 0, { 0, 0 }, 0 };
+    reply(&c, log_id, 404, &ce, sizeof ce, 0);
+    CHECK(!(cc_client_events(&c) & CC_EV_ERROR), "%s", "a 404 log raised an error");
+
+    TEST("a line said: POST /c/chat with its room and text, the answer read as a read");
+    cc_client_chat_say(&c, "g8", "gg", 2, 77);
+    uint32_t say_id = c.next_id - 1;
+    const uint8_t *f;
+    size_t n = cc_client_next_out(&c, &f);
+    sf_frame fr;
+    cw_chat_req q;
+    memset(&q, 0, sizeof q);
+    CHECK(n && sf_parse(f, n, &fr) == 0 && fr.kind == SF_REQ && fr.path_len == 7 && !memcmp(fr.path, "/c/chat", 7) && fr.body_len == sizeof q,
+          "the request");
+    if (n && fr.body_len == sizeof q) memcpy(&q, fr.body, sizeof q);
+    CHECK(!strcmp(q.room, "g8") && q.len == 2 && !memcmp(q.text, "gg", 2) && q.text[2] == 0, "the body: %s %u", q.room, q.len);
+    ce.code = CW_E_CHAT_FAST;
+    ce.wait_s = 1;
+    reply(&c, say_id, 429, &ce, sizeof ce, 0);
+    uint32_t ev = cc_client_events(&c);
+    CHECK((ev & CC_EV_READ) && !(ev & CC_EV_ERROR) && c.read_tag == 77 && c.read_status == 429 && c.read_len == sizeof ce, "the answer");
+    TEST("too long a line goes as 141 bytes, for the server to refuse");
+    char big[200];
+    memset(big, 'x', sizeof big);
+    cc_client_chat_say(&c, "g8", big, sizeof big, 78);
+    n = cc_client_next_out(&c, &f);
+    CHECK(n && sf_parse(f, n, &fr) == 0 && fr.body_len == sizeof q && ((const cw_chat_req *)(const void *)fr.body)->len == CW_CHAT_MAX + 1, "len");
+    TEST("a room name too long is not sent");
+    cc_client_chat_say(&c, "g12345678901", "hi", 2, 79);   // 12 bytes: no room for the NUL
+    cc_client_chat_log(&c, "g12345678901");
+    CHECK(cc_client_next_out(&c, &f) == 0, "%s", "sent");
+}
+
 int main(void) {
     cc_client c;
     char path[300];
@@ -224,5 +362,6 @@ int main(void) {
     drain(&c, path, NULL);
     STREQ(path, "/c/game/7");
     arenas();
+    chats();
     return report("unit_client");
 }
