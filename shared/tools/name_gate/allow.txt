@@ -63,7 +63,7 @@
 2 c_base/core/src/config.c /dynamo/i
 1 c_base/core/src/config.c /cloudfront/i
 3 c_base/core/src/config.c /sqlite/i
-9 c_base/core/src/config.c /\bbots?\b/i
+17 c_base/core/src/config.c /\bbots?\b/i
 1 c_base/core/src/config.h /foolish/i
 6 c_base/core/src/config.h /\baws\b/i
 1 c_base/core/src/config.h /amazon/i
@@ -73,8 +73,8 @@
 2 c_base/core/src/config.h /iot ?core/i
 1 c_base/core/src/config.h /cloudformation/i
 2 c_base/core/src/config.h /sqlite/i
-2 c_base/core/src/config.h /\bgames?\b/i
-7 c_base/core/src/config.h /\bbots?\b/i
+3 c_base/core/src/config.h /\bgames?\b/i
+11 c_base/core/src/config.h /\bbots?\b/i
 1 c_base/core/src/config.h /\bcards?\b/i
 1 c_base/core/src/core.c /\bgames?\b/i
 1 c_base/core/src/core.c /\bbots?\b/i
