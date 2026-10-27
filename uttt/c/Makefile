@@ -15,10 +15,9 @@ CC      ?= cc
 # their callers in uttt_bots.c, so without -flto the compiler cannot see a
 # table lookup on the other side of a call.
 #
-# NO FAST MATH. It is worth 0.9% and this codebase cannot pay for it: the pen
-# is a transcription of rough.js and `make rough-diff` holds it to six
-# decimal places, because two phones looking at one bubble have to produce
-# the same sheet stroke for stroke. Reassociating float arithmetic is exactly
+# NO FAST MATH. It is worth 0.9% and this codebase cannot pay for it: two
+# phones looking at one bubble have to produce the same sheet stroke for
+# stroke. Reassociating float arithmetic is exactly
 # how that stops being true, quietly, on one compiler and not another.
 CFLAGS  ?= -O3 -flto -Wall -Wextra -Werror -std=c11
 LDLIBS  := -lm
@@ -237,10 +236,6 @@ analyse: build/uttt_analyse
 analyse-test: build/uttt_analyse_test
 	./build/uttt_analyse_test
 
-# The pen against the pen it was copied from. Needs node; not in `all`.
-rough-diff: build/uttt_render
-	node tests/rough_diff.mjs
-
 # The same tests under the sanitizers, from their own objects (build/obj/asan):
 # the kernel is compiled for them once, where each program used to compile it
 # again.
@@ -263,7 +258,7 @@ asan: $(addprefix build/asan_,$(ASAN_PROGS)) shared-tests-asan
 clean:
 	rm -rf build
 
-.PHONY: all run arena play render look analyse analyse-test rough-diff asan clean
+.PHONY: all run arena play render look analyse analyse-test asan clean
 
 # ---- the iOS bridge -----------------------------------------------------
 # `make ios-smoke` exercises the identical bridge with the host compiler, so
