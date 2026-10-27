@@ -61,4 +61,4 @@ export function inWords(ms: number): string {
 }
 
 /** A clock time from ms since the epoch, in the reader's zone: "14:00". */
-export const clockTime = (at: number): string => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+export const clockTime = (at: number): string => new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });

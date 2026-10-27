@@ -210,27 +210,35 @@ a.rcard:hover { border-color: var(--accent); text-decoration: none; }
 /* ---- arenas ---- */
 .arenas-page { display: grid; grid-template-columns: 1fr 380px; gap: 24px; align-items: start; }
 .panel-h { margin: 0; padding: 18px 16px 10px; }
-h2.panel-h { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 20px 16px 4px; border-top: 1px solid var(--line); margin-top: 8px; }
+h2.panel-h { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 22px 16px 6px; }
 .panel-p { margin: 0; padding: 0 16px 12px; font-size: 14px; }
+.arenas { table-layout: fixed; }   /* the three lists' columns line up */
+.arenas th:nth-child(1) { width: 38%; }
+.arenas th:nth-child(2) { width: 24%; }
+.arenas th:nth-child(3) { width: 14%; }
+.arenas td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arenas td:first-child { font-weight: 600; }
 .arena-form { display: flex; flex-direction: column; gap: 14px; }
 .arena-form label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
 .arena-form input { font: inherit; color: var(--ink); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
-.arena-opts { display: grid; grid-template-columns: 56px 1fr; gap: 10px 8px; align-items: center; font-size: 13px; }
-.arena-opts .seg { flex-wrap: wrap; justify-self: start; }
-.arena-opts .seg button { padding: 6px 10px; font-size: 13px; }
+.arena-opts { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.arena-opts .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; margin-bottom: 6px; }
+.arena-opts .seg button { padding: 7px 0; font-size: 13px; white-space: nowrap; }
 .arena { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
 .arena-head { padding: 20px; }
 .arena-head h1 { margin-bottom: 4px; }
 .arena-clock { display: flex; flex-direction: column; align-items: flex-end; }
 .arena-clock .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .arena-clock .t { font: 600 30px/1.1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.arena-clock .t.at { font: 600 20px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.arena-actions { margin-top: 14px; min-height: 38px; }
 .standings th:nth-child(1) { width: 48px; }
 .standings th:nth-child(3), .standings th:nth-child(4) { width: 90px; }
 .standings th:nth-child(5) { width: 90px; text-align: right; }
 .standings td.score { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
 .standings tr.me td { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
 .standings tr.out td { color: var(--muted); }
+.live-dot { display: inline-block; width: 7px; height: 7px; margin-left: 8px; border-radius: 50%; background: #3fa45f; vertical-align: 1px; }
 .tag { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: var(--bg); color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .fire { width: 14px; height: 14px; margin-right: 4px; vertical-align: -2px; fill: #e2703a; }
 .ink { color: var(--ink); }

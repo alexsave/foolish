@@ -347,6 +347,7 @@ static void refusals(void) {
 
 static int g_k;   // the player whose game is in play across the end and the restart
 static uint16_t g_score, g_games;
+static uint32_t g_made;   // games the arena made
 
 static void the_end(void) {
     pthread_mutex_lock(&cc_lock);
@@ -362,6 +363,7 @@ static void the_end(void) {
     g_playing_game = l ? l->id : 0;
     g_score = ap_of(a, P[g_k])->score;
     g_games = ap_of(a, P[g_k])->games;
+    g_made = a->games;
     TEST("the end: finished, and no pairing after it");
     uint32_t games = a->games;
     cc_arena_tick(g_now + 60000, W0 + 660000);
@@ -379,6 +381,7 @@ static void restart(void) {
     cc_arena *a = cc_arena_get(g_arena);
     CHECK(a && a->status == CC_ARENA_FINISHED && a->n == 5 && !strcmp(a->name, "Blitz Test"), "arena %p", (void *)a);
     if (!a) { pthread_mutex_unlock(&cc_lock); return; }
+    CHECK(a->games == g_made && g_made > 20, "games made %u, were %u", a->games, g_made);
     cc_live *l = game_of(a, P[g_k]);
     CHECK(a->playing == 2 && l && l->id == g_playing_game && l->arena == g_arena, "the game in play");
     cc_arena_player *k = ap_of(a, P[g_k]);

@@ -29,7 +29,7 @@ function Arenas() {
           <li key={a.id}>
             <Link prefetch={false} href={`/arena?id=${a.id}`}>
               <span><b>{a.name}</b> <span className="muted">{tc(a.baseS, a.incS)}, {a.nPlayers} {a.nPlayers === 1 ? 'player' : 'players'}</span></span>
-              <span className="when">{a.status === CC_ARENA_RUNNING ? `ends ${inWords(a.endsInMs)}` : `${clockTime(a.startsAt)}`}</span>
+              <span className="when">{a.status === CC_ARENA_RUNNING ? `ends ${inWords(a.endsInMs)}` : `starts ${clockTime(a.startsAt)}`}</span>
             </Link>
           </li>
         ))}

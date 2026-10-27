@@ -63,7 +63,7 @@ function Arena() {
           </div>
           <div className="arena-clock">
             <span className="k">{a.status === CC_ARENA_UPCOMING ? 'Starts in' : a.status === CC_ARENA_RUNNING ? 'Ends in' : ARENA_STATUS[a.status]}</span>
-            <span className="t">{a.status === CC_ARENA_UPCOMING ? countdown(a.startsInMs) : a.status === CC_ARENA_RUNNING ? countdown(a.endsInMs) : clockTime(a.endsAt)}</span>
+            <span className={`t ${over ? 'at' : ''}`}>{a.status === CC_ARENA_UPCOMING ? countdown(a.startsInMs) : a.status === CC_ARENA_RUNNING ? countdown(a.endsInMs) : `at ${clockTime(a.endsAt)}`}</span>
           </div>
         </div>
         <div className="stats" style={{ padding: '14px 0 0' }}>
@@ -72,7 +72,10 @@ function Arena() {
           <span><b>{a.games}</b> {a.games === 1 ? 'game' : 'games'}</span>
           {a.status === CC_ARENA_UPCOMING && <span>from {clockTime(a.startsAt)} to {clockTime(a.endsAt)}</span>}
         </div>
-        <div className="row" style={{ marginTop: 14, minHeight: 38 }}>
+        {over && rows.length > 0 && (
+          <p style={{ margin: '14px 0 0' }}>Won by <Link prefetch={false} href={`/user?name=${encodeURIComponent(rows[0].name)}`}><b>{rows[0].name}</b></Link> with {rows[0].score} points from {rows[0].games} games.</p>
+        )}
+        {(!over || a.meIn !== CW_ARENA_OUT || err) && <div className="row arena-actions">
           {!over && a.meIn !== CW_ARENA_IN && <button className="btn primary" disabled={busy} onClick={() => void act(true)}>{a.meIn === CW_ARENA_WITHDRAWN ? 'Join again' : 'Join'}</button>}
           {!over && a.meIn === CW_ARENA_IN && <button className="btn" disabled={busy} onClick={() => void act(false)}>Withdraw</button>}
           {a.meIn !== CW_ARENA_OUT && a.meRank > 0 && (
@@ -85,7 +88,7 @@ function Arena() {
           {a.meIn === CW_ARENA_IN && a.status === CC_ARENA_UPCOMING && <span className="muted">You are in. Your first game starts with the arena.</span>}
           {a.meIn === CW_ARENA_IN && a.status === CC_ARENA_RUNNING && <span className="muted">Stay on this page: your next game opens by itself.</span>}
           {err && <span className="err">{err}</span>}
-        </div>
+        </div>}
       </section>
       <section className="panel">
         <table className="seeks standings">
@@ -96,7 +99,7 @@ function Arena() {
                 <td className="muted">{r.rank}</td>
                 <td>
                   <Link prefetch={false} href={`/user?name=${encodeURIComponent(r.name)}`}>{r.name}</Link>
-                  {r.playing ? <span className="tag">playing</span> : null}
+                  {r.playing ? <span className="live-dot" title="playing" aria-label="playing" /> : null}
                   {r.withdrawn ? <span className="tag">withdrawn</span> : null}
                 </td>
                 <td className="muted">{r.rating}</td>

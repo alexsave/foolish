@@ -8,18 +8,20 @@ Numbers were taken on 2026-10-22 on an Apple M1 (8 cores, 16 GB), shared with ot
 
 One process.
 `build/c_chess serve` is a c_base app: c_base's HTTP and WebSocket server, its accounts (bcrypt, signed tokens), its realtime hub (`/ws`, stream frames, rooms), and SQLite as its store.
-On top of it, about 2,500 lines of C:
+On top of it, about 5,000 lines of C:
 
 | part | where | what it owns |
 |---|---|---|
 | the rules | `c/src/chess.c` | bitboards, legal moves (perft-checked), FEN, UCI, SAN, insufficient material, Zobrist keys |
 | a game | `c/src/game.c` | the clock (from Black's first move), every ending, offers, the first-move abort |
 | ratings | `c/src/glicko2.c`, `rating.c`, `speed.c` | Glicko-2 from Glickman's paper, one rating period a game, the site's bounds; a game's speed from its time control |
+| an arena's rules | `c/src/arena.c` | points, the streak (fire), the 20-ply draw rule, an arena's name |
 | the wire | `c/src/wire.h` | fixed-layout request and push bodies, sizes pinned by `_Static_assert` |
 | the client | `c/src/client.c` | the protocol's client side: the frames it sends, a mirror of the game it shows |
 | state | `server/src/state.c` | players (a rating per speed), live games, seeks, challenges, the clock thread, the finish (ratings), the leaderboards |
-| routes | `server/src/api.c` | sign-up and sign-in, seek, challenge, accept, move, act, the reads |
-| journal | `server/src/journal.c` | SQLite for players, their ratings (a row a speed), game starts and ends, rating points; a flat file for moves |
+| arenas | `server/src/arenas.c` | the arena table, pairing, standings pushes, the hourly schedule |
+| routes | `server/src/api.c`, `api_arena.c` | sign-up and sign-in, seek, challenge, accept, move, act, the reads; making, joining and leaving arenas |
+| journal | `server/src/journal.c` | SQLite for players, their ratings (a row a speed), game starts and ends, rating points, arenas and their players; a flat file for moves |
 | the site | `server/src/web.c` | the Next.js export, read into memory at start, served with gzip twins |
 
 The browser runs `c/src/chess.c`, `game.c` and `client.c` compiled to wasm (`c/wasm/web.c`, 24 KB, 10 KB gzipped).
@@ -211,6 +213,43 @@ The points are read on the request pool as one walk of the index `(player, speed
 The first version used a window (`ROW_NUMBER() OVER (PARTITION BY speed ...)`) over all of a player's points: 18 ms for a player with 20,000 points (one table of a million points), against 0.4 ms for the four bounded walks, which cost the same at any history.
 The browser's kernel marks where each speed's run of points starts and how long it is, so the page draws a graph a speed without sorting anything.
 
+## 3.7 Arenas
+
+**An arena is lichess's.** A time control, rated or not, a name, a start and a length; while it runs, every joined player who is free is paired with another, in games of its time control, until its time is up.
+Scoring is the kernel's (`c/src/arena.c`, so the page shows the same rules): a win 2, a draw 1, a loss 0; after two wins in a row a player is on fire, and a win scores 4 and a draw 2 until a loss or a draw ends the streak; a draw before 20 plies scores nothing.
+No berserk in this cut.
+
+**The arenas live in memory** (`server/src/arenas.c`): a fixed table of 128, at most 64 of them upcoming or running, the rest finished arenas kept for an hour, after which `GET /c/arena/<id>` reads one from the journal on the request pool.
+The clock thread runs them once a second beside the flags, TV and the sweep: an upcoming arena starts at its time, a running one pairs, and the standings of each go to its room (`a<id>`) when they changed, compared with the last frame sent as TV's are.
+A game the arena makes carries its id (`cc_live.arena`, `cc_games.arena`, `cw_snap.arena`) and reports its result to the arena from the finish, after the ratings, so the standings show the new ones.
+
+**Pairing.** The free players (joined, not withdrawn, in no game of any kind, and rested 3 s since their last arena game so a person sees the result) are sorted by the rating of the arena's speed, and each from the top meets the nearest below it that it did not just play, while more than two are free.
+Two left over who just met trade partners with the nearest pair above them rather than wait.
+When an odd number are free, the one who has played the most waits (then the one who finished last, then the lowest rated).
+Both rules came from the unit test: leaving out the lowest rated, the first version, left the bottom player without a game; letting two who just met wait, the second, left one player at 3 games to the top's 8.
+White goes to whoever has had it less often.
+lichess pairs by a weighted matching over a wider window; this greedy pass is the same idea in a few dozen lines, and it costs little enough to run every second (below).
+
+**Refinements to the brief, where the code asked for them.**
+- A guest may join an arena (a guest is a real account here, and an arena is a fine first game) but not make one.
+- Withdrawing before the start leaves the arena altogether, as on lichess; after the start a withdrawn player stays in the standings, marked, and may come back.
+- An arena game cannot be aborted or rematched: an abort would let a player skip an opponent, and the arena pairs its own games.
+  The first-move clock (30 s) still aborts a game nobody started, and the player who did not move is withdrawn until they come back, as lichess pauses an absent player.
+- A push goes to everyone in the room, so it carries nobody's own place; a read, and the answers of a join and a withdrawal, carry the asker's (`me_rank`, `me_score`), so a player below the top 100 still learns where they stand, and the kernel keeps that place across pushes and renews it from the player's own row when it is listed.
+- Ties in score go to the higher rating, then to who joined first (lichess breaks them by performance).
+- The server's file is `arenas.c`, not `arena.c`, so its header does not shadow the kernel's `arena.h`.
+
+**What it costs.** `chessbench --bots 200 --arena-make 80 --tc 60+0 --duration 60` (200 bots in a bullet arena, thinking 200 to 500 ms; the M1 shared with other work, load average 2.1): 91 pairing passes at 50 us each on average, the longest 0.66 ms (the first, which starts 100 games and hands over their pushes and journal records), against the clock thread's budget of a second; 274 moves a second over the minute with round trips of 0.22 / 0.55 ms (p50 / p99), as without an arena.
+A standings frame is a 112-byte header and 32 bytes a row: 3,312 bytes at the 100 rows a frame lists, sent 41 times in the 80 s.
+The top 100 is this site's limit, set by the frame's size; an arena of thousands, as lichess runs, would want the page to ask for the rows it shows.
+`GET /c/stats` counts the passes, their time and the pushes (`arena_passes`, `arena_pass_us`, `arena_pass_max_us`, `arena_pushes`, `arena_push_bytes`).
+
+**The schedule.** The site keeps one upcoming arena per speed on the hour (Hourly Bullet 1+0 for 27 minutes, Hourly Blitz 3+0 and Hourly Rapid 10+0 for 57), made when none is upcoming; `CC_ARENA_SCHEDULE=0` turns it off for the tests and the smoke.
+A signed-in player makes arenas too (`POST /c/arena`: 20 s to 12 hours long, starting within a day, at most four upcoming of their own); 20 s is the minimum so the smoke plays a whole arena in half a minute.
+
+**The journal.** `cc_arenas` holds an arena's row, written at its making, its start and its end, and `cc_arena_players` a player's, written at a join, a withdrawal and the end of each of its games, all through the journal's queue; once the last game in play after the end is over, every row is written once more with its final rank.
+A restart brings back the upcoming and running arenas and the last hour's finished ones with their players, scores and streaks, and joins their games in play back up, so a running arena goes on pairing (the smoke kills the server in the middle of one).
+
 ## 4. The page
 
 Measured by `scratchpad/cc/perf.mjs` (Chrome over CDP, cold cache, the lobby; "ready" is the socket accepted, which on a first visit includes making the guest account, a bcrypt on the server):
@@ -239,4 +278,4 @@ What this does not include yet: TLS on the socket (a few microseconds a frame wi
 
 ## 6. Not built yet
 
-Arenas, chat with moderation, a browser engine with a small network for private analysis, Linux measurements of the engine isolation.
+Berserk in arenas, chat with moderation, a browser engine with a small network for private analysis, Linux measurements of the engine isolation.

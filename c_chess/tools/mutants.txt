@@ -178,3 +178,4 @@ server/src/api.c ::: case CW_A_ABORT: rc = l->arena ? CC_E_STATE : cc_game_abort
 server/src/api.c ::: if (!cc_game_over(&l->g) || l->next_game || l->arena) rc = CC_E_STATE; ::: if (!cc_game_over(&l->g) || l->next_game) rc = CC_E_STATE; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/api.c ::: s.arena = l->arena; ::: (void)0; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
 server/src/api_arena.c ::: case CW_E_ARENA_GUEST: return 403; ::: case CW_E_ARENA_GUEST: return 400; ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess
+server/src/arenas.c ::: if (a->games != games) cc_journal_arena(a); ::: if (a->games != games && 0) cc_journal_arena(a); ::: build/c_chess build/test/smoke ::: build/test/smoke build/c_chess

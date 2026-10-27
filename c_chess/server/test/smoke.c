@@ -820,6 +820,7 @@ static void arenas(void) {
     T_EQ_INT(h.me_rank, 1);
     T_EQ_INT(h.me_score, 2);
     T_EQ_INT(h.me_games, 1);
+    T_EQ_INT((int)h.games, 1);   // the games it made, journaled with the pass that made them
     T_CHECK(cc_client_arena_take(&w->c, w->c.read_buf, w->c.read_len, now_ms(), 1));
     h = arena_of(w);
     T_EQ_INT(h.status, CC_ARENA_RUNNING);

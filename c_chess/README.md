@@ -5,9 +5,9 @@ One C process holds every game in memory and journals to SQLite; moves travel ov
 
 | Folder | What it is |
 | --- | --- |
-| `c/src` | The kernel: chess rules (`chess.c`), a game with its clock and endings (`game.c`), Glicko-2 (`glicko2.c`, `rating.c`), PGN export (`pgn.c`), the wire (`wire.h`) and the protocol client (`client.c`) shared by the browser and the load generator. |
+| `c/src` | The kernel: chess rules (`chess.c`), a game with its clock and endings (`game.c`), Glicko-2 (`glicko2.c`, `rating.c`), an arena's scoring (`arena.c`), PGN export (`pgn.c`), the wire (`wire.h`) and the protocol client (`client.c`) shared by the browser and the load generator. |
 | `c/wasm` | The browser's kernel: the client and rules as wasm exports, and the structs the page reads through structgen's generated readers. |
-| `server` | The c_base app: state, routes, pushes, the SQLite journal, the site served from memory; `tools/chessbench.c` is the load generator and house bot. |
+| `server` | The c_base app: state, arenas, routes, pushes, the SQLite journal, the site served from memory; `tools/chessbench.c` is the load generator and house bot. |
 | `web` | The Next.js site (a static export the server serves). |
 
 ## Build and run
@@ -16,6 +16,13 @@ One C process holds every game in memory and journals to SQLite; moves travel ov
     make check               # unit tests and the smoke (a real server played over its real socket)
     (cd web && npm ci && npm run build)   # the site, with chess.wasm, into web/out
     CBASE_DEV=1 CBASE_LISTEN=127.0.0.1:8900 CBASE_DB=/tmp/c_chess.sqlite CC_WEB_DIR=web/out build/c_chess serve
+
+The server keeps an Hourly Bullet, Blitz and Rapid arena coming up (`CC_ARENA_SCHEDULE=0` turns that off).
+Bots to play against or to fill an arena:
+
+    build/chessbench --port 8900 --bots 2 --forever --tc 300+3 --think 250 --spread 500 --prefix housebot   # seek and play, forever
+    build/chessbench --port 8900 --bots 12 --forever --arena 4 --prefix arenabot                           # join arena 4 and play its pairings
+    build/chessbench --port 8900 --bots 200 --arena-make 90 --tc 60+0 --duration 60                        # make a 90 s arena, fill it, measure
 
 ## License
 

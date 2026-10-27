@@ -262,7 +262,9 @@ static void pair(cc_arena *a, int64_t now) {
             break;
         }
     }
+    uint32_t games = a->games;
     for (uint32_t k = 0; k < np; k++) start(a, &a->pl[PAIR[2 * k]], &a->pl[PAIR[2 * k + 1]], now);
+    if (a->games != games) cc_journal_arena(a);   /* its count of games, once a pass that made some */
 }
 
 /* ---- a game ends ---- */
