@@ -1348,6 +1348,7 @@ int cd_sim_one_step(SimState *s) {
 #ifdef CD_ROLLOUT_NOISE
 
 static _Thread_local int  cd_noise_pm = 0;
+static _Thread_local long cd_noise_drawn = 0;
 static _Thread_local long cd_noise_fired = 0;
 static _Thread_local long cd_noise_unmatched = 0;
 
@@ -1356,10 +1357,12 @@ void cd_sim_set_noise(int per_mille) {
 }
 int cd_sim_noise(void) { return cd_noise_pm; }
 CdNoiseStats cd_sim_noise_stats(void) {
-    CdNoiseStats st = { cd_noise_fired, cd_noise_unmatched };
+    CdNoiseStats st = { cd_noise_drawn, cd_noise_fired, cd_noise_unmatched };
     return st;
 }
-void cd_sim_noise_stats_reset(void) { cd_noise_fired = 0; cd_noise_unmatched = 0; }
+void cd_sim_noise_stats_reset(void) {
+    cd_noise_drawn = 0; cd_noise_fired = 0; cd_noise_unmatched = 0;
+}
 
 // One candidate, compact: the move kind and its cards as an id mask. A cover
 // carries no mask here: the only cover candidate is the greedy full cover,
@@ -1488,6 +1491,7 @@ static int sim_noise_cands(const SimState *s, int p, NoiseCand *c) {
 // index in c[], or -1 for "play the policy". Callers check cd_noise_pm first:
 // at 0 this is never reached and nothing is drawn.
 static int sim_noise_draw(const SimState *s, int p, NoiseCand *c) {
+    cd_noise_drawn++;
     if (game_random() * 1000.0 >= (double)cd_noise_pm) return -1;
     int n = sim_noise_cands(s, p, c);
     if (n <= 0) return -1;
