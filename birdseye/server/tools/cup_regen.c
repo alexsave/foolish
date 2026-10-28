@@ -128,7 +128,6 @@ int main(int argc, char **argv) {
     if (!n_want)
         for (int m = 0; m < BE_CUP_MATCHES; m++)
             if (cup.matches[m].winner != BE_TOUR_NONE) want[n_want++] = m;
-    int64_t to = cup.finished_ms ? cup.finished_ms : INT64_MAX;
     int rc = 0;
     for (int w = 0; w < n_want; w++) {
         int m = want[w];
@@ -143,9 +142,13 @@ int main(int argc, char **argv) {
         remove(games);
         sqlite3_prepare_v2(db, "SELECT players, moves FROM replays WHERE created_at BETWEEN ? AND ? AND length(players) = 32 ORDER BY created_at",
                            -1, &st, NULL);
-        sqlite3_bind_int64(st, 1, cup.started_ms);
+        // One match at a time: this match's games fall after the one before it was decided and by the
+        // time this one was (a pair can meet twice: in the round robin and in the final).
+        int64_t from = m == 0 ? cup.started_ms : cup.matches[m - 1].done_ms;
+        int64_t to = x->done_ms ? x->done_ms + 60000 : INT64_MAX;
+        sqlite3_bind_int64(st, 1, from);
         sqlite3_bind_int64(st, 2, to);
-        int game_no = 0;
+        int game_no = 0, told = 0;
         while (sqlite3_step(st) == SQLITE_ROW) {
             const unsigned char *pl = sqlite3_column_blob(st, 0);
             bool ab = memcmp(pl, ua, 16) == 0 && memcmp(pl + 16, ub, 16) == 0;
@@ -169,14 +172,35 @@ int main(int argc, char **argv) {
                 rc = 1;
                 continue;
             }
+            // Line the replay up with the cup's record of the match: a game the cup counts whose
+            // replay is missing (the server keeps none past the replay format's log cap) is said so.
+            uint8_t fool_bot = hdr.fool == 0 ? (ab ? x->a : x->b) : hdr.fool == 1 ? (ab ? x->b : x->a) : BE_TOUR_NONE;
+            uint8_t res = fool_bot == x->b ? BE_CUP_G_A : fool_bot == x->a ? BE_CUP_G_B : BE_CUP_G_DRAW;
+            while (game_no < x->games && game_no < BE_TOUR_MAX_GAMES_W && cup.result[m * BE_TOUR_MAX_GAMES_W + game_no] != res) {
+                game_no++;
+                FILE *f = fopen(games, "a");
+                if (f) {
+                    fprintf(f, "Game %d: NOT TOLD: the game server kept no replay of it (a game past the replay format's log cap).\n\n", game_no);
+                    fclose(f);
+                }
+            }
             game_no++;
+            told++;
             if (!be_cup_story_write(&r.story, r.names, hdr.fool, game_no, games)) {
                 fprintf(stderr, "cup_regen: cannot write %s\n", games);
                 rc = 1;
             }
         }
         sqlite3_finalize(st);
-        if (game_no != x->games) fprintf(stderr, "cup_regen: match %d: %d replays found, the cup counts %d games\n", m + 1, game_no, x->games);
+        while (game_no < x->games) {
+            game_no++;
+            FILE *f = fopen(games, "a");
+            if (f) {
+                fprintf(f, "Game %d: NOT TOLD: the game server kept no replay of it (a game past the replay format's log cap).\n\n", game_no);
+                fclose(f);
+            }
+        }
+        if (told != x->games) fprintf(stderr, "cup_regen: match %d: %d replays found, the cup counts %d games\n", m + 1, told, x->games);
         // The standings as they stood when this match was decided: the later round-robin matches unplayed.
         be_w_cup then = cup;
         for (int k = m + 1; k < BE_CUP_ROBIN; k++) {
@@ -189,7 +213,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "cup_regen: cannot write %s\n", summary);
             rc = 1;
         }
-        printf("match %d: %d games -> %s\n", m + 1, game_no, summary);
+        printf("match %d: %d of %d games told -> %s\n", m + 1, told, x->games, summary);
     }
     sqlite3_close(db);
     return rc;
