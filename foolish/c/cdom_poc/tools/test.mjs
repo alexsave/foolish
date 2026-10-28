@@ -238,6 +238,26 @@ try {
     assert.equal(await board(), fresh, 'the new game after a reload');
   });
 
+  await check('a save that fails is not silent: a notice until a later save is kept, and the save is tried again', async () => {
+    const page = 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug';
+    await openTable(b, page, { hold: true });
+    // IndexedDB refuses the game's key from now on (the put throws), as a full quota would.
+    await b.evaluate(`(() => { const put = IDBObjectStore.prototype.put; window.$put = put;
+      IDBObjectStore.prototype.put = function (v, k) { if (k === 'foolish-game-v1') throw new DOMException('full', 'QuotaExceededError'); return put.call(this, v, k); };
+      return 1; })()`);
+    assert.equal(await b.evaluate(`document.querySelector('[data-save-failed]')`), null, 'no notice before a save');
+    await b.click('[data-hand-plane] [data-card="0-5"]'); await b.click('[data-pill="Attack"]');
+    await b.until(`document.querySelector('[data-save-failed]')`, 3000);
+    assert.match(await b.evaluate(`document.querySelector('[data-save-failed]').textContent`), /^Not saved/);
+    // The store takes it again: the retry keeps the game, the notice goes, and a reload lands in it.
+    await b.evaluate(`(IDBObjectStore.prototype.put = window.$put, 1)`);
+    await b.until(`!document.querySelector('[data-save-failed]')`, 5000);
+    const battles = await all('[data-table-container] [data-battle-index]', 'e.dataset.card');
+    await b.goto(page); await ready();
+    assert.equal(await b.evaluate(`window.app.then((x) => x.app_game_store(2))`), 1, 'the retried save adopted');
+    assert.deepEqual(await all('[data-table-container] [data-battle-index]', 'e.dataset.card'), battles);
+  });
+
   // Every surface the wood is laid on (the back button, each pill as it comes, the end screen) shows
   // only tile pixels inside a rectangle the C worked the wood out in; elsewhere the tile is the
   // base colour. Checked after every click of a game played out, games played until every pill showed.

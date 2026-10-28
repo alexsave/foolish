@@ -2,7 +2,7 @@
 # Mutation check for cdom_poc's tests (python3 tools/mutate.py [name ...]): each mutant edits one file,
 # rebuilds, runs the test that should catch it, and prints what failed;
 # and the file is restored from a copy taken first (never git checkout).
-import subprocess, shutil, sys, os
+import subprocess, shutil, sys, os, tempfile
 POC = '/Users/alex/Dev/foolish-cdom-port/foolish/c/cdom_poc'
 MUTANTS = [
   ('face radius', 'src/table_app.c', 'sb_s(&s, "border-radius: 5px; border: 2px solid ");', 'sb_s(&s, "border-radius: 4px; border: 2px solid ");', 'tools/test.mjs'),
@@ -38,12 +38,16 @@ MUTANTS = [
   ('the game not kept after a bot step', 'src/table_app.c', '  bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);\n  committed();', '  bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);\n  game_keep_canonical(&G);', 'tools/test.mjs', 'reload'),
   ('the stored game ignored', 'src/table_app.c', '  if (len <= 0 || game_touched || !game_keep_load(&G, p, len)) return;', '  if (1) return;', 'tools/test.mjs', 'reload'),
   ('a battle never uncovered', 'src/table_app.c', '  if (want == it->data) return;\n  int aid', '  if (want == it->data || !want) return;\n  int aid', 'tools/test.mjs', 'reload'),
+  ('a failed save ignored', 'src/table_app.c', '  save_failed = !ok;\n', '  save_failed = 0;\n', 'tools/test.mjs', 'not silent'),
+  ('a failed save not tried again', 'src/table_app.c', '  if (token == TIMER_SAVE_RETRY) { save_retry_pending = 0; game_save(); }', '', 'tools/test.mjs', 'not silent'),
   ('http body not sent', 'vendor/cdom.js', 'const body = bodyLen ? copyBytes(bodyPtr, bodyLen) : undefined;', 'const body = undefined;', 'tests/net_test.mjs'),
 ]
-only = sys.argv[1:] 
-for name, f, old, new, test, *only in MUTANTS:
+only = sys.argv[1:]
+# the source's copy while a mutant is in it: outside the checkout, so no commit can take it
+KEEP = tempfile.mkdtemp(prefix='cdom-poc-mutate-')
+for name, f, old, new, test, *check in MUTANTS:
   if only and name not in only: continue
-  path = os.path.join(POC, f); keep = path + '.keep'
+  path = os.path.join(POC, f); keep = os.path.join(KEEP, os.path.basename(f) + '.keep')
   src = open(path).read()
   assert src.count(old) == 1, f'{name}: anchor not found once'
   shutil.copy(path, keep)
@@ -51,7 +55,7 @@ for name, f, old, new, test, *only in MUTANTS:
     open(path, 'w').write(src.replace(old, new))
     b = subprocess.run(['./build.sh'], cwd=POC, capture_output=True, text=True)
     if b.returncode: print(f'{name}: BUILD FAILED\n{b.stderr[-800:]}'); continue
-    env = dict(os.environ, ONLY=only[0]) if only else os.environ
+    env = dict(os.environ, ONLY=check[0]) if check else os.environ
     r = subprocess.run(['node', test] if test.endswith('.mjs') else [os.path.join(POC, test)], cwd=POC, capture_output=True, text=True, env=env)
     lines = [l for l in r.stdout.splitlines() if l.startswith('FAIL') or 'ok' in l or 'failed' in l][:12]
     print(f'== {name}: exit {r.returncode}')

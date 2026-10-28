@@ -900,7 +900,7 @@ static void render(void) {
 
 /* ---- moves ---------------------------------------------------------------- */
 
-enum { TIMER_TEX = 2, TIMER_BOT_GO = 3, TIMER_BOT_BASE = 16 }; /* the bot's: TIMER_BOT_BASE + its generation */
+enum { TIMER_TEX = 2, TIMER_BOT_GO = 3, TIMER_SAVE_RETRY = 4, TIMER_BOT_BASE = 16 }; /* the bot's: TIMER_BOT_BASE + its generation */
 enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2 };
 /* Measured (tools/timing.mjs, BLANK=1, CPU x4): starting to make textures on a timer right after
  * the first frame, cdom.start resolved at 165 ms against 60 without textures; two frames and 50 ms
@@ -925,7 +925,33 @@ static int game_adopted;
 
 static void game_save(void) {
   int len = game_keep_put(&G, game_blob);
-  if (len > 0) cd_store_put(GAME_KEY, sizeof GAME_KEY - 1, game_blob, (uint32_t)len);
+  if (len > 0) cd_store_put(STORE_GAME, GAME_KEY, sizeof GAME_KEY - 1, game_blob, (uint32_t)len);
+}
+
+/* A put that failed is not silent: a notice says the game is not saved (render_saved) until a later
+ * put is kept, and the save is tried again SAVE_RETRY_MS later (one retry waiting at a time; every
+ * move saves anyway). */
+#define SAVE_RETRY_MS 2000
+static int save_failed, save_retry_pending;
+static cd_region save_notice;
+static void render_saved(void) {
+  if (!cd_region_show(&save_notice, save_failed)) return;
+  cd_at(board, 0);
+  OPEN("div");
+  cd_name_open(save_notice.root);
+  ATTR("data-save-failed", "true");
+  STYLE("position: absolute; top: 8px; left: 50%; transform: translateX(-50%); font-size: 12px; "
+        "color: var(--color-text-primary); text-shadow: var(--text-shadow-label); white-space: nowrap; "
+        "z-index: 2001; pointer-events: none;");
+  TEXT("Not saved: a reload would lose this game");
+  CLOSE();
+  cd_region_end(&save_notice);
+}
+void cd_on_store_put(uint32_t token, uint32_t ok) {
+  if (token != STORE_GAME) return; /* the textures' puts: a cache */
+  save_failed = !ok;
+  if (!ok && !save_retry_pending) { save_retry_pending = 1; cd_timer_start(SAVE_RETRY_MS, TIMER_SAVE_RETRY); }
+  render_saved();
 }
 
 /* ---- the bot's pace (bot_drive.h bot_wait_ms) -------------------------------
@@ -1117,6 +1143,7 @@ void cd_on_timer(uint32_t token) {
   if (token == TIMER_BOT_GO) { bot_pending = 1; bot_step(); }
 #endif
   if (token == TIMER_TEX) tex_go();
+  if (token == TIMER_SAVE_RETRY) { save_retry_pending = 0; game_save(); }
 }
 
 /* For the tests: the engine's reason for the last refused move (0 for none), and the string
@@ -1586,7 +1613,7 @@ void cd_main(void) {
   CLOSE();
   CLOSE(); /* container */
 
-
+  cd_listen_window(CD_EV_RESIZE);
   game_asked = cd_now();
   cd_store_get(STORE_GAME, GAME_KEY, sizeof GAME_KEY - 1, CD_STORE_DEADLINE_MS);
   game_keep_canonical(&G);
