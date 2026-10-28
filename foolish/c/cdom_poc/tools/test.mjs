@@ -137,7 +137,6 @@ try {
       [[1, 0], [1, 0], [1, 0]], 'every texture from the store, no generator run');
     assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => x.app_tex_seed(k)))`), seeds, 'the seeds kept');
     assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
-    assert.equal(await b.evaluate(`getComputedStyle(document.querySelector('.bg-wool')).transform`), 'none', 'the wool layer not doubled');
   });
 
   // Every surface the wood is laid on (the back button, each pill as it comes, the end screen) shows

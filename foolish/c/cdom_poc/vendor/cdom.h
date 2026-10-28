@@ -109,10 +109,15 @@ void cd_set_class(cd_id id, cd_str value);
 /* One style property: element.style.setProperty(prop, value). value may be a cd_tmp; "" removes it. */
 void cd_set_style(cd_id id, cd_str prop, cd_str value);
 void cd_set_style_num(cd_id id, cd_str prop, double v, uint32_t unit);
-/* Pixels to an image file: rgba is w * h * 4 bytes in C memory, read during the call (reuse it
- * after). The shim encodes them as mime ("image/png", or "image/jpeg" at quality 0.92) off the
+/* Pixels to an image file: px is w * h * n bytes in C memory, n = 4 (RGBA) or 3 (RGB, opaque: a
+ * third less room for a picture with no alpha), read during the call (reuse it after). The shim
+ * encodes them as mime ("image/png", or "image/jpeg" at quality 0.92) off the
  * call; the file's bytes arrive in cd_on_encoded(token, p, len), valid until it returns. */
-void cd_encode_image(const uint8_t *rgba, uint32_t w, uint32_t h, cd_str mime, uint32_t token);
+void cd_encode_image(const uint8_t *px, uint32_t w, uint32_t h, uint32_t n, cd_str mime, uint32_t token);
+/* The same, the pixels placed at (x, y) in an image of W x H whose rest is transparent (black in a
+ * JPEG): for a picture of which only a part is ever shown, but whose size the page lays out by. */
+void cd_encode_image_in(const uint8_t *px, uint32_t w, uint32_t h, uint32_t n, uint32_t W, uint32_t H, uint32_t x,
+                        uint32_t y, cd_str mime, uint32_t token);
 void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len); /* the app's hook (empty weak default) */
 /* An image file's bytes (len of them at p, read during the call) as a CSS image: style property
  * prop of node id becomes url(blob:...) now; a custom property such as "--tex" works. */

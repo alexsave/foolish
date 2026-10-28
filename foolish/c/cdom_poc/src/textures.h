@@ -13,7 +13,7 @@
 /* Math.random's stand-in: mulberry32, a double in [0, 1). The parity test gives the TS the same. */
 double tex_random(uint32_t *state);
 
-/* The weave of a w x h picture, kept only in the crop cw x ch at (cx, cy): px is cw * ch * 4.
+/* The weave of a w x h picture, kept only in the crop cw x ch at (cx, cy): px is cw * ch * 3 (RGB).
  * Steps that touch nothing in the crop are skipped, so a smaller crop is less work. */
 typedef struct {
   uint8_t *px;
@@ -29,7 +29,7 @@ int wool_run(Wool *t, int32_t steps); /* 1 when the weave is done */
 typedef struct { int32_t x, y, w, h; } TexRect;
 
 /* The wood of a w x h picture, worked out only inside the rectangles in win (in the picture, not
- * crossing its edges; overlapping ones are each worked out whole): px is w * h * 4 and outside the
+ * crossing its edges; overlapping ones are each worked out whole): px is w * h * 3 (RGB) and outside the
  * rectangles keeps the base colour; col is the float colours of the largest rectangle (w * h * 3). */
 #define WOOD_MAX_WIN 16
 typedef struct {

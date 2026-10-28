@@ -974,9 +974,17 @@ EXPORT("app_ids_live") uint32_t app_ids_live(void) { return cd_ids_live(); }
  * - the fern at FERN_SCALE times the deck's card back in device pixels (not the app's 1000 x 1400),
  *   with the app's 5,000,000 points scaled by the area, so it is as dense;
  * - the wood's 1920 x 1080 tile worked out only where a button shows it (WOOD_SURF);
- * - the wool's middle 1920 x 1080 of the app's 3840 x 2160, all its scale(2) ever shows.
- * One 8 MiB block holds each in turn (the wool's crop, or the wood's tile), freed at the end. */
-enum { TEX_W = 3840, TEX_H = 2160, WOOL_W = TEX_W / 2, WOOL_H = TEX_H / 2 };
+ * - the wool's middle 1920 x 1080 of the app's 3840 x 2160 (and a margin), all its scale(2) ever
+ *   shows: woven only there, put in a 3840 x 2160 image (WOOL_W).
+ * One block (8 MiB class) holds each in turn, RGB where the picture is opaque (the wool's crop, the
+ * wood's tile), freed at the end; none is taken when all three come from the store. */
+/* The wool's crop: the middle 1920 x 1080 widened by 16 columns and 12 rows a side, on JPEG's 16 x 16 block
+ * grid as the app's whole picture is, so its blocks are the same pixels and encode to the same
+ * JPEG blocks; the margin keeps the blocks at its edge (and their chroma) out of sight. It is put
+ * at its place in a 3840 x 2160 image (the rest black, never shown): the page then lays it out,
+ * snaps it to pixels and resamples it exactly as it does the app's picture. */
+enum { TEX_W = 3840, TEX_H = 2160, WOOL_W = 1920 + 32, WOOL_H = 1080 + 24, WOOL_X = (TEX_W - WOOL_W) / 2, WOOL_Y = (TEX_H - WOOL_H) / 2 };
+_Static_assert(WOOL_X % 16 == 0 && WOOL_Y % 16 == 0, "the crop starts on the JPEG block grid");
 enum { FERN_APP_W = 1000, FERN_APP_H = 1400, FERN_APP_POINTS = 5000000, BACK_W = 50, BACK_H = 70, FERN_SCALE = 4 };
 #define TEX_SLICE_MS 8.0
 /* Every surface the wood is laid on besides the pills (PILL): its seed and the most it spans
@@ -1046,7 +1054,7 @@ static void tex_start(int stage) {
   if (stage == TEX_WOOL) {
     tex_random(&rng); tex_random(&rng);
     double ox = tex_random(&rng) * 1000 - 500, oy = tex_random(&rng) * 1000 - 500;
-    wool_begin(&tex.wool, b, TEX_W, TEX_H, (TEX_W - WOOL_W) / 2, (TEX_H - WOOL_H) / 2, WOOL_W, WOOL_H, ox, oy);
+    wool_begin(&tex.wool, b, TEX_W, TEX_H, WOOL_X, WOOL_Y, WOOL_W, WOOL_H, ox, oy);
   }
 }
 
@@ -1079,13 +1087,10 @@ static void tex_keys(void) {
 }
 
 /* A texture's image file lands: its url on the mount; with the fern, the backs turn black under it,
- * as CardBack's do; with the wool, the layer stops doubling: the wool is the middle half of the
- * app's 3840 x 2160 weave, all its scale(2) ever shows, so the same picture lands at the same
- * place (README, Textures). */
+ * as CardBack's do. */
 static void tex_land(int k, const uint8_t *p, uint32_t len) {
   cd_set_image_bytes(CD_MOUNT, cd_internz(TEX_PROP[k]), p, len, cd_internz(TEX_MIME[k]));
   if (k == TEX_FERN) cd_set_style(CD_MOUNT, ZS("--tex-fern-bg"), ZS("#000000"));
-  if (k == TEX_WOOL) cd_set_style(bg_wool, ZS("transform"), ZS("none"));
   tex.at[k] = cd_now();
   tex.landed++;
 }
@@ -1114,9 +1119,9 @@ void cd_on_store(uint32_t token, const uint8_t *p, int32_t len) {
   if (!tex.block) { /* the first texture to make: the room for all of them */
     int32_t most = 0;
     for (int r = 0; r < tex.nrect; r++) if (tex.rect[r].w * tex.rect[r].h > most) most = tex.rect[r].w * tex.rect[r].h;
-    uint32_t fern = (uint32_t)(tex.fern_w * tex.fern_h * 8), wool = WOOL_W * WOOL_H * 4, wood = WOOD_W * WOOD_H * 4;
+    uint32_t fern = (uint32_t)(tex.fern_w * tex.fern_h * 8), wool = WOOL_W * WOOL_H * 3, wood = WOOD_W * WOOD_H * 3;
     uint32_t big = wool > wood ? wool : wood;
-    tex.block = cd_alloc(big > fern ? big : fern); /* 8,294,400 bytes: one 8 MiB size class */
+    tex.block = cd_alloc(big > fern ? big : fern); /* 6,465,024 bytes (the wool, RGB): one 8 MiB size class */
     tex.col = cd_alloc((uint32_t)most * 12);       /* the wood's float colours, one rectangle at a time */
   }
   tex.seed[k] = tex_seed;
@@ -1150,9 +1155,9 @@ void cd_on_raf(uint32_t token, double t) {
   tex.ms[tex.stage] += now - t0;
   if (!done) { cd_raf_request(RAF_SLICE); return; }
   /* the pixels are copied during the call, so the block is free for the next texture at once */
-  if (tex.stage == TEX_FERN) cd_encode_image(tex.fern.px, (uint32_t)tex.fern_w, (uint32_t)tex.fern_h, ZS("image/png"), TEX_FERN);
-  if (tex.stage == TEX_WOOD) cd_encode_image(tex.wood.px, WOOD_W, WOOD_H, ZS("image/png"), TEX_WOOD);
-  if (tex.stage == TEX_WOOL) cd_encode_image(tex.wool.px, WOOL_W, WOOL_H, ZS("image/jpeg"), TEX_WOOL);
+  if (tex.stage == TEX_FERN) cd_encode_image(tex.fern.px, (uint32_t)tex.fern_w, (uint32_t)tex.fern_h, 4, ZS("image/png"), TEX_FERN);
+  if (tex.stage == TEX_WOOD) cd_encode_image(tex.wood.px, WOOD_W, WOOD_H, 3, ZS("image/png"), TEX_WOOD);
+  if (tex.stage == TEX_WOOL) cd_encode_image_in(tex.wool.px, WOOL_W, WOOL_H, 3, TEX_W, TEX_H, WOOL_X, WOOL_Y, ZS("image/jpeg"), TEX_WOOL);
   tex_next(tex.stage + 1);
 }
 

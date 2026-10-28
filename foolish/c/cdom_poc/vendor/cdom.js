@@ -112,10 +112,13 @@ var cdom = (() => {
   function set_class(id, v) { nodes[id].className = S(v); }
   function style(id, p, v) { nodes[id].style.setProperty(S(p), S(v)); }
   function style_num(id, p, v, u) { nodes[id].style.setProperty(S(p), v + S(u)); }
-  // Pixels in C memory to an image file: copied now, encoded off the call, the bytes back into C.
-  function encode(ptr, w, h, m, t) {
-    const c = doc.createElement("canvas"); c.width = w; c.height = h;
-    c.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(mem.buffer, ptr, w * h * 4), w, h), 0, 0);
+  // Pixels in C memory (n bytes each: RGBA, or RGB and opaque), at (X, Y) in a W x H image, to an
+  // image file: copied now, encoded off the call, the bytes back into C.
+  function encode(ptr, w, h, n, W, H, X, Y, m, t) {
+    const c = doc.createElement("canvas"); c.width = W; c.height = H;
+    let px = new Uint8ClampedArray(mem.buffer, ptr, w * h * n);
+    if (n === 3) { const q = new Uint8ClampedArray(w * h * 4); for (let i = 0, j = 0; j < q.length; i += 3, j += 4) { q[j] = px[i]; q[j + 1] = px[i + 1]; q[j + 2] = px[i + 2]; q[j + 3] = 255; } px = q; }
+    c.getContext("2d").putImageData(new ImageData(px, w, h), X, Y);
     c.toBlob(async (b) => deliver(x.cd_encoded, t, await b.arrayBuffer()), S(m), 0.92);
   }
   function image_bytes(id, p, ptr, n, m) {

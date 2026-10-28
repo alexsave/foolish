@@ -45,7 +45,7 @@ static double z_value(const Wool *t);
 void wool_begin(Wool *t, uint8_t *px, int32_t w, int32_t h, int32_t cx, int32_t cy, int32_t cw, int32_t ch,
                 double offx, double offy) {
   *t = (Wool){.px = px, .w = w, .h = h, .cx = cx, .cy = cy, .cw = cw, .ch = ch, .offx = offx, .offy = offy, .horizontal = 1};
-  for (int32_t i = 0; i < cw * ch * 4; i += 4) { px[i] = 113; px[i + 1] = 65; px[i + 2] = 27; px[i + 3] = 255; }
+  for (int32_t i = 0; i < cw * ch * 3; i += 3) { px[i] = 113; px[i + 1] = 65; px[i + 2] = 27; } /* RGB: the weave is opaque */
   t->max = (int32_t)floor_(((double)w * h / (1920 * 1080)) * 2000000);
   t->switch_at = (int32_t)floor_(t->max * 0.4);
   t->z = z_value(t);
@@ -73,13 +73,13 @@ static void write_pixel(Wool *t, double x, double y, int32_t red, int32_t green,
   int32_t dx0 = t->cx - x0 > 0 ? t->cx - x0 : 0, dx1 = t->cx + t->cw - x0 < n ? t->cx + t->cw - x0 : n;
   int32_t dy0 = t->cy - y0 > 0 ? t->cy - y0 : 0, dy1 = t->cy + t->ch - y0 < n ? t->cy + t->ch - y0 : n;
   for (int32_t dy = dy0; dy < dy1; dy++) {
-    uint8_t *row = t->px + (((y0 + dy - t->cy) * t->cw + (x0 - t->cx)) << 2);
+    uint8_t *row = t->px + ((y0 + dy - t->cy) * t->cw + (x0 - t->cx)) * 3;
     double dist_y = fabs_(dy - fy);
     for (int32_t dx = dx0; dx < dx1; dx++) {
       double dist_x = fabs_(dx - fx);
       double edge = fmax_(0.1, 1 - (dist_x + dist_y) / 4);
       double alpha = edge * 0.99, inv = 1 - alpha;
-      uint8_t *p = row + (dx << 2);
+      uint8_t *p = row + dx * 3;
       p[0] = clamp8(p[0] * inv + red * alpha);
       p[1] = clamp8(p[1] * inv + green * alpha);
       p[2] = clamp8(p[2] * inv + blue * alpha);
@@ -142,7 +142,7 @@ void wood_begin(Wood *t, float *col, uint8_t *px, int32_t w, int32_t h, double o
   for (int32_t k = 0; k < nwin; k++) t->rect[k] = win[k];
   uint8_t base[3] = {70, 14, 9}; /* what the blit makes of the base colour, as below */
   for (int k = 0; k < 3; k++) { double v = (float)(base[k] / 255.0) * 255.0 + 0.5; base[k] = (uint8_t)v; }
-  for (int32_t i = 0; i < w * h; i++) { px[i * 4] = base[0]; px[i * 4 + 1] = base[1]; px[i * 4 + 2] = base[2]; px[i * 4 + 3] = 255; }
+  for (int32_t i = 0; i < w * h; i++) { px[i * 3] = base[0]; px[i * 3 + 1] = base[1]; px[i * 3 + 2] = base[2]; } /* RGB: opaque */
 }
 
 static void rect_start(Wood *t) {
@@ -205,7 +205,7 @@ static void rect_blit(Wood *t) {
   for (int32_t y = 0; y < r->h; y++)
     for (int32_t x = 0; x < r->w; x++) {
       const float *c = t->col + (y * r->w + x) * 3;
-      uint8_t *o = t->px + ((r->y + y) * t->w + r->x + x) * 4;
+      uint8_t *o = t->px + ((r->y + y) * t->w + r->x + x) * 3;
       for (int k = 0; k < 3; k++) {
         double v = c[k] * 255.0 + 0.5;
         o[k] = v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t)v;

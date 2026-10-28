@@ -23,6 +23,7 @@ export { paintWool } from '${FOOLISH}/src/utils/woolPixels';
 export { generateTextureViaWebGL } from '${FOOLISH}/src/utils/webglTexture';
 export { generateWoodPixelData, generateWoodTextureFallback } from '${FOOLISH}/src/components/WoodTexture';
 export { generateFernPoints, createCardParams, generateFernPattern, generateFernPatternFallback } from '${FOOLISH}/src/utils/fernFractal';
+export { getCachedTexture, setCachedTexture } from '${FOOLISH}/src/utils/textureCache';
 `);
 await build({
   entryPoints: [path.join(out, 'tex_entry.ts')], bundle: true, format: 'iife', globalName: 'TS', outfile: path.join(out, 'tex_ts.js'),
@@ -41,9 +42,10 @@ const PAGE = `(async () => {
   const real = Math.random;
   const C = (await WebAssembly.instantiateStreaming(fetch('tex_test.wasm'))).instance.exports;
   const bytes = (p, n) => new Uint8Array(C.memory.buffer, p, n);
-  const diff = (a, b, w, h) => { let px = 0, max = 0, sum = 0;
-    for (let i = 0; i < w * h * 4; i += 4) { let any = false;
-      for (let k = 0; k < 4; k++) { const d = Math.abs(a[i + k] - b[i + k]); if (d) { any = true; sum += d; if (d > max) max = d; } } if (any) px++; }
+  // a is RGBA; b is RGBA, or RGB (nb = 3) and then opaque
+  const diff = (a, b, w, h, nb = 4) => { let px = 0, max = 0, sum = 0;
+    for (let i = 0, j = 0; i < w * h * 4; i += 4, j += nb) { let any = false;
+      for (let k = 0; k < 4; k++) { const d = Math.abs(a[i + k] - (k < 3 || nb === 4 ? b[j + k] : 255)); if (d) { any = true; sum += d; if (d > max) max = d; } } if (any) px++; }
     return { differing: px, of: w * h, max, mean: px ? +(sum / px).toFixed(2) : 0 }; };
   const decode = async (url, w, h) => { const img = new Image(); img.src = url; await img.decode();
     const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const cx = cv.getContext('2d');
@@ -54,7 +56,7 @@ const PAGE = `(async () => {
   const noWebGL = (f) => async (...a) => { const g = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function (k, o) { return k === 'webgl' ? null : g.call(this, k, o); };
     try { return await f(...a); } finally { HTMLCanvasElement.prototype.getContext = g; } };
-  const r = {};
+  const r = {}, U = {};
   const seed = ${SEED};
   // the PRNG itself
   { const m = mul(seed); let v; for (let i = 0; i < 1000; i++) v = m(); r.random = v === C.random(seed, 1000) ? 'same 1000 draws' : 'DIFFERENT'; }
@@ -73,17 +75,17 @@ const PAGE = `(async () => {
   // wool: paintWool into a buffer, offsets as the app draws them, then the JPEG the app encodes
   // (woolWorker.ts: putImageData, convertToBlob at 0.92). The C weaves the whole picture and, as the
   // page does, only its middle half (the crop must be the same pixels as the TS's middle half).
-  { const m = mul(seed), ox = m() * 1000 - 500, oy = m() * 1000 - 500, w = 3840, h = 2160, cw = w / 2, ch = h / 2, cx = (w - cw) / 2, cy = (h - ch) / 2;
+  { const m = mul(seed), ox = m() * 1000 - 500, oy = m() * 1000 - 500, w = 3840, h = 2160, cw = 1952, ch = 1104, cx = (w - cw) / 2, cy = (h - ch) / 2;
     const ts = new Uint8ClampedArray(w * h * 4); let t0 = performance.now();
     await TS.paintWool(ts, { width: w, height: h, offsetX: ox, offsetY: oy }); const tsMs = performance.now() - t0;
     t0 = performance.now(); const cv = new OffscreenCanvas(w, h); cv.getContext('2d').putImageData(new ImageData(ts, w, h), 0, 0);
-    await cv.convertToBlob({ type: 'image/jpeg', quality: 0.92 }); const tsEnc = performance.now() - t0;
+    U.wool = URL.createObjectURL(await cv.convertToBlob({ type: 'image/jpeg', quality: 0.92 })); const tsEnc = performance.now() - t0;
     C.reset(); t0 = performance.now(); const p = C.wool(w, h, 0, 0, w, h, ox, oy); const cMs = performance.now() - t0;
-    const full = diff(ts, bytes(p, w * h * 4), w, h);
+    const full = diff(ts, bytes(p, w * h * 3), w, h, 3);
     C.reset(); t0 = performance.now(); const q = C.wool(w, h, cx, cy, cw, ch, ox, oy); const cCrop = performance.now() - t0;
     const mid = new Uint8ClampedArray(cw * ch * 4);
     for (let y = 0; y < ch; y++) mid.set(ts.subarray(((y + cy) * w + cx) * 4, ((y + cy) * w + cx + cw) * 4), y * cw * 4);
-    r.wool = { size: w + 'x' + h, ...full, crop: cw + 'x' + ch + ' at ' + cx + ',' + cy, crop_vs_ts_middle: diff(mid, bytes(q, cw * ch * 4), cw, ch),
+    r.wool = { size: w + 'x' + h, ...full, crop: cw + 'x' + ch + ' at ' + cx + ',' + cy, crop_vs_ts_middle: diff(mid, bytes(q, cw * ch * 3), cw, ch, 3),
       ts_ms: Math.round(tsMs), ts_encode_ms: Math.round(tsEnc), c_ms: Math.round(cMs), c_crop_ms: Math.round(cCrop) }; }
 
   // wood: the float colours, the WebGL blit the app uses, and the CPU fallback; then the wood worked
@@ -95,23 +97,23 @@ const PAGE = `(async () => {
     C.reset(); t0 = performance.now(); const p = C.wood(w, h, seed, 0); const cMs = performance.now() - t0;
     const cf = new Float32Array(C.memory.buffer, C.wood_col(), w * h * 3); let fd = 0, fmax = 0;
     for (let i = 0; i < w * h * 3; i++) if (cf[i] !== pd.colors[i]) { fd++; fmax = Math.max(fmax, Math.abs(cf[i] - pd.colors[i])); }
-    const mine = bytes(p, w * h * 4).slice();
+    const mine = bytes(p, w * h * 3).slice();
     t0 = performance.now();
     const glUrl = await TS.generateTextureViaWebGL(w, h, 'wood', [70 / 255, 14 / 255, 9 / 255, 1], TS.generateWoodPixelData, TS.generateWoodTextureFallback);
-    const tsAll = performance.now() - t0;
+    const tsAll = performance.now() - t0; U.wood = glUrl;
     const gl = await decode(glUrl, w, h);
     const cpu = await decode(await noWebGL(TS.generateWoodTextureFallback)(w, h), w, h);
     const rects = [[1700, 0, 220, 64], [0, 500, 268, 68], [1438, 246, 268, 68], [1880, 1000, 40, 80], [900, 1012, 368, 68], [1850, 1, 70, 30]];
     C.reset(); new Int32Array(C.memory.buffer, C.wood_rects(), rects.length * 4).set(rects.flat());
     t0 = performance.now(); const q = C.wood(w, h, seed, rects.length); const cRects = performance.now() - t0;
-    const part = bytes(q, w * h * 4).slice(), base = [gl[0], 0, 0];
+    const part = bytes(q, w * h * 3).slice();
     let inside = 0, inDiff = 0, inMax = 0, outDiff = 0;
     const inRect = (x, y) => rects.some(([rx, ry, rw, rh]) => x >= rx && x < rx + rw && y >= ry && y < ry + rh);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4;
-      if (inRect(x, y)) { inside++; let d = 0; for (let k = 0; k < 4; k++) d = Math.max(d, Math.abs(part[i + k] - gl[i + k])); if (d) inDiff++; inMax = Math.max(inMax, d); }
-      else if (part[i] !== 70 || part[i + 1] !== 14 || part[i + 2] !== 9 || part[i + 3] !== 255) outDiff++; }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4, j = (y * w + x) * 3;
+      if (inRect(x, y)) { inside++; let d = 0; for (let k = 0; k < 3; k++) d = Math.max(d, Math.abs(part[j + k] - gl[i + k])); if (d) inDiff++; inMax = Math.max(inMax, d); }
+      else if (part[j] !== 70 || part[j + 1] !== 14 || part[j + 2] !== 9) outDiff++; }
     r.wood = { size: w + 'x' + h, float_values_differing: fd + ' of ' + w * h * 3, float_max_abs: fmax,
-      vs_webgl: diff(gl, mine, w, h), vs_cpu_fallback: diff(cpu, mine, w, h),
+      vs_webgl: diff(gl, mine, w, h, 3), vs_cpu_fallback: diff(cpu, mine, w, h, 3),
       rects: { pixels: inside, differing_from_webgl: inDiff, max: inMax, outside_not_base: outDiff },
       ts_ms: Math.round(tsMs), ts_with_webgl_and_png_ms: Math.round(tsAll), c_ms: Math.round(cMs), c_rects_ms: Math.round(cRects) }; }
 
@@ -125,19 +127,40 @@ const PAGE = `(async () => {
     C.reset(); const plain = bytes(C.fern(w, h, n, seed, 0), w * h * 4).slice();
     C.reset(); t0 = performance.now(); const p = C.fern(w, h, n, seed, 1); const cMs = performance.now() - t0;
     const mine = bytes(p, w * h * 4).slice();
-    Math.random = mul(seed); const gl = await decodeRaw(await TS.generateFernPattern(params, { width: w, height: h, bypassCache: true }), w, h);
+    Math.random = mul(seed); t0 = performance.now();
+    const glUrl = await TS.generateFernPattern(params, { width: w, height: h, bypassCache: true }); const tsAll = performance.now() - t0; U.fern = glUrl;
+    const gl = await decodeRaw(glUrl, w, h);
+    // The page's fern: the card back (50 x 70) times 4 times the device pixel ratio, its points
+    // scaled by the area. Against the app's picture shrunk to the same size by the browser (as a
+    // card back shows it), and, for scale, the C's full-size picture shrunk the same way.
+    const shrink = async (px, W, H) => { const cv = new OffscreenCanvas(w, h); cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px), w, h), 0, 0);
+      const d = new OffscreenCanvas(W, H), g = d.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(cv, 0, 0, W, H); return g.getImageData(0, 0, W, H).data; };
+    const page = {};
+    for (const dpr of [1, 2]) { const W = 50 * 4 * dpr, H = 70 * 4 * dpr, pts2 = Math.floor(n * W * H / (w * h));
+      C.reset(); t0 = performance.now(); const pp = bytes(C.fern(W, H, pts2, seed, 1), W * H * 4).slice(); const ms = performance.now() - t0;
+      const ts2 = await shrink(gl, W, H), full2 = await shrink(mine, W, H);
+      page['dpr' + dpr] = { size: W + 'x' + H, points: pts2, c_ms: Math.round(ms), vs_app_shrunk: diff(ts2, pp, W, H), full_c_shrunk_vs_app_shrunk: diff(ts2, full2, W, H) }; }
     Math.random = mul(seed); const cpu = await decodeRaw(await TS.generateFernPatternFallback(w, h, params), w, h);
     r.fern = { size: w + 'x' + h, iterations: n, points_one_pixel_each_vs_ts_points: diff(pts, plain, w, h),
       multisampled_vs_webgl: diff(gl, mine, w, h), one_pixel_each_vs_webgl: diff(gl, plain, w, h),
-      one_pixel_each_vs_cpu_fallback: diff(cpu, plain, w, h), ts_ms: Math.round(tsMs), c_ms: Math.round(cMs) }; }
+      one_pixel_each_vs_cpu_fallback: diff(cpu, plain, w, h), page, ts_ms: Math.round(tsMs), ts_with_webgl_and_png_ms: Math.round(tsAll), c_ms: Math.round(cMs) }; }
   Math.random = real;
+  // The app's warm load: each texture read back from its TextureCacheDB (textureCache.ts, as
+  // WoolBackground, WoodTexture and fernFractal call it: one getCachedTexture each, in turn).
+  for (const k of ['fern', 'wood', 'wool']) await TS.setCachedTexture(k, U[k]);
+  const warm = {}; let t1 = performance.now();
+  for (const k of ['fern', 'wood', 'wool']) { const t = performance.now(); const u = await TS.getCachedTexture(k); warm[k + '_ms'] = +(performance.now() - t).toFixed(1); if (!u) warm[k + '_ms'] = 'MISS'; }
+  warm.total_ms = +(performance.now() - t1).toFixed(1);
+  r.ts_warm = warm;
   return r;
 })()`;
 
 const server = await serve(8720, out);
 const b = await launch();
+const CPU = Number(process.env.CPU || 1);
 let res;
 try {
+  if (CPU > 1) await b.send('Emulation.setCPUThrottlingRate', { rate: CPU });
   await b.goto('http://127.0.0.1:8720/texparity.html');
   res = await b.evaluate(PAGE);
 } finally { await b.close(); server.close(); }

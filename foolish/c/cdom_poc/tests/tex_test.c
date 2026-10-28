@@ -18,7 +18,7 @@ EXPORT("reset") void reset(void) { top = 0; }
 /* The weave of a w x h picture, kept in the crop cw x ch at (cx, cy). */
 EXPORT("wool") uint8_t *wool(int32_t w, int32_t h, int32_t cx, int32_t cy, int32_t cw, int32_t ch, double ox, double oy) {
   Wool t;
-  uint8_t *px = grab((uint32_t)(cw * ch * 4));
+  uint8_t *px = grab((uint32_t)(cw * ch * 3));
   wool_begin(&t, px, w, h, cx, cy, cw, ch, ox, oy);
   while (!wool_run(&t, 1 << 20)) {}
   return px;
@@ -38,7 +38,7 @@ EXPORT("wood") uint8_t *wood(int32_t w, int32_t h, uint32_t seed, int32_t nwin) 
   if (!nwin) { rects[0] = (TexRect){0, 0, w, h}; nwin = 1; }
   for (int32_t k = 0; k < nwin; k++) if (rects[k].w * rects[k].h > most) most = rects[k].w * rects[k].h;
   wood_col = grab((uint32_t)(most * 12));
-  uint8_t *px = grab((uint32_t)(w * h * 4));
+  uint8_t *px = grab((uint32_t)(w * h * 3));
   wood_begin(&t, wood_col, px, w, h, ox, oy, rects, nwin);
   while (!wood_run(&t, 64)) {}
   return px;

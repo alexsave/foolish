@@ -1,5 +1,9 @@
 // First paint and click-to-update of the cdom table in headless Chrome, medians over fresh loads.
 //   node tools/timing.mjs [runs] [cpu-throttle]     (PAGE=/c/cdom_poc/out/index.html?notex for another page)
+// TEX=cold or TEX=warm also times the textures: cold empties the page's store before every load
+// (every texture made), warm loads once first and then each load finds all three in the store.
+// Per texture: when its url was set (ms after navigation), how long making it took on the page's
+// thread, when all three had decoded, and the wasm memory then.
 // Times are script (the handler, C, its DOM calls) and script + style + layout (forced at once).
 // - first paint: the page's first-contentful-paint, and when cdom.start resolved (the wasm
 //   fetched, compiled, instantiated and cd_main's first render done);
@@ -13,18 +17,36 @@ const RUNS = Number(process.argv[2] || 15), CPU = Number(process.argv[3] || 1);
 const server = await serve(8720, FOOLISH, null, { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' });
 const b = await launch();
 const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
-const rows = { fcp: [], ready: [], selScript: [], selFrame: [], playScript: [], playFrame: [], botScript: [], botFrame: [] };
+const rows = { fcp: [], ready: [], selScript: [], selFrame: [], playScript: [], playFrame: [], botScript: [], botFrame: [],
+  fernAt: [], woodAt: [], woolAt: [], fernMs: [], woodMs: [], woolMs: [], decoded: [], mem: [] };
+const TEX = process.env.TEX, ORIGIN = 'http://127.0.0.1:8720';
+const texDone = `window.app.then((x) => x.app_tex_ms(3) === 3)`;
 try {
   await b.send('Network.enable');
   await b.send('Network.setCacheDisabled', { cacheDisabled: true });
   if (CPU > 1) await b.send('Emulation.setCPUThrottlingRate', { rate: CPU });
+  if (TEX === 'warm') { // one load to fill the store
+    await b.goto(ORIGIN + (process.env.PAGE || '/c/cdom_poc/out/index.html'));
+    await b.until(texDone, 120000); await sleep(1000);
+  }
   for (let i = 0; i < RUNS; i++) {
+    if (TEX === 'cold') await b.send('Storage.clearDataForOrigin', { origin: ORIGIN, storageTypes: 'indexeddb' });
     // BLANK=1: each load starts from a blank page, in a fresh renderer, with nothing left running.
     // Needed to time a page that makes textures: the previous load's slices otherwise hold the
     // thread into the next load (measured: +18 ms at x4). Slower absolute numbers (a cold process).
     if (process.env.BLANK) { await b.goto('about:blank'); await sleep(300); }
     await b.goto('http://127.0.0.1:8720' + (process.env.PAGE || '/c/cdom_poc/out/index.html'));
     await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
+    if (TEX) {
+      await b.until(texDone, 120000);
+      const t = await b.evaluate(`window.app.then(async (x) => {
+        const u = ['--tex-fern', '--tex-wood', '--tex-wool'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(4, -1));
+        await Promise.all(u.map((s) => { const i = new Image(); i.src = s; return i.decode(); }));
+        if (![0, 1, 2].every((k) => x.app_tex_stored(k) === (${JSON.stringify(TEX)} === 'warm' ? 1 : 0))) throw new Error('not a ${TEX} load');
+        return { at: [0, 1, 2].map((k) => x.app_tex_at(k)), ms: [0, 1, 2].map((k) => x.app_tex_ms(k)), decoded: performance.now(), mem: x.memory.buffer.byteLength }; })`);
+      rows.fernAt.push(t.at[0]); rows.woodAt.push(t.at[1]); rows.woolAt.push(t.at[2]);
+      rows.fernMs.push(t.ms[0]); rows.woodMs.push(t.ms[1]); rows.woolMs.push(t.ms[2]); rows.decoded.push(t.decoded); rows.mem.push(t.mem);
+    }
     await sleep(200);
     const r = await b.evaluate(`(async () => {
       const x = await window.app;
@@ -55,3 +77,8 @@ console.log(`first contentful paint ${f(med(rows.fcp))}   cdom.start resolved ${
 console.log(`select a card          ${f(med(rows.selScript))} script   ${f(med(rows.selFrame))} with style and layout`);
 console.log(`play (Attack pill)     ${f(med(rows.playScript))} script   ${f(med(rows.playFrame))} with style and layout`);
 console.log(`bot step               ${f(med(rows.botScript))} script   ${f(med(rows.botFrame))} with style and layout`);
+if (TEX) {
+  console.log(`textures (${TEX}): url set at  fern ${f(med(rows.fernAt))}  wood ${f(med(rows.woodAt))}  wool ${f(med(rows.woolAt))}  (ms after navigation)`);
+  console.log(`  made on the page's thread  fern ${f(med(rows.fernMs))}  wood ${f(med(rows.woodMs))}  wool ${f(med(rows.woolMs))}`);
+  console.log(`  all three decoded at ${f(med(rows.decoded))}   wasm memory ${(med(rows.mem) / 1048576).toFixed(1)} MiB (max ${(Math.max(...rows.mem) / 1048576).toFixed(1)})`);
+}
