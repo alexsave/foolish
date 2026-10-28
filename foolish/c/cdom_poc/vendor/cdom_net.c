@@ -27,10 +27,7 @@ __attribute__((weak)) void cd_on_http(uint32_t token, uint32_t status, const uin
   (void)token; (void)status; (void)p; (void)len;
 }
 
-/* The shim asks for room, copies the message in, then calls the export with it. */
-static uint8_t *inbuf;
-EXPORT("cd_net_buf") void *cd_net_buf(uint32_t n) { return inbuf = cd_realloc(inbuf, n ? n : 1); }
-
+/* The shim copies a message into cdom's room for incoming bytes (cd_bytes_buf), then calls these. */
 EXPORT("cd_net_open") void cd_net_open(uint32_t id) { cd_on_ws_open(id); cd_flush(); }
 EXPORT("cd_net_msg") void cd_net_msg(uint32_t id, const uint8_t *p, uint32_t len) { cd_on_ws_msg(id, p, len); cd_flush(); }
 EXPORT("cd_net_close") void cd_net_close(uint32_t id, uint32_t code) { cd_on_ws_close(id, code); cd_flush(); }

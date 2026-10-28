@@ -17,11 +17,10 @@ typedef uint32_t cd_str; /* interned string id */
 #define CD_MOUNT 0u
 #define CD_DETACHED 0xffffffffu
 
-/* CD_EV_RESIZE and CD_EV_VISIBILITY are window events (cd_listen_window); CD_EV_LOAD says a
- * cd_set_image landed. */
+/* CD_EV_RESIZE and CD_EV_VISIBILITY are window events (cd_listen_window). */
 enum { CD_EV_CLICK, CD_EV_DBLCLICK, CD_EV_INPUT, CD_EV_CHANGE, CD_EV_KEYDOWN, CD_EV_KEYUP,
        CD_EV_FOCUSIN, CD_EV_FOCUSOUT, CD_EV_SUBMIT, CD_EV_POINTERDOWN, CD_EV_POINTERUP,
-       CD_EV_POINTERMOVE, CD_EV_RESIZE, CD_EV_VISIBILITY, CD_EV_LOAD };
+       CD_EV_POINTERMOVE, CD_EV_RESIZE, CD_EV_VISIBILITY };
 
 /* ---- memory ----
  * cd_alloc and friends go through malloc, realloc and free. cdom defines those (and calloc)
@@ -110,11 +109,14 @@ void cd_set_class(cd_id id, cd_str value);
 /* One style property: element.style.setProperty(prop, value). value may be a cd_tmp; "" removes it. */
 void cd_set_style(cd_id id, cd_str prop, cd_str value);
 void cd_set_style_num(cd_id id, cd_str prop, double v, uint32_t unit);
-/* Pixels as a CSS image: rgba is w * h * 4 bytes in C memory, read during the call (free it after).
- * The shim encodes them as mime ("image/png", or "image/jpeg" at quality 0.92) off the call and
- * sets style property prop of node id to url(blob:...), a custom property such as "--tex" works;
- * then cd_on_event gets CD_EV_LOAD with that id and key = token. */
-void cd_set_image(cd_id id, cd_str prop, const uint8_t *rgba, uint32_t w, uint32_t h, cd_str mime, uint32_t token);
+/* Pixels to an image file: rgba is w * h * 4 bytes in C memory, read during the call (reuse it
+ * after). The shim encodes them as mime ("image/png", or "image/jpeg" at quality 0.92) off the
+ * call; the file's bytes arrive in cd_on_encoded(token, p, len), valid until it returns. */
+void cd_encode_image(const uint8_t *rgba, uint32_t w, uint32_t h, cd_str mime, uint32_t token);
+void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len); /* the app's hook (empty weak default) */
+/* An image file's bytes (len of them at p, read during the call) as a CSS image: style property
+ * prop of node id becomes url(blob:...) now; a custom property such as "--tex" works. */
+void cd_set_image_bytes(cd_id id, cd_str prop, const uint8_t *p, uint32_t len, cd_str mime);
 void cd_remove(cd_id id);            /* detach and free the id */
 void cd_move(cd_id id, cd_id before);
 void cd_clear(cd_id id);             /* drop all children; caller frees their ids (a cd_region does it for you) */

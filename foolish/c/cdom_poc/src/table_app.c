@@ -23,6 +23,7 @@
 #include "strategy.h"
 #include "../cardtext/card_text.h"
 #include "textures.h"
+#include "cdom_store.h"
 #include <math.h>
 
 
@@ -938,13 +939,6 @@ static void new_game(void) {
 
 void cd_on_event(const cd_event_rec *e) {
   if (e->type == CD_EV_RESIZE) { render(); return; } /* the hand is laid out for the new width */
-  if (e->type == CD_EV_LOAD) { /* a texture landed; with the fern, the backs turn black under it, as CardBack's do */
-    if (e->key == TEX_FERN) cd_set_style(CD_MOUNT, ZS("--tex-fern-bg"), ZS("#000000"));
-    /* The wool is the middle half of the app's 3840 x 2160 weave, all that its scale(2) ever shows:
-     * the same picture at the same place once the layer is not doubled (README, Textures). */
-    if (e->key == TEX_WOOL) cd_set_style(bg_wool, ZS("transform"), ZS("none"));
-    return;
-  }
   if (e->type != CD_EV_CLICK) return;
   uint32_t tag = cd_tag((cd_id)e->id);
   if (tag & TAG_AGAIN) { new_game(); return; }
@@ -997,11 +991,14 @@ static struct {
   uint8_t *block;
   float *col;
   Fern fern; Wood wood; Wool wool;
-  int32_t fern_w, fern_h;
+  int32_t fern_w, fern_h, landed, from_store[3];
   TexRect rect[WOOD_MAX_WIN];
-  double ms[3];
+  double ms[3], at[3];
+  uint32_t seed[3];
+  char key[3][48];
+  uint32_t klen[3];
 } tex;
-static uint32_t tex_rng, tex_seed;
+static uint32_t tex_seed;
 
 /* The tile rectangles a surface with this seed and span shows, split where one runs over the
  * tile's edge; added to out[*n]. */
@@ -1032,21 +1029,110 @@ static int wood_rects(TexRect *out) {
   return n;
 }
 
+/* Texture stage begins from tex_seed: the fern's mulberry32 state is the seed; the wood's offsets
+ * are the seed's first two draws and the wool's its third and fourth, whichever were made here. */
 static void tex_start(int stage) {
   tex.stage = stage;
   uint8_t *b = tex.block;
+  uint32_t rng = tex_seed;
   if (stage == TEX_FERN) {
     int32_t points = (int32_t)((double)FERN_APP_POINTS * tex.fern_w * tex.fern_h / (FERN_APP_W * FERN_APP_H));
-    fern_begin(&tex.fern, b, b + tex.fern_w * tex.fern_h * 4, tex.fern_w, tex.fern_h, points, tex_rng);
+    fern_begin(&tex.fern, b, b + tex.fern_w * tex.fern_h * 4, tex.fern_w, tex.fern_h, points, rng);
   }
   if (stage == TEX_WOOD) {
-    double ox = tex_random(&tex_rng) * 1000 - 500, oy = tex_random(&tex_rng) * 1000 - 500;
+    double ox = tex_random(&rng) * 1000 - 500, oy = tex_random(&rng) * 1000 - 500;
     wood_begin(&tex.wood, tex.col, b, WOOD_W, WOOD_H, ox, oy, tex.rect, tex.nrect);
   }
   if (stage == TEX_WOOL) {
-    double ox = tex_random(&tex_rng) * 1000 - 500, oy = tex_random(&tex_rng) * 1000 - 500;
+    tex_random(&rng); tex_random(&rng);
+    double ox = tex_random(&rng) * 1000 - 500, oy = tex_random(&rng) * 1000 - 500;
     wool_begin(&tex.wool, b, TEX_W, TEX_H, (TEX_W - WOOL_W) / 2, (TEX_H - WOOL_H) / 2, WOOL_W, WOOL_H, ox, oy);
   }
+}
+
+/* ---- the textures across loads: the encoded image is kept in cdom's store (IndexedDB) under a
+ * key that names the generator's version and everything the picture depends on (the fern's size,
+ * the wood's rectangles), as the app keeps its own in TextureCacheDB; a later load sets the
+ * stored bytes and generates nothing. The stored value is the seed (4 bytes, little-endian),
+ * then the image file. */
+static const char *const TEX_PROP[3] = {"--tex-fern", "--tex-wood", "--tex-wool"};
+static const char *const TEX_MIME[3] = {"image/png", "image/png", "image/jpeg"};
+
+static void key_add(char *k, uint32_t *n, const char *s) { while (*s && *n < 47) k[(*n)++] = *s++; }
+static void key_num(char *k, uint32_t *n, uint32_t v) {
+  char d[10]; int m = 0;
+  do d[m++] = (char)('0' + v % 10); while (v /= 10);
+  while (m && *n < 47) k[(*n)++] = d[--m];
+}
+static void tex_keys(void) {
+  static const char *const NAME[3] = {"foolish-tex-fern-v1-", "foolish-tex-wood-v1-", "foolish-tex-wool-v1-"};
+  for (int k = 0; k < 3; k++) { tex.klen[k] = 0; key_add(tex.key[k], &tex.klen[k], NAME[k]); }
+  key_num(tex.key[0], &tex.klen[0], (uint32_t)tex.fern_w); key_add(tex.key[0], &tex.klen[0], "x");
+  key_num(tex.key[0], &tex.klen[0], (uint32_t)tex.fern_h);
+  uint32_t h = 2166136261u; /* FNV-1a over the rectangles */
+  for (int k = 0; k < tex.nrect; k++) {
+    const int32_t v[4] = {tex.rect[k].x, tex.rect[k].y, tex.rect[k].w, tex.rect[k].h};
+    for (int f = 0; f < 4; f++) for (int byte = 0; byte < 4; byte++) h = (h ^ ((uint32_t)v[f] >> (8 * byte) & 0xff)) * 16777619u;
+  }
+  key_num(tex.key[1], &tex.klen[1], h);
+  key_num(tex.key[2], &tex.klen[2], WOOL_W); key_add(tex.key[2], &tex.klen[2], "x"); key_num(tex.key[2], &tex.klen[2], WOOL_H);
+}
+
+/* A texture's image file lands: its url on the mount; with the fern, the backs turn black under it,
+ * as CardBack's do; with the wool, the layer stops doubling: the wool is the middle half of the
+ * app's 3840 x 2160 weave, all its scale(2) ever shows, so the same picture lands at the same
+ * place (README, Textures). */
+static void tex_land(int k, const uint8_t *p, uint32_t len) {
+  cd_set_image_bytes(CD_MOUNT, cd_internz(TEX_PROP[k]), p, len, cd_internz(TEX_MIME[k]));
+  if (k == TEX_FERN) cd_set_style(CD_MOUNT, ZS("--tex-fern-bg"), ZS("#000000"));
+  if (k == TEX_WOOL) cd_set_style(bg_wool, ZS("transform"), ZS("none"));
+  tex.at[k] = cd_now();
+  tex.landed++;
+}
+
+/* The next texture: asked of the store first. */
+static void tex_next(int stage) {
+  tex.stage = stage;
+  if (stage == TEX_DONE) {
+    cd_free(tex.block); cd_free(tex.col); /* back to cdom's free lists (wasm memory does not shrink) */
+    tex.block = 0; tex.col = 0;
+    return;
+  }
+  cd_store_get((uint32_t)stage, tex.key[stage], tex.klen[stage], CD_STORE_DEADLINE_MS);
+}
+
+void cd_on_store(uint32_t token, const uint8_t *p, int32_t len) {
+  int k = (int)token;
+  if (k != tex.stage) return;
+  if (len > 4) { /* kept from an earlier load */
+    tex.seed[k] = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+    tex.from_store[k] = 1;
+    tex_land(k, p + 4, (uint32_t)len - 4);
+    tex_next(k + 1);
+    return;
+  }
+  if (!tex.block) { /* the first texture to make: the room for all of them */
+    int32_t most = 0;
+    for (int r = 0; r < tex.nrect; r++) if (tex.rect[r].w * tex.rect[r].h > most) most = tex.rect[r].w * tex.rect[r].h;
+    uint32_t fern = (uint32_t)(tex.fern_w * tex.fern_h * 8), wool = WOOL_W * WOOL_H * 4, wood = WOOD_W * WOOD_H * 4;
+    uint32_t big = wool > wood ? wool : wood;
+    tex.block = cd_alloc(big > fern ? big : fern); /* 8,294,400 bytes: one 8 MiB size class */
+    tex.col = cd_alloc((uint32_t)most * 12);       /* the wood's float colours, one rectangle at a time */
+  }
+  tex.seed[k] = tex_seed;
+  tex_start(k);
+  cd_raf_request(RAF_SLICE);
+}
+
+/* A texture made here, encoded: it lands, and is kept for the next load. */
+void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len) {
+  int k = (int)token;
+  tex_land(k, p, len);
+  uint8_t *v = cd_alloc(len + 4);
+  v[0] = (uint8_t)tex.seed[k]; v[1] = (uint8_t)(tex.seed[k] >> 8); v[2] = (uint8_t)(tex.seed[k] >> 16); v[3] = (uint8_t)(tex.seed[k] >> 24);
+  __builtin_memcpy(v + 4, p, len);
+  cd_store_put(tex.key[k], tex.klen[k], v, len + 4);
+  cd_free(v);
 }
 
 void cd_on_raf(uint32_t token, double t) {
@@ -1062,22 +1148,16 @@ void cd_on_raf(uint32_t token, double t) {
     now = cd_now();
   }
   tex.ms[tex.stage] += now - t0;
-  if (done) {
-    if (tex.stage == TEX_FERN) cd_set_image(CD_MOUNT, ZS("--tex-fern"), tex.fern.px, tex.fern_w, tex.fern_h, ZS("image/png"), TEX_FERN);
-    if (tex.stage == TEX_WOOD) cd_set_image(CD_MOUNT, ZS("--tex-wood"), tex.wood.px, WOOD_W, WOOD_H, ZS("image/png"), TEX_WOOD);
-    if (tex.stage == TEX_WOOL) cd_set_image(CD_MOUNT, ZS("--tex-wool"), tex.wool.px, WOOL_W, WOOL_H, ZS("image/jpeg"), TEX_WOOL);
-    if (tex.stage + 1 == TEX_DONE) {
-      cd_free(tex.block); cd_free(tex.col);
-      tex.block = 0; tex.col = 0; tex.stage = TEX_DONE;
-      return;
-    }
-    tex_start(tex.stage + 1);
-  }
-  cd_raf_request(RAF_SLICE);
+  if (!done) { cd_raf_request(RAF_SLICE); return; }
+  /* the pixels are copied during the call, so the block is free for the next texture at once */
+  if (tex.stage == TEX_FERN) cd_encode_image(tex.fern.px, (uint32_t)tex.fern_w, (uint32_t)tex.fern_h, ZS("image/png"), TEX_FERN);
+  if (tex.stage == TEX_WOOD) cd_encode_image(tex.wood.px, WOOD_W, WOOD_H, ZS("image/png"), TEX_WOOD);
+  if (tex.stage == TEX_WOOL) cd_encode_image(tex.wool.px, WOOL_W, WOOL_H, ZS("image/jpeg"), TEX_WOOL);
+  tex_next(tex.stage + 1);
 }
 
 static void textures_begin(void) {
-  tex_rng = tex_seed = cd_seed ^ 0x9e3779b9u;
+  tex_seed = cd_seed ^ 0x9e3779b9u;
   cd_viewport_rec vp;
   cd_viewport(&vp);
   double dpr = vp.dpr100 > 0 ? vp.dpr100 / 100.0 : 1;
@@ -1085,21 +1165,26 @@ static void textures_begin(void) {
   tex.fern_h = (int32_t)(BACK_H * FERN_SCALE * dpr);
   if (tex.fern_w > FERN_APP_W) { tex.fern_w = FERN_APP_W; tex.fern_h = FERN_APP_H; }
   tex.nrect = wood_rects(tex.rect);
-  int32_t most = 0;
-  for (int k = 0; k < tex.nrect; k++) if (tex.rect[k].w * tex.rect[k].h > most) most = tex.rect[k].w * tex.rect[k].h;
-  uint32_t fern = (uint32_t)(tex.fern_w * tex.fern_h * 8), wool = WOOL_W * WOOL_H * 4, wood = WOOD_W * WOOD_H * 4;
-  uint32_t big = wool > wood ? wool : wood;
-  tex.block = cd_alloc(big > fern ? big : fern); /* 8,294,400 bytes: one 8 MiB size class */
-  tex.col = cd_alloc((uint32_t)most * 12);       /* the wood's float colours, one rectangle at a time */
-  tex_start(TEX_FERN);
-  cd_raf_request(RAF_SLICE);
+  tex_keys();
+  tex_next(TEX_FERN);
 }
 
-/* For the tests and the README: how long each texture took on the page's thread, in ms. */
-EXPORT("app_tex_ms") double app_tex_ms(int32_t k) { return k < 3 ? tex.ms[k] : tex.stage; }
-/* The seed the textures were made from: the fern's mulberry32 state, the wood's offsets its first
- * two draws, the wool's the next two (tools/shots.mjs makes the TS textures from it). */
-EXPORT("app_tex_seed") uint32_t app_tex_seed(void) { return tex_seed; }
+/* For the tests and the README, by texture k (fern, wood, wool): how long making it took on the
+ * page's thread (0 when it came from the store), when it landed (cd_now: ms since navigation), and
+ * whether it came from the store; k = 3: how many have landed. */
+EXPORT("app_tex_ms") double app_tex_ms(int32_t k) { return k < 3 ? tex.ms[k] : tex.landed; }
+EXPORT("app_tex_at") double app_tex_at(int32_t k) { return tex.at[k]; }
+EXPORT("app_tex_stored") int32_t app_tex_stored(int32_t k) { return tex.from_store[k]; }
+/* The seed texture k was made from (on this load or the one that stored it): the fern's mulberry32
+ * state; the wood's offsets are its first two draws, the wool's the next two (tools/shots.mjs
+ * makes the TS textures from them). */
+EXPORT("app_tex_seed") uint32_t app_tex_seed(int32_t k) { return tex.seed[k]; }
+/* The wood's tile rectangles (x, y, w, h by field 0-3), for the test that every surface lies in one. */
+EXPORT("app_wood_rects") int32_t app_wood_rects(void) { return tex.nrect; }
+EXPORT("app_wood_rect") int32_t app_wood_rect(int32_t k, int32_t f) {
+  const TexRect *r = &tex.rect[k];
+  return f == 0 ? r->x : f == 1 ? r->y : f == 2 ? r->w : r->h;
+}
 
 /* ---- the page -------------------------------------------------------------- */
 

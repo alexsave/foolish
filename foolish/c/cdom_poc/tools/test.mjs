@@ -112,6 +112,8 @@ try {
   });
 
   await check('the textures land after the first paint, through the var()s, and the backs turn black under the fern', async () => {
+    // Cold: the store emptied first (the delete waits for this page's connection to close).
+    await b.evaluate(`indexedDB.deleteDatabase('cdom'), 1`);
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
     await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
     const vars = () => b.evaluate(`['--tex-fern', '--tex-wood', '--tex-wool', '--tex-fern-bg'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(0, 9))`);
@@ -124,10 +126,47 @@ try {
         cs(document.querySelector('[data-location="deck"] > div > div')).backgroundColor,
         cs(document.querySelector('.btn-icon')).backgroundImage.slice(0, 9), cs(document.querySelector('.bg-wool')).backgroundImage.slice(0, 9)]; })()`);
     assert.deepEqual(look, ['url("blob', 'rgb(0, 0, 0)', 'url("blob', 'url("blob']);
+    assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => [x.app_tex_stored(k), x.app_tex_ms(k) > 0]))`),
+      [[0, true], [0, true], [0, true]], 'made here, on a cold load');
+    const seeds = await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => x.app_tex_seed(k)))`);
+    // Warm: the next load sets all three from the store, makes none, and keeps the seeds they were made from.
+    await new Promise((r) => setTimeout(r, 300)); // the puts are fire-and-forget
+    await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
+    await b.until(`window.app.then((x) => x.app_tex_ms(3) === 3)`, 10000);
+    assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => [x.app_tex_stored(k), x.app_tex_ms(k)]))`),
+      [[1, 0], [1, 0], [1, 0]], 'every texture from the store, no generator run');
+    assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => x.app_tex_seed(k)))`), seeds, 'the seeds kept');
+    assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
+    assert.equal(await b.evaluate(`getComputedStyle(document.querySelector('.bg-wool')).transform`), 'none', 'the wool layer not doubled');
   });
 
+  // Every surface the wood is laid on (the back button, each pill as it comes, the end screen) shows
+  // only tile pixels inside a rectangle the C worked the wood out in; elsewhere the tile is the
+  // base colour. Checked after every click of a game played out, games played until every pill showed.
+  const pillsSeen = new Set();
+  const woodCovered = async () => {
+    const bad = await b.evaluate(`window.app.then((x) => {
+      const R = []; for (let k = 0; k < x.app_wood_rects(); k++) R.push([0, 1, 2, 3].map((f) => x.app_wood_rect(k, f)));
+      const inR = (tx, ty) => R.some(([rx, ry, rw, rh]) => tx >= rx && tx < rx + rw && ty >= ry && ty < ry + rh);
+      const out = [], seen = [];
+      for (const e of document.querySelectorAll('[style]')) { const cs = getComputedStyle(e);
+        if (cs.backgroundSize !== '1920px 1080px' || e.getClientRects().length === 0) continue;
+        if (e.dataset.pill) seen.push(e.dataset.pill);
+        const [px, py] = cs.backgroundPosition.split(' ').map(parseFloat), r = e.getBoundingClientRect();
+        const bl = parseFloat(cs.borderLeftWidth), bt = parseFloat(cs.borderTopWidth);
+        const x0 = Math.floor(-bl - px), y0 = Math.floor(-bt - py), x1 = Math.ceil(-bl - px + r.width), y1 = Math.ceil(-bt - py + r.height);
+        let miss = 0;
+        for (let y = y0; y < y1; y++) for (let xx = x0; xx < x1; xx++) if (!inR(((xx % 1920) + 1920) % 1920, ((y % 1080) + 1080) % 1080)) miss++;
+        if (miss) out.push((e.dataset.pill || e.className) + ' ' + miss + ' pixels outside');
+      }
+      return [out, seen]; })`);
+    for (const p of bad[1]) pillsSeen.add(p);
+    assert.deepEqual(bad[0], [], 'every wood surface inside the rectangles');
+  };
+
   await check('a game played out by clicks reaches the end screen, and Play again deals a new one', async () => {
-    const moves = await playToEnd(b);
+    const moves = await playToEnd(b, 400, woodCovered);
+    await woodCovered();
     console.log(`     (${moves} moves of mine to the end)`);
     assert.equal(await turn(), 'over');
     assert.match(await b.evaluate(`document.querySelector('[data-end] h1').textContent`), /^(You won|You are the fool|A draw)$/);
@@ -135,6 +174,17 @@ try {
     await settle();
     assert.equal(await b.evaluate(`document.querySelector('[data-end]')`), null);
     assert.equal(await all('[data-hand-plane] [data-card]', '1').then((x) => x.length), 6, 'a fresh hand of six');
+  });
+
+  await check('every wood surface lies inside a rectangle the C made the wood in, at every step, until every pill has shown', async () => {
+    for (let games = 0; pillsSeen.size < 5 && games < 8; games++) {
+      await playToEnd(b, 400, woodCovered);
+      await woodCovered();
+      await b.click('[data-end] button');
+      await settle();
+    }
+    console.log(`     (pills seen: ${[...pillsSeen].sort().join(' ')})`);
+    assert.equal(pillsSeen.size, 5, 'every pill showed');
   });
 } finally {
   await b.close();

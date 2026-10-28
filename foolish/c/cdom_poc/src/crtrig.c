@@ -1,4 +1,4 @@
-/* crtrig.c - sin and cos rounded correctly, as Chrome's Math.sin and Math.cos are (V8 takes them
+/* crtrig.c - cos rounded correctly, as Chrome's Math.cos is (V8 takes them
  * from LLVM's libc). The wood texture iterates b = cos(...) * b - 2.8 twenty-five times per pixel
  * row, so a last-bit difference in cos grows into a different picture; this makes the C cos the
  * engine's, bit for bit, wherever the parity test looked.
@@ -10,7 +10,7 @@
  * double-double instead. No FMA: products are split (Dekker), as wasm has no fused multiply-add. */
 #include <stdint.h>
 
-double tex_sin(double), tex_cos(double);
+double tex_cos(double);
 
 typedef struct { double hi, lo; } dd;
 
@@ -121,14 +121,13 @@ static double nearest(dd v, double err) {
   return (d < 0 ? -d : d) > err ? y : __builtin_nan("");
 }
 
-static double eval(double x, int want_sin) {
-  if (!(__builtin_fabs(x) < 0x1p19)) return want_sin ? tex_sin(x) : tex_cos(x); /* trig.c; the wood never gets here */
+double cr_cos(double x) {
+  if (!(__builtin_fabs(x) < 0x1p19)) return tex_cos(x); /* trig.c's; the wood never gets here */
   if (!facts_made) make_facts();
-  if (__builtin_fabs(x) < 0x1p-27) return want_sin ? x : 1.0; /* sin x = x, cos x = 1, once rounded */
+  if (__builtin_fabs(x) < 0x1p-27) return 1.0; /* cos x = 1, once rounded */
   int q;
   dd r = reduce(x, &q);
-  int odd = want_sin ? !(q & 1) : (q & 1);   /* sin: q 0 sin, 1 cos, 2 -sin, 3 -cos; cos: q 0 cos, 1 -sin, 2 -cos, 3 sin */
-  int neg = want_sin ? (q >= 2) : (q == 1 || q == 2);
+  int odd = q & 1, neg = q == 1 || q == 2; /* q 0 cos, 1 -sin, 2 -cos, 3 sin */
   double err;
   dd v = series_fast(r, odd, &err);
   double y = nearest(v, err);
@@ -138,6 +137,3 @@ static double eval(double x, int want_sin) {
   }
   return neg ? -y : y;
 }
-
-double cr_sin(double x) { return eval(x, 1); }
-double cr_cos(double x) { return eval(x, 0); }
