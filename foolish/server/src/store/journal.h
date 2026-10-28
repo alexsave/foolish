@@ -25,7 +25,8 @@
 // reads see them, and the flush writes the row, its session-log changes, the seats and a rated
 // end's rating rows. A rated end makes its game due at once (the leaderboard and the profiles
 // read the tables), and its changes are THE RATINGS' ONE OWNER's (cb_journal_seat_ratings) from
-// its commit on. A game's delete is written at once, around the journal, with that game's
+// its commit on; a read of the ratings table writes every waiting rated end first (journal.c THE
+// RATINGS READ RULE), so it never answers older ratings than an end a client was told. A game's delete is written at once, around the journal, with that game's
 // waiting commits first in the same transaction.
 //
 // At start the tables are read and the journal's segments replayed through the kernel
@@ -161,6 +162,7 @@ int cb_journal_flush_due(cb_store *s);
 typedef struct {
     long batches, writes, records, bytes;   // bytes: every byte written to segments
     long flushes, flushed_games, flushed_moves;
+    long flush_failures;                    // flush transactions that failed (their moves stay, and the next flush retries)
     long recovered;                         // records replayed at the last open
     long waiting, waiting_bytes;            // moves not in the tables yet, and their bytes
     long segments;                          // segment files on disk

@@ -954,6 +954,84 @@ static void a_rated_end_is_a_journal_record(void) {
     memset(&g_jo, 0, sizeof g_jo);
 }
 
+// THE RATINGS READ RULE (journal.c ratings_settle): a read of the ratings table answers every
+// acknowledged rated end, though no flush has written it. Here the tables are write-locked by
+// another connection from the deal on, so the end is acknowledged with nothing of it in SQLite,
+// and the flush it kicked fails (the store's busy wait runs out) and leaves it waiting, with no
+// other flush due. The lock goes and the store's rating reads come: they must answer the end's
+// ratings, the ones the journal's owner holds (a client told the end that then reads the
+// leaderboard or its history sees the end's ratings, not the old ones; before the rule it saw
+// whatever the flush had reached).
+static bool see_top(const cb_rating_row *r, void *ud) {
+    int32_t *a = ud;
+    if (strcmp(r->user_id, UID_A) == 0) *a = r->elo_rating;
+    return true;
+}
+
+static void a_ratings_read_answers_every_acknowledged_rated_end(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/rated_read%d.sqlite", g_dir, g_bots);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    two_humans_dealt(gid);
+    cb_game_row row = stored(s, gid);
+    Roster ro;
+    T_EQ_INT(roster_decode(&ro, row.roster, (int)row.roster_len), ROSTER_OK);
+    cb_game_row_free(&row);
+    cb_uuid ids[CB_MAX_SEATS];
+    const char *p[CB_MAX_SEATS];
+    for (int i = 0; i < ro.n; i++) {
+        snprintf(ids[i], sizeof ids[i], "%.*s", (int)ro.seats[i].id_len, (const char *)ro.seats[i].id);
+        p[i] = ids[i];
+    }
+    T_EQ_INT(ro.n, 2);
+    int32_t before[CB_MAX_SEATS];
+    T_EQ_INT(cb_rows_sql.ratings_for(s, p, ro.n, before), CB_OK);
+    sqlite3 *db = NULL;
+    T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
+    T_EQ_INT(sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL), SQLITE_OK);
+    move_t m;
+    int steps = 0;
+    while (steps < 3000 && version_of(s, gid) > 0) { (void)step(s, gid, &m); steps++; }
+    T_CHECK(version_of(s, gid) < 0);   // over, acknowledged
+    // The end's ratings, as the journal's owner holds them, and the tables' still the old ones.
+    int32_t owner[CB_MAX_SEATS], tables[CB_MAX_SEATS];
+    bool old = false;
+    T_EQ_INT(cb_journal_seat_ratings(s, p, ro.n, g_now, 0, owner, &old), CB_OK);
+    T_EQ_INT(cb_rows_sql.ratings_for(s, p, ro.n, tables), CB_OK);
+    bool moved = false;
+    for (int i = 0; i < ro.n; i++) {
+        T_EQ_INT(tables[i], before[i]);
+        moved |= owner[i] != before[i];
+    }
+    T_CHECK(moved);   // the end rated
+    // The kicked flush ran into the lock and failed (bounded: the busy wait is 5 s).
+    cb_journal_stats js;
+    for (int t = 0; t < 400; t++) {
+        cb_journal_stats_get(s, &js);
+        if (js.flush_failures > 0) break;
+        struct timespec ts = { 0, 50 * 1000000 };
+        nanosleep(&ts, NULL);
+    }
+    T_CHECK(js.flush_failures > 0);
+    T_CHECK(js.waiting > 0);
+    T_EQ_INT(sqlite3_exec(db, "COMMIT", NULL, NULL, NULL), SQLITE_OK);
+    T_EQ_INT(cb_rows_sql.ratings_for(s, p, ro.n, tables), CB_OK);
+    for (int i = 0; i < ro.n; i++) T_EQ_INT(tables[i], before[i]);   // still not in the tables
+    // The leaderboard's read first (the one the smoke's rematch raced), then a player's own.
+    int32_t top_a = -1;
+    T_CHECK(CB_ROWS_CALL(s, ratings_top, 100, see_top, &top_a) >= 0);
+    T_EQ_INT(top_a, owner[strcmp(ids[0], UID_A) == 0 ? 0 : 1]);
+    int32_t got[CB_MAX_SEATS];
+    T_EQ_INT(CB_ROWS_CALL(s, ratings_for, p, ro.n, got), CB_OK);
+    for (int i = 0; i < ro.n; i++) T_EQ_INT(got[i], owner[i]);
+    sqlite3_close(db);
+    close_world(s);
+}
+
 // ---- a bot cycle on a legacy-deck board, and a cycle the drive would not repeat --------------
 
 // The crash's files as they are now (the database copied, every segment beside the copy).
@@ -3154,6 +3232,7 @@ int main(void) {
         T_RUN(a_held_game_stays_and_a_gone_one_waits_for_its_release);
     }
     g_bots = false;   // humans only: a bot drive commits once per cycle, some cycles to a step
+    T_RUN(a_ratings_read_answers_every_acknowledged_rated_end);   // once: it waits out a busy timeout
     T_RUN(the_resident_is_handed_over_not_copied);
     T_RUN(the_conversion_knows_every_game_id_column);
     T_RUN(the_conversion_draws_again_and_is_all_or_nothing);
