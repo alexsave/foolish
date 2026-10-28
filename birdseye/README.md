@@ -24,7 +24,7 @@ The sim's size is `BE_PLAYERS` (fake humans, default 60), `BE_TABLES` (tables ke
 
 ### The league, the tournament
 
-- The league (the default, `BE_MODE=league`): `BE_LEAGUE_TABLES` tables (40) of bots alone, made by the game server's dev-only `POST /dev/bot_table` (foolish/server/src/app/dev_bot_table.h), each bot at up to `BE_LEAGUE_PER_BOT` (4) at once, sizes 2 to 8, 30% podkidnoy, played at a human's pace by the server's dev-only `CBASE_BOT_THINK_MS=1500-5000`.
+- The league (the default, `BE_MODE=league`): `BE_LEAGUE_TABLES` tables (80) of bots alone, made by the game server's dev-only `POST /dev/bot_table` (foolish/server/src/app/dev_bot_table.h), each bot at up to `BE_LEAGUE_PER_BOT` (6) at once, sizes 2 to 8, 30% podkidnoy, played at a human's pace by the server's dev-only `CBASE_BOT_THINK_MS=1500-5000`.
   Every finished game's rating stamp is a result in `data/league.bin`; the site's League view draws every bot's rating after every game.
 - A tournament: `BE_MODE=tournament birdseye/tools/run.sh` goes on with the stored tournament, or draws a new one when the last one is finished (or none exists): 48 of the 49 bots (the lowest-rated random one sits out), seeded by the server's ratings, single elimination, two-player best of five, the 16 top seeds straight into the round of 32.
   It plays at the kernel's own bots-only pace (300 ms a move) on 16 tables and takes about a quarter of an hour; the bracket is kept in `data/tournament.bin` and every mode's site shows it under Tournament.

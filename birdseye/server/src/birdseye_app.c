@@ -169,7 +169,7 @@ static int be_serve_open(cb_ctx *ctx, char *err, size_t cap) {
         snprintf(o.cup_file, sizeof o.cup_file, "%s", cf ? cf : "../data/botcup/botcup.bin");
         snprintf(o.cup_dir, sizeof o.cup_dir, "%s", cd ? cd : "../data/botcup");
         // The cup plays one match at a time, on one table.
-        o.tables = o.botcup ? 1 : (int)env_long("BE_LEAGUE_TABLES", o.tournament ? 16 : o.gauntlet ? 1 : 10, 1, 64);
+        o.tables = o.botcup ? 1 : (int)env_long("BE_LEAGUE_TABLES", o.tournament ? 16 : o.gauntlet ? 1 : 10, 1, 256);
         o.tables_per_bot = (int)env_long("BE_LEAGUE_PER_BOT", 1, 1, 8);
         o.podkidnoy = (int)env_long("BE_PODKIDNOY", 30, 0, 100);
         o.seed = (uint64_t)env_long("BE_SEED", 1, 0, INT32_MAX);

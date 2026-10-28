@@ -51,7 +51,7 @@ JWT_SECRET=${JWT_SECRET:-birdseye-local-dev-jwt-secret-0123456789abcdef}
 ADMIN_TOKEN=${ADMIN_TOKEN:-birdseye-local-dev-admin-token-0123456789abcdef}
 mkdir -p "$RUN_DIR" "$BE/data"
 # A tournament plays at the kernel's own bots-only pace (300 ms a move) on 16 tables; the league at a
-# human's pace (a dev-only think time of 1.5 to 5 s) on 40.
+# human's pace (a dev-only think time of 1.5 to 5 s) on 80.
 if [ "${BE_MODE:-league}" = tournament ]; then
     THINK_DEFAULT=""; TABLES_DEFAULT=16
 elif [ "${BE_MODE:-league}" = botcup ]; then
@@ -62,7 +62,8 @@ elif [ "${BE_MODE:-league}" = gauntlet ]; then
     THINK_DEFAULT=""; TABLES_DEFAULT=1
     [ "$BE_HUMAN" = 1 ] || { echo "BE_MODE=gauntlet needs BE_HUMAN=1"; exit 2; }
 else
-    THINK_DEFAULT="1500-5000"; TABLES_DEFAULT=40
+    # The league: 80 tables, a bot at up to 6 at once (78 rows x 6 seats keep 80 tables of 2 to 8 full).
+    THINK_DEFAULT="1500-5000"; TABLES_DEFAULT=80
 fi
 
 stop_one() {
@@ -151,7 +152,7 @@ wait_listening "$RUN_DIR/game.log" "the game server"
         CBASE_JWT_SECRET="$JWT_SECRET" CBASE_JWT_TTL=604800 CBASE_LIMIT_SIGNIN_IP=1000000 CBASE_LIMIT_SUB_USER=1000000 \
         BE_SERVER=127.0.0.1:$GAME_PORT BE_SERVER_PID=$(cat "$RUN_DIR/game.pid") \
         BE_HUMAN_NAME="$HUMAN_NAME" BE_HUMAN_PASSWORD="$HUMAN_PASSWORD" BE_HUMAN_SEED=${BE_HUMAN_SEED:-24} \
-        BE_MODE=${BE_MODE:-league} BE_LEAGUE_TABLES=${BE_LEAGUE_TABLES:-$TABLES_DEFAULT} BE_LEAGUE_PER_BOT=${BE_LEAGUE_PER_BOT:-4} BE_ADMIN_TOKEN="$ADMIN_TOKEN" BE_LEAGUE_FILE="${BE_LEAGUE_FILE:-$BE/data/league.bin}" BE_TOURNAMENT_FILE="${BE_TOURNAMENT_FILE:-$BE/data/tournament.bin}" \
+        BE_MODE=${BE_MODE:-league} BE_LEAGUE_TABLES=${BE_LEAGUE_TABLES:-$TABLES_DEFAULT} BE_LEAGUE_PER_BOT=${BE_LEAGUE_PER_BOT:-6} BE_ADMIN_TOKEN="$ADMIN_TOKEN" BE_LEAGUE_FILE="${BE_LEAGUE_FILE:-$BE/data/league.bin}" BE_TOURNAMENT_FILE="${BE_TOURNAMENT_FILE:-$BE/data/tournament.bin}" \
         BE_GAUNTLET_FILE="${BE_GAUNTLET_FILE:-$BE/data/gauntlet.bin}" \
         BE_BOTCUP_FILE="${BE_BOTCUP_FILE:-$BE/data/botcup/botcup.bin}" BE_BOTCUP_DIR="${BE_BOTCUP_DIR:-$BE/data/botcup}" \
         exec build/birdseye serve
