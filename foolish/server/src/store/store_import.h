@@ -37,6 +37,10 @@ typedef struct {
 } cb_bot_seed;
 extern const cb_bot_seed CB_BOT_SEED[];
 extern const int CB_BOT_SEED_N;
+// The Bot Cup's contest bots: written beside the others (any that are missing, the rows already
+// there kept as they are) by cb_import_seed_bots when CBASE_DEV=1 and CBASE_DEV_BOTCUP=1. Dev only.
+extern const cb_bot_seed CB_BOT_SEED_BOTCUP[];
+extern const int CB_BOT_SEED_BOTCUP_N;
 
 // CB_BOT_SEED written into a store that has no bots yet (cb_store_app seed:
 // SQLite at open, a fresh DynamoDB table by a deploy's --seed-bots), at the

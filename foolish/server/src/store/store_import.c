@@ -559,6 +559,32 @@ int cb_import_seed_bots(cb_store *s) {
     } else if (rc >= 0) {
         rc = 0;
     }
+    // DEV ONLY: the Bot Cup's contest bots beside whatever is there (birdseye's botcup mode).
+    const char *dev = getenv("CBASE_DEV"), *cup = getenv("CBASE_DEV_BOTCUP");
+    if (rc >= 0 && dev && strcmp(dev, "1") == 0 && cup && strcmp(cup, "1") == 0) {
+        have.n = 0;
+        int lr = CB_ROWS_CALL(s, bots_list, add_bot, &have), added = 0;
+        for (int k = 0; lr >= 0 && k < CB_BOT_SEED_BOTCUP_N && have.n < 64; k++) {
+            bool there = false;
+            for (int i = 0; i < have.n; i++)
+                if (strcmp(have.rows[i].id, CB_BOT_SEED_BOTCUP[k].id) == 0) there = true;
+            if (there) continue;
+            cb_bot_row *b = &have.rows[have.n++];
+            memset(b, 0, sizeof *b);
+            cb_strlcpy(b->id, CB_BOT_SEED_BOTCUP[k].id, sizeof b->id);
+            cb_strlcpy(b->nickname, CB_BOT_SEED_BOTCUP[k].nickname, sizeof b->nickname);
+            cb_strlcpy(b->strategy_key, CB_BOT_SEED_BOTCUP[k].strategy_key, sizeof b->strategy_key);
+            b->elo_rating = TABLE_RATING_START;
+            b->previous_elo = -1;
+            added++;
+        }
+        if (lr < 0) rc = lr;
+        else if (added) {
+            cb_store_bots_sort(have.rows, have.n);
+            int wr = CB_ROWS_CALL(s, bots_replace, have.rows, have.n);
+            rc = wr == CB_OK ? rc + added : wr;
+        }
+    }
     free(have.rows);
     free(seed);
     return rc;

@@ -62,3 +62,13 @@ const cb_bot_seed CB_BOT_SEED[] = {
     { "0a00cbfc-0994-59d2-b49e-bccda6767766", "%Moscow 7", "octogen" },
 };
 const int CB_BOT_SEED_N = (int)(sizeof CB_BOT_SEED / sizeof CB_BOT_SEED[0]);
+
+// The Bot Cup's four contest bots (foolish/c/botcup), added only under CBASE_DEV=1 with
+// CBASE_DEV_BOTCUP=1 (birdseye's botcup and league runs): LOCAL ONLY, never in a deployed store.
+const cb_bot_seed CB_BOT_SEED_BOTCUP[] = {
+    { "b07c0b00-0000-4000-8000-000000000001", "kestrel (Fable)", "kestrel" },
+    { "b07c0b00-0000-4000-8000-000000000002", "sapper (Opus)", "sapper" },
+    { "b07c0b00-0000-4000-8000-000000000003", "sonnet (Sonnet)", "sonnet" },
+    { "b07c0b00-0000-4000-8000-000000000004", "haiku (Haiku)", "haiku" },
+};
+const int CB_BOT_SEED_BOTCUP_N = (int)(sizeof CB_BOT_SEED_BOTCUP / sizeof CB_BOT_SEED_BOTCUP[0]);
