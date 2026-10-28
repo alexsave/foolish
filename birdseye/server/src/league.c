@@ -8,7 +8,7 @@
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
-#include "botcup.h"
+#include "cup.h"
 #include "gauntlet.h"
 #include "tournament.h"
 #include "world.h"
@@ -395,7 +395,7 @@ static void rated(lg_table *t, int64_t now_ms) {
     for (int i = 0; i < nc; i++) publish(&be_world_g, BE_F_BOT, &copies[i], sizeof copies[i]);
 }
 
-// ---- the Bot Cup's game stories (botcup.h) ---------------------------------------------------------
+// ---- the Bot Cup's game stories (cup.h) ---------------------------------------------------------
 
 // A seat's name as the summary tells it: the league row's (the server's nickname, no "%").
 static void seat_name(const lg_table *t, int s, char *out, size_t cap) {
@@ -657,7 +657,7 @@ size_t be_tour_snapshot(void **out) {
     return sizeof *copy;
 }
 
-// ---- the Bot Cup (botcup.h) ----------------------------------------------------------------------
+// ---- the Bot Cup (cup.h) ----------------------------------------------------------------------
 
 // The cup changed: kept (the file) and shown (the stream). Under g_mu.
 static void cup_changed(void) {

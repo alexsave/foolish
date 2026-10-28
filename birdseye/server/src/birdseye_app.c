@@ -11,7 +11,7 @@
 //   BE_TOURNAMENT_FILE the tournament's file (default ../data/tournament.bin), shown in every mode
 //   BE_GAUNTLET_FILE the gauntlet's file (default ../data/gauntlet.bin)
 //                    "botcup": the four Bot Cup contest bots in a round robin of best-of-five
-//                    matches, one at a time, then a final (botcup.h; the game server needs
+//                    matches, one at a time, then a final (cup.h; the game server needs
 //                    CBASE_DEV_BOTCUP=1)
 //   BE_BOTCUP_FILE   the cup's file (default ../data/botcup/botcup.bin)
 //   BE_BOTCUP_DIR    each match's summary, <match id>.summary.txt (default ../data/botcup)

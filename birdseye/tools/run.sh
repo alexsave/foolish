@@ -14,7 +14,7 @@
 # "mixed" (fake humans and some bots), or "gauntlet" (with BE_HUMAN=1: the human against one bot
 # of each brain, weakest first, a best of five each; birdseye/server/src/gauntlet.h), or "botcup"
 # (the four Bot Cup contest bots, foolish/c/botcup: a round robin of best-of-five matches, one at a
-# time, then a final; each match's summary in birdseye/data/botcup/; birdseye/server/src/botcup.h).
+# time, then a final; each match's summary in birdseye/data/botcup/; birdseye/server/src/cup.h).
 # The game server runs with CBASE_DEV_BOTCUP=1 (GAME_BOTCUP=0 leaves it off), which adds the four
 # contest bots to its bot list, so every mode's league seats them too.
 # The other knobs are the BE_* variables birdseye/server/src/birdseye_app.c lists (BE_PLAYERS,

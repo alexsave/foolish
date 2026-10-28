@@ -1,4 +1,4 @@
-// botcup.h - THE BOT CUP: the four contest bots (foolish/c/botcup: kestrel, sapper, sonnet, haiku)
+// cup.h - THE BOT CUP: the four contest bots (foolish/c/botcup: kestrel, sapper, sonnet, haiku)
 // in a round robin of two-player best-of-five matches, one match at a time in a fixed order, then a
 // final between the top two (wire.h be_w_cup). Pure bookkeeping, as tournament.h is for the
 // bracket; the league engine (league.c, BE_MODE=botcup) plays every game as a real rated server
@@ -11,8 +11,8 @@
 // THE MATCH SUMMARIES. Each game's story (be_cup_story) is told from the push events the watcher
 // hears; a game's lines go to <dir>/<match id>.games, and when a match is decided they and the
 // score become <dir>/<match id>.summary.txt, which a person writes the match's script from.
-#ifndef BE_BOTCUP_H
-#define BE_BOTCUP_H
+#ifndef BE_CUP_H
+#define BE_CUP_H
 
 #include "wire.h"
 

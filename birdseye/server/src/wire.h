@@ -312,7 +312,7 @@ typedef struct {
     be_w_rung rungs[BE_GAUNT_RUNGS];
 } be_w_gauntlet;
 
-// ---- the Bot Cup (botcup.h) -------------------------------------------------------------------------
+// ---- the Bot Cup (cup.h) -------------------------------------------------------------------------
 //
 // The four contest bots (foolish/c/botcup): a round robin of two-player best-of-five matches, one at
 // a time in a fixed order, then a final between the top two of the standings. A match is the

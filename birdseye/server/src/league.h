@@ -36,7 +36,7 @@ typedef struct {
     char     tour_file[512];   // the tournament's file; "" keeps none
     bool     gauntlet;         // the human climbs the gauntlet (gauntlet.h) instead; needs human_name
     char     gaunt_file[512];  // the gauntlet's file; "" keeps none
-    bool     botcup;           // play the Bot Cup (botcup.h) instead: one match at a time
+    bool     botcup;           // play the Bot Cup (cup.h) instead: one match at a time
     char     cup_file[512];    // the cup's file; "" keeps none
     char     cup_dir[512];     // where each match's summary is written
     int      stall_ms;         // a game in play nobody moved at for this long is given up (not a human's)

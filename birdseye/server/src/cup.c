@@ -1,5 +1,5 @@
-// botcup.c - botcup.h.
-#include "botcup.h"
+// cup.c - cup.h.
+#include "cup.h"
 
 #include "tournament.h"
 
