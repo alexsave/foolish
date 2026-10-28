@@ -745,12 +745,18 @@ static bool cup_new(int64_t now_ms) {
     return true;
 }
 
-// At start: the stored cup goes on; a finished or missing one is drawn afresh (its old match files
-// removed). The four bots are the league rows with the contest bots' strategy keys.
+// At start: the stored cup is shown in every mode; in botcup mode a running one goes on and a
+// finished or missing one is drawn afresh (its old match files removed). The four bots are the
+// league rows with the contest bots' strategy keys.
 static void cup_open(int64_t now_wall) {
     memset(&g_cup, 0, sizeof g_cup);
+    g_cup.champion = BE_TOUR_NONE;
     bool have = g_o.cup_file[0] && be_cup_load(&g_cup, g_o.cup_file, g_ids, g_n_bots);
     for (int m = 0; m < BE_CUP_MATCHES; m++) g_cup.matches[m].live = 0;
+    if (!g_o.botcup) {
+        if (have) cup_changed();
+        return;
+    }
     if (have && g_cup.state == BE_TOUR_RUNNING) {
         CB_INFO("birdseye", "botcup: going on, %u games played", g_cup.games);
         cup_changed();
@@ -1439,6 +1445,7 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
     read_board(false);
     file_open();
     tour_open(cb_now_ms());
+    if (!g_o.botcup) cup_open(cb_now_ms());   // shown, never played
     if (g_o.botcup) {
         g_story = calloc((size_t)g_n_tables, sizeof *g_story);
         if (!g_story) {
