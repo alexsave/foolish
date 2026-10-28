@@ -92,9 +92,14 @@ static double fb_now_ms(void) {
 
 static inline bool fb_is_trump(const Game *g, Card c) { return c.suit == g->power_suit; }
 
-// How much a card is worth keeping: 0..8 for a non-trump, 10..18 for a trump.
+// How much a card is worth keeping: 0..8 for a non-trump, 10..18 for a trump
+// (36 cards); 0..12 and 14..26 with the 52-card deck. Was 36-card only: it
+// subtracted MIN_VALUE_SMALL, so at 6-8 players a 2..4 cost less than nothing
+// and a non-trump ace outranked the low trumps. The trump offset keeps every
+// trump above every non-trump at either deck size (10 at 36 cards, as before).
 static inline int fb_keep(const Game *g, Card c) {
-    return (c.value - MIN_VALUE_SMALL) + (fb_is_trump(g, c) ? 10 : 0);
+    const int min_v = min_value_for(g->num_players);
+    return (c.value - min_v) + (fb_is_trump(g, c) ? ACE_VALUE - min_v + 2 : 0);
 }
 
 static inline uint64_t fb_bit(Card c) { return 1ull << card_to_id(c); }
@@ -276,7 +281,8 @@ static bool fb_policy_lead(const Game *g, int s, LegalMove *m) {
     }
 
     int best_v = -1, best_score = -1000000;
-    for (int v = MIN_VALUE_SMALL; v <= ACE_VALUE; v++) {
+    // Was 36-card only (MIN_VALUE_SMALL): at 6-8 players it never led a 2..5.
+    for (int v = min_value_for(g->num_players); v <= ACE_VALUE; v++) {
         int nt = 0, tr = 0;
         for (int i = 0; i < p->hand_count; i++) {
             if (p->hand[i].value != v) continue;
@@ -331,11 +337,12 @@ static bool fb_policy_throw(const Game *g, int s, LegalMove *m) {
     Card pick[MAX_MOVE_CARDS];
     int n = 0;
     int max_v = deck_empty ? ACE_VALUE : FB_THROW_MAX_V;
-    for (int v = MIN_VALUE_SMALL; v <= max_v && n < cap && n < MAX_MOVE_CARDS; v++)
+    const int min_v = min_value_for(g->num_players);   // was MIN_VALUE_SMALL (36-card only) in both loops
+    for (int v = min_v; v <= max_v && n < cap && n < MAX_MOVE_CARDS; v++)
         for (int i = 0; i < nm && n < cap && n < MAX_MOVE_CARDS; i++)
             if (match[i].value == v && !fb_is_trump(g, match[i])) pick[n++] = match[i];
     if (deck_empty && FB_THROW_TRUMP_MAX > 0)
-        for (int v = MIN_VALUE_SMALL; v <= FB_THROW_TRUMP_MAX && n < cap && n < MAX_MOVE_CARDS; v++)
+        for (int v = min_v; v <= FB_THROW_TRUMP_MAX && n < cap && n < MAX_MOVE_CARDS; v++)
             for (int i = 0; i < nm && n < cap && n < MAX_MOVE_CARDS; i++)
                 if (match[i].value == v && fb_is_trump(g, match[i])) pick[n++] = match[i];
     if (n == 0) return true;   // only trumps match: keep them
@@ -684,7 +691,8 @@ static int fb_candidates(const Game *v, int me, LegalMove *cand) {
         int D = v->players[v->defender].hand_count;
         bool deck_empty = fb_deck_empty(v);
         for (int pass = 0; pass < 2; pass++) {
-            for (int val = MIN_VALUE_SMALL; val <= ACE_VALUE; val++) {
+            // Was 36-card only (MIN_VALUE_SMALL): no 2..5 lead candidates at 6-8 players.
+            for (int val = min_value_for(v->num_players); val <= ACE_VALUE; val++) {
                 Card nt[MAX_MOVE_CARDS], tr[MAX_MOVE_CARDS];
                 int nnt = 0, ntr = 0;
                 for (int i = 0; i < p->hand_count; i++) {
@@ -754,7 +762,8 @@ static int fb_candidates(const Game *v, int me, LegalMove *cand) {
         if (cap <= 0) return nc;
         Card nt[MAX_HAND_SIZE], tr[MAX_HAND_SIZE];
         int nnt = 0, ntr = 0;
-        for (int val = MIN_VALUE_SMALL; val <= ACE_VALUE; val++)
+        // Was 36-card only (MIN_VALUE_SMALL): no 2..5 throw-in candidates at 6-8 players.
+        for (int val = min_value_for(v->num_players); val <= ACE_VALUE; val++)
             for (int i = 0; i < p->hand_count; i++) {
                 if (p->hand[i].value != val || !card_has_value(tv, val)) continue;
                 if (fb_is_trump(v, p->hand[i])) tr[ntr++] = p->hand[i]; else nt[nnt++] = p->hand[i];
