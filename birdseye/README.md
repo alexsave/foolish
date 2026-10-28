@@ -44,6 +44,12 @@ The sim's size is `BE_PLAYERS` (fake humans, default 60), `BE_TABLES` (tables ke
   Eight seconds after each game ends birdseye has the game server delete the finished table (its dev-only `POST /dev/table_drop`, foolish/server/src/app/dev_bot_table.h: the row goes as when its last seat leaves, the replay stays, a game in play is refused), so your dashboard holds only your live lobby.
   The run is kept in `data/gauntlet.bin` (a fixed binary layout); a restart goes on with it and watches the game that was in play again.
   The site's Gauntlet view draws the ladder: each rung's opponent, rating, games and score, your current rung and a "play" link to its live lobby.
+- The Bot Cup: `BE_MODE=botcup birdseye/tools/run.sh`, then http://127.0.0.1:5811/?view=botcup.
+  The four contest bots of ~/Dev/botcup (kestrel by Fable, sapper by Opus, sonnet by Sonnet, haiku by Haiku), copied unchanged into foolish/c/botcup and run as kernel brains 24..27 through `botcup_adapter.c`, which gives each the referee's masked view of its seat and puts the game's random streams back after it (local to this branch: no wasm and no deployed store carries them).
+  The game server adds the four to its bot list under `CBASE_DEV_BOTCUP=1` (run.sh sets it in every mode, so the league seats them too, each at one table at a time).
+  A round robin of two-player best-of-five matches (the tournament's match rules), one at a time in a fixed order (kestrel v haiku, sapper v sonnet, kestrel v sonnet, sapper v haiku, sonnet v haiku, kestrel v sapper), then a final of the top two by match wins, game wins, game difference and head to head.
+  It plays at the kernel's bots-only pace; the cup is kept in `data/botcup/botcup.bin` (a finished one is drawn again at the next start), and each decided match's summary (every game's trump, leader, key moments, every move, the fool, the score) is written to `data/botcup/<match id>.summary.txt`.
+  The site's Bot Cup view shows the standings, every match game by game and the table in play.
 - Both routes the server needs are dev-only (refused or not routed without `CBASE_DEV=1`); the kernel is unchanged. `birdseye/tools/hotpath_proof.sh` shows the move and push path compiles to the same instructions as before them.
 
 By hand:
