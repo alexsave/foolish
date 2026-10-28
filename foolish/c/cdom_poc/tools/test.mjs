@@ -128,6 +128,10 @@ try {
     assert.deepEqual(look, ['url("blob', 'rgb(0, 0, 0)', 'url("blob', 'url("blob']);
     assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => [x.app_tex_stored(k), x.app_tex_ms(k) > 0]))`),
       [[0, true], [0, true], [0, true]], 'made here, on a cold load');
+    // The wool is woven only in its middle but laid out as the app's: a 3840 x 2160 image.
+    assert.deepEqual(await b.evaluate(`(async () => { const i = new Image();
+      i.src = document.getElementById('root').style.getPropertyValue('--tex-wool').slice(4, -1); await i.decode(); return [i.naturalWidth, i.naturalHeight]; })()`),
+      [3840, 2160], 'the wool image is the app\'s size');
     // Warm: the next load sets all three from the store and makes none.
     await new Promise((r) => setTimeout(r, 300)); // the puts are fire-and-forget
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');

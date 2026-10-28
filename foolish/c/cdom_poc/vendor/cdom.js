@@ -1,207 +1,497 @@
 "use strict";
 // cdom shim: C calls one of these functions per DOM operation, and the shim posts events back.
 // Fixed per app. Wasm passes i32, so ids and numbers that may pass 2^31 are made unsigned (>>> 0).
+// Written to be read: the page ships it minified (terser), so names and lines cost nothing there.
 var cdom = (() => {
   const EVENTS = ["click", "dblclick", "input", "change", "keydown", "keyup", "focusin",
     "focusout", "submit", "pointerdown", "pointerup", "pointermove", "resize", "visibilitychange"];
-  const TRANSIENT = 0x40000000, DETACHED = 0xffffffff, SMALL = 64, SVG = "http://www.w3.org/2000/svg";
-  const doc = document, td = new TextDecoder(), te = new TextEncoder();
-  const nodes = [], strs = [], tmp = [], tpl = [], stack = [], on = [], tslot = [];
-  let slots = []; // slot text nodes of the template being built
-  let lmask = new Uint16Array(1024); // listened event types per node id
-  let x, mem, buf, u8, u32, i32, SB, SM, INBOX;
-  let sp = 0, last = null, root = null, base = DETACHED, ref = 0;
+  const TRANSIENT = 0x40000000; // string ids from here up are one-off strings (cd_tmp)
+  const DETACHED = 0xffffffff;  // "no insertion parent" for at()
+  const SMALL = 64;             // string batches up to this many bytes are decoded char by char
+  const SVG = "http://www.w3.org/2000/svg";
+  const doc = document;
+  const textDecoder = new TextDecoder();
+  const textEncoder = new TextEncoder();
+  const nodes = [];         // node by id
+  const interned = [];      // interned strings by id
+  const transient = [];     // one-off strings by id - TRANSIENT
+  const templates = [];     // template root by template id
+  const stack = [];         // the open elements
+  const delegated = [];     // event types with a listener on the mount
+  const templateSlots = []; // slot text nodes by template id
+  let slots = [];           // slot text nodes of the template being built
+  let listenMask = new Uint16Array(1024); // listened event types per node id
+  let exports;              // the wasm module's exports
+  let memory;
+  let buffer;               // memory.buffer when the views below were made
+  let u8;
+  let u32;
+  let i32;
+  let stringBytes;          // where C writes a batch of string bytes
+  let stringMeta;           // where C writes (id, bytes, chars) per string in the batch
+  let inbox;                // where the event record goes
+  let depth = 0;            // how many elements are open
+  let last = null;          // the node made or walked to last
+  let root = null;          // the outermost element closed last
+  let base = DETACHED;      // the parent new top-level nodes go into
+  let before = 0;           // the node they go before (0: at the end)
 
+  // Typed views over wasm memory, made again after it grows.
   function views() {
-    buf = mem.buffer;
-    u8 = new Uint8Array(buf); u32 = new Uint32Array(buf); i32 = new Int32Array(buf);
+    buffer = memory.buffer;
+    u8 = new Uint8Array(buffer);
+    u32 = new Uint32Array(buffer);
+    i32 = new Int32Array(buffer);
   }
-  const S = (a) => (a < TRANSIENT ? strs[a] : tmp[a - TRANSIENT]);
-  function put(dst, s) { if (dst < TRANSIENT) strs[dst] = s; else tmp[dst - TRANSIENT] = s; }
+  // A string by id, interned or one-off.
+  function stringOf(id) {
+    return id < TRANSIENT ? interned[id] : transient[id - TRANSIENT];
+  }
+  // Keeps string value under id.
+  function keep(id, value) {
+    if (id < TRANSIENT) {
+      interned[id] = value;
+    } else {
+      transient[id - TRANSIENT] = value;
+    }
+  }
 
-  // Strings arrive together: one TextDecoder call per batch, and a char loop for tiny batches.
-  function decode(n, nbytes) {
-    let m = SM >> 2, o = 0;
-    if (nbytes > SMALL) {
-      const all = td.decode(u8.subarray(SB, SB + nbytes));
-      for (let i = 0; i < n; i++, m += 3) { const len = u32[m + 2]; put(u32[m], all.substring(o, o + len)); o += len; }
+  // Decodes a batch of count strings (byteCount bytes in all): one TextDecoder call for the
+  // batch, or a char loop when it is small.
+  function decode(count, byteCount) {
+    let meta = stringMeta >> 2;
+    if (byteCount > SMALL) {
+      const all = textDecoder.decode(u8.subarray(stringBytes, stringBytes + byteCount));
+      let offset = 0;
+      for (let i = 0; i < count; i++, meta += 3) {
+        const chars = u32[meta + 2];
+        keep(u32[meta], all.substring(offset, offset + chars));
+        offset += chars;
+      }
       return;
     }
-    for (let i = 0, p = SB; i < n; i++, m += 3) {
-      const nb = u32[m + 1];
-      let s;
-      if (nb === u32[m + 2]) { s = ""; for (let k = 0; k < nb; k++) s += String.fromCharCode(u8[p + k]); }
-      else s = td.decode(u8.subarray(p, p + nb));
-      put(u32[m], s); p += nb;
+    let at = stringBytes;
+    for (let i = 0; i < count; i++, meta += 3) {
+      const bytes = u32[meta + 1];
+      let value;
+      if (bytes === u32[meta + 2]) { // ASCII: one char per byte
+        value = "";
+        for (let k = 0; k < bytes; k++) {
+          value += String.fromCharCode(u8[at + k]);
+        }
+      } else {
+        value = textDecoder.decode(u8.subarray(at, at + bytes));
+      }
+      keep(u32[meta], value);
+      at += bytes;
     }
   }
 
-  function place(n) {
-    if (sp) stack[sp - 1].appendChild(n);
-    else if (base !== DETACHED) nodes[base].insertBefore(n, ref ? nodes[ref] : null);
+  // Puts a new top-level node where at() said, or into the open element.
+  function place(node) {
+    if (depth) {
+      stack[depth - 1].appendChild(node);
+    } else if (base !== DETACHED) {
+      nodes[base].insertBefore(node, before ? nodes[before] : null);
+    }
   }
 
-  // The event record, written into C memory; C flushes its answer on the way out.
-  function post(type, id, e, path, depth) {
-    if (buf !== mem.buffer) views();
-    const k = INBOX >> 2;
-    i32[k] = type; i32[k + 1] = id; i32[k + 2] = e.clientX | 0; i32[k + 3] = e.clientY | 0;
-    i32[k + 4] = e.button | 0; i32[k + 5] = e.keyCode | 0;
-    i32[k + 6] = e.shiftKey | (e.ctrlKey << 1) | (e.altKey << 2) | (e.metaKey << 3);
-    i32[k + 7] = path; i32[k + 8] = depth;
-    x.cd_event();
+  // Writes the event record into C memory and calls C; C flushes its answer on the way out.
+  function post(type, id, event, path, pathDepth) {
+    if (buffer !== memory.buffer) {
+      views();
+    }
+    const record = inbox >> 2;
+    i32[record] = type;
+    i32[record + 1] = id;
+    i32[record + 2] = event.clientX | 0;
+    i32[record + 3] = event.clientY | 0;
+    i32[record + 4] = event.button | 0;
+    i32[record + 5] = event.keyCode | 0;
+    i32[record + 6] = event.shiftKey | (event.ctrlKey << 1) | (event.altKey << 2) | (event.metaKey << 3);
+    i32[record + 7] = path;
+    i32[record + 8] = pathDepth;
+    exports.cd_event();
   }
 
+  // One listener on the mount per event type: the event goes to the nearest listening ancestor of
+  // its target, with the path from that node down (8 bits of child index per level).
   function delegate(type) {
-    on[type] = 1;
-    const bit = 1 << type, top = nodes[0];
-    top.addEventListener(EVENTS[type], (e) => {
-      let path = 0, depth = 0;
-      for (let n = e.target; n && n !== top; n = n.parentNode) {
-        if (n.$i !== undefined && lmask[n.$i] & bit) {
-          post(type, n.$i, e, path, depth);
+    delegated[type] = 1;
+    const bit = 1 << type;
+    const mount = nodes[0];
+    mount.addEventListener(EVENTS[type], (event) => {
+      let path = 0;
+      let pathDepth = 0;
+      for (let node = event.target; node && node !== mount; node = node.parentNode) {
+        if (node.$i !== undefined && listenMask[node.$i] & bit) {
+          post(type, node.$i, event, path, pathDepth);
           return;
         }
-        let i = 0;
-        for (let s = n.previousElementSibling; s; s = s.previousElementSibling) i++;
-        path = (path << 8) | (i & 255); depth++;
+        let index = 0;
+        for (let sibling = node.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+          index++;
+        }
+        path = (path << 8) | (index & 255);
+        pathDepth++;
       }
     });
   }
 
-  function strings(n, nbytes) {
-    if (buf !== mem.buffer) views();
-    decode(n, nbytes);
+  // C sends a batch of new strings.
+  function strings(count, byteCount) {
+    if (buffer !== memory.buffer) {
+      views();
+    }
+    decode(count, byteCount);
   }
-  function at(p, b) { base = p >>> 0; ref = b; }
-  // An opened element or clone is a child of the open element, if any; C says which tags are SVG.
-  function push(el) { if (sp) stack[sp - 1].appendChild(el); stack[sp++] = el; last = el; }
-  function open(t) { push(doc.createElement(S(t))); }
-  function open_svg(t) { push(doc.createElementNS(SVG, S(t))); }
-  function close() { const el = stack[--sp]; if (!sp) { root = el; place(el); } }
-  function text(s) { last = doc.createTextNode(S(s)); place(last); }
-  function text_num(n) { last = doc.createTextNode(n >>> 0); place(last); }
-  function attr(a, v) { last.setAttribute(S(a), S(v)); }
-  function cls(v) { last.className = S(v); }
-  function name(n) { nodes[n] = last; }
-  function name_open(n) { nodes[n] = stack[sp - 1]; }
-  function listen(n, ev) {
-    nodes[n] = last; last.$i = n;
-    if (n >= lmask.length) { const g = new Uint16Array(n * 2); g.set(lmask); lmask = g; }
-    lmask[n] |= 1 << ev; if (!on[ev]) delegate(ev);
+  // Where new top-level nodes go: into parent, before node beforeId (0: at the end).
+  function at(parent, beforeId) {
+    base = parent >>> 0;
+    before = beforeId;
   }
-  function value(s) { last.nodeValue = S(s); }
-  function value_num(n) { last.nodeValue = n >>> 0; }
-  function tpl_save(t) { tpl[t] = root; tslot[t] = slots; slots = []; root.remove(); }
-  function clone(t) { push(tpl[t].cloneNode(true)); }
-  function slot(k) { slots[k] = last; }
-  function tpl_text(t, k, s) { tslot[t][k].nodeValue = S(s); }
-  function tpl_text_num(t, k, n) { tslot[t][k].nodeValue = n >>> 0; }
-  // A walk: n steps of 2 bits (1 firstChild, 2 nextSibling, 3 parentNode) from a named node, or
-  // from the last node when from is -1.
-  function walk(from, steps, n) {
-    let el = from === -1 ? last : nodes[from];
-    for (; n; n--, steps >>>= 2) el = (steps & 3) === 1 ? el.firstChild : (steps & 3) === 2 ? el.nextSibling : el.parentNode;
-    last = el;
+  // An opened element or clone is a child of the open element, if any.
+  function push(element) {
+    if (depth) {
+      stack[depth - 1].appendChild(element);
+    }
+    stack[depth++] = element;
+    last = element;
   }
-  function walk_value(from, steps, n, s) { walk(from, steps, n); last.nodeValue = S(s); }
-  function walk_value_num(from, steps, n, v) { walk(from, steps, n); last.nodeValue = v >>> 0; }
-  function set_text(id, s) { nodes[id].nodeValue = S(s); }
-  function set_text_num(id, n) { nodes[id].nodeValue = n >>> 0; }
-  function set_attr(id, a, v) { nodes[id].setAttribute(S(a), S(v)); }
-  function set_class(id, v) { nodes[id].className = S(v); }
-  function style(id, p, v) { nodes[id].style.setProperty(S(p), S(v)); }
-  function style_num(id, p, v, u) { nodes[id].style.setProperty(S(p), v + S(u)); }
-  // Pixels in C memory (n bytes each: RGBA, or RGB and opaque), at (X, Y) in a W x H image, to an
-  // image file: copied now, encoded off the call, the bytes back into C.
-  function encode(ptr, w, h, n, W, H, X, Y, m, t) {
-    const c = doc.createElement("canvas"); c.width = W; c.height = H;
-    let px = new Uint8ClampedArray(mem.buffer, ptr, w * h * n);
-    if (n === 3) { const q = new Uint8ClampedArray(w * h * 4); for (let i = 0, j = 0; j < q.length; i += 3, j += 4) { q[j] = px[i]; q[j + 1] = px[i + 1]; q[j + 2] = px[i + 2]; q[j + 3] = 255; } px = q; }
-    c.getContext("2d").putImageData(new ImageData(px, w, h), X, Y);
-    c.toBlob(async (b) => deliver(x.cd_encoded, t, await b.arrayBuffer()), S(m), 0.92);
+  // Opens an element; C says which tags are SVG.
+  function open(tag) {
+    push(doc.createElement(stringOf(tag)));
   }
-  function image_bytes(id, p, ptr, n, m) {
-    const b = new Blob([new Uint8Array(mem.buffer, ptr, n).slice()], { type: S(m) });
-    nodes[id].style.setProperty(S(p), `url(${URL.createObjectURL(b)})`);
+  function open_svg(tag) {
+    push(doc.createElementNS(SVG, stringOf(tag)));
   }
-  function remove(id) { nodes[id].remove(); nodes[id] = undefined; lmask[id] = 0; }
-  function free(id) { nodes[id] = undefined; lmask[id] = 0; }
-  function move(id, b) { const el = nodes[id]; el.parentNode.insertBefore(el, b ? nodes[b] : null); }
-  function clear(id) { nodes[id].textContent = ""; }
-  function detach(id) { const el = nodes[id]; el.$p = el.parentNode; el.$s = el.nextSibling; el.remove(); }
-  function attach(id) { const el = nodes[id]; el.$p.insertBefore(el, el.$s); el.$p = el.$s = null; }
+  // Closes the open element; the outermost one is placed.
+  function close() {
+    const element = stack[--depth];
+    if (!depth) {
+      root = element;
+      place(element);
+    }
+  }
+  function text(id) {
+    last = doc.createTextNode(stringOf(id));
+    place(last);
+  }
+  function text_num(number) {
+    last = doc.createTextNode(number >>> 0);
+    place(last);
+  }
+  function attr(name, value) {
+    last.setAttribute(stringOf(name), stringOf(value));
+  }
+  function setClass(value) {
+    last.className = stringOf(value);
+  }
+  // Names the last node, or the open element, with a node id.
+  function name(id) {
+    nodes[id] = last;
+  }
+  function name_open(id) {
+    nodes[id] = stack[depth - 1];
+  }
+  // Names the last node and listens for event type on it (through the mount's listener).
+  function listen(id, type) {
+    nodes[id] = last;
+    last.$i = id;
+    if (id >= listenMask.length) {
+      const grown = new Uint16Array(id * 2);
+      grown.set(listenMask);
+      listenMask = grown;
+    }
+    listenMask[id] |= 1 << type;
+    if (!delegated[type]) {
+      delegate(type);
+    }
+  }
+  function value(id) {
+    last.nodeValue = stringOf(id);
+  }
+  function value_num(number) {
+    last.nodeValue = number >>> 0;
+  }
+  // The element just built becomes template templateId, with the slots marked in it.
+  function tpl_save(templateId) {
+    templates[templateId] = root;
+    templateSlots[templateId] = slots;
+    slots = [];
+    root.remove();
+  }
+  function clone(templateId) {
+    push(templates[templateId].cloneNode(true));
+  }
+  function slot(index) {
+    slots[index] = last;
+  }
+  function tpl_text(templateId, index, id) {
+    templateSlots[templateId][index].nodeValue = stringOf(id);
+  }
+  function tpl_text_num(templateId, index, number) {
+    templateSlots[templateId][index].nodeValue = number >>> 0;
+  }
+  // A walk: count steps of 2 bits (1 firstChild, 2 nextSibling, 3 parentNode) from a named node,
+  // or from the last node when from is -1.
+  function walk(from, steps, count) {
+    let node = from === -1 ? last : nodes[from];
+    for (; count; count--, steps >>>= 2) {
+      const step = steps & 3;
+      if (step === 1) {
+        node = node.firstChild;
+      } else if (step === 2) {
+        node = node.nextSibling;
+      } else {
+        node = node.parentNode;
+      }
+    }
+    last = node;
+  }
+  function walk_value(from, steps, count, id) {
+    walk(from, steps, count);
+    last.nodeValue = stringOf(id);
+  }
+  function walk_value_num(from, steps, count, number) {
+    walk(from, steps, count);
+    last.nodeValue = number >>> 0;
+  }
+  function set_text(id, textId) {
+    nodes[id].nodeValue = stringOf(textId);
+  }
+  function set_text_num(id, number) {
+    nodes[id].nodeValue = number >>> 0;
+  }
+  function set_attr(id, name, value) {
+    nodes[id].setAttribute(stringOf(name), stringOf(value));
+  }
+  function set_class(id, value) {
+    nodes[id].className = stringOf(value);
+  }
+  // One style property.
+  function style(id, property, value) {
+    nodes[id].style.setProperty(stringOf(property), stringOf(value));
+  }
+  function style_num(id, property, number, unit) {
+    nodes[id].style.setProperty(stringOf(property), number + stringOf(unit));
+  }
+  // Pixels in C memory (channels bytes each: RGBA, or RGB and opaque), at (x, y) in an image of
+  // fullWidth x fullHeight, to an image file: copied now, encoded off the call, the file's bytes
+  // back into C (cd_encoded) with token.
+  function encode(pixelsPtr, width, height, channels, fullWidth, fullHeight, x, y, mime, token) {
+    const canvas = doc.createElement("canvas");
+    canvas.width = fullWidth;
+    canvas.height = fullHeight;
+    let pixels = new Uint8ClampedArray(memory.buffer, pixelsPtr, width * height * channels);
+    if (channels === 3) {
+      const rgba = new Uint8ClampedArray(width * height * 4);
+      for (let from = 0, to = 0; to < rgba.length; from += 3, to += 4) {
+        rgba[to] = pixels[from];
+        rgba[to + 1] = pixels[from + 1];
+        rgba[to + 2] = pixels[from + 2];
+        rgba[to + 3] = 255;
+      }
+      pixels = rgba;
+    }
+    canvas.getContext("2d").putImageData(new ImageData(pixels, width, height), x, y);
+    canvas.toBlob(async (blob) => deliver(exports.cd_encoded, token, await blob.arrayBuffer()), stringOf(mime), 0.92);
+  }
+  // An image file's bytes in C memory as a url(blob:) on a style property, now.
+  function image_bytes(id, property, bytesPtr, length, mime) {
+    const blob = new Blob([new Uint8Array(memory.buffer, bytesPtr, length).slice()], { type: stringOf(mime) });
+    nodes[id].style.setProperty(stringOf(property), `url(${URL.createObjectURL(blob)})`);
+  }
+  function remove(id) {
+    nodes[id].remove();
+    nodes[id] = undefined;
+    listenMask[id] = 0;
+  }
+  function free(id) {
+    nodes[id] = undefined;
+    listenMask[id] = 0;
+  }
+  // Moves a node before node beforeId (0: to the end of its parent).
+  function move(id, beforeId) {
+    const node = nodes[id];
+    node.parentNode.insertBefore(node, beforeId ? nodes[beforeId] : null);
+  }
+  function clear(id) {
+    nodes[id].textContent = "";
+  }
+  // Takes a node out of the document, remembering where it was, and puts it back.
+  function detach(id) {
+    const node = nodes[id];
+    node.$p = node.parentNode;
+    node.$s = node.nextSibling;
+    node.remove();
+  }
+  function attach(id) {
+    const node = nodes[id];
+    node.$p.insertBefore(node, node.$s);
+    node.$p = null;
+    node.$s = null;
+  }
 
   // Window events go through the event record like any other (x, y the viewport, key 1 when hidden).
-  const vp = () => ({ clientX: innerWidth, clientY: innerHeight, keyCode: +doc.hidden });
-  function win(ev) { (EVENTS[ev] === "resize" ? window : doc).addEventListener(EVENTS[ev], () => post(ev, 0, vp(), 0, 0)); }
-  function viewport(p) { if (buf !== mem.buffer) views(); i32.set([innerWidth, innerHeight, +doc.hidden, Math.round(devicePixelRatio * 100)], p >> 2); }
-  function timer(ms, t) { setTimeout(() => x.cd_timer(t), ms); }
-  function raf(t) { requestAnimationFrame((ts) => x.cd_raf(t, ts)); }
-  const now = () => performance.now();
+  function viewportRecord() {
+    return { clientX: innerWidth, clientY: innerHeight, keyCode: +doc.hidden };
+  }
+  function win(type) {
+    const target = EVENTS[type] === "resize" ? window : doc;
+    target.addEventListener(EVENTS[type], () => post(type, 0, viewportRecord(), 0, 0));
+  }
+  // The viewport into C memory: width, height, hidden, device pixel ratio times 100.
+  function viewport(recordPtr) {
+    if (buffer !== memory.buffer) {
+      views();
+    }
+    i32.set([innerWidth, innerHeight, +doc.hidden, Math.round(devicePixelRatio * 100)], recordPtr >> 2);
+  }
+  function timer(ms, token) {
+    setTimeout(() => exports.cd_timer(token), ms);
+  }
+  function raf(token) {
+    requestAnimationFrame((time) => exports.cd_raf(token, time));
+  }
+  function now() {
+    return performance.now();
+  }
 
-  // Bytes into C memory, in room C makes with cd_bytes_buf, then f(a, p, n).
-  const utf8 = (p, n) => td.decode(new Uint8Array(mem.buffer, p, n));
-  function deliver(f, a, data) {
-    const b = new Uint8Array(data), p = x.cd_bytes_buf(b.length);
-    new Uint8Array(mem.buffer, p, b.length).set(b); f(a, p, b.length);
+  // UTF-8 bytes in C memory as a string.
+  function utf8(ptr, length) {
+    return textDecoder.decode(new Uint8Array(memory.buffer, ptr, length));
+  }
+  // Bytes into C memory, in room C makes with cd_bytes_buf, then answer(arg, ptr, length).
+  function deliver(answer, arg, data) {
+    const bytes = new Uint8Array(data);
+    const ptr = exports.cd_bytes_buf(bytes.length);
+    new Uint8Array(memory.buffer, ptr, bytes.length).set(bytes);
+    answer(arg, ptr, bytes.length);
   }
 
   // The network (src/cdom_net.c).
   const sockets = [];
-  function ws_open(p, n) {
-    const id = sockets.length, ws = new WebSocket(utf8(p, n)); sockets.push(ws); ws.binaryType = "arraybuffer";
-    ws.onopen = () => x.cd_net_open(id);
-    ws.onmessage = (e) => deliver(x.cd_net_msg, id, typeof e.data === "string" ? te.encode(e.data) : e.data);
-    ws.onclose = (e) => x.cd_net_close(id, e.code);
+  // Opens a WebSocket to the url in C memory; its events come back by socket id.
+  function ws_open(urlPtr, urlLen) {
+    const id = sockets.length;
+    const socket = new WebSocket(utf8(urlPtr, urlLen));
+    sockets.push(socket);
+    socket.binaryType = "arraybuffer";
+    socket.onopen = () => exports.cd_net_open(id);
+    socket.onmessage = (event) => {
+      const data = typeof event.data === "string" ? textEncoder.encode(event.data) : event.data;
+      deliver(exports.cd_net_msg, id, data);
+    };
+    socket.onclose = (event) => exports.cd_net_close(id, event.code);
     return id;
   }
-  function ws_send(id, p, n) { sockets[id].send(new Uint8Array(mem.buffer, p, n).slice()); }
-  function ws_close(id) { sockets[id].close(); }
-  function http(t, mp, mn, up, un, bp, bn) {
-    fetch(utf8(up, un), { method: utf8(mp, mn), body: bn ? new Uint8Array(mem.buffer, bp, bn).slice() : undefined })
-      .then(async (r) => deliver((a, p, n) => x.cd_net_http(a, r.status, p, n), t, await r.arrayBuffer()), () => x.cd_net_http(t, 0, 0, 0));
+  function ws_send(id, bytesPtr, length) {
+    sockets[id].send(new Uint8Array(memory.buffer, bytesPtr, length).slice());
+  }
+  function ws_close(id) {
+    sockets[id].close();
+  }
+  // One request; the status and the body come back with token (status 0 when it failed).
+  function http(token, methodPtr, methodLen, urlPtr, urlLen, bodyPtr, bodyLen) {
+    const body = bodyLen ? new Uint8Array(memory.buffer, bodyPtr, bodyLen).slice() : undefined;
+    fetch(utf8(urlPtr, urlLen), { method: utf8(methodPtr, methodLen), body }).then(
+      async (response) => {
+        const data = await response.arrayBuffer();
+        deliver((arg, ptr, length) => exports.cd_net_http(arg, response.status, ptr, length), token, data);
+      },
+      () => exports.cd_net_http(token, 0, 0, 0));
   }
 
   // A key/value store over IndexedDB (src/cdom_store.c): bytes in, bytes out, under keys C chooses.
-  // A get answers len -1 for a miss, an error, or no answer within ms (indexedDB.open can hang).
-  let idb;
-  const kv = (mode, f) => (idb ??= new Promise((r, j) => { const q = indexedDB.open("cdom", 1);
-    q.onupgradeneeded = () => q.result.createObjectStore("kv"); q.onsuccess = () => r(q.result); q.onerror = () => j(q.error); }))
-    .then((d) => new Promise((r, j) => { const q = f(d.transaction("kv", mode).objectStore("kv")); q.onsuccess = () => r(q.result); q.onerror = () => j(q.error); }));
-  function store_put(kp, kn, p, n) { const v = new Uint8Array(mem.buffer, p, n).slice(); kv("readwrite", (s) => s.put(v, utf8(kp, kn))).catch(() => {}); }
-  function store_get(t, kp, kn, ms) {
-    let done = false; const answer = (v) => { if (done) return; done = true; v ? deliver(x.cd_store_got, t, v) : x.cd_store_got(t, 0, -1); };
+  let database; // a promise of the open database, made on first use
+  function openDatabase() {
+    if (!database) {
+      database = new Promise((resolve, reject) => {
+        const request = indexedDB.open("cdom", 1);
+        request.onupgradeneeded = () => request.result.createObjectStore("kv");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+    return database;
+  }
+  // One request on the store in a transaction of its own; a promise of its result.
+  async function storeRequest(mode, makeRequest) {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const request = makeRequest(db.transaction("kv", mode).objectStore("kv"));
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+  // Keeps a copy of the bytes under the key; nothing answers, and a failure is dropped.
+  function store_put(keyPtr, keyLen, bytesPtr, length) {
+    const bytes = new Uint8Array(memory.buffer, bytesPtr, length).slice();
+    storeRequest("readwrite", (store) => store.put(bytes, utf8(keyPtr, keyLen))).catch(() => {});
+  }
+  // Answers once with token: the bytes under the key, or length -1 for a miss, an error, or no
+  // answer within ms (indexedDB.open can hang).
+  function store_get(token, keyPtr, keyLen, ms) {
+    let answered = false;
+    const answer = (bytes) => {
+      if (answered) {
+        return;
+      }
+      answered = true;
+      if (bytes) {
+        deliver(exports.cd_store_got, token, bytes);
+      } else {
+        exports.cd_store_got(token, 0, -1);
+      }
+    };
     setTimeout(() => answer(null), ms);
-    kv("readonly", (s) => s.get(utf8(kp, kn))).then((v) => answer(v instanceof Uint8Array ? v : null), () => answer(null));
+    storeRequest("readonly", (store) => store.get(utf8(keyPtr, keyLen))).then(
+      (bytes) => answer(bytes instanceof Uint8Array ? bytes : null),
+      () => answer(null));
   }
 
-  function input(id, dst, cap) {
-    const r = te.encodeInto(String(nodes[id].value ?? ""), new Uint8Array(mem.buffer, dst, cap));
-    return r.written;
+  // An input's value into C memory as UTF-8; returns the bytes written.
+  function input(id, destPtr, capacity) {
+    const result = textEncoder.encodeInto(String(nodes[id].value ?? ""), new Uint8Array(memory.buffer, destPtr, capacity));
+    return result.written;
   }
 
-  // mount is an element, or the id of one that may not be parsed yet: then the wasm loads
-  // while the parser and the stylesheets run, and the app starts once the DOM is ready.
+  // Starts the app: mount is an element, or the id of one that may not be parsed yet: then the
+  // wasm loads while the parser and the stylesheets run, and the app starts once the DOM is ready.
   async function start(url, mount, env) {
-    const imports = { cdom: { strings, at, open, open_svg, close, text, text_num, attr, class: cls, name, name_open,
-      listen, value, value_num, tpl_save, clone, slot, tpl_text, tpl_text_num, walk, walk_value, walk_value_num, set_text,
-      set_text_num, set_attr, set_class, style, style_num, encode, image_bytes, remove, free, move, clear, detach, attach, input, win, viewport,
-      timer, raf, now, ws_open, ws_send, ws_close, http, store_put, store_get }, env: env || {} };
-    const res = fetch(url);
-    const { instance } = WebAssembly.instantiateStreaming
-      ? await WebAssembly.instantiateStreaming(res, imports)
-      : await WebAssembly.instantiate(await (await res).arrayBuffer(), imports);
+    const imports = {
+      cdom: {
+        strings, at, open, open_svg, close, text, text_num, attr, class: setClass, name, name_open,
+        listen, value, value_num, tpl_save, clone, slot, tpl_text, tpl_text_num, walk, walk_value, walk_value_num,
+        set_text, set_text_num, set_attr, set_class, style, style_num, encode, image_bytes, remove, free, move, clear,
+        detach, attach, input, win, viewport, timer, raf, now, ws_open, ws_send, ws_close, http, store_put, store_get,
+      },
+      env: env || {},
+    };
+    const response = fetch(url);
+    let instance;
+    if (WebAssembly.instantiateStreaming) {
+      instance = (await WebAssembly.instantiateStreaming(response, imports)).instance;
+    } else {
+      instance = (await WebAssembly.instantiate(await (await response).arrayBuffer(), imports)).instance;
+    }
     if (typeof mount === "string") {
-      if (doc.readyState === "loading") await new Promise((r) => doc.addEventListener("DOMContentLoaded", r, { once: true }));
+      if (doc.readyState === "loading") {
+        await new Promise((resolve) => doc.addEventListener("DOMContentLoaded", resolve, { once: true }));
+      }
       mount = doc.getElementById(mount);
     }
     nodes[0] = mount;
-    x = instance.exports; mem = x.memory; views();
-    const L = x.cd_layout() >> 2;
-    [SB, SM, INBOX] = [u32[L], u32[L + 1], u32[L + 2]];
-    x.cd_start((Math.random() * 4294967296) >>> 0);
-    return x;
+    exports = instance.exports;
+    memory = exports.memory;
+    views();
+    const layout = exports.cd_layout() >> 2;
+    stringBytes = u32[layout];
+    stringMeta = u32[layout + 1];
+    inbox = u32[layout + 2];
+    exports.cd_start((Math.random() * 4294967296) >>> 0);
+    return exports;
   }
   return { start };
 })();
