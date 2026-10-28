@@ -36,6 +36,9 @@ typedef struct {
     char     tour_file[512];   // the tournament's file; "" keeps none
     bool     gauntlet;         // the human climbs the gauntlet (gauntlet.h) instead; needs human_name
     char     gaunt_file[512];  // the gauntlet's file; "" keeps none
+    bool     botcup;           // play the Bot Cup (botcup.h) instead: one match at a time
+    char     cup_file[512];    // the cup's file; "" keeps none
+    char     cup_dir[512];     // where each match's summary is written
     int      stall_ms;         // a game in play nobody moved at for this long is given up (not a human's)
     char     human_name[32];   // a human account in the field ("" none): signed up (or in) at start
     char     human_password[40];
@@ -73,6 +76,9 @@ void be_league_gauges(void);
 size_t be_league_snapshot(void **out, uint8_t mode);
 // GET /be/tournament: the stored tournament (wire.h be_w_tour) in a buffer the caller frees.
 size_t be_tour_snapshot(void **out);
+// GET /be/botcup: the Bot Cup (wire.h be_w_cup; state BE_TOUR_IDLE when none) in a buffer the
+// caller frees.
+size_t be_cup_snapshot(void **out);
 // GET /be/gauntlet: the gauntlet (wire.h be_w_gauntlet; state BE_GAUNT_IDLE when none) in a buffer
 // the caller frees.
 size_t be_gaunt_snapshot(void **out);

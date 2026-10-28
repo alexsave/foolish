@@ -5,6 +5,7 @@ import {
   getLeague,
   getTournament,
   getGauntlet,
+  getBotcup,
   getMetrics,
   getTables,
   openStream,
@@ -18,11 +19,13 @@ import {
   type WTable,
   type WTour,
   type WGauntlet,
+  type WCup,
 } from './api';
-import { BE_GAUNT_IDLE, BE_MODE_GAUNTLET, BE_MODE_MIXED, BE_MODE_TOURNAMENT, BE_TOUR_IDLE, BE_PHASE_GONE, BE_PHASE_LOBBY, BE_PHASE_OVER, BE_PHASE_PLAYING } from './gen/wire';
+import { BE_GAUNT_IDLE, BE_MODE_BOTCUP, BE_MODE_GAUNTLET, BE_MODE_MIXED, BE_MODE_TOURNAMENT, BE_TOUR_IDLE, BE_PHASE_GONE, BE_PHASE_LOBBY, BE_PHASE_OVER, BE_PHASE_PLAYING } from './gen/wire';
 import { Bracket, tourSummary } from './components/Bracket';
 import { Feed } from './components/Feed';
 import { Gauntlet } from './components/Gauntlet';
+import { BotCup, cupTableGid } from './components/BotCup';
 import { buildSeries, EloChart, Families, Standings, botName } from './components/League';
 import { Ops } from './components/Ops';
 import { TableDetail } from './components/TableDetail';
@@ -92,6 +95,7 @@ export function App() {
   const [league, setLeague] = useState<League | null>(null);
   const [tour, setTour] = useState<WTour | null>(null);
   const [gauntlet, setGauntlet] = useState<WGauntlet | null>(null);
+  const [cup, setCup] = useState<WCup | null>(null);
   const [flash, setFlash] = useState<Map<number, number>>(() => new Map());
   const [focus, setFocus] = useState<number | null>(null);
   const [hoverBot, setHoverBot] = useState<number | null>(null);
@@ -102,22 +106,24 @@ export function App() {
   const recent = useRef<WResult[]>([]);
   const loadLeague = useCallback(async () => {
     try {
-      const [l, t, g] = await Promise.all([getLeague(), getTournament(), getGauntlet()]);
+      const [l, t, g, c] = await Promise.all([getLeague(), getTournament(), getGauntlet(), getBotcup()]);
       setLeague(mergeResults(l, recent.current));
       setTour(t);
       setGauntlet(g);
+      setCup(c);
       // Birdseye playing a tournament opens on the bracket, the gauntlet on its ladder, unless the
       // URL says otherwise.
       const asked = new URLSearchParams(window.location.search).get('view');
       if (l.mode === BE_MODE_TOURNAMENT && !asked) setViewState('tournament');
       if (l.mode === BE_MODE_GAUNTLET && !asked) setViewState('gauntlet');
+      if (l.mode === BE_MODE_BOTCUP && !asked) setViewState('botcup');
     } catch (e) {
       if (e instanceof WireMismatch) setFatal(e.message);
     }
   }, []);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get('view');
-    if (q === 'tables' || q === 'league' || q === 'tournament' || q === 'gauntlet') setViewState(q);
+    if (q === 'tables' || q === 'league' || q === 'tournament' || q === 'gauntlet' || q === 'botcup') setViewState(q);
   }, []);
   const setView = useCallback((v: View) => {
     setViewState(v);
@@ -197,6 +203,7 @@ export function App() {
       },
       onTour: (t) => setTour(t),
       onGauntlet: (g) => setGauntlet(g),
+      onCup: (c) => setCup(c),
       onBot: (b) => {
         setLeague((l) => {
           if (!l) return l;
@@ -335,6 +342,8 @@ export function App() {
   const showLeague = isLeague && view === 'league' && !selected;
   const hasGauntlet = gauntlet !== null && gauntlet.state !== BE_GAUNT_IDLE;
   const showGauntlet = isLeague && hasGauntlet && view === 'gauntlet' && !selected;
+  const hasCup = cup !== null && cup.state !== BE_TOUR_IDLE;
+  const showCup = isLeague && hasCup && view === 'botcup' && !selected;
   const series = useMemo(() => (league ? buildSeries(league.bots, league.results) : []), [league]);
   // Rated games a minute over the last ten minutes (or since the first of them): a one-second rate
   // of something that happens a few times a minute reads 0 most seconds.
@@ -380,10 +389,25 @@ export function App() {
         games={league?.results.length ?? 0}
         tour={hasTour}
         gauntlet={hasGauntlet}
+        botcup={hasCup}
         gamesPerMin={gamesPerMin}
       />
       {fatal ? (
         <div className="banner">{fatal}</div>
+      ) : showCup && league && cup ? (
+        <div className="cup-page">
+          <BotCup cup={cup} bots={league.bots} />
+          {(() => {
+            const gid = cupTableGid(cup);
+            return gid ? (
+              <TableDetail gid={gid} live={tables.get(gid) ?? null} version={versions.get(gid) ?? 0} events={byTable.get(gid) ?? []} now={now} />
+            ) : (
+              <section className="card detail">
+                <div className="empty">The first game is being dealt...</div>
+              </section>
+            );
+          })()}
+        </div>
       ) : showGauntlet && league && gauntlet ? (
         <div className="tour-page">
           <Gauntlet g={gauntlet} bots={league.bots} />

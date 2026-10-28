@@ -28,12 +28,13 @@ interface Props {
   gamesPerMin: number | null;
   tour: boolean;
   gauntlet: boolean;
+  botcup: boolean;
 }
 
 export type Filter = 'all' | 'playing' | 'lobby' | 'over';
-export type View = 'league' | 'tournament' | 'gauntlet' | 'tables';
+export type View = 'league' | 'tournament' | 'gauntlet' | 'botcup' | 'tables';
 
-export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompact, view, onView, games, gamesPerMin, tour, gauntlet }: Props) {
+export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompact, view, onView, games, gamesPerMin, tour, gauntlet, botcup }: Props) {
   const status =
     state === 'open' ? { cls: 'dot-green', text: 'live' }
     : state === 'connecting' ? { cls: 'dot-amber', text: 'connecting...' }
@@ -61,6 +62,11 @@ export function TopBar({ state, ops, filter, onFilter, counts, compact, onCompac
           {tour && (
             <button type="button" className={`tab${view === 'tournament' ? ' on' : ''}`} onClick={() => onView('tournament')}>
               Tournament
+            </button>
+          )}
+          {botcup && (
+            <button type="button" className={`tab${view === 'botcup' ? ' on' : ''}`} onClick={() => onView('botcup')}>
+              Bot Cup
             </button>
           )}
           {gauntlet && (

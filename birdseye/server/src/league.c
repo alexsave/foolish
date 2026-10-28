@@ -8,6 +8,7 @@
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/log.h"
+#include "botcup.h"
 #include "gauntlet.h"
 #include "tournament.h"
 #include "world.h"
@@ -25,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -74,9 +76,12 @@ static int            g_human = -1;     // the human's row in g_bots (the last),
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static be_w_bot       g_bots[BE_LEAGUE_BOTS];
 static int            g_n_bots;
+#define BOT_NAME(i) g_bots[i].name_len, g_bots[i].name
 static be_w_tour      g_tour;           // the stored tournament (BE_TOUR_IDLE: none)
 static be_w_gauntlet  g_gaunt;          // the gauntlet (BE_GAUNT_IDLE: none)
 static atomic_bool    g_gaunt_renew;    // POST /be/gauntlet/new asked for a new run
+static be_w_cup       g_cup;            // the Bot Cup (BE_TOUR_IDLE: none)
+static be_cup_story  *g_story;          // botcup mode: each table's story of its game (g_tables' order)
 static be_w_result   *g_results;
 static uint32_t       g_n_results, g_cap_results;
 static FILE          *g_file;
@@ -390,6 +395,46 @@ static void rated(lg_table *t, int64_t now_ms) {
     for (int i = 0; i < nc; i++) publish(&be_world_g, BE_F_BOT, &copies[i], sizeof copies[i]);
 }
 
+// ---- the Bot Cup's game stories (botcup.h) ---------------------------------------------------------
+
+// A seat's name as the summary tells it: the league row's (the server's nickname, no "%").
+static void seat_name(const lg_table *t, int s, char *out, size_t cap) {
+    const be_w_bot *b = &g_bots[t->bots[s]];
+    int skip = b->name_len > 0 && b->name[0] == '%';
+    snprintf(out, cap, "%.*s", b->name_len - skip, b->name + skip);
+}
+
+static be_cup_story *story_of(const lg_table *t) {
+    return g_story && t->match >= 0 && t->n == 2 ? &g_story[t - g_tables] : NULL;
+}
+
+static void story_deal(lg_table *t) {
+    be_cup_story *s = story_of(t);
+    if (!s) return;
+    char n0[BE_NAME + 1], n1[BE_NAME + 1];
+    seat_name(t, 0, n0, sizeof n0);
+    seat_name(t, 1, n1, sizeof n1);
+    const char *names[2] = { n0, n1 };
+    const Game *g = t->ct->g;
+    be_cup_story_deal(s, names, g->power_suit, g->flipped.suit, g->flipped.value, g->first_attacker, g->deck_count);
+}
+
+static void story_event(lg_table *t, int kind, const PushEvent *e) {
+    be_cup_story *s = story_of(t);
+    if (!s) return;
+    char n0[BE_NAME + 1], n1[BE_NAME + 1];
+    seat_name(t, 0, n0, sizeof n0);
+    seat_name(t, 1, n1, sizeof n1);
+    const char *names[2] = { n0, n1 };
+    int8_t su[MAX_HAND_SIZE], va[MAX_HAND_SIZE];
+    int n = e->n_cards < MAX_HAND_SIZE ? e->n_cards : MAX_HAND_SIZE;
+    for (int i = 0; i < n; i++) {
+        su[i] = e->cards[i].suit;
+        va[i] = e->cards[i].value;
+    }
+    be_cup_story_event(s, names, t->ct->g->power_suit, kind, e->seat, su, va, n, t->ct->g->deck_count);
+}
+
 static void apply_cast(lg_table *t, const uint8_t *cast, int n, uint32_t version, int64_t now_ms) {
     if (!t->have) return;
     uint8_t ident[4096];
@@ -414,8 +459,10 @@ static void apply_cast(lg_table *t, const uint8_t *cast, int n, uint32_t version
             if (!t->dealt_ms) {
                 t->dealt_ms = now_ms;
                 event_at(t, kind, -1, NULL, 0, t->ct->version);
+                story_deal(t);
             }
         } else if (kind) {
+            story_event(t, kind, e);
             if (kind == BE_EV_ATTACK || kind == BE_EV_COVER || kind == BE_EV_PASS || kind == BE_EV_PICKUP) {
                 t->moves++;
                 cb_metrics_rate(be_mx, BE_M_MOVES, cb_now_ms(), 1);
@@ -444,6 +491,7 @@ static void advance(lg_table *t, int64_t now_ms) {
         if (!t->dealt_ms) {
             t->dealt_ms = now_ms;
             event_at(t, BE_EV_DEALT, -1, NULL, 0, v->version);
+            story_deal(t);
         }
     }
     if ((t->state == L_WATCH || t->state == L_PLAYING) && v->status == GAME_STATUS_GAME_OVER) {
@@ -496,12 +544,18 @@ static void tour_changed(void) {
 }
 
 static void gaunt_game_over(bool played, uint8_t fool_bot, int64_t now_ms);
+static void cup_game_over(lg_table *t, bool played, uint8_t fool_bot, int64_t now_ms);
 
 // A tournament table that is over (rated: `played`, `fool_bot` its fool) or given up (not played).
 static void tour_game_over(lg_table *t, bool played, uint8_t fool_bot, int64_t now_ms) {
     if (t->match < 0) return;
     if (g_o.gauntlet) {
         gaunt_game_over(played, fool_bot, now_ms);
+        t->match = -1;
+        return;
+    }
+    if (g_o.botcup) {
+        cup_game_over(t, played, fool_bot, now_ms);
         t->match = -1;
         return;
     }
@@ -603,6 +657,142 @@ size_t be_tour_snapshot(void **out) {
     return sizeof *copy;
 }
 
+// ---- the Bot Cup (botcup.h) ----------------------------------------------------------------------
+
+// The cup changed: kept (the file) and shown (the stream). Under g_mu.
+static void cup_changed(void) {
+    g_cup.hash = be_wire_hash();
+    if (g_o.cup_file[0] && !be_cup_save(&g_cup, g_o.cup_file, g_ids, g_n_bots))
+        CB_WARN("birdseye", "botcup: cannot write %s", g_o.cup_file);
+    be_world *w = &be_world_g;
+    if (!w->publish) return;
+    uint8_t *frame = malloc(2 + sizeof g_cup);
+    if (!frame) return;
+    frame[0] = BE_SF_V;
+    frame[1] = BE_F_CUP;
+    memcpy(frame + 2, &g_cup, sizeof g_cup);
+    w->publish(frame, 2 + sizeof g_cup);
+    free(frame);
+}
+
+static void cup_paths(int m, char *games, char *summary, size_t cap) {
+    char id[64];
+    be_cup_match_id(&g_cup, m, id, sizeof id);
+    snprintf(games, cap, "%s/%s.games", g_o.cup_dir, id);
+    snprintf(summary, cap, "%s/%s.summary.txt", g_o.cup_dir, id);
+}
+
+// A cup game that is over (rated: `played`) or given up. A played game's story goes to its match's
+// games file first; a decided match gets its summary.
+static void cup_game_over(lg_table *t, bool played, uint8_t fool_bot, int64_t now_ms) {
+    int m = t->match;
+    char games[600], summary[600];
+    pthread_mutex_lock(&g_mu);
+    cup_paths(m, games, summary, sizeof games);
+    int game_no = m >= 0 && m < BE_CUP_MATCHES ? g_cup.matches[m].games + 1 : 0;
+    pthread_mutex_unlock(&g_mu);
+    be_cup_story *s = story_of(t);
+    if (played && s) {
+        char n0[BE_NAME + 1], n1[BE_NAME + 1];
+        seat_name(t, 0, n0, sizeof n0);
+        seat_name(t, 1, n1, sizeof n1);
+        const char *names[2] = { n0, n1 };
+        int fool = fool_bot == (uint8_t)t->bots[0] ? 0 : fool_bot == (uint8_t)t->bots[1] ? 1 : -1;
+        if (!be_cup_story_write(s, names, fool, game_no, games)) CB_WARN("birdseye", "botcup: cannot write %s", games);
+    }
+    pthread_mutex_lock(&g_mu);
+    bool decided = false;
+    if (be_cup_result(&g_cup, m, played, fool_bot, now_ms)) {
+        const be_w_match *x = &g_cup.matches[m];
+        if (played)
+            CB_INFO("birdseye", "botcup: match %d game %d: %.*s %d, %.*s %d", m + 1, x->games, BOT_NAME(x->a), x->wins_a, BOT_NAME(x->b), x->wins_b);
+        decided = x->winner != BE_TOUR_NONE;
+        if (decided) {
+            static char names_buf[BE_LEAGUE_BOTS][BE_NAME + 1];
+            static const char *names[BE_LEAGUE_BOTS];
+            for (int i = 0; i < g_n_bots; i++) {
+                int skip = g_bots[i].name_len > 0 && g_bots[i].name[0] == '%';
+                snprintf(names_buf[i], sizeof names_buf[i], "%.*s", g_bots[i].name_len - skip, g_bots[i].name + skip);
+                names[i] = names_buf[i];
+            }
+            if (be_cup_summary_write(&g_cup, m, names, games, summary)) CB_INFO("birdseye", "botcup: match %d decided: %s", m + 1, summary);
+            else CB_WARN("birdseye", "botcup: cannot write %s", summary);
+            if (g_cup.state == BE_TOUR_DONE) CB_INFO("birdseye", "botcup: %.*s wins the cup", BOT_NAME(g_cup.champion));
+        }
+        cup_changed();
+    }
+    pthread_mutex_unlock(&g_mu);
+}
+
+// The cup's next game, on a free table: false when none can start now.
+static bool cup_new(int64_t now_ms) {
+    lg_table *t = NULL;
+    for (int i = 0; i < g_n_tables && !t; i++)
+        if (g_tables[i].state == L_FREE) t = &g_tables[i];
+    if (!t) return false;
+    uint8_t seats[2];
+    pthread_mutex_lock(&g_mu);
+    int m = be_cup_next(&g_cup, seats);
+    pthread_mutex_unlock(&g_mu);
+    if (m < 0) return false;
+    int bots[2] = { seats[0], seats[1] };
+    if (!table_open(t, bots, 2, false, m, now_ms)) return false;
+    memset(&g_story[t - g_tables], 0, sizeof g_story[0]);
+    pthread_mutex_lock(&g_mu);
+    be_cup_started(&g_cup, m, t->gid, t->gid_len);
+    cup_changed();
+    pthread_mutex_unlock(&g_mu);
+    return true;
+}
+
+// At start: the stored cup goes on; a finished or missing one is drawn afresh (its old match files
+// removed). The four bots are the league rows with the contest bots' strategy keys.
+static void cup_open(int64_t now_wall) {
+    memset(&g_cup, 0, sizeof g_cup);
+    bool have = g_o.cup_file[0] && be_cup_load(&g_cup, g_o.cup_file, g_ids, g_n_bots);
+    for (int m = 0; m < BE_CUP_MATCHES; m++) g_cup.matches[m].live = 0;
+    if (have && g_cup.state == BE_TOUR_RUNNING) {
+        CB_INFO("birdseye", "botcup: going on, %u games played", g_cup.games);
+        cup_changed();
+        return;
+    }
+    uint8_t bots[BE_CUP_BOTS];
+    for (int k = 0; k < BE_CUP_BOTS; k++) {
+        int at = -1;
+        for (int i = 0; i < g_n_bots && at < 0; i++)
+            if (g_bots[i].key_len == strlen(BE_CUP_KEYS[k]) && memcmp(g_bots[i].key, BE_CUP_KEYS[k], g_bots[i].key_len) == 0) at = i;
+        if (at < 0) {
+            CB_WARN("birdseye", "botcup: the game server has no %s bot (CBASE_DEV_BOTCUP=1): no cup", BE_CUP_KEYS[k]);
+            memset(&g_cup, 0, sizeof g_cup);
+            g_cup.hash = be_wire_hash();
+            g_cup.champion = BE_TOUR_NONE;
+            return;
+        }
+        bots[k] = (uint8_t)at;
+    }
+    be_cup_draw(&g_cup, bots, now_wall);
+    for (int m = 0; m < BE_CUP_ROBIN; m++) {
+        char games[600], summary[600];
+        cup_paths(m, games, summary, sizeof games);
+        remove(games);
+        remove(summary);
+    }
+    CB_INFO("birdseye", "botcup: drawn: the round robin of %.*s, %.*s, %.*s, %.*s, then the final", BOT_NAME(bots[0]), BOT_NAME(bots[1]),
+            BOT_NAME(bots[2]), BOT_NAME(bots[3]));
+    cup_changed();
+}
+
+size_t be_cup_snapshot(void **out) {
+    be_w_cup *copy = malloc(sizeof *copy);
+    if (!copy) return 0;
+    pthread_mutex_lock(&g_mu);
+    *copy = g_cup;
+    pthread_mutex_unlock(&g_mu);
+    copy->hash = be_wire_hash();
+    *out = copy;
+    return sizeof *copy;
+}
+
 // ---- the gauntlet (gauntlet.h) -------------------------------------------------------------------
 
 // The gauntlet changed: kept (the file) and shown (the stream). Under g_mu.
@@ -621,7 +811,6 @@ static void gaunt_changed(void) {
     free(frame);
 }
 
-#define BOT_NAME(i) g_bots[i].name_len, g_bots[i].name
 
 static void gaunt_game_over(bool played, uint8_t fool_bot, int64_t now_ms) {
     pthread_mutex_lock(&g_mu);
@@ -1046,7 +1235,7 @@ typedef struct {
 static void live_path(char *out, size_t cap) { snprintf(out, cap, "%s.live", g_o.file); }
 
 static void live_save(void) {
-    if (!g_o.file[0] || g_o.tournament || g_o.gauntlet) return;   // a tournament asks its matches' games anew
+    if (!g_o.file[0] || g_o.tournament || g_o.gauntlet || g_o.botcup) return;   // a tournament asks its matches' games anew
     char path[600];
     live_path(path, sizeof path);
     FILE *f = fopen(path, "wb");
@@ -1133,7 +1322,9 @@ static void *league_main(void *arg) {
             table_tick(&g_tables[i], now_ms);
             if (g_tables[i].state != L_FREE) live++;
         }
-        if (g_o.tournament) {
+        if (g_o.botcup) {
+            while (live < g_o.tables && cup_new(now_ms)) live++;
+        } else if (g_o.tournament) {
             // Every match that can play starts its game at once (the bots-only pace is quick).
             while (live < g_o.tables && tour_new(now_ms)) live++;
         } else if (g_o.gauntlet) {
@@ -1244,7 +1435,15 @@ int be_league_start(const be_league_opts *o, char *err, size_t cap) {
     read_board(false);
     file_open();
     tour_open(cb_now_ms());
-    if (g_o.gauntlet) gaunt_open(cb_now_ms(), cb_mono_ms());
+    if (g_o.botcup) {
+        g_story = calloc((size_t)g_n_tables, sizeof *g_story);
+        if (!g_story) {
+            snprintf(err, cap, "birdseye: no memory for the cup's stories");
+            return CB_E_NOMEM;
+        }
+        if (g_o.cup_dir[0]) mkdir(g_o.cup_dir, 0755);
+        cup_open(cb_now_ms());
+    } else if (g_o.gauntlet) gaunt_open(cb_now_ms(), cb_mono_ms());
     else if (!g_o.tournament) live_load(cb_mono_ms());
     CB_INFO("birdseye", "league: %d bots, %d tables at once, up to %d a bot, podkidnoy %d%%, against %s", g_n_bots, g_n_tables, g_o.tables_per_bot, g_o.podkidnoy, o->server);
     atomic_store(&g_stop, false);
@@ -1269,6 +1468,8 @@ void be_league_stop(void) {
     }
     free(g_tables);
     g_tables = NULL;
+    free(g_story);
+    g_story = NULL;
     g_n_tables = 0;
     be_client_free(&g_w);
     if (g_file) fclose(g_file);

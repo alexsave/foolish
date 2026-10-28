@@ -18,6 +18,10 @@ const FAMILY_COLOR: Record<string, string> = {
   blackpowder: '#374151',
   cordite: '#1a9a5a',
   octogen: '#8b3fc9',
+  kestrel: '#0e9aa7', // the Bot Cup's contest bots (foolish/c/botcup)
+  sapper: '#c2410c',
+  sonnet: '#4f46e5',
+  haiku: '#65a30d',
   human: '#d6336c', // a person in the field (birdseye BE_HUMAN_NAME), not a strategy family
 };
 export const HUMAN_KEY = 'human';

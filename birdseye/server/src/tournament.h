@@ -22,7 +22,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define BE_TOUR_MAX_GAMES 9   // a match drawn this often goes to the higher seed
+#define BE_TOUR_MAX_GAMES BE_TOUR_MAX_GAMES_W   // (wire.h, 9) a match drawn this often goes to the higher seed
 
 // A fresh bracket from `n` bots' ratings and strategy families (`is_random[i]`: bot i plays the
 // random brain). false when fewer than 49 bots are given (one is always left out).

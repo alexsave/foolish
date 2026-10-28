@@ -23,7 +23,7 @@ interface Props {
   version: number;            // bumps on every change of this table (refetches the detail)
   events: WEvent[];           // this table's events from the stream, newest first
   now: number;
-  onBack: () => void;
+  onBack?: () => void;        // none: no way back (the Bot Cup's embedded table)
 }
 
 export function eventText(e: WEvent, seats: WTable['seats'] | undefined): string {
@@ -65,9 +65,11 @@ export function TableDetail({ gid, live, version, events, now, onBack }: Props) 
     return (
       <section className="card detail">
         <div className="detail-head">
-          <button type="button" className="btn-sm" onClick={onBack}>
-            &larr; All tables
-          </button>
+          {onBack && (
+            <button type="button" className="btn-sm" onClick={onBack}>
+              &larr; All tables
+            </button>
+          )}
           <h2 className="card-title">Table {gid}</h2>
         </div>
         <div className="empty">{error ?? 'Loading...'}</div>
@@ -92,9 +94,11 @@ export function TableDetail({ gid, live, version, events, now, onBack }: Props) 
   return (
     <section className="card detail">
       <div className="detail-head">
-        <button type="button" className="btn-sm" onClick={onBack}>
-          &larr; All tables
-        </button>
+        {onBack && (
+          <button type="button" className="btn-sm" onClick={onBack}>
+            &larr; All tables
+          </button>
+        )}
         <h2 className="card-title">Table {gid}</h2>
         <span className={`pill ${pcls}`}>{PHASE_WORD[t.phase]}</span>
         <span className="pill pill-grey num">{t.nSeats} seats</span>

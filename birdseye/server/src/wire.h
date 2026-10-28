@@ -23,6 +23,8 @@
 //   GET /be/gauntlet         be_w_gauntlet: the human's ladder (state BE_GAUNT_IDLE when none);
 //                            [BE_F_GAUNT] on the stream on every change
 //   POST /be/gauntlet/new    a new run from rung 1 (admin token; 409 while a run is going on)
+//   GET /be/botcup           be_w_cup: the Bot Cup (state BE_TOUR_IDLE when none); [BE_F_CUP] on
+//                            the stream on every change
 #ifndef BIRDSEYE_WIRE_H
 #define BIRDSEYE_WIRE_H
 
@@ -215,6 +217,7 @@ typedef struct {
 #define BE_MODE_MIXED      2
 #define BE_MODE_TOURNAMENT 3
 #define BE_MODE_GAUNTLET   4
+#define BE_MODE_BOTCUP     5
 
 // ---- the tournament (tournament.h) -----------------------------------------------------------------
 //
@@ -228,6 +231,7 @@ typedef struct {
 #define BE_TOUR_MATCHES 47
 #define BE_TOUR_NONE    255   // no bot (yet), no winner (yet)
 #define BE_TOUR_WIN     3     // games to win a match
+#define BE_TOUR_MAX_GAMES_W 9 // tournament.h BE_TOUR_MAX_GAMES: a match drawn this often is decided
 
 #define BE_TOUR_IDLE    0     // no tournament
 #define BE_TOUR_RUNNING 1
@@ -308,6 +312,38 @@ typedef struct {
     be_w_rung rungs[BE_GAUNT_RUNGS];
 } be_w_gauntlet;
 
+// ---- the Bot Cup (botcup.h) -------------------------------------------------------------------------
+//
+// The four contest bots (foolish/c/botcup): a round robin of two-player best-of-five matches, one at
+// a time in a fixed order, then a final between the top two of the standings. A match is the
+// tournament's (be_w_match: first to BE_TOUR_WIN, a drawn game played again, BE_TOUR_MAX_GAMES at
+// most); a, the first named, sits first in the match's odd games (1, 3, 5).
+
+#define BE_CUP_BOTS    4
+#define BE_CUP_ROBIN   6      // every pair once
+#define BE_CUP_MATCHES 7      // the round robin, then the final (matches[6])
+
+// be_w_cup.result[m * BE_TOUR_MAX_GAMES_W + g]: game g of match m
+#define BE_CUP_G_NONE 0
+#define BE_CUP_G_A    1      // b was the fool
+#define BE_CUP_G_B    2      // a was the fool
+#define BE_CUP_G_DRAW 3
+
+typedef struct {
+    uint32_t   hash;
+    uint8_t    state;                 // BE_TOUR_IDLE, BE_TOUR_RUNNING, BE_TOUR_DONE
+    uint8_t    champion;              // league index, BE_TOUR_NONE until the final is won
+    uint8_t    bots[BE_CUP_BOTS];     // league indices: kestrel, sapper, sonnet, haiku
+    // The round robin's standings, by index into bots[]: match wins, then game wins, then game
+    // wins less game losses, then head to head (among the tied), then the order of bots[].
+    uint8_t    order[BE_CUP_BOTS];    // best first
+    uint8_t    mw[BE_CUP_BOTS], ml[BE_CUP_BOTS], gw[BE_CUP_BOTS], gl[BE_CUP_BOTS];
+    uint32_t   games;                 // games played, draws included
+    int64_t    started_ms, finished_ms;
+    uint8_t    result[BE_CUP_MATCHES * BE_TOUR_MAX_GAMES_W];   // match m's game g at m * 9 + g
+    be_w_match matches[BE_CUP_MATCHES];
+} be_w_cup;
+
 // POST /be/session (dev mode only): the site's token for the stream's HELLO, a session of a fixed
 // site account on this process's own store, made through the platform's auth.
 #define BE_TOKEN_MAX 2048
@@ -327,6 +363,7 @@ typedef struct {
 #define BE_F_BOT    5
 #define BE_F_TOUR   6   // the whole be_w_tour, on every change
 #define BE_F_GAUNT  7   // the whole be_w_gauntlet, on every change
+#define BE_F_CUP    8   // the whole be_w_cup, on every change
 
 // The layout hash structgen printed for this header, compiled in (the Makefile).
 #ifndef BIRDSEYE_WIRE_HASH

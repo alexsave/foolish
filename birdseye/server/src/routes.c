@@ -93,6 +93,19 @@ static void tournament_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res
     free(buf);
 }
 
+// ---- GET /be/botcup ------------------------------------------------------------------------------
+
+static void botcup_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    void *buf = NULL;
+    size_t n = be_cup_snapshot(&buf);
+    if (!n) {
+        cb_router_error(res, 500, "no memory");
+        return;
+    }
+    answer(res, buf, n);
+    free(buf);
+}
+
 // ---- GET /be/gauntlet, POST /be/gauntlet/new ---------------------------------------------------
 
 static void gauntlet_get(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
@@ -169,6 +182,7 @@ static const cb_route ROUTES[] = {
     { "GET", "/be/league", CB_ROUTE_POOL, league_get, 0 },
     { "GET", "/be/tournament", CB_ROUTE_POOL, tournament_get, 0 },
     { "GET", "/be/gauntlet", CB_ROUTE_POOL, gauntlet_get, 0 },
+    { "GET", "/be/botcup", CB_ROUTE_POOL, botcup_get, 0 },
     { "POST", "/be/gauntlet/new", CB_ROUTE_POOL, gauntlet_new, 0 },
 };
 const cb_route_list be_route_list = { ROUTES, sizeof ROUTES / sizeof ROUTES[0] };

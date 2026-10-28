@@ -12,7 +12,11 @@
 # other at tables of their own, BE_LEAGUE_TABLES at once), "tournament" (the stored tournament goes
 # on, or a new one is drawn when none is running; the site shows the last one in every mode), or
 # "mixed" (fake humans and some bots), or "gauntlet" (with BE_HUMAN=1: the human against one bot
-# of each brain, weakest first, a best of five each; birdseye/server/src/gauntlet.h).
+# of each brain, weakest first, a best of five each; birdseye/server/src/gauntlet.h), or "botcup"
+# (the four Bot Cup contest bots, foolish/c/botcup: a round robin of best-of-five matches, one at a
+# time, then a final; each match's summary in birdseye/data/botcup/; birdseye/server/src/botcup.h).
+# The game server runs with CBASE_DEV_BOTCUP=1 (GAME_BOTCUP=0 leaves it off), which adds the four
+# contest bots to its bot list, so every mode's league seats them too.
 # The other knobs are the BE_* variables birdseye/server/src/birdseye_app.c lists (BE_PLAYERS,
 # BE_TABLES, BE_THREADS, BE_THINK_MS, BE_BOT_SHARE, BE_PODKIDNOY, BE_HOSTILE_EVERY, BE_REMATCH,
 # BE_SEED); WEB=0 leaves the site out.
@@ -50,6 +54,9 @@ mkdir -p "$RUN_DIR" "$BE/data"
 # human's pace (a dev-only think time of 1.5 to 5 s) on 40.
 if [ "${BE_MODE:-league}" = tournament ]; then
     THINK_DEFAULT=""; TABLES_DEFAULT=16
+elif [ "${BE_MODE:-league}" = botcup ]; then
+    # The Bot Cup: one match at a time on one table, at the kernel's own bots-only pace.
+    THINK_DEFAULT=""; TABLES_DEFAULT=1
 elif [ "${BE_MODE:-league}" = gauntlet ]; then
     # The gauntlet: one table, the human's, the bot at the kernel's own pace.
     THINK_DEFAULT=""; TABLES_DEFAULT=1
@@ -132,7 +139,7 @@ wait_listening() {
         CBASE_LIMIT_SIGNUP_IP=1000000 CBASE_LIMIT_SIGNUP_ALL=1000000 CBASE_LIMIT_SIGNIN_IP=1000000 \
         CBASE_LIMIT_CREATE_USER=1000000 CBASE_LIMIT_BUMP_USER=1000000 CBASE_LIMIT_SUB_USER=1000000 CBASE_LIMIT_CHAT_USER=1000000 \
         CBASE_MAX_CONNS=16384 CBASE_LISTEN_BACKLOG=4096 CBASE_BOT_SPEEDUP=${GAME_BOT_SPEEDUP:-1} \
-        CBASE_BOT_THINK_MS=${GAME_BOT_THINK_MS-$THINK_DEFAULT} \
+        CBASE_BOT_THINK_MS=${GAME_BOT_THINK_MS-$THINK_DEFAULT} CBASE_DEV_BOTCUP=${GAME_BOTCUP:-1} \
         exec build/cbase serve
 ) > "$RUN_DIR/game.log" 2>&1 &
 echo $! > "$RUN_DIR/game.pid"
@@ -146,6 +153,7 @@ wait_listening "$RUN_DIR/game.log" "the game server"
         BE_HUMAN_NAME="$HUMAN_NAME" BE_HUMAN_PASSWORD="$HUMAN_PASSWORD" BE_HUMAN_SEED=${BE_HUMAN_SEED:-24} \
         BE_MODE=${BE_MODE:-league} BE_LEAGUE_TABLES=${BE_LEAGUE_TABLES:-$TABLES_DEFAULT} BE_LEAGUE_PER_BOT=${BE_LEAGUE_PER_BOT:-4} BE_ADMIN_TOKEN="$ADMIN_TOKEN" BE_LEAGUE_FILE="${BE_LEAGUE_FILE:-$BE/data/league.bin}" BE_TOURNAMENT_FILE="${BE_TOURNAMENT_FILE:-$BE/data/tournament.bin}" \
         BE_GAUNTLET_FILE="${BE_GAUNTLET_FILE:-$BE/data/gauntlet.bin}" \
+        BE_BOTCUP_FILE="${BE_BOTCUP_FILE:-$BE/data/botcup/botcup.bin}" BE_BOTCUP_DIR="${BE_BOTCUP_DIR:-$BE/data/botcup}" \
         exec build/birdseye serve
 ) > "$RUN_DIR/birdseye.log" 2>&1 &
 echo $! > "$RUN_DIR/birdseye.pid"
