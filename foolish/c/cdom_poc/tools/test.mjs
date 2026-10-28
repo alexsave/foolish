@@ -39,7 +39,7 @@ async function check(name, fn) {
 
 try {
   await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug');
-  await b.until(`window.appReady`);
+  await ready(); // the board is drawn when the store answers (nothing kept: the golden's)
   await hold(); // the bot may act on the golden's board (it defends): its step waits for the test
 
   await check('first paint: the React golden DOM for the same board, but for what this port leaves out', async () => {

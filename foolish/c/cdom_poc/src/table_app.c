@@ -919,7 +919,6 @@ static void tex_go(void);
 #define GAME_KEY "foolish-game-v1"
 enum { STORE_GAME = 100 }; /* the store's token for the game (the textures' are 0 to NTEX - 1) */
 static unsigned char game_blob[GAME_KEEP_CAP];
-static int game_touched;   /* an operation was committed on this load: the store's game is older */
 static double game_asked, game_answered;
 static int game_adopted;
 
@@ -1001,7 +1000,6 @@ static void bot_check(void) {
 static void committed(void) {
   game_keep_canonical(&G);
   game_save();
-  game_touched = 1;
   mark_shown();
 }
 
@@ -1106,21 +1104,24 @@ static void new_game(void) {
   render();
 }
 
-/* The store's answer to the start's ask: the game left on an earlier load, adopted unless a move
- * has already been made on this one. */
+/* The store's answer to the start's ask, the table's first render: the game left on an earlier
+ * load when it reads as one this table plays, else the seeded deal. Until it answers (at most
+ * CD_STORE_DEADLINE_MS) the page shows its frame and no board: measured (README, Reload), drawing
+ * the seeded deal at once and the kept game over it moved first contentful paint from 70 to 136 ms
+ * at x1 and from 195 to 340 at x4, and holding the board does not move it (the store answers at 54
+ * ms, before the stylesheet's first paint at 70). */
 static void game_stored(const uint8_t *p, int32_t len) {
   game_answered = cd_now();
-  if (len <= 0 || game_touched || !game_keep_load(&G, p, len)) return;
-  game_adopted = 1;
+  game_adopted = len > 0 && game_keep_load(&G, p, len);
   table_reset();
+  game_keep_canonical(&G);
   mark_shown();
-  bot_pending = 0;
-  bot_gen++;
   bot_check();
   render();
 }
 
 void cd_on_event(const cd_event_rec *e) {
+  if (!V) return; /* no board yet: the store has not answered */
   if (e->type == CD_EV_RESIZE) { render(); return; } /* the hand is laid out for the new width */
   if (e->type != CD_EV_CLICK) return;
   uint32_t tag = cd_tag((cd_id)e->id);
@@ -1616,10 +1617,7 @@ void cd_main(void) {
   cd_listen_window(CD_EV_RESIZE);
   game_asked = cd_now();
   cd_store_get(STORE_GAME, GAME_KEY, sizeof GAME_KEY - 1, CD_STORE_DEADLINE_MS);
-  game_keep_canonical(&G);
-  mark_shown();
-  bot_check();
-  render();
+  /* the board is drawn when the store answers (game_stored) */
   if (!page_notex()) {
     textures_begin();                /* the store is asked now; what it has lands when read */
     cd_raf_request(RAF_PAINTED);     /* what it has not is made once the table has painted */

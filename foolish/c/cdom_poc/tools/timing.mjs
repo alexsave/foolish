@@ -19,7 +19,7 @@ const RUNS = Number(process.argv[2] || 15), CPU = Number(process.argv[3] || 1);
 const server = await serve(8720, FOOLISH, null, { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' });
 const b = await launch();
 const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
-const rows = { fcp: [], ready: [], selScript: [], selFrame: [], playScript: [], playFrame: [], botScript: [], botFrame: [],
+const rows = { fcp: [], ready: [], asked: [], answered: [], selScript: [], selFrame: [], playScript: [], playFrame: [], botScript: [], botFrame: [],
   fernAt: [], woodAt: [], woolAt: [], fernMs: [], woodMs: [], woolMs: [], decoded: [], mem: [] };
 const TEX = process.env.TEX, ORIGIN = 'http://127.0.0.1:8720';
 const texDone = `window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`;
@@ -39,6 +39,7 @@ try {
     if (process.env.BLANK) { await b.goto('about:blank'); await sleep(300); }
     await b.goto('http://127.0.0.1:8720' + (process.env.PAGE || '/c/cdom_poc/out/index.html?debug'));
     await b.until('window.appReady');
+    await b.until('window.app.then((x) => x.app_game_store(1) > 0)'); // the board is drawn when the store answers
     await b.evaluate('window.app.then((x) => x.app_debug_hold(1))'); // the bot's step is the test's to run
     if (await b.evaluate('window.app.then((x) => x.app_game_store(2))')) throw new Error('a kept game was adopted: not the golden board');
     if (TEX) {
@@ -67,9 +68,10 @@ try {
       const play = await time(() => document.querySelector('[data-pill="Attack"]').click());
       const bot = await time(() => x.cd_timer(3)); // the bot's step (the test build's release path)
       return { fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime, ready: window.appReady,
+        asked: x.app_game_store(0), answered: x.app_game_store(1),
         sel, play, bot };
     })()`);
-    rows.fcp.push(r.fcp); rows.ready.push(r.ready);
+    rows.fcp.push(r.fcp); rows.ready.push(r.ready); rows.asked.push(r.asked); rows.answered.push(r.answered);
     for (const [s, f] of r.sel) { rows.selScript.push(s); rows.selFrame.push(f); }
     rows.playScript.push(r.play[0]); rows.playFrame.push(r.play[1]);
     rows.botScript.push(r.bot[0]); rows.botFrame.push(r.bot[1]);
@@ -78,7 +80,9 @@ try {
 } finally { await b.close(); server.close(); }
 const f = (v) => v.toFixed(2).padStart(7);
 console.log(`cdom table (${process.env.PAGE || 'out/index.html'}), ${RUNS} fresh loads, CPU x${CPU}: median ms`);
-console.log(`first contentful paint ${f(med(rows.fcp))}   cdom.start resolved ${f(med(rows.ready))}`);
+const span = (a) => { const x = [...a].sort((p, q) => p - q); return `(${x[Math.floor(x.length / 4)].toFixed(1)}-${x[Math.floor(x.length * 3 / 4)].toFixed(1)})`; };
+console.log(`first contentful paint ${f(med(rows.fcp))} ${span(rows.fcp)}   cdom.start resolved ${f(med(rows.ready))} ${span(rows.ready)}`);
+console.log(`the kept game asked of the store ${f(med(rows.asked))}, answered ${f(med(rows.answered))} ${span(rows.answered)} (ms after navigation)`);
 console.log(`select a card          ${f(med(rows.selScript))} script   ${f(med(rows.selFrame))} with style and layout`);
 console.log(`play (Attack pill)     ${f(med(rows.playScript))} script   ${f(med(rows.playFrame))} with style and layout`);
 console.log(`bot step               ${f(med(rows.botScript))} script   ${f(med(rows.botFrame))} with style and layout`);

@@ -252,7 +252,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   let r;
   try {
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug');
-    await b.until(`window.appReady`);
+    await b.until(`window.appReady && window.app.then((x) => x.app_game_store(1) > 0)`);
     r = await consistRun(b, { games, seed, log: console.log });
   } finally { await b.close(); server.close(); }
   console.log(`${r.games} games, ${r.steps} steps, seed ${seed}; ${r.presses} pill presses, ${r.stillOffered} with the pill still offered after the move (a press hidden)`);
