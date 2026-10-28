@@ -31,7 +31,7 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 - `src/trig.c`: sin, cos and tan for the wool and the fern (musl's polynomials, a reduction for arguments below 2^28) and JS's `%` for the wood (141 lines).
 - `src/crtrig.c`: cos rounded correctly, as Chrome's is, for the wood (139 lines).
 - `src/index.html`: the page; `build.sh` inlines the minified shim into it.
-- `vendor/`: cdom from `/Users/alex/Dev/cdom-fixes`, branch port-fixes, commit 8b9266f, unchanged (`src/cdom.c`, `src/cdom.h`, `src/cdom_net.c`, `src/cdom_net.h`, `src/cdom_store.c`, `src/cdom_store.h`, `src/mini.c`, `shim/cdom.js`).
+- `vendor/`: cdom from `/Users/alex/Dev/cdom-fixes`, branch port-fixes, commit b051ddf, unchanged (`src/cdom.c`, `src/cdom.h`, `src/cdom_net.c`, `src/cdom_net.h`, `src/cdom_store.c`, `src/cdom_store.h`, `src/mini.c`, `shim/cdom.js`).
   The table links `cdom_store.c` (the textures across loads) but not `mini.c` (the kernel's libc brings memcmp and strlen) nor `cdom_net.c` (it has no network yet); the network test links the network.
 - `tests/net_test.c`, `tests/net_test.mjs`: cdom's network imports against a local echo server.
 - `tests/tex_test.c`: the texture generators alone, for `tools/texparity.mjs`.
@@ -79,7 +79,9 @@ After the first paint the DOM is the browser's: a patched card is one `style.set
 
 With textures, `shots/react_golden_tex.png` is the golden with the app's TS textures, at the app's sizes (the fern 1000x1400, the wood 1920x1080 whole, the wool 3840x2160 whole), made from the C's seeds and put where WoolBackgroundLayer, getTextureStyle, CardBack and PlayerRing put them.
 Against `shots/cdom_tex_midgame.png` 6,643 of 786,432 pixels differ, every one of them on a card back: 4,025 on the deck, 1,520 and 1,098 on the two mini hands (the fern, Textures); the wool and the wood are the same pixels.
-At 390x844 the count is 21,032: the 13,952 above (the hand, laid out for jsdom's width in the golden), the card backs, nothing on the wool.
+At 390x844 the count is 20,901 to 20,997 over three runs: the 13,952 above (the hand, laid out for jsdom's width in the golden), the card backs, nothing on the wool.
+`tools/shots.mjs` fails over a bar at both sizes (the first paint exactly as above; with textures at most 8,000 over it), and the mutant that places the wool 16 px off makes it fail (755,744).
+The shots run Chrome with `--disable-gpu-rasterization`: with GPU raster Chrome drew one large JPEG two ways, so the same wool bytes under a new url differed from themselves in about 225,000 of 329,160 pixels (by 1 to 20 a channel) in about one load in five while the machine was at a load average of 60, and a run of shots at 390x844 then counted about 245,000; it was never the texture path (the C's crop and the TS's middle decode to the same pixels, and the same bytes did it to the TS's own image).
 `shots/fern_backs.png` and `shots/fern_backs_390x844.png` put a card back of each side by side, 4x (React's left).
 
 ## Consistency
@@ -176,7 +178,8 @@ How they land: `cd_encode_image` (cdom) encodes the pixels in C memory (RGB for 
 Across loads: the bytes go into cdom's store (`cd_store_put`, IndexedDB) under a key with the generator's version and what the picture depends on (the fern's size, a hash of the wood's rectangles); a later load asks the store first (`cd_store_get`, 1,500 ms deadline) and sets what it finds, making nothing.
 The app does the same with TextureCacheDB (src/utils/textureCache.ts: keys fern_v1, wood_v2, wool_v1, reads raced against 1.5 s).
 
-When: the store is asked two frames after the first paint; making waits 50 ms more (started on a timer right after the first frame, making held `cdom.start` to 165 ms at x4 against 60).
+When: the store is asked for all four at once as the table starts (`cd_main`), and the page opens the store's database while the wasm loads (cdom's `start` option `openStore`), so a kept texture lands as soon as it is read; making waits for two frames after the first paint and 50 ms more (started on a timer right after the first frame, making held `cdom.start` to 165 ms at x4 against 60), and keeps its order, waiting for a texture the store has not answered for yet.
+The store's tokens: 0 to 3 the textures, 100 the game (`STORE_GAME`, where it is declared); `cd_on_store` hands the game's to the game first.
 Each texture is made in slices of about 8 ms on animation frames, in the order fern, wool, the table's wood, the end screen's wood, and the next one starts when the last one's file is back: Chrome encodes a PNG in idle time, and every-frame slices left none (at x4 the fern, made in 50 ms, landed 700 ms late).
 One block of 6,465,024 bytes (an 8 MiB size class) holds each in turn and goes back to cdom's free lists at the end; no block is taken when all four come from the store.
 
@@ -249,6 +252,24 @@ At x4 (`CPU=4`, measured while the load average climbed to 12 on 8 cores, so upp
 The app's warm read in the same harness (textureCache.ts getCachedTexture, each opening TextureCacheDB): fern 5.5 ms, wood 1.0, wool 0.9 at x4.
 No React figure is given: the real app's numbers need its server and bundle, which this PoC does not run.
 
+Warm loads after the store is asked at start (the follow-up; `tools/textime.mjs` now waits for the store's answer for the game, as the board does, rather than the human's turn).
+Measured under heavy load: load average 29 to 73 on 8 cores around the runs (another agent's `cnitro_eval` processes at 65 to 83% of a core each), above the core count, so every absolute here is an upper bound; the arms ran interleaved under the same load, and the ratios and the first paint within a session are the results.
+One x1 run lost its Chrome session after three rounds (a tab gone under the load; one run of `tools/test.mjs` lost it the same way and the next three passed) and is not counted.
+| | x1 port | x1 TS | x4 port | x4 TS |
+| --- | ---: | ---: | ---: | ---: |
+| warm: fern set | 40 (38-78) | 25 (23-38) | 215 (147-268) | 49 (38-61) |
+| warm: wool set | 43 (41-83) | 30 (25-43) | 245 (205-286) | 50 (40-64) |
+| warm: all decoded | 133 (122-148) | 139 (117-164) | 326 (299-367) | 171 (147-189) |
+| cold: all decoded | 941 (898-969) | 1,953 (1,924-2,311) | 2,615 (2,610-2,716) | 8,697 (6,983-8,977) |
+| first contentful paint: `?notex` / cold / warm | 81 / 79 / 74 | | 142 / 128 / 173 | |
+At x1 a warm port load now has all four decoded with the TS page (0.96 of it; 1.11 before) and sets them before its own first paint (40 against 74), which does not move.
+At x4 it is still 1.9 times the TS page: the store is asked at 53 ms (when the wasm has started) and answers about 150 ms later, behind the page's own start-up work at x4 (the game's answer, then the board's first frame); a get of 1.5 MB on an idle page takes 2 ms at x4, so it is the busy thread, not IndexedDB.
+The TS page has no start-up of its own (it asks at navigation, with nothing else to do), so this is not a comparison with the app, whose reads wait for its bundle and its mount; asking for the textures before the game moved nothing (230-310 against 210-266), and was taken back.
+At x4 the first paint went 142 / 128 / 173 (`?notex` / cold / warm) with spreads of 122-211, 117-146 and 147-218 under a load of 70, which overlap.
+Measured again once the load fell to 2-5, paired `?notex` and warm loads alternating, 15 to 41 rounds: x4 119 (114-121) against 120 (118-120) and 118 (111-121) against 115 (111-119); x1 63 (59-70) against 70 (63-77) over 41 rounds.
+The x1 warm loads paint 4 to 8 ms later than `?notex` ones (an A/A run, `?notex` against `?notex`, gives 2), and that does not come from the textures' timing: asking the store only after the board's first paint gave 65 against 69, holding a texture read before that paint until after it gave 59 against 68 and 65 against 67, and asking 400 ms after the board 60 against 68; so the store is asked at start and a kept texture is set as soon as it is read.
+
+
 The string table (`tools/strings.mjs`, three games played out by clicks):
 | | before | after |
 | --- | ---: | ---: |
@@ -263,7 +284,7 @@ Sizes:
 - `table.wasm` 75,303 bytes raw, 31,092 brotli (q11), 34,723 gzip (-9) after the consistency pass (the blob's writer and reader, `state_canonical`, `bot_wait_ms`, `anim_finish_rows`, the end screen's rows, the save's notice); before it 71,391, 29,539 and 32,872, before the texture pass 71,725, 29,589 and 32,956, before the first port-fixes pass 54,992, 22,122 and 24,870.
   musl's 2/pi table went with jsmath.c; the crop, the rectangles, the store and the keys came in.
   For scale, the React app's kernel alone, web.wasm, is 67,311 raw and 31,219 gzip (c/Makefile), before any JavaScript, and its textures are in its JavaScript.
-- The shim: cdom's own, unchanged, written to be read and inlined minified: 6,678 bytes minified, 2,632 brotli (6,553 and 2,615 in its golfed form before); cdom's PERF_LOG.md, SHIM_LINES, says what each import is for.
+- The shim: cdom's own, unchanged, written to be read and inlined minified: 6,623 bytes minified, 2,658 brotli (6,553 and 2,615 in its golfed form before); cdom's PERF_LOG.md, SHIM_LINES, says what each import is for.
   Before the first port-fixes pass the port carried 172 lines of its own patched shim.
 - The C the table is written in: 1,710 lines (`table_app.c` 1,626, with the texture pipeline and the test build's window on the kernel, `game_keep.c` and `.h` 48, `ui.h` 36, `kernel_glue.c` 20), plus the generators (385), trig.c (141) and crtrig.c (139).
 
