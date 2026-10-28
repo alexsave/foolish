@@ -8,6 +8,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { launch, serve, FOOLISH } from './cdp.mjs';
 import { playToEnd } from './play.mjs';
+import { consistRun, READ_DOM, clickCard } from './consist.mjs';
 
 const golden = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/bout_2p_attacker.html'), 'utf8');
 const server = await serve(8720, FOOLISH);
@@ -17,14 +18,26 @@ const all = (sel, expr) => b.evaluate(`[...document.querySelectorAll(${JSON.stri
 const turn = () => b.evaluate(`document.querySelector('[data-game-container]').dataset.turn`);
 const pills = () => all('[data-pill]', 'e.dataset.pill');
 const settle = async () => { await b.until(`document.querySelector('[data-game-container]').dataset.turn !== 'bot'`, 15000); };
+// The test build (?debug): the bot's steps held for the test to release one by one, or its waits
+// made a hundredth of the kernel's for the games played out.
+const hold = () => b.evaluate(`window.app.then((x) => x.app_debug_hold(1))`);
+const fast = () => b.evaluate(`window.app.then((x) => x.app_debug_fast(1))`);
+const releaseBot = async () => {
+  await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
+  await b.evaluate(`window.app.then((x) => x.app_debug_release())`);
+  await b.until(`window.app.then((x) => !x.app_debug_due())`);
+  await new Promise((r) => setTimeout(r, 50));
+};
+const ready = async () => { await b.until(`window.appReady`); await b.until(`window.app.then((x) => x.app_game_store(1) > 0)`); };
 let failed = 0;
 async function check(name, fn) {
   try { await fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message.split('\n').join('\n     ')}`); }
 }
 
 try {
-  await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex');
-  await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
+  await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug');
+  await b.until(`window.appReady`);
+  await hold(); // the bot may act on the golden's board (it defends): its step waits for the test
 
   await check('first paint: the React golden DOM for the same board, but for what this port leaves out', async () => {
     // The texture hooks are var()s that fall back to the golden's look until a texture lands
@@ -43,7 +56,7 @@ try {
     theirs = theirs.replace('position: absolute; left: 0px; right: 0px; justify-content: end;',
       'position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); left: 0px; right: 0px; justify-content: end;')
       .replace('left: 49.99999999999999%', 'left: 50%')
-      .replace('class="game-container">', 'class="game-container" data-turn="human">');
+      .replace('class="game-container">', 'class="game-container" data-turn="bot">');
     theirs = theirs.trim();
     if (mine !== theirs) {
       const a = theirs.split('><'), m = mine.split('><');
@@ -90,12 +103,14 @@ try {
       .forEach((e) => { e.$kept = 1; })`);
     await b.click('[data-pill="Attack"]');
     assert.deepEqual(await all('[data-table-container] [data-battle-index]', 'e.dataset.card'), ['1-5', '3-5', '0-5']);
+    assert.deepEqual(await all('[data-hand-plane] [data-card]', 'e.style.borderColor'), ['black', 'black', 'black'], 'Attack spent the selection');
     assert.deepEqual(await all('[data-hand-plane] [data-card]', 'e.dataset.card'), ['1-6', '3-11', '3-13']);
     assert.equal(await turn(), 'bot');
     assert.equal(await b.evaluate(`[...document.querySelectorAll('[data-hand-plane] [data-card]')].every((e) => e.$kept)`), true,
       'the three cards left in my hand are the nodes that were there');
     assert.equal(await b.evaluate(`[...document.querySelectorAll('[data-table-container] > [data-location="table"]')].filter((e) => e.$kept).length`), 2,
       'the two battles that were down are the same nodes');
+    await releaseBot();
     await settle();
     // The handwritten bot faces 6h/8h, 6d and 6s: it covers both open sixes, or it takes all five cards.
     const table = await all('[data-table-container] > [data-location="table"]', 'e.querySelectorAll("[data-card]").length');
@@ -141,6 +156,80 @@ try {
     assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
   });
 
+  await check('the bot waits as the kernel says (bot_wait_ms: 3000 ms after the last move shown), and a move of mine in between puts its step back', async () => {
+    await b.evaluate(`indexedDB.deleteDatabase('cdom'), 1`);
+    await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug');
+    await ready();
+    // The golden's board: the bot defends against 6d, and I may throw in my 6s meanwhile.
+    assert.equal(await turn(), 'bot');
+    assert.equal(await b.evaluate(`window.app.then((x) => x.app_bot_wait())`), 3000, 'the kernel\'s wait with a human in the game');
+    await new Promise((r) => setTimeout(r, 1000));
+    await b.click('[data-hand-plane] [data-card="0-5"]');
+    await b.click('[data-pill="Attack"]');
+    const t1 = await b.evaluate('performance.now()');
+    const SHOWN = `[...document.querySelectorAll('[data-table-container] [data-card]')].length + ':' + document.querySelector('[data-player-id="u-anna-0001"]').lastElementChild.textContent`;
+    const before = await b.evaluate(SHOWN);
+    assert.equal(before, '4:4', 'my throw-in is on the table, the bot has not moved');
+    await b.until(`(${SHOWN}) !== ${JSON.stringify(before)}`, 8000);
+    const t2 = await b.evaluate('performance.now()');
+    console.log(`     (the bot moved ${Math.round(t2 - t1)} ms after my throw-in, ${Math.round(t2)} ms after the load)`);
+    assert.ok(t2 - t1 >= 2900 && t2 - t1 < 4500, `the bot's step 3000 ms after my move, not after the load: ${Math.round(t2 - t1)} ms`);
+  });
+
+  await check('the table is the kernel\'s game and keeps React\'s rules at every click and bot step of played games (tools/consist.mjs)', async () => {
+    await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug');
+    await ready();
+    const r = await consistRun(b, { games: 3, seed: 1 });
+    console.log(`     (${r.games} games, ${r.steps} steps; ${r.presses} pill presses, ${r.stillOffered} with the pill still offered after its move)`);
+    const lines = [...r.kinds].map(([kind, { n, first }]) => `${kind} x${n}: at step ${first.step} after ${first.after} (before: ${first.recent.join(', ')}): ${first.detail}`);
+    assert.deepEqual(lines, [], 'no disagreement');
+    assert.equal(r.games, 3, 'three games played out');
+  });
+
+  await check('a reload lands in the same game, which plays on to its end; after Play again a reload lands in the new one', async () => {
+    const page = 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug';
+    const board = async () => { const d = await b.evaluate(READ_DOM); d.hand = d.hand.map((h) => [h.card, h.left, h.bottom]); return JSON.stringify(d); };
+    const reload = async () => { await new Promise((r) => setTimeout(r, 200)); await b.goto(page); await ready(); await hold(); };
+    await b.evaluate(`indexedDB.deleteDatabase('cdom'), 1`);
+    await reload();
+    assert.equal(await b.evaluate(`window.app.then((x) => x.app_game_store(2))`), 0, 'nothing stored: the seeded deal');
+    // three moves of mine and the bot's answers, then a card left selected (not kept, as in React)
+    await b.click('[data-hand-plane] [data-card="0-5"]'); await b.click('[data-pill="Attack"]');
+    await releaseBot();
+    for (let m = 0; m < 2 && (await turn()) !== 'over'; m++) {
+      const p = await pills();
+      const hand = await all('[data-hand-plane] [data-card]', 'e.dataset.card');
+      let moved = false;
+      for (const c of hand) {
+        await clickCard(b, c);
+        const q = (await pills()).filter((x) => x === 'Attack' || x === 'Cover' || x === 'Pass');
+        if (q.length) { await b.click(`[data-pill="${q[0]}"]`); moved = true; break; }
+        await clickCard(b, c);
+      }
+      if (!moved && p.includes('Good')) await b.click('[data-pill="Good"]');
+      else if (!moved && p.includes('Pickup')) await b.click('[data-pill="Pickup"]');
+      if (await b.evaluate(`window.app.then((x) => x.app_debug_due() || document.querySelector('[data-game-container]').dataset.turn === 'bot')`)) await releaseBot();
+    }
+    const kept = await board();
+    const card = await b.evaluate(`document.querySelector('[data-hand-plane] [data-card]')?.dataset.card`);
+    if (card) await b.click(`[data-hand-plane] [data-card="${card}"]`);
+    await reload();
+    assert.equal(await b.evaluate(`window.app.then((x) => x.app_game_store(2))`), 1, 'the stored game adopted');
+    assert.equal(await board(), kept, 'the DOM after the reload is the DOM before it, the selection aside');
+    await b.evaluate(`window.app.then((x) => { x.app_debug_hold(0); x.app_debug_fast(1); })`);
+    await playToEnd(b);
+    assert.equal(await turn(), 'over');
+    const end = await board();
+    await reload();
+    assert.equal(await board(), end, 'a finished game reloads to its end screen');
+    await b.click('[data-end] button');
+    await b.until(`!document.querySelector('[data-end]')`);
+    const fresh = await board();
+    assert.equal(await all('[data-hand-plane] [data-card]', '1').then((x) => x.length), 6, 'a new deal');
+    await reload();
+    assert.equal(await board(), fresh, 'the new game after a reload');
+  });
+
   // Every surface the wood is laid on (the back button, each pill as it comes, the end screen) shows
   // only tile pixels inside a rectangle the C worked the wood out in; elsewhere the tile is the
   // base colour. Checked after every click of a game played out, games played until every pill showed.
@@ -168,11 +257,14 @@ try {
   };
 
   await check('a game played out by clicks reaches the end screen, and Play again deals a new one', async () => {
+    await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug');
+    await ready();
+    await fast();
     const moves = await playToEnd(b, 400, woodCovered);
     await woodCovered();
     console.log(`     (${moves} moves of mine to the end)`);
     assert.equal(await turn(), 'over');
-    assert.match(await b.evaluate(`document.querySelector('[data-end] h1').textContent`), /^(You won|You are the fool|A draw)$/);
+    assert.equal(await b.evaluate(`document.querySelector('[data-end] h1').textContent`), 'done - Two of us');
     await b.click('[data-end] button');
     await settle();
     assert.equal(await b.evaluate(`document.querySelector('[data-end]')`), null);

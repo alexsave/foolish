@@ -20,6 +20,7 @@
 #include "bot_drive.h"
 #include "client_table.h"
 #include "hand_layout.h"
+#include "anim_plan.h"
 #include "strategy.h"
 #include "../cardtext/card_text.h"
 #include "textures.h"
@@ -37,7 +38,6 @@ extern uint32_t cd_seed;
 /* ---- the game ------------------------------------------------------------ */
 
 #define ME 0
-#define BOT_STEP_MS 650   /* the bot's pace between its visible moves */
 
 static Game G;
 static ClientSlot SLOT;
@@ -53,7 +53,8 @@ static const char *const SEAT_ID[] = {"u-me-0000", "u-anna-0001"};
 /* The selection: card ids (card.h card_to_id) in the order they were picked. */
 static uint8_t sel[MAX_MOVE_CARDS];
 static int nsel;
-static int bot_pending;   /* a timer will drive the bot */
+static int bot_pending;   /* the bot may act: its timer is running */
+static uint32_t pressed, prev_rearm; /* ActionButtons.tsx pressedActions, and the pills it re-arms on (render_hand) */
 static int last_reject;   /* the engine's reason for the last refused move, for the test */
 static uint32_t rng;
 
@@ -555,10 +556,25 @@ static int ask_play(int8_t target, ClientPlay *out) {
   return client_play(&CT, V, &g, &s, out);
 }
 
-static uint32_t current_pills(void) {
+/* The kernel's pills for the selection (all = 1) or for none (all = 0). */
+static uint32_t pills_for(int all) {
   if (V->status != GAME_STATUS_PLAYING || V->seats[ME].status != PLAYER_STATUS_IN) return 0;
+  int n = nsel;
+  if (!all) nsel = 0;
   ClientPlay p;
-  return ask_play(PLAY_TARGET_HAND, &p) == CLIENT_OK ? p.pills : 0;
+  uint32_t bits = ask_play(PLAY_TARGET_HAND, &p) == CLIENT_OK ? p.pills : 0;
+  nsel = n;
+  return bits;
+}
+
+/* The pills shown (ActionButtons.tsx): the kernel's for the selection, less the pressed ones. A
+ * press is dropped when its pill rises again, read with the empty selection's pills folded in,
+ * so putting a card down and picking it up does not re-arm a press (React's `rearm`). */
+static uint32_t current_pills(void) {
+  uint32_t bits = pills_for(1), rearm = bits | pills_for(0);
+  pressed &= ~(rearm & ~prev_rearm);
+  prev_rearm = rearm;
+  return bits & ~pressed;
 }
 
 static void render_hand(void) {
@@ -813,32 +829,38 @@ static void render_seats(void) {
 
 static cd_region end_screen; /* root mode: one element over the board */
 
-static void result_row(const char *medal, int seat) {
+/* A row of WinScreen.tsx: RankIcon (the default theme's emoji: a medal by place, the fool's card
+ * for the last), the name, and "(You)" after mine. */
+static void result_row(int place, int total, int seat) {
+  static const char *const MEDAL[] = {"\xF0\x9F\xA5\x87", "\xF0\x9F\xA5\x88", "\xF0\x9F\xA5\x89"};
   OPEN("div"); cd_class(seat == ME ? ZS("result-card result-card--current-user") : ZS("result-card "));
   OPEN("div"); CLASS("flex items-center gap-md flex-1 min-w-0");
-  OPEN("div"); CLASS("result-card__rank"); OPEN("span"); CLASS(""); cd_text(cd_internz(medal)); CLOSE(); CLOSE();
+  OPEN("div"); CLASS("result-card__rank"); OPEN("span"); CLASS("");
+  cd_text(cd_internz(place == total ? "\xF0\x9F\x83\x8F" : MEDAL[place - 1])); /* the table has two seats: places 1 to 2 */
+  CLOSE(); CLOSE();
   OPEN("div"); CLASS("flex items-baseline gap-sm min-w-0");
   OPEN("span"); cd_class(seat == ME ? ZS("result-card__name result-card__name--current") : ZS("result-card__name "));
   cd_text(cd_internz(SEAT_NAME[seat])); CLOSE();
+  if (seat == ME) { OPEN("span"); CLASS("result-card__you"); TEXT("("); OPEN("span"); TEXT("You"); CLOSE(); TEXT(")"); CLOSE(); }
   CLOSE(); CLOSE(); CLOSE();
 }
 
 static void render_end(void) {
   if (!cd_region_show(&end_screen, V->status == GAME_STATUS_GAME_OVER)) return;
-  int fool = V->fool;
   cd_at(board, 0);
   OPEN("div");
   cd_name_open(end_screen.root);
   ATTR("data-end", "true");
   STYLE("position: absolute; inset: 0px; display: flex; flex-direction: column; align-items: center; "
         "justify-content: center; gap: 16px; z-index: 2000; background-color: rgba(0, 0, 0, 0.35);");
-  OPEN("h1"); CLASS("win-screen__title");
-  cd_text(fool == ME ? ZS("You are the fool") : fool < 0 ? ZS("A draw") : ZS("You won"));
-  CLOSE();
+  OPEN("h1"); CLASS("win-screen__title"); TEXT("done - Two of us"); CLOSE(); /* "done - " and the table's title */
   OPEN("div"); CLASS("win-screen__results"); STYLE("width: min(360px, 90vw);");
   OPEN("div"); CLASS("bg-wood"); cd_attr(S_STYLE, wood_style(SEED_RESULTS, 1)); CLOSE();
-  for (int s = 0; s < V->num_players; s++) if (s != fool) result_row("\xF0\x9F\xA5\x87", s);
-  if (fool >= 0) result_row("\xF0\x9F\x83\x8F", fool);
+  /* The finish order is the kernel's (anim_finish_rows: everyone out, first out first, then the fool). */
+  AnimFinishRow rows[MAX_PLAYERS + 1];
+  int n = anim_finish_rows((const unsigned char *)V->elimination, V->num_eliminated, V->fool, V->num_players, V->my_seat, rows, MAX_PLAYERS + 1);
+  for (int place = 1; place <= n; place++)
+    for (int i = 0; i < n; i++) if (rows[i].place == place) result_row(place, n, rows[i].seat);
   CLOSE();
   cd_id again = cd_id_new();
   OPEN("button"); cd_listen(again, CD_EV_CLICK); cd_tag_set(again, TAG_AGAIN);
@@ -870,7 +892,7 @@ static void render(void) {
 
 /* ---- moves ---------------------------------------------------------------- */
 
-enum { TIMER_BOT = 1, TIMER_TEX = 2, TIMER_BOT_GO = 3 };
+enum { TIMER_TEX = 2, TIMER_BOT_GO = 3, TIMER_BOT_BASE = 16 }; /* the bot's: TIMER_BOT_BASE + its generation */
 enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2 };
 /* Measured (tools/timing.mjs, BLANK=1, CPU x4): starting to make textures on a timer right after
  * the first frame, cdom.start resolved at 165 ms against 60 without textures; two frames and 50 ms
@@ -880,19 +902,89 @@ enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2 };
 static void textures_begin(void);
 static void tex_go(void);
 
-static void schedule_bot(void) {
-  if (bot_pending || G.status != GAME_STATUS_PLAYING || my_turn_owed()) return;
-  bot_pending = 1;
-  cd_timer_start(BOT_STEP_MS, TIMER_BOT);
+/* ---- the game across loads (README, Reload) --------------------------------
+ * After every operation the game is made canonical (the board a load of its blob holds) and its
+ * blob is kept in cdom's store; a load asks the store for it as the table starts, and adopts it
+ * when it reads as a game this table plays. The selection and the pressed pills are not kept, as
+ * React keeps neither. The blob's clock is left zero: it would be this page's time, and a load
+ * shows the board anew (shown_ms below starts at the adopt). */
+#define GAME_KEY "foolish-game-v1"
+enum { STORE_GAME = 100 }; /* the store's token for the game (the textures' are 0 to NTEX - 1) */
+static unsigned char game_blob[GAME_KEEP_CAP];
+static int game_touched;   /* an operation was committed on this load: the store's game is older */
+static double game_asked, game_answered;
+static int game_adopted;
+
+static void game_save(void) {
+  int len = game_keep_put(&G, game_blob);
+  if (len > 0) cd_store_put(GAME_KEY, sizeof GAME_KEY - 1, game_blob, (uint32_t)len);
+}
+
+/* ---- the bot's pace (bot_drive.h bot_wait_ms) -------------------------------
+ * The kernel says how long the bot waits: until the last operation shown has finished playing,
+ * then BOT_PACE_MS_WITH_HUMANS (3000 ms) with a human in the game. The clock is the table's
+ * BoardClock in this page's time: shown_ms is when the last operation (mine, the bot's, a deal,
+ * a load) was shown, and settles_ms when it finishes playing, which with no animations yet is
+ * the same instant (pass 3 adds the animation stream's end, anim_stream_ms). A timer fires when
+ * the wait is over and asks again, so a move of mine in between moves the bot's turn back, as
+ * the server's loop does. A timer cannot be cancelled: each schedule has its own generation, and
+ * a timer of an older one does nothing. */
+static double shown_ms;
+static uint32_t bot_gen; /* the generation of the live bot timer */
+static int last_wait;    /* the kernel's last answer, for the test */
+#ifdef TABLE_DEBUG
+static int dbg_hold, dbg_due, dbg_fast; /* the test build: hold a due step; fast: a wait / 100 */
+#endif
+
+static double settles_ms(void) { return shown_ms; }
+
+static uint32_t bot_wait(void) {
+  int64_t now = (int64_t)cd_now();
+  last_wait = bot_wait_ms(&G, game_human_mask(&G), (int64_t)shown_ms, (int64_t)settles_ms(), now);
+#ifdef TABLE_DEBUG
+  if (dbg_fast) return (uint32_t)last_wait / 100;
+#endif
+  return (uint32_t)last_wait;
+}
+
+static int bot_may_act(void) { return G.status == GAME_STATUS_PLAYING && !my_turn_owed(); }
+
+/* After every change: the bot's timer runs exactly while the bot may act. */
+static void bot_check(void) {
+  if (bot_may_act() == bot_pending) return;
+  bot_gen++;
+  bot_pending = bot_may_act();
+  if (bot_pending) cd_timer_start(bot_wait(), TIMER_BOT_BASE + bot_gen);
+}
+
+/* After every operation on the game: canonical, kept, shown now. */
+static void committed(void) {
+  game_keep_canonical(&G);
+  game_save();
+  game_touched = 1;
+  shown_ms = cd_now() + 1; /* a clock of 0 is a board never shown */
 }
 
 /* One bot step: whatever the bot does up to its next visible move. */
 static void bot_step(void) {
-  bot_pending = 0;
   BotDriveOut out;
   bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
-  schedule_bot();
+  committed();
+  bot_pending = 0;
+  bot_gen++;
+  bot_check();
   render();
+}
+
+/* The bot's timer: wait on if the kernel says so (a move came in between), else step. */
+static void bot_due(uint32_t gen) {
+  if (gen != bot_gen || !bot_pending) return;
+  uint32_t w = bot_wait();
+  if (w > 0) { cd_timer_start(w, TIMER_BOT_BASE + bot_gen); return; }
+#ifdef TABLE_DEBUG
+  if (dbg_hold) { dbg_due = 1; return; }
+#endif
+  bot_step();
 }
 
 static int play(int kind, const Card *cards, int n, const Card *attacks) {
@@ -911,26 +1003,43 @@ static int play(int kind, const Card *cards, int n, const Card *attacks) {
   if (len <= 0 || !awire_decode(wire, len, &a)) return 0;
   if (!awire_apply(&G, ME, &a)) { last_reject = engine_last_reject; return 0; }
   last_reject = 0;
-  nsel = 0;
+  committed();
   return 1;
 }
 
-/* The selection, played where the kernel says it goes: `target` is the table
- * (an attack or a transfer), a battle (a cover), or the Cover button. */
-static int play_selection(int8_t target) {
+/* A selection dropped on `target`, the table (an attack or a transfer) or a battle (a cover):
+ * played where the kernel says it goes. A drop that is a move spends the selection, as React's
+ * drag does (DragContext.tsx endCardDrag, moveType >= 0); one that is not leaves it. */
+static void drop_selection(int8_t target) {
   ClientPlay p;
-  if (!nsel || ask_play(target, &p) != CLIENT_OK || p.move_type < 0) return 0;
-  return play(p.move_type, p.cards, p.n_cards, p.move_type == MOVE_COVER ? p.attack_cards : 0);
+  if (!nsel || ask_play(target, &p) != CLIENT_OK || p.move_type < 0) return;
+  nsel = 0;
+  play(p.move_type, p.cards, p.n_cards, p.move_type == MOVE_COVER ? p.attack_cards : 0);
 }
 
+/* A pill (ActionButtons.tsx handle*Click): it is pressed (hidden) until the kernel's pill falls
+ * and rises again (render_hand), or the move is refused. Attack, Pass and Cover spend the
+ * selection when pressed, refused or not; Pickup and Good leave it. Cover aims itself
+ * (client_play with the Cover button), and does nothing when the kernel has no cover. */
 static void on_pill(uint32_t bit) {
   Card cards[MAX_MOVE_CARDS];
-  for (int i = 0; i < nsel; i++) cards[i] = card_of_id(sel[i]);
-  if (bit == PLAY_PILL_ATTACK) play(AWIRE_ATTACK, cards, nsel, 0);
-  else if (bit == PLAY_PILL_PASS) play(AWIRE_PASS, cards, nsel, 0);
-  else if (bit == PLAY_PILL_COVER) play_selection(CLIENT_PLAY_COVER_BUTTON);
-  else if (bit == PLAY_PILL_PICKUP) play(AWIRE_PICKUP, 0, 0, 0);
-  else if (bit == PLAY_PILL_GOOD) play(AWIRE_GOOD, 0, 0, 0);
+  int n = nsel, ok = 0;
+  for (int i = 0; i < n; i++) cards[i] = card_of_id(sel[i]);
+  if (bit == PLAY_PILL_COVER) {
+    ClientPlay p;
+    if (!nsel || ask_play(CLIENT_PLAY_COVER_BUTTON, &p) != CLIENT_OK || p.move_type != MOVE_COVER) return;
+    pressed |= bit;
+    nsel = 0;
+    ok = play(AWIRE_COVER, p.cards, p.n_cards, p.attack_cards);
+  } else {
+    pressed |= bit;
+    if (bit == PLAY_PILL_ATTACK || bit == PLAY_PILL_PASS) nsel = 0;
+    if (bit == PLAY_PILL_ATTACK) ok = play(AWIRE_ATTACK, cards, n, 0);
+    else if (bit == PLAY_PILL_PASS) ok = play(AWIRE_PASS, cards, n, 0);
+    else if (bit == PLAY_PILL_PICKUP) ok = play(AWIRE_PICKUP, 0, 0, 0);
+    else if (bit == PLAY_PILL_GOOD) ok = play(AWIRE_GOOD, 0, 0, 0);
+  }
+  if (!ok) pressed &= ~bit;
 }
 
 static void toggle(int cid) {
@@ -939,11 +1048,33 @@ static void toggle(int cid) {
   if (nsel < MAX_MOVE_CARDS) sel[nsel++] = (uint8_t)cid;
 }
 
-static void new_game(void) {
+/* A game on the table that was not played to it here (a deal, a load): nothing of the last one's
+ * selection or presses carries over. */
+static void table_reset(void) {
   nsel = 0;
+  pressed = 0;
+  prev_rearm = 0;
+}
+
+static void new_game(void) {
+  table_reset();
   deal_new();
+  committed();
+  bot_check();
   render();
-  schedule_bot();
+}
+
+/* The store's answer to the start's ask: the game left on an earlier load, adopted unless a move
+ * has already been made on this one. */
+static void game_stored(const uint8_t *p, int32_t len) {
+  game_answered = cd_now();
+  if (len <= 0 || game_touched || !game_keep_load(&G, p, len)) return;
+  game_adopted = 1;
+  table_reset();
+  shown_ms = cd_now() + 1;
+  bot_pending = 0;
+  bot_gen++;
+  bot_check();
   render();
 }
 
@@ -958,29 +1089,17 @@ void cd_on_event(const cd_event_rec *e) {
   else if (tag & TAG_BATTLE) {
     int aid = (int)(tag & 0xff), b = -1;
     for (int i = 0; i < V->num_battles; i++) if (card_to_id(V->battles[i].attack) == aid) b = i;
-    if (b >= 0) play_selection((int8_t)b);
-  } else if (tag & TAG_TABLE) play_selection(PLAY_TARGET_TABLE);
+    if (b >= 0) drop_selection((int8_t)b);
+  } else if (tag & TAG_TABLE) drop_selection(PLAY_TARGET_TABLE);
+  bot_check();
   render();
-  schedule_bot();
-  render();
-}
-
-#ifdef TABLE_DEBUG
-static int dbg_hold, dbg_due; /* the test build: a due bot step held until the test releases it */
-#define DEBUG_HOLD_BOT() do { if (dbg_hold) { dbg_due = 1; return; } } while (0)
-#else
-#define DEBUG_HOLD_BOT() do { } while (0)
-#endif
-
-/* The bot's timer: its step (held in the test build when the test asks). */
-static void bot_due(void) {
-  DEBUG_HOLD_BOT();
-  bot_step();
 }
 
 void cd_on_timer(uint32_t token) {
-  if (token == TIMER_BOT) bot_due();
-  if (token == TIMER_BOT_GO) bot_step();
+  if (token >= TIMER_BOT_BASE) bot_due(token - TIMER_BOT_BASE);
+#ifdef TABLE_DEBUG
+  if (token == TIMER_BOT_GO) { bot_pending = 1; bot_step(); }
+#endif
   if (token == TIMER_TEX) tex_go();
 }
 
@@ -990,6 +1109,11 @@ EXPORT("app_last_reject") int app_last_reject(void) { return last_reject; }
 EXPORT("app_str_count") uint32_t app_str_count(void) { return cd_str_count(); }
 EXPORT("app_str_bytes") uint32_t app_str_bytes(void) { return cd_str_bytes(); }
 EXPORT("app_ids_live") uint32_t app_ids_live(void) { return cd_ids_live(); }
+/* The kernel's last answer to how long the bot waits (bot_wait_ms), in ms. */
+EXPORT("app_bot_wait") int32_t app_bot_wait(void) { return last_wait; }
+/* The game's store: when it was asked (which 0) and answered (1), ms after navigation; 2: 1 when
+ * the stored game was adopted. */
+EXPORT("app_game_store") double app_game_store(int32_t which) { return which == 0 ? game_asked : which == 1 ? game_answered : game_adopted; }
 
 #ifdef TABLE_DEBUG
 /* ---- the test build's window on the kernel (out/table_debug.wasm, ?debug) ----------------
@@ -1059,6 +1183,8 @@ EXPORT("app_debug_len") uint32_t app_debug_len(void) { return dbg_n; }
 EXPORT("app_debug_hold") void app_debug_hold(int32_t on) { dbg_hold = on; }
 EXPORT("app_debug_due") int32_t app_debug_due(void) { return dbg_due; }
 EXPORT("app_debug_release") void app_debug_release(void) { if (dbg_due) { dbg_due = 0; cd_timer_start(0, TIMER_BOT_GO); } }
+/* Fast: the bot's waits a hundredth of the kernel's (the games the tests play out). */
+EXPORT("app_debug_fast") void app_debug_fast(int32_t on) { dbg_fast = on; }
 #endif
 /* ---- the textures ----------------------------------------------------------
  * After the first paint (two frames, then a timer), in slices of about 8 ms on animation frames: the fern (the card backs),
@@ -1246,6 +1372,7 @@ static void tex_go(void) {
 }
 
 void cd_on_store(uint32_t token, const uint8_t *p, int32_t len) {
+  if (token == STORE_GAME) { game_stored(p, len); return; }
   int k = (int)token;
   if (k >= NTEX || tex_state[k] != TEX_ASKED) return;
   tex.answered[k] = cd_now();
@@ -1420,6 +1547,11 @@ void cd_main(void) {
   CLOSE(); /* container */
 
   cd_listen_window(CD_EV_RESIZE);
+  game_asked = cd_now();
+  cd_store_get(STORE_GAME, GAME_KEY, sizeof GAME_KEY - 1, CD_STORE_DEADLINE_MS);
+  game_keep_canonical(&G);
+  shown_ms = cd_now() + 1;
+  bot_check();
   render();
   if (!page_notex()) {
     textures_begin();                /* the store is asked now; what it has lands when read */

@@ -27,6 +27,17 @@ MUTANTS = [
   ('fern samples', 'src/textures.c', '{{0.375, 0.875}, {0.875, 0.625}, {0.125, 0.375}, {0.625, 0.125}}', '{{0.375, 0.125}, {0.875, 0.375}, {0.125, 0.625}, {0.625, 0.875}}', 'tools/texparity.mjs'),
   ('cos not rounded', 'src/crtrig.c', '  return fast_two_sum(p.hi, p.lo + (a.hi * b.lo + a.lo * b.hi));', '  return fast_two_sum(p.hi, p.lo + a.hi * b.lo);', 'tools/texparity.mjs'),
   ('ws message bytes shifted', 'vendor/cdom.js', 'new Uint8Array(memory.buffer, ptr, bytes.length).set(bytes);', 'new Uint8Array(memory.buffer, ptr, bytes.length).set(bytes.map((v) => v ^ 1));', 'tests/net_test.mjs'),
+  ('not canonical between operations', 'src/game_keep.c', 'void game_keep_canonical(Game *g) { state_canonical(g); }', 'void game_keep_canonical(Game *g) { (void)g; }', 'out/blob_test'),
+  ('Pickup and Good spend the selection', 'src/table_app.c', '    if (bit == PLAY_PILL_ATTACK || bit == PLAY_PILL_PASS) nsel = 0;', '    nsel = 0;', 'tools/test.mjs'),
+  ('a drop that is no move spends the selection', 'src/table_app.c', '  if (!nsel || ask_play(target, &p) != CLIENT_OK || p.move_type < 0) return;\n  nsel = 0;', '  if (!nsel || ask_play(target, &p) != CLIENT_OK) return;\n  nsel = 0;\n  if (p.move_type < 0) return;', 'tools/test.mjs'),
+  ('the bot not scheduled at the start', 'src/table_app.c', '  shown_ms = cd_now() + 1;\n  bot_check();\n  render();\n  if (!page_notex())', '  shown_ms = cd_now() + 1;\n  render();\n  if (!page_notex())', 'tools/test.mjs'),
+  ('the bot at the port\'s old 650 ms', 'src/table_app.c', '  return (uint32_t)last_wait;\n}', '  return last_wait > 0 ? 650 : 0;\n}', 'tools/test.mjs'),
+  ('the bot not asked again when its timer fires', 'src/table_app.c', '  if (w > 0) { cd_timer_start(w, TIMER_BOT_BASE + bot_gen); return; }', '', 'tools/test.mjs'),
+  ('the end rows not the kernel\'s finish order', 'src/table_app.c', '    for (int i = 0; i < n; i++) if (rows[i].place == place) result_row(place, n, rows[i].seat);', '    for (int i = 0; i < n; i++) if (rows[i].place == place) result_row(place, n, rows[n - 1 - i].seat);', 'tools/test.mjs'),
+  ('no (You) on my row', 'src/table_app.c', '  if (seat == ME) { OPEN("span"); CLASS("result-card__you");', '  if (0) { OPEN("span"); CLASS("result-card__you");', 'tools/test.mjs'),
+  ('the game not kept after a bot step', 'src/table_app.c', '  bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);\n  committed();', '  bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);\n  game_keep_canonical(&G);', 'tools/test.mjs'),
+  ('the stored game ignored', 'src/table_app.c', '  if (len <= 0 || game_touched || !game_keep_load(&G, p, len)) return;', '  if (1) return;', 'tools/test.mjs'),
+  ('a pressed pill shown', 'src/table_app.c', '  return bits & ~pressed;', '  return bits;', 'tools/test.mjs'),
   ('http body not sent', 'vendor/cdom.js', 'const body = bodyLen ? new Uint8Array(memory.buffer, bodyPtr, bodyLen).slice() : undefined;', 'const body = undefined;', 'tests/net_test.mjs'),
 ]
 only = sys.argv[1:] 
@@ -40,11 +51,11 @@ for name, f, old, new, test in MUTANTS:
     open(path, 'w').write(src.replace(old, new))
     b = subprocess.run(['./build.sh'], cwd=POC, capture_output=True, text=True)
     if b.returncode: print(f'{name}: BUILD FAILED\n{b.stderr[-800:]}'); continue
-    r = subprocess.run(['node', test], cwd=POC, capture_output=True, text=True)
+    r = subprocess.run(['node', test] if test.endswith('.mjs') else [os.path.join(POC, test)], cwd=POC, capture_output=True, text=True)
     lines = [l for l in r.stdout.splitlines() if l.startswith('FAIL') or 'ok' in l or 'failed' in l][:12]
     print(f'== {name}: exit {r.returncode}')
     for l in r.stdout.splitlines():
-      if l.startswith('FAIL') or l.startswith('     ') or l.startswith('ws') or l.startswith('http') or l.startswith('game 3') or l.startswith('all at'): print('   ', l[:220])
+      if l.startswith('FAIL') or l.startswith('     ') or l.startswith('ws') or l.startswith('http') or l.startswith('game 3') or l.startswith('all at'): print('   ', l[:400])
   finally:
     shutil.move(keep, path)
 b = subprocess.run(['./build.sh'], cwd=POC, capture_output=True, text=True)

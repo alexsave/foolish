@@ -68,12 +68,11 @@ link "$out/table_debug.wasm" "${dobjs[@]}" "$obj/app_table_app_debug.o"
 "$CC" --target=wasm32 -Oz -nostdlib -mbulk-memory -Wall -Wextra -Werror -I"$here/vendor" -Wl,--no-entry \
   -Wl,--export-memory -Wl,--strip-all -o "$out/net_test.wasm" "$here/tests/net_test.c" "$here/vendor/cdom.c" "$here/vendor/cdom_net.c" "$here/vendor/mini.c"
 
-# The kernel's state blob against the games this table plays (tests/blob_test.c), native, run here.
+# The kernel's state blob against the games this table plays (tests/blob_test.c), native: run out/blob_test.
 clang -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -w -I"$c/src" \
   -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 -DFOOLISH_SEEDED_BOTS_ONLY \
   -o "$out/blob_test" "$here/tests/blob_test.c" "$here/src/game_keep.c" "$shared/deal_rng.c" \
   "${KERNEL[@]/#/$c/}"
-"$out/blob_test"
 
 # The page: the shim minified and inlined (as cdom's bench does), the app's CSS linked.
 "$here/tools/node_modules/.bin/terser" "$here/vendor/cdom.js" -c passes=2 -m -o "$out/cdom.min.js" 2> /dev/null \
