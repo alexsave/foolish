@@ -14,15 +14,6 @@ static void the_league_never_seats_the_human(void) {
     T_CHECK(be_league_may_seat("humanoid", 8, 0, 1));
 }
 
-// A Bot Cup contest bot keeps state in statics: one table at a time, whatever the per-bot cap.
-static void a_contest_bot_sits_at_one_table(void) {
-    T_CHECK(be_league_may_seat("kestrel", 7, 0, 4));
-    T_CHECK(!be_league_may_seat("kestrel", 7, 1, 4));
-    T_CHECK(!be_league_may_seat("haiku", 5, 1, 8));
-    T_CHECK(be_league_may_seat("haiku", 5, 0, 8));
-    T_CHECK(be_league_may_seat("haik", 4, 1, 4));   // not a contest bot's key
-}
-
 // The "bots seated" gauge counts bots: a seat of the human's row is not one.
 static void the_human_is_not_a_seated_bot(void) {
     const int two[] = {3, 48};
@@ -37,6 +28,5 @@ static void the_human_is_not_a_seated_bot(void) {
 int main(void) {
     T_RUN(the_league_never_seats_the_human);
     T_RUN(the_human_is_not_a_seated_bot);
-    T_RUN(a_contest_bot_sits_at_one_table);
     return T_DONE();
 }

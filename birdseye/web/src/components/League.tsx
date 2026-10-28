@@ -9,7 +9,7 @@ import { ago, int, type WBot, type WResult } from '../api';
 
 // ---- the families --------------------------------------------------------------------------------
 // One hue per strategy family (bot_seed.c: seven of each), in the server's ladder order.
-export const FAMILY_ORDER = ['random', 'handwritten', 'robusta', 'firecracker', 'blackpowder', 'cordite', 'octogen'];
+export const FAMILY_ORDER = ['random', 'handwritten', 'robusta', 'firecracker', 'blackpowder', 'cordite', 'octogen', 'haiku', 'sonnet', 'sapper', 'kestrel'];
 const FAMILY_COLOR: Record<string, string> = {
   random: '#9aa3b2',
   handwritten: '#2f6fe4',

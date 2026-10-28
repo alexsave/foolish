@@ -535,14 +535,15 @@ typedef struct {
     int         n;
 } bot_set;
 
+#define BOT_SET_MAX 256
 static bool add_bot(const cb_bot_row *b, void *ud) {
     bot_set *set = ud;
-    if (set->n < 64) set->rows[set->n++] = *b;
-    return set->n < 64;
+    if (set->n < BOT_SET_MAX) set->rows[set->n++] = *b;
+    return set->n < BOT_SET_MAX;
 }
 
 int cb_import_seed_bots(cb_store *s) {
-    bot_set have = { .rows = calloc(64, sizeof(cb_bot_row)) };
+    bot_set have = { .rows = calloc(BOT_SET_MAX, sizeof(cb_bot_row)) };
     cb_bot_row *seed = calloc((size_t)CB_BOT_SEED_N, sizeof *seed);
     int rc = !have.rows || !seed ? CB_E_NOMEM : CB_ROWS_CALL(s, bots_list, add_bot, &have);
     if (rc >= 0 && have.n == 0) {
@@ -564,11 +565,18 @@ int cb_import_seed_bots(cb_store *s) {
     if (rc >= 0 && dev && strcmp(dev, "1") == 0 && cup && strcmp(cup, "1") == 0) {
         have.n = 0;
         int lr = CB_ROWS_CALL(s, bots_list, add_bot, &have), added = 0;
-        for (int k = 0; lr >= 0 && k < CB_BOT_SEED_BOTCUP_N && have.n < 64; k++) {
-            bool there = false;
+        for (int k = 0; lr >= 0 && k < CB_BOT_SEED_BOTCUP_N && have.n < BOT_SET_MAX; k++) {
+            int there = -1;
             for (int i = 0; i < have.n; i++)
-                if (strcmp(have.rows[i].id, CB_BOT_SEED_BOTCUP[k].id) == 0) there = true;
-            if (there) continue;
+                if (strcmp(have.rows[i].id, CB_BOT_SEED_BOTCUP[k].id) == 0) there = i;
+            if (there >= 0) {
+                // A row there under an older name ("kestrel (Fable)") takes today's ("kestrel 1 (Fable)").
+                if (strcmp(have.rows[there].nickname, CB_BOT_SEED_BOTCUP[k].nickname) != 0) {
+                    cb_strlcpy(have.rows[there].nickname, CB_BOT_SEED_BOTCUP[k].nickname, sizeof have.rows[there].nickname);
+                    added++;
+                }
+                continue;
+            }
             cb_bot_row *b = &have.rows[have.n++];
             memset(b, 0, sizeof *b);
             cb_strlcpy(b->id, CB_BOT_SEED_BOTCUP[k].id, sizeof b->id);

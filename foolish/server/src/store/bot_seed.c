@@ -63,12 +63,37 @@ const cb_bot_seed CB_BOT_SEED[] = {
 };
 const int CB_BOT_SEED_N = (int)(sizeof CB_BOT_SEED / sizeof CB_BOT_SEED[0]);
 
-// The Bot Cup's four contest bots (foolish/c/botcup), added only under CBASE_DEV=1 with
-// CBASE_DEV_BOTCUP=1 (birdseye's botcup and league runs): LOCAL ONLY, never in a deployed store.
+// The Bot Cup's four contest bots (foolish/c/botcup), seven rows of each brain like every family
+// above, added only under CBASE_DEV=1 with CBASE_DEV_BOTCUP=1 (birdseye's botcup and league runs):
+// LOCAL ONLY, never in a deployed store. Row 1 of each keeps the id the cup was played with.
 const cb_bot_seed CB_BOT_SEED_BOTCUP[] = {
-    { "b07c0b00-0000-4000-8000-000000000001", "kestrel (Fable)", "kestrel" },
-    { "b07c0b00-0000-4000-8000-000000000002", "sapper (Opus)", "sapper" },
-    { "b07c0b00-0000-4000-8000-000000000003", "sonnet (Sonnet)", "sonnet" },
-    { "b07c0b00-0000-4000-8000-000000000004", "haiku (Haiku)", "haiku" },
+    { "b07c0b00-0000-4000-8000-000000000001", "kestrel 1 (Fable)", "kestrel" },
+    { "b07c0b00-0000-4000-8000-000000000012", "kestrel 2 (Fable)", "kestrel" },
+    { "b07c0b00-0000-4000-8000-000000000013", "kestrel 3 (Fable)", "kestrel" },
+    { "b07c0b00-0000-4000-8000-000000000014", "kestrel 4 (Fable)", "kestrel" },
+    { "b07c0b00-0000-4000-8000-000000000015", "kestrel 5 (Fable)", "kestrel" },
+    { "b07c0b00-0000-4000-8000-000000000016", "kestrel 6 (Fable)", "kestrel" },
+    { "b07c0b00-0000-4000-8000-000000000017", "kestrel 7 (Fable)", "kestrel" },
+    { "b07c0b00-0000-4000-8000-000000000002", "sapper 1 (Opus)", "sapper" },
+    { "b07c0b00-0000-4000-8000-000000000022", "sapper 2 (Opus)", "sapper" },
+    { "b07c0b00-0000-4000-8000-000000000023", "sapper 3 (Opus)", "sapper" },
+    { "b07c0b00-0000-4000-8000-000000000024", "sapper 4 (Opus)", "sapper" },
+    { "b07c0b00-0000-4000-8000-000000000025", "sapper 5 (Opus)", "sapper" },
+    { "b07c0b00-0000-4000-8000-000000000026", "sapper 6 (Opus)", "sapper" },
+    { "b07c0b00-0000-4000-8000-000000000027", "sapper 7 (Opus)", "sapper" },
+    { "b07c0b00-0000-4000-8000-000000000003", "sonnet 1 (Sonnet)", "sonnet" },
+    { "b07c0b00-0000-4000-8000-000000000032", "sonnet 2 (Sonnet)", "sonnet" },
+    { "b07c0b00-0000-4000-8000-000000000033", "sonnet 3 (Sonnet)", "sonnet" },
+    { "b07c0b00-0000-4000-8000-000000000034", "sonnet 4 (Sonnet)", "sonnet" },
+    { "b07c0b00-0000-4000-8000-000000000035", "sonnet 5 (Sonnet)", "sonnet" },
+    { "b07c0b00-0000-4000-8000-000000000036", "sonnet 6 (Sonnet)", "sonnet" },
+    { "b07c0b00-0000-4000-8000-000000000037", "sonnet 7 (Sonnet)", "sonnet" },
+    { "b07c0b00-0000-4000-8000-000000000004", "haiku 1 (Haiku)", "haiku" },
+    { "b07c0b00-0000-4000-8000-000000000042", "haiku 2 (Haiku)", "haiku" },
+    { "b07c0b00-0000-4000-8000-000000000043", "haiku 3 (Haiku)", "haiku" },
+    { "b07c0b00-0000-4000-8000-000000000044", "haiku 4 (Haiku)", "haiku" },
+    { "b07c0b00-0000-4000-8000-000000000045", "haiku 5 (Haiku)", "haiku" },
+    { "b07c0b00-0000-4000-8000-000000000046", "haiku 6 (Haiku)", "haiku" },
+    { "b07c0b00-0000-4000-8000-000000000047", "haiku 7 (Haiku)", "haiku" },
 };
 const int CB_BOT_SEED_BOTCUP_N = (int)(sizeof CB_BOT_SEED_BOTCUP / sizeof CB_BOT_SEED_BOTCUP[0]);

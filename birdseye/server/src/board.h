@@ -38,7 +38,7 @@ bool be_move_raced(const TableResponse *r, uint32_t intent);
 // `lm` is the caller's scratch.
 int be_legal_wire(ClientTable *ct, LegalMoves *lm, uint64_t *rng, int random_pct, uint8_t *wire, int cap);
 
-#define BE_BOTS_MAX 64
+#define BE_BOTS_MAX 128
 typedef struct {
     char id[NW_ID_MAX + 1];
     char key[NW_KEY_MAX + 1];

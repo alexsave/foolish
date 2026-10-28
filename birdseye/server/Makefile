@@ -186,12 +186,14 @@ endef
 prog = $(eval $(call PROG,$(1),$(2),$(3),$(4),$(5),$(6)))
 
 $(call prog,build,build/obj/rel,build/obj/kernel,birdseye,tools/main_serve.c,CFLAGS)
+# The Bot Cup's summaries written again from the game server's replays (tools/cup_regen.c).
+$(call prog,build,build/obj/rel,build/obj/kernel,cup_regen,tools/cup_regen.c,CFLAGS)
 $(call prog,build/asan,build/obj/asan,build/obj/asan-kernel,birdseye,tools/main_serve.c,ASAN_CFLAGS)
 $(foreach u,$(UNITS) $(SMOKES),$(call prog,build/test,build/obj/rel,build/obj/kernel,$(u),test/$(u).c $(TLIB_SRC),CFLAGS))
 $(foreach u,$(UNITS) $(SMOKES),$(call prog,build/asan/test,build/obj/asan,build/obj/asan-kernel,$(u),test/$(u).c $(TLIB_SRC),ASAN_CFLAGS))
 
 # Every object of the product and the tests needs the hash file first (its flags read it).
-$(call c_objs,build/obj/rel,$(APP_SRC) tools/main_serve.c $(TEST_SRC)): | $(WIRE_HASH_FILE)
+$(call c_objs,build/obj/rel,$(APP_SRC) tools/main_serve.c tools/cup_regen.c $(TEST_SRC)): | $(WIRE_HASH_FILE)
 $(call c_objs,build/obj/asan,$(APP_SRC) tools/main_serve.c $(TEST_SRC)): | $(WIRE_HASH_FILE)
 
 .PHONY: all test smoke check test-asan smoke-asan check-asan clean

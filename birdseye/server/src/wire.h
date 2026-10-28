@@ -163,7 +163,7 @@ typedef struct {
 // table_rate, read from the game's envelope: before and delta by seat) or the server's leaderboard;
 // nothing is worked out in birdseye or on the page.
 
-#define BE_LEAGUE_BOTS 64
+#define BE_LEAGUE_BOTS 128
 #define BE_BOT_ID      40
 #define BE_BOT_KEY     16
 

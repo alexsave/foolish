@@ -983,10 +983,6 @@ int be_league_bot_seats(const int *rows, int n, int human_row) {
 
 bool be_league_may_seat(const char *key, int key_len, int seated, int per_bot) {
     if (key_len == (int)strlen(BE_HUMAN_KEY) && memcmp(key, BE_HUMAN_KEY, (size_t)key_len) == 0) return false;
-    // A Bot Cup contest bot keeps state across its calls in statics (kestrel remembers the face-up
-    // trump per seat), so it sits at one table at a time: two tables would share that memory.
-    for (int k = 0; k < BE_CUP_BOTS; k++)
-        if (key_len == (int)strlen(BE_CUP_KEYS[k]) && memcmp(key, BE_CUP_KEYS[k], (size_t)key_len) == 0) return seated < 1;
     return seated < per_bot;
 }
 
@@ -995,14 +991,15 @@ static bool table_new(int64_t now_ms) {
     for (int i = 0; i < g_n_tables && !t; i++)
         if (g_tables[i].state == L_FREE) t = &g_tables[i];
     if (!t) return false;
-    // The free bots, fewest league games first (random among equals), so everyone gets volume.
+    // The free bots, the fewest tables now first, then at random: every row as likely as any other,
+    // so a family's share of the seats is its share of the rows (a row new to the league, such as a
+    // Bot Cup contest bot, is not seated ahead of the rest to catch up on games).
     int free_idx[BE_LEAGUE_BOTS], nf = 0;
     uint32_t key[BE_LEAGUE_BOTS];
     pthread_mutex_lock(&g_mu);
     for (int i = 0; i < g_n_bots; i++)
         if (be_league_may_seat(g_bots[i].key, g_bots[i].key_len, g_bots[i].seated, g_o.tables_per_bot)) {
-            // Fewest league games first, then the fewest tables now, then at random.
-            key[nf] = (g_bots[i].league_games << 16) | ((uint32_t)g_bots[i].seated << 12) | rnd(4096);
+            key[nf] = ((uint32_t)g_bots[i].seated << 12) | rnd(4096);
             free_idx[nf++] = i;
         }
     pthread_mutex_unlock(&g_mu);
