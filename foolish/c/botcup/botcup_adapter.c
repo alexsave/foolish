@@ -12,7 +12,8 @@
 
 extern const BotEntry haiku_bot, sonnet_bot, opus_bot, fable_bot;
 
-static const Card HIDDEN = { 0, 1 };
+// The engine's not-a-card {-1, -1} (botcup.h). It was { 0, 1 }: the 2 of spades at 6-8 players.
+static const Card HIDDEN = { BOTCUP_HIDDEN_SUIT, BOTCUP_HIDDEN_VALUE };
 
 void botcup_make_view(Game *v, const Game *g, int seat) {
     game_clone(v, g);

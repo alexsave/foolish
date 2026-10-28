@@ -30,6 +30,7 @@
 #include "../src/msg_wire.h"   // msg_lobby_can_set_rules, the iMessage spelling of the lobby rule
 #include "../src/hand_layout.h"
 #include "../src/botcup_adapter.h"
+#include "../src/botcup.h"
 #include "../wasm/wire.h"
 #include "fm_exp_digest.h"   // fm_exp, its digest inputs and the committed digest
 #include <stdio.h>
@@ -20498,13 +20499,13 @@ static int bc_spy(const Game *v, int seat, const LegalMoves *moves) {
     for (int p = 0; p < v->num_players; p++)
         for (int i = 0; i < v->players[p].hand_count; i++) {
             Card c = v->players[p].hand[i];
-            bool hidden = c.suit == 0 && c.value == 1;
+            bool hidden = botcup_is_hidden(c);
             if (p == seat) bc_own_real += card_eq(c, bc_real->players[p].hand[i]);
             else if (hidden) bc_hidden++;
             else bc_leaks++;   // an opponent's real card
         }
     for (int i = 0; i < v->deck_count; i++) {
-        if (v->deck[i].suit == 0 && v->deck[i].value == 1) bc_hidden++;
+        if (botcup_is_hidden(v->deck[i])) bc_hidden++;
         else bc_leaks++;
     }
     for (int k = 0; k < v->num_logs; k++) {
@@ -20512,7 +20513,7 @@ static int bc_spy(const Game *v, int seat, const LegalMoves *moves) {
         if (l->log_type != LOG_DRAW || l->player_idx == seat) continue;
         for (int i = 0; i < l->num_pairs; i++) {
             Card c = l->pairs[i].primary;
-            if (c.suit == 0 && c.value == 1) bc_hidden++;
+            if (botcup_is_hidden(c)) bc_hidden++;
             else if (!(bc_real->has_flipped && card_eq(c, bc_real->flipped))) bc_leaks++;
         }
     }
@@ -20567,6 +20568,44 @@ static void test_botcup_adapter_masks(void) {
     CHECK(faults == decisions, "botcup: an index outside the menu is a fault, clamped to 0");
 }
 
+// At 6-8 players the deck has 52 cards, so the 2 of spades ({suit 0, value 1}) is real. The
+// placeholder used to be exactly that card: a seat holding it could not tell it from a hidden one.
+// A real card is never botcup_is_hidden, in the holder's own view; every other seat sees the
+// holder's cards (the 2 among them) as placeholders only.
+static void test_botcup_view_two_of_spades(void) {
+    static Game g, v;
+    const Card two_s = { 0, 1 };
+    int found = 0, own_real = 0, own_hidden = 0, opp_hidden = 0, opp_real = 0;
+    for (int np = 6; np <= 8; np++)
+        for (uint32_t seed = 1; seed < 400 && found < 3 * (np - 5); seed++) {
+            unsigned char ds[FOOLISH_SEED_LEN];
+            for (int i = 0; i < FOOLISH_SEED_LEN; i++) ds[i] = (unsigned char)(seed * 13 + (uint32_t)i * 7 + (uint32_t)np);
+            game_set_seed(seed);
+            game_set_deal_seed_bytes(ds, FOOLISH_SEED_LEN);
+            memset(&g, 0, sizeof g);
+            g.num_players = (int8_t)np;
+            for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+            start_game(&g);
+            int holder = -1, at = -1;
+            for (int p = 0; p < np && holder < 0; p++)
+                for (int i = 0; i < g.players[p].hand_count; i++)
+                    if (card_eq(g.players[p].hand[i], two_s)) { holder = p; at = i; break; }
+            if (holder < 0) continue;
+            found++;
+            botcup_make_view(&v, &g, holder);
+            own_real += card_eq(v.players[holder].hand[at], two_s);
+            own_hidden += botcup_is_hidden(v.players[holder].hand[at]);
+            botcup_make_view(&v, &g, (holder + 1) % np);
+            for (int i = 0; i < v.players[holder].hand_count; i++) {
+                if (botcup_is_hidden(v.players[holder].hand[i])) opp_hidden++;
+                else opp_real++;
+            }
+        }
+    CHECK(found >= 6, "botcup: deals at 6-8 players that give a seat the 2 of spades");
+    CHECK(own_real == found && own_hidden == 0, "botcup: a seat holding the real 2 of spades sees it as a real card, never as hidden");
+    CHECK(opp_hidden > 0 && opp_real == 0, "botcup: another seat sees the holder's hand (the 2 of spades in it) as hidden placeholders only");
+}
+
 int main(void) {
 #ifdef WASM_CAPS_TESTS
     // make tests-wasm-caps: the cordite and belief-log cases under the wasm size limits only.
@@ -20605,6 +20644,7 @@ int main(void) {
 #endif
 #endif
     test_botcup_adapter_masks();
+    test_botcup_view_two_of_spades();
     test_fm_exp();
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();

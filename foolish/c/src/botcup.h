@@ -10,7 +10,9 @@
 
 // Pick a move. `view` is the game as seat `seat` sees it: every other seat's
 // hand cards, the deck's cards and other seats' LOG_DRAW cards are replaced by
-// the placeholder {suit 0, value 1} (counts are real). Everything face up is
+// the placeholder {suit -1, value -1}, the engine's not-a-card (counts are real).
+// It was {suit 0, value 1}, which is the 2 of spades in the 52-card deck that
+// 6-8 players use: a bot could not tell that real card from a hidden one. Everything face up is
 // real: your hand, the table, the flipped trump, the logs of attacks, covers,
 // passes, pickups, discards, goods, player-outs and defender changes.
 // `moves` is the legal move menu for your seat. Return an index into it.
@@ -24,7 +26,10 @@ typedef struct {
     void       (*new_game)(int seat, int num_players);
 } BotEntry;
 
-// The card the referee puts wherever a card is hidden from you.
-static inline int botcup_is_hidden(Card c) { return c.suit == 0 && c.value == 1; }
+// The card the referee puts wherever a card is hidden from you. Never a real
+// card in either deck (a real card has suit 0..3 and value 1..13).
+#define BOTCUP_HIDDEN_SUIT  (-1)
+#define BOTCUP_HIDDEN_VALUE (-1)
+static inline int botcup_is_hidden(Card c) { return c.suit == BOTCUP_HIDDEN_SUIT && c.value == BOTCUP_HIDDEN_VALUE; }
 
 #endif

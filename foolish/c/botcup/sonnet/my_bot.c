@@ -242,7 +242,10 @@ typedef struct { int type, n; int c[10]; int a[10]; } Act;
 enum { A_ATTACK, A_COVER, A_PASS, A_PICKUP, A_GOOD };
 
 static inline double worth(const Sim *S, int c) {
-    int v = T_VAL[c] - 4;
+    // Was T_VAL - 4 (36-card only: 4 is one below the 6): with the 52-card deck at 6-8
+    // players a 2..4 was worth less than nothing and a trump 2..5 less than a non-trump ace.
+    // Measured from one below the deck's lowest value, as at 36 cards.
+    int v = T_VAL[c] - (S->minv - 1);
     return is_tr(S, c) ? PR[P_TW0] + PR[P_TW1] * v : PR[P_NW] * v;
 }
 static inline int ccost(const Sim *S, int c) { return T_VAL[c] + (is_tr(S, c) ? 20 : 0); }
@@ -715,7 +718,9 @@ static int choose(const Game *v, int seat, const LegalMoves *moves) {
     if (!reg && getenv("SB_STAT")) { reg = 1; atexit(st_print); }
     if (moves->n <= 1) return 0;
     if (PR[P_MS] < 0) return policy_choose(v, seat, moves);
-    if (v->num_players > 5 || v->num_players < 2) return 0;
+    // Was 2-5 seats only: at 6-8 players (the 52-card deck) it returned menu entry 0 on
+    // every decision. The simulator and belief already handle 8 seats and 52 cards.
+    if (v->num_players > MAX_PLAYERS || v->num_players < 2) return 0;
     // candidate pruning
     int cand[64], nc = 0;
     int uncovered = 0;

@@ -88,8 +88,16 @@ static double op_now_ms(void) {
 }
 
 // ---------------------------------------------------------------- cards
+// A card's cost: its rank from the deck's lowest, a trump above every non-trump. Was 36-card
+// only ((value - 5) + 10 for a trump): with the 52-card deck at 6-8 players a 2..4 cost less
+// than nothing and a trump 2..5 cost less than a non-trump queen or above, so covers and
+// throw-ins spent low trumps before high non-trumps. At 36 cards it is unchanged.
+static int op_minv = MIN_VALUE_SMALL;   // the deck's lowest value; sim_tab_init sets it each decision
+static inline int op_cost_of(int value, bool trump, int minv) {
+    return (value - minv) + (trump ? ACE_VALUE - minv + 2 : 0);
+}
 static inline int op_cost(Card c, int trump) {
-    return (c.value - 5) + (c.suit == trump ? 10 : 0);
+    return op_cost_of(c.value, c.suit == trump, op_minv);
 }
 
 // A move built by the policy (no MAX_MOVE_CARDS cap).
@@ -440,6 +448,7 @@ static SimTab sim_tab;
 
 static void sim_tab_init(int trump, int minv) {
     SimTab *t = &sim_tab;
+    op_minv = minv;
     if (t->ready && t->trump == trump && t->minv == minv) return;
     memset(t, 0, sizeof *t);
     t->trump = trump; t->minv = minv; t->ready = 1;
@@ -447,7 +456,7 @@ static void sim_tab_init(int trump, int minv) {
     for (int s = 0; s < NUM_SUITS; s++) for (int v = minv; v <= ACE_VALUE; v++) {
         int id = s * 13 + v - 1;
         valid[id] = true;
-        cid[id] = (int8_t)((v - 5) + (s == trump ? 10 : 0));
+        cid[id] = (int8_t)op_cost_of(v, s == trump, minv);   // was (v - 5) + 10: 36-card only
     }
     int n = 0;
     for (int c = -10; c <= 30; c++)

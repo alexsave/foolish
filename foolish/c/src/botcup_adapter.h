@@ -15,7 +15,8 @@
 
 // What `seat` may see of `g`, exactly referee.c's make_view: every other seat's hand cards, the
 // deck's cards and every other seat's LOG_DRAW cards (but the face-up trump) become the
-// placeholder {suit 0, value 1}; counts and everything face up stay real.
+// placeholder {suit -1, value -1} (botcup.h; it was {0, 1}, the 2 of spades at 6-8 players);
+// counts and everything face up stay real.
 void botcup_make_view(Game *v, const Game *g, int seat);
 
 // One choose as the referee asks it: `fn` sees the masked view of `seat`, the game's three random
