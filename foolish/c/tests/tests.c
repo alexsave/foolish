@@ -17056,6 +17056,15 @@ static void test_client_adopts_a_bare_board(void) {
           "a viewer past the table's widest seat is refused before the bytes are read");
     CHECK(client_adopt_state(&ct, buf, sp, 3) == CLIENT_E_MISMATCH,
           "and a viewer this board does not seat is a mismatch, not a format fault");
+    CHECK(client_adopt_state(&ct, buf, sp, 0) == CLIENT_E_MISMATCH,
+          "a spectator's board is not a seat's: that seat's hand is hidden on it");
+    {
+        unsigned char other[4096];
+        const int on = state_put(&cb_game, 2, other);
+        CHECK(client_adopt_state(&ct, other, on, 1) == CLIENT_E_MISMATCH,
+              "nor is a board masked for another seat");
+        CHECK(client_adopt_state(&ct, other, on, 2) == CLIENT_OK, "while the seat it was masked for reads it");
+    }
     CHECK(client_adopt_state(&ct, buf, sp - 1, 0) == CLIENT_E_STATE,
           "a board that does not measure to its own length is refused");
     CHECK(ct.open == false, "and adopting never leaves a push open behind it");

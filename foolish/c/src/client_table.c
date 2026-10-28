@@ -196,6 +196,14 @@ int client_adopt_state(ClientTable *c, const uint8_t *p, int len, int viewer) {
     const int rc = board_import(c, p, len);
     if (rc != CLIENT_OK) return rc;
     if (viewer >= c->g->num_players) return CLIENT_E_MISMATCH;
+    // A bare board does not say whose it is, so the caller's word is checked
+    // against the one thing it can be: a board masked for anyone else (or for
+    // nobody) holds the viewer's own cards as hidden cards.
+    if (viewer >= 0) {
+        const Player *me = &c->g->players[viewer];
+        for (int j = 0; j < me->hand_count; j++)
+            if (card_is_hidden(me->hand[j])) return CLIENT_E_MISMATCH;
+    }
     c->has_roster = false;
     c->table_rules = 0;   // a board alone names no rules: the classic game
     c->version = 0;
