@@ -103,7 +103,7 @@ Every round is a barrier (`be_tour_next` plays only the lowest round with an und
 ## Known gaps
 
 - A restart of the game server while league tables play leaves them on the server; birdseye takes its own tables up again across its own restart (`league.bin.live`), but a tournament's game in play at a stop is played again rather than watched (the server still rates the abandoned one, so the league history can hold a game the bracket does not).
-- Bots that have never played are missing from the server's leaderboard, so on a fresh server the league shows their rating as 0 until their first game (the first stamp says the real one).
+- Bots that have never played are missing from the server's leaderboard; the league shows them at the server's start rating (1000) until their first rated game.
 - The league's games/min in the top bar counts rated results over ten minutes; the platform's one-second rate of games is shown in Numbers only.
 - The histogram's four buckets per octave make a p50 read up to 19% low.
 - The 400-player mixed-mode measurement was never finished.

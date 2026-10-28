@@ -16,6 +16,7 @@
 #include "ask.h"
 #include "client_table.h"
 #include "netwire.h"
+#include "table.h"
 #include "../../../shared/c/rng.h"
 #include "../../../shared/c/stream_frame.h"
 
@@ -241,6 +242,9 @@ static void bots_from_roster(void) {
         memcpy(b->name, r->name, b->name_len);
         b->key_len = (uint8_t)(kn < BE_BOT_KEY ? kn : BE_BOT_KEY);
         memcpy(b->key, r->key, b->key_len);
+        // A bot that has never played is not on the server's leaderboard: it stands where the
+        // server starts every row (table.h), not at 0, until its first rated game says otherwise.
+        b->rating = b->start_rating = TABLE_RATING_START;
     }
 }
 
