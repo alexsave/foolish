@@ -2225,11 +2225,15 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
     return r;
 }
 
-// Fusion (c/FUSION.md): octogen plus rollout noise, and nothing else. The same
-// belief, worlds, budgets, root endgame solve, LEAFBOOK and candidate race as
-// octogen; the one difference is the rollout engine's noise knob, set for the
-// length of this decision and put back to 0 after it, so the next brain to run
-// on this thread (octogen, cordite, a rollout policy) sees the noise off.
+// Fusion (c/FUSION.md): octogen plus rollout noise and a firmer pickup
+// inference, and nothing else. The same belief, worlds, budgets, root endgame
+// solve, LEAFBOOK and candidate race as octogen; the two differences are the
+// rollout engine's noise knob and the void mixture (og_void_mod: a seat that
+// picked up holds nothing beating those cards in (mod-1)/mod of worlds;
+// octogen 4 = 75%, fusion 7 = 6/7, sapper's 85%). Both are set for the length
+// of this decision and put back after it, so the next brain to run on this
+// thread (octogen, cordite, a rollout policy) sees octogen's values. The
+// FUSION_VOID_MOD knob overrides 7 for ablations, read by fusion alone.
 //
 // The knob is the per-mille chance that a rollout decision plays a sensible
 // alternative instead of the policy (cordite_sim.h). FUSION_NOISE_PM is the
@@ -2248,11 +2252,22 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
 #ifndef FUSION_NOISE_PM
 #define FUSION_NOISE_PM 200
 #endif
+#ifndef FUSION_VOID_MOD
+#define FUSION_VOID_MOD 7
+#endif
 int fusion_strategy_choose(const Game *g, int bot_idx,
                            const LegalMoves *moves, void *ctx) {
+    // Load octogen's flags first, so its own load cannot overwrite the void
+    // mixture set below; then swap fusion's in for this decision and put
+    // octogen's back after it (an octogen seat on this thread keeps its 4).
+    if (!og_flags_loaded) og_load_flags();
+    int saved_void_mod = og_void_mod;
+    int vm = bot_knob_int("FUSION_VOID_MOD", FUSION_VOID_MOD);
+    og_void_mod = vm < 2 ? 2 : vm;
     cd_sim_set_noise(bot_knob_int("FUSION_NOISE", FUSION_NOISE_PM));
     int r = octogen_strategy_choose(g, bot_idx, moves, ctx);
     cd_sim_set_noise(0);
+    og_void_mod = saved_void_mod;
     return r;
 }
 #endif

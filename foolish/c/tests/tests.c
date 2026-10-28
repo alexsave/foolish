@@ -2163,7 +2163,8 @@ static void test_rollout_noise_seam(void) {
     CHECK(pol_fired > 0, "the per-seat-policy playout takes the noise too");
 }
 
-// Octogen never draws the noise, and fusion with its knob at 0 IS octogen:
+// Octogen never draws the noise, and fusion with its noise at 0 and its void
+// mixture at octogen's 4 IS octogen:
 // decision for decision over whole stretches of 2- and 3-seat games, down to
 // the state both RNG streams are left in. No existing test pins an octogen
 // decision to a value (FUSION.md says how the run job checks this branch's
@@ -2202,10 +2203,12 @@ static void test_octogen_is_fusion_at_zero(void) {
                     game_rng_set(gr);
                     random_strategy_set_seed(sr);
                     setenv("FUSION_NOISE", "0", 1);
+                    setenv("FUSION_VOID_MOD", "4", 1);   // octogen's mixture too
                     cd_sim_noise_stats_reset();
                     cd_sim_solve_reset();
                     const int b = fusion_strategy_choose(&g, pi, &m, NULL);
                     unsetenv("FUSION_NOISE");
+                    unsetenv("FUSION_VOID_MOD");
                     const CdNoiseStats sf = cd_sim_noise_stats();
                     same  &= a == b && gra == game_rng_get() && sra == random_strategy_rng_get();
                     quiet &= so.drawn == 0 && sf.drawn == 0 && cd_sim_noise() == 0;
@@ -2273,6 +2276,79 @@ static void test_fusion_rollouts_are_noisy(void) {
           "the struct rollouts take it at the same rate");
     CHECK(slow.unmatched == 0, "every struct-path candidate is a move on the seat's lite menu");
     CHECK(restored, "fusion puts the noise back to 0 after its decision");
+}
+
+// Fusion's second lever: the void mixture. A seat that picked up is assumed to
+// hold nothing beating those cards in (mod-1)/mod of sampled worlds; octogen
+// uses 4 (75%), fusion 7 (6/7, sapper's 85%). The value is octogen's
+// thread-local og_void_mod, so fusion must swap its own in for its decision and
+// put octogen's back: an octogen seat on the same thread keeps 4.
+//
+// Over game stretches where seats pick up, at every decision: fusion with the
+// noise off plays exactly octogen at OG_VOID_MOD=7 (same move, same streams);
+// octogen run again right after a fusion call is octogen before it (the
+// restore); and somewhere the two mixtures part (the test has teeth: the void
+// split moves the world sampling, so the streams differ).
+//
+// Mutations that must turn it red: drop the og_void_mod swap in
+// fusion_strategy_choose (fusion is octogen at 4: "fusion at 0 noise is octogen
+// at 7" fails); drop the restore (octogen after fusion runs at 7: the restore
+// check fails); drop the og_load_flags call before the swap (the first
+// fusion call's own flag load overwrites 7 with 4).
+static void test_fusion_void_mixture(void) {
+    static LegalMoves m;
+    fu_small_worlds(1);
+    int decisions = 0, as7 = 1, restored = 1, parted = 0;
+    for (int np = 2; np <= 3; np++) {
+        Game g;
+        make_seeded_game(&g, np, 70 + np);
+        for (int step = 0; step < 40 && game_done(&g) < 0; step++) {
+            int acted = 0;
+            for (int pi = 0; pi < g.num_players && !acted; pi++) {
+                if (!should_bot_act(&g, pi)) continue;
+                calculate_legal_moves(&g, pi, &m);
+                if (m.n == 0) continue;
+                const uint64_t gr = game_rng_get(), sr = random_strategy_rng_get();
+                // Octogen at its default 4, from a cold flag load.
+                og_reload_flags();
+                cd_sim_solve_reset();
+                const int a4 = octogen_strategy_choose(&g, pi, &m, NULL);
+                const uint64_t g4 = game_rng_get(), s4 = random_strategy_rng_get();
+                // Fusion, noise off, flags cold again (the first-call path).
+                game_rng_set(gr); random_strategy_set_seed(sr);
+                setenv("FUSION_NOISE", "0", 1);
+                og_reload_flags();
+                cd_sim_solve_reset();
+                const int f = fusion_strategy_choose(&g, pi, &m, NULL);
+                unsetenv("FUSION_NOISE");
+                const uint64_t gf = game_rng_get(), sf = random_strategy_rng_get();
+                // Octogen right after fusion, flags NOT reloaded: must be the a4 run.
+                game_rng_set(gr); random_strategy_set_seed(sr);
+                cd_sim_solve_reset();
+                const int a4b = octogen_strategy_choose(&g, pi, &m, NULL);
+                restored &= a4b == a4 && game_rng_get() == g4 && random_strategy_rng_get() == s4;
+                // Octogen told 7 by its own env knob.
+                game_rng_set(gr); random_strategy_set_seed(sr);
+                setenv("OG_VOID_MOD", "7", 1);
+                og_reload_flags();
+                cd_sim_solve_reset();
+                const int a7 = octogen_strategy_choose(&g, pi, &m, NULL);
+                unsetenv("OG_VOID_MOD");
+                og_reload_flags();
+                as7 &= a7 == f && game_rng_get() == gf && random_strategy_rng_get() == sf;
+                parted |= a7 != a4 || gf != g4 || sf != s4;
+                decisions++;
+                game_rng_set(g4); random_strategy_set_seed(s4);
+                acted = legal_move_apply(&g, pi, &m.moves[(a4 >= 0 && a4 < m.n) ? a4 : 0]);
+            }
+            if (!acted) break;
+        }
+    }
+    fu_small_worlds(0);
+    CHECK(decisions > 20, "the void mixture was compared over real game stretches");
+    CHECK(parted, "somewhere a pickup made octogen's 4 and fusion's 7 sample different worlds");
+    CHECK(as7, "fusion with the noise off is octogen at OG_VOID_MOD=7, move and streams");
+    CHECK(restored, "octogen right after a fusion call is octogen at 4: fusion puts the mixture back");
 }
 #endif  // CD_ROLLOUT_NOISE
 
@@ -21093,6 +21169,7 @@ int main(void) {
     test_rollout_noise_seam();
     test_octogen_is_fusion_at_zero();
     test_fusion_rollouts_are_noisy();
+    test_fusion_void_mixture();
 #endif
 
     test_deal_rng_kat();
