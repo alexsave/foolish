@@ -343,8 +343,10 @@ int game_validate(const Game *g, int flags) {
             if (!card_first_sighting(&seen, pl->hand[j])) return GAME_INVALID_DUPLICATE_CARD;
         }
     }
-    const int deck_size = NUM_SUITS * (ACE_VALUE - min_value + 1);
-    if (hidden + __builtin_popcountll(seen) > deck_size) return GAME_INVALID_COUNT;
+    // A whole board's cards are all real and all distinct, so it can only hide
+    // too many when it is masked.
+    if (masked && hidden + __builtin_popcountll(seen) > NUM_SUITS * (ACE_VALUE - min_value + 1))
+        return GAME_INVALID_COUNT;
     return GAME_VALID;
 }
 

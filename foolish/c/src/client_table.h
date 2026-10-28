@@ -322,7 +322,8 @@ int client_adopt_board(ClientTable *c, const Game *g, int viewer);
 // callers that hold one on its own: an animation step's own snapshot, or the
 // board a host asked the kernel to serialize (evwire.h, ios_api.h). Measured
 // whole and judged, so a payload that does not read whole is refused; the view
-// names no one.
+// names no one. A board whose `viewer` seat holds a hidden card was masked for
+// someone else, and is refused as CLIENT_E_MISMATCH.
 int client_adopt_state(ClientTable *c, const uint8_t *p, int len, int viewer);
 
 // Opens a push for iteration. `as3`: the payload carries the flags byte and
