@@ -55,6 +55,19 @@ try {
     assert.deepEqual(await pills(), []);
   });
 
+  await check('a resize lays the hand out again for the new width (the kernel\'s hand_layout)', async () => {
+    const lefts = () => all('[data-hand-plane] [data-card]', 'e.style.left');
+    assert.deepEqual(await lefts(), ['399px', '451px', '503px', '555px']);   // 1024 wide: the golden's
+    await b.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+    try {
+      await b.until(`document.querySelector('[data-hand-plane] [data-card]').style.left === '82px'`, 2000);
+      assert.deepEqual(await lefts(), ['82px', '134px', '186px', '238px']);    // 370 of plane: (370 - 206) / 2
+    } finally {   // the checks after this one play at the golden's width either way
+      await b.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 1, mobile: false });
+    }
+    await b.until(`document.querySelector('[data-hand-plane] [data-card]').style.left === '399px'`);
+  });
+
   await check('a click selects a card and the kernel offers its pill; a second click takes it back', async () => {
     await b.click('[data-hand-plane] [data-card="1-6"]');   // 7h: nothing on the table to throw it on
     assert.deepEqual(await pills(), []);

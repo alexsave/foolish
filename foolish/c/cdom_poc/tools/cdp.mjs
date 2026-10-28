@@ -15,13 +15,13 @@ const TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascrip
   '.woff2': 'font/woff2', '.jpg': 'image/jpeg' };
 
 /** Serves the foolish/ tree, so a page links /src/styles/index.css as the app does. */
-export function serve(port = 8720, root = FOOLISH, extra = null) {
+export function serve(port = 8720, root = FOOLISH, extra = null, headers = {}) {
   const server = http.createServer((req, res) => {
     if (extra && extra(req, res)) return;
     const u = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     const f = path.join(root, u);
     if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; }
-    res.writeHead(200, { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream', 'cache-control': 'no-store' });
+    res.writeHead(200, { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream', 'cache-control': 'no-store', ...headers });
     fs.createReadStream(f).pipe(res);
   });
   return new Promise((r) => server.listen(port, '127.0.0.1', () => r(server)));

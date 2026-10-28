@@ -7,7 +7,7 @@
   <script>
 /*CDOM_SHIM*/
 window.app = cdom.start('table.wasm', 'root', { vw: () => window.innerWidth });
-window.app.then((x) => window.addEventListener('resize', () => x.app_resize()));
+window.app.then((x) => { window.appReady = performance.now(); window.addEventListener('resize', () => x.app_resize()); });
   </script>
   <link href="/src/styles/index.css" rel="stylesheet"/>
 </head>

@@ -11,7 +11,8 @@
  * paid the first time only. ONLY A LITERAL: the cache is per call site, so a
  * variable would be interned once and then answer its first value forever.
  * `"" lit` makes anything but a string literal a compile error. */
-#define ZS(lit) ({ static cd_str _zs; if (!_zs) _zs = cd_internz("" lit); _zs; })
+__attribute__((noinline)) static cd_str zs_(cd_str *slot, const char *lit) { return *slot ? *slot : (*slot = cd_internz(lit)); }
+#define ZS(lit) ({ static cd_str _zs; zs_(&_zs, "" lit); })
 
 #define OPEN(tag) cd_open(ZS(tag))
 #define CLOSE() cd_close()
@@ -25,8 +26,8 @@
 typedef struct { char b[2048]; uint32_t n; } SB;
 static inline void sb_reset(SB *s) { s->n = 0; }
 static inline void sb_c(SB *s, char c) { if (s->n < sizeof s->b) s->b[s->n++] = c; }
-static inline void sb_s(SB *s, const char *t) { while (*t) sb_c(s, *t++); }
-static inline void sb_i(SB *s, int32_t v) {
+__attribute__((noinline)) static void sb_s(SB *s, const char *t) { while (*t) sb_c(s, *t++); }
+__attribute__((noinline)) static void sb_i(SB *s, int32_t v) {
   char t[12];
   int k = 0;
   uint32_t u = v < 0 ? 0u - (uint32_t)v : (uint32_t)v;
@@ -35,7 +36,7 @@ static inline void sb_i(SB *s, int32_t v) {
   while (k) sb_c(s, t[--k]);
 }
 /* A length as CSS writes it: up to four decimals, trailing zeros dropped. */
-static inline void sb_f(SB *s, double v) {
+__attribute__((noinline)) static void sb_f(SB *s, double v) {
   if (v < 0) { sb_c(s, '-'); v = -v; }
   uint64_t q = (uint64_t)(v * 10000.0 + 0.5);
   sb_i(s, (int32_t)(q / 10000));
@@ -48,8 +49,8 @@ static inline void sb_f(SB *s, double v) {
   while (d[last] == '0') last--;
   for (int i = 0; i <= last; i++) sb_c(s, d[i]);
 }
-static inline void sb_px(SB *s, const char *prop, double v) { sb_s(s, prop); sb_f(s, v); sb_s(s, "px; "); }
-static inline cd_str sb_str(SB *s) {
+__attribute__((noinline)) static void sb_px(SB *s, const char *prop, double v) { sb_s(s, prop); sb_f(s, v); sb_s(s, "px; "); }
+__attribute__((noinline)) static cd_str sb_str(SB *s) {
   uint32_t n = s->n;
   while (n && s->b[n - 1] == ' ') n--; /* the last "; " keeps its ';' only */
   return cd_intern(s->b, n);
