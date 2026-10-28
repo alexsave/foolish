@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds the cdom table into out/: table.wasm and index.html (the shim inlined).
+# Builds the cdom table into out/: table.wasm and index.html (the shim inlined), and the tests' modules.
 # Run from anywhere. WASM_CC overrides the compiler (homebrew LLVM by default).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -37,7 +37,7 @@ for f in "${SHARED[@]}"; do
 done
 # cdom's mini.c is not linked: the kernel's libc.c brings memcmp and strlen (mini.c's are weak, so
 # either would link). cdom's weak malloc is the one allocator for both.
-for f in "$here/vendor/cdom.c" "$here/vendor/cdom_store.c" "$here/src/table_app.c" "$here/src/kernel_glue.c" "$here/src/game_keep.c" "$here/src/textures.c" "$here/src/crtrig.c" "$here/src/trig.c"; do
+for f in "$here/vendor/cdom.c" "$here/vendor/cdom_store.c" "$here/src/table_app.c" "$here/src/kernel_glue.c" "$here/src/game_keep.c" "$here/src/anim_run.c" "$here/src/textures.c" "$here/src/crtrig.c" "$here/src/trig.c"; do
   o="$obj/app_$(basename "${f%.c}").o"
   "$CC" "${AFLAGS[@]}" -c "$f" -o "$o"
   objs+=("$o")
@@ -88,6 +88,12 @@ link "$out/live_test.wasm" "${lobjs[@]}"
 clang -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -w -I"$c/src" \
   -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 -DFOOLISH_SEEDED_BOTS_ONLY \
   -o "$out/blob_test" "$here/tests/blob_test.c" "$here/src/game_keep.c" "$shared/deal_rng.c" \
+  "${KERNEL[@]/#/$c/}"
+
+# Every operation the table animates, captured as the kernel's stream for my seat (tests/run_test.c), native: run out/run_test.
+clang -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -w -I"$c/src" \
+  -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 -DFOOLISH_SEEDED_BOTS_ONLY \
+  -o "$out/run_test" "$here/tests/run_test.c" "$here/src/game_keep.c" "$here/src/anim_run.c" "$shared/deal_rng.c" \
   "${KERNEL[@]/#/$c/}"
 
 # The page: the shim minified and inlined (as cdom's bench does), the app's CSS linked.

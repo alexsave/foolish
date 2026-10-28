@@ -39,6 +39,10 @@ MUTANTS = [
   ('the stored game ignored', 'src/table_app.c', '  game_adopted = len > 0 && game_keep_load(&G, p, len);', '  game_adopted = 0;', 'tools/test.mjs', 'reload'),
   ('a failed save ignored', 'src/table_app.c', '  save_failed = !ok;\n', '  save_failed = 0;\n', 'tools/test.mjs', 'not silent'),
   ('a failed save not tried again', 'src/table_app.c', '  if (token == TIMER_SAVE_RETRY) { save_retry_pending = 0; game_save(); }', '', 'tools/test.mjs', 'not silent'),
+  # the animation pass: the capture (tests/run_test.c, native)
+  ('the hook not installed', 'src/anim_run.c', '  engine_snap_hook = snap;', '  (void)snap;', 'out/run_test'),
+  ('the stream written for nobody', 'src/anim_run.c', 'g, viewer, actor, ended,', 'g, -1, actor, ended,', 'out/run_test'),
+  ('the final transition dropped', 'src/anim_run.c', 'g, viewer, actor, ended,', 'g, viewer, actor, 0,', 'out/run_test'),
   ('http body not sent', 'vendor/cdom.js', 'body: bodyLen ? copyBytes(bodyPtr, bodyLen) : undefined,', 'body: undefined,', 'tests/net_test.mjs'),
   # the network pass: each import the live contract test exists for, broken (tests/live_test.mjs, a local c_base)
   ('live: request headers not sent', 'vendor/cdom.js', 'headers: headerList(headersPtr, headersLen),', 'headers: [],', 'tests/live_test.mjs'),

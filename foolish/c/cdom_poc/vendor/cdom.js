@@ -360,6 +360,11 @@ var cdom = (() => {
     }
     i32.set([innerWidth, innerHeight, +doc.hidden, Math.round(devicePixelRatio * 100)], recordPtr >> 2);
   }
+  // A node's box on screen into C memory as four doubles: left, top, width, height.
+  function rect(id, outPtr) {
+    const box = nodes[id].getBoundingClientRect();
+    new Float64Array(memory.buffer, outPtr, 4).set([box.left, box.top, box.width, box.height]);
+  }
   function timer(ms, token) {
     setTimeout(() => exports.cd_timer(token), ms);
   }
@@ -534,7 +539,7 @@ var cdom = (() => {
         strings, at, open, open_svg, close, text, text_num, attr, class: setClass, name, name_open,
         listen, value, value_num, tpl_save, clone, slot, tpl_text, tpl_text_num, walk, walk_value, walk_value_num,
         set_text, set_text_num, set_attr, set_class, style, style_num, encode, image_bytes, remove, free, move, clear,
-        detach, attach, input, win, viewport, timer, raf, now, ws_open, ws_send, ws_close, ws_buffered, http, epoch,
+        detach, attach, input, win, viewport, rect, timer, raf, now, ws_open, ws_send, ws_close, ws_buffered, http, epoch,
         store_put, store_get, store_del,
       },
       env: env || {},

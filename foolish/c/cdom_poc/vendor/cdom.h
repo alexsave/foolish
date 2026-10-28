@@ -146,6 +146,10 @@ void cd_listen_window(uint32_t ev);  /* deliver CD_EV_RESIZE or CD_EV_VISIBILITY
 typedef struct { int32_t w, h, hidden, dpr100; } cd_viewport_rec;
 /* innerWidth, innerHeight, document.hidden and devicePixelRatio (times 100, rounded), read now */
 void cd_viewport(cd_viewport_rec *v);
+/* A node's box on screen now (getBoundingClientRect: with its transforms, in CSS px from the
+ * viewport's top left): out[0] left, out[1] top, out[2] width, out[3] height. The browser lays the
+ * page out first if anything changed, so measure once per change, never every frame. */
+void cd_rect(cd_id id, double out[4]);
 
 /* ---- time: answered through the app's hooks (cdom has empty weak defaults) ---- */
 void cd_timer_start(uint32_t ms, uint32_t token); /* cd_on_timer(token) after ms */

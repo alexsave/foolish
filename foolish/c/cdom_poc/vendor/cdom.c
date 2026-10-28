@@ -138,6 +138,7 @@ IMPORTS("detach") void j_detach(cd_id id);
 IMPORTS("attach") void j_attach(cd_id id);
 IMPORTS("win") void j_win(uint32_t ev);
 IMPORTS("viewport") void j_viewport(cd_viewport_rec *v);
+IMPORTS("rect") void j_rect(cd_id id, double *out);
 IMPORTS("timer") void j_timer(uint32_t ms, uint32_t token);
 IMPORTS("raf") void j_raf(uint32_t token);
 IMPORTS("now") double j_now(void);
@@ -530,6 +531,7 @@ void cd_region_hide(cd_region *r) { cd_region_show(r, 0); }
 /* ---- window and time ---- */
 void cd_listen_window(uint32_t ev) { j_win(ev); }
 void cd_viewport(cd_viewport_rec *v) { j_viewport(v); }
+void cd_rect(cd_id id, double out[4]) { j_rect(id, out); }
 void cd_timer_start(uint32_t ms, uint32_t token) { j_timer(ms, token); }
 void cd_raf_request(uint32_t token) { j_raf(token); }
 double cd_now(void) { return j_now(); }
