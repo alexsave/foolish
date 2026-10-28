@@ -17,6 +17,7 @@
 #include "wire.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdint.h>
 
 // The bots' strategy keys, in be_w_cup.bots order, and how the site shows them.
@@ -45,17 +46,26 @@ bool be_cup_load(be_w_cup *c, const char *path, const char *const *ids, int n);
 bool be_cup_save(const be_w_cup *c, const char *path, const char *const *ids, int n);
 
 // ---- a game's story --------------------------------------------------------------------------
-#define BE_CUP_STORY 12000
+// Every line and every move is kept whole, however long the game (the arrays grow): a game of
+// hundreds of moves is not cut. When it is written, a stretch where the same run of moves repeats
+// (a pass loop) is told once with its count ("moves 63-541: the same 8-move cycle, 60 times").
 typedef struct {
-    int      len;
-    char     text[BE_CUP_STORY];      // the key moments, a line each
-    char     moves[BE_CUP_STORY];     // every move, compact ("k:A 7S 7H | h:C 9S")
-    int      moves_len;
-    uint32_t n_moves;
-    uint32_t seat_moves[2], pickups[2], picked[2], passes[2], trumps[2];
-    int8_t   out_order[2];
-    int      n_out;
+    uint32_t move;   // the move it happened at (0: before the first move)
+    char    *text;
+} be_cup_line;
+
+typedef struct {
+    be_cup_line *lines;               // the key moments
+    int          n_lines, cap_lines;
+    be_cup_line *moves;               // every move, compact ("k:A 7S 7H")
+    int          n_moves_tok, cap_moves;
+    uint32_t     n_moves;
+    uint32_t     seat_moves[2], pickups[2], picked[2], passes[2], trumps[2];
+    bool         oom;                 // a line could not be kept: the file says so
 } be_cup_story;
+
+// Frees what the story holds and empties it (a zeroed story is empty too).
+void be_cup_story_reset(be_cup_story *s);
 
 // The game is dealt: trump suit, the face-up card, who leads. names[] are the seats' names.
 void be_cup_story_deal(be_cup_story *s, const char *const names[2], int power_suit, int8_t flip_suit, int8_t flip_value,
@@ -64,8 +74,15 @@ void be_cup_story_deal(be_cup_story *s, const char *const names[2], int power_su
 void be_cup_story_event(be_cup_story *s, const char *const names[2], int power_suit, int kind, int seat,
                         const int8_t *suits, const int8_t *values, int n_cards, int deck_count);
 // The game is over (`fool` the seat, -1 a draw): the story's last lines, then its whole text
-// (header line "Game <g>: ..." included) appended to `path`. false when it could not be written.
+// (header line "Game <g>: ..." included) appended to `path`, repeated stretches folded. false when it
+// could not be written.
 bool be_cup_story_write(be_cup_story *s, const char *const names[2], int fool, int game_no, const char *path);
+
+// The story's moves as written: runs of the same 1..BE_CUP_CYCLE_MAX moves repeated at least
+// BE_CUP_CYCLE_MIN times in a row are one entry. Writes to `f`. (Exposed for unit_cup.)
+#define BE_CUP_CYCLE_MAX 40
+#define BE_CUP_CYCLE_MIN 3
+void be_cup_story_print(const be_cup_story *s, FILE *f);
 
 // The match is decided: <dir>/<id>.summary.txt from its games file and the score.
 bool be_cup_summary_write(const be_w_cup *c, int m, const char *const *names, const char *games_path, const char *out_path);

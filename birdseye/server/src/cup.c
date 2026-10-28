@@ -5,6 +5,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 const char *const BE_CUP_KEYS[BE_CUP_BOTS] = { "kestrel", "sapper", "sonnet", "haiku" };
@@ -249,85 +250,190 @@ static void card_str(int8_t suit, int8_t value, char out[4]) {
     out[2] = 0;
 }
 
-static void add(char *buf, int *len, const char *fmt, ...) {
-    if (*len >= BE_CUP_STORY - 1) return;
+static bool push(be_cup_story *s, be_cup_line **arr, int *n, int *cap, uint32_t move, const char *fmt, ...) {
+    if (*n == *cap) {
+        int nc = *cap ? *cap * 2 : 64;
+        be_cup_line *a = realloc(*arr, (size_t)nc * sizeof *a);
+        if (!a) {
+            s->oom = true;
+            return false;
+        }
+        *arr = a;
+        *cap = nc;
+    }
     va_list ap;
     va_start(ap, fmt);
-    int n = vsnprintf(buf + *len, (size_t)(BE_CUP_STORY - *len), fmt, ap);
+    char *t = NULL;
+    int k = vasprintf(&t, fmt, ap);
     va_end(ap);
-    if (n > 0) *len = *len + n < BE_CUP_STORY - 1 ? *len + n : BE_CUP_STORY - 1;
+    if (k < 0 || !t) {
+        s->oom = true;
+        return false;
+    }
+    (*arr)[*n].move = move;
+    (*arr)[(*n)++].text = t;
+    return true;
+}
+#define LINE(s, move, ...) push((s), &(s)->lines, &(s)->n_lines, &(s)->cap_lines, (move), __VA_ARGS__)
+#define MOVE(s, move, ...) push((s), &(s)->moves, &(s)->n_moves_tok, &(s)->cap_moves, (move), __VA_ARGS__)
+
+void be_cup_story_reset(be_cup_story *s) {
+    for (int i = 0; i < s->n_lines; i++) free(s->lines[i].text);
+    for (int i = 0; i < s->n_moves_tok; i++) free(s->moves[i].text);
+    free(s->lines);
+    free(s->moves);
+    memset(s, 0, sizeof *s);
 }
 
 void be_cup_story_deal(be_cup_story *s, const char *const names[2], int power_suit, int8_t flip_suit, int8_t flip_value,
                        int leader, int deck_count) {
-    memset(s, 0, sizeof *s);
-    s->out_order[0] = s->out_order[1] = -1;
+    be_cup_story_reset(s);
     char fc[4];
     card_str(flip_suit, flip_value, fc);
-    add(s->text, &s->len, "  Trump: %s (face up: %s). %s leads. Stock %d after the deal.\n",
-        power_suit >= 0 && power_suit < 4 ? SUIT_NAME[power_suit] : "?", fc, leader >= 0 && leader < 2 ? names[leader] : "?",
-        deck_count);
+    LINE(s, 0, "  Trump: %s (face up: %s). %s leads. Stock %d after the deal.\n",
+         power_suit >= 0 && power_suit < 4 ? SUIT_NAME[power_suit] : "?", fc, leader >= 0 && leader < 2 ? names[leader] : "?",
+         deck_count);
 }
 
 void be_cup_story_event(be_cup_story *s, const char *const names[2], int power_suit, int kind, int seat,
                         const int8_t *suits, const int8_t *values, int n_cards, int deck_count) {
     if (seat < 0 || seat > 1) seat = -1;
     const char *who = seat >= 0 ? names[seat] : "?";
-    char cards[3 * 40] = "";
+    char cards[3 * 64] = "";
     int cl = 0, n_trump = 0;
-    for (int i = 0; i < n_cards && i < 36; i++) {
+    for (int i = 0; i < n_cards && i < 60; i++) {
         char c[4];
         card_str(suits[i], values[i], c);
         cl += snprintf(cards + cl, sizeof cards - (size_t)cl, "%s%s", i ? " " : "", c);
         n_trump += suits[i] == power_suit;
     }
     const char *tag = kind == BE_EV_ATTACK ? "A" : kind == BE_EV_COVER ? "C" : kind == BE_EV_PASS ? "P" : kind == BE_EV_PICKUP ? "T"
-                    : kind == BE_EV_GOOD ? "G" : kind == BE_EV_OUT ? "O" : NULL;
-    if (!tag) return;
-    if (kind != BE_EV_GOOD) {   // a bout to the discard is no one's move
-        s->n_moves++;
-        if (seat >= 0) s->seat_moves[seat]++;
-    }
-    add(s->moves, &s->moves_len, "%s%c:%s%s%s", s->moves_len ? " | " : "", seat >= 0 ? who[0] : '?', tag, cl ? " " : "", cards);
+                    : kind == BE_EV_OUT ? "O" : NULL;
+    if (!tag) return;   // a bout to the discard is no one's move
+    s->n_moves++;
+    if (seat >= 0) s->seat_moves[seat]++;
     unsigned m = s->n_moves;
+    MOVE(s, m, "%c:%s%s%s", seat >= 0 ? who[0] : '?', tag, cl ? " " : "", cards);
     switch (kind) {
     case BE_EV_ATTACK:   // a lead or a throw-in
     case BE_EV_COVER:
         if (seat >= 0) s->trumps[seat] += (uint32_t)n_trump;
         if (n_trump >= 2 || (n_trump >= 1 && kind == BE_EV_ATTACK))
-            add(s->text, &s->len, "  move %u: %s %s with %d trump%s (%s), stock %d\n", m, who, kind == BE_EV_ATTACK ? "attacks" : "covers",
-                n_trump, n_trump > 1 ? "s" : "", cards, deck_count);
+            LINE(s, m, "  move %u: %s %s with %d trump%s (%s), stock %d\n", m, who, kind == BE_EV_ATTACK ? "attacks" : "covers", n_trump,
+                 n_trump > 1 ? "s" : "", cards, deck_count);
         else if (n_cards >= 3 && kind == BE_EV_ATTACK)
-            add(s->text, &s->len, "  move %u: %s attacks with %d cards at once (%s), stock %d\n", m, who, n_cards, cards, deck_count);
+            LINE(s, m, "  move %u: %s attacks with %d cards at once (%s), stock %d\n", m, who, n_cards, cards, deck_count);
         break;
     case BE_EV_PASS:
         if (seat >= 0) s->passes[seat]++;
-        add(s->text, &s->len, "  move %u: %s passes the attack on with %s, stock %d\n", m, who, cards, deck_count);
+        LINE(s, m, "  move %u: %s passes the attack on with %s, stock %d\n", m, who, cards, deck_count);
         break;
     case BE_EV_PICKUP:
-        if (seat >= 0) { s->pickups[seat]++; s->picked[seat] += (uint32_t)n_cards; }
-        add(s->text, &s->len, "  move %u: %s picks up %d card%s%s%s%s, stock %d\n", m, who, n_cards, n_cards == 1 ? "" : "s",
-            n_cards >= 4 ? " (a big pickup)" : "", cl ? ": " : "", cards, deck_count);
+        if (seat >= 0) {
+            s->pickups[seat]++;
+            s->picked[seat] += (uint32_t)n_cards;
+        }
+        LINE(s, m, "  move %u: %s picks up %d card%s%s%s%s, stock %d\n", m, who, n_cards, n_cards == 1 ? "" : "s",
+             n_cards >= 4 ? " (a big pickup)" : "", cl ? ": " : "", cards, deck_count);
         break;
     case BE_EV_OUT:
-        if (s->n_out < 2 && seat >= 0) s->out_order[s->n_out++] = (int8_t)seat;
-        add(s->text, &s->len, "  move %u: %s goes out\n", m, who);
+        LINE(s, m, "  move %u: %s goes out\n", m, who);
         break;
     default: break;
     }
+}
+
+// The longest-covering repeat at moves[i]: period p (1..BE_CUP_CYCLE_MAX), k times in a row, k at
+// least BE_CUP_CYCLE_MIN. 0 when none.
+static int cycle_at(const be_cup_story *s, int i, int *period) {
+    int best_k = 0, best_cover = 0;
+    for (int p = 1; p <= BE_CUP_CYCLE_MAX && i + 2 * p <= s->n_moves_tok; p++) {
+        int k = 1;
+        for (;;) {
+            int at = i + k * p;
+            if (at + p > s->n_moves_tok) break;
+            bool same = true;
+            for (int q = 0; q < p && same; q++) same = strcmp(s->moves[i + q].text, s->moves[at + q].text) == 0;
+            if (!same) break;
+            k++;
+        }
+        if (k >= BE_CUP_CYCLE_MIN && k * p > best_cover) {
+            best_cover = k * p;
+            best_k = k;
+            *period = p;
+        }
+    }
+    return best_k;
+}
+
+// The folded stretches, as move ranges: [from, to] (1-based moves), period, count.
+typedef struct {
+    uint32_t from, to;
+    int      period, count;
+} fold;
+
+static int folds_of(const be_cup_story *s, fold *out, int cap) {
+    int n = 0;
+    for (int i = 0; i < s->n_moves_tok;) {
+        int p = 0, k = cycle_at(s, i, &p);
+        if (k) {
+            if (n < cap) out[n++] = (fold){ s->moves[i].move, s->moves[i + k * p - 1].move, p, k };
+            i += k * p;
+        } else i++;
+    }
+    return n;
+}
+
+void be_cup_story_print(const be_cup_story *s, FILE *f) {
+    fold fd[256];
+    bool told[256] = { false };
+    int nf = folds_of(s, fd, 256), at = 0;
+    // The key moments: inside a folded stretch only the first round of the cycle is told, then the
+    // count; the moments of the repeats are the same moments again.
+    for (int i = 0; i < s->n_lines; i++) {
+        uint32_t m = s->lines[i].move;
+        while (at < nf && m > fd[at].to) at++;
+        if (at < nf && m >= fd[at].from && m <= fd[at].to) {
+            uint32_t first_end = fd[at].from + (uint32_t)fd[at].period - 1;
+            if (m <= first_end) fputs(s->lines[i].text, f);
+            bool last_in_first = i + 1 >= s->n_lines || s->lines[i + 1].move > first_end;
+            if (!told[at] && (m > first_end || last_in_first)) {
+                fprintf(f, "  moves %u-%u: the same %d-move cycle repeated %d times (its moments as above, again and again)\n", fd[at].from,
+                        fd[at].to, fd[at].period, fd[at].count);
+                told[at] = true;
+            }
+            continue;
+        }
+        fputs(s->lines[i].text, f);
+    }
+    fputs("  Every move (A attack or throw-in, C cover, P pass, T take, O out; [moves a-b: n x (...)] a cycle repeated n times):\n    ", f);
+    for (int i = 0; i < s->n_moves_tok;) {
+        int p = 0, k = cycle_at(s, i, &p);
+        if (i) fputs(" | ", f);
+        if (k) {
+            fprintf(f, "[moves %u-%u: %d x (", s->moves[i].move, s->moves[i + k * p - 1].move, k);
+            for (int q = 0; q < p; q++) fprintf(f, "%s%s", q ? " | " : "", s->moves[i + q].text);
+            fputs(")]", f);
+            i += k * p;
+        } else {
+            fputs(s->moves[i].text, f);
+            i++;
+        }
+    }
+    fputs("\n", f);
 }
 
 bool be_cup_story_write(be_cup_story *s, const char *const names[2], int fool, int game_no, const char *path) {
     FILE *f = fopen(path, "a");
     if (!f) return false;
     fprintf(f, "Game %d: %s (seat 1) v %s (seat 2)\n", game_no, names[0], names[1]);
-    fputs(s->text, f);
+    if (s->oom) fprintf(f, "  (OUT OF MEMORY while this game was told: some lines below are missing)\n");
+    be_cup_story_print(s, f);
     if (fool >= 0 && fool < 2) fprintf(f, "  Fool: %s. Winner: %s.\n", names[fool], names[1 - fool]);
     else fprintf(f, "  A draw: both went out together.\n");
-    fprintf(f, "  Moves: %u (%s %u, %s %u). Pickups: %s %u (%u cards), %s %u (%u cards). Passes: %s %u, %s %u. Trumps played: %s %u, %s %u.\n",
+    fprintf(f, "  Moves: %u (%s %u, %s %u). Pickups: %s %u (%u cards), %s %u (%u cards). Passes: %s %u, %s %u. Trumps played: %s %u, %s %u.\n\n",
             s->n_moves, names[0], s->seat_moves[0], names[1], s->seat_moves[1], names[0], s->pickups[0], s->picked[0], names[1],
             s->pickups[1], s->picked[1], names[0], s->passes[0], names[1], s->passes[1], names[0], s->trumps[0], names[1], s->trumps[1]);
-    fprintf(f, "  Every move (A attack or throw-in, C cover, P pass, T take, O out):\n    %s\n\n", s->moves);
     bool ok = !ferror(f);
     return fclose(f) == 0 && ok;
 }

@@ -1836,7 +1836,7 @@ input {
 }
 
 .ga-rung.cup-match {
-  grid-template-columns: 28px minmax(0, 1fr) 150px 40px 92px;
+  grid-template-columns: 24px minmax(0, 1fr) 92px 36px 74px;
 }
 
 .cup-pair {

@@ -737,7 +737,7 @@ static bool cup_new(int64_t now_ms) {
     if (m < 0) return false;
     int bots[2] = { seats[0], seats[1] };
     if (!table_open(t, bots, 2, false, m, now_ms)) return false;
-    memset(&g_story[t - g_tables], 0, sizeof g_story[0]);
+    be_cup_story_reset(&g_story[t - g_tables]);
     pthread_mutex_lock(&g_mu);
     be_cup_started(&g_cup, m, t->gid, t->gid_len);
     cup_changed();
@@ -1472,6 +1472,7 @@ void be_league_stop(void) {
     }
     free(g_tables);
     g_tables = NULL;
+    for (int i = 0; g_story && i < g_n_tables; i++) be_cup_story_reset(&g_story[i]);
     free(g_story);
     g_story = NULL;
     g_n_tables = 0;

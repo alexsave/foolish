@@ -3,6 +3,10 @@
 #include "t.h"
 #include "cup.h"
 
+#include <unistd.h>
+
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 // Plays match m to the score `a_wins`-`b_wins`: the loser's wins first, so the match is decided by
@@ -99,9 +103,86 @@ static void head_to_head_breaks_a_level_tie(void) {
     T_EQ_INT(c.order[1], 0);
 }
 
+// The file a story writes, read back whole.
+static char *story_file(be_cup_story *s, const char *const names[2], int fool) {
+    char path[] = "/tmp/unit_cup_story_XXXXXX";
+    int fd = mkstemp(path);
+    T_CHECK(fd >= 0);
+    close(fd);
+    T_CHECK(be_cup_story_write(s, names, fool, 4, path));
+    FILE *f = fopen(path, "r");
+    static char buf[1 << 20];
+    size_t n = f ? fread(buf, 1, sizeof buf - 1, f) : 0;
+    buf[n] = 0;
+    if (f) fclose(f);
+    remove(path);
+    return buf;
+}
+
+static int count(const char *hay, const char *needle) {
+    int n = 0;
+    for (const char *p = strstr(hay, needle); p; p = strstr(p + 1, needle)) n++;
+    return n;
+}
+
+// A game of hundreds of moves is written whole: no line cut, every move there.
+static void a_long_game_is_written_whole(void) {
+    be_cup_story s;
+    memset(&s, 0, sizeof s);
+    const char *names[2] = { "kestrel (Fable)", "haiku (Haiku)" };
+    be_cup_story_deal(&s, names, 0, 0, 7, 0, 23);
+    int8_t su[2], va[2];
+    // 700 pickups of two cards drawn at random (a fixed stream), so no stretch repeats and nothing
+    // folds; the stock count each line carries numbers it.
+    uint32_t x = 12345;
+    for (int i = 0; i < 700; i++) {
+        for (int c = 0; c < 2; c++) {
+            x = x * 1664525u + 1013904223u;
+            su[c] = (int8_t)((x >> 24) % 4);
+            va[c] = (int8_t)(5 + (x >> 16) % 9);
+        }
+        be_cup_story_event(&s, names, 0, BE_EV_PICKUP, (int)((x >> 8) % 2), su, va, 2, 1000 + i);
+    }
+    char *out = story_file(&s, names, 1);
+    T_EQ_INT(count(out, "picks up 2 cards"), 700);
+    T_CHECK(strstr(out, "move 700: ") != NULL);
+    T_CHECK(strstr(out, "stock 1699\n") != NULL);   // the last line whole
+    T_CHECK(strstr(out, "Moves: 700 ") != NULL);
+    T_CHECK(strstr(out, "Fool: haiku (Haiku)") != NULL);
+    be_cup_story_reset(&s);
+}
+
+// A pass loop: the same 4 moves 50 times is told once, with its count, in both the moments and the
+// move list; what comes before and after is told as it was.
+static void a_repeated_stretch_is_folded(void) {
+    be_cup_story s;
+    memset(&s, 0, sizeof s);
+    const char *names[2] = { "sapper (Opus)", "haiku (Haiku)" };
+    be_cup_story_deal(&s, names, 0, 0, 7, 0, 23);
+    int8_t su[3] = { 2, 3, 1 }, va[3] = { 5, 5, 9 };
+    be_cup_story_event(&s, names, 0, BE_EV_ATTACK, 0, su + 2, va + 2, 1, 0);   // move 1: a one-off
+    for (int r = 0; r < 50; r++) {                                             // moves 2..201
+        be_cup_story_event(&s, names, 0, BE_EV_ATTACK, 0, su, va, 1, 0);
+        be_cup_story_event(&s, names, 0, BE_EV_PASS, 1, su + 1, va + 1, 1, 0);
+        be_cup_story_event(&s, names, 0, BE_EV_PASS, 0, su + 2, va + 2, 1, 0);
+        be_cup_story_event(&s, names, 0, BE_EV_PICKUP, 1, su, va, 3, 0);
+    }
+    be_cup_story_event(&s, names, 0, BE_EV_OUT, 0, su, va, 0, 0);              // move 202
+    char *out = story_file(&s, names, 1);
+    T_CHECK(strstr(out, "moves 2-201: the same 4-move cycle repeated 50 times") != NULL);
+    T_CHECK(strstr(out, "[moves 2-201: 50 x (s:A 6C | h:P 6D | s:P TH | h:T 6C 6D TH)]") != NULL);
+    T_EQ_INT(count(out, "passes the attack on"), 2);   // the first round's two passes, not 100
+    T_CHECK(strstr(out, "move 202: sapper (Opus) goes out") != NULL);
+    T_CHECK(strstr(out, "Moves: 202 ") != NULL);
+    T_CHECK(strstr(out, "Passes: sapper (Opus) 50, haiku (Haiku) 50") != NULL);   // the counts are of every move
+    be_cup_story_reset(&s);
+}
+
 int main(void) {
     T_RUN(the_round_robin_plays_in_order_one_match_at_a_time);
     T_RUN(the_standings_seat_the_final_and_the_final_crowns);
     T_RUN(head_to_head_breaks_a_level_tie);
+    T_RUN(a_long_game_is_written_whole);
+    T_RUN(a_repeated_stretch_is_folded);
     return T_DONE();
 }
