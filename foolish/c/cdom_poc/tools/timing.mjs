@@ -1,5 +1,7 @@
 // First paint and click-to-update of the cdom table in headless Chrome, medians over fresh loads.
-//   node tools/timing.mjs [runs] [cpu-throttle]     (PAGE=/c/cdom_poc/out/index.html?notex for another page)
+//   node tools/timing.mjs [runs] [cpu-throttle]     (PAGE=/c/cdom_poc/out/index.html?notex&debug for another page)
+// The page is the test build (?debug: the same table with app_debug_*), its bot held so the bot's
+// step runs where the test says; the game each load keeps is forgotten before the next load.
 // TEX=cold or TEX=warm also times the textures: cold empties the page's store before every load
 // (every texture made), warm loads once first and then each load finds all three in the store.
 // Per texture: when its url was set (ms after navigation), how long making it took on the page's
@@ -10,7 +12,7 @@
 // - select: a click on a hand card (the selection, the pills asked of the kernel, the patches);
 // - play: a click on the Attack pill (the move applied, the board re-read, the patches);
 // - bot: the bot's step (bot_drive, then the patches), run where its timer would run it.
-import { launch, serve, FOOLISH, sleep } from './cdp.mjs';
+import { launch, serve, FOOLISH, sleep, FORGET_GAME } from './cdp.mjs';
 
 const RUNS = Number(process.argv[2] || 15), CPU = Number(process.argv[3] || 1);
 // Cross-origin isolated, so performance.now() reads to microseconds rather than 0.1 ms.
@@ -35,8 +37,10 @@ try {
     // Needed to time a page that makes textures: the previous load's slices otherwise hold the
     // thread into the next load (measured: +18 ms at x4). Slower absolute numbers (a cold process).
     if (process.env.BLANK) { await b.goto('about:blank'); await sleep(300); }
-    await b.goto('http://127.0.0.1:8720' + (process.env.PAGE || '/c/cdom_poc/out/index.html'));
-    await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
+    await b.goto('http://127.0.0.1:8720' + (process.env.PAGE || '/c/cdom_poc/out/index.html?debug'));
+    await b.until('window.appReady');
+    await b.evaluate('window.app.then((x) => x.app_debug_hold(1))'); // the bot's step is the test's to run
+    if (await b.evaluate('window.app.then((x) => x.app_game_store(2))')) throw new Error('a kept game was adopted: not the golden board');
     if (TEX) {
       await b.until(texDone, 120000);
       const t = await b.evaluate(`window.app.then(async (x) => {
@@ -61,7 +65,7 @@ try {
       const sel = [];
       for (let k = 0; k < 9; k++) sel.push(await time(() => card().click()));   // ends selected (odd count)
       const play = await time(() => document.querySelector('[data-pill="Attack"]').click());
-      const bot = await time(() => x.cd_timer(1));
+      const bot = await time(() => x.cd_timer(3)); // the bot's step (the test build's release path)
       return { fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime, ready: window.appReady,
         sel, play, bot };
     })()`);
@@ -69,6 +73,7 @@ try {
     for (const [s, f] of r.sel) { rows.selScript.push(s); rows.selFrame.push(f); }
     rows.playScript.push(r.play[0]); rows.playFrame.push(r.play[1]);
     rows.botScript.push(r.bot[0]); rows.botFrame.push(r.bot[1]);
+    await b.evaluate(FORGET_GAME); // the next load starts on the golden board again
   }
 } finally { await b.close(); server.close(); }
 const f = (v) => v.toFixed(2).padStart(7);

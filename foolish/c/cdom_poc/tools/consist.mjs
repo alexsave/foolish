@@ -27,7 +27,7 @@ function mulberry32(a) {
 }
 
 // The kernel's lines (app_debug_state) as an object of word lists.
-async function kernel(b) {
+export async function kernel(b) {
   const text = await b.evaluate(`window.app.then((x) => { const p = x.app_debug_state();
     return new TextDecoder().decode(new Uint8Array(x.memory.buffer, p, x.app_debug_len())); })`);
   const k = { seats: [] };
@@ -42,7 +42,8 @@ async function kernel(b) {
 // The DOM, read the same way.
 export const READ_DOM = `(() => {
   const all = (sel, f) => [...document.querySelectorAll(sel)].map(f);
-  const hand = all('[data-hand-plane] [data-card]', (e) => ({ card: e.dataset.card, left: parseFloat(e.style.left), bottom: parseFloat(e.style.bottom), red: e.style.borderColor === 'red' }));
+  const hand = all('[data-hand-plane] [data-card]', (e) => ({ card: e.dataset.card, left: parseFloat(e.style.left), bottom: parseFloat(e.style.bottom), red: e.style.borderColor === 'red',
+    box: [e.style.left, e.style.bottom, e.style.width, e.style.height].map((v) => String(parseFloat(v))).join(',') }));
   const deck = document.querySelector('[data-location="deck"]');
   const flipped = document.querySelector('[data-location="flipped"]');
   const discard = document.querySelector('[data-location="discard"]');
@@ -73,16 +74,28 @@ export const READ_DOM = `(() => {
 })()`;
 
 // A real click on a hand card where it shows: a long hand overlaps, and a card's centre can be
-// under the next one, so the point is the first along its middle row that hits the card itself.
+// under the next one (or, in two rows, the row in front), so the point is the first along its
+// middle row, then rows above and below, that hits the card itself.
 export async function clickCard(b, card) {
   const sel = `[data-hand-plane] [data-card="${card}"]`;
-  await b.until(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); const r1 = e.getBoundingClientRect();
-    return new Promise((res) => requestAnimationFrame(() => { const r2 = e.getBoundingClientRect(); res(r1.x === r2.x && r1.y === r2.y); })); })()`, 2000);
+  // the whole hand at rest: every card's transition over (its computed box is the one it was given,
+  // to Chrome's 1/64 px layout unit;
+  // a card slides for 0.1 s when the hand changes, over its neighbours)
+  await b.until(`[...document.querySelectorAll('[data-hand-plane] [data-card]')].every((e) => { const c = getComputedStyle(e);
+    return ['left', 'bottom', 'width', 'height'].every((p) => Math.abs(parseFloat(c[p]) - parseFloat(e.style[p])) < 0.05); })`, 2000)
+    .catch(async (err) => { console.log(await b.evaluate(`[...document.querySelectorAll('[data-hand-plane] [data-card]')].map((e) => { const c = getComputedStyle(e);
+    return e.dataset.card + ' ' + ['left', 'bottom', 'width', 'height'].map((p) => c[p] + '|' + e.style[p]).join(' '); })`)); throw err; });
   const at = await b.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(sel)}), r = e.getBoundingClientRect();
-    for (let x = r.left + 2; x < r.right; x += 2) { const y = r.top + r.height / 2;
+    for (const f of [0.5, 0.25, 0.75, 0.1, 0.9]) for (let x = r.left + 2; x < r.right; x += 2) { const y = r.top + r.height * f;
       if (document.elementFromPoint(x, y)?.closest('[data-card]') === e) return { x, y }; }
     return null; })()`);
-  if (!at) throw new Error(`card ${card} shows nowhere`);
+  if (!at) {
+    const why = await b.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(sel)}), r = e.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return JSON.stringify({ rect: [r.left, r.top, r.width, r.height].map(Math.round), vw: innerWidth, vh: innerHeight, cards: document.querySelectorAll('[data-hand-plane] [data-card]').length,
+        top: top ? [top === e, top.closest('[data-card]')?.dataset.card, top.closest('[data-card]') === e, top.parentElement?.tagName, top.closest('[data-hand-plane]') ? 'in plane' : 'outside', top.outerHTML.slice(0, 60)] : null, same: document.querySelectorAll('[data-card="' + e.dataset.card + '"]').length style: e.getAttribute('style').slice(0, 200) }); })()`);
+    throw new Error(`card ${card} shows nowhere: ${why}`);
+  }
   for (const type of ['mousePressed', 'mouseReleased'])
     await b.send('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 });
 }
@@ -108,6 +121,13 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
     const eq = (a, x) => JSON.stringify(a) === JSON.stringify(x);
     const handK = k.hand;
     if (!eq(d.hand.map((h) => h.card), handK)) flag('hand order', `DOM ${d.hand.map((h) => h.card).join(' ')} kernel ${handK.join(' ')}`);
+    // each card where the kernel's hand_layout puts it at this width (left, bottom, width, height)
+    // (within 0.001 px: the port writes a length to 4 decimals, cdom's cd_fmt_len, and Chrome keeps
+    // 6 significant digits of it, as it does of React's full double)
+    const near = (a, b) => a !== undefined && b !== undefined && a.split(',').every((v, j) => Math.abs(Number(v) - Number(b.split(',')[j])) < 0.001);
+    const off = d.hand.findIndex((h, j) => !near(h.box, k.slots[j]));
+    if (off >= 0 || d.hand.length !== k.slots.length)
+      flag('hand card placed off its slot', `${d.hand[off]?.card} at ${d.hand[off]?.box}, kernel ${k.slots[off]} (${d.hand.length} cards)`);
     // in the kernel's order along each row (hand_layout: a long hand is two rows)
     const rows = new Map();
     for (const h of d.hand) rows.set(h.bottom, [...(rows.get(h.bottom) || []), h.left]);
@@ -165,26 +185,28 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
     return { k, d, over };
   };
 
-  await b.evaluate(`window.app.then((x) => { x.app_debug_hold(1); x.app_debug_fast(1); })`);
+  // the kernel seeded too (the bot's choices, the draws, the next deals): one seed, one run
+  await b.evaluate(`window.app.then((x) => { x.app_debug_hold(1); x.app_debug_fast(1); x.app_debug_reseed(${seed}); })`);
   let state = await compare();
   for (; step < maxSteps && done < games; step++) {
     const { k, d, over } = state;
-    const due = await b.evaluate(`window.app.then((x) => x.app_debug_due())`);
+    // the bot's turn by the board alone (not by whether its 30 ms are up), so a seed is one run
+    const due = d.turn === 'bot';
     const before = JSON.stringify([k.hand, k.battles, k.seats, k.status]);
     if (over) {
       what = 'Play again';
       await b.click('[data-end] button');
       selection = []; pressed = new Set(); prevRearm = new Set();
       done++;
-    } else if (due && (rnd() < 0.6 || (!d.pills.length && !d.hand.length))) {
+    } else if (due && (rnd() < 0.8 || (!d.pills.length && !d.hand.length))) {
       what = 'a bot step';
-      await b.evaluate(`window.app.then((x) => x.app_debug_release())`);
-      await b.until(`window.app.then((x) => !x.app_debug_due())`, 2000);
-      await sleep(30);
+      await b.until(`window.app.then((x) => x.app_debug_due())`, 5000);
+      const n = await b.evaluate(`window.app.then((x) => { const n = x.app_bot_steps(); x.app_debug_release(); return n; })`);
+      await b.until(`window.app.then((x) => x.app_bot_steps() > ${n})`, 2000);
     } else {
       const r = rnd();
       const mine = d.hand.filter((h) => h.red).map((h) => h.card);
-      if (d.pills.length && r < 0.5) {
+      if (d.pills.length && r < 0.7) {
         const p = d.pills[Math.floor(rnd() * d.pills.length)];
         what = `the ${p} pill`;
         await b.click(`[data-pill="${p}"]`);
@@ -193,7 +215,7 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
         justPressed = p;
         if (p === 'Attack' || p === 'Pass' || p === 'Cover') selection = [];
         if (reject) pressed.delete(p);
-      } else if (mine.length && rnd() < 0.5) {
+      } else if (mine.length && rnd() < 0.6) {
         const c = mine[Math.floor(rnd() * mine.length)];
         what = `card ${c}`;
         await clickCard(b, c);

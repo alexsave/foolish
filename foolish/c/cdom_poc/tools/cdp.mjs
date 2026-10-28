@@ -99,3 +99,27 @@ export async function launch({ width = 1024, height = 768, port = 8729 } = {}) {
   const closeAll = async () => { try { await send('Target.closeTarget', { targetId }); } catch { /* closed */ } await close(); };
   return { send: s, evaluate, goto, until, shot, click, close: closeAll };
 }
+
+// The table keeps its game in cdom's store (IndexedDB "cdom", object store "kv"; src/table_app.c
+// GAME_KEY) and a load adopts it. openTable loads the table on a fresh game: it forgets the kept
+// game first (from a page of the same origin), then waits for cdom.start and the store's answer.
+// The test build (?debug): hold the bot's steps for the caller to release, or make its waits fast.
+export const GAME_KEY = 'foolish-game-v1';
+// The kept game deleted, from any page of the table's origin (a promise of 1, or 0 on a failure).
+export const FORGET_GAME = `new Promise((resolve) => { const r = indexedDB.open('cdom', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => { const d = r.result; const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').delete(${JSON.stringify(GAME_KEY)});
+      t.oncomplete = () => { d.close(); resolve(1); }; t.onerror = () => { d.close(); resolve(0); }; };
+    r.onerror = () => resolve(0); })`;
+export async function forgetGame(b, origin = 'http://127.0.0.1:8720') {
+  await b.goto(origin + '/src/styles/index.css'); // any document of the origin (a 404 page has none)
+  await b.evaluate(FORGET_GAME);
+}
+export async function openTable(b, url, { hold = false, fast = false, forget = true } = {}) {
+  if (forget) await forgetGame(b, new URL(url).origin);
+  await b.goto(url);
+  await b.until('window.appReady');
+  if (hold) await b.evaluate('window.app.then((x) => x.app_debug_hold(1))');
+  if (fast) await b.evaluate('window.app.then((x) => x.app_debug_fast(1))');
+  await b.until('window.app.then((x) => x.app_game_store(1) > 0)', 3000);
+}

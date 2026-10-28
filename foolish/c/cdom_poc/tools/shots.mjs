@@ -5,7 +5,7 @@
 // seed and applied as the React components apply them (needs out/tex_ts.js: tools/texparity.mjs).
 import fs from 'node:fs';
 import path from 'node:path';
-import { launch, serve, POC, FOOLISH } from './cdp.mjs';
+import { launch, serve, POC, FOOLISH, openTable } from './cdp.mjs';
 import { playToEnd } from './play.mjs';
 
 const W = Number(process.env.W || 1024), H = Number(process.env.H || 768);
@@ -59,8 +59,8 @@ try {
 
   for (const tex of [false, true]) {
   const pre = tex ? 'cdom_tex_' : 'cdom_';
-  await b.goto(`http://127.0.0.1:8720/c/cdom_poc/out/index.html${tex ? '' : '?notex'}`);
-  await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
+  // the test build, the bot held (it may act on the golden's board), on a fresh game
+  await openTable(b, `http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug${tex ? '' : '&notex'}`, { hold: true });
   await b.evaluate('document.fonts.ready.then(() => 1)');
   if (tex) { // every texture landed and decoded
     await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 60000);
@@ -77,8 +77,7 @@ try {
     await b.evaluate(TEXTURE_GOLDEN(seed));
     await new Promise((r) => setTimeout(r, 300));
     await b.shot(path.join(shots, `react_golden_tex${sfx}.png`));
-    await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
-    await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
+    await openTable(b, 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug', { hold: true });
     await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 60000);
     await b.until(`document.getElementById('root').style.getPropertyValue('--tex-wool') !== ''`, 10000);
     await new Promise((r) => setTimeout(r, 300));
@@ -90,7 +89,8 @@ try {
   await b.shot(path.join(shots, `${pre}selected${sfx}.png`));
   // Throw it in, and wait for the bot to answer.
   await b.click('[data-pill="Attack"]');
-  await b.until(`document.querySelector('[data-game-container]').dataset.turn === 'bot'`);
+  await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
+  await b.evaluate(`window.app.then((x) => { x.app_debug_hold(0); x.app_debug_fast(1); x.app_debug_release(); })`);
   await b.until(`document.querySelector('[data-game-container]').dataset.turn !== 'bot'`, 10000);
   await new Promise((r) => setTimeout(r, 400)); // the hand's own 0.1s slide (transition: all 0.1s)
   await b.shot(path.join(shots, `${pre}after_bot${sfx}.png`));

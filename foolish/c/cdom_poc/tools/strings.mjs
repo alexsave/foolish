@@ -6,15 +6,15 @@
 // hold: 10 strings and 200 bytes (3 end titles, 5 pill labels, 2 medals: 66 bytes). A leak adds a
 // string per new style (the "styles interned" mutant: 14 strings and 6 KB from game 2 to 3).
 //   node tools/strings.mjs        (after ./build.sh)
-import { launch, serve, FOOLISH } from './cdp.mjs';
+import { launch, serve, FOOLISH, openTable } from './cdp.mjs';
 import { playToEnd } from './play.mjs';
 
 const server = await serve(8720, FOOLISH);
 const b = await launch();
 const rows = [];
 try {
-  await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex');
-  await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
+  // the test build with the bot's waits 30 ms (the kernel's 3000 otherwise)
+  await openTable(b, 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug', { fast: true });
   const read = async (when) => rows.push({ when, ...(await b.evaluate(`window.app.then((x) => ({ strings: x.app_str_count(), bytes: x.app_str_bytes(), ids: x.app_ids_live() }))`)) });
   await read('first paint');
   for (let g = 1; g <= 3; g++) {

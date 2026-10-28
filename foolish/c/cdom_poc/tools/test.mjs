@@ -6,9 +6,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { launch, serve, FOOLISH } from './cdp.mjs';
+import { launch, serve, FOOLISH, openTable } from './cdp.mjs';
 import { playToEnd } from './play.mjs';
-import { consistRun, READ_DOM, clickCard } from './consist.mjs';
+import { consistRun, READ_DOM, clickCard, kernel } from './consist.mjs';
 
 const golden = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/bout_2p_attacker.html'), 'utf8');
 const server = await serve(8720, FOOLISH);
@@ -19,18 +19,21 @@ const turn = () => b.evaluate(`document.querySelector('[data-game-container]').d
 const pills = () => all('[data-pill]', 'e.dataset.pill');
 const settle = async () => { await b.until(`document.querySelector('[data-game-container]').dataset.turn !== 'bot'`, 15000); };
 // The test build (?debug): the bot's steps held for the test to release one by one, or its waits
-// made a hundredth of the kernel's for the games played out.
+// made 30 ms (app_debug_fast) for the games played out.
 const hold = () => b.evaluate(`window.app.then((x) => x.app_debug_hold(1))`);
 const fast = () => b.evaluate(`window.app.then((x) => x.app_debug_fast(1))`);
 const releaseBot = async () => {
   await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
-  await b.evaluate(`window.app.then((x) => x.app_debug_release())`);
-  await b.until(`window.app.then((x) => !x.app_debug_due())`);
-  await new Promise((r) => setTimeout(r, 50));
+  const n = await b.evaluate(`window.app.then((x) => { const n = x.app_bot_steps(); x.app_debug_release(); return n; })`);
+  await b.until(`window.app.then((x) => x.app_bot_steps() > ${n})`);
 };
 const ready = async () => { await b.until(`window.appReady`); await b.until(`window.app.then((x) => x.app_game_store(1) > 0)`); };
 let failed = 0;
+// ONLY=<regex>: run the checks whose name matches (tools/mutate.py, for a mutant's own check); the
+// checks that set up the first page are cheap and run either way when they come first.
+const ONLY = process.env.ONLY ? new RegExp(process.env.ONLY) : null;
 async function check(name, fn) {
+  if (ONLY && !ONLY.test(name)) return;
   try { await fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message.split('\n').join('\n     ')}`); }
 }
 
@@ -130,7 +133,7 @@ try {
     // Cold: the store emptied first (the delete waits for this page's connection to close).
     await b.evaluate(`indexedDB.deleteDatabase('cdom'), 1`);
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
-    await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
+    await b.until('window.appReady');
     const vars = () => b.evaluate(`['--tex-fern', '--tex-wood', '--tex-wool', '--tex-wood-end', '--tex-fern-bg'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(0, 9))`);
     assert.deepEqual(await vars(), ['', '', '', '', ''], 'nothing has landed by the first paint');
     await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 60000);
@@ -177,8 +180,7 @@ try {
   });
 
   await check('the table is the kernel\'s game and keeps React\'s rules at every click and bot step of played games (tools/consist.mjs)', async () => {
-    await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug');
-    await ready();
+    await openTable(b, 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug'); // the golden's board, nothing kept
     const r = await consistRun(b, { games: 3, seed: 1 });
     console.log(`     (${r.games} games, ${r.steps} steps; ${r.presses} pill presses, ${r.stillOffered} with the pill still offered after its move)`);
     const lines = [...r.kinds].map(([kind, { n, first }]) => `${kind} x${n}: at step ${first.step} after ${first.after} (before: ${first.recent.join(', ')}): ${first.detail}`);
@@ -193,6 +195,9 @@ try {
     await b.evaluate(`indexedDB.deleteDatabase('cdom'), 1`);
     await reload();
     assert.equal(await b.evaluate(`window.app.then((x) => x.app_game_store(2))`), 0, 'nothing stored: the seeded deal');
+    // Seed 3 plays the moves below to 6h, 6d and 6s attacking me: the reload's first paint is the
+    // golden's board, where 6h is covered, and the stored game it then adopts has 6h uncovered.
+    await b.evaluate(`window.app.then((x) => x.app_debug_reseed(3))`);
     // three moves of mine and the bot's answers, then a card left selected (not kept, as in React)
     await b.click('[data-hand-plane] [data-card="0-5"]'); await b.click('[data-pill="Attack"]');
     await releaseBot();
@@ -211,6 +216,9 @@ try {
       if (await b.evaluate(`window.app.then((x) => x.app_debug_due() || document.querySelector('[data-game-container]').dataset.turn === 'bot')`)) await releaseBot();
     }
     const kept = await board();
+    const k = await kernel(b);
+    assert.equal(JSON.stringify(JSON.parse(kept).battles), JSON.stringify(k.battles), 'the battles before the reload are the kernel\'s');
+    assert.deepEqual(k.battles, ['1-5/-', '3-5/-', '0-5/-'], 'seed 3\'s line: 6h uncovered, which the golden board covers');
     const card = await b.evaluate(`document.querySelector('[data-hand-plane] [data-card]')?.dataset.card`);
     if (card) await b.click(`[data-hand-plane] [data-card="${card}"]`);
     await reload();

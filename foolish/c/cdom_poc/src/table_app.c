@@ -363,7 +363,19 @@ static cd_str index_str(uint32_t i) {
 enum { TAG_CARD = 0x100, TAG_PILL = 0x200, TAG_BATTLE = 0x400, TAG_TABLE = 0x800, TAG_AGAIN = 0x1000 };
 
 static cd_list battles;
-static cd_id battle_attack[52]; /* the attack face of each battle, by attack card id */
+static cd_id battle_attack[52];  /* the attack face of each battle, by attack card id */
+static cd_id battle_defense[52]; /* its cover's face, 0 while uncovered */
+
+/* A battle item's data: its cover's card id + 1, 0 while uncovered. */
+static uint32_t cover_data(const Battle *b) { return b->defense.suit >= 0 ? (uint32_t)card_to_id(b->defense) + 1 : 0; }
+
+static void defense_add(int aid, Card d) {
+  face_open(d, 0);
+  cd_attr(S_STYLE, face_style(d, FACE_DEFENSE, 0, 0, 0, 0));
+  cd_name_open(battle_defense[aid] = cd_id_new());
+  data_card(d);
+  CLOSE();
+}
 
 static cd_id battle_create(void *ctx, uint32_t i, uint32_t *data) {
   (void)ctx;
@@ -383,31 +395,26 @@ static cd_id battle_create(void *ctx, uint32_t i, uint32_t *data) {
   cd_attr(ZS("data-battle-index"), index_str(i));
   data_card(b->attack);
   CLOSE();
-  if (covered) {
-    face_open(b->defense, 0);
-    cd_attr(S_STYLE, face_style(b->defense, FACE_DEFENSE, 0, 0, 0, 0));
-    data_card(b->defense);
-    CLOSE();
-  }
+  if (covered) defense_add(aid, b->defense);
   CLOSE();
-  *data = (uint32_t)covered;
+  *data = cover_data(b);
   return cell;
 }
 
+/* A battle whose cover changed: covered (the attack tilts back), or, when the board is replaced (a
+ * load), uncovered or covered by another card. */
 static void battle_patch(void *ctx, uint32_t i, cd_item *it) {
   (void)ctx;
   const Battle *b = &V->battles[i];
-  int covered = b->defense.suit >= 0;
-  if ((uint32_t)covered == it->data) return;
-  it->data = (uint32_t)covered; /* a battle is only ever covered, never uncovered: the attack tilts back */
-  cd_id att = battle_attack[card_to_id(b->attack)];
-  cd_set_style(att, ZS("transform"), ZS("translateX(-50%) rotate(-" COVER_TILT ")"));
-  cd_set_style(att, ZS("z-index"), ZS("1"));
-  cd_at(it->node, 0);
-  face_open(b->defense, 0);
-  cd_attr(S_STYLE, face_style(b->defense, FACE_DEFENSE, 0, 0, 0, 0));
-  data_card(b->defense);
-  CLOSE();
+  uint32_t want = cover_data(b);
+  if (want == it->data) return;
+  int aid = card_to_id(b->attack);
+  cd_id att = battle_attack[aid];
+  if (it->data) { cd_remove(battle_defense[aid]); battle_defense[aid] = 0; }
+  it->data = want;
+  cd_set_style(att, ZS("transform"), want ? ZS("translateX(-50%) rotate(-" COVER_TILT ")") : ZS("translateX(-50%)"));
+  cd_set_style(att, ZS("z-index"), want ? ZS("1") : ZS("2"));
+  if (want) { cd_at(it->node, 0); defense_add(aid, b->defense); }
 }
 
 static void battle_destroy(void *ctx, cd_item *it) {
@@ -415,6 +422,7 @@ static void battle_destroy(void *ctx, cd_item *it) {
   int aid = (int)it->key - 1;
   cd_id_free(battle_attack[aid]);
   battle_attack[aid] = 0;
+  if (battle_defense[aid]) { cd_id_free(battle_defense[aid]); battle_defense[aid] = 0; }
 }
 
 static const cd_list_fns BATTLE_FNS = {0, battle_create, battle_patch, battle_destroy};
@@ -933,17 +941,23 @@ static double shown_ms;
 static uint32_t bot_gen; /* the generation of the live bot timer */
 static int last_wait;    /* the kernel's last answer, for the test */
 #ifdef TABLE_DEBUG
-static int dbg_hold, dbg_due, dbg_fast; /* the test build: hold a due step; fast: a wait / 100 */
+static int dbg_hold, dbg_due, dbg_fast; /* the test build: hold a due step; fast: 30 ms waits */
 #endif
 
 static double settles_ms(void) { return shown_ms; }
 
+/* The board was shown now (a clock of 0 is a board never shown). */
+static void mark_shown(void) {
+  double t = cd_now();
+#ifdef TABLE_DEBUG
+  if (dbg_fast) t -= BOT_PACE_MS_WITH_HUMANS - 30; /* fast: as if shown long enough ago that 30 ms are left */
+#endif
+  shown_ms = t >= 1 ? t : 1;
+}
+
 static uint32_t bot_wait(void) {
   int64_t now = (int64_t)cd_now();
   last_wait = bot_wait_ms(&G, game_human_mask(&G), (int64_t)shown_ms, (int64_t)settles_ms(), now);
-#ifdef TABLE_DEBUG
-  if (dbg_fast) return (uint32_t)last_wait / 100;
-#endif
   return (uint32_t)last_wait;
 }
 
@@ -962,12 +976,14 @@ static void committed(void) {
   game_keep_canonical(&G);
   game_save();
   game_touched = 1;
-  shown_ms = cd_now() + 1; /* a clock of 0 is a board never shown */
+  mark_shown();
 }
 
 /* One bot step: whatever the bot does up to its next visible move. */
+static uint32_t bot_steps; /* how many bot steps this load has run */
 static void bot_step(void) {
   BotDriveOut out;
+  bot_steps++;
   bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
   committed();
   bot_pending = 0;
@@ -1071,7 +1087,7 @@ static void game_stored(const uint8_t *p, int32_t len) {
   if (len <= 0 || game_touched || !game_keep_load(&G, p, len)) return;
   game_adopted = 1;
   table_reset();
-  shown_ms = cd_now() + 1;
+  mark_shown();
   bot_pending = 0;
   bot_gen++;
   bot_check();
@@ -1111,6 +1127,7 @@ EXPORT("app_str_bytes") uint32_t app_str_bytes(void) { return cd_str_bytes(); }
 EXPORT("app_ids_live") uint32_t app_ids_live(void) { return cd_ids_live(); }
 /* The kernel's last answer to how long the bot waits (bot_wait_ms), in ms. */
 EXPORT("app_bot_wait") int32_t app_bot_wait(void) { return last_wait; }
+EXPORT("app_bot_steps") uint32_t app_bot_steps(void) { return bot_steps; }
 /* The game's store: when it was asked (which 0) and answered (1), ms after navigation; 2: 1 when
  * the stored game was adopted. */
 EXPORT("app_game_store") double app_game_store(int32_t which) { return which == 0 ? game_asked : which == 1 ? game_answered : game_adopted; }
@@ -1157,6 +1174,21 @@ EXPORT("app_debug_state") uint32_t app_debug_state(void) {
   client_view_rules(v, 0, 0, 0, &r);
   d_s("status "); d_s(v->status == GAME_STATUS_GAME_OVER ? "over" : "playing");
   d_s("\nhand"); for (int i = 0; i < v->my_hand_count; i++) { d_s(" "); d_card(v->my_hand[i]); }
+  { /* where hand_layout puts each card at this width: left, bottom, width, height (CSS px) */
+    cd_viewport_rec vp;
+    cd_viewport(&vp);
+    static HandLayout dl;
+    hand_layout(&WEB_HAND, v->my_hand_count, (double)vp.w - 20, &dl);
+    d_s("\nslots");
+    for (int i = 0; i < v->my_hand_count; i++) {
+      const HandRect *r = &dl.slot[i];
+      char b[64];
+      d_s(" ");
+      uint32_t n = cd_fmt_len(b, r->x, CD_UNIT_NONE); b[n++] = ','; n += cd_fmt_len(b + n, dl.rows.height - r->y - r->h, CD_UNIT_NONE);
+      b[n++] = ','; n += cd_fmt_len(b + n, r->w, CD_UNIT_NONE); b[n++] = ','; n += cd_fmt_len(b + n, r->h, CD_UNIT_NONE); b[n] = 0;
+      d_s(b);
+    }
+  }
   d_s("\nselected"); for (int i = 0; i < v->my_hand_count; i++) if (selected(card_to_id(v->my_hand[i]))) { d_s(" "); d_card(v->my_hand[i]); }
   d_s("\nsel"); for (int i = 0; i < nsel; i++) { d_s(" "); d_card(card_of_id(sel[i])); }
   d_s("\nkernel_pills"); d_pill_names(d_pills(v, 1));
@@ -1183,7 +1215,15 @@ EXPORT("app_debug_len") uint32_t app_debug_len(void) { return dbg_n; }
 EXPORT("app_debug_hold") void app_debug_hold(int32_t on) { dbg_hold = on; }
 EXPORT("app_debug_due") int32_t app_debug_due(void) { return dbg_due; }
 EXPORT("app_debug_release") void app_debug_release(void) { if (dbg_due) { dbg_due = 0; cd_timer_start(0, TIMER_BOT_GO); } }
-/* Fast: the bot's waits a hundredth of the kernel's (the games the tests play out). */
+/* The kernel's random streams (the draws and the bot's choices) and the next deal's, seeded: a
+ * test that needs one line of play asks for the seed that plays it. */
+EXPORT("app_debug_reseed") void app_debug_reseed(uint32_t seed) {
+  game_set_seed(seed);
+  random_strategy_set_seed(seed);
+  rng = seed | 1;
+}
+/* Fast: the bot waits 30 ms after a move rather than the kernel's 3000 (the games the tests play out):
+ * the clock is put back, the kernel's rule is not touched. */
 EXPORT("app_debug_fast") void app_debug_fast(int32_t on) { dbg_fast = on; }
 #endif
 /* ---- the textures ----------------------------------------------------------
@@ -1550,7 +1590,7 @@ void cd_main(void) {
   game_asked = cd_now();
   cd_store_get(STORE_GAME, GAME_KEY, sizeof GAME_KEY - 1, CD_STORE_DEADLINE_MS);
   game_keep_canonical(&G);
-  shown_ms = cd_now() + 1;
+  mark_shown();
   bot_check();
   render();
   if (!page_notex()) {
