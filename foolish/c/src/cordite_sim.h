@@ -146,14 +146,15 @@ int  cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
 #endif
 
 // What the noise did on this thread since the last reset (a test seam, and the
-// arena's sanity check that a noisy brain is actually noisy). `fired` counts
-// decisions that took a candidate instead of the policy; `unmatched` counts
+// arena's sanity check that a noisy brain is actually noisy). `drawn` counts
+// gate draws, so it is the proof that a brain at 0 drew nothing extra; `fired`
+// counts decisions that took a candidate instead of the policy; `unmatched` counts
 // struct-path picks whose candidate was not on the seat's lite menu. It must
 // stay 0: every candidate is a legal move capped at MAX_MOVE_CARDS, so it is on
 // the menu, unless the enumerator itself truncated the menu at MAX_LEGAL_MOVES
 // (a hand with well over a dozen table-valued cards). An unmatched pick plays
 // the policy instead.
-typedef struct { long fired, unmatched; } CdNoiseStats;
+typedef struct { long drawn, fired, unmatched; } CdNoiseStats;
 
 #ifdef CD_ROLLOUT_NOISE
 void         cd_sim_set_noise(int per_mille);   // clamped to [0, 1000]
@@ -170,7 +171,7 @@ int          cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves);
 #else
 static inline void         cd_sim_set_noise(int per_mille) { (void)per_mille; }
 static inline int          cd_sim_noise(void) { return 0; }
-static inline CdNoiseStats cd_sim_noise_stats(void) { CdNoiseStats z = { 0, 0 }; return z; }
+static inline CdNoiseStats cd_sim_noise_stats(void) { CdNoiseStats z = { 0, 0, 0 }; return z; }
 static inline void         cd_sim_noise_stats_reset(void) { }
 static inline int          cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves) {
     (void)g; (void)p; (void)moves; return -1;

@@ -2043,6 +2043,239 @@ static void test_bot_roster_choose_scopes_knobs(void) {
     CHECK(all_ok, "every offline rung dispatches to a linked brain");
 }
 
+/* ---- fusion: octogen plus rollout noise (c/FUSION.md) ----------------------
+ *
+ * Written before it was ever compiled or run: the job that first builds this
+ * branch runs each test and its mutation check (FUSION.md, "Ready to run"). */
+
+#ifdef CD_ROLLOUT_NOISE
+void og_reload_flags(void);   // octogen_strategy.c (bot_roster.c declares it the same way)
+
+// The octogen world budget, shrunk for a test (env wins over every default,
+// bot_knobs.h). The claims below are about where the rollouts draw, not about
+// strength, so a few dozen worlds a stage serve as well as hundreds.
+static void fu_small_worlds(int on) {
+    if (on) { setenv("OG_W1", "24", 1); setenv("OG_W2", "16", 1); setenv("OG_W3", "16", 1); }
+    else    { unsetenv("OG_W1"); unsetenv("OG_W2"); unsetenv("OG_W3"); }
+    og_reload_flags();
+}
+
+// Fusion is a brain with an id and a name, and research only: no roster row.
+//
+// Mutations that must turn it red: drop `case STRAT_FUSION` from
+// strategy_choose (the choose is -1); drop the "fusion" line from
+// parse_strategy (the name is -1); add a "fusion" row to bot_roster.c (the
+// roster checks); leave STRAT_COUNT at 24 (the id check).
+static void test_fusion_is_dispatchable_and_named(void) {
+    CHECK(STRAT_FUSION == 24 && STRAT_COUNT == 25 && !strategy_retired(STRAT_FUSION),
+          "fusion takes the next free id, 24, and STRAT_COUNT moves past it");
+    CHECK(parse_strategy("fusion") == STRAT_FUSION && parse_strategy("fu") == STRAT_FUSION,
+          "fusion parses by name and by its short alias");
+    CHECK(bot_roster_find("fusion") == -1 && bot_roster_find_by_strat(STRAT_FUSION) == -1,
+          "fusion has no roster row: it is in no shipped roster, lobby or picker");
+    fu_small_worlds(1);
+    Game g;
+    make_seeded_game(&g, 3, 7);
+    static LegalMoves m;
+    const int seat = g.first_attacker;
+    calculate_legal_moves(&g, seat, &m);
+    const int idx = strategy_choose(STRAT_FUSION, &g, seat, &m);
+    CHECK(idx >= 0 && idx < m.n, "strategy_choose dispatches fusion to a legal move");
+    fu_small_worlds(0);
+}
+
+// The knob's seam, below any search: one fixed world rolled out on the
+// bitboard engine, from the same rollout stream, with the noise off and on.
+//
+// Mutations that must turn it red: drop the `cd_noise_pm &&` guard in
+// sim_hw_noisy_move (noise 0 then draws: `drawn` > 0); make sim_noise_move
+// return 0 always, or cd_sim_set_noise store 0 (nothing fires, no playout
+// changes); drop the clamp in cd_sim_set_noise (the clamp checks). An illegal
+// candidate (say the capacity cap dropped from sim_noise_cands) is not this
+// test's to catch, since the bitboard apply does not validate: the struct-path
+// `unmatched` check in test_fusion_rollouts_are_noisy is.
+static void test_rollout_noise_seam(void) {
+    cd_sim_set_noise(5000);
+    CHECK(cd_sim_noise() == 1000, "the noise clamps at 1000 per mille");
+    cd_sim_set_noise(-3);
+    CHECK(cd_sim_noise() == 0, "and at 0");
+
+    Game g;
+    make_seeded_game(&g, 3, 11);
+    SimState base;
+    cd_sim_from_game(&base, &g);   // the test's world: every hand is real, so it is determinized
+    const int me = g.first_attacker;
+    // A ply cap well past any real game: an all-noise playout picks up more
+    // than the policy does and runs longer, and a cut-off playout returns 0.
+    enum { K = 24, FU_TURNS = 4000 };
+    int fp0[K], elim0[K][MAX_PLAYERS];
+    int repeat = 1, ended0 = 1;
+
+    // Off: nothing drawn, and the playout is a function of its stream alone.
+    cd_sim_set_noise(0);
+    cd_sim_noise_stats_reset();
+    for (int k = 0; k < K; k++) {
+        SimState a = base, b = base;
+        game_rng_set(1000u + (uint64_t)k);
+        fp0[k] = cd_sim_playout(&a, me, FU_TURNS, 0);
+        game_rng_set(1000u + (uint64_t)k);
+        const int fb = cd_sim_playout(&b, me, FU_TURNS, 0);
+        repeat &= fb == fp0[k] && a.num_eliminated == b.num_eliminated
+               && !memcmp(a.elim_order, b.elim_order, sizeof a.elim_order);
+        ended0 &= fp0[k] > 0;
+        for (int i = 0; i < MAX_PLAYERS; i++) elim0[k][i] = a.elim_order[i];
+    }
+    CdNoiseStats off = cd_sim_noise_stats();
+    CHECK(off.drawn == 0 && off.fired == 0, "at noise 0 the rollout draws nothing for the noise");
+    CHECK(repeat && ended0, "at noise 0 a playout is its stream's, and every one ends");
+
+    // Always on: every decision is a candidate. The same streams now give other
+    // games, every one still ends (each candidate is a legal move), and the
+    // per-seat-policy playout takes the noise as well as the plain one.
+    cd_sim_set_noise(1000);
+    cd_sim_noise_stats_reset();
+    int differ = 0, ended1 = 1;
+    for (int k = 0; k < K; k++) {
+        SimState a = base;
+        game_rng_set(1000u + (uint64_t)k);
+        const int fa = cd_sim_playout(&a, me, FU_TURNS, 0);
+        ended1 &= fa > 0;
+        int d = fa != fp0[k];
+        for (int i = 0; i < MAX_PLAYERS; i++) d |= a.elim_order[i] != elim0[k][i];
+        differ += d;
+    }
+    CdNoiseStats on = cd_sim_noise_stats();
+    cd_sim_noise_stats_reset();
+    long pol_fired = 0;
+    for (int k = 0; k < 4; k++) {
+        SimState a = base;
+        game_rng_set(2000u + (uint64_t)k);
+        (void)cd_sim_playout_pol(&a, me, FU_TURNS, 0, 0, 0, NULL);
+    }
+    pol_fired = cd_sim_noise_stats().fired;
+    cd_sim_set_noise(0);
+    // Every seat the playout asks has a candidate (a leader a card, a defender
+    // the pickup, a thrower good), so at 1000 nearly every draw fires.
+    CHECK(on.fired > 0 && on.fired * 100 >= on.drawn * 99,
+          "at 1000 per mille every drawn decision takes a candidate");
+    CHECK(differ > 0, "the noise changes how the same streams play out (moves off the policy)");
+    CHECK(ended1, "every noisy playout still ends: the candidates are legal moves");
+    CHECK(pol_fired > 0, "the per-seat-policy playout takes the noise too");
+}
+
+// Octogen never draws the noise, and fusion with its knob at 0 IS octogen:
+// decision for decision over whole stretches of 2- and 3-seat games, down to
+// the state both RNG streams are left in. No existing test pins an octogen
+// decision to a value (FUSION.md says how the run job checks this branch's
+// octogen against main's, move for move), so this test holds the part that can
+// be held inside one binary: the knob at 0 changes nothing and draws nothing.
+//
+// Mutations that must turn it red: drop the `cd_noise_pm &&` guard in
+// sim_seat_move (octogen's rollouts then draw: `drawn` > 0); drop the
+// `cd_sim_noise() ?` guard in og_simulate's struct path together with
+// cd_sim_noise_legal's own `!cd_noise_pm` return (struct path: OG_NO_FASTROLL
+// run below draws); make fusion ignore FUSION_NOISE (fusion at "0" plays 200
+// and its moves or streams part from octogen's); have fusion leave the noise
+// on after its decision (the next octogen call draws).
+static void test_octogen_is_fusion_at_zero(void) {
+    static LegalMoves m;
+    fu_small_worlds(1);
+    int decisions = 0, same = 1, quiet = 1;
+    for (int pass = 0; pass < 2; pass++) {
+        // Pass 1 runs the struct rollout (og_simulate), pass 0 the bitboard one.
+        if (pass == 1) { setenv("OG_NO_FASTROLL", "1", 1); og_reload_flags(); }
+        for (int np = 2; np <= 3; np++) {
+            Game g;
+            make_seeded_game(&g, np, 40 + np + 10 * pass);
+            for (int step = 0; step < (pass ? 8 : 30) && game_done(&g) < 0; step++) {
+                int acted = 0;
+                for (int pi = 0; pi < g.num_players && !acted; pi++) {
+                    if (!should_bot_act(&g, pi)) continue;
+                    calculate_legal_moves(&g, pi, &m);
+                    if (m.n == 0) continue;
+                    const uint64_t gr = game_rng_get(), sr = random_strategy_rng_get();
+                    cd_sim_noise_stats_reset();
+                    cd_sim_solve_reset();   // the same cold solver table for both
+                    const int a = octogen_strategy_choose(&g, pi, &m, NULL);
+                    const uint64_t gra = game_rng_get(), sra = random_strategy_rng_get();
+                    const CdNoiseStats so = cd_sim_noise_stats();
+                    game_rng_set(gr);
+                    random_strategy_set_seed(sr);
+                    setenv("FUSION_NOISE", "0", 1);
+                    cd_sim_noise_stats_reset();
+                    cd_sim_solve_reset();
+                    const int b = fusion_strategy_choose(&g, pi, &m, NULL);
+                    unsetenv("FUSION_NOISE");
+                    const CdNoiseStats sf = cd_sim_noise_stats();
+                    same  &= a == b && gra == game_rng_get() && sra == random_strategy_rng_get();
+                    quiet &= so.drawn == 0 && sf.drawn == 0 && cd_sim_noise() == 0;
+                    decisions++;
+                    acted = legal_move_apply(&g, pi, &m.moves[(a >= 0 && a < m.n) ? a : 0]);
+                }
+                if (!acted) break;
+            }
+        }
+        if (pass == 1) { unsetenv("OG_NO_FASTROLL"); og_reload_flags(); }
+    }
+    fu_small_worlds(0);
+    CHECK(decisions > 40, "octogen and fusion-at-0 were compared over real game stretches");
+    CHECK(quiet, "octogen, and fusion at 0, never draw the noise, on either rollout path");
+    CHECK(same, "fusion at 0 is octogen: the same move and the same RNG streams after, every decision");
+}
+
+// Fusion's rollouts take noisy moves, at about the dose asked for, on both
+// rollout paths, and every struct-path pick is a move on the lite menu.
+//
+// Mutations that must turn it red: set FUSION_NOISE_PM to 0 (nothing fires),
+// or to 1000 (the dose check: everything fires); invert the gate in
+// sim_noise_draw (`<` for `>=`: ~80% fires); make cd_sim_noise_legal match
+// covers by the candidate's empty mask instead of the rebuilt greedy cover
+// (unmatched > 0 whenever a cover is drawn); have fusion_strategy_choose skip
+// cd_sim_set_noise(0) after the decision (the restore check).
+static void test_fusion_rollouts_are_noisy(void) {
+    static LegalMoves m;
+    fu_small_worlds(1);
+    CdNoiseStats fast = { 0, 0, 0 }, slow = { 0, 0, 0 };
+    long og_drawn = 0;
+    int restored = 1;
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass == 1) { setenv("OG_NO_FASTROLL", "1", 1); og_reload_flags(); }
+        // A few first decisions (a lead is a wide choice, so the race runs).
+        for (int k = 0; k < 3; k++) {
+            Game g;
+            make_seeded_game(&g, 3, 60 + k);
+            const int seat = g.first_attacker;
+            calculate_legal_moves(&g, seat, &m);
+            cd_sim_noise_stats_reset();
+            const int a = strategy_choose(STRAT_OCTOGEN, &g, seat, &m);
+            og_drawn += cd_sim_noise_stats().drawn;
+            cd_sim_noise_stats_reset();
+            const int b = strategy_choose(STRAT_FUSION, &g, seat, &m);
+            const CdNoiseStats st = cd_sim_noise_stats();
+            restored &= cd_sim_noise() == 0 && a >= 0 && b >= 0;
+            CdNoiseStats *acc = pass ? &slow : &fast;
+            acc->drawn += st.drawn; acc->fired += st.fired; acc->unmatched += st.unmatched;
+        }
+        if (pass == 1) { unsetenv("OG_NO_FASTROLL"); og_reload_flags(); }
+    }
+    fu_small_worlds(0);
+    if (getenv("FU_TRACE"))
+        fprintf(stderr, "  fusion noise: fast %ld/%ld fired, struct %ld/%ld fired, %ld unmatched\n",
+                fast.fired, fast.drawn, slow.fired, slow.drawn, slow.unmatched);
+    CHECK(og_drawn == 0, "octogen beside it draws no noise");
+    CHECK(fast.fired > 0 && slow.fired > 0, "fusion's rollouts take noisy moves on both rollout paths");
+    // 200 per mille, over thousands of rollout decisions: well inside 12-28%.
+    // (A decision with no candidate draws the gate but cannot fire, so the
+    // rate sits a hair under the gate's.)
+    CHECK(fast.fired * 1000 > fast.drawn * 120 && fast.fired * 1000 < fast.drawn * 280,
+          "the bitboard rollouts take the noise at about one decision in five");
+    CHECK(slow.fired * 1000 > slow.drawn * 120 && slow.fired * 1000 < slow.drawn * 280,
+          "the struct rollouts take it at the same rate");
+    CHECK(slow.unmatched == 0, "every struct-path candidate is a move on the seat's lite menu");
+    CHECK(restored, "fusion puts the noise back to 0 after its decision");
+}
+#endif  // CD_ROLLOUT_NOISE
+
 /* ---------------- base32 over long inputs ------------------------------- */
 
 // The codec's bit accumulator only ever needs its low 12 bits, but it keeps
@@ -17451,7 +17684,7 @@ static void test_podkidnoy_every_brain(void) {
         }
         CHECK(unknown_below == 0, "every id below STRAT_COUNT dispatches to a brain");
         CHECK(retired_alive == 0, "a retired id dispatches to nothing, and sits below STRAT_COUNT");
-        CHECK(STRAT_OCTOGEN == 20 && STRAT_OCTOGEN_ORACLE == 21 && STRAT_COUNT == 24,
+        CHECK(STRAT_OCTOGEN == 20 && STRAT_OCTOGEN_ORACLE == 21 && STRAT_FUSION == 24 && STRAT_COUNT == 25,
               "retiring a brain leaves a hole: the survivors keep their ids");
         CHECK(known_past == 0, "no id past STRAT_COUNT dispatches (bump STRAT_COUNT with a new brain)");
         // The probe sees a real transfer too, so a struct-world search (which
@@ -20855,6 +21088,12 @@ int main(void) {
     test_bot_roster_table_is_the_roster();
     test_bot_knobs_precedence();
     test_bot_roster_choose_scopes_knobs();
+#ifdef CD_ROLLOUT_NOISE
+    test_fusion_is_dispatchable_and_named();
+    test_rollout_noise_seam();
+    test_octogen_is_fusion_at_zero();
+    test_fusion_rollouts_are_noisy();
+#endif
 
     test_deal_rng_kat();
     test_whole_game_reproducible();
