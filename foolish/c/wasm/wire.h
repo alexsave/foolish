@@ -1,6 +1,7 @@
 // 1-byte wire cards for the TS<->kernel IO buffer.
 //   0..51 = suit*13 + (value-1)
-//   0xFE  = the hidden card ({-1,-1}: DRAW logs for other players' picks)
+//   0xFE  = the hidden card (card.h CARD_HIDDEN: DRAW logs for other players'
+//           picks, and every card a masked board cannot see)
 //   0xFF  = no card (uncovered battle defense, single-card log pair)
 // Halves every card crossing the boundary and removes the has_defense /
 // has_target wire bytes (in-band sentinels instead). No host restates the two
@@ -31,7 +32,7 @@ static inline Card card_from_wire_state(unsigned char b) {
 // Log pairs carry the sentinels.
 static inline Card card_from_wire_pair(unsigned char b) {
     if (b == WIRE_CARD_NONE) return CARD_NONE;
-    if (b == WIRE_CARD_HIDDEN) { Card c; c.suit = -1; c.value = -1; return c; }
+    if (b == WIRE_CARD_HIDDEN) return CARD_HIDDEN;
     return card_from_wire_state(b);
 }
 

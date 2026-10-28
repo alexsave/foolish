@@ -225,10 +225,11 @@ static int put_state(const Game *g, unsigned char *p) {
 // state fails - loudly, which is the point.
 //
 // `masked` is the host saying what it is handing over. 0: a whole game, every
-// card real (the server's own Game). 1: one seat's knowledge, with placeholder
-// cards standing in for the deck and the hands it cannot see (the replay
-// oracle's deliberation state) - their identities are then not judged, and
-// everything face-up still is. A host that omits the argument gets 0.
+// card real (the server's own Game). 1: one seat's knowledge, with
+// WIRE_CARD_HIDDEN standing in for the deck and the hands it cannot see (the
+// replay oracle's deliberation state); those import as card.h's CARD_HIDDEN
+// placeholder, and every card it does show is still judged. A host that omits
+// the argument gets 0.
 //
 // The ephemeral IO format
 // carries no deterministic_deck flag (only the durable blob does), so reset it:

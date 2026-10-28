@@ -214,15 +214,13 @@ static void note_version(const char *gid, size_t n, int64_t v) {
 static ClientTable g_c;
 static ClientSlot g_slot;
 
-static bool is_hidden(Card c) { return c.suit == 0 && c.value == 1; }
-static bool is_back(Card c) { return c.suit == -1 && c.value == -1; }
 
 // The board the slot holds: every seat but `viewer`'s hand is masked.
 static void boards_masked(int viewer) {
     const Game *g = g_c.g;
     for (int s = 0; s < g->num_players && s < MAX_PLAYERS; s++) {
         if (s == viewer) continue;
-        for (int k = 0; k < g->players[s].hand_count && k < MAX_HAND_SIZE; k++) FZ_CHECK(is_hidden(g->players[s].hand[k]));
+        for (int k = 0; k < g->players[s].hand_count && k < MAX_HAND_SIZE; k++) FZ_CHECK(card_is_hidden(g->players[s].hand[k]));
     }
 }
 
@@ -297,7 +295,7 @@ static void check_cast(const char *uid, const char *gid, const uint8_t *p, size_
         const PushEvent *e = &g_c.event;
         // A card dealt or drawn to another seat flies face down.
         if ((e->type == EVW_T_DEAL || e->type == EVW_T_REFILL) && e->seat != want && e->seat >= 0)
-            for (int k = 0; k < e->n_cards && k < MAX_HAND_SIZE; k++) FZ_CHECK(is_back(e->cards[k]) || is_hidden(e->cards[k]));
+            for (int k = 0; k < e->n_cards && k < MAX_HAND_SIZE; k++) FZ_CHECK(card_is_hidden(e->cards[k]));
     }
     FZ_CHECK(client_push_final(&g_c) == CLIENT_OK);
     FZ_CHECK(g_c.view.my_seat == want);

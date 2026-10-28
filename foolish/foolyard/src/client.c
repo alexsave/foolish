@@ -289,7 +289,7 @@ int client_pick_legal(const Game *view, int seat, u64 *rng, AwireAction *out) {
 // the one roster entry that is SOUND on a masked view: it reads its own hand,
 // the table, the trump, and counts (hand_count, deck_count,
 // discard_pile_length, has_flipped) - every one of which state_put preserves
-// exactly. The belief bots would be reading {0,1} placeholders where the deck
+// exactly. The belief bots would be reading CARD_HIDDEN placeholders where the deck
 // and the other hands should be, and would not be playing Durak.
 int client_pick_brain(const Game *view, int seat, AwireAction *out) {
     static LegalMoves lm;

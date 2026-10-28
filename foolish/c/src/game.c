@@ -306,10 +306,14 @@ int game_validate(const Game *g, int flags) {
     }
     if ((g->good_players_mask >> np) != 0) return GAME_INVALID_GOOD_MASK;
 
-    // Cards. Face-up cards (the table, the trump) are checked against this
-    // game's deck and against each other in every view. The deck and the hands
-    // are too, unless the state is a masked view - there they hold placeholders,
-    // so all that can be asked is that each is some card.
+    // Cards. Every real card - face up (the table, the trump) or not (the
+    // stock, the hands) - is checked against this game's deck and against every
+    // other in every view. A masked view (one seat's knowledge) also holds
+    // card.h's CARD_HIDDEN placeholder where a card sits that the seat cannot
+    // see: it passes, and is counted, and the view may not hide more cards than
+    // its deck has left once the cards it shows are taken out. (A world the
+    // sampling bots deal from what is left would otherwise have a slot no card
+    // can fill.)
     const int min_value = min_value_for(np);
     uint64_t seen = 0;
     if (g->has_flipped) {
@@ -325,18 +329,22 @@ int game_validate(const Game *g, int flags) {
         if (!card_in_deck(b->defense, min_value)) return GAME_INVALID_CARD;
         if (!card_first_sighting(&seen, b->defense)) return GAME_INVALID_DUPLICATE_CARD;
     }
-    const int hidden_min = masked ? 1 : min_value;
+    int hidden = 0;
     for (int i = 0; i < g->deck_count; i++) {
-        if (!card_in_deck(g->deck[i], hidden_min)) return GAME_INVALID_CARD;
-        if (!masked && !card_first_sighting(&seen, g->deck[i])) return GAME_INVALID_DUPLICATE_CARD;
+        if (masked && card_is_hidden(g->deck[i])) { hidden++; continue; }
+        if (!card_in_deck(g->deck[i], min_value)) return GAME_INVALID_CARD;
+        if (!card_first_sighting(&seen, g->deck[i])) return GAME_INVALID_DUPLICATE_CARD;
     }
     for (int p = 0; p < np; p++) {
         const Player *pl = &g->players[p];
         for (int j = 0; j < pl->hand_count; j++) {
-            if (!card_in_deck(pl->hand[j], hidden_min)) return GAME_INVALID_CARD;
-            if (!masked && !card_first_sighting(&seen, pl->hand[j])) return GAME_INVALID_DUPLICATE_CARD;
+            if (masked && card_is_hidden(pl->hand[j])) { hidden++; continue; }
+            if (!card_in_deck(pl->hand[j], min_value)) return GAME_INVALID_CARD;
+            if (!card_first_sighting(&seen, pl->hand[j])) return GAME_INVALID_DUPLICATE_CARD;
         }
     }
+    const int deck_size = NUM_SUITS * (ACE_VALUE - min_value + 1);
+    if (hidden + __builtin_popcountll(seen) > deck_size) return GAME_INVALID_COUNT;
     return GAME_VALID;
 }
 

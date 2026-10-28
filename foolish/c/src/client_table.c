@@ -285,7 +285,7 @@ int client_push_open(ClientTable *c, const uint8_t *p, int len, int as3,
 }
 
 static Card event_card(unsigned b) {
-    if (b == WIRE_CARD_HIDDEN) { Card x; x.suit = -1; x.value = -1; return x; }
+    if (b == WIRE_CARD_HIDDEN) return CARD_HIDDEN;
     return card_of_id((int)b);
 }
 
@@ -317,8 +317,6 @@ static void delta_snap(const Game *g, int tag, int aux) {
     d->n_snaps++;
 }
 
-static bool is_placeholder(Card x) { return x.suit == 0 && x.value == 1; }   // view.c card_from_wire_masked
-
 // Another seat's cards into its hidden hand: each card the move plays that the
 // hand does not hold already (a card it picked up or drew face up this commit)
 // takes a placeholder's place. The server vouched for the cards; the masked
@@ -329,7 +327,7 @@ static int patch_hand(Player *p, const AwireAction *a) {
         for (int k = 0; k < p->hand_count && !held; k++) held = card_eq(p->hand[k], a->cards[i]);
         if (held) continue;
         int k = 0;
-        while (k < p->hand_count && !is_placeholder(p->hand[k])) k++;
+        while (k < p->hand_count && !card_is_hidden(p->hand[k])) k++;
         if (k == p->hand_count) return -1;
         p->hand[k] = a->cards[i];
     }
@@ -601,7 +599,7 @@ static Game *rules_game(ClientTable *c) { return (Game *)(void *)c->rules.bytes;
 static int board_game(ClientTable *c, const TableView *v) {
     if (!view_holds(v) || v->deck_count < 0 || v->deck_count > MAX_DECK) return GAME_INVALID_COUNT;
     Game *g = rules_game(c);
-    const Card hidden = { .suit = 0, .value = 1 };   // view.c card_from_wire_masked
+    const Card hidden = CARD_HIDDEN;   // what view.c card_from_wire_masked holds
     memset(g, 0, sizeof c->rules.bytes);
     g->status = v->status;
     g->num_players = v->num_players;

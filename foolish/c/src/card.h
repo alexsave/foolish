@@ -102,6 +102,24 @@ static inline bool card_has_value(const bool *marks, int value) {
 #define CARD_NONE ((Card){ .suit = CARD_NONE_SUIT, .value = CARD_NONE_VALUE })
 static inline bool card_is_none(Card c) { return c.suit == CARD_NONE_SUIT && c.value == CARD_NONE_VALUE; }
 
+// THE HIDDEN CARD: a card that is somewhere but that this reader cannot see.
+// One convention for every place the kernel holds one: the wire's
+// WIRE_CARD_HIDDEN decodes to it (a log pair's masked draw, an event's card
+// back), and a masked import (view.c state_get, masked=1) holds it wherever a
+// card sits the viewer cannot see - the stock and every other seat's hand.
+// It is no card of any deck (a negative suit), so a viewer's own real card
+// can never read like one it cannot see. (The masked import used to hold
+// {0,1} instead, which at 6-8 seats, on the 52-card deck, is the real 2 of
+// spades.) Misuse fails loudly: card_to_id is negative, card_in_range is
+// false, and wire_from_card writes it back as WIRE_CARD_HIDDEN, never as a
+// card's byte. It is not CARD_NONE (above), the "no card" of an uncovered
+// battle or a pair with no target: a hidden card is a card.
+#define CARD_HIDDEN_SUIT  (-1)
+#define CARD_HIDDEN_VALUE (-1)
+#define CARD_HIDDEN ((Card){ .suit = CARD_HIDDEN_SUIT, .value = CARD_HIDDEN_VALUE })
+static inline bool card_is_hidden(Card c) { return c.suit == CARD_HIDDEN_SUIT && c.value == CARD_HIDDEN_VALUE; }
+_Static_assert(CARD_HIDDEN_SUIT < 0, "the hidden card must have no suit, so it is no card of any deck");
+
 // ---------- Card notation ------------------------------------------------
 //
 // The one reader of a card written as text, for test fixtures and tools
