@@ -6,8 +6,8 @@
   <title>Foolish table (cdom)</title>
   <script>
 /*CDOM_SHIM*/
-window.app = cdom.start('table.wasm', 'root', { vw: () => window.innerWidth });
-window.app.then((x) => { window.appReady = performance.now(); window.addEventListener('resize', () => x.app_resize()); });
+window.app = cdom.start('table.wasm', 'root', { notex: () => +/[?&]notex\b/.test(location.search) });
+window.app.then(() => { window.appReady = performance.now(); });
   </script>
   <link href="/src/styles/index.css" rel="stylesheet"/>
 </head>

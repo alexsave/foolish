@@ -22,15 +22,13 @@
 #include "hand_layout.h"
 #include "strategy.h"
 #include "../cardtext/card_text.h"
+#include "textures.h"
 #include <math.h>
 
 
 #define EXPORT(n) __attribute__((export_name(n)))
-#define IMPORT(m, n) __attribute__((import_module(m), import_name(n)))
-
-/* Host imports beyond cdom's DOM calls (shim/cdom.js in this directory). */
-IMPORT("cdom", "timer") void js_timer(uint32_t ms, uint32_t token);
-IMPORT("env", "vw") uint32_t js_vw(void);
+/* The page's one setting: 1 when the URL asks for no textures (the golden comparisons). */
+__attribute__((import_module("env"), import_name("notex"))) uint32_t page_notex(void);
 
 extern uint32_t cd_seed;
 
@@ -105,11 +103,13 @@ static void deal_new(void) {
   game_seat_and_deal(&G, keys, 2);
 }
 
+enum { TEX_FERN, TEX_WOOD, TEX_WOOL, TEX_DONE }; /* the textures, in the order they are made */
+
 static int my_turn_owed(void) { return bot_drive_eligible_mask(&G, game_human_mask(&G)) == 0; }
 
 /* ---- strings ------------------------------------------------------------- */
 
-static cd_str S_STYLE, S_DIV, S_SPAN, S_RANK[ACE_VALUE + 1], S_SUIT[NUM_SUITS];
+static cd_str S_STYLE, S_RANK[ACE_VALUE + 1], S_SUIT[NUM_SUITS];
 
 static int card_red(Card c) { return CARD_SUIT_FACE[c.suit].red; }
 
@@ -154,8 +154,9 @@ static void build_thin_template(void) {
   cd_tpl_save(T_THIN);
 }
 
-/* Opens a face of c (the caller adds attributes and closes it). */
-static void face_open(Card c, cd_str style, int thin) {
+/* Opens a face of c (the caller adds its style, built after this, and closes it: a style is a
+ * one-off string that must cross with the very next op). */
+static void face_open(Card c, int thin) {
   cd_str r = S_RANK[c.value], s = S_SUIT[c.suit];
   if (thin) {
     cd_tpl_text(T_THIN, 0, r);
@@ -168,7 +169,6 @@ static void face_open(Card c, cd_str style, int thin) {
     cd_tpl_text(t, 4, s);
     cd_clone(t);
   }
-  cd_attr(S_STYLE, style);
 }
 
 enum { FACE_STILL, FACE_HAND, FACE_ATTACK, FACE_DEFENSE };
@@ -202,14 +202,13 @@ static cd_str face_style(Card c, int kind, const HandRect *slot, double bottom, 
   } else if (kind == FACE_DEFENSE) {
     sb_s(&s, "bottom: 5px; left: 50%; transform: translateX(-50%) rotate(" COVER_TILT "); transform-origin: center bottom; z-index: 2;");
   }
-  return sb_str(&s);
+  return sb_tmp(&s);
 }
 
 static void data_card(Card c) {
-  static SB s;
-  sb_reset(&s);
-  sb_i(&s, c.suit); sb_c(&s, '-'); sb_i(&s, c.value);
-  cd_attr(ZS("data-card"), cd_intern(s.b, s.n));
+  char b[8] = {(char)('0' + c.suit), '-'};
+  uint32_t n = 2 + cd_fmt(b + 2, c.value, 0, CD_UNIT_NONE);
+  cd_attr(ZS("data-card"), cd_tmp(b, n));
 }
 
 /* ---- card backs (CardBack.tsx, the plain red the golden shows) ----------- */
@@ -220,12 +219,13 @@ static cd_str back_style(uint32_t i, double rot, int stacked) {
   sb_s(&s, "position: absolute; ");
   sb_px(&s, "top: ", stacked ? -2.0 * i : 0);
   sb_px(&s, "left: ", stacked ? -1.0 * i : 0);
-  sb_s(&s, "width: 50px; height: 70px; background-color: rgb(180, 14, 9); border: 1px solid rgb(139, 0, 0); "
-           "border-radius: 5px; ");
-  sb_s(&s, "z-index: "); sb_i(&s, (int32_t)i + 2);
-  sb_s(&s, "; transform: rotate(90deg) rotate("); sb_f(&s, rot);
-  sb_s(&s, "deg); transform-origin: center center; background-size: 100% 100%; background-repeat: no-repeat; overflow: hidden;");
-  return sb_str(&s);
+  sb_s(&s, "width: 50px; height: 70px; background-color: var(--tex-fern-bg, rgb(180, 14, 9)); "
+           "border: 1px solid rgb(139, 0, 0); border-radius: 5px; ");
+  sb_s(&s, "z-index: "); sb_i(&s, i + 2);
+  sb_s(&s, "; transform: rotate(90deg) rotate("); sb_num(&s, rot, CD_UNIT_NONE);
+  sb_s(&s, "deg); transform-origin: center center; background-image: var(--tex-fern); background-size: 100% 100%; "
+           "background-repeat: no-repeat; overflow: hidden;");
+  return sb_tmp(&s);
 }
 
 /* CardBack.tsx getRandomRotation(42, i): the discard pile's tilt per layer. */
@@ -238,7 +238,7 @@ static cd_id layer_create(void *ctx, uint32_t i, uint32_t *data) {
   int stacked = ctx != 0;
   cd_id id = cd_id_new();
   OPEN("div");
-  cd_name(id);
+  cd_name_open(id);
   cd_attr(S_STYLE, back_style(i, stacked ? 0 : discard_tilt(i), stacked));
   CLOSE();
   *data = 0;
@@ -255,19 +255,14 @@ static void layers_update(cd_list *L, uint32_t n, const cd_list_fns *f) {
   cd_list_update(L, keys, n, f);
 }
 
-/* Drops a list whose DOM went with a cd_clear: its ids are freed, nothing is emitted for its nodes. */
-static void list_forget(cd_list *L) {
-  for (uint32_t i = 0; i < L->n; i++) cd_id_free(L->items[i].node);
-  L->n = 0;
-}
-
 #define BADGE "position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); margin: 0px; " \
   "color: var(--color-text-primary); font-size: 16px; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); " \
   "pointer-events: none; z-index: 1003;"
 
 /* ---- the stock and the trump (DeckAndFlipped.tsx) ------------------------ */
 
-static cd_id deck_area, deck_badge_txt, deck_layers_box;
+static cd_id deck_badge_txt, deck_layers_box;
+static cd_region deck_area; /* all of the deck's column: rebuilt when what it holds changes */
 static cd_list deck_layers;
 static int32_t deck_shape = -1, deck_badge = -1;
 
@@ -277,18 +272,17 @@ static void render_deck(void) {
                   (V->flipped.value & 31) << 8 | (V->power_suit & 7) << 13;
   if (shape != deck_shape) { /* what the area holds changed: the deck ran out, a new deal */
     deck_shape = shape;
-    cd_clear(deck_area);
-    list_forget(&deck_layers);
-    if (deck_badge_txt) { cd_id_free(deck_badge_txt); deck_badge_txt = 0; }
-    if (deck_layers_box) { cd_id_free(deck_layers_box); deck_layers_box = 0; }
+    cd_list_forget(&deck_layers, &DECK_LAYERS);
+    cd_region_hide(&deck_area);
+    deck_badge_txt = deck_layers_box = 0;
     deck_badge = -1;
-    cd_at(deck_area, 0);
+    cd_region_show(&deck_area, 1);
+    cd_at(deck_area.parent, 0);
     if (R.show_deck_spot) {
       OPEN("div"); STYLE("position: relative;"); ATTR("data-location", "deck");
       OPEN("div"); STYLE("position: relative; width: 50px; height: 70px;");
-      deck_layers.parent = deck_layers_box = cd_id_new();
+      cd_name_open(deck_layers.parent = deck_layers_box = cd_id_new());
       deck_layers.owns_parent = 1;
-      cd_name(deck_layers_box);
       CLOSE();
       if (R.show_deck_pile) {
         OPEN("p"); STYLE(BADGE);
@@ -303,20 +297,22 @@ static void render_deck(void) {
       OPEN("div"); ATTR("data-location", "flipped");
       cd_attr(S_STYLE, R.show_deck_spot ? ZS("margin-top: -30px; width: 50px; height: 70px; z-index: 0;")
                                         : ZS("margin-top: 0px; width: 50px; height: 70px; z-index: 0;"));
-      if (R.show_flipped_card) { face_open(V->flipped, face_style(V->flipped, FACE_STILL, 0, 0, 0, 0), 0); CLOSE(); }
+      if (R.show_flipped_card) {
+        face_open(V->flipped, 0);
+        cd_attr(S_STYLE, face_style(V->flipped, FACE_STILL, 0, 0, 0, 0));
+        CLOSE();
+      }
       CLOSE();
     }
     if (R.show_trump_icon) {
       OPEN("div"); STYLE("display: flex; align-items: center; justify-content: center;");
       OPEN("span");
-      static SB s;
-      sb_reset(&s);
-      sb_s(&s, "font-size: 64px; line-height: 1; color: ");
-      sb_s(&s, CARD_SUIT_FACE[V->power_suit].red ? "#B32929;" : "#0A0A0A;");
-      cd_attr(S_STYLE, sb_str(&s));
+      cd_attr(S_STYLE, CARD_SUIT_FACE[V->power_suit].red ? ZS("font-size: 64px; line-height: 1; color: #B32929;")
+                                                        : ZS("font-size: 64px; line-height: 1; color: #0A0A0A;"));
       cd_text(S_SUIT[V->power_suit]);
       CLOSE(); CLOSE();
     }
+    cd_region_end(&deck_area);
   }
   if (deck_layers_box) layers_update(&deck_layers, (uint32_t)R.deck_pile, &DECK_LAYERS);
   if (deck_badge_txt && deck_badge != R.deck_badge) cd_set_text_num(deck_badge_txt, (uint32_t)(deck_badge = R.deck_badge));
@@ -324,7 +320,8 @@ static void render_deck(void) {
 
 /* ---- the discard pile (DiscardPile.tsx) ---------------------------------- */
 
-static cd_id discard_spot, discard_box, discard_txt;
+static cd_id discard_txt;
+static cd_region discard; /* the pile and its count, in the discard spot */
 static cd_list discard_layers;
 static int32_t discard_n = -1;
 
@@ -332,30 +329,27 @@ static void render_discard(void) {
   int32_t n = V->discard_pile_length;
   if (n == discard_n) return;
   if (n == 0 || discard_n <= 0) { /* the pile appears or goes */
-    cd_clear(discard_spot);
-    list_forget(&discard_layers);
-    if (discard_box) { cd_id_free(discard_box); cd_id_free(discard_txt); discard_box = discard_txt = 0; }
-    if (n > 0) {
-      cd_at(discard_spot, 0);
+    cd_list_forget(&discard_layers, &DISCARD_LAYERS);
+    cd_region_hide(&discard);
+    if (cd_region_show(&discard, n > 0)) {
+      cd_at(discard.parent, 0);
       OPEN("div"); STYLE("position: relative; width: 50px; height: 70px;");
-      cd_name(discard_layers.parent = discard_box = cd_id_new());
+      cd_name_open(discard_layers.parent = cd_id_new());
       discard_layers.owns_parent = 1;
       CLOSE();
-      cd_at(discard_spot, 0);
       OPEN("p"); STYLE(BADGE); cd_text_num((uint32_t)n); cd_name(discard_txt = cd_id_new()); CLOSE();
+      cd_region_end(&discard);
     }
   } else {
     cd_set_text_num(discard_txt, (uint32_t)n);
   }
   discard_n = n;
-  if (discard_box) layers_update(&discard_layers, (uint32_t)n, &DISCARD_LAYERS);
+  if (discard.shown) layers_update(&discard_layers, (uint32_t)n, &DISCARD_LAYERS);
 }
 
 static cd_str index_str(uint32_t i) {
-  static SB s;
-  sb_reset(&s);
-  sb_i(&s, (int32_t)i);
-  return cd_intern(s.b, s.n);
+  char b[12];
+  return cd_tmp(b, cd_fmt(b, (int32_t)i, 0, CD_UNIT_NONE));
 }
 
 /* ---- the battles (TableBattles.tsx) -------------------------------------- */
@@ -377,13 +371,15 @@ static cd_id battle_create(void *ctx, uint32_t i, uint32_t *data) {
   STYLE("display: flex; flex-direction: column; align-items: center; position: relative; width: 60px; "
         "height: 80px; margin: 5px; justify-content: center;");
   ATTR("data-location", "table");
-  face_open(b->attack, face_style(b->attack, FACE_ATTACK, 0, 0, 0, covered), 0);
-  cd_name(battle_attack[aid] = cd_id_new());
+  face_open(b->attack, 0);
+  cd_attr(S_STYLE, face_style(b->attack, FACE_ATTACK, 0, 0, 0, covered));
+  cd_name_open(battle_attack[aid] = cd_id_new());
   cd_attr(ZS("data-battle-index"), index_str(i));
   data_card(b->attack);
   CLOSE();
   if (covered) {
-    face_open(b->defense, face_style(b->defense, FACE_DEFENSE, 0, 0, 0, 0), 0);
+    face_open(b->defense, 0);
+    cd_attr(S_STYLE, face_style(b->defense, FACE_DEFENSE, 0, 0, 0, 0));
     data_card(b->defense);
     CLOSE();
   }
@@ -397,10 +393,13 @@ static void battle_patch(void *ctx, uint32_t i, cd_item *it) {
   const Battle *b = &V->battles[i];
   int covered = b->defense.suit >= 0;
   if ((uint32_t)covered == it->data) return;
-  it->data = (uint32_t)covered; /* a battle is only ever covered, never uncovered */
-  cd_set_attr(battle_attack[card_to_id(b->attack)], S_STYLE, face_style(b->attack, FACE_ATTACK, 0, 0, 0, 1));
+  it->data = (uint32_t)covered; /* a battle is only ever covered, never uncovered: the attack tilts back */
+  cd_id att = battle_attack[card_to_id(b->attack)];
+  cd_set_style(att, ZS("transform"), ZS("translateX(-50%) rotate(-" COVER_TILT ")"));
+  cd_set_style(att, ZS("z-index"), ZS("1"));
   cd_at(it->node, 0);
-  face_open(b->defense, face_style(b->defense, FACE_DEFENSE, 0, 0, 0, 0), 0);
+  face_open(b->defense, 0);
+  cd_attr(S_STYLE, face_style(b->defense, FACE_DEFENSE, 0, 0, 0, 0));
   data_card(b->defense);
   CLOSE();
 }
@@ -423,12 +422,11 @@ static void render_table(void) {
 
 static const HandMetrics WEB_HAND = {50, 20, 70, 2, 6, 0, 34};
 static HandLayout HL;
-static double lift;
+static double lift, act_h = -1, pills_b = -1, plane_h = -1; /* lift, and the three lengths as drawn */
 static cd_id action_area, pills_box, hand_plane;
 static cd_list hand, pills;
-static cd_str hand_style[52];
-static int8_t hand_index[52];
-static cd_str action_style, pills_style, plane_style;
+/* What each hand card shows now, by card id: its box, its bottom, selected, its index. */
+static struct { double x, w, h, bottom; int8_t sel, index; } shown[52];
 
 static int selected(int cid) {
   for (int i = 0; i < nsel; i++) if (sel[i] == cid) return 1;
@@ -436,24 +434,22 @@ static int selected(int cid) {
 }
 
 static int thin(const HandRect *r) { return r->w < 40 && r->h > 60; }
-
-static cd_str hand_card_style(uint32_t i) {
-  const HandRect *r = &HL.slot[i];
-  Card c = V->my_hand[i];
-  return face_style(c, FACE_HAND, r, HL.rows.height - r->y - r->h, selected(card_to_id(c)), 0);
-}
-
+static double card_bottom(const HandRect *r) { return HL.rows.height - r->y - r->h; }
 
 static cd_id hand_create(void *ctx, uint32_t i, uint32_t *data) {
   (void)ctx;
   Card c = V->my_hand[i];
+  const HandRect *r = &HL.slot[i];
   int cid = card_to_id(c);
   cd_id id = cd_id_new();
-  face_open(c, hand_style[cid] = hand_card_style(i), thin(&HL.slot[i]));
+  face_open(c, thin(r));
+  cd_attr(S_STYLE, face_style(c, FACE_HAND, r, card_bottom(r), selected(cid), 0));
+  shown[cid].x = r->x; shown[cid].w = r->w; shown[cid].h = r->h; shown[cid].bottom = card_bottom(r);
+  shown[cid].sel = (int8_t)selected(cid);
   cd_listen(id, CD_EV_CLICK);
   cd_tag_set(id, TAG_CARD | (uint32_t)cid);
   cd_attr(ZS("data-card-index"), index_str(i));
-  hand_index[cid] = (int8_t)i;
+  shown[cid].index = (int8_t)i;
   ATTR("data-location", "hand");
   cd_attr(ZS("data-player-id"), ZS("u-me-0000"));
   data_card(c);
@@ -463,15 +459,22 @@ static cd_id hand_create(void *ctx, uint32_t i, uint32_t *data) {
   return id;
 }
 
+/* A surviving card: only the properties that changed, one style property each. */
 static void hand_patch(void *ctx, uint32_t i, cd_item *it) {
   (void)ctx;
   int cid = (int)it->data;
-  cd_str s = hand_card_style(i);
-  if (s != hand_style[cid]) cd_set_attr(it->node, S_STYLE, hand_style[cid] = s);
-  if (hand_index[cid] != (int8_t)i) cd_set_attr(it->node, ZS("data-card-index"), index_str((uint32_t)(hand_index[cid] = (int8_t)i)));
+  const HandRect *r = &HL.slot[i];
+  double bottom = card_bottom(r);
+  int8_t sl = (int8_t)selected(cid);
+  if (r->x != shown[cid].x) cd_set_style_num(it->node, ZS("left"), shown[cid].x = r->x, CD_UNIT_PX);
+  if (bottom != shown[cid].bottom) cd_set_style_num(it->node, ZS("bottom"), shown[cid].bottom = bottom, CD_UNIT_PX);
+  if (r->w != shown[cid].w) cd_set_style_num(it->node, ZS("width"), shown[cid].w = r->w, CD_UNIT_PX);
+  if (r->h != shown[cid].h) cd_set_style_num(it->node, ZS("height"), shown[cid].h = r->h, CD_UNIT_PX);
+  if (sl != shown[cid].sel) cd_set_style(it->node, ZS("border-color"), (shown[cid].sel = sl) ? ZS("red") : ZS("black"));
+  if (shown[cid].index != (int8_t)i) cd_set_attr(it->node, ZS("data-card-index"), index_str((uint32_t)(shown[cid].index = (int8_t)i)));
 }
 
-static void hand_destroy(void *ctx, cd_item *it) { (void)ctx; hand_style[it->data] = 0; }
+static void hand_destroy(void *ctx, cd_item *it) { (void)ctx; (void)it; }
 static const cd_list_fns HAND_FNS = {0, hand_create, hand_patch, hand_destroy};
 
 /* The pill column, top to bottom, as ActionButtons.tsx COLUMN. */
@@ -480,7 +483,7 @@ static const struct { uint32_t bit; const char *label; double seed; } PILL[] = {
   {PLAY_PILL_PICKUP, "Pickup", 0.15}, {PLAY_PILL_GOOD, "Good", 0.85},
 };
 
-/* TexturedSurface.tsx getTextureStyle without its wood picture (the golden's fallback). */
+/* TexturedSurface.tsx getTextureStyle: the wood once it is made (--tex-wood), the stripes before. */
 static cd_str wood_style(double seed) {
   static SB s;
   int32_t x = (int32_t)__builtin_floor(seed * 1920), y = (int32_t)(seed * 1000 - 1080 * __builtin_floor(seed * 1000 / 1080));
@@ -488,12 +491,12 @@ static cd_str wood_style(double seed) {
   if (sx > 1920 - 260) x = 260;
   if (sy > 1080 - 60) y = 60;
   sb_reset(&s);
-  sb_s(&s, "background-color: rgb(195, 63, 8); background-image: repeating-linear-gradient(90deg, transparent, "
-           "transparent 1px, rgba(0, 0, 0, 0.1) 1px, rgba(0, 0, 0, 0.1) 2px); background-size: 1920px 1080px; "
+  sb_s(&s, "background-color: rgb(195, 63, 8); background-image: var(--tex-wood, repeating-linear-gradient(90deg, transparent, "
+           "transparent 1px, rgba(0, 0, 0, 0.1) 1px, rgba(0, 0, 0, 0.1) 2px)); background-size: 1920px 1080px; "
            "background-position: ");
   sb_i(&s, x); sb_s(&s, "px "); sb_i(&s, y);
   sb_s(&s, "px; background-repeat: repeat;");
-  return sb_str(&s);
+  return sb_tmp(&s);
 }
 
 static uint32_t pill_order[5];
@@ -502,7 +505,7 @@ static cd_id pill_create(void *ctx, uint32_t i, uint32_t *data) {
   int p = (int)pill_order[i];
   cd_id wrap = cd_id_new(), btn = cd_id_new();
   OPEN("div");
-  cd_name(wrap);
+  cd_name_open(wrap);
   OPEN("button");
   cd_listen(btn, CD_EV_CLICK);
   cd_tag_set(btn, TAG_PILL | PILL[p].bit);
@@ -537,30 +540,38 @@ static uint32_t current_pills(void) {
 }
 
 static void render_hand(void) {
-  double width = (double)js_vw() - 20; /* the plane: the window less cards.css's 10px gutters */
+  cd_viewport_rec vp;
+  cd_viewport(&vp);
+  double width = (double)vp.w - 20; /* the plane: the window less cards.css's 10px gutters */
   hand_layout(&WEB_HAND, V->my_hand_count, width, &HL);
   HandLayout empty;
   hand_layout(&WEB_HAND, 0, width, &empty);
   lift = HL.rows.height - empty.rows.height;
 
-  static SB s;
-  sb_reset(&s);
-  sb_s(&s, "display: flex; flex-direction: column; position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); "
-           "left: 0px; right: 0px; justify-content: end; align-items: center; ");
-  sb_px(&s, "height: ", 200 + lift);
-  cd_str st = sb_str(&s);
-  if (st != action_style) cd_set_attr(action_area, S_STYLE, action_style = st);
-  sb_reset(&s);
-  sb_s(&s, "position: absolute; ");
-  sb_px(&s, "bottom: ", 90 + lift);
-  sb_s(&s, "right: 20px; display: flex; flex-direction: column; gap: 5px; z-index: 999;");
-  st = sb_str(&s);
-  if (st != pills_style) cd_set_attr(pills_box, S_STYLE, pills_style = st);
-  sb_reset(&s);
-  sb_s(&s, "position: relative; width: 100%; ");
-  sb_px(&s, "height: ", HL.rows.height);
-  st = sb_str(&s);
-  if (st != plane_style) cd_set_attr(hand_plane, S_STYLE, plane_style = st);
+  if (act_h < 0) { /* the first render writes the whole style, as React's first render does */
+    static SB s;
+    sb_reset(&s);
+    sb_s(&s, "display: flex; flex-direction: column; position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); "
+             "left: 0px; right: 0px; justify-content: end; align-items: center; ");
+    sb_px(&s, "height: ", 200 + lift);
+    cd_set_attr(action_area, S_STYLE, sb_tmp(&s));
+    sb_reset(&s);
+    sb_s(&s, "position: absolute; ");
+    sb_px(&s, "bottom: ", 90 + lift);
+    sb_s(&s, "right: 20px; display: flex; flex-direction: column; gap: 5px; z-index: 999;");
+    cd_set_attr(pills_box, S_STYLE, sb_tmp(&s));
+    sb_reset(&s);
+    sb_s(&s, "position: relative; width: 100%; ");
+    sb_px(&s, "height: ", HL.rows.height);
+    cd_set_attr(hand_plane, S_STYLE, sb_tmp(&s));
+  } else {
+    if (200 + lift != act_h) cd_set_style_num(action_area, ZS("height"), 200 + lift, CD_UNIT_PX);
+    if (90 + lift != pills_b) cd_set_style_num(pills_box, ZS("bottom"), 90 + lift, CD_UNIT_PX);
+    if (HL.rows.height != plane_h) cd_set_style_num(hand_plane, ZS("height"), HL.rows.height, CD_UNIT_PX);
+  }
+  act_h = 200 + lift;
+  pills_b = 90 + lift;
+  plane_h = HL.rows.height;
 
   /* A card that turns thin changes its layout, so its key does too. */
   for (int i = 0; i < V->my_hand_count; i++)
@@ -579,10 +590,11 @@ enum { MARK_NONE, MARK_SHIELD, MARK_SWORD, MARK_LEAD, MARK_CHECK };
 static const char *const MARK_NAME[] = {"", "shield", "sword", "leadSword", "check"};
 
 typedef struct {
-  cd_id root, role, hand, count_box, count_txt;
+  cd_region seat, badge; /* the seat's whole ring entry, and its mini hand's count badge */
+  cd_id role, hand, count_txt;
   cd_list minis;
   int mark, count;
-  cd_str root_style;
+  double lift; /* the lift the root's transform was drawn for */
 } SeatUI;
 static SeatUI seat_ui[MAX_PLAYERS];
 static int n_seats;
@@ -608,8 +620,8 @@ static void mark_emit(int mark) {
                             : mark == MARK_SWORD ? ZS("attacking") : ZS("said good"));
   STYLE("display: inline-flex; line-height: 0;");
   OPEN("svg");
-  const char *size = mark == MARK_SHIELD ? "33" : mark == MARK_CHECK ? "26" : "40";
-  cd_attr(ZS("width"), cd_internz(size)); cd_attr(ZS("height"), cd_internz(size));
+  cd_str size = mark == MARK_SHIELD ? ZS("33") : mark == MARK_CHECK ? ZS("26") : ZS("40");
+  cd_attr(ZS("width"), size); cd_attr(ZS("height"), size);
   ATTR("viewBox", "0 0 24 24"); ATTR("fill", "none"); ATTR("aria-hidden", "true"); ATTR("focusable", "false");
   if (mark == MARK_SHIELD) {
     OPEN("path");
@@ -639,42 +651,59 @@ static void mark_emit(int mark) {
 }
 
 static double mid_of(int n) { return (n - 1) / 2.0; }
+static double mini_left(uint32_t i, int n) { return 50 + (i - mid_of(n)) * 10 - 12.5; }
 static cd_str mini_style(uint32_t i, int n) {
   static SB s;
   sb_reset(&s);
-  sb_s(&s, "box-sizing: border-box; background-color: rgb(180, 14, 9); width: 25px; height: 35px; border-radius: 3px; "
+  sb_s(&s, "box-sizing: border-box; background-color: var(--tex-fern-bg, rgb(180, 14, 9)); width: 25px; height: 35px; border-radius: 3px; "
            "border: 1px solid rgb(139, 0, 0); position: absolute; top: 0px; ");
-  sb_px(&s, "left: ", 50 + (i - mid_of(n)) * 10 - 12.5);
-  sb_s(&s, "z-index: "); sb_i(&s, (int32_t)i);
-  sb_s(&s, "; box-shadow: 0 1px 2px rgba(0,0,0,0.3); background-size: 100% 100%; background-repeat: no-repeat; overflow: hidden;");
-  return sb_str(&s);
+  sb_px(&s, "left: ", mini_left(i, n));
+  sb_s(&s, "z-index: "); sb_i(&s, i);
+  sb_s(&s, "; box-shadow: 0 1px 2px rgba(0,0,0,0.3); background-image: var(--tex-fern); background-size: 100% 100%; "
+           "background-repeat: no-repeat; overflow: hidden;");
+  return sb_tmp(&s);
 }
 
+/* A mini card's data is its left as drawn, in 1/10000 px. */
+static uint32_t left_q(double v) { return (uint32_t)(int32_t)(v * 10000); }
 static cd_id mini_create(void *ctx, uint32_t i, uint32_t *data) {
   SeatUI *u = ctx;
   cd_id id = cd_id_new();
-  OPEN("div"); cd_name(id); cd_attr(S_STYLE, (cd_str)(*data = mini_style(i, u->count))); CLOSE();
+  OPEN("div"); cd_name_open(id); cd_attr(S_STYLE, mini_style(i, u->count)); CLOSE();
+  *data = left_q(mini_left(i, u->count));
   return id;
 }
 static void mini_patch(void *ctx, uint32_t i, cd_item *it) {
   SeatUI *u = ctx;
-  cd_str s = mini_style(i, u->count);
-  if (s != it->data) cd_set_attr(it->node, S_STYLE, (cd_str)(it->data = s));
+  double left = mini_left(i, u->count);
+  if (left_q(left) != it->data) { it->data = left_q(left); cd_set_style_num(it->node, ZS("left"), left, CD_UNIT_PX); }
 }
 static void mini_destroy(void *ctx, cd_item *it) { (void)ctx; (void)it; }
 
+static int seat_view(int seat) { return (seat - V->my_seat + n_seats) % n_seats; }
+/* My seat rides up with the hand's lift. */
+static void sb_transform(SB *s, int seat) {
+  if (seat_view(seat) == 0 && lift > 0) { sb_s(s, "translate(-50%, calc(-50% - "); sb_num(s, lift, CD_UNIT_PX); sb_s(s, "))"); }
+  else sb_s(s, "translate(-50%, -50%)");
+}
 static cd_str seat_style(int seat) {
   static SB s;
-  int v = (seat - V->my_seat + n_seats) % n_seats;
-  double rad = 2 * M_PI * v / n_seats;
+  double rad = 2 * M_PI * seat_view(seat) / n_seats;
   sb_reset(&s);
-  sb_s(&s, "position: absolute; top: "); sb_f(&s, cos(rad) * 35 + 50);
-  sb_s(&s, "%; left: "); sb_f(&s, -sin(rad) * 35 + 50);
-  sb_s(&s, "%; display: flex; flex-direction: column; align-items: center; width: 80px; height: 91px; ");
-  if (v == 0 && lift > 0) { sb_s(&s, "transform: translate(-50%, calc(-50% - "); sb_f(&s, lift); sb_s(&s, "px));"); }
-  else sb_s(&s, "transform: translate(-50%, -50%);");
-  return sb_str(&s);
+  sb_s(&s, "position: absolute; top: "); sb_num(&s, cos(rad) * 35 + 50, CD_UNIT_PCT);
+  sb_s(&s, "; left: "); sb_num(&s, -sin(rad) * 35 + 50, CD_UNIT_PCT);
+  sb_s(&s, "; display: flex; flex-direction: column; align-items: center; width: 80px; height: 91px; transform: ");
+  sb_transform(&s, seat);
+  sb_s(&s, ";");
+  return sb_tmp(&s);
 }
+static cd_str seat_transform(int seat) {
+  static SB s;
+  sb_reset(&s);
+  sb_transform(&s, seat);
+  return sb_tmp(&s);
+}
+static double seat_lift(int seat) { return seat_view(seat) == 0 && lift > 0 ? lift : 0; }
 
 #define ROLE_ROW "height: 40px; width: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; " \
   "transform: scaleX(1); will-change: transform;"
@@ -684,37 +713,46 @@ static cd_str seat_style(int seat) {
 #define COUNT_BOX "position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--color-text-primary); " \
   "font-size: 10px; font-weight: bold; z-index: 100; pointer-events: none; text-shadow: 1px 1px 2px rgba(0,0,0,0.8);"
 
+static const cd_list_fns *mini_fns(SeatUI *u) {
+  static cd_list_fns f[MAX_PLAYERS];
+  int k = (int)(u - seat_ui);
+  f[k] = (cd_list_fns){u, mini_create, mini_patch, mini_destroy};
+  return &f[k];
+}
+
 static void seats_build(void) {
-  for (int s = 0; s < n_seats; s++) { /* a new deal: the old ring goes */
+  for (int s = 0; s < n_seats; s++) { /* a new table: the old ring goes */
     SeatUI *u = &seat_ui[s];
-    list_forget(&u->minis);
-    cd_id_free(u->role); cd_id_free(u->hand);
-    if (u->count_box) { cd_id_free(u->count_box); cd_id_free(u->count_txt); }
-    cd_remove(u->root);
+    cd_list_forget(&u->minis, mini_fns(u));
+    cd_region_hide(&u->badge);
+    cd_region_hide(&u->seat);
   }
   n_seats = V->num_players;
   for (int s = 0; s < n_seats; s++) {
     SeatUI *u = &seat_ui[s];
-    __builtin_memset(u, 0, sizeof *u);
     u->mark = -1;
+    u->count = 0;
+    u->lift = seat_lift(s);
+    cd_region_show(&u->seat, 1);
     cd_at(board, seats_anchor);
     OPEN("div");
-    cd_name(u->root = cd_id_new());
-    cd_attr(S_STYLE, u->root_style = seat_style(s));
+    cd_name_open(u->seat.root);
+    cd_attr(S_STYLE, seat_style(s));
     OPEN("div");
-    cd_name(u->role = cd_id_new());
+    cd_name_open(u->role = cd_id_new());
     cd_attr(ZS("data-role-seat"), index_str((uint32_t)s));
     ATTR("data-role-mark", "");
     STYLE(ROLE_ROW);
     CLOSE();
     OPEN("div"); STYLE(NAME_ROW); cd_text(cd_internz(SEAT_NAME[s])); CLOSE();
     OPEN("div");
-    cd_name(u->hand = cd_id_new());
+    cd_name_open(u->hand = cd_id_new());
     STYLE("display: flex; flex-direction: row; align-items: center; justify-content: center; position: relative; "
           "height: 35px; width: 100px; flex-shrink: 0;");
     if (s != V->my_seat) { ATTR("data-location", "hand"); cd_attr(ZS("data-player-id"), cd_internz(SEAT_ID[s])); }
     CLOSE();
     CLOSE();
+    cd_region_end(&u->seat);
     u->minis.parent = u->hand;
   }
 }
@@ -723,8 +761,7 @@ static void render_seats(void) {
   if (n_seats != V->num_players) seats_build();
   for (int s = 0; s < n_seats; s++) {
     SeatUI *u = &seat_ui[s];
-    cd_str st = seat_style(s);
-    if (st != u->root_style) cd_set_attr(u->root, S_STYLE, u->root_style = st);
+    if (seat_lift(s) != u->lift) { u->lift = seat_lift(s); cd_set_style(u->seat.root, ZS("transform"), seat_transform(s)); }
     int mark = mark_of(s);
     if (mark != u->mark) {
       u->mark = mark;
@@ -736,27 +773,23 @@ static void render_seats(void) {
     if (n != u->count) {
       u->count = n;
       for (int i = 0; i < n; i++) keys[i] = (uint32_t)i + 1;
-      const cd_list_fns f = {u, mini_create, mini_patch, mini_destroy};
-      cd_list_update(&u->minis, keys, (uint32_t)n, &f);
-      if (n > 0 && !u->count_box) {
+      cd_list_update(&u->minis, keys, (uint32_t)n, mini_fns(u)); /* new cards go before the count */
+      if (u->badge.shown && n > 0) cd_set_text_num(u->count_txt, (uint32_t)n);
+      if (cd_region_show(&u->badge, n > 0)) {
         cd_at(u->hand, 0);
-        OPEN("div"); cd_name(u->count_box = cd_id_new()); STYLE(COUNT_BOX);
+        OPEN("div"); cd_name_open(u->badge.root); STYLE(COUNT_BOX);
         cd_text_num((uint32_t)n); cd_name(u->count_txt = cd_id_new());
         CLOSE();
-      } else if (n > 0) {
-        cd_set_text_num(u->count_txt, (uint32_t)n);
-        cd_move(u->count_box, 0); /* the count stays the mini hand's last child, after any card the list appended */
-      } else if (u->count_box) {
-        cd_remove(u->count_box); cd_id_free(u->count_txt);
-        u->count_box = u->count_txt = 0;
+        cd_region_end(&u->badge);
       }
+      u->minis.end = u->badge.shown ? u->badge.root : 0;
     }
   }
 }
 
 /* ---- the end of the game -------------------------------------------------- */
 
-static cd_id end_box;
+static cd_region end_screen; /* root mode: one element over the board */
 
 static void result_row(const char *medal, int seat) {
   OPEN("div"); cd_class(seat == ME ? ZS("result-card result-card--current-user") : ZS("result-card "));
@@ -769,13 +802,11 @@ static void result_row(const char *medal, int seat) {
 }
 
 static void render_end(void) {
-  int over = V->status == GAME_STATUS_GAME_OVER;
-  if (over == (end_box != 0)) return;
-  if (!over) { cd_remove(end_box); end_box = 0; return; }
+  if (!cd_region_show(&end_screen, V->status == GAME_STATUS_GAME_OVER)) return;
   int fool = V->fool;
   cd_at(board, 0);
   OPEN("div");
-  cd_name(end_box = cd_id_new());
+  cd_name_open(end_screen.root);
   ATTR("data-end", "true");
   STYLE("position: absolute; inset: 0px; display: flex; flex-direction: column; align-items: center; "
         "justify-content: center; gap: 16px; z-index: 2000; background-color: rgba(0, 0, 0, 0.35);");
@@ -793,6 +824,7 @@ static void render_end(void) {
   OPEN("span"); CLASS("btn-wood-text"); OPEN("span"); TEXT("Play again"); CLOSE(); CLOSE();
   CLOSE();
   CLOSE();
+  cd_region_end(&end_screen); /* the button's id goes with the screen */
 }
 
 /* ---- one render ----------------------------------------------------------- */
@@ -821,7 +853,7 @@ enum { TIMER_BOT = 1 };
 static void schedule_bot(void) {
   if (bot_pending || G.status != GAME_STATUS_PLAYING || my_turn_owed()) return;
   bot_pending = 1;
-  js_timer(BOT_STEP_MS, TIMER_BOT);
+  cd_timer_start(BOT_STEP_MS, TIMER_BOT);
 }
 
 /* One bot step: whatever the bot does up to its next visible move. */
@@ -878,7 +910,6 @@ static void toggle(int cid) {
 }
 
 static void new_game(void) {
-  if (end_box) { cd_remove(end_box); end_box = 0; }
   nsel = 0;
   deal_new();
   render();
@@ -887,6 +918,11 @@ static void new_game(void) {
 }
 
 void cd_on_event(const cd_event_rec *e) {
+  if (e->type == CD_EV_RESIZE) { render(); return; } /* the hand is laid out for the new width */
+  if (e->type == CD_EV_LOAD) { /* a texture landed; with the fern, the backs turn black under it, as CardBack's do */
+    if (e->key == TEX_FERN) cd_set_style(CD_MOUNT, ZS("--tex-fern-bg"), ZS("#000000"));
+    return;
+  }
   if (e->type != CD_EV_CLICK) return;
   uint32_t tag = cd_tag((cd_id)e->id);
   if (tag & TAG_AGAIN) { new_game(); return; }
@@ -903,26 +939,79 @@ void cd_on_event(const cd_event_rec *e) {
   render();
 }
 
-EXPORT("cd_timer") void cd_timer(uint32_t token) {
+void cd_on_timer(uint32_t token) {
   if (token == TIMER_BOT) bot_step();
-  cd_flush();
 }
 
-EXPORT("app_resize") void app_resize(void) {
-  render();
-  cd_flush();
-}
-
-/* For the test: the engine's reason for the last refused move, 0 for none. */
+/* For the tests: the engine's reason for the last refused move (0 for none), and the string
+ * table's size (the same strings are held in C's pool and in the shim). */
 EXPORT("app_last_reject") int app_last_reject(void) { return last_reject; }
+EXPORT("app_str_count") uint32_t app_str_count(void) { return cd_str_count(); }
+EXPORT("app_str_bytes") uint32_t app_str_bytes(void) { return cd_str_bytes(); }
+EXPORT("app_ids_live") uint32_t app_ids_live(void) { return cd_ids_live(); }
+/* ---- the textures ----------------------------------------------------------
+ * After the first paint, in slices of about 8 ms on animation frames: the fern (the card backs),
+ * the wood (the buttons), then the wool (the background). Each lands as a custom property on the
+ * mount (cd_set_image), which the styles above read through var(). One 32 MiB block holds each
+ * in turn: the wool's 3840 x 2160 pixels, or the wood's float colours and pixels together. */
+enum { TEX_W = 3840, TEX_H = 2160, WOOD_W = 1920, WOOD_H = 1080, FERN_W = 1000, FERN_H = 1400 };
+#define TEX_SLICE_MS 8.0
+static struct { int stage; uint8_t *block; Fern fern; Wood wood; Wool wool; double ms[3]; } tex;
+static uint32_t tex_rng;
+
+static void tex_start(int stage) {
+  tex.stage = stage;
+  uint8_t *b = tex.block;
+  if (stage == TEX_FERN) fern_begin(&tex.fern, b, b + FERN_W * FERN_H * 4, FERN_W, FERN_H, 5000000, tex_rng);
+  if (stage == TEX_WOOD) {
+    double ox = tex_random(&tex_rng) * 1000 - 500, oy = tex_random(&tex_rng) * 1000 - 500;
+    float *col = (float *)b;
+    uint8_t *px = b + WOOD_W * WOOD_H * 3 * 4;
+    wood_begin(&tex.wood, col, (float *)(px + WOOD_W * WOOD_H * 4), px, WOOD_W, WOOD_H, ox, oy);
+  }
+  if (stage == TEX_WOOL) {
+    double ox = tex_random(&tex_rng) * 1000 - 500, oy = tex_random(&tex_rng) * 1000 - 500;
+    wool_begin(&tex.wool, b, TEX_W, TEX_H, ox, oy);
+  }
+}
+
+void cd_on_raf(uint32_t token, double t) {
+  (void)token; (void)t;
+  double t0 = cd_now(), now = t0;
+  int done = 0;
+  while (!done && now - t0 < TEX_SLICE_MS) {
+    if (tex.stage == TEX_FERN) done = fern_run(&tex.fern, 100000);
+    else if (tex.stage == TEX_WOOD) done = wood_run(&tex.wood, 2);
+    else done = wool_run(&tex.wool, 100000);
+    now = cd_now();
+  }
+  tex.ms[tex.stage] += now - t0;
+  if (done) {
+    if (tex.stage == TEX_FERN) cd_set_image(CD_MOUNT, ZS("--tex-fern"), tex.fern.px, FERN_W, FERN_H, ZS("image/png"), TEX_FERN);
+    if (tex.stage == TEX_WOOD) cd_set_image(CD_MOUNT, ZS("--tex-wood"), tex.wood.px, WOOD_W, WOOD_H, ZS("image/png"), TEX_WOOD);
+    if (tex.stage == TEX_WOOL) cd_set_image(CD_MOUNT, ZS("--tex-wool"), tex.wool.px, TEX_W, TEX_H, ZS("image/jpeg"), TEX_WOOL);
+    if (tex.stage + 1 == TEX_DONE) { cd_free(tex.block); tex.block = 0; tex.stage = TEX_DONE; return; }
+    tex_start(tex.stage + 1);
+  }
+  cd_raf_request(0);
+}
+
+static void textures_begin(void) {
+  tex_rng = cd_seed ^ 0x9e3779b9u;
+  uint32_t wood = WOOD_W * WOOD_H * (3 * 4 + 4) + WOOD_H * 4, wool = TEX_W * TEX_H * 4;
+  tex.block = cd_alloc(wood > wool ? wood : wool); /* 33.2 MB: one 32 MiB size class */
+  tex_start(TEX_FERN);
+  cd_raf_request(0);
+}
+
+/* For the tests and the README: how long each texture took on the page's thread, in ms. */
+EXPORT("app_tex_ms") double app_tex_ms(int32_t k) { return k < 3 ? tex.ms[k] : tex.stage; }
 
 /* ---- the page -------------------------------------------------------------- */
 
 void cd_main(void) {
   rng = cd_seed | 1;
   S_STYLE = cd_internz("style");
-  S_DIV = cd_internz("div");
-  S_SPAN = cd_internz("span");
   for (int v = 1; v <= ACE_VALUE; v++) S_RANK[v] = cd_internz(CARD_RANK_LABEL[v]);
   for (int s = 0; s < NUM_SUITS; s++) S_SUIT[s] = cd_internz(CARD_SUIT_FACE[s].glyph);
   client_init(&CT, &SLOT);
@@ -935,21 +1024,21 @@ void cd_main(void) {
 
   cd_at(CD_MOUNT, 0);
   OPEN("div");
-  cd_name(container = cd_id_new());
+  cd_name_open(container = cd_id_new());
   ATTR("data-game-container", "true");
   CLASS("game-container");
-  OPEN("div"); CLASS("bg-wool"); CLOSE();
+  OPEN("div"); CLASS("bg-wool"); STYLE("background-image: var(--tex-wool);"); CLOSE();
   OPEN("div"); CLASS("bg-vignette bg-vignette--default"); CLOSE();
   OPEN("div"); CLASS("bg-soviet"); CLOSE();
   OPEN("div"); CLASS("bg-vignette bg-vignette--soviet"); CLOSE();
 
   OPEN("div");
-  cd_name(board = cd_id_new());
+  cd_name_open(board = cd_id_new());
   CLASS("flex flex-1 flex-center");
   OPEN("p"); CLASS("title--game-display"); TEXT("Two of us"); CLOSE();
 
   OPEN("div");
-  cd_name(deck_area = cd_id_new());
+  cd_name_open(deck_area.parent = cd_id_new());
   STYLE("display: flex; position: absolute; top: 0px; left: 0px; flex-direction: column; align-items: center; "
         "height: 240px; width: 100px; padding-top: 85px;");
   CLOSE();
@@ -957,14 +1046,14 @@ void cd_main(void) {
   OPEN("div");
   STYLE("display: flex; position: absolute; top: 0px; right: 0px; flex-direction: column; justify-content: center; "
         "align-items: center; height: 240px; width: 100px;");
-  OPEN("div"); cd_name(discard_spot = cd_id_new()); STYLE("position: relative;"); ATTR("data-location", "discard"); CLOSE();
+  OPEN("div"); cd_name_open(discard.parent = cd_id_new()); STYLE("position: relative;"); ATTR("data-location", "discard"); CLOSE();
   CLOSE();
 
   OPEN("div");
-  cd_name(action_area = cd_id_new());
+  cd_name_open(action_area = cd_id_new());
   ATTR("data-touch-interactive", "true");
   OPEN("div");
-  cd_name(pills_box = cd_id_new());
+  cd_name_open(pills_box = cd_id_new());
   ATTR("data-touch-interactive", "true");
   pills.parent = pills_box;
   pills.owns_parent = 1;
@@ -973,7 +1062,7 @@ void cd_main(void) {
   ATTR("data-touch-interactive", "true"); ATTR("data-hand-container", "true"); ATTR("data-player-id", "u-me-0000");
   STYLE("width: 100%;");
   OPEN("div");
-  cd_name(hand_plane = cd_id_new());
+  cd_name_open(hand_plane = cd_id_new());
   ATTR("data-hand-plane", "true");
   hand.parent = hand_plane;
   hand.owns_parent = 1;
@@ -988,7 +1077,7 @@ void cd_main(void) {
   CLASS("absolute flex flex-col items-center justify-center w-full");
   STYLE("top: 0px; bottom: 0px;");
   OPEN("div");
-  cd_name(battles.parent = cd_id_new());
+  cd_name_open(battles.parent = cd_id_new());
   ATTR("data-table-container", "true");
   STYLE("display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 100%; max-width: 300px; margin: 0px auto;");
   TEXT(" ");
@@ -997,7 +1086,7 @@ void cd_main(void) {
 
   /* The seats go here, before the chat toggle. */
   OPEN("div");
-  cd_name(seats_anchor = cd_id_new());
+  cd_name_open(seats_anchor = cd_id_new());
   CLASS("chat-toggle"); ATTR("data-chat-button", "true");
   OPEN("div"); CLASS("chat-toggle__icon"); OPEN("span"); CLASS(""); TEXT("\xF0\x9F\x93\x9E"); CLOSE(); CLOSE();
   CLOSE();
@@ -1010,6 +1099,8 @@ void cd_main(void) {
   CLOSE();
   CLOSE(); /* container */
 
+  cd_listen_window(CD_EV_RESIZE);
   render();
+  if (!page_notex()) textures_begin();
 }
 

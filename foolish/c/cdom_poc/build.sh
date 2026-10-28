@@ -35,22 +35,28 @@ for f in "${SHARED[@]}"; do
   "$CC" "${KFLAGS[@]}" -c "$shared/$f" -o "$o"
   objs+=("$o")
 done
-for f in "$here/vendor/cdom.c" "$here/src/table_app.c" "$here/src/kernel_glue.c"; do
+# cdom's mini.c is not linked: the kernel's libc.c brings memcmp and strlen (mini.c's are weak, so
+# either would link). cdom's weak malloc is the one allocator for both.
+for f in "$here/vendor/cdom.c" "$here/src/table_app.c" "$here/src/kernel_glue.c" "$here/src/textures.c" "$here/src/crtrig.c" "$here/src/jsmath.c"; do
   o="$obj/app_$(basename "${f%.c}").o"
   "$CC" "${AFLAGS[@]}" -c "$f" -o "$o"
   objs+=("$o")
 done
 
 "$CC" --target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-memory -Wl,--stack-first -Wl,-z,stack-size=65536 \
-  -Wl,--strip-all -Wl,--export=cd_layout -Wl,--export=cd_start -Wl,--export=cd_event \
+  -Wl,--strip-all \
   -o "$out/table.wasm" "${objs[@]}"
 if command -v wasm-opt > /dev/null; then
   wasm-opt -Oz --enable-bulk-memory --enable-mutable-globals --enable-sign-ext "$out/table.wasm" -o "$out/table.wasm"
 fi
 
+# The texture generators alone, for tools/texparity.mjs.
+"$CC" --target=wasm32 -O2 -nostdlib -mbulk-memory -ffp-contract=off -Wall -Wextra -Werror -Wl,--no-entry \
+  -Wl,--export-memory -Wl,--strip-all -o "$out/tex_test.wasm" "$here/tests/tex_test.c" "$here/src/textures.c" "$here/src/crtrig.c" "$here/src/jsmath.c"
+
 # The network imports' own test module (tests/net_test.mjs): cdom and nothing of the kernel.
 "$CC" --target=wasm32 -Oz -nostdlib -mbulk-memory -Wall -Wextra -Werror -I"$here/vendor" -Wl,--no-entry \
-  -Wl,--export-memory -Wl,--strip-all -o "$out/net_test.wasm" "$here/tests/net_test.c" "$here/vendor/cdom.c" "$here/vendor/mini.c"
+  -Wl,--export-memory -Wl,--strip-all -o "$out/net_test.wasm" "$here/tests/net_test.c" "$here/vendor/cdom.c" "$here/vendor/cdom_net.c" "$here/vendor/mini.c"
 
 # The page: the shim minified and inlined (as cdom's bench does), the app's CSS linked.
 "$here/tools/node_modules/.bin/terser" "$here/vendor/cdom.js" -c passes=2 -m -o "$out/cdom.min.js" 2> /dev/null \

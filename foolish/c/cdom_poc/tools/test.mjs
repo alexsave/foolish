@@ -23,11 +23,17 @@ async function check(name, fn) {
 }
 
 try {
-  await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
+  await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex');
   await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
 
   await check('first paint: the React golden DOM for the same board, but for what this port leaves out', async () => {
-    const mine = await b.evaluate(`document.getElementById('root').innerHTML`);
+    // The texture hooks are var()s that fall back to the golden's look until a texture lands
+    // (textures are off on this load): taken out, the rest is the golden's DOM.
+    const mine = (await b.evaluate(`document.getElementById('root').innerHTML`))
+      .replace(/var\(--tex-wood, (repeating-linear-gradient\(90deg, transparent, transparent 1px, rgba\(0, 0, 0, 0\.1\) 1px, rgba\(0, 0, 0, 0\.1\) 2px\))\)/g, '$1')
+      .replace(/var\(--tex-fern-bg, (rgb\(180, 14, 9\))\)/g, '$1')
+      .replace(/ background-image: var\(--tex-fern\);/g, '')
+      .replace(' style="background-image: var(--tex-wool);"', '');
     let theirs = await b.evaluate(`(() => { const d = document.createElement('div'); d.innerHTML = ${JSON.stringify(golden)};
       d.querySelector('[data-testid="kbd-state"]').remove();   // keyboard play: not ported
       d.querySelector('svg marker#arrowhead').closest('svg').remove();   // the cover arrows' layer: not ported
@@ -99,6 +105,21 @@ try {
     assert.equal(await turn(), 'human');
     assert.equal(await b.evaluate(`[...document.querySelectorAll('[data-role-seat]')].every((e) => e.$kept)`), true,
       'the seat badges are patched in place');
+  });
+
+  await check('the textures land after the first paint, through the var()s, and the backs turn black under the fern', async () => {
+    await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
+    await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
+    const vars = () => b.evaluate(`['--tex-fern', '--tex-wood', '--tex-wool', '--tex-fern-bg'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(0, 9))`);
+    assert.deepEqual(await vars(), ['', '', '', ''], 'nothing has landed by the first paint');
+    await b.until(`window.app.then((x) => x.app_tex_ms(3) === 3)`, 60000);
+    await b.until(`document.getElementById('root').style.getPropertyValue('--tex-wool') !== ''`, 10000);
+    assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
+    const look = await b.evaluate(`(() => { const cs = (e) => getComputedStyle(e);
+      return [cs(document.querySelector('[data-location="deck"] > div > div')).backgroundImage.slice(0, 9),
+        cs(document.querySelector('[data-location="deck"] > div > div')).backgroundColor,
+        cs(document.querySelector('.btn-icon')).backgroundImage.slice(0, 9), cs(document.querySelector('.bg-wool')).backgroundImage.slice(0, 9)]; })()`);
+    assert.deepEqual(look, ['url("blob', 'rgb(0, 0, 0)', 'url("blob', 'url("blob']);
   });
 
   await check('a game played out by clicks reaches the end screen, and Play again deals a new one', async () => {
