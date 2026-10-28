@@ -2225,15 +2225,15 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
     return r;
 }
 
-// Fusion (c/FUSION.md): octogen plus rollout noise and a firmer pickup
-// inference, and nothing else. The same belief, worlds, budgets, root endgame
-// solve, LEAFBOOK and candidate race as octogen; the two differences are the
-// rollout engine's noise knob and the void mixture (og_void_mod: a seat that
-// picked up holds nothing beating those cards in (mod-1)/mod of worlds;
-// octogen 4 = 75%, fusion 7 = 6/7, sapper's 85%). Both are set for the length
-// of this decision and put back after it, so the next brain to run on this
-// thread (octogen, cordite, a rollout policy) sees octogen's values. The
-// FUSION_VOID_MOD knob overrides 7 for ablations, read by fusion alone.
+// Fusion (c/FUSION.md): octogen plus rollout noise, and nothing else. The
+// same belief, worlds, budgets, root endgame solve, LEAFBOOK and candidate
+// race as octogen. Two levers are set for the length of this decision and put
+// back after it, so the next brain to run on this thread (octogen, cordite, a
+// rollout policy) sees octogen's values: the rollout engine's noise knob, and
+// the void mixture (og_void_mod: a seat that picked up holds nothing beating
+// those cards in (mod-1)/mod of worlds). The mixture defaults to octogen's 4
+// (75%): sapper's firmer 6/7 (FUSION_VOID_MOD=7) measured flat in the league
+// (FUSION.md), so the lever stays for experiments, read by fusion alone.
 //
 // The knob is the per-mille chance that a rollout decision plays a sensible
 // alternative instead of the policy (cordite_sim.h). FUSION_NOISE_PM is the
@@ -2253,7 +2253,7 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
 #define FUSION_NOISE_PM 200
 #endif
 #ifndef FUSION_VOID_MOD
-#define FUSION_VOID_MOD 7
+#define FUSION_VOID_MOD 4
 #endif
 int fusion_strategy_choose(const Game *g, int bot_idx,
                            const LegalMoves *moves, void *ctx) {

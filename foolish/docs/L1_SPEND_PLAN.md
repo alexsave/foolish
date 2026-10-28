@@ -26,6 +26,7 @@ precedent is `STRAT_OCTOGEN_ORACLE=21` (`src/strategy.h:30-45` — a research
 variant wrapping octogen with multiplied budgets). §7 names the new bot
 **hexogen** (`STRAT_HEXOGEN 24`) — hexogen/RDX is octogen/HMX's literal
 chemical sibling, which is exactly the relationship the bots will have.
+(Hexogen was never built: id 24 went to fusion, octogen plus rollout noise, `c/FUSION.md`.)
 Pure-speed changes (same moves, less time) may ship inside octogen only if
 they are SIG-identical at the shipped config (the 2WAY/PACK8 standard).
 

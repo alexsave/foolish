@@ -71,6 +71,14 @@ static const BotRosterEntry ROSTER[] = {
     { "cordite",          STRAT_CORDITE,          CORDITE_KNOBS,        1,   1,     1,     9  },
     { "octogen",          STRAT_OCTOGEN,          "OG_TRUMP_KEEP="
                                                   OCTOGEN_TRUMP_KEEP,   1,   1,     1,     10 },
+    // Research only (c/FUSION.md): octogen's brain and knobs plus 20% rollout
+    // noise, which fusion_strategy_choose sets itself. Neither seeded nor
+    // offline, so no lobby, picker or seed row offers it; unlinked in the
+    // shipped bots module (bot_roster_linked). TODO(alex): city and song. A
+    // city is a `bot.fusion` string in all twenty-five languages, needed only
+    // once the row is seeded; the roster has no song field.
+    { "fusion",           STRAT_FUSION,           "OG_TRUMP_KEEP="
+                                                  OCTOGEN_TRUMP_KEEP,   1,   0,     0,     11 },
 };
 static const int ROSTER_N = (int)(sizeof(ROSTER) / sizeof(ROSTER[0]));
 
@@ -151,6 +159,10 @@ int bot_roster_table(BotRosterTable *out) {
 // docs/C_CORE_CONSOLIDATION.md §4.7 warns against. robusta stays reachable for
 // free: firecracker IS robusta's MC, so its code is already linked.
 //
+// fusion is the same case: research only, never seeded, and its rollout noise
+// is compiled out of that module (cordite_sim.h CD_ROLLOUT_NOISE), so
+// fusion_strategy_choose does not exist there.
+//
 // An unlinked brain returns -1 (never a silent fallback to `random`, which is
 // the failure mode seed.sql's comment is about).
 static int dispatch(int strat, const Game *g, int seat, const LegalMoves *moves) {
@@ -166,18 +178,22 @@ static int dispatch(int strat, const Game *g, int seat, const LegalMoves *moves)
 #ifndef FOOLISH_SEEDED_BOTS_ONLY
         case STRAT_ESPRESSO_PROD:    return espresso_prod_strategy_choose(g, seat, moves, 0);
         case STRAT_GUNPOWDER:        return gunpowder_strategy_choose(g, seat, moves, 0);
+        case STRAT_FUSION:           return fusion_strategy_choose(g, seat, moves, 0);
 #endif
         default:                     return -1;
     }
 }
 
-// Can THIS build run entry `idx`'s brain? False only for the offline-only rungs
-// in a seeded-bots-only build. The offline library can run everything.
+// Can THIS build run entry `idx`'s brain? False only for the unseeded rows
+// (the offline-only rungs and research-only fusion) in a seeded-bots-only build.
+// Must name exactly the cases dispatch() compiles out above. The offline
+// library can run everything.
 int bot_roster_linked(int idx) {
     const BotRosterEntry *e = bot_roster_at(idx);
     if (!e) return 0;
 #ifdef FOOLISH_SEEDED_BOTS_ONLY
-    if (e->strat == STRAT_ESPRESSO_PROD || e->strat == STRAT_GUNPOWDER) return 0;
+    if (e->strat == STRAT_ESPRESSO_PROD || e->strat == STRAT_GUNPOWDER
+        || e->strat == STRAT_FUSION) return 0;
 #endif
     return 1;
 }
