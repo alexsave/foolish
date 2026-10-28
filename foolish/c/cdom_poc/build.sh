@@ -68,6 +68,22 @@ link "$out/table_debug.wasm" "${dobjs[@]}" "$obj/app_table_app_debug.o"
 "$CC" --target=wasm32 -Oz -nostdlib -mbulk-memory -Wall -Wextra -Werror -I"$here/vendor" -Wl,--no-entry \
   -Wl,--export-memory -Wl,--strip-all -o "$out/net_test.wasm" "$here/tests/net_test.c" "$here/vendor/cdom.c" "$here/vendor/cdom_net.c" "$here/vendor/mini.c"
 
+# The contract test (tests/live_test.mjs): the kernel's network client, the web's protocol owner
+# (netclient.c and what it reads with), hosted over cdom's network imports, against a local c_base.
+NETK=(src/netclient.c src/netwire.c src/ask.c src/table_wire.c src/view.c src/evwire.c src/roster.c src/awire.c)
+lobjs=("$obj/shared_libc.o")
+for f in "${NETK[@]}"; do
+  o="$obj/net_$(basename "${f%.c}").o"
+  "$CC" "${KFLAGS[@]}" -c "$c/$f" -o "$o"
+  lobjs+=("$o")
+done
+for f in "$here/vendor/cdom.c" "$here/vendor/cdom_net.c" "$here/tests/live_test.c"; do
+  o="$obj/live_$(basename "${f%.c}").o"
+  "$CC" "${AFLAGS[@]}" -c "$f" -o "$o"
+  lobjs+=("$o")
+done
+link "$out/live_test.wasm" "${lobjs[@]}"
+
 # The kernel's state blob against the games this table plays (tests/blob_test.c), native: run out/blob_test.
 clang -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -w -I"$c/src" \
   -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 -DFOOLISH_SEEDED_BOTS_ONLY \

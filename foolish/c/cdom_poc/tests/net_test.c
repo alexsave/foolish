@@ -21,7 +21,7 @@ void cd_on_ws_msg(uint32_t id, const uint8_t *p, uint32_t len) {
   say(ws_ok ? "ws ok" : "ws wrong bytes");
   cd_ws_close(id);
   static const char url[] = "/echo";
-  cd_http(7, "POST", 4, url, sizeof url - 1, MSG, sizeof MSG);
+  cd_http(7, "POST", 4, url, sizeof url - 1, 0, 0, MSG, sizeof MSG, 0);   /* no headers, no deadline */
 }
 void cd_on_http(uint32_t token, uint32_t status, const uint8_t *p, uint32_t len) {
   /* The server answers the body reversed, so an echo of the request object itself cannot pass. */

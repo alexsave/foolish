@@ -39,7 +39,15 @@ MUTANTS = [
   ('the stored game ignored', 'src/table_app.c', '  game_adopted = len > 0 && game_keep_load(&G, p, len);', '  game_adopted = 0;', 'tools/test.mjs', 'reload'),
   ('a failed save ignored', 'src/table_app.c', '  save_failed = !ok;\n', '  save_failed = 0;\n', 'tools/test.mjs', 'not silent'),
   ('a failed save not tried again', 'src/table_app.c', '  if (token == TIMER_SAVE_RETRY) { save_retry_pending = 0; game_save(); }', '', 'tools/test.mjs', 'not silent'),
-  ('http body not sent', 'vendor/cdom.js', 'const body = bodyLen ? copyBytes(bodyPtr, bodyLen) : undefined;', 'const body = undefined;', 'tests/net_test.mjs'),
+  ('http body not sent', 'vendor/cdom.js', 'body: bodyLen ? copyBytes(bodyPtr, bodyLen) : undefined,', 'body: undefined,', 'tests/net_test.mjs'),
+  # the network pass: each import the live contract test exists for, broken (tests/live_test.mjs, a local c_base)
+  ('live: request headers not sent', 'vendor/cdom.js', 'headers: headerList(headersPtr, headersLen),', 'headers: [],', 'tests/live_test.mjs'),
+  ('live: the status not passed on', 'vendor/cdom.js', 'status = response.status;', 'status = 200;', 'tests/live_test.mjs'),
+  ('live: no deadline', 'vendor/cdom.js', 'const timer = deadlineMs ? setTimeout(() => controller.abort(), deadlineMs) : 0;', 'const timer = 0;', 'tests/live_test.mjs'),
+  ('live: the deadline dropped in C', 'vendor/cdom_net.c', '  j_http(token, method, mlen, url, ulen, headers, hlen, body, blen, deadline_ms);', '  j_http(token, method, mlen, url, ulen, headers, hlen, body, blen, 0 * deadline_ms);', 'tests/live_test.mjs'),
+  ('live: an abort reported as a failure', 'vendor/cdom.js', 'controller.signal.aborted ? 1 : 0', '0', 'tests/live_test.mjs'),
+  ('live: socket ids never reused', 'vendor/cdom.js', 'const id = freeSockets.length ? freeSockets.pop() : sockets.length;', 'const id = sockets.length;', 'tests/live_test.mjs'),
+  ('live: bufferedAmount always 0', 'vendor/cdom.js', '    return sockets[id].bufferedAmount;', '    return 0;', 'tests/live_test.mjs'),
 ]
 only = sys.argv[1:]
 # the source's copy while a mutant is in it: outside the checkout, so no commit can take it
@@ -59,7 +67,7 @@ for name, f, old, new, test, *check in MUTANTS:
     lines = [l for l in r.stdout.splitlines() if l.startswith('FAIL') or 'ok' in l or 'failed' in l][:12]
     print(f'== {name}: exit {r.returncode}')
     for l in r.stdout.splitlines():
-      if l.startswith('FAIL') or l.startswith('     ') or l.startswith('ws') or l.startswith('http') or l.startswith('game 3') or l.startswith('all at'): print('   ', l[:400])
+      if l.startswith('FAIL') or l.startswith('     ') or l.startswith('ws') or l.startswith('http') or l.startswith('game 3') or l.startswith('all at') or l.startswith('done'): print('   ', l[:400])
   finally:
     shutil.move(keep, path)
 b = subprocess.run(['./build.sh'], cwd=POC, capture_output=True, text=True)

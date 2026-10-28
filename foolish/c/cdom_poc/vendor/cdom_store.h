@@ -14,8 +14,12 @@ void cd_store_put(uint32_t token, const char *key, uint32_t klen, const void *p,
  * or len -1 for a miss, an error, or no answer within deadline_ms (indexedDB.open can hang). */
 void cd_store_get(uint32_t token, const char *key, uint32_t klen, uint32_t deadline_ms);
 #define CD_STORE_DEADLINE_MS 1500
+/* Forget whatever is under key; the answer is cd_on_store_del(token, ok), as a put's: 1 when the
+ * key holds nothing now (deleting a missing key is kept too), 0 when the delete failed. */
+void cd_store_del(uint32_t token, const char *key, uint32_t klen);
 
 /* The app's hooks (empty weak defaults). */
 void cd_on_store(uint32_t token, const uint8_t *p, int32_t len);
 void cd_on_store_put(uint32_t token, uint32_t ok);
+void cd_on_store_del(uint32_t token, uint32_t ok);
 #endif

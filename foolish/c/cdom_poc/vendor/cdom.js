@@ -383,36 +383,77 @@ var cdom = (() => {
   }
 
   // The network (src/cdom_net.c).
-  const sockets = [];
-  // Opens a WebSocket to the url in C memory; its events come back by socket id.
+  const sockets = [];     // the open sockets by id
+  const freeSockets = []; // ids whose sockets closed, handed out again first
+  // Opens a WebSocket to the url in C memory; its events come back by socket id. The id is free
+  // once the socket closed (before C hears it), so the table holds only the sockets open at once.
   function ws_open(urlPtr, urlLen) {
-    const id = sockets.length;
+    const id = freeSockets.length ? freeSockets.pop() : sockets.length;
     const socket = new WebSocket(utf8(urlPtr, urlLen));
-    sockets.push(socket);
+    sockets[id] = socket;
     socket.binaryType = "arraybuffer";
     socket.onopen = () => exports.cd_net_open(id);
     socket.onmessage = (event) => {
       const data = typeof event.data === "string" ? textEncoder.encode(event.data) : event.data;
       deliver(exports.cd_net_msg, id, data);
     };
-    socket.onclose = (event) => exports.cd_net_close(id, event.code);
+    socket.onclose = (event) => {
+      sockets[id] = undefined;
+      freeSockets.push(id);
+      exports.cd_net_close(id, event.code);
+    };
     return id;
   }
+  // send copies the bytes it is given, so a view of C memory is enough.
   function ws_send(id, bytesPtr, length) {
-    sockets[id].send(copyBytes(bytesPtr, length));
+    sockets[id].send(bytes(bytesPtr, length));
   }
   function ws_close(id) {
     sockets[id].close();
   }
-  // One request; the status and the body come back with token (status 0 when it failed).
-  function http(token, methodPtr, methodLen, urlPtr, urlLen, bodyPtr, bodyLen) {
-    const body = bodyLen ? copyBytes(bodyPtr, bodyLen) : undefined;
-    fetch(utf8(urlPtr, urlLen), { method: utf8(methodPtr, methodLen), body }).then(
-      async (response) => {
-        const data = await response.arrayBuffer();
-        deliver((arg, ptr, length) => exports.cd_net_http(arg, response.status, ptr, length), token, data);
-      },
-      () => exports.cd_net_http(token, 0, 0, 0));
+  function ws_buffered(id) {
+    return sockets[id].bufferedAmount;
+  }
+  // Request headers from one block of "Name: value\n" lines.
+  function headerList(headersPtr, headersLen) {
+    const list = [];
+    for (const line of utf8(headersPtr, headersLen).split("\n")) {
+      const colon = line.indexOf(":");
+      if (colon > 0) {
+        list.push([line.slice(0, colon), line.slice(colon + 1).trim()]);
+      }
+    }
+    return list;
+  }
+  // One request; the status and the body come back with token: status 0 when it never arrived,
+  // 1 when deadlineMs (0: none) passed first and the request was aborted.
+  function http(token, methodPtr, methodLen, urlPtr, urlLen, headersPtr, headersLen, bodyPtr, bodyLen, deadlineMs) {
+    const controller = new AbortController();
+    const init = {
+      method: utf8(methodPtr, methodLen),
+      headers: headerList(headersPtr, headersLen),
+      body: bodyLen ? copyBytes(bodyPtr, bodyLen) : undefined,
+      signal: controller.signal,
+    };
+    const timer = deadlineMs ? setTimeout(() => controller.abort(), deadlineMs) : 0;
+    let status = 0;
+    fetch(utf8(urlPtr, urlLen), init)
+      .then((response) => {
+        status = response.status;
+        return response.arrayBuffer();
+      })
+      .then(
+        (data) => {
+          clearTimeout(timer);
+          deliver((arg, ptr, length) => exports.cd_net_http(arg, status, ptr, length), token, data);
+        },
+        () => {
+          clearTimeout(timer);
+          exports.cd_net_http(token, controller.signal.aborted ? 1 : 0, 0, 0);
+        });
+  }
+  function epoch() {
+    return Date.now();
   }
 
   // A key/value store over IndexedDB (src/cdom_store.c): bytes in, bytes out, under keys C chooses.
@@ -437,16 +478,26 @@ var cdom = (() => {
     const db = await openDatabase();
     return promised(makeRequest(db.transaction("kv", mode).objectStore("kv")));
   }
-  // Keeps a copy of the bytes under the key, then answers with token: 1 kept, 0 failed.
+  // Keeps a copy of the bytes under the key, then answers with token: 1 kept, 0 failed. The key
+  // and the bytes are read now: C's memory may hold something else once the database is open.
   function store_put(token, keyPtr, keyLen, bytesPtr, length) {
+    const key = utf8(keyPtr, keyLen);
     const data = copyBytes(bytesPtr, length);
-    storeRequest("readwrite", (store) => store.put(data, utf8(keyPtr, keyLen))).then(
+    storeRequest("readwrite", (store) => store.put(data, key)).then(
       () => exports.cd_store_put_done(token, 1),
       () => exports.cd_store_put_done(token, 0));
+  }
+  // Forgets the key, then answers with token: 1 done, 0 failed.
+  function store_del(token, keyPtr, keyLen) {
+    const key = utf8(keyPtr, keyLen);
+    storeRequest("readwrite", (store) => store.delete(key)).then(
+      () => exports.cd_store_del_done(token, 1),
+      () => exports.cd_store_del_done(token, 0));
   }
   // Answers once with token: the bytes under the key, or length -1 for a miss, an error, or no
   // answer within ms (indexedDB.open can hang). Anything not bytes is a miss.
   function store_get(token, keyPtr, keyLen, ms) {
+    const key = utf8(keyPtr, keyLen);
     let answered = false;
     const answer = (data) => {
       if (answered) {
@@ -461,7 +512,7 @@ var cdom = (() => {
     };
     setTimeout(answer, ms);
     // the error must not reach answer: only a miss may follow a failure
-    storeRequest("readonly", (store) => store.get(utf8(keyPtr, keyLen))).then(answer, () => answer());
+    storeRequest("readonly", (store) => store.get(key)).then(answer, () => answer());
   }
 
   // An input's value into C memory as UTF-8; returns the bytes written.
@@ -483,7 +534,8 @@ var cdom = (() => {
         strings, at, open, open_svg, close, text, text_num, attr, class: setClass, name, name_open,
         listen, value, value_num, tpl_save, clone, slot, tpl_text, tpl_text_num, walk, walk_value, walk_value_num,
         set_text, set_text_num, set_attr, set_class, style, style_num, encode, image_bytes, remove, free, move, clear,
-        detach, attach, input, win, viewport, timer, raf, now, ws_open, ws_send, ws_close, http, store_put, store_get,
+        detach, attach, input, win, viewport, timer, raf, now, ws_open, ws_send, ws_close, ws_buffered, http, epoch,
+        store_put, store_get, store_del,
       },
       env: env || {},
     };
