@@ -29,7 +29,7 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 - `src/crtrig.c`: sin and cos rounded correctly, as Chrome's are (143 lines).
 - `src/jsmath.c`: musl's tan and fmod, generated from emsdk's copy of musl (1,206 lines, mostly the reduction table and its comments).
 - `src/index.html`: the page; `build.sh` inlines the minified shim into it.
-- `vendor/`: cdom from `/Users/alex/Dev/cdom-fixes`, branch port-fixes, commit 6380ee7, unchanged (`src/cdom.c`, `src/cdom.h`, `src/cdom_net.c`, `src/cdom_net.h`, `src/mini.c`, `shim/cdom.js`).
+- `vendor/`: cdom from `/Users/alex/Dev/cdom-fixes`, branch port-fixes, commit 6380ee7 (the sources are the same at the branch head, 19bf73b), unchanged (`src/cdom.c`, `src/cdom.h`, `src/cdom_net.c`, `src/cdom_net.h`, `src/mini.c`, `shim/cdom.js`).
   The table does not link `mini.c` (the kernel's libc brings memcmp and strlen) nor `cdom_net.c` (it has no network yet); the network test links both.
 - `tests/net_test.c`, `tests/net_test.mjs`: cdom's network imports against a local echo server.
 - `tests/tex_test.c`: the texture generators alone, for `tools/texparity.mjs`.
@@ -122,6 +122,7 @@ Measured on this Mac (headless Chrome 156), CPU x1 and x4 throttled, medians of 
 | the bot's step | 0.92 / 2.34 | 0.65 / 1.95 | 1.02 / 2.80 | 0.98 / 2.81 |
 
 The clicks are faster after because a patched card writes the properties that changed (`cd_set_style_num` on left, bottom, width, height, `border-color`) rather than a whole new 600-byte style string, which also had to be hashed and interned.
+DOM calls per action (`tools/domcount.mjs`, now counting `style.setProperty` too): selecting 6s is 16 before and after (the border is one setProperty where it was one setAttribute); playing it 26 before, 25 after (6 setProperty and 8 setAttribute where it was 14 setAttribute); the bot's step varies with the bot's draw from run to run (76 to 80 calls in both builds), with setAttribute 36 -> 26 and setProperty 0 -> 10.
 First contentful paint waits on the stylesheet's chain of `@import`s; the table itself is in the DOM by the time `cdom.start` resolves.
 For the textures' own timings see Textures.
 No React figure is given: the real app's numbers need its server and bundle, which this PoC does not run.
