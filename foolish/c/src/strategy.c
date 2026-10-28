@@ -10,6 +10,7 @@
 // and the iOS archive links per object, so nothing that never calls it carries
 // the ladder it names.
 #include "strategy.h"
+#include "botcup_adapter.h"
 
 int strategy_choose(int strat, const Game *g, int bot_idx, const LegalMoves *moves) {
     switch (strat) {
@@ -33,6 +34,10 @@ int strategy_choose(int strat, const Game *g, int bot_idx, const LegalMoves *mov
         case STRAT_DISTILLED:         return distilled_strategy_choose(g, bot_idx, moves, NULL);
         case STRAT_OCTOGEN:           return octogen_strategy_choose(g, bot_idx, moves, NULL);
         case STRAT_OCTOGEN_ORACLE:    return octogen_oracle_strategy_choose(g, bot_idx, moves, NULL);
+        case STRAT_BOTCUP_HAIKU:
+        case STRAT_BOTCUP_SONNET:
+        case STRAT_BOTCUP_SAPPER:
+        case STRAT_BOTCUP_KESTREL:    return botcup_strategy_choose(strat, g, bot_idx, moves);
         // 18, 19, 22 and 23 are retired ids (strategy.h): no case, so -1.
         default:                      return -1;
     }

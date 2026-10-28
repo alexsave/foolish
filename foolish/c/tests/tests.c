@@ -29,6 +29,7 @@
 #include "../src/client_table.h"
 #include "../src/msg_wire.h"   // msg_lobby_can_set_rules, the iMessage spelling of the lobby rule
 #include "../src/hand_layout.h"
+#include "../src/botcup_adapter.h"
 #include "../wasm/wire.h"
 #include "fm_exp_digest.h"   // fm_exp, its digest inputs and the committed digest
 #include <stdio.h>
@@ -13244,6 +13245,9 @@ static void test_table_bot_drive_ignores_instance_history(void) {
     const BotRosterEntry *roster = bot_roster(&n_roster);
     for (int e = 0; e < n_roster; e++) {
         const char *brain = roster[e].key;
+        // The Bot Cup's contest bots (botcup_adapter.h) are not ours to make deterministic: they
+        // search to a wall-clock budget over random streams of their own, as the cup ran them.
+        if (roster[e].strat >= STRAT_BOTCUP_HAIKU && roster[e].strat <= STRAT_BOTCUP_KESTREL) continue;
         tb_bot_table(brain, 40 + e);
         int drives = 0, same = 1, first_diff = -1;
 #ifdef COVERAGE_CORPUS
@@ -17319,7 +17323,7 @@ static void test_podkidnoy_every_brain(void) {
         }
         CHECK(unknown_below == 0, "every id below STRAT_COUNT dispatches to a brain");
         CHECK(retired_alive == 0, "a retired id dispatches to nothing, and sits below STRAT_COUNT");
-        CHECK(STRAT_OCTOGEN == 20 && STRAT_OCTOGEN_ORACLE == 21 && STRAT_COUNT == 24,
+        CHECK(STRAT_OCTOGEN == 20 && STRAT_OCTOGEN_ORACLE == 21 && STRAT_COUNT == 28,
               "retiring a brain leaves a hole: the survivors keep their ids");
         CHECK(known_past == 0, "no id past STRAT_COUNT dispatches (bump STRAT_COUNT with a new brain)");
         // The probe sees a real transfer too, so a struct-world search (which
@@ -20484,6 +20488,85 @@ static void test_fm_exp(void) {
     CHECK(edges_ok, "fm_exp: +-0, the clamps, +-inf and the reduction edges give the documented bits");
 }
 
+/* ---------------------- the Bot Cup adapter (botcup_adapter.h) ----------------------- */
+
+// A contest bot that reads what it must not: every card it is shown that is not its own and not
+// face up. The spy counts what it sees through the adapter's view; the real game is the referee's.
+static const Game *bc_real;
+static int bc_leaks, bc_hidden, bc_own_real;
+static int bc_spy(const Game *v, int seat, const LegalMoves *moves) {
+    for (int p = 0; p < v->num_players; p++)
+        for (int i = 0; i < v->players[p].hand_count; i++) {
+            Card c = v->players[p].hand[i];
+            bool hidden = c.suit == 0 && c.value == 1;
+            if (p == seat) bc_own_real += card_eq(c, bc_real->players[p].hand[i]);
+            else if (hidden) bc_hidden++;
+            else bc_leaks++;   // an opponent's real card
+        }
+    for (int i = 0; i < v->deck_count; i++) {
+        if (v->deck[i].suit == 0 && v->deck[i].value == 1) bc_hidden++;
+        else bc_leaks++;
+    }
+    for (int k = 0; k < v->num_logs; k++) {
+        const GameLog *l = &v->logs[k];
+        if (l->log_type != LOG_DRAW || l->player_idx == seat) continue;
+        for (int i = 0; i < l->num_pairs; i++) {
+            Card c = l->pairs[i].primary;
+            if (c.suit == 0 && c.value == 1) bc_hidden++;
+            else if (!(bc_real->has_flipped && card_eq(c, bc_real->flipped))) bc_leaks++;
+        }
+    }
+    // It also moves every random stream and answers outside the menu.
+    for (int i = 0; i < 5; i++) { (void)game_random(); (void)random_strategy_random(); }
+    unsigned char junk[GAME_DEAL_RNG_STATE_MAX];
+    memset(junk, 0x5a, sizeof junk);
+    game_deal_rng_set(junk);
+    return moves->n + 3;
+}
+
+static void test_botcup_adapter_masks(void) {
+    static Game g;
+    static LegalMoves ml;
+    int decisions = 0, faults = 0, rng_moved = 0, drew = 0;
+    for (int np = 2; np <= 4; np += 2) {
+        unsigned char ds[FOOLISH_SEED_LEN];
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) ds[i] = (unsigned char)(np * 31 + i * 7);
+        game_set_seed(41u + (uint32_t)np);
+        random_strategy_set_seed(7);
+        game_set_deal_seed_bytes(ds, FOOLISH_SEED_LEN);
+        memset(&g, 0, sizeof g);
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+        start_game(&g);
+        for (int a = 0; a < 60 && game_done(&g) < 0; a++) {
+            bool acted = false;
+            for (int pi = 0; pi < np && !acted; pi++) {
+                if (!should_bot_act(&g, pi)) continue;
+                calculate_legal_moves(&g, pi, &ml);
+                if (ml.n == 0) continue;
+                bc_real = &g;
+                uint64_t r1 = game_rng_get(), r2 = random_strategy_rng_get();
+                unsigned char d0[GAME_DEAL_RNG_STATE_MAX], d1[GAME_DEAL_RNG_STATE_MAX];
+                game_deal_rng_get(d0);
+                bool fault = false;
+                int idx = botcup_run(bc_spy, &g, pi, &ml, &fault);
+                game_deal_rng_get(d1);
+                rng_moved += game_rng_get() != r1 || random_strategy_rng_get() != r2 || memcmp(d0, d1, sizeof d0) != 0;
+                decisions++;
+                faults += fault && idx == 0;
+                acted = legal_move_apply(&g, pi, &ml.moves[handwritten_strategy_choose(&g, pi, &ml, NULL)]);
+            }
+            if (!acted) break;
+        }
+        for (int k = 0; k < g.num_logs; k++) drew += g.logs[k].log_type == LOG_DRAW;
+    }
+    CHECK(decisions > 40 && drew > 0, "botcup: the spy was asked through games that drew cards");
+    CHECK(bc_hidden > 0 && bc_own_real > 0, "botcup: the spy saw placeholders for the hidden cards and its own hand real");
+    CHECK(bc_leaks == 0, "botcup: a bot reading an opponent's hand, the deck or another seat's draws sees only placeholders");
+    CHECK(rng_moved == 0, "botcup: the game's random streams are put back after a bot's choose");
+    CHECK(faults == decisions, "botcup: an index outside the menu is a fault, clamped to 0");
+}
+
 int main(void) {
 #ifdef WASM_CAPS_TESTS
     // make tests-wasm-caps: the cordite and belief-log cases under the wasm size limits only.
@@ -20521,6 +20604,7 @@ int main(void) {
     test_podkidnoy_every_brain();
 #endif
 #endif
+    test_botcup_adapter_masks();
     test_fm_exp();
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();

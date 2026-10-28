@@ -91,7 +91,8 @@ KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/re
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
             src/strategy.c src/hand_layout.c \
-            src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c
+            src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c \
+            botcup/botcup_adapter.c botcup/haiku_bot.c botcup/sonnet_bot.c botcup/opus_bot.c botcup/fable_bot.c
 # What only host programs add (the arenas, the CLIs, the tests, the research
 # tools): the offline play-to-the-end loop. No shipped module carries it.
 HOST_ONLY_SRC := src/bot_play.c

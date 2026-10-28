@@ -39,6 +39,12 @@
 #define STRAT_OCTOGEN_ORACLE    21   // octogen at 6x worlds (research/audit only)
 // 22 is retired: it was torpex (a learned value net in place of rollouts).
 // 23 is retired: it was novichok (the cheating ceiling probe; read real hands).
+// The Bot Cup's four contest bots (c/botcup/, botcup_adapter.h), each on its seat's masked view.
+// LOCAL ONLY: these ids exist on the birdseye botcup branch and nowhere that ships.
+#define STRAT_BOTCUP_HAIKU      24   // "haiku", team Haiku
+#define STRAT_BOTCUP_SONNET     25   // "sonnet", team Sonnet
+#define STRAT_BOTCUP_SAPPER     26   // "sapper", team Opus
+#define STRAT_BOTCUP_KESTREL    27   // "kestrel", team Fable
 //
 // THE IDS ARE NOT COMPACTED, and a retired one is never handed out again. A
 // STRAT_* id leaves the process: it is a seat's Player.strategy_key, a
@@ -51,7 +57,7 @@
 // case in strategy_choose (strategy.c); tests.c holds the three together, so a
 // brain the dispatch forgot, a count the new brain forgot, or a retired id that
 // came back to life fails there.
-#define STRAT_COUNT             24
+#define STRAT_COUNT             28
 
 // 1 for an id below STRAT_COUNT whose brain was removed. Such an id dispatches
 // to nothing (strategy_choose is -1) and no name parses to it.
@@ -115,6 +121,10 @@ static inline int parse_strategy(const char *s) {
     if (!strcmp(s, "distilled")         || !strcmp(s, "dl")) return STRAT_DISTILLED;
     if (!strcmp(s, "octogen")           || !strcmp(s, "og"))  return STRAT_OCTOGEN;
     if (!strcmp(s, "octogen_oracle")    || !strcmp(s, "ogo")) return STRAT_OCTOGEN_ORACLE;
+    if (!strcmp(s, "haiku"))   return STRAT_BOTCUP_HAIKU;
+    if (!strcmp(s, "sonnet"))  return STRAT_BOTCUP_SONNET;
+    if (!strcmp(s, "sapper"))  return STRAT_BOTCUP_SAPPER;
+    if (!strcmp(s, "kestrel")) return STRAT_BOTCUP_KESTREL;
     return -1;
 }
 

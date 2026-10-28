@@ -8,6 +8,9 @@
 
 #include "bot_knobs.h"
 #include "strategy.h"
+#ifndef __wasm__
+#include "botcup_adapter.h"
+#endif
 
 // Force the flag caches to re-read their knobs. Each Monte-Carlo brain reads
 // its knobs once and latches them (cd_flags_loaded / og_flags_loaded), which
@@ -71,6 +74,12 @@ static const BotRosterEntry ROSTER[] = {
     { "cordite",          STRAT_CORDITE,          CORDITE_KNOBS,        1,   1,     1,     9  },
     { "octogen",          STRAT_OCTOGEN,          "OG_TRUMP_KEEP="
                                                   OCTOGEN_TRUMP_KEEP,   1,   1,     1,     10 },
+    // The Bot Cup's contest bots (botcup_adapter.h): birdseye's botcup mode only. Never seeded on
+    // the site, never offline; their tiers only keep the table's order strict.
+    { "haiku",            STRAT_BOTCUP_HAIKU,     "",                   1,   0,     0,     11 },
+    { "sonnet",           STRAT_BOTCUP_SONNET,    "",                   1,   0,     0,     12 },
+    { "sapper",           STRAT_BOTCUP_SAPPER,    "",                   1,   0,     0,     13 },
+    { "kestrel",          STRAT_BOTCUP_KESTREL,   "",                   1,   0,     0,     14 },
 };
 static const int ROSTER_N = (int)(sizeof(ROSTER) / sizeof(ROSTER[0]));
 
@@ -167,6 +176,12 @@ static int dispatch(int strat, const Game *g, int seat, const LegalMoves *moves)
         case STRAT_ESPRESSO_PROD:    return espresso_prod_strategy_choose(g, seat, moves, 0);
         case STRAT_GUNPOWDER:        return gunpowder_strategy_choose(g, seat, moves, 0);
 #endif
+#ifndef __wasm__   // the contest bots link into native builds only (c/botcup/)
+        case STRAT_BOTCUP_HAIKU:
+        case STRAT_BOTCUP_SONNET:
+        case STRAT_BOTCUP_SAPPER:
+        case STRAT_BOTCUP_KESTREL:   return botcup_strategy_choose(strat, g, seat, moves);
+#endif
         default:                     return -1;
     }
 }
@@ -178,6 +193,9 @@ int bot_roster_linked(int idx) {
     if (!e) return 0;
 #ifdef FOOLISH_SEEDED_BOTS_ONLY
     if (e->strat == STRAT_ESPRESSO_PROD || e->strat == STRAT_GUNPOWDER) return 0;
+#endif
+#ifdef __wasm__
+    if (e->strat >= STRAT_BOTCUP_HAIKU && e->strat <= STRAT_BOTCUP_KESTREL) return 0;
 #endif
     return 1;
 }
