@@ -182,7 +182,7 @@ The string table (`tools/strings.mjs`, three games played out by clicks):
 | after game 1 | 358, 65 KB | 178, 4.5 KB |
 | after game 2 | 388, 74 KB | 178, 4.5 KB |
 | after game 3 | 523, 125 KB | 178, 4.5 KB |
-Every computed string (a style, a data-card, an index) now crosses as a one-off (`cd_tmp`) and is never interned; what is left is literals and labels, all seen by the end of the first game.
+Every computed string (a style, a data-card, an index) now crosses as a one-off (`cd_tmp`) and is never interned; what is left is literals and labels, almost all seen by the end of the first game (in later runs the table ended games at 175 to 181 strings, as the games differ: an end title or a pill can first show in game 2 or 3).
 Live node ids at each end screen: 58, 64, 60 (the board on screen differs; nothing accumulates).
 
 Sizes:
