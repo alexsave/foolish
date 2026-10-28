@@ -483,13 +483,27 @@ static const struct { uint32_t bit; const char *label; double seed; } PILL[] = {
   {PLAY_PILL_PICKUP, "Pickup", 0.15}, {PLAY_PILL_GOOD, "Good", 0.85},
 };
 
+/* The seeds of the wood surfaces that are not pills (ActionButtons, the end screen, the back button). */
+#define SEED_BACK 0.2
+#define SEED_RESULTS 0.42
+#define SEED_AGAIN 0.6
+
+/* TexturedSurface.tsx getTextureStyle's background position for a seed (clearOfTileEdge with the
+ * 260 x 60 plank span). */
+enum { WOOD_W = 1920, WOOD_H = 1080 };
+static void wood_offset(double seed, int32_t *x, int32_t *y) {
+  *x = (int32_t)__builtin_floor(seed * WOOD_W);
+  *y = (int32_t)(seed * 1000 - WOOD_H * __builtin_floor(seed * 1000 / WOOD_H));
+  int32_t sx = (WOOD_W - *x % WOOD_W) % WOOD_W, sy = (WOOD_H - *y % WOOD_H) % WOOD_H;
+  if (sx > WOOD_W - 260) *x = 260;
+  if (sy > WOOD_H - 60) *y = 60;
+}
+
 /* TexturedSurface.tsx getTextureStyle: the wood once it is made (--tex-wood), the stripes before. */
 static cd_str wood_style(double seed) {
   static SB s;
-  int32_t x = (int32_t)__builtin_floor(seed * 1920), y = (int32_t)(seed * 1000 - 1080 * __builtin_floor(seed * 1000 / 1080));
-  int32_t sx = (1920 - x % 1920) % 1920, sy = (1080 - y % 1080) % 1080;
-  if (sx > 1920 - 260) x = 260;
-  if (sy > 1080 - 60) y = 60;
+  int32_t x, y;
+  wood_offset(seed, &x, &y);
   sb_reset(&s);
   sb_s(&s, "background-color: rgb(195, 63, 8); background-image: var(--tex-wood, repeating-linear-gradient(90deg, transparent, "
            "transparent 1px, rgba(0, 0, 0, 0.1) 1px, rgba(0, 0, 0, 0.1) 2px)); background-size: 1920px 1080px; "
@@ -814,13 +828,13 @@ static void render_end(void) {
   cd_text(fool == ME ? ZS("You are the fool") : fool < 0 ? ZS("A draw") : ZS("You won"));
   CLOSE();
   OPEN("div"); CLASS("win-screen__results"); STYLE("width: min(360px, 90vw);");
-  OPEN("div"); CLASS("bg-wood"); cd_attr(S_STYLE, wood_style(0.42)); CLOSE();
+  OPEN("div"); CLASS("bg-wood"); cd_attr(S_STYLE, wood_style(SEED_RESULTS)); CLOSE();
   for (int s = 0; s < V->num_players; s++) if (s != fool) result_row("\xF0\x9F\xA5\x87", s);
   if (fool >= 0) result_row("\xF0\x9F\x83\x8F", fool);
   CLOSE();
   cd_id again = cd_id_new();
   OPEN("button"); cd_listen(again, CD_EV_CLICK); cd_tag_set(again, TAG_AGAIN);
-  CLASS("btn-wood btn-wood--lg"); cd_attr(S_STYLE, wood_style(0.6));
+  CLASS("btn-wood btn-wood--lg"); cd_attr(S_STYLE, wood_style(SEED_AGAIN));
   OPEN("span"); CLASS("btn-wood-text"); OPEN("span"); TEXT("Play again"); CLOSE(); CLOSE();
   CLOSE();
   CLOSE();
@@ -829,7 +843,7 @@ static void render_end(void) {
 
 /* ---- one render ----------------------------------------------------------- */
 
-static cd_id container;
+static cd_id container, bg_wool;
 static cd_str turn_shown;
 
 static void render(void) {
@@ -926,6 +940,9 @@ void cd_on_event(const cd_event_rec *e) {
   if (e->type == CD_EV_RESIZE) { render(); return; } /* the hand is laid out for the new width */
   if (e->type == CD_EV_LOAD) { /* a texture landed; with the fern, the backs turn black under it, as CardBack's do */
     if (e->key == TEX_FERN) cd_set_style(CD_MOUNT, ZS("--tex-fern-bg"), ZS("#000000"));
+    /* The wool is the middle half of the app's 3840 x 2160 weave, all that its scale(2) ever shows:
+     * the same picture at the same place once the layer is not doubled (README, Textures). */
+    if (e->key == TEX_WOOL) cd_set_style(bg_wool, ZS("transform"), ZS("none"));
     return;
   }
   if (e->type != CD_EV_CLICK) return;
@@ -958,26 +975,77 @@ EXPORT("app_ids_live") uint32_t app_ids_live(void) { return cd_ids_live(); }
 /* ---- the textures ----------------------------------------------------------
  * After the first paint (two frames, then a timer), in slices of about 8 ms on animation frames: the fern (the card backs),
  * the wood (the buttons), then the wool (the background). Each lands as a custom property on the
- * mount (cd_set_image), which the styles above read through var(). One 32 MiB block holds each
- * in turn: the wool's 3840 x 2160 pixels, or the wood's float colours and pixels together. */
-enum { TEX_W = 3840, TEX_H = 2160, WOOD_W = 1920, WOOD_H = 1080, FERN_W = 1000, FERN_H = 1400 };
+ * mount (cd_set_image), which the styles above read through var(). Each is only as much as the
+ * page shows (README, Textures):
+ * - the fern at FERN_SCALE times the deck's card back in device pixels (not the app's 1000 x 1400),
+ *   with the app's 5,000,000 points scaled by the area, so it is as dense;
+ * - the wood's 1920 x 1080 tile worked out only where a button shows it (WOOD_SURF);
+ * - the wool's middle 1920 x 1080 of the app's 3840 x 2160, all its scale(2) ever shows.
+ * One 8 MiB block holds each in turn (the wool's crop, or the wood's tile), freed at the end. */
+enum { TEX_W = 3840, TEX_H = 2160, WOOL_W = TEX_W / 2, WOOL_H = TEX_H / 2 };
+enum { FERN_APP_W = 1000, FERN_APP_H = 1400, FERN_APP_POINTS = 5000000, BACK_W = 50, BACK_H = 70, FERN_SCALE = 4 };
 #define TEX_SLICE_MS 8.0
-static struct { int stage; uint8_t *block; Fern fern; Wood wood; Wool wool; double ms[3]; } tex;
+/* Every surface the wood is laid on besides the pills (PILL): its seed and the most it spans
+ * (border box, CSS px). The pills and buttons are TexturedSurface's 260 x 60 plank; the results
+ * panel is min(360px, 90vw) wide and two rows tall. tools/test.mjs checks that each surface on the
+ * page lies inside the rectangle made for it. */
+static const struct { double seed; int32_t w, h; } WOOD_SURF[] = {{SEED_BACK, 260, 60}, {SEED_AGAIN, 260, 60}, {SEED_RESULTS, 360, 120}};
+enum { NPILL = sizeof PILL / sizeof *PILL, NSURF = sizeof WOOD_SURF / sizeof *WOOD_SURF };
+enum { WOOD_MARGIN = 4 }; /* a border's width either side, and then some */
+static struct {
+  int stage, nrect;
+  uint8_t *block;
+  float *col;
+  Fern fern; Wood wood; Wool wool;
+  int32_t fern_w, fern_h;
+  TexRect rect[WOOD_MAX_WIN];
+  double ms[3];
+} tex;
 static uint32_t tex_rng, tex_seed;
+
+/* The tile rectangles a surface with this seed and span shows, split where one runs over the
+ * tile's edge; added to out[*n]. */
+static void wood_rects_add(TexRect *out, int *n, double seed, int32_t sw, int32_t sh) {
+  int32_t x, y;
+  wood_offset(seed, &x, &y);
+  /* the element's padding box starts at tile pixel (tile - x % tile) % tile, its border box earlier */
+  int32_t x0 = (WOOD_W - x % WOOD_W) % WOOD_W - WOOD_MARGIN, y0 = (WOOD_H - y % WOOD_H) % WOOD_H - WOOD_MARGIN;
+  int32_t w = sw + 2 * WOOD_MARGIN, h = sh + 2 * WOOD_MARGIN;
+  for (int32_t ys = y0; ys < y0 + h;) {
+    int32_t ty = ((ys % WOOD_H) + WOOD_H) % WOOD_H, th = WOOD_H - ty < y0 + h - ys ? WOOD_H - ty : y0 + h - ys;
+    for (int32_t xs = x0; xs < x0 + w;) {
+      int32_t tx = ((xs % WOOD_W) + WOOD_W) % WOOD_W, tw = WOOD_W - tx < x0 + w - xs ? WOOD_W - tx : x0 + w - xs;
+      if (*n == WOOD_MAX_WIN) __builtin_trap();
+      out[(*n)++] = (TexRect){tx, ty, tw, th};
+      xs += tw;
+    }
+    ys += th;
+  }
+}
+
+/* The back button first (it is on the first screen), then the pills, then the end screen. */
+static int wood_rects(TexRect *out) {
+  int n = 0;
+  wood_rects_add(out, &n, WOOD_SURF[0].seed, WOOD_SURF[0].w, WOOD_SURF[0].h);
+  for (int k = 0; k < NPILL; k++) wood_rects_add(out, &n, PILL[k].seed, 260, 60);
+  for (int k = 1; k < NSURF; k++) wood_rects_add(out, &n, WOOD_SURF[k].seed, WOOD_SURF[k].w, WOOD_SURF[k].h);
+  return n;
+}
 
 static void tex_start(int stage) {
   tex.stage = stage;
   uint8_t *b = tex.block;
-  if (stage == TEX_FERN) fern_begin(&tex.fern, b, b + FERN_W * FERN_H * 4, FERN_W, FERN_H, 5000000, tex_rng);
+  if (stage == TEX_FERN) {
+    int32_t points = (int32_t)((double)FERN_APP_POINTS * tex.fern_w * tex.fern_h / (FERN_APP_W * FERN_APP_H));
+    fern_begin(&tex.fern, b, b + tex.fern_w * tex.fern_h * 4, tex.fern_w, tex.fern_h, points, tex_rng);
+  }
   if (stage == TEX_WOOD) {
     double ox = tex_random(&tex_rng) * 1000 - 500, oy = tex_random(&tex_rng) * 1000 - 500;
-    float *col = (float *)b;
-    uint8_t *px = b + WOOD_W * WOOD_H * 3 * 4;
-    wood_begin(&tex.wood, col, (float *)(px + WOOD_W * WOOD_H * 4), px, WOOD_W, WOOD_H, ox, oy);
+    wood_begin(&tex.wood, tex.col, b, WOOD_W, WOOD_H, ox, oy, tex.rect, tex.nrect);
   }
   if (stage == TEX_WOOL) {
     double ox = tex_random(&tex_rng) * 1000 - 500, oy = tex_random(&tex_rng) * 1000 - 500;
-    wool_begin(&tex.wool, b, TEX_W, TEX_H, ox, oy);
+    wool_begin(&tex.wool, b, TEX_W, TEX_H, (TEX_W - WOOL_W) / 2, (TEX_H - WOOL_H) / 2, WOOL_W, WOOL_H, ox, oy);
   }
 }
 
@@ -995,10 +1063,14 @@ void cd_on_raf(uint32_t token, double t) {
   }
   tex.ms[tex.stage] += now - t0;
   if (done) {
-    if (tex.stage == TEX_FERN) cd_set_image(CD_MOUNT, ZS("--tex-fern"), tex.fern.px, FERN_W, FERN_H, ZS("image/png"), TEX_FERN);
+    if (tex.stage == TEX_FERN) cd_set_image(CD_MOUNT, ZS("--tex-fern"), tex.fern.px, tex.fern_w, tex.fern_h, ZS("image/png"), TEX_FERN);
     if (tex.stage == TEX_WOOD) cd_set_image(CD_MOUNT, ZS("--tex-wood"), tex.wood.px, WOOD_W, WOOD_H, ZS("image/png"), TEX_WOOD);
-    if (tex.stage == TEX_WOOL) cd_set_image(CD_MOUNT, ZS("--tex-wool"), tex.wool.px, TEX_W, TEX_H, ZS("image/jpeg"), TEX_WOOL);
-    if (tex.stage + 1 == TEX_DONE) { cd_free(tex.block); tex.block = 0; tex.stage = TEX_DONE; return; }
+    if (tex.stage == TEX_WOOL) cd_set_image(CD_MOUNT, ZS("--tex-wool"), tex.wool.px, WOOL_W, WOOL_H, ZS("image/jpeg"), TEX_WOOL);
+    if (tex.stage + 1 == TEX_DONE) {
+      cd_free(tex.block); cd_free(tex.col);
+      tex.block = 0; tex.col = 0; tex.stage = TEX_DONE;
+      return;
+    }
     tex_start(tex.stage + 1);
   }
   cd_raf_request(RAF_SLICE);
@@ -1006,8 +1078,19 @@ void cd_on_raf(uint32_t token, double t) {
 
 static void textures_begin(void) {
   tex_rng = tex_seed = cd_seed ^ 0x9e3779b9u;
-  uint32_t wood = WOOD_W * WOOD_H * (3 * 4 + 4) + WOOD_H * 4, wool = TEX_W * TEX_H * 4;
-  tex.block = cd_alloc(wood > wool ? wood : wool); /* 33.2 MB: one 32 MiB size class */
+  cd_viewport_rec vp;
+  cd_viewport(&vp);
+  double dpr = vp.dpr100 > 0 ? vp.dpr100 / 100.0 : 1;
+  tex.fern_w = (int32_t)(BACK_W * FERN_SCALE * dpr);
+  tex.fern_h = (int32_t)(BACK_H * FERN_SCALE * dpr);
+  if (tex.fern_w > FERN_APP_W) { tex.fern_w = FERN_APP_W; tex.fern_h = FERN_APP_H; }
+  tex.nrect = wood_rects(tex.rect);
+  int32_t most = 0;
+  for (int k = 0; k < tex.nrect; k++) if (tex.rect[k].w * tex.rect[k].h > most) most = tex.rect[k].w * tex.rect[k].h;
+  uint32_t fern = (uint32_t)(tex.fern_w * tex.fern_h * 8), wool = WOOL_W * WOOL_H * 4, wood = WOOD_W * WOOD_H * 4;
+  uint32_t big = wool > wood ? wool : wood;
+  tex.block = cd_alloc(big > fern ? big : fern); /* 8,294,400 bytes: one 8 MiB size class */
+  tex.col = cd_alloc((uint32_t)most * 12);       /* the wood's float colours, one rectangle at a time */
   tex_start(TEX_FERN);
   cd_raf_request(RAF_SLICE);
 }
@@ -1038,7 +1121,7 @@ void cd_main(void) {
   cd_name_open(container = cd_id_new());
   ATTR("data-game-container", "true");
   CLASS("game-container");
-  OPEN("div"); CLASS("bg-wool"); STYLE("background-image: var(--tex-wool);"); CLOSE();
+  OPEN("div"); cd_name_open(bg_wool = cd_id_new()); CLASS("bg-wool"); STYLE("background-image: var(--tex-wool);"); CLOSE();
   OPEN("div"); CLASS("bg-vignette bg-vignette--default"); CLOSE();
   OPEN("div"); CLASS("bg-soviet"); CLOSE();
   OPEN("div"); CLASS("bg-vignette bg-vignette--soviet"); CLOSE();
@@ -1105,7 +1188,7 @@ void cd_main(void) {
 
   OPEN("button");
   CLASS("btn-icon btn-icon--left");
-  cd_attr(S_STYLE, wood_style(0.2));
+  cd_attr(S_STYLE, wood_style(SEED_BACK));
   OPEN("span"); CLASS("btn-icon__symbol"); TEXT("<"); CLOSE();
   CLOSE();
   CLOSE(); /* container */

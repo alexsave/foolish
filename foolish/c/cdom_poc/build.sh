@@ -37,7 +37,7 @@ for f in "${SHARED[@]}"; do
 done
 # cdom's mini.c is not linked: the kernel's libc.c brings memcmp and strlen (mini.c's are weak, so
 # either would link). cdom's weak malloc is the one allocator for both.
-for f in "$here/vendor/cdom.c" "$here/src/table_app.c" "$here/src/kernel_glue.c" "$here/src/textures.c" "$here/src/crtrig.c" "$here/src/jsmath.c"; do
+for f in "$here/vendor/cdom.c" "$here/src/table_app.c" "$here/src/kernel_glue.c" "$here/src/textures.c" "$here/src/crtrig.c" "$here/src/trig.c"; do
   o="$obj/app_$(basename "${f%.c}").o"
   "$CC" "${AFLAGS[@]}" -c "$f" -o "$o"
   objs+=("$o")
@@ -52,7 +52,7 @@ fi
 
 # The texture generators alone, for tools/texparity.mjs.
 "$CC" --target=wasm32 -O2 -nostdlib -mbulk-memory -ffp-contract=off -Wall -Wextra -Werror -Wl,--no-entry \
-  -Wl,--export-memory -Wl,--strip-all -o "$out/tex_test.wasm" "$here/tests/tex_test.c" "$here/src/textures.c" "$here/src/crtrig.c" "$here/src/jsmath.c"
+  -Wl,--export-memory -Wl,--strip-all -o "$out/tex_test.wasm" "$here/tests/tex_test.c" "$here/src/textures.c" "$here/src/crtrig.c" "$here/src/trig.c"
 
 # The network imports' own test module (tests/net_test.mjs): cdom and nothing of the kernel.
 "$CC" --target=wasm32 -Oz -nostdlib -mbulk-memory -Wall -Wextra -Werror -I"$here/vendor" -Wl,--no-entry \

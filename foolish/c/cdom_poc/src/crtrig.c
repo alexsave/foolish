@@ -10,7 +10,7 @@
  * double-double instead. No FMA: products are split (Dekker), as wasm has no fused multiply-add. */
 #include <stdint.h>
 
-double js_sin(double), js_cos(double);
+double tex_sin(double), tex_cos(double);
 
 typedef struct { double hi, lo; } dd;
 
@@ -122,7 +122,7 @@ static double nearest(dd v, double err) {
 }
 
 static double eval(double x, int want_sin) {
-  if (!(__builtin_fabs(x) < 0x1p19)) return want_sin ? js_sin(x) : js_cos(x);
+  if (!(__builtin_fabs(x) < 0x1p19)) return want_sin ? tex_sin(x) : tex_cos(x); /* trig.c; the wood never gets here */
   if (!facts_made) make_facts();
   if (__builtin_fabs(x) < 0x1p-27) return want_sin ? x : 1.0; /* sin x = x, cos x = 1, once rounded */
   int q;

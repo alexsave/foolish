@@ -59,30 +59,61 @@ const PAGE = `(async () => {
   // the PRNG itself
   { const m = mul(seed); let v; for (let i = 0; i < 1000; i++) v = m(); r.random = v === C.random(seed, 1000) ? 'same 1000 draws' : 'DIFFERENT'; }
 
-  // the trig against Chrome's own, on arguments in the textures' ranges and beyond
-  { const m = mul(seed ^ 0x5bd1e995); let ds = 0, dc = 0, dt = 0, n = 0;
-    for (const span of [0.5, 4, 30, 1000, 4e5]) for (let i = 0; i < 600000; i++, n++) { const a = (m() - 0.5) * 2 * span;
-      if (!Object.is(Math.sin(a), C.sin(a))) ds++; if (!Object.is(Math.cos(a), C.cos(a))) dc++; if (!Object.is(Math.tan(a), C.tan(a))) dt++; }
-    r.trig = { arguments: n, sin_differing: ds, cos_differing: dc, tan_differing: dt }; }
+  // the trig against Chrome's own, on arguments in the textures' ranges and beyond: the wood's cos
+  // (crtrig.c) must be Chrome's bit for bit; trig.c's sin, cos and tan within an ulp.
+  { const m = mul(seed ^ 0x5bd1e995); const ulps = (a, b) => { if (Object.is(a, b)) return 0;
+      const f = new Float64Array([a, b]), i = new BigInt64Array(f.buffer); const d = i[0] - i[1]; return Number(d < 0n ? -d : d); };
+    const t = { cr_cos: [0, 0], sin: [0, 0], cos: [0, 0], tan: [0, 0] }; let n = 0;
+    const see = (k, u) => { if (u) { t[k][0]++; t[k][1] = Math.max(t[k][1], u); } };
+    for (const span of [0.5, 4, 30, 1000, 4e5, 1e7]) for (let i = 0; i < 500000; i++, n++) { const a = (m() - 0.5) * 2 * span;
+      if (span < 4e5) see('cr_cos', ulps(Math.cos(a), C.cr_cos(a)));
+      see('sin', ulps(Math.sin(a), C.sin(a))); see('cos', ulps(Math.cos(a), C.cos(a))); see('tan', ulps(Math.tan(a), C.tan(a))); }
+    r.trig = { arguments: n, differing_and_max_ulps: Object.fromEntries(Object.entries(t).map(([k, [d, u]]) => [k, d + ' differ, max ' + u + ' ulp'])), raw: t }; }
 
-  // wool: paintWool into a buffer, offsets as the app draws them
-  { const m = mul(seed), ox = m() * 1000 - 500, oy = m() * 1000 - 500, w = 3840, h = 2160;
+  // wool: paintWool into a buffer, offsets as the app draws them, then the JPEG the app encodes
+  // (woolWorker.ts: putImageData, convertToBlob at 0.92). The C weaves the whole picture and, as the
+  // page does, only its middle half (the crop must be the same pixels as the TS's middle half).
+  { const m = mul(seed), ox = m() * 1000 - 500, oy = m() * 1000 - 500, w = 3840, h = 2160, cw = w / 2, ch = h / 2, cx = (w - cw) / 2, cy = (h - ch) / 2;
     const ts = new Uint8ClampedArray(w * h * 4); let t0 = performance.now();
     await TS.paintWool(ts, { width: w, height: h, offsetX: ox, offsetY: oy }); const tsMs = performance.now() - t0;
-    C.reset(); t0 = performance.now(); const p = C.wool(w, h, ox, oy); const cMs = performance.now() - t0;
-    r.wool = { size: w + 'x' + h, ...diff(ts, bytes(p, w * h * 4), w, h), ts_ms: Math.round(tsMs), c_ms: Math.round(cMs) }; }
+    t0 = performance.now(); const cv = new OffscreenCanvas(w, h); cv.getContext('2d').putImageData(new ImageData(ts, w, h), 0, 0);
+    await cv.convertToBlob({ type: 'image/jpeg', quality: 0.92 }); const tsEnc = performance.now() - t0;
+    C.reset(); t0 = performance.now(); const p = C.wool(w, h, 0, 0, w, h, ox, oy); const cMs = performance.now() - t0;
+    const full = diff(ts, bytes(p, w * h * 4), w, h);
+    C.reset(); t0 = performance.now(); const q = C.wool(w, h, cx, cy, cw, ch, ox, oy); const cCrop = performance.now() - t0;
+    const mid = new Uint8ClampedArray(cw * ch * 4);
+    for (let y = 0; y < ch; y++) mid.set(ts.subarray(((y + cy) * w + cx) * 4, ((y + cy) * w + cx + cw) * 4), y * cw * 4);
+    r.wool = { size: w + 'x' + h, ...full, crop: cw + 'x' + ch + ' at ' + cx + ',' + cy, crop_vs_ts_middle: diff(mid, bytes(q, cw * ch * 4), cw, ch),
+      ts_ms: Math.round(tsMs), ts_encode_ms: Math.round(tsEnc), c_ms: Math.round(cMs), c_crop_ms: Math.round(cCrop) }; }
 
-  // wood: the float colours, the WebGL blit the app uses, and the CPU fallback
+  // wood: the float colours, the WebGL blit the app uses, and the CPU fallback; then the wood worked
+  // out only inside rectangles, as the page does, which must be the same pixels there and the base
+  // colour elsewhere. The rectangles take in the tile's edges: a stripe that starts left of x = 0
+  // lands at the right end of the row above, and row 0's such stores are dropped.
   { const w = 1920, h = 1080;
     Math.random = mul(seed); let t0 = performance.now(); const pd = await TS.generateWoodPixelData(w, h); const tsMs = performance.now() - t0;
-    C.reset(); t0 = performance.now(); const p = C.wood(w, h, seed); const cMs = performance.now() - t0;
+    C.reset(); t0 = performance.now(); const p = C.wood(w, h, seed, 0); const cMs = performance.now() - t0;
     const cf = new Float32Array(C.memory.buffer, C.wood_col(), w * h * 3); let fd = 0, fmax = 0;
     for (let i = 0; i < w * h * 3; i++) if (cf[i] !== pd.colors[i]) { fd++; fmax = Math.max(fmax, Math.abs(cf[i] - pd.colors[i])); }
     const mine = bytes(p, w * h * 4).slice();
-    const gl = await decode(await TS.generateTextureViaWebGL(w, h, 'wood', [70 / 255, 14 / 255, 9 / 255, 1], TS.generateWoodPixelData, TS.generateWoodTextureFallback), w, h);
+    t0 = performance.now();
+    const glUrl = await TS.generateTextureViaWebGL(w, h, 'wood', [70 / 255, 14 / 255, 9 / 255, 1], TS.generateWoodPixelData, TS.generateWoodTextureFallback);
+    const tsAll = performance.now() - t0;
+    const gl = await decode(glUrl, w, h);
     const cpu = await decode(await noWebGL(TS.generateWoodTextureFallback)(w, h), w, h);
+    const rects = [[1700, 0, 220, 64], [0, 500, 268, 68], [1438, 246, 268, 68], [1880, 1000, 40, 80], [900, 1012, 368, 68], [1850, 1, 70, 30]];
+    C.reset(); new Int32Array(C.memory.buffer, C.wood_rects(), rects.length * 4).set(rects.flat());
+    t0 = performance.now(); const q = C.wood(w, h, seed, rects.length); const cRects = performance.now() - t0;
+    const part = bytes(q, w * h * 4).slice(), base = [gl[0], 0, 0];
+    let inside = 0, inDiff = 0, inMax = 0, outDiff = 0;
+    const inRect = (x, y) => rects.some(([rx, ry, rw, rh]) => x >= rx && x < rx + rw && y >= ry && y < ry + rh);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4;
+      if (inRect(x, y)) { inside++; let d = 0; for (let k = 0; k < 4; k++) d = Math.max(d, Math.abs(part[i + k] - gl[i + k])); if (d) inDiff++; inMax = Math.max(inMax, d); }
+      else if (part[i] !== 70 || part[i + 1] !== 14 || part[i + 2] !== 9 || part[i + 3] !== 255) outDiff++; }
     r.wood = { size: w + 'x' + h, float_values_differing: fd + ' of ' + w * h * 3, float_max_abs: fmax,
-      vs_webgl: diff(gl, mine, w, h), vs_cpu_fallback: diff(cpu, mine, w, h), ts_ms: Math.round(tsMs), c_ms: Math.round(cMs) }; }
+      vs_webgl: diff(gl, mine, w, h), vs_cpu_fallback: diff(cpu, mine, w, h),
+      rects: { pixels: inside, differing_from_webgl: inDiff, max: inMax, outside_not_base: outDiff },
+      ts_ms: Math.round(tsMs), ts_with_webgl_and_png_ms: Math.round(tsAll), c_ms: Math.round(cMs), c_rects_ms: Math.round(cRects) }; }
 
   // fern: the points plotted as the GL draw plots them, the WebGL output, the CPU fallback
   { const w = 1000, h = 1400, params = TS.createCardParams(w, h), n = params.render.iterations;
@@ -113,8 +144,8 @@ try {
 console.log(JSON.stringify(res, null, 1));
 // The bar: the PRNG, sin and cos, the wool, the wood (floats and the WebGL picture) and the fern's
 // points exact; the multisampled fern within 3% of the WebGL picture (README, Textures).
-const bad = [res.random !== 'same 1000 draws' && 'random', res.trig.sin_differing && 'sin', res.trig.cos_differing && 'cos',
-  res.wool.differing && 'wool', res.wood.vs_webgl.differing && 'wood', res.fern.points_one_pixel_each_vs_ts_points.differing && 'fern points',
+const bad = [res.random !== 'same 1000 draws' && 'random', res.trig.raw.cr_cos[0] && 'cr_cos', ['sin', 'cos', 'tan'].some((k) => res.trig.raw[k][1] > 1) && 'trig ulp',
+  (res.wool.differing || res.wool.crop_vs_ts_middle.differing) && 'wool', (res.wood.vs_webgl.differing || res.wood.rects.differing_from_webgl || res.wood.rects.outside_not_base) && 'wood', res.fern.points_one_pixel_each_vs_ts_points.differing && 'fern points',
   res.fern.multisampled_vs_webgl.differing > 0.03 * res.fern.multisampled_vs_webgl.of && 'fern multisampled'].filter(Boolean);
 console.log(bad.length ? 'FAIL ' + bad.join(', ') : 'all at the bar');
 process.exit(bad.length ? 1 : 0);

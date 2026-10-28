@@ -128,7 +128,7 @@ var cdom = (() => {
   // Window events go through the event record like any other (x, y the viewport, key 1 when hidden).
   const vp = () => ({ clientX: innerWidth, clientY: innerHeight, keyCode: +doc.hidden });
   function win(ev) { (EVENTS[ev] === "resize" ? window : doc).addEventListener(EVENTS[ev], () => post(ev, 0, vp(), 0, 0)); }
-  function viewport(p) { if (buf !== mem.buffer) views(); i32.set([innerWidth, innerHeight, +doc.hidden], p >> 2); }
+  function viewport(p) { if (buf !== mem.buffer) views(); i32.set([innerWidth, innerHeight, +doc.hidden, Math.round(devicePixelRatio * 100)], p >> 2); }
   function timer(ms, t) { setTimeout(() => x.cd_timer(t), ms); }
   function raf(t) { requestAnimationFrame((ts) => x.cd_raf(t, ts)); }
   const now = () => performance.now();

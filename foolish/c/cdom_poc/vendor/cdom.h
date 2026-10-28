@@ -136,8 +136,9 @@ void cd_on_event(const cd_event_rec *e);
 void cd_main(void);                  /* the app's entry, called once at start */
 uint32_t cd_input_value(cd_id id, char *dst, uint32_t cap); /* copy an input's value on demand */
 void cd_listen_window(uint32_t ev);  /* deliver CD_EV_RESIZE or CD_EV_VISIBILITY to cd_on_event */
-typedef struct { int32_t w, h, hidden; } cd_viewport_rec;
-void cd_viewport(cd_viewport_rec *v); /* innerWidth, innerHeight, document.hidden, read now */
+typedef struct { int32_t w, h, hidden, dpr100; } cd_viewport_rec;
+/* innerWidth, innerHeight, document.hidden and devicePixelRatio (times 100, rounded), read now */
+void cd_viewport(cd_viewport_rec *v);
 
 /* ---- time: answered through the app's hooks (cdom has empty weak defaults) ---- */
 void cd_timer_start(uint32_t ms, uint32_t token); /* cd_on_timer(token) after ms */
