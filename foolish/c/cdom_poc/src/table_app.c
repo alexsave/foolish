@@ -873,8 +873,8 @@ enum { TIMER_BOT = 1, TIMER_TEX = 2 };
 enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2 };
 /* Measured (tools/timing.mjs, BLANK=1, CPU x4): starting to make textures on a timer right after
  * the first frame, cdom.start resolved at 165 ms against 60 without textures; two frames and 50 ms
- * later, at 60. The store is asked two frames after the first paint, without the timer: a texture
- * found there costs a url, not a slice of work. */
+ * later, at 60. The store is asked as the table starts: a texture found there costs a url, not a
+ * slice of work. */
 #define TEX_START_MS 50
 static void textures_begin(void);
 static void tex_go(void);
@@ -1110,26 +1110,38 @@ static void tex_land(int k, const uint8_t *p, uint32_t len) {
   tex.landed++;
 }
 
-/* The fern (small, on the card backs), the wool (the whole background), then the wood (the buttons). */
-static const int TEX_ORDER[NTEX + 1] = {TEX_FERN, TEX_WOOL, TEX_WOOD, TEX_WOOD_END, TEX_DONE};
-static int tex_step, tex_may_make, tex_waiting;
+/* The order textures are made in, when the store has none: the fern (small, on the card backs),
+ * the wool (the whole background), the table's wood, the end screen's. */
+static const int TEX_ORDER[NTEX] = {TEX_FERN, TEX_WOOL, TEX_WOOD, TEX_WOOD_END};
+enum { TEX_ASKED, TEX_MISSING, TEX_LANDED };
+static int tex_state[NTEX], tex_may_make, tex_making;
 
-/* The next texture: asked of the store first. */
-static void tex_next(void) {
-  int stage = tex.stage = TEX_ORDER[tex_step++];
-  if (stage == TEX_DONE) {
-    cd_free(tex.block); cd_free(tex.col); /* back to cdom's free lists (wasm memory does not shrink) */
-    tex.block = 0; tex.col = 0;
-    return;
+/* All four are asked of the store at once, as the page starts: a get costs the page's thread
+ * nothing while it waits, so a texture kept from an earlier load lands as soon as it is read. */
+static void tex_ask(void) {
+  for (int k = 0; k < NTEX; k++) {
+    tex_state[k] = TEX_ASKED;
+    tex.asked[k] = cd_now();
+    cd_store_get((uint32_t)k, tex.key[k], tex.klen[k], CD_STORE_DEADLINE_MS);
   }
-  tex.asked[stage] = cd_now();
-  cd_store_get((uint32_t)stage, tex.key[stage], tex.klen[stage], CD_STORE_DEADLINE_MS);
 }
 
-/* Make texture tex.stage, once making is allowed (TEX_START_MS after the first paint). */
-static void tex_make(void) {
-  if (!tex_may_make) { tex_waiting = 1; return; }
-  tex_waiting = 0;
+/* Makes the next texture the store did not have, in TEX_ORDER, once making is allowed (TEX_START_MS
+ * after the first paint) and nothing else is being made; one still being read is waited for, so
+ * the order holds. The block goes back when every texture has landed. */
+static void tex_make_next(void) {
+  if (tex.landed == NTEX && tex.block) {
+    cd_free(tex.block); cd_free(tex.col); /* back to cdom's free lists (wasm memory does not shrink) */
+    tex.block = 0; tex.col = 0;
+  }
+  if (!tex_may_make || tex_making) return;
+  int k = -1;
+  for (int i = 0; i < NTEX && k < 0; i++) {
+    int t = TEX_ORDER[i];
+    if (tex_state[t] == TEX_ASKED) return; /* not read yet: it may be in the store */
+    if (tex_state[t] == TEX_MISSING) k = t;
+  }
+  if (k < 0) return;
   if (!tex.block) { /* the first texture to make: the room for all of them */
     int32_t most = 0;
     for (int r = 0; r < tex.nrect; r++) if (tex.rect[r].w * tex.rect[r].h > most) most = tex.rect[r].w * tex.rect[r].h;
@@ -1138,40 +1150,44 @@ static void tex_make(void) {
     tex.block = cd_alloc(big > fern ? big : fern); /* 6,465,024 bytes (the wool, RGB): one 8 MiB size class */
     tex.col = cd_alloc((uint32_t)most * 12);       /* the wood's float colours, one rectangle at a time */
   }
-  tex.seed[tex.stage] = tex_seed;
-  tex_start(tex.stage);
+  tex_making = 1;
+  tex.seed[k] = tex_seed;
+  tex_start(k);
   cd_raf_request(RAF_SLICE);
 }
 static void tex_go(void) {
   tex_may_make = 1;
-  if (tex_waiting) tex_make();
+  tex_make_next();
 }
 
 void cd_on_store(uint32_t token, const uint8_t *p, int32_t len) {
   int k = (int)token;
-  if (k != tex.stage) return;
+  if (k >= NTEX || tex_state[k] != TEX_ASKED) return;
   tex.answered[k] = cd_now();
   if (len > 0) { /* kept from an earlier load */
     tex.from_store[k] = 1;
+    tex_state[k] = TEX_LANDED;
     tex_land(k, p, (uint32_t)len);
-    tex_next();
-    return;
+  } else {
+    tex_state[k] = TEX_MISSING;
   }
-  tex_make();
+  tex_make_next();
 }
 
-/* A texture made here, encoded: it lands, and is kept for the next load. */
+/* A texture made here, encoded: it lands, is kept for the next load, and the next is made. */
 void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len) {
   int k = (int)token;
+  tex_state[k] = TEX_LANDED;
   tex_land(k, p, len);
   cd_store_put(tex.key[k], tex.klen[k], p, len);
-  tex_next();
+  tex_making = 0;
+  tex_make_next();
 }
 
 void cd_on_raf(uint32_t token, double t) {
   (void)t;
   if (token == RAF_PAINTED) { cd_raf_request(RAF_PAINTED2); return; }
-  if (token == RAF_PAINTED2) { textures_begin(); cd_timer_start(TEX_START_MS, TIMER_TEX); return; }
+  if (token == RAF_PAINTED2) { cd_timer_start(TEX_START_MS, TIMER_TEX); return; }
   double t0 = cd_now(), now = t0;
   int done = 0;
   while (!done && now - t0 < TEX_SLICE_MS) {
@@ -1200,7 +1216,7 @@ static void textures_begin(void) {
   if (tex.fern_w > FERN_APP_W) { tex.fern_w = FERN_APP_W; tex.fern_h = FERN_APP_H; }
   tex.nrect = wood_rects(tex.rect, &tex.nrect_now);
   tex_keys();
-  tex_next();
+  tex_ask();
 }
 
 /* For the tests and the README, by texture k (fern, wood, wool): how long making it took on the
@@ -1320,6 +1336,9 @@ void cd_main(void) {
 
   cd_listen_window(CD_EV_RESIZE);
   render();
-  if (!page_notex()) cd_raf_request(RAF_PAINTED); /* the textures start once the table has painted */
+  if (!page_notex()) {
+    textures_begin();                /* the store is asked now; what it has lands when read */
+    cd_raf_request(RAF_PAINTED);     /* what it has not is made once the table has painted */
+  }
 }
 

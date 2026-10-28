@@ -459,7 +459,12 @@ var cdom = (() => {
 
   // Starts the app: mount is an element, or the id of one that may not be parsed yet: then the
   // wasm loads while the parser and the stylesheets run, and the app starts once the DOM is ready.
-  async function start(url, mount, env) {
+  // options.openStore: an app that reads its store as it starts opens it now, while the wasm is
+  // fetched and compiled, so its first get finds the database open.
+  async function start(url, mount, env, options) {
+    if (options && options.openStore) {
+      openDatabase().catch(() => {}); // a failure shows again, as a miss, at the first get
+    }
     const imports = {
       cdom: {
         strings, at, open, open_svg, close, text, text_num, attr, class: setClass, name, name_open,
