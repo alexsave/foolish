@@ -1,5 +1,5 @@
 // First paint and click-to-update of the cdom table in headless Chrome, medians over fresh loads.
-//   node tools/timing.mjs [runs] [cpu-throttle]
+//   node tools/timing.mjs [runs] [cpu-throttle]     (PAGE=/c/cdom_poc/out/index.html?notex for another page)
 // Times are script (the handler, C, its DOM calls) and script + style + layout (forced at once).
 // - first paint: the page's first-contentful-paint, and when cdom.start resolved (the wasm
 //   fetched, compiled, instantiated and cd_main's first render done);
@@ -19,7 +19,11 @@ try {
   await b.send('Network.setCacheDisabled', { cacheDisabled: true });
   if (CPU > 1) await b.send('Emulation.setCPUThrottlingRate', { rate: CPU });
   for (let i = 0; i < RUNS; i++) {
-    await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
+    // BLANK=1: each load starts from a blank page, in a fresh renderer, with nothing left running.
+    // Needed to time a page that makes textures: the previous load's slices otherwise hold the
+    // thread into the next load (measured: +18 ms at x4). Slower absolute numbers (a cold process).
+    if (process.env.BLANK) { await b.goto('about:blank'); await sleep(300); }
+    await b.goto('http://127.0.0.1:8720' + (process.env.PAGE || '/c/cdom_poc/out/index.html'));
     await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
     await sleep(200);
     const r = await b.evaluate(`(async () => {
@@ -46,7 +50,7 @@ try {
   }
 } finally { await b.close(); server.close(); }
 const f = (v) => v.toFixed(2).padStart(7);
-console.log(`cdom table, ${RUNS} fresh loads, CPU x${CPU}: median ms`);
+console.log(`cdom table (${process.env.PAGE || 'out/index.html'}), ${RUNS} fresh loads, CPU x${CPU}: median ms`);
 console.log(`first contentful paint ${f(med(rows.fcp))}   cdom.start resolved ${f(med(rows.ready))}`);
 console.log(`select a card          ${f(med(rows.selScript))} script   ${f(med(rows.selFrame))} with style and layout`);
 console.log(`play (Attack pill)     ${f(med(rows.playScript))} script   ${f(med(rows.playFrame))} with style and layout`);

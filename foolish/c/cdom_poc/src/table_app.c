@@ -848,7 +848,12 @@ static void render(void) {
 
 /* ---- moves ---------------------------------------------------------------- */
 
-enum { TIMER_BOT = 1 };
+enum { TIMER_BOT = 1, TIMER_TEX = 2 };
+enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2 };
+/* Measured (tools/timing.mjs, BLANK=1, CPU x4): starting on a timer right after the first frame,
+ * cdom.start resolved at 165 ms against 60 without textures; two frames and 50 ms later, at 60. */
+#define TEX_START_MS 50
+static void textures_begin(void);
 
 static void schedule_bot(void) {
   if (bot_pending || G.status != GAME_STATUS_PLAYING || my_turn_owed()) return;
@@ -941,6 +946,7 @@ void cd_on_event(const cd_event_rec *e) {
 
 void cd_on_timer(uint32_t token) {
   if (token == TIMER_BOT) bot_step();
+  if (token == TIMER_TEX) textures_begin();
 }
 
 /* For the tests: the engine's reason for the last refused move (0 for none), and the string
@@ -950,14 +956,14 @@ EXPORT("app_str_count") uint32_t app_str_count(void) { return cd_str_count(); }
 EXPORT("app_str_bytes") uint32_t app_str_bytes(void) { return cd_str_bytes(); }
 EXPORT("app_ids_live") uint32_t app_ids_live(void) { return cd_ids_live(); }
 /* ---- the textures ----------------------------------------------------------
- * After the first paint, in slices of about 8 ms on animation frames: the fern (the card backs),
+ * After the first paint (two frames, then a timer), in slices of about 8 ms on animation frames: the fern (the card backs),
  * the wood (the buttons), then the wool (the background). Each lands as a custom property on the
  * mount (cd_set_image), which the styles above read through var(). One 32 MiB block holds each
  * in turn: the wool's 3840 x 2160 pixels, or the wood's float colours and pixels together. */
 enum { TEX_W = 3840, TEX_H = 2160, WOOD_W = 1920, WOOD_H = 1080, FERN_W = 1000, FERN_H = 1400 };
 #define TEX_SLICE_MS 8.0
 static struct { int stage; uint8_t *block; Fern fern; Wood wood; Wool wool; double ms[3]; } tex;
-static uint32_t tex_rng;
+static uint32_t tex_rng, tex_seed;
 
 static void tex_start(int stage) {
   tex.stage = stage;
@@ -976,7 +982,9 @@ static void tex_start(int stage) {
 }
 
 void cd_on_raf(uint32_t token, double t) {
-  (void)token; (void)t;
+  (void)t;
+  if (token == RAF_PAINTED) { cd_raf_request(RAF_PAINTED2); return; }
+  if (token == RAF_PAINTED2) { cd_timer_start(TEX_START_MS, TIMER_TEX); return; }
   double t0 = cd_now(), now = t0;
   int done = 0;
   while (!done && now - t0 < TEX_SLICE_MS) {
@@ -993,19 +1001,22 @@ void cd_on_raf(uint32_t token, double t) {
     if (tex.stage + 1 == TEX_DONE) { cd_free(tex.block); tex.block = 0; tex.stage = TEX_DONE; return; }
     tex_start(tex.stage + 1);
   }
-  cd_raf_request(0);
+  cd_raf_request(RAF_SLICE);
 }
 
 static void textures_begin(void) {
-  tex_rng = cd_seed ^ 0x9e3779b9u;
+  tex_rng = tex_seed = cd_seed ^ 0x9e3779b9u;
   uint32_t wood = WOOD_W * WOOD_H * (3 * 4 + 4) + WOOD_H * 4, wool = TEX_W * TEX_H * 4;
   tex.block = cd_alloc(wood > wool ? wood : wool); /* 33.2 MB: one 32 MiB size class */
   tex_start(TEX_FERN);
-  cd_raf_request(0);
+  cd_raf_request(RAF_SLICE);
 }
 
 /* For the tests and the README: how long each texture took on the page's thread, in ms. */
 EXPORT("app_tex_ms") double app_tex_ms(int32_t k) { return k < 3 ? tex.ms[k] : tex.stage; }
+/* The seed the textures were made from: the fern's mulberry32 state, the wood's offsets its first
+ * two draws, the wool's the next two (tools/shots.mjs makes the TS textures from it). */
+EXPORT("app_tex_seed") uint32_t app_tex_seed(void) { return tex_seed; }
 
 /* ---- the page -------------------------------------------------------------- */
 
@@ -1101,6 +1112,6 @@ void cd_main(void) {
 
   cd_listen_window(CD_EV_RESIZE);
   render();
-  if (!page_notex()) textures_begin();
+  if (!page_notex()) cd_raf_request(RAF_PAINTED); /* the textures start once the table has painted */
 }
 
