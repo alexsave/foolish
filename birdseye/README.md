@@ -50,6 +50,7 @@ The sim's size is `BE_PLAYERS` (fake humans, default 60), `BE_TABLES` (tables ke
   A round robin of two-player best-of-five matches (the tournament's match rules), one at a time in a fixed order (kestrel v haiku, sapper v sonnet, kestrel v sonnet, sapper v haiku, sonnet v haiku, kestrel v sapper), then a final of the top two by match wins, game wins, game difference and head to head.
   It plays at the kernel's bots-only pace; the cup is kept in `data/botcup/botcup.bin` (a finished one is drawn again at the next start), and each decided match's summary (every game's trump, leader, key moments, every move, the fool, the score) is written to `data/botcup/<match id>.summary.txt`.
   The site's Bot Cup view shows the standings, every match game by game and the table in play.
+  `birdseye/server/build/cup_regen <game.sqlite> <botcup.bin> <dir> [match ...]` writes the summaries again from the game server's own replays (a game past the replay format's log cap has none, and is said so).
 - Both routes the server needs are dev-only (refused or not routed without `CBASE_DEV=1`); the kernel is unchanged. `birdseye/tools/hotpath_proof.sh` shows the move and push path compiles to the same instructions as before them.
 
 By hand:
