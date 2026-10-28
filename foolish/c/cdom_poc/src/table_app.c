@@ -104,7 +104,7 @@ static void deal_new(void) {
   game_seat_and_deal(&G, keys, 2);
 }
 
-enum { TEX_FERN, TEX_WOOD, TEX_WOOL, TEX_DONE }; /* the textures, in the order they are made */
+enum { TEX_FERN, TEX_WOOD, TEX_WOOL, TEX_DONE }; /* the textures (TEX_ORDER: the order they are made) */
 
 static int my_turn_owed(void) { return bot_drive_eligible_mask(&G, game_human_mask(&G)) == 0; }
 
@@ -865,10 +865,13 @@ static void render(void) {
 
 enum { TIMER_BOT = 1, TIMER_TEX = 2 };
 enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2 };
-/* Measured (tools/timing.mjs, BLANK=1, CPU x4): starting on a timer right after the first frame,
- * cdom.start resolved at 165 ms against 60 without textures; two frames and 50 ms later, at 60. */
+/* Measured (tools/timing.mjs, BLANK=1, CPU x4): starting to make textures on a timer right after
+ * the first frame, cdom.start resolved at 165 ms against 60 without textures; two frames and 50 ms
+ * later, at 60. The store is asked two frames after the first paint, without the timer: a texture
+ * found there costs a url, not a slice of work. */
 #define TEX_START_MS 50
 static void textures_begin(void);
+static void tex_go(void);
 
 static void schedule_bot(void) {
   if (bot_pending || G.status != GAME_STATUS_PLAYING || my_turn_owed()) return;
@@ -957,7 +960,7 @@ void cd_on_event(const cd_event_rec *e) {
 
 void cd_on_timer(uint32_t token) {
   if (token == TIMER_BOT) bot_step();
-  if (token == TIMER_TEX) textures_begin();
+  if (token == TIMER_TEX) tex_go();
 }
 
 /* For the tests: the engine's reason for the last refused move (0 for none), and the string
@@ -988,10 +991,12 @@ _Static_assert(WOOL_X % 16 == 0 && WOOL_Y % 16 == 0, "the crop starts on the JPE
 enum { FERN_APP_W = 1000, FERN_APP_H = 1400, FERN_APP_POINTS = 5000000, BACK_W = 50, BACK_H = 70, FERN_SCALE = 4 };
 #define TEX_SLICE_MS 8.0
 /* Every surface the wood is laid on besides the pills (PILL): its seed and the most it spans
- * (border box, CSS px). The pills and buttons are TexturedSurface's 260 x 60 plank; the results
- * panel is min(360px, 90vw) wide and two rows tall. tools/test.mjs checks that each surface on the
- * page lies inside the rectangle made for it. */
-static const struct { double seed; int32_t w, h; } WOOD_SURF[] = {{SEED_BACK, 260, 60}, {SEED_AGAIN, 260, 60}, {SEED_RESULTS, 360, 120}};
+ * (border box, CSS px, with room to spare: measured, the back button is 44 x 44, a pill 60 x 40,
+ * Play again 149 x 48, the results panel min(360px, 90vw) by 81 for two rows). The wood is made
+ * only there, so the less, the sooner it lands. tools/test.mjs checks, after every click of
+ * played-out games, that each surface on the page lies inside the rectangle made for it. */
+static const struct { double seed; int32_t w, h; } WOOD_SURF[] = {{SEED_BACK, 56, 56}, {SEED_AGAIN, 200, 60}, {SEED_RESULTS, 360, 100}};
+enum { PILL_SPAN_W = 76, PILL_SPAN_H = 52 };
 enum { NPILL = sizeof PILL / sizeof *PILL, NSURF = sizeof WOOD_SURF / sizeof *WOOD_SURF };
 enum { WOOD_MARGIN = 4 }; /* a border's width either side, and then some */
 static struct {
@@ -1032,7 +1037,7 @@ static void wood_rects_add(TexRect *out, int *n, double seed, int32_t sw, int32_
 static int wood_rects(TexRect *out) {
   int n = 0;
   wood_rects_add(out, &n, WOOD_SURF[0].seed, WOOD_SURF[0].w, WOOD_SURF[0].h);
-  for (int k = 0; k < NPILL; k++) wood_rects_add(out, &n, PILL[k].seed, 260, 60);
+  for (int k = 0; k < NPILL; k++) wood_rects_add(out, &n, PILL[k].seed, PILL_SPAN_W, PILL_SPAN_H);
   for (int k = 1; k < NSURF; k++) wood_rects_add(out, &n, WOOD_SURF[k].seed, WOOD_SURF[k].w, WOOD_SURF[k].h);
   return n;
 }
@@ -1061,8 +1066,7 @@ static void tex_start(int stage) {
 /* ---- the textures across loads: the encoded image is kept in cdom's store (IndexedDB) under a
  * key that names the generator's version and everything the picture depends on (the fern's size,
  * the wood's rectangles), as the app keeps its own in TextureCacheDB; a later load sets the
- * stored bytes and generates nothing. The stored value is the seed (4 bytes, little-endian),
- * then the image file. */
+ * stored bytes and generates nothing. The stored value is the image file. */
 static const char *const TEX_PROP[3] = {"--tex-fern", "--tex-wood", "--tex-wool"};
 static const char *const TEX_MIME[3] = {"image/png", "image/png", "image/jpeg"};
 
@@ -1095,9 +1099,13 @@ static void tex_land(int k, const uint8_t *p, uint32_t len) {
   tex.landed++;
 }
 
+/* The fern (small, on the card backs), the wool (the whole background), then the wood (the buttons). */
+static const int TEX_ORDER[4] = {TEX_FERN, TEX_WOOL, TEX_WOOD, TEX_DONE};
+static int tex_step, tex_may_make, tex_waiting;
+
 /* The next texture: asked of the store first. */
-static void tex_next(int stage) {
-  tex.stage = stage;
+static void tex_next(void) {
+  int stage = tex.stage = TEX_ORDER[tex_step++];
   if (stage == TEX_DONE) {
     cd_free(tex.block); cd_free(tex.col); /* back to cdom's free lists (wasm memory does not shrink) */
     tex.block = 0; tex.col = 0;
@@ -1106,16 +1114,10 @@ static void tex_next(int stage) {
   cd_store_get((uint32_t)stage, tex.key[stage], tex.klen[stage], CD_STORE_DEADLINE_MS);
 }
 
-void cd_on_store(uint32_t token, const uint8_t *p, int32_t len) {
-  int k = (int)token;
-  if (k != tex.stage) return;
-  if (len > 4) { /* kept from an earlier load */
-    tex.seed[k] = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-    tex.from_store[k] = 1;
-    tex_land(k, p + 4, (uint32_t)len - 4);
-    tex_next(k + 1);
-    return;
-  }
+/* Make texture tex.stage, once making is allowed (TEX_START_MS after the first paint). */
+static void tex_make(void) {
+  if (!tex_may_make) { tex_waiting = 1; return; }
+  tex_waiting = 0;
   if (!tex.block) { /* the first texture to make: the room for all of them */
     int32_t most = 0;
     for (int r = 0; r < tex.nrect; r++) if (tex.rect[r].w * tex.rect[r].h > most) most = tex.rect[r].w * tex.rect[r].h;
@@ -1124,26 +1126,38 @@ void cd_on_store(uint32_t token, const uint8_t *p, int32_t len) {
     tex.block = cd_alloc(big > fern ? big : fern); /* 6,465,024 bytes (the wool, RGB): one 8 MiB size class */
     tex.col = cd_alloc((uint32_t)most * 12);       /* the wood's float colours, one rectangle at a time */
   }
-  tex.seed[k] = tex_seed;
-  tex_start(k);
+  tex.seed[tex.stage] = tex_seed;
+  tex_start(tex.stage);
   cd_raf_request(RAF_SLICE);
+}
+static void tex_go(void) {
+  tex_may_make = 1;
+  if (tex_waiting) tex_make();
+}
+
+void cd_on_store(uint32_t token, const uint8_t *p, int32_t len) {
+  int k = (int)token;
+  if (k != tex.stage) return;
+  if (len > 0) { /* kept from an earlier load */
+    tex.from_store[k] = 1;
+    tex_land(k, p, (uint32_t)len);
+    tex_next();
+    return;
+  }
+  tex_make();
 }
 
 /* A texture made here, encoded: it lands, and is kept for the next load. */
 void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len) {
   int k = (int)token;
   tex_land(k, p, len);
-  uint8_t *v = cd_alloc(len + 4);
-  v[0] = (uint8_t)tex.seed[k]; v[1] = (uint8_t)(tex.seed[k] >> 8); v[2] = (uint8_t)(tex.seed[k] >> 16); v[3] = (uint8_t)(tex.seed[k] >> 24);
-  __builtin_memcpy(v + 4, p, len);
-  cd_store_put(tex.key[k], tex.klen[k], v, len + 4);
-  cd_free(v);
+  cd_store_put(tex.key[k], tex.klen[k], p, len);
 }
 
 void cd_on_raf(uint32_t token, double t) {
   (void)t;
   if (token == RAF_PAINTED) { cd_raf_request(RAF_PAINTED2); return; }
-  if (token == RAF_PAINTED2) { cd_timer_start(TEX_START_MS, TIMER_TEX); return; }
+  if (token == RAF_PAINTED2) { textures_begin(); cd_timer_start(TEX_START_MS, TIMER_TEX); return; }
   double t0 = cd_now(), now = t0;
   int done = 0;
   while (!done && now - t0 < TEX_SLICE_MS) {
@@ -1158,7 +1172,7 @@ void cd_on_raf(uint32_t token, double t) {
   if (tex.stage == TEX_FERN) cd_encode_image(tex.fern.px, (uint32_t)tex.fern_w, (uint32_t)tex.fern_h, 4, ZS("image/png"), TEX_FERN);
   if (tex.stage == TEX_WOOD) cd_encode_image(tex.wood.px, WOOD_W, WOOD_H, 3, ZS("image/png"), TEX_WOOD);
   if (tex.stage == TEX_WOOL) cd_encode_image_in(tex.wool.px, WOOL_W, WOOL_H, 3, TEX_W, TEX_H, WOOL_X, WOOL_Y, ZS("image/jpeg"), TEX_WOOL);
-  tex_next(tex.stage + 1);
+  tex_next();
 }
 
 static void textures_begin(void) {
@@ -1171,7 +1185,7 @@ static void textures_begin(void) {
   if (tex.fern_w > FERN_APP_W) { tex.fern_w = FERN_APP_W; tex.fern_h = FERN_APP_H; }
   tex.nrect = wood_rects(tex.rect);
   tex_keys();
-  tex_next(TEX_FERN);
+  tex_next();
 }
 
 /* For the tests and the README, by texture k (fern, wood, wool): how long making it took on the
@@ -1180,9 +1194,9 @@ static void textures_begin(void) {
 EXPORT("app_tex_ms") double app_tex_ms(int32_t k) { return k < 3 ? tex.ms[k] : tex.landed; }
 EXPORT("app_tex_at") double app_tex_at(int32_t k) { return tex.at[k]; }
 EXPORT("app_tex_stored") int32_t app_tex_stored(int32_t k) { return tex.from_store[k]; }
-/* The seed texture k was made from (on this load or the one that stored it): the fern's mulberry32
- * state; the wood's offsets are its first two draws, the wool's the next two (tools/shots.mjs
- * makes the TS textures from them). */
+/* The seed texture k was made from on this load (0 when it came from the store): the fern's
+ * mulberry32 state; the wood's offsets are its first two draws, the wool's the next two
+ * (tools/shots.mjs makes the TS textures from them). */
 EXPORT("app_tex_seed") uint32_t app_tex_seed(int32_t k) { return tex.seed[k]; }
 /* The wood's tile rectangles (x, y, w, h by field 0-3), for the test that every surface lies in one. */
 EXPORT("app_wood_rects") int32_t app_wood_rects(void) { return tex.nrect; }

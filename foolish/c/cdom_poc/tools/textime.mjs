@@ -28,8 +28,9 @@ export { default as generateWoolTexture } from '${FOOLISH}/src/components/WoolBa
 `);
 await build({ ...common, entryPoints: [path.join(out, 'ts_tex_entry.ts')], format: 'iife', globalName: 'TSAPP', outfile: path.join(out, 'ts_tex.js'),
   plugins: [{ name: 'app', setup(b) {
-    // generateWoodTexture is the module's own; the wool worker's URL is the bundled worker's.
+    // generateWoodTexture and generateFernPattern are their modules' own; the wool worker's URL is the bundled worker's.
     b.onLoad({ filter: /WoodTexture\.tsx$/ }, (a) => ({ contents: fs.readFileSync(a.path, 'utf8') + '\nexport { generateWoodTexture };', loader: 'tsx', resolveDir: path.dirname(a.path) }));
+    b.onLoad({ filter: /fernFractal\.tsx$/ }, (a) => ({ contents: fs.readFileSync(a.path, 'utf8') + '\nexport { generateFernPattern };', loader: 'tsx', resolveDir: path.dirname(a.path) }));
     b.onLoad({ filter: /WoolBackground\.tsx$/ }, (a) => {
       const src = fs.readFileSync(a.path, 'utf8'), from = "new URL('../utils/woolWorker.ts', import.meta.url)";
       if (!src.includes(from)) throw new Error('the wool worker moved');
@@ -47,7 +48,8 @@ window.texAll = Promise.all([TSAPP.generateFernPattern().then(land('fern')), TSA
 </script></body></html>`);
 
 const load = () => execSync('uptime').toString().trim().replace(/.*load averages?: /, '');
-const top = () => execSync('top -l 1 -o cpu -n 6 -stats pid,command,cpu').toString().trim().split('\n').slice(-6).map((l) => l.trim().replace(/\s+/g, ' ')).join('; ');
+// the busiest processes over one second (top's first sample has no CPU figures)
+const top = () => execSync('top -l 2 -s 1 -o cpu -n 6 -stats command,cpu').toString().trim().split('\n').slice(-6).map((l) => l.trim().replace(/\s+/g, ' ')).join('; ');
 const before = { load: load(), top: top() };
 const server = await serve(8720, FOOLISH, null, { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' });
 const b = await launch();

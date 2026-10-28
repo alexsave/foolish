@@ -128,14 +128,12 @@ try {
     assert.deepEqual(look, ['url("blob', 'rgb(0, 0, 0)', 'url("blob', 'url("blob']);
     assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => [x.app_tex_stored(k), x.app_tex_ms(k) > 0]))`),
       [[0, true], [0, true], [0, true]], 'made here, on a cold load');
-    const seeds = await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => x.app_tex_seed(k)))`);
-    // Warm: the next load sets all three from the store, makes none, and keeps the seeds they were made from.
+    // Warm: the next load sets all three from the store and makes none.
     await new Promise((r) => setTimeout(r, 300)); // the puts are fire-and-forget
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
     await b.until(`window.app.then((x) => x.app_tex_ms(3) === 3)`, 10000);
     assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => [x.app_tex_stored(k), x.app_tex_ms(k)]))`),
       [[1, 0], [1, 0], [1, 0]], 'every texture from the store, no generator run');
-    assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => x.app_tex_seed(k)))`), seeds, 'the seeds kept');
     assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
   });
 
