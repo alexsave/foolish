@@ -39,6 +39,14 @@
 #define STRAT_OCTOGEN_ORACLE    21   // octogen at 6x worlds (research/audit only)
 // 22 is retired: it was torpex (a learned value net in place of rollouts).
 // 23 is retired: it was novichok (the cheating ceiling probe; read real hands).
+// Octogen plus rollout noise (c/FUSION.md): in its heuristic rollouts each
+// seat's decision is, 20% of the time, a uniform pick from a small sensible
+// candidate set instead of the policy move. Research only for now: reachable
+// by id or by name in the native tools, on no roster and in no shipped module.
+// TODO(alex): fusion's roster identity. City: "TBD". Song: "TBD". The roster
+// (bot_roster.c) carries neither field today, and a roster row would put fusion
+// in the shipped roster table, so it has no row until both are decided.
+#define STRAT_FUSION            24
 //
 // THE IDS ARE NOT COMPACTED, and a retired one is never handed out again. A
 // STRAT_* id leaves the process: it is a seat's Player.strategy_key, a
@@ -51,7 +59,7 @@
 // case in strategy_choose (strategy.c); tests.c holds the three together, so a
 // brain the dispatch forgot, a count the new brain forgot, or a retired id that
 // came back to life fails there.
-#define STRAT_COUNT             24
+#define STRAT_COUNT             25
 
 // 1 for an id below STRAT_COUNT whose brain was removed. Such an id dispatches
 // to nothing (strategy_choose is -1) and no name parses to it.
@@ -90,6 +98,8 @@ int octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves,
 // Oracle octogen (research): 6x world budget + wider candidate survival. For
 // loss audits - a decision the oracle changes was compute-limited.
 int octogen_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+// Fusion: octogen with rollout noise (octogen_strategy.c; native builds only).
+int fusion_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
 // Map a strategy name (or short alias) to its STRAT_* id; -1 if unknown.
 // Single source of truth for the name<->id mapping the main programs share.
@@ -115,6 +125,7 @@ static inline int parse_strategy(const char *s) {
     if (!strcmp(s, "distilled")         || !strcmp(s, "dl")) return STRAT_DISTILLED;
     if (!strcmp(s, "octogen")           || !strcmp(s, "og"))  return STRAT_OCTOGEN;
     if (!strcmp(s, "octogen_oracle")    || !strcmp(s, "ogo")) return STRAT_OCTOGEN_ORACLE;
+    if (!strcmp(s, "fusion")            || !strcmp(s, "fu"))  return STRAT_FUSION;
     return -1;
 }
 
