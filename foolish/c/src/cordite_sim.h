@@ -115,6 +115,68 @@ int  cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
                           int leaf_cards, long leaf_budget,
                           const uint8_t *pol, int reply_cap);
 
+// ---------- rollout noise (fusion, c/FUSION.md) ----------------------------
+//
+// At each decision of each seat in a HEURISTIC rollout (the searching seat
+// included), with probability per_mille/1000 the seat plays a uniformly random
+// move from a small SENSIBLE candidate set instead of its rollout policy's move.
+// The candidates are built on this file's own move primitives (cordite_sim.c,
+// sim_noise_cands says how each one maps). Both draws (the gate and the pick)
+// come from the rollout's own stream, game_random(), so the common random
+// numbers across a decision's candidates stay intact: the same worlds and the
+// same rollout streams for every root candidate.
+//
+// Never in an exact line: the noise sits only where a policy move is chosen,
+// and the solvers (cd_sim_solve*, the in-rollout exact leaf, the root endgame
+// solve) never consult a policy, so a solved line is untouched.
+//
+// The value is a thread-local, 0 by default, and at 0 NOTHING is drawn: every
+// draw site is behind `if (per_mille)`, so octogen, cordite and every other
+// brain on these playouts consume exactly the stream they always did and their
+// decisions do not move. fusion_strategy_choose (octogen_strategy.c) sets it
+// for the length of one decision and puts 0 back.
+//
+// Compiled out of the shipped bots module. That module is the seeded ladder
+// (FOOLISH_SEEDED_BOTS_ONLY) and fusion is not on it, so it carries none of the
+// noise code and its bytes stay as they were; the setters below are then
+// no-ops and the struct-path pick never fires. Every native build (the arena
+// tools, the tests, the kernel a server links) has it.
+#ifndef FOOLISH_SEEDED_BOTS_ONLY
+#define CD_ROLLOUT_NOISE 1
+#endif
+
+// What the noise did on this thread since the last reset (a test seam, and the
+// arena's sanity check that a noisy brain is actually noisy). `fired` counts
+// decisions that took a candidate instead of the policy; `unmatched` counts
+// struct-path picks whose candidate was not on the seat's lite menu. It must
+// stay 0: every candidate is a legal move capped at MAX_MOVE_CARDS, so it is on
+// the menu, unless the enumerator itself truncated the menu at MAX_LEGAL_MOVES
+// (a hand with well over a dozen table-valued cards). An unmatched pick plays
+// the policy instead.
+typedef struct { long fired, unmatched; } CdNoiseStats;
+
+#ifdef CD_ROLLOUT_NOISE
+void         cd_sim_set_noise(int per_mille);   // clamped to [0, 1000]
+int          cd_sim_noise(void);
+CdNoiseStats cd_sim_noise_stats(void);
+void         cd_sim_noise_stats_reset(void);
+// The struct rollout's twin of the bitboard noise (og_simulate under
+// OG_NO_FASTROLL / OG_LEAF): `moves` is seat p's calculate_legal_moves_lite
+// menu over the determinized world g. Returns the index of the noisy move, or
+// -1 to play the policy (noise off, the gate said no, or no candidate). Draws
+// exactly what the bitboard path draws at the same decision, so the two paths
+// stay on one stream (OG_DIFFTEST).
+int          cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves);
+#else
+static inline void         cd_sim_set_noise(int per_mille) { (void)per_mille; }
+static inline int          cd_sim_noise(void) { return 0; }
+static inline CdNoiseStats cd_sim_noise_stats(void) { CdNoiseStats z = { 0, 0 }; return z; }
+static inline void         cd_sim_noise_stats_reset(void) { }
+static inline int          cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves) {
+    (void)g; (void)p; (void)moves; return -1;
+}
+#endif
+
 // Exact 2-player deck-empty endgame solver on the bitboard state. Returns the
 // value of position `s` from `me`'s perspective in [-1000,1000] (positive = me
 // escapes, magnitude prefers faster wins / slower losses), identical to the
