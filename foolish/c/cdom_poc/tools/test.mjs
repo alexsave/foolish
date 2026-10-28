@@ -103,6 +103,10 @@ try {
     assert.ok((table.length === 3 && table.every((n) => n === 2)) || (table.length === 0 && anna === '8'),
       `a legal answer: table ${JSON.stringify(table)}, Anna holds ${anna}`);
     assert.equal(await turn(), 'human');
+    // Anna's mini hand: the cards, then the count as the last child, whatever was added before it.
+    assert.deepEqual(await b.evaluate(`(() => { const h = document.querySelector('[data-player-id="u-anna-0001"]');
+      return [h.lastElementChild.textContent, String(h.children.length - 1)]; })()`).then(([t, n]) => t === n), true,
+      'the count badge is the mini hand\'s last child');
     assert.equal(await b.evaluate(`[...document.querySelectorAll('[data-role-seat]')].every((e) => e.$kept)`), true,
       'the seat badges are patched in place');
   });

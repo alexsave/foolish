@@ -111,3 +111,10 @@ try {
   res = await b.evaluate(PAGE);
 } finally { await b.close(); server.close(); }
 console.log(JSON.stringify(res, null, 1));
+// The bar: the PRNG, sin and cos, the wool, the wood (floats and the WebGL picture) and the fern's
+// points exact; the multisampled fern within 3% of the WebGL picture (README, Textures).
+const bad = [res.random !== 'same 1000 draws' && 'random', res.trig.sin_differing && 'sin', res.trig.cos_differing && 'cos',
+  res.wool.differing && 'wool', res.wood.vs_webgl.differing && 'wood', res.fern.points_one_pixel_each_vs_ts_points.differing && 'fern points',
+  res.fern.multisampled_vs_webgl.differing > 0.03 * res.fern.multisampled_vs_webgl.of && 'fern multisampled'].filter(Boolean);
+console.log(bad.length ? 'FAIL ' + bad.join(', ') : 'all at the bar');
+process.exit(bad.length ? 1 : 0);
