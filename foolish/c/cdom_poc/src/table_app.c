@@ -24,6 +24,7 @@
 #include "../cardtext/card_text.h"
 #include "textures.h"
 #include "cdom_store.h"
+#include "game_keep.h"
 #include <math.h>
 
 
@@ -622,13 +623,13 @@ static int n_seats;
 static cd_id board, seats_anchor;
 
 /* roleLedger.ts markWorn over the board on screen. */
-static int mark_of(int seat) {
-  const ViewSeat *p = &V->seats[seat];
-  if (p->status == PLAYER_STATUS_OUT || V->status != GAME_STATUS_PLAYING) return MARK_NONE;
-  if ((V->good_mask >> seat) & 1) return MARK_CHECK;
-  if (V->defender == seat) return MARK_SHIELD;
-  if (V->num_battles > 0 || seat == V->first_attacker)
-    return seat == V->first_attacker ? MARK_LEAD : MARK_SWORD;
+static int mark_of(const TableView *v, int seat) {
+  const ViewSeat *p = &v->seats[seat];
+  if (p->status == PLAYER_STATUS_OUT || v->status != GAME_STATUS_PLAYING) return MARK_NONE;
+  if ((v->good_mask >> seat) & 1) return MARK_CHECK;
+  if (v->defender == seat) return MARK_SHIELD;
+  if (v->num_battles > 0 || seat == v->first_attacker)
+    return seat == v->first_attacker ? MARK_LEAD : MARK_SWORD;
   return MARK_NONE;
 }
 
@@ -783,7 +784,7 @@ static void render_seats(void) {
   for (int s = 0; s < n_seats; s++) {
     SeatUI *u = &seat_ui[s];
     if (seat_lift(s) != u->lift) { u->lift = seat_lift(s); cd_set_style(u->seat.root, ZS("transform"), seat_transform(s)); }
-    int mark = mark_of(s);
+    int mark = mark_of(V, s);
     if (mark != u->mark) {
       u->mark = mark;
       cd_clear(u->role);
@@ -869,7 +870,7 @@ static void render(void) {
 
 /* ---- moves ---------------------------------------------------------------- */
 
-enum { TIMER_BOT = 1, TIMER_TEX = 2 };
+enum { TIMER_BOT = 1, TIMER_TEX = 2, TIMER_BOT_GO = 3 };
 enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2 };
 /* Measured (tools/timing.mjs, BLANK=1, CPU x4): starting to make textures on a timer right after
  * the first frame, cdom.start resolved at 165 ms against 60 without textures; two frames and 50 ms
@@ -964,8 +965,22 @@ void cd_on_event(const cd_event_rec *e) {
   render();
 }
 
+#ifdef TABLE_DEBUG
+static int dbg_hold, dbg_due; /* the test build: a due bot step held until the test releases it */
+#define DEBUG_HOLD_BOT() do { if (dbg_hold) { dbg_due = 1; return; } } while (0)
+#else
+#define DEBUG_HOLD_BOT() do { } while (0)
+#endif
+
+/* The bot's timer: its step (held in the test build when the test asks). */
+static void bot_due(void) {
+  DEBUG_HOLD_BOT();
+  bot_step();
+}
+
 void cd_on_timer(uint32_t token) {
-  if (token == TIMER_BOT) bot_step();
+  if (token == TIMER_BOT) bot_due();
+  if (token == TIMER_BOT_GO) bot_step();
   if (token == TIMER_TEX) tex_go();
 }
 
@@ -975,6 +990,76 @@ EXPORT("app_last_reject") int app_last_reject(void) { return last_reject; }
 EXPORT("app_str_count") uint32_t app_str_count(void) { return cd_str_count(); }
 EXPORT("app_str_bytes") uint32_t app_str_bytes(void) { return cd_str_bytes(); }
 EXPORT("app_ids_live") uint32_t app_ids_live(void) { return cd_ids_live(); }
+
+#ifdef TABLE_DEBUG
+/* ---- the test build's window on the kernel (out/table_debug.wasm, ?debug) ----------------
+ * What the table should show now, worked out afresh from the kernel and not from what was drawn:
+ * the game round-tripped through its blob (the board a server's load of the row would play on),
+ * read for the viewer by a ClientTable of its own, as lines of text the test compares with the
+ * DOM read the same way (tools/consist.mjs). The pills are the kernel's raw answer for the
+ * selection and for none: the pressed-pill rule is the test's model of React's. */
+static Game DG;
+static ClientSlot DSLOT;
+static ClientTable DCT;
+static unsigned char DBLOB[2048];
+static char dbg[4096];
+static uint32_t dbg_n;
+static void d_s(const char *t) { while (*t && dbg_n < sizeof dbg - 1) dbg[dbg_n++] = *t++; }
+static void d_i(int32_t v) { char b[16]; uint32_t n = cd_fmt(b, v, 0, CD_UNIT_NONE); for (uint32_t i = 0; i < n; i++) dbg[dbg_n++] = b[i]; }
+static void d_card(Card c) { d_i(c.suit); d_s("-"); d_i(c.value); }
+static void d_face(Card c) { d_s(CARD_RANK_LABEL[c.value]); d_s(CARD_SUIT_FACE[c.suit].glyph); }
+static uint32_t d_pills(const TableView *v, int with_sel) {
+  if (v->status != GAME_STATUS_PLAYING || v->seats[ME].status != PLAYER_STATUS_IN) return 0;
+  ClientGesture g;
+  __builtin_memset(&g, 0, sizeof g);
+  g.n_cards = with_sel ? (int8_t)nsel : 0;
+  g.target = PLAY_TARGET_HAND;
+  for (int i = 0; i < g.n_cards; i++) g.cards[i] = card_of_id(sel[i]);
+  const ClientPlayScratch sc = {&MOVES, MENU, (int)sizeof MENU};
+  ClientPlay p;
+  return client_play(&DCT, v, &g, &sc, &p) == CLIENT_OK ? p.pills : 0;
+}
+static void d_pill_names(uint32_t bits) { for (int p = 0; p < 5; p++) if (bits & PILL[p].bit) { d_s(" "); d_s(PILL[p].label); } }
+
+EXPORT("app_debug_state") uint32_t app_debug_state(void) {
+  static int inited;
+  if (!inited) { client_init(&DCT, &DSLOT); inited = 1; }
+  dbg_n = 0;
+  int len = game_keep_put(&G, DBLOB);
+  if (len <= 0 || !game_keep_load(&DG, DBLOB, len)) { d_s("error the game does not round-trip\n"); dbg[dbg_n] = 0; return (uint32_t)(uintptr_t)dbg; }
+  if (client_adopt_board(&DCT, &DG, ME) != CLIENT_OK) __builtin_trap();
+  const TableView *v = &DCT.view;
+  ViewRules r;
+  client_view_rules(v, 0, 0, 0, &r);
+  d_s("status "); d_s(v->status == GAME_STATUS_GAME_OVER ? "over" : "playing");
+  d_s("\nhand"); for (int i = 0; i < v->my_hand_count; i++) { d_s(" "); d_card(v->my_hand[i]); }
+  d_s("\nselected"); for (int i = 0; i < v->my_hand_count; i++) if (selected(card_to_id(v->my_hand[i]))) { d_s(" "); d_card(v->my_hand[i]); }
+  d_s("\nsel"); for (int i = 0; i < nsel; i++) { d_s(" "); d_card(card_of_id(sel[i])); }
+  d_s("\nkernel_pills"); d_pill_names(d_pills(v, 1));
+  d_s("\nkernel_pills_none"); d_pill_names(d_pills(v, 0));
+  d_s("\nbattles"); for (int i = 0; i < v->num_battles; i++) { d_s(" "); d_card(v->battles[i].attack); d_s("/"); if (v->battles[i].defense.suit >= 0) d_card(v->battles[i].defense); else d_s("-"); }
+  d_s("\ndeck"); if (r.show_deck_spot && r.show_deck_pile) { d_s(" badge "); d_i(r.deck_badge); d_s(" layers "); d_i(r.deck_pile); }
+  if (r.show_flipped_slot) { d_s(" flipped "); if (r.show_flipped_card) d_face(v->flipped); else d_s("-"); }
+  if (r.show_trump_icon) { d_s(" trump "); d_s(CARD_SUIT_FACE[v->power_suit].glyph); }
+  d_s("\ndiscard"); if (v->discard_pile_length > 0) { d_s(" "); d_i(v->discard_pile_length); }
+  for (int s = 0; s < v->num_players; s++) {
+    d_s("\nseat "); d_i(s); d_s(" "); d_s(mark_of(v, s) ? MARK_NAME[mark_of(v, s)] : "none");
+    d_s(" "); d_i(s == v->my_seat ? v->my_hand_count : v->seats[s].hand_count);
+  }
+  d_s("\nfool "); d_i(v->fool);
+  d_s("\nelimination"); for (int i = 0; i < v->num_eliminated; i++) { d_s(" "); d_i(v->elimination[i]); }
+  d_s("\nbot_eligible "); d_i((int32_t)bot_drive_eligible_mask(&DG, game_human_mask(&DG)));
+  d_s("\n");
+  dbg[dbg_n] = 0;
+  return (uint32_t)(uintptr_t)dbg;
+}
+EXPORT("app_debug_len") uint32_t app_debug_len(void) { return dbg_n; }
+/* Hold: a bot step that falls due waits for app_debug_release (the test reads the table between
+ * every two steps); app_debug_due says one is waiting. */
+EXPORT("app_debug_hold") void app_debug_hold(int32_t on) { dbg_hold = on; }
+EXPORT("app_debug_due") int32_t app_debug_due(void) { return dbg_due; }
+EXPORT("app_debug_release") void app_debug_release(void) { if (dbg_due) { dbg_due = 0; cd_timer_start(0, TIMER_BOT_GO); } }
+#endif
 /* ---- the textures ----------------------------------------------------------
  * After the first paint (two frames, then a timer), in slices of about 8 ms on animation frames: the fern (the card backs),
  * the wood (the buttons), then the wool (the background). Each lands as a custom property on the

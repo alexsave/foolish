@@ -6,7 +6,7 @@
   <title>Foolish table (cdom)</title>
   <script>
 /*CDOM_SHIM*/
-window.app = cdom.start('table.wasm', 'root', { notex: () => +/[?&]notex\b/.test(location.search) },
+window.app = cdom.start(/[?&]debug\b/.test(location.search) ? 'table_debug.wasm' : 'table.wasm', 'root', { notex: () => +/[?&]notex\b/.test(location.search) },
   { openStore: !/[?&]notex\b/.test(location.search) });
 window.app.then(() => { window.appReady = performance.now(); });
   </script>
