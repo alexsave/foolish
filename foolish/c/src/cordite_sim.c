@@ -1336,6 +1336,234 @@ int cd_sim_one_step(SimState *s) {
     return -1;
 }
 
+// ---------- rollout noise (fusion, c/FUSION.md) ----------------------------
+//
+// See cordite_sim.h for the contract. The idea is kestrel's (an outside bot
+// that measured it as its biggest single gain, 1.71 vs 1.43 points per game
+// against itself without it, par 1.5): a rollout policy is an opponent model,
+// and a search that always meets the same deterministic model over-fits it.
+// Mixing a small dose of SENSIBLE alternatives into every seat's rollout play
+// keeps the root values from leaning on the model's exact habits.
+
+#ifdef CD_ROLLOUT_NOISE
+
+static _Thread_local int  cd_noise_pm = 0;
+static _Thread_local long cd_noise_fired = 0;
+static _Thread_local long cd_noise_unmatched = 0;
+
+void cd_sim_set_noise(int per_mille) {
+    cd_noise_pm = per_mille < 0 ? 0 : per_mille > 1000 ? 1000 : per_mille;
+}
+int cd_sim_noise(void) { return cd_noise_pm; }
+CdNoiseStats cd_sim_noise_stats(void) {
+    CdNoiseStats st = { cd_noise_fired, cd_noise_unmatched };
+    return st;
+}
+void cd_sim_noise_stats_reset(void) { cd_noise_fired = 0; cd_noise_unmatched = 0; }
+
+// One candidate, compact: the move kind and its cards as an id mask. A cover
+// carries no mask here: the only cover candidate is the greedy full cover,
+// which is rebuilt from the state when it is the one drawn (deterministic, so
+// rebuilding it is the same move).
+typedef struct { uint8_t type; uint64_t mask; } NoiseCand;
+// The leader's list is the long one: two per distinct value, 13 values.
+#define NOISE_MAX_CANDS 32
+
+static void noise_add(NoiseCand *c, int *n, uint8_t type, uint64_t mask) {
+    if (type == MV_ATTACK && !mask) return;
+    for (int i = 0; i < *n; i++)
+        if (c[i].type == type && c[i].mask == mask) return;   // one entry per distinct move
+    if (*n >= NOISE_MAX_CANDS) return;
+    c[*n].type = type;
+    c[*n].mask = mask;
+    (*n)++;
+}
+
+// The `k` lowest-score cards of `h` (or all of them when there are fewer) as a
+// mask: sim_attack_group_core's own "cheapest first" order, so a candidate is
+// built from the same primitive the handwritten policy attacks with.
+static uint64_t noise_lowest(uint64_t h, int k, int power) {
+    uint8_t ids[64];
+    int n = sim_attack_group_core(h, k, power, ids);
+    uint64_t m = 0;
+    for (int i = 0; i < n; i++) m |= 1ull << ids[i];
+    return m;
+}
+
+// The sensible candidate set for seat p, built on this file's move primitives
+// (the same ones the handwritten rollout policy and the solver's generator
+// use), never a new generator. How kestrel's list maps:
+//
+// LEADER (first attack; sim_gen_first_attack's moves, a subset of them):
+//   for each distinct value in hand
+//     "one card"        the lowest-score card of that value (non-trump first)
+//     "the whole group" every card of that value, capped at the defender's
+//                       capacity, cheapest first (sim_attack_group_core)
+//
+// DEFENDER (an uncovered table):
+//   "cheapest full cover"         sim_greedy_full_cover, the policy's own cover
+//                                 (the lite menu's single cover move)
+//   "cheapest cover w/o trumps"   NOT BUILT, because in this engine it is always
+//                                 either impossible or the same move as the one
+//                                 above: the greedy takes the lowest same-suit
+//                                 card for each attack and reaches for a trump
+//                                 only when the attack's suit has nothing higher
+//                                 left in hand, and the per-suit "higher than"
+//                                 sets are nested, so the greedy never spends a
+//                                 trump a trumpless cover could have avoided.
+//                                 The dedupe would drop it every time.
+//   "pickup"                      always
+//   "each distinct pass"          one single-card pass per matching card, from
+//                                 sim_gen_pass (so its legality, the podkidnoy
+//                                 rule and the next seat's capacity included,
+//                                 is the generator's). Multi-card passes are
+//                                 left out: kestrel's list names a pass per
+//                                 card, and keeping the set small is the point.
+//
+// ATTACKER THROWING IN (a seat that has not said good; table values only):
+//   "good (stop)"                  always
+//   "lowest matching non-trump"    1 card
+//   "all matching non-trumps"      capped at the defender's capacity
+//   "two of them"                  the two lowest non-trumps
+//   "a lone trump"                 the lowest matching trump
+//   "everything"                   every matching card, capped
+//
+// Every attack is also capped at MAX_MOVE_CARDS, the engine's widest move, so
+// each candidate is a move the lite menu holds (cd_sim_noise_legal relies on
+// it, and the noise test holds unmatched at 0). Identical candidates collapse
+// to one, so the draw is uniform over distinct moves.
+static int sim_noise_cands(const SimState *s, int p, NoiseCand *c) {
+    int power = s->power_suit;
+    uint64_t trumps = SUIT_MASK[power];
+    int n = 0;
+    if (s->status != GAME_STATUS_PLAYING || !(s->in_mask >> p & 1u)) return 0;
+
+    if (s->num_battles == 0) {
+        if (p != s->first_attacker) return 0;
+        int cap = sim_hand_count(s, s->defender);
+        if (cap > MAX_MOVE_CARDS) cap = MAX_MOVE_CARDS;
+        if (cap <= 0) return 0;
+        uint64_t h = s->hand[p];
+        for (int v = 1; v <= 13; v++) {
+            uint64_t grp = h & VALUE_MASK[v];
+            if (!grp) continue;
+            noise_add(c, &n, MV_ATTACK, noise_lowest(grp, 1, power));
+            noise_add(c, &n, MV_ATTACK, noise_lowest(grp, cap, power));
+        }
+        return n;
+    }
+
+    if (p == s->defender) {
+        if (sim_all_covered(s)) return 0;
+        SimMove cm;
+        if (sim_greedy_full_cover(s, p, power, &cm)) noise_add(c, &n, MV_COVER, 0);
+        noise_add(c, &n, MV_PICKUP, 0);
+        SolMove pb[16];
+        int np = sim_gen_pass(s, p, pb, 16);
+        for (int i = 0; i < np; i++)
+            if (pb[i].n == 1) noise_add(c, &n, MV_PASS, 1ull << pb[i].cards[0]);
+        return n;
+    }
+
+    if (s->good_mask & (1u << p)) return 0;
+    noise_add(c, &n, MV_GOOD, 0);
+    uint64_t tv = s->hand[p] & sim_table_value_mask(s);
+    int cap = sim_hand_count(s, s->defender) - sim_count_uncovered(s);
+    if (cap > MAX_MOVE_CARDS) cap = MAX_MOVE_CARDS;
+    if (!tv || cap <= 0) return n;
+    uint64_t nt = tv & ~trumps, tr = tv & trumps;
+    if (nt) {
+        noise_add(c, &n, MV_ATTACK, noise_lowest(nt, 1, power));
+        noise_add(c, &n, MV_ATTACK, noise_lowest(nt, cap, power));
+        if (cap >= 2 && popcnt64(nt) >= 2) noise_add(c, &n, MV_ATTACK, noise_lowest(nt, 2, power));
+    }
+    if (tr) noise_add(c, &n, MV_ATTACK, noise_lowest(tr, 1, power));
+    noise_add(c, &n, MV_ATTACK, noise_lowest(tv, cap, power));
+    return n;
+}
+
+// The two draws, shared by both rollout paths so they stay on one stream: the
+// gate (one game_random() per decision while noise is on), then, only when it
+// fires and a candidate exists, the uniform pick. Returns the candidate's
+// index in c[], or -1 for "play the policy". Callers check cd_noise_pm first:
+// at 0 this is never reached and nothing is drawn.
+static int sim_noise_draw(const SimState *s, int p, NoiseCand *c) {
+    if (game_random() * 1000.0 >= (double)cd_noise_pm) return -1;
+    int n = sim_noise_cands(s, p, c);
+    if (n <= 0) return -1;
+    int k = (int)(game_random() * n);
+    if (k < 0) k = 0;
+    if (k >= n) k = n - 1;
+    return k;
+}
+
+// Bitboard path: 1 with `out` filled when the noise takes this decision, 0 to
+// play the policy.
+static int sim_noise_move(SimState *s, int p, SimMove *out) {
+    NoiseCand c[NOISE_MAX_CANDS];
+    int k = sim_noise_draw(s, p, c);
+    if (k < 0) return 0;
+    out->type = (SimMoveType)c[k].type;
+    out->n = 0;
+    if (c[k].type == MV_COVER) {
+        if (!sim_greedy_full_cover(s, p, s->power_suit, out)) return 0;   // cannot happen: it was a candidate
+    } else {
+        for (uint64_t m = c[k].mask; m; m &= m - 1) out->cards[out->n++] = (uint8_t)ctz64(m);
+    }
+    cd_noise_fired++;
+    return 1;
+}
+
+int cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves) {
+    if (!cd_noise_pm) return -1;   // off: draw nothing (see cordite_sim.h)
+    SimState s;
+    cd_sim_from_game(&s, g);
+    NoiseCand c[NOISE_MAX_CANDS];
+    int k = sim_noise_draw(&s, p, c);
+    if (k < 0) return -1;
+    int want;
+    switch (c[k].type) {
+        case MV_ATTACK: want = MOVE_ATTACK; break;
+        case MV_COVER:  want = MOVE_COVER;  break;
+        case MV_PASS:   want = MOVE_PASS;   break;
+        case MV_PICKUP: want = MOVE_PICKUP; break;
+        default:        want = MOVE_GOOD;   break;
+    }
+    // A cover is matched by its cards: the lite menu's one cover is the
+    // greedy (calc_cover_moves_greedy, the struct twin of
+    // sim_greedy_full_cover), so its card set is the candidate's.
+    uint64_t mask = c[k].mask;
+    if (c[k].type == MV_COVER) {
+        SimMove cm;
+        mask = 0;
+        if (sim_greedy_full_cover(&s, p, s.power_suit, &cm))
+            for (int i = 0; i < cm.n; i++) mask |= 1ull << cm.cards[i];
+    }
+    for (int i = 0; i < moves->n; i++) {
+        const LegalMove *m = &moves->moves[i];
+        if (m->type != want) continue;
+        uint64_t mm = 0;
+        for (int j = 0; j < m->n_cards; j++) mm |= 1ull << card_id(m->cards[j]);
+        if (mm != mask) continue;
+        cd_noise_fired++;
+        return i;
+    }
+    cd_noise_unmatched++;
+    return -1;
+}
+
+#endif  // CD_ROLLOUT_NOISE
+
+// The noise, then the handwritten policy: what cd_sim_playout and
+// cd_sim_playout_leaf ask at each decision. With the noise compiled out or at
+// 0 this is sim_handwritten_move exactly, with no extra draw.
+static inline int sim_hw_noisy_move(SimState *s, int p, SimMove *out) {
+#ifdef CD_ROLLOUT_NOISE
+    if (cd_noise_pm && sim_noise_move(s, p, out)) return 1;
+#endif
+    return sim_handwritten_move(s, p, out);
+}
+
 // ---------- per-seat-policy playout (octogen) ----------------------------
 // POL_HW seats play the handwritten policy. POL_LOOSE seats play a weak
 // "random-ish" opponent model: random attack leads (no lowest-first), random
@@ -1457,6 +1685,19 @@ static int sim_mcdef_move(SimState *s, int p, SimMove *out) {
     return sim_handwritten_move(s, p, out);
 }
 
+// One seat's rollout decision on the per-seat-policy playouts: the noise first
+// (fusion; nothing is drawn at 0), then the seat's policy pol[p] (NULL = all
+// handwritten). The single place cd_sim_playout_pol and the reply playout's
+// policy steps choose a move, so the noise cannot reach one and miss the other.
+static int sim_seat_move(SimState *s, int p, const uint8_t *pol, SimMove *out) {
+#ifdef CD_ROLLOUT_NOISE
+    if (cd_noise_pm && sim_noise_move(s, p, out)) return 1;
+#endif
+    if (pol && pol[p] == CD_POL_LOOSE) return sim_loose_move(s, p, out);
+    if (pol && pol[p] == CD_POL_MCDEF) return sim_mcdef_move(s, p, out);
+    return sim_handwritten_move(s, p, out);
+}
+
 // Playout where each seat plays its own policy (pol[p] = CD_POL_*), with
 // optional exact leaf endgames (leaf_cards > 0). pol == NULL means all
 // handwritten, matching cd_sim_playout_leaf / cd_sim_playout exactly.
@@ -1502,12 +1743,7 @@ int cd_sim_playout_pol(SimState *s, int my_idx, int max_turns, int early_exit,
         for (int pi = 0; pi < s->num_players; pi++) {
             if (!sim_should_act(s, pi)) continue;
             SimMove m;
-            int got = (pol && pol[pi] == CD_POL_LOOSE)
-                    ? sim_loose_move(s, pi, &m)
-                    : (pol && pol[pi] == CD_POL_MCDEF)
-                    ? sim_mcdef_move(s, pi, &m)
-                    : sim_handwritten_move(s, pi, &m);
-            if (!got) continue;
+            if (!sim_seat_move(s, pi, pol, &m)) continue;
             sim_apply(s, pi, &m);
             acted = 1;
             break;
@@ -1646,12 +1882,7 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
         }
         // My move, or a non-defender opponent decision: one policy step.
         SimMove m;
-        int got = (pol && pol[actor] == CD_POL_LOOSE)
-                ? sim_loose_move(s, actor, &m)
-                : (pol && pol[actor] == CD_POL_MCDEF)
-                ? sim_mcdef_move(s, actor, &m)
-                : sim_handwritten_move(s, actor, &m);
-        if (!got) break;
+        if (!sim_seat_move(s, actor, pol, &m)) break;
         sim_apply(s, actor, &m);
     }
     return cd_sim_playout_pol(s, my_idx, max_turns, 1,
@@ -1709,7 +1940,7 @@ int cd_sim_playout_leaf(SimState *s, int my_idx, int max_turns, int early_exit,
         for (int pi = 0; pi < s->num_players; pi++) {
             if (!sim_should_act(s, pi)) continue;
             SimMove m;
-            if (!sim_handwritten_move(s, pi, &m)) continue;
+            if (!sim_hw_noisy_move(s, pi, &m)) continue;
             sim_apply(s, pi, &m);
             acted = 1;
             break;
@@ -1748,7 +1979,7 @@ int cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit) {
         for (uint32_t m = elig; m; m &= m - 1) {
             int pi = __builtin_ctz(m);
             SimMove mv;
-            if (!sim_handwritten_move(s, pi, &mv)) continue;
+            if (!sim_hw_noisy_move(s, pi, &mv)) continue;
             sim_apply(s, pi, &mv);
             acted = 1;
             break;
