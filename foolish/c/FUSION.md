@@ -1,14 +1,14 @@
 # Fusion: octogen plus two Bot Cup ideas
 
-Fusion is octogen with two changes.
-First, kestrel's rollout noise: in its heuristic rollouts, each seat's decision is, with probability 20%, a uniform pick from a small sensible candidate set instead of the rollout policy's move.
-Second, sapper's pickup inference at about 85%: a seat that picked up is assumed to hold nothing beating those cards in 6 of 7 sampled worlds (`og_void_mod` = 7), where octogen uses 3 of 4 (`og_void_mod` = 4).
+Fusion is octogen plus kestrel's rollout noise: in its heuristic rollouts, each seat's decision is, with probability 20%, a uniform pick from a small sensible candidate set instead of the rollout policy's move.
 Everything else is octogen's: the same belief, sampled worlds, world budgets, root endgame solve, exact leaf, LEAFBOOK, candidate race and trump-keep tax.
-Registered as `fusion` / `fu`, `STRAT_FUSION = 24` (`src/strategy.h`).
+It also carries a second lever for experiments, sapper's firmer pickup inference: a seat that picked up is assumed to hold nothing beating those cards in (m-1) of m sampled worlds (`og_void_mod` = m).
+Fusion's default is octogen's 4 (3 of 4), because sapper's 7 (6 of 7, about 85%) measured flat in the league (see the first measurement below).
+Registered as `fusion` / `fu`, `STRAT_FUSION = 24` (`src/strategy.h`), with its own research-only roster row (below).
 
 Both levers are set by `fusion_strategy_choose` for the length of one decision and put back after it, so an octogen seat on the same thread keeps noise 0 and mixture 4.
 `og_void_mod` is octogen's thread-local, latched from `OG_VOID_MOD` on a flag load, so fusion loads octogen's flags first and then swaps its own value in; otherwise the first decision's own flag load would overwrite it.
-`FUSION_NOISE` (default 200) and `FUSION_VOID_MOD` (default 7) are read by fusion alone, so ablations need no second brain.
+`FUSION_NOISE` (default 200) and `FUSION_VOID_MOD` (default 4, was 7 until the league measurement) are read by fusion alone, so ablations need no second brain.
 
 > Built, tested and mutation-checked on 2026-10-28 (rebased onto main after #445).
 > The design below is unchanged from the first, uncompiled draft except for the void mixture.
@@ -74,14 +74,17 @@ Every attack is capped at the defender's capacity and at `MAX_MOVE_CARDS`, so ev
 
 - `FOOLISH_SEEDED_BOTS_ONLY` (set in `WASM_BOT_CFLAGS`, so in `web.wasm`, `oracle.wasm` and `oracle-mt.wasm`) turns `CD_ROLLOUT_NOISE` off.
   There the noise code is compiled out, the setters are inline no-ops, and `fusion_strategy_choose` is not defined, so anything that named it would fail to link rather than run octogen under fusion's name.
-  `bot_roster.c` and the wasm source lists are untouched; no source list needed fusion added, because fusion lives in `octogen_strategy.c` and every list that has octogen has it.
+  The wasm source lists are untouched; no source list needed fusion added, because fusion lives in `octogen_strategy.c` and every list that has octogen has it, and `bot_roster.c` compiles its fusion case out there (below).
 - The native kernel (`KERNEL_SRC`: the arena tools, the tests, the kernel c_base links, the iOS xcframework) has the noise compiled in and dormant at 0.
-  Fusion is reachable there only through `strategy_choose` / `parse_strategy`, which is the arena dispatch (`cnitro_eval`, `cnitro_elo`, the tests).
-- **No roster row.**
-  The roster (`src/bot_roster.c`) is one table compiled into every module, including the shipped ones, and read across the boundary as `BotRosterTable`; a row there would put fusion in the shipped roster even with seeded and offline both off.
-  The roster also has no city or song field: a seat's city is an i18n string `bot.<key>` in all twenty-five languages.
-  TODO(alex): fusion's city is "TBD" and its song is "TBD" (marked in `src/strategy.h`).
-  When fusion earns a rung, the options are: a row with seeded=0 and offline=0 that the wasm builds mark unlinked (like espresso_prod and gunpowder under `FOOLISH_SEEDED_BOTS_ONLY`), plus the `bot.fusion` strings; or replace octogen's row's brain outright if fusion simply beats it everywhere.
+  Fusion is reachable there through `strategy_choose` / `parse_strategy`, the arena dispatch (`cnitro_eval`, `cnitro_elo`, the tests), and through its roster row (`bot_roster_choose`), which no lobby, seed row or picker offers.
+- **Its own roster row, offered nowhere.**
+  `src/bot_roster.c` has a `fusion` row on `STRAT_FUSION` with octogen's knobs (`OG_TRUMP_KEEP=40`), uses_logs on, seeded off, offline off, tier 11.
+  Seeded off keeps it out of `bot_seed.c` and so out of every web lobby (the lobby lists seeded bot rows); offline off keeps it out of the phone's picker (`fio_strategy_count` is the offline count).
+  The row is in every module's `BotRosterTable`, so the web and the phone can see its key, but nothing offers it.
+  Under `FOOLISH_SEEDED_BOTS_ONLY` it is handled exactly like espresso_prod and gunpowder: its `dispatch` case is compiled out and `bot_roster_linked` says 0, so `bot_roster_choose` on it is -1 there, never octogen under fusion's name.
+  Natively it is a named bot like any other: `bot_roster_choose` runs it with octogen's knobs installed, and the analysis tools can name it by key.
+  The roster has no city or song field: a seat's city is an i18n string `bot.<key>` in all twenty-five languages, required only for seeded keys, so there is no `bot.fusion` string yet.
+  TODO(alex): fusion's city is "TBD" and its song is "TBD" (marked in `src/strategy.h` and on the row); the song has no field anywhere to go in.
 
 ## Ready to run
 
@@ -107,13 +110,14 @@ make tests-wasm-caps                 # must still pass: octogen under the wasm s
 
 The five new tests (`tests/tests.c`, after `test_bot_roster_choose_scopes_knobs`):
 
-- `test_fusion_is_dispatchable_and_named`: id 24, `STRAT_COUNT` 25, the names parse, no roster row, `strategy_choose` returns a legal move.
+- `test_fusion_is_dispatchable_and_named`: id 24, `STRAT_COUNT` 25, the names parse, its own roster row (neither seeded nor offline, octogen's knobs, linked natively), and both `strategy_choose` and `bot_roster_choose` return a legal move and leave no noise or knobs behind.
 - `test_rollout_noise_seam`: on one fixed world, at 0 nothing is drawn and a playout is its stream's; at 1000 the same streams play out differently, every playout ends, and the per-seat-policy playout takes the noise too.
 - `test_octogen_is_fusion_at_zero`: over stretches of 2- and 3-seat games, on both rollout paths, octogen and fusion with `FUSION_NOISE=0` choose the same move and leave both RNG streams in the same state, and neither draws the noise.
 - `test_fusion_rollouts_are_noisy`: fusion at 200 fires on both paths at 12-28% of drawn decisions, every struct-path pick is on the lite menu, octogen beside it draws nothing, and the knob is back at 0 afterwards.
-- `test_fusion_void_mixture`: over 2- and 3-seat game stretches, fusion with the noise off is octogen at `OG_VOID_MOD=7` move for move and stream for stream, octogen right after a fusion call is octogen at 4, and somewhere the two mixtures part.
+- `test_fusion_void_mixture`: over 2- and 3-seat game stretches, fusion at `FUSION_VOID_MOD=7` with the noise off is octogen at `OG_VOID_MOD=7` move for move and stream for stream, octogen right after a fusion call is octogen at 4, and somewhere the two mixtures part.
 
-`test_octogen_is_fusion_at_zero` now sets `FUSION_VOID_MOD=4` beside `FUSION_NOISE=0`.
+`test_octogen_is_fusion_at_zero` sets only `FUSION_NOISE=0`, so it holds the default mixture to octogen's 4.
+`test_bot_roster_choose_scopes_knobs` now runs every linked roster row, not just the offline rungs, so fusion's row must dispatch.
 
 `test_podkidnoy_every_brain` (the `CD_PASS_PROBE` sweep) now also plays fusion, and its id check expects `STRAT_COUNT == 25`.
 
@@ -194,3 +198,6 @@ The score is the octogen seats' average finish (place-1)/(n-1), lower is better;
 
 The noise does the work; the void mixture at 7 is flat everywhere.
 The other brains' deltas are all inside their intervals, so no single brain paid for the gain.
+
+So fusion's default void mixture is now octogen's 4: fusion is octogen plus 20% rollout noise.
+`FUSION_VOID_MOD` stays as the lever for further experiments.

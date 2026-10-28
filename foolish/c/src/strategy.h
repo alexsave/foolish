@@ -41,11 +41,11 @@
 // 23 is retired: it was novichok (the cheating ceiling probe; read real hands).
 // Octogen plus rollout noise (c/FUSION.md): in its heuristic rollouts each
 // seat's decision is, 20% of the time, a uniform pick from a small sensible
-// candidate set instead of the policy move. Research only for now: reachable
-// by id or by name in the native tools, on no roster and in no shipped module.
-// TODO(alex): fusion's roster identity. City: "TBD". Song: "TBD". The roster
-// (bot_roster.c) carries neither field today, and a roster row would put fusion
-// in the shipped roster table, so it has no row until both are decided.
+// candidate set instead of the policy move. Research only for now: its own
+// roster row (bot_roster.c, key "fusion") is neither seeded nor offline, and
+// the shipped bots module does not link it.
+// TODO(alex): fusion's identity. City: "TBD" (a `bot.fusion` i18n string,
+// added once it is seeded). Song: "TBD" (no such field exists anywhere).
 #define STRAT_FUSION            24
 //
 // THE IDS ARE NOT COMPACTED, and a retired one is never handed out again. A

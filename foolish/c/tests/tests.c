@@ -2032,15 +2032,19 @@ static void test_bot_roster_choose_scopes_knobs(void) {
     CHECK(bot_roster_choose(-1, &g, seat, &m) == -1, "unknown roster index is -1");
     CHECK(bot_roster_choose(bot_roster_count(), &g, seat, &m) == -1, "out-of-range index is -1");
 
-    // Every offline rung must actually dispatch — a roster entry pointing at a
-    // brain this build did not link would otherwise fail only at runtime.
-    int all_ok = 1;
-    for (int i = 0; i < bot_roster_offline_count(); i++) {
+    // Every linked row must actually dispatch (the offline rungs and the
+    // research rows alike) - a roster entry pointing at a brain this build did
+    // not link would otherwise fail only at runtime.
+    int all_ok = 1, linked = 0;
+    for (int i = 0; i < bot_roster_count(); i++) {
+        if (!bot_roster_linked(i)) continue;
+        linked++;
         calculate_legal_moves(&g, seat, &m);
-        int r = bot_roster_choose(bot_roster_offline_at(i), &g, seat, &m);
+        int r = bot_roster_choose(i, &g, seat, &m);
         if (r < 0 || r >= m.n) all_ok = 0;
     }
-    CHECK(all_ok, "every offline rung dispatches to a linked brain");
+    CHECK(linked >= bot_roster_offline_count(), "every offline rung is linked natively");
+    CHECK(all_ok, "every linked roster row dispatches to a linked brain");
 }
 
 /* ---- fusion: octogen plus rollout noise (c/FUSION.md) ----------------------
@@ -2060,19 +2064,32 @@ static void fu_small_worlds(int on) {
     og_reload_flags();
 }
 
-// Fusion is a brain with an id and a name, and research only: no roster row.
+// Fusion is a brain with an id, a name and its own roster row, and research
+// only: the row is neither seeded nor offline, so no lobby, picker or seed row
+// offers it, and it carries octogen's knobs. Through the roster it is a named
+// bot like any other: bot_roster_choose runs it to a legal move.
 //
 // Mutations that must turn it red: drop `case STRAT_FUSION` from
-// strategy_choose (the choose is -1); drop the "fusion" line from
-// parse_strategy (the name is -1); add a "fusion" row to bot_roster.c (the
-// roster checks); leave STRAT_COUNT at 24 (the id check).
+// strategy_choose (the arena choose is -1); drop it from bot_roster.c's
+// dispatch (the roster choose is -1); drop the "fusion" line from
+// parse_strategy (the name is -1); drop the row (the row checks); set its
+// seeded or offline flag (the "not offered" check); give it no knobs (the
+// knob check); leave STRAT_COUNT at 24 (the id check).
 static void test_fusion_is_dispatchable_and_named(void) {
     CHECK(STRAT_FUSION == 24 && STRAT_COUNT == 25 && !strategy_retired(STRAT_FUSION),
           "fusion takes the next free id, 24, and STRAT_COUNT moves past it");
     CHECK(parse_strategy("fusion") == STRAT_FUSION && parse_strategy("fu") == STRAT_FUSION,
           "fusion parses by name and by its short alias");
-    CHECK(bot_roster_find("fusion") == -1 && bot_roster_find_by_strat(STRAT_FUSION) == -1,
-          "fusion has no roster row: it is in no shipped roster, lobby or picker");
+    const int ri = bot_roster_find("fusion");
+    const BotRosterEntry *fe = bot_roster_at(ri);
+    CHECK(fe && fe->strat == STRAT_FUSION && bot_roster_find_by_strat(STRAT_FUSION) == ri,
+          "fusion has its own roster row, key \"fusion\" on STRAT_FUSION");
+    CHECK(fe && !fe->seeded && !fe->offline,
+          "fusion's row is neither seeded nor offline: no lobby, picker or seed row offers it");
+    const BotRosterEntry *oe = bot_roster_at(bot_roster_find("octogen"));
+    CHECK(fe && oe && !strcmp(fe->knobs, oe->knobs) && fe->uses_logs == oe->uses_logs,
+          "fusion's row carries octogen's knobs and is a belief bot like it");
+    CHECK(bot_roster_linked(ri), "the native kernel links fusion");
     fu_small_worlds(1);
     Game g;
     make_seeded_game(&g, 3, 7);
@@ -2081,6 +2098,11 @@ static void test_fusion_is_dispatchable_and_named(void) {
     calculate_legal_moves(&g, seat, &m);
     const int idx = strategy_choose(STRAT_FUSION, &g, seat, &m);
     CHECK(idx >= 0 && idx < m.n, "strategy_choose dispatches fusion to a legal move");
+    calculate_legal_moves(&g, seat, &m);
+    const int rdx = bot_roster_choose(ri, &g, seat, &m);
+    CHECK(rdx >= 0 && rdx < m.n, "bot_roster_choose dispatches fusion's row to a legal move");
+    CHECK(cd_sim_noise() == 0 && bot_knob("OG_TRUMP_KEEP") == NULL,
+          "the roster's fusion leaves neither its noise nor its knobs behind");
     fu_small_worlds(0);
 }
 
@@ -2163,8 +2185,8 @@ static void test_rollout_noise_seam(void) {
     CHECK(pol_fired > 0, "the per-seat-policy playout takes the noise too");
 }
 
-// Octogen never draws the noise, and fusion with its noise at 0 and its void
-// mixture at octogen's 4 IS octogen:
+// Octogen never draws the noise, and fusion with its noise at 0 (and its void
+// mixture at its default, octogen's 4) IS octogen:
 // decision for decision over whole stretches of 2- and 3-seat games, down to
 // the state both RNG streams are left in. No existing test pins an octogen
 // decision to a value (FUSION.md says how the run job checks this branch's
@@ -2177,7 +2199,8 @@ static void test_rollout_noise_seam(void) {
 // cd_sim_noise_legal's own `!cd_noise_pm` return (struct path: OG_NO_FASTROLL
 // run below draws); make fusion ignore FUSION_NOISE (fusion at "0" plays 200
 // and its moves or streams part from octogen's); have fusion leave the noise
-// on after its decision (the next octogen call draws).
+// on after its decision (the next octogen call draws); set FUSION_VOID_MOD's
+// default back to 7 (fusion at 0 is then octogen at 7, and the moves part).
 static void test_octogen_is_fusion_at_zero(void) {
     static LegalMoves m;
     fu_small_worlds(1);
@@ -2202,13 +2225,11 @@ static void test_octogen_is_fusion_at_zero(void) {
                     const CdNoiseStats so = cd_sim_noise_stats();
                     game_rng_set(gr);
                     random_strategy_set_seed(sr);
-                    setenv("FUSION_NOISE", "0", 1);
-                    setenv("FUSION_VOID_MOD", "4", 1);   // octogen's mixture too
+                    setenv("FUSION_NOISE", "0", 1);   // the mixture stays at its default
                     cd_sim_noise_stats_reset();
                     cd_sim_solve_reset();
                     const int b = fusion_strategy_choose(&g, pi, &m, NULL);
                     unsetenv("FUSION_NOISE");
-                    unsetenv("FUSION_VOID_MOD");
                     const CdNoiseStats sf = cd_sim_noise_stats();
                     same  &= a == b && gra == game_rng_get() && sra == random_strategy_rng_get();
                     quiet &= so.drawn == 0 && sf.drawn == 0 && cd_sim_noise() == 0;
@@ -2280,7 +2301,8 @@ static void test_fusion_rollouts_are_noisy(void) {
 
 // Fusion's second lever: the void mixture. A seat that picked up is assumed to
 // hold nothing beating those cards in (mod-1)/mod of sampled worlds; octogen
-// uses 4 (75%), fusion 7 (6/7, sapper's 85%). The value is octogen's
+// uses 4 (75%). Fusion defaults to 4 too (7, sapper's 6/7, measured flat), so
+// this test sets the experiment's FUSION_VOID_MOD=7 itself. The value is octogen's
 // thread-local og_void_mod, so fusion must swap its own in for its decision and
 // put octogen's back: an octogen seat on the same thread keeps 4.
 //
@@ -2291,8 +2313,8 @@ static void test_fusion_rollouts_are_noisy(void) {
 // split moves the world sampling, so the streams differ).
 //
 // Mutations that must turn it red: drop the og_void_mod swap in
-// fusion_strategy_choose (fusion is octogen at 4: "fusion at 0 noise is octogen
-// at 7" fails); drop the restore (octogen after fusion runs at 7: the restore
+// fusion_strategy_choose, or make it ignore the FUSION_VOID_MOD knob (fusion
+// is octogen at 4: "fusion at 0 noise is octogen at 7" fails); drop the restore (octogen after fusion runs at 7: the restore
 // check fails); drop the og_load_flags call before the swap (the first
 // fusion call's own flag load overwrites 7 with 4).
 static void test_fusion_void_mixture(void) {
@@ -2317,10 +2339,12 @@ static void test_fusion_void_mixture(void) {
                 // Fusion, noise off, flags cold again (the first-call path).
                 game_rng_set(gr); random_strategy_set_seed(sr);
                 setenv("FUSION_NOISE", "0", 1);
+                setenv("FUSION_VOID_MOD", "7", 1);
                 og_reload_flags();
                 cd_sim_solve_reset();
                 const int f = fusion_strategy_choose(&g, pi, &m, NULL);
                 unsetenv("FUSION_NOISE");
+                unsetenv("FUSION_VOID_MOD");
                 const uint64_t gf = game_rng_get(), sf = random_strategy_rng_get();
                 // Octogen right after fusion, flags NOT reloaded: must be the a4 run.
                 game_rng_set(gr); random_strategy_set_seed(sr);
@@ -2347,7 +2371,7 @@ static void test_fusion_void_mixture(void) {
     fu_small_worlds(0);
     CHECK(decisions > 20, "the void mixture was compared over real game stretches");
     CHECK(parted, "somewhere a pickup made octogen's 4 and fusion's 7 sample different worlds");
-    CHECK(as7, "fusion with the noise off is octogen at OG_VOID_MOD=7, move and streams");
+    CHECK(as7, "fusion at FUSION_VOID_MOD=7 with the noise off is octogen at OG_VOID_MOD=7, move and streams");
     CHECK(restored, "octogen right after a fusion call is octogen at 4: fusion puts the mixture back");
 }
 #endif  // CD_ROLLOUT_NOISE
