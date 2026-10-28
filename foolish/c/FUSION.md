@@ -1,12 +1,17 @@
-# Fusion: octogen plus rollout noise
+# Fusion: octogen plus two Bot Cup ideas
 
-Fusion is octogen with one change: in its heuristic rollouts, each seat's decision is, with probability 20%, a uniform pick from a small sensible candidate set instead of the rollout policy's move.
+Fusion is octogen with two changes.
+First, kestrel's rollout noise: in its heuristic rollouts, each seat's decision is, with probability 20%, a uniform pick from a small sensible candidate set instead of the rollout policy's move.
+Second, sapper's pickup inference at about 85%: a seat that picked up is assumed to hold nothing beating those cards in 6 of 7 sampled worlds (`og_void_mod` = 7), where octogen uses 3 of 4 (`og_void_mod` = 4).
 Everything else is octogen's: the same belief, sampled worlds, world budgets, root endgame solve, exact leaf, LEAFBOOK, candidate race and trump-keep tax.
 Registered as `fusion` / `fu`, `STRAT_FUSION = 24` (`src/strategy.h`).
 
-> **Nothing here has been compiled or run.**
-> The code was written in one job and is measured in a later one.
-> Expect compile errors on the first build, and expect the tests to need their first real run before anything below is a result.
+Both levers are set by `fusion_strategy_choose` for the length of one decision and put back after it, so an octogen seat on the same thread keeps noise 0 and mixture 4.
+`og_void_mod` is octogen's thread-local, latched from `OG_VOID_MOD` on a flag load, so fusion loads octogen's flags first and then swaps its own value in; otherwise the first decision's own flag load would overwrite it.
+`FUSION_NOISE` (default 200) and `FUSION_VOID_MOD` (default 7) are read by fusion alone, so ablations need no second brain.
+
+> Built, tested and mutation-checked on 2026-10-28 (rebased onto main after #445).
+> The design below is unchanged from the first, uncompiled draft except for the void mixture.
 
 ## The idea and where it came from
 
@@ -90,8 +95,7 @@ make build/cnitro_tests build/cnitro_eval build/cnitro_elo
 make OMP=1 build/cnitro_eval build/cnitro_elo   # the parallel arena, for steps 4 and 5 (rebuilds the same targets)
 ```
 
-Expect compile errors on the first try: nothing has been compiled.
-Likely spots: the `SimMoveType` cast and `SolMove` use in `sim_noise_cands`, the `CdNoiseStats` initializers, `og_reload_flags` declared locally in `tests/tests.c`, and unused-function warnings for the four new tests in the `WASM_CAPS_TESTS` build.
+The first build compiled clean with no warnings.
 
 ### 2. Tests
 
@@ -101,12 +105,15 @@ FU_TRACE=1 ./build/cnitro_tests 2>&1 | grep 'fusion noise'   # the measured fire
 make tests-wasm-caps                 # must still pass: octogen under the wasm size limits
 ```
 
-The four new tests (`tests/tests.c`, after `test_bot_roster_choose_scopes_knobs`):
+The five new tests (`tests/tests.c`, after `test_bot_roster_choose_scopes_knobs`):
 
 - `test_fusion_is_dispatchable_and_named`: id 24, `STRAT_COUNT` 25, the names parse, no roster row, `strategy_choose` returns a legal move.
 - `test_rollout_noise_seam`: on one fixed world, at 0 nothing is drawn and a playout is its stream's; at 1000 the same streams play out differently, every playout ends, and the per-seat-policy playout takes the noise too.
 - `test_octogen_is_fusion_at_zero`: over stretches of 2- and 3-seat games, on both rollout paths, octogen and fusion with `FUSION_NOISE=0` choose the same move and leave both RNG streams in the same state, and neither draws the noise.
 - `test_fusion_rollouts_are_noisy`: fusion at 200 fires on both paths at 12-28% of drawn decisions, every struct-path pick is on the lite menu, octogen beside it draws nothing, and the knob is back at 0 afterwards.
+- `test_fusion_void_mixture`: over 2- and 3-seat game stretches, fusion with the noise off is octogen at `OG_VOID_MOD=7` move for move and stream for stream, octogen right after a fusion call is octogen at 4, and somewhere the two mixtures part.
+
+`test_octogen_is_fusion_at_zero` now sets `FUSION_VOID_MOD=4` beside `FUSION_NOISE=0`.
 
 `test_podkidnoy_every_brain` (the `CD_PASS_PROBE` sweep) now also plays fusion, and its id check expects `STRAT_COUNT == 25`.
 
@@ -171,3 +178,19 @@ done
 - **Noise costs worlds' worth of signal.** At a fixed world budget, noisier rollouts mean noisier root estimates; if the sweep favours a dose, check whether it still holds when octogen's own budget is the binding constraint (the oracle at 6x is the probe).
 - **The own-seat share.** Kestrel noised every seat including its own; if the seat-0 noise is what hurts, a variant that exempts the searching seat is one condition in `sim_seat_move`.
 - **Wall clock.** Each fired decision builds a small candidate list, and noisy rollouts run somewhat longer (more pickups); at 20% this should be a few percent, and the paired run's `rate=` line shows it.
+
+## First measurement (2026-10-28): the Bot Cup league
+
+The serverless league (`cnitro_league_sim --accounts=7`, the gauntlet branch's 11 brains x 7 accounts, random table size 2-8) on seeds 100001..103000, with the 7 octogen accounts swapped for a variant and still labelled octogen, so every arm has the same tables, seats and deals.
+Four arms ran concurrently, 2 workers each, so machine load hit every arm alike (the Bot Cup bots are time-budgeted, so a game is not reproducible run to run; the pairing is by table and deal).
+The score is the octogen seats' average finish (place-1)/(n-1), lower is better; the delta is paired per seed against plain octogen, with a 95% interval.
+
+| Table size | Games | octogen | fusion (noise + void 7) | noise only | void 7 only |
+| --- | --- | --- | --- | --- | --- |
+| all | 1115 | .382 | .355 (-.027 +/- .023) | .355 (-.027 +/- .023) | .376 (-.006 +/- .020) |
+| 2p | 71 | .254 | .085 (-.169 +/- .104) | .155 (-.099 +/- .125) | .239 (-.014 +/- .108) |
+| 3-5p | 420 | .383 | .350 (-.033 +/- .042) | .357 (-.026 +/- .041) | .382 (-.001 +/- .033) |
+| 6-8p | 624 | .396 | .389 (-.007 +/- .027) | .376 (-.020 +/- .027) | .387 (-.009 +/- .025) |
+
+The noise does the work; the void mixture at 7 is flat everywhere.
+The other brains' deltas are all inside their intervals, so no single brain paid for the gain.
