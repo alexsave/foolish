@@ -3326,8 +3326,12 @@ static void test_replay_step_board_is_the_board_that_seat_decided_on(void) {
     static unsigned char board[RS_BOARD_MAX], trailer[RS_BOARD_MAX];
     static unsigned char index[4096];
 
-    int boards = 0, spectator_boards = 0;
-    for (int np = 2; np <= 4; np++) {
+    int boards = 0, spectator_boards = 0, large_deck_boards = 0;
+    // 2-4 seats play the 36-card deck; 6 plays the 52-card one, whose 2 of
+    // spades is the card the masked placeholder used to be.
+    static const int seats[] = { 2, 3, 4, 6 };
+    for (int si = 0; si < (int)(sizeof seats / sizeof seats[0]); si++) {
+        const int np = seats[si];
         Game g;
         unsigned char seed[FOOLISH_SEED_LEN];
         if (!rs_play_seeded(&g, np, 610 + np, seed)) { CHECK(0, "seeded game plays out"); continue; }
@@ -3348,6 +3352,7 @@ static void test_replay_step_board_is_the_board_that_seat_decided_on(void) {
             if (len <= 0) continue;
             boards++;
             spectator_boards += viewer == VIEW_SPECTATOR;
+            large_deck_boards += np >= 6;
 
             // IT IS THE BOARD THE PREVIOUS STEP LEFT, masked for this seat -
             // byte for byte the trailer of that step's frame. An off-by-one
@@ -3366,9 +3371,10 @@ static void test_replay_step_board_is_the_board_that_seat_decided_on(void) {
             int mine_real = 0, mine_hidden = 0, theirs_real = 0;
             for (int s = 0; s < b.num_players; s++)
                 for (int h = 0; h < b.players[s].hand_count; h++) {
-                    // state_get(masked) writes the {0,1} placeholder for a back,
-                    // and no dealt card has value 1 in any deck this game uses.
-                    const int hidden = b.players[s].hand[h].value == 1;
+                    // state_get(masked) writes card.h's CARD_HIDDEN placeholder
+                    // for a back, which is no card of any deck - the 52-card
+                    // deck's 2 of spades included.
+                    const int hidden = card_is_hidden(b.players[s].hand[h]);
                     if (s == viewer) { mine_real += !hidden; mine_hidden += hidden; }
                     else theirs_real += !hidden;
                 }
@@ -3379,6 +3385,206 @@ static void test_replay_step_board_is_the_board_that_seat_decided_on(void) {
     }
     CHECK(boards > 100, "enough recorded decisions had their board rebuilt");
     CHECK(spectator_boards > 0, "and a round end, which nobody in particular decided");
+    CHECK(large_deck_boards > 20, "and enough of them on the 52-card deck");
+}
+
+// A dealt table of `np` seats (the opening deal, nothing played), from `seed`.
+static void mp_deal(Game *g, int np, int seed) {
+    unsigned char bytes[FOOLISH_SEED_LEN];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) bytes[i] = (unsigned char)(i * 29 + seed * 11 + np);
+    game_set_seed((uint32_t)(seed + 1));
+    game_set_deal_seed_bytes(bytes, FOOLISH_SEED_LEN);
+    memset(g, 0, sizeof(*g));
+    g->num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) g->players[i].status = PLAYER_STATUS_READY;
+    start_game(g);
+}
+
+// THE MASKED PLACEHOLDER IS NO CARD. A masked import (state_get masked=1) puts
+// a placeholder where every card the viewer cannot see sits. At 6-8 seats the
+// game plays the 52-card deck, whose lowest card is the 2 of spades {0,1} - so
+// a placeholder of {0,1} was a real card there, and a viewer's own 2 of spades
+// read exactly like a card it could not see. The placeholder is read off the
+// decoder here (an opponent's hidden card), not named, so this asks what the
+// kernel does rather than what it says it does.
+static void test_masked_placeholder_is_no_card_at_six_seats(void) {
+    static Game g, m;
+    static unsigned char buf[24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS];
+    static unsigned char again[sizeof buf];
+    const Card two_of_spades = { .suit = SUIT_SPADES, .value = MIN_VALUE_LARGE };
+    int tables = 0, own_real = 1, hidden_same = 1, outside = 1, loud = 1, rewritten_hidden = 1, validated = 1;
+    for (int np = 6; np <= MAX_PLAYERS; np++) {
+        for (int seed = 0; seed < 400; seed++) {
+            mp_deal(&g, np, 4100 + np * 1000 + seed);
+            int viewer = -1;
+            for (int s = 0; s < np && viewer < 0; s++)
+                for (int j = 0; j < g.players[s].hand_count; j++)
+                    if (card_eq(g.players[s].hand[j], two_of_spades)) viewer = s;
+            if (viewer < 0) continue;   // the 2 of spades is in the stock: deal again
+            tables++;
+            const int n = state_put(&g, viewer, buf);
+            memset(&m, 0, sizeof m);
+            if (state_import(&m, buf, n, 1) != GAME_VALID) { validated = 0; continue; }
+            const Card placeholder = m.players[(viewer + 1) % np].hand[0];
+            // It is no card of this game's deck, and misuse fails loudly: its
+            // dense id is not one of the 52.
+            outside &= !card_in_range(placeholder, min_value_for(np), ACE_VALUE);
+            loud &= card_to_id(placeholder) < 0;
+            // The viewer's own 2 of spades is a real card, never the placeholder.
+            int held = 0;
+            for (int j = 0; j < m.players[viewer].hand_count; j++) {
+                const Card c = m.players[viewer].hand[j];
+                if (card_eq(c, two_of_spades)) held = 1;
+                if (card_eq(c, placeholder)) own_real = 0;
+            }
+            own_real &= held;
+            // Every card it cannot see is that one placeholder.
+            for (int s = 0; s < np; s++) {
+                if (s == viewer) continue;
+                for (int j = 0; j < m.players[s].hand_count; j++) hidden_same &= card_eq(m.players[s].hand[j], placeholder);
+            }
+            for (int i = 0; i < m.deck_count; i++) hidden_same &= card_eq(m.deck[i], placeholder);
+            // Written back whole, the masked game still says "hidden" where it
+            // never knew the card - not the 2 of spades' byte.
+            // The stock follows the flags byte, the flip byte, the u32 good
+            // mask, the good-timestamp byte and the u16 count (view.c state_put).
+            const int k = state_put(&m, VIEW_UNMASKED, again);
+            const int at = STATE_FLAGS_AT + 1 + 1 + 4 + 1 + 2;
+            rewritten_hidden &= k == n && (again[at - 2] | again[at - 1] << 8) == m.deck_count;
+            for (int i = 0; i < m.deck_count; i++) rewritten_hidden &= again[at + i] == WIRE_CARD_HIDDEN;
+        }
+    }
+    CHECK(tables >= 20, "masked placeholder: enough 6-8 seat deals put the 2 of spades in a hand");
+    CHECK(validated, "masked placeholder: every viewer's masked board imports");
+    CHECK(outside, "masked placeholder: the placeholder is no card of the 52-card deck");
+    CHECK(loud, "masked placeholder: the placeholder has no card id");
+    CHECK(own_real, "masked placeholder: the viewer's real 2 of spades is not the placeholder");
+    CHECK(hidden_same, "masked placeholder: every card the viewer cannot see is the placeholder");
+    CHECK(rewritten_hidden, "masked placeholder: a masked game written whole writes its stock as hidden");
+}
+
+// A MASKED BOARD'S REAL CARDS ARE JUDGED. The deck and the hands of a masked
+// board are placeholders where the viewer cannot see, and real cards where it
+// can (its own hand, cards the client patched in face up). The placeholder
+// passes; a real card must be a card of THIS game's deck and appear once; and
+// the board cannot hide more cards than the deck has left to hide.
+static void test_masked_validate_judges_the_real_cards(void) {
+    static Game g, m, x;
+    static unsigned char buf[24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS];
+    mp_deal(&g, 4, 77);
+    const int n = state_put(&g, 0, buf);
+    CHECK(state_import(&m, buf, n, 1) == GAME_VALID, "masked validate: a 4-seat viewer's board imports");
+
+    // The 2 of spades is a real card - of the 52-card deck, not this 36-card one.
+    memcpy(&x, &m, sizeof x);
+    x.players[0].hand[0] = (Card){ .suit = SUIT_SPADES, .value = MIN_VALUE_LARGE };
+    CHECK(game_validate(&x, GAME_VALIDATE_MASKED) == GAME_INVALID_CARD,
+          "masked validate: a 2 in a 4-seat viewer's hand is refused");
+    memcpy(&x, &m, sizeof x);
+    x.players[1].hand[0] = (Card){ .suit = SUIT_HEARTS, .value = MIN_VALUE_LARGE };
+    CHECK(game_validate(&x, GAME_VALIDATE_MASKED) == GAME_INVALID_CARD,
+          "masked validate: a 2 among a 4-seat opponent's hidden cards is refused");
+
+    // One card in two places, both of them where the viewer can see.
+    memcpy(&x, &m, sizeof x);
+    x.players[0].hand[1] = x.players[0].hand[0];
+    CHECK(game_validate(&x, GAME_VALIDATE_MASKED) == GAME_INVALID_DUPLICATE_CARD,
+          "masked validate: the viewer holding one card twice is refused");
+    memcpy(&x, &m, sizeof x);
+    x.players[0].hand[0] = x.flipped;
+    CHECK(game_validate(&x, GAME_VALIDATE_MASKED) == GAME_INVALID_DUPLICATE_CARD,
+          "masked validate: the viewer holding the face-up trump is refused");
+
+    // A byte that is neither a card nor the hidden card is refused where the
+    // viewer cannot see, too: the exact decode's not-a-card is the hidden card,
+    // so it must be refused by the byte, not by the card it decodes to.
+    {
+        static unsigned char bad[sizeof buf];
+        memcpy(bad, buf, (size_t)n);
+        const int stock_at = STATE_FLAGS_AT + 1 + 1 + 4 + 1 + 2;
+        CHECK(bad[stock_at] == WIRE_CARD_HIDDEN, "masked validate: the stock's first byte is the hidden card");
+        bad[stock_at] = 0x40;
+        memcpy(&x, &m, sizeof x);
+        CHECK(state_import(&x, bad, n, 1) == GAME_INVALID_CARD,
+              "masked validate: a stock byte that is no card is refused");
+    }
+
+    // A dealt board accounts for every card of the deck, so it sits exactly on
+    // the bound; one more hidden card than the deck has left is refused. (The
+    // sampling bots deal a world's hidden cards from what is left, and a board
+    // that hides more than that leaves a slot they cannot fill.)
+    CHECK(m.deck_count > 0, "masked validate: the dealt board has a stock");
+    memcpy(&x, &m, sizeof x);
+    x.deck[x.deck_count] = m.deck[0];
+    x.deck_count++;
+    CHECK(game_validate(&x, GAME_VALIDATE_MASKED) == GAME_INVALID_COUNT,
+          "masked validate: a board hiding one card more than the deck holds is refused");
+    memcpy(&x, &m, sizeof x);
+    x.players[2].hand[x.players[2].hand_count] = m.deck[0];
+    x.players[2].hand_count++;
+    CHECK(game_validate(&x, GAME_VALIDATE_MASKED) == GAME_INVALID_COUNT,
+          "masked validate: so is one more hidden card in an opponent's hand");
+}
+
+// A LOG THE BOARD CONTRADICTS IS NOT BELIEVED. octogen deals each sampled world
+// from its pool of unseen cards, and a slot the pool cannot fill keeps the
+// board's own card - on a masked board (the Oracle's) the placeholder, which
+// has no card id for the rollouts. Here the log says the opponent attacked with
+// three of its cards and they were discarded, while the board still hides all
+// six of its cards: the pool is three short. octogen must then decide on what
+// the board shows, exactly as it does with the memory taken away (a log of the
+// same record count that says nothing), seed for seed.
+static void test_octogen_does_not_believe_a_log_the_board_contradicts(void) {
+    static Game g, mem, blind;
+    static LegalMoves lm;
+    static unsigned char buf[24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS];
+    const int og = bot_roster_find("octogen");
+    CHECK(og >= 0, "octogen is on the roster");
+    if (og < 0) return;
+    int compared = 0, same = 1;
+    for (int seed = 0; seed < 16 && compared < 10; seed++) {
+        mp_deal(&g, 2, 9100 + seed);
+        const int viewer = g.first_attacker, opp = 1 - viewer;
+        // Three of the opponent's cards that are not trumps.
+        Card shown[3];
+        int k = 0;
+        for (int j = 0; j < g.players[opp].hand_count && k < 3; j++)
+            if (g.players[opp].hand[j].suit != g.power_suit) shown[k++] = g.players[opp].hand[j];
+        if (k < 3) continue;
+        const int n = state_put(&g, viewer, buf);
+        memset(&mem, 0, sizeof mem);
+        if (state_import(&mem, buf, n, 1) != GAME_VALID) { CHECK(0, "the viewer's board imports"); return; }
+        memcpy(&blind, &mem, sizeof blind);
+        mem.num_logs = blind.num_logs = 2;
+        memset(mem.logs, 0, 2 * sizeof mem.logs[0]);
+        memset(blind.logs, 0, 2 * sizeof blind.logs[0]);
+        for (int i = 0; i < 2; i++) {
+            blind.logs[i].log_type = LOG_GAME_START;
+            blind.logs[i].player_idx = -1;
+            blind.logs[i].defender_index = -1;
+        }
+        mem.logs[0].log_type = LOG_ATTACK;
+        mem.logs[0].player_idx = (int8_t)opp;
+        mem.logs[0].defender_index = -1;
+        mem.logs[0].num_pairs = 3;
+        for (int i = 0; i < 3; i++) { mem.logs[0].pairs[i].primary = shown[i]; mem.logs[0].pairs[i].target = CARD_NONE; }
+        mem.logs[1].log_type = LOG_DISCARD;
+        mem.logs[1].player_idx = -1;
+        mem.logs[1].defender_index = -1;
+        calculate_legal_moves(&mem, viewer, &lm);
+        if (lm.n < 2) continue;
+        random_strategy_set_seed(0x5eed0000u + (uint32_t)seed);
+        const int a = bot_roster_choose(og, &mem, viewer, &lm);
+        random_strategy_set_seed(0x5eed0000u + (uint32_t)seed);
+        const int b = bot_roster_choose(og, &blind, viewer, &lm);
+        if (a != b) {
+            if (same) fprintf(stderr, "  seed %d: with the contradicted log octogen chose %d, without it %d\n", seed, a, b);
+            same = 0;
+        }
+        compared++;
+    }
+    CHECK(compared >= 8, "octogen short pool: enough opening positions were compared");
+    CHECK(same, "octogen short pool: a log the board contradicts changes no decision");
 }
 
 // The door must refuse a step that is not a decision it can vouch for, rather
@@ -20607,6 +20813,9 @@ int main(void) {
     test_replay_steps_replays_a_deal_with_no_trump();
     test_replay_step_index_refuses_a_small_buffer();
     test_replay_step_board_is_the_board_that_seat_decided_on();
+    test_masked_placeholder_is_no_card_at_six_seats();
+    test_masked_validate_judges_the_real_cards();
+    test_octogen_does_not_believe_a_log_the_board_contradicts();
     test_replay_step_board_refuses_what_is_not_a_decision();
     test_replay_step_memory_is_the_public_log_before_the_move();
     test_replay_step_memory_refuses_what_it_cannot_pair();

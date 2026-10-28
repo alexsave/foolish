@@ -437,6 +437,33 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
         }
     }
 
+    // Every hidden slot a world deals must get a pool card: og_sample_world
+    // leaves a slot it cannot fill holding the board's own card, and on a
+    // masked board (the Oracle's) that is card.h's CARD_HIDDEN, which has no
+    // card id for the rollouts' bitboards. A pool shorter than the slots means
+    // the log located cards the board does not agree with, so drop what the log
+    // located and keep what the board shows; game_validate's masked bound
+    // (hidden cards never outnumber what the deck has left) makes that pool
+    // cover every slot. A consistent log never gets here: one test per decision.
+    {
+        int slots = g->deck_count;
+        for (int p = 0; p < g->num_players; p++)
+            if (p != bot_idx) slots += g->players[p].hand_count - B->b.pinned_n[p];
+        if (B->b.n < slots) {
+            int board_kn = bot->hand_count + g->num_battles + (g->has_flipped ? 1 : 0);
+            for (int i = 0; i < g->num_battles; i++)
+                board_kn += !card_is_none(g->table_battles[i].defense);
+            for (int p = 0; p < g->num_players; p++) B->b.pinned_n[p] = 0;
+            B->b.n = 0;
+            for (int suit = 0; suit < 4; suit++) {
+                for (int v = start_v; v <= ACE_VALUE; v++) {
+                    Card c = { (int8_t)suit, (int8_t)v };
+                    if (!bot_set_contains(known, board_kn, c)) B->b.pool[B->b.n++] = c;
+                }
+            }
+        }
+    }
+
     // Feasibility: if constraints leave fewer allowed pool cards than the
     // player's unknown count, relax floors first, then voids.
     for (int p = 0; p < g->num_players; p++) {

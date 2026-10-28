@@ -96,9 +96,6 @@ static int pick_move_awire(const unsigned char *packed, int len, unsigned char *
 // that masked EVERYTHING (the failure mode a leak test cannot see) still fails.
 static Game g_smoke_board;
 
-// state_get's masked decode turns WIRE_CARD_HIDDEN into the {0,1} placeholder.
-static int smoke_is_masked_card(Card c) { return c.suit == 0 && c.value == 1; }
-
 // What the evwire walk saw, so the SAME frames can be stepped through the entry
 // points Swift uses and the two readings diffed (smoke_push_frames).
 #define SMOKE_MAX_EVENTS 2048
@@ -126,7 +123,7 @@ static void smoke_ev_sink(void *ctx, int index, const EvwRead *ev) {
         const Player *pl = &g_smoke_board.players[p];
         if (p == c->viewer) {
             for (int i = 0; i < pl->hand_count; i++)
-                if (!smoke_is_masked_card(pl->hand[i])) c->real_seen = 1;
+                if (!card_is_hidden(pl->hand[i])) c->real_seen = 1;
             continue;
         }
         // A hand of two or more identical cards is not a hand - it is the
@@ -134,7 +131,7 @@ static void smoke_ev_sink(void *ctx, int index, const EvwRead *ev) {
         // state_get, and a real one can never look like it.
         int masked = 1;
         for (int i = 0; i < pl->hand_count; i++)
-            if (!smoke_is_masked_card(pl->hand[i])) masked = 0;
+            if (!card_is_hidden(pl->hand[i])) masked = 0;
         if (!masked) {
             printf("FAIL packed events: seat %d's hand came back real to viewer %d\n",
                    p, c->viewer);

@@ -33,7 +33,7 @@ static int state_put_rules(const Game *g, int viewer, int rules, unsigned char *
     // keeps the stale card in g->flipped (gated by has_flipped) — writing it
     // would make byte-equal states serialize differently depending on
     // whether they came from a marshal round-trip (which normalizes to the
-    // {0,0} placeholder -> WIRE_CARD_HIDDEN) or stayed kernel-resident.
+    // {0,0} no-flip value -> WIRE_CARD_HIDDEN) or stayed kernel-resident.
     // Decoders ignore this byte when has_flipped is 0.
     *q++ = g->has_flipped ? wire_from_card(g->flipped) : (unsigned char)WIRE_CARD_HIDDEN;
     le_put_u32(q, g->good_players_mask); q += 4;
@@ -102,18 +102,21 @@ uint32_t board_check(const Game *g, int viewer) {
 }
 
 // A state card byte, decoded EXACTLY: 0..51 is that card, and every other byte
-// becomes the {-1,-1} not-a-card, which game_validate refuses. (It used to
-// clamp onto the ace of diamonds, which turned a corrupt byte into a real card
-// the state could then be played on.)
+// becomes card.h's CARD_HIDDEN, which game_validate refuses on a whole board.
+// (It used to clamp onto the ace of diamonds, which turned a corrupt byte into
+// a real card the state could then be played on.)
 static Card card_from_wire_exact(unsigned char b) {
-    if (b > 51) { Card c; c.suit = -1; c.value = -1; return c; }
+    if (b > 51) return CARD_HIDDEN;
     return card_of_id(b);
 }
 
-// Masked decode: WIRE_CARD_HIDDEN becomes the {0,1} placeholder the browser
-// marshal always used for redacted cards; everything else decodes exactly.
-static Card card_from_wire_masked(unsigned char b) {
-    if (b == WIRE_CARD_HIDDEN) { Card c; c.suit = 0; c.value = 1; return c; }
+// Masked decode of a stock or hand byte: WIRE_CARD_HIDDEN becomes CARD_HIDDEN
+// (view.h says why that card), 0..51 is that card. Any other byte sets *bad:
+// the exact decode's not-a-card is CARD_HIDDEN too, which a masked board
+// accepts, so a corrupt byte is refused here, by the byte, instead.
+static Card card_from_wire_masked(unsigned char b, int *bad) {
+    if (b == WIRE_CARD_HIDDEN) return CARD_HIDDEN;
+    if (b > 51) *bad = 1;
     return card_from_wire_exact(b);
 }
 
@@ -127,7 +130,7 @@ int state_get(Game *g, const unsigned char *p, int len, int masked) {
     // original bug wearing a parameter.
     if (state_measure(p, len) != len) return GAME_INVALID_COUNT;
     const unsigned char *q = p;
-    int clamped = 0;
+    int clamped = 0, bad = 0;
     // No full-struct memset: the Game is ~200 KB (mostly log capacity) and
     // every read in the kernel is bounded by the counts set below. Every
     // count is also clamped to its array capacity - the same set state_measure
@@ -164,7 +167,7 @@ int state_get(Game *g, const unsigned char *p, int len, int masked) {
     CLAMP(g->deck_count, MAX_DECK);
     for (int i = 0; i < g->deck_count; i++) {
         unsigned char b = *q++;
-        g->deck[i] = masked ? card_from_wire_masked(b) : card_from_wire_exact(b);
+        g->deck[i] = masked ? card_from_wire_masked(b, &bad) : card_from_wire_exact(b);
     }
     // Read as a byte, not an int8: MAX_BATTLES is 64 in wasm, so 128..255 must
     // clamp high rather than wrap negative.
@@ -187,7 +190,7 @@ int state_get(Game *g, const unsigned char *p, int len, int masked) {
         CLAMP(pl->hand_count, MAX_HAND_SIZE);
         for (int j = 0; j < pl->hand_count; j++) {
             unsigned char b = *q++;
-            pl->hand[j] = masked ? card_from_wire_masked(b) : card_from_wire_exact(b);
+            pl->hand[j] = masked ? card_from_wire_masked(b, &bad) : card_from_wire_exact(b);
         }
     }
     g->num_eliminated = (int8_t)*q++;
@@ -200,7 +203,7 @@ int state_get(Game *g, const unsigned char *p, int len, int masked) {
     g->log_cap = 0;
     g->log_virt = 0;
     g->log_room = 0;
-    return clamped ? GAME_INVALID_COUNT : GAME_VALID;
+    return clamped ? GAME_INVALID_COUNT : bad ? GAME_INVALID_CARD : GAME_VALID;
 }
 
 void state_canonical(Game *g) {

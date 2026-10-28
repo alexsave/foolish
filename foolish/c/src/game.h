@@ -474,7 +474,7 @@ extern _Thread_local int engine_last_reject;
 // renumber. c/tests/tests.c test_table_load_refuses_a_board_it_could_not_have_made
 // pins one case per family at both doors.
 #define GAME_VALID                     0
-#define GAME_INVALID_COUNT            (-1)  // a count on the wire exceeded its capacity
+#define GAME_INVALID_COUNT            (-1)  // a count on the wire exceeded its capacity, or a masked board hides more cards than its deck has left
 #define GAME_INVALID_STATUS           (-2)  // Game.status is not a GAME_STATUS_*
 #define GAME_INVALID_NUM_PLAYERS      (-3)  // too few seats for a dealt game
 #define GAME_INVALID_PLAYER_STATUS    (-4)  // a Player.status is not a PLAYER_STATUS_*
@@ -489,8 +489,9 @@ extern _Thread_local int engine_last_reject;
 #define GAME_INVALID_RULES            (-13) // Game.rules names a rule this kernel does not know (GAME_RULES_KNOWN)
 
 // game_validate flag: `g` came from a MASKED view (view.c state_get masked=1),
-// so the deck and the hands hold placeholders rather than real cards. Their
-// identities are then not checked; everything face-up still is.
+// so the deck and the hands may hold card.h's CARD_HIDDEN placeholder where the
+// viewer cannot see. A placeholder passes and is counted; every real card is
+// still checked, wherever it sits.
 #define GAME_VALIDATE_MASKED 1
 
 int game_validate(const Game *g, int flags);

@@ -1022,7 +1022,7 @@ int anim_stale_optimistic_on_table(const Card *opt_cards, int n_opt,
 // and anything else is clamped onto the deck. The suit needs no ceiling - its
 // field cannot exceed 3 (card.h pins that) - so only its floor is checked.
 static Card ask_card(Card c) {
-    if (c.suit == -1 && c.value == -1) return c;
+    if (card_is_hidden(c)) return c;
     Card r;
     r.suit = (int8_t)(c.suit < 0 ? 0 : c.suit);
     r.value = (int8_t)(c.value < 1 ? 1 : c.value > ACE_VALUE ? ACE_VALUE : c.value);
@@ -1571,7 +1571,7 @@ int anim_hand_laid_out_masked(const unsigned char *cards, int n_cards, uint64_t 
 // A hand slot in the byte alphabet the rule above speaks (the header's table).
 static unsigned char ask_hand_slot(Card c) {
     if (card_is_none(c)) return ANIM_TABLE_UNKNOWN;
-    if (c.suit == -1 && c.value == -1) return ANIM_TABLE_NONE;
+    if (card_is_hidden(c)) return ANIM_TABLE_NONE;
     return (unsigned char)card_to_id(ask_card(c));
 }
 

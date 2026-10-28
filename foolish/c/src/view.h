@@ -50,10 +50,20 @@ int state_put(const Game *g, int viewer, unsigned char *out);
 // Counts still clamp to their array capacity behind that, belt and braces, and
 // a clamp is reported as GAME_INVALID_COUNT; a card byte that is not a card
 // decodes to the {-1,-1} not-a-card.
-// masked=1 additionally decodes WIRE_CARD_HIDDEN deck and hand cards to the
-// {0,1} placeholder - the same placeholder the browser marshal always used for
-// redacted cards, so a client importing a masked view gets a kernel state
-// byte-identical to one marshaled from the host's own PersonalGame.
+// masked=1 additionally decodes WIRE_CARD_HIDDEN deck and hand cards to
+// card.h's CARD_HIDDEN, the {-1,-1} hidden card, and refuses any other byte
+// there that is not a card (GAME_INVALID_CARD).
+//
+// WHY THAT CARD. A masked import needs a placeholder that is never a real
+// card. It was {0,1}, which at 6-8 seats (the 52-card deck) is the real 2 of
+// spades, so a viewer's own 2 of spades read like a card it could not see.
+// {-1,-1} is the kernel's one existing hidden-card convention - the wire's
+// WIRE_CARD_HIDDEN already decodes to it in log pairs and event backs - and it
+// is no card of any deck: card_in_range is false, card_to_id is negative, and
+// state_put writes it back as WIRE_CARD_HIDDEN. It is not CARD_NONE {-2,-2}
+// (an uncovered battle's defense), and it never reaches a battle: the table
+// decodes exactly. {0,0} was the other candidate (the stale flip's value);
+// it would have been a second "hidden" next to {-1,-1} for no gain.
 int state_get(Game *g, const unsigned char *p, int len, int masked);
 
 // THE BLOB'S CANONICAL BOARD: `g` brought to what state_get gives back from its own
