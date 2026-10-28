@@ -977,6 +977,10 @@ int be_league_bot_seats(const int *rows, int n, int human_row) {
 
 bool be_league_may_seat(const char *key, int key_len, int seated, int per_bot) {
     if (key_len == (int)strlen(BE_HUMAN_KEY) && memcmp(key, BE_HUMAN_KEY, (size_t)key_len) == 0) return false;
+    // A Bot Cup contest bot keeps state across its calls in statics (kestrel remembers the face-up
+    // trump per seat), so it sits at one table at a time: two tables would share that memory.
+    for (int k = 0; k < BE_CUP_BOTS; k++)
+        if (key_len == (int)strlen(BE_CUP_KEYS[k]) && memcmp(key, BE_CUP_KEYS[k], (size_t)key_len) == 0) return seated < 1;
     return seated < per_bot;
 }
 

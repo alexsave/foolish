@@ -55,7 +55,8 @@ typedef struct {
 #define BE_HUMAN_KEY "human"
 
 // Whether the league (not the tournament) may seat this row at one more table, `per_bot` the most
-// tables a bot sits at at once: never a human's row.
+// tables a bot sits at at once: never a human's row, and a Bot Cup contest bot (cup.h BE_CUP_KEYS)
+// at one table at a time.
 bool be_league_may_seat(const char *key, int key_len, int seated, int per_bot);
 
 // How many of a table's `n` seats (`rows`, rows of the bot list) are bots: every seat but the human's
