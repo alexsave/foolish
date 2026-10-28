@@ -383,6 +383,7 @@ struct cb_journal {
     int64_t         armed_ms;      // (ov_mu)
     bool            rearm_wanted;  // (ov_mu) ov_apply asks write_batch to rearm the flush thread
     atomic_long     flusher_wakes;
+    atomic_long     flush_failures;
     // a backup attached (the backup hooks below): no segment at or after backup_mark is deleted
     bool            pinned;
     bool            restored;      // the database is a restored copy (store.h CB_STORE_RESTORED_SUFFIX)
@@ -1608,6 +1609,7 @@ static int flush_txn(cb_journal *j, bool all, int64_t pass_ms, bool writer_held,
         }
     } else {
         *more = false;
+        atomic_fetch_add(&j->flush_failures, 1);
         CB_ERROR(MOD, "flush failed (%s): the moves stay in the journal and the next flush retries", cb_strerror(rc));
     }
     snapshot_free(&sn);
@@ -1945,8 +1947,8 @@ static int j_game_commit(cb_store *s, const cb_game_commit *c) {
     const bool plain = c->moves && c->n_moves >= 1 && c->n_moves <= BOT_DRIVE_MAX_ACTIONS;
     // EVERY COMMIT THROUGH THE JOURNAL: a plain move as its moves, any other (a deal, a lobby
     // edit, an end, a rated one too) whole (a full record). A rated end's changes ride its record:
-    // THE RATINGS' ONE OWNER (jrating) takes them at once, and the game is due at once, so the
-    // tables' readers (the leaderboard, a profile) see them one flush later.
+    // THE RATINGS' ONE OWNER (jrating) takes them at once, and the game is due at once; the
+    // tables' readers (the leaderboard, a profile) write it first (THE RATINGS READ RULE).
     if (!plain && (!row->state || !row->roster)) return around(s, row->id, c, NULL, 0);
     // The fence the tables would apply: the game's acknowledged version is the expected one,
     // read in this epoch (an exclusive section after it refuses the record: write_batch). A game
@@ -2200,6 +2202,36 @@ static int j_games_get_views(cb_store *s, const char *const *ids, int n, cb_game
     return cb_rows_sql.games_get_views(s, ids, n, view_swap, &v);
 }
 
+// THE RATINGS READ RULE: a served read of the ratings table (the leaderboard, a player's own
+// rating; the whole list is an import's, which settles first) first writes every acknowledged
+// rated end into the tables, so a client that was told a game's end reads the ratings that end
+// made (before, the read raced the flush the end kicked, and a player who opened the board or
+// the history at once could see the old rating). A rated end is due at
+// once (game_full), so this pass writes it if the flush thread has not yet; with none waiting it
+// reads no lock but the overlay's. A pass that fails is logged there (flush_txn) and the read
+// goes on, answering what the tables hold, as it did before the rule. On the network loop's
+// thread it answers CB_E_WOULD_BLOCK having read nothing (a read of the tables waits on the disk).
+static int ratings_settle(cb_journal *j) {
+    if (on_loop(j)) return CB_E_WOULD_BLOCK;
+    bool waiting = false;
+    pthread_mutex_lock(&j->ov_mu);
+    for (int b = 0; b < OV_BUCKETS && !waiting; b++)
+        for (const jgame *g = j->buckets[b]; g && !waiting; g = g->next) waiting = g->n_rated > 0;
+    pthread_mutex_unlock(&j->ov_mu);
+    if (waiting) (void)flush_pass(j, false);
+    return CB_OK;
+}
+
+static int j_ratings_top(cb_store *s, int limit, cb_rating_fn fn, void *ud) {
+    const int rc = ratings_settle(cb_journal_of(s));
+    return rc != CB_OK ? rc : cb_rows_sql.ratings_top(s, limit, fn, ud);
+}
+
+static int j_ratings_for(cb_store *s, const char *const *ids, int n, int32_t *out) {
+    const int rc = ratings_settle(cb_journal_of(s));
+    return rc != CB_OK ? rc : cb_rows_sql.ratings_for(s, ids, n, out);
+}
+
 const cb_rows_ops *cb_journal_rows(void) { return &J_OPS; }
 
 // ---- the seats' ratings (THE RATINGS' ONE OWNER) ------------------------------------------------
@@ -2226,7 +2258,7 @@ int cb_journal_seat_ratings(cb_store *s, const char *const *ids, int n, int64_t 
         int64_t mc[CB_MAX_SEATS];
         int m = 0;
         for (int i = 0; i < n; i++) if (miss[i]) mids[m++] = ids[i];
-        int rc = cb_rows_of(s)->ratings_for(s, mids, m, mr);
+        int rc = cb_rows_sql.ratings_for(s, mids, m, mr);   // a miss holds no rated end: no settle
         for (int i = 0; rc == CB_OK && i < m; i++) {
             cb_user_row u;
             const int ur = CB_STORE_CALL(s, user_get, mids[i], &u);
@@ -2631,6 +2663,8 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
         J_OPS.is_member = j_is_member;
         J_OPS.game_members = j_game_members;
         J_OPS.rating_set_username = j_rating_set_username;
+        J_OPS.ratings_top = j_ratings_top;
+        J_OPS.ratings_for = j_ratings_for;
     }
 
     char marker[1200];
@@ -2753,4 +2787,5 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     out->txn_moves_max = j->txn_moves_max;
     out->txn_hold_us_max = j->txn_hold_us_max;
     out->flusher_wakes = j->flusher_wakes;
+    out->flush_failures = j->flush_failures;
 }
