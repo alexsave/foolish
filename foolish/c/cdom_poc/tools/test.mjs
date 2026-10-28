@@ -195,8 +195,8 @@ try {
     await b.evaluate(`indexedDB.deleteDatabase('cdom'), 1`);
     await reload();
     assert.equal(await b.evaluate(`window.app.then((x) => x.app_game_store(2))`), 0, 'nothing stored: the seeded deal');
-    // Seed 3 plays the moves below to 6h, 6d and 6s attacking me: the reload's first paint is the
-    // golden's board, where 6h is covered, and the stored game it then adopts has 6h uncovered.
+    // Seed 3 plays the moves below to 6h, 6d and 6s attacking me, 6h uncovered where the golden's
+    // board covers it (drawn over that board, the kept game once kept the golden's 8h on 6h).
     await b.evaluate(`window.app.then((x) => x.app_debug_reseed(3))`);
     // three moves of mine and the bot's answers, then a card left selected (not kept, as in React)
     await b.click('[data-hand-plane] [data-card="0-5"]'); await b.click('[data-pill="Attack"]');

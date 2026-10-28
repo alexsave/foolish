@@ -36,7 +36,6 @@ MUTANTS = [
   ('no (You) on my row', 'src/table_app.c', '  if (seat == ME) { OPEN("span"); CLASS("result-card__you");', '  if (0) { OPEN("span"); CLASS("result-card__you");', 'tools/test.mjs', 'React'),
   ('the game not kept after a bot step', 'src/table_app.c', '  bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);\n  committed();', '  bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);\n  game_keep_canonical(&G);', 'tools/test.mjs', 'reload'),
   ('the stored game ignored', 'src/table_app.c', '  game_adopted = len > 0 && game_keep_load(&G, p, len);', '  game_adopted = 0;', 'tools/test.mjs', 'reload'),
-  ('a battle never uncovered', 'src/table_app.c', '  if (want == it->data) return;\n  int aid', '  if (want == it->data || !want) return;\n  int aid', 'tools/test.mjs', 'reload'),
   ('a failed save ignored', 'src/table_app.c', '  save_failed = !ok;\n', '  save_failed = 0;\n', 'tools/test.mjs', 'not silent'),
   ('a failed save not tried again', 'src/table_app.c', '  if (token == TIMER_SAVE_RETRY) { save_retry_pending = 0; game_save(); }', '', 'tools/test.mjs', 'not silent'),
   ('http body not sent', 'vendor/cdom.js', 'const body = bodyLen ? copyBytes(bodyPtr, bodyLen) : undefined;', 'const body = undefined;', 'tests/net_test.mjs'),

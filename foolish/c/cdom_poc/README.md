@@ -10,9 +10,10 @@ The look is the React components' inline styles, copied value for value, over `s
 The board is the kernel's, called directly as C: a `Game`, read for the viewer with `client_adopt_board` into a `TableView` and `client_view_rules`, the pills and the meaning of a click from `client_play`, the move written by `client_move_wire` and applied by `awire_apply`, and the bot's answer from `bot_drive`.
 The first board is the one `e2e/ui_dom_snapshots.test.ts` `twoSeatBout()` composes for the golden `bout_2p_attacker.html` (trump Kc, my 6s 7h Qd Ad against 9h Th Jh 6c, 6h/8h and 6d on the table).
 "Play again" deals a fresh seeded game.
+A reload lands in the same game: the kernel's state blob is kept in cdom's store after every move and adopted as the table starts (Reload, below).
 
 Playing: click a card to select it (red border) and the kernel's pills appear; click a pill, the table (attack or transfer) or a battle (cover) to play.
-The bot answers 650 ms later, one visible move per step, and the game runs to its end screen.
+The bot answers when the kernel says (`bot_wait_ms`: 3000 ms after the last move shown with a human in the game), one visible move per step, and the game runs to its end screen.
 Every region keeps what it last drew and emits only the difference: the hand, the battles, the pills, the stock and discard layers and each mini hand are cdom keyed lists; the counts, the role marks and the hand positions are patched in place.
 Nothing is rebuilt on a move: the test tags the nodes before a move and finds the same nodes after it.
 
@@ -22,7 +23,8 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 
 ## Files
 
-- `src/table_app.c`: the table (1,325 lines; 251 of them the texture pipeline, from making to the store).
+- `src/table_app.c`: the table (1,626 lines, the texture pipeline and the test build's window on the kernel among them).
+- `src/game_keep.c`, `src/game_keep.h`: the game as a host keeps it: canonical after every operation, its blob written and adopted (48 lines); linked by the table and by `tests/blob_test.c`.
 - `src/ui.h`: element shorthands over cdom's `CD_LIT`, and the style builder whose result crosses as a one-off string (36 lines).
 - `src/kernel_glue.c`: the one bot brain (20 lines); the allocator is cdom's.
 - `src/textures.c`, `src/textures.h`: the wool, the wood and the fern, ports of their TS generators, the wool kept in a crop and the wood in rectangles (385 lines).
@@ -33,14 +35,18 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
   The table links `cdom_store.c` (the textures across loads) but not `mini.c` (the kernel's libc brings memcmp and strlen) nor `cdom_net.c` (it has no network yet); the network test links the network.
 - `tests/net_test.c`, `tests/net_test.mjs`: cdom's network imports against a local echo server.
 - `tests/tex_test.c`: the texture generators alone, for `tools/texparity.mjs`.
-- `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks), `mutate.py`.
+- `tests/blob_test.c`: native; 300 games round-tripped through the state blob at every step (110 lines).
+- `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks), `consist.mjs` (the DOM against the kernel and React's rules at every click and bot step), `mutate.py`.
+- `out/table_debug.wasm`: the test build, the same table with `TABLE_DEBUG` (`?debug` on the page loads it): the kernel's state as text (`app_debug_state`), the bot's steps held for the test (`app_debug_hold`, `app_debug_release`) or made 30 ms (`app_debug_fast`, the clock put back, the kernel's rule untouched), and the kernel's random streams seeded (`app_debug_reseed`).
 - `shots/`: the screenshots.
 
 ## Running it
 
 ```
-./build.sh                      # out/table.wasm, out/index.html, out/net_test.wasm, out/tex_test.wasm
-node tools/test.mjs             # the table test
+./build.sh                      # out/table.wasm, out/table_debug.wasm, out/index.html, out/net_test.wasm, out/tex_test.wasm, out/blob_test
+out/blob_test                   # the state blob against the games this table plays (native)
+node tools/test.mjs             # the table test (ONLY=<regex> runs the checks it matches)
+node tools/consist.mjs 3 1      # 3 games by seeded random clicks, the DOM against the kernel at every step
 node tests/net_test.mjs         # the network imports
 node tools/strings.mjs          # the string table over three games
 node tools/texparity.mjs        # the C textures against the TS generators (writes out/tex_ts.js)
@@ -55,7 +61,8 @@ Run `npm install` once in `tools/` for terser; without it the shim is inlined un
 `tools/texparity.mjs` and `tools/textime.mjs` bundle the app's TS with esbuild from the main checkout's node_modules (`/Users/alex/Dev/foolish/foolish/node_modules`).
 `build.sh` needs homebrew LLVM (`WASM_CC` overrides it), and uses `wasm-opt` and `brotli` when present.
 The tools serve `foolish/` on port 8720 and drive Chrome on 8729.
-`?notex` on the page leaves the textures out (the golden comparisons use it).
+`?notex` on the page leaves the textures out (the golden comparisons use it); `?debug` loads the test build.
+A load adopts the game the last load kept: the tools that need the golden's board load it through `openTable` (tools/cdp.mjs), which forgets the kept game first.
 To play by hand, serve `foolish/` (for example `node -e "import('./c/cdom_poc/tools/cdp.mjs').then((m) => m.serve())"` from `foolish/`) and open http://127.0.0.1:8720/c/cdom_poc/out/index.html.
 
 ## Against the React golden
@@ -74,6 +81,73 @@ With textures, `shots/react_golden_tex.png` is the golden with the app's TS text
 Against `shots/cdom_tex_midgame.png` 6,643 of 786,432 pixels differ, every one of them on a card back: 4,025 on the deck, 1,520 and 1,098 on the two mini hands (the fern, Textures); the wool and the wood are the same pixels.
 At 390x844 the count is 21,032: the 13,952 above (the hand, laid out for jsdom's width in the golden), the card backs, nothing on the wool.
 `shots/fern_backs.png` and `shots/fern_backs_390x844.png` put a card back of each side by side, 4x (React's left).
+
+## Consistency
+
+The owner played the port and found no consistent state.
+Reproduced first, by `tools/consist.mjs` and `tests/blob_test.c` at 6e0646936 (before any fix) and by a scripted load, wait, throw-in and reload against that build and this one.
+`tools/consist.mjs` plays games by seeded random real clicks (cards picked and put down, pills, a battle, the empty table), holds the bot's steps and releases them one by one, and after every click and every bot step compares the DOM with the kernel's state (worked out afresh, from the game round-tripped through its blob, by a ClientTable of its own) and with a model of React's rules for what the kernel does not hold (spec: GameContext's selection, ActionButtons' pressed pills and rearm, DragContext's drop, WinScreen).
+It checks the hand (cards, order, each card's box against the kernel's `hand_layout` slot, the red borders), the pills, the battles, the stock badge and layers, the trump card or icon, the discard pile, each seat's mark and count, whose step it is, and the end screen.
+
+What it and the other repros found, in order, and what each was:
+1. **The game the port kept was not the game its blob holds** (a real bug; `tests/blob_test.c`).
+   Round-tripping the port's game through `state_blob_put`/`state_blob_load` at every step of seeded games and driving both copies on with the same seeds: seed 1, step 11, a transfer by the defender, and the two boards differ (`players[1].awaiting_attack` 1 in the resident game, 0 in the loaded one; then other moves).
+   The defender's raw awaiting flag outlives its turn as defender, the blob writes it as `game_seat_awaiting`, and the passer, an attacker again, carried the dead flag into play.
+   The kernel's answer is view.h `state_canonical`: a host that keeps a board between operations keeps it canonical (table.c `table_resident` does).
+   Fixed: `game_keep_canonical` after every operation (a move, a bot step, a deal, a load); 300 games, 15,418 steps then agree board for board and drive for drive.
+   (The same test first showed two bot seats taking turns in another order after a load: bot_drive.c `drive_seed` counts the log, which the blob drops; canonical drops it too, and the port has one bot seat.)
+2. **The bot never moved on the first board** (a real bug).
+   The golden's board has the bot defending against 6d; at load `data-turn` said "human" and four seconds later the table was unchanged (3 cards, Anna 4): the bot was scheduled only after a click.
+   Fixed: the bot's timer runs exactly while the kernel says it may act (`bot_check` after every change, from the start).
+3. **The bot answered 650 ms after a move, the port's own number** (React parity; measured 643 ms after a throw-in).
+   Fixed: the kernel's `bot_wait_ms` (The bot's pace, below): 3,020 ms measured after the same throw-in.
+4. **The end screen was the port's own** (React parity): "You are the fool", "You won" or "A draw" and rows "🥇Anna", "🃏Me", where WinScreen.tsx says "done - Two of us" (its title), orders the rows by the kernel's `anim_finish_rows` (everyone out, then the fool), gives the fool's card to the last place (so a draw's second out too) and writes "(You)" after my name.
+   Fixed: the same title, the kernel's rows, RankIcon's rule and the "(You)" span.
+   The button stays "Play again" (the app's "Continue to lobby" goes to a lobby this port does not have).
+5. **A reload went back to the seeded deal** (missing; the app re-reads its server's row): before the reload my hand 1-6 3-11 3-13 0-13 0-12 2-6 against an empty table and Anna's 8, after it the golden's 0-5 1-6 3-11 3-13.
+   Fixed: Reload, below.
+6. **A battle's cover was only ever added** (a real bug, found by the reload check).
+   With the kept game drawn over the seeded deal, the golden's 6h/8h battle stayed covered in the DOM where the kept game had 6h uncovered (the list key is the attack card, and the patch assumed a battle is only covered).
+   Fixed twice over, for different reasons: a battle's patch now follows its cover both ways (its item holds the cover's card), and the board is no longer drawn before the store answers (Reload).
+   No path in play replaces a covered battle with an uncovered one under the same attack card now, so the both-ways patch has no check that can reach it; it is kept as the list's honest rule.
+7. **The selection rules differed in code but showed nothing** (React parity, invisible locally).
+   The port cleared the selection after any move it applied (Pickup and Good included) and only when applied; React clears it when Attack, Pass or Cover is pressed (refused or not), when a drop is a move, and never on Pickup or Good.
+   The port now does exactly that, but nothing a player sees changed: a selection never offers Pickup or Good (one move, one button), and an offered Attack, Pass or Cover is never refused by a local engine.
+   Neither the bot's moves nor a card turning illegal clears it, as in React; the pills follow `client_play` (the consistency check holds both).
+8. **No pressed pills** (React parity, invisible locally).
+   Implemented as ActionButtons does (hidden until the kernel's pill falls and rises again, folded with the empty selection's pills; unpressed on a refusal), but over 3 games and 72 presses (seed 1) no pill was still offered after its move: a press only shows while a move is on its way to a server.
+   Its mutant would be equivalent and is not in the list.
+Two early reports of the harness were its own: a click on a card's centre that landed on a neighbour still sliding (0.1 s) or lying over it, now clicked where the card shows once every card's transition is over.
+
+## Reload
+
+The React app keeps no game in the browser (spec_state.md section 1): online it re-reads the server's committed row and adopts it through `client_adopt_envelope`.
+The port's equivalent is the kernel's own durable form: after every operation the game is made canonical and `state_blob_put` (format v5, 122 bytes for a fresh deal) is kept in cdom's store under `foolish-game-v1`, the store the textures use (one store path).
+As the table starts it asks the store (`openStore` opens IndexedDB while the wasm loads) and draws the board when the store answers: the kept game when `state_blob_load` reads it as a two-seat game playing or over, else the seeded deal.
+The seats' kinds are not in the blob (the kernel's `table_load` takes them from its roster): seat 0 is the human and seat 1 the handwritten bot again.
+The blob carries `has_flipped` and, with it, the trump; an unflipped trump comes back as {0,0}, which `client_adopt_board` hides behind `has_flipped` and `state_canonical` writes on the resident game too, so `tests/blob_test.c` finds the same TableView and ViewRules for both seats either way.
+The blob's clock is written zero: it would be this page's time, and a load shows the board anew, so the bot waits its full pace after a reload.
+The handwritten bot keeps nothing outside the Game (its random draws come from the kernel's stream, which a load starts anew): the blob is the whole game.
+Not kept, as React keeps neither: the selection and the pressed pills; the hand is in the kernel's order (the port has no local order).
+A failed write is not silent: the store answers each put (`cd_on_store_put`), a failure shows "Not saved: a reload would lose this game" at the top of the table until a later put is kept, and the save is tried again 2 s later (every move saves anyway).
+
+When to draw: measured two ways, paired and interleaved (`tools/timing.mjs`, BLANK=1, 3 rounds of 7 fresh loads per arm per throttle, `?notex&debug`, nothing kept), first contentful paint median and 25th-75th percentile:
+| | x1 | x4 |
+| --- | ---: | ---: |
+| A: the seeded deal drawn at once, a kept game adopted over it | 136.6 (116.7-163.7) to 165.7 | 330.0 to 353.5 |
+| B: the board drawn when the store answers | 69.5 to 73.0 (66.6-114.2) | 189.4 to 200.4 |
+(the range is the three rounds' medians; the store answered at 54 to 58 ms at x1 and 185 to 194 at x4 in B, before the first paint, and cdom.start resolved at 24 to 28 ms in B and 70 to 95 in A.)
+Load: averages 29.9 to 41.9 on 8 cores around the runs (another agent's `cnitro_eval` and `cnitro_tests` at 44 to 70% of a core each), above the core count, so the absolute times are upper bounds; the arms ran alternately under the same load and B was faster in every round.
+B is the table: the frame (the wool, the title, the back button) paints, the board joins it when the store answers, at most `CD_STORE_DEADLINE_MS` (1,500 ms) when IndexedDB hangs, and a click or a resize before then does nothing.
+Why A cost so much more than the render itself was not taken further: B does not move first paint (69.5 to 73.0 against this pass's start, 73 in the texture table below).
+
+## The bot's pace
+
+The kernel owns it: `bot_wait_ms(g, human_mask, shown_ms, settles_ms, now)` (bot_drive.h), the server's rule, says how long the bot waits before it acts on the board in front of it: until the last operation shown has finished playing, then `BOT_PACE_MS_WITH_HUMANS` (3000 ms) with a human in the game.
+The port keeps the table's BoardClock in its own page time: `shown_ms` is when the last operation (mine, the bot's, a deal, a load) was shown, and `settles_ms` when it finishes playing, which with no animations is the same instant (`settles_ms()` in table_app.c is where pass 3 adds the animation stream's end, `anim_stream_ms`).
+The bot's timer runs exactly while the kernel says it may act (`bot_drive_eligible_mask`), and asks the kernel again when it fires: a move of mine in between moves the bot's step back, as the server's loop does (measured: the bot moved 3,018 to 3,024 ms after my throw-in, 4,088 to 4,128 ms after the load).
+A timer cannot be cancelled: each schedule has a generation, and an older one's timer does nothing.
+`bot_cycle_delay_ms` (the iMessage loop's fixed sleep after a cycle) is not used: it counts from the bot's own move and ignores a human's, which bot_drive.h names as the reason the server moved to `bot_wait_ms`.
 
 ## Textures
 
@@ -186,12 +260,12 @@ Every computed string (a style, a data-card, an index) now crosses as a one-off 
 Live node ids at each end screen: 58, 64, 60 (the board on screen differs; nothing accumulates).
 
 Sizes:
-- `table.wasm` 71,391 bytes raw, 29,539 brotli (q11), 32,872 gzip (-9); before the texture pass 71,725, 29,589 and 32,956, before the first port-fixes pass 54,992, 22,122 and 24,870.
+- `table.wasm` 75,303 bytes raw, 31,092 brotli (q11), 34,723 gzip (-9) after the consistency pass (the blob's writer and reader, `state_canonical`, `bot_wait_ms`, `anim_finish_rows`, the end screen's rows, the save's notice); before it 71,391, 29,539 and 32,872, before the texture pass 71,725, 29,589 and 32,956, before the first port-fixes pass 54,992, 22,122 and 24,870.
   musl's 2/pi table went with jsmath.c; the crop, the rectangles, the store and the keys came in.
   For scale, the React app's kernel alone, web.wasm, is 67,311 raw and 31,219 gzip (c/Makefile), before any JavaScript, and its textures are in its JavaScript.
 - The shim: cdom's own, unchanged, written to be read and inlined minified: 6,678 bytes minified, 2,632 brotli (6,553 and 2,615 in its golfed form before); cdom's PERF_LOG.md, SHIM_LINES, says what each import is for.
   Before the first port-fixes pass the port carried 172 lines of its own patched shim.
-- The C the table is written in: 1,381 lines (`table_app.c` 1,325, of which the texture pipeline 251, `ui.h` 36, `kernel_glue.c` 20), plus the generators (385), trig.c (141) and crtrig.c (139).
+- The C the table is written in: 1,710 lines (`table_app.c` 1,626, with the texture pipeline and the test build's window on the kernel, `game_keep.c` and `.h` 48, `ui.h` 36, `kernel_glue.c` 20), plus the generators (385), trig.c (141) and crtrig.c (139).
 
 ## Against the TSX it replaces
 
@@ -202,22 +276,27 @@ For what both do, the C is about as long as the TSX, most of it the same inline 
 
 ## The tests
 
-`tools/test.mjs` (headless Chrome, real mouse events):
-- the first paint is the golden's DOM, but for the listed differences;
+`tools/test.mjs` (headless Chrome, real mouse events; the test build, its bot held or fast where a check says so):
+- the first paint is the golden's DOM, but for the listed differences (and `data-turn="bot"`: the bot may act on that board);
 - the seeded deal reads back: the hand, the battles, a badge of 21 over 20 stock layers, the marks, no pills;
 - a resize re-lays the hand at the new width through `hand_layout` (the resize arrives through cdom's event path, `cd_listen_window`);
 - a click selects a card and the kernel's pills follow (7h offers nothing, 6s offers Attack), and a second click deselects;
-- Attack plays 6s, the bot answers with a legal move, the surviving hand cards, battles and seats are the same DOM nodes, and Anna's count stays her mini hand's last child;
+- Attack plays 6s and spends the selection, the bot answers with a legal move, the surviving hand cards, battles and seats are the same DOM nodes, and Anna's count stays her mini hand's last child;
 - the textures land after the first paint: with the store emptied, none is set when the table first shows, then all four and the black back are, a card back, a button and the wool show a `url(blob:...)`, all were made on this load, and the wool's image is the app's 3840x2160;
 - the next load in the same profile sets all four from the store and makes none (no generator ran);
-- a game played out by clicks (`tools/play.mjs`, textures on) reaches the end screen, and Play again deals six new cards;
+- the bot waits as the kernel says: 3000 ms with a human in the game (`app_bot_wait`), and a throw-in of mine a second after the load puts its step 3000 ms after the throw-in (between 2,900 and 4,500 ms), not after the load;
+- the consistency check (`tools/consist.mjs`, seed 1, 3 games, textures on): no disagreement at any click or bot step;
+- a reload lands in the same game: seed 3's line (my 6s, the bot's answers, my moves) to 6h, 6d and 6s attacking me, the DOM the kernel's, a card selected, a reload: the stored game adopted and the DOM the same but for the selection; then played to its end, a reload shows the end screen, Play again, and a reload shows the new deal;
+- a save that fails is not silent: with IndexedDB refusing the game's key, a move shows the notice; the store taking it again, the retry keeps the game, the notice goes, and a reload adopts it;
+- a game played out by clicks (`tools/play.mjs`, textures on) reaches the end screen ("done - Two of us"), and Play again deals six new cards;
 - after every click of that game and of more games, until every pill has shown, every wood surface on the page (the back button, each pill, the results panel, Play again) lies inside the rectangles its picture was worked out in.
 
+`tests/blob_test.c` (native, ASan and UBSan): 300 seeded games with seat 1 the bot and seat 0 the same brain driven alone, the game canonical after every operation as the table keeps it; at every step the blob is written and adopted by `game_keep_load` into a zeroed Game, and the board (`state_put` unmasked, byte for byte), both seats' TableView and ViewRules, and the next drive from the same seeds all agree.
 `tests/net_test.mjs`: a wasm module sends 8 binary bytes over a WebSocket and gets them echoed, then POSTs them and gets them back reversed (cdom's network, with no cd_flush anywhere).
 `tools/strings.mjs`: from game 2 to game 3 the string table may grow only by what a game can show for the first time late (an end title, a pill, a medal: at most 10 strings and 200 bytes); it had been "may not grow", which failed whenever game 3 was the first to show such a literal (seen once in this pass, 180 to 181).
 `tools/texparity.mjs`: the PRNG exact; the wood's cos exactly Chrome's and trig.c's sin, cos and tan within 1 ulp; the wool (whole and the page's crop), the wood (floats, the WebGL picture, and six rectangles with the base colour around them) and the fern's points exact; the multisampled fern within 3% of the WebGL picture; and, measured but not judged, the page-size fern against the app's picture shrunk.
 
-Mutation check (`tools/mutate.py`), each of 24 mutants caught by the check written for it:
+Mutation check (`tools/mutate.py`), each of 36 mutants caught by the check written for it (a mutant of this pass runs the check it names, `ONLY`; the source's copy is kept outside the checkout):
 - a card face's radius 5px to 4px: the golden check names the first differing tag;
 - the bot never chooses a move: the bot-answer check times out on `data-turn`;
 - the hand rebuilt on every render: "the three cards left in my hand are the nodes that were there";
@@ -233,6 +312,15 @@ Mutation check (`tools/mutate.py`), each of 24 mutants caught by the check writt
 - the store ignored: "every texture from the store, no generator run" (the warm load made all four);
 - the wool not placed in the 3840x2160 image: "the wool image is the app's size" (1952x1104);
 - the WebSocket bytes flipped in the shim: "ws failed"; the HTTP body not sent: "http wrong".
+- the game not canonical between operations: `out/blob_test` ("seed 1 step 11 after the next drive: the board differs");
+- a drop that is no move spends the selection: the consistency check ("selection held x152 ... port (none) React 1-6");
+- the bot not scheduled at the start: the golden check (`data-turn="human"`) and the pace check;
+- the bot's wait 650 ms from the clock: "the kernel's wait with a human in the game" (650 against 3000); the timer stepping without asking again: "the bot's step 3000 ms after my move, not after the load: 1876 ms";
+- the end rows reversed, and no "(You)": the consistency check ("end rows");
+- the game not kept after a bot step, and the kept game ignored: the reload check ("the DOM after the reload is the DOM before it", "the stored game adopted");
+- a failed put not answered, and not tried again: the save check (no notice; the notice never goes).
+Not in the list, being equivalent here: Pickup and Good spending the selection (a selection never offers either), a pressed pill shown (no press outlives its move locally), and a battle's cover patched one way only (no path in play uncovers a battle under the same attack card since the board waits for the store).
+Run at load averages 45.9 to 89.7 on 8 cores (the bot league), every mutant caught; the pace check's bounds (2,900 to 4,500 ms) held.
 
 ## WHAT THE APP NEEDED FROM CDOM
 
@@ -305,6 +393,10 @@ Items 1 to 16 were folded into cdom on branch port-fixes (`/Users/alex/Dev/cdom-
 - **A one-off string must be used in the very next op.**
   `face_open` had to stop taking a style argument (the template slot writes in between would have sent it early); cdom traps on a stale one-off, which is how it showed.
 - **The table grew**: `table_app.c` is 1,325 lines, 251 of them the texture pipeline (making, the crop and rectangles, the store, the keys); in the first port-fixes pass it went from 1,015 to 1,117 with per-property patching (a hand card remembers its box and writes only what moved), which keeps the string table flat and made the clicks faster.
+- **A host keeping a board must keep it canonical** (consistency pass): the kernel says so in view.h `state_canonical`, but nothing stops a host that applies moves to a resident Game from skipping it, and the board then drifts from its own row (Consistency, item 1).
+  A kernel entry that applies a move and canonicalises in one call would make the rule impossible to forget.
+- **Whether a put was kept** (consistency pass): the saved game needs the answer the textures can ignore; cdom's store now answers every put (`cd_on_store_put`, vendored by the texture pass), and the table shows a notice and retries on a failure.
+- **First paint and the store** (consistency pass): drawing the board before the store answered and the kept game over it cost first paint 66 ms at x1 (Reload); the board now waits for the answer, bounded by the store's deadline.
 - **Open for live play (not now)**:
   - fetch has no request headers (no Authorization: Bearer, so c_base /v1 is unreachable) and no response headers;
   - the sockets array never frees ids;
