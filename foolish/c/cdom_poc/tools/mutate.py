@@ -26,7 +26,7 @@ MUTANTS = [
   ('wool not placed', 'src/table_app.c', 'cd_encode_image_in(tex.wool.px, WOOL_W, WOOL_H, 3, TEX_W, TEX_H, WOOL_X, WOOL_Y,', 'cd_encode_image_in(tex.wool.px, WOOL_W, WOOL_H, 3, WOOL_W, WOOL_H, 0, 0,', 'tools/test.mjs'),
   ('fern samples', 'src/textures.c', '{{0.375, 0.875}, {0.875, 0.625}, {0.125, 0.375}, {0.625, 0.125}}', '{{0.375, 0.125}, {0.875, 0.375}, {0.125, 0.625}, {0.625, 0.875}}', 'tools/texparity.mjs'),
   ('cos not rounded', 'src/crtrig.c', '  return fast_two_sum(p.hi, p.lo + (a.hi * b.lo + a.lo * b.hi));', '  return fast_two_sum(p.hi, p.lo + a.hi * b.lo);', 'tools/texparity.mjs'),
-  ('ws message bytes shifted', 'vendor/cdom.js', 'new Uint8Array(memory.buffer, ptr, bytes.length).set(bytes);', 'new Uint8Array(memory.buffer, ptr, bytes.length).set(bytes.map((v) => v ^ 1));', 'tests/net_test.mjs'),
+  ('ws message bytes shifted', 'vendor/cdom.js', 'bytes(ptr, incoming.length).set(incoming);', 'bytes(ptr, incoming.length).set(incoming.map((v) => v ^ 1));', 'tests/net_test.mjs'),
   ('not canonical between operations', 'src/game_keep.c', 'void game_keep_canonical(Game *g) { state_canonical(g); }', 'void game_keep_canonical(Game *g) { (void)g; }', 'out/blob_test'),
   ('Pickup and Good spend the selection', 'src/table_app.c', '    if (bit == PLAY_PILL_ATTACK || bit == PLAY_PILL_PASS) nsel = 0;', '    nsel = 0;', 'tools/test.mjs', 'React'),
   ('a drop that is no move spends the selection', 'src/table_app.c', '  if (!nsel || ask_play(target, &p) != CLIENT_OK || p.move_type < 0) return;\n  nsel = 0;', '  if (!nsel || ask_play(target, &p) != CLIENT_OK) return;\n  nsel = 0;\n  if (p.move_type < 0) return;', 'tools/test.mjs', 'React'),
@@ -38,7 +38,7 @@ MUTANTS = [
   ('the game not kept after a bot step', 'src/table_app.c', '  bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);\n  committed();', '  bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);\n  game_keep_canonical(&G);', 'tools/test.mjs', 'reload'),
   ('the stored game ignored', 'src/table_app.c', '  if (len <= 0 || game_touched || !game_keep_load(&G, p, len)) return;', '  if (1) return;', 'tools/test.mjs', 'reload'),
   ('a battle never uncovered', 'src/table_app.c', '  if (want == it->data) return;\n  int aid', '  if (want == it->data || !want) return;\n  int aid', 'tools/test.mjs', 'reload'),
-  ('http body not sent', 'vendor/cdom.js', 'const body = bodyLen ? new Uint8Array(memory.buffer, bodyPtr, bodyLen).slice() : undefined;', 'const body = undefined;', 'tests/net_test.mjs'),
+  ('http body not sent', 'vendor/cdom.js', 'const body = bodyLen ? copyBytes(bodyPtr, bodyLen) : undefined;', 'const body = undefined;', 'tests/net_test.mjs'),
 ]
 only = sys.argv[1:] 
 for name, f, old, new, test, *only in MUTANTS:

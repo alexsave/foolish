@@ -1431,7 +1431,7 @@ void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len) {
   int k = (int)token;
   tex_state[k] = TEX_LANDED;
   tex_land(k, p, len);
-  cd_store_put(tex.key[k], tex.klen[k], p, len);
+  cd_store_put((uint32_t)k, tex.key[k], tex.klen[k], p, len); /* a cache: a failed put is not answered here */
   tex_making = 0;
   tex_make_next();
 }
@@ -1586,7 +1586,7 @@ void cd_main(void) {
   CLOSE();
   CLOSE(); /* container */
 
-  cd_listen_window(CD_EV_RESIZE);
+
   game_asked = cd_now();
   cd_store_get(STORE_GAME, GAME_KEY, sizeof GAME_KEY - 1, CD_STORE_DEADLINE_MS);
   game_keep_canonical(&G);

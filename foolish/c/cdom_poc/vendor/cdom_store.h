@@ -6,12 +6,16 @@
 #define CDOM_STORE_H
 #include <stdint.h>
 
-/* Keep len bytes at p (read during the call) under key; nothing answers, and a failure is silent. */
-void cd_store_put(const char *key, uint32_t klen, const void *p, uint32_t len);
+/* Keep len bytes at p (read during the call) under key; the answer is cd_on_store_put(token, ok),
+ * ok 1 when they are kept and 0 when the put failed (a quota, a closed database): an app that keeps
+ * something it must not lose (a saved game) checks it; one that keeps a cache may ignore it. */
+void cd_store_put(uint32_t token, const char *key, uint32_t klen, const void *p, uint32_t len);
 /* Ask for the bytes under key; the answer is cd_on_store(token, p, len), p valid until it returns,
  * or len -1 for a miss, an error, or no answer within deadline_ms (indexedDB.open can hang). */
 void cd_store_get(uint32_t token, const char *key, uint32_t klen, uint32_t deadline_ms);
 #define CD_STORE_DEADLINE_MS 1500
 
-void cd_on_store(uint32_t token, const uint8_t *p, int32_t len); /* the app's hook (empty weak default) */
+/* The app's hooks (empty weak defaults). */
+void cd_on_store(uint32_t token, const uint8_t *p, int32_t len);
+void cd_on_store_put(uint32_t token, uint32_t ok);
 #endif

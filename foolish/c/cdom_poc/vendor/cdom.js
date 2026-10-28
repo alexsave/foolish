@@ -43,6 +43,18 @@ var cdom = (() => {
     u32 = new Uint32Array(buffer);
     i32 = new Int32Array(buffer);
   }
+  // A view of length bytes of C memory at ptr, good until the memory grows.
+  function bytes(ptr, length) {
+    return new Uint8Array(memory.buffer, ptr, length);
+  }
+  // A copy of them, which outlives the call and any growth.
+  function copyBytes(ptr, length) {
+    return bytes(ptr, length).slice();
+  }
+  // Puts node into parent before node next (null: at the end).
+  function place(parent, node, next) {
+    parent.insertBefore(node, next);
+  }
   // A string by id, interned or one-off.
   function stringOf(id) {
     return id < TRANSIENT ? interned[id] : transient[id - TRANSIENT];
@@ -88,11 +100,11 @@ var cdom = (() => {
   }
 
   // Puts a new top-level node where at() said, or into the open element.
-  function place(node) {
+  function placeNew(node) {
     if (depth) {
       stack[depth - 1].appendChild(node);
     } else if (base !== DETACHED) {
-      nodes[base].insertBefore(node, before ? nodes[before] : null);
+      place(nodes[base], node, before ? nodes[before] : null);
     }
   }
 
@@ -170,16 +182,16 @@ var cdom = (() => {
     const element = stack[--depth];
     if (!depth) {
       root = element;
-      place(element);
+      placeNew(element);
     }
   }
   function text(id) {
     last = doc.createTextNode(stringOf(id));
-    place(last);
+    placeNew(last);
   }
   function text_num(number) {
     last = doc.createTextNode(number >>> 0);
-    place(last);
+    placeNew(last);
   }
   function attr(name, value) {
     last.setAttribute(stringOf(name), stringOf(value));
@@ -299,7 +311,7 @@ var cdom = (() => {
   }
   // An image file's bytes in C memory as a url(blob:) on a style property, now.
   function image_bytes(id, property, bytesPtr, length, mime) {
-    const blob = new Blob([new Uint8Array(memory.buffer, bytesPtr, length).slice()], { type: stringOf(mime) });
+    const blob = new Blob([copyBytes(bytesPtr, length)], { type: stringOf(mime) });
     nodes[id].style.setProperty(stringOf(property), `url(${URL.createObjectURL(blob)})`);
   }
   function remove(id) {
@@ -314,7 +326,7 @@ var cdom = (() => {
   // Moves a node before node beforeId (0: to the end of its parent).
   function move(id, beforeId) {
     const node = nodes[id];
-    node.parentNode.insertBefore(node, beforeId ? nodes[beforeId] : null);
+    place(node.parentNode, node, beforeId ? nodes[beforeId] : null);
   }
   function clear(id) {
     nodes[id].textContent = "";
@@ -328,7 +340,7 @@ var cdom = (() => {
   }
   function attach(id) {
     const node = nodes[id];
-    node.$p.insertBefore(node, node.$s);
+    place(node.$p, node, node.$s);
     node.$p = null;
     node.$s = null;
   }
@@ -360,14 +372,14 @@ var cdom = (() => {
 
   // UTF-8 bytes in C memory as a string.
   function utf8(ptr, length) {
-    return textDecoder.decode(new Uint8Array(memory.buffer, ptr, length));
+    return textDecoder.decode(bytes(ptr, length));
   }
   // Bytes into C memory, in room C makes with cd_bytes_buf, then answer(arg, ptr, length).
   function deliver(answer, arg, data) {
-    const bytes = new Uint8Array(data);
-    const ptr = exports.cd_bytes_buf(bytes.length);
-    new Uint8Array(memory.buffer, ptr, bytes.length).set(bytes);
-    answer(arg, ptr, bytes.length);
+    const incoming = new Uint8Array(data);
+    const ptr = exports.cd_bytes_buf(incoming.length);
+    bytes(ptr, incoming.length).set(incoming);
+    answer(arg, ptr, incoming.length);
   }
 
   // The network (src/cdom_net.c).
@@ -387,14 +399,14 @@ var cdom = (() => {
     return id;
   }
   function ws_send(id, bytesPtr, length) {
-    sockets[id].send(new Uint8Array(memory.buffer, bytesPtr, length).slice());
+    sockets[id].send(copyBytes(bytesPtr, length));
   }
   function ws_close(id) {
     sockets[id].close();
   }
   // One request; the status and the body come back with token (status 0 when it failed).
   function http(token, methodPtr, methodLen, urlPtr, urlLen, bodyPtr, bodyLen) {
-    const body = bodyLen ? new Uint8Array(memory.buffer, bodyPtr, bodyLen).slice() : undefined;
+    const body = bodyLen ? copyBytes(bodyPtr, bodyLen) : undefined;
     fetch(utf8(urlPtr, urlLen), { method: utf8(methodPtr, methodLen), body }).then(
       async (response) => {
         const data = await response.arrayBuffer();
@@ -404,56 +416,57 @@ var cdom = (() => {
   }
 
   // A key/value store over IndexedDB (src/cdom_store.c): bytes in, bytes out, under keys C chooses.
+  // A promise of an IndexedDB request's result.
+  function promised(request) {
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
   let database; // a promise of the open database, made on first use
   function openDatabase() {
     if (!database) {
-      database = new Promise((resolve, reject) => {
-        const request = indexedDB.open("cdom", 1);
-        request.onupgradeneeded = () => request.result.createObjectStore("kv");
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
+      const request = indexedDB.open("cdom", 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("kv");
+      database = promised(request);
     }
     return database;
   }
   // One request on the store in a transaction of its own; a promise of its result.
   async function storeRequest(mode, makeRequest) {
     const db = await openDatabase();
-    return new Promise((resolve, reject) => {
-      const request = makeRequest(db.transaction("kv", mode).objectStore("kv"));
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
+    return promised(makeRequest(db.transaction("kv", mode).objectStore("kv")));
   }
-  // Keeps a copy of the bytes under the key; nothing answers, and a failure is dropped.
-  function store_put(keyPtr, keyLen, bytesPtr, length) {
-    const bytes = new Uint8Array(memory.buffer, bytesPtr, length).slice();
-    storeRequest("readwrite", (store) => store.put(bytes, utf8(keyPtr, keyLen))).catch(() => {});
+  // Keeps a copy of the bytes under the key, then answers with token: 1 kept, 0 failed.
+  function store_put(token, keyPtr, keyLen, bytesPtr, length) {
+    const data = copyBytes(bytesPtr, length);
+    storeRequest("readwrite", (store) => store.put(data, utf8(keyPtr, keyLen))).then(
+      () => exports.cd_store_put_done(token, 1),
+      () => exports.cd_store_put_done(token, 0));
   }
   // Answers once with token: the bytes under the key, or length -1 for a miss, an error, or no
-  // answer within ms (indexedDB.open can hang).
+  // answer within ms (indexedDB.open can hang). Anything not bytes is a miss.
   function store_get(token, keyPtr, keyLen, ms) {
     let answered = false;
-    const answer = (bytes) => {
+    const answer = (data) => {
       if (answered) {
         return;
       }
       answered = true;
-      if (bytes) {
-        deliver(exports.cd_store_got, token, bytes);
+      if (data instanceof Uint8Array) {
+        deliver(exports.cd_store_got, token, data);
       } else {
         exports.cd_store_got(token, 0, -1);
       }
     };
-    setTimeout(() => answer(null), ms);
-    storeRequest("readonly", (store) => store.get(utf8(keyPtr, keyLen))).then(
-      (bytes) => answer(bytes instanceof Uint8Array ? bytes : null),
-      () => answer(null));
+    setTimeout(answer, ms);
+    // the error must not reach answer: only a miss may follow a failure
+    storeRequest("readonly", (store) => store.get(utf8(keyPtr, keyLen))).then(answer, () => answer());
   }
 
   // An input's value into C memory as UTF-8; returns the bytes written.
   function input(id, destPtr, capacity) {
-    const result = textEncoder.encodeInto(String(nodes[id].value ?? ""), new Uint8Array(memory.buffer, destPtr, capacity));
+    const result = textEncoder.encodeInto(String(nodes[id].value ?? ""), bytes(destPtr, capacity));
     return result.written;
   }
 
