@@ -19,7 +19,7 @@ Nothing is rebuilt on a move: the test tags the nodes before a move and finds th
 
 The wool, wood and fern textures are made in C after the first paint, only as much of each as the page shows, and kept across loads in cdom's store as the app keeps its own (Textures, below).
 Not ported: the flights and other animations, drag and drop, keyboard play and the cover arrows, the tutorial hints, chat, translations, and live play.
-Live play against c_base and sign-in are next steps, not part of this PoC; the network imports below are the piece they would stand on.
+Live play against c_base and sign-in are next steps, not part of this PoC; the network imports they would stand on are proved against a real local c_base (Network, below).
 
 ## Files
 
@@ -31,9 +31,10 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 - `src/trig.c`: sin, cos and tan for the wool and the fern (musl's polynomials, a reduction for arguments below 2^28) and JS's `%` for the wood (141 lines).
 - `src/crtrig.c`: cos rounded correctly, as Chrome's is, for the wood (139 lines).
 - `src/index.html`: the page; `build.sh` inlines the minified shim into it.
-- `vendor/`: cdom from `/Users/alex/Dev/cdom-fixes`, branch port-fixes, commit b051ddf, unchanged (`src/cdom.c`, `src/cdom.h`, `src/cdom_net.c`, `src/cdom_net.h`, `src/cdom_store.c`, `src/cdom_store.h`, `src/mini.c`, `shim/cdom.js`).
-  The table links `cdom_store.c` (the textures across loads) but not `mini.c` (the kernel's libc brings memcmp and strlen) nor `cdom_net.c` (it has no network yet); the network test links the network.
-- `tests/net_test.c`, `tests/net_test.mjs`: cdom's network imports against a local echo server.
+- `vendor/`: cdom from `/Users/alex/Dev/cdom-fixes`, branch port-fixes, commit 9501d6f, unchanged (`src/cdom.c`, `src/cdom.h`, `src/cdom_net.c`, `src/cdom_net.h`, `src/cdom_store.c`, `src/cdom_store.h`, `src/mini.c`, `shim/cdom.js`).
+  The table links `cdom_store.c` (the textures across loads) but not `mini.c` (the kernel's libc brings memcmp and strlen) nor `cdom_net.c` (it has no network yet); the network tests link the network.
+- `tests/net_test.c`, `tests/net_test.mjs`: cdom's network imports against a local echo server (the fast test).
+- `tests/live_test.c`, `tests/live_test.mjs`: the contract test: the kernel's network client (`netclient.c`, the web's protocol owner) hosted over cdom's imports as `src/common/backend.ts` hosts it, against a real local c_base (Network, below).
 - `tests/tex_test.c`: the texture generators alone, for `tools/texparity.mjs`.
 - `tests/blob_test.c`: native; 300 games round-tripped through the state blob at every step (110 lines).
 - `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks), `consist.mjs` (the DOM against the kernel and React's rules at every click and bot step), `mutate.py`.
@@ -43,11 +44,12 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 ## Running it
 
 ```
-./build.sh                      # out/table.wasm, out/table_debug.wasm, out/index.html, out/net_test.wasm, out/tex_test.wasm, out/blob_test
+./build.sh                      # out/table.wasm, out/table_debug.wasm, out/index.html, out/net_test.wasm, out/live_test.wasm, out/tex_test.wasm, out/blob_test
 out/blob_test                   # the state blob against the games this table plays (native)
 node tools/test.mjs             # the table test (ONLY=<regex> runs the checks it matches)
 node tools/consist.mjs 3 1      # 3 games by seeded random clicks, the DOM against the kernel at every step
 node tests/net_test.mjs         # the network imports
+node tests/live_test.mjs        # the network imports against a local c_base (make -j4 in c_base/ first)
 node tools/strings.mjs          # the string table over three games
 node tools/texparity.mjs        # the C textures against the TS generators (writes out/tex_ts.js)
 node tools/shots.mjs            # shots/*.png (W=390 H=844 for a phone); run texparity first
@@ -204,6 +206,56 @@ What a player sees is the picture shrunk onto a 50x70 (deck) or 25x35 (mini hand
 `shots/fern_backs*.png` show them side by side.
 The 2.3% at full size: the GPU's rules at the edges of a point's square (which samples a point exactly on a boundary covers, and the precision of positions after the vertex shader) are not documented; four variants did not do better than the plain square, and on another GPU the app's own fern differs from this one in the same way.
 
+## Network
+
+cdom's network imports were made fit for live play in cdom (port-fixes 9501d6f, PERF_LOG.md "Port fixes"), each with a unit case and a mutant there:
+- `cd_http(token, method, mlen, url, ulen, headers, hlen, body, blen, deadline_ms)`: request headers cross as one block of `Name: value\n` lines in C memory (one string, built in C with a memcpy or two; name/value pairs would cross as two pointers each), so `Authorization: Bearer <jwt>` and `Content-Type: application/octet-stream` are sent.
+  The answer's status is the response's; `CD_HTTP_FAILED` (0) when it never arrived; `CD_HTTP_TIMEOUT` (1) when `deadline_ms` passed first and the request was aborted (an AbortController).
+  Response headers are not exposed: the web client reads only the status and the body, and the headers would need a format of their own across.
+- `cd_ws_buffered(id)`: the socket's bufferedAmount.
+- A closed socket's id is free before C hears the close, and the next `cd_ws_open` takes it: the shim's table holds the sockets open at once.
+- `cd_ws_send` sends a view of C memory (send copies; the `.slice()` is gone; the echo test writes over the message as the send returns).
+- `cd_store_del(token, key, klen)`, answered by `cd_on_store_del(token, ok)` as a put is.
+  The store also read a put's or a get's key only after the database opened, so a key in a buffer C had reused was read late; it is read during the call now.
+- `cd_epoch_ms()` (Date.now()): netclient.h takes epoch ms (a token's expiry is one), and `cd_now()` is the page's own clock.
+The shim: 6,623 bytes minified and 2,658 brotli before, 7,221 and 2,861 after (+598, +203).
+
+`tests/live_test.c` is the web host written over those imports: `nc_do(intent)`, then every `nc_next_request` sent as fetch with only the client's `Authorization` value and, on a POST, `Content-Type: application/octet-stream`, its status and body handed to `nc_on_response` (a TIMEOUT handed on as 0, "never arrived"; a 15 s deadline on every request); the socket opened at the client's `nc_req_stream()` path, `nc_stream_opened` on open, every `nc_stream_next` frame sent, every message to `nc_stream_in`; the pump again on `cd_timer` after `nc_due_ms`, with a generation so an older timer does nothing.
+`tests/live_test.mjs` builds nothing: it starts `c_base/build/cbase serve` on port 0 with throwaway secrets and a throwaway SQLite file (`CBASE_DEV=1`, `CBASE_ALLOWED_ORIGINS='*'`; never production), takes a port nobody listens on, serves the module on 8720 (cross-origin to c_base, as the web app with its own backend URL is), and reads the module's verdict.
+A run (c_base on 127.0.0.1:60608, load 4.6):
+```
+http POST /v1/auth/signup -> 200
+ok   signup: signed in as CDOMLIVE354CA758, access token 172 bytes, why 0
+http GET /v1/games -> 200
+ok   games: a list of 0 rows, why 0
+ok   stream: the first frame sent is HELLO (60), READY (61) back
+http POST /v1/create -> 200
+ok   create: game 6001cf, envelope 129 bytes, why 0
+ok   a wrong Bearer: status 401
+ok   a 1 ms deadline: aborted, status 1
+ok   a port nobody listens on: never arrived, status 0
+http GET /v1/games/6001cf -> 200
+ok   sockets: 20 opened and closed, ids 1 to 1
+ok   bufferedAmount: 176 right after the HELLO, 0 once drained
+stream frames seen: 61 65 51 65
+requests: POST /v1/auth/signup GET /v1/games POST /v1/create GET /v1/games/6001cf
+done
+```
+The frames: READY, the REPLY to the dashboard's subscription, the creator's view pushed (NW_WS_VIEW 51), the REPLY to the new game's own subscription (a create subscribes it), whose catch-up is the client's own `GET /v1/games/<gid>`.
+The wrong Bearer and the deadline are raw `cd_http` calls (through the client a 401 is refreshed and sent again); the 20 socket cycles open and close a second socket while the stream holds id 0.
+Four runs in a row, all passing (the 1 ms deadline always aborted first: the CORS preflight alone takes longer).
+The live mutants (tools/mutate.py, `live: ...`): request headers not sent (the client signs up, then `/v1/games` is 401, the refresh is 200 and the retry 401 again: "FAIL games ... why 1"), the status not passed on ("a wrong Bearer: status 200"), no deadline in the shim and the deadline dropped in C ("a 1 ms deadline: aborted, status 200"), an abort reported as a failure ("status 0"), socket ids never reused ("ids 1 to 20"), bufferedAmount always 0 ("0 right after the HELLO").
+
+What a live table still needs (this pass does not wire the table to play):
+- Identity: a sign-up and sign-in screen (`NC_DO_SIGN_UP`, `NC_DO_SIGN_IN`; the name upper-cased by the host, ASK_WHY_ACCOUNT codes shown as backend.ts `BackendError.describe` words them), sign-out (`NC_DO_SIGN_OUT`, then `nc_reset`), and the session kept across loads: `nc_session_save` into cdom's store after every `NC_EV_SESSION`, `nc_session_load` at start, `cd_store_del` on sign-out (the web keeps it in localStorage and follows other tabs; the port would need a storage event too, or accept one tab).
+- A lobby: `NC_DO_GAMES` and `NC_DO_CREATE`, joining by link, `NC_DO_OPEN_GAME` (flag 1 when no board is held), the bots list (`NC_DO_BOTS`) and the leaderboard if wanted.
+- The table's board from the server instead of the local `Game`: an answered or pushed envelope adopted with `client_adopt_envelope` (client_table.h), the seats named through `client_identity_begin` and `client_identity_seat`; the stream held with `nc_stream_sub(NW_SUB_GAME, gid)` while the table shows, and each `NC_EV_VIEW` adopted whole, each `NC_EV_CAST` animated through `client_push_open`, `client_push_next` and `client_push_final` (and `client_push_settle` for an optimistic move); `NC_EV_SEATED` says whether the user sits there.
+- A move sent with `NC_DO_PLAY` (the kernel's action wire from `client_move_wire` and the version as the intent), applied optimistically and settled when the cast or the refusal comes (`NcDone.action_status`, `reject_code`); the pressed pills (Consistency, item 8) then show while a move is on its way.
+- The bot driven by the server, not `bot_drive` here; the local `game_keep` blob only for offline play.
+- Chat (`NC_DO_CHAT_HISTORY`, `NC_DO_SEND_CHAT`, `NC_EV_CHAT`), if the table shows it.
+- The reconnect: on `cd_on_ws_close`, reopen after `nc_stream_closed(now)` ms (backend.ts `lost`), and close when `nc_stream_next` hands out an empty frame; a hidden page (`CD_EV_VISIBILITY`) may pause the pump.
+- `cd_ws_buffered` read before a large send, if anything large is ever sent (the client's frames are under 4 KB).
+
 ## Numbers
 
 Measured on this Mac (headless Chrome 156), CPU x1 and x4 throttled, medians of 21 fresh loads with the cache off; script is the click handler, C and its DOM calls, and the second figure adds style and layout forced at once.
@@ -284,7 +336,7 @@ Sizes:
 - `table.wasm` 75,303 bytes raw, 31,092 brotli (q11), 34,723 gzip (-9) after the consistency pass (the blob's writer and reader, `state_canonical`, `bot_wait_ms`, `anim_finish_rows`, the end screen's rows, the save's notice); before it 71,391, 29,539 and 32,872, before the texture pass 71,725, 29,589 and 32,956, before the first port-fixes pass 54,992, 22,122 and 24,870.
   musl's 2/pi table went with jsmath.c; the crop, the rectangles, the store and the keys came in.
   For scale, the React app's kernel alone, web.wasm, is 67,311 raw and 31,219 gzip (c/Makefile), before any JavaScript, and its textures are in its JavaScript.
-- The shim: cdom's own, unchanged, written to be read and inlined minified: 6,623 bytes minified, 2,658 brotli (6,553 and 2,615 in its golfed form before); cdom's PERF_LOG.md, SHIM_LINES, says what each import is for.
+- The shim: cdom's own, unchanged, written to be read and inlined minified: 7,221 bytes minified, 2,861 brotli after the network pass (6,623 and 2,658 before it; 6,553 and 2,615 in its golfed form); cdom's PERF_LOG.md, SHIM_LINES, says what each import is for.
   Before the first port-fixes pass the port carried 172 lines of its own patched shim.
 - The C the table is written in: 1,710 lines (`table_app.c` 1,626, with the texture pipeline and the test build's window on the kernel, `game_keep.c` and `.h` 48, `ui.h` 36, `kernel_glue.c` 20), plus the generators (385), trig.c (141) and crtrig.c (139).
 
@@ -314,10 +366,11 @@ For what both do, the C is about as long as the TSX, most of it the same inline 
 
 `tests/blob_test.c` (native, ASan and UBSan): 300 seeded games with seat 1 the bot and seat 0 the same brain driven alone, the game canonical after every operation as the table keeps it; at every step the blob is written and adopted by `game_keep_load` into a zeroed Game, and the board (`state_put` unmasked, byte for byte), both seats' TableView and ViewRules, and the next drive from the same seeds all agree.
 `tests/net_test.mjs`: a wasm module sends 8 binary bytes over a WebSocket and gets them echoed, then POSTs them and gets them back reversed (cdom's network, with no cd_flush anywhere).
+`tests/live_test.mjs`: the kernel's network client over cdom's imports against a local c_base (Network).
 `tools/strings.mjs`: from game 2 to game 3 the string table may grow only by what a game can show for the first time late (an end title, a pill, a medal: at most 10 strings and 200 bytes); it had been "may not grow", which failed whenever game 3 was the first to show such a literal (seen once in this pass, 180 to 181).
 `tools/texparity.mjs`: the PRNG exact; the wood's cos exactly Chrome's and trig.c's sin, cos and tan within 1 ulp; the wool (whole and the page's crop), the wood (floats, the WebGL picture, and six rectangles with the base colour around them) and the fern's points exact; the multisampled fern within 3% of the WebGL picture; and, measured but not judged, the page-size fern against the app's picture shrunk.
 
-Mutation check (`tools/mutate.py`), each of 35 mutants caught by the check written for it (a mutant of this pass runs the check it names, `ONLY`; the source's copy is kept outside the checkout):
+Mutation check (`tools/mutate.py`), each of 42 mutants caught by the check written for it (a mutant of this pass runs the check it names, `ONLY`; the source's copy is kept outside the checkout):
 - a card face's radius 5px to 4px: the golden check names the first differing tag;
 - the bot never chooses a move: the bot-answer check times out on `data-turn`;
 - the hand rebuilt on every render: "the three cards left in my hand are the nodes that were there";
@@ -334,6 +387,7 @@ Mutation check (`tools/mutate.py`), each of 35 mutants caught by the check writt
 - the wool not placed in the 3840x2160 image: "the wool image is the app's size" (1952x1104);
 - the wool placed 16 px off in that image: `tools/shots.mjs` "FAIL over the bar" (755,744 pixels with textures);
 - the WebSocket bytes flipped in the shim: "ws failed"; the HTTP body not sent: "http wrong".
+- the seven live mutants (Network): each fails its own line of `tests/live_test.mjs`.
 - the game not canonical between operations: `out/blob_test` ("seed 1 step 11 after the next drive: the board differs");
 - a drop that is no move spends the selection: the consistency check ("selection held x152 ... port (none) React 1-6");
 - the bot not scheduled at the start: the golden check (`data-turn="human"`) and the pace check;
@@ -419,13 +473,9 @@ Items 1 to 16 were folded into cdom on branch port-fixes (`/Users/alex/Dev/cdom-
   A kernel entry that applies a move and canonicalises in one call would make the rule impossible to forget.
 - **Whether a put was kept** (consistency pass): the saved game needs the answer the textures can ignore; cdom's store now answers every put (`cd_on_store_put`, vendored by the texture pass), and the table shows a notice and retries on a failure.
 - **First paint and the store** (consistency pass): drawing the board before the store answered and the kept game over it cost first paint 66 ms at x1 (Reload); the board now waits for the answer, bounded by the store's deadline.
-- **Open for live play (not now)**:
-  - fetch has no request headers (no Authorization: Bearer, so c_base /v1 is unreachable) and no response headers;
-  - the sockets array never frees ids;
-  - no send backpressure (bufferedAmount);
-  - no fetch abort or deadline;
-  - the store has no delete and a failed put is silent;
-  - ws_send's .slice() copy is unneeded (send copies).
+- **Open for live play**: closed by the network pass (Network): request headers, a deadline and its own answer, bufferedAmount, socket ids reused, a store delete (a failed put was answered already), ws_send without its copy, and the wall clock.
+  Still not exposed: response headers (nothing in the contract reads them).
+  What a live table needs beyond the imports is listed under Network.
 
 ### Where plain C felt fine
 
