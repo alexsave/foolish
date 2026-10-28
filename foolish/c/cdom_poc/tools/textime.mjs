@@ -10,7 +10,9 @@
 // generateWoodTexture (WebGL), and WoolBackground's generateWoolTexture, whose weave runs on the
 // app's wool worker (woolWorker.ts, bundled as the app's worker). Times are ms after navigation:
 // when each texture's url was ready (the port: set on the mount; the TS: its promise resolved),
-// and when all three had decoded. The port's figures also give its first contentful paint.
+// and when all had decoded (the port's four: its wood is two pictures, the end screen's made last). The port's figures also give its first contentful paint.
+// BEFORE=dir (a build of an earlier port, under foolish/c/) adds that build, cold, to the first
+// three rounds: only when all three textures had decoded is read from it.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -54,7 +56,7 @@ const before = { load: load(), top: top() };
 const server = await serve(8720, FOOLISH, null, { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' });
 const b = await launch();
 const ORIGIN = 'http://127.0.0.1:8720', PORT = ORIGIN + '/c/cdom_poc/out/index.html', TSP = ORIGIN + '/c/cdom_poc/out/ts_tex.html';
-const arms = { notex: [], port_cold: [], ts_cold: [], port_warm: [], ts_warm: [] };
+const arms = { notex: [], port_cold: [], ts_cold: [], port_warm: [], ts_warm: [], before: [] };
 const blank = async () => { await b.goto('about:blank'); await sleep(300); };
 const clear = () => b.send('Storage.clearDataForOrigin', { origin: ORIGIN, storageTypes: 'indexeddb' });
 async function port(arm, notex) {
@@ -62,17 +64,27 @@ async function port(arm, notex) {
   await b.goto(PORT + (notex ? '?notex' : ''));
   await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`, 30000);
   if (notex) { await sleep(300); arms[arm].push({ fcp: await b.evaluate(`performance.getEntriesByName('first-contentful-paint')[0]?.startTime`) }); return; }
-  await b.until(`window.app.then((x) => x.app_tex_ms(3) === 3)`, 300000);
+  await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 300000);
   const r = await b.evaluate(`window.app.then(async (x) => {
-    const u = ['--tex-fern', '--tex-wood', '--tex-wool'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(4, -1));
+    const u = ['--tex-fern', '--tex-wood', '--tex-wool', '--tex-wood-end'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(4, -1));
     await Promise.all(u.map((s) => { const i = new Image(); i.src = s; return i.decode(); }));
-    return { fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime, fern: x.app_tex_at(0), wood: x.app_tex_at(1), wool: x.app_tex_at(2),
-      decoded: performance.now(), stored: [0, 1, 2].map((k) => x.app_tex_stored(k)).join(''), made: [0, 1, 2].map((k) => x.app_tex_ms(k)),
+    return { fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime, fern: x.app_tex_at(0), wood: x.app_tex_at(1), wool: x.app_tex_at(2), woodEnd: x.app_tex_at(3),
+      decoded: performance.now(), stored: [0, 1, 2, 3].map((k) => x.app_tex_stored(k)).join(''), made: [0, 1, 2, 3].map((k) => x.app_tex_ms(k)),
       mem: x.memory.buffer.byteLength }; })`);
-  const want = arm === 'port_warm' ? '111' : '000';
+  const want = arm === 'port_warm' ? '1111' : '0000';
   if (r.stored !== want) throw new Error(`${arm}: stored ${r.stored}`);
   arms[arm].push(r);
   await sleep(500); // the store's puts are fire-and-forget
+}
+async function beforeBuild() {
+  await blank();
+  await b.goto(ORIGIN + '/c/' + process.env.BEFORE + '/out/index.html');
+  await b.until(`window.app?.then((x) => x.app_tex_ms(3) === 3)`, 600000);
+  await b.until(`document.getElementById('root').style.getPropertyValue('--tex-wool') !== ''`, 60000);
+  arms.before.push(await b.evaluate(`(async () => {
+    const u = ['--tex-fern', '--tex-wood', '--tex-wool'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(4, -1));
+    await Promise.all(u.map((s) => { const i = new Image(); i.src = s; return i.decode(); }));
+    return { decoded: performance.now(), mem: (await window.app).memory.buffer.byteLength }; })()`));
 }
 async function ts(arm) {
   await blank();
@@ -87,6 +99,7 @@ try {
     // The two stores are separate databases, so one clear makes both cold loads cold; each then
     // fills its own store for the warm loads. Which arm goes first alternates round by round.
     await port('notex', true);
+    if (process.env.BEFORE && i < 3) await beforeBuild();
     await clear();
     if (i % 2) { await ts('ts_cold'); await port('port_cold'); await ts('ts_warm'); await port('port_warm'); }
     else { await port('port_cold'); await ts('ts_cold'); await port('port_warm'); await ts('ts_warm'); }
@@ -101,8 +114,9 @@ console.log(`load before: ${before.load} | ${before.top}`);
 console.log(`load after:  ${after.load} | ${after.top}`);
 console.log(`first contentful paint: port ?notex ${cell(arms.notex.map((r) => r.fcp))}, port cold ${cell(arms.port_cold.map((r) => r.fcp))}, port warm ${cell(arms.port_warm.map((r) => r.fcp))}`);
 for (const arm of ['port_cold', 'ts_cold', 'port_warm', 'ts_warm'])
-  console.log(`${arm.padEnd(10)} fern ${cell(arms[arm].map((r) => r.fern)).padEnd(16)} wood ${cell(arms[arm].map((r) => r.wood)).padEnd(16)} wool ${cell(arms[arm].map((r) => r.wool)).padEnd(16)} all decoded ${cell(arms[arm].map((r) => r.decoded))}`);
+  console.log(`${arm.padEnd(10)} fern ${cell(arms[arm].map((r) => r.fern)).padEnd(16)} wood ${cell(arms[arm].map((r) => r.wood)).padEnd(16)} wool ${cell(arms[arm].map((r) => r.wool)).padEnd(16)}${arm.startsWith('port') ? ' end-screen wood ' + cell(arms[arm].map((r) => r.woodEnd)).padEnd(16) : ''} all decoded ${cell(arms[arm].map((r) => r.decoded))}`);
 for (const arm of ['port_cold', 'port_warm'])
-  console.log(`${arm} made on the page's thread: fern ${cell(arms[arm].map((r) => r.made[0]))} wood ${cell(arms[arm].map((r) => r.made[1]))} wool ${cell(arms[arm].map((r) => r.made[2]))}; wasm memory ${(q(arms[arm].map((r) => r.mem), 0.5) / 1048576).toFixed(1)} MiB`);
+  console.log(`${arm} made on the page's thread: fern ${cell(arms[arm].map((r) => r.made[0]))} wood ${cell(arms[arm].map((r) => r.made[1]))} wool ${cell(arms[arm].map((r) => r.made[2]))} end-screen wood ${cell(arms[arm].map((r) => r.made[3]))}; wasm memory ${(q(arms[arm].map((r) => r.mem), 0.5) / 1048576).toFixed(1)} MiB`);
+if (arms.before.length) console.log(`before (${process.env.BEFORE}, cold, ${arms.before.length} rounds): all decoded ${cell(arms.before.map((r) => r.decoded))}; wasm memory ${(q(arms.before.map((r) => r.mem), 0.5) / 1048576).toFixed(1)} MiB`);
 const ratio = (a, c) => q(arms[a].map((r) => r.decoded), 0.5) / q(arms[c].map((r) => r.decoded), 0.5);
 console.log(`all decoded, port / TS: cold ${ratio('port_cold', 'ts_cold').toFixed(2)}, warm ${ratio('port_warm', 'ts_warm').toFixed(2)}`);

@@ -116,18 +116,18 @@ try {
     await b.evaluate(`indexedDB.deleteDatabase('cdom'), 1`);
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
     await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
-    const vars = () => b.evaluate(`['--tex-fern', '--tex-wood', '--tex-wool', '--tex-fern-bg'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(0, 9))`);
-    assert.deepEqual(await vars(), ['', '', '', ''], 'nothing has landed by the first paint');
-    await b.until(`window.app.then((x) => x.app_tex_ms(3) === 3)`, 60000);
+    const vars = () => b.evaluate(`['--tex-fern', '--tex-wood', '--tex-wool', '--tex-wood-end', '--tex-fern-bg'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(0, 9))`);
+    assert.deepEqual(await vars(), ['', '', '', '', ''], 'nothing has landed by the first paint');
+    await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 60000);
     await b.until(`document.getElementById('root').style.getPropertyValue('--tex-wool') !== ''`, 10000);
-    assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
+    assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
     const look = await b.evaluate(`(() => { const cs = (e) => getComputedStyle(e);
       return [cs(document.querySelector('[data-location="deck"] > div > div')).backgroundImage.slice(0, 9),
         cs(document.querySelector('[data-location="deck"] > div > div')).backgroundColor,
         cs(document.querySelector('.btn-icon')).backgroundImage.slice(0, 9), cs(document.querySelector('.bg-wool')).backgroundImage.slice(0, 9)]; })()`);
     assert.deepEqual(look, ['url("blob', 'rgb(0, 0, 0)', 'url("blob', 'url("blob']);
-    assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => [x.app_tex_stored(k), x.app_tex_ms(k) > 0]))`),
-      [[0, true], [0, true], [0, true]], 'made here, on a cold load');
+    assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2, 3].map((k) => [x.app_tex_stored(k), x.app_tex_ms(k) > 0]))`),
+      [[0, true], [0, true], [0, true], [0, true]], 'made here, on a cold load');
     // The wool is woven only in its middle but laid out as the app's: a 3840 x 2160 image.
     assert.deepEqual(await b.evaluate(`(async () => { const i = new Image();
       i.src = document.getElementById('root').style.getPropertyValue('--tex-wool').slice(4, -1); await i.decode(); return [i.naturalWidth, i.naturalHeight]; })()`),
@@ -135,10 +135,10 @@ try {
     // Warm: the next load sets all three from the store and makes none.
     await new Promise((r) => setTimeout(r, 300)); // the puts are fire-and-forget
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
-    await b.until(`window.app.then((x) => x.app_tex_ms(3) === 3)`, 10000);
-    assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2].map((k) => [x.app_tex_stored(k), x.app_tex_ms(k)]))`),
-      [[1, 0], [1, 0], [1, 0]], 'every texture from the store, no generator run');
-    assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
+    await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 10000);
+    assert.deepEqual(await b.evaluate(`window.app.then((x) => [0, 1, 2, 3].map((k) => [x.app_tex_stored(k), x.app_tex_ms(k)]))`),
+      [[1, 0], [1, 0], [1, 0], [1, 0]], 'every texture from the store, no generator run');
+    assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
   });
 
   // Every surface the wood is laid on (the back button, each pill as it comes, the end screen) shows
@@ -147,12 +147,14 @@ try {
   const pillsSeen = new Set();
   const woodCovered = async () => {
     const bad = await b.evaluate(`window.app.then((x) => {
-      const R = []; for (let k = 0; k < x.app_wood_rects(); k++) R.push([0, 1, 2, 3].map((f) => x.app_wood_rect(k, f)));
-      const inR = (tx, ty) => R.some(([rx, ry, rw, rh]) => tx >= rx && tx < rx + rw && ty >= ry && ty < ry + rh);
+      // the table's rectangles for --tex-wood, the end screen's for --tex-wood-end
+      const R = [[], []]; for (let k = 0; k < x.app_wood_rects(); k++) R[+(k >= x.app_wood_rects_now())].push([0, 1, 2, 3].map((f) => x.app_wood_rect(k, f)));
       const out = [], seen = [];
       for (const e of document.querySelectorAll('[style]')) { const cs = getComputedStyle(e);
         if (cs.backgroundSize !== '1920px 1080px' || e.getClientRects().length === 0) continue;
         if (e.dataset.pill) seen.push(e.dataset.pill);
+        const mine = R[+e.style.backgroundImage.includes('--tex-wood-end')];
+        const inR = (tx, ty) => mine.some(([rx, ry, rw, rh]) => tx >= rx && tx < rx + rw && ty >= ry && ty < ry + rh);
         const [px, py] = cs.backgroundPosition.split(' ').map(parseFloat), r = e.getBoundingClientRect();
         const bl = parseFloat(cs.borderLeftWidth), bt = parseFloat(cs.borderTopWidth);
         const x0 = Math.floor(-bl - px), y0 = Math.floor(-bt - py), x1 = Math.ceil(-bl - px + r.width), y1 = Math.ceil(-bt - py + r.height);

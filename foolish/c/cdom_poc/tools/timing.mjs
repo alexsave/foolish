@@ -20,7 +20,7 @@ const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >
 const rows = { fcp: [], ready: [], selScript: [], selFrame: [], playScript: [], playFrame: [], botScript: [], botFrame: [],
   fernAt: [], woodAt: [], woolAt: [], fernMs: [], woodMs: [], woolMs: [], decoded: [], mem: [] };
 const TEX = process.env.TEX, ORIGIN = 'http://127.0.0.1:8720';
-const texDone = `window.app.then((x) => x.app_tex_ms(3) === 3)`;
+const texDone = `window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`;
 try {
   await b.send('Network.enable');
   await b.send('Network.setCacheDisabled', { cacheDisabled: true });
@@ -40,9 +40,9 @@ try {
     if (TEX) {
       await b.until(texDone, 120000);
       const t = await b.evaluate(`window.app.then(async (x) => {
-        const u = ['--tex-fern', '--tex-wood', '--tex-wool'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(4, -1));
+        const u = ['--tex-fern', '--tex-wood', '--tex-wool', '--tex-wood-end'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(4, -1));
         await Promise.all(u.map((s) => { const i = new Image(); i.src = s; return i.decode(); }));
-        if (![0, 1, 2].every((k) => x.app_tex_stored(k) === (${JSON.stringify(TEX)} === 'warm' ? 1 : 0))) throw new Error('not a ${TEX} load');
+        if (![0, 1, 2, 3].every((k) => x.app_tex_stored(k) === (${JSON.stringify(TEX)} === 'warm' ? 1 : 0))) throw new Error('not a ${TEX} load');
         return { at: [0, 1, 2].map((k) => x.app_tex_at(k)), ms: [0, 1, 2].map((k) => x.app_tex_ms(k)), decoded: performance.now(), mem: x.memory.buffer.byteLength }; })`);
       rows.fernAt.push(t.at[0]); rows.woodAt.push(t.at[1]); rows.woolAt.push(t.at[2]);
       rows.fernMs.push(t.ms[0]); rows.woodMs.push(t.ms[1]); rows.woolMs.push(t.ms[2]); rows.decoded.push(t.decoded); rows.mem.push(t.mem);

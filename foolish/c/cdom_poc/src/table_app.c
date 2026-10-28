@@ -104,7 +104,10 @@ static void deal_new(void) {
   game_seat_and_deal(&G, keys, 2);
 }
 
-enum { TEX_FERN, TEX_WOOD, TEX_WOOL, TEX_DONE }; /* the textures (TEX_ORDER: the order they are made) */
+/* The textures (TEX_ORDER: the order they are made). The wood is two pictures of the same tile:
+ * the surfaces on the table (the back button, the pills), and those of the end screen, which is
+ * made last and shown much later; each is worked out only where its surfaces are. */
+enum { TEX_FERN, TEX_WOOD, TEX_WOOL, TEX_WOOD_END, TEX_DONE, NTEX = TEX_DONE };
 
 static int my_turn_owed(void) { return bot_drive_eligible_mask(&G, game_human_mask(&G)) == 0; }
 
@@ -500,13 +503,16 @@ static void wood_offset(double seed, int32_t *x, int32_t *y) {
   if (sy > WOOD_H - 60) *y = 60;
 }
 
-/* TexturedSurface.tsx getTextureStyle: the wood once it is made (--tex-wood), the stripes before. */
-static cd_str wood_style(double seed) {
+/* TexturedSurface.tsx getTextureStyle: the wood once it is made (--tex-wood, or --tex-wood-end on
+ * the end screen), the stripes before. */
+static cd_str wood_style(double seed, int end) {
   static SB s;
   int32_t x, y;
   wood_offset(seed, &x, &y);
   sb_reset(&s);
-  sb_s(&s, "background-color: rgb(195, 63, 8); background-image: var(--tex-wood, repeating-linear-gradient(90deg, transparent, "
+  sb_s(&s, "background-color: rgb(195, 63, 8); background-image: var(");
+  sb_s(&s, end ? "--tex-wood-end" : "--tex-wood");
+  sb_s(&s, ", repeating-linear-gradient(90deg, transparent, "
            "transparent 1px, rgba(0, 0, 0, 0.1) 1px, rgba(0, 0, 0, 0.1) 2px)); background-size: 1920px 1080px; "
            "background-position: ");
   sb_i(&s, x); sb_s(&s, "px "); sb_i(&s, y);
@@ -525,7 +531,7 @@ static cd_id pill_create(void *ctx, uint32_t i, uint32_t *data) {
   cd_listen(btn, CD_EV_CLICK);
   cd_tag_set(btn, TAG_PILL | PILL[p].bit);
   CLASS("btn-action");
-  cd_attr(S_STYLE, wood_style(PILL[p].seed));
+  cd_attr(S_STYLE, wood_style(PILL[p].seed, 0));
   cd_attr(ZS("data-pill"), cd_internz(PILL[p].label));
   OPEN("span"); CLASS("btn-action-text"); OPEN("span"); cd_text(cd_internz(PILL[p].label)); CLOSE(); CLOSE();
   CLOSE();
@@ -829,13 +835,13 @@ static void render_end(void) {
   cd_text(fool == ME ? ZS("You are the fool") : fool < 0 ? ZS("A draw") : ZS("You won"));
   CLOSE();
   OPEN("div"); CLASS("win-screen__results"); STYLE("width: min(360px, 90vw);");
-  OPEN("div"); CLASS("bg-wood"); cd_attr(S_STYLE, wood_style(SEED_RESULTS)); CLOSE();
+  OPEN("div"); CLASS("bg-wood"); cd_attr(S_STYLE, wood_style(SEED_RESULTS, 1)); CLOSE();
   for (int s = 0; s < V->num_players; s++) if (s != fool) result_row("\xF0\x9F\xA5\x87", s);
   if (fool >= 0) result_row("\xF0\x9F\x83\x8F", fool);
   CLOSE();
   cd_id again = cd_id_new();
   OPEN("button"); cd_listen(again, CD_EV_CLICK); cd_tag_set(again, TAG_AGAIN);
-  CLASS("btn-wood btn-wood--lg"); cd_attr(S_STYLE, wood_style(SEED_AGAIN));
+  CLASS("btn-wood btn-wood--lg"); cd_attr(S_STYLE, wood_style(SEED_AGAIN, 1));
   OPEN("span"); CLASS("btn-wood-text"); OPEN("span"); TEXT("Play again"); CLOSE(); CLOSE();
   CLOSE();
   CLOSE();
@@ -1000,16 +1006,16 @@ enum { PILL_SPAN_W = 76, PILL_SPAN_H = 52 };
 enum { NPILL = sizeof PILL / sizeof *PILL, NSURF = sizeof WOOD_SURF / sizeof *WOOD_SURF };
 enum { WOOD_MARGIN = 4 }; /* a border's width either side, and then some */
 static struct {
-  int stage, nrect;
+  int stage, nrect, nrect_now; /* rect[0, nrect_now): the table's wood; the rest: the end screen's */
   uint8_t *block;
   float *col;
   Fern fern; Wood wood; Wool wool;
-  int32_t fern_w, fern_h, landed, from_store[3];
+  int32_t fern_w, fern_h, landed, from_store[NTEX];
   TexRect rect[WOOD_MAX_WIN];
-  double ms[3], at[3];
-  uint32_t seed[3];
-  char key[3][48];
-  uint32_t klen[3];
+  double ms[NTEX], at[NTEX];
+  uint32_t seed[NTEX];
+  char key[NTEX][48];
+  uint32_t klen[NTEX];
 } tex;
 static uint32_t tex_seed;
 
@@ -1033,11 +1039,12 @@ static void wood_rects_add(TexRect *out, int *n, double seed, int32_t sw, int32_
   }
 }
 
-/* The back button first (it is on the first screen), then the pills, then the end screen. */
-static int wood_rects(TexRect *out) {
+/* The table's surfaces (the back button, the pills), then the end screen's (*now: where they start). */
+static int wood_rects(TexRect *out, int *now) {
   int n = 0;
   wood_rects_add(out, &n, WOOD_SURF[0].seed, WOOD_SURF[0].w, WOOD_SURF[0].h);
   for (int k = 0; k < NPILL; k++) wood_rects_add(out, &n, PILL[k].seed, PILL_SPAN_W, PILL_SPAN_H);
+  *now = n;
   for (int k = 1; k < NSURF; k++) wood_rects_add(out, &n, WOOD_SURF[k].seed, WOOD_SURF[k].w, WOOD_SURF[k].h);
   return n;
 }
@@ -1052,9 +1059,10 @@ static void tex_start(int stage) {
     int32_t points = (int32_t)((double)FERN_APP_POINTS * tex.fern_w * tex.fern_h / (FERN_APP_W * FERN_APP_H));
     fern_begin(&tex.fern, b, b + tex.fern_w * tex.fern_h * 4, tex.fern_w, tex.fern_h, points, rng);
   }
-  if (stage == TEX_WOOD) {
+  if (stage == TEX_WOOD || stage == TEX_WOOD_END) {
     double ox = tex_random(&rng) * 1000 - 500, oy = tex_random(&rng) * 1000 - 500;
-    wood_begin(&tex.wood, tex.col, b, WOOD_W, WOOD_H, ox, oy, tex.rect, tex.nrect);
+    int from = stage == TEX_WOOD ? 0 : tex.nrect_now, to = stage == TEX_WOOD ? tex.nrect_now : tex.nrect;
+    wood_begin(&tex.wood, tex.col, b, WOOD_W, WOOD_H, ox, oy, tex.rect + from, to - from);
   }
   if (stage == TEX_WOOL) {
     tex_random(&rng); tex_random(&rng);
@@ -1067,8 +1075,8 @@ static void tex_start(int stage) {
  * key that names the generator's version and everything the picture depends on (the fern's size,
  * the wood's rectangles), as the app keeps its own in TextureCacheDB; a later load sets the
  * stored bytes and generates nothing. The stored value is the image file. */
-static const char *const TEX_PROP[3] = {"--tex-fern", "--tex-wood", "--tex-wool"};
-static const char *const TEX_MIME[3] = {"image/png", "image/png", "image/jpeg"};
+static const char *const TEX_PROP[NTEX] = {"--tex-fern", "--tex-wood", "--tex-wool", "--tex-wood-end"};
+static const char *const TEX_MIME[NTEX] = {"image/png", "image/png", "image/jpeg", "image/png"};
 
 static void key_add(char *k, uint32_t *n, const char *s) { while (*s && *n < 47) k[(*n)++] = *s++; }
 static void key_num(char *k, uint32_t *n, uint32_t v) {
@@ -1077,16 +1085,19 @@ static void key_num(char *k, uint32_t *n, uint32_t v) {
   while (m && *n < 47) k[(*n)++] = d[--m];
 }
 static void tex_keys(void) {
-  static const char *const NAME[3] = {"foolish-tex-fern-v1-", "foolish-tex-wood-v1-", "foolish-tex-wool-v1-"};
-  for (int k = 0; k < 3; k++) { tex.klen[k] = 0; key_add(tex.key[k], &tex.klen[k], NAME[k]); }
+  static const char *const NAME[NTEX] = {"foolish-tex-fern-v1-", "foolish-tex-wood-v1-", "foolish-tex-wool-v1-", "foolish-tex-wood-v1-"};
+  for (int k = 0; k < NTEX; k++) { tex.klen[k] = 0; key_add(tex.key[k], &tex.klen[k], NAME[k]); }
   key_num(tex.key[0], &tex.klen[0], (uint32_t)tex.fern_w); key_add(tex.key[0], &tex.klen[0], "x");
   key_num(tex.key[0], &tex.klen[0], (uint32_t)tex.fern_h);
-  uint32_t h = 2166136261u; /* FNV-1a over the rectangles */
-  for (int k = 0; k < tex.nrect; k++) {
-    const int32_t v[4] = {tex.rect[k].x, tex.rect[k].y, tex.rect[k].w, tex.rect[k].h};
-    for (int f = 0; f < 4; f++) for (int byte = 0; byte < 4; byte++) h = (h ^ ((uint32_t)v[f] >> (8 * byte) & 0xff)) * 16777619u;
+  for (int part = 0; part < 2; part++) { /* the woods, by FNV-1a over their rectangles */
+    uint32_t h = 2166136261u;
+    for (int k = part ? tex.nrect_now : 0; k < (part ? tex.nrect : tex.nrect_now); k++) {
+      const int32_t v[4] = {tex.rect[k].x, tex.rect[k].y, tex.rect[k].w, tex.rect[k].h};
+      for (int f = 0; f < 4; f++) for (int byte = 0; byte < 4; byte++) h = (h ^ ((uint32_t)v[f] >> (8 * byte) & 0xff)) * 16777619u;
+    }
+    int k = part ? TEX_WOOD_END : TEX_WOOD;
+    key_num(tex.key[k], &tex.klen[k], h);
   }
-  key_num(tex.key[1], &tex.klen[1], h);
   key_num(tex.key[2], &tex.klen[2], WOOL_W); key_add(tex.key[2], &tex.klen[2], "x"); key_num(tex.key[2], &tex.klen[2], WOOL_H);
 }
 
@@ -1100,7 +1111,7 @@ static void tex_land(int k, const uint8_t *p, uint32_t len) {
 }
 
 /* The fern (small, on the card backs), the wool (the whole background), then the wood (the buttons). */
-static const int TEX_ORDER[4] = {TEX_FERN, TEX_WOOL, TEX_WOOD, TEX_DONE};
+static const int TEX_ORDER[NTEX + 1] = {TEX_FERN, TEX_WOOL, TEX_WOOD, TEX_WOOD_END, TEX_DONE};
 static int tex_step, tex_may_make, tex_waiting;
 
 /* The next texture: asked of the store first. */
@@ -1162,7 +1173,7 @@ void cd_on_raf(uint32_t token, double t) {
   int done = 0;
   while (!done && now - t0 < TEX_SLICE_MS) {
     if (tex.stage == TEX_FERN) done = fern_run(&tex.fern, 100000);
-    else if (tex.stage == TEX_WOOD) done = wood_run(&tex.wood, 2);
+    else if (tex.stage == TEX_WOOD || tex.stage == TEX_WOOD_END) done = wood_run(&tex.wood, 2);
     else done = wool_run(&tex.wool, 100000);
     now = cd_now();
   }
@@ -1170,7 +1181,7 @@ void cd_on_raf(uint32_t token, double t) {
   if (!done) { cd_raf_request(RAF_SLICE); return; }
   /* the pixels are copied during the call, so the block is free for the next texture at once */
   if (tex.stage == TEX_FERN) cd_encode_image(tex.fern.px, (uint32_t)tex.fern_w, (uint32_t)tex.fern_h, 4, ZS("image/png"), TEX_FERN);
-  if (tex.stage == TEX_WOOD) cd_encode_image(tex.wood.px, WOOD_W, WOOD_H, 3, ZS("image/png"), TEX_WOOD);
+  if (tex.stage == TEX_WOOD || tex.stage == TEX_WOOD_END) cd_encode_image(tex.wood.px, WOOD_W, WOOD_H, 3, ZS("image/png"), (uint32_t)tex.stage);
   if (tex.stage == TEX_WOOL) cd_encode_image_in(tex.wool.px, WOOL_W, WOOL_H, 3, TEX_W, TEX_H, WOOL_X, WOOL_Y, ZS("image/jpeg"), TEX_WOOL);
   tex_next();
 }
@@ -1183,15 +1194,18 @@ static void textures_begin(void) {
   tex.fern_w = (int32_t)(BACK_W * FERN_SCALE * dpr);
   tex.fern_h = (int32_t)(BACK_H * FERN_SCALE * dpr);
   if (tex.fern_w > FERN_APP_W) { tex.fern_w = FERN_APP_W; tex.fern_h = FERN_APP_H; }
-  tex.nrect = wood_rects(tex.rect);
+  tex.nrect = wood_rects(tex.rect, &tex.nrect_now);
   tex_keys();
   tex_next();
 }
 
 /* For the tests and the README, by texture k (fern, wood, wool): how long making it took on the
  * page's thread (0 when it came from the store), when it landed (cd_now: ms since navigation), and
- * whether it came from the store; k = 3: how many have landed. */
-EXPORT("app_tex_ms") double app_tex_ms(int32_t k) { return k < 3 ? tex.ms[k] : tex.landed; }
+ * whether it came from the store; k = NTEX: how many have landed. */
+EXPORT("app_tex_ms") double app_tex_ms(int32_t k) { return k < NTEX ? tex.ms[k] : tex.landed; }
+/* How many textures there are (fern, wood, wool, the end screen's wood): app_tex_ms(this) == this
+ * when all have landed. */
+EXPORT("app_tex_count") int32_t app_tex_count(void) { return NTEX; }
 EXPORT("app_tex_at") double app_tex_at(int32_t k) { return tex.at[k]; }
 EXPORT("app_tex_stored") int32_t app_tex_stored(int32_t k) { return tex.from_store[k]; }
 /* The seed texture k was made from on this load (0 when it came from the store): the fern's
@@ -1200,6 +1214,7 @@ EXPORT("app_tex_stored") int32_t app_tex_stored(int32_t k) { return tex.from_sto
 EXPORT("app_tex_seed") uint32_t app_tex_seed(int32_t k) { return tex.seed[k]; }
 /* The wood's tile rectangles (x, y, w, h by field 0-3), for the test that every surface lies in one. */
 EXPORT("app_wood_rects") int32_t app_wood_rects(void) { return tex.nrect; }
+EXPORT("app_wood_rects_now") int32_t app_wood_rects_now(void) { return tex.nrect_now; } /* the table's; the rest are the end screen's */
 EXPORT("app_wood_rect") int32_t app_wood_rect(int32_t k, int32_t f) {
   const TexRect *r = &tex.rect[k];
   return f == 0 ? r->x : f == 1 ? r->y : f == 2 ? r->w : r->h;
@@ -1292,7 +1307,7 @@ void cd_main(void) {
 
   OPEN("button");
   CLASS("btn-icon btn-icon--left");
-  cd_attr(S_STYLE, wood_style(SEED_BACK));
+  cd_attr(S_STYLE, wood_style(SEED_BACK, 0));
   OPEN("span"); CLASS("btn-icon__symbol"); TEXT("<"); CLOSE();
   CLOSE();
   CLOSE(); /* container */

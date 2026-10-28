@@ -63,9 +63,9 @@ try {
   await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
   await b.evaluate('document.fonts.ready.then(() => 1)');
   if (tex) { // every texture landed and decoded
-    await b.until(`window.app.then((x) => x.app_tex_ms(3) === 3)`, 60000);
+    await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 60000);
     await b.until(`document.getElementById('root').style.getPropertyValue('--tex-wool') !== ''`, 10000);
-    await b.evaluate(`Promise.all(['--tex-fern', '--tex-wood', '--tex-wool'].map((v) => { const i = new Image();
+    await b.evaluate(`Promise.all(['--tex-fern', '--tex-wood', '--tex-wool', '--tex-wood-end'].map((v) => { const i = new Image();
       i.src = document.getElementById('root').style.getPropertyValue(v).slice(4, -1); return i.decode(); })).then(() => new Promise((r) => setTimeout(r, 300)))`);
     const seed = await b.evaluate('window.app.then((x) => [0, 1, 2].map((k) => x.app_tex_seed(k)))');
     await b.shot(path.join(shots, `${pre}midgame${sfx}.png`));
@@ -79,7 +79,7 @@ try {
     await b.shot(path.join(shots, `react_golden_tex${sfx}.png`));
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
     await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
-    await b.until(`window.app.then((x) => x.app_tex_ms(3) === 3)`, 60000);
+    await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 60000);
     await b.until(`document.getElementById('root').style.getPropertyValue('--tex-wool') !== ''`, 10000);
     await new Promise((r) => setTimeout(r, 300));
   } else await b.shot(path.join(shots, `${pre}midgame${sfx}.png`));
