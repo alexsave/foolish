@@ -49,7 +49,7 @@ const server = await serve(8720, FOOLISH, (req, res) => {
   if (req.url !== '/golden.html') return false;
   res.writeHead(200, { 'content-type': 'text/html' }); res.end(goldenPage); return true;
 });
-const b = await launch({ width: W, height: H });
+const b = await launch({ width: W, height: H, flags: ['--disable-gpu-rasterization'] }); // one way to draw a JPEG (cdp.mjs)
 let backs = null;
 try {
   const sfx = W === 1024 ? '' : `_${W}x${H}`;
@@ -109,9 +109,19 @@ try {
     if (a.length !== b.length) return -1;
     let n = 0; for (let i = 0; i < a.length; i += 4) if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) n++;
     return n; })()`);
-  console.log(`pixels differing, React golden vs cdom first paint: ${await differ(`react_golden${sfx}.png`, `cdom_midgame${sfx}.png`)} of ${W * H}`);
+  const plain = await differ(`react_golden${sfx}.png`, `cdom_midgame${sfx}.png`);
+  const textured = await differ(`react_golden_tex${sfx}.png`, `cdom_tex_midgame${sfx}.png`);
+  console.log(`pixels differing, React golden vs cdom first paint: ${plain} of ${W * H}`);
   console.log(`pixels differing, React golden vs cdom with 6s selected: ${await differ(`react_golden${sfx}.png`, `cdom_selected${sfx}.png`)}`);
-  console.log(`pixels differing, React golden with the TS textures vs cdom with its C textures: ${await differ(`react_golden_tex${sfx}.png`, `cdom_tex_midgame${sfx}.png`)} of ${W * H}`);
+  console.log(`pixels differing, React golden with the TS textures vs cdom with its C textures: ${textured} of ${W * H}`);
+  // The bar, at the two sizes the README gives (else none): the first paint as the golden's (at
+  // 390x844 the golden's hand was laid out at jsdom's 1024), and with textures only the card backs
+  // added (the fern: about 6,600 and 7,000; the wool and the wood the same pixels).
+  const BAR = { '1024x768': [0, 8000], '390x844': [13952, 13952 + 8000] }[`${W}x${H}`];
+  if (BAR && (plain !== BAR[0] || textured > BAR[1])) {
+    console.log(`FAIL over the bar: first paint ${plain} (want ${BAR[0]}), with textures ${textured} (want at most ${BAR[1]})`);
+    process.exitCode = 1;
+  }
   // The card backs alone: pixels differing and the largest channel difference inside each, and the
   // two crops side by side (React's left, the C's right), 4x, in shots/fern_backs*.png.
   const crops = await b.evaluate(`(async () => {

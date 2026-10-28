@@ -62,7 +62,9 @@ const clear = () => b.send('Storage.clearDataForOrigin', { origin: ORIGIN, stora
 async function port(arm, notex) {
   await blank();
   await b.goto(PORT + (notex ? '?notex' : ''));
-  await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`, 30000);
+  // the table is up once the store has answered for the game (the board waits for it); the turn
+  // may then be the bot's for its pace, which is not what this times
+  await b.until('window.appReady && window.app.then((x) => x.app_game_store(1) > 0)', 30000);
   if (notex) { await sleep(300); arms[arm].push({ fcp: await b.evaluate(`performance.getEntriesByName('first-contentful-paint')[0]?.startTime`) }); return; }
   await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 300000);
   const r = await b.evaluate(`window.app.then(async (x) => {

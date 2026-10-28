@@ -23,6 +23,7 @@ MUTANTS = [
   ('pill wood too narrow', 'src/table_app.c', 'enum { PILL_SPAN_W = 76, PILL_SPAN_H = 52 };', 'enum { PILL_SPAN_W = 40, PILL_SPAN_H = 52 };', 'tools/test.mjs'),
   ('results wood too short', 'src/table_app.c', '{SEED_RESULTS, 360, 100}', '{SEED_RESULTS, 360, 60}', 'tools/test.mjs'),
   ('store ignored', 'src/table_app.c', '  if (len > 0) { /* kept from an earlier load */', '  if (0) {', 'tools/test.mjs'),
+  ('wool placed 16 px off', 'src/table_app.c', 'TEX_W, TEX_H, WOOL_X, WOOL_Y, ZS("image/jpeg")', 'TEX_W, TEX_H, WOOL_X + 16, WOOL_Y, ZS("image/jpeg")', 'tools/shots.mjs'),
   ('wool not placed', 'src/table_app.c', 'cd_encode_image_in(tex.wool.px, WOOL_W, WOOL_H, 3, TEX_W, TEX_H, WOOL_X, WOOL_Y,', 'cd_encode_image_in(tex.wool.px, WOOL_W, WOOL_H, 3, WOOL_W, WOOL_H, 0, 0,', 'tools/test.mjs'),
   ('fern samples', 'src/textures.c', '{{0.375, 0.875}, {0.875, 0.625}, {0.125, 0.375}, {0.625, 0.125}}', '{{0.375, 0.125}, {0.875, 0.375}, {0.125, 0.625}, {0.625, 0.875}}', 'tools/texparity.mjs'),
   ('cos not rounded', 'src/crtrig.c', '  return fast_two_sum(p.hi, p.lo + (a.hi * b.lo + a.lo * b.hi));', '  return fast_two_sum(p.hi, p.lo + a.hi * b.lo);', 'tools/texparity.mjs'),

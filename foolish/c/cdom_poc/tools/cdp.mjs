@@ -27,11 +27,16 @@ export function serve(port = 8720, root = FOOLISH, extra = null, headers = {}) {
   return new Promise((r) => server.listen(port, '127.0.0.1', () => r(server)));
 }
 
-export async function launch({ width = 1024, height = 768, port = 8729 } = {}) {
+// flags: more Chrome switches. Pixel comparisons pass '--disable-gpu-rasterization': with GPU
+// raster, Chrome draws one large JPEG two ways (the same bytes under a new url differed in 225,611
+// of 329,160 pixels, 1 to 20 per channel, about one load in five under a load average of 60),
+// and the wool is such a JPEG.
+export async function launch({ width = 1024, height = 768, port = 8729, flags = [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdom-poc-chrome-'));
   const proc = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, '--no-first-run',
-      '--no-default-browser-check', '--disable-extensions', '--hide-scrollbars', `--window-size=${width},${height}`, 'about:blank'],
+      '--no-default-browser-check', '--disable-extensions', '--hide-scrollbars', `--window-size=${width},${height}`,
+      ...flags, 'about:blank'],
     { stdio: 'ignore' });
   const close = async () => {
     try { ws?.close(); } catch { /* gone */ }
