@@ -1,0 +1,6 @@
+{
+  "name": "cdom",
+  "private": true,
+  "description": "Build-time tools only: terser minifies the shim that bench/build.sh inlines into each page.",
+  "devDependencies": { "terser": "5.44.0" }
+}

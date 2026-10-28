@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="default">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>Foolish table (cdom)</title>
+  <script>
+/*CDOM_SHIM*/
+window.app = cdom.start('table.wasm', 'root', { vw: () => window.innerWidth });
+window.app.then((x) => window.addEventListener('resize', () => x.app_resize()));
+  </script>
+  <link href="/src/styles/index.css" rel="stylesheet"/>
+</head>
+<body>
+<div id="root"></div>
+</body>
+</html>
