@@ -223,12 +223,20 @@ int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) 
 
 static uint8_t game_status_byte(const Game *g) { return (uint8_t)g->status; }
 
-// The rating stamp the loaded table shows and stores: the finished game's, and
-// no stamp at all once the board is anything else. A rematch's lobby
-// (table_continue) is a new game with nothing to show yet, and this is the one
-// place that says so - the Table keeps the bytes it loaded.
+// The rating stamp the loaded table shows and stores, NULL when it has none.
+// Table.ratings is the stamp of the game on the board and of no other: only
+// table_rate writes one (on the operation that ended the game), a load or an
+// adoption brings the one its row or resident holds, and table_continue, the one
+// way off a finished board, drops it. So this reads the stamp and judges nothing.
+//
+// It used to judge the board instead ("over and stamped"), and that hid the
+// first game's stamp in the rematch's lobby without ever dropping it: a
+// resident (the server keeps one per game and never reloads the row) carried it
+// through the lobby and the deal, and the commit that ended the SECOND game found
+// it showing again, asked for no ratings and applied the first game's changes a
+// second time (table 824ee3 in production, 2026-10-28).
 static const GameRatings *table_stamp(const Table *t) {
-    return t->g->status == GAME_STATUS_GAME_OVER && t->ratings.n > 0 ? &t->ratings : 0;
+    return t->ratings.n > 0 ? &t->ratings : 0;
 }
 
 // One viewer's envelope. `trailer`: the roster trailer already written for this table (the
@@ -727,6 +735,9 @@ int table_continue(Table *t, const char *actor_id, int id_len) {
     if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
     if (t->g->status != GAME_STATUS_GAME_OVER) return TABLE_E_NOT_OVER;
     game_reset_to_lobby(t->g, roster_bot_mask(&t->r));
+    // The finished game's stamp is that game's (table_stamp): the rematch is a new
+    // game, rated by the commit that ends it and by no earlier one.
+    memset(&t->ratings, 0, sizeof(t->ratings));
     // A lobby has no deck to draw from, so its blob says so: the deck bit of every
     // lobby blob's flag byte is clear (plan 3.4), and the next deal sets it again.
     // The RULES carry over (game_reset_to_lobby leaves g->rules alone): a rematch
@@ -948,8 +959,8 @@ int table_resident_encode(const TableResident *res, uint8_t *state, int state_ca
                           int roster_cap, int *roster_len) {
     const Game *g = (const Game *)res->head;
     if (state_cap < TABLE_STATE_MAX) return TABLE_E_CAP;
-    // table_stamp's rule: the stamp rides a finished, rated board.
-    const GameRatings *stamp = g->status == GAME_STATUS_GAME_OVER && res->ratings.n > 0 ? &res->ratings : 0;
+    // A resident is a Table's (table_resident), so its stamp is the board's own (table_stamp).
+    const GameRatings *stamp = res->ratings.n > 0 ? &res->ratings : 0;
     const int n = state_blob_put_rated_at(g, &res->clock, stamp, STATE_BLOB_FORMAT, state);
     if (n == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
     if (n < 0) return n;

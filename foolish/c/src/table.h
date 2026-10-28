@@ -191,6 +191,8 @@ typedef struct {
     BoardClock  clock;
     // What the finished game did to its seats' ratings (view.h GameRatings), from
     // the state blob; unrated (n 0) for a game that is not over or was not rated.
+    // It is the stamp of the game on the board and of no other: table_rate writes
+    // it, a load or an adoption brings it, and table_continue drops it.
     // Every envelope of a rated, finished table carries it (table_envelope).
     GameRatings ratings;
     // THE MOVES THE LAST OPERATION APPLIED, as action wires in the order they
@@ -295,7 +297,8 @@ int table_retitle(Table *t, const char *actor_id, int id_len, const char *title,
 // rematch (table_continue leaves them).
 int table_set_rules(Table *t, const char *actor_id, int id_len, int passing);
 // A finished game back to its lobby (game_reset_to_lobby with the roster's
-// bots), playing the rules the finished game played.
+// bots), playing the rules the finished game played. The finished game's rating
+// stamp goes with it: the rematch is rated by the commit that ends it.
 int table_continue(Table *t, const char *actor_id, int id_len);
 // The actor's own hand: new card i is old card idx[i]. TABLE_E_WIRE when idx is
 // not a permutation of the hand. No push: nobody else can see a hand's order.

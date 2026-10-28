@@ -39,6 +39,7 @@
 #include "lib_proc.h"
 #include "fixture_unfurl.h"
 
+#include "anim_plan.h"
 #include "awire.h"
 #include "client_table.h"
 #include "evwire.h"
@@ -787,6 +788,129 @@ static void game_scenario(void) {
     free(sc);
 }
 
+
+// ---- a rematch rates its own game -----------------------------------------------------------
+//
+// Table 824ee3 in production (2026-10-28): a rematch on the same table ended, and every seat's
+// rating moved by the PREVIOUS game's changes again (the fool gained), and the end screen showed
+// that game's numbers beside this game's finish order. The server keeps a game it touched as a
+// resident (journal.h), and the resident carried the first game's stamp through the rematch.
+// Two humans, two games at one table, everything over HTTP as a client does it: each game's end
+// screen (its envelope) shows that game's own stamp - the ratings it began from, which for the
+// second game are the ones the first left, and the changes over its own finish order - and the
+// leaderboard holds exactly what the stamps say.
+
+// The stamp u's envelope of the finished game shows, by seat (n 0 when unrated), and its finish
+// order best first (anim_finish_rows over the board's eliminations and fool).
+static bool rematch_stamp(smoke_user *u, const char *gid, smoke_client *sc, cb_buf *env, GameRatings *st,
+                          int8_t order[MAX_PLAYERS]) {
+    int64_t v;
+    memset(st, 0, sizeof *st);
+    if (!game_view(u, gid, &v, env)) return false;
+    client_init(&sc->c, &sc->slot);
+    if (client_adopt_envelope(&sc->c, env->p, (int)env->len) < 0 || sc->c.view.status != GAME_STATUS_GAME_OVER) return false;
+    const int np = sc->c.g->num_players;
+    if (sc->c.view.rated) {
+        st->n = (uint8_t)np;
+        for (int s = 0; s < np; s++) { st->before[s] = sc->c.view.rating_before[s]; st->delta[s] = sc->c.view.rating_delta[s]; }
+    }
+    unsigned char elim[MAX_PLAYERS];
+    for (int i = 0; i < sc->c.g->num_eliminated; i++) elim[i] = (unsigned char)sc->c.g->elimination_order[i];
+    AnimFinishRow rows[MAX_PLAYERS + 1];
+    const int n = anim_finish_rows(elim, sc->c.g->num_eliminated, sc->c.view.fool, np, -1, rows, MAX_PLAYERS + 1);
+    if (n != np) return false;
+    for (int i = 0; i < n; i++) order[i] = (int8_t)rows[i].seat;
+    return true;
+}
+
+// The two humans play the dealt game to its end. The game's status.
+static int rematch_play(smoke_user *humans[2], const char *gid, smoke_client *sc, cb_buf *env, uint64_t *rng) {
+    int status = GAME_STATUS_PLAYING;
+    const int64_t t0 = mono_ms();
+    while (status == GAME_STATUS_PLAYING && mono_ms() - t0 < 300000) {
+        bool moved = false;
+        for (int h = 0; h < 2 && status == GAME_STATUS_PLAYING; h++) {
+            int64_t seen;
+            if (!game_view(humans[h], gid, &seen, env)) continue;
+            client_init(&sc->c, &sc->slot);
+            if (client_adopt_envelope(&sc->c, env->p, (int)env->len) < 0) continue;
+            status = sc->c.view.status;
+            uint8_t wire[64];
+            const int n = choose_move(sc, env, wire, sizeof wire, rng);
+            if (n <= 0) continue;
+            T_EQ_INT(call(humans[h], NC_DO_PLAY, gid, wire, n, sc->c.view.version), 200);
+            moved = true;
+        }
+        if (!moved) {
+            struct timespec ts = { 0, 20 * 1000000 };
+            nanosleep(&ts, NULL);
+        }
+    }
+    return status;
+}
+
+// The leaderboard's rating of each of the two humans, by seat (A at 0, B at 1).
+static bool rematch_board(smoke_user *A, smoke_user *B, int32_t out[2]) {
+    out[0] = out[1] = -1;
+    if (call(A, NC_DO_LEADERBOARD, NULL, NULL, 0, -1) != 200) return false;
+    const int rows = nc_list_read(g_status, g_body, g_len, NW_BOARD);
+    for (int i = 0; i < rows; i++) {
+        const NcBoardRow *r = nc_board_row(g_body, g_len, i);
+        if (!r || r->is_bot) continue;
+        if (r->id_len == strlen(A->id) && memcmp(r->id, A->id, r->id_len) == 0) out[0] = (int32_t)r->rating;
+        if (r->id_len == strlen(B->id) && memcmp(r->id, B->id, r->id_len) == 0) out[1] = (int32_t)r->rating;
+    }
+    return out[0] >= 0 && out[1] >= 0;
+}
+
+static void a_rematch_rates_its_own_game(void) {
+    smoke_user A, B;
+    int sa = signup(&A, "REMATCHA"), sb = signup(&B, "REMATCHB");
+    T_EQ_INT(sa, 0);
+    T_EQ_INT(sb, 0);
+    if (sa || sb) return;
+    smoke_client *sc = calloc(1, sizeof *sc);
+    cb_buf env;
+    cb_buf_init(&env);
+    smoke_user *humans[2] = { &A, &B };
+    uint64_t rng = 0x5eed;
+    T_EQ_INT(call(&A, NC_DO_CREATE, NULL, NULL, 0, -1), 200);
+    client_init(&sc->c, &sc->slot);
+    T_CHECK(client_adopt_envelope(&sc->c, g_body, g_len) >= 0);
+    char gid[32];
+    snprintf(gid, sizeof gid, "%.*s", (int)sc->c.gid_len, sc->c.gid);
+    T_EQ_INT(ask(&B, ASK_JOIN, gid, &env), 200);
+
+    GameRatings stamp[2];
+    int8_t order[2][MAX_PLAYERS];
+    int32_t board[3][2];
+    // A new account is on no board until it has played: it starts at the kernel's start.
+    rematch_board(&A, &B, board[0]);
+    for (int s = 0; s < 2; s++) if (board[0][s] < 0) board[0][s] = TABLE_RATING_START;
+    for (int g = 0; g < 2; g++) {
+        if (g == 1) T_EQ_INT(ask(&B, ASK_CONTINUE, gid, &env), 200);   // the rematch: same table, back to its lobby
+        T_EQ_INT(ask(&A, ASK_START, gid, &env), 200);
+        T_EQ_INT(ask(&B, ASK_START, gid, &env), 200);
+        T_EQ_INT(rematch_play(humans, gid, sc, &env, &rng), GAME_STATUS_GAME_OVER);
+        T_CHECK(rematch_stamp(&B, gid, sc, &env, &stamp[g], order[g]));
+        T_CHECK(rematch_board(&A, &B, board[g + 1]));
+        T_EQ_INT(stamp[g].n, 2);
+        int32_t want[MAX_PLAYERS];
+        T_EQ_INT(elo_deltas(board[g], order[g], 2, want), 2);
+        fprintf(stderr, "smoke: rematch game %d: fool seat %d, stamp %d%+d %d%+d (want %+d %+d), board %d %d -> %d %d\n", g + 1,
+                order[g][1], stamp[g].before[0], stamp[g].delta[0], stamp[g].before[1], stamp[g].delta[1], want[0], want[1],
+                board[g][0], board[g][1], board[g + 1][0], board[g + 1][1]);
+        for (int s = 0; s < 2; s++) {
+            T_EQ_INT(stamp[g].before[s], board[g][s]);          // rated from the ratings this game began with
+            T_EQ_INT(stamp[g].delta[s], want[s]);               // by its own finish order
+            T_EQ_INT(board[g + 1][s], board[g][s] + stamp[g].delta[s]);   // and applied as stamped, once
+        }
+    }
+    // Game 2's stamp is not game 1's (game 1 moved the ratings, so game 2 began elsewhere).
+    T_CHECK(stamp[1].before[0] != stamp[0].before[0]);
+    cb_buf_free(&env);
+    free(sc);
+}
 // ---- kills at any moment lose no acknowledged move --------------------------------------
 //
 // THE JOURNAL'S PROMISE, as production meets it (journal.h): a move is acknowledged once its batch
@@ -1051,6 +1175,7 @@ int main(int argc, char **argv) {
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(an_idle_human_turn_is_never_kicked);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_lobby_left_to_its_bots_is_deleted);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(game_scenario);
+    if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_rematch_rates_its_own_game);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(kills_lose_no_acknowledged_move);
     else printf("NOTE smoke: the game scenario is off (CBASE_SMOKE_GAME=0)\n");
     T_RUN(drains_on_sigterm);

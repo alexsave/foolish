@@ -18680,6 +18680,157 @@ static void dl_cast_all(DlCounts *k, uint32_t bots) {
     }
 }
 
+// A REMATCH RATES ITS OWN GAME, ON THE SERVER'S PATH (table.h table_rate). The
+// server keeps a game it touched as a resident (table_resident / table_adopt, the
+// move journal's overlay) and runs every operation on a copy of it, never
+// reloading the row; the products of each commit apply their rating changes to
+// the stored rows. Two games at one table, the second dealt by a rematch
+// (table_continue), each ended and rated the way cb_section_commit does it: the
+// ending commit wants ratings, the host reads the stored ones, table_rate, the
+// products again, the changes applied.
+//
+// Production met the opposite (table 824ee3, 2026-10-28): the resident carried
+// the first game's stamp through the rematch's lobby and deal, the second game's
+// ending commit found a stamp already there, asked for no ratings and applied the
+// FIRST game's changes again - its fool gained the three points the first game's
+// third place had. Each game owns its stamp: the rematch's lobby has none, and
+// the commit that ends a game names that game's changes and no other's.
+typedef struct {
+    TableResident res;
+    TbRow         row;          // the stored row each commit writes (what a load would read)
+    int32_t       stored[MAX_PLAYERS];   // the rating rows the products apply to
+    int           applied;      // ending commits that applied changes
+} RmTable;
+static RmTable rm;
+
+// Commits the adopted table's operation the way the server does: the products,
+// and when they ask for ratings, the stored ones handed to table_rate and the
+// products asked for again. The changes the products name are applied to the
+// stored ratings; the resident and the row become the committed table. 1, or 0
+// on a refusal. The ending commit's products stay in *c and tb_arena.
+static int rm_commit(TableCommit *c) {
+    if (wv_commit(&rm.row, "g", c) < 0) return 0;
+    if (c->wants_ratings) {
+        if (table_rate(&tb, rm.stored, tb_game.num_players) != TABLE_OK) return 0;
+        rm.row.version--;   // the same commit, asked again (no second version)
+        if (c->logs_reset) return 0;
+        rm.row.log_len -= c->logs.len;
+        if (wv_commit(&rm.row, "g", c) < 0) return 0;
+    }
+    if (c->n_rated > 0) {
+        for (int s = 0; s < c->n_rated; s++) rm.stored[s] += c->rating_delta[s];
+        rm.applied++;
+    }
+    table_resident(&tb, &c->clock, &rm.res);
+    return 1;
+}
+
+// Plays the resident's game to its end, humans by dl_human_move and the bots by
+// their drive, each operation on a table adopted from the resident. 1 with the
+// ending commit's products in *c.
+static int rm_play_to_the_end(uint32_t bots, TableCommit *c) {
+    char id[16], ab[2 * FOOLISH_SEED_LEN + 1];
+    uint8_t w[128];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) memcpy(ab + 2 * i, "ab", 2);
+    for (int step = 0; step < 3000; step++) {
+        table_adopt(&tb, &rm.res);
+        if (tb_game.status != GAME_STATUS_PLAYING) return 0;
+        table_set_deal_seed(&tb, ab, 2 * FOOLISH_SEED_LEN);
+        int drove = 0;
+        if (table_bots_due(&tb)) {
+            const int d = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+            if (d < 0) return 0;
+            drove = d > 0;
+        }
+        if (!drove) {
+            const int wl = dl_human_move(&tb_game, bots, id, sizeof(id), w, sizeof(w));
+            if (wl <= 0 || table_act(&tb, id, (int)strlen(id), w, wl, -1, 0) != TABLE_APPLIED) return 0;
+        }
+        if (!rm_commit(c)) return 0;
+        if (c->ended) return 1;
+    }
+    return 0;
+}
+
+// The stamp an ending commit's spectator envelope shows, by seat, into `out`
+// (n 0 when unrated).
+static void rm_shown(const TableCommit *c, GameRatings *out) {
+    memset(out, 0, sizeof(*out));
+    client_init(&ct, &ct_slot);
+    if (client_adopt_envelope(&ct, tb_arena + c->spectator.off, c->spectator.len) != CLIENT_OK || !ct.view.rated) return;
+    out->n = (uint8_t)ct.view.num_players;
+    for (int s = 0; s < out->n; s++) { out->before[s] = ct.view.rating_before[s]; out->delta[s] = ct.view.rating_delta[s]; }
+}
+
+static void test_table_rematch_rates_its_own_game(void) {
+    enum { NP = 3 };
+    const uint32_t bots = 1u << 1;
+    TableCommit c;
+    GameRatings first, second;
+    int8_t order[MAX_PLAYERS];
+    int32_t want[MAX_PLAYERS], after_first[MAX_PLAYERS];
+    static uint8_t first_row[sizeof(rm.row.state)];
+    int first_row_len = 0;
+    cb_rng = 0x5e7a7cu;
+    memset(&rm, 0, sizeof(rm));
+    for (int s = 0; s < NP; s++) rm.stored[s] = 1000 + 37 * s;
+    tb_seed_fill(3);
+    CHECK(wv_deal(&rm.row, NP, bots), "a rated table deals its first game");
+    table_resident(&tb, 0, &rm.res);
+
+    // THE FIRST GAME: rated once, by its own finish order, and applied.
+    CHECK(rm_play_to_the_end(bots, &c), "the first game plays to its end on the resident");
+    CHECK(rm.applied == 1 && c.n_rated == NP, "its ending commit applies changes");
+    rm_shown(&c, &first);
+    {
+        const int32_t was[NP] = { 1000, 1037, 1074 };
+        CHECK(table_rankings(&tb, order) == NP && elo_deltas(was, order, NP, want) == NP, "the first game's finish order and changes");
+        for (int s = 0; s < NP; s++)
+            CHECK(first.n == NP && first.before[s] == was[s] && first.delta[s] == want[s] && c.rating_delta[s] == want[s],
+                  "the first game's stamp is its own: the ratings it began from and its changes");
+    }
+    memcpy(after_first, rm.stored, sizeof(after_first));
+    memcpy(first_row, rm.row.state, (size_t)rm.row.state_len);
+    first_row_len = rm.row.state_len;
+
+    // THE REMATCH: back to the lobby, every human ready, a new deal. No stamp in between.
+    table_adopt(&tb, &rm.res);
+    CHECK(table_continue(&tb, RS("id-0")) == TABLE_OK && rm_commit(&c) && c.n_rated == 0, "the table continues into its lobby, rating nobody");
+    CHECK(rm.res.ratings.n == 0, "the rematch's lobby carries no stamp: the first game's belongs to the first game");
+    for (int s = 0; s < NP; s++) {
+        if ((bots >> s) & 1u) continue;
+        char id[8];
+        snprintf(id, sizeof(id), "id-%d", s);
+        tb_seed_fill(11 + s);
+        table_adopt(&tb, &rm.res);
+        const int rc = table_ready(&tb, id, (int)strlen(id), tb_seed);
+        game_set_seed(1);
+        CHECK(rc == TABLE_OK && rm_commit(&c) && c.n_rated == 0, "each human readies, rating nobody");
+    }
+    CHECK(rm.res.ratings.n == 0 && ((const Game *)rm.res.head)->status == GAME_STATUS_PLAYING, "the rematch is dealt, unstamped");
+
+    // THE SECOND GAME: its ending commit asks for ratings again and applies ITS changes.
+    const int applied = rm.applied;
+    CHECK(rm_play_to_the_end(bots, &c), "the second game plays to its end on the resident");
+    CHECK(rm.applied == applied + 1, "its ending commit applies changes once");
+    rm_shown(&c, &second);
+    CHECK(table_rankings(&tb, order) == NP && elo_deltas(after_first, order, NP, want) == NP, "the second game's finish order and changes");
+    int differs = 0;
+    for (int s = 0; s < NP; s++) {
+        CHECK(second.n == NP && second.before[s] == after_first[s], "the second game is rated from the ratings the first left");
+        CHECK(second.delta[s] == want[s], "the second game's stamp is its own changes over its own finish order");
+        CHECK(rm.stored[s] == after_first[s] + second.delta[s], "what was applied to the stored ratings is the second game's stamp");
+        differs |= second.before[s] != first.before[s] || second.delta[s] != first.delta[s];
+    }
+    CHECK(differs, "and it is not the first game's stamp");
+
+    // THE FIRST GAME'S OWN ROW, read again after the second: still its own stamp.
+    CHECK(table_load(&tb, first_row, first_row_len, rm.row.roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == NP,
+          "the first game's stored row loads with its stamp");
+    for (int s = 0; s < NP; s++)
+        CHECK(tb.ratings.before[s] == first.before[s] && tb.ratings.delta[s] == first.delta[s], "and that stamp is still the first game's");
+}
+
 // THE GATE: over 1,000 random games of 2 to 8 seats, humans and "random" bots,
 // every commit cast to every human seat and the spectators - as the board cast,
 // and as a delta wherever table_cast_delta_ok allows one - the client's rebuilt
@@ -20716,6 +20867,7 @@ int main(void) {
     test_client_adopts_envelopes();
     test_rating_stamp_rides_the_row_and_the_envelope();
     test_table_rates_the_game_it_ends();
+    test_table_rematch_rates_its_own_game();
     test_ask_round_trips();
     test_table_ask_runs_every_kind();
     test_table_cast_carries_its_version();
