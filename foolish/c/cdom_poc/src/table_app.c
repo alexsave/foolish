@@ -1012,7 +1012,7 @@ static struct {
   Fern fern; Wood wood; Wool wool;
   int32_t fern_w, fern_h, landed, from_store[NTEX];
   TexRect rect[WOOD_MAX_WIN];
-  double ms[NTEX], at[NTEX];
+  double ms[NTEX], at[NTEX], asked[NTEX], answered[NTEX];
   uint32_t seed[NTEX];
   char key[NTEX][48];
   uint32_t klen[NTEX];
@@ -1122,6 +1122,7 @@ static void tex_next(void) {
     tex.block = 0; tex.col = 0;
     return;
   }
+  tex.asked[stage] = cd_now();
   cd_store_get((uint32_t)stage, tex.key[stage], tex.klen[stage], CD_STORE_DEADLINE_MS);
 }
 
@@ -1149,6 +1150,7 @@ static void tex_go(void) {
 void cd_on_store(uint32_t token, const uint8_t *p, int32_t len) {
   int k = (int)token;
   if (k != tex.stage) return;
+  tex.answered[k] = cd_now();
   if (len > 0) { /* kept from an earlier load */
     tex.from_store[k] = 1;
     tex_land(k, p, (uint32_t)len);
@@ -1163,6 +1165,7 @@ void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len) {
   int k = (int)token;
   tex_land(k, p, len);
   cd_store_put(tex.key[k], tex.klen[k], p, len);
+  tex_next();
 }
 
 void cd_on_raf(uint32_t token, double t) {
@@ -1179,11 +1182,12 @@ void cd_on_raf(uint32_t token, double t) {
   }
   tex.ms[tex.stage] += now - t0;
   if (!done) { cd_raf_request(RAF_SLICE); return; }
-  /* the pixels are copied during the call, so the block is free for the next texture at once */
+  /* The pixels are copied during the call, but the next texture waits for the file: Chrome encodes
+   * a PNG in idle time, and slices on every frame leave none (measured at CPU x4: the fern, made in
+   * 50 ms, landed 700 ms later, behind the wool's slices). */
   if (tex.stage == TEX_FERN) cd_encode_image(tex.fern.px, (uint32_t)tex.fern_w, (uint32_t)tex.fern_h, 4, ZS("image/png"), TEX_FERN);
   if (tex.stage == TEX_WOOD || tex.stage == TEX_WOOD_END) cd_encode_image(tex.wood.px, WOOD_W, WOOD_H, 3, ZS("image/png"), (uint32_t)tex.stage);
   if (tex.stage == TEX_WOOL) cd_encode_image_in(tex.wool.px, WOOL_W, WOOL_H, 3, TEX_W, TEX_H, WOOL_X, WOOL_Y, ZS("image/jpeg"), TEX_WOOL);
-  tex_next();
 }
 
 static void textures_begin(void) {
@@ -1207,6 +1211,8 @@ EXPORT("app_tex_ms") double app_tex_ms(int32_t k) { return k < NTEX ? tex.ms[k] 
  * when all have landed. */
 EXPORT("app_tex_count") int32_t app_tex_count(void) { return NTEX; }
 EXPORT("app_tex_at") double app_tex_at(int32_t k) { return tex.at[k]; }
+/* When texture k was asked of the store (which = 0) and when the store answered (which = 1). */
+EXPORT("app_tex_store") double app_tex_store(int32_t k, int32_t which) { return which ? tex.answered[k] : tex.asked[k]; }
 EXPORT("app_tex_stored") int32_t app_tex_stored(int32_t k) { return tex.from_store[k]; }
 /* The seed texture k was made from on this load (0 when it came from the store): the fern's
  * mulberry32 state; the wood's offsets are its first two draws, the wool's the next two

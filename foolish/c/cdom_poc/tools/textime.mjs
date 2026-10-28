@@ -68,7 +68,7 @@ async function port(arm, notex) {
   const r = await b.evaluate(`window.app.then(async (x) => {
     const u = ['--tex-fern', '--tex-wood', '--tex-wool', '--tex-wood-end'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(4, -1));
     await Promise.all(u.map((s) => { const i = new Image(); i.src = s; return i.decode(); }));
-    return { fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime, fern: x.app_tex_at(0), wood: x.app_tex_at(1), wool: x.app_tex_at(2), woodEnd: x.app_tex_at(3),
+    return { fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime, fern: x.app_tex_at(0), wood: x.app_tex_at(1), wool: x.app_tex_at(2), woodEnd: x.app_tex_at(3), store: [0, 1, 2, 3].map((k) => x.app_tex_store(k, 1) - x.app_tex_store(k, 0)),
       decoded: performance.now(), stored: [0, 1, 2, 3].map((k) => x.app_tex_stored(k)).join(''), made: [0, 1, 2, 3].map((k) => x.app_tex_ms(k)),
       mem: x.memory.buffer.byteLength }; })`);
   const want = arm === 'port_warm' ? '1111' : '0000';
@@ -115,6 +115,8 @@ console.log(`load after:  ${after.load} | ${after.top}`);
 console.log(`first contentful paint: port ?notex ${cell(arms.notex.map((r) => r.fcp))}, port cold ${cell(arms.port_cold.map((r) => r.fcp))}, port warm ${cell(arms.port_warm.map((r) => r.fcp))}`);
 for (const arm of ['port_cold', 'ts_cold', 'port_warm', 'ts_warm'])
   console.log(`${arm.padEnd(10)} fern ${cell(arms[arm].map((r) => r.fern)).padEnd(16)} wood ${cell(arms[arm].map((r) => r.wood)).padEnd(16)} wool ${cell(arms[arm].map((r) => r.wool)).padEnd(16)}${arm.startsWith('port') ? ' end-screen wood ' + cell(arms[arm].map((r) => r.woodEnd)).padEnd(16) : ''} all decoded ${cell(arms[arm].map((r) => r.decoded))}`);
+for (const arm of ['port_cold', 'port_warm'])
+  console.log(`${arm} the store's answer took: ${['fern', 'wood', 'wool', 'end-screen wood'].map((n, k) => n + ' ' + cell(arms[arm].map((r) => r.store[k]))).join(', ')}`);
 for (const arm of ['port_cold', 'port_warm'])
   console.log(`${arm} made on the page's thread: fern ${cell(arms[arm].map((r) => r.made[0]))} wood ${cell(arms[arm].map((r) => r.made[1]))} wool ${cell(arms[arm].map((r) => r.made[2]))} end-screen wood ${cell(arms[arm].map((r) => r.made[3]))}; wasm memory ${(q(arms[arm].map((r) => r.mem), 0.5) / 1048576).toFixed(1)} MiB`);
 if (arms.before.length) console.log(`before (${process.env.BEFORE}, cold, ${arms.before.length} rounds): all decoded ${cell(arms.before.map((r) => r.decoded))}; wasm memory ${(q(arms.before.map((r) => r.mem), 0.5) / 1048576).toFixed(1)} MiB`);
