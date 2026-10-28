@@ -317,7 +317,7 @@ For what both do, the C is about as long as the TSX, most of it the same inline 
 `tools/strings.mjs`: from game 2 to game 3 the string table may grow only by what a game can show for the first time late (an end title, a pill, a medal: at most 10 strings and 200 bytes); it had been "may not grow", which failed whenever game 3 was the first to show such a literal (seen once in this pass, 180 to 181).
 `tools/texparity.mjs`: the PRNG exact; the wood's cos exactly Chrome's and trig.c's sin, cos and tan within 1 ulp; the wool (whole and the page's crop), the wood (floats, the WebGL picture, and six rectangles with the base colour around them) and the fern's points exact; the multisampled fern within 3% of the WebGL picture; and, measured but not judged, the page-size fern against the app's picture shrunk.
 
-Mutation check (`tools/mutate.py`), each of 34 mutants caught by the check written for it (a mutant of this pass runs the check it names, `ONLY`; the source's copy is kept outside the checkout):
+Mutation check (`tools/mutate.py`), each of 35 mutants caught by the check written for it (a mutant of this pass runs the check it names, `ONLY`; the source's copy is kept outside the checkout):
 - a card face's radius 5px to 4px: the golden check names the first differing tag;
 - the bot never chooses a move: the bot-answer check times out on `data-turn`;
 - the hand rebuilt on every render: "the three cards left in my hand are the nodes that were there";
@@ -332,6 +332,7 @@ Mutation check (`tools/mutate.py`), each of 34 mutants caught by the check writt
 - the pills' wood rectangles 40 wide: "Attack 560 pixels outside"; the results panel's 60 tall: "bg-wood 5882 pixels outside";
 - the store ignored: "every texture from the store, no generator run" (the warm load made all four);
 - the wool not placed in the 3840x2160 image: "the wool image is the app's size" (1952x1104);
+- the wool placed 16 px off in that image: `tools/shots.mjs` "FAIL over the bar" (755,744 pixels with textures);
 - the WebSocket bytes flipped in the shim: "ws failed"; the HTTP body not sent: "http wrong".
 - the game not canonical between operations: `out/blob_test` ("seed 1 step 11 after the next drive: the board differs");
 - a drop that is no move spends the selection: the consistency check ("selection held x152 ... port (none) React 1-6");
