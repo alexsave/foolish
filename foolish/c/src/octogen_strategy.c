@@ -622,8 +622,14 @@ static int og_simulate(Game *g, int my_idx, int max_turns) {
             LegalMoves *moves = rollout_moves_scratch();
             calculate_legal_moves_lite(g, pi, moves);
             if (moves->n == 0) continue;
-            StrategyFn fn = bot_rollout_for(g, og_rollout_policy);
-            int idx = fn(g, pi, moves, NULL);
+            // Fusion's rollout noise, the struct twin of the bitboard path's
+            // (cordite_sim.h): -1 plays the policy. At noise 0 (octogen) it
+            // returns before drawing anything, so this stream is unchanged.
+            int idx = cd_sim_noise() ? cd_sim_noise_legal(g, pi, moves) : -1;
+            if (idx < 0) {
+                StrategyFn fn = bot_rollout_for(g, og_rollout_policy);
+                idx = fn(g, pi, moves, NULL);
+            }
             if (idx < 0 || idx >= moves->n) continue;
             if (legal_move_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
         }
@@ -2218,3 +2224,35 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
     og_oracle = 0;
     return r;
 }
+
+// Fusion (c/FUSION.md): octogen plus rollout noise, and nothing else. The same
+// belief, worlds, budgets, root endgame solve, LEAFBOOK and candidate race as
+// octogen; the one difference is the rollout engine's noise knob, set for the
+// length of this decision and put back to 0 after it, so the next brain to run
+// on this thread (octogen, cordite, a rollout policy) sees the noise off.
+//
+// The knob is the per-mille chance that a rollout decision plays a sensible
+// alternative instead of the policy (cordite_sim.h). FUSION_NOISE_PM is the
+// default; the FUSION_NOISE knob (env over roster spec, bot_knobs.h) overrides
+// it for sweeps, and is read by fusion alone, so a paired fusion-vs-octogen run
+// can sweep it without touching the control. Octogen itself never sets the
+// knob: it stays 0 there, and at 0 the rollouts draw nothing extra.
+//
+// 200 is kestrel's tuned value (20%), measured against kestrel's own, weaker
+// rollout policy; FUSION.md has the sweep that should re-tune it for octogen.
+//
+// Defined only where the noise is compiled in. The shipped bots module (the
+// seeded ladder) has no fusion: anything there that named it would fail to
+// link, rather than quietly running octogen under fusion's name.
+#ifdef CD_ROLLOUT_NOISE
+#ifndef FUSION_NOISE_PM
+#define FUSION_NOISE_PM 200
+#endif
+int fusion_strategy_choose(const Game *g, int bot_idx,
+                           const LegalMoves *moves, void *ctx) {
+    cd_sim_set_noise(bot_knob_int("FUSION_NOISE", FUSION_NOISE_PM));
+    int r = octogen_strategy_choose(g, bot_idx, moves, ctx);
+    cd_sim_set_noise(0);
+    return r;
+}
+#endif

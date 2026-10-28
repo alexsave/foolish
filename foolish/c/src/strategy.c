@@ -33,6 +33,7 @@ int strategy_choose(int strat, const Game *g, int bot_idx, const LegalMoves *mov
         case STRAT_DISTILLED:         return distilled_strategy_choose(g, bot_idx, moves, NULL);
         case STRAT_OCTOGEN:           return octogen_strategy_choose(g, bot_idx, moves, NULL);
         case STRAT_OCTOGEN_ORACLE:    return octogen_oracle_strategy_choose(g, bot_idx, moves, NULL);
+        case STRAT_FUSION:            return fusion_strategy_choose(g, bot_idx, moves, NULL);
         // 18, 19, 22 and 23 are retired ids (strategy.h): no case, so -1.
         default:                      return -1;
     }
