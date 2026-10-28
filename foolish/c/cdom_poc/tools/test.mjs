@@ -1,0 +1,106 @@
+// The cdom table in headless Chrome: the first paint is the React golden's DOM for the same
+// board, a click sequence plays a legal move and the bot answers through keyed patches, and a
+// game played out by clicks reaches its end screen. Exits non-zero on the first failure.
+//
+//   node tools/test.mjs        (after ./build.sh)
+import fs from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { launch, serve, FOOLISH } from './cdp.mjs';
+import { playToEnd } from './play.mjs';
+
+const golden = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/bout_2p_attacker.html'), 'utf8');
+const server = await serve(8720, FOOLISH);
+const b = await launch();
+const q = (sel) => b.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? e.outerHTML : null; })()`);
+const all = (sel, expr) => b.evaluate(`[...document.querySelectorAll(${JSON.stringify(sel)})].map((e) => ${expr})`);
+const turn = () => b.evaluate(`document.querySelector('[data-game-container]').dataset.turn`);
+const pills = () => all('[data-pill]', 'e.dataset.pill');
+const settle = async () => { await b.until(`document.querySelector('[data-game-container]').dataset.turn !== 'bot'`, 15000); };
+let failed = 0;
+async function check(name, fn) {
+  try { await fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message.split('\n').join('\n     ')}`); }
+}
+
+try {
+  await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
+  await b.until(`document.querySelector('[data-game-container]')?.dataset.turn === 'human'`);
+
+  await check('first paint: the React golden DOM for the same board, but for what this port leaves out', async () => {
+    const mine = await b.evaluate(`document.getElementById('root').innerHTML`);
+    let theirs = await b.evaluate(`(() => { const d = document.createElement('div'); d.innerHTML = ${JSON.stringify(golden)};
+      d.querySelector('[data-testid="kbd-state"]').remove();   // keyboard play: not ported
+      d.querySelector('svg marker#arrowhead').closest('svg').remove();   // the cover arrows' layer: not ported
+      return d.innerHTML; })()`);
+    // jsdom could not parse the action area's bottom (max() and env()); the seat ring's
+    // 49.99999999999999% is JS printing -sin(pi) * 35 + 50, which C prints to four places.
+    theirs = theirs.replace('position: absolute; left: 0px; right: 0px; justify-content: end;',
+      'position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); left: 0px; right: 0px; justify-content: end;')
+      .replace('left: 49.99999999999999%', 'left: 50%')
+      .replace('class="game-container">', 'class="game-container" data-turn="human">');
+    theirs = theirs.trim();
+    if (mine !== theirs) {
+      const a = theirs.split('><'), m = mine.split('><');
+      const i = a.findIndex((x, k) => x !== m[k]);
+      assert.fail(`first difference at tag ${i}:\n  react: <${a[i]}>\n  cdom:  <${m[i]}>`);
+    }
+  });
+
+  await check('first paint: the seeded deal, read back', async () => {
+    assert.deepEqual(await all('[data-hand-plane] [data-card]', 'e.dataset.card'), ['0-5', '1-6', '3-11', '3-13']);
+    assert.deepEqual(await all('[data-table-container] > [data-location="table"]', 'e.querySelectorAll("[data-card]").length'), [2, 1]);
+    assert.equal(await b.evaluate(`document.querySelector('[data-location="deck"] p').textContent`), '21');
+    assert.equal(await b.evaluate(`document.querySelector('[data-location="deck"] > div').children.length`), 20);
+    assert.deepEqual(await all('[data-role-mark]', 'e.dataset.roleMark'), ['leadSword', 'shield']);
+    assert.deepEqual(await pills(), []);
+  });
+
+  await check('a click selects a card and the kernel offers its pill; a second click takes it back', async () => {
+    await b.click('[data-hand-plane] [data-card="1-6"]');   // 7h: nothing on the table to throw it on
+    assert.deepEqual(await pills(), []);
+    assert.match(await q('[data-hand-plane] [data-card="1-6"]'), /border: 2px solid red/);
+    await b.click('[data-hand-plane] [data-card="1-6"]');
+    assert.match(await q('[data-hand-plane] [data-card="1-6"]'), /border: 2px solid black/);
+    await b.click('[data-hand-plane] [data-card="0-5"]');   // 6s: a six is on the table
+    assert.deepEqual(await pills(), ['Attack']);
+  });
+
+  await check('the move plays, the bot answers, and the DOM is patched, not rebuilt', async () => {
+    // Every node that should survive the move is tagged; a rebuild would make new ones.
+    await b.evaluate(`document.querySelectorAll('[data-hand-plane] [data-card], [data-table-container] > *, [data-role-seat]')
+      .forEach((e) => { e.$kept = 1; })`);
+    await b.click('[data-pill="Attack"]');
+    assert.deepEqual(await all('[data-table-container] [data-battle-index]', 'e.dataset.card'), ['1-5', '3-5', '0-5']);
+    assert.deepEqual(await all('[data-hand-plane] [data-card]', 'e.dataset.card'), ['1-6', '3-11', '3-13']);
+    assert.equal(await turn(), 'bot');
+    assert.equal(await b.evaluate(`[...document.querySelectorAll('[data-hand-plane] [data-card]')].every((e) => e.$kept)`), true,
+      'the three cards left in my hand are the nodes that were there');
+    assert.equal(await b.evaluate(`[...document.querySelectorAll('[data-table-container] > [data-location="table"]')].filter((e) => e.$kept).length`), 2,
+      'the two battles that were down are the same nodes');
+    await settle();
+    // The handwritten bot faces 6h/8h, 6d and 6s: it covers both open sixes, or it takes all five cards.
+    const table = await all('[data-table-container] > [data-location="table"]', 'e.querySelectorAll("[data-card]").length');
+    const anna = await b.evaluate(`document.querySelector('[data-player-id="u-anna-0001"]').lastElementChild.textContent`);
+    assert.ok((table.length === 3 && table.every((n) => n === 2)) || (table.length === 0 && anna === '8'),
+      `a legal answer: table ${JSON.stringify(table)}, Anna holds ${anna}`);
+    assert.equal(await turn(), 'human');
+    assert.equal(await b.evaluate(`[...document.querySelectorAll('[data-role-seat]')].every((e) => e.$kept)`), true,
+      'the seat badges are patched in place');
+  });
+
+  await check('a game played out by clicks reaches the end screen, and Play again deals a new one', async () => {
+    const moves = await playToEnd(b);
+    console.log(`     (${moves} moves of mine to the end)`);
+    assert.equal(await turn(), 'over');
+    assert.match(await b.evaluate(`document.querySelector('[data-end] h1').textContent`), /^(You won|You are the fool|A draw)$/);
+    await b.click('[data-end] button');
+    await settle();
+    assert.equal(await b.evaluate(`document.querySelector('[data-end]')`), null);
+    assert.equal(await all('[data-hand-plane] [data-card]', '1').then((x) => x.length), 6, 'a fresh hand of six');
+  });
+} finally {
+  await b.close();
+  server.close();
+}
+if (failed) { console.log(`${failed} failed`); process.exit(1); }
+console.log('all passed');

@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { launch, serve, POC, FOOLISH } from './cdp.mjs';
+import { playToEnd } from './play.mjs';
 
 const W = Number(process.env.W || 1024), H = Number(process.env.H || 768);
 const shots = path.join(POC, 'shots');
@@ -45,6 +46,9 @@ try {
   await b.until(`document.querySelector('[data-game-container]').dataset.turn !== 'bot'`, 10000);
   await new Promise((r) => setTimeout(r, 400)); // the hand's own 0.1s slide (transition: all 0.1s)
   await b.shot(path.join(shots, `cdom_after_bot${sfx}.png`));
+  // Played out to the end screen.
+  await playToEnd(b);
+  await b.shot(path.join(shots, `cdom_end${sfx}.png`));
   // How many pixels differ between two shots: the React golden against the cdom first paint, and,
   // as the measure's own check, against the shot with a card selected (which must differ).
   const differ = (x, y) => b.evaluate(`(async () => {

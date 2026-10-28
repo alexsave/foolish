@@ -81,9 +81,18 @@ export async function launch({ width = 1024, height = 768, port = 8729 } = {}) {
     fs.writeFileSync(file, Buffer.from(data, 'base64'));
   };
   /** A real click: mouse pressed and released at the centre of the element `sel` names. */
+  // The element is clicked where it rests: a hand card slides for 0.1s after the hand changes,
+  // so the rect is read until two reads a frame apart agree (bounded).
   const click = async (sel) => {
-    const at = await evaluate(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const rect = `(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`;
+    let at = await evaluate(rect);
+    for (let n = 0; n < 40; n++) {
+      await sleep(20);
+      const again = await evaluate(rect);
+      if (again.x === at.x && again.y === at.y) break;
+      at = again;
+    }
     for (const type of ['mousePressed', 'mouseReleased'])
       await s('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 });
   };

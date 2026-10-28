@@ -8,8 +8,10 @@
 #include <stdint.h>
 
 /* A literal interned once per call site: the hash lookup cd_internz does is
- * paid the first time only. */
-#define ZS(lit) ({ static cd_str _zs; if (!_zs) _zs = cd_internz(lit); _zs; })
+ * paid the first time only. ONLY A LITERAL: the cache is per call site, so a
+ * variable would be interned once and then answer its first value forever.
+ * `"" lit` makes anything but a string literal a compile error. */
+#define ZS(lit) ({ static cd_str _zs; if (!_zs) _zs = cd_internz("" lit); _zs; })
 
 #define OPEN(tag) cd_open(ZS(tag))
 #define CLOSE() cd_close()

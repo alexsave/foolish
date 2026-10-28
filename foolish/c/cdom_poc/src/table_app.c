@@ -508,7 +508,7 @@ static cd_id pill_create(void *ctx, uint32_t i, uint32_t *data) {
   cd_tag_set(btn, TAG_PILL | PILL[p].bit);
   CLASS("btn-action");
   cd_attr(S_STYLE, wood_style(PILL[p].seed));
-  ATTR("data-pill", PILL[p].label);
+  cd_attr(ZS("data-pill"), cd_internz(PILL[p].label));
   OPEN("span"); CLASS("btn-action-text"); OPEN("span"); cd_text(cd_internz(PILL[p].label)); CLOSE(); CLOSE();
   CLOSE();
   CLOSE();
@@ -783,6 +783,7 @@ static void render_end(void) {
   cd_text(fool == ME ? ZS("You are the fool") : fool < 0 ? ZS("A draw") : ZS("You won"));
   CLOSE();
   OPEN("div"); CLASS("win-screen__results"); STYLE("width: min(360px, 90vw);");
+  OPEN("div"); CLASS("bg-wood"); cd_attr(S_STYLE, wood_style(0.42)); CLOSE();
   for (int s = 0; s < V->num_players; s++) if (s != fool) result_row("\xF0\x9F\xA5\x87", s);
   if (fool >= 0) result_row("\xF0\x9F\x83\x8F", fool);
   CLOSE();
@@ -1011,3 +1012,4 @@ void cd_main(void) {
 
   render();
 }
+

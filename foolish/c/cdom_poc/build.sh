@@ -48,6 +48,10 @@ if command -v wasm-opt > /dev/null; then
   wasm-opt -Oz --enable-bulk-memory --enable-mutable-globals --enable-sign-ext "$out/table.wasm" -o "$out/table.wasm"
 fi
 
+# The network imports' own test module (tests/net_test.mjs): cdom and nothing of the kernel.
+"$CC" --target=wasm32 -Oz -nostdlib -mbulk-memory -Wall -Wextra -Werror -I"$here/vendor" -Wl,--no-entry \
+  -Wl,--export-memory -Wl,--strip-all -o "$out/net_test.wasm" "$here/tests/net_test.c" "$here/vendor/cdom.c" "$here/vendor/mini.c"
+
 # The page: the shim minified and inlined (as cdom's bench does), the app's CSS linked.
 "$here/tools/node_modules/.bin/terser" "$here/vendor/cdom.js" -c passes=2 -m -o "$out/cdom.min.js" 2> /dev/null \
   || cp "$here/vendor/cdom.js" "$out/cdom.min.js"
