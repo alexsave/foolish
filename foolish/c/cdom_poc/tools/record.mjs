@@ -12,7 +12,12 @@
 // own pace, the flights at 1x. Nothing is driven from inside the page: every move is real CDP input.
 // The recording is the compositor's own frames (Page.startScreencast, a frame only when the page
 // changes, each with its timestamp), written to out/run/<name>/ as they come; kept in shots/run/:
-//   <name>.mp4         every frame, each shown for as long as it was on screen (ffmpeg, 30 fps)
+//   <name>.mp4         every frame, each shown for as long as it was on screen (ffmpeg, 60 fps)
+// The screencast hands over the next frame only once the last is acked: each is acked the moment it
+// arrives and written to disk after, off the hot path, and is a JPEG (Chrome encodes a 1024x768 PNG
+// in tens of ms, which held the old recording to about 14 frames a second: the film stuttered where
+// the page did not). FILM_CHECK=1 counts, over every flight, the frames the film holds against the
+// frames the page drew (an rAF log), and fails under 90 per cent.
 //   <name>_moves.txt   every move: its time in the film, by what hand, what it was
 //   <name>_sheet.png   one frame a second, its time on it
 // and in out/run/<name>_50ms/ (not committed: about 2 MB a frame), one frame every 50 ms while
@@ -27,7 +32,7 @@ const W = Number(process.env.W || 1024), H = Number(process.env.H || 768);
 const TOUCH = process.env.TOUCH === '1';
 const MAX_MOVES = Number(process.env.MOVES || 400);
 const name = `run_${W}x${H}${TOUCH ? '_touch' : ''}${process.env.MOVES ? `_${MAX_MOVES}moves` : ''}`;
-const URL_TABLE = 'http://127.0.0.1:8720/c/cdom_poc/out/index.html';
+const URL_TABLE = `http://127.0.0.1:8720/c/cdom_poc/${process.env.PAGE || 'out'}/index.html`; // PAGE=out_<commit>: an earlier build (retake.sh)
 const raw = path.join(POC, 'out/run', name);
 const keep = path.join(POC, 'shots/run');
 fs.rmSync(raw, { recursive: true, force: true });
@@ -44,14 +49,23 @@ if (TOUCH) {
 // ---- the recorder: every frame to disk as it comes, with its compositor time ----------------
 const frames = [];
 let t0 = null;
+const writes = [];
 const off = b.listen('Page.screencastFrame', (f) => {
+  b.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
   const ts = f.metadata.timestamp * 1000;
   if (t0 === null) { t0 = ts; firstWall = Date.now(); }
-  const file = path.join(raw, `${String(frames.length).padStart(5, '0')}.png`);
-  fs.writeFileSync(file, Buffer.from(f.data, 'base64'));
-  frames.push({ t: ts - t0, file });
-  b.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
+  const file = path.join(raw, `${String(frames.length).padStart(5, '0')}.jpg`);
+  writes.push(fs.promises.writeFile(file, Buffer.from(f.data, 'base64')));
+  frames.push({ t: ts - t0, file, ts });
 });
+// The page's own frames and its flights (FILM_CHECK): every rAF time, every flight's transition start
+// and end, installed before any script of the page.
+await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => { const fp = window.__fp = { frames: [], runs: [], ends: [] };
+  const loop = (t) => { fp.frames.push(performance.timeOrigin + t); requestAnimationFrame(loop); }; requestAnimationFrame(loop);
+  const isFlight = (e) => { const p = e.target.parentElement; return !!p && p.style.zIndex === '10000' && p.style.position === 'fixed'; };
+  addEventListener('transitionrun', (e) => { if (e.propertyName === 'top' && isFlight(e)) fp.runs.push(performance.timeOrigin + performance.now()); }, true);
+  const end = (e) => { if (e.propertyName === 'top' && isFlight(e)) fp.ends.push(performance.timeOrigin + performance.now()); };
+  addEventListener('transitionend', end, true); addEventListener('transitioncancel', end, true); })();` });
 const moves = [];
 // A move's time in the film: the wall clock since the first frame came (the compositor's clock is
 // the frames' own; the two run together within a frame).
@@ -156,7 +170,7 @@ try {
   await b.evaluate(FORGET_GAME);
   await b.evaluate(`new Promise((r) => { const q = indexedDB.deleteDatabase('cdom'); q.onsuccess = q.onerror = q.onblocked = () => r(1); })`);
   await b.goto('about:blank');
-  await b.send('Page.startScreencast', { format: 'png', everyNthFrame: 1 });
+  await b.send('Page.startScreencast', { format: 'jpeg', quality: 92, everyNthFrame: 1 });
   await b.send('Page.navigate', { url: URL_TABLE });
   log('-', 'navigated: a cold load of out/index.html');
   await b.until('window.appReady', 10000);
@@ -203,8 +217,10 @@ try {
   server.close();
   throw e;
 }
+const pageLog = await b.evaluate('({ frames: window.__fp.frames, runs: window.__fp.runs, ends: window.__fp.ends })');
 await b.send('Page.stopScreencast').catch(() => {});
 off();
+await Promise.all(writes);
 
 // ---- what is kept ---------------------------------------------------------------------------
 try {
@@ -214,7 +230,19 @@ fs.writeFileSync(path.join(keep, `${name}_moves.txt`), moves.map((m) => `${(m.t 
 const list = path.join(raw, 'list.txt');
 fs.writeFileSync(list, frames.map((f, i) => `file '${f.file}'\nduration ${(((frames[i + 1]?.t ?? end) - f.t) / 1000).toFixed(4)}`).join('\n') + `\nfile '${frames.at(-1).file}'\n`);
 execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list,
-  '-vf', 'fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '26', path.join(keep, `${name}.mp4`)]);
+  '-vf', 'fps=60,scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', path.join(keep, `${name}.mp4`)]);
+// The film against the page: over every flight (a transition's start to its end), the frames the
+// screencast delivered against the frames the page drew. The screencast's timestamps are wall-clock
+// seconds, the page's performance.timeOrigin-based ms: the same clock.
+const flightsIv = pageLog.runs.map((s) => [s, pageLog.ends.find((e) => e >= s) ?? s + 600]);
+let pageN = 0, filmN = 0;
+for (const [s, e] of flightsIv) {
+  pageN += pageLog.frames.filter((t) => t >= s && t <= e).length;
+  filmN += frames.filter((f) => f.ts >= s && f.ts <= e).length;
+}
+const filmPct = pageN ? (100 * filmN / pageN) : NaN;
+console.log(`film check: over ${flightsIv.length} flights the page drew ${pageN} frames and the film holds ${filmN} (${filmPct.toFixed(1)}%)`);
+if (process.env.FILM_CHECK && !(filmPct >= 90)) { console.log('FILM_CHECK: the film drops frames the page drew'); process.exitCode = 1; }
 // One frame every 50 ms while the page changes (a frame came within the last 50 ms), as PNGs.
 const dir = path.join(POC, 'out/run', `${name}_50ms`);
 fs.rmSync(dir, { recursive: true, force: true });
@@ -224,7 +252,7 @@ for (let at = 0, i = 0; at <= end; at += 50) {
   const before = i;
   while (i + 1 < frames.length && frames[i + 1].t <= at) i++;
   if (i === before && at > 0) continue; // nothing new was painted in this 50 ms
-  fs.copyFileSync(frames[i].file, path.join(dir, `${String(Math.round(at)).padStart(7, '0')}ms.png`));
+  fs.copyFileSync(frames[i].file, path.join(dir, `${String(Math.round(at)).padStart(7, '0')}ms.jpg`));
   kept++;
 }
 // The contact sheet, one frame a second with its time on it, drawn by Chrome in a canvas.

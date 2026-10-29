@@ -4,6 +4,8 @@
 // source; no window is ever shown on this shared Mac).
 //   node tools/framepace.mjs [moves] [cpu]        both arms, `moves` moves of mine each (default 10)
 //   ARMS=port node tools/framepace.mjs 10 1        the port alone (no React build or c_base needed)
+//   FILM=1 node tools/framepace.mjs 8 1            and each session filmed (shots/run/flights_*.mp4),
+//                                                  both side by side (shots/run/side_by_side_react_left_port_right_<W>x<H>.mp4)
 // What is measured, over every flight window (from a flight's first transition to its last end):
 //   - the page's frames: an rAF logger installed before any script, every frame's time; a gap is a
 //     delta over 1.5 vsyncs, the frames it lost round(delta / vsync) - 1;
@@ -11,7 +13,8 @@
 //     spent (script, style, layout, paint, prepaint/layerize, decode), and forced layouts: a Layout
 //     or UpdateLayoutTree inside a FireAnimationFrame (a rect read after a write in the frame loop).
 // A flight window is named by what started it: my move's pill (attack, cover, pass, take, sweep),
-// the deal, or a bot (any window my last move did not start).
+// the deal (DEAL=1 PAGE_QUERY=?debug, the port: a new game dealt first, as Play again deals it; a
+// load draws its deal at once), or a bot (any window my last move did not start).
 // PROBE=1 (GATE turns it on) reads every frame after it is painted: each flight's box and each
 // card's, and reports per flight the frames it stood still at its start and how far short of the
 // card the board then draws it was taken off (the landing's jump), and every card on the board that
@@ -20,6 +23,7 @@
 // the flights' frame deltas are over 20 ms, when a flight stands more than one frame at its start,
 // or when one is taken off more than 1 px from where its card is then drawn.
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { launch, serve, sleep, FORGET_GAME, FOOLISH, POC } from './cdp.mjs';
 import { load } from './react_rig.mjs';
@@ -29,7 +33,8 @@ const ARMS = (process.env.ARMS || 'port,react').split(',');
 const W = Number(process.env.W || 1024), H = Number(process.env.H || 768);
 const GATE = process.env.GATE === '1', GATE_PCT = Number(process.env.GATE_PCT || 2);
 if (GATE) process.env.PROBE = '1';
-const PORT_URL = 'http://127.0.0.1:8720/c/cdom_poc/out/index.html' + (process.env.PAGE_QUERY || '');
+// PAGE=out_<commit> measures an earlier build (tools/retake.sh <commit>)
+const PORT_URL = `http://127.0.0.1:8720/c/cdom_poc/${process.env.PAGE || 'out'}/index.html` + (process.env.PAGE_QUERY || '');
 
 // Installed before any script of the page: every rAF time, every flight transition's start and end
 // (a flight: a child of the fixed overlay at z-index 10000, both tables), the last DOM change.
@@ -86,6 +91,8 @@ const handSel = '[data-hand-plane] [data-card]';
 const VERB = { Attack: 'attack', Cover: 'cover', Pass: 'pass', Pickup: 'take', Good: 'sweep' };
 
 async function session(arm) {
+  const DEAL = arm === 'port' && !!process.env.DEAL;
+  if (DEAL && !/debug/.test(PORT_URL)) throw new Error('DEAL=1 needs the test build: PAGE_QUERY=?debug');
   let rig = null, server = null;
   if (arm === 'react') { const { startRig } = await import('./react_rig.mjs'); rig = await startRig(); }
   else server = await serve(8720, FOOLISH);
@@ -135,12 +142,33 @@ async function session(arm) {
     await quiet(1500, 60000);
     if (CPU > 1) await b.send('Emulation.setCPUThrottlingRate', { rate: CPU });
     await traceStart();
+    // FILM=1: the session filmed as record.mjs films a game (the screencast's JPEGs, each acked as it
+    // comes and written after), kept as shots/run/flights_<arm>_<W>x<H>.mp4 at 60 fps, real time
+    const film = [], writes = [];
+    const filmDir = path.join(POC, 'out/framepace', `film_${arm}`);
+    let offFilm = null;
+    if (process.env.FILM) {
+      fs.rmSync(filmDir, { recursive: true, force: true });
+      fs.mkdirSync(filmDir, { recursive: true });
+      offFilm = b.listen('Page.screencastFrame', (f) => {
+        b.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
+        const file = path.join(filmDir, `${String(film.length).padStart(5, '0')}.jpg`);
+        writes.push(fs.promises.writeFile(file, Buffer.from(f.data, 'base64')));
+        film.push({ t: f.metadata.timestamp * 1000, file });
+      });
+      await b.send('Page.startScreencast', { format: 'jpeg', quality: 92, everyNthFrame: 1 });
+    }
     await sleep(200);
     // the clock pair: a user timing mark in both
     const pageT0 = await b.evaluate(`(performance.mark('framepace0'), performance.getEntriesByName('framepace0')[0].startTime)`);
     const frames0 = await b.evaluate('window.__fp.frames.length');
     const runs0 = await b.evaluate('window.__fp.runs.length');
     const ends0 = await b.evaluate('window.__fp.ends.length');
+    if (DEAL) { // a new game dealt first (the test build's app_debug_deal, Play again's own call)
+      await mark('deal');
+      await b.evaluate('window.app.then((x) => x.app_debug_deal())');
+      await sleep(1000);
+    }
     let moves = 0;
     for (let tries = 0; moves < MOVES && tries < MOVES * 6; tries++) {
       await quiet();
@@ -167,19 +195,31 @@ async function session(arm) {
     await quiet(1000, 30000);
     const fp = await b.evaluate(`({ frames: window.__fp.frames.slice(${frames0}), runs: window.__fp.runs.slice(${runs0}), ends: window.__fp.ends.slice(${ends0}), probe: window.__fp.probe || [] })`);
     out.probe = fp.probe;
+    out.timeOrigin = await b.evaluate('performance.timeOrigin');
     await traceEnd();
     offData();
+    if (offFilm) {
+      await b.send('Page.stopScreencast');
+      offFilm();
+      await Promise.all(writes);
+      const list = path.join(filmDir, 'list.txt'), end = film.at(-1).t + 100;
+      fs.writeFileSync(list, film.map((f, i) => `file '${f.file}'\nduration ${(((film[i + 1]?.t ?? end) - f.t) / 1000).toFixed(4)}`).join('\n') + `\nfile '${film.at(-1).file}'\n`);
+      out.filmFrames = film.map((f) => [f.t, f.file]);
+      out.film = path.join(POC, 'shots/run', `flights_${arm}${process.env.PAGE ? '_' + process.env.PAGE : ''}_${W}x${H}.mp4`);
+      execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list,
+        '-vf', 'fps=60,scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', out.film]);
+    }
     out.load1 = load();
     out.moves = moves;
     out.frames = fp.frames;
     out.marks = marks;
 
-    // the flight windows: transitions that overlap or touch (within 40 ms) are one window
+    // the flight windows: transitions that overlap or touch (within 80 ms: a beat ends a frame early) are one window
     const iv = fp.runs.map((s) => [s, fp.ends.find((e) => e >= s) ?? s + 600]).sort((x, y) => x[0] - y[0]);
     const wins = [];
     for (const [s, e] of iv) {
       const w = wins.at(-1);
-      if (w && s <= w.end + 40) w.end = Math.max(w.end, e); else wins.push({ start: s, end: e });
+      if (w && s <= w.end + 80) w.end = Math.max(w.end, e); else wins.push({ start: s, end: e });
     }
     // named by my last mark before it, when it began within 1.2 s of it; else a bot's
     for (const w of wins) {
@@ -233,7 +273,7 @@ async function session(arm) {
     // ack, each with its time), from 150 ms before it to 400 ms after, as JPEGs named by ms since the window opened plus 1000
     if (process.env.SHOTS) {
       const shots = events.filter((e) => e.name === 'Screenshot' && e.args?.snapshot).map((e) => ({ at: toPage(e.ts), data: e.args.snapshot }));
-      const dir = path.join(POC, 'out/framepace', `${arm}_shots`);
+      const dir = path.join(POC, 'out/framepace', `${arm}${process.env.PAGE ? '_' + process.env.PAGE : ''}_shots`);
       fs.rmSync(dir, { recursive: true, force: true });
       wins.forEach((w, i) => {
         const d = path.join(dir, `${String(i).padStart(2, '0')}_${w.label}`);
@@ -263,11 +303,20 @@ async function session(arm) {
 
 fs.mkdirSync(path.join(POC, 'out/framepace'), { recursive: true });
 const results = [];
+process.on('exit', () => {
+  // FILM with both arms: React left, the port right, as long as the shorter
+  const films = Object.fromEntries(results.filter((r) => r.film).map((r) => [r.arm, r.film]));
+  if (!films.port || !films.react) return;
+  // (this ffmpeg has no drawtext: the file's name says which is which)
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', films.react, '-i', films.port, '-filter_complex',
+    '[0:v][1:v]hstack=inputs=2:shortest=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20',
+    path.join(POC, 'shots/run', `side_by_side_react_left_port_right_${W}x${H}.mp4`)]);
+});
 for (const arm of ARMS) {
   const r = await session(arm);
   results.push(r);
   fs.mkdirSync(path.join(POC, 'out/framepace'), { recursive: true });
-  fs.writeFileSync(path.join(POC, 'out/framepace', `${arm}_cpu${CPU}.json`), JSON.stringify(r)); // debugging output
+  fs.writeFileSync(path.join(POC, 'out/framepace', `${arm}${process.env.PAGE ? '_' + process.env.PAGE : ''}_cpu${CPU}.json`), JSON.stringify(r)); // debugging output
 }
 
 // Every flight's path from the probe: its centre frame by frame (a flight is known by its face's
