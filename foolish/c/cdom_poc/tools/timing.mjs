@@ -11,7 +11,8 @@
 //   fetched, compiled, instantiated and cd_main's first render done);
 // - select: a click on a hand card (the selection, the pills asked of the kernel, the patches);
 // - play: a click on the Attack pill (the move applied, the board re-read, the patches);
-// - bot: the bot's step (bot_drive, then the patches), run where its timer would run it.
+// - bot: the bot's step (bot_drive, then the patches), run where its timer would run it;
+// - the run after play and after the bot: the frame and timer callbacks until the animations land.
 import { launch, serve, FOOLISH, sleep, FORGET_GAME } from './cdp.mjs';
 
 const RUNS = Number(process.argv[2] || 15), CPU = Number(process.argv[3] || 1);
@@ -20,6 +21,7 @@ const server = await serve(8720, FOOLISH, null, { 'cross-origin-opener-policy': 
 const b = await launch();
 const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
 const rows = { fcp: [], ready: [], asked: [], answered: [], selScript: [], selFrame: [], playScript: [], playFrame: [], botScript: [], botFrame: [],
+  playRun: [], playFrames: [], botRun: [], botFrames: [],
   fernAt: [], woodAt: [], woolAt: [], fernMs: [], woodMs: [], woolMs: [], decoded: [], mem: [] };
 const TEX = process.env.TEX, ORIGIN = 'http://127.0.0.1:8720';
 const texDone = `window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`;
@@ -61,20 +63,32 @@ try {
         document.body.getBoundingClientRect(); document.querySelector('[data-hand-plane]').offsetHeight;
         return [t1 - t0, performance.now() - t0]; };
       const card = () => document.querySelector('[data-hand-plane] [data-card="0-5"]');
+      // The run after an action: every frame and timer callback (C and its DOM calls) until its
+      // animations have landed, summed, and the frames it took (0 for a build without animations).
+      const rafNative = window.requestAnimationFrame.bind(window), timeoutNative = window.setTimeout.bind(window);
+      let tracking = false, spent = 0, frames = 0;
+      window.requestAnimationFrame = (cb) => rafNative((t) => { const t0 = performance.now(); cb(t); if (tracking) { spent += performance.now() - t0; frames++; } });
+      window.setTimeout = (cb, ms, ...a) => timeoutNative(() => { const t0 = performance.now(); cb(...a); if (tracking) spent += performance.now() - t0; }, ms);
+      const runOf = async () => { spent = 0; frames = 0; tracking = true;
+        while (x.app_anim_busy && x.app_anim_busy()) await new Promise((r) => timeoutNative(r, 5));
+        tracking = false; return [spent, frames]; };
       await frame();
       if (!crossOriginIsolated) throw new Error('not isolated');
       const sel = [];
       for (let k = 0; k < 9; k++) sel.push(await time(() => card().click()));   // ends selected (odd count)
       const play = await time(() => document.querySelector('[data-pill="Attack"]').click());
+      const playRun = await runOf();
       const bot = await time(() => x.cd_timer(3)); // the bot's step (the test build's release path)
+      const botRun = await runOf();
       return { fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime, ready: window.appReady,
         asked: x.app_game_store(0), answered: x.app_game_store(1),
-        sel, play, bot };
+        sel, play, bot, playRun, botRun };
     })()`);
     rows.fcp.push(r.fcp); rows.ready.push(r.ready); rows.asked.push(r.asked); rows.answered.push(r.answered);
     for (const [s, f] of r.sel) { rows.selScript.push(s); rows.selFrame.push(f); }
     rows.playScript.push(r.play[0]); rows.playFrame.push(r.play[1]);
     rows.botScript.push(r.bot[0]); rows.botFrame.push(r.bot[1]);
+    rows.playRun.push(r.playRun[0]); rows.playFrames.push(r.playRun[1]); rows.botRun.push(r.botRun[0]); rows.botFrames.push(r.botRun[1]);
     await b.evaluate(FORGET_GAME); // the next load starts on the golden board again
   }
 } finally { await b.close(); server.close(); }
@@ -86,6 +100,8 @@ console.log(`the kept game asked of the store ${f(med(rows.asked))}, answered ${
 console.log(`select a card          ${f(med(rows.selScript))} script   ${f(med(rows.selFrame))} with style and layout`);
 console.log(`play (Attack pill)     ${f(med(rows.playScript))} script   ${f(med(rows.playFrame))} with style and layout`);
 console.log(`bot step               ${f(med(rows.botScript))} script   ${f(med(rows.botFrame))} with style and layout`);
+console.log(`  play's run after it    ${f(med(rows.playRun))} script over ${med(rows.playFrames)} frames ${span(rows.playRun)}`);
+console.log(`  bot's run after it     ${f(med(rows.botRun))} script over ${med(rows.botFrames)} frames ${span(rows.botRun)}`);
 if (TEX) {
   console.log(`textures (${TEX}): url set at  fern ${f(med(rows.fernAt))}  wood ${f(med(rows.woodAt))}  wool ${f(med(rows.woolAt))}  (ms after navigation)`);
   console.log(`  made on the page's thread  fern ${f(med(rows.fernMs))}  wood ${f(med(rows.woodMs))}  wool ${f(med(rows.woolMs))}`);
