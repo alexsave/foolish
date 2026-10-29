@@ -9,6 +9,10 @@
 //     the selection (a tap toggles; Attack, Pass and Cover spend it when pressed, a table or
 //     battle drop when it is a move; Pickup and Good leave it), the pressed pills (hidden until the
 //     pill falls and rises again, ActionButtons.tsx rearm), the end screen (WinScreen.tsx).
+// The board is judged once the animations have landed (app_anim_busy); while a flight is up, right
+// after the action that started it, every card in the air must be hidden where it is drawn on the
+// table or in my hand (it shows once, in its flight). The run's clock goes 4 times as fast here
+// (app_debug_anim_speed: the kernel's plan untouched), so a game takes seconds, not minutes.
 // Every disagreement is printed once per kind with the step that showed it, and counted.
 //
 //   node tools/consist.mjs [games] [seed]        (after ./build.sh)
@@ -114,8 +118,22 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
   // React's state, which the kernel does not hold: the selection and the pressed pills.
   let selection = [], pressed = new Set(), prevRearm = new Set();
 
+  // While a flight is up: each card in the air hidden wherever the hand or the table draws it.
+  let flightsSeen = 0;
+  const midFlight = async () => {
+    const r = await b.evaluate(`window.app.then((x) => { const out = [], n = x.app_anim_flying();
+      for (let i = 0; i < n; i++) { const id = x.app_anim_flight_card(i); if (id < 0) continue;
+        const card = Math.floor(id / 13) + '-' + (id % 13 + 1);
+        for (const e of document.querySelectorAll('[data-hand-plane] [data-card="' + card + '"], [data-table-container] [data-card="' + card + '"]'))
+          if (getComputedStyle(e).visibility !== 'hidden') out.push(card + ' shows in ' + (e.closest('[data-hand-plane]') ? 'my hand' : 'the table')); }
+      return [n, out]; })`);
+    flightsSeen += r[0];
+    if (r[1].length) flag('a flying card shows where it is drawn', r[1].join(', '));
+  };
   // modelBefore(k): React's model updated for what the kernel now says, before the DOM is judged.
   const compare = async (modelBefore = () => {}) => {
+    await midFlight();
+    await b.until('window.app.then((x) => !x.app_anim_busy())', 30000);
     const k = await kernel(b), d = await b.evaluate(READ_DOM);
     modelBefore(k);
     const eq = (a, x) => JSON.stringify(a) === JSON.stringify(x);
@@ -186,7 +204,7 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
   };
 
   // the kernel seeded too (the bot's choices, the draws, the next deals): one seed, one run
-  await b.evaluate(`window.app.then((x) => { x.app_debug_hold(1); x.app_debug_fast(1); x.app_debug_reseed(${seed}); })`);
+  await b.evaluate(`window.app.then((x) => { x.app_debug_hold(1); x.app_debug_fast(1); x.app_debug_anim_speed(4); x.app_debug_reseed(${seed}); })`);
   let state = await compare();
   for (; step < maxSteps && done < games; step++) {
     const { k, d, over } = state;
@@ -241,7 +259,7 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
       if (drop && before !== JSON.stringify([k2.hand, k2.battles, k2.seats, k2.status])) selection = [];
     });
   }
-  return { steps: step, games: done, kinds, presses, stillOffered };
+  return { steps: step, games: done, kinds, presses, stillOffered, flightsSeen };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -255,7 +273,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     await b.until(`window.appReady && window.app.then((x) => x.app_game_store(1) > 0)`);
     r = await consistRun(b, { games, seed, log: console.log });
   } finally { await b.close(); server.close(); }
-  console.log(`${r.games} games, ${r.steps} steps, seed ${seed}; ${r.presses} pill presses, ${r.stillOffered} with the pill still offered after the move (a press hidden)`);
+  console.log(`${r.games} games, ${r.steps} steps, seed ${seed}; ${r.presses} pill presses, ${r.stillOffered} with the pill still offered after the move (a press hidden); ${r.flightsSeen} flights checked mid-air`);
   for (const [kind, { n, first }] of r.kinds) console.log(`${String(n).padStart(5)}  ${kind}: first at step ${first.step} after ${first.after} (before that: ${first.recent.join(', ')})\n       ${first.detail}`);
   process.exit(r.kinds.size ? 1 : 0);
 }

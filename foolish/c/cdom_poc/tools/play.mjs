@@ -1,5 +1,6 @@
 // Plays the human seat to the end of the game by clicks, as a person would: the first card any
-// verb takes (select it, press its pill), else Good, else Pickup. Returns the moves made.
+// verb takes (select it, press its pill), else Good, else Pickup, each once the last move's
+// animations have landed. Returns the moves made.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // onStep, when given, is awaited after every click (a pill may have come or gone).
 export async function playToEnd(b, maxMoves = 400, onStep = null) {
@@ -10,6 +11,7 @@ export async function playToEnd(b, maxMoves = 400, onStep = null) {
   let moves = 0;
   for (; moves < maxMoves; moves++) {
     await b.until(`document.querySelector('[data-game-container]').dataset.turn !== 'bot'`, 15000);
+    await b.until('window.app.then((x) => !x.app_anim_busy())', 30000); // the run has landed: the board is the game's
     if (onStep) await onStep();
     if ((await turn()) === 'over') return moves;
     let played = false;

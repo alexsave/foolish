@@ -17,15 +17,20 @@ const q = (sel) => b.evaluate(`(() => { const e = document.querySelector(${JSON.
 const all = (sel, expr) => b.evaluate(`[...document.querySelectorAll(${JSON.stringify(sel)})].map((e) => ${expr})`);
 const turn = () => b.evaluate(`document.querySelector('[data-game-container]').dataset.turn`);
 const pills = () => all('[data-pill]', 'e.dataset.pill');
-const settle = async () => { await b.until(`document.querySelector('[data-game-container]').dataset.turn !== 'bot'`, 15000); };
+// The animations have landed (the run and any turning mark): the board is the game's.
+const idle = () => b.until('window.app.then((x) => !x.app_anim_busy())', 30000);
+const settle = async () => { await b.until(`document.querySelector('[data-game-container]').dataset.turn !== 'bot'`, 15000); await idle(); };
 // The test build (?debug): the bot's steps held for the test to release one by one, or its waits
 // made 30 ms (app_debug_fast) for the games played out.
 const hold = () => b.evaluate(`window.app.then((x) => x.app_debug_hold(1))`);
+// The run's clock 8 times as fast for games played out (the kernel's plan untouched).
+const speed = () => b.evaluate(`window.app.then((x) => x.app_debug_anim_speed(8))`);
 const fast = () => b.evaluate(`window.app.then((x) => x.app_debug_fast(1))`);
 const releaseBot = async () => {
   await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
   const n = await b.evaluate(`window.app.then((x) => { const n = x.app_bot_steps(); x.app_debug_release(); return n; })`);
   await b.until(`window.app.then((x) => x.app_bot_steps() > ${n})`);
+  await idle();
 };
 const ready = async () => { await b.until(`window.appReady`); await b.until(`window.app.then((x) => x.app_game_store(1) > 0)`); };
 let failed = 0;
@@ -105,6 +110,7 @@ try {
     await b.evaluate(`document.querySelectorAll('[data-hand-plane] [data-card], [data-table-container] > *, [data-role-seat]')
       .forEach((e) => { e.$kept = 1; })`);
     await b.click('[data-pill="Attack"]');
+    await idle();
     assert.deepEqual(await all('[data-table-container] [data-battle-index]', 'e.dataset.card'), ['1-5', '3-5', '0-5']);
     assert.deepEqual(await all('[data-hand-plane] [data-card]', 'e.style.borderColor'), ['black', 'black', 'black'], 'Attack spent the selection');
     assert.deepEqual(await all('[data-hand-plane] [data-card]', 'e.dataset.card'), ['1-6', '3-11', '3-13']);
@@ -159,7 +165,7 @@ try {
     assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
   });
 
-  await check('the bot waits as the kernel says (bot_wait_ms: 3000 ms after the last move shown), and a move of mine in between puts its step back', async () => {
+  await check('the bot waits as the kernel says (bot_wait_ms: 3000 ms after the last move shown has finished playing), and a move of mine in between puts its step back', async () => {
     await b.evaluate(`indexedDB.deleteDatabase('cdom'), 1`);
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug');
     await ready();
@@ -168,21 +174,233 @@ try {
     assert.equal(await b.evaluate(`window.app.then((x) => x.app_bot_wait())`), 3000, 'the kernel\'s wait with a human in the game');
     await new Promise((r) => setTimeout(r, 1000));
     await b.click('[data-hand-plane] [data-card="0-5"]');
+    const n0 = await b.evaluate('window.app.then((x) => x.app_bot_steps())');
     await b.click('[data-pill="Attack"]');
     const t1 = await b.evaluate('performance.now()');
-    const SHOWN = `[...document.querySelectorAll('[data-table-container] [data-card]')].length + ':' + document.querySelector('[data-player-id="u-anna-0001"]').lastElementChild.textContent`;
-    const before = await b.evaluate(SHOWN);
-    assert.equal(before, '4:4', 'my throw-in is on the table, the bot has not moved');
-    await b.until(`(${SHOWN}) !== ${JSON.stringify(before)}`, 8000);
+    // my throw-in's run: one flight of the kernel's 500 ms; the bot's wait counts from its landing
+    const run = await b.evaluate('window.app.then((x) => [x.app_anim_steps(), x.app_anim_step(0, 2)])');
+    assert.deepEqual(run, [1, 500], 'my throw-in is one step of 500 ms');
+    await b.until(`window.app.then((x) => x.app_bot_steps() > ${n0})`, 8000);
     const t2 = await b.evaluate('performance.now()');
-    console.log(`     (the bot moved ${Math.round(t2 - t1)} ms after my throw-in, ${Math.round(t2)} ms after the load)`);
-    assert.ok(t2 - t1 >= 2900 && t2 - t1 < 4500, `the bot's step 3000 ms after my move, not after the load: ${Math.round(t2 - t1)} ms`);
+    console.log(`     (the bot stepped ${Math.round(t2 - t1)} ms after my throw-in, ${Math.round(t2)} ms after the load)`);
+    assert.ok(t2 - t1 >= 3450 && t2 - t1 < 4500, `the bot's step 3000 ms after my throw-in has landed (500 + 3000), not after the click or the load: ${Math.round(t2 - t1)} ms`);
+  });
+
+  // ---- the animations (README, Animations) -----------------------------------------------------
+  // A recorder in the page: every flight node as the overlay gets it (its card, its start), when it
+  // was armed and with what (its landing, transition, shadow), and when it went; and every width a
+  // role coin was drawn at. Read back as plain values.
+  const RECORD = `window.app.then((x) => { const rec = window.$rec = { flights: [], coins: [] };
+    const root = document.getElementById('root');
+    const isOverlay = (n) => n.nodeType === 1 && n.style && n.style.zIndex === '10000';
+    const armed = new MutationObserver((ms) => { for (const m of ms) { const f = rec.flights.find((q) => q.node === m.target);
+      if (f && !f.armedAt && m.target.style.transition !== 'none') { f.armedAt = performance.now();
+        f.end = { x: parseFloat(m.target.style.left), y: parseFloat(m.target.style.top), transform: m.target.style.transform,
+          transition: m.target.style.transition, shadow: m.target.firstChild.style.boxShadow }; } } });
+    new MutationObserver((ms) => { const t = performance.now(); for (const m of ms) {
+      for (const n of m.addedNodes) if (isOverlay(n)) [...n.children].forEach((c, i) => { const card = x.app_anim_flight_card(i);
+        const slot = document.querySelector('[data-location="flipped"]')?.getBoundingClientRect();
+        rec.flights.push({ node: c, at: t, card, layers: card < 0 ? c.firstChild.children.length : 0, slot: slot ? [slot.left + slot.width / 2, slot.top + slot.height / 2] : null,
+          start: { x: parseFloat(c.style.left), y: parseFloat(c.style.top), transform: c.style.transform } });
+        armed.observe(c, { attributes: true, attributeFilter: ['style'] }); });
+      for (const n of m.removedNodes) if (isOverlay(n)) for (const f of rec.flights) if (!f.goneAt && n.contains(f.node)) f.goneAt = t; } })
+      .observe(root, { childList: true, subtree: true });
+    new MutationObserver((ms) => { for (const m of ms) { const e = m.target; if (e.dataset.roleSeat === undefined) continue;
+      const w = /scaleX\\(([^)]*)\\)/.exec(e.style.transform); if (w) rec.coins.push([+e.dataset.roleSeat, +w[1], e.dataset.roleMark]); } })
+      .observe(root, { attributes: true, subtree: true, attributeFilter: ['style', 'data-role-mark'] });
+    return 1; })`;
+  const flights = () => b.evaluate(`window.$rec.flights.map(({ node, ...f }) => f)`);
+  const centre = (sel) => b.evaluate(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+  const near = (a, b2, tol, what) => assert.ok(Math.abs(a[0] - b2[0]) <= tol && Math.abs(a[1] - b2[1]) <= tol, `${what}: ${a.map(Math.round)} against ${b2.map(Math.round)}`);
+  const id = (card) => { const [suit, value] = card.split('-').map(Number); return suit * 13 + value - 1; };
+  const TRANSITION = 'left 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94), top 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+  const vis = (sel) => b.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? getComputedStyle(e).visibility : 'none'; })()`);
+  const seatCount = (seat) => b.evaluate(`document.querySelector('[data-role-seat="${seat}"]').parentElement.lastElementChild.lastElementChild?.textContent ?? null`);
+  const ANIM_PAGE = 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug';
+
+  await check('a played card flies from its place in my hand to the cell the row made for it, hidden at both ends, and the board commits at the landing', async () => {
+    await openTable(b, ANIM_PAGE, { hold: true });
+    await b.evaluate(RECORD);
+    const from = await centre('[data-hand-plane] [data-card="0-5"]');
+    await b.click('[data-hand-plane] [data-card="0-5"]');
+    await b.click('[data-pill="Attack"]');
+    // mid-flight: the card shows only in its flight; the cell is there (the row made room) and empty;
+    // the row glides over the flight's own 500 ms; my count is the board before the landing
+    const mid = await b.evaluate(`[getComputedStyle(document.querySelector('[data-hand-plane] [data-card="0-5"]')).visibility,
+      getComputedStyle(document.querySelector('[data-table-container] [data-card="0-5"]')).visibility,
+      [...document.querySelectorAll('[data-table-container] > div')].map((c) => c.style.transition).filter((t) => t.startsWith('transform 500ms')).length,
+      document.querySelector('[data-role-seat="0"]').parentElement.lastElementChild.lastElementChild.textContent,
+      window.$rec.flights.length]`);
+    assert.deepEqual(mid, ['hidden', 'hidden', 2, '4', 1], 'mid-flight: hand card hidden, cell hidden, the two cells already down gliding, my count 4, one flight');
+    await idle();
+    const to = await centre('[data-table-container] [data-card="0-5"]');
+    const [f] = await flights();
+    assert.equal(f.card, id('0-5'));
+    near([f.start.x, f.start.y], from, 0.5, 'it leaves from the hand card\'s centre');
+    near([f.end.x, f.end.y], to, 0.5, 'it lands on the cell\'s centre');
+    assert.equal(f.start.transform, 'translate(-50%, -50%) translate(0px, 17.5px) scale(1.5) rotate(0rad)');
+    assert.equal(f.end.transform, 'translate(-50%, -50%) translate(0px, 28px) scale(1.8) rotate(0rad)');
+    assert.equal(f.end.transition, TRANSITION);
+    assert.equal(f.end.shadow, 'rgba(0, 0, 0, 0.4) 0px 10px 20px');
+    console.log(`     (armed ${Math.round(f.armedAt - f.at)} ms after it was drawn, gone ${Math.round(f.goneAt - f.at)} ms after)`);
+    assert.ok(f.armedAt - f.at >= 15 && f.armedAt - f.at < 150, `armed one beat (25 ms) after: ${f.armedAt - f.at}`);
+    assert.ok(f.goneAt - f.at >= 480 && f.goneAt - f.at < 800, `gone at its landing (500 ms): ${f.goneAt - f.at}`);
+    assert.deepEqual([await vis('[data-table-container] [data-card="0-5"]'), await vis('[data-hand-plane] [data-card="0-5"]'), await seatCount(0)],
+      ['visible', 'none', '3'], 'after the landing: on the table, out of my hand, my count 3');
+  });
+
+  await check('the bot\'s cover flies from its seat and lands laid across its attack, which turns with it; a take flies to the seat; the refill from the stock into my hand as it makes room', async () => {
+    await openTable(b, ANIM_PAGE, { hold: true });
+    await b.evaluate(RECORD);
+    const seat = await centre('[data-player-id="u-anna-0001"]');
+    await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
+    await b.evaluate(`window.app.then((x) => x.app_debug_release())`);
+    await b.until(`window.$rec.flights.length > 0`);
+    const turning = await b.evaluate(`(() => { const a = document.querySelector('[data-table-container] [data-card="3-5"]'); return [a.style.transform, a.style.transition]; })()`);
+    assert.deepEqual(turning, ['translateX(-50%) rotate(-0.19635rad)', 'transform 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94) 25ms, box-shadow 0.2s ease-in-out'],
+      'the attack under the cover turns over the flight, on its curve, after its arm');
+    await idle();
+    let [f] = await flights();
+    assert.equal(f.card, id('2-5'), 'the bot covers 6d with the trump 6c');
+    near([f.start.x, f.start.y], seat, 0.5, 'from the bot\'s mini hand');
+    assert.match(f.end.transform, /scale\(1\.8\) rotate\(0\.1963\d*rad\)$/, 'it lands tilted at the cover angle');
+    const d = await centre('[data-table-container] [data-card="2-5"]');
+    near([f.end.x, f.end.y], d, 0.5, 'it lands where the cover is drawn');
+    assert.equal(await b.evaluate(`document.querySelector('[data-table-container] [data-card="3-5"]').style.transition`),
+      'transform cubic-bezier(0.25, 0.46, 0.45, 0.94), box-shadow 0.2s ease-in-out', 'the turn\'s transition back at rest (0 ms, as Chrome writes it back)');
+    // my throw-in, then the bot takes all five: they fly from where they lie to its seat, the covered
+    // pair still at their tilts
+    await b.click('[data-hand-plane] [data-card="0-5"]');
+    await b.click('[data-pill="Attack"]');
+    await idle();
+    const lie = await b.evaluate(`Object.fromEntries([...document.querySelectorAll('[data-table-container] [data-card]')].map((e) => { const r = e.getBoundingClientRect(); return [e.dataset.card, [r.left + r.width / 2, r.top + r.height / 2]]; }))`);
+    const handBefore = await all('[data-hand-plane] [data-card]', 'e.style.left');
+    const n0 = (await flights()).length;
+    await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
+    await b.evaluate(`window.app.then((x) => x.app_debug_release())`);
+    // the refill's flight: my hand has made room for it (its cards slid), the stock counts down as they leave
+    const taken = JSON.stringify(Object.keys(lie).map(id));
+    await b.until(`window.app.then((x) => x.app_anim_flying() > 0 && !${taken}.includes(x.app_anim_flight_card(0)))`, 8000);
+    const handMid = await all('[data-hand-plane] [data-card]', 'e.style.left');
+    const badgeMid = await b.evaluate(`document.querySelector('[data-location="deck"] p').textContent`);
+    await idle();
+    const fs2 = (await flights()).slice(n0);
+    const take = fs2.filter((x) => x.end && Math.abs(x.end.y - seat[1]) < 20);
+    assert.deepEqual(take.map((x) => x.card).sort((p, q) => p - q), ['1-5', '1-7', '3-5', '2-5', '0-5'].map(id).sort((p, q) => p - q), 'the take: the five table cards to the bot\'s seat');
+    for (const x of take) {
+      const card = Object.keys(lie).find((c) => id(c) === x.card);
+      near([x.start.x, x.start.y], lie[card], 0.5, `${card} leaves from where it lay`);
+    }
+    const tilt = (c) => /rotate\(([^)]*)rad\)/.exec(take.find((x) => x.card === id(c)).start.transform)[1];
+    assert.deepEqual(['1-5', '1-7', '3-5', '2-5', '0-5'].map(tilt).map(Number).map((v) => Math.round(v * 1e4) / 1e4), [-0.1963, 0.1963, -0.1963, 0.1963, 0], 'each lifts off at the tilt it lay at');
+    const refill = fs2.filter((x) => !take.includes(x));
+    assert.equal(refill.length, 3, 'my refill: three cards, the bot\'s none (it holds eight)');
+    const deck = await centre('[data-location="deck"] > div');
+    near([refill[0].start.x, refill[0].start.y], deck, 1, 'from the stock');
+    assert.notDeepEqual(handMid, handBefore, 'my hand made room while the cards were in the air');
+    assert.equal(badgeMid, String(Math.max(0, 21 - 3)), 'the stock counts down as its cards leave');
+    const mine = await b.evaluate(`Object.fromEntries([...document.querySelectorAll('[data-hand-plane] [data-card]')].map((e) => { const r = e.getBoundingClientRect(); return [e.dataset.card, [r.left + r.width / 2, r.top + r.height / 2]]; }))`);
+    for (const x of refill) {
+      const card = Object.keys(mine).find((c) => id(c) === x.card);
+      near([x.end.x, x.end.y], mine[card], 0.5, `${card} lands on its slot in my hand`);
+    }
+  });
+  await check('a sweep flies the table to the discard pile, whose count shows at its landing while the refills still fly; the bot\'s draw is one stack of backs; the marks turn over as coins', async () => {
+    await openTable(b, ANIM_PAGE, { hold: true });
+    await b.evaluate(RECORD);
+    await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
+    await b.evaluate(`window.app.then((x) => x.app_debug_release())`);
+    await b.until('window.app.then((x) => x.app_bot_steps() > 0)');
+    await idle();
+    const lie = await b.evaluate(`Object.fromEntries([...document.querySelectorAll('[data-table-container] [data-card]')].map((e) => { const r = e.getBoundingClientRect(); return [e.dataset.card, [r.left + r.width / 2, r.top + r.height / 2]]; }))`);
+    const pile = await centre('[data-location="discard"]');
+    const deck = await centre('[data-location="deck"] > div');
+    const seat = await centre('[data-player-id="u-anna-0001"]');
+    const n0 = (await flights()).length;
+    await b.click('[data-pill="Good"]');
+    // once the sweep has landed and the refills are in the air: the pile's count is the landed step's
+    await b.until(`window.app.then((x) => x.app_anim_landed() >= 1 && x.app_anim_flying() > 0 && x.app_anim_flight_card(0) !== ${id('1-5')})`, 5000);
+    const mid = await b.evaluate(`[document.querySelector('[data-location="discard"] p')?.textContent ?? null, window.app.then((x) => x.app_anim_busy())]`);
+    assert.deepEqual([mid[0], await b.evaluate('window.app.then((x) => x.app_anim_busy())')], ['4', 1], 'the discard pile shows its four cards while the run still plays');
+    await idle();
+    const fs2 = (await flights()).slice(n0);
+    const sweep = fs2.filter((x) => Object.keys(lie).some((c) => id(c) === x.card) && x.end && Math.abs(x.end.y - pile[1]) < 20);
+    assert.equal(sweep.length, 4, 'the four table cards to the pile');
+    sweep.forEach((x, i) => {
+      const card = Object.keys(lie).find((c) => id(c) === x.card);
+      near([x.start.x, x.start.y], lie[card], 0.5, `${card} leaves from where it lay`);
+      near([x.end.x, x.end.y], [pile[0] + 3 * i, pile[1] + 3 * i], 0.5, `${card} lands on the pile, 3 px a card apart`);
+    });
+    const backs = fs2.filter((x) => x.card === -1);
+    assert.equal(backs.length, 1, 'the bot\'s draw is one flight');
+    assert.equal(backs[0].layers, 3, 'of three backs (it had 3 cards)');
+    near([backs[0].start.x, backs[0].start.y], deck, 1, 'from the stock');
+    near([backs[0].end.x, backs[0].end.y], seat, 1, 'to the bot\'s seat');
+    // the bout ended: the shield and the swords moved at the closing beat, each turning over where it stands
+    await b.until(`window.app.then((x) => !x.app_anim_busy())`);
+    const coins = await b.evaluate('window.$rec.coins');
+    const narrow = coins.filter(([, w]) => w < 0.5);
+    assert.ok(narrow.length >= 2 && coins.at(-1)[1] === 1, `the marks turned as coins (widths drawn: ${coins.length}, under 0.5: ${narrow.length})`);
+    assert.deepEqual(await all('[data-role-mark]', 'e.dataset.roleMark'), ['shield', 'leadSword'], 'the bout over: Anna leads, I defend');
+  });
+
+  await check('a deal is one flight per card, 350 ms each as the kernel paces it, mine face up and the bot\'s a back, then the trump turned out of the stock', async () => {
+    await openTable(b, ANIM_PAGE, { hold: true });
+    await b.evaluate(RECORD);
+    await b.evaluate('window.app.then((x) => x.app_debug_deal())');
+    const plan = await b.evaluate('window.app.then((x) => { const o = []; for (let k = 0; k < x.app_anim_steps(); k++) o.push([x.app_anim_step(k, 0), x.app_anim_step(k, 1), x.app_anim_step(k, 2)]); return o; })');
+    const deals = plan.filter(([t]) => t === 1);
+    assert.equal(deals.length, 12);
+    assert.deepEqual(deals.map(([, start, dur]) => [start, dur]), deals.map((_, k) => [525 + 375 * k, 350]), 'the kernel\'s plan: 350 ms a card, 25 ms apart, after the 500 ms opening');
+    await idle();
+    const fs2 = await flights();
+    assert.equal(fs2.length, 13, 'twelve cards and the trump');
+    const dur = (x) => /left (\d+)ms/.exec(x.end.transition)[1];
+    assert.deepEqual(fs2.slice(0, 12).map(dur), Array(12).fill('350'), 'each dealt card flies 350 ms');
+    assert.equal(dur(fs2[12]), '500', 'the trump turns in 500');
+    assert.deepEqual(fs2.slice(0, 12).map((x) => x.card >= 0 ? 'face' : 'back'), Array(6).fill(['face', 'back']).flat(), 'mine face up, the bot\'s a back, a card at a time round the table');
+    const hand = await all('[data-hand-plane] [data-card]', 'e.dataset.card');
+    assert.deepEqual(fs2.slice(0, 12).filter((x) => x.card >= 0).map((x) => x.card), hand.map(id), 'my six, in the order the hand holds them');
+    const slot = await centre('[data-location="flipped"]');
+    near([fs2[12].end.x, fs2[12].end.y], slot, 0.5, 'the trump lands in its slot');
+  });
+
+  await check('a move made while a run plays joins it: one run, its steps after the ones already there (start_ms from the kernel)', async () => {
+    await openTable(b, ANIM_PAGE, { hold: true });
+    await b.evaluate(RECORD);
+    const runs0 = await b.evaluate('window.app.then((x) => x.app_anim_runs())');
+    await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
+    await b.evaluate(`window.app.then((x) => x.app_debug_release())`);
+    await b.until(`window.$rec.flights.length > 0`); // the cover is in the air
+    await b.click('[data-hand-plane] [data-card="0-5"]');
+    await b.click('[data-pill="Attack"]');
+    const plan = await b.evaluate('window.app.then((x) => [x.app_anim_runs(), x.app_anim_steps(), x.app_anim_step(0, 0), x.app_anim_step(1, 0), x.app_anim_step(1, 1)])');
+    assert.deepEqual(plan, [runs0 + 1, 2, 5, 4, 525], 'one run: the cover (0 ms), then my attack at 500 + 25');
+    await idle();
+    const [cover, mine] = await flights();
+    assert.ok(mine.at >= cover.goneAt - 1, `my card took off once the cover had landed (${Math.round(mine.at - cover.at)} ms after it)`);
+    assert.deepEqual(await all('[data-table-container] [data-battle-index]', 'e.dataset.card'), ['1-5', '3-5', '0-5']);
+  });
+
+  await check('a reload in the middle of a flight lands on the committed board, with no flight', async () => {
+    await openTable(b, ANIM_PAGE, { hold: true });
+    await b.click('[data-hand-plane] [data-card="0-5"]');
+    await b.click('[data-pill="Attack"]');
+    assert.equal(await b.evaluate('window.app.then((x) => x.app_anim_flying())'), 1, 'in the air');
+    await new Promise((r) => setTimeout(r, 200)); // the save is a put on its way
+    await b.goto(ANIM_PAGE);
+    await ready();
+    const k = await kernel(b);
+    assert.deepEqual(await b.evaluate('window.app.then((x) => [x.app_game_store(2), x.app_anim_busy(), x.app_anim_runs()])'), [1, 0, 0], 'the kept game, nothing playing');
+    assert.deepEqual(await all('[data-table-container] [data-battle-index]', 'e.dataset.card'), ['1-5', '3-5', '0-5']);
+    assert.deepEqual(k.battles, ['1-5/1-7', '3-5/-', '0-5/-']);
+    assert.equal(await b.evaluate(`[...document.querySelectorAll('div')].some((d) => d.style.zIndex === '10000')`), false, 'no overlay');
   });
 
   await check('the table is the kernel\'s game and keeps React\'s rules at every click and bot step of played games (tools/consist.mjs)', async () => {
     await openTable(b, 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug'); // the golden's board, nothing kept
     const r = await consistRun(b, { games: 3, seed: 1 });
-    console.log(`     (${r.games} games, ${r.steps} steps; ${r.presses} pill presses, ${r.stillOffered} with the pill still offered after its move)`);
+    console.log(`     (${r.games} games, ${r.steps} steps; ${r.presses} pill presses, ${r.stillOffered} with the pill still offered after its move; ${r.flightsSeen} flights checked mid-air)`);
     const lines = [...r.kinds].map(([kind, { n, first }]) => `${kind} x${n}: at step ${first.step} after ${first.after} (before: ${first.recent.join(', ')}): ${first.detail}`);
     assert.deepEqual(lines, [], 'no disagreement');
     assert.equal(r.games, 3, 'three games played out');
@@ -191,7 +409,7 @@ try {
   await check('a reload lands in the same game, which plays on to its end; after Play again a reload lands in the new one', async () => {
     const page = 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug';
     const board = async () => { const d = await b.evaluate(READ_DOM); d.hand = d.hand.map((h) => [h.card, h.left, h.bottom]); return JSON.stringify(d); };
-    const reload = async () => { await new Promise((r) => setTimeout(r, 200)); await b.goto(page); await ready(); await hold(); };
+    const reload = async () => { await new Promise((r) => setTimeout(r, 200)); await b.goto(page); await ready(); await hold(); await speed(); };
     await b.evaluate(`indexedDB.deleteDatabase('cdom'), 1`);
     await reload();
     assert.equal(await b.evaluate(`window.app.then((x) => x.app_game_store(2))`), 0, 'nothing stored: the seeded deal');
@@ -215,6 +433,7 @@ try {
       else if (!moved && p.includes('Pickup')) await b.click('[data-pill="Pickup"]');
       if (await b.evaluate(`window.app.then((x) => x.app_debug_due() || document.querySelector('[data-game-container]').dataset.turn === 'bot')`)) await releaseBot();
     }
+    await idle();
     const kept = await board();
     const k = await kernel(b);
     assert.equal(JSON.stringify(JSON.parse(kept).battles), JSON.stringify(k.battles), 'the battles before the reload are the kernel\'s');
@@ -232,6 +451,7 @@ try {
     assert.equal(await board(), end, 'a finished game reloads to its end screen');
     await b.click('[data-end] button');
     await b.until(`!document.querySelector('[data-end]')`);
+    await idle(); // the deal's run
     const fresh = await board();
     assert.equal(await all('[data-hand-plane] [data-card]', '1').then((x) => x.length), 6, 'a new deal');
     await reload();
@@ -288,9 +508,18 @@ try {
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug');
     await ready();
     await fast();
+    await speed();
+    await b.evaluate(RECORD);
+    // the trump, read off its slot: rank and suit glyph (spades, hearts, clubs, diamonds are suits 0-3; ace is 13)
+    const face = await b.evaluate(`document.querySelector('[data-location="flipped"]').textContent.replace(/\\s/g, '')`);
+    const glyph = [...face].at(-1), rank = face.slice(0, face.indexOf(glyph));
+    const trumpId = ['♠', '♥', '♣', '♦'].indexOf(glyph) * 13 + ({ J: 10, Q: 11, K: 12, A: 13 }[rank] ?? Number(rank) - 1) - 1;
     const moves = await playToEnd(b, 400, woodCovered);
     await woodCovered();
     console.log(`     (${moves} moves of mine to the end)`);
+    const out = (await flights()).filter((x) => x.card === trumpId);
+    assert.ok(out.length >= 1, `the trump (${face}) is drawn, as the last card of the stock`);
+    near([out[0].start.x, out[0].start.y], out[0].slot, 1, 'its first flight leaves from its own slot, face up');
     assert.equal(await turn(), 'over');
     assert.equal(await b.evaluate(`document.querySelector('[data-end] h1').textContent`), 'done - Two of us');
     await b.click('[data-end] button');

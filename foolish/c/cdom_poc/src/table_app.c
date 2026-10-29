@@ -772,20 +772,43 @@ typedef struct {
   cd_list minis;
   int mark, count;
   double lift; /* the lift the root's transform was drawn for */
+  /* the coin (roleMotion.ts): the mark it is turning to, the face it turns from, when it started
+   * (< 0: at rest), and the width it was last drawn at */
+  int target, coin_from;
+  double coin_t0, coin_scale;
 } SeatUI;
 static SeatUI seat_ui[MAX_PLAYERS];
 static int n_seats;
 static cd_id board, seats_anchor;
 
-/* roleLedger.ts markWorn over the board on screen. */
-static int mark_of(const TableView *v, int seat) {
-  const ViewSeat *p = &v->seats[seat];
-  if (p->status == PLAYER_STATUS_OUT || v->status != GAME_STATUS_PLAYING) return MARK_NONE;
-  if ((v->good_mask >> seat) & 1) return MARK_CHECK;
-  if (v->defender == seat) return MARK_SHIELD;
-  if (v->num_battles > 0 || seat == v->first_attacker)
-    return seat == v->first_attacker ? MARK_LEAD : MARK_SWORD;
+/* roleLedger.ts markWorn: the one mark a seat wears, from the roles shown (the defender, the
+ * opener, the goods) and whether the table is open (showsSword: on an empty table only the opener
+ * holds a sword); none for a seat that is out or a game that is not playing. */
+static int worn(AnimRoles r, int table_open, const TableView *v, int seat) {
+  if (v->seats[seat].status == PLAYER_STATUS_OUT || v->status != GAME_STATUS_PLAYING) return MARK_NONE;
+  if ((r.good_mask >> seat) & 1) return MARK_CHECK;
+  if (r.defender == seat) return MARK_SHIELD;
+  if (table_open || seat == r.first_attacker) return seat == r.first_attacker ? MARK_LEAD : MARK_SWORD;
   return MARK_NONE;
+}
+static AnimRoles roles_of(const TableView *v) { return (AnimRoles){v->defender, v->first_attacker, (int)v->good_mask}; }
+#ifdef TABLE_DEBUG
+/* The mark a board's own roles give (the kernel's state, for the test build). */
+static int mark_of(const TableView *v, int seat) { return worn(roles_of(v), v->num_battles > 0, v, seat); }
+#endif
+
+/* ---- what the badges are wearing (useRoleMotion.ts, the shown ledger) ------------------------
+ * Not the board's roles: a run freezes the marks and moves them at the kernel's three moments
+ * (anim_plan.h "the role beat"): a good being SET leads the stream (anim_goods_opening, as its
+ * operation joins the run), a good CLEARED by a throw-in and the shield a transfer hands on turn
+ * as that step opens (anim_goods_cleared, anim_pass_hand_off), and everything else at the closing
+ * beat, once the run has landed (the board's own roles again). With no run the board's roles are
+ * shown as they come (a bystander's write, anim_shown_ledger_allows). */
+static struct { AnimRoles roles; int open, known; } SHOWN_ROLES;
+static void roles_set(AnimRoles r, int open) {
+  SHOWN_ROLES.roles = r;
+  SHOWN_ROLES.open = open;
+  SHOWN_ROLES.known = 1;
 }
 
 #define SWORD_PATH "M12 1.2 L13.6 5.5 L13.6 14.3 L18 14.3 L18 16.6 L13.1 16.6 L13.1 19.6 L10.9 19.6 L10.9 16.6 L6 16.6 L6 14.3 L10.4 14.3 L10.4 5.5 Z"
@@ -907,7 +930,9 @@ static void seats_build(void) {
   n_seats = V->num_players;
   for (int s = 0; s < n_seats; s++) {
     SeatUI *u = &seat_ui[s];
-    u->mark = -1;
+    u->mark = u->target = -1;
+    u->coin_t0 = -1;
+    u->coin_scale = 1;
     u->count = 0;
     u->lift = seat_lift(s);
     cd_region_show(&u->seat, 1);
@@ -934,18 +959,75 @@ static void seats_build(void) {
   }
 }
 
+/* A seat's mark drawn with a face (MARK_NONE: none). */
+static void face_draw(SeatUI *u, int mark) {
+  if (mark == u->mark) return;
+  u->mark = mark;
+  cd_clear(u->role);
+  cd_set_attr(u->role, ZS("data-role-mark"), cd_internz(MARK_NAME[mark]));
+  if (mark != MARK_NONE) { cd_at(u->role, 0); mark_emit(mark); }
+}
+
+/* THE COIN (roleMotion.ts coinFrameAt, ported value for value): a mark becoming another turns over
+ * where it stands. Its width collapses as the cosine of a steady angle, waits a beat edge-on, the
+ * face is swapped, and it opens as the sine; a mark that begins or ends makes one half. Every
+ * duration is a proportion of the kernel's flight time (ANIM_TIME_MS). */
+#define ROLE_FLIP_HALF_MS (ANIM_TIME_MS * 0.22)
+#define ROLE_FLIP_SETTLE_MS (30 < ROLE_FLIP_HALF_MS * 0.3 ? 30 : ROLE_FLIP_HALF_MS * 0.3)
+#define ROLE_FLIP_COLLAPSE_MS (ROLE_FLIP_HALF_MS - ROLE_FLIP_SETTLE_MS > 10 ? ROLE_FLIP_HALF_MS - ROLE_FLIP_SETTLE_MS : 10)
+#define ROLE_EDGE_ON 0.001
+enum { RAF_COIN = 4 };
+static int coins_turning;
+
+static void coin_start(SeatUI *u, int to) {
+  u->coin_from = u->mark; /* from the face drawn now, whatever a turn left it at */
+  u->target = to;
+  u->coin_t0 = cd_now();
+  if (!coins_turning) cd_raf_request(RAF_COIN);
+  coins_turning = 1;
+}
+
+/* One frame of a seat's coin; 1 while it is still turning. */
+static int coin_frame(SeatUI *u, double now) {
+  if (u->coin_t0 < 0) return 0;
+  double t = now - u->coin_t0, scale = 1;
+  int face = u->target, from = u->coin_from == MARK_NONE ? -1 : u->coin_from, to = u->target == MARK_NONE ? -1 : u->target, turning = 1;
+  if (from >= 0 && t < ROLE_FLIP_HALF_MS) {
+    face = from;
+    scale = t < ROLE_FLIP_COLLAPSE_MS ? cos(t / ROLE_FLIP_COLLAPSE_MS * M_PI / 2) : ROLE_EDGE_ON;
+  } else {
+    if (from >= 0) t -= ROLE_FLIP_HALF_MS;
+    if (to >= 0 && t < ROLE_FLIP_HALF_MS) scale = sin(t / ROLE_FLIP_HALF_MS * M_PI / 2);
+    else { scale = 1; turning = 0; u->coin_t0 = -1; }
+  }
+  if (scale < ROLE_EDGE_ON) scale = ROLE_EDGE_ON;
+  face_draw(u, face);
+  if (scale != u->coin_scale) {
+    static SB s;
+    sb_reset(&s);
+    sb_s(&s, "scaleX("); sb_num(&s, scale, CD_UNIT_NONE); sb_s(&s, ")");
+    cd_set_style(u->role, ZS("transform"), sb_tmp(&s));
+    u->coin_scale = scale;
+  }
+  return turning;
+}
+
+static void coins_frame(void) {
+  double now = cd_now();
+  int any = 0;
+  for (int s = 0; s < n_seats; s++) any |= coin_frame(&seat_ui[s], now);
+  coins_turning = any;
+  if (any) cd_raf_request(RAF_COIN);
+}
+
 static void render_seats(void) {
   if (n_seats != V->num_players) seats_build();
   for (int s = 0; s < n_seats; s++) {
     SeatUI *u = &seat_ui[s];
     if (seat_lift(s) != u->lift) { u->lift = seat_lift(s); cd_set_style(u->seat.root, ZS("transform"), seat_transform(s)); }
-    int mark = mark_of(V, s);
-    if (mark != u->mark) {
-      u->mark = mark;
-      cd_clear(u->role);
-      cd_set_attr(u->role, ZS("data-role-mark"), cd_internz(MARK_NAME[mark]));
-      if (mark != MARK_NONE) { cd_at(u->role, 0); mark_emit(mark); }
-    }
+    int mark = worn(SHOWN_ROLES.roles, SHOWN_ROLES.open, V, s);
+    if (u->mark < 0) { u->target = mark; face_draw(u, mark); } /* a new ring: drawn as it is */
+    else if (mark != u->target) coin_start(u, mark);
     int n = s == V->my_seat ? V->my_hand_count : V->seats[s].hand_count;
     if (n != u->count) {
       u->count = n;
@@ -1034,6 +1116,7 @@ static AnimPlan PLAN;
 static AnimFrame FR;           /* where the run stood at the last render */
 static int run_n, run_landed, run_opened;
 static double run_origin = -1; /* page ms when the run started; < 0: no run */
+static double run_settles;     /* page ms when the run's last step lands (kept after it has) */
 static double anim_speed = 1;  /* the test build's: the run's clock goes this many times faster */
 static uint32_t runs_started;  /* for the tests */
 
@@ -1059,9 +1142,22 @@ static int run_plan(int from) {
 }
 
 static void flights_clear(void);
-/* The role marks' beats (filled in by the role pass below). */
+static TableView run_final; /* the board the run settles on: the last operation's final board */
+
+/* The run is over: the closing beat is the bystander's write the next render makes (the board's
+ * own roles, now nothing is playing). */
 static void roles_settle(void) {}
-static void roles_opened(int step) { (void)step; }
+
+/* Step k opened: a good it clears turns with its card, and a transfer hands the shield on with
+ * it (useAnimationRun's onOpened in AnimationContext.tsx, the kernel's two rules). */
+static void roles_opened(int k) {
+  const PushEvent *e = &run[k].ev;
+  AnimRoles out;
+  if (!SHOWN_ROLES.known) return;
+  if (e->to == EVW_LOC_TABLE && anim_goods_cleared(SHOWN_ROLES.roles, (int)run[k].board.good_mask, &out)) roles_set(out, 1);
+  if (e->type == EVW_T_ATTACK_PASS && e->seat >= 0
+      && anim_pass_hand_off(SHOWN_ROLES.roles, 1u << e->seat, run_final.defender, &out)) roles_set(out, 1);
+}
 
 /* The run is over: every step has landed (or it is landed at once: no room, a plan refused). */
 static void run_end(void) {
@@ -1088,14 +1184,20 @@ static void op_end(int actor) {
   int n = run_capture_end(&G, ME, actor, G.status == GAME_STATUS_GAME_OVER, run + run_n, ANIM_MAX_STEPS - run_n);
   if (n <= 0) return; /* nothing shown, or a stream that does not read: the board is drawn as it is */
   if (!was && n > 1 && run[1].ev.type == EVW_T_DEAL) run_pre = run[0].board; /* a deal lands on the empty table */
+  run_final = *run_capture_final();
+  AnimRoles opening; /* a good this operation sets leads it */
+  if (SHOWN_ROLES.known && anim_goods_opening(SHOWN_ROLES.roles, (int)run[run_n].board.good_mask, &opening))
+    roles_set(opening, SHOWN_ROLES.open);
   run_n += n;
   if (!run_plan(from)) { run_end(); return; }
-  if (was) return;
-  run_origin = cd_now();
-  run_landed = run_opened = 0;
-  row_ms = 0;
-  runs_started++;
-  cd_raf_request(RAF_ANIM);
+  if (!was) {
+    run_origin = cd_now();
+    run_landed = run_opened = 0;
+    row_ms = 0;
+    runs_started++;
+    cd_raf_request(RAF_ANIM);
+  }
+  run_settles = run_origin + PLAN.total_ms / anim_speed;
 }
 
 /* Where the run stands now: the steps landed since the last render (in order), the steps opened
@@ -1147,7 +1249,7 @@ static void run_show(void) {
  * browser moves it; every endpoint is measured once, as React measures in a layout effect. */
 enum { MAX_FLIGHTS = 64, CARD_H = 70 };
 static cd_region overlay;
-static struct { cd_id node, face; double x, y, angle; } flight[MAX_FLIGHTS];
+static struct { cd_id node, face; double x, y, angle; int cid; } flight[MAX_FLIGHTS]; /* cid: the card, -1 a stack of backs */
 static int n_flights, flight_beat = -1, flight_ms, flights_made;
 static uint32_t flight_gen; /* the arm's generation: an older beat's timer arms nothing */
 
@@ -1213,6 +1315,7 @@ static void flight_add(Card c, int backs, double x0, double y0, double a0, doubl
   flight[n_flights].x = x1;
   flight[n_flights].y = y1;
   flight[n_flights].angle = a1;
+  flight[n_flights].cid = backs ? -1 : card_to_id(c);
   n_flights++;
 }
 
@@ -1390,6 +1493,7 @@ static void render_board(void) {
     V = &CT.view;
   }
   run_show();
+  if (anim_shown_ledger_allows(ANIM_CLAIM_BYSTANDER, run_on())) roles_set(roles_of(V), V->num_battles > 0);
   client_view_rules(V, SHOW.from_deck, SHOW.to_flipped, SHOW.trump_out, &R);
   render_deck();
   render_discard();
@@ -1490,7 +1594,7 @@ static int last_wait;    /* the kernel's last answer, for the test */
 static int dbg_hold, dbg_due, dbg_fast; /* the test build: hold a due step; fast: 30 ms waits */
 #endif
 
-static double settles_ms(void) { return run_on() ? run_origin + PLAN.total_ms / anim_speed : shown_ms; }
+static double settles_ms(void) { return run_settles > shown_ms ? run_settles : shown_ms; }
 
 /* The board was shown now (a clock of 0 is a board never shown). */
 static void mark_shown(void) {
@@ -1692,10 +1796,10 @@ EXPORT("app_bot_wait") int32_t app_bot_wait(void) { return last_wait; }
 EXPORT("app_bot_steps") uint32_t app_bot_steps(void) { return bot_steps; }
 /* The game's store: when it was asked (which 0) and answered (1), ms after navigation; 2: 1 when
  * the stored game was adopted. */
-/* The animations, for the tests: 1 while a run plays; how many runs have started and how many
+/* The animations, for the tests: 1 while a run plays or a mark is turning; how many runs have started and how many
  * flights were made on this load; the run's step count, and step k's type, start and duration (the
  * kernel's plan). */
-EXPORT("app_anim_busy") int32_t app_anim_busy(void) { return run_on(); }
+EXPORT("app_anim_busy") int32_t app_anim_busy(void) { return run_on() || coins_turning; }
 EXPORT("app_anim_runs") uint32_t app_anim_runs(void) { return runs_started; }
 EXPORT("app_anim_flights") int32_t app_anim_flights(void) { return flights_made; }
 EXPORT("app_anim_steps") int32_t app_anim_steps(void) { return run_n; }
@@ -1706,6 +1810,9 @@ EXPORT("app_anim_step") int32_t app_anim_step(int32_t k, int32_t f) {
 /* When the run started (cd_now ms), and where it stands: the steps landed and opened. */
 EXPORT("app_anim_origin") double app_anim_origin(void) { return run_origin; }
 EXPORT("app_anim_landed") int32_t app_anim_landed(void) { return run_landed; }
+/* The cards in the air now: how many flights, and flight i's card id (-1: a stack of backs). */
+EXPORT("app_anim_flying") int32_t app_anim_flying(void) { return n_flights; }
+EXPORT("app_anim_flight_card") int32_t app_anim_flight_card(int32_t i) { return i >= 0 && i < n_flights ? flight[i].cid : -2; }
 EXPORT("app_game_store") double app_game_store(int32_t which) { return which == 0 ? game_asked : which == 1 ? game_answered : game_adopted; }
 
 #ifdef TABLE_DEBUG
@@ -2020,6 +2127,7 @@ void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len) {
 void cd_on_raf(uint32_t token, double t) {
   (void)t;
   if (token == RAF_ANIM) { run_frame(); return; }
+  if (token == RAF_COIN) { coins_frame(); return; }
   if (token == RAF_PAINTED) { cd_raf_request(RAF_PAINTED2); return; }
   if (token == RAF_PAINTED2) { cd_timer_start(TEX_START_MS, TIMER_TEX); return; }
   double t0 = cd_now(), now = t0;
