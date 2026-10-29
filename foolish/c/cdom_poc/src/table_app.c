@@ -63,6 +63,15 @@ static struct {
   int flight_ms;                  /* the beat in the air's duration */
 } SHOW;
 static int veiled(uint64_t set, int cid) { return (int)((set >> cid) & 1); }
+static cd_id container, bg_wool; /* the table's root, and the wool behind it */
+
+/* The centre of a node as drawn now (cdom's cd_rect: the browser lays out first if it must). */
+static void centre_of(cd_id id, double *x, double *y) {
+  double r[4];
+  cd_rect(id, r);
+  *x = r[0] + r[2] / 2;
+  *y = r[1] + r[3] / 2;
+}
 
 static const char *const SEAT_NAME[] = {"Me", "Anna"};
 static const char *const SEAT_ID[] = {"u-me-0000", "u-anna-0001"};
@@ -778,7 +787,8 @@ typedef struct {
   /* the coin (roleMotion.ts): the mark it is turning to, the face it turns from, when it started
    * (< 0: at rest), and the width it was last drawn at */
   int target, coin_from;
-  double coin_t0, coin_scale;
+  double coin_t0, coin_delay, coin_scale;
+  int departing, arriving; /* a ghost carries this seat's mark away, or brings one here */
 } SeatUI;
 static SeatUI seat_ui[MAX_PLAYERS];
 static int n_seats;
@@ -807,11 +817,12 @@ static int mark_of(const TableView *v, int seat) { return worn(roles_of(v), v->n
  * as that step opens (anim_goods_cleared, anim_pass_hand_off), and everything else at the closing
  * beat, once the run has landed (the board's own roles again). With no run the board's roles are
  * shown as they come (a bystander's write, anim_shown_ledger_allows). */
-static struct { AnimRoles roles; int open, known; } SHOWN_ROLES;
+static struct { AnimRoles roles; int open, known, still; } SHOWN_ROLES; /* still: change in place, nothing flies */
 static void roles_set(AnimRoles r, int open) {
   SHOWN_ROLES.roles = r;
   SHOWN_ROLES.open = open;
   SHOWN_ROLES.known = 1;
+  SHOWN_ROLES.still = 0;
 }
 
 #define SWORD_PATH "M12 1.2 L13.6 5.5 L13.6 14.3 L18 14.3 L18 16.6 L13.1 16.6 L13.1 19.6 L10.9 19.6 L10.9 16.6 L6 16.6 L6 14.3 L10.4 14.3 L10.4 5.5 Z"
@@ -936,6 +947,7 @@ static void seats_build(void) {
     u->mark = u->target = -1;
     u->coin_t0 = -1;
     u->coin_scale = 1;
+    u->departing = u->arriving = 0;
     u->count = 0;
     u->lift = seat_lift(s);
     cd_region_show(&u->seat, 1);
@@ -982,20 +994,32 @@ static void face_draw(SeatUI *u, int mark) {
 enum { RAF_COIN = 4 };
 static int coins_turning;
 
-static void coin_start(SeatUI *u, int to) {
-  u->coin_from = u->mark; /* from the face drawn now, whatever a turn left it at */
+/* A seat's coin turns from one face to another (MARK_NONE: a half flip), the old face held for
+ * `delay` ms first (roleMotion.ts RoleCoinPhase). */
+static void coin_play(SeatUI *u, int from, int to, double delay) {
+  u->coin_from = from;
   u->target = to;
   u->coin_t0 = cd_now();
+  u->coin_delay = delay;
   if (!coins_turning) cd_raf_request(RAF_COIN);
   coins_turning = 1;
+}
+
+/* A seat's coin stands at a face, at once (the hand-off's swaps: RoleCoin.tsx stand). */
+static void coin_stand(SeatUI *u, int mark) {
+  u->coin_t0 = -1;
+  u->target = mark;
+  face_draw(u, mark);
+  if (u->coin_scale != 1) { cd_set_style(u->role, ZS("transform"), ZS("scaleX(1)")); u->coin_scale = 1; }
 }
 
 /* One frame of a seat's coin; 1 while it is still turning. */
 static int coin_frame(SeatUI *u, double now) {
   if (u->coin_t0 < 0) return 0;
-  double t = now - u->coin_t0, scale = 1;
+  double t = now - u->coin_t0 - u->coin_delay, scale = 1;
   int face = u->target, from = u->coin_from == MARK_NONE ? -1 : u->coin_from, to = u->target == MARK_NONE ? -1 : u->target, turning = 1;
-  if (from >= 0 && t < ROLE_FLIP_HALF_MS) {
+  if (t < 0) face = u->coin_from;
+  else if (from >= 0 && t < ROLE_FLIP_HALF_MS) {
     face = from;
     scale = t < ROLE_FLIP_COLLAPSE_MS ? cos(t / ROLE_FLIP_COLLAPSE_MS * M_PI / 2) : ROLE_EDGE_ON;
   } else {
@@ -1015,22 +1039,170 @@ static int coin_frame(SeatUI *u, double now) {
   return turning;
 }
 
+/* ---- the hand-off (roleLedger.ts roleFlightsBetween, RoleFlightsLayer.tsx) ----------------------
+ * The shield and the opener's sword are the two marks that belong to a seat and then to another,
+ * so they fly when they change hands: a ghost of the mark on a quadratic arc lifted toward the top
+ * of the board (by up to 56 px), growing and casting a shadow as it lifts, spinning one whole
+ * turn, over ROLE_FLIGHT_MS (0.8 of a card's flight) on the flights' curve, armed 25 ms after it is
+ * drawn and stepped at most a 60 Hz frame at a time. The seat it leaves blanks at once (a pass's
+ * old defender then turns its sword in a third of the way along); the seat it flies to turns its
+ * own mark away to be edge-on as it lands, and stands the real mark up in the frame it lands. */
+#define ROLE_FLIGHT_MS (ANIM_TIME_MS * 0.8)
+#define ROLE_MAKE_WAY_DELAY_MS (ROLE_FLIGHT_MS - ROLE_FLIP_HALF_MS)
+#define ROLE_PASS_SWORD_DELAY_MS (ROLE_FLIGHT_MS / 3)
+#define ROLE_FRAME_CAP_MS (1000.0 / 60)
+#define ROLE_FLIGHT_ARM_MS 25
+static cd_region ghosts;
+static struct { cd_id node; double fx, fy, tx, ty, elapsed, last; int to_seat; } ghost[2];
+static int n_ghosts, ghosts_landed;
+static uint32_t handoffs; /* for the tests */
+static AnimRoles roles_drawn;
+static int roles_drawn_known;
+
+/* The cubic-bezier(0.25, 0.46, 0.45, 0.94) of time t (roleMotion.ts roleFlightEase: Newton on x). */
+static double role_ease(double t) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  double u = t;
+  for (int i = 0; i < 8; i++) {
+    double x = 3 * 0.25 * u * (1 - u) * (1 - u) + 3 * 0.45 * u * u * (1 - u) + u * u * u - t;
+    double d = 3 * 0.25 * (1 - 4 * u + 3 * u * u) + 3 * 0.45 * (2 * u - 3 * u * u) + 3 * u * u;
+    if (__builtin_fabs(d) < 1e-6) break;
+    u -= x / d;
+    u = u < 0 ? 0 : u > 1 ? 1 : u;
+  }
+  return 3 * 0.46 * u * (1 - u) * (1 - u) + 3 * 0.94 * u * u * (1 - u) + u * u * u;
+}
+
+/* A ghost at progress p (eased): on the arc, grown and shadowed by its lift, turned spin * p. */
+static void ghost_draw(int g, double p) {
+  double dx = ghost[g].tx - ghost[g].fx, dy = ghost[g].ty - ghost[g].fy, dist = sqrt(dx * dx + dy * dy);
+  double cx = (ghost[g].fx + ghost[g].tx) / 2, cy = (ghost[g].fy + ghost[g].ty) / 2 - (dist * 0.28 < 56 ? dist * 0.28 : 56);
+  double q = 1 - p, lift = 1 - __builtin_fabs(p - 0.5) * 2;
+  cd_set_style_num(ghost[g].node, ZS("left"), q * q * ghost[g].fx + 2 * q * p * cx + p * p * ghost[g].tx, CD_UNIT_PX);
+  cd_set_style_num(ghost[g].node, ZS("top"), q * q * ghost[g].fy + 2 * q * p * cy + p * p * ghost[g].ty, CD_UNIT_PX);
+  static SB s;
+  sb_reset(&s);
+  sb_s(&s, "translate(-50%, -50%) rotate("); sb_num(&s, 360 * p, CD_UNIT_DEG);
+  sb_s(&s, ") scale("); sb_num(&s, 1 + 0.45 * lift, CD_UNIT_NONE); sb_s(&s, ")");
+  cd_set_style(ghost[g].node, ZS("transform"), sb_tmp(&s));
+  sb_reset(&s);
+  sb_s(&s, "drop-shadow(0 "); sb_num(&s, 6 * lift, CD_UNIT_PX); sb_s(&s, " "); sb_num(&s, 8 * lift, CD_UNIT_PX);
+  sb_s(&s, " rgba(0,0,0,"); sb_num(&s, 0.45 * lift, CD_UNIT_NONE); sb_s(&s, "))");
+  cd_set_style(ghost[g].node, ZS("filter"), sb_tmp(&s));
+}
+
+/* The roles drawn change from `was` to `now`: each mark that changed hands flies (both seats must
+ * be on screen), and the two seats of each flight are told. */
+static void handoff_start(AnimRoles was, AnimRoles now) {
+  int from[2], to[2], kind[2], n = 0;
+  if (was.defender != now.defender && was.defender >= 0 && now.defender >= 0 && was.defender < n_seats && now.defender < n_seats) {
+    from[n] = was.defender; to[n] = now.defender; kind[n++] = MARK_SHIELD;
+  }
+  if (was.first_attacker != now.first_attacker && was.first_attacker >= 0 && now.first_attacker >= 0
+      && was.first_attacker < n_seats && now.first_attacker < n_seats) {
+    from[n] = was.first_attacker; to[n] = now.first_attacker; kind[n++] = MARK_LEAD;
+  }
+  if (!n) return;
+  cd_region_hide(&ghosts); /* a hand-off still in the air is overtaken: its seats stand */
+  for (int g = 0; g < n_ghosts; g++) seat_ui[ghost[g].to_seat].arriving = 0;
+  for (int k = 0; k < n_seats; k++) seat_ui[k].departing = 0;
+  cd_region_show(&ghosts, 1);
+  cd_at(container, 0);
+  OPEN("div"); cd_name_open(ghosts.root);
+  STYLE("position: fixed; top: 0px; left: 0px; width: 100%; height: 100%; pointer-events: none; z-index: 10001; user-select: none;");
+  for (int g = 0; g < n; g++) {
+    double fx, fy, tx, ty;
+    centre_of(seat_ui[from[g]].role, &fx, &fy);
+    centre_of(seat_ui[to[g]].role, &tx, &ty);
+    ghost[g] = (typeof(ghost[g])){cd_id_new(), fx, fy, tx, ty, 0, -1, to[g]};
+    OPEN("div"); cd_name_open(ghost[g].node);
+    cd_attr(ZS("data-role-flight"), kind[g] == MARK_SHIELD ? ZS("shield") : ZS("sword"));
+    static SB st;
+    sb_reset(&st);
+    sb_s(&st, "position: absolute; "); sb_px(&st, "left: ", fx); sb_px(&st, "top: ", fy);
+    sb_s(&st, "transform: translate(-50%, -50%); line-height: 0; will-change: transform, left, top;");
+    cd_attr(S_STYLE, sb_tmp(&st));
+    mark_emit(kind[g]);
+    CLOSE();
+  }
+  CLOSE();
+  cd_region_end(&ghosts);
+  n_ghosts = n;
+  ghosts_landed = 0;
+  handoffs++;
+  int coming[MAX_PLAYERS] = {0}; /* the kind flying to each seat */
+  for (int g = 0; g < n; g++) { seat_ui[from[g]].departing = 1; seat_ui[to[g]].arriving = 1; coming[to[g]] = kind[g]; }
+  for (int k = 0; k < n_seats; k++) { /* RoleCoin.tsx advance, the seat's two flags read together */
+    SeatUI *u = &seat_ui[k];
+    if (u->departing) { /* the ghost is this seat's mark now: blank at once; a pass's old defender turns its sword in */
+      int t = u->arriving ? MARK_NONE : worn(now, SHOWN_ROLES.open, V, k);
+      coin_stand(u, MARK_NONE);
+      if (t != MARK_NONE) coin_play(u, MARK_NONE, t, ROLE_PASS_SWORD_DELAY_MS);
+    } else if (u->arriving) { /* what it wears turns away, edge-on as the ghost lands */
+      int wearing = u->coin_t0 >= 0 ? (u->target == coming[k] ? u->coin_from : u->target) : u->mark;
+      coin_stand(u, wearing);
+      if (wearing != MARK_NONE) coin_play(u, wearing, MARK_NONE, ROLE_MAKE_WAY_DELAY_MS);
+    }
+  }
+  if (!coins_turning) cd_raf_request(RAF_COIN);
+  coins_turning = 1;
+}
+
+/* One frame of the ghosts; 1 while one is still in the air. When all have landed they go, and the
+ * seats they flew to stand their marks up in the same frame. */
+static int ghosts_frame(double now) {
+  if (!n_ghosts) return 0;
+  for (int g = 0; g < n_ghosts; g++) {
+    if (ghost[g].last >= 0) {
+      double dt = now - ghost[g].last;
+      ghost[g].elapsed += dt < 0 ? 0 : dt > ROLE_FRAME_CAP_MS ? ROLE_FRAME_CAP_MS : dt;
+    }
+    ghost[g].last = now;
+    double since = ghost[g].elapsed - ROLE_FLIGHT_ARM_MS, p = since <= 0 ? 0 : since / ROLE_FLIGHT_MS;
+    ghost_draw(g, role_ease(p > 1 ? 1 : p));
+    if (p >= 1 && !(ghosts_landed >> g & 1)) ghosts_landed |= 1 << g;
+  }
+  if (ghosts_landed != (1 << n_ghosts) - 1) return 1;
+  cd_region_hide(&ghosts);
+  for (int g = 0; g < n_ghosts; g++) {
+    SeatUI *a = &seat_ui[ghost[g].to_seat];
+    a->arriving = 0;
+    coin_stand(a, worn(SHOWN_ROLES.roles, SHOWN_ROLES.open, V, ghost[g].to_seat));
+  }
+  for (int k = 0; k < n_seats; k++) seat_ui[k].departing = 0;
+  n_ghosts = 0;
+  return 0;
+}
+
 static void coins_frame(void) {
   double now = cd_now();
-  int any = 0;
+  int any = ghosts_frame(now);
   for (int s = 0; s < n_seats; s++) any |= coin_frame(&seat_ui[s], now);
   coins_turning = any;
   if (any) cd_raf_request(RAF_COIN);
 }
 
 static void render_seats(void) {
-  if (n_seats != V->num_players) seats_build();
+  if (n_seats != V->num_players) { seats_build(); roles_drawn_known = 0; }
+  if (SHOWN_ROLES.known) {
+    AnimRoles r = SHOWN_ROLES.roles;
+    if (roles_drawn_known && !SHOWN_ROLES.still && (r.defender != roles_drawn.defender || r.first_attacker != roles_drawn.first_attacker))
+      handoff_start(roles_drawn, r);
+    roles_drawn = r;
+    roles_drawn_known = 1;
+  }
   for (int s = 0; s < n_seats; s++) {
     SeatUI *u = &seat_ui[s];
     if (seat_lift(s) != u->lift) { u->lift = seat_lift(s); cd_set_style(u->seat.root, ZS("transform"), seat_transform(s)); }
     int mark = worn(SHOWN_ROLES.roles, SHOWN_ROLES.open, V, s);
     if (u->mark < 0) { u->target = mark; face_draw(u, mark); } /* a new ring: drawn as it is */
-    else if (mark != u->target) coin_start(u, mark);
+    else if (!u->arriving && !u->departing && mark != u->target) {
+      /* nothing flies here: the ordinary gesture between two marks (resolveGesture) */
+      int resting = u->coin_t0 >= 0 ? u->coin_from : u->mark;
+      if (resting == mark) coin_stand(u, mark); /* the mark came back: put it back */
+      else coin_play(u, resting, mark, 0);
+    }
     int n = s == V->my_seat ? V->my_hand_count : V->seats[s].hand_count;
     if (n != u->count) {
       u->count = n;
@@ -1111,7 +1283,6 @@ enum { TIMER_TEX = 2, TIMER_BOT_GO = 3, TIMER_SAVE_RETRY = 4, TIMER_BOT_BASE = 1
 enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2, RAF_ANIM = 3 };
 enum { RUN_ROOM = MAX_SNAPS }; /* the most steps one operation adds (one per hook) */
 
-static cd_id container, bg_wool;
 static RunStep run[ANIM_MAX_STEPS];
 static TableView run_pre;      /* what shows until step 0 lands: the board the run started on */
 static AnimPlanAsk ASK;
@@ -1340,13 +1511,6 @@ static void flights_arm(uint32_t gen) {
   }
 }
 
-/* The centre of a node as drawn now. */
-static void centre_of(cd_id id, double *x, double *y) {
-  double r[4];
-  cd_rect(id, r);
-  *x = r[0] + r[2] / 2;
-  *y = r[1] + r[3] / 2;
-}
 
 /* A card on the table: its face and the tilt it lies at (a cover across, the attack under it the
  * other way: flightGeometry.ts tableTilt); 0 when the row does not hold it. */
@@ -1496,7 +1660,10 @@ static void render_board(void) {
     V = &CT.view;
   }
   run_show();
-  if (anim_shown_ledger_allows(ANIM_CLAIM_BYSTANDER, run_on())) roles_set(roles_of(V), V->num_battles > 0);
+  if (anim_shown_ledger_allows(ANIM_CLAIM_BYSTANDER, run_on())) {
+    roles_set(roles_of(V), V->num_battles > 0);
+    SHOWN_ROLES.still = V->status == GAME_STATUS_GAME_OVER; /* a finished board's marks fly nowhere (syncFromView) */
+  }
   client_view_rules(V, SHOW.from_deck, SHOW.to_flipped, SHOW.trump_out, &R);
   render_deck();
   render_discard();
@@ -1803,6 +1970,7 @@ EXPORT("app_bot_steps") uint32_t app_bot_steps(void) { return bot_steps; }
  * flights were made on this load; the run's step count, and step k's type, start and duration (the
  * kernel's plan). */
 EXPORT("app_anim_busy") int32_t app_anim_busy(void) { return run_on() || coins_turning; }
+EXPORT("app_anim_handoffs") uint32_t app_anim_handoffs(void) { return handoffs; } /* role marks thrown seat to seat */
 EXPORT("app_anim_runs") uint32_t app_anim_runs(void) { return runs_started; }
 EXPORT("app_anim_flights") int32_t app_anim_flights(void) { return flights_made; }
 EXPORT("app_anim_steps") int32_t app_anim_steps(void) { return run_n; }

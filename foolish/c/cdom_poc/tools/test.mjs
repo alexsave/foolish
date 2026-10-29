@@ -190,7 +190,7 @@ try {
   // A recorder in the page: every flight node as the overlay gets it (its card, its start), when it
   // was armed and with what (its landing, transition, shadow), and when it went; and every width a
   // role coin was drawn at. Read back as plain values.
-  const RECORD = `window.app.then((x) => { const rec = window.$rec = { flights: [], coins: [] };
+  const RECORD = `window.app.then((x) => { const rec = window.$rec = { flights: [], coins: [], ghosts: [], marks: [] };
     const root = document.getElementById('root');
     const isOverlay = (n) => n.nodeType === 1 && n.style && n.style.zIndex === '10000';
     const armed = new MutationObserver((ms) => { for (const m of ms) { const f = rec.flights.find((q) => q.node === m.target);
@@ -203,13 +203,19 @@ try {
         rec.flights.push({ node: c, at: t, card, layers: card < 0 ? c.firstChild.children.length : 0, slot: slot ? [slot.left + slot.width / 2, slot.top + slot.height / 2] : null,
           start: { x: parseFloat(c.style.left), y: parseFloat(c.style.top), transform: c.style.transform } });
         armed.observe(c, { attributes: true, attributeFilter: ['style'] }); });
-      for (const n of m.removedNodes) if (isOverlay(n)) for (const f of rec.flights) if (!f.goneAt && n.contains(f.node)) f.goneAt = t; } })
+      for (const n of m.removedNodes) if (isOverlay(n)) for (const f of rec.flights) if (!f.goneAt && n.contains(f.node)) f.goneAt = t;
+      // the role ghosts (z 10001): their kind and where each starts, and when they go
+      for (const n of m.addedNodes) if (n.nodeType === 1 && n.style && n.style.zIndex === '10001')
+        for (const g of n.querySelectorAll('[data-role-flight]')) rec.ghosts.push({ kind: g.dataset.roleFlight, at: t, start: [parseFloat(g.style.left), parseFloat(g.style.top)], landed: x.app_anim_landed() });
+      for (const n of m.removedNodes) if (n.nodeType === 1 && n.style && n.style.zIndex === '10001') for (const g of rec.ghosts) if (!g.goneAt) { g.goneAt = t; g.goneLanded = x.app_anim_landed(); g.goneBusyRun = x.app_anim_steps(); } } })
       .observe(root, { childList: true, subtree: true });
     new MutationObserver((ms) => { for (const m of ms) { const e = m.target; if (e.dataset.roleSeat === undefined) continue;
+      if (m.attributeName === 'data-role-mark') rec.marks.push({ t: performance.now(), seat: +e.dataset.roleSeat, mark: e.dataset.roleMark, landed: x.app_anim_landed(), steps: x.app_anim_steps() });
       const w = /scaleX\\(([^)]*)\\)/.exec(e.style.transform); if (w) rec.coins.push([+e.dataset.roleSeat, +w[1], e.dataset.roleMark]); } })
       .observe(root, { attributes: true, subtree: true, attributeFilter: ['style', 'data-role-mark'] });
     return 1; })`;
   const flights = () => b.evaluate(`window.$rec.flights.map(({ node, ...f }) => f)`);
+  const pad = (seat) => centre(`[data-role-seat="${seat}"]`);
   const centre = (sel) => b.evaluate(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
   const near = (a, b2, tol, what) => assert.ok(Math.abs(a[0] - b2[0]) <= tol && Math.abs(a[1] - b2[1]) <= tol, `${what}: ${a.map(Math.round)} against ${b2.map(Math.round)}`);
   const id = (card) => { const [suit, value] = card.split('-').map(Number); return suit * 13 + value - 1; };
@@ -345,6 +351,12 @@ try {
     const narrow = coins.filter(([, w]) => w < 0.5);
     assert.ok(narrow.length >= 2 && coins.at(-1)[1] === 1, `the marks turned as coins (widths drawn: ${coins.length}, under 0.5: ${narrow.length})`);
     assert.deepEqual(await all('[data-role-mark]', 'e.dataset.roleMark'), ['shield', 'leadSword'], 'the bout over: Anna leads, I defend');
+    const ghosts = await b.evaluate('window.$rec.ghosts');
+    assert.deepEqual(ghosts.map((g) => g.kind).sort(), ['shield', 'sword'], 'the closing beat throws the shield and the opener\'s sword');
+    near(ghosts.find((g) => g.kind === 'shield').start, await pad(1), 0.5, 'the shield leaves Anna\'s badge');
+    near(ghosts.find((g) => g.kind === 'sword').start, await pad(0), 0.5, 'the sword leaves mine');
+    const fin = ghosts[0].goneAt - ghosts[0].at;
+    assert.ok(fin >= 400 && fin < 900, `the ghosts fly ROLE_FLIGHT_MS (400) after their 25 ms arm: ${Math.round(fin)} ms`);
   });
 
   await check('a transfer hands the shield over as its card leaves (anim_pass_hand_off), not when it lands', async () => {
@@ -354,10 +366,22 @@ try {
     assert.deepEqual(await all('[data-role-mark]', 'e.dataset.roleMark'), ['leadSword', 'shield']);
     await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
     await b.evaluate(`window.app.then((x) => x.app_debug_release())`);
-    await b.until(`window.$rec.flights.length > 0`);
-    await new Promise((r) => setTimeout(r, 300)); // the coins take 220 ms; the card 500
-    const mid = await b.evaluate(`window.app.then((x) => [x.app_anim_landed(), x.app_anim_flight_card(0), [...document.querySelectorAll('[data-role-mark]')].map((e) => e.dataset.roleMark)])`);
-    assert.deepEqual(mid, [0, id('1-11'), ['shield', 'sword']], 'with the Qh still in the air: my shield, Anna a sword (the hand-off moves the shield alone)');
+    const anna = await pad(1);
+    await idle();
+    const { ghosts, marks } = await b.evaluate('({ ghosts: window.$rec.ghosts, marks: window.$rec.marks })');
+    const [cardFlight] = await flights();
+    assert.equal(cardFlight.card, id('1-11'), 'the bot transfers Qh');
+    assert.equal(ghosts.length, 1, 'one mark flies: the shield');
+    assert.equal(ghosts[0].kind, 'shield');
+    near(ghosts[0].start, anna, 0.5, 'it leaves Anna\'s badge');
+    assert.ok(ghosts[0].at - cardFlight.at < 20, `it takes off with the card (${Math.round(ghosts[0].at - cardFlight.at)} ms after it)`);
+    assert.equal(ghosts[0].goneLanded, 0, 'it lands while the transferred card is still in the air');
+    const mine = marks.filter((m) => m.seat === 0);
+    assert.deepEqual(mine.at(-1) && [mine.at(-1).mark, mine.at(-1).landed], ['shield', 0], 'my badge shows the shield as the ghost lands, before the card does');
+    const hers = marks.filter((m) => m.seat === 1).map((m) => m.mark);
+    assert.deepEqual(hers, ['', 'sword'], 'Anna\'s badge blanks as the shield leaves it, then turns a sword in (the hand-off moves the shield alone)');
+    const turned = await b.evaluate('window.$rec.coins.filter(([seat, w]) => seat === 0 && w < 0.5).length');
+    assert.ok(turned > 0, 'my badge turns its sword away to be edge-on as the shield lands (the make-way)');
     await idle();
     assert.deepEqual(await all('[data-table-container] [data-battle-index]', 'e.dataset.card'), ['3-11', '1-11']);
   });
