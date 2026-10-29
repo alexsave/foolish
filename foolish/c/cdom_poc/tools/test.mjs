@@ -236,7 +236,10 @@ try {
         rec.flights.push({ node: c, at: t, card, layers: card < 0 ? c.firstChild.children.length : 0, slot: slot ? [slot.left + slot.width / 2, slot.top + slot.height / 2] : null,
           start: { x: parseFloat(c.style.left), y: parseFloat(c.style.top), transform: c.style.transform } });
         armed.observe(c, { attributes: true, attributeFilter: ['style'] }); });
-      for (const n of m.removedNodes) if (isOverlay(n)) for (const f of rec.flights) if (!f.goneAt && n.contains(f.node)) f.goneAt = t;
+      // gone: and where its card is drawn as it goes (the board's card the swap shows)
+      for (const n of m.removedNodes) if (isOverlay(n)) for (const f of rec.flights) if (!f.goneAt && n.contains(f.node)) { f.goneAt = t;
+        const e = f.card >= 0 && document.querySelector('[data-hand-plane] [data-card="' + Math.floor(f.card / 13) + '-' + (f.card % 13 + 1) + '"], [data-table-container] [data-card="' + Math.floor(f.card / 13) + '-' + (f.card % 13 + 1) + '"]');
+        if (e) { const r = e.getBoundingClientRect(); f.landed = [r.left + r.width / 2, r.top + r.height / 2]; } }
       // the role ghosts (z 10001): their kind and where each starts, and when they go
       for (const n of m.addedNodes) if (n.nodeType === 1 && n.style && n.style.zIndex === '10001')
         for (const g of n.querySelectorAll('[data-role-flight]')) rec.ghosts.push({ kind: g.dataset.roleFlight, at: t, start: [parseFloat(g.style.left), parseFloat(g.style.top)], landed: x.app_anim_landed() });
@@ -252,7 +255,20 @@ try {
   const centre = (sel) => b.evaluate(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
   const near = (a, b2, tol, what) => assert.ok(Math.abs(a[0] - b2[0]) <= tol && Math.abs(a[1] - b2[1]) <= tol, `${what}: ${a.map(Math.round)} against ${b2.map(Math.round)}`);
   const id = (card) => { const [suit, value] = card.split('-').map(Number); return suit * 13 + value - 1; };
-  const TRANSITION = 'left 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94), top 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+  // A flight's transition: left, top and transform over one time on the flights' curve, armed on the
+  // frame after its start frame and ending one frame before its beat lands (README, Animations:
+  // smooth landings): its time is the beat's less one to three frames. Returns that time.
+  const EASE = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+  // It counts from its start frame: a delay of minus one frame. Returns [time, delay].
+  const flightMs = (transition, beat, what) => {
+    const m = /^left (\d+)ms (.*) (-\d+)ms, top (\d+)ms (.*) (-\d+)ms, transform (\d+)ms (.*) (-\d+)ms$/.exec(transition);
+    assert.ok(m, `${what}: a left, top and transform transition, each from a frame back: ${transition}`);
+    assert.ok(m[1] === m[4] && m[1] === m[7] && m[3] === m[6] && m[3] === m[9] && [m[2], m[5], m[8]].every((e) => e === EASE), `${what}: one time on the flights' curve: ${transition}`);
+    const ms = Number(m[1]), lead = -Number(m[3]);
+    assert.ok(lead >= 15 && lead <= 18, `${what}: counted from its start frame, a frame back: ${lead} ms`);
+    assert.ok(ms >= beat - 45 && ms <= beat - 5, `${what}: ends a frame before its ${beat} ms beat lands: ${ms} ms`);
+    return [ms, lead];
+  };
   const vis = (sel) => b.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? getComputedStyle(e).visibility : 'none'; })()`);
   const seatCount = (seat) => b.evaluate(`document.querySelector('[data-role-seat="${seat}"]').parentElement.lastElementChild.lastElementChild?.textContent ?? null`);
   const ANIM_PAGE = 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug';
@@ -282,10 +298,10 @@ try {
     near([f.end.x, f.end.y], to, 0.5, 'it lands on the cell\'s centre');
     assert.equal(f.start.transform, 'translate(-50%, -50%) translate(0px, 17.5px) scale(1.5) rotate(0rad)');
     assert.equal(f.end.transform, 'translate(-50%, -50%) translate(0px, 28px) scale(1.8) rotate(0rad)');
-    assert.equal(f.end.transition, TRANSITION);
+    flightMs(f.end.transition, 500, 'the attack');
     assert.equal(f.end.shadow, 'rgba(0, 0, 0, 0.4) 0px 10px 20px');
     console.log(`     (armed ${Math.round(f.armedAt - f.at)} ms after it was drawn, gone ${Math.round(f.goneAt - f.at)} ms after)`);
-    assert.ok(f.armedAt - f.at >= 15 && f.armedAt - f.at < 150, `armed one beat (25 ms) after: ${f.armedAt - f.at}`);
+    assert.ok(f.armedAt - f.at >= 10 && f.armedAt - f.at < 150, `armed on the frame after its start frame: ${f.armedAt - f.at}`);
     assert.ok(f.goneAt - f.at >= 480 && f.goneAt - f.at < 800, `gone at its landing (500 ms): ${f.goneAt - f.at}`);
     assert.deepEqual([await vis('[data-table-container] [data-card="0-5"]'), await vis('[data-hand-plane] [data-card="0-5"]'), await seatCount(0)],
       ['visible', 'none', '3'], 'after the landing: on the table, out of my hand, my count 3');
@@ -298,9 +314,14 @@ try {
     await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
     await b.evaluate(`window.app.then((x) => x.app_debug_release())`);
     await b.until(`window.$rec.flights.length > 0`);
-    const turning = await b.evaluate(`(() => { const a = document.querySelector('[data-table-container] [data-card="3-5"]'); return [a.style.transform, a.style.transition]; })()`);
-    assert.deepEqual(turning, ['translateX(-50%) rotate(-0.19635rad)', 'transform 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94) 25ms, box-shadow 0.2s ease-in-out'],
-      'the attack under the cover turns over the flight, on its curve, after its arm');
+    // before the arm the attack lies as it did; from the arm it turns over the flight's own frames
+    const still = await b.evaluate(`(() => { const a = document.querySelector('[data-table-container] [data-card="3-5"]'); return [!!window.$rec.flights[0].end, a.style.transform]; })()`);
+    if (!still[0]) assert.equal(still[1], 'translateX(-50%)', 'the attack waits for the cover\'s arm');
+    await b.until(`!!window.$rec.flights[0].end`);
+    const turning = await b.evaluate(`(() => { const a = document.querySelector('[data-table-container] [data-card="3-5"]'); return [a.style.transform, a.style.transition, window.$rec.flights[0].end.transition]; })()`);
+    const [coverMs, lead] = flightMs(turning[2], 500, 'the cover');
+    assert.deepEqual(turning.slice(0, 2), ['translateX(-50%) rotate(-0.19635rad)', `transform ${coverMs}ms ${EASE} -${lead}ms, box-shadow 0.2s ease-in-out`],
+      'the attack under the cover turns over the flight\'s own frames, on its curve, from its arm');
     await idle();
     let [f] = await flights();
     assert.equal(f.card, id('2-5'), 'the bot covers 6d with the trump 6c');
@@ -432,9 +453,8 @@ try {
     await idle();
     const fs2 = await flights();
     assert.equal(fs2.length, 13, 'twelve cards and the trump');
-    const dur = (x) => /left (\d+)ms/.exec(x.end.transition)[1];
-    assert.deepEqual(fs2.slice(0, 12).map(dur), Array(12).fill('350'), 'each dealt card flies 350 ms');
-    assert.equal(dur(fs2[12]), '500', 'the trump turns in 500');
+    fs2.slice(0, 12).forEach((x, k) => flightMs(x.end.transition, 350, `dealt card ${k}`));
+    flightMs(fs2[12].end.transition, 500, 'the trump');
     assert.deepEqual(fs2.slice(0, 12).map((x) => x.card >= 0 ? 'face' : 'back'), Array(6).fill(['face', 'back']).flat(), 'mine face up, the bot\'s a back, a card at a time round the table');
     const hand = await all('[data-hand-plane] [data-card]', 'e.dataset.card');
     assert.deepEqual(fs2.slice(0, 12).filter((x) => x.card >= 0).map((x) => x.card), hand.map(id), 'my six, in the order the hand holds them');
@@ -613,10 +633,16 @@ try {
     await idle();
     assert.deepEqual(await battles(), ['1-5/1-8']);
     assert.deepEqual(await hand(), ['2-5', '0-5', '3-12']);
+    await b.evaluate(RECORD);
     await key(b, 'ArrowDown');   // Take: 6h and my 9h come back
     await idle();
     const drawn = await hand();
     assert.deepEqual(drawn.slice(0, 5), ['2-5', '0-5', '1-8', '3-12', '1-5'], 'the 9h back in its slot, the 6h new at the end');
+    // each flew to the slot it is drawn in as it lands (the hand's remembered order, not the board's:
+    // aimed by the board's order, the 9h landed a slot away and jumped)
+    const took = (await flights()).filter((f) => f.card === id('1-8') || f.card === id('1-5'));
+    assert.equal(took.length, 2, 'both cards flew');
+    for (const f of took) near([f.end.x, f.end.y], f.landed, 0.5, `card ${f.card} lands where its card is drawn as it goes`);
     await b.until('window.app.then((x) => x.app_saves_pending() === 0)');
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug');
     await ready();

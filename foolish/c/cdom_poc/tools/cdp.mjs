@@ -109,7 +109,7 @@ export async function launch({ width = 1024, height = 768, port = 8729, flags = 
   const closeAll = async () => { try { await send('Target.closeTarget', { targetId }); } catch { /* closed */ } await close(); };
   /** Every `method` event to fn until the returned function is called (a screencast's frames). */
   const listen = (method, fn) => { const l = { method, fn }; listeners.push(l); return () => listeners.splice(listeners.indexOf(l), 1); };
-  return { send: s, evaluate, goto, until, shot, click, listen, close: closeAll };
+  return { send: s, evaluate, goto, until, shot, click, listen, close: closeAll, pid: () => proc.pid };
 }
 
 // The table keeps its game in cdom's store (IndexedDB "cdom", object store "kv"; src/table_app.c

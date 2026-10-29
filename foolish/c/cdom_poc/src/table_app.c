@@ -60,7 +60,7 @@ static struct {
   uint64_t veil_hand, veil_table; /* by card id (card_to_id): hidden in my hand, on the table */
   uint64_t covering;              /* attack ids a cover in the air lands on */
   int arriving;                   /* cards flying into my hand */
-  int flight_ms;                  /* the beat in the air's duration */
+  int flight_ms;                  /* the beat in the air's transition once armed (arm_ms), else 0 */
 } SHOW;
 static int veiled(uint64_t set, int cid) { return (int)((set >> cid) & 1); }
 static cd_id container, bg_wool; /* the table's root, and the wool behind it */
@@ -223,13 +223,14 @@ enum { FACE_STILL, FACE_HAND, FACE_ATTACK, FACE_DEFENSE };
 #define COVER_RAD 0.19634954084936207 /* TableBattles.tsx COVER_ROTATION_RAD, pi / 16 */
 #define COVER_TILT "0.19634954084936207rad"
 #define EASE "cubic-bezier(0.25, 0.46, 0.45, 0.94)" /* FlightCard.tsx EASE: the flights' curve, and the row's */
-#define FLIGHT_ARM_MS 25 /* FlightCard.tsx: a flight stands one paint at its start before it moves */
 
 /* A battle's attack turns with the cover flying onto it: over the flight's duration, on its curve,
- * starting when the flight is armed (TableBattles.tsx attackCardStyle); 0 ms with nothing flying. */
+ * from the frame the flight is armed on, over the same arm_ms (TableBattles.tsx attackCardStyle, whose
+ * turn waits React's 25 ms arm); 0 ms with nothing flying. */
+static int arm_lead;
 static void sb_attack_transition(SB *s, int ms) {
-  sb_s(s, "transform "); sb_i(s, ms); sb_s(s, "ms " EASE " "); sb_i(s, ms > 0 ? FLIGHT_ARM_MS : 0);
-  sb_s(s, "ms, box-shadow 0.2s ease-in-out");
+  sb_s(s, "transform "); sb_i(s, ms); sb_s(s, "ms " EASE " "); /* React's golden writes the delay */
+  sb_i(s, ms > 0 ? -arm_lead : 0); sb_s(s, "ms, box-shadow 0.2s ease-in-out");
 }
 
 /* `tilted`, an attack's: bit 0 turned out of its cover's way, bit 1 covered (it lies under). */
@@ -1449,11 +1450,23 @@ static void render_end(void) {
  * plays. When the last step has landed the run ends and the game's own board is drawn: it is the
  * stream's final board, with the roles the closing beat hands on (anim_run.h). */
 enum { TIMER_TEX = 2, TIMER_BOT_GO = 3, TIMER_SAVE_RETRY = 4, TIMER_BOT_BASE = 16 }; /* the bot's: TIMER_BOT_BASE + its generation */
-#define TIMER_ARM 0x80000000u /* a flight's arm: TIMER_ARM | its generation */
 enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2, RAF_ANIM = 3 };
 enum { RUN_ROOM = MAX_SNAPS }; /* the most steps one operation adds (one per hook) */
 
 static RunStep run[ANIM_MAX_STEPS];
+static int n_flights, flight_beat = -1, flights_made; /* the flights (below) */
+/* The frame clock: raf_seq counts the run's frames (run_frame), in_raf is set inside one, and
+ * vsync is the last frame-to-frame time seen (16.7 ms until two frames have been). A beat's flights
+ * are armed on the frame after the one that first painted them at their start (flight_arm_seq),
+ * React's 25 ms timer made exact: a timer lands on either side of a frame, so React's flights stand
+ * one or two frames, and its transition, the beat's whole duration from the arm, is still running
+ * when the plan lands the beat (the card cut 2 to 14 px short of where the board draws it). */
+static uint32_t raf_seq, flight_arm_seq;
+/* arm_ms: the armed beat's transition (0: none armed); arm_lead: how long before the arm frame it
+ * counts as begun, one frame (a negative transition-delay): the start frame is the only one that
+ * shows a flight still, where a transition armed on frame k + 1 would paint its start again there */
+static int in_raf, flight_armed = 1, arm_ms;
+static double raf_last = -1, vsync = 1000.0 / 60;
 static TableView run_pre;      /* what shows until step 0 lands: the board the run started on */
 static AnimPlanAsk ASK;
 static AnimPlan PLAN;
@@ -1587,7 +1600,9 @@ static void run_show(void) {
   SHOW.trump_out = !card_is_none(FR.trump_flight);
   if (FR.step == ANIM_STEP_NONE) return;
   const AnimPlanStep *ps = &PLAN.steps[FR.step];
-  SHOW.flight_ms = ps->duration_ms;
+  /* the beat's flights armed: the turn of a battle a cover lands on runs with them */
+  int armed = flight_armed && arm_ms > 0 && flight_beat == ps->beat_first;
+  SHOW.flight_ms = armed ? arm_ms : 0;
   for (int k = ps->beat_first; k < ps->beat_first + ps->beat_n; k++) {
     const PushEvent *e = &run[k].ev;
     uint64_t ids = 0;
@@ -1603,28 +1618,28 @@ static void run_show(void) {
       SHOW.veil_table |= ids;
       RV = &run[k].board; /* the row makes room for the pile now (React's arrivingPiles) */
     }
-    if (e->type == EVW_T_COVER && e->has_target) SHOW.covering |= 1ull << card_to_id(e->target);
+    if (e->type == EVW_T_COVER && e->has_target && armed) SHOW.covering |= 1ull << card_to_id(e->target);
   }
 }
 
 /* ---- the flights (FlightCard.tsx, flightGeometry.ts) ---------------------------------------------
  * The beat in the air's cards, each one node in an overlay (AnimationOverlay.tsx: fixed, over
  * everything, never hit), made when the beat opens and gone when it lands. A flight is put at the
- * centre of where its card is drawn, at scale 1.5 and the tilt it lies at there, and FLIGHT_ARM_MS
- * later given its landing: the centre of where the card will be drawn, scale 1.8, the tilt it will
- * lie at, and a shadow, with a CSS transition of the beat's duration on the flights' curve. The
- * browser moves it; every endpoint is measured once, as React measures in a layout effect. */
+ * centre of where its card is drawn, at scale 1.5 and the tilt it lies at there, and on the next
+ * frame after the one that painted it there given its landing: the centre of where the card will be
+ * drawn, scale 1.8, the tilt it will lie at, and a shadow, with a CSS transition on the flights'
+ * curve that ends on the last frame before the beat lands (README, Animations: smooth landings).
+ * The browser moves it; every endpoint is measured once, as React measures in a layout effect. */
 enum { MAX_FLIGHTS = 64, CARD_H = 70 };
 static cd_region overlay;
 static struct { cd_id node, face; double x, y, angle; int cid; } flight[MAX_FLIGHTS]; /* cid: the card, -1 a stack of backs */
-static int n_flights, flight_beat = -1, flight_ms, flights_made;
-static uint32_t flight_gen; /* the arm's generation: an older beat's timer arms nothing */
 
 static void flights_clear(void) {
   cd_region_hide(&overlay);
   n_flights = 0;
+  flight_armed = 1;
+  arm_ms = 0;
   flight_beat = -1;
-  flight_gen++;
 }
 
 /* The transform a flight is drawn with: hung by its centre, turned about its bottom edge (so the
@@ -1686,14 +1701,16 @@ static void flight_add(Card c, int backs, double x0, double y0, double a0, doubl
   n_flights++;
 }
 
-/* The flights' landings, FLIGHT_ARM_MS after they were drawn at their start (one crossed paint). */
-static void flights_arm(uint32_t gen) {
-  if (gen != (flight_gen & 0x7fffffffu)) return;
+/* The flights' landings, on the frame after the one that painted them at their start (the
+ * transition starts on that frame), over arm_ms (run_frame). */
+static void flights_arm(void) {
+  int ms = arm_ms;
   for (int i = 0; i < n_flights; i++) {
     static SB s;
     sb_reset(&s);
-    sb_s(&s, "left "); sb_i(&s, flight_ms); sb_s(&s, "ms " EASE ", top "); sb_i(&s, flight_ms);
-    sb_s(&s, "ms " EASE ", transform "); sb_i(&s, flight_ms); sb_s(&s, "ms " EASE);
+    sb_s(&s, "left "); sb_i(&s, ms); sb_s(&s, "ms " EASE " "); sb_i(&s, -arm_lead);
+    sb_s(&s, "ms, top "); sb_i(&s, ms); sb_s(&s, "ms " EASE " "); sb_i(&s, -arm_lead);
+    sb_s(&s, "ms, transform "); sb_i(&s, ms); sb_s(&s, "ms " EASE " "); sb_i(&s, -arm_lead); sb_s(&s, "ms");
     cd_set_style(flight[i].node, ZS("transition"), sb_tmp(&s));
     cd_set_style_num(flight[i].node, ZS("left"), flight[i].x, CD_UNIT_PX);
     cd_set_style_num(flight[i].node, ZS("top"), flight[i].y, CD_UNIT_PX);
@@ -1732,12 +1749,19 @@ static void glide_offset(int aid, double *dx, double *dy) {
 static cd_id seat_hand(int seat) { return seat_ui[seat].hand; } /* another seat's mini hand: where its cards come and go */
 static cd_id hand_plane_id(void) { return hand_plane; }
 
-/* Where a card of step k lands in MY hand: the kernel's slot for it in the hand that step leaves,
+/* Where a card of step k lands in MY hand: the kernel's slot for it in the hand that step leaves, as drawn,
  * off the plane's bottom edge (handShape.tsx handLandingCentre). */
 static int my_hand_landing(int k, Card c, double *x, double *y) {
   const TableView *b = &run[k].board;
+  /* the order that board will be drawn in (hand_order: the remembered slots, a new card at the end),
+   * not the board's own: a take aimed by the board's order landed up to 360 px from its card */
+  static uint8_t mem[52];
+  static Card order[MAX_HAND_SIZE];
+  __builtin_memcpy(mem, hand_memory, (size_t)hand_memory_n);
+  int n = client_hand_remember(mem, hand_memory_n, (int)sizeof mem, b->my_hand, b->my_hand_count);
+  client_hand_shown(mem, n, b->my_hand, b->my_hand_count, order);
   int at = -1;
-  for (int i = 0; i < b->my_hand_count; i++) if (b->my_hand[i].suit == c.suit && b->my_hand[i].value == c.value) at = i;
+  for (int i = 0; i < b->my_hand_count; i++) if (order[i].suit == c.suit && order[i].value == c.value) at = i;
   if (at < 0) return 0;
   cd_viewport_rec vp;
   cd_viewport(&vp);
@@ -1755,7 +1779,6 @@ static int my_hand_landing(int k, Card c, double *x, double *y) {
  * to where it will be (flightGeometry.ts planFlights). Measured now, once. */
 static void flights_open(int beat) {
   const AnimPlanStep *ps = &PLAN.steps[beat];
-  flight_ms = ps->duration_ms;
   cd_viewport_rec vp;
   cd_viewport(&vp);
   int made = 0;
@@ -1828,7 +1851,10 @@ static void flights_open(int beat) {
   CLOSE();
   cd_region_end(&overlay);
   flights_made += n_flights;
-  cd_timer_start(FLIGHT_ARM_MS, TIMER_ARM | (flight_gen & 0x7fffffffu));
+  /* drawn inside frame k's callback, frame k paints them: armed on k + 1; drawn between frames, the
+   * next frame (raf_seq + 1) paints them: armed on raf_seq + 2 */
+  flight_armed = 0;
+  flight_arm_seq = raf_seq + (in_raf ? 1 : 2);
 }
 
 /* After a render: the beat in the air flies (made once, as it opens), and is gone once it lands. */
@@ -1889,8 +1915,12 @@ static void render(void) {
 }
 
 /* The run's frame loop: a frame whose answer differs from the last one's is drawn. */
-static void run_frame(void) {
-  if (!run_on()) return;
+static void run_frame(double frame_ms) {
+  if (raf_last >= 0 && frame_ms - raf_last > 4 && frame_ms - raf_last < 40) vsync = frame_ms - raf_last;
+  raf_last = frame_ms;
+  raf_seq++;
+  if (!run_on()) { raf_last = -1; return; }
+  in_raf = 1;
   AnimFrame was = FR;
   int landed = run_landed, opened = run_opened;
   run_sample();
@@ -1898,7 +1928,23 @@ static void run_frame(void) {
       || was.in_flight_from_deck != FR.in_flight_from_deck || was.in_flight_to_flipped != FR.in_flight_to_flipped
       || !card_is_none(was.trump_flight) != !card_is_none(FR.trump_flight))
     render_board();
+  /* The beat in the air is armed, counted from its start frame (arm_lead): its transition ends one
+   * frame before the beat lands, so the last frame that shows a flight shows it where the board's
+   * card is drawn (the swap moves nothing but the size React's flights land at, 1.8). The battle a cover lands on turns over the same frames:
+   * the board is drawn again with the turn (run_show), then the flights are given their landing. */
+  if (run_on() && !flight_armed && raf_seq >= flight_arm_seq) {
+    const AnimPlanStep *ps = &PLAN.steps[flight_beat];
+    double land = run_origin + (ps->start_ms + ps->duration_ms) / anim_speed;
+    arm_lead = (int)(vsync + 0.5);
+    arm_ms = (int)(land - cd_now()); /* from a frame ago to a frame before the landing */
+    if (arm_ms < arm_lead + 1) arm_ms = arm_lead + 1; /* a late frame: it lands at once, and the turn still reads as armed */
+    flight_armed = 1;
+    render_board();
+    flights_arm();
+  }
+  in_raf = 0;
   if (run_on()) cd_raf_request(RAF_ANIM);
+  else raf_last = -1;
 }
 
 /* ---- moves ---------------------------------------------------------------- */
@@ -2697,7 +2743,6 @@ void cd_on_event(const cd_event_rec *e) {
 }
 
 void cd_on_timer(uint32_t token) {
-  if (token & TIMER_ARM) { flights_arm(token & ~TIMER_ARM); return; }
   if (token >= TIMER_BOT_BASE) bot_due(token - TIMER_BOT_BASE);
 #ifdef TABLE_DEBUG
   if (token == TIMER_BOT_GO) { bot_pending = 1; bot_step(); }
@@ -3104,7 +3149,7 @@ void cd_on_image(uint32_t token, uint32_t ok) {
 
 void cd_on_raf(uint32_t token, double t) {
   (void)t;
-  if (token == RAF_ANIM) { run_frame(); return; }
+  if (token == RAF_ANIM) { run_frame(t); return; }
   if (token == RAF_COIN) { coins_frame(); return; }
   if (token == RAF_KBD) { kb_poll_frame(); return; }
   if (token == RAF_PAINTED) { cd_raf_request(RAF_PAINTED2); return; }

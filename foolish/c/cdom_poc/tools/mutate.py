@@ -51,13 +51,20 @@ MUTANTS = [
   ('the stream written for nobody', 'src/anim_run.c', 'g, viewer, actor, ended,', 'g, -1, actor, ended,', 'out/run_test'),
   ('the final transition dropped', 'src/anim_run.c', 'g, viewer, actor, ended,', 'g, viewer, actor, 0,', 'out/run_test'),
   # the animation pass: the table (tools/test.mjs, the check named by the regex)
-  ('the deal flies at 500 ms, not the kernel\'s', 'src/table_app.c', '  flight_ms = ps->duration_ms;\n  cd_viewport_rec vp;', '  flight_ms = 500;\n  cd_viewport_rec vp;', 'tools/test.mjs', 'deal is'),
+  ('the deal flies at 500 ms, not the kernel\'s', 'src/table_app.c', '    double land = run_origin + (ps->start_ms + ps->duration_ms) / anim_speed;', '    double land = run_origin + (ps->start_ms + 500) / anim_speed;', 'tools/test.mjs', 'deal is'),
   ('a landed step not committed', 'src/table_app.c', '  int k = run_landed > run_ahead ? run_landed : run_ahead;', '  int k = 0 * run_landed * run_ahead;', 'tools/test.mjs', 'sweep'),
   ('the bot paced from the click', 'src/table_app.c', 'static double settles_ms(void) { return run_settles > shown_ms ? run_settles : shown_ms; }', 'static double settles_ms(void) { (void)run_settles; return shown_ms; }', 'tools/test.mjs', 'waits as the kernel'),
   ('no veil', 'src/table_app.c', 'static void veil_set(cd_id id, int on) { cd_set_style(id, ZS("visibility"), on ? ZS("hidden") : ZS("")); }', 'static void veil_set(cd_id id, int on) { (void)id; (void)on; }', 'tools/test.mjs', 'played card|kernel.s game'),
-  ('flights never armed', 'src/table_app.c', '  if (gen != (flight_gen & 0x7fffffffu)) return;', '  if (gen || 1) return;', 'tools/test.mjs', 'played card'),
+  ('flights never armed', 'src/table_app.c', 'static void flights_arm(void) {\n  int ms = arm_ms;', 'static void flights_arm(void) {\n  if (arm_ms) return;\n  int ms = arm_ms;', 'tools/test.mjs', 'played card'),
+  # the smooth landings pass (README, Animations): each mutant puts back one cause of a jumpy landing
+  ('flights run the beat\'s whole time from the arm (React\'s)', 'src/table_app.c', '    arm_ms = (int)(land - cd_now()); /* from a frame ago to a frame before the landing */', '    arm_ms = ps->duration_ms; (void)land;', 'tools/test.mjs', 'played card'),
+  ('flights run the beat\'s whole time from the arm, the gate', 'src/table_app.c', '    arm_ms = (int)(land - cd_now()); /* from a frame ago to a frame before the landing */', '    arm_ms = ps->duration_ms; (void)land;', 'GATE=1 ARMS=port tools/framepace.mjs 6 1'),
+  ('flights not counted from their start frame, the gate', 'src/table_app.c', '    arm_lead = (int)(vsync + 0.5);', '    arm_lead = 0;', 'GATE=1 ARMS=port tools/framepace.mjs 6 1'),
+  ('flights armed a frame late, the gate', 'src/table_app.c', '  flight_arm_seq = raf_seq + (in_raf ? 1 : 2);', '  flight_arm_seq = raf_seq + (in_raf ? 2 : 3);', 'GATE=1 ARMS=port tools/framepace.mjs 6 1'),
+  ('a take aimed by the board\'s order', 'src/table_app.c', 'if (order[i].suit == c.suit && order[i].value == c.value) at = i;', 'if (b->my_hand[i].suit == c.suit && b->my_hand[i].value == c.value) at = i;', 'tools/test.mjs', 'taken back'),
   ('the row does not glide', 'src/table_app.c', '    cd_set_style(battle_cell[moved[k]], ZS("transition"), sb_tmp(&t));', '    (void)sb_tmp(&t);', 'tools/test.mjs', 'played card'),
-  ('the attack does not turn with its cover', 'src/table_app.c', '    if (e->type == EVW_T_COVER && e->has_target) SHOW.covering |= 1ull << card_to_id(e->target);', '', 'tools/test.mjs', 'cover flies'),
+  ('the attack does not turn with its cover', 'src/table_app.c', '    if (e->type == EVW_T_COVER && e->has_target && armed) SHOW.covering |= 1ull << card_to_id(e->target);', '', 'tools/test.mjs', 'cover flies'),
+  ('the attack turns before its cover is armed', 'src/table_app.c', '    if (e->type == EVW_T_COVER && e->has_target && armed) SHOW.covering', '    if (e->type == EVW_T_COVER && e->has_target) SHOW.covering', 'tools/test.mjs', 'cover flies'),
   ('my hand makes no room', 'src/table_app.c', '  hand_layout(&WEB_HAND, V->my_hand_count + SHOW.arriving, width, &HL);', '  hand_layout(&WEB_HAND, V->my_hand_count, width, &HL);', 'tools/test.mjs', 'cover flies'),
   ('a move during a run starts another', 'src/table_app.c', '  int was = run_on(), from = run_n;', '  int was = 0, from = run_n;', 'tools/test.mjs', 'joins it'),
   ('no coin', 'src/table_app.c', '      else coin_play(u, resting, mark, 0);', '      else coin_stand(u, mark);', 'tools/test.mjs', 'sweep'),
@@ -133,12 +140,16 @@ for name, f, old, new, test, *check in MUTANTS:
     b = subprocess.run(['./build.sh'], cwd=POC, capture_output=True, text=True)
     if b.returncode: missed.append(name + ' (does not build)'); print(f'{name}: BUILD FAILED\n{b.stderr[-800:]}'); continue
     env = dict(os.environ, FAILFAST='1', **({'ONLY': check[0]} if check else {}))
-    r = subprocess.run(['node', test] if test.endswith('.mjs') else [os.path.join(POC, test)], cwd=POC, capture_output=True, text=True, env=env)
+    # a test may carry its settings and arguments: 'GATE=1 ARMS=port tools/framepace.mjs 6 1'
+    words = test.split()
+    env.update(w.split('=', 1) for w in words if '=' in w)
+    args = [w for w in words if '=' not in w]
+    r = subprocess.run(['node', *args] if args[0].endswith('.mjs') else [os.path.join(POC, args[0]), *args[1:]], cwd=POC, capture_output=True, text=True, env=env)
     caught = r.returncode != 0
     (caught_n if caught else missed).append(name)
     print(f'== {name}: exit {r.returncode}, {"caught" if caught else "MISSED"}')
     for l in r.stdout.splitlines():
-      if l.startswith('FAIL') or l.startswith('     ') or l.startswith('ws') or l.startswith('http') or l.startswith('game 3') or l.startswith('all at') or l.startswith('done'): print('   ', l[:400])
+      if l.startswith('FAIL') or l.startswith('GATE') or l.startswith('  flights probed') or l.startswith('     ') or l.startswith('ws') or l.startswith('http') or l.startswith('game 3') or l.startswith('all at') or l.startswith('done'): print('   ', l[:400])
   finally:
     shutil.move(keep, path)
 b = subprocess.run(['./build.sh'], cwd=POC, capture_output=True, text=True)
