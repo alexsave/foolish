@@ -1,17 +1,28 @@
-# Fusion: octogen plus two Bot Cup ideas
+# Fusion: octogen plus rollout noise
 
-Fusion is octogen plus kestrel's rollout noise: in its heuristic rollouts, each seat's decision is, with probability 20%, a uniform pick from a small sensible candidate set instead of the rollout policy's move.
+Fusion is octogen plus kestrel's rollout noise: in its heuristic rollouts, each seat's decision is, with probability 30%, a uniform pick from a small sensible candidate set instead of the rollout policy's move.
+The noise is on at tables of two to five players and off at six and above, where fusion is octogen move for move, with no extra draw (the measurements below).
 Everything else is octogen's: the same belief, sampled worlds, world budgets, root endgame solve, exact leaf, LEAFBOOK, candidate race and trump-keep tax.
 It also carries a second lever for experiments, sapper's firmer pickup inference: a seat that picked up is assumed to hold nothing beating those cards in (m-1) of m sampled worlds (`og_void_mod` = m).
 Fusion's default is octogen's 4 (3 of 4), because sapper's 7 (6 of 7, about 85%) measured flat in the league (see the first measurement below).
-Registered as `fusion` / `fu`, `STRAT_FUSION = 24` (`src/strategy.h`), with its own research-only roster row (below).
+Registered as `fusion` / `fu`, `STRAT_FUSION = 24` (`src/strategy.h`), with its own roster row that nothing offers yet (below, and "To go live").
 
 Both levers are set by `fusion_strategy_choose` for the length of one decision and put back after it, so an octogen seat on the same thread keeps noise 0 and mixture 4.
 `og_void_mod` is octogen's thread-local, latched from `OG_VOID_MOD` on a flag load, so fusion loads octogen's flags first and then swaps its own value in; otherwise the first decision's own flag load would overwrite it.
-`FUSION_NOISE` (default 200) and `FUSION_VOID_MOD` (default 4, was 7 until the league measurement) are read by fusion alone, so ablations need no second brain.
 
-> Built, tested and mutation-checked on 2026-10-28 (rebased onto main after #445).
-> The design below is unchanged from the first, uncompiled draft except for the void mixture.
+### The defaults and the knobs
+
+Each setting is a C default in `src/octogen_strategy.c` and a knob (env over roster spec, `bot_knobs.h`) read by fusion alone, so a paired fusion-vs-octogen run can change one without touching the control.
+No knob is needed for the production behaviour.
+
+| Knob | Default | Meaning |
+| --- | --- | --- |
+| `FUSION_NOISE` | 300 | per-mille chance that a rollout decision plays the noise |
+| `FUSION_NOISE_MAX_PC` | 5 | the largest table (the game's seat count) the noise is on at; above it fusion sets 0 and is octogen |
+| `FUSION_NOISE_MODE` | 0 | 0: uniform over the sensible candidates; 1: uniform over the seat's whole rollout menu (research only) |
+| `FUSION_VOID_MOD` | 4 | the void mixture (octogen's value) |
+
+The table size is the game's seat count, the size every measurement was taken at, not the number of seats still in.
 
 ## The idea and where it came from
 
@@ -32,8 +43,8 @@ Kestrel applies the noise to every seat, the searching seat included; noise for 
 - **The bitboard rollouts** (the default path): every place a playout asks a seat for its policy move now asks the noise first.
   `sim_seat_move` is that one place for `cd_sim_playout_pol` and the reply playout's policy steps; `sim_hw_noisy_move` is the same for `cd_sim_playout` and `cd_sim_playout_leaf`.
   Octogen's default path is `cd_sim_playout_pol` (OG_BBLEAF defaults to 2, so the leaf flag is always on).
-- **The struct rollout** (`og_simulate`, used under `OG_NO_FASTROLL`, `OG_LEAF`, `OG_DIFFTEST` or `OG_NO_WORLDSIM`): `cd_sim_noise_legal` builds a SimState from the determinized world, draws the same way, and maps the candidate onto the seat's lite menu by move kind and card set.
-  One candidate builder serves both paths, so the two cannot disagree on the set.
+- **The struct rollout** (`og_simulate`, used under `OG_NO_FASTROLL`, `OG_LEAF`, `OG_DIFFTEST` or `OG_NO_WORLDSIM`): `cd_sim_noise_legal` builds a SimState from the determinized world, draws with the same `sim_noise_draw`, and maps the picked move onto the seat's lite menu by move kind and card set.
+  The pick is made on the SimState in both paths, by one function, so in either mode the two cannot disagree on the menu, its order or the move an index means; the lite menu's own order never matters.
 - **The stream**: both draws (the gate, then the pick) are `game_random()`, the rollout's own stream, which `og_run_stages` reseeds to the same `sim_rng` for every root candidate in a world.
   So the common random numbers across candidates are intact: the same worlds and the same rollout streams for every root candidate.
   The two paths draw in the same order, so `OG_DIFFTEST` still compares like with like.
@@ -48,6 +59,7 @@ So at 0 not one extra `game_random()` is consumed, and octogen, cordite and ever
 The refactor that put the policy dispatch into `sim_seat_move` keeps the same branch order (LOOSE, MCDEF, else handwritten).
 `CdNoiseStats.drawn` counts gate draws, so a test can prove a brain at 0 drew nothing.
 The cost at 0 is one thread-local load per rollout ply in native builds.
+The `sim_pass_pool` refactor (the pass gates shared by `sim_gen_pass` and the noise) changes no generated move: octogen, cordite, firecracker and blackpowder replay main's games exactly (below).
 
 ### The candidate set, and how kestrel's list maps
 
@@ -70,118 +82,59 @@ Every attack is capped at the defender's capacity and at `MAX_MOVE_CARDS`, so ev
 | Thrower | a lone trump | the lowest matching trump |
 | Thrower | everything | every matching card, capped |
 
-### What is NOT in any shipped module
+### The whole-menu mode (`FUSION_NOISE_MODE=1`, research only)
 
-- `FOOLISH_SEEDED_BOTS_ONLY` (set in `WASM_BOT_CFLAGS`, so in `web.wasm`, `oracle.wasm` and `oracle-mt.wasm`) turns `CD_ROLLOUT_NOISE` off.
-  There the noise code is compiled out, the setters are inline no-ops, and `fusion_strategy_choose` is not defined, so anything that named it would fail to link rather than run octogen under fusion's name.
-  The wasm source lists are untouched; no source list needed fusion added, because fusion lives in `octogen_strategy.c` and every list that has octogen has it, and `bot_roster.c` compiles its fusion case out there (below).
-- The native kernel (`KERNEL_SRC`: the arena tools, the tests, the kernel c_base links, the iOS xcframework) has the noise compiled in and dormant at 0.
-  Fusion is reachable there through `strategy_choose` / `parse_strategy`, the arena dispatch (`cnitro_eval`, `cnitro_elo`, the tests), and through its roster row (`bot_roster_choose`), which no lobby, seed row or picker offers.
+"Actual random" against the sensible set: uniform over every move of the seat's `calculate_legal_moves_lite` menu.
+That menu is the one every rollout deliberates over and the only one the struct rollout can play from, so its covers are the one greedy full cover; every attack, throw-in and pass is on it, each capped at `MAX_MOVE_CARDS` and at the receiving seat's capacity exactly as the lite enumerator caps them.
+`sim_noise_fams` describes the menu as a few families (a single move, or every 1..kmax subset of a pool of cards: a leader's value group, a defender's matching cards with `sim_pass_pool`'s gates, a thrower's table-valued cards), counts it with binomials, and unranks one uniform index into its move.
+Nothing is built: a thrower with a dozen table-valued cards has thousands of throw-ins.
+The draws are the sensible mode's (the gate, then one pick), so the mode never changes how many numbers a decision consumes.
+It measured level with the sensible set (below), so the default stays the sensible set and this mode stays a knob for further experiments.
+
+### Where it is compiled, and where it is not
+
+- **The native kernel** (`KERNEL_SRC`: the arena tools, the tests, the iOS xcframework, and the kernel the server links) has the noise compiled in, dormant at 0 for every other brain.
+  The production server is c_base, which links `KERNEL_SRC` natively with `KERNEL_CFLAGS` (`c_base/Makefile`): `-DCD_LEAFBOOK` plus the `-DMAX_*` capacities from `print-human-caps`, which filters `WASM_FLAGS` to `-DMAX_%` and so never carries `FOOLISH_SEEDED_BOTS_ONLY` (that flag is only in `WASM_BOT_CFLAGS`).
+  So the server can already run fusion with its noise: `table_add_bot` / `table_load` accept the `fusion` key (`bot_roster_linked` is 1 natively) and `bot_drive` plays it through `bot_roster_choose`.
+- **The browser's modules** (`WASM_BOT_CFLAGS`: `web.wasm`, `oracle.wasm`, `oracle-mt.wasm`, and the e2e `table_host`, which is built from the same flags) define `FOOLISH_SEEDED_BOTS_ONLY`, which turns `CD_ROLLOUT_NOISE` off.
+  There the noise code is compiled out, the setters are inline no-ops, and `fusion_strategy_choose` is not defined, so anything that named it would fail to link rather than run octogen under fusion's name; `bot_roster.c` compiles its fusion case out and `bot_roster_linked` says 0, exactly as for espresso_prod and gunpowder.
+  No browser path runs a bot brain: `web.wasm` exports the client slot, the net client and the replay steps, none of which resolves a brain key, and the Oracle analyses replays with octogen, whatever brain sat in a seat.
+  So the browser never needs fusion compiled in, for going live or after.
 - **Its own roster row, offered nowhere.**
   `src/bot_roster.c` has a `fusion` row on `STRAT_FUSION` with octogen's knobs (`OG_TRUMP_KEEP=40`), uses_logs on, seeded off, offline off, tier 11.
-  Seeded off keeps it out of `bot_seed.c` and so out of every web lobby (the lobby lists seeded bot rows); offline off keeps it out of the phone's picker (`fio_strategy_count` is the offline count).
+  Seeded off keeps it out of `bot_seed.c` and so out of every web lobby (the lobby lists the store's bot rows); offline off keeps it out of the phone's picker (`fio_strategy_count` is the offline count).
   The row is in every module's `BotRosterTable`, so the web and the phone can see its key, but nothing offers it.
-  Under `FOOLISH_SEEDED_BOTS_ONLY` it is handled exactly like espresso_prod and gunpowder: its `dispatch` case is compiled out and `bot_roster_linked` says 0, so `bot_roster_choose` on it is -1 there, never octogen under fusion's name.
-  Natively it is a named bot like any other: `bot_roster_choose` runs it with octogen's knobs installed, and the analysis tools can name it by key.
-  The roster has no city or song field: a seat's city is an i18n string `bot.<key>` in all twenty-five languages, required only for seeded keys, so there is no `bot.fusion` string yet.
+- **No city or song yet.**
+  On the website a bot's city is its STORED nickname (`%Vienna 1`), seven `bot_seed.c` rows per rung, and no display map exists; the `bot.<key>` i18n strings name a seat from its strategy key (the phone's `BotNames.display(strategy:)`, used by the offline picker).
   TODO(alex): fusion's city is "TBD" and its song is "TBD" (marked in `src/strategy.h` and on the row); the song has no field anywhere to go in.
 
-## Ready to run
+## Tests
 
-All commands from `foolish/c` in this worktree.
-The Mac rules apply: one local executor at a time, no zsh word-splitting tricks, and `make OMP=1` needs libomp (`brew install libomp`).
+All from `foolish/c`: `make build/cnitro_tests && ./build/cnitro_tests` (the whole suite), `FU_TRACE=1` prints the measured fire rates, and `make tests-wasm-caps` holds octogen under the wasm size limits.
+The fusion tests (`tests/tests.c`, after `test_bot_roster_choose_scopes_knobs`), each with the mutations that turned it red written beside it:
 
-### 1. Build
-
-```sh
-make build/cnitro_tests build/cnitro_eval build/cnitro_elo
-make OMP=1 build/cnitro_eval build/cnitro_elo   # the parallel arena, for steps 4 and 5 (rebuilds the same targets)
-```
-
-The first build compiled clean with no warnings.
-
-### 2. Tests
-
-```sh
-./build/cnitro_tests                 # the whole suite, including the four fusion tests below
-FU_TRACE=1 ./build/cnitro_tests 2>&1 | grep 'fusion noise'   # the measured fire rates
-make tests-wasm-caps                 # must still pass: octogen under the wasm size limits
-```
-
-The five new tests (`tests/tests.c`, after `test_bot_roster_choose_scopes_knobs`):
-
-- `test_fusion_is_dispatchable_and_named`: id 24, `STRAT_COUNT` 25, the names parse, its own roster row (neither seeded nor offline, octogen's knobs, linked natively), and both `strategy_choose` and `bot_roster_choose` return a legal move and leave no noise or knobs behind.
+- `test_fusion_is_dispatchable_and_named`: id 24, `STRAT_COUNT` 25, the names parse, its own roster row (neither seeded nor offline, octogen's knobs, linked natively), both dispatches return a legal move and leave no noise, mode or knobs behind, and `FUSION_NOISE_MODE=1` reaches the rollouts (`CdNoiseStats.any`).
 - `test_rollout_noise_seam`: on one fixed world, at 0 nothing is drawn and a playout is its stream's; at 1000 the same streams play out differently, every playout ends, and the per-seat-policy playout takes the noise too.
 - `test_octogen_is_fusion_at_zero`: over stretches of 2- and 3-seat games, on both rollout paths, octogen and fusion with `FUSION_NOISE=0` choose the same move and leave both RNG streams in the same state, and neither draws the noise.
-- `test_fusion_rollouts_are_noisy`: fusion at 200 fires on both paths at 12-28% of drawn decisions, every struct-path pick is on the lite menu, octogen beside it draws nothing, and the knob is back at 0 afterwards.
+- `test_fusion_rollouts_are_noisy`: with no knob set, fusion fires on both paths at 24-36% of drawn decisions (29.8% and 30.1% measured; the default 300, and 200 or 400 both fall outside), every struct-path pick is on the lite menu, octogen beside it draws nothing, and the knob is back at 0 afterwards.
+- `test_fusion_noise_modes_are_legal_on_both_paths`: over every decision of 120 random games (2-6 seats, both rule sets) and 1500 crafted big-hand boards, every sensible candidate is on the seat's lite menu, the whole-menu mode's menu IS the lite menu with every move once, and at the same stream state the bitboard path and the struct path draw the same gate and pick, play the same move and leave the stream in the same state, in both modes.
+  The crafted boards are what reach a thrower with more than `MAX_MOVE_CARDS` table-valued cards; random games never did, and the first mutation check of the cap stayed green until they were added.
+- `test_fusion_noise_by_table_size`: with no knob set, fusion draws the noise at 2 to 5 seats, and at 6 and 7 seats it is octogen, the same move and both streams after, with no draw.
 - `test_fusion_void_mixture`: over 2- and 3-seat game stretches, fusion at `FUSION_VOID_MOD=7` with the noise off is octogen at `OG_VOID_MOD=7` move for move and stream for stream, octogen right after a fusion call is octogen at 4, and somewhere the two mixtures part.
 
-`test_octogen_is_fusion_at_zero` sets only `FUSION_NOISE=0`, so it holds the default mixture to octogen's 4.
-`test_bot_roster_choose_scopes_knobs` now runs every linked roster row, not just the offline rungs, so fusion's row must dispatch.
+`test_bot_roster_choose_scopes_knobs` runs every linked roster row, so fusion's row must dispatch, and `test_podkidnoy_every_brain` plays fusion too.
 
-`test_podkidnoy_every_brain` (the `CD_PASS_PROBE` sweep) now also plays fusion, and its id check expects `STRAT_COUNT == 25`.
+### Octogen is unchanged against main
 
-Then the mutation check, one mutation at a time, each written beside its test: break the code, confirm the named assertion goes red, restore by re-editing (never `git checkout --`).
+No test pins an octogen decision to a value, so this branch was compared with main at its fork point (a detached worktree at `1cca1f9d5`) by `cnitro_eval --inspect`, which prints every move of a seeded game:
 
-### 3. Octogen is unchanged against main
+- octogen vs octogen at 2, 4 and 6 players, seeds 200001-200003: every transcript byte-identical;
+- fusion vs octogen at 6 players on the same seeds: main's octogen transcript exactly (noise off above five);
+- cordite, firecracker and blackpowder at 2 and 4 players, seeds 200001-200002 (the solver's `sim_gen_pass` now goes through `sim_pass_pool`): byte-identical.
 
-No existing test pins an octogen decision to a value, so prove this branch's octogen is main's move for move:
-
-```sh
-BASE=/Users/alex/Dev/foolish/.claude/worktrees/fusion-base
-git worktree add --detach $BASE c7e0a1a4d          # this branch's fork point on main
-make -C $BASE/foolish/c build/cnitro_eval
-for s in 200001 200002 200003; do for pc in 2 4; do
-  $BASE/foolish/c/build/cnitro_eval --strategy=octogen --opp=octogen --players=$pc --inspect=$s > /tmp/og_main_${pc}_$s.txt
-  ./build/cnitro_eval --strategy=octogen --opp=octogen --players=$pc --inspect=$s > /tmp/og_fusion_${pc}_$s.txt
-  cmp /tmp/og_main_${pc}_$s.txt /tmp/og_fusion_${pc}_$s.txt
-done; done
-```
-
-Every `cmp` must be silent (use the scratchpad instead of `/tmp` if the session has one).
-Also run `scripts/wasm_build.sh` on both trees and compare the raw `web.wasm` and `oracle*.wasm`: they should be byte-identical or differ only by the `sim_seat_move` refactor's code layout; a difference is to be explained, not waved through.
-Remove the base worktree afterwards (`git worktree remove $BASE`).
-
-### 4. Paired same-deal comparison, fusion vs octogen
-
-`--control` plays every seed twice on the same deal, the hero at seat 0 and then the control at seat 0, against the same opponents, and reports the paired finish delta (negative is better for the hero).
-
-```sh
-./build/cnitro_eval --strategy=fusion --control=octogen --opp=octogen  --players=2,4 --games=400 --seed-start=200001
-./build/cnitro_eval --strategy=fusion --control=octogen --opp=cordite  --players=2,4 --games=400 --seed-start=300001
-./build/cnitro_eval --strategy=fusion --control=octogen --opp=handwritten --players=2,4 --games=400 --seed-start=400001
-```
-
-The three fields matter because the octogen hunt-5 lesson is that a rollout change's sign is a property of the opponent: against handwritten the stock policy IS the opponent's decision function, so noise there is pure model error; against search-like opponents it may be the de-biasing kestrel saw.
-A 0-delta sanity arm first: `FUSION_NOISE=0 ./build/cnitro_eval --strategy=fusion --control=octogen --opp=octogen --players=2,4 --games=200` must report every pair equal.
-
-### 5. The dose sweep
-
-The 20% was tuned on kestrel's weaker policy, so sweep it for octogen.
-`FUSION_NOISE` is read by fusion alone, so the control stays plain octogen:
-
-```sh
-for pm in 50 100 200 300; do
-  FUSION_NOISE=$pm ./build/cnitro_eval --strategy=fusion --control=octogen --opp=octogen --players=2,3,4,6 --games=400 --seed-start=500001
-done
-```
-
-### 6. ELO
-
-```sh
-./build/cnitro_elo --games=2000 --pool=fusion,octogen,cordite,blackpowder,handwritten --pcs=2,3,4,5,6 --snapshot-every=200
-```
-
-### What to expect, and the risks
-
-- **Kestrel's number does not transfer as is.** Its gain was measured against itself with a weaker rollout policy; octogen's handwritten rollouts plus its belief, exact leaf and root solve are a different regime.
-  A null is a real possibility, and so is a small loss.
-- **2 players may lose.** Heads-up octogen solves exactly more often (root solve to 28 cards, the exact leaf), so a larger share of its value comes from truth, and noise in the remaining rollouts is more likely to blur a sharp estimate than to de-bias it.
-  Expect the best case at 3-4 players.
-- **Against handwritten tables, expect harm.** The stock rollout policy is exactly a handwritten opponent's decision function, so noise there is pure model error (the hunt-5 sign rule in `OCTOGEN.md`).
-- **Noise costs worlds' worth of signal.** At a fixed world budget, noisier rollouts mean noisier root estimates; if the sweep favours a dose, check whether it still holds when octogen's own budget is the binding constraint (the oracle at 6x is the probe).
-- **The own-seat share.** Kestrel noised every seat including its own; if the seat-0 noise is what hurts, a variant that exempts the searching seat is one condition in `sim_seat_move`.
-- **Wall clock.** Each fired decision builds a small candidate list, and noisy rollouts run somewhat longer (more pickups); at 20% this should be a few percent, and the paired run's `rate=` line shows it.
+`scripts/wasm_build.sh` on both trees: `web.wasm` 101,300 -> 101,333 B, `oracle.wasm` 159,502 -> 159,440 B, `oracle-mt.wasm` 1,105,416 -> 1,105,355 B.
+The named `web.wasm` has no noise or fusion symbol at all; its function list is main's, and the only symbol-level change is one `.rodata` segment fewer.
+The bytes are the `fusion` roster row (its key string and row in the table every module carries) and code layout from the `sim_seat_move` / `sim_hw_noisy_move` / `sim_pass_pool` refactors, which compile to the same calls with the noise out.
 
 ## First measurement (2026-10-28): the Bot Cup league
 
@@ -199,5 +152,77 @@ The score is the octogen seats' average finish (place-1)/(n-1), lower is better;
 The noise does the work; the void mixture at 7 is flat everywhere.
 The other brains' deltas are all inside their intervals, so no single brain paid for the gain.
 
-So fusion's default void mixture is now octogen's 4: fusion is octogen plus 20% rollout noise.
+So fusion's default void mixture is now octogen's 4, and the noise is the whole bot.
 `FUSION_VOID_MOD` stays as the lever for further experiments.
+(The league arms ran the noise at 20%; the paired runs below moved the default to 30%.)
+
+## Paired measurements (2026-10-28 and 29)
+
+`cnitro_eval --strategy=fusion --control=octogen --opp=octogen --players=N` plays every seed twice on the same deal, fusion at seat 0 and then octogen at seat 0, against octogen tables, and reports the paired mean-place difference (negative: fusion better).
+Each cell is 2016 pairs: 6 workers of 336 pairs on disjoint seed ranges from one base, `nice -n 5`, `FUSION_VOID_MOD=4`, built from this branch.
+The interval is 95%.
+A sanity arm at `FUSION_NOISE=0` reports every pair equal.
+
+The dose, sensible mode (seeds 5000001 for 4 and 6 players):
+
+| Players | 20% | 25% | 30% | 40% |
+| --- | --- | --- | --- | --- |
+| 2 (win% vs octogen's 50.1) | 64.1 | | 63.8 | 63.8 |
+| 4 (mean place) | -0.046 +/- 0.062 | -0.060 +/- 0.062 | -0.086 +/- 0.063 | |
+| 6 (mean place) | +0.104 +/- 0.092 | +0.054 +/- 0.091 | +0.136 +/- 0.093 | |
+
+An earlier 500-pair sweep at 4 players and 30% was also significant (-0.18).
+So the level is 30%: level with 20% heads-up, best at 4 players, and the noise is off at 6, where fusion was worse at every level.
+
+The mode, at 30%, both modes on the same seeds (base 7000001):
+
+| Players | Sensible candidates | Whole lite menu | Wall clock per cell |
+| --- | --- | --- | --- |
+| 2: win% (octogen 46.2) | 63.7 | 63.0 | about 18 min each |
+| 2: mean place | -0.175 +/- 0.030, 698/345/973 | -0.168 +/- 0.030, 675/337/1004 | |
+| 4: mean place | -0.063 +/- 0.060, 719/656/641 | -0.045 +/- 0.061, 719/659/638 | about 4 min each |
+
+(better/worse/same pairs after each difference; the 2-player cells shared the machine with test builds, so their clocks are long.)
+The two modes are inside each other's intervals at both sizes, so the default stays the sensible set, the simpler one and the one the earlier runs proved; the whole-menu mode stays as `FUSION_NOISE_MODE=1` for further experiments.
+
+5 players, 30%, sensible mode (seeds 8000001, `FUSION_NOISE_MAX_PC=5`): -0.017 +/- 0.069, 664 better, 633 worse, 719 the same (win% 17.7 vs 19.7), 5 min.
+That is flat: the point estimate is on fusion's side and the interval is wide either way.
+The rule was "on unless the difference is positive", so the noise is on at 5 players, and `FUSION_NOISE_MAX_PC` is 5.
+
+## To go live
+
+Fusion is ready but not reachable: everything a seeded fusion needs is on main except the step that needs its city.
+Verified on this branch:
+
+- The server (c_base) links the kernel natively without `FOOLISH_SEEDED_BOTS_ONLY` (see "Where it is compiled"), so it already accepts the `fusion` key and plays it with the noise; no flag or build change is needed.
+- No browser module needs fusion: `web.wasm` and the Oracle never run a seat's brain, and a lobby showing a seated fusion reads stored nicknames, not `bot_roster_linked`.
+- The roster row, the knobs, the defaults and the tests are in place.
+
+### The dependency: the seed only fills an empty store
+
+`cb_import_seed_bots` (`foolish/server/src/store/store_import.c`) writes `CB_BOT_SEED` only into a store whose bots table is EMPTY, and never adds to or overwrites a store that has bots.
+Production has its 49 bot rows, with the hosted store's own random v4 ids (its nicknames and strategy keys match `bot_seed.c`, its ids do not).
+So adding fusion's rows to `bot_seed.c` today would change nothing on the running server.
+Going live therefore waits on one of:
+
+1. the C bot registry job (queued after this one), which changes the seed to "insert every row whose id is missing, never update an existing row", after which the server picks new rows up on its next seed run; or
+2. an explicit admin insert of fusion's rows on production.
+
+This branch changes neither the seed logic nor production.
+
+### The go-live PR, after that job lands
+
+One small PR, touching exactly:
+
+1. `foolish/server/src/store/bot_seed.c`: seven rows `{ "<fresh v4 uuid>", "%<City> 1".."%<City> 7", "fusion" }` after the octogen rows (the file's comment says its ids are UUIDv5 of the nickname, but the namespace is not recorded anywhere in the repo, so mint fresh fixed ids).
+2. `foolish/c/src/bot_roster.c`: the `fusion` row's `seeded` 0 -> 1 (offline stays 0 unless the phone's picker should offer it too), and the TODO comments there and in `src/strategy.h` (city, song).
+3. `foolish/c/tests/tests.c` `test_fusion_is_dispatchable_and_named`: the "neither seeded nor offline" check becomes "seeded, not offline".
+4. The `bot.fusion` city string: `FS_K_BOT_FUSION` in `foolish/c/i18n/keys.h` and the string in all 25 `foolish/c/i18n/strings_*.c`, then the generated modules regenerated (`tools/datagen`); if the city is spelled the same in some language, add `bot.fusion` to `mayMatchEnglish` in `foolish/ios/FoolishTests/LocalizationTests.swift`.
+   Strictly only the phone's `BotNames.display(strategy:)` reads it (the website shows the stored nickname), but it keeps every key the roster can name localized.
+5. `foolish/e2e/validation/bot_city_names_validation.test.ts`: the city into `LADDER` (and it must contain no word of `ORDNANCE`).
+6. `foolish/e2e/validation/bot_ladder_order_validation.test.ts`: the picker now ends on `<City> 7` (fusion is tier 11, above octogen's 10), and the city joins the expected ladder after Moscow.
+7. `foolish/e2e/bot_roster_parity.test.ts`: it asserts every seeded key is `linked` in the kernel it dumps, which is `web.wasm` (`kernelBotRoster`), a premise left over from `bots.wasm`, which was the server's.
+   Either restate it against the server's native kernel, or link fusion into `WASM_BOT_CFLAGS` builds; the first is right, since no browser path runs a brain and linking the noise there costs `web.wasm` bytes for nothing.
+8. `foolish/server/test/unit_store.c`: the seeded-bot counts 49 -> 56 (`open_applies_schema_and_seeds_bots` and the two paging tests: 20, 20, 16), and `c_base/providers/aws/ops/deploy.sh`'s "49 bots" comment.
+9. `docs/IOS_BOT_NAMING.md` and `docs/ARCHITECTURE.html` section 7 list the ladder's cities.
+

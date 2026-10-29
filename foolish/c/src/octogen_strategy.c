@@ -2246,12 +2246,13 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
 //                       30% ahead of kestrel's 20% at 4 players and level at 2.
 //   FUSION_NOISE_MAX_PC the largest table the noise is on at. At a bigger table
 //                       fusion sets 0, so it IS octogen there, move for move,
-//                       with no extra draw. 4: on at 2, 3 and 4 players, where it
-//                       measured better; at 6 it measured worse at every level
-//                       and at 5 it measured flat (FUSION.md).
+//                       with no extra draw. 5: on at 2 to 5 players (better at
+//                       2 and 4, a hair better at 5); at 6 it measured worse at
+//                       every level (FUSION.md).
 //   FUSION_NOISE_MODE   what the random move is uniform over: 0, the sensible
 //                       candidates (CD_NOISE_SENSIBLE), or 1, the whole rollout
-//                       menu (CD_NOISE_ANY). 0: the two measured level.
+//                       menu (CD_NOISE_ANY). 0: the two measured level at 2 and
+//                       4 players, so the simpler, proven set stays.
 //
 // The table size is the game's seat count, the size the measurements were taken
 // at, not the seats still in.
@@ -2264,7 +2265,7 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
 #define FUSION_NOISE_PM 300
 #endif
 #ifndef FUSION_NOISE_MAX_PC
-#define FUSION_NOISE_MAX_PC 4
+#define FUSION_NOISE_MAX_PC 5
 #endif
 #ifndef FUSION_NOISE_MODE
 #define FUSION_NOISE_MODE CD_NOISE_SENSIBLE

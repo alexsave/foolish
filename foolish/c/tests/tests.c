@@ -2469,20 +2469,20 @@ static void test_fusion_noise_modes_are_legal_on_both_paths(void) {
     CHECK(t.agree, "both rollout paths draw the same gate and pick and play the same move, in both modes");
 }
 
-// Fusion's noise by table size, with no knob set: on at 2, 3 and 4 seats, off
-// above FUSION_NOISE_MAX_PC, where fusion IS octogen, the same move and both
+// Fusion's noise by table size, with no knob set: on at 2 to 5 seats, off
+// above FUSION_NOISE_MAX_PC (5), where fusion IS octogen, the same move and both
 // RNG streams left in the same state at every decision, with no draw at all.
 //
 // Mutations that must turn it red: set FUSION_NOISE_MAX_PC to 6 (fusion at 6
-// draws: the "is octogen" check); set it to 3 (fusion at 4 is quiet: the "on"
-// check); drop the table-size test from fusion_strategy_choose (the same as 6+
-// drawing).
+// draws: the "is octogen" and "no noise" checks); set it to 4 (fusion at 5 is
+// quiet: the "on" check); dropping the table-size test from
+// fusion_strategy_choose is the first of these.
 static void test_fusion_noise_by_table_size(void) {
     static LegalMoves m;
     fu_small_worlds(1);
     int on_drew = 1, off_same = 1, off_quiet = 1, off_decisions = 0;
     for (int np = 2; np <= 7; np++) {
-        const int on = np <= 4;
+        const int on = np <= 5;
         Game g;
         make_seeded_game(&g, np, 300 + np);
         long drawn = 0;
@@ -2517,10 +2517,10 @@ static void test_fusion_noise_by_table_size(void) {
         if (on) on_drew &= drawn > 0;
     }
     fu_small_worlds(0);
-    CHECK(on_drew, "fusion draws the noise at 2, 3 and 4 seats with no knob set");
-    CHECK(off_decisions >= 12, "fusion and octogen were compared at 5, 6 and 7 seats");
-    CHECK(off_quiet, "above four seats fusion draws no noise at all");
-    CHECK(off_same, "above four seats fusion is octogen: the same move and the same RNG streams after");
+    CHECK(on_drew, "fusion draws the noise at 2 to 5 seats with no knob set");
+    CHECK(off_decisions >= 8, "fusion and octogen were compared at 6 and 7 seats");
+    CHECK(off_quiet, "above five seats fusion draws no noise at all");
+    CHECK(off_same, "above five seats fusion is octogen: the same move and the same RNG streams after");
 }
 
 // Fusion's second lever: the void mixture. A seat that picked up is assumed to

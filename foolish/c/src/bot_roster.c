@@ -72,7 +72,7 @@ static const BotRosterEntry ROSTER[] = {
     { "octogen",          STRAT_OCTOGEN,          "OG_TRUMP_KEEP="
                                                   OCTOGEN_TRUMP_KEEP,   1,   1,     1,     10 },
     // Ready but not reachable (c/FUSION.md): octogen's brain and knobs plus
-    // 30% rollout noise at tables of up to four, which fusion_strategy_choose
+    // 30% rollout noise at tables of up to five, which fusion_strategy_choose
     // sets itself. Neither seeded nor offline, so no lobby, picker or seed row
     // offers it; unlinked in web.wasm (bot_roster_linked). TODO(alex): city and
     // song. The city is the nickname of seven bot_seed.c rows, and seeding it
