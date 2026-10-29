@@ -245,7 +245,7 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
     } else {
       const r = rnd();
       const mine = d.hand.filter((h) => h.red).map((h) => h.card);
-      if (d.pills.length && r < 0.7) {
+      if (d.pills.length && r < 0.4) {
         const p = d.pills[Math.floor(rnd() * d.pills.length)];
         what = `the ${p} pill`;
         await b.click(`[data-pill="${p}"]`);
@@ -259,14 +259,14 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
         what = `card ${c}`;
         await clickCard(b, c);
         selection = selection.filter((x) => x !== c);
-      } else if (d.battles.length && mine.length && r < 0.6) {
+      } else if (d.battles.length && mine.length && r < 0.5) {
         const i = Math.floor(rnd() * d.battles.length);
         what = `battle ${d.battles[i]}`;
         await b.click(`[data-table-container] > [data-location="table"]:nth-child(${i + 1}) [data-card]`);
-      } else if (mine.length && r < 0.65) {
+      } else if (mine.length && r < 0.55) {
         what = 'the empty table';
         await b.click('[data-table-container]');
-      } else if (d.hand.length && r < 0.85) {
+      } else if (d.hand.length && r < 0.75) {
         // a card dragged by mouse or by touch: out of the hand onto a battle or the open table, or
         // along the hand to another card's place. Within the hand's area it trades places with
         // every card it passes over, on the way out too; the model replays that on the kernel's
@@ -302,7 +302,7 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
         }
         await drag(b, from, pts, { touch, steps: 1 });
         if (swapped) memory = [...order, ...memory.filter((x) => !order.includes(x))];
-      } else if (r < 0.95) {
+      } else if (r < 0.92) {
         // a key: a number toggles a card, a letter plays as its button would, an arrow moves the cursor, Up and Down play
         const keys = ['1', '2', '3', '4', '5', '6', 'a', 'c', 'p', 'u', 'g', ' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Shift'];
         const k = keys[Math.floor(rnd() * keys.length)], order = d.hand.map((h) => h.card);

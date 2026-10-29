@@ -1,7 +1,7 @@
 // DOM calls per action: every DOM method and setter the shim reaches is counted for one
 // select (a tap: the press and the release), one play (the Attack pill) and one bot step, then a
 // drag of the 6s (the move that makes it a game action, a move whose answer is the same, the move
-// onto 6d where the answer changes, the drop on the table) and a key (the cursor on, then a number),
+// onto 6d, still an attack for an attacker's card, the drop on the table) and a key (the cursor on, then a number),
 // on the golden board (textures off, the test build), each until its animations have landed: the
 // handler's calls, then the frames' and timers' after it.
 //   PAGE=/c/cdom_poc/out_before/index.html node tools/domcount.mjs   for another build

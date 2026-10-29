@@ -16,7 +16,7 @@
 // - the run after play and after the bot: the frame and timer callbacks until the animations land;
 // - GESTURES=1 adds, on the golden board put back (app_debug_board 0): a drag of the 6s, each
 //   document move timed (the one that makes it a game action and asks the kernel, one whose answer
-//   is the same, the one onto the 6d where the answer changes), its drop on the table (the attack),
+//   is the same, the one onto the 6d, which an attacker's card still attacks from), its drop on the table (the attack),
 //   and keys (an arrow putting the cursor on, a number selecting).
 import { launch, serve, FOOLISH, sleep, FORGET_GAME } from './cdp.mjs';
 
@@ -135,7 +135,7 @@ console.log(`bot step               ${f(med(rows.botScript))} script   ${f(med(r
 console.log(`  play's run after it    ${f(med(rows.playRun))} script over ${med(rows.playFrames)} frames ${span(rows.playRun)}`);
 console.log(`  bot's run after it     ${f(med(rows.botRun))} script over ${med(rows.botFrames)} frames ${span(rows.botRun)}`);
 if (process.env.GESTURES) {
-  for (const [label, row] of [['drag: the move out (a game action)', 'dragOut'], ['drag: a move, the same answer', 'dragSame'], ['drag: the move onto 6d', 'dragOnto'],
+  for (const [label, row] of [['drag: the move out (a game action)', 'dragOut'], ['drag: a move, the same answer', 'dragSame'], ['drag: a move onto 6d (still Attack)', 'dragOnto'],
     ['drop on the table (attack)', 'drop'], ['key: ArrowRight (cursor on)', 'keyArrow'], ['key: 2 (select)', 'keyNum']])
     console.log(`${label.padEnd(36)} ${f(med(rows[row]))} script ${span(rows[row])}  ${f(med(rows[row + 'F']))} with style and layout`);
 }
