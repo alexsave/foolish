@@ -1275,6 +1275,45 @@ static bool bot_key_step(const cb_item *it, void *ud) {
     return true;
 }
 
+// One bot row's PUT into b: the whole item (its ladder index key, gsi2, too).
+// `new_only`: the write holds only where the item does not exist yet.
+static int bot_put(batch *b, const cb_bot_row *r, bool new_only) {
+    if (!bw(b)) return CB_E_FULL;
+    attrs *a = &b->a[b->n];
+    char pk[KB];
+    add(a, CB_AVS("gsi2pk", "BOTS"));
+    add(a, CB_AVS("gsi2sk", r->id));
+    add(a, CB_AVS("id", r->id));
+    add(a, CB_AVS("nickname", r->nickname));
+    add(a, CB_AVS("strategy_key", r->strategy_key));
+    add(a, CB_AVN("elo_rating", r->elo_rating));
+    if (r->previous_elo >= 0) add(a, CB_AVN("previous_elo", r->previous_elo));
+    add(a, CB_AVN("games_played", r->games_played));
+    add(a, CB_AVN("created_at", r->created_at));
+    add(a, CB_AVN("updated_at", r->updated_at));
+    b->w[b->n] = (cb_iwrite){ .op = CB_IW_PUT, .key = { keep(bz_next(b), k(pk, sizeof pk, "BOT#", r->id)), "BOT" },
+                              .attrs = a->a, .n_attrs = a->n };
+    if (new_only) b->w[b->n].cond[b->w[b->n].n_cond++] = CB_IF_ABSENT;
+    b->n++;
+    return CB_OK;
+}
+
+// These n bot rows added in one transaction, each held to its item not
+// existing: a taken id refuses the whole transaction (CB_E_CONFLICT), so
+// nothing is written and no row is ever updated.
+int cb_rows_bots_add(cb_store *s, const cb_bot_row *rows, int n) {
+    if (n < 0 || (n && !rows)) return CB_E_INVALID;
+    if (n == 0) return CB_OK;
+    if (n > CB_ITEM_TXN_MAX) return CB_E_FULL;
+    batch *b = batch_take();
+    if (!b) return CB_E_NOMEM;
+    int rc = CB_OK;
+    for (int i = 0; rc == CB_OK && i < n; i++) rc = bot_put(b, &rows[i], true);
+    if (rc == CB_OK) rc = s->ops->item_txn(s, b->w, b->n, NULL, NULL);
+    batch_give(b);
+    return rc;
+}
+
 // Every bot row replaced by these n, atomically.
 int cb_rows_bots_replace(cb_store *s, const cb_bot_row *rows, int n) {
     vec stored = { .size = sizeof(cb_uuid) };
@@ -1291,25 +1330,7 @@ int cb_rows_bots_replace(cb_store *s, const cb_bot_row *rows, int n) {
         char pk[KB];
         b->w[b->n++] = (cb_iwrite){ .op = CB_IW_DELETE, .key = { keep(bz_next(b), k(pk, sizeof pk, "BOT#", id)), "BOT" } };
     }
-    for (int i = 0; rc == CB_OK && i < n; i++) {
-        if (!bw(b)) { rc = CB_E_FULL; break; }
-        const cb_bot_row *r = &rows[i];
-        attrs *a = &b->a[b->n];
-        char pk[KB];
-        add(a, CB_AVS("gsi2pk", "BOTS"));
-        add(a, CB_AVS("gsi2sk", r->id));
-        add(a, CB_AVS("id", r->id));
-        add(a, CB_AVS("nickname", r->nickname));
-        add(a, CB_AVS("strategy_key", r->strategy_key));
-        add(a, CB_AVN("elo_rating", r->elo_rating));
-        if (r->previous_elo >= 0) add(a, CB_AVN("previous_elo", r->previous_elo));
-        add(a, CB_AVN("games_played", r->games_played));
-        add(a, CB_AVN("created_at", r->created_at));
-        add(a, CB_AVN("updated_at", r->updated_at));
-        b->w[b->n] = (cb_iwrite){ .op = CB_IW_PUT, .key = { keep(bz_next(b), k(pk, sizeof pk, "BOT#", r->id)), "BOT" },
-                                  .attrs = a->a, .n_attrs = a->n };
-        b->n++;
-    }
+    for (int i = 0; rc == CB_OK && i < n; i++) rc = bot_put(b, &rows[i], false);
     if (rc == CB_OK && b->n > CB_ITEM_TXN_MAX) rc = CB_E_FULL;
     if (rc == CB_OK && b->n) {
         rc = s->ops->item_txn(s, b->w, b->n, NULL, NULL);
@@ -1678,6 +1699,7 @@ const cb_rows_ops cb_rows_foolish = {
     .bots_idle = cb_rows_bots_idle,
     .lease_held = cb_rows_lease_held,
     .bots_list = cb_rows_bots_list,
+    .bots_add = cb_rows_bots_add,
     .ratings_list = cb_rows_ratings_list,
     .ratings_top = cb_rows_ratings_top,
     .ratings_for = cb_rows_ratings_for,

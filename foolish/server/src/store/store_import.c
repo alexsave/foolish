@@ -530,36 +530,54 @@ static long long export_count(const char *dir, const char *name) {
     return n;
 }
 
+// The ids the store's bots already have, as bots_list hands them over.
 typedef struct {
-    cb_bot_row *rows;
-    int         n;
-} bot_set;
+    cb_uuid *ids;
+    int      n, cap;
+    bool     oom;
+} id_set;
 
-static bool add_bot(const cb_bot_row *b, void *ud) {
-    bot_set *set = ud;
-    if (set->n < 64) set->rows[set->n++] = *b;
-    return set->n < 64;
+static bool add_id(const cb_bot_row *b, void *ud) {
+    id_set *set = ud;
+    if (set->n == set->cap) {
+        int cap = set->cap ? set->cap * 2 : 64;
+        cb_uuid *p = realloc(set->ids, (size_t)cap * sizeof *p);
+        if (!p) { set->oom = true; return false; }
+        set->ids = p;
+        set->cap = cap;
+    }
+    cb_strlcpy(set->ids[set->n++], b->id, sizeof(cb_uuid));
+    return true;
 }
 
+static bool has_id(const id_set *set, const char *id) {
+    for (int i = 0; i < set->n; i++) if (strcmp(set->ids[i], id) == 0) return true;
+    return false;
+}
+
+// Insert the seed's rows whose ids the store lacks, in one all-or-none write,
+// and never touch a row it has: a store with bots gains exactly the missing
+// ones (a newly seeded bot reaches a running server on its next seed), its
+// existing rows, ratings and nicknames stay as they are, and a second run finds
+// nothing missing and writes nothing. The ids are production's own (bot_seed.c),
+// which is what makes this safe on prod's store.
 int cb_import_seed_bots(cb_store *s) {
-    bot_set have = { .rows = calloc(64, sizeof(cb_bot_row)) };
-    cb_bot_row *seed = calloc((size_t)CB_BOT_SEED_N, sizeof *seed);
-    int rc = !have.rows || !seed ? CB_E_NOMEM : CB_ROWS_CALL(s, bots_list, add_bot, &have);
-    if (rc >= 0 && have.n == 0) {
-        for (int i = 0; i < CB_BOT_SEED_N; i++) {
-            cb_strlcpy(seed[i].id, CB_BOT_SEED[i].id, sizeof seed[i].id);
-            cb_strlcpy(seed[i].nickname, CB_BOT_SEED[i].nickname, sizeof seed[i].nickname);
-            cb_strlcpy(seed[i].strategy_key, CB_BOT_SEED[i].strategy_key, sizeof seed[i].strategy_key);
-            seed[i].elo_rating = TABLE_RATING_START;
-            seed[i].previous_elo = -1;
-        }
-        cb_store_bots_sort(seed, CB_BOT_SEED_N);
-        rc = CB_ROWS_CALL(s, bots_replace, seed, CB_BOT_SEED_N);
-        if (rc == CB_OK) rc = CB_BOT_SEED_N;
-    } else if (rc >= 0) {
-        rc = 0;
+    enum { SEED_MAX = BOT_ROSTER_MAX * BOT_IDS_MAX };
+    cb_bot_row *seed = calloc(SEED_MAX, sizeof *seed);
+    id_set have = { 0 };
+    int n = seed ? cb_bot_seed_rows(seed, SEED_MAX) : CB_E_NOMEM;
+    if (n == -1) n = CB_E_INVALID;   // the registry's seeded rows do not fit or lack their accounts
+    int rc = n < 0 ? n : CB_ROWS_CALL(s, bots_list, add_id, &have);
+    if (rc >= 0 && have.oom) rc = CB_E_NOMEM;
+    if (rc >= 0) {
+        int missing = 0;
+        for (int i = 0; i < n; i++)
+            if (!has_id(&have, seed[i].id)) seed[missing++] = seed[i];
+        cb_store_bots_sort(seed, missing);
+        rc = missing ? CB_ROWS_CALL(s, bots_add, seed, missing) : CB_OK;
+        if (rc == CB_OK) rc = missing;
     }
-    free(have.rows);
+    free(have.ids);
     free(seed);
     return rc;
 }
