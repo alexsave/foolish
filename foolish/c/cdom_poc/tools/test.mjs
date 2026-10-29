@@ -236,6 +236,7 @@ try {
     const to = await centre('[data-table-container] [data-card="0-5"]');
     const [f] = await flights();
     assert.equal(f.card, id('0-5'));
+    assert.ok(f.end, 'armed: given its landing');
     near([f.start.x, f.start.y], from, 0.5, 'it leaves from the hand card\'s centre');
     near([f.end.x, f.end.y], to, 0.5, 'it lands on the cell\'s centre');
     assert.equal(f.start.transform, 'translate(-50%, -50%) translate(0px, 17.5px) scale(1.5) rotate(0rad)');
@@ -322,6 +323,8 @@ try {
     await b.until(`window.app.then((x) => x.app_anim_landed() >= 1 && x.app_anim_flying() > 0 && x.app_anim_flight_card(0) !== ${id('1-5')})`, 5000);
     const mid = await b.evaluate(`[document.querySelector('[data-location="discard"] p')?.textContent ?? null, window.app.then((x) => x.app_anim_busy())]`);
     assert.deepEqual([mid[0], await b.evaluate('window.app.then((x) => x.app_anim_busy())')], ['4', 1], 'the discard pile shows its four cards while the run still plays');
+    // the badges mid-run: my good leads the stream (a check at once), the rest waits for the closing beat
+    assert.deepEqual(await all('[data-role-mark]', 'e.dataset.roleMark'), ['check', 'shield'], 'mid-run: my check, Anna\'s shield, frozen');
     await idle();
     const fs2 = (await flights()).slice(n0);
     const sweep = fs2.filter((x) => Object.keys(lie).some((c) => id(c) === x.card) && x.end && Math.abs(x.end.y - pile[1]) < 20);
@@ -342,6 +345,21 @@ try {
     const narrow = coins.filter(([, w]) => w < 0.5);
     assert.ok(narrow.length >= 2 && coins.at(-1)[1] === 1, `the marks turned as coins (widths drawn: ${coins.length}, under 0.5: ${narrow.length})`);
     assert.deepEqual(await all('[data-role-mark]', 'e.dataset.roleMark'), ['shield', 'leadSword'], 'the bout over: Anna leads, I defend');
+  });
+
+  await check('a transfer hands the shield over as its card leaves (anim_pass_hand_off), not when it lands', async () => {
+    await openTable(b, ANIM_PAGE, { hold: true });
+    await b.evaluate('window.app.then((x) => x.app_debug_transfer())');
+    await b.evaluate(RECORD);
+    assert.deepEqual(await all('[data-role-mark]', 'e.dataset.roleMark'), ['leadSword', 'shield']);
+    await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
+    await b.evaluate(`window.app.then((x) => x.app_debug_release())`);
+    await b.until(`window.$rec.flights.length > 0`);
+    await new Promise((r) => setTimeout(r, 300)); // the coins take 220 ms; the card 500
+    const mid = await b.evaluate(`window.app.then((x) => [x.app_anim_landed(), x.app_anim_flight_card(0), [...document.querySelectorAll('[data-role-mark]')].map((e) => e.dataset.roleMark)])`);
+    assert.deepEqual(mid, [0, id('1-11'), ['shield', 'sword']], 'with the Qh still in the air: my shield, Anna a sword (the hand-off moves the shield alone)');
+    await idle();
+    assert.deepEqual(await all('[data-table-container] [data-battle-index]', 'e.dataset.card'), ['3-11', '1-11']);
   });
 
   await check('a deal is one flight per card, 350 ms each as the kernel paces it, mine face up and the bot\'s a back, then the trump turned out of the stock', async () => {
@@ -519,6 +537,7 @@ try {
     console.log(`     (${moves} moves of mine to the end)`);
     const out = (await flights()).filter((x) => x.card === trumpId);
     assert.ok(out.length >= 1, `the trump (${face}) is drawn, as the last card of the stock`);
+    assert.ok(out[0].slot, 'the trump\'s slot is on screen as its first flight leaves');
     near([out[0].start.x, out[0].start.y], out[0].slot, 1, 'its first flight leaves from its own slot, face up');
     assert.equal(await turn(), 'over');
     assert.equal(await b.evaluate(`document.querySelector('[data-end] h1').textContent`), 'done - Two of us');

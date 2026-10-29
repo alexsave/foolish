@@ -84,8 +84,11 @@ static int parse(const char *s, Card *out, Card *covers, int cap) {
 }
 
 /* The board e2e/ui_dom_snapshots.test.ts twoSeatBout() composes for the golden
- * bout_2p_attacker.html: the same fields its fixture builder writes. */
-static void deal_fixture(void) {
+ * bout_2p_attacker.html: the same fields its fixture builder writes. The test build composes
+ * others on the same stock (a table, my hand, the bot's). */
+static void compose(const char *table, const char *mine, const char *bots);
+static void deal_fixture(void) { compose("6h/8h 6d", "6s 7h Qd Ad", "9h Th Jh 6c"); }
+static void compose(const char *table, const char *mine, const char *bots) {
   __builtin_memset(&G, 0, sizeof G);
   game_reset_to_lobby(&G, 0);
   Card c[64], cov[64];
@@ -100,10 +103,10 @@ static void deal_fixture(void) {
   int n = parse("7s 8s 9s Ts Js Qs Ks As 7c 8c 9c Tc Jc Qc Ac 7d 8d 9d Td Jd", c, 0, MAX_DECK);
   G.deck_count = (int16_t)n;
   for (int i = 0; i < n; i++) G.deck[i] = c[i];
-  n = parse("6h/8h 6d", c, cov, MAX_BATTLES);
+  n = parse(table, c, cov, MAX_BATTLES);
   G.num_battles = (int8_t)n;
   for (int i = 0; i < n; i++) G.table_battles[i] = (Battle){c[i], cov[i]};
-  const char *hands[] = {"6s 7h Qd Ad", "9h Th Jh 6c"};
+  const char *hands[] = {mine, bots};
   for (int s = 0; s < 2; s++) {
     Player *p = &G.players[s];
     n = parse(hands[s], c, 0, MAX_HAND_SIZE);
@@ -1911,6 +1914,18 @@ EXPORT("app_debug_fast") void app_debug_fast(int32_t on) { dbg_fast = on; }
 /* The run's clock this many times faster (the games the tests play out): the kernel's plan is not
  * touched, only how fast its time passes here. */
 EXPORT("app_debug_anim_speed") void app_debug_anim_speed(double k) { anim_speed = k > 0 ? k : 1; }
+/* The golden's stock with my Qd attacking and the bot holding Qh: it transfers (the handwritten
+ * brain always does here), for the check that the shield moves as the card leaves. */
+EXPORT("app_debug_transfer") void app_debug_transfer(void) {
+  table_reset();
+  if (run_on()) run_end();
+  compose("Qd", "6s 7h Ad 6d", "Qh 8h 9h 6c");
+  committed();
+  bot_pending = 0;
+  bot_gen++;
+  bot_check();
+  render();
+}
 /* A new deal now, as Play again deals one (the deal's run, one card at a time). */
 EXPORT("app_debug_deal") void app_debug_deal(void) { new_game(); }
 #endif
