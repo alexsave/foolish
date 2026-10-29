@@ -18,12 +18,14 @@ Every region keeps what it last drew and emits only the difference: the hand, th
 Nothing is rebuilt on a move: the test tags the nodes before a move and finds the same nodes after it.
 
 The wool, wood and fern textures are made in C after the first paint, only as much of each as the page shows, and kept across loads in cdom's store as the app keeps its own (Textures, below).
-Not ported: the flights and other animations, drag and drop, keyboard play and the cover arrows, the tutorial hints, chat, translations, and live play.
+Every card flies as the React table flies it, from the kernel's own animation plan, and the role marks turn and change hands as React's do (Animations, below).
+Not ported: drag and drop, keyboard play and the cover arrows, the tutorial hints, chat, translations, sound, and live play.
 Live play against c_base and sign-in are next steps, not part of this PoC; the network imports they would stand on are proved against a real local c_base (Network, below).
 
 ## Files
 
-- `src/table_app.c`: the table (1,626 lines, the texture pipeline and the test build's window on the kernel among them).
+- `src/table_app.c`: the table (2,471 lines, the texture pipeline, the animations and the test build's window on the kernel among them).
+- `src/anim_run.c`, `src/anim_run.h`: an operation captured as the kernel's stream for my seat and read back as the web reads a push (97 lines); linked by the table and by `tests/run_test.c`.
 - `src/game_keep.c`, `src/game_keep.h`: the game as a host keeps it: canonical after every operation, its blob written and adopted (48 lines); linked by the table and by `tests/blob_test.c`.
 - `src/ui.h`: element shorthands over cdom's `CD_LIT`, and the style builder whose result crosses as a one-off string (36 lines).
 - `src/kernel_glue.c`: the one bot brain (20 lines); the allocator is cdom's.
@@ -31,21 +33,24 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 - `src/trig.c`: sin, cos and tan for the wool and the fern (musl's polynomials, a reduction for arguments below 2^28) and JS's `%` for the wood (141 lines).
 - `src/crtrig.c`: cos rounded correctly, as Chrome's is, for the wood (139 lines).
 - `src/index.html`: the page; `build.sh` inlines the minified shim into it.
-- `vendor/`: cdom from `/Users/alex/Dev/cdom-fixes`, branch port-fixes, commit 9501d6f, unchanged (`src/cdom.c`, `src/cdom.h`, `src/cdom_net.c`, `src/cdom_net.h`, `src/cdom_store.c`, `src/cdom_store.h`, `src/mini.c`, `shim/cdom.js`).
+- `vendor/`: cdom from `/Users/alex/Dev/cdom-fixes`, branch port-fixes, commit 5885289 (`cd_rect`, this pass), unchanged (`src/cdom.c`, `src/cdom.h`, `src/cdom_net.c`, `src/cdom_net.h`, `src/cdom_store.c`, `src/cdom_store.h`, `src/mini.c`, `shim/cdom.js`).
   The table links `cdom_store.c` (the textures across loads) but not `mini.c` (the kernel's libc brings memcmp and strlen) nor `cdom_net.c` (it has no network yet); the network tests link the network.
 - `tests/net_test.c`, `tests/net_test.mjs`: cdom's network imports against a local echo server (the fast test).
 - `tests/live_test.c`, `tests/live_test.mjs`: the contract test: the kernel's network client (`netclient.c`, the web's protocol owner) hosted over cdom's imports as `src/common/backend.ts` hosts it, against a real local c_base (Network, below).
 - `tests/tex_test.c`: the texture generators alone, for `tools/texparity.mjs`.
 - `tests/blob_test.c`: native; 300 games round-tripped through the state blob at every step (110 lines).
-- `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks), `consist.mjs` (the DOM against the kernel and React's rules at every click and bot step), `mutate.py`.
+- `tests/run_test.c`: native; every operation of 200 games captured and planned as the table does (161 lines).
+- `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks), `film.mjs` (a scenario recorded frame by frame into a contact sheet and a GIF), `consist.mjs` (the DOM against the kernel and React's rules at every click and bot step), `mutate.py`.
 - `out/table_debug.wasm`: the test build, the same table with `TABLE_DEBUG` (`?debug` on the page loads it): the kernel's state as text (`app_debug_state`), the bot's steps held for the test (`app_debug_hold`, `app_debug_release`) or made 30 ms (`app_debug_fast`, the clock put back, the kernel's rule untouched), and the kernel's random streams seeded (`app_debug_reseed`).
-- `shots/`: the screenshots.
+- `shots/`: the screenshots; `shots/anim/` the films (contact sheets and GIFs).
 
 ## Running it
 
 ```
 ./build.sh                      # out/table.wasm, out/table_debug.wasm, out/index.html, out/net_test.wasm, out/live_test.wasm, out/tex_test.wasm, out/blob_test
 out/blob_test                   # the state blob against the games this table plays (native)
+out/run_test                    # every operation captured as the kernel's stream and planned (native)
+node tools/film.mjs             # shots/anim: cover-sweep, attack-take, deal (W=390 H=844 for a phone)
 node tools/test.mjs             # the table test (ONLY=<regex> runs the checks it matches)
 node tools/consist.mjs 3 1      # 3 games by seeded random clicks, the DOM against the kernel at every step
 node tests/net_test.mjs         # the network imports
@@ -148,10 +153,126 @@ Why A cost so much more than the render itself was not taken further: B does not
 ## The bot's pace
 
 The kernel owns it: `bot_wait_ms(g, human_mask, shown_ms, settles_ms, now)` (bot_drive.h), the server's rule, says how long the bot waits before it acts on the board in front of it: until the last operation shown has finished playing, then `BOT_PACE_MS_WITH_HUMANS` (3000 ms) with a human in the game.
-The port keeps the table's BoardClock in its own page time: `shown_ms` is when the last operation (mine, the bot's, a deal, a load) was shown, and `settles_ms` when it finishes playing, which with no animations is the same instant (`settles_ms()` in table_app.c is where pass 3 adds the animation stream's end, `anim_stream_ms`).
-The bot's timer runs exactly while the kernel says it may act (`bot_drive_eligible_mask`), and asks the kernel again when it fires: a move of mine in between moves the bot's step back, as the server's loop does (measured: the bot moved 3,018 to 3,024 ms after my throw-in, 4,088 to 4,128 ms after the load).
+The port keeps the table's BoardClock in its own page time: `shown_ms` is when the last operation (mine, the bot's, a deal, a load) was shown, and `settles_ms` when it finishes playing: the animation run's last landing, kept after the run has ended (Animations), or `shown_ms` with no run.
+The bot's timer runs exactly while the kernel says it may act (`bot_drive_eligible_mask`), and asks the kernel again when it fires: a move of mine in between moves the bot's step back, as the server's loop does (measured before the animations: the bot moved 3,018 to 3,024 ms after my throw-in, 4,088 to 4,128 ms after the load; with them, 3,504 to 3,517 ms after the throw-in, whose run is 500 ms).
 A timer cannot be cancelled: each schedule has a generation, and an older one's timer does nothing.
 `bot_cycle_delay_ms` (the iMessage loop's fixed sleep after a cycle) is not used: it counts from the bot's own move and ignores a human's, which bot_drive.h names as the reason the server moved to `bot_wait_ms`.
+
+## Animations
+
+Every card flies as the React table flies it, and the kernel decides what flies, where from, where to, in what order and for how long.
+The complaint was "no animations": the port drew the new board at once.
+
+### What happens on a move
+
+1. **The operation is captured as the kernel's stream for my seat** (`src/anim_run.c`).
+   The React table animates a server's push: the kernel's evwire stream for its seat, read step by step through the client slot (`client_push_open`, `client_push_next`), each step what moved and the board it left (src/state/pushSequence.ts).
+   The server writes that stream from the engine's hook snapshots (table.c `table_push`: `evwire_serialize` over the operation's snapshots and logs).
+   The port is its own server, so it does both halves with the same kernel calls: `engine_snap_hook` keeps the snapshots while an operation runs (a move through `awire_apply`, a bot step through `bot_drive`, a deal), `evwire_serialize` writes them for my seat (the bot's draws masked), and `client_push_open`/`client_push_next`/`client_push_final` read them back.
+   No kernel function was added: the derivation (`evwire_walk`) and the reader were there.
+   `tests/run_test.c` (native, 200 games) holds it: the stream's final board is the board the table adopts, the last step's draws the same but for the roles, the plan lasts what `anim_stream_ms` says, the deal is 12 DEAL steps at 350 ms and 6,575 ms in all, the bot's draws are masked and mine named.
+2. **The steps join one growing run** (useAnimationRun.ts).
+   A run in the air is appended to: the steps already there keep their timing, nothing is spliced or cancelled.
+   The plan is the kernel's, asked with each step's event and board (`client_plan_step`, `client_plan`): when each step opens and lands, which steps fly together (a beat: one cover event per card, merged), for how long (350 ms a dealt card, 500 everything else, the 1,500 ms rest after a bout-ending cover), and the stock's cards in the air.
+3. **Every frame asks the plan where the run stands** (`anim_plan_at`, a frame loop on `cd_raf_request` while a run plays).
+   The board drawn is the last landed step's (every step a skipped frame passed lands in order), or the board the run started on until step 0 lands (a deal starts on the empty table its first step carries).
+   The beat in the air flies; the cards it carries are hidden where they left and where they land.
+   A frame whose answer did not change draws nothing.
+   When the last step has landed the run ends and the game's own board is drawn: the stream's final board, with the roles the closing beat hands on.
+4. **The bot is paced from the run's end.**
+   `settles_ms()` (pass 2's hook) is the run's last landing, kept after the run has ended, so the kernel's `bot_wait_ms` waits 3,000 ms after the last flight lands, not after the click (measured: the bot stepped 3,504 to 3,517 ms after my throw-in, whose run is 500 ms).
+5. **Input is not blocked**, as React does not block it: a move made while a run plays joins it (its steps open after the ones there).
+   A click is judged on the board on screen and applied to the game; the kernel refuses a move that the shown board offered but the game no longer allows, and nothing flies (React would fly it and fly it home: Gaps).
+
+A reload in the middle of a flight lands on the committed board with no flight: the game is saved after every operation, and the run is not.
+
+### A flight (FlightCard.tsx, flightGeometry.ts)
+
+Each card of the beat in the air is one node in an overlay (AnimationOverlay.tsx: fixed, over everything, never hit), made when the beat opens and removed when it lands.
+It is drawn at the centre of where its card is drawn, at scale 1.5 and the tilt it lies at there; `FLIGHT_ARM_MS` (25 ms, a cd timer, as React's setTimeout) later it is given its landing (the centre of where the card will be drawn, scale 1.8, the tilt it will lie at, the shadow) and a CSS transition of the beat's duration on the flights' curve.
+The browser moves it; C decided both ends and the time.
+Every endpoint is measured once, when the beat opens, with cdom's `cd_rect` (getBoundingClientRect into C memory, added to cdom for this: WHAT THE APP NEEDED, 16c); React measures in a layout effect at the same moment.
+
+| | React | port |
+| --- | --- | --- |
+| path | straight between element centres: `left`, `top` and `transform` transition together | the same |
+| duration | the step's `duration_ms` (350 a dealt card, 500 otherwise) | the same, from the kernel's plan; the test build's speed knob only runs the clock faster |
+| easing | `cubic-bezier(0.25, 0.46, 0.45, 0.94)` | the same |
+| arm | one 25 ms setTimeout after the start frame | one 25 ms cd timer (measured 26 to 28 ms from drawn to armed) |
+| scale | 1.5, then 1.8 | the same |
+| rotation | from the tilt it lay at to the one it lands at, about the card's bottom edge, the pivot paid back by a translate | the same transform string |
+| a cover | lands laid across its attack at pi/16, aimed at the attack's centre turned about its bottom edge | the same (`laidAcross`), the attack measured upright before its turn starts |
+| a card off the table | lifts off at the tilt it lay at (-pi/16 an attack under a cover, +pi/16 the cover) | the same |
+| shadow | `0 0px 0px rgba(0,0,0,0.4)`, then `0 10px 20px`, through the face's own 0.2 s box-shadow transition | the same |
+| overlay | `position: fixed`, z-index 10000, `pointer-events: none` | the same |
+| another seat's draw | one CardBack stack of the cards from the stock, rotated 90 degrees | the same layers (`back_style`) |
+| the trump drawn | the draw's last card, face up, out of its own slot (`AnimPlanStep.trump_out`) | the same |
+| several cards into one unmeasured place | 3 px apart each | the same |
+| the cards it carries | `visibility: hidden` where they left and where they land, shown at the landing | the same (visibility alone: a hidden card is never hit and nothing moves it) |
+| the row | grows a cell for a pile as its step opens (arrivingPiles) and glides (a FLIP) over that step's duration on the same curve | the same: each cell pinned where it is drawn, let go with `transform <ms>ms EASE` |
+| an attack under a cover in flight | turns with it: `transform <ms>ms EASE 25ms` | the same |
+| my hand | makes room for the cards flying into it (laid out for the held and the arriving), each lands on its slot; `all 0.1s ease` | the same, landing slots from `hand_layout` |
+| the stock's badge | drops as cards leave (`in_flight_from_deck`), the trump's slot empties while it flies | the same, through `client_view_rules` with the frame's counts |
+
+### The role marks (useRoleMotion.ts, roleMotion.ts, RoleCoin.tsx, RoleFlightsLayer.tsx)
+
+The badges wear a shown ledger, not the board's roles: a run freezes them and moves them at the kernel's three moments (anim_plan.h "the role beat"):
+a good being set leads its stream (`anim_goods_opening`, as the operation joins the run), a good cleared by a throw-in and the shield a transfer hands on turn as that step opens (`anim_goods_cleared`, `anim_pass_hand_off`), and everything else at the closing beat, once the run has landed.
+With no run the board's roles are shown as they come (`anim_shown_ledger_allows`, a bystander's write; a finished board's marks change in place).
+- **The coin**: a mark becoming another turns over where it stands, `coinFrameAt` ported value for value: the width collapses as the cosine of a steady angle over 80 ms, waits 30 ms edge-on, the face swaps, and it opens as the sine over 110 ms; a mark that begins or ends makes one half. Every duration is a proportion of `ANIM_TIME_MS`.
+- **The hand-off**: the shield and the opener's sword, the two marks that belong to a seat and then to another, fly as ghosts when they change hands: a quadratic arc lifted toward the top of the board by min(56, 0.28 x distance) px, scale 1 + 0.45 x lift, a drop shadow of `0 6l 8l rgba(0,0,0,0.45l)`, one whole spin, over 400 ms (0.8 of a card's flight) on the flights' curve (inverted by Newton, as roleFlightEase), armed 25 ms after it is drawn and stepped at most a 60 Hz frame at a time.
+  The seat it leaves blanks at once (a pass's old defender then turns its sword in 133 ms later); the seat it flies to turns its own mark away to be edge-on as the ghost lands (290 ms later), and stands the real mark up in the frame the ghost goes; a seat both left and landed on stays blank until then.
+  The ghosts are drawn per frame from C (left, top, transform, filter), as React draws them per frame from JS: an arc cannot be one CSS transition.
+
+### Evidence
+
+`tools/film.mjs` records what the page paints, frame by frame, with the compositor's timestamps (CDP `Page.startScreencast`), and keeps every frame in `out/anim/<name>/`, a contact sheet of one frame every 50 ms with its time on it, and a GIF timed as recorded, in `shots/anim/`:
+- `cover-sweep`: the bot covers 6d with the trump 6c (the 6d turns under it), I say Good: the table sweeps to the pile, my two cards and the bot's three (one stack of backs) refill from the stock, and the closing beat throws the shield to me and the opener's sword to Anna;
+- `attack-take`: the cover, my 6s thrown in (the row glides to make room), the bot takes all five to its seat (the covered pair lifting off at their tilts), my refill into a hand that makes room;
+- `deal`: a new deal one card at a time, mine face up and the bot's as backs, the stock counting down, the trump turned last;
+- `attack-take_390x844`: the same at a phone's window.
+
+### The numbers
+
+Measured paired and interleaved (`tools/timing.mjs`, 3 rounds of 7 fresh loads per arm per throttle, `?notex&debug`, the arms alternating), "before" the build of this pass's start (028fa3548, in `out_before/`, which replaced the older df7fda82d build that the Numbers table names), "after" this pass's flights and coins (the role ghosts came after the run and do not enter these actions).
+Load averages 2.3 to 3.4 on 8 cores around every run (on top: secd, WindowServer, ctkd), below the core count.
+Medians of the three rounds' medians (ms, the range of the rounds' medians):
+| | before x1 | after x1 | before x4 | after x4 |
+| --- | ---: | ---: | ---: | ---: |
+| first contentful paint | 27.6 (27.5-28.7) | 27.8 (24.8-29.4) | 58.3 (58.0-58.8) | 59.2 (58.1-59.5) |
+| select a card: script / with style and layout | 0.20 / 0.65 | 0.25 / 0.75 | 0.11 / 1.09 | 0.09 / 1.00 |
+| play the Attack pill: script / with style and layout | 0.62 / 1.54 | 2.19 / 2.54 | 0.94 / 2.40 | 2.76 / 3.30 |
+| the bot's step: script / with style and layout | 0.94 / 2.36 | 1.11 / 2.17 | 1.13 / 3.25 | 1.27 / 2.89 |
+| the run after my play: every frame and timer callback until it lands | | 1.77 over 31 frames | | 1.09 over 31 frames |
+| the run after the bot's step (its take and the refills) | | 4.42 over 62 frames | | 3.50 over 62 frames |
+The play's script now includes layout: the flight's endpoints and the row's glide are measured in the handler (`cd_rect` makes the browser lay out), as React's layout effect does before its paint; the time with style and layout is what the click costs (2.5 against 1.5 ms at x1).
+A frame of the run in the air costs nothing measurable: 31 frames for the play's 500 ms come to 1.8 ms, which is the arm and the landing's commit; the frame loop draws only a frame whose answer changed.
+The x4 run sums came out lower than x1's in every round; that was not explained, and they are read as small, not as faster.
+
+DOM calls per action (`tools/domcount.mjs`, counted until the action's animations land):
+| | before | after: in the handler | after: the frames and timers after it | after: all |
+| --- | ---: | ---: | ---: | ---: |
+| select 6s | 15 | 15 | 0 | 15 |
+| play it (Attack) | 25 | 35 | 22 | 57 |
+| the bot's step (a take and the refills) | 77 to 80 | 48 | 142 to 147 | 190 to 195 |
+What the extra calls are: a flight is a cloned face and its wrapper (about 4 calls) armed with 5 `setProperty`; the row's glide is 3 a moving cell; a veil 1 each way; the overlay comes and goes; the badge counts as cards leave.
+
+The string table stays flat from game 2 on (`tools/strings.mjs`): 192, 195 and 196 strings, 5.9 to 6.0 KB, at the three games' ends (178 and 4.5 KB before this pass: the flights', the glide's and the coins' literals); every position and transform crosses as a one-off.
+`table.wasm` 104,009 bytes, 42,119 brotli, 47,367 gzip (75,330, 31,106 and 34,735 at this pass's start): about 14.1 KB of the code is the kernel now linked (`evwire_serialize` and `evwire_walk`, the push reader with its roster-trailer reader, `anim_build_plan` and `anim_plan_at`), and 11.7 KB the port's own (the run, the flights, the coins, the row's glide; measured on unstripped links, by function), then the ghosts (+3.6 KB).
+
+### Not done, and every way it differs from the React table
+
+- **No revert flight.** React flies a move the server refused home with the red look; here the game is local and nothing refuses a move that flew. A click made on the board on screen while a run plays is judged against the game itself: a move the shown board offered and the game no longer allows is refused (`app_last_reject`) and nothing flies, where React would fly it and fly it back.
+- **No sound.** React strikes the plan's cues (`AnimPlan.cues`) on its audio engine (the reference checkout's branch); the port plays none.
+- **The ghost's watchdog** (React lands a hand-off that no frame drew) is not ported: the ghosts and the coins step only on frames, at most a 60 Hz frame each, as React's do, so a stalled page stretches them rather than ending them.
+- **A coin interrupted mid-turn** restarts from the face it was drawn with; React's RoleCoin has a finer rule for a mark that changes and comes back within a paint ("restore"), which the port takes as "stand it at once" and does not otherwise reproduce.
+- **The glide offset** a landing is aimed off is the cell's box against its rest while its glide runs (its end time known); React reads the computed transform. They differ only if the window is resized mid-glide.
+- **The plan is built when steps join the run, not every frame**: the same answer (it is a pure function of the run), less work.
+- **The held piles** (React's rule for a board that got ahead of its own flight, a server's confirmation beating the card) cannot happen here: every board the port draws is a step's own or the game's after its run.
+- **No side-by-side film with React**: the React table needs its server. The look is matched number by number (the table above) and the endpoints are measured in the tests; the films are the port's.
+- **Headless timing**: in headless Chrome the screencast and the timers stall now and then (a 500 ms gap with no frame was seen once in a film), which stretches a ghost exactly as a slow device would; the tests judge endpoints and landings, not frame times.
+- **The kernel's push reader** links its roster-trailer reader (about 2 KB) though the port's streams carry no roster: an entry that reads a sequence with no identity would not.
+- Unchanged from earlier passes and still not ported: drag and drop, keyboard play and the cover arrows, the tutorial's hints, chat, translations, live play.
 
 ## Textures
 
@@ -333,12 +454,12 @@ Every computed string (a style, a data-card, an index) now crosses as a one-off 
 Live node ids at each end screen: 58, 64, 60 (the board on screen differs; nothing accumulates).
 
 Sizes:
-- `table.wasm` 75,303 bytes raw, 31,092 brotli (q11), 34,723 gzip (-9) after the consistency pass (the blob's writer and reader, `state_canonical`, `bot_wait_ms`, `anim_finish_rows`, the end screen's rows, the save's notice); before it 71,391, 29,539 and 32,872, before the texture pass 71,725, 29,589 and 32,956, before the first port-fixes pass 54,992, 22,122 and 24,870.
+- `table.wasm` 104,009 bytes raw, 42,119 brotli and 47,367 gzip after the animation pass (Animations, The numbers); 75,303 bytes raw, 31,092 brotli (q11), 34,723 gzip (-9) after the consistency pass (the blob's writer and reader, `state_canonical`, `bot_wait_ms`, `anim_finish_rows`, the end screen's rows, the save's notice); before it 71,391, 29,539 and 32,872, before the texture pass 71,725, 29,589 and 32,956, before the first port-fixes pass 54,992, 22,122 and 24,870.
   musl's 2/pi table went with jsmath.c; the crop, the rectangles, the store and the keys came in.
   For scale, the React app's kernel alone, web.wasm, is 67,311 raw and 31,219 gzip (c/Makefile), before any JavaScript, and its textures are in its JavaScript.
-- The shim: cdom's own, unchanged, written to be read and inlined minified: 7,221 bytes minified, 2,861 brotli after the network pass (6,623 and 2,658 before it; 6,553 and 2,615 in its golfed form); cdom's PERF_LOG.md, SHIM_LINES, says what each import is for.
+- The shim: cdom's own, unchanged, written to be read and inlined minified: 7,351 bytes minified, 2,919 brotli with `rect` (this pass); 7,221 and 2,861 after the network pass (6,623 and 2,658 before it; 6,553 and 2,615 in its golfed form); cdom's PERF_LOG.md, SHIM_LINES, says what each import is for.
   Before the first port-fixes pass the port carried 172 lines of its own patched shim.
-- The C the table is written in: 1,710 lines (`table_app.c` 1,626, with the texture pipeline and the test build's window on the kernel, `game_keep.c` and `.h` 48, `ui.h` 36, `kernel_glue.c` 20), plus the generators (385), trig.c (141) and crtrig.c (139).
+- The C the table is written in: 2,652 lines (`table_app.c` 2,471, `anim_run.c` and `.h` 97, with the texture pipeline and the test build's window on the kernel, `game_keep.c` and `.h` 48, `ui.h` 36, `kernel_glue.c` 20), plus the generators (385), trig.c (141) and crtrig.c (139).
 
 ## Against the TSX it replaces
 
@@ -358,11 +479,12 @@ For what both do, the C is about as long as the TSX, most of it the same inline 
 - the textures land after the first paint: with the store emptied, none is set when the table first shows, then all four and the black back are, a card back, a button and the wool show a `url(blob:...)`, all were made on this load, and the wool's image is the app's 3840x2160;
 - the next load in the same profile sets all four from the store and makes none (no generator ran);
 - the bot waits as the kernel says: 3000 ms with a human in the game (`app_bot_wait`), and a throw-in of mine a second after the load puts its step 3000 ms after the throw-in (between 2,900 and 4,500 ms), not after the load;
-- the consistency check (`tools/consist.mjs`, seed 1, 3 games, textures on): no disagreement at any click or bot step;
+- the consistency check (`tools/consist.mjs`, seed 1, 3 games, textures on): no disagreement at any click or bot step, judged once the animations have landed (the run's clock 4 times as fast, the kernel's plan untouched), and every card in the air hidden wherever it is drawn (164 flights checked mid-air);
 - a reload lands in the same game: seed 3's line (my 6s, the bot's answers, my moves) to 6h, 6d and 6s attacking me, the DOM the kernel's, a card selected, a reload: the stored game adopted and the DOM the same but for the selection; then played to its end, a reload shows the end screen, Play again, and a reload shows the new deal;
 - a save that fails is not silent: with IndexedDB refusing the game's key, a move shows the notice; the store taking it again, the retry keeps the game, the notice goes, and a reload adopts it;
 - a game played out by clicks (`tools/play.mjs`, textures on) reaches the end screen ("done - Two of us"), and Play again deals six new cards;
-- after every click of that game and of more games, until every pill has shown, every wood surface on the page (the back button, each pill, the results panel, Play again) lies inside the rectangles its picture was worked out in.
+- after every click of that game and of more games, until every pill has shown, every wood surface on the page (the back button, each pill, the results panel, Play again) lies inside the rectangles its picture was worked out in;
+- the animations (Animations), through an in-page recorder of every flight node (its card, its start, when it was armed and with what, when it went), every role ghost and every mark change: a played card leaves from its hand card's centre and lands on the centre of the cell the row made for it, at scale 1.5 then 1.8, armed about 25 ms after it is drawn and gone at its 500 ms landing, hidden at both ends meanwhile, the two cells already down gliding, my count unchanged until the landing; the bot's cover leaves its seat and lands laid across 6d, which turns with it (`transform 500ms ... 25ms`); a take flies the five table cards from where they lay, at their tilts, to the bot's seat; the refill flies from the stock onto the slots my hand made room for; a sweep flies four cards to the pile (3 px apart), the pile's count showing at its landing while the refills still fly, the bot's draw one stack of three backs, my check frozen through the run and the closing beat throwing the shield and the opener's sword as ghosts; a transfer's shield takes off with the card and lands before it, my badge making way and Anna's blanking then turning a sword in; a deal is 12 flights at 350 ms (the kernel's plan: 525 + 375 k), mine face up and the bot's backs, then the trump into its slot; a move made while a run plays joins it (one run, its step at 525 ms); a reload mid-flight lands on the committed board with no overlay; and in the played-out game the trump's first flight leaves its own slot.
 
 `tests/blob_test.c` (native, ASan and UBSan): 300 seeded games with seat 1 the bot and seat 0 the same brain driven alone, the game canonical after every operation as the table keeps it; at every step the blob is written and adopted by `game_keep_load` into a zeroed Game, and the board (`state_put` unmasked, byte for byte), both seats' TableView and ViewRules, and the next drive from the same seeds all agree.
 `tests/net_test.mjs`: a wasm module sends 8 binary bytes over a WebSocket and gets them echoed, then POSTs them and gets them back reversed (cdom's network, with no cd_flush anywhere).
@@ -370,7 +492,7 @@ For what both do, the C is about as long as the TSX, most of it the same inline 
 `tools/strings.mjs`: from game 2 to game 3 the string table may grow only by what a game can show for the first time late (an end title, a pill, a medal: at most 10 strings and 200 bytes); it had been "may not grow", which failed whenever game 3 was the first to show such a literal (seen once in this pass, 180 to 181).
 `tools/texparity.mjs`: the PRNG exact; the wood's cos exactly Chrome's and trig.c's sin, cos and tan within 1 ulp; the wool (whole and the page's crop), the wood (floats, the WebGL picture, and six rectangles with the base colour around them) and the fern's points exact; the multisampled fern within 3% of the WebGL picture; and, measured but not judged, the page-size fern against the app's picture shrunk.
 
-Mutation check (`tools/mutate.py`), each of 42 mutants caught by the check written for it (a mutant of this pass runs the check it names, `ONLY`; the source's copy is kept outside the checkout):
+Mutation check (`tools/mutate.py`), each of 62 mutants caught by the check written for it (a mutant of this pass runs the check it names, `ONLY`; the source's copy is kept outside the checkout):
 - a card face's radius 5px to 4px: the golden check names the first differing tag;
 - the bot never chooses a move: the bot-answer check times out on `data-turn`;
 - the hand rebuilt on every render: "the three cards left in my hand are the nodes that were there";
@@ -395,8 +517,11 @@ Mutation check (`tools/mutate.py`), each of 42 mutants caught by the check writt
 - the end rows reversed, and no "(You)": the consistency check ("end rows");
 - the game not kept after a bot step, and the kept game ignored: the reload check ("the DOM after the reload is the DOM before it", "the stored game adopted");
 - a failed put not answered, and not tried again: the save check (no notice; the notice never goes).
+- the animation pass, the capture (`out/run_test`): the snapshot hook not installed ("the deal is 0 DEAL steps"), the stream written for nobody ("the stream's final board is not the board the table adopts (my hand)"), the closing transition dropped ("the last step's board draws otherwise ... (status)");
+- the animation pass, the table: the deal flown at 500 ms ("each dealt card flies 350 ms"), a landed step not committed ("the discard pile shows its four cards while the run still plays"), the bot paced from the click ("3,012 ms"), no veil (the played card's mid-flight check and consist.mjs's "a flying card shows where it is drawn"), flights never armed ("armed: given its landing"), no row glide ("the two cells already down gliding"), the attack not turning under a cover ("the attack under the cover turns"), no room made in my hand ("my hand made room"), a move during a run starting another run ("one run"), no coin ("the marks turned as coins"), the marks not frozen in a run and the shield waiting for the landing ("it takes off with the card": 504 and 514 ms after it), the good not leading the stream ("mid-run: my check"), the trump drawn out of the stock ("its first flight leaves from its own slot"), no ghost ("one mark flies: the shield"), the seat landed on not making way ("the make-way"), the seat left keeping its mark ("Anna's badge blanks");
 Not in the list, being equivalent here: Pickup and Good spending the selection (a selection never offers either), a pressed pill shown (no press outlives its move locally), and a battle's cover patched one way only (no path in play uncovers a battle under the same attack card since the board waits for the store).
 Run at load averages 45.9 to 89.7 on 8 cores (the bot league), every mutant caught; the pace check's bounds (2,900 to 4,500 ms) held.
+All 62 again after the animation pass, in one run (load 2.4 to 10.3 on 8 cores, a 6-process eval run joining it midway): every one caught, the pace check's new bounds (3,450 to 4,500 ms) held.
 
 ## WHAT THE APP NEEDED FROM CDOM
 
@@ -448,11 +573,17 @@ Items 1 to 16 were folded into cdom on branch port-fixes (`/Users/alex/Dev/cdom-
 16b. **Nothing outlived the page** (texture pass).
     Closed: `cdom_store.c`, a key/value store over IndexedDB (put, and get with a deadline that answers a miss); bytes in, bytes out, the version in the key.
     cdom's unit page tests both with mutants (PERF_LOG.md, port-fixes 5d4b07b and cfa702a).
+16c. **No element could be measured** (animation pass).
+    Closed: `cd_rect(id, out)`, a node's box on screen (getBoundingClientRect, transforms included) as four doubles in C memory (port-fixes 5885289: unit case, mutants rect-order and rect-untransformed; 130 bytes minified, 58 brotli).
+    A flight leaves from the centre of the card it replaces and lands on a battle cell the browser's flex row placed, and the row's glide reads each cell before and after a change; C cannot know those boxes without asking. It was the one cdom change the animations needed: the motion is CSS transitions set with `cd_set_style`, the timing `cd_raf_request`, `cd_timer_start` and `cd_now`.
 17. **`bot_drive` pulls in every brain through the roster.**
     The kernel's, not cdom's, and still open: `kernel_glue.c` answers the two roster calls for the handwritten brain alone.
     A link per app, by what it calls, is the kernel's doctrine; the roster's dispatch table defeats it.
 
 ### Open, and new findings
+
+- **Measuring forces layout** (animation pass): `cd_rect` in a click handler makes the browser lay out there and then (the play's script time went from 0.6 to 2.2 ms, its total from 1.5 to 2.5); React pays the same in its layout effect. A batched read (several ids, one crossing) would cut the crossings, not the layout.
+- **Per-frame motion that CSS cannot do** (the role ghost's arc) is driven from C every frame (4 `setProperty` a ghost a frame for 400 ms); a cdom import for the Web Animations API with keyframes from C would hand it to the compositor. Not needed for anything a transition can do.
 
 - **First paint and a texture start**: a timer right after the first frame held `cdom.start` to 165 ms at CPU x4 against 60; two frames and 50 ms later it does not (the store, which costs nothing on the thread, is asked after the two frames alone).
   A cdom "after the first paint" hook would put that knowledge in one place.
