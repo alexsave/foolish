@@ -3,50 +3,45 @@
 //
 // The roster's strategy keys keep their ordnance names in the kernel
 // (cordite_strategy.c, octogen_strategy.c) because that is what the brains are
-// called and what c/src/bot_roster.c dispatches on. The player-facing nickname
-// is a city on the road to Moscow, in the table, and nothing maps between them:
+// called and what c/src/bots.c dispatches on. The player-facing nickname is a
+// city on the road to Moscow, the seeded row's `city` in that same registry,
+// and nothing maps between them: the server names a rung's accounts
+// "%<city> 1".."%<city> 7" (foolish/server/src/store/bot_seed.c) and
 // src/common/botDisplayName drops the reserved '%' and returns the rest. So a
-// page shows what foolish's bot_seed.c says, and a replay shows what its blob stored.
+// page shows what the registry's city says, and a replay shows what its blob
+// stored.
 //
 // THAT MAKES THIS GATE STRONGER THAN THE ONE IT REPLACES. It used to check that
 // a render-time map covered every seeded rung in 25 languages; there is no map
-// to cover, so it reads the stored names and refuses an ordnance word outright.
-// The 25-language `bot.*` strings still exist for the phone's offline picker,
-// which names a seat from its strategy key - ios/FoolishTests/LocalizationTests
-// holds those, not this file.
+// to cover, so it reads the cities the server stores and refuses an ordnance
+// word outright. The 25-language `bot.*` strings still exist for the phone's
+// offline picker, which names a seat from its strategy key -
+// ios/FoolishTests/LocalizationTests holds those, not this file.
 //
 // Pure test - no Postgres, no network, no compiler, no wasm.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve, join } from 'node:path';
 import { botDisplayName } from '../../src/common/botName.ts';
+import { BotRegistry as Rows } from '../../sdk/ts/gen/bot_registry.ts';
 
-const REPO = resolve(import.meta.dirname, '../..');
-const read = (p: string) => readFileSync(join(REPO, p), 'utf8');
+// The registry's rows as the C reads them: a field a row leaves out (a research
+// brain has no key, an unseeded bot no city) is its zero value.
+const BotRegistry = Rows.map((r) => ({
+    name: r.name, key: r.key ?? '', knobs: r.knobs ?? '', uses_logs: r.uses_logs ?? 0, seeded: r.seeded ?? 0,
+    offline: r.offline ?? 0, tier: r.tier ?? 0, city: r.city ?? '',
+}));
 
-/** The rows foolish's bot_seed.c inserts: stored nickname and strategy key. */
-function seededRows(): { nickname: string; key: string }[] {
-    // Strip `--` comments first: the prose between the rows carries semicolons
-    // and apostrophes, either of which ends the statement early and silently.
-    const src = read('server/src/store/bot_seed.c').replace(/\/\/[^\n]*/g, '');
-    const at = src.indexOf('CB_BOT_SEED[] = {');
-    const stmt = src.slice(at, src.indexOf('};', at));
-    const out: { nickname: string; key: string }[] = [];
-    for (const m of stmt.matchAll(/\{\s*"[^"]*"\s*,\s*"%([^"]*)"\s*,\s*"([^"]+)"\s*\}/g)) {
-        out.push({ nickname: m[1], key: m[2] });
-    }
-    assert.ok(out.length >= 20, `parsed only ${out.length} seeded rows - parser drifted?`);
+/** The seeded rungs, weakest first: the city each one's accounts are named after. */
+function seededCities(): { city: string; key: string }[] {
+    const out = BotRegistry.filter((r) => r.seeded === 1).sort((a, b) => a.tier - b.tier)
+        .map((r) => ({ city: r.city, key: r.key }));
+    assert.ok(out.length >= 3, `read only ${out.length} seeded rows - the generated table drifted?`);
     return out;
 }
 
 // The seven rungs, weakest to strongest (docs/IOS_BOT_NAMING.md). Spelled out
 // rather than derived, because this is the list the site is held to.
 const LADDER = ['Miami', 'New York', 'Seoul', 'Madrid', 'Vienna', 'St. Petersburg', 'Moscow'];
-
-// A bot is eight seats minus the human, so a rung needs seven rows to fill a
-// table with itself.
-const SEATS_TO_FILL = 7;
 
 // Every family the site has ever seeded, plus the research-only names one grep
 // away from a page (docs/IOS_BOT_NAMING.md section 5 on why "Novichok" in
@@ -58,38 +53,24 @@ const ORDNANCE = [
     'dynamite', 'tnt', 'simple heuristic', 'handwritten', 'espresso', 'robusta',
 ];
 
-test('no seeded nickname is an ordnance name', () => {
+test('no seeded city is an ordnance name', () => {
     const bad: string[] = [];
-    for (const { nickname } of seededRows()) {
-        const low = nickname.toLowerCase();
-        for (const word of ORDNANCE) if (low.includes(word)) bad.push(`${nickname} (contains "${word}")`);
+    for (const { city, key } of seededCities()) {
+        const low = city.toLowerCase();
+        for (const word of ORDNANCE) if (low.includes(word)) bad.push(`${key}: ${city} (contains "${word}")`);
     }
     assert.deepEqual(bad, [], 'these rows put a kernel brain name on a board, where a city belongs:\n  '
         + `${bad.join('\n  ')}\n`
-        + 'The nickname in foolish\'s bot_seed.c IS what a page shows - there is no display map to hide it.');
+        + 'The city in c/src/bots.c IS what a page shows - there is no display map to hide it.');
 });
 
-test('every seeded nickname is a rung of the ladder plus an instance number', () => {
-    const wrong: string[] = [];
-    for (const { nickname } of seededRows()) {
-        const m = /^(.+?) (\d+)$/.exec(nickname);
-        if (!m || !LADDER.includes(m[1])) wrong.push(nickname);
-    }
-    assert.deepEqual(wrong, [], 'these nicknames are not "<city> <n>" for a city on the ladder '
-        + `(${LADDER.join(', ')}):\n  ${wrong.join('\n  ')}\n`);
-});
-
-test('every rung of the ladder is seated, seven deep', () => {
-    const byCity = new Map<string, number>();
-    for (const { nickname } of seededRows()) {
-        const city = nickname.replace(/ \d+$/, '');
-        byCity.set(city, (byCity.get(city) ?? 0) + 1);
-    }
-    assert.deepEqual([...byCity.keys()].sort(), [...LADDER].sort(),
-        'the seeded cities must be exactly the ladder - a rung with no rows is a city the site advertises and cannot seat');
-    const short = [...byCity].filter(([, n]) => n < SEATS_TO_FILL).map(([c, n]) => `${c}: ${n}`);
-    assert.deepEqual(short, [], 'these rungs cannot fill an eight-seat table on their own '
-        + `(a human plus ${SEATS_TO_FILL}):\n  ${short.join('\n  ')}\n`);
+test('the seeded cities are the ladder, in strength order', () => {
+    // Each of them seats seven deep (a human plus seven fills a table); tests.c
+    // holds every seeded row to all seven of its accounts.
+    // Mutation that turned it red (restored after): Vienna spelled Wien in bots.c.
+    assert.deepEqual(seededCities().map((r) => r.city), LADDER,
+        'the seeded cities must be exactly the ladder, weakest first - a rung with no city is a bot the site cannot name, '
+        + 'and a city off the ladder is one the naming doc never chose');
 });
 
 test('the display name is the stored name, minus the reserved prefix', () => {

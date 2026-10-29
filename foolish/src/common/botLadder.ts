@@ -7,7 +7,7 @@
 // walked out through the families in reverse insert order. Nothing about a row's
 // age is a property of the bot.
 //
-// THE LADDER ORDER IS THE KERNEL'S. `tier` in c/src/bot_roster.c is the strength
+// THE LADDER ORDER IS THE KERNEL'S. `tier` in c/src/bots.c is the strength
 // order (docs/IOS_BOT_NAMING.md), and this file takes it as an argument rather
 // than keeping a second copy of it - the same reason src/common/botName.ts
 // derives a strategy key instead of tabulating one. Pass `tierOf` from
