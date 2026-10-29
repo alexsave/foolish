@@ -494,7 +494,7 @@ static void bots_board_history_replay(void) {
     fay[36] = 0;
     T_EQ_INT(call(b_bots, NULL), 200);
     int nb = nc_list_read(g_status, g_body, g_len, NW_BOTS);
-    T_EQ_INT(nb, 49);
+    T_EQ_INT(nb, 56);
     const NcBotRow *b = nc_bot_row(g_body, g_len, 0);
     T_CHECK(b && b->nickname_len > 1 && b->nickname[0] == '%' && b->key_len > 0);
 
@@ -714,7 +714,7 @@ static void cache_control_per_route(void) {
     const NcRequest *q = nc_req_bots(g_now);
     T_CHECK(q && q->auth_len == 0);
     T_EQ_INT(send_req(q), 200);
-    T_EQ_INT(nc_list_read(g_status, g_body, g_len, NW_BOTS), 49);
+    T_EQ_INT(nc_list_read(g_status, g_body, g_len, NW_BOTS), 56);
     T_EQ_STR(res_header("Cache-Control"), "public, max-age=0, s-maxage=86400");
     T_EQ_STR(res_header("Access-Control-Allow-Origin"), "*");
     T_EQ_STR(res_header("Vary"), "");
