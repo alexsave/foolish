@@ -96,7 +96,20 @@ static int parse(const char *s, Card *out, Card *covers, int cap) {
  * bout_2p_attacker.html: the same fields its fixture builder writes. The test build composes
  * others on the same stock (a table, my hand, the bot's). */
 static void compose(const char *table, const char *mine, const char *bots);
-static void deal_fixture(void) { compose("6h/8h 6d", "6s 7h Qd Ad", "9h Th Jh 6c"); }
+#ifdef TABLE_DEBUG
+/* The test build's boards (app_debug_board, and ?board=k on the page as the first board): 0 the
+ * golden's with 6d covered by Kd, 1 and 2 boards where I defend (README, the gesture checks), 3 all
+ * covered, 4 the golden's board with the seats swapped: I defend it, as Anna does in the golden
+ * bout_2p_defender.html. */
+static void debug_compose(int32_t k);
+__attribute__((import_module("env"), import_name("board"))) uint32_t page_board(void);
+#endif
+static void deal_fixture(void) {
+#ifdef TABLE_DEBUG
+  if (page_board()) { debug_compose((int32_t)page_board()); return; }
+#endif
+  compose("6h/8h 6d", "6s 7h Qd Ad", "9h Th Jh 6c");
+}
 static void compose(const char *table, const char *mine, const char *bots) {
   __builtin_memset(&G, 0, sizeof G);
   game_reset_to_lobby(&G, 0);
@@ -2812,14 +2825,19 @@ EXPORT("app_debug_deal") void app_debug_deal(void) { new_game(); }
  *      (two targets), 6s nothing; and Take is offered;
  *   2  I defend 6h holding 6c 6s 9h Kd: 6s only transfers, 6c covers or transfers, 9h only covers,
  *      Kd neither;
- *   3  I lead over 6h/8h and 6d/Kd, all covered, holding 6s 7h Qd Ad: Good is offered. */
+ *   3  I lead over 6h/8h and 6d/Kd, all covered, holding 6s 7h Qd Ad: Good is offered (0 is the same);
+ *   4  the golden's board with the seats swapped: I defend 6h/8h and 6d holding 9h Th Jh 6c. */
+static void debug_compose(int32_t k) {
+  if (k == 1) compose("7h Qd", "9h Kd 6c 6s", "Jh Qh Kh Ah");
+  else if (k == 2) compose("6h", "6c 6s 9h Kd", "Jh Qh Kh Ah");
+  else if (k == 4) compose("6h/8h 6d", "9h Th Jh 6c", "6s 7h Qd Ad");
+  else compose("6h/8h 6d/Kd", "6s 7h Qd Ad", "9h Th Jh 6c");
+  if (k == 1 || k == 2 || k == 4) { G.first_attacker = 1; G.defender = 0; }
+}
 EXPORT("app_debug_board") void app_debug_board(int32_t k) {
   table_reset();
   if (run_on()) run_end();
-  if (k == 1) compose("7h Qd", "9h Kd 6c 6s", "Jh Qh Kh Ah");
-  else if (k == 2) compose("6h", "6c 6s 9h Kd", "Jh Qh Kh Ah");
-  else compose("6h/8h 6d/Kd", "6s 7h Qd Ad", "9h Th Jh 6c");
-  if (k == 1 || k == 2) { G.first_attacker = 1; G.defender = 0; }
+  debug_compose(k);
   committed();
   bot_pending = 0;
   bot_gen++;

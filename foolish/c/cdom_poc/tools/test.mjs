@@ -12,6 +12,7 @@ import { consistRun, READ_DOM, clickCard, kernel } from './consist.mjs';
 import { drag, key, centre as restingCentre } from './input.mjs';
 
 const golden = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/bout_2p_attacker.html'), 'utf8');
+const defenderGolden = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/bout_2p_defender.html'), 'utf8');
 const winGolden = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/win_screen.html'), 'utf8');
 const server = await serve(8720, FOOLISH);
 const b = await launch();
@@ -49,29 +50,37 @@ try {
   await ready(); // the board is drawn when the store answers (nothing kept: the golden's)
   await hold(); // the bot may act on the golden's board (it defends): its step waits for the test
 
-  await check('first paint: the React golden DOM for the same board, but for what this port leaves out', async () => {
-    // The texture hooks are var()s that fall back to the golden's look until a texture lands
-    // (textures are off on this load): taken out, the rest is the golden's DOM.
+  // The first paint against a React golden (e2e/fixtures/ui_dom), the listed differences taken out:
+  // the texture hooks are var()s that fall back to the golden's look until a texture lands (off on
+  // these loads); the cover arrows' layer is not ported; jsdom could not parse the action area's
+  // bottom (max() and env()); the seat ring's 49.99999999999999% is JS printing -sin(pi) * 35 + 50,
+  // which C prints to four places; data-turn and data-pill are the tests' own. golden: the recorded DOM, edited
+  // first by edit(html) when given.
+  const goldenDiff = async (goldenHtml, edit = (h) => h, domEdit = '') => {
     const mine = (await b.evaluate(`document.getElementById('root').innerHTML`))
       .replace(/var\(--tex-wood, (repeating-linear-gradient\(90deg, transparent, transparent 1px, rgba\(0, 0, 0, 0\.1\) 1px, rgba\(0, 0, 0, 0\.1\) 2px\))\)/g, '$1')
       .replace(/var\(--tex-fern-bg, (rgb\(180, 14, 9\))\)/g, '$1')
       .replace(/ background-image: var\(--tex-fern\);/g, '')
-      .replace(' style="background-image: var(--tex-wool);"', '');
-    let theirs = await b.evaluate(`(() => { const d = document.createElement('div'); d.innerHTML = ${JSON.stringify(golden)};
-      d.querySelector('svg marker#arrowhead').closest('svg').remove();   // the cover arrows' layer: not ported
+      .replace(' style="background-image: var(--tex-wool);"', '')
+      .replace(/ data-turn="[a-z]*"/, '')
+      .replace(/ data-pill="[A-Za-z]*"/g, '');
+    let theirs = await b.evaluate(`(() => { const d = document.createElement('div'); d.innerHTML = ${JSON.stringify(edit(goldenHtml))};
+      d.querySelector('svg marker#arrowhead').closest('svg').remove();
+      ${domEdit}
       return d.innerHTML; })()`);
-    // jsdom could not parse the action area's bottom (max() and env()); the seat ring's
-    // 49.99999999999999% is JS printing -sin(pi) * 35 + 50, which C prints to four places.
     theirs = theirs.replace('position: absolute; left: 0px; right: 0px; justify-content: end;',
       'position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); left: 0px; right: 0px; justify-content: end;')
-      .replace('left: 49.99999999999999%', 'left: 50%')
-      .replace('class="game-container">', 'class="game-container" data-turn="bot">');
-    theirs = theirs.trim();
+      .replace('left: 49.99999999999999%', 'left: 50%').trim();
     if (mine !== theirs) {
       const a = theirs.split('><'), m = mine.split('><');
       const i = a.findIndex((x, k) => x !== m[k]);
       assert.fail(`first difference at tag ${i}:\n  react: <${a[i]}>\n  cdom:  <${m[i]}>`);
     }
+  };
+
+  await check('first paint: the React golden DOM for the same board, but for what this port leaves out', async () => {
+    assert.equal(await turn(), 'bot', 'the bot may act on that board (it defends)');
+    await goldenDiff(golden);
   });
 
   await check('first paint: the seeded deal, read back', async () => {
@@ -134,6 +143,16 @@ try {
       'the count badge is the mini hand\'s last child');
     assert.equal(await b.evaluate(`[...document.querySelectorAll('[data-role-seat]')].every((e) => e.$kept)`), true,
       'the seat badges are patched in place');
+  });
+
+  await check('first paint as the defender: the React golden bout_2p_defender.html (the same board seen by Anna), the seats named for this table', async () => {
+    // the golden is Anna's view of the golden's board; here I hold her cards and defend, so its
+    // names and ids are swapped to this table's (Me at the bottom, Anna at the top)
+    await openTable(b, 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug&board=4', { hold: true });
+    // React draws the seats in seat order, and Anna is seat 1 there: the two seat boxes change places
+    await goldenDiff(defenderGolden, (h) => h.replace(/u-anna-0001|u-me-0000|>Anna<|>Me<|data-role-seat="[01]"/g, (m) => ({ 'u-anna-0001': 'u-me-0000', 'u-me-0000': 'u-anna-0001', '>Anna<': '>Me<', '>Me<': '>Anna<',
+      'data-role-seat="0"': 'data-role-seat="1"', 'data-role-seat="1"': 'data-role-seat="0"' })[m]),
+      `const [top, bottom] = d.querySelectorAll('div[style*="width: 80px; height: 91px"]'); top.parentNode.insertBefore(bottom, top);`);
   });
 
   await check('the textures land after the first paint, through the var()s, and the backs turn black under the fern', async () => {

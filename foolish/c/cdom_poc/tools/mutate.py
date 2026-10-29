@@ -14,6 +14,7 @@ MUTANTS = [
   ('end screen over the table', 'src/table_app.c', '(end_shown = over) ? ZS("none") : ZS("")', '(end_shown = over) ? ZS("") : ZS("")', 'tools/test.mjs', 'played out by clicks'),
   ('end screen without ReplayShare', 'src/table_app.c', '  OPEN("span"); TEXT("Replay code unavailable for this game"); CLOSE();', '', 'tools/test.mjs', 'played out by clicks'),
   ('ReplayShare frame without its wood', 'src/table_app.c', '{SEED_RESULTS, 360, 100}, {SEED_REPLAY, 188, 188}};', '{SEED_RESULTS, 360, 100}, {SEED_REPLAY, 100, 100}};', 'tools/test.mjs', 'played out by clicks|every wood surface'),
+  ('pill label class', 'src/table_app.c', 'OPEN("span"); CLASS("btn-action-text"); OPEN("span"); cd_text(cd_internz(PILL[p].label));', 'OPEN("span"); CLASS("btn-action-label"); OPEN("span"); cd_text(cd_internz(PILL[p].label));', 'tools/test.mjs', 'first paint as the defender'),
   ('no resize listener', 'src/table_app.c', '  cd_listen_window(CD_EV_RESIZE);', '', 'tools/test.mjs'),
   ('count badge not anchored', 'src/table_app.c', '      u->minis.end = u->badge.shown ? u->badge.root : 0;', '      u->minis.end = 0;', 'tools/test.mjs'),
   ('no fern background', 'src/table_app.c', '  if (ok && k == TEX_FERN) cd_set_style(CD_MOUNT, ZS("--tex-fern-bg"), ZS("#000000"));', '', 'tools/test.mjs', 'textures land'),
