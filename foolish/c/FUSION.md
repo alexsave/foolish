@@ -5,7 +5,7 @@ The noise is on at tables of two to five players and off at six and above, where
 Everything else is octogen's: the same belief, sampled worlds, world budgets, root endgame solve, exact leaf, LEAFBOOK, candidate race and trump-keep tax.
 It also carries a second lever for experiments, sapper's firmer pickup inference: a seat that picked up is assumed to hold nothing beating those cards in (m-1) of m sampled worlds (`og_void_mod` = m).
 Fusion's default is octogen's 4 (3 of 4), because sapper's 7 (6 of 7, about 85%) measured flat in the league (see the first measurement below).
-Registered as `fusion` / `fu`, `STRAT_FUSION = 24` (`src/strategy.h`), by its row in the bot registry (`src/bots.c`), which makes it a named bot that nothing offers yet (below, and "To go live").
+Registered as `fusion` / `fu`, `STRAT_FUSION = 24` (`src/strategy.h`), by its row in the bot registry (`src/bots.c`), and it is live on the website as Moscow, the top rung, since 2026-10-29 ("Live" below).
 It is the first bot on the registry: its brain stays in `src/octogen_strategy.c` (it is octogen with two levers set, not a file of its own), and its row is its whole registration.
 
 Both levers are set by `fusion_strategy_choose` for the length of one decision and put back after it, so an octogen seat on the same thread keeps noise 0 and mixture 4.
@@ -101,13 +101,12 @@ It measured level with the sensible set (below), so the default stays the sensib
   There the noise code is compiled out, the setters are inline no-ops, and `fusion_strategy_choose` is not defined, so anything that named it would fail to link rather than run octogen under fusion's name; its `bots.c` row is `native_only` and its dispatch entry `NATIVE_ONLY(fusion_strategy_choose)`, NULL there, so `bot_roster_linked` says 0, exactly as for espresso_prod and gunpowder.
   No browser path runs a bot brain: `web.wasm` exports the client slot, the net client and the replay steps, none of which resolves a brain key, and the Oracle analyses replays with octogen, whatever brain sat in a seat.
   So the browser never needs fusion compiled in, for going live or after.
-- **Its own roster row, offered nowhere.**
-  `src/bots.c` has a `fusion` row at `STRAT_FUSION` with octogen's knobs (`OG_TRUMP_KEEP=40`), uses_logs on, seeded off, offline off, tier 11, and no city or ids.
-  Seeded off keeps it out of the server's bot accounts (`bot_seed.c` derives them from the seeded rows) and so out of every web lobby (the lobby lists the store's bot rows); offline off keeps it out of the phone's picker (`fio_strategy_count` is the offline count).
-  The row is in every module's `BotRosterTable`, so the web and the phone can see its key, but nothing offers it.
-- **No city or song yet.**
-  On the website a bot's city is its STORED nickname (`%Vienna 1`), seven accounts per seeded rung, named from its row's `city`, and no display map exists; the `bot.<key>` i18n strings name a seat from its strategy key (the phone's `BotNames.display(strategy:)`, used by the offline picker).
-  TODO(alex): fusion's city is "TBD" and its song is "TBD" (marked on its `src/bots.c` row); the song has no field anywhere to go in.
+- **Its own roster row, seeded as Moscow.**
+  `src/bots.c` has a `fusion` row at `STRAT_FUSION` with octogen's knobs (`OG_TRUMP_KEEP=40`), uses_logs on, seeded on, offline off, tier 11, city Moscow at 0 km, and seven server accounts.
+  Seeded puts its accounts in the server's store (`bot_seed.c`) and so in every web lobby (the lobby lists the store's bot rows); offline off keeps it out of the phone's picker (`fio_strategy_count` is the offline count, and the picker resolves its ladder against it).
+  The row stays `native_only`: the browser's modules never run a seat's brain, so they leave it out, and `e2e/bot_roster_parity.test.ts` no longer asks them to link a seeded bot; the server's own test does (`foolish/server/test/unit_store.c` `bot_seed_is_production`).
+- **Its song is Moscow's.**
+  A song belongs to a city, not a brain, and each seeded row's comment in `src/bots.c` names its city's; Moscow's is the National Anthem of the Soviet Union, so fusion carries it now and octogen took St. Petersburg's.
 
 ## Tests
 
@@ -190,33 +189,16 @@ The two modes are inside each other's intervals at both sizes, so the default st
 That is flat: the point estimate is on fusion's side and the interval is wide either way.
 The rule was "on unless the difference is positive", so the noise is on at 5 players, and `FUSION_NOISE_MAX_PC` is 5.
 
-## To go live
+## Live (2026-10-29)
 
-Fusion is ready but not reachable: everything a seeded fusion needs is on main except the step that needs its city.
-Verified on this branch:
+Fusion went live as Moscow, and every rung above Vienna moved down one city: octogen is St. Petersburg (635 km), cordite is Warsaw (1,151 km, new), fusion is Moscow (0 km).
+A rating follows the bot: production's existing accounts keep their ids, strategies and ratings, and only their names changed; fusion's seven accounts (freshly minted v4 ids in its row) start at the default rating.
 
-- The server (c_base) links the kernel natively without `FOOLISH_SEEDED_BOTS_ONLY` (see "Where it is compiled"), so it already accepts the `fusion` key and plays it with the noise; no flag or build change is needed.
-- No browser module needs fusion: `web.wasm` and the Oracle never run a seat's brain, and a lobby showing a seated fusion reads stored nicknames, not `bot_roster_linked`.
-- The roster row, the knobs, the defaults and the tests are in place.
+The renames needed no hand-run step on production.
+The server's seed (`cb_import_seed_bots`, `foolish/server/src/store/store_import.c`) now brings every seeded account to its row: an id the store lacks is added, and a stored id whose nickname is not `%<city> <n>` gets that nickname and nothing else (`bots_rename`, a nickname-only, all-or-none write on both stores).
+So the registry is the one owner of a seeded bot's name, and a city that moves is a `bots.c` edit plus a deploy.
+On production's SQLite the seed runs at every store open, so the deploy that shipped this renamed cordite's 7 and octogen's 7 accounts and added fusion's 7 (21 rows) before serving a request; `seed_brings_production_to_the_ladder` in `foolish/server/test/unit_store.c` runs exactly that against production's 49 rows.
+Nicknames carry no unique constraint, and games already played keep the names their seats were dealt with.
+The leaderboard is edge-cached (`s-maxage=3600`), so it can show the old names for up to an hour after a deploy.
 
-### The seed adds missing bots (done by the registry job)
-
-`cb_import_seed_bots` (`foolish/server/src/store/store_import.c`) inserts every seeded account whose id the store lacks and never updates or overwrites a row it has.
-The registry carries production's own 49 ids, so on production it finds them all and writes nothing; a newly seeded fusion's seven accounts are the only rows it would add, on the server's next seed run (SQLite: every store open; DynamoDB: a deploy's `cbase-import --seed-bots`).
-
-### The go-live PR
-
-One small PR, touching exactly:
-
-1. `foolish/c/src/bots.c`, the `fusion` row: `seeded` 0 -> 1 (offline stays 0 unless the phone's picker should offer it too), its `city` and `km`, and seven freshly minted v4 `ids` (never derived), and the TODO comment there (city, song).
-2. `foolish/c/tests/tests.c` `test_fusion_is_dispatchable_and_named`: the "neither seeded nor offline" check becomes "seeded, not offline".
-3. The `bot.fusion` city string: `FS_K_BOT_FUSION` in `foolish/c/i18n/keys.h` and the string in all 25 `foolish/c/i18n/strings_*.c`, then the generated modules regenerated (`tools/datagen`); if the city is spelled the same in some language, add `bot.fusion` to `mayMatchEnglish` in `foolish/ios/FoolishTests/LocalizationTests.swift`.
-   Strictly only the phone's `BotNames.display(strategy:)` reads it (the website shows the stored nickname), but it keeps every key the roster can name localized.
-4. The phone's picker ladder is the registry's rows that have a city (`BotNames.swift`, from the generated `BotRegistry`), so giving fusion a city puts its rung after Moscow there too; if fusion should stay off the phone, that rule must read `offline` as well.
-5. `foolish/e2e/validation/bot_city_names_validation.test.ts`: the city into `LADDER` (and it must contain no word of `ORDNANCE`).
-6. `foolish/e2e/validation/bot_ladder_order_validation.test.ts`: the picker now ends on `<City> 7` (fusion is tier 11, above octogen's 10), and the city joins the expected ladder after Moscow.
-7. `foolish/e2e/bot_roster_parity.test.ts`: it asserts every seeded key is `linked` in the kernel it dumps, which is `web.wasm` (`kernelBotRoster`), a premise left over from `bots.wasm`, which was the server's.
-   Either restate it against the server's native kernel, or link fusion into `WASM_BOT_CFLAGS` builds; the first is right, since no browser path runs a brain and linking the noise there costs `web.wasm` bytes for nothing.
-8. `foolish/server/test/unit_store.c`: `bot_seed_is_production` holds the seed to production's 49 accounts exactly, so it gains fusion's seven as the accounts production does not have yet; the seeded-bot counts 49 -> 56 (`open_applies_schema_and_seeds_bots`, `seed_adds_only_missing_bots` and the two paging tests: 20, 20, 16), `c_base/providers/aws/test/unit_dynamo_ops.c`'s seed counts, and `c_base/providers/aws/ops/deploy.sh`'s "49 bots" comment.
-9. `docs/IOS_BOT_NAMING.md` and `docs/ARCHITECTURE.html` section 7 list the ladder's cities.
-
+The touch points, for the next bot that goes live: its `bots.c` row (seeded, city, km, ids); its `bot.<key>` string in `i18n/keys.h` and the twenty-five `i18n/strings_*.c` (and `mayMatchEnglish` in `ios/FoolishTests/LocalizationTests.swift`); `LADDER` in `e2e/validation/bot_city_names_validation.test.ts` and the ladder in `e2e/validation/bot_ladder_order_validation.test.ts`; the seeded counts and the expected ladder in `foolish/server/test/unit_store.c` and `c_base/providers/aws/test/unit_dynamo_ops.c`; `docs/IOS_BOT_NAMING.md` and `docs/ARCHITECTURE.html` section 7.

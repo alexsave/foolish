@@ -39,9 +39,9 @@ function seededCities(): { city: string; key: string }[] {
     return out;
 }
 
-// The seven rungs, weakest to strongest (docs/IOS_BOT_NAMING.md). Spelled out
+// The eight rungs, weakest to strongest (docs/IOS_BOT_NAMING.md). Spelled out
 // rather than derived, because this is the list the site is held to.
-const LADDER = ['Miami', 'New York', 'Seoul', 'Madrid', 'Vienna', 'St. Petersburg', 'Moscow'];
+const LADDER = ['Miami', 'New York', 'Seoul', 'Madrid', 'Vienna', 'Warsaw', 'St. Petersburg', 'Moscow'];
 
 // Every family the site has ever seeded, plus the research-only names one grep
 // away from a page (docs/IOS_BOT_NAMING.md section 5 on why "Novichok" in

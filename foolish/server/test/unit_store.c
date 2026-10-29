@@ -158,35 +158,91 @@ static const struct { const char *id, *nickname, *key; } PROD_BOTS[] = {
     { "abe1fcfa-992c-4bf5-b163-32c0b0a21a7b", "%Moscow 7", "octogen" },
 };
 
-// THE SEED IS PRODUCTION'S BOTS: the accounts bot_seed.c derives from the
-// kernel's registry (foolish/c/src/bots.c: each seeded row's city and ids) are
-// exactly the 49 above, id for id. This is what makes seeding by missing id
-// safe on prod's store - it finds every one of them and writes nothing - and
-// what gives a fresh store, the tests and local dev prod's own bots.
+// FUSION'S SEVEN ACCOUNTS, the ones production does not have yet: minted
+// (random v4) for its registry row on 2026-10-29, when it went live as Moscow.
+static const char *const FUSION_IDS[] = {
+    "2c58c4a2-a254-4a75-a465-db25fce8de79", "a721ac2c-afc4-41d7-87ff-285cef86f1fd",
+    "592588e9-ba8f-44b9-be56-2803377705bf", "98385eea-2b92-44f7-a436-11c20337eec3",
+    "03f1f377-00a7-4936-b7ea-ed4f2c93b206", "6db6e1cc-fa6c-4e9f-a2e9-9bba574e63d5",
+    "efe6f751-912f-48be-a488-5aee56b85bdb",
+};
+
+// THE LADDER the registry names, written out here so a city that moves is a
+// test that moves with it (2026-10-29: fusion took Moscow, octogen St.
+// Petersburg, cordite Warsaw). The rating follows the BOT: an account keeps
+// its id and strategy, and only its name says the rung's city.
+static const char *ladder_city(const char *key) {
+    static const struct { const char *key, *city; } L[] = {
+        { "random", "Miami" },        { "handwritten", "New York" }, { "robusta", "Seoul" },
+        { "firecracker", "Madrid" },  { "blackpowder", "Vienna" },   { "cordite", "Warsaw" },
+        { "octogen", "St. Petersburg" }, { "fusion", "Moscow" },
+    };
+    for (size_t i = 0; i < sizeof L / sizeof L[0]; i++) if (strcmp(L[i].key, key) == 0) return L[i].city;
+    return NULL;
+}
+
+// "%<city of key> <n>", with n the instance number of production's `nickname`
+// (its last word): the name the seed gives that account.
+static void ladder_name(char *out, size_t cap, const char *key, const char *nickname) {
+    const char *sp = strrchr(nickname, ' ');
+    snprintf(out, cap, "%%%s %s", ladder_city(key) ? ladder_city(key) : "?", sp ? sp + 1 : "?");
+}
+
+// THE SEED IS PRODUCTION'S BOTS, ON THE REGISTRY'S LADDER: the accounts
+// bot_seed.c derives from the kernel's registry (foolish/c/src/bots.c: each
+// seeded row's city and ids) are the 49 above, id for id and strategy for
+// strategy, each named for its bot's city today, plus fusion's seven. This is
+// what makes seeding by id safe on prod's store - it finds every one of the 49
+// and only renames or adds - and what gives a fresh store, the tests and local
+// dev prod's own bots.
 //
 // Mutations that turned it red, each restored after: one hex digit of
-// octogen's seventh id in bots.c (`at >= 0`: "%Moscow 7" not seeded); Vienna
+// octogen's seventh id in bots.c (`at >= 0`: that account not seeded); Vienna
 // spelled Wien in bots.c (the nickname assertion); nicknames numbered from 0 in
 // bot_seed.c (the nickname assertion); bot_seed.c not skipping unseeded rows
-// (`n == N`: a row with no city refuses the whole seed).
+// (`n == N + 7`: a row with no city refuses the whole seed); octogen left on
+// Moscow in bots.c (the nickname assertion); one of fusion's ids changed in
+// bots.c (the fusion assertion).
 static void bot_seed_is_production(void) {
-    enum { N = (int)(sizeof PROD_BOTS / sizeof PROD_BOTS[0]) };
+    enum { N = (int)(sizeof PROD_BOTS / sizeof PROD_BOTS[0]), F = (int)(sizeof FUSION_IDS / sizeof FUSION_IDS[0]) };
     cb_bot_row rows[BOT_ROSTER_MAX * BOT_IDS_MAX];
     const int n = cb_bot_seed_rows(rows, (int)(sizeof rows / sizeof rows[0]));
     T_EQ_INT(N, 49);
-    T_EQ_INT(n, N);
+    T_EQ_INT(F, BOT_IDS_MAX);
+    T_EQ_INT(n, N + F);
     for (int i = 0; i < N; i++) {
         int at = -1;
         for (int j = 0; j < n; j++) if (strcmp(rows[j].id, PROD_BOTS[i].id) == 0) at = j;
         if (at < 0) { fprintf(stderr, "  prod bot %s (%s) is not seeded\n", PROD_BOTS[i].id, PROD_BOTS[i].nickname); T_CHECK(at >= 0); continue; }
-        T_EQ_STR(rows[at].nickname, PROD_BOTS[i].nickname);
+        char want[64];
+        ladder_name(want, sizeof want, PROD_BOTS[i].key, PROD_BOTS[i].nickname);
+        T_EQ_STR(rows[at].nickname, want);
         T_EQ_STR(rows[at].strategy_key, PROD_BOTS[i].key);
         T_EQ_INT(rows[at].elo_rating, TABLE_RATING_START);
         T_EQ_INT(rows[at].previous_elo, -1);
         T_EQ_INT(rows[at].games_played, 0);
     }
+    for (int i = 0; i < F; i++) {
+        int at = -1;
+        for (int j = 0; j < n; j++) if (strcmp(rows[j].id, FUSION_IDS[i]) == 0) at = j;
+        T_CHECK(at >= 0);
+        if (at < 0) continue;
+        char want[32];
+        snprintf(want, sizeof want, "%%Moscow %d", i + 1);
+        T_EQ_STR(rows[at].nickname, want);
+        T_EQ_STR(rows[at].strategy_key, "fusion");
+    }
+    // The server plays every seeded bot: this binary links the kernel the way
+    // the server does (c_base/Makefile KERNEL_SRC with KERNEL_CFLAGS, never
+    // FOOLISH_SEEDED_BOTS_ONLY), so every seeded account's brain dispatches
+    // here. web.wasm leaves a server-only brain out (bots.c native_only), so
+    // the browser's dump is not where this is held (e2e/bot_roster_parity).
+    for (int j = 0; j < n; j++) {
+        const int ri = bot_roster_find(rows[j].strategy_key);
+        T_CHECK(ri >= 0 && bot_roster_linked(ri));
+    }
     // One cap short is a refusal, never a shorter seed.
-    T_EQ_INT(cb_bot_seed_rows(rows, N - 1), -1);
+    T_EQ_INT(cb_bot_seed_rows(rows, N + F - 1), -1);
 }
 
 static bool same_bot(const cb_bot_row *a, const cb_bot_row *b) {
@@ -201,26 +257,31 @@ static const cb_bot_row *find_bot(const bots_t *b, const char *id) {
     return NULL;
 }
 
-// SEEDING ADDS THE MISSING BOTS AND NOTHING ELSE (store_import.c
-// cb_import_seed_bots): on a store that already has bots - two seeded ones gone,
-// one played and renamed, one that is no seed's at all - a seed run (1) adds
-// exactly the two missing accounts, at the start rating, (2) leaves every
-// existing row, its rating and its nickname as it was, and (3) a second run
-// writes nothing. Both backends: SQLite here, DynamoDB Local in check-dynamo.
+// SEEDING ADDS THE MISSING BOTS AND NAMES THE REST BY THE REGISTRY
+// (store_import.c cb_import_seed_bots): on a store that already has bots - two
+// seeded ones gone, one played and renamed, one that is no seed's at all - a
+// seed run (1) adds exactly the two missing accounts, at the start rating, and
+// gives the renamed one its registry name back, so it returns 3; (2) leaves
+// every other row as it was, and the renamed one's rating, games, strategy and
+// timestamps too; (3) a second run writes nothing; and bots_rename itself is
+// all or none. Both backends: SQLite here, DynamoDB Local in check-dynamo.
 //
 // Mutations that turned it red, each restored after: the old rule, write only
-// into an empty store (assertion 1: `cb_import_seed_bots(s) == 2`); bots_replace
+// into an empty store (assertion 1: `cb_import_seed_bots(s) == 3`); bots_replace
 // of the missing rows in place of bots_add (assertion 2: every existing row,
-// the played one and the stranger, gone); has_id always false, so every seed
-// row reads as missing (assertion 1: CB_E_CONFLICT, and reopening the store
-// fails too); the SQL S_BOT_ADD as INSERT OR REPLACE (the all-or-none check:
-// a taken id overwritten, `== CB_E_CONFLICT`). The item store's CB_IF_ABSENT
-// dropped is caught by c_base/providers/aws/test/unit_dynamo_ops.c
-// (import_seed_and_reindex: the request lacks attribute_not_exists).
+// the played one and the stranger, gone); stored_bot always NULL, so every seed
+// row reads as missing (assertion 1: CB_E_CONFLICT); the rename comparison
+// dropped, so nothing is renamed (assertion 1, and the played row's name); the
+// SQL S_BOT_ADD as INSERT OR REPLACE (the all-or-none check: a taken id
+// overwritten, `== CB_E_CONFLICT`); the SQL rename's changes() check dropped
+// (the rename all-or-none check: CB_OK); S_BOT_RENAME also setting elo_rating
+// (assertion 2: the played row's rating). The item store's CB_IF_ABSENT and
+// CB_IF_EXISTS dropped are caught by c_base/providers/aws/test/unit_dynamo_ops.c
+// (import_seed_and_reindex: the requests lack their conditions).
 static void seed_adds_only_missing_bots(void) {
     cb_store *s = open_fresh();
     bots_t all = { 0 };
-    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &all), 49);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &all), 56);
 
     // The store as a running server would have it: Miami 3 and Moscow 7 gone,
     // Vienna 2 played and renamed, and a bot no seed knows.
@@ -248,34 +309,46 @@ static void seed_adds_only_missing_bots(void) {
                               .strategy_key = "random", .elo_rating = 1500, .previous_elo = 1490, .games_played = 99 };
     T_EQ_INT(CB_ROWS_CALL(s, bots_replace, keep, n), CB_OK);
     bots_t before = { 0 };
-    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &before), 48);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &before), 55);
 
-    // (1) exactly the missing two, as the seed writes them.
-    T_EQ_INT(cb_import_seed_bots(s), 2);
+    // (1) exactly the missing two, as the seed writes them, and the one rename.
+    T_EQ_INT(cb_import_seed_bots(s), 3);
     bots_t after = { 0 };
-    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &after), 50);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &after), 57);
     for (int g = 0; g < 2; g++) {
         const cb_bot_row *r = find_bot(&after, gone[g]);
         T_CHECK(r != NULL);
         if (!r) continue;
         T_EQ_STR(r->nickname, g ? "%Moscow 7" : "%Miami 3");
+        T_EQ_STR(r->strategy_key, g ? "fusion" : "random");
         T_EQ_INT(r->elo_rating, TABLE_RATING_START);
         T_EQ_INT(r->previous_elo, -1);
         T_EQ_INT(r->games_played, 0);
     }
-    // (2) every row that was there is there, unchanged: the played one keeps
-    // its rating and its new name, the stranger stays.
+    // (2) every row that was there is there: the played one with its registry
+    // name back and everything else of it as it was, the rest (the stranger
+    // included) unchanged.
     for (int i = 0; i < before.n; i++) {
         const cb_bot_row *r = find_bot(&after, before.rows[i].id);
-        T_CHECK(r != NULL && same_bot(r, &before.rows[i]));
+        T_CHECK(r != NULL);
+        if (!r || strcmp(r->id, played->id) == 0) continue;
+        T_CHECK(same_bot(r, &before.rows[i]));
     }
     const cb_bot_row *p = find_bot(&after, played->id);
-    T_CHECK(p && p->elo_rating == 1234 && p->games_played == 17 && strcmp(p->nickname, "%Vienna Renamed") == 0);
+    T_CHECK(p != NULL);
+    if (p) {
+        T_EQ_STR(p->nickname, "%Vienna 2");
+        T_EQ_STR(p->strategy_key, "blackpowder");
+        T_EQ_INT(p->elo_rating, 1234);
+        T_EQ_INT(p->previous_elo, 1188);
+        T_EQ_INT(p->games_played, 17);
+        T_EQ_INT(p->updated_at, 777);
+    }
 
-    // (3) a second run finds nothing missing and writes nothing.
+    // (3) a second run finds nothing missing or misnamed and writes nothing.
     T_EQ_INT(cb_import_seed_bots(s), 0);
     bots_t again = { 0 };
-    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &again), 50);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &again), 57);
     for (int i = 0; i < after.n; i++) T_CHECK(same_bot(&again.rows[i], &after.rows[i]));
 
     // bots_add itself is all or none: a taken id refuses the whole write.
@@ -284,8 +357,80 @@ static void seed_adds_only_missing_bots(void) {
                           after.rows[0] };
     T_EQ_INT(CB_ROWS_CALL(s, bots_add, two, 2), CB_E_CONFLICT);
     bots_t last = { 0 };
-    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &last), 50);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &last), 57);
     T_CHECK(find_bot(&last, two[0].id) == NULL);
+
+    // So is bots_rename: an id that is no bot's refuses the whole write, and
+    // the stored row before it keeps its name.
+    cb_bot_row ren[2] = { after.rows[0], { .id = "0c0ffee0-0000-4000-8000-00000000beef", .nickname = "%Nobody 1" } };
+    snprintf(ren[0].nickname, sizeof ren[0].nickname, "%%Elsewhere 1");
+    T_EQ_INT(CB_ROWS_CALL(s, bots_rename, ren, 2), CB_E_CONFLICT);
+    last.n = 0;
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &last), 57);
+    const cb_bot_row *first = find_bot(&last, after.rows[0].id);
+    T_CHECK(first && same_bot(first, &after.rows[0]));
+    T_CHECK(find_bot(&last, ren[1].id) == NULL);
+    cb_store_close(s);
+}
+
+// THE GO-LIVE ON PRODUCTION'S OWN STORE (2026-10-29): a store holding exactly
+// production's 49 bot rows, named as production named them (octogen on
+// Moscow, cordite on St. Petersburg) and played as production played them,
+// is brought to the registry's ladder by one seed run: cordite's seven become
+// Warsaw 1..7 and octogen's St. Petersburg 1..7, every rating, game count,
+// strategy and timestamp untouched (the rating follows the bot), and fusion's
+// seven are added as Moscow 1..7 at the start rating. 14 renames + 7 adds = 21
+// rows written, and nothing on a second run.
+//
+// Mutations that turned it red, each restored after: the renames skipped in
+// cb_import_seed_bots (`== 21`, and octogen still on Moscow beside fusion);
+// the renames written through bots_replace's full row from the seed instead
+// (every played row's rating back at the start: the rating assertions).
+static void seed_brings_production_to_the_ladder(void) {
+    enum { N = (int)(sizeof PROD_BOTS / sizeof PROD_BOTS[0]) };
+    cb_store *s = open_fresh();
+    cb_bot_row prod[N];
+    for (int i = 0; i < N; i++) {
+        prod[i] = (cb_bot_row){ .elo_rating = 900 + 7 * i, .previous_elo = 890 + 7 * i, .games_played = i,
+                                .created_at = 1000 + i, .updated_at = 2000 + i };
+        snprintf(prod[i].id, sizeof prod[i].id, "%s", PROD_BOTS[i].id);
+        snprintf(prod[i].nickname, sizeof prod[i].nickname, "%s", PROD_BOTS[i].nickname);
+        snprintf(prod[i].strategy_key, sizeof prod[i].strategy_key, "%s", PROD_BOTS[i].key);
+    }
+    T_EQ_INT(CB_ROWS_CALL(s, bots_replace, prod, N), CB_OK);
+
+    T_EQ_INT(cb_import_seed_bots(s), 21);
+    bots_t b = { 0 };
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), N + 7);
+    for (int i = 0; i < N; i++) {
+        const cb_bot_row *r = find_bot(&b, prod[i].id);
+        T_CHECK(r != NULL);
+        if (!r) continue;
+        char want[64];
+        ladder_name(want, sizeof want, PROD_BOTS[i].key, PROD_BOTS[i].nickname);
+        T_EQ_STR(r->nickname, want);
+        T_EQ_STR(r->strategy_key, prod[i].strategy_key);
+        T_EQ_INT(r->elo_rating, prod[i].elo_rating);
+        T_EQ_INT(r->previous_elo, prod[i].previous_elo);
+        T_EQ_INT(r->games_played, prod[i].games_played);
+        T_EQ_INT(r->created_at, prod[i].created_at);
+        T_EQ_INT(r->updated_at, prod[i].updated_at);
+    }
+    int moscow = 0, petersburg = 0, warsaw = 0;
+    for (int i = 0; i < b.n; i++) {
+        const cb_bot_row *r = &b.rows[i];
+        if (strncmp(r->nickname, "%Moscow ", 8) == 0) moscow += strcmp(r->strategy_key, "fusion") == 0 ? 1 : 100;
+        if (strncmp(r->nickname, "%St. Petersburg ", 16) == 0) petersburg += strcmp(r->strategy_key, "octogen") == 0 ? 1 : 100;
+        if (strncmp(r->nickname, "%Warsaw ", 8) == 0) warsaw += strcmp(r->strategy_key, "cordite") == 0 ? 1 : 100;
+    }
+    T_EQ_INT(moscow, 7);
+    T_EQ_INT(petersburg, 7);
+    T_EQ_INT(warsaw, 7);
+    for (int i = 0; i < 7; i++) {
+        const cb_bot_row *r = find_bot(&b, FUSION_IDS[i]);
+        T_CHECK(r && r->elo_rating == TABLE_RATING_START && r->games_played == 0);
+    }
+    T_EQ_INT(cb_import_seed_bots(s), 0);
     cb_store_close(s);
 }
 
@@ -295,12 +440,14 @@ static void open_applies_schema_and_seeds_bots(void) {
     cb_store *s = open_fresh();
     T_EQ_STR(s->ops->name, tsb_dynamo() ? "dynamo" : "sqlite");
     bots_t b = { 0 };
-    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 49);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 56);
     T_EQ_STR(b.rows[0].nickname, "%Miami 1");
     T_EQ_STR(b.rows[0].strategy_key, "random");
     T_EQ_STR(b.rows[6].nickname, "%Miami 7");
-    T_EQ_STR(b.rows[48].nickname, "%Moscow 7");
+    T_EQ_STR(b.rows[48].nickname, "%St. Petersburg 7");
     T_EQ_STR(b.rows[48].strategy_key, "octogen");
+    T_EQ_STR(b.rows[55].nickname, "%Moscow 7");
+    T_EQ_STR(b.rows[55].strategy_key, "fusion");
     T_EQ_STR(b.rows[0].id, "176d94a4-71f2-4542-9510-5603e52058d7");   // production's own %Miami 1
     T_EQ_INT(b.rows[0].elo_rating, 1000);
     T_EQ_INT(b.rows[0].previous_elo, -1);
@@ -308,7 +455,7 @@ static void open_applies_schema_and_seeds_bots(void) {
         // A second seed finds the bots there and writes nothing.
         T_EQ_INT(cb_import_seed_bots(s), 0);
         b.n = 0;
-        T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 49);
+        T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 56);
         cb_store_close(s);
         return;
     }
@@ -319,7 +466,7 @@ static void open_applies_schema_and_seeds_bots(void) {
     snprintf(path, sizeof path, "%s/s%d.sqlite", g_dir, g_seq);
     T_EQ_INT(cb_store_open_sqlite(path, &s), CB_OK);
     b.n = 0;
-    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 49);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 56);
     cb_store_close(s);
 
     // Schema 3 -> 4: the API Gateway connection tables, rows and all, are
@@ -1614,7 +1761,7 @@ static void admin_reads(void) {
     T_EQ_STR(n.ids[6], "identities");
     T_EQ_STR(n.ids[14], "users");
 
-    // Pages of 20 over the 49 bots: 20, 20, 9, and the cursor runs out.
+    // Pages of 20 over the 56 bots: 20, 20, 16, and the cursor runs out.
     rows_t r = { 0 };
     char cur[64] = "", next[64];
     int pages = 0, total = 0;
@@ -1625,7 +1772,7 @@ static void admin_reads(void) {
         pages++;
         snprintf(cur, sizeof cur, "%s", next);
     } while (cur[0] && pages < 10);
-    T_EQ_INT(total, 49);
+    T_EQ_INT(total, 56);
     T_EQ_INT(pages, 3);
     // The cursor is the row offset a page ends at, nothing else: strtoll read
     // "3x", " 3" and "+3" as 3, and "x" as the first page.
@@ -1654,7 +1801,7 @@ static void admin_reads(void) {
     // one statement only.
     r.rows = 0;
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT count(*) AS n FROM bots", false, collect_row, &r), 1);
-    T_EQ_STR(r.first[0], "49");
+    T_EQ_STR(r.first[0], "56");
     T_EQ_STR(r.col0, "n");
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "DELETE FROM bots", false, collect_row, &r), CB_E_FORBIDDEN);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "  -- c\n DELETE FROM bots", false, collect_row, &r), CB_E_FORBIDDEN);
@@ -1666,7 +1813,7 @@ static void admin_reads(void) {
                            collect_row, &r),
              0);
     bots_t b = { 0 };
-    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 48);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 55);
     // A blob reads as "\x" hex.
     cb_user_row a = mkuser("a@x.io", "A", 1);
     CB_STORE_CALL(s, user_create, &a);
@@ -1711,7 +1858,7 @@ static void admin_reads_dynamo(void) {
     names_t n = { 0 };
     T_EQ_INT(CB_STORE_CALL(s, admin_collections, collect_name, &n), 8);
     T_EQ_STR(n.ids[3], "GAME");
-    // Pages of 20 over the 49 bots (the only items in a fresh table): 20, 20, 9.
+    // Pages of 20 over the 56 bots (the only items in a fresh table): 20, 20, 16.
     rows_t r = { 0 };
     char cur[1024] = "", next[1024];
     int pages = 0, total = 0;
@@ -1722,7 +1869,7 @@ static void admin_reads_dynamo(void) {
         pages++;
         snprintf(cur, sizeof cur, "%s", next);
     } while (cur[0] && pages < 10);
-    T_EQ_INT(total, 49);
+    T_EQ_INT(total, 56);
     T_CHECK(pages >= 3);
     r.rows = 0;
     T_EQ_INT(CB_STORE_CALL(s, admin_browse, "BOT", "176d94a4", "", 100, collect_row, &r, next, sizeof next), 1);
@@ -1740,7 +1887,7 @@ static void admin_reads_dynamo(void) {
     T_EQ_INT(CB_STORE_CALL(s, admin_query, q, false, collect_row, &r), CB_E_FORBIDDEN);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, q, true, collect_row, &r), 0);
     bots_t b = { 0 };
-    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 48);
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &b), 55);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELEKT", true, collect_row, &r), CB_E_INVALID);
 
     // A Binary attribute reads as "\x" hex.
@@ -2157,6 +2304,7 @@ int main(void) {
     T_RUN(bot_seed_is_production);
     T_RUN(open_applies_schema_and_seeds_bots);
     T_RUN(seed_adds_only_missing_bots);
+    T_RUN(seed_brings_production_to_the_ladder);
     T_RUN(users_round_trip);
     T_RUN(signin_fails_round_trip);
     T_RUN(refresh_tokens_rotate);

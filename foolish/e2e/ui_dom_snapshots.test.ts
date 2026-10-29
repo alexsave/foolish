@@ -299,7 +299,7 @@ async function screen(name: string, seed: number, setup: () => void, page: () =>
 // ---- the screens ----------------------------------------------------------------------
 
 const bots = [
-    { id: 'b-cordite-01', nickname: '%St. Petersburg 1', strategy_key: 'cordite' },
+    { id: 'b-cordite-01', nickname: '%Warsaw 1', strategy_key: 'cordite' },
     { id: 'b-robusta-02', nickname: '%Seoul 2', strategy_key: 'robusta' },
     { id: 'b-powder-003', nickname: '%Vienna 3', strategy_key: 'blackpowder' },
 ];
@@ -316,7 +316,7 @@ test('lobby, 1 seat: the creator alone', async () => {
 test('lobby, 3 seats: a human, a ready bot, another human', async () => {
     const gid = 'lob3';
     const board = fixture().title('Дмитрий\'s Game')
-        .seats([seat(ME, 'Me'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'), seat('u-dmitry-01', 'Дмитрий')]).build();
+        .seats([seat(ME, 'Me'), seat('b-cordite-01', 'Warsaw 1', 'cordite'), seat('u-dmitry-01', 'Дмитрий')]).build();
     await screen('lobby_3', 12, () => {
         rows.playerViews.set(gid, envelope(gid, board, 0));
         rows.bots = bots;
@@ -325,7 +325,7 @@ test('lobby, 3 seats: a human, a ready bot, another human', async () => {
 
 test('lobby, 8 seats: full, with bots', async () => {
     const gid = 'lob8';
-    const seats = [seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'),
+    const seats = [seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'Warsaw 1', 'cordite'),
         seat('u-boris-001', 'Boris'), seat('b-robusta-02', 'Seoul 2', 'robusta'), seat('u-vera-0001', 'Vera'),
         seat('b-powder-003', 'Vienna 3', 'blackpowder'), seat('u-gleb-0001', 'Gleb')];
     const board = fixture().title('Full table').seats(seats).seatStatus(1, READY).build();
@@ -358,7 +358,7 @@ test('2 seats, mid-bout, as the defender', async () => {
 test('4 seats, right after a pickup', async () => {
     const gid = 'four';
     const board = fixture().title('After the pickup')
-        .seats([seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'), seat('u-boris-001', 'Boris')])
+        .seats([seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'Warsaw 1', 'cordite'), seat('u-boris-001', 'Boris')])
         .status(PLAYING).trump('Qh').deck('7s 8s 9s Ts Js Qs Ks As')
         .hand(0, '7c 8c 9c Tc Jc').hand(1, '6h 7h 8h 9h Th 6d').hand(2, 'Qc Kc Ac 7d 8d 9d').hand(3, 'Td Jd Qd Kd Ad Jh')
         .table('6c/Kh', '6s').attacker(0).defender(1).discard(4).build();
@@ -411,7 +411,7 @@ test('every seat badge: role row, name and mini hand fit the seat box, none sque
 });
 
 function eightSeats() {
-    const seats = [seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'),
+    const seats = [seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'Warsaw 1', 'cordite'),
         seat('u-boris-001', 'Boris'), seat('b-robusta-02', 'Seoul 2', 'robusta'), seat('u-vera-0001', 'Vera'),
         seat('b-powder-003', 'Vienna 3', 'blackpowder'), seat('u-gleb-0001', 'Gleb')];
     return fixture().title('Eight').seats(seats).status(PLAYING).trump('2d').deck('3s 4s 5s 6s')
@@ -453,7 +453,7 @@ test('a said good, as the attacker who said it', async () => {
 
 test('the win screen', async () => {
     const gid = 'done';
-    const board = fixture().title('Finished').seats([seat(ME, 'Me'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'), seat('u-anna-0001', 'Anna')])
+    const board = fixture().title('Finished').seats([seat(ME, 'Me'), seat('b-cordite-01', 'Warsaw 1', 'cordite'), seat('u-anna-0001', 'Anna')])
         .status(GAME_OVER).powerSuit(1).hand(1, '6s 7s').seatStatus(0, OUT).seatStatus(1, IN).seatStatus(2, OUT)
         // What THIS game did to each seat's rating, stamped on it (the same
         // numbers the rating rows used to be read for: 1200 -> 1216, 1426 -> 1400,
@@ -470,7 +470,7 @@ test('the win screen', async () => {
 });
 
 test('the dashboard', async () => {
-    const lobby = fixture().title('Waiting room').seats([seat(ME, 'Me'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite')]).build();
+    const lobby = fixture().title('Waiting room').seats([seat(ME, 'Me'), seat('b-cordite-01', 'Warsaw 1', 'cordite')]).build();
     await screen('dashboard', 71, () => {
         rows.dashboard = [envelope('dash1', twoSeatBout(), 0), envelope('dash2', lobby, 0), envelope('dash3', eightSeats(), 0)];
     }, () => gamePage('', ME));

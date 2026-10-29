@@ -530,54 +530,72 @@ static long long export_count(const char *dir, const char *name) {
     return n;
 }
 
-// The ids the store's bots already have, as bots_list hands them over.
+// The store's bots, as bots_list hands them over (each one's id and nickname
+// are what the seed reads).
 typedef struct {
-    cb_uuid *ids;
-    int      n, cap;
-    bool     oom;
-} id_set;
+    cb_bot_row *rows;
+    int         n, cap;
+    bool        oom;
+} bot_set;
 
-static bool add_id(const cb_bot_row *b, void *ud) {
-    id_set *set = ud;
+static bool add_bot(const cb_bot_row *b, void *ud) {
+    bot_set *set = ud;
     if (set->n == set->cap) {
         int cap = set->cap ? set->cap * 2 : 64;
-        cb_uuid *p = realloc(set->ids, (size_t)cap * sizeof *p);
+        cb_bot_row *p = realloc(set->rows, (size_t)cap * sizeof *p);
         if (!p) { set->oom = true; return false; }
-        set->ids = p;
+        set->rows = p;
         set->cap = cap;
     }
-    cb_strlcpy(set->ids[set->n++], b->id, sizeof(cb_uuid));
+    set->rows[set->n++] = *b;
     return true;
 }
 
-static bool has_id(const id_set *set, const char *id) {
-    for (int i = 0; i < set->n; i++) if (strcmp(set->ids[i], id) == 0) return true;
-    return false;
+static const cb_bot_row *stored_bot(const bot_set *set, const char *id) {
+    for (int i = 0; i < set->n; i++) if (strcmp(set->rows[i].id, id) == 0) return &set->rows[i];
+    return NULL;
 }
 
-// Insert the seed's rows whose ids the store lacks, in one all-or-none write,
-// and never touch a row it has: a store with bots gains exactly the missing
-// ones (a newly seeded bot reaches a running server on its next seed), its
-// existing rows, ratings and nicknames stay as they are, and a second run finds
-// nothing missing and writes nothing. The ids are production's own (bot_seed.c),
-// which is what makes this safe on prod's store.
+// THE REGISTRY OWNS A SEEDED BOT'S NAME, the store owns its rating. Each seed
+// row (bot_seed.c, one per seeded account, by production's id) is compared
+// with the store's row of that id:
+//  - no row: the account is added, at the start rating (a newly seeded bot
+//    reaches a running server on its next seed);
+//  - a row with another nickname: only the nickname is set to the registry's
+//    (a city that moved to another bot, or a renamed city: the account keeps
+//    its id, strategy, rating and games, so the rating follows the bot);
+//  - a row with the registry's nickname: nothing.
+// The renames go first, then the adds, each its own all-or-none write. Both
+// are idempotent and every seed recomputes them from the store, so a run cut
+// between the two finishes on the next one, and a second run writes nothing.
+// A stored bot no seed row names is never touched. Nicknames carry no unique
+// constraint on either store, so a city moving from one bot to another (the
+// old bot's accounts renamed, the new bot's added under the same names) needs
+// no ordering beyond this. Rows a game already seated keep the name they were
+// seated with, in that game's state.
 int cb_import_seed_bots(cb_store *s) {
     enum { SEED_MAX = BOT_ROSTER_MAX * BOT_IDS_MAX };
     cb_bot_row *seed = calloc(SEED_MAX, sizeof *seed);
-    id_set have = { 0 };
-    int n = seed ? cb_bot_seed_rows(seed, SEED_MAX) : CB_E_NOMEM;
+    cb_bot_row *rename = calloc(SEED_MAX, sizeof *rename);
+    bot_set have = { 0 };
+    int n = seed && rename ? cb_bot_seed_rows(seed, SEED_MAX) : CB_E_NOMEM;
     if (n == -1) n = CB_E_INVALID;   // the registry's seeded rows do not fit or lack their accounts
-    int rc = n < 0 ? n : CB_ROWS_CALL(s, bots_list, add_id, &have);
+    int rc = n < 0 ? n : CB_ROWS_CALL(s, bots_list, add_bot, &have);
     if (rc >= 0 && have.oom) rc = CB_E_NOMEM;
     if (rc >= 0) {
-        int missing = 0;
-        for (int i = 0; i < n; i++)
-            if (!has_id(&have, seed[i].id)) seed[missing++] = seed[i];
+        int missing = 0, renamed = 0;
+        for (int i = 0; i < n; i++) {
+            const cb_bot_row *got = stored_bot(&have, seed[i].id);
+            if (!got) seed[missing++] = seed[i];
+            else if (strcmp(got->nickname, seed[i].nickname) != 0) rename[renamed++] = seed[i];
+        }
+        rc = renamed ? CB_ROWS_CALL(s, bots_rename, rename, renamed) : CB_OK;
         cb_store_bots_sort(seed, missing);
-        rc = missing ? CB_ROWS_CALL(s, bots_add, seed, missing) : CB_OK;
-        if (rc == CB_OK) rc = missing;
+        if (rc == CB_OK) rc = missing ? CB_ROWS_CALL(s, bots_add, seed, missing) : CB_OK;
+        if (rc == CB_OK) rc = renamed + missing;
     }
-    free(have.ids);
+    free(have.rows);
+    free(rename);
     free(seed);
     return rc;
 }
