@@ -4,7 +4,10 @@
 // Written to be read: the page ships it minified (terser), so names and lines cost nothing there.
 var cdom = (() => {
   const EVENTS = ["click", "dblclick", "input", "change", "keydown", "keyup", "focusin",
-    "focusout", "submit", "pointerdown", "pointerup", "pointermove", "resize", "visibilitychange"];
+    "focusout", "submit", "pointerdown", "pointerup", "pointermove", "resize", "visibilitychange",
+    "mousedown", "mousemove", "mouseup", "touchstart", "touchmove", "touchend", "touchcancel"];
+  const RESIZE = 12;            // EVENTS index of the window's resize
+  const VISIBILITY = 13;        // and of visibilitychange
   const TRANSIENT = 0x40000000; // string ids from here up are one-off strings (cd_tmp)
   const DETACHED = 0xffffffff;  // "no insertion parent" for at()
   const SMALL = 64;             // string batches up to this many bytes are decoded char by char
@@ -20,7 +23,8 @@ var cdom = (() => {
   const delegated = [];     // event types with a listener on the mount
   const templateSlots = []; // slot text nodes by template id
   let slots = [];           // slot text nodes of the template being built
-  let listenMask = new Uint16Array(1024); // listened event types per node id
+  const windowListeners = []; // the document's (or window's) listener per event type, while listened
+  let listenMask = new Uint32Array(1024); // listened event types per node id (a bit per type)
   let exports;              // the wasm module's exports
   let memory;
   let buffer;               // memory.buffer when the views below were made
@@ -108,22 +112,47 @@ var cdom = (() => {
     }
   }
 
-  // Writes the event record into C memory and calls C; C flushes its answer on the way out.
+  // Where an event happened: a touch event's first changed touch (the finger that pressed, moved or
+  // lifted), any other event's own clientX and clientY.
+  function pointOf(event) {
+    return event.changedTouches ? event.changedTouches[0] : event;
+  }
+  // 1 when the event is aimed at a field the user types into.
+  function editing(target) {
+    if (!target || !target.tagName) {
+      return 0;
+    }
+    const tag = target.tagName;
+    return +(target.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT");
+  }
+  // Writes the event record into C memory and calls C; C flushes its answer on the way out, and
+  // may have asked for the event's default action not to be taken.
   function post(type, id, event, path, pathDepth) {
     if (buffer !== memory.buffer) {
       views();
     }
     const record = inbox >> 2;
+    const point = pointOf(event);
+    const key = event.key;
     i32[record] = type;
     i32[record + 1] = id;
-    i32[record + 2] = event.clientX | 0;
-    i32[record + 3] = event.clientY | 0;
+    i32[record + 2] = point.clientX | 0;
+    i32[record + 3] = point.clientY | 0;
     i32[record + 4] = event.button | 0;
     i32[record + 5] = event.keyCode | 0;
-    i32[record + 6] = event.shiftKey | (event.ctrlKey << 1) | (event.altKey << 2) | (event.metaKey << 3);
+    i32[record + 6] = event.shiftKey | (event.ctrlKey << 1) | (event.altKey << 2) | (event.metaKey << 3)
+      | (editing(event.target) << 4);
     i32[record + 7] = path;
     i32[record + 8] = pathDepth;
+    i32[record + 9] = typeof key === "string" && key.length === 1 ? key.charCodeAt(0) : 0;
+    i32[record + 10] = 0;
     exports.cd_event();
+    if (buffer !== memory.buffer) {
+      views();
+    }
+    if (i32[record + 10] && event.preventDefault) {
+      event.preventDefault();
+    }
   }
 
   // One listener on the mount per event type: the event goes to the nearest listening ancestor of
@@ -211,7 +240,7 @@ var cdom = (() => {
     nodes[id] = last;
     last.$i = id;
     if (id >= listenMask.length) {
-      const grown = new Uint16Array(id * 2);
+      const grown = new Uint32Array(id * 2);
       grown.set(listenMask);
       listenMask = grown;
     }
@@ -345,13 +374,43 @@ var cdom = (() => {
     node.$s = null;
   }
 
-  // Window events go through the event record like any other (x, y the viewport, key 1 when hidden).
+  // Window events go through the event record like any other: resize and visibilitychange as the
+  // viewport (x, y its size, key 1 when hidden), every other type as the event itself.
   function viewportRecord() {
     return { clientX: innerWidth, clientY: innerHeight, keyCode: +doc.hidden };
   }
+  function windowTarget(type) {
+    return type === RESIZE ? window : doc;
+  }
+  // Listens for event type on the whole page, once however often it is asked; not passive, so C
+  // can stop a touchmove scrolling the page.
   function win(type) {
-    const target = EVENTS[type] === "resize" ? window : doc;
-    target.addEventListener(EVENTS[type], () => post(type, 0, viewportRecord(), 0, 0));
+    if (windowListeners[type]) {
+      return;
+    }
+    const viewportEvent = type === RESIZE || type === VISIBILITY;
+    const listener = (event) => post(type, 0, viewportEvent ? viewportRecord() : event, 0, 0);
+    windowListeners[type] = listener;
+    windowTarget(type).addEventListener(EVENTS[type], listener, { passive: false });
+  }
+  function unwin(type) {
+    const listener = windowListeners[type];
+    if (!listener) {
+      return;
+    }
+    windowTarget(type).removeEventListener(EVENTS[type], listener);
+    windowListeners[type] = undefined;
+  }
+  // The node an event at (x, y) would go to: the nearest listening ancestor-or-self of the topmost
+  // element there that takes pointer events; 0 for none.
+  function hit(x, y) {
+    const mount = nodes[0];
+    for (let node = doc.elementFromPoint(x, y); node && node !== mount; node = node.parentNode) {
+      if (node.$i !== undefined && listenMask[node.$i]) {
+        return node.$i;
+      }
+    }
+    return 0;
   }
   // The viewport into C memory: width, height, hidden, device pixel ratio times 100.
   function viewport(recordPtr) {
@@ -539,7 +598,7 @@ var cdom = (() => {
         strings, at, open, open_svg, close, text, text_num, attr, class: setClass, name, name_open,
         listen, value, value_num, tpl_save, clone, slot, tpl_text, tpl_text_num, walk, walk_value, walk_value_num,
         set_text, set_text_num, set_attr, set_class, style, style_num, encode, image_bytes, remove, free, move, clear,
-        detach, attach, input, win, viewport, rect, timer, raf, now, ws_open, ws_send, ws_close, ws_buffered, http, epoch,
+        detach, attach, input, win, unwin, hit, viewport, rect, timer, raf, now, ws_open, ws_send, ws_close, ws_buffered, http, epoch,
         store_put, store_get, store_del,
       },
       env: env || {},

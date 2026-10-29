@@ -1,6 +1,8 @@
 // Is the table on screen the kernel's game, and does it behave as the React table does?
-// Plays games by real clicks with a seeded random hand (cards picked and put down, pills, the
-// table, a battle), the bot's steps held and released one at a time (?debug: table_debug.wasm),
+// Plays games by real input with a seeded random hand (cards picked and put down by clicks, taps,
+// number keys and the arrow cursor; pills; the table and a battle clicked; cards dragged onto the
+// table or a battle by mouse and by touch, and along the hand; letter keys; Up and Down), the bot's
+// steps held and released one at a time (?debug: table_debug.wasm),
 // and after EVERY click and every bot step reads the DOM and compares it with
 //   - the kernel's state, worked out afresh from the game round-tripped through its blob
 //     (app_debug_state: the hand, the battles, the stock and the trump, the discard pile, each
@@ -8,7 +10,9 @@
 //   - a model of React's own rules for what the kernel does not hold (spec_state.md section 2):
 //     the selection (a tap toggles; Attack, Pass and Cover spend it when pressed, a table or
 //     battle drop when it is a move; Pickup and Good leave it), the pressed pills (hidden until the
-//     pill falls and rises again, ActionButtons.tsx rearm), the end screen (WinScreen.tsx).
+//     pill falls and rises again, ActionButtons.tsx rearm), the end screen (WinScreen.tsx), the
+//     hand's order (clientReconcile.ts: a sticky memory that drags and Meta+arrows rearrange), and
+//     the keyboard's cursor (KeyboardPlayMode.tsx: the card it is on, kept across moves, clamped).
 // The board is judged once the animations have landed (app_anim_busy); while a flight is up, right
 // after the action that started it, every card in the air must be hidden where it is drawn on the
 // table or in my hand (it shows once, in its flight). The run's clock goes 4 times as fast here
@@ -18,6 +22,7 @@
 //   node tools/consist.mjs [games] [seed]        (after ./build.sh)
 // As a module: consistRun(b, { games, seed }) returns { steps, games, kinds: Map(kind -> {n, first}) }.
 import { sleep } from './cdp.mjs';
+import { drag, key, centre } from './input.mjs';
 
 const COLUMN = ['Attack', 'Cover', 'Pass', 'Pickup', 'Good'];
 
@@ -64,6 +69,7 @@ export const READ_DOM = `(() => {
     flipped: flipped ? flipped.textContent.replace(/\\s/g, '') : null,
     hasFlippedSlot: !!flipped,
     trumpIcon: [...document.querySelectorAll('span')].find((s) => s.style.fontSize === '64px')?.textContent ?? null,
+    kbd: { mode: document.querySelector('[data-testid="kbd-state"]').dataset.mode, sel: document.querySelector('[data-testid="kbd-state"]').dataset.sel },
     discardBadge: discard.querySelector('p')?.textContent ?? null,
     discardLayers: discard.querySelector('div')?.children.length ?? 0,
     seats: all('[data-role-seat]', (e) => {
@@ -105,6 +111,8 @@ export async function clickCard(b, card) {
 }
 
 export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log = () => {} } = {}) {
+  const settledHand = () => b.until(`[...document.querySelectorAll('[data-hand-plane] [data-card]')].every((e) => { const c = getComputedStyle(e);
+    return ['left', 'bottom', 'width', 'height'].every((p) => Math.abs(parseFloat(c[p]) - parseFloat(e.style[p])) < 0.05); })`, 2000);
   const rnd = mulberry32(seed);
   const kinds = new Map();
   let step = 0, done = 0, what = 'load', presses = 0, stillOffered = 0, justPressed = null;
@@ -115,8 +123,12 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
     kinds.set(kind, { n: 1, first: { step, after: what, detail, recent: history.slice(-6) } });
     log(`DISAGREE ${kind} (step ${step}, after ${what}): ${detail}`);
   };
-  // React's state, which the kernel does not hold: the selection and the pressed pills.
-  let selection = [], pressed = new Set(), prevRearm = new Set();
+  // React's state, which the kernel does not hold: the selection, the pressed pills, the hand's
+  // remembered order, and the keyboard's cursor (its index, and whether it is aiming).
+  let selection = [], pressed = new Set(), prevRearm = new Set(), memory = [], cursor = -1, aiming = false;
+  const remember = (m, hand) => { const out = [...new Set(m)]; for (const c of hand) if (!out.includes(c)) out.push(c); return out; };
+  const shown = (m, hand) => [...m.filter((c) => hand.includes(c)), ...hand.filter((c) => !m.includes(c))];
+  const toggle = (c) => { selection = selection.includes(c) ? selection.filter((x) => x !== c) : [...selection, c]; };
 
   // While a flight is up: each card in the air hidden wherever the hand or the table draws it.
   let flightsSeen = 0;
@@ -133,12 +145,21 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
   // modelBefore(k): React's model updated for what the kernel now says, before the DOM is judged.
   const compare = async (modelBefore = () => {}) => {
     await midFlight();
-    await b.until('window.app.then((x) => !x.app_anim_busy())', 30000);
+    await b.until('window.app.then((x) => !x.app_anim_busy())', 30000).catch(async (err) => {
+      console.log('RAF', await b.evaluate(`new Promise((r) => { requestAnimationFrame(() => r('fires')); setTimeout(() => r('no frame in 1 s, hidden ' + document.hidden + ' ' + document.visibilityState), 1000); })`));
+      console.log('STUCK', await b.evaluate(`window.app.then((x) => JSON.stringify({ busy: x.app_anim_busy(), steps: x.app_anim_steps(), landed: x.app_anim_landed(), origin: x.app_anim_origin(), now: performance.now(), flying: x.app_anim_flying(), plan: [...Array(x.app_anim_steps()).keys()].map((k) => [x.app_anim_step(k, 0), x.app_anim_step(k, 1), x.app_anim_step(k, 2)]) }))`));
+      throw err; });
     const k = await kernel(b), d = await b.evaluate(READ_DOM);
     modelBefore(k);
     const eq = (a, x) => JSON.stringify(a) === JSON.stringify(x);
-    const handK = k.hand;
-    if (!eq(d.hand.map((h) => h.card), handK)) flag('hand order', `DOM ${d.hand.map((h) => h.card).join(' ')} kernel ${handK.join(' ')}`);
+    // the hand in React's order: the kernel's cards, ordered by the remembered order
+    memory = remember(memory, k.hand);
+    const handK = shown(memory, k.hand);
+    if (!eq(d.hand.map((h) => h.card), handK)) flag('hand order', `DOM ${d.hand.map((h) => h.card).join(' ')} React ${handK.join(' ')} (kernel ${k.hand.join(' ')})`);
+    // the keyboard's cursor: kept on its index across moves, on the last card when the hand shrank
+    if (cursor >= handK.length) cursor = handK.length ? handK.length - 1 : -1;
+    const wantKb = [aiming ? 'target' : cursor >= 0 ? 'cards' : 'none', cursor >= 0 ? handK[cursor] : ''];
+    if (!eq([d.kbd.mode, d.kbd.sel], wantKb)) flag('keyboard cursor', `DOM ${d.kbd.mode} ${d.kbd.sel} React ${wantKb.join(' ')}`);
     // each card where the kernel's hand_layout puts it at this width (left, bottom, width, height)
     // (within 0.001 px: the port writes a length to 4 decimals, cdom's cd_fmt_len, and Chrome keeps
     // 6 significant digits of it, as it does of React's full double)
@@ -214,7 +235,7 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
     if (over) {
       what = 'Play again';
       await b.click('[data-end] button');
-      selection = []; pressed = new Set(); prevRearm = new Set();
+      selection = []; pressed = new Set(); prevRearm = new Set(); memory = []; cursor = -1; aiming = false;
       done++;
     } else if (due && (rnd() < 0.8 || (!d.pills.length && !d.hand.length))) {
       what = 'a bot step';
@@ -242,9 +263,58 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
         const i = Math.floor(rnd() * d.battles.length);
         what = `battle ${d.battles[i]}`;
         await b.click(`[data-table-container] > [data-location="table"]:nth-child(${i + 1}) [data-card]`);
-      } else if (mine.length && r < 0.7) {
+      } else if (mine.length && r < 0.65) {
         what = 'the empty table';
         await b.click('[data-table-container]');
+      } else if (d.hand.length && r < 0.85) {
+        // a card dragged by mouse or by touch: out of the hand onto a battle or the open table, or
+        // along the hand to another card's place. Within the hand's area it trades places with
+        // every card it passes over, on the way out too; the model replays that on the kernel's
+        // slots (the topmost card under each point, DragContext.tsx), the port draws it.
+        const i = Math.floor(rnd() * d.hand.length), c = d.hand[i].card, touch = rnd() < 0.5;
+        await settledHand();
+        const from = await centre(b, `[data-hand-plane] [data-card="${c}"]`);
+        let to, path;
+        if (rnd() < 0.7) {
+          const t = Math.floor(rnd() * (d.battles.length + 1));
+          to = t < d.battles.length ? await centre(b, `[data-table-container] > [data-location="table"]:nth-child(${t + 1}) [data-battle-index]`) : { x: 512, y: 300 };
+          what = `${touch ? 'touch' : 'mouse'} drag of ${c} onto ${t < d.battles.length ? 'battle ' + d.battles[t] : 'the table'}`;
+          path = [to];
+        } else {
+          const j = Math.floor(rnd() * d.hand.length), at = await centre(b, `[data-hand-plane] [data-card="${d.hand[j].card}"]`);
+          what = `${touch ? 'touch' : 'mouse'} rearrange of ${c} toward ${d.hand[j].card}`;
+          path = [{ x: from.x, y: from.y - 12 }, at];
+        }
+        const pts = [];
+        let at = from;
+        for (const q of path) { for (let s = 1; s <= 8; s++) pts.push({ x: at.x + (q.x - at.x) * s / 8, y: at.y + (q.y - at.y) * s / 8 }); at = q; }
+        const geo = await b.evaluate(`(() => { const r = document.querySelector('[data-hand-plane]').getBoundingClientRect(); return [r.left, r.top, r.bottom]; })()`);
+        const kk = await kernel(b);
+        const order = d.hand.map((h) => h.card), slots = kk.slots.map((v) => v.split(',').map(Number));
+        let idx = i, moving = false, swapped = false;
+        for (const q of pts) {
+          if ((q.x - from.x) ** 2 + (q.y - from.y) ** 2 > 100) moving = true;
+          if (!moving || q.y < geo[1] - 70) continue;   // still a press, or out of the hand's area
+          let hit = -1;
+          slots.forEach(([x, bottom, w, h], k) => { const left = geo[0] + x, top = geo[2] - bottom - h;
+            if (q.x >= left && q.x < left + w && q.y >= top && q.y < top + h) hit = k; });   // the last drawn is on top
+          if (hit >= 0 && hit !== idx) { [order[idx], order[hit]] = [order[hit], order[idx]]; idx = hit; swapped = true; }
+        }
+        await drag(b, from, pts, { touch, steps: 1 });
+        if (swapped) memory = [...order, ...memory.filter((x) => !order.includes(x))];
+      } else if (r < 0.95) {
+        // a key: a number toggles a card, a letter plays as its button would, an arrow moves the cursor, Up and Down play
+        const keys = ['1', '2', '3', '4', '5', '6', 'a', 'c', 'p', 'u', 'g', ' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Shift'];
+        const k = keys[Math.floor(rnd() * keys.length)], order = d.hand.map((h) => h.card);
+        what = `key ${JSON.stringify(k)}`;
+        await key(b, k);
+        const n = order.length;
+        if (/^[1-6]$/.test(k)) { if (Number(k) <= n) toggle(order[Number(k) - 1]); }
+        else if (k === 'Shift') { if (cursor >= 0 && cursor < n && !aiming) toggle(order[cursor]); }
+        else if (aiming) { if (k === 'ArrowUp' || k === 'ArrowDown') aiming = false; }   // the aim plays, or is given up
+        else if (k === 'ArrowLeft' || k === 'ArrowRight') { if (cursor < 0) { if (n) cursor = 0; } else if (n) cursor = (cursor + (k === 'ArrowLeft' ? n - 1 : 1)) % n; }
+        // whether Up aims is the kernel's (client_cursor_play, held in c/tests): read, then held from here on
+        else if (k === 'ArrowUp' && cursor >= 0 && !selection.length) aiming = (await b.evaluate(`document.querySelector('[data-testid="kbd-state"]').dataset.mode`)) === 'target';
       } else if (d.hand.length) {
         const c = d.hand[Math.floor(rnd() * d.hand.length)].card;
         what = `card ${c}`;
@@ -252,9 +322,11 @@ export async function consistRun(b, { games = 3, seed = 1, maxSteps = 4000, log 
         selection = selection.includes(c) ? selection.filter((x) => x !== c) : [...selection, c];
       } else { await sleep(20); continue; }
     }
-    history.push(what); if (process.env.TRACE) console.log(step, what, due, d.turn, d.pills.join(","), d.hand.length);
-    // a table or battle drop that was a move spends the selection (DragContext.tsx endCardDrag)
-    const drop = what.startsWith('battle') || what === 'the empty table';
+    history.push(what); if (process.env.TRACE) console.log(step, what, due, d.turn, d.pills.join(","), d.hand.length, await b.evaluate("document.visibilityState"));
+    // a table or battle drop that was a move spends the selection (DragContext.tsx endCardDrag), and
+    // so do the keys that play the selection (KeyboardInputHandler, and Up with cards selected)
+    const drop = what.startsWith('battle') || what === 'the empty table' || what.includes(' drag of ')
+      || what === 'key "a"' || what === 'key "c"' || what === 'key "p"' || what === 'key " "' || (what === 'key "ArrowUp"' && selection.length);
     state = await compare((k2) => {
       if (drop && before !== JSON.stringify([k2.hand, k2.battles, k2.seats, k2.status])) selection = [];
     });
@@ -269,6 +341,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const b = await launch();
   let r;
   try {
+    // a trap or an exception in the page is printed (a run that never ends is often one)
+    b.listen('Runtime.exceptionThrown', (e) => console.log('PAGE EXCEPTION', e.exceptionDetails?.exception?.description?.slice(0, 600)));
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug');
     await b.until(`window.appReady && window.app.then((x) => x.app_game_store(1) > 0)`);
     r = await consistRun(b, { games, seed, log: console.log });

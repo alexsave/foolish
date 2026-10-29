@@ -17,10 +17,18 @@ typedef uint32_t cd_str; /* interned string id */
 #define CD_MOUNT 0u
 #define CD_DETACHED 0xffffffffu
 
-/* CD_EV_RESIZE and CD_EV_VISIBILITY are window events (cd_listen_window). */
+/* CD_EV_RESIZE and CD_EV_VISIBILITY are window events (cd_listen_window); every other type can be
+ * listened for on a node (cd_listen) or on the whole document (cd_listen_window). The mouse and
+ * touch types are for a drag as the browser has always delivered it: the press on the node, the
+ * moves and the release on the document while it lasts. */
 enum { CD_EV_CLICK, CD_EV_DBLCLICK, CD_EV_INPUT, CD_EV_CHANGE, CD_EV_KEYDOWN, CD_EV_KEYUP,
        CD_EV_FOCUSIN, CD_EV_FOCUSOUT, CD_EV_SUBMIT, CD_EV_POINTERDOWN, CD_EV_POINTERUP,
-       CD_EV_POINTERMOVE, CD_EV_RESIZE, CD_EV_VISIBILITY };
+       CD_EV_POINTERMOVE, CD_EV_RESIZE, CD_EV_VISIBILITY, CD_EV_MOUSEDOWN, CD_EV_MOUSEMOVE,
+       CD_EV_MOUSEUP, CD_EV_TOUCHSTART, CD_EV_TOUCHMOVE, CD_EV_TOUCHEND, CD_EV_TOUCHCANCEL };
+
+/* The event record's mods bits. CD_MOD_EDITING: the event's target is an input, a textarea, a
+ * select or contenteditable (a key typed into a field, which an app's shortcuts leave alone). */
+enum { CD_MOD_SHIFT = 1, CD_MOD_CTRL = 2, CD_MOD_ALT = 4, CD_MOD_META = 8, CD_MOD_EDITING = 16 };
 
 /* ---- memory ----
  * cd_alloc and friends go through malloc, realloc and free. cdom defines those (and calloc)
@@ -136,13 +144,31 @@ uint32_t cd_pending(void);           /* nonzero while strings or a walk wait to 
  * id is the nearest listening ancestor-or-self of the target. path holds the
  * element-child indices from that node down toward the target, one byte per
  * level (byte 0 = which child of the listener), for depth levels (max 4).
+ * x, y: clientX and clientY (a touch event's: its first changed touch, the finger that pressed,
+ * moved or lifted). key: keyCode. ch: the key's character when event.key is one UTF-16 unit
+ * ("a", "A", "3", "-", " "), else 0 ("ArrowUp", "Shift"). mods: CD_MOD_* bits. prevent is
+ * cdom's (cd_prevent_default).
  * A window event (CD_EV_RESIZE, CD_EV_VISIBILITY) has id CD_MOUNT, x and y the viewport's
- * size, and key 1 when the document is hidden. */
-typedef struct { int32_t type, id, x, y, button, key, mods, path, depth; } cd_event_rec;
+ * size, and key 1 when the document is hidden; any other type listened for with cd_listen_window
+ * is the document's event as it is, with id CD_MOUNT (cd_hit names the node under a point). */
+typedef struct { int32_t type, id, x, y, button, key, mods, path, depth, ch, prevent; } cd_event_rec;
 void cd_on_event(const cd_event_rec *e);
 void cd_main(void);                  /* the app's entry, called once at start */
 uint32_t cd_input_value(cd_id id, char *dst, uint32_t cap); /* copy an input's value on demand */
-void cd_listen_window(uint32_t ev);  /* deliver CD_EV_RESIZE or CD_EV_VISIBILITY to cd_on_event */
+/* Deliver ev for the whole page: CD_EV_RESIZE on the window, every other type on the document
+ * (keys, and the moves and release of a drag). Listening twice is listening once. The listener
+ * is not passive, so cd_prevent_default works on a touchmove (it stops the page scrolling). */
+void cd_listen_window(uint32_t ev);
+void cd_unlisten_window(uint32_t ev); /* stop delivering it (a drag that ended) */
+/* During cd_on_event: the browser's default action for this event is not taken (event.preventDefault
+ * once the hook returns): no native drag after a mousedown, no scroll after a touchmove, no mouse
+ * events and click after a touchend, no character typed after a keydown. */
+void cd_prevent_default(void);
+/* The node an event at (x, y) in the viewport would be delivered to: the nearest listening
+ * ancestor-or-self of the topmost element there that takes pointer events (elementFromPoint, so
+ * a pointer-events: none overlay is seen through), whatever type it listens for; 0 for none. The
+ * browser lays the page out first if anything changed. */
+cd_id cd_hit(int32_t x, int32_t y);
 typedef struct { int32_t w, h, hidden, dpr100; } cd_viewport_rec;
 /* innerWidth, innerHeight, document.hidden and devicePixelRatio (times 100, rounded), read now */
 void cd_viewport(cd_viewport_rec *v);

@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { launch, serve, FOOLISH, openTable } from './cdp.mjs';
 import { playToEnd } from './play.mjs';
 import { consistRun, READ_DOM, clickCard, kernel } from './consist.mjs';
+import { drag, key, centre as restingCentre } from './input.mjs';
 
 const golden = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/bout_2p_attacker.html'), 'utf8');
 const server = await serve(8720, FOOLISH);
@@ -56,7 +57,6 @@ try {
       .replace(/ background-image: var\(--tex-fern\);/g, '')
       .replace(' style="background-image: var(--tex-wool);"', '');
     let theirs = await b.evaluate(`(() => { const d = document.createElement('div'); d.innerHTML = ${JSON.stringify(golden)};
-      d.querySelector('[data-testid="kbd-state"]').remove();   // keyboard play: not ported
       d.querySelector('svg marker#arrowhead').closest('svg').remove();   // the cover arrows' layer: not ported
       return d.innerHTML; })()`);
     // jsdom could not parse the action area's bottom (max() and env()); the seat ring's
@@ -437,6 +437,203 @@ try {
     assert.deepEqual(await all('[data-table-container] [data-battle-index]', 'e.dataset.card'), ['1-5', '3-5', '0-5']);
     assert.deepEqual(k.battles, ['1-5/1-7', '3-5/-', '0-5/-']);
     assert.equal(await b.evaluate(`[...document.querySelectorAll('div')].some((d) => d.style.zIndex === '10000')`), false, 'no overlay');
+  });
+
+  // ---- drag and drop, and keyboard play (README, Drag and drop; Keyboard) ------------------------
+  // A board of app_debug_board (k: 0 the golden's, 1 to 3 below), the bot held, textures off.
+  const board = async (k) => {
+    await openTable(b, 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug', { hold: true });
+    if (k) await b.evaluate(`window.app.then((x) => x.app_debug_board(${k}))`);
+    await idle();
+  };
+  const hand = () => all('[data-hand-plane] [data-card]', 'e.dataset.card');
+  const reds = () => all('[data-hand-plane] [data-card]', 'e.style.borderColor === "red" ? e.dataset.card : ""').then((x) => x.filter(Boolean));
+  const battles = () => all('[data-table-container] > [data-location="table"]', '[...e.querySelectorAll("[data-card]")].map((c) => c.dataset.card).join("/")');
+  const cardAt = (c) => restingCentre(b, `[data-hand-plane] [data-card="${c}"]`);
+  const battleAt = (c) => restingCentre(b, `[data-table-container] [data-battle-index][data-card="${c}"]`);
+  // What shows mid-drag: the shadow's badge and cards, the drop cells, the amber cells, the dragged card's look.
+  const midDrag = () => b.evaluate(`(() => { const s = document.querySelector('.drag-shadow');
+    return { badge: s?.querySelector('.drag-shadow__indicator')?.textContent ?? null,
+      cards: s ? [...s.querySelectorAll('.drag-shadow__cards > div')].map((e) => e.firstElementChild.textContent.replace(/\\s/g, '')) : null,
+      at: s ? [s.style.left, s.style.top] : null,
+      cells: [...document.querySelectorAll('[data-table-container] > [data-location="table"]')].filter((e) => e.style.borderStyle === 'dashed').map((e) => e.dataset.battleIndex),
+      amber: [...document.querySelectorAll('[data-table-container] > [data-location="table"]')].filter((e) => e.style.borderStyle === 'solid' && e.style.borderColor === 'rgb(210, 144, 2)').map((e) => e.querySelector('[data-card]').dataset.card),
+      look: [...document.querySelectorAll('[data-hand-plane] [data-card]')].map((e) => e.dataset.card + ':' + e.style.borderColor + ':' + e.style.opacity) }; })()`);
+  const TABLE_SPOT = { x: 512, y: 300 };   // open table, away from the battles and the hand's area
+
+  for (const touch of [false, true]) {
+    const by = touch ? ' (touch)' : '';
+    await check(`a card dragged onto the table attacks; the shadow names the move over the drop cells while it is held${by}`, async () => {
+      await board(0);   // the golden's: 6s may be thrown in
+      let seen = null;
+      await drag(b, await cardAt('0-5'), [TABLE_SPOT], { touch, atEach: async () => { seen = await midDrag(); } });
+      assert.deepEqual(seen.badge, '⚔️ Attack', 'the badge names the kernel\'s move');
+      assert.deepEqual(seen.at, ['512px', '260px'], 'over the pointer, 40 px up');
+      assert.deepEqual(seen.cells, ['2'], 'one drop cell, past the two battles');
+      assert.ok(seen.look.includes('0-5:red:1'), `the dragged card shows the selection's border: ${seen.look}`);
+      await idle();
+      assert.deepEqual(await battles(), ['1-5/1-7', '3-5', '0-5'], 'the attack is played');
+      assert.deepEqual(await hand(), ['1-6', '3-11', '3-13']);
+      const after = await midDrag();
+      assert.equal(after.badge, null, 'the shadow is gone');
+      assert.deepEqual(after.cells, [], 'and the drop cells');
+    });
+
+    await check(`a card dragged onto a battle it beats covers it (the kernel's pairing), the cell in amber while it is held; onto one it cannot beat, nothing${by}`, async () => {
+      await board(1);   // I defend 7h and Qd with 9h Kd 6c 6s
+      await b.click('[data-hand-plane] [data-card="3-12"]');   // Kd selected
+      let seen = null;
+      // 6s onto 7h: no move. The card comes back, the selection is untouched.
+      await drag(b, await cardAt('0-5'), [await battleAt('1-6')], { touch, atEach: async () => { seen = await midDrag(); } });
+      assert.equal(seen.badge, null, 'no badge for a drop that is no move');
+      assert.deepEqual(seen.amber, [], 'no cell in amber');
+      await idle();
+      assert.deepEqual(await battles(), ['1-6', '3-11'], 'nothing played');
+      assert.deepEqual(await hand(), ['1-8', '3-12', '2-5', '0-5'], 'the card is back in its place');
+      assert.deepEqual(await reds(), ['3-12'], 'the selection untouched');
+      // 9h onto 7h: a cover, amber while held.
+      await drag(b, await cardAt('1-8'), [await battleAt('1-6')], { touch, atEach: async () => { seen = await midDrag(); } });
+      assert.equal(seen.badge, '🛡️ Cover');
+      assert.deepEqual(seen.amber, ['1-6'], 'the cover\'s cell in amber');
+      assert.deepEqual(seen.cards, ['9\u2665'], 'the shadow carries the dragged card alone (it is not selected)');
+      await idle();
+      assert.deepEqual(await battles(), ['1-6/1-8', '3-11'], 'covered as the kernel paired it');
+      assert.deepEqual(await reds(), [], 'a drop that is a move spends the selection');
+      assert.deepEqual((await midDrag()).amber, [], 'the amber is gone');
+    });
+
+    await check(`a press released within 150 ms after a 5 px wiggle is a tap and toggles the card; a 200 ms hold selects nothing${by}`, async () => {
+      await board(0);
+      const at = await cardAt('1-6');
+      await drag(b, at, [{ x: at.x + 3, y: at.y + 4 }], { touch, steps: 2, stepMs: 5 });
+      assert.deepEqual(await reds(), ['1-6'], 'a tap selects');
+      await drag(b, at, [{ x: at.x + 3, y: at.y + 4 }], { touch, steps: 2, stepMs: 5 });
+      assert.deepEqual(await reds(), [], 'a second tap takes it back');
+      await drag(b, at, [], { touch, holdMs: 200 });
+      assert.deepEqual(await reds(), [], 'a long press selects nothing');
+      assert.equal(await b.evaluate('window.app.then((x) => x.app_drag(0))'), 0, 'and the drag is over');
+    });
+
+    await check(`a card dragged along the hand changes places with the cards it passes, dimmed meanwhile, and the game keeps the order${by}`, async () => {
+      await board(0);
+      let seen = null;
+      const from = await cardAt('0-5'), last = await cardAt('3-13');
+      await drag(b, from, [{ x: from.x, y: from.y - 30 }, { x: last.x, y: last.y - 30 }], { touch, steps: 8, atEach: async (i) => { if (i === 1) seen = await midDrag(); } });
+      assert.ok(seen.look.some((l) => l === '0-5:black:0.3'), `the dragged card is dimmed: ${seen.look}`);
+      assert.equal(seen.badge, null, 'no shadow within the hand');
+      await idle();
+      assert.deepEqual(await hand(), ['1-6', '3-11', '3-13', '0-5'], 'the six went to the end, the others moved left one by one');
+      assert.deepEqual(await all('[data-hand-plane] [data-card]', 'e.dataset.cardIndex'), ['0', '1', '2', '3']);
+      assert.deepEqual(await reds(), [], 'a drag is no tap');
+      assert.deepEqual((await kernel(b)).hand, ['1-6', '3-11', '3-13', '0-5'], 'the game holds the new order');
+      await b.until('window.app.then((x) => x.app_saves_pending() === 0)');
+      await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug');
+      await ready();
+      assert.deepEqual(await hand(), ['1-6', '3-11', '3-13', '0-5'], 'a reload draws it');
+    });
+  }
+
+  await check('a transfer by drag: the shadow says Pass over a drop cell; dragging a selected card carries the selection', async () => {
+    await board(2);   // I defend 6h with 6c 6s 9h Kd
+    await b.click('[data-hand-plane] [data-card="0-5"]');
+    await b.click('[data-hand-plane] [data-card="2-5"]');   // 6s and 6c selected
+    let seen = null;
+    await drag(b, await cardAt('0-5'), [TABLE_SPOT], { atEach: async () => { seen = await midDrag(); } });
+    assert.equal(seen.badge, '🔄 Pass');
+    assert.deepEqual(seen.cards.length, 2, 'the shadow carries both selected cards');
+    assert.deepEqual(seen.cells, ['1', '2'], 'two drop cells, one a card');
+    await idle();
+    assert.deepEqual(await battles(), ['1-5', '2-5', '0-5'], 'both transferred, in the kernel\'s order for the move');
+  });
+
+  await check('keys: 3 toggles the third card, 1 then A attacks with the first; letters do nothing with Ctrl, Alt or Meta held', async () => {
+    await board(0);
+    await key(b, '3');
+    assert.deepEqual(await reds(), ['3-11']);
+    await key(b, '3');
+    assert.deepEqual(await reds(), []);
+    await key(b, '1', { meta: true });
+    assert.deepEqual(await reds(), [], 'Meta+1 is the browser\'s');
+    await key(b, '1');
+    assert.deepEqual(await pills(), ['Attack']);
+    await key(b, 'a', { ctrl: true });
+    assert.deepEqual(await battles(), ['1-5/1-7', '3-5'], 'Ctrl+A plays nothing');
+    await key(b, 'a');
+    await idle();
+    assert.deepEqual(await battles(), ['1-5/1-7', '3-5', '0-5'], 'A attacked with the six');
+    assert.deepEqual(await reds(), [], 'and spent the selection');
+  });
+
+  await check('arrows: the cursor sits under its card as React draws it, Shift toggles, Meta+Right moves the card, and the hidden state says so', async () => {
+    await board(0);
+    const st = () => b.evaluate(`(() => { const e = document.querySelector('[data-testid="kbd-state"]'); return [e.dataset.mode, e.dataset.sel, e.dataset.target]; })()`);
+    assert.deepEqual(await st(), ['none', '', '']);
+    await key(b, 'ArrowRight');
+    await key(b, 'ArrowRight');
+    assert.deepEqual(await st(), ['cards', '1-6', '']);
+    const geo = await b.evaluate(`(() => { const c = document.querySelector('[data-hand-plane] [data-card="1-6"]').getBoundingClientRect();
+      const u = [...document.querySelectorAll('[data-game-container] > div')].find((e) => e.style.zIndex === '1500');
+      const s = u.style; return [parseFloat(s.left) - (c.x + 0.15 * c.width), parseFloat(s.top) - (c.y + c.height + 4), parseFloat(s.width) - 0.7 * c.width, s.height, s.position, s.background]; })()`);
+    for (const d of geo.slice(0, 3)) assert.ok(Math.abs(d) < 0.01, `the underline at rect.x + 0.15 w, rect.y + h + 4, 0.7 w: ${geo}`);
+    assert.deepEqual(geo.slice(3), ['3px', 'fixed', 'rgb(17, 17, 17)']);
+    await key(b, 'Shift');
+    assert.deepEqual(await reds(), ['1-6'], 'Shift toggles the card under the cursor');
+    await key(b, 'ArrowRight', { shift: true });
+    assert.deepEqual(await reds(), ['1-6', '3-11'], 'Shift+Right sweeps on and toggles');
+    await key(b, 'ArrowLeft', { meta: true });
+    assert.deepEqual(await hand(), ['0-5', '3-11', '1-6', '3-13'], 'Meta+Left moved the card under the cursor');
+    assert.deepEqual(await st(), ['cards', '3-11', ''], 'and the cursor with it');
+    assert.deepEqual((await kernel(b)).hand, ['0-5', '3-11', '1-6', '3-13'], 'kept in the game');
+  });
+
+  await check('arrows: Up on a card that covers two battles aims (the arrow and the box on the target), Right cycles, Up covers the one shown', async () => {
+    await board(1);   // 6c, the trump, covers 7h or Qd
+    const st = () => b.evaluate(`(() => { const e = document.querySelector('[data-testid="kbd-state"]'); return [e.dataset.mode, e.dataset.sel, e.dataset.target]; })()`);
+    for (let i = 0; i < 3; i++) await key(b, 'ArrowRight');   // 9h, Kd, 6c
+    assert.deepEqual(await st(), ['cards', '2-5', '']);
+    await key(b, 'ArrowUp');
+    assert.deepEqual(await st(), ['target', '2-5', '1-6'], 'aiming at the first battle the kernel lists');
+    const arrow = () => b.evaluate(`(() => { const s = document.querySelector('svg marker#kbd-arrow')?.closest('svg'); if (!s) return null;
+      const l = s.querySelector('line'), r = s.querySelector(':scope > rect'), t = document.querySelector('[data-battle-index][data-card="' + document.querySelector('[data-testid="kbd-state"]').dataset.target + '"]').getBoundingClientRect();
+      const c = document.querySelector('[data-hand-plane] [data-card="2-5"]').getBoundingClientRect();
+      return { from: [+l.getAttribute('x1') - (c.x + c.width / 2), +l.getAttribute('y1') - c.y], to: [+l.getAttribute('x2') - (t.x + t.width / 2), +l.getAttribute('y2') - (t.y + t.height / 2)],
+        box: [+r.getAttribute('x') - (t.x - 3), +r.getAttribute('width') - (t.width + 6)], stroke: l.getAttribute('stroke'), z: s.style.zIndex }; })()`);
+    const a = await arrow();
+    for (const d of [...a.from, ...a.to, ...a.box]) assert.ok(Math.abs(d) < 0.01, `the arrow from the card's top to the target's centre, the box 3 px out: ${JSON.stringify(a)}`);
+    assert.equal(a.stroke, '#ff2d2d');
+    await key(b, 'ArrowRight');
+    assert.deepEqual(await st(), ['target', '2-5', '3-11'], 'Right cycles to the next');
+    await key(b, 'ArrowUp');
+    await idle();
+    assert.deepEqual(await battles(), ['1-6', '3-11/2-5'], 'Up covered the Qd with the trump');
+    assert.deepEqual((await st())[0], 'cards', 'the aim is over, the cursor stays');
+    assert.equal(await arrow(), null, 'the arrow is gone');
+  });
+
+  await check('arrows: a card that may cover or transfer aims at the battle, then the PASS place right of the row; Down takes when Take shows, and says Good when Good shows', async () => {
+    await board(2);   // 6c covers 6h or transfers
+    await key(b, 'ArrowRight');   // 6c
+    await key(b, 'ArrowUp');
+    await key(b, 'ArrowRight');
+    const pass = await b.evaluate(`(() => { const s = document.querySelector('svg marker#kbd-arrow').closest('svg'), l = s.querySelector('line'), t = s.querySelector('text');
+      const cells = [...document.querySelectorAll('[data-location="table"]')].map((e) => e.getBoundingClientRect());
+      const right = Math.max(...cells.map((r) => r.right)), mid = (Math.min(...cells.map((r) => r.top)) + Math.max(...cells.map((r) => r.bottom))) / 2;
+      return [+l.getAttribute('x2') - (right + 46), +l.getAttribute('y2') - mid, l.getAttribute('stroke-dasharray'), t.textContent, document.querySelector('[data-testid="kbd-state"]').dataset.target]; })()`);
+    assert.ok(Math.abs(pass[0]) < 0.01 && Math.abs(pass[1]) < 0.01, `the pass point is 46 px right of the row, at its middle: ${pass}`);
+    assert.deepEqual(pass.slice(2), ['7 5', 'PASS', 'pass']);
+    await key(b, 'ArrowDown');
+    assert.equal((await b.evaluate(`document.querySelector('[data-testid="kbd-state"]').dataset.mode`)), 'cards', 'Down gives up the aim');
+    assert.ok((await pills()).includes('Pickup'), 'Take shows');
+    await key(b, 'ArrowDown');
+    await idle();
+    assert.deepEqual(await battles(), [], 'Down took');
+    assert.ok((await hand()).includes('1-5'), 'the 6h is in my hand');
+    await board(3);   // all covered: Good shows
+    assert.deepEqual(await pills(), ['Good']);
+    await key(b, 'ArrowDown');
+    await idle();
+    assert.deepEqual(await b.evaluate('window.app.then((x) => x.app_last_reject())'), 0);
+    assert.deepEqual(await pills(), [], 'Down said Good');
   });
 
   await check('the table is the kernel\'s game and keeps React\'s rules at every click and bot step of played games (tools/consist.mjs)', async () => {

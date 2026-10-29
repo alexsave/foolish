@@ -411,7 +411,10 @@ static cd_id battle_defense[52]; /* its cover's face, 0 while uncovered */
 static cd_id battle_cell[52];    /* its cell, the box the row lays out and glides */
 /* What each battle shows now, by attack id: the attack turned (covered, or a cover flying onto it),
  * the attack and its cover hidden (their flight is up), and the transition the turn runs on. */
-static struct { int8_t tilt, veil_a, veil_d; int32_t ms; } bshown[52];
+static struct { int8_t tilt, veil_a, veil_d, amber; int32_t ms; } bshown[52];
+/* The drop a drag would make now, while it is a game action: the kernel's move, else move_type -1
+ * (render_drag keeps it; the battles and the drop cells read it). */
+static const ClientPlay *drop_now;
 
 /* A battle item's data: its cover's card id + 1, 0 while uncovered. */
 static uint32_t cover_data(const Battle *b) { return b->defense.suit >= 0 ? (uint32_t)card_to_id(b->defense) + 1 : 0; }
@@ -447,6 +450,15 @@ static void battle_show(int aid, const Battle *b) {
   if (va != bshown[aid].veil_a) veil_set(att, bshown[aid].veil_a = (int8_t)va);
   int vd = covered && veiled(SHOW.veil_table, card_to_id(b->defense));
   if (covered && vd != bshown[aid].veil_d) veil_set(battle_defense[aid], bshown[aid].veil_d = (int8_t)vd);
+  /* a drag's cover would land here (TableBattles.tsx isCardBeingCovered): the cell in amber */
+  int amber = 0;
+  if (drop_now && drop_now->move_type == MOVE_COVER)
+    for (int k = 0; k < drop_now->n_cards; k++) amber |= card_to_id(drop_now->attack_cards[k]) == aid;
+  if (amber != bshown[aid].amber) {
+    bshown[aid].amber = (int8_t)amber;
+    cd_set_style(battle_cell[aid], ZS("border"), amber ? ZS("3px solid rgb(210, 144, 2)") : ZS(""));
+    cd_set_style(battle_cell[aid], ZS("background-color"), amber ? ZS("rgba(210, 144, 2, 0.1)") : ZS(""));
+  }
 }
 
 static cd_id battle_create(void *ctx, uint32_t i, uint32_t *data) {
@@ -458,14 +470,15 @@ static cd_id battle_create(void *ctx, uint32_t i, uint32_t *data) {
   cd_id cell = cd_id_new();
   battle_cell[aid] = cell;
   OPEN("div");
-  cd_listen(cell, CD_EV_CLICK);
-  cd_tag_set(cell, TAG_BATTLE | (uint32_t)aid);
+  cd_name_open(cell);
   STYLE("display: flex; flex-direction: column; align-items: center; position: relative; width: 60px; "
         "height: 80px; margin: 5px; justify-content: center;");
   ATTR("data-location", "table");
   face_open(b->attack, 0);
   cd_attr(S_STYLE, face_style(b->attack, FACE_ATTACK, 0, 0, 0, tilt | covered << 1));
-  cd_name_open(battle_attack[aid] = cd_id_new());
+  /* the attack card is the battle's target, for a click and under a drag (data-battle-index) */
+  cd_listen(battle_attack[aid] = cd_id_new(), CD_EV_CLICK);
+  cd_tag_set(battle_attack[aid], TAG_BATTLE | (uint32_t)aid);
   cd_attr(ZS("data-battle-index"), index_str(i));
   data_card(b->attack);
   CLOSE();
@@ -473,7 +486,7 @@ static cd_id battle_create(void *ctx, uint32_t i, uint32_t *data) {
   CLOSE();
   bshown[aid].tilt = (int8_t)tilt;
   bshown[aid].ms = SHOW.flight_ms;
-  bshown[aid].veil_a = bshown[aid].veil_d = 0;
+  bshown[aid].veil_a = bshown[aid].veil_d = bshown[aid].amber = 0;
   battle_show(aid, b);
   *data = cover_data(b);
   return cell;
@@ -517,14 +530,45 @@ static int8_t cell_glided[52];   /* a glide was started on it: its transition is
 static double cell_glide_end[52]; /* when that glide is over (cd_now ms): until then the cell is not at its rest */
 static int row_ms;               /* React's rowMs: the duration of the step that opened last */
 
+/* The drop cells a drag holds open beside the row for an attack or a transfer, one a card
+ * (TableBattles.tsx emptyDropZones): dashed amber with a "+", after the battles; each is a target
+ * for the drop past the last battle, which the kernel reads as the table. */
+static cd_id drop_cell[MAX_MOVE_CARDS];
+static int n_drop_cells;
+static void drop_cells_set(int want, uint32_t n_battles) {
+  while (n_drop_cells > want) cd_remove(drop_cell[--n_drop_cells]);
+  battles.end = n_drop_cells ? drop_cell[0] : 0; /* the battles stay before them */
+  while (n_drop_cells < want) {
+    cd_id id = cd_id_new();
+    cd_at(battles.parent, 0);
+    OPEN("div");
+    cd_name_open(id);
+    ATTR("data-location", "table");
+    cd_attr(ZS("data-battle-index"), index_str(n_battles + (uint32_t)n_drop_cells));
+    STYLE("display: flex; flex-direction: column; align-items: center; position: relative; width: 60px; height: 80px; "
+          "margin: 5px; justify-content: center; border: 3px dashed rgb(210, 144, 2); background-color: rgba(210, 144, 2, 0.1); "
+          "border-radius: 8px;");
+    OPEN("div");
+    STYLE("width: 40px; height: 60px; border: 2px dashed rgb(210, 144, 2); border-radius: 4px; display: flex; "
+          "align-items: center; justify-content: center; font-size: 24px; color: rgb(210, 144, 2); opacity: 0.7;");
+    TEXT("+");
+    CLOSE();
+    CLOSE();
+    drop_cell[n_drop_cells++] = id;
+    battles.end = drop_cell[0];
+  }
+}
+
 static void render_table(void) {
   uint32_t n = (uint32_t)RV->num_battles;
   for (uint32_t i = 0; i < n; i++) keys[i] = (uint32_t)card_to_id(RV->battles[i].attack) + 1;
   int same = n == n_row_keys && !__builtin_memcmp(keys, row_keys, n * sizeof keys[0]);
+  int cells = drop_now && (drop_now->move_type == MOVE_ATTACK || drop_now->move_type == MOVE_PASS) ? drop_now->n_cards : 0;
+  int cells_change = cells != n_drop_cells;
   double drawn[52][2];
   int8_t had[52] = {0};
   double r[4];
-  if (!same)
+  if (!same) /* where each cell is drawn now, the drop cells a drag held open included (React's rest) */
     for (uint32_t i = 0; i < n_row_keys; i++) {
       int aid = (int)row_keys[i] - 1;
       if (!battle_cell[aid]) continue;
@@ -532,7 +576,23 @@ static void render_table(void) {
       drawn[aid][0] = r[0]; drawn[aid][1] = r[1];
       had[aid] = 1;
     }
+  if (cells_change && cells < n_drop_cells) drop_cells_set(cells, n); /* gone before the list: its tail goes after the battles */
   cd_list_update(&battles, keys, n, &BATTLE_FNS);
+  if (cells_change && cells > n_drop_cells) drop_cells_set(cells, n);
+  else if (n_drop_cells && !same) /* their indices follow the battle count */
+    for (int k = 0; k < n_drop_cells; k++) cd_set_attr(drop_cell[k], ZS("data-battle-index"), index_str(n + (uint32_t)k));
+  if (same && cells_change) { /* the drop cells make room at once, with no glide (React's ms 0): every glide cut, the rests measured */
+    for (uint32_t i = 0; i < n; i++) {
+      int aid = (int)keys[i] - 1;
+      if (cell_glided[aid]) { cd_set_style(battle_cell[aid], ZS("transition"), ZS("none")); cd_set_style(battle_cell[aid], ZS("transform"), ZS("")); cell_glided[aid] = 0; }
+    }
+    for (uint32_t i = 0; i < n; i++) {
+      int aid = (int)keys[i] - 1;
+      cd_rect(battle_cell[aid], r);
+      cell_rest[aid][0] = r[0]; cell_rest[aid][1] = r[1];
+    }
+    return;
+  }
   if (same) return;
   __builtin_memcpy(row_keys, keys, n * sizeof keys[0]);
   n_row_keys = n;
@@ -575,9 +635,57 @@ static HandLayout HL;
 static double lift, act_h = -1, pills_b = -1, plane_h = -1; /* lift, and the three lengths as drawn */
 static cd_id action_area, pills_box, hand_plane;
 static cd_list hand, pills;
-/* What each hand card shows now, by card id: its box, its bottom, selected, its index, hidden (a
- * flight carries it), and its node (where a flight leaves from). */
-static struct { double x, w, h, bottom; int8_t sel, index, veil; cd_id node; } shown[52];
+/* What each hand card shows now, by card id: its box, its bottom, its border red (selected, or
+ * dragged off the hand), dimmed (dragged within it), its index, hidden (a flight carries it), and
+ * its node (where a flight leaves from). */
+static struct { double x, w, h, bottom; int8_t sel, dim, index, veil; cd_id node; } shown[52];
+
+/* My hand in the order it is drawn (React's localHandOrder): the board's cards in the order the
+ * table remembers (client_hand_remember, client_hand_shown: a card keeps its slot while it is away,
+ * a new one goes to the end), which drags and the keyboard rearrange (client_hand_swap). */
+static uint8_t hand_memory[52];
+static int hand_memory_n;
+static Card HAND[MAX_HAND_SIZE];
+static int hand_n;
+static void hand_order(void) {
+  hand_memory_n = client_hand_remember(hand_memory, hand_memory_n, (int)sizeof hand_memory, V->my_hand, V->my_hand_count);
+  hand_n = V->my_hand_count;
+  client_hand_shown(hand_memory, hand_memory_n, V->my_hand, hand_n, HAND);
+}
+
+/* A drag of a hand card (DragContext.tsx): pressed on a card, and from 10 px a drag, which within
+ * the hand's area rearranges it and outside it is a game action whose drop the kernel reads. */
+static struct {
+  int on;              /* a card is pressed (isDraggingCard) */
+  int index;           /* its index in the hand as drawn (draggedCardIndex, following it as it swaps) */
+  int x0, y0;          /* where it was pressed */
+  double t0;           /* when */
+  int moving;          /* it has moved more than 10 px (isActuallyDragging) */
+  int swapped;         /* the hand was rearranged by it (hasSwapped) */
+  int action;          /* outside the hand's area: a game action (isDraggingForGameAction) */
+  int cid;             /* the card dragged for the action (draggedCard) */
+  int x, y;            /* the pointer (currentCursorPos) */
+  double area_top;     /* the hand's area starts here: the plane's top less a card's height */
+  int8_t target;       /* client_drop_target where the pointer is */
+  int asked;           /* PLAY is the kernel's answer for the target and cards below */
+  int8_t asked_target, asked_n;
+  uint8_t asked_cards[MAX_MOVE_CARDS];
+  ClientPlay play;     /* what the drop would be (determineGameAction) */
+} DRAG;
+/* The keyboard's cursor (KeyboardPlayMode.tsx): the card under it by its index in the hand as drawn
+ * (-1 none), and while a card is aimed, the targets cycled: a battle (its index and attack) or the
+ * transfer (battle -1), the one shown idx. */
+static struct {
+  int sel;
+  int n_targets, idx;
+  int8_t battle[MAX_BATTLES + 1];
+  Card attack[MAX_BATTLES + 1];
+} KB = {.sel = -1};
+static int dragged_look(int cid, int *dim) { /* ActionButtons.tsx CardDiv: the dragged card's border and opacity */
+  int it = DRAG.on && DRAG.index >= 0 && DRAG.index < hand_n && card_to_id(HAND[DRAG.index]) == cid;
+  *dim = it && DRAG.moving && !DRAG.action;
+  return it && DRAG.action;
+}
 
 static int selected(int cid) {
   for (int i = 0; i < nsel; i++) if (sel[i] == cid) return 1;
@@ -589,15 +697,19 @@ static double card_bottom(const HandRect *r) { return HL.rows.height - r->y - r-
 
 static cd_id hand_create(void *ctx, uint32_t i, uint32_t *data) {
   (void)ctx;
-  Card c = V->my_hand[i];
+  Card c = HAND[i];
   const HandRect *r = &HL.slot[i];
-  int cid = card_to_id(c);
+  int cid = card_to_id(c), dim;
+  int red = selected(cid) | dragged_look(cid, &dim);
   cd_id id = cd_id_new();
   face_open(c, thin(r));
-  cd_attr(S_STYLE, face_style(c, FACE_HAND, r, card_bottom(r), selected(cid), 0));
+  cd_attr(S_STYLE, face_style(c, FACE_HAND, r, card_bottom(r), red, 0));
   shown[cid].x = r->x; shown[cid].w = r->w; shown[cid].h = r->h; shown[cid].bottom = card_bottom(r);
-  shown[cid].sel = (int8_t)selected(cid);
-  cd_listen(id, CD_EV_CLICK);
+  shown[cid].sel = (int8_t)red;
+  shown[cid].dim = 0;
+  /* the press starts a drag or a tap (DragContext.tsx startCardDrag): mouse and touch, as React */
+  cd_listen(id, CD_EV_MOUSEDOWN);
+  cd_listen(id, CD_EV_TOUCHSTART);
   cd_tag_set(id, TAG_CARD | (uint32_t)cid);
   cd_attr(ZS("data-card-index"), index_str(i));
   shown[cid].index = (int8_t)i;
@@ -608,6 +720,8 @@ static cd_id hand_create(void *ctx, uint32_t i, uint32_t *data) {
   CLOSE();
   shown[cid].node = id;
   shown[cid].veil = 0;
+  if (dim) cd_set_style(id, ZS("opacity"), ZS("0.3"));
+  shown[cid].dim = (int8_t)dim;
   if (veiled(SHOW.veil_hand, cid)) veil_set(id, shown[cid].veil = 1);
   *data = (uint32_t)cid;
   return id;
@@ -619,12 +733,14 @@ static void hand_patch(void *ctx, uint32_t i, cd_item *it) {
   int cid = (int)it->data;
   const HandRect *r = &HL.slot[i];
   double bottom = card_bottom(r);
-  int8_t sl = (int8_t)selected(cid);
+  int dim;
+  int8_t sl = (int8_t)(selected(cid) | dragged_look(cid, &dim));
   if (r->x != shown[cid].x) cd_set_style_num(it->node, ZS("left"), shown[cid].x = r->x, CD_UNIT_PX);
   if (bottom != shown[cid].bottom) cd_set_style_num(it->node, ZS("bottom"), shown[cid].bottom = bottom, CD_UNIT_PX);
   if (r->w != shown[cid].w) cd_set_style_num(it->node, ZS("width"), shown[cid].w = r->w, CD_UNIT_PX);
   if (r->h != shown[cid].h) cd_set_style_num(it->node, ZS("height"), shown[cid].h = r->h, CD_UNIT_PX);
   if (sl != shown[cid].sel) cd_set_style(it->node, ZS("border-color"), (shown[cid].sel = sl) ? ZS("red") : ZS("black"));
+  if (dim != shown[cid].dim) cd_set_style(it->node, ZS("opacity"), (shown[cid].dim = (int8_t)dim) ? ZS("0.3") : ZS("1"));
   if (shown[cid].index != (int8_t)i) cd_set_attr(it->node, ZS("data-card-index"), index_str((uint32_t)(shown[cid].index = (int8_t)i)));
   int8_t v = (int8_t)veiled(SHOW.veil_hand, cid);
   if (v != shown[cid].veil) veil_set(it->node, shown[cid].veil = v);
@@ -763,9 +879,10 @@ static void render_hand(void) {
   plane_h = HL.rows.height;
 
   /* A card that turns thin changes its layout, so its key does too. */
-  for (int i = 0; i < V->my_hand_count; i++)
-    keys[i] = (uint32_t)card_to_id(V->my_hand[i]) + 1 + (thin(&HL.slot[i]) ? 64u : 0u);
-  cd_list_update(&hand, keys, (uint32_t)V->my_hand_count, &HAND_FNS);
+  hand_order();
+  for (int i = 0; i < hand_n; i++)
+    keys[i] = (uint32_t)card_to_id(HAND[i]) + 1 + (thin(&HL.slot[i]) ? 64u : 0u);
+  cd_list_update(&hand, keys, (uint32_t)hand_n, &HAND_FNS);
 
   uint32_t bits = current_pills(), n = 0;
   for (uint32_t p = 0; p < 5; p++)
@@ -1651,6 +1768,9 @@ static void flights_update(void) {
 /* ---- one render ----------------------------------------------------------- */
 
 static cd_str turn_shown;
+static int drag_ask(void);
+static void render_drag(void);
+static void render_keys(void);
 
 /* The board on screen: the run's (where it stands now) while one plays, else the game's. */
 static void render_board(void) {
@@ -1665,12 +1785,16 @@ static void render_board(void) {
     SHOWN_ROLES.still = V->status == GAME_STATUS_GAME_OVER; /* a finished board's marks fly nowhere (syncFromView) */
   }
   client_view_rules(V, SHOW.from_deck, SHOW.to_flipped, SHOW.trump_out, &R);
+  drop_now = 0;
+  if (DRAG.on && DRAG.action) { DRAG.asked = 0; drag_ask(); drop_now = &DRAG.play; } /* asked again on the board now drawn */
   render_deck();
   render_discard();
   render_hand();
   render_table();
   render_seats();
   render_end();
+  render_drag();
+  render_keys();
   cd_str turn = V->status == GAME_STATUS_GAME_OVER ? ZS("over") : bot_pending ? ZS("bot") : ZS("human");
   if (turn != turn_shown) cd_set_attr(container, ZS("data-turn"), turn_shown = turn);
   flights_update();
@@ -1716,9 +1840,10 @@ static unsigned char game_blob[GAME_KEEP_CAP];
 static double game_asked, game_answered;
 static int game_adopted;
 
+static uint32_t saves_asked, saves_answered; /* for the tests: a reload waits for the last put's answer */
 static void game_save(void) {
   int len = game_keep_put(&G, game_blob);
-  if (len > 0) cd_store_put(STORE_GAME, GAME_KEY, sizeof GAME_KEY - 1, game_blob, (uint32_t)len);
+  if (len > 0) { cd_store_put(STORE_GAME, GAME_KEY, sizeof GAME_KEY - 1, game_blob, (uint32_t)len); saves_asked++; }
 }
 
 /* A put that failed is not silent: a notice says the game is not saved (render_saved) until a later
@@ -1742,6 +1867,7 @@ static void render_saved(void) {
 }
 void cd_on_store_put(uint32_t token, uint32_t ok) {
   if (token != STORE_GAME) return; /* the textures' puts: a cache */
+  saves_answered++;
   save_failed = !ok;
   if (!ok && !save_retry_pending) { save_retry_pending = 1; cd_timer_start(SAVE_RETRY_MS, TIMER_SAVE_RETRY); }
   render_saved();
@@ -1892,12 +2018,497 @@ static void toggle(int cid) {
   if (nsel < MAX_MOVE_CARDS) sel[nsel++] = (uint8_t)cid;
 }
 
+static int hand_index(int cid) {
+  for (int i = 0; i < hand_n; i++) if (card_to_id(HAND[i]) == cid) return i;
+  return -1;
+}
+
+/* The hand's order as drawn, kept in the game as a server keeps a seat's (game_rearrange_hand, the
+ * move ASK_REARRANGE_HAND makes): a reload draws it so. React sends it 5 s after a drag; here the
+ * game is local and it is kept at once. Not a move: the bot's clock is left alone. */
+static void hand_keep(void) {
+  Player *p = &G.players[ME];
+  Card order[MAX_HAND_SIZE];
+  uint8_t idx[MAX_HAND_SIZE];
+  client_hand_shown(hand_memory, hand_memory_n, p->hand, p->hand_count, order);
+  for (int i = 0; i < p->hand_count; i++)
+    for (int k = 0; k < p->hand_count; k++)
+      if (card_eq(order[i], p->hand[k])) idx[i] = (uint8_t)k;
+  if (game_rearrange_hand(&G, ME, idx, p->hand_count)) { game_keep_canonical(&G); game_save(); }
+}
+
+/* ---- drag and drop (DragContext.tsx, DragShadow.tsx, TableBattles.tsx) ----------------------
+ * Mouse and touch, as React: the press on a hand card, then the document's moves and release while
+ * it lasts. A press released within 150 ms that neither moved 10 px nor rearranged is a tap, which
+ * toggles the card; a press held longer does nothing. Moved 10 px it is a drag: within the hand's
+ * area (the plane and one card's height above it) it swaps the card with the one under the
+ * pointer, live; outside it, it is a game action, and the kernel says what the drop would be
+ * (client_gesture_cards, client_drop_target, client_play), which the shadow names and the table
+ * shows (the cover's cell in amber, the drop cells of an attack or a transfer). Let go, a move is
+ * played as a pill plays it, and the selection is spent; anything else does nothing. */
+enum { DRAG_SLOP_PX = 10, TAP_MS = 150 };
+static const uint32_t DRAG_EVENTS[] = {CD_EV_MOUSEMOVE, CD_EV_TOUCHMOVE, CD_EV_MOUSEUP, CD_EV_TOUCHEND};
+static void drag_listen(int on) {
+  for (int k = 0; k < 4; k++) {
+    if (on) cd_listen_window(DRAG_EVENTS[k]);
+    else cd_unlisten_window(DRAG_EVENTS[k]);
+  }
+}
+
+/* The kernel's reading of a drop where the pointer is now, on the board on screen (DragContext.tsx
+ * determineGameAction), asked again only when the target or the cards changed (or DRAG.asked was
+ * cleared: every render asks on the board it draws). 1 when the answer differs from the last one. */
+static int drag_ask(void) {
+  cd_id under = cd_hit(DRAG.x, DRAG.y);
+  uint32_t tag = under ? cd_tag(under) : 0;
+  int battle = -1;
+  if (tag & TAG_BATTLE)
+    for (int i = 0; i < V->num_battles; i++) if (card_to_id(V->battles[i].attack) == (int)(tag & 0xff)) battle = i;
+  int8_t target = (int8_t)client_drop_target(V, 0, battle);
+  Card picked[MAX_MOVE_CARDS], cards[MAX_MOVE_CARDS];
+  for (int i = 0; i < nsel; i++) picked[i] = card_of_id(sel[i]);
+  int n = client_gesture_cards(picked, nsel, card_of_id(DRAG.cid), cards);
+  uint8_t ids[MAX_MOVE_CARDS];
+  for (int i = 0; i < n; i++) ids[i] = (uint8_t)card_to_id(cards[i]);
+  if (DRAG.asked && target == DRAG.asked_target && n == DRAG.asked_n
+      && !__builtin_memcmp(ids, DRAG.asked_cards, (size_t)n)) return 0;
+  ClientPlay was = DRAG.play;
+  ClientGesture g;
+  __builtin_memset(&g, 0, sizeof g);
+  g.n_cards = (int8_t)n;
+  g.target = target;
+  for (int i = 0; i < n; i++) g.cards[i] = cards[i];
+  const ClientPlayScratch sc = {&MOVES, MENU, (int)sizeof MENU};
+  if (client_play(&CT, V, &g, &sc, &DRAG.play) != CLIENT_OK) DRAG.play.move_type = -1;
+  DRAG.asked = 1;
+  DRAG.asked_target = target;
+  DRAG.asked_n = (int8_t)n;
+  __builtin_memcpy(DRAG.asked_cards, ids, (size_t)n);
+  if (was.move_type != DRAG.play.move_type || was.n_cards != DRAG.play.n_cards) return 1;
+  for (int i = 0; i < DRAG.play.n_cards; i++)
+    if (!card_eq(was.cards[i], DRAG.play.cards[i]) || !card_eq(was.attack_cards[i], DRAG.play.attack_cards[i])) return 1;
+  return 0;
+}
+
+static void drag_start(const cd_event_rec *e, int cid) {
+  int at = hand_index(cid);
+  if (at < 0) return;
+  if (e->type == CD_EV_MOUSEDOWN) cd_prevent_default(); /* no native drag of a draggable card, no text selection */
+  if (DRAG.on) drag_listen(0);
+  __builtin_memset(&DRAG, 0, sizeof DRAG);
+  DRAG.on = 1;
+  DRAG.index = at;
+  DRAG.x0 = DRAG.x = e->x;
+  DRAG.y0 = DRAG.y = e->y;
+  DRAG.t0 = cd_now();
+  drag_listen(1);
+}
+
+static void render_drag_position(void);
+static void drag_move(const cd_event_rec *e) {
+  if (!DRAG.on) return;
+  if (e->type == CD_EV_TOUCHMOVE) cd_prevent_default(); /* the page does not scroll under a drag */
+  int was_moving = DRAG.moving, was_action = DRAG.action, changed = 0;
+  DRAG.x = e->x;
+  DRAG.y = e->y;
+  int dx = e->x - DRAG.x0, dy = e->y - DRAG.y0;
+  if (dx * dx + dy * dy > DRAG_SLOP_PX * DRAG_SLOP_PX) DRAG.moving = 1;
+  double r[4];
+  cd_rect(hand_plane, r);
+  int in_area = e->y >= r[1] - WEB_HAND.card_h;
+  if (DRAG.moving && !in_area) {
+    if (!DRAG.action) { DRAG.action = 1; DRAG.cid = card_to_id(HAND[DRAG.index]); DRAG.asked = 0; }
+  } else if (DRAG.action && in_area) {
+    DRAG.action = 0;
+  }
+  if (DRAG.moving && !DRAG.action) { /* a rearrange: the card under the pointer changes places with it */
+    cd_id under = cd_hit(e->x, e->y);
+    uint32_t tag = under ? cd_tag(under) : 0;
+    int to = tag & TAG_CARD ? hand_index((int)(tag & 0xff)) : -1;
+    if (to >= 0 && to != DRAG.index && client_hand_swap(hand_memory, &hand_memory_n, (int)sizeof hand_memory, HAND, hand_n, DRAG.index, to)) {
+      DRAG.index = to;
+      DRAG.swapped = 1;
+      changed = 1;
+    }
+  }
+  if (DRAG.action) changed |= drag_ask();
+  if (changed || was_moving != DRAG.moving || was_action != DRAG.action) render_board();
+  else render_drag_position();
+}
+
+static void drag_end(const cd_event_rec *e) {
+  (void)e;
+  if (!DRAG.on) return;
+  cd_prevent_default(); /* after a touch: no mouse events and no click */
+  drag_listen(0);
+  double held = cd_now() - DRAG.t0;
+  if (held >= 0 && held < TAP_MS && !DRAG.swapped && !DRAG.moving && DRAG.index < hand_n)
+    toggle(card_to_id(HAND[DRAG.index]));
+  if (DRAG.action && DRAG.moving) { /* the drop, where the pointer last moved */
+    drag_ask();
+    ClientPlay p = DRAG.play;
+    if (p.move_type >= 0) nsel = 0;
+    if (p.move_type == MOVE_ATTACK || p.move_type == MOVE_COVER || p.move_type == MOVE_PASS)
+      play(p.move_type, p.cards, p.n_cards, p.move_type == MOVE_COVER ? p.attack_cards : 0);
+  }
+  if (DRAG.swapped) hand_keep();
+  __builtin_memset(&DRAG, 0, sizeof DRAG);
+}
+
+/* The drag shadow (DragShadow.tsx, cards.css .drag-shadow): while a drag is a game action, over the
+ * pointer 40 px up, a badge naming the drop the kernel reads (none for no move) over the cards the
+ * drag carries. Rebuilt when the answer changes; moved with the pointer. */
+static cd_region shadow;
+static struct { int8_t move_type, n; uint8_t cards[MAX_MOVE_CARDS]; int x, y; } shadow_shown;
+static void render_drag_position(void) {
+  if (!shadow.shown || (shadow_shown.x == DRAG.x && shadow_shown.y == DRAG.y)) return;
+  cd_set_style_num(shadow.root, ZS("left"), shadow_shown.x = DRAG.x, CD_UNIT_PX);
+  cd_set_style_num(shadow.root, ZS("top"), (shadow_shown.y = DRAG.y) - 40, CD_UNIT_PX);
+}
+static void render_drag(void) {
+  int want = DRAG.on && DRAG.action;
+  int8_t mt = want ? DRAG.play.move_type : -1;
+  if (want && shadow.shown && mt == shadow_shown.move_type && DRAG.asked_n == shadow_shown.n
+      && !__builtin_memcmp(DRAG.asked_cards, shadow_shown.cards, (size_t)DRAG.asked_n)) {
+    render_drag_position();
+    return;
+  }
+  cd_region_hide(&shadow);
+  if (!want || !cd_region_show(&shadow, 1)) return;
+  shadow_shown.move_type = mt;
+  shadow_shown.n = DRAG.asked_n;
+  __builtin_memcpy(shadow_shown.cards, DRAG.asked_cards, (size_t)DRAG.asked_n);
+  shadow_shown.x = DRAG.x;
+  shadow_shown.y = DRAG.y;
+  static SB s;
+  sb_reset(&s);
+  sb_px(&s, "left: ", DRAG.x);
+  sb_px(&s, "top: ", DRAG.y - 40);
+  cd_at(board, deck_area.parent); /* the board's first child after its title, as React mounts it */
+  OPEN("div");
+  cd_name_open(shadow.root);
+  CLASS("drag-shadow");
+  cd_attr(S_STYLE, sb_tmp(&s));
+  if (mt == MOVE_ATTACK || mt == MOVE_COVER || mt == MOVE_PASS) {
+    OPEN("div");
+    CLASS("drag-shadow__indicator");
+    if (mt == MOVE_PASS) { TEXT("\xF0\x9F\x94\x84"); TEXT(" "); TEXT("Pass"); } /* the theme's pass icon, then t('pass') */
+    else {
+      OPEN("span"); CLASS("");
+      if (mt == MOVE_ATTACK) TEXT("\xE2\x9A\x94\xEF\xB8\x8F"); else TEXT("\xF0\x9F\x9B\xA1\xEF\xB8\x8F");
+      CLOSE();
+      TEXT(" ");
+      if (mt == MOVE_ATTACK) TEXT("Attack"); else TEXT("Cover");
+    }
+    CLOSE();
+  }
+  OPEN("div");
+  CLASS("drag-shadow__cards");
+  for (int i = 0; i < DRAG.asked_n; i++) {
+    Card c = card_of_id(DRAG.asked_cards[i]);
+    face_open(c, 0);
+    sb_reset(&s);
+    sb_s(&s, "background-color: var(--color-card-face); width: 50px; height: 70px; border-radius: 5px; border: 2px solid black; "
+             "box-shadow: rgba(0, 0, 0, 0.3) 0px 2px 4px; cursor: default; user-select: none; -webkit-user-select: none; "
+             "pointer-events: none; transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out, box-shadow 0.2s ease-in-out; "
+             "position: relative; font-family: Georgia, serif; font-weight: bold; color: ");
+    sb_s(&s, card_red(c) ? "rgb(220, 38, 38); " : "rgb(0, 0, 0); ");
+    sb_s(&s, "display: flex; flex-direction: column; font-size: 20px; line-height: 15px; transform: scale(0.8); "
+             "transform-origin: center center; margin-right: 2px; opacity: 0.9;");
+    cd_attr(S_STYLE, sb_tmp(&s));
+    CLOSE();
+  }
+  CLOSE();
+  CLOSE();
+  cd_region_end(&shadow);
+}
+
+/* ---- keyboard play (KeyboardInputHandler.tsx, KeyboardPlayMode.tsx) -------------------------
+ * Two systems on the one keydown, as React mounts both on the live table. Letters and numbers:
+ * 1-9, 0, - and = toggle the hand's cards 1 to 12; Space or A attacks with the selection and Space
+ * or C covers with it (the Cover button's aim), by whether I defend; G says Good, P passes, U
+ * takes; each only when its pill shows, and none with Ctrl, Alt or Meta held. Arrows: a cursor on
+ * the hand; Shift toggles the card under it, Shift+Left/Right sweeps and toggles, Meta+Left/Right
+ * moves the card; Up plays (the selection as the buttons would, or the cursor's card as the kernel
+ * reads it, client_cursor_play: a card that could cover more than one battle, or cover and
+ * transfer, aims first, Left/Right cycling the targets and Up playing the one shown, Down giving
+ * up), Down takes or says Good. No key does anything typed into a field. */
+static void kb_after_move(void) { KB.n_targets = 0; } /* the aim goes; the cursor stays */
+
+/* A key's move, as KeyboardPlayMode fires it: its pill pressed until the move is refused, the
+ * selection spent when it was the selection's and the move was taken. */
+static void kb_fire(uint32_t bit, int kind, const Card *cards, int n, const Card *attacks, int spend) {
+  pressed |= bit;
+  int ok = play(kind, cards, n, attacks);
+  if (ok && spend) nsel = 0;
+  if (!ok) pressed &= ~bit;
+  kb_after_move();
+}
+
+static void kb_take_or_good(void) {
+  uint32_t pills = pills_for(1);
+  if (pills & PLAY_PILL_PICKUP) kb_fire(PLAY_PILL_PICKUP, AWIRE_PICKUP, 0, 0, 0, 0);
+  else if (pills & PLAY_PILL_GOOD) kb_fire(PLAY_PILL_GOOD, AWIRE_GOOD, 0, 0, 0, 0);
+}
+
+enum { KEY_SHIFT = 16, KEY_LEFT = 37, KEY_UP = 38, KEY_RIGHT = 39, KEY_DOWN = 40 };
+
+/* KeyboardInputHandler: the letters and numbers. */
+static void kb_letters(const cd_event_rec *e) {
+  if (e->mods & (CD_MOD_CTRL | CD_MOD_ALT | CD_MOD_META)) return;
+  int ch = e->ch >= 'A' && e->ch <= 'Z' ? e->ch + 32 : e->ch;
+  int pos = ch >= '1' && ch <= '9' ? ch - '0' : ch == '0' ? 10 : ch == '-' ? 11 : ch == '=' ? 12 : 0;
+  if (pos) {
+    cd_prevent_default();
+    if (pos <= hand_n) toggle(card_to_id(HAND[pos - 1]));
+    return;
+  }
+  int defending = V->defender == V->my_seat;
+  uint32_t pills = pills_for(1);
+  Card cards[MAX_MOVE_CARDS];
+  int n = nsel;
+  for (int i = 0; i < n; i++) cards[i] = card_of_id(sel[i]);
+  if ((ch == ' ' || ch == 'a') && !defending) {
+    cd_prevent_default();
+    if (pills & PLAY_PILL_ATTACK) { nsel = 0; play(AWIRE_ATTACK, cards, n, 0); }
+  } else if ((ch == ' ' || ch == 'c') && defending) {
+    cd_prevent_default();
+    ClientPlay p;
+    if (nsel && ask_play(CLIENT_PLAY_COVER_BUTTON, &p) == CLIENT_OK && p.move_type == MOVE_COVER) {
+      nsel = 0;
+      play(AWIRE_COVER, p.cards, p.n_cards, p.attack_cards);
+    }
+  } else if (ch == 'g') {
+    cd_prevent_default();
+    if (pills & PLAY_PILL_GOOD) play(AWIRE_GOOD, 0, 0, 0);
+  } else if (ch == 'p') {
+    cd_prevent_default();
+    if (pills & PLAY_PILL_PASS) { nsel = 0; play(AWIRE_PASS, cards, n, 0); }
+  } else if (ch == 'u') {
+    cd_prevent_default();
+    if (pills & PLAY_PILL_PICKUP) play(AWIRE_PICKUP, 0, 0, 0);
+  }
+}
+
+/* KeyboardPlayMode: Shift and the arrows. */
+static void kb_arrows(const cd_event_rec *e) {
+  int shift = e->mods & CD_MOD_SHIFT, other = e->mods & (CD_MOD_CTRL | CD_MOD_ALT | CD_MOD_META);
+  int k = e->key, sideways = k == KEY_LEFT || k == KEY_RIGHT;
+  if (k == KEY_SHIFT) {
+    if (other || KB.sel < 0 || KB.sel >= hand_n || KB.n_targets) return;
+    cd_prevent_default();
+    toggle(card_to_id(HAND[KB.sel]));
+    return;
+  }
+  if (k < KEY_LEFT || k > KEY_DOWN) return;
+  if (shift && !other && sideways) { /* sweep-select */
+    cd_prevent_default();
+    if (!hand_n || KB.n_targets) return;
+    KB.sel = KB.sel < 0 ? 0 : k == KEY_LEFT ? (KB.sel - 1 + hand_n) % hand_n : (KB.sel + 1) % hand_n;
+    toggle(card_to_id(HAND[KB.sel]));
+    return;
+  }
+  if ((e->mods & CD_MOD_META) && !(e->mods & (CD_MOD_CTRL | CD_MOD_ALT)) && sideways) { /* rearrange */
+    cd_prevent_default();
+    if (KB.sel < 0 || KB.sel >= hand_n) return;
+    int to = k == KEY_LEFT ? KB.sel - 1 : KB.sel + 1;
+    if (to < 0 || to >= hand_n) return;
+    if (client_hand_swap(hand_memory, &hand_memory_n, (int)sizeof hand_memory, HAND, hand_n, KB.sel, to)) { KB.sel = to; hand_keep(); }
+    return;
+  }
+  if (shift || other) return; /* a held modifier never plays */
+  cd_prevent_default();
+  if (KB.n_targets) { /* aiming */
+    if (k == KEY_LEFT) KB.idx = (KB.idx - 1 + KB.n_targets) % KB.n_targets;
+    else if (k == KEY_RIGHT) KB.idx = (KB.idx + 1) % KB.n_targets;
+    else if (k == KEY_DOWN) KB.n_targets = 0;
+    else if (KB.sel < 0 || KB.sel >= hand_n) KB.n_targets = 0;
+    else {
+      Card c = HAND[KB.sel];
+      if (KB.battle[KB.idx] < 0) kb_fire(PLAY_PILL_PASS, AWIRE_PASS, &c, 1, 0, 0);
+      else kb_fire(PLAY_PILL_COVER, AWIRE_COVER, &c, 1, &KB.attack[KB.idx], 0);
+    }
+    return;
+  }
+  if (KB.sel < 0) {
+    if (k == KEY_DOWN) kb_take_or_good();
+    else if (sideways && hand_n) KB.sel = 0;
+    return;
+  }
+  if (!hand_n) { KB.sel = -1; return; }
+  if (k == KEY_LEFT) { KB.sel = (KB.sel - 1 + hand_n) % hand_n; return; }
+  if (k == KEY_RIGHT) { KB.sel = (KB.sel + 1) % hand_n; return; }
+  if (KB.sel >= hand_n) return;
+  if (k == KEY_DOWN) { kb_take_or_good(); return; }
+  int defending = V->defender == V->my_seat;
+  if (nsel) { /* Up commits the selection, as the buttons would */
+    Card cards[MAX_MOVE_CARDS];
+    int n = nsel;
+    for (int i = 0; i < n; i++) cards[i] = card_of_id(sel[i]);
+    uint32_t pills = pills_for(1);
+    if (!defending) { if (pills & PLAY_PILL_ATTACK) kb_fire(PLAY_PILL_ATTACK, AWIRE_ATTACK, cards, n, 0, 1); return; }
+    ClientPlay p;
+    if (ask_play(CLIENT_PLAY_COVER_BUTTON, &p) == CLIENT_OK && p.move_type == MOVE_COVER)
+      kb_fire(PLAY_PILL_COVER, AWIRE_COVER, p.cards, p.n_cards, p.attack_cards, 1);
+    else if (pills & PLAY_PILL_PASS) kb_fire(PLAY_PILL_PASS, AWIRE_PASS, cards, n, 0, 1);
+    return;
+  }
+  Card c = HAND[KB.sel];
+  ClientPlay p;
+  const ClientPlayScratch sc = {&MOVES, MENU, (int)sizeof MENU};
+  int kind = client_cursor_play(&CT, V, c, &sc, &p);
+  if (kind == CLIENT_CURSOR_ATTACK) kb_fire(PLAY_PILL_ATTACK, AWIRE_ATTACK, &c, 1, 0, 0);
+  else if (kind == CLIENT_CURSOR_PASS) kb_fire(PLAY_PILL_PASS, AWIRE_PASS, &c, 1, 0, 0);
+  else if (kind == CLIENT_CURSOR_COVER) kb_fire(PLAY_PILL_COVER, AWIRE_COVER, &c, 1, &V->battles[p.coverable[0]].attack, 0);
+  else if (kind == CLIENT_CURSOR_CHOOSE) {
+    KB.n_targets = 0;
+    for (int i = 0; i < p.n_coverable; i++) {
+      KB.battle[KB.n_targets] = p.coverable[i];
+      KB.attack[KB.n_targets++] = V->battles[p.coverable[i]].attack;
+    }
+    if (p.pills & PLAY_PILL_PASS) KB.battle[KB.n_targets++] = -1;
+    KB.idx = 0;
+  }
+}
+
+static void on_key(const cd_event_rec *e) {
+  if (e->mods & CD_MOD_EDITING) return;
+  kb_letters(e);
+  kb_arrows(e);
+}
+
+/* What the keyboard shows (KeyboardPlayMode.tsx): the hidden state the tests read, the cursor (a
+ * short dark underline below the card, from the kernel's slot for it, not a border: the red border
+ * is the selection's), and while aiming the red arrow from the card's top to the target: a cover's
+ * attack card boxed, or the transfer's dashed place right of the row with PASS under it. */
+static cd_id kbd_state;
+static cd_region kb_cursor, kb_arrow;
+static struct { int8_t mode; int sel_cid, target; double cur[4], arrow[6]; } kb_shown = {-1, -2, -2, {0}, {0}};
+static void kb_attr_card(cd_id id, cd_str name, int cid) {
+  if (cid < 0) { cd_set_attr(id, name, ZS("")); return; }
+  Card c = card_of_id((uint8_t)cid);
+  char b[8] = {(char)('0' + c.suit), '-'};
+  uint32_t n = 2 + cd_fmt(b + 2, c.value, 0, CD_UNIT_NONE);
+  cd_set_attr(id, name, cd_tmp(b, n));
+}
+static void svg_num(const char *name, double v) {
+  char b[32];
+  cd_attr(cd_internz(name), cd_tmp(b, cd_fmt_len(b, v, CD_UNIT_NONE)));
+}
+static void render_keys(void) {
+  if (KB.sel >= hand_n) KB.sel = hand_n ? hand_n - 1 : -1; /* the cursor stays where it was, or on the last card */
+  int mode = KB.n_targets ? 2 : KB.sel >= 0 ? 1 : 0;
+  int sel_cid = KB.sel >= 0 ? card_to_id(HAND[KB.sel]) : -1;
+  int target = !KB.n_targets ? -2 : KB.battle[KB.idx] < 0 ? -1 : card_to_id(KB.attack[KB.idx]);
+  if (mode != kb_shown.mode) {
+    static const char *const MODE[] = {"none", "cards", "target"};
+    cd_set_attr(kbd_state, ZS("data-mode"), cd_internz(MODE[kb_shown.mode = (int8_t)mode]));
+  }
+  if (sel_cid != kb_shown.sel_cid) kb_attr_card(kbd_state, ZS("data-sel"), kb_shown.sel_cid = sel_cid);
+  if (target != kb_shown.target) {
+    kb_shown.target = target;
+    if (target == -1) cd_set_attr(kbd_state, ZS("data-target"), ZS("pass"));
+    else kb_attr_card(kbd_state, ZS("data-target"), target < 0 ? -1 : target);
+  }
+  /* the cursor's card, where the kernel's slot puts it on the plane */
+  double cur[4] = {0}, pr[4];
+  if (sel_cid >= 0 && KB.sel < HL.n) {
+    cd_rect(hand_plane, pr);
+    const HandRect *slot = &HL.slot[KB.sel];
+    cur[0] = pr[0] + slot->x; cur[1] = pr[1] + slot->y; cur[2] = slot->w; cur[3] = slot->h;
+  }
+  /* the arrow's end: the attack card's box, or the transfer's point */
+  double to[4] = {0};
+  int pass = target == -1, aim = mode == 2 && sel_cid >= 0;
+  if (aim && !pass && battle_attack[target]) cd_rect(battle_attack[target], to);
+  else if (aim && pass) {
+    double right = -1e9, top = 1e9, bottom = -1e9, r[4];
+    int n = 0;
+    for (uint32_t i = 0; i < n_row_keys; i++) {
+      int aid = (int)row_keys[i] - 1;
+      if (!battle_cell[aid]) continue;
+      cd_rect(battle_cell[aid], r);
+      if (r[0] + r[2] > right) right = r[0] + r[2];
+      if (r[1] < top) top = r[1];
+      if (r[1] + r[3] > bottom) bottom = r[1] + r[3];
+      n++;
+    }
+    cd_viewport_rec vp;
+    cd_viewport(&vp);
+    to[0] = n ? right + 46 : vp.w / 2.0;
+    to[1] = n ? (top + bottom) / 2 : vp.h / 2.0;
+  } else aim = 0;
+  if (!(cur[2] > 0)) cd_region_hide(&kb_cursor);
+  else if (cd_region_show(&kb_cursor, 1)) {
+    cd_at(container, kb_arrow.shown ? kb_arrow.root : board);
+    OPEN("div");
+    cd_name_open(kb_cursor.root);
+    STYLE("position: fixed; left: 0px; top: 0px; width: 0px; height: 3px; background: rgb(17, 17, 17); border-radius: 2px; "
+          "box-shadow: rgba(255, 255, 255, 0.7) 0px 0px 5px 1px; pointer-events: none; z-index: 1500;");
+    CLOSE();
+    cd_region_end(&kb_cursor);
+    kb_shown.cur[2] = -1;
+  }
+  if (kb_cursor.shown && __builtin_memcmp(cur, kb_shown.cur, sizeof cur)) {
+    __builtin_memcpy(kb_shown.cur, cur, sizeof cur);
+    cd_set_style_num(kb_cursor.root, ZS("left"), cur[0] + cur[2] * 0.15, CD_UNIT_PX);
+    cd_set_style_num(kb_cursor.root, ZS("top"), cur[1] + cur[3] + 4, CD_UNIT_PX);
+    cd_set_style_num(kb_cursor.root, ZS("width"), cur[2] * 0.7, CD_UNIT_PX);
+  }
+  double arrow[6] = {cur[0] + cur[2] / 2, cur[1], pass ? to[0] : to[0] + to[2] / 2, pass ? to[1] : to[1] + to[3] / 2, pass, target};
+  if (!aim || !(cur[2] > 0)) { cd_region_hide(&kb_arrow); return; }
+  if (kb_arrow.shown && !__builtin_memcmp(arrow, kb_shown.arrow, sizeof arrow)) return;
+  __builtin_memcpy(kb_shown.arrow, arrow, sizeof arrow);
+  cd_region_hide(&kb_arrow);
+  cd_region_show(&kb_arrow, 1);
+  cd_at(container, board);
+  OPEN("svg");
+  cd_name_open(kb_arrow.root);
+  STYLE("position: fixed; inset: 0px; width: 100%; height: 100%; pointer-events: none; z-index: 1500;");
+  OPEN("defs");
+  OPEN("marker"); ATTR("id", "kbd-arrow"); ATTR("markerWidth", "11"); ATTR("markerHeight", "8"); ATTR("refX", "9"); ATTR("refY", "4"); ATTR("orient", "auto");
+  OPEN("polygon"); ATTR("points", "0 0, 11 4, 0 8"); ATTR("fill", "#ff2d2d"); CLOSE();
+  CLOSE();
+  CLOSE();
+  OPEN("line");
+  svg_num("x1", arrow[0]); svg_num("y1", arrow[1]); svg_num("x2", arrow[2]); svg_num("y2", arrow[3]);
+  ATTR("stroke", "#ff2d2d"); ATTR("stroke-width", "3");
+  if (pass) ATTR("stroke-dasharray", "7 5");
+  ATTR("marker-end", "url(#kbd-arrow)");
+  CLOSE();
+  if (!pass) {
+    OPEN("rect");
+    svg_num("x", to[0] - 3); svg_num("y", to[1] - 3); svg_num("width", to[2] + 6); svg_num("height", to[3] + 6);
+    ATTR("rx", "8"); ATTR("fill", "none"); ATTR("stroke", "#ff2d2d"); ATTR("stroke-width", "3");
+    CLOSE();
+  } else {
+    OPEN("g");
+    OPEN("rect");
+    svg_num("x", to[0] - 26); svg_num("y", to[1] - 36); ATTR("width", "52"); ATTR("height", "72");
+    ATTR("rx", "8"); ATTR("fill", "none"); ATTR("stroke", "#ff2d2d"); ATTR("stroke-width", "3"); ATTR("stroke-dasharray", "6 4");
+    CLOSE();
+    OPEN("text");
+    svg_num("x", to[0]); svg_num("y", to[1] + 54); ATTR("fill", "#ff2d2d"); ATTR("font-size", "13"); ATTR("font-weight", "700");
+    ATTR("text-anchor", "middle"); TEXT("PASS");
+    CLOSE();
+    CLOSE();
+  }
+  CLOSE();
+  cd_region_end(&kb_arrow);
+}
+
 /* A game on the table that was not played to it here (a deal, a load): nothing of the last one's
  * selection or presses carries over. */
+static void drag_listen(int on);
 static void table_reset(void) {
   nsel = 0;
   pressed = 0;
   prev_rearm = 0;
+  hand_memory_n = 0; /* the order starts as the game's */
+  if (DRAG.on) drag_listen(0);
+  __builtin_memset(&DRAG, 0, sizeof DRAG);
+  KB.sel = -1;
+  KB.n_targets = 0;
 }
 
 static void new_game(void) {
@@ -1927,20 +2538,34 @@ static void game_stored(const uint8_t *p, int32_t len) {
   render();
 }
 
-void cd_on_event(const cd_event_rec *e) {
-  if (!V) return; /* no board yet: the store has not answered */
-  if (e->type == CD_EV_RESIZE) { render(); return; } /* the hand is laid out for the new width */
-  if (e->type != CD_EV_CLICK) return;
-  uint32_t tag = cd_tag((cd_id)e->id);
-  if (tag & TAG_AGAIN) { new_game(); return; }
-  if (V->status != GAME_STATUS_PLAYING) return;
-  if (tag & TAG_CARD) toggle((int)(tag & 0xff));
-  else if (tag & TAG_PILL) on_pill(tag & 0xff);
+/* A click: Play again, a pill, or the selection put down on a battle or the table. */
+static void on_click(uint32_t tag) {
+  if (tag & TAG_PILL) on_pill(tag & 0xff);
   else if (tag & TAG_BATTLE) {
     int aid = (int)(tag & 0xff), b = -1;
     for (int i = 0; i < V->num_battles; i++) if (card_to_id(V->battles[i].attack) == aid) b = i;
     if (b >= 0) drop_selection((int8_t)b);
   } else if (tag & TAG_TABLE) drop_selection(PLAY_TARGET_TABLE);
+}
+
+void cd_on_event(const cd_event_rec *e) {
+  if (!V) return; /* no board yet: the store has not answered */
+  if (e->type == CD_EV_RESIZE) { render(); return; } /* the hand is laid out for the new width */
+  uint32_t tag = cd_tag((cd_id)e->id);
+  switch (e->type) {
+  case CD_EV_MOUSEDOWN: case CD_EV_TOUCHSTART: /* a hand card pressed */
+    if ((tag & TAG_CARD) && V->status == GAME_STATUS_PLAYING) drag_start(e, (int)(tag & 0xff));
+    return;
+  case CD_EV_MOUSEMOVE: case CD_EV_TOUCHMOVE: drag_move(e); return; /* it draws what changed */
+  case CD_EV_MOUSEUP: case CD_EV_TOUCHEND: drag_end(e); break;
+  case CD_EV_KEYDOWN: on_key(e); break;
+  case CD_EV_CLICK:
+    if (tag & TAG_AGAIN) { new_game(); return; }
+    if (V->status != GAME_STATUS_PLAYING) return;
+    on_click(tag);
+    break;
+  default: return;
+  }
   bot_check();
   render();
 }
@@ -1984,6 +2609,7 @@ EXPORT("app_anim_landed") int32_t app_anim_landed(void) { return run_landed; }
 /* The cards in the air now: how many flights, and flight i's card id (-1: a stack of backs). */
 EXPORT("app_anim_flying") int32_t app_anim_flying(void) { return n_flights; }
 EXPORT("app_anim_flight_card") int32_t app_anim_flight_card(int32_t i) { return i >= 0 && i < n_flights ? flight[i].cid : -2; }
+EXPORT("app_saves_pending") uint32_t app_saves_pending(void) { return saves_asked - saves_answered; }
 EXPORT("app_game_store") double app_game_store(int32_t which) { return which == 0 ? game_asked : which == 1 ? game_answered : game_adopted; }
 
 #ifdef TABLE_DEBUG
@@ -2096,6 +2722,34 @@ EXPORT("app_debug_transfer") void app_debug_transfer(void) {
 }
 /* A new deal now, as Play again deals one (the deal's run, one card at a time). */
 EXPORT("app_debug_deal") void app_debug_deal(void) { new_game(); }
+/* Boards on the golden's stock for the drag and key checks (trump clubs, the Kc turned; every card
+ * once, outside the golden's stock):
+ *   1  I defend 7h and Qd holding 9h Kd 6c 6s: 9h covers only 7h, Kd only Qd, the trump 6c either
+ *      (two targets), 6s nothing; and Take is offered;
+ *   2  I defend 6h holding 6c 6s 9h Kd: 6s only transfers, 6c covers or transfers, 9h only covers,
+ *      Kd neither;
+ *   3  I lead over 6h/8h and 6d/Kd, all covered, holding 6s 7h Qd Ad: Good is offered. */
+EXPORT("app_debug_board") void app_debug_board(int32_t k) {
+  table_reset();
+  if (run_on()) run_end();
+  if (k == 1) compose("7h Qd", "9h Kd 6c 6s", "Jh Qh Kh Ah");
+  else if (k == 2) compose("6h", "6c 6s 9h Kd", "Jh Qh Kh Ah");
+  else compose("6h/8h 6d/Kd", "6s 7h Qd Ad", "9h Th Jh 6c");
+  if (k == 1 || k == 2) { G.first_attacker = 1; G.defender = 0; }
+  committed();
+  bot_pending = 0;
+  bot_gen++;
+  bot_check();
+  render();
+}
+/* The keyboard's cursor and aim, for the tests: the cursor's index (-1 none), the targets' count. */
+EXPORT("app_kb") int32_t app_kb(int32_t which) { return which == 0 ? KB.sel : KB.n_targets; }
+/* The drag, for the tests: 0 none, 1 pressed, 2 a rearrange, 3 a game action; and the move the
+ * drop would make (MOVE_*, -1 none). */
+EXPORT("app_drag") int32_t app_drag(int32_t which) {
+  if (which == 1) return DRAG.on && DRAG.action ? DRAG.play.move_type : -1;
+  return !DRAG.on ? 0 : !DRAG.moving ? 1 : DRAG.action ? 3 : 2;
+}
 #endif
 /* ---- the textures ----------------------------------------------------------
  * After the first paint (two frames, then a timer), in slices of about 8 ms on animation frames: the fern (the card backs),
@@ -2391,6 +3045,10 @@ void cd_main(void) {
   OPEN("div"); CLASS("bg-vignette bg-vignette--default"); CLOSE();
   OPEN("div"); CLASS("bg-soviet"); CLOSE();
   OPEN("div"); CLASS("bg-vignette bg-vignette--soviet"); CLOSE();
+  OPEN("div");
+  cd_name_open(kbd_state = cd_id_new());
+  ATTR("data-testid", "kbd-state"); ATTR("data-mode", "none"); ATTR("data-sel", ""); ATTR("data-target", ""); STYLE("display: none;");
+  CLOSE();
 
   OPEN("div");
   cd_name_open(board = cd_id_new());
@@ -2460,6 +3118,7 @@ void cd_main(void) {
   CLOSE(); /* container */
 
   cd_listen_window(CD_EV_RESIZE);
+  cd_listen_window(CD_EV_KEYDOWN);
   game_asked = cd_now();
   cd_store_get(STORE_GAME, GAME_KEY, sizeof GAME_KEY - 1, CD_STORE_DEADLINE_MS);
   /* the board is drawn when the store answers (game_stored) */

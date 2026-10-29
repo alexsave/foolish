@@ -137,6 +137,8 @@ IMPORTS("clear") void j_clear(cd_id id);
 IMPORTS("detach") void j_detach(cd_id id);
 IMPORTS("attach") void j_attach(cd_id id);
 IMPORTS("win") void j_win(uint32_t ev);
+IMPORTS("unwin") void j_unwin(uint32_t ev);
+IMPORTS("hit") cd_id j_hit(int32_t x, int32_t y);
 IMPORTS("viewport") void j_viewport(cd_viewport_rec *v);
 IMPORTS("rect") void j_rect(cd_id id, double *out);
 IMPORTS("timer") void j_timer(uint32_t ms, uint32_t token);
@@ -530,6 +532,9 @@ void cd_region_hide(cd_region *r) { cd_region_show(r, 0); }
 
 /* ---- window and time ---- */
 void cd_listen_window(uint32_t ev) { j_win(ev); }
+void cd_unlisten_window(uint32_t ev) { j_unwin(ev); }
+void cd_prevent_default(void) { inbox.prevent = 1; }
+cd_id cd_hit(int32_t x, int32_t y) { return j_hit(x, y); }
 void cd_viewport(cd_viewport_rec *v) { j_viewport(v); }
 void cd_rect(cd_id id, double out[4]) { j_rect(id, out); }
 void cd_timer_start(uint32_t ms, uint32_t token) { j_timer(ms, token); }
