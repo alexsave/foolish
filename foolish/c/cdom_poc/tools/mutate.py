@@ -87,6 +87,7 @@ MUTANTS = [
   ('drag: the order not kept in the game', 'src/table_app.c', '  if (DRAG.swapped) hand_keep();', '', 'tools/test.mjs', 'along the hand'),
   ('drag: a drop that is a move keeps the selection', 'src/table_app.c', '    if (p.move_type >= 0) nsel = 0;', '', 'tools/test.mjs', 'onto a battle it beats covers it'),
   ('drag: the dragged card alone, selected or not', 'src/table_app.c', '  int n = client_gesture_cards(picked, nsel, card_of_id(DRAG.cid), cards);', '  int n = client_gesture_cards(picked, 0, card_of_id(DRAG.cid), cards);', 'tools/test.mjs', 'transfer by drag'),
+  ('the drawn order not kept after a move', 'src/table_app.c', 'static void committed(void) {\n  hand_into_game();', 'static void committed(void) {', 'tools/test.mjs', 'taken back'),
   ('hand drawn in the game\'s order', 'src/table_app.c', '  client_hand_shown(hand_memory, hand_memory_n, V->my_hand, hand_n, HAND);', '  for (int i = 0; i < hand_n; i++) HAND[i] = V->my_hand[i];', 'tools/test.mjs', 'kernel\'s game and keeps React'),
   ('keys: modifiers not ignored', 'src/table_app.c', '  if (e->mods & (CD_MOD_CTRL | CD_MOD_ALT | CD_MOD_META)) return;\n  int ch', '  int ch', 'tools/test.mjs', 'keys:'),
   ('keys: typed into a field', 'src/table_app.c', '  if (e->mods & CD_MOD_EDITING) return;\n  kb_letters(e);', '  kb_letters(e);', 'tools/test.mjs', 'keys:'),

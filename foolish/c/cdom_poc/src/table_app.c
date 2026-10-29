@@ -1922,7 +1922,24 @@ static void bot_check(void) {
 }
 
 /* After every operation on the game: canonical, kept, shown now. */
+/* My hand's order as drawn (the remembered order over the game's cards, new ones last) made the
+ * game's own (game_rearrange_hand, the server's call for ASK_REARRANGE_HAND). After a drag or a
+ * Meta+arrow, and after every operation: a card taken back keeps the slot it is drawn in, so a
+ * reload, which draws the game's order, draws what was on screen. React's server holds the order
+ * only a drag sent it, and a React reload puts such a card where the server has it. */
+static void hand_into_game(void) {
+  Player *p = &G.players[ME];
+  Card order[MAX_HAND_SIZE];
+  uint8_t idx[MAX_HAND_SIZE];
+  client_hand_shown(hand_memory, hand_memory_n, p->hand, p->hand_count, order);
+  for (int i = 0; i < p->hand_count; i++)
+    for (int k = 0; k < p->hand_count; k++)
+      if (card_eq(order[i], p->hand[k])) idx[i] = (uint8_t)k;
+  game_rearrange_hand(&G, ME, idx, p->hand_count);
+}
+
 static void committed(void) {
+  hand_into_game();
   game_keep_canonical(&G);
   game_save();
   mark_shown();
@@ -2027,14 +2044,9 @@ static int hand_index(int cid) {
  * move ASK_REARRANGE_HAND makes): a reload draws it so. React sends it 5 s after a drag; here the
  * game is local and it is kept at once. Not a move: the bot's clock is left alone. */
 static void hand_keep(void) {
-  Player *p = &G.players[ME];
-  Card order[MAX_HAND_SIZE];
-  uint8_t idx[MAX_HAND_SIZE];
-  client_hand_shown(hand_memory, hand_memory_n, p->hand, p->hand_count, order);
-  for (int i = 0; i < p->hand_count; i++)
-    for (int k = 0; k < p->hand_count; k++)
-      if (card_eq(order[i], p->hand[k])) idx[i] = (uint8_t)k;
-  if (game_rearrange_hand(&G, ME, idx, p->hand_count)) { game_keep_canonical(&G); game_save(); }
+  hand_into_game();
+  game_keep_canonical(&G);
+  game_save();
 }
 
 /* ---- drag and drop (DragContext.tsx, DragShadow.tsx, TableBattles.tsx) ----------------------

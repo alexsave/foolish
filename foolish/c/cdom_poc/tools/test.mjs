@@ -468,7 +468,8 @@ try {
       let seen = null;
       // let go 40 px above the hand: still the hand's area (the plane and a card's height above it), no move
       const top = await b.evaluate(`document.querySelector('[data-hand-plane]').getBoundingClientRect().top`);
-      await drag(b, await cardAt('0-5'), [{ x: 700, y: top - 40 }], { touch });
+      const six = await cardAt('0-5');   // straight up: passing over another card would trade places with it
+      await drag(b, six, [{ x: six.x, y: top - 40 }], { touch });
       await idle();
       assert.deepEqual(await battles(), ['1-5/1-7', '3-5'], 'a drop in the hand\'s area plays nothing');
       assert.deepEqual(await hand(), ['0-5', '1-6', '3-11', '3-13']);
@@ -548,6 +549,22 @@ try {
       assert.deepEqual(await hand(), ['1-6', '3-11', '3-13', '0-5'], 'a reload draws it');
     });
   }
+
+  await check('a card taken back keeps the slot it was drawn in (React\'s remembered order), and a reload draws the hand so', async () => {
+    await board(2);   // I defend 6h holding 6c 6s 9h Kd
+    await drag(b, await cardAt('1-8'), [await battleAt('1-5')]);   // 9h covers 6h
+    await idle();
+    assert.deepEqual(await battles(), ['1-5/1-8']);
+    assert.deepEqual(await hand(), ['2-5', '0-5', '3-12']);
+    await key(b, 'ArrowDown');   // Take: 6h and my 9h come back
+    await idle();
+    const drawn = await hand();
+    assert.deepEqual(drawn.slice(0, 5), ['2-5', '0-5', '1-8', '3-12', '1-5'], 'the 9h back in its slot, the 6h new at the end');
+    await b.until('window.app.then((x) => x.app_saves_pending() === 0)');
+    await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug');
+    await ready();
+    assert.deepEqual(await hand(), drawn, 'a reload draws the hand as it was drawn');
+  });
 
   await check('a transfer by drag: the shadow says Pass over a drop cell; dragging a selected card carries the selection', async () => {
     await board(2);   // I defend 6h with 6c 6s 9h Kd
