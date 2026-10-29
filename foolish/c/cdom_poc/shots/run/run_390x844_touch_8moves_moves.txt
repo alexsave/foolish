@@ -1,0 +1,10 @@
+   0.00 s  -          navigated: a cold load of out/index.html
+   1.10 s  -          the textures have landed
+   4.71 s  tap        0-5 selected, Attack pressed
+  10.59 s  touch-drag 1-6 dragged: ⚔️ Attack
+  16.82 s  tap        3-7 selected, Attack pressed
+  29.62 s  touch-drag 2-6 dragged: ⚔️ Attack
+  35.33 s  tap        3-11 selected, Attack pressed
+  43.15 s  touch-drag 2-11 dragged: ⚔️ Attack
+  48.90 s  tap        3-13 selected, Attack pressed
+  54.27 s  touch-drag 0-13 dragged: ⚔️ Attack

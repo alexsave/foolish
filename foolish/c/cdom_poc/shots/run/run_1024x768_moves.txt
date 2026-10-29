@@ -1,0 +1,29 @@
+   0.00 s  -          navigated: a cold load of out/index.html
+   0.98 s  -          the textures have landed
+   4.85 s  click      0-5 selected, Attack pressed
+  10.83 s  drag       1-6 dragged: ⚔️ Attack
+  16.66 s  letters    key 3 (3-7), then A
+  37.77 s  click      Good pressed
+  47.37 s  click      3-11 selected, Cover pressed
+  57.34 s  drag       2-13 dragged: 🛡️ Cover
+  62.40 s  letters    key 2 (2-9), then C
+  71.37 s  arrows     arrows to 2-6, Up
+  78.40 s  click      3-13 selected, Attack pressed
+ 103.83 s  letters    key G (Good)
+ 113.94 s  letters    key 2 (2-10), then C
+ 143.97 s  click      Pickup pressed
+ 153.00 s  click      0-12 selected, Cover pressed
+ 159.93 s  drag       2-10 dragged: ⚔️ Attack
+ 164.78 s  letters    key 1 (0-10), then A
+ 170.95 s  arrows     arrows to 1-10, Up
+ 177.10 s  click      3-8 selected, Attack pressed
+ 182.68 s  drag       0-9 dragged: ⚔️ Attack
+ 188.00 s  letters    key 1 (0-6), then A
+ 194.03 s  arrows     arrows to 3-6, Up
+ 210.82 s  drag       Good pressed
+ 220.03 s  drag       3-10 dragged: 🛡️ Cover
+ 228.10 s  letters    key 1 (0-11), then C
+ 232.67 s  arrows     arrows to 2-12, Up
+ 237.66 s  -          the end screen: done - Two of us
+ 239.53 s  click      Play again
+ 247.19 s  -          the new deal has landed
