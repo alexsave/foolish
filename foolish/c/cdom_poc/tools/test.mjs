@@ -12,6 +12,7 @@ import { consistRun, READ_DOM, clickCard, kernel } from './consist.mjs';
 import { drag, key, centre as restingCentre } from './input.mjs';
 
 const golden = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/bout_2p_attacker.html'), 'utf8');
+const winGolden = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/win_screen.html'), 'utf8');
 const server = await serve(8720, FOOLISH);
 const b = await launch();
 const q = (sel) => b.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? e.outerHTML : null; })()`);
@@ -837,9 +838,29 @@ try {
     near([out[0].start.x, out[0].start.y], out[0].slot, 1, 'its first flight leaves from its own slot, face up');
     assert.equal(await turn(), 'over');
     assert.equal(await b.evaluate(`document.querySelector('[data-end] h1').textContent`), 'done - Two of us');
+    // The page that takes the table's place is React's WinScreen DOM (the golden win_screen.html,
+    // a rated three-seat game) but for the title's table, the rows (two here, unrated: no ratings;
+    // their order and marks are the consistency check's), the button's words and the wood's var()s.
+    const [mineEnd, theirsEnd, tableShown] = await b.evaluate(`(() => {
+      const strip = (root) => { root.querySelectorAll('.result-card').forEach((e) => e.remove()); return root; };
+      const mine = strip(document.querySelector('[data-end]').cloneNode(true));
+      mine.removeAttribute('data-end');
+      const d = document.createElement('div'); d.innerHTML = ${JSON.stringify(winGolden)};
+      const theirs = strip(d.firstElementChild);
+      theirs.querySelector('h1').textContent = 'done - Two of us';
+      theirs.querySelector('button .btn-wood-text > span').textContent = 'Play again';
+      return [mine.outerHTML.replace(/var\\(--tex-wood-end, (repeating-linear-gradient\\(90deg, transparent, transparent 1px, rgba\\(0, 0, 0, 0\\.1\\) 1px, rgba\\(0, 0, 0, 0\\.1\\) 2px\\))\\)/g, '$1')
+        .replace(' style="background-image: var(--tex-wool);"', ''), theirs.outerHTML,
+        getComputedStyle(document.querySelector('[data-game-container]')).display]; })()`);
+    if (mineEnd !== theirsEnd) {
+      const a = theirsEnd.split('><'), m = mineEnd.split('><'), i = a.findIndex((x, k) => x !== m[k]);
+      assert.fail(`the end screen is React's WinScreen: first difference at tag ${i}:\n  react: <${a[i]}>\n  cdom:  <${m[i]}>`);
+    }
+    assert.equal(tableShown, 'none', 'the table gives way to the page, as GameView swaps them');
     await b.click('[data-end] button');
     await settle();
     assert.equal(await b.evaluate(`document.querySelector('[data-end]')`), null);
+    assert.equal(await b.evaluate(`document.querySelector('[data-game-container]').style.display`), '', 'the table is back for the new deal, as its CSS lays it out');
     assert.equal(await all('[data-hand-plane] [data-card]', '1').then((x) => x.length), 6, 'a fresh hand of six');
   });
 

@@ -759,6 +759,7 @@ static const struct { uint32_t bit; const char *label; double seed; } PILL[] = {
 #define SEED_BACK 0.2
 #define SEED_RESULTS 0.42
 #define SEED_AGAIN 0.6
+#define SEED_REPLAY 0.2 /* ReplayShare's frame */
 
 /* TexturedSurface.tsx getTextureStyle's background position for a seed (clearOfTileEdge with the
  * 260 x 60 plank span). */
@@ -773,18 +774,23 @@ static void wood_offset(double seed, int32_t *x, int32_t *y) {
 
 /* TexturedSurface.tsx getTextureStyle: the wood once it is made (--tex-wood, or --tex-wood-end on
  * the end screen), the stripes before. */
-static cd_str wood_style(double seed, int end) {
-  static SB s;
+/* getTextureStyle's wood: the colour, the picture (or the golden's stripes until it lands), the
+ * tile's size and the seed's offset, appended to s. */
+static void wood_add(SB *s, double seed, int end) {
   int32_t x, y;
   wood_offset(seed, &x, &y);
+  sb_s(s, "background-color: rgb(195, 63, 8); background-image: var(");
+  sb_s(s, end ? "--tex-wood-end" : "--tex-wood");
+  sb_s(s, ", repeating-linear-gradient(90deg, transparent, "
+          "transparent 1px, rgba(0, 0, 0, 0.1) 1px, rgba(0, 0, 0, 0.1) 2px)); background-size: 1920px 1080px; "
+          "background-position: ");
+  sb_i(s, x); sb_s(s, "px "); sb_i(s, y);
+  sb_s(s, "px; background-repeat: repeat;");
+}
+static cd_str wood_style(double seed, int end) {
+  static SB s;
   sb_reset(&s);
-  sb_s(&s, "background-color: rgb(195, 63, 8); background-image: var(");
-  sb_s(&s, end ? "--tex-wood-end" : "--tex-wood");
-  sb_s(&s, ", repeating-linear-gradient(90deg, transparent, "
-           "transparent 1px, rgba(0, 0, 0, 0.1) 1px, rgba(0, 0, 0, 0.1) 2px)); background-size: 1920px 1080px; "
-           "background-position: ");
-  sb_i(&s, x); sb_s(&s, "px "); sb_i(&s, y);
-  sb_s(&s, "px; background-repeat: repeat;");
+  wood_add(&s, seed, end);
   return sb_tmp(&s);
 }
 
@@ -1341,7 +1347,7 @@ static void render_seats(void) {
 
 /* ---- the end of the game -------------------------------------------------- */
 
-static cd_region end_screen; /* root mode: one element over the board */
+static cd_region end_screen; /* root mode: the page that takes the table's place */
 
 /* A row of WinScreen.tsx: RankIcon (the default theme's emoji: a medal by place, the fool's card
  * for the last), the name, and "(You)" after mine. */
@@ -1359,22 +1365,55 @@ static void result_row(int place, int total, int seat) {
   CLOSE(); CLOSE(); CLOSE();
 }
 
+/* WinScreen.tsx: when the game is over the table goes and the page takes its place (GameView routes
+ * GAME_OVER to it): the wool, the title, the results on one plank, ReplayShare, and the button. The
+ * table is kept, hidden, for the next deal. ReplayShare shows its frame as React does for a game
+ * with no replay snapshot (the port has no server to keep one); the button is Play again (there is
+ * no lobby to continue to); the game is not rated, so no rating shows. */
+static int end_shown;
 static void render_end(void) {
-  if (!cd_region_show(&end_screen, V->status == GAME_STATUS_GAME_OVER)) return;
-  cd_at(board, 0);
+  int over = V->status == GAME_STATUS_GAME_OVER;
+  if (over != end_shown) cd_set_style(container, ZS("display"), (end_shown = over) ? ZS("none") : ZS(""));
+  if (!cd_region_show(&end_screen, over)) return;
+  cd_at(CD_MOUNT, 0);
   OPEN("div");
   cd_name_open(end_screen.root);
   ATTR("data-end", "true");
-  STYLE("position: absolute; inset: 0px; display: flex; flex-direction: column; align-items: center; "
-        "justify-content: center; gap: 16px; z-index: 2000; background-color: rgba(0, 0, 0, 0.35);");
+  CLASS("page"); STYLE("padding: 0.25rem 1rem 1rem;");
+  OPEN("div"); CLASS("bg-wool"); STYLE("background-image: var(--tex-wool);"); CLOSE();
+  OPEN("div"); CLASS("bg-vignette bg-vignette--default"); CLOSE();
+  OPEN("div"); CLASS("bg-soviet"); CLOSE();
+  OPEN("div"); CLASS("bg-vignette bg-vignette--soviet"); CLOSE();
   OPEN("h1"); CLASS("win-screen__title"); TEXT("done - Two of us"); CLOSE(); /* "done - " and the table's title */
-  OPEN("div"); CLASS("win-screen__results"); STYLE("width: min(360px, 90vw);");
+  OPEN("div"); CLASS("win-screen__results");
   OPEN("div"); CLASS("bg-wood"); cd_attr(S_STYLE, wood_style(SEED_RESULTS, 1)); CLOSE();
   /* The finish order is the kernel's (anim_finish_rows: everyone out, first out first, then the fool). */
   AnimFinishRow rows[MAX_PLAYERS + 1];
   int n = anim_finish_rows((const unsigned char *)V->elimination, V->num_eliminated, V->fool, V->num_players, V->my_seat, rows, MAX_PLAYERS + 1);
   for (int place = 1; place <= n; place++)
     for (int i = 0; i < n; i++) if (rows[i].place == place) result_row(place, n, rows[i].seat);
+  CLOSE();
+  OPEN("div"); CLASS("replay-share");
+  STYLE("position: relative; z-index: var(--z-content); display: flex; flex-direction: column; align-items: center; gap: 0.6rem; margin: 0px 0px 0.5rem;");
+  OPEN("div");
+  { /* the QR's wood frame (getTextureStyle(woodUrl, false, 0.2)) */
+    static SB fs;
+    sb_reset(&fs);
+    sb_s(&fs, "width: 188px; height: 188px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; "
+              "padding: 12px; border-radius: 10px; border: 2px solid rgb(93, 58, 26); box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), "
+              "inset 0 -1px 0 rgba(0,0,0,0.3), 0 3px 6px rgba(0,0,0,0.4); ");
+    wood_add(&fs, SEED_REPLAY, 1);
+    sb_s(&fs, " line-height: 0;");
+    cd_attr(S_STYLE, sb_tmp(&fs));
+  }
+  OPEN("span"); CLASS("text-shadow");
+  STYLE("color: var(--color-text-primary); font-size: 0.8rem; text-align: center; line-height: 1.35; opacity: 0.85;");
+  OPEN("span"); TEXT("Replay code unavailable for this game"); CLOSE();
+  CLOSE();
+  CLOSE();
+  OPEN("div");
+  STYLE("min-height: 1.5rem; width: 100%; display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.9rem;");
+  CLOSE();
   CLOSE();
   cd_id again = cd_id_new();
   OPEN("button"); cd_listen(again, CD_EV_CLICK); cd_tag_set(again, TAG_AGAIN);
@@ -2819,10 +2858,10 @@ enum { FERN_APP_W = 1000, FERN_APP_H = 1400, FERN_APP_POINTS = 5000000, BACK_W =
 #define TEX_SLICE_MS 8.0
 /* Every surface the wood is laid on besides the pills (PILL): its seed and the most it spans
  * (border box, CSS px, with room to spare: measured, the back button is 44 x 44, a pill 60 x 40,
- * Play again 149 x 48, the results panel min(360px, 90vw) by 81 for two rows). The wood is made
+ * Play again 149 x 48, the results panel 352 by 81 for two rows, ReplayShare's frame 188 x 188). The wood is made
  * only there, so the less, the sooner it lands. tools/test.mjs checks, after every click of
  * played-out games, that each surface on the page lies inside the rectangle made for it. */
-static const struct { double seed; int32_t w, h; } WOOD_SURF[] = {{SEED_BACK, 56, 56}, {SEED_AGAIN, 200, 60}, {SEED_RESULTS, 360, 100}};
+static const struct { double seed; int32_t w, h; } WOOD_SURF[] = {{SEED_BACK, 56, 56}, {SEED_AGAIN, 200, 60}, {SEED_RESULTS, 360, 100}, {SEED_REPLAY, 188, 188}};
 enum { PILL_SPAN_W = 76, PILL_SPAN_H = 52 };
 enum { NPILL = sizeof PILL / sizeof *PILL, NSURF = sizeof WOOD_SURF / sizeof *WOOD_SURF };
 enum { WOOD_MARGIN = 4 }; /* a border's width either side, and then some */
