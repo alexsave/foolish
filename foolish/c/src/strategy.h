@@ -40,7 +40,7 @@
 // 22 is retired: it was torpex (a learned value net in place of rollouts).
 // 23 is retired: it was novichok (the cheating ceiling probe; read real hands).
 // Octogen plus rollout noise (c/FUSION.md): in its heuristic rollouts each
-// seat's decision is, 30% of the time at tables of up to four, a uniform pick
+// seat's decision is, 30% of the time at tables of up to five, a uniform pick
 // from a small sensible candidate set instead of the policy move; at bigger
 // tables it is octogen. Ready but not reachable: its own roster row
 // (bot_roster.c, key "fusion") is neither seeded nor offline, and the browser's
