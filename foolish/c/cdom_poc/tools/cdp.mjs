@@ -55,11 +55,12 @@ export async function launch({ width = 1024, height = 768, port = 8729, flags = 
     await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
   } catch (e) { await close(); throw e; }
   let id = 0;
-  const pend = new Map(), waiters = [];
+  const pend = new Map(), waiters = [], listeners = [];
   ws.onmessage = (m) => {
     const d = JSON.parse(m.data);
     if (d.id && pend.has(d.id)) { pend.get(d.id)(d); pend.delete(d.id); return; }
     for (const w of [...waiters]) if (w.method === d.method) { waiters.splice(waiters.indexOf(w), 1); w.r(d.params); }
+    for (const l of listeners) if (l.method === d.method) l.fn(d.params);
   };
   const send = (method, params = {}, sessionId) => new Promise((r) => {
     const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params, sessionId }));
@@ -102,7 +103,9 @@ export async function launch({ width = 1024, height = 768, port = 8729, flags = 
       await s('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 });
   };
   const closeAll = async () => { try { await send('Target.closeTarget', { targetId }); } catch { /* closed */ } await close(); };
-  return { send: s, evaluate, goto, until, shot, click, close: closeAll };
+  /** Every `method` event to fn until the returned function is called (a screencast's frames). */
+  const listen = (method, fn) => { const l = { method, fn }; listeners.push(l); return () => listeners.splice(listeners.indexOf(l), 1); };
+  return { send: s, evaluate, goto, until, shot, click, listen, close: closeAll };
 }
 
 // The table keeps its game in cdom's store (IndexedDB "cdom", object store "kv"; src/table_app.c

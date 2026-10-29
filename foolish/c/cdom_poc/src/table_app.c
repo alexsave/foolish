@@ -26,6 +26,7 @@
 #include "textures.h"
 #include "cdom_store.h"
 #include "game_keep.h"
+#include "anim_run.h"
 #include <math.h>
 
 
@@ -46,6 +47,22 @@ static ViewRules R;
 static LegalMoves MOVES;
 static unsigned char MENU[64 * 1024];
 static const TableView *V;
+/* The board whose battles the row draws: V, or while a card is coming down onto the table the board
+ * of the step that brings it, so the row makes room as it flies (React's arrivingPiles). */
+static const TableView *RV;
+
+/* What the run in the air shows besides its landed board (README, Animations), worked out from the
+ * kernel's frame before every render (run_show): the stock's cards in the air, the cards hidden
+ * where their flight left and where it lands, the attacks turning under a cover in flight, the room
+ * my hand makes for cards flying into it, and the flight's duration. All zero with no run. */
+static struct {
+  int from_deck, to_flipped, trump_out;
+  uint64_t veil_hand, veil_table; /* by card id (card_to_id): hidden in my hand, on the table */
+  uint64_t covering;              /* attack ids a cover in the air lands on */
+  int arriving;                   /* cards flying into my hand */
+  int flight_ms;                  /* the beat in the air's duration */
+} SHOW;
+static int veiled(uint64_t set, int cid) { return (int)((set >> cid) & 1); }
 
 static const char *const SEAT_NAME[] = {"Me", "Anna"};
 static const char *const SEAT_ID[] = {"u-me-0000", "u-anna-0001"};
@@ -178,8 +195,19 @@ static void face_open(Card c, int thin) {
 }
 
 enum { FACE_STILL, FACE_HAND, FACE_ATTACK, FACE_DEFENSE };
-#define COVER_TILT "0.19634954084936207rad" /* TableBattles.tsx COVER_ROTATION_RAD, pi / 16 */
+#define COVER_RAD 0.19634954084936207 /* TableBattles.tsx COVER_ROTATION_RAD, pi / 16 */
+#define COVER_TILT "0.19634954084936207rad"
+#define EASE "cubic-bezier(0.25, 0.46, 0.45, 0.94)" /* FlightCard.tsx EASE: the flights' curve, and the row's */
+#define FLIGHT_ARM_MS 25 /* FlightCard.tsx: a flight stands one paint at its start before it moves */
 
+/* A battle's attack turns with the cover flying onto it: over the flight's duration, on its curve,
+ * starting when the flight is armed (TableBattles.tsx attackCardStyle); 0 ms with nothing flying. */
+static void sb_attack_transition(SB *s, int ms) {
+  sb_s(s, "transform "); sb_i(s, ms); sb_s(s, "ms " EASE " "); sb_i(s, ms > 0 ? FLIGHT_ARM_MS : 0);
+  sb_s(s, "ms, box-shadow 0.2s ease-in-out");
+}
+
+/* `tilted`, an attack's: bit 0 turned out of its cover's way, bit 1 covered (it lies under). */
 static cd_str face_style(Card c, int kind, const HandRect *slot, double bottom, int selected, int tilted) {
   static SB s;
   sb_reset(&s);
@@ -191,9 +219,9 @@ static cd_str face_style(Card c, int kind, const HandRect *slot, double bottom, 
   sb_s(&s, kind == FACE_HAND ? "cursor: move; " : kind == FACE_ATTACK ? "cursor: pointer; " : "cursor: default; ");
   sb_s(&s, "user-select: none; -webkit-user-select: none; ");
   sb_s(&s, kind == FACE_HAND || kind == FACE_ATTACK ? "pointer-events: auto; " : "pointer-events: none; ");
-  sb_s(&s, kind == FACE_HAND ? "transition: all 0.1s ease, visibility 0s; "
-         : kind == FACE_ATTACK ? "transition: transform 0ms cubic-bezier(0.25, 0.46, 0.45, 0.94) 0ms, box-shadow 0.2s ease-in-out; "
-         : "transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out, box-shadow 0.2s ease-in-out; ");
+  if (kind == FACE_ATTACK) { sb_s(&s, "transition: "); sb_attack_transition(&s, SHOW.flight_ms); sb_s(&s, "; "); }
+  else sb_s(&s, kind == FACE_HAND ? "transition: all 0.1s ease, visibility 0s; "
+                : "transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out, box-shadow 0.2s ease-in-out; ");
   sb_s(&s, kind == FACE_STILL ? "position: relative; " : "position: absolute; ");
   sb_s(&s, "font-family: Georgia, serif; font-weight: bold; color: ");
   sb_s(&s, card_red(c) ? "rgb(220, 38, 38); " : "rgb(0, 0, 0); ");
@@ -203,8 +231,9 @@ static cd_str face_style(Card c, int kind, const HandRect *slot, double bottom, 
     sb_px(&s, "bottom: ", bottom);
     sb_s(&s, "box-sizing: border-box; z-index: 1000; justify-content: center; align-items: center; opacity: 1;");
   } else if (kind == FACE_ATTACK) {
-    sb_s(&s, tilted ? "bottom: 5px; left: 50%; transform: translateX(-50%) rotate(-" COVER_TILT "); transform-origin: center bottom; z-index: 1;"
-                    : "bottom: 5px; left: 50%; transform: translateX(-50%); transform-origin: center bottom; z-index: 2;");
+    sb_s(&s, tilted & 1 ? "bottom: 5px; left: 50%; transform: translateX(-50%) rotate(-" COVER_TILT "); transform-origin: center bottom; "
+                        : "bottom: 5px; left: 50%; transform: translateX(-50%); transform-origin: center bottom; ");
+    sb_s(&s, tilted & 2 ? "z-index: 1;" : "z-index: 2;");
   } else if (kind == FACE_DEFENSE) {
     sb_s(&s, "bottom: 5px; left: 50%; transform: translateX(-50%) rotate(" COVER_TILT "); transform-origin: center bottom; z-index: 2;");
   }
@@ -267,7 +296,7 @@ static void layers_update(cd_list *L, uint32_t n, const cd_list_fns *f) {
 
 /* ---- the stock and the trump (DeckAndFlipped.tsx) ------------------------ */
 
-static cd_id deck_badge_txt, deck_layers_box;
+static cd_id deck_badge_txt, deck_layers_box, deck_spot, flipped_slot; /* the last two: where a flight leaves or lands */
 static cd_region deck_area; /* all of the deck's column: rebuilt when what it holds changes */
 static cd_list deck_layers;
 static int32_t deck_shape = -1, deck_badge = -1;
@@ -280,12 +309,13 @@ static void render_deck(void) {
     deck_shape = shape;
     cd_list_forget(&deck_layers, &DECK_LAYERS);
     cd_region_hide(&deck_area);
-    deck_badge_txt = deck_layers_box = 0;
+    deck_badge_txt = deck_layers_box = deck_spot = flipped_slot = 0;
     deck_badge = -1;
     cd_region_show(&deck_area, 1);
     cd_at(deck_area.parent, 0);
     if (R.show_deck_spot) {
       OPEN("div"); STYLE("position: relative;"); ATTR("data-location", "deck");
+      cd_name_open(deck_spot = cd_id_new());
       OPEN("div"); STYLE("position: relative; width: 50px; height: 70px;");
       cd_name_open(deck_layers.parent = deck_layers_box = cd_id_new());
       deck_layers.owns_parent = 1;
@@ -301,6 +331,7 @@ static void render_deck(void) {
     }
     if (R.show_flipped_slot) {
       OPEN("div"); ATTR("data-location", "flipped");
+      cd_name_open(flipped_slot = cd_id_new());
       cd_attr(S_STYLE, R.show_deck_spot ? ZS("margin-top: -30px; width: 50px; height: 70px; z-index: 0;")
                                         : ZS("margin-top: 0px; width: 50px; height: 70px; z-index: 0;"));
       if (R.show_flipped_card) {
@@ -365,9 +396,18 @@ enum { TAG_CARD = 0x100, TAG_PILL = 0x200, TAG_BATTLE = 0x400, TAG_TABLE = 0x800
 static cd_list battles;
 static cd_id battle_attack[52];  /* the attack face of each battle, by attack card id */
 static cd_id battle_defense[52]; /* its cover's face, 0 while uncovered */
+static cd_id battle_cell[52];    /* its cell, the box the row lays out and glides */
+/* What each battle shows now, by attack id: the attack turned (covered, or a cover flying onto it),
+ * the attack and its cover hidden (their flight is up), and the transition the turn runs on. */
+static struct { int8_t tilt, veil_a, veil_d; int32_t ms; } bshown[52];
 
 /* A battle item's data: its cover's card id + 1, 0 while uncovered. */
 static uint32_t cover_data(const Battle *b) { return b->defense.suit >= 0 ? (uint32_t)card_to_id(b->defense) + 1 : 0; }
+
+/* A card a flight carries is hidden where it left and where it lands, at once and shown at once
+ * (CardFace.tsx sets visibility hidden over its own style; its "no pointer events" and "no
+ * transition" change nothing here: a hidden card is never hit, and nothing moves it while hidden). */
+static void veil_set(cd_id id, int on) { cd_set_style(id, ZS("visibility"), on ? ZS("hidden") : ZS("")); }
 
 static void defense_add(int aid, Card d) {
   face_open(d, 0);
@@ -375,14 +415,36 @@ static void defense_add(int aid, Card d) {
   cd_name_open(battle_defense[aid] = cd_id_new());
   data_card(d);
   CLOSE();
+  bshown[aid].veil_d = 0;
+}
+
+/* The battle's turn, veils and transition as the run has them now: only what changed. */
+static void battle_show(int aid, const Battle *b) {
+  cd_id att = battle_attack[aid];
+  int covered = b->defense.suit >= 0;
+  if (SHOW.flight_ms != bshown[aid].ms) { /* first, so a turn set with it runs on it */
+    static SB t;
+    sb_reset(&t);
+    sb_attack_transition(&t, bshown[aid].ms = SHOW.flight_ms);
+    cd_set_style(att, ZS("transition"), sb_tmp(&t));
+  }
+  int tilt = covered || veiled(SHOW.covering, aid);
+  if (tilt != bshown[aid].tilt)
+    cd_set_style(att, ZS("transform"), (bshown[aid].tilt = (int8_t)tilt) ? ZS("translateX(-50%) rotate(-" COVER_TILT ")") : ZS("translateX(-50%)"));
+  int va = veiled(SHOW.veil_table, aid);
+  if (va != bshown[aid].veil_a) veil_set(att, bshown[aid].veil_a = (int8_t)va);
+  int vd = covered && veiled(SHOW.veil_table, card_to_id(b->defense));
+  if (covered && vd != bshown[aid].veil_d) veil_set(battle_defense[aid], bshown[aid].veil_d = (int8_t)vd);
 }
 
 static cd_id battle_create(void *ctx, uint32_t i, uint32_t *data) {
   (void)ctx;
-  const Battle *b = &V->battles[i];
+  const Battle *b = &RV->battles[i];
   int covered = b->defense.suit >= 0;
   int aid = card_to_id(b->attack);
+  int tilt = covered || veiled(SHOW.covering, aid);
   cd_id cell = cd_id_new();
+  battle_cell[aid] = cell;
   OPEN("div");
   cd_listen(cell, CD_EV_CLICK);
   cd_tag_set(cell, TAG_BATTLE | (uint32_t)aid);
@@ -390,46 +452,108 @@ static cd_id battle_create(void *ctx, uint32_t i, uint32_t *data) {
         "height: 80px; margin: 5px; justify-content: center;");
   ATTR("data-location", "table");
   face_open(b->attack, 0);
-  cd_attr(S_STYLE, face_style(b->attack, FACE_ATTACK, 0, 0, 0, covered));
+  cd_attr(S_STYLE, face_style(b->attack, FACE_ATTACK, 0, 0, 0, tilt | covered << 1));
   cd_name_open(battle_attack[aid] = cd_id_new());
   cd_attr(ZS("data-battle-index"), index_str(i));
   data_card(b->attack);
   CLOSE();
   if (covered) defense_add(aid, b->defense);
   CLOSE();
+  bshown[aid].tilt = (int8_t)tilt;
+  bshown[aid].ms = SHOW.flight_ms;
+  bshown[aid].veil_a = bshown[aid].veil_d = 0;
+  battle_show(aid, b);
   *data = cover_data(b);
   return cell;
 }
 
-/* A battle whose cover changed: covered (the attack tilts back), or, when the board is replaced (a
- * load), uncovered or covered by another card. */
+/* A battle that survived: its cover when it changed (covered; or, when the board is replaced by a
+ * load, uncovered or covered by another card), then its turn and veils. */
 static void battle_patch(void *ctx, uint32_t i, cd_item *it) {
   (void)ctx;
-  const Battle *b = &V->battles[i];
+  const Battle *b = &RV->battles[i];
   uint32_t want = cover_data(b);
-  if (want == it->data) return;
   int aid = card_to_id(b->attack);
-  cd_id att = battle_attack[aid];
-  if (it->data) { cd_remove(battle_defense[aid]); battle_defense[aid] = 0; }
-  it->data = want;
-  cd_set_style(att, ZS("transform"), want ? ZS("translateX(-50%) rotate(-" COVER_TILT ")") : ZS("translateX(-50%)"));
-  cd_set_style(att, ZS("z-index"), want ? ZS("1") : ZS("2"));
-  if (want) { cd_at(it->node, 0); defense_add(aid, b->defense); }
+  if (want != it->data) {
+    if (it->data) { cd_remove(battle_defense[aid]); battle_defense[aid] = 0; }
+    it->data = want;
+    cd_set_style(battle_attack[aid], ZS("z-index"), want ? ZS("1") : ZS("2"));
+    if (want) { cd_at(it->node, 0); defense_add(aid, b->defense); }
+  }
+  battle_show(aid, b);
 }
 
 static void battle_destroy(void *ctx, cd_item *it) {
   (void)ctx;
   int aid = (int)it->key - 1;
   cd_id_free(battle_attack[aid]);
-  battle_attack[aid] = 0;
+  battle_attack[aid] = battle_cell[aid] = 0;
   if (battle_defense[aid]) { cd_id_free(battle_defense[aid]); battle_defense[aid] = 0; }
 }
 
 static const cd_list_fns BATTLE_FNS = {0, battle_create, battle_patch, battle_destroy};
 
+/* ---- the row's glide (TableBattles.tsx, the FLIP) ---------------------------------------------
+ * The cells are centred, so a pile arriving or leaving moves every other one, and CSS cannot
+ * transition a flex reflow. So each cell is pinned where it is DRAWN (its box before the change,
+ * a glide still running included), then let go to where the new layout put it, over the duration
+ * of the step that opened last and on the flights' curve: the row moves with the card. Measured
+ * only when the row's cells change. */
+static uint32_t row_keys[MAX_BATTLES], n_row_keys;
+static double cell_rest[52][2];  /* each cell's box at rest (left, top), as last laid out */
+static int8_t cell_glided[52];   /* a glide was started on it: its transition is cut before the next measure */
+static double cell_glide_end[52]; /* when that glide is over (cd_now ms): until then the cell is not at its rest */
+static int row_ms;               /* React's rowMs: the duration of the step that opened last */
+
 static void render_table(void) {
-  for (int i = 0; i < V->num_battles; i++) keys[i] = (uint32_t)card_to_id(V->battles[i].attack) + 1;
-  cd_list_update(&battles, keys, (uint32_t)V->num_battles, &BATTLE_FNS);
+  uint32_t n = (uint32_t)RV->num_battles;
+  for (uint32_t i = 0; i < n; i++) keys[i] = (uint32_t)card_to_id(RV->battles[i].attack) + 1;
+  int same = n == n_row_keys && !__builtin_memcmp(keys, row_keys, n * sizeof keys[0]);
+  double drawn[52][2];
+  int8_t had[52] = {0};
+  double r[4];
+  if (!same)
+    for (uint32_t i = 0; i < n_row_keys; i++) {
+      int aid = (int)row_keys[i] - 1;
+      if (!battle_cell[aid]) continue;
+      cd_rect(battle_cell[aid], r);
+      drawn[aid][0] = r[0]; drawn[aid][1] = r[1];
+      had[aid] = 1;
+    }
+  cd_list_update(&battles, keys, n, &BATTLE_FNS);
+  if (same) return;
+  __builtin_memcpy(row_keys, keys, n * sizeof keys[0]);
+  n_row_keys = n;
+  int moved[MAX_BATTLES], n_moved = 0;
+  for (uint32_t i = 0; i < n; i++) { /* where the new layout puts each cell, every glide cut */
+    int aid = (int)keys[i] - 1;
+    if (cell_glided[aid]) { cd_set_style(battle_cell[aid], ZS("transition"), ZS("none")); cell_glided[aid] = 0; }
+  }
+  for (uint32_t i = 0; i < n; i++) {
+    int aid = (int)keys[i] - 1;
+    cd_rect(battle_cell[aid], r);
+    cell_rest[aid][0] = r[0]; cell_rest[aid][1] = r[1];
+    if (!had[aid]) continue; /* a pile that was not down has nowhere to come from */
+    double dx = drawn[aid][0] - r[0], dy = drawn[aid][1] - r[1];
+    if (__builtin_fabs(dx) < 0.5 && __builtin_fabs(dy) < 0.5) continue;
+    static SB t;
+    sb_reset(&t);
+    sb_s(&t, "translate("); sb_num(&t, dx, CD_UNIT_PX); sb_s(&t, ", "); sb_num(&t, dy, CD_UNIT_PX); sb_s(&t, ")");
+    cd_set_style(battle_cell[aid], ZS("transition"), ZS("none"));
+    cd_set_style(battle_cell[aid], ZS("transform"), sb_tmp(&t));
+    moved[n_moved++] = aid;
+  }
+  if (!n_moved) return;
+  cd_rect(battle_cell[moved[0]], r); /* the pinned place is the style the glide starts from */
+  for (int k = 0; k < n_moved; k++) {
+    static SB t;
+    sb_reset(&t);
+    sb_s(&t, "transform "); sb_i(&t, row_ms); sb_s(&t, "ms " EASE);
+    cd_set_style(battle_cell[moved[k]], ZS("transition"), sb_tmp(&t));
+    cd_set_style(battle_cell[moved[k]], ZS("transform"), ZS(""));
+    cell_glided[moved[k]] = 1;
+    cell_glide_end[moved[k]] = cd_now() + row_ms;
+  }
 }
 
 /* ---- my hand (ActionButtons.tsx CardDiv, handShape.tsx) ------------------- */
@@ -439,8 +563,9 @@ static HandLayout HL;
 static double lift, act_h = -1, pills_b = -1, plane_h = -1; /* lift, and the three lengths as drawn */
 static cd_id action_area, pills_box, hand_plane;
 static cd_list hand, pills;
-/* What each hand card shows now, by card id: its box, its bottom, selected, its index. */
-static struct { double x, w, h, bottom; int8_t sel, index; } shown[52];
+/* What each hand card shows now, by card id: its box, its bottom, selected, its index, hidden (a
+ * flight carries it), and its node (where a flight leaves from). */
+static struct { double x, w, h, bottom; int8_t sel, index, veil; cd_id node; } shown[52];
 
 static int selected(int cid) {
   for (int i = 0; i < nsel; i++) if (sel[i] == cid) return 1;
@@ -469,6 +594,9 @@ static cd_id hand_create(void *ctx, uint32_t i, uint32_t *data) {
   data_card(c);
   ATTR("draggable", "true");
   CLOSE();
+  shown[cid].node = id;
+  shown[cid].veil = 0;
+  if (veiled(SHOW.veil_hand, cid)) veil_set(id, shown[cid].veil = 1);
   *data = (uint32_t)cid;
   return id;
 }
@@ -486,9 +614,11 @@ static void hand_patch(void *ctx, uint32_t i, cd_item *it) {
   if (r->h != shown[cid].h) cd_set_style_num(it->node, ZS("height"), shown[cid].h = r->h, CD_UNIT_PX);
   if (sl != shown[cid].sel) cd_set_style(it->node, ZS("border-color"), (shown[cid].sel = sl) ? ZS("red") : ZS("black"));
   if (shown[cid].index != (int8_t)i) cd_set_attr(it->node, ZS("data-card-index"), index_str((uint32_t)(shown[cid].index = (int8_t)i)));
+  int8_t v = (int8_t)veiled(SHOW.veil_hand, cid);
+  if (v != shown[cid].veil) veil_set(it->node, shown[cid].veil = v);
 }
 
-static void hand_destroy(void *ctx, cd_item *it) { (void)ctx; (void)it; }
+static void hand_destroy(void *ctx, cd_item *it) { (void)ctx; shown[it->data].node = 0; }
 static const cd_list_fns HAND_FNS = {0, hand_create, hand_patch, hand_destroy};
 
 /* The pill column, top to bottom, as ActionButtons.tsx COLUMN. */
@@ -589,7 +719,8 @@ static void render_hand(void) {
   cd_viewport_rec vp;
   cd_viewport(&vp);
   double width = (double)vp.w - 20; /* the plane: the window less cards.css's 10px gutters */
-  hand_layout(&WEB_HAND, V->my_hand_count, width, &HL);
+  /* the cards it holds and, while a flight brings more, room for them at the end (handShape.tsx) */
+  hand_layout(&WEB_HAND, V->my_hand_count + SHOW.arriving, width, &HL);
   HandLayout empty;
   hand_layout(&WEB_HAND, 0, width, &empty);
   lift = HL.rows.height - empty.rows.height;
@@ -879,15 +1010,387 @@ static void render_end(void) {
   cd_region_end(&end_screen); /* the button's id goes with the screen */
 }
 
-/* ---- one render ----------------------------------------------------------- */
+/* ---- the animations (README, Animations) ----------------------------------------------------
+ * Every operation on the game (a move of mine, a bot step, a deal) is captured as the kernel's
+ * stream for my seat (anim_run.c) and appended to one growing run, as the React table appends each
+ * push (useAnimationRun.ts): the steps already there keep their timing, nothing is spliced or
+ * cancelled. The plan is the kernel's (client_plan_step, client_plan): when each step opens and
+ * lands, which steps fly together (a beat), for how long, and the stock's cards in the air. Every
+ * render asks it where the run stands now (anim_plan_at) and draws that: the board of the last step
+ * to land (every step a skipped frame passed landed in order), the beat in the air flying, the
+ * cards it carries hidden where they left and where they land. A frame loop renders while a run
+ * plays. When the last step has landed the run ends and the game's own board is drawn: it is the
+ * stream's final board, with the roles the closing beat hands on (anim_run.h). */
+enum { TIMER_TEX = 2, TIMER_BOT_GO = 3, TIMER_SAVE_RETRY = 4, TIMER_BOT_BASE = 16 }; /* the bot's: TIMER_BOT_BASE + its generation */
+#define TIMER_ARM 0x80000000u /* a flight's arm: TIMER_ARM | its generation */
+enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2, RAF_ANIM = 3 };
+enum { RUN_ROOM = MAX_SNAPS }; /* the most steps one operation adds (one per hook) */
 
 static cd_id container, bg_wool;
+static RunStep run[ANIM_MAX_STEPS];
+static TableView run_pre;      /* what shows until step 0 lands: the board the run started on */
+static AnimPlanAsk ASK;
+static AnimPlan PLAN;
+static AnimFrame FR;           /* where the run stood at the last render */
+static int run_n, run_landed, run_opened;
+static double run_origin = -1; /* page ms when the run started; < 0: no run */
+static double anim_speed = 1;  /* the test build's: the run's clock goes this many times faster */
+static uint32_t runs_started;  /* for the tests */
+
+static int run_on(void) { return run_origin >= 0; }
+static const TableView *run_board(void) { return run_landed ? &run[run_landed - 1].board : &run_pre; }
+
+/* The plan of the whole run, steps [from, run_n) newly added: the kernel's, from each step's event
+ * and board (as pushSequence.ts and animPlan.ts planFor hand them over). */
+static int run_plan(int from) {
+  for (int i = from; i < run_n; i++) {
+    const PushEvent *e = &run[i].ev;
+    ClientPlanStep st;
+    __builtin_memset(&st, 0, sizeof st);
+    st.type = e->type;
+    st.seat = e->seat;
+    st.from = (uint8_t)e->from; /* -1, none, is ANIM_LOC_NONE */
+    st.to = (uint8_t)e->to;
+    st.n_cards = e->n_cards;
+    for (int k = 0; k < e->n_cards; k++) st.cards[k] = e->cards[k];
+    if (client_plan_step(&ASK, i, &st, &run[i].board) != ANIM_EOK) return 0;
+  }
+  return client_plan(&ASK, run_n, &run[run_n - 1].board, &PLAN) == ANIM_EOK;
+}
+
+static void flights_clear(void);
+/* The role marks' beats (filled in by the role pass below). */
+static void roles_settle(void) {}
+static void roles_opened(int step) { (void)step; }
+
+/* The run is over: every step has landed (or it is landed at once: no room, a plan refused). */
+static void run_end(void) {
+  run_origin = -1;
+  run_n = run_landed = run_opened = 0;
+  __builtin_memset(&FR, 0, sizeof FR);
+  FR.step = ANIM_STEP_NONE;
+  flights_clear();
+  roles_settle();
+}
+
+/* Before an operation: its hooks are captured from here. A run with no room for one more operation
+ * is landed first (a guard: a deal is 16 steps, a move a handful, the run holds 128). */
+static void op_begin(void) {
+  if (run_on() && run_n > ANIM_MAX_STEPS - RUN_ROOM) run_end();
+  run_capture_begin(&G);
+}
+
+/* After it: its steps join the run, which starts now if none was playing, on the board on screen
+ * (a deal's run on the empty table its first step carries). `actor` the seat that acted, -1 none. */
+static void op_end(int actor) {
+  int was = run_on(), from = run_n;
+  if (!was && V) run_pre = *V; /* before the capture writes into run[], which V may still point into */
+  int n = run_capture_end(&G, ME, actor, G.status == GAME_STATUS_GAME_OVER, run + run_n, ANIM_MAX_STEPS - run_n);
+  if (n <= 0) return; /* nothing shown, or a stream that does not read: the board is drawn as it is */
+  if (!was && n > 1 && run[1].ev.type == EVW_T_DEAL) run_pre = run[0].board; /* a deal lands on the empty table */
+  run_n += n;
+  if (!run_plan(from)) { run_end(); return; }
+  if (was) return;
+  run_origin = cd_now();
+  run_landed = run_opened = 0;
+  row_ms = 0;
+  runs_started++;
+  cd_raf_request(RAF_ANIM);
+}
+
+/* Where the run stands now: the steps landed since the last render (in order), the steps opened
+ * (their role beats turn now), and the run's end. */
+static void run_sample(void) {
+  int t = (int)((cd_now() - run_origin) * anim_speed);
+  if (anim_plan_at(&PLAN, t, &FR) != ANIM_EOK) { run_end(); return; }
+  if (FR.landed > run_landed) run_landed = FR.landed < run_n ? FR.landed : run_n;
+  while (run_opened < run_n && PLAN.steps[run_opened].start_ms <= t) {
+    row_ms = PLAN.steps[run_opened].duration_ms; /* the row moves with the card, over its time */
+    roles_opened(run_opened);
+    run_opened++;
+  }
+  if (FR.done && run_landed >= run_n) run_end();
+}
+
+/* What the beat in the air shows besides the landed board (SHOW). */
+static void run_show(void) {
+  __builtin_memset(&SHOW, 0, sizeof SHOW);
+  RV = V;
+  if (!run_on()) return;
+  SHOW.from_deck = FR.in_flight_from_deck;
+  SHOW.to_flipped = FR.in_flight_to_flipped;
+  SHOW.trump_out = !card_is_none(FR.trump_flight);
+  if (FR.step == ANIM_STEP_NONE) return;
+  const AnimPlanStep *ps = &PLAN.steps[FR.step];
+  SHOW.flight_ms = ps->duration_ms;
+  for (int k = ps->beat_first; k < ps->beat_first + ps->beat_n; k++) {
+    const PushEvent *e = &run[k].ev;
+    uint64_t ids = 0;
+    for (int i = 0; i < e->n_cards; i++) if (e->cards[i].suit >= 0) ids |= 1ull << card_to_id(e->cards[i]);
+    if (e->from == EVW_LOC_HAND && e->seat == ME) SHOW.veil_hand |= ids;
+    if (e->from == EVW_LOC_TABLE) SHOW.veil_table |= ids;
+    if (e->to == EVW_LOC_HAND && e->seat == ME) SHOW.arriving += e->n_cards;
+    if (e->to == EVW_LOC_TABLE && e->type == EVW_T_ATTACK_PASS) {
+      SHOW.veil_table |= ids;
+      RV = &run[k].board; /* the row makes room for the pile now (React's arrivingPiles) */
+    }
+    if (e->type == EVW_T_COVER && e->has_target) SHOW.covering |= 1ull << card_to_id(e->target);
+  }
+}
+
+/* ---- the flights (FlightCard.tsx, flightGeometry.ts) ---------------------------------------------
+ * The beat in the air's cards, each one node in an overlay (AnimationOverlay.tsx: fixed, over
+ * everything, never hit), made when the beat opens and gone when it lands. A flight is put at the
+ * centre of where its card is drawn, at scale 1.5 and the tilt it lies at there, and FLIGHT_ARM_MS
+ * later given its landing: the centre of where the card will be drawn, scale 1.8, the tilt it will
+ * lie at, and a shadow, with a CSS transition of the beat's duration on the flights' curve. The
+ * browser moves it; every endpoint is measured once, as React measures in a layout effect. */
+enum { MAX_FLIGHTS = 64, CARD_H = 70 };
+static cd_region overlay;
+static struct { cd_id node, face; double x, y, angle; } flight[MAX_FLIGHTS];
+static int n_flights, flight_beat = -1, flight_ms, flights_made;
+static uint32_t flight_gen; /* the arm's generation: an older beat's timer arms nothing */
+
+static void flights_clear(void) {
+  cd_region_hide(&overlay);
+  n_flights = 0;
+  flight_beat = -1;
+  flight_gen++;
+}
+
+/* The transform a flight is drawn with: hung by its centre, turned about its bottom edge (so the
+ * pivot is paid back), grown and tilted (FlightCard.tsx). */
+static void sb_flight_transform(SB *s, double scale, double angle) {
+  sb_s(s, "translate(-50%, -50%) translate(");
+  sb_num(s, -scale * (CARD_H / 2.0) * sin(angle), CD_UNIT_PX);
+  sb_s(s, ", ");
+  sb_num(s, (scale * cos(angle) - 1) * (CARD_H / 2.0), CD_UNIT_PX);
+  sb_s(s, ") scale(");
+  sb_num(s, scale, CD_UNIT_NONE);
+  sb_s(s, ") rotate(");
+  sb_num(s, angle, CD_UNIT_RAD);
+  sb_s(s, ")");
+}
+
+/* A flying face: CardFace's own style with the overlay's border, shadow (none until armed), filter
+ * and colour (FlightCard.tsx NORMAL). */
+#define FLIGHT_FACE "background-color: var(--color-card-face); width: 50px; height: 70px; border-radius: 5px; " \
+  "border: 2px solid black; box-shadow: 0 0px 0px rgba(0,0,0,0.4); cursor: default; user-select: none; " \
+  "-webkit-user-select: none; -webkit-touch-callout: none; pointer-events: none; " \
+  "transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out, box-shadow 0.2s ease-in-out; position: relative; " \
+  "font-family: Georgia, serif; font-weight: bold; display: flex; flex-direction: column; font-size: 20px; " \
+  "line-height: 15px; filter: none; color: "
+
+/* One flight: a face of c, or a stack of `backs` card backs (another seat's draw: CardBack with as
+ * many layers), from (x0, y0) at angle a0 to (x1, y1) at a1. */
+static void flight_add(Card c, int backs, double x0, double y0, double a0, double x1, double y1, double a1) {
+  if (n_flights == MAX_FLIGHTS) return;
+  cd_id node = cd_id_new(), face = 0;
+  OPEN("div");
+  cd_name_open(node);
+  static SB s;
+  sb_reset(&s);
+  sb_s(&s, "position: absolute; ");
+  sb_px(&s, "left: ", x0);
+  sb_px(&s, "top: ", y0);
+  sb_s(&s, "transform-origin: center bottom; transform: ");
+  sb_flight_transform(&s, 1.5, a0);
+  sb_s(&s, "; opacity: 1; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; transition: none;");
+  cd_attr(S_STYLE, sb_tmp(&s));
+  if (backs) {
+    OPEN("div"); STYLE("position: relative; width: 50px; height: 70px;");
+    for (int i = 0; i < backs; i++) { OPEN("div"); cd_attr(S_STYLE, back_style((uint32_t)i, 0, 1)); CLOSE(); }
+    CLOSE();
+  } else {
+    face_open(c, 0);
+    cd_attr(S_STYLE, card_red(c) ? ZS(FLIGHT_FACE "rgb(220, 38, 38);") : ZS(FLIGHT_FACE "rgb(0, 0, 0);"));
+    cd_name_open(face = cd_id_new());
+    CLOSE();
+  }
+  CLOSE();
+  flight[n_flights].node = node;
+  flight[n_flights].face = face;
+  flight[n_flights].x = x1;
+  flight[n_flights].y = y1;
+  flight[n_flights].angle = a1;
+  n_flights++;
+}
+
+/* The flights' landings, FLIGHT_ARM_MS after they were drawn at their start (one crossed paint). */
+static void flights_arm(uint32_t gen) {
+  if (gen != (flight_gen & 0x7fffffffu)) return;
+  for (int i = 0; i < n_flights; i++) {
+    static SB s;
+    sb_reset(&s);
+    sb_s(&s, "left "); sb_i(&s, flight_ms); sb_s(&s, "ms " EASE ", top "); sb_i(&s, flight_ms);
+    sb_s(&s, "ms " EASE ", transform "); sb_i(&s, flight_ms); sb_s(&s, "ms " EASE);
+    cd_set_style(flight[i].node, ZS("transition"), sb_tmp(&s));
+    cd_set_style_num(flight[i].node, ZS("left"), flight[i].x, CD_UNIT_PX);
+    cd_set_style_num(flight[i].node, ZS("top"), flight[i].y, CD_UNIT_PX);
+    sb_reset(&s);
+    sb_flight_transform(&s, 1.8, flight[i].angle);
+    cd_set_style(flight[i].node, ZS("transform"), sb_tmp(&s));
+    if (flight[i].face) cd_set_style(flight[i].face, ZS("box-shadow"), ZS("0 10px 20px rgba(0,0,0,0.4)"));
+  }
+}
+
+/* The centre of a node as drawn now. */
+static void centre_of(cd_id id, double *x, double *y) {
+  double r[4];
+  cd_rect(id, r);
+  *x = r[0] + r[2] / 2;
+  *y = r[1] + r[3] / 2;
+}
+
+/* A card on the table: its face and the tilt it lies at (a cover across, the attack under it the
+ * other way: flightGeometry.ts tableTilt); 0 when the row does not hold it. */
+static cd_id table_face(int cid, double *angle) {
+  for (int i = 0; i < RV->num_battles; i++) {
+    const Battle *b = &RV->battles[i];
+    int aid = card_to_id(b->attack), covered = b->defense.suit >= 0;
+    if (aid == cid) { *angle = covered ? -COVER_RAD : 0; return battle_attack[aid]; }
+    if (covered && card_to_id(b->defense) == cid) { *angle = COVER_RAD; return battle_defense[aid]; }
+  }
+  *angle = 0;
+  return 0;
+}
+
+/* How far a table card's cell is from where it comes to rest (a glide still running): a landing is
+ * aimed at the rest (flightGeometry.ts restingCentre). */
+static void glide_offset(int aid, double *dx, double *dy) {
+  double r[4];
+  *dx = *dy = 0;
+  if (!battle_cell[aid] || cd_now() >= cell_glide_end[aid]) return; /* at rest: its box is where it is */
+  cd_rect(battle_cell[aid], r);
+  *dx = r[0] - cell_rest[aid][0];
+  *dy = r[1] - cell_rest[aid][1];
+}
+
+static cd_id seat_hand(int seat) { return seat_ui[seat].hand; } /* another seat's mini hand: where its cards come and go */
+static cd_id hand_plane_id(void) { return hand_plane; }
+
+/* Where a card of step k lands in MY hand: the kernel's slot for it in the hand that step leaves,
+ * off the plane's bottom edge (handShape.tsx handLandingCentre). */
+static int my_hand_landing(int k, Card c, double *x, double *y) {
+  const TableView *b = &run[k].board;
+  int at = -1;
+  for (int i = 0; i < b->my_hand_count; i++) if (b->my_hand[i].suit == c.suit && b->my_hand[i].value == c.value) at = i;
+  if (at < 0) return 0;
+  cd_viewport_rec vp;
+  cd_viewport(&vp);
+  static HandLayout l;
+  hand_layout(&WEB_HAND, b->my_hand_count, (double)vp.w - 20, &l);
+  double r[4];
+  cd_rect(hand_plane_id(), r);
+  const HandRect *s = &l.slot[at];
+  *x = r[0] + s->x + s->w / 2;
+  *y = r[1] + r[3] - (l.rows.height - s->y - s->h) - s->h / 2;
+  return 1;
+}
+
+/* The flights of the beat opening at `beat`: each card of each of its steps, from where it is drawn
+ * to where it will be (flightGeometry.ts planFlights). Measured now, once. */
+static void flights_open(int beat) {
+  const AnimPlanStep *ps = &PLAN.steps[beat];
+  flight_ms = ps->duration_ms;
+  cd_viewport_rec vp;
+  cd_viewport(&vp);
+  int made = 0;
+  for (int k = beat; k < beat + ps->beat_n; k++) {
+    const PushEvent *e = &run[k].ev;
+    const AnimPlanStep *st = &PLAN.steps[k];
+    int n = e->n_cards;
+    if (n == 0 || e->type == EVW_T_MAGIC_TRANSITION) continue;
+    int trump = !card_is_none(st->trump_out) && st->trump_from == ANIM_LOC_FLIPPED; /* the draw's last card is the trump */
+    int backs = 0;
+    for (int i = 0; i < n; i++) backs += e->cards[i].suit < 0;
+    if (!made) { cd_region_show(&overlay, 1); cd_at(container, 0); OPEN("div"); cd_name_open(overlay.root);
+      STYLE("position: fixed; top: 0px; left: 0px; width: 100%; height: 100%; pointer-events: none; z-index: 10000; "
+            "user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;");
+      made = 1; }
+    if (backs == n) { /* another seat's draw: one stack of backs out of the stock, and the trump face up out of its slot */
+      double x1, y1, x0, y0;
+      centre_of(seat_hand(e->seat), &x1, &y1);
+      if (n - trump > 0 && deck_spot) { centre_of(deck_spot, &x0, &y0); flight_add(e->cards[0], n - trump, x0, y0, 0, x1, y1, 0); }
+      if (trump && flipped_slot) { centre_of(flipped_slot, &x0, &y0); flight_add(st->trump_out, 0, x0, y0, 0, x1, y1, 0); }
+      continue;
+    }
+    for (int i = 0; i < n; i++) {
+      Card c = e->cards[i];
+      int cid = card_to_id(c), precise = 0;
+      double x0 = vp.w / 2.0, y0 = vp.h - 100.0, a0 = 0, x1 = vp.w / 2.0, y1 = vp.h / 2.0, a1 = 0;
+      /* where it leaves from */
+      if (trump && i == n - 1) { if (!flipped_slot) continue; centre_of(flipped_slot, &x0, &y0); }
+      else if (e->from == EVW_LOC_DECK) { if (!deck_spot) continue; centre_of(deck_spot, &x0, &y0); }
+      else if (e->from == EVW_LOC_FLIPPED) { if (!flipped_slot) continue; centre_of(flipped_slot, &x0, &y0); }
+      else if (e->from == EVW_LOC_HAND) {
+        if (e->seat == ME && shown[cid].node) centre_of(shown[cid].node, &x0, &y0);
+        else if (e->seat != ME) centre_of(seat_hand(e->seat), &x0, &y0);
+      } else if (e->from == EVW_LOC_TABLE) {
+        cd_id f = table_face(cid, &a0);
+        if (f) centre_of(f, &x0, &y0); else x0 = vp.w / 2.0, y0 = vp.h / 2.0;
+      }
+      /* where it lands */
+      if (e->to == EVW_LOC_TABLE && e->type == EVW_T_COVER && e->has_target && battle_attack[card_to_id(e->target)]) {
+        int tid = card_to_id(e->target);
+        double r[4], dx, dy;
+        cd_rect(battle_attack[tid], r); /* upright: its turn waits for the arm */
+        glide_offset(tid, &dx, &dy);
+        x1 = r[0] - dx + r[2] / 2 + sin(COVER_RAD) * (r[3] / 2); /* the attack's centre turned about its bottom edge */
+        y1 = r[1] + r[3] - dy - cos(COVER_RAD) * (r[3] / 2);
+        a1 = COVER_RAD;
+        precise = 1;
+      } else if (e->to == EVW_LOC_TABLE && battle_attack[cid]) { /* the cell the row has made for it */
+        double dx, dy;
+        centre_of(battle_attack[cid], &x1, &y1);
+        glide_offset(cid, &dx, &dy);
+        x1 -= dx; y1 -= dy;
+        precise = 1;
+      } else if (e->to == EVW_LOC_HAND && e->seat == ME) {
+        precise = my_hand_landing(k, c, &x1, &y1);
+      } else if (e->to == EVW_LOC_HAND) {
+        centre_of(seat_hand(e->seat), &x1, &y1);
+      } else if (e->to == EVW_LOC_DISCARD) {
+        centre_of(discard.parent, &x1, &y1);
+      } else if (e->to == EVW_LOC_FLIPPED) {
+        if (!flipped_slot) continue;
+        centre_of(flipped_slot, &x1, &y1);
+        precise = 1;
+      }
+      if (!precise) { x1 += i * 3; y1 += i * 3; } /* cards into one unmeasured place do not stack exactly */
+      flight_add(c, 0, x0, y0, a0, x1, y1, a1);
+    }
+  }
+  if (!made) return;
+  CLOSE();
+  cd_region_end(&overlay);
+  flights_made += n_flights;
+  cd_timer_start(FLIGHT_ARM_MS, TIMER_ARM | (flight_gen & 0x7fffffffu));
+}
+
+/* After a render: the beat in the air flies (made once, as it opens), and is gone once it lands. */
+static void flights_update(void) {
+  int beat = run_on() && FR.step != ANIM_STEP_NONE ? PLAN.steps[FR.step].beat_first : -1;
+  if (beat == flight_beat) return;
+  flights_clear();
+  if (beat < 0) return;
+  flight_beat = beat;
+  flights_open(beat);
+}
+
+/* ---- one render ----------------------------------------------------------- */
+
 static cd_str turn_shown;
 
-static void render(void) {
-  if (client_adopt_board(&CT, &G, ME) != CLIENT_OK) __builtin_trap();
-  V = &CT.view;
-  client_view_rules(V, 0, 0, 0, &R);
+/* The board on screen: the run's (where it stands now) while one plays, else the game's. */
+static void render_board(void) {
+  if (run_on()) V = run_board();
+  else {
+    if (client_adopt_board(&CT, &G, ME) != CLIENT_OK) __builtin_trap();
+    V = &CT.view;
+  }
+  run_show();
+  client_view_rules(V, SHOW.from_deck, SHOW.to_flipped, SHOW.trump_out, &R);
   render_deck();
   render_discard();
   render_hand();
@@ -896,12 +1399,29 @@ static void render(void) {
   render_end();
   cd_str turn = V->status == GAME_STATUS_GAME_OVER ? ZS("over") : bot_pending ? ZS("bot") : ZS("human");
   if (turn != turn_shown) cd_set_attr(container, ZS("data-turn"), turn_shown = turn);
+  flights_update();
+}
+
+static void render(void) {
+  if (run_on()) run_sample();
+  render_board();
+}
+
+/* The run's frame loop: a frame whose answer differs from the last one's is drawn. */
+static void run_frame(void) {
+  if (!run_on()) return;
+  AnimFrame was = FR;
+  int landed = run_landed, opened = run_opened;
+  run_sample();
+  if (!run_on() || landed != run_landed || opened != run_opened || was.step != FR.step
+      || was.in_flight_from_deck != FR.in_flight_from_deck || was.in_flight_to_flipped != FR.in_flight_to_flipped
+      || !card_is_none(was.trump_flight) != !card_is_none(FR.trump_flight))
+    render_board();
+  if (run_on()) cd_raf_request(RAF_ANIM);
 }
 
 /* ---- moves ---------------------------------------------------------------- */
 
-enum { TIMER_TEX = 2, TIMER_BOT_GO = 3, TIMER_SAVE_RETRY = 4, TIMER_BOT_BASE = 16 }; /* the bot's: TIMER_BOT_BASE + its generation */
-enum { RAF_SLICE = 0, RAF_PAINTED = 1, RAF_PAINTED2 = 2 };
 /* Measured (tools/timing.mjs, BLANK=1, CPU x4): starting to make textures on a timer right after
  * the first frame, cdom.start resolved at 165 ms against 60 without textures; two frames and 50 ms
  * later, at 60. The store is asked as the table starts: a texture found there costs a url, not a
@@ -957,8 +1477,9 @@ void cd_on_store_put(uint32_t token, uint32_t ok) {
  * The kernel says how long the bot waits: until the last operation shown has finished playing,
  * then BOT_PACE_MS_WITH_HUMANS (3000 ms) with a human in the game. The clock is the table's
  * BoardClock in this page's time: shown_ms is when the last operation (mine, the bot's, a deal,
- * a load) was shown, and settles_ms when it finishes playing, which with no animations yet is
- * the same instant (pass 3 adds the animation stream's end, anim_stream_ms). A timer fires when
+ * a load) was shown, and settles_ms when it finishes playing: the run's last landing (the run is
+ * the queue the operations' streams play in, so this is the server's BoardClock settles_ms, which
+ * queues a stream behind the one in flight), or shown_ms with no run. A timer fires when
  * the wait is over and asks again, so a move of mine in between moves the bot's turn back, as
  * the server's loop does. A timer cannot be cancelled: each schedule has its own generation, and
  * a timer of an older one does nothing. */
@@ -969,7 +1490,7 @@ static int last_wait;    /* the kernel's last answer, for the test */
 static int dbg_hold, dbg_due, dbg_fast; /* the test build: hold a due step; fast: 30 ms waits */
 #endif
 
-static double settles_ms(void) { return shown_ms; }
+static double settles_ms(void) { return run_on() ? run_origin + PLAN.total_ms / anim_speed : shown_ms; }
 
 /* The board was shown now (a clock of 0 is a board never shown). */
 static void mark_shown(void) {
@@ -982,7 +1503,11 @@ static void mark_shown(void) {
 
 static uint32_t bot_wait(void) {
   int64_t now = (int64_t)cd_now();
-  last_wait = bot_wait_ms(&G, game_human_mask(&G), (int64_t)shown_ms, (int64_t)settles_ms(), now);
+  double settles = settles_ms();
+#ifdef TABLE_DEBUG
+  if (dbg_fast) settles -= BOT_PACE_MS_WITH_HUMANS - 30; /* fast: 30 ms after the run, as after the move */
+#endif
+  last_wait = bot_wait_ms(&G, game_human_mask(&G), (int64_t)shown_ms, (int64_t)settles, now);
   return (uint32_t)last_wait;
 }
 
@@ -1008,7 +1533,9 @@ static uint32_t bot_steps; /* how many bot steps this load has run */
 static void bot_step(void) {
   BotDriveOut out;
   bot_steps++;
+  op_begin();
   bot_drive(&G, game_human_mask(&G), BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
+  op_end(out.n ? out.actions[out.n - 1].seat : -1);
   committed();
   bot_pending = 0;
   bot_gen++;
@@ -1041,7 +1568,10 @@ static int play(int kind, const Card *cards, int n, const Card *attacks) {
   int len = client_move_wire(&m, wire, sizeof wire);
   AwireAction a;
   if (len <= 0 || !awire_decode(wire, len, &a)) return 0;
-  if (!awire_apply(&G, ME, &a)) { last_reject = engine_last_reject; return 0; }
+  op_begin();
+  int ok = awire_apply(&G, ME, &a);
+  op_end(ME); /* a refused move captured nothing: no steps */
+  if (!ok) { last_reject = engine_last_reject; return 0; }
   last_reject = 0;
   committed();
   return 1;
@@ -1098,7 +1628,10 @@ static void table_reset(void) {
 
 static void new_game(void) {
   table_reset();
+  if (run_on()) run_end();
+  op_begin();
   deal_new();
+  op_end(-1);
   committed();
   bot_check();
   render();
@@ -1139,6 +1672,7 @@ void cd_on_event(const cd_event_rec *e) {
 }
 
 void cd_on_timer(uint32_t token) {
+  if (token & TIMER_ARM) { flights_arm(token & ~TIMER_ARM); return; }
   if (token >= TIMER_BOT_BASE) bot_due(token - TIMER_BOT_BASE);
 #ifdef TABLE_DEBUG
   if (token == TIMER_BOT_GO) { bot_pending = 1; bot_step(); }
@@ -1158,6 +1692,20 @@ EXPORT("app_bot_wait") int32_t app_bot_wait(void) { return last_wait; }
 EXPORT("app_bot_steps") uint32_t app_bot_steps(void) { return bot_steps; }
 /* The game's store: when it was asked (which 0) and answered (1), ms after navigation; 2: 1 when
  * the stored game was adopted. */
+/* The animations, for the tests: 1 while a run plays; how many runs have started and how many
+ * flights were made on this load; the run's step count, and step k's type, start and duration (the
+ * kernel's plan). */
+EXPORT("app_anim_busy") int32_t app_anim_busy(void) { return run_on(); }
+EXPORT("app_anim_runs") uint32_t app_anim_runs(void) { return runs_started; }
+EXPORT("app_anim_flights") int32_t app_anim_flights(void) { return flights_made; }
+EXPORT("app_anim_steps") int32_t app_anim_steps(void) { return run_n; }
+EXPORT("app_anim_step") int32_t app_anim_step(int32_t k, int32_t f) {
+  if (k < 0 || k >= run_n) return -1;
+  return f == 0 ? run[k].ev.type : f == 1 ? PLAN.steps[k].start_ms : f == 2 ? PLAN.steps[k].duration_ms : f == 3 ? run[k].ev.seat : run[k].ev.n_cards;
+}
+/* When the run started (cd_now ms), and where it stands: the steps landed and opened. */
+EXPORT("app_anim_origin") double app_anim_origin(void) { return run_origin; }
+EXPORT("app_anim_landed") int32_t app_anim_landed(void) { return run_landed; }
 EXPORT("app_game_store") double app_game_store(int32_t which) { return which == 0 ? game_asked : which == 1 ? game_answered : game_adopted; }
 
 #ifdef TABLE_DEBUG
@@ -1253,6 +1801,11 @@ EXPORT("app_debug_reseed") void app_debug_reseed(uint32_t seed) {
 /* Fast: the bot waits 30 ms after a move rather than the kernel's 3000 (the games the tests play out):
  * the clock is put back, the kernel's rule is not touched. */
 EXPORT("app_debug_fast") void app_debug_fast(int32_t on) { dbg_fast = on; }
+/* The run's clock this many times faster (the games the tests play out): the kernel's plan is not
+ * touched, only how fast its time passes here. */
+EXPORT("app_debug_anim_speed") void app_debug_anim_speed(double k) { anim_speed = k > 0 ? k : 1; }
+/* A new deal now, as Play again deals one (the deal's run, one card at a time). */
+EXPORT("app_debug_deal") void app_debug_deal(void) { new_game(); }
 #endif
 /* ---- the textures ----------------------------------------------------------
  * After the first paint (two frames, then a timer), in slices of about 8 ms on animation frames: the fern (the card backs),
@@ -1466,6 +2019,7 @@ void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len) {
 
 void cd_on_raf(uint32_t token, double t) {
   (void)t;
+  if (token == RAF_ANIM) { run_frame(); return; }
   if (token == RAF_PAINTED) { cd_raf_request(RAF_PAINTED2); return; }
   if (token == RAF_PAINTED2) { cd_timer_start(TEX_START_MS, TIMER_TEX); return; }
   double t0 = cd_now(), now = t0;
