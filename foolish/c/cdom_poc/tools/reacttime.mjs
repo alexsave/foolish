@@ -31,8 +31,10 @@
 // "all decoded"; its time set is printed beside, from the port's own record (app_tex_at(3)).
 // CPU throttling slows a page's main thread: the React app's wool weaves on a worker, which it
 // leaves alone (cold, its wool takes 2 times as long at x4, not 4).
-// The store is checked, not assumed: a cold load must find TextureCacheDB (React) or the port's
-// texture keys empty, and a warm one must find all three kept.
+// The store is checked, not assumed: as a React page starts (indexedDB.databases(), asked by the
+// observer before the page's scripts run) a cold load finds no TextureCacheDB and a warm one finds it,
+// and after every React load it keeps fern_v1, wood_v2 and wool_v1; a port load finds its
+// texture keys none kept (cold) or all kept (warm).
 // PROBE=1 stops after the setup with screenshots in out/reacttime_*.png.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -101,6 +103,8 @@ const PORT = PORT_ORIGIN + '/c/cdom_poc/out/index.html', TSP = PORT_ORIGIN + '/c
 // ---- the observer, in every document before its scripts
 const OBSERVER = `(() => {
   const t = window.__tex = {};
+  // the origin's databases as the document starts, before the page's own scripts open any
+  indexedDB.databases().then((list) => { t.databases = list.map((db) => db.name).join(' '); });
   const mark = (k) => { if (t[k] === undefined) t[k] = performance.now(); };
   const blob = (el) => el.style && el.style.backgroundImage.includes('blob:');
   const look = (el) => {
@@ -196,6 +200,9 @@ const PORT_URLS = `['--tex-fern', '--tex-wood', '--tex-wool'].map((v) => documen
 async function react(arm, url) {
   await blank();
   await b.goto(url);
+  await b.until('window.__tex.databases !== undefined', 5000);
+  const atStart = await b.evaluate('window.__tex.databases');
+  if (atStart.includes('TextureCacheDB') !== (arm === 'react_warm')) throw new Error(`${arm}: the databases at the start: "${atStart}"`);
   await b.until(`window.__tex.wool !== undefined && window.__tex.fern !== undefined && window.__tex.wood !== undefined && window.__tex.board !== undefined`, 300000);
   const r = await b.evaluate(DECODED(REACT_URLS));
   await sleep(1000); // setCachedTexture is fire-and-forget
