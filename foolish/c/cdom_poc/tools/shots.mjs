@@ -20,8 +20,16 @@ const golden = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/bout_2p_a
 const ACTION = 'position: absolute; left: 0px; right: 0px; justify-content: end;';
 if (!golden.includes(ACTION)) throw new Error('the golden action area moved');
 const goldenFixed = golden.replace(ACTION, 'position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); left: 0px; right: 0px; justify-content: end;');
-const goldenPage = `<!DOCTYPE html><html lang="en" data-theme="default"><head><meta charset="utf-8"/>
-<link href="/src/styles/index.css" rel="stylesheet"/><script src="/c/cdom_poc/out/tex_ts.js"></script></head><body><div id="root">${goldenFixed}</div></body></html>`;
+const pageOf = (dom) => `<!DOCTYPE html><html lang="en" data-theme="default"><head><meta charset="utf-8"/>
+<link href="/src/styles/index.css" rel="stylesheet"/><script src="/c/cdom_poc/out/tex_ts.js"></script></head><body><div id="root">${dom}</div></body></html>`;
+const goldenPage = pageOf(goldenFixed);
+// The defender's golden (bout_2p_defender.html: the same board seen by Anna, who defends), its
+// names and ids swapped to this table's (Me at the bottom) and its two seats' boxes in this table's
+// order, as tools/test.mjs compares its DOM: the port shows it on ?board=4.
+const defender = fs.readFileSync(path.join(FOOLISH, 'e2e/fixtures/ui_dom/bout_2p_defender.html'), 'utf8');
+if (!defender.includes(ACTION)) throw new Error('the defender golden action area moved');
+const defenderPage = pageOf(defender.replace(ACTION, 'position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); left: 0px; right: 0px; justify-content: end;')
+  .replace(/u-anna-0001|u-me-0000|>Anna<|>Me</g, (m) => ({ 'u-anna-0001': 'u-me-0000', 'u-me-0000': 'u-anna-0001', '>Anna<': '>Me<', '>Me<': '>Anna<' })[m]));
 
 // In the golden page: the TS textures from the seeds the C made each from (the fern's, the wood's
 // and the wool's: they may come from different loads through the store), in the draw order the C
@@ -46,8 +54,9 @@ const TEXTURE_GOLDEN = ([SF, SW, SL]) => `(async () => {
   return 1; })()`;
 
 const server = await serve(8720, FOOLISH, (req, res) => {
-  if (req.url !== '/golden.html') return false;
-  res.writeHead(200, { 'content-type': 'text/html' }); res.end(goldenPage); return true;
+  const page = { '/golden.html': goldenPage, '/golden_defender.html': defenderPage }[req.url];
+  if (!page) return false;
+  res.writeHead(200, { 'content-type': 'text/html' }); res.end(page); return true;
 });
 const b = await launch({ width: W, height: H, flags: ['--disable-gpu-rasterization'] }); // one way to draw a JPEG (cdp.mjs)
 let backs = null;
@@ -56,6 +65,14 @@ try {
   await b.goto('http://127.0.0.1:8720/golden.html');
   await b.evaluate('document.fonts.ready.then(() => 1)');
   await b.shot(path.join(shots, `react_golden${sfx}.png`));
+  await b.goto('http://127.0.0.1:8720/golden_defender.html');
+  // React draws the seats in seat order, and Anna, who defends there, is seat 1: the two boxes change places
+  await b.evaluate(`(() => { const [top, bottom] = document.querySelectorAll('div[style*="width: 80px; height: 91px"]'); top.parentNode.insertBefore(bottom, top); })()`);
+  await b.evaluate('document.fonts.ready.then(() => 1)');
+  await b.shot(path.join(shots, `react_golden_defender${sfx}.png`));
+  await openTable(b, 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?debug&notex&board=4', { hold: true });
+  await b.evaluate('document.fonts.ready.then(() => 1)');
+  await b.shot(path.join(shots, `cdom_defender${sfx}.png`));
 
   for (const tex of [false, true]) {
   const pre = tex ? 'cdom_tex_' : 'cdom_';
@@ -101,7 +118,7 @@ try {
   }
   // How many pixels differ between two shots: the React golden against the cdom first paint, and,
   // as the measure's own check, against the shot with a card selected (which must differ).
-  const differ = (x, y) => b.evaluate(`(async () => {
+  const differ = (x, y, withMost = false) => b.evaluate(`(async () => {
     const load = (src) => new Promise((r, j) => { const i = new Image(); i.onload = () => r(i); i.onerror = j; i.src = src; });
     const px = async (src) => { const i = await load(src); const c = new OffscreenCanvas(i.width, i.height);
       const g = c.getContext('2d'); g.drawImage(i, 0, 0); return g.getImageData(0, 0, i.width, i.height).data; };
@@ -109,18 +126,21 @@ try {
     const b = await px('data:image/png;base64,${fs.readFileSync(path.join(shots, y)).toString('base64')}');
     if (a.length !== b.length) return -1;
     let n = 0; for (let i = 0; i < a.length; i += 4) if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) n++;
-    return n; })()`);
+    let most = 0; for (let i = 0; i < a.length; i++) if ((i & 3) !== 3) most = Math.max(most, Math.abs(a[i] - b[i]));
+    return ${JSON.stringify(withMost)} ? [n, most] : n; })()`);
   const plain = await differ(`react_golden${sfx}.png`, `cdom_midgame${sfx}.png`);
   const textured = await differ(`react_golden_tex${sfx}.png`, `cdom_tex_midgame${sfx}.png`);
   console.log(`pixels differing, React golden vs cdom first paint: ${plain} of ${W * H}`);
   console.log(`pixels differing, React golden vs cdom with 6s selected: ${await differ(`react_golden${sfx}.png`, `cdom_selected${sfx}.png`)}`);
   console.log(`pixels differing, React golden with the TS textures vs cdom with its C textures: ${textured} of ${W * H}`);
+  const [defending, defendingMost] = await differ(`react_golden_defender${sfx}.png`, `cdom_defender${sfx}.png`, true);
+  console.log(`pixels differing, React's defender golden vs cdom's first paint of the same board as the defender: ${defending} of ${W * H}, by at most ${defendingMost} a channel`);
   // The bar, at the two sizes the README gives (else none): the first paint as the golden's (at
   // 390x844 the golden's hand was laid out at jsdom's 1024), and with textures only the card backs
   // added (the fern: about 6,600 and 7,000; the wool and the wood the same pixels).
   const BAR = { '1024x768': [0, 8000], '390x844': [13952, 13952 + 8000] }[`${W}x${H}`];
-  if (BAR && (plain !== BAR[0] || textured > BAR[1])) {
-    console.log(`FAIL over the bar: first paint ${plain} (want ${BAR[0]}), with textures ${textured} (want at most ${BAR[1]})`);
+  if (BAR && (plain !== BAR[0] || textured > BAR[1] || (W === 1024 && defending !== 0))) {
+    console.log(`FAIL over the bar: first paint ${plain} (want ${BAR[0]}), with textures ${textured} (want at most ${BAR[1]}), as the defender ${defending} (want 0 at 1024x768)`);
     process.exitCode = 1;
   }
   // The card backs alone: pixels differing and the largest channel difference inside each, and the

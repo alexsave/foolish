@@ -15,6 +15,7 @@ MUTANTS = [
   ('end screen without ReplayShare', 'src/table_app.c', '  OPEN("span"); TEXT("Replay code unavailable for this game"); CLOSE();', '', 'tools/test.mjs', 'played out by clicks'),
   ('ReplayShare frame without its wood', 'src/table_app.c', '{SEED_RESULTS, 360, 100}, {SEED_REPLAY, 188, 188}};', '{SEED_RESULTS, 360, 100}, {SEED_REPLAY, 100, 100}};', 'tools/test.mjs', 'played out by clicks|every wood surface'),
   ('pill label class', 'src/table_app.c', 'OPEN("span"); CLASS("btn-action-text"); OPEN("span"); cd_text(cd_internz(PILL[p].label));', 'OPEN("span"); CLASS("btn-action-label"); OPEN("span"); cd_text(cd_internz(PILL[p].label));', 'tools/test.mjs', 'first paint as the defender'),
+  ('the pills 1 px further right', 'src/table_app.c', '    sb_s(&s, "right: 20px; display: flex; flex-direction: column; gap: 5px; z-index: 999;");', '    sb_s(&s, "right: 19px; display: flex; flex-direction: column; gap: 5px; z-index: 999;");', 'tools/shots.mjs'),
   ('no resize listener', 'src/table_app.c', '  cd_listen_window(CD_EV_RESIZE);', '', 'tools/test.mjs'),
   ('count badge not anchored', 'src/table_app.c', '      u->minis.end = u->badge.shown ? u->badge.root : 0;', '      u->minis.end = 0;', 'tools/test.mjs'),
   ('no fern background', 'src/table_app.c', '  if (ok && k == TEX_FERN) cd_set_style(CD_MOUNT, ZS("--tex-fern-bg"), ZS("#000000"));', '', 'tools/test.mjs', 'textures land'),
