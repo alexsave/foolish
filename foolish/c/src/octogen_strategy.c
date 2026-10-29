@@ -2235,22 +2235,39 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
 // (75%): sapper's firmer 6/7 (FUSION_VOID_MOD=7) measured flat in the league
 // (FUSION.md), so the lever stays for experiments, read by fusion alone.
 //
-// The knob is the per-mille chance that a rollout decision plays a sensible
-// alternative instead of the policy (cordite_sim.h). FUSION_NOISE_PM is the
-// default; the FUSION_NOISE knob (env over roster spec, bot_knobs.h) overrides
-// it for sweeps, and is read by fusion alone, so a paired fusion-vs-octogen run
-// can sweep it without touching the control. Octogen itself never sets the
-// knob: it stays 0 there, and at 0 the rollouts draw nothing extra.
+// The noise has three settings, each a default here and a knob (env over roster
+// spec, bot_knobs.h) read by fusion alone, so a paired fusion-vs-octogen run can
+// sweep one without touching the control. Octogen itself never sets them: its
+// noise stays 0, and at 0 the rollouts draw nothing extra.
 //
-// 200 is kestrel's tuned value (20%), measured against kestrel's own, weaker
-// rollout policy; FUSION.md has the sweep that should re-tune it for octogen.
+//   FUSION_NOISE        the per-mille chance that a rollout decision plays a
+//                       random move instead of the policy's (cordite_sim.h).
+//                       300: the paired sweeps against octogen (FUSION.md) put
+//                       30% ahead of kestrel's 20% at 4 players and level at 2.
+//   FUSION_NOISE_MAX_PC the largest table the noise is on at. At a bigger table
+//                       fusion sets 0, so it IS octogen there, move for move,
+//                       with no extra draw. 4: on at 2, 3 and 4 players, where it
+//                       measured better; at 6 it measured worse at every level
+//                       and at 5 it measured flat (FUSION.md).
+//   FUSION_NOISE_MODE   what the random move is uniform over: 0, the sensible
+//                       candidates (CD_NOISE_SENSIBLE), or 1, the whole rollout
+//                       menu (CD_NOISE_ANY). 0: the two measured level.
+//
+// The table size is the game's seat count, the size the measurements were taken
+// at, not the seats still in.
 //
 // Defined only where the noise is compiled in. The shipped bots module (the
 // seeded ladder) has no fusion: anything there that named it would fail to
 // link, rather than quietly running octogen under fusion's name.
 #ifdef CD_ROLLOUT_NOISE
 #ifndef FUSION_NOISE_PM
-#define FUSION_NOISE_PM 200
+#define FUSION_NOISE_PM 300
+#endif
+#ifndef FUSION_NOISE_MAX_PC
+#define FUSION_NOISE_MAX_PC 4
+#endif
+#ifndef FUSION_NOISE_MODE
+#define FUSION_NOISE_MODE CD_NOISE_SENSIBLE
 #endif
 #ifndef FUSION_VOID_MOD
 #define FUSION_VOID_MOD 4
@@ -2264,9 +2281,12 @@ int fusion_strategy_choose(const Game *g, int bot_idx,
     int saved_void_mod = og_void_mod;
     int vm = bot_knob_int("FUSION_VOID_MOD", FUSION_VOID_MOD);
     og_void_mod = vm < 2 ? 2 : vm;
-    cd_sim_set_noise(bot_knob_int("FUSION_NOISE", FUSION_NOISE_PM));
+    const int on = g->num_players <= bot_knob_int("FUSION_NOISE_MAX_PC", FUSION_NOISE_MAX_PC);
+    cd_sim_set_noise(on ? bot_knob_int("FUSION_NOISE", FUSION_NOISE_PM) : 0);
+    cd_sim_set_noise_mode(bot_knob_int("FUSION_NOISE_MODE", FUSION_NOISE_MODE));
     int r = octogen_strategy_choose(g, bot_idx, moves, ctx);
     cd_sim_set_noise(0);
+    cd_sim_set_noise_mode(CD_NOISE_SENSIBLE);
     og_void_mod = saved_void_mod;
     return r;
 }

@@ -2197,7 +2197,7 @@ static void test_rollout_noise_seam(void) {
 // sim_seat_move (octogen's rollouts then draw: `drawn` > 0); drop the
 // `cd_sim_noise() ?` guard in og_simulate's struct path together with
 // cd_sim_noise_legal's own `!cd_noise_pm` return (struct path: OG_NO_FASTROLL
-// run below draws); make fusion ignore FUSION_NOISE (fusion at "0" plays 200
+// run below draws); make fusion ignore FUSION_NOISE (fusion at "0" plays 300
 // and its moves or streams part from octogen's); have fusion leave the noise
 // on after its decision (the next octogen call draws); set FUSION_VOID_MOD's
 // default back to 7 (fusion at 0 is then octogen at 7, and the moves part).
@@ -2250,8 +2250,12 @@ static void test_octogen_is_fusion_at_zero(void) {
 // Fusion's rollouts take noisy moves, at about the dose asked for, on both
 // rollout paths, and every struct-path pick is a move on the lite menu.
 //
+// The default level is 300 per mille (FUSION.md has the sweep), so with no
+// knob set the bitboard rate sits near 30%: the 24-36% window holds it there,
+// and kestrel's old 200 (about 20%) or 400 (about 40%) both fall outside it.
+//
 // Mutations that must turn it red: set FUSION_NOISE_PM to 0 (nothing fires),
-// or to 1000 (the dose check: everything fires); invert the gate in
+// to 200 or 400 (the 24-36% window), or to 1000 (everything fires); invert the gate in
 // sim_noise_draw (`<` for `>=`: ~80% fires); make cd_sim_noise_legal match
 // covers by the candidate's empty mask instead of the rebuilt greedy cover
 // (unmatched > 0 whenever a cover is drawn); have fusion_strategy_choose skip
@@ -2288,15 +2292,169 @@ static void test_fusion_rollouts_are_noisy(void) {
                 fast.fired, fast.drawn, slow.fired, slow.drawn, slow.unmatched);
     CHECK(og_drawn == 0, "octogen beside it draws no noise");
     CHECK(fast.fired > 0 && slow.fired > 0, "fusion's rollouts take noisy moves on both rollout paths");
-    // 200 per mille, over thousands of rollout decisions: well inside 12-28%.
+    // 300 per mille, over thousands of rollout decisions: well inside 24-36%.
     // (A decision with no candidate draws the gate but cannot fire, so the
     // rate sits a hair under the gate's.)
-    CHECK(fast.fired * 1000 > fast.drawn * 120 && fast.fired * 1000 < fast.drawn * 280,
-          "the bitboard rollouts take the noise at about one decision in five");
-    CHECK(slow.fired * 1000 > slow.drawn * 120 && slow.fired * 1000 < slow.drawn * 280,
+    CHECK(fast.fired * 1000 > fast.drawn * 240 && fast.fired * 1000 < fast.drawn * 360,
+          "the bitboard rollouts take the noise at the default 300 per mille, about one decision in three");
+    CHECK(slow.fired * 1000 > slow.drawn * 240 && slow.fired * 1000 < slow.drawn * 360,
           "the struct rollouts take it at the same rate");
     CHECK(slow.unmatched == 0, "every struct-path candidate is a move on the seat's lite menu");
     CHECK(restored, "fusion puts the noise back to 0 after its decision");
+}
+
+// Both noise modes, on both rollout paths, over every decision of random games
+// at every table size and both rule sets. Each mode's menu is moves of the
+// seat's lite menu (the menu the struct rollout plays from); CD_NOISE_ANY's
+// menu IS the lite menu, every move once; and at the same stream state the
+// bitboard path (cd_sim_noise_pick) and the struct path (cd_sim_noise_legal)
+// draw the same gate and the same pick, play the same move and leave the stream
+// in the same state. A lite menu cut off at MAX_LEGAL_MOVES is skipped: past the
+// cap the struct path cannot play what it does not hold.
+//
+// Mutations that must turn it red: take the MAX_MOVE_CARDS clamp out of
+// noise_fam (thrower families outgrow the lite menu: the "IS the lite menu"
+// check); unrank with the wrong subset size, e.g. `k <= f->kmax` in
+// noise_fam_move's size loop (a move off the menu, and duplicates); drop the
+// pass family from sim_noise_fams (the any-mode menu is short of the passes);
+// have cd_sim_noise_legal draw from the sensible menu whatever the mode (the
+// two paths pick different moves); leave the greedy-cover family out of
+// sim_noise_fams (short of the cover).
+static int fu_card_id(Card c) { return c.suit * 13 + (c.value - 1); }
+static uint64_t fu_move_mask(const LegalMove *m) {
+    uint64_t mm = 0;
+    for (int j = 0; j < m->n_cards; j++) mm |= 1ull << fu_card_id(m->cards[j]);
+    return mm;
+}
+static int fu_menu_find(const LegalMoves *lm, int8_t kind, uint64_t mask) {
+    for (int i = 0; i < lm->n; i++)
+        if (lm->moves[i].type == kind && fu_move_mask(&lm->moves[i]) == mask) return i;
+    return -1;
+}
+static void test_fusion_noise_modes_are_legal_on_both_paths(void) {
+    static BotPlay bp;
+    static LegalMoves lite;
+    enum { FU_MENU = 4096 };
+    static int8_t kind[FU_MENU];
+    static uint64_t mask[FU_MENU];
+    static unsigned char seen[FU_MENU];
+    long positions = 0, picks = 0, any_beyond_sensible = 0;
+    int on_menu = 1, any_is_lite = 1, agree = 1;
+    for (int np = 2; np <= 6; np++)
+        for (int seed = 0; seed < 24; seed++) {
+            Game g;
+            make_seeded_game(&g, np, 900 + seed * 7 + np);
+            if (seed & 1) g.rules |= GAME_RULE_NO_PASS;
+            uint64_t order = 77u + (uint64_t)seed;
+            bot_play_init(&bp, &g, 400, BOT_PLAY_SHUFFLE, &order);
+            for (int idx; (idx = bot_play_next(&bp)) >= 0;) {
+                const int p = bp.seat;
+                calculate_legal_moves_lite(&g, p, &lite);
+                if (lite.n > 0 && lite.n < MAX_LEGAL_MOVES) {
+                    positions++;
+                    // The sensible menu: every entry on the lite menu.
+                    const int ns = cd_sim_noise_menu(&g, p, CD_NOISE_SENSIBLE, kind, mask, FU_MENU);
+                    for (int i = 0; i < ns; i++) on_menu &= fu_menu_find(&lite, kind[i], mask[i]) >= 0;
+                    int8_t skind[64]; uint64_t smask[64];
+                    const int nss = ns < 64 ? ns : 64;
+                    for (int i = 0; i < nss; i++) { skind[i] = kind[i]; smask[i] = mask[i]; }
+                    // The whole menu: the lite menu exactly, each move once.
+                    const int na = cd_sim_noise_menu(&g, p, CD_NOISE_ANY, kind, mask, FU_MENU);
+                    any_is_lite &= na == lite.n;
+                    memset(seen, 0, (size_t)lite.n);
+                    for (int i = 0; i < na && i < FU_MENU; i++) {
+                        const int at = fu_menu_find(&lite, kind[i], mask[i]);
+                        if (at < 0 || seen[at]) { any_is_lite = 0; continue; }
+                        seen[at] = 1;
+                        int in_s = 0;
+                        for (int j = 0; j < nss; j++) in_s |= skind[j] == kind[i] && smask[j] == mask[i];
+                        any_beyond_sensible += !in_s;
+                    }
+                    // The two paths, each mode, the gate always open and half open.
+                    for (int mode = 0; mode < 2; mode++)
+                        for (int lvl = 500; lvl <= 1000; lvl += 500) {
+                            cd_sim_set_noise(lvl);
+                            cd_sim_set_noise_mode(mode);
+                            const uint64_t r0 = game_rng_get();
+                            int8_t bk = -1; uint64_t bm = 0;
+                            cd_sim_noise_stats_reset();
+                            const int fired = cd_sim_noise_pick(&g, p, &bk, &bm);
+                            const uint64_t r1 = game_rng_get();
+                            game_rng_set(r0);
+                            const int si = cd_sim_noise_legal(&g, p, &lite);
+                            const uint64_t r2 = game_rng_get();
+                            const CdNoiseStats st = cd_sim_noise_stats();
+                            int ok = r1 == r2 && (si >= 0) == fired && st.unmatched == 0;
+                            if (ok && fired)
+                                ok = lite.moves[si].type == bk && fu_move_mask(&lite.moves[si]) == bm;
+                            agree &= ok;
+                            picks += fired;
+                            cd_sim_set_noise(0);
+                            cd_sim_set_noise_mode(CD_NOISE_SENSIBLE);
+                        }
+                }
+                bot_play_apply(&bp, random_strategy_choose(&g, idx, &bp.moves, NULL));
+            }
+        }
+    CHECK(positions > 2000 && picks > positions, "the noise menus were held over thousands of random decisions");
+    CHECK(on_menu, "every sensible candidate is a move on the seat's lite menu");
+    CHECK(any_is_lite, "the whole-menu mode's menu is the lite menu, every move exactly once");
+    CHECK(any_beyond_sensible > 0, "the whole-menu mode reaches moves the sensible set never offers");
+    CHECK(agree, "both rollout paths draw the same gate and pick and play the same move, in both modes");
+}
+
+// Fusion's noise by table size, with no knob set: on at 2, 3 and 4 seats, off
+// above FUSION_NOISE_MAX_PC, where fusion IS octogen, the same move and both
+// RNG streams left in the same state at every decision, with no draw at all.
+//
+// Mutations that must turn it red: set FUSION_NOISE_MAX_PC to 6 (fusion at 6
+// draws: the "is octogen" check); set it to 3 (fusion at 4 is quiet: the "on"
+// check); drop the table-size test from fusion_strategy_choose (the same as 6+
+// drawing).
+static void test_fusion_noise_by_table_size(void) {
+    static LegalMoves m;
+    fu_small_worlds(1);
+    int on_drew = 1, off_same = 1, off_quiet = 1, off_decisions = 0;
+    for (int np = 2; np <= 7; np++) {
+        const int on = np <= 4;
+        Game g;
+        make_seeded_game(&g, np, 300 + np);
+        long drawn = 0;
+        for (int step = 0; step < (on ? 2 : 4) && game_done(&g) < 0; step++) {
+            int acted = 0;
+            for (int pi = 0; pi < g.num_players && !acted; pi++) {
+                if (!should_bot_act(&g, pi)) continue;
+                calculate_legal_moves(&g, pi, &m);
+                if (m.n == 0) continue;
+                const uint64_t gr = game_rng_get(), sr = random_strategy_rng_get();
+                cd_sim_solve_reset();
+                const int a = octogen_strategy_choose(&g, pi, &m, NULL);
+                const uint64_t gra = game_rng_get(), sra = random_strategy_rng_get();
+                game_rng_set(gr);
+                random_strategy_set_seed(sr);
+                cd_sim_noise_stats_reset();
+                cd_sim_solve_reset();
+                const int b = fusion_strategy_choose(&g, pi, &m, NULL);
+                const CdNoiseStats sf = cd_sim_noise_stats();
+                drawn += sf.drawn;
+                if (!on) {
+                    off_same &= a == b && gra == game_rng_get() && sra == random_strategy_rng_get();
+                    off_quiet &= sf.drawn == 0;
+                    off_decisions++;
+                }
+                game_rng_set(gra);
+                random_strategy_set_seed(sra);
+                acted = legal_move_apply(&g, pi, &m.moves[(a >= 0 && a < m.n) ? a : 0]);
+            }
+            if (!acted) break;
+        }
+        if (on) on_drew &= drawn > 0;
+    }
+    fu_small_worlds(0);
+    CHECK(on_drew, "fusion draws the noise at 2, 3 and 4 seats with no knob set");
+    CHECK(off_decisions >= 12, "fusion and octogen were compared at 5, 6 and 7 seats");
+    CHECK(off_quiet, "above four seats fusion draws no noise at all");
+    CHECK(off_same, "above four seats fusion is octogen: the same move and the same RNG streams after");
 }
 
 // Fusion's second lever: the void mixture. A seat that picked up is assumed to
@@ -21193,6 +21351,8 @@ int main(void) {
     test_rollout_noise_seam();
     test_octogen_is_fusion_at_zero();
     test_fusion_rollouts_are_noisy();
+    test_fusion_noise_modes_are_legal_on_both_paths();
+    test_fusion_noise_by_table_size();
     test_fusion_void_mixture();
 #endif
 

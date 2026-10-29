@@ -119,9 +119,12 @@ int  cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
 //
 // At each decision of each seat in a HEURISTIC rollout (the searching seat
 // included), with probability per_mille/1000 the seat plays a uniformly random
-// move from a small SENSIBLE candidate set instead of its rollout policy's move.
-// The candidates are built on this file's own move primitives (cordite_sim.c,
-// sim_noise_cands says how each one maps). Both draws (the gate and the pick)
+// move instead of its rollout policy's move. What it is uniform over is the
+// mode: CD_NOISE_SENSIBLE (the default) is a small sensible candidate set built
+// on this file's own move primitives (cordite_sim.c, sim_noise_cands says how
+// each one maps); CD_NOISE_ANY is the seat's whole rollout menu, every move
+// calculate_legal_moves_lite holds (sim_noise_fams). FUSION.md has the two
+// measured against each other. Both draws (the gate and the pick)
 // come from the rollout's own stream, game_random(), so the common random
 // numbers across a decision's candidates stay intact: the same worlds and the
 // same rollout streams for every root candidate.
@@ -156,9 +159,17 @@ int  cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
 // the policy instead.
 typedef struct { long drawn, fired, unmatched; } CdNoiseStats;
 
+#define CD_NOISE_SENSIBLE 0   // uniform over the sensible candidates
+#define CD_NOISE_ANY      1   // uniform over the whole lite menu
+
 #ifdef CD_ROLLOUT_NOISE
 void         cd_sim_set_noise(int per_mille);   // clamped to [0, 1000]
 int          cd_sim_noise(void);
+// The mode, thread-local like the level and set with it: anything but
+// CD_NOISE_ANY is CD_NOISE_SENSIBLE. It draws nothing on its own: at level 0
+// no mode is ever consulted.
+void         cd_sim_set_noise_mode(int mode);
+int          cd_sim_noise_mode(void);
 CdNoiseStats cd_sim_noise_stats(void);
 void         cd_sim_noise_stats_reset(void);
 // The struct rollout's twin of the bitboard noise (og_simulate under
@@ -168,9 +179,21 @@ void         cd_sim_noise_stats_reset(void);
 // exactly what the bitboard path draws at the same decision, so the two paths
 // stay on one stream (OG_DIFFTEST).
 int          cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves);
+// Test seams (tests.c), on the SimState built from g as both rollout paths
+// build it. cd_sim_noise_menu writes seat p's noise menu in `mode` (move kinds
+// MOVE_*, card-id masks; a cover's mask is the greedy cover's cards), at most
+// `cap` entries in the order the pick indexes them, and returns its full size.
+// cd_sim_noise_pick is the bitboard path's draw at that decision, gate and pick
+// from game_random() exactly as a rollout takes them: 1 with the move when the
+// noise fired, 0 to play the policy.
+int          cd_sim_noise_menu(const Game *g, int p, int mode,
+                               int8_t *kind, uint64_t *mask, int cap);
+int          cd_sim_noise_pick(const Game *g, int p, int8_t *kind, uint64_t *mask);
 #else
 static inline void         cd_sim_set_noise(int per_mille) { (void)per_mille; }
 static inline int          cd_sim_noise(void) { return 0; }
+static inline void         cd_sim_set_noise_mode(int mode) { (void)mode; }
+static inline int          cd_sim_noise_mode(void) { return CD_NOISE_SENSIBLE; }
 static inline CdNoiseStats cd_sim_noise_stats(void) { CdNoiseStats z = { 0, 0, 0 }; return z; }
 static inline void         cd_sim_noise_stats_reset(void) { }
 static inline int          cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves) {

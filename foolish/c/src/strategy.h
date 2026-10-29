@@ -40,12 +40,14 @@
 // 22 is retired: it was torpex (a learned value net in place of rollouts).
 // 23 is retired: it was novichok (the cheating ceiling probe; read real hands).
 // Octogen plus rollout noise (c/FUSION.md): in its heuristic rollouts each
-// seat's decision is, 20% of the time, a uniform pick from a small sensible
-// candidate set instead of the policy move. Research only for now: its own
-// roster row (bot_roster.c, key "fusion") is neither seeded nor offline, and
-// the shipped bots module does not link it.
-// TODO(alex): fusion's identity. City: "TBD" (a `bot.fusion` i18n string,
-// added once it is seeded). Song: "TBD" (no such field exists anywhere).
+// seat's decision is, 30% of the time at tables of up to four, a uniform pick
+// from a small sensible candidate set instead of the policy move; at bigger
+// tables it is octogen. Ready but not reachable: its own roster row
+// (bot_roster.c, key "fusion") is neither seeded nor offline, and the browser's
+// module (web.wasm, FOOLISH_SEEDED_BOTS_ONLY) does not link it.
+// TODO(alex): fusion's identity. City: "TBD" (the nickname of its seven
+// foolish/server/src/store/bot_seed.c rows; FUSION.md "To go live" has every
+// step). Song: "TBD" (no such field exists anywhere).
 #define STRAT_FUSION            24
 //
 // THE IDS ARE NOT COMPACTED, and a retired one is never handed out again. A

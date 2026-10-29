@@ -71,12 +71,12 @@ static const BotRosterEntry ROSTER[] = {
     { "cordite",          STRAT_CORDITE,          CORDITE_KNOBS,        1,   1,     1,     9  },
     { "octogen",          STRAT_OCTOGEN,          "OG_TRUMP_KEEP="
                                                   OCTOGEN_TRUMP_KEEP,   1,   1,     1,     10 },
-    // Research only (c/FUSION.md): octogen's brain and knobs plus 20% rollout
-    // noise, which fusion_strategy_choose sets itself. Neither seeded nor
-    // offline, so no lobby, picker or seed row offers it; unlinked in the
-    // shipped bots module (bot_roster_linked). TODO(alex): city and song. A
-    // city is a `bot.fusion` string in all twenty-five languages, needed only
-    // once the row is seeded; the roster has no song field.
+    // Ready but not reachable (c/FUSION.md): octogen's brain and knobs plus
+    // 30% rollout noise at tables of up to four, which fusion_strategy_choose
+    // sets itself. Neither seeded nor offline, so no lobby, picker or seed row
+    // offers it; unlinked in web.wasm (bot_roster_linked). TODO(alex): city and
+    // song. The city is the nickname of seven bot_seed.c rows, and seeding it
+    // flips `seeded` here (FUSION.md "To go live"); the roster has no song field.
     { "fusion",           STRAT_FUSION,           "OG_TRUMP_KEEP="
                                                   OCTOGEN_TRUMP_KEEP,   1,   0,     0,     11 },
 };
