@@ -307,6 +307,11 @@ typedef struct cb_rows_ops {
     // with nothing written when any of the ids is already a bot's: an existing
     // row, its rating and its nickname are never touched.
     int (*bots_add)(cb_store *s, const cb_bot_row *rows, int n);
+    // The seed's other write: these n bot rows' nicknames set by id (each row's
+    // id and nickname are read, nothing else), all or none. CB_OK, or
+    // CB_E_CONFLICT with nothing written when any id is no bot's. The rating,
+    // games played, strategy key and timestamps are never touched.
+    int (*bots_rename)(cb_store *s, const cb_bot_row *rows, int n);
     // EVERY rating row the leaderboard index holds, highest first: the played
     // ones, and on DynamoDB any row still in the layout before the sparse key
     // (which cbase-import --reindex-ratings takes out). A read that grows with
@@ -501,6 +506,7 @@ int cb_rows_bots_idle(cb_store *s, const char *game, int64_t version);
 int cb_rows_lease_held(cb_store *s, const char *game, int64_t now);
 int cb_rows_bots_list(cb_store *s, cb_bot_fn fn, void *ud);
 int cb_rows_bots_add(cb_store *s, const cb_bot_row *rows, int n);
+int cb_rows_bots_rename(cb_store *s, const cb_bot_row *rows, int n);
 int cb_rows_ratings_list(cb_store *s, cb_rating_fn fn, void *ud);
 int cb_rows_ratings_top(cb_store *s, int limit, cb_rating_fn fn, void *ud);
 int cb_rows_ratings_for(cb_store *s, const char *const *ids, int n, int32_t *out);

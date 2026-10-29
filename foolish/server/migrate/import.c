@@ -10,9 +10,10 @@
 // On DynamoDB it runs in the store's bulk mode: paced to the table's
 // provisioned capacity, and never giving up on a throttle.
 //
-// --seed-bots writes the schema's 49 bots into a store that has none (a fresh
-// DynamoDB table; providers/aws/ops/deploy.sh runs it after every deploy) and leaves a store
-// with bots alone.
+// --seed-bots brings a store's bots to the kernel's registry (a fresh
+// DynamoDB table gets all 56; providers/aws/ops/deploy.sh runs it after every
+// deploy): the accounts it lacks are added, a stored account's name is set to
+// its rung's city, and nothing else of a stored bot is touched.
 //
 // --reindex-ratings moves every rating row to the leaderboard's sparse,
 // rating-ordered GSI2 key (store_import.h cb_import_reindex_ratings); deploy.sh
@@ -72,7 +73,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "cbase-import: seeding the bots failed: %s\n", cb_strerror(rc));
             return 1;
         }
-        printf(rc ? "seeded %d bots\n" : "the store already has its bots\n", rc);
+        printf(rc ? "seeded %d bot rows (added or renamed)\n" : "the store already has its bots\n", rc);
         if (rc > 0) cb_edge_stale(CB_EDGE_ALL);
         return cb_edge_flush(&cfg) == CB_OK ? 0 : 1;
     }

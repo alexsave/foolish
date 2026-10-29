@@ -32,8 +32,19 @@ It is the product's map now: both hosts render it, from one table.*
 > Each rung's city, its distance to the Kremlin and its seven server accounts are fields of its row in `c/src/bots.c`, beside its brain, knobs and tier.
 > `BotNames.ladder` and the km caption are generated from those rows (`tools/structgen/gen.sh` runs datagen into `sdk/swift/gen/phone/BotRegistry.swift`, compiled by the app target only), and the server derives its bot rows ("%<city> 1".."%<city> 7", production's own ids) from them in `foolish/server/src/store/bot_seed.c`.
 > Adding a seeded rung is: its `src/<name>_strategy.c`, its row in `c/src/bots.c` (key, tier, `seeded = 1`, city, km, seven freshly minted v4 ids), and its `bot.<key>` string in `c/i18n/keys.h` and all twenty-five `strings_<code>.c`.
-> A running server picks the new accounts up on its next seed, which inserts only the ids its store lacks and never touches an existing row.
+> A running server picks the new accounts up on its next seed, which inserts the ids its store lacks (and, since the note below, names an existing account by its row's city, nothing else of it).
 > The `bot_city_names_validation` and `bot_ladder_order_validation` e2e tests read the same rows (generated `sdk/ts/gen/bot_registry.ts`), so the city also goes into their `LADDER`.
+
+> **UPDATED (2026-10-29, owner): fusion is Moscow, and the ladder has eight rungs.**
+> Weakest to strongest: **Miami (random, 9,600 km) · New York (handwritten, 7,500) · Seoul (robusta, 6,600) · Madrid (firecracker, 3,440) · Vienna (blackpowder, 1,660) · Warsaw (cordite, 1,151) · St. Petersburg (octogen, 635) · Moscow (fusion, 0)**.
+> Each city moved down one bot: octogen took St. Petersburg, cordite took Warsaw (new, 1,151 km great-circle to the Kremlin), and fusion, octogen plus rollout noise (`c/FUSION.md`), took Moscow.
+> The other rungs and their distances are unchanged.
+> A rating follows the BOT, not the city: an account keeps its id, strategy and rating, and only its name moves.
+> So the server's seed brings a stored account's nickname to its row's city by id (`foolish/server/src/store/store_import.c` `cb_import_seed_bots`; ratings, games and strategy untouched), and fusion's seven new accounts start at the default rating.
+> The registry is the one owner of a seeded bot's name: a city that moves is a `c/src/bots.c` edit, and the next deploy renames the accounts, with no hand-run step.
+> Games already played keep the names their seats were dealt with, in their state and replays.
+> Fusion is not offline, so the phone's picker still ends on St. Petersburg (octogen) and offers no Moscow rung; the phone's `bot.fusion` string names it if it ever is.
+> `bot.cordite` is Warsaw in all twenty-five languages (Varsovie, Warschau, Varsovia, Warszawa, Варшава, ワルシャワ, 华沙, ...); `bot.octogen` took cordite's St. Petersburg strings and `bot.fusion` octogen's Moscow strings.
 
 *Design doc + implementation spec. Shipped on both hosts: iOS in July 2026
 (`ios/FoolishApp/PhoneOnly/BotNames.swift`), the website in September
@@ -279,6 +290,7 @@ Yekaterinburg row is standard encyclopedic forms — re-verify when shipping).
 |---|---|---|---|---|---|---|---|---|---|---|
 | Moscow | モスクワ | 莫斯科 | Moscú | Moscou | Moskau | Moscou | Mosca | Moskwa | Moskova | Москва |
 | St. Petersburg | サンクトペテルブルク | 圣彼得堡 | San Petersburgo | Saint-Pétersbourg | Sankt Petersburg | São Petersburgo | San Pietroburgo | Petersburg | Sankt-Peterburg | Санкт-Петербург |
+| Warsaw | ワルシャワ | 华沙 | Varsovia | Varsovie | Warschau | Varsóvia | Varsavia | Warszawa | Varşova | Варшава |
 | Kazan | カザン | 喀山 | Kazán | Kazan | Kasan | Cazã | Kazan' | Kazań | Kazan | Казань |
 | Samara | サマーラ | 萨马拉 | Samara | Samara | Samara | Samara | Samara | Samara | Samara | Самара |
 | Yekaterinburg | エカテリンブルク | 叶卡捷琳堡 | Ekaterimburgo | Iekaterinbourg | Jekaterinburg | Ecaterimburgo | Ekaterinburg | Jekaterynburg | Yekaterinburg | Єкатеринбург |

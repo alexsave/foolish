@@ -7,9 +7,10 @@
 // the migration carried them, and bots.c holds them as data, so a fresh store,
 // the tests and local dev seat exactly the bots prod does. That is also what
 // makes the seed safe to run against a store that has bots (cb_import_seed_bots
-// inserts only the ids it lacks): ids derived from the names instead would
-// have added 49 duplicates beside prod's rows. unit_store.c holds the derived
-// set to prod's 49 (id, nickname, strategy key) triples.
+// inserts the ids it lacks and brings a stored id's nickname to its row's
+// city, never its rating): ids derived from the names instead would have added
+// 49 duplicates beside prod's rows. unit_store.c holds the derived set to
+// prod's (id, nickname, strategy key) triples plus the accounts prod lacks.
 //
 // '%' is the reserved first character of a bot's name (c_base auth/names.c
 // refuses it in a human's).

@@ -7,7 +7,7 @@
 // server seats a bot by its key through that table on the C Table (table_load
 // refuses a brain the build does not know), and derives its bot accounts from
 // the seeded rows (foolish/server/src/store/bot_seed.c; foolish/server/test/
-// unit_store.c holds them to production's 49).
+// unit_store.c holds them to production's 49 plus fusion's 7).
 //
 // The SOURCE side is read through datagen (tools/structgen/gen.sh writes
 // sdk/ts/gen/bot_registry.ts from bots.c with clang), not by parsing C as text,
@@ -72,7 +72,7 @@ test('C roster: the _max tiers are retired', () => {
         'cordite plays on the production budget');
 });
 
-test('the shipped kernel carries the roster the source says, and links every seeded bot', () => {
+test('the shipped kernel carries the roster the source says', () => {
     const roster = sourceRoster();
     const dump = new Map(kernelBotRoster().map(e => [e.key, e]));
     assert.deepEqual([...dump.keys()], roster.map(r => r.key), 'the kernel dumps the rows bots.c lists, in tier order');
@@ -83,9 +83,12 @@ test('the shipped kernel carries the roster the source says, and links every see
         assert.equal(k.seeded, entry.seeded === 1, `${entry.key}: seeded differs from bots.c`);
         assert.equal(k.offline, entry.offline === 1, `${entry.key}: offline differs from bots.c`);
         assert.equal(k.tier, entry.tier, `${entry.key}: tier differs from bots.c`);
-        // A seeded bot is dealt on the site: the shipped module must run its
-        // brain, or a seat carrying it has no bot behind its name.
-        if (entry.seeded) assert.ok(k.linked, `${entry.key} is seeded but not linked into the shipped module`);
+        // Whether this module links a seeded bot's brain is not asked here: no
+        // browser module runs a seat's brain (the server plays every bot seat),
+        // so web.wasm leaves a server-only brain out (fusion, `native_only` in
+        // bots.c). The server, which links the kernel natively, is held to
+        // running every seeded bot by foolish/server/test/unit_store.c
+        // (bot_seed_is_production: every seeded account's key is linked there).
     }
 });
 

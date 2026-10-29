@@ -1314,6 +1314,29 @@ int cb_rows_bots_add(cb_store *s, const cb_bot_row *rows, int n) {
     return rc;
 }
 
+// These n bot rows' nicknames set by id in one transaction, each held to its
+// item existing: an absent id refuses the whole transaction (CB_E_CONFLICT),
+// so nothing is written. Only the nickname is set; the rating, the games and
+// the strategy key stay as they are.
+int cb_rows_bots_rename(cb_store *s, const cb_bot_row *rows, int n) {
+    if (n < 0 || (n && !rows)) return CB_E_INVALID;
+    if (n == 0) return CB_OK;
+    if (n > CB_ITEM_TXN_MAX) return CB_E_FULL;
+    batch *b = batch_take();
+    if (!b) return CB_E_NOMEM;
+    for (int i = 0; i < n; i++) {
+        char pk[KB];
+        sets *x = &b->x[b->n];
+        set(x, CB_AVS("nickname", rows[i].nickname), CB_SET_TO);
+        b->w[b->n] = (cb_iwrite){ .op = CB_IW_UPDATE, .key = { keep(bz_next(b), k(pk, sizeof pk, "BOT#", rows[i].id)), "BOT" },
+                                  .sets = x->a, .n_sets = x->n, .cond = { CB_IF_EXISTS }, .n_cond = 1 };
+        b->n++;
+    }
+    int rc = s->ops->item_txn(s, b->w, b->n, NULL, NULL);
+    batch_give(b);
+    return rc;
+}
+
 // Every bot row replaced by these n, atomically.
 int cb_rows_bots_replace(cb_store *s, const cb_bot_row *rows, int n) {
     vec stored = { .size = sizeof(cb_uuid) };
@@ -1700,6 +1723,7 @@ const cb_rows_ops cb_rows_foolish = {
     .lease_held = cb_rows_lease_held,
     .bots_list = cb_rows_bots_list,
     .bots_add = cb_rows_bots_add,
+    .bots_rename = cb_rows_bots_rename,
     .ratings_list = cb_rows_ratings_list,
     .ratings_top = cb_rows_ratings_top,
     .ratings_for = cb_rows_ratings_for,

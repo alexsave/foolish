@@ -49,7 +49,7 @@ enum {
     S_MEMBERS_CLEAR, S_SEAT_BOTS_CLEAR, S_CHAT_CLEAR, S_REPLAYS_ORPHAN,
     S_GAMES_OF_USER, S_IS_MEMBER, S_NEEDING_BOTS,
     S_BOT_RATE, S_USER_RATE,
-    S_BOTS_ALL, S_BOTS_CLEAR, S_BOT_PUT, S_BOT_ADD, S_BOT_ELO, S_USER_ELO,
+    S_BOTS_ALL, S_BOTS_CLEAR, S_BOT_PUT, S_BOT_ADD, S_BOT_RENAME, S_BOT_ELO, S_USER_ELO,
     S_RATINGS_PLAYED, S_RATING_NAME, S_RATING_PUT,
     S_REPLAY_PUT, S_REPLAY_PLAYER_PUT, S_REPLAYS_NEW, S_REPLAYS_OLD, S_REPLAY_EXTRAS,
     S_CHAT_PUT, S_CHAT_LIST,
@@ -202,6 +202,7 @@ static const char *const STMTS[S__COUNT] = {
     [S_BOT_PUT] = "INSERT OR REPLACE INTO bots (" BOT_COLS ") VALUES (" BOT_VALS ")",
     // A plain INSERT: a taken id is the primary key refusing it, CB_E_CONFLICT.
     [S_BOT_ADD] = "INSERT INTO bots (" BOT_COLS ") VALUES (" BOT_VALS ")",
+    [S_BOT_RENAME] = "UPDATE bots SET nickname = ?2 WHERE id = ?1",
     [S_BOT_ELO] = "SELECT elo_rating FROM bots WHERE id = ?1",
     [S_USER_ELO] = "SELECT elo_rating FROM ratings WHERE user_id = ?1",
     [S_RATINGS_PLAYED] = "SELECT " RATING_COLS " FROM ratings WHERE games_played > 0 ORDER BY elo_rating DESC, user_id LIMIT ?1",
@@ -1022,6 +1023,29 @@ static int sql_bots_add(cb_store *s, const cb_bot_row *rows, int n) {
     return cb_sql_write(s, bots_add_step, &o);
 }
 
+// All or none: an id that is no bot's fails the step (CB_E_CONFLICT), and the
+// write rolls back. Only the nickname is set.
+static int bots_rename_step(cb_sql *x, void *ud) {
+    rating_op *o = ud;
+    for (int i = 0; i < o->n; i++) {
+        stmt_t *s = cb_sql_stmt(x, S_BOT_RENAME);
+        if (!s) return CB_E_DB;
+        if (!cb_sql_bind_uuid(s, 1, o->bots[i].id)) return CB_E_INVALID;
+        b_text(s, 2, o->bots[i].nickname);
+        int rc = cb_sql_run(x, s, "bot rename");
+        if (rc != CB_OK) return rc;
+        if (cb_sql_changes(x) == 0) return CB_E_CONFLICT;
+    }
+    return CB_OK;
+}
+
+static int sql_bots_rename(cb_store *s, const cb_bot_row *rows, int n) {
+    if (n < 0 || (n && !rows)) return CB_E_INVALID;
+    if (n == 0) return CB_OK;
+    rating_op o = { .bots = rows, .n = n };
+    return cb_sql_write(s, bots_rename_step, &o);
+}
+
 static int sql_bots_replace(cb_store *s, const cb_bot_row *rows, int n) {
     if (n < 0) return CB_E_INVALID;
     rating_op o = { .bots = rows, .n = n };
@@ -1258,6 +1282,7 @@ const cb_rows_ops cb_rows_sql = {
     .games_needing_bots = sql_games_needing_bots,
     .bots_list = sql_bots_list,
     .bots_add = sql_bots_add,
+    .bots_rename = sql_bots_rename,
     .ratings_list = sql_ratings_list,
     .ratings_top = sql_ratings_top,
     .ratings_for = sql_ratings_for,

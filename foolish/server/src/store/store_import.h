@@ -38,12 +38,15 @@ const char *cb_import_export_kind(const char *pk, const char *sk, char *id, size
 // BOT_ROSTER_MAX * BOT_IDS_MAX rows (bot_roster.h, bots.h).
 int cb_bot_seed_rows(cb_bot_row *out, int cap);
 
-// cb_bot_seed_rows written into a store (cb_store_app seed: SQLite at every
-// open, DynamoDB by a deploy's --seed-bots), but ONLY the rows whose id the
-// store lacks, all or none: an existing bot row, its rating and its nickname
-// are never updated, so a migrated store keeps its hosted rows and a second
-// run writes nothing. The number written (0 when nothing was missing), or a
-// CB_E_* (CB_E_CONFLICT: another seeder added one of them first; run again).
+// cb_bot_seed_rows brought into a store (cb_store_app seed: SQLite at every
+// open, DynamoDB by a deploy's --seed-bots): a seed row whose id the store
+// lacks is added, and a stored row of a seed id whose nickname is not the
+// registry's gets the registry's nickname, nothing else (its rating, games and
+// strategy key stay; see store_import.c). Renames, then adds, each all or none;
+// a second run writes nothing, and a bot no seed row names is never touched.
+// The number of rows written (renamed + added; 0 when the store already
+// matches), or a CB_E_* (CB_E_CONFLICT: another writer added or removed one of
+// them first; run again).
 int cb_import_seed_bots(cb_store *s);
 
 // Every rating row the leaderboard index holds, brought to its current key

@@ -1,6 +1,6 @@
 // The picker walks the road to Moscow, in the order the road runs.
 //
-// Miami 1 … Miami 7, New York 1 … Seoul … Madrid … Vienna … St. Petersburg …
+// Miami 1 … Miami 7, New York 1 … Seoul … Madrid … Vienna … Warsaw … St. Petersburg …
 // Moscow 7: weakest rung to strongest, and within a rung by instance number.
 // Before this the lobby asked Postgres for `created_at` descending, which is the
 // order foolish's bot_seed.c happens to INSERT, backwards - the picker opened on Moscow 7
@@ -67,7 +67,7 @@ test('the picker opens on the weakest bot and ends on the strongest', () => {
 
     // The cities in order of first appearance: the ladder, weakest to strongest.
     const ladder = [...new Set(shown.map((n) => n.replace(/ \d+$/, '')))];
-    assert.deepEqual(ladder, ['Miami', 'New York', 'Seoul', 'Madrid', 'Vienna', 'St. Petersburg', 'Moscow'],
+    assert.deepEqual(ladder, ['Miami', 'New York', 'Seoul', 'Madrid', 'Vienna', 'Warsaw', 'St. Petersburg', 'Moscow'],
         'the cities must appear in strength order - the road to Moscow, weakest first');
 
     // …and inside each city, 1 before 2 before 3.

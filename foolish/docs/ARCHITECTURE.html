@@ -756,7 +756,9 @@ The current design is <code>c_base/DESIGN.md</code> at the repository root.</div
   browser seat bots through (<code>bot_roster.c</code>), the server's bot accounts (<code>bot_seed.c</code>), and the
   phone's picker ladder, generated from it by datagen - so "the phone and the site run different bots" cannot
   recur (it did once: iOS ran cordite at the arena budget). Adding a bot is its <code>src/&lt;name&gt;_strategy.c</code>
-  and one row there. The player-facing ladder renders strength as air distance to the Kremlin:</p>
+  and one row there. The player-facing ladder renders strength as air distance to the Kremlin. A rating follows the
+  bot, not the city: the server's seed names each stored account by its row's city (by id, rating untouched), so a city
+  that moves to another bot is a registry edit and the next deploy:</p>
   <div class="tw"><table>
     <thead><tr><th>Rung</th><th>Key</th><th>Brain</th></tr></thead>
     <tbody>
@@ -765,8 +767,9 @@ The current design is <code>c_base/DESIGN.md</code> at the repository root.</div
       <tr><td>Seoul</td><td><code>robusta</code></td><td>The first Monte-Carlo bot — public-info sampling.</td></tr>
       <tr><td>Madrid</td><td><code>firecracker</code></td><td>Robusta's MC with a smarter rollout policy.</td></tr>
       <tr><td>Vienna</td><td><code>blackpowder</code></td><td>Belief-constrained determinized MC + exact 2-player endgame solver.</td></tr>
-      <tr><td>St.&nbsp;Petersburg</td><td><code>cordite</code></td><td>Blackpowder's successor: bitboard rollouts, common random numbers, loss-avoiding root solver, rank-floor inference.</td></tr>
-      <tr><td>Moscow</td><td><code>octogen</code></td><td>The shipped apex — cordite's line with an extended exact-solve window; provably never worse than its predecessor.</td></tr>
+      <tr><td>Warsaw</td><td><code>cordite</code></td><td>Blackpowder's successor: bitboard rollouts, common random numbers, loss-avoiding root solver, rank-floor inference.</td></tr>
+      <tr><td>St.&nbsp;Petersburg</td><td><code>octogen</code></td><td>Cordite's line with an extended exact-solve window; provably never worse than its predecessor.</td></tr>
+      <tr><td>Moscow</td><td><code>fusion</code></td><td>The apex, on the website only: octogen with 30% sensible noise in every seat's rollout play at tables of up to five, so its search stops over-fitting one deterministic opponent model.</td></tr>
     </tbody>
   </table></div>
   <p>How the strong ones think, in one paragraph: rebuild a <em>belief</em> from the public log every call

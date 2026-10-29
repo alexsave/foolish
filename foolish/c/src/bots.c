@@ -25,6 +25,10 @@
 //      and its distance `km`, BOT_IDS_MAX freshly minted v4 `ids` (never
 //      derived), and a `bot.<key>` string in foolish/c/i18n (keys.h and all
 //      twenty-five strings_<code>.c) for the phone's picker.
+//    - A seeded row's comment, on the line above its `city`, carries that
+//      CITY's song. The song belongs to the city, not the brain: when a city
+//      moves to another bot, its song moves with it. A comment on purpose, so
+//      it ships no bytes; name the piece, never quote its lyrics.
 //
 // A host never restates any of this: the web reads BotRosterTable
 // (wasm_bot_roster_dump), the phone reads the same table through EngineC and
@@ -53,7 +57,7 @@
 // The browser's modules (WASM_BOT_CFLAGS, -DFOOLISH_SEEDED_BOTS_ONLY: web.wasm,
 // oracle.wasm, oracle-mt.wasm and the e2e table_host) link only the brains a
 // named bot there can dispatch, which are the rostered ones minus the
-// offline-only espresso and gunpowder and the unseeded fusion. Every other
+// offline-only espresso and gunpowder and the server-only fusion. Every other
 // brain is `native_only` in its row and NATIVE_ONLY (NULL) in the dispatch
 // table, so their objects can stay out of the link (the Makefile's
 // WASM_BOT_SRC) and bot_roster_linked says 0 rather than a seat silently
@@ -63,7 +67,7 @@
 // CD_ROLLOUT_NOISE), so its function does not exist there.
 //
 // No browser module seeds a store either, so the server accounts' ids are
-// left out of them too (SEED_IDS): 49 UUIDs every visitor would download and
+// left out of them too (SEED_IDS): 56 UUIDs every visitor would download and
 // nothing there reads.
 #ifdef FOOLISH_SEEDED_BOTS_ONLY
 #define NATIVE_ONLY(fn) NULL
@@ -115,6 +119,7 @@ static const BotDef BOTS[STRAT_COUNT] = {
     [STRAT_RANDOM] = {
         .name = "random", .alias = "rand",
         .key = "random", .knobs = "", .uses_logs = 0, .seeded = 1, .offline = 1, .tier = 1,
+        // Miami's song: Kygo, "Stole the Show".
         .city = "Miami", .km = 9600,
         .ids = SEED_IDS("176d94a4-71f2-4542-9510-5603e52058d7", "15b54f52-2240-4955-8055-e27b7d767e3a",
                         "fb86b312-0a92-456a-9d86-dbcf139c5c0c", "cb71817c-55c4-4588-9e50-48f5f14c1fe0",
@@ -128,6 +133,7 @@ static const BotDef BOTS[STRAT_COUNT] = {
     [STRAT_ROBUSTA] = {
         .name = "robusta", .alias = "rob",
         .key = "robusta", .knobs = "", .uses_logs = 1, .seeded = 1, .offline = 1, .tier = 5,
+        // Seoul's song: LE SSERAFIM, "Eve, Psyche & The Bluebeard's wife".
         .city = "Seoul", .km = 6600,
         .ids = SEED_IDS("7ef1fc0b-3615-4dc8-b3ef-aa8f5d54d974", "8bc76702-5436-4765-9276-06b3cf48c28a",
                         "2fb4b0e0-042f-4e8c-a686-0fe57683a53f", "31e33723-01db-4ed7-91a5-25c7aacadb34",
@@ -137,6 +143,7 @@ static const BotDef BOTS[STRAT_COUNT] = {
     [STRAT_FIRECRACKER] = {
         .name = "firecracker", .alias = "fc",
         .key = "firecracker", .knobs = "", .uses_logs = 1, .seeded = 1, .offline = 1, .tier = 6,
+        // Madrid's song: Celia Cruz, "La Vida Es un Carnaval".
         .city = "Madrid", .km = 3440,
         .ids = SEED_IDS("8dab2d5c-c44d-4b59-837b-8e412c2ae942", "323fe1d3-7911-473d-a510-acae44946c0e",
                         "7e4ded9f-0f9e-4a19-8246-c42202365971", "34d13cb1-a638-43c8-b7b9-142736ef3dfc",
@@ -151,6 +158,7 @@ static const BotDef BOTS[STRAT_COUNT] = {
     [STRAT_BLACKPOWDER] = {
         .name = "blackpowder", .alias = "bp",
         .key = "blackpowder", .knobs = "", .uses_logs = 1, .seeded = 1, .offline = 1, .tier = 8,
+        // Vienna's song: Mozart, Requiem, "Lacrimosa".
         .city = "Vienna", .km = 1660,
         .ids = SEED_IDS("492b48b0-f474-4661-8545-b269ca614325", "a541a928-8152-441c-8fb9-ff224bbf7dc7",
                         "4201eb28-61ad-40d5-885b-4950111489a0", "29107dcb-fb7b-4088-bf44-b41f7fa9b84f",
@@ -160,7 +168,8 @@ static const BotDef BOTS[STRAT_COUNT] = {
     [STRAT_CORDITE] = {
         .name = "cordite", .alias = "cd",
         .key = "cordite", .knobs = CORDITE_KNOBS, .uses_logs = 1, .seeded = 1, .offline = 1, .tier = 9,
-        .city = "St. Petersburg", .km = 635,
+        // Warsaw's song: Chopin, Fantaisie-Impromptu (Op. 66).
+        .city = "Warsaw", .km = 1151,
         .ids = SEED_IDS("56959dab-9d74-438b-b0e7-2f08d4524c81", "30532f60-cd98-48bb-8044-e2f8393d5702",
                         "88cc6a4a-400f-40ed-917f-20ec9eb5e16f", "4d1c6b02-a5f7-41e6-b57a-f5aada3db922",
                         "b06f300a-2f9c-4d99-bb50-77580466e4ab", "518a9f06-e7bf-4688-a75e-ce603711ed83",
@@ -187,6 +196,7 @@ static const BotDef BOTS[STRAT_COUNT] = {
     [STRAT_HANDWRITTEN_PROD] = {
         .name = "handwritten_prod", .alias = "hp",
         .key = "handwritten", .knobs = "", .uses_logs = 0, .seeded = 1, .offline = 1, .tier = 3,
+        // New York's song: Robin S, "Show Me Love".
         .city = "New York", .km = 7500,
         .ids = SEED_IDS("663f2cbf-e8f7-407c-a991-192a1a929a17", "a3791b0c-9fe3-4881-846e-d9a36b5ffec5",
                         "7615f43f-f937-43df-95bc-5ba7537e5efc", "44d3db6c-7ea2-4573-ab6d-59d512a43e00",
@@ -198,7 +208,8 @@ static const BotDef BOTS[STRAT_COUNT] = {
     [STRAT_OCTOGEN] = {
         .name = "octogen", .alias = "og",
         .key = "octogen", .knobs = OCTOGEN_KNOBS, .uses_logs = 1, .seeded = 1, .offline = 1, .tier = 10,
-        .city = "Moscow", .km = 0,
+        // St. Petersburg's song: Prokofiev, "Dance of the Knights".
+        .city = "St. Petersburg", .km = 635,
         .ids = SEED_IDS("4f6f2ebb-1d3e-4761-a5a9-c91313eba087", "f60b53ec-74f6-45fe-9e0f-315e5495bc18",
                         "45f7a264-aedc-4ee4-8473-4681d6e0bcb8", "acc775ae-6d35-41d2-88bc-7dc1599cff82",
                         "df16e0de-4569-4771-804e-98f8d13affd1", "fc185071-a522-424e-a1bd-0c4d34b32d3e",
@@ -209,15 +220,21 @@ static const BotDef BOTS[STRAT_COUNT] = {
     },
     // 22 (torpex) and 23 (novichok) are retired.
     //
-    // Ready but not reachable (c/FUSION.md): octogen's brain and knobs plus 30%
-    // rollout noise at tables of up to five, which fusion_strategy_choose sets
-    // itself. Neither seeded nor offline, so no lobby, picker or seed row offers
-    // it. TODO(alex): fusion's city (and so its km and its seven ids, minted when
-    // it is seeded) and its song, which has no field anywhere. FUSION.md "To go
-    // live" has every step.
+    // The top rung (c/FUSION.md): octogen's brain and knobs plus 30% rollout
+    // noise at tables of up to five, which fusion_strategy_choose sets itself.
+    // Seeded, so the server deals it on the website as Moscow; not offline, so
+    // the phone's picker does not offer it. native_only: the server links the
+    // kernel natively and is the only place a seated fusion plays (the
+    // browser's modules run no seat's brain and compile its noise out).
     [STRAT_FUSION] = {
         .name = "fusion", .alias = "fu", .native_only = 1,
-        .key = "fusion", .knobs = OCTOGEN_KNOBS, .uses_logs = 1, .seeded = 0, .offline = 0, .tier = 11,
+        .key = "fusion", .knobs = OCTOGEN_KNOBS, .uses_logs = 1, .seeded = 1, .offline = 0, .tier = 11,
+        // Moscow's song: the National Anthem of the Soviet Union.
+        .city = "Moscow", .km = 0,
+        .ids = SEED_IDS("2c58c4a2-a254-4a75-a465-db25fce8de79", "a721ac2c-afc4-41d7-87ff-285cef86f1fd",
+                        "592588e9-ba8f-44b9-be56-2803377705bf", "98385eea-2b92-44f7-a436-11c20337eec3",
+                        "03f1f377-00a7-4936-b7ea-ed4f2c93b206", "6db6e1cc-fa6c-4e9f-a2e9-9bba574e63d5",
+                        "efe6f751-912f-48be-a488-5aee56b85bdb"),
     },
 };
 

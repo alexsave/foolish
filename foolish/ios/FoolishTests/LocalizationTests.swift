@@ -293,7 +293,7 @@ final class LocalizationTests: XCTestCase {
     private static let mayMatchEnglish: Set<String> = [
         "bot.random", "bot.handwritten", "bot.robusta",
         "bot.firecracker", "bot.blackpowder", "bot.cordite",
-        "bot.octogen", "bot.max",
+        "bot.octogen", "bot.fusion", "bot.max",
         // Digits, in every language that writes them as digits.
         "ios.rank.ten",
         // Chinese card players say the letters (A/K/Q/J), exactly as printed on

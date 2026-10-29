@@ -2064,16 +2064,16 @@ static void fu_small_worlds(int on) {
     og_reload_flags();
 }
 
-// Fusion is a brain with an id, a name and its own roster row, and research
-// only: the row is neither seeded nor offline, so no lobby, picker or seed row
-// offers it, and it carries octogen's knobs. Through the roster it is a named
+// Fusion is a brain with an id, a name and its own roster row, the website's
+// top rung: the row is seeded (the server's Moscow accounts) and not offline
+// (the phone's picker does not offer it), and it carries octogen's knobs. Through the roster it is a named
 // bot like any other: bot_roster_choose runs it to a legal move.
 //
 // Mutations that must turn it red: a NULL entry in bots.c's dispatch table (the
 // arena choose and the roster choose are -1); drop
 // its name (the id check: the slot reads as retired); drop its alias (the name
-// check); drop its key (the row checks); set its seeded or offline flag (the
-// "not offered" check); give it no knobs (the knob check); leave STRAT_COUNT at
+// check); drop its key (the row checks); clear its seeded flag, set its
+// offline flag, or give it another city (the "seeded, not offline" check); give it no knobs (the knob check); leave STRAT_COUNT at
 // 24 (the id check, and bots.c's [STRAT_FUSION] no longer compiles); have
 // fusion ignore FUSION_NOISE_MODE (the "reaches" check); drop its reset of the
 // mode after the decision (the "puts back" check).
@@ -2086,8 +2086,8 @@ static void test_fusion_is_dispatchable_and_named(void) {
     const BotDef *fe = bot_roster_at(ri);
     CHECK(fe && bot_roster_strat(ri) == STRAT_FUSION && bot_roster_find_by_strat(STRAT_FUSION) == ri,
           "fusion has its own roster row, key \"fusion\" on STRAT_FUSION");
-    CHECK(fe && !fe->seeded && !fe->offline,
-          "fusion's row is neither seeded nor offline: no lobby, picker or seed row offers it");
+    CHECK(fe && fe->seeded && !fe->offline && fe->city && !strcmp(fe->city, "Moscow") && fe->km == 0,
+          "fusion's row is seeded as Moscow, 0 km, and not offline: the website deals it, the phone's picker does not");
     const BotDef *oe = bot_roster_at(bot_roster_find("octogen"));
     CHECK(fe && oe && !strcmp(fe->knobs, oe->knobs) && fe->uses_logs == oe->uses_logs,
           "fusion's row carries octogen's knobs and is a belief bot like it");
@@ -2955,6 +2955,28 @@ static void test_bots_registry(void) {
           "the named bots' tiers are 1..n, each once, and a brain with no key has no bot fields");
     CHECK(cities_ok, "a named bot has a city exactly when it is seeded");
     CHECK(ids_ok, "a seeded bot has all its server accounts, every id a distinct UUID; an unseeded one has none");
+
+    // The website's ladder is the road to Moscow: walking the seeded rungs up
+    // by tier, the distance falls strictly and no city repeats (a server
+    // account's name is "<city> <n>", so two rungs on one city would be two
+    // bots under one name), ending on Moscow itself at 0 km.
+    int road_ok = 1, last_km = -1, top_tier = 0;
+    const char *top_city = NULL;
+    for (int t = 1; t <= STRAT_COUNT; t++)
+        for (int s = 0; s < STRAT_COUNT; s++) {
+            const BotDef *d = bot_def(s);
+            if (!d || !d->key || !d->seeded || d->tier != t || !d->city) continue;
+            if (last_km >= 0 && d->km >= last_km) road_ok = 0;
+            last_km = d->km;
+            top_tier = t;
+            top_city = d->city;
+            for (int o = 0; o < STRAT_COUNT; o++) {
+                const BotDef *e = bot_def(o);
+                if (o != s && e && e->seeded && e->city && !strcmp(e->city, d->city)) road_ok = 0;
+            }
+        }
+    CHECK(road_ok && top_tier > 0 && last_km == 0 && top_city && !strcmp(top_city, "Moscow"),
+          "the seeded rungs climb by tier to Moscow at 0 km, each closer than the last, no city twice");
 }
 
 static void seat_all(Game *g, int strat) {
