@@ -15,7 +15,7 @@ In one sitting Alex can:
 - find nothing that disagrees with the kernel: `tools/consist.mjs` judges the DOM against the kernel's state and React's rules at every click, drag, key and bot step (9 games over three seeds, 995 steps, no disagreement), and `tools/test.mjs` runs 39 checks of the look, the motion and the gestures, all passing.
 
 The evidence:
-- `shots/run/run_1024x768.mp4`: one whole game recorded at 1024x768 from a cold first paint to the new deal after Play again, the moves by click, drag, letters and arrows in turn (`shots/run/run_1024x768_moves.txt` says which move is which, at what second; `_sheet.png` is one frame a second); `shots/run/run_390x844_touch_8moves.mp4` eight moves by touch at a phone's size. `node tools/record.mjs` records them again (the frames 50 ms apart land in `out/run/`).
+- `shots/run/run_1024x768.mp4`: one whole game recorded at 1024x768 from a cold first paint to the new deal after Play again, the moves by click, drag, letters and arrows in turn (`shots/run/run_1024x768_moves.txt` says which move is which, at what second; `_sheet.png` is one frame a second); `shots/run/run_390x844_touch_8moves.mp4` eight moves by touch at a phone's size. `node tools/record.mjs` records them again (the frames 50 ms apart land in `out/run/`). Both at 60 fps, every frame the page drew (Animations, Smooth landings); `shots/run/side_by_side_react_left_port_right_1024x768.mp4` is React beside the port.
 - `shots/side_by_side/`: the port beside the real React app (its build, live against a local c_base) at 1024x768 and 390x844: mid-game, a card selected, a drag held over the table, the cursor, an aim, a card 200 ms into its flight, the end screen (`tools/sidebyside.mjs`).
 - `shots/react_golden.png` and `shots/cdom_midgame.png`, `shots/react_golden_defender.png` and `shots/cdom_defender.png`: the React goldens and the port's first paint of the same boards, 0 of 786,432 pixels apart at 1024x768 (`tools/shots.mjs`).
 - `shots/anim/`: the films of single moves (contact sheets and GIFs); `shots/drag_*.png`, `shots/keys_*.png`: the gestures held mid-way.
@@ -131,7 +131,7 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 - `tests/tex_test.c`: the texture generators alone, for `tools/texparity.mjs`.
 - `tests/blob_test.c`: native; 300 games round-tripped through the state blob at every step (110 lines).
 - `tests/run_test.c`: native; every operation of 200 games captured and planned as the table does (161 lines).
-- `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `reacttime.mjs` (the same against the real React app, its production build on a local c_base), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks, mouse drags, touch drags or the arrow keys), `input.mjs` (real CDP input: a mouse or touch drag in steps, keys), `gestureshots.mjs` (the gestures held mid-way, shots), `film.mjs` (a scenario recorded frame by frame into a contact sheet and a GIF), `consist.mjs` (the DOM against the kernel and React's rules at every click and bot step), `record.mjs` (a whole game recorded by mixed hands, Done), `react_rig.mjs` (the real React app on this Mac: c_base, its build's router, a table against a bot), `actiontime.mjs` (a move's cost on both, from Chrome's trace), `sidebyside.mjs` (both tables at each moment, shots), `reacttime.mjs`, `retake.sh` (any earlier commit built into `out_<commit>/`, its own tool run against it), `mutate.py`.
+- `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `reacttime.mjs` (the same against the real React app, its production build on a local c_base), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks, mouse drags, touch drags or the arrow keys), `input.mjs` (real CDP input: a mouse or touch drag in steps, keys), `gestureshots.mjs` (the gestures held mid-way, shots), `film.mjs` (a scenario recorded frame by frame into a contact sheet and a GIF), `consist.mjs` (the DOM against the kernel and React's rules at every click and bot step), `record.mjs` (a whole game recorded by mixed hands, Done), `framepace.mjs` (frame delivery and every landing on both tables, the films, the gate: Smooth landings), `react_rig.mjs` (the real React app on this Mac: c_base, its build's router, a table against a bot), `actiontime.mjs` (a move's cost on both, from Chrome's trace), `sidebyside.mjs` (both tables at each moment, shots), `reacttime.mjs`, `retake.sh` (any earlier commit built into `out_<commit>/`, its own tool run against it), `mutate.py`.
 - `out/table_debug.wasm`: the test build, the same table with `TABLE_DEBUG` (`?debug` on the page loads it): the kernel's state as text (`app_debug_state`), the bot's steps held for the test (`app_debug_hold`, `app_debug_release`) or made 30 ms (`app_debug_fast`, the clock put back, the kernel's rule untouched), and the kernel's random streams seeded (`app_debug_reseed`); boards for the gesture checks (`app_debug_board`), and the drag's and the cursor's state (`app_drag`, `app_kb`).
 - `shots/`: the screenshots; `shots/anim/` the films (contact sheets and GIFs); `shots/run/` the recorded games (MP4, a contact sheet, the moves); `shots/side_by_side/` the port beside React.
 
@@ -156,7 +156,9 @@ node tools/textime.mjs 9 1      # the textures, port and app, cold and warm, int
 node tools/reacttime.mjs 11 4   # the textures, port against the real React app and the harness page; CPU x4 (Textures, React baseline)
 CPU=4 node tools/texparity.mjs  # the generators' parity, and their times throttled
 python3 tools/mutate.py         # every mutant, rebuilt and tested, the source restored after
-node tools/record.mjs           # a whole game by click, drag, letters and arrows, recorded (W=390 H=844 TOUCH=1 by touch; MOVES=n)
+node tools/record.mjs           # a whole game by click, drag, letters and arrows, recorded (W=390 H=844 TOUCH=1 by touch; MOVES=n; FILM_CHECK=1)
+node tools/framepace.mjs 10 1   # frame delivery and every landing, the port against React (ARMS=port alone; x4; PROBE, FILM, SHOTS, DEAL)
+GATE=1 ARMS=port node tools/framepace.mjs 6 1   # the smooth-landing check
 node tools/actiontime.mjs 7 1   # a move's cost, the port against the real React app, from Chrome's trace (x4 for the throttle)
 node tools/sidebyside.mjs       # shots/side_by_side: both tables at each moment (W=390 H=844)
 tools/retake.sh df7fda82d tools/timing.mjs 21 1   # an earlier commit built into out_df7fda82d/ and timed with its own tool
@@ -295,16 +297,16 @@ A reload in the middle of a flight lands on the committed board with no flight: 
 ### A flight (FlightCard.tsx, flightGeometry.ts)
 
 Each card of the beat in the air is one node in an overlay (AnimationOverlay.tsx: fixed, over everything, never hit), made when the beat opens and removed when it lands.
-It is drawn at the centre of where its card is drawn, at scale 1.5 and the tilt it lies at there; `FLIGHT_ARM_MS` (25 ms, a cd timer, as React's setTimeout) later it is given its landing (the centre of where the card will be drawn, scale 1.8, the tilt it will lie at, the shadow) and a CSS transition of the beat's duration on the flights' curve.
+It is drawn at the centre of where its card is drawn, at scale 1.5 and the tilt it lies at there; on the frame after the one that painted it there it is given its landing (the centre of where the card will be drawn, scale 1.8, the tilt it will lie at, the shadow) and a CSS transition on the flights' curve that counts from its start frame (a delay of minus one frame) and ends one frame before the beat lands (Smooth landings, below).
 The browser moves it; C decided both ends and the time.
 Every endpoint is measured once, when the beat opens, with cdom's `cd_rect` (getBoundingClientRect into C memory, added to cdom for this: WHAT THE APP NEEDED, 16c); React measures in a layout effect at the same moment.
 
 | | React | port |
 | --- | --- | --- |
 | path | straight between element centres: `left`, `top` and `transform` transition together | the same |
-| duration | the step's `duration_ms` (350 a dealt card, 500 otherwise) | the same, from the kernel's plan; the test build's speed knob only runs the clock faster |
+| duration | the step's `duration_ms` (350 a dealt card, 500 otherwise) from the arm, so the transition is still running when the plan lands the beat | the beat's time from its start frame to the frame before it lands (the kernel's plan; 450 to 495 ms of a 500 ms beat), so the card is at rest where the board draws it on the last frame it flies; the test build's speed knob only runs the clock faster |
 | easing | `cubic-bezier(0.25, 0.46, 0.45, 0.94)` | the same |
-| arm | one 25 ms setTimeout after the start frame | one 25 ms cd timer (measured 26 to 28 ms from drawn to armed) |
+| arm | one 25 ms setTimeout after the start frame: the flight stands still 2 or 3 frames (measured) | the frame after the start frame, counted from it (`transition-delay` minus one frame): it stands still on its start frame alone |
 | scale | 1.5, then 1.8 | the same |
 | rotation | from the tilt it lay at to the one it lands at, about the card's bottom edge, the pivot paid back by a translate | the same transform string |
 | a cover | lands laid across its attack at pi/16, aimed at the attack's centre turned about its bottom edge | the same (`laidAcross`), the attack measured upright before its turn starts |
@@ -316,8 +318,8 @@ Every endpoint is measured once, when the beat opens, with cdom's `cd_rect` (get
 | several cards into one unmeasured place | 3 px apart each | the same |
 | the cards it carries | `visibility: hidden` where they left and where they land, shown at the landing | the same (visibility alone: a hidden card is never hit and nothing moves it) |
 | the row | grows a cell for a pile as its step opens (arrivingPiles) and glides (a FLIP) over that step's duration on the same curve | the same: each cell pinned where it is drawn, let go with `transform <ms>ms EASE` |
-| an attack under a cover in flight | turns with it: `transform <ms>ms EASE 25ms` | the same |
-| my hand | makes room for the cards flying into it (laid out for the held and the arriving), each lands on its slot; `all 0.1s ease` | the same, landing slots from `hand_layout` |
+| an attack under a cover in flight | turns with it: `transform <ms>ms EASE 25ms` | turns over the cover's own frames: the turn is written on the cover's arm frame with the cover's time and delay |
+| my hand | makes room for the cards flying into it (laid out for the held and the arriving), each lands on its slot; `all 0.1s ease` | the same, landing slots from `hand_layout` in the order the hand will be drawn (its remembered slots, a new card at the end), not the board's order |
 | the stock's badge | drops as cards leave (`in_flight_from_deck`), the trump's slot empties while it flies | the same, through `client_view_rules` with the frame's counts |
 
 ### The role marks (useRoleMotion.ts, roleMotion.ts, RoleCoin.tsx, RoleFlightsLayer.tsx)
@@ -366,6 +368,45 @@ What the extra calls are: a flight is a cloned face and its wrapper (about 4 cal
 The string table stays flat from game 2 on (`tools/strings.mjs`): 192, 195 and 196 strings, 5.9 to 6.0 KB, at the three games' ends (178 and 4.5 KB before this pass: the flights', the glide's and the coins' literals); every position and transform crosses as a one-off.
 `table.wasm` 104,009 bytes, 42,119 brotli, 47,367 gzip (75,330, 31,106 and 34,735 at this pass's start): about 14.1 KB of the code is the kernel now linked (`evwire_serialize` and `evwire_walk`, the push reader with its roster-trailer reader, `anim_build_plan` and `anim_plan_at`), and 11.7 KB the port's own (the run, the flights, the coins, the row's glide; measured on unstripped links, by function), then the ghosts (+3.6 KB).
 
+### Smooth landings (the lag pass)
+
+The complaint: the full-game film "looks really laggy", "a little bit jumpy, especially on card landings", and "the React is smoother".
+It was both the recorder and the page.
+
+**The recorder** delivered about a quarter of the frames the page drew.
+`tools/record.mjs` took the screencast as PNGs, wrote each to disk before acking it, and Chrome sends the next frame only after the ack (and encodes a 1024x768 PNG in tens of ms), then encoded at 30 fps.
+Measured with the film check (`FILM_CHECK=1`: over every flight, the screencast's frames against the page's own rAF log), the old way held 106 of the 405 frames the page drew in 15 flights (26%, about 15 a second); the new way (JPEG, acked the moment it arrives, written after, encoded at 60 fps) held 512 of 513 (99.8%), and 4,145 of 4,180 over the whole game's 159 flights (99.2%) with a load average of 7 from another job.
+
+**The page** drew every frame (60 a second, no long task, no dropped frame in the flights, at x1 and x4, the port and React alike), but its landings jumped.
+`tools/framepace.mjs` reads every frame after it is painted (each flight's box and each card's) and found, for the port at a040ec57a and for React the same way:
+- a flight stood still 2 or 3 frames at its start: the 25 ms arm timer lands on either side of a frame, and a transition armed on a frame paints its start again there;
+- it was taken off 2 to 14 px short of where the board then draws its card, because its transition, the beat's whole time from the arm, is still running when the plan lands the beat; React's flights live one frame longer (its landing commits a frame later), so React's misses are smaller than the old port's (median 2.9 to 3.7 px against 5.5 to 6.3);
+- a card taken into my hand was aimed at its place in the board's order, not the order the hand is drawn in: it landed up to 466 px from its card, which then jumped there.
+
+Fixed in C (`flights_arm`, `run_frame`, `my_hand_landing`): the flights are armed on the frame after their start frame, counted from it, over the time to the frame before the beat lands; the covered attack turns over the same frames; a card into my hand is aimed at the slot the hand will draw it in.
+Every landing is now within 0.1 px of its card, and the flight stands only on its start frame.
+
+`node tools/framepace.mjs 10 1` (PROBE=1), the same moves on both tables, headless, a load average of 2 to 3 (`uptime` logged with each run):
+| | port before (a040ec57a) | port after | React |
+| --- | ---: | ---: | ---: |
+| frames lost in the flights, x1 | 0 | 0 | 0 |
+| frames lost in the flights, x4 | not taken | 0 | 0 |
+| compositor frames mid-flight that showed no change (PipelineReporter, x1) | 89 of 730 | 0 of 607 | 92 of 917 (and 13 dropped) |
+| frames a flight stands at its start | 2 or 3 | 1 (the start frame) | 2 or 3 (x4: up to 4) |
+| taken off short of its card, median / max (px), x1 | 6.3 / 466 | 0.0 / 0.1 | 2.9 / 8.1 (another run 3.7 / 102) |
+| the same at x4 | | 0.0 / 0.1 | 3.6 / 154 |
+
+What is left at a landing is the size: a flight lands at scale 1.8, as React's does (FlightCard.tsx `1.5 + progress * 0.3`), and the board's card is drawn at 1, so the card shrinks by 44% in one frame on every landing, on both tables.
+It is the largest discontinuity left, and it is React's; landing at the board's scale would make the port smoother than React, and is a choice for the owner.
+
+The evidence:
+- `shots/run/run_1024x768.mp4` (the whole game, 60 fps, 329 s) and `shots/run/run_390x844_touch_8moves.mp4`, recorded again with the fixed recorder and table (the old films held about 14 distinct frames a second: 278 in a 20 s stretch, 119 gaps over 50 ms);
+- `shots/run/flights_port_1024x768.mp4`, `flights_react_1024x768.mp4` and `side_by_side_react_left_port_right_1024x768.mp4`: 8 moves of each, filmed the same way (React left, the port right; the boards differ, the kinds of move do not), and `flights_port_before_1024x768.mp4` the port at a040ec57a;
+- `shots/landing/landing_<kind>.png`: before (top) and after (bottom), every frame the compositor drew from 100 ms before a landing to 45 ms after (the trace's own screenshots, on the probe's clock), round the card's place, for an attack, a cover, a take, a deal, and the bot's into my hand and onto the table; the yellow frame is the first without the flight.
+
+The checks: `GATE=1 ARMS=port node tools/framepace.mjs 6 1` fails when more than 2% of the flights' frame deltas are over 20 ms, a flight stands more than its start frame, or one is taken off more than 1 px short; the table test checks the flights' transitions (one time, counted from a frame back, ending a frame before the beat), the covered attack turning with the cover's own time, and a take's cards landing where their cards are drawn as they go.
+Mutants (each puts one cause back): the beat's whole time from the arm (caught by the test and by the gate: 15 landings 1 to 3.5 px short), no lead (the gate: 25 flights stood 2 frames), armed a frame late (the gate), a take aimed by the board's order (the test: 52 px), the attack not turning, the attack turning before its cover is armed, the flights never armed, the deal at 500 ms: 9 caught, 0 missed.
+
 ### Not done, and every way it differs from the React table
 
 - **No revert flight.** React flies a move the server refused home with the red look; here the game is local and nothing refuses a move that flew. A click made on the board on screen while a run plays is judged against the game itself: a move the shown board offered and the game no longer allows is refused (`app_last_reject`) and nothing flies, where React would fly it and fly it back.
@@ -375,8 +416,9 @@ The string table stays flat from game 2 on (`tools/strings.mjs`): 192, 195 and 1
 - **The glide offset** a landing is aimed off is the cell's box against its rest while its glide runs (its end time known); React reads the computed transform. They differ only if the window is resized mid-glide.
 - **The plan is built when steps join the run, not every frame**: the same answer (it is a pure function of the run), less work.
 - **The held piles** (React's rule for a board that got ahead of its own flight, a server's confirmation beating the card) cannot happen here: every board the port draws is a step's own or the game's after its run.
-- **The films are the port's**: the React table is now run here (its build live on a local c_base, `tools/react_rig.mjs`), and `tools/sidebyside.mjs` puts a flight of each beside the other (`shots/side_by_side/flight_*.png`, 200 ms into the flight); a frame-by-frame film of React's was not made.
-- **Headless timing**: in headless Chrome the screencast and the timers stall now and then (a 500 ms gap with no frame was seen once in a film), which stretches a ghost exactly as a slow device would; the tests judge endpoints and landings, not frame times.
+- **The films**: the React table is run here (its build live on a local c_base, `tools/react_rig.mjs`); `tools/sidebyside.mjs` puts a flight of each beside the other (`shots/side_by_side/flight_*.png`, 200 ms into the flight), and `FILM=1 node tools/framepace.mjs` films both at 60 fps (Smooth landings).
+- **Headless timing**: the measurements and films are headless Chrome (`--headless=new`, the real compositor at 60 Hz); a headed window on this shared Mac takes the owner's focus and is not used.
+- **The landing's size**: a flight lands at scale 1.8 and its card is drawn at 1, as React's (Smooth landings).
 - **The kernel's push reader** links its roster-trailer reader (about 2 KB) though the port's streams carry no roster: an entry that reads a sequence with no identity would not.
 - Unchanged from earlier passes and still not ported: the cover arrows (dead in React), the tutorial's hints, chat, translations, live play. Drag and drop and keyboard play came after (their own sections).
 
@@ -807,7 +849,7 @@ For what both do, the C is about as long as the TSX, most of it the same inline 
 - a save that fails is not silent: with IndexedDB refusing the game's key, a move shows the notice; the store taking it again, the retry keeps the game, the notice goes, and a reload adopts it;
 - a game played out by clicks (`tools/play.mjs`, textures on) reaches the end screen ("done - Two of us"), and Play again deals six new cards;
 - after every click of that game and of more games, until every pill has shown, every wood surface on the page (the back button, each pill, the results panel, Play again) lies inside the rectangles its picture was worked out in;
-- the animations (Animations), through an in-page recorder of every flight node (its card, its start, when it was armed and with what, when it went), every role ghost and every mark change: a played card leaves from its hand card's centre and lands on the centre of the cell the row made for it, at scale 1.5 then 1.8, armed about 25 ms after it is drawn and gone at its 500 ms landing, hidden where it lands meanwhile, the two cells already down gliding, the board the move's at once (out of my hand, my count 3: Final pass, defect 5); the bot's cover leaves its seat and lands laid across 6d, which turns with it (`transform 500ms ... 25ms`); a take flies the five table cards from where they lay, at their tilts, to the bot's seat; the refill flies from the stock onto the slots my hand made room for; a sweep flies four cards to the pile (3 px apart), the pile's count showing at its landing while the refills still fly, the bot's draw one stack of three backs, my check frozen through the run and the closing beat throwing the shield and the opener's sword as ghosts; a transfer's shield takes off with the card and lands before it, my badge making way and Anna's blanking then turning a sword in; a deal is 12 flights at 350 ms (the kernel's plan: 525 + 375 k), mine face up and the bot's backs, then the trump into its slot; a move made while a run plays joins it (one run, its step at 525 ms); a reload mid-flight lands on the committed board with no overlay; and in the played-out game the trump's first flight leaves its own slot.
+- the animations (Animations), through an in-page recorder of every flight node (its card, its start, when it was armed and with what, when it went), every role ghost and every mark change: a played card leaves from its hand card's centre and lands on the centre of the cell the row made for it, at scale 1.5 then 1.8, armed on the frame after it is drawn over one time counted from a frame back that ends a frame before its 500 ms landing, and gone at that landing, hidden where it lands meanwhile, the two cells already down gliding, the board the move's at once (out of my hand, my count 3: Final pass, defect 5); the bot's cover leaves its seat and lands laid across 6d, which turns with it over the cover's own time and delay, not before its arm; a take flies the five table cards from where they lay, at their tilts, to the bot's seat; the refill flies from the stock onto the slots my hand made room for; a sweep flies four cards to the pile (3 px apart), the pile's count showing at its landing while the refills still fly, the bot's draw one stack of three backs, my check frozen through the run and the closing beat throwing the shield and the opener's sword as ghosts; a transfer's shield takes off with the card and lands before it, my badge making way and Anna's blanking then turning a sword in; a deal is 12 flights of 350 ms beats (the kernel's plan: 525 + 375 k), each transition ending a frame before its beat lands, mine face up and the bot's backs, then the trump into its slot; a move made while a run plays joins it (one run, its step at 525 ms); a reload mid-flight lands on the committed board with no overlay; and in the played-out game the trump's first flight leaves its own slot.
 
 - the final pass: the defender's first paint is React's golden `bout_2p_defender.html`; the backs' black never lands without the fern; G takes the Good pill down at once; the cursor stays under a sliding card at every frame; the end screen is React's WinScreen page (the golden `win_screen.html`), the table hidden under it and back for the next deal; the played card's board is the move's while it flies; a drop reads the battle through a layer that listens nowhere, by mouse and by touch.
 
