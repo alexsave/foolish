@@ -1465,7 +1465,18 @@ static double anim_speed = 1;  /* the test build's: the run's clock goes this ma
 static uint32_t runs_started;  /* for the tests */
 
 static int run_on(void) { return run_origin >= 0; }
-static const TableView *run_board(void) { return run_landed ? &run[run_landed - 1].board : &run_pre; }
+/* A move of mine that is the whole operation (an attack, a pass, a cover, a pickup and nothing the
+ * server adds to it) is the board at once once its flight is off, as React's is: its push holds no
+ * event the table has not already flown, so React adopts the board when the server answers
+ * (AnimationContext's "all events optimistic: just update state"), not when the card lands; a
+ * server here answers in no time. Steps [0, run_ahead) show their board from then on: the count on
+ * my seat, the hand laid out without the card and the pills are the move's at once, the card
+ * itself hidden where it lands until it does. run_ahead_at: the step whose opening sets it. */
+static int run_ahead, run_ahead_at = -1, run_ahead_to;
+static const TableView *run_board(void) {
+  int k = run_landed > run_ahead ? run_landed : run_ahead;
+  return k ? &run[k - 1].board : &run_pre;
+}
 
 /* The plan of the whole run, steps [from, run_n) newly added: the kernel's, from each step's event
  * and board (as pushSequence.ts and animPlan.ts planFor hand them over). */
@@ -1507,6 +1518,8 @@ static void roles_opened(int k) {
 static void run_end(void) {
   run_origin = -1;
   run_n = run_landed = run_opened = 0;
+  run_ahead = run_ahead_to = 0;
+  run_ahead_at = -1;
   __builtin_memset(&FR, 0, sizeof FR);
   FR.step = ANIM_STEP_NONE;
   flights_clear();
@@ -1532,6 +1545,12 @@ static void op_end(int actor) {
   AnimRoles opening; /* a good this operation sets leads it */
   if (SHOWN_ROLES.known && anim_goods_opening(SHOWN_ROLES.roles, (int)run[run_n].board.good_mask, &opening))
     roles_set(opening, SHOWN_ROLES.open);
+  int mine_alone = actor == ME;
+  for (int i = from; i < from + n && mine_alone; i++) {
+    const PushEvent *e = &run[i].ev;
+    mine_alone = e->seat == ME && (e->type == EVW_T_ATTACK_PASS || e->type == EVW_T_COVER || e->type == EVW_T_PICKUP);
+  }
+  if (mine_alone) { run_ahead_at = from; run_ahead_to = from + n; }
   run_n += n;
   if (!run_plan(from)) { run_end(); return; }
   if (!was) {
@@ -1573,9 +1592,13 @@ static void run_show(void) {
     const PushEvent *e = &run[k].ev;
     uint64_t ids = 0;
     for (int i = 0; i < e->n_cards; i++) if (e->cards[i].suit >= 0) ids |= 1ull << card_to_id(e->cards[i]);
+    /* ahead: the board drawn holds this step's cards already (run_ahead: a lone move of mine), so
+     * they are hidden where they land, as React hides its own move's cards on the board it adopted */
+    int ahead = k < run_ahead;
     if (e->from == EVW_LOC_HAND && e->seat == ME) SHOW.veil_hand |= ids;
     if (e->from == EVW_LOC_TABLE) SHOW.veil_table |= ids;
-    if (e->to == EVW_LOC_HAND && e->seat == ME) SHOW.arriving += e->n_cards;
+    if (e->to == EVW_LOC_HAND && e->seat == ME) { if (ahead) SHOW.veil_hand |= ids; else SHOW.arriving += e->n_cards; }
+    if (e->to == EVW_LOC_TABLE && e->type == EVW_T_COVER && ahead) SHOW.veil_table |= ids;
     if (e->to == EVW_LOC_TABLE && e->type == EVW_T_ATTACK_PASS) {
       SHOW.veil_table |= ids;
       RV = &run[k].board; /* the row makes room for the pile now (React's arrivingPiles) */
@@ -1852,6 +1875,12 @@ static void render_board(void) {
   cd_str turn = V->status == GAME_STATUS_GAME_OVER ? ZS("over") : bot_pending ? ZS("bot") : ZS("human");
   if (turn != turn_shown) cd_set_attr(container, ZS("data-turn"), turn_shown = turn);
   flights_update();
+  /* the move's flight is off, measured from where its card was drawn: the board is the move's now */
+  if (run_on() && run_ahead_at >= 0 && run_opened > run_ahead_at) {
+    run_ahead = run_ahead_to;
+    run_ahead_at = -1;
+    render_board();
+  }
 }
 
 static void render(void) {

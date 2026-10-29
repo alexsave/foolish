@@ -254,20 +254,22 @@ try {
   const seatCount = (seat) => b.evaluate(`document.querySelector('[data-role-seat="${seat}"]').parentElement.lastElementChild.lastElementChild?.textContent ?? null`);
   const ANIM_PAGE = 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug';
 
-  await check('a played card flies from its place in my hand to the cell the row made for it, hidden at both ends, and the board commits at the landing', async () => {
+  await check('a played card flies from its place in my hand to the cell the row made for it, hidden where it lands, and the board is the move\'s at once (React adopts it when the server answers)', async () => {
     await openTable(b, ANIM_PAGE, { hold: true });
     await b.evaluate(RECORD);
     const from = await centre('[data-hand-plane] [data-card="0-5"]');
     await b.click('[data-hand-plane] [data-card="0-5"]');
     await b.click('[data-pill="Attack"]');
     // mid-flight: the card shows only in its flight; the cell is there (the row made room) and empty;
-    // the row glides over the flight's own 500 ms; my count is the board before the landing
-    const mid = await b.evaluate(`[getComputedStyle(document.querySelector('[data-hand-plane] [data-card="0-5"]')).visibility,
+    // the row glides over the flight's own 500 ms; the board is the move's: the card out of my hand
+    // (the rest laid out without it) and my count 3, as React's is once the server has answered a
+    // move it adds nothing to (here the server is the page: at once)
+    const mid = await b.evaluate(`[document.querySelector('[data-hand-plane] [data-card="0-5"]'),
       getComputedStyle(document.querySelector('[data-table-container] [data-card="0-5"]')).visibility,
       [...document.querySelectorAll('[data-table-container] > div')].map((c) => c.style.transition).filter((t) => t.startsWith('transform 500ms')).length,
       document.querySelector('[data-role-seat="0"]').parentElement.lastElementChild.lastElementChild.textContent,
       window.$rec.flights.length]`);
-    assert.deepEqual(mid, ['hidden', 'hidden', 2, '4', 1], 'mid-flight: hand card hidden, cell hidden, the two cells already down gliding, my count 4, one flight');
+    assert.deepEqual(mid, [null, 'hidden', 2, '3', 1], 'mid-flight: out of my hand, the cell hidden, the two cells already down gliding, my count 3, one flight');
     await idle();
     const to = await centre('[data-table-container] [data-card="0-5"]');
     const [f] = await flights();
