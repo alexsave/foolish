@@ -9,7 +9,7 @@
 // (the backend's URL is read at build time; CBASE_PORT=<port> here if the build used another one),
 // `make -j4` in c_base/, ./build.sh here, and node tools/textime.mjs once (it writes out/ts_tex.html;
 // without it the harness arm is left out).
-// It starts c_base/build/cbase serve on that port with throwaway secrets and a throwaway SQLite
+// It starts (tools/react_rig.mjs) c_base/build/cbase serve on that port with throwaway secrets and a throwaway SQLite
 // file (CBASE_DEV=1, as tests/live_test.mjs; never production), serves the export on 8733 with the
 // rules of the site's CloudFront router (c_base/providers/aws/ops/site/web.yaml: / is index.html,
 // a known page gets .html, any other one-segment path is the shell _shell.html), and serves
@@ -37,67 +37,14 @@
 // texture keys none kept (cold) or all kept (warm).
 // PROBE=1 stops after the setup with screenshots in out/reacttime_*.png.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import crypto from 'node:crypto';
-import { spawn, execSync } from 'node:child_process';
-import { launch, serve, FOOLISH, POC, sleep } from './cdp.mjs';
+import { launch, POC, sleep } from './cdp.mjs';
+import { startRig, reactTable, load, top, REACT, PORT_ORIGIN } from './react_rig.mjs';
 
 const ROUNDS = Number(process.argv[2] || 9), CPU = Number(process.argv[3] || 1);
-const CBASE_PORT = Number(process.env.CBASE_PORT || 8731), REACT_PORT = 8733;
-const EXPORT = path.join(FOOLISH, 'out');
-const cbase = path.resolve(FOOLISH, '../c_base/build/cbase');
 const out = path.join(POC, 'out');
-if (!fs.existsSync(path.join(EXPORT, '_shell.html'))) { console.log(`no ${EXPORT}/_shell.html: run the app's build first (see the header)`); process.exit(2); }
-if (!fs.existsSync(cbase)) { console.log(`no ${cbase}: run make -j4 in c_base/ first`); process.exit(2); }
-// The build must point at the c_base this starts.
-const baked = execSync(`grep -rl 'http://127.0.0.1:${CBASE_PORT}' ${path.join(EXPORT, '_next/static/chunks')} || true`).toString().trim();
-if (!baked) { console.log(`the export does not name http://127.0.0.1:${CBASE_PORT}: rebuild it with NEXT_PUBLIC_BACKEND_URL set to it`); process.exit(2); }
 const HARNESS = fs.existsSync(path.join(out, 'ts_tex.html'));
-
-const load = () => execSync('uptime').toString().trim().replace(/.*load averages?: /, '');
-// the busiest processes over one second (top's first sample has no CPU figures)
-const top = () => execSync('top -l 2 -s 1 -o cpu -n 6 -stats command,cpu').toString().trim().split('\n').slice(-6).map((l) => l.trim().replace(/\s+/g, ' ')).join('; ');
-
-// ---- c_base, as tests/live_test.mjs starts it, on the port the build names
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdom-reacttime-'));
-const server = spawn(cbase, ['serve'], {
-  env: { ...process.env, CBASE_DEV: '1', CBASE_LISTEN: `127.0.0.1:${CBASE_PORT}`, CBASE_STORE: 'sqlite', CBASE_DB: path.join(dir, 'cbase.sqlite'),
-    CBASE_JWT_SECRET: crypto.randomBytes(32).toString('hex'), CBASE_ADMIN_TOKEN: crypto.randomBytes(24).toString('hex'), CBASE_ALLOWED_ORIGINS: '*' },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-let serverLog = '';
-const up = await new Promise((resolve) => {
-  const read = (d) => { serverLog += d; if (/listening on 127\.0\.0\.1:\d+/.test(serverLog)) resolve(true); };
-  server.stdout.on('data', read);
-  server.stderr.on('data', read);
-  server.on('exit', () => resolve(false));
-  setTimeout(() => resolve(false), 10000);
-});
-const stopServer = async () => {
-  server.kill('SIGTERM');
-  for (let n = 0; n < 30 && server.exitCode === null && server.signalCode === null; n++) await sleep(100);
-  if (server.exitCode === null && server.signalCode === null) server.kill('SIGKILL');
-  fs.rmSync(dir, { recursive: true, force: true });
-};
-if (!up) { console.log('c_base did not start:\n' + serverLog.slice(-1500)); await stopServer(); process.exit(2); }
-
-// ---- the export, routed as the site's CloudFront function routes it
-const pages = new Set(fs.readdirSync(EXPORT).filter((f) => f.endsWith('.html')).map((f) => f.slice(0, -5)));
-const route = (req) => {
-  const u = new URL(req.url, 'http://x');
-  let p = u.pathname.replace(/\/+$/, '') || '/';
-  if (p === '/') p = '/index.html';
-  else if (p.slice(p.lastIndexOf('/')).includes('.')) { /* a file */ }
-  else if (pages.has(p.slice(1))) p += '.html';
-  else if (p.indexOf('/', 1) < 0) p = '/_shell.html';
-  else p = '/404.html';
-  req.url = p + u.search;
-  return false;
-};
-const reactServer = await serve(REACT_PORT, EXPORT, route);
-const portServer = await serve(8720, FOOLISH, null, { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' });
-const REACT = `http://127.0.0.1:${REACT_PORT}`, PORT_ORIGIN = 'http://127.0.0.1:8720';
+const rig = await startRig({ portHeaders: { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' } });
 const PORT = PORT_ORIGIN + '/c/cdom_poc/out/index.html', TSP = PORT_ORIGIN + '/c/cdom_poc/out/ts_tex.html';
 
 // ---- the observer, in every document before its scripts
@@ -141,42 +88,7 @@ const arms = {};
 for (const k of ['port_cold', 'react_cold', 'ts_cold', 'port_warm', 'react_warm', 'ts_warm']) arms[k] = [];
 const blank = async () => { await b.goto('about:blank'); await sleep(300); };
 const clear = async (origin) => b.send('Storage.clearDataForOrigin', { origin, storageTypes: 'indexeddb' });
-const typeInto = async (sel, text) => { await b.click(sel); await b.send('Input.insertText', { text }); };
 const shot = (name) => b.shot(path.join(out, `reacttime_${name}.png`));
-
-// The app's sign-up and create move between pages; an ask in flight while a page goes is asked again.
-const until = async (expr, ms) => {
-  for (let n = 0; n < ms / 25; n++) {
-    try { if (await b.evaluate(expr)) return; } catch (e) { if (!/navigated|context/i.test(e.message)) throw e; }
-    await sleep(25);
-  }
-  throw new Error(`timed out waiting for ${expr}`);
-};
-
-/** A fresh user, a game against a bot, started: the table's url. */
-async function setup() {
-  await b.goto(REACT + '/');
-  await until(`!!document.querySelector('#username')`, 30000);
-  const name = 'RT' + crypto.randomBytes(4).toString('hex').toUpperCase(), password = crypto.randomBytes(12).toString('hex');
-  await typeInto('#username', name);
-  await typeInto('#password', password);
-  await b.click('form .form-row--actions > :nth-child(2)'); // Sign up
-  // the dashboard's one full-width wood button: CreateGameButton
-  await until(`location.pathname === '/dashboard' && !!document.querySelector('button.btn-wood--full')`, 30000);
-  if (process.env.PROBE) await shot('dashboard');
-  await b.click('button.btn-wood--full');
-  await until(`location.pathname.length > 2 && location.pathname !== '/dashboard' && !!document.querySelector('.btn-add-bot')`, 30000);
-  const url = REACT + await b.evaluate('location.pathname');
-  // a press before the bot roster has loaded is parked by the lobby until it has (Lobby.tsx)
-  await b.click('.btn-add-bot');
-  await until(`document.querySelectorAll('.lobby__player-wrapper').length === 2`, 30000);
-  await sleep(1000); // the add is shown optimistically: let the server's answer land first
-  if (process.env.PROBE) await shot('lobby');
-  await b.click('.btn-ready');
-  await until(`!!document.querySelector('[data-location="hand"][data-card]')`, 60000);
-  if (process.env.PROBE) await shot('table');
-  return { url, name };
-}
 
 const PORT_STORED = `window.app.then((x) => [0, 1, 2, 3].map((k) => x.app_tex_stored(k)).join(''))`;
 const REACT_STORED = `new Promise((resolve) => { const r = indexedDB.open('TextureCacheDB', 1);
@@ -236,7 +148,7 @@ async function harness(arm) {
 const notes = [];
 let table;
 try {
-  table = await setup();
+  table = await reactTable(b, process.env.PROBE ? shot : null);
   console.log(`user ${table.name}, the table at ${table.url}`);
   if (process.env.PROBE) {
     await clear(REACT);
@@ -263,7 +175,7 @@ try {
     notes.push({ when: 'after', load: load(), top: top() });
   }
 } catch (e) { console.error(e); process.exitCode = 1; if (process.env.PROBE) await shot('error').catch(() => {}); }
-finally { await b.close(); reactServer.close(); portServer.close(); await stopServer(); }
+finally { await b.close(); await rig.stop(); }
 if (process.env.PROBE || process.exitCode) process.exit();
 
 const q = (a, p) => { const s = a.filter((v) => typeof v === 'number').sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(p * (s.length - 1) + 0.5))] : NaN; };
