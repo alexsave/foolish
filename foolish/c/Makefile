@@ -73,24 +73,21 @@ CFLAGS += -DCD_PASS_PROBE
 # whole server down.
 CFLAGS += -DENGINE_SNAP_ASSERT
 
+# Every brain: one src/<name>_strategy.c each, registered by its row in
+# src/bots.c and listed nowhere else. A wildcard over SOURCES, sorted so the
+# link order is fixed; never a glob over objects, which once linked a stale
+# object left in build/ and produced 16 duplicate symbols.
+STRATEGY_SRC := $(sort $(wildcard src/*_strategy.c))
 # The engine + all heuristic / Monte-Carlo bots: the kernel, as a host that
 # serves games links it (c_base reads it through print-kernel).
 KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/replay.c src/replay_steps.c \
             src/replay_extras.c src/view.c src/awire.c \
-            src/evwire.c src/random_strategy.c src/espresso_strategy.c \
-            src/handwritten_strategy.c src/robusta_strategy.c \
-            src/firecracker_strategy.c src/gunpowder_strategy.c \
-            src/blackpowder_strategy.c src/cordite_strategy.c \
-            src/cordite_sim.c src/bot_common.c src/astrolite_strategy.c \
-            src/simple_heuristic_strategy.c src/champion_strategy.c \
-            src/ultimate_champion_strategy.c src/hacker_strategy.c \
-            src/fulminate_strategy.c src/fm_exp.c src/espresso_prod_strategy.c \
-            src/handwritten_prod_strategy.c src/distill_feat.c \
-            src/distilled_strategy.c src/octogen_strategy.c \
-            src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
+            src/evwire.c $(STRATEGY_SRC) \
+            src/cordite_sim.c src/bot_common.c src/fm_exp.c src/distill_feat.c \
+            src/bots.c src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
-            src/strategy.c src/hand_layout.c \
+            src/hand_layout.c \
             src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c
 # What only host programs add (the arenas, the CLIs, the tests, the research
 # tools): the offline play-to-the-end loop. No shipped module carries it.
@@ -1313,16 +1310,14 @@ wasm-msg-size: build/msg.wasm
 # env table: with no roster spec installed, bot_knob() is just getenv() (see
 # bot_knobs.h), so bots.wasm behaves byte-for-byte as before.
 #
-# bot_roster.c IS here — A2 brought it in, because bot_drive.c dispatches
-# through the roster and the module does not link without it. (This comment
-# used to say the opposite, "deliberately NOT here yet"; it predates A2. The
-# feared cost did not materialize: linking the roster does NOT drag
-# espresso_prod_strategy.c / gunpowder_strategy.c in, so the module still
-# carries only the rungs the server seeds.)
-#
-# What is left of A1 is the SWITCH, not the link: wasm_choose_move still
-# dispatches its own way, and the TS env blocks in bot_strategy.ts still set
-# the knobs the roster already specifies. Folding the two is one change.
+# bots.c and bot_roster.c ARE here: bot_drive.c dispatches through the roster
+# and the module does not link without them. Linking the registry does NOT drag
+# the research brains in: under FOOLISH_SEEDED_BOTS_ONLY every row whose brain
+# this list leaves out is `native_only` and NULL in the dispatch (bots.c
+# NATIVE_ONLY), so the list below is explicit on purpose. A new brain stays out of these modules until it
+# is added here, and a row that names a brain missing from here without
+# NATIVE_ONLY fails the link rather than quietly growing every visitor's
+# download.
 #
 # There is NO toolchain skew in the RAW module, and it is measured rather than
 # asserted: with clang 22.1.8 + binaryen 130, the whole-kernel link of these
@@ -1359,7 +1354,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/
                 src/simple_heuristic_strategy.c \
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
-                src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
+                src/bots.c src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
                 src/hand_layout.c \
                 src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c \
                 $(SHARED)/wasm/libc.c $(SHARED)/wasm/bump_alloc.c \
@@ -1385,11 +1380,13 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/
 # ≤K-card subtrees with a proven-exact value for ~15% faster e2e p50. The book
 # data (~27 KiB read-only) is dwarfed by the runtime TT peak, so the wasm memory
 # footprint is unchanged; only the module SIZE grows by the book bytes.
-# -DFOOLISH_SEEDED_BOTS_ONLY: bot_roster.c dispatches only the brains this
-# module links (the seeded ladder). Without it the roster's dispatch would drag
+# -DFOOLISH_SEEDED_BOTS_ONLY: the registry (bots.c NATIVE_ONLY) dispatches only
+# the brains this module links. Without it the roster's dispatch would drag
 # espresso_prod + gunpowder in for two offline-only rungs the server can never
-# seed — measured at +5.1 KB gzip (54.1 -> 59.2 KB) on every edge cold start.
-# The roster TABLE is unaffected: same keys, knobs, flags, tiers everywhere.
+# seed - measured at +5.1 KB gzip (54.1 -> 59.2 KB) on every edge cold start.
+# It also leaves the bot accounts' ids out (bots.c SEED_IDS): no module here
+# seeds a store. The roster TABLE is unaffected: same keys, knobs, flags, tiers
+# everywhere.
 # WASM_IO_CAP=409600 (400 KiB). Two jobs, and the larger one sets it.
 #
 # 1. The LOG EXPORT, which wasm_api.c's export_logs writes UNCHECKED:
@@ -1822,7 +1819,7 @@ COV_BRANCH_MIN ?= 74
 # coverage climbs; never lower one to make a red build pass.
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
-                  hand_layout bot_drive bot_roster analyse ask table_wire netwire netclient
+                  hand_layout bots bot_drive bot_roster analyse ask table_wire netwire netclient
 # deal_rng, sha256 and b32 are in the SAME gate, from their new home. They left this
 # list's `src/` prefix behind when they moved to shared/, and a filter that no
 # longer matches does not fail - gcovr simply reports the file it cannot find as
@@ -1927,7 +1924,7 @@ coverage:
 	# a check that named files while the files moved underneath it. Every source
 	# the iOS app links is, by definition, shipped kernel - so if one of those is
 	# missing from COV_KERNEL, say which, and fail. (The reverse is allowed:
-	# COV_KERNEL also holds table/bot_drive/bot_roster/analyse, which the wasm
+	# COV_KERNEL also holds table/bots/bot_drive/bot_roster/analyse, which the wasm
 	# and the servers link but the phone does not.)
 	@missing=""; for f in $(notdir $(basename $(filter src/%,$(IOS_CORE_SRC)))); do \
 	   case " $(COV_KERNEL) " in *" $$f "*) ;; *) missing="$$missing $$f" ;; esac; \

@@ -19,11 +19,10 @@
 // cardDisplay/console.log strings are presentation and are dropped; every
 // computation feeding the choice is mirrored.
 
-// strategy.h's parse_strategy needs strcmp, which the freestanding wasm
-// libc stub doesn't declare — include the core headers directly instead.
 #include "card.h"
 #include "game.h"
 #include "legal.h"
+#include "strategy.h"
 
 // Mirrors analyzeAttackEffectiveness: score an attack card against the
 // defender's (fully visible) hand. Lower is better.

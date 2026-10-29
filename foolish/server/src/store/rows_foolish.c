@@ -1744,7 +1744,7 @@ int cb_store_games_get_each(cb_store *s, const char *const *ids, int n, cb_game_
 
 static int bot_tier(const char *key) {
     int idx = bot_roster_find(key);
-    const BotRosterEntry *e = idx >= 0 ? bot_roster_at(idx) : NULL;
+    const BotDef *e = idx >= 0 ? bot_roster_at(idx) : NULL;
     return e && e->tier ? e->tier : 1000;
 }
 

@@ -1009,10 +1009,10 @@ void analyse_params_default(AnalyseParams *p) {
 int analyse_packed(const unsigned char *code, int code_len, const AnalyseParams *p,
                    unsigned char *out, int out_cap) {
     if (!code || !p || !out || code_len <= 0) return -ANALYSE_EBADARG;
-    const BotRosterEntry *e = bot_roster_at(p->roster_idx);
-    if (!e) return -ANALYSE_EBADARG;
-    const BotRosterEntry *de = p->deep_roster_idx >= 0 ? bot_roster_at(p->deep_roster_idx) : 0;
-    if (p->deep_roster_idx >= 0 && !de) return -ANALYSE_EBADARG;
+    const int strat = bot_roster_strat(p->roster_idx);
+    if (strat < 0) return -ANALYSE_EBADARG;
+    const int deep_strat = p->deep_roster_idx >= 0 ? bot_roster_strat(p->deep_roster_idx) : -1;
+    if (p->deep_roster_idx >= 0 && deep_strat < 0) return -ANALYSE_EBADARG;
     if (p->worlds < 1) return -ANALYSE_EBADARG;
 
     uint32_t t0 = an_now_ms();
@@ -1026,7 +1026,7 @@ int analyse_packed(const unsigned char *code, int code_len, const AnalyseParams 
     if (p->seat >= C.hdr.n) return -ANALYSE_EBADARG;
 
     // Pass 1: the scan.
-    AnScanCtx sc = { p, e->strat, 0 };
+    AnScanCtx sc = { p, strat, 0 };
     r = an_walk(&C, p->seat, an_scan_visit, &sc);
     if (r < 0) return r;
     // g_real is now the finished (or cut) game: the deal report reads it.
@@ -1034,8 +1034,8 @@ int analyse_packed(const unsigned char *code, int code_len, const AnalyseParams 
     int fool = game_done(fin);
 
     // Pass 2: the deep pass on the K largest losses.
-    if (de && p->deep_nodes > 0) {
-        AnDeepCtx dc; dc.p = p; dc.strat = de->strat; dc.n = 0;
+    if (deep_strat >= 0 && p->deep_nodes > 0) {
+        AnDeepCtx dc; dc.p = p; dc.strat = deep_strat; dc.n = 0;
         bool used[AN_MAX_NODES]; memset(used, 0, sizeof used);
         for (int k = 0; k < p->deep_nodes; k++) {
             int best = -1; double bl = 0.0;
@@ -1092,7 +1092,7 @@ int analyse_packed(const unsigned char *code, int code_len, const AnalyseParams 
           && an_put8(&q, end, (unsigned)fin->power_suit)
           && an_put8(&q, end, fool < 0 ? 0xFFu : (unsigned)fool)
           && an_put8(&q, end, (unsigned)p->roster_idx)
-          && an_put8(&q, end, de ? (unsigned)p->deep_roster_idx : 0xFFu)
+          && an_put8(&q, end, deep_strat >= 0 ? (unsigned)p->deep_roster_idx : 0xFFu)
           && an_put8(&q, end, hflags)
           && an_put16(&q, end, (unsigned)g_n_nodes)
           && an_put16(&q, end, decisive < 0 ? 0xFFFFu : (unsigned)decisive)

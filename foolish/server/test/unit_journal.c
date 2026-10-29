@@ -1941,7 +1941,7 @@ static bool same_board(const Table *a, const Table *b) {
 static int kt_brains(const char *keys[2]) {
     int n = 0;
     for (int i = 0; i < bot_roster_count() && n < 2; i++) {
-        const BotRosterEntry *e = bot_roster_at(i);
+        const BotDef *e = bot_roster_at(i);
         if (bot_roster_linked(i) && !e->uses_logs && e->tier > 0 && e->tier <= 3) keys[n++] = e->key;
     }
     return n;

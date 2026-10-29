@@ -20,8 +20,7 @@
 #include "game.h"
 #include "legal.h"
 #include "bot_common.h"
-
-int champion_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+#include "strategy.h"
 
 // Strategy parameters (ChampionStrategy readonly fields). The TS also
 // declares ATTACK_CONTINUATION_PROB (0.75), TRUMP_CONSERVATION_LEVEL (0.70)

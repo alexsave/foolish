@@ -86,7 +86,7 @@ int table_seat_kinds(const Roster *r, int8_t *kinds) {
         if (r->seats[s].brain_len == 0) continue;
         const int idx = bot_roster_find(r->seats[s].brain);
         if (idx < 0 || !bot_roster_linked(idx)) return TABLE_E_UNKNOWN_BRAIN;
-        kinds[s] = (int8_t)bot_roster_at(idx)->strat;
+        kinds[s] = (int8_t)bot_roster_strat(idx);
     }
     return TABLE_OK;
 }
@@ -185,7 +185,7 @@ bool table_bots_need_logs(const Table *t) {
     const uint32_t eligible = bot_drive_eligible_mask(t->g, ~bots);
     for (int s = 0; s < t->g->num_players; s++) {
         if (!((eligible >> s) & 1u)) continue;
-        const BotRosterEntry *e = bot_roster_at(bot_roster_find(t->r.seats[s].brain));
+        const BotDef *e = bot_roster_at(bot_roster_find(t->r.seats[s].brain));
         if (e && e->uses_logs) return true;
     }
     return false;
@@ -657,7 +657,7 @@ int table_add_bot(Table *t, const char *actor_id, int id_len, const char *bot_id
     if (idx < 0 || !bot_roster_linked(idx)) return TABLE_E_UNKNOWN_BRAIN;
     const int rc = roster_seat_add(&t->r, bot_id, bot_len, nick, nick_len, brain, brain_len);
     if (rc < 0) return roster_refusal(t, rc);
-    game_lobby_seat(t->g, bot_roster_at(idx)->strat);
+    game_lobby_seat(t->g, bot_roster_strat(idx));
     lobby_edit(t, 1);
     if (game_lobby_can_deal(t->g)) deal(t, deal_seed);
     return TABLE_OK;
