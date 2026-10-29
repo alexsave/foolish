@@ -6,7 +6,7 @@
 // committed), a contact sheet of one frame every `step` ms with its time written on it (drawn by
 // Chrome itself in a canvas) and a GIF timed as recorded (ffmpeg), both in shots/anim/.
 //
-//   node tools/film.mjs [scenario ...]   (after ./build.sh)
+//   node tools/film.mjs [scenario ...]   (after ./build.sh; W=390 H=844 for a phone's window)
 // Scenarios, on the golden's board with the bot held and its waits fast, the flights at 1x:
 //   cover-sweep   the bot covers 6d with the trump 6c (the attack turns under it), I say Good: the
 //                 table sweeps to the discard pile and both hands refill from the stock
@@ -113,14 +113,16 @@ const SCENARIOS = {
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const names = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(SCENARIOS);
   const server = await serve(8720, FOOLISH);
-  const b = await launch();
+  // W and H: another window (390 x 844 for a phone); the films' names then carry the size
+  const W = Number(process.env.W || 1024), H = Number(process.env.H || 768), sfx = W === 1024 && H === 768 ? '' : `_${W}x${H}`;
+  const b = await launch({ width: W, height: H });
   try {
     for (const name of names) {
       await openTable(b, URL_TABLE, { hold: true, fast: true });
       await sleep(300);
       const frames = await film(b, () => SCENARIOS[name](b));
-      const r = await writeFilm(b, name, frames);
-      console.log(`${name}: ${r.frames} frames over ${Math.round(frames.at(-1).t)} ms, sheet of ${r.sheet} (shots/anim/${name}_sheet.png, ${name}.gif)`);
+      const r = await writeFilm(b, name + sfx, frames);
+      console.log(`${name + sfx}: ${r.frames} frames over ${Math.round(frames.at(-1).t)} ms, sheet of ${r.sheet} (shots/anim/${name + sfx}_sheet.png, ${name + sfx}.gif)`);
     }
   } finally { await b.close(); server.close(); }
 }
