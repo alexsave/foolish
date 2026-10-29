@@ -508,7 +508,11 @@ try {
       await idle();
       assert.deepEqual(await battles(), ['1-5/1-7', '3-5'], 'a drop in the hand\'s area plays nothing');
       assert.deepEqual(await hand(), ['0-5', '1-6', '3-11', '3-13']);
+      // every move of the drag: its event kept, to read whether the page stopped its default (a touch
+      // move left alone scrolls or zooms a phone's page under the finger)
+      await b.evaluate(`window.moved = []; window.addEventListener('${touch ? 'touchmove' : 'mousemove'}', (e) => window.moved.push(e))`);
       await drag(b, await cardAt('0-5'), [TABLE_SPOT], { touch, atEach: async () => { seen = await midDrag(); } });
+      if (touch) assert.ok(await b.evaluate(`window.moved.length > 0 && window.moved.every((e) => e.defaultPrevented)`), 'every touch move of the drag has its default stopped');
       assert.deepEqual(seen.badge, '⚔️ Attack', 'the badge names the kernel\'s move');
       assert.deepEqual(seen.at, ['512px', '260px'], 'over the pointer, 40 px up');
       assert.deepEqual(seen.cells, ['2'], 'one drop cell, past the two battles');

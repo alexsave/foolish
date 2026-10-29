@@ -85,7 +85,7 @@ MUTANTS = [
   ('drag: the hand never its area', 'src/table_app.c', 'int in_area = e->y >= r[1] - WEB_HAND.card_h;', 'int in_area = 0;', 'tools/test.mjs', 'along the hand'),
   ('drag: a mousedown starts the native drag', 'src/table_app.c', '  if (e->type == CD_EV_MOUSEDOWN) cd_prevent_default();', '', 'tools/test.mjs', 'onto the table attacks; the shadow names the move over the drop cells while it is held$'),
   ('drag: a touch end lets the mouse events through', 'src/table_app.c', '  cd_prevent_default(); /* after a touch: no mouse events and no click */', '', 'tools/test.mjs', 'press released.*touch'),
-  ('drag: a touch move scrolls', 'src/table_app.c', '  if (e->type == CD_EV_TOUCHMOVE) cd_prevent_default();', '', 'tools/test.mjs', 'touch'),
+  ('drag: a touch move scrolls', 'src/table_app.c', '  if (e->type == CD_EV_TOUCHMOVE) cd_prevent_default();', '', 'tools/test.mjs', 'onto the table attacks.*touch'),
   ('drag: the badge names Attack for a cover', 'src/table_app.c', '      if (mt == MOVE_ATTACK) TEXT("Attack"); else TEXT("Cover");', '      TEXT("Attack");', 'tools/test.mjs', 'onto a battle it beats covers it'),
   ('drag: no drop cells', 'src/table_app.c', 'drop_now->move_type == MOVE_PASS) ? drop_now->n_cards : 0;', 'drop_now->move_type == MOVE_PASS) ? 0 : 0;', 'tools/test.mjs', 'onto the table attacks'),
   ('drag: no amber', 'src/table_app.c', '    for (int k = 0; k < drop_now->n_cards; k++) amber |= card_to_id(drop_now->attack_cards[k]) == aid;', '', 'tools/test.mjs', 'onto a battle it beats covers it'),
@@ -113,7 +113,7 @@ MUTANTS = [
   ('arrows: the arrow from the card\'s middle', 'src/table_app.c', 'double arrow[6] = {cur[0] + cur[2] / 2, cur[1],', 'double arrow[6] = {cur[0] + cur[2] / 2, cur[1] + cur[3] / 2,', 'tools/test.mjs', 'arrows: Up on a card'),
   ('arrows: the pass place 40 px out', 'src/table_app.c', '    to[0] = n ? right + 46 : vp.w / 2.0;', '    to[0] = n ? right + 40 : vp.w / 2.0;', 'tools/test.mjs', 'arrows: a card that may'),
   ('arrows: Down does nothing', 'src/table_app.c', '  if (k == KEY_DOWN) { kb_take_or_good(); return; }\n  int defending', '  if (k == KEY_DOWN) { return; }\n  int defending', 'tools/test.mjs', 'arrows: a card that may'),
-  ('arrows: the hidden state stays none', 'src/table_app.c', '    cd_set_attr(kbd_state, ZS("data-mode"), cd_internz(MODE[kb_shown.mode = (int8_t)mode]));', '    kb_shown.mode = (int8_t)mode;', 'tools/test.mjs', 'arrows: the cursor'),
+  ('arrows: the hidden state stays none', 'src/table_app.c', '    cd_set_attr(kbd_state, ZS("data-mode"), cd_internz(MODE[kb_shown.mode = (int8_t)mode]));', '    cd_set_attr(kbd_state, ZS("data-mode"), cd_internz(MODE[0 * (kb_shown.mode = (int8_t)mode)]));', 'tools/test.mjs', 'arrows: the cursor'),
 ]
 only = sys.argv[1:]
 # the source's copy while a mutant is in it: outside the checkout, so no commit can take it
