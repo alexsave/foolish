@@ -2074,7 +2074,9 @@ static void fu_small_worlds(int on) {
 // dispatch (the roster choose is -1); drop the "fusion" line from
 // parse_strategy (the name is -1); drop the row (the row checks); set its
 // seeded or offline flag (the "not offered" check); give it no knobs (the
-// knob check); leave STRAT_COUNT at 24 (the id check).
+// knob check); leave STRAT_COUNT at 24 (the id check); have fusion ignore
+// FUSION_NOISE_MODE (the "reaches" check); drop its reset of the mode after
+// the decision (the "puts back" check).
 static void test_fusion_is_dispatchable_and_named(void) {
     CHECK(STRAT_FUSION == 24 && STRAT_COUNT == 25 && !strategy_retired(STRAT_FUSION),
           "fusion takes the next free id, 24, and STRAT_COUNT moves past it");
@@ -2103,6 +2105,21 @@ static void test_fusion_is_dispatchable_and_named(void) {
     CHECK(rdx >= 0 && rdx < m.n, "bot_roster_choose dispatches fusion's row to a legal move");
     CHECK(cd_sim_noise() == 0 && bot_knob("OG_TRUMP_KEEP") == NULL,
           "the roster's fusion leaves neither its noise nor its knobs behind");
+    // The mode knob reaches the rollouts, and is put back after the decision:
+    // the default draws only from the sensible set, FUSION_NOISE_MODE=1 from
+    // the whole menu.
+    calculate_legal_moves(&g, seat, &m);
+    cd_sim_noise_stats_reset();
+    (void)strategy_choose(STRAT_FUSION, &g, seat, &m);
+    const CdNoiseStats s0 = cd_sim_noise_stats();
+    setenv("FUSION_NOISE_MODE", "1", 1);
+    cd_sim_noise_stats_reset();
+    const int any = strategy_choose(STRAT_FUSION, &g, seat, &m);
+    unsetenv("FUSION_NOISE_MODE");
+    const CdNoiseStats s1 = cd_sim_noise_stats();
+    CHECK(s0.fired > 0 && s0.any == 0 && any >= 0 && any < m.n && s1.any > 0,
+          "FUSION_NOISE_MODE=1 reaches fusion's rollouts, and the default draws from the sensible set");
+    CHECK(cd_sim_noise_mode() == CD_NOISE_SENSIBLE, "fusion puts the noise mode back after its decision");
     fu_small_worlds(0);
 }
 
@@ -2263,7 +2280,7 @@ static void test_octogen_is_fusion_at_zero(void) {
 static void test_fusion_rollouts_are_noisy(void) {
     static LegalMoves m;
     fu_small_worlds(1);
-    CdNoiseStats fast = { 0, 0, 0 }, slow = { 0, 0, 0 };
+    CdNoiseStats fast = { 0, 0, 0, 0 }, slow = { 0, 0, 0, 0 };
     long og_drawn = 0;
     int restored = 1;
     for (int pass = 0; pass < 2; pass++) {
@@ -2331,15 +2348,65 @@ static int fu_menu_find(const LegalMoves *lm, int8_t kind, uint64_t mask) {
         if (lm->moves[i].type == kind && fu_move_mask(&lm->moves[i]) == mask) return i;
     return -1;
 }
-static void test_fusion_noise_modes_are_legal_on_both_paths(void) {
-    static BotPlay bp;
+typedef struct { long positions, picks, any_beyond_sensible, wide; int on_menu, any_is_lite, agree; } FuMenuTally;
+// One decision of one seat, every claim of the test above. Positions whose lite
+// menu is empty or cut off at MAX_LEGAL_MOVES are not counted.
+static void fu_check_position(Game *g, int p, FuMenuTally *t) {
     static LegalMoves lite;
     enum { FU_MENU = 4096 };
     static int8_t kind[FU_MENU];
     static uint64_t mask[FU_MENU];
     static unsigned char seen[FU_MENU];
-    long positions = 0, picks = 0, any_beyond_sensible = 0;
-    int on_menu = 1, any_is_lite = 1, agree = 1;
+    calculate_legal_moves_lite(g, p, &lite);
+    if (lite.n == 0 || lite.n >= MAX_LEGAL_MOVES) return;
+    t->positions++;
+    // The sensible menu: every entry on the lite menu.
+    const int ns = cd_sim_noise_menu(g, p, CD_NOISE_SENSIBLE, kind, mask, FU_MENU);
+    for (int i = 0; i < ns; i++) t->on_menu &= fu_menu_find(&lite, kind[i], mask[i]) >= 0;
+    int8_t skind[64]; uint64_t smask[64];
+    const int nss = ns < 64 ? ns : 64;
+    for (int i = 0; i < nss; i++) { skind[i] = kind[i]; smask[i] = mask[i]; }
+    // The whole menu: the lite menu exactly, each move once.
+    const int na = cd_sim_noise_menu(g, p, CD_NOISE_ANY, kind, mask, FU_MENU);
+    t->any_is_lite &= na == lite.n;
+    memset(seen, 0, (size_t)lite.n);
+    for (int i = 0; i < na && i < FU_MENU; i++) {
+        const int at = fu_menu_find(&lite, kind[i], mask[i]);
+        if (at < 0 || seen[at]) { t->any_is_lite = 0; continue; }
+        seen[at] = 1;
+        int in_s = 0;
+        for (int j = 0; j < nss; j++) in_s |= skind[j] == kind[i] && smask[j] == mask[i];
+        t->any_beyond_sensible += !in_s;
+        t->wide += kind[i] == MOVE_ATTACK && __builtin_popcountll(mask[i]) > 6;
+    }
+    // The two paths, each mode, the gate always open and half open.
+    for (int mode = 0; mode < 2; mode++)
+        for (int lvl = 500; lvl <= 1000; lvl += 500) {
+            cd_sim_set_noise(lvl);
+            cd_sim_set_noise_mode(mode);
+            const uint64_t r0 = game_rng_get();
+            int8_t bk = -1; uint64_t bm = 0;
+            cd_sim_noise_stats_reset();
+            const int fired = cd_sim_noise_pick(g, p, &bk, &bm);
+            const uint64_t r1 = game_rng_get();
+            game_rng_set(r0);
+            const int si = cd_sim_noise_legal(g, p, &lite);
+            const uint64_t r2 = game_rng_get();
+            const CdNoiseStats st = cd_sim_noise_stats();
+            int ok = r1 == r2 && (si >= 0) == fired && st.unmatched == 0;
+            if (ok && fired)
+                ok = lite.moves[si].type == bk && fu_move_mask(&lite.moves[si]) == bm;
+            t->agree &= ok;
+            t->picks += fired;
+            cd_sim_set_noise(0);
+            cd_sim_set_noise_mode(CD_NOISE_SENSIBLE);
+        }
+}
+
+static void test_fusion_noise_modes_are_legal_on_both_paths(void) {
+    static BotPlay bp;
+    FuMenuTally t = { 0, 0, 0, 0, 1, 1, 1 };
+    // Every decision of random games, every table size, both rule sets.
     for (int np = 2; np <= 6; np++)
         for (int seed = 0; seed < 24; seed++) {
             Game g;
@@ -2348,59 +2415,58 @@ static void test_fusion_noise_modes_are_legal_on_both_paths(void) {
             uint64_t order = 77u + (uint64_t)seed;
             bot_play_init(&bp, &g, 400, BOT_PLAY_SHUFFLE, &order);
             for (int idx; (idx = bot_play_next(&bp)) >= 0;) {
-                const int p = bp.seat;
-                calculate_legal_moves_lite(&g, p, &lite);
-                if (lite.n > 0 && lite.n < MAX_LEGAL_MOVES) {
-                    positions++;
-                    // The sensible menu: every entry on the lite menu.
-                    const int ns = cd_sim_noise_menu(&g, p, CD_NOISE_SENSIBLE, kind, mask, FU_MENU);
-                    for (int i = 0; i < ns; i++) on_menu &= fu_menu_find(&lite, kind[i], mask[i]) >= 0;
-                    int8_t skind[64]; uint64_t smask[64];
-                    const int nss = ns < 64 ? ns : 64;
-                    for (int i = 0; i < nss; i++) { skind[i] = kind[i]; smask[i] = mask[i]; }
-                    // The whole menu: the lite menu exactly, each move once.
-                    const int na = cd_sim_noise_menu(&g, p, CD_NOISE_ANY, kind, mask, FU_MENU);
-                    any_is_lite &= na == lite.n;
-                    memset(seen, 0, (size_t)lite.n);
-                    for (int i = 0; i < na && i < FU_MENU; i++) {
-                        const int at = fu_menu_find(&lite, kind[i], mask[i]);
-                        if (at < 0 || seen[at]) { any_is_lite = 0; continue; }
-                        seen[at] = 1;
-                        int in_s = 0;
-                        for (int j = 0; j < nss; j++) in_s |= skind[j] == kind[i] && smask[j] == mask[i];
-                        any_beyond_sensible += !in_s;
-                    }
-                    // The two paths, each mode, the gate always open and half open.
-                    for (int mode = 0; mode < 2; mode++)
-                        for (int lvl = 500; lvl <= 1000; lvl += 500) {
-                            cd_sim_set_noise(lvl);
-                            cd_sim_set_noise_mode(mode);
-                            const uint64_t r0 = game_rng_get();
-                            int8_t bk = -1; uint64_t bm = 0;
-                            cd_sim_noise_stats_reset();
-                            const int fired = cd_sim_noise_pick(&g, p, &bk, &bm);
-                            const uint64_t r1 = game_rng_get();
-                            game_rng_set(r0);
-                            const int si = cd_sim_noise_legal(&g, p, &lite);
-                            const uint64_t r2 = game_rng_get();
-                            const CdNoiseStats st = cd_sim_noise_stats();
-                            int ok = r1 == r2 && (si >= 0) == fired && st.unmatched == 0;
-                            if (ok && fired)
-                                ok = lite.moves[si].type == bk && fu_move_mask(&lite.moves[si]) == bm;
-                            agree &= ok;
-                            picks += fired;
-                            cd_sim_set_noise(0);
-                            cd_sim_set_noise_mode(CD_NOISE_SENSIBLE);
-                        }
-                }
+                fu_check_position(&g, bp.seat, &t);
                 bot_play_apply(&bp, random_strategy_choose(&g, idx, &bp.moves, NULL));
             }
         }
-    CHECK(positions > 2000 && picks > positions, "the noise menus were held over thousands of random decisions");
-    CHECK(on_menu, "every sensible candidate is a move on the seat's lite menu");
-    CHECK(any_is_lite, "the whole-menu mode's menu is the lite menu, every move exactly once");
-    CHECK(any_beyond_sensible > 0, "the whole-menu mode reaches moves the sensible set never offers");
-    CHECK(agree, "both rollout paths draw the same gate and pick and play the same move, in both modes");
+    const long game_positions = t.positions;
+    // Crafted boards with the big hands a game seldom deals: one 52-card deck
+    // dealt out, up to 20 cards a seat, a table of 1-6 battles each covered or
+    // not, every seat asked. They are what reach a thrower with more than
+    // MAX_MOVE_CARDS table-valued cards against a defender who can take them.
+    uint64_t r = 0xF05107ULL;
+    for (int it = 0; it < 1500; it++) {
+        Game g;
+        memset(&g, 0, sizeof g);
+        uint8_t deck[52];
+        for (int i = 0; i < 52; i++) deck[i] = (uint8_t)i;
+        for (int i = 51; i > 0; i--) {
+            const int j = (int)(rng_u32(&r) % (uint32_t)(i + 1));
+            const uint8_t x = deck[i]; deck[i] = deck[j]; deck[j] = x;
+        }
+        int d = 0;
+        const int np = 2 + (int)(rng_u32(&r) % 4);
+        g.num_players = (int8_t)np;
+        g.status = GAME_STATUS_PLAYING;
+        g.power_suit = (int8_t)(rng_u32(&r) % NUM_SUITS);
+        g.rules = rng_u32(&r) % 2 ? GAME_RULE_NO_PASS : 0;
+        g.first_attacker = (int8_t)(rng_u32(&r) % (uint32_t)np);
+        g.defender = (int8_t)((g.first_attacker + 1) % np);
+        g.num_battles = (int8_t)(rng_u32(&r) % 7);
+        for (int b = 0; b < g.num_battles; b++) {
+            const uint8_t a = deck[d++];
+            g.table_battles[b].attack = (Card){ (int8_t)(a / 13), (int8_t)(a % 13 + 1) };
+            const uint8_t c = deck[d++];
+            g.table_battles[b].defense = rng_u32(&r) % 2 ? CARD_NONE : (Card){ (int8_t)(c / 13), (int8_t)(c % 13 + 1) };
+        }
+        for (int i = 0; i < np; i++) {
+            Player *pl = &g.players[i];
+            pl->status = PLAYER_STATUS_IN;
+            const int want = 1 + (int)(rng_u32(&r) % 20);
+            for (int k = 0; k < want && d < 52; k++) {
+                const uint8_t c = deck[d++];
+                pl->hand[pl->hand_count++] = (Card){ (int8_t)(c / 13), (int8_t)(c % 13 + 1) };
+            }
+        }
+        for (int p = 0; p < np; p++) fu_check_position(&g, p, &t);
+    }
+    CHECK(game_positions > 2000 && t.positions > game_positions + 2000 && t.picks > t.positions,
+          "the noise menus were held over thousands of game decisions and crafted boards");
+    CHECK(t.wide > 0, "the boards reach throw-ins wider than six cards");
+    CHECK(t.on_menu, "every sensible candidate is a move on the seat's lite menu");
+    CHECK(t.any_is_lite, "the whole-menu mode's menu is the lite menu, every move exactly once");
+    CHECK(t.any_beyond_sensible > 0, "the whole-menu mode reaches moves the sensible set never offers");
+    CHECK(t.agree, "both rollout paths draw the same gate and pick and play the same move, in both modes");
 }
 
 // Fusion's noise by table size, with no knob set: on at 2, 3 and 4 seats, off

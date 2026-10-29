@@ -152,12 +152,14 @@ int  cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
 // arena's sanity check that a noisy brain is actually noisy). `drawn` counts
 // gate draws, so it is the proof that a brain at 0 drew nothing extra; `fired`
 // counts decisions that took a candidate instead of the policy; `unmatched` counts
-// struct-path picks whose candidate was not on the seat's lite menu. It must
+// struct-path picks whose candidate was not on the seat's lite menu; `any`
+// counts the picks drawn from the whole menu (CD_NOISE_ANY), so a test can see
+// which mode a brain's rollouts ran in. `unmatched` must
 // stay 0: every candidate is a legal move capped at MAX_MOVE_CARDS, so it is on
 // the menu, unless the enumerator itself truncated the menu at MAX_LEGAL_MOVES
 // (a hand with well over a dozen table-valued cards). An unmatched pick plays
 // the policy instead.
-typedef struct { long drawn, fired, unmatched; } CdNoiseStats;
+typedef struct { long drawn, fired, unmatched, any; } CdNoiseStats;
 
 #define CD_NOISE_SENSIBLE 0   // uniform over the sensible candidates
 #define CD_NOISE_ANY      1   // uniform over the whole lite menu
@@ -194,7 +196,7 @@ static inline void         cd_sim_set_noise(int per_mille) { (void)per_mille; }
 static inline int          cd_sim_noise(void) { return 0; }
 static inline void         cd_sim_set_noise_mode(int mode) { (void)mode; }
 static inline int          cd_sim_noise_mode(void) { return CD_NOISE_SENSIBLE; }
-static inline CdNoiseStats cd_sim_noise_stats(void) { CdNoiseStats z = { 0, 0, 0 }; return z; }
+static inline CdNoiseStats cd_sim_noise_stats(void) { CdNoiseStats z = { 0, 0, 0, 0 }; return z; }
 static inline void         cd_sim_noise_stats_reset(void) { }
 static inline int          cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves) {
     (void)g; (void)p; (void)moves; return -1;

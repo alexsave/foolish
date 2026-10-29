@@ -1363,6 +1363,7 @@ static _Thread_local int  cd_noise_mode = CD_NOISE_SENSIBLE;
 static _Thread_local long cd_noise_drawn = 0;
 static _Thread_local long cd_noise_fired = 0;
 static _Thread_local long cd_noise_unmatched = 0;
+static _Thread_local long cd_noise_any = 0;
 
 void cd_sim_set_noise(int per_mille) {
     cd_noise_pm = per_mille < 0 ? 0 : per_mille > 1000 ? 1000 : per_mille;
@@ -1373,11 +1374,11 @@ void cd_sim_set_noise_mode(int mode) {
 }
 int cd_sim_noise_mode(void) { return cd_noise_mode; }
 CdNoiseStats cd_sim_noise_stats(void) {
-    CdNoiseStats st = { cd_noise_drawn, cd_noise_fired, cd_noise_unmatched };
+    CdNoiseStats st = { cd_noise_drawn, cd_noise_fired, cd_noise_unmatched, cd_noise_any };
     return st;
 }
 void cd_sim_noise_stats_reset(void) {
-    cd_noise_drawn = 0; cd_noise_fired = 0; cd_noise_unmatched = 0;
+    cd_noise_drawn = 0; cd_noise_fired = 0; cd_noise_unmatched = 0; cd_noise_any = 0;
 }
 
 // One candidate, compact: the move kind and its cards as an id mask. A cover
@@ -1633,6 +1634,7 @@ static int sim_noise_draw(const SimState *s, int p, NoiseCand *out) {
         uint64_t n = noise_menu_size(f, nf);
         if (!n) return 0;
         *out = noise_menu_move(f, nf, noise_index(n));
+        cd_noise_any++;
         return 1;
     }
     NoiseCand c[NOISE_MAX_CANDS];
