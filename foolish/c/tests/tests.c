@@ -2072,8 +2072,8 @@ static void fu_small_worlds(int on) {
 // Mutations that must turn it red: a NULL entry in bots.c's dispatch table (the
 // arena choose and the roster choose are -1); drop
 // its name (the id check: the slot reads as retired); drop its alias (the name
-// check); drop its key (the row checks); clear its seeded flag, set its
-// offline flag, or give it another city (the "seeded, not offline" check); give it no knobs (the knob check); leave STRAT_COUNT at
+// check); drop its key (the row checks); clear its seeded flag or set its
+// offline flag (the "seeded, not offline" check); give it no knobs (the knob check); leave STRAT_COUNT at
 // 24 (the id check, and bots.c's [STRAT_FUSION] no longer compiles); have
 // fusion ignore FUSION_NOISE_MODE (the "reaches" check); drop its reset of the
 // mode after the decision (the "puts back" check).
@@ -2960,6 +2960,8 @@ static void test_bots_registry(void) {
     // by tier, the distance falls strictly and no city repeats (a server
     // account's name is "<city> <n>", so two rungs on one city would be two
     // bots under one name), ending on Moscow itself at 0 km.
+    // Mutations that turned it red, each restored after (in bots.c): octogen at
+    // 2000 km; cordite back on St. Petersburg beside octogen; fusion unseeded.
     int road_ok = 1, last_km = -1, top_tier = 0;
     const char *top_city = NULL;
     for (int t = 1; t <= STRAT_COUNT; t++)

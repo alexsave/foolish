@@ -13,6 +13,7 @@
 
 #include "store/rows_foolish.h"
 #include "bot_roster.h"
+#include "bots.h"
 #include "table.h"
 #include "util/clock.h"
 #include "util/err.h"
@@ -202,7 +203,8 @@ static void ladder_name(char *out, size_t cap, const char *key, const char *nick
 // bot_seed.c (the nickname assertion); bot_seed.c not skipping unseeded rows
 // (`n == N + 7`: a row with no city refuses the whole seed); octogen left on
 // Moscow in bots.c (the nickname assertion); one of fusion's ids changed in
-// bots.c (the fusion assertion).
+// bots.c (the fusion assertion); fusion's NAMED dispatch entry NULL in bots.c
+// (the linked assertion).
 static void bot_seed_is_production(void) {
     enum { N = (int)(sizeof PROD_BOTS / sizeof PROD_BOTS[0]), F = (int)(sizeof FUSION_IDS / sizeof FUSION_IDS[0]) };
     cb_bot_row rows[BOT_ROSTER_MAX * BOT_IDS_MAX];
@@ -239,7 +241,7 @@ static void bot_seed_is_production(void) {
     // the browser's dump is not where this is held (e2e/bot_roster_parity).
     for (int j = 0; j < n; j++) {
         const int ri = bot_roster_find(rows[j].strategy_key);
-        T_CHECK(ri >= 0 && bot_roster_linked(ri));
+        T_CHECK(ri >= 0 && bot_roster_linked(ri) && bot_choose(bot_roster_strat(ri)) != NULL);
     }
     // One cap short is a refusal, never a shorter seed.
     T_EQ_INT(cb_bot_seed_rows(rows, N + F - 1), -1);
@@ -270,7 +272,9 @@ static const cb_bot_row *find_bot(const bots_t *b, const char *id) {
 // into an empty store (assertion 1: `cb_import_seed_bots(s) == 3`); bots_replace
 // of the missing rows in place of bots_add (assertion 2: every existing row,
 // the played one and the stranger, gone); stored_bot always NULL, so every seed
-// row reads as missing (assertion 1: CB_E_CONFLICT); the rename comparison
+// row reads as missing (a store with bots no longer opens: its seed hits a
+// taken id); the renames sent through bots_add (assertion 1: CB_E_CONFLICT,
+// nothing renamed or added); the rename comparison
 // dropped, so nothing is renamed (assertion 1, and the played row's name); the
 // SQL S_BOT_ADD as INSERT OR REPLACE (the all-or-none check: a taken id
 // overwritten, `== CB_E_CONFLICT`); the SQL rename's changes() check dropped
@@ -384,8 +388,8 @@ static void seed_adds_only_missing_bots(void) {
 //
 // Mutations that turned it red, each restored after: the renames skipped in
 // cb_import_seed_bots (`== 21`, and octogen still on Moscow beside fusion);
-// the renames written through bots_replace's full row from the seed instead
-// (every played row's rating back at the start: the rating assertions).
+// the SQL rename also setting elo_rating (the rating assertions); one of
+// fusion's ids changed in bots.c (fusion's accounts at the start rating).
 static void seed_brings_production_to_the_ladder(void) {
     enum { N = (int)(sizeof PROD_BOTS / sizeof PROD_BOTS[0]) };
     cb_store *s = open_fresh();
