@@ -92,6 +92,7 @@ try {
   await b.until(`window.app.then((x) => x.app_debug_due())`, 10000);
   await b.evaluate(`window.app.then((x) => { x.app_debug_hold(0); x.app_debug_fast(1); x.app_debug_release(); })`);
   await b.until(`document.querySelector('[data-game-container]').dataset.turn !== 'bot'`, 10000);
+  await b.until('window.app.then((x) => !x.app_anim_busy())', 20000); // the bot's flights have landed
   await new Promise((r) => setTimeout(r, 400)); // the hand's own 0.1s slide (transition: all 0.1s)
   await b.shot(path.join(shots, `${pre}after_bot${sfx}.png`));
   // Played out to the end screen.
