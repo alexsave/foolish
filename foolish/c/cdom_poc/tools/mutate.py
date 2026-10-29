@@ -82,7 +82,7 @@ MUTANTS = [
   ('drag: the badge names Attack for a cover', 'src/table_app.c', '      if (mt == MOVE_ATTACK) TEXT("Attack"); else TEXT("Cover");', '      TEXT("Attack");', 'tools/test.mjs', 'onto a battle it beats covers it'),
   ('drag: no drop cells', 'src/table_app.c', 'drop_now->move_type == MOVE_PASS) ? drop_now->n_cards : 0;', 'drop_now->move_type == MOVE_PASS) ? 0 : 0;', 'tools/test.mjs', 'onto the table attacks'),
   ('drag: no amber', 'src/table_app.c', '    for (int k = 0; k < drop_now->n_cards; k++) amber |= card_to_id(drop_now->attack_cards[k]) == aid;', '', 'tools/test.mjs', 'onto a battle it beats covers it'),
-  ('drag: the dragged card looks as any', 'src/table_app.c', '  *dim = it && DRAG.moving && !DRAG.action;\n  return it && DRAG.action;', '  *dim = 0;\n  return 0;', 'tools/test.mjs', 'onto the table attacks|along the hand'),
+  ('drag: the dragged card looks as any', 'src/table_app.c', '  *dim = it && DRAG.moving && !DRAG.action;\n  return it && DRAG.action;', '  *dim = it && 0;\n  return it && 0;', 'tools/test.mjs', 'onto the table attacks|along the hand'),
   ('drag: no rearrange', 'src/table_app.c', 'if (to >= 0 && to != DRAG.index && client_hand_swap(', 'if (0 && client_hand_swap(', 'tools/test.mjs', 'along the hand'),
   ('drag: the order not kept in the game', 'src/table_app.c', '  if (DRAG.swapped) hand_keep();', '', 'tools/test.mjs', 'along the hand'),
   ('drag: a drop that is a move keeps the selection', 'src/table_app.c', '    if (p.move_type >= 0) nsel = 0;', '', 'tools/test.mjs', 'onto a battle it beats covers it'),

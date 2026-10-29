@@ -576,6 +576,10 @@ try {
     assert.deepEqual(await reds(), []);
     await key(b, '1', { meta: true });
     assert.deepEqual(await reds(), [], 'Meta+1 is the browser\'s');
+    await key(b, '2');   // 7h: no Attack pill for it, so A does nothing and keeps it
+    await key(b, 'a');
+    assert.deepEqual(await reds(), ['1-6'], 'A without the Attack pill leaves the selection');
+    await key(b, '2');
     await key(b, '1');
     assert.deepEqual(await pills(), ['Attack']);
     await key(b, 'a', { ctrl: true });

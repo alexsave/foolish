@@ -13,7 +13,11 @@
 //   kernel, the patches; before the drag pass it was a click);
 // - play: a click on the Attack pill (the move applied, the board re-read, the patches);
 // - bot: the bot's step (bot_drive, then the patches), run where its timer would run it;
-// - the run after play and after the bot: the frame and timer callbacks until the animations land.
+// - the run after play and after the bot: the frame and timer callbacks until the animations land;
+// - GESTURES=1 adds, on the golden board put back (app_debug_board 0): a drag of the 6s, each
+//   document move timed (the one that makes it a game action and asks the kernel, one whose answer
+//   is the same, the one onto the 6d where the answer changes), its drop on the table (the attack),
+//   and keys (an arrow putting the cursor on, a number selecting).
 import { launch, serve, FOOLISH, sleep, FORGET_GAME } from './cdp.mjs';
 
 const RUNS = Number(process.argv[2] || 15), CPU = Number(process.argv[3] || 1);
@@ -23,6 +27,7 @@ const b = await launch();
 const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
 const rows = { fcp: [], ready: [], asked: [], answered: [], selScript: [], selFrame: [], playScript: [], playFrame: [], botScript: [], botFrame: [],
   playRun: [], playFrames: [], botRun: [], botFrames: [],
+  dragOut: [], dragOutF: [], dragSame: [], dragSameF: [], dragOnto: [], dragOntoF: [], drop: [], dropF: [], keyArrow: [], keyArrowF: [], keyNum: [], keyNumF: [],
   fernAt: [], woodAt: [], woolAt: [], fernMs: [], woodMs: [], woolMs: [], decoded: [], mem: [] };
 const TEX = process.env.TEX, ORIGIN = 'http://127.0.0.1:8720';
 const texDone = `window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`;
@@ -83,15 +88,39 @@ try {
       const playRun = await runOf();
       const bot = await time(() => x.cd_timer(3)); // the bot's step (the test build's release path)
       const botRun = await runOf();
+      let g = null;
+      if (${JSON.stringify(!!process.env.GESTURES)}) {
+        x.app_debug_board(0);
+        while (x.app_anim_busy()) await new Promise((r) => timeoutNative(r, 5));
+        const at = (sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }; };
+        const mouse = (target, type, p) => target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, ...p }));
+        const key = (k, code) => document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: k, keyCode: code }));
+        const six = () => document.querySelector('[data-hand-plane] [data-card="0-5"]'), onto = at('[data-table-container] [data-battle-index][data-card="3-5"]');
+        await frame();
+        mouse(six(), 'mousedown', at('[data-hand-plane] [data-card="0-5"]'));
+        const out = await time(() => mouse(document, 'mousemove', { clientX: 512, clientY: 300 }));
+        const same = await time(() => mouse(document, 'mousemove', { clientX: 520, clientY: 292 }));
+        const into = await time(() => mouse(document, 'mousemove', onto));
+        mouse(document, 'mousemove', { clientX: 512, clientY: 300 });
+        const drop = await time(() => mouse(document, 'mouseup', { clientX: 512, clientY: 300 }));
+        while (x.app_anim_busy()) await new Promise((r) => timeoutNative(r, 5));
+        x.app_debug_board(0);
+        while (x.app_anim_busy()) await new Promise((r) => timeoutNative(r, 5));
+        const arrow = await time(() => key('ArrowRight', 39));
+        const num = await time(() => key('2', 50));
+        g = { out, same, into, drop, arrow, num };
+      }
       return { fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime, ready: window.appReady,
         asked: x.app_game_store(0), answered: x.app_game_store(1),
-        sel, play, bot, playRun, botRun };
+        sel, play, bot, playRun, botRun, g };
     })()`);
     rows.fcp.push(r.fcp); rows.ready.push(r.ready); rows.asked.push(r.asked); rows.answered.push(r.answered);
     for (const [s, f] of r.sel) { rows.selScript.push(s); rows.selFrame.push(f); }
     rows.playScript.push(r.play[0]); rows.playFrame.push(r.play[1]);
     rows.botScript.push(r.bot[0]); rows.botFrame.push(r.bot[1]);
     rows.playRun.push(r.playRun[0]); rows.playFrames.push(r.playRun[1]); rows.botRun.push(r.botRun[0]); rows.botFrames.push(r.botRun[1]);
+    if (r.g) for (const [k, row] of [['out', 'dragOut'], ['same', 'dragSame'], ['into', 'dragOnto'], ['drop', 'drop'], ['arrow', 'keyArrow'], ['num', 'keyNum']]) {
+      rows[row].push(r.g[k][0]); rows[row + 'F'].push(r.g[k][1]); }
     await b.evaluate(FORGET_GAME); // the next load starts on the golden board again
   }
 } finally { await b.close(); server.close(); }
@@ -105,6 +134,11 @@ console.log(`play (Attack pill)     ${f(med(rows.playScript))} script   ${f(med(
 console.log(`bot step               ${f(med(rows.botScript))} script   ${f(med(rows.botFrame))} with style and layout`);
 console.log(`  play's run after it    ${f(med(rows.playRun))} script over ${med(rows.playFrames)} frames ${span(rows.playRun)}`);
 console.log(`  bot's run after it     ${f(med(rows.botRun))} script over ${med(rows.botFrames)} frames ${span(rows.botRun)}`);
+if (process.env.GESTURES) {
+  for (const [label, row] of [['drag: the move out (a game action)', 'dragOut'], ['drag: a move, the same answer', 'dragSame'], ['drag: the move onto 6d', 'dragOnto'],
+    ['drop on the table (attack)', 'drop'], ['key: ArrowRight (cursor on)', 'keyArrow'], ['key: 2 (select)', 'keyNum']])
+    console.log(`${label.padEnd(36)} ${f(med(rows[row]))} script ${span(rows[row])}  ${f(med(rows[row + 'F']))} with style and layout`);
+}
 if (TEX) {
   console.log(`textures (${TEX}): url set at  fern ${f(med(rows.fernAt))}  wood ${f(med(rows.woodAt))}  wool ${f(med(rows.woolAt))}  (ms after navigation)`);
   console.log(`  made on the page's thread  fern ${f(med(rows.fernMs))}  wood ${f(med(rows.woodMs))}  wool ${f(med(rows.woolMs))}`);
