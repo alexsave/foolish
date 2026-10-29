@@ -169,10 +169,11 @@ void cd_unlisten_window(uint32_t ev); /* stop delivering it (a drag that ended) 
  * once the hook returns): no native drag after a mousedown, no scroll after a touchmove, no mouse
  * events and click after a touchend, no character typed after a keydown. */
 void cd_prevent_default(void);
-/* The node an event at (x, y) in the viewport would be delivered to: the nearest listening
- * ancestor-or-self of the topmost element there that takes pointer events (elementFromPoint, so
- * a pointer-events: none overlay is seen through), whatever type it listens for; 0 for none. The
- * browser lays the page out first if anything changed. */
+/* The listening node under (x, y) in the viewport: the first that listens, whatever type, among
+ * every element there that takes pointer events, topmost first with each one's ancestors after it
+ * (elementsFromPoint: a pointer-events: none overlay is not there, and a layer that takes pointer
+ * events but listens nowhere is seen through, as a drop's target is read under a seat or a
+ * flight); 0 for none. The browser lays the page out first if anything changed. */
 cd_id cd_hit(int32_t x, int32_t y);
 typedef struct { int32_t w, h, hidden, dpr100; } cd_viewport_rec;
 /* innerWidth, innerHeight, document.hidden and devicePixelRatio (times 100, rounded), read now */

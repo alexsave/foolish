@@ -414,11 +414,15 @@ var cdom = (() => {
     windowTarget(type).removeEventListener(EVENTS[type], listener);
     windowListeners[type] = undefined;
   }
-  // The node an event at (x, y) would go to: the nearest listening ancestor-or-self of the topmost
-  // element there that takes pointer events; 0 for none.
+  // The listening node under (x, y): the first that listens among every element there that takes
+  // pointer events, topmost first (each one's ancestors come after it), as a drop's target is read
+  // through whatever lies over it; 0 for none.
   function hit(x, y) {
     const mount = nodes[0];
-    for (let node = doc.elementFromPoint(x, y); node && node !== mount; node = node.parentNode) {
+    for (const node of doc.elementsFromPoint(x, y)) {
+      if (node === mount) {
+        break;
+      }
       if (node.$i !== undefined && listenMask[node.$i]) {
         return node.$i;
       }

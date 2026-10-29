@@ -541,6 +541,24 @@ try {
       assert.deepEqual((await midDrag()).amber, [], 'the amber is gone');
     });
 
+    await check(`a drop reads the battle through a layer over it that takes pointer events but listens nowhere (a seat, a name), as React's elementsFromPoint does${by}`, async () => {
+      await board(1);   // I defend 7h and Qd with 9h Kd 6c 6s
+      const at = await battleAt('1-6');
+      // a box over the 7h's middle that takes pointer events and listens to nothing, as a seat would
+      await b.evaluate(`(() => { const d = document.createElement('div'); d.id = 'over';
+        d.style.cssText = 'position: fixed; left: ${at.x - 15}px; top: ${at.y - 15}px; width: 30px; height: 30px; z-index: 5000;';
+        document.querySelector('[data-game-container]').append(d); })()`);
+      assert.equal(await b.evaluate(`document.elementFromPoint(${at.x}, ${at.y}).id`), 'over', 'the box is the topmost there');
+      let seen = null;
+      // the trump 6c covers either battle: only the battle under the pointer says which (on the open
+      // table it is no move), so the box must be seen through
+      await drag(b, await cardAt('2-5'), [at], { touch, atEach: async () => { seen = await midDrag(); } });
+      assert.equal(seen.badge, '🛡️ Cover', 'the cover of the 7h is read under the box');
+      await idle();
+      assert.deepEqual(await battles(), ['1-6/2-5', '3-11'], 'and played on the 7h');
+      await b.evaluate(`document.getElementById('over').remove()`);
+    });
+
     await check(`a press released within 150 ms after a 5 px wiggle is a tap and toggles the card; a 200 ms hold selects nothing${by}`, async () => {
       await board(0);
       const at = await cardAt('1-6');

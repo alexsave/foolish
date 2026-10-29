@@ -103,6 +103,7 @@ MUTANTS = [
   ('arrows: the cursor not polled', 'src/table_app.c', '  if (!kb_polling && KB.sel >= 0) { kb_polling = 1; cd_raf_request(RAF_KBD); }', '', 'tools/test.mjs', 'arrows: the cursor'),
   ('a lone move of mine waits for its landing', 'src/table_app.c', '  if (mine_alone) { run_ahead_at = from; run_ahead_to = from + n; }', '', 'tools/test.mjs', 'a played card flies'),
   ('my cover shows where it lands mid-flight', 'src/table_app.c', '    if (e->to == EVW_LOC_TABLE && e->type == EVW_T_COVER && ahead) SHOW.veil_table |= ids;', '', 'tools/test.mjs', 'consist'),
+  ('the drop reads the topmost layer only', 'vendor/cdom.js', '    for (const node of doc.elementsFromPoint(x, y)) {', '    for (const node of [doc.elementFromPoint(x, y)]) {', 'tools/test.mjs', 'a drop reads the battle through'),
   ('arrows: no wrap', 'src/table_app.c', '  if (k == KEY_LEFT) { KB.sel = (KB.sel - 1 + hand_n) % hand_n; return; }', '  if (k == KEY_LEFT) { KB.sel = KB.sel > 0 ? KB.sel - 1 : 0; return; }', 'tools/test.mjs', 'arrows: the cursor'),
   ('arrows: the underline off its card', 'src/table_app.c', 'cur[0] + cur[2] * 0.15, CD_UNIT_PX);', 'cur[0] + cur[2] * 0.1, CD_UNIT_PX);', 'tools/test.mjs', 'arrows: the cursor'),
   ('arrows: Meta+arrow not kept', 'src/table_app.c', '{ KB.sel = to; hand_keep(); }', '{ KB.sel = to; }', 'tools/test.mjs', 'arrows: the cursor'),
