@@ -24,7 +24,7 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 
 ## Files
 
-- `src/table_app.c`: the table (3,131 lines, the texture pipeline, the animations, drag and drop, the keyboard and the test build's window on the kernel among them).
+- `src/table_app.c`: the table (3,142 lines, the texture pipeline, the animations, drag and drop, the keyboard and the test build's window on the kernel among them).
 - `src/anim_run.c`, `src/anim_run.h`: an operation captured as the kernel's stream for my seat and read back as the web reads a push (97 lines); linked by the table and by `tests/run_test.c`.
 - `src/game_keep.c`, `src/game_keep.h`: the game as a host keeps it: canonical after every operation, its blob written and adopted (48 lines); linked by the table and by `tests/blob_test.c`.
 - `src/ui.h`: element shorthands over cdom's `CD_LIT`, and the style builder whose result crosses as a one-off string (36 lines).
@@ -393,7 +393,7 @@ The click rows are not a before and after: the select is now a tap (a press and 
 DOM calls per action (`tools/domcount.mjs`): the tap selecting the 6s 15 (the click was 15), the drag's move out 38 (the shadow, its badge and card, the drop cell, the dragged card's border), a move with the same answer 2 (left, top), the drop 49 (26 in the handler, 23 in the frames after it; the Attack pill is 57), ArrowRight 8 (the hidden state's two attributes, the cursor made), a number 2.
 
 The string table (`tools/strings.mjs`): 134 strings at the first paint, 198, 199 and 200 at the three games' ends (6.0 KB), flat from game 2 on.
-`table.wasm` 117,460 bytes, 46,877 brotli, 52,770 gzip (104,009, 42,119 and 47,367 before this pass): the table's own code grew 12.7 KB in its object, before wasm-opt (render_board 5.7 KB, with the cursor, the arrow, the shadow and the drop cells inlined into it; cd_on_event 3.2 KB, with the key and drag handlers; drag_ask 1.0 KB), the kernel's client_table 1.3 KB (the lifted rules).
+`table.wasm` 117,457 bytes, 46,851 brotli, 52,778 gzip (104,009, 42,119 and 47,367 before this pass): the table's own code grew 12.7 KB in its object, before wasm-opt (render_board 5.7 KB, with the cursor, the arrow, the shadow and the drop cells inlined into it; cd_on_event 3.2 KB, with the key and drag handlers; drag_ask 1.0 KB), the kernel's client_table 1.3 KB (the lifted rules).
 
 
 ### Every way it differs from the React table
@@ -648,7 +648,7 @@ Sizes:
   For scale, the React app's kernel alone, web.wasm, is 67,311 raw and 31,219 gzip (c/Makefile), before any JavaScript, and its textures are in its JavaScript.
 - The shim: cdom's own, unchanged, written to be read and inlined minified: 8,147 bytes minified, 3,228 brotli after the drag and keys pass (the events, the key's character and time, `cd_prevent_default`, `cd_unlisten_window`, `cd_hit`); 7,351 and 2,919 with `rect` (the animation pass); 7,221 and 2,861 after the network pass (6,623 and 2,658 before it; 6,553 and 2,615 in its golfed form); cdom's PERF_LOG.md, SHIM_LINES, says what each import is for.
   Before the first port-fixes pass the port carried 172 lines of its own patched shim.
-- The C the table is written in: 3,332 lines (`table_app.c` 3,131, `anim_run.c` and `.h` 97, with the texture pipeline and the test build's window on the kernel, `game_keep.c` and `.h` 48, `ui.h` 36, `kernel_glue.c` 20), plus the generators (385), trig.c (141) and crtrig.c (139).
+- The C the table is written in: 3,343 lines (`table_app.c` 3,142, `anim_run.c` and `.h` 97, with the texture pipeline and the test build's window on the kernel, `game_keep.c` and `.h` 48, `ui.h` 36, `kernel_glue.c` 20), plus the generators (385), trig.c (141) and crtrig.c (139).
 
 ## Against the TSX it replaces
 
