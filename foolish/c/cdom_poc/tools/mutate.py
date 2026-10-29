@@ -3,6 +3,7 @@
 # rebuilds, runs the test that should catch it, and prints what failed;
 # and the file is restored from a copy taken first (never git checkout).
 import subprocess, shutil, sys, os, tempfile
+sys.stdout.reconfigure(line_buffering=True)
 POC = '/Users/alex/Dev/foolish-cdom-port/foolish/c/cdom_poc'
 MUTANTS = [
   ('face radius', 'src/table_app.c', 'sb_s(&s, "border-radius: 5px; border: 2px solid ");', 'sb_s(&s, "border-radius: 4px; border: 2px solid ");', 'tools/test.mjs'),
@@ -51,7 +52,7 @@ MUTANTS = [
   ('the final transition dropped', 'src/anim_run.c', 'g, viewer, actor, ended,', 'g, viewer, actor, 0,', 'out/run_test'),
   # the animation pass: the table (tools/test.mjs, the check named by the regex)
   ('the deal flies at 500 ms, not the kernel\'s', 'src/table_app.c', '  flight_ms = ps->duration_ms;\n  cd_viewport_rec vp;', '  flight_ms = 500;\n  cd_viewport_rec vp;', 'tools/test.mjs', 'deal is'),
-  ('a landed step not committed', 'src/table_app.c', 'static const TableView *run_board(void) { return run_landed ? &run[run_landed - 1].board : &run_pre; }', 'static const TableView *run_board(void) { return &run_pre; }', 'tools/test.mjs', 'sweep'),
+  ('a landed step not committed', 'src/table_app.c', '  int k = run_landed > run_ahead ? run_landed : run_ahead;', '  int k = 0 * run_landed * run_ahead;', 'tools/test.mjs', 'sweep'),
   ('the bot paced from the click', 'src/table_app.c', 'static double settles_ms(void) { return run_settles > shown_ms ? run_settles : shown_ms; }', 'static double settles_ms(void) { (void)run_settles; return shown_ms; }', 'tools/test.mjs', 'waits as the kernel'),
   ('no veil', 'src/table_app.c', 'static void veil_set(cd_id id, int on) { cd_set_style(id, ZS("visibility"), on ? ZS("hidden") : ZS("")); }', 'static void veil_set(cd_id id, int on) { (void)id; (void)on; }', 'tools/test.mjs', 'played card|kernel.s game'),
   ('flights never armed', 'src/table_app.c', '  if (gen != (flight_gen & 0x7fffffffu)) return;', '  if (gen || 1) return;', 'tools/test.mjs', 'played card'),
@@ -98,7 +99,7 @@ MUTANTS = [
   ('keys: modifiers not ignored', 'src/table_app.c', '  if (e->mods & (CD_MOD_CTRL | CD_MOD_ALT | CD_MOD_META)) return;\n  int ch', '  int ch', 'tools/test.mjs', 'keys:'),
   ('keys: typed into a field', 'src/table_app.c', '  if (e->mods & CD_MOD_EDITING) return;\n  kb_letters(e);', '  kb_letters(e);', 'tools/test.mjs', 'keys:'),
   ('keys: the numbers one off', 'src/table_app.c', '    if (pos <= hand_n) toggle(card_to_id(HAND[pos - 1]));', '    if (pos < hand_n) toggle(card_to_id(HAND[pos]));', 'tools/test.mjs', 'keys:'),
-  ('keys: A plays without the Attack pill', 'src/table_app.c', '    if (pills & PLAY_PILL_ATTACK) { nsel = 0; play(AWIRE_ATTACK, cards, n, 0); }', '    { nsel = 0; play(AWIRE_ATTACK, cards, n, 0); }', 'tools/test.mjs', 'keys:'),
+  ('keys: A plays without the Attack pill', 'src/table_app.c', '    if (pills & PLAY_PILL_ATTACK) { nsel = 0; letter_fire(PLAY_PILL_ATTACK, AWIRE_ATTACK, cards, n, 0); }', '    { nsel = 0; letter_fire(PLAY_PILL_ATTACK, AWIRE_ATTACK, cards, n, 0); }', 'tools/test.mjs', 'keys:'),
   ('keys: a letter does not press its pill', 'src/table_app.c', '  pressed |= bit;\n  if (!play(kind, cards, n, attacks)) pressed &= ~bit;', '  play(kind, cards, n, attacks);', 'tools/test.mjs', 'keys:'),
   ('arrows: the cursor from the slot, not the card', 'src/table_app.c', '  if (sel_cid >= 0 && shown[sel_cid].node) cd_rect(shown[sel_cid].node, cur);\n  else if', '  if (0) {}\n  else if', 'tools/test.mjs', 'arrows: the cursor'),
   ('arrows: the cursor not polled', 'src/table_app.c', '  if (!kb_polling && KB.sel >= 0) { kb_polling = 1; cd_raf_request(RAF_KBD); }', '', 'tools/test.mjs', 'arrows: the cursor'),
@@ -118,6 +119,9 @@ only = sys.argv[1:]
 # the source's copy while a mutant is in it: outside the checkout, so no commit can take it
 KEEP = tempfile.mkdtemp(prefix='cdom-poc-mutate-')
 caught_n, missed = [], []
+# every anchor first: a mutant whose text is gone stops the run before any source is touched
+stale = [m[0] for m in MUTANTS if open(os.path.join(POC, m[1])).read().count(m[2]) != 1]
+if stale: sys.exit('anchors not found once: ' + ', '.join(stale))
 for name, f, old, new, test, *check in MUTANTS:
   if only and name not in only: continue
   path = os.path.join(POC, f); keep = os.path.join(KEEP, os.path.basename(f) + '.keep')
