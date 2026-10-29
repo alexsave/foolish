@@ -492,7 +492,7 @@ The current design is <code>c_base/DESIGN.md</code> at the repository root.</div
       <tr><td><code>msg_wire.c</code></td><td>The FMSG iMessage envelope — the serverless track's entire protocol (§11).</td></tr>
       <tr><td><code>anim_plan.c</code></td><td>The animation <em>policy</em> core — stale-broadcast dropping, optimistic reconciliation, flight planning — ported from the web client so a phone and a browser can never disagree about what animates (§9).</td></tr>
       <tr><td><code>deal_rng.c</code></td><td>ChaCha20 (RFC 8439) for the reproducible 32-byte-seeded deal; integer-only, so identical on x86, arm64 and wasm32.</td></tr>
-      <tr><td><code>bot_roster.c / bot_drive.c / bot_knobs.c</code></td><td>The one table mapping bot key → brain → tuning knobs, the drive cycle (fair pick, silent-action bundling, stop conditions), and the pacing table (3000&nbsp;ms with humans watching, 300&nbsp;ms bots-only) — shared by server, phone and browser (§7).</td></tr>
+      <tr><td><code>bots.c / bot_roster.c / bot_drive.c / bot_knobs.c</code></td><td>The one registry of every brain and named bot (id → name → dispatch → key → knobs → tier → city → server accounts), the roster view over it, the drive cycle (fair pick, silent-action bundling, stop conditions), and the pacing table (3000&nbsp;ms with humans watching, 300&nbsp;ms bots-only) — shared by server, phone and browser (§7).</td></tr>
       <tr><td><code>*_strategy.c / cordite_sim.c / leafbook</code></td><td>24 bot brains from <code>random</code> to <code>octogen</code>, the ~200-byte bitboard rollout engine, the exact endgame solver and its precomputed leaf book (§7).</td></tr>
     </tbody>
   </table></div>
@@ -750,10 +750,13 @@ The current design is <code>c_base/DESIGN.md</code> at the repository root.</div
   sees exactly what an attentive human sees, and derives the rest.</p>
 
   <h3>The ladder</h3>
-  <p><code>c/src/bot_roster.c</code> is the single table mapping key → brain → knobs → seeded/offline flags —
-  consumed by the server, the phone and the browser, and parity-policed so "the phone and the site run
-  different bots" cannot recur (it did once: iOS ran cordite at the arena budget). The player-facing ladder
-  renders strength as air distance to the Kremlin:</p>
+  <p><code>c/src/bots.c</code> is the single registry: one row per brain, indexed by its stable id, holding its
+  dispatch and, for a named bot, its key, knobs, seeded/offline flags, tier, city, distance to the Kremlin and the
+  ids of its server accounts. Everything reads it - the arena's dispatch, the roster the server, the phone and the
+  browser seat bots through (<code>bot_roster.c</code>), the server's bot accounts (<code>bot_seed.c</code>), and the
+  phone's picker ladder, generated from it by datagen - so "the phone and the site run different bots" cannot
+  recur (it did once: iOS ran cordite at the arena budget). Adding a bot is its <code>src/&lt;name&gt;_strategy.c</code>
+  and one row there. The player-facing ladder renders strength as air distance to the Kremlin:</p>
   <div class="tw"><table>
     <thead><tr><th>Rung</th><th>Key</th><th>Brain</th></tr></thead>
     <tbody>

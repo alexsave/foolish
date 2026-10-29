@@ -17,7 +17,7 @@ It is the product's map now: both hosts render it, from one table.*
 > `BotNames.swift` and `src/common/botName.ts` both look up the same ten.
 > **(b) The site's seeded roster is the ladder, and nothing else.**
 > `simple_heuristic` is off it: it was the one seeded family with no city, and a seat reading "Simple Heuristic 2" between Miami and Madrid is the thing this map exists to prevent.
-> It keeps its brain, its tier and its offline flag; `seeded` is 0 in `c/src/bot_roster.c`.
+> It keeps its brain, its tier and its offline flag; `seeded` is 0 in its row of `c/src/bots.c`.
 > `%0x00C0FFEE` is off it too - it predates the ladder and is the one seeded nickname that is not a rung's name, so among cities it reads as a bug rather than as a joke.
 > The parser still passes a leading `0x…` through verbatim for old replay blobs.
 > **(c) Seven rows per family**, because eight seats is a human plus seven opponents and a full table of one rung was impossible below that.
@@ -27,6 +27,13 @@ It is the product's map now: both hosts render it, from one table.*
 > The shipped `bots.wasm` still LINKS simple_heuristic on purpose, so a game already holding such a seat finishes playing.
 > The gate is `e2e/validation/bot_city_names_validation.test.ts`: every seeded key must have a `bot.<key>` string in all 25 languages, and no seeded nickname may render as an explosive in any of them.
 
+
+> **UPDATED (2026-10-29): the ladder is data in the kernel's bot registry.**
+> Each rung's city, its distance to the Kremlin and its seven server accounts are fields of its row in `c/src/bots.c`, beside its brain, knobs and tier.
+> `BotNames.ladder` and the km caption are generated from those rows (`tools/structgen/gen.sh` runs datagen into `sdk/swift/gen/phone/BotRegistry.swift`, compiled by the app target only), and the server derives its bot rows ("%<city> 1".."%<city> 7", production's own ids) from them in `foolish/server/src/store/bot_seed.c`.
+> Adding a seeded rung is: its `src/<name>_strategy.c`, its row in `c/src/bots.c` (key, tier, `seeded = 1`, city, km, seven freshly minted v4 ids), and its `bot.<key>` string in `c/i18n/keys.h` and all twenty-five `strings_<code>.c`.
+> A running server picks the new accounts up on its next seed, which inserts only the ids its store lacks and never touches an existing row.
+> The `bot_city_names_validation` and `bot_ladder_order_validation` e2e tests read the same rows (generated `sdk/ts/gen/bot_registry.ts`), so the city also goes into their `LADDER`.
 
 *Design doc + implementation spec. Shipped on both hosts: iOS in July 2026
 (`ios/FoolishApp/PhoneOnly/BotNames.swift`), the website in September
@@ -119,7 +126,7 @@ are in play — the mapping must serve both:
 | Source | Shape | Roster |
 |---|---|---|
 | Offline picker / offline seats | strategy key from `EngineC.roster()` (`fio_strategy_name`) | all 10 rungs above |
-| Online nicknames (DB rows) | raw string `"% <Base> [Max] <n>"` in `players[].name` - there is NO strategy enum on the wire (`sdk/ts/wire/view.ts:29-30`; `strategy_key` is server-only) | the *seeded* subset = the C roster's `seeded` column (`c/src/bot_roster.c`): Random, Handwritten, Firecracker, Blackpowder, Cordite and Octogen, **×7 each** (`server/impls/supabase/seed.sql`) - seven so that one human plus seven of one rung fills an eight-seat table. Simple Heuristic ×3 and `0x00C0FFEE` were here until 2026-09-22. The `[Max]` slot no longer occurs on live rows - only in old replay blobs. |
+| Online nicknames (DB rows) | raw string `"% <Base> [Max] <n>"` in `players[].name` - there is NO strategy enum on the wire (`sdk/ts/wire/view.ts:29-30`; `strategy_key` is server-only) | the *seeded* subset = the C registry's `seeded` column (`c/src/bots.c`): Random, Handwritten, Firecracker, Blackpowder, Cordite and Octogen, **×7 each** (`server/impls/supabase/seed.sql`) - seven so that one human plus seven of one rung fills an eight-seat table. Simple Heuristic ×3 and `0x00C0FFEE` were here until 2026-09-22. The `[Max]` slot no longer occurs on live rows - only in old replay blobs. |
 | Replay blobs / history | names embedded at encode time | anything ever seeded — **including dropped families** (`Espresso` rows existed before migration `20260711130000_drop_non_wasm_bots`), so the nickname parser keeps Espresso/Robusta/Gunpowder in its base table for historical replays |
 
 **Rule: strategy-derived bot names are treated as KEYS and localized at
