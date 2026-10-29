@@ -675,4 +675,68 @@ typedef struct {
 int client_play(ClientTable *c, const TableView *v, const ClientGesture *g,
                 const ClientPlayScratch *s, ClientPlay *out);
 
+// ---------- what a drag and the keyboard's cursor carry ------------------------
+//
+// The web table's last gesture rules that lived in TypeScript (src/state/view.ts
+// gestureCards and dropTarget, and KeyboardPlayMode.tsx's Up on the cursor card),
+// here so a table drawn in C asks them rather than writing them a second time.
+// The web still holds its own copies; they are the same answers, and switching it
+// to these is a change of its own.
+
+// The cards a drag carries: the whole selection, in its order, when the dragged
+// card is one of it; otherwise the dragged card alone (dragging an unselected card
+// is how one card is played while several are picked). Written to `out`
+// (MAX_MOVE_CARDS); returns how many.
+int client_gesture_cards(const Card *sel, int n_sel, Card dragged, Card *out);
+
+// Where a drag was let go, as client_play's target: PLAY_TARGET_HAND in the hand's
+// area (a rearrange, never a play) whatever is under it; the battle under it when
+// that names one of the board's battles; else PLAY_TARGET_TABLE - the open table,
+// or a drop cell drawn past the last battle (its index is the battle count and up).
+// `battle` is -1 when nothing is under it.
+int client_drop_target(const TableView *v, int in_hand, int battle);
+
+// What Up does with the card under the keyboard's cursor when nothing is selected:
+// client_play of that one card dropped in the hand (which fills `out`), read as
+//   an attacker:  ATTACK when the Attack pill shows for it, else NONE;
+//   the defender: PASS when it covers nothing and may transfer; COVER when it
+//                 covers exactly one battle (out->coverable[0]) and may not
+//                 transfer; NONE when it does neither; and otherwise CHOOSE: the
+//                 player cycles out->coverable[0..n_coverable) in that order, then
+//                 the transfer last when out->pills holds PLAY_PILL_PASS.
+// Returns a CLIENT_CURSOR_*, or client_play's refusal (negative).
+#define CLIENT_CURSOR_NONE   0
+#define CLIENT_CURSOR_ATTACK 1
+#define CLIENT_CURSOR_PASS   2
+#define CLIENT_CURSOR_COVER  3
+#define CLIENT_CURSOR_CHOOSE 4
+int client_cursor_play(ClientTable *c, const TableView *v, Card card,
+                       const ClientPlayScratch *s, ClientPlay *out);
+
+// ---------- the order a table draws my hand in --------------------------------
+//
+// A table keeps its own order of the viewer's hand (src/state/clientReconcile.ts
+// reconcileHandMemory, displayedHand, reorderHand, and ServerContext.tsx
+// setLocalHandOrder): a memory of card ids (card_to_id) that only grows, so a card
+// that leaves the hand and comes back - played and refused, or drawn in a board a
+// run has not reached yet - keeps its slot, and a card new to the hand goes to the
+// end. Drags and the keyboard rearrange it; the game's own order is the server's
+// (game_rearrange_hand), which a host sets from it.
+
+// The memory after a board whose hand is `hand`: `memory` without repeats, then
+// every card of `hand` it does not hold, in the hand's order. Returns its length,
+// at most `cap` (cards past it are not remembered).
+int client_hand_remember(uint8_t *memory, int n, int cap, const Card *hand, int n_hand);
+
+// The hand as drawn: the cards of `hand` in the memory's order, then any the
+// memory does not hold in the hand's order. Never a card the hand does not hold;
+// writes n_hand cards to `out`.
+void client_hand_shown(const uint8_t *memory, int n, const Card *hand, int n_hand, Card *out);
+
+// Two cards of the hand as drawn change places: `shown` with `from` and `to`
+// swapped becomes the memory, followed by the cards the memory held that are not
+// drawn, in its order. 1, or 0 and nothing changed when `from` equals `to` or
+// either is not an index of `shown`.
+int client_hand_swap(uint8_t *memory, int *n, int cap, const Card *shown, int n_shown, int from, int to);
+
 #endif

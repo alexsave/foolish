@@ -1390,3 +1390,76 @@ int client_play(ClientTable *c, const TableView *v, const ClientGesture *g,
     }
     return CLIENT_OK;
 }
+
+int client_gesture_cards(const Card *sel, int n_sel, Card dragged, Card *out) {
+    if (n_sel > MAX_MOVE_CARDS) n_sel = MAX_MOVE_CARDS;
+    for (int i = 0; i < n_sel; i++) {
+        if (!card_eq(sel[i], dragged)) continue;
+        for (int k = 0; k < n_sel; k++) out[k] = sel[k];
+        return n_sel;
+    }
+    out[0] = dragged;
+    return 1;
+}
+
+int client_drop_target(const TableView *v, int in_hand, int battle) {
+    if (in_hand) return PLAY_TARGET_HAND;
+    return battle >= 0 && battle < v->num_battles ? battle : PLAY_TARGET_TABLE;
+}
+
+int client_cursor_play(ClientTable *c, const TableView *v, Card card,
+                       const ClientPlayScratch *s, ClientPlay *out) {
+    ClientGesture g;
+    memset(&g, 0, sizeof g);
+    g.n_cards = 1;
+    g.target = PLAY_TARGET_HAND;
+    g.cards[0] = card;
+    const int rc = client_play(c, v, &g, s, out);
+    if (rc != CLIENT_OK) return rc;
+    if (v->defender != v->my_seat)
+        return (out->pills & PLAY_PILL_ATTACK) ? CLIENT_CURSOR_ATTACK : CLIENT_CURSOR_NONE;
+    const int pass = (out->pills & PLAY_PILL_PASS) != 0;
+    if (out->n_coverable == 0) return pass ? CLIENT_CURSOR_PASS : CLIENT_CURSOR_NONE;
+    if (out->n_coverable == 1 && !pass) return CLIENT_CURSOR_COVER;
+    return CLIENT_CURSOR_CHOOSE;
+}
+
+static int hand_holds(const uint8_t *ids, int n, int id) {
+    for (int i = 0; i < n; i++) if (ids[i] == id) return 1;
+    return 0;
+}
+
+int client_hand_remember(uint8_t *memory, int n, int cap, const Card *hand, int n_hand) {
+    int kept = 0;
+    for (int i = 0; i < n; i++)
+        if (!hand_holds(memory, kept, memory[i])) memory[kept++] = memory[i];
+    for (int i = 0; i < n_hand && kept < cap; i++) {
+        const int id = card_to_id(hand[i]);
+        if (id >= 0 && !hand_holds(memory, kept, id)) memory[kept++] = (uint8_t)id;
+    }
+    return kept;
+}
+
+void client_hand_shown(const uint8_t *memory, int n, const Card *hand, int n_hand, Card *out) {
+    uint8_t used[MAX_HAND_SIZE] = { 0 };
+    int k = 0;
+    for (int m = 0; m < n; m++)
+        for (int i = 0; i < n_hand && i < MAX_HAND_SIZE; i++)
+            if (!used[i] && card_to_id(hand[i]) == memory[m]) { out[k++] = hand[i]; used[i] = 1; break; }
+    for (int i = 0; i < n_hand && i < MAX_HAND_SIZE; i++)
+        if (!used[i]) out[k++] = hand[i];
+}
+
+int client_hand_swap(uint8_t *memory, int *n, int cap, const Card *shown, int n_shown, int from, int to) {
+    if (from == to || from < 0 || to < 0 || from >= n_shown || to >= n_shown || n_shown > cap) return 0;
+    uint8_t next[64];
+    int k = 0;
+    for (int i = 0; i < n_shown && k < (int)sizeof next; i++)
+        next[k++] = (uint8_t)card_to_id(shown[i == from ? to : i == to ? from : i]);
+    const int drawn = k;
+    for (int i = 0; i < *n && k < cap && k < (int)sizeof next; i++)
+        if (!hand_holds(next, drawn, memory[i])) next[k++] = memory[i];
+    memcpy(memory, next, (size_t)k);
+    *n = k;
+    return 1;
+}

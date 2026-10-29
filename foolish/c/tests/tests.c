@@ -16769,6 +16769,170 @@ static void test_client_play_is_the_engine(void) {
     CHECK(pill_wrong == 0, "every pill client_play draws is a move the engine takes, one move one button");
 }
 
+// ---- what a drag and the keyboard's cursor carry (client_gesture_cards, client_drop_target,
+// client_cursor_play): the web table's last gesture rules, lifted out of TypeScript for the
+// table drawn in C (c/cdom_poc).
+//
+// The cursor's verdict is held two ways over dealt games: its kind is the decision table written
+// out again here from client_play's own answer (the coverable battles, the pills), and the move
+// each kind names is one the ENGINE takes on the whole game - the attack, the transfer, the one
+// cover, every target of a choice - while a defender's NONE is a card the engine lets neither
+// cover nor transfer.
+//
+// MUTATIONS RUN (each applied to c/src/client_table.c alone, reverted after):
+//   1  gesture cards: the dragged card alone even when it is selected          -> 1 failure
+//   2  gesture cards: the selection whether or not the dragged card is in it   -> 1
+//   3  drop target: the hand's area falls through to the battle under it       -> 1
+//   4  drop target: a drop cell (index == the battle count) names a battle     -> 1
+//   5  cursor: an attacker's card attacks without the Attack pill              -> 1
+//   6  cursor: a defender's lone cover is played even when it may transfer     -> 1
+//   7  cursor: a card that covers nothing transfers without the Pass pill      -> 1
+//   8  cursor: the defender is read as the seat that leads                     -> 1
+static void test_client_drag_and_cursor_gestures(void) {
+    const Card sixs = { SUIT_SPADES, 5 }, sevenh = { SUIT_HEARTS, 6 }, qd = { SUIT_DIAMONDS, 11 };
+    Card out[MAX_MOVE_CARDS];
+    const Card picked[2] = { sevenh, sixs };
+    int n = client_gesture_cards(picked, 2, sixs, out);
+    CHECK(n == 2 && card_eq(out[0], sevenh) && card_eq(out[1], sixs), "a drag of a selected card carries the selection, in its order");
+    n = client_gesture_cards(picked, 2, qd, out);
+    CHECK(n == 1 && card_eq(out[0], qd), "a drag of an unselected card carries that card alone");
+    n = client_gesture_cards(picked, 0, qd, out);
+    CHECK(n == 1 && card_eq(out[0], qd), "and so does a drag with nothing selected");
+
+    cvr_board(&cb_view, 0);
+    cb_view.num_battles = 2;
+    cb_view.battles[1] = (Battle){ .attack = qd, .defense = CARD_NONE };
+    CHECK(client_drop_target(&cb_view, 1, 0) == PLAY_TARGET_HAND, "a drop in the hand's area is the hand, whatever is under it");
+    CHECK(client_drop_target(&cb_view, 0, 1) == 1 && client_drop_target(&cb_view, 0, 0) == 0, "a drop on a battle names it");
+    CHECK(client_drop_target(&cb_view, 0, 2) == PLAY_TARGET_TABLE, "a drop cell past the last battle is the table");
+    CHECK(client_drop_target(&cb_view, 0, -1) == PLAY_TARGET_TABLE, "and so is nothing under it");
+
+    int kinds[5] = { 0 }, wrong = 0, asked = 0;
+    cb_rng = 13;
+    for (int np = 2; np <= 4; np++) {
+        cb_deal(&cb_game, np, 90 + np);
+        client_init(&ct, &ct_slot);
+        for (int moves = 0; moves < 150; moves++) {
+            for (int seat = 0; seat < np; seat++) {
+                if (cb_game.players[seat].status != PLAYER_STATUS_IN) continue;
+                if (client_adopt_board(&ct, &cb_game, seat) != CLIENT_OK) continue;
+                cb_view = ct.view;
+                const Player *p = &cb_game.players[seat];
+                const int defends = cb_game.defender == seat;
+                for (int h = 0; h < p->hand_count && h < 8; h++) {
+                    const Card card = p->hand[h];
+                    const int kind = client_cursor_play(&ct, &cb_view, card, &cp_scratch, &cp_out);
+                    if (kind < 0 || kind > CLIENT_CURSOR_CHOOSE) { wrong++; continue; }
+                    asked++;
+                    kinds[kind]++;
+                    const int pass = (cp_out.pills & PLAY_PILL_PASS) != 0, nc = cp_out.n_coverable;
+                    const int want = !defends ? ((cp_out.pills & PLAY_PILL_ATTACK) ? CLIENT_CURSOR_ATTACK : CLIENT_CURSOR_NONE)
+                                   : nc == 0 ? (pass ? CLIENT_CURSOR_PASS : CLIENT_CURSOR_NONE)
+                                   : nc == 1 && !pass ? CLIENT_CURSOR_COVER : CLIENT_CURSOR_CHOOSE;
+                    if (kind != want) wrong++;
+                    uint8_t w[64];
+                    int wl;
+                    if (kind == CLIENT_CURSOR_ATTACK || kind == CLIENT_CURSOR_PASS
+                        || ((kind == CLIENT_CURSOR_CHOOSE || kind == CLIENT_CURSOR_NONE) && defends)) {
+                        wl = cb_wire(kind == CLIENT_CURSOR_ATTACK ? AWIRE_ATTACK : AWIRE_PASS, &card, 0, 1, w);
+                        const int ok = cb_engine_verdict(&cb_game, seat, w, wl) == 0;
+                        if (kind == CLIENT_CURSOR_ATTACK || kind == CLIENT_CURSOR_PASS) { if (!ok) wrong++; }
+                        else if (kind == CLIENT_CURSOR_NONE && ok) wrong++;
+                        else if (kind == CLIENT_CURSOR_CHOOSE && ok != pass) wrong++;
+                    }
+                    for (int b = 0; b < cb_view.num_battles && defends; b++) {
+                        int listed = 0;
+                        for (int i = 0; i < nc; i++) listed |= cp_out.coverable[i] == b;
+                        const Card attack = cb_view.battles[b].attack;
+                        wl = cb_wire(AWIRE_COVER, &card, &attack, 1, w);
+                        const int ok = cb_engine_verdict(&cb_game, seat, w, wl) == 0;
+                        if (kind == CLIENT_CURSOR_NONE && ok) wrong++;
+                        if ((kind == CLIENT_CURSOR_COVER || kind == CLIENT_CURSOR_CHOOSE) && listed != ok) wrong++;
+                    }
+                }
+            }
+            if (!cb_step(&cb_game)) break;
+        }
+    }
+    fprintf(stderr, "  [cursor] %d asked: none %d, attack %d, pass %d, cover %d, choose %d\n",
+            asked, kinds[0], kinds[1], kinds[2], kinds[3], kinds[4]);
+    CHECK(asked > 500 && kinds[CLIENT_CURSOR_ATTACK] > 50 && kinds[CLIENT_CURSOR_PASS] > 5
+          && kinds[CLIENT_CURSOR_COVER] > 20 && kinds[CLIENT_CURSOR_CHOOSE] > 5 && kinds[CLIENT_CURSOR_NONE] > 50,
+          "the cursor met every kind of card often enough");
+    CHECK(wrong == 0, "the cursor's verdict is its decision table over client_play, and every move it names the engine takes");
+}
+
+// ---- the order a table draws my hand in (client_hand_remember, client_hand_shown,
+// client_hand_swap; src/state/clientReconcile.ts reconcileHandMemory, displayedHand, reorderHand,
+// ServerContext.tsx setLocalHandOrder), lifted for the table drawn in C.
+//
+// MUTATIONS RUN (each applied to c/src/client_table.c alone, reverted after):
+//   1  remember: repeats in the memory are kept                              -> 1 failure
+//   2  remember: a new card goes to the front                                -> 4
+//   3  shown: the hand's order, the memory ignored                           -> 3
+//   4  shown: a card the hand does not hold is drawn from the memory         -> 3
+//   5  swap: the cards it remembered and does not draw are dropped           -> 1
+//   6  swap: an index one past the hand is taken                             -> 3
+//   7  swap: a card moves to the place rather than trading places            -> 2
+static void test_client_hand_order(void) {
+    const Card six = { SUIT_SPADES, 5 }, seven = { SUIT_HEARTS, 6 }, queen = { SUIT_DIAMONDS, 11 }, ace = { SUIT_DIAMONDS, 13 };
+    const Card nine = { SUIT_CLUBS, 8 };
+    const int i6 = card_to_id(six), i7 = card_to_id(seven), iq = card_to_id(queen), ia = card_to_id(ace), i9 = card_to_id(nine);
+    uint8_t mem[52];
+    Card out[MAX_HAND_SIZE];
+    const Card hand[4] = { six, seven, queen, ace };
+    int n = client_hand_remember(mem, 0, 52, hand, 4);
+    CHECK(n == 4 && mem[0] == i6 && mem[1] == i7 && mem[2] == iq && mem[3] == ia, "a first board is remembered in its own order");
+
+    // The ace and the six trade places; then the seven is played (still in the air: the board lacks it).
+    client_hand_shown(mem, n, hand, 4, out);
+    CHECK(client_hand_swap(mem, &n, 52, out, 4, 0, 3) == 1, "a swap of two drawn cards is made");
+    client_hand_shown(mem, n, hand, 4, out);
+    CHECK(card_eq(out[0], ace) && card_eq(out[1], seven) && card_eq(out[2], queen) && card_eq(out[3], six),
+          "the two cards trade places and the rest stay");
+    CHECK(client_hand_swap(mem, &n, 52, out, 4, 1, 1) == 0 && client_hand_swap(mem, &n, 52, out, 4, 0, 4) == 0
+          && client_hand_swap(mem, &n, 52, out, 4, -1, 2) == 0, "a swap with itself or past the hand changes nothing");
+    const Card after[3] = { six, queen, ace };
+    n = client_hand_remember(mem, n, 52, after, 3);
+    client_hand_shown(mem, n, after, 3, out);
+    CHECK(n == 4 && card_eq(out[0], ace) && card_eq(out[1], queen) && card_eq(out[2], six), "a card that left is not drawn, and the rest keep their order");
+
+    // The queen moves to the front while the seven is away; the seven comes back to its slot, and a
+    // new nine goes to the end.
+    CHECK(client_hand_swap(mem, &n, 52, out, 3, 1, 0) == 1, "a swap while a card is away");
+    const Card back[5] = { nine, seven, six, queen, ace };
+    n = client_hand_remember(mem, n, 52, back, 5);
+    client_hand_shown(mem, n, back, 5, out);
+    CHECK(n == 5 && card_eq(out[0], queen) && card_eq(out[1], ace) && card_eq(out[2], six) && card_eq(out[3], seven)
+          && card_eq(out[4], nine), "the card that was away keeps its slot behind the drawn ones, and a new card goes to the end");
+    (void)i9;
+
+    // A memory with repeats keeps the first of each.
+    uint8_t dup[6] = { (uint8_t)iq, (uint8_t)i6, (uint8_t)iq, (uint8_t)ia, (uint8_t)i6, (uint8_t)i7 };
+    n = client_hand_remember(dup, 6, 52, hand, 0);
+    CHECK(n == 4 && dup[0] == iq && dup[1] == i6 && dup[2] == ia && dup[3] == i7, "a memory with repeats keeps the first of each");
+
+    // Over dealt games: the drawn hand is always a permutation of the board's, whatever is swapped.
+    int wrong = 0, boards = 0;
+    cb_rng = 17;
+    cb_deal(&cb_game, 3, 61);
+    n = 0;
+    for (int moves = 0; moves < 200; moves++) {
+        const Player *p = &cb_game.players[0];
+        n = client_hand_remember(mem, n, 52, p->hand, p->hand_count);
+        client_hand_shown(mem, n, p->hand, p->hand_count, out);
+        for (int i = 0; i < p->hand_count; i++) {
+            int found = 0;
+            for (int k = 0; k < p->hand_count; k++) found += card_eq(out[k], p->hand[i]);
+            if (found != 1) wrong++;
+        }
+        if (p->hand_count > 1) client_hand_swap(mem, &n, 52, out, p->hand_count, cb_rand(p->hand_count), cb_rand(p->hand_count));
+        boards++;
+        if (!cb_step(&cb_game)) break;
+    }
+    CHECK(boards > 20 && wrong == 0, "the drawn hand is the board's hand, every card once, whatever was swapped");
+}
+
 static void test_client_play_refuses_what_is_not_a_gesture(void) {
     ClientGesture g;
     cb_deal(&cb_game, 3, 77);
@@ -20743,6 +20907,8 @@ int main(void) {
     test_client_push_settle();
     test_client_play_is_the_engine();
     test_client_play_refuses_what_is_not_a_gesture();
+    test_client_drag_and_cursor_gestures();
+    test_client_hand_order();
     test_client_move_wire_is_the_old_encoders_bytes();
     test_awire_decode_refuses_every_malformed_shape();
     test_client_adopts_a_bare_board();
