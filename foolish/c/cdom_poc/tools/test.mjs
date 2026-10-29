@@ -40,9 +40,12 @@ let failed = 0;
 // ONLY=<regex>: run the checks whose name matches (tools/mutate.py, for a mutant's own check); the
 // checks that set up the first page are cheap and run either way when they come first.
 const ONLY = process.env.ONLY ? new RegExp(process.env.ONLY) : null;
+// FAILFAST=1 (tools/mutate.py): stop at the first failure, the mutant caught.
+class Stop extends Error {}
 async function check(name, fn) {
   if (ONLY && !ONLY.test(name)) return;
   try { await fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message.split('\n').join('\n     ')}`); }
+  if (failed && process.env.FAILFAST) throw new Stop();
 }
 
 try {
@@ -923,6 +926,8 @@ try {
       assert.equal(await b.evaluate(`document.querySelector('[data-end] h1').textContent`), 'done - Two of us');
     });
   }
+} catch (e) {
+  if (!(e instanceof Stop)) throw e;
 } finally {
   await b.close();
   server.close();

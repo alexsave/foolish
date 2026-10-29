@@ -117,6 +117,7 @@ MUTANTS = [
 only = sys.argv[1:]
 # the source's copy while a mutant is in it: outside the checkout, so no commit can take it
 KEEP = tempfile.mkdtemp(prefix='cdom-poc-mutate-')
+caught_n, missed = [], []
 for name, f, old, new, test, *check in MUTANTS:
   if only and name not in only: continue
   path = os.path.join(POC, f); keep = os.path.join(KEEP, os.path.basename(f) + '.keep')
@@ -126,14 +127,17 @@ for name, f, old, new, test, *check in MUTANTS:
   try:
     open(path, 'w').write(src.replace(old, new))
     b = subprocess.run(['./build.sh'], cwd=POC, capture_output=True, text=True)
-    if b.returncode: print(f'{name}: BUILD FAILED\n{b.stderr[-800:]}'); continue
-    env = dict(os.environ, ONLY=check[0]) if check else os.environ
+    if b.returncode: missed.append(name + ' (does not build)'); print(f'{name}: BUILD FAILED\n{b.stderr[-800:]}'); continue
+    env = dict(os.environ, FAILFAST='1', **({'ONLY': check[0]} if check else {}))
     r = subprocess.run(['node', test] if test.endswith('.mjs') else [os.path.join(POC, test)], cwd=POC, capture_output=True, text=True, env=env)
-    lines = [l for l in r.stdout.splitlines() if l.startswith('FAIL') or 'ok' in l or 'failed' in l][:12]
-    print(f'== {name}: exit {r.returncode}')
+    caught = r.returncode != 0
+    (caught_n if caught else missed).append(name)
+    print(f'== {name}: exit {r.returncode}, {"caught" if caught else "MISSED"}')
     for l in r.stdout.splitlines():
       if l.startswith('FAIL') or l.startswith('     ') or l.startswith('ws') or l.startswith('http') or l.startswith('game 3') or l.startswith('all at') or l.startswith('done'): print('   ', l[:400])
   finally:
     shutil.move(keep, path)
 b = subprocess.run(['./build.sh'], cwd=POC, capture_output=True, text=True)
 print('restored and rebuilt:', b.returncode == 0)
+print(f'{len(caught_n)} caught, {len(missed)} missed' + (': ' + ', '.join(missed) if missed else ''))
+sys.exit(1 if missed or b.returncode else 0)

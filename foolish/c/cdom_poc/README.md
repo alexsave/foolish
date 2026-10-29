@@ -3,6 +3,97 @@
 A proof of concept: the web game table (src/components/GameBoard.tsx and the GameDisplay components) written as one plain C file that drives the DOM through cdom, over the app's own CSS.
 It is local only and not wired into the web app.
 
+## Done
+
+Serve `foolish/` (`node -e "import('./c/cdom_poc/tools/cdp.mjs').then((m) => m.serve())"` from `foolish/`) and open http://127.0.0.1:8720/c/cdom_poc/out/index.html.
+In one sitting Alex can:
+- see the table at once, with its textures: on a first visit the wool, the wood and the fern are made in C and on the table within 0.7 s (React's own app takes 1.9 s on the same machine), on a later visit read back from the store in 0.12 s (React 0.25 s), with no frame of a card back without its fern (Final pass, defect 1);
+- play a whole game by mouse clicks, by mouse drags, by touch (a touch emulation or a phone's window), by the number and letter keys, and by the arrows' cursor, mixing them at will, against the handwritten bot at the kernel's own pace (3 s after the last flight lands);
+- see every card fly as the React table flies it, from the kernel's animation plan: deals, attacks, covers, transfers, takes, sweeps, refills, the trump, and the role marks turning and changing hands;
+- reload at any moment, mid-flight included, and land in the same game with the hand in the order it was drawn;
+- reach React's own end screen (WinScreen's page) and deal again with Play again;
+- find nothing that disagrees with the kernel: `tools/consist.mjs` judges the DOM against the kernel's state and React's rules at every click, drag, key and bot step (9 games over three seeds, 995 steps, no disagreement), and `tools/test.mjs` runs 39 checks of the look, the motion and the gestures, all passing.
+
+The evidence:
+- `shots/run/run_1024x768.mp4`: one whole game recorded at 1024x768 from a cold first paint to the new deal after Play again, the moves by click, drag, letters and arrows in turn (`shots/run/run_1024x768_moves.txt` says which move is which, at what second; `_sheet.png` is one frame a second); `shots/run/run_390x844_touch_8moves.mp4` eight moves by touch at a phone's size. `node tools/record.mjs` records them again (the frames 50 ms apart land in `out/run/`).
+- `shots/side_by_side/`: the port beside the real React app (its build, live against a local c_base) at 1024x768 and 390x844: mid-game, a card selected, a drag held over the table, the cursor, an aim, a card 200 ms into its flight, the end screen (`tools/sidebyside.mjs`).
+- `shots/react_golden.png` and `shots/cdom_midgame.png`, `shots/react_golden_defender.png` and `shots/cdom_defender.png`: the React goldens and the port's first paint of the same boards, 0 of 786,432 pixels apart at 1024x768 (`tools/shots.mjs`).
+- `shots/anim/`: the films of single moves (contact sheets and GIFs); `shots/drag_*.png`, `shots/keys_*.png`: the gestures held mid-way.
+
+The numbers, port against the real React app, paired and interleaved in one Chrome on this Mac, 7 rounds each (load averages 1.7 to 3.4 on 8 cores around every run, below the core count; `tools/reacttime.mjs`, `tools/actiontime.mjs`, `tools/timing.mjs`), medians:
+| | port x1 | React x1 | port x4 | React x4 |
+| --- | ---: | ---: | ---: | ---: |
+| first contentful paint, a first visit (cold) | 69 | 372 | 115 | 1,824 |
+| first contentful paint, a later visit (warm) | 69 | 204 | 123 | 280 |
+| first contentful paint, textures off | 62 | | 121 | |
+| the three textures decoded, cold | 706 | 1,936 | 1,728 | 7,768 |
+| the three textures decoded, warm | 123 | 250 | 253 | 444 |
+| select a card: its tasks (script, microtasks, style, layout) | 1.59 | 8.56 | 1.51 | 7.57 |
+| select: with the frames that draw it | 12.3 | 46.5 | 8.8 | 68.2 |
+| play a card: its tasks | 8.16 | 11.72 | 10.51 | 13.67 |
+| play: every task in the 2 s of its flight | 65.2 (34 frames) | 64.6 (32) | 48.3 (34) | 76.8 (34) |
+| play: per frame of the flight | 1.94 | 1.92 | 1.42 | 1.99 |
+| the bot's answer: the task that brings it | 2.07 | 1.56 | 1.77 | 1.42 |
+| the bot's answer: every task in the 2.5 s after | 52.1 (34 frames) | 80.9 (38) | 48.0 (38) | 68.6 (38) |
+| what a load fetches | 207 KiB, 13 requests | 1,015 KiB, 28 requests | | |
+(ms; the moves timed were attacks and covers in both, whatever came first: the boards differ, React's being a live server game.)
+`table.wasm` is 119,269 bytes, 47,512 brotli; the shim 8,258 bytes minified, 3,276 brotli; the table's C 4,138 lines against 1,795 of TSX for the same pieces (Against the TSX it replaces).
+The details, the spreads and how each was taken are under Numbers (the final pass) and Textures (React baseline).
+
+### Still not equal to the React app
+
+Everything any pass found and left, once each, with its reason.
+1. **No live play.** The port is its own server: a local game against the handwritten bot, kept in the browser's store. No sign-in, no lobby, no other people, no reconnect. The network imports are proved against a real c_base (Network); what the table would still need is listed there.
+2. **No sound.** The reference checkout's branch strikes the plan's cues (`AnimPlan.cues`) on its audio engine; the port plays none. It would take Web Audio imports in cdom (decode, schedule) and the cue schedule driven from C, as the flights are.
+3. **No revert flight.** React flies a move its server refused back home in red; nothing refuses a move that flew here. A click made on a board a run has left behind is refused before anything flies (`app_last_reject`), where React would fly it and fly it back. It needs a server's refusal to be reproduced.
+4. **The end screen's replay share shows no code.** React shows a QR and a link from the server's replay snapshot; the port shows React's own frame for a game without one ("Replay code unavailable for this game"). It would take the kernel's replay code (`replay_encode_v6_from_game` with the deal's seed, which the port has) and a QR encoder in C.
+5. **The end screen says Play again**, React Continue to Lobby (there is no lobby), and shows no ratings (the game is not rated).
+6. **Not ported:** chat (the toggle is drawn, does nothing), the tutorial's hints, translations (English only), the Soviet theme, and the cover arrows (React mounts them, but nothing fills the map they draw from, so they never show).
+7. **A move of mine made while the bot's flights still land**: React's board jumps to its server's answer then, its held piles keeping the earlier cards back; the port's takes the move's board when its own flight leaves, after the earlier ones have landed. A move alone is the same in both (Final pass, defect 5).
+8. **The letter keys press their pill**, as the click and the arrows do; React's letters do not, and their pill stands until the server's board comes (deliberate: Final pass, defect 2).
+9. **The hand's order is kept in the game**: a rearrange at the drop (React's is sent 5 s later, so a React reload within 5 s loses it), Meta+arrows too (React's keyboard keeps them local), and the drawn order after every move (a React reload puts a card taken back where its server appended it). Deliberate: a reload draws the hand as it was on screen.
+10. **React's drag lags one event**: its first move past 10 px is still read in the hand's terms (`isActuallyDragging` set in one move is read in the next); the port's is a drag at once.
+11. **Focus in the pill column**: React's letters and numbers do nothing while the focused element is inside `[data-touch-interactive]`; the port does not track focus. Not met in play: a pressed pill leaves the DOM and takes the focus with it.
+12. **A coin interrupted mid-turn** restarts from the face it was drawn with; React's RoleCoin has a finer rule ("restore") for a mark that changes and comes back within a paint.
+13. **The ghost's watchdog** (React lands a hand-off no frame drew) is not ported: a stalled page stretches a ghost rather than ending it.
+14. **The glide offset** a landing is aimed off is the cell's box against its rest while its glide runs; React reads the computed transform. They differ only if the window is resized mid-glide.
+15. **The fern is another draw of the same fern**, made at four times the card back in device pixels, not the app's 1000x1400: on screen a back differs from React's in about half its pixels by up to 79 levels a channel (`shots/fern_backs*.png`); the wool and the wood are the app's pixels exactly.
+16. **A texture's time set**: the port sets a picture once it has decoded, React as soon as its url exists, so "set" is not the same moment in both; the decoded times compare (the table above).
+17. **The rules lifted into the kernel** (the gesture cards, the drop target, the cursor's play, the hand's remembered order) still have their TypeScript copies in the React app: the same answers, two owners until the web moves onto the kernel's.
+18. **No frame-by-frame film of React**: the side-by-side shows stills of the live React table; the films are the port's.
+
+## Final pass: defects found
+
+Found by playing whole games the four ways at 1024x768 and 390x844 (`tools/record.mjs`, frames read 50 ms apart through every flight), by putting the port beside the real React app (`tools/sidebyside.mjs`, its build live on a local c_base) and by holding the defender's board and the end screen against React's goldens.
+Each was reproduced in the browser first, then fixed with a check that went red on its mutant (all in `tools/mutate.py`).
+1. **The card backs flashed black for a frame before the fern** (cold and warm loads alike).
+   Reproduced: the screencast's frames at a cold load, the mean of a mini back's pixels per frame: red (206), then black (31) for one frame (17 to 33 ms), then the fern (142); warm the same.
+   Cause: the black under the fern was set in the same call as the fern's url, and the browser loads a blob url's picture off the call, so the black painted first.
+   Fixed in cdom (port-fixes d24f809): `cd_set_image_bytes` sets the url once the picture has decoded and answers `cd_on_image(token, ok)`; the table sets the black in that answer, so both paint in one frame (and a kept picture that no longer decodes is made again).
+   Checks: cdom's unit case (a MutationObserver sees the url and the answer's mark always together; bytes that are no image set nothing and answer 0; mutants image-set-early, image-unanswered) and the table's texture check (the black never without the fern; mutant "the backs black before the fern").
+2. **G left the Good pill standing beside the check it had already turned**, for the run's 500 ms (`tools/record.mjs` at 53.7 s; measured: the pill went 527 ms after the key, 44 ms after a click).
+   The letter keys did not press their pill as the click and the arrows' Up do.
+   React's letters do not either (KeyboardInputHandler.tsx), and its pill stands for the server's round trip; here the letters press their pill (a deliberate departure: the three ways of playing behave alike).
+   Check: "keys: ... G takes the Good pill down at once" (mutant "keys: a letter does not press its pill").
+3. **The keyboard cursor jumped ahead of its card**: placed where the hand's 0.1 s slide would end, up to a card's width (52 px) off while the card slid; React polls the card's box every frame.
+   Fixed: the cursor and the arrow are read from the card's own box, every frame after a draw until they have stood still four frames, so they follow the slide and a row's glide.
+   Check: the underline under the sliding card at every frame of a Meta+Left (mutants "arrows: the cursor from the slot, not the card" and "arrows: the cursor not polled").
+4. **The end screen was an overlay over the table** (a dark veil, the back button, the seats and the pile still showing), where React's GameView swaps the table for WinScreen's page.
+   Fixed: the page takes the table's place: the wool, the title, the results' plank, ReplayShare's wood frame (as React shows it for a game with no replay snapshot) and the button; the table is kept hidden for the next deal.
+   Check: the page is the golden `win_screen.html`'s DOM but for the title, the rows, the button's words and the wood's var()s; the frame's wood lies inside its rectangles (mutants "end screen over the table", "end screen without ReplayShare", "ReplayShare frame without its wood").
+5. **My own move waited for its landing**: for the 500 ms of its flight the hand kept a hole where the card had been, my count read one card more, and the old board's pills stood (a Good pill the game would refuse), where React's view takes the move's board as soon as the server answers a push that holds nothing it has not flown (AnimationContext's "all events optimistic: just update state"), tens of ms later.
+   Seen side by side with the live React table (`shots/side_by_side/flight_*.png`: React's count 5 and its hand closed up, the port's 4 and a hole).
+   Fixed: a move of mine that is the whole operation (an attack, a pass, a cover, a pickup and nothing the server adds) is the board as soon as its flight is off (the server here answers at once); the card is hidden where it lands until it does.
+   On the way the consistency check caught a cover of mine showing on the table mid-flight (the board drawn now holds it): hidden too.
+   Checks: the played-card flight check mid-flight (mutant "a lone move of mine waits for its landing") and `tools/consist.mjs` (mutant "my cover shows where it lands mid-flight").
+6. **A drop read only the topmost layer**: `cd_hit` took `elementFromPoint`, React's drop `elementsFromPoint`; a layer that takes pointer events but listens nowhere (a seat, a name) over a battle hid the battle.
+   Fixed in cdom (port-fixes 5215814): `cd_hit` returns the first listening node among every layer under the point.
+   Checks: cdom's unit case (mutants hit-topmost-only, hit-bottom-first) and the table's drop of the trump that covers either battle onto the 7h under a box that is topmost there, by mouse and by touch (mutant "the drop reads the topmost layer only").
+7. **The harness drove a dead run's Chrome**: a run that died before closing its Chrome left it on port 8729, and the next run attached to it, with its profile and its kept game (three first-paint checks failed on a hand that was not the golden's).
+   Fixed: `tools/cdp.mjs` refuses to start when something already answers on its port, and `tools/record.mjs` closes its Chrome on every path.
+
+Looked at and found equal (no change): the defender's first paint (the golden `bout_2p_defender.html`, the same board seen by Anna: the same DOM but for the names and the seats' order, 0 of 786,432 pixels at 1024x768, now checked by `tools/test.mjs` and `tools/shots.mjs`); the selected card, the pill column, the drag shadow and its cards, the cursor and a flight's nodes, read off the live React table and the port at the same moments (the same styles but for content, attribute order and the `-webkit-` duplicates Chrome drops); a Pickup pill that stands through the hold after my last cover (React's board then offers it too).
+
 ## What was built
 
 `src/table_app.c` draws a two-seat table, me against the handwritten bot, with the React table's look: the hand, the battles, the stock and the trump, the discard pile, both seats with their role marks and mini hands, the pill column, and an end screen.
@@ -24,7 +115,7 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 
 ## Files
 
-- `src/table_app.c`: the table (3,142 lines, the texture pipeline, the animations, drag and drop, the keyboard and the test build's window on the kernel among them).
+- `src/table_app.c`: the table (3,272 lines, the texture pipeline, the animations, drag and drop, the keyboard and the test build's window on the kernel among them).
 - `src/anim_run.c`, `src/anim_run.h`: an operation captured as the kernel's stream for my seat and read back as the web reads a push (97 lines); linked by the table and by `tests/run_test.c`.
 - `src/game_keep.c`, `src/game_keep.h`: the game as a host keeps it: canonical after every operation, its blob written and adopted (48 lines); linked by the table and by `tests/blob_test.c`.
 - `src/ui.h`: element shorthands over cdom's `CD_LIT`, and the style builder whose result crosses as a one-off string (36 lines).
@@ -33,16 +124,16 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 - `src/trig.c`: sin, cos and tan for the wool and the fern (musl's polynomials, a reduction for arguments below 2^28) and JS's `%` for the wood (141 lines).
 - `src/crtrig.c`: cos rounded correctly, as Chrome's is, for the wood (139 lines).
 - `src/index.html`: the page; `build.sh` inlines the minified shim into it.
-- `vendor/`: cdom from `/Users/alex/Dev/cdom-fixes`, branch port-fixes, commit 2ff8218 (the drag and keys pass: mouse and touch events, the key's character and the event's time in the record, `cd_prevent_default`, `cd_unlisten_window`, `cd_hit`), unchanged (`src/cdom.c`, `src/cdom.h`, `src/cdom_net.c`, `src/cdom_net.h`, `src/cdom_store.c`, `src/cdom_store.h`, `src/mini.c`, `shim/cdom.js`).
+- `vendor/`: cdom from `/Users/alex/Dev/cdom-fixes`, branch port-fixes, commit 5215814 (the final pass: an image's url set once it has decoded and answered with `cd_on_image`, `cd_hit` reading every layer under the point; before it 2ff8218, the drag and keys pass: mouse and touch events, the key's character and the event's time in the record, `cd_prevent_default`, `cd_unlisten_window`, `cd_hit`), unchanged (`src/cdom.c`, `src/cdom.h`, `src/cdom_net.c`, `src/cdom_net.h`, `src/cdom_store.c`, `src/cdom_store.h`, `src/mini.c`, `shim/cdom.js`).
   The table links `cdom_store.c` (the textures across loads) but not `mini.c` (the kernel's libc brings memcmp and strlen) nor `cdom_net.c` (it has no network yet); the network tests link the network.
 - `tests/net_test.c`, `tests/net_test.mjs`: cdom's network imports against a local echo server (the fast test).
 - `tests/live_test.c`, `tests/live_test.mjs`: the contract test: the kernel's network client (`netclient.c`, the web's protocol owner) hosted over cdom's imports as `src/common/backend.ts` hosts it, against a real local c_base (Network, below).
 - `tests/tex_test.c`: the texture generators alone, for `tools/texparity.mjs`.
 - `tests/blob_test.c`: native; 300 games round-tripped through the state blob at every step (110 lines).
 - `tests/run_test.c`: native; every operation of 200 games captured and planned as the table does (161 lines).
-- `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `reacttime.mjs` (the same against the real React app, its production build on a local c_base), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks, mouse drags, touch drags or the arrow keys), `input.mjs` (real CDP input: a mouse or touch drag in steps, keys), `gestureshots.mjs` (the gestures held mid-way, shots), `film.mjs` (a scenario recorded frame by frame into a contact sheet and a GIF), `consist.mjs` (the DOM against the kernel and React's rules at every click and bot step), `mutate.py`.
+- `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `reacttime.mjs` (the same against the real React app, its production build on a local c_base), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks, mouse drags, touch drags or the arrow keys), `input.mjs` (real CDP input: a mouse or touch drag in steps, keys), `gestureshots.mjs` (the gestures held mid-way, shots), `film.mjs` (a scenario recorded frame by frame into a contact sheet and a GIF), `consist.mjs` (the DOM against the kernel and React's rules at every click and bot step), `record.mjs` (a whole game recorded by mixed hands, Done), `react_rig.mjs` (the real React app on this Mac: c_base, its build's router, a table against a bot), `actiontime.mjs` (a move's cost on both, from Chrome's trace), `sidebyside.mjs` (both tables at each moment, shots), `reacttime.mjs`, `retake.sh` (any earlier commit built into `out_<commit>/`, its own tool run against it), `mutate.py`.
 - `out/table_debug.wasm`: the test build, the same table with `TABLE_DEBUG` (`?debug` on the page loads it): the kernel's state as text (`app_debug_state`), the bot's steps held for the test (`app_debug_hold`, `app_debug_release`) or made 30 ms (`app_debug_fast`, the clock put back, the kernel's rule untouched), and the kernel's random streams seeded (`app_debug_reseed`); boards for the gesture checks (`app_debug_board`), and the drag's and the cursor's state (`app_drag`, `app_kb`).
-- `shots/`: the screenshots; `shots/anim/` the films (contact sheets and GIFs).
+- `shots/`: the screenshots; `shots/anim/` the films (contact sheets and GIFs); `shots/run/` the recorded games (MP4, a contact sheet, the moves); `shots/side_by_side/` the port beside React.
 
 ## Running it
 
@@ -65,6 +156,10 @@ node tools/textime.mjs 9 1      # the textures, port and app, cold and warm, int
 node tools/reacttime.mjs 11 4   # the textures, port against the real React app and the harness page; CPU x4 (Textures, React baseline)
 CPU=4 node tools/texparity.mjs  # the generators' parity, and their times throttled
 python3 tools/mutate.py         # every mutant, rebuilt and tested, the source restored after
+node tools/record.mjs           # a whole game by click, drag, letters and arrows, recorded (W=390 H=844 TOUCH=1 by touch; MOVES=n)
+node tools/actiontime.mjs 7 1   # a move's cost, the port against the real React app, from Chrome's trace (x4 for the throttle)
+node tools/sidebyside.mjs       # shots/side_by_side: both tables at each moment (W=390 H=844)
+tools/retake.sh df7fda82d tools/timing.mjs 21 1   # an earlier commit built into out_df7fda82d/ and timed with its own tool
 ```
 
 Run `npm install` once in `tools/` for terser; without it the shim is inlined unminified.
@@ -95,6 +190,10 @@ At 390x844 the count is 20,901 to 20,997 over three runs: the 13,952 above (the 
 `tools/shots.mjs` fails over a bar at both sizes (the first paint exactly as above; with textures at most 8,000 over it), and the mutant that places the wool 16 px off makes it fail (755,744).
 The shots run Chrome with `--disable-gpu-rasterization`: with GPU raster Chrome drew one large JPEG two ways, so the same wool bytes under a new url differed from themselves in about 225,000 of 329,160 pixels (by 1 to 20 a channel) in about one load in five while the machine was at a load average of 60, and a run of shots at 390x844 then counted about 245,000; it was never the texture path (the C's crop and the TS's middle decode to the same pixels, and the same bytes did it to the TS's own image).
 `shots/fern_backs.png` and `shots/fern_backs_390x844.png` put a card back of each side by side, 4x (React's left).
+
+The defender's golden, `bout_2p_defender.html` (the same board seen by Anna, who defends it), is held the same way since the final pass: the test build's board 4 (`?board=4`) is that board with the seats swapped, so I defend it, and its first paint is the golden's DOM but for the names and the order of the two seat boxes (React draws seat 0 first), with the same differences taken out; the Pickup pill and the shield are in it.
+`tools/shots.mjs` puts the two side by side (`shots/react_golden_defender.png`, `shots/cdom_defender.png`): 0 of 786,432 pixels differ at 1024x768 (2,844, each by 1 or 2 levels, while the seats' boxes were in React's order: they composite in that order), 13,952 at 390x844, the same count as the attacker's board (the golden's hand laid out at jsdom's 1024 width).
+The end screen is React's WinScreen page (Final pass, defect 4), held against the golden `win_screen.html` (a rated three-seat game): the same DOM but for the title's table, the rows, the button's words and the wood's var()s.
 
 ## Consistency
 
@@ -189,6 +288,7 @@ The complaint was "no animations": the port drew the new board at once.
    `settles_ms()` (pass 2's hook) is the run's last landing, kept after the run has ended, so the kernel's `bot_wait_ms` waits 3,000 ms after the last flight lands, not after the click (measured: the bot stepped 3,504 to 3,517 ms after my throw-in, whose run is 500 ms).
 5. **Input is not blocked**, as React does not block it: a move made while a run plays joins it (its steps open after the ones there).
    A click is judged on the board on screen and applied to the game; the kernel refuses a move that the shown board offered but the game no longer allows, and nothing flies (React would fly it and fly it home: Gaps).
+6. **A move of mine that is the whole operation is the board at once** (since the final pass, defect 5): an attack, a pass, a cover or a pickup to which the game adds nothing is drawn as the board as soon as its flight is off (its cards hidden where they land until they do), as React adopts the board when its server answers a push that holds nothing it has not flown; anything more (a cover that ends the bout, a pickup and its refills) commits step by step at the landings, as before.
 
 A reload in the middle of a flight lands on the committed board with no flight: the game is saved after every operation, and the run is not.
 
@@ -275,7 +375,7 @@ The string table stays flat from game 2 on (`tools/strings.mjs`): 192, 195 and 1
 - **The glide offset** a landing is aimed off is the cell's box against its rest while its glide runs (its end time known); React reads the computed transform. They differ only if the window is resized mid-glide.
 - **The plan is built when steps join the run, not every frame**: the same answer (it is a pure function of the run), less work.
 - **The held piles** (React's rule for a board that got ahead of its own flight, a server's confirmation beating the card) cannot happen here: every board the port draws is a step's own or the game's after its run.
-- **No side-by-side film with React**: the React table needs its server. The look is matched number by number (the table above) and the endpoints are measured in the tests; the films are the port's.
+- **The films are the port's**: the React table is now run here (its build live on a local c_base, `tools/react_rig.mjs`), and `tools/sidebyside.mjs` puts a flight of each beside the other (`shots/side_by_side/flight_*.png`, 200 ms into the flight); a frame-by-frame film of React's was not made.
 - **Headless timing**: in headless Chrome the screencast and the timers stall now and then (a 500 ms gap with no frame was seen once in a film), which stretches a ghost exactly as a slow device would; the tests judge endpoints and landings, not frame times.
 - **The kernel's push reader** links its roster-trailer reader (about 2 KB) though the port's streams carry no roster: an entry that reads a sequence with no identity would not.
 - Unchanged from earlier passes and still not ported: the cover arrows (dead in React), the tutorial's hints, chat, translations, live play. Drag and drop and keyboard play came after (their own sections).
@@ -312,7 +412,7 @@ The complaint was "no drag and drop": the port took a click on a card and nothin
 | a cover's battle | the cell: `border: 3px solid #d29002`, background rgba(210, 144, 2, 0.1) | the same (two `setProperty` each way) |
 | an attack or a transfer | one drop cell a card after the battles: the battle cell's style with `3px dashed #d29002`, the same background, radius 8, a 40 x 60 dashed 2px box with a `+` (24 px, opacity 0.7) inside; `data-battle-index` the battle count and up | the same DOM |
 | the row making room | at once (the FLIP's 0 ms when only the drop cells change) | at once: every glide cut, the rests measured again |
-| the hit test | `document.elementsFromPoint`: every layer under the point | `cd_hit`: the topmost element that takes pointer events, then its nearest listening ancestor (Gaps) |
+| the hit test | `document.elementsFromPoint`: every layer under the point | `cd_hit`: the first listening node among every layer under the point (`elementsFromPoint`, since the final pass) |
 | a battle's target | the attack card (`data-battle-index` is on it) | the attack card, which listens now (it was the cell) |
 
 ### The hand's order
@@ -345,7 +445,7 @@ A key's move hides its pill until it is refused, as React's `fire` does; the aim
 | | React | port |
 | --- | --- | --- |
 | the state the tests read | `<div data-testid="kbd-state" data-mode="none\|cards\|target" data-sel data-target style="display: none">`, after the vignettes | the same div, in the same place: the golden's first paint now matches it too (one exclusion fewer) |
-| the cursor | fixed, `left: x + 0.15 w; top: y + h + 4; width: 0.7 w; height: 3px`, #111, radius 2, `box-shadow: 0 0 5px 1px rgba(255, 255, 255, 0.7)`, z-index 1500, from the card's box polled every frame | the same; the box from the kernel's slot on the measured plane, set when it changes |
+| the cursor | fixed, `left: x + 0.15 w; top: y + h + 4; width: 0.7 w; height: 3px`, #111, radius 2, `box-shadow: 0 0 5px 1px rgba(255, 255, 255, 0.7)`, z-index 1500, from the card's box polled every frame | the same, the card's box polled every frame after a draw until it has stood still four frames (it follows the hand's slide and the row's glide; since the final pass) |
 | the arrow | a fixed full-window svg, z-index 1500: marker `kbd-arrow` (polygon 0 0, 11 4, 0 8; 11 x 8, ref 9 4, #ff2d2d), a line 3 wide from the card's top centre to the target | the same svg |
 | a cover's target | a rect 3 px out round the attack card, rx 8 | the same |
 | the transfer's target | the line dashed 7 5 to 46 px right of the table's cells at their middle (the window's centre with none), a 52 x 72 rect dashed 6 4, rx 8, and PASS (13 px, 700) 54 px below | the same |
@@ -398,11 +498,9 @@ The string table (`tools/strings.mjs`): 134 strings at the first paint, 198, 199
 
 ### Every way it differs from the React table
 
-- **The hit test** is the topmost element that takes pointer events (`elementFromPoint`), React's every layer (`elementsFromPoint`): where a seat or a flight that takes pointer events lies over a battle, React still finds the battle and the port finds the table. On the golden board and board 1, at 1024x768 and 390x844, no point of an attack card (3,300 points, 3 px apart) has anything over it that takes pointer events.
 - **React's state lags one event**: `isActuallyDragging` set in a move is read in the next, so React's first move past 10 px is still in the hand's terms; the port's is a drag at once.
 - **The rearrange is kept at the drop**, React's 5 s later (so a React reload within 5 s loses it); and Meta+arrows are kept too, which React's keyboard leaves local (setLocalHandOrder alone, never sent); and the drawn order is kept after every move, where a React reload puts a card taken back where its server appended it.
 - **A touch that the browser cancels** (touchcancel) ends nothing, in React or here: the drag waits for the next release.
-- **The cursor and the arrow** are placed when the table draws, not every frame: React polls the card's box per frame and so follows the hand's 0.1 s slide and a row's glide; here they jump to where those end.
 - **Focus in the pill column**: React's letters and numbers do nothing while the focused element is inside `[data-touch-interactive]` (a pill button just clicked keeps the focus); the port does not track focus, so after a pill click its letters still work.
 - **The cover arrows** (CoverArrows.tsx) are not ported: React mounts them, but nothing ever fills the map they draw from, so they never show.
 - **The rules lifted into the kernel** still have their TypeScript copies in the React app.
@@ -430,7 +528,7 @@ The wood keeps `src/crtrig.c`, cos rounded correctly (0 of 1,500,000 arguments d
 Working the wood out only where it shows made that cost small.
 `src/jsmath.c` (1,206 lines, musl's 1,200-bit 2/pi table) is gone.
 
-How they land: `cd_encode_image` (cdom) encodes the pixels in C memory (RGB for the wool and the wood, so the room is a quarter less) and hands the file's bytes back to C; `cd_set_image_bytes` puts them on the mount as `--tex-fern`, `--tex-wood`, `--tex-wool` and `--tex-wood-end`, which the styles read through `var()`, falling back to the golden's look; with the fern, `--tex-fern-bg: #000000` gives the backs CardBack's black.
+How they land: `cd_encode_image` (cdom) encodes the pixels in C memory (RGB for the wool and the wood, so the room is a quarter less) and hands the file's bytes back to C; `cd_set_image_bytes` puts them on the mount as `--tex-fern`, `--tex-wood`, `--tex-wool` and `--tex-wood-end` once the browser has decoded them, which the styles read through `var()`, falling back to the golden's look; with the fern, `--tex-fern-bg: #000000` gives the backs CardBack's black, set in the image's answer (`cd_on_image`) so it paints in the fern's frame (Final pass, defect 1).
 Across loads: the bytes go into cdom's store (`cd_store_put`, IndexedDB) under a key with the generator's version and what the picture depends on (the fern's size, a hash of the wood's rectangles); a later load asks the store first (`cd_store_get`, 1,500 ms deadline) and sets what it finds, making nothing.
 The app does the same with TextureCacheDB (src/utils/textureCache.ts: keys fern_v1, wood_v2, wool_v1, reads raced against 1.5 s).
 
@@ -566,6 +664,42 @@ What a live table still needs (this pass does not wire the table to play):
 - The reconnect: on `cd_on_ws_close`, reopen after `nc_stream_closed(now)` ms (backend.ts `lost`), and close when `nc_stream_next` hands out an empty frame; a hidden page (`CD_EV_VISIBILITY`) may pause the pump.
 - `cd_ws_buffered` read before a large send, if anything large is ever sent (the client's frames are under 4 KB).
 
+## Numbers (the final pass)
+
+All on 2026-10-29 in one session, load averages 1.7 to 3.4 on 8 cores before and after every run (on top: WindowServer, the wallpaper's extension, now and then corespotlightd or mediaanalysisd at up to 1.7 cores for a few seconds), below the core count; every comparison paired and interleaved, the arms alternating within a round.
+
+The port against the real React app (the table under Done): `tools/actiontime.mjs 7 1` and `7 4` time a move from Chrome's own trace (CDP Tracing, devtools.timeline), the same way for both: every top-level task on the page's main thread (RunTask: the script, its microtasks, the style, layout and paint it ran).
+A tap is a real CDP mouse press and release on a card with a move; the play a real click on its pill; the bot's answer the longest task a timer (the port) or a socket message (React's push) ran after the play's run, and the tasks after it.
+The 25th to 75th percentiles at x1, port then React: select 1.58-2.38 and 7.45-8.94; with its frames 12.08-13.34 and 42.01-49.30; play 6.71-9.48 and 11.31-12.41; its run 62.04-69.43 and 63.72-78.68; the bot's task 1.82-3.32 and 1.09-1.71; its run 48.12-57.41 and 65.32-140.15.
+At x4: select 1.21-1.65 and 7.55-8.04; with its frames 8.20-10.36 and 65.14-76.39; play 9.56-12.47 and 13.15-14.70; its run 46.98-53.05 and 74.92-78.78; the bot's task 1.45-3.45 and 0.94-1.59; its run 40.38-108.93 and 59.33-110.58.
+The port's select draws nothing beyond its own task (a border and a pill: 15 DOM calls); React's re-renders the board's components.
+The play costs the port 0.7 of React's at x1 and 0.77 at x4: the move applied, the kernel's plan built, the flight measured and armed, and the move's board drawn at once (defect 5); React sends, judges and enqueues its flight, then renders.
+The flight's frames cost the same at x1 and 0.72 of React's at x4.
+The bot's answer is a slightly longer task in the port (its move is chosen and applied there; React only receives it), its flights cheaper.
+The texture rows are `tools/reacttime.mjs 7 1` and `7 4` (Textures, React baseline, for the method); the harness page (the app's texture code alone, `out/ts_tex.html`) decoded all three at 1,997 and 136 ms cold and warm at x1, 6,367 and 137 at x4.
+
+This pass against its start, `tools/timing.mjs` (the test build, `?notex&debug`, `BLANK=1`), 3 rounds of 7 fresh loads per arm per throttle, the arms alternating, medians of the rounds' medians (ms; script, then with style and layout):
+| | c22d9ce0c x1 | final x1 | c22d9ce0c x4 | final x4 |
+| --- | ---: | ---: | ---: | ---: |
+| first contentful paint | 63.7 | 62.2 | 121.4 | 120.8 |
+| select a card | 0.28 / 0.66 | 0.26 / 0.65 | 0.56 / 1.37 | 0.51 / 1.28 |
+| play the Attack pill | 3.70 / 3.97 | 4.28 / 4.83 | 6.52 / 6.82 | 6.99 / 7.80 |
+| the bot's step | 1.70 / 2.59 | 1.82 / 2.82 | 2.68 / 4.01 | 2.49 / 4.02 |
+| the run after the play (31 frames) | 3.25 | 2.20 | 2.57 | 1.85 |
+| the run after the bot's step (62 frames) | 4.39 | 4.33 | 4.82 | 4.55 |
+The play's handler grew by about half a millisecond and its run shrank by about as much: the move's board (my hand without the card, my count, the pills) is drawn in the click now rather than at the landing (defect 5).
+DOM calls (`tools/domcount.mjs`): select 15, play 57 (47 in the handler, 10 after it; 35 and 22 before), the bot's step 183 (48 and 135), a drag's move out 38, a move with the same answer 2, the drop 49 (39 and 10), ArrowRight 8, a number 2.
+The string table (`tools/strings.mjs`): 134 strings at the first paint, 207, 209 and 209 at the three games' ends (6.3 KB, flat from game 2 on; the end screen's page added its literals).
+`table.wasm` 119,269 bytes, 47,512 brotli, 53,528 gzip (117,457, 46,851 and 52,778 at the pass's start): the end screen's page, the cursor's poll and the move's board at once.
+The shim 8,258 bytes minified, 3,276 brotli (8,146 and 3,228; cdom's PERF_LOG.md SHIM_LINES).
+
+### Taking a number again
+
+`tools/retake.sh <commit> [tool ...]` builds any commit in a clean worktree into `out_<commit>/` and runs that commit's own copy of a tool against its build, as the number was first taken (`tools/retake.sh df7fda82d tools/timing.mjs 21 1`).
+The builds are byte for byte the sizes the README gives (df7fda82d 54,992 bytes, d526bba10 71,725, 028fa3548 75,330, c22d9ce0c 117,457).
+The "before" columns: Numbers (the first pass), df7fda82d; Textures, d526bba10; Animations, The numbers, 028fa3548 (`out_before/` held that build too); this pass, c22d9ce0c.
+The "after" columns are the commit that wrote each table: `git log -S '<a number in it>' -- README.md` names it.
+
 ## Numbers
 
 Measured on this Mac (headless Chrome 156), CPU x1 and x4 throttled, medians of 21 fresh loads with the cache off; script is the click handler, C and its DOM calls, and the second figure adds style and layout forced at once.
@@ -673,7 +807,9 @@ For what both do, the C is about as long as the TSX, most of it the same inline 
 - a save that fails is not silent: with IndexedDB refusing the game's key, a move shows the notice; the store taking it again, the retry keeps the game, the notice goes, and a reload adopts it;
 - a game played out by clicks (`tools/play.mjs`, textures on) reaches the end screen ("done - Two of us"), and Play again deals six new cards;
 - after every click of that game and of more games, until every pill has shown, every wood surface on the page (the back button, each pill, the results panel, Play again) lies inside the rectangles its picture was worked out in;
-- the animations (Animations), through an in-page recorder of every flight node (its card, its start, when it was armed and with what, when it went), every role ghost and every mark change: a played card leaves from its hand card's centre and lands on the centre of the cell the row made for it, at scale 1.5 then 1.8, armed about 25 ms after it is drawn and gone at its 500 ms landing, hidden at both ends meanwhile, the two cells already down gliding, my count unchanged until the landing; the bot's cover leaves its seat and lands laid across 6d, which turns with it (`transform 500ms ... 25ms`); a take flies the five table cards from where they lay, at their tilts, to the bot's seat; the refill flies from the stock onto the slots my hand made room for; a sweep flies four cards to the pile (3 px apart), the pile's count showing at its landing while the refills still fly, the bot's draw one stack of three backs, my check frozen through the run and the closing beat throwing the shield and the opener's sword as ghosts; a transfer's shield takes off with the card and lands before it, my badge making way and Anna's blanking then turning a sword in; a deal is 12 flights at 350 ms (the kernel's plan: 525 + 375 k), mine face up and the bot's backs, then the trump into its slot; a move made while a run plays joins it (one run, its step at 525 ms); a reload mid-flight lands on the committed board with no overlay; and in the played-out game the trump's first flight leaves its own slot.
+- the animations (Animations), through an in-page recorder of every flight node (its card, its start, when it was armed and with what, when it went), every role ghost and every mark change: a played card leaves from its hand card's centre and lands on the centre of the cell the row made for it, at scale 1.5 then 1.8, armed about 25 ms after it is drawn and gone at its 500 ms landing, hidden where it lands meanwhile, the two cells already down gliding, the board the move's at once (out of my hand, my count 3: Final pass, defect 5); the bot's cover leaves its seat and lands laid across 6d, which turns with it (`transform 500ms ... 25ms`); a take flies the five table cards from where they lay, at their tilts, to the bot's seat; the refill flies from the stock onto the slots my hand made room for; a sweep flies four cards to the pile (3 px apart), the pile's count showing at its landing while the refills still fly, the bot's draw one stack of three backs, my check frozen through the run and the closing beat throwing the shield and the opener's sword as ghosts; a transfer's shield takes off with the card and lands before it, my badge making way and Anna's blanking then turning a sword in; a deal is 12 flights at 350 ms (the kernel's plan: 525 + 375 k), mine face up and the bot's backs, then the trump into its slot; a move made while a run plays joins it (one run, its step at 525 ms); a reload mid-flight lands on the committed board with no overlay; and in the played-out game the trump's first flight leaves its own slot.
+
+- the final pass: the defender's first paint is React's golden `bout_2p_defender.html`; the backs' black never lands without the fern; G takes the Good pill down at once; the cursor stays under a sliding card at every frame; the end screen is React's WinScreen page (the golden `win_screen.html`), the table hidden under it and back for the next deal; the played card's board is the move's while it flies; a drop reads the battle through a layer that listens nowhere, by mouse and by touch.
 
 `tests/blob_test.c` (native, ASan and UBSan): 300 seeded games with seat 1 the bot and seat 0 the same brain driven alone, the game canonical after every operation as the table keeps it; at every step the blob is written and adopted by `game_keep_load` into a zeroed Game, and the board (`state_put` unmasked, byte for byte), both seats' TableView and ViewRules, and the next drive from the same seeds all agree.
 `tests/net_test.mjs`: a wasm module sends 8 binary bytes over a WebSocket and gets them echoed, then POSTs them and gets them back reversed (cdom's network, with no cd_flush anywhere).
@@ -683,7 +819,7 @@ For what both do, the C is about as long as the TSX, most of it the same inline 
 
 - drag and drop by mouse and by touch, the keyboard by letters, numbers and arrows, and a game played out by mouse drags, by touch drags and by the arrow keys alone (Gestures: evidence and numbers).
 
-Mutation check (`tools/mutate.py`), each of 92 mutants caught by the check written for it (a mutant of this pass runs the check it names, `ONLY`; the source's copy is kept outside the checkout):
+Mutation check (`tools/mutate.py`), each of 104 mutants caught by the check written for it (a mutant of this pass runs the check it names, `ONLY`; the source's copy is kept outside the checkout):
 - a card face's radius 5px to 4px: the golden check names the first differing tag;
 - the bot never chooses a move: the bot-answer check times out on `data-turn`;
 - the hand rebuilt on every render: "the three cards left in my hand are the nodes that were there";
@@ -711,6 +847,7 @@ Mutation check (`tools/mutate.py`), each of 92 mutants caught by the check writt
 - the animation pass, the capture (`out/run_test`): the snapshot hook not installed ("the deal is 0 DEAL steps"), the stream written for nobody ("the stream's final board is not the board the table adopts (my hand)"), the closing transition dropped ("the last step's board draws otherwise ... (status)");
 - the animation pass, the table: the deal flown at 500 ms ("each dealt card flies 350 ms"), a landed step not committed ("the discard pile shows its four cards while the run still plays"), the bot paced from the click ("3,012 ms"), no veil (the played card's mid-flight check and consist.mjs's "a flying card shows where it is drawn"), flights never armed ("armed: given its landing"), no row glide ("the two cells already down gliding"), the attack not turning under a cover ("the attack under the cover turns"), no room made in my hand ("my hand made room"), a move during a run starting another run ("one run"), no coin ("the marks turned as coins"), the marks not frozen in a run and the shield waiting for the landing ("it takes off with the card": 504 and 514 ms after it), the good not leading the stream ("mid-run: my check"), the trump drawn out of the stock ("its first flight leaves from its own slot"), no ghost ("one mark flies: the shield"), the seat landed on not making way ("the make-way"), the seat left keeping its mark ("Anna's badge blanks");
 - the drag and keyboard pass (31, each run with its check, `ONLY`, at load 2.1 to 3.8 on 8 cores): no 10 px slop ("a tap selects"), a long press a tap ("a long press selects nothing"), the tap timed by the handler's clock ("a tap released behind a busy page selects"), no card's height above the hand ("a drop in the hand's area plays nothing"), the hand never its area ("the dragged card is dimmed"), a mousedown left to start the native drag (the attack check), a touch end letting the mouse events through ("a tap selects", touch), a touch move left to scroll (the touch attack check), the badge naming Attack for a cover, no drop cells, no amber ("the cover's cell in amber"), the dragged card looking as any other ("dimmed"), no rearrange ("the six went to the end"), the order not kept in the game ("the game holds the new order"), a drop that is a move keeping the selection ("spends the selection"), the dragged card alone though selected ("the shadow carries both selected cards"), the hand drawn in the game's order (the consistency check), the keys with a modifier held ("Meta+1 is the browser's"), a key typed into a field ("keys typed into a field do nothing"), the numbers one off, A without the Attack pill ("A without the Attack pill leaves the selection"), the cursor not wrapping ("Left from the first card wraps to the last"), the underline off its card (-2.5 px), Meta+arrow not kept ("kept in the game"), the aim not cycling ("Right cycles to the next"), the arrow from the card's middle ({"from":[0,35]}), the pass place 40 px out (-6), Down doing nothing ("Down took"), the hidden state staying "none", the drawn order not kept after a move ("a reload draws the hand as it was drawn"); and the pass-1 mutant of a hand rebuilt on every render, moved onto the hand as now drawn.
+- the final pass (12, each run with its check, `FAILFAST=1`: the test stops at its first failure): the backs black before the fern ("the backs' black lands with the fern"), a letter not pressing its pill ("G takes the Good pill down at once"), the cursor from the slot and the cursor not polled ("the underline under the sliding card every frame"), the end screen over the table ("the table gives way to the page"), without ReplayShare (the golden's first difference), the frame's wood not made ("24108 pixels outside"), the pill's label class (the defender's golden), the pills 1 px over (`tools/shots.mjs`, the defender's 2,639 pixels), a lone move waiting for its landing ("mid-flight: out of my hand"), my cover showing mid-flight (consist.mjs, "a flying card shows where it is drawn"), the drop reading the topmost layer only ("the cover of the 7h is read under the box").
 Not in the list, being equivalent here: Pickup and Good spending the selection (a selection never offers either), a pressed pill shown (no press outlives its move locally), and a battle's cover patched one way only (no path in play uncovers a battle under the same attack card since the board waits for the store).
 Run at load averages 45.9 to 89.7 on 8 cores (the bot league), every mutant caught; the pace check's bounds (2,900 to 4,500 ms) held.
 All 62 again after the animation pass, in one run (load 2.4 to 10.3 on 8 cores, a 6-process eval run joining it midway): every one caught, the pace check's new bounds (3,450 to 4,500 ms) held.
@@ -773,6 +910,10 @@ Items 1 to 16 were folded into cdom on branch port-fixes (`/Users/alex/Dev/cdom-
     Closed (port-fixes 105ddc6 and 2ff8218, cdom's PERF_LOG.md SHIM_LINES): the mouse and touch event types (the per-node listen mask grew to 32 bits for them), a touch event's point from its changed touch, the key's character (`ch`) and a typed-into-a-field bit in the record, the event's own time (`ms`, event.timeStamp, which a tap is timed by), `cd_prevent_default` (no native drag after a mousedown on a `draggable` card, no scroll under a touch drag, no mouse events and click after a touchend, nothing typed after a handled key), document listeners that are not passive and can be removed again (`cd_unlisten_window`), and `cd_hit` (the listening node under a point, through what takes no pointer events).
     Seven unit cases and thirteen mutants there, all caught; the shim 7,352 -> 8,147 bytes minified, 2,921 -> 3,228 brotli.
     The drag's hit test is the one thing the browser has to answer; what it means (the target, the cards, the move) is the kernel's.
+16e. **An image set before it could paint** (final pass).
+    Closed (port-fixes d24f809): `cd_set_image_bytes` sets the url once the picture has decoded and answers `cd_on_image(token, ok)`, so what goes with a picture (the black under the fern) is set in its answer and paints in its frame; bytes that do not decode set nothing and answer 0.
+16f. **The hit test saw only the topmost layer** (final pass).
+    Closed (port-fixes 5215814): `cd_hit` returns the first listening node among every layer under the point (`elementsFromPoint`), as the React table's drop reads through a seat or a name.
 17. **`bot_drive` pulls in every brain through the roster.**
     The kernel's, not cdom's, and still open: `kernel_glue.c` answers the two roster calls for the handwritten brain alone.
     A link per app, by what it calls, is the kernel's doctrine; the roster's dispatch table defeats it.
