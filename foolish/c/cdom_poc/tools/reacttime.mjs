@@ -27,6 +27,10 @@
 //   the port: #root's --tex-wool, --tex-fern and --tex-wood set (what its styles read);
 //   both: the first hand card in the DOM ([data-location="hand"][data-card]), and the first
 //   contentful paint; then all three pictures decoded. The harness page reports its own times.
+// The port's fourth picture (the end screen's wood, made last) is not on the table and not in
+// "all decoded"; its time set is printed beside, from the port's own record (app_tex_at(3)).
+// CPU throttling slows a page's main thread: the React app's wool weaves on a worker, which it
+// leaves alone (cold, its wool takes 2 times as long at x4, not 4).
 // The store is checked, not assumed: a cold load must find TextureCacheDB (React) or the port's
 // texture keys empty, and a warm one must find all three kept.
 // PROBE=1 stops after the setup with screenshots in out/reacttime_*.png.
@@ -180,7 +184,10 @@ const REACT_STORED = `new Promise((resolve) => { const r = indexedDB.open('Textu
 // The three pictures' urls on the page, decoded; then the observer's times.
 const DECODED = (urls) => `(async () => { const u = ${urls};
   await Promise.all(u.map((s) => { const i = new Image(); i.src = s; return i.decode(); }));
-  return { ...window.__tex, decoded: performance.now(), fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime }; })()`;
+  // bytes: what the page fetched (served uncompressed and uncached, as cdp.mjs serves everything)
+  const fetched = [...performance.getEntriesByType('navigation'), ...performance.getEntriesByType('resource')];
+  return { ...window.__tex, decoded: performance.now(), fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime,
+    bytes: fetched.reduce((sum, e) => sum + (e.encodedBodySize || 0), 0), requests: fetched.length }; })()`;
 const URL_OF = (sel) => `(() => { const e = ${sel}; return e ? e.style.backgroundImage.replace(/^url\\("?|"?\\)$/g, '') : ''; })()`;
 const REACT_URLS = `[${URL_OF(`document.querySelector('.bg-wool')`)}, ${URL_OF(`[...document.querySelectorAll('[style]')].find((e) => e.style.backgroundImage.includes('blob:') && e.style.backgroundSize === '100% 100%')`)},
   ${URL_OF(`[...document.querySelectorAll('[style]')].find((e) => e.style.backgroundImage.includes('blob:') && e.style.backgroundSize !== '100% 100%' && !e.classList.contains('bg-wool'))`)}]`;
@@ -208,6 +215,7 @@ async function port(arm) {
   const want = arm === 'port_warm' ? '1111' : '0000';
   if (r.stored !== want) throw new Error(`${arm}: stored ${r.stored}`);
   await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 300000);
+  r.woodEnd = await b.evaluate('window.app.then((x) => x.app_tex_at(3))'); // the end screen's wood, set (as textime.mjs reads it)
   await sleep(500); // the store's puts are fire-and-forget
   arms[arm].push(r);
 }
@@ -258,7 +266,9 @@ for (const n of notes) console.log(`load ${n.when}: ${n.load} | ${n.top}`);
 for (const arm of Object.keys(arms)) {
   if (!arms[arm].length) continue;
   const col = (k) => cell(arms[arm].map((r) => r[k])).padEnd(15);
-  console.log(`${arm.padEnd(10)} fcp ${col('fcp')} board ${col('board')} fern ${col('fern')} wood ${col('wood')} wool ${col('wool')} all decoded ${col('decoded')}`);
+  console.log(`${arm.padEnd(10)} fcp ${col('fcp')} board ${col('board')} fern ${col('fern')} wood ${col('wood')} wool ${col('wool')} all decoded ${col('decoded')}`
+    + (arm.startsWith('port') ? ` end-screen wood set ${col('woodEnd')}` : '')
+    + (arm.startsWith('ts') ? '' : ` fetched ${(q(arms[arm].map((r) => r.bytes), 0.5) / 1024).toFixed(0)} KiB in ${q(arms[arm].map((r) => r.requests), 0.5)} requests`));
 }
 const med = (arm, k) => q(arms[arm].map((r) => r[k]), 0.5);
 for (const w of ['cold', 'warm'])

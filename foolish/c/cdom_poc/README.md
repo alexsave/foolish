@@ -40,7 +40,7 @@ Live play against c_base and sign-in are next steps, not part of this PoC; the n
 - `tests/tex_test.c`: the texture generators alone, for `tools/texparity.mjs`.
 - `tests/blob_test.c`: native; 300 games round-tripped through the state blob at every step (110 lines).
 - `tests/run_test.c`: native; every operation of 200 games captured and planned as the table does (161 lines).
-- `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks), `film.mjs` (a scenario recorded frame by frame into a contact sheet and a GIF), `consist.mjs` (the DOM against the kernel and React's rules at every click and bot step), `mutate.py`.
+- `tools/`: `cdp.mjs` (headless Chrome over CDP and a static server), `test.mjs`, `shots.mjs`, `timing.mjs`, `textime.mjs` (the textures' timing against the app's), `reacttime.mjs` (the same against the real React app, its production build on a local c_base), `strings.mjs`, `texparity.mjs`, `domcount.mjs`, `domdiff.mjs`, `play.mjs` (plays my seat to the end by clicks), `film.mjs` (a scenario recorded frame by frame into a contact sheet and a GIF), `consist.mjs` (the DOM against the kernel and React's rules at every click and bot step), `mutate.py`.
 - `out/table_debug.wasm`: the test build, the same table with `TABLE_DEBUG` (`?debug` on the page loads it): the kernel's state as text (`app_debug_state`), the bot's steps held for the test (`app_debug_hold`, `app_debug_release`) or made 30 ms (`app_debug_fast`, the clock put back, the kernel's rule untouched), and the kernel's random streams seeded (`app_debug_reseed`).
 - `shots/`: the screenshots; `shots/anim/` the films (contact sheets and GIFs).
 
@@ -60,12 +60,15 @@ node tools/texparity.mjs        # the C textures against the TS generators (writ
 node tools/shots.mjs            # shots/*.png (W=390 H=844 for a phone); run texparity first
 node tools/timing.mjs 21 1      # medians over 21 fresh loads, CPU x1 (or x4); PAGE=..., BLANK=1, TEX=cold|warm
 node tools/textime.mjs 9 1      # the textures, port and app, cold and warm, interleaved; CPU x1 (or x4); BEFORE=dir
+node tools/reacttime.mjs 11 4   # the textures, port against the real React app and the harness page; CPU x4 (Textures, React baseline)
 CPU=4 node tools/texparity.mjs  # the generators' parity, and their times throttled
 python3 tools/mutate.py         # every mutant, rebuilt and tested, the source restored after
 ```
 
 Run `npm install` once in `tools/` for terser; without it the shim is inlined unminified.
 `tools/texparity.mjs` and `tools/textime.mjs` bundle the app's TS with esbuild from the main checkout's node_modules (`/Users/alex/Dev/foolish/foolish/node_modules`).
+`tools/reacttime.mjs` needs the app's production build in this checkout and c_base built: in `foolish/`, `npm ci` once (its own node_modules: this branch's lockfile is not the main checkout's), then `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8731 npm run build` (the URL is read at build time; `CBASE_PORT` tells the tool another one), `make -j4` in `c_base/`, and `tools/textime.mjs` run once for the harness page.
+It starts c_base on that port as `tests/live_test.mjs` does (throwaway secrets and SQLite, `CBASE_DEV=1`), serves the export on 8733 with the site router's rules, signs a fresh user up on the app's own welcome page, creates a game, adds a bot and presses Ready, then times every load; `PROBE=1` stops after one load of each with screenshots in `out/reacttime_*.png`.
 `build.sh` needs homebrew LLVM (`WASM_CC` overrides it), and uses `wasm-opt` and `brotli` when present.
 The tools serve `foolish/` on port 8720 and drive Chrome on 8729.
 `?notex` on the page leaves the textures out (the golden comparisons use it); `?debug` loads the test build.
@@ -327,6 +330,60 @@ What a player sees is the picture shrunk onto a 50x70 (deck) or 25x35 (mini hand
 `shots/fern_backs*.png` show them side by side.
 The 2.3% at full size: the GPU's rules at the edges of a point's square (which samples a point exactly on a boundary covers, and the precision of positions after the vertex shader) are not documented; four variants did not do better than the plain square, and on another GPU the app's own fern differs from this one in the same way.
 
+### React baseline
+
+The harness page above (`out/ts_tex.html`) runs the app's three texture functions at navigation with nothing else to do.
+The real app must load its bundle and its kernel, restore the session, fetch the game from its server and mount the table before its texture hooks show anything, so `tools/reacttime.mjs` times the real thing in the same rig and throttle.
+The build: this checkout's app (branch cdom-port at 2ceb588e9), `npm ci`, then `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8731 npm run build`: Next.js 16.2.6, the static export `next build` makes for production (`out/`), served with the rules of the site's CloudFront router (c_base/providers/aws/ops/site/web.yaml), without the cross-origin isolation headers, which production turns on only with a flag.
+The server: `c_base/build/cbase serve` on 127.0.0.1:8731, throwaway secrets and SQLite, as `tests/live_test.mjs` starts it.
+The route: a fresh user signed up on the app's welcome page (`/`), a game created on `/dashboard`, a bot added and Ready pressed in its lobby, and then every timed load opens `/<game id>` (the game page, `_shell.html`), the table against the bot, from about:blank, so the app's module-level texture variables start empty each time.
+Its textures do not wait for that page in the app: the fern starts in FernFractalProvider, which ProtectedRoute puts around every signed-in page, the wool is behind the kernel's gate and the loading screen as well, and the wood is on the welcome page, the dashboard and the lobby.
+A player who walks from the dashboard to a table has all three in memory already; these loads are a reload or an opened link, the case where both apps start from nothing but their stores.
+Cold: TextureCacheDB (React) and the port's store emptied before the round, and checked: every React load leaves fern_v1, wood_v2 and wool_v1 kept, and every port load finds its keys as the arm says.
+Times are ms after navigation, set by one MutationObserver installed in every page before its scripts: React's `.bg-wool`, card backs and wood surfaces getting a blob background, the port's `--tex-*` set on its root, and the first hand card in the DOM ("board"); "all decoded" is the three pictures on the table decoded.
+Two sessions on 2026-10-28, 11 rounds each, arms rotating within a round; the fusion run had ended (`pgrep -x cnitro_eval` empty before and after every run), and the load stayed under the 8 cores:
+session 1 x1 6.08 before (top: secd, our Chrome, ctkd, WindowServer), 2.98 after; x4 3.05 before, 2.11 after (our Chrome's GPU helper at 57%); session 2 x1 2.41 and 2.20, x4 2.50 and 2.21.
+The table is session 2; session 1 agreed within 7% on every median below except the harness's cold ones (up to 13%: x1 2,146 against 1,893).
+
+All three decoded, median (25th-75th):
+| | x1 cold | x1 warm | x4 cold | x4 warm |
+| --- | ---: | ---: | ---: | ---: |
+| port | 729 (697-731) | 144 (125-154) | 1,723 (1,694-1,735) | 247 (240-252) |
+| real React app | 2,101 (1,962-2,286) | 248 (227-251) | 6,870 (6,589-8,465) | 477 (448-486) |
+| harness page | 1,893 (1,826-2,206) | 135 (125-136) | 7,788 (6,516-8,092) | 137 (136-138) |
+| port / React | 0.35 | 0.58 | 0.25 | 0.52 |
+| harness / React | 0.90 | 0.54 | 1.13 | 0.29 |
+| session 1: port / React / harness | 705 / 2,171 / 2,146 | 141 / 237 / 136 | 1,713 / 6,782 / 7,223 | 245 / 449 / 137 |
+
+Each texture set, x4:
+| | fcp | board | fern | wood | wool |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| port, warm | 116 (113-120) | 178 (177-183) | 195 (194-200) | 197 (196-203) | 203 (202-209) |
+| React, warm | 292 (292-296) | 399 (394-401) | 398 (394-400) | 399 (394-400) | 210 (207-211) |
+| harness, warm | | | 39 (39-42) | 40 (40-42) | 41 (40-42) |
+| port, cold | 116 (112-118) | 183 (180-184) | 284 (283-288) | 1,688 (1,685-1,705) | 1,035 (1,033-1,043) |
+| React, cold | 1,284 (1,272-1,632) | 1,265 (1,253-1,613) | 6,828 (6,545-8,424) | 6,351 (6,147-7,980) | 1,984 (1,925-2,454) |
+| harness, cold | | | 7,693 (6,421-8,000) | 7,300 (5,986-7,866) | 1,853 (1,690-1,909) |
+At x1: port warm fern, wood, wool 96, 96, 98 and board 90, React 132, 131, 87 and board 131; cold, React's board 358 and first paint 372 against the port's 92 and 68.
+The port's fourth picture, the end screen's wood, is set at 206 (204-211) warm and 2,480 (2,474-2,487) cold at x4 (99 and 962 at x1); it is not on the table and not in "all decoded".
+What each page fetched (served uncompressed and uncached, as `tools/cdp.mjs` serves everything): the port 191 KiB in 14 requests, the React table 1,015 KiB in 28.
+
+Which bar is right: the real app's.
+The harness page is the stricter one, by 3.5 times at x4 warm (137 against 477 ms) and 1.8 times at x1 (135 against 248), because it reads its store at navigation with no app to start; the real app's warm reads wait for its bundle, its kernel, the session and the game's fetch.
+Against the real app the port's warm path is not behind at x4: it has all three decoded at 0.52 of React's time (247 against 477), and at x1 at 0.58.
+Texture by texture the wool is level (203 against 210 at x4, 98 against 87 at x1, where React's is ahead by 11 ms), and the fern and the wood land at half React's time, because React mounts them with its board (both are set within 1 ms of its first hand card), while the port sets them right after its own.
+Cold, the port is 3 to 4 times ahead (0.25 at x4), and React's own texture making also holds up its board: its first hand card is in the DOM at 1,265 ms cold against 399 warm at x4.
+Against the harness page the port is still 1.8 times slower warm at x4 (247 against 137); that gap is the port's start-up before it asks its store (Numbers, below), which the real app has too, and more of.
+
+What makes the comparison unfair, and which way:
+- CPU throttling slows a page's main thread, not its workers: React's wool weaves on a worker, so its cold wool is 2 times slower at x4, not 4 (1,984 against 1,005), while the port's wool is made on the page's thread; this flatters React's cold wool.
+- The work differs cold: React makes its pictures whole (3840x2160, 1920x1080, 1000x1400), the port only what shows; this is the port's design, not the rig.
+- React's table needs its server: the session's restore and the game's fetch go to a local c_base over loopback; the port's game is in its own store.
+  In production the server is farther and React's warm path would be slower still.
+- Both are served with no-store and no compression; production caches and compresses React's 1 MiB of scripts, which would shorten its start (and its warm path) on a repeat visit.
+- The port's page is served cross-origin isolated (COOP and COEP, as `tools/textime.mjs` serves it), the React app is not.
+- The bot moves on React's table during a load when it is its turn (the server's pace); the port's table is the port's own game, with its bot's pace.
+
 ## Network
 
 cdom's network imports were made fit for live play in cdom (port-fixes 9501d6f, PERF_LOG.md "Port fixes"), each with a unit case and a mutant there:
@@ -423,7 +480,7 @@ Wasm memory: 3.3 MiB after a warm load, which takes no block; 11.8 MiB after a c
 The generators alone (`tools/texparity.mjs`, x1): the app's paintWool 686 ms and its JPEG 110, generateWoodPixelData 1,713 (1,834 with its WebGL draw and PNG), generateFernPoints 329 (721 with its WebGL draw and PNG); the C's full 4K wool 424 and its crop 105, the C's wood in the six test rectangles 174 (its full tile, still exact, 4,038), the fern at 1000x1400 228 and at 200x280 9.
 At x4 (`CPU=4`, measured while the load average climbed to 12 on 8 cores, so upper bounds): paintWool 2,819 and its JPEG 404, generateWoodPixelData 7,073 (6,994 with WebGL and PNG), generateFernPoints 1,302 (2,135 with WebGL and PNG); the C's crop 438, its six wood rectangles 702, the fern at 200x280 37 and 400x560 148.
 The app's warm read in the same harness (textureCache.ts getCachedTexture, each opening TextureCacheDB): fern 5.5 ms, wood 1.0, wool 0.9 at x4.
-No React figure is given: the real app's numbers need its server and bundle, which this PoC does not run.
+The real app, with its server and bundle, is measured under React baseline (Textures).
 
 Warm loads after the store is asked at start (the follow-up; `tools/textime.mjs` now waits for the store's answer for the game, as the board does, rather than the human's turn).
 Measured under heavy load: load average 29 to 73 on 8 cores around the runs (another agent's `cnitro_eval` processes at 65 to 83% of a core each), above the core count, so every absolute here is an upper bound; the arms ran interleaved under the same load, and the ratios and the first paint within a session are the results.
