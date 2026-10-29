@@ -34,26 +34,19 @@ public enum BotNames {
         return s == lookup ? key.capitalized : s
     }
 
-    /// The offline difficulty ladder: 7 tiers, weakest → strongest, each a world
-    /// city on the road to Moscow (owner decision 2026-07-16). The picker shows
-    /// exactly these; the 3 intermediate strategies (simple_heuristic, espresso,
-    /// gunpowder) are not surfaced. Values are strategy keys (EngineC.roster()).
-    public static let ladder: [String] = [
-        "random",       // Miami
-        "handwritten",  // New York
-        "robusta",      // Seoul
-        "firecracker",  // Madrid
-        "blackpowder",  // Vienna
-        "cordite",      // St. Petersburg
-        "octogen",      // Moscow
-    ]
+    /// The offline difficulty ladder, weakest → strongest: the rungs with a
+    /// world city on the road to Moscow (owner decision 2026-07-16), as strategy
+    /// keys (EngineC.roster()). The kernel's registry says which rungs those are
+    /// and in what order (c/src/bots.c, `city` and `tier`); `BotRegistry` is
+    /// generated from it (tools/structgen/gen.sh).
+    public static let ladder: [String] = rungs.map(\.key)
 
-    /// Air distance to the Kremlin per rung. Drives the picker flavor line;
-    /// strictly monotonic so it doubles as the strength order.
-    private static let km: [String: Int] = [
-        "random": 9_600, "handwritten": 7_500, "robusta": 6_600,
-        "firecracker": 3_440, "blackpowder": 1_660, "cordite": 635, "octogen": 0,
-    ]
+    /// The rungs with a city, in tier order.
+    private static let rungs = BotRegistry.filter { !$0.city.isEmpty }.sorted { $0.tier < $1.tier }
+
+    /// Air distance to the Kremlin per rung (the registry's `km`). Drives the
+    /// picker flavor line; strictly monotonic so it doubles as the strength order.
+    private static let km = Dictionary(uniqueKeysWithValues: rungs.map { ($0.key, $0.km) })
 
     /// Localized picker caption — "1,420 km from Moscow", or "The Kremlin
     /// itself" for Moscow. `nil` for keys with no rung (humans, unknowns).

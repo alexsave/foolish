@@ -6,45 +6,49 @@
 // order foolish's bot_seed.c happens to INSERT, backwards - the picker opened on Moscow 7
 // and walked out through the families in reverse.
 //
-// TWO SOURCES MEET HERE and neither is restated in TypeScript: the rows come
-// from foolish's bot_seed.c (where the nickname IS the city - there is no display map) and
-// the strength order from `tier` in c/src/bot_roster.c. The comparator the lobby
-// uses (src/common/botLadder.ts) is handed the tiers, so this drives the real one
+// ONE SOURCE MEETS THE COMPARATOR HERE and nothing is restated in TypeScript:
+// the rows and the strength order both come from the kernel's bot registry
+// (c/src/bots.c), read through datagen (sdk/ts/gen/bot_registry.ts). A seeded
+// row's server accounts are "%<city> 1".."%<city> 7" (foolish/server/src/store/
+// bot_seed.c, where the nickname IS the city - there is no display map), and
+// its `tier` is the strength order. The comparator the lobby uses
+// (src/common/botLadder.ts) is handed the tiers, so this drives the real one
 // over the real data rather than a fixture that could agree with a bug.
 //
 // Pure test - no Postgres, no network, no compiler, no wasm.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve, join } from 'node:path';
 import { sortBotsByLadder, instanceOf } from '../../src/common/botLadder.ts';
 import { botDisplayName } from '../../src/common/botName.ts';
+import { BotRegistry as Rows } from '../../sdk/ts/gen/bot_registry.ts';
 
-const REPO = resolve(import.meta.dirname, '../..');
-const read = (p: string) => readFileSync(join(REPO, p), 'utf8');
+// The registry's rows as the C reads them: a field a row leaves out (a research
+// brain has no key, an unseeded bot no city) is its zero value.
+const BotRegistry = Rows.map((r) => ({
+    name: r.name, key: r.key ?? '', knobs: r.knobs ?? '', uses_logs: r.uses_logs ?? 0, seeded: r.seeded ?? 0,
+    offline: r.offline ?? 0, tier: r.tier ?? 0, city: r.city ?? '',
+}));
 
-/** strategy key -> tier, read as text from the C table. */
+// A seeded bot's accounts per rung: BOT_IDS_MAX in c/src/bots.h, which
+// tests.c holds every seeded row to.
+const ACCOUNTS = 7;
+
+/** strategy key -> tier, from the registry. */
 function tiers(): Map<string, number> {
-    const src = read('c/src/bot_roster.c');
-    const body = src.slice(src.indexOf('static const BotRosterEntry ROSTER[]'));
-    const rows = body.slice(0, body.indexOf('};')).replace(/\/\/[^\n]*/g, '');
     const out = new Map<string, number>();
-    const ROW = /\{\s*"([^"]+)"\s*,\s*STRAT_\w+\s*,\s*((?:"[^"]*"|\w+|\s)+?)\s*,\s*\d\s*,\s*\d\s*,\s*\d\s*,\s*(\d+)\s*\}/g;
-    for (const m of rows.matchAll(ROW)) out.set(m[1], Number(m[3]));
-    assert.ok(out.size >= 10, `parsed only ${out.size} roster rows - parser drifted?`);
+    for (const r of BotRegistry) if (r.key) out.set(r.key, r.tier);
+    assert.ok(out.size >= 10, `read only ${out.size} named bots - the generated table drifted?`);
     return out;
 }
 
-/** The rows foolish's bot_seed.c inserts, as the site stores them. */
+/** The rows the server seeds, as the site stores them. */
 function seededRows(): { nickname: string; strategy_key: string }[] {
-    const src = read('server/src/store/bot_seed.c').replace(/\/\/[^\n]*/g, '');
-    const at = src.indexOf('CB_BOT_SEED[] = {');
-    const stmt = src.slice(at, src.indexOf('};', at));
     const out: { nickname: string; strategy_key: string }[] = [];
-    for (const m of stmt.matchAll(/\{\s*"[^"]*"\s*,\s*"%([^"]*)"\s*,\s*"([^"]+)"\s*\}/g)) {
-        out.push({ nickname: `%${m[1]}`, strategy_key: m[2] });
+    for (const r of BotRegistry) {
+        if (r.seeded !== 1) continue;
+        for (let n = 1; n <= ACCOUNTS; n++) out.push({ nickname: `%${r.city} ${n}`, strategy_key: r.key });
     }
-    assert.ok(out.length >= 20, `parsed only ${out.length} seeded rows - parser drifted?`);
+    assert.ok(out.length >= 20, `read only ${out.length} seeded rows - the generated table drifted?`);
     return out;
 }
 

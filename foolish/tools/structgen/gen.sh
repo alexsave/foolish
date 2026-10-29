@@ -463,6 +463,23 @@ dgc() { "$DG" --cwd "$root/c" --flags "$BOTS" --header cardtext/card_text.h "$@"
 dgc --table CARD_RANK_LABEL --require-complete --name CardRankLabel --ts "$prod/card_rank.ts"
 dgc --table CARD_SUIT_FACE  --require-complete --name CardSuitFace  --ts "$prod/card_suit.ts"
 
+# ---- the bot registry (c/src/bots.c, through datagen) ----------------------------
+#
+# One row per brain, indexed by its STRAT_* id: its names, the named bot's
+# flags and tier, its city and its distance to the Kremlin. A row also holds the
+# bot accounts' ids, an array no literal cell can say, so --columns reads only
+# the fields a host needs and never evaluates the rest.
+#
+# The phone app's picker ladder and its km caption (ios/FoolishApp/PhoneOnly/
+# BotNames.swift) read the Swift module. It is written to gen/phone/, which only
+# the app target compiles (ios/project.yml): FoolishKit ships inside the iMessage
+# app, where no bot ladder belongs. The TS module is what the e2e roster tests
+# read the source's rows from, instead of parsing C as text.
+mkdir -p "$swift/phone"
+dgb() { "$DG" --cwd "$root/c" --flags "$BOTS" --header src/bots.c --table BOTS --name BotRegistry "$@"; }
+dgb --columns key,tier,city,km --swift "$swift/phone/BotRegistry.swift"
+dgb --columns name,key,knobs,uses_logs,seeded,offline,tier,city,km --ts "$prod/bot_registry.ts"
+
 # Genericity fixtures (test/verify.test.ts).
 "$SG" --cwd "$sg/test" --header kinds.h --root Kinds --build wasm= --const K_ --const KFLAG_ --ts "$fixtures/kinds.ts"
 "$SG" --cwd "$sg/test" --header snap.h --root Snap --root SPtr --build wasm= --snapshot Snap --snapshot SPtr --snapshot-only \
