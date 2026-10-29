@@ -989,10 +989,12 @@ static int sim_gen_regular_attack(const SimState *s, int p, SolMove *buf, int ma
     return n;
 }
 
-// Pass moves: all same-value k-subsets of matching cards, capped by the
-// next player's capacity (next_cards >= k + num_battles). Mirrors
-// calc_pass_moves (all battles uncovered, all same value).
-static int sim_gen_pass(const SimState *s, int p, SolMove *buf, int max_n) {
+// The defender's transfer pool: the cards seat p may pass with, and in *kmax
+// the widest pass the next seat can take (next_cards >= k + num_battles), or 0
+// when no pass is open. Mirrors calc_pass_moves' gates (all battles uncovered,
+// all the same value, the podkidnoy rule). sim_gen_pass enumerates the pool's
+// subsets; the rollout noise (sim_noise_fams) counts them.
+static uint64_t sim_pass_pool(const SimState *s, int p, int *kmax) {
     if (s->rules & GAME_RULE_NO_PASS) return 0;   // podkidnoy: no transfer
     if (s->num_battles == 0) return 0;
     if (s->covered_mask) return 0;
@@ -1002,8 +1004,17 @@ static int sim_gen_pass(const SimState *s, int p, SolMove *buf, int max_n) {
     uint64_t matching = s->hand[p] & VALUE_MASK[v0];
     if (!matching) return 0;
     int next = sim_next_player(s, s->defender);
-    int kmax = sim_hand_count(s, next) - s->num_battles;
-    if (kmax < 1) return 0;
+    *kmax = sim_hand_count(s, next) - s->num_battles;
+    return *kmax < 1 ? 0 : matching;
+}
+
+// Pass moves: all same-value k-subsets of matching cards, capped by the
+// next player's capacity (next_cards >= k + num_battles). Mirrors
+// calc_pass_moves (all battles uncovered, all same value).
+static int sim_gen_pass(const SimState *s, int p, SolMove *buf, int max_n) {
+    int kmax = 0;
+    uint64_t matching = sim_pass_pool(s, p, &kmax);
+    if (!matching) return 0;
     int n = 0;
     enum_subsets(matching, 1, kmax, buf, &n, max_n, MV_PASS);
     return n;
@@ -1348,6 +1359,7 @@ int cd_sim_one_step(SimState *s) {
 #ifdef CD_ROLLOUT_NOISE
 
 static _Thread_local int  cd_noise_pm = 0;
+static _Thread_local int  cd_noise_mode = CD_NOISE_SENSIBLE;
 static _Thread_local long cd_noise_drawn = 0;
 static _Thread_local long cd_noise_fired = 0;
 static _Thread_local long cd_noise_unmatched = 0;
@@ -1356,6 +1368,10 @@ void cd_sim_set_noise(int per_mille) {
     cd_noise_pm = per_mille < 0 ? 0 : per_mille > 1000 ? 1000 : per_mille;
 }
 int cd_sim_noise(void) { return cd_noise_pm; }
+void cd_sim_set_noise_mode(int mode) {
+    cd_noise_mode = mode == CD_NOISE_ANY ? CD_NOISE_ANY : CD_NOISE_SENSIBLE;
+}
+int cd_sim_noise_mode(void) { return cd_noise_mode; }
 CdNoiseStats cd_sim_noise_stats(void) {
     CdNoiseStats st = { cd_noise_drawn, cd_noise_fired, cd_noise_unmatched };
     return st;
@@ -1485,64 +1501,202 @@ static int sim_noise_cands(const SimState *s, int p, NoiseCand *c) {
     return n;
 }
 
+// ---- CD_NOISE_ANY: uniform over the seat's whole rollout menu ----------
+//
+// "Actual random", against the sensible set above: every move the seat's
+// calculate_legal_moves_lite menu holds, each as likely as any other. That menu
+// is what every rollout deliberates over and the only one the struct rollout
+// can play from, so its covers are the one greedy full cover; every attack,
+// throw-in and pass is there, each capped at MAX_MOVE_CARDS and at the receiving
+// seat's capacity exactly as the lite enumerator caps them.
+//
+// The menu is counted, not built: a thrower holding a dozen table-valued cards
+// has thousands of throw-ins, so it is a few families of subsets, and the pick
+// is one index into their total, unranked into its move. One family is either
+// a single move (the greedy cover, the pickup, good: kmax 0) or every subset of
+// `pool` of 1..kmax cards: a leader's one value group, a defender's matching
+// cards to pass with (sim_pass_pool, the solver's own pass gates), a thrower's
+// table-valued cards. The leader's groups and the defender's pool are one value
+// each, so they hold at most four cards; a thrower's pool mixes values.
+typedef struct { uint8_t type; int kmax; uint64_t pool; } NoiseFam;
+#define NOISE_MAX_FAMS 16   // a leader's 13 value groups is the most
+
+static void noise_fam(NoiseFam *f, int *n, uint8_t type, uint64_t pool, int kmax) {
+    if (kmax > MAX_MOVE_CARDS) kmax = MAX_MOVE_CARDS;
+    if (type != MV_COVER && type != MV_PICKUP && type != MV_GOOD && (!pool || kmax < 1)) return;
+    f[*n].type = type;
+    f[*n].pool = pool;
+    f[*n].kmax = kmax;
+    (*n)++;
+}
+
+// Seat p's menu as families, branch for branch calc_moves' (legal.c) and
+// sim_noise_cands' own guards.
+static int sim_noise_fams(const SimState *s, int p, NoiseFam *f) {
+    int n = 0;
+    if (s->status != GAME_STATUS_PLAYING || !(s->in_mask >> p & 1u)) return 0;
+    if (s->num_battles == 0) {
+        if (p != s->first_attacker) return 0;
+        int cap = sim_hand_count(s, s->defender);
+        for (int v = 1; v <= 13; v++)
+            noise_fam(f, &n, MV_ATTACK, s->hand[p] & VALUE_MASK[v], cap);
+        return n;
+    }
+    if (p == s->defender) {
+        if (sim_all_covered(s)) return 0;
+        SimMove cm;
+        if (sim_greedy_full_cover(s, p, s->power_suit, &cm)) noise_fam(f, &n, MV_COVER, 0, 0);
+        noise_fam(f, &n, MV_PICKUP, 0, 0);
+        int kmax = 0;
+        uint64_t pool = sim_pass_pool(s, p, &kmax);
+        noise_fam(f, &n, MV_PASS, pool, kmax);
+        return n;
+    }
+    if (s->good_mask & (1u << p)) return 0;
+    noise_fam(f, &n, MV_GOOD, 0, 0);
+    noise_fam(f, &n, MV_ATTACK, s->hand[p] & sim_table_value_mask(s),
+              sim_hand_count(s, s->defender) - sim_count_uncovered(s));
+    return n;
+}
+
+static uint64_t noise_choose(int n, int k) {   // C(n, k); n <= 52 and k <= 8 here
+    if (k < 0 || k > n) return 0;
+    uint64_t c = 1;
+    for (int i = 0; i < k; i++) c = c * (uint64_t)(n - i) / (uint64_t)(i + 1);
+    return c;
+}
+
+// How many moves family f holds: 1 for a single move, else the subsets of
+// 1..kmax of its pool's cards.
+static uint64_t noise_fam_size(const NoiseFam *f) {
+    if (f->kmax == 0) return 1;
+    int m = popcnt64(f->pool);
+    uint64_t t = 0;
+    for (int k = 1; k <= f->kmax && k <= m; k++) t += noise_choose(m, k);
+    return t;
+}
+
+// Move r (0-based) of family f: the subsets in order of size, and within a
+// size in lexicographic order of card id (the combinatorial number system).
+static NoiseCand noise_fam_move(const NoiseFam *f, uint64_t r) {
+    NoiseCand c = { f->type, 0 };
+    if (f->kmax == 0) return c;
+    int ids[64], m = 0;
+    for (uint64_t h = f->pool; h; h &= h - 1) ids[m++] = ctz64(h);
+    int k = 1;
+    for (; k < f->kmax && k < m; k++) {
+        uint64_t ck = noise_choose(m, k);
+        if (r < ck) break;
+        r -= ck;
+    }
+    for (int j = 0; j < m && k > 0; j++) {
+        uint64_t with = noise_choose(m - j - 1, k - 1);   // the subsets that take ids[j]
+        if (r < with) { c.mask |= 1ull << ids[j]; k--; }
+        else r -= with;
+    }
+    return c;
+}
+
+// The menu's size, and move r of it, family after family.
+static uint64_t noise_menu_size(const NoiseFam *f, int nf) {
+    uint64_t t = 0;
+    for (int i = 0; i < nf; i++) t += noise_fam_size(&f[i]);
+    return t;
+}
+static NoiseCand noise_menu_move(const NoiseFam *f, int nf, uint64_t r) {
+    for (int i = 0; i < nf; i++) {
+        uint64_t sz = noise_fam_size(&f[i]);
+        if (r < sz) return noise_fam_move(&f[i], r);
+        r -= sz;
+    }
+    NoiseCand none = { MV_GOOD, 0 };   // unreachable: r < the menu's size
+    return none;
+}
+
+// A uniform index below n from one game_random(), clamped against rounding.
+static uint64_t noise_index(uint64_t n) {
+    uint64_t k = (uint64_t)(game_random() * (double)n);
+    return k >= n ? n - 1 : k;
+}
+
 // The two draws, shared by both rollout paths so they stay on one stream: the
 // gate (one game_random() per decision while noise is on), then, only when it
-// fires and a candidate exists, the uniform pick. Returns the candidate's
-// index in c[], or -1 for "play the policy". Callers check cd_noise_pm first:
-// at 0 this is never reached and nothing is drawn.
-static int sim_noise_draw(const SimState *s, int p, NoiseCand *c) {
+// fires and the mode's menu is not empty, the uniform pick. 1 with the move in
+// *out, or 0 for "play the policy". Callers check cd_noise_pm first: at 0 this
+// is never reached and nothing is drawn.
+static int sim_noise_draw(const SimState *s, int p, NoiseCand *out) {
     cd_noise_drawn++;
-    if (game_random() * 1000.0 >= (double)cd_noise_pm) return -1;
+    if (game_random() * 1000.0 >= (double)cd_noise_pm) return 0;
+    if (cd_noise_mode == CD_NOISE_ANY) {
+        NoiseFam f[NOISE_MAX_FAMS];
+        int nf = sim_noise_fams(s, p, f);
+        uint64_t n = noise_menu_size(f, nf);
+        if (!n) return 0;
+        *out = noise_menu_move(f, nf, noise_index(n));
+        return 1;
+    }
+    NoiseCand c[NOISE_MAX_CANDS];
     int n = sim_noise_cands(s, p, c);
-    if (n <= 0) return -1;
-    int k = (int)(game_random() * n);
-    if (k < 0) k = 0;
-    if (k >= n) k = n - 1;
-    return k;
+    if (n <= 0) return 0;
+    *out = c[noise_index((uint64_t)n)];
+    return 1;
+}
+
+// A candidate as the move it plays: a cover is the greedy full cover, rebuilt
+// from the state (deterministic, so it is the move that was counted); every
+// other kind is its card set. 0 only for a cover that cannot be built, which
+// cannot happen: it was only listed when it could.
+static int noise_as_move(const SimState *s, int p, NoiseCand c, SimMove *out) {
+    out->type = (SimMoveType)c.type;
+    out->n = 0;
+    if (c.type == MV_COVER) return sim_greedy_full_cover(s, p, s->power_suit, out);
+    for (uint64_t m = c.mask; m; m &= m - 1) out->cards[out->n++] = (uint8_t)ctz64(m);
+    return 1;
 }
 
 // Bitboard path: 1 with `out` filled when the noise takes this decision, 0 to
 // play the policy.
 static int sim_noise_move(SimState *s, int p, SimMove *out) {
-    NoiseCand c[NOISE_MAX_CANDS];
-    int k = sim_noise_draw(s, p, c);
-    if (k < 0) return 0;
-    out->type = (SimMoveType)c[k].type;
-    out->n = 0;
-    if (c[k].type == MV_COVER) {
-        if (!sim_greedy_full_cover(s, p, s->power_suit, out)) return 0;   // cannot happen: it was a candidate
-    } else {
-        for (uint64_t m = c[k].mask; m; m &= m - 1) out->cards[out->n++] = (uint8_t)ctz64(m);
-    }
+    NoiseCand c;
+    if (!sim_noise_draw(s, p, &c) || !noise_as_move(s, p, c, out)) return 0;
     cd_noise_fired++;
     return 1;
 }
 
+static int8_t noise_kind(uint8_t type) {
+    switch (type) {
+        case MV_ATTACK: return MOVE_ATTACK;
+        case MV_COVER:  return MOVE_COVER;
+        case MV_PASS:   return MOVE_PASS;
+        case MV_PICKUP: return MOVE_PICKUP;
+        default:        return MOVE_GOOD;
+    }
+}
+
+// A candidate's cards as an id mask; a cover's are the greedy cover's.
+static uint64_t noise_mask(const SimState *s, int p, NoiseCand c) {
+    if (c.type != MV_COVER) return c.mask;
+    SimMove cm;
+    uint64_t mask = 0;
+    if (sim_greedy_full_cover(s, p, s->power_suit, &cm))
+        for (int i = 0; i < cm.n; i++) mask |= 1ull << cm.cards[i];
+    return mask;
+}
+
+// The struct path draws on the SimState its world converts to, with the same
+// draw as the bitboard path, so both paths pick the same move from the same
+// stream whatever the mode; the move is then found on the seat's lite menu by
+// kind and card set (the lite menu's one cover is the greedy,
+// calc_cover_moves_greedy, the struct twin of sim_greedy_full_cover). Neither
+// mode's menu needs the lite menu's order: the pick is made on the SimState.
 int cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves) {
     if (!cd_noise_pm) return -1;   // off: draw nothing (see cordite_sim.h)
     SimState s;
     cd_sim_from_game(&s, g);
-    NoiseCand c[NOISE_MAX_CANDS];
-    int k = sim_noise_draw(&s, p, c);
-    if (k < 0) return -1;
-    int want;
-    switch (c[k].type) {
-        case MV_ATTACK: want = MOVE_ATTACK; break;
-        case MV_COVER:  want = MOVE_COVER;  break;
-        case MV_PASS:   want = MOVE_PASS;   break;
-        case MV_PICKUP: want = MOVE_PICKUP; break;
-        default:        want = MOVE_GOOD;   break;
-    }
-    // A cover is matched by its cards: the lite menu's one cover is the
-    // greedy (calc_cover_moves_greedy, the struct twin of
-    // sim_greedy_full_cover), so its card set is the candidate's.
-    uint64_t mask = c[k].mask;
-    if (c[k].type == MV_COVER) {
-        SimMove cm;
-        mask = 0;
-        if (sim_greedy_full_cover(&s, p, s.power_suit, &cm))
-            for (int i = 0; i < cm.n; i++) mask |= 1ull << cm.cards[i];
-    }
+    NoiseCand c;
+    if (!sim_noise_draw(&s, p, &c)) return -1;
+    const int8_t want = noise_kind(c.type);
+    const uint64_t mask = noise_mask(&s, p, c);
     for (int i = 0; i < moves->n; i++) {
         const LegalMove *m = &moves->moves[i];
         if (m->type != want) continue;
@@ -1554,6 +1708,43 @@ int cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves) {
     }
     cd_noise_unmatched++;
     return -1;
+}
+
+int cd_sim_noise_menu(const Game *g, int p, int mode,
+                      int8_t *kind, uint64_t *mask, int cap) {
+    SimState s;
+    cd_sim_from_game(&s, g);
+    if (mode == CD_NOISE_ANY) {
+        NoiseFam f[NOISE_MAX_FAMS];
+        int nf = sim_noise_fams(&s, p, f);
+        uint64_t n = noise_menu_size(f, nf);
+        for (uint64_t i = 0; i < n && i < (uint64_t)cap; i++) {
+            NoiseCand c = noise_menu_move(f, nf, i);
+            kind[i] = noise_kind(c.type);
+            mask[i] = noise_mask(&s, p, c);
+        }
+        return n > 0x7fffffff ? 0x7fffffff : (int)n;
+    }
+    NoiseCand c[NOISE_MAX_CANDS];
+    int n = sim_noise_cands(&s, p, c);
+    for (int i = 0; i < n && i < cap; i++) {
+        kind[i] = noise_kind(c[i].type);
+        mask[i] = noise_mask(&s, p, c[i]);
+    }
+    return n;
+}
+
+int cd_sim_noise_pick(const Game *g, int p, int8_t *kind, uint64_t *mask) {
+    if (!cd_noise_pm) return 0;
+    SimState s;
+    cd_sim_from_game(&s, g);
+    SimMove out;
+    if (!sim_noise_move(&s, p, &out)) return 0;
+    uint64_t m = 0;
+    for (int i = 0; i < out.n; i++) m |= 1ull << out.cards[i];
+    *kind = noise_kind((uint8_t)out.type);
+    *mask = m;
+    return 1;
 }
 
 #endif  // CD_ROLLOUT_NOISE
