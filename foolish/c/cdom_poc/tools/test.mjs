@@ -138,6 +138,12 @@ try {
   await check('the textures land after the first paint, through the var()s, and the backs turn black under the fern', async () => {
     // Cold: the store emptied first (the delete waits for this page's connection to close).
     await b.evaluate(`indexedDB.deleteDatabase('cdom'), 1`);
+    // Every change to the mount's style, seen as it happens (installed before the page's scripts):
+    // the backs' black and the fern must come together, or the backs show a frame of black.
+    const { identifier } = await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.fernSeen = [];
+      new MutationObserver(() => { const r = document.getElementById('root'); if (!r) return;
+        window.fernSeen.push([r.style.getPropertyValue('--tex-fern') !== '', r.style.getPropertyValue('--tex-fern-bg') !== '']); })
+        .observe(document, { attributes: true, attributeFilter: ['style'], subtree: true });` });
     await b.goto('http://127.0.0.1:8720/c/cdom_poc/out/index.html');
     await b.until('window.appReady');
     const vars = () => b.evaluate(`['--tex-fern', '--tex-wood', '--tex-wool', '--tex-wood-end', '--tex-fern-bg'].map((v) => document.getElementById('root').style.getPropertyValue(v).slice(0, 9))`);
@@ -145,6 +151,10 @@ try {
     await b.until(`window.app.then((x) => x.app_tex_ms(x.app_tex_count()) === x.app_tex_count())`, 60000);
     await b.until(`document.getElementById('root').style.getPropertyValue('--tex-wool') !== ''`, 10000);
     assert.deepEqual(await vars(), ['url(blob:', 'url(blob:', 'url(blob:', 'url(blob:', '#000000'], 'every texture set on the mount');
+    const fernSeen = await b.evaluate('window.fernSeen');
+    await b.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+    assert.ok(fernSeen.length && fernSeen.every(([fern, black]) => fern === black),
+      `the backs' black lands with the fern, never before it: ${JSON.stringify(fernSeen.filter(([f, k]) => f !== k).slice(0, 3))}`);
     const look = await b.evaluate(`(() => { const cs = (e) => getComputedStyle(e);
       return [cs(document.querySelector('[data-location="deck"] > div > div')).backgroundImage.slice(0, 9),
         cs(document.querySelector('[data-location="deck"] > div > div')).backgroundColor,
@@ -605,6 +615,13 @@ try {
     await idle();
     assert.deepEqual(await battles(), ['1-5/1-7', '3-5', '0-5'], 'A attacked with the six');
     assert.deepEqual(await reds(), [], 'and spent the selection');
+      // board 3 (all covered): G says Good, and its pill goes with the key, not when the run lands
+    await board(3);
+    assert.deepEqual(await pills(), ['Good']);
+    await key(b, 'g');
+    assert.deepEqual(await pills(), [], 'G takes the Good pill down at once, as its click does');
+    await idle();
+    assert.deepEqual(await pills(), [], 'and it stays down');
   });
 
   await check('arrows: the cursor sits under its card as React draws it, Shift toggles, Meta+Right moves the card, and the hidden state says so', async () => {
@@ -626,7 +643,19 @@ try {
     assert.deepEqual(await reds(), ['1-6'], 'Shift toggles the card under the cursor');
     await key(b, 'ArrowRight', { shift: true });
     assert.deepEqual(await reds(), ['1-6', '3-11'], 'Shift+Right sweeps on and toggles');
+    // the card slides to its new place for 0.1 s: the underline follows it every frame, as React's
+    // per-frame poll of the card's box does (read in a task after each frame's callbacks)
+    await b.evaluate(`(() => { window.follow = []; const t0 = performance.now();
+      const look = () => { const c = document.querySelector('[data-hand-plane] [data-card="3-11"]').getBoundingClientRect();
+        const u = [...document.querySelectorAll('[data-game-container] > div')].find((e) => e.style.zIndex === '1500');
+        window.follow.push([Math.round(performance.now() - t0), +(parseFloat(u.style.left) - (c.x + 0.15 * c.width)).toFixed(2), +c.x.toFixed(1)]); };
+      const frame = () => { setTimeout(look, 0); if (performance.now() - t0 < 300) requestAnimationFrame(frame); };
+      requestAnimationFrame(frame); })()`);
     await key(b, 'ArrowLeft', { meta: true });
+    await new Promise((r) => setTimeout(r, 400));
+    const follow = await b.evaluate('window.follow');
+    assert.ok(new Set(follow.map((f) => f[2])).size > 2, `the card slid over several frames: ${JSON.stringify(follow)}`);
+    assert.ok(follow.every((f) => Math.abs(f[1]) < 0.5), `the underline under the sliding card every frame: ${JSON.stringify(follow.filter((f) => Math.abs(f[1]) >= 0.5))}`);
     assert.deepEqual(await hand(), ['0-5', '3-11', '1-6', '3-13'], 'Meta+Left moved the card under the cursor');
     assert.deepEqual(await st(), ['cards', '3-11', ''], 'and the cursor with it');
     assert.deepEqual((await kernel(b)).hand, ['0-5', '3-11', '1-6', '3-13'], 'kept in the game');

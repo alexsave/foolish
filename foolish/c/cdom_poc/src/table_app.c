@@ -1109,6 +1109,7 @@ static void face_draw(SeatUI *u, int mark) {
 #define ROLE_FLIP_COLLAPSE_MS (ROLE_FLIP_HALF_MS - ROLE_FLIP_SETTLE_MS > 10 ? ROLE_FLIP_HALF_MS - ROLE_FLIP_SETTLE_MS : 10)
 #define ROLE_EDGE_ON 0.001
 enum { RAF_COIN = 4 };
+static void kb_poll_start(void); /* the keyboard's cursor and arrow, polled after a draw */
 static int coins_turning;
 
 /* A seat's coin turns from one face to another (MARK_NONE: a half flip), the old face held for
@@ -1795,6 +1796,7 @@ static void render_board(void) {
   render_end();
   render_drag();
   render_keys();
+  kb_poll_start();
   cd_str turn = V->status == GAME_STATUS_GAME_OVER ? ZS("over") : bot_pending ? ZS("bot") : ZS("human");
   if (turn != turn_shown) cd_set_attr(container, ZS("data-turn"), turn_shown = turn);
   flights_update();
@@ -2265,6 +2267,12 @@ static void kb_take_or_good(void) {
 
 enum { KEY_SHIFT = 16, KEY_LEFT = 37, KEY_UP = 38, KEY_RIGHT = 39, KEY_DOWN = 40 };
 
+/* A letter's move: its pill pressed until the move is refused. */
+static void letter_fire(uint32_t bit, int kind, const Card *cards, int n, const Card *attacks) {
+  pressed |= bit;
+  if (!play(kind, cards, n, attacks)) pressed &= ~bit;
+}
+
 /* KeyboardInputHandler: the letters and numbers. */
 static void kb_letters(const cd_event_rec *e) {
   if (e->mods & (CD_MOD_CTRL | CD_MOD_ALT | CD_MOD_META)) return;
@@ -2280,25 +2288,28 @@ static void kb_letters(const cd_event_rec *e) {
   Card cards[MAX_MOVE_CARDS];
   int n = nsel;
   for (int i = 0; i < n; i++) cards[i] = card_of_id(sel[i]);
+  /* A letter's move presses its pill as the pill's click and the arrows' Up do (React's letters do
+   * not, and their pill stays up until the server's board comes: here that was the run's 500 ms,
+   * the Good pill standing beside the check it had already turned). */
   if ((ch == ' ' || ch == 'a') && !defending) {
     cd_prevent_default();
-    if (pills & PLAY_PILL_ATTACK) { nsel = 0; play(AWIRE_ATTACK, cards, n, 0); }
+    if (pills & PLAY_PILL_ATTACK) { nsel = 0; letter_fire(PLAY_PILL_ATTACK, AWIRE_ATTACK, cards, n, 0); }
   } else if ((ch == ' ' || ch == 'c') && defending) {
     cd_prevent_default();
     ClientPlay p;
     if (nsel && ask_play(CLIENT_PLAY_COVER_BUTTON, &p) == CLIENT_OK && p.move_type == MOVE_COVER) {
       nsel = 0;
-      play(AWIRE_COVER, p.cards, p.n_cards, p.attack_cards);
+      letter_fire(PLAY_PILL_COVER, AWIRE_COVER, p.cards, p.n_cards, p.attack_cards);
     }
   } else if (ch == 'g') {
     cd_prevent_default();
-    if (pills & PLAY_PILL_GOOD) play(AWIRE_GOOD, 0, 0, 0);
+    if (pills & PLAY_PILL_GOOD) letter_fire(PLAY_PILL_GOOD, AWIRE_GOOD, 0, 0, 0);
   } else if (ch == 'p') {
     cd_prevent_default();
-    if (pills & PLAY_PILL_PASS) { nsel = 0; play(AWIRE_PASS, cards, n, 0); }
+    if (pills & PLAY_PILL_PASS) { nsel = 0; letter_fire(PLAY_PILL_PASS, AWIRE_PASS, cards, n, 0); }
   } else if (ch == 'u') {
     cd_prevent_default();
-    if (pills & PLAY_PILL_PICKUP) play(AWIRE_PICKUP, 0, 0, 0);
+    if (pills & PLAY_PILL_PICKUP) letter_fire(PLAY_PILL_PICKUP, AWIRE_PICKUP, 0, 0, 0);
   }
 }
 
@@ -2383,6 +2394,23 @@ static void kb_arrows(const cd_event_rec *e) {
   }
 }
 
+/* The cursor's and the arrow's boxes polled every frame after a draw, as React's are, until they
+ * have stood still KB_STILL_FRAMES frames (a slide or a glide may start 25 ms late). */
+enum { RAF_KBD = 5, KB_STILL_FRAMES = 4 };
+static int kb_polling, kb_still, kb_moved; /* kb_moved: the last render_keys moved the cursor or the arrow */
+static void render_keys(void);
+static void kb_poll_start(void) {
+  kb_still = 0;
+  if (!kb_polling && KB.sel >= 0) { kb_polling = 1; cd_raf_request(RAF_KBD); }
+}
+static void kb_poll_frame(void) {
+  kb_polling = 0;
+  kb_moved = 0;
+  render_keys();
+  kb_still = kb_moved ? 0 : kb_still + 1;
+  if (KB.sel >= 0 && kb_still < KB_STILL_FRAMES) { kb_polling = 1; cd_raf_request(RAF_KBD); }
+}
+
 static void on_key(const cd_event_rec *e) {
   if (e->mods & CD_MOD_EDITING) return;
   kb_letters(e);
@@ -2422,9 +2450,12 @@ static void render_keys(void) {
     if (target == -1) cd_set_attr(kbd_state, ZS("data-target"), ZS("pass"));
     else kb_attr_card(kbd_state, ZS("data-target"), target < 0 ? -1 : target);
   }
-  /* the cursor's card, where the kernel's slot puts it on the plane */
+  /* the cursor's card where it is drawn now: React polls the card's box every frame, so the cursor
+   * and the arrow follow the hand's 0.1 s slide and the row's glide; kb_poll does the same while
+   * they move (before the card is drawn, the kernel's slot for it on the plane) */
   double cur[4] = {0}, pr[4];
-  if (sel_cid >= 0 && KB.sel < HL.n) {
+  if (sel_cid >= 0 && shown[sel_cid].node) cd_rect(shown[sel_cid].node, cur);
+  else if (sel_cid >= 0 && KB.sel < HL.n) {
     cd_rect(hand_plane, pr);
     const HandRect *slot = &HL.slot[KB.sel];
     cur[0] = pr[0] + slot->x; cur[1] = pr[1] + slot->y; cur[2] = slot->w; cur[3] = slot->h;
@@ -2462,6 +2493,7 @@ static void render_keys(void) {
     kb_shown.cur[2] = -1;
   }
   if (kb_cursor.shown && __builtin_memcmp(cur, kb_shown.cur, sizeof cur)) {
+    kb_moved = 1;
     __builtin_memcpy(kb_shown.cur, cur, sizeof cur);
     cd_set_style_num(kb_cursor.root, ZS("left"), cur[0] + cur[2] * 0.15, CD_UNIT_PX);
     cd_set_style_num(kb_cursor.root, ZS("top"), cur[1] + cur[3] + 4, CD_UNIT_PX);
@@ -2470,6 +2502,7 @@ static void render_keys(void) {
   double arrow[6] = {cur[0] + cur[2] / 2, cur[1], pass ? to[0] : to[0] + to[2] / 2, pass ? to[1] : to[1] + to[3] / 2, pass, target};
   if (!aim || !(cur[2] > 0)) { cd_region_hide(&kb_arrow); return; }
   if (kb_arrow.shown && !__builtin_memcmp(arrow, kb_shown.arrow, sizeof arrow)) return;
+  kb_moved = 1;
   __builtin_memcpy(kb_shown.arrow, arrow, sizeof arrow);
   cd_region_hide(&kb_arrow);
   cd_region_show(&kb_arrow, 1);
@@ -2889,13 +2922,10 @@ static void tex_keys(void) {
   key_num(tex.key[2], &tex.klen[2], WOOL_W); key_add(tex.key[2], &tex.klen[2], "x"); key_num(tex.key[2], &tex.klen[2], WOOL_H);
 }
 
-/* A texture's image file lands: its url on the mount; with the fern, the backs turn black under it,
- * as CardBack's do. */
+/* A texture's image file lands: its url goes on the mount once the browser has decoded it
+ * (cd_on_image), so no frame shows the property before its picture. */
 static void tex_land(int k, const uint8_t *p, uint32_t len) {
-  cd_set_image_bytes(CD_MOUNT, cd_internz(TEX_PROP[k]), p, len, cd_internz(TEX_MIME[k]));
-  if (k == TEX_FERN) cd_set_style(CD_MOUNT, ZS("--tex-fern-bg"), ZS("#000000"));
-  tex.at[k] = cd_now();
-  tex.landed++;
+  cd_set_image_bytes(CD_MOUNT, cd_internz(TEX_PROP[k]), p, len, cd_internz(TEX_MIME[k]), (uint32_t)k);
 }
 
 /* The order textures are made in, when the store has none: the fern (small, on the card backs),
@@ -2973,10 +3003,24 @@ void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len) {
   tex_make_next();
 }
 
+/* The picture is on: with the fern, the backs turn black under it, as CardBack's do, in the same
+ * frame as the fern (set earlier, every back showed a frame of black before its fern). A kept
+ * picture that no longer decodes is made again. */
+void cd_on_image(uint32_t token, uint32_t ok) {
+  int k = (int)token;
+  if (k < 0 || k >= NTEX) return;
+  if (!ok && tex.from_store[k]) { tex.from_store[k] = 0; tex_state[k] = TEX_MISSING; tex_make_next(); return; }
+  if (ok && k == TEX_FERN) cd_set_style(CD_MOUNT, ZS("--tex-fern-bg"), ZS("#000000"));
+  tex.at[k] = cd_now();
+  tex.landed++;
+  tex_make_next();
+}
+
 void cd_on_raf(uint32_t token, double t) {
   (void)t;
   if (token == RAF_ANIM) { run_frame(); return; }
   if (token == RAF_COIN) { coins_frame(); return; }
+  if (token == RAF_KBD) { kb_poll_frame(); return; }
   if (token == RAF_PAINTED) { cd_raf_request(RAF_PAINTED2); return; }
   if (token == RAF_PAINTED2) { cd_timer_start(TEX_START_MS, TIMER_TEX); return; }
   double t0 = cd_now(), now = t0;

@@ -339,10 +339,22 @@ var cdom = (() => {
     canvas.getContext("2d").putImageData(new ImageData(pixels, width, height), x, y);
     canvas.toBlob(async (blob) => deliver(exports.cd_encoded, token, await blob.arrayBuffer()), stringOf(mime), 0.92);
   }
-  // An image file's bytes in C memory as a url(blob:) on a style property, now.
-  function image_bytes(id, property, bytesPtr, length, mime) {
-    const blob = new Blob([copyBytes(bytesPtr, length)], { type: stringOf(mime) });
-    nodes[id].style.setProperty(stringOf(property), `url(${URL.createObjectURL(blob)})`);
+  // An image file's bytes in C memory as a url(blob:) on a style property, set once the image has
+  // decoded (so no frame paints the property with nothing behind it), then answered with
+  // cd_image(token, 1); bytes that do not decode set nothing and answer 0.
+  function image_bytes(id, property, bytesPtr, length, mime, token) {
+    const node = nodes[id];
+    const name = stringOf(property);
+    const url = URL.createObjectURL(new Blob([copyBytes(bytesPtr, length)], { type: stringOf(mime) }));
+    const image = new Image();
+    image.src = url;
+    image.decode().then(() => {
+      node.style.setProperty(name, `url(${url})`);
+      exports.cd_image(token, 1);
+    }, () => {
+      URL.revokeObjectURL(url);
+      exports.cd_image(token, 0);
+    });
   }
   function remove(id) {
     nodes[id].remove();

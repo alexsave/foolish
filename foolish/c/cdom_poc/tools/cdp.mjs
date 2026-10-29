@@ -32,6 +32,10 @@ export function serve(port = 8720, root = FOOLISH, extra = null, headers = {}) {
 // of 329,160 pixels, 1 to 20 per channel, about one load in five under a load average of 60),
 // and the wool is such a JPEG.
 export async function launch({ width = 1024, height = 768, port = 8729, flags = [] } = {}) {
+  // A Chrome already on the port (a run that died before closing its own) would be driven instead
+  // of this one, with its profile and its kept game: refuse, and name it.
+  const stale = await fetch(`http://127.0.0.1:${port}/json/version`).then(() => true, () => false);
+  if (stale) throw new Error(`a Chrome already listens on ${port} (a run that did not close it?): stop it by its PID first`);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdom-poc-chrome-'));
   const proc = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, '--no-first-run',

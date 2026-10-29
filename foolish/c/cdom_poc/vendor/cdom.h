@@ -128,8 +128,12 @@ void cd_encode_image_in(const uint8_t *px, uint32_t w, uint32_t h, uint32_t n, u
                         uint32_t y, cd_str mime, uint32_t token);
 void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len); /* the app's hook (empty weak default) */
 /* An image file's bytes (len of them at p, read during the call) as a CSS image: style property
- * prop of node id becomes url(blob:...) now; a custom property such as "--tex" works. */
-void cd_set_image_bytes(cd_id id, cd_str prop, const uint8_t *p, uint32_t len, cd_str mime);
+ * prop of node id becomes url(blob:...) once the image has decoded, so no frame paints the
+ * property before its picture (a custom property such as "--tex" works), and then
+ * cd_on_image(token, 1) is called, in the same task: what goes with the picture (a colour under
+ * it) is set there and paints with it. Bytes that do not decode set nothing: cd_on_image(token, 0). */
+void cd_set_image_bytes(cd_id id, cd_str prop, const uint8_t *p, uint32_t len, cd_str mime, uint32_t token);
+void cd_on_image(uint32_t token, uint32_t ok); /* the app's hook (empty weak default) */
 void cd_remove(cd_id id);            /* detach and free the id */
 void cd_move(cd_id id, cd_id before);
 void cd_clear(cd_id id);             /* drop all children; caller frees their ids (a cd_region does it for you) */

@@ -129,7 +129,7 @@ IMPORTS("style") void j_style(cd_id id, uint32_t prop, uint32_t v);
 IMPORTS("style_num") void j_style_num(cd_id id, uint32_t prop, double v, uint32_t unit);
 IMPORTS("encode") void j_encode(const uint8_t *px, uint32_t w, uint32_t h, uint32_t n, uint32_t W, uint32_t H, uint32_t x, uint32_t y,
                              uint32_t mime, uint32_t token);
-IMPORTS("image_bytes") void j_image_bytes(cd_id id, uint32_t prop, const uint8_t *p, uint32_t len, uint32_t mime);
+IMPORTS("image_bytes") void j_image_bytes(cd_id id, uint32_t prop, const uint8_t *p, uint32_t len, uint32_t mime, uint32_t token);
 IMPORTS("remove") void j_remove(cd_id id);
 IMPORTS("free") void j_free(cd_id id);
 IMPORTS("move") void j_move(cd_id id, cd_id before);
@@ -434,9 +434,9 @@ void cd_encode_image_in(const uint8_t *px, uint32_t w, uint32_t h, uint32_t n, u
 void cd_encode_image(const uint8_t *px, uint32_t w, uint32_t h, uint32_t n, cd_str mime, uint32_t token) {
   cd_encode_image_in(px, w, h, n, w, h, 0, 0, mime, token);
 }
-void cd_set_image_bytes(cd_id id, cd_str prop, const uint8_t *p, uint32_t len, cd_str mime) {
+void cd_set_image_bytes(cd_id id, cd_str prop, const uint8_t *p, uint32_t len, cd_str mime, uint32_t token) {
   uint32_t a = ref_name(prop), m = ref_name(mime);
-  ready(); j_image_bytes(id, a, p, len, m);
+  ready(); j_image_bytes(id, a, p, len, m, token);
 }
 void cd_move(cd_id id, cd_id before) { ready(); j_move(id, before); }
 void cd_clear(cd_id id) { ready(); j_clear(id); }
@@ -579,6 +579,11 @@ EXPORT("cd_bytes_buf") void *cd_bytes_buf(uint32_t n) { return inbytes = cd_real
 __attribute__((weak)) void cd_on_encoded(uint32_t token, const uint8_t *p, uint32_t len) { (void)token; (void)p; (void)len; }
 EXPORT("cd_encoded") void cd_encoded(uint32_t token, const uint8_t *p, uint32_t len) {
   cd_on_encoded(token, p, len);
+  cd_flush();
+}
+__attribute__((weak)) void cd_on_image(uint32_t token, uint32_t ok) { (void)token; (void)ok; }
+EXPORT("cd_image") void cd_image(uint32_t token, uint32_t ok) {
+  cd_on_image(token, ok);
   cd_flush();
 }
 
