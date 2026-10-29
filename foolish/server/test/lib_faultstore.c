@@ -247,6 +247,10 @@ static int w_rating_reindex(cb_store *s, const cb_rating_row *r) {
     if (take()) return atomic_load(&g_rc);
     return cb_rows_of(IN(s))->rating_reindex ? cb_rows_of(IN(s))->rating_reindex(IN(s), r) : CB_E_NOTIMPL;
 }
+static int w_bots_add(cb_store *s, const cb_bot_row *rows, int n) {
+    if (take()) return atomic_load(&g_rc);
+    return cb_rows_of(IN(s))->bots_add ? cb_rows_of(IN(s))->bots_add(IN(s), rows, n) : CB_E_NOTIMPL;
+}
 static int w_bots_replace(cb_store *s, const cb_bot_row *rows, int n) {
     if (take()) return atomic_load(&g_rc);
     return cb_rows_of(IN(s))->bots_replace ? cb_rows_of(IN(s))->bots_replace(IN(s), rows, n) : CB_E_NOTIMPL;
@@ -351,6 +355,7 @@ static const cb_rows_ops FAULT_ROWS = {
     .lease_renew = w_lease_renew,
     .lease_release = w_lease_release,
     .bots_list = w_bots_list,
+    .bots_add = w_bots_add,
     .ratings_list = w_ratings_list,
     .ratings_top = w_ratings_top,
     .ratings_for = w_ratings_for,
@@ -372,12 +377,12 @@ static const cb_store_app FAULT_APP = { .rows = &FAULT_ROWS };
 // Every operation of store.h and of rows_foolish.h is wrapped above. An
 // operation added there and not here would be left NULL (CB_E_NOTIMPL to
 // whatever calls it through this store), so each table's size is held to its
-// count: store.h's name, close and 33 operations; rows_foolish.h's 29. The
+// count: store.h's name, close and 33 operations; rows_foolish.h's 30. The
 // account hooks are the wrapped store's (its user_create and user_delete run
 // them), so this store has none of its own.
 _Static_assert(sizeof(cb_store_ops) == (size_t)(33 + 2) * sizeof(void *),
                "store.h has an operation lib_faultstore.c does not wrap: add its w_ wrapper and its line in FAULT_OPS");
-_Static_assert(sizeof(cb_rows_ops) == (size_t)29 * sizeof(void *),
+_Static_assert(sizeof(cb_rows_ops) == (size_t)30 * sizeof(void *),
                "rows_foolish.h has an operation lib_faultstore.c does not wrap: add its w_ wrapper and its line in FAULT_ROWS");
 
 cb_store *fs_wrap(cb_store *inner) {

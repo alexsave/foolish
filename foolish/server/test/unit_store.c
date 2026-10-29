@@ -12,6 +12,7 @@
 #include "store/store_import.h"
 
 #include "store/rows_foolish.h"
+#include "bot_roster.h"
 #include "table.h"
 #include "util/clock.h"
 #include "util/err.h"
@@ -97,6 +98,197 @@ static int32_t rating_of(cb_store *s, const char *id) {
     return out;
 }
 
+// ---- the bots ----------------------------------------------------------------------------
+
+// PRODUCTION'S 49 BOT ACCOUNTS, as (id, nickname, strategy_key): copied by hand
+// on 2026-10-28 from a read-only backup of the production SQLite store's
+// `bots` table (scratchpad prod/latest.sqlite, `SELECT id, nickname,
+// strategy_key FROM bots`, the 16-byte ids written as UUID text). Production
+// was never touched. The hosted store minted these ids (random v4) and the
+// migration carried them, so they match nothing derivable: they are data.
+static const struct { const char *id, *nickname, *key; } PROD_BOTS[] = {
+    { "176d94a4-71f2-4542-9510-5603e52058d7", "%Miami 1", "random" },
+    { "15b54f52-2240-4955-8055-e27b7d767e3a", "%Miami 2", "random" },
+    { "fb86b312-0a92-456a-9d86-dbcf139c5c0c", "%Miami 3", "random" },
+    { "cb71817c-55c4-4588-9e50-48f5f14c1fe0", "%Miami 4", "random" },
+    { "250cca6c-6e42-49c1-9ddb-f0a892d1bdc8", "%Miami 5", "random" },
+    { "127fe4f9-c6ae-4574-a138-6d672398c0b3", "%Miami 6", "random" },
+    { "958fe3ae-f1d3-4009-ba13-5497c241c373", "%Miami 7", "random" },
+    { "663f2cbf-e8f7-407c-a991-192a1a929a17", "%New York 1", "handwritten" },
+    { "a3791b0c-9fe3-4881-846e-d9a36b5ffec5", "%New York 2", "handwritten" },
+    { "7615f43f-f937-43df-95bc-5ba7537e5efc", "%New York 3", "handwritten" },
+    { "44d3db6c-7ea2-4573-ab6d-59d512a43e00", "%New York 4", "handwritten" },
+    { "71afbbc7-8210-43ee-87f2-a553e2850659", "%New York 5", "handwritten" },
+    { "aed56295-c1af-42a7-957d-e93bc1c0e8db", "%New York 6", "handwritten" },
+    { "5b4bd18e-4c3b-4ffe-b3d7-0190fa756052", "%New York 7", "handwritten" },
+    { "7ef1fc0b-3615-4dc8-b3ef-aa8f5d54d974", "%Seoul 1", "robusta" },
+    { "8bc76702-5436-4765-9276-06b3cf48c28a", "%Seoul 2", "robusta" },
+    { "2fb4b0e0-042f-4e8c-a686-0fe57683a53f", "%Seoul 3", "robusta" },
+    { "31e33723-01db-4ed7-91a5-25c7aacadb34", "%Seoul 4", "robusta" },
+    { "4b562969-4424-4806-ae2b-211635fd01a0", "%Seoul 5", "robusta" },
+    { "d94da892-95c2-4c4a-aa40-b1835293c564", "%Seoul 6", "robusta" },
+    { "c423710d-afe3-4ec8-bc7f-6dbd4fb891b8", "%Seoul 7", "robusta" },
+    { "8dab2d5c-c44d-4b59-837b-8e412c2ae942", "%Madrid 1", "firecracker" },
+    { "323fe1d3-7911-473d-a510-acae44946c0e", "%Madrid 2", "firecracker" },
+    { "7e4ded9f-0f9e-4a19-8246-c42202365971", "%Madrid 3", "firecracker" },
+    { "34d13cb1-a638-43c8-b7b9-142736ef3dfc", "%Madrid 4", "firecracker" },
+    { "10e6bc02-3e6f-4ee5-8388-fcedfaf6c08f", "%Madrid 5", "firecracker" },
+    { "4c61fbcc-ddd8-4188-9b46-74ade99681d3", "%Madrid 6", "firecracker" },
+    { "7e178642-b839-4a4f-91db-bf6aae3513cb", "%Madrid 7", "firecracker" },
+    { "492b48b0-f474-4661-8545-b269ca614325", "%Vienna 1", "blackpowder" },
+    { "a541a928-8152-441c-8fb9-ff224bbf7dc7", "%Vienna 2", "blackpowder" },
+    { "4201eb28-61ad-40d5-885b-4950111489a0", "%Vienna 3", "blackpowder" },
+    { "29107dcb-fb7b-4088-bf44-b41f7fa9b84f", "%Vienna 4", "blackpowder" },
+    { "ea14d04e-ebcc-4f73-81de-3ccd86530d4f", "%Vienna 5", "blackpowder" },
+    { "c634657e-cb48-4ef6-800a-f76f2250eb43", "%Vienna 6", "blackpowder" },
+    { "6e3e3e5d-5466-4d84-8767-6e4d9d5394aa", "%Vienna 7", "blackpowder" },
+    { "56959dab-9d74-438b-b0e7-2f08d4524c81", "%St. Petersburg 1", "cordite" },
+    { "30532f60-cd98-48bb-8044-e2f8393d5702", "%St. Petersburg 2", "cordite" },
+    { "88cc6a4a-400f-40ed-917f-20ec9eb5e16f", "%St. Petersburg 3", "cordite" },
+    { "4d1c6b02-a5f7-41e6-b57a-f5aada3db922", "%St. Petersburg 4", "cordite" },
+    { "b06f300a-2f9c-4d99-bb50-77580466e4ab", "%St. Petersburg 5", "cordite" },
+    { "518a9f06-e7bf-4688-a75e-ce603711ed83", "%St. Petersburg 6", "cordite" },
+    { "bc195cef-fac6-45fd-a518-c7d25b42e35e", "%St. Petersburg 7", "cordite" },
+    { "4f6f2ebb-1d3e-4761-a5a9-c91313eba087", "%Moscow 1", "octogen" },
+    { "f60b53ec-74f6-45fe-9e0f-315e5495bc18", "%Moscow 2", "octogen" },
+    { "45f7a264-aedc-4ee4-8473-4681d6e0bcb8", "%Moscow 3", "octogen" },
+    { "acc775ae-6d35-41d2-88bc-7dc1599cff82", "%Moscow 4", "octogen" },
+    { "df16e0de-4569-4771-804e-98f8d13affd1", "%Moscow 5", "octogen" },
+    { "fc185071-a522-424e-a1bd-0c4d34b32d3e", "%Moscow 6", "octogen" },
+    { "abe1fcfa-992c-4bf5-b163-32c0b0a21a7b", "%Moscow 7", "octogen" },
+};
+
+// THE SEED IS PRODUCTION'S BOTS: the accounts bot_seed.c derives from the
+// kernel's registry (foolish/c/src/bots.c: each seeded row's city and ids) are
+// exactly the 49 above, id for id. This is what makes seeding by missing id
+// safe on prod's store - it finds every one of them and writes nothing - and
+// what gives a fresh store, the tests and local dev prod's own bots.
+//
+// Mutations that turned it red, each restored after: one hex digit of
+// octogen's seventh id in bots.c (`at >= 0`: "%Moscow 7" not seeded); Vienna
+// spelled Wien in bots.c (the nickname assertion); nicknames numbered from 0 in
+// bot_seed.c (the nickname assertion); bot_seed.c not skipping unseeded rows
+// (`n == N`: a row with no city refuses the whole seed).
+static void bot_seed_is_production(void) {
+    enum { N = (int)(sizeof PROD_BOTS / sizeof PROD_BOTS[0]) };
+    cb_bot_row rows[BOT_ROSTER_MAX * BOT_IDS_MAX];
+    const int n = cb_bot_seed_rows(rows, (int)(sizeof rows / sizeof rows[0]));
+    T_EQ_INT(N, 49);
+    T_EQ_INT(n, N);
+    for (int i = 0; i < N; i++) {
+        int at = -1;
+        for (int j = 0; j < n; j++) if (strcmp(rows[j].id, PROD_BOTS[i].id) == 0) at = j;
+        if (at < 0) { fprintf(stderr, "  prod bot %s (%s) is not seeded\n", PROD_BOTS[i].id, PROD_BOTS[i].nickname); T_CHECK(at >= 0); continue; }
+        T_EQ_STR(rows[at].nickname, PROD_BOTS[i].nickname);
+        T_EQ_STR(rows[at].strategy_key, PROD_BOTS[i].key);
+        T_EQ_INT(rows[at].elo_rating, TABLE_RATING_START);
+        T_EQ_INT(rows[at].previous_elo, -1);
+        T_EQ_INT(rows[at].games_played, 0);
+    }
+    // One cap short is a refusal, never a shorter seed.
+    T_EQ_INT(cb_bot_seed_rows(rows, N - 1), -1);
+}
+
+static bool same_bot(const cb_bot_row *a, const cb_bot_row *b) {
+    return strcmp(a->id, b->id) == 0 && strcmp(a->nickname, b->nickname) == 0
+        && strcmp(a->strategy_key, b->strategy_key) == 0 && a->elo_rating == b->elo_rating
+        && a->previous_elo == b->previous_elo && a->games_played == b->games_played
+        && a->created_at == b->created_at && a->updated_at == b->updated_at;
+}
+
+static const cb_bot_row *find_bot(const bots_t *b, const char *id) {
+    for (int i = 0; i < b->n; i++) if (strcmp(b->rows[i].id, id) == 0) return &b->rows[i];
+    return NULL;
+}
+
+// SEEDING ADDS THE MISSING BOTS AND NOTHING ELSE (store_import.c
+// cb_import_seed_bots): on a store that already has bots - two seeded ones gone,
+// one played and renamed, one that is no seed's at all - a seed run (1) adds
+// exactly the two missing accounts, at the start rating, (2) leaves every
+// existing row, its rating and its nickname as it was, and (3) a second run
+// writes nothing. Both backends: SQLite here, DynamoDB Local in check-dynamo.
+//
+// Mutations that turned it red, each restored after: the old rule, write only
+// into an empty store (assertion 1: `cb_import_seed_bots(s) == 2`); bots_replace
+// of the missing rows in place of bots_add (assertion 2: every existing row,
+// the played one and the stranger, gone); has_id always false, so every seed
+// row reads as missing (assertion 1: CB_E_CONFLICT, and reopening the store
+// fails too); the SQL S_BOT_ADD as INSERT OR REPLACE (the all-or-none check:
+// a taken id overwritten, `== CB_E_CONFLICT`). The item store's CB_IF_ABSENT
+// dropped is caught by c_base/providers/aws/test/unit_dynamo_ops.c
+// (import_seed_and_reindex: the request lacks attribute_not_exists).
+static void seed_adds_only_missing_bots(void) {
+    cb_store *s = open_fresh();
+    bots_t all = { 0 };
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &all), 49);
+
+    // The store as a running server would have it: Miami 3 and Moscow 7 gone,
+    // Vienna 2 played and renamed, and a bot no seed knows.
+    cb_bot_row keep[64];
+    int n = 0;
+    char gone[2][CB_UUID_LEN + 1] = { "", "" };
+    const cb_bot_row *played = NULL;
+    for (int i = 0; i < all.n; i++) {
+        const cb_bot_row *r = &all.rows[i];
+        if (strcmp(r->nickname, "%Miami 3") == 0) { snprintf(gone[0], sizeof gone[0], "%s", r->id); continue; }
+        if (strcmp(r->nickname, "%Moscow 7") == 0) { snprintf(gone[1], sizeof gone[1], "%s", r->id); continue; }
+        keep[n] = *r;
+        if (strcmp(r->nickname, "%Vienna 2") == 0) {
+            snprintf(keep[n].nickname, sizeof keep[n].nickname, "%%Vienna Renamed");
+            keep[n].elo_rating = 1234;
+            keep[n].previous_elo = 1188;
+            keep[n].games_played = 17;
+            keep[n].updated_at = 777;
+            played = &keep[n];
+        }
+        n++;
+    }
+    T_CHECK(gone[0][0] && gone[1][0] && played);
+    keep[n++] = (cb_bot_row){ .id = "0c0ffee0-0000-4000-8000-00000000c0ff", .nickname = "%0x00C0FFEE",
+                              .strategy_key = "random", .elo_rating = 1500, .previous_elo = 1490, .games_played = 99 };
+    T_EQ_INT(CB_ROWS_CALL(s, bots_replace, keep, n), CB_OK);
+    bots_t before = { 0 };
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &before), 48);
+
+    // (1) exactly the missing two, as the seed writes them.
+    T_EQ_INT(cb_import_seed_bots(s), 2);
+    bots_t after = { 0 };
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &after), 50);
+    for (int g = 0; g < 2; g++) {
+        const cb_bot_row *r = find_bot(&after, gone[g]);
+        T_CHECK(r != NULL);
+        if (!r) continue;
+        T_EQ_STR(r->nickname, g ? "%Moscow 7" : "%Miami 3");
+        T_EQ_INT(r->elo_rating, TABLE_RATING_START);
+        T_EQ_INT(r->previous_elo, -1);
+        T_EQ_INT(r->games_played, 0);
+    }
+    // (2) every row that was there is there, unchanged: the played one keeps
+    // its rating and its new name, the stranger stays.
+    for (int i = 0; i < before.n; i++) {
+        const cb_bot_row *r = find_bot(&after, before.rows[i].id);
+        T_CHECK(r != NULL && same_bot(r, &before.rows[i]));
+    }
+    const cb_bot_row *p = find_bot(&after, played->id);
+    T_CHECK(p && p->elo_rating == 1234 && p->games_played == 17 && strcmp(p->nickname, "%Vienna Renamed") == 0);
+
+    // (3) a second run finds nothing missing and writes nothing.
+    T_EQ_INT(cb_import_seed_bots(s), 0);
+    bots_t again = { 0 };
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &again), 50);
+    for (int i = 0; i < after.n; i++) T_CHECK(same_bot(&again.rows[i], &after.rows[i]));
+
+    // bots_add itself is all or none: a taken id refuses the whole write.
+    cb_bot_row two[2] = { { .id = "0c0ffee0-0000-4000-8000-00000000beef", .nickname = "%New 1", .strategy_key = "random",
+                            .elo_rating = 1000, .previous_elo = -1 },
+                          after.rows[0] };
+    T_EQ_INT(CB_ROWS_CALL(s, bots_add, two, 2), CB_E_CONFLICT);
+    bots_t last = { 0 };
+    T_EQ_INT(CB_ROWS_CALL(s, bots_list, collect_bot, &last), 50);
+    T_CHECK(find_bot(&last, two[0].id) == NULL);
+    cb_store_close(s);
+}
+
 // ---- open ----------------------------------------------------------------------------
 
 static void open_applies_schema_and_seeds_bots(void) {
@@ -109,7 +301,7 @@ static void open_applies_schema_and_seeds_bots(void) {
     T_EQ_STR(b.rows[6].nickname, "%Miami 7");
     T_EQ_STR(b.rows[48].nickname, "%Moscow 7");
     T_EQ_STR(b.rows[48].strategy_key, "octogen");
-    T_EQ_STR(b.rows[0].id, "2c601cde-63d2-5291-8fcb-735f5860b1ec");
+    T_EQ_STR(b.rows[0].id, "176d94a4-71f2-4542-9510-5603e52058d7");   // production's own %Miami 1
     T_EQ_INT(b.rows[0].elo_rating, 1000);
     T_EQ_INT(b.rows[0].previous_elo, -1);
     if (tsb_dynamo()) {
@@ -633,7 +825,7 @@ static void membership_follows_commits(void) {
     cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 2, .n_bots = 1 };
     memcpy(c.humans[0], a.id, sizeof(cb_uuid));
     memcpy(c.humans[1], b.id, sizeof(cb_uuid));
-    snprintf(c.bots[0], sizeof c.bots[0], "2c601cde-63d2-5291-8fcb-735f5860b1ec");
+    snprintf(c.bots[0], sizeof c.bots[0], "176d94a4-71f2-4542-9510-5603e52058d7");
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
     T_EQ_INT(CB_ROWS_CALL(s, is_member, "game01", b.id), 1);
     // The game's members: both humans, never the bot (a chat is published to each).
@@ -1104,7 +1296,7 @@ static void ratings_applied_by_commit(void) {
     T_EQ_INT(rating_of(s, b.id), TABLE_RATING_NONE);
     cb_game_row g = mkgame("rate01", 10);
     CB_ROWS_CALL(s, game_create, &g, a.id);
-    const char *bot = "2c601cde-63d2-5291-8fcb-735f5860b1ec", *gone = "00000000-0000-4000-8000-0000000000aa";
+    const char *bot = "176d94a4-71f2-4542-9510-5603e52058d7", *gone = "00000000-0000-4000-8000-0000000000aa";
     cb_game_row n = mkgame("rate01", 10);
     n.version = 1;
     n.updated_at = 77;
@@ -1443,16 +1635,16 @@ static void admin_reads(void) {
                  CB_E_INVALID);
     // A prefix of the first column: a UUID column matches its text (its 16 bytes shown as the UUID).
     r.rows = 0;
-    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots", "2c601cde", "", 100, collect_row, &r, next, sizeof next), 1);
+    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots", "176d94a4", "", 100, collect_row, &r, next, sizeof next), 1);
     T_EQ_STR(next, "");
     T_EQ_STR(r.col0, "id");
-    T_EQ_STR(r.first[0], "2c601cde-63d2-5291-8fcb-735f5860b1ec");
+    T_EQ_STR(r.first[0], "176d94a4-71f2-4542-9510-5603e52058d7");
     // "column=value": an equality, a UUID by its text.
     r.rows = 0;
-    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots", "id=98d81d2b-94d3-540f-a5c9-106293670763", "", 100, collect_row, &r, next,
+    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots", "id=15b54f52-2240-4955-8055-e27b7d767e3a", "", 100, collect_row, &r, next,
                            sizeof next),
              1);
-    T_EQ_STR(r.first[0], "98d81d2b-94d3-540f-a5c9-106293670763");
+    T_EQ_STR(r.first[0], "15b54f52-2240-4955-8055-e27b7d767e3a");
     T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots", "nope=1", "", 10, collect_row, &r, next, sizeof next), CB_E_INVALID);
     T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots; DROP TABLE users", NULL, "", 10, collect_row, &r, next, sizeof next),
              CB_E_INVALID);
@@ -1470,7 +1662,7 @@ static void admin_reads(void) {
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT 1; DELETE FROM bots", true, collect_row, &r), CB_E_INVALID);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELECT 1;", false, collect_row, &r), 1);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, "SELEKT", false, collect_row, &r), CB_E_INVALID);
-    T_EQ_INT(CB_STORE_CALL(s, admin_query, "DELETE FROM bots WHERE id = x'2c601cde63d252918fcb735f5860b1ec'", true,
+    T_EQ_INT(CB_STORE_CALL(s, admin_query, "DELETE FROM bots WHERE id = x'176d94a471f2454295105603e52058d7'", true,
                            collect_row, &r),
              0);
     bots_t b = { 0 };
@@ -1533,17 +1725,17 @@ static void admin_reads_dynamo(void) {
     T_EQ_INT(total, 49);
     T_CHECK(pages >= 3);
     r.rows = 0;
-    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "BOT", "2c601cde", "", 100, collect_row, &r, next, sizeof next), 1);
+    T_EQ_INT(CB_STORE_CALL(s, admin_browse, "BOT", "176d94a4", "", 100, collect_row, &r, next, sizeof next), 1);
     T_EQ_INT(CB_STORE_CALL(s, admin_browse, "bots; DROP", NULL, "", 10, collect_row, &r, next, sizeof next), CB_E_INVALID);
 
     // PartiQL: reads always, writes only when allowed.
     char q[512];
-    snprintf(q, sizeof q, "SELECT nickname FROM \"%s\" WHERE pk = 'BOT#2c601cde-63d2-5291-8fcb-735f5860b1ec' AND sk = 'BOT'",
+    snprintf(q, sizeof q, "SELECT nickname FROM \"%s\" WHERE pk = 'BOT#176d94a4-71f2-4542-9510-5603e52058d7' AND sk = 'BOT'",
              tsb_table());
     r.rows = 0;
     T_EQ_INT(CB_STORE_CALL(s, admin_query, q, false, collect_row, &r), 1);
     T_EQ_STR(r.first[0], "%Miami 1");
-    snprintf(q, sizeof q, "DELETE FROM \"%s\" WHERE pk = 'BOT#2c601cde-63d2-5291-8fcb-735f5860b1ec' AND sk = 'BOT'",
+    snprintf(q, sizeof q, "DELETE FROM \"%s\" WHERE pk = 'BOT#176d94a4-71f2-4542-9510-5603e52058d7' AND sk = 'BOT'",
              tsb_table());
     T_EQ_INT(CB_STORE_CALL(s, admin_query, q, false, collect_row, &r), CB_E_FORBIDDEN);
     T_EQ_INT(CB_STORE_CALL(s, admin_query, q, true, collect_row, &r), 0);
@@ -1962,7 +2154,9 @@ int main(void) {
     snprintf(g_dir, sizeof g_dir, "/tmp/cbase-unit-store-XXXXXX");
     if (!mkdtemp(g_dir)) { perror("mkdtemp"); return 1; }
     T_RUN(item_size_is_the_sum_of_its_attributes);
+    T_RUN(bot_seed_is_production);
     T_RUN(open_applies_schema_and_seeds_bots);
+    T_RUN(seed_adds_only_missing_bots);
     T_RUN(users_round_trip);
     T_RUN(signin_fails_round_trip);
     T_RUN(refresh_tokens_rotate);

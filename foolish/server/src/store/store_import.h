@@ -31,17 +31,19 @@ int cb_import_dir(cb_store *s, const char *dir, FILE *out);
 // becomes (a SCAN marker, a refresh token).
 const char *cb_import_export_kind(const char *pk, const char *sk, char *id, size_t cap);
 
-// THE BOTS foolish seeds (bot_seed.c): fixed ids, ladder order.
-typedef struct {
-    const char *id, *nickname, *strategy_key;
-} cb_bot_seed;
-extern const cb_bot_seed CB_BOT_SEED[];
-extern const int CB_BOT_SEED_N;
+// THE BOTS foolish seeds (bot_seed.c): the accounts of every seeded bot in the
+// kernel's registry (foolish/c/src/bots.c), with production's own ids, at the
+// start rating, in ladder order, into out. The count, or -1 when they do not
+// fit in cap or a seeded row lacks its city or one of its ids. At most
+// BOT_ROSTER_MAX * BOT_IDS_MAX rows (bot_roster.h, bots.h).
+int cb_bot_seed_rows(cb_bot_row *out, int cap);
 
-// CB_BOT_SEED written into a store that has no bots yet (cb_store_app seed:
-// SQLite at open, a fresh DynamoDB table by a deploy's --seed-bots), at the
-// start rating, in ladder order. The number written, 0 when the store
-// already has bots (an import's hosted rows are never replaced), or a CB_E_*.
+// cb_bot_seed_rows written into a store (cb_store_app seed: SQLite at every
+// open, DynamoDB by a deploy's --seed-bots), but ONLY the rows whose id the
+// store lacks, all or none: an existing bot row, its rating and its nickname
+// are never updated, so a migrated store keeps its hosted rows and a second
+// run writes nothing. The number written (0 when nothing was missing), or a
+// CB_E_* (CB_E_CONFLICT: another seeder added one of them first; run again).
 int cb_import_seed_bots(cb_store *s);
 
 // Every rating row the leaderboard index holds, brought to its current key

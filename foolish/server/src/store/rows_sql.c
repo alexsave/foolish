@@ -49,7 +49,7 @@ enum {
     S_MEMBERS_CLEAR, S_SEAT_BOTS_CLEAR, S_CHAT_CLEAR, S_REPLAYS_ORPHAN,
     S_GAMES_OF_USER, S_IS_MEMBER, S_NEEDING_BOTS,
     S_BOT_RATE, S_USER_RATE,
-    S_BOTS_ALL, S_BOTS_CLEAR, S_BOT_PUT, S_BOT_ELO, S_USER_ELO,
+    S_BOTS_ALL, S_BOTS_CLEAR, S_BOT_PUT, S_BOT_ADD, S_BOT_ELO, S_USER_ELO,
     S_RATINGS_PLAYED, S_RATING_NAME, S_RATING_PUT,
     S_REPLAY_PUT, S_REPLAY_PLAYER_PUT, S_REPLAYS_NEW, S_REPLAYS_OLD, S_REPLAY_EXTRAS,
     S_CHAT_PUT, S_CHAT_LIST,
@@ -200,6 +200,8 @@ static const char *const STMTS[S__COUNT] = {
     [S_BOTS_ALL] = "SELECT " BOT_COLS " FROM bots",
     [S_BOTS_CLEAR] = "DELETE FROM bots",
     [S_BOT_PUT] = "INSERT OR REPLACE INTO bots (" BOT_COLS ") VALUES (" BOT_VALS ")",
+    // A plain INSERT: a taken id is the primary key refusing it, CB_E_CONFLICT.
+    [S_BOT_ADD] = "INSERT INTO bots (" BOT_COLS ") VALUES (" BOT_VALS ")",
     [S_BOT_ELO] = "SELECT elo_rating FROM bots WHERE id = ?1",
     [S_USER_ELO] = "SELECT elo_rating FROM ratings WHERE user_id = ?1",
     [S_RATINGS_PLAYED] = "SELECT " RATING_COLS " FROM ratings WHERE games_played > 0 ORDER BY elo_rating DESC, user_id LIMIT ?1",
@@ -983,24 +985,41 @@ static int sql_rating_import(cb_store *s, const cb_rating_row *r) {
 // The leaderboard's order is an index here, so every row already has it.
 static int sql_rating_reindex(cb_store *s, const cb_rating_row *r) { return CB_E_CONFLICT; }
 
+// One bot row through statement `st` (S_BOT_PUT, or S_BOT_ADD).
+static int bot_write(cb_sql *x, int st, const cb_bot_row *b) {
+    stmt_t *s = cb_sql_stmt(x, st);
+    if (!s) return CB_E_DB;
+    if (!cb_sql_bind_uuid(s, B_ID, b->id)) return CB_E_INVALID;
+    b_text(s, B_NICKNAME, b->nickname);
+    b_text(s, B_STRATEGY, b->strategy_key);
+    b_i64(s, B_ELO, b->elo_rating);
+    b_i64(s, B_PREVIOUS_ELO, b->previous_elo);
+    b_i64(s, B_PLAYED, b->games_played);
+    b_i64(s, B_CREATED_AT, b->created_at);
+    b_i64(s, B_UPDATED_AT, b->updated_at);
+    return cb_sql_run(x, s, st == S_BOT_ADD ? "bot add" : "bot put");
+}
+
 static int bots_replace_step(cb_sql *x, void *ud) {
     rating_op *o = ud;
     int rc = cb_sql_run(x, cb_sql_stmt(x, S_BOTS_CLEAR), "bots clear");
-    for (int i = 0; rc == CB_OK && i < o->n; i++) {
-        const cb_bot_row *b = &o->bots[i];
-        stmt_t *s = cb_sql_stmt(x, S_BOT_PUT);
-        if (!s) return CB_E_DB;
-        if (!cb_sql_bind_uuid(s, B_ID, b->id)) return CB_E_INVALID;
-        b_text(s, B_NICKNAME, b->nickname);
-        b_text(s, B_STRATEGY, b->strategy_key);
-        b_i64(s, B_ELO, b->elo_rating);
-        b_i64(s, B_PREVIOUS_ELO, b->previous_elo);
-        b_i64(s, B_PLAYED, b->games_played);
-        b_i64(s, B_CREATED_AT, b->created_at);
-        b_i64(s, B_UPDATED_AT, b->updated_at);
-        rc = cb_sql_run(x, s, "bot put");
-    }
+    for (int i = 0; rc == CB_OK && i < o->n; i++) rc = bot_write(x, S_BOT_PUT, &o->bots[i]);
     return rc;
+}
+
+// All or none: the first taken id fails the step, and the write rolls back.
+static int bots_add_step(cb_sql *x, void *ud) {
+    rating_op *o = ud;
+    int rc = CB_OK;
+    for (int i = 0; rc == CB_OK && i < o->n; i++) rc = bot_write(x, S_BOT_ADD, &o->bots[i]);
+    return rc;
+}
+
+static int sql_bots_add(cb_store *s, const cb_bot_row *rows, int n) {
+    if (n < 0 || (n && !rows)) return CB_E_INVALID;
+    if (n == 0) return CB_OK;
+    rating_op o = { .bots = rows, .n = n };
+    return cb_sql_write(s, bots_add_step, &o);
 }
 
 static int sql_bots_replace(cb_store *s, const cb_bot_row *rows, int n) {
@@ -1238,6 +1257,7 @@ const cb_rows_ops cb_rows_sql = {
     .game_members = sql_game_members,
     .games_needing_bots = sql_games_needing_bots,
     .bots_list = sql_bots_list,
+    .bots_add = sql_bots_add,
     .ratings_list = sql_ratings_list,
     .ratings_top = sql_ratings_top,
     .ratings_for = sql_ratings_for,
