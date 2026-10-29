@@ -182,7 +182,7 @@ static void seat_tables(World *w, const SeatSpec *lineup, int n_seats) {
             if (!spec->is_client) {
                 // strategy_key is a STRAT_* brain id, not a roster index:
                 // bot_drive resolves it with bot_roster_find_by_strat.
-                s->bots[seat].strategy = (i8)bot_roster_at(spec->strategy)->strat;
+                s->bots[seat].strategy = (i8)bot_roster_strat(spec->strategy);
                 s->bots[seat].think_us = spec->think_us;
                 s->bots[seat].jitter_us = spec->jitter_us;
                 continue;

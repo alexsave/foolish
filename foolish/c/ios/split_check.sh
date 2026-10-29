@@ -26,7 +26,7 @@ set -e
 # The doors into the bot module. Not a list of every ladder symbol: these are
 # what a caller in the core half would actually reach for, and each one drags
 # the rest.
-BAD='bot_drive|bot_roster_|bot_cycle_delay_ms|bot_knob|_strategy_choose|cordite_|octogen_|leafbook'
+BAD='bot_drive|bot_roster_|bot_cycle_delay_ms|bot_knob|bot_def|parse_strategy|_strategy_choose|cordite_|octogen_|leafbook'
 
 FAIL=0
 for OBJ in "$@"; do

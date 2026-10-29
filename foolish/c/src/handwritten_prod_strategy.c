@@ -56,15 +56,11 @@
 //   strings and findBestCoverCombination's unused botPlayer parameter) and
 //   every console.log.
 
-// strategy.h's parse_strategy needs strcmp, which the freestanding wasm
-// libc stub doesn't declare — include the core headers directly instead.
 #include "card.h"
 #include "game.h"
 #include "legal.h"
 #include "bot_common.h"
-
-int handwritten_prod_strategy_choose(const Game *g, int bot_idx,
-                                     const LegalMoves *moves, void *ctx);
+#include "strategy.h"
 
 // cardScore: value + (1000 if power suit).
 static int card_score(Card c, int power_suit) {

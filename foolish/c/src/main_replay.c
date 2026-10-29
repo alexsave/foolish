@@ -38,18 +38,12 @@ static void print_card(Card c, int trump) {
     if (c.suit == trump) printf("*");
 }
 
+// Any brain bots.c names, by name or alias (it once knew three, in a switch
+// of its own).
 static int strat_id(const char *s) {
-    if (!strcmp(s,"esp")||!strcmp(s,"espresso")) return STRAT_ESPRESSO;
-    if (!strcmp(s,"rand")||!strcmp(s,"random")) return STRAT_RANDOM;
-    if (!strcmp(s,"hw")||!strcmp(s,"handwritten")) return STRAT_HANDWRITTEN;
-    fprintf(stderr,"unknown strat '%s'\n",s); exit(2);
-}
-
-static int run_strategy(int strat, const Game *g, int p, const LegalMoves *moves) {
-    if (strat == STRAT_RANDOM) return random_strategy_choose(g, p, moves, NULL);
-    if (strat == STRAT_ESPRESSO) return espresso_strategy_choose(g, p, moves, NULL);
-    if (strat == STRAT_HANDWRITTEN) return handwritten_strategy_choose(g, p, moves, NULL);
-    return -1;
+    const int id = parse_strategy(s);
+    if (id < 0) { fprintf(stderr,"unknown strat '%s'\n",s); exit(2); }
+    return id;
 }
 
 static void print_hand(const Player *p, int trump) {
@@ -247,7 +241,7 @@ int main(int argc, char **argv) {
     BotPlay bp;
     bot_play_init(&bp, &g, 4000, BOT_PLAY_SHUFFLE, NULL);
     for (int p; (p = bot_play_next(&bp)) >= 0; ) {
-        int idx = run_strategy(strats[p], &g, p, &bp.moves);
+        int idx = strategy_choose(strats[p], &g, p, &bp.moves);
         if (idx < 0 || idx >= bp.moves.n) continue;
         const LegalMove *m = &bp.moves.moves[idx];
 

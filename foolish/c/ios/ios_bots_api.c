@@ -48,14 +48,14 @@ int fio_set_seat_strategy(int seat, int strategy_id) {
     Game *g = fio_resident_game();
     if (!g) return FIO_ENOGAME;
     if (seat < 0 || seat >= g->num_players) return FIO_EBADARG;
-    const BotRosterEntry *e = bot_roster_at(fio_roster_idx(strategy_id));
-    if (!e) return FIO_ENOSTRAT;
+    const int strat = bot_roster_strat(fio_roster_idx(strategy_id));
+    if (strat < 0) return FIO_ENOSTRAT;
     // strategy_key IS the assignment: it holds a STRAT_* id by kernel-wide
     // convention and the kernel reads it (espresso_prod_strategy.c checks
     // strategy_key == STRAT_RANDOM to mirror the TS bot's random-opponent
     // case). The per-seat roster-index mirror this used to keep alongside it
     // was written in three places and read in none.
-    g->players[seat].strategy_key = (int8_t)e->strat;
+    g->players[seat].strategy_key = (int8_t)strat;
     return FIO_EOK;
 }
 
@@ -85,7 +85,7 @@ int fio_bot_drive(int human_mask) {
 int fio_strategy_count(void) { return bot_roster_offline_count(); }
 
 int fio_strategy_name(int id, char *out, int cap) {
-    const BotRosterEntry *e = bot_roster_at(fio_roster_idx(id));
+    const BotDef *e = bot_roster_at(fio_roster_idx(id));
     if (!e) return FIO_ENOSTRAT;
     if (!out || cap <= 0) return FIO_EBADARG;
     // A bare NUL-terminated key: the picker shows it, nothing parses it.

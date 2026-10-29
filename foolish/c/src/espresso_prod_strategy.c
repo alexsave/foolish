@@ -62,8 +62,7 @@
 //   first occurrence of each value in `matching`; mirrored with a
 //   first-occurrence scan.
 // - `strategy_key === 'random'` maps to strategy_key == 0 (STRAT_RANDOM in
-//   strategy.h, the roster's `random` row). strategy.h itself is not
-//   included: its parse_strategy needs strcmp, absent from the wasm shim.
+//   strategy.h, the registry's `random` row).
 // - All eval arithmetic is done in double with the TS's left-to-right
 //   term order; counts/sums/scores are exact small integers so the double
 //   ==/</> comparisons match JS exactly.
@@ -74,17 +73,10 @@
 #include "game.h"
 #include "legal.h"
 #include "bot_common.h"
+#include "strategy.h"   // handwritten_prod_strategy_choose: chooseNP's `this.hw.chooseMove` fallback
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
-
-// The production handwritten mirror (chooseNP's `this.hw.chooseMove`
-// fallback). Prototype matches strategy.h.
-int handwritten_prod_strategy_choose(const Game *g, int bot_idx,
-                                     const LegalMoves *moves, void *ctx);
-
-int espresso_prod_strategy_choose(const Game *g, int bot_idx,
-                                  const LegalMoves *moves, void *ctx);
 
 // strategy_key id of the TS 'random' strategy (STRAT_RANDOM).
 #define EP_KEY_RANDOM 0

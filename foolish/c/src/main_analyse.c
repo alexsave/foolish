@@ -65,7 +65,7 @@ static const char *verdict_str(int v) {
 }
 
 static const char *roster_key(int idx) {
-    const BotRosterEntry *e = bot_roster_at(idx);
+    const BotDef *e = bot_roster_at(idx);
     return e ? e->key : "?";
 }
 

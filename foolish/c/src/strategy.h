@@ -5,7 +5,6 @@
 
 #include "game.h"
 #include "legal.h"
-#include <string.h>
 
 #define STRAT_RANDOM      0
 #define STRAT_ESPRESSO    1
@@ -39,15 +38,8 @@
 #define STRAT_OCTOGEN_ORACLE    21   // octogen at 6x worlds (research/audit only)
 // 22 is retired: it was torpex (a learned value net in place of rollouts).
 // 23 is retired: it was novichok (the cheating ceiling probe; read real hands).
-// Octogen plus rollout noise (c/FUSION.md): in its heuristic rollouts each
-// seat's decision is, 30% of the time at tables of up to five, a uniform pick
-// from a small sensible candidate set instead of the policy move; at bigger
-// tables it is octogen. Ready but not reachable: its own roster row
-// (bot_roster.c, key "fusion") is neither seeded nor offline, and the browser's
-// module (web.wasm, FOOLISH_SEEDED_BOTS_ONLY) does not link it.
-// TODO(alex): fusion's identity. City: "TBD" (the nickname of its seven
-// foolish/server/src/store/bot_seed.c rows; FUSION.md "To go live" has every
-// step). Song: "TBD" (no such field exists anywhere).
+// Octogen plus rollout noise (c/FUSION.md); ready but not reachable (its row in
+// bots.c is neither seeded nor offline).
 #define STRAT_FUSION            24
 //
 // THE IDS ARE NOT COMPACTED, and a retired one is never handed out again. A
@@ -57,27 +49,33 @@
 // oracle_answer.args). Renumbering the survivors would turn one bot into
 // another on the far side. strategy_retired() names the holes.
 //
-// One past the last id. A new STRAT_* id takes this value, bumps it, and gets a
-// case in strategy_choose (strategy.c); tests.c holds the three together, so a
-// brain the dispatch forgot, a count the new brain forgot, or a retired id that
-// came back to life fails there.
+// One past the last id, and the length of the registry (bots.c BOTS[]). A new
+// STRAT_* id takes this value and bumps it; its row in bots.c is the rest of
+// its registration.
 #define STRAT_COUNT             25
 
-// 1 for an id below STRAT_COUNT whose brain was removed. Such an id dispatches
-// to nothing (strategy_choose is -1) and no name parses to it.
-static inline int strategy_retired(int strat) {
-    return strat == 18 || strat == 19 || strat == 22 || strat == 23;
-}
+// 1 for an id below STRAT_COUNT whose brain was removed: its slot in bots.c is
+// empty, so it dispatches to nothing (strategy_choose is -1) and no name parses
+// to it.
+int strategy_retired(int strat);
 
 // Returns chosen move index in moves->moves[] (0..moves->n-1).
 typedef int (*StrategyFn)(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
 // Run brain `strat` (a STRAT_* id) at its C defaults - the arena's dispatch,
 // which every native tool (cnitro_eval, _elo, _gen, _showcase) and the tests
-// share. -1 for an id that is not a brain. A named, knob-tuned production bot
-// is bot_roster_choose instead.
+// share: bots.c's dispatch tables at `strat`. -1 for an id that is not a brain, or one
+// this build does not link. A named, knob-tuned production bot is
+// bot_roster_choose instead.
 int strategy_choose(int strat, const Game *g, int bot_idx, const LegalMoves *moves);
 
+// Map a strategy name (or short alias) to its STRAT_* id; -1 if unknown. The
+// names are bots.c's, the one list the main programs share.
+int parse_strategy(const char *s);
+
+// One per brain, each defined in its src/<name>_strategy.c (two more variants
+// live in cordite_strategy.c and octogen_strategy.c), and each named once more,
+// in its bots.c row.
 int random_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int handwritten_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
@@ -102,33 +100,5 @@ int octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves,
 int octogen_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 // Fusion: octogen with rollout noise (octogen_strategy.c; native builds only).
 int fusion_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
-
-// Map a strategy name (or short alias) to its STRAT_* id; -1 if unknown.
-// Single source of truth for the name<->id mapping the main programs share.
-static inline int parse_strategy(const char *s) {
-    if (!s) return -1;
-    if (!strcmp(s, "random")      || !strcmp(s, "rand")) return STRAT_RANDOM;
-    if (!strcmp(s, "espresso")    || !strcmp(s, "esp"))  return STRAT_ESPRESSO;
-    if (!strcmp(s, "handwritten") || !strcmp(s, "hw"))   return STRAT_HANDWRITTEN;
-    if (!strcmp(s, "robusta")     || !strcmp(s, "rob"))  return STRAT_ROBUSTA;
-    if (!strcmp(s, "firecracker") || !strcmp(s, "fc"))   return STRAT_FIRECRACKER;
-    if (!strcmp(s, "gunpowder")   || !strcmp(s, "gp"))   return STRAT_GUNPOWDER;
-    if (!strcmp(s, "blackpowder") || !strcmp(s, "bp"))   return STRAT_BLACKPOWDER;
-    if (!strcmp(s, "cordite")     || !strcmp(s, "cd"))   return STRAT_CORDITE;
-    if (!strcmp(s, "astrolite")   || !strcmp(s, "as"))   return STRAT_ASTROLITE;
-    if (!strcmp(s, "cordite_old") || !strcmp(s, "cd0"))  return STRAT_CORDITE_OLD;
-    if (!strcmp(s, "simple_heuristic")  || !strcmp(s, "sh")) return STRAT_SIMPLE_HEURISTIC;
-    if (!strcmp(s, "champion")          || !strcmp(s, "ch")) return STRAT_CHAMPION;
-    if (!strcmp(s, "ultimate_champion") || !strcmp(s, "uc")) return STRAT_ULTIMATE_CHAMPION;
-    if (!strcmp(s, "hacker")            || !strcmp(s, "hk")) return STRAT_HACKER;
-    if (!strcmp(s, "fulminate")         || !strcmp(s, "fm")) return STRAT_FULMINATE;
-    if (!strcmp(s, "espresso_prod")     || !strcmp(s, "ep")) return STRAT_ESPRESSO_PROD;
-    if (!strcmp(s, "handwritten_prod")  || !strcmp(s, "hp")) return STRAT_HANDWRITTEN_PROD;
-    if (!strcmp(s, "distilled")         || !strcmp(s, "dl")) return STRAT_DISTILLED;
-    if (!strcmp(s, "octogen")           || !strcmp(s, "og"))  return STRAT_OCTOGEN;
-    if (!strcmp(s, "octogen_oracle")    || !strcmp(s, "ogo")) return STRAT_OCTOGEN_ORACLE;
-    if (!strcmp(s, "fusion")            || !strcmp(s, "fu"))  return STRAT_FUSION;
-    return -1;
-}
 
 #endif

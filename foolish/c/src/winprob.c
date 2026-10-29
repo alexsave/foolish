@@ -333,8 +333,8 @@ int winprob_packed(const unsigned char *code, int code_len, const WinprobParams 
                    WinprobProgress progress, void *progress_ctx,
                    unsigned char *out, int out_cap) {
     if (!code || !p || !out || code_len <= 0) return -WINPROB_EBADARG;
-    const BotRosterEntry *e = bot_roster_at(p->roster_idx);
-    if (!e) return -WINPROB_EBADARG;
+    const int strat = bot_roster_strat(p->roster_idx);
+    if (strat < 0) return -WINPROB_EBADARG;
     if (p->worlds < 0 || p->belief_worlds < 0) return -WINPROB_EBADARG;
     if (p->worlds == 0 && p->belief_worlds == 0) return -WINPROB_EBADARG;
 
@@ -361,7 +361,7 @@ int winprob_packed(const unsigned char *code, int code_len, const WinprobParams 
 
     // The roster's brain, not its index: a seat carries a STRAT_* id.
     WinprobParams run = *p;
-    run.roster_idx = e->strat;
+    run.roster_idx = strat;
 
     uint32_t t0 = wp_now_ms();
     r = wp_walk(&hdr, deck, n_deck, n_acts, &run, progress, progress_ctx);

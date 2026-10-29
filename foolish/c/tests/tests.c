@@ -12,6 +12,7 @@
 #include "../src/awire.h"
 #include "../src/strategy.h"
 #include "../src/bot_play.h"
+#include "../src/bots.h"
 #include "../src/bot_roster.h"
 #include "../src/bot_knobs.h"
 #include "../src/bot_drive.h"
@@ -1887,25 +1888,26 @@ static void test_whole_game_reproducible(void) {
 // registry, seed.sql and ios_api.c used to each restate in their own words.
 
 static void test_bot_roster_table(void) {
-    int n = 0;
-    const BotRosterEntry *r = bot_roster(&n);
-    CHECK(n > 0 && r != NULL, "roster is non-empty");
-    CHECK(n == bot_roster_count(), "bot_roster(&n) and bot_roster_count() agree");
+    const int n = bot_roster_count();
+    CHECK(n > 0, "roster is non-empty");
 
-    // Keys unique, tiers strictly increasing (the table IS the strength
+    // Keys unique, tiers strictly increasing (the roster IS the strength
     // ladder — the offline picker renders it in order).
-    int dup = 0, unordered = 0;
+    int dup = 0, unordered = 0, holes = 0;
     for (int i = 0; i < n; i++) {
+        const BotDef *a = bot_roster_at(i);
+        if (!a) { holes = 1; continue; }
         for (int j = i + 1; j < n; j++)
-            if (!strcmp(r[i].key, r[j].key)) dup = 1;
-        if (i && r[i].tier <= r[i - 1].tier) unordered = 1;
+            if (bot_roster_at(j) && !strcmp(a->key, bot_roster_at(j)->key)) dup = 1;
+        if (i && bot_roster_at(i - 1) && a->tier <= bot_roster_at(i - 1)->tier) unordered = 1;
     }
+    CHECK(!holes, "every roster index below the count is a row");
     CHECK(!dup, "roster keys are unique");
     CHECK(!unordered, "roster is in strictly increasing tier order");
 
     // Round-trip every key through find().
     int roundtrip = 1;
-    for (int i = 0; i < n; i++) if (bot_roster_find(r[i].key) != i) roundtrip = 0;
+    for (int i = 0; i < n; i++) if (!bot_roster_at(i) || bot_roster_find(bot_roster_at(i)->key) != i) roundtrip = 0;
     CHECK(roundtrip, "bot_roster_find round-trips every key to its index");
     CHECK(bot_roster_find("nope") == -1, "unknown key is -1, not a silent fallback");
     CHECK(bot_roster_find(NULL) == -1, "NULL key is -1");
@@ -1924,19 +1926,17 @@ static void test_bot_roster_table(void) {
     // handwritten/espresso must be the PRODUCTION mirrors, not the arena
     // variants — ios_api.c pointed at the arena ones, so offline Handwritten
     // was not the site's Handwritten (§3).
-    const BotRosterEntry *hw = bot_roster_at(bot_roster_find("handwritten"));
-    const BotRosterEntry *es = bot_roster_at(bot_roster_find("espresso"));
-    CHECK(hw && hw->strat == STRAT_HANDWRITTEN_PROD, "handwritten -> the _PROD mirror");
-    CHECK(es && es->strat == STRAT_ESPRESSO_PROD, "espresso -> the _PROD mirror");
+    CHECK(bot_roster_strat(bot_roster_find("handwritten")) == STRAT_HANDWRITTEN_PROD, "handwritten -> the _PROD mirror");
+    CHECK(bot_roster_strat(bot_roster_find("espresso")) == STRAT_ESPRESSO_PROD, "espresso -> the _PROD mirror");
 
     // Knobs: cordite must carry the deployed budget, or the phone silently
     // runs arena-mode cordite (CD_BUDGET's C default is 0 = arena).
-    const BotRosterEntry *cd = bot_roster_at(bot_roster_find("cordite"));
+    const BotDef *cd = bot_roster_at(bot_roster_find("cordite"));
     CHECK(cd && strstr(cd->knobs, "CD_BUDGET=prod"), "cordite carries CD_BUDGET=prod");
     CHECK(cd && strstr(cd->knobs, "CD_RACE=1"), "cordite carries CD_RACE=1");
     CHECK(cd && cd->uses_logs, "cordite is a belief bot (needs the session log)");
 
-    const BotRosterEntry *rnd = bot_roster_at(bot_roster_find("random"));
+    const BotDef *rnd = bot_roster_at(bot_roster_find("random"));
     CHECK(rnd && !rnd->uses_logs, "random needs no session log");
 
     // The offline projection: every offline entry resolves, in tier order.
@@ -1945,7 +1945,7 @@ static void test_bot_roster_table(void) {
     int proj_ok = 1, last = -1;
     for (int i = 0; i < on; i++) {
         int idx = bot_roster_offline_at(i);
-        const BotRosterEntry *e = bot_roster_at(idx);
+        const BotDef *e = bot_roster_at(idx);
         if (!e || !e->offline || idx <= last) proj_ok = 0;
         last = idx;
     }
@@ -2001,9 +2001,9 @@ static void test_bot_roster_table_is_the_roster(void) {
     const int n = bot_roster_table(&t);
     CHECK(n == bot_roster_count() && t.n == n, "one row per roster entry");
     for (int i = 0; i < n && i < BOT_ROSTER_MAX; i++) {
-        const BotRosterEntry *e = bot_roster_at(i);
+        const BotDef *e = bot_roster_at(i);
         const BotRosterRow *r = &t.rows[i];
-        CHECK(r->strat == e->strat, "a row carries its entry's brain");
+        CHECK(r->strat == bot_roster_strat(i) && bot_def(r->strat) == e, "a row carries its entry's brain");
         CHECK(r->linked == (bot_roster_linked(i) != 0), "a row says whether this build links the brain");
         CHECK(r->uses_logs == (e->uses_logs != 0), "a row carries uses_logs");
         CHECK(r->seeded == (e->seeded != 0), "a row carries seeded");
@@ -2069,26 +2069,26 @@ static void fu_small_worlds(int on) {
 // offers it, and it carries octogen's knobs. Through the roster it is a named
 // bot like any other: bot_roster_choose runs it to a legal move.
 //
-// Mutations that must turn it red: drop `case STRAT_FUSION` from
-// strategy_choose (the arena choose is -1); drop it from bot_roster.c's
-// dispatch (the roster choose is -1); drop the "fusion" line from
-// parse_strategy (the name is -1); drop the row (the row checks); set its
-// seeded or offline flag (the "not offered" check); give it no knobs (the
-// knob check); leave STRAT_COUNT at 24 (the id check); have fusion ignore
-// FUSION_NOISE_MODE (the "reaches" check); drop its reset of the mode after
-// the decision (the "puts back" check).
+// Mutations that must turn it red: a NULL entry in bots.c's dispatch table (the
+// arena choose and the roster choose are -1); drop
+// its name (the id check: the slot reads as retired); drop its alias (the name
+// check); drop its key (the row checks); set its seeded or offline flag (the
+// "not offered" check); give it no knobs (the knob check); leave STRAT_COUNT at
+// 24 (the id check, and bots.c's [STRAT_FUSION] no longer compiles); have
+// fusion ignore FUSION_NOISE_MODE (the "reaches" check); drop its reset of the
+// mode after the decision (the "puts back" check).
 static void test_fusion_is_dispatchable_and_named(void) {
     CHECK(STRAT_FUSION == 24 && STRAT_COUNT == 25 && !strategy_retired(STRAT_FUSION),
           "fusion takes the next free id, 24, and STRAT_COUNT moves past it");
     CHECK(parse_strategy("fusion") == STRAT_FUSION && parse_strategy("fu") == STRAT_FUSION,
           "fusion parses by name and by its short alias");
     const int ri = bot_roster_find("fusion");
-    const BotRosterEntry *fe = bot_roster_at(ri);
-    CHECK(fe && fe->strat == STRAT_FUSION && bot_roster_find_by_strat(STRAT_FUSION) == ri,
+    const BotDef *fe = bot_roster_at(ri);
+    CHECK(fe && bot_roster_strat(ri) == STRAT_FUSION && bot_roster_find_by_strat(STRAT_FUSION) == ri,
           "fusion has its own roster row, key \"fusion\" on STRAT_FUSION");
     CHECK(fe && !fe->seeded && !fe->offline,
           "fusion's row is neither seeded nor offline: no lobby, picker or seed row offers it");
-    const BotRosterEntry *oe = bot_roster_at(bot_roster_find("octogen"));
+    const BotDef *oe = bot_roster_at(bot_roster_find("octogen"));
     CHECK(fe && oe && !strcmp(fe->knobs, oe->knobs) && fe->uses_logs == oe->uses_logs,
           "fusion's row carries octogen's knobs and is a belief bot like it");
     CHECK(bot_roster_linked(ri), "the native kernel links fusion");
@@ -2805,19 +2805,156 @@ static void test_bot_cycle_delay(void) {
 // cordite/cordite_max pair (two entries, one brain, different knobs) is exactly
 // what would break it.
 static void test_bot_roster_strat_unique(void) {
-    int n = 0;
-    const BotRosterEntry *r = bot_roster(&n);
+    const int n = bot_roster_count();
     int dup = 0;
     for (int i = 0; i < n; i++)
         for (int j = i + 1; j < n; j++)
-            if (r[i].strat == r[j].strat) dup = 1;
+            if (bot_roster_strat(i) == bot_roster_strat(j)) dup = 1;
     CHECK(!dup, "no two roster entries share a brain (bot_roster_find_by_strat is 1:1)");
 
     int rt = 1;
-    for (int i = 0; i < n; i++) if (bot_roster_find_by_strat(r[i].strat) != i) rt = 0;
+    for (int i = 0; i < n; i++) if (bot_roster_find_by_strat(bot_roster_strat(i)) != i) rt = 0;
     CHECK(rt, "bot_roster_find_by_strat round-trips every entry");
     CHECK(bot_roster_find_by_strat(-1) == -1, "an unassigned seat resolves to no entry");
     CHECK(bot_roster_find_by_strat(STRAT_ASTROLITE) == -1, "an unrostered brain resolves to -1");
+}
+
+// bots.c AGAIN, compiled the way the browser's modules compile it
+// (FOOLISH_SEEDED_BOTS_ONLY), under other names, so one test can see both
+// builds: a row's `native_only` and its NATIVE_ONLY dispatch entry say the same
+// thing there, which no native assertion could otherwise reach.
+//
+// Not in the coverage build: gcov counts a source file per object, and a second
+// copy of bots.c in this object would stand in for the real one's counts
+// (it calls none of what the suite calls through the real one).
+#ifndef COVERAGE_CORPUS
+#define FOOLISH_SEEDED_BOTS_ONLY
+#define BOTS             SEEDED_BOTS
+#define NAMED            SEEDED_NAMED
+#define RESEARCH         SEEDED_RESEARCH
+#define bot_def          seeded_bot_def
+#define bot_choose       seeded_bot_choose
+#define bot_linked       seeded_bot_linked
+#define strategy_retired seeded_strategy_retired
+#define strategy_choose  seeded_strategy_choose
+#define parse_strategy   seeded_parse_strategy
+#define same             seeded_same
+const BotDef *seeded_bot_def(int strat);
+StrategyFn seeded_bot_choose(int strat);
+int seeded_bot_linked(int strat);
+int seeded_strategy_retired(int strat);
+int seeded_strategy_choose(int strat, const Game *g, int bot_idx, const LegalMoves *moves);
+int seeded_parse_strategy(const char *s);
+#include "../src/bots.c"
+#undef FOOLISH_SEEDED_BOTS_ONLY
+#undef BOTS
+#undef NAMED
+#undef RESEARCH
+#undef bot_def
+#undef bot_choose
+#undef bot_linked
+#undef strategy_retired
+#undef strategy_choose
+#undef parse_strategy
+#undef same
+#undef NATIVE_ONLY
+#undef SEED_IDS
+
+// THE BROWSER'S BUILD OF THE REGISTRY links exactly the brains its rows say:
+// every brain not `native_only` has its function there, every `native_only`
+// one is NULL (its object is not in WASM_BOT_SRC), bot_linked reads the same
+// off the row, and no server account id rides along (no browser module seeds
+// a store).
+//
+// Mutations that turned it red, each restored after (in bots.c): hacker's
+// RESEARCH entry and gunpowder's NAMED entry without NATIVE_ONLY, and
+// astrolite's row without native_only (the "exactly when" check, both ways); SEED_IDS keeping the ids in the
+// browser's build (the ids check); bot_linked ignoring the flag there (the
+// bot_linked check).
+static void test_bots_registry_browser_build(void) {
+    int agree = 1, linked_ok = 1, no_ids = 1, some_native = 0, some_linked = 0;
+    for (int s = 0; s < STRAT_COUNT; s++) {
+        const BotDef *d = seeded_bot_def(s);
+        if (!d) continue;
+        if ((SEEDED_NAMED[s] == NULL && SEEDED_RESEARCH[s] == NULL) != (d->native_only != 0)) agree = 0;
+        if (seeded_bot_linked(s) != !d->native_only) linked_ok = 0;
+        for (int i = 0; i < BOT_IDS_MAX; i++) if (d->ids[i]) no_ids = 0;
+        some_native += d->native_only != 0;
+        some_linked += !d->native_only;
+    }
+    CHECK(agree, "in the browser's build a brain has its function exactly when its row is not native_only");
+    CHECK(linked_ok, "and bot_linked says the same, off the row alone");
+    CHECK(no_ids, "and no row carries a server account id there");
+    CHECK(some_native > 0 && some_linked >= 8, "the browser's build drops the research brains and keeps the ladder");
+}
+#endif   // COVERAGE_CORPUS
+
+// THE REGISTRY (bots.c) holds itself together: every id below STRAT_COUNT is a
+// brain with a name and an alias or a retired hole, every name and alias parses
+// back to its own id and to no other, this build links every brain, the named
+// bots' tiers are 1..n with no gap or repeat (the roster's order is read off
+// them), and a rung has a city exactly when it is seeded, with all BOT_IDS_MAX
+// of its server accounts, every id a distinct UUID.
+//
+// Mutations that turned it red, each restored after (in bots.c): fusion's alias
+// "og" (the parse and the unique checks); fusion at tier 12 (the tiers check,
+// and the roster's own round trips); gunpowder seeded with no city (the city
+// and the ids checks); one of cordite's ids NULL, and one of them octogen's
+// (the ids check); a row at the retired id 23 (the holes checks); hacker's
+// function also in the NAMED dispatch table (the bot_choose check).
+static void test_bots_registry(void) {
+    int named = 0, retired = 0, parses = 1, unique = 1, linked = 1, named_only = 1;
+    for (int s = 0; s < STRAT_COUNT; s++) {
+        const BotDef *d = bot_def(s);
+        if (!d) { retired += strategy_retired(s); continue; }
+        named++;
+        if (strategy_retired(s) || !d->alias) parses = 0;
+        else if (parse_strategy(d->name) != s || parse_strategy(d->alias) != s) parses = 0;
+        if (!bot_linked(s)) linked = 0;
+        if ((bot_choose(s) != NULL) != (d->key != NULL)) named_only = 0;
+        for (int t = 0; t < s; t++) {
+            const BotDef *o = bot_def(t);
+            if (o && d->alias && (!strcmp(d->name, o->name) || !strcmp(d->alias, o->alias)
+                                  || !strcmp(d->name, o->alias) || !strcmp(d->alias, o->name))) unique = 0;
+        }
+    }
+    CHECK(named + retired == STRAT_COUNT && retired == 4, "every id is a brain or one of the four retired holes");
+    CHECK(strategy_retired(18) && strategy_retired(19) && strategy_retired(22) && strategy_retired(23)
+          && bot_def(18) == NULL && parse_strategy("semtex") == -1 && parse_strategy("torpex") == -1,
+          "the retired ids stay holes: no row, no name");
+    CHECK(!strategy_retired(-1) && !strategy_retired(STRAT_COUNT) && bot_def(-1) == NULL && bot_def(STRAT_COUNT) == NULL,
+          "an id outside the table is neither a brain nor a retired one");
+    CHECK(parses, "every brain's name and alias parse to its own id");
+    CHECK(unique, "no two brains share a name or an alias");
+    CHECK(parse_strategy(NULL) == -1 && parse_strategy("") == -1 && parse_strategy("octo") == -1,
+          "an unknown, empty or partial name parses to nothing");
+    CHECK(linked, "the native kernel links every brain");
+    CHECK(named_only, "the roster's dispatch (bot_choose) reaches exactly the brains a named bot runs");
+
+    int keyed = 0, tier_seen[STRAT_COUNT + 1] = { 0 }, tiers_ok = 1, cities_ok = 1, ids_ok = 1;
+    for (int s = 0; s < STRAT_COUNT; s++) {
+        const BotDef *d = bot_def(s);
+        if (!d) continue;
+        if (!d->key) { if (d->tier || d->seeded || d->offline || d->city) tiers_ok = 0; continue; }
+        keyed++;
+        if (d->tier < 1 || d->tier > STRAT_COUNT || tier_seen[d->tier]++) tiers_ok = 0;
+        if (!d->seeded != !d->city) cities_ok = 0;
+        for (int i = 0; i < BOT_IDS_MAX; i++) {
+            const char *id = d->ids[i];
+            if (!d->seeded) { if (id) ids_ok = 0; continue; }
+            if (!id || strlen(id) != 36 || id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-') { ids_ok = 0; continue; }
+            for (int t = 0; t < STRAT_COUNT; t++) {
+                const BotDef *o = bot_def(t);
+                for (int j = 0; o && j < BOT_IDS_MAX; j++)
+                    if (o->ids[j] && (t != s || j != i) && !strcmp(o->ids[j], id)) ids_ok = 0;
+            }
+        }
+    }
+    for (int t = 1; t <= keyed; t++) if (tier_seen[t] != 1) tiers_ok = 0;
+    CHECK(keyed == bot_roster_count() && tiers_ok,
+          "the named bots' tiers are 1..n, each once, and a brain with no key has no bot fields");
+    CHECK(cities_ok, "a named bot has a city exactly when it is seeded");
+    CHECK(ids_ok, "a seeded bot has all its server accounts, every id a distinct UUID; an unseeded one has none");
 }
 
 static void seat_all(Game *g, int strat) {
@@ -11454,7 +11591,7 @@ static void test_table_load(void) {
     CHECK(tb_game.deterministic_deck, "the deterministic-deck flag is carried from the blob");
     CHECK(tb_game.players[0].strategy_key == STRATEGY_KEY_HUMAN && tb_game.players[1].strategy_key == STRATEGY_KEY_HUMAN,
           "a seat with no brain is a human");
-    CHECK(tb_game.players[2].strategy_key == bot_roster_at(bot_roster_find("random"))->strat,
+    CHECK(tb_game.players[2].strategy_key == bot_roster_strat(bot_roster_find("random")),
           "a bot seat's kind is its brain's strat");
     CHECK(tb.r.n == 3 && roster_seat_of(&tb.r, RS("id-2")) == 2, "the roster is loaded");
 
@@ -12273,7 +12410,7 @@ static void test_table_leave_and_bots(void) {
                TABLE_E_UNKNOWN_BRAIN, "a bot needs a brain");
     CHECK(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed) == TABLE_OK
           && tb.r.n == 4 && tb_game.players[3].status == PLAYER_STATUS_READY
-          && tb_game.players[3].strategy_key == bot_roster_at(bot_roster_find("random"))->strat
+          && tb_game.players[3].strategy_key == bot_roster_strat(bot_roster_find("random"))
           && !tb.dealt_now, "a bot sits down READY with its brain's kind, and nothing deals yet");
     TB_REFUSED(table_leave(&tb, RS("a"), RS("bot-1")), TABLE_E_FORBIDDEN, "a bot is not removed as a leaving player");
     TB_REFUSED(table_remove_bot(&tb, RS("a"), RS("b")), TABLE_E_NOT_SEATED, "a human is not removed as a bot");
@@ -14003,10 +14140,9 @@ static void test_table_bot_drive_ignores_instance_history(void) {
     const int other_len = tb_state_len;
     memcpy(other_state, tb_state, (size_t)other_len);
 
-    int n_roster = 0;
-    const BotRosterEntry *roster = bot_roster(&n_roster);
+    const int n_roster = bot_roster_count();
     for (int e = 0; e < n_roster; e++) {
-        const char *brain = roster[e].key;
+        const char *brain = bot_roster_at(e)->key;
         tb_bot_table(brain, 40 + e);
         int drives = 0, same = 1, first_diff = -1;
 #ifdef COVERAGE_CORPUS
@@ -20922,31 +21058,32 @@ static void test_table_a_load_leaves_nothing_of_the_last_table(void) {
 // table_seal).
 //
 // WHAT "LINKED" MEANS HERE. This suite links every brain in the roster
-// (bot_roster_linked is 1 for every entry); only bots.wasm, built with
-// -DFOOLISH_SEEDED_BOTS_ONLY, leaves the offline-only rungs (espresso,
-// gunpowder) out, and only there are they refused. So every roster key seats as
+// (bot_roster_linked is 1 for every entry); only the browser's modules, built
+// with -DFOOLISH_SEEDED_BOTS_ONLY, leave the offline-only rungs (espresso,
+// gunpowder) and fusion out (bots.c NATIVE_ONLY), and only there are they
+// refused. So every roster key seats as
 // itself here, and the refusals are the keys no build has: culled bots (semtex
 // and fulminate were real once), a name that never existed, and a key in the
 // wrong case.
 static void test_table_every_brain_seats_as_itself(void) {
     static const char *const dead[] = { "semtex", "fulminate", "totallyfakebot", "RANDOM", "Cordite", "" };
-    int n_roster = 0, linked = 1, seated = 1, stored = 1;
-    const BotRosterEntry *roster = bot_roster(&n_roster);
+    const int n_roster = bot_roster_count();
+    int linked = 1, seated = 1, stored = 1;
     tb_seed_fill(3);
     for (int e = 0; e < n_roster; e++) {
-        const char *key = roster[e].key;
+        const char *key = bot_roster_at(e)->key;
         const int len = (int)strlen(key);
         linked &= bot_roster_linked(e) == 1;
         table_init(&tb, &tb_game, &tb_snaps);
         table_create(&tb, RS("host"), RS("Host"));
         const int rc = table_add_bot(&tb, RS("host"), RS("bot-1"), RS("Bot"), key, len, tb_seed);
         const int ok = rc == TABLE_OK && tb.r.n == 2 && tb.r.seats[1].brain_len == len
-                    && memcmp(tb.r.seats[1].brain, key, (size_t)len) == 0 && tb_game.players[1].strategy_key == roster[e].strat;
+                    && memcmp(tb.r.seats[1].brain, key, (size_t)len) == 0 && tb_game.players[1].strategy_key == bot_roster_strat(e);
         if (!ok) fprintf(stderr, "  %s: table_add_bot answered %d\n", key, rc);
         seated &= ok;
         FxBoard lobby = { .np = 2, .status = GAME_STATUS_WAITING };
         lobby.brain[1] = key;
-        stored &= fx_seal(&lobby) > 0 && tb_game.players[1].strategy_key == roster[e].strat;
+        stored &= fx_seal(&lobby) > 0 && tb_game.players[1].strategy_key == bot_roster_strat(e);
     }
     CHECK(n_roster >= 8 && linked, "this build links every brain in the roster");
     CHECK(seated, "every brain added to a lobby seats as itself, not a neighbour or random");
@@ -21401,6 +21538,10 @@ int main(void) {
     test_bot_pacing_table();
     test_bot_cycle_delay();
     test_bot_roster_strat_unique();
+    test_bots_registry();
+#ifndef COVERAGE_CORPUS
+    test_bots_registry_browser_build();
+#endif
     test_bot_drive_basic();
     test_bot_drive_bundles_only_silent();
     test_bot_drive_fairness();

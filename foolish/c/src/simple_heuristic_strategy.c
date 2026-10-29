@@ -15,14 +15,11 @@
 //
 // No RNG: the TS never calls Math.random().
 
-// strategy.h is not included: its parse_strategy() inline needs strcmp,
-// which the freestanding wasm shim <string.h> doesn't provide. game.h +
-// legal.h carry everything this file uses, and the chooser signature below
-// matches StrategyFn exactly.
 #include "card.h"
 #include "game.h"
 #include "legal.h"
 #include "bot_common.h"
+#include "strategy.h"
 
 // shouldGiveUp(bot.hand, game): give up when we can't defend every
 // uncovered attack, when defending would spend more than half our trumps,
