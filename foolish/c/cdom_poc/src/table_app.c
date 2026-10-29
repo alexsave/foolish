@@ -659,7 +659,7 @@ static struct {
   int on;              /* a card is pressed (isDraggingCard) */
   int index;           /* its index in the hand as drawn (draggedCardIndex, following it as it swaps) */
   int x0, y0;          /* where it was pressed */
-  double t0;           /* when */
+  int32_t t0;          /* when: the press's own time (cd_event_rec.ms), as React reads e.timeStamp */
   int moving;          /* it has moved more than 10 px (isActuallyDragging) */
   int swapped;         /* the hand was rearranged by it (hasSwapped) */
   int action;          /* outside the hand's area: a game action (isDraggingForGameAction) */
@@ -2100,7 +2100,7 @@ static void drag_start(const cd_event_rec *e, int cid) {
   DRAG.index = at;
   DRAG.x0 = DRAG.x = e->x;
   DRAG.y0 = DRAG.y = e->y;
-  DRAG.t0 = cd_now();
+  DRAG.t0 = e->ms;
   drag_listen(1);
 }
 
@@ -2137,11 +2137,11 @@ static void drag_move(const cd_event_rec *e) {
 }
 
 static void drag_end(const cd_event_rec *e) {
-  (void)e;
   if (!DRAG.on) return;
   cd_prevent_default(); /* after a touch: no mouse events and no click */
   drag_listen(0);
-  double held = cd_now() - DRAG.t0;
+  /* timed by the two events' own stamps: a release whose handler ran late is still a tap */
+  int32_t held = e->ms - DRAG.t0;
   if (held >= 0 && held < TAP_MS && !DRAG.swapped && !DRAG.moving && DRAG.index < hand_n)
     toggle(card_to_id(HAND[DRAG.index]));
   if (DRAG.action && DRAG.moving) { /* the drop, where the pointer last moved */

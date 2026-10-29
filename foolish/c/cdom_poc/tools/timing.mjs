@@ -9,7 +9,8 @@
 // Times are script (the handler, C, its DOM calls) and script + style + layout (forced at once).
 // - first paint: the page's first-contentful-paint, and when cdom.start resolved (the wasm
 //   fetched, compiled, instantiated and cd_main's first render done);
-// - select: a click on a hand card (the selection, the pills asked of the kernel, the patches);
+// - select: a tap on a hand card, the press and the release (the selection, the pills asked of the
+//   kernel, the patches; before the drag pass it was a click);
 // - play: a click on the Attack pill (the move applied, the board re-read, the patches);
 // - bot: the bot's step (bot_drive, then the patches), run where its timer would run it;
 // - the run after play and after the bot: the frame and timer callbacks until the animations land.
@@ -75,7 +76,9 @@ try {
       await frame();
       if (!crossOriginIsolated) throw new Error('not isolated');
       const sel = [];
-      for (let k = 0; k < 9; k++) sel.push(await time(() => card().click()));   // ends selected (odd count)
+      const tap = () => { const r = card().getBoundingClientRect(), p = { bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
+        card().dispatchEvent(new MouseEvent('mousedown', p)); document.dispatchEvent(new MouseEvent('mouseup', p)); };
+      for (let k = 0; k < 9; k++) sel.push(await time(tap));   // ends selected (odd count)
       const play = await time(() => document.querySelector('[data-pill="Attack"]').click());
       const playRun = await runOf();
       const bot = await time(() => x.cd_timer(3)); // the bot's step (the test build's release path)

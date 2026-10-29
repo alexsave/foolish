@@ -146,6 +146,7 @@ var cdom = (() => {
     i32[record + 8] = pathDepth;
     i32[record + 9] = typeof key === "string" && key.length === 1 ? key.charCodeAt(0) : 0;
     i32[record + 10] = 0;
+    i32[record + 11] = Math.round(event.timeStamp || 0);
     exports.cd_event();
     if (buffer !== memory.buffer) {
       views();

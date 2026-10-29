@@ -146,12 +146,13 @@ uint32_t cd_pending(void);           /* nonzero while strings or a walk wait to 
  * level (byte 0 = which child of the listener), for depth levels (max 4).
  * x, y: clientX and clientY (a touch event's: its first changed touch, the finger that pressed,
  * moved or lifted). key: keyCode. ch: the key's character when event.key is one UTF-16 unit
- * ("a", "A", "3", "-", " "), else 0 ("ArrowUp", "Shift"). mods: CD_MOD_* bits. prevent is
- * cdom's (cd_prevent_default).
+ * ("a", "A", "3", "-", " "), else 0 ("ArrowUp", "Shift"). mods: CD_MOD_* bits. ms: when the
+ * event happened (event.timeStamp, cd_now()'s clock, whole ms): a press and its release are timed
+ * by their own stamps, not by when their handlers got to run. prevent is cdom's (cd_prevent_default).
  * A window event (CD_EV_RESIZE, CD_EV_VISIBILITY) has id CD_MOUNT, x and y the viewport's
  * size, and key 1 when the document is hidden; any other type listened for with cd_listen_window
  * is the document's event as it is, with id CD_MOUNT (cd_hit names the node under a point). */
-typedef struct { int32_t type, id, x, y, button, key, mods, path, depth, ch, prevent; } cd_event_rec;
+typedef struct { int32_t type, id, x, y, button, key, mods, path, depth, ch, prevent, ms; } cd_event_rec;
 void cd_on_event(const cd_event_rec *e);
 void cd_main(void);                  /* the app's entry, called once at start */
 uint32_t cd_input_value(cd_id id, char *dst, uint32_t cap); /* copy an input's value on demand */

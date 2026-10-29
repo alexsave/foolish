@@ -466,6 +466,12 @@ try {
     await check(`a card dragged onto the table attacks; the shadow names the move over the drop cells while it is held${by}`, async () => {
       await board(0);   // the golden's: 6s may be thrown in
       let seen = null;
+      // let go 40 px above the hand: still the hand's area (the plane and a card's height above it), no move
+      const top = await b.evaluate(`document.querySelector('[data-hand-plane]').getBoundingClientRect().top`);
+      await drag(b, await cardAt('0-5'), [{ x: 700, y: top - 40 }], { touch });
+      await idle();
+      assert.deepEqual(await battles(), ['1-5/1-7', '3-5'], 'a drop in the hand\'s area plays nothing');
+      assert.deepEqual(await hand(), ['0-5', '1-6', '3-11', '3-13']);
       await drag(b, await cardAt('0-5'), [TABLE_SPOT], { touch, atEach: async () => { seen = await midDrag(); } });
       assert.deepEqual(seen.badge, '⚔️ Attack', 'the badge names the kernel\'s move');
       assert.deepEqual(seen.at, ['512px', '260px'], 'over the pointer, 40 px up');
@@ -511,6 +517,16 @@ try {
       assert.deepEqual(await reds(), [], 'a second tap takes it back');
       await drag(b, at, [], { touch, holdMs: 200 });
       assert.deepEqual(await reds(), [], 'a long press selects nothing');
+      // a quick tap whose release waits 250 ms behind a busy page is still a tap: the two events'
+      // own times are 0 to 150 ms apart, whatever the handler's clock says (DragContext.tsx endCardDrag)
+      const T = touch ? 'Input.dispatchTouchEvent' : 'Input.dispatchMouseEvent';
+      const ev = (type) => touch ? { type: type ? 'touchEnd' : 'touchStart', touchPoints: type ? [] : [{ x: at.x, y: at.y, id: 1 }] }
+        : { type: type ? 'mouseReleased' : 'mousePressed', x: at.x, y: at.y, button: 'left', buttons: type ? 0 : 1, clickCount: 1 };
+      await b.send(T, ev(0));
+      const busy = b.evaluate('(() => { const t = performance.now() + 250; while (performance.now() < t); return 1; })()');
+      await b.send(T, ev(1));
+      await busy;
+      assert.deepEqual(await reds(), ['1-6'], 'a tap released behind a busy page selects');
       assert.equal(await b.evaluate('window.app.then((x) => x.app_drag(0))'), 0, 'and the drag is over');
     });
 
@@ -548,6 +564,12 @@ try {
 
   await check('keys: 3 toggles the third card, 1 then A attacks with the first; letters do nothing with Ctrl, Alt or Meta held', async () => {
     await board(0);
+    // typed into a field: no key is the table's
+    await b.evaluate(`(() => { const i = document.createElement('input'); i.id = 'typing'; document.body.append(i); i.focus(); })()`);
+    await key(b, '1');
+    await key(b, 'ArrowRight');
+    assert.deepEqual([await reds(), await b.evaluate(`document.querySelector('[data-testid="kbd-state"]').dataset.mode`)], [[], 'none'], 'keys typed into a field do nothing');
+    await b.evaluate(`document.getElementById('typing').remove()`);
     await key(b, '3');
     assert.deepEqual(await reds(), ['3-11']);
     await key(b, '3');
@@ -568,6 +590,9 @@ try {
     await board(0);
     const st = () => b.evaluate(`(() => { const e = document.querySelector('[data-testid="kbd-state"]'); return [e.dataset.mode, e.dataset.sel, e.dataset.target]; })()`);
     assert.deepEqual(await st(), ['none', '', '']);
+    await key(b, 'ArrowRight');
+    await key(b, 'ArrowLeft');
+    assert.deepEqual(await st(), ['cards', '3-13', ''], 'Left from the first card wraps to the last');
     await key(b, 'ArrowRight');
     await key(b, 'ArrowRight');
     assert.deepEqual(await st(), ['cards', '1-6', '']);
@@ -778,6 +803,16 @@ try {
     console.log(`     (pills seen: ${[...pillsSeen].sort().join(' ')})`);
     assert.equal(pillsSeen.size, 5, 'every pill showed');
   });
+  for (const mode of ['drag', 'touch', 'keys']) {
+    await check(`a game played out by ${mode === 'keys' ? 'the arrow keys alone' : mode === 'touch' ? 'touch drags' : 'mouse drags'} reaches the end screen (tools/play.mjs ${mode})`, async () => {
+      await openTable(b, 'http://127.0.0.1:8720/c/cdom_poc/out/index.html?notex&debug', { fast: true });
+      await speed();
+      const moves = await playToEnd(b, 400, null, mode);
+      console.log(`     (${moves} moves of mine to the end)`);
+      assert.equal(await turn(), 'over');
+      assert.equal(await b.evaluate(`document.querySelector('[data-end] h1').textContent`), 'done - Two of us');
+    });
+  }
 } finally {
   await b.close();
   server.close();
