@@ -794,6 +794,11 @@ int client_board_edit(ClientTable *c, TableView *v, const BoardEdit *e) {
             if (n > MAX_BATTLES) return CLIENT_E_CAP;
             for (int i = 0; i < n; i++) v->battles[i] = (Battle){ .attack = e->cards[i], .defense = CARD_NONE };
             v->num_battles = (int8_t)n;
+            // A card on the table is not in my hand: laying back a pickup of mine
+            // over the board its confirmation left (client_revert_board, the
+            // sweep's cards) takes them out of the hand that board already gave
+            // them to, or one card would be in two places.
+            hand_without(v, e->cards, n);
             return CLIENT_OK;
         case CLIENT_EDIT_LIFT: {
             int kept = 0;
