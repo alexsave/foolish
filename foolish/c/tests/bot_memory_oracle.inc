@@ -1,6 +1,8 @@
 // The log scans BotMemory replaced, verbatim from the tree before it
 // (renamed, their research switches at their defaults): the equivalence oracle.
-// GENERATED once from that tree; never edited to agree with the memory.
+// GENERATED once from that tree; never edited to agree with the memory. The one
+// addition: old_og_belief reports to OLD_OG_PROBE at the two points main's
+// octogen reports to its belief probe (octogen_strategy.h og_belief_probe).
 
 static void old_rb_pinned(const Game *g, int bot_idx, OldPool *u) {
     for (int p = 0; p < MAX_PLAYERS; p++) u->pinned_n[p] = 0;
@@ -568,6 +570,7 @@ static void old_og_belief(const Game *g, int bot_idx, OgBeliefProbe *B) {
         B->trump_leads[p] = trump_viol[p];
         if (trump_viol[p] >= 1) { B->b.distrust_floor[p] = true; B->b.floor_v[p] = 0; }
     }
+    OLD_OG_PROBE(OG_PROBE_RAW);
 
     // Semtex adaptivity: a proven void contradiction means the seat picks up
     // strategically while holding cover - an MC bot (cordite family) or a
@@ -696,4 +699,5 @@ static void old_og_belief(const Game *g, int bot_idx, OgBeliefProbe *B) {
         }
         if (allowed < unknown) B->b.void_n[p] = 0;
     }
+    OLD_OG_PROBE(OG_PROBE_FINAL);
 }

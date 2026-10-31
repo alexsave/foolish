@@ -20,6 +20,7 @@
 #include "../src/strategy.h"
 #include "../src/game.h"
 #include "../src/legal.h"
+#include "../src/octogen_strategy.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +33,21 @@ typedef struct {
     int  pinned_n[MAX_PLAYERS];
 } OldPool;
 static int old_og_profile = 0;
+// The belief probe's two stages (octogen_strategy.h og_belief_probe), as the old
+// scan and the product each report them.
+typedef struct { BotBelief b; bool tell[MAX_PLAYERS]; int seen; } ProbeAt;
+static ProbeAt old_at[2], new_at[2];
+static void probe_capture(ProbeAt *at, int stage, const BotBelief *b, const bool *tell) {
+    if (stage < 0 || stage > 1) return;
+    at[stage].b = *b;
+    memcpy(at[stage].tell, tell, sizeof at[stage].tell);
+    at[stage].seen = 1;
+}
+#define OLD_OG_PROBE(stage) probe_capture(old_at, (stage), &B->b, B->mc_tell)
+static void new_probe(int stage, const Game *g, int bot_idx, const BotBelief *b, const bool mc_tell[MAX_PLAYERS]) {
+    (void)g; (void)bot_idx;
+    probe_capture(new_at, stage, b, mc_tell);
+}
 
 #include "bot_memory_oracle.inc"
 
@@ -61,7 +77,7 @@ static bool belief_equal(const BotBelief *x, const BotBelief *y, int np, const c
 }
 
 // What the run saw, so a run that never exercised a rule cannot pass.
-static long n_capped, n_decisions, n_flip, n_voids, n_floors, n_tells, n_decl, n_broken, n_viol_pend, n_pinned;
+static long n_probed, n_capped, n_decisions, n_flip, n_voids, n_floors, n_tells, n_decl, n_broken, n_viol_pend, n_pinned;
 
 static void compare_all(const Game *g, const BotMemory *mem, int gi) {
     bot_mem_bind(g, mem);
@@ -98,8 +114,20 @@ static void compare_all(const Game *g, const BotMemory *mem, int gi) {
                 }
                 continue;
             }
+            memset(old_at, 0, sizeof old_at);
+            memset(new_at, 0, sizeof new_at);
+            old_og_belief(g, s, &x);
+            og_belief_probe = new_probe;
             og_belief_of(g, s, &y);
+            og_belief_probe = 0;
             CHECK(belief_equal(&x.b, &y.b, np, &what), "game %d seat %d log %d: octogen %s differs", gi, s, g->num_logs, what);
+            for (int st = 0; st < 2; st++) {
+                const char *w2 = "";
+                CHECK(old_at[st].seen && new_at[st].seen && belief_equal(&old_at[st].b, &new_at[st].b, np, &w2)
+                      && memcmp(old_at[st].tell, new_at[st].tell, sizeof old_at[st].tell) == 0,
+                      "game %d seat %d log %d: octogen's belief probe, stage %d, reads a different belief (%s)", gi, s, g->num_logs, st, w2);
+                n_probed += st;
+            }
             for (int p = 0; p < np; p++) {
                 CHECK(x.trump_leads[p] == y.trump_leads[p], "game %d seat %d: octogen trump leads differ for %d", gi, s, p);
                 CHECK(x.mc_tell[p] == y.mc_tell[p], "game %d seat %d log %d: octogen mc_tell differs for %d", gi, s, g->num_logs, p);
@@ -215,9 +243,9 @@ int main(int argc, char **argv) {
         }
     }
     printf("bot_memory_test: %d games (%ld rematches), %ld decisions x every seat; seen: flip pins %ld, voids %ld, floors %ld, "
-           "floors broken %ld, declined values %ld, tells %ld, trump leads %ld, pinned rows %ld, robusta past a capped pickup %ld; %ld checks\n",
-           games, rematches, n_decisions, n_flip, n_voids, n_floors, n_broken, n_decl, n_tells, n_viol_pend, n_pinned, n_capped, checks);
-    CHECK(n_flip > 0 && n_voids > 0 && n_floors > 0 && n_broken > 0 && n_decl > 0 && n_tells > 0 && n_viol_pend > 0 && n_pinned > 0,
+           "floors broken %ld, declined values %ld, tells %ld, trump leads %ld, pinned rows %ld, robusta past a capped pickup %ld, octogen probe stages compared %ld; %ld checks\n",
+           games, rematches, n_decisions, n_flip, n_voids, n_floors, n_broken, n_decl, n_tells, n_viol_pend, n_pinned, n_capped, 2 * n_probed, checks);
+    CHECK(n_flip > 0 && n_voids > 0 && n_floors > 0 && n_broken > 0 && n_decl > 0 && n_tells > 0 && n_viol_pend > 0 && n_pinned > 0 && n_probed > 0,
           "the run exercised every rule the memory folds");
     if (fails) { printf("FAIL: %d of %ld checks\n", fails, checks); return 1; }
     printf("ok\n");
