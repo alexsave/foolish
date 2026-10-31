@@ -139,3 +139,28 @@ StrategyFn bot_rollout_for(const Game *g, int policy) {
     if (deck_active || bot_in_count(g) == 2) return handwritten_strategy_choose;
     return espresso_strategy_choose;
 }
+
+void bot_mem_belief(const BotMemory *m, const Game *g, int bot_idx, BotBelief *B, int floors, bool flip) {
+    memset(B, 0, sizeof(*B));
+    const int n = g->num_players < m->num_players ? g->num_players : m->num_players;
+    for (int p = 0; p < n; p++) {
+        if (p == bot_idx) continue;
+        int rn;
+        const Card *row = bot_mem_row(m, g, p, flip, &rn);
+        B->pinned_n[p] = rn;
+        memcpy(B->pinned[p], row, (size_t)rn * sizeof(Card));
+        B->void_n[p] = m->void_n[p];
+        memcpy(B->voids[p], m->voids[p], (size_t)m->void_n[p] * sizeof(Card));
+        if (floors == 0) continue;
+        const bool led_trump = bot_mem_trump_leads(m, g, p) >= 1;
+        B->floor_v[p] = floors > 0 && !led_trump ? m->floor_v[p] : 0;
+        B->distrust_floor[p] = led_trump || (floors > 0 && (m->flags[p] & BOT_MEM_FLOOR_BROKEN));
+    }
+}
+
+int bot_mem_discards(const BotMemory *m, Card *out) {
+    int n = 0;
+    for (int id = 0; id < 52; id++)
+        if (m->discard >> id & 1u) out[n++] = card_of_id(id);
+    return n;
+}

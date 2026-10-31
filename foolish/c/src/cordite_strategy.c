@@ -89,134 +89,17 @@ static _Thread_local int cd_bb_avoid_budget = 15000;
 // The belief is bot_common.h's.
 typedef BotBelief Belief;
 
-// The face-up trump the draw record L took, into *out; false when nothing says
-// which card it was. A Game that drew it itself still holds it in g->flipped
-// (the kernel leaves the drawn card there, gated by has_flipped). A Game a table
-// LOADED from its row does not - the blob carries no drawn trump, so state_get
-// leaves the {0,0} that is not a card - but its session log masks every draw
-// except the face-up trump's (view.c log_record_put), so the one card the record
-// names is it. Pinning the {0,0} instead put a card that does not exist in that
-// seat's hand: a phantom bit in every sampled world's hand bitboard (card_id -1).
-static bool cd_drawn_trump(const Game *g, const GameLog *L, Card *out) {
-    if (card_in_range(g->flipped, 1, ACE_VALUE)) { *out = g->flipped; return true; }
-    for (int k = 0; k < L->num_pairs; k++) {
-        if (card_in_range(L->pairs[k].primary, 1, ACE_VALUE)) { *out = L->pairs[k].primary; return true; }
-    }
-    return false;
-}
-
-// Chronological scan over logs: pinned cards, flipped-trump holder, void
-// constraints, rank floors and trust flags, all in one pass.
+// The belief: pinned cards, the flipped-trump holder, void constraints, rank
+// floors and trust flags, read off the table's memory, then judged against
+// the board.
 static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
-    memset(B, 0, sizeof(*B));
-
-    // Last draw event: holds the flipped trump if the deck is exhausted, and
-    // marks the moment the deck died (for "deck alive at log i" tests).
-    int last_draw_idx = -1;
-    for (int i = 0; i < g->num_logs; i++) {
-        if (g->logs[i].log_type == LOG_DRAW) last_draw_idx = i;
-    }
-    bool deck_alive_now = (g->deck_count > 0 || g->has_flipped);
-    int flip_log_idx = (!deck_alive_now && !cd_no_flip) ? last_draw_idx : -1;
-
-    int trump_viol[MAX_PLAYERS] = {0};
-    int in_now = g->num_players;
-
-    // Replayed table state (per-move events only; PICKUP/DISCARD card lists
-    // silently truncate at MAX_LOG_PAIRS=16 and must not be trusted).
-    Card tbl[80];
-    int  tbl_n = 0;
-    Card unc[MAX_BATTLES * 2];  // uncovered attack cards only
-    int  unc_n = 0;
-    Card discards[160];
-    int  disc_n = 0;
-
-    for (int i = 0; i < g->num_logs; i++) {
-        const GameLog *L = &g->logs[i];
-        int p = L->player_idx;
-        bool deck_alive_at = deck_alive_now || i <= last_draw_idx;
-        switch (L->log_type) {
-            case LOG_ATTACK:
-            case LOG_PASS: {
-                bool first_attack = (L->log_type == LOG_ATTACK && tbl_n == 0);
-                bool any_trump = false;
-                for (int k = 0; k < L->num_pairs; k++) {
-                    Card c = L->pairs[k].primary;
-                    if (c.suit == g->power_suit) any_trump = true;
-                    if (unc_n < (int)(sizeof(unc) / sizeof(unc[0]))) unc[unc_n++] = c;
-                    if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
-                    if (p >= 0 && p != bot_idx) {
-                        bot_floor_check(B, g, p, c);
-                        bot_pinned_remove(B, p, c);
-                    }
-                }
-                if (p >= 0 && p != bot_idx && L->log_type == LOG_ATTACK) {
-                    if (any_trump && deck_alive_at) trump_viol[p]++;
-                    if (first_attack && L->num_pairs == 1 && !any_trump
-                        && in_now > 2 && !cd_no_floors) {
-                        B->floor_v[p] = L->pairs[0].primary.value;
-                    }
-                }
-                break;
-            }
-            case LOG_COVER:
-                for (int k = 0; k < L->num_pairs; k++) {
-                    Card c = L->pairs[k].primary;
-                    if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
-                    if (p >= 0 && p != bot_idx) {
-                        bot_floor_check(B, g, p, c);
-                        bot_pinned_remove(B, p, c);
-                    }
-                    if (!card_is_none(L->pairs[k].target)) {
-                        for (int q = 0; q < unc_n; q++) {
-                            if (card_eq(unc[q], L->pairs[k].target)) {
-                                unc[q] = unc[--unc_n];
-                                break;
-                            }
-                        }
-                    }
-                }
-                break;
-            case LOG_PICKUP:
-                if (p >= 0 && p != bot_idx) {
-                    // Exactly one uncovered attack => defender held no cover.
-                    if (unc_n == 1 && B->void_n[p] < BOT_MAX_VOIDS) {
-                        B->voids[p][B->void_n[p]++] = unc[0];
-                    }
-                    for (int k = 0; k < tbl_n; k++) bot_pinned_add(B, p, tbl[k]);
-                    B->floor_v[p] = 0;   // hand gained cards
-                }
-                tbl_n = 0;
-                unc_n = 0;
-                break;
-            case LOG_DISCARD:
-                for (int k = 0; k < tbl_n && disc_n < 160; k++) discards[disc_n++] = tbl[k];
-                tbl_n = 0;
-                unc_n = 0;
-                break;
-            case LOG_DRAW:
-                if (p >= 0 && p != bot_idx) {
-                    B->void_n[p] = 0;    // new unknown cards: constraints expire
-                    B->floor_v[p] = 0;
-                    Card trump;
-                    if (i == flip_log_idx && cd_drawn_trump(g, L, &trump)) bot_pinned_add(B, p, trump);
-                }
-                break;
-            case LOG_PLAYER_OUT:
-                in_now--;
-                break;
-            default:
-                break;
-        }
-    }
-
-    // Behavior-based trust: lowest-first attackers almost never lead trump
-    // while the deck is alive, so one strike kills floors. Voids are NOT
-    // gated this way — a trump lead can be forced (all-trump hand), and the
-    // 1-in-4 unconstrained world mixture already absorbs void violators.
-    for (int p = 0; p < g->num_players; p++) {
-        if (trump_viol[p] >= 1) { B->distrust_floor[p] = true; B->floor_v[p] = 0; }
-    }
+    // The scan over the log is the table's memory now (bot_memory.h): pinned
+    // rows with the flipped-trump holder's, voids, floors with their distrust
+    // (a trump lead while the deck was alive kills them), the discard pile.
+    const BotMemory *M = bot_mem_of(g);
+    bot_mem_belief(M, g, bot_idx, B, cd_no_floors ? -1 : 1, !cd_no_flip);
+    Card discards[64];
+    const int disc_n = bot_mem_discards(M, discards);
 
     // Players that left the game hold nothing.
     for (int p = 0; p < g->num_players; p++) {
@@ -1355,3 +1238,5 @@ int cordite_old_strategy_choose(const Game *g, int bot_idx,
     cd_old_budget = 0;
     return r;
 }
+
+void cd_belief_probe(const Game *g, int bot_idx, BotBelief *B) { cd_build_belief(g, bot_idx, B); }

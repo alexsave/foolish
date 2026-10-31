@@ -22,6 +22,7 @@
 #include "card.h"
 #include "strategy.h"
 #include "cordite_sim.h"
+#include "bot_memory.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -73,9 +74,21 @@ static inline void bot_lite_clone(Game *dst, const Game *src) {
 // Short slots (WORLD_LOG_CAP > 0, the wasm builds) are marked so log_alloc
 // applies the same discard filter to rollout appends (game.h); 0 on native
 // keeps full capacity.
+//
+// A board the table's memory is bound to (bot_memory.h; the server's, whose
+// Game holds only the current operation's records) has its discards from the
+// memory: the same cards, as few records as MAX_LOG_PAIRS allows.
 static inline void bot_clone_world(Game *dst, const Game *src) {
     memcpy(dst, src, offsetof(Game, logs));
     int nl = 0;
+    const BotMemory *mem = bot_mem_bound(src);
+    if (mem) {
+        nl = bot_mem_discard_logs(mem, dst->logs, WORLD_LOG_CAP > 0 ? WORLD_LOG_CAP : MAX_LOGS);
+        dst->num_logs = nl;
+        dst->log_cap  = WORLD_LOG_CAP;
+        dst->log_virt = (int16_t)nl;
+        return;
+    }
     for (int i = 0; i < src->num_logs; i++) {
         if (src->logs[i].log_type != LOG_DISCARD) continue;
         if (WORLD_LOG_CAP > 0 && nl >= WORLD_LOG_CAP) break;  // crafted states only
@@ -161,6 +174,19 @@ typedef struct {
     bool distrust_void[MAX_PLAYERS];
 } BotBelief;
 
+// THE BELIEF FROM THE MEMORY (bot_memory.h): what a brain's chronological log
+// scan built, read off the table's one block. Seat bot_idx's own row stays
+// empty, as the scans skipped it. Pinned rows (the last drawer's with the
+// face-up trump when `flip` and the stock is empty), voids, and with `floors`
+// the floors and their distrust, trump leads applied: 0 for a brain without
+// floors (blackpowder: none, and no distrust), 1 with them, -1 with them
+// ablated (CD_NO_FLOORS / OG_NO_FLOORS: no floor is ever set, so only a trump
+// lead distrusts). The rest of a scan's ending (out seats, the clamp, the
+// pool, feasibility) is each brain's own, against the board, as before.
+void bot_mem_belief(const BotMemory *m, const Game *g, int bot_idx, BotBelief *B, int floors, bool flip);
+// The discarded cards, in card-id order; returns how many.
+int bot_mem_discards(const BotMemory *m, Card *out);
+
 // p cannot hold c: c covers one of p's void cards.
 static inline bool bot_void_forbidden(const BotBelief *B, const Game *g, int p, Card c) {
     for (int k = 0; k < B->void_n[p]; k++) {
@@ -207,6 +233,20 @@ static inline void bot_floor_check(BotBelief *B, const Game *g, int p, Card c) {
         B->distrust_floor[p] = true;
     }
 }
+
+// THE BELIEF PROBES (test-only: tests/bot_memory_test.c holds each to the log
+// scan it replaced). Each is the brain's own belief builder, whole: blackpowder's,
+// cordite's, octogen's (with its tells, at its C defaults), and robusta's
+// pinned rows and unseen pool (in B->pinned / B->pool).
+typedef struct {
+    BotBelief b;
+    int  cards_played[MAX_PLAYERS], trumps_played[MAX_PLAYERS], trump_leads[MAX_PLAYERS];
+    bool mc_tell[MAX_PLAYERS], loose[MAX_PLAYERS];
+} OgBeliefProbe;
+void bp_belief_probe(const Game *g, int bot_idx, BotBelief *B);
+void cd_belief_probe(const Game *g, int bot_idx, BotBelief *B);
+void og_belief_probe(const Game *g, int bot_idx, OgBeliefProbe *B);
+void robusta_belief_probe(const Game *g, int bot_idx, BotBelief *B);
 
 // The oracle self-check (CD_VERIFY / OG_VERIFY, test-only): reads the real
 // hands to validate the public-information belief, never to play, and says

@@ -62,90 +62,15 @@ static _Thread_local int bp_verify = 0;
 // The belief is bot_common.h's.
 typedef BotBelief Belief;
 
-// Chronological scan over logs: pinned cards, flipped-trump holder, and
-// void constraints, all in one pass.
+// The belief: pinned cards, the flipped-trump holder and void constraints,
+// read off the table's memory, then judged against the board.
 static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
-    memset(B, 0, sizeof(*B));
-
-    // The flipped trump is the last card ever drawn. If the deck (incl.
-    // flipped) is exhausted, the final LOG_DRAW event's player took it.
-    int flip_log_idx = -1;
-    if (g->deck_count == 0 && !g->has_flipped && !bp_no_flip) {
-        for (int i = 0; i < g->num_logs; i++) {
-            if (g->logs[i].log_type == LOG_DRAW) flip_log_idx = i;
-        }
-    }
-
-    // Replayed table state. We rebuild the table from ATTACK/COVER/PASS
-    // events rather than trusting LOG_PICKUP/LOG_DISCARD card lists: those
-    // two can exceed MAX_LOG_PAIRS (a 10-battle pickup is 20+ cards) and get
-    // silently truncated, whereas per-move events carry at most 8 cards.
-    Card tbl[80];               // every card currently on the table
-    int  tbl_n = 0;
-    Card unc[MAX_BATTLES * 2];  // uncovered attack cards only
-    int  unc_n = 0;
-    Card discards[160];         // accumulated discard pile (complete)
-    int  disc_n = 0;
-
-    for (int i = 0; i < g->num_logs; i++) {
-        const GameLog *L = &g->logs[i];
-        int p = L->player_idx;
-        switch (L->log_type) {
-            case LOG_ATTACK:
-            case LOG_PASS:
-                for (int k = 0; k < L->num_pairs; k++) {
-                    Card c = L->pairs[k].primary;
-                    if (unc_n < (int)(sizeof(unc) / sizeof(unc[0]))) unc[unc_n++] = c;
-                    if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
-                    if (p >= 0 && p != bot_idx) bot_pinned_remove(B, p, c);
-                }
-                break;
-            case LOG_COVER:
-                for (int k = 0; k < L->num_pairs; k++) {
-                    // primary = cover card (leaves p's hand), target = attack.
-                    Card c = L->pairs[k].primary;
-                    if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
-                    if (p >= 0 && p != bot_idx) bot_pinned_remove(B, p, c);
-                    if (!card_is_none(L->pairs[k].target)) {
-                        for (int q = 0; q < unc_n; q++) {
-                            if (card_eq(unc[q], L->pairs[k].target)) {
-                                unc[q] = unc[--unc_n];
-                                break;
-                            }
-                        }
-                    }
-                }
-                break;
-            case LOG_PICKUP:
-                if (p >= 0 && p != bot_idx) {
-                    // Exactly one uncovered attack => the defender held no
-                    // cover for it. (Multi-attack pickups only prove "no
-                    // joint full cover" — too weak to use as a hard
-                    // constraint, so we skip those.)
-                    if (unc_n == 1 && B->void_n[p] < BOT_MAX_VOIDS) {
-                        B->voids[p][B->void_n[p]++] = unc[0];
-                    }
-                    // The whole replayed table enters p's hand.
-                    for (int k = 0; k < tbl_n; k++) bot_pinned_add(B, p, tbl[k]);
-                }
-                tbl_n = 0;
-                unc_n = 0;
-                break;
-            case LOG_DISCARD:
-                for (int k = 0; k < tbl_n && disc_n < 160; k++) discards[disc_n++] = tbl[k];
-                tbl_n = 0;
-                unc_n = 0;
-                break;
-            case LOG_DRAW:
-                if (p >= 0 && p != bot_idx) {
-                    B->void_n[p] = 0;  // new unknown cards: constraints expire
-                    if (i == flip_log_idx) bot_pinned_add(B, p, g->flipped);
-                }
-                break;
-            default:
-                break;
-        }
-    }
+    // The scan over the log is the table's memory now (bot_memory.h): pinned
+    // rows with the flipped-trump holder's, voids, and the discard pile.
+    const BotMemory *M = bot_mem_of(g);
+    bot_mem_belief(M, g, bot_idx, B, 0, !bp_no_flip);
+    Card discards[64];
+    const int disc_n = bot_mem_discards(M, discards);
 
     // Players that left the game hold nothing.
     for (int p = 0; p < g->num_players; p++) {
@@ -523,7 +448,7 @@ int blackpowder_strategy_choose(const Game *g, int bot_idx,
     int W1, W2;
     bp_params(g->num_players, &W1, &W2);
 
-    uint32_t base = bot_mix((uint32_t)g->num_logs * 2654435761u,
+    uint32_t base = bot_mix(bot_mem_records(g) * 2654435761u,
                            ((uint32_t)g->deck_count << 8)
                            ^ (uint32_t)g->discard_pile_length
                            ^ ((uint32_t)bot_idx << 20));
@@ -598,3 +523,5 @@ int blackpowder_strategy_choose(const Game *g, int bot_idx,
     game_rng_set(saved_rng);
     return best >= 0 ? C.idx[best] : 0;
 }
+
+void bp_belief_probe(const Game *g, int bot_idx, BotBelief *B) { bp_build_belief(g, bot_idx, B); }
