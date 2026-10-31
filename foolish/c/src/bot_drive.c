@@ -218,17 +218,20 @@ uint32_t bot_drive_seed_base(const uint8_t *seed, int len) {
 // bridge's begin_action). A cycle does both in one call, so it must say so.
 // Restores rather than clears: whether snapshots are wanted at all is the
 // host's call, and a bundle's earlier actions have already recorded theirs.
-static int choose_move(const Game *g, int seat, const LegalMoves *moves) {
+static int choose_move(BotDriveChoose choose, const Game *g, int seat, const LegalMoves *moves) {
     void (*saved)(const Game *, int, int) = engine_snap_hook;
     engine_snap_hook = 0;
+    int idx = choose(g, seat, moves);
+    engine_snap_hook = saved;
+    return idx;
+}
+
+int bot_drive_roster_choose(const Game *g, int seat, const LegalMoves *moves) {
     // Seats carry a STRAT_* id by kernel-wide convention (the kernel itself
     // reads it — espresso_prod checks strategy_key == STRAT_RANDOM), so the
     // roster entry is resolved back from the brain. That mapping is 1:1 and the
     // roster tests pin it that way.
-    int ridx = bot_roster_find_by_strat(g->players[seat].strategy_key);
-    int idx = bot_roster_choose(ridx, g, seat, moves);
-    engine_snap_hook = saved;
-    return idx;
+    return bot_roster_choose(bot_roster_find_by_strat(g->players[seat].strategy_key), g, seat, moves);
 }
 
 // Same move? Compares what the kernel's enumerator produced, so this is an
@@ -261,7 +264,12 @@ static int pref_index(const BotDrivePref *pref, int n_pref, int seat,
 
 int bot_drive(Game *g, uint32_t human_mask, int max_actions,
               const BotDrivePref *pref, int n_pref, BotDriveOut *out) {
-    if (!g || !out) return -1;
+    return bot_drive_with(g, human_mask, max_actions, pref, n_pref, bot_drive_roster_choose, out);
+}
+
+int bot_drive_with(Game *g, uint32_t human_mask, int max_actions,
+                   const BotDrivePref *pref, int n_pref, BotDriveChoose choose, BotDriveOut *out) {
+    if (!g || !out || !choose) return -1;
     out->n = 0;
     out->stop = BOT_STOP_NO_ELIGIBLE;
     out->ended = -1;
@@ -306,7 +314,7 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions,
         if (idx < 0) {
             if (bot_drive_pre_action_hook)
                 bot_drive_pre_action_hook(g, seat, BOT_DRIVE_PHASE_CHOOSE);
-            idx = choose_move(g, seat, &g_scratch);
+            idx = choose_move(choose, g, seat, &g_scratch);
         }
         if (idx < 0 || idx >= g_scratch.n) continue;
 

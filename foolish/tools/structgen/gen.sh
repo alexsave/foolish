@@ -463,6 +463,14 @@ dgc() { "$DG" --cwd "$root/c" --flags "$BOTS" --header cardtext/card_text.h "$@"
 dgc --table CARD_RANK_LABEL --require-complete --name CardRankLabel --ts "$prod/card_rank.ts"
 dgc --table CARD_SUIT_FACE  --require-complete --name CardSuitFace  --ts "$prod/card_suit.ts"
 
+# ---- the promo codes (c/promo, through datagen) ------------------------------------
+#
+# The short paths on the promo playing cards, each the place it was handed out
+# and the language its game opens in (c/promo/promo_codes.h says the rules a row
+# keeps). Linked by nothing; the web's route reads the TS module.
+"$DG" --cwd "$root/c" --header promo/promo_codes.h --table PROMO_CODES --require-complete --name PromoCodes \
+   --ts "$prod/promo_codes.ts"
+
 # ---- the bot registry (c/src/bots.c, through datagen) ----------------------------
 #
 # One row per brain, indexed by its STRAT_* id: its names, the named bot's

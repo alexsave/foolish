@@ -4,6 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { useRouter } from 'next/navigation';
 import { PLAYER_STATUS, type TableView, type ViewCard as Card } from '../state/view';
 import { TexturedSurface } from './TexturedSurface';
+import { EndCard } from './EndCard';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { AuthContext } from '../contexts/AuthContext';
 import { ReplayServerProvider, useServer } from '../contexts/ServerContext';
@@ -343,31 +344,17 @@ const TutorialBoard = () => {
 
             {/* end-of-game card */}
             {finished && (
-                <div
-                    data-testid="tut-end"
-                    style={{ position: 'absolute', inset: 0, zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(8,6,4,0.55)' }}
-                >
-                    <div
-                        className="text-shadow"
-                        style={{
-                            width: 'min(90vw, 440px)', textAlign: 'center', background: 'rgba(24,18,12,0.92)',
-                            border: '1px solid rgba(231,151,67,0.4)', borderRadius: 16, padding: '24px 22px',
-                            color: 'var(--color-text-primary)', boxShadow: '0 10px 40px rgba(0,0,0,0.6)',
-                        }}
-                    >
-                        <div style={{ fontSize: '2rem', marginBottom: 6 }}>🃏</div>
-                        <p style={{ fontSize: '1.05rem', lineHeight: 1.4, margin: '0 0 6px' }}>{t('tut_fool', { name: names[summary.fool] })}</p>
-                        <p style={{ fontSize: '0.9rem', opacity: 0.85, margin: '0 0 18px' }}>{t('tut_done')}</p>
-                        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-                            <TexturedSurface as="button" seed={0.3} className="btn-wood btn-wood--md" onClick={() => window.location.reload()}>
-                                <span className="btn-wood-text">{t('tut_replay')}</span>
-                            </TexturedSurface>
-                            <TexturedSurface as="button" seed={0.6} className="btn-wood btn-wood--md" onClick={onExit}>
-                                <span className="btn-wood-text">{t('tut_exit')}</span>
-                            </TexturedSurface>
-                        </div>
-                    </div>
-                </div>
+                <EndCard testId="tut-end" actions={<>
+                    <TexturedSurface as="button" seed={0.3} className="btn-wood btn-wood--md" onClick={() => window.location.reload()}>
+                        <span className="btn-wood-text">{t('tut_replay')}</span>
+                    </TexturedSurface>
+                    <TexturedSurface as="button" seed={0.6} className="btn-wood btn-wood--md" onClick={onExit}>
+                        <span className="btn-wood-text">{t('tut_exit')}</span>
+                    </TexturedSurface>
+                </>}>
+                    <p style={{ fontSize: '1.05rem', lineHeight: 1.4, margin: '0 0 6px' }}>{t('tut_fool', { name: names[summary.fool] })}</p>
+                    <p style={{ fontSize: '0.9rem', opacity: 0.85, margin: '0 0 18px' }}>{t('tut_done')}</p>
+                </EndCard>
             )}
         </>} />
     );

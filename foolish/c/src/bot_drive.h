@@ -161,9 +161,29 @@ typedef struct {
 // legal — see BotDrivePref. They change only whether a seat SEARCHES, never
 // which seats are eligible, the order they are picked in, or what is legal.
 //
+// Every seat's brain is the roster's (bot_drive_roster_choose).
+//
 // Returns the number of actions applied, or -1 on a bad argument.
 int bot_drive(Game *g, uint32_t human_mask, int max_actions,
               const BotDrivePref *pref, int n_pref, BotDriveOut *out);
+
+// How a drive picks one seat's move from its menu: an index into `moves`, or
+// -1 for none. The seat's brain is the chooser's business.
+typedef int (*BotDriveChoose)(const Game *g, int seat, const LegalMoves *moves);
+
+// The roster's chooser: the named bot the seat's STRAT_* id belongs to, with its
+// knobs (bot_roster_choose). A function pointer is a link-time reference, and
+// this one reaches every brain a named bot runs.
+int bot_drive_roster_choose(const Game *g, int seat, const LegalMoves *moves);
+
+// bot_drive with the chooser named. THE ONE DRIVE: bot_drive is this with
+// bot_drive_roster_choose. A host that links fewer brains than the roster names
+// (the browser's local game, local_table.h, which links one) passes its own
+// chooser, and wasm-ld then drops every brain it does not reach. Everything
+// else - who is eligible, the order, the bundling, the pacing, the seeding
+// hook - is this function's, whoever chooses.
+int bot_drive_with(Game *g, uint32_t human_mask, int max_actions,
+                   const BotDrivePref *pref, int n_pref, BotDriveChoose choose, BotDriveOut *out);
 
 // The wait for one completed drive cycle (max visible pacing class, priced +
 // human-reduced) in one call, so no host re-reduces `drv`'s actions itself. The
