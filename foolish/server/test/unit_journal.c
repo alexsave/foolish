@@ -25,6 +25,7 @@
 #include "bot_roster.h"
 #include "roster.h"
 #include "table.h"
+#include "lib_created_game.h"
 #include "util/err.h"
 #include "util/str.h"
 #include "../../../shared/c/fnv.h"
@@ -179,17 +180,11 @@ static cb_game_row stored(cb_store *s, const char *gid) {
     return row;
 }
 
-static bool first_game(const cb_view_row *row, void *ud) {
-    snprintf((char *)ud, CB_GAME_ID_MAX + 1, "%s", row->game_id);
-    return false;
-}
-
 // A game dealt on the world's store: A and B, or A and a bot (g_bots).
 static void two_humans_dealt(char gid[CB_GAME_ID_MAX + 1]) {
     reply r;
     call("create", "A", NULL, 0, &r);
-    gid[0] = 0;
-    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
     if (g_bots) {
         meta("A", ASK_ADD_BOT, gid, &r);
         meta("A", ASK_START, gid, &r);
@@ -1128,7 +1123,7 @@ static void a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused(void) {
         // A, two bots: a bot's cycle can end a bout (a draw) and the other bot act after it.
         reply r;
         call("create", "A", NULL, 0, &r);
-        cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+        T_CHECK(tc_created_game(r.body, r.len, gid));
         meta("A", ASK_ADD_BOT, gid, &r);
         meta("A", ASK_ADD_BOT, gid, &r);
         meta("A", ASK_START, gid, &r);
@@ -1429,7 +1424,7 @@ static void a_deal_and_its_moves_read_no_table(void) {
     reply r;
     call("create", "A", NULL, 0, &r);
     char gid[CB_GAME_ID_MAX + 1] = "";
-    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
     const long reads0 = table_reads(s);
     if (g_bots) meta("A", ASK_ADD_BOT, gid, &r);
     else meta("B", ASK_JOIN, gid, &r);
@@ -1541,7 +1536,7 @@ static void a_resident_the_tables_contradict_is_dropped(void) {
     reply r;
     call("create", "A", NULL, 0, &r);
     char gid[CB_GAME_ID_MAX + 1] = "";
-    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
     meta("A", ASK_SET_RULES, gid, &r);   // resident, its commit in the journal (the table goes podkidnoy)
     T_EQ_INT(ask_status(&r), 200);
     T_EQ_INT(cb_journal_flush(s), CB_OK);   // and in the tables
@@ -1584,7 +1579,7 @@ static void a_lobby_and_its_deal_write_no_table(void) {
     reply r;
     call("create", "A", NULL, 0, &r);
     char gid[CB_GAME_ID_MAX + 1] = "";
-    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
     const unsigned long wal0 = cb_store_local_wal_frames(s);
     if (g_bots) {
         meta("A", ASK_ADD_BOT, gid, &r);
@@ -1658,7 +1653,7 @@ static void a_torn_or_corrupt_whole_commit_is_dropped(void) {
         reply r;
         call("create", "A", NULL, 0, &r);
         char gid[CB_GAME_ID_MAX + 1] = "";
-        cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+        T_CHECK(tc_created_game(r.body, r.len, gid));
         meta("B", ASK_JOIN, gid, &r);
         const uint64_t h_join = row_hash(s, gid);
         const int64_t v_join = -version_of(s, gid);
@@ -1742,7 +1737,7 @@ static void crafted_whole_commits_recover_or_refuse(void) {
     reply r;
     call("create", "A", NULL, 0, &r);
     char gid[CB_GAME_ID_MAX + 1] = "";
-    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
     meta("B", ASK_JOIN, gid, &r);
     T_EQ_INT(-version_of(s, gid), 1);
     close_world(s);
@@ -2207,7 +2202,6 @@ static void a_flush_is_bounded_transactions(void) {
     char gid[NG][CB_GAME_ID_MAX + 1];
     for (int i = 0; i < NG; i++) {
         cb_limits_reset();   // the create limit is per user and minute
-        g_now += 60000;      // and the newest game is the first one A's list names
         two_humans_dealt(gid[i]);
         for (int k = 0; k < i; k++) T_CHECK(strcmp(gid[i], gid[k]) != 0);
     }
