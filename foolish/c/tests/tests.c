@@ -21695,7 +21695,7 @@ static int lt_read_cast(uint32_t want_version) {
 
 // The human's move: the first legal one on the resident board (the table's, as
 // the last operation left it), as the page would send it.
-static int lt_human_request(uint8_t *req, int cap) {
+static int lt_human_request(uint8_t *req, int cap, uint32_t intent) {
     if (!should_bot_act(&lt_game, 0)) return 0;
     LegalMoves lm;
     calculate_legal_moves(&lt_game, 0, &lm);
@@ -21709,7 +21709,7 @@ static int lt_human_request(uint8_t *req, int cap) {
     memcpy(req, lt_table.gid, (size_t)gl);
     const int wl = awire_encode(&a, req + gl, cap - gl);
     if (wl <= 0) return -1;
-    return table_request_encode(req, cap, gl, wl, true, lt_table.version);
+    return table_request_encode(req, cap, gl, wl, true, intent);
 }
 
 static void test_local_table_plays_a_game(void) {
@@ -21750,7 +21750,7 @@ static void test_local_table_plays_a_game(void) {
     CHECK(ask_encode(&bump, ask, sizeof ask) == al && local_table_ask(&lt_table, ask, al, now) == TABLE_E_NOT_SEATED,
           "an ask for another game is not this table's");
 
-    int bot_cycles = 0, human_moves = 0, waited = 0, casts_ok = 1, step = 0;
+    int bot_cycles = 0, human_moves = 0, waited = 0, casts_ok = 1, step = 0, stale_checked = 0;
     uint8_t req[256];
     for (; step < 2000 && ct.view.status == GAME_STATUS_PLAYING; step++) {
         now += 50;
@@ -21765,9 +21765,21 @@ static void test_local_table_plays_a_game(void) {
             continue;
         }
         (void)local_table_envelope(&lt_table, ct_env2, sizeof ct_env2);   // adopts: lt_game is the board now
-        const int rl = lt_human_request(req, sizeof req);
-        if (rl <= 0) break;
         const uint32_t v = lt_table.version;
+        // A move composed before the round began (a board the bot's pickup has
+        // since closed) is refused, as the server refuses it.
+        if (!stale_checked && lt_table.round_epoch > 1) {
+            stale_checked = 1;
+            const int sl = lt_human_request(req, sizeof req, (uint32_t)lt_table.round_epoch - 1);
+            n = sl > 0 ? local_table_action(&lt_table, req, sl, now, lt_out, sizeof lt_out) : -1;
+            TableResponse sr;
+            CHECK(n > 0 && table_response_decode(lt_out, n, &sr) == 0 && sr.status == TABLE_STATUS_REJECTED
+                  && sr.reject_code == TABLE_REJECT_STALE_ROUND && sr.version == v && lt_table.version == v
+                  && local_table_cast(&lt_table, lt_out, sizeof lt_out) == 0,
+                  "a move composed before the round began is refused as stale, and commits nothing");
+        }
+        const int rl = lt_human_request(req, sizeof req, v);
+        if (rl <= 0) break;
         n = local_table_action(&lt_table, req, rl, now, lt_out, sizeof lt_out);
         TableResponse resp;
         if (n <= 0 || table_response_decode(lt_out, n, &resp) != 0 || resp.status != TABLE_STATUS_APPLIED
@@ -21778,6 +21790,7 @@ static void test_local_table_plays_a_game(void) {
     CHECK(ct.view.status == GAME_STATUS_GAME_OVER && ct.view.fool >= 0, "the game is played to its end");
     CHECK(bot_cycles > 3 && human_moves > 3 && waited > 0, "both seats moved, and the bot waited on the board's clock");
     CHECK(casts_ok, "every cast reads as the human's, at the version it committed");
+    CHECK(stale_checked, "a round closed during the game, so the stale guard was asked");
     CHECK(local_table_bot_wait_ms(&lt_table, now) == -1 && local_table_bot(&lt_table, now) == 0,
           "a finished game leaves the bot nothing to do");
 
