@@ -24,15 +24,20 @@ const LOCAL_AUTH = {
 };
 
 export const PromoGame = ({ promo }: { promo: Promo }) => {
-    const { t, visitLanguage } = useLocalization();
+    const { t, language, loaded, visitLanguage } = useLocalization();
     const [playing, setPlaying] = useState(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => visitLanguage(promo.lang), [promo]);
+    // The table opens once the code's language is in, so the visitor's seat is
+    // named in it ("Вы" on /br, not the English standing in while it loads).
+    const inLanguage = language === promo.lang && loaded;
     useEffect(() => {
-        visitLanguage(promo.lang);
+        if (!inLanguage) return;
         const stop = playLocally(promo.code, t('you'));
         setPlaying(true);
         return stop;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [promo]);
+    }, [promo, inLanguage]);
     if (!playing) return null;
     return (
         <AuthContext.Provider value={LOCAL_AUTH}>

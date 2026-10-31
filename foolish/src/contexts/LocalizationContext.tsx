@@ -6,6 +6,8 @@ export type { Language };
 interface LocalizationContextType {
     language: Language;
     setLanguage: (lang: Language) => void;
+    /** The active language's own strings are in (not English standing in while they load). */
+    loaded: boolean;
     /** Shows `lang` now, and keeps it as the visitor's language only if they have not chosen one (a promo code's). */
     visitLanguage: (lang: Language) => void;
     t: (stringId: StringId, params?: Record<string, string>) => string;
@@ -28,6 +30,7 @@ export const LocalizationProvider = ({ children }: { children: ReactNode }) => {
     // language arrives from its own chunk a moment later, so the first paint is
     // never blank and never blocked on a fetch.
     const [table, setTable] = useState<StringTable>(EN);
+    const [tableLanguage, setTableLanguage] = useState<Language>('en');
 
     // Hydrate the persisted language from localStorage once, on the client.
     useEffect(() => {
@@ -40,8 +43,8 @@ export const LocalizationProvider = ({ children }: { children: ReactNode }) => {
     // the one they last chose, not on whichever request happened to land last.
     useEffect(() => {
         let live = true;
-        if (language === 'en') { setTable(EN); return; }
-        loadLanguage(language).then((t) => { if (live) setTable(t); });
+        if (language === 'en') { setTable(EN); setTableLanguage('en'); return; }
+        loadLanguage(language).then((t) => { if (live) { setTable(t); setTableLanguage(language); } });
         return () => { live = false; };
     }, [language]);
 
@@ -59,7 +62,7 @@ export const LocalizationProvider = ({ children }: { children: ReactNode }) => {
         translate(table, stringId, params);
 
     return (
-        <LocalizationContext.Provider value={{ language, setLanguage, visitLanguage, t, languages: LANGUAGES }}>
+        <LocalizationContext.Provider value={{ language, loaded: tableLanguage === language, setLanguage, visitLanguage, t, languages: LANGUAGES }}>
             {children}
         </LocalizationContext.Provider>
     );
