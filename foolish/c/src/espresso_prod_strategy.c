@@ -24,20 +24,11 @@
 //   handwritten_prod_strategy_choose, after tryRandomTweaks' draw — same
 //   order as the TS.
 // - Discard memory: the TS keeps `private memory = new Map<gameId,
-//   {seenCards}>` — PERSISTENT static state that lives for the strategy
-//   instance's lifetime, is fed by rescanning ALL of game.logs on every
-//   chooseMove (updateDiscardMemory), and is NEVER cleared, not even
-//   between games. The kernel is not told the game id, so this mirror
-//   keeps one persistent set (a suit x value grid), OR-accumulated from
-//   the logs at the top of every choose: exactly the TS behavior whenever
-//   every decision served by one kernel instance carries the same game id.
-//   That is what the parity harness exercises (all its games share id
-//   'botparity', and the TS side demonstrably carries seen cards across
-//   games — rebuilding from the current game's logs alone diverges). With
-//   unique per-game ids the TS starts each game with a fresh set; the
-//   kernel cannot observe that without game-id plumbing.
-//   `if (pair.primary)` maps to a suit >= 0 guard (hidden/absent cards
-//   travel as {-1,-1}).
+//   {seenCards}>`, fed by rescanning game.logs on every chooseMove and never
+//   cleared, so a table's rematches shared one set. The kernel reads the
+//   current game's discards off the table's memory (bot_memory.h) instead: a
+//   bot sees its own game only. (The mirror used to keep one thread-wide set
+//   that no host ever reset, which carried discards across unrelated games.)
 // - getDeckCards loops `value <= 14` although the real max value is
 //   ACE_VALUE = 13, so four phantom value-14 cards (never in any hand, so
 //   never "known") always land in the reconstructed deck and inflate
@@ -116,43 +107,15 @@ static int ep_get_opponent(const Game *g, int bot_idx) {
     return -1;
 }
 
-// getMem(game.id).seenCards — the TS strategy instance's persistent,
-// never-cleared discard memory (see the header note on why a single set is
-// the exact realizable mirror without game-id plumbing). _Thread_local to
-// match the engine's RNG statics; the wasm build strips it.
-static _Thread_local bool ep_seen_mem[NUM_SUITS][EP_VAL_SLOTS];
-
-// Game-id plumbing: the TS kept one seen-set PER game id (a Map on the
-// strategy instance), so two different games never shared memory. The kernel
-// serves many games from one instance; the bridge hashes game.id and calls
-// this before each decision, and a key change resets the set (an LRU of one:
-// sequential games match the TS exactly; INTERLEAVED games restart their
-// memory on each switch where the TS would resume — memory only sharpens
-// tie-breaks, and that beats cross-game contamination). Callers that never
-// set a key (native arena) keep the single persistent set.
-static _Thread_local uint32_t ep_game_key = 0;
-void espresso_prod_set_game_key(uint32_t key);
-void espresso_prod_set_game_key(uint32_t key) {
-    if (key == ep_game_key) return;
-    ep_game_key = key;
-    memset(ep_seen_mem, 0, sizeof ep_seen_mem);
-}
-
-// updateDiscardMemory: add every discard-log primary to the persistent set.
-// Only ever adds — exactly like the TS.
-static void ep_update_discard_memory(const Game *g) {
-    for (int i = 0; i < g->num_logs; i++) {
-        if (g->logs[i].log_type != LOG_DISCARD) continue;
-        for (int j = 0; j < g->logs[i].num_pairs; j++) {
-            Card p = g->logs[i].pairs[j].primary;
-            // TS: `if (pair.primary)` — hidden/absent primaries are {-1,-1}.
-            // card.h's test: the suit's and the value's ceilings are the
-            // bitfield's, which gcc was proving for us (-Wtype-limits).
-            if (card_in_range(p, 0, EP_VAL_SLOTS - 1)) {
-                ep_seen_mem[p.suit][p.value] = true;
-            }
-        }
-    }
+// getMem(game.id).seenCards: the cards discarded THIS game, the table's memory's
+// discard set (bot_memory.h). The TS kept a per-game-id set that was never
+// cleared, so it carried across a table's rematches; this mirror kept one
+// thread-wide set, never reset by any host, which carried one game's discards
+// into every later game the same server thread played. A bot sees its own
+// game only, so the set is the game's own.
+static bool ep_seen(const BotMemory *M, int s, int v) {
+    if (s < 0 || s >= NUM_SUITS || v < 1 || v > ACE_VALUE) return false;
+    return bot_mem_discarded(M, (Card){ .suit = (int8_t)s, .value = (int8_t)v });
 }
 
 // countSeenTrumps: distinct seen cards with the power suit.
@@ -161,7 +124,7 @@ static int ep_count_seen_trumps(const Game *g) {
     if (ps < 0 || ps >= NUM_SUITS) return 0;
     int count = 0;
     for (int v = 0; v < EP_VAL_SLOTS; v++) {
-        if (ep_seen_mem[ps][v]) count++;
+        if (ep_seen(bot_mem_of(g), ps, v)) count++;
     }
     return count;
 }
@@ -577,10 +540,11 @@ static int ep_choose_1v1(const Game *g, int bot_idx, const LegalMoves *moves) {
             // seenCards; deck = the complement over suit 0..3, value
             // startValue..14 (verbatim TS bound — value 14 is phantom).
             bool known[NUM_SUITS][EP_VAL_SLOTS];
-            // Seed with the persistent discard memory (mem.seenCards).
+            // Seed with the game's discard memory (mem.seenCards).
+            const BotMemory *M = bot_mem_of(g);
             for (int s = 0; s < NUM_SUITS; s++)
                 for (int v = 0; v < EP_VAL_SLOTS; v++)
-                    known[s][v] = ep_seen_mem[s][v];
+                    known[s][v] = ep_seen(M, s, v);
             for (int i = 0; i < g->num_players; i++) {
                 for (int j = 0; j < g->players[i].hand_count; j++) {
                     Card c = g->players[i].hand[j];
@@ -935,7 +899,6 @@ int espresso_prod_strategy_choose(const Game *g, int bot_idx,
                                   const LegalMoves *moves, void *ctx) {
     (void)ctx;
     if (moves->n == 0) return -1;   // TS throws; no index to return.
-    ep_update_discard_memory(g);
 
     // opps = players other than the bot with status IN.
     int in_opps = 0;

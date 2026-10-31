@@ -1,6 +1,7 @@
 // See bot_drive.h.
 
 #include "bot_drive.h"
+#include "bot_memory.h"
 
 #include "bot_roster.h"
 #include "game.h"
@@ -119,7 +120,7 @@ uint32_t bot_drive_eligible_mask(const Game *g, uint32_t human_mask) {
 static uint32_t drive_seed(const Game *g) {
     uint32_t h = 0x9E3779B9u;
 #define MIX(v) do { h ^= (uint32_t)(v); h *= 0x85EBCA77u; h ^= h >> 13; } while (0)
-    MIX(g->num_logs);
+    MIX(bot_mem_records(g));
     MIX(g->num_battles);
     MIX(g->deck_count);
     MIX(g->discard_pile_length);
@@ -190,7 +191,7 @@ void bot_drive_seed_decision(const Game *g, uint32_t base, uint32_t log_offset, 
     // stream through the one mix game_state_seed already avalanches (its final
     // xorshift-multiply chain), and so a host with no base still gets a seed
     // that moves. Knuth's multiplicative constant spreads +1 across all 32 bits.
-    const uint32_t progress = log_offset + (uint32_t)g->num_logs;
+    const uint32_t progress = bot_mem_bound(g) ? bot_mem_records(g) : log_offset + (uint32_t)g->num_logs;
     base ^= progress * 2654435761u;
     if (phase == BOT_DRIVE_PHASE_CHOOSE) {
         random_strategy_set_seed(game_state_seed(g, base, GAME_SEED_SALT_STRATEGY));

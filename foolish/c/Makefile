@@ -83,7 +83,7 @@ STRATEGY_SRC := $(sort $(wildcard src/*_strategy.c))
 KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/replay.c src/replay_steps.c \
             src/replay_extras.c src/view.c src/awire.c \
             src/evwire.c $(STRATEGY_SRC) \
-            src/cordite_sim.c src/bot_common.c src/fm_exp.c src/distill_feat.c \
+            src/cordite_sim.c src/bot_common.c src/bot_memory.c src/fm_exp.c src/distill_feat.c \
             src/bots.c src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
@@ -205,9 +205,10 @@ $(call host_prog,bench_engine,tests/bench_engine.c)
 # move is a lane that runs `make tests` at the flags the product ships, and then
 # leaving the experiment out of the coverage build - not one without the other,
 # since dropping it from coverage today would leave it running in no CI at all.
-tests: build/cnitro_tests build/bot_drive_threads_test build/replay_threads_test build/cnitro_replay \
+tests: build/cnitro_tests build/bot_memory_test build/bot_drive_threads_test build/replay_threads_test build/cnitro_replay \
        build/replay_overlay_test build/replay_rebuild_difftest build/hand_contract_test
 	./build/cnitro_tests
+	./build/bot_memory_test
 	./build/hand_contract_test
 	./build/bot_drive_threads_test
 	./build/replay_threads_test
@@ -215,6 +216,11 @@ tests: build/cnitro_tests build/bot_drive_threads_test build/replay_threads_test
 	./tests/replay_cli_labels.sh build/cnitro_replay
 	./tests/replay_cli_decode.sh build/cnitro_replay
 	./build/replay_rebuild_difftest 700
+
+# BotMemory's proofs (tests/bot_memory_test.c): the per-ply equivalence oracle
+# against the log scans it replaced, and the block's canonical bytes.
+build/bot_memory_test: $(call c_objs,build/obj/host,tests/bot_memory_test.c) $(CORE_OBJ)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # M8's overlay (src/wasm_overlay.h): the replay codec's scratch aliased into the
 # solver arena, as the bots modules compile it. Its own objects, with the
@@ -1367,7 +1373,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/robusta_strategy.c src/firecracker_strategy.c \
                 src/blackpowder_strategy.c \
-                src/cordite_strategy.c src/cordite_sim.c src/bot_common.c \
+                src/cordite_strategy.c src/cordite_sim.c src/bot_common.c src/bot_memory.c \
                 src/simple_heuristic_strategy.c \
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
