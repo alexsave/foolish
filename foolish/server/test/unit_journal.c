@@ -1972,6 +1972,12 @@ static void the_resident_is_the_row(void) {
         T_CHECK(table_commit_products(&a.t, GID, (int)sizeof GID - 1, version, now, &ca, aa, ARENA) > 0);
         TableResident res;
         table_resident(&a.t, &ca.clock, &res);
+        // The session log the row's commits wrote, which a load of a row without its bot
+        // memory folds (table_bots_need_logs), as the bot loop hands it over.
+        static uint8_t slog[1 << 18];
+        size_t slog_len = 0;
+        memcpy(slog, aa + ca.logs.off, (size_t)ca.logs.len);
+        slog_len = (size_t)ca.logs.len;
         while (ops < 1500) {
             // The server's table and the load's.
             table_init(&a.t, a.g, a.sn);
@@ -1982,6 +1988,7 @@ static void the_resident_is_the_row(void) {
             table_init(&b.t, b.g, b.sn);
             T_EQ_INT(table_load(&b.t, state, sl, roster, rl), TABLE_OK);
             table_set_deal_seed(&b.t, hex, 64);
+            if (table_bots_need_logs(&b.t)) T_CHECK(table_set_session_log(&b.t, slog, (int)slog_len) >= 0);
             if (!same_board(&a.t, &b.t)) { T_CHECK(!"adopted and loaded boards differ"); break; }
             // Byte for byte, too: the slots past every count. A sanitizer cannot tell a stale card in
             // hand[hand_count] from a zero (both are initialized), so this is the one check that can.
@@ -2026,6 +2033,11 @@ static void the_resident_is_the_row(void) {
             const int nb = table_commit_products(&b.t, GID, (int)sizeof GID - 1, version, now, &cb, ab, ARENA);
             T_EQ_INT(na, nb);
             if (na <= 0 || na != nb || memcmp(aa, ab, (size_t)na) != 0) { T_CHECK(!"the products differ"); break; }
+            if (ca.logs_reset) slog_len = 0;
+            if (slog_len + (size_t)ca.logs.len <= sizeof slog) {
+                memcpy(slog + slog_len, aa + ca.logs.off, (size_t)ca.logs.len);
+                slog_len += (size_t)ca.logs.len;
+            }
             // The products with no row (a plain move's) are the same products less the row.
             TableCommit cn;
             const int nn = table_commit_products_flags(&a.t, GID, (int)sizeof GID - 1, version, now, TABLE_PRODUCTS_NO_ROW, &cn, ab, ARENA);

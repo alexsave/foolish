@@ -56,9 +56,10 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
     *idle_version = -1;
 
     for (int attempt = 1; attempt <= CB_TABLE_ATTEMPTS; attempt++) {
-        // Always fresh, and always with the log: its length seeds every bot
-        // decision (bot_drive.h), whatever the seated brains read. Under serve the game is the
-        // overlay's resident, adopted (no decode), and its session log the overlay's moves.
+        // Always fresh. Under serve the game is the overlay's resident, adopted (no decode),
+        // with its bot memory (bot_memory.h): every record of the session folded, which is
+        // what the belief brains read and what every decision seed counts. The session log
+        // is read only for a row that did not carry the memory (table_bots_need_logs).
         cb_game_row row;
         bool kept = false;
         uint8_t *logs = NULL;
@@ -76,16 +77,20 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
         }
         int64_t wait = cb_bots_wait_ms(ctx, &s->t, row.created_at, cb_app_now());
         if (wait > 0) { *delay_ms = wait; CYCLE_OUT(CYCLE_AGAIN); }
-        // The stored session log, whole (the belief brains read it): the LOG# items since the deal.
-        if (CB_ROWS_CALL(ctx->store, game_logs, game_id, row.log_from, &logs, &logs_len) != CB_OK) {
-            CB_ERROR("bots", "game %s: session log unreadable", game_id);
-            CYCLE_OUT(CYCLE_ERROR);
-        }
-        const int log_len = (int)logs_len;
-        kr = table_set_session_log(&s->t, logs, log_len);
-        if (kr < 0) {
-            CB_ERROR("bots", "game %s: session log refused (%d)", game_id, kr);
-            CYCLE_OUT(CYCLE_ERROR);
+        // The stored session log, whole, folded into the table's memory once: the LOG# items
+        // since the deal, for a row that did not carry the memory.
+        int log_len = -1;
+        if (table_bots_need_logs(&s->t)) {
+            if (CB_ROWS_CALL(ctx->store, game_logs, game_id, row.log_from, &logs, &logs_len) != CB_OK) {
+                CB_ERROR("bots", "game %s: session log unreadable", game_id);
+                CYCLE_OUT(CYCLE_ERROR);
+            }
+            log_len = (int)logs_len;
+            kr = table_set_session_log(&s->t, logs, log_len);
+            if (kr < 0) {
+                CB_ERROR("bots", "game %s: session log refused (%d)", game_id, kr);
+                CYCLE_OUT(CYCLE_ERROR);
+            }
         }
         if (cb_bots_cycle_observer) cb_bots_cycle_observer(game_id, attempt, log_len, prefs_len);
         BotDriveOut drv;
