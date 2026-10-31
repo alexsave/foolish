@@ -44,13 +44,13 @@ CUT_RADIUS = 48
 FRAME_W = 30  # B2: the medium frame
 
 
-def index_html(rank, scale):
+def index_html(rank, scale, suit_h=SUIT_H, gap=GAP):
     ink, top, wide = (A_INK, A_TOP, A_WIDE) if rank == "A" else (SIX_INK, SIX_TOP, SIX_WIDE)
     rf = RANK_H * MM * scale / ink
-    sf = SUIT_H * MM * scale / HEART_INK
+    sf = suit_h * MM * scale / HEART_INK
     cx = max(CENTRE * MM * scale, (mc.SAFE[0] - L) + wide * rf / 2 + 4)  # clear of the safe line
     rank_top = TOP * MM * scale
-    suit_top = rank_top + RANK_H * MM * scale + GAP * MM * scale
+    suit_top = rank_top + RANK_H * MM * scale + gap * MM * scale
     css = "position:absolute;line-height:1;transform:translateX(-50%);white-space:nowrap;"
     one = (f'<div style="{css}left:{cx:.1f}px;top:{rank_top - top * rf:.1f}px;font-size:{rf:.1f}px">{rank}</div>'
            f'<div style="{css}left:{cx:.1f}px;top:{suit_top - HEART_TOP * sf:.1f}px;font-size:{sf:.1f}px">♥</div>')
@@ -77,11 +77,11 @@ def ink(img):
     return np.asarray(img.convert("L")) < 250
 
 
-def face(tmp, name, rank, scale, q, module, head, head_px, url_px):
+def face(tmp, name, rank, scale, q, module, head, head_px, url_px, suit_h=SUIT_H, gap=GAP):
     n = q.symbol_size(border=4)[0]
     size = n * module
     x0, y0 = CX - size // 2, CY - size // 2
-    idx = shoot(doc(index_html(rank, scale)), tmp, name + "_i")
+    idx = shoot(doc(index_html(rank, scale, suit_h, gap)), tmp, name + "_i")
     txt = shoot(doc(text_html(head, y0, y0 + size, head_px, url_px)), tmp, name + "_t")
     a, b = ink(idx), ink(txt)
     box = np.zeros_like(a)
@@ -93,6 +93,9 @@ def face(tmp, name, rank, scale, q, module, head, head_px, url_px):
         problems.append("text touches an index")
     if ((a | b) & box).any():
         problems.append("ink in the QR or its quiet zone")
+    ia = np.nonzero(a)
+    if ia[1].min() < mc.SAFE[0] or ia[1].max() > mc.SAFE[2] or ia[0].min() < mc.SAFE[1] or ia[0].max() > mc.SAFE[3]:
+        problems.append("index outside the safe area")
     tb = np.nonzero(b)
     if tb[1].min() < mc.SAFE[0] or tb[1].max() > mc.SAFE[2] or tb[0].min() < mc.SAFE[1] or tb[0].max() > mc.SAFE[3]:
         problems.append("text outside the safe area")
