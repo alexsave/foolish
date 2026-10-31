@@ -2978,6 +2978,45 @@ int seeded_parse_strategy(const char *s);
 #undef same
 #undef NATIVE_ONLY
 #undef SEED_IDS
+#undef ORACLE_LINKED
+
+// And a third time, the way the Infinite Oracle's two modules compile it
+// (FOOLISH_SEEDED_BOTS_ONLY and FOOLISH_ORACLE_BUILD): the browser's registry
+// plus fusion, the brain the Oracle analyses with.
+#define FOOLISH_SEEDED_BOTS_ONLY
+#define FOOLISH_ORACLE_BUILD
+#define BOTS             ORACLE_BOTS
+#define NAMED            ORACLE_NAMED
+#define RESEARCH         ORACLE_RESEARCH
+#define bot_def          oracle_bot_def
+#define bot_choose       oracle_bot_choose
+#define bot_linked       oracle_bot_linked
+#define strategy_retired oracle_strategy_retired
+#define strategy_choose  oracle_strategy_choose
+#define parse_strategy   oracle_parse_strategy
+#define same             oracle_same
+const BotDef *oracle_bot_def(int strat);
+StrategyFn oracle_bot_choose(int strat);
+int oracle_bot_linked(int strat);
+int oracle_strategy_retired(int strat);
+int oracle_strategy_choose(int strat, const Game *g, int bot_idx, const LegalMoves *moves);
+int oracle_parse_strategy(const char *s);
+#include "../src/bots.c"
+#undef FOOLISH_SEEDED_BOTS_ONLY
+#undef FOOLISH_ORACLE_BUILD
+#undef BOTS
+#undef NAMED
+#undef RESEARCH
+#undef bot_def
+#undef bot_choose
+#undef bot_linked
+#undef strategy_retired
+#undef strategy_choose
+#undef parse_strategy
+#undef same
+#undef NATIVE_ONLY
+#undef SEED_IDS
+#undef ORACLE_LINKED
 
 // THE BROWSER'S BUILD OF THE REGISTRY links exactly the brains its rows say:
 // every brain not `native_only` has its function there, every `native_only`
@@ -3005,6 +3044,29 @@ static void test_bots_registry_browser_build(void) {
     CHECK(linked_ok, "and bot_linked says the same, off the row alone");
     CHECK(no_ids, "and no row carries a server account id there");
     CHECK(some_native > 0 && some_linked >= 8, "the browser's build drops the research brains and keeps the ladder");
+    CHECK(SEEDED_NAMED[STRAT_FUSION] == NULL && !seeded_bot_linked(STRAT_FUSION), "web.wasm does not link fusion");
+}
+
+// THE ORACLE'S BUILD OF THE REGISTRY is the browser's plus fusion
+// (docs/INFINITE_ORACLE_DESIGN.md "The brain"): fusion's function is there and
+// bot_linked says so, so wasm_choose_move(STRAT_FUSION) dispatches it, and every
+// other brain is exactly as the browser links it.
+//
+// Mutations that turned it red, each restored after (in bots.c): ORACLE_LINKED
+// without its FOOLISH_ORACLE_BUILD arm ("the Oracle links fusion"); bot_linked's
+// Oracle arm dropped ("and bot_linked says so"); gunpowder's entry under
+// ORACLE_LINKED instead of NATIVE_ONLY ("every other brain is the browser's").
+static void test_bots_registry_oracle_build(void) {
+    CHECK(ORACLE_NAMED[STRAT_FUSION] == fusion_strategy_choose, "the Oracle links fusion");
+    CHECK(oracle_bot_linked(STRAT_FUSION) && oracle_bot_choose(STRAT_FUSION) == fusion_strategy_choose,
+          "and bot_linked says so");
+    int same_else = 1;
+    for (int s = 0; s < STRAT_COUNT; s++) {
+        if (s == STRAT_FUSION) continue;
+        if (ORACLE_NAMED[s] != SEEDED_NAMED[s] || ORACLE_RESEARCH[s] != SEEDED_RESEARCH[s]
+            || oracle_bot_linked(s) != seeded_bot_linked(s)) same_else = 0;
+    }
+    CHECK(same_else, "every other brain is the browser's");
 }
 #endif   // COVERAGE_CORPUS
 
@@ -21684,6 +21746,7 @@ int main(void) {
     test_bots_registry();
 #ifndef COVERAGE_CORPUS
     test_bots_registry_browser_build();
+    test_bots_registry_oracle_build();
 #endif
     test_bot_drive_basic();
     test_bot_drive_bundles_only_silent();
