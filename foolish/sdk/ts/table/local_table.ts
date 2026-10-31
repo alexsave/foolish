@@ -1,4 +1,5 @@
-// local_table.ts - the browser's local table (c/src/local_table.h), over web.wasm.
+// local_table.ts - the browser's local table (c/src/local_table.h), over promo.wasm
+// (the promo page's link of the kernel, c/Makefile; sdk/ts/wasm/wasm_asset.ts).
 //
 // A call-and-copy wrapper like client_table.ts: each method writes its input
 // into the IO buffer, has the kernel run one operation, and copies the answer
@@ -7,15 +8,15 @@
 // out - and every one that comes out is the human seat's, which the page reads
 // through the client slot exactly as it reads a server's.
 
-import type { WebExports } from '../gen/exports.web.ts';
+import type { PromoExports } from '../gen/exports.promo.ts';
 import { __clientKernelExports } from '../wasm/bots.ts';
 
 const enc = new TextEncoder();
 
 export class LocalTable {
-    private readonly ex: WebExports;
+    private readonly ex: PromoExports;
 
-    constructor(ex: WebExports) { this.ex = ex; }
+    constructor(ex: PromoExports) { this.ex = ex; }
 
     private put(...parts: Uint8Array[]): number {
         const total = parts.reduce((n, p) => n + p.length, 0);
@@ -70,5 +71,5 @@ let shared: LocalTable | null = null;
 
 /** The page's one local table, on the page's kernel (warm it first: ensureBotsAsync). */
 export function localTable(): LocalTable {
-    return (shared ??= new LocalTable(__clientKernelExports() as unknown as WebExports));
+    return (shared ??= new LocalTable(__clientKernelExports() as unknown as PromoExports));
 }

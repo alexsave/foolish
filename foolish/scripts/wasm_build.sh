@@ -7,6 +7,9 @@
 #                                      disk, so they test the bytes a visitor
 #                                      runs). An export allow-list, so wasm-ld
 #                                      drops the bots and the C Table.
+#   promo   sdk/ts/wasm/promo.wasm.gz  the promo page's link (foolish.cards/br): the
+#                                      client slot plus the local table and one
+#                                      bot, and no backend client (c/Makefile)
 #   oracle  public/oracle.wasm.gz      the client-side replay analyser (Mode A)
 #           public/oracle-mt.wasm.gz   the same analyser's shared-memory Mode B
 #
@@ -144,13 +147,14 @@ cd "$(dirname "$0")/.."
 # that audited them.
 ARTIFACTS=(
   "web|sdk/ts/wasm/web.wasm.gz|wasm-web"
+  "promo|sdk/ts/wasm/promo.wasm.gz|wasm-promo"
   "oracle|public/oracle.wasm.gz|wasm-oracle"
   "oracle|public/oracle-mt.wasm.gz|wasm-oracle-mt"
 )
 # NOT `GROUPS`: that is a bash special variable holding the caller's unix
 # group ids, and assigning to it is silently IGNORED - every lookup below then
 # compared a group name against a list of gids and refused everything.
-WASM_GROUPS=(web oracle)
+WASM_GROUPS=(web promo oracle)
 
 field() { printf '%s\n' "${ARTIFACTS[@]}" | cut -d'|' -f"$1"; }
 # rows of one group, or every row when the group is empty

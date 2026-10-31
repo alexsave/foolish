@@ -11,16 +11,32 @@
 //   * the same .gz read synchronously from disk, in Node (the e2e suites and
 //     tools), so a test runs the very bytes a visitor downloads.
 //
-// There is ONE module here and no choice between links. The server links the
+// A page loads ONE module (chooseKernelLink, below). The server links the
 // kernel natively (c_base), and so does the table host the Node suites take
 // the C Table and the bots from (e2e/helpers/table_host.ts).
 import { gunzip } from './gunzip.ts';
 
-// The bundler resolves this literal to the emitted asset; it must stay a
-// literal, because a template here would make the bundler emit every
+// WHICH LINK. web.wasm is every page's; promo.wasm is the promo page's
+// (c/Makefile, src/common/promo.ts): the client slot plus the local table, and
+// no backend client. A page that plays a promo code says so before the kernel
+// loads (KernelGate), and the page then fetches that one module and not the
+// other. One module per page: what is loaded is what every reader reads.
+export type KernelLink = 'web' | 'promo';
+let link: KernelLink = 'web';
+let loadedLink: KernelLink | null = null;
+
+/** The link this page loads. Before the first load; afterwards only the link already loaded is accepted. */
+export function chooseKernelLink(want: KernelLink): boolean {
+    if (loadedLink) return loadedLink === want;
+    link = want;
+    return true;
+}
+
+// The bundler resolves each literal to its emitted asset; they must stay
+// literals, because a template here would make the bundler emit every
 // `*.wasm.gz` the pattern could match.
 function wasmAssetUrl(): URL {
-    return new URL('./web.wasm.gz', import.meta.url);
+    return link === 'promo' ? new URL('./promo.wasm.gz', import.meta.url) : new URL('./web.wasm.gz', import.meta.url);
 }
 
 // Reading the asset without a STATIC `node:fs` import, which a browser bundle
@@ -65,6 +81,7 @@ let prefetched: Uint8Array | null = null;
  *  were already fetched: a browser must await loadWasmGzAsync first. */
 export function loadWasmGz(): Uint8Array {
     if (prefetched) return prefetched;
+    loadedLink = link;
     const gz = readAssetSync();
     if (!gz) {
         throw new Error(
@@ -78,6 +95,7 @@ export function loadWasmGz(): Uint8Array {
  *  Caches the inflated bytes so the sync loadWasmGz above can serve them. */
 export async function loadWasmGzAsync(): Promise<Uint8Array> {
     if (prefetched) return prefetched;
+    loadedLink = link;
     const local = await readAssetAsync();
     const bytes = local
         ? gunzip(local)

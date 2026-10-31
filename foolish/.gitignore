@@ -51,6 +51,7 @@ tools/structgen/gen/
 # the path list out of scripts/wasm_build.sh rather than restating it here, so a
 # new module is covered the day it lands.
 sdk/ts/wasm/web.wasm.gz
+sdk/ts/wasm/promo.wasm.gz
 # The server's old module: no build writes it now, but a checkout that built it
 # before still has one, and it must not be committed by accident.
 sdk/ts/wasm/bots.wasm.gz
