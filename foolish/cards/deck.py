@@ -106,7 +106,7 @@ def render(tmp, name, rank, suit, colour, q, head, head_px, idx_cache):
     if name not in idx_cache:
         idx_cache[name] = shoot(fn.doc(index_html(rank, suit, colour)), tmp, name + "_i")
     idx = idx_cache[name]
-    txt = shoot(fn.doc(text_html(head, colour, y0, y0 + size, head_px)), tmp, name + "_t")
+    txt = shoot(fn.doc(text_html(head, RED, y0, y0 + size, head_px)), tmp, name + "_t")
     a, b = fn.ink(idx), fn.ink(txt)
     box = np.zeros_like(a)
     box[y0:y0 + size, x0:x0 + size] = True
