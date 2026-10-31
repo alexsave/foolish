@@ -153,7 +153,7 @@ export const Welcome = () => {
         <div className="page page--centered page--full-viewport">
             <WoolBackgroundLayer />
             
-            <p className="title title--brand z-content">
+            <p className="title title--brand z-content" style={{ ['--brand-len' as string]: t('foolish').length }}>
                 <Text
                     id="foolish"
                     className={useFernTitle

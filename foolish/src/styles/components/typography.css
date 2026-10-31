@@ -12,7 +12,11 @@
 }
 
 .title--brand {
-  font-size: var(--font-size-title);
+  /* The full size, unless the name in this language is too long for the screen:
+     then about 0.7em a capital, fitted to the width. --brand-len is the name's
+     length in characters (Welcome.tsx); seven (FOOLISH) never shrinks on a phone,
+     ДУРАЦКИЙ and ДУРНУВАТИЙ do, where the Soviet banner used to hide it. */
+  font-size: min(var(--font-size-title), calc(94vw / (0.7 * var(--brand-len, 7))));
   color: var(--color-accent-red);
   text-shadow: var(--text-shadow-title);
   margin-bottom: 30px;
