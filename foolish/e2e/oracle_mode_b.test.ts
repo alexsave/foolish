@@ -172,6 +172,23 @@ test('§8b.7-1 Mode A and Mode B converge to the same per-candidate means', asyn
         const tol = Math.max(0.05, 5 * Math.sqrt(1.44 / aMinN + 1.44 / minN));
         assert.ok(worst < tol, `worst |A-B| = ${worst.toFixed(4)} on ${worstKey} (tolerance ${tol.toFixed(4)})`);
         console.log(`  §8b.7-1: ${matched} candidates matched, worst |A-B| = ${worst.toFixed(4)} < ${tol.toFixed(4)} (A n>=${aMinN}, B n>=${minN})`);
+
+        // Both modes run fusion (docs/INFINITE_ORACLE_DESIGN.md "The brain"): its
+        // noisy race was accumulated on every row, to the same means in both
+        // modes, and the overlay gets exactly one Best. Mutation-checked
+        // (2026-10-31): the thread loop calling octogen again, and the shadow
+        // sums folded into the next row, each failed "Mode B ran fusion's noisy
+        // race"/"the noisy means agree"; readCandidates without fusionBest
+        // failed "exactly one Best".
+        let sworst = 0;
+        for (const c of b) {
+            assert.ok(c.shadowMean != null && c.shadowMean >= 1, `Mode B ran fusion's noisy race on ${c.key}`);
+            const a = aByKey.get(c.key)!;
+            assert.ok(a.shadowMean != null, `Mode A ran it on ${c.key}`);
+            sworst = Math.max(sworst, Math.abs(a.shadowMean! - c.shadowMean!));
+        }
+        assert.ok(sworst < tol, `the noisy means agree: worst |A-B| = ${sworst.toFixed(4)} (tolerance ${tol.toFixed(4)})`);
+        assert.equal(b.filter((c) => c.best).length, 1, 'exactly one Best in Mode B');
     } finally { await rig.close(); }
 });
 

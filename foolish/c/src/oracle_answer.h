@@ -41,6 +41,8 @@ typedef struct {
     int32_t keep1, keep2;           // OG_KEEP1 / OG_KEEP2: 26 turns racing off
     int32_t w1, w2, w3;             // OG_W1..OG_W3: worlds per stage
     int32_t solve_budget;           // OG_EXPLAIN_SOLVE_BUDGET: nodes per root move, 0 = no probe
+    int32_t shadow_w;               // FUSION_SHADOW_W: fusion's noisy race's worlds, percent of
+                                    //   the noise-free race's (0 = fusion's own 100)
 } OgKnobs;
 #endif
 

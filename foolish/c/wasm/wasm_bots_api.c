@@ -187,7 +187,7 @@ void wasm_reload_bot_flags(void) { cordite_reload_flags(); }
 // budget). Compiled ONLY into the oracle modules.
 //
 // THE ORACLE'S KNOBS, AS A STRUCT (oracle_answer.h OgKnobs). The host writes the
-// six numbers through its generated writer and applies them; it never spells a
+// numbers through its generated writer and applies them; it never spells a
 // knob's name and never packs a string. Three hosts used to carry the same loop
 // that wrote "KEY\0VALUE\0" into the IO buffer a character at a time, once per
 // knob, and this is the one place that knows the names instead.
@@ -196,7 +196,7 @@ void wasm_reload_bot_flags(void) { cordite_reload_flags(); }
 // that is what bot_knobs.h reads and what makes a knob a per-decision re-read
 // (OG_EXPLAIN_SOLVE_BUDGET is asked for fresh on every probe). The table is
 // REPLACED, not merged: these are the Oracle's knobs and every other OG_* value
-// is the C default, which is what wasm_clearenv followed by six sets always
+// is the C default, which is what wasm_clearenv followed by one set per knob always
 // meant.
 //
 // Applying does NOT tell octogen to re-read, because octogen already does, in
@@ -236,6 +236,7 @@ void wasm_og_knobs_apply(void) {
     og_knob_put("OG_W2", g_og_knobs.w2);
     og_knob_put("OG_W3", g_og_knobs.w3);
     og_knob_put("OG_EXPLAIN_SOLVE_BUDGET", g_og_knobs.solve_budget);
+    og_knob_put("FUSION_SHADOW_W", g_og_knobs.shadow_w);
 }
 #endif
 

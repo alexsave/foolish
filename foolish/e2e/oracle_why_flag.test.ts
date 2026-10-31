@@ -84,7 +84,7 @@ const SNAPSHOT: OracleSnapshot = {
 };
 
 /** Render the overlay into jsdom and hand back its host element. */
-async function overlay(): Promise<{ host: HTMLElement; unmount: () => Promise<void> }> {
+async function overlay(snapshot: OracleSnapshot = SNAPSHOT): Promise<{ host: HTMLElement; unmount: () => Promise<void> }> {
     const React = (await import('react')).default;
     const { createRoot } = await import('react-dom/client');
     const { act } = await import('react');
@@ -97,7 +97,7 @@ async function overlay(): Promise<{ host: HTMLElement; unmount: () => Promise<vo
     await act(async () => {
         root.render(React.createElement(LocalizationProvider, null,
             React.createElement(OracleOverlay, {
-                snapshot: SNAPSHOT, onClose: noop, onToggleMemory: noop, onRetry: noop,
+                snapshot, onClose: noop, onToggleMemory: noop, onRetry: noop,
             })));
     });
     return {
@@ -219,5 +219,32 @@ test('the played row is scrolled into view once, and it is the played row', asyn
         await unmount();
     } finally {
         if (had) proto.scrollIntoView = prev; else delete proto.scrollIntoView;
+    }
+});
+
+/* -----------------------------------------------------------------------------
+ * Best is fusion's pick, not the lowest number (docs/INFINITE_ORACLE_DESIGN.md
+ * "The brain"). The rows show the noise-free race's expected finish, and the
+ * Best chip goes where src/oracle/accumulator.ts fusionBest put it, which is off
+ * the lowest EF exactly when the noisy race overruled octogen's pick.
+ *
+ * Mutation-checked (2026-10-31): the overlay's isBest back on "the lowest EF"
+ * failed "the Best chip is on fusion's pick"; isBest ignoring `scored` was not
+ * reachable from here (an unscored row is never best) and is covered by
+ * fusionBest's own test.
+ * -------------------------------------------------------------------------- */
+test('the Best chip is on fusion\'s pick, also when it is not the lowest expected finish', async () => {
+    delete process.env[FLAG];
+    const overruled: OracleSnapshot = {
+        ...SNAPSHOT,
+        candidates: [{ ...SNAPSHOT.candidates[0], best: false }, { ...SNAPSHOT.candidates[1], best: true }],
+    };
+    for (const [snap, at] of [[SNAPSHOT, 0], [overruled, 1]] as const) {
+        const { host, unmount } = await overlay(snap);
+        const body = host.querySelector('[data-testid="oracle-panel"]')!.lastElementChild!;
+        const marked = host.querySelectorAll('[data-best]');
+        assert.equal(marked.length, 1, 'one row carries the Best chip');
+        assert.ok(body.children[at].contains(marked[0]), `the Best chip is on fusion's pick, row ${at}`);
+        await unmount();
     }
 });

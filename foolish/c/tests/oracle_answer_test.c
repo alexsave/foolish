@@ -4,11 +4,14 @@
 // e2e/oracle_answer.test.ts holds the struct to what the old JSON line said,
 // through the wasm module and the generated reader. That proves the transport
 // and it is a FIXTURE: it knows thirteen decisions. This file is the other half.
-// It plays whole games with octogen in every seat, and after every choose holds
+// It plays whole games with fusion in every seat (the Oracle's brain,
+// docs/INFINITE_ORACLE_DESIGN.md "The brain"), and after every choose holds
 // the answer to things it can check without trusting the code that filled it:
 // the real Game (the hand, the table, the counts - and the true hands, which a
 // pinned card must really be in), the legal-move menu (every row is one of its
-// moves, each at most once, and the chosen row is the move octogen returned),
+// moves, each at most once, and the chosen row is the move the brain returned),
+// octogen at the same seed (fusion's rows, scores and storylines are octogen's
+// own race, and only fusion's rows carry a noisy race beside them),
 // libc's snprintf (the row labels are written by a hand-rolled text cursor;
 // here they are formatted again with the format strings the JSON emitter used),
 // and the answer's own arithmetic (a storyline cannot be told more often than
@@ -38,6 +41,7 @@ static int n_pass = 0, n_fail = 0;
 static struct {
     int decisions, rows, scored, why, multi_cover, pruned, proven, unknown;
     int pinned, voids, floors, covered, single, short_story, replies;
+    int raced, noisy, overruled;
 } seen;
 
 // ---------- the labels, by libc ----------------------------------------------
@@ -146,7 +150,7 @@ static void check_answer(const Game *g, int seat, const LegalMoves *moves, int c
         CHECK(strlen(want) < OG_ANSWER_LABEL, "the reference label fits the field");
         CHECK(r->label_len == strlen(want) && memcmp(r->label, want, r->label_len) == 0, "the label is what snprintf writes");
 
-        if (r->chosen) { n_chosen++; CHECK(mi == chosen, "the chosen row is the move octogen returned"); }
+        if (r->chosen) { n_chosen++; CHECK(mi == chosen, "the chosen row is the move the brain returned"); }
         if (r->scored) {
             n_scored++; seen.scored++;
             CHECK(r->nsim > 0, "a scored row was sampled");
@@ -209,7 +213,52 @@ static void check_answer(const Game *g, int seat, const LegalMoves *moves, int c
     }
 }
 
-// ---------- games, octogen in every seat --------------------------------------
+// ---------- fusion's answer against octogen's -----------------------------------
+// The two at the same strategy seed from a cold table, so octogen's race and
+// fusion's first race sample the same worlds through the same solver state.
+// What the Oracle shows is defined here: a row's score and storylines are the
+// noise-free race's, octogen's own numbers, and fusion's noisy race rides beside
+// them in shadow_score, on every row the race sampled and on no octogen row.
+//
+// Mutation-checked (2026-10-31; each built with make oracle-answer-test, seen
+// red, restored): publishing the noisy race as the row's score ("a row's score
+// is octogen's"); tracing the noisy race too (the why checks, "an entry folds
+// exactly its row's playouts"); never publishing the shadow arrays ("fusion
+// scored the row in its noisy race"); publishing them for octogen too ("octogen
+// has no noisy race"); the noisy race run with the noise off ("the noisy race
+// is noisy somewhere").
+static OgAnswer fu_ans;
+static void check_fusion_rows(const OgAnswer *fu, const OgAnswer *og, int n_players) {
+    CHECK(fu->n_rows == og->n_rows && fu->n_why == og->n_why, "fusion answers octogen's rows and storylines");
+    if (fu->n_rows != og->n_rows) return;
+    int n_scored = 0, noisy = 0, moved = 0;
+    for (int k = 0; k < fu->n_rows; k++) n_scored += fu->rows[k].scored;
+    for (int k = 0; k < fu->n_rows; k++) {
+        const OgAnswerRow *f = &fu->rows[k], *o = &og->rows[k];
+        CHECK(f->label_len == o->label_len && !memcmp(f->label, o->label, f->label_len), "the same row, in the same place");
+        CHECK(f->scored == o->scored && f->nsim == o->nsim && f->score == o->score,
+              "a row's score is octogen's, world for world");
+        CHECK(f->verdict == o->verdict && f->pruned == o->pruned, "the same verdicts");
+        CHECK(!o->shadow_scored && o->shadow_nsim == 0, "octogen has no noisy race");
+        if (f->scored && n_scored > 1) {
+            seen.raced++;
+            CHECK(f->shadow_scored && f->shadow_nsim > 0, "fusion scored the row in its noisy race");
+            CHECK(f->shadow_score >= 1.0 && f->shadow_score <= (double)n_players, "a noisy mean is a finish position");
+            noisy += f->shadow_score != f->score;
+        } else {
+            CHECK(!f->shadow_scored, "no noisy race where nothing was raced");
+        }
+        moved += f->chosen != o->chosen;
+    }
+    for (int i = 0; i < fu->n_why && fu->n_why == og->n_why; i++)
+        CHECK(fu->why[i].row == og->why[i].row && fu->why[i].n == og->why[i].n
+              && fu->why[i].n_paths == og->why[i].n_paths && fu->why[i].mepk == og->why[i].mepk,
+              "the storylines are the noise-free race's");
+    seen.noisy += noisy > 0;
+    seen.overruled += moved > 0;
+}
+
+// ---------- games, fusion in every seat ---------------------------------------
 static void play(uint32_t seed, int n_players) {
     cd_sim_solve_reset();
     game_set_seed(seed);
@@ -227,12 +276,19 @@ static void play(uint32_t seed, int n_players) {
             if (!should_bot_act(&g, pi)) continue;
             calculate_legal_moves(&g, pi, &moves);
             if (moves.n == 0) continue;
+            const uint64_t s = (uint64_t)seed * 2654435761u + (uint64_t)iters;
+            cd_sim_solve_reset(); random_strategy_set_seed(s);
             og_answer_reset();
             CHECK(og_answer() == NULL, "a reset forgets the last answer");
-            int idx = octogen_strategy_choose(&g, pi, &moves, NULL);
-            CHECK(idx >= 0 && idx < moves.n, "octogen chose a legal move");
+            int idx = fusion_strategy_choose(&g, pi, &moves, NULL);
+            CHECK(idx >= 0 && idx < moves.n, "fusion chose a legal move");
             if (idx < 0 || idx >= moves.n) return;
             check_answer(&g, pi, &moves, idx);
+            if (og_answer()) fu_ans = *og_answer();
+            cd_sim_solve_reset(); random_strategy_set_seed(s);
+            og_answer_reset();
+            (void)octogen_strategy_choose(&g, pi, &moves, NULL);
+            if (og_answer()) check_fusion_rows(&fu_ans, og_answer(), g.num_players);
             acted = legal_move_apply(&g, pi, &moves.moves[idx]);
         }
         if (!acted) break;
@@ -265,8 +321,13 @@ int main(void) {
     CHECK(seen.pinned > 0 && seen.voids > 0 && seen.floors > 0, "pins, voids and floors");
     CHECK(seen.covered > 0 && seen.single > 0, "covered battles and single-move decisions");
     CHECK(seen.short_story > 0 && seen.replies > 0, "storylines that resolve early, and replies");
+    CHECK(seen.raced > 1000, "rows raced by both of fusion's races");
+    CHECK(seen.noisy > 100, "the noisy race is noisy somewhere");
+    CHECK(seen.overruled > 0, "fusion's pick is not octogen's somewhere");
 
-    printf("oracle_answer_test: %d decisions, %d rows (%d scored, %d pruned, %d proven); %d checks passed, %d failed\n",
-           seen.decisions, seen.rows, seen.scored, seen.pruned, seen.proven, n_pass, n_fail);
+    printf("oracle_answer_test: %d decisions, %d rows (%d scored, %d pruned, %d proven; %d raced twice, "
+           "%d decisions noisy, %d overruled); %d checks passed, %d failed\n",
+           seen.decisions, seen.rows, seen.scored, seen.pruned, seen.proven, seen.raced,
+           seen.noisy, seen.overruled, n_pass, n_fail);
     return n_fail ? 1 : 0;
 }

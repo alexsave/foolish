@@ -30,10 +30,10 @@ export interface OracleJob {
 
 /* ---------------------------- the Oracle's knobs -------------------------- */
 
-/** The OG_* values the Oracle sets, and the only ones: every other knob is the
- *  kernel's default. The same six numbers in both modes, written into the module
- *  through the generated writer of c/src/oracle_answer.h OgKnobs - no host names
- *  a knob or packs a string. */
+/** The OG_* values the Oracle sets, and fusion's FUSION_SHADOW_W, and the only
+ *  ones: every other knob is the kernel's default. The same numbers in both
+ *  modes, written into the module through the generated writer of
+ *  c/src/oracle_answer.h OgKnobs - no host names a knob or packs a string. */
 export interface OracleKnobs {
     keep1: number;                  // OG_KEEP1 / OG_KEEP2: 26 turns racing OFF,
     keep2: number;                  //   so nsim is uniform across candidates
@@ -41,6 +41,7 @@ export interface OracleKnobs {
     w2: number;
     w3: number;
     solveBudget: number;            // nodes the exact probe may spend per root move; 0 = no probe
+    shadowW: number;                // FUSION_SHADOW_W: fusion's noisy race's worlds, % of the noise-free race's
 }
 
 /* ------------------------- one batch's answer ---------------------------- */
@@ -281,6 +282,12 @@ export const ORACLE_W1_MAX = 192;
 export const ORACLE_BATCH_FAST_MS = 25;   // below → double W1
 export const ORACLE_BATCH_SLOW_MS = 80;   // above → halve W1
 
+/** Fusion's noisy race on half the worlds of its noise-free race (FUSION_SHADOW_W,
+ *  the bot's own is 100): the budget split of docs/INFINITE_ORACLE_DESIGN.md
+ *  "The brain". The rows' numbers are the noise-free race's, so this costs the
+ *  Best pick evidence only, and none of what the rows show. */
+const ORACLE_SHADOW_W = 50;
+
 /** Per-move endgame verdict probe budget (the kernel asks for it per probe). */
 const ORACLE_SOLVE_BUDGET = 2_000_000;
 
@@ -289,7 +296,7 @@ const ORACLE_SOLVE_BUDGET = 2_000_000;
  *  then retunes w1 and zeroes the budget as it learns (oracleWorker.ts). */
 export const ORACLE_KNOBS: Readonly<OracleKnobs> = {
     keep1: 26, keep2: 26, w1: ORACLE_W1_START, w2: 1, w3: 0,
-    solveBudget: ORACLE_SOLVE_BUDGET,
+    solveBudget: ORACLE_SOLVE_BUDGET, shadowW: ORACLE_SHADOW_W,
 };
 
 /** Convergence checkpoint (§8.7), computed over candidates with n > 0 ONLY. */

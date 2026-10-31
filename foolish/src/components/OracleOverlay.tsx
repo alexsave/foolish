@@ -398,6 +398,7 @@ function McRow({ c, best, worst, bestAdj, t, open, onClick }: {
     return (
         <div
             {...(onClick ? { 'data-testid': 'oracle-row', onClick } : null)}
+            {...(isBest ? { 'data-best': '' } : null)}
             style={{
                 display: 'flex', flexDirection: 'column', gap: 3,
                 padding: '5px 7px', borderRadius: 5,
