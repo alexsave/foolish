@@ -15,16 +15,21 @@
 //   - `code` has a letter outside 0-9a-f, so it can never be a game id (those are
 //     exactly six of "0123456789abcdef", server/src/store/game_id.h) and is
 //     shorter than any replay code;
-//   - `lang` is a language c/i18n declares;
+//   - `lang` is a language c/i18n declares, and may be left out: a code with
+//     none opens in PROMO_LANG_DEFAULT (English);
 //   - `src` names the place, once: what a request log or a later count reads.
 #ifndef FOOLISH_PROMO_CODES_H
 #define FOOLISH_PROMO_CODES_H
 
 typedef struct { const char *code; const char *src; const char *lang; } PromoCode;
 
+// The language of a code whose row names none. A one-cell table so the
+// generator carries it to the web: the default has one owner, here.
+static const char *const PROMO_LANG_DEFAULT[] = { "en" };
+
 static const PromoCode PROMO_CODES[] = {
     { .code = "br", .src = "brighton",          .lang = "ru" },   // Brighton Beach
-    { .code = "ws", .src = "washington-square", .lang = "en" },   // Washington Square Park
+    { .code = "ws", .src = "washington-square" },                 // Washington Square Park: the default
 };
 
 #endif
