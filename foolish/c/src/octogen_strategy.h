@@ -17,6 +17,12 @@ int fusion_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, 
 // o's per world, pen_gap is f's trump-keep tax minus o's. 1 when f beats o by
 // more than k10 tenths of a standard error of that paired difference.
 int og_fusion_overrules(double dsum, double d2sum, int n, double pen_gap, int k10);
+// What fusion's shadow did on this thread since the last reset (a test seam and
+// a trace): races run, races whose noisy pick overruled octogen's, and races in
+// which octogen's pinned pick missed a world (must stay 0: it is never culled).
+typedef struct { long races, overruled, pin_short; } OgFusionStats;
+OgFusionStats og_fusion_stats(void);
+void          og_fusion_stats_reset(void);
 
 #ifdef FOOLISH_ORACLE_BUILD
 // Infinite-oracle only (docs/INFINITE_ORACLE_DESIGN.md §6.2): un-latch the

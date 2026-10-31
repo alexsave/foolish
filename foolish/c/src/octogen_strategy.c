@@ -1970,13 +1970,17 @@ static double og_keep_penalty(const Game *g, const LegalMove *m) {
 // the pin's, so the pick can be tested against the pin paired over the worlds
 // both played. og_shadow is non-NULL only inside that race.
 typedef struct {
-    int pin, w_pct;
+    int pin, w_pct, worlds;
     double d[OG_MAX_CANDS], d2[OG_MAX_CANDS];
     int n[OG_MAX_CANDS];
 } OgShadow;
 static _Thread_local OgShadow *og_shadow = NULL;
+static _Thread_local OgFusionStats og_fu_stats;
+OgFusionStats og_fusion_stats(void) { return og_fu_stats; }
+void og_fusion_stats_reset(void) { memset(&og_fu_stats, 0, sizeof og_fu_stats); }
 
 static void og_shadow_fold(OgShadow *sh, int n, const bool *alive, const double *wfp) {
+    sh->worlds++;
     for (int i = 0; i < n; i++) {
         if (!alive[i]) continue;
         double d = wfp[i] - wfp[sh->pin];
@@ -2196,10 +2200,14 @@ static int og_fusion_shadow(const Game *g, int bot_idx, const LegalMoves *moves,
     og_run_stages(g, bot_idx, moves, B, C, keep_pen, score, nsim, alive);
     og_fusion_noise(0);
     og_shadow = NULL;
+    og_fu_stats.races++;
+    og_fu_stats.pin_short += sh.n[o] != sh.worlds;   // o must have played every world
     int f = og_best(C, keep_pen, score, nsim, alive);
     if (f < 0 || f == o) return o;
-    return og_fusion_overrules(sh.d[f], sh.d2[f], sh.n[f], keep_pen[f] - keep_pen[o],
-                               og_fu->shadow) ? f : o;
+    if (!og_fusion_overrules(sh.d[f], sh.d2[f], sh.n[f], keep_pen[f] - keep_pen[o],
+                             og_fu->shadow)) return o;
+    og_fu_stats.overruled++;
+    return f;
 }
 
 int og_fusion_overrules(double dsum, double d2sum, int n, double pen_gap, int k10) {
