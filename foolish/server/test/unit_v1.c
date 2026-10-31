@@ -4,6 +4,7 @@
 // store (SQLite, or DynamoDB Local under CBASE_STORE=dynamo) and real auth,
 // every request through cb_handle.
 #include "t.h"
+#include "lib_created_game.h"
 #include "cbase/provider.h"
 #include "rate_limits.h"
 
@@ -407,7 +408,7 @@ static void games_views_and_chat(void) {
     int created_len = g_len;
     memcpy(created, g_body, (size_t)g_len);
     char gid[CB_GAME_ID_MAX + 1] = "";
-    CB_ROWS_CALL(g_ctx.store, games_of_user, dora_id, 1, first_game, gid);
+    T_CHECK(tc_created_game(created, (size_t)created_len, gid));
     T_CHECK(gid[0] != 0);
 
     // The dashboard: one game, the envelope create answered with.
@@ -534,7 +535,7 @@ static void bots_board_history_replay(void) {
     T_CHECK(h && h->has_rating && h->rating == 1600 && h->n == 0);
     T_EQ_INT(call(b_create, NULL), 200);
     char gid[CB_GAME_ID_MAX + 1] = "";
-    CB_ROWS_CALL(g_ctx.store, games_of_user, fay, 1, first_game, gid);
+    T_CHECK(tc_created_game(g_body, (size_t)g_len, gid));
     cb_snapshot_row s;
     memset(&s, 0, sizeof s);
     cb_uuid_v4(s.id);
@@ -551,12 +552,7 @@ static void bots_board_history_replay(void) {
     // A newer replay of another of Fay's games: the replay route still answers the one asked for.
     T_EQ_INT(call(b_create, NULL), 200);
     char gid2[CB_GAME_ID_MAX + 1] = "";
-    CB_ROWS_CALL(g_ctx.store, games_of_user, fay, 1, first_game, gid2);
-    // Two games made in one millisecond list in either order: then the other one is the second.
-    if (strcmp(gid2, gid) == 0) {
-        g_seen = 0;
-        CB_ROWS_CALL(g_ctx.store, games_of_user, fay, 2, second_game, gid2);
-    }
+    T_CHECK(tc_created_game(g_body, (size_t)g_len, gid2));
     T_CHECK(gid2[0] && strcmp(gid2, gid) != 0);
     cb_snapshot_row s2 = s;
     cb_uuid_v4(s2.id);
@@ -1031,7 +1027,7 @@ static void guessed_game_ids_are_limited(void) {
     char uid[40];
     snprintf(uid, sizeof uid, "%.36s", nc_session_info()->user_id);
     T_EQ_INT(call(b_create, NULL), 200);
-    CB_ROWS_CALL(g_ctx.store, games_of_user, uid, 1, first_game, g_mine);
+    T_CHECK(tc_created_game(g_body, (size_t)g_len, g_mine));
     g_peer = B;
     nc_reset();
     T_EQ_INT(sign(1, "HOST", "secret-11"), 0);
@@ -1039,7 +1035,7 @@ static void guessed_game_ids_are_limited(void) {
     int hn = nc_session_save(host, sizeof host);
     snprintf(uid, sizeof uid, "%.36s", nc_session_info()->user_id);
     T_EQ_INT(call(b_create, NULL), 200);
-    CB_ROWS_CALL(g_ctx.store, games_of_user, uid, 1, first_game, g_theirs);
+    T_CHECK(tc_created_game(g_body, (size_t)g_len, g_theirs));
     T_CHECK(g_mine[0] && g_theirs[0] && strcmp(g_mine, g_theirs) != 0);
     const int b = cb_limit_rules[CB_LIMIT_ID_MISS_IP].burst;
 

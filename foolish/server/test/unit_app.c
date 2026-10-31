@@ -2643,6 +2643,37 @@ static void a_held_lease_skips_the_drive(void) {
     T_EQ_INT(until, g_now + CB_BOT_LEASE_MS);
 }
 
+// The dashboard's order on the in-RAM store is the tables': most recently updated first, a tie
+// by game id (store/rows_sql.c ORDER BY updated_at DESC, game_id), never the order the games
+// were put in. Three games in one millisecond, drawn out of id order.
+static int g_tie_draw;
+static void tie_ids(char out[CB_GAME_ID_MAX + 1]) {
+    static const char *const ids[3] = { "bbbbbb", "cccccc", "aaaaaa" };
+    snprintf(out, CB_GAME_ID_MAX + 1, "%s", ids[g_tie_draw++ % 3]);
+}
+static bool all_games(const cb_view_row *row, void *ud) {
+    char (*ids)[CB_GAME_ID_MAX + 1] = ud;
+    int i = 0;
+    while (ids[i][0]) i++;
+    if (i < 3) snprintf(ids[i], CB_GAME_ID_MAX + 1, "%s", row->game_id);
+    return true;
+}
+
+static void the_dashboard_breaks_a_tie_by_game_id(void) {
+    setup(0);
+    reply r;
+    char gid[CB_GAME_ID_MAX + 1];
+    g_tie_draw = 0;
+    cb_app_game_id = tie_ids;
+    for (int i = 0; i < 3; i++) create_game(gid, &r);
+    cb_app_game_id = cb_game_id_random;
+    char ids[4][CB_GAME_ID_MAX + 1] = { "", "", "", "" };
+    T_EQ_INT(cb_table_views_of_user(&g_ctx, UID_A, 0, all_games, ids), 3);
+    T_EQ_STR(ids[0], "aaaaaa");
+    T_EQ_STR(ids[1], "bbbbbb");
+    T_EQ_STR(ids[2], "cccccc");
+}
+
 static void the_scan_kicks_stale_active_bot_games(void) {
     setup(0);
     char g1[CB_GAME_ID_MAX + 1], g2[CB_GAME_ID_MAX + 1], g3[CB_GAME_ID_MAX + 1];
@@ -2836,6 +2867,7 @@ int main(void) {
     T_RUN(pushes_go_out_in_commit_order);
     T_RUN(the_bot_loop_drives_until_a_human_owes_a_move);
     T_RUN(a_held_lease_skips_the_drive);
+    T_RUN(the_dashboard_breaks_a_tie_by_game_id);
     T_RUN(the_scan_kicks_stale_active_bot_games);
     T_RUN(the_scan_never_kicks_a_game_waiting_on_its_human);
     T_RUN(a_drive_that_finds_nothing_takes_the_game_out_of_the_scan);
