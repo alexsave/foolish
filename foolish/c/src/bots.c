@@ -250,6 +250,10 @@ static const BotDef BOTS[STRAT_COUNT] = {
                         "03f1f377-00a7-4936-b7ea-ed4f2c93b206", "6db6e1cc-fa6c-4e9f-a2e9-9bba574e63d5",
                         "efe6f751-912f-48be-a488-5aee56b85bdb"),
     },
+    // Fusion with its knobs read from FUSIONX_* (c/FUSION.md "Belief research
+    // knobs"): the research arm of a paired run against fusion. No key, so no
+    // roster row, no account and no ladder rung.
+    [STRAT_FUSION_X] = { .name = "fusion_x", .alias = "fux", .native_only = 1 },
 };
 
 // THE DISPATCH, beside the rows and apart from them on purpose, in two tables
@@ -290,6 +294,7 @@ static const StrategyFn RESEARCH[STRAT_COUNT] = {
     [STRAT_FULMINATE]         = NATIVE_ONLY(fulminate_strategy_choose),
     [STRAT_DISTILLED]         = NATIVE_ONLY(distilled_strategy_choose),
     [STRAT_OCTOGEN_ORACLE]    = NATIVE_ONLY(octogen_oracle_strategy_choose),
+    [STRAT_FUSION_X]          = NATIVE_ONLY(fusion_x_strategy_choose),
 };
 
 const BotDef *bot_def(int strat) {

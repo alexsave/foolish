@@ -41,6 +41,9 @@
 // Octogen whose pick a noisy second race may overrule (c/FUSION.md); seeded on
 // the website as Moscow, not offline.
 #define STRAT_FUSION            24
+// Fusion reading its knobs from FUSIONX_* (research, not on the roster): the
+// arm of a paired fusion_x-vs-fusion run whose knobs the control does not see.
+#define STRAT_FUSION_X          25
 //
 // THE IDS ARE NOT COMPACTED, and a retired one is never handed out again. A
 // STRAT_* id leaves the process: it is a seat's Player.strategy_key, a
@@ -52,7 +55,7 @@
 // One past the last id, and the length of the registry (bots.c BOTS[]). A new
 // STRAT_* id takes this value and bumps it; its row in bots.c is the rest of
 // its registration.
-#define STRAT_COUNT             25
+#define STRAT_COUNT             26
 
 // 1 for an id below STRAT_COUNT whose brain was removed: its slot in bots.c is
 // empty, so it dispatches to nothing (strategy_choose is -1) and no name parses
@@ -100,5 +103,7 @@ int octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves,
 int octogen_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 // Fusion: octogen with rollout noise (octogen_strategy.c; native builds only).
 int fusion_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+// fusion_x: fusion with FUSIONX_* knobs (research; native builds only).
+int fusion_x_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
 #endif

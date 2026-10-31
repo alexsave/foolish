@@ -2080,8 +2080,8 @@ static void fu_small_worlds(int on) {
 // fusion ignore FUSION_NOISE_MODE (the "reaches" check); drop its reset of the
 // mode after the decision (the "puts back" check).
 static void test_fusion_is_dispatchable_and_named(void) {
-    CHECK(STRAT_FUSION == 24 && STRAT_COUNT == 25 && !strategy_retired(STRAT_FUSION),
-          "fusion takes the next free id, 24, and STRAT_COUNT moves past it");
+    CHECK(STRAT_FUSION == 24 && STRAT_FUSION_X == 25 && STRAT_COUNT == 26 && !strategy_retired(STRAT_FUSION),
+          "fusion takes the next free id, 24, its research arm fusion_x 25, and STRAT_COUNT moves past them");
     CHECK(parse_strategy("fusion") == STRAT_FUSION && parse_strategy("fu") == STRAT_FUSION,
           "fusion parses by name and by its short alias");
     const int ri = bot_roster_find("fusion");
@@ -18389,7 +18389,8 @@ static void test_podkidnoy_every_brain(void) {
         }
         CHECK(unknown_below == 0, "every id below STRAT_COUNT dispatches to a brain");
         CHECK(retired_alive == 0, "a retired id dispatches to nothing, and sits below STRAT_COUNT");
-        CHECK(STRAT_OCTOGEN == 20 && STRAT_OCTOGEN_ORACLE == 21 && STRAT_FUSION == 24 && STRAT_COUNT == 25,
+        CHECK(STRAT_OCTOGEN == 20 && STRAT_OCTOGEN_ORACLE == 21 && STRAT_FUSION == 24 && STRAT_FUSION_X == 25
+              && STRAT_COUNT == 26,
               "retiring a brain leaves a hole: the survivors keep their ids");
         CHECK(known_past == 0, "no id past STRAT_COUNT dispatches (bump STRAT_COUNT with a new brain)");
         // The probe sees a real transfer too, so a struct-world search (which
