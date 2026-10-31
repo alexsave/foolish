@@ -38,8 +38,8 @@
 #define STRAT_OCTOGEN_ORACLE    21   // octogen at 6x worlds (research/audit only)
 // 22 is retired: it was torpex (a learned value net in place of rollouts).
 // 23 is retired: it was novichok (the cheating ceiling probe; read real hands).
-// Octogen plus rollout noise (c/FUSION.md); ready but not reachable (its row in
-// bots.c is neither seeded nor offline).
+// Octogen whose pick a noisy second race may overrule (c/FUSION.md); seeded on
+// the website as Moscow, not offline.
 #define STRAT_FUSION            24
 //
 // THE IDS ARE NOT COMPACTED, and a retired one is never handed out again. A

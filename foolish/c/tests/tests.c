@@ -2276,8 +2276,8 @@ static void test_octogen_is_fusion_at_zero(void) {
 // to 200 or 400 (the 24-36% window), or to 1000 (everything fires); invert the gate in
 // sim_noise_draw (`<` for `>=`: ~80% fires); make cd_sim_noise_legal match
 // covers by the candidate's empty mask instead of the rebuilt greedy cover
-// (unmatched > 0 whenever a cover is drawn); have fusion_strategy_choose skip
-// cd_sim_set_noise(0) after the decision (the restore check).
+// (unmatched > 0 whenever a cover is drawn); have og_fusion_noise(0) leave the
+// level on after the shadow race (the restore check).
 static void test_fusion_rollouts_are_noisy(void) {
     static LegalMoves m;
     fu_small_worlds(1);
@@ -2470,66 +2470,75 @@ static void test_fusion_noise_modes_are_legal_on_both_paths(void) {
     CHECK(t.agree, "both rollout paths draw the same gate and pick and play the same move, in both modes");
 }
 
-// Fusion's noise by table size, with no knob set: on at 2 to 5 seats, off
-// above FUSION_NOISE_MAX_PC (5), where fusion IS octogen, the same move and both
-// RNG streams left in the same state at every decision, with no draw at all.
+// Fusion's noise by table size. With no knob set it is on at every size, 2 to
+// 7 seats here (with the shadow selection it measured better than octogen at
+// all of 2-8, FUSION.md). FUSION_NOISE_MAX_PC is the switch: at 5, a 6- or
+// 7-seat fusion IS octogen, the same move and both RNG streams left in the same
+// state at every decision, with no draw at all, while 2 to 5 seats still draw.
 //
-// Mutations that must turn it red: set FUSION_NOISE_MAX_PC to 6 (fusion at 6
-// draws: the "is octogen" and "no noise" checks); set it to 4 (fusion at 5 is
-// quiet: the "on" check); dropping the table-size test from
-// fusion_strategy_choose is the first of these.
+// Mutations that must turn it red: set FUSION_NOISE_MAX_PC's default to 5 (no
+// knob, fusion at 6 and 7 is quiet: the "every size" check); have
+// fusion_strategy_choose ignore the knob (at 6 and 7 it still draws: the "is
+// octogen" and "no noise" checks); compare with `<` for `<=` (the knob's 5
+// turns 5 seats quiet: the "still draws" check).
 static void test_fusion_noise_by_table_size(void) {
     static LegalMoves m;
     fu_small_worlds(1);
-    int on_drew = 1, off_same = 1, off_quiet = 1, off_decisions = 0;
-    for (int np = 2; np <= 7; np++) {
-        const int on = np <= 5;
-        Game g;
-        make_seeded_game(&g, np, 300 + np);
-        long drawn = 0;
-        for (int step = 0; step < (on ? 2 : 4) && game_done(&g) < 0; step++) {
-            int acted = 0;
-            for (int pi = 0; pi < g.num_players && !acted; pi++) {
-                if (!should_bot_act(&g, pi)) continue;
-                calculate_legal_moves(&g, pi, &m);
-                if (m.n == 0) continue;
-                const uint64_t gr = game_rng_get(), sr = random_strategy_rng_get();
-                cd_sim_solve_reset();
-                const int a = octogen_strategy_choose(&g, pi, &m, NULL);
-                const uint64_t gra = game_rng_get(), sra = random_strategy_rng_get();
-                game_rng_set(gr);
-                random_strategy_set_seed(sr);
-                cd_sim_noise_stats_reset();
-                cd_sim_solve_reset();
-                const int b = fusion_strategy_choose(&g, pi, &m, NULL);
-                const CdNoiseStats sf = cd_sim_noise_stats();
-                drawn += sf.drawn;
-                if (!on) {
-                    off_same &= a == b && gra == game_rng_get() && sra == random_strategy_rng_get();
-                    off_quiet &= sf.drawn == 0;
-                    off_decisions++;
+    int all_drew = 1, on_drew = 1, off_same = 1, off_quiet = 1, off_decisions = 0;
+    for (int knob = 0; knob < 2; knob++) {
+        if (knob) setenv("FUSION_NOISE_MAX_PC", "5", 1);
+        for (int np = 2; np <= 7; np++) {
+            const int on = !knob || np <= 5;
+            Game g;
+            make_seeded_game(&g, np, 300 + np);
+            long drawn = 0;
+            for (int step = 0; step < (on ? 2 : 4) && game_done(&g) < 0; step++) {
+                int acted = 0;
+                for (int pi = 0; pi < g.num_players && !acted; pi++) {
+                    if (!should_bot_act(&g, pi)) continue;
+                    calculate_legal_moves(&g, pi, &m);
+                    if (m.n == 0) continue;
+                    const uint64_t gr = game_rng_get(), sr = random_strategy_rng_get();
+                    cd_sim_solve_reset();
+                    const int a = octogen_strategy_choose(&g, pi, &m, NULL);
+                    const uint64_t gra = game_rng_get(), sra = random_strategy_rng_get();
+                    game_rng_set(gr);
+                    random_strategy_set_seed(sr);
+                    cd_sim_noise_stats_reset();
+                    cd_sim_solve_reset();
+                    const int b = fusion_strategy_choose(&g, pi, &m, NULL);
+                    const CdNoiseStats sf = cd_sim_noise_stats();
+                    drawn += sf.drawn;
+                    if (!on) {
+                        off_same &= a == b && gra == game_rng_get() && sra == random_strategy_rng_get();
+                        off_quiet &= sf.drawn == 0;
+                        off_decisions++;
+                    }
+                    game_rng_set(gra);
+                    random_strategy_set_seed(sra);
+                    acted = legal_move_apply(&g, pi, &m.moves[(a >= 0 && a < m.n) ? a : 0]);
                 }
-                game_rng_set(gra);
-                random_strategy_set_seed(sra);
-                acted = legal_move_apply(&g, pi, &m.moves[(a >= 0 && a < m.n) ? a : 0]);
+                if (!acted) break;
             }
-            if (!acted) break;
+            if (!knob) all_drew &= drawn > 0;
+            else if (on) on_drew &= drawn > 0;
         }
-        if (on) on_drew &= drawn > 0;
+        if (knob) unsetenv("FUSION_NOISE_MAX_PC");
     }
     fu_small_worlds(0);
-    CHECK(on_drew, "fusion draws the noise at 2 to 5 seats with no knob set");
-    CHECK(off_decisions >= 8, "fusion and octogen were compared at 6 and 7 seats");
-    CHECK(off_quiet, "above five seats fusion draws no noise at all");
-    CHECK(off_same, "above five seats fusion is octogen: the same move and the same RNG streams after");
+    CHECK(all_drew, "with no knob set fusion draws the noise at every table size, 2 to 7 seats");
+    CHECK(on_drew, "at FUSION_NOISE_MAX_PC=5 fusion still draws at 2 to 5 seats");
+    CHECK(off_decisions >= 8, "fusion and octogen were compared at 6 and 7 seats under the switch");
+    CHECK(off_quiet, "above the switch fusion draws no noise at all");
+    CHECK(off_same, "above the switch fusion is octogen: the same move and the same RNG streams after");
 }
 
 // Fusion's second lever: the void mixture. A seat that picked up is assumed to
 // hold nothing beating those cards in (mod-1)/mod of sampled worlds; octogen
 // uses 4 (75%). Fusion defaults to 4 too (7, sapper's 6/7, measured flat), so
 // this test sets the experiment's FUSION_VOID_MOD=7 itself. The value is octogen's
-// thread-local og_void_mod, so fusion must swap its own in for its decision and
-// put octogen's back: an octogen seat on the same thread keeps 4.
+// in fusion's parameter block (OgFusion.void_mod), read by the race in place
+// of octogen's og_void_mod: an octogen seat on the same thread keeps 4.
 //
 // Over game stretches where seats pick up, at every decision: fusion with the
 // noise off plays exactly octogen at OG_VOID_MOD=7 (same move, same streams);
@@ -2537,11 +2546,11 @@ static void test_fusion_noise_by_table_size(void) {
 // restore); and somewhere the two mixtures part (the test has teeth: the void
 // split moves the world sampling, so the streams differ).
 //
-// Mutations that must turn it red: drop the og_void_mod swap in
-// fusion_strategy_choose, or make it ignore the FUSION_VOID_MOD knob (fusion
-// is octogen at 4: "fusion at 0 noise is octogen at 7" fails); drop the restore (octogen after fusion runs at 7: the restore
-// check fails); drop the og_load_flags call before the swap (the first
-// fusion call's own flag load overwrites 7 with 4).
+// Mutations that must turn it red: have og_run_stages read og_void_mod whatever
+// og_fu says, or fusion_strategy_choose ignore the FUSION_VOID_MOD knob
+// (fusion is octogen at 4: "fusion at 0 noise is octogen at 7" fails); have
+// fusion_strategy_choose leave og_fu set after its decision (octogen after it
+// runs fusion's 7: the restore check).
 static void test_fusion_void_mixture(void) {
     static LegalMoves m;
     fu_small_worlds(1);

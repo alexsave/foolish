@@ -7,9 +7,9 @@
 
 int octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int octogen_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
-// Fusion: octogen plus rollout noise (c/FUSION.md). Defined only where the
-// rollout noise is compiled in (cordite_sim.h CD_ROLLOUT_NOISE): not in the
-// shipped bots module.
+// Fusion: octogen whose pick a noisy second race may overrule (c/FUSION.md).
+// Defined only where the rollout noise is compiled in (cordite_sim.h
+// CD_ROLLOUT_NOISE): not in the shipped bots module.
 int fusion_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 // Fusion's shadow rule (octogen_strategy.c og_fusion_shadow), exposed for its
 // test. The noisy race's pick f against octogen's own pick o over n shared
