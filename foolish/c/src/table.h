@@ -28,6 +28,7 @@
 #include "roster.h"
 #include "evwire.h"
 #include "bot_drive.h"
+#include "bot_memory.h"
 #include "ask.h"
 #include <stddef.h>
 
@@ -204,6 +205,16 @@ typedef struct {
     // The preferred moves the last table_bot_drive was offered (BotDrivePref).
     int8_t      n_prefs;
     BotDrivePref prefs[MAX_PLAYERS];
+    // THE BOT MEMORY (bot_memory.h): every record of this game's session log,
+    // folded as the store holds it (masked), so the belief brains and the
+    // decision seeds read it instead of the log. `mem_valid` once it holds the
+    // whole session: from a row that carried it (a v6 state blob), a resident,
+    // the session log folded once (table_set_session_log), or the deal's own
+    // GAME_START. Without it the row's next state carries none. `mem_at` is the
+    // board's log record the fold has reached; the products fold the rest.
+    BotMemory   mem;
+    bool        mem_valid;
+    int32_t     mem_at;
 } Table;
 
 // Points a table at its storage. Nothing is loaded.
@@ -250,8 +261,10 @@ bool table_needs_bots(const Table *t);
 // (the board has no clock in it), so a row keeps it from commit to commit.
 bool table_bots_due(const Table *t);
 
-// A bot that could act now uses the session log (a belief brain), so the host
-// must hydrate it before driving.
+// The board is being played and the table does not hold its bot memory (a row
+// written before the memory rode it, or by a writer that had none), so the host
+// must hand over the session log (table_set_session_log) before driving: every
+// decision seed counts the session's records, whatever brain is seated.
 bool table_bots_need_logs(const Table *t);
 
 // ---- lobby edits (docs/C_GAME_SHAPE_MIGRATION.md Q9) --------------------------
@@ -449,7 +462,7 @@ int table_commit_products_flags(const Table *t, const char *game_id, int gid_len
 #define TABLE_HEAD_BYTES offsetof(Game, logs)
 // A bound on one state_put, for reserving space before writing it.
 #define TABLE_STATE_MAX (STATE_BLOB_HEADER + 24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS \
-                         + STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES)
+                         + STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES + STATE_BLOB_SECTIONS_BYTES)
 
 typedef struct TableResident {
     _Alignas(8) unsigned char head[TABLE_HEAD_BYTES];   // the Game up to Game.logs (num_logs 0)
@@ -457,6 +470,8 @@ typedef struct TableResident {
     BoardClock  clock;
     GameRatings ratings;
     uint32_t    rng_base;
+    BotMemory   mem;          // Table.mem, folded to the board (valid or not)
+    bool        mem_valid;
 } TableResident;
 
 // The table loaded from a resident: its board copied into t->g (the copy an operation may
@@ -522,18 +537,15 @@ int table_cast_delta(const Table *t, int viewer, uint32_t version, uint32_t publ
 int table_set_deal_seed(Table *t, const char *seed_hex, int len);
 
 // Hands the table the row's session log (games.logs_packed: per record a u48 LE
-// ms timestamp, then the log_record_put layout). A bot cycle ALWAYS calls it: the
-// log's length is the game's progress, which seeds every bot decision
-// (bot_drive.h bot_drive_seed_decision), so a table that returns to an exact
-// earlier board still draws a fresh number.
-//
-// The RECORDS are read onto the board only for a brain that reads them
-// (table_bots_need_logs) - otherwise a long game would spend its MAX_LOGS
-// capacity on a session nothing consults and drop its own new records. A record
-// with more pairs than MAX_LOG_PAIRS keeps its first MAX_LOG_PAIRS; records past
-// MAX_LOGS are dropped; a truncated tail ends the log. Returns the records the
-// log holds (whether or not they were read onto the board), or TABLE_E_WIRE for
-// an unknown record type.
+// ms timestamp, then the log_record_put layout), for a table whose row did not
+// carry its bot memory (Table.mem; table_bots_need_logs): on a board being
+// played the log is folded into a fresh memory, from its first record, and the
+// memory then rides the row (a v6 state blob) from commit to commit. The records
+// are NOT read onto the board: no brain reads the board's log any more
+// (bot_memory.h), and the decision seeds count the memory's records
+// (bot_mem_records). A record with more pairs than MAX_LOG_PAIRS keeps
+// its first MAX_LOG_PAIRS; a truncated tail ends the log. Returns the records the
+// log holds, or TABLE_E_WIRE for an unknown record type.
 int table_set_session_log(Table *t, const uint8_t *log, int len);
 
 // Drives the bot seats for one cycle (bot_drive.h), seeded per decision from the
