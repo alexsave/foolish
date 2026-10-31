@@ -21833,6 +21833,20 @@ static void test_local_table_plays_a_game(void) {
     CHECK(local_table_bot_wait_ms(&lt_table, now) == -1 && local_table_bot(&lt_table, now) == 0,
           "a finished game leaves the bot nothing to do");
 
+    // THE FINISHED GAME'S REPLAY, as the server's finalize_game makes it: the
+    // code reads back as this game (two seats, its fool), and the extras name
+    // both seats in seat order.
+    static uint8_t lt_scratch[256 * 1024];
+    CHECK(local_table_replay_moves(&lt_table, lt_out, sizeof lt_out) == TABLE_E_NOT_OVER, "no replay is made before it is asked for");
+    CHECK(local_table_replay(&lt_table, lt_scratch, sizeof lt_scratch) == TABLE_OK, "the finished game's replay is made");
+    const int nm = local_table_replay_moves(&lt_table, lt_out, sizeof lt_out);
+    ReplaySummary rs;
+    CHECK(nm > 0 && replay_summary_v6(lt_out, nm, &rs) == REPLAY_EOK && rs.num_players == 2 && rs.fool == ct.view.fool,
+          "its moves code is this game: two seats, the same fool");
+    const int ne = local_table_replay_extras(&lt_table, lt_out, sizeof lt_out);
+    CHECK(ne > 0 && memmem(lt_out, (size_t)ne, "You", 3) && memmem(lt_out, (size_t)ne, "%Miami 1", 8),
+          "its extras name the human and the bot");
+
     // A move after the end is moot, and commits nothing.
     memcpy(req, "br", 2);
     AwireAction a;

@@ -1164,7 +1164,8 @@ WASM_CLIENT_EXPORTS := \
 WASM_LOCAL_EXPORTS := \
   -Wl,--export=wasm_local_open -Wl,--export=wasm_local_view -Wl,--export=wasm_local_start \
   -Wl,--export=wasm_local_action -Wl,--export=wasm_local_ask \
-  -Wl,--export=wasm_local_bot_wait -Wl,--export=wasm_local_bot -Wl,--export=wasm_local_cast
+  -Wl,--export=wasm_local_bot_wait -Wl,--export=wasm_local_bot -Wl,--export=wasm_local_cast \
+  -Wl,--export=wasm_local_replay
 
 # A replay's recorded decision as the Oracle imports it, and a code at a glance
 # (src/replay_steps.h, wasm/wasm_bots_api.c), web.wasm and the test build: the web page builds

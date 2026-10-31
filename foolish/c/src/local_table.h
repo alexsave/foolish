@@ -52,6 +52,9 @@
 // human's envelope, the logs, the clock), and the human's cast.
 #define LOCAL_ARENA_CAP (24 * 1024)
 #define LOCAL_CAST_CAP  (48 * 1024)
+// The finished game's replay (table_replay_code, table_replay_extras): a two-seat
+// game's moves code is tens of bytes and its extras a few hundred.
+#define LOCAL_REPLAY_CAP (8 * 1024)
 
 typedef struct {
     Table         t;
@@ -68,6 +71,9 @@ typedef struct {
     uint8_t       log[LOCAL_LOG_CAP];
     uint8_t       arena[LOCAL_ARENA_CAP];
     uint8_t       cast[LOCAL_CAST_CAP];
+    int           replay_len, extras_len;   // 0 until the finished game's replay is made
+    uint8_t       replay[LOCAL_REPLAY_CAP];
+    uint8_t       extras[LOCAL_REPLAY_CAP];
 } LocalTable;
 
 // A new table `gid` on `g` and `snaps` (host storage, as table_init's): the
@@ -104,6 +110,18 @@ int local_table_bot_wait_ms(LocalTable *L, int64_t now_ms);
 // the actions it applied (0: nothing to do, nothing committed), or a refusal.
 // A cycle that applied any is committed, and its cast is the table's.
 int local_table_bot(LocalTable *L, int64_t now_ms);
+
+// THE FINISHED GAME'S REPLAY, made exactly as the server's finalize_game makes
+// it (server/src/app/table_ops.c): table_replay_extras over the roster and the
+// session log, then table_replay_code from the deal seed and the same log, with
+// its round-trip gate. Made once, on the first ask after the game ends, and kept;
+// `scratch` is the decode gate's workspace. TABLE_E_NOT_OVER before the end, or
+// the kernel's refusal. The moves code and the extras are then
+// local_table_replay_moves and local_table_replay_extras.
+int local_table_replay(LocalTable *L, uint8_t *scratch, int scratch_cap);
+// The made replay's moves code (the v6 code, raw bytes) / extras blob, copied into `out`: the length.
+int local_table_replay_moves(const LocalTable *L, uint8_t *out, int cap);
+int local_table_replay_extras(const LocalTable *L, uint8_t *out, int cap);
 
 // The cast the last committed operation left for the human (evwire.h), once:
 // copied into `out`, its length; 0 when there is none or it was taken.
