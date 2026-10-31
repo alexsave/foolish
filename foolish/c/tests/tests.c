@@ -2054,6 +2054,7 @@ static void test_bot_roster_choose_scopes_knobs(void) {
 
 #ifdef CD_ROLLOUT_NOISE
 void og_reload_flags(void);   // octogen_strategy.c (bot_roster.c declares it the same way)
+int og_fusion_overrules(double dsum, double d2sum, int n, double pen_gap, int k10);   // octogen_strategy.h
 
 // The octogen world budget, shrunk for a test (env wins over every default,
 // bot_knobs.h). The claims below are about where the rollouts draw, not about
@@ -2597,6 +2598,103 @@ static void test_fusion_void_mixture(void) {
     CHECK(parted, "somewhere a pickup made octogen's 4 and fusion's 7 sample different worlds");
     CHECK(as7, "fusion at FUSION_VOID_MOD=7 with the noise off is octogen at OG_VOID_MOD=7, move and streams");
     CHECK(restored, "octogen right after a fusion call is octogen at 4: fusion puts the mixture back");
+}
+
+// Fusion's shadow rule, on its own: the noisy race's pick f replaces octogen's
+// pick o only when f is better, paired over the shared worlds, by more than k
+// standard errors, the trump-keep tax counted.
+//
+// Mutations that must turn it red: drop `gap < 0.0` (f worse by more than k SE
+// overrules); compare `gap * gap > k * k * var` without the `/ n` (the 1-SE
+// case no longer overrules at k 1); leave pen_gap out of gap (the tax case
+// overrules); drop the n < 2 guard (one world with a gap overrules on var 0).
+static void test_fusion_shadow_rule(void) {
+    // f better by 1 in every world: var 0, any k.
+    CHECK(og_fusion_overrules(-100.0, 100.0, 100, 0.0, 20) == 1,
+          "a pick better in every world overrules octogen's");
+    // An exact tie (octogen's twins): never.
+    CHECK(og_fusion_overrules(0.0, 0.0, 100, 0.0, 0) == 0,
+          "an exact tie keeps octogen's pick, even at k 0");
+    // 55 worlds at -1, 45 at +1: mean -0.1, var 0.99, se 0.0995, about 1.005 SE.
+    CHECK(og_fusion_overrules(-10.0, 100.0, 100, 0.0, 10) == 1,
+          "a pick about one standard error better overrules at k 1");
+    CHECK(og_fusion_overrules(-10.0, 100.0, 100, 0.0, 20) == 0,
+          "but not at k 2");
+    // The mirror: f worse by about one SE never overrules.
+    CHECK(og_fusion_overrules(10.0, 100.0, 100, 0.0, 10) == 0,
+          "a worse pick never overrules, however far off");
+    // f better on the rollouts by 0.03 everywhere, but taxed 0.04 more.
+    CHECK(og_fusion_overrules(-3.0, 0.09, 100, 0.04, 0) == 0,
+          "the trump-keep tax counts: a pick better only before its tax keeps octogen's");
+    CHECK(og_fusion_overrules(-1.0, 1.0, 1, 0.0, 0) == 0,
+          "one world is not evidence");
+}
+
+// Fusion's selection end to end, and the guard that keeps octogen octogen.
+// Over stretches of 2- and 3-seat games, at every decision, with the noise on:
+// at an unreachable bar (FUSION_SHADOW a thousand standard errors) fusion plays
+// octogen's own pick, although its rollouts drew the noise (the shadow race
+// ran); at bar 0 somewhere the noisy race overrules it (the rule has teeth);
+// and octogen right after a fusion call is octogen before it, the same move and
+// both RNG streams (fusion leaves no parameter behind).
+//
+// Mutations that must turn it red: have og_fusion_shadow return the noisy pick
+// whatever the rule says (the bar-1000 check); have it return o always, or skip
+// it (the bar-0 check); leave og_fu set after fusion_strategy_choose (octogen
+// after fusion runs fusion's selection: the guard check); run the first race
+// noisy under the shadow (bar 1000 still parts from octogen).
+static void test_fusion_shadow_selection(void) {
+    static LegalMoves m;
+    fu_small_worlds(1);
+    int decisions = 0, kept = 1, guard = 1, parted = 0;
+    long drawn = 0;
+    for (int np = 2; np <= 3; np++) {
+        Game g;
+        make_seeded_game(&g, np, 90 + np);
+        for (int step = 0; step < 24 && game_done(&g) < 0; step++) {
+            int acted = 0;
+            for (int pi = 0; pi < g.num_players && !acted; pi++) {
+                if (!should_bot_act(&g, pi)) continue;
+                calculate_legal_moves(&g, pi, &m);
+                if (m.n == 0) continue;
+                const uint64_t gr = game_rng_get(), sr = random_strategy_rng_get();
+                cd_sim_solve_reset();
+                const int a = octogen_strategy_choose(&g, pi, &m, NULL);
+                const uint64_t ga = game_rng_get(), sa = random_strategy_rng_get();
+                // The bar out of reach: octogen's pick, with the noise drawn.
+                game_rng_set(gr); random_strategy_set_seed(sr);
+                setenv("FUSION_SHADOW", "10000", 1);
+                cd_sim_noise_stats_reset();
+                cd_sim_solve_reset();
+                const int f = fusion_strategy_choose(&g, pi, &m, NULL);
+                drawn += cd_sim_noise_stats().drawn;
+                kept &= f == a;
+                // Bar 0: the noisy race's pick whenever it is better at all.
+                game_rng_set(gr); random_strategy_set_seed(sr);
+                setenv("FUSION_SHADOW", "0", 1);
+                cd_sim_solve_reset();
+                const int f0 = fusion_strategy_choose(&g, pi, &m, NULL);
+                unsetenv("FUSION_SHADOW");
+                parted |= f0 != a;
+                // Octogen again, right after fusion.
+                game_rng_set(gr); random_strategy_set_seed(sr);
+                cd_sim_solve_reset();
+                const int a2 = octogen_strategy_choose(&g, pi, &m, NULL);
+                guard &= a2 == a && game_rng_get() == ga && random_strategy_rng_get() == sa
+                      && cd_sim_noise() == 0;
+                decisions++;
+                game_rng_set(ga); random_strategy_set_seed(sa);
+                acted = legal_move_apply(&g, pi, &m.moves[(a >= 0 && a < m.n) ? a : 0]);
+            }
+            if (!acted) break;
+        }
+    }
+    fu_small_worlds(0);
+    CHECK(decisions > 20, "fusion's selection was compared over real game stretches");
+    CHECK(drawn > 0, "the shadow race ran with the noise on");
+    CHECK(kept, "at an unreachable bar fusion plays octogen's own pick, every decision");
+    CHECK(parted, "at bar 0 the noisy race overrules octogen somewhere");
+    CHECK(guard, "octogen after a fusion call is octogen: the same move and both RNG streams");
 }
 #endif  // CD_ROLLOUT_NOISE
 
@@ -21585,6 +21683,8 @@ int main(void) {
     test_fusion_noise_modes_are_legal_on_both_paths();
     test_fusion_noise_by_table_size();
     test_fusion_void_mixture();
+    test_fusion_shadow_rule();
+    test_fusion_shadow_selection();
 #endif
 
     test_deal_rng_kat();
