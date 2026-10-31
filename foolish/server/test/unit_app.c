@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <time.h>
 #include "lib_app_store_mem.h"
+#include "lib_created_game.h"
 
 #include "after.h"
 #include "app/app_internal.h"
@@ -313,16 +314,15 @@ static bool first_game(const cb_view_row *row, void *ud) {
 }
 
 // A new game created over HTTP by `bearer` (whose user id is uid); its id into gid.
-static void create_game_by(const char *bearer, const char *uid, char gid[CB_GAME_ID_MAX + 1], reply *r) {
+static void create_game_by(const char *bearer, char gid[CB_GAME_ID_MAX + 1], reply *r) {
     call("POST", "create", bearer, NULL, NULL, 0, r);
     gid[0] = 0;
     if (r->status != 200) return;
-    // The dashboard read gives the id back: the newest game first.
-    cb_table_views_of_user(&g_ctx, uid, 1, first_game, gid);
+    T_CHECK(tc_created_game(r->body, r->len, gid));   // the create's own answer names it
 }
 
 static void create_game(char gid[CB_GAME_ID_MAX + 1], reply *r) {
-    create_game_by("A", UID_A, gid, r);
+    create_game_by("A", gid, r);
 }
 
 // A legal move for `seat` on the stored board (WAIT excluded), as its action
@@ -907,7 +907,6 @@ static void a_finished_games_replay_is_a_job(void) {
     char g1[CB_GAME_ID_MAX + 1];
     two_humans_dealt(g1);
     play_to_the_end(g1);
-    g_now += 60000;   // the second game is the dashboard's newest
     two_humans_dealt(gid);
     play_to_the_end(gid);
     T_CHECK(strcmp(g1, gid) != 0);
@@ -1444,7 +1443,7 @@ static void a_taken_game_id_is_drawn_again(void) {
     T_EQ_INT(r.status, 200);
     T_EQ_INT(g_draws, 3);
     char gid[CB_GAME_ID_MAX + 1];
-    cb_table_views_of_user(&g_ctx, UID_B, 1, first_game, gid);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
     T_EQ_STR(gid, "fedcba");
     // The answer names the stored game, and A's game is untouched.
     cb_view_row v;
@@ -2445,7 +2444,9 @@ static void a_bot_pause_does_not_hold_the_thread(void) {
     create_game(ga, &r);
     meta("A", ASK_ADD_BOT, ga, NULL, &r);
     meta("A", ASK_START, ga, NULL, &r);
+    T_CHECK(until_a_bot_is_due(ga));
     create_game(gb, &r);
+    T_CHECK(strcmp(ga, gb) != 0);   // two games, not one driven twice
     meta("A", ASK_ADD_BOT, gb, NULL, &r);
     meta("A", ASK_START, gb, NULL, &r);
     T_CHECK(until_a_bot_is_due(gb));
@@ -2507,7 +2508,7 @@ static void the_scan_windows_follow_the_speedup(void) {
     g_cfg.bot_speedup = 10;
     char g1[CB_GAME_ID_MAX + 1];
     reply r;
-    create_game_by("A", UID_A, g1, &r);
+    create_game_by("A", g1, &r);
     const int64_t now = g_now + 1;
     const int64_t stale = CB_BOT_STALE_MS / 10, abandon = CB_BOT_ABANDON_MS / 10;
     tm_set_scan(g_store, g1, true, now - stale, now - 1000);   // touched exactly the window ago: not yet stale
@@ -2646,11 +2647,11 @@ static void the_scan_kicks_stale_active_bot_games(void) {
     setup(0);
     char g1[CB_GAME_ID_MAX + 1], g2[CB_GAME_ID_MAX + 1], g3[CB_GAME_ID_MAX + 1];
     reply r;
-    create_game_by("A", UID_A, g1, &r);
+    create_game_by("A", g1, &r);
     g_now += 10;
-    create_game_by("B", UID_B, g2, &r);
+    create_game_by("B", g2, &r);
     g_now += 10;
-    create_game_by("A", UID_A, g3, &r);
+    create_game_by("A", g3, &r);
     int64_t now = g_now;
     // Stale and active: kicked. Abandoned (no commit within the hour): not.
     // Fresh (touched within STALE_MS): not. No bot work: not.

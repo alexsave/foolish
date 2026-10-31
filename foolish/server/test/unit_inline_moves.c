@@ -3,6 +3,7 @@
 // alone is made there, and every step that would wait (table_ops.c "THE LOOP NEVER WAITS") sends the
 // request to the pool instead, with the loop serving everyone else meanwhile.
 #include "t.h"
+#include "lib_created_game.h"
 #include "app/app_internal.h"
 #include "app/functions_http.h"
 #include "app/table_ops.h"
@@ -130,17 +131,11 @@ static bool all_games(const cb_view_row *row, void *ud) {
     return true;
 }
 
-static bool first_game(const cb_view_row *row, void *ud) {
-    snprintf((char *)ud, CB_GAME_ID_MAX + 1, "%s", row->game_id);
-    return false;
-}
-
 static void two_humans_dealt(char gid[CB_GAME_ID_MAX + 1]) {
     reply r;
     call("create", "A", NULL, 0, &r);
     T_EQ_INT(r.status, 200);
-    gid[0] = 0;
-    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
     meta("B", ASK_JOIN, gid, &r);
     meta("A", ASK_START, gid, &r);
     meta("B", ASK_START, gid, &r);
@@ -523,8 +518,7 @@ static void a_human_and_a_bot_dealt(char gid[CB_GAME_ID_MAX + 1]) {
     reply r;
     call("create", "A", NULL, 0, &r);
     T_EQ_INT(r.status, 200);
-    gid[0] = 0;
-    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
     meta("A", ASK_ADD_BOT, gid, &r);
     meta("A", ASK_START, gid, &r);
     T_CHECK(gid[0] != 0);
@@ -609,8 +603,7 @@ static void two_humans_and_a_bot_dealt(char gid[CB_GAME_ID_MAX + 1]) {
     cb_limits_reset();   // a game after a game: the create limit is not what is tested
     call("create", "A", NULL, 0, &r);
     T_EQ_INT(r.status, 200);
-    gid[0] = 0;
-    cb_table_views_of_user(&g_ctx, UID_A, 1, first_game, gid);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
     meta("B", ASK_JOIN, gid, &r);
     meta("A", ASK_ADD_BOT, gid, &r);
     meta("A", ASK_START, gid, &r);
