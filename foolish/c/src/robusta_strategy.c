@@ -42,38 +42,15 @@ typedef struct {
     int  pinned_n[MAX_PLAYERS];
 } UnseenPool;
 
-// Track cards that are publicly known to currently sit in a specific opp's
-// hand. We start from each LOG_PICKUP log entry (cards land in that player's
-// hand) and remove cards as that player plays them (attack/cover/pass).
-static void compute_pinned_per_opp(const Game *g, int bot_idx, UnseenPool *u) {
+// Cards publicly known to sit in a specific opp's hand right now: what a
+// pickup put there, less what that player has played since. The table's memory
+// keeps the rows (bot_memory.h); the face-up trump's holder is not pinned here.
+static void compute_pinned_per_opp(const Game *g, const BotMemory *M, int bot_idx, UnseenPool *u) {
     for (int p = 0; p < MAX_PLAYERS; p++) u->pinned_n[p] = 0;
-    for (int i = 0; i < g->num_logs; i++) {
-        const GameLog *L = &g->logs[i];
-        if (L->log_type == LOG_PICKUP) {
-            int p = L->player_idx;
-            if (p < 0 || p >= g->num_players || p == bot_idx) continue;
-            // Pickup adds the (attack) cards onto p's hand. Engine stores
-            // them as `primary` in card_pairs.
-            for (int k = 0; k < L->num_pairs && u->pinned_n[p] < MAX_HAND_SIZE; k++) {
-                u->pinned[p][u->pinned_n[p]++] = L->pairs[k].primary;
-            }
-        } else if (L->log_type == LOG_ATTACK
-                   || L->log_type == LOG_COVER
-                   || L->log_type == LOG_PASS) {
-            int p = L->player_idx;
-            if (p < 0 || p >= g->num_players || p == bot_idx) continue;
-            // Cards leave p's hand. Remove them from pinned if present.
-            for (int k = 0; k < L->num_pairs; k++) {
-                Card c = L->pairs[k].primary;
-                for (int q = 0; q < u->pinned_n[p]; q++) {
-                    if (card_eq(u->pinned[p][q], c)) {
-                        u->pinned[p][q] = u->pinned[p][u->pinned_n[p] - 1];
-                        u->pinned_n[p]--;
-                        break;
-                    }
-                }
-            }
-        }
+    for (int p = 0; p < g->num_players && p < M->num_players; p++) {
+        if (p == bot_idx) continue;
+        u->pinned_n[p] = M->pin_n[p];
+        memcpy(u->pinned[p], M->pin[p], (size_t)M->pin_n[p] * sizeof(Card));
     }
     // Drop pinned cards for players who are no longer IN (their hand cleared).
     for (int p = 0; p < g->num_players; p++) {
@@ -82,7 +59,8 @@ static void compute_pinned_per_opp(const Game *g, int bot_idx, UnseenPool *u) {
 }
 
 static void build_unseen_pool(const Game *g, int bot_idx, UnseenPool *u) {
-    compute_pinned_per_opp(g, bot_idx, u);
+    const BotMemory *M = bot_mem_of(g);
+    compute_pinned_per_opp(g, M, bot_idx, u);
     // Known cards = my hand + table battles + discard log + flipped
     //             + all pinned cards (specifically located in some opp's hand).
     Card known[160];
@@ -94,13 +72,7 @@ static void build_unseen_pool(const Game *g, int bot_idx, UnseenPool *u) {
         if (!card_is_none(g->table_battles[i].defense)) known[kn++] = g->table_battles[i].defense;
     }
     if (g->has_flipped) known[kn++] = g->flipped;
-    for (int i = 0; i < g->num_logs; i++) {
-        if (g->logs[i].log_type == LOG_DISCARD) {
-            for (int j = 0; j < g->logs[i].num_pairs; j++) {
-                known[kn++] = g->logs[i].pairs[j].primary;
-            }
-        }
-    }
+    kn += bot_mem_discards(M, known + kn);
     for (int p = 0; p < g->num_players; p++) {
         for (int j = 0; j < u->pinned_n[p] && kn < (int)(sizeof(known)/sizeof(known[0])); j++) {
             known[kn++] = u->pinned[p][j];
@@ -248,7 +220,7 @@ int robusta_mc_choose(const Game *g, int bot_idx, const LegalMoves *moves,
 
     UnseenPool U; build_unseen_pool(g, bot_idx, &U);
 
-    uint32_t base_seed = (uint32_t)g->num_logs * 0x9E3779B1u
+    uint32_t base_seed = bot_mem_records(g) * 0x9E3779B1u
                        ^ (uint32_t)g->discard_pile_length
                        ^ ((uint32_t)g->deck_count << 7);
     int n_samples = mc_samples_for_pc(g->num_players);
@@ -262,4 +234,16 @@ int robusta_mc_choose(const Game *g, int bot_idx, const LegalMoves *moves,
         if (s < best_score) { best_score = s; best = i; }
     }
     return best >= 0 ? best : 0;
+}
+
+void robusta_belief_of(const Game *g, int bot_idx, BotBelief *B) {
+    UnseenPool U;
+    build_unseen_pool(g, bot_idx, &U);
+    memset(B, 0, sizeof(*B));
+    B->n = U.n;
+    memcpy(B->pool, U.pool, sizeof B->pool);
+    for (int p = 0; p < MAX_PLAYERS; p++) {
+        B->pinned_n[p] = U.pinned_n[p];
+        memcpy(B->pinned[p], U.pinned[p], sizeof B->pinned[p]);
+    }
 }
