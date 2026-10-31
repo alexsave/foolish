@@ -83,12 +83,16 @@
 // these last bytes. A v3 or v4 blob's clock is always TABLE_STATE_V3_CLOCK_BYTES.
 #define TABLE_STATE_CLOCK_BYTES STATE_BLOB_CLOCK_BYTES
 #define TABLE_STATE_V3_CLOCK_BYTES STATE_BLOB_V3_CLOCK_BYTES
-// EVERYTHING a written blob carries behind its board: the clock, and from v5 the
-// game's rating stamp behind that (view.h GameRatings, TABLE_STATE_STAMP_BYTES
-// of it). Two blobs of the same BOARD are equal up to these bytes; the clock is
-// the first TABLE_STATE_CLOCK_BYTES of them.
+// The FIXED bytes a written blob ends with (view.h state_blob_tail_bytes): from v6
+// the sections' count, then the clock, and from v5 the game's rating stamp behind
+// that (view.h GameRatings, TABLE_STATE_STAMP_BYTES of it).
 #define TABLE_STATE_STAMP_BYTES GAME_RATINGS_BYTES
-#define TABLE_STATE_TAIL_BYTES (STATE_BLOB_CLOCK_BYTES + (STATE_BLOB_FORMAT == STATE_BLOB_FORMAT_V5 ? GAME_RATINGS_BYTES : 0))
+#define TABLE_STATE_TAIL_BYTES (STATE_BLOB_CLOCK_BYTES + (STATE_BLOB_FORMAT >= STATE_BLOB_FORMAT_V5 ? GAME_RATINGS_BYTES : 0) \
+                                + (STATE_BLOB_FORMAT == STATE_BLOB_FORMAT_V6 ? 2 : 0))
+// From v6 the sections follow, variable: two blobs of the same BOARD are equal in
+// their first state_blob_board_bytes (view.h), and the clock and the stamp start
+// right after those.
+#define TABLE_STATE_FORMAT_V6 STATE_BLOB_FORMAT_V6
 
 // ---- the action request and response (the `action` endpoint's body) --------
 //

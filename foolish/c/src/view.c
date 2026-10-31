@@ -325,28 +325,31 @@ int state_blob_put_full_at(const Game *g, const BoardClock *clk, const GameRatin
     // them, and a row stays the bytes every v4 reader already reads.
     const int n = STATE_BLOB_HEADER + state_put_rules(g, VIEW_UNMASKED, 0, out + STATE_BLOB_HEADER);
     if (format == STATE_BLOB_FORMAT_V2) return n;
-    put_clock(out + n, clk ? clk->shown_ms : 0);
-    put_clock(out + n + 6, clk ? clk->settles_ms : 0);
-    if (format != STATE_BLOB_FORMAT_V5 && format != STATE_BLOB_FORMAT_V6) return n + STATE_BLOB_V3_CLOCK_BYTES;
+    int at = n;
+    if (format == STATE_BLOB_FORMAT_V6) {
+        // The sections, in tag order, and their count. The bot memory is a
+        // played board's only: the one owner of that rule on the way in, as the
+        // stamp's below.
+        const int start = at;
+        if (sec && sec->bot_memory_len > 0 && sec->bot_memory_len <= STATE_BLOB_SECTION_MAX
+            && g->status == GAME_STATUS_PLAYING) {
+            out[at++] = STATE_BLOB_SECTION_BOT_MEMORY;
+            out[at++] = (unsigned char)sec->bot_memory_len;
+            out[at++] = (unsigned char)(sec->bot_memory_len >> 8);
+            memcpy(out + at, sec->bot_memory, (size_t)sec->bot_memory_len);
+            at += sec->bot_memory_len;
+        }
+        const int sb = at - start;
+        out[at++] = (unsigned char)sb;
+        out[at++] = (unsigned char)(sb >> 8);
+    }
+    put_clock(out + at, clk ? clk->shown_ms : 0);
+    put_clock(out + at + 6, clk ? clk->settles_ms : 0);
+    at += STATE_BLOB_V3_CLOCK_BYTES;
+    if (format != STATE_BLOB_FORMAT_V5 && format != STATE_BLOB_FORMAT_V6) return at;
     // The stamp is a finished game's: the one owner of that rule on the way in.
     const bool stamped = ratings && ratings->n > 0 && g->status == GAME_STATUS_GAME_OVER;
-    int at = n + STATE_BLOB_V3_CLOCK_BYTES;
-    at += game_ratings_put(stamped ? ratings : 0, out + at);
-    if (format != STATE_BLOB_FORMAT_V6) return at;
-    // The sections, in tag order. The bot memory is a played board's only: the
-    // one owner of that rule on the way in, as the stamp's above.
-    const int start = at;
-    if (sec && sec->bot_memory_len > 0 && sec->bot_memory_len <= STATE_BLOB_SECTION_MAX
-        && g->status == GAME_STATUS_PLAYING) {
-        out[at++] = STATE_BLOB_SECTION_BOT_MEMORY;
-        out[at++] = (unsigned char)sec->bot_memory_len;
-        out[at++] = (unsigned char)(sec->bot_memory_len >> 8);
-        memcpy(out + at, sec->bot_memory, (size_t)sec->bot_memory_len);
-        at += sec->bot_memory_len;
-    }
-    out[at] = (unsigned char)(at - start);
-    out[at + 1] = (unsigned char)((at - start) >> 8);
-    return at + 2;
+    return at + game_ratings_put(stamped ? ratings : 0, out + at);
 }
 
 int state_blob_put(const Game *g, const BoardClock *clk, unsigned char *out) {
@@ -361,28 +364,38 @@ int state_blob_load_rated(Game *g, const unsigned char *p, int len, BoardClock *
     return state_blob_load_full(g, p, len, clk, ratings, 0);
 }
 
-// A v6 blob's sections, which end the blob: their ranges into *sec, the bytes
-// they take (suffix included) into *taken. false for sections this kernel did
-// not write (state_blob_load_full).
-static bool sections_read(const unsigned char *p, int len, int floor, StateBlobSections *sec, int *taken) {
+// A v6 blob's sections: their ranges into *sec. `end` is where they end (the
+// count's offset); `floor` the offset they start at. 1 for sections this kernel
+// wrote; GAME_INVALID_COUNT when their lengths do not add up (a cut row reads so,
+// the board's own reason); 0 for a tag out of order, an empty section or a tag
+// this kernel does not know (state_blob_load_full).
+static int sections_read(const unsigned char *p, int end, int floor, StateBlobSections *sec) {
     memset(sec, 0, sizeof(*sec));
-    if (len - floor < 2) return false;
-    const int n = p[len - 2] | (p[len - 1] << 8);
-    if (n > len - floor - 2) return false;
-    int at = len - 2 - n, last = 0;
-    const int end = len - 2;
+    int at = floor, last = 0;
     while (at < end) {
-        if (end - at < 3) return false;
+        if (end - at < 3) return GAME_INVALID_COUNT;
         const int tag = p[at], sl = p[at + 1] | (p[at + 2] << 8);
-        if (tag <= last || sl == 0 || sl > end - at - 3) return false;
-        if (tag != STATE_BLOB_SECTION_BOT_MEMORY) return false;   // not a section this kernel knows
+        if (sl > end - at - 3) return GAME_INVALID_COUNT;
+        if (tag <= last || sl == 0) return 0;
+        if (tag != STATE_BLOB_SECTION_BOT_MEMORY) return 0;   // not a section this kernel knows
         sec->bot_memory = p + at + 3;
         sec->bot_memory_len = sl;
         last = tag;
         at += 3 + sl;
     }
-    *taken = n + 2;
-    return true;
+    return 1;
+}
+
+int state_blob_board_bytes(const unsigned char *p, int len) {
+    if (!p || len < STATE_BLOB_HEADER) return -1;
+    const int tail = state_blob_tail_bytes(p[0]);
+    if (tail < 0 || len - tail < STATE_BLOB_HEADER) return -1;
+    int board = len - tail;
+    if (p[0] == STATE_BLOB_FORMAT_V6) {
+        const int at = len - tail;   // the count sits first in the tail
+        board -= p[at] | (p[at + 1] << 8);
+    }
+    return board >= STATE_BLOB_HEADER ? board : -1;
 }
 
 int state_blob_load_full(Game *g, const unsigned char *p, int len, BoardClock *clk, GameRatings *ratings,
@@ -394,11 +407,13 @@ int state_blob_load_full(Game *g, const unsigned char *p, int len, BoardClock *c
     int tail = state_blob_tail_bytes(p[0]);
     if (tail < 0) return 0;
     StateBlobSections sec = { 0 };
+    int sections = 0;
     if (p[0] == STATE_BLOB_FORMAT_V6) {
-        int taken = 0;
-        if (len < STATE_BLOB_HEADER + tail + 2) return GAME_INVALID_COUNT;
-        if (!sections_read(p, len, STATE_BLOB_HEADER + tail, &sec, &taken)) return 0;
-        len -= taken;   // the rest of the blob is v5's
+        // The sections' count, first in the tail: a count past the bytes there
+        // are is a cut row (the board's own reason below), not a bad section.
+        if (len < STATE_BLOB_HEADER + tail) return GAME_INVALID_COUNT;
+        sections = p[len - tail] | (p[len - tail + 1] << 8);
+        if (sections > len - tail - STATE_BLOB_HEADER) return GAME_INVALID_COUNT;
     }
     const int v5 = p[0] == STATE_BLOB_FORMAT_V5 || p[0] == STATE_BLOB_FORMAT_V6;
     const int v4 = v5 || p[0] == STATE_BLOB_FORMAT_V4;   // the flag byte is v4's from v4 on
@@ -408,13 +423,17 @@ int state_blob_load_full(Game *g, const unsigned char *p, int len, BoardClock *c
     // them, so a board that names some is not a row this kernel wrote.
     if (len > STATE_BLOB_HEADER + STATE_FLAGS_AT
         && (p[STATE_BLOB_HEADER + STATE_FLAGS_AT] & ~STATE_FLAG_FLIPPED)) return 0;
-    const int state_len = len - STATE_BLOB_HEADER - tail;
+    const int state_len = len - STATE_BLOB_HEADER - tail - sections;
     // THE BOARD IS JUDGED FIRST, THEN THE STAMP, and a refusal of either adopts
     // nothing. A row that is cut short or holds a board the kernel refuses says
     // so with the board's own reason (GAME_INVALID_*), stamped or not: the tail
     // of a truncated blob is not a stamp, and reading it as one would turn every
     // short v5 row into "a format this kernel does not read".
     if (state_measure(p + STATE_BLOB_HEADER, state_len) != state_len) return GAME_INVALID_COUNT;
+    if (p[0] == STATE_BLOB_FORMAT_V6) {
+        const int sr = sections_read(p, len - tail, STATE_BLOB_HEADER + state_len, &sec);
+        if (sr != 1) return sr;
+    }
     GameRatings stamp = { 0 };
     if (v5 && !game_ratings_get(&stamp, p + len - GAME_RATINGS_BYTES)) return 0;
     if (!stamp.n && !sec.bot_memory_len) {
@@ -443,7 +462,7 @@ int state_blob_load_full(Game *g, const unsigned char *p, int len, BoardClock *c
     // game, whatever this Game held before it.
     g->rules = (int8_t)(v4 && !(p[1] & STATE_BLOB_FLAG_PASSING) ? GAME_RULE_NO_PASS : 0);
     if (clk) {
-        const unsigned char *c = p + STATE_BLOB_HEADER + state_len;
+        const unsigned char *c = p + len - tail + (p[0] == STATE_BLOB_FORMAT_V6 ? 2 : 0);
         const int clocked = state_blob_clock_bytes(p[0]) > 0;
         clk->shown_ms = clocked ? (int64_t)le_get_u48(c) : 0;
         clk->settles_ms = clocked ? (int64_t)le_get_u48(c + 6) : 0;

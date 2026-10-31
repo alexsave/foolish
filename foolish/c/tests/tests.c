@@ -15128,22 +15128,25 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
 // must be the one a cold fold of the whole stored log makes. Then the section
 // layout's refusals.
 static uint8_t bm_v6[8192 + 2048];
+static int bm_sec_at;   // where bm_as_v6 put the section
 static int bm_as_v6(const BlRow *row, const BotMemory *m) {
     uint8_t mb[BOT_MEM_BYTES_MAX];
     const int ml = bot_mem_encode(m, mb, (int)sizeof mb);
-    if (ml <= 0) return -1;
-    memcpy(bm_v6, row->state, (size_t)row->state_len);
-    // A v5 blob is a v6 blob without its sections (view.h): the format byte, then
-    // the sections and their count at the end.
+    const int board = state_blob_board_bytes(row->state, row->state_len);
+    if (ml <= 0 || board < 0 || row->state[0] != STATE_BLOB_FORMAT_V5) return -1;
+    // The row's board, the memory section and its count, then the row's clock
+    // and stamp (view.h layout v6).
+    const int fixed = STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES;
+    memcpy(bm_v6, row->state, (size_t)board);
     bm_v6[0] = STATE_BLOB_FORMAT_V6;
-    int at = row->state_len;
-    if (row->state[0] != STATE_BLOB_FORMAT_V5) return -1;
+    int at = bm_sec_at = board;
     bm_v6[at++] = STATE_BLOB_SECTION_BOT_MEMORY;
     bm_v6[at++] = (uint8_t)ml; bm_v6[at++] = (uint8_t)(ml >> 8);
     memcpy(bm_v6 + at, mb, (size_t)ml);
     at += ml;
-    bm_v6[at] = (uint8_t)(3 + ml); bm_v6[at + 1] = (uint8_t)((3 + ml) >> 8);
-    return at + 2;
+    bm_v6[at++] = (uint8_t)(3 + ml); bm_v6[at++] = (uint8_t)((3 + ml) >> 8);
+    memcpy(bm_v6 + at, row->state + row->state_len - fixed, (size_t)fixed);
+    return at + fixed;
 }
 
 static void test_bot_memory_rides_the_row(void) {
@@ -15208,7 +15211,7 @@ static void test_bot_memory_rides_the_row(void) {
                 // B: the same row as v6, its memory in the blob and no log at all.
                 const int l6 = bm_as_v6(&bl_row, &backfilled);
                 if (l6 < 0) { refused++; break; }
-                const int bytes = l6 - bl_row.state_len - 5;
+                const int bytes = l6 - bl_row.state_len - 5;   // the section, less its tag, length and count
                 bytes_sum += bytes;
                 if (bytes > bytes_max) bytes_max = bytes;
                 if (table_load(&tb, bm_v6, l6, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
@@ -15252,13 +15255,14 @@ static void test_bot_memory_rides_the_row(void) {
           "bot memory: the dealt row as v6 loads with its memory");
     static uint8_t bad[sizeof bm_v6];
 #define BM_REFUSE(msg, edit) do { memcpy(bad, bm_v6, (size_t)l6); int bl = l6; edit; \
-        CHECK(table_load(&tb, bad, bl, bl_row.roster, ROSTER_BYTES) == TABLE_E_STATE_VERSION, msg); } while (0)
-    const int sec_at = bl_row.state_len;
+        const int rc_ = table_load(&tb, bad, bl, bl_row.roster, ROSTER_BYTES); \
+        CHECK(rc_ != TABLE_OK && !tb.loaded, msg); } while (0)
+    const int sec_at = bm_sec_at, count_at = l6 - state_blob_tail_bytes(STATE_BLOB_FORMAT_V6);
     BM_REFUSE("bot memory: a section tag this kernel does not know is refused", bad[sec_at] = 2);
-    BM_REFUSE("bot memory: a section count past the blob is refused", bad[bl - 1] = 0x7f);
+    BM_REFUSE("bot memory: a section count past the blob is refused", bad[count_at + 1] = 0x7f);
     BM_REFUSE("bot memory: a section longer than its bytes is refused", bad[sec_at + 2] = 0x7f);
     BM_REFUSE("bot memory: an empty section is refused", (bad[sec_at + 1] = 0, bad[sec_at + 2] = 0));
-    BM_REFUSE("bot memory: a v6 blob cut inside its count is refused", bl = l6 - 1);
+    BM_REFUSE("bot memory: a v6 blob cut short is refused", bl = l6 - 1);
     // A section of bytes the memory's codec refuses loads the board without a
     // memory: the log is the truth, and the next cycle folds it again.
     memcpy(bad, bm_v6, (size_t)l6);
@@ -15274,17 +15278,22 @@ static void test_bot_memory_rides_the_row(void) {
     uint8_t mb[BOT_MEM_BYTES_MAX];
     const StateBlobSections sec = { mb, bot_mem_encode(&backfilled, mb, (int)sizeof mb) };
     const int lw = state_blob_put_full_at(&lobby, 0, 0, &sec, STATE_BLOB_FORMAT_V6, bad);
-    CHECK(lw > 2 && bad[lw - 1] == 0 && bad[lw - 2] == 0, "bot memory: a lobby's v6 blob carries no memory");
+    const int lb = state_blob_board_bytes(bad, lw);
+    CHECK(lw > 0 && lb > 0 && bad[lb] == 0 && bad[lb + 1] == 0, "bot memory: a lobby's v6 blob carries no memory");
     static Game back;
     StateBlobSections got;
     CHECK(state_blob_load_full(&back, bad, lw, 0, 0, &got) == 1 && got.bot_memory_len == 0,
           "bot memory: a lobby's v6 blob reads back, with no memory");
-    const int ll = lw - 2;
-    bad[ll] = STATE_BLOB_SECTION_BOT_MEMORY; bad[ll + 1] = (uint8_t)sec.bot_memory_len; bad[ll + 2] = (uint8_t)(sec.bot_memory_len >> 8);
-    memcpy(bad + ll + 3, mb, (size_t)sec.bot_memory_len);
-    bad[ll + 3 + sec.bot_memory_len] = (uint8_t)(3 + sec.bot_memory_len);
-    bad[ll + 4 + sec.bot_memory_len] = (uint8_t)((3 + sec.bot_memory_len) >> 8);
-    CHECK(state_blob_load_full(&back, bad, ll + 5 + sec.bot_memory_len, 0, 0, &got) == 0,
+    static uint8_t with[sizeof bm_v6];
+    memcpy(with, bad, (size_t)lb);
+    int at = lb;
+    with[at++] = STATE_BLOB_SECTION_BOT_MEMORY; with[at++] = (uint8_t)sec.bot_memory_len; with[at++] = (uint8_t)(sec.bot_memory_len >> 8);
+    memcpy(with + at, mb, (size_t)sec.bot_memory_len);
+    at += sec.bot_memory_len;
+    with[at++] = (uint8_t)(3 + sec.bot_memory_len); with[at++] = (uint8_t)((3 + sec.bot_memory_len) >> 8);
+    memcpy(with + at, bad + lb + 2, (size_t)(lw - lb - 2));
+    at += lw - lb - 2;
+    CHECK(state_blob_load_full(&back, with, at, 0, 0, &got) == 0,
           "bot memory: a lobby's blob with a memory is not one this kernel wrote");
 #undef BM_REFUSE
 }
