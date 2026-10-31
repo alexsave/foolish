@@ -39,7 +39,10 @@ test('the shipped web.wasm exports what the web calls', () => {
     // shipped surface, so anything it names must be in the shipped artifact.
     assert.ok(called.size > 20, `expected the SDK wrappers to name many exports, saw ${called.size}`);
 
-    const missing = [...called].filter((n) => !names.has(n)).sort();
+    // The local table's calls are promo.wasm's, the promo page's own link
+    // (e2e/wasm_web_link.test.ts holds that module to them).
+    const local = new Set(calledExports(new URL('../sdk/ts/table', import.meta.url).pathname));
+    const missing = [...called].filter((n) => !names.has(n) && !(n.startsWith('wasm_local_') && local.has(n))).sort();
     assert.deepEqual(missing, [],
         `web.wasm is missing ${missing.join(', ')} - rebuild: npm run wasm:web`);
 });
