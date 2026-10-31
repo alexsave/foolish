@@ -158,7 +158,7 @@ typedef struct {
 // board the screen shows that no server wrote. See client_board_edit.
 #define CLIENT_EDIT_KEEP   1  // my pending cards stand on the table: over `target`, or as attacks
 #define CLIENT_EDIT_TURN   2  // the lead and the shield my pending pass moved: first_attacker, defender
-#define CLIENT_EDIT_TABLE  3  // the table is `cards`, as uncovered attacks
+#define CLIENT_EDIT_TABLE  3  // the table is `cards`, as uncovered attacks, and none of them is in my hand
 #define CLIENT_EDIT_LIFT   4  // every battle holding one of `cards` leaves the table
 #define CLIENT_EDIT_RETURN 5  // `cards` back into my hand, each that is not there already
 #define CLIENT_EDIT_LOBBY  6  // the rematch's lobby (game_reset_to_lobby), before its reset arrives

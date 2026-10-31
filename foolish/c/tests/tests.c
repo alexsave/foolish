@@ -17233,6 +17233,45 @@ static void test_client_push_settle(void) {
           && card_eq(home.battles[0].attack, c9h) && card_is_none(home.battles[0].defense),
           "with no transition it is the cards the sweep names, uncovered");
 
+    // MY OWN PICKUP, confirmed with a card my tap never saw. I took a table of
+    // two (6h, 9h) and the bot threw in a third (7s) before my Take reached the
+    // server, so the push's PICKUP sweeps three and my two predictions are
+    // doomed. They fly back over the PICKUP event's own board - the one after
+    // the pickup, whose hand already holds all three - laid back on the table.
+    // A card cannot be in two places: laid on the table, it leaves the hand, or
+    // the board is one no gate reads (game_validate: GAME_INVALID_DUPLICATE_CARD)
+    // and the page that asks a gesture of it throws. Found playing the promo
+    // page's local game (local_table.h), whose casts arrive at once.
+    {
+        const Card swept[3] = { cvr_attack(), c9h, c7s };
+        cvr_board(&cb_view, 1);
+        cb_view.defender = 1;
+        cb_view.num_battles = 2;
+        cb_view.battles[0] = (Battle){ .attack = cvr_attack(), .defense = CARD_NONE };
+        cb_view.battles[1] = (Battle){ .attack = c9h, .defense = CARD_NONE };
+        cb_view.my_hand_count = 1;
+        cb_view.my_hand[0] = (Card){ .suit = SUIT_DIAMONDS, .value = 3 };
+        cb_view2 = cb_view;
+        cb_view2.num_battles = 0;
+        cb_view2.my_hand_count = 4;
+        for (int i = 0; i < 3; i++) cb_view2.my_hand[1 + i] = swept[i];
+        cb_view2.seats[1].hand_count = 4;
+        memset(&cb_q, 0, sizeof(cb_q));
+        cb_q.versioned = true;
+        cb_q.n_motions = 2;
+        cb_q.motions[0] = (ConflictMotion){ .card = cvr_attack(), .dest = ANIM_DEST_MY_HAND, .target = CARD_NONE };
+        cb_q.motions[1] = (ConflictMotion){ .card = c9h, .dest = ANIM_DEST_MY_HAND, .target = CARD_NONE };
+        ps_event(0, ANIM_EVT_PICKUP, 1, ANIM_LOC_TABLE, ANIM_LOC_HAND, swept, 3);
+        const int rc = ps_settle(&cb_view2, &cb_view2, 0);
+        home = cb_view2;
+        const int rr = rc == CLIENT_OK && ps_out.n_flights > 0 ? client_revert_board(&ct, &home, 0, &cb_q, &ps_out) : -1;
+        int both = 0;
+        for (int b = 0; b < home.num_battles; b++)
+            for (int h = 0; h < home.my_hand_count; h++) both += card_eq(home.battles[b].attack, home.my_hand[h]);
+        CHECK(rr == CLIENT_OK && home.num_battles == 3 && home.my_hand_count == 1 && both == 0,
+              "a pickup laid back on the table for its confirmation leaves my hand: no card is in two places");
+    }
+
     // My pending pass: judged against the seat the shield lands on once it stands.
     cvr_board(&cb_view, 1);
     cb_view.battles[0].defense = CARD_NONE;
