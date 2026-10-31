@@ -222,8 +222,9 @@ static void check_answer(const Game *g, int seat, const LegalMoves *moves, int c
 //
 // Mutation-checked (2026-10-31; each built with make oracle-answer-test, seen
 // red, restored): publishing the noisy race as the row's score ("a row's score
-// is octogen's"); tracing the noisy race too (the why checks, "an entry folds
-// exactly its row's playouts"); never publishing the shadow arrays ("fusion
+// is octogen's"); tracing the noisy race too, both hooks (the why checks, "an
+// entry folds exactly its row's playouts"; og_trace_begin alone is harmless,
+// since the fold is og_trace_end's); never publishing the shadow arrays ("fusion
 // scored the row in its noisy race"); publishing them for octogen too ("octogen
 // has no noisy race"); the noisy race run with the noise off ("the noisy race
 // is noisy somewhere").
