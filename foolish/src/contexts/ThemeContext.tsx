@@ -10,16 +10,18 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-// Map languages to themes
-const LANGUAGE_THEMES: Record<Language, Theme> = {
-  en: 'default',
-  ru: 'soviet',
-  ko: 'default',
-};
+// THE SOVIET THEME IS NOT CHOSEN BY LANGUAGE ANY MORE. Russian used to switch it
+// on (a language -> theme map here: ru -> 'soviet', en and ko -> 'default', and
+// every other language fell through to no theme at all). Since 2026-10-31 every
+// language reads the default theme. The theme itself is kept - its CSS
+// ([data-theme="soviet"]) and the components that read isSoviet - and nothing
+// selects it: there is no theme picker. Turning it back on for Russian is this
+// one rule.
+const themeFor = (_language: Language): Theme => 'default';
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   const { language } = useLocalization();
-  const theme = LANGUAGE_THEMES[language];
+  const theme = themeFor(language);
   const isSoviet = theme === 'soviet';
 
   // Apply theme to document root (html element) for CSS variable targeting
