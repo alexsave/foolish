@@ -75,6 +75,38 @@ All 1008-pair cells, paired against octogen at octogen tables, against the shado
 
 For reference, the first fusion on the same seeds: 4 players -0.052 +/- 0.090, 6 players +0.184 +/- 0.131.
 
+## Measurements of the shadow (2026-10-31)
+
+`cnitro_eval --strategy=fusion --control=octogen --opp=octogen --players=N` plays every seed twice on the same deal, fusion at seat 0 and then octogen at seat 0, against octogen tables, and reports the paired mean-place difference (negative: fusion better).
+Each decisive cell is 2016 pairs: 6 workers of 336 pairs on disjoint seed ranges from base 9000001 (seeds no scan had used), `nice -n 10`, the shipped defaults with no knob set.
+The first fusion is main's own binary (`ec506be0a`) on the same seeds.
+The interval is 95%; better/worse/same counts the pairs.
+
+| Players | Fusion (shadow) vs octogen | better/worse/same | The first fusion vs octogen |
+| --- | --- | --- | --- |
+| 2 | -0.164 +/- 0.025 | 530/201/1285 | -0.160 +/- 0.030 |
+| 3 | -0.144 +/- 0.039 | 544/336/1136 | -0.125 +/- 0.047 |
+| 4 | -0.109 +/- 0.043 | 478/330/1208 | +0.006 +/- 0.062 |
+| 5 | -0.099 +/- 0.043 | 403/259/1353 | -0.027 +/- 0.069 |
+| 6 | -0.073 +/- 0.064 | 495/398/1122 | (octogen: noise off) |
+| 7 | -0.100 +/- 0.062 | 415/350/1251 | (octogen) |
+| 8 | -0.009 +/- 0.062 | 352/317/1347 | (octogen) |
+
+Fusion is better than octogen at 2 to 7 players and level at 8, where the 1008-pair scan on seeds 5000001 had it at -0.110 +/- 0.090; so the noise is on at every size and `FUSION_NOISE_MAX_PC` defaults to 8.
+Against the first fusion it is level at 2 and 3 and better at 4 and 5, and at 6 to 8 it gains what the first fusion had to give up by switching the noise off.
+The shadow also keeps far more of octogen's moves: "same" is 56-67% of the pairs against 33-50% for the first fusion, so the noise now changes the game only where it has evidence.
+
+The scans that chose the design (1008 pairs, seeds 5000001 at 3, 4 and 6-8 players, 7000001 at 2, 8000001 at 5) had the shadow at 2 SE at -0.146 (2), -0.123 (3), -0.128 (4), -0.123 (5), -0.057 (6), -0.152 (7) and -0.110 (8).
+
+OPPONENTS_PLACEHOLDER
+
+### What it costs
+
+The shadow runs the race twice, so a fusion decision costs about two octogen decisions, a little more where the noisy rollouts run longer.
+TIMING_PLACEHOLDER
+Octogen's budget is a count of sampled worlds (`og_params`), not a clock, and the server's bot drive has no per-move deadline: it paces the bots' moves in seconds and budgets whole drives (`foolish/server/src/app/bots.c`), so tens of milliseconds more per move are not visible to a player.
+So fusion keeps octogen's world budget in both races and accepts the cost; `FUSION_SHADOW_W` halves the noisy race's worlds if the cost ever matters (about 1.9x octogen instead of 2.8x at 6 players), and measured mixed (-0.056 at 4 players, -0.086 at 6, against -0.128 and -0.057 at full worlds).
+
 ## The idea and where it came from
 
 The idea is kestrel's, an outside bot whose search is determinized Monte Carlo like octogen's.
@@ -173,9 +205,14 @@ The fusion tests (`tests/tests.c`, after `test_bot_roster_choose_scopes_knobs`),
 - `test_fusion_noise_by_table_size`: with no knob set, fusion draws the noise at every size from 2 to 7 seats; with `FUSION_NOISE_MAX_PC=5` it still draws at 2 to 5, and at 6 and 7 it is octogen, the same move and both streams after, with no draw.
 - `test_fusion_void_mixture`: over 2- and 3-seat game stretches, fusion at `FUSION_VOID_MOD=7` with the noise off is octogen at `OG_VOID_MOD=7` move for move and stream for stream, octogen right after a fusion call is octogen at 4, and somewhere the two mixtures part.
 - `test_fusion_shadow_rule`: `og_fusion_overrules` on its own: a pick better in every world overrules, an exact tie never does (even at bar 0), a pick about one standard error better overrules at 1 SE and not at 2, a worse pick never does, the trump-keep tax counts, and one world is not evidence.
-- `test_fusion_shadow_selection`: over 2- and 3-seat game stretches with the noise on, at an unreachable bar (`FUSION_SHADOW=10000`) fusion plays octogen's own pick every decision although its rollouts drew the noise; at bar 0 the noisy race overrules octogen somewhere; and octogen right after a fusion call is octogen before it, the same move and both RNG streams, with the noise back at 0 (the octogen-identity guard: fusion leaves no parameter behind).
+- `test_fusion_shadow_selection`: over 2- and 3-seat game stretches with the noise on, at an unreachable bar (`FUSION_SHADOW=10000`) fusion plays octogen's own pick every decision although its rollouts drew the noise; at bar 0 the noisy race overrules octogen somewhere; and octogen right after a fusion call is octogen before it, the same move and both RNG streams, with the noise back at 0 (the octogen-identity guard: fusion leaves no parameter behind); and octogen's pinned pick played every world of every shadow race (`og_fusion_stats`). `FU_TRACE=1` prints the races and overrules (68 races, 23 overruled at bar 0).
 
 `test_bot_roster_choose_scopes_knobs` runs every linked roster row, so fusion's row must dispatch, and `test_podkidnoy_every_brain` plays fusion too.
+
+The shadow's mutation check (2026-10-31), each mutant built and run against the whole suite: all fifteen turned it red.
+Dropping `gap < 0` from the rule, its `/ n`, the trump-keep tax or its one-world guard each fails `test_fusion_shadow_rule`; always playing the noisy pick, never running the shadow, or running the first race noisy fails `test_fusion_shadow_selection`; leaving `og_fu` set or the noise on after the race fails the identity checks across five tests; the per-size default at 5, an ignored `FUSION_NOISE_MAX_PC` and `<` for `<=` each fail `test_fusion_noise_by_table_size`; and a race that ignores fusion's void mixture, or octogen reading one, fails `test_fusion_void_mixture` and `test_octogen_is_fusion_at_zero`.
+The first run left one mutant green: letting `og_cull` drop the pinned pick changed no move the tests looked at, because its stale score only feeds a rule that rarely overrules.
+`og_fusion_stats` (races, overrules, and races in which the pin missed a world) was added for it, and the pin check turned it red.
 
 ### Octogen is unchanged against main
 

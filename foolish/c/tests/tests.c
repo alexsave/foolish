@@ -2054,7 +2054,7 @@ static void test_bot_roster_choose_scopes_knobs(void) {
 
 #ifdef CD_ROLLOUT_NOISE
 void og_reload_flags(void);   // octogen_strategy.c (bot_roster.c declares it the same way)
-int og_fusion_overrules(double dsum, double d2sum, int n, double pen_gap, int k10);   // octogen_strategy.h
+#include "../src/octogen_strategy.h"   // og_fusion_overrules, og_fusion_stats
 
 // The octogen world budget, shrunk for a test (env wins over every default,
 // bot_knobs.h). The claims below are about where the rollouts draw, not about
@@ -2651,12 +2651,14 @@ static void test_fusion_shadow_rule(void) {
 // whatever the rule says (the bar-1000 check); have it return o always, or skip
 // it (the bar-0 check); leave og_fu set after fusion_strategy_choose (octogen
 // after fusion runs fusion's selection: the guard check); run the first race
-// noisy under the shadow (bar 1000 still parts from octogen).
+// noisy under the shadow (bar 1000 still parts from octogen); let og_cull drop
+// the pinned candidate (it misses worlds: the pin check).
 static void test_fusion_shadow_selection(void) {
     static LegalMoves m;
     fu_small_worlds(1);
     int decisions = 0, kept = 1, guard = 1, parted = 0;
-    long drawn = 0;
+    long drawn = 0, overruled = 0;
+    og_fusion_stats_reset();
     for (int np = 2; np <= 3; np++) {
         Game g;
         make_seeded_game(&g, np, 90 + np);
@@ -2682,7 +2684,10 @@ static void test_fusion_shadow_selection(void) {
                 game_rng_set(gr); random_strategy_set_seed(sr);
                 setenv("FUSION_SHADOW", "0", 1);
                 cd_sim_solve_reset();
+                const OgFusionStats st0 = og_fusion_stats();
                 const int f0 = fusion_strategy_choose(&g, pi, &m, NULL);
+                const OgFusionStats st1 = og_fusion_stats();
+                overruled += st1.overruled - st0.overruled;
                 unsetenv("FUSION_SHADOW");
                 parted |= f0 != a;
                 // Octogen again, right after fusion.
@@ -2704,6 +2709,13 @@ static void test_fusion_shadow_selection(void) {
     CHECK(kept, "at an unreachable bar fusion plays octogen's own pick, every decision");
     CHECK(parted, "at bar 0 the noisy race overrules octogen somewhere");
     CHECK(guard, "octogen after a fusion call is octogen: the same move and both RNG streams");
+    const OgFusionStats st = og_fusion_stats();
+    if (getenv("FU_TRACE"))
+        fprintf(stderr, "  fusion shadow: %ld races, %ld overruled at bar 0\n", st.races, overruled);
+    CHECK(st.races > 0 && st.pin_short == 0,
+          "octogen's pinned pick plays every world of every shadow race (it is never culled)");
+    CHECK(overruled > 0 && st.overruled == overruled,
+          "the overrules are bar 0's alone: an unreachable bar never overrules");
 }
 #endif  // CD_ROLLOUT_NOISE
 
