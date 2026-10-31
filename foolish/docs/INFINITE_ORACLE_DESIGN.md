@@ -33,6 +33,74 @@ It is off in production and off in a default dev run; `NEXT_PUBLIC_FOOLISH_ORACL
 The reason it is dark is not quality: the replay route is a self-contained base32 payload that needs no auth and no database row, so a client-side panel cannot be metered.
 With the flag off the rows carry no click handler, no pointer cursor and no hint line, which `e2e/oracle_why_flag.test.ts` asserts rather than assumes.
 
+## The brain: fusion (2026-10-31)
+
+The Oracle analyses every position with fusion (`c/FUSION.md`), not octogen, in both modes.
+Fusion is octogen's noise-free race, then the same race over the same worlds with kestrel's rollout noise on and octogen's pick pinned, and the noisy race's pick is played only when it is better by more than two standard errors.
+It measured better than octogen at 2 to 7 players and level at 8.
+Where this document says "octogen" about the brain the Oracle runs, read fusion; everything about belief, worlds, candidates, the exact probe and the transport is unchanged, because fusion is octogen with one parameter block set.
+
+### What the numbers mean
+
+Every row's number (`EF x.xx +-y.yy`), its bar, its class chip and its storylines are the **noise-free race**: octogen's own race, the expected finish if every seat plays the rollout policy from here.
+Fusion's first race is that race exactly, world for world, so the meaning of every number the overlay printed before the switch is unchanged; `e2e/oracle_answer.test.ts` still matches the text path's fixture field for field, and `c/tests/oracle_answer_test.c` holds fusion's rows to octogen's at the same seed on every decision of nine games.
+The **Best** chip is **fusion's pick**: octogen's pick (the top row, the lowest expected finish) unless the noisy race's pick beats it, mean plus trump tax, by more than `FUSION_SHADOW` tenths of a standard error.
+The noisy race's mean rides beside each row (`OgAnswerRow.shadow_score`, Mode B's `sum_fp_shadow`) as that evidence and is not printed.
+Exact-endgame answers are untouched: the probe runs before either race and its verdicts are what the exact panel shows.
+
+Why the noise-free race and not the noisy one, measured on 664 decisions of 2-, 4- and 6-seat games at 400 worlds each, racing off, the same worlds for both:
+
+| Players | best-to-worst spread, noise-free | noisy | rows classed blunder, noise-free | noisy |
+| --- | --- | --- | --- | --- |
+| 2 | 0.190 | 0.128 | 2.0% | 0.3% |
+| 4 | 0.448 | 0.350 | 28.7% | 19.9% |
+| 6 | 0.748 | 0.601 | 32.8% | 26.2% |
+
+The noise makes every finish more random, so it pulls every move toward the middle place by 20-33%, and the classes (`ORACLE_CLASS_THRESHOLDS`, calibrated on octogen's numbers) would call a third of the blunders mistakes.
+And "the expected finish if three in ten of everybody's later decisions, yours included, are a random sensible move" is not what a reader takes `EF` to mean.
+The noisy race is fusion's robustness check on octogen's pick, which is exactly what the Best chip reports.
+
+So Best can sit on a row whose number is not the lowest.
+That is the case the shadow selection exists for: the noisy race found, beyond its bar, that the move holds up better when play goes off the rollout policy's script.
+The lowest row then still shows the class chip `best` (its delta from the lowest number is 0), so the panel says both things that are true: this row has the lowest expected finish, and that one is fusion's pick.
+Where the two are twins (the same expected finish, which noise-free races produce in a third to a half of all decisions), both read best and the chip says which one fusion plays.
+
+### The rule over accumulated worlds
+
+`fusionBest` (`src/oracle/accumulator.ts`) applies fusion's rule to everything sampled so far, in both modes; it reads the bar from the kernel (`FUSION_SHADOW`, `c/src/octogen_strategy.h`, through structgen), so the Oracle and the bot cannot drift apart.
+The kernel pairs the difference world by world inside one decision; across batches the accumulator keeps each row's own mean and standard error, so the error the Oracle uses is both rows' combined, which is never smaller than the paired one.
+So Best moves off octogen's pick on no less evidence than the bot needs.
+Mode A's standard error is the batch means' (Welford), Mode B's the n-based proxy it already used for the printed `+-`.
+A row the noisy race never sampled cannot overrule, and a decision with no noisy race (one candidate, a proven win) keeps octogen's pick.
+As the run sharpens the bar shrinks with the error, and it stops shrinking where the run stops: at convergence (worst SE 0.005) it is about 0.014 places of noisy expected finish.
+
+### The cost, and the budget split
+
+The noisy race costs more than the noise-free one (its rollouts run longer and draw the noise at every policy decision), and `c/FUSION.md` measures a fusion decision at 2.3-2.8x octogen's milliseconds.
+The Oracle runs its noisy race on half the worlds of its noise-free race (`ORACLE_SHADOW_W = 50`, `OgKnobs.shadow_w`, fusion's `FUSION_SHADOW_W`), because the noisy race decides only the Best chip and none of the numbers the rows print.
+The error of its means grows by about 1.4x for it, which only raises the bar the noisy race has to clear.
+Mode A's batches stay inside the same window they always aimed at, because `oracleWorker.ts` already sizes each batch to 25-80 ms; what grows is the time to convergence.
+
+Measured in headless Chromium (Playwright, Linux x86-64, 4 cores, clang 18.1.3 and binaryen 130, so absolute numbers are not CI's), on 36 Monte Carlo decisions of 2-, 4- and 6-seat games, memory on, against `main`'s modules:
+
+| | 2 players | 4 players | 6 players |
+| --- | --- | --- | --- |
+| Mode A, one batch at w1 24, median (60 batches each) | 2.4 -> 3.7 ms | 0.5 -> 0.6 ms | 0.4 -> 1.2 ms |
+| Mode B, 2 threads, ms of one thread per choose at w1 24, median (12 decisions, 1 s each) | 2.6 -> 4.8 ms | 0.3 -> 0.6 ms | 0.4 -> 1.1 ms |
+| Mode A, one instance, time to convergence, median (4 decisions each) | 7.1 -> 12.8 s | 1.9 -> 2.9 s | 3.5 -> 6.2 s |
+| the same with the noisy race on all worlds | 15.4 s | 4.9 s | 9.0 s |
+
+The convergence ratio per decision (median) is 1.8x, 1.8x and 2.1x with the split, against 2.2x, 3.0x and 3.3x without it.
+The longest batch was 89 ms (91 ms before) and the first batch's answer arrived within 18 ms (58 ms before), so the panel is exactly as responsive; it keeps sharpening for longer, inside `ORACLE_HARD_CAP_MS` as before.
+Fusion's Best left octogen's pick on 3 of the 12 decisions, by 0.000 (twins), 0.011 and 0.025 places of expected finish.
+
+### Where it is built
+
+`FOOLISH_ORACLE_BUILD` turns `CD_ROLLOUT_NOISE` on (`c/src/cordite_sim.h`), and `c/src/bots.c` links fusion's function on the same condition (`ORACLE_LINKED`), with `bot_linked` saying so, so `wasm_choose_move(STRAT_FUSION)` dispatches it in Mode A and Mode B's thread loop calls `fusion_strategy_choose` (`c/wasm/wasm_oracle_mt.c`).
+No Makefile flag changed: the Oracle's modules already say `FOOLISH_ORACLE_BUILD`.
+`web.wasm` is byte-identical with and without the switch, and links no fusion.
+Only the noise-free race is traced for the why panel (`og_trace_begin` / `og_trace_end` skip the shadow race), so the storylines explain the numbers they sit under.
+
 **Status: IMPLEMENTED (Mode A).** Mode A shipped on branch
 `claude/replay-ui-new-feature-tektn9`: the C hooks (`-DFOOLISH_ORACLE_BUILD`),
 the `wasm-oracle` Makefile target + committed `public/oracle.wasm.gz`, the

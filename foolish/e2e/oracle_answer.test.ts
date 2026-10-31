@@ -158,6 +158,8 @@ test('the struct answers what the JSON line and the OGP1 blob answered', async (
             if (row.pruned) seen.pruned++;
             if (row.verdict_val !== undefined) seen.verdicts++;
             if (row.target && row.target.length > 1) seen.covers++;
+            // Mutation-checked (2026-10-31): the bridge dispatching octogen (20)
+            // instead of STRAT_FUSION failed "has its noisy race".
             // Fusion is the brain: its noisy race ran every row the noise-free
             // race sampled (both start every candidate on the same stage-one
             // worlds; a board wider than keep1 is culled in each race on its own

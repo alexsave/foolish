@@ -22,7 +22,7 @@ The block, the shadow and the noise all compile only where the noise does (`CD_R
 
 ### The defaults and the knobs
 
-Each setting is a C default in `src/octogen_strategy.c` and a knob (env over roster spec, `bot_knobs.h`) read by fusion alone, so a paired fusion-vs-octogen run can change one without touching the control.
+Each setting is a C default in `src/octogen_strategy.c` (`FUSION_SHADOW`'s in `src/octogen_strategy.h`, where the Oracle's Best pick reads the same bar through structgen) and a knob (env over roster spec, `bot_knobs.h`) read by fusion alone, so a paired fusion-vs-octogen run can change one without touching the control.
 No knob is needed for the production behaviour.
 
 | Knob | Default | Meaning |
@@ -196,10 +196,12 @@ It measured level with the sensible set (below), so the default stays the sensib
 - **The native kernel** (`KERNEL_SRC`: the arena tools, the tests, the iOS xcframework, and the kernel the server links) has the noise compiled in, dormant at 0 for every other brain.
   The production server is c_base, which links `KERNEL_SRC` natively with `KERNEL_CFLAGS` (`c_base/Makefile`): `-DCD_LEAFBOOK` plus the `-DMAX_*` capacities from `print-human-caps`, which filters `WASM_FLAGS` to `-DMAX_%` and so never carries `FOOLISH_SEEDED_BOTS_ONLY` (that flag is only in `WASM_BOT_CFLAGS`).
   So the server can already run fusion with its noise: `table_add_bot` / `table_load` accept the `fusion` key (`bot_roster_linked` is 1 natively) and `bot_drive` plays it through `bot_roster_choose`.
-- **The browser's modules** (`WASM_BOT_CFLAGS`: `web.wasm`, `oracle.wasm`, `oracle-mt.wasm`, and the e2e `table_host`, which is built from the same flags) define `FOOLISH_SEEDED_BOTS_ONLY`, which turns `CD_ROLLOUT_NOISE` off.
-  There the noise code is compiled out, the setters are inline no-ops, and `fusion_strategy_choose` is not defined, so anything that named it would fail to link rather than run octogen under fusion's name; its `bots.c` row is `native_only` and its dispatch entry `NATIVE_ONLY(fusion_strategy_choose)`, NULL there, so `bot_roster_linked` says 0, exactly as for espresso_prod and gunpowder.
-  No browser path runs a bot brain: `web.wasm` exports the client slot, the net client and the replay steps, none of which resolves a brain key, and the Oracle analyses replays with octogen, whatever brain sat in a seat.
-  So the browser never needs fusion compiled in, for going live or after.
+- **`web.wasm` and the e2e `table_host`** (`WASM_BOT_CFLAGS`, built from the same flags) define `FOOLISH_SEEDED_BOTS_ONLY`, which turns `CD_ROLLOUT_NOISE` off.
+  There the noise code is compiled out, the setters are inline no-ops, and `fusion_strategy_choose` is not defined, so anything that named it would fail to link rather than run octogen under fusion's name; its `bots.c` row is `native_only` and its dispatch entry `ORACLE_LINKED(fusion_strategy_choose)`, NULL there, so `bot_roster_linked` says 0, exactly as for espresso_prod and gunpowder.
+  No path of `web.wasm` runs a bot brain: it exports the client slot, the net client and the replay steps, none of which resolves a brain key, so it never needs fusion compiled in, and it is byte-identical with or without the Oracle's switch.
+- **The Infinite Oracle's two modules** (`oracle.wasm`, `oracle-mt.wasm`: `WASM_BOT_CFLAGS` plus `FOOLISH_ORACLE_BUILD`) analyse every replayed position with fusion, whatever brain sat in the seat (`docs/INFINITE_ORACLE_DESIGN.md` "The brain").
+  `CD_ROLLOUT_NOISE` is on where `FOOLISH_SEEDED_BOTS_ONLY` is off or `FOOLISH_ORACLE_BUILD` is on (`src/cordite_sim.h`), `ORACLE_LINKED` links fusion's function on the same condition and `bot_linked` says so there, so `wasm_choose_move(STRAT_FUSION)` dispatches it; no seat plays it, and the row stays `native_only`, which is what `web.wasm` reads.
+  `test_bots_registry_oracle_build` (`tests/tests.c`) holds that registry to the browser's plus fusion.
 - **Its own roster row, seeded as Moscow.**
   `src/bots.c` has a `fusion` row at `STRAT_FUSION` with octogen's knobs (`OG_TRUMP_KEEP=40`), uses_logs on, seeded on, offline off, tier 11, city Moscow at 0 km, and seven server accounts.
   Seeded puts its accounts in the server's store (`bot_seed.c`) and so in every web lobby (the lobby lists the store's bot rows); offline off keeps it out of the phone's picker (`fio_strategy_count` is the offline count, and the picker resolves its ladder against it).
@@ -240,8 +242,8 @@ No test pins an octogen decision to a value, so this branch was compared with ma
 - fusion with `FUSION_SHADOW=-1` (no shadow) at 2 and 4 players, seeds 200001-200002: main's fusion transcript exactly, so the one-race fusion that went live is still there as a research setting.
 
 `scripts/wasm_build.sh` on both trees: `web.wasm` is byte-identical to main's (102,188 B raw), so the browser's module carries none of the shadow.
-`oracle.wasm` is 1 B smaller and `oracle-mt.wasm` 5 B smaller: the oracle builds run octogen, and the final pick moved into `og_best`, a function of its own that the shadow calls too; the struct rollout's loop was folded to one exit.
-The oracle builds' behaviour is octogen's, whose transcripts are main's.
+`oracle.wasm` was 1 B smaller and `oracle-mt.wasm` 5 B smaller: the oracle builds ran octogen then, and the final pick moved into `og_best`, a function of its own that the shadow calls too; the struct rollout's loop was folded to one exit.
+They run fusion since the Oracle's switch (`docs/INFINITE_ORACLE_DESIGN.md` "The brain"), and their rows are still octogen's race (`e2e/oracle_answer.test.ts` matches the text path's fixture field for field).
 
 The earlier proof for the first fusion (against `1cca1f9d5`) is in git history; it covered the `sim_seat_move` / `sim_hw_noisy_move` / `sim_pass_pool` refactors the noise brought.
 
