@@ -383,7 +383,10 @@ function McRow({ c, best, worst, bestAdj, t, open, onClick }: {
     // Bar width replicates the X-ray formula (gen_html.py / multi_render.py).
     const span = Math.max(worst - best, 0.4);
     const barW = scored ? Math.max(12, Math.min(100, 96 - ((eff! - best) / span) * 84)) : 0;
-    const isBest = scored && bestAdj != null && Math.abs(eff! - bestAdj) < 1e-9;
+    // Best is fusion's pick (accumulator.ts fusionBest), which may sit off the
+    // lowest EF when the noisy race says so beyond its bar; the class chips stay
+    // on the EF yardstick (delta from the lowest EF).
+    const isBest = scored && c.best;
     const delta = scored && bestAdj != null ? eff! - bestAdj : 0;
     const cls = scored ? oracleClassify(delta) : null;
     const barColor = isBest ? CLASS_COLOR.best : (cls ? CLASS_COLOR[cls] : '#8a8a92');

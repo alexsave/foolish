@@ -61,6 +61,8 @@ export interface OracleRecordCandidate {
     target?: string[];
     score: number | null;          // mean finish this record, null if nsim==0
     nsim: number;
+    shadow_score: number | null;   // the same in fusion's noisy race, null if it did not sample the row
+    shadow_nsim: number;
     alive: number;
     pruned?: number;               // §6.3 verdict-only entry for a pruned move
     forced_loss: number;
@@ -153,6 +155,9 @@ export interface OracleCandidate {
     mean: number | null;           // sum/n, mean finish (lower = better)
     se: number;                    // standard error of the mean (batch-mean stddev / √batches)
     adjusted: number | null;       // mean + trump tax (display ranking)
+    shadowMean: number | null;     // mean finish in fusion's noisy race (the shadow selection's evidence)
+    shadowSe: number;
+    best: boolean;                 // fusion's pick over everything sampled so far (fusionBest)
     verdict: OracleVerdict;
     verdictVal?: number;
     forcedLoss: boolean;

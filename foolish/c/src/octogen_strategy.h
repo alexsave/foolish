@@ -17,6 +17,14 @@ int fusion_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, 
 // o's per world, pen_gap is f's trump-keep tax minus o's. 1 when f beats o by
 // more than k10 tenths of a standard error of that paired difference.
 int og_fusion_overrules(double dsum, double d2sum, int n, double pen_gap, int k10);
+// Fusion's default bar (the FUSION_SHADOW knob), in tenths of a standard error:
+// 2 SE, measured better than 1 and 3 at 4 and 6 players (c/FUSION.md). Here and
+// not in octogen_strategy.c because the Infinite Oracle holds its own Best pick
+// to the same bar (src/oracle/accumulator.ts fusionBest), and reads it through
+// structgen (tools/structgen/specs/oracle_answer.args) rather than a copy.
+#ifndef FUSION_SHADOW
+#define FUSION_SHADOW 20
+#endif
 // What fusion's shadow did on this thread since the last reset (a test seam and
 // a trace): races run, races whose noisy pick overruled octogen's, and races in
 // which octogen's pinned pick missed a world (must stay 0: it is never culled).

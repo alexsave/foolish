@@ -20,6 +20,7 @@ import {
     OracleJob, OracleCandidate, OracleVerdict, OracleKnobs, ORACLE_KNOBS,
     oracleCardToken, canonicalMoveKey, ORACLE_TRUMP_KEEP,
 } from './types';
+import { fusionBest } from './accumulator';
 
 /** Per-thread stack (§8b.6): 512 KiB, ~36x the measured 14.3 KiB worst case.
  *  Thread stacks live in the heap region where --stack-first's trap-on-overflow
@@ -225,10 +226,12 @@ export class OracleMtSession {
             const key = canonicalMoveKey(type, cards, target);
             const nsim = ex.wasm_mt_nsim(i);
             const mean = nsim > 0 ? ex.wasm_mt_sumfp(i) / nsim : null;
+            const snsim = ex.wasm_mt_nsim_shadow(i);
             const forced = ex.wasm_mt_forced(i) !== 0;
             // Mode B has no per-batch variance stream (that is the point - no
             // per-batch anything crosses the wasm boundary), so the +- text uses
-            // an n-based proxy at the finish-position spread Mode A measures.
+            // an n-based proxy at the finish-position spread Mode A measures,
+            // and so does the noisy race's, which fusionBest weighs.
             const se = nsim > 0 ? 1.2 / Math.sqrt(nsim) : Infinity;
             const tax = mean != null && type === 'attack' && job.deckAlive
                 ? ORACLE_TRUMP_KEEP * cards.filter((tk) => tk.endsWith('*')).length : 0;
@@ -238,6 +241,8 @@ export class OracleMtSession {
                 key, type, label: `${type} ${cards.join(',')}`, cards,
                 target: target.length ? target : undefined,
                 n: nsim, mean, se, adjusted: mean == null ? null : mean + tax,
+                shadowMean: snsim > 0 ? ex.wasm_mt_sumfp_shadow(i) / snsim : null,
+                shadowSe: snsim > 0 ? 1.2 / Math.sqrt(snsim) : Infinity, best: false,
                 verdict, verdictVal: dv.verdictVal, forcedLoss: forced, pruned: false,
                 chosen: i === chosen,
                 played: key === job.recordedKey,
@@ -262,6 +267,7 @@ function sortCandidates(list: OracleCandidate[], exact: boolean): OracleCandidat
             if (b.mean == null) return -1;
             return (a.mean - b.mean) || ((a.adjusted ?? a.mean) - (b.adjusted ?? b.mean));
         });
+        fusionBest(list);
     }
     return list;
 }

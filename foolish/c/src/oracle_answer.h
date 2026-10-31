@@ -7,9 +7,10 @@
 //   OgKnobs    what the host sets before a batch: the handful of OG_* values
 //              the Oracle tunes, as numbers. Both oracle modules.
 //   OgAnswer   what one deliberation answered: the position as the seat saw
-//              it, octogen's belief, every candidate with its score and
-//              verdict, and the playout storylines behind each score. Mode A
-//              only - Mode B accumulates in C instead (oracle_mt.h).
+//              it, octogen's belief, every candidate with its score (and, for
+//              fusion, its score in the noisy race) and verdict, and the
+//              playout storylines behind each score. Mode A only - Mode B
+//              accumulates in C instead (oracle_mt.h).
 //
 // The answer used to leave the module as a line of JSON text the kernel printed
 // into a megabyte buffer with its own freestanding snprintf, beside a packed
@@ -95,6 +96,12 @@ typedef struct {
     int32_t verdict_val;            // +-(1000 - depth), for a win, loss or draw
     int32_t nsim;
     double  score;                  // mean finish position (lower is better), untaxed
+    // Fusion's noisy race over the same worlds (octogen_strategy.c
+    // og_fusion_shadow): the evidence its shadow selection weighs against
+    // octogen's own pick. The answer's score above is the noise-free race's.
+    bool    shadow_scored;          // the noisy race ran and sampled this row
+    int32_t shadow_nsim;
+    double  shadow_score;           // its mean finish position, untaxed
     uint8_t label_len;
     char    label[OG_ANSWER_LABEL]; // the move in the kernel's notation: "cover 10H->7H"
 } OgAnswerRow;

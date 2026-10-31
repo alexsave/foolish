@@ -128,7 +128,9 @@ function assertSameAnswer(got: OracleRecord, c: Captured): void {
 
     assert.equal(gotRows.length, want.candidates.length, `${at}: the number of rows`);
     for (let k = 0; k < gotRows.length; k++) {
-        const { why: gotWhy, score: gotScore, ...gotRow } = gotRows[k];
+        // The noisy race is fusion's addition, which the text path never had;
+        // the test below holds it on its own.
+        const { why: gotWhy, score: gotScore, shadow_score: _s, shadow_nsim: _n, ...gotRow } = gotRows[k];
         const { score: wantScore, ...wantRow } = want.candidates[k];
         assert.deepEqual(gotRow, wantRow, `${at}: row ${k} (${wantRow.label})`);
         if (wantScore === null) assert.equal(gotScore, null, `${at}: row ${k} is unscored`);
@@ -143,7 +145,7 @@ test('the struct answers what the JSON line and the OGP1 blob answered', async (
     await inst.init(ORACLE_BYTES);
     inst.setKnobs(KNOBS);
 
-    const seen = { rows: 0, scored: 0, why: 0, pruned: 0, verdicts: 0, covers: 0, pinned: 0, voids: 0, floors: 0, covered: 0 };
+    const seen = { rows: 0, scored: 0, why: 0, pruned: 0, verdicts: 0, covers: 0, pinned: 0, voids: 0, floors: 0, covered: 0, noisy: 0 };
     for (const c of captured) {
         const r = inst.analyzeOnce(jobOf(c), c.analyzeSeed);
         assert.ok('record' in r, `${c.label} step ${c.idx}: the choose answered`);
@@ -156,6 +158,16 @@ test('the struct answers what the JSON line and the OGP1 blob answered', async (
             if (row.pruned) seen.pruned++;
             if (row.verdict_val !== undefined) seen.verdicts++;
             if (row.target && row.target.length > 1) seen.covers++;
+            // Fusion is the brain: its noisy race ran every row the noise-free
+            // race sampled (both start every candidate on the same stage-one
+            // worlds; a board wider than keep1 is culled in each race on its own
+            // scores, so later stages may differ), and its means are finishes too.
+            if (row.score !== null && r.record.candidates.filter((x) => x.score !== null).length > 1) {
+                assert.ok(row.shadow_nsim > 0 && row.shadow_score !== null, `${c.label} step ${c.idx}: ${row.label} has its noisy race`);
+                assert.ok(row.shadow_score! >= 1 && row.shadow_score! <= r.record.opp_counts.length,
+                    `${c.label} step ${c.idx}: ${row.label}'s noisy mean ${row.shadow_score} is a finish`);
+                if (row.shadow_score !== row.score) seen.noisy++;
+            }
         }
         if (r.record.belief.pinned.some((p) => p.length)) seen.pinned++;
         if (r.record.belief.voids.some((p) => p.length)) seen.voids++;

@@ -776,7 +776,8 @@ static int og_explain_on(void) {
 // typedef, just above og_publish.
 static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
                        const Belief *B, const void *C, const double *score, const int *nsim,
-                       const bool *alive, const bool *forced_loss,
+                       const bool *alive, const double *sh_score, const int *sh_nsim,
+                       const bool *forced_loss,
                        int chosen_idx, int solver_applied, int solver_win_idx);
 #endif  // OG_EXPLAIN_BUILD
 
@@ -1567,6 +1568,7 @@ static void og_ans_row(OgAnswerRow *r, const LegalMove *m, int trump) {
     r->forced_loss = false; r->chosen = false;
     r->verdict = OG_VERDICT_NONE; r->has_verdict_val = false; r->verdict_val = 0;
     r->nsim = 0; r->score = 0.0;
+    r->shadow_scored = false; r->shadow_nsim = 0; r->shadow_score = 0.0;
     og_ans_label(r, m, trump);
 }
 // The probe's value for a move, as a verdict: a sentinel says why there is no
@@ -1630,6 +1632,7 @@ static void og_answer_print(FILE *f, const OgAnswer *a) {
         const OgAnswerRow *r = &a->rows[k];
         fprintf(f, "%s{\"label\":\"%s\"", k ? "," : "", r->label);
         if (r->scored) fprintf(f, ",\"score\":%.4f", r->score);
+        if (r->shadow_scored) fprintf(f, ",\"shadow_score\":%.4f,\"shadow_nsim\":%d", r->shadow_score, r->shadow_nsim);
         fprintf(f, ",\"nsim\":%d,\"alive\":%d", r->nsim, r->alive ? 1 : 0);
         if (r->pruned) fprintf(f, ",\"pruned\":1");
         fprintf(f, ",\"forced_loss\":%d,\"verdict\":\"%s\"", r->forced_loss ? 1 : 0, VERDICT[r->verdict]);
@@ -1647,7 +1650,8 @@ static void og_answer_print(FILE *f, const OgAnswer *a) {
 // move index into moves->moves[].
 static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
                        const Belief *B, const void *Cv, const double *score, const int *nsim,
-                       const bool *alive, const bool *forced_loss,
+                       const bool *alive, const double *sh_score, const int *sh_nsim,
+                       const bool *forced_loss,
                        int chosen_idx, int solver_applied, int solver_win_idx) {
 #ifndef CD_WASM_OVERLAY
     if (!og_ex_out) return;
@@ -1702,6 +1706,11 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
         og_ans_row(r, &moves->moves[mi], trump);
         r->nsim = nsim ? nsim[k] : 0;
         if (score && nsim && nsim[k] > 0) { r->scored = true; r->score = score[k] / (double)nsim[k]; }
+        r->shadow_nsim = sh_nsim ? sh_nsim[k] : 0;
+        if (sh_score && sh_nsim && sh_nsim[k] > 0) {
+            r->shadow_scored = true;
+            r->shadow_score = sh_score[k] / (double)sh_nsim[k];
+        }
         r->alive = alive ? alive[k] : true;
         r->forced_loss = forced_loss ? forced_loss[mi] : false;
         if (solver_applied && mi < vcap) og_ans_verdict(r, og_ex_verdict[mi]);
@@ -1865,16 +1874,19 @@ static void og_verdicts_reset(void) {
 
 // score/nsim/alive index by CANDIDATE position (matching C->idx[]) and are
 // NULL at every exit but the Monte Carlo one; forced_loss indexes the legal
-// moves and is NULL only when one move was legal.
+// moves and is NULL only when one move was legal. sh_score/sh_nsim are fusion's
+// noisy race (og_fusion_shadow), by candidate too, and NULL unless that race ran.
 static void og_publish(const Game *g, int bot_idx, const LegalMoves *moves,
                        const Belief *B, const Candidates *C,
                        const double *score, const int *nsim, const bool *alive,
+                       const double *sh_score, const int *sh_nsim,
                        const bool *forced_loss, int chosen, int best, int win_idx) {
     (void)g; (void)bot_idx; (void)moves; (void)B; (void)C; (void)score; (void)nsim;
-    (void)alive; (void)forced_loss; (void)chosen; (void)best; (void)win_idx;
+    (void)alive; (void)sh_score; (void)sh_nsim; (void)forced_loss; (void)chosen; (void)best;
+    (void)win_idx;
 #ifdef OG_EXPLAIN_BUILD
     if (og_explain_on())
-        og_ex_emit(g, bot_idx, moves, B, C, score, nsim, alive, forced_loss,
+        og_ex_emit(g, bot_idx, moves, B, C, score, nsim, alive, sh_score, sh_nsim, forced_loss,
                    chosen, og_ex_solve_applied, win_idx);
 #endif
 #ifdef FOOLISH_ORACLE_MT
@@ -1890,6 +1902,10 @@ static void og_publish(const Game *g, int bot_idx, const LegalMoves *moves,
                 if (nsim[i] > 0) {
                     __atomic_fetch_add(&g_ogmt.sum_fp[i], (uint64_t)(score[i] + 0.5), __ATOMIC_RELAXED);
                     __atomic_fetch_add(&g_ogmt.nsim[i], (uint32_t)nsim[i], __ATOMIC_RELAXED);
+                }
+                if (sh_score && sh_nsim[i] > 0) {
+                    __atomic_fetch_add(&g_ogmt.sum_fp_shadow[i], (uint64_t)(sh_score[i] + 0.5), __ATOMIC_RELAXED);
+                    __atomic_fetch_add(&g_ogmt.nsim_shadow[i], (uint32_t)sh_nsim[i], __ATOMIC_RELAXED);
                 }
                 if (forced_loss[C->idx[i]])
                     __atomic_store_n(&g_ogmt.forced_loss[i], 1u, __ATOMIC_RELAXED);
@@ -1917,7 +1933,7 @@ static void og_publish_only_move(const Game *g, int bot_idx, const LegalMoves *m
     Belief lb;
     if (og_explain_on()) { og_build_belief(g, bot_idx, &lb); B = &lb; }   // for the known-state dump only
 #endif
-    og_publish(g, bot_idx, moves, B, &TC, NULL, NULL, NULL, NULL, 0, 0, -1);
+    og_publish(g, bot_idx, moves, B, &TC, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, -1);
 #endif
 }
 
@@ -1933,12 +1949,28 @@ static void og_publish_win(const Game *g, int bot_idx, const LegalMoves *moves,
     int row = -1;
     for (int i = 0; i < EC.n; i++)
         if (EC.idx[i] == solved) { row = i; break; }
-    og_publish(g, bot_idx, moves, B, &EC, NULL, NULL, NULL, forced_loss, solved, row, solved);
+    og_publish(g, bot_idx, moves, B, &EC, NULL, NULL, NULL, NULL, NULL, forced_loss, solved, row, solved);
 #endif
 }
 
+#ifdef CD_ROLLOUT_NOISE
+// Fusion's shadow race (og_fusion_shadow): candidate `pin` (octogen's own pick)
+// is never culled, and every world folds each alive candidate's score minus
+// the pin's, so the pick can be tested against the pin paired over the worlds
+// both played. og_shadow is non-NULL only inside that race.
+typedef struct {
+    int pin, w_pct, worlds;
+    double d[OG_MAX_CANDS], d2[OG_MAX_CANDS];
+    int n[OG_MAX_CANDS];
+} OgShadow;
+static _Thread_local OgShadow *og_shadow = NULL;
+#endif
+
 // The Mode A path trace (CD_ORC_TRACE, the answer's why table), around one
 // deliberation and around each root-move playout of it. Empty elsewhere.
+// Fusion's noisy race is not traced: the storylines explain the scores the
+// answer's rows carry, which are the noise-free race's (docs/INFINITE_ORACLE_DESIGN.md
+// "The brain"); the noisy race's own are only its shadow_score.
 static inline void og_trace_reset(void) {
 #ifdef CD_ORC_TRACE
     og_orc_reset();   // fresh path aggregation per deliberation
@@ -1947,12 +1979,13 @@ static inline void og_trace_reset(void) {
 static inline void og_trace_begin(int bot_idx) {
     (void)bot_idx;
 #ifdef CD_ORC_TRACE
-    cd_orc_begin(bot_idx);   // trace root apply + playout
+    if (!og_shadow) cd_orc_begin(bot_idx);   // trace root apply + playout
 #endif
 }
 static inline void og_trace_end(int ci, int fp) {
     (void)ci; (void)fp;
 #ifdef CD_ORC_TRACE
+    if (og_shadow) return;
     cd_orc_end();
     og_orc_fold(ci, fp);
 #endif
@@ -1975,16 +2008,6 @@ static double og_keep_penalty(const Game *g, const LegalMove *m) {
 }
 
 #ifdef CD_ROLLOUT_NOISE
-// Fusion's shadow race (og_fusion_shadow): candidate `pin` (octogen's own pick)
-// is never culled, and every world folds each alive candidate's score minus
-// the pin's, so the pick can be tested against the pin paired over the worlds
-// both played. og_shadow is non-NULL only inside that race.
-typedef struct {
-    int pin, w_pct, worlds;
-    double d[OG_MAX_CANDS], d2[OG_MAX_CANDS];
-    int n[OG_MAX_CANDS];
-} OgShadow;
-static _Thread_local OgShadow *og_shadow = NULL;
 static _Thread_local OgFusionStats og_fu_stats;
 OgFusionStats og_fusion_stats(void) { return og_fu_stats; }
 void og_fusion_stats_reset(void) { memset(&og_fu_stats, 0, sizeof og_fu_stats); }
@@ -2193,16 +2216,17 @@ static void og_fusion_noise(int on) {
 // half of all decisions, and octogen's rank order then picks the cheaper twin;
 // any noise turns those ties into coin flips (FUSION.md), so the noise is let
 // overrule octogen only where it says something.
+//
+// The race's sums and sample counts are the caller's (score, nsim: zeroed
+// here), so an analysis build can publish them beside the noise-free race's.
 static int og_fusion_shadow(const Game *g, int bot_idx, const LegalMoves *moves,
                             const Belief *B, const Candidates *C,
-                            const double *keep_pen, int o) {
-    if (o < 0) return o;
+                            const double *keep_pen, int o, double *score, int *nsim) {
     OgShadow sh;
     memset(&sh, 0, sizeof sh);
     sh.pin = o;
     sh.w_pct = og_fu->shadow_w_pct > 0 ? og_fu->shadow_w_pct : 100;
-    double score[OG_MAX_CANDS] = {0};
-    int    nsim [OG_MAX_CANDS] = {0};
+    for (int i = 0; i < C->n; i++) { score[i] = 0.0; nsim[i] = 0; }
     bool   alive[OG_MAX_CANDS];
     for (int i = 0; i < C->n; i++) alive[i] = true;
     og_shadow = &sh;
@@ -2316,11 +2340,11 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         og_pick_candidates(g, moves, forced_loss, &C);
     }
     if (C.n == 0) {
-        og_publish(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss, 0, -1, -1);
+        og_publish(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, NULL, NULL, forced_loss, 0, -1, -1);
         game_rng_set(saved_rng); return 0;
     }
     if (C.n == 1) {
-        og_publish(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss, C.idx[0], 0, -1);
+        og_publish(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, NULL, NULL, forced_loss, C.idx[0], 0, -1);
         game_rng_set(saved_rng); return C.idx[0];
     }
 
@@ -2342,13 +2366,21 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     if (og_fu) og_fusion_noise(0);
 #endif
     int best = og_best(&C, keep_pen, score, nsim, alive);
+    const double *sh_score = NULL;   // fusion's noisy race, when it ran
+    const int    *sh_nsim  = NULL;
 #ifdef CD_ROLLOUT_NOISE
-    if (og_fu && og_fu->shadow >= 0 && og_fu->noise_pm > 0)
-        best = og_fusion_shadow(g, bot_idx, moves, &B, &C, keep_pen, best);
+    double fu_score[OG_MAX_CANDS];
+    int    fu_nsim [OG_MAX_CANDS];
+    if (og_fu && og_fu->shadow >= 0 && og_fu->noise_pm > 0 && best >= 0) {
+        best = og_fusion_shadow(g, bot_idx, moves, &B, &C, keep_pen, best, fu_score, fu_nsim);
+        sh_score = fu_score;
+        sh_nsim  = fu_nsim;
+    }
 #endif
 
     int chosen = og_hide_uncoverable(g, moves, best >= 0 ? C.idx[best] : 0);
-    og_publish(g, bot_idx, moves, &B, &C, score, nsim, alive, forced_loss, chosen, best, -1);
+    og_publish(g, bot_idx, moves, &B, &C, score, nsim, alive, sh_score, sh_nsim,
+               forced_loss, chosen, best, -1);
     game_rng_set(saved_rng);
     return chosen;
 }
@@ -2429,9 +2461,6 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
 #endif
 #ifndef FUSION_VOID_MOD
 #define FUSION_VOID_MOD 4
-#endif
-#ifndef FUSION_SHADOW
-#define FUSION_SHADOW 20
 #endif
 #ifndef FUSION_SHADOW_W
 #define FUSION_SHADOW_W 100

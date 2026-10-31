@@ -56,6 +56,10 @@ typedef struct {
     OgMtCand cand[OG_MT_MAX_CANDS];
     uint64_t sum_fp[OG_MT_MAX_CANDS];   // Σ finish positions (integral -> exact)
     uint32_t nsim[OG_MT_MAX_CANDS];
+    // The same over fusion's noisy race (octogen_strategy.c og_fusion_shadow),
+    // the evidence its shadow selection weighs; sum_fp/nsim are the noise-free race.
+    uint64_t sum_fp_shadow[OG_MT_MAX_CANDS];
+    uint32_t nsim_shadow[OG_MT_MAX_CANDS];
     uint32_t forced_loss[OG_MT_MAX_CANDS];
     uint32_t batches;               // # accumulated batches across all threads
     uint32_t desc_mismatch;         // batches DROPPED for candidate-set disagreement

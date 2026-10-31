@@ -56,12 +56,12 @@ const SNAPSHOT: OracleSnapshot = {
     candidates: [
         {
             key: 'attack|6S|', type: 'attack', label: 'attack 6S', cards: ['6S'],
-            n: 400, mean: 1.24, se: 0.01, adjusted: 1.24, verdict: 'none',
+            n: 400, mean: 1.24, se: 0.01, adjusted: 1.24, shadowMean: 1.31, shadowSe: 0.01, best: true, verdict: 'none',
             forcedLoss: false, pruned: false, chosen: true, played: true, why: why(0.4, 1.20),
         },
         {
             key: 'attack|9H|', type: 'attack', label: 'attack 9H', cards: ['9H'],
-            n: 400, mean: 1.61, se: 0.02, adjusted: 1.61, verdict: 'none',
+            n: 400, mean: 1.61, se: 0.02, adjusted: 1.61, shadowMean: 1.58, shadowSe: 0.02, best: false, verdict: 'none',
             forcedLoss: false, pruned: false, chosen: false, played: false, why: why(1.3, 1.55),
         },
     ],

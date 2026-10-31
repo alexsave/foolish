@@ -142,12 +142,15 @@ int  cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
 // decisions do not move. fusion_strategy_choose (octogen_strategy.c) sets it
 // for the length of one decision and puts 0 back.
 //
-// Compiled out of the shipped bots module. That module is the seeded ladder
-// (FOOLISH_SEEDED_BOTS_ONLY) and fusion is not on it, so it carries none of the
-// noise code and its bytes stay as they were; the setters below are then
-// no-ops and the struct-path pick never fires. Every native build (the arena
-// tools, the tests, the kernel a server links) has it.
-#ifndef FOOLISH_SEEDED_BOTS_ONLY
+// Compiled out of web.wasm and the e2e table host (FOOLISH_SEEDED_BOTS_ONLY):
+// no seat there plays fusion, so they carry none of the noise code and their
+// bytes stay as they were; the setters below are then no-ops and the
+// struct-path pick never fires. Every native build (the arena tools, the
+// tests, the kernel a server links) has it, and so do the Infinite Oracle's
+// two modules (FOOLISH_ORACLE_BUILD), which analyse every position with fusion
+// (docs/INFINITE_ORACLE_DESIGN.md "The brain"). bots.c links fusion's function
+// on exactly this condition.
+#if !defined(FOOLISH_SEEDED_BOTS_ONLY) || defined(FOOLISH_ORACLE_BUILD)
 #define CD_ROLLOUT_NOISE 1
 #endif
 
