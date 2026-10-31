@@ -244,6 +244,7 @@ export async function history(): Promise<{ rating: number | null; rows: NetHisto
 }
 /** The newest replay of a game the caller played in (the game's id or a history row's), or null. */
 export async function replay(gameId: string): Promise<NetReplay | null> {
+    if (local) return local.replay(gameId);
     const a = await ask({ kind: N.NC_DO_REPLAY, gid: gameId }).catch(() => null);
     return a ? { moves: span(a, a.done.aOff, a.done.aLen), extras: span(a, a.done.bOff, a.done.bLen) } : null;
 }

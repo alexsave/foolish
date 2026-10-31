@@ -18,7 +18,15 @@ interface PlayerResult {
     rank: number;
 }
 
-export const WinScreen: React.FC = () => {
+/** A game played in the tab (the promo page) names its own screen and its own way on. */
+interface WinScreenProps {
+    /** The heading, in place of "done - <the table's title>". */
+    title?: string;
+    /** The buttons, in place of Continue to Lobby. */
+    actions?: React.ReactNode;
+}
+
+export const WinScreen: React.FC<WinScreenProps> = ({ title, actions }) => {
     const { view: game, continueGame, loadGame } = useServer();
     const { woodUrl } = useTexture();
 
@@ -86,7 +94,7 @@ export const WinScreen: React.FC = () => {
         <div className="page" style={{ padding: '0.25rem 1rem 1rem' }}>
             <WoolBackgroundLayer />
             
-            <h1 className="win-screen__title">done - {game.title}</h1>
+            <h1 className="win-screen__title">{title ?? `done - ${game.title}`}</h1>
 
             <div className="win-screen__results">
                 {/* One wood plank behind the whole list (CSS hides it in Soviet
@@ -142,16 +150,18 @@ export const WinScreen: React.FC = () => {
 
             <ReplayShare gameId={game.gameId} />
 
-            <TexturedSurface
-                as="button"
-                seed={0.6}
-                onClick={handleContinue}
-                className="btn-wood btn-wood--lg"
-            >
-                <span className="btn-wood-text">
-                    <Text id="continue_to_lobby" />
-                </span>
-            </TexturedSurface>
+            {actions ?? (
+                <TexturedSurface
+                    as="button"
+                    seed={0.6}
+                    onClick={handleContinue}
+                    className="btn-wood btn-wood--lg"
+                >
+                    <span className="btn-wood-text">
+                        <Text id="continue_to_lobby" />
+                    </span>
+                </TexturedSurface>
+            )}
         </div>
     );
 };

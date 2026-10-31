@@ -1560,7 +1560,7 @@ wasm-web: wasm-cc-check
 # table (WASM_LOCAL_EXPORTS), which brings the C Table and ONE brain
 # (local_table.h LOCAL_BOT_STRAT). What it leaves out is what that page never
 # calls: the backend's client (a promo game sends nothing) and the replay
-# reader. web.wasm, which every other visitor loads, carries none of the table.
+# reader. The finish screen's share link is written (b32 and the link), never read. web.wasm, which every other visitor loads, carries none of the table.
 #
 # The page's reach set is pinned at run time, not by a bundle scan (the shell
 # page's bundle reaches everything web.wasm exports): e2e/promo_local_game.test.ts
@@ -1577,7 +1577,8 @@ WASM_PROMO_NAMES := \
   wasm_anim_finish_rows wasm_anim_hand_laid_out \
   wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
-  wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows
+  wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
+  wasm_replay_b32_encode wasm_replay_extras_ptr wasm_replay_link
 WASM_PROMO_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_LOCAL_EXPORTS) \
                      $(filter $(addprefix -Wl$(comma)--export=,$(WASM_PROMO_NAMES)),$(WASM_BOTS_ALL_EXPORTS))
 WASM_PROMO_MISSING = $(filter-out $(WASM_PROMO_EXPORTS),$(addprefix -Wl$(comma)--export=,$(WASM_PROMO_NAMES)))
