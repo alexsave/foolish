@@ -62,6 +62,7 @@ import { bindersIn, calledExports, makefileExportNames } from './helpers/wasm_ex
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
 const WEB = 'sdk/ts/wasm/web.wasm.gz';
+const PROMO = 'sdk/ts/wasm/promo.wasm.gz';
 /** A shipped module's raw bytes, inflated. */
 const moduleBytes = (rel: string): Uint8Array => gunzipSync(readFileSync(ROOT + rel));
 
@@ -222,7 +223,11 @@ test('web.wasm exports exactly the kernel entries the browser bundle reaches', a
     // replay entry as well and would hide a missing one here.
     const oracleCalls = calledExports(ROOT + 'src/oracle');
     assert.ok(oracleCalls.has('wasm_choose_move'), 'the Oracle\'s calls were read');
-    const wanted = [...reach].filter((n) => kernel.has(n) && !(oracleCalls.has(n) && !web.has(n))).sort();
+    // And what the promo page's own link exports and web.wasm does not (the
+    // local table, sdk/ts/table/local_table.ts) is that link's: the test below.
+    const promo = exportNames(PROMO);
+    const wanted = [...reach].filter((n) => kernel.has(n) && !(oracleCalls.has(n) && !web.has(n))
+        && !(promo.has(n) && !web.has(n))).sort();
     assert.ok(wanted.length > 40, `the reach scan found only ${wanted.length} kernel entries - did the bundle build?`);
 
     const missing = wanted.filter((n) => !web.has(n));
@@ -236,4 +241,19 @@ test('web.wasm exports exactly the kernel entries the browser bundle reaches', a
         + 'root, so each one is code the browser downloads and never runs - drop it from\n'
         + 'WASM_WEB_NAMES in c/Makefile. (If it is genuinely called from somewhere the bundler\n'
         + 'cannot see, say so where the name is listed.)');
+});
+
+test('promo.wasm is the promo page\'s link: the local table and the client slot, and no backend client', () => {
+    // The promo page (src/components/PromoGame.tsx) loads promo.wasm INSTEAD of
+    // web.wasm (src/components/KernelGate.tsx), and reads every board through
+    // the same client slot. What it plays on top is the local table.
+    const promo = exportNames(PROMO), web = exportNames(WEB);
+    const src = readFileSync(ROOT + 'sdk/ts/table/local_table.ts', 'utf8');
+    const local = new Set([...src.matchAll(/\.(wasm_local_[a-z0-9_]+)\(/g)].map((m) => m[1]));
+    assert.ok(local.size >= 8, `read only ${local.size} local-table calls`);
+    assert.deepEqual([...local].filter((n) => !promo.has(n)), [], 'promo.wasm exports every local-table call');
+    assert.deepEqual([...local].filter((n) => web.has(n)), [], 'and web.wasm none: every other visitor downloads no table');
+    const client = calledExports(ROOT + 'sdk/ts/table');
+    assert.deepEqual([...client].filter((n) => !promo.has(n)).sort(), [], 'the client slot reads a promo game as it reads any');
+    assert.deepEqual([...promo].filter((n) => n.startsWith('wasm_net_')), [], 'a promo game sends nothing: no backend client is linked');
 });
