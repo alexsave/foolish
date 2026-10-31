@@ -1364,6 +1364,12 @@ static _Thread_local long cd_noise_drawn = 0;
 static _Thread_local long cd_noise_fired = 0;
 static _Thread_local long cd_noise_unmatched = 0;
 static _Thread_local long cd_noise_any = 0;
+// The keyed stream (cd_sim_set_noise_crn): off, the noise draws from
+// game_random() like the rest of the rollout; on, from its own stream, keyed by
+// the rollout's seed, the deciding seat and that seat's decision count.
+static _Thread_local int      cd_noise_crn = 0;
+static _Thread_local uint64_t cd_noise_seed = 0;
+static _Thread_local uint16_t cd_noise_k[MAX_PLAYERS];
 
 void cd_sim_set_noise(int per_mille) {
     cd_noise_pm = per_mille < 0 ? 0 : per_mille > 1000 ? 1000 : per_mille;
@@ -1373,6 +1379,11 @@ void cd_sim_set_noise_mode(int mode) {
     cd_noise_mode = mode == CD_NOISE_ANY ? CD_NOISE_ANY : CD_NOISE_SENSIBLE;
 }
 int cd_sim_noise_mode(void) { return cd_noise_mode; }
+void cd_sim_set_noise_crn(int on) { cd_noise_crn = on != 0; }
+void cd_sim_noise_reseed(uint64_t seed) {
+    cd_noise_seed = seed;
+    memset(cd_noise_k, 0, sizeof cd_noise_k);
+}
 CdNoiseStats cd_sim_noise_stats(void) {
     CdNoiseStats st = { cd_noise_drawn, cd_noise_fired, cd_noise_unmatched, cd_noise_any };
     return st;
@@ -1614,9 +1625,26 @@ static NoiseCand noise_menu_move(const NoiseFam *f, int nf, uint64_t r) {
     return none;
 }
 
-// A uniform index below n from one game_random(), clamped against rounding.
-static uint64_t noise_index(uint64_t n) {
-    uint64_t k = (uint64_t)(game_random() * (double)n);
+// One noise draw in [0, 1): game_random(), or with the keyed stream on, a
+// splitmix64 hash of (the rollout's seed, seat p, p's decision count, which
+// draw of the decision). Keyed per seat decision, the k-th decision of seat p
+// meets the same noise under every root candidate however the other seats'
+// play diverged, and game_random() is left to the deck alone, so the rollouts
+// of a decision's candidates keep their common random numbers past ply one.
+static double noise_random(int p, int which) {
+    if (!cd_noise_crn) return game_random();
+    uint64_t z = cd_noise_seed ^ ((uint64_t)(unsigned)p << 56)
+               ^ ((uint64_t)cd_noise_k[p] << 8) ^ (uint64_t)which;
+    z += 0x9E3779B97F4A7C15ull;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    return (double)(z >> 11) * (1.0 / 9007199254740992.0);
+}
+
+// A uniform index below n from one draw r in [0, 1), clamped against rounding.
+static uint64_t noise_index(uint64_t n, double r) {
+    uint64_t k = (uint64_t)(r * (double)n);
     return k >= n ? n - 1 : k;
 }
 
@@ -1627,21 +1655,28 @@ static uint64_t noise_index(uint64_t n) {
 // is never reached and nothing is drawn.
 static int sim_noise_draw(const SimState *s, int p, NoiseCand *out) {
     cd_noise_drawn++;
-    if (game_random() * 1000.0 >= (double)cd_noise_pm) return 0;
-    if (cd_noise_mode == CD_NOISE_ANY) {
-        NoiseFam f[NOISE_MAX_FAMS];
-        int nf = sim_noise_fams(s, p, f);
-        uint64_t n = noise_menu_size(f, nf);
-        if (!n) return 0;
-        *out = noise_menu_move(f, nf, noise_index(n));
-        cd_noise_any++;
-        return 1;
+    int r = 0;
+    if (noise_random(p, 0) * 1000.0 < (double)cd_noise_pm) {
+        if (cd_noise_mode == CD_NOISE_ANY) {
+            NoiseFam f[NOISE_MAX_FAMS];
+            int nf = sim_noise_fams(s, p, f);
+            uint64_t n = noise_menu_size(f, nf);
+            if (n) {
+                *out = noise_menu_move(f, nf, noise_index(n, noise_random(p, 1)));
+                cd_noise_any++;
+                r = 1;
+            }
+        } else {
+            NoiseCand c[NOISE_MAX_CANDS];
+            int n = sim_noise_cands(s, p, c);
+            if (n > 0) {
+                *out = c[noise_index((uint64_t)n, noise_random(p, 1))];
+                r = 1;
+            }
+        }
     }
-    NoiseCand c[NOISE_MAX_CANDS];
-    int n = sim_noise_cands(s, p, c);
-    if (n <= 0) return 0;
-    *out = c[noise_index((uint64_t)n)];
-    return 1;
+    if (cd_noise_crn) cd_noise_k[p]++;   // the keyed stream counts p's decisions
+    return r;
 }
 
 // A candidate as the move it plays: a cover is the greedy full cover, rebuilt
