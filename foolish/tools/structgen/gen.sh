@@ -469,8 +469,10 @@ dgc --table CARD_SUIT_FACE  --require-complete --name CardSuitFace  --ts "$prod/
 # The short paths on the promo playing cards, each the place it was handed out
 # and the language its game opens in (c/promo/promo_codes.h says the rules a row
 # keeps). Linked by nothing; the web's route reads the TS module.
-"$DG" --cwd "$root/c" --header promo/promo_codes.h --table PROMO_CODES --require-complete --name PromoCodes \
+"$DG" --cwd "$root/c" --header promo/promo_codes.h --table PROMO_CODES --name PromoCodes \
    --ts "$prod/promo_codes.ts"
+"$DG" --cwd "$root/c" --header promo/promo_codes.h --table PROMO_LANG_DEFAULT --require-complete --name PromoLangDefault \
+   --ts "$prod/promo_lang_default.ts"
 
 # ---- the bot registry (c/src/bots.c, through datagen) ----------------------------
 #

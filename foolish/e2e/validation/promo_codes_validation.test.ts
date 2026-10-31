@@ -11,6 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PromoCodes } from '../../sdk/ts/gen/promo_codes.ts';
+import { PromoLangDefault } from '../../sdk/ts/gen/promo_lang_default.ts';
 import { FoolishLanguages } from '../../sdk/ts/gen/i18n/languages.ts';
 import { promoOf } from '../../src/common/promo.ts';
 import { classifyPathSegment } from '../../server/api/common/replay_codec.ts';
@@ -23,7 +24,7 @@ test('every promo code keeps the header\'s rules', () => {
         assert.match(p.code, /^[a-z]+$/, `${p.code}: lowercase ASCII letters`);
         assert.match(p.code, /[g-z]/, `${p.code}: a letter no game id has`);
         assert.equal(classifyPathSegment(p.code), 'shortcode', `${p.code}: never read as a replay code`);
-        assert.ok(languages.has(p.lang), `${p.code}: ${p.lang} is a language c/i18n declares`);
+        assert.ok(p.lang === undefined || languages.has(p.lang), `${p.code}: ${p.lang} is a language c/i18n declares`);
         assert.match(p.src, /^[a-z][a-z-]*$/, `${p.code}: src names a place`);
         assert.ok(!codes.has(p.code) && !srcs.has(p.src), `${p.code}: one row per code and per place`);
         codes.add(p.code);
@@ -34,6 +35,14 @@ test('every promo code keeps the header\'s rules', () => {
 test('the cards Alex asked for: /br is Brighton in Russian, /ws Washington Square in English', () => {
     assert.deepEqual({ ...promoOf('br') }, { code: 'br', src: 'brighton', lang: 'ru' });
     assert.deepEqual({ ...promoOf('ws') }, { code: 'ws', src: 'washington-square', lang: 'en' });
+});
+
+test('a code that names no language opens in the default, which is English', () => {
+    assert.deepEqual([...PromoLangDefault], ['en'], 'the default is English');
+    const bare = PromoCodes.filter((p) => p.lang === undefined);
+    assert.ok(bare.length > 0, 'some row leaves its language out (ws), so the default is exercised');
+    for (const p of bare) assert.equal(promoOf(p.code)?.lang, 'en', `${p.code} opens in English`);
+    assert.equal(promoOf('br')?.lang, 'ru', 'and a row that names one keeps it');
 });
 
 test('a code is found in any case, and nothing else is a code', () => {
