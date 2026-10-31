@@ -2324,6 +2324,14 @@ static bool og_keep_at(int w, int num, int den) {
     return (a + den - 1) / den > (b + den - 1) / den;
 }
 
+// A hash's draw at num/den, from its high bits. One bot_mix of a seed and a
+// small index is not enough for draws that must be independent across indexes
+// (two voids of one seat came out exactly complementary), so the independent
+// draws mix twice.
+static bool og_hash_below(uint32_t h, int num, int den) {
+    return (uint32_t)(((uint64_t)h * (uint32_t)den) >> 32) < (uint32_t)num;
+}
+
 // Fusion's choice of constraints for world w (og_fu set). The two booleans
 // become the untold seats' schedules at fusion's keep rates; and when a world
 // needs a per-seat choice (a told seat under FUSION_TOLD_MOD, FUSION_INDEP, a
@@ -2342,7 +2350,7 @@ static const OgWorldMask *og_fu_world(const Game *g, const Belief *B, int w, uin
     }
     if (!need) return NULL;
     const bool told_on = og_fu->told_mod > 0
-                      && bot_mix(wseed, 0x7E11B00Bu) % (uint32_t)og_fu->told_mod == 0;
+                      && og_hash_below(bot_mix(wseed, 0x7E11B00Bu), 1, og_fu->told_mod);
     const bool d_on = (w % og_fu->d_mod) != og_fu->d_mod - 1;
     for (int p = 0; p < MAX_PLAYERS; p++) {
         const uint8_t all = (uint8_t)((1u << B->b.void_n[p]) - 1u);
@@ -2353,12 +2361,13 @@ static const OgWorldMask *og_fu_world(const Game *g, const Belief *B, int w, uin
         } else if (og_fu->indep) {
             uint8_t m = 0;
             for (int k = 0; k < B->b.void_n[p]; k++) {
-                const uint32_t h = bot_mix(wseed ^ 0x1DE9E4D5u, (uint32_t)(p * 16 + k + 1));
-                if (h % (uint32_t)og_fu->void_den < (uint32_t)og_fu->void_num) m |= (uint8_t)(1u << k);
+                const uint32_t i = (uint32_t)(p * 16 + k + 1);
+                const uint32_t h = bot_mix(bot_mix(wseed ^ 0x1DE9E4D5u, i), i);
+                if (og_hash_below(h, og_fu->void_num, og_fu->void_den)) m |= (uint8_t)(1u << k);
             }
             mk->vmask[p] = m;
-            const uint32_t hf = bot_mix(wseed ^ 0x1DE9E4D5u, (uint32_t)(p * 16 + 15));
-            mk->floor_on[p] = !og_no_floors && hf % (uint32_t)fden < (uint32_t)fnum;
+            const uint32_t hf = bot_mix(bot_mix(wseed ^ 0x1DE9E4D5u, (uint32_t)(p * 16 + 15)), (uint32_t)(p * 16 + 15));
+            mk->floor_on[p] = !og_no_floors && og_hash_below(hf, fnum, fden);
         } else {
             mk->vmask[p] = *use_voids ? all : 0;
             mk->floor_on[p] = *use_floors;
@@ -2861,6 +2870,8 @@ void og_fusion_probe(const Game *g, int bot_idx, int worlds, OgFusionProbe *out)
     static _Thread_local Belief B;
     og_build_belief(g, bot_idx, &B);
     for (int p = 0; p < MAX_PLAYERS; p++) {
+        out->pinned_n[p] = B.b.pinned_n[p];
+        for (int k = 0; k < B.b.pinned_n[p]; k++) out->pinned[p][k] = B.b.pinned[p][k];
         out->void_n[p] = B.b.void_n[p];
         for (int k = 0; k < B.b.void_n[p]; k++) out->voids[p][k] = B.b.voids[p][k];
         out->floor_v[p] = B.b.floor_v[p];
@@ -2883,10 +2894,16 @@ void og_fusion_probe(const Game *g, int bot_idx, int worlds, OgFusionProbe *out)
         out->worlds++;
         for (int p = 0; p < g->num_players; p++) {
             if (p == bot_idx) continue;
-            for (int k = 0; k < B.b.void_n[p]; k++)
-                out->void_on[p][k] += mk ? (mk->vmask[p] >> k) & 1 : uv;
+            int von = 0;
+            for (int k = 0; k < B.b.void_n[p]; k++) {
+                const int on = mk ? (mk->vmask[p] >> k) & 1 : uv;
+                out->void_on[p][k] += on;
+                von += on;
+            }
+            out->void_some[p] += von > 0 && von < B.b.void_n[p];
             out->floor_on[p] += B.b.floor_v[p] > 0 && (mk ? mk->floor_on[p] : uf);
-            out->d_on[p] += mk && mk->d_on[p];
+            const bool don = mk && mk->d_on[p];
+            out->d_on[p] += don;
             bool vb = false, db = false;
             for (int j = B.b.pinned_n[p]; j < world->players[p].hand_count; j++) {
                 const Card c = world->players[p].hand[j];
@@ -2894,7 +2911,9 @@ void og_fusion_probe(const Game *g, int bot_idx, int worlds, OgFusionProbe *out)
                 db |= og_d_forbidden(&B, g, p, c);
             }
             out->void_broken[p] += vb;
+            out->void_broken_on[p] += vb && B.b.void_n[p] > 0 && von == B.b.void_n[p];
             out->d_broken[p] += db;
+            out->d_broken_on[p] += db && don;
         }
     }
     og_fu = NULL;

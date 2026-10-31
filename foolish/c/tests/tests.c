@@ -2718,6 +2718,402 @@ static void test_fusion_shadow_selection(void) {
     CHECK(overruled > 0 && st.overruled == overruled,
           "the overrules are bar 0's alone: an unreachable bar never overrules");
 }
+// ---- fusion's belief research knobs (FUSION.md "Belief research knobs") ----
+//
+// The scan reads the log and the board's counts, so these tests write the log
+// by hand (FxLog): every hand count follows the log the way og_build_belief
+// counts it, the deck is what the 36 cards leave, and the deciding seat's hand
+// is cards no record names. og_fusion_probe then reports the belief fusion
+// builds under the FUSION_* knobs and what its sampled worlds applied.
+typedef struct {
+    Game *g;
+    Card  atk[MAX_BATTLES], def[MAX_BATTLES];
+    int   nb;
+    int   disc;
+} FxLog;
+
+static Card fxc(int suit, int value) { Card c = { (int8_t)suit, (int8_t)value }; return c; }
+
+static void fx_begin(FxLog *x, Game *g, int np, int trump) {
+    memset(g, 0, sizeof *g);
+    memset(x, 0, sizeof *x);
+    x->g = g;
+    g->status = GAME_STATUS_PLAYING;
+    g->num_players = (int8_t)np;
+    g->power_suit = (int8_t)trump;
+    g->first_attacker = 0;
+    g->defender = 1;
+    for (int i = 0; i < np; i++) {
+        g->players[i].status = PLAYER_STATUS_IN;
+        g->players[i].hand_count = CARDS_PER_PLAYER;
+    }
+}
+static GameLog *fx_log(FxLog *x, int type, int p) {
+    GameLog *L = &x->g->logs[x->g->num_logs++];
+    memset(L, 0, sizeof *L);
+    L->log_type = (int8_t)type;
+    L->player_idx = (int8_t)p;
+    L->defender_index = -1;
+    return L;
+}
+static void fx_attack(FxLog *x, int p, Card c) {
+    GameLog *L = fx_log(x, LOG_ATTACK, p);
+    L->num_pairs = 1;
+    L->pairs[0].primary = c;
+    L->pairs[0].target = CARD_NONE;
+    x->g->players[p].hand_count--;
+    x->atk[x->nb] = c;
+    x->def[x->nb++] = CARD_NONE;
+}
+static void fx_cover(FxLog *x, int p, Card c, Card target) {
+    GameLog *L = fx_log(x, LOG_COVER, p);
+    L->num_pairs = 1;
+    L->pairs[0].primary = c;
+    L->pairs[0].target = target;
+    x->g->players[p].hand_count--;
+    for (int i = 0; i < x->nb; i++) if (card_eq(x->atk[i], target)) x->def[i] = c;
+}
+static void fx_good(FxLog *x, int p) { (void)fx_log(x, LOG_GOOD, p); }
+static void fx_defender(FxLog *x, int d) { fx_log(x, LOG_DEFENDER_CHANGE, -1)->defender_index = (int8_t)d; }
+static void fx_pickup(FxLog *x, int p) {
+    (void)fx_log(x, LOG_PICKUP, p);
+    for (int i = 0; i < x->nb; i++) x->g->players[p].hand_count += 1 + !card_is_none(x->def[i]);
+    x->nb = 0;
+}
+static void fx_discard(FxLog *x) {
+    (void)fx_log(x, LOG_DISCARD, -1);
+    for (int i = 0; i < x->nb; i++) x->disc += 1 + !card_is_none(x->def[i]);
+    x->g->discard_pile_length = (int16_t)x->disc;
+    x->nb = 0;
+}
+static void fx_draw(FxLog *x, int p, int n) {
+    GameLog *L = fx_log(x, LOG_DRAW, p);
+    L->num_pairs = (int8_t)n;
+    for (int i = 0; i < n; i++) { L->pairs[i].primary = CARD_HIDDEN; L->pairs[i].target = CARD_NONE; }
+    x->g->players[p].hand_count = (int8_t)(x->g->players[p].hand_count + n);
+}
+// The board: the open battles on the table, the deciding seat's hand from
+// cards no record names, and the deck the rest of the 36 cards.
+static void fx_end(FxLog *x, int bot) {
+    Game *g = x->g;
+    g->num_battles = (int8_t)x->nb;
+    for (int i = 0; i < x->nb; i++) { g->table_battles[i].attack = x->atk[i]; g->table_battles[i].defense = x->def[i]; }
+    int k = 0;
+    for (int s = 0; s < 4 && k < g->players[bot].hand_count; s++) {
+        for (int v = MIN_VALUE_SMALL; v <= ACE_VALUE && k < g->players[bot].hand_count; v++) {
+            const Card c = fxc(s, v);
+            int named = 0;
+            for (int i = 0; i < g->num_logs && !named; i++)
+                for (int j = 0; j < g->logs[i].num_pairs; j++)
+                    if (card_eq(g->logs[i].pairs[j].primary, c)) named = 1;
+            if (!named) g->players[bot].hand[k++] = c;
+        }
+    }
+    int held = 0;
+    for (int i = 0; i < g->num_players; i++) held += g->players[i].hand_count;
+    int table = 0;
+    for (int i = 0; i < x->nb; i++) table += 1 + !card_is_none(x->def[i]);
+    g->deck_count = (int16_t)(36 - held - table - x->disc);
+}
+
+// FUSION_TOLD_MOD (B). Seat 1 picks up 9H (a void: nothing beats it), covers
+// with 10H (which beats 9H: the void tell, so seat 1 is told) and picks up JD
+// (a second void, after the tell); seat 2 picks up 6C, untold. With the knob
+// off the told seat's voids are dropped (octogen's OG_ADAPT); at 4 it keeps both
+// and the worlds apply them, together, in about 1 of 4, while the untold seat
+// keeps its exact 3 of 4; a world that applies them deals no card they forbid.
+//
+// Mutations that must turn it red: drop the told_mod guard in og_build_belief's
+// adapt block (the voids are dropped at 4: "keeps"); make og_fu_world's told_on
+// always true (the rate check); have og_sample_world ignore og_wmask (a world
+// that applies the voids deals a forbidden card: broken_on).
+static void fx_told_log(FxLog *x, Game *g) {
+    fx_begin(x, g, 3, SUIT_SPADES);
+    fx_defender(x, 1);
+    fx_attack(x, 2, fxc(SUIT_HEARTS, 8));
+    fx_pickup(x, 1);
+    fx_attack(x, 2, fxc(SUIT_HEARTS, 7));
+    fx_cover(x, 1, fxc(SUIT_HEARTS, 9), fxc(SUIT_HEARTS, 7));
+    fx_discard(x);
+    fx_attack(x, 2, fxc(SUIT_DIAMONDS, 10));
+    fx_pickup(x, 1);
+    fx_defender(x, 2);
+    fx_attack(x, 1, fxc(SUIT_CLUBS, 5));
+    fx_pickup(x, 2);
+    fx_end(x, 0);
+}
+static void test_fusion_told_mod(void) {
+    static Game g;
+    FxLog x;
+    OgFusionProbe pr;
+    const int W = 400;
+    fx_told_log(&x, &g);
+    random_strategy_set_seed(11);
+    og_fusion_probe(&g, 0, W, &pr);
+    CHECK(pr.told[1] && !pr.told[2], "B: the void tell marks seat 1, not seat 2");
+    CHECK(pr.void_n[1] == 0 && pr.void_n[2] == 1 && pr.void_on[2][0] == 300,
+          "B off: the told seat's voids are dropped, the untold seat's apply in exactly 3 of 4 worlds");
+    setenv("FUSION_TOLD_MOD", "4", 1);
+    random_strategy_set_seed(11);
+    og_fusion_probe(&g, 0, W, &pr);
+    unsetenv("FUSION_TOLD_MOD");
+    if (getenv("FU_TRACE"))
+        fprintf(stderr, "  told_mod 4: told seat voids on %d/%d, broken %d, broken_on %d; untold %d\n",
+                pr.void_on[1][0], W, pr.void_broken[1], pr.void_broken_on[1], pr.void_on[2][0]);
+    CHECK(pr.told[1] && pr.void_n[1] == 2, "B at 4: the told seat keeps both voids, the one inferred after the tell too");
+    CHECK(pr.void_on[1][0] >= 70 && pr.void_on[1][0] <= 130 && pr.void_on[1][0] == pr.void_on[1][1],
+          "B at 4: the worlds apply the told seat's voids together in about 1 of 4");
+    CHECK(pr.void_broken_on[1] == 0 && pr.void_broken[1] > W / 2,
+          "B at 4: a world that applies them deals no card they forbid, the others do");
+    CHECK(pr.void_n[2] == 1 && pr.void_on[2][0] == 300, "B at 4: the untold seat keeps its exact 3 of 4");
+}
+
+// FUSION_A. Seat 1 picks up 9H (pinned) and then picks up 8H, which the pinned
+// 9H covers: a tell under A. Seat 2 picks up 7D (pinned) and later covers a lone
+// 7C while seat 0 has room for a transfer: a tell under A (it could have
+// passed with its 7D). Not at a podkidnoy table, where there is no transfer,
+// and not when the board's hand counts disagree with the log's (the transfer
+// tell rests on them); the cover tell needs no count and stays. A told seat
+// then goes through B: its voids are dropped at FUSION_TOLD_MOD 0.
+//
+// Mutations that must turn it red: drop the pickup check (seat 1 untold under
+// A); drop the transfer check, or a_xfer's merge (seat 2 untold); drop
+// og_xfer_legal's game_pass_allowed test (podkidnoy tells); drop the counts_ok
+// test on a_xfer (the tampered board tells).
+static void fx_a_log(FxLog *x, Game *g, int rules, int tamper) {
+    fx_begin(x, g, 3, SUIT_SPADES);
+    g->rules = (int8_t)rules;
+    fx_defender(x, 1);
+    fx_attack(x, 2, fxc(SUIT_HEARTS, 8));
+    fx_pickup(x, 1);
+    fx_attack(x, 2, fxc(SUIT_HEARTS, 7));
+    fx_pickup(x, 1);
+    fx_defender(x, 2);
+    fx_attack(x, 0, fxc(SUIT_DIAMONDS, 6));
+    fx_pickup(x, 2);
+    fx_attack(x, 1, fxc(SUIT_CLUBS, 6));
+    fx_cover(x, 2, fxc(SUIT_CLUBS, 11), fxc(SUIT_CLUBS, 6));
+    fx_discard(x);
+    fx_end(x, 0);
+    if (tamper) { g->players[2].hand_count++; g->deck_count--; }
+}
+static void test_fusion_pinned_tell(void) {
+    static Game g;
+    FxLog x;
+    OgFusionProbe pr;
+    fx_a_log(&x, &g, 0, 0);
+    og_fusion_probe(&g, 0, 0, &pr);
+    CHECK(!pr.told[1] && !pr.told[2] && pr.void_n[1] == 2, "A off: no tell, seat 1 keeps its two voids");
+    setenv("FUSION_A", "1", 1);
+    og_fusion_probe(&g, 0, 0, &pr);
+    CHECK(pr.told[1], "A: a pickup the pinned 9H could have covered marks the seat told");
+    CHECK(pr.told[2], "A: a cover where the pinned 7D could have transferred marks the seat told");
+    CHECK(pr.void_n[1] == 0, "A's tell goes through B: at FUSION_TOLD_MOD 0 the told seat's voids are dropped");
+    setenv("FUSION_TOLD_MOD", "3", 1);
+    og_fusion_probe(&g, 0, 0, &pr);
+    unsetenv("FUSION_TOLD_MOD");
+    CHECK(pr.told[1] && pr.void_n[1] == 2, "and at FUSION_TOLD_MOD 3 it keeps them");
+    fx_a_log(&x, &g, GAME_RULE_NO_PASS, 0);
+    og_fusion_probe(&g, 0, 0, &pr);
+    CHECK(pr.told[1] && !pr.told[2], "A at a podkidnoy table: no transfer, so no transfer tell");
+    fx_a_log(&x, &g, 0, 1);
+    og_fusion_probe(&g, 0, 0, &pr);
+    unsetenv("FUSION_A");
+    CHECK(pr.told[1] && !pr.told[2], "A: counts the board contradicts keep no transfer tell, the cover tell stays");
+}
+
+// FUSION_INDEP and the keep rates. Seat 1 picks up 9H and JD (two voids, no
+// draw between), seat 2 led a lone 9H at three seats (a floor). At the defaults
+// the voids go all or none, in exactly 3 of 4 worlds, the floor in exactly 1 of
+// 2; FUSION_VOID_KEEP=500 and FUSION_FLOOR_KEEP=250 move the exact counts; under
+// FUSION_INDEP each void is its own draw at its rate, so some worlds keep one
+// and drop the other.
+//
+// Mutations that must turn it red: ignore indep in og_fu_world (no world keeps
+// one void alone); hash every void of a seat alike (the same); have
+// og_keep_at keep num/den by floor instead of ceil (the default counts move:
+// octogen's schedule is lost); read FUSION_VOID_KEEP and ignore it (the 500
+// count).
+static void test_fusion_indep_and_keep(void) {
+    static Game g;
+    FxLog x;
+    OgFusionProbe pr;
+    const int W = 400;
+    fx_begin(&x, &g, 3, SUIT_SPADES);
+    fx_defender(&x, 1);
+    fx_attack(&x, 2, fxc(SUIT_HEARTS, 8));
+    fx_pickup(&x, 1);
+    fx_attack(&x, 2, fxc(SUIT_DIAMONDS, 10));
+    fx_pickup(&x, 1);
+    fx_end(&x, 0);
+    random_strategy_set_seed(5);
+    og_fusion_probe(&g, 0, W, &pr);
+    CHECK(pr.void_n[1] == 2 && pr.void_on[1][0] == 300 && pr.void_on[1][1] == 300 && pr.void_some[1] == 0,
+          "keep: at the defaults both voids go together, in exactly 3 of 4 worlds");
+    CHECK(pr.floor_v[2] > 0 && pr.floor_on[2] == 200, "keep: the floor in exactly 1 of 2");
+    setenv("FUSION_VOID_KEEP", "500", 1);
+    setenv("FUSION_FLOOR_KEEP", "250", 1);
+    og_fusion_probe(&g, 0, W, &pr);
+    CHECK(pr.void_on[1][0] == 200 && pr.void_on[1][1] == 200 && pr.void_some[1] == 0 && pr.floor_on[2] == 100,
+          "keep: FUSION_VOID_KEEP=500 and FUSION_FLOOR_KEEP=250 keep exactly half and a quarter");
+    unsetenv("FUSION_VOID_KEEP");
+    unsetenv("FUSION_FLOOR_KEEP");
+    setenv("FUSION_INDEP", "1", 1);
+    og_fusion_probe(&g, 0, W, &pr);
+    unsetenv("FUSION_INDEP");
+    if (getenv("FU_TRACE"))
+        fprintf(stderr, "  indep: voids on %d and %d of %d, one alone in %d, floor %d\n",
+                pr.void_on[1][0], pr.void_on[1][1], W, pr.void_some[1], pr.floor_on[2]);
+    CHECK(pr.void_some[1] >= 100 && pr.void_some[1] <= 200,
+          "indep: each void is its own draw, so about 3 worlds in 8 keep one of the two");
+    CHECK(pr.void_on[1][0] >= 255 && pr.void_on[1][0] <= 345 && pr.void_on[1][1] >= 255 && pr.void_on[1][1] <= 345
+          && pr.floor_on[2] >= 160 && pr.floor_on[2] <= 240,
+          "indep: at the keep rates, 3 of 4 for a void and 1 of 2 for the floor");
+    CHECK(pr.void_broken_on[1] == 0, "indep: a world that keeps both voids deals no card they forbid");
+}
+
+// FUSION_D, each rule recorded and its tell. Seat 0 leads a lone 8C at seat 1
+// (D4: no second non-trump 8, seat 1 had room for two), seat 1 covers it with
+// 10C while seat 2 had room for a transfer (D1: no 8 at all), seat 0 says good
+// while seat 1 could take one more (D2: no non-trump 8 or 10). Each bit records
+// only its rule; the worlds apply them in exactly 3 of 4 (FUSION_D_MOD 4; 2 at
+// 2), and a world that applies them deals none of those cards. Then seat 0
+// leads 8H at seat 2 and seat 1 throws in 8D: each play is a card its
+// constraint forbids, a D tell; a draw before them ends the constraints instead.
+//
+// Mutations that must turn it red: drop any one rule's record (its check);
+// drop og_fu_d_tell's call in the attack loop (D2 and D4's tells) or the cover
+// loop (D1's); let a draw keep the D constraints (the expiry check); have
+// og_sample_world's mask repair skip d_on (broken_on); read FUSION_D_MOD and
+// ignore it (the 2 count).
+static void fx_d_log(FxLog *x, Game *g, int tell, int draw) {
+    fx_begin(x, g, 3, SUIT_SPADES);
+    fx_defender(x, 1);
+    fx_attack(x, 0, fxc(SUIT_CLUBS, 7));
+    fx_cover(x, 1, fxc(SUIT_CLUBS, 9), fxc(SUIT_CLUBS, 7));
+    fx_good(x, 0);
+    fx_discard(x);
+    if (draw) { fx_draw(x, 0, 1); fx_draw(x, 1, 1); }
+    if (tell) {
+        fx_defender(x, 2);
+        fx_attack(x, 0, fxc(SUIT_HEARTS, 7));
+        fx_cover(x, 2, fxc(SUIT_HEARTS, 10), fxc(SUIT_HEARTS, 7));
+        fx_attack(x, 1, fxc(SUIT_DIAMONDS, 7));
+        fx_cover(x, 2, fxc(SUIT_DIAMONDS, 10), fxc(SUIT_DIAMONDS, 7));
+        fx_discard(x);
+    }
+    fx_end(x, 2);
+}
+static void test_fusion_d_rules(void) {
+    static Game g;
+    FxLog x;
+    OgFusionProbe pr;
+    const int W = 400;
+    const uint16_t b8 = 1u << 7, b10 = 1u << 9;
+    fx_d_log(&x, &g, 0, 0);
+    og_fusion_probe(&g, 2, W, &pr);
+    CHECK(!pr.d1v[1] && !pr.d2v[0] && !pr.d4v[0] && pr.d_on[1] == 0, "D off: no constraint, no world applies one");
+    setenv("FUSION_D", "1", 1);
+    og_fusion_probe(&g, 2, W, &pr);
+    CHECK(pr.d1v[1] == b8 && !pr.d2v[0] && !pr.d4v[0], "D1: a cover where a transfer was legal: seat 1 holds no 8");
+    CHECK(pr.d_on[1] == 300 && pr.d_broken_on[1] == 0 && pr.d_broken[1] > 0,
+          "D1: applied in exactly 3 of 4 worlds, and those deal seat 1 no 8");
+    setenv("FUSION_D_MOD", "2", 1);
+    og_fusion_probe(&g, 2, W, &pr);
+    unsetenv("FUSION_D_MOD");
+    CHECK(pr.d_on[1] == 200, "D: FUSION_D_MOD=2 applies them in 1 of 2");
+    setenv("FUSION_D", "2", 1);
+    og_fusion_probe(&g, 2, W, &pr);
+    CHECK(pr.d2v[0] == (b8 | b10) && !pr.d1v[1] && !pr.d4v[0], "D2: good over a table seat 0 could throw on: no non-trump 8 or 10");
+    setenv("FUSION_D", "4", 1);
+    og_fusion_probe(&g, 2, W, &pr);
+    CHECK(pr.d4v[0] == b8 && !pr.d1v[1] && !pr.d2v[0], "D4: a lone 8C where two fit: no second non-trump 8");
+    // The tells, one rule at a time.
+    fx_d_log(&x, &g, 1, 0);
+    setenv("FUSION_D", "1", 1);
+    og_fusion_probe(&g, 2, 0, &pr);
+    CHECK(pr.d_distrust[1] && !pr.d1v[1], "D1's tell: seat 1 throws in an 8, its D constraints are gone for the game");
+    setenv("FUSION_D", "2", 1);
+    og_fusion_probe(&g, 2, 0, &pr);
+    CHECK(pr.d_distrust[0] && !pr.d2v[0] && !pr.d_distrust[1], "D2's tell: seat 0 leads a non-trump 8");
+    setenv("FUSION_D", "4", 1);
+    og_fusion_probe(&g, 2, 0, &pr);
+    CHECK(pr.d_distrust[0] && !pr.d4v[0], "D4's tell: the same lead, a second non-trump 8");
+    // A draw ends the constraints first: the same plays are no tell.
+    fx_d_log(&x, &g, 1, 1);
+    setenv("FUSION_D", "7", 1);
+    og_fusion_probe(&g, 2, 0, &pr);
+    unsetenv("FUSION_D");
+    CHECK(!pr.d_distrust[0] && !pr.d_distrust[1], "D: a draw ends the constraints, so the later 8s are no tell");
+}
+
+// Against handwritten seats the D rules and A's tells are sound: over random
+// 3- and 4-seat games of a random seat 0 against handwritten_prod seats, at
+// every seat-0 decision, no handwritten seat is ever caught by a D tell or told
+// by A, and no handwritten hand holds a card its D constraints forbid (but the
+// pinned ones, which a pickup gained publicly); every rule records somewhere.
+// Against random seats the D tells and A's tells fire.
+//
+// Mutations that must turn it red: drop og_xfer_legal's receiver capacity test
+// (D1 records where no transfer was legal: a hand breaks it); drop D2's
+// capacity test (the same for D2); drop D4's room-for-two test (the same for
+// D4); record D2 over trump table values (a held trump breaks it).
+static void test_fusion_d_sound_vs_handwritten(void) {
+    static LegalMoves m;
+    long rec1 = 0, rec2 = 0, rec4 = 0, broken = 0, hw_tells = 0, a_tells = 0, rnd_tells = 0, rnd_a = 0, looks = 0;
+    for (int field = 0; field < 2; field++) {
+        const int opp = field == 0 ? STRAT_HANDWRITTEN_PROD : STRAT_RANDOM;
+        for (int gi = 0; gi < 40; gi++) {
+            Game g;
+            const int np = 3 + gi % 2;
+            make_seeded_game(&g, np, 300 + gi + 100 * field);
+            for (int step = 0; step < 400 && game_done(&g) < 0; step++) {
+                int acted = 0;
+                for (int pi = 0; pi < g.num_players && !acted; pi++) {
+                    if (!should_bot_act(&g, pi)) continue;
+                    calculate_legal_moves(&g, pi, &m);
+                    if (m.n == 0) continue;
+                    if (pi == 0) {
+                        OgFusionProbe d, a0;
+                        setenv("FUSION_D", "7", 1);
+                        setenv("FUSION_A", "1", 1);
+                        og_fusion_probe(&g, 0, 0, &d);
+                        unsetenv("FUSION_D");
+                        unsetenv("FUSION_A");
+                        og_fusion_probe(&g, 0, 0, &a0);
+                        looks++;
+                        for (int p = 1; p < g.num_players; p++) {
+                            if (field == 1) { rnd_tells += d.d_distrust[p]; rnd_a += d.told[p] != a0.told[p]; continue; }
+                            rec1 += d.d1v[p] != 0;
+                            rec2 += d.d2v[p] != 0;
+                            rec4 += d.d4v[p] != 0;
+                            hw_tells += d.d_distrust[p];
+                            a_tells += d.told[p] != a0.told[p];
+                            for (int j = 0; j < g.players[p].hand_count; j++) {
+                                const Card c = g.players[p].hand[j];
+                                if (bot_set_contains(d.pinned[p], d.pinned_n[p], c)) continue;   // gained publicly
+                                const uint16_t bit = (uint16_t)(1u << c.value);
+                                if ((d.d1v[p] & bit) || (c.suit != g.power_suit && ((d.d2v[p] | d.d4v[p]) & bit)))
+                                    broken++;
+                            }
+                        }
+                    }
+                    const int pick = pi == 0 ? strategy_choose(STRAT_RANDOM, &g, pi, &m)
+                                             : strategy_choose(opp, &g, pi, &m);
+                    acted = legal_move_apply(&g, pi, &m.moves[(pick >= 0 && pick < m.n) ? pick : 0]);
+                }
+                if (!acted) break;
+            }
+        }
+    }
+    if (getenv("FU_TRACE"))
+        fprintf(stderr, "  D vs handwritten: %ld looks; recorded D1 %ld, D2 %ld, D4 %ld; broken %ld, tells %ld, A %ld; random seats' tells %ld, A %ld\n",
+                looks, rec1, rec2, rec4, broken, hw_tells, a_tells, rnd_tells, rnd_a);
+    CHECK(rec1 > 0 && rec2 > 0 && rec4 > 0, "D vs handwritten: every rule records somewhere");
+    CHECK(broken == 0, "D vs handwritten: no handwritten hand holds a card its D constraints forbid");
+    CHECK(hw_tells == 0 && a_tells == 0, "D vs handwritten: no D tell and no A tell ever catches a handwritten seat");
+    CHECK(rnd_tells > 0 && rnd_a > 0, "D vs random seats: the D tells and A's tells fire");
+}
 #endif  // CD_ROLLOUT_NOISE
 
 /* ---------------- base32 over long inputs ------------------------------- */
@@ -22018,6 +22414,11 @@ int main(void) {
     test_fusion_void_mixture();
     test_fusion_shadow_rule();
     test_fusion_shadow_selection();
+    test_fusion_told_mod();
+    test_fusion_pinned_tell();
+    test_fusion_indep_and_keep();
+    test_fusion_d_rules();
+    test_fusion_d_sound_vs_handwritten();
 #endif
 
     test_deal_rng_kat();

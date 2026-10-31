@@ -36,13 +36,18 @@ void          og_fusion_stats_reset(void);
 int fusion_x_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 // Fusion's belief at a decision, under the FUSION_* knobs, and what `worlds` of
 // its sampled worlds applied and dealt (a test seam; octogen_strategy.c
-// og_fusion_probe). Per seat: the voids, floor and tell the scan ended with,
+// og_fusion_probe). Per seat: the pinned cards, the voids, floor and tell the
+// scan ended with,
 // the D constraints (value masks: d1v no card of the value, d2v / d4v no
 // non-trump of it) and the D tell; per world counts: worlds applying each void,
-// the floor, the D constraints, and worlds whose deal gave the seat an unknown
-// card one of its voids (void_broken) or D constraints (d_broken) forbids.
+// some but not all of its voids (void_some), the floor, the D constraints, and
+// worlds whose deal gave the seat an unknown card one of its voids
+// (void_broken; void_broken_on among the worlds applying them all) or its D
+// constraints (d_broken; d_broken_on among the worlds applying them) forbids.
 #define OG_PROBE_VOIDS 6
 typedef struct {
+    int  pinned_n[MAX_PLAYERS];
+    Card pinned[MAX_PLAYERS][MAX_HAND_SIZE];
     int  void_n[MAX_PLAYERS];
     Card voids[MAX_PLAYERS][OG_PROBE_VOIDS];
     int  floor_v[MAX_PLAYERS];
@@ -52,7 +57,9 @@ typedef struct {
     int  worlds;
     int  void_on[MAX_PLAYERS][OG_PROBE_VOIDS];
     int  floor_on[MAX_PLAYERS], d_on[MAX_PLAYERS];
-    int  void_broken[MAX_PLAYERS], d_broken[MAX_PLAYERS];
+    int  void_some[MAX_PLAYERS];
+    int  void_broken[MAX_PLAYERS], void_broken_on[MAX_PLAYERS];
+    int  d_broken[MAX_PLAYERS], d_broken_on[MAX_PLAYERS];
 } OgFusionProbe;
 void og_fusion_probe(const Game *g, int bot_idx, int worlds, OgFusionProbe *out);
 
