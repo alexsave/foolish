@@ -6,6 +6,8 @@ export type { Language };
 interface LocalizationContextType {
     language: Language;
     setLanguage: (lang: Language) => void;
+    /** Shows `lang` now, and keeps it as the visitor's language only if they have not chosen one (a promo code's). */
+    visitLanguage: (lang: Language) => void;
     t: (stringId: StringId, params?: Record<string, string>) => string;
     /** Every language c/i18n declares, each naming itself. */
     languages: typeof LANGUAGES;
@@ -48,11 +50,16 @@ export const LocalizationProvider = ({ children }: { children: ReactNode }) => {
         localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
     };
 
+    const visitLanguage = (lang: Language) => {
+        setLanguageState(lang);
+        if (!localStorage.getItem(LANGUAGE_STORAGE_KEY)) localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+    };
+
     const t = (stringId: StringId, params?: Record<string, string>): string =>
         translate(table, stringId, params);
 
     return (
-        <LocalizationContext.Provider value={{ language, setLanguage, t, languages: LANGUAGES }}>
+        <LocalizationContext.Provider value={{ language, setLanguage, visitLanguage, t, languages: LANGUAGES }}>
             {children}
         </LocalizationContext.Provider>
     );

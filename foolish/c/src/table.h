@@ -543,6 +543,10 @@ int table_set_session_log(Table *t, const uint8_t *log, int len);
 // Returns the actions applied (0 means nothing to commit), TABLE_E_WIRE for a
 // malformed prefs blob, TABLE_E_NOT_LOADED.
 int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actions, BotDriveOut *out);
+// table_bot_drive with the chooser named (bot_drive.h bot_drive_with): table_bot_drive is this
+// with bot_drive_roster_choose. For a host that links fewer brains than the roster (local_table.h).
+int table_bot_drive_with(Table *t, BotDriveChoose choose, const uint8_t *prefs, int prefs_len, int max_actions,
+                         BotDriveOut *out);
 
 // The preferred moves to offer a retry of this cycle: the ones the drive was
 // offered, overlaid with what it applied (one per seat, the latest winning).

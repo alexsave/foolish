@@ -92,8 +92,12 @@ KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/re
 # What only host programs add (the arenas, the CLIs, the tests, the research
 # tools): the offline play-to-the-end loop. No shipped module carries it.
 HOST_ONLY_SRC := src/bot_play.c
+# The browser's own host: a game against a bot played in the tab, with no
+# server (src/local_table.h). web.wasm and the native tests link it; a host that
+# serves games does not, so it is not in KERNEL_SRC (print-kernel).
+BROWSER_HOST_SRC := src/local_table.c
 # Linked into every binary built here.
-CORE_SRC := $(KERNEL_SRC) $(HOST_ONLY_SRC)
+CORE_SRC := $(KERNEL_SRC) $(HOST_ONLY_SRC) $(BROWSER_HOST_SRC)
 # Where each becomes an object: build/obj/host/<the source's own path>.o, the
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
@@ -1153,6 +1157,14 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version -Wl,--export=wasm_client_board_keep \
   -Wl,--export=wasm_client_plan_step_ptr -Wl,--export=wasm_client_plan_step -Wl,--export=wasm_client_plan
 
+# The browser's local table (src/local_table.h, wasm/wasm_local_api.c), web.wasm
+# only: a promo visitor's game against a bot, hosted in the tab. Everything it
+# hands out is the human seat's (an envelope, a cast, an action response).
+WASM_LOCAL_EXPORTS := \
+  -Wl,--export=wasm_local_open -Wl,--export=wasm_local_view -Wl,--export=wasm_local_start \
+  -Wl,--export=wasm_local_action -Wl,--export=wasm_local_ask \
+  -Wl,--export=wasm_local_bot_wait -Wl,--export=wasm_local_bot -Wl,--export=wasm_local_cast
+
 # A replay's recorded decision as the Oracle imports it, and a code at a glance
 # (src/replay_steps.h, wasm/wasm_bots_api.c), web.wasm and the test build: the web page builds
 # the Oracle's job and hands the bytes to oracle.wasm, which only imports them, so
@@ -1173,7 +1185,7 @@ WASM_REPLAY_WEB_EXPORTS := \
 # table host (tests/table_host.c), which calls the same entry files natively.
 # Nothing loads a whole-kernel wasm module any more.
 WASM_BOTS_ALL_EXPORTS = $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
-                        $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
+                        $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) $(WASM_LOCAL_EXPORTS)
 
 # The small-memory flag set the iMessage module (wasm-msg below) is built from.
 # It was rules.wasm's, which the web no longer loads: the browser reads web.wasm,
@@ -1360,9 +1372,10 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/
                 src/bots.c src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
                 src/hand_layout.c \
                 src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c \
+                $(BROWSER_HOST_SRC) \
                 $(SHARED)/wasm/libc.c $(SHARED)/wasm/bump_alloc.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c \
-                wasm/wasm_net_api.c
+                wasm/wasm_net_api.c wasm/wasm_local_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
 # core is built at -O3, everything else at -Oz. -O3 on those five files cuts the
@@ -1508,7 +1521,7 @@ WASM_WEB_NAMES := \
 # Picked OUT of the whole list rather than spelled a second time, so a name
 # the browser's module exports is one the bots objects define under that list's
 # meaning - never a second export surface with a second meaning.
-WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
+WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) $(WASM_LOCAL_EXPORTS) \
                    $(filter $(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)),$(WASM_BOTS_ALL_EXPORTS))
 
 # AND THE GATE ON THE FILTER ITSELF. $(filter) over a name the whole list does

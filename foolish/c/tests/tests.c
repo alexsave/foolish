@@ -28,6 +28,7 @@
 #include "../src/roster.h"
 #include "../src/table.h"
 #include "../src/client_table.h"
+#include "../src/local_table.h"
 #include "../src/msg_wire.h"   // msg_lobby_can_set_rules, the iMessage spelling of the lobby rule
 #include "../src/hand_layout.h"
 #include "../wasm/wire.h"
@@ -21666,6 +21667,135 @@ static void test_fm_exp(void) {
     CHECK(edges_ok, "fm_exp: +-0, the clamps, +-inf and the reduction edges give the documented bits");
 }
 
+// ---- the browser's local game (local_table.h) ------------------------------------
+//
+// A promo visitor plays one bot in the tab, with no server: the table is the
+// server's own Table, hosted by local_table.c, and what reaches the page is read
+// by the client slot exactly as a served game's bytes are. Played to its end
+// here, every byte the page would get is read by the client slot as the page
+// reads it.
+
+static LocalTable lt_table;
+static Game lt_game;
+static TableSnaps lt_snaps;
+static uint8_t lt_out[1 << 16];
+
+// The human's view of what the table just handed out: the cast, opened against
+// the identity the envelope gave, read to its final board.
+static int lt_read_cast(uint32_t want_version) {
+    const int n = local_table_cast(&lt_table, lt_out, sizeof lt_out);
+    if (n <= 0) return 0;
+    const int idn = client_identity(&ct, ct_id, sizeof ct_id);
+    if (client_cast_open(&ct, lt_out, n, ct_id, idn, 0, 0) != CLIENT_OK) return -1;
+    int r;
+    while ((r = client_push_next(&ct)) == 1) {}
+    if (r != 0 || client_push_final(&ct) != CLIENT_OK) return -1;
+    return ct.view.version == want_version && ct.view.my_seat == 0 ? 1 : -1;
+}
+
+// The human's move: the first legal one on the resident board (the table's, as
+// the last operation left it), as the page would send it.
+static int lt_human_request(uint8_t *req, int cap) {
+    if (!should_bot_act(&lt_game, 0)) return 0;
+    LegalMoves lm;
+    calculate_legal_moves(&lt_game, 0, &lm);
+    if (lm.n == 0) return 0;
+    const LegalMove *m = &lm.moves[0];
+    AwireAction a;
+    memset(&a, 0, sizeof a);
+    a.kind = m->type; a.n = m->n_cards;
+    for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+    const int gl = lt_table.gid_len;
+    memcpy(req, lt_table.gid, (size_t)gl);
+    const int wl = awire_encode(&a, req + gl, cap - gl);
+    if (wl <= 0) return -1;
+    return table_request_encode(req, cap, gl, wl, true, lt_table.version);
+}
+
+static void test_local_table_plays_a_game(void) {
+    // The one constant is the roster's own brain, and its chooser the roster's.
+    CHECK(bot_choose(LOCAL_BOT_STRAT) == LOCAL_BOT_CHOOSE && bot_def(LOCAL_BOT_STRAT)->key != NULL,
+          "the local bot's chooser is the roster's for its brain");
+
+    uint8_t seed[FOOLISH_SEED_LEN];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (uint8_t)(7 * i + 3);
+    int64_t now = 1700000000000LL;
+    CHECK(local_table_open(&lt_table, &lt_game, &lt_snaps, RS("br"), seed, RS("You"), now) == TABLE_OK,
+          "a local table opens");
+    CHECK(local_table_cast(&lt_table, lt_out, sizeof lt_out) == 0, "opening casts nothing: the page reads its envelope");
+    client_init(&ct, &ct_slot);
+    int n = local_table_envelope(&lt_table, ct_env, sizeof ct_env);
+    CHECK(n > 0 && client_adopt_envelope(&ct, ct_env, n) == CLIENT_OK, "its envelope reads");
+    CHECK(ct.view.my_seat == 0 && ct.view.num_players == 2 && ct.view.status == GAME_STATUS_WAITING
+          && !ct.view.seats[0].is_ai && ct.view.seats[1].is_ai && ct.view.version == 1
+          && strcmp(ct.view.seats[1].name, "%Miami 1") == 0 && ct.view.gid_len == 2 && memcmp(ct.view.game_id, "br", 2) == 0,
+          "the human sits in seat 0 of a lobby, the roster's bot beside them");
+    CHECK(local_table_bot_wait_ms(&lt_table, now) == -1, "the bot has nothing to do in the lobby");
+
+    CHECK(local_table_start(&lt_table, now) == TABLE_OK, "the human starts");
+    CHECK(lt_read_cast(2) == 1 && ct.view.status == GAME_STATUS_PLAYING && ct.view.my_hand_count == 6
+          && ct.view.seats[1].hand_count == 6, "the deal arrives as the human's cast, six cards each");
+    CHECK(local_table_start(&lt_table, now) == TABLE_MOOT && local_table_cast(&lt_table, lt_out, sizeof lt_out) == 0,
+          "a second start deals nothing");
+
+    // A bump is an ask that commits nothing.
+    TableAsk bump;
+    memset(&bump, 0, sizeof bump);
+    bump.kind = ASK_BUMP; bump.gid_len = 2; memcpy(bump.gid, "br", 2);
+    uint8_t ask[ASK_BYTES_MAX];
+    const int al = ask_encode(&bump, ask, sizeof ask);
+    CHECK(al > 0 && local_table_ask(&lt_table, ask, al, now) == TABLE_MOOT
+          && local_table_cast(&lt_table, lt_out, sizeof lt_out) == 0, "a bump commits nothing");
+    memcpy(bump.gid, "zz", 2);
+    CHECK(ask_encode(&bump, ask, sizeof ask) == al && local_table_ask(&lt_table, ask, al, now) == TABLE_E_NOT_SEATED,
+          "an ask for another game is not this table's");
+
+    int bot_cycles = 0, human_moves = 0, waited = 0, casts_ok = 1, step = 0;
+    uint8_t req[256];
+    for (; step < 2000 && ct.view.status == GAME_STATUS_PLAYING; step++) {
+        now += 50;
+        const int wait = local_table_bot_wait_ms(&lt_table, now);
+        if (wait > 0) { waited++; now += wait; continue; }
+        if (wait == 0) {
+            const uint32_t v = lt_table.version;
+            const int k = local_table_bot(&lt_table, now);
+            if (k <= 0) break;
+            bot_cycles++;
+            casts_ok &= lt_read_cast(v + 1) == 1;
+            continue;
+        }
+        (void)local_table_envelope(&lt_table, ct_env2, sizeof ct_env2);   // adopts: lt_game is the board now
+        const int rl = lt_human_request(req, sizeof req);
+        if (rl <= 0) break;
+        const uint32_t v = lt_table.version;
+        n = local_table_action(&lt_table, req, rl, now, lt_out, sizeof lt_out);
+        TableResponse resp;
+        if (n <= 0 || table_response_decode(lt_out, n, &resp) != 0 || resp.status != TABLE_STATUS_APPLIED
+            || resp.version != v + 1) break;
+        human_moves++;
+        casts_ok &= lt_read_cast(v + 1) == 1;
+    }
+    CHECK(ct.view.status == GAME_STATUS_GAME_OVER && ct.view.fool >= 0, "the game is played to its end");
+    CHECK(bot_cycles > 3 && human_moves > 3 && waited > 0, "both seats moved, and the bot waited on the board's clock");
+    CHECK(casts_ok, "every cast reads as the human's, at the version it committed");
+    CHECK(local_table_bot_wait_ms(&lt_table, now) == -1 && local_table_bot(&lt_table, now) == 0,
+          "a finished game leaves the bot nothing to do");
+
+    // A move after the end is moot, and commits nothing.
+    memcpy(req, "br", 2);
+    AwireAction a;
+    memset(&a, 0, sizeof a);
+    a.kind = AWIRE_GOOD;
+    const int wl = awire_encode(&a, req + 2, sizeof req - 2);
+    const int rl = table_request_encode(req, sizeof req, 2, wl, false, 0);
+    const uint32_t v = lt_table.version;
+    n = local_table_action(&lt_table, req, rl, now, lt_out, sizeof lt_out);
+    TableResponse resp;
+    CHECK(n > 0 && table_response_decode(lt_out, n, &resp) == 0 && resp.status == TABLE_STATUS_MOOT
+          && resp.version == v && local_table_cast(&lt_table, lt_out, sizeof lt_out) == 0,
+          "a move on a finished game is moot");
+}
+
 int main(void) {
 #ifdef WASM_CAPS_TESTS
     // make tests-wasm-caps: the cordite and belief-log cases under the wasm size limits only.
@@ -21946,6 +22076,7 @@ int main(void) {
     test_table_act_moot_and_stale_round();
     test_table_commit_products();
     test_table_plays_a_game_to_its_end();
+    test_local_table_plays_a_game();
     test_table_request_and_response();
     test_table_request_encode_and_response_decode();
     test_evwire_as3_split();

@@ -13,6 +13,7 @@ import { netClient, NetConst as N, type NetAction, type NetAnswer, type NetBot, 
 import { bytesToBase64, base64ToBytes } from '@sdk/ts/wire/bytes.ts';
 import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
 import { rememberUser } from './session';
+import { localBackend, type LocalBackend } from './localBackend';
 
 const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
 const SESSION_KEY = 'foolish.session';
@@ -88,6 +89,23 @@ export function sessionUser(): { id: string; username: string } | null {
     return s.signedIn ? { id: s.userId, username: s.username } : null;
 }
 
+// ---- a game played in this tab ------------------------------------------------------
+//
+// While a local game is on (a promo code, src/common/promo.ts) the kernel's
+// local table answers the game's calls below, and every other call is refused
+// before it is made: no request leaves the page (ask() and Stream.open() say
+// so). The page turns it on before it mounts the game and off when it leaves.
+let local: LocalBackend | null = null;
+
+/** Play `gameId` in this tab, the human named `you`, until the returned function is called. */
+export function playLocally(gameId: string, you: string): () => void {
+    const l = localBackend(gameId, you, (gid, cast) => { for (const s of stream.listeners) s.cast?.(gid, cast); });
+    local = l;
+    return () => { l.stop(); if (local === l) local = null; };
+}
+
+const offline = (): never => { throw new BackendError(N.ASK_WHY_REFUSED, 0, 0); };
+
 // ---- the transport loop ---------------------------------------------------------------
 
 const waiting = new Map<number, (a: NetAnswer) => void>();
@@ -129,6 +147,7 @@ function settle(a: NetAnswer): void {
 
 /** One intent, answered: its finished ticket, or a throw with the refusal. */
 async function ask(i: NetIntent): Promise<NetAnswer> {
+    if (local) offline();
     await ready();
     sessionUser();
     const t = netClient().do(i);
@@ -178,11 +197,13 @@ export async function create(): Promise<Uint8Array> {
 }
 /** An ask (ask.h, the kernel's bytes): the asker's envelope when it moved them (a join, their own leave), else null. */
 export async function meta(bytes: Uint8Array): Promise<Uint8Array | null> {
+    if (local) { const rc = local.meta(bytes); return rc < 0 ? offline() : null; }
     const a = await ask({ kind: N.NC_DO_ASK, bytes });
     return a.done.aLen ? span(a, a.done.aOff, a.done.aLen) : null;
 }
 /** A move: the kernel's action wire for `gameId`, composed against `intent` (none: -1). */
 export async function action(gameId: string, wire: Uint8Array, intent = -1): Promise<NetAction> {
+    if (local) return local.action(gameId, wire, intent);
     const { done: d } = await ask({ kind: N.NC_DO_PLAY, gid: gameId, bytes: wire, intent });
     return { status: d.actionStatus, rejectCode: d.rejectCode, version: d.version };
 }
@@ -198,12 +219,13 @@ export async function games(): Promise<Uint8Array[]> {
  * outlives the page, so it is told: netclient.h NC_DO_OPEN_GAME).
  */
 export async function view(gameId: string, holds: boolean): Promise<Uint8Array | null | 'stale'> {
+    if (local) return local.view(gameId);
     const a = await ask({ kind: N.NC_DO_OPEN_GAME, gid: gameId, flag: holds ? 0 : 1 }).catch(() => null);
     if (!a) return null;
     return a.done.stale ? 'stale' : span(a, a.done.aOff, a.done.aLen);
 }
 /** A game's chat, oldest first (members only). */
-export const chats = async (gameId: string): Promise<NetChat[]> => (await ask({ kind: N.NC_DO_CHAT_HISTORY, gid: gameId })).rows as NetChat[];
+export const chats = async (gameId: string): Promise<NetChat[]> => local ? [] : (await ask({ kind: N.NC_DO_CHAT_HISTORY, gid: gameId })).rows as NetChat[];
 export async function sendChat(gameId: string, message: string): Promise<void> {
     await ask({ kind: N.NC_DO_SEND_CHAT, gid: gameId, bytes: enc.encode(message) });
 }
@@ -256,6 +278,7 @@ class Stream {
 
     /** Hear `what` (NW_SUB_*) for `gameId` until the returned function is called. */
     hold(what: number, gameId = ''): () => void {
+        if (local) return local.hold(what, gameId);
         netClient().subscribe(what, gameId);
         this.holds++;
         this.open();
@@ -295,7 +318,7 @@ class Stream {
     }
 
     private open(): void {
-        if (this.socket || typeof WebSocket === 'undefined' || !sessionUser()) return;
+        if (local || this.socket || typeof WebSocket === 'undefined' || !sessionUser()) return;
         const url = new URL(netClient().streamPath(), BASE || window.location.origin);
         url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
         const ws = new WebSocket(url);

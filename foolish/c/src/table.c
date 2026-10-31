@@ -1071,8 +1071,13 @@ static void table_drive_seed(const Game *g, int seat, int phase) {
 }
 
 int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actions, BotDriveOut *out) {
+    return table_bot_drive_with(t, bot_drive_roster_choose, prefs, prefs_len, max_actions, out);
+}
+
+int table_bot_drive_with(Table *t, BotDriveChoose choose, const uint8_t *prefs, int prefs_len, int max_actions,
+                         BotDriveOut *out) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
-    if (!out || prefs_len < 0 || (prefs_len > 0 && !prefs)) return TABLE_E_WIRE;
+    if (!out || !choose || prefs_len < 0 || (prefs_len > 0 && !prefs)) return TABLE_E_WIRE;
     const int n_prefs = prefs_decode(t, prefs, prefs_len);
     if (n_prefs < 0) { t->n_prefs = 0; return n_prefs; }
     t->n_prefs = (int8_t)n_prefs;
@@ -1085,7 +1090,7 @@ int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actio
     t_drive_base = t->rng_base;
     t_drive_log_offset = (uint32_t)(t->log_len - t->log_start);
     bot_drive_pre_action_hook = table_drive_seed;
-    const int n = bot_drive(t->g, game_human_mask(t->g), max_actions, n_prefs ? t->prefs : 0, n_prefs, out);
+    const int n = bot_drive_with(t->g, game_human_mask(t->g), max_actions, n_prefs ? t->prefs : 0, n_prefs, choose, out);
     bot_drive_pre_action_hook = prev_seed;
     engine_snap_hook = prev_snap;
     t_capture = 0;
