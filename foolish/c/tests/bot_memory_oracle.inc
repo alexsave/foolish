@@ -132,7 +132,7 @@ static void old_bp_belief(const Game *g, int bot_idx, BotBelief *B) {
                 if (p >= 0 && p != bot_idx) {
                     // Exactly one uncovered attack => the defender held no
                     // cover for it. (Multi-attack pickups only prove "no
-                    // joint full cover" — too weak to use as a hard
+                    // joint full cover" - too weak to use as a hard
                     // constraint, so we skip those.)
                     if (unc_n == 1 && B->void_n[p] < BOT_MAX_VOIDS) {
                         B->voids[p][B->void_n[p]++] = unc[0];
@@ -327,7 +327,7 @@ static void old_cd_belief(const Game *g, int bot_idx, BotBelief *B) {
 
     // Behavior-based trust: lowest-first attackers almost never lead trump
     // while the deck is alive, so one strike kills floors. Voids are NOT
-    // gated this way — a trump lead can be forced (all-trump hand), and the
+    // gated this way - a trump lead can be forced (all-trump hand), and the
     // 1-in-4 unconstrained world mixture already absorbs void violators.
     for (int p = 0; p < g->num_players; p++) {
         if (trump_viol[p] >= 1) { B->distrust_floor[p] = true; B->floor_v[p] = 0; }
@@ -413,7 +413,7 @@ static void old_og_belief(const Game *g, int bot_idx, OgBeliefProbe *B) {
     // seat said GOOD over (while the defender had spare capacity). A
     // handwritten-family attacker NEVER declines a legal non-trump attack, so
     // later playing a non-trump card of a declined value (before gaining
-    // cards) proves the seat attacks strategically — an MC bot or a thinking
+    // cards) proves the seat attacks strategically - an MC bot or a thinking
     // human. Cleared on draw/pickup (the played card might be a new one).
     uint16_t decl_vals[MAX_PLAYERS] = {0};
     int hand_n[MAX_PLAYERS];
@@ -543,7 +543,7 @@ static void old_og_belief(const Game *g, int bot_idx, OgBeliefProbe *B) {
                         // (other draws arrive {-1,-1}). Read it from the LOG, not
                         // g->flipped: the wire serializer zeroes g->flipped to
                         // {0,0} once has_flipped goes false (view.c), so the
-                        // resident kernel state no longer carries the real card —
+                        // resident kernel state no longer carries the real card -
                         // pinning g->flipped there phantom-pins {0,0}.
                         if (L->num_pairs > 0) {
                             Card fc = L->pairs[L->num_pairs - 1].primary;
@@ -562,7 +562,7 @@ static void old_og_belief(const Game *g, int bot_idx, OgBeliefProbe *B) {
 
     // Behavior-based trust: lowest-first attackers almost never lead trump
     // while the deck is alive, so one strike kills floors. Voids are NOT
-    // gated this way — a trump lead can be forced (all-trump hand), and the
+    // gated this way - a trump lead can be forced (all-trump hand), and the
     // 1-in-4 unconstrained world mixture already absorbs void violators.
     for (int p = 0; p < g->num_players; p++) {
         B->trump_leads[p] = trump_viol[p];
@@ -570,10 +570,10 @@ static void old_og_belief(const Game *g, int bot_idx, OgBeliefProbe *B) {
     }
 
     // Semtex adaptivity: a proven void contradiction means the seat picks up
-    // strategically while holding cover — an MC bot (cordite family) or a
+    // strategically while holding cover - an MC bot (cordite family) or a
     // thinking human. Both floor and void inference model heuristic-family
     // opponents and are wrong for such seats; drop them for the rest of the
-    // game (no draw-expiry reset — the tell is about the PLAYER, not the hand).
+    // game (no draw-expiry reset - the tell is about the PLAYER, not the hand).
     if (1) {
         for (int p = 0; p < g->num_players; p++) {
             if (!B->mc_tell[p]) continue;
