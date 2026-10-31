@@ -11627,7 +11627,7 @@ static void test_table_load(void) {
         if (rc_ != (want)) fprintf(stderr, "  table_load(%s): got %d, want %d\n", msg, rc_, want); \
         CHECK(rc_ == (want) && !tb.loaded, msg); \
         CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, msg); } while (0)
-    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = TABLE_STATE_FORMAT + 1;
+    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = STATE_BLOB_FORMAT_V6 + 1;
     REFUSE(TABLE_E_STATE_VERSION, "a state blob of an unknown format", tb_state2, tb_state_len, tb_roster);
     tb_state2[0] = 1;
     REFUSE(TABLE_E_STATE_VERSION, "a v1 state blob (rewritten to v2 by a migration long ago)", tb_state2, tb_state_len, tb_roster);
@@ -13563,7 +13563,7 @@ static uint8_t tb_log[1 << 18], tb_log2[1 << 18], tb_code[1 << 16], tb_code2[1 <
 static uint8_t tb_scratch[1 << 20];
 static int tb_log_len;
 static char tb_seed_hex[2 * FOOLISH_SEED_LEN + 1];
-static BotDriveOut tb_drv, tb_drv2;
+static BotDriveOut tb_drv, tb_drv2, tb_drv3;
 static Game tb_ref;
 
 static uint32_t tb_fnv(const char *s, int n) { return fnv1a32(FNV32_OFFSET, s, (size_t)n); }
@@ -13661,6 +13661,23 @@ static void tb_bridge_seed(const Game *g, int seat, int phase) {
     bot_drive_seed_decision(g, tb_hook_base, 0u, phase);
 }
 
+// A stored session log read onto a board, as a host that keeps the whole Game holds it.
+static void tb_log_onto(Game *g, const uint8_t *log, int len) {
+    int n = 0;
+    for (int q = 0; q + 10 <= len && n < MAX_LOGS; q += 10 + 2 * log[q + 9]) {
+        GameLog *l = &g->logs[n++];
+        l->log_type = (int8_t)log[q + 6];
+        l->player_idx = (int8_t)log[q + 7];
+        l->defender_index = (int8_t)log[q + 8];
+        l->num_pairs = (int8_t)(log[q + 9] < MAX_LOG_PAIRS ? log[q + 9] : MAX_LOG_PAIRS);
+        for (int j = 0; j < l->num_pairs; j++) {
+            l->pairs[j].primary = card_from_wire_pair(log[q + 10 + 2 * j]);
+            l->pairs[j].target = card_from_wire_pair(log[q + 11 + 2 * j]);
+        }
+    }
+    g->num_logs = n;
+}
+
 static int tb_record_bytes(const Game *g, int from) {
     int n = 0;
     for (int i = from; i < g->num_logs; i++) n += 6 + 4 + 2 * g->logs[i].num_pairs;
@@ -13676,24 +13693,20 @@ static void test_table_deal_seed_and_session_log(void) {
     int records = 0;
     for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9]) records++;
     CHECK(records >= 1 && tb_log[6] == LOG_GAME_START, "the deal wrote a session log that opens with GAME_START");
-    CHECK(tb_reload(1) == records && tb_game.num_logs == records && tb.log_start == records
-          && tb.log_len == records,
-          "every record loads, and the next operation's records start above them");
-    int same = 1;
-    for (int i = 0, q = 0; i < records; i++, q += 10 + 2 * tb_log[q + 9]) {
-        const GameLog *l = &tb_game.logs[i];
-        same &= l->log_type == tb_log[q + 6] && (uint8_t)l->player_idx == tb_log[q + 7]
-              && (uint8_t)l->defender_index == tb_log[q + 8] && l->num_pairs == tb_log[q + 9];
-        for (int j = 0; j < l->num_pairs; j++)
-            same &= card_eq(l->pairs[j].primary, card_from_wire_pair(tb_log[q + 10 + 2 * j]))
-                 && card_eq(l->pairs[j].target, card_from_wire_pair(tb_log[q + 11 + 2 * j]));
-    }
-    CHECK(same, "each record is the bytes' type, seat, defender and card pairs");
+    // The memory the dealing table folded live, record by record as it committed them.
+    static TableResident live;
+    table_resident(&tb, 0, &live);
+    CHECK(live.mem_valid && live.mem.n_records == (uint32_t)records, "the dealing table folded every record it wrote");
+    CHECK(tb_reload(1) == records && tb_game.num_logs == 0 && tb.log_start == 0 && tb.log_len == records,
+          "every record is counted, and none is read onto the board (no brain reads the board's log)");
+    CHECK(tb.mem_valid && bot_mem_equal(&tb.mem, &live.mem),
+          "the session log folds to the memory the dealing table folded live (a cold backfill is the live block)");
     TableCommit c;
     CHECK(table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.logs.len == 0,
           "an imported session log is not a product");
 
-    CHECK(tb_reload(0) == 0 && tb.log_len == 0, "a table that was handed no log has no session beneath it");
+    CHECK(tb_reload(0) == 0 && tb.log_len == 0 && !tb.mem_valid && table_bots_need_logs(&tb),
+          "a table that was handed no log has no session beneath it, and asks for one");
     CHECK(table_set_session_log(&tb, tb_log, tb_log_len - 1) == records - 1,
           "a truncated tail ends the log");
     memcpy(tb_log2, tb_log, (size_t)tb_log_len);
@@ -13702,13 +13715,13 @@ static void test_table_deal_seed_and_session_log(void) {
     memset(tb_log2, 0, 10 + 2 * 70);
     tb_log2[6] = LOG_PICKUP; tb_log2[7] = 0; tb_log2[8] = 0xFF; tb_log2[9] = 70;
     for (int j = 0; j < 70; j++) { tb_log2[10 + 2 * j] = (uint8_t)(j % 52); tb_log2[11 + 2 * j] = 0xFF; }
-    CHECK(table_set_session_log(&tb, tb_log2, 10 + 2 * 70) == 1 && tb_game.logs[0].num_pairs == MAX_LOG_PAIRS,
-          "a record keeps its first MAX_LOG_PAIRS pairs");
+    CHECK(table_set_session_log(&tb, tb_log2, 10 + 2 * 70) == 1 && tb_game.num_logs == 0 && tb.mem.n_records == 1,
+          "a record wider than MAX_LOG_PAIRS is one record, folded and not read onto the board");
     memset(tb_log2, 0, sizeof(tb_log2));
     for (int i = 0; i < MAX_LOGS + 50; i++) { tb_log2[10 * i + 6] = LOG_GOOD; tb_log2[10 * i + 7] = 1; tb_log2[10 * i + 8] = 0xFF; }
     CHECK(table_set_session_log(&tb, tb_log2, 10 * (MAX_LOGS + 50)) == MAX_LOGS + 50
-          && tb_game.num_logs == MAX_LOGS && tb.log_len == MAX_LOGS + 50,
-          "records past MAX_LOGS are not read onto the board, but they are still counted");
+          && tb_game.num_logs == 0 && tb.log_len == MAX_LOGS + 50 && tb.mem.n_records == MAX_LOGS + 50,
+          "records past MAX_LOGS are folded and counted: the memory has no MAX_LOGS cliff");
     Table unloaded;
     table_init(&unloaded, &tb_src, &tb_snaps);
     CHECK(table_set_session_log(&unloaded, tb_log, tb_log_len) == TABLE_E_NOT_LOADED, "an unloaded table takes no log");
@@ -13977,18 +13990,20 @@ static void test_table_bot_drive_cycle(void) {
             if (tb_commit_row(now, &c) < 0) break;
             continue;
         }
-        const int logs = table_bots_need_logs(&tb);
         table_set_session_log(&tb, tb_log, tb_log_len);
-        const int imported = logs ? tb_game.num_logs : 0;
+        const int imported = tb.mem_valid ? (int)tb.mem.n_records : 0;
+        // The wasm bridge's board holds the whole session log (its resident game
+        // keeps it), and its brains fold that log themselves.
         memcpy(&tb_ref, &tb_game, sizeof(Game));
+        tb_log_onto(&tb_ref, tb_log, tb_log_len);
         const int n = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
         if (n <= 0) break;
         drives++;
         logged_drives += imported > 0;
         if (!checked && imported > 0 && tb_drv.stop == BOT_STOP_EVENTS) {
             checked = 1;
-            CHECK(tb.log_start == imported && tb.actor == tb_drv.actions[n - 1].seat,
-                  "the cycle's records start above the session log, and its actor is its last action's seat");
+            CHECK(tb.log_start == 0 && tb_ref.num_logs - n >= 0 && tb.actor == tb_drv.actions[n - 1].seat,
+                  "the cycle's records start on an empty board (the session is the memory's), and its actor is its last action's seat");
             // The wasm bridge's cycle on the same board: the same moves and the same board.
             tb_hook_base = tb_fnv(tb_seed_hex, 64);
             bot_drive_pre_action_hook = tb_bridge_seed;
@@ -13997,7 +14012,7 @@ static void test_table_bot_drive_cycle(void) {
             CHECK(n2 == n && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)n) == 0
                   && tb_same_board(&tb_ref, &tb_game), "seeded per decision exactly as the wasm bridge seeds a drive");
             const int pn = table_commit_products(&tb, RS("g"), 2, now, &c, tb_arena, sizeof(tb_arena));
-            CHECK(pn > 0 && c.logs.len == tb_record_bytes(&tb_game, imported) && c.logs.len > 0
+            CHECK(pn > 0 && c.logs.len == tb_record_bytes(&tb_game, 0) && c.logs.len > 0
                   && tb_arena[c.logs.off + 6] != LOG_GAME_START, "the commit carries only the cycle's own records");
             // NOT `n_events > 0`: that is the very test this branch of the work
             // removed from the adapter. A cycle that stopped on a visible action
@@ -14790,8 +14805,9 @@ static int bl_row_cycle(BlRow *row, const uint8_t *log, int log_len, int max_act
 // octogen and the other belief brains deduce hidden cards from the session log.
 // For a long window the server loaded state without it, so they chose blind in
 // production and played as if they had no memory (the octogen investigation).
-// The bot loop now hands the kernel the stored log (games.logs_packed) whenever
-// table_bots_need_logs says a belief bot is about to choose. This pins the
+// The table now folds every record into its bot memory (bot_memory.h), which
+// rides the row; a row without one is backfilled from the stored log
+// (games.logs_packed) once, when table_bots_need_logs says so. This pins the
 // kernel half: from the same row, the same deal seed and the same position,
 // octogen's committed state with the session log differs from its committed
 // state with the memory taken away on a meaningful fraction of positions. If the
@@ -14806,12 +14822,12 @@ static int bl_row_cycle(BlRow *row, const uint8_t *log, int log_len, int max_act
 // empty log moves octogen's RNG stream and changes moves even when the records
 // are never read - measured at 320 of 1,736 positions with the import cut out.
 // That comparison could not go red on the regression it guards. The blind run
-// here hands over a log of the SAME record count made of GAME_START records,
-// which carry nothing and which og_build_belief ignores: same seed, same board,
-// no memory. With the import cut out the two runs are then identical and the
-// count is exactly 0. A choose observer (table_choose_observer) also confirms
-// that every decision was made over a board holding exactly the records handed
-// over.
+// here hands over a log of the SAME record count made of LOG_GOOD records of no
+// seat, which the memory folds as nothing but their count: same seed, same
+// board, no memory. With the fold cut out the two runs are then identical and
+// the count is exactly 0. A choose observer (table_choose_observer) also
+// confirms that every decision read a memory bound to its board that counts
+// exactly the records handed over.
 //
 // Native and wasm read the log through the same table_set_session_log, but at
 // different caps: MAX_LOG_PAIRS is 16 here and 64 in bots.wasm, and the engine's
@@ -14832,18 +14848,14 @@ static int tb_expect_logs, tb_decisions, tb_blind_decisions, tb_carded_decisions
 static void tb_choose_observer(const Game *g, int seat) {
     (void)seat;
     tb_decisions++;
-    if (g->num_logs != tb_expect_logs) tb_blind_decisions++;
-    // A real card in the records the strategy is about to read (card backs, the
-    // hidden draws, cross as negative suits and are none), as the wasm bridge's
-    // belief probe counted them.
+    const BotMemory *m = bot_mem_bound(g);
+    if (!m || m->n_records != (uint32_t)tb_expect_logs) tb_blind_decisions++;
+    // Real cards in the memory the strategy is about to read, as the wasm
+    // bridge's belief probe counted them in the log.
     if (!tb_with_memory) return;   // the run with the memory taken away reads no cards by design
     tb_memory_decisions++;
-    int carded = 0;
-    for (int i = 0; i < g->num_logs && i < MAX_LOGS && !carded; i++)
-        for (int j = 0; j < g->logs[i].num_pairs && !carded; j++) {
-            const Card a = g->logs[i].pairs[j].primary, b = g->logs[i].pairs[j].target;
-            carded = (a.suit >= 0 && a.value > 0) || (b.suit >= 0 && b.value > 0);
-        }
+    int carded = m && (m->discard || m->tbl_n);
+    for (int p = 0; m && p < MAX_PLAYERS && !carded; p++) carded = m->pin_n[p] || m->void_n[p] || m->floor_v[p];
     tb_carded_decisions += carded;
 }
 
@@ -14872,12 +14884,13 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
                 memcpy(before_state, bl_row.state, (size_t)before_len);
                 memcpy(before_roster, bl_row.roster, ROSTER_BYTES);
                 if (table_load(&tb, before_state, before_len, before_roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
-                const int belief = table_bots_need_logs(&tb) && before_log_len > 0;
+                const int belief = before_log_len > 0;
                 // The records the row holds, as the kernel counts them; a log this long
                 // of GAME_START records is the same progress with nothing remembered.
                 const int records = table_set_session_log(&tb, bl_row.log, before_log_len);
                 if (records < 0 || records > MAX_LOGS) { refused++; break; }
-                tb_expect_logs = belief ? records : 0;
+                if (tb.mem_valid == 0) { refused++; break; }
+                tb_expect_logs = records;
                 tb_with_memory = 1;
                 const int n = bl_row_cycle(&bl_row, bl_row.log, before_log_len, 1, &c);
                 tb_with_memory = 0;
@@ -14888,7 +14901,7 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
                 if (table_load(&tb, before_state, before_len, before_roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
                 table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
                 memset(blank, 0, (size_t)(10 * records));
-                for (int i = 0; i < records; i++) { blank[10 * i + 6] = LOG_GAME_START; blank[10 * i + 7] = 0xFF; blank[10 * i + 8] = 0xFF; }
+                for (int i = 0; i < records; i++) { blank[10 * i + 6] = LOG_GOOD; blank[10 * i + 7] = 0xFF; blank[10 * i + 8] = 0xFF; }
                 if (table_set_session_log(&tb, blank, 10 * records) != records) { refused++; break; }
                 const int nb = table_bot_drive(&tb, 0, 0, 1, &tb_drv2);
                 int same = 0;
@@ -14912,15 +14925,186 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
             compared, changed, tb_decisions, tb_carded_decisions, tb_memory_decisions, widest_read, widest_list);
     CHECK(refused == 0, "every octogen row dealt, loaded and drove");
     CHECK(tb_decisions > 1000 * GAMES * (WIDEST - 1) / 18 && tb_blind_decisions == 0,
-          "every octogen decision was made over a board holding exactly the session-log records handed over");
+          "every octogen decision read a memory bound to its board, counting exactly the session-log records handed over");
     // Not records of nothing: from the first attack on, what a search reads holds
     // real cards (was e2e/belief_logs.test.ts's withCards, over one game in wasm).
-    CHECK(tb_carded_decisions > tb_memory_decisions / 2, "most octogen decisions read real cards out of the session log");
+    CHECK(tb_carded_decisions > tb_memory_decisions / 2, "most octogen decisions read real cards out of the memory");
     CHECK(widest_read < MAX_LOG_PAIRS,
           "every record octogen reads is below the native MAX_LOG_PAIRS, so the import read what bots.wasm reads");
     CHECK(compared > 500 * GAMES * (WIDEST - 1) / 18, "more than 500 belief decisions (27 a game) were compared with and without the session log");
     // If the log were ignored (the regression), this would be exactly 0.
     CHECK(changed > 0, "the session log changed octogen's move at least once (0 means the belief input is being ignored)");
+}
+
+// THE BOT MEMORY RIDES THE ROW (view.h layout v6, bot_memory.h). A row is
+// driven two ways from every position of whole games at 2, 4 and 6 seats: as a
+// row without its memory (a v5 blob, the session log folded once, the
+// backfill), and as the same row written as v6 with the memory section the
+// backfill made (no session log at all, which is what a cycle reads from a row
+// the switch step wrote). The two must load the same memory and commit the same
+// state bytes and the same records, and the memory the commit carries forward
+// must be the one a cold fold of the whole stored log makes. Then the section
+// layout's refusals.
+static uint8_t bm_v6[8192 + 2048];
+static int bm_as_v6(const BlRow *row, const BotMemory *m) {
+    uint8_t mb[BOT_MEM_BYTES_MAX];
+    const int ml = bot_mem_encode(m, mb, (int)sizeof mb);
+    if (ml <= 0) return -1;
+    memcpy(bm_v6, row->state, (size_t)row->state_len);
+    // A v5 blob is a v6 blob without its sections (view.h): the format byte, then
+    // the sections and their count at the end.
+    bm_v6[0] = STATE_BLOB_FORMAT_V6;
+    int at = row->state_len;
+    if (row->state[0] != STATE_BLOB_FORMAT_V5) return -1;
+    bm_v6[at++] = STATE_BLOB_SECTION_BOT_MEMORY;
+    bm_v6[at++] = (uint8_t)ml; bm_v6[at++] = (uint8_t)(ml >> 8);
+    memcpy(bm_v6 + at, mb, (size_t)ml);
+    at += ml;
+    bm_v6[at] = (uint8_t)(3 + ml); bm_v6[at + 1] = (uint8_t)((3 + ml) >> 8);
+    return at + 2;
+}
+
+static void test_bot_memory_rides_the_row(void) {
+    static uint8_t state_a[8192], logs_a[4096];
+    static BotMemory backfilled, carried;
+    TableCommit c;
+    int compared = 0, refused = 0, differ = 0, mem_differ = 0, cold_differ = 0, bytes_max = 0;
+    int bridged = 0, bundled = 0, bridge_differ = 0;
+    long bytes_sum = 0;
+    static const char *brains[] = { "octogen", "cordite", "blackpowder" };
+#ifdef COVERAGE_CORPUS
+    enum { GAMES = 1, CYCLES = 40 };
+#else
+    enum { GAMES = 2, CYCLES = 400 };
+#endif
+    for (int np = 2; np <= 6; np += 2) {
+        for (int gi = 0; gi < GAMES; gi++) {
+            tb_seed_bytes(np, 0x6e6 + gi);
+            if (bl_bots_only_row(&bl_row, np, brains[(np / 2 + gi) % 3], tb_seed) != TABLE_OK) { refused++; continue; }
+            for (int cy = 0; cy < CYCLES && bl_row.status == GAME_STATUS_PLAYING; cy++) {
+                // A: the row without its memory, backfilled from the stored log.
+                if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+                CHECK(table_bots_need_logs(&tb) == (bl_row.state[0] != STATE_BLOB_FORMAT_V6),
+                      "a played row without its memory asks for the session log, and one with it does not");
+                if (table_set_session_log(&tb, bl_row.log, bl_row.log_len) < 0 || !tb.mem_valid) { refused++; break; }
+                backfilled = tb.mem;
+                // C: the wasm bridge's drive of the same position, over a board that
+                // holds the whole session log (its brains fold it themselves).
+                memcpy(&tb_ref, &tb_game, offsetof(Game, logs));
+                tb_log_onto(&tb_ref, bl_row.log, bl_row.log_len);
+                const int nc = tb_ref.num_logs < MAX_LOGS ? 1 : 0;
+                if (nc) {
+                    tb_hook_base = tb_fnv(tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+                    bot_drive_pre_action_hook = tb_bridge_seed;
+                    bot_drive(&tb_ref, game_human_mask(&tb_ref), 0, 0, 0, &tb_drv3);
+                    bot_drive_pre_action_hook = 0;
+                }
+                const int na = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+                if (na <= 0) break;
+                const int64_t now = 1700000000000LL + (int64_t)bl_row.version * 1000;
+                if (table_commit_products(&tb, RS("g"), bl_row.version + 1, now, &c, tb_arena, sizeof(tb_arena)) <= 0) { refused++; break; }
+                if (nc) {
+                    bridged++;
+                    bundled += na > 1;
+                    const int bd = !(tb_drv3.n == na && memcmp(tb_drv3.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)na) == 0);
+                    if (bd && bridge_differ < 6) {
+                        int first = 0;
+                        while (first < na && first < tb_drv3.n && memcmp(&tb_drv3.actions[first], &tb_drv.actions[first], sizeof(BotDriveAction)) == 0) first++;
+                        fprintf(stderr, "  bridge differs: %dp %s cycle %d: n %d vs %d, first diverging action %d, logs %d\n",
+                                np, brains[(np / 2 + gi) % 3], cy, na, tb_drv3.n, first, tb_ref.num_logs);
+                    }
+                    bridge_differ += bd;
+                }
+                const int sa = c.state.len, la = c.logs.len;
+                memcpy(state_a, tb_arena + c.state.off, (size_t)sa);
+                memcpy(logs_a, tb_arena + c.logs.off, (size_t)la);
+                static TableResident res;
+                table_resident(&tb, 0, &res);
+                carried = res.mem;
+
+                // B: the same row as v6, its memory in the blob and no log at all.
+                const int l6 = bm_as_v6(&bl_row, &backfilled);
+                if (l6 < 0) { refused++; break; }
+                const int bytes = l6 - bl_row.state_len - 5;
+                bytes_sum += bytes;
+                if (bytes > bytes_max) bytes_max = bytes;
+                if (table_load(&tb, bm_v6, l6, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+                mem_differ += !(tb.mem_valid && bot_mem_equal(&tb.mem, &backfilled) && !table_bots_need_logs(&tb));
+                const int nb = table_bot_drive(&tb, 0, 0, 0, &tb_drv2);
+                const int pb = nb > 0 ? table_commit_products(&tb, RS("g"), bl_row.version + 1, now, &c, tb_arena, sizeof(tb_arena)) : -1;
+                differ += !(nb == na && pb > 0 && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)na) == 0
+                            && c.state.len == sa && memcmp(tb_arena + c.state.off, state_a, (size_t)sa) == 0
+                            && c.logs.len == la && memcmp(tb_arena + c.logs.off, logs_a, (size_t)la) == 0);
+                compared++;
+                // The row moves on by B's products (A's, when they agree); the
+                // memory it carries is the stored log's, folded cold.
+                if (pb <= 0 || bl_row_take(&bl_row, &c) < 0) { refused++; break; }
+                if (bl_row.status == GAME_STATUS_PLAYING) {
+                    if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                    table_set_session_log(&tb, bl_row.log, bl_row.log_len);
+                    cold_differ += !bot_mem_equal(&tb.mem, &carried);
+                }
+            }
+        }
+    }
+    fprintf(stderr, "  bot memory rides the row: %d positions (%d against the bridge, %d of them bundled cycles), memory section %ld B mean, %d B max\n",
+            compared, bridged, bundled, compared ? bytes_sum / compared : 0, bytes_max);
+    CHECK(bundled > 20 && bridge_differ == 0,
+          "bot memory: every cycle, bundled ones included, moves as the wasm bridge's drive over the whole session log");
+    CHECK(refused == 0, "bot memory: every row dealt, loaded, drove and committed");
+    CHECK(compared > 200 * GAMES, "bot memory: whole games of positions were compared");
+    CHECK(mem_differ == 0, "bot memory: a v6 row loads the very memory a backfill of its log makes");
+    CHECK(differ == 0, "bot memory: a cycle from the row's memory moves and commits exactly as one from its session log");
+    CHECK(cold_differ == 0, "bot memory: the memory a commit carries forward is the stored log's, folded cold");
+
+    // The section layout's refusals: each is a row this kernel did not write.
+    tb_seed_bytes(3, 9);
+    CHECK(bl_bots_only_row(&bl_row, 3, "random", tb_seed) == TABLE_OK, "bot memory: a three-seat table deals");
+    CHECK(table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) == TABLE_OK
+          && table_set_session_log(&tb, bl_row.log, bl_row.log_len) > 0, "bot memory: the dealt row loads");
+    backfilled = tb.mem;
+    const int l6 = bm_as_v6(&bl_row, &backfilled);
+    CHECK(l6 > 0 && table_load(&tb, bm_v6, l6, bl_row.roster, ROSTER_BYTES) == TABLE_OK && tb.mem_valid,
+          "bot memory: the dealt row as v6 loads with its memory");
+    static uint8_t bad[sizeof bm_v6];
+#define BM_REFUSE(msg, edit) do { memcpy(bad, bm_v6, (size_t)l6); int bl = l6; edit; \
+        CHECK(table_load(&tb, bad, bl, bl_row.roster, ROSTER_BYTES) == TABLE_E_STATE_VERSION, msg); } while (0)
+    const int sec_at = bl_row.state_len;
+    BM_REFUSE("bot memory: a section tag this kernel does not know is refused", bad[sec_at] = 2);
+    BM_REFUSE("bot memory: a section count past the blob is refused", bad[bl - 1] = 0x7f);
+    BM_REFUSE("bot memory: a section longer than its bytes is refused", bad[sec_at + 2] = 0x7f);
+    BM_REFUSE("bot memory: an empty section is refused", (bad[sec_at + 1] = 0, bad[sec_at + 2] = 0));
+    BM_REFUSE("bot memory: a v6 blob cut inside its count is refused", bl = l6 - 1);
+    // A section of bytes the memory's codec refuses loads the board without a
+    // memory: the log is the truth, and the next cycle folds it again.
+    memcpy(bad, bm_v6, (size_t)l6);
+    bad[sec_at + 3 + 1] = 0x7f;   // the seat count
+    CHECK(table_load(&tb, bad, l6, bl_row.roster, ROSTER_BYTES) == TABLE_OK && !tb.mem_valid && table_bots_need_logs(&tb),
+          "bot memory: a memory the codec refuses is no memory, and the table asks for the log");
+    // A board not being played carries none: the writer drops it, the reader refuses it.
+    static Game lobby;
+    memset(&lobby, 0, sizeof lobby);
+    lobby.status = GAME_STATUS_WAITING;
+    lobby.num_players = 3;
+    for (int i = 0; i < 3; i++) lobby.players[i].status = PLAYER_STATUS_READY;
+    uint8_t mb[BOT_MEM_BYTES_MAX];
+    const StateBlobSections sec = { mb, bot_mem_encode(&backfilled, mb, (int)sizeof mb) };
+    const int lw = state_blob_put_full_at(&lobby, 0, 0, &sec, STATE_BLOB_FORMAT_V6, bad);
+    CHECK(lw > 2 && bad[lw - 1] == 0 && bad[lw - 2] == 0, "bot memory: a lobby's v6 blob carries no memory");
+    static Game back;
+    StateBlobSections got;
+    CHECK(state_blob_load_full(&back, bad, lw, 0, 0, &got) == 1 && got.bot_memory_len == 0,
+          "bot memory: a lobby's v6 blob reads back, with no memory");
+    const int ll = lw - 2;
+    bad[ll] = STATE_BLOB_SECTION_BOT_MEMORY; bad[ll + 1] = (uint8_t)sec.bot_memory_len; bad[ll + 2] = (uint8_t)(sec.bot_memory_len >> 8);
+    memcpy(bad + ll + 3, mb, (size_t)sec.bot_memory_len);
+    bad[ll + 3 + sec.bot_memory_len] = (uint8_t)(3 + sec.bot_memory_len);
+    bad[ll + 4 + sec.bot_memory_len] = (uint8_t)((3 + sec.bot_memory_len) >> 8);
+    CHECK(state_blob_load_full(&back, bad, ll + 5 + sec.bot_memory_len, 0, 0, &got) == 0,
+          "bot memory: a lobby's blob with a memory is not one this kernel wrote");
+#undef BM_REFUSE
 }
 
 // The durable state blob is lossless: load then commit is the identity (was
@@ -19021,7 +19205,7 @@ static void test_state_blob_formats_read_and_written(void) {
     CHECK(bl_row.state[1] & TABLE_STATE_FLAG_PASSING, "state blob: a classic table says PASSING in its flag byte");
 
     // Any other format is refused, not misread.
-    static const int other[] = { 0, 1, TABLE_STATE_FORMAT + 1, 0xff };
+    static const int other[] = { 0, 1, STATE_BLOB_FORMAT_V6 + 1, 0xff };
     for (int k = 0; k < 4; k++) {
         memcpy(blob, bl_row.state, (size_t)sl);
         blob[0] = (uint8_t)other[k];
@@ -21854,6 +22038,7 @@ int main(void) {
     // packed_wire_stream, client_envelope_decode, awire_codec, ask_wire and
     // wasm_kernel_fuzz over bots.wasm).
     test_state_blob_formats_read_and_written();
+    test_bot_memory_rides_the_row();
     test_masked_view_does_not_depend_on_hidden_hands();
     test_every_viewer_reads_the_committed_board();
     test_every_push_is_leak_free_and_mirrors_the_commit();

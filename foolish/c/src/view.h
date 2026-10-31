@@ -174,6 +174,7 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 #define STATE_BLOB_FORMAT_V3 3   // ... then the board's clock (BoardClock below)
 #define STATE_BLOB_FORMAT_V4 4   // v3, its flag byte the bits below
 #define STATE_BLOB_FORMAT_V5 5   // v4, then the game's rating stamp (GameRatings below)
+#define STATE_BLOB_FORMAT_V6 6   // v5, then its sections (StateBlobSections below)
 
 // The v4 flag byte. Bit 0 means what the whole v2/v3 flag byte meant; a classic
 // game's row reads PASSING with it.
@@ -186,6 +187,25 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 // v4) and this kernel is the switch, which writes v5 and stamps the game it
 // ends (table.h table_rate). v4 rows stay in the column until a game rewrites
 // them, so v4 is still read, as an unrated game.
+//
+// Layout v6: v5, then SECTIONS, then a u16 LE count of the section bytes, so
+// the blob still ends where its reader can find what it carries:
+//
+//   [v5 blob] { u8 tag, u16 LE len, len bytes }* [u16 LE sections' bytes]
+//
+// Tags strictly ascending, each at most once, no empty section, and a tag this
+// kernel does not know makes the row unreadable (a newer kernel's expand step
+// names it first). A section is a table fact the board does not hold:
+//
+//   1  the bot memory (bot_memory.h's durable form), on a board being PLAYED
+//      only: what the belief bots remember of this game, so a bot cycle does
+//      not read the session log back to rebuild it. It is a cache of the log:
+//      a row without it (every v5 row, or a v6 row whose writer had none) is
+//      read by folding the session log once (table.h table_set_session_log).
+//
+// A second section (the repetition ring, say) takes the next tag; the layout
+// is the same for every one, so two changes that each add a section compose
+// without either knowing the other's bytes.
 //
 // THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: V5, the
 // switch step (it was V4 while the expand kernel was deploying). Everything that
@@ -212,7 +232,8 @@ typedef struct {
 // kernel does not read: the ONE list of the formats read, for state_blob_load
 // and for table_load's look at the header before it.
 static inline int state_blob_clock_bytes(int fmt) {
-    return fmt == STATE_BLOB_FORMAT_V3 || fmt == STATE_BLOB_FORMAT_V4 || fmt == STATE_BLOB_FORMAT_V5 ? STATE_BLOB_V3_CLOCK_BYTES
+    return fmt == STATE_BLOB_FORMAT_V3 || fmt == STATE_BLOB_FORMAT_V4 || fmt == STATE_BLOB_FORMAT_V5
+        || fmt == STATE_BLOB_FORMAT_V6 ? STATE_BLOB_V3_CLOCK_BYTES
          : fmt == STATE_BLOB_FORMAT_V2 ? 0 : -1;
 }
 
@@ -248,12 +269,23 @@ int game_ratings_put(const GameRatings *r, unsigned char *out);
 // count past MAX_PLAYERS, or a slot past the count that is not zero.
 bool game_ratings_get(GameRatings *r, const unsigned char *p);
 
-// Every byte a blob of format `fmt` carries behind its state (the clock, and
-// from v5 the rating stamp), or -1 for a format this kernel does not read.
+// Every FIXED byte a blob of format `fmt` carries behind its state (the clock,
+// and from v5 the rating stamp; v6's sections are counted by their own suffix),
+// or -1 for a format this kernel does not read.
 static inline int state_blob_tail_bytes(int fmt) {
     const int clock = state_blob_clock_bytes(fmt);
-    return clock < 0 ? -1 : clock + (fmt == STATE_BLOB_FORMAT_V5 ? GAME_RATINGS_BYTES : 0);
+    return clock < 0 ? -1 : clock + (fmt == STATE_BLOB_FORMAT_V5 || fmt == STATE_BLOB_FORMAT_V6 ? GAME_RATINGS_BYTES : 0);
 }
+
+// THE SECTIONS of a v6 blob (layout v6 above), as byte ranges: the kernel's
+// reader of each is its owner's (table.c decodes the bot memory). len 0: none.
+#define STATE_BLOB_SECTION_BOT_MEMORY 1
+#define STATE_BLOB_SECTION_MAX 1536   // a section's bytes (bot_memory.h BOT_MEM_BYTES_MAX fits)
+#define STATE_BLOB_SECTIONS_BYTES (3 + STATE_BLOB_SECTION_MAX + 2)   // everything v6 adds, at most
+typedef struct {
+    const unsigned char *bot_memory;
+    int bot_memory_len;
+} StateBlobSections;
 // The clock bytes a WRITTEN blob ends with.
 #define STATE_BLOB_CLOCK_BYTES (STATE_BLOB_FORMAT == STATE_BLOB_FORMAT_V2 ? 0 : STATE_BLOB_V3_CLOCK_BYTES)
 
@@ -277,6 +309,11 @@ int state_blob_put_at(const Game *g, const BoardClock *clk, int format, unsigned
 // is the unrated stamp. A format before v5 has nowhere to put a stamp and a
 // board that is not over has none, so in both cases none is written.
 int state_blob_put_rated_at(const Game *g, const BoardClock *clk, const GameRatings *ratings, int format, unsigned char *out);
+// THE ROW with its sections (`sec` NULL: none): what a v6 blob carries behind
+// the stamp. A format before v6 has nowhere to put one, and a board that is not
+// being played has no bot memory, so in those cases none is written.
+int state_blob_put_full_at(const Game *g, const BoardClock *clk, const GameRatings *ratings,
+                           const StateBlobSections *sec, int format, unsigned char *out);
 
 // Load a durable blob back into g, and its clock into `clk` (may be NULL; a v2
 // blob reads as a zero clock), and its rules into g->rules (v2 and v3: the
@@ -294,6 +331,13 @@ int state_blob_load(Game *g, const unsigned char *p, int len, BoardClock *clk);
 // kernel did not write: one that does not read (game_ratings_get), that counts
 // seats the board does not have, or that sits on a board that is not over.
 int state_blob_load_rated(Game *g, const unsigned char *p, int len, BoardClock *clk, GameRatings *ratings);
+// And its sections into `sec` (may be NULL), as ranges into p: none before v6.
+// 0, unreadable, for sections this kernel did not write: out of order, empty,
+// a tag it does not know, a count that does not add up, or a bot memory on a
+// board that is not being played. The section's own bytes are its owner's to
+// judge.
+int state_blob_load_full(Game *g, const unsigned char *p, int len, BoardClock *clk, GameRatings *ratings,
+                         StateBlobSections *sec);
 
 // ---------- the response envelope header ----------------------------------
 //

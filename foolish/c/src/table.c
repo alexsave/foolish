@@ -44,7 +44,63 @@ static void table_snap(const Game *g, int tag, int aux) {
 
 // Opens an operation: forgets the last one's products and records what the
 // DRAW-privacy rule and the event walk need from before it.
+// ---------- the bot memory (Table.mem) --------------------------------------------
+//
+// THE ONE FUNNEL: every record the board gains is folded as the store holds it
+// (bot_mem_fold_masked, log_record_put's masking with the operation's trump
+// before it began), from Table.mem_at on. A memory that is not valid becomes
+// valid at the deal's GAME_START, which resets it.
+static void mem_fold_board(const Table *t, BotMemory *m, bool *valid, int from) {
+    const Game *g = t->g;
+    for (int i = from; i < g->num_logs && i < MAX_LOGS; i++) {
+        const GameLog *l = &g->logs[i];
+        if (!*valid) {
+            if (l->log_type != LOG_GAME_START) continue;
+            *valid = true;
+        }
+        bot_mem_fold_masked(m, l, g, t->pre_has_flip, t->pre_flip);
+    }
+}
+static void mem_sync(Table *t) {
+    if (t->mem_at < 0 || t->mem_at > t->g->num_logs) t->mem_at = t->g->num_logs;
+    mem_fold_board(t, &t->mem, &t->mem_valid, t->mem_at);
+    t->mem_at = t->g->num_logs;
+}
+// The memory as of the board now, for a reader that may not change the table.
+static const BotMemory *mem_now(const Table *t, BotMemory *scratch, bool *valid) {
+    *valid = t->mem_valid;
+    if (t->mem_at >= t->g->num_logs) return &t->mem;
+    *scratch = t->mem;
+    mem_fold_board(t, scratch, valid, t->mem_at < 0 ? 0 : t->mem_at);
+    return scratch;
+}
+// A table's memory starts over: nothing known, from the board's next record.
+static void mem_forget(Table *t) {
+    bot_mem_clear(&t->mem);
+    t->mem_valid = false;
+    t->mem_at = t->g->num_logs;
+}
+// The memory a row writes (view.h STATE_BLOB_SECTION_BOT_MEMORY): its encoding,
+// or none (len 0) for a table without one.
+static StateBlobSections mem_section(const BotMemory *m, bool valid, uint8_t *buf, int cap) {
+    StateBlobSections sec = { 0 };
+    if (!valid) return sec;
+    const int n = bot_mem_encode(m, buf, cap);
+    if (n > 0) { sec.bot_memory = buf; sec.bot_memory_len = n; }
+    return sec;
+}
+// A row's memory section, read: valid only for one this kernel wrote, of this board.
+static void mem_load(Table *t, const StateBlobSections *sec) {
+    mem_forget(t);
+    if (!sec->bot_memory_len) return;
+    if (bot_mem_decode(&t->mem, sec->bot_memory, sec->bot_memory_len) && t->mem.num_players == t->g->num_players)
+        t->mem_valid = true;
+    else
+        bot_mem_clear(&t->mem);
+}
+
 static void scope_open(Table *t, int actor) {
+    mem_sync(t);   // the last operation's records, folded with that operation's trump
     t->snaps->n = 0;
     t->ended = t->dealt_now = t->roster_changed = t->rules_changed = t->lobby_event = false;
     t->pre_has_flip = t->g->has_flipped;
@@ -77,6 +133,7 @@ void table_init(Table *t, Game *g, TableSnaps *snaps) {
     t->g = g;
     t->snaps = snaps;
     t->actor = -1;
+    t->mem.cur_def = t->mem.flip_holder = -1;
     if (snaps) snaps->n = 0;
 }
 
@@ -104,13 +161,15 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     if (state[STATE_BLOB_HEADER + 1] != (uint8_t)r.n) return TABLE_E_MISMATCH;
     const int kr = table_seat_kinds(&r, kinds);
     if (kr != TABLE_OK) return kr;
-    const int v = state_blob_load_rated(t->g, state, state_len, &t->clock, &t->ratings);
+    StateBlobSections sec;
+    const int v = state_blob_load_full(t->g, state, state_len, &t->clock, &t->ratings, &sec);
     // The row's rules are the load's to set (view.h state_blob_load): a v2 or v3
     // row is the classic game, whatever an earlier FMSG decode left on t->g.
     if (v != 1) return v == 0 ? TABLE_E_STATE_VERSION : v;
     for (int s = 0; s < r.n; s++) t->g->players[s].strategy_key = kinds[s];
     t->r = r;
     t->roster_valid = true;   // roster_decode validated it
+    mem_load(t, &sec);
     scope_open(t, -1);
     // The state blob carries no session log, so until the host hands one over
     // (table_set_session_log) the row's log is what the board holds: nothing.
@@ -180,15 +239,7 @@ bool table_bots_due(const Table *t) {
 }
 
 bool table_bots_need_logs(const Table *t) {
-    if (!t->loaded || t->g->status != GAME_STATUS_PLAYING) return false;
-    const uint32_t bots = roster_bot_mask(&t->r);
-    const uint32_t eligible = bot_drive_eligible_mask(t->g, ~bots);
-    for (int s = 0; s < t->g->num_players; s++) {
-        if (!((eligible >> s) & 1u)) continue;
-        const BotDef *e = bot_roster_at(bot_roster_find(t->r.seats[s].brain));
-        if (e && e->uses_logs) return true;
-    }
-    return false;
+    return t->loaded && t->g->status == GAME_STATUS_PLAYING && !t->mem_valid;
 }
 
 // ---------- products --------------------------------------------------------------
@@ -463,7 +514,12 @@ int table_commit_products_flags(const Table *t, const char *game_id, int gid_len
     if (row) {
         if (cap - at < TABLE_STATE_MAX) return TABLE_E_CAP;
         out->state.off = at;
-        out->state.len = state_blob_put_rated_at(g, &clock, table_stamp(t), STATE_BLOB_FORMAT, arena + at);
+        BotMemory scratch;
+        bool valid;
+        const BotMemory *m = mem_now(t, &scratch, &valid);
+        uint8_t mb[BOT_MEM_BYTES_MAX];
+        const StateBlobSections sec = mem_section(m, valid, mb, (int)sizeof mb);
+        out->state.len = state_blob_put_full_at(g, &clock, table_stamp(t), &sec, STATE_BLOB_FORMAT, arena + at);
         if (out->state.len == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
         at += out->state.len;
     }
@@ -600,6 +656,7 @@ int table_create(Table *t, const char *actor_id, int id_len, const char *name, i
     Game *g = t->g;
     memset(g, 0, offsetof(Game, logs));
     g->num_logs = 0;
+    mem_forget(t);
     // The lobby's resting state has one owner, the reset a finished game takes
     // back to its lobby: no seat leads or defends (GAME_SEAT_NONE).
     game_reset_to_lobby(g, 0);
@@ -936,6 +993,9 @@ int table_adopt(Table *t, const TableResident *res) {
     t->ratings = res->ratings;
     t->rng_base = res->rng_base;
     t->detail = 0;
+    t->mem = res->mem;
+    t->mem_valid = res->mem_valid;
+    t->mem_at = 0;   // the board carries no log: the resident's memory is folded to it
     scope_open(t, -1);
     t->log_len = 0;
     t->loaded = true;
@@ -953,6 +1013,11 @@ void table_resident(const Table *t, const BoardClock *clock, TableResident *out)
     out->clock = clock ? *clock : t->clock;
     out->ratings = t->ratings;
     out->rng_base = t->rng_base;
+    BotMemory scratch;
+    bool valid;
+    out->mem = *mem_now(t, &scratch, &valid);
+    out->mem_valid = valid;
+    (void)scratch;
 }
 
 int table_resident_encode(const TableResident *res, uint8_t *state, int state_cap, int *state_len, uint8_t *roster,
@@ -961,7 +1026,9 @@ int table_resident_encode(const TableResident *res, uint8_t *state, int state_ca
     if (state_cap < TABLE_STATE_MAX) return TABLE_E_CAP;
     // A resident is a Table's (table_resident), so its stamp is the board's own (table_stamp).
     const GameRatings *stamp = res->ratings.n > 0 ? &res->ratings : 0;
-    const int n = state_blob_put_rated_at(g, &res->clock, stamp, STATE_BLOB_FORMAT, state);
+    uint8_t mb[BOT_MEM_BYTES_MAX];
+    const StateBlobSections sec = mem_section(&res->mem, res->mem_valid, mb, (int)sizeof mb);
+    const int n = state_blob_put_full_at(g, &res->clock, stamp, &sec, STATE_BLOB_FORMAT, state);
     if (n == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
     if (n < 0) return n;
     const int rl = roster_encode(&res->r, roster, roster_cap);
@@ -1015,7 +1082,41 @@ static int log_read(Table *t, const uint8_t *log, int len) {
     }
     g->num_logs = n;
     t->log_start = n;
+    t->mem_at = n;   // records of the stored log, not new ones: the memory has them or does not
     return n;
+}
+
+// The stored log folded into the table's memory, from scratch (the backfill of
+// a row that did not carry it): the records as the store holds them, which is
+// the form the funnel folds.
+static void mem_backfill(Table *t, const uint8_t *log, int len) {
+    BotMemory *m = &t->mem;
+    bot_mem_clear(m);
+    bool started = false;
+    GameLog l;
+    for (int at = 0, k; (k = log_record_at(log, len, at)) > 0; at += k) {
+        const uint8_t *r = log + at + 6;
+        l.log_type = (int8_t)r[0];
+        l.player_idx = (int8_t)r[1];
+        l.defender_index = (int8_t)r[2];
+        l.num_pairs = (int8_t)(r[3] < MAX_LOG_PAIRS ? r[3] : MAX_LOG_PAIRS);
+        for (int j = 0; j < l.num_pairs; j++) {
+            l.pairs[j].primary = card_from_wire_pair(r[4 + 2 * j]);
+            l.pairs[j].target = card_from_wire_pair(r[5 + 2 * j]);
+        }
+        // A session starts at its deal; a log cut before one is still counted.
+        if (!started && l.log_type != LOG_GAME_START) {
+            started = true;
+            const int8_t np = t->g->num_players;
+            m->num_players = np;
+            m->in_now = np;
+            for (int i = 0; i < np; i++) m->hand_n[i] = CARDS_PER_PLAYER;
+        }
+        started = true;
+        bot_mem_fold(m, &l, t->g);
+    }
+    t->mem_valid = true;
+    t->mem_at = t->g->num_logs;
 }
 
 int table_set_session_log(Table *t, const uint8_t *log, int len) {
@@ -1023,7 +1124,7 @@ int table_set_session_log(Table *t, const uint8_t *log, int len) {
     const int n = log_count(log, len);
     if (n < 0) return n;
     t->log_len = n;
-    if (table_bots_need_logs(t)) log_read(t, log, len);
+    if (t->g->status == GAME_STATUS_PLAYING) mem_backfill(t, log, len);
     return n;
 }
 
@@ -1065,7 +1166,17 @@ static _Thread_local uint32_t t_drive_base;
 static _Thread_local uint32_t t_drive_log_offset;
 void (*table_choose_observer)(const Game *g, int seat) = 0;
 
+// The table being driven: its memory is folded up to the board before each
+// decision (a bot cycle bundles several moves, and a later bot reads what the
+// earlier ones did) and bound to the board for the brains (bot_mem_bind).
+static _Thread_local Table *t_drive_table;
+
 static void table_drive_seed(const Game *g, int seat, int phase) {
+    Table *t = t_drive_table;
+    if (t && t->g == g) {
+        mem_sync(t);
+        bot_mem_bind(g, t->mem_valid ? &t->mem : 0);
+    }
     if (phase == BOT_DRIVE_PHASE_CHOOSE && table_choose_observer) table_choose_observer(g, seat);
     bot_drive_seed_decision(g, t_drive_base, t_drive_log_offset, phase);
 }
@@ -1085,7 +1196,16 @@ int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actio
     t_drive_base = t->rng_base;
     t_drive_log_offset = (uint32_t)(t->log_len - t->log_start);
     bot_drive_pre_action_hook = table_drive_seed;
+    Table *const prev_table = t_drive_table;
+    t_drive_table = t;
+    // Bound for the whole drive, not only its decisions: the drive's own seat
+    // order (bot_drive.c drive_seed) counts the session's records too.
+    mem_sync(t);
+    bot_mem_bind(t->g, t->mem_valid ? &t->mem : 0);
     const int n = bot_drive(t->g, game_human_mask(t->g), max_actions, n_prefs ? t->prefs : 0, n_prefs, out);
+    t_drive_table = prev_table;
+    bot_mem_bind(0, 0);
+    mem_sync(t);
     bot_drive_pre_action_hook = prev_seed;
     engine_snap_hook = prev_snap;
     t_capture = 0;
