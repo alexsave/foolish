@@ -1,15 +1,24 @@
-# Fusion: octogen plus rollout noise
+# Fusion: octogen with a noisy second opinion
 
-Fusion is octogen plus kestrel's rollout noise: in its heuristic rollouts, each seat's decision is, with probability 30%, a uniform pick from a small sensible candidate set instead of the rollout policy's move.
-The noise is on at tables of two to five players and off at six and above, where fusion is octogen move for move, with no extra draw (the measurements below).
+Fusion is octogen whose pick a second, noisy race may overrule.
+At every decision it first runs octogen's own race, noise-free, and so knows octogen's pick.
+It then runs the same race again over the same sampled worlds with kestrel's rollout noise on: in its heuristic rollouts, each seat's decision is, with probability 30%, a uniform pick from a small sensible candidate set instead of the rollout policy's move.
+Octogen's pick is pinned in that second race (never culled), and the noisy race's pick replaces it only when it is better by more than two standard errors of the paired difference over those worlds ("the shadow selection" below).
+It does this at every table size, 2 to 8 players.
 Everything else is octogen's: the same belief, sampled worlds, world budgets, root endgame solve, exact leaf, LEAFBOOK, candidate race and trump-keep tax.
-It also carries a second lever for experiments, sapper's firmer pickup inference: a seat that picked up is assumed to hold nothing beating those cards in (m-1) of m sampled worlds (`og_void_mod` = m).
+It also carries a lever for experiments, sapper's firmer pickup inference: a seat that picked up is assumed to hold nothing beating those cards in (m-1) of m sampled worlds (the void mixture m).
 Fusion's default is octogen's 4 (3 of 4), because sapper's 7 (6 of 7, about 85%) measured flat in the league (see the first measurement below).
 Registered as `fusion` / `fu`, `STRAT_FUSION = 24` (`src/strategy.h`), by its row in the bot registry (`src/bots.c`), and it is live on the website as Moscow, the top rung, since 2026-10-29 ("Live" below).
-It is the first bot on the registry: its brain stays in `src/octogen_strategy.c` (it is octogen with two levers set, not a file of its own), and its row is its whole registration.
+It is the first bot on the registry: its brain stays in `src/octogen_strategy.c` (it is octogen with one parameter block set, not a file of its own), and its row is its whole registration.
 
-Both levers are set by `fusion_strategy_choose` for the length of one decision and put back after it, so an octogen seat on the same thread keeps noise 0 and mixture 4.
-`og_void_mod` is octogen's thread-local, latched from `OG_VOID_MOD` on a flag load, so fusion loads octogen's flags first and then swaps its own value in; otherwise the first decision's own flag load would overwrite it.
+### One parameter block, and octogen never sets it
+
+Everything fusion does differently from octogen is one struct, `OgFusion` (`src/octogen_strategy.c`): the noise level and mode, the void mixture, the shadow's bar and the noisy race's world share.
+`fusion_strategy_choose` fills it from its defaults and knobs, points the thread-local `og_fu` at it for one decision and puts `NULL` back after it.
+Octogen never sets `og_fu`, and every fusion branch in octogen's code is `if (og_fu)` (or `if (og_shadow)`, which only fusion's shadow race sets), so with `og_fu` `NULL` octogen runs exactly its own lines and draws exactly its own numbers.
+There is no copy of octogen's search: the shadow race is `og_run_stages` itself, called a second time with a pinned candidate.
+The rollout engine's noise knob (`cd_sim_set_noise`) is set from the block around the noisy race only, and put back to 0 after it.
+The block, the shadow and the noise all compile only where the noise does (`CD_ROLLOUT_NOISE`): the browser's modules carry none of it, and `web.wasm` is byte-identical to main's.
 
 ### The defaults and the knobs
 
@@ -18,12 +27,53 @@ No knob is needed for the production behaviour.
 
 | Knob | Default | Meaning |
 | --- | --- | --- |
-| `FUSION_NOISE` | 300 | per-mille chance that a rollout decision plays the noise |
-| `FUSION_NOISE_MAX_PC` | 5 | the largest table (the game's seat count) the noise is on at; above it fusion sets 0 and is octogen |
-| `FUSION_NOISE_MODE` | 0 | 0: uniform over the sensible candidates; 1: uniform over the seat's whole rollout menu (research only) |
+| `FUSION_NOISE` | 300 | per-mille chance that a rollout decision of the noisy race plays the noise |
+| `FUSION_SHADOW` | 20 | the bar, in tenths of a standard error, the noisy race's pick must clear against octogen's; below 0, no shadow: the one race is noisy and picks alone (the fusion that went live first; research) |
+| `FUSION_NOISE_MAX_PC` | 8 (`MAX_PLAYERS`) | the largest table (the game's seat count) the noise is on at; above it fusion is octogen |
+| `FUSION_SHADOW_W` | 100 | the noisy race's worlds, percent of octogen's: the cost lever (research) |
+| `FUSION_NOISE_MODE` | 0 | 0: uniform over the sensible candidates; 1: uniform over the seat's whole rollout menu (research) |
 | `FUSION_VOID_MOD` | 4 | the void mixture (octogen's value) |
 
 The table size is the game's seat count, the size every measurement was taken at, not the number of seats still in.
+
+## Why the noise alone cost a fixed amount: octogen's ties
+
+The first fusion (the one race, noisy) was better than octogen at 2 to 5 players and worse at 6, and a dose sweep showed the loss did not shrink with the dose: even at 1 per mille fusion was worse at 6 players by +0.28 places, and at 4 by +0.08.
+The cause is octogen's tie-breaking.
+With noise-free rollouts over shared worlds, 35-53% of decisions have their top two candidates scoring identically in every world: twins such as a three-card and a two-card attack of the same value, or a cover and a pickup that the rollout policy plays out the same way.
+Octogen then picks by candidate rank: the strict `<` of its final pick and the drop-the-last rule of `og_cull` both keep the earlier candidate, and `og_pick_candidates` ranks "dump widest, spend cheapest" first, with the trump-keep tax on top.
+That rank order is a prior worth about 0.15 places (the comment on `og_pick_candidates` has its measurement).
+Any noise at all breaks those ties (at 6 players the tied share falls from 50% to 22% at 1 per mille), and a broken tie is a coin flip, so the noisy race played the later-ranked twin about half the time: the two-card attack, the pickup instead of the cover, good instead of the throw-in.
+So the noise had a fixed cost (about +0.08 places at 4 players, +0.28 at 6) on top of its own gain (about -0.15 at every size), and the gain only won where the cost was smaller.
+
+A second, smaller cause: the noise draws its gate from the rollout's own stream, `game_random()`, which also draws the deck (`sim_draw`).
+The first version of this file said the common random numbers across candidates were intact; they are not past the first decision, because a candidate whose line asks one more decision consumes one more draw, and every later card moves with it.
+
+## The shadow selection
+
+Fusion keeps octogen's pick unless the noise says something about it.
+`og_fusion_shadow` runs the race again with the noise on, over the same worlds (the world seed depends only on the strategy stream and the seat, so the second race samples the first race's worlds), with octogen's pick `o` pinned: `og_cull` never drops it.
+Every world folds each alive candidate's finish minus `o`'s (`og_shadow_fold`), so at the end the noisy race's pick `f` can be compared with `o` paired over every world `f` played.
+`f` is played only when its mean finish plus trump-keep tax beats `o`'s by more than two standard errors of that paired difference (`og_fusion_overrules`).
+An exact tie never overrules, so the twins keep octogen's rank order; a real difference the noise exposes does.
+
+The bar was measured at 1, 2 and 3 standard errors (1008 pairs, seeds 5000001): 4 players -0.072, -0.128, -0.077; 6 players -0.041, -0.057, -0.031.
+Two is best at both, so the default is 20.
+
+### What was tried and dropped
+
+All 1008-pair cells, paired against octogen at octogen tables, against the shadow at 2 SE on the same seeds (4 players -0.128 +/- 0.062, 6 players -0.057 +/- 0.082):
+
+| Variant | 4 players | 6 players | Verdict |
+| --- | --- | --- | --- |
+| a separate noise stream, keyed per seat decision, so the deck keeps its common numbers | -0.104 +/- 0.062 | -0.006 +/- 0.083 | worse at both: dropped, the noise stays on `game_random()` |
+| a rollout that never finishes (0.2% at 6 players) scored the middle place, not last | -0.120 +/- 0.062 | -0.049 +/- 0.082 | level: dropped |
+| the noisy race on half the worlds (`FUSION_SHADOW_W=50`) | -0.056 +/- 0.058 | -0.086 +/- 0.077 | mixed: stays a research knob |
+| noise 500 per mille | -0.107 +/- 0.068 | -0.029 +/- 0.093 | no better: 300 stays |
+| no shadow, a tie band of 0.02 places in the culls and the final pick | -0.054 +/- 0.091 | +0.083 +/- 0.130 | the cheap fix recovers part of the 6-player loss and nothing at 4: dropped |
+| no shadow, a band of 0.05 | +0.019 +/- 0.088 | | dropped |
+
+For reference, the first fusion on the same seeds: 4 players -0.052 +/- 0.090, 6 players +0.184 +/- 0.131.
 
 ## The idea and where it came from
 
@@ -39,15 +89,16 @@ Kestrel applies the noise to every seat, the searching seat included; noise for 
 
 - **The knob** is a thread-local per-mille in the bitboard rollout engine, `cd_sim_set_noise` / `cd_sim_noise` (`src/cordite_sim.h`, `src/cordite_sim.c`).
   It is 0 by default.
-  `fusion_strategy_choose` (`src/octogen_strategy.c`) sets it for the length of one octogen decision and puts 0 back.
-  Octogen never touches it.
+  Octogen's race code sets it from fusion's block around the noisy race only (`og_fusion_noise`) and puts 0 back after it.
+  Octogen itself never touches it: every call is behind `og_fu`.
 - **The bitboard rollouts** (the default path): every place a playout asks a seat for its policy move now asks the noise first.
   `sim_seat_move` is that one place for `cd_sim_playout_pol` and the reply playout's policy steps; `sim_hw_noisy_move` is the same for `cd_sim_playout` and `cd_sim_playout_leaf`.
   Octogen's default path is `cd_sim_playout_pol` (OG_BBLEAF defaults to 2, so the leaf flag is always on).
 - **The struct rollout** (`og_simulate`, used under `OG_NO_FASTROLL`, `OG_LEAF`, `OG_DIFFTEST` or `OG_NO_WORLDSIM`): `cd_sim_noise_legal` builds a SimState from the determinized world, draws with the same `sim_noise_draw`, and maps the picked move onto the seat's lite menu by move kind and card set.
   The pick is made on the SimState in both paths, by one function, so in either mode the two cannot disagree on the menu, its order or the move an index means; the lite menu's own order never matters.
 - **The stream**: both draws (the gate, then the pick) are `game_random()`, the rollout's own stream, which `og_run_stages` reseeds to the same `sim_rng` for every root candidate in a world.
-  So the common random numbers across candidates are intact: the same worlds and the same rollout streams for every root candidate.
+  Every root candidate starts from the same stream, but the common random numbers do not survive the first decision: a line that asks one more decision consumes one more draw, and the deck's later draws move with it ("Why the noise alone cost a fixed amount" above).
+  A separate stream keyed per seat decision kept them shared and measured worse ("What was tried and dropped"), so the stream stays.
   The two paths draw in the same order, so `OG_DIFFTEST` still compares like with like.
 - **Never in an exact line**: the noise only replaces a policy choice.
   The root endgame solve, `cd_sim_solve*`, the in-rollout exact leaf and the reply tournament's enumeration never consult a policy, so solved lines are untouched.
@@ -113,28 +164,33 @@ It measured level with the sensible set (below), so the default stays the sensib
 All from `foolish/c`: `make build/cnitro_tests && ./build/cnitro_tests` (the whole suite), `FU_TRACE=1` prints the measured fire rates, and `make tests-wasm-caps` holds octogen under the wasm size limits.
 The fusion tests (`tests/tests.c`, after `test_bot_roster_choose_scopes_knobs`), each with the mutations that turned it red written beside it:
 
-- `test_fusion_is_dispatchable_and_named`: id 24, `STRAT_COUNT` 25, the names parse, its own roster row (neither seeded nor offline, octogen's knobs, linked natively), both dispatches return a legal move and leave no noise, mode or knobs behind, and `FUSION_NOISE_MODE=1` reaches the rollouts (`CdNoiseStats.any`).
+- `test_fusion_is_dispatchable_and_named`: id 24, `STRAT_COUNT` 25, the names parse, its own roster row (seeded as Moscow, not offline, octogen's knobs, linked natively), both dispatches return a legal move and leave no noise, mode or knobs behind, and `FUSION_NOISE_MODE=1` reaches the rollouts (`CdNoiseStats.any`).
 - `test_rollout_noise_seam`: on one fixed world, at 0 nothing is drawn and a playout is its stream's; at 1000 the same streams play out differently, every playout ends, and the per-seat-policy playout takes the noise too.
 - `test_octogen_is_fusion_at_zero`: over stretches of 2- and 3-seat games, on both rollout paths, octogen and fusion with `FUSION_NOISE=0` choose the same move and leave both RNG streams in the same state, and neither draws the noise.
 - `test_fusion_rollouts_are_noisy`: with no knob set, fusion fires on both paths at 24-36% of drawn decisions (29.8% and 30.1% measured; the default 300, and 200 or 400 both fall outside), every struct-path pick is on the lite menu, octogen beside it draws nothing, and the knob is back at 0 afterwards.
 - `test_fusion_noise_modes_are_legal_on_both_paths`: over every decision of 120 random games (2-6 seats, both rule sets) and 1500 crafted big-hand boards, every sensible candidate is on the seat's lite menu, the whole-menu mode's menu IS the lite menu with every move once, and at the same stream state the bitboard path and the struct path draw the same gate and pick, play the same move and leave the stream in the same state, in both modes.
   The crafted boards are what reach a thrower with more than `MAX_MOVE_CARDS` table-valued cards; random games never did, and the first mutation check of the cap stayed green until they were added.
-- `test_fusion_noise_by_table_size`: with no knob set, fusion draws the noise at 2 to 5 seats, and at 6 and 7 seats it is octogen, the same move and both streams after, with no draw.
+- `test_fusion_noise_by_table_size`: with no knob set, fusion draws the noise at every size from 2 to 7 seats; with `FUSION_NOISE_MAX_PC=5` it still draws at 2 to 5, and at 6 and 7 it is octogen, the same move and both streams after, with no draw.
 - `test_fusion_void_mixture`: over 2- and 3-seat game stretches, fusion at `FUSION_VOID_MOD=7` with the noise off is octogen at `OG_VOID_MOD=7` move for move and stream for stream, octogen right after a fusion call is octogen at 4, and somewhere the two mixtures part.
+- `test_fusion_shadow_rule`: `og_fusion_overrules` on its own: a pick better in every world overrules, an exact tie never does (even at bar 0), a pick about one standard error better overrules at 1 SE and not at 2, a worse pick never does, the trump-keep tax counts, and one world is not evidence.
+- `test_fusion_shadow_selection`: over 2- and 3-seat game stretches with the noise on, at an unreachable bar (`FUSION_SHADOW=10000`) fusion plays octogen's own pick every decision although its rollouts drew the noise; at bar 0 the noisy race overrules octogen somewhere; and octogen right after a fusion call is octogen before it, the same move and both RNG streams, with the noise back at 0 (the octogen-identity guard: fusion leaves no parameter behind).
 
 `test_bot_roster_choose_scopes_knobs` runs every linked roster row, so fusion's row must dispatch, and `test_podkidnoy_every_brain` plays fusion too.
 
 ### Octogen is unchanged against main
 
-No test pins an octogen decision to a value, so this branch was compared with main at its fork point (a detached worktree at `1cca1f9d5`) by `cnitro_eval --inspect`, which prints every move of a seeded game:
+No test pins an octogen decision to a value, so this branch was compared with main (`ec506be0a`, a detached worktree) by `cnitro_eval --inspect`, which prints every move of a seeded game:
 
 - octogen vs octogen at 2, 4 and 6 players, seeds 200001-200003: every transcript byte-identical;
-- fusion vs octogen at 6 players on the same seeds: main's octogen transcript exactly (noise off above five);
-- cordite, firecracker and blackpowder at 2 and 4 players, seeds 200001-200002 (the solver's `sim_gen_pass` now goes through `sim_pass_pool`): byte-identical.
+- cordite, firecracker and blackpowder at 2 and 4 players, seeds 200001-200002: byte-identical (`cordite_sim.c` is main's file; only a comment in its header changed);
+- fusion vs octogen at 6 players with `FUSION_NOISE_MAX_PC=5` (the noise off), seeds 200001-200003: main's octogen transcript exactly, so fusion with its noise off is octogen;
+- fusion with `FUSION_SHADOW=-1` (no shadow) at 2 and 4 players, seeds 200001-200002: main's fusion transcript exactly, so the one-race fusion that went live is still there as a research setting.
 
-`scripts/wasm_build.sh` on both trees: `web.wasm` 101,300 -> 101,333 B, `oracle.wasm` 159,502 -> 159,440 B, `oracle-mt.wasm` 1,105,416 -> 1,105,355 B.
-The named `web.wasm` has no noise or fusion symbol at all; its function list is main's, and the only symbol-level change is one `.rodata` segment fewer.
-The bytes are the `fusion` roster row (its key string and row in the table every module carries) and code layout from the `sim_seat_move` / `sim_hw_noisy_move` / `sim_pass_pool` refactors, which compile to the same calls with the noise out.
+`scripts/wasm_build.sh` on both trees: `web.wasm` is byte-identical to main's (102,188 B raw), so the browser's module carries none of the shadow.
+`oracle.wasm` is 1 B smaller and `oracle-mt.wasm` 5 B smaller: the oracle builds run octogen, and the final pick moved into `og_best`, a function of its own that the shadow calls too; the struct rollout's loop was folded to one exit.
+The oracle builds' behaviour is octogen's, whose transcripts are main's.
+
+The earlier proof for the first fusion (against `1cca1f9d5`) is in git history; it covered the `sim_seat_move` / `sim_hw_noisy_move` / `sim_pass_pool` refactors the noise brought.
 
 ## First measurement (2026-10-28): the Bot Cup league
 

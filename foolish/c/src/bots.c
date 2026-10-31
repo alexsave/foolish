@@ -220,8 +220,9 @@ static const BotDef BOTS[STRAT_COUNT] = {
     },
     // 22 (torpex) and 23 (novichok) are retired.
     //
-    // The top rung (c/FUSION.md): octogen's brain and knobs plus 30% rollout
-    // noise at tables of up to five, which fusion_strategy_choose sets itself.
+    // The top rung (c/FUSION.md): octogen's brain and knobs, whose pick a
+    // second race with 30% rollout noise may overrule when it is two standard
+    // errors better, at every table size; fusion_strategy_choose sets it itself.
     // Seeded, so the server deals it on the website as Moscow; not offline, so
     // the phone's picker does not offer it. native_only: the server links the
     // kernel natively and is the only place a seated fusion plays (the

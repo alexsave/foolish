@@ -2361,34 +2361,37 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
     return r;
 }
 
-// Fusion (c/FUSION.md): octogen plus rollout noise, and nothing else. The
-// same belief, worlds, budgets, root endgame solve, LEAFBOOK and candidate
-// race as octogen. Two levers are set for the length of this decision and put
-// back after it, so the next brain to run on this thread (octogen, cordite, a
-// rollout policy) sees octogen's values: the rollout engine's noise knob, and
-// the void mixture (og_void_mod: a seat that picked up holds nothing beating
-// those cards in (mod-1)/mod of worlds). The mixture defaults to octogen's 4
-// (75%): sapper's firmer 6/7 (FUSION_VOID_MOD=7) measured flat in the league
-// (FUSION.md), so the lever stays for experiments, read by fusion alone.
+// Fusion (c/FUSION.md): octogen whose pick a second, noisy race may overrule.
+// The same belief, worlds, budgets, root endgame solve, LEAFBOOK and candidate
+// race as octogen; everything fusion does differently is in its OgFusion block,
+// which this function fills and points og_fu at for one decision and clears
+// after it, so the next brain on this thread (octogen, cordite, a rollout
+// policy) runs with og_fu NULL, octogen's own code.
 //
-// The noise has three settings, each a default here and a knob (env over roster
-// spec, bot_knobs.h) read by fusion alone, so a paired fusion-vs-octogen run can
-// sweep one without touching the control. Octogen itself never sets them: its
-// noise stays 0, and at 0 the rollouts draw nothing extra.
+// Each setting is a default here and a knob (env over roster spec,
+// bot_knobs.h) read by fusion alone, so a paired fusion-vs-octogen run can
+// sweep one without touching the control.
 //
-//   FUSION_NOISE        the per-mille chance that a rollout decision plays a
-//                       random move instead of the policy's (cordite_sim.h).
-//                       300: the paired sweeps against octogen (FUSION.md) put
-//                       30% ahead of kestrel's 20% at 4 players and level at 2.
-//   FUSION_NOISE_MAX_PC the largest table the noise is on at. At a bigger table
-//                       fusion sets 0, so it IS octogen there, move for move,
-//                       with no extra draw. 5: on at 2 to 5 players (better at
-//                       2 and 4, a hair better at 5); at 6 it measured worse at
-//                       every level (FUSION.md).
-//   FUSION_NOISE_MODE   what the random move is uniform over: 0, the sensible
-//                       candidates (CD_NOISE_SENSIBLE), or 1, the whole rollout
-//                       menu (CD_NOISE_ANY). 0: the two measured level at 2 and
-//                       4 players, so the simpler, proven set stays.
+//   FUSION_NOISE        the per-mille chance that a rollout decision of the
+//                       noisy race plays a random move instead of the
+//                       policy's (cordite_sim.h). 300.
+//   FUSION_SHADOW       the bar, in tenths of a standard error, the noisy
+//                       race's pick must clear against octogen's own pick to
+//                       be played (og_fusion_shadow). 20: 2 SE, better than 1
+//                       and 3 at 4 and 6 players. Below 0 there is no shadow:
+//                       the one race is noisy and picks alone (the fusion that
+//                       went live first, a research setting now).
+//   FUSION_NOISE_MAX_PC the largest table the noise is on at; above it fusion
+//                       is octogen, move for move, with no extra draw.
+//                       MAX_PLAYERS: with the shadow fusion measured better
+//                       than octogen at every size, 2 to 8.
+//   FUSION_SHADOW_W     the noisy race's worlds, percent of octogen's: the cost
+//                       lever (research; 100).
+//   FUSION_NOISE_MODE   0: the sensible candidates (CD_NOISE_SENSIBLE); 1: the
+//                       whole rollout menu (CD_NOISE_ANY), research.
+//   FUSION_VOID_MOD     the void mixture (a seat that picked up holds nothing
+//                       beating those cards in (mod-1)/mod of worlds): octogen's
+//                       4; sapper's 7 measured flat.
 //
 // The table size is the game's seat count, the size the measurements were taken
 // at, not the seats still in.
@@ -2401,7 +2404,7 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
 #define FUSION_NOISE_PM 300
 #endif
 #ifndef FUSION_NOISE_MAX_PC
-#define FUSION_NOISE_MAX_PC 5
+#define FUSION_NOISE_MAX_PC MAX_PLAYERS
 #endif
 #ifndef FUSION_NOISE_MODE
 #define FUSION_NOISE_MODE CD_NOISE_SENSIBLE
