@@ -180,6 +180,13 @@ typedef struct {
                                       // pickup-while-holding-cover (MC/human)
     bool loose[MAX_PLAYERS];          // profiled weak/random seat
 } Belief;
+#ifndef FOOLISH_SEEDED_BOTS_ONLY
+og_belief_probe_fn og_belief_probe = NULL;   // octogen_strategy.h
+#define OG_PROBE(stage) do { if (og_belief_probe) og_belief_probe((stage), g, bot_idx, &B->b, B->mc_tell); } while (0)
+#else
+#define OG_PROBE(stage) do { } while (0)
+#endif
+
 // Chronological scan over logs: pinned cards, flipped-trump holder, void
 // constraints, rank floors and trust flags, all in one pass.
 static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
@@ -357,6 +364,8 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
         if (trump_viol[p] >= 1) { B->b.distrust_floor[p] = true; B->b.floor_v[p] = 0; }
     }
 
+    OG_PROBE(OG_PROBE_RAW);
+
     // Semtex adaptivity: a proven void contradiction means the seat picks up
     // strategically while holding cover — an MC bot (cordite family) or a
     // thinking human. Both floor and void inference model heuristic-family
@@ -484,6 +493,7 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
         }
         if (allowed < unknown) B->b.void_n[p] = 0;
     }
+    OG_PROBE(OG_PROBE_FINAL);
 }
 
 // ---------- world sampling ------------------------------------------------
