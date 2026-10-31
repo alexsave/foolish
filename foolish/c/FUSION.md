@@ -98,12 +98,28 @@ The shadow also keeps far more of octogen's moves: "same" is 56-67% of the pairs
 
 The scans that chose the design (1008 pairs, seeds 5000001 at 3, 4 and 6-8 players, 7000001 at 2, 8000001 at 5) had the shadow at 2 SE at -0.146 (2), -0.123 (3), -0.128 (4), -0.123 (5), -0.057 (6), -0.152 (7) and -0.110 (8).
 
-OPPONENTS_PLACEHOLDER
+Against other fields (1008 pairs, seeds 9100001; the control is still octogen at seat 0, the other seats the field):
+
+| Field | 2 players | 4 players | 6 players |
+| --- | --- | --- | --- |
+| cordite | -0.121 +/- 0.031 | -0.142 +/- 0.061 | -0.182 +/- 0.092 |
+| handwritten | -0.003 +/- 0.018 | -0.019 +/- 0.044 | -0.013 +/- 0.064 |
+
+Against cordite, the strongest field below octogen, fusion gains as much as against octogen or more.
+Against handwritten, the human proxy, it is level: octogen already wins 92% of heads-up games there, and the same game is played in 68-91% of the pairs.
 
 ### What it costs
 
 The shadow runs the race twice, so a fusion decision costs about two octogen decisions, a little more where the noisy rollouts run longer.
-TIMING_PLACEHOLDER
+Measured by a paired timer (octogen tables; at every seat-0 decision with a choice, octogen and then fusion on the same state and RNG state, 12 games per size, this Mac, native `-O3`):
+
+| Players | octogen ms/move (max) | fusion ms/move (max) | ratio |
+| --- | --- | --- | --- |
+| 2 | 22.6 (229) | 51.9 (392) | 2.3 |
+| 4 | 3.6 (30) | 8.9 (41) | 2.5 |
+| 6 | 7.2 (32) | 20.3 (90) | 2.8 |
+| 8 | 7.6 (38) | 21.0 (106) | 2.8 |
+
 Octogen's budget is a count of sampled worlds (`og_params`), not a clock, and the server's bot drive has no per-move deadline: it paces the bots' moves in seconds and budgets whole drives (`foolish/server/src/app/bots.c`), so tens of milliseconds more per move are not visible to a player.
 So fusion keeps octogen's world budget in both races and accepts the cost; `FUSION_SHADOW_W` halves the noisy race's worlds if the cost ever matters (about 1.9x octogen instead of 2.8x at 6 players), and measured mixed (-0.056 at 4 players, -0.086 at 6, against -0.128 and -0.057 at full worlds).
 
