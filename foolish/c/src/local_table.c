@@ -84,6 +84,7 @@ int local_table_open(LocalTable *L, Game *g, TableSnaps *snaps, const char *gid,
     if (rc != TABLE_OK) return rc;
     if ((rc = commit(L, now_ms)) != TABLE_OK) return rc;
     L->cast_len = 0;   // nobody was watching a table that did not exist: the page reads its envelope
+    L->replay_len = L->extras_len = 0;
     L->open = true;
     return TABLE_OK;
 }
@@ -161,4 +162,36 @@ int local_table_cast(LocalTable *L, uint8_t *out, int cap) {
     memcpy(out, L->cast, (size_t)n);
     L->cast_len = 0;
     return n;
+}
+
+int local_table_replay(LocalTable *L, uint8_t *scratch, int scratch_cap) {
+    if (!L || !L->open) return TABLE_E_NOT_LOADED;
+    if (L->replay_len > 0) return TABLE_OK;
+    adopt(L);
+    if (L->t.g->status != GAME_STATUS_GAME_OVER) return TABLE_E_NOT_OVER;
+    // The extras read the roster and the log, never the board, so the board the
+    // code replays is still the adopted one (the server's order, finalize_game).
+    const int ne = table_replay_extras(&L->t, L->log, L->log_len, L->extras, sizeof L->extras);
+    if (ne < 0) return ne;
+    const int nc = table_replay_code(&L->t, L->seed, FOOLISH_SEED_LEN, L->log, L->log_len,
+                                     L->replay, sizeof L->replay, scratch, scratch_cap);
+    if (nc < 0) return nc;
+    L->extras_len = ne;
+    L->replay_len = nc;
+    return TABLE_OK;
+}
+
+static int copy_out(const uint8_t *src, int n, uint8_t *out, int cap) {
+    if (n <= 0) return TABLE_E_NOT_OVER;
+    if (!out || n > cap) return TABLE_E_CAP;
+    memcpy(out, src, (size_t)n);
+    return n;
+}
+
+int local_table_replay_moves(const LocalTable *L, uint8_t *out, int cap) {
+    return L ? copy_out(L->replay, L->replay_len, out, cap) : TABLE_E_NOT_LOADED;
+}
+
+int local_table_replay_extras(const LocalTable *L, uint8_t *out, int cap) {
+    return L ? copy_out(L->extras, L->extras_len, out, cap) : TABLE_E_NOT_LOADED;
 }

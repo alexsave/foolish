@@ -65,3 +65,18 @@ int wasm_local_bot(double now_ms) { return local_table_bot(g_local, (int64_t)now
 
 // The last committed operation's cast at io, once: its length, 0 for none.
 int wasm_local_cast(void) { return local_table_cast(g_local, wasm_io_ptr(), wasm_io_cap()); }
+
+// The finished game's replay (local_table_replay), made on the first ask: the
+// moves code at io (`which` 0) or the extras blob (1), its length, or a refusal.
+// The decode gate's workspace is allocated the first time, like the table's.
+#define LOCAL_REPLAY_SCRATCH (256 * 1024)
+static uint8_t *g_local_scratch;
+int wasm_local_replay(int which) {
+    if (!g_local) return TABLE_E_NOT_LOADED;
+    if (!g_local_scratch) g_local_scratch = malloc(LOCAL_REPLAY_SCRATCH);
+    if (!g_local_scratch) return TABLE_E_CAP;
+    const int rc = local_table_replay(g_local, g_local_scratch, LOCAL_REPLAY_SCRATCH);
+    if (rc != TABLE_OK) return rc;
+    return which == 0 ? local_table_replay_moves(g_local, wasm_io_ptr(), wasm_io_cap())
+                      : local_table_replay_extras(g_local, wasm_io_ptr(), wasm_io_cap());
+}
