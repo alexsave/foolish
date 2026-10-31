@@ -7,3 +7,7 @@ export type Promo = (typeof PromoCodes)[number];
 /** The promo a path segment names, in any case (/br, /BR, /Br), or null. */
 export const promoOf = (segment: string): Promo | null =>
     PromoCodes.find((p) => p.code === segment.toLowerCase()) ?? null;
+
+/** The kernel link the page at the address bar needs: promo.wasm for a promo code (c/Makefile), else web.wasm. */
+export const kernelLinkForAddress = (): 'web' | 'promo' =>
+    promoOf(decodeURIComponent(window.location.pathname.split('/')[1] ?? '')) ? 'promo' : 'web';

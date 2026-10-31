@@ -256,6 +256,7 @@ gen_exports() {
   # files' own functions, called natively - are typed from the same definitions
   # under the same flags.
   ex_link WebExports       exports.web.ts        web.wasm WASM_BOT_LDFLAGS WASM_WEB_EXPORTS
+  ex_link PromoExports     exports.promo.ts      promo.wasm WASM_BOT_LDFLAGS WASM_PROMO_EXPORTS
   ex_link TableHostExports exports.table_host.ts -        TABLE_HOST_EXPORTS
   ex_run bots WASM_BOT_CFLAGS WASM_BOT_SRC
   # The iMessage extension's module: its own sources, flags and export lists.

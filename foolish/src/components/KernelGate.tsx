@@ -2,6 +2,8 @@
 
 import React from 'react';
 import { ensureBotsAsync } from '../../sdk/ts/wasm/bots';
+import { chooseKernelLink, type KernelLink } from '../../sdk/ts/wasm/wasm_asset';
+import { kernelLinkForAddress } from '../common/promo';
 
 // The kernel gate (A8/F7).
 //
@@ -36,11 +38,19 @@ import { ensureBotsAsync } from '../../sdk/ts/wasm/bots';
 // kernel without a gate is a cold-start crash, and a page that does not reach
 // it with a gate is a page nothing without JavaScript can read. Adding a route
 // does not require remembering this comment; forgetting turns that test red.
-export function KernelGate({ children }: { children: React.ReactNode }) {
+//
+// `link` says which link of the kernel the page needs (sdk/ts/wasm/wasm_asset.ts):
+// web.wasm unless it says otherwise, and 'address' for the page the shell serves
+// every one-segment path with, where a promo code needs promo.wasm (src/common/promo.ts).
+// A string, not a function: a server page hands it over. A tab that already loaded the other one
+// (a client-side navigation between the promo page and the rest) reloads, and
+// the fresh page loads the one it needs.
+export function KernelGate({ children, link = 'web' }: { children: React.ReactNode; link?: KernelLink | 'address' }) {
   const [ready, setReady] = React.useState(false);
   const [failed, setFailed] = React.useState<Error | null>(null);
   React.useEffect(() => {
     let cancelled = false;
+    if (!chooseKernelLink(link === 'address' ? kernelLinkForAddress() : link)) { window.location.reload(); return; }
     ensureBotsAsync()
       .then(() => { if (!cancelled) setReady(true); })
       .catch((e) => { if (!cancelled) setFailed(e instanceof Error ? e : new Error(String(e))); });

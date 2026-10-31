@@ -1157,9 +1157,10 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_cast_open -Wl,--export=wasm_client_cast_version -Wl,--export=wasm_client_board_keep \
   -Wl,--export=wasm_client_plan_step_ptr -Wl,--export=wasm_client_plan_step -Wl,--export=wasm_client_plan
 
-# The browser's local table (src/local_table.h, wasm/wasm_local_api.c), web.wasm
-# only: a promo visitor's game against a bot, hosted in the tab. Everything it
-# hands out is the human seat's (an envelope, a cast, an action response).
+# The browser's local table (src/local_table.h, wasm/wasm_local_api.c), promo.wasm
+# only (below): a promo visitor's game against a bot, hosted in the tab.
+# Everything it hands out is the human seat's (an envelope, a cast, an action
+# response).
 WASM_LOCAL_EXPORTS := \
   -Wl,--export=wasm_local_open -Wl,--export=wasm_local_view -Wl,--export=wasm_local_start \
   -Wl,--export=wasm_local_action -Wl,--export=wasm_local_ask \
@@ -1521,7 +1522,7 @@ WASM_WEB_NAMES := \
 # Picked OUT of the whole list rather than spelled a second time, so a name
 # the browser's module exports is one the bots objects define under that list's
 # meaning - never a second export surface with a second meaning.
-WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) $(WASM_LOCAL_EXPORTS) \
+WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_NET_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
                    $(filter $(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)),$(WASM_BOTS_ALL_EXPORTS))
 
 # AND THE GATE ON THE FILTER ITSELF. $(filter) over a name the whole list does
@@ -1545,6 +1546,59 @@ build/web.wasm: $(WASM_BOT_OBJ) Makefile
 wasm-web: wasm-cc-check
 	@$(MAKE) --no-print-directory build/web.wasm
 	gzip -9 -n -c build/web.wasm > ../sdk/ts/wasm/web.wasm.gz
+
+# ---------------------------------------------------------------------------
+# promo.wasm - THE PROMO PAGE'S LINK OF THE SAME KERNEL (src/common/promo.ts).
+#
+# A visitor who scans a promo card's QR (foolish.cards/br) plays one bot in the
+# tab, and the page loads this module INSTEAD of web.wasm. Like web.wasm it is
+# the bots objects ($(WASM_BOT_OBJ)) under an export allow-list, so it is not a
+# second kernel: the same .o files, flags, layout hash and wasm-opt pass. What
+# it exports is what that page calls - the client slot that reads every
+# envelope and cast, the animation rules, the hand layout - plus the local
+# table (WASM_LOCAL_EXPORTS), which brings the C Table and ONE brain
+# (local_table.h LOCAL_BOT_STRAT). What it leaves out is what that page never
+# calls: the backend's client (a promo game sends nothing) and the replay
+# reader. web.wasm, which every other visitor loads, carries none of the table.
+#
+# The page's reach set is pinned at run time, not by a bundle scan (the shell
+# page's bundle reaches everything web.wasm exports): e2e/promo_local_game.test.ts
+# plays the promo route on this module alone, so a call to an export it lacks is
+# a red test, not a TypeError in a tab.
+WASM_PROMO_NAMES := \
+  wasm_init wasm_io_ptr wasm_io_cap wasm_layout_hash wasm_can_cover \
+  wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
+  wasm_bot_roster_dump \
+  wasm_anim_set_transport \
+  wasm_anim_should_drop_stale \
+  wasm_anim_hand_ask_ptr wasm_anim_hand_laid_ptr \
+  wasm_anim_finish_ask_ptr wasm_anim_finish_ptr \
+  wasm_anim_finish_rows wasm_anim_hand_laid_out \
+  wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
+  wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
+  wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows
+WASM_PROMO_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_LOCAL_EXPORTS) \
+                     $(filter $(addprefix -Wl$(comma)--export=,$(WASM_PROMO_NAMES)),$(WASM_BOTS_ALL_EXPORTS))
+WASM_PROMO_MISSING = $(filter-out $(WASM_PROMO_EXPORTS),$(addprefix -Wl$(comma)--export=,$(WASM_PROMO_NAMES)))
+
+build/promo.wasm: $(WASM_BOT_OBJ) Makefile
+	@mkdir -p build
+	@[ -z "$(WASM_PROMO_MISSING)" ] || { \
+	  echo "c/Makefile: WASM_PROMO_NAMES names exports WASM_BOTS_ALL_EXPORTS does not have:"; \
+	  for n in $(WASM_PROMO_MISSING); do echo "  $$n"; done; exit 1; }
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
+	          $(WASM_PROMO_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
+
+.PHONY: wasm-promo wasm-promo-size
+wasm-promo: wasm-cc-check
+	@$(MAKE) --no-print-directory build/promo.wasm
+	gzip -9 -n -c build/promo.wasm > ../sdk/ts/wasm/promo.wasm.gz
+
+wasm-promo-size: build/promo.wasm build/web.wasm
+	@printf 'web.wasm    raw %7d  gzip %7d\n' $$(wc -c < build/web.wasm) $$(gzip -9 -c build/web.wasm | wc -c)
+	@printf 'promo.wasm  raw %7d  gzip %7d\n' $$(wc -c < build/promo.wasm) $$(gzip -9 -c build/promo.wasm | wc -c)
+
 
 # Name-preserving companion for the wasm-anatomy tool (tools/wasm_anatomy): same
 # objects, same link, same wasm-opt pass, minus --strip-all and with wasm-opt

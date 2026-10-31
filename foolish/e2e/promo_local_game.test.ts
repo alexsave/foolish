@@ -43,10 +43,13 @@ const requests: string[] = [];
 const realFetch = globalThis.fetch;
 g.fetch = async (url: unknown, init?: unknown) => {
     const u = String(url instanceof URL ? url.href : (url as Request)?.url ?? url);
-    // The kernel's own module is an asset of the page, not a request to the backend.
-    if (u.startsWith('file:') || u.startsWith('data:')) return realFetch(url as any, init as any);
-    requests.push(`fetch ${u}`);
-    throw new Error(`a request left the page: ${u}`);
+    // Only the network counts: the page's own blob: textures and the kernel's
+    // file: asset never leave it.
+    if (/^(https?|wss?):/i.test(u)) {
+        requests.push(`fetch ${u}`);
+        throw new Error(`a request left the page: ${u}`);
+    }
+    return realFetch(url as any, init as any);
 };
 g.WebSocket = class { constructor(url: string) { requests.push(`websocket ${url}`); throw new Error(`a socket left the page: ${url}`); } };
 
@@ -60,7 +63,7 @@ mock.module('next/navigation', { namedExports: {
 
 interface Page { host: HTMLElement; wait: (ms: number) => Promise<void>; close: () => Promise<void> }
 
-/** The site's route for /`seg`, under the root providers, as the static shell renders it. */
+/** The site's page for /`seg`, under the root providers, as the static shell renders it. */
 async function open(seg: string): Promise<Page> {
     const React = (await import('react')).default;
     const h = React.createElement;
@@ -71,17 +74,19 @@ async function open(seg: string): Promise<Page> {
     const { StyleProvider } = await import('../src/contexts/StyleContext.tsx');
     const { TextureProvider } = await import('../src/components/TexturedSurface.tsx');
     const { AuthProvider } = await import('../src/contexts/AuthContext.tsx');
-    const { GameRoute } = await import('../src/app/[game_id]/GameRoute.tsx');
-    const { ensureBotsAsync } = await import('../sdk/ts/wasm/bots.ts');
-    await ensureBotsAsync();   // KernelGate's wait, which the route sits behind
+    // The page itself, kernel gate and all: the gate picks the kernel's link by
+    // the address (promo.wasm for a code), so this runs on the module a visitor's
+    // tab loads, and nothing else.
+    const { default: GamePage } = await import('../src/app/[game_id]/page.tsx');
     segment = seg;
+    (dom as unknown as { reconfigure(o: { url: string }): void }).reconfigure({ url: `https://foolish.cards/${seg}` });
     const host = dom.window.document.createElement('div');
     dom.window.document.body.appendChild(host);
     const root = createRoot(host);
     const wait = async (ms: number) => { for (let i = 0; i < 6; i++) await act(async () => { await new Promise((r) => setTimeout(r, ms / 6)); }); };
     await act(async () => {
         root.render(h(LocalizationProvider, null, h(ThemeProvider, null, h(StyleProvider, null, h(TextureProvider, null,
-            h(AuthProvider, null, h(GameRoute)))))));
+            h(AuthProvider, null, h(GamePage)))))));
     });
     return { host, wait, close: async () => { await act(async () => { root.unmount(); }); host.remove(); } };
 }
@@ -99,6 +104,7 @@ async function landsInADealtGame(seg: string, lang: string, theme: string): Prom
     requests.length = 0;
     const { GAME_STATUS } = await import('../src/state/view.ts');
     const page = await open(seg);
+    try {
     await until(page, () => page.host.querySelector(`[data-promo-game="${GAME_STATUS.PLAYING}"]`) !== null,
         `/${seg}: a game is being played, with no tap`);
     await until(page, () => handCards(page.host) === 6, `/${seg}: the deal lands: six cards in the visitor's hand`);
@@ -107,36 +113,32 @@ async function landsInADealtGame(seg: string, lang: string, theme: string): Prom
         `/${seg}: the page is in ${lang} (its theme, ${theme})`);
     await page.wait(400);   // the bot's turn, if it leads
     assert.deepEqual(requests, [], `/${seg}: nothing left the page`);
+    } catch (e) { await page.close(); throw e; }
     return page;
 }
 
-test('/br lands in a dealt game against the bot, in Russian, with no request sent', async () => {
+// One game per code per process: a page's version gate is the tab's, and a tab
+// meets a second game at one address only through a reload (the end card's
+// Rematch reloads), so each code is opened once here.
+test('/BR lands in a dealt game against the bot, in Russian, with no request sent', async () => {
     dom.window.localStorage.clear();
-    const page = await landsInADealtGame('br', 'ru', 'soviet');
+    const page = await landsInADealtGame('BR', 'ru', 'soviet');
     try {
         assert.equal(dom.window.localStorage.getItem('foolish_language'), 'ru', 'a visitor with no language of their own keeps Russian');
     } finally { await page.close(); }
 });
 
-test('/BR is the same code: the case of a typed or scanned path does not matter', async () => {
+test('/ws lands in a dealt game in English, and a visitor\'s own language choice is not overwritten', async () => {
     dom.window.localStorage.clear();
-    const page = await landsInADealtGame('BR', 'ru', 'soviet');
-    await page.close();
-});
-
-test('a visitor who chose a language keeps it, and still plays the code\'s for this visit', async () => {
-    dom.window.localStorage.clear();
-    dom.window.localStorage.setItem('foolish_language', 'en');
-    const page = await landsInADealtGame('Br', 'ru', 'soviet');
-    try {
-        assert.equal(dom.window.localStorage.getItem('foolish_language'), 'en', 'their own choice is not overwritten');
-    } finally { await page.close(); }
-});
-
-test('/ws lands in a dealt game against the bot, in English', async () => {
-    dom.window.localStorage.clear();
+    dom.window.localStorage.setItem('foolish_language', 'ru');
     const page = await landsInADealtGame('ws', 'en', 'default');
     try {
-        assert.equal(dom.window.localStorage.getItem('foolish_language'), 'en');
+        assert.equal(dom.window.localStorage.getItem('foolish_language'), 'ru', 'their own choice is kept for their next visit');
     } finally { await page.close(); }
+});
+
+test('the page ran on promo.wasm alone', async () => {
+    const { chooseKernelLink } = await import('../sdk/ts/wasm/wasm_asset.ts');
+    assert.equal(chooseKernelLink('promo'), true, 'the promo link is the one this tab loaded');
+    assert.equal(chooseKernelLink('web'), false, 'and web.wasm never was');
 });

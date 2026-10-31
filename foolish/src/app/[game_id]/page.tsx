@@ -11,7 +11,7 @@ export function generateStaticParams() {
 
 export default function GamePage() {
   return (
-    <KernelGate>
+    <KernelGate link="address">
       <GameRoute />
     </KernelGate>
   );
