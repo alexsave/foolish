@@ -318,9 +318,13 @@ static int m_games_of_user(cb_store *s, const char *user, int limit, cb_member_f
         }
     }
     pthread_mutex_unlock(&m->mu);
-    // Most recently updated first.
+    // Most recently updated first, a tie by game id: the tables' ORDER BY updated_at DESC,
+    // game_id (store/rows_sql.c, journal.c member_cmp), never the slot a game was put in.
     for (int i = 1; i < n; i++)
-        for (int j = i; j > 0 && rows[j].updated_at > rows[j - 1].updated_at; j--) {
+        for (int j = i; j > 0 && (rows[j].updated_at > rows[j - 1].updated_at ||
+                                  (rows[j].updated_at == rows[j - 1].updated_at &&
+                                   strcmp(rows[j].game_id, rows[j - 1].game_id) < 0));
+             j--) {
             cb_member_row t = rows[j]; rows[j] = rows[j - 1]; rows[j - 1] = t;
         }
     int k = 0;
