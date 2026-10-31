@@ -55,6 +55,10 @@ typedef struct {
     long a1, a1_pre, a1_any, a2, a2_pre, pin_bad;
     // D: naive constraints at opponent decisions (fires, and how many were true).
     long d1, d1_true, d2, d2_true, d3, d3_true, d4, d4_true;
+    // A per seat: caught by A (A1 or A2) before mc_tell, or only by A; and what
+    // dropping that seat's voids from then on would drop (FINAL, per decision).
+    long seats_a, seats_a_first, seats_a_only, seats_told, a_lead_sum, a_lead_n;
+    long dec_a_void, dec_a_void_wrong;
     long opp_dec;
     int  steps, finish;
 } Ctr;
@@ -71,6 +75,7 @@ static Card pins[MAX_PLAYERS][MAX_HAND_SIZE];   // the tool's own public pins (f
 static int  pins_n[MAX_PLAYERS];
 static bool told_seen[MAX_PLAYERS];              // the observer's mc_tell, as last probed
 static bool told_end[MAX_PLAYERS];
+static int  a_step[MAX_PLAYERS], tell_step[MAX_PLAYERS];   // first A fire, first tell seen (-1: none)
 static bool vol_pickup[MAX_PLAYERS], strat_decline[MAX_PLAYERS];   // ground truth so far
 static Card last_voids[MAX_PLAYERS][BOT_MAX_VOIDS];
 static int  last_void_n[MAX_PLAYERS];
@@ -117,6 +122,7 @@ static void probe(int stage, const Game *g, int bot_idx, const BotBelief *b, con
             if (g->players[p].status != PLAYER_STATUS_IN) continue;
             if (mc_tell[p] && !told_seen[p]) {
                 told_seen[p] = true;
+                tell_step[p] = g_step;
                 C.tells++;
                 if (!vol_pickup[p] && !strat_decline[p]) C.tells_false++;
                 if (vol_pickup[p]) C.tells_void_path++;
@@ -158,6 +164,15 @@ static void probe(int stage, const Game *g, int bot_idx, const BotBelief *b, con
         return;
     }
     // FINAL: what the worlds apply.
+    bool av = false, avw = false;   // voids on A-caught seats the tell has not caught
+    for (int p = 1; p < g->num_players; p++) {
+        if (g->players[p].status != PLAYER_STATUS_IN || a_step[p] < 0 || mc_tell[p]) continue;
+        for (int k = 0; k < b->void_n[p]; k++) {
+            av = true;
+            if (void_wrong(g, b, p, b->voids[p][k])) avw = true;
+        }
+    }
+    if (av) { C.dec_a_void++; if (avw) C.dec_a_void_wrong++; }
     bool app = false, app_w = false, va = false, vw = false, fa = false, fw = false;
     for (int p = 1; p < g->num_players; p++) {
         if (g->players[p].status != PLAYER_STATUS_IN) continue;
@@ -243,7 +258,7 @@ static void opp_signals(const Game *g, int p, const LegalMoves *mv, const LegalM
             if (one_pinned) any = true;
             if (all_pinned && x->n_cards == unc) strict = true;
         }
-        if (strict) { C.a1++; if (!told_seen[p]) C.a1_pre++; }
+        if (strict) { C.a1++; if (!told_seen[p]) C.a1_pre++; if (a_step[p] < 0) a_step[p] = g_step; }
         if (any) C.a1_any++;
     }
     // A2: a cover or pickup when a transfer with a pinned card was on the menu.
@@ -253,7 +268,7 @@ static void opp_signals(const Game *g, int p, const LegalMoves *mv, const LegalM
             if (x->type != MOVE_PASS) continue;
             bool pinned = false;
             for (int k = 0; k < x->n_cards; k++) pinned |= bot_set_contains(pins[p], pins_n[p], x->cards[k]);
-            if (pinned) { C.a2++; if (!told_seen[p]) C.a2_pre++; break; }
+            if (pinned) { C.a2++; if (!told_seen[p]) C.a2_pre++; if (a_step[p] < 0) a_step[p] = g_step; break; }
         }
     }
 
@@ -392,6 +407,7 @@ static void play(uint32_t seed, int pc, int obs, int opp) {
     memset(last_void_n, 0, sizeof last_void_n);
     memset(last_floor, 0, sizeof last_floor);
     infs_n = 0;
+    for (int p = 0; p < MAX_PLAYERS; p++) a_step[p] = tell_step[p] = -1;
     g_step = g_obs_dec = 0;
 
     cd_sim_solve_reset();   // as cnitro_eval: a cold solver TT per game
@@ -423,6 +439,13 @@ static void play(uint32_t seed, int pc, int obs, int opp) {
         for (int p = 0; p < pc; p++) if (G->players[p].status != PLAYER_STATUS_IN) pins_n[p] = 0;
     }
     for (int p = 0; p < pc; p++) told_end[p] = told_seen[p];
+    for (int p = 1; p < pc; p++) {
+        if (tell_step[p] >= 0) C.seats_told++;
+        if (a_step[p] < 0) continue;
+        C.seats_a++;
+        if (tell_step[p] < 0) C.seats_a_only++;
+        else if (a_step[p] < tell_step[p]) { C.seats_a_first++; C.a_lead_sum += tell_step[p] - a_step[p]; C.a_lead_n++; }
+    }
     for (int i = 0; i < infs_n; i++) {
         if (!told_end[infs[i].seat]) continue;
         C.void_n_later++;
@@ -465,6 +488,8 @@ int main(int argc, char **argv) {
         F(dec_floor_applied); F(dec_floor_applied_wrong); F(dec_raw_told); F(dec_raw_told_wrong); F(dec_any_told);
         F(tells); F(tells_false); F(tells_void_path); F(tell_dec_sum); F(tell_step_sum); F(tell_deck_sum); F(tell_deckalive);
         F(seats); F(a1); F(a1_pre); F(a1_any); F(a2); F(a2_pre); F(pin_bad);
+        F(seats_a); F(seats_a_first); F(seats_a_only); F(seats_told); F(a_lead_sum); F(a_lead_n);
+        F(dec_a_void); F(dec_a_void_wrong);
         F(d1); F(d1_true); F(d2); F(d2_true); F(d3); F(d3_true); F(d4); F(d4_true); F(opp_dec);
         F(steps); F(finish);
         printf("\n");
