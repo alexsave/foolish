@@ -171,6 +171,9 @@ host_test = $(eval $(call HOST_TEST,$(1),$(2)))
 # shared/c/stats, in their own directory so the builds that wildcard
 # shared/c/*.c do not pick up its test.
 $(call host_prog,cnitro_eval,src/main_eval.c $(SHARED)/stats/stats.c)
+# Measurement only (tools/belief_sizing): how right octogen's belief is against the real hands,
+# read through og_belief_probe. Not part of any check or shipped build.
+$(call host_prog,belief_sizing,tools/belief_sizing/belief_sizing.c)
 $(call host_prog,cnitro_elo,src/main_elo.c)
 $(call host_prog,cnitro_replay,src/main_replay.c)
 $(call host_prog,cnitro_showcase,src/main_showcase.c)
