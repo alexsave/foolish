@@ -62,8 +62,9 @@ const PromoBoard = () => {
                     <TexturedSurface as="button" seed={0.3} className="btn-wood btn-wood--md" onClick={() => window.location.reload()}>
                         <span className="btn-wood-text">{t('rematch')}</span>
                     </TexturedSurface>
-                    {/* A full navigation, so the local game is left behind with the page. */}
-                    <TexturedSurface as="a" href="/" seed={0.6} className="btn-wood btn-wood--md">
+                    {/* A full navigation, so the local game is left behind with the page. A
+                        button like its neighbour, not a link: an <a> sits its label lower. */}
+                    <TexturedSurface as="button" seed={0.6} className="btn-wood btn-wood--md" onClick={() => window.location.assign('/')}>
                         <span className="btn-wood-text">{t('sign_up')}</span>
                     </TexturedSurface>
                 </>}>
