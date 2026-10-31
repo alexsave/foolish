@@ -11776,6 +11776,25 @@ static void tb_fixture(int np, uint32_t bots, int seed) {
     tb_roster_for(np, bots, "random", tb_roster);
 }
 
+// Where a state blob of a format this kernel reads keeps its clock (NULL: none).
+static uint8_t *tb_blob_clock(uint8_t *x, int xl) {
+    if (state_blob_clock_bytes(x[0]) <= 0) return 0;
+    return x + xl - state_blob_tail_bytes(x[0]) + (x[0] == STATE_BLOB_FORMAT_V6 ? 2 : 0);
+}
+
+// Two state blobs of any formats this kernel reads carry the same board (the
+// bytes past the format byte up to the board's end) and the same clock.
+static int tb_blob_same_board_clock(const uint8_t *x, int xl, const uint8_t *y, int yl) {
+    const int bx = state_blob_board_bytes(x, xl), by = state_blob_board_bytes(y, yl);
+    if (bx < 0 || bx != by || memcmp(x + 1, y + 1, (size_t)bx - 1) != 0) return 0;
+    const int cx = state_blob_clock_bytes(x[0]), cy = state_blob_clock_bytes(y[0]);
+    if (cx != cy) return 0;
+    if (cx == 0) return 1;
+    const uint8_t *kx = x + xl - state_blob_tail_bytes(x[0]) + (x[0] == STATE_BLOB_FORMAT_V6 ? 2 : 0);
+    const uint8_t *ky = y + yl - state_blob_tail_bytes(y[0]) + (y[0] == STATE_BLOB_FORMAT_V6 ? 2 : 0);
+    return memcmp(kx, ky, (size_t)cx) == 0;
+}
+
 static int tb_same_board(const Game *a, const Game *b) {
     static unsigned char x[8192], y[8192];
     const int n = state_put(a, VIEW_UNMASKED, x);
@@ -11893,14 +11912,18 @@ static void test_state_blob_v4_carries_the_rules(void) {
         const int cr = tr == TABLE_OK ? table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) : tr;
         // The commit writes the format this kernel writes: the v4 row's bytes
         // past its format byte, and whatever that format adds behind the clock.
-        CHECK(cr >= 0 && c.state.len == n + TABLE_STATE_TAIL_BYTES - STATE_BLOB_V3_CLOCK_BYTES
-              && tb_arena[c.state.off] == TABLE_STATE_FORMAT
-              && memcmp(tb_arena + c.state.off + 1, loaded + 1, (size_t)n - 1) == 0,
+        CHECK(cr >= 0 && tb_arena[c.state.off] == TABLE_STATE_FORMAT
+              && tb_blob_same_board_clock(tb_arena + c.state.off, c.state.len, loaded, n),
               "a podkidnoy v4 row commits back the board, flags and clock it loaded");
     }
-    CHECK(state_blob_put(&g, &clk, blob) == n + TABLE_STATE_TAIL_BYTES - STATE_BLOB_V3_CLOCK_BYTES
-          && blob[0] == STATE_BLOB_FORMAT && !(blob[1] & STATE_BLOB_FLAG_PASSING),
-          "the shipped writer writes a podkidnoy board at its own format, passing bit clear");
+    {
+        static unsigned char v4[8192];
+        memcpy(v4, blob, (size_t)n);
+        const int wn = state_blob_put(&g, &clk, blob);
+        CHECK(wn == n + TABLE_STATE_TAIL_BYTES - STATE_BLOB_V3_CLOCK_BYTES && blob[0] == STATE_BLOB_FORMAT
+              && !(blob[1] & STATE_BLOB_FLAG_PASSING) && tb_blob_same_board_clock(blob, wn, v4, n),
+              "the shipped writer writes a podkidnoy board at its own format, passing bit clear");
+    }
     CHECK(state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V3, blob) == STATE_BLOB_E_RULES
           && state_blob_put_at(&g, &clk, STATE_BLOB_FORMAT_V2, blob) == STATE_BLOB_E_RULES,
           "v3 and v2 writers: neither writes a podkidnoy board");
@@ -11937,8 +11960,7 @@ static void test_state_blob_v4_carries_the_rules(void) {
     CHECK(tr == TABLE_OK && game_pass_allowed(&tb_game) && menu_has(&tb_game, 1, MOVE_PASS),
           "v4: a table loads a passing row as passing over a podkidnoy Game");
     CHECK(tr == TABLE_OK && table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
-          && tb_arena[c.state.off] == TABLE_STATE_FORMAT && c.state.len == n + TABLE_STATE_TAIL_BYTES - STATE_BLOB_V3_CLOCK_BYTES
-          && memcmp(tb_arena + c.state.off + 1, blob + 1, (size_t)n - 1) == 0,
+          && tb_arena[c.state.off] == TABLE_STATE_FORMAT && tb_blob_same_board_clock(tb_arena + c.state.off, c.state.len, blob, n),
           "a passing v4 row commits back the board, flags and clock it loaded");
 
     // v3 and v2 rows are the classic game, whatever the Game held before (an
@@ -12134,13 +12156,16 @@ static void test_table_commit_products(void) {
     // The board, at the format written, then - when that format carries it - the
     // clock the move put on it (view.h BoardClock): shown at the commit's own
     // time, and done playing one flight later - the attack is a single beat.
-    CHECK(tb_arena[c.state.off] == TABLE_STATE_FORMAT && c.state.len == tb_blob(&tb_game, tb_buf)
-          && memcmp(tb_arena + c.state.off, tb_buf, (size_t)c.state.len - TABLE_STATE_TAIL_BYTES) == 0,
-          "the state blob is the board after the move, at the format this kernel writes");
+    {
+        const int bl = tb_blob(&tb_game, tb_buf), bb = state_blob_board_bytes(tb_buf, bl);
+        CHECK(tb_arena[c.state.off] == TABLE_STATE_FORMAT && bb > 0 && state_blob_board_bytes(tb_arena + c.state.off, c.state.len) == bb
+              && memcmp(tb_arena + c.state.off, tb_buf, (size_t)bb) == 0,
+              "the state blob is the board after the move, at the format this kernel writes");
+    }
     CHECK(c.clock.shown_ms == 0x010203040506LL, "the clock shows the move at the commit's time");
     CHECK(c.clock.settles_ms == 0x010203040506LL + ANIM_TIME_MS, "and has it done playing one flight later");
     if (TABLE_STATE_CLOCK_BYTES > 0) {
-        const uint8_t *ck = tb_arena + c.state.off + c.state.len - TABLE_STATE_TAIL_BYTES;
+        const uint8_t *ck = tb_blob_clock(tb_arena + c.state.off, c.state.len);
         int64_t settles = 0;
         for (int b = 5; b >= 0; b--) settles = settles * 256 + ck[6 + b];
         CHECK(memcmp(ck, "\x06\x05\x04\x03\x02\x01", 6) == 0 && settles == c.clock.settles_ms,
@@ -13305,14 +13330,20 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // once more when the writer went to v5: hashing each blob as its v4 self
     // (format byte 4, without the GAME_RATINGS_BYTES behind the clock) gives the
     // v4 digest 0xeaae85afbc52968e back, so the format byte and the empty rating
-    // stamp are the whole of that one - a deal's envelopes did not move. Both
+    // stamp are the whole of that one - a deal's envelopes did not move. And when
+    // the writer went to v6: hashing each blob as its v5 self (format byte 5,
+    // without the bot memory section and its count) gives the v5 digest
+    // 0x56a752e11fc9bd4c back, checked below, so the memory the deal folded and
+    // the format byte are the whole of that one. Both
     // moved when a dealt hand became ascending (game.c deal_initial): the
     // envelopes carry the hands in their new order, and the bots, reading
     // hands in that order, played different games. [1] moved alone when the
     // replay format went to 11 (the trump symbol's alphabet gained the Aces):
     // the same logs, and each code is its v10 self with the version and trump
     // symbols re-radixed.
-    static const uint64_t golden[2] = { 0x56a752e11fc9bd4cULL, 0xee92c4ae62c7e2d8ULL };
+    static const uint64_t golden[2] = { 0x043de2cd90986217ULL, 0xee92c4ae62c7e2d8ULL };
+    static const uint64_t golden_v5 = 0x56a752e11fc9bd4cULL;
+    uint64_t hc5 = FNV64_OFFSET;
     uint64_t hc = FNV64_OFFSET;
     for (int np = 2; np <= MAX_PLAYERS; np++) {
         for (int seed_k = 1; seed_k <= 3; seed_k++) {
@@ -13329,6 +13360,20 @@ static void test_opening_deal_bytes_are_unchanged(void) {
             hc = dl_bytes(hc, tb_arena + c.logs.off, c.logs.len);
             for (int s = 0; s < np; s++) hc = dl_bytes(hc, tb_arena + c.views[s].off, c.views[s].len);
             hc = dl_bytes(hc, tb_arena + c.spectator.off, c.spectator.len);
+            {
+                // The same products with the blob as its v5 self.
+                static uint8_t v5[8192];
+                const uint8_t *st = tb_arena + c.state.off;
+                const int board = state_blob_board_bytes(st, c.state.len), fixed = STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES;
+                memcpy(v5, st, (size_t)board);
+                memcpy(v5 + board, st + c.state.len - fixed, (size_t)fixed);
+                v5[0] = STATE_BLOB_FORMAT_V5;
+                hc5 = dl_bytes(hc5, v5, board + fixed);
+                hc5 = dl_bytes(hc5, tb_arena + c.roster.off, c.roster.len);
+                hc5 = dl_bytes(hc5, tb_arena + c.logs.off, c.logs.len);
+                for (int s = 0; s < np; s++) hc5 = dl_bytes(hc5, tb_arena + c.views[s].off, c.views[s].len);
+                hc5 = dl_bytes(hc5, tb_arena + c.spectator.off, c.spectator.len);
+            }
         }
     }
     uint64_t hr = FNV64_OFFSET;
@@ -13364,6 +13409,8 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     game_set_seed(1);
     DCHECK(hc == golden[0], "deal commit bytes unchanged: digest 0x%016llxULL, want 0x%016llxULL",
            (unsigned long long)hc, (unsigned long long)golden[0]);
+    DCHECK(hc5 == golden_v5, "deal commit bytes, the blob as its v5 self, are the v5 writer's: digest 0x%016llxULL, want 0x%016llxULL",
+           (unsigned long long)hc5, (unsigned long long)golden_v5);
     DCHECK(hr == golden[1], "game logs and replay codes unchanged: digest 0x%016llxULL, want 0x%016llxULL",
            (unsigned long long)hr, (unsigned long long)golden[1]);
 }
@@ -13887,8 +13934,9 @@ static void test_table_deal_seed_and_session_log(void) {
     CHECK(table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.logs.len == 0,
           "an imported session log is not a product");
 
-    CHECK(tb_reload(0) == 0 && tb.log_len == 0 && !tb.mem_valid && table_bots_need_logs(&tb),
-          "a table that was handed no log has no session beneath it, and asks for one");
+    CHECK(tb_reload(0) == 0 && tb.log_len == 0 && tb.mem_valid && !table_bots_need_logs(&tb)
+          && bot_mem_equal(&tb.mem, &live.mem),
+          "a row written with its memory needs no log: the memory it carries is the session's");
     CHECK(table_set_session_log(&tb, tb_log, tb_log_len - 1) == records - 1,
           "a truncated tail ends the log");
     memcpy(tb_log2, tb_log, (size_t)tb_log_len);
@@ -14091,7 +14139,7 @@ static void test_table_bot_wait(void) {
         // stream now rather than behind it.
         tb_bot_table_n("random", 23, MAX_PLAYERS - 1);
         const BoardClock far = { T0, T0 + BOT_CLOCK_HORIZON_MS + 1 };
-        tb_put_clock(tb_state + tb_state_len - TABLE_STATE_TAIL_BYTES, &far);
+        tb_put_clock(tb_blob_clock(tb_state, tb_state_len), &far);
         CHECK(tb_reload(1) >= 0 && tb.clock.settles_ms == far.settles_ms && table_bot_wait_ms(&tb, T0) == 0,
               "a clock settling past the horizon holds no bot");
         ms = -1;
@@ -15128,32 +15176,24 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
 // must be the one a cold fold of the whole stored log makes. Then the section
 // layout's refusals.
 static uint8_t bm_v6[8192 + 2048];
-static int bm_sec_at;   // where bm_as_v6 put the section
-static int bm_as_v6(const BlRow *row, const BotMemory *m) {
-    uint8_t mb[BOT_MEM_BYTES_MAX];
-    const int ml = bot_mem_encode(m, mb, (int)sizeof mb);
+// The row's state with NO memory, into bm_v5: a v5 blob, as the expand kernel
+// wrote it (the board, then the clock and the stamp).
+static uint8_t bm_v5[8192];
+static int bm_as_v5(const BlRow *row) {
     const int board = state_blob_board_bytes(row->state, row->state_len);
-    if (ml <= 0 || board < 0 || row->state[0] != STATE_BLOB_FORMAT_V5) return -1;
-    // The row's board, the memory section and its count, then the row's clock
-    // and stamp (view.h layout v6).
     const int fixed = STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES;
-    memcpy(bm_v6, row->state, (size_t)board);
-    bm_v6[0] = STATE_BLOB_FORMAT_V6;
-    int at = bm_sec_at = board;
-    bm_v6[at++] = STATE_BLOB_SECTION_BOT_MEMORY;
-    bm_v6[at++] = (uint8_t)ml; bm_v6[at++] = (uint8_t)(ml >> 8);
-    memcpy(bm_v6 + at, mb, (size_t)ml);
-    at += ml;
-    bm_v6[at++] = (uint8_t)(3 + ml); bm_v6[at++] = (uint8_t)((3 + ml) >> 8);
-    memcpy(bm_v6 + at, row->state + row->state_len - fixed, (size_t)fixed);
-    return at + fixed;
+    if (board < 0) return -1;
+    memcpy(bm_v5, row->state, (size_t)board);
+    memcpy(bm_v5 + board, row->state + row->state_len - fixed, (size_t)fixed);
+    bm_v5[0] = STATE_BLOB_FORMAT_V5;
+    return board + fixed;
 }
 
 static void test_bot_memory_rides_the_row(void) {
     static uint8_t state_a[8192], logs_a[4096];
-    static BotMemory backfilled, carried;
+    static BotMemory backfilled;
     TableCommit c;
-    int compared = 0, refused = 0, differ = 0, mem_differ = 0, cold_differ = 0, bytes_max = 0;
+    int compared = 0, refused = 0, differ = 0, mem_differ = 0, bytes_max = 0;
     int bridged = 0, bundled = 0, bridge_differ = 0;
     long bytes_sum = 0;
     static const char *brains[] = { "octogen", "cordite", "blackpowder" };
@@ -15167,11 +15207,11 @@ static void test_bot_memory_rides_the_row(void) {
             tb_seed_bytes(np, 0x6e6 + gi);
             if (bl_bots_only_row(&bl_row, np, brains[(np / 2 + gi) % 3], tb_seed) != TABLE_OK) { refused++; continue; }
             for (int cy = 0; cy < CYCLES && bl_row.status == GAME_STATUS_PLAYING; cy++) {
-                // A: the row without its memory, backfilled from the stored log.
-                if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                // A: the row without its memory (a v5 blob), backfilled from the stored log.
+                const int l5 = bm_as_v5(&bl_row);
+                if (l5 < 0 || table_load(&tb, bm_v5, l5, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
                 table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
-                CHECK(table_bots_need_logs(&tb) == (bl_row.state[0] != STATE_BLOB_FORMAT_V6),
-                      "a played row without its memory asks for the session log, and one with it does not");
+                CHECK(table_bots_need_logs(&tb), "a played row without its memory asks for the session log");
                 if (table_set_session_log(&tb, bl_row.log, bl_row.log_len) < 0 || !tb.mem_valid) { refused++; break; }
                 backfilled = tb.mem;
                 // C: the wasm bridge's drive of the same position, over a board that
@@ -15187,35 +15227,25 @@ static void test_bot_memory_rides_the_row(void) {
                 }
                 const int na = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
                 if (na <= 0) break;
-                const int64_t now = 1700000000000LL + (int64_t)bl_row.version * 1000;
-                if (table_commit_products(&tb, RS("g"), bl_row.version + 1, now, &c, tb_arena, sizeof(tb_arena)) <= 0) { refused++; break; }
                 if (nc) {
                     bridged++;
                     bundled += na > 1;
-                    const int bd = !(tb_drv3.n == na && memcmp(tb_drv3.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)na) == 0);
-                    if (bd && bridge_differ < 6) {
-                        int first = 0;
-                        while (first < na && first < tb_drv3.n && memcmp(&tb_drv3.actions[first], &tb_drv.actions[first], sizeof(BotDriveAction)) == 0) first++;
-                        fprintf(stderr, "  bridge differs: %dp %s cycle %d: n %d vs %d, first diverging action %d, logs %d\n",
-                                np, brains[(np / 2 + gi) % 3], cy, na, tb_drv3.n, first, tb_ref.num_logs);
-                    }
-                    bridge_differ += bd;
+                    bridge_differ += !(tb_drv3.n == na && memcmp(tb_drv3.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)na) == 0);
                 }
+                const int64_t now = 1700000000000LL + (int64_t)bl_row.version * 1000;
+                if (table_commit_products(&tb, RS("g"), bl_row.version + 1, now, &c, tb_arena, sizeof(tb_arena)) <= 0) { refused++; break; }
                 const int sa = c.state.len, la = c.logs.len;
                 memcpy(state_a, tb_arena + c.state.off, (size_t)sa);
                 memcpy(logs_a, tb_arena + c.logs.off, (size_t)la);
-                static TableResident res;
-                table_resident(&tb, 0, &res);
-                carried = res.mem;
 
-                // B: the same row as v6, its memory in the blob and no log at all.
-                const int l6 = bm_as_v6(&bl_row, &backfilled);
-                if (l6 < 0) { refused++; break; }
-                const int bytes = l6 - bl_row.state_len - 5;   // the section, less its tag, length and count
+                // B: the row as this kernel wrote it (v6, its memory in the blob), and no log at all.
+                const int tail = state_blob_tail_bytes(bl_row.state[0]);
+                const int bytes = bl_row.state_len - tail - state_blob_board_bytes(bl_row.state, bl_row.state_len);
                 bytes_sum += bytes;
                 if (bytes > bytes_max) bytes_max = bytes;
-                if (table_load(&tb, bm_v6, l6, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
                 table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+                // The memory the row carries forward is the stored log's, folded cold.
                 mem_differ += !(tb.mem_valid && bot_mem_equal(&tb.mem, &backfilled) && !table_bots_need_logs(&tb));
                 const int nb = table_bot_drive(&tb, 0, 0, 0, &tb_drv2);
                 const int pb = nb > 0 ? table_commit_products(&tb, RS("g"), bl_row.version + 1, now, &c, tb_arena, sizeof(tb_arena)) : -1;
@@ -15223,41 +15253,34 @@ static void test_bot_memory_rides_the_row(void) {
                             && c.state.len == sa && memcmp(tb_arena + c.state.off, state_a, (size_t)sa) == 0
                             && c.logs.len == la && memcmp(tb_arena + c.logs.off, logs_a, (size_t)la) == 0);
                 compared++;
-                // The row moves on by B's products (A's, when they agree); the
-                // memory it carries is the stored log's, folded cold.
                 if (pb <= 0 || bl_row_take(&bl_row, &c) < 0) { refused++; break; }
-                if (bl_row.status == GAME_STATUS_PLAYING) {
-                    if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
-                    table_set_session_log(&tb, bl_row.log, bl_row.log_len);
-                    cold_differ += !bot_mem_equal(&tb.mem, &carried);
-                }
             }
         }
     }
     fprintf(stderr, "  bot memory rides the row: %d positions (%d against the bridge, %d of them bundled cycles), memory section %ld B mean, %d B max\n",
             compared, bridged, bundled, compared ? bytes_sum / compared : 0, bytes_max);
-    CHECK(bundled > 20 && bridge_differ == 0,
-          "bot memory: every cycle, bundled ones included, moves as the wasm bridge's drive over the whole session log");
     CHECK(refused == 0, "bot memory: every row dealt, loaded, drove and committed");
     CHECK(compared > 200 * GAMES, "bot memory: whole games of positions were compared");
-    CHECK(mem_differ == 0, "bot memory: a v6 row loads the very memory a backfill of its log makes");
+    CHECK(mem_differ == 0, "bot memory: the memory a row carries is the cold fold of its stored log");
     CHECK(differ == 0, "bot memory: a cycle from the row's memory moves and commits exactly as one from its session log");
-    CHECK(cold_differ == 0, "bot memory: the memory a commit carries forward is the stored log's, folded cold");
+    CHECK(bundled > 20 && bridge_differ == 0,
+          "bot memory: every cycle, bundled ones included, moves as the wasm bridge's drive over the whole session log");
 
     // The section layout's refusals: each is a row this kernel did not write.
     tb_seed_bytes(3, 9);
     CHECK(bl_bots_only_row(&bl_row, 3, "random", tb_seed) == TABLE_OK, "bot memory: a three-seat table deals");
-    CHECK(table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) == TABLE_OK
-          && table_set_session_log(&tb, bl_row.log, bl_row.log_len) > 0, "bot memory: the dealt row loads");
+    const int l6 = bl_row.state_len;
+    memcpy(bm_v6, bl_row.state, (size_t)l6);
+    CHECK(bm_v6[0] == STATE_BLOB_FORMAT_V6 && table_load(&tb, bm_v6, l6, bl_row.roster, ROSTER_BYTES) == TABLE_OK && tb.mem_valid,
+          "bot memory: the dealt row is v6 and loads with its memory");
     backfilled = tb.mem;
-    const int l6 = bm_as_v6(&bl_row, &backfilled);
-    CHECK(l6 > 0 && table_load(&tb, bm_v6, l6, bl_row.roster, ROSTER_BYTES) == TABLE_OK && tb.mem_valid,
-          "bot memory: the dealt row as v6 loads with its memory");
     static uint8_t bad[sizeof bm_v6];
 #define BM_REFUSE(msg, edit) do { memcpy(bad, bm_v6, (size_t)l6); int bl = l6; edit; \
         const int rc_ = table_load(&tb, bad, bl, bl_row.roster, ROSTER_BYTES); \
         CHECK(rc_ != TABLE_OK && !tb.loaded, msg); } while (0)
-    const int sec_at = bm_sec_at, count_at = l6 - state_blob_tail_bytes(STATE_BLOB_FORMAT_V6);
+    const int sec_at = state_blob_board_bytes(bm_v6, l6);
+    const int count_at = l6 - state_blob_tail_bytes(STATE_BLOB_FORMAT_V6);
+    CHECK(sec_at > 0 && bm_v6[sec_at] == STATE_BLOB_SECTION_BOT_MEMORY, "bot memory: the section follows the board");
     BM_REFUSE("bot memory: a section tag this kernel does not know is refused", bad[sec_at] = 2);
     BM_REFUSE("bot memory: a section count past the blob is refused", bad[count_at + 1] = 0x7f);
     BM_REFUSE("bot memory: a section longer than its bytes is refused", bad[sec_at + 2] = 0x7f);
@@ -15270,7 +15293,7 @@ static void test_bot_memory_rides_the_row(void) {
     CHECK(table_load(&tb, bad, l6, bl_row.roster, ROSTER_BYTES) == TABLE_OK && !tb.mem_valid && table_bots_need_logs(&tb),
           "bot memory: a memory the codec refuses is no memory, and the table asks for the log");
     // A board not being played carries none: the writer drops it, the reader refuses it.
-    static Game lobby;
+    static Game lobby, back;
     memset(&lobby, 0, sizeof lobby);
     lobby.status = GAME_STATUS_WAITING;
     lobby.num_players = 3;
@@ -15280,7 +15303,6 @@ static void test_bot_memory_rides_the_row(void) {
     const int lw = state_blob_put_full_at(&lobby, 0, 0, &sec, STATE_BLOB_FORMAT_V6, bad);
     const int lb = state_blob_board_bytes(bad, lw);
     CHECK(lw > 0 && lb > 0 && bad[lb] == 0 && bad[lb + 1] == 0, "bot memory: a lobby's v6 blob carries no memory");
-    static Game back;
     StateBlobSections got;
     CHECK(state_blob_load_full(&back, bad, lw, 0, 0, &got) == 1 && got.bot_memory_len == 0,
           "bot memory: a lobby's v6 blob reads back, with no memory");
@@ -15564,7 +15586,7 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
     table_init(&tb, &tb_game, &tb_snaps);
     CHECK(table_load(&tb, blob, n5, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 3 && tb.ratings.delta[1] == -3,
           "a table loads a v5 row and holds its stamp");
-    CHECK(TABLE_STATE_FORMAT == STATE_BLOB_FORMAT_V5, "this kernel WRITES v5 (the switch step)");
+    CHECK(TABLE_STATE_FORMAT == STATE_BLOB_FORMAT_V6, "this kernel WRITES v6 (the switch step of v5 -> v6), which keeps v5's stamp");
 
     // ---- the envelope ----
     client_init(&ct, &ct_slot);
@@ -15705,7 +15727,7 @@ static void test_table_rates_the_game_it_ends(void) {
     CHECK(n > 0 && c.ended && c.n_rated == 3 && c.rating_delta[0] == want[0] && c.rating_delta[1] == want[1]
           && c.rating_delta[2] == want[2] && c.rating_delta[3] == 0, "the ending commit names the changes to apply, by seat");
     CHECK(!c.wants_ratings, "and, rated, it wants nothing more");
-    CHECK(tb_arena[c.state.off] == STATE_BLOB_FORMAT_V5, "the row is written as v5");
+    CHECK(tb_arena[c.state.off] == STATE_BLOB_FORMAT_V6, "the row is written as v6");
     client_init(&ct, &ct_slot);
     for (int s = 0; s < 3; s++) {
         if (s == 1) { CHECK(c.views[s].len == 0, "the bot seat has no envelope"); continue; }
@@ -19420,10 +19442,10 @@ static int wv_random_move(const Game *g, char *id, int id_cap, uint8_t *w, int c
 static void test_state_blob_formats_read_and_written(void) {
     static uint8_t blob[8192], want[8192];
     TableCommit c;
-    CHECK(TABLE_STATE_FORMAT == TABLE_STATE_FORMAT_V5, "state blob: the format this kernel writes is v5");
+    CHECK(TABLE_STATE_FORMAT == TABLE_STATE_FORMAT_V6, "state blob: the format this kernel writes is v6");
     CHECK(TABLE_STATE_CLOCK_BYTES == TABLE_STATE_V3_CLOCK_BYTES
-          && TABLE_STATE_TAIL_BYTES == TABLE_STATE_V3_CLOCK_BYTES + TABLE_STATE_STAMP_BYTES,
-          "state blob: a written blob carries the clock, and the rating stamp behind it");
+          && TABLE_STATE_TAIL_BYTES == 2 + TABLE_STATE_V3_CLOCK_BYTES + TABLE_STATE_STAMP_BYTES,
+          "state blob: a written blob ends with the sections' count, the clock, and the rating stamp behind it");
 
     tb_seed_bytes(4, 1);
     CHECK(bl_bots_only_row(&bl_row, 4, "random", tb_seed) == TABLE_OK, "state blob: a four-seat bots table deals");
@@ -19449,7 +19471,7 @@ static void test_state_blob_formats_read_and_written(void) {
     // alone) and a clock: shown at T, done playing at T + 500.
     const int64_t T = 1700000000000LL;
     const BoardClock clk = { T, T + 500 };
-    const int board = sl - TABLE_STATE_TAIL_BYTES;
+    const int board = state_blob_board_bytes(bl_row.state, sl);
     memcpy(blob, bl_row.state, (size_t)board);
     tb_put_clock(blob + board, &clk);
     const int n3 = board + TABLE_STATE_V3_CLOCK_BYTES;
@@ -19461,30 +19483,38 @@ static void test_state_blob_formats_read_and_written(void) {
     CHECK(table_bot_wait_ms(&tb, T + 150) == wait - 50, "state blob: less the time gone since the v3 clock");
     CHECK(table_bot_wait_ms(&tb, T + 3600000) == 0, "state blob: and not at all an hour later");
     // Written back at the current format: the same board and clock, the flag
-    // byte the v3 deck bit and PASSING, and no rating stamp.
-    memcpy(want, blob, (size_t)n3);
+    // byte the v3 deck bit and PASSING, no bot memory (the row carried none, so
+    // an empty sections' count) and no rating stamp.
+    memcpy(want, blob, (size_t)board);
     want[0] = TABLE_STATE_FORMAT;
     want[1] |= TABLE_STATE_FLAG_PASSING;
-    memset(want + n3, 0, TABLE_STATE_STAMP_BYTES);
+    want[board] = want[board + 1] = 0;
+    tb_put_clock(want + board + 2, &clk);
+    memset(want + board + 2 + TABLE_STATE_V3_CLOCK_BYTES, 0, TABLE_STATE_STAMP_BYTES);
+    const int wl3 = board + TABLE_STATE_TAIL_BYTES;
     CHECK(table_commit_products(&tb, RS("g"), bl_row.version, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
-          && c.state.len == n3 + TABLE_STATE_STAMP_BYTES && memcmp(tb_arena + c.state.off, want, (size_t)c.state.len) == 0,
+          && c.state.len == wl3 && memcmp(tb_arena + c.state.off, want, (size_t)c.state.len) == 0,
           "state blob: a v3 row commits back at the current format, the same board and clock, passing, unrated");
 
     // v4 is v5 without the stamp, under its own format byte. A passing row and
-    // a podkidnoy row each commit back the board, flags and clock they loaded.
-    const int n4 = sl - TABLE_STATE_STAMP_BYTES;
+    // a podkidnoy row each commit back the board, flags and clock they loaded
+    // (and, carrying no bot memory, an empty sections' count).
+    const int n4 = board + TABLE_STATE_V3_CLOCK_BYTES;
     const uint8_t deck = bl_row.state[1] & TABLE_STATE_FLAG_DETERMINISTIC;
     for (int passing = 1; passing >= 0; passing--) {
-        memcpy(blob, bl_row.state, (size_t)n4);
+        memcpy(blob, bl_row.state, (size_t)board);
+        memcpy(blob + board, tb_blob_clock(bl_row.state, sl), TABLE_STATE_V3_CLOCK_BYTES);
         blob[0] = TABLE_STATE_FORMAT_V4;
         blob[1] = (uint8_t)(deck | (passing ? TABLE_STATE_FLAG_PASSING : 0));
-        memcpy(want, blob, (size_t)n4);
+        memcpy(want, blob, (size_t)board);
         want[0] = TABLE_STATE_FORMAT;
-        memset(want + n4, 0, TABLE_STATE_STAMP_BYTES);
+        want[board] = want[board + 1] = 0;
+        memcpy(want + board + 2, blob + board, TABLE_STATE_V3_CLOCK_BYTES);
+        memset(want + board + 2 + TABLE_STATE_V3_CLOCK_BYTES, 0, TABLE_STATE_STAMP_BYTES);
         const int rc = table_load(&tb, blob, n4, bl_row.roster, ROSTER_BYTES);
         CHECK(rc == TABLE_OK, passing ? "state blob: a passing v4 row loads" : "state blob: a podkidnoy v4 row loads");
         CHECK(rc == TABLE_OK && table_commit_products(&tb, RS("g"), bl_row.version, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
-              && c.state.len == sl && memcmp(tb_arena + c.state.off, want, (size_t)sl) == 0,
+              && c.state.len == wl3 && memcmp(tb_arena + c.state.off, want, (size_t)wl3) == 0,
               passing ? "state blob: a passing v4 row is written back the same bytes at the current format"
                       : "state blob: a podkidnoy v4 row is written back the same, still podkidnoy");
     }
@@ -20267,13 +20297,23 @@ static void test_delta_cast_rebuilds_the_board_cast(void) {
 // And the products a plain move asks for (TABLE_PRODUCTS_NO_ROW | NO_SPECTATOR_VIEW) are the
 // same envelopes byte for byte, with no spectator envelope and no row.
 static uint8_t po_arena2[sizeof(tb_arena)];
-#define PRODUCTS_DIGEST_GOLDEN 0xd0f12e4eu   // taken on main at 893ab6490, before these changes
+// With every state blob folded as its v5 self. It was 0xd0f12e4e (taken on main at
+// 893ab6490), and moved once, with the bot memory (bot_memory.h): this harness hands
+// no session log, so every bot decision's progress term (bot_drive.h) used to count
+// only the records on the board, where the server's bot loop always handed the log
+// over and counted the session's. The memory counts the session's records here too.
+// With the old progress term put back, this test gives 0xd0f12e4e again, so the
+// seeds are the whole of that change: no move, record or envelope moved otherwise.
+#define PRODUCTS_DIGEST_GOLDEN 0xdc6a515au
+// The bytes as written: the state as v6 (view.h: the bot memory section and its count).
+#define PRODUCTS_DIGEST_GOLDEN_V6 0x2758e01du
 static void test_products_are_the_bytes_they_were(void) {
     uint8_t w[128];
     char id[16], ab[2 * FOOLISH_SEED_LEN + 1];
     for (int i = 0; i < FOOLISH_SEED_LEN; i++) memcpy(ab + 2 * i, "ab", 2);
     TableCommit c, c2;
-    uint32_t h = FNV32_OFFSET;
+    uint32_t h = FNV32_OFFSET, h6 = FNV32_OFFSET;
+    static uint8_t po_v5[8192];
     long commits = 0, plain_same = 0, plain_checked = 0;
     cb_rng = 0x0b7e5u;
     for (int g = 0; g < 400; g++) {
@@ -20319,11 +20359,23 @@ static void test_products_are_the_bytes_they_were(void) {
             }
             if (wv_commit(&wv_row, "g", &c) < 0) break;
             commits++;
-            h = tb_fold(h, tb_arena + c.state.off, c.state.len);
+            h6 = tb_fold(h6, tb_arena + c.state.off, c.state.len);
+            {
+                const uint8_t *st = tb_arena + c.state.off;
+                const int board = state_blob_board_bytes(st, c.state.len), fixed = STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES;
+                memcpy(po_v5, st, (size_t)board);
+                memcpy(po_v5 + board, st + c.state.len - fixed, (size_t)fixed);
+                po_v5[0] = STATE_BLOB_FORMAT_V5;
+                h = tb_fold(h, po_v5, board + fixed);
+            }
             h = tb_fold(h, tb_arena + c.roster.off, c.roster.len);
             h = tb_fold(h, tb_arena + c.logs.off, c.logs.len);
+            h6 = tb_fold(h6, tb_arena + c.roster.off, c.roster.len);
+            h6 = tb_fold(h6, tb_arena + c.logs.off, c.logs.len);
             for (int s = 0; s < np; s++) h = tb_fold(h, tb_arena + c.views[s].off, c.views[s].len);
+            for (int s = 0; s < np; s++) h6 = tb_fold(h6, tb_arena + c.views[s].off, c.views[s].len);
             h = tb_fold(h, tb_arena + c.spectator.off, c.spectator.len);
+            h6 = tb_fold(h6, tb_arena + c.spectator.off, c.spectator.len);
             // Each envelope is also table_envelope's for that viewer (the trailer written on its own).
             for (int v = -1; v < np; v++) {
                 if (v >= 0 && ((bots >> v) & 1u)) continue;
@@ -20333,9 +20385,11 @@ static void test_products_are_the_bytes_they_were(void) {
             }
         }
     }
-    printf("  products: %ld commits, digest %08x; %ld of %ld plain-move products the same envelopes\n", commits, h, plain_same, plain_checked);
+    printf("  products: %ld commits, digest %08x (as written %08x); %ld of %ld plain-move products the same envelopes\n", commits, h, h6,
+           plain_same, plain_checked);
     CHECK(commits > 80000, "products: enough commits");
-    CHECK(h == PRODUCTS_DIGEST_GOLDEN, "products: every commit's bytes are the ones the kernel wrote before (state, roster, logs, envelopes)");
+    CHECK(h == PRODUCTS_DIGEST_GOLDEN, "products: every commit's bytes are the ones the kernel wrote before (state as v5, roster, logs, envelopes)");
+    CHECK(h6 == PRODUCTS_DIGEST_GOLDEN_V6, "products: and the bytes as this kernel writes them (the state as v6)");
     CHECK(plain_checked > 50000 && plain_same == plain_checked,
           "products: a plain move's products (no row, no spectator envelope) are the same seat envelopes");
 }
@@ -21244,7 +21298,7 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
         for (int step = 0; step < 3000 && bl_row.status == GAME_STATUS_PLAYING; step++) {
             TableCommit c;
             if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { stuck++; break; }
-            logged += table_bots_need_logs(&tb);
+            logged += tb.mem_valid && !table_bots_need_logs(&tb);   // a row that carried its bot memory
             if (table_needs_bots(&tb)) {
                 uint32_t h = 0, h2 = 0;
                 int plen = 0, plen2 = 0;
@@ -21328,10 +21382,10 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
         CHECK(other < 0, what);
         codes++;
     }
-    fprintf(stderr, "  [bot cycles] %d codes, %d human moves, %d retries, %d logged loads\n", codes, humans, retries, logged);
+    fprintf(stderr, "  [bot cycles] %d codes, %d human moves, %d retries, %d loads with their memory\n", codes, humans, retries, logged);
     CHECK(stuck == 0, "every load, drive, move and commit of the games was accepted");
     CHECK(logged > 0 && retries > 0 && humans > 0 && codes + capped == GAMES && codes >= GAMES - 1,
-          "every path was exercised: belief loads, retries, human moves, codes");
+          "every path was exercised: loads with their memory, retries, human moves, codes");
     CHECK(retry_diff == 0, "a CAS retry offered the lost attempt's moves replays them byte for byte, under another seed");
 }
 

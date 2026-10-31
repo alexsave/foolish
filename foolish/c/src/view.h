@@ -208,12 +208,14 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 // is the same for every one, so two changes that each add a section compose
 // without either knowing the other's bytes.
 //
-// THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: V5, the
-// switch step (it was V4 while the expand kernel was deploying). Everything that
-// depends on which one is written - the clock bytes a blob ends with, whether a
-// board's rules can be written at all, whether a finished game's rating stamp
-// survives the row - follows from it.
-#define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V5
+// THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: V6, the
+// switch step of v5 -> v6 (V5 while its expand kernel, which read v6 and still
+// wrote v5, was deploying). Everything that depends on which one is written -
+// the clock bytes a blob ends with, whether a board's rules can be written at
+// all, whether a finished game's rating stamp survives the row, whether a bot
+// memory rides it - follows from it. v5 rows stay in the column until a game
+// rewrites them, so v5 is still read, as a row without a bot memory.
+#define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V6
 
 // The bytes the blob's header costs, ahead of the state_put payload.
 #define STATE_BLOB_HEADER 2
