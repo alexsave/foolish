@@ -15198,9 +15198,9 @@ static void test_bot_memory_rides_the_row(void) {
     long bytes_sum = 0;
     static const char *brains[] = { "octogen", "cordite", "blackpowder" };
 #ifdef COVERAGE_CORPUS
-    enum { GAMES = 1, CYCLES = 40 };
+    enum { GAMES = 1, CYCLES = 40, POSITIONS = 60 };    // three widths of 40 cycles at most
 #else
-    enum { GAMES = 2, CYCLES = 400 };
+    enum { GAMES = 2, CYCLES = 400, POSITIONS = 400 };
 #endif
     for (int np = 2; np <= 6; np += 2) {
         for (int gi = 0; gi < GAMES; gi++) {
@@ -15260,7 +15260,7 @@ static void test_bot_memory_rides_the_row(void) {
     fprintf(stderr, "  bot memory rides the row: %d positions (%d against the bridge, %d of them bundled cycles), memory section %ld B mean, %d B max\n",
             compared, bridged, bundled, compared ? bytes_sum / compared : 0, bytes_max);
     CHECK(refused == 0, "bot memory: every row dealt, loaded, drove and committed");
-    CHECK(compared > 200 * GAMES, "bot memory: whole games of positions were compared");
+    CHECK(compared > POSITIONS, "bot memory: whole games of positions were compared");
     CHECK(mem_differ == 0, "bot memory: the memory a row carries is the cold fold of its stored log");
     CHECK(differ == 0, "bot memory: a cycle from the row's memory moves and commits exactly as one from its session log");
     CHECK(bundled > 20 && bridge_differ == 0,
