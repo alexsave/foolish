@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
 import { useLocalization } from '../contexts/LocalizationContext';
 import { useServer } from '../contexts/ServerContext';
@@ -12,7 +12,7 @@ import { ProtectedRoute } from './ProtectedRoute';
 import { GameBoard } from './GameBoard';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { TexturedSurface } from './TexturedSurface';
-import { EndCard } from './EndCard';
+import { WinScreen } from './WinScreen';
 
 /* A promo code's game (src/common/promo.ts): the visitor against the bot, dealt
  * the moment the page opens, played in this tab by the kernel's local table
@@ -29,15 +29,20 @@ export const PromoGame = ({ promo }: { promo: Promo }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => visitLanguage(promo.lang), [promo]);
     // The table opens once the code's language is in, so the visitor's seat is
-    // named in it ("Вы" on /br, not the English standing in while it loads).
+    // named in it ("Гость" on /br, not the English standing in while it loads):
+    // the name the replay's QR carries too.
+    // Opened ONCE, and left only when the page goes: the language settling again
+    // afterwards (a stored choice arriving) must not deal a second game under the
+    // page that is already showing the first.
     const inLanguage = language === promo.lang && loaded;
+    const stop = useRef<(() => void) | null>(null);
     useEffect(() => {
-        if (!inLanguage) return;
-        const stop = playLocally(promo.code, t('you'));
+        if (!inLanguage || stop.current) return;
+        stop.current = playLocally(promo.code, t('visitor'));
         setPlaying(true);
-        return stop;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [promo, inLanguage]);
+    }, [inLanguage]);
+    useEffect(() => () => { stop.current?.(); stop.current = null; }, []);
     if (!playing) return null;
     return (
         <AuthContext.Provider value={LOCAL_AUTH}>
@@ -53,26 +58,29 @@ const PromoBoard = () => {
     const { t } = useLocalization();
     usePreventScroll();
     if (!view) return null;
-    const over = view.status === GAME_STATUS.GAME_OVER;
+    // The finish screen is the online game's own (ranks, places, the replay's QR
+    // and link), unrated as a local game is, with this page's two ways on.
+    if (view.status === GAME_STATUS.GAME_OVER) {
+        return (
+            <div data-promo-game={view.status} style={{ display: 'contents' }}>
+                <WinScreen title={t('game_over')} actions={
+                    <div data-testid="promo-end" style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+                        <TexturedSurface as="button" seed={0.3} className="btn-wood btn-wood--lg" onClick={() => window.location.reload()}>
+                            <span className="btn-wood-text">{t('play_again')}</span>
+                        </TexturedSurface>
+                        {/* A full navigation, so the local game is left behind with the page. */}
+                        <TexturedSurface as="button" seed={0.6} className="btn-wood btn-wood--lg" onClick={() => window.location.assign('/')}>
+                            <span className="btn-wood-text">{t('register')}</span>
+                        </TexturedSurface>
+                    </div>
+                } />
+            </div>
+        );
+    }
     return (
         <div data-game-container className="game-container" data-promo-game={view.status}>
             <WoolBackgroundLayer />
-            <GameBoard interactive chrome={over && (
-                <EndCard testId="promo-end" actions={<>
-                    <TexturedSurface as="button" seed={0.3} className="btn-wood btn-wood--md" onClick={() => window.location.reload()}>
-                        <span className="btn-wood-text">{t('rematch')}</span>
-                    </TexturedSurface>
-                    {/* A full navigation, so the local game is left behind with the page. A
-                        button like its neighbour, not a link: an <a> sits its label lower. */}
-                    <TexturedSurface as="button" seed={0.6} className="btn-wood btn-wood--md" onClick={() => window.location.assign('/')}>
-                        <span className="btn-wood-text">{t('sign_up')}</span>
-                    </TexturedSurface>
-                </>}>
-                    <p style={{ fontSize: '1.15rem', lineHeight: 1.4, margin: '0 0 18px' }}>
-                        {t(view.fool === view.mySeat ? 'you_lose' : 'you_win')}
-                    </p>
-                </EndCard>
-            )} />
+            <GameBoard interactive />
         </div>
     );
 };

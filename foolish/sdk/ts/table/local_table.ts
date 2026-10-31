@@ -60,6 +60,12 @@ export class LocalTable {
     /** One bot cycle: the actions it applied. */
     bot(): number { return this.ex.wasm_local_bot(Date.now()); }
 
+    /** The finished game's replay, made as the server's finalize makes it: its moves code and extras (raw bytes). */
+    replay(): { moves: Uint8Array; extras: Uint8Array } {
+        const moves = this.out(this.ex.wasm_local_replay(0), 'replay');
+        return { moves, extras: this.out(this.ex.wasm_local_replay(1), 'replay extras') };
+    }
+
     /** The cast the last committed operation left for the human, once; null for none. */
     cast(): Uint8Array | null {
         const n = this.ex.wasm_local_cast();

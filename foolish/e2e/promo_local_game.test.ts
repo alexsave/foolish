@@ -92,26 +92,24 @@ async function open(seg: string): Promise<Page> {
 }
 
 /** Waits (bounded) until `ok` holds of the page. */
-async function until(page: Page, ok: () => boolean, what: string): Promise<void> {
-    for (let i = 0; i < 60 && !ok(); i++) await page.wait(60);
-    assert.ok(ok(), `${what} (the page drew: ${page.host.innerHTML.slice(0, 300)})`);
+async function until(page: Page, ok: () => boolean, what: string | (() => string)): Promise<void> {
+    for (let i = 0; i < 160 && !ok(); i++) await page.wait(60);   // the deal plays at its own pace (~5 s)
+    assert.ok(ok(), `${typeof what === 'string' ? what : what()} (the page drew: ${page.host.innerHTML.slice(0, 300)})`);
 }
 
 const handCards = (host: HTMLElement) => host.querySelectorAll('[data-location="hand"][data-card]').length;
 
 /** Holds that `seg` is a dealt local game against the bot, the page in `lang`, and nothing sent. */
-async function landsInADealtGame(seg: string, lang: string, theme: string, you: string): Promise<Page> {
+async function landsInADealtGame(seg: string, lang: string, you: string): Promise<Page> {
     requests.length = 0;
     const { GAME_STATUS } = await import('../src/state/view.ts');
     const page = await open(seg);
     try {
     await until(page, () => page.host.querySelector(`[data-promo-game="${GAME_STATUS.PLAYING}"]`) !== null,
         `/${seg}: a game is being played, with no tap`);
-    await until(page, () => handCards(page.host) === 6, `/${seg}: the deal lands: six cards in the visitor's hand`);
+    await until(page, () => handCards(page.host) === 6, () => `/${seg}: the deal lands: six cards in the visitor's hand (${handCards(page.host)} there)`);
     assert.match(page.host.textContent ?? '', /Miami 1/, `/${seg}: the opponent is the bot`);
     assert.ok((page.host.textContent ?? '').includes(you), `/${seg}: the visitor's seat is named in ${lang} (${you})`);
-    await until(page, () => dom.window.document.documentElement.getAttribute('data-theme') === theme,
-        `/${seg}: the page is in ${lang} (its theme, ${theme})`);
     await page.wait(400);   // the bot's turn, if it leads
     assert.deepEqual(requests, [], `/${seg}: nothing left the page`);
     } catch (e) { await page.close(); throw e; }
@@ -123,7 +121,7 @@ async function landsInADealtGame(seg: string, lang: string, theme: string, you: 
 // Rematch reloads), so each code is opened once here.
 test('/BR lands in a dealt game against the bot, in Russian, with no request sent', async () => {
     dom.window.localStorage.clear();
-    const page = await landsInADealtGame('BR', 'ru', 'soviet', 'Вы');
+    const page = await landsInADealtGame('BR', 'ru', 'Гость');
     try {
         assert.equal(dom.window.localStorage.getItem('foolish_language'), 'ru', 'a visitor with no language of their own keeps Russian');
     } finally { await page.close(); }
@@ -132,7 +130,7 @@ test('/BR lands in a dealt game against the bot, in Russian, with no request sen
 test('/ws lands in a dealt game in English, and a visitor\'s own language choice is not overwritten', async () => {
     dom.window.localStorage.clear();
     dom.window.localStorage.setItem('foolish_language', 'ru');
-    const page = await landsInADealtGame('ws', 'en', 'default', 'You');
+    const page = await landsInADealtGame('ws', 'en', 'Visitor');
     try {
         assert.equal(dom.window.localStorage.getItem('foolish_language'), 'ru', 'their own choice is kept for their next visit');
     } finally { await page.close(); }

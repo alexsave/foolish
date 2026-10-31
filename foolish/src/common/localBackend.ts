@@ -17,6 +17,8 @@ export interface LocalBackend {
     /** The kernel's TABLE_* result of an ask, negative for a refusal. */
     meta(body: Uint8Array): number;
     hold(what: number, gameId: string): () => void;
+    /** The finished game's replay, or null before the end. */
+    replay(gameId: string): { moves: Uint8Array; extras: Uint8Array } | null;
     stop(): void;
 }
 
@@ -66,6 +68,10 @@ export function localBackend(gameId: string, you: string, cast: (gameId: string,
                 setTimeout(() => { if (!stopped) { table.start(); flush(); } }, 0);
             }
             return () => {};
+        },
+        replay(gid) {
+            if (gid !== gameId || !opened) return null;
+            try { return table.replay(); } catch { return null; }
         },
         stop() {
             stopped = true;
