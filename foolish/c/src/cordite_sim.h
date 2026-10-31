@@ -174,6 +174,15 @@ void         cd_sim_set_noise_mode(int mode);
 int          cd_sim_noise_mode(void);
 CdNoiseStats cd_sim_noise_stats(void);
 void         cd_sim_noise_stats_reset(void);
+// The keyed stream, thread-local like the level and 0 by default (fusion's,
+// FUSION.md). Off, both noise draws are game_random(), the rollout's own
+// stream. On, they come from a hash of the seed last given to
+// cd_sim_noise_reseed, the deciding seat and that seat's decision count since
+// the reseed, so game_random() is left to the deck and the k-th decision of a
+// seat meets the same draws under every root candidate. The searcher reseeds
+// before every rollout. Like the mode, it draws nothing on its own.
+void         cd_sim_set_noise_crn(int on);
+void         cd_sim_noise_reseed(uint64_t seed);
 // The struct rollout's twin of the bitboard noise (og_simulate under
 // OG_NO_FASTROLL / OG_LEAF): `moves` is seat p's calculate_legal_moves_lite
 // menu over the determinized world g. Returns the index of the noisy move, or
@@ -198,6 +207,8 @@ static inline void         cd_sim_set_noise_mode(int mode) { (void)mode; }
 static inline int          cd_sim_noise_mode(void) { return CD_NOISE_SENSIBLE; }
 static inline CdNoiseStats cd_sim_noise_stats(void) { CdNoiseStats z = { 0, 0, 0, 0 }; return z; }
 static inline void         cd_sim_noise_stats_reset(void) { }
+static inline void         cd_sim_set_noise_crn(int on) { (void)on; }
+static inline void         cd_sim_noise_reseed(uint64_t seed) { (void)seed; }
 static inline int          cd_sim_noise_legal(const Game *g, int p, const LegalMoves *moves) {
     (void)g; (void)p; (void)moves; return -1;
 }

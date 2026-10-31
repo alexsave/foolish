@@ -164,6 +164,29 @@ static _Thread_local double og_trump_keep = 0.040;
 // in less wall-clock. Tunable via OG_BB_WIN / OG_BB_AVOID for sweeps.
 static _Thread_local int og_bb_win_budget = 20000;
 static _Thread_local int og_bb_avoid_budget = 15000;
+
+// ---------- fusion's parameters (c/FUSION.md) ----------------------------
+// Fusion is this brain with one parameter block set. Every way fusion differs
+// from octogen reads it, and only through og_fu: fusion_strategy_choose points
+// og_fu at its block for one decision and puts NULL back, and octogen never
+// sets it, so with og_fu NULL every line below is octogen's and draws exactly
+// octogen's numbers (test_octogen_is_fusion_at_zero, FUSION.md "Octogen is
+// unchanged"). Compiled only where the rollout noise is (CD_ROLLOUT_NOISE): the
+// shipped bots module carries none of it.
+#ifdef CD_ROLLOUT_NOISE
+typedef struct {
+    int noise_pm;        // rollout noise, per mille (cordite_sim.h); 0: none
+    int noise_mode;      // CD_NOISE_SENSIBLE or CD_NOISE_ANY
+    int noise_crn;       // 1: the noise draws from its own keyed stream
+    int void_mod;        // the void mixture, in og_void_mod's place
+    int shadow;          // >= 0: the shadow selection, at this many tenths of a
+                         // standard error; < 0: the noisy race picks alone
+    int shadow_w_pct;    // the noisy race's worlds, percent of octogen's
+    int tie_milli;       // the tie band at the culls and the pick, milli-places
+    int unfinished_mid;  // 1: a rollout that never finishes scores the middle place
+} OgFusion;
+static _Thread_local const OgFusion *og_fu = NULL;
+#endif
 // ---------- belief state ------------------------------------------------
 
 #ifdef OG_EXPLAIN_BUILD
@@ -1944,6 +1967,43 @@ static double og_keep_penalty(const Game *g, const LegalMove *m) {
     return pen;
 }
 
+// A rollout's score from its finish fp: the place, or for a rollout that never
+// finished (fp 0: the turn cap, or no seat could act) the last place, written
+// into *fp so the trace sees it. Fusion with unfinished_mid scores such a
+// rollout the middle place instead: the cap says nothing about the searcher's
+// finish, and last place is the one score it is surely not owed.
+static inline double og_finish(const Game *g, int *fp) {
+    if (*fp) return (double)*fp;
+    *fp = g->num_players;
+#ifdef CD_ROLLOUT_NOISE
+    if (og_fu && og_fu->unfinished_mid) return (g->num_players + 1) * 0.5;
+#endif
+    return (double)g->num_players;
+}
+
+#ifdef CD_ROLLOUT_NOISE
+// Fusion's shadow race (og_fusion_shadow): candidate `pin` (octogen's own pick)
+// is never culled, and every world folds each alive candidate's score minus
+// the pin's, so the pick can be tested against the pin paired over the worlds
+// both played. og_shadow is non-NULL only inside that race.
+typedef struct {
+    int pin, w_pct;
+    double d[OG_MAX_CANDS], d2[OG_MAX_CANDS];
+    int n[OG_MAX_CANDS];
+} OgShadow;
+static _Thread_local OgShadow *og_shadow = NULL;
+
+static void og_shadow_fold(OgShadow *sh, int n, const bool *alive, const double *wfp) {
+    for (int i = 0; i < n; i++) {
+        if (!alive[i]) continue;
+        double d = wfp[i] - wfp[sh->pin];
+        sh->d[i] += d;
+        sh->d2[i] += d * d;
+        sh->n[i]++;
+    }
+}
+#endif
+
 // After stage 0 and stage 1: drop the worst candidates until `keep` are alive.
 static void og_cull(int stage, int n, const double *keep_pen,
                     const double *score, const int *nsim, bool *alive) {
@@ -1957,18 +2017,28 @@ static void og_cull(int stage, int n, const double *keep_pen,
         keep = (og_keep2 > 0) ? og_keep2 : (og_oracle ? 3 : 2);
     }
     if (keep >= n_alive) return;
+    double band = 0.0;   // octogen: exact ties only
+    int pin = -1;        // octogen: every candidate can be dropped
+#ifdef CD_ROLLOUT_NOISE
+    if (og_fu) band = og_fu->tie_milli / 1000.0;
+    if (og_shadow) pin = og_shadow->pin;
+#endif
     for (int dropped = n_alive - keep; dropped > 0; dropped--) {
         int worst = -1;
         double worst_v = -1e30;
         for (int i = 0; i < n; i++) {
-            if (!alive[i]) continue;
-            double v = score[i] / (double)(nsim[i] ? nsim[i] : 1) + keep_pen[i];
+            if (!alive[i] || i == pin) continue;
+            double v = score[i] / (double)(nsim[i] ? nsim[i] : 1) + keep_pen[i] + band;
             // >= : among tied scores drop the LAST candidate. The
             // candidate list is ranked cheapest-first, so this keeps
             // the cheap move on ties; dropping the first-tied instead
             // systematically burns trumps (measured ~0.1 mean finish
             // vs blackpowder tables at pc4).
-            if (v >= worst_v) { worst_v = v; worst = i; }
+            // Fusion's band (og_fu->tie_milli) widens "tied" to within the
+            // band of the worst so far: the +band above, then the worst keeps
+            // its own score without it, so the walk drops the last of a
+            // near-tied tail. At band 0 it is octogen's exact-tie rule.
+            if (v >= worst_v) { worst_v = v - band; worst = i; }
         }
         if (worst < 0) break;
         alive[worst] = false;
@@ -1988,6 +2058,18 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
                           double *score, int *nsim, bool *alive) {
     int W1, W2, W3;
     og_params(g->num_players, &W1, &W2, &W3);
+    int void_mod = og_void_mod;
+#ifdef CD_ROLLOUT_NOISE
+    OgShadow *sh = og_shadow;
+    const int fu_crn = og_fu && og_fu->noise_crn && cd_sim_noise();
+    double wfp[OG_MAX_CANDS];
+    if (og_fu) void_mod = og_fu->void_mod;
+    if (sh && sh->w_pct != 100) {
+        W1 = (W1 * sh->w_pct + 99) / 100;
+        W2 = (W2 * sh->w_pct + 99) / 100;
+        W3 = (W3 * sh->w_pct + 99) / 100;
+    }
+#endif
 
     // World-sampling seed. Depends ONLY on the SERVER-ONLY secret - the strategy
     // LCG, reseeded per decision from state_fnv(g_rng_base) (see wasm_api.c) -
@@ -2023,7 +2105,7 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
             // Belief mixture: voids assume cover-if-you-can pickups (3 of 4
             // worlds), floors assume lowest-first attackers (every other
             // world). Per-player distrust already cleared bogus constraints.
-            bool use_voids  = (w % og_void_mod) != og_void_mod - 1;
+            bool use_voids  = (w % void_mod) != void_mod - 1;
             bool use_floors = !og_no_floors && (w % og_floor_mod) == 0;
             og_sample_world(world, g, bot_idx, B, wseed, use_voids, use_floors);
             uint32_t sim_rng = bot_mix(wseed, 0x51AB1E5u);
@@ -2035,6 +2117,9 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
                     if (!alive[ci]) continue;
                     *trial_sim = *world_sim;            // cheap struct copy
                     game_rng_set(sim_rng);              // identical stream
+#ifdef CD_ROLLOUT_NOISE
+                    if (fu_crn) cd_sim_noise_reseed(sim_rng);
+#endif
                     og_trace_begin(bot_idx);
                     int fp;
                     if (!cd_sim_apply_root_move(trial_sim, bot_idx,
@@ -2045,7 +2130,6 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
                                                   og_bbleaf_on ? og_bbleaf_cards_eff : 0,
                                                   og_bbleaf_budget, og_polmap,
                                                   og_reply_cap);
-                        if (fp == 0) fp = g->num_players;
                     } else {
                         fp = (og_bbleaf_on || og_polmap)
                            ? cd_sim_playout_pol(trial_sim, bot_idx, 600,
@@ -2053,12 +2137,18 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
                                                 og_bbleaf_on ? og_bbleaf_cards_eff : 0,
                                                 og_bbleaf_budget, og_polmap)
                            : cd_sim_playout(trial_sim, bot_idx, 600, !og_no_earlyexit);
-                        if (fp == 0) fp = g->num_players;
                     }
-                    score[ci] += (double)fp;
+                    double v = og_finish(g, &fp);
+                    score[ci] += v;
                     nsim[ci]++;
                     og_trace_end(ci, fp);
+#ifdef CD_ROLLOUT_NOISE
+                    wfp[ci] = v;
+#endif
                 }
+#ifdef CD_ROLLOUT_NOISE
+                if (sh) og_shadow_fold(sh, C->n, alive, wfp);
+#endif
                 continue;
             }
 
@@ -2066,20 +2156,97 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
                 if (!alive[ci]) continue;
                 bot_lite_clone(trial, world);
                 game_rng_set(sim_rng);   // identical stream for every move
-                if (!legal_move_apply(trial, bot_idx, &moves->moves[C->idx[ci]])) {
-                    score[ci] += (double)g->num_players;
-                    nsim[ci]++;
-                    continue;
-                }
-                int fp = og_rollout(trial, bot_idx, 600);
-                if (fp == 0) fp = g->num_players;
-                score[ci] += (double)fp;
+#ifdef CD_ROLLOUT_NOISE
+                if (fu_crn) cd_sim_noise_reseed(sim_rng);
+#endif
+                int fp = legal_move_apply(trial, bot_idx, &moves->moves[C->idx[ci]])
+                       ? og_rollout(trial, bot_idx, 600) : g->num_players;
+                double v = og_finish(g, &fp);
+                score[ci] += v;
                 nsim[ci]++;
+#ifdef CD_ROLLOUT_NOISE
+                wfp[ci] = v;
+#endif
             }
+#ifdef CD_ROLLOUT_NOISE
+            if (sh) og_shadow_fold(sh, C->n, alive, wfp);
+#endif
         }
         if (stage < 2) og_cull(stage, C->n, keep_pen, score, nsim, alive);
     }
 }
+
+// The race's pick: the lowest mean finish plus trump-keep tax among the
+// survivors; on a tie the earlier-ranked candidate (strict <), so the ranking's
+// "dump widest, spend cheapest" order breaks exact ties. Fusion's band
+// (og_fu->tie_milli) widens the tie: a later candidate must beat the pick by
+// more than the band to take it. -1 when nothing was sampled.
+static int og_best(const Candidates *C, const double *keep_pen,
+                   const double *score, const int *nsim, const bool *alive) {
+    double band = 0.0;
+#ifdef CD_ROLLOUT_NOISE
+    if (og_fu) band = og_fu->tie_milli / 1000.0;
+#endif
+    int best = -1;
+    double best_v = 1e30;
+    for (int i = 0; i < C->n; i++) {
+        if (!alive[i] || nsim[i] == 0) continue;
+        double v = score[i] / (double)nsim[i] + keep_pen[i];
+        if (v < best_v - band) { best_v = v; best = i; }
+    }
+    return best;
+}
+
+#ifdef CD_ROLLOUT_NOISE
+// Fusion's noise for the race about to run: on, its level, mode and stream from
+// og_fu; off, 0 and the defaults, so nothing after it draws.
+static void og_fusion_noise(int on) {
+    cd_sim_set_noise(on ? og_fu->noise_pm : 0);
+    cd_sim_set_noise_mode(on ? og_fu->noise_mode : CD_NOISE_SENSIBLE);
+    cd_sim_set_noise_crn(on ? og_fu->noise_crn : 0);
+}
+
+// The shadow selection. `o` is octogen's own pick, from the noise-free race
+// just run. The same race is run again over the same worlds with the noise on
+// and o pinned (never culled); the noisy race's pick f replaces o only when f
+// beats o by more than og_fu->shadow tenths of a standard error of their paired
+// difference over those worlds. Noise-free rollouts tie exactly in a third to a
+// half of all decisions, and octogen's rank order then picks the cheaper twin;
+// any noise turns those ties into coin flips (FUSION.md), so the noise is let
+// overrule octogen only where it says something.
+static int og_fusion_shadow(const Game *g, int bot_idx, const LegalMoves *moves,
+                            const Belief *B, const Candidates *C,
+                            const double *keep_pen, int o) {
+    if (o < 0) return o;
+    OgShadow sh;
+    memset(&sh, 0, sizeof sh);
+    sh.pin = o;
+    sh.w_pct = og_fu->shadow_w_pct > 0 ? og_fu->shadow_w_pct : 100;
+    double score[OG_MAX_CANDS] = {0};
+    int    nsim [OG_MAX_CANDS] = {0};
+    bool   alive[OG_MAX_CANDS];
+    for (int i = 0; i < C->n; i++) alive[i] = true;
+    og_shadow = &sh;
+    og_fusion_noise(1);
+    og_run_stages(g, bot_idx, moves, B, C, keep_pen, score, nsim, alive);
+    og_fusion_noise(0);
+    og_shadow = NULL;
+    int f = og_best(C, keep_pen, score, nsim, alive);
+    if (f < 0 || f == o) return o;
+    return og_fusion_overrules(sh.d[f], sh.d2[f], sh.n[f], keep_pen[f] - keep_pen[o],
+                               og_fu->shadow) ? f : o;
+}
+
+int og_fusion_overrules(double dsum, double d2sum, int n, double pen_gap, int k10) {
+    if (n < 2) return 0;
+    const double m = dsum / n;
+    double var = d2sum / n - m * m;
+    if (var < 0.0) var = 0.0;
+    // gap < 0: f is better. f when -gap > k * sqrt(var / n), compared squared.
+    const double gap = m + pen_gap, k = k10 / 10.0;
+    return gap < 0.0 && gap * gap > k * k * var / n;
+}
+#endif
 
 // Information-hiding rule (docs/OCTOGEN_HIDE_UNCOVERABLE.md). If octogen is
 // about to play a COVER while it cannot cover EVERY uncovered card on the
@@ -2183,15 +2350,19 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     double keep_pen[OG_MAX_CANDS];
     for (int i = 0; i < C.n; i++) keep_pen[i] = og_keep_penalty(g, &moves->moves[C.idx[i]]);
 
+#ifdef CD_ROLLOUT_NOISE
+    // Fusion without the shadow: this one race is the noisy one.
+    if (og_fu) og_fusion_noise(og_fu->shadow < 0);
+#endif
     og_run_stages(g, bot_idx, moves, &B, &C, keep_pen, score, nsim, alive);
-
-    int best = -1;
-    double best_v = 1e30;
-    for (int i = 0; i < C.n; i++) {
-        if (!alive[i] || nsim[i] == 0) continue;
-        double v = score[i] / (double)nsim[i] + keep_pen[i];
-        if (v < best_v) { best_v = v; best = i; }
-    }
+#ifdef CD_ROLLOUT_NOISE
+    if (og_fu) og_fusion_noise(0);
+#endif
+    int best = og_best(&C, keep_pen, score, nsim, alive);
+#ifdef CD_ROLLOUT_NOISE
+    if (og_fu && og_fu->shadow >= 0 && og_fu->noise_pm > 0)
+        best = og_fusion_shadow(g, bot_idx, moves, &B, &C, keep_pen, best);
+#endif
 
     int chosen = og_hide_uncoverable(g, moves, best >= 0 ? C.idx[best] : 0);
     og_publish(g, bot_idx, moves, &B, &C, score, nsim, alive, forced_loss, chosen, best, -1);
@@ -2273,22 +2444,38 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
 #ifndef FUSION_VOID_MOD
 #define FUSION_VOID_MOD 4
 #endif
+#ifndef FUSION_SHADOW
+#define FUSION_SHADOW 20
+#endif
+#ifndef FUSION_SHADOW_W
+#define FUSION_SHADOW_W 100
+#endif
+#ifndef FUSION_CRN
+#define FUSION_CRN 0
+#endif
+#ifndef FUSION_TIE
+#define FUSION_TIE 0
+#endif
+#ifndef FUSION_UNFINISHED
+#define FUSION_UNFINISHED 0
+#endif
 int fusion_strategy_choose(const Game *g, int bot_idx,
                            const LegalMoves *moves, void *ctx) {
-    // Load octogen's flags first, so its own load cannot overwrite the void
-    // mixture set below; then swap fusion's in for this decision and put
-    // octogen's back after it (an octogen seat on this thread keeps its 4).
-    if (!og_flags_loaded) og_load_flags();
-    int saved_void_mod = og_void_mod;
-    int vm = bot_knob_int("FUSION_VOID_MOD", FUSION_VOID_MOD);
-    og_void_mod = vm < 2 ? 2 : vm;
     const int on = g->num_players <= bot_knob_int("FUSION_NOISE_MAX_PC", FUSION_NOISE_MAX_PC);
-    cd_sim_set_noise(on ? bot_knob_int("FUSION_NOISE", FUSION_NOISE_PM) : 0);
-    cd_sim_set_noise_mode(bot_knob_int("FUSION_NOISE_MODE", FUSION_NOISE_MODE));
+    const int vm = bot_knob_int("FUSION_VOID_MOD", FUSION_VOID_MOD);
+    const OgFusion fu = {
+        .noise_pm       = on ? bot_knob_int("FUSION_NOISE", FUSION_NOISE_PM) : 0,
+        .noise_mode     = bot_knob_int("FUSION_NOISE_MODE", FUSION_NOISE_MODE),
+        .noise_crn      = bot_knob_int("FUSION_CRN", FUSION_CRN),
+        .void_mod       = vm < 2 ? 2 : vm,
+        .shadow         = bot_knob_int("FUSION_SHADOW", FUSION_SHADOW),
+        .shadow_w_pct   = bot_knob_int("FUSION_SHADOW_W", FUSION_SHADOW_W),
+        .tie_milli      = bot_knob_int("FUSION_TIE", FUSION_TIE),
+        .unfinished_mid = bot_knob_int("FUSION_UNFINISHED", FUSION_UNFINISHED),
+    };
+    og_fu = &fu;
     int r = octogen_strategy_choose(g, bot_idx, moves, ctx);
-    cd_sim_set_noise(0);
-    cd_sim_set_noise_mode(CD_NOISE_SENSIBLE);
-    og_void_mod = saved_void_mod;
+    og_fu = NULL;
     return r;
 }
 #endif
