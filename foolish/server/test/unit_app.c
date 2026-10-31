@@ -2203,14 +2203,18 @@ static void every_view_goes_to_its_own_seat(void) {
 }
 
 // belief_logs_wiring.test.ts, belief_human_freshness.test.ts: every bot cycle
-// is handed the stored session log whole (octogen reads it), fresh after a
-// human's commit; resilience.test.ts: a cycle that lost its CAS offers back the
-// moves it already chose.
-static struct { int calls, short_log, retries_with_prefs, retries; } g_cyc;
+// reads the whole session, fresh after a human's commit: from the bot memory
+// the row carries (bot_memory.h, a v6 state blob), or, for a row without one,
+// from the stored session log, whole. resilience.test.ts: a cycle that lost its
+// CAS offers back the moves it already chose.
+static struct { int calls, short_log, log_reads, retries_with_prefs, retries; } g_cyc;
 static void cycle_observer(const char *game_id, int attempt, int logs_len, int prefs_len) {
     g_cyc.calls++;
     cb_game_row row = stored(game_id);
-    if (logs_len <= 0 || (size_t)logs_len != row.logs_len) g_cyc.short_log++;
+    if (logs_len >= 0) {
+        g_cyc.log_reads++;
+        if (logs_len == 0 || (size_t)logs_len != row.logs_len) g_cyc.short_log++;
+    }
     cb_game_row_free(&row);
     if (attempt > 1) {
         g_cyc.retries++;
@@ -2242,6 +2246,10 @@ static void every_bot_cycle_gets_the_whole_log_and_its_choices_back(void) {
     T_EQ_INT(status_of(gid), GAME_STATUS_GAME_OVER);
     T_CHECK(g_cyc.calls > 0);
     T_EQ_INT(g_cyc.short_log, 0);
+    // A row the switch step writes carries its memory, so no cycle reads the log;
+    // before it, every cycle does (and reads it whole).
+    if (TABLE_STATE_FORMAT == STATE_BLOB_FORMAT_V6) T_EQ_INT(g_cyc.log_reads, 0);
+    else T_EQ_INT(g_cyc.log_reads, g_cyc.calls);
     T_CHECK(g_cyc.retries > 0);
     T_EQ_INT(g_cyc.retries_with_prefs, g_cyc.retries);
 }
