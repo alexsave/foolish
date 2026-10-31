@@ -16,4 +16,7 @@
 --count OgAnswerWhy.replies=n_replies --count OgAnswerWhy.paths=n_paths --count OgAnswerPath.sym=len
 # The codes a row and an answer carry, and the move ids a row's type is one of.
 --const OG_VERDICT_ --const OG_SOLVER_ --const MOVE_
---header strategy.h --const STRAT_OCTOGEN
+# The brain the bridge dispatches (fusion), and its shadow bar, which is the bar
+# the overlay's Best pick is held to (src/oracle/accumulator.ts fusionBest).
+--header strategy.h --const STRAT_FUSION
+--header octogen_strategy.h --const FUSION_SHADOW

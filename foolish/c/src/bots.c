@@ -63,8 +63,14 @@
 // WASM_BOT_SRC) and bot_roster_linked says 0 rather than a seat silently
 // playing another bot. Linking espresso_prod and gunpowder there
 // measured +5.1 KB gzip on every cold start for rungs nothing seeds; fusion's
-// rollout noise is compiled out of those modules altogether (cordite_sim.h
-// CD_ROLLOUT_NOISE), so its function does not exist there.
+// rollout noise is compiled out of web.wasm and the table host altogether
+// (cordite_sim.h CD_ROLLOUT_NOISE), so its function does not exist there.
+//
+// The one exception is the Infinite Oracle's two modules (FOOLISH_ORACLE_BUILD):
+// no seat plays there either, but the Oracle analyses every position with
+// fusion (docs/INFINITE_ORACLE_DESIGN.md "The brain"), so they compile its noise
+// in and link its function (ORACLE_LINKED), and bot_linked says so. Fusion's
+// row stays native_only: that is what web.wasm and the table host read.
 //
 // No browser module seeds a store either, so the server accounts' ids are
 // left out of them too (SEED_IDS): 56 UUIDs every visitor would download and
@@ -75,6 +81,12 @@
 #else
 #define NATIVE_ONLY(fn) fn
 #define SEED_IDS(...) { __VA_ARGS__ }
+#endif
+// Native, and in the Oracle's modules: cordite_sim.h CD_ROLLOUT_NOISE's condition.
+#if !defined(FOOLISH_SEEDED_BOTS_ONLY) || defined(FOOLISH_ORACLE_BUILD)
+#define ORACLE_LINKED(fn) fn
+#else
+#define ORACLE_LINKED(fn) NULL
 #endif
 
 // The octogen trump-conservation tie-break, in milli-units of mean-finish
@@ -225,8 +237,9 @@ static const BotDef BOTS[STRAT_COUNT] = {
     // errors better, at every table size; fusion_strategy_choose sets it itself.
     // Seeded, so the server deals it on the website as Moscow; not offline, so
     // the phone's picker does not offer it. native_only: the server links the
-    // kernel natively and is the only place a seated fusion plays (the
-    // browser's modules run no seat's brain and compile its noise out).
+    // kernel natively and is the only place a seated fusion plays (web.wasm
+    // runs no seat's brain and compiles its noise out; the Oracle's modules
+    // link it to analyse with, not to seat, see ORACLE_LINKED above).
     [STRAT_FUSION] = {
         .name = "fusion", .alias = "fu", .native_only = 1,
         .key = "fusion", .knobs = OCTOGEN_KNOBS, .uses_logs = 1, .seeded = 1, .offline = 0, .tier = 11,
@@ -264,7 +277,7 @@ static const StrategyFn NAMED[STRAT_COUNT] = {
     [STRAT_BLACKPOWDER]      = blackpowder_strategy_choose,
     [STRAT_CORDITE]          = cordite_strategy_choose,
     [STRAT_OCTOGEN]          = octogen_strategy_choose,
-    [STRAT_FUSION]           = NATIVE_ONLY(fusion_strategy_choose),
+    [STRAT_FUSION]           = ORACLE_LINKED(fusion_strategy_choose),
 };
 static const StrategyFn RESEARCH[STRAT_COUNT] = {
     [STRAT_ESPRESSO]          = NATIVE_ONLY(espresso_strategy_choose),
@@ -290,7 +303,9 @@ StrategyFn bot_choose(int strat) { return bot_def(strat) ? NAMED[strat] : NULL; 
 
 int bot_linked(int strat) {
     const BotDef *d = bot_def(strat);
-#ifdef FOOLISH_SEEDED_BOTS_ONLY
+#if defined(FOOLISH_SEEDED_BOTS_ONLY) && defined(FOOLISH_ORACLE_BUILD)
+    return d && (!d->native_only || NAMED[strat] != NULL);   // and fusion (ORACLE_LINKED)
+#elif defined(FOOLISH_SEEDED_BOTS_ONLY)
     return d && !d->native_only;
 #else
     return d != NULL;

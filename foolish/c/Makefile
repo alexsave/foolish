@@ -1709,6 +1709,7 @@ WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_mt_thread_main \
   -Wl,--export=wasm_mt_ncand -Wl,--export=wasm_mt_ready -Wl,--export=wasm_mt_batches \
   -Wl,--export=wasm_mt_chosen -Wl,--export=wasm_mt_sumfp -Wl,--export=wasm_mt_nsim \
+  -Wl,--export=wasm_mt_sumfp_shadow -Wl,--export=wasm_mt_nsim_shadow \
   -Wl,--export=wasm_mt_forced -Wl,--export=wasm_mt_candidates \
   -Wl,--export=wasm_mt_mismatch -Wl,--export=wasm_mt_canary \
   -Wl,--export=wasm_mt_solver -Wl,--export=wasm_mt_verdict -Wl,--export=wasm_mt_defuse

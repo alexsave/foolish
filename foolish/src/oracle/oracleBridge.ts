@@ -14,7 +14,7 @@ import {
     MOVE_ATTACK, MOVE_COVER, MOVE_PASS, MOVE_PICKUP, MOVE_GOOD, MOVE_WAIT,
     OG_VERDICT_NONE, OG_VERDICT_UNKNOWN, OG_VERDICT_ILLEGAL,
     OG_VERDICT_WIN, OG_VERDICT_LOSS, OG_VERDICT_DRAW,
-    OG_SOLVER_NONE, OG_SOLVER_WIN, OG_SOLVER_EVAL, STRAT_OCTOGEN,
+    OG_SOLVER_NONE, OG_SOLVER_WIN, OG_SOLVER_EVAL, STRAT_FUSION,
 } from '@sdk/ts/gen/oracle_answer.oracle.ts';
 import type { OracleExports } from '@sdk/ts/gen/exports.oracle.ts';
 import {
@@ -53,6 +53,8 @@ function recordOfAnswer(a: OgAnswer_Snap): OracleRecord {
             cards: r.cards.map(tok),
             score: r.scored ? r.score : null,
             nsim: r.nsim,
+            shadow_score: r.shadowScored ? r.shadowScore : null,
+            shadow_nsim: r.shadowNsim,
             alive: r.alive ? 1 : 0,
             forced_loss: r.forcedLoss ? 1 : 0,
             verdict: VERDICT_NAME[r.verdict] ?? 'none',
@@ -140,7 +142,7 @@ export class OracleInstance {
         // 5. seed  6. forget the last answer  7. choose
         ex.wasm_set_strategy_seed(seed >>> 0);
         ex.wasm_og_answer_reset();
-        ex.wasm_choose_move(STRAT_OCTOGEN, seat);
+        ex.wasm_choose_move(STRAT_FUSION, seat);
 
         // 8. read the answer, over a view taken AFTER the choose (it may have
         //    grown linear memory via the TT bump alloc, detaching earlier ones).

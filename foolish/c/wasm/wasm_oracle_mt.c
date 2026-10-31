@@ -31,7 +31,10 @@
 
 /* kernel + strategy entry points (real TLS in this build) */
 void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *moves);
-int  octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+/* The brain the Oracle analyses with (docs/INFINITE_ORACLE_DESIGN.md "The brain"):
+   fusion, octogen with its noisy second race; compiled in here because
+   FOOLISH_ORACLE_BUILD turns CD_ROLLOUT_NOISE on (cordite_sim.h). */
+int  fusion_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 void random_strategy_set_seed(uint64_t s);
 void og_reload_flags(void);                 /* FOOLISH_ORACLE_BUILD hook, reused */
 Game *wasm_game_ptr_internal(void);         /* the shared resident game */
@@ -84,7 +87,7 @@ void wasm_mt_warmup(int seat) {
     og_reload_flags();
     random_strategy_set_seed(1u);
     calculate_legal_moves(g, seat, &t_moves);   /* MT3 item 1: masks + TT on control */
-    if (t_moves.n > 0) octogen_strategy_choose(g, seat, &t_moves, 0);
+    if (t_moves.n > 0) fusion_strategy_choose(g, seat, &t_moves, 0);
 }
 
 __attribute__((export_name("wasm_mt_setup")))
@@ -106,6 +109,8 @@ void wasm_mt_setup(int seat, uint32_t seed_base, uint32_t nthreads) {
     for (int i = 0; i < OG_MT_MAX_CANDS; i++) {
         __atomic_store_n(&g_ogmt.sum_fp[i], 0ull, __ATOMIC_RELAXED);
         __atomic_store_n(&g_ogmt.nsim[i], 0u, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_ogmt.sum_fp_shadow[i], 0ull, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_ogmt.nsim_shadow[i], 0u, __ATOMIC_RELAXED);
         __atomic_store_n(&g_ogmt.forced_loss[i], 0u, __ATOMIC_RELAXED);
         __atomic_store_n(&g_ogmt.verdict[i], 0, __ATOMIC_RELAXED);
     }
@@ -150,6 +155,17 @@ __attribute__((export_name("wasm_mt_nsim")))
 double wasm_mt_nsim(int i) {
     if (i < 0 || i >= OG_MT_MAX_CANDS) return 0;
     return (double)__atomic_load_n(&g_ogmt.nsim[i], __ATOMIC_RELAXED);
+}
+/* The same two over fusion's noisy race (OgMtControl.sum_fp_shadow). */
+__attribute__((export_name("wasm_mt_sumfp_shadow")))
+double wasm_mt_sumfp_shadow(int i) {
+    if (i < 0 || i >= OG_MT_MAX_CANDS) return 0;
+    return (double)__atomic_load_n(&g_ogmt.sum_fp_shadow[i], __ATOMIC_RELAXED);
+}
+__attribute__((export_name("wasm_mt_nsim_shadow")))
+double wasm_mt_nsim_shadow(int i) {
+    if (i < 0 || i >= OG_MT_MAX_CANDS) return 0;
+    return (double)__atomic_load_n(&g_ogmt.nsim_shadow[i], __ATOMIC_RELAXED);
 }
 __attribute__((export_name("wasm_mt_forced")))
 int wasm_mt_forced(int i) {
@@ -210,7 +226,7 @@ void wasm_mt_thread_main(int tid, double stack_low) {
             random_strategy_set_seed(mix3(seed_base, (uint32_t)tid, b));
             calculate_legal_moves(game, seat, &t_moves);
             if (t_moves.n > 0) {
-                int idx = octogen_strategy_choose(game, seat, &t_moves, 0);  /* MT5 accumulates */
+                int idx = fusion_strategy_choose(game, seat, &t_moves, 0);  /* MT5 accumulates */
                 __atomic_add_fetch(&g_ogmt.total_choose, 1ull, __ATOMIC_RELAXED);
                 __atomic_add_fetch(&g_ogmt.checksum, (uint64_t)(idx + 1), __ATOMIC_RELAXED);
             }

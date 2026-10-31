@@ -11,6 +11,7 @@ import {
     ORACLE_TRUMP_KEEP, ORACLE_CONVERGE_MIN_N, ORACLE_CONVERGE_MAX_SE,
     canonicalMoveKey,
 } from './types';
+import { FUSION_SHADOW } from '@sdk/ts/gen/oracle_answer.oracle.ts';
 
 interface Welford { count: number; mean: number; m2: number; }
 function welfordAdd(w: Welford, x: number): void {
@@ -35,6 +36,7 @@ interface Acc {
     n: number;                 // cumulative nsim (worlds sampled for this candidate)
     sum: number;               // cumulative score * nsim
     bm: Welford;               // per-batch means (for SE)
+    sn: number; ssum: number; sbm: Welford;   // the same three over fusion's noisy race
     verdict: OracleVerdict;
     verdictVal?: number;
     forcedLoss: boolean;
@@ -91,6 +93,7 @@ export class OracleAccumulator {
                 a = {
                     key, type: c.type, label: c.label, cards: c.cards, target: c.target,
                     n: 0, sum: 0, bm: { count: 0, mean: 0, m2: 0 },
+                    sn: 0, ssum: 0, sbm: { count: 0, mean: 0, m2: 0 },
                     verdict: 'none', forcedLoss: false, pruned: false, chosen: false,
                     whyN: 0, whyMepk: 0, whyOppk: 0, whyMetr: 0, whyOpptr: 0, whyRnds: 0,
                     pathPool: new Map(), replyPool: new Map(),
@@ -102,6 +105,11 @@ export class OracleAccumulator {
                 a.sum += c.score * c.nsim;
                 welfordAdd(a.bm, c.score);          // the record's mean IS this batch's mean
                 if (c.nsim > batchWorlds) batchWorlds = c.nsim;
+            }
+            if (c.shadow_nsim > 0 && c.shadow_score != null) {
+                a.sn += c.shadow_nsim;
+                a.ssum += c.shadow_score * c.shadow_nsim;
+                welfordAdd(a.sbm, c.shadow_score);
             }
             if (c.verdict && c.verdict !== 'none' && a.verdict === 'none') {
                 a.verdict = c.verdict;
@@ -222,6 +230,9 @@ export class OracleAccumulator {
                 mean,
                 se: welfordSE(a.bm),
                 adjusted: mean == null ? null : mean + tax,
+                shadowMean: a.sn > 0 ? a.ssum / a.sn : null,
+                shadowSe: welfordSE(a.sbm),
+                best: false,
                 verdict: a.verdict,
                 verdictVal: a.verdictVal,
                 forcedLoss: a.forcedLoss,
@@ -245,9 +256,38 @@ export class OracleAccumulator {
                 if (y.mean == null) return -1;
                 return (x.mean - y.mean) || ((x.adjusted ?? x.mean) - (y.adjusted ?? y.mean));
             });
+            fusionBest(list);
         }
         return list;
     }
+}
+
+/** Mark fusion's pick among rows already sorted best-first by expected finish
+ *  (docs/INFINITE_ORACLE_DESIGN.md "The brain"). Fusion's own rule
+ *  (c/src/octogen_strategy.c og_fusion_shadow), over every world sampled so far:
+ *  octogen's pick o is the top row, the noisy race's pick f is the row with the
+ *  lowest noisy mean plus trump tax, and f replaces o only when it is better by
+ *  more than FUSION_SHADOW tenths of a standard error. The kernel pairs the
+ *  difference world by world; across batches only each row's own SE is kept, so
+ *  the error here is both rows' combined, which is never smaller than the paired
+ *  one: the Oracle moves Best off octogen's pick on no less evidence than the bot
+ *  needs. A row the noisy race never sampled cannot overrule, and with no noisy
+ *  race at all (one candidate, or a proven win) o is Best. Both
+ *  modes call this, so the rule is written once on this side. */
+export function fusionBest(list: OracleCandidate[]): void {
+    const o = list[0];
+    if (!o || o.mean == null) return;
+    const tax = (c: OracleCandidate) => (c.adjusted ?? 0) - (c.mean ?? 0);
+    let f = o;
+    for (const c of list) {
+        if (c.mean == null || c.shadowMean == null) continue;
+        if (f.shadowMean == null || c.shadowMean + tax(c) < f.shadowMean + tax(f)) f = c;
+    }
+    const k = FUSION_SHADOW / 10;
+    const gap = f === o || o.shadowMean == null || f.shadowMean == null ? 0
+        : f.shadowMean + tax(f) - (o.shadowMean + tax(o));
+    const se2 = f.shadowSe * f.shadowSe + o.shadowSe * o.shadowSe;
+    (gap < 0 && gap * gap > k * k * se2 ? f : o).best = true;
 }
 
 // verdict_val encodes ±(1000 - depth); a shallower win/loss ranks stronger.
