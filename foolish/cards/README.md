@@ -7,7 +7,8 @@ Print-ready art for a small run of promo cards from MakePlayingCards (MPC): one 
 ```sh
 python3 -m venv /tmp/cards-venv
 /tmp/cards-venv/bin/pip install -r foolish/cards/requirements.txt
-/tmp/cards-venv/bin/python foolish/cards/make_cards.py              # all three layouts
+/tmp/cards-venv/bin/python foolish/cards/make_cards.py              # all three layouts, EC M into out/M/ and EC H into out/H/
+/tmp/cards-venv/bin/python foolish/cards/make_cards.py --ec m       # one error-correction level
 /tmp/cards-venv/bin/python foolish/cards/make_cards.py --layout B   # one layout
 /tmp/cards-venv/bin/python foolish/cards/make_cards.py --payload https   # HTTPS://FOOLISH.CARDS/<CODE>, v2 at Q
 /tmp/cards-venv/bin/python foolish/cards/make_cards.py --frame      # the app's #8B0000 border on the back
@@ -20,16 +21,21 @@ It writes `out/` and prints one line per face: every QR is decoded back from the
 ## What to edit
 
 The list at the top of `make_cards.py`: `SOURCES` (short path, name), `PAYLOAD_FORM`, and the two headline lines.
-The QR carries `WWW.FOOLISH.CARDS/<CODE>` in capitals (the lobby QR's form), alphanumeric mode, error correction M, version 1 (21 x 21 modules); the script asserts the version.
+The QR carries `WWW.FOOLISH.CARDS/<CODE>` in capitals (the lobby QR's form), alphanumeric mode: error correction M is version 1 (21 x 21 modules), H is version 2 (25 x 25); the script asserts the version for each.
 The bare `FOOLISH.CARDS/<CODE>` is not offered: a phone camera opened it as a web search.
 The printed URL is always `foolish.cards`.
 Each code must contain a character outside the game-id alphabet (`0-9a-f`, `foolish/server/src/store/game_id.h`) and must not be 6 long, so it can never be a game id; the script asserts both.
 
 ## Files
 
-- `out/back.png` - the back, 822 x 1122 px at 300 dpi.
-- `out/face_<layout>_<name>_<CODE>.png` - a face per layout and source.
-- `out/preview_<layout>_<name>.png` - back and face side by side at actual size (300 dpi, print at 100%), cut line solid blue, safe area dashed pink.
+One folder per error-correction level, `out/M/` and `out/H/`:
+
+- `back.png` - the back.
+- `face_<layout>_<name>_<CODE>.png` - a face per layout and source.
+- `preview_<layout>_<name>.png` - back and face side by side at actual size (print at 100%), cut line solid blue, safe area dashed pink. Not for upload.
+
+Every `back.png` and `face_*.png` is what MPC's uploader takes, and the script asserts it on the saved file: PNG, 8-bit RGB with no alpha, an embedded sRGB profile, 300 dpi, exactly 822 x 1122.
+To upload one design: `back.png` as the back and one `face_<layout>_*_<CODE>.png` per source as the fronts.
 
 Layouts: A ace (Т top-left, A bottom-right, the QR as the one pip), B six of hearts (the lowest card of the 36-card Durak deck, QR between the pip columns), C jester (ДУРАК stacked down the corners like a joker's index, the app's jester-Д as the figure).
 
