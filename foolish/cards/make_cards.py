@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Foolish promo playing cards: print-ready PNGs for MakePlayingCards (MPC).
 
-One back (the app's Khokhloma pattern) and one face per QR source, in three
-face layouts. Every QR is decoded back from the final PNG and checked against
-the exact payload. See README.md for the commands.
+One back (the app's own IFS fern, rendered by fern.c) and one face per QR source,
+in three face layouts. Every QR is decoded back from the final PNG and checked
+against the exact payload. See README.md for the commands.
 """
 
 import argparse
+import hashlib
 import os
+import subprocess
 import sys
+import tempfile
 
 import cv2
 import numpy as np
@@ -16,20 +19,24 @@ import segno
 from PIL import Image, ImageDraw, ImageFont
 
 # ---- edit me -------------------------------------------------------------------------
-# One card per source: (short path, name). The QR carries QR_PREFIX + short path, all
-# upper-case so the QR stays in alphanumeric mode (version 2 at Q). The printed URL on
+# One card per source: (short path, name). The QR carries the payload form's prefix +
+# short path, all upper-case so the QR stays in alphanumeric mode. The printed URL on
 # the card is always the clean "foolish.cards".
 # Every short path must hold at least one character outside the game-id alphabet
 # (GAME_ID_ALPHABET below, from foolish/server/src/store/game_id.h) and must not be
 # GAME_ID_LEN long, so it can never be read as a game id. main() asserts both.
 SOURCES = [
     ("BR", "brighton"),   # Brighton Beach
-    ("TK", "tashkent"),   # Tashkent market
     ("WS", "wsp"),        # Washington Square Park
-    ("HO", "handout"),    # handed out in person
 ]
-QR_PREFIX = "HTTPS://FOOLISH.CARDS/"
-QR_ERROR = "q"             # m or q
+# Payload forms: prefix, error correction, the QR version it must come out as (asserted).
+# www is the lobby QR's form (foolish/src/components/Lobby.tsx); Alex's phone opened
+# WWW.FOOLISH.CARDS/BR as a link, while the bare FOOLISH.CARDS/BR opened a web search.
+PAYLOAD_FORMS = {
+    "www": ("WWW.FOOLISH.CARDS/", "m", 1),
+    "https": ("HTTPS://FOOLISH.CARDS/", "q", 2),
+}
+PAYLOAD_FORM = "www"
 PRINTED_URL = "foolish.cards"
 HEADLINE_RU = "Сыграем в дурака?"
 HEADLINE_EN = "Play Durak"
@@ -41,7 +48,7 @@ GAME_ID_LEN = 6
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)  # foolish/
 OUT = os.path.join(HERE, "out")
-KHOKHLOMA = os.path.join(REPO, "public", "khokhloma-pattern.png")
+FERN_C = os.path.join(HERE, "fern.c")
 JESTER = os.path.join(REPO, "ios", "Tools", "icon-source", "jester-d.png")
 OSWALD = os.path.join(HERE, "fonts", "Oswald.ttf")
 BEBAS = os.path.join(HERE, "fonts", "BebasNeue-Regular.ttf")
@@ -71,52 +78,54 @@ def font(path, size, weight=None):
 
 
 # ---- the back ---------------------------------------------------------------------------
+# The app's card back is generated, not drawn: the IFS fern of fernFractal.tsx (gold
+# spine, red and bronze bulbs, on black, under a thin dark-red frame in CardBack.tsx).
+# fern.c is a port of it; build_fern() proves the port against the e2e test's digest of
+# the real code before anything is rendered.
 
-def crisp_upscale(src, scale, ss=2, classes=3):
-    """Upscale a flat-colour painting without inventing detail.
+# foolish/e2e/fern_texture.test.ts: the title fern (1400 x 1960, 12M points, 2 px dots,
+# scaleY 14 * 1400/70), off the seeded LCG, through the no-WebGL path (points computed
+# twice), must paint exactly these pixels after exactly this many random draws.
+WEB_DIGEST = "9c51cfc05121234948dfa83cf87b3214182c840c79583bacb02eda44cf8c07b6"
+WEB_DRAWS = "50884422"
 
-    The source is 250 x 350 px, a third of what 300 dpi needs. A plain Lanczos
-    upscale is soft at arm's length, so: cluster the source's colours into the
-    painting's three inks (background, gold, red), upscale each ink's soft
-    membership map with bicubic, and give each output pixel the ink whose map
-    wins there. Edges become clean curves along the source's own boundaries;
-    inside a region the (lightly smoothed) Lanczos colour is kept, so the berries
-    keep their shading.
-    """
-    a = src.astype(np.float32)
-    h, w, _ = a.shape
-    px = a.reshape(-1, 3)
-    centers = np.array([[15, 15, 11], [212, 146, 8], [176, 34, 4]], np.float32)[:classes]
-    for _ in range(12):  # k-means, seeded at the three inks
-        d = ((px[:, None, :] - centers[None]) ** 2).sum(-1)
-        lab = d.argmin(1)
-        centers = np.stack([px[lab == k].mean(0) for k in range(classes)])
-    d = ((px[:, None, :] - centers[None]) ** 2).sum(-1)
-    memb = np.exp(-(d - d.min(1, keepdims=True)) / (2 * 45.0 ** 2))
-    memb /= memb.sum(1, keepdims=True)
-    big = (w * scale * ss, h * scale * ss)
-    maps = np.stack([
-        np.asarray(Image.fromarray(memb[:, k].reshape(h, w).astype(np.float32), "F").resize(big, Image.BICUBIC))
-        for k in range(classes)
-    ], -1)
-    label = maps.argmax(-1)
-    lanczos = np.asarray(Image.fromarray(src).resize(big, Image.LANCZOS))
-    # an edge-keeping blur: the source's 8-bit blockiness, tripled, reads as grain in print
-    lanczos = cv2.bilateralFilter(lanczos, 9, 28, 6).astype(np.float32)
-    dl = ((lanczos[..., None, :] - centers[None, None]) ** 2).sum(-1).argmin(-1)
-    out = np.where((dl == label)[..., None], lanczos, centers[label])
-    img = Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
-    return img.resize((w * scale, h * scale), Image.LANCZOS)
+# FernCardBack.swift's look, the owner's round-7 pick: 1 px dots, 14 per pixel, alpha 0.20.
+FERN_DENSITY = 14
+FERN_ALPHA = 0.20
+FRAME = (139, 0, 0)   # #8B0000, CardBack.tsx's border (1 px on a 50 px card)
+FRAME_PX = 15         # the same 1/50 of the 750 px cut width
+# Off by default: the fern runs through the bleed. A band this close to the cut line
+# shows MPC's cut tolerance (about 1/16 in) as a visibly uneven border.
 
 
-def make_back():
-    src = np.asarray(Image.open(KHOKHLOMA).convert("RGB"))
-    th, tw = TRIM[3] - TRIM[1], TRIM[2] - TRIM[0]
-    assert src.shape[1] * 3 == tw and src.shape[0] * 3 == th, "the pattern is 5:7, exactly 1/3 of the cut size"
-    art = np.asarray(crisp_upscale(src, 3))
-    b = TRIM[0]
-    full = np.pad(art, ((b, b), (b, b), (0, 0)), mode="reflect")  # bleed: the pattern mirrored past the cut
-    return Image.fromarray(full)
+def build_fern(tmp):
+    exe = os.path.join(tmp, "fern")
+    subprocess.run(["cc", "-O2", "-ffp-contract=off", "-o", exe, FERN_C, "-lm"], check=True)
+    out = os.path.join(tmp, "title.rgba")
+    draws = subprocess.run([exe, "web", "1400", "1960", "12000000", "2", "280", "1", "2", out],
+                           check=True, capture_output=True, text=True).stdout.strip()
+    digest = hashlib.sha256(open(out, "rb").read()).hexdigest()
+    ok = draws == WEB_DRAWS and digest == WEB_DIGEST
+    print(f"{'OK  ' if ok else 'FAIL'} fern.c vs fern_texture.test.ts: draws {draws}, pixels {digest[:16]}")
+    assert ok, "fern.c no longer draws the app's fern"
+    return exe
+
+
+def make_back(exe, tmp, frame):
+    """The fern rendered natively over the whole bleed area, framed to the cut size
+    exactly as the app frames it to the card (scale 14 * cut width / 70, centred)."""
+    out = os.path.join(tmp, "back.rgba")
+    scale = 14 * (TRIM[2] - TRIM[0]) / 70
+    subprocess.run([exe, "ios", str(W), str(H), str(W * H * FERN_DENSITY), "1", str(FERN_ALPHA),
+                    str(scale), str(W / 2), str(H / 2), out], check=True)
+    img = Image.frombytes("RGBA", (W, H), open(out, "rb").read()).convert("RGB")
+    if not frame:
+        return img
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = TRIM
+    for i in range(TRIM[0] + FRAME_PX):  # the frame: FRAME_PX inside the cut line, solid through the bleed
+        d.rectangle([x0 + FRAME_PX - 1 - i, y0 + FRAME_PX - 1 - i, x1 - FRAME_PX + i, y1 - FRAME_PX + i], outline=FRAME)
+    return img
 
 
 # ---- face pieces ------------------------------------------------------------------------
@@ -169,9 +178,10 @@ def paste_mark(img, cx, top, size):
     img.alpha_composite(j, (int(cx * SS - size * SS / 2), int(top * SS)))
 
 
-def qr_symbol(payload):
-    q = segno.make(payload, error=QR_ERROR, boost_error=False, micro=False)
+def qr_symbol(payload, error, version):
+    q = segno.make(payload, error=error, boost_error=False, micro=False)
     assert q.mode == "alphanumeric", (payload, q.mode)
+    assert q.version == version, f"{payload}: version {q.version}, want {version}"
     return q
 
 
@@ -206,7 +216,7 @@ def blank():
 
 def face_ace(q):
     """A - the ace: Т (туз) top-left, A bottom-right, the QR as the one big pip."""
-    module = 12
+    module = 13 if q.version == 1 else 12
     art = blank()
     s = SS
     d = ImageDraw.Draw(art)
@@ -227,7 +237,7 @@ def face_ace(q):
 
 def face_six(q):
     """B - the six of hearts, the lowest card of the 36-card Durak deck; the QR sits between the pip columns."""
-    module = 9
+    module = 10 if q.version == 1 else 9
     art = blank()
     s = SS
     d = ImageDraw.Draw(art)
@@ -252,7 +262,7 @@ def face_six(q):
 
 def face_joker(q):
     """C - the jester: ДУРАК stacked down the corners like a joker's index, the app's jester-Д as the figure."""
-    module = 10
+    module = 11 if q.version == 1 else 10
     art = blank()
     s = SS
     d = ImageDraw.Draw(art)
@@ -329,11 +339,15 @@ def check_short_path(code):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--layout", default="all", choices=["all"] + sorted(LAYOUTS))
+    ap.add_argument("--payload", default=PAYLOAD_FORM, choices=sorted(PAYLOAD_FORMS))
+    ap.add_argument("--frame", action="store_true", help="the app's #8B0000 card-back border on the back")
     args = ap.parse_args()
     layouts = sorted(LAYOUTS) if args.layout == "all" else [args.layout]
+    prefix, error, version = PAYLOAD_FORMS[args.payload]
     os.makedirs(OUT, exist_ok=True)
 
-    back = make_back()
+    with tempfile.TemporaryDirectory() as tmp:
+        back = make_back(build_fern(tmp), tmp, args.frame)
     assert back.size == (W, H)
     back.save(os.path.join(OUT, "back.png"), dpi=(DPI, DPI))
     print(f"back.png  {W}x{H}")
@@ -341,8 +355,8 @@ def main():
     failures = 0
     for code, name in SOURCES:
         check_short_path(code)
-        payload = QR_PREFIX + code
-        q = qr_symbol(payload)
+        payload = prefix + code
+        q = qr_symbol(payload, error, version)
         for key in layouts:
             label, fn = LAYOUTS[key]
             face = fn(q)
@@ -356,7 +370,7 @@ def main():
             ok = full == payload and small == payload
             failures += not ok
             print(f"{'OK  ' if ok else 'FAIL'} {os.path.basename(path):28s} {name:9s} "
-                  f"QR v{q.version}-{QR_ERROR.upper()} want {payload!r} full={full!r} at40%={small!r}")
+                  f"QR v{q.version}-{error.upper()} want {payload!r} full={full!r} at40%={small!r}")
             if code == SOURCES[0][0]:
                 preview(back, face, f"Foolish promo card, layout {key} ({label}), source {code}") \
                     .save(os.path.join(OUT, f"preview_{key}_{label}.png"), dpi=(DPI, DPI))
