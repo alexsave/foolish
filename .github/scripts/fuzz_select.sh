@@ -42,6 +42,9 @@
 # no target, so a change to them alone fuzzes nothing.
 # Files moving keeps all of this true with no edit here.
 set -euo pipefail
+# No `| head` anywhere: under pipefail, GNU sed (Linux, CI) fails on the
+# broken pipe when head stops reading early, where macOS sed is silent. A
+# reader stops itself instead (sed q, awk exit, or one awk over the file).
 
 usage() { sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
@@ -72,12 +75,12 @@ fi
 
 # The make database of the fuzz build.
 make -C "$cb" -pq fuzz > "$work/db" 2>/dev/null || true
-targets=$(sed -n 's/^FUZZ_TARGETS := //p' "$work/db" | head -1)
+targets=$(sed -n '/^FUZZ_TARGETS := /{s///p;q;}' "$work/db")
 [ -n "$targets" ] || { echo "fuzz_select: no FUZZ_TARGETS in the make database" >&2; exit 1; }
 
 # Every object some target links, through nm once.
 for t in $targets; do
-  sed -n "s|^build/fuzz/$t: ||p" "$work/db" | head -1 | tr ' ' '\n' | grep '\.o$'
+  sed -n "\|^build/fuzz/$t: |{s|||p;q;}" "$work/db" | tr ' ' '\n' | grep '\.o$'
 done | sort -u > "$work/objs"
 [ -s "$work/objs" ] || { echo "fuzz_select: no fuzz objects; run make -C c_base fuzz first" >&2; exit 1; }
 while read -r o; do
@@ -212,13 +215,14 @@ fi
   }' "$work/cmds.base" "$work/cmds.head" "$work/deps") | sort > "$work/commands"
 if [ -s "$work/commands" ]; then
   echo "fuzz_select: the base builds $(wc -l < "$work/commands" | tr -d ' ') files differently:" >&2
-  sed 's/^/  /; s/\t/: /' "$work/commands" | head -20 >&2
+  # One reader, no `| head`: under pipefail a writer cut off by head fails.
+  awk -F'\t' 'NR <= 20 { print "  " $1 ": " $2 } END { if (NR > 20) print "  and " NR - 20 " more" }' "$work/commands" >&2
   cut -f1 "$work/commands" >> "$work/changed"
 fi
 
 selected=''
 for t in $targets; do
-  src=$(awk -v t="$t" '$1 == t && $2 ~ ("/fz_" t "\\.c$") { print $2 }' "$work/deps" | head -1)
+  src=$(awk -v t="$t" '$1 == t && $2 ~ ("/fz_" t "\\.c$") { print $2; exit }' "$work/deps")
   corpus=${src%/*}/corpus/$t/
   hits=$( { awk -v t="$t" '$1 == t { print $2 }' "$work/deps" | grep -Fxf - "$work/changed" || true
             grep -F "$corpus" "$work/changed" | awk -v c="$corpus" 'index($0, c) == 1' || true; } | sort -u)
