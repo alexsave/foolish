@@ -1481,18 +1481,26 @@ int table_replay_extras(const Table *t, const uint8_t *log, int log_len, uint8_t
 
 // ---- the move list (move_list.h) ----------------------------------------------
 
-int table_move_list_append(uint8_t *list, int len, int cap, const uint8_t *records, int rec_len) {
-    if (len < 0 || cap < len || (len > 0 && !list) || rec_len < 0 || (rec_len > 0 && !records)) return TABLE_E_WIRE;
+int table_move_list_chunk(int64_t base_ms, const uint8_t *records, int rec_len, uint8_t *out, int cap) {
+    if (rec_len < 0 || (rec_len > 0 && !records) || cap < 0 || (cap > 0 && !out)) return TABLE_E_WIRE;
     if (log_whole(records, rec_len) != 0) return TABLE_E_WIRE;
-    MoveListTail tail;
-    if (move_list_scan(list, len, &tail) < 0) return TABLE_E_WIRE;
+    MoveListChunk w;
+    move_list_chunk_begin(&w, out, cap, base_ms);
     int k;
     for (int at = 0; (k = log_record_at(records, rec_len, at)) > 0; at += k) {
         const uint8_t *r = records + at;
-        len = move_list_append(list, len, cap, &tail, (int64_t)le_get_u48(r), r[6], (int8_t)r[7], r[9], r + 10);
-        if (len < 0) return TABLE_E_CAP;
+        if (move_list_chunk_put(&w, (int64_t)le_get_u48(r), r[6], (int8_t)r[7], r[9], r + 10) < 0) return TABLE_E_CAP;
     }
-    return len;
+    return w.len;
+}
+
+// A list a replay can be cut from: 0, TABLE_E_WIRE for bytes that are no list,
+// -REPLAY_ETOOLONG for a session the list could not keep (as an overflowed log was).
+static int list_usable(const uint8_t *list, int list_len) {
+    if (list_len < 0 || (list_len > 0 && !list)) return TABLE_E_WIRE;
+    const int r = move_list_check(list, list_len);
+    if (r == MOVE_LIST_E_BROKEN || (r == 0 && list_len > MOVE_LIST_MAX)) return -REPLAY_ETOOLONG;
+    return r < 0 ? TABLE_E_WIRE : 0;
 }
 
 // The list's atoms in replay_encode_v6's per-action layout, into `out`: a GOOD
@@ -1501,11 +1509,11 @@ int table_move_list_append(uint8_t *list, int len, int cap, const uint8_t *recor
 static int list_atoms(const uint8_t *list, int list_len, uint8_t *out, int cap, int *len) {
     MoveListCursor c;
     MoveListItem it;
-    if (move_list_open(&c, list, list_len) != 0) return TABLE_E_WIRE;
+    if (move_list_open(&c, list, list_len, 0) != 0) return TABLE_E_WIRE;
     int w = 0, n = 0, goods_at = -1, goods_n = 0, r;
     while ((r = move_list_next(&c, &it)) > 0) {
         if (it.kind != LOG_GOOD && goods_at >= 0) { w = goods_at; n -= goods_n; goods_at = -1; goods_n = 0; }
-        if (it.kind == MOVE_LIST_START || it.kind == MOVE_LIST_CUT) continue;
+        if (it.kind == MOVE_LIST_START || it.kind == MOVE_LIST_OTHER) continue;
         const int np = it.kind == LOG_COVER ? 1 : it.kind == LOG_ATTACK || it.kind == LOG_PASS ? it.n : 0;
         if (w + 3 + 2 * np > cap) return TABLE_E_CAP;
         if (it.kind == LOG_GOOD && goods_at < 0) goods_at = w;
@@ -1538,7 +1546,7 @@ static bool replay_verify_list(int n_seats, const uint8_t *list, int list_len, c
     const uint32_t n_dec = le_get_u32(dec + 16);
     MoveListCursor c;
     MoveListItem it;
-    if (move_list_open(&c, list, list_len) != 0) return false;
+    if (move_list_open(&c, list, list_len, 0) != 0) return false;
     int d = REPLAY_DEC_HDR;
     uint32_t read = 0;
     for (;;) {
@@ -1567,9 +1575,8 @@ static bool replay_verify_list(int n_seats, const uint8_t *list, int list_len, c
 int table_replay_code_list(const Table *t, const uint8_t *seed, int seed_len, const uint8_t *list, int list_len,
                            uint8_t *out, int cap, uint8_t *scratch, int scratch_cap) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
-    MoveListTail tail;
-    if (list_len < 0 || (list_len > 0 && !list) || move_list_scan(list, list_len, &tail) < 0) return TABLE_E_WIRE;
-    if (tail.broken) return -REPLAY_ETOOLONG;
+    const int usable = list_usable(list, list_len);
+    if (usable < 0) return usable;
     int atoms_len = 0;
     const int n_atoms = list_atoms(list, list_len, scratch, scratch_cap, &atoms_len);
     if (n_atoms < 0) return n_atoms;
@@ -1584,6 +1591,7 @@ int table_replay_code_list(const Table *t, const uint8_t *seed, int seed_len, co
 typedef struct {
     const uint8_t *list;
     int len;
+    int64_t base;
     MoveListCursor c;
     int index;
     double prev;
@@ -1604,7 +1612,7 @@ static double list_gap(void *ctx, int i) {
     ListTimes *x = (ListTimes *)ctx;
     int64_t ms = 0;
     if (i == 0 || i != x->index + 1) {   // restart from the first gap
-        move_list_open(&x->c, x->list, x->len);
+        move_list_open(&x->c, x->list, x->len, x->base);
         list_timed_next(x, &ms);
         x->prev = list_seconds(ms);
         x->index = -1;
@@ -1618,10 +1626,10 @@ static double list_gap(void *ctx, int i) {
     return g > 0 ? g : 0;
 }
 
-int table_replay_extras_list(const Table *t, const uint8_t *list, int list_len, uint8_t *out, int cap) {
+int table_replay_extras_list(const Table *t, int64_t base_ms, const uint8_t *list, int list_len, uint8_t *out, int cap) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
-    MoveListTail tail;
-    if (list_len < 0 || (list_len > 0 && !list) || move_list_scan(list, list_len, &tail) < 0) return TABLE_E_WIRE;
+    const int usable = list_usable(list, list_len);
+    if (usable < 0) return usable;
     const uint8_t *names[MAX_PLAYERS];
     int lens[MAX_PLAYERS];
     for (int s = 0; s < t->r.n; s++) { names[s] = (const uint8_t *)t->r.seats[s].name; lens[s] = t->r.seats[s].name_len; }
@@ -1629,10 +1637,11 @@ int table_replay_extras_list(const Table *t, const uint8_t *list, int list_len, 
     memset(&x, 0, sizeof x);
     x.list = list;
     x.len = list_len;
+    x.base = base_ms;
     x.index = -1;
     int64_t ms = 0, first = 0;
     int n_times = 0;
-    move_list_open(&x.c, list, list_len);
+    move_list_open(&x.c, list, list_len, base_ms);
     while (list_timed_next(&x, &ms)) { if (n_times == 0) first = ms; n_times++; }
     if (n_times - 1 > 0xffff) return TABLE_E_WIRE;
     const int n = replay_extras_encode_parts(names, lens, t->r.n, n_times > 0, n_times > 0 ? list_seconds(first) : 0,

@@ -50,149 +50,142 @@ static int rec(uint8_t *out, int at, int64_t ms, int type, int seat, int n, cons
     return at + 10 + 2 * n;
 }
 
-static int parse_all(const uint8_t *list, int len) {
-    MoveListTail t;
-    return move_list_scan(list, len, &t);
+static int parse_all(const uint8_t *list, int len) { return move_list_check(list, len); }
+
+// One commit's records, chunked and appended to the list at `len`.
+static int chunk_onto(uint8_t *list, int len, int64_t base, const uint8_t *log, int n) {
+    const int k = table_move_list_chunk(base, log, n, list + len, 4096);
+    return k < 0 ? k : len + k;
 }
 
 static void test_codec(void) {
-    static uint8_t log[4096], list[4096], bad[4096];
+    static uint8_t log[4096], list[8192], bad[4096];
     const uint8_t a1[2] = { 7, 0xFF }, cov[2] = { 20, 7 }, a4[8] = { 1, 0xFF, 14, 0xFF, 27, 0xFF, 40, 0xFF };
     const uint8_t p2[4] = { 2, 0xFF, 15, 0xFF }, pick[4] = { 1, 0xFF, 14, 0xFF }, hid[2] = { 0xFE, 0xFF };
-    const int64_t t0 = 1700000000000LL;
-    int at = 0;
-    at = rec(log, at, t0, LOG_GAME_START, -1, 0, 0);
-    at = rec(log, at, t0, LOG_DRAW, 0, 1, hid);
-    at = rec(log, at, t0 + 1000, LOG_ATTACK, 0, 1, a1);
-    at = rec(log, at, t0 + 1000, LOG_COVER, 1, 1, cov);          // the same commit: no TICK
+    const int64_t t0 = 1700000000000LL, base = t0 - 5000;
+    int len = 0, at;
+    // Six commits, as a server appends them.
+    at = rec(log, 0, t0, LOG_GAME_START, -1, 0, 0);
+    at = rec(log, at, t0, LOG_DRAW, 0, 1, hid);                          // after no GOOD: nothing
+    len = chunk_onto(list, len, base, log, at);
+    at = rec(log, 0, t0 + 1000, LOG_ATTACK, 0, 1, a1);
+    at = rec(log, at, t0 + 1000, LOG_COVER, 1, 1, cov);                  // the same commit: no TICK
     at = rec(log, at, t0 + 1000, LOG_GOOD, 0, 0, 0);
-    at = rec(log, at, t0 + 1000, LOG_DISCARD, -1, 2, cov);        // after a GOOD: ROUND_END
-    at = rec(log, at, t0 + 1000, LOG_DRAW, 0, 1, hid);            // after no GOOD: nothing
-    at = rec(log, at, t0 + 1007, LOG_ATTACK, 1, 4, a4);           // 7 ms: a one-byte TICK; 4 cards: the count byte
-    at = rec(log, at, t0 + 1007 - 300, LOG_PASS, 0, 2, p2);       // the clock stepped back
-    at = rec(log, at, t0 + 1007 - 300, LOG_PICKUP, 1, 2, pick);
-    at = rec(log, at, t0 + 1007 - 300, LOG_GOOD, 2, 0, 0);
-    at = rec(log, at, t0 + 1007 - 300, LOG_DEFENDER_CHANGE, 1, 0, 0);   // after a GOOD: CUT
-    at = rec(log, at, t0 + 1007 - 300, LOG_GOOD, 1, 0, 0);        // pending at the end
-    const int len = table_move_list_append(list, 0, sizeof(list), log, at);
-    // The expected bytes, spelled out by hand from move_list.h.
-    uint8_t exp[64];
-    int e = 0;
-    exp[e++] = MOVE_LIST_FORMAT;
-    {   // TICK of zigzag(t0)
-        uint64_t z = (uint64_t)t0 << 1;
-        exp[e++] = (uint8_t)(0xC0 | 16 | (z & 15));
-        for (z >>= 4; z; z >>= 7) exp[e++] = (uint8_t)((z & 0x7f) | (z > 0x7f ? 0x80 : 0));
-    }
-    exp[e++] = 0x00;                            // START
-    exp[e++] = 0xC0 | 16 | ((2000 & 15));       // TICK +1000 ms: z 2000, low nibble 0
-    exp[e++] = 2000 >> 4;                       // 125
-    exp[e++] = 1 << 5 | 0 << 3 | 0; exp[e++] = 7;               // ATTACK seat 0, one card
-    exp[e++] = 2 << 5 | 1; exp[e++] = 20; exp[e++] = 7;         // COVER seat 1
-    exp[e++] = 5 << 5 | 0;                                      // GOOD seat 0
-    exp[e++] = 0x01;                                            // ROUND_END
-    exp[e++] = 0xC0 | 14;                                       // TICK +7: z 14
-    exp[e++] = 1 << 5 | 3 << 3 | 1; exp[e++] = 4;               // ATTACK seat 1, n byte
-    exp[e++] = 1; exp[e++] = 14; exp[e++] = 27; exp[e++] = 40;
-    exp[e++] = 0xC0 | 16 | (599 & 15); exp[e++] = 599 >> 4;     // TICK -300: z 599
-    exp[e++] = 3 << 5 | 1 << 3 | 0; exp[e++] = 2; exp[e++] = 15; // PASS seat 0, two cards
-    exp[e++] = 4 << 5 | 1;                                      // PICKUP seat 1
-    exp[e++] = 5 << 5 | 2;                                      // GOOD seat 2
-    exp[e++] = 0x02;                                            // CUT
-    exp[e++] = 5 << 5 | 1;                                      // GOOD seat 1
-    check(len == e && memcmp(list, exp, (size_t)e) == 0, "codec: a session's list is exactly its spelling");
+    at = rec(log, at, t0 + 1000, LOG_DISCARD, -1, 2, cov);               // after a GOOD: the round's end
+    at = rec(log, at, t0 + 1000, LOG_DRAW, 0, 1, hid);
+    len = chunk_onto(list, len, base, log, at);
+    at = rec(log, 0, t0 + 1007, LOG_ATTACK, 1, 4, a4);                   // 4 cards: the count byte
+    len = chunk_onto(list, len, base, log, at);
+    at = rec(log, 0, t0 + 707, LOG_PASS, 0, 2, p2);                      // the clock stepped back
+    at = rec(log, at, t0 + 707, LOG_PICKUP, 1, 2, pick);
+    at = rec(log, at, t0 + 707, LOG_GOOD, 2, 0, 0);
+    at = rec(log, at, t0 + 707, LOG_DEFENDER_CHANGE, 1, 0, 0);           // after a GOOD: OTHER
+    at = rec(log, at, t0 + 707, LOG_GOOD, 1, 0, 0);
+    len = chunk_onto(list, len, base, log, at);
+    at = rec(log, 0, t0 + 707, LOG_DRAW, 1, 1, hid);                     // a chunk's first record: OTHER
+    len = chunk_onto(list, len, base, log, at);
+    at = rec(log, 0, t0 + 900, LOG_DISCARD, -1, 2, cov);                 // a chunk's first: DISCARD, the reader decides
+    len = chunk_onto(list, len, base, log, at);
+    // Spelled by hand from move_list.h. TICK z: 5000 ms -> 10000 = 0x2710 (low 0, LEB128 of 625: f1 04);
+    // 6000 -> 12000 = 0x2ee0 (low 0, 750: ee 05); 6007 -> 12014 (low e, 750); 5707 -> 11414 = 0x2c96 (low 6, 713: c9 05).
+    const uint8_t exp[] = {
+        0x01, 0xD0, 0xF1, 0x04, 0x00,                      // format, TICK, START
+        0xD0, 0xEE, 0x05, 0x20, 0x07, 0x41, 0x14, 0x07,    // TICK, ATTACK seat 0 [7], COVER seat 1 20 over 7
+        0xA0, 0x01,                                        // GOOD seat 0, DISCARD
+        0xDE, 0xEE, 0x05, 0x39, 0x04, 0x01, 0x0E, 0x1B, 0x28,   // TICK, ATTACK seat 1 count 4
+        0xD6, 0xC9, 0x05, 0x68, 0x02, 0x0F, 0x81, 0xA2, 0x02, 0xA1,   // TICK, PASS, PICKUP, GOOD, OTHER, GOOD
+        0x02,                                              // the DRAW chunk: OTHER
+        0x01,                                              // the DISCARD chunk
+    };
+    const int e = (int)sizeof(exp);
+    check(len == e && memcmp(list, exp, (size_t)e) == 0, "codec: a session's list is exactly its chunks' spelling");
     if (len != e || memcmp(list, exp, (size_t)e) != 0) {
         fprintf(stderr, "  got %d:", len);
         for (int i = 0; i < len; i++) fprintf(stderr, " %02x", list[i]);
-        fprintf(stderr, "\n  want %d:", e);
-        for (int i = 0; i < e; i++) fprintf(stderr, " %02x", exp[i]);
         fprintf(stderr, "\n");
     }
 
-    // The reader gives back every item, every time and the tail.
+    // The reader gives back every item, every time.
     MoveListCursor c;
     MoveListItem it;
     int kinds[32], n = 0, r;
     int64_t times[32];
-    move_list_open(&c, list, len);
+    move_list_open(&c, list, len, base);
     while ((r = move_list_next(&c, &it)) > 0 && n < 32) { times[n] = it.ms; kinds[n++] = it.kind; }
     const int wk[] = { MOVE_LIST_START, LOG_ATTACK, LOG_COVER, LOG_GOOD, MOVE_LIST_ROUND_END, LOG_ATTACK, LOG_PASS,
-                       LOG_PICKUP, LOG_GOOD, MOVE_LIST_CUT, LOG_GOOD };
-    int same = r == 0 && n == 11;
+                       LOG_PICKUP, LOG_GOOD, MOVE_LIST_OTHER, LOG_GOOD, MOVE_LIST_OTHER, MOVE_LIST_OTHER };
+    int same = r == 0 && n == 13;
     for (int i = 0; same && i < n; i++) same = kinds[i] == wk[i];
-    check(same, "codec: the reader gives back the items in order");
-    check(n == 11 && times[0] == t0 && times[1] == t0 + 1000 && times[2] == t0 + 1000 && times[5] == t0 + 1007
+    check(same, "codec: the reader gives back the items in order, a chunk's first DISCARD after no GOOD as no round end");
+    check(n == 13 && times[0] == t0 && times[1] == t0 + 1000 && times[2] == t0 + 1000 && times[5] == t0 + 1007
           && times[6] == t0 + 707, "codec: and the exact millisecond of every item, equal ones equal");
-    MoveListTail tl;
-    check(move_list_scan(list, len, &tl) == 0 && tl.ms == t0 + 707 && tl.last_good && !tl.broken,
-          "codec: the tail is the last time and a pending GOOD");
 
-    // Appending commit by commit is appending the whole log at once.
-    int l2 = 0, q = 0;
-    while (q < at) {
-        const int k = 10 + 2 * log[q + 9];
-        l2 = table_move_list_append(list + 2048, l2, 2048, log + q, k);
-        q += k;
-    }
-    check(l2 == len && memcmp(list + 2048, list, (size_t)len) == 0, "codec: record by record is the same list");
+    // Records of one chunk at two times (no commit writes them, the writer still keeps them apart).
+    at = rec(log, 0, t0, LOG_GAME_START, -1, 0, 0);
+    at = rec(log, at, t0 + 3, LOG_ATTACK, 0, 1, a1);
+    const int k2 = table_move_list_chunk(base, log, at, bad, sizeof(bad));
+    move_list_open(&c, bad, k2 > 0 ? k2 : 0, base);
+    int64_t t_att = -1;
+    while (move_list_next(&c, &it) > 0) if (it.kind == LOG_ATTACK) t_att = it.ms;
+    check(t_att == t0 + 3, "codec: a record at another millisecond in the same chunk gets its own TICK");
 
-    // A GAME_START starts the list again.
-    uint8_t gs[10];
-    rec(gs, 0, 5, LOG_GAME_START, -1, 0, 0);
-    memcpy(bad, list, (size_t)len);
-    const int l3 = table_move_list_append(bad, len, sizeof(bad), gs, 10);
-    check(l3 == 3 && bad[0] == MOVE_LIST_FORMAT && bad[1] == (0xC0 | 10) && bad[2] == 0x00,
-          "codec: a GAME_START starts a new list");
+    // A GAME_START drops what its chunk held before it.
+    at = rec(log, 0, t0, LOG_ATTACK, 0, 1, a1);
+    at = rec(log, at, base + 5, LOG_GAME_START, -1, 0, 0);
+    const int k3 = table_move_list_chunk(base, log, at, bad, sizeof(bad));
+    check(k3 == 3 && bad[0] == MOVE_LIST_FORMAT && bad[1] == (0xC0 | 10) && bad[2] == 0x00,
+          "codec: a GAME_START begins the list again");
 
     // Every refusal of the reader.
     check(parse_all(list, len) == 0 && parse_all(list, 0) == 0, "codec: the list and the empty list read");
-    struct { const char *what; uint8_t b[8]; int n; } refused[] = {
-        { "an unknown format byte", { 2, 0x00 }, 2 },
-        { "a broken list with bytes after it", { MOVE_LIST_BROKEN, 0x00 }, 2 },
-        { "a TICK of zero", { 1, 0xC0, 0x00 }, 3 },
-        { "a TICK whose LEB128 ends in a zero byte", { 1, 0xD2, 0x81, 0x00, 0x20, 0x07 }, 6 },
-        { "a TICK before a GOOD", { 1, 0xC2, 0xA0 }, 3 },
-        { "a TICK at the end", { 1, 0xC2 }, 2 },
-        { "two TICKs", { 1, 0xC2, 0xC2, 0x00 }, 4 },
-        { "a ROUND_END after no GOOD", { 1, 0x20, 0x07, 0x01 }, 4 },
-        { "a CUT first", { 1, 0x02 }, 2 },
-        { "a START after an item", { 1, 0x20, 0x07, 0x00 }, 4 },
-        { "an unknown mark", { 1, 0x03 }, 2 },
-        { "kind 7", { 1, 0xE0 }, 2 },
-        { "a card past 51", { 1, 0x20, 52 }, 3 },
-        { "a count byte under 4", { 1, 0x38, 3, 1, 2, 3 }, 6 },
-        { "a COVER with count bits", { 1, 0x48, 1, 2 }, 4 },
-        { "a GOOD with count bits", { 1, 0xA8 }, 2 },
-        { "a cut-off attack", { 1, 0x28, 1 }, 3 },
-        { "a time below zero", { 1, 0xC1, 0x20, 0x07 }, 4 },
+    struct { const char *what; uint8_t b[10]; int n; } refused[] = {
+        { "an unknown format byte", { 2, 0xC0, 0x00 }, 3 },
+        { "a list that does not begin at its START", { 1, 0x20, 0x07 }, 3 },
+        { "a START with no TICK", { 1, 0x00 }, 2 },
+        { "a TICK whose LEB128 ends in a zero byte", { 1, 0xD2, 0x81, 0x00, 0x00 }, 5 },
+        { "a TICK before a GOOD", { 1, 0xC0, 0x00, 0xC2, 0xA0 }, 5 },
+        { "a TICK at the end", { 1, 0xC0, 0x00, 0xC2 }, 4 },
+        { "two TICKs", { 1, 0xC0, 0xC0, 0x00 }, 4 },
+        { "a second START", { 1, 0xC0, 0x00, 0xC0, 0x00 }, 5 },
+        { "an unknown mark", { 1, 0xC0, 0x00, 0x03 }, 4 },
+        { "a BROKEN with low bits", { 1, 0xC0, 0x00, 0xE1 }, 4 },
+        { "a TICK before a BROKEN", { 1, 0xC0, 0x00, 0xC0, 0xE0 }, 5 },
+        { "a card past 51", { 1, 0xC0, 0x00, 0x20, 52 }, 5 },
+        { "a count byte under 4", { 1, 0xC0, 0x00, 0x38, 3, 1, 2, 3 }, 8 },
+        { "a COVER with count bits", { 1, 0xC0, 0x00, 0x48, 1, 2 }, 6 },
+        { "a GOOD with count bits", { 1, 0xC0, 0x00, 0xA8 }, 4 },
+        { "a cut-off attack", { 1, 0xC0, 0x00, 0x28, 1 }, 5 },
+        { "a TICK past 2^49", { 1, 0xD0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x08, 0x00 }, 10 },
     };
     for (int i = 0; i < (int)(sizeof(refused) / sizeof(refused[0])); i++) {
         char what[96];
         snprintf(what, sizeof(what), "codec: the reader refuses %s", refused[i].what);
         check(parse_all(refused[i].b, refused[i].n) == MOVE_LIST_E_PARSE, what);
     }
-    const uint8_t ok_time[] = { 1, 0xC2, 0x20, 0x07, 0xC1, 0x28, 1, 2 };   // +1 then -1: back to 0
-    check(parse_all(ok_time, sizeof(ok_time)) == 0, "codec: a step back to zero reads");
-    const uint8_t ok_leb[] = { 1, 0xD2, 0x01, 0x20, 0x07 };   // the same +9 ms spelled minimally
+    const uint8_t ok_leb[] = { 1, 0xD2, 0x01, 0x00 };   // +9 ms spelled minimally
     check(parse_all(ok_leb, sizeof(ok_leb)) == 0, "codec: a minimal LEB128 TICK reads");
+    const uint8_t brk[] = { 1, 0xC0, 0x00, 0xE0 };
+    check(parse_all(brk, sizeof(brk)) == MOVE_LIST_E_BROKEN, "codec: a BROKEN item reads as a session not kept");
 
-    // The broken list: a hidden card where an atom needs one, a seat past 7, a full buffer.
-    uint8_t one[20];
+    // The writer's BROKEN: a hidden card where an atom needs one, a seat past 7; and no room.
+    uint8_t one[40];
     int b1 = rec(one, 0, 9, LOG_ATTACK, 0, 1, hid);
-    check(table_move_list_append(bad, 0, sizeof(bad), one, b1) == 1 && bad[0] == MOVE_LIST_BROKEN,
-          "codec: an attack with a hidden card breaks the list");
+    check(table_move_list_chunk(0, one, b1, bad, sizeof(bad)) == 1 && bad[0] == 0xE0,
+          "codec: an attack with a hidden card is BROKEN");
     b1 = rec(one, 0, 9, LOG_GOOD, 9, 0, 0);
-    check(table_move_list_append(bad, 0, sizeof(bad), one, b1) == 1 && bad[0] == MOVE_LIST_BROKEN,
-          "codec: a seat past 7 breaks the list");
-    check(table_move_list_append(bad, 0, 12, log, at) == 1 && bad[0] == MOVE_LIST_BROKEN,
-          "codec: a list past its room is broken");
+    b1 = rec(one, b1, 9, LOG_GOOD, 0, 0, 0);
+    check(table_move_list_chunk(0, one, b1, bad, sizeof(bad)) == 1 && bad[0] == 0xE0,
+          "codec: a seat past 7 is BROKEN, and the chunk says nothing after it");
+    b1 = rec(one, 0, 9, LOG_GOOD, 9, 0, 0);
+    b1 = rec(one, b1, 9, LOG_GAME_START, -1, 0, 0);
+    check(table_move_list_chunk(0, one, b1, bad, sizeof(bad)) == 4 && bad[0] == MOVE_LIST_FORMAT && bad[3] == 0x00,
+          "codec: until a GAME_START begins a new list");
     b1 = rec(one, 0, 9, LOG_ATTACK, 0, 1, a1);
-    check(table_move_list_append(bad, 1, sizeof(bad), one, b1) == 1 && bad[0] == MOVE_LIST_BROKEN,
-          "codec: a broken list stays broken");
-    check(table_move_list_append(bad, 1, sizeof(bad), gs, 10) == 3 && bad[0] == MOVE_LIST_FORMAT,
-          "codec: until the next GAME_START");
-    check(table_move_list_append(bad, 0, 0, one, b1) == TABLE_E_CAP, "codec: no room at all is refused");
-    check(table_move_list_append(bad, 0, sizeof(bad), log, at - 1) == TABLE_E_WIRE, "codec: records cut short are refused");
+    check(table_move_list_chunk(0, one, b1, bad, 2) == TABLE_E_CAP, "codec: a chunk past its room is refused");
+    check(table_move_list_chunk(0, log, at - 1, bad, sizeof(bad)) == TABLE_E_WIRE, "codec: records cut short are refused");
+    // A chunk is at most its records plus the slack.
+    at = rec(log, 0, (int64_t)1 << 47, LOG_GAME_START, -1, 0, 0);
+    check(table_move_list_chunk(0, log, at, bad, at + MOVE_LIST_CHUNK_SLACK) > 0, "codec: the slack holds the widest TICK");
 }
 
 // ---- 2. the proof -----------------------------------------------------------------
@@ -203,14 +196,14 @@ static Table g_t;
 static uint8_t g_arena[1 << 20];
 static uint8_t g_state[8192], g_roster[ROSTER_BYTES];
 static int g_state_len;
-static uint8_t g_log[1 << 18], g_list[MOVE_LIST_MAX];
+static uint8_t g_log[1 << 18], g_list[1 << 18];
 static int g_log_len, g_list_len;
 static uint8_t g_code_a[1 << 16], g_code_b[1 << 16], g_ex_a[1 << 16], g_ex_b[1 << 16], g_scratch[1 << 21];
 static BotDriveOut g_drv;
 static LegalMoves g_moves;
 static uint64_t g_rng;
 static uint32_t g_version;
-static int64_t g_now;
+static int64_t g_now, g_base;   // the commit clock, and the base the chunks are written from (the row's created_at)
 static int g_verbose;
 
 static uint32_t rnd(void) {
@@ -242,8 +235,12 @@ static int commit(TableCommit *c) {
     if (g_log_len + c->logs.len > (int)sizeof(g_log)) return -1;
     memcpy(g_log + g_log_len, g_arena + c->logs.off, (size_t)c->logs.len);
     g_log_len += c->logs.len;
-    g_list_len = table_move_list_append(g_list, g_list_len, sizeof(g_list), g_arena + c->logs.off, c->logs.len);
-    return g_list_len < 0 ? g_list_len : n;
+    // The move list as a store keeps it: this commit's chunk appended.
+    const int k = table_move_list_chunk(g_base, g_arena + c->logs.off, c->logs.len, g_list + g_list_len,
+                                        (int)sizeof(g_list) - g_list_len);
+    if (k < 0) return k;
+    g_list_len += k;
+    return n;
 }
 
 static int reload(void) {
@@ -281,7 +278,7 @@ static int count_moves(void) {
     MoveListCursor c;
     MoveListItem it;
     int n = 0;
-    if (move_list_open(&c, g_list, g_list_len) != 0) return 0;
+    if (move_list_open(&c, g_list, g_list_len, g_base) != 0) return 0;
     while (move_list_next(&c, &it) > 0)
         if (it.kind == LOG_ATTACK || it.kind == LOG_COVER || it.kind == LOG_PASS || it.kind == LOG_PICKUP) n++;
     return n;
@@ -304,7 +301,7 @@ static void compare(const uint8_t *seed, int game, int end) {
     if (reload() < 0) { S.mismatch++; return; }
     const int lb = table_replay_code_list(&g_t, seed, FOOLISH_SEED_LEN, g_list, g_list_len, g_code_b, sizeof(g_code_b),
                                           g_scratch, sizeof(g_scratch));
-    const int eb = table_replay_extras_list(&g_t, g_list, g_list_len, g_ex_b, sizeof(g_ex_b));
+    const int eb = table_replay_extras_list(&g_t, g_base, g_list, g_list_len, g_ex_b, sizeof(g_ex_b));
     if (reload() < 0) { S.mismatch++; return; }
     const int la = table_replay_code(&g_t, seed, FOOLISH_SEED_LEN, g_log, g_log_len, g_code_a, sizeof(g_code_a),
                                      g_scratch, sizeof(g_scratch));
@@ -323,7 +320,7 @@ static void compare(const uint8_t *seed, int game, int end) {
         MoveListCursor mc;
         MoveListItem mi;
         int last = -1;
-        if (move_list_open(&mc, g_list, g_list_len) == 0) while (move_list_next(&mc, &mi) > 0) last = mi.kind;
+        if (move_list_open(&mc, g_list, g_list_len, g_base) == 0) while (move_list_next(&mc, &mi) > 0) last = mi.kind;
         if (last == LOG_GOOD) S.pending_good++;
     }
     else if (la <= 0 && lb == la) S.code_refused_same++;
@@ -344,7 +341,7 @@ static void compare(const uint8_t *seed, int game, int end) {
         MoveListCursor mc;
         MoveListItem mi;
         int head = -1;
-        if (move_list_open(&mc, g_list, g_list_len) == 0)
+        if (move_list_open(&mc, g_list, g_list_len, g_base) == 0)
             while (head < 0 && move_list_next(&mc, &mi) > 0)
                 if (mi.kind == LOG_PASS && mi.n <= 3) head = mc.at - mi.n - 1;
         if (head > 0) {
@@ -380,7 +377,7 @@ static void play_table(int game) {
     const int deals = 1 + game % 3;
     uint8_t seed[FOOLISH_SEED_LEN];
     g_rng = 0x2545F4914F6CDD1DULL ^ ((uint64_t)game * 0x9E3779B97F4A7C15ULL);
-    g_now = 1700000000000LL + (int64_t)game * 86400000LL;
+    g_now = g_base = 1700000000000LL + (int64_t)game * 86400000LL;
     g_version = 0;
     g_log_len = g_list_len = 0;
     seed_of(seed, game, 0);
@@ -441,6 +438,24 @@ int main(int argc, char **argv) {
     test_codec();
     memset(&S, 0, sizeof S);
     for (int g = seed0; g < seed0 + games; g++) play_table(g);
+    // A list past MOVE_LIST_MAX (the last game's, then a run of GOODs) has no replay, as an overflowed log had none.
+    if (g_list_len > 0 && reload() == 0) {
+        static uint8_t longer[MOVE_LIST_MAX + 4096];
+        memcpy(longer, g_list, (size_t)g_list_len);
+        memset(longer + g_list_len, 0xA0, (size_t)(MOVE_LIST_MAX + 1 - g_list_len));
+        uint8_t seed[FOOLISH_SEED_LEN];
+        seed_of(seed, seed0 + games - 1, 0);
+        check(table_replay_code_list(&g_t, seed, FOOLISH_SEED_LEN, longer, MOVE_LIST_MAX + 1, g_code_b, sizeof(g_code_b),
+                                     g_scratch, sizeof(g_scratch)) == -REPLAY_ETOOLONG
+              && table_replay_extras_list(&g_t, g_base, longer, MOVE_LIST_MAX + 1, g_ex_b, sizeof(g_ex_b)) == -REPLAY_ETOOLONG,
+              "a list past MOVE_LIST_MAX has no replay");
+        longer[g_list_len] = 0xE0;
+        check(table_replay_code_list(&g_t, seed, FOOLISH_SEED_LEN, longer, g_list_len + 1, g_code_b, sizeof(g_code_b),
+                                     g_scratch, sizeof(g_scratch)) == -REPLAY_ETOOLONG,
+              "a list with a BROKEN item has no replay");
+        check(table_replay_code_list(&g_t, seed, FOOLISH_SEED_LEN, longer + 1, 4, g_code_b, sizeof(g_code_b),
+                                     g_scratch, sizeof(g_scratch)) == TABLE_E_WIRE, "bytes that are no list are refused");
+    }
     printf("move list: %d cuts compared (%d mid-game, %d at a game's end) over %d tables\n", S.compared, S.mid,
            S.compared - S.mid, games);
     printf("  code identical %d, the same refusal %d, the list has a code past the log's MAX_LOGS %d; extras identical %d; "
