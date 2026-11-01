@@ -76,6 +76,10 @@ cannot help**; it only postpones the same abort at a deeper, exponentially wider
 Interaction problem — and was measured to corrupt otherwise-proven verdicts. It is not
 a valid fix.)
 
+The game itself now ends as a draw when a position occurs for the third time (`REPETITION.md`).
+That is a rule of the game, checked by the engine with the game's real history, and the solver above never sees it.
+
+
 ## The correct method: retrograde analysis (and the true value)
 
 Cyclic finite games are solved by **backward induction over the reachable set**, not by
