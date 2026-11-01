@@ -338,7 +338,7 @@ export type OracleClass =
 /** The kernel's ranking (c/src/oracle_rank.c) of the rows a mode accumulated:
  *  display order, Best, fusion's pick, classes and bars, for both modes. */
 export interface OracleRanker {
-    rank(list: OracleCandidate[], exact: boolean, deckAlive: boolean): OracleRanked;
+    rank(list: OracleCandidate[], exact: boolean, deckAlive: boolean, numPlayers: number): OracleRanked;
 }
 /** The rows in display order, and whether the numbers shown have converged. */
 export interface OracleRanked { rows: OracleCandidate[]; converged: boolean }

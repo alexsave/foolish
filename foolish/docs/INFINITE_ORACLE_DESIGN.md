@@ -59,9 +59,9 @@ What the switch costs, measured before it on 664 decisions of 2-, 4- and 6-seat 
 | 4 | 0.448 | 0.350 | 28.7% | 19.9% |
 | 6 | 0.748 | 0.601 | 32.8% | 26.2% |
 
-The noise makes every finish more random, so it pulls every move toward the middle place by 20-33%, and the class thresholds (`c/src/oracle_rank.c`, calibrated on octogen's noise-free numbers) call about a third of the old blunders mistakes.
+The noise makes every finish more random, so it pulls every move toward the middle place by 20-33%, and the raw-EF class thresholds of the time (calibrated on octogen's noise-free numbers) called about a third of those blunders mistakes.
 The noisy numbers read as "the expected finish if three in ten of everybody's later decisions, yours included, are a random sensible move".
-Recalibrating the thresholds on the noisy race is open.
+Since 2026-11-01 the classes are no longer those thresholds but chess.com's expected-points bands (next section), which scale with the table instead of being calibrated on either race.
 Convergence is judged on the noisy race too (next sections): "Converged" means every number shown has 65,536 noisy worlds behind it and an error of at most 0.005, so the `+-` printed at "Converged" is at most the checkpoint.
 
 Rows the noisy race did not score: when it scored no row at all (one candidate, a proven win: a decision with no noisy race), the noise-free race is shown instead, since fusion is then octogen.
@@ -83,8 +83,12 @@ The rule, Monte Carlo regime, every number below being the noisy race's:
 - **Best.** Every row that ties with fusion's pick reads Best.
   Fusion's pick is the one row marked `pick`, and its chip is drawn filled.
   When fusion keeps octogen's pick, the noisy race's lowest row is within fusion's bar of it and so (up to the trump tax, which the bar counts and the tie does not) ties it: the Best group sits at the top of the list.
-- **Class.** A row tied with fusion's pick is `best`.
-  Any other row measures its gap to the Best group's lowest number (a row below it that does not tie is `best` too), then the thresholds: `< 0.05` excellent, `< 0.15` good, `< 0.35` inaccuracy, `< 0.7` mistake, else blunder.
+- **Class (since 2026-11-01: chess.com's, by expected-points loss).** A row tied with fusion's pick is `best`.
+  Any other row is classed the way chess.com classifies a move (support.chess.com/en/articles/8572705), by its loss in expected points on a 0-1 scale.
+  An expected finish EF on an n-seat table is E = (n - EF) / (n - 1) expected points (1st = 1.0, last = 0.0), so a row's loss is (EF - the Best group's lowest EF) / (n - 1).
+  The bands are chess.com's: Excellent below 0.02, Good 0.02-0.05, Inaccuracy 0.05-0.10, Mistake 0.10-0.20, Blunder 0.20 and over (each band includes its lower bound), one table in `og_rank_class`.
+  A row below the Best group that does not tie loses nothing and is `best` too.
+  These replace the raw-EF thresholds (`< 0.05` excellent, `< 0.15` good, `< 0.35` inaccuracy, `< 0.7` mistake), which did not scale with the table: the same 0.3 places is a third of the scale at 2 seats and a twentieth of it at 8.
 - **Order.** By number, then the number plus the trump-keep tax, then input order, except that the Best rows sit together as one block where their lowest number puts it, fusion's pick first.
   Then the rows with no number shown, by noise-free mean, then the unsampled.
   The played move is never moved out of its place.

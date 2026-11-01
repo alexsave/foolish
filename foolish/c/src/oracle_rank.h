@@ -33,15 +33,15 @@
 // visible). Mode A merges answers by move, so it never holds more.
 #define OG_RANK_MAX_ROWS 728
 
-// A row's class, chess.com style, from its gap to the best number at or below
-// it (oracle_rank.c says which numbers those are).
+// A row's class, as chess.com classifies moves: by expected-points loss
+// against the Best group (oracle_rank.c og_rank_class has the table).
 enum {
     OG_CLASS_NONE       = 0,        // not scored, or the exact regime (verdicts, no classes)
-    OG_CLASS_BEST       = 1,        // tied with a best number
-    OG_CLASS_EXCELLENT  = 2,        // gap < 0.05 places
-    OG_CLASS_GOOD       = 3,        // < 0.15
-    OG_CLASS_INACCURACY = 4,        // < 0.35
-    OG_CLASS_MISTAKE    = 5,        // < 0.7
+    OG_CLASS_BEST       = 1,        // tied with fusion's pick
+    OG_CLASS_EXCELLENT  = 2,        // loss < 0.02 expected points
+    OG_CLASS_GOOD       = 3,        // < 0.05
+    OG_CLASS_INACCURACY = 4,        // < 0.10
+    OG_CLASS_MISTAKE    = 5,        // < 0.20
     OG_CLASS_BLUNDER    = 6,
 };
 
@@ -65,6 +65,7 @@ typedef struct {
 typedef struct {
     bool     exact;                 // a proven win or loss exists: verdict ordering
     bool     deck_alive;            // the trump-keep tax is on
+    uint8_t  n_players;             // seats at the table: finish places 1..n
     uint16_t n_rows;
     OgRankRow rows[OG_RANK_MAX_ROWS];
 } OgRankAsk;

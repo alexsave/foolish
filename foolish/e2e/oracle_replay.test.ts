@@ -191,7 +191,7 @@ test('§12.2-1b the recorded move is one of the candidates, at every decision', 
             inst.setKnobs({ ...ORACLE_KNOBS, w1: 8 });
             const r = inst.analyzeOnce(job, 0x9e37 + j);
             if (!('record' in r)) continue;
-            const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, ranker: inst });
+            const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, numPlayers: job.numPlayers, ranker: inst });
             acc.add(r.record);
             const kind = STEP_NAME[frames[j].kind] ?? String(frames[j].kind);
             total[kind] = (total[kind] ?? 0) + 1;
@@ -248,7 +248,7 @@ test('§12.2-1c every pass a hand can make is on the panel', async () => {
             const r = inst.analyzeOnce(job, 0x9e37 + j);
             if (!('record' in r)) continue;
             walked++;
-            const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, ranker: inst });
+            const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, numPlayers: job.numPlayers, ranker: inst });
             acc.add(r.record);
             const passes = acc.candidates(false).filter((c) => String(c.key).startsWith('pass|')).length;
             widest = Math.max(widest, passes);
@@ -301,7 +301,7 @@ test('§12.2-2 batching: keys stable, n increases, worlds vary across seeds', as
     const idx = Math.floor(frames.length * 0.4);
     const job = buildOracleJob(frames, code, idx, true, id)!;
     assert.ok(job);
-    const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, ranker: inst });
+    const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, numPlayers: job.numPlayers, ranker: inst });
     inst.setKnobs({ ...ORACLE_KNOBS, w1: 24 });
     let prevKeys = '';
     const means: number[] = [];
@@ -336,7 +336,7 @@ test('§12.2-4 memory toggle: ON proves an endgame verdict that OFF cannot', asy
         if (j == null || j !== idx) continue;
         const run = (memoryOn: boolean) => {
             const job = buildOracleJob(frames, code, idx, memoryOn, id)!;
-            const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, ranker: inst });
+            const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, numPlayers: job.numPlayers, ranker: inst });
             inst.setKnobs({ ...ORACLE_KNOBS, w1: 16 });
             for (let b = 0; b < 2; b++) {
                 const r = inst.analyzeOnce(job, 31 + b);
@@ -389,7 +389,7 @@ test('§12.2-7 why table: storylines read back, merge, and template into a proof
     const { code, frames, id } = await fixture('4p', hw(4), 42);
     const idx = Math.floor(frames.length * 0.4);
     const job = buildOracleJob(frames, code, idx, true, id)!;
-    const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, ranker: inst });
+    const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, numPlayers: job.numPlayers, ranker: inst });
     inst.setKnobs({ ...ORACLE_KNOBS, w1: 24 });
     let sawWhy = false;
     for (let b = 0; b < 3; b++) {
