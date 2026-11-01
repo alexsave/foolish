@@ -10,6 +10,7 @@ import { ReplayFrame } from '../../replay/frames';
 import { REPLAY_ATOM_DEAL, REPLAY_ATOM_ATTACK, REPLAY_ATOM_COVER, REPLAY_ATOM_PASS, REPLAY_ATOM_PICKUP, REPLAY_ATOM_ROUND_END, REPLAY_ATOM_GOOD } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import { InlineCard } from './InlineCards';
 import { seatName } from './seatName';
+import { useBotName } from '../../common/botName';
 
 /* What just happened, in the viewer's language. The kind comes from the kernel
  * (frames.ts) rather than from the frame's events, because on the wire an attack
@@ -22,6 +23,7 @@ import { seatName } from './seatName';
 const StepMessage = ({ frame, names }: {
     frame: ReplayFrame; names: string[] | null;
 }) => {
+    const botName = useBotName();
     const cards = (cs: Card[]) => (
         <span style={{ display: 'inline-flex', gap: 3, verticalAlign: 'middle' }}>
             {cs.map((c, i) => (
@@ -29,7 +31,7 @@ const StepMessage = ({ frame, names }: {
             ))}
         </span>
     );
-    const who = frame.seat !== null ? <b>{seatName(frame.seat, names)}</b> : null;
+    const who = frame.seat !== null ? <b>{seatName(frame.seat, names, botName)}</b> : null;
 
     switch (frame.kind) {
         case REPLAY_ATOM_DEAL:
@@ -94,11 +96,13 @@ const StepMessage = ({ frame, names }: {
 
 /* The closing line: who was left holding cards. The board carries the 🃏 on the
  * fool's name; this says it in words, on the last step only. */
-const FoolMessage = ({ fool, names }: { fool: number | null; names: string[] | null }) =>
-    fool === null ? null : (
+const FoolMessage = ({ fool, names }: { fool: number | null; names: string[] | null }) => {
+    const botName = useBotName();
+    return fool === null ? null : (
         <span>
-            🃏 <b>{seatName(fool, names)}</b> <Text id="is_the_fool" />
+            🃏 <b>{seatName(fool, names, botName)}</b> <Text id="is_the_fool" />
         </span>
     );
+};
 
 export { StepMessage, FoolMessage };

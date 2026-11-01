@@ -5,7 +5,7 @@ import { TexturedSurface, useTexture, getTextureStyle } from './TexturedSurface'
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { Text } from './Text';
 import { RankIcon } from './SovietIcon';
-import { botDisplayName } from '../common/botName';
+import { useBotName } from '../common/botName';
 import { ReplayShare } from './ReplayShare';
 // The finish order is the kernel's (anim_plan.c anim_finish_rows), over the
 // board's own elimination order and fool, not a second ranking derived here.
@@ -27,6 +27,7 @@ interface WinScreenProps {
 }
 
 export const WinScreen: React.FC<WinScreenProps> = ({ title, actions }) => {
+    const botName = useBotName();
     const { view: game, continueGame, loadGame } = useServer();
     const { woodUrl } = useTexture();
 
@@ -125,7 +126,7 @@ export const WinScreen: React.FC<WinScreenProps> = ({ title, actions }) => {
 
                                 <div className="flex items-baseline gap-sm min-w-0">
                                     <span className={`result-card__name ${isCurrentUser ? 'result-card__name--current' : ''}`}>
-                                        {botDisplayName(result.name)}
+                                        {botName(result.name)}
                                     </span>
                                     {isCurrentUser && (
                                         <span className="result-card__you">(<Text id="you" />)</span>

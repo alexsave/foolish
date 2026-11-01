@@ -2,7 +2,7 @@ import { useRouter } from "next/navigation";
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from "../TexturedSurface";
 import { Text } from "../Text";
 import { SovietIcon, SuitIcon } from "../SovietIcon";
-import { botDisplayName } from "../../common/botName";
+import { useBotName } from "../../common/botName";
 import { PLAYER_STATUS, GAME_STATUS, type TableView } from "../../state/view";
 
 interface GameCardProps {
@@ -10,6 +10,7 @@ interface GameCardProps {
 }
 
 export const GameCard: React.FC<GameCardProps> = ({ game }) => {
+    const botName = useBotName();
     const router = useRouter();
     const { woodUrl } = useTexture();
 
@@ -71,7 +72,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game }) => {
                             <span key={idx} className="game-card__player">
                                 <SovietIcon name={player.isAi ? 'bot' : 'person'} size={14} />
                                 <span className={`game-card__player-name ${isCurrentUser ? 'game-card__player-name--current' : ''}`}>
-                                    {botDisplayName(player.name)}
+                                    {botName(player.name)}
                                 </span>
 
                                 {isWaiting && (

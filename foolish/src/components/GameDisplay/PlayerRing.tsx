@@ -9,7 +9,7 @@ import { RoleCoin } from "../RoleCoin";
 import { useAnimation } from "../../contexts/AnimationContext";
 import { markWorn, shownBoardOf } from "../../state/roleLedger";
 import { SovietCardBack } from "./SovietCardBack";
-import { botDisplayName } from "../../common/botName";
+import { useBotName } from "../../common/botName";
 import { useHandShape } from "./handShape";
 
 // Mini stacked card back — same SVG as the full CardBack, absolutely positioned
@@ -142,6 +142,7 @@ const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: View
  *  A seat that is not in the ledger yet (a first paint) wears whatever the live
  *  board says, so the very first frame is not blank. */
 export const PlayerRing = () => {
+    const botName = useBotName();
     const { t } = useLocalization();
     const game = useServer().view as TableView;
     const { chatMessages } = useServer();
@@ -294,7 +295,7 @@ export const PlayerRing = () => {
                             justifyContent: 'center',
                             position: 'relative'
                         }}>
-                            {botDisplayName(player.name)}
+                            {botName(player.name)}
 
                             {bubble && (
                                 <div className={`chat-bubble ${!styles.icons.useEmojiIcons ? 'chat-bubble--soviet' : ''}`}>

@@ -7,7 +7,7 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 import { Text } from './Text';
 import { SovietIcon, RankIcon } from './SovietIcon';
 import { TexturedSurface, useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
-import { botDisplayName } from '../common/botName';
+import { useBotName } from '../common/botName';
 
 /**
  * Global standings: the server's top players and top bots who have played
@@ -39,6 +39,7 @@ const TABS: { key: Filter; label: 'tab_all' | 'tab_humans' | 'tab_bots' }[] = [
 const BOARD_SIZE = 100;
 
 export const Leaderboard: React.FC = () => {
+    const botName = useBotName();
     const { user_id } = useAuth();
     const { woodUrl } = useTexture();
     const [entries, setEntries] = useState<Entry[] | null>(null);
@@ -154,7 +155,7 @@ export const Leaderboard: React.FC = () => {
 
                                 <div className="flex flex-col min-w-0">
                                     <span className={`result-card__name ${isCurrentUser ? 'result-card__name--current' : ''}`}>
-                                        <SovietIcon name={entry.is_ai ? 'bot' : 'person'} size={14} /> {botDisplayName(entry.name)}
+                                        <SovietIcon name={entry.is_ai ? 'bot' : 'person'} size={14} /> {botName(entry.name)}
                                     </span>
                                     {isCurrentUser && (
                                         <span className="result-card__you">
