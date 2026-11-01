@@ -614,20 +614,24 @@ int table_replay_extras(const Table *t, const uint8_t *log, int log_len, uint8_t
 // What the server keeps of a game being played instead of its session log: the
 // v6 code's atoms and the exact times of the moves, server-only like the seed.
 
-// The list of `len` bytes in `list` (`cap` of room) with one commit's records
-// (TableCommit.logs: the session-log layout) appended; a GAME_START among them
-// starts the list again. Returns the new length (a list it could not hold reads
-// back broken, and has no replay), TABLE_E_WIRE for records or a list that are
-// not whole, TABLE_E_CAP for a `cap` of 0.
-int table_move_list_append(uint8_t *list, int len, int cap, const uint8_t *records, int rec_len);
+// One commit's chunk of the list (move_list.h), from its records (TableCommit.logs:
+// the session-log layout), into `out`: the store appends it to the session's list
+// as it appended the records, and clears the list where it cleared the log. Its
+// times are offsets from `base_ms`, which the host holds constant for the game
+// (the server: the row's created_at). A chunk is at most rec_len +
+// MOVE_LIST_CHUNK_SLACK bytes (0 when no record is one the list mentions).
+// Returns its length, TABLE_E_WIRE for records that are not whole, TABLE_E_CAP.
+int table_move_list_chunk(int64_t base_ms, const uint8_t *records, int rec_len, uint8_t *out, int cap);
 // table_replay_code from the move list: the same code, byte for byte, and the
 // same gate (the decoded code's ATTACK, COVER, PASS and PICKUP against the
-// list's). A broken list is -REPLAY_ETOOLONG, as an overflowed log was;
-// TABLE_E_WIRE for bytes that are no list. The board is read, never changed.
+// list's). A broken list, or one past MOVE_LIST_MAX, is -REPLAY_ETOOLONG, as an
+// overflowed log was; TABLE_E_WIRE for bytes that are no list. The code holds no
+// time, so no base. The board is read, never changed.
 int table_replay_code_list(const Table *t, const uint8_t *seed, int seed_len, const uint8_t *list, int list_len,
                            uint8_t *out, int cap, uint8_t *scratch, int scratch_cap);
-// table_replay_extras from the move list: the same blob, byte for byte.
-int table_replay_extras_list(const Table *t, const uint8_t *list, int list_len, uint8_t *out, int cap);
+// table_replay_extras from the move list and the base its chunks were written
+// with: the same blob, byte for byte. -REPLAY_ETOOLONG and TABLE_E_WIRE as above.
+int table_replay_extras_list(const Table *t, int64_t base_ms, const uint8_t *list, int list_len, uint8_t *out, int cap);
 
 // The finish order, best first: the eliminated seats in the order they went
 // out, then the fools by seat (anim_plan.c anim_finish_rows), and each row's
