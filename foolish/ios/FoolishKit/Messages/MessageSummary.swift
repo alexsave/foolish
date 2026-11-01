@@ -70,6 +70,7 @@ public enum MessageSummary {
             // §12's result card. The fool is the kernel's (`view.gameOver`),
             // the same seat `line` announces in the summary.
             let fool = view?.gameOver ?? -1
+            if view?.drawn == true { return FStrings.t("result_draw") }
             return fool >= 0 ? FStrings.t("ios.msg.isfool", ["name": name(fool, names)]) : brand
         default:
             // A live bubble whose view did not come back, or a board with no
@@ -143,6 +144,7 @@ public enum MessageSummary {
         if env?.phase == 3 {
             // §12: the finished bubble announces the fool.
             let fool = view?.gameOver ?? -1
+            if view?.drawn == true { return FStrings.t("ios.msg.draw") }
             return fool >= 0 ? FStrings.t("ios.msg.fool", ["name": seatName(fool)])
                              : FStrings.t("ios.msg.tap")
         }

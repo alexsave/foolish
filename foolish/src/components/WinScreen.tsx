@@ -96,6 +96,8 @@ export const WinScreen: React.FC<WinScreenProps> = ({ title, actions }) => {
             <WoolBackgroundLayer />
             
             <h1 className="win-screen__title">{title ?? `done - ${game.title}`}</h1>
+            {/* A repetition draw: every seat still in is a fool (the kernel's game_drawn). */}
+            {game.drawn && <p className="win-screen__subtitle"><Text id="result_draw" /></p>}
 
             <div className="win-screen__results">
                 {/* One wood plank behind the whole list (CSS hides it in Soviet
