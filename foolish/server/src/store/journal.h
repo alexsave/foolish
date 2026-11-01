@@ -72,9 +72,14 @@
 typedef struct cb_journal cb_journal;
 
 // The segments' and records' format: 3, a whole commit carries its move list chunk (move_list.h;
-// 2 carried its session-log records; 1 was the replay coder and FNV-1a). A segment of another
-// format is refused at open: the server that wrote it flushes everything when it stops cleanly.
+// 2 carried its session-log records; 1 was the replay coder and FNV-1a). A FORMAT-2 SEGMENT IS
+// READ TOO: its batches are format 3's byte for byte, and a whole commit's records are chunked
+// into its move list as they are read (table_move_list_chunk, from the record's created_at), so a
+// server SIGKILLed during the swap to format 3 leaves segments the new one recovers. A segment of
+// any other format is refused at open: the server that wrote it flushes everything when it
+// stops cleanly.
 #define CB_JOURNAL_FORMAT 3
+#define CB_JOURNAL_FORMAT_PREV 2
 
 // Replays one record at start: `row` is the game as it stood before it, m the record (a bot
 // cycle is seeded from the row's bot memory alone, as the live cycle is). Fills *out (owned

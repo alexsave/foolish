@@ -11,6 +11,7 @@
 #include "util/str.h"
 #include "roster.h"
 #include "table.h"
+#include "move_list.h"
 #include "../../../../shared/c/clock.h"
 #include "../../../../shared/c/crc32c/crc32c.h"
 #include "../../../../shared/c/fnv.h"
@@ -32,6 +33,8 @@
 #define SEG_MAGIC "FJNL"
 #define SEG_HDR 16
 #define FORMAT CB_JOURNAL_FORMAT
+#define FORMAT_PREV CB_JOURNAL_FORMAT_PREV   // read, never written (journal.h)
+static bool format_read(uint32_t f) { return f == FORMAT || f == FORMAT_PREV; }
 #define BATCH_MAGIC 'J'
 #define FULL_MAGIC 'R'           // a whole commit (journal.h "A FULL RECORD")
 #define FULL_HDR 12
@@ -192,7 +195,7 @@ int cb_journal_batch_encode(cb_jslots *t, int64_t seg_start_ms, const cb_jmove *
 
 int cb_journal_batch_decode(cb_jslots *t, int64_t seg_start_ms, const uint8_t *in, size_t len, size_t *used,
                             cb_jmove *out, EvwMove (*mv)[EVW_DELTA_MAX_MOVES], int cap) {
-    if (len < CB_JOURNAL_BATCH_HDR || in[0] != BATCH_MAGIC || in[1] != FORMAT) return -1;
+    if (len < CB_JOURNAL_BATCH_HDR || in[0] != BATCH_MAGIC || !format_read(in[1])) return -1;
     const size_t plen = get_u16(in + 2);
     if (CB_JOURNAL_BATCH_HDR + plen > len) return -1;   // torn
     if (get_u32(in + 4) != batch_sum(in, in + CB_JOURNAL_BATCH_HDR, plen)) return -1;
@@ -320,6 +323,7 @@ typedef struct jrec {
     jgame       *g;             // the game its operation holds (THE HOLD), or NULL: ov_apply looks it up
     bool         full;          // a whole commit (FULL_MAGIC): the row's bytes are written, not m's moves
     bool         clear;         // (full) it clears the session log first
+    bool         log_records;   // (full, read from a format-2 segment) log holds session-log records
     const uint8_t *log;         // the commit's log delta (the caller's: ov_apply copies it)
     const cb_game_rated *rated; // (full) the commit rated the game: its rating changes (the caller's), else NULL
     size_t       log_len;
@@ -947,7 +951,7 @@ static int full_encode(const jrec *r, uint8_t *out, size_t cap) {
 // torn or corrupt.
 static long full_decode(const uint8_t *in, size_t len, jrec *r, cb_game_rated *rated) {
     memset(r, 0, sizeof *r);
-    if (len < FULL_HDR || in[0] != FULL_MAGIC || in[1] != FORMAT) return -1;
+    if (len < FULL_HDR || in[0] != FULL_MAGIC || !format_read(in[1])) return -1;
     const uint32_t plen = get_u32(in + 8);
     if (plen > len - FULL_HDR || get_u32(in + 4) != batch_sum(in + 8, in + FULL_HDR, plen)) return -1;
     const uint8_t *q = in + FULL_HDR, *end = q + plen;
@@ -1011,6 +1015,7 @@ static long full_decode(const uint8_t *in, size_t len, jrec *r, cb_game_rated *r
     w->state = (uint8_t *)p[0], w->state_len = n[0];
     w->roster = (uint8_t *)p[1], w->roster_len = n[1];
     r->log = p[2], r->log_len = n[2];
+    r->log_records = in[1] == FORMAT_PREV;   // format 2: the commit's session-log records, not its chunk
     w->version = r->m.base_version + 1;
     w->updated_at = w->last_commit_at = r->m.now_ms;
     w->seats_exact = true;
@@ -2524,11 +2529,27 @@ static int recover_full(cb_journal *j, jrec *r, char *err, size_t cap) {
                  r->m.game, (long long)at, (long long)r->m.base_version);
         return CB_E_STATE;
     }
-    // The record's bytes are the segment buffer's: ov_apply copies its log.
+    // A format-2 whole commit carries the records it appended: they become its move list chunk,
+    // as the commit would write it today (table_ops.c section_row, from the row's created_at).
+    uint8_t *chunk = NULL;
+    if (r->log_records && r->log_len) {
+        const size_t room = r->log_len + MOVE_LIST_CHUNK_SLACK;
+        if (!(chunk = malloc(room))) return CB_E_NOMEM;
+        const int k = table_move_list_chunk(r->row.created_at, r->log, (int)r->log_len, chunk, (int)room);
+        if (k < 0) {
+            free(chunk);
+            snprintf(err, cap, "journal: game %s's format-2 commit holds records the kernel refuses (%d)", r->m.game, k);
+            return CB_E_STATE;
+        }
+        r->log = chunk;
+        r->log_len = (size_t)k;
+    }
+    // The record's bytes are the segment buffer's (or the chunk just made): ov_apply copies its log.
     jgame *g;
     pthread_mutex_lock(&j->ov_mu);
     rc = ov_apply(j, r, &g);
     pthread_mutex_unlock(&j->ov_mu);
+    free(chunk);
     if (rc == CB_OK) atomic_fetch_add(&j->recovered, 1);
     return rc;
 }
@@ -2547,7 +2568,10 @@ static int recover_segment(cb_journal *j, uint64_t seq, char *err, size_t cap) {
         free(buf);
         return CB_OK;
     }
-    if (len >= SEG_HDR && memcmp(buf, SEG_MAGIC, 4) == 0 && get_u32(buf + 4) != FORMAT) {
+    if (len >= SEG_HDR && memcmp(buf, SEG_MAGIC, 4) == 0 && get_u32(buf + 4) == FORMAT_PREV)
+        CB_WARN(MOD, "%s is format %d (an older server's, not flushed at its stop): read as it was written",
+                path, FORMAT_PREV);
+    if (len >= SEG_HDR && memcmp(buf, SEG_MAGIC, 4) == 0 && !format_read(get_u32(buf + 4))) {
         // Another format's moves (an older server's): never skipped, they were acknowledged.
         // The older server flushes every move and deletes its segments when it stops cleanly.
         snprintf(err, cap, "journal: %s is format %u, this server reads %d: stop the server that wrote it cleanly (its close flushes) and start again",
