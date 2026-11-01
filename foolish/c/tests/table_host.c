@@ -120,6 +120,7 @@ static inline int64_t I64(double d) { return (int64_t)d; }
     E(I, wasm_table_envelope, 3, (I64(a[0]), I64(a[1]), a[2])) \
     E(I, wasm_table_join, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_table_load, 2, (I64(a[0]), I64(a[1]))) \
+    E(I, wasm_table_move_list_chunk, 2, (I64(a[0]), a[1])) \
     E(I, wasm_table_needs_bots, 0, ()) \
     E(I, wasm_table_push, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_table_rate, 1, (I64(a[0]))) \
@@ -127,11 +128,10 @@ static inline int64_t I64(double d) { return (int64_t)d; }
     E(I, wasm_table_rearrange_hand, 2, (I64(a[0]), I64(a[1]))) \
     E(I, wasm_table_reject, 0, ()) \
     E(I, wasm_table_replay_code, 2, (I64(a[0]), I64(a[1]))) \
-    E(I, wasm_table_replay_extras, 1, (I64(a[0]))) \
+    E(I, wasm_table_replay_extras, 2, (I64(a[0]), a[1])) \
     E(P, wasm_table_roster_ptr, 0, ()) \
     E(I, wasm_table_seat_of, 1, (I64(a[0]))) \
     E(I, wasm_table_set_deal_seed, 1, (I64(a[0]))) \
-    E(I, wasm_table_set_session_log, 1, (I64(a[0]))) \
     E(I, wasm_unambiguous_cover, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
     /* end */
 

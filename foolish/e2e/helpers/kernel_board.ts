@@ -102,7 +102,9 @@ export function dealTable(seats: FixtureSeat[], seed: Uint8Array, opts: { gameId
     if (rc !== L.TABLE_OK) throw refused('ready', rc);
     const p = table.commit(gameId, 1, opts.nowMs ?? 1_700_000_000_000);
     if (typeof p === 'number') throw refused('commit', p);
-    return { gameId, version: 1, state: p.state, roster: p.roster, seedHex: bareHex(seed), log: p.logs ?? new Uint8Array(0), status: p.status, fool: p.fool };
+    const baseMs = opts.nowMs ?? 1_700_000_000_000;
+    return { gameId, version: 1, state: p.state, roster: p.roster, seedHex: bareHex(seed), list: table.sessionList(new Uint8Array(0), p, baseMs),
+        baseMs, status: p.status, fool: p.fool };
 }
 
 /** One move by the seat `actorId` through table_act, committed; the rc when it did not apply. */
@@ -116,6 +118,6 @@ export function tableMove(row: BotTableRow, actorId: string, wire: Uint8Array, o
     if (rc !== L.TABLE_APPLIED) return rc;
     const p = table.commit(row.gameId, row.version + 1, opts.nowMs ?? 1_700_000_000_000 + row.version * 1000);
     if (typeof p === 'number') throw refused('commit', p);
-    const log = p.logs === null ? row.log : p.logsReset ? p.logs : Buffer.concat([row.log, p.logs]);
-    return { ...row, version: row.version + 1, state: p.state, roster: p.roster, log: new Uint8Array(log), status: p.status, fool: p.fool };
+    return { ...row, version: row.version + 1, state: p.state, roster: p.roster, list: table.sessionList(row.list, p, row.baseMs),
+        status: p.status, fool: p.fool };
 }

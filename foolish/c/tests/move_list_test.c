@@ -24,6 +24,7 @@
 #include "../src/replay_extras.h"
 #include "../src/table.h"
 #include "../src/move_list.h"
+#include "replay_log_oracle.h"
 #include "../../../shared/c/le_bytes.h"
 #include "../../../shared/c/rng.h"
 #include <stdio.h>
@@ -301,9 +302,9 @@ static void compare(const uint8_t *seed, int game, int end) {
                                           g_scratch, sizeof(g_scratch));
     const int eb = table_replay_extras_list(&g_t, g_base, g_list, g_list_len, g_ex_b, sizeof(g_ex_b));
     if (reload() < 0) { S.mismatch++; return; }
-    const int la = table_replay_code(&g_t, seed, FOOLISH_SEED_LEN, g_log, g_log_len, g_code_a, sizeof(g_code_a),
+    const int la = oracle_replay_code(&g_t, seed, FOOLISH_SEED_LEN, g_log, g_log_len, g_code_a, sizeof(g_code_a),
                                      g_scratch, sizeof(g_scratch));
-    const int ea = table_replay_extras(&g_t, g_log, g_log_len, g_ex_a, sizeof(g_ex_a));
+    const int ea = oracle_replay_extras(&g_t, g_log, g_log_len, g_ex_a, sizeof(g_ex_a));
     S.compared++;
     if (!end) S.mid++;
     int ok = 1;

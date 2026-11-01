@@ -590,25 +590,6 @@ int table_bot_wait_ms(const Table *t, int64_t now_ms);
 
 // ---- the end of a game -------------------------------------------------------
 
-// The finished table's v6 replay code, from its 32-byte deal seed and its
-// session log (the layout table_set_session_log reads, which it counts), and
-// then THE ROUND-TRIP GATE: the code is decoded again (into `scratch`) and every
-// ATTACK, COVER, PASS and PICKUP of the log's last GAME_START session must come
-// back with the same seat and card pairs. Returns the code's length, a negative
-// REPLAY_E* from the codec, TABLE_E_WIRE for a log the import refuses, or
-// TABLE_E_REPLAY_VERIFY when the gate fails. Only a code this returns may retire
-// the log.
-int table_replay_code(Table *t, const uint8_t *seed, int seed_len, const uint8_t *log, int log_len,
-                      uint8_t *out, int cap, uint8_t *scratch, int scratch_cap);
-
-// The replay extras blob (replay_extras.h) for the loaded roster's names in seat
-// order and the move times of the session log: its last GAME_START session's
-// GAME_START and ATTACK/COVER/PASS/PICKUP records, each time the record's
-// milliseconds / 1000 as a double, the first the start and the rest as gaps
-// (never negative). A log with none of those records carries no times. Returns
-// the blob's length, TABLE_E_WIRE for a malformed log, or TABLE_E_CAP.
-int table_replay_extras(const Table *t, const uint8_t *log, int log_len, uint8_t *out, int cap);
-
 // ---- the session's move list (move_list.h) --------------------------------------
 //
 // What the server keeps of a game being played instead of its session log: the
@@ -622,15 +603,22 @@ int table_replay_extras(const Table *t, const uint8_t *log, int log_len, uint8_t
 // MOVE_LIST_CHUNK_SLACK bytes (0 when no record is one the list mentions).
 // Returns its length, TABLE_E_WIRE for records that are not whole, TABLE_E_CAP.
 int table_move_list_chunk(int64_t base_ms, const uint8_t *records, int rec_len, uint8_t *out, int cap);
-// table_replay_code from the move list: the same code, byte for byte, and the
-// same gate (the decoded code's ATTACK, COVER, PASS and PICKUP against the
-// list's). A broken list, or one past MOVE_LIST_MAX, is -REPLAY_ETOOLONG, as an
+// The finished table's v6 replay code, from its 32-byte deal seed and its
+// session's move list, and then THE ROUND-TRIP GATE: the code is decoded again
+// (into `scratch`) and every ATTACK, COVER, PASS and PICKUP of the list must come
+// back with the same seat and cards (the list keeps none of a pickup's). Returns
+// the code's length, a negative REPLAY_E* from the codec, TABLE_E_REPLAY_VERIFY
+// when the gate fails. A broken list, or one past MOVE_LIST_MAX, is -REPLAY_ETOOLONG, as an
 // overflowed log was; TABLE_E_WIRE for bytes that are no list. The code holds no
 // time, so no base. The board is read, never changed.
 int table_replay_code_list(const Table *t, const uint8_t *seed, int seed_len, const uint8_t *list, int list_len,
                            uint8_t *out, int cap, uint8_t *scratch, int scratch_cap);
-// table_replay_extras from the move list and the base its chunks were written
-// with: the same blob, byte for byte. -REPLAY_ETOOLONG and TABLE_E_WIRE as above.
+// The replay extras blob (replay_extras.h) for the loaded roster's names in seat
+// order and the move times of the move list, read from the base its chunks were
+// written with: the GAME_START and each ATTACK/COVER/PASS/PICKUP, each time its
+// milliseconds / 1000 as a double, the first the start and the rest as gaps
+// (never negative). A list with no timed item carries no times. TABLE_E_CAP for
+// a small `out`. -REPLAY_ETOOLONG and TABLE_E_WIRE as above.
 int table_replay_extras_list(const Table *t, int64_t base_ms, const uint8_t *list, int list_len, uint8_t *out, int cap);
 
 // The finish order, best first: the eliminated seats in the order they went

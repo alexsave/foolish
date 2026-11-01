@@ -16,6 +16,7 @@
 #include "bots.h"
 #include "table.h"
 #include "move_list.h"
+#include "../../c/tests/replay_log_oracle.h"
 #include "awire.h"
 #include "legal.h"
 #include "view.h"
@@ -2495,11 +2496,11 @@ static void a_schema_9_database_turns_its_logs_into_move_lists(void) {
         if (u == &over) {
             // The finished game's replay from its list is the one its log made.
             T_CHECK(row.state_len == (size_t)u->state_len && memcmp(row.state, u->state, row.state_len) == 0);
-            const int ca = table_replay_code(&t, u->seed, FOOLISH_SEED_LEN, u->log, u->log_len, code_a, sizeof code_a, scratch, sizeof scratch);
+            const int ca = oracle_replay_code(&t, u->seed, FOOLISH_SEED_LEN, u->log, u->log_len, code_a, sizeof code_a, scratch, sizeof scratch);
             T_EQ_INT(table_load(&t, row.state, (int)row.state_len, row.roster, (int)row.roster_len), TABLE_OK);
             const int cb = table_replay_code_list(&t, u->seed, FOOLISH_SEED_LEN, got, (int)got_len, code_b, sizeof code_b, scratch, sizeof scratch);
             T_CHECK(ca > 0 && cb == ca && memcmp(code_a, code_b, (size_t)ca) == 0);
-            const int ea = table_replay_extras(&t, u->log, u->log_len, ex_a, sizeof ex_a);
+            const int ea = oracle_replay_extras(&t, u->log, u->log_len, ex_a, sizeof ex_a);
             const int eb = table_replay_extras_list(&t, row.created_at, got, (int)got_len, ex_b, sizeof ex_b);
             T_CHECK(ea > 0 && eb == ea && memcmp(ex_a, ex_b, (size_t)ea) == 0);
         } else {

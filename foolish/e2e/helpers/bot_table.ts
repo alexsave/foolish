@@ -6,14 +6,14 @@
 //
 //   const g = playBotTable(['cordite', 'octogen'], seedBytes(2, 7));
 //   g.code    // the verified v6 replay code of the finished game
-//   g.state   // the final durable state blob, g.roster its roster, g.log its session log
+//   g.state   // the final durable state blob, g.roster its roster, g.list its session's move list
 //
 // Every step is a C Table call over the table host (e2e/helpers/server_table.ts):
 // the lobby is a kernel-sealed fixture, the deal is table_ready with the seed,
-// each cycle is exactly the server's bot cycle (bot_actions.ts runCycle: load,
-// set the deal seed, import the session log when a bot reads it, table_bot_drive,
-// commit the products), and the code is table_replay_code, the finalize path's
-// own round-tripped encoder. Nothing here knows a byte layout or a game rule:
+// each cycle is exactly the server's bot cycle (server/src/app/bots.c run_cycle: load,
+// set the deal seed, table_bot_drive on the row's bot memory, commit the products and
+// append the commit's move list chunk), and the code is table_replay_code_list, the
+// finalize path's own round-tripped encoder. Nothing here knows a byte layout or a game rule:
 // whose turn it is, what a bot plays and when the game is over are the kernel's.
 //
 // Pure kernel: no Postgres, so the performance harnesses can import it too. Tests and harnesses only (it holds the unmasked state blob).
@@ -36,8 +36,10 @@ export interface BotTableRow {
     roster: Uint8Array;
     /** games.game_seed: the deal seed as hex. */
     seedHex: string;
-    /** games.logs_packed: the session log. */
-    log: Uint8Array;
+    /** games.move_list: the session's move list (c/src/move_list.h). */
+    list: Uint8Array;
+    /** games.created_at: the base the list's times are offsets from. */
+    baseMs: number;
     /** GAME_STATUS_* of `state`. */
     status: number;
     /** The seat that lost, once the game is over; -1 before. */
@@ -63,15 +65,8 @@ function refused(what: string, rc: number): Error {
 function commitRow(table: ServerTable, row: BotTableRow, nowMs: number): BotTableRow {
     const p = table.commit(row.gameId, row.version + 1, nowMs);
     if (typeof p === 'number') throw refused('commit products', p);
-    const log = p.logs === null ? row.log : p.logsReset ? p.logs : concat(row.log, p.logs);
-    return { ...row, version: row.version + 1, state: p.state, roster: p.roster, log, status: p.status, fool: p.fool };
-}
-
-function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
-    const out = new Uint8Array(a.length + b.length);
-    out.set(a, 0);
-    out.set(b, a.length);
-    return out;
+    const list = table.sessionList(row.list, p, row.baseMs);
+    return { ...row, version: row.version + 1, state: p.state, roster: p.roster, list, status: p.status, fool: p.fool };
 }
 
 /** A lobby of `brains` (bot_roster keys), every seat ready, dealt from `seed` by table_ready. */
@@ -86,7 +81,7 @@ export function dealBotTable(brains: string[], seed: Uint8Array, opts: BotTableO
     if (rc !== L.TABLE_OK) throw refused('ready', rc);
     const row: BotTableRow = {
         gameId, version: 0, state: lobby.state, roster: lobby.roster, seedHex: bareHex(seed),
-        log: new Uint8Array(0), status: L.GAME_STATUS_WAITING, fool: -1,
+        list: new Uint8Array(0), baseMs: opts.startMs ?? 1_700_000_000_000, status: L.GAME_STATUS_WAITING, fool: -1,
     };
     return commitRow(table, row, opts.startMs ?? 1_700_000_000_000);
 }
@@ -98,10 +93,7 @@ export function botCycle(row: BotTableRow, opts: BotTableOptions & { maxActions?
     if (rc < 0) throw refused('load', rc);
     rc = table.setDealSeed(row.seedHex);
     if (rc < 0) throw refused('deal seed', rc);
-    // Always, as the server's cycle does: the log's length is the progress term
-    // of every bot decision's seed (c/src/bot_drive.h).
-    rc = table.setSessionLog(row.log);
-    if (rc < 0) throw refused('session log', rc);
+    // No session log: the row's bot memory is what every decision reads and counts (c/src/bot_memory.h).
     const t0 = performance.now();
     const drive = table.botDrive(null, opts.maxActions ?? 0);
     const ms = performance.now() - t0;
@@ -126,12 +118,12 @@ export function driveBotTable(
     throw new Error(`bot_table: ${row.gameId} did not end in ${opts.maxCycles ?? 5000} cycles`);
 }
 
-/** The verified v6 replay code of a finished row (table_replay_code, the finalize path's encoder). */
+/** The verified v6 replay code of a finished row (table_replay_code_list, the finalize path's encoder). */
 export function replayCodeOf(row: BotTableRow, seed: Uint8Array, opts: BotTableOptions = {}): Uint8Array {
     const table = opts.table ?? fixtureTable();
     const rc = table.load(row.state, row.roster);
     if (rc < 0) throw refused('load', rc);
-    const code = table.replayCode(seed, row.log);
+    const code = table.replayCode(seed, row.list);
     if (typeof code === 'number') throw refused('replay code', code);
     return code;
 }

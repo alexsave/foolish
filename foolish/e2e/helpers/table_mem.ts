@@ -69,13 +69,6 @@ const EMPTY = new Uint8Array(0);
 
 export const hexOf = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
-function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
-    const out = new Uint8Array(a.length + b.length);
-    out.set(a);
-    out.set(b, a.length);
-    return out;
-}
-
 function must(what: string, rc: number): void {
     if (rc < 0) throw new Error(`table_mem: ${what} refused: ${reasonOf(rc, ['TABLE_E_', 'GAME_INVALID_', 'ROSTER_E_'])} (${rc})`);
 }
@@ -136,13 +129,15 @@ export function residentMoves(seat: number): MemMove[] {
 
 /**
  * One games row held in memory: the state and roster a commit wrote, the
- * version, the deal seed and the session log (games.logs_packed), updated the
- * way commit_table updates them. Every call is one kernel section on the
+ * version, the deal seed and the session's move list (games.move_list), updated
+ * the way the server's commit updates them. Every call is one kernel section on the
  * fixtures' table.
  */
 export class MemTable {
     version = 0;
-    log: Uint8Array = EMPTY;
+    list: Uint8Array = EMPTY;
+    /** games.created_at: the base the list's times are offsets from. */
+    baseMs = 1_760_000_000_000;
     seedHex: string | null = null;
 
     constructor(public state: Uint8Array, public roster: Uint8Array, public gameId = 'mem') {}
@@ -204,15 +199,10 @@ export class MemTable {
         return { ...r, products: r.rc === L.TABLE_APPLIED ? this.commit() : null };
     }
 
-    /**
-     * One bot cycle (table_bot_drive), committed when it applied anything. The
-     * row's session log is handed over as the bot loop hands it over; `log`
-     * overrides it (an empty log, to take the memory away).
-     */
-    drive(maxActions = 0, log?: Uint8Array): { drive: TableDrive; products: TableProducts | null } {
+    /** One bot cycle (table_bot_drive) on the row's bot memory, as the server's cycle drives it, committed when it applied anything. */
+    drive(maxActions = 0): { drive: TableDrive; products: TableProducts | null } {
         this.load();
         const table = fixtureTable();
-        must('session log', table.setSessionLog(log ?? this.log));
         const d = table.botDrive(null, maxActions);
         if (typeof d === 'number') throw new Error(`table_mem: bot drive refused (${d})`);
         return { drive: d, products: d.n > 0 ? this.commit() : null };
@@ -225,7 +215,7 @@ export class MemTable {
         this.version++;
         this.state = p.state;
         this.roster = p.roster;
-        this.log = p.logsReset ? (p.logs ?? EMPTY) : p.logs ? concat(this.log, p.logs) : this.log;
+        this.list = fixtureTable().sessionList(this.list, p, this.baseMs);
         return p;
     }
 
