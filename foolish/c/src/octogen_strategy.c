@@ -177,15 +177,27 @@ static _Thread_local int og_bb_avoid_budget = 15000;
 typedef struct {
     int noise_pm;        // rollout noise, per mille (cordite_sim.h); 0: none
     int noise_mode;      // CD_NOISE_SENSIBLE or CD_NOISE_ANY
-    int void_mod;        // the void mixture, in og_void_mod's place
     int shadow;          // >= 0: the shadow selection, at this many tenths of a
                          // standard error; < 0: the noisy race picks alone
     int shadow_w_pct;    // the noisy race's worlds, percent of octogen's
+    // The belief research knobs (FUSION.md "Belief research knobs"). Every
+    // default is the behaviour fusion had without them.
+    int void_num, void_den;    // an untold seat's voids in num/den of worlds
+                               // ((mod-1)/mod from FUSION_VOID_MOD, octogen's 3/4)
+    int floor_num, floor_den;  // its floors in num/den of worlds; den 0: octogen's
+                               // og_floor_mod mixture (1/2)
+    int indep;           // 1: each void and floor kept per world on its own draw
+    int told_mod;        // B: > 0, a told seat keeps its voids and floors, in 1 of
+                         // told_mod worlds; 0: dropped (octogen's OG_ADAPT)
+    int a_tell;          // A: a pickup or cover a pinned card contradicts is a tell
+    int d_mask;          // D: bit0 D1, bit1 D2, bit2 D4 (og_build_belief)
+    int d_mod;           // D constraints in (d_mod-1)/d_mod of worlds
 } OgFusion;
 static _Thread_local const OgFusion *og_fu = NULL;
 #endif
 // ---------- belief state ------------------------------------------------
 
+_Static_assert(BOT_MAX_VOIDS == OG_PROBE_VOIDS, "fusion's probe holds a seat's voids");
 #ifdef OG_EXPLAIN_BUILD
 _Static_assert(BOT_MAX_VOIDS <= OG_ANSWER_MAX_VOIDS, "the answer cannot hold a seat's voids");
 #endif
@@ -199,12 +211,88 @@ typedef struct {
     bool mc_tell[MAX_PLAYERS];        // proven void contradiction: strategic
                                       // pickup-while-holding-cover (MC/human)
     bool loose[MAX_PLAYERS];          // profiled weak/random seat
+#ifdef CD_ROLLOUT_NOISE
+    // Fusion's D constraints (og_fu->d_mask; zero for octogen): per seat, the
+    // values it holds no card of (D1), and the values it holds no non-trump of
+    // (D2 from a GOOD, D4 from a lone attack card), each until its next draw or
+    // pickup; d_distrust once its play contradicted one (for the whole game).
+    uint16_t d1v[MAX_PLAYERS], d2v[MAX_PLAYERS], d4v[MAX_PLAYERS];
+    bool d_distrust[MAX_PLAYERS];
+#endif
 } Belief;
 #ifndef FOOLISH_SEEDED_BOTS_ONLY
 og_belief_probe_fn og_belief_probe = NULL;   // octogen_strategy.h
 #define OG_PROBE(stage) do { if (og_belief_probe) og_belief_probe((stage), g, bot_idx, &B->b, B->mc_tell); } while (0)
 #else
 #define OG_PROBE(stage) do { } while (0)
+#endif
+
+#ifdef CD_ROLLOUT_NOISE
+// p's D constraints forbid c.
+static inline bool og_d_forbidden(const Belief *B, const Game *g, int p, Card c) {
+    if (c.value < 0) return false;   // a 5-bit field: at most 15
+    const uint16_t bit = (uint16_t)(1u << c.value);
+    if (B->d1v[p] & bit) return true;
+    return c.suit != g->power_suit && ((B->d2v[p] | B->d4v[p]) & bit);
+}
+static inline bool og_d_any(const Belief *B, int p) {
+    return (B->d1v[p] | B->d2v[p] | B->d4v[p]) != 0;
+}
+static inline void og_d_clear(Belief *B, int p) {
+    B->d1v[p] = B->d2v[p] = B->d4v[p] = 0;
+}
+// Would a one-card transfer by defender p have been legal, from public facts
+// only: the table's rules, `tbl_n` uncovered attacks all of one value and no
+// cover (the caller's test), the receiving seat (the next seat after p that the
+// log saw go out of the game skips) holding at least tbl_n + 1 cards by the
+// log's count, and room on the table. A seat out of the game without a log
+// record reads as a receiver with no cards, so the answer can only err toward
+// "not legal".
+static bool og_xfer_legal(const Game *g, int p, int tbl_n, const int *hand_n, const bool *out) {
+    if (!game_pass_allowed(g) || tbl_n <= 0 || tbl_n + 1 > MAX_BATTLES) return false;
+    int in_count = 0;
+    for (int i = 0; i < g->num_players; i++) in_count += !out[i];
+    if (in_count <= 1) return false;
+    int r = (p + 1) % g->num_players;
+    while (out[r]) r = (r + 1) % g->num_players;
+    return r != p && hand_n[r] >= tbl_n + 1;
+}
+#endif
+#ifdef CD_ROLLOUT_NOISE
+// p holds a pinned card of value v (any suit; only non-trumps when nt).
+static bool og_pinned_value(const Belief *B, int p, int v, int power, int nt) {
+    for (int q = 0; q < B->b.pinned_n[p]; q++) {
+        const Card c = B->b.pinned[p][q];
+        if (c.value == v && !(nt && c.suit == power)) return true;
+    }
+    return false;
+}
+// The D tell: p plays c, a card one of its D constraints forbids, which it did
+// not gain publicly. p is not a handwritten seat: no D constraint for it, for
+// the rest of the game.
+static void og_fu_d_tell(Belief *B, const Game *g, int p, Card c) {
+    if (!og_fu || B->d_distrust[p] || !og_d_any(B, p)) return;
+    if (bot_set_contains(B->b.pinned[p], B->b.pinned_n[p], c)) return;
+    if (!og_d_forbidden(B, g, p, c)) return;
+    B->d_distrust[p] = true;
+    og_d_clear(B, p);
+}
+// Defender p covers or picks up. When the table holds only uncovered attacks,
+// all of one value v, and a transfer was publicly legal (og_xfer_legal), a
+// handwritten defender would have transferred with any card of v it held: so
+// it holds none (D1), and a pinned card of v is a tell (A, deferred to the
+// count check through a_xfer). D1 is not recorded against a pinned v.
+static void og_fu_defended(Belief *B, const Game *g, int p, const Card *tbl, int tbl_n,
+                           int unc_n, const int *hand_n, const bool *out, bool *a_xfer) {
+    if (tbl_n == 0 || tbl_n != unc_n) return;
+    const int v = tbl[0].value;
+    if (v < 0) return;
+    for (int k = 1; k < tbl_n; k++) if (tbl[k].value != v) return;
+    if (!og_xfer_legal(g, p, tbl_n, hand_n, out)) return;
+    const bool pinned_v = og_pinned_value(B, p, v, g->power_suit, 0);
+    if (og_fu->a_tell && pinned_v) a_xfer[p] = true;
+    if ((og_fu->d_mask & 1) && !pinned_v && !B->d_distrust[p]) B->d1v[p] |= (uint16_t)(1u << v);
+}
 #endif
 
 // Chronological scan over logs: pinned cards, flipped-trump holder, void
@@ -243,6 +331,15 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
     int  unc_n = 0;
     Card discards[160];
     int  disc_n = 0;
+#ifdef CD_ROLLOUT_NOISE
+    // Fusion's tells and D constraints (og_fu only): the seats the log saw go
+    // out (for a transfer's receiver), and the A transfer tells, which rest on
+    // the log's hand counts and so are kept only if those counts agree with the
+    // board at the end of the scan.
+    bool out_seat[MAX_PLAYERS] = {0};
+    bool a_xfer[MAX_PLAYERS] = {0};
+    const int fu_d = og_fu ? og_fu->d_mask : 0;
+#endif
 
     for (int i = 0; i < g->num_logs; i++) {
         const GameLog *L = &g->logs[i];
@@ -256,6 +353,19 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                 if (first_attack && cur_def < 0 && p >= 0) {
                     cur_def = (p + 1) % g->num_players;   // pre-change rounds
                 }
+#ifdef CD_ROLLOUT_NOISE
+                // D4: a lone non-trump attack card where the defender had room
+                // for two (a lead: its hand; a throw-in: its hand less the
+                // uncovered attacks). A second card of that value is always
+                // legal beside the first, so a handwritten attacker, which plays
+                // the most non-trump cards it can, holds no second one.
+                int d4_cap = -1;
+                if ((fu_d & 4) && L->log_type == LOG_ATTACK && p >= 0 && p != bot_idx
+                    && L->num_pairs == 1 && cur_def >= 0 && cur_def != p
+                    && L->pairs[0].primary.suit != g->power_suit) {
+                    d4_cap = first_attack ? hand_n[cur_def] : hand_n[cur_def] - unc_n;
+                }
+#endif
                 bool any_trump = false;
                 for (int k = 0; k < L->num_pairs; k++) {
                     Card c = L->pairs[k].primary;
@@ -275,10 +385,20 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                             && bot_void_forbidden(&B->b, g, p, c)) B->mc_tell[p] = true;
                         if (c.suit != g->power_suit
                             && (decl_vals[p] & (1u << c.value))) B->mc_tell[p] = true;
+#ifdef CD_ROLLOUT_NOISE
+                        og_fu_d_tell(B, g, p, c);
+#endif
                         bot_floor_check(&B->b, g, p, c);
                         bot_pinned_remove(&B->b, p, c);
                     }
                 }
+#ifdef CD_ROLLOUT_NOISE
+                if (d4_cap >= 2 && !B->d_distrust[p]) {
+                    const Card c = L->pairs[0].primary;
+                    if (!og_pinned_value(B, p, c.value, g->power_suit, 1))
+                        B->d4v[p] |= (uint16_t)(1u << c.value);
+                }
+#endif
                 if (p >= 0 && p != bot_idx && L->log_type == LOG_ATTACK) {
                     if (any_trump && deck_alive_at) trump_viol[p]++;
                     if (first_attack && L->num_pairs == 1 && !any_trump
@@ -290,6 +410,10 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
             }
             case LOG_COVER:
                 if (p >= 0) hand_n[p] -= L->num_pairs;
+#ifdef CD_ROLLOUT_NOISE
+                if (og_fu && p >= 0 && p != bot_idx)
+                    og_fu_defended(B, g, p, tbl, tbl_n, unc_n, hand_n, out_seat, a_xfer);
+#endif
                 for (int k = 0; k < L->num_pairs; k++) {
                     Card c = L->pairs[k].primary;
                     if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
@@ -302,6 +426,9 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                             && bot_void_forbidden(&B->b, g, p, c)) B->mc_tell[p] = true;
                         if (c.suit != g->power_suit
                             && (decl_vals[p] & (1u << c.value))) B->mc_tell[p] = true;
+#ifdef CD_ROLLOUT_NOISE
+                        og_fu_d_tell(B, g, p, c);
+#endif
                         bot_floor_check(&B->b, g, p, c);
                         bot_pinned_remove(&B->b, p, c);
                     }
@@ -323,11 +450,40 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                             decl_vals[p] |= (uint16_t)(1u << tbl[k].value);
                     }
                 }
+#ifdef CD_ROLLOUT_NOISE
+                // D2: good while the defender had room for one more card. Any
+                // non-trump of a table value would then have been a legal
+                // throw-in, and a handwritten attacker throws one whenever it
+                // can, so it holds none.
+                if ((fu_d & 2) && p >= 0 && p != bot_idx && cur_def >= 0 && p != cur_def
+                    && tbl_n > 0 && hand_n[cur_def] - unc_n >= 1 && !B->d_distrust[p]) {
+                    uint16_t m = 0;
+                    for (int k = 0; k < tbl_n; k++) {
+                        if (tbl[k].value >= 0
+                            && !og_pinned_value(B, p, tbl[k].value, g->power_suit, 1))
+                            m |= (uint16_t)(1u << tbl[k].value);
+                    }
+                    B->d2v[p] |= m;
+                }
+#endif
                 break;
             case LOG_DEFENDER_CHANGE:
                 cur_def = L->defender_index;
                 break;
             case LOG_PICKUP:
+#ifdef CD_ROLLOUT_NOISE
+                if (og_fu && p >= 0 && p != bot_idx) {
+                    // A: one uncovered attack and a pinned card that covers it.
+                    // The cover was legal, and a handwritten defender covers a
+                    // table it can cover whole.
+                    if (og_fu->a_tell && unc_n == 1) {
+                        for (int q = 0; q < B->b.pinned_n[p]; q++)
+                            if (can_cover(unc[0], B->b.pinned[p][q], g->power_suit)) B->mc_tell[p] = true;
+                    }
+                    og_d_clear(B, p);   // a pickup ends p's D constraints
+                    og_fu_defended(B, g, p, tbl, tbl_n, unc_n, hand_n, out_seat, a_xfer);
+                }
+#endif
                 if (p >= 0) { hand_n[p] += tbl_n; decl_vals[p] = 0; }
                 if (p >= 0 && p != bot_idx) {
                     // Exactly one uncovered attack => defender held no cover.
@@ -350,6 +506,9 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                 if (p >= 0 && p != bot_idx) {
                     B->b.void_n[p] = 0;    // new unknown cards: constraints expire
                     B->b.floor_v[p] = 0;
+#ifdef CD_ROLLOUT_NOISE
+                    og_d_clear(B, p);
+#endif
                     if (i == flip_log_idx) {
                         // Deck just ran dry: this seat picked up the face-up
                         // trump, watched all game, so pin it. Its identity is the
@@ -369,6 +528,9 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                 break;
             case LOG_PLAYER_OUT:
                 in_now--;
+#ifdef CD_ROLLOUT_NOISE
+                if (p >= 0 && p < MAX_PLAYERS) out_seat[p] = true;
+#endif
                 break;
             default:
                 break;
@@ -385,6 +547,21 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
     }
 
     OG_PROBE(OG_PROBE_RAW);
+#ifdef CD_ROLLOUT_NOISE
+    // Fusion: the A transfer tells and every D constraint rest on the log's
+    // hand counts (the receiver's room, the defender's capacity). If those
+    // counts do not end on the board's, none of them is trusted. A told seat
+    // is strategic, not handwritten: it keeps no D constraint.
+    if (og_fu) {
+        bool counts_ok = true;
+        for (int p = 0; p < g->num_players; p++)
+            if (hand_n[p] != g->players[p].hand_count) counts_ok = false;
+        for (int p = 0; p < g->num_players; p++) {
+            if (counts_ok && a_xfer[p]) B->mc_tell[p] = true;
+            if (!counts_ok || B->mc_tell[p] || B->d_distrust[p] || p == bot_idx) og_d_clear(B, p);
+        }
+    }
+#endif
 
     // Semtex adaptivity: a proven void contradiction means the seat picks up
     // strategically while holding cover — an MC bot (cordite family) or a
@@ -394,8 +571,16 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
     if (og_adapt) {
         for (int p = 0; p < g->num_players; p++) {
             if (!B->mc_tell[p]) continue;
-            B->b.void_n[p] = 0;
-            B->b.floor_v[p] = 0;
+#ifdef CD_ROLLOUT_NOISE
+            // Fusion's soft tell (FUSION_TOLD_MOD > 0): the seat keeps what the
+            // scan inferred, and the worlds apply it in 1 of told_mod
+            // (og_fu_world).
+            if (!(og_fu && og_fu->told_mod > 0))
+#endif
+            {
+                B->b.void_n[p] = 0;
+                B->b.floor_v[p] = 0;
+            }
             B->b.distrust_void[p] = true;
             B->b.distrust_floor[p] = true;
         }
@@ -493,6 +678,24 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
         }
     }
 
+#ifdef CD_ROLLOUT_NOISE
+    // Fusion's D constraints go first when a seat's constraints together leave
+    // too few pool cards for its unknown slots.
+    if (og_fu) {
+        for (int p = 0; p < g->num_players; p++) {
+            if (!og_d_any(B, p) || g->players[p].status != PLAYER_STATUS_IN) { og_d_clear(B, p); continue; }
+            int unknown = g->players[p].hand_count - B->b.pinned_n[p];
+            if (unknown <= 0) continue;
+            int allowed = 0;
+            for (int i = 0; i < B->b.n; i++) {
+                if (!bot_void_forbidden(&B->b, g, p, B->b.pool[i])
+                    && !bot_floor_forbidden(&B->b, g, p, B->b.pool[i])
+                    && !og_d_forbidden(B, g, p, B->b.pool[i])) allowed++;
+            }
+            if (allowed < unknown) og_d_clear(B, p);
+        }
+    }
+#endif
     // Feasibility: if constraints leave fewer allowed pool cards than the
     // player's unknown count, relax floors first, then voids.
     for (int p = 0; p < g->num_players; p++) {
@@ -523,6 +726,27 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
 // stay small. Constraint-violating dealt cards are repaired by swapping with
 // compatible deck cards; impossible repairs degrade gracefully.
 static _Thread_local int og_full_logs = 0;   // OG_FULL_LOGS=1: bp-style worlds
+
+#ifdef CD_ROLLOUT_NOISE
+// Fusion's per-world, per-seat choice of constraints (og_fu_world), for the
+// worlds that need more than octogen's two booleans: a told seat's soft tell,
+// the independent draws, the D constraints. NULL (octogen, and fusion at its
+// defaults): og_sample_world applies apply_voids / apply_floors as octogen does.
+typedef struct {
+    uint8_t vmask[MAX_PLAYERS];   // which of p's voids this world applies
+    bool    floor_on[MAX_PLAYERS];
+    bool    d_on[MAX_PLAYERS];
+} OgWorldMask;
+static _Thread_local const OgWorldMask *og_wmask = NULL;
+_Static_assert(BOT_MAX_VOIDS <= 8, "OgWorldMask.vmask holds one bit per void");
+
+static bool og_mask_bad(const OgWorldMask *mk, const Belief *B, const Game *g, int p, Card c) {
+    for (int k = 0; k < B->b.void_n[p]; k++)
+        if (((mk->vmask[p] >> k) & 1) && can_cover(B->b.voids[p][k], c, g->power_suit)) return true;
+    if (mk->floor_on[p] && bot_floor_forbidden(&B->b, g, p, c)) return true;
+    return mk->d_on[p] && og_d_forbidden(B, g, p, c);
+}
+#endif
 
 static void og_sample_world(Game *g_out, const Game *g_in, int my_idx,
                             const Belief *B, uint32_t seed,
@@ -574,6 +798,27 @@ static void og_sample_world(Game *g_out, const Game *g_in, int my_idx,
         }
     }
 
+#ifdef CD_ROLLOUT_NOISE
+    // The same repair as below, by fusion's mask: a slot holding a card the
+    // world's constraints forbid swaps with the first deck card they allow.
+    if (og_wmask) {
+        const OgWorldMask *mk = og_wmask;
+        for (int si = 0; si < ns; si++) {
+            int p = slots[si].player;
+            Card c = g_out->players[p].hand[slots[si].slot];
+            if (!og_mask_bad(mk, B, g_in, p, c)) continue;
+            for (int d = 0; d < deck_n; d++) {
+                Card dc = g_out->deck[d];
+                if (!og_mask_bad(mk, B, g_in, p, dc)) {
+                    g_out->deck[d] = c;
+                    g_out->players[p].hand[slots[si].slot] = dc;
+                    break;
+                }
+            }
+        }
+        return;
+    }
+#endif
     if (!apply_voids && !apply_floors) return;
     for (int si = 0; si < ns; si++) {
         int p = slots[si].player;
@@ -2067,6 +2312,71 @@ static void og_cull(int stage, int n, const double *keep_pen,
 // into a function per path they inline back, and bots.wasm still came out
 // 182 B larger for it (measured at the shipped flags); this is the hot loop,
 // so it keeps the shape it was profiled in.
+#ifdef CD_ROLLOUT_NOISE
+// The ceil schedule: world w keeps a constraint kept in num/den of worlds iff
+// ceil((w+1) num/den) > ceil(w num/den), so the first n worlds keep exactly
+// ceil(n num/den). For num/den = (m-1)/m it is octogen's (w % m) != m-1, and for
+// 1/m its (w % m) == 0, world for world; it draws nothing.
+static bool og_keep_at(int w, int num, int den) {
+    if (den <= 0 || num >= den) return true;
+    if (num <= 0) return false;
+    const long long a = (long long)(w + 1) * num, b = (long long)w * num;
+    return (a + den - 1) / den > (b + den - 1) / den;
+}
+
+// A hash's draw at num/den, from its high bits. One bot_mix of a seed and a
+// small index is not enough for draws that must be independent across indexes
+// (two voids of one seat came out exactly complementary), so the independent
+// draws mix twice.
+static bool og_hash_below(uint32_t h, int num, int den) {
+    return (uint32_t)(((uint64_t)h * (uint32_t)den) >> 32) < (uint32_t)num;
+}
+
+// Fusion's choice of constraints for world w (og_fu set). The two booleans
+// become the untold seats' schedules at fusion's keep rates; and when a world
+// needs a per-seat choice (a told seat under FUSION_TOLD_MOD, FUSION_INDEP, a
+// D constraint), `mk` is filled and returned, else NULL, octogen's path. The
+// per-world draws are hashes of the world's seed, never the game's streams.
+static const OgWorldMask *og_fu_world(const Game *g, const Belief *B, int w, uint32_t wseed,
+                                      bool *use_voids, bool *use_floors, OgWorldMask *mk) {
+    const int fnum = og_fu->floor_den > 0 ? og_fu->floor_num : 1;
+    const int fden = og_fu->floor_den > 0 ? og_fu->floor_den : og_floor_mod;
+    *use_voids  = og_keep_at(w, og_fu->void_num, og_fu->void_den);
+    *use_floors = !og_no_floors && og_keep_at(w, fnum, fden);
+    bool need = og_fu->indep != 0;
+    for (int p = 0; p < g->num_players && !need; p++) {
+        if (og_d_any(B, p)) need = true;
+        if (og_fu->told_mod > 0 && B->mc_tell[p] && (B->b.void_n[p] > 0 || B->b.floor_v[p] > 0)) need = true;
+    }
+    if (!need) return NULL;
+    const bool told_on = og_fu->told_mod > 0
+                      && og_hash_below(bot_mix(wseed, 0x7E11B00Bu), 1, og_fu->told_mod);
+    const bool d_on = (w % og_fu->d_mod) != og_fu->d_mod - 1;
+    for (int p = 0; p < MAX_PLAYERS; p++) {
+        const uint8_t all = (uint8_t)((1u << B->b.void_n[p]) - 1u);
+        mk->d_on[p] = d_on && og_d_any(B, p);
+        if (og_fu->told_mod > 0 && B->mc_tell[p]) {
+            mk->vmask[p] = told_on ? all : 0;
+            mk->floor_on[p] = told_on;
+        } else if (og_fu->indep) {
+            uint8_t m = 0;
+            for (int k = 0; k < B->b.void_n[p]; k++) {
+                const uint32_t i = (uint32_t)(p * 16 + k + 1);
+                const uint32_t h = bot_mix(bot_mix(wseed ^ 0x1DE9E4D5u, i), i);
+                if (og_hash_below(h, og_fu->void_num, og_fu->void_den)) m |= (uint8_t)(1u << k);
+            }
+            mk->vmask[p] = m;
+            const uint32_t hf = bot_mix(bot_mix(wseed ^ 0x1DE9E4D5u, (uint32_t)(p * 16 + 15)), (uint32_t)(p * 16 + 15));
+            mk->floor_on[p] = !og_no_floors && og_hash_below(hf, fnum, fden);
+        } else {
+            mk->vmask[p] = *use_voids ? all : 0;
+            mk->floor_on[p] = *use_floors;
+        }
+    }
+    return mk;
+}
+#endif
+
 static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
                           const Belief *B, const Candidates *C, const double *keep_pen,
                           double *score, int *nsim, bool *alive) {
@@ -2076,7 +2386,7 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
 #ifdef CD_ROLLOUT_NOISE
     OgShadow *sh = og_shadow;
     double wfp[OG_MAX_CANDS];
-    if (og_fu) void_mod = og_fu->void_mod;
+    OgWorldMask wmask;
     if (sh && sh->w_pct != 100) {
         W1 = (W1 * sh->w_pct + 99) / 100;
         W2 = (W2 * sh->w_pct + 99) / 100;
@@ -2120,7 +2430,13 @@ static void og_run_stages(const Game *g, int bot_idx, const LegalMoves *moves,
             // world). Per-player distrust already cleared bogus constraints.
             bool use_voids  = (w % void_mod) != void_mod - 1;
             bool use_floors = !og_no_floors && (w % og_floor_mod) == 0;
+#ifdef CD_ROLLOUT_NOISE
+            if (og_fu) og_wmask = og_fu_world(g, B, w, wseed, &use_voids, &use_floors, &wmask);
+#endif
             og_sample_world(world, g, bot_idx, B, wseed, use_voids, use_floors);
+#ifdef CD_ROLLOUT_NOISE
+            og_wmask = NULL;
+#endif
             uint32_t sim_rng = bot_mix(wseed, 0x51AB1E5u);
 
             if (fast_path) {
@@ -2465,20 +2781,141 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
 #ifndef FUSION_SHADOW_W
 #define FUSION_SHADOW_W 100
 #endif
-int fusion_strategy_choose(const Game *g, int bot_idx,
-                           const LegalMoves *moves, void *ctx) {
-    const int on = g->num_players <= bot_knob_int("FUSION_NOISE_MAX_PC", FUSION_NOISE_MAX_PC);
-    const int vm = bot_knob_int("FUSION_VOID_MOD", FUSION_VOID_MOD);
-    const OgFusion fu = {
-        .noise_pm       = on ? bot_knob_int("FUSION_NOISE", FUSION_NOISE_PM) : 0,
-        .noise_mode     = bot_knob_int("FUSION_NOISE_MODE", FUSION_NOISE_MODE),
-        .void_mod       = vm < 2 ? 2 : vm,
-        .shadow         = bot_knob_int("FUSION_SHADOW", FUSION_SHADOW),
-        .shadow_w_pct   = bot_knob_int("FUSION_SHADOW_W", FUSION_SHADOW_W),
-    };
+#ifndef FUSION_TOLD_MOD
+#define FUSION_TOLD_MOD 0
+#endif
+#ifndef FUSION_D_MOD
+#define FUSION_D_MOD 4
+#endif
+// One of fusion's knobs: <prefix>_<key>, env over roster spec (bot_knobs.h).
+// fusion reads prefix FUSION; fusion_x, the research arm, reads FUSIONX, so a
+// paired fusion_x-vs-fusion run sets one arm's knobs and not the other's.
+static const char *fu_knob_name(char *buf, size_t n, const char *prefix, const char *key) {
+    snprintf(buf, n, "%s_%s", prefix, key);
+    return buf;
+}
+static int fu_knob(const char *prefix, const char *key, int def) {
+    char b[48];
+    return bot_knob_int(fu_knob_name(b, sizeof b, prefix, key), def);
+}
+static int fu_knob_set(const char *prefix, const char *key) {
+    char b[48];
+    const char *v = bot_knob(fu_knob_name(b, sizeof b, prefix, key));
+    return v && v[0];
+}
+static int fu_clamp(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+static void og_fusion_params(OgFusion *fu, const Game *g, const char *px) {
+    const int on = g->num_players <= fu_knob(px, "NOISE_MAX_PC", FUSION_NOISE_MAX_PC);
+    const int vm = fu_knob(px, "VOID_MOD", FUSION_VOID_MOD);
+    memset(fu, 0, sizeof *fu);
+    fu->noise_pm     = on ? fu_knob(px, "NOISE", FUSION_NOISE_PM) : 0;
+    fu->noise_mode   = fu_knob(px, "NOISE_MODE", FUSION_NOISE_MODE);
+    fu->shadow       = fu_knob(px, "SHADOW", FUSION_SHADOW);
+    fu->shadow_w_pct = fu_knob(px, "SHADOW_W", FUSION_SHADOW_W);
+    // The void keep rate: FUSION_VOID_KEEP per mille when set, else the void
+    // mixture's (mod-1)/mod (4: 750 per mille). The floor keep rate:
+    // FUSION_FLOOR_KEEP per mille when set, else octogen's 1/OG_FLOOR_MOD (2:
+    // 500 per mille). Either way the default worlds are octogen's, world for
+    // world (og_keep_at).
+    if (fu_knob_set(px, "VOID_KEEP")) {
+        fu->void_num = fu_clamp(fu_knob(px, "VOID_KEEP", 750), 0, 1000);
+        fu->void_den = 1000;
+    } else {
+        fu->void_den = vm < 2 ? 2 : vm;
+        fu->void_num = fu->void_den - 1;
+    }
+    if (fu_knob_set(px, "FLOOR_KEEP")) {
+        fu->floor_num = fu_clamp(fu_knob(px, "FLOOR_KEEP", 500), 0, 1000);
+        fu->floor_den = 1000;
+    }
+    fu->indep    = fu_knob(px, "INDEP", 0) != 0;
+    fu->told_mod = fu_clamp(fu_knob(px, "TOLD_MOD", FUSION_TOLD_MOD), 0, 1 << 20);
+    fu->a_tell   = fu_knob(px, "A", 0) != 0;
+    fu->d_mask   = fu_knob(px, "D", 0) & 7;
+    fu->d_mod    = fu_clamp(fu_knob(px, "D_MOD", FUSION_D_MOD), 2, 1 << 20);
+}
+
+static int fusion_choose_px(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx,
+                            const char *px) {
+    OgFusion fu;
+    og_fusion_params(&fu, g, px);
     og_fu = &fu;
     int r = octogen_strategy_choose(g, bot_idx, moves, ctx);
     og_fu = NULL;
     return r;
+}
+
+int fusion_strategy_choose(const Game *g, int bot_idx,
+                           const LegalMoves *moves, void *ctx) {
+    return fusion_choose_px(g, bot_idx, moves, ctx, "FUSION");
+}
+
+// fusion_x (research, not on the roster): fusion reading its knobs from the
+// FUSIONX_ prefix. With none set it is fusion, move for move.
+int fusion_x_strategy_choose(const Game *g, int bot_idx,
+                             const LegalMoves *moves, void *ctx) {
+    return fusion_choose_px(g, bot_idx, moves, ctx, "FUSIONX");
+}
+
+// The belief seam for the tests (octogen_strategy.h): fusion's belief at this
+// decision under the FUSION_* knobs, and what `worlds` of its sampled worlds
+// (octogen's world seeds) applied and dealt.
+void og_fusion_probe(const Game *g, int bot_idx, int worlds, OgFusionProbe *out) {
+    memset(out, 0, sizeof *out);
+    if (!og_flags_loaded) og_load_flags();
+    OgFusion fu;
+    og_fusion_params(&fu, g, "FUSION");
+    og_fu = &fu;
+    static _Thread_local Belief B;
+    og_build_belief(g, bot_idx, &B);
+    for (int p = 0; p < MAX_PLAYERS; p++) {
+        out->pinned_n[p] = B.b.pinned_n[p];
+        for (int k = 0; k < B.b.pinned_n[p]; k++) out->pinned[p][k] = B.b.pinned[p][k];
+        out->void_n[p] = B.b.void_n[p];
+        for (int k = 0; k < B.b.void_n[p]; k++) out->voids[p][k] = B.b.voids[p][k];
+        out->floor_v[p] = B.b.floor_v[p];
+        out->told[p] = B.mc_tell[p];
+        out->d1v[p] = B.d1v[p];
+        out->d2v[p] = B.d2v[p];
+        out->d4v[p] = B.d4v[p];
+        out->d_distrust[p] = B.d_distrust[p];
+    }
+    uint32_t base = bot_mix((uint32_t)bot_idx * 2654435761u, (uint32_t)random_strategy_rng_get());
+    Game *world = world_scratch_game();
+    OgWorldMask wm;
+    for (int w = 0; w < worlds; w++) {
+        uint32_t wseed = bot_mix(base, (uint32_t)(w + 1) * 0x85EBCA77u);
+        bool uv = true, uf = true;
+        const OgWorldMask *mk = og_fu_world(g, &B, w, wseed, &uv, &uf, &wm);
+        og_wmask = mk;
+        og_sample_world(world, g, bot_idx, &B, wseed, uv, uf);
+        og_wmask = NULL;
+        out->worlds++;
+        for (int p = 0; p < g->num_players; p++) {
+            if (p == bot_idx) continue;
+            int von = 0;
+            for (int k = 0; k < B.b.void_n[p]; k++) {
+                const int on = mk ? (mk->vmask[p] >> k) & 1 : uv;
+                out->void_on[p][k] += on;
+                von += on;
+            }
+            out->void_some[p] += von > 0 && von < B.b.void_n[p];
+            out->floor_on[p] += B.b.floor_v[p] > 0 && (mk ? mk->floor_on[p] : uf);
+            const bool don = mk && mk->d_on[p];
+            out->d_on[p] += don;
+            bool vb = false, db = false;
+            for (int j = B.b.pinned_n[p]; j < world->players[p].hand_count; j++) {
+                const Card c = world->players[p].hand[j];
+                vb |= bot_void_forbidden(&B.b, g, p, c);
+                db |= og_d_forbidden(&B, g, p, c);
+            }
+            out->void_broken[p] += vb;
+            out->void_broken_on[p] += vb && B.b.void_n[p] > 0 && von == B.b.void_n[p];
+            out->d_broken[p] += db;
+            out->d_broken_on[p] += db && don;
+        }
+    }
+    og_fu = NULL;
 }
 #endif
