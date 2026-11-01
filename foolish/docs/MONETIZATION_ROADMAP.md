@@ -179,6 +179,17 @@ Chess.com's most important lesson: **free play, paid understanding.**
    (and hiring/acquisition interest) to the game. Budget one post/month; this
    is your zero-CAC channel while cash is thin.
 
+6. **Live move grades (chess.com's `!` and `?` glyphs).** (Idea from Alex, 2026-11-01.)
+   A mode where each of your own moves is graded the moment you play it, and a small glyph pops up above the card you played: `!!`, `!`, `?!`, `?`, `??`, set in Georgia on a small skeuomorphic button.
+   The grade is the Infinite Oracle's class for that move, which already follows chess.com's expected-points thresholds (Best 0, Excellent up to 0.02, Good up to 0.05, Inaccuracy up to 0.10, Mistake up to 0.20, Blunder above), with a finishing place mapped to expected points as (n - EF) / (n - 1).
+   - *Free vs Premium:* the glyph is the free hook; tapping it for the reason is the Premium part, same shape as item 1.
+   - *The explanation gap.* Chess.com can say why a move is bad; we mostly cannot yet.
+     What we do have: the better move itself (highlight the card), the cost in places ("this gave up 0.4 of a place"), and the oracle's flag-gated why-panel (`docs/INFINITE_ORACLE_DESIGN.md` addendum 9.7), which renders octogen's belief block and a template proof of the expected finish, with no AI calls (Mode A only today).
+     Next step for real explanations: template reasons computed by comparing the played move's rollouts with the best move's (trump spent early, a pickup forced next round, a transfer that backfired, a void the opponent was known to have).
+   - *Fairness.* A live grade reveals what the engine believes about hidden cards, which is information a player would not otherwise have.
+     So live grades belong to bot games and unrated tables; in rated games, show them only after the game (the post-game review in item 1).
+   - *Cost.* Grading runs the oracle in the browser after each of your moves (seconds of wasm compute), so it grades only your own moves, starts after the move animates, and may show the glyph a beat late; a converged grade can replace a provisional one.
+
 **Gate to Phase 3:** ≥ 2% of weekly-active users converting to Premium, LTV
 estimable, churn < 8%/mo. Blended revenue run-rate ≥ $15–25k/mo.
 
