@@ -197,7 +197,9 @@ function repin(c: Captured, rec: OracleRecord): void {
         belief: { pinned: rec.belief.pinned, pool: Array(rec.belief.poolCount).fill('?'), voids: rec.belief.voids, floor: rec.belief.floor },
         hand: rec.hand, hand_count: rec.hand.length, opp_counts: rec.opp_counts,
         table: rec.table, solver: rec.solver,
-        candidates: rec.candidates.map(({ why, score, ...row }, k) => {
+        // The noisy race is not the text path's (assertSameAnswer strips it from
+        // the struct's rows), so a re-pin writes the rows without it too.
+        candidates: rec.candidates.map(({ why, score, shadow_score: _s, shadow_nsim: _n, ...row }, k) => {
             if (why) paths.push([k, why]);
             return { ...row, score: score === null ? null : asText4(score) };
         }),
