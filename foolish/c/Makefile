@@ -90,7 +90,7 @@ KERNEL_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/re
             src/cordite_sim.c src/bot_common.c src/bot_memory.c src/fm_exp.c src/distill_feat.c \
             src/bots.c src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
-            src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c \
+            src/analyse.c src/roster.c src/table.c src/move_list.c src/client_table.c src/card.c \
             src/hand_layout.c \
             src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c
 # What only host programs add (the arenas, the CLIs, the tests, the research
@@ -210,7 +210,7 @@ $(call host_prog,bench_engine,tests/bench_engine.c)
 # leaving the experiment out of the coverage build - not one without the other,
 # since dropping it from coverage today would leave it running in no CI at all.
 tests: build/cnitro_tests build/bot_memory_test build/bot_drive_threads_test build/replay_threads_test build/cnitro_replay \
-       build/replay_overlay_test build/replay_rebuild_difftest build/hand_contract_test build/oracle_rank_test
+       build/replay_overlay_test build/replay_rebuild_difftest build/hand_contract_test build/oracle_rank_test build/move_list_test_caps
 	./tests/rep_head_copies.sh
 	./build/cnitro_tests
 	./build/bot_memory_test
@@ -222,6 +222,7 @@ tests: build/cnitro_tests build/bot_memory_test build/bot_drive_threads_test bui
 	./tests/replay_cli_labels.sh build/cnitro_replay
 	./tests/replay_cli_decode.sh build/cnitro_replay
 	./build/replay_rebuild_difftest 700
+	./build/move_list_test_caps 60
 
 # BotMemory's proofs (tests/bot_memory_test.c): the per-ply equivalence oracle
 # against the log scans it replaced, and the block's canonical bytes.
@@ -338,7 +339,7 @@ $(call host_test,msg_wire_test,tests/msg_wire_test.c)
 $(call host_test,msg_expand_test,tests/msg_expand_test.c)
 $(call host_test,anim_plan_test,tests/anim_plan_test.c)
 difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_v6_test build/anim_plan_test build/msg_expand_test build/replay_rebuild_difftest \
-           build/fm_exp_decisions_test
+           build/fm_exp_decisions_test build/move_list_test_caps
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/msg_wire_test 20 && \
 	./build/msg_expand_test && \
@@ -348,6 +349,7 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 	./build/solver_difftest 4 40 "" 200000 && \
 	./build/replay_v6_test 40 && \
 	./build/replay_rebuild_difftest 10000 && \
+	./build/move_list_test_caps 2000 && \
 	./build/fm_exp_decisions_test 200 6 && \
 	$(MAKE) analyse-test && \
 	$(MAKE) msg-flow-sim
@@ -1394,7 +1396,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/
                 src/simple_heuristic_strategy.c \
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
-                src/bots.c src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
+                src/bots.c src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/move_list.c src/client_table.c src/card.c \
                 src/hand_layout.c \
                 src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c \
                 $(BROWSER_HOST_SRC) \
@@ -1920,7 +1922,7 @@ COV_BRANCH_MIN ?= 74
 # coverage climbs; never lower one to make a red build pass.
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
-                  hand_layout bots bot_drive bot_roster analyse ask table_wire netwire netclient
+                  hand_layout bots bot_drive bot_roster analyse ask table_wire netwire netclient move_list
 # deal_rng, sha256 and b32 are in the SAME gate, from their new home. They left this
 # list's `src/` prefix behind when they moved to shared/, and a filter that no
 # longer matches does not fail - gcovr simply reports the file it cannot find as
@@ -1972,6 +1974,7 @@ covbuild/$(1): $$(call c_objs,covbuild/obj,$(2)) $$(COV_OBJ)
 endef
 $(eval $(call COV_PROG,cnitro_tests,tests/tests.c))
 $(eval $(call COV_PROG,sim_difftest,tests/sim_difftest.c))
+$(eval $(call COV_PROG,move_list_test,tests/move_list_test.c))
 $(eval $(call COV_PROG,apply_difftest,tests/apply_difftest.c))
 $(eval $(call COV_PROG,solver_difftest,tests/solver_difftest.c))
 $(eval $(call COV_PROG,replay_v6_test,tests/replay_v6_test.c))
@@ -2008,8 +2011,10 @@ cov-run-msg-wire: covbuild/msg_wire_test
 	./covbuild/msg_wire_test $(COV_MSG_GAMES)
 cov-run-analyse: covbuild/analyse_test
 	./covbuild/analyse_test
-cov-run-small: covbuild/replay_v6_test covbuild/anim_plan_test covbuild/msg_expand_test covbuild/unit_netwire covbuild/unit_netclient
+cov-run-small: covbuild/replay_v6_test covbuild/anim_plan_test covbuild/msg_expand_test covbuild/unit_netwire covbuild/unit_netclient \
+               covbuild/move_list_test
 	./covbuild/replay_v6_test 10
+	./covbuild/move_list_test 60
 	./covbuild/anim_plan_test
 	./covbuild/msg_expand_test
 	./covbuild/unit_netwire
@@ -2067,3 +2072,21 @@ coverage:
 
 clean:
 	rm -rf build covbuild
+
+# THE SESSION'S MOVE LIST (src/move_list.h): its codec, and THE PROOF that the
+# replay code and extras cut from it are the session log's, byte for byte
+# (tests/move_list_test.c), AT THE SERVER'S CAPS: the kernel
+# as c_base links it (print-human-caps), so a pickup of more than 16 cards is
+# logged whole, as the server logs it. At the compact arena caps the session
+# log's own gate refuses such a game mid-way (its pickup is logged short), which
+# says nothing about the list. Its own objects.
+SERVERCAPS_CFLAGS = $(CFLAGS) $(filter -DMAX_%,$(WASM_FLAGS))
+$(eval $(call C_VARIANT,build/obj/servercaps,CC,SERVERCAPS_CFLAGS))
+build/move_list_test_caps: $(call c_objs,build/obj/servercaps,tests/move_list_test.c $(CORE_SRC))
+	$(CC) $(SERVERCAPS_CFLAGS) $^ -o $@ $(LDFLAGS)
+.PHONY: move-list-proof
+# MOVE_LIST_GAMES tables from MOVE_LIST_SEED0: CI runs it in chunks.
+MOVE_LIST_GAMES ?= 400
+MOVE_LIST_SEED0 ?= 1
+move-list-proof: build/move_list_test_caps
+	./build/move_list_test_caps $(MOVE_LIST_GAMES) $(MOVE_LIST_SEED0)
