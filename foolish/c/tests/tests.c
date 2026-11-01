@@ -21885,6 +21885,11 @@ static void test_bot_nickname(void) {
     CHECK(bn_is("%Miami", BOT_NICK_STORED, 0, 0, "Miami") && bn_is("%Miami x1", BOT_NICK_STORED, 0, 0, "Miami x1")
           && bn_is("%Miami 0", BOT_NICK_STORED, 0, 0, "Miami 0") && bn_is("% 1", BOT_NICK_STORED, 0, 0, " 1"),
           "a city needs one space and an account from 1");
+    CHECK(bn_is("%Miami 01", BOT_NICK_STORED, 0, 0, "Miami 01") && bn_is("%Miami 9999", BOT_NICK_CITY, "random", 9999, 0)
+          && bn_is("%Miami 10000", BOT_NICK_STORED, 0, 0, "Miami 10000")
+          && bn_is("%Miami 00000000000000000000001", BOT_NICK_STORED, 0, 0, "Miami 00000000000000000000001")
+          && bn_is("%Miami 99999999999999999999", BOT_NICK_STORED, 0, 0, "Miami 99999999999999999999"),
+          "an account is the writer's form: no leading zero, at most BOT_NICK_DIGITS digits, never an overflow");
     CHECK(bn_is("Anna", BOT_NICK_HUMAN, 0, 0, "Anna") && bn_is("Майами 1", BOT_NICK_HUMAN, 0, 0, "Майами 1"),
           "a human's name is theirs, even one that reads like a rung");
     // Every rung's every account reads back as itself: the writer and the

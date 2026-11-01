@@ -98,6 +98,7 @@ int bot_roster_table(BotRosterTable *out);
 // carries: the host says them.
 #define BOT_NICK_PREFIX   '%'
 #define BOT_NICK_SHOW_MAX 64           // == ROSTER_NAME_MAX: a stored name's bytes
+#define BOT_NICK_DIGITS   4            // an account number's most digits (int16_t instance)
 #define BOT_NICK_HUMAN    0            // not a bot's name: show it as stored (`show`)
 #define BOT_NICK_CITY     1            // a rung's account: the row's city (bot.<key>), then `instance`
 #define BOT_NICK_STORED   2            // a bot's name no row has (an old replay's '%Octogen 1'): show `show`
@@ -111,8 +112,8 @@ typedef struct {
 } BotNickname;
 
 // What `name` (len bytes of UTF-8) is: BOT_NICK_*, with `out` filled. A city
-// matches a named row's city exactly, and the instance is one or more digits
-// after one space; anything else behind '%' is BOT_NICK_STORED.
+// matches a named row's city exactly, and the instance is 1 to BOT_NICK_DIGITS
+// digits after one space, with no leading zero; anything else behind '%' is BOT_NICK_STORED.
 int bot_nickname_read(const char *name, int len, BotNickname *out);
 
 // The stored name of brain `strat`'s `instance`-th account, "%<city> <n>", into
