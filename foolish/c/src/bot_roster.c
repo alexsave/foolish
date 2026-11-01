@@ -154,12 +154,19 @@ static int shown(BotNickname *out, int kind, const char *s, int len) {
 
 int bot_nickname_read(const char *name, int len, BotNickname *out) {
     memset(out, 0, sizeof *out);
-    if (!name || len <= 0 || name[0] != BOT_NICK_PREFIX) return shown(out, BOT_NICK_HUMAN, name ? name : "", len > 0 ? len : 0);
+    if (!name || len <= 0) return shown(out, BOT_NICK_HUMAN, "", 0);
+    if (name[0] != BOT_NICK_PREFIX) return shown(out, BOT_NICK_HUMAN, name, len);
     const char *bare = name + 1;
     const int blen = len - 1;
-    int sp = blen - 1, instance = 0, place = 1;
-    while (sp >= 0 && bare[sp] >= '0' && bare[sp] <= '9' && instance < 100000) { instance += (bare[sp] - '0') * place; place *= 10; sp--; }
-    if (sp > 0 && sp < blen - 1 && bare[sp] == ' ' && instance >= 1) {
+    // The account: 1 to BOT_NICK_DIGITS digits after the last space, no leading
+    // zero (the writer's form), so it fits instance and the sum cannot overflow.
+    int sp = blen - 1;
+    while (sp >= 0 && bare[sp] >= '0' && bare[sp] <= '9') sp--;
+    const int nd = blen - 1 - sp;
+    int instance = 0;
+    if (nd >= 1 && nd <= BOT_NICK_DIGITS && bare[sp + 1] != '0')
+        for (int i = sp + 1; i < blen; i++) instance = instance * 10 + (bare[i] - '0');
+    if (sp > 0 && bare[sp] == ' ' && instance >= 1) {
         for (int i = 0, n = bot_roster_count(); i < n; i++) {
             const BotDef *d = bot_roster_at(i);
             if (!d || !d->city || (int)strlen(d->city) != sp || memcmp(d->city, bare, (size_t)sp) != 0) continue;
