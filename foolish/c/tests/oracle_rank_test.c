@@ -27,6 +27,9 @@
  *     the longest loss lead";
  *   - fusion's bar at 0: "within the bar, octogen's pick stands";
  *   - the tax left out of the noisy gap: "the trump tax counts in the gap";
+ *   - a chess.com threshold shifted (0.05 -> 0.06): "classes are chess.com's
+ *     expected-points bands, scaled by the seats";
+ *   - the (n - 1) scaling dropped: the same test, at 6 seats;
  *   - convergence judged on the noise-free race's error and worlds:
  *     "converged is judged on the noisy race's error";
  *   - the world floor dropped from convergence: "converged needs the world
@@ -43,7 +46,7 @@
 static OgRankAsk ask;
 static OgRankAnswer ans;
 
-static void reset(bool exact) { memset(&ask, 0, sizeof ask); ask.exact = exact; }
+static void reset(bool exact) { memset(&ask, 0, sizeof ask); ask.exact = exact; ask.n_players = 2; }
 
 /* A sampled row: mean and error in the noise-free race, mean and error in the
  * noisy one. Returns its index. */
@@ -73,6 +76,7 @@ int main(void)
 {
     /* ---- the prod decision ---------------------------------------------- */
     reset(false);
+    ask.n_players = 4;                                       /* the replay is a 4-seat game */
     const int played = row(3.8583, 0.0016, 3.3116, 0.004);
     const int low    = row(2.9975, 0.0025, 3.4824, 0.004);   /* octogen's pick */
     const int f      = row(3.7569, 0.0027, 3.1732, 0.004);   /* fusion's */
@@ -100,10 +104,12 @@ int main(void)
 
     TEST("rank: a row's class is its gap to the Best group");
     CHECK(line_of(f)->best && line_of(f)->cls == OG_CLASS_BEST, "the pick is Best");
-    CHECK(!line_of(twin1)->best && line_of(twin1)->cls == OG_CLASS_GOOD, "3.2325 is 0.059 behind: good (%d)", line_of(twin1)->cls);
-    CHECK(line_of(played)->cls == OG_CLASS_GOOD, "3.3116 is 0.138 behind: good (%d)", line_of(played)->cls);
-    CHECK(line_of(low)->cls == OG_CLASS_INACCURACY, "octogen's 3.4824 is 0.309 behind: inaccuracy (%d)", line_of(low)->cls);
-    CHECK(line_of(mid)->cls == OG_CLASS_MISTAKE, "3.6025 is 0.429 behind: mistake (%d)", line_of(mid)->cls);
+    /* expected-points loss on 4 seats: the EF gap over 3 */
+    CHECK(!line_of(twin1)->best && line_of(twin1)->cls == OG_CLASS_EXCELLENT, "3.2325 is 0.059 behind, 0.020 points: excellent (%d)", line_of(twin1)->cls);
+    CHECK(line_of(played)->cls == OG_CLASS_GOOD, "3.3116 is 0.138 behind, 0.046 points: good (%d)", line_of(played)->cls);
+    CHECK(line_of(twin2)->cls == OG_CLASS_INACCURACY, "3.3439 is 0.171 behind, 0.057 points: inaccuracy (%d)", line_of(twin2)->cls);
+    CHECK(line_of(low)->cls == OG_CLASS_MISTAKE, "octogen's 3.4824 is 0.309 behind, 0.103 points: mistake (%d)", line_of(low)->cls);
+    CHECK(line_of(mid)->cls == OG_CLASS_MISTAKE, "3.6025 is 0.429 behind, 0.143 points: mistake (%d)", line_of(mid)->cls);
 
     /* ---- a tied group at the top ----------------------------------------- */
     reset(false);
@@ -116,7 +122,7 @@ int main(void)
     CHECK(pick_of() == a, "octogen's pick stands (%d)", pick_of());
     CHECK(line_of(a)->best && line_of(b)->best && line_of(c)->best, "every row within two errors of the pick is Best");
     CHECK(line_of(a)->cls == OG_CLASS_BEST && line_of(b)->cls == OG_CLASS_BEST && line_of(c)->cls == OG_CLASS_BEST, "and class best");
-    CHECK(!line_of(d)->best && line_of(d)->cls == OG_CLASS_EXCELLENT, "0.04 behind is not (%d)", line_of(d)->cls);
+    CHECK(!line_of(d)->best && line_of(d)->cls == OG_CLASS_GOOD, "0.04 behind is not: 0.04 points on 2 seats, good (%d)", line_of(d)->cls);
     CHECK(pos_of(a) == 0 && pos_of(c) == 1 && pos_of(b) == 2 && pos_of(d) == 3, "order a c b d");
 
     /* ---- fusion keeps o; the noisy race's lower row is within its bar ------- */
@@ -136,11 +142,11 @@ int main(void)
         const int o = row(2.00, 0.001, 2.10, 0.001);
         const int t = row(2.05, 0.001, 2.05, 0.001);       /* lower, but taxed 2.13: not fusion's */
         ask.rows[t].attack = true; ask.rows[t].n_trump = 2;
-        const int r3 = row(2.10, 0.001, 2.20, 0.001);
+        const int r3 = row(2.10, 0.001, 2.18, 0.001);
         og_rank(&ask, &ans);
         CHECK(pick_of() == o && !line_of(t)->best, "o is the pick, t below it does not tie");
         CHECK(line_of(t)->cls == OG_CLASS_BEST, "t is class best: nothing is better (%d)", line_of(t)->cls);
-        CHECK(line_of(r3)->cls == OG_CLASS_GOOD, "2.20 is 0.10 behind the Best group, not 0.15 behind t: good (%d)", line_of(r3)->cls);
+        CHECK(line_of(r3)->cls == OG_CLASS_INACCURACY, "2.18 is 0.08 behind the Best group (inaccuracy), not 0.13 behind t (mistake): %d", line_of(r3)->cls);
     }
 
     /* ---- the block keeps a non-member out of its middle ------------------ */
@@ -206,7 +212,7 @@ int main(void)
         CHECK(!ans.noisy, "the answer says so");
         CHECK(line_of(q0)->shown && fabs(line_of(q0)->ef - 3.0) < 1e-12 && line_of(q0)->pick && line_of(q0)->best,
               "octogen's pick shows its own number and is Best");
-        CHECK(line_of(q1)->cls == OG_CLASS_INACCURACY, "0.2 behind: inaccuracy (%d)", line_of(q1)->cls);
+        CHECK(line_of(q1)->cls == OG_CLASS_BLUNDER, "0.2 behind on 2 seats is 0.2 points: blunder (%d)", line_of(q1)->cls);
     }
 
     /* ---- fusion's bar ---------------------------------------------------- */
@@ -263,6 +269,33 @@ int main(void)
         CHECK(pos_of(s) == 0 && pos_of(un) == 1, "sampled first");
         CHECK(!line_of(un)->best && !line_of(un)->shown && line_of(un)->cls == OG_CLASS_NONE && line_of(un)->bar == 0.0f,
               "no verdict on it");
+    }
+
+    /* ---- chess.com's thresholds, on expected points ----------------------- */
+    TEST("rank: classes are chess.com's expected-points bands, scaled by the seats");
+    {
+        static const double T[] = { 0.02, 0.05, 0.10, 0.20 };
+        static const uint8_t below[] = { OG_CLASS_EXCELLENT, OG_CLASS_GOOD, OG_CLASS_INACCURACY, OG_CLASS_MISTAKE };
+        static const uint8_t at[] = { OG_CLASS_GOOD, OG_CLASS_INACCURACY, OG_CLASS_MISTAKE, OG_CLASS_BLUNDER };
+        static const int seats[] = { 2, 6 };
+        for (int s = 0; s < 2; s++) {
+            reset(false);
+            ask.n_players = (uint8_t)seats[s];
+            const double span = seats[s] - 1;
+            row(3.0, 0.0, 2.0, 0.0);                          /* the pick */
+            int lo[4], hi[4];
+            for (int k = 0; k < 4; k++) {
+                lo[k] = row(3.0, 0.0, 2.0 + T[k] * span - 1e-7, 0.0);
+                hi[k] = row(3.0, 0.0, 2.0 + T[k] * span + 1e-7, 0.0);
+            }
+            og_rank(&ask, &ans);
+            for (int k = 0; k < 4; k++) {
+                CHECK(line_of(lo[k])->cls == below[k], "%dp, just under %.2f points: class %d, want %d",
+                      seats[s], T[k], line_of(lo[k])->cls, below[k]);
+                CHECK(line_of(hi[k])->cls == at[k], "%dp, just over %.2f points: class %d, want %d",
+                      seats[s], T[k], line_of(hi[k])->cls, at[k]);
+            }
+        }
     }
 
     /* ---- convergence: on the numbers shown -------------------------------- */

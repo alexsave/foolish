@@ -27,7 +27,9 @@
  * block, its ties follow"); fusion's bar at 0 ("within the
  * bar, octogen's pick stands"); the tax left out of the noisy gap ("the trump
  * tax picks the noisy race's row"); and the accumulator returning its rows
- * unranked ("the rows sort by the noisy race's expected finish"). The kernel's own
+ * unranked ("the rows sort by the noisy race's expected finish"); the
+ * classes on raw EF gaps instead of expected points ("chess.com's classes on
+ * expected points"). The kernel's own
  * cases, with more of these, are c/tests/oracle_rank_test.c.
  * ========================================================================== */
 
@@ -51,7 +53,7 @@ const row = (key: string, mean: number, se: number, shadowMean: number | null, s
     ef: null, best: false, pick: false, cls: null, bar: 0, verdict: 'none', forcedLoss: false, pruned: false,
     chosen: false, played: false,
 });
-const ranked = async (list: OracleCandidate[], deckAlive = false) => (await kernel).rank(list, false, deckAlive).rows;
+const ranked = async (list: OracleCandidate[], deckAlive = false, numPlayers = 4) => (await kernel).rank(list, false, deckAlive, numPlayers).rows;
 const pickOf = async (list: OracleCandidate[], deckAlive = false) => {
     const r = await ranked(list, deckAlive);
     const p = r.filter((c) => c.pick);
@@ -76,8 +78,8 @@ test('the prod decision: the panel shows the noisy race, so fusion\'s pick is th
     assert.deepEqual(r.map((c) => c.key), ['f', 'twin1', 'played', 'twin2', 'low', 'mid'], 'the rows sort by the noisy race');
     assert.deepEqual([by.get('f')!.ef, by.get('f')!.se], [3.1732, 0.004], 'the pick is the lowest number shown, with the noisy race\'s error');
     assert.equal(by.get('low')!.ef, 3.4824, 'octogen\'s pick shows its noisy number, not its noise-free 2.9975');
-    assert.deepEqual(r.map((c) => c.cls), ['best', 'good', 'good', 'inaccuracy', 'inaccuracy', 'mistake'],
-        'the played 3.31 is good: every class is the gap to the Best group in the numbers shown');
+    assert.deepEqual(r.map((c) => c.cls), ['best', 'excellent', 'good', 'inaccuracy', 'mistake', 'mistake'],
+        'chess.com\'s classes on expected points: the EF gap to the Best group over 3 on this 4-seat table (the played 3.31 loses 0.046: good)');
     assert.deepEqual(r.map((c) => c.best), [true, false, false, false, false, false], 'the noisy race separates the noise-free twins');
 });
 
@@ -134,7 +136,7 @@ const rec = (rows: [string, number, number][], n = 50): OracleRecord => ({
 
 test('the accumulator ranks through the kernel over every batch it merged', async () => {
     const ranker = await kernel;
-    const acc = new OracleAccumulator({ deckAlive: false, recordedKey: '', ranker });
+    const acc = new OracleAccumulator({ deckAlive: false, recordedKey: '', numPlayers: 4, ranker });
     // 6S is octogen's (1.40 against 1.45) and the noisy race prefers 9H by 0.10
     // with batch-to-batch wobble of 0.01: overruled.
     for (let b = 0; b < 40; b++) {
@@ -145,10 +147,10 @@ test('the accumulator ranks through the kernel over every batch it merged', asyn
     assert.equal(list[0].cards[0], '9H', 'the rows sort by the noisy race\'s expected finish');
     assert.ok(Math.abs(list[0].ef! - 1.50) < 1e-9 && list[0].se < 0.01, 'the number shown is the noisy mean, with its error');
     assert.deepEqual(list.map((c) => [c.best, c.pick]), [[true, true], [false, false]], 'the accumulator ranks through the kernel');
-    assert.deepEqual(list.map((c) => c.cls), ['best', 'good'], 'octogen\'s 6S is 0.10 behind in the noisy race');
+    assert.deepEqual(list.map((c) => c.cls), ['best', 'good'], 'octogen\'s 6S is 0.10 behind in the noisy race: 0.033 points on 4 seats');
 
     // The same with the noisy race in octogen's favour: Best stays on top.
-    const keep = new OracleAccumulator({ deckAlive: false, recordedKey: '', ranker });
+    const keep = new OracleAccumulator({ deckAlive: false, recordedKey: '', numPlayers: 4, ranker });
     for (let b = 0; b < 40; b++) keep.add(rec([['6S', 1.40, 1.50 + (b % 2) * 0.01], ['9H', 1.45, 1.55]]));
     assert.deepEqual(keep.candidates(false).map((c) => c.pick), [true, false], 'octogen\'s pick stands');
 });

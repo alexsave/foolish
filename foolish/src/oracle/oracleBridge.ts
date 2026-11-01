@@ -60,9 +60,9 @@ export interface RankKernel {
 /** Hand the accumulated rows to the kernel and take them back in its order,
  *  with the number it shows (fusion's noisy race), its error, Best, pick,
  *  class and bar, and whether those numbers have converged. Both modes call this. */
-export function rankCandidates(k: RankKernel, list: OracleCandidate[], exact: boolean, deckAlive: boolean): OracleRanked {
+export function rankCandidates(k: RankKernel, list: OracleCandidate[], exact: boolean, deckAlive: boolean, numPlayers: number): OracleRanked {
     k.write(memOf(k.buffer()), k.ex.wasm_og_rank_ask(), {
-        exact, deckAlive,
+        exact, deckAlive, nPlayers: numPlayers,
         rows: list.map((c) => ({
             scored: c.mean != null, mean: c.mean ?? 0, se: c.se, nsim: c.n,
             shadowScored: c.shadowMean != null, shadowMean: c.shadowMean ?? 0, shadowSe: c.shadowSe, shadowNsim: c.shadowN,
@@ -137,10 +137,10 @@ export class OracleInstance implements OracleRanker {
         this.ex.wasm_init();
     }
 
-    rank(list: OracleCandidate[], exact: boolean, deckAlive: boolean): OracleRanked {
+    rank(list: OracleCandidate[], exact: boolean, deckAlive: boolean, numPlayers: number): OracleRanked {
         const ex = this.ex;
         return rankCandidates({ buffer: () => ex.memory.buffer, ex, write: writeOgRankAsk, read: readOgRankAnswer },
-            list, exact, deckAlive);
+            list, exact, deckAlive, numPlayers);
     }
 
     /** Set the OG_* knobs (§8.5 step 1); octogen reads them at its next
