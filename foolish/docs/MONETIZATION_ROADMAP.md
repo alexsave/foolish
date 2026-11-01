@@ -185,6 +185,9 @@ Chess.com's most important lesson: **free play, paid understanding.**
    - *Free vs Premium:* the glyph is the free hook; tapping it for the reason is the Premium part, same shape as item 1.
    - *The explanation gap.* Chess.com can say why a move is bad; we mostly cannot yet.
      What we do have: the better move itself (highlight the card), the cost in places ("this gave up 0.4 of a place"), and the oracle's flag-gated why-panel (`docs/INFINITE_ORACLE_DESIGN.md` addendum 9.7), which renders octogen's belief block and a template proof of the expected finish, with no AI calls (Mode A only today).
+     Lichess, which is open source, does no more than that: `modules/tree/src/main/Advice.scala` in lila grades by the drop in winning chances (on a -1 to 1 scale: 0.1 Inaccuracy, 0.2 Mistake, 0.3 Blunder) and its whole explanation is "(eval before -> eval after) Blunder. X was best.", plus three fixed checkmate sentences.
+     What makes lichess feel explained is interaction: the eval graph, playing the engine's better line out on the board, and "Learn from your mistakes" (replay the bad move and find a better one).
+     The cheap way to match it: let the player tap the better card and watch the round play out from there, or retry the move as a puzzle.
      Next step for real explanations: template reasons computed by comparing the played move's rollouts with the best move's (trump spent early, a pickup forced next round, a transfer that backfired, a void the opponent was known to have).
    - *Fairness.* A live grade reveals what the engine believes about hidden cards, which is information a player would not otherwise have.
      So live grades belong to bot games and unrated tables; in rated games, show them only after the game (the post-game review in item 1).
