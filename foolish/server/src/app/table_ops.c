@@ -73,8 +73,8 @@ static int row_copy(cb_game_row *dst, const cb_game_row *src) {
     *dst = *src;
     dst->state = dup_bytes(src->state, src->state_len);
     dst->roster = dup_bytes(src->roster, src->roster_len);
-    dst->logs = src->logs_len ? dup_bytes(src->logs, src->logs_len) : NULL;
-    if (!dst->state || !dst->roster || (src->logs_len && !dst->logs)) {
+    dst->list = src->list_len ? dup_bytes(src->list, src->list_len) : NULL;
+    if (!dst->state || !dst->roster || (src->list_len && !dst->list)) {
         cb_game_row_free(dst);
         return CB_E_NOMEM;
     }
@@ -100,12 +100,12 @@ static int buf_put(uint8_t **p, size_t *cap, const uint8_t *src, size_t n) {
 static int row_copy_into(cb_game_row *dst, cb_row_buf *b, const cb_game_row *src) {
     if (buf_put(&b->state, &b->state_cap, src->state, src->state_len) != CB_OK ||
         buf_put(&b->roster, &b->roster_cap, src->roster, src->roster_len) != CB_OK ||
-        (src->logs_len && buf_put(&b->logs, &b->logs_cap, src->logs, src->logs_len) != CB_OK))
+        (src->list_len && buf_put(&b->logs, &b->logs_cap, src->list, src->list_len) != CB_OK))
         return CB_E_NOMEM;
     *dst = *src;
     dst->state = b->state;
     dst->roster = b->roster;
-    dst->logs = src->logs_len ? b->logs : NULL;
+    dst->list = src->list_len ? b->logs : NULL;
     return CB_OK;
 }
 
@@ -141,8 +141,8 @@ static int take_game(void *ud, const cb_game_row *row, const TableResident *res)
     table_init(&s->t, &s->g, &s->snaps);
     table_adopt(&s->t, res);
     *w->out = *row;
-    w->out->state = w->out->roster = w->out->logs = NULL;
-    w->out->state_len = w->out->roster_len = w->out->logs_len = 0;
+    w->out->state = w->out->roster = w->out->list = NULL;
+    w->out->state_len = w->out->roster_len = w->out->list_len = 0;
     w->adopted = true;
     return CB_OK;
 }
@@ -475,11 +475,11 @@ void cb_table_snap_summary(cb_snap_summary *m, const uint8_t *code, int n_code, 
 static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     enum { CODE_CAP = 2 * 1024 * 1024, SCRATCH_CAP = 1024 * 1024, EXTRAS_CAP = 256 * 1024 };
     uint8_t *code = NULL, *scratch = NULL, *extras = NULL, *logs = NULL;
-    size_t logs_len = 0;
+    size_t list_len = 0;
     const char *why = NULL;
     int rc = 0;
     if (!nrow->has_seed) { why = "no deal seed: nothing to encode a replay from"; goto out; }
-    if (CB_ROWS_CALL(ctx->store, game_logs, nrow->id, nrow->log_from, &logs, &logs_len) != CB_OK || logs_len == 0) {
+    if (CB_ROWS_CALL(ctx->store, game_list, nrow->id, nrow->list_from, &logs, &list_len) != CB_OK || list_len == 0) {
         free(logs);
         why = "no move list: nothing to encode a replay from";
         goto out;
@@ -496,9 +496,9 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     }
     // The session's move list (move_list.h), its times from the row's created_at as section_row
     // wrote them; both read the board and the roster, never change them.
-    int n_extras = table_replay_extras_list(&s->t, nrow->created_at, logs, (int)logs_len, extras, EXTRAS_CAP);
+    int n_extras = table_replay_extras_list(&s->t, nrow->created_at, logs, (int)list_len, extras, EXTRAS_CAP);
     if (n_extras < 0) { rc = n_extras; why = "replay extras refused"; goto out; }
-    int n_code = table_replay_code_list(&s->t, nrow->seed, CB_SEED_LEN, logs, (int)logs_len,
+    int n_code = table_replay_code_list(&s->t, nrow->seed, CB_SEED_LEN, logs, (int)list_len,
                                         code, CODE_CAP, scratch, SCRATCH_CAP);
     if (n_code < 0) { rc = n_code; why = "replay code refused"; goto out; }
     CB_INFO("table", "game %s: replay encoded (v6) to %d+%d bytes", nrow->id, n_code, n_extras);
@@ -862,16 +862,16 @@ static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *de
     // The session log: a deal replaces it, a lobby empties it, anything else
     // appends this operation's records. The store appends the delta (a LOG# item
     // at the new version); the row only says where the session's log starts.
-    const bool log_clear = c->logs_reset || waiting;
-    np->log_from = log_clear ? np->version : row->log_from;
-    if (waiting && !c->logs_reset) np->log_from = np->version;
+    const bool list_clear = c->logs_reset || waiting;
+    np->list_from = list_clear ? np->version : row->list_from;
+    if (waiting && !c->logs_reset) np->list_from = np->version;
     // The round guard's epoch: 0 on a deal or in a lobby, the new version when
     // this operation closed a round, else unchanged.
     np->round_epoch = (c->logs_reset || waiting) ? 0 : c->closed_round ? row->version + 1 : row->round_epoch;
 
     memset(gp, 0, lists ? sizeof *gp : CB_GAME_COMMIT_HEAD);
     gp->row = np;
-    gp->log_clear = log_clear;
+    gp->list_clear = list_clear;
     // What the store appends is not the records but the session's MOVE LIST chunk they make
     // (move_list.h): the code's atoms and the commit's millisecond, timed from the row's
     // created_at. It goes in the arena after the products (and after an earlier chunk of this
@@ -887,8 +887,8 @@ static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *de
             if (at < (int)sizeof s->arena) s->arena[at + k++] = MOVE_LIST_BROKEN_ITEM;
         }
         s->arena_hw = at + k;
-        gp->log_add = s->arena + at;
-        gp->log_add_len = (size_t)k;
+        gp->list_add = s->arena + at;
+        gp->list_add_len = (size_t)k;
     }
     gp->expected_version = row->version;
     if (!lists) return;
@@ -1178,9 +1178,9 @@ int cb_table_replay_move(void *ud, const cb_game_row *row, const struct cb_jmove
     cb_game_commit gc;
     section_row(s, row, NULL, m->now_ms, false, &nrow, &gc);
     rc = row_copy(out, &nrow);
-    if (rc == CB_OK && gc.log_add_len) {
-        if (!(*log = dup_bytes(gc.log_add, gc.log_add_len))) rc = CB_E_NOMEM;
-        else *log_len = gc.log_add_len;
+    if (rc == CB_OK && gc.list_add_len) {
+        if (!(*log = dup_bytes(gc.list_add, gc.list_add_len))) rc = CB_E_NOMEM;
+        else *log_len = gc.list_add_len;
     }
 out:
     cb_section_free(s);

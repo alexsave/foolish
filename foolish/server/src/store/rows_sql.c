@@ -319,7 +319,7 @@ static void game_bind(stmt_t *s, const cb_game_row *g, int64_t last_commit_at) {
     b_bytes_or_null(s, G_SEED, g->has_seed ? g->seed : NULL, g->has_seed ? CB_SEED_LEN : 0);
     b_i64(s, G_NEEDS_BOTS, g->needs_bots);
     b_i64(s, G_ROUND_EPOCH, g->round_epoch);
-    b_i64(s, G_LOG_FROM, g->log_from);
+    b_i64(s, G_LOG_FROM, g->list_from);
     b_i64(s, G_CREATED_AT, g->created_at);
     b_i64(s, G_UPDATED_AT, g->updated_at);
     b_i64(s, G_LAST_COMMIT_AT, last_commit_at);
@@ -343,7 +343,7 @@ static bool game_of(stmt_t *s, cb_game_row *g) {
     }
     g->needs_bots = sqlite3_column_int(s, COL(G_NEEDS_BOTS)) != 0;
     g->round_epoch = sqlite3_column_int64(s, COL(G_ROUND_EPOCH));
-    g->log_from = sqlite3_column_int64(s, COL(G_LOG_FROM));
+    g->list_from = sqlite3_column_int64(s, COL(G_LOG_FROM));
     g->created_at = sqlite3_column_int64(s, COL(G_CREATED_AT));
     g->updated_at = sqlite3_column_int64(s, COL(G_UPDATED_AT));
     g->last_commit_at = sqlite3_column_int64(s, COL(G_LAST_COMMIT_AT));
@@ -394,10 +394,10 @@ static int list_step(cb_sql *x, void *ud) {
 }
 
 // The current session's move list (games.move_list), as one malloc'd buffer; nothing for a row with no session.
-static int sql_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
+static int sql_game_list(cb_store *s, const char *id, int64_t list_from, uint8_t **out, size_t *out_len) {
     *out = NULL;
     *out_len = 0;
-    if (log_from <= 0) return CB_OK;
+    if (list_from <= 0) return CB_OK;
     list_read r = { .id = id };
     int rc = cb_sql_read(s, list_step, &r);
     if (rc != CB_OK) {
@@ -544,7 +544,7 @@ static int commit_step(cb_sql *x, void *ud) {
         sqlite3_reset(e);
         return k < 0 ? k : k ? CB_E_CONFLICT : CB_E_NOT_FOUND;
     }
-    if ((rc = list_write(x, g->id, c->log_clear, c->log_add, c->log_add_len)) != CB_OK) return rc;
+    if ((rc = list_write(x, g->id, c->list_clear, c->list_add, c->list_add_len)) != CB_OK) return rc;
     seats_t *st = malloc(sizeof *st);
     if (!st) return CB_E_NOMEM;
     if (c->prev_known) {
@@ -575,12 +575,12 @@ typedef struct {
 static int import_step(cb_sql *x, void *ud) {
     import_op *o = ud;
     cb_game_row row = *o->g;
-    row.log_from = o->g->logs_len ? o->g->version : 0;
+    row.list_from = o->g->list_len ? o->g->version : 0;
     stmt_t *s = cb_sql_stmt(x, S_GAME_REPLACE);
     if (!s) return CB_E_DB;
     game_bind(s, &row, row.last_commit_at);
     int rc = cb_sql_run(x, s, "game import");
-    if (rc == CB_OK) rc = list_write(x, row.id, true, row.logs, row.logs_len);
+    if (rc == CB_OK) rc = list_write(x, row.id, true, row.list, row.list_len);
     if (rc == CB_OK) rc = run_game_id(x, S_MEMBERS_CLEAR, row.id, NULL);
     if (rc == CB_OK) rc = run_game_id(x, S_SEAT_BOTS_CLEAR, row.id, NULL);
     for (int i = 0; rc == CB_OK && i < o->n_humans; i++) rc = seat_write(x, S_MEMBER_ADD, row.id, o->humans[i], row.updated_at);
@@ -653,7 +653,7 @@ static int flush_step(cb_sql *x, void *ud) {
         }
         for (int k = 0; k < f->n_moves; k++) {
             const cb_game_move *m = &f->moves[k];
-            if ((rc = list_write(x, f->row->id, m->clear, m->log, m->len)) != CB_OK) return rc;
+            if ((rc = list_write(x, f->row->id, m->clear, m->chunk, m->len)) != CB_OK) return rc;
             if (m->rated && (rc = rate_rows(x, m->rated->n, m->rated->ids, m->rated->is_bot, m->rated->delta,
                                             m->rated->names, m->rated->at)) != CB_OK)
                 return rc;
@@ -1271,7 +1271,7 @@ static int sql_delete(cb_sql *x, const char *user) {
 
 const cb_rows_ops cb_rows_sql = {
     .game_get = sql_game_get,
-    .game_logs = sql_game_logs,
+    .game_list = sql_game_list,
     .games_get_views = sql_games_get_views,
     .game_create = sql_game_create,
     .game_commit = sql_game_commit,
@@ -1454,7 +1454,7 @@ int cb_rows_sql_convert_game_ids(cb_store *s, void (*draw)(char out[CB_GAME_ID_M
 // ---- the upgrade from schema 9: the session logs become move lists ----------------------------
 //
 // Schema 9 kept each game's session log in game_moves (the kernel's records, one row per commit from
-// log_from). Schema 10 keeps the session's move list on the game's own row (games.move_list, move_list.h).
+// list_from). Schema 10 keeps the session's move list on the game's own row (games.move_list, move_list.h).
 // Once, in the schema's transaction: the column added, every session's log read whole and chunked into
 // its list (one chunk from the row's created_at: what the commits would have written, but for the marks
 // a chunk's start adds), and a board being played whose row does not carry its bot memory (a row
@@ -1465,7 +1465,7 @@ static const char UP_HAS_LIST[] = "SELECT 1 FROM pragma_table_info('games') WHER
 static const char UP_HAS_MOVES[] = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'game_moves'";
 static const char UP_ADD_LIST[] = "ALTER TABLE games ADD COLUMN move_list BLOB";
 static const char UP_GAMES[] = "SELECT id FROM games WHERE log_from > 0";
-// ?1 the game, ?2 log_from.
+// ?1 the game, ?2 list_from.
 static const char UP_LOG[] = "SELECT action FROM game_moves WHERE game_id = ?1 AND seq >= ?2 ORDER BY seq";
 // ?1 the game, ?2 its list, ?3 its state (the same bytes, or the board with its bot memory folded in).
 static const char UP_SET[] = "UPDATE games SET move_list = ?2, state = ?3 WHERE id = ?1";
@@ -1521,7 +1521,7 @@ static int up_game(cb_sql *x, const char *id, up_table *u) {
     cb_buf log;
     cb_buf_init(&log);
     b_text(u->log, 1, id);
-    b_i64(u->log, 2, row.log_from);
+    b_i64(u->log, 2, row.list_from);
     int k;
     while ((k = step_row(x, u->log, "upgrade log")) == 1)
         cb_buf_append(&log, sqlite3_column_blob(u->log, 0), (size_t)sqlite3_column_bytes(u->log, 0));

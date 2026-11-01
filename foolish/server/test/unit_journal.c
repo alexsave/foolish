@@ -177,7 +177,7 @@ static void action(const char *bearer, const char *gid, const uint8_t *wire, int
 static cb_game_row stored(cb_store *s, const char *gid) {
     cb_game_row row;
     memset(&row, 0, sizeof row);
-    if (CB_ROWS_CALL(s, game_get, gid, &row) == CB_OK) CB_ROWS_CALL(s, game_logs, gid, row.log_from, &row.logs, &row.logs_len);
+    if (CB_ROWS_CALL(s, game_get, gid, &row) == CB_OK) CB_ROWS_CALL(s, game_list, gid, row.list_from, &row.list, &row.list_len);
     return row;
 }
 
@@ -295,12 +295,12 @@ static int64_t play(const char *gid, const move_t *m) {
 static uint64_t row_hash(cb_store *s, const char *gid) {
     cb_game_row g = stored(s, gid);
     uint64_t h = FNV64_OFFSET;
-    int64_t f[] = { g.status, g.version, g.needs_bots, g.round_epoch, g.log_from, g.created_at, g.updated_at, g.last_commit_at, g.has_seed };
+    int64_t f[] = { g.status, g.version, g.needs_bots, g.round_epoch, g.list_from, g.created_at, g.updated_at, g.last_commit_at, g.has_seed };
     h = fnv1a64(h, f, sizeof f);
     h = fnv1a64(h, g.state, g.state_len);
     h = fnv1a64(h, g.roster, g.roster_len);
     h = fnv1a64(h, g.seed, sizeof g.seed);
-    h = fnv1a64(h, g.logs, g.logs_len);
+    h = fnv1a64(h, g.list, g.list_len);
     cb_game_row_free(&g);
     return h;
 }
@@ -1877,7 +1877,7 @@ static void a_format_2_segment_is_recovered_onto_the_list(void) {
     if (!s) { fprintf(stderr, "  %s\n", err); return; }
     T_EQ_INT(-version_of(s, gid), 2);   // its commit adopted
     cb_game_row row = stored(s, gid);
-    T_CHECK(wn > 0 && row.logs_len == (size_t)wn && memcmp(row.logs, want, (size_t)wn) == 0);   // its records became the list
+    T_CHECK(wn > 0 && row.list_len == (size_t)wn && memcmp(row.list, want, (size_t)wn) == 0);   // its records became the list
     cb_game_row_free(&row);
     close_world(s);
 }

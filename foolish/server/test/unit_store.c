@@ -697,10 +697,10 @@ static bool collect_view_row(const cb_game_row *r, void *ud) {
     views_got *v = ud;
     v->state_ok &= r->state_len == sizeof g_state && memcmp(r->state, g_state, sizeof g_state) == 0 &&
                    r->roster_len == sizeof g_roster && memcmp(r->roster, g_roster, sizeof g_roster) == 0;
-    v->logs |= r->logs != NULL || r->logs_len != 0;
+    v->logs |= r->list != NULL || r->list_len != 0;
     if (v->n < 4) {
         v->rows[v->n] = *r;
-        v->rows[v->n].state = v->rows[v->n].roster = v->rows[v->n].logs = NULL;
+        v->rows[v->n].state = v->rows[v->n].roster = v->rows[v->n].list = NULL;
         v->n++;
     }
     return true;
@@ -716,7 +716,7 @@ static void game_round_trip(void) {
     T_EQ_INT(CB_ROWS_CALL(s, game_get, "ab12cd", &got), CB_OK);
     T_EQ_MEM(got.state, got.state_len, g_state, sizeof g_state);
     T_EQ_MEM(got.roster, got.roster_len, g_roster, sizeof g_roster);
-    T_CHECK(got.logs == NULL && got.logs_len == 0);
+    T_CHECK(got.list == NULL && got.list_len == 0);
     T_CHECK(!got.has_seed && !got.needs_bots);
     T_EQ_INT(got.version, 0);
     T_EQ_INT(got.created_at, 100);
@@ -728,7 +728,7 @@ static void game_round_trip(void) {
     // A commit writes every column.
     cb_game_row n = mkgame("ab12cd", 100);
     n.status = 1;
-    n.log_from = 1;
+    n.list_from = 1;
     n.has_seed = true;
     for (int i = 0; i < CB_SEED_LEN; i++) n.seed[i] = (uint8_t)(i * 7);
     n.needs_bots = true;
@@ -736,16 +736,16 @@ static void game_round_trip(void) {
     n.round_epoch = 1;
     n.updated_at = 200;
     n.last_commit_at = 0;   // the store stamps the commit's time itself
-    cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1, .log_add = g_logs, .log_add_len = sizeof g_logs,
-                         .log_clear = true };
+    cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1, .list_add = g_logs, .list_add_len = sizeof g_logs,
+                         .list_clear = true };
     memcpy(c.humans[0], a.id, sizeof c.humans[0]);
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
     T_EQ_INT(CB_ROWS_CALL(s, game_get, "ab12cd", &got), CB_OK);
     T_EQ_INT(got.status, 1);
-    T_CHECK(got.logs == NULL);
-    T_EQ_INT(got.log_from, 1);
-    CB_ROWS_CALL(s, game_logs, "ab12cd", got.log_from, &got.logs, &got.logs_len);
-    T_EQ_MEM(got.logs, got.logs_len, g_logs, sizeof g_logs);
+    T_CHECK(got.list == NULL);
+    T_EQ_INT(got.list_from, 1);
+    CB_ROWS_CALL(s, game_list, "ab12cd", got.list_from, &got.list, &got.list_len);
+    T_EQ_MEM(got.list, got.list_len, g_logs, sizeof g_logs);
     T_CHECK(got.has_seed);
     T_EQ_MEM(got.seed, CB_SEED_LEN, n.seed, CB_SEED_LEN);
     T_CHECK(got.needs_bots);
@@ -2051,15 +2051,15 @@ static void big_items_and_pages(void) {
     for (size_t i = 0; i < sn; i++) state[i] = (uint8_t)(i * 131 + (i >> 8));
     for (size_t i = 0; i < ln; i++) logs[i] = (uint8_t)(255 - i % 251);
     cb_game_row n = mkgame("big001", 10);
-    n.state = state, n.state_len = sn, n.log_from = 1, n.version = 1, n.updated_at = 20;
-    cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1, .log_add = logs, .log_add_len = ln, .log_clear = true };
+    n.state = state, n.state_len = sn, n.list_from = 1, n.version = 1, n.updated_at = 20;
+    cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 1, .list_add = logs, .list_add_len = ln, .list_clear = true };
     memcpy(c.humans[0], a.id, sizeof(cb_uuid));
     T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
     cb_game_row got;
     T_EQ_INT(CB_ROWS_CALL(s, game_get, "big001", &got), CB_OK);
     T_EQ_MEM(got.state, got.state_len, state, sn);
-    CB_ROWS_CALL(s, game_logs, "big001", got.log_from, &got.logs, &got.logs_len);
-    T_EQ_MEM(got.logs, got.logs_len, logs, ln);
+    CB_ROWS_CALL(s, game_list, "big001", got.list_from, &got.list, &got.list_len);
+    T_EQ_MEM(got.list, got.list_len, logs, ln);
     cb_game_row_free(&got);
 
     enum { NSNAP = 24, SNAPLEN = 64000 };
@@ -2318,7 +2318,7 @@ static void the_session_list_appends_and_clears(void) {
     cb_game_row g = mkgame("li55st", 100);
     T_EQ_INT(CB_ROWS_CALL(s, game_create, &g, a.id), CB_OK);
     cb_game_row n = mkgame("li55st", 100), got;
-    n.log_from = 1;
+    n.list_from = 1;
     const uint8_t one[2] = { 0xaa, 0xbb }, two[1] = { 0xcc }, both[3] = { 0xaa, 0xbb, 0xcc };
     struct { bool clear; const uint8_t *add; size_t n; const uint8_t *want; size_t want_n; } steps[] = {
         { true, one, sizeof one, one, sizeof one },     // a deal: the list is its chunk
@@ -2329,14 +2329,14 @@ static void the_session_list_appends_and_clears(void) {
     };
     for (int i = 0; i < (int)(sizeof steps / sizeof steps[0]); i++) {
         n.version = i + 1;
-        cb_game_commit c = { .row = &n, .expected_version = i, .n_humans = 1, .log_add = steps[i].add,
-                             .log_add_len = steps[i].n, .log_clear = steps[i].clear };
+        cb_game_commit c = { .row = &n, .expected_version = i, .n_humans = 1, .list_add = steps[i].add,
+                             .list_add_len = steps[i].n, .list_clear = steps[i].clear };
         memcpy(c.humans[0], a.id, sizeof c.humans[0]);
         T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
         T_EQ_INT(CB_ROWS_CALL(s, game_get, "li55st", &got), CB_OK);
-        T_EQ_INT(CB_ROWS_CALL(s, game_logs, "li55st", got.log_from, &got.logs, &got.logs_len), CB_OK);
-        if (steps[i].want_n) T_EQ_MEM(got.logs, got.logs_len, steps[i].want, steps[i].want_n);
-        else T_EQ_INT(got.logs_len, 0);   // a lobby keeps no list
+        T_EQ_INT(CB_ROWS_CALL(s, game_list, "li55st", got.list_from, &got.list, &got.list_len), CB_OK);
+        if (steps[i].want_n) T_EQ_MEM(got.list, got.list_len, steps[i].want, steps[i].want_n);
+        else T_EQ_INT(got.list_len, 0);   // a lobby keeps no list
         cb_game_row_free(&got);
     }
     cb_store_close(s);
@@ -2347,12 +2347,12 @@ static void the_session_list_appends_and_clears(void) {
 #define UP_RS(x) (x), (int)strlen(x)
 
 // A game played through the kernel as the server plays it, one commit per human move or bot cycle,
-// up to `max_commits` (0: to its end): its row (version, state, roster, created_at, log_from) and its
+// up to `max_commits` (0: to its end): its row (version, state, roster, created_at, list_from) and its
 // session log as schema 9 stored it, one game_moves row per commit at the version the commit wrote.
 typedef struct {
     uint8_t state[TABLE_STATE_MAX], roster[ROSTER_BYTES], log[1 << 16], seed[FOOLISH_SEED_LEN];
     int     state_len, log_len, status, n_rows;
-    int64_t version, log_from, created_at, now;
+    int64_t version, list_from, created_at, now;
     int64_t seq[2048];
     int     off[2048], len[2048];
 } up_game_t;
@@ -2380,7 +2380,7 @@ static void up_play(up_game_t *u, int seed0, int max_commits) {
         u->state_len = c.state.len;
         memcpy(u->roster, arena + c.roster.off, ROSTER_BYTES);
         u->status = c.status;
-        if (c.logs_reset) { u->log_len = 0; u->n_rows = 0; u->log_from = u->version; }
+        if (c.logs_reset) { u->log_len = 0; u->n_rows = 0; u->list_from = u->version; }
         if (c.logs.len && u->n_rows < 2048 && u->log_len + c.logs.len <= (int)sizeof u->log) {
             u->seq[u->n_rows] = u->version;
             u->off[u->n_rows] = u->log_len;
@@ -2430,7 +2430,7 @@ static void up_insert(sqlite3 *db, const char *id, const up_game_t *u) {
     sqlite3_bind_blob(st, 4, u->state, u->state_len, SQLITE_STATIC);
     sqlite3_bind_blob(st, 5, u->roster, ROSTER_BYTES, SQLITE_STATIC);
     sqlite3_bind_blob(st, 6, u->seed, FOOLISH_SEED_LEN, SQLITE_STATIC);
-    sqlite3_bind_int64(st, 7, u->log_from);
+    sqlite3_bind_int64(st, 7, u->list_from);
     sqlite3_bind_int64(st, 8, u->created_at);
     sqlite3_bind_int64(st, 9, u->now);
     T_EQ_INT(sqlite3_step(st), SQLITE_DONE);
@@ -2488,7 +2488,7 @@ static void a_schema_9_database_turns_its_logs_into_move_lists(void) {
         T_EQ_INT(CB_ROWS_CALL(s, game_get, ids[k], &row), CB_OK);
         uint8_t *got = NULL;
         size_t got_len = 0;
-        T_EQ_INT(CB_ROWS_CALL(s, game_logs, ids[k], row.log_from, &got, &got_len), CB_OK);
+        T_EQ_INT(CB_ROWS_CALL(s, game_list, ids[k], row.list_from, &got, &got_len), CB_OK);
         const int want = table_move_list_chunk(u->created_at, u->log, u->log_len, list, sizeof list);
         T_CHECK(want > 0 && (size_t)want == got_len && memcmp(got, list, got_len) == 0);   // the list is the log's
         table_init(&t, &g, &snaps);

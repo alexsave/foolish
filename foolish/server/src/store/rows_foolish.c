@@ -248,7 +248,7 @@ bool cb_rows_game_of(const cb_item *it, cb_game_row *g) {
     uint8_t *seed;
     size_t seed_len;
     if (!b_of(it, "state", &g->state, &g->state_len) || !b_of(it, "roster", &g->roster, &g->roster_len) ||
-        !b_of(it, "move_list", &g->logs, &g->logs_len) || !b_of(it, "game_seed", &seed, &seed_len)) {
+        !b_of(it, "move_list", &g->list, &g->list_len) || !b_of(it, "game_seed", &seed, &seed_len)) {
         cb_game_row_free(g);
         return false;
     }
@@ -260,8 +260,8 @@ bool cb_rows_game_of(const cb_item *it, cb_game_row *g) {
     bool_of(it, "needs_bots", &g->needs_bots);
     bool_of(it, "seats_exact", &g->seats_exact);
     g->round_epoch = cb_item_n_or(it, "round_epoch", 0);
-    // The session's move list rides in the row whole (move_list, move_list.h); log_from only says there is one.
-    g->log_from = g->logs_len ? (g->version > 0 ? g->version : 1) : 0;
+    // The session's move list rides in the row whole (move_list, move_list.h); list_from only says there is one.
+    g->list_from = g->list_len ? (g->version > 0 ? g->version : 1) : 0;
     g->created_at = cb_item_n_or(it, "created_at", 0);
     g->updated_at = cb_item_n_or(it, "updated_at", 0);
     g->last_commit_at = cb_item_n_or(it, "last_commit_at", 0);
@@ -274,7 +274,7 @@ static void game_attrs(attrs *x, const cb_game_row *g) {
     add(x, CB_AVN("status", g->status));
     add(x, CB_AVB("state", g->state, g->state_len));
     add(x, CB_AVB("roster", g->roster, g->roster_len));
-    if (g->logs_len) add(x, CB_AVB("move_list", g->logs, g->logs_len));
+    if (g->list_len) add(x, CB_AVB("move_list", g->list, g->list_len));
     if (g->has_seed) add(x, CB_AVB("game_seed", g->seed, CB_SEED_LEN));
     add(x, CB_AVBOOL("needs_bots", g->needs_bots));
     add(x, CB_AVN("version", g->version));
@@ -292,10 +292,10 @@ int cb_rows_game_get(cb_store *s, const char *id, cb_game_row *out) {
     int rc = get_item(s, k(pk, sizeof pk, "GAME#", id), "ROW", &it);
     if (rc == CB_OK && !cb_rows_game_of(&it, out)) rc = CB_E_DB;
     cb_item_free(&it);
-    if (rc == CB_OK) {   // game_get never carries the log (game_logs reads it)
-        free(out->logs);
-        out->logs = NULL;
-        out->logs_len = 0;
+    if (rc == CB_OK) {   // game_get never carries the log (game_list reads it)
+        free(out->list);
+        out->list = NULL;
+        out->list_len = 0;
     }
     return rc;
 }
@@ -307,10 +307,10 @@ int cb_rows_game_get(cb_store *s, const char *id, cb_game_row *out) {
 // row's moves column in SQL: rows_sql.c.) An item written before the list held the session's log
 // records as logs_packed, which nothing reads any more: that game has no replay.
 
-int cb_rows_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
+int cb_rows_game_list(cb_store *s, const char *id, int64_t list_from, uint8_t **out, size_t *out_len) {
     *out = NULL;
     *out_len = 0;
-    if (log_from <= 0) return CB_OK;
+    if (list_from <= 0) return CB_OK;
     char pk[KB];
     cb_item it;
     cb_item_init(&it);
@@ -319,9 +319,9 @@ int cb_rows_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **o
     if (rc == CB_OK && !cb_rows_game_of(&it, &g)) rc = CB_E_DB;
     cb_item_free(&it);
     if (rc != CB_OK) return rc;
-    *out = g.logs;
-    *out_len = g.logs_len;
-    g.logs = NULL;
+    *out = g.list;
+    *out_len = g.list_len;
+    g.list = NULL;
     cb_game_row_free(&g);
     return CB_OK;
 }
@@ -330,14 +330,14 @@ int cb_rows_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **o
 static int full_log(cb_store *s, const cb_game_commit *c, uint8_t **out, size_t *len) {
     uint8_t *old = NULL;
     size_t old_len = 0;
-    int rc = c->log_clear ? CB_OK : cb_rows_game_logs(s, c->row->id, 1, &old, &old_len);
+    int rc = c->list_clear ? CB_OK : cb_rows_game_list(s, c->row->id, 1, &old, &old_len);
     if (rc != CB_OK) return rc;
-    *len = old_len + c->log_add_len;
+    *len = old_len + c->list_add_len;
     *out = NULL;
     if (!*len) return CB_OK;
     *out = realloc(old, *len);
     if (!*out) { free(old); return CB_E_NOMEM; }
-    if (c->log_add_len) memcpy(*out + old_len, c->log_add, c->log_add_len);
+    if (c->list_add_len) memcpy(*out + old_len, c->list_add, c->list_add_len);
     return CB_OK;
 }
 
@@ -642,8 +642,8 @@ void cb_rows_cas_write(const cb_game_commit *c, int64_t last_commit_at, cb_rows_
     set(&x, CB_AVB("state", g->state, g->state_len), CB_SET_TO);
     set(&x, CB_AVB("roster", g->roster, g->roster_len), CB_SET_TO);
     // A commit that neither clears the list nor adds to it leaves the stored list as it is.
-    if (c->log_clear || c->log_add_len) {
-        if (g->logs_len) set(&x, CB_AVB("move_list", g->logs, g->logs_len), CB_SET_TO);
+    if (c->list_clear || c->list_add_len) {
+        if (g->list_len) set(&x, CB_AVB("move_list", g->list, g->list_len), CB_SET_TO);
         else set(&x, CB_AVB("move_list", NULL, 0), CB_SET_REMOVE);
     }
     if (g->has_seed) set(&x, CB_AVB("game_seed", g->seed, CB_SEED_LEN), CB_SET_TO);
@@ -801,11 +801,11 @@ static int commit_or_import(cb_store *s, const cb_game_commit *c0, bool import) 
         const cb_game_row *g = c.row;
         cb_game_row row = *g;
         row.last_commit_at = import ? g->last_commit_at : g->updated_at;   // a commit's time is its last commit
-        if (!import && (c.log_clear || c.log_add_len)) {   // the row carries the whole list
+        if (!import && (c.list_clear || c.list_add_len)) {   // the row carries the whole list
             size_t full_len = 0;
             if ((rc = full_log(s, &c, &full, &full_len)) != CB_OK) break;
-            row.logs = full;
-            row.logs_len = full_len;
+            row.list = full;
+            row.list_len = full_len;
             c.row = &row;
         }
         // The SCAN marker: none to write when the commit leaves the game
@@ -1707,7 +1707,7 @@ int cb_rows_chat_list(cb_store *s, const char *game, int limit, cb_chat_fn fn, v
 
 const cb_rows_ops cb_rows_foolish = {
     .game_get = cb_rows_game_get,
-    .game_logs = cb_rows_game_logs,
+    .game_list = cb_rows_game_list,
     .games_get_views = cb_rows_games_get_views,
     .game_create = cb_rows_game_create,
     .game_commit = cb_rows_game_commit,
@@ -1751,9 +1751,9 @@ const cb_rows_ops *cb_rows_of(const cb_store *s) {
 void cb_game_row_free(cb_game_row *g) {
     free(g->state);
     free(g->roster);
-    free(g->logs);
-    g->state = g->roster = g->logs = NULL;
-    g->state_len = g->roster_len = g->logs_len = 0;
+    free(g->list);
+    g->state = g->roster = g->list = NULL;
+    g->state_len = g->roster_len = g->list_len = 0;
 }
 
 void cb_snapshot_row_free(cb_snapshot_row *s) {
@@ -1776,9 +1776,9 @@ int cb_store_games_get_each(cb_store *s, const char *const *ids, int n, cb_game_
         int rc = cb_rows_of(s)->game_get(s, ids[i], &row);
         if (rc == CB_E_NOT_FOUND) continue;
         if (rc != CB_OK) return rc;
-        free(row.logs);
-        row.logs = NULL;
-        row.logs_len = 0;
+        free(row.list);
+        row.list = NULL;
+        row.list_len = 0;
         count++;
         bool more = fn(&row, ud);
         cb_game_row_free(&row);

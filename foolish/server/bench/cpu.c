@@ -300,8 +300,8 @@ static bool fixtures(void) {
     g_row.state_len = (size_t)g_state_len;
     g_row.roster = g_roster;
     g_row.roster_len = (size_t)g_roster_len;
-    g_row.logs = g_logs;
-    g_row.logs_len = (size_t)g_logs_len;
+    g_row.list = g_logs;
+    g_row.list_len = (size_t)g_logs_len;
     g_row.has_seed = true;
     memcpy(g_row.seed, g_seed, CB_SEED_LEN);
     g_row.version = g_version;
