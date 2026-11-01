@@ -1,30 +1,34 @@
 /* =============================================================================
- * Infinite Oracle - Best is fusion's pick and every row tied with it
- * (docs/INFINITE_ORACLE_DESIGN.md "Ties, Best and the classes")
+ * Infinite Oracle - the panel shows fusion's noisy race, and Best is fusion's
+ * pick and every row tied with it (docs/INFINITE_ORACLE_DESIGN.md "Ties, Best
+ * and the classes")
  * =============================================================================
- * The rows show the noise-free race's expected finish (octogen's own numbers).
- * The kernel (c/src/oracle_rank.c, which states the whole rule) ranks them for
- * both modes: fusion's pick is octogen's pick (the top row) unless the noisy
+ * The kernel (c/src/oracle_rank.c, which states the whole rule) ranks the rows
+ * for both modes. Every number it hands back - the EF, its error, the bar, the
+ * class, the ties and the order - is fusion's NOISY race, the race fusion's
+ * pick comes from, so Best, the classes and the numbers cannot disagree.
+ * Fusion's pick is octogen's (the lowest noise-free mean) unless the noisy
  * race's pick is better, mean plus trump tax, by more than FUSION_SHADOW tenths
- * of the two rows' combined standard error; every row whose number ties the
- * pick's within two combined standard errors reads Best; and a class is the gap
- * to the Best group, not to the lowest number. This file drives it through the
- * shipped oracle.wasm, the way the replay screen's main thread does.
+ * of the two rows' combined standard error; every row whose noisy number ties
+ * the pick's within two combined standard errors reads Best; a class is the
+ * gap to the Best group. This file drives it through the shipped oracle.wasm,
+ * the way the replay screen's main thread does.
  *
- * REWRITTEN on 2026-11-01, not kept green: this file used to assert "exactly one
- * row is Best", and that assertion was the prod bug (step 51 of the replay in
- * the design doc, eleven rows printing "EF 3.76 +-0.00", one BEST, ten
- * BLUNDER). Exactly one row is fusion's PICK; Best is the pick's tied group.
+ * REWRITTEN twice, not kept green. On 2026-11-01 it stopped asserting "exactly
+ * one row is Best" (the prod tie bug: one BEST among eleven rows printing "EF
+ * 3.76"). Later the same day Alex decided the panel shows the noisy race's
+ * numbers, so the prod decision now reads: fusion's pick is the lowest number
+ * (3.17), octogen's pick shows its own noisy 3.48 and is an inaccuracy.
  *
  * Mutation-checked (2026-11-01; each seen red by the named assertion, then
- * restored): oracle_rank.c's tie rule removed ("every 3.76 twin reads Best");
- * the Best block not kept together ("the Best rows sit together, the pick
- * first"); the class from the lowest number ("3.86 is good, not blunder");
- * fusion's bar at 0 ("within the bar, octogen's pick stands"); the tax left out
- * of the noisy gap ("the trump tax picks the noisy race's row"); and the
- * accumulator returning its rows unranked ("the accumulator ranks through the
- * kernel"). Each C mutant was rebuilt into public/oracle.wasm.gz first. The
- * kernel's own cases, with more of these, are c/tests/oracle_rank_test.c.
+ * restored, every C mutant rebuilt into public/oracle.wasm.gz first): the
+ * noise-free numbers shown ("the rows sort by the noisy race"); the tie
+ * rule removed and the Best block not kept together (both "the pick leads its
+ * block, its ties follow"); fusion's bar at 0 ("within the
+ * bar, octogen's pick stands"); the tax left out of the noisy gap ("the trump
+ * tax picks the noisy race's row"); and the accumulator returning its rows
+ * unranked ("the rows sort by the noisy race's expected finish"). The kernel's own
+ * cases, with more of these, are c/tests/oracle_rank_test.c.
  * ========================================================================== */
 
 import { test } from 'node:test';
@@ -44,7 +48,7 @@ const kernel = (async () => { const k = new OracleInstance(); await k.init(ORACL
 const row = (key: string, mean: number, se: number, shadowMean: number | null, shadowSe: number, trumps = 0): OracleCandidate => ({
     key, type: 'attack', label: key, cards: Array.from({ length: trumps }, () => 'AS*'), n: 1000, mean, se,
     shadowN: shadowMean == null ? 0 : 500, shadowMean, shadowSe,
-    best: false, pick: false, cls: null, bar: 0, verdict: 'none', forcedLoss: false, pruned: false,
+    ef: null, best: false, pick: false, cls: null, bar: 0, verdict: 'none', forcedLoss: false, pruned: false,
     chosen: false, played: false,
 });
 const ranked = async (list: OracleCandidate[], deckAlive = false) => (await kernel).rank(list, false, deckAlive);
@@ -56,7 +60,7 @@ const pickOf = async (list: OracleCandidate[], deckAlive = false) => {
     return p[0].key;
 };
 
-test('the prod decision: every row tied with fusion\'s pick reads Best', async () => {
+test('the prod decision: the panel shows the noisy race, so fusion\'s pick is the lowest number', async () => {
     // Step 51, trimmed to one row of each kind (rows.txt of the repro).
     const list = [
         row('played', 3.8583, 0.0016, 3.3116, 0.004),
@@ -69,12 +73,26 @@ test('the prod decision: every row tied with fusion\'s pick reads Best', async (
     const r = await ranked(list);
     const by = new Map(r.map((c) => [c.key, c]));
     assert.deepEqual(r.filter((c) => c.pick).map((c) => c.key), ['f'], 'fusion plays f');
-    assert.deepEqual(['f', 'twin1', 'twin2'].map((k) => by.get(k)!.best), [true, true, true], 'every 3.76 twin reads Best');
-    assert.deepEqual(['f', 'twin1', 'twin2'].map((k) => by.get(k)!.cls), ['best', 'best', 'best'], 'and is class best');
-    assert.deepEqual(r.map((c) => c.key), ['low', 'mid', 'f', 'twin1', 'twin2', 'played'], 'the Best rows sit together, the pick first');
-    assert.equal(by.get('played')!.cls, 'good', '3.86 is good, not blunder: 0.10 behind the Best group');
-    assert.equal(by.get('low')!.cls, 'best', 'the lowest number still reads best');
-    assert.equal(by.get('low')!.best, false, 'but it is not Best: fusion does not play it');
+    assert.deepEqual(r.map((c) => c.key), ['f', 'twin1', 'played', 'twin2', 'low', 'mid'], 'the rows sort by the noisy race');
+    assert.deepEqual([by.get('f')!.ef, by.get('f')!.se], [3.1732, 0.004], 'the pick is the lowest number shown, with the noisy race\'s error');
+    assert.equal(by.get('low')!.ef, 3.4824, 'octogen\'s pick shows its noisy number, not its noise-free 2.9975');
+    assert.deepEqual(r.map((c) => c.cls), ['best', 'good', 'good', 'inaccuracy', 'inaccuracy', 'mistake'],
+        'the played 3.31 is good: every class is the gap to the Best group in the numbers shown');
+    assert.deepEqual(r.map((c) => c.best), [true, false, false, false, false, false], 'the noisy race separates the noise-free twins');
+});
+
+test('every row tied in the noisy race reads Best, the pick leads its block', async () => {
+    // x is the noisy race's lowest, 0.004 under octogen's o: inside fusion's
+    // bar (2 * sqrt(2) * 0.003 = 0.0085), so o stays the pick and x ties it.
+    const r = await ranked([
+        row('x', 3.30, 0.003, 3.096, 0.003),
+        row('o', 3.00, 0.003, 3.100, 0.003),
+        row('y', 3.30, 0.003, 3.106, 0.003),
+        row('z', 3.30, 0.003, 3.140, 0.003),
+    ]);
+    assert.deepEqual(r.map((c) => [c.key, c.best, c.pick]), [['o', true, true], ['x', true, false], ['y', true, false], ['z', false, false]],
+        'the pick leads its block, its ties follow, 0.04 behind is not Best');
+    assert.equal(r[3].cls, 'excellent');
 });
 
 test('octogen\'s pick is fusion\'s unless the noisy race says otherwise beyond the bar', async () => {
@@ -124,10 +142,10 @@ test('the accumulator ranks through the kernel over every batch it merged', asyn
         acc.add(rec([['6S', 1.40 + w, 1.60 + w], ['9H', 1.45 - w, 1.50 - w]]));
     }
     const list = acc.candidates(false);
-    assert.equal(list[0].cards[0], '6S', 'the rows sort by the noise-free expected finish');
-    assert.ok(Math.abs(list[0].shadowMean! - 1.60) < 1e-9 && list[0].shadowSe < 0.01, 'the noisy mean and its error');
-    assert.deepEqual(list.map((c) => [c.best, c.pick]), [[false, false], [true, true]], 'the accumulator ranks through the kernel');
-    assert.deepEqual(list.map((c) => c.cls), ['best', 'best'], 'the lowest number reads best, and so does fusion\'s pick');
+    assert.equal(list[0].cards[0], '9H', 'the rows sort by the noisy race\'s expected finish');
+    assert.ok(Math.abs(list[0].ef! - 1.50) < 1e-9 && list[0].se < 0.01, 'the number shown is the noisy mean, with its error');
+    assert.deepEqual(list.map((c) => [c.best, c.pick]), [[true, true], [false, false]], 'the accumulator ranks through the kernel');
+    assert.deepEqual(list.map((c) => c.cls), ['best', 'good'], 'octogen\'s 6S is 0.10 behind in the noisy race');
 
     // The same with the noisy race in octogen's favour: Best stays on top.
     const keep = new OracleAccumulator({ deckAlive: false, recordedKey: '', ranker });

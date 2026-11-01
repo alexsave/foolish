@@ -184,8 +184,11 @@ test('§8b.7-1 Mode A and Mode B converge to the same per-candidate means', asyn
         // tie bug; Best is now every row tied with fusion's pick, and exactly one
         // row is the pick. Mutation-checked (2026-11-01): readCandidates
         // returning its rows unranked failed "exactly one pick in Mode B"; the
-        // Mode B module ranking with the tie rule removed failed "Mode B's
-        // module ranks Mode A's rows as Mode A's does".
+        // kernel showing the noise-free numbers failed "Mode B shows the noisy
+        // race's number and error" (added when Alex chose the noisy numbers);
+        // the Mode B module alone drawing its bars from 90 instead of 96 failed
+        // "Mode B's module ranks Mode A's rows as Mode A's does". (Its tie rule
+        // removed stays green here: this fixture's noisy numbers have no ties.)
         let sworst = 0;
         for (const c of b) {
             assert.ok(c.shadowMean != null && c.shadowMean >= 1, `Mode B ran fusion's noisy race on ${c.key}`);
@@ -198,6 +201,8 @@ test('§8b.7-1 Mode A and Mode B converge to the same per-candidate means', asyn
         assert.ok(b.find((c) => c.pick)!.best, 'and it reads Best');
         const bestAt = b.flatMap((c, i) => (c.best ? [i] : []));
         assert.equal(bestAt[bestAt.length - 1] - bestAt[0] + 1, bestAt.length, 'the Best rows sit together');
+        for (const c of b) assert.ok(c.ef === c.shadowMean && Math.abs(c.se - 1.2 / Math.sqrt(c.shadowN)) < 1e-12,
+            `Mode B shows the noisy race's number and error on ${c.key}`);
         // The same rows through both modules: one rule, so one answer.
         const aList = acc.candidates(false);
         const mem = rig.session.memory!;

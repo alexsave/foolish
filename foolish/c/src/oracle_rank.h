@@ -7,9 +7,10 @@
 //                 and standard error, fusion's noisy race's, the exact probe's
 //                 verdict, and what the trump-keep tax needs. Written through
 //                 the writer structgen makes from this header.
-//   OgRankAnswer  the rows in display order, each with its class, whether it is
-//                 Best (tied with fusion's pick), whether it IS fusion's pick,
-//                 the error to print and its bar.
+//   OgRankAnswer  the rows in display order, each with the number it shows
+//                 (fusion's noisy race's expected finish) and its error, its
+//                 class, whether it is Best (tied with fusion's pick), whether
+//                 it IS fusion's pick, and its bar.
 //
 // It used to be four rules in TypeScript, two of them twice: a sort in each
 // mode, fusion's Best pick (accumulator.ts fusionBest) and the class chips
@@ -73,12 +74,16 @@ typedef struct {
     uint8_t  cls;                   // OG_CLASS_*
     bool     best;                  // tied with fusion's pick: reads Best
     bool     pick;                  // fusion's pick itself: the move fusion plays
+    bool     shown;                 // the row has a number to show (ef, se, bar)
     float    bar;                   // bar width, percent (0 = no bar)
-    double   se;                    // the standard error to print
-    double   shadow_se;             // the noisy race's, as fusion's bar weighed it
+    double   ef;                    // the expected finish shown: the noisy race's
+                                    //   (the noise-free one when OgRankAnswer.noisy is false)
+    double   se;                    // its standard error, the +- shown
+    double   shadow_se;             // the noisy race's error, as fusion's bar weighed it
 } OgRankLine;
 
 typedef struct {
+    bool     noisy;                 // the numbers are the noisy race's (it scored some row)
     uint16_t n_lines;
     OgRankLine lines[OG_RANK_MAX_ROWS];
 } OgRankAnswer;
