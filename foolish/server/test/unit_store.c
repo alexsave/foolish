@@ -27,6 +27,7 @@
 #include <sqlite3.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 static char g_dir[256];
 static int g_seq;
@@ -2518,9 +2519,59 @@ static void a_schema_9_database_turns_its_logs_into_move_lists(void) {
     T_EQ_INT(sqlite3_column_int(st, 0), 0);   // game_moves is gone
     sqlite3_finalize(st);
     sqlite3_close(db);
+    // THE COPY BEFORE THE UPGRADE, beside it and kept: a sound schema-9 database with every
+    // game_moves row, which the previous binary opens. MUTATION-CHECKED: no copy turns "the copy
+    // before the upgrade is there" red.
+    char copy[400];
+    T_CHECK(cb_store_local_pre_upgrade_path(path, copy, sizeof copy));
+    T_CHECK(access(copy, F_OK) == 0);   // the copy before the upgrade is there
+    T_EQ_INT(sqlite3_open(copy, &db), SQLITE_OK);
+    T_EQ_INT(sqlite3_prepare_v2(db, "PRAGMA integrity_check", -1, &st, NULL), SQLITE_OK);
+    T_EQ_INT(sqlite3_step(st), SQLITE_ROW);
+    T_EQ_STR((const char *)sqlite3_column_text(st, 0), "ok");
+    sqlite3_finalize(st);
+    T_EQ_INT(sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &st, NULL), SQLITE_OK);
+    T_EQ_INT(sqlite3_step(st), SQLITE_ROW);
+    T_EQ_INT(sqlite3_column_int(st, 0), 9);
+    sqlite3_finalize(st);
+    T_EQ_INT(sqlite3_prepare_v2(db, "SELECT count(*) FROM game_moves", -1, &st, NULL), SQLITE_OK);
+    T_EQ_INT(sqlite3_step(st), SQLITE_ROW);
+    T_EQ_INT(sqlite3_column_int(st, 0), over.n_rows + mid.n_rows);
+    sqlite3_finalize(st);
+    sqlite3_close(db);
     // Opened again at 10: nothing is repeated.
     T_EQ_INT(cb_store_open_sqlite(path, &s), CB_OK);
     if (s) cb_store_close(s);
+    unlink(path);
+
+    // A copy that cannot be written refuses the open, and the schema-9 database is as it was.
+    // MUTATION-CHECKED: the open going on without its copy turns "a failed copy refuses the open" red.
+    snprintf(path, sizeof path, "%s/v9b-%d.sqlite", g_dir, ++g_seq);
+    T_EQ_INT(cb_store_open_sqlite(path, &s), CB_OK);
+    if (!s) return;
+    cb_store_close(s);
+    T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
+    T_EQ_INT(sqlite3_exec(db, "ALTER TABLE games DROP COLUMN move_list; "
+                              "CREATE TABLE game_moves (game_id TEXT NOT NULL, seq INTEGER NOT NULL, action BLOB NOT NULL, "
+                              "PRIMARY KEY (game_id, seq)) WITHOUT ROWID; PRAGMA user_version = 9", NULL, NULL, NULL), SQLITE_OK);
+    up_insert(db, "over11", &over);
+    sqlite3_close(db);
+    T_CHECK(cb_store_local_pre_upgrade_path(path, copy, sizeof copy));
+    char blocker[420];
+    snprintf(blocker, sizeof blocker, "%s.tmp", copy);
+    T_EQ_INT(mkdir(blocker, 0700), 0);   // the copy's file cannot be made
+    s = NULL;
+    T_CHECK(cb_store_open_sqlite(path, &s) != CB_OK && s == NULL);   // a failed copy refuses the open
+    if (s) cb_store_close(s);
+    T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
+    T_EQ_INT(sqlite3_prepare_v2(db, "SELECT (SELECT user_version FROM pragma_user_version), "
+                                    "(SELECT count(*) FROM game_moves)", -1, &st, NULL), SQLITE_OK);
+    T_EQ_INT(sqlite3_step(st), SQLITE_ROW);
+    T_EQ_INT(sqlite3_column_int(st, 0), 9);   // untouched: still schema 9
+    T_EQ_INT(sqlite3_column_int(st, 1), over.n_rows);
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    rmdir(blocker);
     unlink(path);
 }
 
