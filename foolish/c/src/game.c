@@ -206,7 +206,27 @@ int game_done(const Game *g) {
         else if (g->players[i].status == PLAYER_STATUS_OUT) { out_count++; }
     }
     if (in_count == 1 && out_count == g->num_players - 1) return last_in;
+    // A repetition draw (rep_checkpoint): over with every seat still IN a fool.
+    // The lowest of them stands for all (game.h).
+    if (g->status == GAME_STATUS_GAME_OVER && in_count >= 2 && in_count + out_count == g->num_players)
+        for (int i = 0; i < g->num_players; i++)
+            if (g->players[i].status == PLAYER_STATUS_IN) return i;
     return -1;
+}
+
+uint32_t game_fools(const Game *g) {
+    const int n = g->num_players < 0 ? 0 : g->num_players > MAX_PLAYERS ? MAX_PLAYERS : g->num_players;
+    if (g->status != GAME_STATUS_GAME_OVER && game_done(g) < 0) return 0;
+    uint32_t fools = (1u << n) - 1u;
+    for (int i = 0; i < g->num_eliminated && i < MAX_PLAYERS; i++)
+        if (g->elimination_order[i] >= 0 && g->elimination_order[i] < n)
+            fools &= ~(1u << g->elimination_order[i]);
+    return fools;
+}
+
+bool game_drawn(const Game *g) {
+    const uint32_t f = game_fools(g);
+    return (f & (f - 1u)) != 0;
 }
 
 // The kernel records its own end. handle_* leave the loser on player statuses
@@ -729,6 +749,11 @@ static int determine_lowest_power_index(Game *g) {
 // The lobby->playing reset every start path shares.
 static void start_game_reset(Game *g) {
     g->status = GAME_STATUS_PLAYING;
+    // A DEALT GAME IS A WHOLE GAME: it carries the repetition rule, with a new
+    // history (game.h game_rep_attach) - unless it marks itself a short slot
+    // (log_cap or log_room, a re-deal scratch), whose storage ends before the ring.
+    if (g->log_cap == 0 && g->log_room == 0) game_rep_attach(g);
+    else g->rep_live = false;
     g->num_battles = 0;
     g->num_eliminated = 0;
     g->num_logs = 0;
@@ -818,6 +843,7 @@ void start_game(Game *g) {
 
 void game_reset_to_lobby(Game *g, unsigned int bot_mask) {
     g->status = GAME_STATUS_WAITING;
+    if (g->rep_live) memset(&g->rep, 0, sizeof g->rep);
 
     for (int i = 0; i < g->num_players; i++) {
         Player *p = &g->players[i];
@@ -884,6 +910,132 @@ void start_game_with_deck(Game *g, const Card *deck, int n_deck) {
 // codes cut before it are rejected rather than re-read (replay.h).
 static bool no_cards_left(const Game *g) {
     return g->deck_count == 0 && !g->has_flipped;
+}
+
+// ---------- the repetition draw (game.h GameRepetition) -------------------------
+
+static uint64_t rep_mix(uint64_t h, uint64_t v) { return rng_splitmix64_at(h ^ v); }
+
+uint64_t game_rep_position(const GameRepPosition *p) {
+    uint64_t h = RNG_GOLDEN;
+    h = rep_mix(h, (uint8_t)p->rules);
+    h = rep_mix(h, (uint8_t)p->num_players);
+    h = rep_mix(h, (uint8_t)p->power_suit);
+    h = rep_mix(h, (uint8_t)p->first_attacker);
+    h = rep_mix(h, (uint8_t)p->defender);
+    h = rep_mix(h, (uint8_t)p->has_flipped);
+    h = rep_mix(h, (uint8_t)p->flipped);
+    h = rep_mix(h, (uint16_t)p->discard);
+    h = rep_mix(h, (uint16_t)p->deck_count);
+    h = rep_mix(h, p->stock);
+    h = rep_mix(h, p->good_mask);
+    h = rep_mix(h, (uint8_t)p->has_good_timestamp);
+    const int nb = p->num_battles < 0 ? 0 : p->num_battles > MAX_BATTLES ? MAX_BATTLES : p->num_battles;
+    h = rep_mix(h, (uint8_t)nb);
+    for (int i = 0; i < nb; i++) h = rep_mix(h, (uint64_t)(uint8_t)p->attack[i] << 8 | (uint8_t)p->defense[i]);
+    const int np = p->num_players < 0 ? 0 : p->num_players > MAX_PLAYERS ? MAX_PLAYERS : p->num_players;
+    for (int s = 0; s < np; s++) {
+        h = rep_mix(h, (uint8_t)p->status[s]);
+        h = rep_mix(h, (p->awaiting >> s) & 1u);
+        h = rep_mix(h, p->hand[s]);
+    }
+    const int ne = p->num_eliminated < 0 ? 0 : p->num_eliminated > MAX_PLAYERS ? MAX_PLAYERS : p->num_eliminated;
+    h = rep_mix(h, (uint8_t)ne);
+    for (int i = 0; i < ne; i++) h = rep_mix(h, (uint8_t)p->elimination[i]);
+    return h;
+}
+
+bool game_rep_checkpoint(GameRepetition *r, uint64_t fp, int stock, int discard, uint32_t in_mask) {
+    // A new history whenever the stock, the discard or the seats still in
+    // changed: no position can come back across any of them.
+    if (r->fill && (r->stock != stock || r->discard != discard || r->in_mask != (uint8_t)in_mask))
+        memset(r, 0, sizeof *r);
+    if (!r->fill) {
+        r->stock = (int16_t)stock;
+        r->discard = (int16_t)discard;
+        r->in_mask = (uint8_t)in_mask;
+    }
+    int seen = 0;
+    for (int i = 0; i < r->fill; i++) seen += r->fp[i] == fp;
+    r->fp[r->head] = fp;
+    r->head = (uint8_t)((r->head + 1) % GAME_REP_RING);
+    if (r->fill < GAME_REP_RING) r->fill++;
+    return seen >= 2;   // seen twice before: this is the third time
+}
+
+static int8_t rep_id(Card c) {
+    const int id = card_to_id(c);
+    return (int8_t)(id >= 0 && id < 64 ? id : -1);
+}
+
+// The engine's position (game.h GameRepPosition). False for a board that cannot
+// say what its position is: a hidden card in a hand or in the stock (a host's
+// masked mirror).
+static bool rep_position(const Game *g, GameRepPosition *p) {
+    memset(p, 0, sizeof *p);
+    p->rules = g->rules;
+    p->num_players = g->num_players;
+    p->power_suit = g->power_suit;
+    p->first_attacker = g->first_attacker;
+    p->defender = g->defender;
+    p->has_flipped = g->has_flipped;
+    p->flipped = g->has_flipped ? rep_id(g->flipped) : -1;
+    p->discard = g->discard_pile_length;
+    p->deck_count = g->deck_count;
+    for (int i = 0; i < g->deck_count && i < MAX_DECK; i++) {
+        if (card_is_hidden(g->deck[i]) || rep_id(g->deck[i]) < 0) return false;
+        p->stock |= 1ull << rep_id(g->deck[i]);
+    }
+    p->good_mask = g->good_players_mask;
+    p->has_good_timestamp = g->has_good_timestamp;
+    p->num_battles = g->num_battles;
+    for (int i = 0; i < g->num_battles && i < MAX_BATTLES; i++) {
+        p->attack[i] = rep_id(g->table_battles[i].attack);
+        p->defense[i] = card_is_none(g->table_battles[i].defense) ? -1 : rep_id(g->table_battles[i].defense);
+    }
+    for (int s = 0; s < g->num_players && s < MAX_PLAYERS; s++) {
+        const Player *pl = &g->players[s];
+        p->status[s] = pl->status;
+        if (pl->awaiting_attack) p->awaiting |= (uint8_t)(1u << s);
+        for (int i = 0; i < pl->hand_count; i++) {
+            if (card_is_hidden(pl->hand[i]) || rep_id(pl->hand[i]) < 0) return false;
+            p->hand[s] |= 1ull << rep_id(pl->hand[i]);
+        }
+    }
+    p->num_eliminated = g->num_eliminated;
+    for (int i = 0; i < g->num_eliminated && i < MAX_PLAYERS; i++) p->elimination[i] = g->elimination_order[i];
+    return true;
+}
+
+void game_rep_attach(Game *g) {
+    g->rep_live = true;
+    memset(&g->rep, 0, sizeof g->rep);
+}
+
+void game_copy_head(Game *dst, const Game *src, size_t n) {
+    if (n > offsetof(Game, logs)) n = offsetof(Game, logs);
+    memcpy(dst, src, n);
+    if (n > offsetof(Game, rep_live)) dst->rep_live = false;
+}
+
+uint64_t game_rep_fingerprint(const Game *g) {
+    GameRepPosition p;
+    return rep_position(g, &p) ? game_rep_position(&p) : 0;
+}
+
+// The engine's checkpoint, right after a pickup, on a game still running.
+// `drew` says whether the pickup's refill handed anyone a card. True for a draw.
+static bool rep_checkpoint(Game *g, bool drew) {
+    // Only a full Game its owner attached has a ring to keep (Game.rep_live).
+    if (!g->rep_live || drew || g->status != GAME_STATUS_PLAYING || game_done(g) >= 0) return false;
+    GameRepetition *r = &g->rep;
+    GameRepPosition p;
+    if (!rep_position(g, &p)) { memset(r, 0, sizeof *r); return false; }
+    uint32_t in_mask = 0;
+    for (int s = 0; s < g->num_players && s < MAX_PLAYERS; s++)
+        if (g->players[s].status == PLAYER_STATUS_IN) in_mask |= 1u << s;
+    return game_rep_checkpoint(r, game_rep_position(&p), g->deck_count + (g->has_flipped ? 1 : 0),
+                               g->discard_pile_length, in_mask);
 }
 
 // One seat's turn at the talon: draw to six, log it as one DRAW, and drop a
@@ -1300,6 +1452,9 @@ bool handle_pickup(Game *g, int player_idx) {
     g->num_battles = 0;
     SNAP(g, ENGINE_HOOK_PICKUP, player_idx);
 
+    // Whether the refill hands anyone a card: the stock, or the trump under it.
+    const int stock_before = g->deck_count;
+    const bool flip_before = g->has_flipped;
     refill_player_hands(g);
 
     g->first_attacker = (int8_t)get_next_player_index(g, g->defender);
@@ -1309,6 +1464,14 @@ bool handle_pickup(Game *g, int player_idx) {
     dc->defender_index = g->defender;
     g->good_players_mask = 0;
     g->has_good_timestamp = false;
+
+    // THE REPETITION DRAW's one checkpoint (game.h GameRepetition): a pickup that
+    // drew nobody a card. The game's own status says it is over, so every apply
+    // path - awire_apply, the replay's replay_action_apply, a bot's rollout -
+    // ends here alike, and game_done reads it as over with every seat still in
+    // a fool.
+    if (rep_checkpoint(g, g->deck_count != stock_before || g->has_flipped != flip_before))
+        g->status = GAME_STATUS_GAME_OVER;
     return true;
 }
 

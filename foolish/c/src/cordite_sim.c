@@ -2250,7 +2250,7 @@ int *rollout_index_scratch(int which) {
 }
 
 void solve_clone_prefix(Game *dst, const Game *src) {
-    memcpy(dst, src, offsetof(Game, logs));
+    game_copy_head(dst, src, offsetof(Game, logs));
     // Sinkhole: log_alloc sees a full array and drops appends into its own
     // static scratch, so nothing ever writes past the prefix-sized slot.
     dst->num_logs = MAX_LOGS;
@@ -2263,7 +2263,7 @@ LegalMoves *rollout_moves_scratch(void) { return &solve_ws.rollout; }
 Game *solve_scratch_root(void) { return (Game *)solve_root_scratch; }
 
 void solve_clone_root(Game *dst, const Game *src) {
-    memcpy(dst, src, offsetof(Game, logs));
+    game_copy_head(dst, src, offsetof(Game, logs));
     dst->num_logs = 0;   // solver never reads history; keeps lite reads in-slot
 }
 

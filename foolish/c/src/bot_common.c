@@ -55,7 +55,7 @@ bool bot_solver_ready(void) {
 
 int bot_solve(BotSolver *S, const Game *g, int alpha, int beta, int depth) {
     int loser = game_done(g);
-    if (loser >= 0) return (loser == S->me) ? -(1000 - depth) : (1000 - depth);
+    if (loser >= 0) return ((game_fools(g) >> S->me) & 1u) ? -(1000 - depth) : (1000 - depth);   // every fool of a draw loses
     if (bot_in_count(g) == 0) return 0;   // defensive: simultaneous out
     if (depth >= BOT_SOLVE_MAX_DEPTH) { S->aborted = true; return 0; }
     if (--S->budget <= 0) { S->aborted = true; return 0; }

@@ -168,7 +168,7 @@ unsigned char *wasm_cards_b_ptr(void) { return g_in_raw_b; }
 
 static void snap_cb(const Game *g, int tag, int aux) {
     if (g_n_snaps >= SNAP_RING_CAP) return;
-    memcpy(g_snaps[g_n_snaps].bytes, g, GAME_PREFIX_SIZE);
+    game_copy_head((Game *)(void *)g_snaps[g_n_snaps].bytes, g, GAME_PREFIX_SIZE);
     g_snap_tags[g_n_snaps] = tag;
     g_snap_aux[g_n_snaps] = aux;
     g_n_snaps++;
@@ -335,6 +335,7 @@ int wasm_state_serialize(void) {
 // a negative GAME_INVALID_* reason if the state inside is one the kernel
 // refuses (game.h game_validate) - the working game is then left as it was.
 int wasm_state_deserialize(int len) {
+    if (!g_game.rep_live) game_rep_attach(&g_game);   // the row's repetition history lands in it
     return state_blob_load(&g_game, g_io, len, 0);
 }
 

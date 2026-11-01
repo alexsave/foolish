@@ -61,11 +61,12 @@ static inline int bot_in_count(const Game *g) {
     return n;
 }
 
-// Copy only the live prefix of a Game (header + first num_logs entries).
-// logs[] is the final member, so everything else is inside the prefix.
+// Copy only the live prefix of a Game (header + first num_logs entries). The
+// repetition ring past the logs (game.h Game.rep) stays behind: the copy plays
+// without the rule (game_copy_head clears rep_live).
 static inline void bot_lite_clone(Game *dst, const Game *src) {
-    size_t base = offsetof(Game, logs);
-    memcpy(dst, src, base + (size_t)src->num_logs * sizeof(GameLog));
+    game_copy_head(dst, src, offsetof(Game, logs));
+    memcpy(dst->logs, src->logs, (size_t)src->num_logs * sizeof(GameLog));
 }
 
 // A sampled world's board: the whole Game but its log, which keeps only the
@@ -79,7 +80,7 @@ static inline void bot_lite_clone(Game *dst, const Game *src) {
 // Game holds only the current operation's records) has its discards from the
 // memory: the same cards, as few records as MAX_LOG_PAIRS allows.
 static inline void bot_clone_world(Game *dst, const Game *src) {
-    memcpy(dst, src, offsetof(Game, logs));
+    game_copy_head(dst, src, offsetof(Game, logs));
     int nl = 0;
     const BotMemory *mem = bot_mem_bound_read(src);
     if (mem) {

@@ -70,7 +70,7 @@ static int        g_rs_n;
 static void rs_snap_cb(const Game *g, int tag, int aux) {
     ENGINE_SNAP_ROOM(g_rs_n < RS_MAX_SNAPS);
     if (g_rs_n >= RS_MAX_SNAPS) return;
-    memcpy(g_rs_snaps[g_rs_n].bytes, g, RS_GAME_PREFIX);
+    game_copy_head((Game *)(void *)g_rs_snaps[g_rs_n].bytes, g, RS_GAME_PREFIX);
     g_rs_tags[g_rs_n] = tag;
     g_rs_aux[g_rs_n] = aux;
     g_rs_n++;

@@ -211,6 +211,7 @@ $(call host_prog,bench_engine,tests/bench_engine.c)
 # since dropping it from coverage today would leave it running in no CI at all.
 tests: build/cnitro_tests build/bot_memory_test build/bot_drive_threads_test build/replay_threads_test build/cnitro_replay \
        build/replay_overlay_test build/replay_rebuild_difftest build/hand_contract_test build/oracle_rank_test
+	./tests/rep_head_copies.sh
 	./build/cnitro_tests
 	./build/bot_memory_test
 	./build/hand_contract_test

@@ -337,6 +337,11 @@ typedef struct {
     Coder *rev_coder;          // coder reached from draw_for to code reveals
     const unsigned char *rev;  // encode: real hidden card ids (deal + draws)
     int rev_n, rev_pos;        // reveal stream length / cursor
+    // THE REPETITION DRAW, the engine's own rule over this model's hands
+    // (game.h game_rep_checkpoint): a game the engine ended as a draw ends here
+    // on the same pickup, so its header names fools and no atom follows it.
+    GameRepetition rep;
+    bool drawn;
 } RModel;
 
 static _Thread_local RModel g_model;
@@ -578,6 +583,37 @@ static void discard_table(RModel *m) {
 // Each apply_* mirrors the corresponding execute* in the server actions,
 // including the exact order of emitted logs and rotation updates.
 
+// This model's position (game.h GameRepPosition), right after a pickup: the
+// table empty, nobody good, nobody awaiting. Compared only with this model's own
+// earlier positions, so the stock is the model's (the never-revealed cards).
+static uint64_t model_position(const RModel *m) {
+    GameRepPosition p;
+    memset(&p, 0, sizeof p);
+    p.rules = (int8_t)(m->pass_allowed ? 0 : GAME_RULE_NO_PASS);
+    p.num_players = (int8_t)m->n;
+    p.power_suit = (int8_t)m->power_suit;
+    p.first_attacker = (int8_t)m->first_attacker;
+    p.defender = (int8_t)m->defender;
+    p.has_flipped = m->flipped_held;
+    p.flipped = (int8_t)(m->flipped_held ? m->trump_id : -1);
+    p.discard = (int16_t)m->discard;
+    p.deck_count = (int16_t)m->deck_count;
+    p.stock = m->unseen;
+    p.good_mask = m->good_mask;
+    p.num_battles = (int8_t)m->num_battles;
+    for (int i = 0; i < m->num_battles && i < MAX_BATTLES; i++) {
+        p.attack[i] = m->battles[i].attack;
+        p.defense[i] = m->battles[i].defense;
+    }
+    for (int s = 0; s < m->n; s++) {
+        p.status[s] = m->status[s] ? PLAYER_STATUS_IN : PLAYER_STATUS_OUT;
+        p.hand[s] = m->known[s];
+    }
+    p.num_eliminated = (int8_t)m->num_elim;
+    for (int i = 0; i < m->num_elim && i < MAX_PLAYERS; i++) p.elimination[i] = (int8_t)m->elim[i];
+    return game_rep_position(&p);
+}
+
 static void apply_attack(RModel *m, int seat, const int8_t *ids, int n) {
     m->good_mask = 0;   // every action clears it (game.c handle_attack)
     if (g_atom_sink) {
@@ -673,10 +709,18 @@ static void apply_pickup(RModel *m) {
     emit(m, LOG_PICKUP, m->defender, -1, pairs, np);
     for (int i = 0; i < np; i++) m->known[m->defender] |= 1ull << pairs[i][0];
     m->num_battles = 0;
+    const int stock_before = stock_total(m);
     refill(m);
     m->first_attacker = next_in(m, m->defender);
     m->defender = next_in(m, m->first_attacker);
     emit(m, LOG_DEFENDER_CHANGE, -1, m->defender, 0, 0);
+    // The engine's checkpoint (game.c handle_pickup): a pickup that drew nobody
+    // a card, on a game still running.
+    if (stock_total(m) == stock_before && in_count(m) >= 2) {
+        uint32_t in_mask = 0;
+        for (int s = 0; s < m->n; s++) if (m->status[s]) in_mask |= 1u << s;
+        m->drawn = game_rep_checkpoint(&m->rep, model_position(m), stock_total(m), m->discard, in_mask);
+    }
 }
 
 // handle_good WITHOUT the round transition: `seat` declares good and the bout
@@ -1442,7 +1486,7 @@ static void run_replay_v6(RModel *m, Coder *c, Src *s, uint32_t n_atoms) {
     }
 
     for (uint32_t a = 0; a < n_atoms; a++) {
-        if (in_count(m) <= 1) { m->err = REPLAY_ELOGSAFTER; return; }
+        if (in_count(m) <= 1 || m->drawn) { m->err = REPLAY_ELOGSAFTER; return; }
         check_conservation(m);
         if (m->err) return;
 
@@ -1815,10 +1859,13 @@ static int decode_impl(const unsigned char *in, int in_len,
     if (m->err) return -m->err;
     if (!bn_is_zero(&g_bn)) return -REPLAY_ELEFTOVER;
     // A code may legitimately be a mid-game cut where >1 players are still IN -
-    // then there is no fool yet (out[4] = 0xFF).
+    // then there is no fool yet (out[4] = 0xFF). A game that ended as a
+    // repetition draw has every seat still IN a fool, and names the lowest, as
+    // game.h game_done does: the seats the elimination does not name are the
+    // fools.
     int fool = -1;
-    if (in_count(m) == 1) {
-        for (int seat = 0; seat < n; seat++)
+    if (in_count(m) == 1 || m->drawn) {
+        for (int seat = n - 1; seat >= 0; seat--)
             if (m->status[seat]) fool = seat;
     }
 
