@@ -33,8 +33,69 @@ No knob is needed for the production behaviour.
 | `FUSION_SHADOW_W` | 100 | the noisy race's worlds, percent of octogen's: the cost lever (research) |
 | `FUSION_NOISE_MODE` | 0 | 0: uniform over the sensible candidates; 1: uniform over the seat's whole rollout menu (research) |
 | `FUSION_VOID_MOD` | 4 | the void mixture (octogen's value) |
+| `FUSION_VOID_KEEP`, `FUSION_FLOOR_KEEP`, `FUSION_INDEP`, `FUSION_TOLD_MOD`, `FUSION_A`, `FUSION_D`, `FUSION_D_MOD` | see below | the belief research knobs ("Belief research knobs" below); at their defaults fusion plays as without them |
 
 The table size is the game's seat count, the size every measurement was taken at, not the number of seats still in.
+
+## Belief research knobs (2026-10-31)
+
+Seven knobs that change what fusion believes about the other seats' hands, for paired experiments.
+Each is a field of `OgFusion`, read by `og_fusion_params` the way the knobs above are, and takes effect only under `og_fu`, so octogen never sees one.
+At every default fusion plays exactly as without them: the `--inspect` transcripts of octogen and of fusion at 2, 4 and 6 players, seeds 200001-200003, against octogen tables, are byte-identical to strong-fusion's (`a413fa12`, 18 of 18), and so are fusion's with `FUSION_VOID_KEEP=750 FUSION_FLOOR_KEEP=500` set (9 of 9).
+
+| Knob | Default | Meaning |
+| --- | --- | --- |
+| `FUSION_VOID_KEEP` | unset: (m-1)/m of `FUSION_VOID_MOD` m, 750 at 4 | per mille of worlds an untold seat's voids apply in |
+| `FUSION_FLOOR_KEEP` | unset: 1/`OG_FLOOR_MOD`, 500 | per mille of worlds an untold seat's floor applies in |
+| `FUSION_INDEP` | 0 | 1: every void and every floor of an untold seat is kept or dropped on its own draw per world, at its keep rate, instead of all or none |
+| `FUSION_TOLD_MOD` (B) | 0 | 0: a told seat's voids and floors are dropped (octogen's `OG_ADAPT`); N > 0: it keeps them, the ones inferred after the tell too, and they apply in 1 of N worlds |
+| `FUSION_A` | 0 | 1: the pinned-card tell (below) marks a seat told |
+| `FUSION_D` | 0 | a bitmask of the D constraints: 1 D1, 2 D2, 4 D4 |
+| `FUSION_D_MOD` | 4 | the D constraints apply in (m-1)/m of worlds |
+
+### The worlds
+
+Octogen picks a world's constraints by its index: voids unless `w % 4 == 3`, floors when `w % 2 == 0`.
+Fusion's keep rates use one schedule for any rate num/den: world w keeps the constraint when ceil((w+1) num/den) > ceil(w num/den), so the first n worlds keep exactly ceil(n num/den) (`og_keep_at`).
+For (m-1)/m it is octogen's void rule and for 1/m its floor rule, world for world, so the defaults draw nothing new and choose the same worlds.
+The per-world draws the other knobs need (the told seats' 1 in N, `FUSION_INDEP`'s draw per void and per floor) are hashes of the world's seed, read from their high bits; they never touch the game's or the strategy's random streams.
+The told seats' draw is one per world, independent of the untold seats' schedule; in a told world every told seat's voids and floors apply together.
+When a world needs a choice per seat (a told seat under B, `FUSION_INDEP`, a D constraint) `og_fu_world` fills an `OgWorldMask` and `og_sample_world` repairs the deal by it, the same repair as octogen's (a forbidden card in an unknown slot swaps with the first deck card the mask allows); otherwise the mask is NULL and the world is octogen's.
+Pinned cards are facts: no knob drops one, and no constraint touches a pinned slot.
+
+### A: the pinned-card tell
+
+During the scan, a seat p that is not the deciding seat is told when:
+
+- it picks up while exactly one attack is uncovered and one of its pinned cards (before this pickup pins the table) covers it (`can_cover`); or
+- it covers or picks up while the table holds only uncovered attacks, all of one value, a one-card transfer was publicly legal, and it holds a pinned card of that value.
+
+"Publicly legal" (`og_xfer_legal`) is the engine's transfer rule on public facts only: the table's rules allow transfers, no cover is on the table, the receiving seat (the next one after p that the log has not seen go out) holds at least the table's attacks plus one by the log's count, and the table has room.
+A seat that left without a log record reads as a receiver with no cards, so the test can only err toward "not legal".
+The transfer tell rests on the log's hand counts, so it is kept only when those counts end on the board's (`counts_ok`); the cover tell needs no count.
+A told seat is the same flag as the void tell's (`mc_tell`), so it goes through B: the old hard drop at `FUSION_TOLD_MOD=0`, the soft one at N.
+Handwritten covers a table it can cover whole and transfers whenever it can, so neither pattern is ever a handwritten seat's (`test_fusion_d_sound_vs_handwritten`).
+
+### D: soft constraints against handwritten-style seats
+
+Each rule reads the handwritten policy's habit, on public facts only (table, hand counts by the log, the defender's room, the rules); none reads a hand.
+
+- D1: the defender covers or picks up where a one-card transfer was publicly legal (A's test): it holds no card of that value. Not recorded against a pinned card of the value.
+- D2: an attacker says good while the defender had room for one more card: any non-trump of a table value would have been a legal throw-in, so it holds no non-trump of the table's values (a value it holds pinned is left out).
+- D4: an attacker plays a lone non-trump card where the defender had room for two (a lead: its hand; a throw-in: its hand less the uncovered attacks): it holds no second non-trump of that value.
+
+Each lives until that seat's next draw or pickup (a pickup may record a new D1), applies in (`FUSION_D_MOD`-1) of `FUSION_D_MOD` worlds, and is dropped with the others when the seat's constraints together leave too few pool cards for its unknown slots.
+The tell: a seat that plays a card one of its D constraints forbids, which it did not gain publicly (not pinned), is not a handwritten seat; its D constraints are dropped for the rest of the game (`d_distrust`).
+A told seat keeps no D constraint either, and none survives a scan whose hand counts disagree with the board.
+Over 80 random-vs-handwritten_prod games at 3 and 4 seats, every rule records (D1 1425, D2 1529, D4 1158 seat-decisions) and no handwritten hand ever breaks one; against random seats the D tell fires 3114 times and A's tells 714.
+
+### The eval hook: `fusion_x`
+
+A knob in the environment reaches both arms of `--strategy=fusion --control=...` when both are fusion, so the research arm is its own brain: `fusion_x` (`fux`, `STRAT_FUSION_X = 25`), fusion with every knob read from the `FUSIONX_` prefix instead of `FUSION_`.
+It is a research row in `src/bots.c` (no key: no roster row, no account, not seeded, not on the ladder) and `native_only`, so the browser's modules never link it.
+With no `FUSIONX_*` set it is fusion move for move (9 of 9 transcripts), and `FUSIONX_*` leaves fusion's own transcripts unchanged.
+
+    FUSIONX_TOLD_MOD=4 cnitro_eval --strategy=fusion_x --control=fusion --opp=octogen --players=4 --games=N --seed-start=S
 
 ## Why the noise alone cost a fixed amount: octogen's ties
 
@@ -224,6 +285,7 @@ The fusion tests (`tests/tests.c`, after `test_bot_roster_choose_scopes_knobs`),
 - `test_fusion_void_mixture`: over 2- and 3-seat game stretches, fusion at `FUSION_VOID_MOD=7` with the noise off is octogen at `OG_VOID_MOD=7` move for move and stream for stream, octogen right after a fusion call is octogen at 4, and somewhere the two mixtures part.
 - `test_fusion_shadow_rule`: `og_fusion_overrules` on its own: a pick better in every world overrules, an exact tie never does (even at bar 0), a pick about one standard error better overrules at 1 SE and not at 2, a worse pick never does, the trump-keep tax counts, and one world is not evidence.
 - `test_fusion_shadow_selection`: over 2- and 3-seat game stretches with the noise on, at an unreachable bar (`FUSION_SHADOW=10000`) fusion plays octogen's own pick every decision although its rollouts drew the noise; at bar 0 the noisy race overrules octogen somewhere; and octogen right after a fusion call is octogen before it, the same move and both RNG streams, with the noise back at 0 (the octogen-identity guard: fusion leaves no parameter behind); and octogen's pinned pick played every world of every shadow race (`og_fusion_stats`). `FU_TRACE=1` prints the races and overrules (68 races, 23 overruled at bar 0).
+- `test_fusion_told_mod`, `test_fusion_pinned_tell`, `test_fusion_indep_and_keep`, `test_fusion_d_rules` and `test_fusion_d_sound_vs_handwritten`: the belief research knobs, through `og_fusion_probe` on hand-written logs and over random-vs-handwritten games ("Belief research knobs" above; each test's comment lists its mutations).
 
 `test_bot_roster_choose_scopes_knobs` runs every linked roster row, so fusion's row must dispatch, and `test_podkidnoy_every_brain` plays fusion too.
 
