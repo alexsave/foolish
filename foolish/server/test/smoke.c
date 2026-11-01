@@ -896,7 +896,7 @@ static void a_rematch_rates_its_own_game(void) {
         T_CHECK(rematch_board(&A, &B, board[g + 1]));
         T_EQ_INT(stamp[g].n, 2);
         int32_t want[MAX_PLAYERS];
-        T_EQ_INT(elo_deltas(board[g], order[g], 2, want), 2);
+        T_EQ_INT(elo_deltas(board[g], order[g], NULL, 2, want), 2);
         fprintf(stderr, "smoke: rematch game %d: fool seat %d, stamp %d%+d %d%+d (want %+d %+d), board %d %d -> %d %d\n", g + 1,
                 order[g][1], stamp[g].before[0], stamp[g].delta[0], stamp[g].before[1], stamp[g].delta[1], want[0], want[1],
                 board[g][0], board[g][1], board[g + 1][0], board[g + 1][1]);

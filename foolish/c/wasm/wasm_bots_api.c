@@ -139,11 +139,13 @@ void wasm_import_logs(void) {
     q += 2;
     if (n > MAX_LOGS) n = MAX_LOGS;
     g->num_logs = 0;
+    bool seats_ok = true;
     for (int i = 0; i < n; i++) {
         GameLog *l = &g->logs[g->num_logs++];
         l->log_type = (int8_t)*q++;
         l->player_idx = (int8_t)*q++;
         l->defender_index = (int8_t)*q++;
+        seats_ok &= game_log_seat_ok(g, l->player_idx) && game_log_seat_ok(g, l->defender_index);
         int np = *q++;
         l->num_pairs = 0;
         for (int j = 0; j < np; j++) {
@@ -155,6 +157,9 @@ void wasm_import_logs(void) {
             q += 2;
         }
     }
+    // A record naming a seat the table does not have is a log no game wrote, and a
+    // brain would index its per-seat arrays by it (game.h game_log_seat_ok): none kept.
+    if (!seats_ok) g->num_logs = 0;
 }
 
 // Per-seat application strategy keys. Not part of the rules state (the rules

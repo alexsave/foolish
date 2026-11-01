@@ -1464,11 +1464,14 @@ int anim_pass_slot_shown(int previewing, int dragging, int seen_this_drag,
 
 // ---- the end screen ----
 
-// THE FINISH ORDER: rank 1 is the first player out, counting up to the fool
-// last. `elimination` is first-out first and holds everyone except the fool;
-// `game_over` is the one seat still holding cards, given the last place, or
-// negative while the game is still running. `total` on every row is the seat
-// count, so a row knows it is the fool without consulting the list.
+// THE FINISH ORDER: rank 1 is the first player out, counting up to the fools
+// last. `elimination` is first-out first. `game_over` is negative while the
+// game is still running, and otherwise a fool's seat (game.h game_done): then
+// EVERY seat the elimination does not name is a fool and takes the last place,
+// by seat - the one seat still holding cards after a game lost on cards, every
+// seat still in after a repetition draw (game.h game_fools). The last place is
+// the seat count, so a row knows it is a fool without consulting the list, and
+// the fools of a draw share it.
 typedef struct {
     int place;    // 1..total
     int seat;
@@ -1484,7 +1487,7 @@ int anim_finish_rows(const unsigned char *elimination, int n_elim,
 // A seat count no table has (negative, or past MAX_PLAYERS) and a list longer
 // than a table are ANIM_EBADARG; `out->n` is 0 on a refusal.
 typedef struct {
-    int     game_over;                   // the fool's seat, negative while the game runs
+    int     game_over;                   // a fool's seat, negative while the game runs
     int     n_players;
     int     my_seat;                     // negative for a spectator
     uint8_t n_elim;
@@ -1492,7 +1495,7 @@ typedef struct {
 } AnimFinishAsk;
 typedef struct {
     uint8_t       n;
-    AnimFinishRow rows[MAX_PLAYERS + 1]; // everyone out, then the fool
+    AnimFinishRow rows[MAX_PLAYERS + 1]; // everyone out, then the fools
 } AnimFinish;
 int anim_finish_ask(const AnimFinishAsk *q, AnimFinish *out);
 

@@ -16,7 +16,8 @@ void client_init(ClientTable *c, ClientSlot *slot) {
 // ---------- the view ------------------------------------------------------------
 
 // The one seat the elimination order does not name, once the game is over (its
-// seats are parked, so game_done cannot say); game_done while it runs.
+// seats are parked, so game_done cannot say), the lowest of them for a draw
+// (game.h game_fools); game_done while it runs.
 static int fool_of(const Game *g) {
     if (g->status != GAME_STATUS_GAME_OVER) return game_done(g);
     uint32_t out = 0;
@@ -59,6 +60,7 @@ static void view_board(TableView *v, const Game *g, int viewer, int status) {
     // lobby, CLIENT_EDIT_LOBBY) leaves it behind.
     if (status != GAME_STATUS_GAME_OVER) view_unrate(v);
     v->fool = (int8_t)fool_of(g);
+    v->drawn = game_drawn(g);
     v->deck_count = g->deck_count;
     v->discard_pile_length = g->discard_pile_length;
     v->has_flipped = g->has_flipped;
@@ -319,7 +321,7 @@ static void delta_snap(const Game *g, int tag, int aux) {
     ClientDelta *d = t_delta;
     if (!d) return;
     if (d->n_snaps >= EVW_DELTA_MAX_SNAPS) { d->overflow = true; return; }
-    memcpy(d->slot[d->n_snaps].bytes, g, CLIENT_DELTA_SNAP_BYTES);
+    game_copy_head((Game *)(void *)d->slot[d->n_snaps].bytes, g, CLIENT_DELTA_SNAP_BYTES);
     d->tag[d->n_snaps] = tag;
     d->aux[d->n_snaps] = aux;
     d->n_snaps++;

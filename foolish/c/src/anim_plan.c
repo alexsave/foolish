@@ -1688,7 +1688,18 @@ int anim_finish_rows(const unsigned char *elimination, int n_elim,
                      AnimFinishRow *out, int cap) {
     if (!out || n_elim < 0 || n_players < 0) return ANIM_EBADARG;
     if (n_elim > 0 && !elimination) return ANIM_EBADARG;
-    const int rows = n_elim + (game_over >= 0 ? 1 : 0);
+    // THE FOOLS are every seat the elimination does not name (game.h
+    // game_fools): the one seat still holding cards after a game lost on cards,
+    // every seat still in after a repetition draw. A seat number past the table
+    // names nobody.
+    uint32_t fools = 0;
+    if (game_over >= 0) {
+        fools = n_players >= 32 ? ~0u : (1u << n_players) - 1u;
+        for (int i = 0; i < n_elim; i++)
+            if (elimination[i] < 32) fools &= ~(1u << elimination[i]);
+    }
+    int rows = n_elim;
+    for (uint32_t f = fools; f; f &= f - 1u) rows++;
     if (rows > cap) return ANIM_ECAP;
     int w = 0;
     for (int i = 0; i < n_elim; i++) {
@@ -1697,13 +1708,15 @@ int anim_finish_rows(const unsigned char *elimination, int n_elim,
         out[w].is_you = (my_seat >= 0 && (int)elimination[i] == my_seat) ? 1 : 0;
         w++;
     }
-    // The fool is the one seat still holding cards, and takes the last place -
-    // which is the SEAT COUNT, not the row count: a row knows it is the fool by
-    // place == total.
-    if (game_over >= 0) {
+    // Each fool takes the last place, by seat - which is the SEAT COUNT, not the
+    // row count: a row knows it is a fool by place == total, and two fools of a
+    // draw share it.
+    for (int s = 0; s < 32 && fools; s++) {
+        if (!((fools >> s) & 1u)) continue;
+        fools &= ~(1u << s);
         out[w].place = n_players;
-        out[w].seat = game_over;
-        out[w].is_you = (my_seat >= 0 && game_over == my_seat) ? 1 : 0;
+        out[w].seat = s;
+        out[w].is_you = (my_seat >= 0 && s == my_seat) ? 1 : 0;
         w++;
     }
     return w;

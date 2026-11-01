@@ -36,7 +36,7 @@ static void table_snap(const Game *g, int tag, int aux) {
     if (!s) return;
     ENGINE_SNAP_ROOM(s->n < MAX_SNAPS);
     if (s->n >= MAX_SNAPS) return;
-    memcpy(s->slot[s->n].bytes, g, TABLE_SNAP_BYTES);
+    game_copy_head((Game *)(void *)s->slot[s->n].bytes, g, TABLE_SNAP_BYTES);
     s->tag[s->n] = tag;
     s->aux[s->n] = aux;
     s->n++;
@@ -171,6 +171,9 @@ void table_init(Table *t, Game *g, TableSnaps *snaps) {
     t->actor = -1;
     t->mem.cur_def = t->mem.flip_holder = -1;
     if (snaps) snaps->n = 0;
+    // A table's Game is full storage for a live game: it carries the repetition
+    // rule's ring (game.h game_rep_attach).
+    if (g) game_rep_attach(g);
 }
 
 int table_seat_kinds(const Roster *r, int8_t *kinds) {
@@ -466,6 +469,11 @@ int table_cast(const Table *t, const char *game_id, int gid_len, int viewer, uin
 bool table_cast_delta_ok(const Table *t) {
     if (!t->loaded || t->n_moves == 0 || t->dealt_now || t->roster_changed || t->rules_changed || t->lobby_event) return false;
     const Game *g = t->g;
+    // A REPETITION DRAW is not a viewer's to rebuild: it is a repeat of the whole
+    // board, hidden hands and all, which a masked board cannot see (game.c keeps
+    // no history on one). The operation that ends a game that way goes as the
+    // board cast.
+    if (t->ended && game_drawn(g)) return false;
     // Every record the operation wrote is on the board (none dropped at MAX_LOGS),
     // and the client's slot holds as many hooks and records as the server's did.
     return g->num_logs < MAX_LOGS && g->num_logs - t->log_start <= EVW_DELTA_MAX_LOGS && t->snaps->n <= EVW_DELTA_MAX_SNAPS;
@@ -935,7 +943,7 @@ static int unnamed_seat(const Game *g) {
     return -1;
 }
 
-int table_rankings(const Table *t, int8_t seats_out[MAX_PLAYERS]) {
+int table_rankings(const Table *t, int8_t seats_out[MAX_PLAYERS], int8_t places_out[MAX_PLAYERS]) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     const Game *g = t->g;
     unsigned char elim[MAX_PLAYERS];
@@ -945,7 +953,10 @@ int table_rankings(const Table *t, int8_t seats_out[MAX_PLAYERS]) {
     AnimFinishRow rows[MAX_PLAYERS + 1];
     const int n = anim_finish_rows(elim, n_elim, fool, g->num_players, -1, rows, MAX_PLAYERS + 1);
     if (n < 0) return n;
-    for (int i = 0; i < n && i < MAX_PLAYERS; i++) seats_out[i] = (int8_t)rows[i].seat;
+    for (int i = 0; i < n && i < MAX_PLAYERS; i++) {
+        seats_out[i] = (int8_t)rows[i].seat;
+        if (places_out) places_out[i] = (int8_t)rows[i].place;
+    }
     return n;
 }
 
@@ -962,12 +973,15 @@ static int elo_win_change(int32_t d) {
     return c;
 }
 
-int elo_deltas(const int32_t *ratings, const int8_t *order, int n, int32_t *out) {
+int elo_deltas(const int32_t *ratings, const int8_t *order, const int8_t *place, int n, int32_t *out) {
     if (!ratings || !order || !out || n < 0 || n > MAX_PLAYERS) return TABLE_E_WIRE;
     uint32_t seen = 0;
     for (int i = 0; i < n; i++) {
         if (order[i] < 0 || order[i] >= n || ((seen >> order[i]) & 1u)) return TABLE_E_WIRE;
         seen |= 1u << order[i];
+        // Places run best first: a place may repeat the one before it (a tie),
+        // never undercut it.
+        if (place && (place[i] < 1 || place[i] > n || (i > 0 && place[i] < place[i - 1]))) return TABLE_E_WIRE;
     }
     for (int i = 0; i < n; i++) {
         const int me = order[i];
@@ -975,7 +989,10 @@ int elo_deltas(const int32_t *ratings, const int8_t *order, int n, int32_t *out)
         for (int j = 0; j < n; j++) {
             if (j == i) continue;
             const int c = elo_win_change(ratings[order[j]] - ratings[me]);
-            total += i < j ? c : c - 10;
+            // 1 against a seat below, 0 against one above, and a half against a
+            // seat that shares the place: the fools of a repetition draw.
+            const int pi = place ? place[i] : i, pj = place ? place[j] : j;
+            total += pi < pj ? c : pi > pj ? c - 10 : c - 5;
         }
         out[me] = total;
     }
@@ -991,11 +1008,11 @@ int table_rate(Table *t, const int32_t *ratings, int n) {
         from[s] = ratings[s] == TABLE_RATING_NONE ? TABLE_RATING_START : ratings[s];
     }
     if (!t->ended || n < 2) return TABLE_MOOT;
-    int8_t order[MAX_PLAYERS];
+    int8_t order[MAX_PLAYERS], place[MAX_PLAYERS];
     int32_t deltas[MAX_PLAYERS];
-    const int k = table_rankings(t, order);
+    const int k = table_rankings(t, order, place);
     if (k != n) return k < 0 ? k : TABLE_E_MISMATCH;
-    const int rc = elo_deltas(from, order, n, deltas);
+    const int rc = elo_deltas(from, order, place, n, deltas);
     if (rc < 0) return rc;
     memset(&t->ratings, 0, sizeof(t->ratings));
     t->ratings.n = (uint8_t)n;
@@ -1015,13 +1032,20 @@ int table_seat_of(const Table *t, const char *id, int id_len) {
 
 // ---------- the resident game ---------------------------------------------------
 
-// The Game's log array is its last field, so everything before it is the board a resident
-// keeps (a layout change that put a field after it would leave that field out: refused here).
+// THE GAME'S LAYOUT a resident relies on: everything before the log array is the head it
+// keeps, and after the logs comes only the repetition ring (game.h Game.rep), which the
+// resident keeps apart (TableResident.rep). A field anywhere else after the head would be
+// left out of both: refused here.
 _Static_assert(offsetof(Game, num_logs) < offsetof(Game, logs), "num_logs is in the resident head");
-_Static_assert(sizeof(Game) - offsetof(Game, logs) - sizeof(((Game *)0)->logs) < 8, "Game.logs is the Game's last field");
+_Static_assert(offsetof(Game, rep) == offsetof(Game, logs) + sizeof(((Game *)0)->logs), "Game.rep follows Game.logs");
+_Static_assert(sizeof(Game) - offsetof(Game, rep) - sizeof(((Game *)0)->rep) < 8, "Game.rep is the Game's last field");
 
 int table_adopt(Table *t, const TableResident *res) {
-    memcpy(t->g, res->head, TABLE_HEAD_BYTES);
+    // The table's Game is full storage (table_init attached it): the head, then the ring the
+    // resident kept apart, so a game held between two human moves keeps its history.
+    game_copy_head(t->g, (const Game *)(const void *)res->head, TABLE_HEAD_BYTES);
+    t->g->rep_live = true;
+    t->g->rep = res->rep;
     t->g->num_logs = 0;   // the board carries no log (table_load's rule)
     t->r = res->r;
     t->roster_valid = true;   // a resident is made only from a table the kernel loaded or committed
@@ -1040,7 +1064,10 @@ int table_adopt(Table *t, const TableResident *res) {
 }
 
 void table_resident(const Table *t, const BoardClock *clock, TableResident *out) {
-    memcpy(out->head, t->g, TABLE_HEAD_BYTES);
+    // The head without its ring flag (a head alone has no ring to point at), and the ring apart.
+    game_copy_head((Game *)(void *)out->head, t->g, TABLE_HEAD_BYTES);
+    if (t->g->rep_live) out->rep = t->g->rep;
+    else memset(&out->rep, 0, sizeof out->rep);
     // THE BOARD A LOAD OF ITS OWN ROW WOULD HOLD (view.h state_canonical), not the working
     // board: a seat's raw awaiting flag that the blob writes as game_seat_awaiting, carried
     // instead, played the next operation on another board than the recovery's replay of it;
@@ -1064,7 +1091,8 @@ int table_resident_encode(const TableResident *res, uint8_t *state, int state_ca
     // A resident is a Table's (table_resident), so its stamp is the board's own (table_stamp).
     const GameRatings *stamp = res->ratings.n > 0 ? &res->ratings : 0;
     uint8_t mb[BOT_MEM_BYTES_MAX];
-    const StateBlobSections sec = mem_section(&res->mem, res->mem_valid, mb, (int)sizeof mb);
+    StateBlobSections sec = mem_section(&res->mem, res->mem_valid, mb, (int)sizeof mb);
+    sec.rep = &res->rep;   // the ring the resident kept apart from its head (section 2)
     const int n = state_blob_put_full_at(g, &res->clock, stamp, &sec, STATE_BLOB_FORMAT, state);
     if (n == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
     if (n < 0) return n;
@@ -1167,6 +1195,11 @@ int table_set_session_log(Table *t, const uint8_t *log, int len) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     const int n = log_count(log, len);
     if (n < 0) return n;
+    // Every record names a seat of this table or none (game.h game_log_seat_ok):
+    // a brain indexes its per-seat arrays by them.
+    for (int at = 0, k; (k = log_record_at(log, len, at)) > 0; at += k)
+        if (!game_log_seat_ok(t->g, (int8_t)log[at + 7]) || !game_log_seat_ok(t->g, (int8_t)log[at + 8]))
+            return TABLE_E_WIRE;
     t->log_len = n;
     if (t->g->status == GAME_STATUS_PLAYING) mem_backfill(t, log, len);
     return n;

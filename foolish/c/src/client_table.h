@@ -72,10 +72,14 @@ typedef struct {
     int8_t   num_eliminated;
     int8_t   my_seat;         // -1: a spectator
     int8_t   my_hand_count;
-    int8_t   fool;            // the fool's seat once the game is over, else -1
+    int8_t   fool;            // the fool's seat once the game is over (the lowest, for a draw), else -1
     int16_t  deck_count, discard_pile_length;
     bool     has_flipped;
     bool     has_good_timestamp;
+    // THE GAME ENDED AS A REPETITION DRAW (game.h game_drawn): every seat the
+    // elimination does not name is a fool, `fool` the lowest of them. A screen
+    // says so rather than naming one fool.
+    bool     drawn;
     // THE TABLE'S RULES: true the classic passing game, false podkidnoy (Game.rules
     // GAME_RULE_NO_PASS, in the boundary sense of docs/PODKIDNOY.md). The roster
     // trailer's (roster.h, format 2), so a spectator deciding whether to join sees

@@ -33,6 +33,7 @@
 #include "../src/hand_layout.h"
 #include "../wasm/wire.h"
 #include "fm_exp_digest.h"   // fm_exp, its digest inputs and the committed digest
+#include "repetition_0e68bd.h"   // game 0e68bd: the looping game the repetition draw is held to
 #include <stdio.h>
 #include <time.h>
 #include <sys/mman.h>
@@ -9364,11 +9365,17 @@ static void test_board_finish_rows_rank_first_out_to_the_fool(void) {
     CHECK(rows[3].place == 4 && rows[3].seat == 1 && rows[3].is_you == 0,
           "the fool - the one seat still holding cards - takes the LAST place");
 
-    // The last place is the seat count, not the row count. A game with rows
-    // missing must not promote the fool.
+    // The last place is the seat count, not the row count. A list with a seat
+    // missing promotes nobody: every seat it does not name is a fool, at the
+    // seat count, by seat (the two fools of a repetition draw, game.h game_fools).
     n = anim_finish_rows(order, 2, 1, 4, -1, rows, MAX_PLAYERS);
-    CHECK(n == 3 && rows[2].place == 4,
-          "the fool's place is the seat count even when the list is short");
+    CHECK(n == 4 && rows[2].place == 4 && rows[2].seat == 1 && rows[3].place == 4 && rows[3].seat == 3,
+          "every seat the list does not name is a fool at the seat count, even when the list is short");
+    const unsigned char none[1] = { 0 };
+    n = anim_finish_rows(none, 0, 0, 2, 1, rows, MAX_PLAYERS);
+    CHECK(n == 2 && rows[0].place == 2 && rows[0].seat == 0 && !rows[0].is_you
+          && rows[1].place == 2 && rows[1].seat == 1 && rows[1].is_you,
+          "a two-seat draw: two fool rows, both at the last place");
 
     // A spectator holds no seat, and the kernel spends -1 on "no seat" too.
     n = anim_finish_rows(order, 3, 1, 4, -1, rows, MAX_PLAYERS);
@@ -9756,13 +9763,18 @@ static void test_ask_finish_rows_and_its_bounds(void) {
     CHECK(anim_finish_ask(&q, &out) == 4 && !out.rows[0].is_you && !out.rows[1].is_you
           && !out.rows[2].is_you && !out.rows[3].is_you, "a spectator owns no row");
 
-    // A FULL TABLE'S LIST AND A FOOL is one row more than there are seats, and
-    // the answer has room for it (the byte entry's scratch did too).
+    // A FULL TABLE: everyone out but the fool, and a draw with nobody out, every
+    // seat a fool - a row a seat either way, which the answer has room for.
     memset(&q, 0, sizeof q);
-    q.n_elim = MAX_PLAYERS; q.n_players = MAX_PLAYERS; q.game_over = 0; q.my_seat = -1;
-    for (int i = 0; i < MAX_PLAYERS; i++) q.elimination[i] = (uint8_t)i;
-    CHECK(anim_finish_ask(&q, &out) == MAX_PLAYERS + 1 && out.rows[MAX_PLAYERS].place == MAX_PLAYERS,
+    q.n_elim = MAX_PLAYERS - 1; q.n_players = MAX_PLAYERS; q.game_over = MAX_PLAYERS - 1; q.my_seat = -1;
+    for (int i = 0; i < MAX_PLAYERS - 1; i++) q.elimination[i] = (uint8_t)i;
+    CHECK(anim_finish_ask(&q, &out) == MAX_PLAYERS && out.rows[MAX_PLAYERS - 1].place == MAX_PLAYERS
+          && out.rows[MAX_PLAYERS - 1].seat == MAX_PLAYERS - 1,
           "the longest list a table can hold, and the fool after it");
+    q.n_elim = 0; q.game_over = 0;
+    CHECK(anim_finish_ask(&q, &out) == MAX_PLAYERS && out.rows[0].place == MAX_PLAYERS
+          && out.rows[MAX_PLAYERS - 1].place == MAX_PLAYERS && out.rows[MAX_PLAYERS - 1].seat == MAX_PLAYERS - 1,
+          "a full table drawn with nobody out: every seat a fool at the last place");
 
     // The bounds the shim used to hold.
     q.n_elim = MAX_PLAYERS + 1;
@@ -11779,7 +11791,7 @@ static void tb_fixture(int np, uint32_t bots, int seed) {
 // Where a state blob of a format this kernel reads keeps its clock (NULL: none).
 static uint8_t *tb_blob_clock(uint8_t *x, int xl) {
     if (state_blob_clock_bytes(x[0]) <= 0) return 0;
-    return x + xl - state_blob_tail_bytes(x[0]) + (x[0] == STATE_BLOB_FORMAT_V6 ? 2 : 0);
+    return x + xl - state_blob_tail_bytes(x[0]) + (state_blob_has_sections(x[0]) ? 2 : 0);
 }
 
 // Two state blobs of any formats this kernel reads carry the same board (the
@@ -11790,8 +11802,8 @@ static int tb_blob_same_board_clock(const uint8_t *x, int xl, const uint8_t *y, 
     const int cx = state_blob_clock_bytes(x[0]), cy = state_blob_clock_bytes(y[0]);
     if (cx != cy) return 0;
     if (cx == 0) return 1;
-    const uint8_t *kx = x + xl - state_blob_tail_bytes(x[0]) + (x[0] == STATE_BLOB_FORMAT_V6 ? 2 : 0);
-    const uint8_t *ky = y + yl - state_blob_tail_bytes(y[0]) + (y[0] == STATE_BLOB_FORMAT_V6 ? 2 : 0);
+    const uint8_t *kx = x + xl - state_blob_tail_bytes(x[0]) + (state_blob_has_sections(x[0]) ? 2 : 0);
+    const uint8_t *ky = y + yl - state_blob_tail_bytes(y[0]) + (state_blob_has_sections(y[0]) ? 2 : 0);
     return memcmp(kx, ky, (size_t)cx) == 0;
 }
 
@@ -11828,7 +11840,7 @@ static void test_table_load(void) {
         if (rc_ != (want)) fprintf(stderr, "  table_load(%s): got %d, want %d\n", msg, rc_, want); \
         CHECK(rc_ == (want) && !tb.loaded, msg); \
         CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, msg); } while (0)
-    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = STATE_BLOB_FORMAT_V6 + 1;
+    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = STATE_BLOB_FORMAT + 1;
     REFUSE(TABLE_E_STATE_VERSION, "a state blob of an unknown format", tb_state2, tb_state_len, tb_roster);
     tb_state2[0] = 1;
     REFUSE(TABLE_E_STATE_VERSION, "a v1 state blob (rewritten to v2 by a migration long ago)", tb_state2, tb_state_len, tb_roster);
@@ -12275,7 +12287,7 @@ static void test_table_plays_a_game_to_its_end(void) {
     CHECK(table_act(&tb, RS("id-0"), tb_buf, 2, -1, 0) == TABLE_MOOT, "and the next move is moot");
 
     int8_t order[MAX_PLAYERS];
-    const int k = table_rankings(&tb, order);
+    const int k = table_rankings(&tb, order, NULL);
     CHECK(k == 3 && order[2] == c.fool, "the fool finishes last");
     CHECK(order[0] == tb_game.elimination_order[0] && order[1] == tb_game.elimination_order[1],
           "the others finish in the order they went out");
@@ -12526,26 +12538,26 @@ static void test_elo_deltas(void) {
     int32_t out[MAX_PLAYERS];
     const int32_t even2[2] = { 1000, 1000 };
     const int8_t first0[2] = { 0, 1 }, first1[2] = { 1, 0 };
-    CHECK(elo_deltas(even2, first0, 2, out) == 2 && out[0] == 5 && out[1] == -5, "an even pair moves 5 each way");
-    CHECK(elo_deltas(even2, first1, 2, out) == 2 && out[1] == 5 && out[0] == -5, "the order is by place, not seat");
+    CHECK(elo_deltas(even2, first0, NULL, 2, out) == 2 && out[0] == 5 && out[1] == -5, "an even pair moves 5 each way");
+    CHECK(elo_deltas(even2, first1, NULL, 2, out) == 2 && out[1] == 5 && out[0] == -5, "the order is by place, not seat");
     const int32_t three[3] = { 1000, 1000, 1000 };
     const int8_t o3[3] = { 2, 0, 1 };
-    CHECK(elo_deltas(three, o3, 3, out) == 3 && out[2] == 10 && out[0] == 0 && out[1] == -10,
+    CHECK(elo_deltas(three, o3, NULL, 3, out) == 3 && out[2] == 10 && out[0] == 0 && out[1] == -10,
           "three even seats: +10, 0, -10");
     // The steps: a win against a player 511 above is worth 9, 512 above is 10.
     int32_t r[2] = { 1000, 1511 };
-    CHECK(elo_deltas(r, first0, 2, out) == 2 && out[0] == 9 && out[1] == -9, "d = 511: 9");
+    CHECK(elo_deltas(r, first0, NULL, 2, out) == 2 && out[0] == 9 && out[1] == -9, "d = 511: 9");
     r[1] = 1512;
-    CHECK(elo_deltas(r, first0, 2, out) == 2 && out[0] == 10 && out[1] == -10, "d = 512: 10");
+    CHECK(elo_deltas(r, first0, NULL, 2, out) == 2 && out[0] == 10 && out[1] == -10, "d = 512: 10");
     r[1] = 1000 - 34;
-    CHECK(elo_deltas(r, first0, 2, out) == 2 && out[0] == 5 && out[1] == -5, "d = -34: 5");
+    CHECK(elo_deltas(r, first0, NULL, 2, out) == 2 && out[0] == 5 && out[1] == -5, "d = -34: 5");
     r[1] = 1000 - 35;
-    CHECK(elo_deltas(r, first0, 2, out) == 2 && out[0] == 4 && out[1] == -4, "d = -35: 4");
+    CHECK(elo_deltas(r, first0, NULL, 2, out) == 2 && out[0] == 4 && out[1] == -4, "d = -35: 4");
     r[1] = 1000 - 5000;
-    CHECK(elo_deltas(r, first0, 2, out) == 2 && out[0] == 0 && out[1] == 0, "a far weaker loser moves nothing");
+    CHECK(elo_deltas(r, first0, NULL, 2, out) == 2 && out[0] == 0 && out[1] == 0, "a far weaker loser moves nothing");
     const int8_t dup[2] = { 0, 0 }, range[2] = { 0, 2 };
-    CHECK(elo_deltas(even2, dup, 2, out) == TABLE_E_WIRE, "a repeated seat is refused");
-    CHECK(elo_deltas(even2, range, 2, out) == TABLE_E_WIRE, "a seat past n is refused");
+    CHECK(elo_deltas(even2, dup, NULL, 2, out) == TABLE_E_WIRE, "a repeated seat is refused");
+    CHECK(elo_deltas(even2, range, NULL, 2, out) == TABLE_E_WIRE, "a seat past n is refused");
 }
 
 // ---- lobby edits ----
@@ -13342,8 +13354,10 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // hands in that order, played different games. [1] moved alone when the
     // replay format went to 11 (the trump symbol's alphabet gained the Aces):
     // the same logs, and each code is its v10 self with the version and trump
-    // symbols re-radixed.
-    static const uint64_t golden[2] = { 0x7b758b6f24f305d8ULL, 0xee92c4ae62c7e2d8ULL };
+    // symbols re-radixed. [0] moved again when the writer went to v7: its v5
+    // fold (golden_v5) did not move, so the format byte is the whole of it - a
+    // deal holds no repetition history, so no ring section rides it.
+    static const uint64_t golden[2] = { 0x3a8f02478369e153ULL, 0xee92c4ae62c7e2d8ULL };
     static const uint64_t golden_v5 = 0x56a752e11fc9bd4cULL;
     uint64_t hc5 = FNV64_OFFSET;
     uint64_t hc = FNV64_OFFSET;
@@ -15178,17 +15192,33 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
 // must be the one a cold fold of the whole stored log makes. Then the section
 // layout's refusals.
 static uint8_t bm_v6[8192 + 2048];
-// The row's state with NO memory, into bm_v5: a v5 blob, as the expand kernel
-// wrote it (the board, then the clock and the stamp).
+// The row's state with NO memory, into bm_v5: the same row less its memory
+// section (view.h section 1) - every other section kept, the repetition ring
+// (section 2) among them, so the two paths differ by the memory alone. A row
+// without the memory reads exactly as a v5 row does (table.h
+// table_set_session_log folds the log); a v5 blob itself would also drop the
+// ring, which is no part of what this test compares.
 static uint8_t bm_v5[8192];
 static int bm_as_v5(const BlRow *row) {
     const int board = state_blob_board_bytes(row->state, row->state_len);
-    const int fixed = STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES;
-    if (board < 0) return -1;
+    const int tail = state_blob_tail_bytes(row->state[0]);
+    if (board < 0 || tail < 0) return -1;
+    const int end = row->state_len - tail;   // where the sections end (their count)
     memcpy(bm_v5, row->state, (size_t)board);
-    memcpy(bm_v5 + board, row->state + row->state_len - fixed, (size_t)fixed);
-    bm_v5[0] = STATE_BLOB_FORMAT_V5;
-    return board + fixed;
+    int at = board;
+    for (int s = board; s + 3 <= end; ) {
+        const int sl = row->state[s + 1] | (row->state[s + 2] << 8);
+        if (row->state[s] != STATE_BLOB_SECTION_BOT_MEMORY) {
+            memcpy(bm_v5 + at, row->state + s, (size_t)(3 + sl));
+            at += 3 + sl;
+        }
+        s += 3 + sl;
+    }
+    const int kept = at - board;
+    bm_v5[at++] = (uint8_t)kept;
+    bm_v5[at++] = (uint8_t)(kept >> 8);
+    memcpy(bm_v5 + at, row->state + end + 2, (size_t)(tail - 2));
+    return at + tail - 2;
 }
 
 static void test_bot_memory_rides_the_row(void) {
@@ -15209,7 +15239,7 @@ static void test_bot_memory_rides_the_row(void) {
             tb_seed_bytes(np, 0x6e6 + gi);
             if (bl_bots_only_row(&bl_row, np, brains[(np / 2 + gi) % 3], tb_seed) != TABLE_OK) { refused++; continue; }
             for (int cy = 0; cy < CYCLES && bl_row.status == GAME_STATUS_PLAYING; cy++) {
-                // A: the row without its memory (a v5 blob), backfilled from the stored log.
+                // A: the row without its memory (its memory section dropped), backfilled from the stored log.
                 const int l5 = bm_as_v5(&bl_row);
                 if (l5 < 0 || table_load(&tb, bm_v5, l5, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
                 table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
@@ -15273,17 +15303,17 @@ static void test_bot_memory_rides_the_row(void) {
     CHECK(bl_bots_only_row(&bl_row, 3, "random", tb_seed) == TABLE_OK, "bot memory: a three-seat table deals");
     const int l6 = bl_row.state_len;
     memcpy(bm_v6, bl_row.state, (size_t)l6);
-    CHECK(bm_v6[0] == STATE_BLOB_FORMAT_V6 && table_load(&tb, bm_v6, l6, bl_row.roster, ROSTER_BYTES) == TABLE_OK && tb.mem_valid,
-          "bot memory: the dealt row is v6 and loads with its memory");
+    CHECK(bm_v6[0] == STATE_BLOB_FORMAT && table_load(&tb, bm_v6, l6, bl_row.roster, ROSTER_BYTES) == TABLE_OK && tb.mem_valid,
+          "bot memory: the dealt row is the current format and loads with its memory");
     backfilled = tb.mem;
     static uint8_t bad[sizeof bm_v6];
 #define BM_REFUSE(msg, edit) do { memcpy(bad, bm_v6, (size_t)l6); int bl = l6; edit; \
         const int rc_ = table_load(&tb, bad, bl, bl_row.roster, ROSTER_BYTES); \
         CHECK(rc_ != TABLE_OK && !tb.loaded, msg); } while (0)
     const int sec_at = state_blob_board_bytes(bm_v6, l6);
-    const int count_at = l6 - state_blob_tail_bytes(STATE_BLOB_FORMAT_V6);
+    const int count_at = l6 - state_blob_tail_bytes(bm_v6[0]);
     CHECK(sec_at > 0 && bm_v6[sec_at] == STATE_BLOB_SECTION_BOT_MEMORY, "bot memory: the section follows the board");
-    BM_REFUSE("bot memory: a section tag this kernel does not know is refused", bad[sec_at] = 2);
+    BM_REFUSE("bot memory: a section tag this kernel does not know is refused", bad[sec_at] = 3);
     BM_REFUSE("bot memory: a section count past the blob is refused", bad[count_at + 1] = 0x7f);
     BM_REFUSE("bot memory: a section longer than its bytes is refused", bad[sec_at + 2] = 0x7f);
     BM_REFUSE("bot memory: an empty section is refused", (bad[sec_at + 1] = 0, bad[sec_at + 2] = 0));
@@ -15301,7 +15331,7 @@ static void test_bot_memory_rides_the_row(void) {
     lobby.num_players = 3;
     for (int i = 0; i < 3; i++) lobby.players[i].status = PLAYER_STATUS_READY;
     uint8_t mb[BOT_MEM_BYTES_MAX];
-    const StateBlobSections sec = { mb, bot_mem_encode(&backfilled, mb, (int)sizeof mb) };
+    const StateBlobSections sec = { mb, bot_mem_encode(&backfilled, mb, (int)sizeof mb), 0 };
     const int lw = state_blob_put_full_at(&lobby, 0, 0, &sec, STATE_BLOB_FORMAT_V6, bad);
     const int lb = state_blob_board_bytes(bad, lw);
     CHECK(lw > 0 && lb > 0 && bad[lb] == 0 && bad[lb + 1] == 0, "bot memory: a lobby's v6 blob carries no memory");
@@ -15588,7 +15618,7 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
     table_init(&tb, &tb_game, &tb_snaps);
     CHECK(table_load(&tb, blob, n5, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 3 && tb.ratings.delta[1] == -3,
           "a table loads a v5 row and holds its stamp");
-    CHECK(TABLE_STATE_FORMAT == STATE_BLOB_FORMAT_V6, "this kernel WRITES v6 (the switch step of v5 -> v6), which keeps v5's stamp");
+    CHECK(TABLE_STATE_FORMAT == STATE_BLOB_FORMAT_V7, "this kernel WRITES v7 (v6's sections, the repetition ring among them), which keeps v5's stamp");
 
     // ---- the envelope ----
     client_init(&ct, &ct_slot);
@@ -15719,7 +15749,7 @@ static void test_table_rates_the_game_it_ends(void) {
     // The changes are elo_deltas over the table's own finish order.
     int8_t order[MAX_PLAYERS];
     int32_t want[MAX_PLAYERS];
-    CHECK(table_rankings(&tb, order) == 3 && elo_deltas(ratings, order, 3, want) == 3, "the finish order and its changes");
+    CHECK(table_rankings(&tb, order, NULL) == 3 && elo_deltas(ratings, order, NULL, 3, want) == 3, "the finish order and its changes");
     CHECK(want[order[0]] > 0 && want[order[2]] < 0, "the winner gains and the fool loses (the control: these are real changes)");
     for (int s = 0; s < 3; s++)
         CHECK(tb.ratings.before[s] == ratings[s] && tb.ratings.delta[s] == want[s], "each seat is stamped with its rating and its change");
@@ -15729,7 +15759,7 @@ static void test_table_rates_the_game_it_ends(void) {
     CHECK(n > 0 && c.ended && c.n_rated == 3 && c.rating_delta[0] == want[0] && c.rating_delta[1] == want[1]
           && c.rating_delta[2] == want[2] && c.rating_delta[3] == 0, "the ending commit names the changes to apply, by seat");
     CHECK(!c.wants_ratings, "and, rated, it wants nothing more");
-    CHECK(tb_arena[c.state.off] == STATE_BLOB_FORMAT_V6, "the row is written as v6");
+    CHECK(tb_arena[c.state.off] == STATE_BLOB_FORMAT_V7, "the row is written as v7");
     client_init(&ct, &ct_slot);
     for (int s = 0; s < 3; s++) {
         if (s == 1) { CHECK(c.views[s].len == 0, "the bot seat has no envelope"); continue; }
@@ -15796,7 +15826,7 @@ static void test_table_rates_the_game_it_ends(void) {
     {
         const int32_t fresh[3] = { TABLE_RATING_NONE, TABLE_RATING_NONE, TABLE_RATING_NONE };
         const int32_t start[3] = { TABLE_RATING_START, TABLE_RATING_START, TABLE_RATING_START };
-        CHECK(table_rankings(&tb, order) == 3 && elo_deltas(start, order, 3, want) == 3, "the changes among three seats at the start");
+        CHECK(table_rankings(&tb, order, NULL) == 3 && elo_deltas(start, order, NULL, 3, want) == 3, "the changes among three seats at the start");
         CHECK(table_rate(&tb, fresh, 3) == TABLE_OK && tb.ratings.before[0] == TABLE_RATING_START && tb.ratings.before[2] == TABLE_RATING_START
               && tb.ratings.delta[0] == want[0] && tb.ratings.delta[1] == want[1] && tb.ratings.delta[2] == want[2],
               "seats with no rating are rated from TABLE_RATING_START");
@@ -15805,9 +15835,9 @@ static void test_table_rates_the_game_it_ends(void) {
     // A rating never goes below zero, and the stamp is what is applied.
     CHECK(tb_play_to_the_last_move(51), "and once more");
     int32_t poor[3];
-    CHECK(table_rankings(&tb, order) == 3, "the finish order");
+    CHECK(table_rankings(&tb, order, NULL) == 3, "the finish order");
     poor[0] = poor[1] = poor[2] = 3;
-    elo_deltas(poor, order, 3, want);
+    elo_deltas(poor, order, NULL, 3, want);
     CHECK(want[order[2]] == -10, "three even seats: the fool would lose ten (the control)");
     CHECK(table_rate(&tb, poor, 3) == TABLE_OK && tb.ratings.delta[order[2]] == -3 && tb.ratings.before[order[2]] == 3
           && tb.ratings.delta[order[0]] == want[order[0]], "a seat with three points loses three, not ten");
@@ -19434,17 +19464,18 @@ static int wv_random_move(const Game *g, char *id, int id_cap, uint8_t *w, int c
 
 // THE DURABLE STATE BLOB'S FORMATS (was e2e/state_codec.test.ts; its volume
 // half is test_table_state_blob_round_trips_every_reachable_state). This kernel
-// reads v2 to v5 and writes v5: the board, its clock behind it, its rules in the
-// flag byte, and the game's rating stamp behind the clock. A row of any other
-// format is refused rather than misread; a v3 row loads with its clock, and a
-// v3 or v4 row commits back as the same board, flags and clock at the current
-// format, unrated. (The file's last case, that the board read back through the
+// reads v2 to v6 and writes v6: the board, its repetition history behind it
+// (one byte while it has none), the clock behind that, its rules in the flag
+// byte, and the game's rating stamp behind the clock. A row of any other format
+// is refused rather than misread; a v3 row loads with its clock, and a v3, v4 or
+// v5 row commits back as the same board, flags and clock at the current format,
+// with no history and unrated. (The file's last case, that the board read back through the
 // GENERATED TypeScript accessors rebuilds the blob, held only a test helper: no
 // shipped TypeScript reads the unmasked Game, which the browser is denied.)
 static void test_state_blob_formats_read_and_written(void) {
     static uint8_t blob[8192], want[8192];
     TableCommit c;
-    CHECK(TABLE_STATE_FORMAT == TABLE_STATE_FORMAT_V6, "state blob: the format this kernel writes is v6");
+    CHECK(TABLE_STATE_FORMAT == TABLE_STATE_FORMAT_V7, "state blob: the format this kernel writes is v7");
     CHECK(TABLE_STATE_CLOCK_BYTES == TABLE_STATE_V3_CLOCK_BYTES
           && TABLE_STATE_TAIL_BYTES == 2 + TABLE_STATE_V3_CLOCK_BYTES + TABLE_STATE_STAMP_BYTES,
           "state blob: a written blob ends with the sections' count, the clock, and the rating stamp behind it");
@@ -19459,7 +19490,7 @@ static void test_state_blob_formats_read_and_written(void) {
     CHECK(bl_row.state[1] & TABLE_STATE_FLAG_PASSING, "state blob: a classic table says PASSING in its flag byte");
 
     // Any other format is refused, not misread.
-    static const int other[] = { 0, 1, STATE_BLOB_FORMAT_V6 + 1, 0xff };
+    static const int other[] = { 0, 1, STATE_BLOB_FORMAT + 1, 0xff };
     for (int k = 0; k < 4; k++) {
         memcpy(blob, bl_row.state, (size_t)sl);
         blob[0] = (uint8_t)other[k];
@@ -19523,6 +19554,20 @@ static void test_state_blob_formats_read_and_written(void) {
     blob[1] = (uint8_t)(deck | TABLE_STATE_FLAG_PASSING | 0x04);
     CHECK(table_load(&tb, blob, n4, bl_row.roster, ROSTER_BYTES) == TABLE_E_STATE_VERSION,
           "state blob: a v4 flag bit this kernel does not know is unreadable");
+
+    // v5 has no sections: the board, the clock and the stamp. It loads as a game
+    // with no repetition history yet, and commits back as the current row of the
+    // same board and clock.
+    const int n5 = board + TABLE_STATE_TAIL_BYTES - 2;
+    memcpy(blob, bl_row.state, (size_t)board);
+    memcpy(blob + board, bl_row.state + sl - TABLE_STATE_TAIL_BYTES + 2, (size_t)TABLE_STATE_TAIL_BYTES - 2);
+    blob[0] = TABLE_STATE_FORMAT_V5;
+    CHECK(table_load(&tb, blob, n5, bl_row.roster, ROSTER_BYTES) == TABLE_OK && tb_game.rep.fill == 0,
+          "state blob: a v5 row loads, with no history");
+    CHECK(table_commit_products(&tb, RS("g"), bl_row.version, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
+          && tb_arena[c.state.off] == TABLE_STATE_FORMAT
+          && tb_blob_same_board_clock(tb_arena + c.state.off, c.state.len, blob, n5),
+          "state blob: a v5 row commits back at the current format, the same board and clock");
 }
 
 // A MASKED VIEW MUST NOT DEPEND ON WHAT IT IS MASKING (was e2e/view_codec.test.ts).
@@ -20162,7 +20207,7 @@ static void test_table_rematch_rates_its_own_game(void) {
     rm_shown(&c, &first);
     {
         const int32_t was[NP] = { 1000, 1037, 1074 };
-        CHECK(table_rankings(&tb, order) == NP && elo_deltas(was, order, NP, want) == NP, "the first game's finish order and changes");
+        CHECK(table_rankings(&tb, order, NULL) == NP && elo_deltas(was, order, NULL, NP, want) == NP, "the first game's finish order and changes");
         for (int s = 0; s < NP; s++)
             CHECK(first.n == NP && first.before[s] == was[s] && first.delta[s] == want[s] && c.rating_delta[s] == want[s],
                   "the first game's stamp is its own: the ratings it began from and its changes");
@@ -20192,7 +20237,7 @@ static void test_table_rematch_rates_its_own_game(void) {
     CHECK(rm_play_to_the_end(bots, &c), "the second game plays to its end on the resident");
     CHECK(rm.applied == applied + 1, "its ending commit applies changes once");
     rm_shown(&c, &second);
-    CHECK(table_rankings(&tb, order) == NP && elo_deltas(after_first, order, NP, want) == NP, "the second game's finish order and changes");
+    CHECK(table_rankings(&tb, order, NULL) == NP && elo_deltas(after_first, order, NULL, NP, want) == NP, "the second game's finish order and changes");
     int differs = 0;
     for (int s = 0; s < NP; s++) {
         CHECK(second.n == NP && second.before[s] == after_first[s], "the second game is rated from the ratings the first left");
@@ -20307,11 +20352,12 @@ static uint8_t po_arena2[sizeof(tb_arena)];
 // With the old progress term put back, this test gives 0xd0f12e4e again, so the
 // seeds are the whole of that change: no move, record or envelope moved otherwise.
 #define PRODUCTS_DIGEST_GOLDEN 0xdc6a515au
-// The bytes as written: the state as v6 (view.h: the bot memory section and its count).
-// It was 0x2758e01d until a table whose brains read no log kept a counts-only block
-// (table.c mem_wanted): the v5 digest above did not move, so the memory sections are
-// the whole of that change.
-#define PRODUCTS_DIGEST_GOLDEN_V6 0xd39a060cu
+// The bytes as written: the state as this kernel writes it (view.h: the sections and their
+// count). It was 0x2758e01d until a table whose brains read no log kept a counts-only block
+// (table.c mem_wanted), and 0xd39a060c until the writer went to v7 (the repetition ring as
+// section 2): the v5 digest above did not move either time, so the sections and the format
+// byte are the whole of each change.
+#define PRODUCTS_DIGEST_GOLDEN_V6 0x6670b4f1u
 static void test_products_are_the_bytes_they_were(void) {
     uint8_t w[128];
     char id[16], ab[2 * FOOLISH_SEED_LEN + 1];
@@ -20394,7 +20440,7 @@ static void test_products_are_the_bytes_they_were(void) {
            plain_same, plain_checked);
     CHECK(commits > 80000, "products: enough commits");
     CHECK(h == PRODUCTS_DIGEST_GOLDEN, "products: every commit's bytes are the ones the kernel wrote before (state as v5, roster, logs, envelopes)");
-    CHECK(h6 == PRODUCTS_DIGEST_GOLDEN_V6, "products: and the bytes as this kernel writes them (the state as v6)");
+    CHECK(h6 == PRODUCTS_DIGEST_GOLDEN_V6, "products: and the bytes as this kernel writes them (the state as v7)");
     CHECK(plain_checked > 50000 && plain_same == plain_checked,
           "products: a plain move's products (no row, no spectator envelope) are the same seat envelopes");
 }
@@ -21863,7 +21909,7 @@ static void test_table_ranks_every_finished_game(void) {
             AnimFinishRow rows[MAX_PLAYERS];
             int8_t order[MAX_PLAYERS];
             const int n = anim_finish_rows(elim, ne, fool, np, -1, rows, MAX_PLAYERS);
-            const int k = table_rankings(&tb, order);
+            const int k = table_rankings(&tb, order, NULL);
             int seats = 0, places = 0, row_ok = n == np && k == np && fool >= 0;
             for (int i = 0; row_ok && i < n; i++) {
                 seats |= 1 << rows[i].seat;
@@ -21882,8 +21928,577 @@ static void test_table_ranks_every_finished_game(void) {
     AnimFinishRow rows[MAX_PLAYERS];
     const unsigned char twice[2] = { 1, 1 };
     const int n = anim_finish_rows(twice, 2, 0, 3, -1, rows, MAX_PLAYERS);
-    CHECK(n == 3 && rows[0].seat == 1 && rows[1].seat == 1 && rows[2].seat == 0,
-          "a repeated seat is ranked as given, never deduped: a producer bug shows on the board");
+    CHECK(n == 4 && rows[0].seat == 1 && rows[1].seat == 1 && rows[2].seat == 0 && rows[3].seat == 2,
+          "a repeated seat is ranked as given, never deduped: a producer bug shows on the board (and the seat it crowded out is a fool)");
+}
+
+// ---- the repetition draw (game.h GameRepetition, c/REPETITION.md) ----
+//
+// Game 0e68bd looped: an eight-move cycle, two pickups a pass, from its 73rd
+// move to the end of its log at the 744th and past it (repetition_0e68bd.h).
+// On the engine before the rule the log plays through to the end with the game
+// still running; the rule ends it at the 98th move, the third time the board
+// after the 73rd move comes back with the same eight moves between each visit.
+
+// A card by suit (S, H, C, D = 0..3) and rank (2..14, the ace 14).
+static Card rp(int suit, int rank) { Card c; c.suit = (int8_t)suit; c.value = (int8_t)(rank - 1); return c; }
+
+// The game's deal, as the table dealt it (table.c deal): the seed, two seats.
+static void rep_0e68bd_deal(Game *g) {
+    unsigned char saved[GAME_DEAL_RNG_STATE_MAX];
+    game_deal_rng_get(saved);
+    make_2p_game(g);
+    game_rep_attach(g);
+    game_set_deal_seed_bytes(REP_0E68BD_SEED, 32);
+    start_game(g);
+    game_deal_rng_set(saved);
+}
+
+// The fixture's move at byte `at` as an action. Returns its length.
+static int rep_0e68bd_move(int at, int *seat, AwireAction *a) {
+    const unsigned char *m = REP_0E68BD_MOVES + at;
+    static const int kind[] = { -1, AWIRE_ATTACK, AWIRE_COVER, AWIRE_PASS, AWIRE_PICKUP, AWIRE_GOOD };
+    memset(a, 0, sizeof *a);
+    a->kind = kind[m[0]];
+    *seat = m[1];
+    a->n = m[0] == LOG_PICKUP || m[0] == LOG_GOOD ? 0 : m[2];
+    for (int i = 0; i < a->n; i++) {
+        a->cards[i] = card_from_wire_pair(m[3 + 2 * i]);
+        a->attacks[i] = card_from_wire_pair(m[4 + 2 * i]);
+    }
+    return 3 + 2 * m[2];
+}
+
+// Plays the fixture's moves from byte *at through awire_apply (the path every
+// table takes) until one is refused or `upto` moves are in, leaving *at at the
+// next move. Returns the moves applied.
+static int rep_0e68bd_play(Game *g, int *at, int upto) {
+    int played = 0;
+    while (*at < (int)sizeof REP_0E68BD_MOVES && played < upto) {
+        int seat;
+        AwireAction a;
+        const int len = rep_0e68bd_move(*at, &seat, &a);
+        if (!awire_apply(g, seat, &a)) break;
+        *at += len;
+        played++;
+    }
+    return played;
+}
+
+// (a) The third occurrence of the position after move 73 (visits at 73, 85, 98).
+// MUTATION-CHECKED: game.c handle_pickup's `if (rep_checkpoint(g, ...))` made
+// `if (0 && rep_checkpoint(g, ...))` plays all 744 moves with the game still
+// running ("the 98th move ends it" goes red).
+static void test_repetition_ends_game_0e68bd(void) {
+    static Game g;
+    int at = 0;
+    rep_0e68bd_deal(&g);
+    CHECK(rep_0e68bd_play(&g, &at, 97) == 97 && g.status == GAME_STATUS_PLAYING && game_done(&g) < 0,
+          "0e68bd: 97 moves in, the game runs");
+    CHECK(g.deck_count == 0 && !g.has_flipped && g.discard_pile_length == 26 && g.rep.fill == 4,
+          "0e68bd: the stock is gone and four checkpoints of one history are held");
+    CHECK(rep_0e68bd_play(&g, &at, 1) == 1 && g.status == GAME_STATUS_GAME_OVER,
+          "0e68bd: the 98th move ends it, a pickup bringing back the board after the 73rd move for the third time");
+    CHECK(game_done(&g) == 0 && game_fools(&g) == 3u && game_drawn(&g) && g.num_eliminated == 0,
+          "0e68bd: a draw - both seats fools, nobody out, game_done the lower seat");
+    CHECK(g.players[0].status == PLAYER_STATUS_IN && g.players[1].status == PLAYER_STATUS_IN,
+          "0e68bd: both seats are still in");
+    CHECK(rep_0e68bd_play(&g, &at, 1) == 0 && engine_last_reject == ENGINE_REJECT_NOT_PLAYING,
+          "0e68bd: and the 99th move is refused, the game being over");
+}
+
+// THE CYCLE OF 0e68bd, built by hand: the board after its 73rd move, trump
+// spades, the stock gone. Seat 0 holds 6H 8S 6D JS 6S JC and defends, seat 1
+// holds 6C 7S KS AH and leads. With `three`, a third seat sits out, first out.
+static void rep_cycle_board(Game *g, int three) {
+    memset(g, 0, offsetof(Game, logs));
+    g->num_logs = 0;
+    game_rep_attach(g);
+    g->status = GAME_STATUS_PLAYING;
+    g->num_players = three ? 3 : 2;
+    g->power_suit = 0;
+    g->discard_pile_length = three ? 20 : 26;
+    g->first_attacker = 1;
+    g->defender = 0;
+    const Card s0[] = { rp(1, 6), rp(0, 8), rp(3, 6), rp(0, 11), rp(0, 6), rp(2, 11) };
+    const Card s1[] = { rp(2, 6), rp(0, 7), rp(0, 13), rp(1, 14) };
+    for (int i = 0; i < 6; i++) g->players[0].hand[i] = s0[i];
+    for (int i = 0; i < 4; i++) g->players[1].hand[i] = s1[i];
+    g->players[0].hand_count = 6;
+    g->players[1].hand_count = 4;
+    g->players[0].status = g->players[1].status = PLAYER_STATUS_IN;
+    if (three) {
+        g->players[2].status = PLAYER_STATUS_OUT;
+        g->elimination_order[0] = 2;
+        g->num_eliminated = 1;
+    }
+}
+
+// The cycle's eight moves, the `i`th (0..7). `swap` covers the two attacks of
+// its second bout in the other order: the same boards, different moves.
+static bool rep_cycle_move(Game *g, int i, bool swap) {
+    AwireAction a;
+    memset(&a, 0, sizeof a);
+    int seat;
+    switch (i) {
+        case 0: seat = 1; a.kind = AWIRE_ATTACK; a.n = 1; a.cards[0] = rp(2, 6); break;
+        case 1: seat = 0; a.kind = AWIRE_PASS; a.n = 2; a.cards[0] = rp(3, 6); a.cards[1] = rp(0, 6); break;
+        case 2: seat = 1; a.kind = AWIRE_PICKUP; break;
+        case 3: seat = 0; a.kind = AWIRE_ATTACK; a.n = 1; a.cards[0] = rp(1, 6); break;
+        case 4: seat = 1; a.kind = AWIRE_PASS; a.n = 2; a.cards[0] = rp(3, 6); a.cards[1] = rp(0, 6); break;
+        case 5: case 6: {
+            const bool first = (i == 5) != swap;   // 8S on 6H, then JS on 6D
+            seat = 0; a.kind = AWIRE_COVER; a.n = 1;
+            a.cards[0] = first ? rp(0, 8) : rp(0, 11);
+            a.attacks[0] = first ? rp(1, 6) : rp(3, 6);
+            break;
+        }
+        default: seat = 0; a.kind = AWIRE_PICKUP; break;
+    }
+    return awire_apply(g, seat, &a);
+}
+
+// Plays cycles from the board, `swap_mask` bit c swapping the covers of cycle
+// c. Returns the moves played before the game ended (or all of them).
+static int rep_cycles(Game *g, int cycles, unsigned swap_mask) {
+    int played = 0;
+    for (int c = 0; c < cycles; c++)
+        for (int i = 0; i < 8; i++) {
+            if (g->status != GAME_STATUS_PLAYING) return played;
+            if (!rep_cycle_move(g, i, (swap_mask >> c) & 1u)) return -1 - played;
+            played++;
+        }
+    return played;
+}
+
+// (b) The board the 0e68bd cycle starts from ends in a draw on the third visit
+// of the first position the history holds: the one after the cycle's first
+// pickup. Its checkpoints run Y X Y X Y, Y first after move 3, so the draw is
+// move 3 + 2 * 8 = 19, two whole cycles after the history began.
+// (d) MUTATION-CHECKED: game_rep_checkpoint's `seen >= 2` made `seen >= 1` (a
+// position seen once before is a draw) ends it at move 11, the second Y ("the
+// second visit is not a draw" goes red).
+static void test_repetition_draws_on_the_third_visit(void) {
+    static Game g;
+    rep_cycle_board(&g, 0);
+    CHECK(rep_cycles(&g, 1, 0) == 8 && g.status == GAME_STATUS_PLAYING && g.rep.fill == 2,
+          "one cycle: two checkpoints, the game runs");
+    CHECK(rep_cycles(&g, 1, 0) == 8 && g.status == GAME_STATUS_PLAYING && g.rep.fill == 4,
+          "the second visit is not a draw: every position of the cycle seen twice, the game runs");
+    CHECK(rep_cycles(&g, 1, 0) == 3 && g.status == GAME_STATUS_GAME_OVER,
+          "the third visit of the first position held ends it, three moves into the third cycle");
+    CHECK(game_drawn(&g) && game_fools(&g) == 3u && game_done(&g) == 0 && g.num_eliminated == 0,
+          "a draw: both seats fools, game_done the lower seat");
+}
+
+// (c) BY ANY ROUTE, as in chess: the second cycle covers the same two attacks
+// in the other order, so the moves between the visits differ, and the third
+// visit of Y is still a draw, at move 19.
+static void test_repetition_counts_any_route(void) {
+    static Game g;
+    rep_cycle_board(&g, 0);
+    CHECK(rep_cycles(&g, 3, 2u) == 19 && g.status == GAME_STATUS_GAME_OVER && game_drawn(&g),
+          "a third visit by another route is a draw too");
+}
+
+// (e) THE HISTORY STARTS OVER when the discard grows, a seat goes out, or the
+// stock changes.
+// MUTATION-CHECKED, one clause at a time in game_rep_checkpoint's reset:
+// without `r->discard != discard` "a bout to the discard starts a new history"
+// goes red; without `r->in_mask != (uint8_t)in_mask` "a seat going out starts a
+// new history" goes red; without `r->stock != stock` "a new stock count starts
+// a new history" goes red.
+static void test_repetition_history_starts_over(void) {
+    static Game g;
+    rep_cycle_board(&g, 0);
+    CHECK(rep_cycles(&g, 1, 0) == 8 && g.rep.fill == 2, "two checkpoints held");
+    // Seat 1 leads 6C, seat 0 covers with 8S, seat 1 is done: the bout goes to
+    // the discard. Seat 0 leads 6H and seat 1 picks it up.
+    AwireAction a;
+    memset(&a, 0, sizeof a);
+    a.kind = AWIRE_ATTACK; a.n = 1; a.cards[0] = rp(2, 6);
+    bool ok = awire_apply(&g, 1, &a);
+    a.kind = AWIRE_COVER; a.cards[0] = rp(0, 8); a.attacks[0] = rp(2, 6);
+    ok = ok && awire_apply(&g, 0, &a);
+    a.kind = AWIRE_GOOD; a.n = 0;
+    ok = ok && awire_apply(&g, 1, &a);
+    a.kind = AWIRE_ATTACK; a.n = 1; a.cards[0] = rp(1, 6);
+    ok = ok && awire_apply(&g, 0, &a);
+    a.kind = AWIRE_PICKUP; a.n = 0;
+    ok = ok && awire_apply(&g, 1, &a);
+    CHECK(ok && g.discard_pile_length == 28 && g.status == GAME_STATUS_PLAYING, "the bout went to the discard");
+    CHECK(g.rep.fill == 1 && g.rep.discard == 28, "a bout to the discard starts a new history");
+
+    // Three seats, nobody out. Seat 0 leads 6H and seat 1 picks it up (a
+    // checkpoint); seat 2 leads its last card, 9D, and is out; seat 0 picks it up.
+    memset(&g, 0, offsetof(Game, logs));
+    game_rep_attach(&g);
+    g.status = GAME_STATUS_PLAYING;
+    g.num_players = 3;
+    g.first_attacker = 0;
+    g.defender = 1;
+    g.discard_pile_length = 30;
+    g.players[0].hand[0] = rp(1, 6); g.players[0].hand[1] = rp(1, 7); g.players[0].hand_count = 2;
+    g.players[1].hand[0] = rp(2, 8); g.players[1].hand_count = 1;
+    g.players[2].hand[0] = rp(3, 9); g.players[2].hand_count = 1;
+    for (int s = 0; s < 3; s++) g.players[s].status = PLAYER_STATUS_IN;
+    a.kind = AWIRE_ATTACK; a.n = 1; a.cards[0] = rp(1, 6);
+    ok = awire_apply(&g, 0, &a);
+    a.kind = AWIRE_PICKUP; a.n = 0;
+    ok = ok && awire_apply(&g, 1, &a);
+    CHECK(ok && g.rep.fill == 1 && g.first_attacker == 2 && g.defender == 0, "a checkpoint, seat 2 to lead");
+    a.kind = AWIRE_ATTACK; a.n = 1; a.cards[0] = rp(3, 9);
+    ok = awire_apply(&g, 2, &a);
+    a.kind = AWIRE_PICKUP; a.n = 0;
+    ok = ok && awire_apply(&g, 0, &a);
+    CHECK(ok && g.num_eliminated == 1 && g.status == GAME_STATUS_PLAYING, "seat 2 went out, the game runs");
+    CHECK(g.rep.fill == 1 && g.rep.in_mask == 3u, "a seat going out starts a new history");
+
+    // The stock: a pickup that draws is no checkpoint, so the next one that
+    // draws nobody meets a history of another stock count.
+    GameRepetition r;
+    memset(&r, 0, sizeof r);
+    game_rep_checkpoint(&r, 11, 5, 20, 3u);
+    game_rep_checkpoint(&r, 12, 5, 20, 3u);
+    CHECK(r.fill == 2, "two checkpoints with five cards in the stock");
+    game_rep_checkpoint(&r, 11, 4, 20, 3u);
+    CHECK(r.fill == 1 && r.stock == 4, "a new stock count starts a new history");
+}
+
+// (f) THE CHECKPOINT IS A PICKUP THAT DREW NOBODY A CARD, stock or no stock:
+// a pickup that refills a hand changes the stock, and no position can repeat
+// across it.
+// MUTATION-CHECKED: rep_checkpoint's `drew ||` deleted ("a pickup that draws
+// records nothing" goes red); the guard made the old "the stock is gone"
+// (`g->deck_count > 0 || g->has_flipped ||`) leaves "a pickup that draws nobody
+// a card with the stock left is a checkpoint" red, and the 3-seat loop with a
+// stock (test_repetition_ends_the_arena_loops) runs on.
+static void test_repetition_checkpoints_where_nobody_draws(void) {
+    static Game g;
+    for (int leader = 7; leader >= 6; leader--) {
+        memset(&g, 0, offsetof(Game, logs));
+        game_rep_attach(&g);
+        g.status = GAME_STATUS_PLAYING;
+        g.num_players = 2;
+        g.first_attacker = 0;
+        g.defender = 1;
+        // Seven cards to lead from leaves six after the attack, so nobody draws;
+        // six leaves five, and the leader draws one.
+        for (int i = 0; i < leader; i++) g.players[0].hand[i] = rp(1, 2 + i);
+        for (int i = 0; i < 6; i++) g.players[1].hand[i] = rp(2, 2 + i);
+        g.players[0].hand_count = (int8_t)leader;
+        g.players[1].hand_count = 6;
+        g.players[0].status = g.players[1].status = PLAYER_STATUS_IN;
+        g.deck[0] = rp(3, 2); g.deck[1] = rp(3, 3);
+        g.deck_count = 2;
+        g.deterministic_deck = true;
+        AwireAction a;
+        memset(&a, 0, sizeof a);
+        a.kind = AWIRE_ATTACK; a.n = 1; a.cards[0] = rp(1, 2);
+        bool ok = awire_apply(&g, 0, &a);
+        a.kind = AWIRE_PICKUP; a.n = 0;
+        ok = ok && awire_apply(&g, 1, &a);
+        if (leader == 7)
+            CHECK(ok && g.deck_count == 2 && g.rep.fill == 1 && g.rep.stock == 2,
+                  "a pickup that draws nobody a card with the stock left is a checkpoint");
+        else
+            CHECK(ok && g.deck_count == 1 && g.rep.fill == 0, "a pickup that draws records nothing");
+    }
+}
+
+// THE FINGERPRINT FOLDS EVERY FIELD OF THE POSITION (game.h game_rep_position):
+// two positions that differ in any one field must not match.
+// MUTATION-CHECKED: game.c game_rep_position's `h = rep_mix(h, (uint8_t)p->defender);`
+// deleted goes red at "the defender is in the position".
+static void test_repetition_position_folds_every_field(void) {
+    GameRepPosition base;
+    memset(&base, 0, sizeof base);
+    base.num_players = 3; base.power_suit = 1; base.first_attacker = 1; base.defender = 2;
+    base.has_flipped = 1; base.flipped = 9; base.discard = 10; base.deck_count = 4; base.stock = 0xF0;
+    base.num_battles = 1; base.attack[0] = 3; base.defense[0] = -1;
+    base.status[0] = base.status[1] = base.status[2] = PLAYER_STATUS_IN;
+    base.hand[0] = 1; base.hand[1] = 2; base.hand[2] = 4;
+    const uint64_t h0 = game_rep_position(&base);
+    GameRepPosition p;
+#define DIFFERS(edit, what) do { p = base; edit; CHECK(game_rep_position(&p) != h0, what); } while (0)
+    DIFFERS(p.rules = GAME_RULE_NO_PASS, "the rules are in the position");
+    DIFFERS(p.num_players = 4, "the seat count is in the position");
+    DIFFERS(p.power_suit = 2, "the trump suit is in the position");
+    DIFFERS(p.first_attacker = 0, "the first attacker is in the position");
+    DIFFERS(p.defender = 0, "the defender is in the position");
+    DIFFERS(p.has_flipped = 0, "the trump under the stock is in the position");
+    DIFFERS(p.flipped = 10, "the trump card is in the position");
+    DIFFERS(p.discard = 12, "the discard is in the position");
+    DIFFERS(p.deck_count = 3, "the stock count is in the position");
+    DIFFERS(p.stock = 0xF1, "the stock's cards are in the position");
+    DIFFERS(p.good_mask = 2, "the goods are in the position");
+    DIFFERS(p.has_good_timestamp = 1, "the good timestamp is in the position");
+    DIFFERS(p.num_battles = 0, "the table's size is in the position");
+    DIFFERS(p.attack[0] = 4, "an attack card is in the position");
+    DIFFERS(p.defense[0] = 5, "a cover card is in the position");
+    DIFFERS(p.status[2] = PLAYER_STATUS_OUT, "a seat's status is in the position");
+    DIFFERS(p.awaiting = 1, "awaiting_attack is in the position");
+    DIFFERS((p.hand[0] = 2, p.hand[1] = 1), "who holds which card is in the position");
+    DIFFERS((p.num_eliminated = 1, p.elimination[0] = 0), "the out seats are in the position");
+#undef DIFFERS
+    p = base;
+    CHECK(game_rep_position(&p) == h0, "the same position is the same fingerprint");
+}
+
+// THE WINDOW (game.h GAME_REP_RING, 16): a position that comes back every 8
+// checkpoints is found twice when it comes back the third time; one that comes
+// back every 9 has dropped out of the ring by then and is never caught. This
+// is the rule's documented limit (c/REPETITION.md): periods up to
+// GAME_REP_RING / 2.
+// MUTATION-CHECKED: GAME_REP_RING 15 goes red at "a period of 8 is caught".
+static void test_repetition_window_is_the_ring(void) {
+    for (int period = 8; period <= 9; period++) {
+        GameRepetition r;
+        memset(&r, 0, sizeof r);
+        int fired = -1;
+        for (int i = 0; i < 200 && fired < 0; i++)
+            if (game_rep_checkpoint(&r, 1000u + (uint64_t)(i % period), 0, 20, 3u)) fired = i;
+        if (period == 8) CHECK(fired == 16, "a period of 8 is caught on its third visit, the 17th checkpoint");
+        else CHECK(fired < 0, "a period of 9 is wider than the ring and is never caught");
+    }
+}
+
+// THE ARENA'S LOOPS. Of about 69,000 seeded bot games at 2 to 8 seats (the
+// rule's evaluation, c/REPETITION.md), ten looped to the 20,000-turn cap on the
+// kernel before the rule; these eight still do on the kernel the rule landed on
+// (two 7- and 8-seat robusta games, seeds 101416 and 100955, now end on cards
+// at moves 380 and 398 since the bot memory changed robusta's play). Each now
+// ends as a draw, at the move given.
+// 3 seats, handwritten, seed 100492 loops with nine cards still in the stock:
+// every hand holds six or more, so no pickup draws, and only a checkpoint at a
+// pickup that drew nobody a card sees it.
+// MUTATION-CHECKED: see test_repetition_checkpoints_where_nobody_draws.
+typedef struct { int np; const char *brain; unsigned seed; int draw_move; } RepLoop;
+static const RepLoop REP_LOOPS[] = {
+    { 3, "handwritten", 100492, 54 }, { 3, "robusta", 100398, 129 },
+    { 5, "handwritten", 100121, 102 }, { 6, "handwritten", 101231, 208 },
+    { 6, "handwritten", 101305, 157 }, { 7, "handwritten", 101853, 213 },
+    { 8, "handwritten", 101927, 265 }, { 8, "handwritten", 102690, 209 },
+};
+static void test_repetition_ends_the_arena_loops(void) {
+    static Game g;
+    for (int k = 0; k < (int)(sizeof REP_LOOPS / sizeof REP_LOOPS[0]); k++) {
+        const RepLoop *L = &REP_LOOPS[k];
+        const int key = parse_strategy(L->brain);
+        cd_sim_solve_reset();
+        game_set_seed(L->seed);
+        random_strategy_set_seed(L->seed);
+        memset(&g, 0, offsetof(Game, logs));
+        g.num_logs = 0;
+        game_rep_attach(&g);
+        g.num_players = (int8_t)L->np;
+        for (int i = 0; i < L->np; i++) { g.players[i].status = PLAYER_STATUS_READY; g.players[i].strategy_key = (int8_t)key; }
+        start_game(&g);
+        BotPlay bp;
+        bot_play_init(&bp, &g, 20000, BOT_PLAY_SHUFFLE, NULL);
+        int moves = 0;
+        for (int pi; (pi = bot_play_next(&bp)) >= 0; )
+            if (bot_play_apply(&bp, strategy_choose(key, &g, pi, &bp.moves))) moves++;
+        if (!game_drawn(&g) || moves != L->draw_move)
+            fprintf(stderr, "  loop %d (%d seats, %s, seed %u): %s after %d moves, want a draw at %d\n", k, L->np, L->brain,
+                    L->seed, game_drawn(&g) ? "drawn" : "not drawn", moves, L->draw_move);
+        CHECK(game_drawn(&g) && moves == L->draw_move, "an arena loop ends as a draw, at its move");
+    }
+}
+
+// (g) THREE SEATS, ONE ALREADY OUT: the two still in loop, and the draw makes
+// them both fools, sharing the last place, while the seat that went out keeps
+// the first. The ranking is the kernel's (anim_finish_rows).
+// MUTATION-CHECKED: game.c game_fools ignoring the elimination order (`fools =
+// (1u << n) - 1u` returned as is) goes red at "the seat that went out is no fool".
+static void test_repetition_draw_keeps_the_places_of_those_out(void) {
+    static Game g;
+    rep_cycle_board(&g, 1);
+    CHECK(rep_cycles(&g, 3, 0) == 19 && g.status == GAME_STATUS_GAME_OVER, "the two seats in loop to a draw");
+    CHECK(game_fools(&g) == 3u, "the seat that went out is no fool");
+    CHECK(game_done(&g) == 0 && game_drawn(&g) && g.num_eliminated == 1 && g.elimination_order[0] == 2,
+          "game_done the lower fool, the out seat still first out");
+    unsigned char elim[MAX_PLAYERS];
+    elim[0] = (unsigned char)g.elimination_order[0];
+    AnimFinishRow rows[MAX_PLAYERS];
+    const int n = anim_finish_rows(elim, 1, game_done(&g), 3, 1, rows, MAX_PLAYERS);
+    CHECK(n == 3 && rows[0].place == 1 && rows[0].seat == 2
+          && rows[1].place == 3 && rows[1].seat == 0 && !rows[1].is_you
+          && rows[2].place == 3 && rows[2].seat == 1 && rows[2].is_you,
+          "the out seat first, then both fools at the last place, by seat");
+}
+
+// (h) THE ROW CARRIES THE HISTORY (view.h STATE_BLOB_FORMAT_V7, section 2): the server
+// loads a game from its row for every move, so a game reloaded mid-loop must
+// call the draw on the very pickup the game held in memory would. A v5 row (the
+// kernel before this one) still loads, as a game with no history yet.
+// MUTATION-CHECKED: view.c state_blob_load_rated's `if (v6) g->rep = rep;`
+// deleted ("the history is the row's, byte for byte" goes red).
+static void test_repetition_history_survives_the_row(void) {
+    static Game g, back;
+    static unsigned char blob[TABLE_STATE_MAX], again[TABLE_STATE_MAX];
+    rep_cycle_board(&g, 0);
+    bool ok = rep_cycles(&g, 2, 0) == 16 && rep_cycle_move(&g, 0, false) && rep_cycle_move(&g, 1, false);
+    CHECK(ok && g.status == GAME_STATUS_PLAYING && g.rep.fill == 4,
+          "two cycles and two moves: four checkpoints held");
+    const int n = state_blob_put(&g, 0, blob);
+    memset(&back, 0, sizeof back);
+    game_rep_attach(&back);
+    CHECK(n > 0 && n <= TABLE_STATE_MAX && blob[0] == STATE_BLOB_FORMAT_V7, "the row is v7");
+    // The ring is section 2 (view.h), only the entries in use: a 3-byte section
+    // header, its fill byte, a 6-byte key and 8 bytes a fingerprint. An empty ring
+    // is no section at all.
+    GameRepetition empty;
+    memset(&empty, 0, sizeof empty);
+    const StateBlobSections none = { 0, 0, &empty };
+    const int bare = state_blob_put_full_at(&g, 0, 0, &none, STATE_BLOB_FORMAT_V7, again);
+    const int ring = 1 + STATE_BLOB_REP_HEAD + g.rep.fill * STATE_BLOB_REP_ENTRY;
+    CHECK(n == bare + 3 + ring, "the row carries only the entries in use, in a section of their own");
+    CHECK(state_blob_load(&back, blob, n, 0) == 1 && memcmp(&back.rep, &g.rep, sizeof g.rep) == 0,
+          "the history is the row's, byte for byte");
+    CHECK(rep_cycle_move(&back, 2, false) && back.status == GAME_STATUS_GAME_OVER && game_drawn(&back),
+          "the reloaded game draws on the pickup the played one would");
+    CHECK(state_blob_put(&g, 0, again) == n && memcmp(again, blob, (size_t)n) == 0, "the history writes the same bytes twice");
+
+    // The rows the kernels before this one wrote: v5, and v6 (the bot memory's,
+    // deployed first). Neither can hold a ring; both load as a game with no history.
+    for (int fmt = STATE_BLOB_FORMAT_V5; fmt <= STATE_BLOB_FORMAT_V6; fmt++) {
+        const int nf = state_blob_put_at(&g, 0, fmt, blob);
+        memset(&back, 0xff, offsetof(Game, logs));
+        back.rep_live = true;   // poisoned, but still the full Game its owner attached (a bool holds 0 or 1)
+        CHECK(nf > 0 && blob[0] == fmt && state_blob_load(&back, blob, nf, 0) == 1 && back.rep.fill == 0,
+              fmt == STATE_BLOB_FORMAT_V5 ? "a v5 row of the same board loads, with no history (and none of the Game's before it)"
+                                          : "a v6 row of the same board loads, with no history");
+    }
+    // A v6 row never held a ring: one that names section 2 is not a row a v6
+    // kernel wrote, and a v6 kernel (a rollback) refuses a v7 row the same way.
+    const int n7 = state_blob_put(&g, 0, blob);
+    blob[0] = STATE_BLOB_FORMAT_V6;
+    CHECK(state_blob_load(&back, blob, n7, 0) == 0, "a v6 row naming the repetition section is unreadable");
+    blob[0] = STATE_BLOB_FORMAT_V7;
+    blob[n7 - TABLE_STATE_TAIL_BYTES - ring] = GAME_REP_RING + 1;
+    CHECK(state_blob_load(&back, blob, n7, 0) == 0, "a history counting past the ring is a row this kernel did not write");
+}
+
+// (i) A DRAW RATES AS A DRAW. Played through the table to the pickup that ends
+// it: the finalize parks both seats, the ranking puts both at the last place,
+// and table_rate scores the two fools a half each against the other - level
+// ratings move nowhere, and a gap moves the same three points each way. A
+// third seat already out beats both fools.
+// MUTATION-CHECKED: table.c elo_deltas scoring a shared place as the order
+// (`pi < pj ? c : c - 10`) goes red at "two level fools: the draw moves neither".
+static void test_repetition_draw_rates_the_fools_level(void) {
+    static Game g;
+    static unsigned char blob[TABLE_STATE_MAX];
+    uint8_t roster[ROSTER_BYTES], w[16];
+    rep_cycle_board(&g, 0);
+    const bool ok = rep_cycles(&g, 2, 0) == 16 && rep_cycle_move(&g, 0, false) && rep_cycle_move(&g, 1, false);
+    const int n = state_blob_put(&g, 0, blob);
+    tb_roster_for(2, 0, "", roster);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(ok && table_load(&tb, blob, n, roster, ROSTER_BYTES) == TABLE_OK && tb_game.rep.fill == 4,
+          "the loop's row loads at a table, one pickup from the draw, its history with it");
+    // BETWEEN TWO HUMAN MOVES the server keeps the game resident, not as a row: the
+    // head, and the ring kept apart (table.h TableResident). The resident is the row,
+    // history and all, and a table that adopts it keeps the history.
+    // MUTATION-CHECKED: table.c table_adopt's `t->g->rep = res->rep;` deleted goes red
+    // at "an adopted resident keeps its ring".
+    static TableResident res;
+    static uint8_t res_state[TABLE_STATE_MAX], res_roster[ROSTER_BYTES];
+    int res_sl = 0, res_rl = 0;
+    table_resident(&tb, NULL, &res);
+    CHECK(res.rep.fill == 4 && !((const Game *)(const void *)res.head)->rep_live,
+          "the resident keeps the ring apart from a head that claims none");
+    CHECK(table_resident_encode(&res, res_state, (int)sizeof res_state, &res_sl, res_roster, (int)sizeof res_roster, &res_rl) == TABLE_OK
+          && res_sl == n && memcmp(res_state, blob, (size_t)n) == 0,
+          "the resident is the row: its encode is the row it came from, history and all");
+    memset(&tb_game, 0, sizeof tb_game);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_adopt(&tb, &res) == TABLE_OK && tb_game.rep_live && tb_game.rep.fill == 4
+          && memcmp(&tb_game.rep, &res.rep, sizeof res.rep) == 0, "an adopted resident keeps its ring");
+    AwireAction a;
+    memset(&a, 0, sizeof a);
+    a.kind = AWIRE_PICKUP;
+    const int wl = awire_encode(&a, w, sizeof w);
+    CHECK(table_act(&tb, RS("id-1"), w, wl, -1, 0) == TABLE_APPLIED && tb.ended && tb_game.status == GAME_STATUS_GAME_OVER,
+          "the pickup ends the game at the table");
+    CHECK(game_fools(&tb_game) == 3u && game_drawn(&tb_game), "the finalized board still says both are fools");
+    // MUTATION-CHECKED: table.c table_cast_delta_ok's draw guard deleted goes red here.
+    CHECK(!table_cast_delta_ok(&tb), "the draw goes to every viewer as the board cast, which a masked board needs");
+    int8_t order[MAX_PLAYERS], place[MAX_PLAYERS];
+    CHECK(table_rankings(&tb, order, place) == 2 && order[0] == 0 && order[1] == 1 && place[0] == 2 && place[1] == 2,
+          "both fools share the last place");
+    const int32_t level[2] = { 1000, 1000 }, apart[2] = { 1200, 1000 };
+    CHECK(table_rate(&tb, level, 2) == TABLE_OK && tb.ratings.delta[0] == 0 && tb.ratings.delta[1] == 0,
+          "two level fools: the draw moves neither");
+    CHECK(table_rate(&tb, apart, 2) == TABLE_OK && tb.ratings.delta[0] == -3 && tb.ratings.delta[1] == 3,
+          "200 apart: the stronger fool gives the weaker three");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 9, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.ended
+          && c.status == GAME_STATUS_GAME_OVER && c.fool == 0 && c.n_rated == 2 && c.rating_delta[1] == 3,
+          "the commit names the lower fool and carries the stamp");
+    // What a screen reads: the seat's envelope, adopted by the client, says draw.
+    // MUTATION-CHECKED: client_table.c view_board's `v->drawn = game_drawn(g);`
+    // deleted goes red here.
+    client_init(&ct, &ct_slot);
+    CHECK(c.views[1].len > 0 && client_adopt_envelope(&ct, tb_arena + c.views[1].off, c.views[1].len) == CLIENT_OK
+          && ct.view.drawn && ct.view.fool == 0 && ct.view.num_eliminated == 0,
+          "the seat's envelope reads as a draw, the lower fool named");
+    int32_t out[MAX_PLAYERS];
+    const int32_t three[3] = { 1000, 1000, 1000 };
+    const int8_t o3[3] = { 2, 0, 1 }, p3[3] = { 1, 3, 3 };
+    CHECK(elo_deltas(three, o3, p3, 3, out) == 3 && out[2] == 10 && out[0] == -5 && out[1] == -5,
+          "three level seats, one out first and two fools: +10, and -5 for each fool");
+    const int8_t bad[3] = { 1, 3, 2 };
+    CHECK(elo_deltas(three, o3, bad, 3, out) == TABLE_E_WIRE, "places that go back up are refused");
+
+    // THE SESSION LOG DOOR refuses a record naming a seat the table does not have:
+    // octogen indexes its per-seat arrays by it (UBSan found seat 10 in a hostile
+    // log once the doors test's corpus changed with the v6 rows).
+    // MUTATION-CHECKED: table.c table_set_session_log's seat loop deleted goes red
+    // at "a log naming seat 10 at a two-seat table is refused".
+    uint8_t rec[10] = { 0, 0, 0, 0, 0, 0, LOG_GOOD, 1, 0xFF, 0 };
+    CHECK(table_set_session_log(&tb, rec, 10) == 1, "a log naming a seat of the table is read");
+    rec[7] = 10;
+    CHECK(table_set_session_log(&tb, rec, 10) == TABLE_E_WIRE, "a log naming seat 10 at a two-seat table is refused");
+    rec[7] = 0xFF; rec[8] = 2;
+    CHECK(table_set_session_log(&tb, rec, 10) == TABLE_E_WIRE, "and so is one naming defender 2");
+}
+
+// THE REPLAY ENDS WHERE THE GAME DID. A drawn game's v6 code is its moves up to
+// the pickup that drew it; the codec's own model (replay.c RModel) must call
+// the same draw, or its header says the code was cut mid-game (no fool) and the
+// history pages and rankings that read it (ReplaySummary) lose the result. The
+// engine rebuilding the code (replay_steps_v6) draws on its own.
+// MUTATION-CHECKED: replay.c apply_pickup's `m->drawn = game_rep_checkpoint(...)`
+// made a bare call ("the summary names the fools" goes red).
+static void rep_null_sink(void *ctx, const EvwEvent *ev) { (void)ctx; (void)ev; }
+static void test_repetition_draw_survives_the_replay(void) {
+    static Game g;
+    static unsigned char code[1 << 14];
+    int at = 0;
+    rep_0e68bd_deal(&g);
+    CHECK(rep_0e68bd_play(&g, &at, 98) == 98 && game_drawn(&g), "0e68bd plays to its draw");
+    const int n = replay_encode_v6_from_game(&g, REP_0E68BD_SEED, 32, 0x7fffffff, code, (int)sizeof code);
+    CHECK(n > 0, "the drawn game encodes as a v6 code");
+    ReplaySummary s;
+    CHECK(n > 0 && replay_summary_v6(code, n, &s) == REPLAY_EOK && s.fool == 0 && s.num_eliminated == 0
+          && s.num_players == 2 && s.discard_pile_length == 26,
+          "the summary names the fools: the lower seat, and nobody out");
+    ReplayHeader h;
+    CHECK(n > 0 && replay_steps_v6(code, n, VIEW_SPECTATOR, &h, rep_null_sink, 0) == REPLAY_EOK,
+          "the code plays back through the engine");
+    const Game *r = replay_steps_last_game();
+    CHECK(r->status == GAME_STATUS_GAME_OVER && game_drawn(r) && game_fools(r) == 3u && h.fool == 0,
+          "the rebuilt game is the same draw");
+    bool same = true;
+    for (int s2 = 0; s2 < 2; s2++) {
+        uint64_t a = 0, b = 0;
+        for (int i = 0; i < g.players[s2].hand_count; i++) a |= 1ull << card_to_id(g.players[s2].hand[i]);
+        for (int i = 0; i < r->players[s2].hand_count; i++) b |= 1ull << card_to_id(r->players[s2].hand[i]);
+        same &= a == b;
+    }
+    CHECK(same && memcmp(&r->rep, &g.rep, sizeof g.rep) == 0, "on the same hands, with the same history");
 }
 
 // ---- a bot's good is a move (was e2e/good_is_a_move.test.ts) ----
@@ -22719,6 +23334,18 @@ int main(void) {
     test_table_a_load_leaves_nothing_of_the_last_table();
     test_table_every_brain_seats_as_itself();
     test_table_ranks_every_finished_game();
+    test_repetition_ends_game_0e68bd();
+    test_repetition_draws_on_the_third_visit();
+    test_repetition_counts_any_route();
+    test_repetition_history_starts_over();
+    test_repetition_checkpoints_where_nobody_draws();
+    test_repetition_position_folds_every_field();
+    test_repetition_window_is_the_ring();
+    test_repetition_ends_the_arena_loops();
+    test_repetition_draw_keeps_the_places_of_those_out();
+    test_repetition_history_survives_the_row();
+    test_repetition_draw_rates_the_fools_level();
+    test_repetition_draw_survives_the_replay();
     test_table_a_bots_good_is_a_move();
     test_table_composed_boards_round_trip();
     test_client_adopts_envelopes();
