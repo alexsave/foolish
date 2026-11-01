@@ -19,7 +19,7 @@ import {
     memOf, readOgMtCandidates, writeOgKnobs, readOgRankAnswer, writeOgRankAsk,
 } from '@sdk/ts/gen/oracle_layout.oracle_mt.ts';
 import {
-    OracleJob, OracleCandidate, OracleVerdict, OracleKnobs, ORACLE_KNOBS,
+    OracleJob, OracleCandidate, OracleRanked, OracleVerdict, OracleKnobs, ORACLE_KNOBS,
     oracleCardToken, canonicalMoveKey,
 } from './types';
 import { rankCandidates } from './oracleBridge';
@@ -198,25 +198,20 @@ export class OracleMtSession {
     solverFired(): boolean { return !!this.ex && this.ex.wasm_mt_solver() !== 0; }
     defuse(): void { this.ex?.wasm_mt_defuse(); }
 
-    /** The smallest per-candidate world count - the convergence yardstick. */
-    minNsim(): number {
-        const ex = this.ex;
-        if (!ex) return 0;
-        const n = ex.wasm_mt_ncand();
-        if (n <= 0) return 0;
-        let m = Infinity;
-        for (let i = 0; i < n; i++) { const s = ex.wasm_mt_nsim(i); if (s > 0) m = Math.min(m, s); }
-        return m === Infinity ? 0 : m;
-    }
-
     /** Read the C accumulator into the same OracleCandidate rows Mode A's
      *  accumulator produces, so the overlay cannot tell the modes apart. */
-    readCandidates(job: OracleJob, exact: boolean): OracleCandidate[] {
+    readCandidates(job: OracleJob, exact: boolean): OracleCandidate[] { return this.ranked(job, exact).rows; }
+
+    /** The convergence checkpoint (§8.7), the kernel's, on the numbers the
+     *  panel shows (c/src/oracle_rank.c). */
+    converged(job: OracleJob): boolean { return this.ranked(job, false).converged; }
+
+    private ranked(job: OracleJob, exact: boolean): OracleRanked {
         const ex = this.ex;
-        if (!ex) return [];
+        if (!ex) return { rows: [], converged: false };
         const trump = job.powerSuit;
         const at = ex.wasm_mt_candidates();      // the published table's copy, 0 until published
-        if (at <= 0) return [];
+        if (at <= 0) return { rows: [], converged: false };
         const table = readOgMtCandidates(memOf(this.memory!.buffer), at).cand;
         const chosen = ex.wasm_mt_chosen();
         const out: OracleCandidate[] = [];

@@ -84,6 +84,8 @@ typedef struct {
 
 typedef struct {
     bool     noisy;                 // the numbers are the noisy race's (it scored some row)
+    bool     converged;             // every shown row's number has met the checkpoint
+                                    //   (OG_RANK_CONVERGE_*): the run may stop
     uint16_t n_lines;
     OgRankLine lines[OG_RANK_MAX_ROWS];
 } OgRankAnswer;
@@ -91,6 +93,13 @@ typedef struct {
 // The rule's numbers, named for its test.
 #define OG_RANK_TIE_FLOOR  0.0001   // two rows nearer than this always tie
 #define OG_RANK_SE_PROXY   1.2      // finish-place spread behind the n-based error
+// The convergence checkpoint (docs/INFINITE_ORACLE_DESIGN.md §8.7), on the
+// numbers SHOWN: every shown row has at least this many worlds behind its
+// number AND its error is at most this. AND, not OR: the error is the test and
+// the world count a floor under it, so a lucky error off a handful of samples
+// cannot end the run.
+#define OG_RANK_CONVERGE_MIN_N  65536
+#define OG_RANK_CONVERGE_MAX_SE 0.005
 
 void og_rank(const OgRankAsk *ask, OgRankAnswer *out);
 

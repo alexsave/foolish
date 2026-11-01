@@ -36,7 +36,7 @@ import { buildOracleJob } from '../src/oracle/replayOracleInput.ts';
 import { OracleInstance, rankCandidates } from '../src/oracle/oracleBridge.ts';
 import { readOgRankAnswer, writeOgRankAsk } from '../sdk/ts/gen/oracle_layout.oracle_mt.ts';
 import { OracleAccumulator } from '../src/oracle/accumulator.ts';
-import { OracleJob } from '../src/oracle/types.ts';
+import { OracleCandidate, OracleJob } from '../src/oracle/types.ts';
 import { ORACLE_MT_KNOBS, oracleSeedBase } from '../src/oracle/oracleMtSession.ts';
 import { openMtRig } from './helpers/oracle_mt_node.ts';
 import { seededCode } from './helpers/seeded_codes.ts';
@@ -320,5 +320,59 @@ test('§8b.7-5 exact endgame: Mode B reaches Mode A verdicts off per-thread tabl
         assert.equal(rig.session.canaryTrips(), 0, 'no stack canary trip in the endgame regime');
         assert.equal(rig.session.mismatches(), 0, 'no dropped batch in the endgame regime');
         console.log(`  §8b.7-5: ${proofs} proofs in Mode B, ${compared} agreed with Mode A, ${b.length} candidates`);
+    } finally { await rig.close(); }
+});
+
+/* -----------------------------------------------------------------------------
+ * §8b.7-6 Both modes converge on fusion's NOISY race (docs/INFINITE_ORACLE_DESIGN.md
+ * "The cost, and the budget split"): the panel prints the noisy race's numbers,
+ * so "Converged" is judged on them (c/src/oracle_rank.c), and the +- printed at
+ * convergence is at most the checkpoint. The noisy race runs on twice the
+ * noise-free race's worlds (ORACLE_SHADOW_W = 200), the rule this split states.
+ *
+ * Mutation-checked (2026-11-01; each seen red by the named assertion, then
+ * restored): the share back at 50 failed "the noisy race has twice the
+ * noise-free race's worlds" (Mode A's, which runs first). Judging convergence on the
+ * noise-free race is held natively (c/tests/oracle_rank_test.c), because with
+ * the noisy race on more worlds that mutant stops later, never earlier.
+ * -------------------------------------------------------------------------- */
+const CONVERGE_MAX_SE = 0.005, CONVERGE_MIN_N = 65_536;   // c/src/oracle_rank.h OG_RANK_CONVERGE_*
+function assertConverged(rows: OracleCandidate[], mode: string) {
+    const shown = rows.filter((c) => c.ef != null);
+    assert.ok(shown.length >= 8, `${mode}: the wide decision is shown (${shown.length} rows)`);
+    for (const c of shown) {
+        assert.ok(c.se <= CONVERGE_MAX_SE, `${mode}: the +- printed at convergence is at most ${CONVERGE_MAX_SE} (${c.key}: ${c.se})`);
+        assert.ok(c.shadowN >= CONVERGE_MIN_N, `${mode}: every shown number has ${CONVERGE_MIN_N} noisy worlds (${c.key}: ${c.shadowN})`);
+        assert.ok(c.shadowN >= 1.9 * c.n, `${mode}: the noisy race has twice the noise-free race's worlds (${c.key}: ${c.shadowN} vs ${c.n})`);
+    }
+}
+
+test('§8b.7-6 both modes converge on the noisy race, and print its +- at convergence', async () => {
+    const job = await mcJob();
+    // Mode A, one instance, wide batches: until the kernel says converged.
+    const inst = new OracleInstance();
+    await inst.init(ORACLE_BYTES);
+    inst.setKnobs({ ...ORACLE_MT_KNOBS, w1: 192, solveBudget: 0 });
+    const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, ranker: inst });
+    const t0 = Date.now();
+    for (let b = 0; b < 4000 && !acc.converged(); b++) {
+        const r = inst.analyzeOnce(job, 7 + b * 7919);
+        if ('record' in r) acc.add(r.record);
+    }
+    assert.ok(acc.converged(), 'Mode A converged inside the batch cap');
+    assertConverged(acc.candidates(false), 'Mode A');
+    console.log(`  §8b.7-6: Mode A converged in ${Date.now() - t0} ms`);
+
+    // Mode B, three threads: run until the kernel says converged.
+    const rig = await openMtRig(job, 3);
+    try {
+        const t1 = Date.now();
+        rig.session.setup(job.seat, oracleSeedBase(job.decisionId));
+        for (let i = 0; i < 600 && !rig.session.converged(job); i++) await new Promise((r) => setTimeout(r, 100));
+        rig.session.stop();
+        for (let i = 0; i < 400 && rig.session.active() > 0; i++) await new Promise((r) => setTimeout(r, 5));
+        assert.ok(rig.session.converged(job), 'Mode B converged inside a minute');
+        assertConverged(rig.session.readCandidates(job, false), 'Mode B');
+        console.log(`  §8b.7-6: Mode B converged in ${Date.now() - t1} ms`);
     } finally { await rig.close(); }
 });

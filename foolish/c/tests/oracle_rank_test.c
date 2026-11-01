@@ -26,7 +26,13 @@
  *   - the exact regime sorted by depth instead of value: "the quickest win and
  *     the longest loss lead";
  *   - fusion's bar at 0: "within the bar, octogen's pick stands";
- *   - the tax left out of the noisy gap: "the trump tax counts in the gap".
+ *   - the tax left out of the noisy gap: "the trump tax counts in the gap";
+ *   - convergence judged on the noise-free race's error and worlds:
+ *     "converged is judged on the noisy race's error";
+ *   - the world floor dropped from convergence: "converged needs the world
+ *     floor too";
+ *   - convergence over every sampled row, not the shown ones: "a row with no
+ *     number shown does not hold convergence back".
  */
 #include <stdint.h>
 #include <string.h>
@@ -257,6 +263,51 @@ int main(void)
         CHECK(pos_of(s) == 0 && pos_of(un) == 1, "sampled first");
         CHECK(!line_of(un)->best && !line_of(un)->shown && line_of(un)->cls == OG_CLASS_NONE && line_of(un)->bar == 0.0f,
               "no verdict on it");
+    }
+
+    /* ---- convergence: on the numbers shown -------------------------------- */
+    TEST("rank: converged is judged on the noisy race's error");
+    {
+        reset(false);
+        const int r0 = row(3.0, 0.020, 3.10, 0.0049), r1 = row(3.1, 0.020, 3.20, 0.0050);
+        ask.rows[r0].nsim = ask.rows[r1].nsim = 32768;                 /* noise-free: half the worlds, wide */
+        ask.rows[r0].shadow_nsim = ask.rows[r1].shadow_nsim = 65536;
+        og_rank(&ask, &ans);
+        CHECK(ans.converged, "every shown error <= 0.005 over 65,536 noisy worlds: converged");
+        for (int i = 0; i < ans.n_lines; i++)
+            CHECK(ans.lines[i].se <= OG_RANK_CONVERGE_MAX_SE, "the +- printed at convergence is at most the checkpoint (%g)", ans.lines[i].se);
+        ask.rows[r1].shadow_se = 0.0051;
+        ask.rows[r0].se = ask.rows[r1].se = 0.001;
+        ask.rows[r0].nsim = ask.rows[r1].nsim = 200000;
+        og_rank(&ask, &ans);
+        CHECK(!ans.converged, "a noisy error of 0.0051 is not converged, however tight the noise-free race");
+    }
+    TEST("rank: converged needs the world floor too");
+    {
+        reset(false);
+        const int r0 = row(3.0, 0.001, 3.10, 0.004);
+        ask.rows[r0].shadow_nsim = 65535;
+        og_rank(&ask, &ans);
+        CHECK(!ans.converged, "65,535 noisy worlds is under the floor");
+        ask.rows[r0].shadow_nsim = 65536;
+        og_rank(&ask, &ans);
+        CHECK(ans.converged, "65,536 is at it");
+        ask.rows[r0].shadow_se = INFINITY;
+        og_rank(&ask, &ans);
+        CHECK(!ans.converged, "an unmeasured error never converges");
+    }
+    TEST("rank: a row with no number shown does not hold convergence back");
+    {
+        reset(false);
+        const int r0 = row(3.0, 0.001, 3.10, 0.004);
+        ask.rows[r0].shadow_nsim = 70000;
+        const int bare = row(2.5, 0.001, 0.0, 0.0);
+        ask.rows[bare].shadow_scored = false; ask.rows[bare].shadow_nsim = 0;
+        og_rank(&ask, &ans);
+        CHECK(ans.converged, "only shown rows count");
+        reset(false);
+        og_rank(&ask, &ans);
+        CHECK(!ans.converged, "an empty answer is not converged");
     }
 
     /* ---- the exact regime ------------------------------------------------- */

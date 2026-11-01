@@ -41,6 +41,10 @@
 //         The played move is never moved out of its place.
 //   bar   the X-ray pages' formula over the shown numbers: 96 - 84 * (v -
 //         lowest) / span, span their spread floored at 0.4, clamped [12, 100].
+//   converged  every shown row has OG_RANK_CONVERGE_MIN_N worlds behind its
+//         number and an error of at most OG_RANK_CONVERGE_MAX_SE: the noisy
+//         race's, since that is what is shown. An unmeasured (infinite) error
+//         never passes.
 //
 // Exact regime (a proven win or loss): by verdict, win, draw, unknown, none,
 // loss, illegal; within a verdict by its value, larger first (+-(1000 - depth):
@@ -195,6 +199,17 @@ void og_rank(const OgRankAsk *ask, OgRankAnswer *out) {
     }
     out->n_lines = (uint16_t)n;
     out->noisy = noisy;
+    // Converged: judged on what is shown, so the +- the panel prints at
+    // "Converged" is at most the checkpoint. Not in the exact regime, whose
+    // answer is the verdicts (the host stops on those itself).
+    bool conv = false;
+    for (int i = 0; i < n; i++) {
+        if (!W.shown[i]) continue;
+        const int32_t wn = noisy ? ask->rows[i].shadow_nsim : ask->rows[i].nsim;
+        if (wn < OG_RANK_CONVERGE_MIN_N || !(W.vse[i] <= OG_RANK_CONVERGE_MAX_SE)) { conv = false; break; }
+        conv = true;
+    }
+    out->converged = conv;
     for (int i = 0; i < n; i++) og_rank_line(&out->lines[i], i);
     if (n == 0) return;
 
