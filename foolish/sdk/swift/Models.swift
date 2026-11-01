@@ -136,8 +136,10 @@ public struct GameView: Codable, Equatable, Sendable {
     public let defender: Int
     public let viewer: Int
     public let goodMask: Int
-    /// Fool (loser) seat once the game is over, else -1.
+    /// Fool (loser) seat once the game is over, else -1: the lowest fool of a draw.
     public let gameOver: Int
+    /// The game ended as a repetition draw: every seat still in is a fool (the kernel's game_drawn).
+    public let drawn: Bool
     public let flipped: Card?
     public let battles: [BattleView]
     public let eliminationOrder: [Int]
@@ -148,7 +150,7 @@ public struct GameView: Codable, Equatable, Sendable {
     public init(status: Int, numPlayers: Int, powerSuit: Int, deckCount: Int,
                 discardCount: Int, hasFlipped: Bool, firstAttacker: Int, defender: Int,
                 viewer: Int, goodMask: Int, gameOver: Int, flipped: Card?,
-                battles: [BattleView], eliminationOrder: [Int], players: [PlayerView]) {
+                battles: [BattleView], eliminationOrder: [Int], players: [PlayerView], drawn: Bool = false) {
         self.status = status
         self.numPlayers = numPlayers
         self.powerSuit = powerSuit
@@ -160,6 +162,7 @@ public struct GameView: Codable, Equatable, Sendable {
         self.viewer = viewer
         self.goodMask = goodMask
         self.gameOver = gameOver
+        self.drawn = drawn
         self.flipped = flipped
         self.battles = battles
         self.eliminationOrder = eliminationOrder

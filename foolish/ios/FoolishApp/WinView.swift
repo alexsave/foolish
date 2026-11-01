@@ -23,19 +23,21 @@ struct WinView<Session: GameSession>: View {
     @State private var showQR = false
 
     private var humanWon: Bool { foolSeat != humanSeat }
+    /// A repetition draw: every seat still in is a fool, so no one fool is named.
+    private var drawn: Bool { game.view?.drawn ?? false }
 
     var body: some View {
         ZStack {
             Color.black.opacity(0.6).ignoresSafeArea()
             VStack(spacing: FSpace.xl) {
                 Spacer()
-                Text(humanWon ? FStrings.t("you_win") : FStrings.t("you_lose"))
+                Text(drawn ? FStrings.t("result_draw") : humanWon ? FStrings.t("you_win") : FStrings.t("you_lose"))
                     .font(FType.numeral(40))
                     .foregroundColor(humanWon ? FColor.win : FColor.accent)
                     .scaleEffect(revealed ? 1 : 0.8)
                     .opacity(revealed ? 1 : 0)
 
-                if let name = foolName {
+                if !drawn, let name = foolName {
                     Text(name)
                         .font(FType.title(18))
                         .foregroundColor(FColor.textPrimary)

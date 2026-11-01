@@ -89,6 +89,6 @@ public extension GameView {
                   // rule, which this file used to restate from the statuses.
                   gameOver: v.fool,
                   flipped: v.hasFlipped ? Card(s: v.flipped.suit, v: v.flipped.value) : nil,
-                  battles: battles, eliminationOrder: v.elimination, players: players)
+                  battles: battles, eliminationOrder: v.elimination, players: players, drawn: v.drawn)
     }
 }

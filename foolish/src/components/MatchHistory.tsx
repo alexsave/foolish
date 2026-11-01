@@ -70,10 +70,14 @@ const StatsCard: React.FC<{ stats: HistoryStats; elo: { rating: number } | null;
     </div>
 );
 
+// Was I a fool? The server ranks every fool at the seat count (cb_snapshot_rank),
+// both fools of a repetition draw included; a row with no summary has only the seat.
+const wasFool = (e: HistoryEntry) => (e.myRank > 0 ? e.myRank === e.playerCount : e.mySeat === e.foolSeat);
+
 // One finished game: how it went for you, who sat where, and the way into its replay.
 const HistoryRow: React.FC<{ entry: HistoryEntry; woodUrl: string | null; onOpen: () => void }> = ({ entry, woodUrl, onOpen }) => {
     const botName = useBotName();
-    const survived = entry.mySeat !== entry.foolSeat;
+    const survived = !wasFool(entry);
     const seed = seedFromString(entry.id);
     const flip = flipFromString(entry.id);
 
@@ -178,7 +182,7 @@ export const MatchHistory: React.FC = () => {
     // lifetime figure, and it's current by definition.
     const stats = useMemo(() => {
         if (!entries || entries.length === 0) return null;
-        const fools = entries.filter((e) => e.mySeat === e.foolSeat).length;
+        const fools = entries.filter(wasFool).length;
         return {
             games: entries.length,
             fools,
