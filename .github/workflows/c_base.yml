@@ -28,7 +28,11 @@ on:
       - 'shared/c/**'
       - 'shared/tools/**'
       - '.github/workflows/c_base.yml'
-  # Every pull request, a stacked one into another branch included.
+  # Every pull request, a stacked one into another branch included. Beyond
+  # the deploy's paths: the product fuzz targets the fuzz stage also selects
+  # (shared/fuzz and the product kernels it builds from) and the selector.
+  # Not on push: those change no deployed byte (product_fuzz_nightly.yml
+  # fuzzes them every night).
   pull_request:
     paths:
       - 'c_base/**'
@@ -36,6 +40,12 @@ on:
       - 'foolish/server/**'
       - 'shared/c/**'
       - 'shared/tools/**'
+      - 'shared/fuzz/**'
+      - 'pickemup/c/**'
+      - 'tallybones/c/**'
+      - 'chuiniu/c/**'
+      - 'uttt/c/**'
+      - '.github/scripts/fuzz_select.sh'
       - '.github/workflows/c_base.yml'
   workflow_dispatch: {}
 
@@ -119,9 +129,12 @@ jobs:
         run: make -C c_base/client ts-test
 
   # THE FUZZ STAGE: one job per target, in parallel, each 30 s from its corpus
-  # (c_base_fuzz_nightly.yml is the same shape at 10 min). fuzz_targets says
-  # which: on a push to main or a dispatch every <side>/fuzz/fz_*.c; on a pull
-  # request only the targets built from a file it changes
+  # (c_base_fuzz_nightly.yml and product_fuzz_nightly.yml are the same shape
+  # at 10 min). The targets are three builds' (fuzz_select.sh's header): c_base's
+  # (<t>), c_base/client's (client:<t>) and shared/fuzz's products
+  # (product:<t>). fuzz_targets says which: on a push to main or a dispatch
+  # every target of the three (fuzz_select.sh --all); on a pull request only
+  # the targets built from a file it changes
   # (.github/scripts/fuzz_select.sh: link line, nm reachability, the
   # compiler's dependency files, and the build's own commands against the
   # base's, so a makefile edit reruns the targets whose compile or link it
@@ -157,7 +170,7 @@ jobs:
             t=$(.github/scripts/fuzz_select.sh --base "$BASE" --head "$HEAD")
             [ -n "$t" ] || echo "No fuzz target is built from a file this pull request changes: nothing to fuzz."
           else
-            t=$(make -s -C c_base print-fuzz-targets)
+            t=$(.github/scripts/fuzz_select.sh --all)
           fi
           echo "targets=$(tr ' ' '\n' <<< "$t" | sed '/^$/d' | jq -R . | jq -sc .)" | tee -a "$GITHUB_OUTPUT"
 
@@ -190,16 +203,34 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential clang libssl-dev libsqlite3-dev
+      # The name's prefix says the build (fuzz_select.sh's header): its
+      # directory, its binary, its smoke goal and where a crash lands.
+      - id: where
+        env:
+          T: ${{ matrix.target }}
+        run: |
+          case "$T" in
+            client:*)  t=${T#client:}
+                       echo "dir=c_base/client"; echo "bin=build/fuzz/$t"
+                       echo "smoke=fuzz-smoke FUZZ_TIME=30"; echo "crashes=c_base/client/build/fuzz-crashes" ;;
+            product:*) t=${T#product:}
+                       echo "dir=shared/fuzz"; echo "bin=build/$t"
+                       echo "smoke=smoke TARGETS=$t FUZZ_TIME=30"; echo "crashes=shared/fuzz/build/crashes/$t" ;;
+            *:*)       echo "fuzz target $T: no build has that prefix" >&2; exit 1 ;;
+            *)         echo "dir=c_base"; echo "bin=build/fuzz/$T"
+                       echo "smoke=fuzz-smoke FUZZ_TIME=30 FUZZ_TARGETS=$T"; echo "crashes=c_base/build/fuzz-crashes/$T" ;;
+          esac >> "$GITHUB_OUTPUT"
+          echo "artifact=fuzz-crashes-${T/:/-}" >> "$GITHUB_OUTPUT"
       - name: build
-        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" build/fuzz/${{ matrix.target }}
+        run: make -C ${{ steps.where.outputs.dir }} -j"$(getconf _NPROCESSORS_ONLN)" ${{ steps.where.outputs.bin }}
       - name: 30 s from its corpus
-        run: make -C c_base fuzz-smoke FUZZ_TIME=30 FUZZ_TARGETS=${{ matrix.target }}
+        run: make -C ${{ steps.where.outputs.dir }} ${{ steps.where.outputs.smoke }}
       - name: the inputs that crashed
         if: failure()
         uses: actions/upload-artifact@v6
         with:
-          name: fuzz-crashes-${{ matrix.target }}
-          path: c_base/build/fuzz-crashes/${{ matrix.target }}
+          name: ${{ steps.where.outputs.artifact }}
+          path: ${{ steps.where.outputs.crashes }}
           if-no-files-found: ignore
           retention-days: 30
 
