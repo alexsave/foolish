@@ -21232,7 +21232,7 @@ static int bl_seats_row(BlRow *row, int np, const char *const *brains, const cha
 // robusta's and so firecracker's and gunpowder's, and espresso_prod's discard
 // set - and the memory block itself must hold only cards of the game's deck:
 // pinned rows, voids, pools, floors and discards.
-static long fk_decisions, fk_bad, fk_cards;
+static long fk_decisions, fk_bad, fk_cards, fk_counted;
 static int fk_first_bad;
 static bool fk_card_ok(const Game *g, Card c) { return card_in_range(c, min_value_for(g->num_players), ACE_VALUE); }
 static void fk_check_belief(const Game *g, int seat, const BotBelief *b, const char *who) {
@@ -21251,6 +21251,11 @@ bad:
 }
 static void fk_observer(const Game *g, int seat) {
     fk_decisions++;
+    // A table whose brains read no log keeps only its record count (table.c
+    // mem_wanted): it holds no belief to check, and asking for one trips the
+    // reader guard (bot_mem_bound_read), which is the point of the guard.
+    const BotMemory *bound = bot_mem_bound(g);
+    if (bound && bound->counts_only) { fk_counted++; return; }
     BotBelief b;
     bp_belief_of(g, seat, &b);
     fk_check_belief(g, seat, &b, "blackpowder");
@@ -21291,7 +21296,7 @@ static void test_beliefs_never_hold_a_fake_card(void) {
     TableCommit c;
     int refused = 0, ended = 0, games = 0, podkidnoy = 0;
     const long fakes0 = bot_mem_fakes_refused;
-    fk_decisions = fk_bad = fk_cards = 0;
+    fk_decisions = fk_bad = fk_cards = fk_counted = 0;
     fk_first_bad = 0;
     table_choose_observer = fk_observer;
     for (int gi = 0; gi < GAMES + BELIEF_GAMES; gi++) {
@@ -21316,11 +21321,11 @@ static void test_beliefs_never_hold_a_fake_card(void) {
         ended += bl_row.status == GAME_STATUS_GAME_OVER;
     }
     table_choose_observer = 0;
-    fprintf(stderr, "  fake cards: %d games (%d ended, %d podkidnoy), %ld decisions, %ld belief cards checked, %ld bad, %ld refused by the guard\n",
-            games, ended, podkidnoy, fk_decisions, fk_cards, fk_bad, bot_mem_fakes_refused - fakes0);
+    fprintf(stderr, "  fake cards: %d games (%d ended, %d podkidnoy), %ld decisions (%ld at tables that read no log), %ld belief cards checked, %ld bad, %ld refused by the guard\n",
+            games, ended, podkidnoy, fk_decisions, fk_counted, fk_cards, fk_bad, bot_mem_fakes_refused - fakes0);
     CHECK(refused == 0 && games == GAMES + BELIEF_GAMES, "fake cards: every bots-only row dealt and every cycle committed");
     CHECK(ended > games * 9 / 10, "fake cards: the games were played to their ends");
-    CHECK(fk_decisions > 100L * games, "fake cards: every decision of the games was checked");
+    CHECK(fk_decisions - fk_counted > 100L * games, "fake cards: every decision at a table that folds the whole memory was checked");
     CHECK(fk_bad == 0, "fake cards: no belief of any log-reading brain, nor the memory, ever held a card the deck does not have");
     CHECK(bot_mem_fakes_refused == fakes0, "fake cards: the guard never had to refuse one in a real game");
 }
