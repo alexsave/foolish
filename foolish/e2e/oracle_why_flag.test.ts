@@ -258,7 +258,7 @@ test('a tied group all reads Best, in one colour, and the pick is marked', async
         row('JD', 3.7569, 0.0027, 3.1720),
         row('JH', 3.7559, 0.0027, 3.1732),
         row('JS', 3.7602, 0.0027, 3.1790),
-    ], false, false, 4).rows;
+    ], false, { deckAlive: false, numPlayers: 4, eliminations: 0 }).rows;
     const { host, unmount } = await overlay({ ...SNAPSHOT, candidates, recordedKey: '8D', recordedLabel: 'attack 8D' });
     const body = host.querySelector('[data-testid="oracle-panel"]')!.lastElementChild!;
     const rows = [...body.children].slice(0, candidates.length);

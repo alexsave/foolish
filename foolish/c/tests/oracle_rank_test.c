@@ -30,6 +30,8 @@
  *   - a chess.com threshold shifted (0.05 -> 0.06): "classes are chess.com's
  *     expected-points bands, scaled by the seats";
  *   - the (n - 1) scaling dropped: the same test, at 6 seats;
+ *   - the seats already out ignored (seats - 1 again): "classes measure the
+ *     places still open";
  *   - convergence judged on the noise-free race's error and worlds:
  *     "converged is judged on the noisy race's error";
  *   - the world floor dropped from convergence: "converged needs the world
@@ -296,6 +298,46 @@ int main(void)
                       seats[s], T[k], line_of(hi[k])->cls, at[k]);
             }
         }
+    }
+
+    TEST("rank: classes measure the places still open");
+    {
+        static const double T[] = { 0.02, 0.05, 0.10, 0.20 };
+        static const uint8_t below[] = { OG_CLASS_EXCELLENT, OG_CLASS_GOOD, OG_CLASS_INACCURACY, OG_CLASS_MISTAKE };
+        static const uint8_t at[] = { OG_CLASS_GOOD, OG_CLASS_INACCURACY, OG_CLASS_MISTAKE, OG_CLASS_BLUNDER };
+        /* 6 seats, 2 out: places 3..6, a span of 3; 6 seats, 4 out: the last two, a span of 1 */
+        static const int out_[] = { 2, 4 }, span_[] = { 3, 1 };
+        for (int s = 0; s < 2; s++) {
+            reset(false);
+            ask.n_players = 6; ask.n_out = (uint8_t)out_[s];
+            row(3.0, 0.0, 5.0, 0.0);                          /* the pick */
+            int lo[4], hi[4];
+            for (int k = 0; k < 4; k++) {
+                lo[k] = row(3.0, 0.0, 5.0 + T[k] * span_[s] - 1e-7, 0.0);
+                hi[k] = row(3.0, 0.0, 5.0 + T[k] * span_[s] + 1e-7, 0.0);
+            }
+            og_rank(&ask, &ans);
+            for (int k = 0; k < 4; k++) {
+                CHECK(line_of(lo[k])->cls == below[k], "6p, %d out, just under %.2f points: class %d, want %d",
+                      out_[s], T[k], line_of(lo[k])->cls, below[k]);
+                CHECK(line_of(hi[k])->cls == at[k], "6p, %d out, just over %.2f points: class %d, want %d",
+                      out_[s], T[k], line_of(hi[k])->cls, at[k]);
+            }
+        }
+        /* throwing a 6-seat game's two-player endgame: 0.9 places is 0.9 points (blunder), not 0.18 (mistake) */
+        reset(false);
+        ask.n_players = 6; ask.n_out = 4;
+        row(3.0, 0.0, 5.05, 0.0);
+        const int thrown = row(3.0, 0.0, 5.95, 0.0);
+        og_rank(&ask, &ans);
+        CHECK(line_of(thrown)->cls == OG_CLASS_BLUNDER, "0.9 places with two left is a blunder (%d)", line_of(thrown)->cls);
+        /* one seat in (no real decision) counts as one place */
+        reset(false);
+        ask.n_players = 6; ask.n_out = 5;
+        row(3.0, 0.0, 5.0, 0.0);
+        const int one = row(3.0, 0.0, 5.03, 0.0);
+        og_rank(&ask, &ans);
+        CHECK(line_of(one)->cls == OG_CLASS_GOOD, "fewer than two in counts as one place: 0.03 is good (%d)", line_of(one)->cls);
     }
 
     /* ---- convergence: on the numbers shown -------------------------------- */

@@ -85,7 +85,9 @@ The rule, Monte Carlo regime, every number below being the noisy race's:
   When fusion keeps octogen's pick, the noisy race's lowest row is within fusion's bar of it and so (up to the trump tax, which the bar counts and the tie does not) ties it: the Best group sits at the top of the list.
 - **Class (since 2026-11-01: chess.com's, by expected-points loss).** A row tied with fusion's pick is `best`.
   Any other row is classed the way chess.com classifies a move (support.chess.com/en/articles/8572705), by its loss in expected points on a 0-1 scale.
-  An expected finish EF on an n-seat table is E = (n - EF) / (n - 1) expected points (1st = 1.0, last = 0.0), so a row's loss is (EF - the Best group's lowest EF) / (n - 1).
+  With k of n seats already out the mover can only finish k+1..n, so an expected finish EF is E = (n - EF) / (n - k - 1) expected points (the best place still open = 1.0, last = 0.0), and a row's loss is (EF - the Best group's lowest EF) / (n - k - 1).
+  So throwing the two-player endgame of a 6-seat game (finishing 6th instead of 5th) loses 1.0, a Blunder, where dividing by the seats would have said 0.2.
+  The host passes k from the board (`OracleJob.eliminations`); fewer than two seats in counts as one place.
   The bands are chess.com's: Excellent below 0.02, Good 0.02-0.05, Inaccuracy 0.05-0.10, Mistake 0.10-0.20, Blunder 0.20 and over (each band includes its lower bound), one table in `og_rank_class`.
   A row below the Best group that does not tie loses nothing and is `best` too.
   These replace the raw-EF thresholds (`< 0.05` excellent, `< 0.15` good, `< 0.35` inaccuracy, `< 0.7` mistake), which did not scale with the table: the same 0.3 places is a third of the scale at 2 seats and a twentieth of it at 8.

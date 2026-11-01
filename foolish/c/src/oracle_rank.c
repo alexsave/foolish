@@ -31,10 +31,13 @@
 //         plays. A pick with no number shown (never seen in practice: o is
 //         pinned in the noisy race) is marked but makes no Best group.
 //   class a row tied with the pick is best. Any other shown row is classed by
-//         its EXPECTED-POINTS LOSS, as chess.com classifies moves: the expected
-//         finish EF maps to expected points E = (n - EF) / (n - 1) on an
-//         n-player table (1st = 1.0, last = 0.0), so the loss against the Best
-//         group's lowest number is (EF - that) / (n - 1), and the classes are
+//         its EXPECTED-POINTS LOSS, as chess.com classifies moves. With k of n
+//         seats already out the mover can only finish k+1..n, so the expected
+//         finish EF maps to expected points E = (n - EF) / (n - k - 1) (the
+//         best place still open = 1.0, last = 0.0), and the loss against the
+//         Best group's lowest number is (EF - that) / (n - k - 1): throwing a
+//         two-player endgame of a 6-seat game (5th -> 6th) loses 1.0, not 0.2.
+//         Fewer than two seats in counts as one place. The classes are
 //         chess.com's table (og_rank_class). A row below the Best group that
 //         does not tie (the tax can produce one) loses nothing: best too.
 //   order shown rows by number, then the number plus tax, then input order;
@@ -173,9 +176,10 @@ static const struct { double below; uint8_t cls; } OG_RANK_CLASSES[] = {
     { 0.10, OG_CLASS_INACCURACY },
     { 0.20, OG_CLASS_MISTAKE },
 };
-static uint8_t og_rank_class(double gap, int n_players) {
+static uint8_t og_rank_class(double gap, int n_players, int n_out) {
     if (gap < OG_RANK_TIE_FLOOR) return OG_CLASS_BEST;
-    const double loss = gap / (double)(n_players > 1 ? n_players - 1 : 1);
+    const int places = n_players - n_out - 1;           // the places still open, less one
+    const double loss = gap / (double)(places > 1 ? places : 1);
     for (int k = 0; k < (int)(sizeof OG_RANK_CLASSES / sizeof *OG_RANK_CLASSES); k++)
         if (loss < OG_RANK_CLASSES[k].below) return OG_RANK_CLASSES[k].cls;
     return OG_CLASS_BLUNDER;
@@ -266,7 +270,7 @@ void og_rank(const OgRankAsk *ask, OgRankAnswer *out) {
         cls[i] = OG_CLASS_NONE; bar[i] = 0.0f;
         W.gkey[i] = W.v[i]; W.prio[i] = 2;
         if (!W.shown[i]) continue;
-        cls[i] = best[i] ? OG_CLASS_BEST : og_rank_class(W.shown[pick] ? W.v[i] - gmin : W.v[i] - lo, ask->n_players);
+        cls[i] = best[i] ? OG_CLASS_BEST : og_rank_class(W.shown[pick] ? W.v[i] - gmin : W.v[i] - lo, ask->n_players, ask->n_out);
         double w = 96.0 - (W.v[i] - lo) / span * 84.0;
         bar[i] = (float)(w < 12.0 ? 12.0 : w > 100.0 ? 100.0 : w);
         if (best[i]) { W.gkey[i] = gmin; W.prio[i] = i == pick ? 0 : 1; }

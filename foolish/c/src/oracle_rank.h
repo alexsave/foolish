@@ -66,6 +66,8 @@ typedef struct {
     bool     exact;                 // a proven win or loss exists: verdict ordering
     bool     deck_alive;            // the trump-keep tax is on
     uint8_t  n_players;             // seats at the table: finish places 1..n
+    uint8_t  n_out;                 // seats already out: the mover finishes in
+                                    //   n_out + 1 .. n_players (the host's board says)
     uint16_t n_rows;
     OgRankRow rows[OG_RANK_MAX_ROWS];
 } OgRankAsk;

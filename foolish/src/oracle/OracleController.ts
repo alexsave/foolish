@@ -123,7 +123,7 @@ export class OracleController {
         }
         if (gen !== this.gen) return;      // superseded while loading
 
-        this.acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, numPlayers: job.numPlayers, ranker: this.ranker! });
+        this.acc = new OracleAccumulator({ table: job, recordedKey: job.recordedKey, ranker: this.ranker! });
         this.status = 'running';
         this.workers.forEach((w, i) =>
             w.postMessage({ t: 'analyze', job, seedSalt: (i * 0x9e3779b1 + 1) >>> 0, gen }));
