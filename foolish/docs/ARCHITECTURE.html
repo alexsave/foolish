@@ -630,7 +630,10 @@ The current design is <code>c_base/DESIGN.md</code> at the repository root.</div
   the hot path.</strong> Hidden data leaves the kernel already redacted, and the DB side matches — row-level
   security cannot hide a column, so a migration replaced the games-table RLS policy with column-level
   SELECT grants that simply omit <code>state</code>, <code>game_seed</code> and <code>logs_packed</code>.
-  The masked path is the only path.</p>
+  The masked path is the only path. On <code>cbase serve</code> the session log is gone: the server keeps the
+  session's <em>move list</em> (<code>games.move_list</code>, <code>c/src/move_list.h</code>: the replay code's
+  atoms and the commits' times, about 7.7 bytes a move), server-only like the seed, and no reply or push
+  carries it (<code>unit_app no_reply_or_push_carries_the_move_list</code>).</p>
 </section>
 
 <!-- ============================================================ -->
@@ -714,7 +717,10 @@ The current design is <code>c_base/DESIGN.md</code> at the repository root.</div
   <ul>
     <li><strong>The blob is authoritative.</strong> Once dealt, <code>games.state</code> (~96 bytes hex) is
     the game; the JSONB hand tables stop being written and persist only for lobbies. <code>game_seed</code>
-    (32-byte ChaCha seed) and <code>logs_packed</code> are server-only columns hidden by grants.</li>
+    (32-byte ChaCha seed) and <code>logs_packed</code> are server-only columns hidden by grants. (On
+    <code>cbase serve</code>, <code>logs_packed</code> became the session's move list,
+    <code>games.move_list</code>: each commit appends its chunk, and only the game's end reads it, to cut
+    the replay.)</li>
     <li><strong><code>commit_game</code> is one 14-parameter RPC</strong> committing blob, view caches,
     spectator view, log append and round-epoch stamp in a single version-fenced transaction. Callers retry
     conflicts up to 5 times. A per-isolate LRU cache (256 games), fenced by the same version, removes one of
