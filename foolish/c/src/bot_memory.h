@@ -59,6 +59,12 @@ typedef struct {
     int8_t   in_now;          // seats not yet out (LOG_PLAYER_OUT)
     int8_t   cur_def;         // the defender as octogen's scan followed it, -1 before any
     int8_t   flip_holder;     // the last seat to draw, -1 for none
+    // A table none of whose brains reads the memory (bot_mem_count) keeps only
+    // the record count, the one thing every decision seed reads: the fold costs
+    // a game of random or handwritten bots nothing it did not pay before the
+    // memory. Such a block holds n_records and num_players and nothing else, and
+    // no reader may take it for a belief (bot_mem_bound_read).
+    uint8_t  counts_only;
     // The current bout, replayed from the per-move records (a PICKUP or DISCARD
     // record's card list truncates at MAX_LOG_PAIRS, the moves never do).
     uint8_t  tbl_n, unc_n;
@@ -103,6 +109,11 @@ void bot_mem_clear(BotMemory *m);
 // block first.
 void bot_mem_fold(BotMemory *m, const GameLog *rec, const Game *g);
 
+// The fold of a table whose brains read no memory (table.c mem_wanted): a
+// LOG_GAME_START starts a counts-only block, and every record is counted. The
+// count is exactly bot_mem_fold's, so a decision seeds alike from either block.
+void bot_mem_count(BotMemory *m, const GameLog *rec, const Game *g);
+
 // One record as the session log STORES it, folded: the record is masked first
 // by the one rule the store's writer applies (view.c log_record_put, with the
 // operation's face-up trump before it began), and read back as the log reader
@@ -125,7 +136,13 @@ const BotMemory *bot_mem_of(const Game *g);
 // Bind `m` as g's block on this thread (NULL unbinds). The server's table binds
 // the table's block around a bot drive (table.c).
 void bot_mem_bind(const Game *g, const BotMemory *m);
+// The block bound to g (any block: what the seeds count), or NULL.
 const BotMemory *bot_mem_bound(const Game *g);
+// The block bound to g for a READER (a belief, a world's discards), or NULL.
+// A counts-only block is no belief: a brain asking for one is a brain the
+// registry says reads no log (bots.c uses_logs), which aborts the native test
+// builds (BOT_MEM_ASSERT) and in a shipped build reads g's own log instead.
+const BotMemory *bot_mem_bound_read(const Game *g);
 
 // The progress term of every decision seed: the bound block's record count,
 // else g->num_logs (which is what a fold of g's log counts).

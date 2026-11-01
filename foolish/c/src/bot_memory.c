@@ -208,6 +208,15 @@ void bot_mem_fold(BotMemory *m, const GameLog *L, const Game *g) {
     }
 }
 
+void bot_mem_count(BotMemory *m, const GameLog *L, const Game *g) {
+    if (L->log_type == LOG_GAME_START) {
+        bot_mem_clear(m);
+        m->num_players = (int8_t)(g->num_players > 0 && g->num_players <= MAX_PLAYERS ? g->num_players : 0);
+        m->counts_only = 1;
+    }
+    m->n_records++;
+}
+
 void bot_mem_mask(const GameLog *rec, const Game *g, bool pre_has_flip, Card pre_flip, GameLog *l) {
     unsigned char w[4 + 2 * MAX_LOG_PAIRS];
     log_record_put(rec, 1, pre_has_flip, pre_flip, g->has_flipped, w);
@@ -248,8 +257,18 @@ const BotMemory *bot_mem_bound(const Game *g) {
     return g && g == t_bound_game ? t_bound_mem : 0;
 }
 
-const BotMemory *bot_mem_for(const Game *g, BotMemory *scratch) {
+const BotMemory *bot_mem_bound_read(const Game *g) {
     const BotMemory *m = bot_mem_bound(g);
+    if (!m || !m->counts_only) return m;
+#ifdef BOT_MEM_ASSERT
+    fprintf(stderr, "bot_memory: a brain read the memory of a table whose brains read none (bots.c uses_logs is wrong)\n");
+    abort();
+#endif
+    return 0;
+}
+
+const BotMemory *bot_mem_for(const Game *g, BotMemory *scratch) {
+    const BotMemory *m = bot_mem_bound_read(g);
     if (m) return m;
     bot_mem_from_logs(scratch, g);
     return scratch;
@@ -288,7 +307,8 @@ int bot_mem_discard_logs(const BotMemory *m, GameLog *dst, int cap) {
 // ---- the durable form --------------------------------------------------------
 //
 //   varint n_records, u8 num_players, u8 in_now, i8 cur_def, i8 flip_holder,
-//   u8 has (bit0 discard, bit1 table, bit2 alt),
+//   u8 has (bit0 discard, bit1 table, bit2 alt, bit3 counts only: the byte is
+//   then exactly 8, in_now 0, cur_def and flip_holder -1, and nothing follows),
 //   [u64 LE discard], [u8 tbl_n, ids, u8 unc_n, ids], [u8 alt_n, ids],
 //   then per seat: u8 present (bit0 row, bit1 voids, bit2 floor, bit3 flags,
 //   bit4 decl, bit5 counts), i16 hand_n as a zigzag varint, and what present
@@ -349,6 +369,12 @@ int bot_mem_encode(const BotMemory *m, uint8_t *out, int cap) {
     buf[at++] = (uint8_t)m->in_now;
     buf[at++] = (uint8_t)m->cur_def;
     buf[at++] = (uint8_t)m->flip_holder;
+    if (m->counts_only) {
+        buf[at++] = 8;
+        if (at > cap) return -1;
+        memcpy(out, buf, (size_t)at);
+        return at;
+    }
     const bool table = m->tbl_n || m->unc_n, alt = m->flip_holder >= 0;
     buf[at++] = (uint8_t)((m->discard ? 1 : 0) | (table ? 2 : 0) | (alt ? 4 : 0));
     if (m->discard) for (int i = 0; i < 8; i++) buf[at++] = (uint8_t)(m->discard >> (8 * i));
@@ -395,7 +421,11 @@ bool bot_mem_decode(BotMemory *m, const uint8_t *p, int len) {
     m->cur_def = (int8_t)rd_u8(&r);
     m->flip_holder = (int8_t)rd_u8(&r);
     const uint32_t has = rd_u8(&r);
-    if (n > MAX_PLAYERS || m->in_now < 0 || m->in_now > n || m->cur_def < -1 || m->cur_def >= MAX_PLAYERS
+    if (has == 8) {
+        // Counts only: the record count and the seats, nothing remembered.
+        m->counts_only = 1;
+        if (n > MAX_PLAYERS || m->in_now != 0 || m->cur_def != -1 || m->flip_holder != -1) r.bad = true;
+    } else if (n > MAX_PLAYERS || m->in_now < 0 || m->in_now > n || m->cur_def < -1 || m->cur_def >= MAX_PLAYERS
         || m->flip_holder < -1 || m->flip_holder >= n || (has & ~7u) || ((has & 4) != 0) != (m->flip_holder >= 0))
         r.bad = true;
     if (!r.bad && (has & 1)) {
@@ -408,7 +438,7 @@ bool bot_mem_decode(BotMemory *m, const uint8_t *p, int len) {
         if (!m->tbl_n && !m->unc_n) r.bad = true;
     }
     if (!r.bad && (has & 4)) m->alt_n = (uint8_t)rd_cards(&r, m->alt, BOT_MEM_ROW);
-    for (int s = 0; s < n && !r.bad; s++) {
+    for (int s = 0; s < n && !r.bad && !m->counts_only; s++) {
         const uint32_t present = rd_u8(&r);
         if (present & ~63u) { r.bad = true; break; }
         const uint32_t z = rd_var(&r);

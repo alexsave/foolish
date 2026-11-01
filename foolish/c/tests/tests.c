@@ -13334,14 +13334,16 @@ static void test_opening_deal_bytes_are_unchanged(void) {
     // the writer went to v6: hashing each blob as its v5 self (format byte 5,
     // without the bot memory section and its count) gives the v5 digest
     // 0x56a752e11fc9bd4c back, checked below, so the memory the deal folded and
-    // the format byte are the whole of that one. Both
+    // the format byte are the whole of that one. [0] moved again (from
+    // 0x043de2cd90986217) when a table of humans kept a counts-only block
+    // (table.c mem_wanted): the v5 digest did not move. Both
     // moved when a dealt hand became ascending (game.c deal_initial): the
     // envelopes carry the hands in their new order, and the bots, reading
     // hands in that order, played different games. [1] moved alone when the
     // replay format went to 11 (the trump symbol's alphabet gained the Aces):
     // the same logs, and each code is its v10 self with the version and trump
     // symbols re-radixed.
-    static const uint64_t golden[2] = { 0x043de2cd90986217ULL, 0xee92c4ae62c7e2d8ULL };
+    static const uint64_t golden[2] = { 0x7b758b6f24f305d8ULL, 0xee92c4ae62c7e2d8ULL };
     static const uint64_t golden_v5 = 0x56a752e11fc9bd4cULL;
     uint64_t hc5 = FNV64_OFFSET;
     uint64_t hc = FNV64_OFFSET;
@@ -20306,7 +20308,10 @@ static uint8_t po_arena2[sizeof(tb_arena)];
 // seeds are the whole of that change: no move, record or envelope moved otherwise.
 #define PRODUCTS_DIGEST_GOLDEN 0xdc6a515au
 // The bytes as written: the state as v6 (view.h: the bot memory section and its count).
-#define PRODUCTS_DIGEST_GOLDEN_V6 0x2758e01du
+// It was 0x2758e01d until a table whose brains read no log kept a counts-only block
+// (table.c mem_wanted): the v5 digest above did not move, so the memory sections are
+// the whole of that change.
+#define PRODUCTS_DIGEST_GOLDEN_V6 0xd39a060cu
 static void test_products_are_the_bytes_they_were(void) {
     uint8_t w[128];
     char id[16], ab[2 * FOOLISH_SEED_LEN + 1];
@@ -21318,6 +21323,108 @@ static void test_beliefs_never_hold_a_fake_card(void) {
     CHECK(fk_decisions > 100L * games, "fake cards: every decision of the games was checked");
     CHECK(fk_bad == 0, "fake cards: no belief of any log-reading brain, nor the memory, ever held a card the deck does not have");
     CHECK(bot_mem_fakes_refused == fakes0, "fake cards: the guard never had to refuse one in a real game");
+}
+
+// A TABLE FOLDS ONLY WHAT ITS BRAINS READ (table.c mem_wanted, bot_memory.c
+// bot_mem_count). A table of humans and named bots that read no log (random,
+// handwritten, simple_heuristic) keeps a counts-only block: the record count
+// every decision seed reads, and nothing else, so the engine path of such a
+// game costs what it did before the memory (bench_engine: the whole fold was
+// 6-9% of a random game). Whole games at 2 to 6 seats, every position driven
+// two ways: from the row as written (v6, its counts-only block, no log) and
+// from the same row as v5 with the stored log folded whole (the backfill). The
+// two must count the same records and move the same moves. Then the other
+// direction: a counts-only block under a roster that seats a reader is no
+// memory, and the table asks for the log. Then the codec's spelling of it.
+//
+// Mutants (each turned the named checks red, then restored): mem_wanted always
+// false -> "a table seating a reader folds the whole memory" and "... under a
+// roster that seats a reader is no memory"; always true -> "a table whose brains
+// read no log carries a counts-only block" and the codec checks; bot_mem_count
+// not counting -> "counts exactly the records" and "moves exactly as one from
+// the folded log"; mem_level_check a no-op -> "... is no memory, and the table
+// asks for the log"; the decoder not checking in_now -> "counts seats in is
+// refused". `has & 8` for `has == 8` in the decoder is equivalent (the
+// re-encode check refuses any other has byte). octogen's uses_logs set to 0
+// aborts test_bot_memory_rides_the_row in bot_mem_bound_read: the guard a
+// misflagged brain trips.
+static void test_bot_memory_counts_only_without_readers(void) {
+    static const char *const plain[] = { "random", "handwritten", "simple_heuristic" };
+    static const char *const names[MAX_PLAYERS] = { "A", "B", "C", "D", "E", "F", "G", "H" };
+#ifdef COVERAGE_CORPUS
+    enum { GAMES = 3, CYCLES = 60 };
+#else
+    enum { GAMES = 30, CYCLES = 400 };
+#endif
+    TableCommit c;
+    int games = 0, positions = 0, refused = 0, not_counts = 0, count_differ = 0, move_differ = 0;
+    for (int gi = 0; gi < GAMES; gi++) {
+        const int np = 2 + gi % 5;
+        const char *brains[MAX_PLAYERS];
+        for (int s = 0; s < np; s++) brains[s] = plain[(gi + s) % 3];
+        tb_seed_bytes(np, 0xc0de + gi);
+        if (bl_seats_row(&bl_row, np, brains, names) != TABLE_OK) { refused++; continue; }
+        games++;
+        for (int cy = 0; cy < CYCLES && bl_row.status == GAME_STATUS_PLAYING; cy++) {
+            // A: the row without its block (v5), the stored log folded whole.
+            const int l5 = bm_as_v5(&bl_row);
+            if (l5 < 0 || table_load(&tb, bm_v5, l5, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+            table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+            if (table_set_session_log(&tb, bl_row.log, bl_row.log_len) < 0 || !tb.mem_valid) { refused++; break; }
+            const uint32_t folded = tb.mem.counts_only ? 0 : tb.mem.n_records;
+            const int na = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+            if (na <= 0) break;
+            // B: the row as written, and no log at all.
+            if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+            table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+            not_counts += !(tb.mem_valid && tb.mem.counts_only && !table_bots_need_logs(&tb));
+            count_differ += tb.mem.n_records != folded;
+            const int nb = table_bot_drive(&tb, 0, 0, 0, &tb_drv2);
+            move_differ += !(nb == na && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)na) == 0);
+            positions++;
+            if (nb <= 0 || bl_row_commit(&bl_row, &c) < 0) { refused++; break; }
+        }
+    }
+    fprintf(stderr, "  bot memory counts only: %d games, %d positions\n", games, positions);
+    CHECK(refused == 0 && games == GAMES, "counts only: every row dealt, loaded, drove and committed");
+    CHECK(positions > GAMES * 20, "counts only: whole games of positions were compared");
+    CHECK(not_counts == 0, "counts only: a table whose brains read no log carries a counts-only block, and needs no log");
+    CHECK(count_differ == 0, "counts only: the block counts exactly the records a whole fold of the stored log counts");
+    CHECK(move_differ == 0, "counts only: a cycle from the counted block moves exactly as one from the folded log");
+
+    // A counts-only block where a reader is seated: no memory, the log is asked for.
+    tb_seed_bytes(3, 0xc0de);
+    static BlRow reader;
+    CHECK(bl_bots_only_row(&reader, 3, "octogen", tb_seed) == TABLE_OK, "counts only: a reader's table deals");
+    CHECK(table_load(&tb, reader.state, reader.state_len, reader.roster, ROSTER_BYTES) == TABLE_OK
+          && tb.mem_valid && !tb.mem.counts_only,
+          "counts only: a table seating a reader folds the whole memory");
+    CHECK(bl_bots_only_row(&bl_row, 3, "random", tb_seed) == TABLE_OK
+          && table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) == TABLE_OK
+          && tb.mem_valid && tb.mem.counts_only,
+          "counts only: a random table deals with a counts-only block");
+    const BotMemory counted = tb.mem;
+    CHECK(table_load(&tb, bl_row.state, bl_row.state_len, reader.roster, ROSTER_BYTES) == TABLE_OK
+          && !tb.mem_valid && table_bots_need_logs(&tb),
+          "counts only: a counts-only block under a roster that seats a reader is no memory, and the table asks for the log");
+    CHECK(table_set_session_log(&tb, bl_row.log, bl_row.log_len) > 0 && tb.mem_valid && !tb.mem.counts_only
+          && tb.mem.n_records == counted.n_records,
+          "counts only: the log the reader's table asks for folds whole");
+
+    // The durable spelling: n_records, the seats, 0, -1, -1, has = 8, nothing after.
+    uint8_t mb[BOT_MEM_BYTES_MAX], bad[BOT_MEM_BYTES_MAX + 1];
+    BotMemory back;
+    const int n = bot_mem_encode(&counted, mb, (int)sizeof mb);
+    CHECK(n == 6 && mb[1] == 3 && mb[2] == 0 && mb[3] == 0xff && mb[4] == 0xff && mb[5] == 8,
+          "counts only: the block is six bytes (a one-byte count, the seats, in_now 0, no defender, no drawer, has 8)");
+    CHECK(bot_mem_decode(&back, mb, n) && back.counts_only && bot_mem_equal(&back, &counted),
+          "counts only: the block reads back as itself");
+    memcpy(bad, mb, (size_t)n); bad[n] = 0;
+    CHECK(!bot_mem_decode(&back, bad, n + 1), "counts only: a byte after the has byte is refused");
+    memcpy(bad, mb, (size_t)n); bad[2] = 1;
+    CHECK(!bot_mem_decode(&back, bad, n), "counts only: a counts-only block that counts seats in is refused");
+    memcpy(bad, mb, (size_t)n); bad[5] = 9;
+    CHECK(!bot_mem_decode(&back, bad, n), "counts only: a counts-only block with a discard bit is refused");
 }
 
 #define TP_NOW0 1726600000000LL
@@ -22642,6 +22749,7 @@ int main(void) {
     test_state_blob_formats_read_and_written();
     test_bot_memory_rides_the_row();
     test_beliefs_never_hold_a_fake_card();
+    test_bot_memory_counts_only_without_readers();
     test_masked_view_does_not_depend_on_hidden_hands();
     test_every_viewer_reads_the_committed_board();
     test_every_push_is_leak_free_and_mirrors_the_commit();

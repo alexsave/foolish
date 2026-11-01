@@ -81,7 +81,7 @@ static inline void bot_lite_clone(Game *dst, const Game *src) {
 static inline void bot_clone_world(Game *dst, const Game *src) {
     memcpy(dst, src, offsetof(Game, logs));
     int nl = 0;
-    const BotMemory *mem = bot_mem_bound(src);
+    const BotMemory *mem = bot_mem_bound_read(src);
     if (mem) {
         nl = bot_mem_discard_logs(mem, dst->logs, WORLD_LOG_CAP > 0 ? WORLD_LOG_CAP : MAX_LOGS);
         dst->num_logs = nl;
