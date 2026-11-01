@@ -206,7 +206,7 @@ int analyse_verdict(int n_cands, int played_best, int all_lost, double loss, dou
 
 static int an_exact_rec(Game *g, int me, long *budget, int depth) {
     int loser = game_done(g);
-    if (loser >= 0) return (loser == me) ? -1 : 1;
+    if (loser >= 0) return ((game_fools(g) >> me) & 1u) ? -1 : 1;
     if (bot_in_count(g) != 2) return 0;
     if (g->deck_count == 0 && !g->has_flipped) {
         SimState s;
@@ -247,7 +247,7 @@ static int an_exact_rec(Game *g, int me, long *budget, int depth) {
 static int an_exact(const Game *g, int me, long budget) {
     if (budget <= 0) return 0;
     int loser = game_done(g);
-    if (loser >= 0) return (loser == me) ? -1 : 1;   // the candidate ended the game
+    if (loser >= 0) return ((game_fools(g) >> me) & 1u) ? -1 : 1;   // the candidate ended the game
     if (bot_in_count(g) != 2) return 0;
     if (g->deck_count > 1) return 0;
     Game *root = solve_scratch_root();

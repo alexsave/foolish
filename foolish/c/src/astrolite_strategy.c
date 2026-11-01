@@ -395,7 +395,7 @@ static void cd_sample_world(Game *g_out, const Game *g_in, int my_idx,
     if (cd_full_logs) {
         game_clone(g_out, g_in);
     } else {
-        memcpy(g_out, g_in, offsetof(Game, logs));
+        game_copy_head(g_out, g_in, offsetof(Game, logs));
         int nl = 0;
         for (int i = 0; i < g_in->num_logs; i++) {
             if (g_in->logs[i].log_type == LOG_DISCARD) g_out->logs[nl++] = g_in->logs[i];
@@ -497,7 +497,7 @@ static bool cd_solver_ready(void) {
 // negative = me as durak. Magnitude prefers faster wins / slower losses.
 static int cd_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     int loser = game_done(g);
-    if (loser >= 0) return (loser == S->me) ? -(1000 - depth) : (1000 - depth);
+    if (loser >= 0) return ((game_fools(g) >> S->me) & 1u) ? -(1000 - depth) : (1000 - depth);   // every fool of a draw loses
     if (bot_in_count(g) == 0) return 0;   // defensive: simultaneous out
     if (depth >= CD_SOLVE_MAX_DEPTH) { S->aborted = true; return 0; }
     if (--S->budget <= 0) { S->aborted = true; return 0; }

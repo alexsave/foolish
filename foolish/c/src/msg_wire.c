@@ -1215,7 +1215,10 @@ int msg_rematch_lobby(const unsigned char *finished, int finished_len,
     // A FINISHED chain always has its fool (msg_decode refuses a header that
     // says FINISHED over a game that is not over), so every rematch lobby
     // carries the fool's carry - which is also how the lobby gate knows a
-    // rematch lobby when it sees one (msg_lobby_is_rematch).
+    // rematch lobby when it sees one (msg_lobby_is_rematch). A repetition draw
+    // has several fools, and the carry is the LOWEST of them, the one game_done
+    // names: one seat has to open the rematch, and the lowest is the rule that
+    // needs no tie-break of its own.
     if (fool < 0) return MSG_EPHASE;
 
     // THE FINISHED GAME'S SEATING, every seat named. A finished chain carries

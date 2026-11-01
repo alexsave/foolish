@@ -229,7 +229,8 @@ typedef struct {
     int8_t  num_players;
     int8_t  power_suit;
     int8_t  first_attacker;
-    int8_t  fool;                       // -1 for a code cut mid-game
+    int8_t  fool;                       // -1 for a code cut mid-game; the lowest fool of a repetition draw, whose
+                                        // fools are every seat `elimination` does not name (game.h game_fools)
     int8_t  num_eliminated;
     int8_t  elimination[MAX_PLAYERS];   // seats, in the order they went out; the fool is not one
     int16_t moves;                      // ATTACK, COVER, PASS and PICKUP: one gap each in the extras

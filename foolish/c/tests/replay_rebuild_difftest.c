@@ -120,6 +120,11 @@ static bool same_cards(const Card *a, const Card *b, int n) {
     return true;
 }
 
+// A finished game's stock in card order, for the comparison below.
+static int card_cmp(const void *x, const void *y) {
+    return card_to_id(*(const Card *)x) - card_to_id(*(const Card *)y);
+}
+
 static bool same_multiset(const Card *a, const Card *b, int n) {
     int ca[64] = {0};
     for (int i = 0; i < n; i++) ca[card_to_id(a[i]) & 63]++;
@@ -192,7 +197,7 @@ int main(int argc, char **argv) {
     static Game g;
     static unsigned char want[RS_BOARD_MAX], got[RS_BOARD_MAX];
     unsigned char seed32[FOOLISH_SEED_LEN];
-    int played = 0, skipped = 0, diverged = 0;
+    int played = 0, skipped = 0, diverged = 0, drawn_with_stock = 0;
     int per_np[MAX_PLAYERS + 1] = {0}, div_np[MAX_PLAYERS + 1] = {0};
     const char *classes[16]; int class_n[16]; int n_classes = 0;
 
@@ -206,12 +211,26 @@ int main(int argc, char **argv) {
         if (!play(&g, np, hw, rules, seed, seed32) || g.num_logs >= MAX_LOGS) { skipped++; continue; }
         played++; per_np[np]++;
 
-        const int want_len = state_put(&g, VIEW_UNMASKED, want);
+        int want_len = state_put(&g, VIEW_UNMASKED, want);
         const int enc = replay_encode_v6_from_game(&g, seed32, FOOLISH_SEED_LEN, 1 << 30,
                                                    g_enc, ENC_CAP);
         int r = enc > 0 ? replay_steps_v6(g_enc, enc, VIEW_UNMASKED, 0, no_sink, 0) : enc;
         const Game *back = r == REPLAY_EOK ? replay_steps_last_game() : 0;
-        const int got_len = back ? state_put(back, VIEW_UNMASKED, got) : -1;
+        int got_len = back ? state_put(back, VIEW_UNMASKED, got) : -1;
+        // A REPETITION DRAW can end a game with cards still in the stock (c/REPETITION.md),
+        // and a v6 code reveals only the cards drawn: the stock's order past the last draw
+        // is in no code, so the rebuild holds the same cards in another order. Nobody draws
+        // from a finished game, so its stock is compared as cards.
+        if (back && game_drawn(&g) && g.deck_count > 0) {
+            static Game sg, sb;
+            game_copy_head(&sg, &g, offsetof(Game, logs));
+            game_copy_head(&sb, back, offsetof(Game, logs));
+            qsort(sg.deck, (size_t)sg.deck_count, sizeof(Card), card_cmp);
+            qsort(sb.deck, (size_t)sb.deck_count, sizeof(Card), card_cmp);
+            want_len = state_put(&sg, VIEW_UNMASKED, want);
+            got_len = state_put(&sb, VIEW_UNMASKED, got);
+            drawn_with_stock++;
+        }
         if (g_trace) {
             for (int i = 0; i < g_n_live; i++) dump(&g_live[i], g_live_what[i]);
             trace_rebuild(g_enc, enc);
@@ -232,8 +251,8 @@ int main(int argc, char **argv) {
     }
 
     printf("replay_rebuild_difftest: %d games played (%d skipped), %d diverged; "
-           "%d mid-game cuts, %d diverged\n",
-           played, skipped, diverged, mid_checks, mid_diverged);
+           "%d mid-game cuts, %d diverged; %d drawn with a stock left\n",
+           played, skipped, diverged, mid_checks, mid_diverged, drawn_with_stock);
     for (int np = 2; np <= MAX_PLAYERS; np++)
         if (per_np[np]) printf("  %d seats: %d / %d\n", np, div_np[np], per_np[np]);
     for (int c = 0; c < n_classes; c++) printf("  class %-22s %d\n", classes[c], class_n[c]);

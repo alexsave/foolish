@@ -252,6 +252,7 @@ GameRatings *wasm_fixture_stamp_ptr(void) { return &g_fixture_stamp; }
 Game *wasm_fixture_begin(void) {
     Game *g = wasm_game_ptr_internal();
     memset(g, 0, sizeof(*g));
+    game_rep_attach(g);   // the zeroing took the table's ring flag with it
     game_reset_to_lobby(g, 0);
     memset(&g_fixture_roster, 0, sizeof(g_fixture_roster));
     memset(&g_fixture_stamp, 0, sizeof(g_fixture_stamp));

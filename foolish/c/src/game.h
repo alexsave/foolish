@@ -174,6 +174,62 @@ typedef struct {
     // identity must not ride those copies.
 } Player;
 
+// THE REPETITION DRAW (c/REPETITION.md), the chess rule. A game is over, a draw,
+// when the same position occurs for the third time, by any route. Every seat
+// still in is then a fool; seats already out keep their places (game_fools).
+//
+// Positions are compared where a repeat can happen: right after a pickup that
+// drew nobody a card. A pickup that refills a hand changes the stock, and a
+// bout that ends on the discard changes the discard, so no position can come
+// back across either. The history starts over whenever the stock count, the
+// discard length or the set of seats still in changes.
+//
+// The ring holds the fingerprints (game_rep_position, 64 bits) of the last
+// GAME_REP_RING checkpoints of this history. The third occurrence is the
+// current fingerprint found twice in it, so a position that recurs every p
+// checkpoints is caught when 2p <= GAME_REP_RING: periods up to 8. Two honest
+// limits: a repeat spread wider than that is not caught, and two positions
+// may share a fingerprint once in 2^64.
+//
+// 136 bytes, after the logs (Game.rep, Game.rep_live), so no clone of a head
+// carries it; the durable row does (view.h STATE_BLOB_FORMAT_V6), with only
+// the entries in use.
+#define GAME_REP_RING 16
+typedef struct {
+    uint64_t fp[GAME_REP_RING];         // the checkpoints' position fingerprints
+    int16_t  discard;                   // the history's discard_pile_length
+    int16_t  stock;                     // and its stock: deck_count, plus 1 while the trump is under it
+    uint8_t  in_mask;                   // and the seats still in
+    uint8_t  fill;                      // checkpoints held, 0..GAME_REP_RING
+    uint8_t  head;                      // the slot the next checkpoint takes
+} GameRepetition;
+
+// A POSITION, as the rule compares it: everything that matters for play, read
+// from whichever model of the game is asking (the engine's Game, the replay
+// codec's own model). Cards are bit card id. Hand order and the deck's order
+// are not play: a hand is a set, and the stock cannot reorder without a draw,
+// which starts a new history, so the stock's set stands for its order.
+typedef struct {
+    int8_t   rules;            // Game.rules
+    int8_t   num_players;
+    int8_t   power_suit;
+    int8_t   first_attacker, defender;
+    int8_t   has_flipped;      // the trump still under the stock
+    int8_t   flipped;          // its card id, -1 without one
+    int16_t  discard;
+    int16_t  deck_count;
+    uint64_t stock;            // the stock's cards
+    uint32_t good_mask;
+    int8_t   has_good_timestamp;
+    int8_t   num_battles;
+    int8_t   attack[MAX_BATTLES], defense[MAX_BATTLES];   // card ids, defense -1 uncovered
+    int8_t   status[MAX_PLAYERS];
+    uint8_t  awaiting;         // seats with awaiting_attack set
+    uint64_t hand[MAX_PLAYERS];
+    int8_t   num_eliminated;
+    int8_t   elimination[MAX_PLAYERS];
+} GameRepPosition;
+
 typedef struct {
     int8_t  status;
     int8_t  num_players;
@@ -217,6 +273,13 @@ typedef struct {
     // good_players: bitmask of player indices that have said good.
     uint32_t good_players_mask;
     bool     has_good_timestamp;
+    // THIS GAME CARRIES THE REPETITION RULE'S RING (`rep`, after the logs): a
+    // full Game its owner attached (game_rep_attach). The ring lies past the
+    // logs, where a slot holding only the head (a solver child, a client slot)
+    // or a short log (a sampled world) has no storage, so nothing touches it
+    // unless this is set, and every copy of a head into other storage clears it
+    // (game_copy_head). It sits in what was padding, so no field moved.
+    bool     rep_live;
 
     // Log storage control for SHORT-log instances (sampled-world slots whose
     // logs[] array is allocated smaller than MAX_LOGS — see WORLD_LOG_CAP in
@@ -239,6 +302,12 @@ typedef struct {
     // Logs (append-only).
     int      num_logs;
     GameLog  logs[MAX_LOGS];
+    // The repetition draw's memory (GameRepetition above), LAST and outside the
+    // head on purpose: no Monte-Carlo clone, solver child, sampled world or
+    // snapshot copies it, so their sizes are what they were. Only a full Game
+    // with rep_live set reads or writes it; the durable row (view.h v6) and the
+    // server's resident (table.h TableResident) carry it between operations.
+    GameRepetition rep;
 } Game;
 
 // May the defender transfer in this game? THE question every menu, every
@@ -500,7 +569,64 @@ int game_validate(const Game *g, int flags);
 
 bool can_cover(Card attack, Card defense, int power_suit);
 int  get_next_player_index(const Game *g, int current);
-int  game_done(const Game *g);   // returns loser index, or -1
+// The fool of a game that is over on its seats' statuses, or -1 while it runs.
+// A game lost on cards has one: the lone seat still IN. A REPETITION DRAW
+// (GameRepetition above) has every seat still IN as a fool, and this returns
+// the LOWEST of them, so `>= 0` still means "over" to every caller; ask
+// game_fools for all of them. A finished board whose seats the table parked
+// (READY/IDLE) reads -1 here, as it always has: game_fools reads the
+// elimination order instead.
+int  game_done(const Game *g);
+// EVERY FOOL of a finished game, as a seat mask: every seat the elimination
+// order does not name. One seat for a game lost on cards, every seat still in
+// for a repetition draw. 0 while the game runs (or in a lobby). Read from the
+// status and the elimination order only, so it answers the same on a live
+// board, a parked one and any board a host was sent.
+uint32_t game_fools(const Game *g);
+// Did the game end as a repetition draw? More than one fool.
+bool game_drawn(const Game *g);
+
+// May a log record name this seat (its player_idx or defender_index)? A seat of
+// the table, or -1 for none. The log doors (table.c table_set_session_log,
+// wasm_bots_api.c wasm_import_logs) refuse a record that names any other: every
+// brain reading the logs indexes its per-seat arrays by them.
+static inline bool game_log_seat_ok(const Game *g, int seat) {
+    return seat == -1 || (seat >= 0 && seat < g->num_players && seat < MAX_PLAYERS);
+}
+
+// THE RULE ITSELF, for every model of a game that must call the draw where the
+// engine does: the engine (game.c, at the end of handle_pickup) and the replay
+// codec's own model (replay.c RModel). One owner of the position's fingerprint
+// and of the ring, so the two cannot disagree.
+//
+// game_rep_position: the fingerprint of a position. Exact-state defined: it
+// folds, each through splitmix64, rules, num_players, power_suit,
+// first_attacker, defender, has_flipped, flipped, discard, deck_count, stock,
+// good_mask, has_good_timestamp, num_battles and each battle's attack and
+// defense, then per seat status, awaiting and hand, then num_eliminated and
+// the elimination order - in that order.
+uint64_t game_rep_position(const GameRepPosition *p);
+// game_rep_checkpoint: a checkpoint, right after a pickup that drew nobody a
+// card. Starts a new history when `stock`, `discard` or `in_mask` differ from
+// the ring's, records `fp`, and returns true when `fp` was already held twice:
+// the position's third occurrence.
+bool game_rep_checkpoint(GameRepetition *r, uint64_t fp, int stock, int discard, uint32_t in_mask);
+// The engine's position of `g` (the stock read off g->deck), for the tests.
+uint64_t game_rep_fingerprint(const Game *g);
+
+// MARKS `g` A FULL GAME THAT CARRIES THE RULE (Game.rep_live) and starts its
+// ring empty. EVERY DEAL attaches its own Game (start_game, start_game_with_deck),
+// unless the Game marks itself a short slot (log_cap or log_room); a Game that is
+// loaded rather than dealt is attached by its owner (table_init, the wasm bridge's
+// state load). A Game nobody attached plays without the rule: a solver child, a
+// sampled world, a client's masked board.
+void game_rep_attach(Game *g);
+
+// THE ONE WAY TO COPY A HEAD (the first `n` bytes of a Game, at most
+// offsetof(Game, logs)) into other storage: the bytes, with rep_live cleared,
+// because the copy's storage is not known to hold a ring. tests/
+// rep_head_copies.sh fails the build on any other memcpy of a Game prefix.
+void game_copy_head(Game *dst, const Game *src, size_t n);
 
 // A seat whose strategy_key is this is a HUMAN: the auto-driver (bot_drive) must
 // not act for it. strategy_key is otherwise a bot's roster index (>= 0), so this
