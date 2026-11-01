@@ -8,6 +8,7 @@
 #include "anim_plan.h"
 #include "replay.h"
 #include "replay_extras.h"
+#include "move_list.h"
 #include "../wasm/wire.h"
 #include "../../../shared/c/le_bytes.h"
 #include <string.h>
@@ -1475,5 +1476,166 @@ int table_replay_extras(const Table *t, const uint8_t *log, int log_len, uint8_t
     const int n = replay_extras_encode_parts(names, lens, t->r.n, n_times > 0,
                                              n_times > 0 ? record_seconds(log + first) : 0,
                                              n_times > 0 ? n_times - 1 : 0, times_gap, &c, out, cap);
+    return n == -REPLAY_EXTRAS_ECAP ? TABLE_E_CAP : n;
+}
+
+// ---- the move list (move_list.h) ----------------------------------------------
+
+int table_move_list_append(uint8_t *list, int len, int cap, const uint8_t *records, int rec_len) {
+    if (len < 0 || cap < len || (len > 0 && !list) || rec_len < 0 || (rec_len > 0 && !records)) return TABLE_E_WIRE;
+    if (log_whole(records, rec_len) != 0) return TABLE_E_WIRE;
+    MoveListTail tail;
+    if (move_list_scan(list, len, &tail) < 0) return TABLE_E_WIRE;
+    int k;
+    for (int at = 0; (k = log_record_at(records, rec_len, at)) > 0; at += k) {
+        const uint8_t *r = records + at;
+        len = move_list_append(list, len, cap, &tail, (int64_t)le_get_u48(r), r[6], (int8_t)r[7], r[9], r + 10);
+        if (len < 0) return TABLE_E_CAP;
+    }
+    return len;
+}
+
+// The list's atoms in replay_encode_v6's per-action layout, into `out`: a GOOD
+// only while nothing follows it, as log_atom_kind keeps one. The count, or
+// TABLE_E_CAP; *len the bytes.
+static int list_atoms(const uint8_t *list, int list_len, uint8_t *out, int cap, int *len) {
+    MoveListCursor c;
+    MoveListItem it;
+    if (move_list_open(&c, list, list_len) != 0) return TABLE_E_WIRE;
+    int w = 0, n = 0, goods_at = -1, goods_n = 0, r;
+    while ((r = move_list_next(&c, &it)) > 0) {
+        if (it.kind != LOG_GOOD && goods_at >= 0) { w = goods_at; n -= goods_n; goods_at = -1; goods_n = 0; }
+        if (it.kind == MOVE_LIST_START || it.kind == MOVE_LIST_CUT) continue;
+        const int np = it.kind == LOG_COVER ? 1 : it.kind == LOG_ATTACK || it.kind == LOG_PASS ? it.n : 0;
+        if (w + 3 + 2 * np > cap) return TABLE_E_CAP;
+        if (it.kind == LOG_GOOD && goods_at < 0) goods_at = w;
+        if (it.kind == LOG_GOOD) goods_n++;
+        out[w] = it.kind == MOVE_LIST_ROUND_END ? REPLAY_ROUND_END : (uint8_t)it.kind;
+        out[w + 1] = it.kind == MOVE_LIST_ROUND_END ? 0xFF : (uint8_t)it.seat;
+        out[w + 2] = (uint8_t)np;
+        for (int j = 0; j < np; j++) {
+            out[w + 3 + 2 * j] = it.cards[it.kind == LOG_COVER ? 0 : j];
+            out[w + 4 + 2 * j] = it.kind == LOG_COVER ? it.cards[1] : REPLAY_CARD_NONE;
+        }
+        w += 3 + 2 * np;
+        n++;
+    }
+    if (r < 0) return TABLE_E_WIRE;
+    *len = w;
+    return n;
+}
+
+static bool info_kind(int kind) {
+    return kind == LOG_ATTACK || kind == LOG_COVER || kind == LOG_PASS || kind == LOG_PICKUP;
+}
+
+// THE ROUND-TRIP GATE for a move list: the decoded code's ATTACK, COVER, PASS
+// and PICKUP records against the list's, in order - same count, same type, the
+// same seat (one the table has), the same cards (the list keeps none of a
+// pickup's: the decoder derives them from the cards before it).
+static bool replay_verify_list(int n_seats, const uint8_t *list, int list_len, const uint8_t *dec, int dec_len) {
+    if (dec_len < REPLAY_DEC_HDR) return false;
+    const uint32_t n_dec = le_get_u32(dec + 16);
+    MoveListCursor c;
+    MoveListItem it;
+    if (move_list_open(&c, list, list_len) != 0) return false;
+    int d = REPLAY_DEC_HDR;
+    uint32_t read = 0;
+    for (;;) {
+        int r;
+        while ((r = move_list_next(&c, &it)) > 0 && !info_kind(it.kind)) {}
+        if (r < 0) return false;
+        const uint8_t *dr = 0;
+        while (read < n_dec) {
+            if (d + 4 > dec_len || d + 4 + 2 * dec[d + 3] > dec_len) return false;
+            const uint8_t *q = dec + d;
+            d += 4 + 2 * q[3];
+            read++;
+            if (info_type(q[0])) { dr = q; break; }
+        }
+        if (r == 0 || !dr) return r == 0 && !dr;
+        if (dr[0] != it.kind || it.seat >= n_seats || dr[1] != it.seat) return false;
+        if (it.kind == LOG_COVER) {
+            if (dr[3] != 1 || dr[4] != it.cards[0] || dr[5] != it.cards[1]) return false;
+        } else if (it.kind != LOG_PICKUP) {
+            if (dr[3] != it.n) return false;
+            for (int j = 0; j < it.n; j++) if (dr[4 + 2 * j] != it.cards[j]) return false;
+        }
+    }
+}
+
+int table_replay_code_list(const Table *t, const uint8_t *seed, int seed_len, const uint8_t *list, int list_len,
+                           uint8_t *out, int cap, uint8_t *scratch, int scratch_cap) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    MoveListTail tail;
+    if (list_len < 0 || (list_len > 0 && !list) || move_list_scan(list, list_len, &tail) < 0) return TABLE_E_WIRE;
+    if (tail.broken) return -REPLAY_ETOOLONG;
+    int atoms_len = 0;
+    const int n_atoms = list_atoms(list, list_len, scratch, scratch_cap, &atoms_len);
+    if (n_atoms < 0) return n_atoms;
+    const int n = replay_encode_v6_from_atoms(t->g, seed, seed_len, scratch, atoms_len, n_atoms, out, cap);
+    if (n < 0) return n;
+    const int dn = replay_decode(out, n, scratch, scratch_cap);
+    if (dn < 0) return dn;
+    return replay_verify_list(t->g->num_players, list, list_len, scratch, dn) ? n : TABLE_E_REPLAY_VERIFY;
+}
+
+// The list's times, one at a time (replay_extras.h ReplayExtrasGap), as TimesCursor walks a log's.
+typedef struct {
+    const uint8_t *list;
+    int len;
+    MoveListCursor c;
+    int index;
+    double prev;
+} ListTimes;
+
+static double list_seconds(int64_t ms) { return (double)ms / 1000; }
+
+// The next timed item's time into *ms: 1, or 0 when there is none.
+static int list_timed_next(ListTimes *x, int64_t *ms) {
+    MoveListItem it;
+    int r;
+    while ((r = move_list_next(&x->c, &it)) > 0)
+        if (it.timed) { *ms = it.ms; return 1; }
+    return 0;
+}
+
+static double list_gap(void *ctx, int i) {
+    ListTimes *x = (ListTimes *)ctx;
+    int64_t ms = 0;
+    if (i == 0 || i != x->index + 1) {   // restart from the first gap
+        move_list_open(&x->c, x->list, x->len);
+        list_timed_next(x, &ms);
+        x->prev = list_seconds(ms);
+        x->index = -1;
+        for (int j = 0; j < i; j++) list_gap(ctx, j);
+    }
+    list_timed_next(x, &ms);
+    volatile double tm = list_seconds(ms);
+    volatile double g = tm - x->prev;
+    x->prev = tm;
+    x->index = i;
+    return g > 0 ? g : 0;
+}
+
+int table_replay_extras_list(const Table *t, const uint8_t *list, int list_len, uint8_t *out, int cap) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    MoveListTail tail;
+    if (list_len < 0 || (list_len > 0 && !list) || move_list_scan(list, list_len, &tail) < 0) return TABLE_E_WIRE;
+    const uint8_t *names[MAX_PLAYERS];
+    int lens[MAX_PLAYERS];
+    for (int s = 0; s < t->r.n; s++) { names[s] = (const uint8_t *)t->r.seats[s].name; lens[s] = t->r.seats[s].name_len; }
+    ListTimes x;
+    memset(&x, 0, sizeof x);
+    x.list = list;
+    x.len = list_len;
+    x.index = -1;
+    int64_t ms = 0, first = 0;
+    int n_times = 0;
+    move_list_open(&x.c, list, list_len);
+    while (list_timed_next(&x, &ms)) { if (n_times == 0) first = ms; n_times++; }
+    if (n_times - 1 > 0xffff) return TABLE_E_WIRE;
+    const int n = replay_extras_encode_parts(names, lens, t->r.n, n_times > 0, n_times > 0 ? list_seconds(first) : 0,
+                                             n_times > 0 ? n_times - 1 : 0, list_gap, &x, out, cap);
     return n == -REPLAY_EXTRAS_ECAP ? TABLE_E_CAP : n;
 }
