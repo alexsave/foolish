@@ -21187,11 +21187,13 @@ static void test_table_all_random_tables_always_end(void) {
 // A lobby of `np` seats "id-0".. named `names`, seat s a `brains[s]` bot or a
 // human where that is "", every seat ready, dealt from tb_seed by id-0's ready:
 // the committed row at version 1. TABLE_OK, or the refusal.
+static int8_t bl_lobby_rules;   // the lobby's rules (game.h GAME_RULE_*): 0, the classic game, unless a test sets it
 static int bl_seats_row(BlRow *row, int np, const char *const *brains, const char *const *names) {
     static Game lobby;
     Roster r;
     TableCommit c;
     memset(&lobby, 0, sizeof(lobby));
+    lobby.rules = bl_lobby_rules;
     lobby.status = GAME_STATUS_WAITING;
     lobby.num_players = (int8_t)np;
     for (int i = 0; i < np; i++) lobby.players[i].status = PLAYER_STATUS_READY;
@@ -21213,6 +21215,109 @@ static int bl_seats_row(BlRow *row, int np, const char *const *brains, const cha
     row->log_len = 0;
     rc = bl_row_commit(row, &c);
     return rc < 0 ? rc : TABLE_OK;
+}
+
+// A BELIEF NEVER HOLDS A FAKE CARD (bot_memory.c admit, the one owner). Whole
+// seeded bots-only games at 2 to 8 seats - the 36-card deck at 2-5, the 52-card
+// deck at 6-8 - classic and podkidnoy, played through the table as the server
+// plays them (a row loaded, driven a cycle, committed), so every board is one a
+// load made: a drawn trump reads {0,0} on it, and a hidden draw is CARD_HIDDEN
+// in the log. Before every decision, every log-reading brain's belief for the
+// deciding seat - blackpowder's, cordite's, octogen's (fusion's is octogen's),
+// robusta's and so firecracker's and gunpowder's, and espresso_prod's discard
+// set - and the memory block itself must hold only cards of the game's deck:
+// pinned rows, voids, pools, floors and discards.
+static long fk_decisions, fk_bad, fk_cards;
+static int fk_first_bad;
+static bool fk_card_ok(const Game *g, Card c) { return card_in_range(c, min_value_for(g->num_players), ACE_VALUE); }
+static void fk_check_belief(const Game *g, int seat, const BotBelief *b, const char *who) {
+    for (int p = 0; p < g->num_players; p++) {
+        for (int k = 0; k < b->pinned_n[p]; k++, fk_cards++) if (!fk_card_ok(g, b->pinned[p][k])) goto bad;
+        for (int k = 0; k < b->void_n[p]; k++, fk_cards++) if (!fk_card_ok(g, b->voids[p][k])) goto bad;
+        if (b->floor_v[p] && (b->floor_v[p] < min_value_for(g->num_players) || b->floor_v[p] > ACE_VALUE)) goto bad;
+    }
+    for (int k = 0; k < b->n; k++, fk_cards++) if (!fk_card_ok(g, b->pool[k])) goto bad;
+    return;
+bad:
+    if (!fk_bad++ && !fk_first_bad) {
+        fk_first_bad = 1;
+        fprintf(stderr, "  fake card: %s's belief for seat %d at %d seats, log %d\n", who, seat, g->num_players, (int)bot_mem_records(g));
+    }
+}
+static void fk_observer(const Game *g, int seat) {
+    fk_decisions++;
+    BotBelief b;
+    bp_belief_of(g, seat, &b);
+    fk_check_belief(g, seat, &b, "blackpowder");
+    cd_belief_of(g, seat, &b);
+    fk_check_belief(g, seat, &b, "cordite");
+    static OgBeliefProbe o;
+    og_belief_of(g, seat, &o);
+    fk_check_belief(g, seat, &o.b, "octogen");
+    robusta_belief_of(g, seat, &b);
+    fk_check_belief(g, seat, &b, "robusta");
+    // The block itself, every seat's rows (a reader skips its own, the block does not).
+    const BotMemory *m = bot_mem_of(g);
+    memset(&b, 0, sizeof b);
+    for (int p = 0; p < m->num_players; p++) {
+        b.pinned_n[p] = m->pin_n[p];
+        memcpy(b.pinned[p], m->pin[p], (size_t)m->pin_n[p] * sizeof(Card));
+        b.void_n[p] = m->void_n[p];
+        memcpy(b.voids[p], m->voids[p], (size_t)m->void_n[p] * sizeof(Card));
+        b.floor_v[p] = m->floor_v[p];
+    }
+    b.n = bot_mem_discards(m, b.pool);   // espresso_prod's seen set is the discards
+    if (m->flip_holder >= 0) {
+        b.pinned_n[m->flip_holder] = m->alt_n;
+        memcpy(b.pinned[m->flip_holder], m->alt, (size_t)m->alt_n * sizeof(Card));
+    }
+    fk_check_belief(g, seat, &b, "the memory block");
+}
+
+static void test_beliefs_never_hold_a_fake_card(void) {
+#ifdef COVERAGE_CORPUS
+    enum { GAMES = 21, BELIEF_GAMES = 7 };
+#else
+    enum { GAMES = 2000, BELIEF_GAMES = 105 };
+#endif
+    static const char *const cheap[] = { "random", "handwritten", "simple_heuristic", "espresso" };
+    static const char *const belief[] = { "robusta", "blackpowder", "cordite", "octogen", "fusion", "firecracker", "gunpowder" };
+    static const char *const names[MAX_PLAYERS] = { "A", "B", "C", "D", "E", "F", "G", "H" };
+    TableCommit c;
+    int refused = 0, ended = 0, games = 0, podkidnoy = 0;
+    const long fakes0 = bot_mem_fakes_refused;
+    fk_decisions = fk_bad = fk_cards = 0;
+    fk_first_bad = 0;
+    table_choose_observer = fk_observer;
+    for (int gi = 0; gi < GAMES + BELIEF_GAMES; gi++) {
+        const int np = 2 + gi % 7;
+        const char *brains[MAX_PLAYERS];
+        // Mostly cheap movers, which make every kind of board fast; then games
+        // with the belief brains themselves seated, one per seat in turn.
+        for (int s = 0; s < np; s++)
+            brains[s] = gi < GAMES ? cheap[(gi + s) % 4] : belief[(gi + s) % 7];
+        tb_seed_bytes(np, 0xfa4e + gi);
+        bl_lobby_rules = gi % 3 == 2 ? GAME_RULE_NO_PASS : 0;   // podkidnoy every third game
+        const int rc = bl_seats_row(&bl_row, np, brains, names);
+        bl_lobby_rules = 0;
+        if (rc != TABLE_OK) { refused++; continue; }
+        games++;
+        podkidnoy += !game_pass_allowed(&tb_game);
+        for (int cy = 0; cy < 4000 && bl_row.status == GAME_STATUS_PLAYING; cy++) {
+            const int n = bl_row_cycle(&bl_row, bl_row.log, bl_row.log_len, 0, &c);
+            if (n < 0) { refused++; break; }
+            if (n == 0) break;
+        }
+        ended += bl_row.status == GAME_STATUS_GAME_OVER;
+    }
+    table_choose_observer = 0;
+    fprintf(stderr, "  fake cards: %d games (%d ended, %d podkidnoy), %ld decisions, %ld belief cards checked, %ld bad, %ld refused by the guard\n",
+            games, ended, podkidnoy, fk_decisions, fk_cards, fk_bad, bot_mem_fakes_refused - fakes0);
+    CHECK(refused == 0 && games == GAMES + BELIEF_GAMES, "fake cards: every bots-only row dealt and every cycle committed");
+    CHECK(ended > games * 9 / 10, "fake cards: the games were played to their ends");
+    CHECK(fk_decisions > 100L * games, "fake cards: every decision of the games was checked");
+    CHECK(fk_bad == 0, "fake cards: no belief of any log-reading brain, nor the memory, ever held a card the deck does not have");
+    CHECK(bot_mem_fakes_refused == fakes0, "fake cards: the guard never had to refuse one in a real game");
 }
 
 #define TP_NOW0 1726600000000LL
@@ -22536,6 +22641,7 @@ int main(void) {
     // wasm_kernel_fuzz over bots.wasm).
     test_state_blob_formats_read_and_written();
     test_bot_memory_rides_the_row();
+    test_beliefs_never_hold_a_fake_card();
     test_masked_view_does_not_depend_on_hidden_hands();
     test_every_viewer_reads_the_committed_board();
     test_every_push_is_leak_free_and_mirrors_the_commit();

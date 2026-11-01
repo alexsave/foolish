@@ -4,6 +4,10 @@
 #include "../wasm/wire.h"
 
 #include <string.h>
+#ifdef BOT_MEM_ASSERT
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 // ---- the rows (bot_common.h bot_pin_add / bot_pin_remove, the same rules) ----
 
@@ -20,8 +24,35 @@ static void row_remove(Card *row, uint8_t *n, Card c) {
         }
     }
 }
-static void row_add(Card *row, uint8_t *n, Card c) {
-    if (*n >= BOT_MEM_ROW || row_has(row, *n, c)) return;
+// ---- THE ONE OWNER of "a belief never holds a fake card" ----------------------
+//
+// Every card the memory pins to a seat, every void it infers and every floor it
+// sets passes here: a card of THIS game's deck (a suit, a value from the deck's
+// lowest for the seat count up to the Ace), never CARD_HIDDEN, CARD_NONE, the
+// all-zero {0,0} or a value the deck does not have. A record that would put one
+// there came from a corrupt or hostile log; in the native test builds
+// (BOT_MEM_ASSERT, beside ENGINE_SNAP_ASSERT in c/Makefile) that is a failure,
+// loudly, and in every shipped build the card is simply not written.
+_Thread_local int bot_mem_tolerate_fakes;
+_Thread_local long bot_mem_fakes_refused;
+
+static bool admit(const BotMemory *m, Card c, const char *what) {
+    if (card_in_range(c, min_value_for(m->num_players), ACE_VALUE)) return true;
+    bot_mem_fakes_refused++;
+#ifdef BOT_MEM_ASSERT
+    if (!bot_mem_tolerate_fakes) {
+        fprintf(stderr, "bot_memory: refused to %s the card {suit %d, value %d} at %d seats (a fake card in a belief)\n",
+                what, c.suit, c.value, m->num_players);
+        abort();
+    }
+#else
+    (void)what;
+#endif
+    return false;
+}
+
+static void row_add(const BotMemory *m, Card *row, uint8_t *n, Card c) {
+    if (*n >= BOT_MEM_ROW || row_has(row, *n, c) || !admit(m, c, "pin")) return;
     row[(*n)++] = c;
 }
 
@@ -88,7 +119,7 @@ void bot_mem_fold(BotMemory *m, const GameLog *L, const Game *g) {
             }
             if (p >= 0 && L->log_type == LOG_ATTACK) {
                 if (any_trump && m->viol_pend[p] < UINT16_MAX) m->viol_pend[p]++;
-                if (first_attack && np == 1 && !any_trump && m->in_now > 2)
+                if (first_attack && np == 1 && !any_trump && m->in_now > 2 && admit(m, L->pairs[0].primary, "set a floor from"))
                     m->floor_v[p] = (uint8_t)L->pairs[0].primary.value;
             }
             break;
@@ -126,10 +157,11 @@ void bot_mem_fold(BotMemory *m, const GameLog *L, const Game *g) {
                 m->hand_n[p] = (int16_t)(m->hand_n[p] + m->tbl_n);
                 m->decl[p] = 0;
                 // Exactly one uncovered attack: the defender held no cover for it.
-                if (m->unc_n == 1 && m->void_n[p] < BOT_MEM_VOIDS) m->voids[p][m->void_n[p]++] = m->unc[0];
+                if (m->unc_n == 1 && m->void_n[p] < BOT_MEM_VOIDS && admit(m, m->unc[0], "infer a void from"))
+                    m->voids[p][m->void_n[p]++] = m->unc[0];
                 for (int k = 0; k < m->tbl_n; k++) {
-                    row_add(m->pin[p], &m->pin_n[p], m->tbl[k]);
-                    if (p == m->flip_holder) row_add(m->alt, &m->alt_n, m->tbl[k]);
+                    row_add(m, m->pin[p], &m->pin_n[p], m->tbl[k]);
+                    if (p == m->flip_holder) row_add(m, m->alt, &m->alt_n, m->tbl[k]);
                 }
                 m->floor_v[p] = 0;
             }
@@ -163,7 +195,7 @@ void bot_mem_fold(BotMemory *m, const GameLog *L, const Game *g) {
                 memcpy(m->alt, m->pin[p], sizeof m->alt);
                 if (np > 0) {
                     const Card fc = L->pairs[np - 1].primary;
-                    if (fc.value >= 0 && fc.suit >= 0) row_add(m->alt, &m->alt_n, fc);
+                    if (fc.value >= 0 && fc.suit >= 0) row_add(m, m->alt, &m->alt_n, fc);
                 }
                 if (m->flags[p] & BOT_MEM_TELL) m->flags[p] |= BOT_MEM_ALT_TELL;
             }
