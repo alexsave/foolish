@@ -6,10 +6,12 @@
 // called and what c/src/bots.c dispatches on. The player-facing nickname is a
 // city on the road to Moscow, the seeded row's `city` in that same registry,
 // and the brain's key names the city's translation: the server names a rung's
-// accounts "%<city> 1".."%<city> 7" (foolish/server/src/store/bot_seed.c), and
-// src/common/botName.ts botDisplayName finds the registry row by that city and
-// shows `bot.<key>` in the page's language (Майами 1 in Russian). A name whose
-// city no row has (an old replay's ordnance name) shows as its blob stored it.
+// accounts "%<city> 1".."%<city> 7" (foolish/server/src/store/bot_seed.c); the
+// kernel reads a stored name back to its row and account (c/src/bot_roster.h
+// bot_nickname_read, held natively by tests.c test_bot_nickname), and
+// src/common/botName.ts says the row's `bot.<key>` in the page's language
+// (Майами 1 in Russian). A name whose city no row has (an old replay's
+// ordnance name) shows as its blob stored it.
 //
 // THAT MAKES THIS GATE STRONGER THAN THE ONE IT REPLACES. It used to check that
 // a render-time map covered every seeded rung in 25 languages; there is no map
@@ -18,7 +20,7 @@
 // offline picker, which names a seat from its strategy key -
 // ios/FoolishTests/LocalizationTests holds those, not this file.
 //
-// Pure test - no Postgres, no network, no compiler, no wasm.
+// No Postgres, no network, no compiler; the display test reads web.wasm.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { botDisplayName } from '../../src/common/botName.ts';

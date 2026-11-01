@@ -86,6 +86,40 @@ typedef struct {
 // read as a bot going missing.
 int bot_roster_table(BotRosterTable *out);
 
+// ---- a bot's stored name, and how a host shows it ----------------------------
+//
+// A seeded bot is STORED by its rung's city, in English, behind the reserved
+// '%': "%<city> <n>", the nickname of its n-th server account
+// (server/src/store/bot_seed.c) and of the promo page's local bot
+// (local_table.c). The stored name is the language-neutral fact a replay blob
+// carries; a page says the city in its reader's language. Which city a name
+// names, and which of its accounts, is this file's answer, so no host parses a
+// nickname. The city's words are c/i18n's `bot.<key>`, which no wasm module
+// carries: the host says them.
+#define BOT_NICK_PREFIX   '%'
+#define BOT_NICK_SHOW_MAX 64           // == ROSTER_NAME_MAX: a stored name's bytes
+#define BOT_NICK_HUMAN    0            // not a bot's name: show it as stored (`show`)
+#define BOT_NICK_CITY     1            // a rung's account: the row's city (bot.<key>), then `instance`
+#define BOT_NICK_STORED   2            // a bot's name no row has (an old replay's '%Octogen 1'): show `show`
+typedef struct {
+    int8_t   kind;                       // BOT_NICK_*
+    uint8_t  key_len;                    // BOT_NICK_CITY: the row's key, whose string is bot.<key>
+    char     key[BOT_ROSTER_KEY_MAX];
+    int16_t  instance;                   // BOT_NICK_CITY: the account's number, 1 first
+    uint8_t  show_len;                   // HUMAN and STORED: what to show (the name, minus '%' for a bot)
+    char     show[BOT_NICK_SHOW_MAX];
+} BotNickname;
+
+// What `name` (len bytes of UTF-8) is: BOT_NICK_*, with `out` filled. A city
+// matches a named row's city exactly, and the instance is one or more digits
+// after one space; anything else behind '%' is BOT_NICK_STORED.
+int bot_nickname_read(const char *name, int len, BotNickname *out);
+
+// The stored name of brain `strat`'s `instance`-th account, "%<city> <n>", into
+// `out` (not NUL-terminated): its length, or -1 for a row with no city, an
+// instance below 1, or a name over `cap`.
+int bot_nickname_write(int strat, int instance, char *out, int cap);
+
 // Run entry `idx`'s brain over `moves`, with the entry's knobs installed for
 // the duration (env still overrides — see bot_knobs.h). Returns the chosen
 // index into moves->moves[], or -1 for an unknown idx / no legal moves.

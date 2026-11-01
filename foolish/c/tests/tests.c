@@ -21862,6 +21862,53 @@ static void test_local_table_plays_a_game(void) {
           "a move on a finished game is moot");
 }
 
+// ---- a bot's stored name (bot_roster.h bot_nickname_read / _write) -----------------
+//
+// A page shows a stored bot name as its rung's city in the reader's language.
+// The kernel says which row and which account; these are the names the site and
+// its replays actually carry.
+static int bn_is(const char *name, int kind, const char *key, int instance, const char *show) {
+    BotNickname n;
+    const int k = bot_nickname_read(name, (int)strlen(name), &n);
+    if (k != kind || n.kind != kind) return 0;
+    if (kind == BOT_NICK_CITY)
+        return n.instance == instance && n.key_len == strlen(key) && memcmp(n.key, key, n.key_len) == 0 && n.show_len == 0;
+    return n.show_len == strlen(show) && memcmp(n.show, show, n.show_len) == 0 && n.key_len == 0;
+}
+
+static void test_bot_nickname(void) {
+    CHECK(bn_is("%Miami 1", BOT_NICK_CITY, "random", 1, 0), "%Miami 1 is the random rung's first account");
+    CHECK(bn_is("%Moscow 2", BOT_NICK_CITY, bot_def(STRAT_FUSION)->key, 2, 0), "%Moscow 2 is the Moscow rung's second");
+    CHECK(bn_is("%St. Petersburg 7", BOT_NICK_CITY, "octogen", 7, 0), "a city with a space and a dot, seventh account");
+    CHECK(bn_is("%Octogen 1", BOT_NICK_STORED, 0, 0, "Octogen 1"), "an old replay's ordnance name shows as stored");
+    CHECK(bn_is("%0x00C0FFEE", BOT_NICK_STORED, 0, 0, "0x00C0FFEE"), "a bot name with no number shows as stored");
+    CHECK(bn_is("%Miami", BOT_NICK_STORED, 0, 0, "Miami") && bn_is("%Miami x1", BOT_NICK_STORED, 0, 0, "Miami x1")
+          && bn_is("%Miami 0", BOT_NICK_STORED, 0, 0, "Miami 0") && bn_is("% 1", BOT_NICK_STORED, 0, 0, " 1"),
+          "a city needs one space and an account from 1");
+    CHECK(bn_is("Anna", BOT_NICK_HUMAN, 0, 0, "Anna") && bn_is("Майами 1", BOT_NICK_HUMAN, 0, 0, "Майами 1"),
+          "a human's name is theirs, even one that reads like a rung");
+    // Every rung's every account reads back as itself: the writer and the
+    // reader are one format.
+    int checked = 0, ok = 1;
+    for (int i = 0, n = bot_roster_count(); i < n; i++) {
+        const int strat = bot_roster_strat(i);
+        const BotDef *d = bot_def(strat);
+        if (!d || !d->city) continue;
+        for (int inst = 1; inst <= BOT_IDS_MAX; inst++) {
+            char nick[ROSTER_NAME_MAX + 1];
+            const int len = bot_nickname_write(strat, inst, nick, ROSTER_NAME_MAX);
+            BotNickname r;
+            ok &= len > 0 && bot_nickname_read(nick, len, &r) == BOT_NICK_CITY && r.instance == inst
+                  && r.key_len == strlen(d->key) && memcmp(r.key, d->key, r.key_len) == 0;
+            checked++;
+        }
+    }
+    CHECK(ok && checked >= 8 * BOT_IDS_MAX, "every rung's every account reads back as itself");
+    char small[4];
+    CHECK(bot_nickname_write(STRAT_RANDOM, 1, small, sizeof small) == -1 && bot_nickname_write(STRAT_RANDOM, 0, small, 0) == -1,
+          "a name that does not fit, or account 0, is refused");
+}
+
 int main(void) {
 #ifdef WASM_CAPS_TESTS
     // make tests-wasm-caps: the cordite and belief-log cases under the wasm size limits only.
@@ -22143,6 +22190,7 @@ int main(void) {
     test_table_commit_products();
     test_table_plays_a_game_to_its_end();
     test_local_table_plays_a_game();
+    test_bot_nickname();
     test_table_request_and_response();
     test_table_request_encode_and_response_decode();
     test_evwire_as3_split();

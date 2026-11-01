@@ -83,6 +83,17 @@ int wasm_bot_roster_dump(void) {
     return bot_roster_table(&g_bot_roster) < 0 ? 0 : (int)(uintptr_t)&g_bot_roster;
 }
 
+// io = [a stored name]. What it names (bot_roster.h BotNickname), read through
+// its generated reader: the struct's address.
+static BotNickname g_bot_nickname;
+int wasm_bot_nickname(int len) {
+    extern unsigned char *wasm_io_ptr(void);
+    extern int wasm_io_cap(void);
+    if (len < 0 || len > wasm_io_cap()) len = 0;
+    bot_nickname_read((const char *)wasm_io_ptr(), len, &g_bot_nickname);
+    return (int)(uintptr_t)&g_bot_nickname;
+}
+
 // Key and value are NUL-terminated strings at the start of the IO buffer
 // (key first, value right after its NUL). Setting an existing key replaces it.
 extern unsigned char *wasm_io_ptr(void);

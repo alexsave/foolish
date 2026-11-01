@@ -126,3 +126,51 @@ int bot_roster_choose(int idx, const Game *g, int seat, const LegalMoves *moves)
     if (chosen < 0 || chosen >= moves->n) return -1;
     return chosen;
 }
+
+// ---- a bot's stored name (bot_roster.h) ---------------------------------------
+
+int bot_nickname_write(int strat, int instance, char *out, int cap) {
+    const BotDef *d = bot_def(strat);
+    if (!d || !d->city || instance < 1 || !out) return -1;
+    char digits[12];
+    int nd = 0;
+    for (int v = instance; v > 0; v /= 10) digits[nd++] = (char)('0' + v % 10);
+    const int city = (int)strlen(d->city), n = 1 + city + 1 + nd;
+    if (n > cap) return -1;
+    out[0] = BOT_NICK_PREFIX;
+    memcpy(out + 1, d->city, (size_t)city);
+    out[1 + city] = ' ';
+    for (int i = 0; i < nd; i++) out[2 + city + i] = digits[nd - 1 - i];
+    return n;
+}
+
+static int shown(BotNickname *out, int kind, const char *s, int len) {
+    out->kind = (int8_t)kind;
+    if (len > BOT_NICK_SHOW_MAX) len = BOT_NICK_SHOW_MAX;   // a stored name is at most this long (roster.h)
+    out->show_len = (uint8_t)len;
+    memcpy(out->show, s, (size_t)len);
+    return kind;
+}
+
+int bot_nickname_read(const char *name, int len, BotNickname *out) {
+    memset(out, 0, sizeof *out);
+    if (!name || len <= 0 || name[0] != BOT_NICK_PREFIX) return shown(out, BOT_NICK_HUMAN, name ? name : "", len > 0 ? len : 0);
+    const char *bare = name + 1;
+    const int blen = len - 1;
+    int sp = blen - 1, instance = 0, place = 1;
+    while (sp >= 0 && bare[sp] >= '0' && bare[sp] <= '9' && instance < 100000) { instance += (bare[sp] - '0') * place; place *= 10; sp--; }
+    if (sp > 0 && sp < blen - 1 && bare[sp] == ' ' && instance >= 1) {
+        for (int i = 0, n = bot_roster_count(); i < n; i++) {
+            const BotDef *d = bot_roster_at(i);
+            if (!d || !d->city || (int)strlen(d->city) != sp || memcmp(d->city, bare, (size_t)sp) != 0) continue;
+            const int klen = (int)strlen(d->key);
+            if (klen > BOT_ROSTER_KEY_MAX) break;
+            out->kind = BOT_NICK_CITY;
+            out->key_len = (uint8_t)klen;
+            memcpy(out->key, d->key, (size_t)klen);
+            out->instance = (int16_t)instance;
+            return BOT_NICK_CITY;
+        }
+    }
+    return shown(out, BOT_NICK_STORED, bare, blen);
+}
