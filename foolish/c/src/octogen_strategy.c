@@ -157,7 +157,7 @@ static _Thread_local int og_rollout_policy = 0;       // OG_ROLLOUT: 0=default, 
 // toward the cheap non-trump WITHOUT overriding a genuine gap. In milli-units of
 // mean-finish-position via OG_TRUMP_KEEP (default 40 = 0.040; MC noise between
 // near-tied candidates ~0.05). 0 disables. Endgame (deck dead) is never taxed.
-static _Thread_local double og_trump_keep = 0.040;
+static _Thread_local double og_trump_keep = OG_TRUMP_KEEP_DEFAULT / 1000.0;
 // Bitboard endgame-solver node budgets (per shared pass). The bitboard solver
 // (transposition table + O(1) clone) resolves far more per node than the
 // struct solver, so it needs a much smaller node budget to do equivalent work
@@ -1627,7 +1627,7 @@ static void og_load_flags(void) {
     og_keep1 = og_env_int("OG_KEEP1", 0);
     og_keep2 = og_env_int("OG_KEEP2", 0);
     og_rollout_policy = og_env_int("OG_ROLLOUT", 0);
-    og_trump_keep = og_env_int("OG_TRUMP_KEEP", 40) / 1000.0;
+    og_trump_keep = og_env_int("OG_TRUMP_KEEP", OG_TRUMP_KEEP_DEFAULT) / 1000.0;
     og_bb_win_budget = og_env_int("OG_BB_WIN", 400000);
     og_solve_cards = og_env_int("OG_SOLVE_CARDS", 28);
     og_avoid_cards = og_env_int("OG_AVOID_CARDS", 24);

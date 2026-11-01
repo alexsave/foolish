@@ -21,6 +21,7 @@
 #include "view.h"
 #include "replay_extras.h"
 #include "oracle_answer.h"   // empty outside the oracle builds
+#include "oracle_rank.h"     // likewise
 #include <string.h>
 #include <stdlib.h>
 
@@ -248,6 +249,18 @@ void wasm_og_knobs_apply(void) {
     og_knob_put("OG_W3", g_og_knobs.w3);
     og_knob_put("OG_EXPLAIN_SOLVE_BUDGET", g_og_knobs.solve_budget);
     og_knob_put("FUSION_SHADOW_W", g_og_knobs.shadow_w);
+}
+
+// The overlay's row order, Best and classes (oracle_rank.h): the host writes
+// its accumulated rows into the ask through the generated writer, asks, and
+// reads the answer back through the generated reader. Both oracle modules, so
+// both modes rank by one rule.
+static OgRankAsk g_og_rank_ask;
+static OgRankAnswer g_og_rank_answer;
+OgRankAsk *wasm_og_rank_ask(void) { return &g_og_rank_ask; }
+const OgRankAnswer *wasm_og_rank(void) {
+    og_rank(&g_og_rank_ask, &g_og_rank_answer);
+    return &g_og_rank_answer;
 }
 #endif
 

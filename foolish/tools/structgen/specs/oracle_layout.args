@@ -11,3 +11,9 @@
 # which go in through their writer in both oracle modules: Mode A's is in
 # specs/oracle_answer.args.
 --header oracle_answer.h --root OgKnobs --snapshot OgKnobs --writer OgKnobs
+# And the overlay's ranking (c/src/oracle_rank.h), the same writer and reader
+# as Mode A's in specs/oracle_answer.args, with the verdict ids its rows carry.
+--header oracle_rank.h --root OgRankAsk --root OgRankAnswer
+--snapshot OgRankAsk --writer OgRankAsk --snapshot OgRankAnswer
+--count OgRankAsk.rows=n_rows --count OgRankAnswer.lines=n_lines
+--const OG_CLASS_ --const OG_VERDICT_

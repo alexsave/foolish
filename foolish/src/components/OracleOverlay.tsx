@@ -17,7 +17,7 @@ import type { ViewCard as Card } from '../state/view';
 import { useLocalization } from '../contexts/LocalizationContext';
 import { SegmentText } from './SegmentDisplay';
 import {
-    OracleSnapshot, OracleCandidate, oracleClassify, OracleClass,
+    OracleSnapshot, OracleCandidate, OracleClass,
     oracleWhyPanelEnabled,
 } from '../oracle/types';
 import { explainCandidate, WhyTreeNode, symPhrase, TFn } from '../oracle/explain';
@@ -137,9 +137,11 @@ interface Props {
 // Filled "hardware label" chip - mimics the amber/colored solid indicator
 // tags stenciled onto old car-stereo faceplates (e.g. "PLAYED", "WIN").
 // Unlit segments read as embossed dark strokes against the solid fill.
-const SolidChip = ({ bg, fg = '#fff', text }: { bg: string; fg?: string; text: string }) => (
+const SolidChip = ({ bg, fg = '#fff', text, width }: { bg: string; fg?: string; text: string; width?: number }) => (
     <span style={{
         display: 'inline-flex', padding: '2px 5px', borderRadius: 4, background: bg, whiteSpace: 'nowrap',
+        // A fixed width sits in the class-chip column: LedChip's exact box.
+        ...(width ? { width, flex: '0 0 auto', justifyContent: 'center', boxSizing: 'border-box', padding: '2px 6px', border: `1px solid ${bg}` } : null),
     }}>
         <SegmentText text={text} color={fg} height={8} gap={1.5} dim="rgba(0,0,0,0.18)" />
     </span>
@@ -371,27 +373,18 @@ function WhyPanel({ c, bestCand, s, t }: {
     );
 }
 
-function McRow({ c, best, worst, bestAdj, t, open, onClick }: {
-    c: OracleCandidate; best: number; worst: number; bestAdj: number | null;
-    t: (id: any, p?: any) => string; open?: boolean; onClick?: () => void;
+function McRow({ c, t, open, onClick }: {
+    c: OracleCandidate; t: (id: any, p?: any) => string; open?: boolean; onClick?: () => void;
 }) {
-    // Bar, sort, classification and the displayed number ALL key off the true
-    // expected finish (mean) - the 0.04/trump tie-break tax never distorts what
-    // the user sees, so the bars always agree with the EF numbers.
-    const eff = c.mean;
-    const scored = eff != null;
-    // Bar width replicates the X-ray formula (gen_html.py / multi_render.py).
-    const span = Math.max(worst - best, 0.4);
-    const barW = scored ? Math.max(12, Math.min(100, 96 - ((eff! - best) / span) * 84)) : 0;
-    // Best is fusion's pick (accumulator.ts fusionBest), which may sit off the
-    // lowest EF when the noisy race says so beyond its bar; the class chips stay
-    // on the EF yardstick (delta from the lowest EF).
+    // Order, Best, fusion's pick, the class and the bar are the kernel's
+    // (c/src/oracle_rank.c); this row only draws them. Every row tied with
+    // fusion's pick reads Best, and the pick's chip is the filled one.
+    const scored = c.mean != null;
     const isBest = scored && c.best;
-    const delta = scored && bestAdj != null ? eff! - bestAdj : 0;
-    const cls = scored ? oracleClassify(delta) : null;
-    const barColor = isBest ? CLASS_COLOR.best : (cls ? CLASS_COLOR[cls] : '#8a8a92');
+    const cls = c.cls;
+    const barColor = cls ? CLASS_COLOR[cls] : '#8a8a92';
     // EF and its error are always exactly "D.DD" and never omitted.
-    const efText = scored ? `EF ${eff!.toFixed(2)} ±${c.se.toFixed(2)}` : (c.pruned ? '-' : '…');
+    const efText = scored ? `EF ${c.mean!.toFixed(2)} ±${c.se.toFixed(2)}` : (c.pruned ? '-' : '…');
 
     const { text: title, redAt } = moveTitleText(c);
 
@@ -399,6 +392,7 @@ function McRow({ c, best, worst, bestAdj, t, open, onClick }: {
         <div
             {...(onClick ? { 'data-testid': 'oracle-row', onClick } : null)}
             {...(isBest ? { 'data-best': '' } : null)}
+            {...(c.pick ? { 'data-pick': '' } : null)}
             style={{
                 display: 'flex', flexDirection: 'column', gap: 3,
                 padding: '5px 7px', borderRadius: 5,
@@ -418,13 +412,14 @@ function McRow({ c, best, worst, bestAdj, t, open, onClick }: {
                     />
                 </div>
                 {c.played && <SolidChip bg={AMBER} fg="#231404" text={t('oracle_played')} />}
-                {isBest && <LedChip color={CLASS_COLOR.best} text={t('oracle_best')} width={CLASS_CHIP_W} />}
+                {isBest && c.pick && <SolidChip bg={CLASS_COLOR.best} text={t('oracle_best')} width={CLASS_CHIP_W} />}
+                {isBest && !c.pick && <LedChip color={CLASS_COLOR.best} text={t('oracle_best')} width={CLASS_CHIP_W} />}
                 {!isBest && cls && <LedChip color={CLASS_COLOR[cls]} text={t(`oracle_class_${cls}`)} width={CLASS_CHIP_W} />}
                 {c.pruned && !scored && <LedChip color="rgba(180,180,190,0.7)" text={t('oracle_pruned')} width={CLASS_CHIP_W} />}
                 {c.forcedLoss && <SolidChip bg={VERDICT_COLOR.loss} text={t('oracle_forced_loss')} />}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {scored ? <EqBar pct={barW} color={barColor} />
+                {scored ? <EqBar pct={c.bar} color={barColor} />
                     : <div style={{ flex: '1 1 auto', height: 7 }} />}
                 <span title={t('oracle_ef_tip')} style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
                     <SegmentText text={efText} color={AMBER} height={10} gap={1.5} length={EF_TITLE_LEN} />
@@ -518,14 +513,6 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
         // did not scroll.
         if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
     }, [decisionId, snapshot]);
-
-    const scored = useMemo(
-        () => (snapshot?.candidates ?? []).filter((c) => c.mean != null).map((c) => c.mean!),
-        [snapshot],
-    );
-    const best = scored.length ? Math.min(...scored) : 0;
-    const worst = scored.length ? Math.max(...scored) : 0;
-    const bestAdj = scored.length ? best : null;
 
     const s = snapshot;
     const exact = s?.regime === 'exact';
@@ -654,7 +641,7 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
                                     <div ref={c.played ? playedRef : undefined} data-played={c.played ? '' : undefined}>
                                     {exact
                                         ? <VerdictRow c={c} t={t} open={open} onClick={onClick} />
-                                        : <McRow c={c} best={best} worst={worst} bestAdj={bestAdj} t={t} open={open} onClick={onClick} />}
+                                        : <McRow c={c} t={t} open={open} onClick={onClick} />}
                                     </div>
                                     {open && <WhyPanel c={c} bestCand={bestCand} s={s} t={t as unknown as TFn} />}
                                 </React.Fragment>

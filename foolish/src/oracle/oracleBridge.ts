@@ -10,15 +10,17 @@
  * ========================================================================== */
 
 import {
-    memOf, readOgAnswer, writeOgKnobs, type OgAnswer_Snap, type Card_Snap,
+    memOf, readOgAnswer, writeOgKnobs, readOgRankAnswer, writeOgRankAsk, type OgAnswer_Snap, type Card_Snap,
     MOVE_ATTACK, MOVE_COVER, MOVE_PASS, MOVE_PICKUP, MOVE_GOOD, MOVE_WAIT,
     OG_VERDICT_NONE, OG_VERDICT_UNKNOWN, OG_VERDICT_ILLEGAL,
     OG_VERDICT_WIN, OG_VERDICT_LOSS, OG_VERDICT_DRAW,
     OG_SOLVER_NONE, OG_SOLVER_WIN, OG_SOLVER_EVAL, STRAT_FUSION,
+    OG_CLASS_BEST, OG_CLASS_EXCELLENT, OG_CLASS_GOOD, OG_CLASS_INACCURACY, OG_CLASS_MISTAKE, OG_CLASS_BLUNDER,
 } from '@sdk/ts/gen/oracle_answer.oracle.ts';
 import type { OracleExports } from '@sdk/ts/gen/exports.oracle.ts';
 import {
-    OracleJob, OracleKnobs, OracleRecord, OracleRecordCandidate, OracleVerdict, oracleCardToken,
+    OracleCandidate, OracleClass, OracleJob, OracleKnobs, OracleRanker, OracleRecord, OracleRecordCandidate,
+    OracleVerdict, oracleCardToken,
 } from './types';
 
 type BatchResult =
@@ -40,6 +42,38 @@ const VERDICT_NAME: Record<number, OracleVerdict> = {
 const SOLVER_NAME: Record<number, OracleRecord['solver']['result']> = {
     [OG_SOLVER_NONE]: 'none', [OG_SOLVER_WIN]: 'win', [OG_SOLVER_EVAL]: 'eval',
 };
+const VERDICT_ID = Object.fromEntries(Object.entries(VERDICT_NAME).map(([id, v]) => [v, Number(id)])) as Record<OracleVerdict, number>;
+const CLASS_NAME: Record<number, OracleClass> = {
+    [OG_CLASS_BEST]: 'best', [OG_CLASS_EXCELLENT]: 'excellent', [OG_CLASS_GOOD]: 'good',
+    [OG_CLASS_INACCURACY]: 'inaccuracy', [OG_CLASS_MISTAKE]: 'mistake', [OG_CLASS_BLUNDER]: 'blunder',
+};
+
+/** One module's door to the kernel's ranking (c/src/oracle_rank.h): its memory,
+ *  the two exports, and the writer and reader structgen made for that module. */
+export interface RankKernel {
+    buffer(): ArrayBuffer;
+    ex: Pick<OracleExports, 'wasm_og_rank_ask' | 'wasm_og_rank'>;
+    write: typeof writeOgRankAsk;
+    read: typeof readOgRankAnswer;
+}
+
+/** Hand the accumulated rows to the kernel and take them back in its order,
+ *  with its Best, pick, class, bar and printed error. Both modes call this. */
+export function rankCandidates(k: RankKernel, list: OracleCandidate[], exact: boolean, deckAlive: boolean): OracleCandidate[] {
+    k.write(memOf(k.buffer()), k.ex.wasm_og_rank_ask(), {
+        exact, deckAlive,
+        rows: list.map((c) => ({
+            scored: c.mean != null, mean: c.mean ?? 0, se: c.se, nsim: c.n,
+            shadowScored: c.shadowMean != null, shadowMean: c.shadowMean ?? 0, shadowSe: c.shadowSe, shadowNsim: c.shadowN,
+            attack: c.type === 'attack', nTrump: c.cards.filter((t) => t.endsWith('*')).length,
+            verdict: VERDICT_ID[c.verdict], hasVerdictVal: c.verdictVal != null, verdictVal: c.verdictVal ?? 0,
+        })),
+    });
+    const at = k.ex.wasm_og_rank();
+    return k.read(memOf(k.buffer()), at).lines.map((l) => ({
+        ...list[l.row], se: l.se, shadowSe: l.shadowSe, best: l.best, pick: l.pick, cls: CLASS_NAME[l.cls] ?? null, bar: l.bar,
+    }));
+}
 
 /** The kernel's answer as the record the accumulator, the worker and the
  *  overlay read: cards become the tokens rows are keyed by, codes become their
@@ -91,7 +125,7 @@ function recordOfAnswer(a: OgAnswer_Snap): OracleRecord {
     };
 }
 
-export class OracleInstance {
+export class OracleInstance implements OracleRanker {
     ex!: OracleExports;
 
     async init(bytes: Uint8Array): Promise<void> {
@@ -99,6 +133,12 @@ export class OracleInstance {
         const instance = (src as WebAssembly.WebAssemblyInstantiatedSource).instance;
         this.ex = instance.exports as unknown as OracleExports;
         this.ex.wasm_init();
+    }
+
+    rank(list: OracleCandidate[], exact: boolean, deckAlive: boolean): OracleCandidate[] {
+        const ex = this.ex;
+        return rankCandidates({ buffer: () => ex.memory.buffer, ex, write: writeOgRankAsk, read: readOgRankAnswer },
+            list, exact, deckAlive);
     }
 
     /** Set the OG_* knobs (§8.5 step 1); octogen reads them at its next
