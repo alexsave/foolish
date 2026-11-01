@@ -92,11 +92,11 @@ function playRandomGame(np: number, brain: string): Played {
 }
 
 /** The finalize path's encode of a finished game: its code, or the kernel's refusal code. */
-function encodeGame(game: Pick<Played, 'state' | 'roster' | 'seed' | 'log'>): Uint8Array | number {
+function encodeGame(game: Pick<Played, 'state' | 'roster' | 'seed' | 'list'>): Uint8Array | number {
   const table = fixtureTable();
   const rc = table.load(game.state, game.roster);
   if (rc < 0) throw new Error(`the finished game does not load (${rc})`);
-  return table.replayCode(game.seed, game.log);
+  return table.replayCode(game.seed, game.list);
 }
 
 const tooLong = (rc: number) => rc === -REPLAY_ETOOLONG;
@@ -200,10 +200,10 @@ function roundTripGame(game: Played, np: number, where: string): boolean {
   });
 
   // extras (names + per-move timing) round-trip: the finalize path's extras,
-  // from the table's roster and the session log's commit clock.
+  // from the table's roster and the move list's commit clock.
   const table = fixtureTable();
   assert.equal(table.load(game.state, game.roster), 0);
-  const blob = table.replayExtras(game.log);
+  const blob = table.replayExtras(game.list, game.baseMs);
   assert.ok(typeof blob !== 'number', `extras refused (${blob})`);
   const extras = kernelB32Encode(blob as Uint8Array);
   const full = joinReplayCode(enc.base32, extras);

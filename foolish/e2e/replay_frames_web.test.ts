@@ -352,7 +352,7 @@ test('one committed operation is one clock stamp, which is what the merge reads'
     }
 
     const code = replayCodeOf(row, seedBytes(2, 7), { table });
-    const extras = table.replayExtras(row.log);
+    const extras = table.replayExtras(row.list, row.baseMs);
     assert.ok(typeof extras !== 'number', 'the table produced an extras blob');
     const sum = replaySummary(code)!;
     const decoded = kernelReplayExtrasDecode(extras as Uint8Array, sum.numPlayers, sum.moves);

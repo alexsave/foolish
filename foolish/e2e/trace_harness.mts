@@ -50,7 +50,7 @@ let moves = 0;
 for (let guard = 0; row.status === L.GAME_STATUS_PLAYING && guard < 4000; guard++) {
     if (moves === Number(process.env.TRACE_AT ?? -1)) {
         fixtureTable().load(row.state, row.roster);
-        out(`AT#${moves} state=${JSON.stringify(board())} nlog=${row.log.length}B`);
+        out(`AT#${moves} state=${JSON.stringify(board())} nlist=${row.list.length}B`);
     }
     const c = botCycle(row, { maxActions: 1 });
     if (c.drive.n === 0) break;

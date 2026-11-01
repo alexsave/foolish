@@ -192,16 +192,6 @@ export class ServerTable {
         return this.ex.wasm_table_set_deal_seed(...this.put(seedHex ?? ''));
     }
 
-    /**
-     * table_set_session_log: the row's stored session log (games.logs_packed bytes).
-     * A bot cycle ALWAYS hands it over - its length is the progress every bot decision
-     * is seeded from - and the kernel reads the records onto the board only for a brain
-     * that consults them. Records the log holds, or a refusal.
-     */
-    setSessionLog(log: Uint8Array): number {
-        return this.ex.wasm_table_set_session_log(...this.put(log));
-    }
-
     /** table_bot_drive, offered `prefs` (a drivePrefs() blob of a failed attempt, or null). A TableDrive, or a refusal. */
     botDrive(prefs: Uint8Array | null, maxActions = 0): TableDrive | number {
         const n = this.ex.wasm_table_bot_drive(...this.put(prefs ?? ''), maxActions);
@@ -218,14 +208,34 @@ export class ServerTable {
 
     // ---- the end of a game ----
 
-    /** table_replay_code: the verified v6 replay code of the loaded finished game, or a refusal. */
-    replayCode(seed: Uint8Array, log: Uint8Array): Uint8Array | number {
-        return this.out(this.ex.wasm_table_replay_code(...this.put(seed, log)));
+    /** table_move_list_chunk: one commit's records as the chunk the server's store appends to the session's move list. */
+    moveListChunk(records: Uint8Array, baseMs: number): Uint8Array | number {
+        return this.out(this.ex.wasm_table_move_list_chunk(...this.put(records), baseMs));
     }
 
-    /** table_replay_extras: the replay extras blob (names from the roster, times from the log), or a refusal. */
-    replayExtras(log: Uint8Array): Uint8Array | number {
-        return this.out(this.ex.wasm_table_replay_extras(...this.put(log)));
+    /**
+     * The session's move list after a commit, as the server keeps it (table_ops.c section_row,
+     * rows_sql.c list_write): a deal or a lobby starts it again, any other commit appends its chunk.
+     */
+    sessionList(list: Uint8Array, p: TableProducts, baseMs: number): Uint8Array {
+        const restart = p.logsReset || p.status === L.GAME_STATUS_WAITING;
+        if (!p.logs) return restart ? new Uint8Array(0) : list;
+        const chunk = this.must('move list chunk', this.ex.wasm_table_move_list_chunk(...this.put(p.logs), baseMs));
+        if (restart) return chunk;
+        const out = new Uint8Array(list.length + chunk.length);
+        out.set(list, 0);
+        out.set(chunk, list.length);
+        return out;
+    }
+
+    /** table_replay_code_list: the verified v6 replay code of the loaded finished game from its move list, or a refusal. */
+    replayCode(seed: Uint8Array, list: Uint8Array): Uint8Array | number {
+        return this.out(this.ex.wasm_table_replay_code(...this.put(seed, list)));
+    }
+
+    /** table_replay_extras_list: the replay extras blob (names from the roster, times from the list from `baseMs`), or a refusal. */
+    replayExtras(list: Uint8Array, baseMs: number): Uint8Array | number {
+        return this.out(this.ex.wasm_table_replay_extras(...this.put(list), baseMs));
     }
 
     /** The loaded roster's seats, in seat order. */

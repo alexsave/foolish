@@ -4,7 +4,7 @@
 // THE HOST OF ONE TABLE. It is what the server (c_base's foolish app) is to a
 // game, cut down to the one table a promo visitor plays: it keeps the game as a
 // resident between operations (table.h TableResident, as the server's journal
-// does), keeps its session log, numbers its versions, and after every operation
+// does), keeps its session's move list, numbers its versions, and after every operation
 // hands out what a server would push to the human's seat - the seat's envelope
 // and its cast. So the page reads a local game through exactly the code it reads
 // a served one with (client_table.h): the envelope and the cast are the same
@@ -44,15 +44,15 @@
 #define LOCAL_HUMAN_ID "local-you"
 #define LOCAL_BOT_ID   "local-bot"
 
-// The session log a game can keep (the u48-stamped records table_set_session_log
-// reads). A whole two-seat game is a few KB; past the cap the log stops growing,
-// which only stops its length seeding later decisions (bot_drive.h).
-#define LOCAL_LOG_CAP   (64 * 1024)
+// The session's move list a game can keep (move_list.h), as the server keeps it:
+// a whole two-seat game is a few hundred bytes; a list that outgrows the cap is
+// broken (the game keeps going and has no replay).
+#define LOCAL_LIST_CAP  (16 * 1024)
 // The products of one operation (TABLE_PRODUCTS_NO_ROW and no spectator: the
 // human's envelope, the logs, the clock), and the human's cast.
 #define LOCAL_ARENA_CAP (24 * 1024)
 #define LOCAL_CAST_CAP  (48 * 1024)
-// The finished game's replay (table_replay_code, table_replay_extras): a two-seat
+// The finished game's replay (table_replay_code_list, table_replay_extras_list): a two-seat
 // game's moves code is tens of bytes and its extras a few hundred.
 #define LOCAL_REPLAY_CAP (8 * 1024)
 
@@ -66,9 +66,10 @@ typedef struct {
     uint32_t      version;
     int64_t       round_epoch;   // the version the current round began at (the server's column)
     bool          open;
-    int           log_len;
+    int64_t       opened_ms;     // the table's creation: the base the move list is timed from (the server's created_at)
+    int           list_len;
     int           cast_len;      // the last operation's cast, 0 for none
-    uint8_t       log[LOCAL_LOG_CAP];
+    uint8_t       list[LOCAL_LIST_CAP];
     uint8_t       arena[LOCAL_ARENA_CAP];
     uint8_t       cast[LOCAL_CAST_CAP];
     int           replay_len, extras_len;   // 0 until the finished game's replay is made
@@ -112,8 +113,8 @@ int local_table_bot_wait_ms(LocalTable *L, int64_t now_ms);
 int local_table_bot(LocalTable *L, int64_t now_ms);
 
 // THE FINISHED GAME'S REPLAY, made exactly as the server's finalize_game makes
-// it (server/src/app/table_ops.c): table_replay_extras over the roster and the
-// session log, then table_replay_code from the deal seed and the same log, with
+// it (server/src/app/table_ops.c): table_replay_extras_list over the roster and the
+// move list, then table_replay_code_list from the deal seed and the same list, with
 // its round-trip gate. Made once, on the first ask after the game ends, and kept;
 // `scratch` is the decode gate's workspace. TABLE_E_NOT_OVER before the end, or
 // the kernel's refusal. The moves code and the extras are then

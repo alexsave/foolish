@@ -157,13 +157,6 @@ int wasm_table_set_deal_seed(int len) {
     return rc;
 }
 
-// io = [games.logs_packed bytes] -> records the log holds.
-int wasm_table_set_session_log(int len) {
-    const unsigned char *io = inputs(len);
-    if (!io || len < 0) return TABLE_E_WIRE;
-    return table_set_session_log(table(), io, len);
-}
-
 // io = [a prefs blob (table.h table_drive_prefs), or nothing] -> actions applied;
 // the cycle is at wasm_table_drive_ptr. No env: the C roster's knob specs are
 // authoritative, and a table an earlier decision left must not override them
@@ -176,26 +169,37 @@ int wasm_table_bot_drive(int prefs_len, int max_actions) {
     return table_bot_drive(table(), io, prefs_len, max_actions, &g_table_drive);
 }
 
-// io = [deal seed][session log] -> io = the verified v6 replay code. The code is
-// written into the replay buffer and decoded back into the IO buffer past the
-// inputs (the gate reads the log again), then copied to the front.
-int wasm_table_replay_code(int seed_len, int log_len) {
-    const unsigned char *io = inputs(seed_len + log_len);
-    if (!io || seed_len < 0 || log_len < 0) return TABLE_E_WIRE;
-    const int used = seed_len + log_len;
-    const int n = table_replay_code(table(), io, seed_len, io + seed_len, log_len,
-                                    wasm_replay_io_ptr(), wasm_replay_io_cap(),
-                                    wasm_io_ptr() + used, wasm_io_cap() - used);
+// io = [one commit's records (TableCommit.logs)] -> io = its move list chunk (move_list.h),
+// timed from `base_ms` (the row's created_at): what the server's store appends.
+int wasm_table_move_list_chunk(int rec_len, double base_ms) {
+    const unsigned char *io = inputs(rec_len);
+    if (!io || rec_len < 0) return TABLE_E_WIRE;
+    const int n = table_move_list_chunk((int64_t)base_ms, io, rec_len, wasm_replay_io_ptr(), wasm_replay_io_cap());
     if (n > 0) memcpy(wasm_io_ptr(), wasm_replay_io_ptr(), (size_t)n);
     return n;
 }
 
-// io = [session log] -> io = the replay extras blob (built in the replay buffer:
-// the times are read from the log while the blob is written).
-int wasm_table_replay_extras(int log_len) {
-    const unsigned char *io = inputs(log_len);
-    if (!io || log_len < 0) return TABLE_E_WIRE;
-    const int n = table_replay_extras(table(), io, log_len, wasm_replay_io_ptr(), wasm_replay_io_cap());
+// io = [deal seed][the session's move list] -> io = the verified v6 replay code. The code is
+// written into the replay buffer and decoded back into the IO buffer past the inputs (the
+// gate reads the list again), then copied to the front.
+int wasm_table_replay_code(int seed_len, int list_len) {
+    const unsigned char *io = inputs(seed_len + list_len);
+    if (!io || seed_len < 0 || list_len < 0) return TABLE_E_WIRE;
+    const int used = seed_len + list_len;
+    const int n = table_replay_code_list(table(), io, seed_len, io + seed_len, list_len,
+                                         wasm_replay_io_ptr(), wasm_replay_io_cap(),
+                                         wasm_io_ptr() + used, wasm_io_cap() - used);
+    if (n > 0) memcpy(wasm_io_ptr(), wasm_replay_io_ptr(), (size_t)n);
+    return n;
+}
+
+// io = [the session's move list] -> io = the replay extras blob, its times from `base_ms`
+// (built in the replay buffer: the times are read from the list while the blob is written).
+int wasm_table_replay_extras(int list_len, double base_ms) {
+    const unsigned char *io = inputs(list_len);
+    if (!io || list_len < 0) return TABLE_E_WIRE;
+    const int n = table_replay_extras_list(table(), (int64_t)base_ms, io, list_len, wasm_replay_io_ptr(),
+                                           wasm_replay_io_cap());
     if (n > 0) memcpy(wasm_io_ptr(), wasm_replay_io_ptr(), (size_t)n);
     return n;
 }

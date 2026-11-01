@@ -2,6 +2,7 @@
 #include "local_table.h"
 #include "bots.h"
 #include "bot_roster.h"
+#include "move_list.h"
 #include <string.h>
 
 #define HUMAN_LEN ((int)sizeof LOCAL_HUMAN_ID - 1)
@@ -25,7 +26,7 @@ static void adopt(LocalTable *L) { table_adopt(&L->t, &L->res); }
 
 // The section's last step, after an operation that changed the table: the
 // products at the next version, as the server commits them (table_ops.c
-// cb_section_commit) - the session log grows by the operation's records, the
+// cb_section_commit) - the move list grows by the operation's chunk, the
 // round's epoch moves with a closed round, the resident is kept with the clock
 // the products advanced, and the human's cast is left for the page.
 static int commit(LocalTable *L, int64_t now_ms) {
@@ -36,10 +37,14 @@ static int commit(LocalTable *L, int64_t now_ms) {
                                                &L->c, L->arena, sizeof L->arena);
     if (rc < 0) return rc;
     const TableCommit *c = &L->c;
-    if (c->logs_reset) L->log_len = 0;
-    if (c->logs.len > 0 && L->log_len + c->logs.len <= (int)sizeof L->log) {
-        memcpy(L->log + L->log_len, L->arena + c->logs.off, (size_t)c->logs.len);
-        L->log_len += c->logs.len;
+    // The session's move list, as the server's store keeps it (table_ops.c section_row): a deal
+    // or a lobby starts it again, any other operation appends its chunk.
+    if (c->logs_reset || c->status == GAME_STATUS_WAITING) L->list_len = 0;
+    if (c->logs.len > 0 && L->list_len < (int)sizeof L->list) {
+        const int k = table_move_list_chunk(L->opened_ms, L->arena + c->logs.off, c->logs.len, L->list + L->list_len,
+                                            (int)sizeof L->list - L->list_len);
+        if (k >= 0) L->list_len += k;
+        else L->list[L->list_len++] = MOVE_LIST_BROKEN_ITEM;   // no room: no replay, never no commit
     }
     L->round_epoch = (c->logs_reset || c->status == GAME_STATUS_WAITING) ? 0
                    : c->closed_round ? (int64_t)next : L->round_epoch;
@@ -59,7 +64,8 @@ static int commit(LocalTable *L, int64_t now_ms) {
 int local_table_open(LocalTable *L, Game *g, TableSnaps *snaps, const char *gid, int gid_len,
                      const uint8_t *seed, const char *you, int you_len, int64_t now_ms) {
     if (!L || !g || !snaps || !gid || !seed || gid_len <= 0 || gid_len > ROSTER_GAME_ID_MAX) return TABLE_E_WIRE;
-    memset(L, 0, offsetof(LocalTable, log));
+    memset(L, 0, offsetof(LocalTable, list));
+    L->opened_ms = now_ms;
     memcpy(L->gid, gid, (size_t)gid_len);
     L->gid_len = gid_len;
     memcpy(L->seed, seed, FOOLISH_SEED_LEN);
@@ -141,10 +147,9 @@ int local_table_bot(LocalTable *L, int64_t now_ms) {
     if (!L || !L->open) return TABLE_E_NOT_LOADED;
     adopt(L);
     if (!table_bots_due(&L->t)) return 0;
-    // Always the log: its length is the game's progress, which seeds every
-    // decision (table.h table_set_session_log).
-    int rc = table_set_session_log(&L->t, L->log, L->log_len);
-    if (rc < 0) return rc;
+    // No session log: the resident carries the bot memory (bot_memory.h), whose
+    // record count is the progress every decision is seeded from.
+    int rc;
     BotDriveOut drv;
     const int n = table_bot_drive_with(&L->t, choose, NULL, 0, 0, &drv);
     if (n <= 0) return n;
@@ -166,12 +171,11 @@ int local_table_replay(LocalTable *L, uint8_t *scratch, int scratch_cap) {
     if (L->replay_len > 0) return TABLE_OK;
     adopt(L);
     if (L->t.g->status != GAME_STATUS_GAME_OVER) return TABLE_E_NOT_OVER;
-    // The extras read the roster and the log, never the board, so the board the
-    // code replays is still the adopted one (the server's order, finalize_game).
-    const int ne = table_replay_extras(&L->t, L->log, L->log_len, L->extras, sizeof L->extras);
+    // From the move list, as the server's finalize_game cuts it.
+    const int ne = table_replay_extras_list(&L->t, L->opened_ms, L->list, L->list_len, L->extras, sizeof L->extras);
     if (ne < 0) return ne;
-    const int nc = table_replay_code(&L->t, L->seed, FOOLISH_SEED_LEN, L->log, L->log_len,
-                                     L->replay, sizeof L->replay, scratch, scratch_cap);
+    const int nc = table_replay_code_list(&L->t, L->seed, FOOLISH_SEED_LEN, L->list, L->list_len,
+                                          L->replay, sizeof L->replay, scratch, scratch_cap);
     if (nc < 0) return nc;
     L->extras_len = ne;
     L->replay_len = nc;

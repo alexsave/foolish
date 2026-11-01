@@ -13805,6 +13805,22 @@ static void test_table_seat_of(void) {
 }
 
 static uint8_t tb_log[1 << 18], tb_log2[1 << 18], tb_code[1 << 16], tb_code2[1 << 16];
+
+// A finished session's replay as the server cuts it: the session log the commits wrote
+// (TableCommit.logs, appended), chunked whole into its move list (move_list.h, timed from 0),
+// then table_replay_code_list / table_replay_extras_list.
+static uint8_t tb_list[1 << 18];
+static int tb_replay_code(Table *t, const uint8_t *seed, int seed_len, const uint8_t *log, int log_len, uint8_t *out,
+                          int cap, uint8_t *scratch, int scratch_cap) {
+    const int n = table_move_list_chunk(0, log, log_len, tb_list, (int)sizeof tb_list);
+    if (n < 0) return n;
+    return table_replay_code_list(t, seed, seed_len, tb_list, n, out, cap, scratch, scratch_cap);
+}
+static int tb_replay_extras(const Table *t, const uint8_t *log, int log_len, uint8_t *out, int cap) {
+    const int n = table_move_list_chunk(0, log, log_len, tb_list, (int)sizeof tb_list);
+    if (n < 0) return n;
+    return table_replay_extras_list(t, 0, tb_list, n, out, cap);
+}
 static uint8_t tb_scratch[1 << 20];
 static int tb_log_len;
 static char tb_seed_hex[2 * FOOLISH_SEED_LEN + 1];
@@ -14812,7 +14828,7 @@ static void test_a_four_aces_table_deals_and_plays_out(void) {
     const TbPlayed p = tb_row_play(&row, &tb, hex);
     CHECK(p.ended, "four-Aces table: the game is played to its end, cycle by cycle");
     CHECK(table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK, "four-Aces table: the finished row loads");
-    const int n = table_replay_code(&tb, seed, FOOLISH_SEED_LEN, row.log, row.log_len, tb_code, sizeof(tb_code),
+    const int n = tb_replay_code(&tb, seed, FOOLISH_SEED_LEN, row.log, row.log_len, tb_code, sizeof(tb_code),
                                     tb_scratch, sizeof(tb_scratch));
     CHECK(n > 0, "four-Aces table: the finished game has a replay code");
     ReplayHeader hdr;
@@ -14842,7 +14858,7 @@ static void test_table_replay_code_and_extras(void) {
     CHECK(over, "the game is played to its end");
     Table unloaded;
     table_init(&unloaded, &tb_src, &tb_snaps);
-    CHECK(table_replay_code(&unloaded, tb_seed, 32, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch,
+    CHECK(tb_replay_code(&unloaded, tb_seed, 32, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch,
                             sizeof(tb_scratch)) == TABLE_E_NOT_LOADED, "an unloaded table has no replay");
 
     // The reference: the finished board with the session log parsed apart from the table, encoded directly.
@@ -14859,22 +14875,23 @@ static void test_table_replay_code_and_extras(void) {
         }
     }
     const int want = replay_encode_v6_from_game(&tb_ref, tb_seed, 32, 1 << 30, tb_code2, sizeof(tb_code2));
-    const int got = table_replay_code(&tb, tb_seed, 32, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+    const int got = tb_replay_code(&tb, tb_seed, 32, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
     if (got < 0 || want < 0) fprintf(stderr, "  replay: got %d, want %d\n", got, want);
     CHECK(want > 0 && got == want && memcmp(tb_code, tb_code2, (size_t)want) == 0,
           "the code is replay_encode_v6_from_game of the finished board and its session log");
-    CHECK(table_replay_code(&tb, tb_seed, 31, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch,
+    CHECK(tb_replay_code(&tb, tb_seed, 31, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch,
                             sizeof(tb_scratch)) < 0, "a short deal seed has no code");
 
-    // The gate: a session log whose pickup names a card the game never picked up.
+    // The gate: a session whose pickup names a seat that did not pick up (the encoder reads only
+    // that a pickup happened; the decoded pickup is the defender's).
     int pickup_at = -1;
     for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9])
         if (tb_log[q + 6] == LOG_PICKUP && tb_log[q + 9] > 0) pickup_at = q;
     CHECK(pickup_at >= 0, "the game has a pickup");
     memcpy(tb_log2, tb_log, (size_t)tb_log_len);
-    tb_log2[pickup_at + 10] = (uint8_t)((tb_log2[pickup_at + 10] + 1) % 52);
+    tb_log2[pickup_at + 7] = (uint8_t)((tb_log2[pickup_at + 7] + 1) % tb_game.num_players);
     tb_reload(0);
-    const int gate = table_replay_code(&tb, tb_seed, 32, tb_log2, tb_log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+    const int gate = tb_replay_code(&tb, tb_seed, 32, tb_log2, tb_log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
     if (gate != TABLE_E_REPLAY_VERIFY) fprintf(stderr, "  gate: got %d\n", gate);
     CHECK(gate == TABLE_E_REPLAY_VERIFY, "a code that does not decode back to the log's actions is refused");
 
@@ -14882,7 +14899,7 @@ static void test_table_replay_code_and_extras(void) {
     tb_reload(0);
     const int al = tb_extras_args(&tb.r, tb_log, tb_log_len, args);
     const int ew = replay_extras_encode(args, al, tb_code2, sizeof(tb_code2));
-    const int eg = table_replay_extras(&tb, tb_log, tb_log_len, tb_code, sizeof(tb_code));
+    const int eg = tb_replay_extras(&tb, tb_log, tb_log_len, tb_code, sizeof(tb_code));
     if (eg != ew || (ew > 0 && memcmp(tb_code, tb_code2, (size_t)ew) != 0)) {
         fprintf(stderr, "  extras: got %d, want %d\n", eg, ew);
         for (int i = 0; i < ew; i++) if (tb_code[i] != tb_code2[i]) { fprintf(stderr, "  first diff at byte %d\n", i); break; }
@@ -14893,23 +14910,17 @@ static void test_table_replay_code_and_extras(void) {
     memcpy(tb_log2, tb_log, (size_t)tb_log_len);
     for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log2[q + 9]) tb_log2[q + 3] = (uint8_t)(tb_log2[q + 3] - 1);
     memcpy(tb_log2 + tb_log_len, tb_log, (size_t)tb_log_len);
-    const int eg3 = table_replay_extras(&tb, tb_log2, 2 * tb_log_len, tb_code, sizeof(tb_code));
+    const int eg3 = tb_replay_extras(&tb, tb_log2, 2 * tb_log_len, tb_code, sizeof(tb_code));
     CHECK(eg3 == ew && memcmp(tb_code, tb_code2, (size_t)ew) == 0, "an earlier session in the log is not timed");
-    // A log with no timed record: names only.
+    // Records that never began at a deal are no session: no list, no extras.
     memset(tb_log2, 0, 10);
     tb_log2[6] = LOG_DRAW; tb_log2[7] = 1; tb_log2[8] = 0xFF;
-    const int al2 = tb_extras_args(&tb.r, tb_log2, 10, args);
-    const int ew2 = replay_extras_encode(args, al2, tb_code2, sizeof(tb_code2));
-    const int eg2 = table_replay_extras(&tb, tb_log2, 10, tb_code, sizeof(tb_code));
-    CHECK(ew2 > 0 && eg2 == ew2 && memcmp(tb_code, tb_code2, (size_t)ew2) == 0 && !(args[0] & REPLAY_EXTRAS_FLAG_TIMES),
-          "a session without timed records carries names only");
-    CHECK(table_replay_extras(&tb, tb_log, tb_log_len, tb_code, 3) == TABLE_E_CAP, "a small buffer is refused");
+    CHECK(tb_replay_extras(&tb, tb_log2, 10, tb_code, sizeof(tb_code)) == TABLE_E_WIRE,
+          "records with no deal before them are no session");
+    CHECK(tb_replay_extras(&tb, tb_log, tb_log_len, tb_code, 3) == TABLE_E_CAP, "a small buffer is refused");
 
-    // AN OVER-LONG GAME IS A REFUSAL, TOLD APART FROM A FAULT (was e2e/replay_codec.test.ts).
-    // The engine-game round trips skip a game whose session log outran MAX_LOGS;
-    // that skip is honest only while the refusal has a code no malformed input
-    // shares. The session log played over and over is a whole log of more
-    // records than the build keeps.
+    // NO MAX_LOGS CEILING: the session log played over and over is a log of more records than
+    // the build's board keeps, and its list is the last session's, whose code it has.
     int records = 0;
     for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9]) records++;
     const int copies = MAX_LOGS / records + 2;
@@ -14917,14 +14928,18 @@ static void test_table_replay_code_and_extras(void) {
     for (int i = 0; i < copies && (i + 1) * tb_log_len <= (int)sizeof(tb_log2); i++)
         memcpy(tb_log2 + i * tb_log_len, tb_log, (size_t)tb_log_len);
     tb_reload(0);
-    const int too_long = table_replay_code(&tb, tb_seed, 32, tb_log2, copies * tb_log_len, tb_code, sizeof(tb_code),
-                                       tb_scratch, sizeof(tb_scratch));
-    CHECK(too_long == -REPLAY_ETOOLONG, "a session log past MAX_LOGS is the documented too-long refusal");
+    const int repeated = tb_replay_code(&tb, tb_seed, 32, tb_log2, copies * tb_log_len, tb_code, sizeof(tb_code),
+                                        tb_scratch, sizeof(tb_scratch));
     tb_reload(0);
-    const int none = table_replay_code(&tb, tb_seed, 32, tb_log, 0, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+    const int once = tb_replay_code(&tb, tb_seed, 32, tb_log, tb_log_len, tb_code2, sizeof(tb_code2), tb_scratch,
+                                    sizeof(tb_scratch));
+    CHECK(repeated > 0 && repeated == once && memcmp(tb_code, tb_code2, (size_t)once) == 0,
+          "a log past MAX_LOGS records has the code of its last session");
+    tb_reload(0);
+    const int none = tb_replay_code(&tb, tb_seed, 32, tb_log, 0, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
     CHECK(none < 0 && none != -REPLAY_ETOOLONG, "no log at all refuses, and not as too long");
     tb_reload(0);
-    const int cut = table_replay_code(&tb, tb_seed, 32, tb_log, tb_log_len - 1, tb_code, sizeof(tb_code), tb_scratch,
+    const int cut = tb_replay_code(&tb, tb_seed, 32, tb_log, tb_log_len - 1, tb_code, sizeof(tb_code), tb_scratch,
                                       sizeof(tb_scratch));
     CHECK(cut < 0 && cut != -REPLAY_ETOOLONG, "a log cut mid-record refuses, and not as too long");
 }
@@ -16340,7 +16355,7 @@ static void test_table_bots_never_transfer_under_podkidnoy(void) {
                     // record is a session no code can verify against.
                     if (b != 0 && row.status == GAME_STATUS_GAME_OVER
                         && table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK) {
-                        const int n = table_replay_code(&tb, seed, FOOLISH_SEED_LEN, row.log, row.log_len, tb_code, sizeof(tb_code),
+                        const int n = tb_replay_code(&tb, seed, FOOLISH_SEED_LEN, row.log, row.log_len, tb_code, sizeof(tb_code),
                                                         tb_scratch, sizeof(tb_scratch));
                         ReplayHeader hdr;
                         memset(&hdr, 0, sizeof(hdr));
@@ -19743,7 +19758,7 @@ static void test_every_push_is_leak_free_and_mirrors_the_commit(void) {
             moves++;
             if (c.ended) {
                 const int cl = wv_load(&wv_row) == TABLE_OK
-                    ? table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, wv_row.log, wv_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch))
+                    ? tb_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, wv_row.log, wv_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch))
                     : -1;
                 if (cl <= 0) fprintf(stderr, "  game %d: the finished game's log does not encode (%d)\n", g, cl);
                 codes += cl > 0;
@@ -21159,9 +21174,9 @@ static void test_table_a_game_writes_the_same_rows_twice(void) {
     CHECK(b.log_len == a.log_len && memcmp(a.log, b.log, (size_t)a.log_len) == 0,
           "and the same session-log rows, record for record");
     const int ca = table_load(&tb, a.state, a.state_len, a.roster, ROSTER_BYTES) == TABLE_OK
-        ? table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, a.log, a.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch)) : -1;
+        ? tb_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, a.log, a.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch)) : -1;
     const int cb = table_load(&t2, b.state, b.state_len, b.roster, ROSTER_BYTES) == TABLE_OK
-        ? table_replay_code(&t2, tb_seed, FOOLISH_SEED_LEN, b.log, b.log_len, tb_code2, sizeof(tb_code2), tb_scratch, sizeof(tb_scratch)) : -1;
+        ? tb_replay_code(&t2, tb_seed, FOOLISH_SEED_LEN, b.log, b.log_len, tb_code2, sizeof(tb_code2), tb_scratch, sizeof(tb_scratch)) : -1;
     CHECK(ca > 0 && cb == ca && memcmp(tb_code, tb_code2, (size_t)ca) == 0, "and the same replay code");
 }
 
@@ -21619,7 +21634,7 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
         ReplaySummary sum;
         memset(&sum, 0, sizeof(sum));
         table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
-        const int cl = table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+        const int cl = tb_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
         // At this suite's compact caps a pickup of more than MAX_LOG_PAIRS cards
         // is logged short (c/Makefile print-human-caps: the shipped builds log 64),
         // and the round-trip gate must then refuse the code rather than pass a
@@ -21634,7 +21649,7 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
         snprintf(what, sizeof(what), "game %d: the replay code verifies, and its summary is the table's seats and fool", k);
         CHECK(cl > 0 && replay_summary_v6(tb_code, cl, &sum) == REPLAY_EOK && sum.num_players == np && sum.fool == fool, what);
         table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
-        const int el = table_replay_extras(&tb, bl_row.log, bl_row.log_len, tb_code2, sizeof(tb_code2));
+        const int el = tb_replay_extras(&tb, bl_row.log, bl_row.log_len, tb_code2, sizeof(tb_code2));
         const int dl = el > 0 ? replay_extras_decode(tb_code2, el, np, sum.moves, extras, sizeof(extras)) : -1;
         int named = dl > 0 && replay_extras_unpack(extras, dl, &x) == dl && x.n_names == np;
         for (int s = 0; named && s < np; s++)
@@ -21645,12 +21660,12 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
         // mid-record, not at a halfway point: a whole prefix of a session encodes
         // and verifies against itself.
         table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
-        const int cut = table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len - 1, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+        const int cut = tb_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len - 1, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
         snprintf(what, sizeof(what), "game %d: a log cut mid-record is refused (%d)", k, cut);
         CHECK(cut < 0, what);
         tb_seed[0] ^= 1;
         table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
-        const int other = table_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+        const int other = tb_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
         snprintf(what, sizeof(what), "game %d: another deal seed is refused (%d)", k, other);
         CHECK(other < 0, what);
         codes++;
