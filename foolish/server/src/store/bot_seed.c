@@ -13,19 +13,21 @@
 // prod's (id, nickname, strategy key) triples plus the accounts prod lacks.
 //
 // '%' is the reserved first character of a bot's name (c_base auth/names.c
-// refuses it in a human's).
+// refuses it in a human's). The name's form is the kernel's to write
+// (bot_roster.h bot_nickname_write) and to read (bot_nickname_read): this
+// file never spells it, so the seed and every reader of a nickname agree.
 #include "store/store_import.h"
 
 #include "bot_roster.h"
 #include "table.h"
 #include "util/str.h"
 
-#include <stdio.h>
 #include <string.h>
 
 int cb_bot_seed_rows(cb_bot_row *out, int cap) {
     int n = 0;
     for (int r = 0; r < bot_roster_count(); r++) {
+        const int strat = bot_roster_strat(r);
         const BotDef *d = bot_roster_at(r);
         if (!d || !d->seeded) continue;
         for (int i = 0; i < BOT_IDS_MAX; i++) {
@@ -34,7 +36,8 @@ int cb_bot_seed_rows(cb_bot_row *out, int cap) {
             cb_bot_row *b = &out[n++];
             memset(b, 0, sizeof *b);
             cb_strlcpy(b->id, d->ids[i], sizeof b->id);
-            snprintf(b->nickname, sizeof b->nickname, "%%%s %d", d->city, i + 1);
+            const int nl = bot_nickname_write(strat, i + 1, b->nickname, (int)sizeof b->nickname - 1);
+            if (nl < 0) return -1;                    // a name over the column (memset left it NUL-terminated)
             cb_strlcpy(b->strategy_key, d->key, sizeof b->strategy_key);
             b->elo_rating = TABLE_RATING_START;
             b->previous_elo = -1;
