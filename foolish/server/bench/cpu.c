@@ -114,11 +114,11 @@ static int commit(void) {
     g_state_len = g_c.state.len;
     memcpy(g_roster, g_arena + g_c.roster.off, (size_t)g_c.roster.len);
     g_roster_len = g_c.roster.len;
+    // The session's move list (move_list.h), as the host's commit appends each commit's chunk.
     if (g_c.logs_reset) g_logs_len = 0;
-    if (g_logs_len + g_c.logs.len <= (int)sizeof g_logs) {
-        memcpy(g_logs + g_logs_len, g_arena + g_c.logs.off, (size_t)g_c.logs.len);
-        g_logs_len += g_c.logs.len;
-    }
+    const int k = table_move_list_chunk(1760000000000, g_arena + g_c.logs.off, g_c.logs.len, g_logs + g_logs_len,
+                                        (int)sizeof g_logs - g_logs_len);
+    if (k > 0) g_logs_len += k;
     g_version++;
     return 0;
 }

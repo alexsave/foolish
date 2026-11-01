@@ -587,7 +587,7 @@ static void race_on_commit(const cb_fanout *f) {
     pthread_create(&g_race_th, NULL, move_thread, &g_race);
     usleep(100000);   // the move reaches the loop, which finds the game locked and hands it on
 }
-static void race_on_cycle(const char *game_id, int attempt, int logs_len, int prefs_len) {
+static void race_on_cycle(const char *game_id, int attempt, int prefs_len) {
     atomic_fetch_add(&g_race_attempts, attempt > 1);
     if (atomic_load(&g_race_when) != 2 || strcmp(game_id, g_race_gid) != 0) return;
     atomic_store(&g_race_when, 0);

@@ -38,7 +38,7 @@
 // wall clock's ms, so a number is never reused across restarts): "FJNL", u32 LE format (2), u64 LE start ms, then
 // batches. A segment of another format refuses the start: a deploy stops the old server, whose
 // close flushes every move into the tables and deletes its segments, before the new one opens.
-// A BATCH: u8 'J', u8 format (2), u16 LE payload length, u32 LE CRC-32C over those 4 bytes
+// A BATCH: u8 'J', u8 format (3), u16 LE payload length, u32 LE CRC-32C over those 4 bytes
 // and the payload (shared/c/crc32c), then the payload, fixed fields and no coder:
 //   u8  n               the records, 1..CB_JOURNAL_BATCH_MAX
 //   i32 LE base         the batch's earliest ms - the segment's start ms
@@ -51,12 +51,12 @@
 //     u32 LE ms         the record's ms - base
 //     the moves         evwire.h THE MOVE LIST: u8 n, then { u8 seat, u8 wire length, the
 //                       awire bytes } per move (one for a human's move, a cycle's in order)
-// A FULL RECORD (one whole commit): u8 'R', u8 format (2), u16 0, u32 LE CRC-32C over the
+// A FULL RECORD (one whole commit): u8 'R', u8 format (3), u16 0, u32 LE CRC-32C over the
 // payload length and the payload, u32 LE payload length, then the payload: u8 id length, the
 // id, i64 LE base version, i64 LE ms, u8 flags (1 clears the session log, 2 has a deal seed,
 // 4 needs bots, 8 rated), i8 status, i64 LE log_from, round_epoch and created_at, the 32-byte seed when
-// flagged, then u32 LE length + bytes each of the state blob, the roster and the session-log
-// records it appended, and when rated (flag 8) the rating changes: u8 n, then per seat u8 id
+// flagged, then u32 LE length + bytes each of the state blob, the roster and the move list
+// chunk it appended (move_list.h; format 2 held the session-log records), and when rated (flag 8) the rating changes: u8 n, then per seat u8 id
 // length, the id, u8 1 for a bot, i32 LE delta, u8 name length, the name. Recovery adopts its row as the game's (no kernel run: the record is
 // the commit's result) when the game is at its base version. It names no slot: a move after
 // it codes its version (the "old" bit).
@@ -71,13 +71,18 @@
 
 typedef struct cb_journal cb_journal;
 
-// Replays one record at start: `row` is the game as it stood before it (a bot cycle also gets
-// the game's session log, which seeds its moves), m the record. Fills *out (owned byte fields) with the row the commit wrote and *log with the
-// session-log records it appended (malloc'd, may be NULL with len 0). CB_OK, or anything
-// else to refuse the start.
+// The segments' and records' format: 3, a whole commit carries its move list chunk (move_list.h;
+// 2 carried its session-log records; 1 was the replay coder and FNV-1a). A segment of another
+// format is refused at open: the server that wrote it flushes everything when it stops cleanly.
+#define CB_JOURNAL_FORMAT 3
+
+// Replays one record at start: `row` is the game as it stood before it, m the record (a bot
+// cycle is seeded from the row's bot memory alone, as the live cycle is). Fills *out (owned
+// byte fields) with the row the commit wrote and *log with the move list chunk it appended
+// (move_list.h; malloc'd, may be NULL with len 0). CB_OK, or anything else to refuse the start.
 struct cb_jmove;
-typedef int (*cb_journal_apply_fn)(void *ud, const cb_game_row *row, const uint8_t *session_log, size_t session_log_len,
-                                   const struct cb_jmove *m, cb_game_row *out, uint8_t **log, size_t *log_len);
+typedef int (*cb_journal_apply_fn)(void *ud, const cb_game_row *row, const struct cb_jmove *m, cb_game_row *out,
+                                   uint8_t **log, size_t *log_len);
 
 typedef struct {
     const char *path;          // the database's path: segments are <path>-journal.<seq>

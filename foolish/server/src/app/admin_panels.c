@@ -38,7 +38,7 @@ static cb_js_admin_game game_of(const cb_game_row *g, game_store *st) {
         .id = g->id, .status = g->status, .status_label = cb_table_status_label(g->status), .version = g->version,
         .round_epoch = g->round_epoch, .needs_bots = g->needs_bots, .created_at = g->created_at,
         .updated_at = g->updated_at, .last_commit_at = g->last_commit_at, .state_len = (int64_t)g->state_len,
-        .roster_len = (int64_t)g->roster_len, .logs_len = (int64_t)g->logs_len, .has_seed = g->has_seed,
+        .roster_len = (int64_t)g->roster_len, .has_seed = g->has_seed,
     };
     int rc = g->roster ? roster_decode(&st->r, g->roster, (int)g->roster_len) : ROSTER_E_LENGTH;
     a.seats_ok = rc == ROSTER_OK;

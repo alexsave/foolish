@@ -25,7 +25,7 @@ typedef struct {
     long groups, merged_away, emails_changed, passwords_taken;
     long members_repointed, members_deduped, chat_repointed, rosters_repointed, replays_repointed, replay_players_repointed;
     long sessions_dropped, refresh_dropped, fails_dropped, ratings_dropped;
-    long games_deleted, moves_deleted, members_deleted, bots_deleted, chat_deleted, replays_deleted, replay_players_deleted;
+    long games_deleted, members_deleted, bots_deleted, chat_deleted, replays_deleted, replay_players_deleted;
     long ratings_reset;
     long email_mismatch;   // other accounts whose email is not the current transform (informational)
     long unexpected;

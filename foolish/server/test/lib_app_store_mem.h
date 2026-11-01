@@ -25,6 +25,7 @@ typedef struct {
     int bots_idle;         // bots_idle calls that took a game out of the scan
     int prev_given;        // commits that wrote with the prev seats given (no read)
     int prev_wrong;        // commits refused: a stored seat was not in prev, or prev said no bot work where there was
+    int list_reads;        // game_logs calls: the session's move list read (only a game end reads it)
 } tm_hooks;
 
 // A fresh store with `n_bots` bots seated in the bots table, each with

@@ -106,8 +106,8 @@ int cb_section_envelope(cb_section *s, int viewer, uint32_t version, uint8_t **o
 
 // The journal's replay of one move at start (journal.h cb_journal_apply_fn; ud is the cb_ctx).
 struct cb_jmove;
-int cb_table_replay_move(void *ud, const cb_game_row *row, const uint8_t *session_log, size_t session_log_len,
-                         const struct cb_jmove *m, cb_game_row *out, uint8_t **log, size_t *log_len);
+int cb_table_replay_move(void *ud, const cb_game_row *row, const struct cb_jmove *m, cb_game_row *out, uint8_t **log,
+                         size_t *log_len);
 
 // What a commit attempt came to.
 typedef struct {

@@ -64,10 +64,9 @@ int64_t cb_bots_wait_ms(const cb_ctx *ctx, const Table *t, int64_t created_at, i
 // CB_OK (including "someone else holds the lease"), CB_E_NOT_FOUND, CB_E_DB.
 int cb_bots_drive(cb_ctx *ctx, const char *game_id);
 // Test seam: called before each table_bot_drive with what the drive is handed:
-// the session log's length when the cycle read it (table_set_session_log, for a
-// row that did not carry its bot memory), else -1, and the length of the moves a
-// lost CAS already chose (the prefs). NULL in production.
-extern void (*cb_bots_cycle_observer)(const char *game_id, int attempt, int logs_len, int prefs_len);
+// the length of the moves a lost CAS already chose (the prefs). The drive is handed
+// no session log (the store keeps none: move_list.h). NULL in production.
+extern void (*cb_bots_cycle_observer)(const char *game_id, int attempt, int prefs_len);
 // The heartbeat's scan: kicks every due game. Returns how many it kicked.
 int cb_bots_scan(cb_ctx *ctx, int64_t now_ms);
 

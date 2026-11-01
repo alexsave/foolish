@@ -173,7 +173,8 @@ int move_list_chunk_put(MoveListChunk *w, int64_t ms, int type, int seat, int n_
     if ((type == LOG_GAME_START || atom) && (ms < 0 || ms >= MS_LIMIT || w->base < 0 || w->base >= MS_LIMIT)) spelled = false;
     if (!spelled) {
         w->broken = true;
-        const uint8_t b = K_BROKEN << 5;
+        const uint8_t b = MOVE_LIST_BROKEN_ITEM;
+        _Static_assert(MOVE_LIST_BROKEN_ITEM == K_BROKEN << 5, "the host's BROKEN chunk is the item");
         return put(w, &b, 1);
     }
     if (type == LOG_GAME_START) item[n++] = MOVE_LIST_FORMAT;

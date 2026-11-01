@@ -77,7 +77,7 @@ struct cb_mig {
     FILE     *log;
     long      seen[F__N], written[F__N], skipped[F__N], failed[F__N];
     long      orphans;     // chat whose game is gone: skipped (counted in skipped[F_CHAT])
-    long      game_logs;   // games whose row carried a session log: one game_moves row each
+    long      game_logs;   // games whose row carried a session's move list
     // A game's seats, held until its ROW (same pk).
     char      seat_game[CB_GAME_ID_MAX + 1];
     int       n_humans, n_bots;
@@ -551,7 +551,7 @@ int cb_mig_same(cb_mig *m, const cb_item *it) {
         cb_game_row_free(&got);
         cb_game_row_free(&g);
         if (e != CB_OK) return e;
-        return same ? 1 : differ(m, pk, sk, "a game field, its state, roster or session log");
+        return same ? 1 : differ(m, pk, sk, "a game field, its state, roster or move list");
     }
     case F_POINTER: {
         if (!uuid_lit(after_hash(sk), k1) || !uuid_lit(after_hash(pk), k2)) return differ(m, pk, sk, "a bad key");
@@ -678,9 +678,9 @@ int cb_mig_report(cb_mig *m, FILE *out) {
             want = m->seen[F_EMAIL];
             snprintf(sql, sizeof sql, "SELECT count(*) FROM users");
         } else {
-            name = "game_moves";   // one row per game whose row carried a session log
+            name = "games (move lists)";   // a game whose row carried a session's move list
             want = m->game_logs;
-            snprintf(sql, sizeof sql, "SELECT count(DISTINCT game_id) FROM game_moves");
+            snprintf(sql, sizeof sql, "SELECT count(*) FROM games WHERE move_list IS NOT NULL");
         }
         first_row r;
         int n = q1(m->dst, sql, &r);

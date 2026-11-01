@@ -28,7 +28,7 @@
 #define BOT_DEADLINE_MARGIN_MS  5000   // Lambda: stop this long before the invocation's deadline
 #define BOT_PREFS_CAP           4096
 
-void (*cb_bots_cycle_observer)(const char *game_id, int attempt, int logs_len, int prefs_len);
+void (*cb_bots_cycle_observer)(const char *game_id, int attempt, int prefs_len);
 
 typedef struct {
     double  compute_ms;
@@ -58,16 +58,18 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
     for (int attempt = 1; attempt <= CB_TABLE_ATTEMPTS; attempt++) {
         // Always fresh. Under serve the game is the overlay's resident, adopted (no decode),
         // with its bot memory (bot_memory.h): every record of the session folded, which is
-        // what the belief brains read and what every decision seed counts. The session log
-        // is read only for a row that did not carry the memory (table_bots_need_logs).
+        // what the belief brains read and what every decision seed counts. The cycle reads no
+        // session log: the store keeps only the session's move list (move_list.h), which is no
+        // log. A row that did not carry its memory (table_bots_need_logs: written before the
+        // memory, and not upgraded) is driven without one, exactly as the journal's recovery
+        // drives the same row (table_ops.c cb_table_replay_move), so the cycle stays a function
+        // of the stored row.
         cb_game_row row;
         bool kept = false;
-        uint8_t *logs = NULL;
-        size_t logs_len = 0;
         int rc = cb_section_read(ctx, game_id, s, &row, &kept);
         if (rc == CB_E_NOT_FOUND) return CYCLE_DONE;
         if (rc != CB_OK) return CYCLE_ERROR;
-#define CYCLE_OUT(v) do { cb_row_release(&row, kept); free(logs); return (v); } while (0)
+#define CYCLE_OUT(v) do { cb_row_release(&row, kept); return (v); } while (0)
         int kr;
         // The kernel's own answer, the one the row's needs_bots was written
         // from (table_bots_due): a row that says otherwise leaves the scan.
@@ -77,22 +79,10 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
         }
         int64_t wait = cb_bots_wait_ms(ctx, &s->t, row.created_at, cb_app_now());
         if (wait > 0) { *delay_ms = wait; CYCLE_OUT(CYCLE_AGAIN); }
-        // The stored session log, whole, folded into the table's memory once: the LOG# items
-        // since the deal, for a row that did not carry the memory.
-        int log_len = -1;
-        if (table_bots_need_logs(&s->t)) {
-            if (CB_ROWS_CALL(ctx->store, game_logs, game_id, row.log_from, &logs, &logs_len) != CB_OK) {
-                CB_ERROR("bots", "game %s: session log unreadable", game_id);
-                CYCLE_OUT(CYCLE_ERROR);
-            }
-            log_len = (int)logs_len;
-            kr = table_set_session_log(&s->t, logs, log_len);
-            if (kr < 0) {
-                CB_ERROR("bots", "game %s: session log refused (%d)", game_id, kr);
-                CYCLE_OUT(CYCLE_ERROR);
-            }
-        }
-        if (cb_bots_cycle_observer) cb_bots_cycle_observer(game_id, attempt, log_len, prefs_len);
+        if (table_bots_need_logs(&s->t))
+            CB_WARN("bots", "game %s: the row at version %lld carries no bot memory: driven without one", game_id,
+                    (long long)row.version);
+        if (cb_bots_cycle_observer) cb_bots_cycle_observer(game_id, attempt, prefs_len);
         BotDriveOut drv;
         const int64_t t0 = cb_mono_ms();
         kr = table_bot_drive(&s->t, prefs, prefs_len, 0, &drv);
@@ -132,7 +122,6 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
         rc = cb_section_commit(ctx, s, &row, NULL, NULL, ratings, &have_ratings, &co);
         cb_table_unlock(lock);
         cb_row_release(&row, kept);
-        free(logs);
 #undef CYCLE_OUT
         if (rc != CB_OK) return CYCLE_ERROR;
         if (co.lost) continue;   // a human committed during the drive: reload and drive again
