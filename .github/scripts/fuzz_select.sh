@@ -2,7 +2,7 @@
 # fuzz_select.sh - which of c_base's libFuzzer targets a change can reach.
 #
 #   .github/scripts/fuzz_select.sh --base <sha> [--head <sha>]
-#   .github/scripts/fuzz_select.sh --files <path>...      (a synthetic diff)
+#   .github/scripts/fuzz_select.sh [--against <rev|dir>] --files <path>...
 #
 # Prints the selected target names on stdout, one line, space separated
 # (empty when none), and why on stderr. Run it from anywhere in the repo after
@@ -22,20 +22,35 @@
 #      inputs), walked to the files in the repository.
 # A changed file selects every target whose set holds it. A file under the
 # target's corpus (fuzz/corpus/<target>, beside fz_<target>.c) selects that
-# target. A change to any makefile either build reads (MAKEFILE_LIST of
-# c_base's and of the kernel's, which c_base asks for its source list) selects
-# every target: flags change every object. The workflow and this script build
+# target.
+#
+# A makefile is in no target's set: what it decides is the COMMANDS, so those
+# are what is compared, and no makefile is named here. `make -n -B fuzz` prints
+# every command the fuzz build runs; it is run in this working tree and in a
+# scratch checkout of the base (the merge base of --base and --head; with
+# --files, --against, HEAD by default, or a directory holding a tree), and
+# each command is keyed by the file it writes. An object or generated file
+# whose command differs counts as changed, exactly like a changed source, so
+# it selects the targets that reach it; a target whose link line differs (its
+# flags or libraries, an object it reaches newly on it, or an object taken off
+# it whose source still exists) is selected. So a flag in CB_CFLAGS,
+# KERNEL_CAPS or FUZZ_SAN, or a new compile recipe in c_rules.mk, reruns every
+# target (every compile line changed); FUZZ_EXTRA_<t> or FUZZ_EXCLUDE_<t>
+# reruns <t>; a comment, a test rule, a wasm or iOS rule reruns nothing,
+# because the fuzz build runs the same commands. A base whose fuzz build does
+# not even dry-run selects every target. The workflow and this script build
 # no target, so a change to them alone fuzzes nothing.
 # Files moving keeps all of this true with no edit here.
 set -euo pipefail
 
 usage() { sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
-base='' head=HEAD files=()
+base='' head=HEAD against='' files=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) base=${2:?}; shift 2 ;;
     --head) head=${2:?}; shift 2 ;;
+    --against) against=${2:?}; shift 2 ;;
     --files) shift; files=("$@"); set --; [ ${#files[@]} -gt 0 ] || usage ;;
     *) usage ;;
   esac
@@ -49,14 +64,14 @@ trap 'rm -rf "$work"' EXIT
 
 if [ ${#files[@]} -eq 0 ]; then
   git -C "$root" diff --no-renames --name-only "$base...$head" > "$work/changed"
+  against=$(git -C "$root" merge-base "$base" "$head")
 else
   printf '%s\n' "${files[@]}" > "$work/changed"
+  against=${against:-HEAD}
 fi
 
-# The make database of the fuzz build, and the kernel make's makefiles.
+# The make database of the fuzz build.
 make -C "$cb" -pq fuzz > "$work/db" 2>/dev/null || true
-kdir=$(sed -n 's/^KDIR := //p' "$work/db" | head -1)
-make -C "$cb/$kdir" -pq print-kernel 2>/dev/null | sed -n 's/^MAKEFILE_LIST := //p' > "$work/kmk" || true
 targets=$(sed -n 's/^FUZZ_TARGETS := //p' "$work/db" | head -1)
 [ -n "$targets" ] || { echo "fuzz_select: no FUZZ_TARGETS in the make database" >&2; exit 1; }
 
@@ -125,6 +140,7 @@ awk -v targets="$targets" -v cbrel=c_base '
           if (P[j] != "|" && !(P[j] in seen)) { seen[P[j]] = 1; st[++sp] = P[j] }
       }
       for (f in seen) { r = norm(f); if (r != "") print t, r }
+      print t, cbrel "/build/fuzz/" t                # its link line (step 4)
       if (ENVIRON["FUZZ_SELECT_STATS"] != "") {
         nr = 0; for (o in reach) nr++
         nl = 0; for (o in link) nl++
@@ -136,20 +152,68 @@ awk -v targets="$targets" -v cbrel=c_base '
 # FUZZ_SELECT_DEPS=<file>: keep the whole "<target> <path>" table to read.
 [ -z "${FUZZ_SELECT_DEPS:-}" ] || cp "$work/deps" "$FUZZ_SELECT_DEPS"
 
-# The makefiles of both builds select everything.
-{
-  sed -n 's/^MAKEFILE_LIST := //p' "$work/db" | head -1 | tr ' ' '\n' | sed '/^$/d; /\.d$/d; s|^|c_base/|'
-  tr ' ' '\n' < "$work/kmk" | sed '/^$/d; s|^|c_base/'"$kdir"'/|'
-} | awk '{ n = split($0, a, "/"); k = 0
-           for (i = 1; i <= n; i++) { if (a[i] == "..") k--; else if (a[i] != "." && a[i] != "") s[++k] = a[i] }
-           o = s[1]; for (i = 2; i <= k; i++) o = o "/" s[i]; print o }' > "$work/all_triggers"
-
-all=$(grep -Fxf "$work/all_triggers" "$work/changed" || true)
-if [ -n "$all" ]; then
-  echo "fuzz_select: every target, a makefile changed:" >&2
-  while read -r f; do echo "  $f"; done <<< "$all" >&2
+# 4. The commands (the header's "a makefile"): "C <file> <command>" for each
+# file the fuzz build writes, "L <target> <link command less its objects>" and
+# "O <target> <object>", from a dry run in the tree $1. Fails when make does.
+cmds() {
+  local out
+  out=$(MAKEFLAGS='' make -s -C "$1/c_base" -n -B fuzz 2>/dev/null) || return 1
+  awk -v r="$1/" -v OFS='\t' '
+    { while ((i = index($0, r)) > 0) $0 = substr($0, 1, i - 1) "@/" substr($0, i + length(r))
+      n = split($0, w, " "); out = ""
+      for (i = 1; i < n; i++) if (w[i] == "-o" || w[i] == ">") out = w[i + 1]
+      if (out == "") next                          # mkdir, echo, the stamp swap
+      sub(/\.new$/, "", out)
+      if (out !~ /^build\/fuzz\/[^\/]+$/) { print "C", out, $0; next }
+      t = substr(out, 12); cmd = ""
+      for (i = 1; i <= n; i++) if (w[i] ~ /\.o$/) print "O", t, w[i]; else cmd = cmd " " w[i]
+      print "L", t, cmd
+    }' <<< "$out"
+}
+if [ -d "$against" ]; then
+  tree=$(cd "$against" && pwd)
+else
+  tree=$work/tree; mkdir "$tree"
+  GIT_INDEX_FILE=$work/index git -C "$root" --work-tree="$tree" read-tree -u --reset "$against"
+fi
+cmds "$root" > "$work/cmds.head" || { echo "fuzz_select: make -n fuzz fails in this tree" >&2; exit 1; }
+if ! cmds "$tree" > "$work/cmds.base"; then
+  echo "fuzz_select: every target, the base's fuzz build does not dry-run ($against)" >&2
   echo "$targets"
   exit 0
+fi
+# The files the base builds differently, as changed files: "<path>\t<why>".
+(cd "$cb" && awk -F'\t' -v cbrel=c_base '
+  FILENAME == ARGV[1] { if ($1 == "C") bc[$2] = $3; else if ($1 == "L") bl[$2] = $3; else bo[$2 SUBSEP $3] = 1; next }
+  FILENAME == ARGV[2] { if ($1 == "C") hc[$2] = $3; else if ($1 == "L") hl[$2] = $3; else ho[$2 SUBSEP $3] = 1; next }
+  { split($0, d, " "); dep[d[1] SUBSEP d[2]] = 1 }  # the "<target> <path>" table
+  function source(o,   n, w, i) {                   # what a base compile of o read
+    n = split(bc[o], w, " ")
+    for (i = 1; i < n; i++) if (w[i] == "-c") return w[i + 1]
+    return ""
+  }
+  function exists(f,   l, r) { if (f == "") return 0; r = (getline l < f); close(f); return r >= 0 }
+  END {
+    for (o in hc) if (!(o in bc)) print cbrel "/" o "\tthe base does not build it"
+    else if (bc[o] != hc[o]) print cbrel "/" o "\tits command changed"
+    for (t in hl) {
+      why = ""
+      if ((t in bl) && bl[t] != hl[t]) why = " its link command changed;"
+      for (k in ho) if (!(k in bo)) {
+        split(k, p, SUBSEP)
+        if (p[1] == t && ((t SUBSEP cbrel "/" p[2]) in dep)) why = why " now links " p[2] ";"
+      }
+      if (t in bl) for (k in bo) if (!(k in ho)) {
+        split(k, p, SUBSEP)
+        if (p[1] == t && exists(source(p[2]))) why = why " no longer links " p[2] ";"
+      }
+      if (why != "") print cbrel "/build/fuzz/" t "\t" substr(why, 2, length(why) - 2)
+    }
+  }' "$work/cmds.base" "$work/cmds.head" "$work/deps") | sort > "$work/commands"
+if [ -s "$work/commands" ]; then
+  echo "fuzz_select: the base builds $(wc -l < "$work/commands" | tr -d ' ') files differently:" >&2
+  sed 's/^/  /; s/\t/: /' "$work/commands" | head -20 >&2
+  cut -f1 "$work/commands" >> "$work/changed"
 fi
 
 selected=''

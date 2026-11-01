@@ -123,8 +123,9 @@ jobs:
   # which: on a push to main or a dispatch every <side>/fuzz/fz_*.c; on a pull
   # request only the targets built from a file it changes
   # (.github/scripts/fuzz_select.sh: link line, nm reachability, the
-  # compiler's dependency files), all of them when a makefile changes, and
-  # none for a doc, this workflow or the script.
+  # compiler's dependency files, and the build's own commands against the
+  # base's, so a makefile edit reruns the targets whose compile or link it
+  # changes), and none for a doc, this workflow or the script.
   fuzz_targets:
     name: fuzz targets to run
     runs-on: ubuntu-24.04
@@ -159,6 +160,21 @@ jobs:
             t=$(make -s -C c_base print-fuzz-targets)
           fi
           echo "targets=$(tr ' ' '\n' <<< "$t" | sed '/^$/d' | jq -R . | jq -sc .)" | tee -a "$GITHUB_OUTPUT"
+
+  # The selector's own test (c_base/fuzz/test/fuzz_select_test.sh): synthetic
+  # diffs and base trees with one makefile edited, over a real fuzz build. Its
+  # own job, so the fuzz stage does not wait on it.
+  fuzz_select_test:
+    name: fuzz_select.sh picks the targets a change reaches
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential clang libssl-dev libsqlite3-dev
+      - name: build every target
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" fuzz
+      - name: the selector's test
+        run: bash c_base/fuzz/test/fuzz_select_test.sh
 
   fuzz:
     name: fuzz-smoke ${{ matrix.target }} (30 s)
@@ -256,7 +272,7 @@ jobs:
       - name: the shell scripts
         run: |
           bash -n c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/ops_env.sh c_base/providers/aws/ops/deploy.sh c_base/providers/local/ops/vm_release.sh c_base/providers/local/ops/vm_deploy.sh c_base/providers/local/ops/vm_boot.sh
-          shellcheck -x .github/scripts/fuzz_select.sh c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/providers/aws/ops/test/changeset_gate_test.sh c_base/providers/aws/ops/role_covers_release.sh c_base/providers/aws/ops/test/role_covers_release_test.sh c_base/providers/local/ops/vm_release.sh c_base/providers/local/ops/vm_deploy.sh c_base/providers/local/ops/vm_boot.sh c_base/fuzz/test/fuzz_mk_test.sh
+          shellcheck -x .github/scripts/fuzz_select.sh c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/providers/aws/ops/test/changeset_gate_test.sh c_base/providers/aws/ops/role_covers_release.sh c_base/providers/aws/ops/test/role_covers_release_test.sh c_base/providers/local/ops/vm_release.sh c_base/providers/local/ops/vm_deploy.sh c_base/providers/local/ops/vm_boot.sh c_base/fuzz/test/fuzz_mk_test.sh c_base/fuzz/test/fuzz_select_test.sh
       - name: web_deploy.sh, vm_release.sh and lambda_deploy.sh refuse a tree behind main (no AWS calls)
         run: bash c_base/ops/test/web_deploy_gate_test.sh
       - name: ops_env.sh never generates a secret for a live stack (no AWS calls)
