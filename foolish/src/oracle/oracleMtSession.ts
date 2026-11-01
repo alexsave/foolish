@@ -243,6 +243,6 @@ export class OracleMtSession {
         }
         const mem = this.memory!;
         return rankCandidates({ buffer: () => mem.buffer, ex, write: writeOgRankAsk, read: readOgRankAnswer },
-            out, exact, job.deckAlive, job.numPlayers);
+            out, exact, job);
     }
 }

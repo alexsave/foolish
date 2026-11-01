@@ -99,7 +99,7 @@ async function modeA(job: OracleJob, minN: number, batchCap: number) {
     const inst = new OracleInstance();
     await inst.init(ORACLE_BYTES);
     inst.setKnobs(ORACLE_MT_KNOBS);
-    const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, numPlayers: job.numPlayers, ranker: inst });
+    const acc = new OracleAccumulator({ table: job, recordedKey: job.recordedKey, ranker: inst });
     let batches = 0;
     for (let b = 0; b < batchCap; b++) {
         const r = inst.analyzeOnce(job, 1009 + b * 7919);
@@ -207,8 +207,8 @@ test('§8b.7-1 Mode A and Mode B converge to the same per-candidate means', asyn
         const aList = acc.candidates(false);
         const mem = rig.session.memory!;
         const viaB = rankCandidates({ buffer: () => mem.buffer, ex: rig.session.ex!, write: writeOgRankAsk, read: readOgRankAnswer },
-            aList, false, job.deckAlive, job.numPlayers);
-        assert.deepEqual(viaB, inst.rank(aList, false, job.deckAlive, job.numPlayers), 'Mode B\'s module ranks Mode A\'s rows as Mode A\'s does');
+            aList, false, job);
+        assert.deepEqual(viaB, inst.rank(aList, false, job), 'Mode B\'s module ranks Mode A\'s rows as Mode A\'s does');
     } finally { await rig.close(); }
 });
 
@@ -353,7 +353,7 @@ test('§8b.7-6 both modes converge on the noisy race, and print its +- at conver
     const inst = new OracleInstance();
     await inst.init(ORACLE_BYTES);
     inst.setKnobs({ ...ORACLE_MT_KNOBS, w1: 192, solveBudget: 0 });
-    const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, numPlayers: job.numPlayers, ranker: inst });
+    const acc = new OracleAccumulator({ table: job, recordedKey: job.recordedKey, ranker: inst });
     for (let b = 0; b < 4000 && !acc.converged(); b++) {
         const r = inst.analyzeOnce(job, 7 + b * 7919);
         if ('record' in r) acc.add(r.record);

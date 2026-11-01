@@ -53,7 +53,8 @@ const row = (key: string, mean: number, se: number, shadowMean: number | null, s
     ef: null, best: false, pick: false, cls: null, bar: 0, verdict: 'none', forcedLoss: false, pruned: false,
     chosen: false, played: false,
 });
-const ranked = async (list: OracleCandidate[], deckAlive = false, numPlayers = 4) => (await kernel).rank(list, false, deckAlive, numPlayers).rows;
+const ranked = async (list: OracleCandidate[], deckAlive = false, numPlayers = 4) =>
+    (await kernel).rank(list, false, { deckAlive, numPlayers, eliminations: 0 }).rows;
 const pickOf = async (list: OracleCandidate[], deckAlive = false) => {
     const r = await ranked(list, deckAlive);
     const p = r.filter((c) => c.pick);
@@ -136,7 +137,7 @@ const rec = (rows: [string, number, number][], n = 50): OracleRecord => ({
 
 test('the accumulator ranks through the kernel over every batch it merged', async () => {
     const ranker = await kernel;
-    const acc = new OracleAccumulator({ deckAlive: false, recordedKey: '', numPlayers: 4, ranker });
+    const acc = new OracleAccumulator({ table: { deckAlive: false, numPlayers: 4, eliminations: 0 }, recordedKey: '', ranker });
     // 6S is octogen's (1.40 against 1.45) and the noisy race prefers 9H by 0.10
     // with batch-to-batch wobble of 0.01: overruled.
     for (let b = 0; b < 40; b++) {
@@ -150,7 +151,7 @@ test('the accumulator ranks through the kernel over every batch it merged', asyn
     assert.deepEqual(list.map((c) => c.cls), ['best', 'good'], 'octogen\'s 6S is 0.10 behind in the noisy race: 0.033 points on 4 seats');
 
     // The same with the noisy race in octogen's favour: Best stays on top.
-    const keep = new OracleAccumulator({ deckAlive: false, recordedKey: '', numPlayers: 4, ranker });
+    const keep = new OracleAccumulator({ table: { deckAlive: false, numPlayers: 4, eliminations: 0 }, recordedKey: '', ranker });
     for (let b = 0; b < 40; b++) keep.add(rec([['6S', 1.40, 1.50 + (b % 2) * 0.01], ['9H', 1.45, 1.55]]));
     assert.deepEqual(keep.candidates(false).map((c) => c.pick), [true, false], 'octogen\'s pick stands');
 });

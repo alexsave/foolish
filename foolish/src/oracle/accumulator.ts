@@ -7,7 +7,7 @@
 
 import {
     OracleRecord, OracleCandidate, OracleVerdict, OracleCandPaths,
-    OraclePathStat, OracleReplyStat, OracleRanker,
+    OraclePathStat, OracleReplyStat, OracleRanker, OracleTable,
     canonicalMoveKey,
 } from './types';
 
@@ -53,7 +53,7 @@ export class OracleAccumulator {
     totalWorlds = 0;
     batches = 0;
 
-    constructor(private opts: { deckAlive: boolean; recordedKey: string; numPlayers: number; ranker: OracleRanker }) {}
+    constructor(private opts: { table: OracleTable; recordedKey: string; ranker: OracleRanker }) {}
 
     /** Decision-static context captured from the first record that carries a
      *  belief block (identical every batch - the belief is a function of the
@@ -151,7 +151,7 @@ export class OracleAccumulator {
 
     /** The convergence checkpoint (§8.7), the kernel's, on the numbers the
      *  panel shows (c/src/oracle_rank.c). */
-    converged(): boolean { return this.opts.ranker.rank(this.rows(), false, this.opts.deckAlive, this.opts.numPlayers).converged; }
+    converged(): boolean { return this.opts.ranker.rank(this.rows(), false, this.opts.table).converged; }
 
     hasKey(key: string): boolean { return this.acc.has(key); }
 
@@ -159,7 +159,7 @@ export class OracleAccumulator {
      *  pick, classes and bars (c/src/oracle_rank.c). `exact` switches it to the
      *  verdict ordering. */
     candidates(exact: boolean): OracleCandidate[] {
-        return this.opts.ranker.rank(this.rows(), exact, this.opts.deckAlive, this.opts.numPlayers).rows;
+        return this.opts.ranker.rank(this.rows(), exact, this.opts.table).rows;
     }
 
     /** Every accumulated row, unranked. */
