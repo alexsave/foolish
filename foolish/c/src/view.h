@@ -175,6 +175,7 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 #define STATE_BLOB_FORMAT_V4 4   // v3, its flag byte the bits below
 #define STATE_BLOB_FORMAT_V5 5   // v4, then the game's rating stamp (GameRatings below)
 #define STATE_BLOB_FORMAT_V6 6   // v5, then its sections (StateBlobSections below)
+#define STATE_BLOB_FORMAT_V7 7   // v6, its sections may hold the repetition ring (section 2)
 
 // The v4 flag byte. Bit 0 means what the whole v2/v3 flag byte meant; a classic
 // game's row reads PASSING with it.
@@ -204,18 +205,31 @@ int state_import(Game *g, const unsigned char *p, int len, int masked);
 //      a row without it (every v5 row, or a v6 row whose writer had none) is
 //      read by folding the session log once (table.h table_set_session_log).
 //
-// A second section (the repetition ring, say) takes the next tag; the layout
-// is the same for every one, so two changes that each add a section compose
-// without either knowing the other's bytes.
+//   2  the repetition ring (game.h GameRepetition), from v7 only: the position
+//      fingerprints of the game's last checkpoints, so a game reloaded for every
+//      move still calls its draw. Only while the ring holds an entry; its bytes:
+//        u8  fill                 entries in use, 1..GAME_REP_RING
+//        u8  head                 the ring slot the next checkpoint takes
+//        i16 LE discard           the history's discard_pile_length
+//        i16 LE stock             its stock: deck_count, plus 1 while the trump is under it
+//        u8  in_mask              its seats still in
+//        fill x u64 LE            the position fingerprints, oldest first
+//      7 + 8 x fill bytes, at most 135. Self-delimiting by its fill byte, and
+//      the section's own length must agree.
 //
-// THE FORMAT THIS KERNEL WRITES, and the one switch of the move above: V6, the
-// switch step of v5 -> v6 (V5 while its expand kernel, which read v6 and still
-// wrote v5, was deploying). Everything that depends on which one is written -
-// the clock bytes a blob ends with, whether a board's rules can be written at
+// Layout v7: v6, with section 2 allowed. A FORMAT NUMBER OF ITS OWN, not a
+// second tag under v6, because v6 (the bot memory, #453) deployed first: a
+// kernel that reads v6 refuses a tag it does not know, so a rollback to it
+// refuses a v7 row honestly at the format byte rather than at a tag, and a v6
+// row - which can never hold a ring - reads here as a game with no history.
+// v6 -> v7 is expand and switch in one kernel: it reads v2..v7 and writes v7.
+//
+// THE FORMAT THIS KERNEL WRITES. Everything that depends on which one is written
+// - the clock bytes a blob ends with, whether a board's rules can be written at
 // all, whether a finished game's rating stamp survives the row, whether a bot
-// memory rides it - follows from it. v5 rows stay in the column until a game
-// rewrites them, so v5 is still read, as a row without a bot memory.
-#define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V6
+// memory or a repetition ring rides it - follows from it. v5 and v6 rows stay in
+// the column until a game rewrites them, so both are still read.
+#define STATE_BLOB_FORMAT STATE_BLOB_FORMAT_V7
 
 // The bytes the blob's header costs, ahead of the state_put payload.
 #define STATE_BLOB_HEADER 2
@@ -236,7 +250,7 @@ typedef struct {
 // and for table_load's look at the header before it.
 static inline int state_blob_clock_bytes(int fmt) {
     return fmt == STATE_BLOB_FORMAT_V3 || fmt == STATE_BLOB_FORMAT_V4 || fmt == STATE_BLOB_FORMAT_V5
-        || fmt == STATE_BLOB_FORMAT_V6 ? STATE_BLOB_V3_CLOCK_BYTES
+        || fmt == STATE_BLOB_FORMAT_V6 || fmt == STATE_BLOB_FORMAT_V7 ? STATE_BLOB_V3_CLOCK_BYTES
          : fmt == STATE_BLOB_FORMAT_V2 ? 0 : -1;
 }
 
@@ -278,18 +292,30 @@ bool game_ratings_get(GameRatings *r, const unsigned char *p);
 // kernel does not read.
 static inline int state_blob_tail_bytes(int fmt) {
     const int clock = state_blob_clock_bytes(fmt);
-    return clock < 0 ? -1 : clock + (fmt == STATE_BLOB_FORMAT_V5 || fmt == STATE_BLOB_FORMAT_V6 ? GAME_RATINGS_BYTES : 0)
-                                  + (fmt == STATE_BLOB_FORMAT_V6 ? 2 : 0);
+    return clock < 0 ? -1 : clock + (fmt >= STATE_BLOB_FORMAT_V5 ? GAME_RATINGS_BYTES : 0)
+                                  + (fmt >= STATE_BLOB_FORMAT_V6 ? 2 : 0);
 }
+// Does a blob of format `fmt` carry sections (layout v6)?
+static inline bool state_blob_has_sections(int fmt) { return fmt >= STATE_BLOB_FORMAT_V6; }
 
 // THE SECTIONS of a v6 blob (layout v6 above), as byte ranges: the kernel's
 // reader of each is its owner's (table.c decodes the bot memory). len 0: none.
 #define STATE_BLOB_SECTION_BOT_MEMORY 1
+#define STATE_BLOB_SECTION_REPETITION 2
 #define STATE_BLOB_SECTION_MAX 1536   // a section's bytes (bot_memory.h BOT_MEM_BYTES_MAX fits)
-#define STATE_BLOB_SECTIONS_BYTES (3 + STATE_BLOB_SECTION_MAX + 2)   // everything v6 adds, at most
+#define STATE_BLOB_REP_HEAD 6         // section 2's key: head, discard, stock, in_mask
+#define STATE_BLOB_REP_ENTRY 8        // and one fingerprint
+#define STATE_BLOB_REP_MAX (1 + STATE_BLOB_REP_HEAD + GAME_REP_RING * STATE_BLOB_REP_ENTRY)
+// Everything the sections add, at most: both sections and the count.
+#define STATE_BLOB_SECTIONS_BYTES (3 + STATE_BLOB_SECTION_MAX + 3 + STATE_BLOB_REP_MAX + 2)
 typedef struct {
     const unsigned char *bot_memory;
     int bot_memory_len;
+    // The ring a writer puts in section 2 when it is not the Game's own: a host
+    // holding a head with the ring kept apart (table.h TableResident). NULL: the
+    // Game's own, when it carries one (Game.rep_live). The reader leaves it NULL
+    // and sets the ring on the Game it loads.
+    const GameRepetition *rep;
 } StateBlobSections;
 // The clock bytes a WRITTEN blob carries.
 #define STATE_BLOB_CLOCK_BYTES (STATE_BLOB_FORMAT == STATE_BLOB_FORMAT_V2 ? 0 : STATE_BLOB_V3_CLOCK_BYTES)

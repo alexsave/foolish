@@ -266,6 +266,10 @@ int state_import(Game *g, const unsigned char *p, int len, int masked) {
     int r = state_get(g, p, len, masked);
     if (r == GAME_VALID) r = game_validate(g, masked ? GAME_VALIDATE_MASKED : 0);
     if (r != GAME_VALID) memcpy(g, saved, sizeof saved);
+    // A board names no repetition history: a row carries its own in a section
+    // (state_blob_load_full, v7), and a host's board has none. Only once the
+    // board is adopted, so a refusal leaves the Game as it was.
+    else if (g->rep_live) memset(&g->rep, 0, sizeof g->rep);
     return r;
 }
 
@@ -301,6 +305,49 @@ bool game_ratings_get(GameRatings *r, const unsigned char *p) {
     return true;
 }
 
+// THE REPETITION RING'S BYTES, section 2 of a v7 blob (view.h). Every slot the
+// ring does not hold is zero in a Game (game.c clears the whole history whenever
+// it starts one), so the held slots and the head are the history byte for byte.
+static int rep_put(const GameRepetition *r, unsigned char *out) {
+    const int fill = r->fill <= GAME_REP_RING ? r->fill : GAME_REP_RING;
+    unsigned char *q = out;
+    *q++ = (unsigned char)fill;
+    *q++ = r->head;
+    le_put_u16(q, (uint16_t)r->discard); q += 2;
+    le_put_u16(q, (uint16_t)r->stock); q += 2;
+    *q++ = r->in_mask;
+    for (int i = fill; i > 0; i--) {
+        le_put_u64(q, r->fp[(r->head + GAME_REP_RING - i) % GAME_REP_RING]);
+        q += 8;
+    }
+    return (int)(q - out);
+}
+
+// Reads a ring at p, `len` bytes available. SELF-DELIMITING by its fill byte.
+// Returns the bytes it took, GAME_INVALID_COUNT when fewer than its fill says are
+// there, or 0 for bytes this kernel did not write (a count past the ring, a head
+// off it).
+static int rep_get(GameRepetition *r, const unsigned char *p, int len) {
+    memset(r, 0, sizeof *r);
+    if (len < 1) return GAME_INVALID_COUNT;
+    if (p[0] > GAME_REP_RING) return 0;
+    const int fill = p[0];
+    const int took = 1 + STATE_BLOB_REP_HEAD + fill * STATE_BLOB_REP_ENTRY;
+    if (len < took) return GAME_INVALID_COUNT;
+    const unsigned char *q = p + 1;
+    r->fill = (uint8_t)fill;
+    r->head = *q++;
+    r->discard = (int16_t)le_get_u16(q); q += 2;
+    r->stock = (int16_t)le_get_u16(q); q += 2;
+    r->in_mask = *q++;
+    if (r->head >= GAME_REP_RING || (fill < GAME_REP_RING && r->head != fill)) return 0;
+    for (int i = fill; i > 0; i--) {
+        r->fp[(r->head + GAME_REP_RING - i) % GAME_REP_RING] = le_get_u64(q);
+        q += 8;
+    }
+    return took;
+}
+
 int state_blob_put_at(const Game *g, const BoardClock *clk, int format, unsigned char *out) {
     return state_blob_put_rated_at(g, clk, 0, format, out);
 }
@@ -312,7 +359,7 @@ int state_blob_put_rated_at(const Game *g, const BoardClock *clk, const GameRati
 int state_blob_put_full_at(const Game *g, const BoardClock *clk, const GameRatings *ratings,
                            const StateBlobSections *sec, int format, unsigned char *out) {
     int flag = g->deterministic_deck ? STATE_BLOB_FLAG_DETERMINISTIC : 0;
-    if (format == STATE_BLOB_FORMAT_V4 || format == STATE_BLOB_FORMAT_V5 || format == STATE_BLOB_FORMAT_V6) {
+    if (format >= STATE_BLOB_FORMAT_V4 && format <= STATE_BLOB_FORMAT_V7) {
         // The one rule v4 carries; a rules bit beyond it has no flag to go in.
         if (g->rules & ~GAME_RULE_NO_PASS) return STATE_BLOB_E_RULES;
         if (game_pass_allowed(g)) flag |= STATE_BLOB_FLAG_PASSING;
@@ -326,7 +373,7 @@ int state_blob_put_full_at(const Game *g, const BoardClock *clk, const GameRatin
     const int n = STATE_BLOB_HEADER + state_put_rules(g, VIEW_UNMASKED, 0, out + STATE_BLOB_HEADER);
     if (format == STATE_BLOB_FORMAT_V2) return n;
     int at = n;
-    if (format == STATE_BLOB_FORMAT_V6) {
+    if (state_blob_has_sections(format)) {
         // The sections, in tag order, and their count. The bot memory is a
         // played board's only: the one owner of that rule on the way in, as the
         // stamp's below.
@@ -339,6 +386,15 @@ int state_blob_put_full_at(const Game *g, const BoardClock *clk, const GameRatin
             memcpy(out + at, sec->bot_memory, (size_t)sec->bot_memory_len);
             at += sec->bot_memory_len;
         }
+        // The repetition ring, from v7, while it holds an entry (section 2).
+        const GameRepetition *rep = sec && sec->rep ? sec->rep : g->rep_live ? &g->rep : 0;
+        if (format >= STATE_BLOB_FORMAT_V7 && rep && rep->fill > 0) {
+            const int rl = rep_put(rep, out + at + 3);
+            out[at] = STATE_BLOB_SECTION_REPETITION;
+            out[at + 1] = (unsigned char)rl;
+            out[at + 2] = (unsigned char)(rl >> 8);
+            at += 3 + rl;
+        }
         const int sb = at - start;
         out[at++] = (unsigned char)sb;
         out[at++] = (unsigned char)(sb >> 8);
@@ -346,7 +402,7 @@ int state_blob_put_full_at(const Game *g, const BoardClock *clk, const GameRatin
     put_clock(out + at, clk ? clk->shown_ms : 0);
     put_clock(out + at + 6, clk ? clk->settles_ms : 0);
     at += STATE_BLOB_V3_CLOCK_BYTES;
-    if (format != STATE_BLOB_FORMAT_V5 && format != STATE_BLOB_FORMAT_V6) return at;
+    if (format < STATE_BLOB_FORMAT_V5) return at;
     // The stamp is a finished game's: the one owner of that rule on the way in.
     const bool stamped = ratings && ratings->n > 0 && g->status == GAME_STATUS_GAME_OVER;
     return at + game_ratings_put(stamped ? ratings : 0, out + at);
@@ -369,17 +425,26 @@ int state_blob_load_rated(Game *g, const unsigned char *p, int len, BoardClock *
 // wrote; GAME_INVALID_COUNT when their lengths do not add up (a cut row reads so,
 // the board's own reason); 0 for a tag out of order, an empty section or a tag
 // this kernel does not know (state_blob_load_full).
-static int sections_read(const unsigned char *p, int end, int floor, StateBlobSections *sec) {
+static int sections_read(const unsigned char *p, int end, int floor, StateBlobSections *sec, GameRepetition *rep) {
     memset(sec, 0, sizeof(*sec));
+    memset(rep, 0, sizeof(*rep));
     int at = floor, last = 0;
     while (at < end) {
         if (end - at < 3) return GAME_INVALID_COUNT;
         const int tag = p[at], sl = p[at + 1] | (p[at + 2] << 8);
         if (sl > end - at - 3) return GAME_INVALID_COUNT;
         if (tag <= last || sl == 0) return 0;
-        if (tag != STATE_BLOB_SECTION_BOT_MEMORY) return 0;   // not a section this kernel knows
-        sec->bot_memory = p + at + 3;
-        sec->bot_memory_len = sl;
+        if (tag == STATE_BLOB_SECTION_BOT_MEMORY) {
+            sec->bot_memory = p + at + 3;
+            sec->bot_memory_len = sl;
+        } else if (tag == STATE_BLOB_SECTION_REPETITION && p[0] >= STATE_BLOB_FORMAT_V7) {
+            // Read by its own fill byte, and the section's length must be exactly that.
+            const int rr = rep_get(rep, p + at + 3, sl);
+            if (rr <= 0) return rr;
+            if (rr != sl || rep->fill == 0) return 0;
+        } else {
+            return 0;   // not a section this kernel knows (or not one this format has)
+        }
         last = tag;
         at += 3 + sl;
     }
@@ -391,7 +456,7 @@ int state_blob_board_bytes(const unsigned char *p, int len) {
     const int tail = state_blob_tail_bytes(p[0]);
     if (tail < 0 || len - tail < STATE_BLOB_HEADER) return -1;
     int board = len - tail;
-    if (p[0] == STATE_BLOB_FORMAT_V6) {
+    if (state_blob_has_sections(p[0])) {
         const int at = len - tail;   // the count sits first in the tail
         board -= p[at] | (p[at + 1] << 8);
     }
@@ -407,15 +472,17 @@ int state_blob_load_full(Game *g, const unsigned char *p, int len, BoardClock *c
     int tail = state_blob_tail_bytes(p[0]);
     if (tail < 0) return 0;
     StateBlobSections sec = { 0 };
+    GameRepetition rep;
+    memset(&rep, 0, sizeof rep);
     int sections = 0;
-    if (p[0] == STATE_BLOB_FORMAT_V6) {
+    if (state_blob_has_sections(p[0])) {
         // The sections' count, first in the tail: a count past the bytes there
         // are is a cut row (the board's own reason below), not a bad section.
         if (len < STATE_BLOB_HEADER + tail) return GAME_INVALID_COUNT;
         sections = p[len - tail] | (p[len - tail + 1] << 8);
         if (sections > len - tail - STATE_BLOB_HEADER) return GAME_INVALID_COUNT;
     }
-    const int v5 = p[0] == STATE_BLOB_FORMAT_V5 || p[0] == STATE_BLOB_FORMAT_V6;
+    const int v5 = p[0] >= STATE_BLOB_FORMAT_V5;
     const int v4 = v5 || p[0] == STATE_BLOB_FORMAT_V4;   // the flag byte is v4's from v4 on
     if (v4 && (p[1] & ~STATE_BLOB_FLAGS_V4)) return 0;   // a rule this kernel cannot honour
     if (len < STATE_BLOB_HEADER + tail) return GAME_INVALID_COUNT;
@@ -430,8 +497,8 @@ int state_blob_load_full(Game *g, const unsigned char *p, int len, BoardClock *c
     // of a truncated blob is not a stamp, and reading it as one would turn every
     // short v5 row into "a format this kernel does not read".
     if (state_measure(p + STATE_BLOB_HEADER, state_len) != state_len) return GAME_INVALID_COUNT;
-    if (p[0] == STATE_BLOB_FORMAT_V6) {
-        const int sr = sections_read(p, len - tail, STATE_BLOB_HEADER + state_len, &sec);
+    if (state_blob_has_sections(p[0])) {
+        const int sr = sections_read(p, len - tail, STATE_BLOB_HEADER + state_len, &sec, &rep);
         if (sr != 1) return sr;
     }
     GameRatings stamp = { 0 };
@@ -456,13 +523,17 @@ int state_blob_load_full(Game *g, const unsigned char *p, int len, BoardClock *c
     }
     if (ratings) *ratings = stamp;
     if (secs) *secs = sec;
+    // The board's import cleared the ring (state_import); the row's own is the one
+    // it has (none before v7, none in a row whose ring was empty). Only a Game that
+    // carries a ring keeps one (Game.rep_live).
+    if (g->rep_live) g->rep = rep;
     // v2 and v3 read the whole flag byte as the deck bit, as they always have.
     g->deterministic_deck = v4 ? (p[1] & STATE_BLOB_FLAG_DETERMINISTIC) != 0 : p[1] != 0;
     // THE one place a row sets the rules: before v4 every row is the classic
     // game, whatever this Game held before it.
     g->rules = (int8_t)(v4 && !(p[1] & STATE_BLOB_FLAG_PASSING) ? GAME_RULE_NO_PASS : 0);
     if (clk) {
-        const unsigned char *c = p + len - tail + (p[0] == STATE_BLOB_FORMAT_V6 ? 2 : 0);
+        const unsigned char *c = p + len - tail + (state_blob_has_sections(p[0]) ? 2 : 0);
         const int clocked = state_blob_clock_bytes(p[0]) > 0;
         clk->shown_ms = clocked ? (int64_t)le_get_u48(c) : 0;
         clk->settles_ms = clocked ? (int64_t)le_get_u48(c + 6) : 0;

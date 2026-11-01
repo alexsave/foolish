@@ -2248,7 +2248,7 @@ static void every_bot_cycle_gets_the_whole_log_and_its_choices_back(void) {
     T_EQ_INT(g_cyc.short_log, 0);
     // A row the switch step writes carries its memory, so no cycle reads the log;
     // before it, every cycle does (and reads it whole).
-    if (TABLE_STATE_FORMAT == STATE_BLOB_FORMAT_V6) T_EQ_INT(g_cyc.log_reads, 0);
+    if (TABLE_STATE_FORMAT >= STATE_BLOB_FORMAT_V6) T_EQ_INT(g_cyc.log_reads, 0);   // v6 on: the memory section rides
     else T_EQ_INT(g_cyc.log_reads, g_cyc.calls);
     T_CHECK(g_cyc.retries > 0);
     T_EQ_INT(g_cyc.retries_with_prefs, g_cyc.retries);
