@@ -56,18 +56,49 @@ Why the noise-free race and not the noisy one, measured on 664 decisions of 2-, 
 | 4 | 0.448 | 0.350 | 28.7% | 19.9% |
 | 6 | 0.748 | 0.601 | 32.8% | 26.2% |
 
-The noise makes every finish more random, so it pulls every move toward the middle place by 20-33%, and the classes (`ORACLE_CLASS_THRESHOLDS`, calibrated on octogen's numbers) would call a third of the blunders mistakes.
+The noise makes every finish more random, so it pulls every move toward the middle place by 20-33%, and the classes (the thresholds in `c/src/oracle_rank.c`, calibrated on octogen's numbers) would call a third of the blunders mistakes.
 And "the expected finish if three in ten of everybody's later decisions, yours included, are a random sensible move" is not what a reader takes `EF` to mean.
 The noisy race is fusion's robustness check on octogen's pick, which is exactly what the Best chip reports.
 
 So Best can sit on a row whose number is not the lowest.
 That is the case the shadow selection exists for: the noisy race found, beyond its bar, that the move holds up better when play goes off the rollout policy's script.
-The lowest row then still shows the class chip `best` (its delta from the lowest number is 0), so the panel says both things that are true: this row has the lowest expected finish, and that one is fusion's pick.
-Where the two are twins (the same expected finish, which noise-free races produce in a third to a half of all decisions), both read best and the chip says which one fusion plays.
+The lowest row then still shows the class chip `best` (it has the lowest expected finish), so the panel says both things that are true: this row has the lowest expected finish, and that one is fusion's pick.
+Where rows are twins (the same expected finish, which noise-free races produce in a third to a half of all decisions), they all read best, and the filled chip says which one fusion plays (next section).
+
+### Ties, Best and the classes (2026-11-01)
+
+One C function owns the panel's verdicts, `og_rank` (`c/src/oracle_rank.c`, whose header comment states the whole rule), and both modes hand it the same per-row numbers through structgen's writer and read its answer back through the reader (`OgRankAsk`, `OgRankAnswer`, exported by `oracle.wasm` and `oracle-mt.wasm`).
+It returns the rows in display order, and for each row whether it reads Best, whether it is fusion's pick, its class, its bar and the error to print.
+TypeScript only renders that answer.
+
+It used to be four TypeScript rules: a sort in each mode, `fusionBest`, and `oracleClassify`, with the class chips measured from the lowest number while the Best chip was fusion's pick.
+Two yardsticks on one panel produced the bug Alex found on prod: at step 51 of a 4-seat replay, fusion overruled octogen's 2.9975 for a 3.7569 whose ten twins all printed `EF 3.76 +-0.00`, and one of the eleven read BEST while the other ten (0.76 behind the lowest number) read BLUNDER, as did the played 3.86, which is 0.10 behind fusion's pick.
+
+The rule, Monte Carlo regime:
+
+- **Tie.** Two rows tie when their means differ by no more than `max(0.0001, k * sqrt(se_a^2 + se_b^2))`, with `k = FUSION_SHADOW / 10`: the two standard errors fusion holds its own pick to.
+  An error not measured yet (one batch) counts as 0, so before the run has an error only rows within 0.0001 tie.
+  At convergence (every printed error `+-0.00`, below 0.005) two rows tie when they are within about 0.014 places, so rows that print the same two decimals can still be apart when their errors are tight enough to say so.
+- **Best.** Every row that ties with fusion's pick reads Best.
+  Fusion's pick is the one row marked `pick`, and its chip is drawn filled.
+- **Class.** A row tied with fusion's pick, or with octogen's pick (the lowest number), is `best`.
+  Any other row measures its gap to the nearest of those two numbers at or below it, then the thresholds: `< 0.05` excellent, `< 0.15` good, `< 0.35` inaccuracy, `< 0.7` mistake, else blunder.
+  When fusion agrees with octogen, as it does on most decisions, that is the gap to the best row.
+  When fusion overrules, the rows between the lowest number and fusion's group keep the lowest number's yardstick, and the rows below fusion's group measure from it.
+- **Order.** By mean, then the mean plus the trump-keep tax, then input order, except that the Best rows sit together as one block where their lowest mean puts it, fusion's pick first.
+  The played move is never moved out of its place.
+- **Bar.** The X-ray pages' formula, `96 - 84 * (mean - lowest) / span`, the span floored at 0.4 and the width clamped to `[12, 100]`.
+
+Exact regime: by verdict (win, draw, unknown, none, loss, illegal), then by the verdict's value, larger first (`+-(1000 - depth)`, so the quickest win and the longest loss lead), then the mean, then input order; no Best and no classes.
+The TypeScript it replaced sorted by depth descending for every verdict, which put the slowest win first.
+
+The trump-keep tax is octogen's own default (`OG_TRUMP_KEEP_DEFAULT`, `c/src/octogen_strategy.h`), so the ranking and the bot read one number.
+Mode B's errors are the n-based proxy `1.2 / sqrt(n)`, computed by the kernel when the host passes `-1`.
+`c/tests/oracle_rank_test.c` holds the rule on crafted rows, `e2e/oracle_fusion_best.test.ts` holds it through the shipped module, `e2e/oracle_mode_b.test.ts` holds the two modules to one answer for the same rows, and `e2e/oracle_why_flag.test.ts` renders a tied group.
 
 ### The rule over accumulated worlds
 
-`fusionBest` (`src/oracle/accumulator.ts`) applies fusion's rule to everything sampled so far, in both modes; it reads the bar from the kernel (`FUSION_SHADOW`, `c/src/octogen_strategy.h`, through structgen), so the Oracle and the bot cannot drift apart.
+`og_rank` (`c/src/oracle_rank.c`) applies fusion's rule to everything sampled so far, in both modes, with the bar it reads from `FUSION_SHADOW` (`c/src/octogen_strategy.h`), so the Oracle and the bot cannot drift apart.
 The kernel pairs the difference world by world inside one decision; across batches the accumulator keeps each row's own mean and standard error, so the error the Oracle uses is both rows' combined, which is never smaller than the paired one.
 So Best moves off octogen's pick on no less evidence than the bot needs.
 Mode A's standard error is the batch means' (Welford), Mode B's the n-based proxy it already used for the printed `+-`.
@@ -1279,7 +1310,7 @@ note.
 
 ### 9.2 Candidate rows
 
-One row per candidate, sorted by **adjusted score** ascending (best first):
+One row per candidate, in the kernel's order (`c/src/oracle_rank.c`; "Ties, Best and the classes" above is the current rule and supersedes the details below):
 
 ```
 [mini-cards]  label      [========== bar ==========]  EF 2.31 ±0.04   (chips)
