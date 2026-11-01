@@ -21332,8 +21332,10 @@ static void test_beliefs_never_hold_a_fake_card(void) {
 // game costs what it did before the memory (bench_engine: the whole fold was
 // 6-9% of a random game). Whole games at 2 to 6 seats, every position driven
 // two ways: from the row as written (v6, its counts-only block, no log) and
-// from the same row as v5 with the stored log folded whole (the backfill). The
-// two must count the same records and move the same moves. Then the other
+// from the same row as v5 with the stored log handed over (the backfill, which
+// a server recovery also takes when it replays a bot cycle). Both blocks must
+// be counts-only, count every record of the stored log, be the same block, and
+// move the same moves. Then the other
 // direction: a counts-only block under a roster that seats a reader is no
 // memory, and the table asks for the log. Then the codec's spelling of it.
 //
@@ -21341,8 +21343,11 @@ static void test_beliefs_never_hold_a_fake_card(void) {
 // false -> "a table seating a reader folds the whole memory" and "... under a
 // roster that seats a reader is no memory"; always true -> "a table whose brains
 // read no log carries a counts-only block" and the codec checks; bot_mem_count
-// not counting -> "counts exactly the records" and "moves exactly as one from
-// the folded log"; mem_level_check a no-op -> "... is no memory, and the table
+// not counting -> "counting every record of the stored log" and "counts every
+// record of its stored log"; the backfill folding whole whatever the seats (the
+// bug unit_journal's sigkill recovery caught: the recovered row's bytes were not
+// the acknowledged ones) -> "the backfill of such a row is counts-only too";
+// mem_level_check a no-op -> "... is no memory, and the table
 // asks for the log"; the decoder not checking in_now -> "counts seats in is
 // refused". `has & 8` for `has == 8` in the decoder is equivalent (the
 // re-encode check refuses any other has byte). octogen's uses_logs set to 0
@@ -21357,7 +21362,7 @@ static void test_bot_memory_counts_only_without_readers(void) {
     enum { GAMES = 30, CYCLES = 400 };
 #endif
     TableCommit c;
-    int games = 0, positions = 0, refused = 0, not_counts = 0, count_differ = 0, move_differ = 0;
+    int games = 0, positions = 0, refused = 0, not_counts = 0, count_differ = 0, move_differ = 0, backfill_differ = 0;
     for (int gi = 0; gi < GAMES; gi++) {
         const int np = 2 + gi % 5;
         const char *brains[MAX_PLAYERS];
@@ -21371,14 +21376,18 @@ static void test_bot_memory_counts_only_without_readers(void) {
             if (l5 < 0 || table_load(&tb, bm_v5, l5, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
             table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
             if (table_set_session_log(&tb, bl_row.log, bl_row.log_len) < 0 || !tb.mem_valid) { refused++; break; }
-            const uint32_t folded = tb.mem.counts_only ? 0 : tb.mem.n_records;
+            uint32_t records = 0;
+            for (int q = 0; q + 10 <= bl_row.log_len; q += 10 + 2 * bl_row.log[q + 9]) records++;
+            static BotMemory backfilled;
+            backfilled = tb.mem;
+            backfill_differ += !(backfilled.counts_only && backfilled.n_records == records);
             const int na = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
             if (na <= 0) break;
             // B: the row as written, and no log at all.
             if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
             table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
             not_counts += !(tb.mem_valid && tb.mem.counts_only && !table_bots_need_logs(&tb));
-            count_differ += tb.mem.n_records != folded;
+            count_differ += !(tb.mem.n_records == records && bot_mem_equal(&tb.mem, &backfilled));
             const int nb = table_bot_drive(&tb, 0, 0, 0, &tb_drv2);
             move_differ += !(nb == na && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)na) == 0);
             positions++;
@@ -21389,8 +21398,9 @@ static void test_bot_memory_counts_only_without_readers(void) {
     CHECK(refused == 0 && games == GAMES, "counts only: every row dealt, loaded, drove and committed");
     CHECK(positions > GAMES * 20, "counts only: whole games of positions were compared");
     CHECK(not_counts == 0, "counts only: a table whose brains read no log carries a counts-only block, and needs no log");
-    CHECK(count_differ == 0, "counts only: the block counts exactly the records a whole fold of the stored log counts");
-    CHECK(move_differ == 0, "counts only: a cycle from the counted block moves exactly as one from the folded log");
+    CHECK(backfill_differ == 0, "counts only: the backfill of such a row is counts-only too, counting every record of the stored log");
+    CHECK(count_differ == 0, "counts only: the block a row carries counts every record of its stored log, and is its backfill's (a recovery writes the live bytes)");
+    CHECK(move_differ == 0, "counts only: a cycle from the row's block moves exactly as one from the stored log handed over");
 
     // A counts-only block where a reader is seated: no memory, the log is asked for.
     tb_seed_bytes(3, 0xc0de);

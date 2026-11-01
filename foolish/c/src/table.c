@@ -1125,10 +1125,13 @@ static int log_read(Table *t, const uint8_t *log, int len) {
 
 // The stored log folded into the table's memory, from scratch (the backfill of
 // a row that did not carry it): the records as the store holds them, which is
-// the form the funnel folds.
+// the form the funnel folds. Of the kind the seats want (mem_wanted), as the
+// funnel would have folded it live: a recovery that replays a bot cycle hands
+// the log over, and must write the bytes the live table wrote.
 static void mem_backfill(Table *t, const uint8_t *log, int len) {
     BotMemory *m = &t->mem;
     bot_mem_clear(m);
+    const bool counts_only = !mem_wanted(t);
     bool started = false;
     GameLog l;
     for (int at = 0, k; (k = log_record_at(log, len, at)) > 0; at += k) {
@@ -1146,11 +1149,15 @@ static void mem_backfill(Table *t, const uint8_t *log, int len) {
             started = true;
             const int8_t np = t->g->num_players;
             m->num_players = np;
-            m->in_now = np;
-            for (int i = 0; i < np; i++) m->hand_n[i] = CARDS_PER_PLAYER;
+            m->counts_only = counts_only;
+            if (!counts_only) {
+                m->in_now = np;
+                for (int i = 0; i < np; i++) m->hand_n[i] = CARDS_PER_PLAYER;
+            }
         }
         started = true;
-        bot_mem_fold(m, &l, t->g);
+        if (counts_only) bot_mem_count(m, &l, t->g);
+        else bot_mem_fold(m, &l, t->g);
     }
     t->mem_valid = true;
     t->mem_at = t->g->num_logs;
