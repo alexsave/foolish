@@ -354,25 +354,23 @@ test('§8b.7-6 both modes converge on the noisy race, and print its +- at conver
     await inst.init(ORACLE_BYTES);
     inst.setKnobs({ ...ORACLE_MT_KNOBS, w1: 192, solveBudget: 0 });
     const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, numPlayers: job.numPlayers, ranker: inst });
-    const t0 = Date.now();
     for (let b = 0; b < 4000 && !acc.converged(); b++) {
         const r = inst.analyzeOnce(job, 7 + b * 7919);
         if ('record' in r) acc.add(r.record);
     }
     assert.ok(acc.converged(), 'Mode A converged inside the batch cap');
     assertConverged(acc.candidates(false), 'Mode A');
-    console.log(`  §8b.7-6: Mode A converged in ${Date.now() - t0} ms`);
+    console.log(`  §8b.7-6: Mode A converged at ${Math.min(...acc.candidates(false).map((c) => c.shadowN))} noisy worlds`);
 
     // Mode B, three threads: run until the kernel says converged.
     const rig = await openMtRig(job, 3);
     try {
-        const t1 = Date.now();
         rig.session.setup(job.seat, oracleSeedBase(job.decisionId));
         for (let i = 0; i < 600 && !rig.session.converged(job); i++) await new Promise((r) => setTimeout(r, 100));
         rig.session.stop();
         for (let i = 0; i < 400 && rig.session.active() > 0; i++) await new Promise((r) => setTimeout(r, 5));
         assert.ok(rig.session.converged(job), 'Mode B converged inside a minute');
         assertConverged(rig.session.readCandidates(job, false), 'Mode B');
-        console.log(`  §8b.7-6: Mode B converged in ${Date.now() - t1} ms`);
+        console.log(`  §8b.7-6: Mode B converged at ${Math.min(...rig.session.readCandidates(job, false).map((c) => c.shadowN))} noisy worlds`);
     } finally { await rig.close(); }
 });
