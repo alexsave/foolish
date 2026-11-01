@@ -100,7 +100,7 @@ async function until(page: Page, ok: () => boolean, what: string | (() => string
 const handCards = (host: HTMLElement) => host.querySelectorAll('[data-location="hand"][data-card]').length;
 
 /** Holds that `seg` is a dealt local game against the bot, the page in `lang`, and nothing sent. */
-async function landsInADealtGame(seg: string, lang: string, you: string): Promise<Page> {
+async function landsInADealtGame(seg: string, lang: string, you: string, bot: string): Promise<Page> {
     requests.length = 0;
     const { GAME_STATUS } = await import('../src/state/view.ts');
     const page = await open(seg);
@@ -108,7 +108,7 @@ async function landsInADealtGame(seg: string, lang: string, you: string): Promis
     await until(page, () => page.host.querySelector(`[data-promo-game="${GAME_STATUS.PLAYING}"]`) !== null,
         `/${seg}: a game is being played, with no tap`);
     await until(page, () => handCards(page.host) === 6, () => `/${seg}: the deal lands: six cards in the visitor's hand (${handCards(page.host)} there)`);
-    assert.match(page.host.textContent ?? '', /Miami 1/, `/${seg}: the opponent is the bot`);
+    assert.ok((page.host.textContent ?? '').includes(bot), `/${seg}: the opponent is the bot, its city in ${lang} (${bot})`);
     assert.ok((page.host.textContent ?? '').includes(you), `/${seg}: the visitor's seat is named in ${lang} (${you})`);
     await page.wait(400);   // the bot's turn, if it leads
     assert.deepEqual(requests, [], `/${seg}: nothing left the page`);
@@ -121,7 +121,7 @@ async function landsInADealtGame(seg: string, lang: string, you: string): Promis
 // Rematch reloads), so each code is opened once here.
 test('/BR lands in a dealt game against the bot, in Russian, with no request sent', async () => {
     dom.window.localStorage.clear();
-    const page = await landsInADealtGame('BR', 'ru', 'Гость');
+    const page = await landsInADealtGame('BR', 'ru', 'Гость', 'Майами 1');
     try {
         assert.equal(dom.window.localStorage.getItem('foolish_language'), 'ru', 'a visitor with no language of their own keeps Russian');
     } finally { await page.close(); }
@@ -130,7 +130,7 @@ test('/BR lands in a dealt game against the bot, in Russian, with no request sen
 test('/ws lands in a dealt game in English, and a visitor\'s own language choice is not overwritten', async () => {
     dom.window.localStorage.clear();
     dom.window.localStorage.setItem('foolish_language', 'ru');
-    const page = await landsInADealtGame('ws', 'en', 'Visitor');
+    const page = await landsInADealtGame('ws', 'en', 'Visitor', 'Miami 1');
     try {
         assert.equal(dom.window.localStorage.getItem('foolish_language'), 'ru', 'their own choice is kept for their next visit');
     } finally { await page.close(); }

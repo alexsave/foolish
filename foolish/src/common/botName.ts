@@ -11,6 +11,10 @@
 // game_snapshots.extras blob, so a 1-byte prefix beats a 4-byte emoji on every
 // bot seat of every stored game. '%' has no case, so it survives the signup
 // uppercase-normalization unchanged.
+import { BotRegistry } from '@sdk/ts/gen/bot_registry.ts';
+import { useLocalization } from '../contexts/LocalizationContext';
+import type { StringId } from './strings';
+
 const BOT_USERNAME_PREFIX = '%';
 
 
@@ -26,18 +30,32 @@ export const isBotName = (name: string): boolean =>
     name.startsWith(BOT_USERNAME_PREFIX);
 
 
-// Bots render with an icon, so drop the prefix for display.
+// Bots render with an icon, so drop the prefix for display, and name the city in
+// the reader's language.
 //
-// NO MAPPING LIVES HERE, and that is the design (owner, 2026-09-22). The roster
-// is named after cities where it is STORED - bots.nickname is '%Moscow 1', the
-// name a replay blob embeds is '%Moscow 1' - so a name needs no translating on
-// the way to a page. What a replay code says is what the page shows, including
-// an old code that says '%Octogen 1': those games were played by a bot with that
-// name and they render it.
+// A seeded bot is STORED by its city, in English, as its server account's
+// nickname: "%<city> <n>" (server/src/store/bot_seed.c; the promo page's local
+// bot, c/src/local_table.c, takes the same form). The city is a row of the
+// kernel's bot registry (c/src/bots.c, generated as sdk/ts/gen/bot_registry.ts),
+// and that row's key names its translation in c/i18n (`bot.<key>`: Miami is
+// Майами in Russian). So the stored name stays the one language-neutral fact a
+// replay blob carries, and the page reads it in whatever language it is in.
+// (Until 2026-11-01 nothing mapped: a Russian reader saw "Miami 1".)
 //
-// The cost, stated where someone will look for it: a stored name cannot be
-// localized, so bot names read the same in every language. The `bot.*` strings
-// in c/i18n stay for the phone's OFFLINE picker, which names a seat from its
-// strategy key rather than from a stored row.
-export const botDisplayName = (name: string): string =>
-    isBotName(name) ? name.slice(BOT_USERNAME_PREFIX.length) : name;
+// A name whose city no row has - an old replay's '%Octogen 1', a bot renamed
+// since - is shown as stored, minus the prefix: that game really was played by a
+// bot of that name.
+const CITY_ROW = /^(.+) (\d+)$/;
+export const botDisplayName = (name: string, t: (id: StringId) => string): string => {
+    if (!isBotName(name)) return name;
+    const bare = name.slice(BOT_USERNAME_PREFIX.length);
+    const m = CITY_ROW.exec(bare);
+    const row = m ? BotRegistry.find((r) => r.city === m[1] && r.key) : undefined;
+    return m && row ? `${t(`bot.${row.key}` as StringId)} ${m[2]}` : bare;
+};
+
+/** botDisplayName in the page's language, for a component. */
+export const useBotName = (): ((name: string) => string) => {
+    const { t } = useLocalization();
+    return (name) => botDisplayName(name, t);
+};

@@ -20,6 +20,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sortBotsByLadder, instanceOf } from '../../src/common/botLadder.ts';
 import { botDisplayName } from '../../src/common/botName.ts';
+import { EN, translate, type StringId } from '../../src/common/strings.ts';
 import { BotRegistry as Rows } from '../../sdk/ts/gen/bot_registry.ts';
 
 // The registry's rows as the C reads them: a field a row leaves out (a research
@@ -60,7 +61,7 @@ test('the picker opens on the weakest bot and ends on the strongest', () => {
     const shuffled = [...rows].sort((a, b) =>
         a.nickname.length - b.nickname.length || b.nickname.localeCompare(a.nickname));
 
-    const shown = sortBotsByLadder(shuffled, (k) => tier.get(k)).map((r) => botDisplayName(r.nickname));
+    const shown = sortBotsByLadder(shuffled, (k) => tier.get(k)).map((r) => botDisplayName(r.nickname, (id: StringId) => translate(EN, id)));
 
     assert.equal(shown[0], 'Miami 1', `the picker opens on ${shown[0]}, not the weakest rung`);
     assert.equal(shown[shown.length - 1], 'Moscow 7', `the picker ends on ${shown[shown.length - 1]}`);

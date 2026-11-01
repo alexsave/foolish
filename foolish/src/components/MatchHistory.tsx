@@ -8,7 +8,7 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 import { Text } from './Text';
 import { SovietIcon, RankIcon } from './SovietIcon';
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
-import { botDisplayName, isBotName } from '../common/botName';
+import { useBotName, isBotName } from '../common/botName';
 import { ensureBotsAsync, kernelB32Encode } from '@sdk/ts/wasm/bots.ts';
 import { joinReplayCode } from '@api/common/replay_extras.ts';
 import { historyEntry, type HistoryEntry } from './matchHistoryRow';
@@ -72,6 +72,7 @@ const StatsCard: React.FC<{ stats: HistoryStats; elo: { rating: number } | null;
 
 // One finished game: how it went for you, who sat where, and the way into its replay.
 const HistoryRow: React.FC<{ entry: HistoryEntry; woodUrl: string | null; onOpen: () => void }> = ({ entry, woodUrl, onOpen }) => {
+    const botName = useBotName();
     const survived = entry.mySeat !== entry.foolSeat;
     const seed = seedFromString(entry.id);
     const flip = flipFromString(entry.id);
@@ -107,7 +108,7 @@ const HistoryRow: React.FC<{ entry: HistoryEntry; woodUrl: string | null; onOpen
                             <span key={seat} style={{ marginRight: 6, fontWeight: seat === entry.mySeat ? 'bold' : 'normal' }}>
                                 {isBotName(name) && <SovietIcon name="bot" size={11} />}
                                 {seat === entry.foolSeat && <SovietIcon name="fool" size={11} />}
-                                {botDisplayName(name)}
+                                {botName(name)}
                             </span>
                         ))}
                     </span>

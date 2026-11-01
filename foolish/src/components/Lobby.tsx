@@ -16,7 +16,7 @@ import { useLocalization } from "../contexts/LocalizationContext";
 import { SovietIcon } from "./SovietIcon";
 import { Check } from "./RoleMark";
 import { useStyles } from "../contexts/StyleContext";
-import { botDisplayName } from "../common/botName";
+import { useBotName } from "../common/botName";
 import { sortBotsByLadder } from "../common/botLadder";
 import { kernelBotRoster } from "@sdk/ts/wasm/bots.ts";
 
@@ -46,6 +46,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     textureUrl,
     useWoodTexture,
 }) => {
+    const botName = useBotName();
     const playerSeed = seedFromString(player.id);
     const flip = flipFromString(player.id);
     const playerCardStyle = getTextureStyle(textureUrl, !useWoodTexture, playerSeed);
@@ -68,7 +69,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             />
             <p className="player-card__name">
                 {player.isAi && <><SovietIcon name="bot" size={14} /> </>}
-                {botDisplayName(player.name)}
+                {botName(player.name)}
             </p>
             <div className="player-card__status">
                 <SovietIcon name={isReady ? 'ready' : 'not-ready'} size={16} />
@@ -119,6 +120,7 @@ const RulesCheckbox: React.FC<RulesCheckboxProps> = ({ passing, enabled, onChang
 };
 
 export const Lobby = () => {
+    const botName = useBotName();
     const game_id = useUrlGameId()?.toLowerCase();
     const { view: game, updateGameName, setRules, rearrangePlayer, addBot, exitGame, joinGame, startGame } = useServer();
     const router = useRouter();
@@ -636,7 +638,7 @@ export const Lobby = () => {
                         {useWoodTexture && <div className="btn-add-bot__texture" style={buttonTextureStyle} />}
                         <p className="btn-add-bot__text">
                             {selectedBot
-                                ? t('add_bot_named', { name: botDisplayName(selectedBot.nickname) })
+                                ? t('add_bot_named', { name: botName(selectedBot.nickname) })
                                 : t('add_bot')}
                         </p>
                     </div>
