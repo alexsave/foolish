@@ -25,6 +25,7 @@
 #include "../src/table.h"
 #include "../src/move_list.h"
 #include "../../../shared/c/le_bytes.h"
+#include "../../../shared/c/rng.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -206,10 +207,7 @@ static uint32_t g_version;
 static int64_t g_now, g_base;   // the commit clock, and the base the chunks are written from (the row's created_at)
 static int g_verbose;
 
-static uint32_t rnd(void) {
-    g_rng ^= g_rng << 13; g_rng ^= g_rng >> 7; g_rng ^= g_rng << 17;
-    return (uint32_t)(g_rng >> 11);
-}
+static uint32_t rnd(void) { return rng_u32(&g_rng); }
 
 // The commit clock: mostly a bot's or a person's pace, sometimes the same
 // millisecond, sometimes a long pause, now and then a step back.
@@ -367,8 +365,8 @@ static void compare(const uint8_t *seed, int game, int end) {
 static const char *const BRAINS[] = { "random", "handwritten", "simple_heuristic" };
 
 static void seed_of(uint8_t *seed, int game, int deal) {
-    uint64_t x = 0x9E3779B97F4A7C15ULL * (uint64_t)(game * 7 + deal + 1);
-    for (int i = 0; i < FOOLISH_SEED_LEN; i++) { x ^= x >> 29; x *= 0xBF58476D1CE4E5B9ULL; seed[i] = (uint8_t)(x >> 56); }
+    uint64_t x = rng_seed64((uint64_t)(game * 7 + deal + 1));
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (uint8_t)(rng_splitmix64(&x) >> 56);
 }
 
 static void play_table(int game) {
@@ -376,7 +374,7 @@ static void play_table(int game) {
     const int np = 2 + game % 7;
     const int deals = 1 + game % 3;
     uint8_t seed[FOOLISH_SEED_LEN];
-    g_rng = 0x2545F4914F6CDD1DULL ^ ((uint64_t)game * 0x9E3779B97F4A7C15ULL);
+    g_rng = rng_seed64((uint64_t)game);
     g_now = g_base = 1700000000000LL + (int64_t)game * 86400000LL;
     g_version = 0;
     g_log_len = g_list_len = 0;
