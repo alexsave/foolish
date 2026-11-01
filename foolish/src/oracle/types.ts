@@ -154,11 +154,16 @@ export interface OracleCandidate {
     target?: string[];
     n: number;                     // cumulative nsim
     mean: number | null;           // sum/n, mean finish (lower = better)
-    se: number;                    // standard error of the mean (batch-mean stddev / √batches)
-    adjusted: number | null;       // mean + trump tax (display ranking)
+    se: number;                    // standard error of the mean (batch-mean stddev / √batches);
+                                   //   negative before ranking: the kernel's n-based proxy (Mode B)
+    shadowN: number;               // worlds fusion's noisy race sampled it on
     shadowMean: number | null;     // mean finish in fusion's noisy race (the shadow selection's evidence)
-    shadowSe: number;
-    best: boolean;                 // fusion's pick over everything sampled so far (fusionBest)
+    shadowSe: number;              // likewise
+    // What the kernel's ranking said (c/src/oracle_rank.c, which states the rule):
+    best: boolean;                 // tied with fusion's pick: reads Best
+    pick: boolean;                 // fusion's pick itself
+    cls: OracleClass | null;       // the class chip, null when unscored or exact
+    bar: number;                   // bar width, percent
     verdict: OracleVerdict;
     verdictVal?: number;
     forcedLoss: boolean;
@@ -261,13 +266,6 @@ export function oracleWhyPanelEnabled(): boolean {
 
 /* ------------------------------ tuning knobs ----------------------------- */
 
-/** octogen's trump-keep tax (OG_TRUMP_KEEP default 40 milli = 0.040 per trump
- *  card in an attack while the deck is alive). Applied at selection only; the
- *  scores an answer carries are UNTAXED, so the client re-applies it for display ranking,
- *  exactly as the X-ray pages do (octogen_strategy.c OG_TRUMP_KEEP default;
- *  bot_strategy.ts deployed env; build_data.py). */
-export const ORACLE_TRUMP_KEEP = 0.040;
-
 /** Worker fleet size: clamp(cores - 2, 1, 8). */
 const ORACLE_MAX_WORKERS = 8;
 export function oracleWorkerCount(): number {
@@ -328,19 +326,12 @@ export const ORACLE_MIN_FOCUS_MS = 3_500;
  *  and a terminal snapshot (converged/exact/forced/error) ignores it entirely. */
 export const ORACLE_PUBLISH_MS = 80;
 
-/** chess.com-style move classification, on ADJUSTED scores relative to best. */
-const ORACLE_CLASS_THRESHOLDS: { max: number; id: OracleClass }[] = [
-    { max: 0.0001, id: 'best' },
-    { max: 0.05, id: 'excellent' },
-    { max: 0.15, id: 'good' },
-    { max: 0.35, id: 'inaccuracy' },
-    { max: 0.7, id: 'mistake' },
-    { max: Infinity, id: 'blunder' },
-];
+/** chess.com-style move classification (c/src/oracle_rank.h OG_CLASS_*). */
 export type OracleClass =
     | 'best' | 'excellent' | 'good' | 'inaccuracy' | 'mistake' | 'blunder';
 
-export function oracleClassify(delta: number): OracleClass {
-    for (const t of ORACLE_CLASS_THRESHOLDS) if (delta < t.max) return t.id;
-    return 'blunder';
+/** The kernel's ranking (c/src/oracle_rank.c) of the rows a mode accumulated:
+ *  display order, Best, fusion's pick, classes and bars, for both modes. */
+export interface OracleRanker {
+    rank(list: OracleCandidate[], exact: boolean, deckAlive: boolean): OracleCandidate[];
 }

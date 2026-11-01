@@ -46,6 +46,18 @@ typedef struct {
 } OgKnobs;
 #endif
 
+// What the exact endgame probe said of one root move. Outside both
+// guards below: Mode B has no answer, and its rows still carry a verdict into
+// the ranking (oracle_rank.h).
+enum {
+    OG_VERDICT_NONE    = 0,         // the probe did not run, or did not reach this move
+    OG_VERDICT_UNKNOWN = 1,         // ran out of budget
+    OG_VERDICT_ILLEGAL = 2,
+    OG_VERDICT_WIN     = 3,
+    OG_VERDICT_LOSS    = 4,
+    OG_VERDICT_DRAW    = 5,
+};
+
 #ifdef OG_EXPLAIN_BUILD
 // Matches OG_MAX_CANDS for an oracle build and OG_MAX_VOIDS (octogen_strategy.c
 // asserts both), so this header never decides how wide octogen thinks.
@@ -61,16 +73,6 @@ typedef struct {
 #define OG_ANSWER_TOP_PATHS    12
 #define OG_ANSWER_TOP_REPLIES  3
 #define OG_ANSWER_PATH_ROUNDS  4    // CD_ORC_ROUNDS (cordite_sim.h); octogen_strategy.c asserts it
-
-// What the exact endgame probe said of one root move.
-enum {
-    OG_VERDICT_NONE    = 0,         // the probe did not run, or did not reach this move
-    OG_VERDICT_UNKNOWN = 1,         // ran out of budget
-    OG_VERDICT_ILLEGAL = 2,
-    OG_VERDICT_WIN     = 3,
-    OG_VERDICT_LOSS    = 4,
-    OG_VERDICT_DRAW    = 5,
-};
 
 // How the root endgame solver left the decision.
 enum {

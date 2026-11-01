@@ -16,7 +16,12 @@
 --count OgAnswerWhy.replies=n_replies --count OgAnswerWhy.paths=n_paths --count OgAnswerPath.sym=len
 # The codes a row and an answer carry, and the move ids a row's type is one of.
 --const OG_VERDICT_ --const OG_SOLVER_ --const MOVE_
-# The brain the bridge dispatches (fusion), and its shadow bar, which is the bar
-# the overlay's Best pick is held to (src/oracle/accumulator.ts fusionBest).
+# The brain the bridge dispatches (fusion).
 --header strategy.h --const STRAT_FUSION
---header octogen_strategy.h --const FUSION_SHADOW
+# The overlay's row order, Best and classes (c/src/oracle_rank.h): the rows go
+# in through a writer and the ranking comes back through a reader, in Mode A's
+# module here and in Mode B's in specs/oracle_layout.args.
+--header oracle_rank.h --root OgRankAsk --root OgRankAnswer
+--snapshot OgRankAsk --writer OgRankAsk --snapshot OgRankAnswer
+--count OgRankAsk.rows=n_rows --count OgRankAnswer.lines=n_lines
+--const OG_CLASS_

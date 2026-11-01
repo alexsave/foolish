@@ -33,7 +33,8 @@ import { readFileSync } from 'node:fs';
 import { gunzip } from '../sdk/ts/wasm/gunzip.ts';
 import { buildReplayFrames } from '../src/replay/frames.ts';
 import { buildOracleJob } from '../src/oracle/replayOracleInput.ts';
-import { OracleInstance } from '../src/oracle/oracleBridge.ts';
+import { OracleInstance, rankCandidates } from '../src/oracle/oracleBridge.ts';
+import { readOgRankAnswer, writeOgRankAsk } from '../sdk/ts/gen/oracle_layout.oracle_mt.ts';
 import { OracleAccumulator } from '../src/oracle/accumulator.ts';
 import { OracleJob } from '../src/oracle/types.ts';
 import { ORACLE_MT_KNOBS, oracleSeedBase } from '../src/oracle/oracleMtSession.ts';
@@ -98,7 +99,7 @@ async function modeA(job: OracleJob, minN: number, batchCap: number) {
     const inst = new OracleInstance();
     await inst.init(ORACLE_BYTES);
     inst.setKnobs(ORACLE_MT_KNOBS);
-    const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
+    const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, ranker: inst });
     let batches = 0;
     for (let b = 0; b < batchCap; b++) {
         const r = inst.analyzeOnce(job, 1009 + b * 7919);
@@ -109,7 +110,7 @@ async function modeA(job: OracleJob, minN: number, batchCap: number) {
         if (list.length && Math.min(...list.map((c) => c.n)) >= minN) break;
     }
     assert.ok(batches > 0, 'Mode A produced at least one batch');
-    return { acc, batches };
+    return { acc, batches, inst };
 }
 
 test('§8b.7-0 the threaded module is what ran, and threads really deliberated', async () => {
@@ -146,7 +147,7 @@ test('§8b.7-1 Mode A and Mode B converge to the same per-candidate means', asyn
         // Mode A is single-instance here, so it is asked to match Mode B's world
         // count only up to a cap - past ~20k worlds the standard error is already
         // an order of magnitude below the tolerance and the rest is CI minutes.
-        const { acc } = await modeA(job, Math.min(minN, 20000), 20000);
+        const { acc, inst } = await modeA(job, Math.min(minN, 20000), 20000);
         const aRows = acc.candidates(false).filter((c) => c.mean != null);
         const aByKey = new Map(aRows.map((c) => [c.key, c]));
         const aMinN = Math.min(...aRows.map((c) => c.n));
@@ -175,11 +176,16 @@ test('§8b.7-1 Mode A and Mode B converge to the same per-candidate means', asyn
 
         // Both modes run fusion (docs/INFINITE_ORACLE_DESIGN.md "The brain"): its
         // noisy race was accumulated on every row, to the same means in both
-        // modes, and the overlay gets exactly one Best. Mutation-checked
-        // (2026-10-31): the thread loop calling octogen again, and the shadow
-        // sums folded into the next row, each failed "Mode B ran fusion's noisy
-        // race"/"the noisy means agree"; readCandidates without fusionBest
-        // failed "exactly one Best".
+        // modes, and both modes rank by the kernel's one rule (c/src/oracle_rank.c).
+        // Mutation-checked (2026-10-31): the thread loop calling octogen again,
+        // and the shadow sums folded into the next row, each failed "Mode B ran
+        // fusion's noisy race"/"the noisy means agree". REWRITTEN 2026-11-01:
+        // this used to assert "exactly one Best in Mode B", which was the prod
+        // tie bug; Best is now every row tied with fusion's pick, and exactly one
+        // row is the pick. Mutation-checked (2026-11-01): readCandidates
+        // returning its rows unranked failed "exactly one pick in Mode B"; the
+        // Mode B module ranking with the tie rule removed failed "Mode B's
+        // module ranks Mode A's rows as Mode A's does".
         let sworst = 0;
         for (const c of b) {
             assert.ok(c.shadowMean != null && c.shadowMean >= 1, `Mode B ran fusion's noisy race on ${c.key}`);
@@ -188,7 +194,16 @@ test('§8b.7-1 Mode A and Mode B converge to the same per-candidate means', asyn
             sworst = Math.max(sworst, Math.abs(a.shadowMean! - c.shadowMean!));
         }
         assert.ok(sworst < tol, `the noisy means agree: worst |A-B| = ${sworst.toFixed(4)} (tolerance ${tol.toFixed(4)})`);
-        assert.equal(b.filter((c) => c.best).length, 1, 'exactly one Best in Mode B');
+        assert.equal(b.filter((c) => c.pick).length, 1, 'exactly one pick in Mode B');
+        assert.ok(b.find((c) => c.pick)!.best, 'and it reads Best');
+        const bestAt = b.flatMap((c, i) => (c.best ? [i] : []));
+        assert.equal(bestAt[bestAt.length - 1] - bestAt[0] + 1, bestAt.length, 'the Best rows sit together');
+        // The same rows through both modules: one rule, so one answer.
+        const aList = acc.candidates(false);
+        const mem = rig.session.memory!;
+        const viaB = rankCandidates({ buffer: () => mem.buffer, ex: rig.session.ex!, write: writeOgRankAsk, read: readOgRankAnswer },
+            aList, false, job.deckAlive);
+        assert.deepEqual(viaB, inst.rank(aList, false, job.deckAlive), 'Mode B\'s module ranks Mode A\'s rows as Mode A\'s does');
     } finally { await rig.close(); }
 });
 

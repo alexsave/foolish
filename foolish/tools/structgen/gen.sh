@@ -265,7 +265,7 @@ gen_exports() {
   # The Infinite Oracle's two: the same sources under the Oracle's flags, and
   # the threaded build, which adds wasm_oracle_mt.c and imports its memory.
   ex_link OracleExports   exports.oracle.ts    oracle.wasm    WASM_ORACLE_LDFLAGS WASM_ORACLE_EXPORTS
-  ex_run oracle WASM_ORACLE_CFLAGS WASM_BOT_SRC
+  ex_run oracle WASM_ORACLE_CFLAGS WASM_ORACLE_SRC
   ex_link OracleMtExports exports.oracle_mt.ts oracle-mt.wasm WASM_ORACLE_MT_LDFLAGS WASM_ORACLE_MT_EXPORTS
   ex_run oracle_mt WASM_ORACLE_MT_CFLAGS WASM_ORACLE_MT_SRC
   ex_go

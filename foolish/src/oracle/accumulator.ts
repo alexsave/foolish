@@ -7,11 +7,10 @@
 
 import {
     OracleRecord, OracleCandidate, OracleVerdict, OracleCandPaths,
-    OraclePathStat, OracleReplyStat,
-    ORACLE_TRUMP_KEEP, ORACLE_CONVERGE_MIN_N, ORACLE_CONVERGE_MAX_SE,
+    OraclePathStat, OracleReplyStat, OracleRanker,
+    ORACLE_CONVERGE_MIN_N, ORACLE_CONVERGE_MAX_SE,
     canonicalMoveKey,
 } from './types';
-import { FUSION_SHADOW } from '@sdk/ts/gen/oracle_answer.oracle.ts';
 
 interface Welford { count: number; mean: number; m2: number; }
 function welfordAdd(w: Welford, x: number): void {
@@ -50,16 +49,12 @@ interface Acc {
     replyPool: Map<number, { type: number; card: number; n: number }>;
 }
 
-const VERDICT_RANK: Record<string, number> = {
-    win: 0, draw: 1, unknown: 2, none: 3, loss: 4, illegal: 5,
-};
-
 export class OracleAccumulator {
     private acc = new Map<string, Acc>();
     totalWorlds = 0;
     batches = 0;
 
-    constructor(private opts: { deckAlive: boolean; recordedKey: string }) {}
+    constructor(private opts: { deckAlive: boolean; recordedKey: string; ranker: OracleRanker }) {}
 
     /** Decision-static context captured from the first record that carries a
      *  belief block (identical every batch - the belief is a function of the
@@ -146,12 +141,6 @@ export class OracleAccumulator {
         this.batches++;
     }
 
-    private trumpTax(a: Acc): number {
-        if (a.type !== 'attack' || !this.opts.deckAlive) return 0;
-        const nTrump = a.cards.filter((t) => t.endsWith('*')).length;
-        return ORACLE_TRUMP_KEEP * nTrump;
-    }
-
     hasWinLoss(): boolean {
         for (const a of this.acc.values())
             if (a.verdict === 'win' || a.verdict === 'loss') return true;
@@ -195,13 +184,13 @@ export class OracleAccumulator {
 
     hasKey(key: string): boolean { return this.acc.has(key); }
 
-    /** Snapshot the candidate list, sorted best-first. `exact` switches to
-     *  verdict-rank ordering; otherwise ascending adjusted (mean + trump tax). */
+    /** Snapshot the candidate list in the kernel's order, with its Best,
+     *  pick, classes and bars (c/src/oracle_rank.c). `exact` switches it to the
+     *  verdict ordering. */
     candidates(exact: boolean): OracleCandidate[] {
         const list: OracleCandidate[] = [];
         for (const a of this.acc.values()) {
             const mean = a.n > 0 ? a.sum / a.n : null;
-            const tax = mean == null ? 0 : this.trumpTax(a);
             let why: OracleCandidate['why'];
             if (a.whyN > 0) {
                 const paths: OraclePathStat[] = [...a.pathPool.values()]
@@ -229,10 +218,10 @@ export class OracleAccumulator {
                 n: a.n,
                 mean,
                 se: welfordSE(a.bm),
-                adjusted: mean == null ? null : mean + tax,
+                shadowN: a.sn,
                 shadowMean: a.sn > 0 ? a.ssum / a.sn : null,
                 shadowSe: welfordSE(a.sbm),
-                best: false,
+                best: false, pick: false, cls: null, bar: 0,
                 verdict: a.verdict,
                 verdictVal: a.verdictVal,
                 forcedLoss: a.forcedLoss,
@@ -242,55 +231,6 @@ export class OracleAccumulator {
                 why,
             });
         }
-        if (exact) {
-            list.sort((x, y) =>
-                (VERDICT_RANK[x.verdict] ?? 9) - (VERDICT_RANK[y.verdict] ?? 9)
-                || depthOf(y) - depthOf(x));
-        } else {
-            // Sort by the true expected finish (mean) so the order matches the
-            // displayed numbers + bars; the trump tax is only an invisible
-            // tie-break for exactly-equal means (octogen's trump-conservation).
-            list.sort((x, y) => {
-                if (x.mean == null && y.mean == null) return 0;
-                if (x.mean == null) return 1;          // scoreless rows last
-                if (y.mean == null) return -1;
-                return (x.mean - y.mean) || ((x.adjusted ?? x.mean) - (y.adjusted ?? y.mean));
-            });
-            fusionBest(list);
-        }
-        return list;
+        return this.opts.ranker.rank(list, exact, this.opts.deckAlive);
     }
-}
-
-/** Mark fusion's pick among rows already sorted best-first by expected finish
- *  (docs/INFINITE_ORACLE_DESIGN.md "The brain"). Fusion's own rule
- *  (c/src/octogen_strategy.c og_fusion_shadow), over every world sampled so far:
- *  octogen's pick o is the top row, the noisy race's pick f is the row with the
- *  lowest noisy mean plus trump tax, and f replaces o only when it is better by
- *  more than FUSION_SHADOW tenths of a standard error. The kernel pairs the
- *  difference world by world; across batches only each row's own SE is kept, so
- *  the error here is both rows' combined, which is never smaller than the paired
- *  one: the Oracle moves Best off octogen's pick on no less evidence than the bot
- *  needs. A row the noisy race never sampled cannot overrule, and with no noisy
- *  race at all (one candidate, or a proven win) o is Best. Both
- *  modes call this, so the rule is written once on this side. */
-export function fusionBest(list: OracleCandidate[]): void {
-    const o = list[0];
-    if (!o || o.mean == null) return;
-    const tax = (c: OracleCandidate) => (c.adjusted ?? 0) - (c.mean ?? 0);
-    let f = o;
-    for (const c of list) {
-        if (c.mean == null || c.shadowMean == null) continue;
-        if (f.shadowMean == null || c.shadowMean + tax(c) < f.shadowMean + tax(f)) f = c;
-    }
-    const k = FUSION_SHADOW / 10;
-    const gap = f === o || o.shadowMean == null || f.shadowMean == null ? 0
-        : f.shadowMean + tax(f) - (o.shadowMean + tax(o));
-    const se2 = f.shadowSe * f.shadowSe + o.shadowSe * o.shadowSe;
-    (gap < 0 && gap * gap > k * k * se2 ? f : o).best = true;
-}
-
-// verdict_val encodes ±(1000 - depth); a shallower win/loss ranks stronger.
-function depthOf(c: OracleCandidate): number {
-    return c.verdictVal != null ? 1000 - Math.abs(c.verdictVal) : 1000;
 }

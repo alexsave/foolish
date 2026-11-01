@@ -9,6 +9,7 @@
 
 import { gunzip } from '@sdk/ts/wasm/gunzip.ts';
 import { OracleAccumulator } from './accumulator';
+import { OracleInstance } from './oracleBridge';
 import {
     OracleJob, OracleSnapshot, OracleStatus, WorkerToMain,
     oracleWorkerCount, ORACLE_HARD_CAP_MS, ORACLE_MIN_FOCUS_MS, ORACLE_PUBLISH_MS,
@@ -40,6 +41,9 @@ const cancelRaf: (id: number) => void =
 export class OracleController {
     private workers: Worker[] = [];
     private bytes: Uint8Array | null = null;
+    /** A main-thread instance of the same module, for the kernel's ranking of
+     *  the merged rows (c/src/oracle_rank.c); it never deliberates. */
+    private ranker: OracleInstance | null = null;
     private loadPromise: Promise<void> | null = null;
     private ready = false;
 
@@ -74,6 +78,9 @@ export class OracleController {
         if (!resp.ok) throw new Error(`oracle fetch ${resp.status}`);
         const gz = new Uint8Array(await resp.arrayBuffer());
         this.bytes = gunzip(gz);
+        const ranker = new OracleInstance();
+        await ranker.init(this.bytes);
+        this.ranker = ranker;
 
         const n = oracleWorkerCount();
         const readies: Promise<void>[] = [];
@@ -99,7 +106,7 @@ export class OracleController {
         this.gen++;
         const gen = this.gen;
         this.job = job;
-        this.acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
+        this.acc = null;    // made once the module (and its ranking) is loaded
         this.error = undefined;
         this.startMs = Date.now();
         this.status = 'loading';
@@ -116,6 +123,7 @@ export class OracleController {
         }
         if (gen !== this.gen) return;      // superseded while loading
 
+        this.acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey, ranker: this.ranker! });
         this.status = 'running';
         this.workers.forEach((w, i) =>
             w.postMessage({ t: 'analyze', job, seedSalt: (i * 0x9e3779b1 + 1) >>> 0, gen }));
@@ -135,6 +143,7 @@ export class OracleController {
         this.workers.forEach((w) => w.terminate());
         this.workers = [];
         this.ready = false;
+        this.ranker = null;
         this.loadPromise = null;
         if (this.rafId != null) { cancelRaf(this.rafId); this.rafId = null; }
         this.subs.clear();

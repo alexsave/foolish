@@ -19,12 +19,16 @@ int fusion_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, 
 int og_fusion_overrules(double dsum, double d2sum, int n, double pen_gap, int k10);
 // Fusion's default bar (the FUSION_SHADOW knob), in tenths of a standard error:
 // 2 SE, measured better than 1 and 3 at 4 and 6 players (c/FUSION.md). Here and
-// not in octogen_strategy.c because the Infinite Oracle holds its own Best pick
-// to the same bar (src/oracle/accumulator.ts fusionBest), and reads it through
-// structgen (tools/structgen/specs/oracle_answer.args) rather than a copy.
+// not in octogen_strategy.c because the Infinite Oracle holds its own Best pick,
+// and the ties around it, to the same bar (src/oracle_rank.c).
 #ifndef FUSION_SHADOW
 #define FUSION_SHADOW 20
 #endif
+// Octogen's trump-keep tax (the OG_TRUMP_KEEP knob's default), in thousandths
+// of a finish place per trump card an attack leads while the deck is alive.
+// Here for the same reason: the Oracle ranks its rows by the same tie-break
+// (src/oracle_rank.c), and a second copy of the number is how the two drift.
+#define OG_TRUMP_KEEP_DEFAULT 40
 // What fusion's shadow did on this thread since the last reset (a test seam and
 // a trace): races run, races whose noisy pick overruled octogen's, and races in
 // which octogen's pinned pick missed a world (must stay 0: it is never culled).

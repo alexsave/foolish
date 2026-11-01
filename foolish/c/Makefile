@@ -210,10 +210,11 @@ $(call host_prog,bench_engine,tests/bench_engine.c)
 # leaving the experiment out of the coverage build - not one without the other,
 # since dropping it from coverage today would leave it running in no CI at all.
 tests: build/cnitro_tests build/bot_memory_test build/bot_drive_threads_test build/replay_threads_test build/cnitro_replay \
-       build/replay_overlay_test build/replay_rebuild_difftest build/hand_contract_test
+       build/replay_overlay_test build/replay_rebuild_difftest build/hand_contract_test build/oracle_rank_test
 	./build/cnitro_tests
 	./build/bot_memory_test
 	./build/hand_contract_test
+	./build/oracle_rank_test
 	./build/bot_drive_threads_test
 	./build/replay_threads_test
 	./build/replay_overlay_test
@@ -265,6 +266,17 @@ build/hand_contract_test: $(call c_objs,build/obj/host,src/hand_layout.c tests/h
 .PHONY: hand-contract-test
 hand-contract-test: build/hand_contract_test
 	./build/hand_contract_test
+
+# The Infinite Oracle's row order, Best and classes (src/oracle_rank.c), on
+# crafted rows. The source compiles only under -DFOOLISH_ORACLE_BUILD, which no
+# variant here sets, so the binary is one compile line of its own. Part of
+# `make tests`.
+build/oracle_rank_test: src/oracle_rank.c src/oracle_rank.h src/oracle_answer.h tests/oracle_rank_test.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -DFOOLISH_ORACLE_BUILD src/oracle_rank.c tests/oracle_rank_test.c -o $@ -lm
+.PHONY: oracle-rank-test
+oracle-rank-test: build/oracle_rank_test
+	./build/oracle_rank_test
 
 # The same suite under AddressSanitizer + UBSan, at -O1, from its own objects
 # (build/obj/asan - not CORE_OBJ, whose objects are -O3 -flto and not
@@ -1685,7 +1697,8 @@ WASM_ORACLE_CFLAGS := $(filter-out -DCD_TT_BITS=12,$(WASM_BOT_CFLAGS)) \
 WASM_ORACLE_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS))
 WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_og_answer -Wl,--export=wasm_og_answer_reset \
-  -Wl,--export=wasm_og_knobs_ptr -Wl,--export=wasm_og_knobs_apply
+  -Wl,--export=wasm_og_knobs_ptr -Wl,--export=wasm_og_knobs_apply \
+  -Wl,--export=wasm_og_rank_ask -Wl,--export=wasm_og_rank
 # ONE MAKE RULE PER OBJECT, the same shape wasm-bots has had all along. This
 # recipe used to be a shell `for` loop over all 34 sources inside a .PHONY
 # target, so every `npm run wasm` recompiled the whole oracle whether or not
@@ -1739,7 +1752,10 @@ WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
 WASM_ORACLE_OBJ_FLAGS = $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) \
                         $(if $(filter $(WASM_BOT_O3_STEMS),$*),-O3,-Oz)
 $(eval $(call C_VARIANT,build/botoracle,WASM_CC,WASM_ORACLE_OBJ_FLAGS,build/layout/oracle.hash,O3: $(WASM_BOT_O3_SRC)))
-WASM_ORACLE_OBJ    := $(call c_objs,build/botoracle,$(call wasm_sorted,$(WASM_BOT_SRC)))
+# The bots sources and the overlay's ranking (src/oracle_rank.c), which only
+# the two oracle modules carry.
+WASM_ORACLE_SRC    := $(WASM_BOT_SRC) src/oracle_rank.c
+WASM_ORACLE_OBJ    := $(call c_objs,build/botoracle,$(call wasm_sorted,$(WASM_ORACLE_SRC)))
 
 # Makefile is a prerequisite because the export list IS this file: a changed list
 # relinks, and the link had been .PHONY (so always run) until now.
@@ -1772,7 +1788,7 @@ wasm-oracle: wasm-cc-check
 #                      the C accumulator (src/oracle_mt.h).
 # A SECOND committed artifact (public/oracle-mt.wasm.gz); the browser loader
 # picks it only when crossOriginIsolated. NEVER replaces the shipped modules.
-WASM_ORACLE_MT_SRC := $(WASM_BOT_SRC) wasm/wasm_oracle_mt.c
+WASM_ORACLE_MT_SRC := $(WASM_BOT_SRC) wasm/wasm_oracle_mt.c src/oracle_rank.c
 WASM_ORACLE_MT_CFLAGS := $(filter-out -DCD_WASM_OVERLAY -DCD_TT_BITS=12 -D_Thread_local=,$(WASM_BOT_CFLAGS)) \
                          -DCD_TT_BITS=20 -matomics \
                          -DFOOLISH_ORACLE_BUILD -DFOOLISH_ORACLE_MT
@@ -1791,7 +1807,8 @@ WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_mt_sumfp_shadow -Wl,--export=wasm_mt_nsim_shadow \
   -Wl,--export=wasm_mt_forced -Wl,--export=wasm_mt_candidates \
   -Wl,--export=wasm_mt_mismatch -Wl,--export=wasm_mt_canary \
-  -Wl,--export=wasm_mt_solver -Wl,--export=wasm_mt_verdict -Wl,--export=wasm_mt_defuse
+  -Wl,--export=wasm_mt_solver -Wl,--export=wasm_mt_verdict -Wl,--export=wasm_mt_defuse \
+  -Wl,--export=wasm_og_rank_ask -Wl,--export=wasm_og_rank
 # The same rules as wasm-oracle just above, and everything said there applies
 # here - read that block first. The differences are only these: the source list
 # carries wasm/wasm_oracle_mt.c as well, the flags are the THREADED ones

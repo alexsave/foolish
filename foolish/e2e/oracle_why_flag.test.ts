@@ -56,12 +56,14 @@ const SNAPSHOT: OracleSnapshot = {
     candidates: [
         {
             key: 'attack|6S|', type: 'attack', label: 'attack 6S', cards: ['6S'],
-            n: 400, mean: 1.24, se: 0.01, adjusted: 1.24, shadowMean: 1.31, shadowSe: 0.01, best: true, verdict: 'none',
+            n: 400, mean: 1.24, se: 0.01, shadowN: 200, shadowMean: 1.31, shadowSe: 0.01,
+            best: true, pick: true, cls: 'best', bar: 96, verdict: 'none',
             forcedLoss: false, pruned: false, chosen: true, played: true, why: why(0.4, 1.20),
         },
         {
             key: 'attack|9H|', type: 'attack', label: 'attack 9H', cards: ['9H'],
-            n: 400, mean: 1.61, se: 0.02, adjusted: 1.61, shadowMean: 1.58, shadowSe: 0.02, best: false, verdict: 'none',
+            n: 400, mean: 1.61, se: 0.02, shadowN: 200, shadowMean: 1.58, shadowSe: 0.02,
+            best: false, pick: false, cls: 'blunder', bar: 12, verdict: 'none',
             forcedLoss: false, pruned: false, chosen: false, played: false, why: why(1.3, 1.55),
         },
     ],
@@ -223,28 +225,54 @@ test('the played row is scrolled into view once, and it is the played row', asyn
 });
 
 /* -----------------------------------------------------------------------------
- * Best is fusion's pick, not the lowest number (docs/INFINITE_ORACLE_DESIGN.md
- * "The brain"). The rows show the noise-free race's expected finish, and the
- * Best chip goes where src/oracle/accumulator.ts fusionBest put it, which is off
- * the lowest EF exactly when the noisy race overruled octogen's pick.
+ * A tied group all reads Best, in one colour (docs/INFINITE_ORACLE_DESIGN.md
+ * "Ties, Best and the classes"). The rows are ranked by the shipped oracle.wasm
+ * (c/src/oracle_rank.c) and the overlay renders the answer, so this is the
+ * prod bug end to end below the browser: three rows printing "EF 3.76 +-0.00",
+ * fusion's pick among them, the lowest number elsewhere. Before the rule moved
+ * into the kernel one of the three read BEST and two read BLUNDER.
  *
- * Mutation-checked (2026-10-31): the overlay's isBest back on "the lowest EF"
- * failed "the Best chip is on fusion's pick"; isBest ignoring `scored` was not
- * reachable from here (an unscored row is never best) and is covered by
- * fusionBest's own test.
+ * Mutation-checked (2026-11-01; each seen red by the named assertion, then
+ * restored): McRow keying Best on `pick` instead of `best` failed "every tied
+ * row carries the Best chip", and so did oracle_rank.c without its tie rule
+ * (rebuilt into the module); the kernel's class measured from the lowest
+ * number failed "and is not drawn as a blunder"; the bar coloured green on the
+ * pick only failed "one colour for the whole group"; the pick's chip drawn like
+ * the others failed "the pick's chip is the filled one".
  * -------------------------------------------------------------------------- */
-test('the Best chip is on fusion\'s pick, also when it is not the lowest expected finish', async () => {
+test('a tied group all reads Best, in one colour, and the pick is marked', async () => {
     delete process.env[FLAG];
-    const overruled: OracleSnapshot = {
-        ...SNAPSHOT,
-        candidates: [{ ...SNAPSHOT.candidates[0], best: false }, { ...SNAPSHOT.candidates[1], best: true }],
-    };
-    for (const [snap, at] of [[SNAPSHOT, 0], [overruled, 1]] as const) {
-        const { host, unmount } = await overlay(snap);
-        const body = host.querySelector('[data-testid="oracle-panel"]')!.lastElementChild!;
-        const marked = host.querySelectorAll('[data-best]');
-        assert.equal(marked.length, 1, 'one row carries the Best chip');
-        assert.ok(body.children[at].contains(marked[0]), `the Best chip is on fusion's pick, row ${at}`);
-        await unmount();
-    }
+    const { readFileSync } = await import('node:fs');
+    const { gunzip } = await import('../sdk/ts/wasm/gunzip.ts');
+    const { OracleInstance } = await import('../src/oracle/oracleBridge.ts');
+    const kernel = new OracleInstance();
+    await kernel.init(gunzip(new Uint8Array(readFileSync('public/oracle.wasm.gz'))));
+    const base = SNAPSHOT.candidates[1];
+    const row = (key: string, mean: number, se: number, shadowMean: number, played = false) => ({
+        ...base, key, label: key, cards: [key], mean, se, shadowMean, shadowSe: 0.004, played, why: undefined,
+    });
+    const candidates = kernel.rank([
+        row('8D', 3.8583, 0.0016, 3.3116, true),
+        row('6S', 2.9975, 0.0025, 3.4824),
+        row('JD', 3.7569, 0.0027, 3.1732),
+        row('JH', 3.7559, 0.0027, 3.2325),
+        row('JS', 3.7602, 0.0027, 3.3439),
+    ], false, false);
+    const { host, unmount } = await overlay({ ...SNAPSHOT, candidates, recordedKey: '8D', recordedLabel: 'attack 8D' });
+    const body = host.querySelector('[data-testid="oracle-panel"]')!.lastElementChild!;
+    const rows = [...body.children].slice(0, candidates.length);
+    const lit = (el: Element) => new Set([...el.querySelectorAll('div')]
+        .map((d) => (d as HTMLElement).style.background).filter((b) => b && !b.startsWith('rgba')));
+    const group = rows.slice(1, 4);
+    assert.deepEqual(candidates.map((c) => c.key), ['6S', 'JD', 'JH', 'JS', '8D'], 'the group sits together, the pick first');
+    assert.equal(group.filter((r) => r.querySelector('[data-best]')).length, 3, 'every tied row carries the Best chip');
+    for (const r of group) assert.deepEqual([...lit(r)], ['rgb(76, 175, 125)'], 'one colour for the whole group, Best\'s green');
+    assert.equal(host.querySelectorAll('[data-pick]').length, 1, 'one row is fusion\'s pick');
+    assert.ok(group[0].querySelector('[data-pick]'), 'and it leads the group');
+    const filled = (r: Element) => [...r.querySelectorAll('span')]
+        .some((sp) => (sp as HTMLElement).style.background.replace(/\s/g, '') === 'rgb(76,175,125)');
+    assert.ok(filled(group[0]) && !filled(group[1]) && !filled(group[2]), 'the pick\'s chip is the filled one');
+    assert.ok(!rows[4].querySelector('[data-best]'), 'the played 3.86 is not Best');
+    assert.ok(!lit(rows[4]).has('rgb(212, 91, 78)'), 'and is not drawn as a blunder');
+    await unmount();
 });

@@ -15,12 +15,14 @@
 
 import { MOVE_NAMES } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import type { OracleMtExports } from '@sdk/ts/gen/exports.oracle_mt.ts';
-import { memOf, readOgMtCandidates, writeOgKnobs } from '@sdk/ts/gen/oracle_layout.oracle_mt.ts';
+import {
+    memOf, readOgMtCandidates, writeOgKnobs, readOgRankAnswer, writeOgRankAsk,
+} from '@sdk/ts/gen/oracle_layout.oracle_mt.ts';
 import {
     OracleJob, OracleCandidate, OracleVerdict, OracleKnobs, ORACLE_KNOBS,
-    oracleCardToken, canonicalMoveKey, ORACLE_TRUMP_KEEP,
+    oracleCardToken, canonicalMoveKey,
 } from './types';
-import { fusionBest } from './accumulator';
+import { rankCandidates } from './oracleBridge';
 
 /** Per-thread stack (§8b.6): 512 KiB, ~36x the measured 14.3 KiB worst case.
  *  Thread stacks live in the heap region where --stack-first's trap-on-overflow
@@ -228,46 +230,24 @@ export class OracleMtSession {
             const mean = nsim > 0 ? ex.wasm_mt_sumfp(i) / nsim : null;
             const snsim = ex.wasm_mt_nsim_shadow(i);
             const forced = ex.wasm_mt_forced(i) !== 0;
-            // Mode B has no per-batch variance stream (that is the point - no
-            // per-batch anything crosses the wasm boundary), so the +- text uses
-            // an n-based proxy at the finish-position spread Mode A measures,
-            // and so does the noisy race's, which fusionBest weighs.
-            const se = nsim > 0 ? 1.2 / Math.sqrt(nsim) : Infinity;
-            const tax = mean != null && type === 'attack' && job.deckAlive
-                ? ORACLE_TRUMP_KEEP * cards.filter((tk) => tk.endsWith('*')).length : 0;
             const dv = decodeVerdict(ex.wasm_mt_verdict(i));
             const verdict: OracleVerdict = dv.verdict !== 'none' ? dv.verdict : (forced ? 'loss' : 'none');
             out.push({
                 key, type, label: `${type} ${cards.join(',')}`, cards,
                 target: target.length ? target : undefined,
-                n: nsim, mean, se, adjusted: mean == null ? null : mean + tax,
+                // Mode B has no per-batch variance stream (that is the point - no
+                // per-batch anything crosses the wasm boundary), so both errors are
+                // the kernel's n-based proxy (c/src/oracle_rank.c), asked for by -1.
+                n: nsim, mean, se: -1, shadowN: snsim,
                 shadowMean: snsim > 0 ? ex.wasm_mt_sumfp_shadow(i) / snsim : null,
-                shadowSe: snsim > 0 ? 1.2 / Math.sqrt(snsim) : Infinity, best: false,
+                shadowSe: -1, best: false, pick: false, cls: null, bar: 0,
                 verdict, verdictVal: dv.verdictVal, forcedLoss: forced, pruned: false,
                 chosen: i === chosen,
                 played: key === job.recordedKey,
             });
         }
-        return sortCandidates(out, exact);
+        const mem = this.memory!;
+        return rankCandidates({ buffer: () => mem.buffer, ex, write: writeOgRankAsk, read: readOgRankAnswer },
+            out, exact, job.deckAlive);
     }
-}
-
-/** The overlay's row order. Identical rule to the Mode A accumulator: bars,
- *  sort and the displayed number all key off the true expected finish; the
- *  trump tax is only an invisible tie-break. */
-function sortCandidates(list: OracleCandidate[], exact: boolean): OracleCandidate[] {
-    if (exact) {
-        const RANK: Record<string, number> = { win: 0, draw: 1, unknown: 2, none: 3, loss: 4, illegal: 5 };
-        const depth = (c: OracleCandidate) => (c.verdictVal != null ? 1000 - Math.abs(c.verdictVal) : 1000);
-        list.sort((a, b) => (RANK[a.verdict] ?? 9) - (RANK[b.verdict] ?? 9) || depth(b) - depth(a));
-    } else {
-        list.sort((a, b) => {
-            if (a.mean == null && b.mean == null) return 0;
-            if (a.mean == null) return 1;
-            if (b.mean == null) return -1;
-            return (a.mean - b.mean) || ((a.adjusted ?? a.mean) - (b.adjusted ?? b.mean));
-        });
-        fusionBest(list);
-    }
-    return list;
 }
