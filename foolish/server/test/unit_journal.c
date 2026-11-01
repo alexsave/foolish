@@ -23,6 +23,7 @@
 #include "awire.h"
 #include "legal.h"
 #include "bot_roster.h"
+#include "move_list.h"
 #include "roster.h"
 #include "table.h"
 #include "lib_created_game.h"
@@ -1785,13 +1786,13 @@ static void crafted_whole_commits_recover_or_refuse(void) {
         T_EQ_INT(-version_of(s, gid), 1);   // the game as the tables hold it
         close_world(s);
     }
-    // A segment another format wrote (an older server's, its moves acknowledged) is never
+    // A segment of a format this server does not read (format 1, the replay coder's) is never
     // skipped: the start is refused, and says how to get past it.
     char db[340];
     snprintf(db, sizeof db, "%s/crafted_old.sqlite", g_dir);
     crash_copy(path, db);
     const size_t n = full_frame(fr, gid, -1, 1, 0, 4, 4, 0);
-    write_segment_as(db, fr, n, JOURNAL_FORMAT - 1);
+    write_segment_as(db, fr, n, JOURNAL_FORMAT - 2);
     err[0] = 0;
     s = open_world(db, true, err, sizeof err);
     T_CHECK(s == NULL);
@@ -1802,6 +1803,83 @@ static void crafted_whole_commits_recover_or_refuse(void) {
     s = open_world(db, true, err, sizeof err);
     T_CHECK(s != NULL);
     if (s) { T_EQ_INT(-version_of(s, gid), 2); close_world(s); }   // its commit adopted (a lobby status)
+}
+
+// A FORMAT-2 SEGMENT IS RECOVERED (journal.h CB_JOURNAL_FORMAT_PREV): the server before the move list
+// wrote a whole commit's session-log records where format 3 writes its move list chunk, so a server
+// SIGKILLed during the swap leaves such a segment behind. Its commit is read and its records become the
+// chunk the commit would write today: the game's stored list is table_move_list_chunk of those records,
+// from the record's created_at. MUTATION-CHECKED: the reader refusing format 2 turns "a format-2
+// segment opens" red; the reader taking the records as the list turns "its records became the list"
+// red.
+static size_t full_frame_log(uint8_t *out, const char *id, int64_t base, int64_t created_at, uint8_t format,
+                             const uint8_t *log, uint32_t log_len) {
+    uint8_t *q = out + 12;
+    const size_t n = strlen(id);
+    *q++ = (uint8_t)n;
+    memcpy(q, id, n), q += n;
+    le(q, (uint64_t)base, 8), q += 8;
+    le(q, 1760000000000ULL, 8), q += 8;
+    *q++ = 1;   // flags: it clears the session first (a deal)
+    *q++ = 0;   // status: a lobby, as far as the frame's row says
+    le(q, (uint64_t)(base + 1), 8), q += 8;   // log_from: this commit begins the session
+    le(q, 0, 8), q += 8;                      // round_epoch
+    le(q, (uint64_t)created_at, 8), q += 8;
+    le(q, 4, 4), q += 4;
+    memset(q, 0, 4), q += 4;   // state
+    le(q, 0, 4), q += 4;       // roster
+    le(q, log_len, 4), q += 4;
+    memcpy(q, log, log_len), q += log_len;
+    const uint32_t plen = (uint32_t)(q - out - 12);
+    out[0] = 'R', out[1] = format, out[2] = out[3] = 0;
+    le(out + 8, plen, 4);
+    le(out + 4, crc32c(crc32c(0, out + 8, 4), out + 12, plen), 4);
+    return 12 + plen;
+}
+
+static int session_record(uint8_t *out, int64_t ms, int type, int seat, int n, const uint8_t *pairs) {
+    le(out, (uint64_t)ms, 6);
+    out[6] = (uint8_t)type, out[7] = (uint8_t)seat, out[8] = 0xFF, out[9] = (uint8_t)n;
+    if (n) memcpy(out + 10, pairs, (size_t)(2 * n));
+    return 10 + 2 * n;
+}
+
+static void a_format_2_segment_is_recovered_onto_the_list(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/fmt2.sqlite", g_dir);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, false, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    reply r;
+    call("create", "A", NULL, 0, &r);
+    char gid[CB_GAME_ID_MAX + 1] = "";
+    T_CHECK(tc_created_game(r.body, r.len, gid));
+    meta("B", ASK_JOIN, gid, &r);
+    T_EQ_INT(-version_of(s, gid), 1);
+    close_world(s);
+    // The deal's records as the format-2 server stored them: GAME_START, then an ATTACK.
+    static uint8_t log[64], fr[1024], want[128];
+    const uint8_t a1[2] = { 7, 0xFF };
+    const int64_t created = 1759999990000LL, ms = 1760000000000LL;
+    int ln = session_record(log, ms, LOG_GAME_START, 0xFF, 0, NULL);
+    ln += session_record(log + ln, ms, LOG_ATTACK, 0, 1, a1);
+    const int wn = table_move_list_chunk(created, log, ln, want, (int)sizeof want);
+    T_CHECK(wn > 0);
+    char db[340];
+    snprintf(db, sizeof db, "%s/fmt2_crash.sqlite", g_dir);
+    crash_copy(path, db);
+    const size_t n = full_frame_log(fr, gid, 1, created, JOURNAL_FORMAT - 1, log, (uint32_t)ln);
+    write_segment_as(db, fr, n, JOURNAL_FORMAT - 1);
+    err[0] = 0;
+    s = open_world(db, true, err, sizeof err);
+    T_CHECK(s != NULL);   // a format-2 segment opens
+    if (!s) { fprintf(stderr, "  %s\n", err); return; }
+    T_EQ_INT(-version_of(s, gid), 2);   // its commit adopted
+    cb_game_row row = stored(s, gid);
+    T_CHECK(wn > 0 && row.logs_len == (size_t)wn && memcmp(row.logs, want, (size_t)wn) == 0);   // its records became the list
+    cb_game_row_free(&row);
+    close_world(s);
 }
 
 // THE RESIDENCY CAP: past opts.max_games the least recently touched idle games leave at the
@@ -3219,6 +3297,7 @@ int main(void) {
     T_RUN(the_overlay_keeps_at_most_its_cap);
     T_RUN(a_torn_or_corrupt_whole_commit_is_dropped);
     T_RUN(crafted_whole_commits_recover_or_refuse);
+    T_RUN(a_format_2_segment_is_recovered_onto_the_list);
     T_RUN(no_row_cache_beside_the_overlay);
     T_RUN(a_move_on_the_loop_reads_no_clock_for_the_journal);
     for (int b = 0; b < 2; b++) {
