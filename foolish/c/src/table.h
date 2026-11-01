@@ -518,7 +518,9 @@ int table_cast(const Table *t, const char *game_id, int gid_len, int viewer, uin
 // last operation applied moves (table_act, table_bot_drive) and did nothing a
 // move cannot do - no deal, no roster or rules change, no lobby event - and it
 // fits the client's rebuild slot (EVW_DELTA_MAX_SNAPS hooks, EVW_DELTA_MAX_LOGS
-// records, none dropped). Otherwise every viewer gets table_cast.
+// records, none dropped), and it did not end the game as a repetition draw (a
+// repeat of hidden hands, which no masked board can rebuild). Otherwise every
+// viewer gets table_cast.
 bool table_cast_delta_ok(const Table *t);
 // The public half of every viewer's board check (view.h board_check_public of the
 // committed board): one per commit, handed to each table_cast_delta.
@@ -608,14 +610,19 @@ int table_replay_code(Table *t, const uint8_t *seed, int seed_len, const uint8_t
 int table_replay_extras(const Table *t, const uint8_t *log, int log_len, uint8_t *out, int cap);
 
 // The finish order, best first: the eliminated seats in the order they went
-// out, then the fool (anim_plan.c anim_finish_rows). Returns the count.
-int table_rankings(const Table *t, int8_t seats_out[MAX_PLAYERS]);
+// out, then the fools by seat (anim_plan.c anim_finish_rows), and each row's
+// place into `places_out` (may be NULL): 1 up, the fools all at the seat count,
+// so the fools of a repetition draw share it. Returns the count.
+int table_rankings(const Table *t, int8_t seats_out[MAX_PLAYERS], int8_t places_out[MAX_PLAYERS]);
 
 // Each seat's rating change: the sum over every other seat of the 1v1 change
 // (K = 10, rounded like Math.round), scoring 1 against a seat that finished
-// below and 0 against one above. `ratings` and `out` by seat, `order` best
-// first. Integer ratings only, which every rating in the product is.
-int elo_deltas(const int32_t *ratings, const int8_t *order, int n, int32_t *out);
+// below, 0 against one above and a half against one that shares its place.
+// With c = round(10 * (1 - E)) the win's change, that is c, c - 10 and c - 5
+// (exact: round(10 * (0.5 - E)) is round(10 * (1 - E)) - 5). `ratings` and `out` by
+// seat, `order` best first, `place` the place of each `order` entry (NULL: no
+// two share one). Integer ratings only, which every rating in the product is.
+int elo_deltas(const int32_t *ratings, const int8_t *order, const int8_t *place, int n, int32_t *out);
 
 // What a host hands table_rate, and where table_rankings answers.
 typedef struct {

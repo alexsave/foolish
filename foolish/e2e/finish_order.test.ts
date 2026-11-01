@@ -40,8 +40,9 @@ test('the shim carries the kernel row layout unchanged', () => {
     assert.ok(animFinishRows([2, 0, 3], 1, 4, -1).every((r) => !r.isYou),
         'a spectator owns no row');
 
-    // The fool's place is the SEAT count, not the row count.
+    // A fool's place is the SEAT count, not the row count, and every seat the
+    // list does not name is a fool (a repetition draw's, c/REPETITION.md).
     const short = animFinishRows([0], 1, 4, -1);
-    assert.equal(short.length, 2, 'a short list still ranks the fool');
-    assert.equal(short[1].place, 4, "the fool's place is the seat count");
+    assert.deepEqual(short.map((r) => [r.place, r.seat]), [[1, 0], [4, 1], [4, 2], [4, 3]],
+        'every unnamed seat is a fool at the seat count');
 });
