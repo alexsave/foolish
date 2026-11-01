@@ -260,11 +260,14 @@ static void bot_seed_is_production(void) {
 // So the seed never spells the "%<city> <n>" form itself, and no stored name
 // is one the kernel would read as another bot's or as a stranger's.
 //
-// Mutations that turned it red, each restored after: bot_seed.c writing
-// account i + 2 for i + 1 (the account range: instance 8 read back); bot_seed.c
-// writing the next row's strategy, bot_roster_strat(r + 1) (the strategy-key
-// assertion); the writer's separator ' ' as '_' in bot_roster.c (the kind
-// assertion: BOT_NICK_STORED).
+// Mutations that turned it red, each restored after (objects deleted before
+// every rebuild, so no stale mutant survived make's same-second check):
+// bot_seed.c writing account i + 2 for i + 1 (the account range: instance 8
+// read back, and the per-row account set); bot_seed.c writing the next row's
+// strategy, bot_roster_strat(r + 1) (the seed fails on the last row, so n > 0,
+// and every row's account set); the writer's separator ' ' as '_' in
+// bot_roster.c (the kind assertion: BOT_NICK_STORED, and every check after it).
+// bot_seed_is_production also goes red on all three.
 static void bot_seed_names_read_back(void) {
     cb_bot_row rows[BOT_ROSTER_MAX * BOT_IDS_MAX];
     const int n = cb_bot_seed_rows(rows, (int)(sizeof rows / sizeof rows[0]));
