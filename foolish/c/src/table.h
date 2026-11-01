@@ -88,11 +88,12 @@
 // that (view.h GameRatings, TABLE_STATE_STAMP_BYTES of it).
 #define TABLE_STATE_STAMP_BYTES GAME_RATINGS_BYTES
 #define TABLE_STATE_TAIL_BYTES (STATE_BLOB_CLOCK_BYTES + (STATE_BLOB_FORMAT >= STATE_BLOB_FORMAT_V5 ? GAME_RATINGS_BYTES : 0) \
-                                + (STATE_BLOB_FORMAT == STATE_BLOB_FORMAT_V6 ? 2 : 0))
+                                + (STATE_BLOB_FORMAT >= STATE_BLOB_FORMAT_V6 ? 2 : 0))
 // From v6 the sections follow, variable: two blobs of the same BOARD are equal in
 // their first state_blob_board_bytes (view.h), and the clock and the stamp start
 // right after those.
 #define TABLE_STATE_FORMAT_V6 STATE_BLOB_FORMAT_V6
+#define TABLE_STATE_FORMAT_V7 STATE_BLOB_FORMAT_V7
 
 // ---- the action request and response (the `action` endpoint's body) --------
 //
@@ -469,7 +470,8 @@ int table_commit_products_flags(const Table *t, const char *game_id, int gid_len
                          + STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES + STATE_BLOB_SECTIONS_BYTES)
 
 typedef struct TableResident {
-    _Alignas(8) unsigned char head[TABLE_HEAD_BYTES];   // the Game up to Game.logs (num_logs 0)
+    _Alignas(8) unsigned char head[TABLE_HEAD_BYTES];   // the Game up to Game.logs (num_logs 0, rep_live clear)
+    GameRepetition rep;                                 // its repetition ring (game.h Game.rep), kept apart
     Roster      r;
     BoardClock  clock;
     GameRatings ratings;

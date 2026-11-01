@@ -192,7 +192,7 @@ typedef struct {
 // may share a fingerprint once in 2^64.
 //
 // 136 bytes, after the logs (Game.rep, Game.rep_live), so no clone of a head
-// carries it; the durable row does (view.h STATE_BLOB_FORMAT_V6), with only
+// carries it; the durable row does (view.h STATE_BLOB_FORMAT_V7), with only
 // the entries in use.
 #define GAME_REP_RING 16
 typedef struct {
