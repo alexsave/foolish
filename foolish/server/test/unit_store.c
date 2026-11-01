@@ -253,6 +253,52 @@ static void bot_seed_is_production(void) {
     T_EQ_INT(cb_bot_seed_rows(rows, N + F - 1), -1);
 }
 
+// EVERY SEEDED NICKNAME IS THE KERNEL'S OWN NAME FOR ITS ACCOUNT: each row
+// bot_seed.c derives reads back through bot_nickname_read (bot_roster.h, the
+// one reader) as BOT_NICK_CITY, naming the row's own strategy and an account
+// 1 to BOT_IDS_MAX, each account of a strategy exactly once; and writing that
+// (strategy, account) again through bot_nickname_write gives the same bytes.
+// So the seed never spells the "%<city> <n>" form itself, and no stored name
+// is one the kernel would read as another bot's or as a stranger's.
+//
+// Mutations that turned it red, each restored after: bot_seed.c writing
+// account i + 2 for i + 1 (the account range: instance 8 read back); bot_seed.c
+// writing the next row's strategy, bot_roster_strat(r + 1) (the strategy-key
+// assertion); the writer's separator ' ' as '_' in bot_roster.c (the kind
+// assertion: BOT_NICK_STORED).
+static void bot_seed_names_read_back(void) {
+    cb_bot_row rows[BOT_ROSTER_MAX * BOT_IDS_MAX];
+    const int n = cb_bot_seed_rows(rows, (int)(sizeof rows / sizeof rows[0]));
+    T_CHECK(n > 0);
+    unsigned seen[BOT_ROSTER_MAX] = {0};     // per registry row: a bit per account read back
+    for (int j = 0; j < n; j++) {
+        BotNickname nk;
+        const int len = (int)strlen(rows[j].nickname);
+        T_EQ_INT(bot_nickname_read(rows[j].nickname, len, &nk), BOT_NICK_CITY);
+        T_EQ_INT(nk.kind, BOT_NICK_CITY);
+        char key[BOT_ROSTER_KEY_MAX + 1];
+        memcpy(key, nk.key, nk.key_len);
+        key[nk.key_len] = 0;
+        T_EQ_STR(key, rows[j].strategy_key);
+        T_CHECK(nk.instance >= 1 && nk.instance <= BOT_IDS_MAX);
+        const int ri = bot_roster_find(rows[j].strategy_key);
+        T_CHECK(ri >= 0);
+        if (ri < 0 || nk.instance < 1 || nk.instance > BOT_IDS_MAX) continue;
+        T_CHECK(!(seen[ri] & (1u << nk.instance)));
+        seen[ri] |= 1u << nk.instance;
+        char again[BOT_NICK_SHOW_MAX];
+        const int alen = bot_nickname_write(bot_roster_strat(ri), nk.instance, again, (int)sizeof again);
+        T_EQ_INT(alen, len);
+        T_CHECK(alen == len && memcmp(again, rows[j].nickname, (size_t)len) == 0);
+    }
+    // Every seeded row's seven accounts, none missing.
+    for (int r = 0; r < bot_roster_count(); r++) {
+        const BotDef *d = bot_roster_at(r);
+        if (!d || !d->seeded) continue;
+        T_EQ_INT((int)seen[r], (int)(((1u << BOT_IDS_MAX) - 1) << 1));
+    }
+}
+
 static bool same_bot(const cb_bot_row *a, const cb_bot_row *b) {
     return strcmp(a->id, b->id) == 0 && strcmp(a->nickname, b->nickname) == 0
         && strcmp(a->strategy_key, b->strategy_key) == 0 && a->elo_rating == b->elo_rating
@@ -2581,6 +2627,7 @@ int main(void) {
     if (!mkdtemp(g_dir)) { perror("mkdtemp"); return 1; }
     T_RUN(item_size_is_the_sum_of_its_attributes);
     T_RUN(bot_seed_is_production);
+    T_RUN(bot_seed_names_read_back);
     T_RUN(open_applies_schema_and_seeds_bots);
     T_RUN(a_schema_9_database_turns_its_logs_into_move_lists);
     T_RUN(seed_adds_only_missing_bots);
