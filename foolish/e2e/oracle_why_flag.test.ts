@@ -57,13 +57,13 @@ const SNAPSHOT: OracleSnapshot = {
         {
             key: 'attack|6S|', type: 'attack', label: 'attack 6S', cards: ['6S'],
             n: 400, mean: 1.24, se: 0.01, shadowN: 200, shadowMean: 1.31, shadowSe: 0.01,
-            best: true, pick: true, cls: 'best', bar: 96, verdict: 'none',
+            ef: 1.31, best: true, pick: true, cls: 'best', bar: 96, verdict: 'none',
             forcedLoss: false, pruned: false, chosen: true, played: true, why: why(0.4, 1.20),
         },
         {
             key: 'attack|9H|', type: 'attack', label: 'attack 9H', cards: ['9H'],
             n: 400, mean: 1.61, se: 0.02, shadowN: 200, shadowMean: 1.58, shadowSe: 0.02,
-            best: false, pick: false, cls: 'blunder', bar: 12, verdict: 'none',
+            ef: 1.58, best: false, pick: false, cls: 'blunder', bar: 12, verdict: 'none',
             forcedLoss: false, pruned: false, chosen: false, played: false, why: why(1.3, 1.55),
         },
     ],
@@ -227,18 +227,19 @@ test('the played row is scrolled into view once, and it is the played row', asyn
 /* -----------------------------------------------------------------------------
  * A tied group all reads Best, in one colour (docs/INFINITE_ORACLE_DESIGN.md
  * "Ties, Best and the classes"). The rows are ranked by the shipped oracle.wasm
- * (c/src/oracle_rank.c) and the overlay renders the answer, so this is the
- * prod bug end to end below the browser: three rows printing "EF 3.76 +-0.00",
- * fusion's pick among them, the lowest number elsewhere. Before the rule moved
- * into the kernel one of the three read BEST and two read BLUNDER.
+ * (c/src/oracle_rank.c) and the overlay renders the answer: the step-51 rows,
+ * with the numbers shown being fusion's noisy race, three of them tied there,
+ * fusion's pick among them, and octogen's (the lowest noise-free number) below.
+ * Before the rule moved into the kernel one of three tied rows read BEST and
+ * two read BLUNDER.
  *
  * Mutation-checked (2026-11-01; each seen red by the named assertion, then
- * restored): McRow keying Best on `pick` instead of `best` failed "every tied
- * row carries the Best chip", and so did oracle_rank.c without its tie rule
- * (rebuilt into the module); the kernel's class measured from the lowest
- * number failed "and is not drawn as a blunder"; the bar coloured green on the
- * pick only failed "one colour for the whole group"; the pick's chip drawn like
- * the others failed "the pick's chip is the filled one".
+ * restored, C mutants rebuilt into the module): McRow keying Best on `pick`
+ * instead of `best` failed "every tied row carries the Best chip", and so did
+ * oracle_rank.c without its tie rule; the kernel showing the noise-free
+ * numbers failed "the group leads the list, the pick first"; the bar coloured
+ * green on the pick only failed "one colour for the whole group"; the pick's
+ * chip drawn like the others failed "the pick's chip is the filled one".
  * -------------------------------------------------------------------------- */
 test('a tied group all reads Best, in one colour, and the pick is marked', async () => {
     delete process.env[FLAG];
@@ -254,17 +255,18 @@ test('a tied group all reads Best, in one colour, and the pick is marked', async
     const candidates = kernel.rank([
         row('8D', 3.8583, 0.0016, 3.3116, true),
         row('6S', 2.9975, 0.0025, 3.4824),
-        row('JD', 3.7569, 0.0027, 3.1732),
-        row('JH', 3.7559, 0.0027, 3.2325),
-        row('JS', 3.7602, 0.0027, 3.3439),
+        row('JD', 3.7569, 0.0027, 3.1720),
+        row('JH', 3.7559, 0.0027, 3.1732),
+        row('JS', 3.7602, 0.0027, 3.1790),
     ], false, false);
     const { host, unmount } = await overlay({ ...SNAPSHOT, candidates, recordedKey: '8D', recordedLabel: 'attack 8D' });
     const body = host.querySelector('[data-testid="oracle-panel"]')!.lastElementChild!;
     const rows = [...body.children].slice(0, candidates.length);
     const lit = (el: Element) => new Set([...el.querySelectorAll('div')]
         .map((d) => (d as HTMLElement).style.background).filter((b) => b && !b.startsWith('rgba')));
-    const group = rows.slice(1, 4);
-    assert.deepEqual(candidates.map((c) => c.key), ['6S', 'JD', 'JH', 'JS', '8D'], 'the group sits together, the pick first');
+    const group = rows.slice(0, 3);
+    assert.deepEqual(candidates.map((c) => c.key), ['JD', 'JH', 'JS', '8D', '6S'], 'the group leads the list, the pick first');
+    assert.deepEqual(candidates.map((c) => c.ef), [3.1720, 3.1732, 3.1790, 3.3116, 3.4824], 'the numbers shown are the noisy race\'s');
     assert.equal(group.filter((r) => r.querySelector('[data-best]')).length, 3, 'every tied row carries the Best chip');
     for (const r of group) assert.deepEqual([...lit(r)], ['rgb(76, 175, 125)'], 'one colour for the whole group, Best\'s green');
     assert.equal(host.querySelectorAll('[data-pick]').length, 1, 'one row is fusion\'s pick');
@@ -272,7 +274,7 @@ test('a tied group all reads Best, in one colour, and the pick is marked', async
     const filled = (r: Element) => [...r.querySelectorAll('span')]
         .some((sp) => (sp as HTMLElement).style.background.replace(/\s/g, '') === 'rgb(76,175,125)');
     assert.ok(filled(group[0]) && !filled(group[1]) && !filled(group[2]), 'the pick\'s chip is the filled one');
-    assert.ok(!rows[4].querySelector('[data-best]'), 'the played 3.86 is not Best');
-    assert.ok(!lit(rows[4]).has('rgb(212, 91, 78)'), 'and is not drawn as a blunder');
+    assert.ok(!rows[3].querySelector('[data-best]'), 'the played 3.31 is not Best');
+    assert.ok(!lit(rows[3]).has('rgb(212, 91, 78)'), 'and is not drawn as a blunder');
     await unmount();
 });

@@ -221,7 +221,7 @@ export class OracleAccumulator {
                 shadowN: a.sn,
                 shadowMean: a.sn > 0 ? a.ssum / a.sn : null,
                 shadowSe: welfordSE(a.sbm),
-                best: false, pick: false, cls: null, bar: 0,
+                ef: null, best: false, pick: false, cls: null, bar: 0,
                 verdict: a.verdict,
                 verdictVal: a.verdictVal,
                 forcedLoss: a.forcedLoss,

@@ -379,12 +379,12 @@ function McRow({ c, t, open, onClick }: {
     // Order, Best, fusion's pick, the class and the bar are the kernel's
     // (c/src/oracle_rank.c); this row only draws them. Every row tied with
     // fusion's pick reads Best, and the pick's chip is the filled one.
-    const scored = c.mean != null;
+    const scored = c.ef != null;
     const isBest = scored && c.best;
     const cls = c.cls;
     const barColor = cls ? CLASS_COLOR[cls] : '#8a8a92';
     // EF and its error are always exactly "D.DD" and never omitted.
-    const efText = scored ? `EF ${c.mean!.toFixed(2)} ±${c.se.toFixed(2)}` : (c.pruned ? '-' : '…');
+    const efText = scored ? `EF ${c.ef!.toFixed(2)} ±${c.se.toFixed(2)}` : (c.pruned || c.mean != null ? '-' : '…');
 
     const { text: title, redAt } = moveTitleText(c);
 

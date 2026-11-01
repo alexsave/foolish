@@ -155,11 +155,13 @@ export interface OracleCandidate {
     n: number;                     // cumulative nsim
     mean: number | null;           // sum/n, mean finish (lower = better)
     se: number;                    // standard error of the mean (batch-mean stddev / √batches);
-                                   //   negative before ranking: the kernel's n-based proxy (Mode B)
+                                   //   negative before ranking: the kernel's n-based proxy (Mode B);
+                                   //   after ranking, the error of `ef`
     shadowN: number;               // worlds fusion's noisy race sampled it on
     shadowMean: number | null;     // mean finish in fusion's noisy race (the shadow selection's evidence)
     shadowSe: number;              // likewise
     // What the kernel's ranking said (c/src/oracle_rank.c, which states the rule):
+    ef: number | null;             // the expected finish shown: fusion's noisy race's, null when none is shown
     best: boolean;                 // tied with fusion's pick: reads Best
     pick: boolean;                 // fusion's pick itself
     cls: OracleClass | null;       // the class chip, null when unscored or exact

@@ -1,29 +1,32 @@
-/* oracle_rank_test.c - the Infinite Oracle's row order, Best and classes
- * (src/oracle_rank.c, which states the rule). Pure: crafted rows in, the
- * answer checked line by line. Part of `make tests`.
+/* oracle_rank_test.c - the Infinite Oracle's row order, Best, classes and the
+ * numbers shown (src/oracle_rank.c, which states the rule). Pure: crafted rows
+ * in, the answer checked line by line. Part of `make tests`.
  *
- * The first case is the decision that showed the bug on prod (step 51 of the
- * replay in docs/INFINITE_ORACLE_DESIGN.md "Ties, Best and the classes"),
- * trimmed to one row per kind: fusion overrules octogen's 2.9975 for a 3.7569
- * whose twins print the same "EF 3.76 +-0.00", and before the rule moved here
- * one of the twins read BEST and the rest BLUNDER.
+ * Every number the panel shows is fusion's NOISY race (the race fusion's pick
+ * comes from), so the first case is the decision that showed the bug on prod
+ * (step 51 of the replay in docs/INFINITE_ORACLE_DESIGN.md "Ties, Best and the
+ * classes"), one row per kind: in the noise-free race fusion's pick printed the
+ * same "EF 3.76" as ten twins and sat 0.76 below the lowest number; in the
+ * noisy race it is the lowest number, and the panel now says so.
  *
  * Mutation-checked (2026-11-01; each seen red by the named test, then
- * restored from a copy outside the checkout):
- *   - the tie rule removed (best = i == pick only): "a tied group is all Best"
- *     and "the pick's twins read Best" go red;
- *   - the Best block not kept together (gkey = mean for every row): "the Best
- *     rows sit together, the pick first" goes red;
- *   - the class measured from the lowest row for every row (the old yardstick):
- *     "a row's class is its gap to the Best group" goes red;
- *   - the tolerance at one standard error instead of FUSION_SHADOW/10 = two:
- *     "two standard errors tie" goes red;
+ * restored from a copy outside the checkout, the binary removed before every
+ * build so make's whole-second clock cannot keep a stale one):
+ *   - the noise-free numbers shown (v = mean): "the noisy race is what is shown";
+ *   - the tie rule removed (best = i == pick only): "a tied group is all Best";
+ *   - the Best block not kept together (gkey = v): "the Best rows sit
+ *     together, the pick first";
+ *   - the class from the lowest number shown, not the Best group: "a row's
+ *     class is its gap to the Best group";
+ *   - the tolerance at one standard error: "two standard errors tie";
  *   - an unmeasured error counted as infinite: "one batch ties only within the
- *     floor" goes red;
+ *     floor";
+ *   - a row the noisy race did not score shown anyway (shown = scored): "a row
+ *     the noisy race did not score shows no number";
  *   - the exact regime sorted by depth instead of value: "the quickest win and
- *     the longest loss lead" goes red;
- *   - fusion's bar at 0: "within the bar, octogen's pick stands" goes red;
- *   - the tax left out of the noisy gap: "the trump tax counts in the gap" red.
+ *     the longest loss lead";
+ *   - fusion's bar at 0: "within the bar, octogen's pick stands";
+ *   - the tax left out of the noisy gap: "the trump tax counts in the gap".
  */
 #include <stdint.h>
 #include <string.h>
@@ -77,59 +80,79 @@ int main(void)
     TEST("rank: fusion overrules octogen beyond its bar");
     CHECK(pick_of() == f, "pick %d, want %d", pick_of(), f);
 
-    TEST("rank: a tied group is all Best");
-    CHECK(line_of(f)->best && line_of(twin1)->best && line_of(twin2)->best, "the 3.76 twins all read Best");
-    CHECK(line_of(f)->cls == OG_CLASS_BEST && line_of(twin1)->cls == OG_CLASS_BEST && line_of(twin2)->cls == OG_CLASS_BEST,
-          "and all class best (%d %d %d)", line_of(f)->cls, line_of(twin1)->cls, line_of(twin2)->cls);
-    CHECK(line_of(twin1)->bar == line_of(f)->bar || fabsf(line_of(twin1)->bar - line_of(f)->bar) < 0.2f, "bars alike");
-    CHECK(!line_of(low)->best && !line_of(played)->best && !line_of(tail)->best, "nothing outside the group is Best");
-
-    TEST("rank: the Best rows sit together, the pick first");
+    TEST("rank: the noisy race is what is shown");
+    CHECK(ans.noisy, "the answer says its numbers are the noisy race's");
+    CHECK(fabs(line_of(f)->ef - 3.1732) < 1e-12 && fabs(line_of(f)->se - 0.004) < 1e-12,
+          "the pick shows 3.1732 +-0.004 (%g +-%g)", line_of(f)->ef, line_of(f)->se);
+    CHECK(fabs(line_of(low)->ef - 3.4824) < 1e-12, "octogen's pick shows its noisy 3.4824 (%g)", line_of(low)->ef);
     {
-        const int want[] = { low, lowtw, mid, f, twin1, twin2, played, tail };
+        const int want[] = { f, twin1, played, twin2, tail, low, lowtw, mid };
         for (int i = 0; i < 8; i++)
             CHECK(ans.lines[i].row == want[i], "line %d is row %d, want %d", i, ans.lines[i].row, want[i]);
     }
+    CHECK(fabsf(line_of(f)->bar - 96.0f) < 1e-4f, "the pick's bar is the longest, 96 (%g)", line_of(f)->bar);
 
     TEST("rank: a row's class is its gap to the Best group");
-    CHECK(line_of(played)->cls == OG_CLASS_GOOD, "3.8583 is 0.10 behind fusion's 3.7569: good, not blunder (%d)", line_of(played)->cls);
-    CHECK(line_of(tail)->cls == OG_CLASS_INACCURACY, "3.9649 is 0.21 behind: inaccuracy (%d)", line_of(tail)->cls);
+    CHECK(line_of(f)->best && line_of(f)->cls == OG_CLASS_BEST, "the pick is Best");
+    CHECK(!line_of(twin1)->best && line_of(twin1)->cls == OG_CLASS_GOOD, "3.2325 is 0.059 behind: good (%d)", line_of(twin1)->cls);
+    CHECK(line_of(played)->cls == OG_CLASS_GOOD, "3.3116 is 0.138 behind: good (%d)", line_of(played)->cls);
+    CHECK(line_of(low)->cls == OG_CLASS_INACCURACY, "octogen's 3.4824 is 0.309 behind: inaccuracy (%d)", line_of(low)->cls);
+    CHECK(line_of(mid)->cls == OG_CLASS_MISTAKE, "3.6025 is 0.429 behind: mistake (%d)", line_of(mid)->cls);
 
-    TEST("rank: the lowest number keeps its own yardstick");
-    CHECK(line_of(low)->cls == OG_CLASS_BEST, "the lowest row still reads best (%d)", line_of(low)->cls);
-    CHECK(line_of(lowtw)->cls == OG_CLASS_BEST, "and so does its twin (%d)", line_of(lowtw)->cls);
-    CHECK(line_of(mid)->cls == OG_CLASS_INACCURACY, "3.3179 is 0.32 behind the lowest: inaccuracy (%d)", line_of(mid)->cls);
-    CHECK(fabsf(line_of(low)->bar - 96.0f) < 1e-4f, "the lowest row's bar is 96 (%g)", line_of(low)->bar);
-
-    /* ---- fusion agrees with octogen: one group at the top ---------------- */
+    /* ---- a tied group at the top ----------------------------------------- */
     reset(false);
-    const int a = row(2.000, 0.003, 2.10, 0.004);
-    const int b = row(2.006, 0.003, 2.11, 0.004);
-    const int c = row(2.004, 0.003, 2.12, 0.004);
-    const int d = row(2.050, 0.003, 2.15, 0.004);
+    const int a = row(2.000, 0.003, 2.100, 0.003);
+    const int b = row(2.006, 0.003, 2.106, 0.003);
+    const int c = row(2.004, 0.003, 2.104, 0.003);
+    const int d = row(2.050, 0.003, 2.140, 0.003);
     og_rank(&ask, &ans);
-    TEST("rank: the pick's twins read Best");
+    TEST("rank: a tied group is all Best");
     CHECK(pick_of() == a, "octogen's pick stands (%d)", pick_of());
-    CHECK(line_of(a)->best && line_of(b)->best && line_of(c)->best, "every twin of the top row is Best");
-    CHECK(!line_of(d)->best && line_of(d)->cls == OG_CLASS_EXCELLENT, "0.05 behind is not (%d)", line_of(d)->cls);
+    CHECK(line_of(a)->best && line_of(b)->best && line_of(c)->best, "every row within two errors of the pick is Best");
+    CHECK(line_of(a)->cls == OG_CLASS_BEST && line_of(b)->cls == OG_CLASS_BEST && line_of(c)->cls == OG_CLASS_BEST, "and class best");
+    CHECK(!line_of(d)->best && line_of(d)->cls == OG_CLASS_EXCELLENT, "0.04 behind is not (%d)", line_of(d)->cls);
     CHECK(pos_of(a) == 0 && pos_of(c) == 1 && pos_of(b) == 2 && pos_of(d) == 3, "order a c b d");
 
-    /* ---- the block keeps a non-member out of its middle ------------------ */
+    /* ---- fusion keeps o; the noisy race's lower row is within its bar ------- */
     reset(false);
-    const int p0 = row(3.000, 0.010, 3.0, 0.004);
-    const int x  = row(3.025, 0.020, 3.1, 0.004);    /* tied: 2 * sqrt(.01^2 + .02^2) = .0447 */
-    const int y  = row(3.021, 0.000, 3.1, 0.004);    /* not: 2 * .01 = .02 < .021 */
+    const int o1 = row(2.00, 0.001, 2.10, 0.01);
+    const int f1 = row(2.05, 0.001, 2.08, 0.01);     /* 0.02 better, bar 0.0283 */
     og_rank(&ask, &ans);
     TEST("rank: the Best rows sit together, the pick first");
+    CHECK(pick_of() == o1 && line_of(f1)->best, "o is the pick and the row below it ties");
+    CHECK(pos_of(o1) == 0 && pos_of(f1) == 1, "the pick leads its block although its number is higher");
+
+    /* ---- a row below the Best group that does not tie --------------------- */
+    TEST("rank: a row's class is its gap to the Best group");
+    reset(false);
+    ask.deck_alive = true;
+    {
+        const int o = row(2.00, 0.001, 2.10, 0.001);
+        const int t = row(2.05, 0.001, 2.05, 0.001);       /* lower, but taxed 2.13: not fusion's */
+        ask.rows[t].attack = true; ask.rows[t].n_trump = 2;
+        const int r3 = row(2.10, 0.001, 2.20, 0.001);
+        og_rank(&ask, &ans);
+        CHECK(pick_of() == o && !line_of(t)->best, "o is the pick, t below it does not tie");
+        CHECK(line_of(t)->cls == OG_CLASS_BEST, "t is class best: nothing is better (%d)", line_of(t)->cls);
+        CHECK(line_of(r3)->cls == OG_CLASS_GOOD, "2.20 is 0.10 behind the Best group, not 0.15 behind t: good (%d)", line_of(r3)->cls);
+    }
+
+    /* ---- the block keeps a non-member out of its middle ------------------ */
+    TEST("rank: the Best rows sit together, the pick first");
+    reset(false);
+    const int p0 = row(3.0, 0.01, 3.000, 0.010);
+    const int x  = row(3.1, 0.01, 3.025, 0.020);    /* tied: 2 * sqrt(.01^2 + .02^2) = .0447 */
+    const int y  = row(3.1, 0.01, 3.021, 0.000);    /* not: 2 * .01 = .02 < .021 */
+    og_rank(&ask, &ans);
     CHECK(line_of(x)->best && !line_of(y)->best, "x ties the pick, y does not");
     CHECK(pos_of(p0) == 0 && pos_of(x) == 1 && pos_of(y) == 2, "order p x y, not p y x (%d %d %d)", pos_of(p0), pos_of(x), pos_of(y));
 
     /* ---- the tolerance --------------------------------------------------- */
     TEST("rank: two standard errors tie");
     reset(false);
-    row(3.0000, 0.0027, 3.0, 0.004);
-    const int in = row(3.0070, 0.0027, 3.1, 0.004);    /* 2 * sqrt(2) * .0027 = .00764 */
-    const int out = row(3.0080, 0.0027, 3.1, 0.004);
+    row(3.0, 0.001, 3.0000, 0.0027);
+    const int in = row(3.1, 0.001, 3.0070, 0.0027);     /* 2 * sqrt(2) * .0027 = .00764 */
+    const int out = row(3.1, 0.001, 3.0080, 0.0027);
     og_rank(&ask, &ans);
     CHECK(line_of(in)->best, "0.0070 apart at se 0.0027 ties");
     CHECK(!line_of(out)->best && line_of(out)->cls == OG_CLASS_EXCELLENT, "0.0080 does not");
@@ -137,8 +160,8 @@ int main(void)
     TEST("rank: one batch ties only within the floor");
     reset(false);
     row(3.0, INFINITY, 3.0, INFINITY);
-    const int near = row(3.00005, INFINITY, 3.0, INFINITY);
-    const int far = row(3.001, INFINITY, 3.0, INFINITY);
+    const int near = row(3.0, INFINITY, 3.00005, INFINITY);
+    const int far = row(3.0, INFINITY, 3.001, INFINITY);
     og_rank(&ask, &ans);
     CHECK(line_of(near)->best, "0.00005 apart is a tie before any error is measured");
     CHECK(!line_of(far)->best, "0.001 apart is not");
@@ -147,9 +170,37 @@ int main(void)
     reset(false);
     {
         const int r = row(3.0, -1.0, 3.0, -1.0);
-        ask.rows[r].nsim = 57600;
+        ask.rows[r].shadow_nsim = 57600;
         og_rank(&ask, &ans);
         CHECK(fabs(line_of(r)->se - 0.005) < 1e-12, "1.2 / sqrt(57600) = 0.005 (%g)", line_of(r)->se);
+    }
+
+    /* ---- what the noisy race did not score ------------------------------- */
+    TEST("rank: a row the noisy race did not score shows no number");
+    reset(false);
+    {
+        const int s0 = row(3.0, 0.01, 3.2, 0.01);
+        const int bare = row(2.5, 0.01, 0.0, 0.0);
+        ask.rows[bare].shadow_scored = false; ask.rows[bare].shadow_nsim = 0;
+        const int s1 = row(3.1, 0.01, 3.3, 0.01);
+        og_rank(&ask, &ans);
+        CHECK(ans.noisy, "the noisy race ran");
+        CHECK(!line_of(bare)->shown && line_of(bare)->cls == OG_CLASS_NONE && !line_of(bare)->best
+              && line_of(bare)->bar == 0.0f, "no number, class, Best or bar for it");
+        CHECK(pos_of(s0) == 0 && pos_of(s1) == 1 && pos_of(bare) == 2, "it sorts after every shown row (%d %d %d)",
+              pos_of(s0), pos_of(s1), pos_of(bare));
+    }
+
+    TEST("rank: with no noisy race the noise-free race is shown");
+    reset(false);
+    {
+        const int q0 = row(3.0, 0.01, 0.0, 0.0), q1 = row(3.2, 0.01, 0.0, 0.0);
+        ask.rows[q0].shadow_scored = ask.rows[q1].shadow_scored = false;
+        og_rank(&ask, &ans);
+        CHECK(!ans.noisy, "the answer says so");
+        CHECK(line_of(q0)->shown && fabs(line_of(q0)->ef - 3.0) < 1e-12 && line_of(q0)->pick && line_of(q0)->best,
+              "octogen's pick shows its own number and is Best");
+        CHECK(line_of(q1)->cls == OG_CLASS_INACCURACY, "0.2 behind: inaccuracy (%d)", line_of(q1)->cls);
     }
 
     /* ---- fusion's bar ---------------------------------------------------- */
@@ -183,14 +234,14 @@ int main(void)
         CHECK(pick_of() == o, "pick %d", pick_of());
     }
 
-    TEST("rank: equal means sort by the taxed mean, then input order");
+    TEST("rank: equal numbers sort by the taxed number, then input order");
     reset(false);
     ask.deck_alive = true;
     {
-        const int t = row(2.5, 0.0, 2.5, 0.01);
+        const int t = row(2.5, 0.0, 2.5, 0.0);
         ask.rows[t].attack = true; ask.rows[t].n_trump = 1;
-        const int u = row(2.5, 0.0, 2.5, 0.01);
-        const int v = row(2.5, 0.0, 2.5, 0.01);
+        const int u = row(2.5, 0.0, 2.5, 0.0);
+        const int v = row(2.5, 0.0, 2.5, 0.0);
         og_rank(&ask, &ans);
         CHECK(pos_of(u) == 0 && pos_of(v) == 1 && pos_of(t) == 2, "u v t (%d %d %d)", pos_of(u), pos_of(v), pos_of(t));
         CHECK(line_of(t)->best && line_of(u)->pick, "all three tie, u is the pick");
@@ -204,7 +255,8 @@ int main(void)
         const int s = row(3.0, 0.01, 3.0, 0.01);
         og_rank(&ask, &ans);
         CHECK(pos_of(s) == 0 && pos_of(un) == 1, "sampled first");
-        CHECK(!line_of(un)->best && line_of(un)->cls == OG_CLASS_NONE && line_of(un)->bar == 0.0f, "no verdict on it");
+        CHECK(!line_of(un)->best && !line_of(un)->shown && line_of(un)->cls == OG_CLASS_NONE && line_of(un)->bar == 0.0f,
+              "no verdict on it");
     }
 
     /* ---- the exact regime ------------------------------------------------- */

@@ -58,7 +58,8 @@ export interface RankKernel {
 }
 
 /** Hand the accumulated rows to the kernel and take them back in its order,
- *  with its Best, pick, class, bar and printed error. Both modes call this. */
+ *  with the number it shows (fusion's noisy race), its error, Best, pick,
+ *  class and bar. Both modes call this. */
 export function rankCandidates(k: RankKernel, list: OracleCandidate[], exact: boolean, deckAlive: boolean): OracleCandidate[] {
     k.write(memOf(k.buffer()), k.ex.wasm_og_rank_ask(), {
         exact, deckAlive,
@@ -71,7 +72,7 @@ export function rankCandidates(k: RankKernel, list: OracleCandidate[], exact: bo
     });
     const at = k.ex.wasm_og_rank();
     return k.read(memOf(k.buffer()), at).lines.map((l) => ({
-        ...list[l.row], se: l.se, shadowSe: l.shadowSe, best: l.best, pick: l.pick, cls: CLASS_NAME[l.cls] ?? null, bar: l.bar,
+        ...list[l.row], ef: l.shown ? l.ef : null, se: l.se, shadowSe: l.shadowSe, best: l.best, pick: l.pick, cls: CLASS_NAME[l.cls] ?? null, bar: l.bar,
     }));
 }
 

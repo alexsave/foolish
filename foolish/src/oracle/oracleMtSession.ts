@@ -240,7 +240,7 @@ export class OracleMtSession {
                 // the kernel's n-based proxy (c/src/oracle_rank.c), asked for by -1.
                 n: nsim, mean, se: -1, shadowN: snsim,
                 shadowMean: snsim > 0 ? ex.wasm_mt_sumfp_shadow(i) / snsim : null,
-                shadowSe: -1, best: false, pick: false, cls: null, bar: 0,
+                shadowSe: -1, ef: null, best: false, pick: false, cls: null, bar: 0,
                 verdict, verdictVal: dv.verdictVal, forcedLoss: forced, pruned: false,
                 chosen: i === chosen,
                 played: key === job.recordedKey,
