@@ -72,6 +72,10 @@ CFLAGS += -DCD_PASS_PROBE
 # there the drop is the store's designed behaviour, and an assert would take the
 # whole server down.
 CFLAGS += -DENGINE_SNAP_ASSERT
+# The bot memory's loud check (src/bot_memory.c admit): a fake card a fold would
+# pin, infer a void from or set a floor from aborts these suites and tools. The
+# same native builds only: a shipped build refuses the card and plays on.
+CFLAGS += -DBOT_MEM_ASSERT
 
 # Every brain: one src/<name>_strategy.c each, registered by its row in
 # src/bots.c and listed nowhere else. A wildcard over SOURCES, sorted so the
@@ -277,7 +281,7 @@ hand-contract-test: build/hand_contract_test
 ASAN_CFLAGS := -ffp-contract=off -fsanitize=address,undefined -fno-sanitize=object-size \
                -fno-omit-frame-pointer -fno-sanitize-recover=undefined \
                -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DCD_LEAFBOOK \
-               -DCD_PASS_PROBE -DENGINE_SNAP_ASSERT
+               -DCD_PASS_PROBE -DENGINE_SNAP_ASSERT -DBOT_MEM_ASSERT
 .PHONY: tests-asan
 build/cnitro_tests_asan: $(call c_objs,build/obj/asan,$(CORE_SRC) tests/tests.c)
 	$(CC) $(ASAN_CFLAGS) $^ -o $@ -lm
@@ -1875,7 +1879,7 @@ wasm-fm-exp-test: wasm-cc-check build/fm_exp_native_bits build/fm_exp_test_O3.wa
 # runtime. Objects (and their .gcno/.gcda) land in covbuild/ where gcovr finds
 # them recursively. Tune the floors with COV_LINE_MIN / COV_BRANCH_MIN.
 COV_CC         ?= gcc
-COV_FLAGS      := -O0 -g -ffp-contract=off --coverage -fprofile-update=atomic -Isrc -I../../c_base/core/test -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE -DCOVERAGE_CORPUS -DENGINE_SNAP_ASSERT
+COV_FLAGS      := -O0 -g -ffp-contract=off --coverage -fprofile-update=atomic -Isrc -I../../c_base/core/test -Wno-unused-parameter -Wno-deprecated-declarations -DCD_PASS_PROBE -DCOVERAGE_CORPUS -DENGINE_SNAP_ASSERT -DBOT_MEM_ASSERT
 COV_LINE_MIN   ?= 90
 COV_BRANCH_MIN ?= 74
 # THE WHOLE SHIPPED KERNEL, not three files of it.

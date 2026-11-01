@@ -86,6 +86,13 @@ typedef struct {
     Card     alt[BOT_MEM_ROW];
 } BotMemory;
 
+// THE FAKE-CARD GUARD (bot_memory.c admit): every pin, void and floor the fold
+// writes is a card of this game's deck, or it is not written. Counted here; in
+// the native test builds (BOT_MEM_ASSERT) a refusal aborts, unless a test that
+// feeds hostile bytes on purpose sets bot_mem_tolerate_fakes.
+extern _Thread_local int bot_mem_tolerate_fakes;
+extern _Thread_local long bot_mem_fakes_refused;
+
 // An empty block: no game, nothing seen.
 void bot_mem_clear(BotMemory *m);
 
