@@ -449,7 +449,7 @@ int cb_rows_sql_convert_game_ids(cb_store *s, void (*draw)(char out[CB_GAME_ID_M
 // How many games hold an id the conversion would rewrite (read only): 0 means nothing to do.
 int cb_rows_sql_bad_game_ids(cb_store *s, int *n);
 // The table and column of every game id the SQL store holds: what the conversion rewrites.
-#define CB_ROWS_SQL_N_GAME_ID_COLUMNS 6
+#define CB_ROWS_SQL_N_GAME_ID_COLUMNS 5
 extern const char *const CB_ROWS_SQL_GAME_ID_COLUMNS[CB_ROWS_SQL_N_GAME_ID_COLUMNS][2];
 
 // games_get_views for a store with no round trip to save (SQLite, the tests'

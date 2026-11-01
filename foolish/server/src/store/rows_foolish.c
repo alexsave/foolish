@@ -248,7 +248,7 @@ bool cb_rows_game_of(const cb_item *it, cb_game_row *g) {
     uint8_t *seed;
     size_t seed_len;
     if (!b_of(it, "state", &g->state, &g->state_len) || !b_of(it, "roster", &g->roster, &g->roster_len) ||
-        !b_of(it, "logs_packed", &g->logs, &g->logs_len) || !b_of(it, "game_seed", &seed, &seed_len)) {
+        !b_of(it, "move_list", &g->logs, &g->logs_len) || !b_of(it, "game_seed", &seed, &seed_len)) {
         cb_game_row_free(g);
         return false;
     }
@@ -260,7 +260,7 @@ bool cb_rows_game_of(const cb_item *it, cb_game_row *g) {
     bool_of(it, "needs_bots", &g->needs_bots);
     bool_of(it, "seats_exact", &g->seats_exact);
     g->round_epoch = cb_item_n_or(it, "round_epoch", 0);
-    // The session log rides in the row whole (logs_packed); log_from only says there is one.
+    // The session's move list rides in the row whole (move_list, move_list.h); log_from only says there is one.
     g->log_from = g->logs_len ? (g->version > 0 ? g->version : 1) : 0;
     g->created_at = cb_item_n_or(it, "created_at", 0);
     g->updated_at = cb_item_n_or(it, "updated_at", 0);
@@ -274,7 +274,7 @@ static void game_attrs(attrs *x, const cb_game_row *g) {
     add(x, CB_AVN("status", g->status));
     add(x, CB_AVB("state", g->state, g->state_len));
     add(x, CB_AVB("roster", g->roster, g->roster_len));
-    if (g->logs_len) add(x, CB_AVB("logs_packed", g->logs, g->logs_len));
+    if (g->logs_len) add(x, CB_AVB("move_list", g->logs, g->logs_len));
     if (g->has_seed) add(x, CB_AVB("game_seed", g->seed, CB_SEED_LEN));
     add(x, CB_AVBOOL("needs_bots", g->needs_bots));
     add(x, CB_AVN("version", g->version));
@@ -300,11 +300,12 @@ int cb_rows_game_get(cb_store *s, const char *id, cb_game_row *out) {
     return rc;
 }
 
-// ---- the session log: logs_packed in the row (the production layout) --------------------------
+// ---- the session's move list: move_list in the row ------------------------------------------------
 //
-// The DynamoDB path keeps the cumulative log inside the game row, as production holds it, so a commit
-// reads it and writes it back whole with the records appended. (The SQL store appends one game_moves
-// row instead: rows_sql.c.)
+// The DynamoDB path keeps the session's move list (move_list.h) inside the game row, so a commit reads
+// it and writes it back whole with its chunk appended. (The SQL store appends the chunk to its games
+// row's moves column in SQL: rows_sql.c.) An item written before the list held the session's log
+// records as logs_packed, which nothing reads any more: that game has no replay.
 
 int cb_rows_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
     *out = NULL;
@@ -325,7 +326,7 @@ int cb_rows_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **o
     return CB_OK;
 }
 
-// The log a commit writes: its records after the stored log (or alone, when it clears it).
+// The list a commit writes: its chunk after the stored list (or alone, when it clears it).
 static int full_log(cb_store *s, const cb_game_commit *c, uint8_t **out, size_t *len) {
     uint8_t *old = NULL;
     size_t old_len = 0;
@@ -640,10 +641,10 @@ void cb_rows_cas_write(const cb_game_commit *c, int64_t last_commit_at, cb_rows_
     set(&x, CB_AVN("status", g->status), CB_SET_TO);
     set(&x, CB_AVB("state", g->state, g->state_len), CB_SET_TO);
     set(&x, CB_AVB("roster", g->roster, g->roster_len), CB_SET_TO);
-    // A commit that neither clears the log nor adds to it leaves the stored log as it is.
+    // A commit that neither clears the list nor adds to it leaves the stored list as it is.
     if (c->log_clear || c->log_add_len) {
-        if (g->logs_len) set(&x, CB_AVB("logs_packed", g->logs, g->logs_len), CB_SET_TO);
-        else set(&x, CB_AVB("logs_packed", NULL, 0), CB_SET_REMOVE);
+        if (g->logs_len) set(&x, CB_AVB("move_list", g->logs, g->logs_len), CB_SET_TO);
+        else set(&x, CB_AVB("move_list", NULL, 0), CB_SET_REMOVE);
     }
     if (g->has_seed) set(&x, CB_AVB("game_seed", g->seed, CB_SEED_LEN), CB_SET_TO);
     else set(&x, CB_AVB("game_seed", NULL, 0), CB_SET_REMOVE);
@@ -800,7 +801,7 @@ static int commit_or_import(cb_store *s, const cb_game_commit *c0, bool import) 
         const cb_game_row *g = c.row;
         cb_game_row row = *g;
         row.last_commit_at = import ? g->last_commit_at : g->updated_at;   // a commit's time is its last commit
-        if (!import && (c.log_clear || c.log_add_len)) {   // the row carries the whole log
+        if (!import && (c.log_clear || c.log_add_len)) {   // the row carries the whole list
             size_t full_len = 0;
             if ((rc = full_log(s, &c, &full, &full_len)) != CB_OK) break;
             row.logs = full;

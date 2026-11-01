@@ -148,6 +148,7 @@ static int m_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **
     *out = NULL;
     *out_len = 0;
     pthread_mutex_lock(&m->mu);
+    m->hooks.list_reads++;
     tm_game *g = find_game(m, id);
     if (g && g->row.logs_len && (*out = dupb(g->row.logs, g->row.logs_len))) *out_len = g->row.logs_len;
     pthread_mutex_unlock(&m->mu);

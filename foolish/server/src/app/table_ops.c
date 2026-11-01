@@ -8,6 +8,7 @@
 // loop, and the new row's bookkeeping columns.
 #include <stddef.h>
 #include "app_internal.h"
+#include "move_list.h"
 #include "store/journal.h"
 #include "bots.h"
 #include "edge.h"
@@ -480,7 +481,7 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     if (!nrow->has_seed) { why = "no deal seed: nothing to encode a replay from"; goto out; }
     if (CB_ROWS_CALL(ctx->store, game_logs, nrow->id, nrow->log_from, &logs, &logs_len) != CB_OK || logs_len == 0) {
         free(logs);
-        why = "no session log: nothing to encode a replay from";
+        why = "no move list: nothing to encode a replay from";
         goto out;
     }
     // The section's kept scratch (one allocation per thread, not three per game end).
@@ -493,12 +494,12 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
         why = "does not load";
         goto out;
     }
-    // The extras read the roster and the log, never the board (table_replay_extras takes the
-    // Table const), so the board table_replay_code replays is still the loaded one.
-    int n_extras = table_replay_extras(&s->t, logs, (int)logs_len, extras, EXTRAS_CAP);
+    // The session's move list (move_list.h), its times from the row's created_at as section_row
+    // wrote them; both read the board and the roster, never change them.
+    int n_extras = table_replay_extras_list(&s->t, nrow->created_at, logs, (int)logs_len, extras, EXTRAS_CAP);
     if (n_extras < 0) { rc = n_extras; why = "replay extras refused"; goto out; }
-    int n_code = table_replay_code(&s->t, nrow->seed, CB_SEED_LEN, logs, (int)logs_len,
-                                   code, CODE_CAP, scratch, SCRATCH_CAP);
+    int n_code = table_replay_code_list(&s->t, nrow->seed, CB_SEED_LEN, logs, (int)logs_len,
+                                        code, CODE_CAP, scratch, SCRATCH_CAP);
     if (n_code < 0) { rc = n_code; why = "replay code refused"; goto out; }
     CB_INFO("table", "game %s: replay encoded (v6) to %d+%d bytes", nrow->id, n_code, n_extras);
 
@@ -516,7 +517,7 @@ static void finalize_game(cb_ctx *ctx, cb_section *s, const cb_game_row *nrow) {
     cb_table_snap_summary(&snap.sum, code, n_code, extras, n_extras);
     if ((rc = CB_ROWS_CALL(ctx->store, snapshot_put, &snap)) != CB_OK) why = "snapshot_put failed";
 out:
-    if (why) CB_ERROR("table", "game %s: snapshot failed, keeping the log: %s (%d)", nrow->id, why, rc);
+    if (why) CB_ERROR("table", "game %s: snapshot failed, keeping the move list: %s (%d)", nrow->id, why, rc);
     free(logs);
 }
 
@@ -871,9 +872,23 @@ static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *de
     memset(gp, 0, lists ? sizeof *gp : CB_GAME_COMMIT_HEAD);
     gp->row = np;
     gp->log_clear = log_clear;
+    // What the store appends is not the records but the session's MOVE LIST chunk they make
+    // (move_list.h): the code's atoms and the commit's millisecond, timed from the row's
+    // created_at. It goes in the arena after the products (and after an earlier chunk of this
+    // section: a second section_row writes a fresh one), and the arena's high water says so.
     if (!(waiting && !c->logs_reset) && c->logs.len > 0) {
-        gp->log_add = (uint8_t *)A + c->logs.off;
-        gp->log_add_len = (size_t)c->logs.len;
+        const int at = s->arena_hw;
+        int k = table_move_list_chunk(row->created_at, A + c->logs.off, c->logs.len, s->arena + at,
+                                      (int)sizeof s->arena - at);
+        if (k < 0) {
+            // No room: the session keeps going without a replay (a BROKEN item), never without its commit.
+            CB_ERROR("table", "game %s: no room for the move list's chunk (%d): the game will have no replay", row->id, k);
+            k = 0;
+            if (at < (int)sizeof s->arena) s->arena[at + k++] = MOVE_LIST_BROKEN_ITEM;
+        }
+        s->arena_hw = at + k;
+        gp->log_add = s->arena + at;
+        gp->log_add_len = (size_t)k;
     }
     gp->expected_version = row->version;
     if (!lists) return;
@@ -1089,8 +1104,8 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
 
 // ---- the journal's replay (journal.h cb_journal_apply_fn) ------------------------------------
 
-int cb_table_replay_move(void *ud, const cb_game_row *row, const uint8_t *session_log, size_t session_log_len,
-                         const struct cb_jmove *m, cb_game_row *out, uint8_t **log, size_t *log_len) {
+int cb_table_replay_move(void *ud, const cb_game_row *row, const struct cb_jmove *m, cb_game_row *out, uint8_t **log,
+                         size_t *log_len) {
     cb_ctx *ctx = ud;
     memset(out, 0, sizeof *out);
     *log = NULL;
@@ -1119,8 +1134,10 @@ int cb_table_replay_move(void *ud, const cb_game_row *row, const uint8_t *sessio
         }
     } else {
         // The cycle again, its moves handed to the drive as the ones it applied: the drive
-        // reuses each (no search) under its own seeding, and must apply exactly them.
-        kr = table_set_session_log(&s->t, session_log, (int)session_log_len);
+        // reuses each (no search) under its own seeding, and must apply exactly them. Like the
+        // live cycle (bots.c run_cycle) it is handed no session log: the row's bot memory is all
+        // a decision reads.
+        kr = 0;
         BotDriveOut want, drv;
         memset(&want, 0, sizeof want);
         for (int i = 0; kr >= 0 && i < m->n_mv; i++) {

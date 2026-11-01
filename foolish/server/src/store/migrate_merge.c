@@ -250,7 +250,7 @@ static void replays_pass(ctx *c) {
     sqlite3_finalize(gone);
 }
 
-static const char *const KNOWN[] = { "users", "sessions", "refresh_tokens", "signin_fails", "games", "game_moves", "game_members", "game_bots",
+static const char *const KNOWN[] = { "users", "sessions", "refresh_tokens", "signin_fails", "games", "game_members", "game_bots",
                                      "bots", "ratings", "replays", "replay_players", "chat", "_gone_games", "_gone_replays" };
 
 static void unknown_tables(ctx *c) {
@@ -318,7 +318,6 @@ static void body(ctx *c, unsigned flags) {
 #define DEL(field, sql) do { q = prep(c, sql); if (q) { sqlite3_step(q); t->field += sqlite3_changes(c->db); sqlite3_finalize(q); } } while (0)
         DEL(replay_players_deleted, "DELETE FROM replay_players WHERE replay_id IN (SELECT id FROM _gone_replays) OR replay_id IN (SELECT id FROM replays WHERE game_id IN (SELECT game_id FROM _gone_games))");
         DEL(replays_deleted, "DELETE FROM replays WHERE id IN (SELECT id FROM _gone_replays)");
-        DEL(moves_deleted, "DELETE FROM game_moves WHERE game_id IN (SELECT game_id FROM _gone_games)");
         DEL(members_deleted, "DELETE FROM game_members WHERE game_id IN (SELECT game_id FROM _gone_games)");
         DEL(bots_deleted, "DELETE FROM game_bots WHERE game_id IN (SELECT game_id FROM _gone_games)");
         DEL(chat_deleted, "DELETE FROM chat WHERE game_id IN (SELECT game_id FROM _gone_games)");
@@ -409,11 +408,11 @@ int cb_mig_transform(const char *path, unsigned flags, FILE *log, cb_mig_tx *out
     fprintf(o, "transform: %ld duplicate groups, %ld accounts merged away, %ld passwords taken from a newer account, %ld emails set to today's transform\n"
                "transform: re-pointed: game_members %ld (+%ld already seated, dropped), roster seats in %ld games, replays %ld, replay_players %ld, chat %ld\n"
                "transform: dropped with the merged-away accounts: sessions %ld, refresh tokens %ld, sign-in failures %ld, ratings %ld\n"
-               "transform: self-vs-self games deleted %ld (moves %ld, members %ld, bot links %ld, chat %ld, replays %ld, replay_players %ld)\n"
+               "transform: self-vs-self games deleted %ld (their move lists with them; members %ld, bot links %ld, chat %ld, replays %ld, replay_players %ld)\n"
                "transform: ratings reset %ld; %ld other accounts' emails differ from today's transform (left as they are); unexpected %ld\n",
             t->groups, t->merged_away, t->passwords_taken, t->emails_changed, t->members_repointed, t->members_deduped, t->rosters_repointed,
             t->replays_repointed, t->replay_players_repointed, t->chat_repointed, t->sessions_dropped, t->refresh_dropped, t->fails_dropped,
-            t->ratings_dropped, t->games_deleted, t->moves_deleted, t->members_deleted, t->bots_deleted, t->chat_deleted, t->replays_deleted,
+            t->ratings_dropped, t->games_deleted, t->members_deleted, t->bots_deleted, t->chat_deleted, t->replays_deleted,
             t->replay_players_deleted, t->ratings_reset, t->email_mismatch, t->unexpected);
     free(c.a);
     free(c.r);

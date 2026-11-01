@@ -8,9 +8,13 @@
 -- whose rows are KBs (games, replays) keeps its rowid, so a row stays on one leaf page
 -- (a WITHOUT ROWID row over about 1 KB spills to overflow pages, rewritten with it).
 
--- A game: the kernel's state and roster and the scalar columns, a fixed size. The
--- session log is NOT here: it is game_moves. log_from is the seq of the current
--- session's first move (0: none). updated_at is the last commit's time.
+-- A game: the kernel's state and roster, the scalar columns, and the session's MOVE LIST
+-- (move_list: the v6 code's atoms and the commits' times, move_list.h; NULL: no session), which
+-- each commit appends its chunk to and a deal or a lobby replaces. Server-only, like the seed:
+-- with the seed it is the deal. log_from is the version of the commit that began the current
+-- session (0: none). updated_at is the last commit's time. A database at schema 9 kept the
+-- session log in a game_moves table instead; opening it converts it once (rows_sql.c
+-- sql_upgrade).
 CREATE TABLE IF NOT EXISTS games (
     id             TEXT PRIMARY KEY,
     status         INTEGER NOT NULL,
@@ -23,19 +27,9 @@ CREATE TABLE IF NOT EXISTS games (
     log_from       INTEGER NOT NULL,
     created_at     INTEGER NOT NULL,
     updated_at     INTEGER NOT NULL,
-    last_commit_at INTEGER NOT NULL
+    last_commit_at INTEGER NOT NULL,
+    move_list      BLOB
 );
-
--- The append-only session log: one row per commit that appended kernel log records,
--- at seq = the version that commit wrote. A move appends one row; a deal or a lobby
--- reset deletes the game's rows; the bot drive and the replay at game end read them
--- in order from log_from.
-CREATE TABLE IF NOT EXISTS game_moves (
-    game_id TEXT NOT NULL,
-    seq     INTEGER NOT NULL,
-    action  BLOB NOT NULL,
-    PRIMARY KEY (game_id, seq)
-) WITHOUT ROWID;
 
 -- The humans seated at a game (the dashboard, the chat fan-out, membership checks).
 CREATE TABLE IF NOT EXISTS game_members (
@@ -78,9 +72,9 @@ CREATE INDEX IF NOT EXISTS ratings_top ON ratings(elo_rating DESC, user_id) WHER
 -- A finished game's replay: the kernel's v6 replay code (moves), the extras (the seats'
 -- names and gaps), the players in seat order (16 bytes each, bots included), and the
 -- summary the history list shows (fool, dur; NULL: none). game_id NULL once the game
--- is deleted. It keeps its own encoded moves rather than pointing at game_moves: the
+-- is deleted. It keeps its own encoded moves rather than pointing at games.move_list: the
 -- code is a different, compact format, and a replay outlives both the game and its
--- session log (a rematch's deal clears the log).
+-- session's list (a rematch's deal clears the list).
 CREATE TABLE IF NOT EXISTS replays (
     id         BLOB PRIMARY KEY,
     game_id    TEXT,

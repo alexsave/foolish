@@ -31,7 +31,7 @@
 #define MOD "journal"
 #define SEG_MAGIC "FJNL"
 #define SEG_HDR 16
-#define FORMAT 2   // 2: the fixed record and CRC-32C (1: the replay coder and FNV-1a)
+#define FORMAT CB_JOURNAL_FORMAT
 #define BATCH_MAGIC 'J'
 #define FULL_MAGIC 'R'           // a whole commit (journal.h "A FULL RECORD")
 #define FULL_HDR 12
@@ -2477,12 +2477,9 @@ static int recover_move(cb_journal *j, const cb_jmove *m, char *err, size_t cap)
     jrec r;
     memset(&r, 0, sizeof r);
     r.m = *m;
-    uint8_t *slog = NULL, *mlog = NULL;
-    size_t slog_len = 0;
-    if (m->bots) rc = logs_of(j, m->game, cur.log_from, &slog, &slog_len);   // a bot's moves are seeded from it
-    if (rc == CB_OK) rc = j->o.apply(j->o.apply_ud, &cur, slog, slog_len, m, &r.row, &mlog, &r.log_len);
+    uint8_t *mlog = NULL;
+    rc = j->o.apply(j->o.apply_ud, &cur, m, &r.row, &mlog, &r.log_len);   // a bot cycle reads no session log either
     r.log = mlog;
-    free(slog);
     cb_game_row_free(&cur);
     if (rc == CB_OK && r.row.version != m->base_version + 1) rc = CB_E_STATE;
     if (rc != CB_OK) {

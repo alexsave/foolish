@@ -11,7 +11,7 @@
 //   1 BOT#<id> BOT           -> bots           (all of them replace the seed, at cb_mig_finish)
 //   2 GAME#<id> BOT#<bot>    -> game_bots      (held until the game's ROW, which sorts after)
 //   2 GAME#<id> MEMBER#<u>   -> game_members   (likewise)
-//   2 GAME#<id> ROW          -> games, and its logs_packed as one game_moves row
+//   2 GAME#<id> ROW          -> games, its move_list with it
 //   3 SNAP#<id> PLAYER#<u>   -> replay_players (held until the replay; the summary comes from them)
 //   3 SNAP#<id> SNAP         -> replays
 //   4 CHAT#<game> <t>#<id>   -> chat

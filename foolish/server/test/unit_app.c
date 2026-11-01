@@ -209,6 +209,44 @@ static void setup(int n_bots) {
     g_nseq = 0;
 }
 
+// ---- THE LEAK RULE: the session's move list never leaves the server ----------------------------
+//
+// The move list (move_list.h) holds every card played, and with the deal seed (games.seed, also
+// server-only) the whole deal: it must never reach a player. While g_leak.gid is set, every reply body
+// and every push (each seat's envelope and cast, the spectators' cast) is searched for every window of
+// LEAK_WINDOW bytes of the game's list as it stands; a window found is a leak. 16 bytes is several
+// moves, long enough that a chance match in a reply's own bytes would need a 2^-128 coincidence.
+#define LEAK_WINDOW 16
+static struct {
+    char    gid[CB_GAME_ID_MAX + 1];
+    int     checked, leaks, windows;
+    uint8_t last[1 << 16];   // the longest list the game has held: a session a deal or a lobby cleared
+    size_t  last_len;        // is still looked for
+} g_leak;
+static int leak_in(const void *p, size_t n, const uint8_t *list, size_t len) {
+    for (size_t i = 0; len >= LEAK_WINDOW && i + LEAK_WINDOW <= len; i++) {
+        g_leak.windows++;
+        if (memmem(p, n, list + i, LEAK_WINDOW)) return 1;
+    }
+    return 0;
+}
+static void leak_check(const void *p, size_t n) {
+    if (!p || !n) return;
+    cb_game_row row;
+    if (CB_ROWS_CALL(g_store, game_get, g_leak.gid, &row) != CB_OK) return;
+    uint8_t *list = NULL;
+    size_t len = 0;
+    CB_ROWS_CALL(g_store, game_logs, g_leak.gid, row.log_from, &list, &len);
+    cb_game_row_free(&row);
+    g_leak.checked++;
+    if (leak_in(p, n, list, len) || leak_in(p, n, g_leak.last, g_leak.last_len)) g_leak.leaks++;
+    if (len >= g_leak.last_len && len <= sizeof g_leak.last) {
+        memcpy(g_leak.last, list, len);
+        g_leak.last_len = len;
+    }
+    free(list);
+}
+
 // ---- requests ------------------------------------------------------------------------------
 
 typedef struct {
@@ -243,6 +281,7 @@ static void call(const char *method, const char *fn, const char *bearer, const c
         T_CHECK(cb_section_pooled_is_clean());
     }
     out->status = res.status;
+    if (g_leak.gid[0]) leak_check(res.body.p, res.body.len);
     out->len = res.body.len < sizeof out->body ? res.body.len : sizeof out->body;
     if (out->len) memcpy(out->body, res.body.p, out->len);
     out->ctype[0] = 0;
@@ -289,8 +328,14 @@ static int refusal_why(const reply *r, AskRefusal *out) {
 static cb_game_row stored(const char *gid) {
     cb_game_row row;
     memset(&row, 0, sizeof row);
-    if (CB_ROWS_CALL(g_store, game_get, gid, &row) == CB_OK)
-        CB_ROWS_CALL(g_store, game_logs, gid, row.log_from, &row.logs, &row.logs_len);
+    CB_ROWS_CALL(g_store, game_get, gid, &row);
+    return row;
+}
+
+// The stored row with its session's move list (move_list.h) in row.logs.
+static cb_game_row stored_list(const char *gid) {
+    cb_game_row row = stored(gid);
+    if (row.version) CB_ROWS_CALL(g_store, game_logs, gid, row.log_from, &row.logs, &row.logs_len);
     return row;
 }
 
@@ -398,13 +443,12 @@ static int seat_of(const char *gid, const char *uid) {
 }
 
 // Whether the kernel can encode the stored session as a replay, asked of the
-// kernel itself on the committed row. Two kernel limits make its round-trip
-// gate refuse one, and the end of the game then logs and swallows that, as
-// finalize.ts did: a log longer than MAX_LOGS records, and a pickup of more
-// than MAX_LOG_PAIRS (16) cards, whose record keeps 16 while the replay has
-// them all (a three-seat passing game reaches it).
+// kernel itself on the committed row and its move list. The list keeps no
+// pickup's cards and has no MAX_LOGS ceiling, so the one limit left is
+// MOVE_LIST_MAX bytes, which no game here reaches; the end of the game logs
+// and swallows a refusal, as finalize.ts did.
 static bool log_encodable(const char *gid) {
-    cb_game_row row = stored(gid);
+    cb_game_row row = stored_list(gid);
     Game *g = calloc(1, sizeof *g);
     TableSnaps *snaps = calloc(1, sizeof *snaps);
     uint8_t *code = malloc(1 << 21), *scratch = malloc(1 << 20);
@@ -412,7 +456,7 @@ static bool log_encodable(const char *gid) {
     table_init(&t, g, snaps);
     int n = table_load(&t, row.state, (int)row.state_len, row.roster, (int)row.roster_len);
     if (n == TABLE_OK)
-        n = table_replay_code(&t, row.seed, CB_SEED_LEN, row.logs, (int)row.logs_len, code, 1 << 21, scratch, 1 << 20);
+        n = table_replay_code_list(&t, row.seed, CB_SEED_LEN, row.logs, (int)row.logs_len, code, 1 << 21, scratch, 1 << 20);
     free(g);
     free(snaps);
     free(code);
@@ -496,7 +540,7 @@ static void join_add_bot_and_start(void) {
     T_EQ_INT(r.status, 200);
     T_EQ_INT(status_of(gid), GAME_STATUS_PLAYING);
     T_EQ_INT(version_of(gid), 4);
-    cb_game_row row = stored(gid);
+    cb_game_row row = stored_list(gid);
     T_CHECK(row.has_seed);
     T_CHECK(row.logs_len > 0);
     T_EQ_INT(row.round_epoch, 0);
@@ -963,6 +1007,14 @@ static void a_finished_game_writes_a_snapshot_and_ratings(void) {
         memcpy(cs.extras, c.extras, sizeof c.extras);
         cs.n_extras = c.n_extras;
         the_summary_of_a_finished_game(&cs);
+        // The replay's times are the game's: its first move after the table was made, by the commit
+        // clock (the move list's TICKs are offsets from the row's created_at; read from another base,
+        // the start would fall decades away).
+        static ReplayExtras x;
+        cb_game_row row = stored(gid);
+        T_EQ_INT(cb_table_extras_read(&x, c.extras, c.n_extras, c.n_players, c.n_moves), 0);
+        T_CHECK(x.start_time >= (double)row.created_at / 1000 && x.start_time <= (double)g_now / 1000 + 1);
+        cb_game_row_free(&row);
     }
     // A move on a finished game is MOOT and commits nothing.
     int64_t v = version_of(gid);
@@ -1845,7 +1897,7 @@ static void continue_returns_a_clean_lobby(void) {
     T_EQ_INT(version_of(gid), v);
     meta("A", ASK_CONTINUE, gid, NULL, &r);
     T_EQ_INT(r.status, 200);
-    cb_game_row row = stored(gid);
+    cb_game_row row = stored_list(gid);
     T_EQ_INT(row.status, GAME_STATUS_WAITING);
     T_CHECK(!row.has_seed);
     T_EQ_INT(row.logs_len, 0);
@@ -1853,7 +1905,7 @@ static void continue_returns_a_clean_lobby(void) {
     cb_game_row_free(&row);
     meta("A", ASK_START, gid, NULL, &r);
     meta("B", ASK_START, gid, NULL, &r);
-    row = stored(gid);
+    row = stored_list(gid);
     T_EQ_INT(row.status, GAME_STATUS_PLAYING);
     T_CHECK(row.has_seed);
     T_CHECK(row.logs_len > 0);
@@ -2030,8 +2082,8 @@ static void *taker(void *p) {
 static taker_arg g_taker;
 static pthread_t g_taker_th;
 static int g_taker_runs, g_taker_free;
-static void taking_observer(const char *game_id, int attempt, int logs_len, int prefs_len) {
-    (void)attempt; (void)logs_len; (void)prefs_len;
+static void taking_observer(const char *game_id, int attempt, int prefs_len) {
+    (void)attempt; (void)prefs_len;
     if (g_taker_runs++) return;
     g_taker.gid = game_id;
     atomic_store(&g_taker.got, false);
@@ -2203,26 +2255,21 @@ static void every_view_goes_to_its_own_seat(void) {
 }
 
 // belief_logs_wiring.test.ts, belief_human_freshness.test.ts: every bot cycle
-// reads the whole session, fresh after a human's commit: from the bot memory
-// the row carries (bot_memory.h, a v6 state blob), or, for a row without one,
-// from the stored session log, whole. resilience.test.ts: a cycle that lost its
-// CAS offers back the moves it already chose.
-static struct { int calls, short_log, log_reads, retries_with_prefs, retries; } g_cyc;
-static void cycle_observer(const char *game_id, int attempt, int logs_len, int prefs_len) {
+// reads the whole session, fresh after a human's commit, from the bot memory
+// the row carries (bot_memory.h, a v6 state blob), and never the store's session
+// list (move_list.h): only the game's end reads that. resilience.test.ts: a cycle
+// that lost its CAS offers back the moves it already chose.
+static struct { int calls, retries_with_prefs, retries; } g_cyc;
+static void cycle_observer(const char *game_id, int attempt, int prefs_len) {
+    (void)game_id;
     g_cyc.calls++;
-    cb_game_row row = stored(game_id);
-    if (logs_len >= 0) {
-        g_cyc.log_reads++;
-        if (logs_len == 0 || (size_t)logs_len != row.logs_len) g_cyc.short_log++;
-    }
-    cb_game_row_free(&row);
     if (attempt > 1) {
         g_cyc.retries++;
         if (prefs_len > 0) g_cyc.retries_with_prefs++;
     }
 }
 
-static void every_bot_cycle_gets_the_whole_log_and_its_choices_back(void) {
+static void every_bot_cycle_reads_no_list_and_gets_its_choices_back(void) {
     setup(1);
     char gid[CB_GAME_ID_MAX + 1];
     reply r;
@@ -2232,6 +2279,7 @@ static void every_bot_cycle_gets_the_whole_log_and_its_choices_back(void) {
     memset(&g_cyc, 0, sizeof g_cyc);
     cb_bots_cycle_observer = cycle_observer;
     tm_hooks *hk = tm_hooks_of(g_store);
+    const int reads0 = hk->list_reads;
     int steals = 0;
     for (int i = 0; i < 3000 && status_of(gid) == GAME_STATUS_PLAYING; i++) {
         uint8_t wire[64];
@@ -2245,13 +2293,50 @@ static void every_bot_cycle_gets_the_whole_log_and_its_choices_back(void) {
     cb_bots_cycle_observer = NULL;
     T_EQ_INT(status_of(gid), GAME_STATUS_GAME_OVER);
     T_CHECK(g_cyc.calls > 0);
-    T_EQ_INT(g_cyc.short_log, 0);
-    // A row the switch step writes carries its memory, so no cycle reads the log;
-    // before it, every cycle does (and reads it whole).
-    if (TABLE_STATE_FORMAT >= STATE_BLOB_FORMAT_V6) T_EQ_INT(g_cyc.log_reads, 0);   // v6 on: the memory section rides
-    else T_EQ_INT(g_cyc.log_reads, g_cyc.calls);
+    // No cycle reads the list: the one read is the game's end's, for its replay (a job, which may
+    // have run already; run here if not).
+    run_fin_jobs();
+    T_EQ_INT(hk->list_reads - reads0, 1);
     T_CHECK(g_cyc.retries > 0);
     T_EQ_INT(g_cyc.retries_with_prefs, g_cyc.retries);
+}
+
+static void leak_observer(const cb_fanout *f) {
+    for (int i = 0; i < f->n_seats; i++) {
+        leak_check(f->seats[i].envelope, f->seats[i].envelope_len);
+        leak_check(f->seats[i].cast, f->seats[i].cast_len);
+    }
+    leak_check(f->spectator_cast, f->spectator_cast_len);
+}
+
+// THE LEAK RULE, end to end: a human and two bots play a game to its end and into a rematch's deal,
+// and no reply and no push carries any 16 bytes of the session's move list.
+// MUTATION-CHECKED: a game reply carrying the list (table_ops.c cb_table_run appending it to the
+// actor's envelope) turns "no reply or push carries the move list" red.
+static void no_reply_or_push_carries_the_move_list(void) {
+    setup(2);
+    char gid[CB_GAME_ID_MAX + 1];
+    reply r;
+    create_game(gid, &r);
+    meta("A", ASK_ADD_BOT, gid, NULL, &r);
+    meta("A", ASK_ADD_BOT, gid, NULL, &r);
+    memset(&g_leak, 0, sizeof g_leak);
+    snprintf(g_leak.gid, sizeof g_leak.gid, "%s", gid);
+    cb_fanout_observer = leak_observer;
+    meta("A", ASK_START, gid, NULL, &r);
+    for (int i = 0; i < 3000 && status_of(gid) == GAME_STATUS_PLAYING; i++) {
+        if (any_human_move(gid, &r)) continue;
+        T_EQ_INT(cb_bots_drive(&g_ctx, gid), CB_OK);
+    }
+    T_EQ_INT(status_of(gid), GAME_STATUS_GAME_OVER);
+    call("GET", "replays", "A", NULL, NULL, 0, &r);   // the history, and the game's replay in it
+    meta("A", ASK_CONTINUE, gid, NULL, &r);
+    meta("A", ASK_START, gid, NULL, &r);
+    T_EQ_INT(status_of(gid), GAME_STATUS_PLAYING);
+    cb_fanout_observer = fan_observer;
+    g_leak.gid[0] = 0;
+    T_CHECK(g_leak.checked > 20 && g_leak.windows > 1000);   // the list was long and was looked for
+    T_EQ_INT(g_leak.leaks, 0);   // no reply or push carries the move list
 }
 
 // web_bot_first_move_pace.test.ts, web_throwin_vs_bot.test.ts,
@@ -2324,7 +2409,7 @@ static void bot_moves_wait_for_the_table_to_settle(void) {
 // The lease each cycle holds is the production lease over k.
 static struct { int n; int64_t lease_left[256]; } g_lease_seen;
 static char g_lease_gid[CB_GAME_ID_MAX + 1];
-static void lease_observer(const char *game_id, int attempt, int logs_len, int prefs_len) {
+static void lease_observer(const char *game_id, int attempt, int prefs_len) {
     char token[CB_UUID_LEN + 1];
     int64_t until = 0;
     if (strcmp(game_id, g_lease_gid) == 0 && tm_lease(g_store, game_id, token, &until) == CB_OK && g_lease_seen.n < 256)
@@ -2624,10 +2709,11 @@ static void the_bot_loop_drives_until_a_human_owes_a_move(void) {
     cb_rating_row rb;
     T_EQ_INT(tm_rating(g_store, tm_bot_id(g_store, 0), &rb), CB_OK);
     T_EQ_INT(rb.games_played, 1);
-    // The snapshot, whenever the kernel can encode this session (log_encodable), by the job the
-    // drive's ending commit queued.
+    // The snapshot, by the job the drive's ending commit queued: every finished session encodes
+    // (its move list has no ceiling a game reaches, log_encodable).
     run_fin_jobs();
-    T_EQ_INT(tm_hooks_of(g_store)->snapshots, log_encodable(gid) ? 1 : 0);
+    T_CHECK(log_encodable(gid));
+    T_EQ_INT(tm_hooks_of(g_store)->snapshots, 1);
 }
 
 static void a_held_lease_skips_the_drive(void) {
@@ -2895,7 +2981,8 @@ int main(void) {
     T_RUN(a_bot_computes_unlocked_and_commits_locked);
     T_RUN(games_never_share_a_lock);
     T_RUN(every_view_goes_to_its_own_seat);
-    T_RUN(every_bot_cycle_gets_the_whole_log_and_its_choices_back);
+    T_RUN(every_bot_cycle_reads_no_list_and_gets_its_choices_back);
+    T_RUN(no_reply_or_push_carries_the_move_list);
     T_RUN(bot_moves_wait_for_the_table_to_settle);
     T_RUN(production_bot_timers);
     T_RUN(the_boards_time);

@@ -901,7 +901,7 @@ static void reset_world(uint64_t seed) {
     g_steal = 0;
     static const char *const EMPTY[] = {   // every row but the bots, children before their parents
         "DELETE FROM chat", "DELETE FROM replay_players", "DELETE FROM replays", "DELETE FROM ratings",
-        "DELETE FROM game_bots", "DELETE FROM game_members", "DELETE FROM game_moves", "DELETE FROM games",
+        "DELETE FROM game_bots", "DELETE FROM game_members", "DELETE FROM games",
         "DELETE FROM signin_fails", "DELETE FROM refresh_tokens", "DELETE FROM sessions", "DELETE FROM users",
     };
     for (size_t i = 0; i < sizeof EMPTY / sizeof EMPTY[0]; i++)

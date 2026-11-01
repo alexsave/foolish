@@ -17,7 +17,7 @@
 #include "../../../shared/c/crc32c/crc32c.h"
 
 // The segment format journal.c writes (journal.h SEGMENT FILE).
-#define JOURNAL_FORMAT 2
+#define JOURNAL_FORMAT CB_JOURNAL_FORMAT
 #include "util/clock.h"
 #include "store/store_sql.h"
 #include "awire.h"
@@ -508,19 +508,19 @@ static void a_move_off_its_board_is_refused(void) {
     cb_game_row out;
     uint8_t *log = NULL;
     size_t log_len = 0;
-    T_EQ_INT(cb_table_replay_move(&g_ctx, &row, NULL, 0, &m, &out, &log, &log_len), CB_OK);
+    T_EQ_INT(cb_table_replay_move(&g_ctx, &row, &m, &out, &log, &log_len), CB_OK);
     T_EQ_INT(out.version, row.version + 1);
     cb_game_row_free(&out);
     free(log);
     // The other seat, whose move it is not, is refused: the kernel acts it and says no.
     if (pick_move(&row, 1 - seat, wire, sizeof wire) <= 0) {
         mv.seat = (int8_t)(1 - seat);
-        T_CHECK(cb_table_replay_move(&g_ctx, &row, NULL, 0, &m, &out, &log, &log_len) != CB_OK);
+        T_CHECK(cb_table_replay_move(&g_ctx, &row, &m, &out, &log, &log_len) != CB_OK);
         mv.seat = (int8_t)seat;
     }
     // A seat past the roster names no player.
     mv.seat = MAX_PLAYERS - 1;
-    T_CHECK(cb_table_replay_move(&g_ctx, &row, NULL, 0, &m, &out, &log, &log_len) != CB_OK);
+    T_CHECK(cb_table_replay_move(&g_ctx, &row, &m, &out, &log, &log_len) != CB_OK);
     free(log);
     cb_game_row_free(&row);
     close_world(s);
@@ -681,14 +681,17 @@ static void sql_dump(const char *path, const char *gid, uint64_t *games, uint64_
         *games = fnv1a64(*games, b ? b : "", (size_t)sqlite3_column_bytes(st, c));
     }
     sqlite3_finalize(st);
-    sqlite3_prepare_v2(db, "SELECT seq, action FROM game_moves WHERE game_id = ?1 ORDER BY seq", -1, &st, NULL);
+    // The session's move list (games.move_list, move_list.h), apart from the row's other columns so a
+    // test can say it is there: *moves its hash, *n_moves its bytes.
+    T_EQ_INT(sqlite3_prepare_v2(db, "SELECT move_list FROM games WHERE id = ?1", -1, &st, NULL), SQLITE_OK);
     sqlite3_bind_text(st, 1, gid, -1, SQLITE_STATIC);
-    while (sqlite3_step(st) == SQLITE_ROW) {
-        int64_t seq = sqlite3_column_int64(st, 0);
-        *moves = fnv1a64(*moves, &seq, sizeof seq);
-        *moves = fnv1a64(*moves, sqlite3_column_blob(st, 1), (size_t)sqlite3_column_bytes(st, 1));
-        (*n_moves)++;
-    }
+    T_EQ_INT(sqlite3_step(st), SQLITE_ROW);
+    // A BLOB, appended to as one: SQL's || makes TEXT of its operands, which a reader of the column as
+    // text (length(), the admin browser) would cut at the first zero byte. MUTATION-CHECKED: the append
+    // without its CAST turns this red.
+    if (sqlite3_column_type(st, 0) != SQLITE_NULL) T_EQ_INT(sqlite3_column_type(st, 0), SQLITE_BLOB);
+    *n_moves = sqlite3_column_bytes(st, 0);
+    *moves = fnv1a64(*moves, sqlite3_column_blob(st, 0), (size_t)*n_moves);
     sqlite3_finalize(st);
     sqlite3_close(db);
 }
@@ -745,9 +748,12 @@ static void the_flush_writes_the_rows_per_move_commits_write(void) {
     T_EQ_INT(js.records, llabs(version_of(b, gid)) - v_dealt);   // every commit since the deal, bot cycles and an end too
     T_EQ_INT(cb_journal_flush(b), CB_OK);
     sql_dump(pb, gid, &gb, &mb, &nb);
+    // The flush writes the row, and the move list the per-move commits appended chunk by chunk, byte
+    // for byte (the list is not empty: the deal and the moves are in it).
     T_CHECK(gb == ga);
     T_CHECK(mb == ma);
     T_EQ_INT(nb, na);
+    T_CHECK(na > 0);
     T_CHECK(n > 10);
     close_world(b);
 }

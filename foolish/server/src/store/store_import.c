@@ -7,6 +7,7 @@
 
 #include "bot_roster.h"
 #include "table.h"
+#include "move_list.h"
 #include "util/err.h"
 #include "../../../../shared/c/hex/hex.h"
 #include "../../../../shared/c/num_parse.h"
@@ -384,6 +385,23 @@ static bool import_games(cb_store *s, const char *dir, tally *t, tally *th, tall
             (*unloadable)++;
             fprintf(stderr, "cbase-import: game %s does not load through the kernel (table_load %d, detail %d)\n", g.id,
                     lr, tbl.detail);
+        }
+        // The export's logs_packed is the session's log records; the store keeps its move list
+        // (move_list.h), one chunk from the row's created_at.
+        if (g.logs_len) {
+            uint8_t *list = malloc(g.logs_len + MOVE_LIST_CHUNK_SLACK);
+            const int n = list ? table_move_list_chunk(g.created_at, g.logs, (int)g.logs_len, list,
+                                                       (int)g.logs_len + MOVE_LIST_CHUNK_SLACK) : TABLE_E_CAP;
+            free(g.logs);
+            g.logs = NULL;
+            g.logs_len = 0;
+            if (n > 0) {
+                g.logs = list;
+                g.logs_len = (size_t)n;
+            } else {
+                free(list);
+                if (n < 0) fprintf(stderr, "cbase-import: game %s: its session log is refused (%d): no move list\n", g.id, n);
+            }
         }
         cb_uuid humans[CB_MAX_SEATS], bots[CB_MAX_SEATS];
         int nh = seats_of(&ph, ph_g, ph_u, g.id, humans), nbots = seats_of(&bh, bh_g, bh_b, g.id, bots);

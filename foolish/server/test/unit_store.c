@@ -15,6 +15,10 @@
 #include "bot_roster.h"
 #include "bots.h"
 #include "table.h"
+#include "move_list.h"
+#include "awire.h"
+#include "legal.h"
+#include "view.h"
 #include "util/clock.h"
 #include "util/err.h"
 #include "util/uuid.h"
@@ -1759,11 +1763,11 @@ static void admin_reads(void) {
     cb_store *s = open_fresh();
     // The collections are the tables, by name.
     names_t n = { 0 };
-    T_EQ_INT(CB_STORE_CALL(s, admin_collections, collect_name, &n), 15);
+    T_EQ_INT(CB_STORE_CALL(s, admin_collections, collect_name, &n), 14);
     T_EQ_STR(n.ids[0], "bots");
-    T_EQ_STR(n.ids[5], "games");
-    T_EQ_STR(n.ids[6], "identities");
-    T_EQ_STR(n.ids[14], "users");
+    T_EQ_STR(n.ids[4], "games");
+    T_EQ_STR(n.ids[5], "identities");
+    T_EQ_STR(n.ids[13], "users");
 
     // Pages of 20 over the 56 bots: 20, 20, 16, and the cursor runs out.
     rows_t r = { 0 };
@@ -2301,12 +2305,232 @@ static void every_write_moves_the_change_count(void) {
     cb_store_close(s);
 }
 
+// The session's list (games.move_list, move_list.h): a commit appends its chunk, a deal replaces it,
+// a clear with no chunk (a lobby) leaves none.
+// MUTATION-CHECKED: rows_sql.c list_write skipping a clear with nothing to add turns "a lobby keeps
+// no list" red.
+static void the_session_list_appends_and_clears(void) {
+    cb_store *s = open_fresh();
+    cb_user_row a = mkuser("list@x.io", "LIST", 1);
+    T_EQ_INT(CB_STORE_CALL(s, user_create, &a), CB_OK);
+    cb_game_row g = mkgame("li55st", 100);
+    T_EQ_INT(CB_ROWS_CALL(s, game_create, &g, a.id), CB_OK);
+    cb_game_row n = mkgame("li55st", 100), got;
+    n.log_from = 1;
+    const uint8_t one[2] = { 0xaa, 0xbb }, two[1] = { 0xcc }, both[3] = { 0xaa, 0xbb, 0xcc };
+    struct { bool clear; const uint8_t *add; size_t n; const uint8_t *want; size_t want_n; } steps[] = {
+        { true, one, sizeof one, one, sizeof one },     // a deal: the list is its chunk
+        { false, two, sizeof two, both, sizeof both },  // a move: appended
+        { false, NULL, 0, both, sizeof both },          // a commit that adds nothing leaves it
+        { true, NULL, 0, NULL, 0 },                     // a lobby keeps no list
+        { true, two, sizeof two, two, sizeof two },     // the next deal's alone
+    };
+    for (int i = 0; i < (int)(sizeof steps / sizeof steps[0]); i++) {
+        n.version = i + 1;
+        cb_game_commit c = { .row = &n, .expected_version = i, .n_humans = 1, .log_add = steps[i].add,
+                             .log_add_len = steps[i].n, .log_clear = steps[i].clear };
+        memcpy(c.humans[0], a.id, sizeof c.humans[0]);
+        T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
+        T_EQ_INT(CB_ROWS_CALL(s, game_get, "li55st", &got), CB_OK);
+        T_EQ_INT(CB_ROWS_CALL(s, game_logs, "li55st", got.log_from, &got.logs, &got.logs_len), CB_OK);
+        if (steps[i].want_n) T_EQ_MEM(got.logs, got.logs_len, steps[i].want, steps[i].want_n);
+        else T_EQ_INT(got.logs_len, 0);   // a lobby keeps no list
+        cb_game_row_free(&got);
+    }
+    cb_store_close(s);
+}
+
+// ---- schema 9 -> 10: the session logs become move lists ----------------------------------------
+
+#define UP_RS(x) (x), (int)strlen(x)
+
+// A game played through the kernel as the server plays it, one commit per human move or bot cycle,
+// up to `max_commits` (0: to its end): its row (version, state, roster, created_at, log_from) and its
+// session log as schema 9 stored it, one game_moves row per commit at the version the commit wrote.
+typedef struct {
+    uint8_t state[TABLE_STATE_MAX], roster[ROSTER_BYTES], log[1 << 16], seed[FOOLISH_SEED_LEN];
+    int     state_len, log_len, status, n_rows;
+    int64_t version, log_from, created_at, now;
+    int64_t seq[2048];
+    int     off[2048], len[2048];
+} up_game_t;
+
+static void up_play(up_game_t *u, int seed0, int max_commits) {
+    static Game g;
+    static TableSnaps snaps;
+    static uint8_t arena[1 << 18];
+    static LegalMoves moves;
+    Table t;
+    TableCommit c;
+    memset(u, 0, sizeof *u);
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) u->seed[i] = (uint8_t)(seed0 * 31 + i * 7 + 1);
+    u->created_at = u->now = 1760000000000LL + seed0;
+    table_init(&t, &g, &snaps);
+    table_create(&t, UP_RS("h"), UP_RS("Human"));
+    table_add_bot(&t, UP_RS("h"), UP_RS("b1"), UP_RS("Bot"), UP_RS("random"), u->seed);
+    game_set_seed(1);
+    table_ready(&t, UP_RS("h"), u->seed);
+    for (int n = 0;; n++) {
+        u->now += 700 + (n % 5) * 311;
+        if (table_commit_products(&t, UP_RS("g"), (uint32_t)u->version + 1, u->now, &c, arena, sizeof arena) < 0) break;
+        u->version++;
+        memcpy(u->state, arena + c.state.off, (size_t)c.state.len);
+        u->state_len = c.state.len;
+        memcpy(u->roster, arena + c.roster.off, ROSTER_BYTES);
+        u->status = c.status;
+        if (c.logs_reset) { u->log_len = 0; u->n_rows = 0; u->log_from = u->version; }
+        if (c.logs.len && u->n_rows < 2048 && u->log_len + c.logs.len <= (int)sizeof u->log) {
+            u->seq[u->n_rows] = u->version;
+            u->off[u->n_rows] = u->log_len;
+            u->len[u->n_rows++] = c.logs.len;
+            memcpy(u->log + u->log_len, arena + c.logs.off, (size_t)c.logs.len);
+            u->log_len += c.logs.len;
+        }
+        if (c.status != GAME_STATUS_PLAYING || (max_commits && n >= max_commits)) break;
+        if (table_load(&t, u->state, u->state_len, u->roster, ROSTER_BYTES) != TABLE_OK) break;
+        BotDriveOut drv;
+        if (bot_drive_eligible_mask(&g, game_human_mask(&g)) != 0) {
+            if (table_bot_drive(&t, 0, 0, 1, &drv) <= 0) break;
+        } else {
+            calculate_legal_moves(&g, 0, &moves);
+            if (moves.n == 0) break;
+            const LegalMove *m = &moves.moves[n % moves.n];
+            AwireAction a;
+            memset(&a, 0, sizeof a);
+            a.kind = m->type; a.n = m->n_cards;
+            for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+            uint8_t wire[256];
+            const int wl = awire_encode(&a, wire, sizeof wire);
+            if (table_act(&t, UP_RS("h"), wire, wl, -1, 0) != TABLE_APPLIED) break;
+        }
+    }
+}
+
+// The row's state with no bot memory: the v5 blob a server before the memory wrote (the board, then
+// the clock and the stamp).
+static int up_as_v5(up_game_t *u) {
+    const int board = state_blob_board_bytes(u->state, u->state_len), fixed = STATE_BLOB_V3_CLOCK_BYTES + GAME_RATINGS_BYTES;
+    if (board < 0) return -1;
+    memmove(u->state + board, u->state + u->state_len - fixed, (size_t)fixed);
+    u->state[0] = STATE_BLOB_FORMAT_V5;
+    u->state_len = board + fixed;
+    return 0;
+}
+
+static void up_insert(sqlite3 *db, const char *id, const up_game_t *u) {
+    sqlite3_stmt *st;
+    T_EQ_INT(sqlite3_prepare_v2(db, "INSERT INTO games (id, status, version, state, roster, seed, needs_bots, round_epoch, "
+                                    "log_from, created_at, updated_at, last_commit_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, "
+                                    "?7, ?8, ?9, ?9)", -1, &st, NULL), SQLITE_OK);
+    sqlite3_bind_text(st, 1, id, -1, SQLITE_STATIC);
+    sqlite3_bind_int(st, 2, u->status);
+    sqlite3_bind_int64(st, 3, u->version);
+    sqlite3_bind_blob(st, 4, u->state, u->state_len, SQLITE_STATIC);
+    sqlite3_bind_blob(st, 5, u->roster, ROSTER_BYTES, SQLITE_STATIC);
+    sqlite3_bind_blob(st, 6, u->seed, FOOLISH_SEED_LEN, SQLITE_STATIC);
+    sqlite3_bind_int64(st, 7, u->log_from);
+    sqlite3_bind_int64(st, 8, u->created_at);
+    sqlite3_bind_int64(st, 9, u->now);
+    T_EQ_INT(sqlite3_step(st), SQLITE_DONE);
+    sqlite3_finalize(st);
+    T_EQ_INT(sqlite3_prepare_v2(db, "INSERT INTO game_moves (game_id, seq, action) VALUES (?1, ?2, ?3)", -1, &st, NULL), SQLITE_OK);
+    for (int i = 0; i < u->n_rows; i++) {
+        sqlite3_reset(st);
+        sqlite3_bind_text(st, 1, id, -1, SQLITE_STATIC);
+        sqlite3_bind_int64(st, 2, u->seq[i]);
+        sqlite3_bind_blob(st, 3, u->log + u->off[i], u->len[i], SQLITE_STATIC);
+        T_EQ_INT(sqlite3_step(st), SQLITE_DONE);
+    }
+    sqlite3_finalize(st);
+}
+
+// MUTATION-CHECKED (each red on the named check, then restored): the upgrade not chunking the log
+// ("the list is the log's"), not folding the memory ("carries its bot memory"), not dropping
+// game_moves ("game_moves is gone").
+static void a_schema_9_database_turns_its_logs_into_move_lists(void) {
+    if (tsb_dynamo()) return;
+    static up_game_t over, mid;
+    static Game g;
+    static TableSnaps snaps;
+    static uint8_t list[1 << 16], code_a[1 << 16], code_b[1 << 16], ex_a[4096], ex_b[4096], scratch[1 << 20];
+    up_play(&over, 3, 0);
+    up_play(&mid, 4, 24);
+    T_EQ_INT(over.status, GAME_STATUS_GAME_OVER);
+    T_EQ_INT(mid.status, GAME_STATUS_PLAYING);
+    T_CHECK(over.n_rows > 10 && mid.n_rows > 10);
+    T_EQ_INT(up_as_v5(&mid), 0);
+    // A schema 9 file: the games table without move_list, game_moves with the sessions' rows.
+    char path[320];
+    snprintf(path, sizeof path, "%s/v9-%d.sqlite", g_dir, ++g_seq);
+    cb_store *s = NULL;
+    T_EQ_INT(cb_store_open_sqlite(path, &s), CB_OK);
+    if (!s) return;
+    cb_store_close(s);
+    sqlite3 *db;
+    T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
+    T_EQ_INT(sqlite3_exec(db, "ALTER TABLE games DROP COLUMN move_list; "
+                              "CREATE TABLE game_moves (game_id TEXT NOT NULL, seq INTEGER NOT NULL, action BLOB NOT NULL, "
+                              "PRIMARY KEY (game_id, seq)) WITHOUT ROWID; PRAGMA user_version = 9", NULL, NULL, NULL), SQLITE_OK);
+    up_insert(db, "over11", &over);
+    up_insert(db, "mid222", &mid);
+    sqlite3_close(db);
+
+    T_EQ_INT(cb_store_open_sqlite(path, &s), CB_OK);
+    if (!s) return;
+    Table t;
+    const up_game_t *gs[2] = { &over, &mid };
+    const char *ids[2] = { "over11", "mid222" };
+    for (int k = 0; k < 2; k++) {
+        const up_game_t *u = gs[k];
+        cb_game_row row;
+        T_EQ_INT(CB_ROWS_CALL(s, game_get, ids[k], &row), CB_OK);
+        uint8_t *got = NULL;
+        size_t got_len = 0;
+        T_EQ_INT(CB_ROWS_CALL(s, game_logs, ids[k], row.log_from, &got, &got_len), CB_OK);
+        const int want = table_move_list_chunk(u->created_at, u->log, u->log_len, list, sizeof list);
+        T_CHECK(want > 0 && (size_t)want == got_len && memcmp(got, list, got_len) == 0);   // the list is the log's
+        table_init(&t, &g, &snaps);
+        T_EQ_INT(table_load(&t, row.state, (int)row.state_len, row.roster, (int)row.roster_len), TABLE_OK);
+        if (u == &over) {
+            // The finished game's replay from its list is the one its log made.
+            T_CHECK(row.state_len == (size_t)u->state_len && memcmp(row.state, u->state, row.state_len) == 0);
+            const int ca = table_replay_code(&t, u->seed, FOOLISH_SEED_LEN, u->log, u->log_len, code_a, sizeof code_a, scratch, sizeof scratch);
+            T_EQ_INT(table_load(&t, row.state, (int)row.state_len, row.roster, (int)row.roster_len), TABLE_OK);
+            const int cb = table_replay_code_list(&t, u->seed, FOOLISH_SEED_LEN, got, (int)got_len, code_b, sizeof code_b, scratch, sizeof scratch);
+            T_CHECK(ca > 0 && cb == ca && memcmp(code_a, code_b, (size_t)ca) == 0);
+            const int ea = table_replay_extras(&t, u->log, u->log_len, ex_a, sizeof ex_a);
+            const int eb = table_replay_extras_list(&t, row.created_at, got, (int)got_len, ex_b, sizeof ex_b);
+            T_CHECK(ea > 0 && eb == ea && memcmp(ex_a, ex_b, (size_t)ea) == 0);
+        } else {
+            // The board being played carries its bot memory now, folded from the log; the board itself is the same.
+            T_CHECK(!table_bots_need_logs(&t));   // carries its bot memory
+            const int board = state_blob_board_bytes(u->state, u->state_len);
+            T_CHECK(board > 0 && row.state_len > (size_t)u->state_len && memcmp(row.state + 1, u->state + 1, (size_t)board - 1) == 0);
+        }
+        free(got);
+        cb_game_row_free(&row);
+    }
+    cb_store_close(s);
+    T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
+    sqlite3_stmt *st;
+    T_EQ_INT(sqlite3_prepare_v2(db, "SELECT count(*) FROM sqlite_master WHERE name = 'game_moves'", -1, &st, NULL), SQLITE_OK);
+    T_EQ_INT(sqlite3_step(st), SQLITE_ROW);
+    T_EQ_INT(sqlite3_column_int(st, 0), 0);   // game_moves is gone
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    // Opened again at 10: nothing is repeated.
+    T_EQ_INT(cb_store_open_sqlite(path, &s), CB_OK);
+    if (s) cb_store_close(s);
+    unlink(path);
+}
+
 int main(void) {
     snprintf(g_dir, sizeof g_dir, "/tmp/cbase-unit-store-XXXXXX");
     if (!mkdtemp(g_dir)) { perror("mkdtemp"); return 1; }
     T_RUN(item_size_is_the_sum_of_its_attributes);
     T_RUN(bot_seed_is_production);
     T_RUN(open_applies_schema_and_seeds_bots);
+    T_RUN(a_schema_9_database_turns_its_logs_into_move_lists);
     T_RUN(seed_adds_only_missing_bots);
     T_RUN(seed_brings_production_to_the_ladder);
     T_RUN(users_round_trip);
@@ -2314,6 +2538,7 @@ int main(void) {
     T_RUN(refresh_tokens_rotate);
     T_RUN(sessions_round_trip);
     T_RUN(game_round_trip);
+    T_RUN(the_session_list_appends_and_clears);
     T_RUN(cas_second_writer_loses);
     T_RUN(lone_commit_cas);
     T_RUN(membership_follows_commits);

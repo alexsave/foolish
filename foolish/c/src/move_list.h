@@ -69,6 +69,9 @@
 #include <stdint.h>
 
 #define MOVE_LIST_FORMAT 1
+// The one-byte chunk a host appends for a commit whose chunk it had no room for:
+// the session keeps its commits and loses its replay.
+#define MOVE_LIST_BROKEN_ITEM 0xE0
 // The longest list a replay is cut from. About 64 times a 6-seat p99 game's
 // (531 records), so only a game that should have ended long ago reaches it.
 #define MOVE_LIST_MAX (64 * 1024)
