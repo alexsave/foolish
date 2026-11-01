@@ -42,13 +42,16 @@ Where this document says "octogen" about the brain the Oracle runs, read fusion;
 
 ### What the numbers mean
 
-Every row's number (`EF x.xx +-y.yy`), its bar, its class chip and its storylines are the **noise-free race**: octogen's own race, the expected finish if every seat plays the rollout policy from here.
-Fusion's first race is that race exactly, world for world, so the meaning of every number the overlay printed before the switch is unchanged; `e2e/oracle_answer.test.ts` still matches the text path's fixture field for field, and `c/tests/oracle_answer_test.c` holds fusion's rows to octogen's at the same seed on every decision of nine games.
-The **Best** chip is **fusion's pick**: octogen's pick (the top row, the lowest expected finish) unless the noisy race's pick beats it, mean plus trump tax, by more than `FUSION_SHADOW` tenths of a standard error.
-The noisy race's mean rides beside each row (`OgAnswerRow.shadow_score`, Mode B's `sum_fp_shadow`) as that evidence and is not printed.
+**Since 2026-11-01 every number the panel shows is fusion's noisy race** (Alex's decision on PR #459): each row's `EF x.xx +-y.yy`, its bar, its class chip, the ties and the order are the noisy race's mean and standard error, the race fusion's pick comes from.
+Before that the rows showed the noise-free race and the Best chip was fusion's pick, so on a decision where fusion overruled octogen the Best row was not the lowest number on the panel, and the two could not be read together (step 51 of the replay in the next section: Best on a 3.76 that sat 0.76 below the lowest number shown).
+Now the number, the class and Best come from one race and cannot disagree.
+
+The **Best** chip is still **fusion's pick** and every row tied with it: octogen's pick (the lowest noise-free expected finish) unless the noisy race's pick beats it, mean plus trump tax, by more than `FUSION_SHADOW` tenths of a standard error.
+The noise-free race is not shown; it only names octogen's pick for fusion's rule.
+The storylines of the why panel (flag-gated, off) are still traced from the noise-free race only (`og_trace_begin` skips the shadow race), so they explain octogen's numbers, not the ones printed.
 Exact-endgame answers are untouched: the probe runs before either race and its verdicts are what the exact panel shows.
 
-Why the noise-free race and not the noisy one, measured on 664 decisions of 2-, 4- and 6-seat games at 400 worlds each, racing off, the same worlds for both:
+What the switch costs, measured before it on 664 decisions of 2-, 4- and 6-seat games at 400 worlds each, racing off, the same worlds for both:
 
 | Players | best-to-worst spread, noise-free | noisy | rows classed blunder, noise-free | noisy |
 | --- | --- | --- | --- | --- |
@@ -56,44 +59,44 @@ Why the noise-free race and not the noisy one, measured on 664 decisions of 2-, 
 | 4 | 0.448 | 0.350 | 28.7% | 19.9% |
 | 6 | 0.748 | 0.601 | 32.8% | 26.2% |
 
-The noise makes every finish more random, so it pulls every move toward the middle place by 20-33%, and the classes (the thresholds in `c/src/oracle_rank.c`, calibrated on octogen's numbers) would call a third of the blunders mistakes.
-And "the expected finish if three in ten of everybody's later decisions, yours included, are a random sensible move" is not what a reader takes `EF` to mean.
-The noisy race is fusion's robustness check on octogen's pick, which is exactly what the Best chip reports.
+The noise makes every finish more random, so it pulls every move toward the middle place by 20-33%, and the class thresholds (`c/src/oracle_rank.c`, calibrated on octogen's noise-free numbers) call about a third of the old blunders mistakes.
+The noisy numbers read as "the expected finish if three in ten of everybody's later decisions, yours included, are a random sensible move".
+Recalibrating the thresholds on the noisy race is open.
+The convergence check is also still the noise-free race's (`ORACLE_CONVERGE_MAX_SE`, `accumulator.ts converged`), and the noisy race runs on half the worlds (`ORACLE_SHADOW_W = 50`), so the `+-` printed at "Converged" is the noisy race's and can be larger than 0.005; holding convergence to the noisy error is open too.
 
-So Best can sit on a row whose number is not the lowest.
-That is the case the shadow selection exists for: the noisy race found, beyond its bar, that the move holds up better when play goes off the rollout policy's script.
-The lowest row then still shows the class chip `best` (it has the lowest expected finish), so the panel says both things that are true: this row has the lowest expected finish, and that one is fusion's pick.
-Where rows are twins (the same expected finish, which noise-free races produce in a third to a half of all decisions), they all read best, and the filled chip says which one fusion plays (next section).
+Rows the noisy race did not score: when it scored no row at all (one candidate, a proven win: a decision with no noisy race), the noise-free race is shown instead, since fusion is then octogen.
+Otherwise a row it did not score shows `-` for its number, no bar, no class and never Best, and sorts after every row that has a number.
 
 ### Ties, Best and the classes (2026-11-01)
 
 One C function owns the panel's verdicts, `og_rank` (`c/src/oracle_rank.c`, whose header comment states the whole rule), and both modes hand it the same per-row numbers through structgen's writer and read its answer back through the reader (`OgRankAsk`, `OgRankAnswer`, exported by `oracle.wasm` and `oracle-mt.wasm`).
-It returns the rows in display order, and for each row whether it reads Best, whether it is fusion's pick, its class, its bar and the error to print.
+It returns the rows in display order, and for each row the number shown (fusion's noisy race's expected finish) and its error, whether it reads Best, whether it is fusion's pick, its class and its bar.
 TypeScript only renders that answer.
 
 It used to be four TypeScript rules: a sort in each mode, `fusionBest`, and `oracleClassify`, with the class chips measured from the lowest number while the Best chip was fusion's pick.
 Two yardsticks on one panel produced the bug Alex found on prod: at step 51 of a 4-seat replay, fusion overruled octogen's 2.9975 for a 3.7569 whose ten twins all printed `EF 3.76 +-0.00`, and one of the eleven read BEST while the other ten (0.76 behind the lowest number) read BLUNDER, as did the played 3.86, which is 0.10 behind fusion's pick.
 
-The rule, Monte Carlo regime:
+The rule, Monte Carlo regime, every number below being the noisy race's:
 
-- **Tie.** Two rows tie when their means differ by no more than `max(0.0001, k * sqrt(se_a^2 + se_b^2))`, with `k = FUSION_SHADOW / 10`: the two standard errors fusion holds its own pick to.
+- **Tie.** Two rows tie when their numbers differ by no more than `max(0.0001, k * sqrt(se_a^2 + se_b^2))`, with `k = FUSION_SHADOW / 10`: the two standard errors fusion holds its own pick to.
   An error not measured yet (one batch) counts as 0, so before the run has an error only rows within 0.0001 tie.
-  At convergence (every printed error `+-0.00`, below 0.005) two rows tie when they are within about 0.014 places, so rows that print the same two decimals can still be apart when their errors are tight enough to say so.
 - **Best.** Every row that ties with fusion's pick reads Best.
   Fusion's pick is the one row marked `pick`, and its chip is drawn filled.
-- **Class.** A row tied with fusion's pick, or with octogen's pick (the lowest number), is `best`.
-  Any other row measures its gap to the nearest of those two numbers at or below it, then the thresholds: `< 0.05` excellent, `< 0.15` good, `< 0.35` inaccuracy, `< 0.7` mistake, else blunder.
-  When fusion agrees with octogen, as it does on most decisions, that is the gap to the best row.
-  When fusion overrules, the rows between the lowest number and fusion's group keep the lowest number's yardstick, and the rows below fusion's group measure from it.
-- **Order.** By mean, then the mean plus the trump-keep tax, then input order, except that the Best rows sit together as one block where their lowest mean puts it, fusion's pick first.
+  When fusion keeps octogen's pick, the noisy race's lowest row is within fusion's bar of it and so (up to the trump tax, which the bar counts and the tie does not) ties it: the Best group sits at the top of the list.
+- **Class.** A row tied with fusion's pick is `best`.
+  Any other row measures its gap to the Best group's lowest number (a row below it that does not tie is `best` too), then the thresholds: `< 0.05` excellent, `< 0.15` good, `< 0.35` inaccuracy, `< 0.7` mistake, else blunder.
+- **Order.** By number, then the number plus the trump-keep tax, then input order, except that the Best rows sit together as one block where their lowest number puts it, fusion's pick first.
+  Then the rows with no number shown, by noise-free mean, then the unsampled.
   The played move is never moved out of its place.
-- **Bar.** The X-ray pages' formula, `96 - 84 * (mean - lowest) / span`, the span floored at 0.4 and the width clamped to `[12, 100]`.
+- **Bar.** The X-ray pages' formula, `96 - 84 * (v - lowest) / span`, over the numbers shown, the span floored at 0.4 and the width clamped to `[12, 100]`.
+
+At step 51 the noisy race separates the eleven noise-free twins: fusion's pick shows 3.17 and is the lowest number, the next twin 3.23 (good), the played move 3.31 (good), and octogen's pick its noisy 3.48 (inaccuracy).
 
 Exact regime: by verdict (win, draw, unknown, none, loss, illegal), then by the verdict's value, larger first (`+-(1000 - depth)`, so the quickest win and the longest loss lead), then the mean, then input order; no Best and no classes.
 The TypeScript it replaced sorted by depth descending for every verdict, which put the slowest win first.
 
 The trump-keep tax is octogen's own default (`OG_TRUMP_KEEP_DEFAULT`, `c/src/octogen_strategy.h`), so the ranking and the bot read one number.
-Mode B's errors are the n-based proxy `1.2 / sqrt(n)`, computed by the kernel when the host passes `-1`.
+Mode B's errors are the n-based proxy `1.2 / sqrt(n)` over the noisy race's worlds, computed by the kernel when the host passes `-1`.
 `c/tests/oracle_rank_test.c` holds the rule on crafted rows, `e2e/oracle_fusion_best.test.ts` holds it through the shipped module, `e2e/oracle_mode_b.test.ts` holds the two modules to one answer for the same rows, and `e2e/oracle_why_flag.test.ts` renders a tied group.
 
 ### The rule over accumulated worlds
@@ -108,7 +111,7 @@ As the run sharpens the bar shrinks with the error, and it stops shrinking where
 ### The cost, and the budget split
 
 The noisy race costs more than the noise-free one (its rollouts run longer and draw the noise at every policy decision), and `c/FUSION.md` measures a fusion decision at 2.3-2.8x octogen's milliseconds.
-The Oracle runs its noisy race on half the worlds of its noise-free race (`ORACLE_SHADOW_W = 50`, `OgKnobs.shadow_w`, fusion's `FUSION_SHADOW_W`), because the noisy race decides only the Best chip and none of the numbers the rows print.
+The Oracle runs its noisy race on half the worlds of its noise-free race (`ORACLE_SHADOW_W = 50`, `OgKnobs.shadow_w`, fusion's `FUSION_SHADOW_W`), a budget set when the noisy race decided only the Best chip; since it is also what the rows print, its numbers carry about 1.4x the noise-free race's error.
 The error of its means grows by about 1.4x for it, which only raises the bar the noisy race has to clear.
 Mode A's batches stay inside the same window they always aimed at, because `oracleWorker.ts` already sizes each batch to 25-80 ms; what grows is the time to convergence.
 
