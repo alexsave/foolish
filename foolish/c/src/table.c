@@ -50,6 +50,28 @@ static void table_snap(const Game *g, int tag, int aux) {
 // (bot_mem_fold_masked, log_record_put's masking with the operation's trump
 // before it began), from Table.mem_at on. A memory that is not valid becomes
 // valid at the deal's GAME_START, which resets it.
+//
+// A FOLD ONLY FOR A TABLE THAT READS IT. The deal's GAME_START picks the block's
+// kind from the seats (mem_wanted): a table where some brain reads the memory
+// folds every record whole; one of humans and brains that read nothing
+// (random, handwritten, simple_heuristic) only counts them (bot_mem_count), so
+// the seeds still count the session and the engine path costs what it did
+// before the memory. The seats cannot change brains while a game is played
+// (table_add_bot and table_remove_bot are lobby operations), so the kind holds
+// to the game's end; a counts-only block loaded onto a table that wants the
+// memory (mem_level_check) is no memory, and the log is folded instead.
+static bool mem_wanted(const Table *t) {
+    const Game *g = t->g;
+    for (int s = 0; s < g->num_players && s < MAX_PLAYERS; s++) {
+        const int k = g->players[s].strategy_key;
+        if (k == STRATEGY_KEY_HUMAN) continue;
+        // Only a named bot the registry says reads no log is spared: a research
+        // brain (no key) gets the whole memory, whatever its row says.
+        const BotDef *d = bot_def(k);
+        if (!d || !d->key || d->uses_logs) return true;
+    }
+    return false;
+}
 static void mem_fold_board(const Table *t, BotMemory *m, bool *valid, int from) {
     const Game *g = t->g;
     for (int i = from; i < g->num_logs && i < MAX_LOGS; i++) {
@@ -58,11 +80,24 @@ static void mem_fold_board(const Table *t, BotMemory *m, bool *valid, int from) 
             if (l->log_type != LOG_GAME_START) continue;
             *valid = true;
         }
-        bot_mem_fold_masked(m, l, g, t->pre_has_flip, t->pre_flip);
+        if (l->log_type == LOG_GAME_START ? !mem_wanted(t) : m->counts_only) bot_mem_count(m, l, g);
+        else bot_mem_fold_masked(m, l, g, t->pre_has_flip, t->pre_flip);
+    }
+}
+// A counts-only block on a table some brain of which reads the memory is no
+// memory: table_bots_need_logs then asks for the session log, folded whole.
+static void mem_level_check(Table *t) {
+    if (t->mem_valid && t->mem.counts_only && mem_wanted(t)) {
+        bot_mem_clear(&t->mem);
+        t->mem_valid = false;
     }
 }
 static void mem_sync(Table *t) {
     if (t->mem_at < 0 || t->mem_at > t->g->num_logs) t->mem_at = t->g->num_logs;
+    // Most syncs (every decision's, every operation's opening) find nothing new:
+    // they return here, not through the fold's frame (sample: its prologue and
+    // epilogue were the hot lines of a call that folded no record).
+    if (t->mem_at == t->g->num_logs) return;
     mem_fold_board(t, &t->mem, &t->mem_valid, t->mem_at);
     t->mem_at = t->g->num_logs;
 }
@@ -97,6 +132,7 @@ static void mem_load(Table *t, const StateBlobSections *sec) {
         t->mem_valid = true;
     else
         bot_mem_clear(&t->mem);
+    mem_level_check(t);
 }
 
 static void scope_open(Table *t, int actor) {
@@ -996,6 +1032,7 @@ int table_adopt(Table *t, const TableResident *res) {
     t->mem = res->mem;
     t->mem_valid = res->mem_valid;
     t->mem_at = 0;   // the board carries no log: the resident's memory is folded to it
+    mem_level_check(t);
     scope_open(t, -1);
     t->log_len = 0;
     t->loaded = true;
