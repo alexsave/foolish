@@ -1728,29 +1728,12 @@ static int deal_reveals_from_seed(const unsigned char *seed, int seed_len, int n
 #pragma GCC diagnostic pop
 #endif
 
-int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int seed_len,
-                               int max_atoms, unsigned char *out, int out_cap) {
-    err_clear();
-    if (!g || !seed || seed_len < FOOLISH_SEED_LEN) return -REPLAY_EINPUT;
-    if (g->num_logs >= MAX_LOGS) return -REPLAY_ETOOLONG;  // overflowed → untrusted
-    int n = g->num_players;
-    if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
-    if (max_atoms <= 0) return -REPLAY_EINPUT;
-
-    // THE OPENER. Once anybody has attacked it is the first logged attack. Before
-    // that it is the seat the deal named - a started game with no move yet,
-    // which is exactly what an iMessage chat opens on after Start, and whose
-    // whole replay is its deal (one step, zero atoms: the format always could
-    // say that). It is read off the game only while the game is dealt and
-    // untouched, because that is the only moment `first_attacker` still means
-    // "who opened": every bout reassigns it. A lobby names nobody
-    // (GAME_SEAT_NONE) and so still refuses - it has no deal to show.
-    // encode_v6_run proves the seat against the deal either way: an imposed
-    // opener (the fool's penalty) gets the forced bit, a derived one does not.
-    int fa = replay_first_attacker_from_logs(g->logs, g->num_logs);
-    if (fa < 0 && g->status == GAME_STATUS_PLAYING && g->num_battles == 0
-        && count_atoms_from_logs(g->logs, g->num_logs, 1) == 0)
-        fa = g->first_attacker;
+// The re-deal, its check against the game, and the encode: everything a
+// played game's code needs once its opener and its atoms are known, whichever
+// source (the board's logs, or a move list's atoms) supplies them.
+static int encode_v6_for_game(const Game *g, const unsigned char *seed, int seed_len, int fa,
+                              int n_actions, Src *s, unsigned char *out, int out_cap) {
+    const int n = g->num_players;
     if (fa < 0 || fa >= n) return -REPLAY_EINPUT;   // no opener → nothing to encode
 
     unsigned char reveals[MAX_PLAYERS * CARDS_PER_PLAYER + MAX_DECK];
@@ -1775,21 +1758,76 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
         return -REPLAY_EHEADER;
 
     // Zero atoms is a started game's whole replay: the deal and nothing after.
-    int n_actions = count_atoms_from_logs(g->logs, g->num_logs, max_atoms);
     if (n_actions < 0) return -REPLAY_EINPUT;
-
-    Src s;
-    memset(&s, 0, sizeof s);
-    s.logs = g->logs;
-    s.num_logs = g->num_logs;
-    s.count = n_actions;
+    s->count = n_actions;
 
     // The mode comes off the GAME, never off a caller's argument: this code is
     // the thing every device will re-derive the table's rules from, and a host
     // that could state them independently of the game it is encoding could seal
     // a chain nobody (itself included) can replay.
     return encode_v6_run(n, trump_id, fa, n_actions, game_pass_allowed(g),
-                         reveals, n_reveals, &s, out, out_cap);
+                         reveals, n_reveals, s, out, out_cap);
+}
+
+// THE OPENER of a game with no atom yet. Once anybody has attacked it is the
+// first logged attack. Before that it is the seat the deal named - a started
+// game with no move yet, which is exactly what an iMessage chat opens on after
+// Start, and whose whole replay is its deal (one step, zero atoms: the format
+// always could say that). It is read off the game only while the game is dealt
+// and untouched, because that is the only moment `first_attacker` still means
+// "who opened": every bout reassigns it. A lobby names nobody
+// (GAME_SEAT_NONE) and so still refuses - it has no deal to show.
+// encode_v6_run proves the seat against the deal either way: an imposed
+// opener (the fool's penalty) gets the forced bit, a derived one does not.
+static int opener_before_any_atom(const Game *g) {
+    return g->status == GAME_STATUS_PLAYING && g->num_battles == 0 ? g->first_attacker : -1;
+}
+
+int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int seed_len,
+                               int max_atoms, unsigned char *out, int out_cap) {
+    err_clear();
+    if (!g || !seed || seed_len < FOOLISH_SEED_LEN) return -REPLAY_EINPUT;
+    if (g->num_logs >= MAX_LOGS) return -REPLAY_ETOOLONG;  // overflowed → untrusted
+    int n = g->num_players;
+    if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
+    if (max_atoms <= 0) return -REPLAY_EINPUT;
+
+    int fa = replay_first_attacker_from_logs(g->logs, g->num_logs);
+    if (fa < 0 && count_atoms_from_logs(g->logs, g->num_logs, 1) == 0) fa = opener_before_any_atom(g);
+
+    Src s;
+    memset(&s, 0, sizeof s);
+    s.logs = g->logs;
+    s.num_logs = g->num_logs;
+    if (fa < 0 || fa >= n) return -REPLAY_EINPUT;
+    return encode_v6_for_game(g, seed, seed_len, fa, count_atoms_from_logs(g->logs, g->num_logs, max_atoms),
+                              &s, out, out_cap);
+}
+
+int replay_encode_v6_from_atoms(const Game *g, const unsigned char *seed, int seed_len,
+                                const unsigned char *atoms, int atoms_len, int n_atoms,
+                                unsigned char *out, int out_cap) {
+    err_clear();
+    if (!g || !seed || seed_len < FOOLISH_SEED_LEN) return -REPLAY_EINPUT;
+    if (atoms_len < 0 || (atoms_len > 0 && !atoms) || n_atoms < 0) return -REPLAY_EINPUT;
+    const int n = g->num_players;
+    if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
+
+    // The opener is the first ATTACK's seat, read off the atoms as the logs' is.
+    int fa = -1, seen = 0;
+    for (int at = 0; at + 3 <= atoms_len && seen < n_atoms; seen++) {
+        if (atoms[at] == LOG_ATTACK) { fa = atoms[at + 1]; break; }
+        at += 3 + 2 * atoms[at + 2];
+    }
+    if (fa < 0 && n_atoms == 0) fa = opener_before_any_atom(g);
+
+    Src s;
+    memset(&s, 0, sizeof s);
+    s.buf = atoms;
+    s.len = atoms_len;
+    s.pos = 0;
+    if (fa < 0 || fa >= n) return -REPLAY_EINPUT;
+    return encode_v6_for_game(g, seed, seed_len, fa, n_atoms, &s, out, out_cap);
 }
 
 // The shared decode. `out` NULL = decode for the atoms alone: the RModel's

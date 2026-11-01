@@ -310,6 +310,18 @@ int replay_decoded_log(const unsigned char *dec, int len, int *at, ReplayDecoded
 int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int seed_len,
                                int max_atoms, unsigned char *out, int out_cap);
 
+// The same code from the game's ATOMS rather than its logs: `atoms` is
+// `n_atoms` actions in replay_encode_v6's per-action layout (u8 kind, u8 seat,
+// u8 n_pairs, the pairs), already derived (a ROUND_END marker for a DISCARD
+// after a GOOD, a GOOD only while pending at the end), as the server's move list
+// holds them (move_list.h, table.h table_replay_code_list). `g` gives what the
+// atoms do not: the width, the rules, and, for a game with no atom yet, its
+// opener. Every check and every byte is replay_encode_v6_from_game's, except
+// that there is no log to overflow, so no REPLAY_ETOOLONG.
+int replay_encode_v6_from_atoms(const Game *g, const unsigned char *seed, int seed_len,
+                                const unsigned char *atoms, int atoms_len, int n_atoms,
+                                unsigned char *out, int out_cap);
+
 // The opening attacker, read off a played game's logs: the seat of the first
 // LOG_ATTACK, or -1 if none was logged. NOT g->first_attacker, which is set at
 // the deal but REASSIGNED every bout, so a finished game holds the LAST round's
