@@ -1085,7 +1085,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_set_game_key \
   -Wl,--export=wasm_set_strategy_seed -Wl,--export=wasm_reload_bot_flags \
   -Wl,--export=wasm_choose_move \
-  -Wl,--export=wasm_bot_roster_dump \
+  -Wl,--export=wasm_bot_roster_dump -Wl,--export=wasm_bot_nickname \
   -Wl,--export=wasm_bot_drive -Wl,--export=wasm_bot_eligible_mask \
   -Wl,--export=wasm_bot_cycle_delay_ms -Wl,--export=wasm_bot_drive_log_start \
   -Wl,--export=wasm_export_logs_masked_from \
@@ -1505,7 +1505,7 @@ WASM_BOT_OBJ    := $(call c_objs,build/botobj,$(WASM_BOT_SRC))
 WASM_WEB_NAMES := \
   wasm_init wasm_io_ptr wasm_io_cap wasm_layout_hash wasm_can_cover \
   wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
-  wasm_bot_roster_dump \
+  wasm_bot_roster_dump wasm_bot_nickname \
   wasm_anim_set_transport \
   wasm_anim_should_drop_stale \
   wasm_anim_hand_ask_ptr wasm_anim_hand_laid_ptr \
@@ -1569,7 +1569,7 @@ wasm-web: wasm-cc-check
 WASM_PROMO_NAMES := \
   wasm_init wasm_io_ptr wasm_io_cap wasm_layout_hash wasm_can_cover \
   wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
-  wasm_bot_roster_dump \
+  wasm_bot_roster_dump wasm_bot_nickname \
   wasm_anim_set_transport \
   wasm_anim_should_drop_stale \
   wasm_anim_hand_ask_ptr wasm_anim_hand_laid_ptr \

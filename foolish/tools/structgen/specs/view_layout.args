@@ -87,6 +87,11 @@
 # table says about every named bot and what this build links, through its reader.
 --header bot_roster.h --root BotRosterTable --snapshot BotRosterTable
 --count BotRosterTable.rows=n --count BotRosterRow.key=key_len
+# What a stored bot name names (bot_roster.h BotNickname): the city's row and
+# the account's number, so the page says the city in its own language.
+--root BotNickname --snapshot BotNickname
+--count BotNickname.key=key_len --count BotNickname.show=show_len
+--const BOT_NICK_
 # One step as a replay screen plays it (replay_steps.h ReplayPlayStep), read where
 # the records lie, RS_PLAY_STRIDE bytes apart.
 --root ReplayPlayStep --snapshot ReplayPlayStep

@@ -156,6 +156,17 @@ export function kernelBotRoster(): readonly BotRosterEntry[] {
     return rosterCache = V.readBotRosterTable(mem(ex), at).rows;
 }
 
+export type BotNickname = V.BotNickname_Snap;
+
+/** What a stored name names (bot_roster.h bot_nickname_read): a rung's city and account, or a name to show as it is. */
+export function kernelBotNickname(name: string): BotNickname {
+    const ex = bots();
+    const bytes = utf8(name);
+    const n = Math.min(bytes.length, ex.wasm_io_cap());
+    mem(ex).u8.set(bytes.subarray(0, n), ex.wasm_io_ptr());
+    return V.readBotNickname(mem(ex), ex.wasm_bot_nickname(n));
+}
+
 /* ---------------- the replay code's extras blob (c/src/replay_extras.h) ------
  *
  * The nicknames and per-move timing behind the dash in a share link. The codec

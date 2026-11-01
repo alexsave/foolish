@@ -1,6 +1,7 @@
 // local_table.c - one human and one bot, in the browser. See local_table.h.
 #include "local_table.h"
 #include "bots.h"
+#include "bot_roster.h"
 #include <string.h>
 
 #define HUMAN_LEN ((int)sizeof LOCAL_HUMAN_ID - 1)
@@ -65,21 +66,17 @@ int local_table_open(LocalTable *L, Game *g, TableSnaps *snaps, const char *gid,
     Table *t = &L->t;
     table_init(t, g, snaps);
 
-    // The bot is the roster's row for the brain: its key, and the nickname a
-    // server account of its rung carries ("%Miami 1", bots.h).
+    // The bot is the roster's row for the brain: its key, and the nickname its
+    // rung's first server account carries ("%Miami 1", bot_roster.h).
     const BotDef *d = bot_def(LOCAL_BOT_STRAT);
-    if (!d || !d->key || !d->city) return TABLE_E_UNKNOWN_BRAIN;
+    if (!d || !d->key) return TABLE_E_UNKNOWN_BRAIN;
     char nick[ROSTER_NAME_MAX];
-    const int city_len = (int)strlen(d->city);
-    if (city_len + 3 > (int)sizeof nick) return TABLE_E_WIRE;
-    nick[0] = '%';
-    memcpy(nick + 1, d->city, (size_t)city_len);
-    nick[1 + city_len] = ' ';
-    nick[2 + city_len] = '1';
+    const int nick_len = bot_nickname_write(LOCAL_BOT_STRAT, 1, nick, (int)sizeof nick);
+    if (nick_len < 0) return TABLE_E_UNKNOWN_BRAIN;
 
     int rc = table_create(t, LOCAL_HUMAN_ID, HUMAN_LEN, you, you_len);
     if (rc == TABLE_OK)
-        rc = table_add_bot(t, LOCAL_HUMAN_ID, HUMAN_LEN, LOCAL_BOT_ID, BOT_LEN, nick, city_len + 3,
+        rc = table_add_bot(t, LOCAL_HUMAN_ID, HUMAN_LEN, LOCAL_BOT_ID, BOT_LEN, nick, nick_len,
                            d->key, (int)strlen(d->key), L->seed);
     if (rc != TABLE_OK) return rc;
     if ((rc = commit(L, now_ms)) != TABLE_OK) return rc;
