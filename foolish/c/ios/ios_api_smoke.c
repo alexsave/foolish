@@ -1906,11 +1906,14 @@ static int board_rules_check(void) {
     if (fio_finish_rows(elim, 3, 1, 4, 0, (char *)out, 4) != FIO_ECAP) {
         printf("FAIL finish rows wrote past its buffer\n"); return 1;
     }
-    // A ROSTER WITH FEWER ROWS THAN SEATS, so `total` cannot be read off the row
-    // count: the fool's place is the SEAT count, and that is what tells a row it
-    // is the fool. Six seats, two out, one fool - three rows, place 6 at the end.
+    // A FINISHED GAME WITH SEATS THE ELIMINATION DOES NOT NAME: every one of them is
+    // a fool at the SEAT count (anim_plan.h anim_finish_rows, c/REPETITION.md) -
+    // the fools of a repetition draw. Six seats, two out: four fool rows, by seat,
+    // all at place 6.
     n = fio_finish_rows(elim, 2, 1, 6, -1, (char *)out, sizeof out);
-    if (n != FIO_FINISH_HEAD + 3 * 3 || out[1] != 3 || out[2] != 6 || out[9] != 6) {
+    if (n != FIO_FINISH_HEAD + 3 * 6 || out[1] != 6 || out[2] != 6
+        || out[9] != 6 || out[10] != 1 || out[12] != 6 || out[13] != 3
+        || out[15] != 6 || out[16] != 4 || out[18] != 6 || out[19] != 5) {
         printf("FAIL finish rows total is the seat count rc=%d\n", n); return 1;
     }
 
