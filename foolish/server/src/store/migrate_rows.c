@@ -77,7 +77,7 @@ struct cb_mig {
     FILE     *log;
     long      seen[F__N], written[F__N], skipped[F__N], failed[F__N];
     long      orphans;     // chat whose game is gone: skipped (counted in skipped[F_CHAT])
-    long      game_logs;   // games whose row carried a session's move list
+    long      game_list;   // games whose row carried a session's move list
     // A game's seats, held until its ROW (same pk).
     char      seat_game[CB_GAME_ID_MAX + 1];
     int       n_humans, n_bots;
@@ -279,7 +279,7 @@ int cb_mig_put(cb_mig *m, const cb_item *it) {
                 m->written[F_MEMBER] += m->n_humans;
                 m->written[F_SEAT_BOT] += m->n_bots;
             }
-            if (g.logs_len) m->game_logs++;
+            if (g.list_len) m->game_list++;
         }
         m->seat_game[0] = '\0';
         m->n_humans = m->n_bots = 0;
@@ -538,15 +538,15 @@ int cb_mig_same(cb_mig *m, const cb_item *it) {
             return e == CB_E_NOT_FOUND ? differ(m, pk, sk, "no such game") : e;
         }
         uint8_t *logs = NULL;
-        size_t logs_len = 0;
-        e = CB_ROWS_CALL(m->dst, game_logs, g.id, got.log_from, &logs, &logs_len);
+        size_t list_len = 0;
+        e = CB_ROWS_CALL(m->dst, game_list, g.id, got.list_from, &logs, &list_len);
         bool same = e == CB_OK && got.status == g.status && got.version == g.version && got.needs_bots == g.needs_bots &&
                     got.round_epoch == g.round_epoch && got.created_at == g.created_at && got.updated_at == g.updated_at &&
                     got.last_commit_at == g.last_commit_at && got.has_seed == g.has_seed &&
                     (!g.has_seed || memcmp(got.seed, g.seed, CB_SEED_LEN) == 0) && got.state_len == g.state_len &&
                     !memcmp(got.state, g.state, g.state_len) && got.roster_len == g.roster_len &&
-                    !memcmp(got.roster, g.roster, g.roster_len) && logs_len == g.logs_len &&
-                    (!logs_len || !memcmp(logs, g.logs, logs_len));
+                    !memcmp(got.roster, g.roster, g.roster_len) && list_len == g.list_len &&
+                    (!list_len || !memcmp(logs, g.list, list_len));
         free(logs);
         cb_game_row_free(&got);
         cb_game_row_free(&g);
@@ -679,7 +679,7 @@ int cb_mig_report(cb_mig *m, FILE *out) {
             snprintf(sql, sizeof sql, "SELECT count(*) FROM users");
         } else {
             name = "games (move lists)";   // a game whose row carried a session's move list
-            want = m->game_logs;
+            want = m->game_list;
             snprintf(sql, sizeof sql, "SELECT count(*) FROM games WHERE move_list IS NOT NULL");
         }
         first_row r;

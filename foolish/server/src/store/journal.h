@@ -54,7 +54,7 @@
 // A FULL RECORD (one whole commit): u8 'R', u8 format (3), u16 0, u32 LE CRC-32C over the
 // payload length and the payload, u32 LE payload length, then the payload: u8 id length, the
 // id, i64 LE base version, i64 LE ms, u8 flags (1 clears the session log, 2 has a deal seed,
-// 4 needs bots, 8 rated), i8 status, i64 LE log_from, round_epoch and created_at, the 32-byte seed when
+// 4 needs bots, 8 rated), i8 status, i64 LE list_from, round_epoch and created_at, the 32-byte seed when
 // flagged, then u32 LE length + bytes each of the state blob, the roster and the move list
 // chunk it appended (move_list.h; format 2 held the session-log records), and when rated (flag 8) the rating changes: u8 n, then per seat u8 id
 // length, the id, u8 1 for a bot, i32 LE delta, u8 name length, the name. Recovery adopts its row as the game's (no kernel run: the record is

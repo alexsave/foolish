@@ -69,18 +69,18 @@ static void seed(cb_store *s) {
         cb_game_row n = g;
         n.version = 1;
         n.updated_at = 20;
-        cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 2, .n_bots = 1, .log_add = log1,
-                             .log_add_len = sizeof log1, .log_clear = true };
-        n.log_from = 1;
+        cb_game_commit c = { .row = &n, .expected_version = 0, .n_humans = 2, .n_bots = 1, .list_add = log1,
+                             .list_add_len = sizeof log1, .list_clear = true };
+        n.list_from = 1;
         memcpy(c.humans[0], g_user[i], sizeof(cb_uuid));
         memcpy(c.humans[1], g_user[i + 1], sizeof(cb_uuid));
         memcpy(c.bots[0], first_bot_row.id, sizeof(cb_uuid));
         T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
         n.version = 2;
         c.expected_version = 1;
-        c.log_add = log2;
-        c.log_add_len = sizeof log2;
-        c.log_clear = false;
+        c.list_add = log2;
+        c.list_add_len = sizeof log2;
+        c.list_clear = false;
         T_EQ_INT(CB_ROWS_CALL(s, game_commit, &c), CB_OK);
     }
     for (int i = 0; i < N_SNAPS; i++) {
@@ -238,9 +238,9 @@ static void the_export_end_to_end(void) {
     T_EQ_INT(CB_ROWS_CALL(dst, game_get, "000001", &g), CB_OK);
     T_EQ_INT(g.version, 2);
     uint8_t *logs = NULL;
-    size_t logs_len = 0;
-    T_EQ_INT(CB_ROWS_CALL(dst, game_logs, "000001", g.log_from, &logs, &logs_len), CB_OK);
-    T_EQ_MEM(logs, logs_len, "\x10\x11\x20", 3);   // the cumulative log, whole
+    size_t list_len = 0;
+    T_EQ_INT(CB_ROWS_CALL(dst, game_list, "000001", g.list_from, &logs, &list_len), CB_OK);
+    T_EQ_MEM(logs, list_len, "\x10\x11\x20", 3);   // the cumulative log, whole
     free(logs);
     cb_game_row_free(&g);
     T_EQ_INT(CB_ROWS_CALL(dst, is_member, "000002", g_user[3]), 1);

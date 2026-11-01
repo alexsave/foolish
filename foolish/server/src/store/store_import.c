@@ -367,7 +367,7 @@ static bool import_games(cb_store *s, const char *dir, tally *t, tally *th, tall
         g.last_commit_at = cell_i64(&c, r, lc, g.updated_at);
         const char *sh = cell(&c, r, seed);
         bool ok = g.status >= 0 && cell_hex(&c, r, sta, &g.state, &g.state_len) &&
-                  cell_hex(&c, r, ros, &g.roster, &g.roster_len) && cell_hex(&c, r, logs, &g.logs, &g.logs_len);
+                  cell_hex(&c, r, ros, &g.roster, &g.roster_len) && cell_hex(&c, r, logs, &g.list, &g.list_len);
         if (ok && sh) {   // games.game_seed is TEXT: 64 hex characters
             g.has_seed = true;
             ok = strlen(sh) == 2 * CB_SEED_LEN && hex_decode(sh, strlen(sh), g.seed, CB_SEED_LEN) == CB_SEED_LEN;
@@ -388,16 +388,16 @@ static bool import_games(cb_store *s, const char *dir, tally *t, tally *th, tall
         }
         // The export's logs_packed is the session's log records; the store keeps its move list
         // (move_list.h), one chunk from the row's created_at.
-        if (g.logs_len) {
-            uint8_t *list = malloc(g.logs_len + MOVE_LIST_CHUNK_SLACK);
-            const int n = list ? table_move_list_chunk(g.created_at, g.logs, (int)g.logs_len, list,
-                                                       (int)g.logs_len + MOVE_LIST_CHUNK_SLACK) : TABLE_E_CAP;
-            free(g.logs);
-            g.logs = NULL;
-            g.logs_len = 0;
+        if (g.list_len) {
+            uint8_t *list = malloc(g.list_len + MOVE_LIST_CHUNK_SLACK);
+            const int n = list ? table_move_list_chunk(g.created_at, g.list, (int)g.list_len, list,
+                                                       (int)g.list_len + MOVE_LIST_CHUNK_SLACK) : TABLE_E_CAP;
+            free(g.list);
+            g.list = NULL;
+            g.list_len = 0;
             if (n > 0) {
-                g.logs = list;
-                g.logs_len = (size_t)n;
+                g.list = list;
+                g.list_len = (size_t)n;
             } else {
                 free(list);
                 if (n < 0) fprintf(stderr, "cbase-import: game %s: its session log is refused (%d): no move list\n", g.id, n);

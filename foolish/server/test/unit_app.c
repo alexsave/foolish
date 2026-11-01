@@ -236,7 +236,7 @@ static void leak_check(const void *p, size_t n) {
     if (CB_ROWS_CALL(g_store, game_get, g_leak.gid, &row) != CB_OK) return;
     uint8_t *list = NULL;
     size_t len = 0;
-    CB_ROWS_CALL(g_store, game_logs, g_leak.gid, row.log_from, &list, &len);
+    CB_ROWS_CALL(g_store, game_list, g_leak.gid, row.list_from, &list, &len);
     cb_game_row_free(&row);
     g_leak.checked++;
     if (leak_in(p, n, list, len) || leak_in(p, n, g_leak.last, g_leak.last_len)) g_leak.leaks++;
@@ -335,7 +335,7 @@ static cb_game_row stored(const char *gid) {
 // The stored row with its session's move list (move_list.h) in row.logs.
 static cb_game_row stored_list(const char *gid) {
     cb_game_row row = stored(gid);
-    if (row.version) CB_ROWS_CALL(g_store, game_logs, gid, row.log_from, &row.logs, &row.logs_len);
+    if (row.version) CB_ROWS_CALL(g_store, game_list, gid, row.list_from, &row.list, &row.list_len);
     return row;
 }
 
@@ -456,7 +456,7 @@ static bool log_encodable(const char *gid) {
     table_init(&t, g, snaps);
     int n = table_load(&t, row.state, (int)row.state_len, row.roster, (int)row.roster_len);
     if (n == TABLE_OK)
-        n = table_replay_code_list(&t, row.seed, CB_SEED_LEN, row.logs, (int)row.logs_len, code, 1 << 21, scratch, 1 << 20);
+        n = table_replay_code_list(&t, row.seed, CB_SEED_LEN, row.list, (int)row.list_len, code, 1 << 21, scratch, 1 << 20);
     free(g);
     free(snaps);
     free(code);
@@ -542,7 +542,7 @@ static void join_add_bot_and_start(void) {
     T_EQ_INT(version_of(gid), 4);
     cb_game_row row = stored_list(gid);
     T_CHECK(row.has_seed);
-    T_CHECK(row.logs_len > 0);
+    T_CHECK(row.list_len > 0);
     T_EQ_INT(row.round_epoch, 0);
     // The deal is broadcast: each human's cast and the spectators'.
     T_EQ_INT(g_fan.casts, 2);
@@ -1900,7 +1900,7 @@ static void continue_returns_a_clean_lobby(void) {
     cb_game_row row = stored_list(gid);
     T_EQ_INT(row.status, GAME_STATUS_WAITING);
     T_CHECK(!row.has_seed);
-    T_EQ_INT(row.logs_len, 0);
+    T_EQ_INT(row.list_len, 0);
     T_EQ_INT(row.version, v + 1);
     cb_game_row_free(&row);
     meta("A", ASK_START, gid, NULL, &r);
@@ -1908,7 +1908,7 @@ static void continue_returns_a_clean_lobby(void) {
     row = stored_list(gid);
     T_EQ_INT(row.status, GAME_STATUS_PLAYING);
     T_CHECK(row.has_seed);
-    T_CHECK(row.logs_len > 0);
+    T_CHECK(row.list_len > 0);
     cb_game_row_free(&row);
     T_CHECK(any_human_move(gid, &r));
     TableResponse resp;

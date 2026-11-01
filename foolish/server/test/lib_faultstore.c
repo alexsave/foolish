@@ -107,9 +107,9 @@ static int w_game_get(cb_store *s, const char *id, cb_game_row *out) {
     if (take()) return atomic_load(&g_rc);
     return cb_rows_of(IN(s))->game_get ? cb_rows_of(IN(s))->game_get(IN(s), id, out) : CB_E_NOTIMPL;
 }
-static int w_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len) {
+static int w_game_list(cb_store *s, const char *id, int64_t list_from, uint8_t **out, size_t *out_len) {
     if (take()) return atomic_load(&g_rc);
-    return cb_rows_of(IN(s))->game_logs ? cb_rows_of(IN(s))->game_logs(IN(s), id, log_from, out, out_len) : CB_E_NOTIMPL;
+    return cb_rows_of(IN(s))->game_list ? cb_rows_of(IN(s))->game_list(IN(s), id, list_from, out, out_len) : CB_E_NOTIMPL;
 }
 static int w_game_create(cb_store *s, const cb_game_row *g, const char *creator_id) {
     if (take()) return atomic_load(&g_rc);
@@ -346,7 +346,7 @@ static const cb_store_ops FAULT_OPS = {
 // foolish's rows, each forwarded to the wrapped store's own.
 static const cb_rows_ops FAULT_ROWS = {
     .game_get = w_game_get,
-    .game_logs = w_game_logs,
+    .game_list = w_game_list,
     .game_create = w_game_create,
     .game_commit = w_game_commit,
     .game_delete = w_game_delete,

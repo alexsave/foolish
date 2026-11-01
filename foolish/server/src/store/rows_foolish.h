@@ -37,12 +37,12 @@ typedef struct {
     int      status;            // kernel GAME_STATUS_*
     uint8_t *state;   size_t state_len;    // kernel state blob
     uint8_t *roster;  size_t roster_len;   // kernel durable roster (ROSTER_BYTES)
-    // The session log is NOT in the row: a move appends its records to the game's
-    // LOG# items (rows_foolish.c) and the row only names where the current session's
-    // log begins. game_get never fills logs; game_logs reads them (finalize, bot drive).
-    // A row handed to game_import may carry logs (the migration's whole log).
-    uint8_t *logs;    size_t logs_len;
-    int64_t  log_from;          // version of the first LOG# item of the current session log; 0: none
+    // The session's MOVE LIST (move_list.h) is not read with the row: a commit appends
+    // its chunk (cb_game_commit list_add) and game_list reads it (the game's end). game_get
+    // never fills list; a row handed to game_import may carry it (a migration's whole list).
+    // Server-only, like the seed: with the seed it is the deal.
+    uint8_t *list;    size_t list_len;
+    int64_t  list_from;          // the version of the commit that began the current session; 0: none
     bool     has_seed;
     uint8_t  seed[CB_SEED_LEN];            // the deal seed, when has_seed
     bool     needs_bots;
@@ -67,11 +67,11 @@ void cb_game_row_free(cb_game_row *g);   // frees the byte fields; the struct is
 // removed) and the rating changes the kernel computed (TableCommit.n_rated).
 typedef struct {
     const cb_game_row *row;     // row->version is the NEW version (expected + 1)
-    // The session log, as a delta: log_clear empties it first (a deal, a lobby), then
-    // log_add (this operation's records) is appended, stored at seq row->version. The
-    // caller sets row->log_from to row->version when it clears, else carries it over.
-    const uint8_t *log_add;  size_t log_add_len;
-    bool     log_clear;
+    // The session's move list, as a delta: list_clear empties it first (a deal, a lobby), then
+    // list_add (this commit's chunk, table.h table_move_list_chunk) is appended. The caller
+    // sets row->list_from to row->version when it clears, else carries it over.
+    const uint8_t *list_add;  size_t list_add_len;
+    bool     list_clear;
     int64_t  expected_version;
     // Moves the journal may hold (journal.h): set only for a commit that is one human move
     // or one bot cycle and nothing else (the roster, the status and the seed unchanged, no
@@ -231,9 +231,9 @@ typedef struct cb_rows_ops {
     // games
     // CB_E_NOT_FOUND, or the row (caller frees with cb_game_row_free).
     int (*game_get)(cb_store *s, const char *id, cb_game_row *out);
-    // The session log of a game whose row has log_from: the records of every commit
-    // since, in order, one malloc'd buffer (NULL, 0 for none).
-    int (*game_logs)(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len);
+    // The session's move list of a game whose row has list_from: the chunks of every commit
+    // since, in order, one malloc'd buffer (NULL, 0 for none). Only the game's end reads it.
+    int (*game_list)(cb_store *s, const char *id, int64_t list_from, uint8_t **out, size_t *out_len);
     // A new game at version 0 with its creator as member. CB_E_CONFLICT when
     // the id is taken (the caller draws another, up to 5 times).
     int (*game_create)(cb_store *s, const cb_game_row *g, const char *creator_id);
@@ -254,7 +254,7 @@ typedef struct cb_rows_ops {
     // needs the games' own order sorts the rows it loads, as PostgREST does.
     int (*games_of_user)(cb_store *s, const char *user_id, int limit, cb_member_fn fn, void *ud);
     // The rows of `ids` for a list of views (the dashboard): every column but
-    // the session log (logs NULL, logs_len 0), read consistently. fn once per
+    // the session's move list (list NULL, list_len 0), read consistently. fn once per
     // game that exists, in the order of ids (a missing id is skipped); false
     // from fn stops. The number of rows handed to fn, or a CB_E_*. DynamoDB
     // reads them in BatchGetItems of up to 100 keys, not one GetItem each.
@@ -378,9 +378,8 @@ extern const cb_rows_ops  cb_rows_sql;       // on the SQL store (rows_sql.c)
 
 // ---- the journal's flush (rows_sql.c; journal.h says when) --------------------------------
 // One game's acknowledged state brought into the tables: its row as it now is, fenced on
-// the version the tables hold (sql_version), its commits since then (game_moves rows at their
-// seq, in order; a commit that cleared the session log - a deal, a lobby - clears the stored
-// one first) and, when a commit since changed them, its seats (brought to humans and bots).
+// the version the tables hold (sql_version), its commits since then (their move list chunks
+// in order; a commit that cleared the list - a deal, a lobby - clears the stored one first) and, when a commit since changed them, its seats (brought to humans and bots).
 // A rated end's rating changes, as a journaled commit carries them to the flush (the same fields
 // as cb_game_commit's n_rated..rated_names, applied the same way), stamped `at`.
 typedef struct {
@@ -393,7 +392,7 @@ typedef struct {
 } cb_game_rated;
 typedef struct {
     int64_t        seq;
-    const uint8_t *log;
+    const uint8_t *chunk;   // the commit's move list chunk
     size_t         len;
     bool           clear;
     const cb_game_rated *rated;   // the commit rated the game (a journaled rated end), else NULL
@@ -432,13 +431,13 @@ int cb_rows_sql_keys(cb_store *s, cb_rows_key_fn fn, void *ud);
 // THE GAME ID CONVERSION (store/game_id.h): every game id the SQL store holds that is not
 // cb_game_id_ok (the 12-hex ids drawn between 2026-10-17 and the rule) rewritten to a fresh
 // id that names nothing in any table, in every table that holds a game id
-// (CB_ROWS_SQL_GAME_ID_COLUMNS: the game's row, its session log, its seats, its replays and
+// (CB_ROWS_SQL_GAME_ID_COLUMNS: the game's row and its move list, its seats, its replays and
 // its chat), all of it ONE transaction: a crash leaves every id as it was, and a second run
 // finds nothing to do. `draw` draws a candidate (cb_game_id_random; a test's to make one
 // collide); `seen`, when not NULL, hears each old id and its new one after the commit.
 // *converted (may be NULL): how many games were. CB_OK, CB_E_INVALID (not the SQL store,
 // or a draw that is not a game id), CB_E_CONFLICT (no free id in CB_GAME_ID_DRAWS draws), or
-// the store's error, with nothing written. The state blobs, rosters, session logs and
+// the store's error, with nothing written. The state blobs, rosters, move lists and
 // replays name no game id (the kernel takes the id as an argument when it builds a view),
 // so the id columns are the whole of it. Run it only where nothing holds a game by id in
 // memory: at the boot, before anything is served (the journal's open leaves its overlay empty).
@@ -487,7 +486,7 @@ bool cb_rows_snapshot_of(const cb_item *it, cb_snapshot_row *s);   // SNAP#<id> 
 bool cb_rows_chat_of(const cb_item *it, cb_chat_row *c);       // CHAT#<game> <created>#<id>
 
 int cb_rows_game_get(cb_store *s, const char *id, cb_game_row *out);
-int cb_rows_game_logs(cb_store *s, const char *id, int64_t log_from, uint8_t **out, size_t *out_len);
+int cb_rows_game_list(cb_store *s, const char *id, int64_t list_from, uint8_t **out, size_t *out_len);
 int cb_rows_games_get_views(cb_store *s, const char *const *ids, int n, cb_game_fn fn, void *ud);
 int cb_rows_game_create(cb_store *s, const cb_game_row *g, const char *creator);
 int cb_rows_game_commit(cb_store *s, const cb_game_commit *c);

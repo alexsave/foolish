@@ -180,7 +180,7 @@ static void clean_export_imports_everything(void) {
     T_EQ_INT(g.updated_at, 4000);
     T_EQ_INT(g.last_commit_at, 3900);
     T_EQ_INT(g.status, GAME_STATUS_WAITING);
-    T_CHECK(!g.has_seed && g.logs_len == 0);
+    T_CHECK(!g.has_seed && g.list_len == 0);
     T_EQ_INT((long long)g.state_len * 2, (long long)strlen(g_state_hex));
     cb_game_row_free(&g);
     T_EQ_INT(CB_ROWS_CALL(s, is_member, "ab12cd", U1), 1);
