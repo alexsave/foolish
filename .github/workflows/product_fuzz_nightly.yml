@@ -5,7 +5,9 @@
 # Makefile does not link the product kernels, so these build from
 # shared/fuzz/Makefile. A crash fails the target's job and its input is
 # uploaded: minimise it, add it to shared/fuzz/corpus/<target> and as a unit
-# test, and fix it.
+# test, and fix it. A pull request smokes the targets it reaches for 30 s
+# (c_base.yml's fuzz stage, .github/scripts/fuzz_select.sh, as product:<t>);
+# this keeps the whole matrix every night.
 name: product fuzz (nightly)
 
 on:
