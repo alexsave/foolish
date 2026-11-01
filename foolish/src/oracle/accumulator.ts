@@ -8,7 +8,6 @@
 import {
     OracleRecord, OracleCandidate, OracleVerdict, OracleCandPaths,
     OraclePathStat, OracleReplyStat, OracleRanker,
-    ORACLE_CONVERGE_MIN_N, ORACLE_CONVERGE_MAX_SE,
     canonicalMoveKey,
 } from './types';
 
@@ -80,7 +79,7 @@ export class OracleAccumulator {
                 trump: rec.trump,
             };
         }
-        let batchWorlds = 0;
+        let batchWorlds = 0, shadowWorlds = 0;
         for (const c of cands) {
             const key = canonicalMoveKey(c.type, c.cards, c.target);
             let a = this.acc.get(key);
@@ -105,6 +104,7 @@ export class OracleAccumulator {
                 a.sn += c.shadow_nsim;
                 a.ssum += c.shadow_score * c.shadow_nsim;
                 welfordAdd(a.sbm, c.shadow_score);
+                if (c.shadow_nsim > shadowWorlds) shadowWorlds = c.shadow_nsim;
             }
             if (c.verdict && c.verdict !== 'none' && a.verdict === 'none') {
                 a.verdict = c.verdict;
@@ -136,8 +136,10 @@ export class OracleAccumulator {
             }
         }
         // nsim is uniform across candidates (racing off, common random numbers),
-        // so one representative delta is the batch's true world count.
-        this.totalWorlds += batchWorlds;
+        // so one representative delta is the batch's true world count. The
+        // count shown is the noisy race's, whose numbers the panel prints, and
+        // the noise-free race's only on a decision with no noisy race.
+        this.totalWorlds += shadowWorlds || batchWorlds;
         this.batches++;
     }
 
@@ -147,40 +149,9 @@ export class OracleAccumulator {
         return false;
     }
 
-    /** Least-sampled and worst-SE over candidates with n > 0 (§8.7). */
-    minN(): number {
-        let m = Infinity;
-        for (const a of this.acc.values()) if (a.n > 0) m = Math.min(m, a.n);
-        return m;
-    }
-    maxSE(): number {
-        let m = 0, any = false;
-        for (const a of this.acc.values()) if (a.n > 0) { any = true; m = Math.max(m, welfordSE(a.bm)); }
-        return any ? m : Infinity;
-    }
-    converged(): boolean {
-        let any = false;
-        for (const a of this.acc.values()) if (a.n > 0) { any = true; break; }
-        if (!any) return false;
-        // AND, not OR. These are not two ways of being converged - one is the
-        // test and the other is a floor under it. maxSE is the test: the panel
-        // prints "EF x.xx +-y.yy" and the run is done when that number is small.
-        // minN only says the estimate has seen enough worlds to be believed, so
-        // a lucky-looking SE off a handful of samples cannot end the run.
-        //
-        // OR-ed, the floor was doing the stopping. On a board whose candidates
-        // sit close together the worlds arrive long before the standard errors
-        // separate, so minN crossed 65,536 first and the run ended with the
-        // worst SE still near 0.01 - which is what the panel was showing, and
-        // the target of 0.005 was never actually met. An SE only shrinks with
-        // the square root of the worlds, so the last stretch is the expensive
-        // one and it was exactly the stretch being skipped.
-        //
-        // The Oracle is the one thing here that is allowed to be slow: it is
-        // bounded by ORACLE_HARD_CAP_MS, and a hard board now spends that
-        // budget instead of stopping early with a number it did not earn.
-        return this.minN() >= ORACLE_CONVERGE_MIN_N && this.maxSE() <= ORACLE_CONVERGE_MAX_SE;
-    }
+    /** The convergence checkpoint (§8.7), the kernel's, on the numbers the
+     *  panel shows (c/src/oracle_rank.c). */
+    converged(): boolean { return this.opts.ranker.rank(this.rows(), false, this.opts.deckAlive).converged; }
 
     hasKey(key: string): boolean { return this.acc.has(key); }
 
@@ -188,6 +159,11 @@ export class OracleAccumulator {
      *  pick, classes and bars (c/src/oracle_rank.c). `exact` switches it to the
      *  verdict ordering. */
     candidates(exact: boolean): OracleCandidate[] {
+        return this.opts.ranker.rank(this.rows(), exact, this.opts.deckAlive).rows;
+    }
+
+    /** Every accumulated row, unranked. */
+    private rows(): OracleCandidate[] {
         const list: OracleCandidate[] = [];
         for (const a of this.acc.values()) {
             const mean = a.n > 0 ? a.sum / a.n : null;
@@ -231,6 +207,6 @@ export class OracleAccumulator {
                 why,
             });
         }
-        return this.opts.ranker.rank(list, exact, this.opts.deckAlive);
+        return list;
     }
 }

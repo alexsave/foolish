@@ -62,7 +62,7 @@ What the switch costs, measured before it on 664 decisions of 2-, 4- and 6-seat 
 The noise makes every finish more random, so it pulls every move toward the middle place by 20-33%, and the class thresholds (`c/src/oracle_rank.c`, calibrated on octogen's noise-free numbers) call about a third of the old blunders mistakes.
 The noisy numbers read as "the expected finish if three in ten of everybody's later decisions, yours included, are a random sensible move".
 Recalibrating the thresholds on the noisy race is open.
-The convergence check is also still the noise-free race's (`ORACLE_CONVERGE_MAX_SE`, `accumulator.ts converged`), and the noisy race runs on half the worlds (`ORACLE_SHADOW_W = 50`), so the `+-` printed at "Converged" is the noisy race's and can be larger than 0.005; holding convergence to the noisy error is open too.
+Convergence is judged on the noisy race too (next sections): "Converged" means every number shown has 65,536 noisy worlds behind it and an error of at most 0.005, so the `+-` printed at "Converged" is at most the checkpoint.
 
 Rows the noisy race did not score: when it scored no row at all (one candidate, a proven win: a decision with no noisy race), the noise-free race is shown instead, since fusion is then octogen.
 Otherwise a row it did not score shows `-` for its number, no bar, no class and never Best, and sorts after every row that has a number.
@@ -111,9 +111,30 @@ As the run sharpens the bar shrinks with the error, and it stops shrinking where
 ### The cost, and the budget split
 
 The noisy race costs more than the noise-free one (its rollouts run longer and draw the noise at every policy decision), and `c/FUSION.md` measures a fusion decision at 2.3-2.8x octogen's milliseconds.
-The Oracle runs its noisy race on half the worlds of its noise-free race (`ORACLE_SHADOW_W = 50`, `OgKnobs.shadow_w`, fusion's `FUSION_SHADOW_W`), a budget set when the noisy race decided only the Best chip; since it is also what the rows print, its numbers carry about 1.4x the noise-free race's error.
-The error of its means grows by about 1.4x for it, which only raises the bar the noisy race has to clear.
-Mode A's batches stay inside the same window they always aimed at, because `oracleWorker.ts` already sizes each batch to 25-80 ms; what grows is the time to convergence.
+
+**Since 2026-11-01 the noisy race runs on twice the worlds of the noise-free race** (`ORACLE_SHADOW_W = 200`, `OgKnobs.shadow_w`, fusion's `FUSION_SHADOW_W` in percent), and the run converges on it: `og_rank` (`c/src/oracle_rank.c`) answers `converged` when every row it shows has `OG_RANK_CONVERGE_MIN_N = 65,536` noisy worlds behind its number AND an error of at most `OG_RANK_CONVERGE_MAX_SE = 0.005` (the error is the test, the world count a floor under it, as before).
+Both modes stop on that answer (`accumulator.ts converged`, `oracleMtSession.ts converged`), and the panel's world count is the noisy race's.
+Before, the noisy race had half the worlds and the run stopped on the noise-free race, so the `+-` printed at "Converged" was the noisy race's and wider than the checkpoint (0.0064 at step 51 in Mode B).
+
+**The noise-free race gets half the noisy race's worlds, and the rule is a fixed ratio, not a stop.**
+Its only job now is to name octogen's pick `o` for fusion's rule: `o` is the pinned row of the noisy race and the pick unless the noisy race beats it beyond its bar.
+At convergence it has 32,768 worlds per row, an error of about 0.003-0.004 (Mode A measures it; it was 0.0027 at 66,000 worlds at step 51), so `o` is named among rows within about 0.01 places of each other.
+Naming a different one of those rows changes nothing the panel says: the panel's numbers, ties, Best and classes are the noisy race's, and the noisy race overrules `o` only when it finds a row better beyond its bar, which a near-twin of `o` cannot change by more than its own error.
+A stop rule ("run the noise-free race only until `o` is separated from the field by k standard errors") would save little and cannot be built: fusion runs both races inside every choose, so a batch has both or neither, and Mode B's threads run on fixed knobs.
+Equal shares (`200 -> 100`) would buy the noise-free race the precision it no longer uses at the price of a third more rollout time.
+
+Measured at step 51 of the replay in "Ties, Best and the classes" (headless Chrome over CDP, `next dev`, this Mac with nothing else running, two takes each, the controller's own elapsed time at the Converged chip):
+
+| | before (noise-free convergence, share 50) | after (noisy convergence, share 200) |
+| --- | --- | --- |
+| Mode A, time to Converged | 5.17 s, 5.34 s | 6.18 s, 5.64 s |
+| Mode A, widest `+-` shown | 0.0042, 0.0044 | 0.0030, 0.0029 |
+| Mode B, time to Converged | 5.04 s, 4.96 s | 5.71 s, 5.99 s |
+| Mode B, widest `+-` shown | 0.0066, 0.0066 | 0.0047, 0.0046 |
+
+Both are close to the 3.5 s focus floor plus loading at this decision; on one instance with no floor (`e2e/oracle_mode_b.test.ts` §8b.7-6, 23 candidates) Mode A takes about 36 s and Mode B (3 threads) about 13 s.
+
+The earlier measurement, for the split as it was (noisy race on half the worlds), follows.
 
 Measured in headless Chromium (Playwright, Linux x86-64, 4 cores, clang 18.1.3 and binaryen 130, so absolute numbers are not CI's), on 36 Monte Carlo decisions of 2-, 4- and 6-seat games, memory on, against `main`'s modules:
 

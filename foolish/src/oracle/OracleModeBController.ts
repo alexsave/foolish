@@ -15,7 +15,7 @@
 import { gunzip } from '@sdk/ts/wasm/gunzip.ts';
 import {
     OracleJob, OracleSnapshot, OracleStatus,
-    oracleWorkerCount, ORACLE_CONVERGE_MIN_N, ORACLE_HARD_CAP_MS, ORACLE_MIN_FOCUS_MS,
+    oracleWorkerCount, ORACLE_HARD_CAP_MS, ORACLE_MIN_FOCUS_MS,
 } from './types';
 import { OracleMtSession, oracleSeedBase } from './oracleMtSession';
 
@@ -156,8 +156,7 @@ export class OracleModeBController {
             this.session.defuse();
         }
 
-        const minN = this.session.minNsim();
-        if ((minN >= ORACLE_CONVERGE_MIN_N && elapsed >= ORACLE_MIN_FOCUS_MS) || elapsed >= ORACLE_HARD_CAP_MS) {
+        if ((elapsed >= ORACLE_MIN_FOCUS_MS && this.session.converged(this.job!)) || elapsed >= ORACLE_HARD_CAP_MS) {
             this.status = 'converged';
             this.session.stop();
             this.publish();
@@ -188,7 +187,7 @@ export class OracleModeBController {
         const active = this.ready && this.status !== 'loading' && this.status !== 'error';
         const exact = active && (this.status === 'exact' || this.session.hasProof());
         const candidates = active ? this.session.readCandidates(job, exact) : [];
-        const totalWorlds = candidates.reduce((m, c) => Math.max(m, c.n), 0);
+        const totalWorlds = candidates.reduce((m, c) => Math.max(m, c.shadowN || c.n), 0);   // the noisy race's, as shown
         const elapsedMs = this.startMs ? Date.now() - this.startMs : 0;
         return {
             decisionId: job.decisionId,

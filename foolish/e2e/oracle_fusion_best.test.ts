@@ -51,7 +51,7 @@ const row = (key: string, mean: number, se: number, shadowMean: number | null, s
     ef: null, best: false, pick: false, cls: null, bar: 0, verdict: 'none', forcedLoss: false, pruned: false,
     chosen: false, played: false,
 });
-const ranked = async (list: OracleCandidate[], deckAlive = false) => (await kernel).rank(list, false, deckAlive);
+const ranked = async (list: OracleCandidate[], deckAlive = false) => (await kernel).rank(list, false, deckAlive).rows;
 const pickOf = async (list: OracleCandidate[], deckAlive = false) => {
     const r = await ranked(list, deckAlive);
     const p = r.filter((c) => c.pick);
