@@ -36,6 +36,8 @@ No knob is needed for the production behaviour.
 
 The table size is the game's seat count, the size every measurement was taken at, not the number of seats still in.
 
+The belief knobs tried on fusion in 2026-10 (void and floor keep rates, independent draws, a soft tell, a pinned-card tell and naive-seat constraints) are written up in `RETRO_BELIEF.md`; none gave a proven gain, and none shipped.
+
 ## Why the noise alone cost a fixed amount: octogen's ties
 
 The first fusion (the one race, noisy) was better than octogen at 2 to 5 players and worse at 6, and a dose sweep showed the loss did not shrink with the dose: even at 1 per mille fusion was worse at 6 players by +0.28 places, and at 4 by +0.08.
