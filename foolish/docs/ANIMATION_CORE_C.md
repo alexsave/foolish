@@ -192,8 +192,9 @@ What a sequence sounds like (2026-10-13, [`AUDIO.md`](AUDIO.md)):
   bout-end hold.
 - `anim_role_cue(shown, next)` - the cue for a turn of the marks: a good said,
   or a mark that went from one seat to another. A good cleared is silent.
-- `anim_finish_cue(game_over, my_seat)` - the fool's sound, everybody else's,
-  or none while the game runs.
+- `anim_finish_cue(AnimFinishAsk)` - the fool's sound, everybody else's, or
+  none while the game runs, asked the finish order's own question so the two
+  agree on the fools: after a repetition draw every fool hears `FOOL`.
 - `AnimCue.undoes` - a `REVERT` is not a sound of its own: it names the cue of
   the move being undone (read off the stream), and a host plays that sound
   backwards.

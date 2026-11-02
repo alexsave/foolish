@@ -12,10 +12,11 @@ import { ANIM_CUE_NONE } from '@sdk/ts/gen/anim.bots.ts';
 import type { TableView } from '../state/view';
 import { cueAudio } from './cueAudio';
 
-/** The kernel's answer for a board: the fool's seat (negative while the game
- *  runs) and the viewer's (negative for a spectator). */
-export const finishCueOf = (view: Pick<TableView, 'fool' | 'mySeat'>): number =>
-    animFinishCue(view.fool, view.mySeat);
+/** The kernel's answer for a board, asked as its results list is: the
+ *  elimination, a fool's seat (negative while the game runs), the seat count and
+ *  the viewer's seat (negative for a spectator). */
+export const finishCueOf = (view: Pick<TableView, 'elimination' | 'fool' | 'seats' | 'mySeat'>): number =>
+    animFinishCue([...view.elimination], view.fool, view.seats.length, view.mySeat);
 
 export function useFinishCue(view: TableView | null | undefined): void {
     // The game this screen was showing before its status last changed.
@@ -33,7 +34,7 @@ export function useFinishCue(view: TableView | null | undefined): void {
         if (was !== gameId) return;
         const cue = finishCueOf(view);
         if (cue !== ANIM_CUE_NONE) cueAudio.strike(cue);
-        // `view` is read for the two seats only, at the moment the status turns.
+        // `view` is read for the end only, at the moment the status turns.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [gameId, status]);
 }

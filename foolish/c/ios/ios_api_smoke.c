@@ -1748,10 +1748,13 @@ static int board_rules_check(void) {
         || fio_role_cue(1, 0, 0x5, 1, 0, 0x1) != ANIM_CUE_NONE
         || fio_role_cue(1, 0, 0x1, 2, 0, 0x1) != ANIM_CUE_HAND_OFF
         || fio_role_cue(1, 0, 0x1, -1, -1, 0x1) != ANIM_CUE_NONE
-        || fio_finish_cue(-1, 0) != ANIM_CUE_NONE
-        || fio_finish_cue(2, 2) != ANIM_CUE_FOOL
-        || fio_finish_cue(2, 0) != ANIM_CUE_FINISH
-        || fio_finish_cue(2, -1) != ANIM_CUE_FINISH) {
+        || fio_finish_cue(NULL, 0, -1, 3, 0) != ANIM_CUE_NONE
+        || fio_finish_cue((const uint8_t[]){ 0, 1 }, 2, 2, 3, 2) != ANIM_CUE_FOOL
+        || fio_finish_cue((const uint8_t[]){ 0, 1 }, 2, 2, 3, 0) != ANIM_CUE_FINISH
+        || fio_finish_cue((const uint8_t[]){ 0, 1 }, 2, 2, 3, -1) != ANIM_CUE_FINISH
+        // a repetition draw: seat 0 went out, seats 1 and 2 are both fools
+        || fio_finish_cue((const uint8_t[]){ 0 }, 1, 1, 3, 2) != ANIM_CUE_FOOL
+        || fio_finish_cue((const uint8_t[]){ 0 }, 1, 1, 3, 0) != ANIM_CUE_FINISH) {
         printf("FAIL sound cues\n"); return 1;
     }
     // What could sound next: a lobby can only deal, and the scalars cross in

@@ -443,10 +443,14 @@ int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
 //   role     the badges going from `shown` to `next`: a good said, or a mark
 //            that travelled from one seat to another.
 //   finish   the end of the game for the viewer at `my_seat` (negative for a
-//            spectator); `game_over` is the fool's seat, negative while it runs.
+//            spectator), asked with fio_finish_rows' own arguments so the sound
+//            and the list agree on who the fool is: `game_over` is a fool's
+//            seat, negative while it runs, and every seat `elimination` does
+//            not name is a fool (all of them after a repetition draw).
 int fio_role_cue(int shown_defender, int shown_first_attacker, int shown_good_mask,
                  int next_defender, int next_first_attacker, int next_good_mask);
-int fio_finish_cue(int game_over, int my_seat);
+int fio_finish_cue(const uint8_t *elimination, int n_elim, int game_over,
+                   int n_players, int my_seat);
 // Which cues could sound NEXT from a board, one bit per ANIM_CUE_* - what a
 // host loads first (anim_cues_next; a superset by design). The scalars are
 // AnimCueAsk's, in its order.

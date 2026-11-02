@@ -935,11 +935,6 @@ int anim_role_cue(AnimRoles shown, AnimRoles next) {
     return (next.good_mask & ~shown.good_mask) ? ANIM_CUE_GOOD : ANIM_CUE_NONE;
 }
 
-int anim_finish_cue(int game_over, int my_seat) {
-    if (game_over < 0) return ANIM_CUE_NONE;
-    return my_seat == game_over ? ANIM_CUE_FOOL : ANIM_CUE_FINISH;
-}
-
 #define CUE(k) ((uint32_t)1 << (k))
 
 uint32_t anim_cues_next(const AnimCueAsk *q) {
@@ -1887,21 +1882,25 @@ int anim_pass_slot_shown(int previewing, int dragging, int seen_this_drag,
     return 0;
 }
 
+// THE FOOLS of a finished game, as a seat mask: every seat the elimination
+// does not name (game.h game_fools) - the one seat still holding cards after a
+// game lost on cards, every seat still in after a repetition draw. 0 while the
+// game runs. A seat number past the table names nobody. The one owner of the
+// answer for the end screen's list and its sound alike.
+static uint32_t finish_fools(const unsigned char *elimination, int n_elim, int game_over, int n_players) {
+    if (game_over < 0) return 0;
+    uint32_t fools = n_players >= 32 ? ~0u : (1u << n_players) - 1u;
+    for (int i = 0; i < n_elim; i++)
+        if (elimination[i] < 32) fools &= ~(1u << elimination[i]);
+    return fools;
+}
+
 int anim_finish_rows(const unsigned char *elimination, int n_elim,
                      int game_over, int n_players, int my_seat,
                      AnimFinishRow *out, int cap) {
     if (!out || n_elim < 0 || n_players < 0) return ANIM_EBADARG;
     if (n_elim > 0 && !elimination) return ANIM_EBADARG;
-    // THE FOOLS are every seat the elimination does not name (game.h
-    // game_fools): the one seat still holding cards after a game lost on cards,
-    // every seat still in after a repetition draw. A seat number past the table
-    // names nobody.
-    uint32_t fools = 0;
-    if (game_over >= 0) {
-        fools = n_players >= 32 ? ~0u : (1u << n_players) - 1u;
-        for (int i = 0; i < n_elim; i++)
-            if (elimination[i] < 32) fools &= ~(1u << elimination[i]);
-    }
+    uint32_t fools = finish_fools(elimination, n_elim, game_over, n_players);
     int rows = n_elim;
     for (uint32_t f = fools; f; f &= f - 1u) rows++;
     if (rows > cap) return ANIM_ECAP;
@@ -1938,6 +1937,13 @@ int anim_finish_ask(const AnimFinishAsk *q, AnimFinish *out) {
     if (n < 0) return n;
     out->n = (uint8_t)n;
     return n;
+}
+
+int anim_finish_cue(const AnimFinishAsk *q) {
+    if (!q || q->n_elim > MAX_PLAYERS || q->n_players < 0 || q->n_players > MAX_PLAYERS) return ANIM_CUE_NONE;
+    if (q->game_over < 0) return ANIM_CUE_NONE;
+    const uint32_t fools = finish_fools(q->elimination, q->n_elim, q->game_over, q->n_players);
+    return (q->my_seat >= 0 && q->my_seat < 32 && ((fools >> q->my_seat) & 1u)) ? ANIM_CUE_FOOL : ANIM_CUE_FINISH;
 }
 
 unsigned anim_board_chrome(int is_over, int results_shown, int spectating, int rules) {

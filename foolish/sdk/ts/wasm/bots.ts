@@ -447,11 +447,17 @@ export function animCuesNext(ask: V.AnimCueAsk_Snap): number {
     return ex.wasm_anim_cues_next() >>> 0;
 }
 
-/** WHAT THE END OF THE GAME SOUNDS LIKE to this viewer (anim_finish_cue).
- *  `gameOver` is the fool's seat, negative while the game runs; `mySeat` is
- *  negative for a spectator. */
-export function animFinishCue(gameOver: number, mySeat: number): number {
-    return bots().wasm_anim_finish_cue(gameOver, mySeat);
+/** WHAT THE END OF THE GAME SOUNDS LIKE to this viewer (anim_finish_cue),
+ *  asked exactly as the finish order is (animFinishRows below), so the sound
+ *  and the list agree on who the fool is - after a repetition draw, every seat
+ *  `elimination` does not name. `gameOver` is a fool's seat, negative while the
+ *  game runs; `mySeat` is negative for a spectator. */
+export function animFinishCue(
+    elimination: number[], gameOver: number, nPlayers: number, mySeat: number,
+): number {
+    const ex = bots();
+    V.writeAnimFinishAsk(mem(ex), ex.wasm_anim_finish_ask_ptr(), { gameOver, nPlayers, mySeat, elimination });
+    return ex.wasm_anim_finish_cue();
 }
 
 /** MAY THIS WRITER TOUCH THE SHOWN BADGES (anim_shown_ledger_allows)? `claim` is

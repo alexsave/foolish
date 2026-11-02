@@ -1632,6 +1632,7 @@ static void test_plan_is_laid_out_in_beats(void) {
 //   anim_role_cue reading removed goods as a good said   fails "a good cleared is silent"
 //   a mark taken off (or put on) read as a hand-off      fails "not handed to anyone" / "came from nowhere"
 //   anim_finish_cue with the two cues swapped            fails "the fool hears"
+//   anim_finish_cue reading only game_over (one fool)    fails "every other fool" / "the list puts it last"
 
 // The cue step `step` makes of `kind`, or NULL.
 static const AnimCue *cue_of(const AnimPlan *p, int step, int kind) {
@@ -1993,10 +1994,44 @@ static void test_plan_sound_cues(void) {
     }
 
     // ---- the end ----
-    CHECK(anim_finish_cue(-1, 0) == ANIM_CUE_NONE, "a game still running has no end to sound");
-    CHECK(anim_finish_cue(2, 2) == ANIM_CUE_FOOL, "the fool hears that they are the fool");
-    CHECK(anim_finish_cue(2, 0) == ANIM_CUE_FINISH, "everyone else hears the game finish");
-    CHECK(anim_finish_cue(2, -1) == ANIM_CUE_FINISH, "and so does a spectator, who is nobody's fool");
+    // Asked as the end screen is (AnimFinishAsk): three seats, 0 and 1 out in
+    // that order, 2 left holding cards.
+    {
+        AnimFinishAsk q = { .game_over = 2, .n_players = 3, .my_seat = 0, .n_elim = 2, .elimination = { 0, 1 } };
+        AnimFinishAsk running = q;
+        running.game_over = -1;
+        CHECK(anim_finish_cue(&running) == ANIM_CUE_NONE, "a game still running has no end to sound");
+        CHECK(anim_finish_cue(0) == ANIM_CUE_NONE, "and no question has none either");
+        q.my_seat = 2;
+        CHECK(anim_finish_cue(&q) == ANIM_CUE_FOOL, "the fool hears that they are the fool");
+        q.my_seat = 0;
+        CHECK(anim_finish_cue(&q) == ANIM_CUE_FINISH, "everyone else hears the game finish");
+        q.my_seat = -1;
+        CHECK(anim_finish_cue(&q) == ANIM_CUE_FINISH, "and so does a spectator, who is nobody's fool");
+
+        // A REPETITION DRAW (game.h game_fools): seat 0 went out, then the
+        // position came round a third time with 1, 2 and 3 still in - all
+        // three are fools, and `game_over` names only the lowest of them.
+        AnimFinishAsk draw = { .game_over = 1, .n_players = 4, .my_seat = 1, .n_elim = 1, .elimination = { 0 } };
+        CHECK(anim_finish_cue(&draw) == ANIM_CUE_FOOL, "a draw: the lowest fool hears the fool's sound");
+        draw.my_seat = 3;
+        CHECK(anim_finish_cue(&draw) == ANIM_CUE_FOOL, "a draw: so does every other fool, whom game_over does not name");
+        draw.my_seat = 0;
+        CHECK(anim_finish_cue(&draw) == ANIM_CUE_FINISH, "a draw: the seat that went out before it hears the finish");
+        draw.my_seat = -1;
+        CHECK(anim_finish_cue(&draw) == ANIM_CUE_FINISH, "a draw: and a spectator is still nobody's fool");
+        // The sound and the list are one answer: every row at the last place is
+        // a seat that hears FOOL, and no other row is.
+        AnimFinish rows;
+        draw.my_seat = -1;
+        CHECK(anim_finish_ask(&draw, &rows) == 4, "a draw lists every seat");
+        for (int i = 0; i < rows.n; i++) {
+            AnimFinishAsk me = draw;
+            me.my_seat = rows.rows[i].seat;
+            CHECK((anim_finish_cue(&me) == ANIM_CUE_FOOL) == (rows.rows[i].place == draw.n_players),
+                  "a seat hears FOOL exactly when the list puts it last");
+        }
+    }
 }
 
 int main(void) {

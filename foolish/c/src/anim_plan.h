@@ -890,13 +890,8 @@ int anim_pass_hand_off(AnimRoles shown, unsigned attack_pass_seats,
 // ANIM_NO_MASK says nothing about the goods.
 int anim_role_cue(AnimRoles shown, AnimRoles next);
 
-// WHAT THE END OF THE GAME SOUNDS LIKE to the viewer at `my_seat` (negative
-// for a spectator): ANIM_CUE_FOOL for the fool, ANIM_CUE_FINISH for everyone
-// else, ANIM_CUE_NONE while the game is still running. `game_over` is the
-// fool's seat, negative while it runs - AnimFinishAsk.game_over, the same
-// value the end screen is asked with. The host strikes it as the results come
-// up.
-int anim_finish_cue(int game_over, int my_seat);
+// WHAT THE END OF THE GAME SOUNDS LIKE: anim_finish_cue, with the end screen
+// below, because it is asked the end screen's own question (AnimFinishAsk).
 
 // ---- which cues could sound NEXT ------------------------------------------
 //
@@ -1704,6 +1699,18 @@ typedef struct {
     AnimFinishRow rows[MAX_PLAYERS + 1]; // everyone out, then the fools
 } AnimFinish;
 int anim_finish_ask(const AnimFinishAsk *q, AnimFinish *out);
+
+// WHAT THE END OF THE GAME SOUNDS LIKE to the viewer `q->my_seat` (negative for
+// a spectator), asked with the SAME question as the finish order, so the sound
+// and the list can never disagree about who the fool is: ANIM_CUE_FOOL when the
+// viewer is a fool, ANIM_CUE_FINISH for everyone else (a spectator included),
+// ANIM_CUE_NONE while the game is still running. The fools are anim_finish_rows'
+// - every seat the elimination does not name - so a REPETITION DRAW, where
+// every seat still in is a fool, sounds FOOL to each of them and FINISH to the
+// seats that went out before it. A NULL ask, or one anim_finish_ask would
+// refuse, is NONE: no end is sounded off a question no screen could draw. The
+// host strikes it as the results come up.
+int anim_finish_cue(const AnimFinishAsk *q);
 
 // WHAT THE BOARD'S OWN CHROME DRAWS, end screen included.
 //

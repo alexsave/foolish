@@ -13598,7 +13598,10 @@ static void test_next_cues_cover_every_move(void) {
                     const AnimRoles now = { g.defender, g.first_attacker, (int)g.good_players_mask };
                     const int role = game_done(&g) < 0 ? anim_role_cue(was, now) : ANIM_CUE_NONE;
                     if (role != ANIM_CUE_NONE) { made |= (uint32_t)1 << role; n_role++; }
-                    const int fin = anim_finish_cue(game_done(&g), viewer);
+                    AnimFinishAsk end = { .game_over = game_done(&g), .n_players = g.num_players,
+                                          .my_seat = viewer, .n_elim = (uint8_t)g.num_eliminated };
+                    for (int e = 0; e < g.num_eliminated; e++) end.elimination[e] = (uint8_t)g.elimination_order[e];
+                    const int fin = anim_finish_cue(&end);
                     if (fin != ANIM_CUE_NONE) { made |= (uint32_t)1 << fin; n_finish++; }
                     if (made & ~mask) {
                         if (missed++ < 4)

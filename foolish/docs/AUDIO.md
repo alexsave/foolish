@@ -35,8 +35,15 @@ The host asks `anim_role_cue(shown, next)` at the one place it turns the marks.
 On the web that is `syncRoles` in `src/state/useRoleMotion.ts`.
 
 **The end.**
-`anim_finish_cue(game_over, my_seat)` answers the fool's sound, everybody else's, or none while the game runs.
-The web asks it as the results screen comes up (`src/audio/useFinishCue.ts`, called from `GameView`).
+`anim_finish_cue(AnimFinishAsk)` answers the fool's sound, everybody else's, or none while the game runs.
+It is asked the end screen's own question (the elimination, a fool's seat, the seat count, the viewer), so the sound and the results list cannot disagree about who the fool is: one helper in `c/src/anim_plan.c` answers both.
+The web asks it as the results screen comes up (`src/audio/useFinishCue.ts`, called from `GameView` online and from `PromoGame` for a promo code's local game).
+
+**A repetition draw has several fools.**
+A game drawn on the third repetition (`TableView.drawn`, `game.h game_fools`) makes every seat still in a fool, and `game_over` names only the lowest of them.
+The rule: the viewer hears `FOOL` if they are one of the fools, and `FINISH` otherwise - a seat that went out before the draw, or a spectator.
+The fools are every seat the elimination does not name, exactly as the results list ranks them, so a fool the board's `fool` field does not name still hears `FOOL`.
+`test_plan_sound_cues` in `c/tests/anim_plan_test.c` holds the draw case and that a seat hears `FOOL` exactly when the list puts it last.
 
 ## The cues
 
@@ -128,7 +135,7 @@ The control for sound is the mute.
 
 **The control.**
 `src/components/SoundButton.tsx` is one icon button: tap to mute or unmute.
-The route mounts it, not the board, so it is there for the lobby, the board and the results (`src/app/[game_id]/page.tsx`, `src/app/tutorial/page.tsx`).
+The route mounts it, not the board, so it is there for the lobby, the board and the results (`src/app/[game_id]/GameRoute.tsx` for a live game, a replay and a promo code's local game, and `src/app/tutorial/page.tsx`).
 The mute and the master volume are remembered in this browser as two plain keys (`foolish_sound_muted`, `foolish_sound_volume`).
 The volume slider lives on `/sounds` for now.
 
@@ -290,7 +297,7 @@ Nothing plays sound on iOS yet; the architecture is ready for it.
    Schedule with `scheduleBuffer(_:at:)` against the engine's clock, never `DispatchQueue.asyncAfter`.
 3. In `MessageTableView+Sequence.swift`, where `playStep` builds a beat's flights, schedule the cues whose `step` falls in that beat at `cue.atMs - step.startMs` from the beat's start, each strike `ANIM_SOUND_STAGGER_MS` after the last.
    iOS walks beats and sleeps between them, so the offset is taken from the beat, not from the sequence.
-4. Ask `fio_role_cue` in `syncRoles` (`MessageTableView+Roles.swift`) and `fio_finish_cue` where `gameOverHold` ends.
+4. Ask `fio_role_cue` in `syncRoles` (`MessageTableView+Roles.swift`) and `fio_finish_cue` (with the arguments `fio_finish_rows` already takes) where `gameOverHold` ends.
 5. Use the `.ambient` audio session category, so the ringer switch silences it and it mixes with the player's music.
 6. Play a `REVERT` as the buffer of `cue.undoes`, reversed (copy the samples back to front once and keep the buffer).
 7. Load the buffers `fio_cues_next` names first.

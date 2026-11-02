@@ -13,6 +13,7 @@ import { GameBoard } from './GameBoard';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { TexturedSurface } from './TexturedSurface';
 import { WinScreen } from './WinScreen';
+import { useFinishCue } from '../audio/useFinishCue';
 
 /* A promo code's game (src/common/promo.ts): the visitor against the bot, dealt
  * the moment the page opens, played in this tab by the kernel's local table
@@ -57,6 +58,9 @@ const PromoBoard = () => {
     const { view } = useServer();
     const { t } = useLocalization();
     usePreventScroll();
+    // The end of the game is heard as the results take the board's place, as
+    // it is online (GameView): the local game is the same game.
+    useFinishCue(view);
     if (!view) return null;
     // The finish screen is the online game's own (ranks, places, the replay's QR
     // and link), unrated as a local game is, with this page's two ways on.

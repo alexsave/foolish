@@ -691,8 +691,13 @@ int fio_role_cue(int shown_defender, int shown_first_attacker, int shown_good_ma
     return anim_role_cue(shown, next);
 }
 
-int fio_finish_cue(int game_over, int my_seat) {
-    return anim_finish_cue(game_over, my_seat);
+int fio_finish_cue(const uint8_t *elimination, int n_elim, int game_over,
+                   int n_players, int my_seat) {
+    if (n_elim < 0 || n_elim > MAX_PLAYERS || (n_elim > 0 && !elimination)) return ANIM_CUE_NONE;
+    AnimFinishAsk q = { .game_over = game_over, .n_players = n_players, .my_seat = my_seat,
+                        .n_elim = (uint8_t)n_elim };
+    for (int i = 0; i < n_elim; i++) q.elimination[i] = elimination[i];
+    return anim_finish_cue(&q);
 }
 
 unsigned fio_cues_next(int status, int my_seat, int n_players, int n_battles,

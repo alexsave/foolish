@@ -926,13 +926,6 @@ static AnimCueAsk g_anim_cue_ask;
 AnimCueAsk *wasm_anim_cue_ask_ptr(void) { return &g_anim_cue_ask; }
 unsigned wasm_anim_cues_next(void) { return anim_cues_next(&g_anim_cue_ask); }
 
-// WHAT THE END OF THE GAME SOUNDS LIKE to this viewer (anim_plan.h
-// anim_finish_cue): the fool's seat (negative while the game runs) and the
-// viewer's (negative for a spectator) in, an ANIM_CUE_* out.
-int wasm_anim_finish_cue(int game_over, int my_seat) {
-    return anim_finish_cue(game_over, my_seat);
-}
-
 // THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen, asked as
 // a value (AnimFinishAsk: the elimination seats first out first, the fool's
 // seat or a negative while the game runs, the seat count, and the viewer or a
@@ -944,6 +937,12 @@ AnimFinishAsk *wasm_anim_finish_ask_ptr(void) { return &g_anim_finish_ask; }
 AnimFinish *wasm_anim_finish_ptr(void)        { return &g_anim_finish; }
 int wasm_anim_finish_rows(void) {
     return anim_finish_ask(&g_anim_finish_ask, &g_anim_finish);
+}
+// WHAT THE END OF THE GAME SOUNDS LIKE to this viewer (anim_plan.h
+// anim_finish_cue), asked with the same AnimFinishAsk as the rows, written
+// through the same generated writer: an ANIM_CUE_* out.
+int wasm_anim_finish_cue(void) {
+    return anim_finish_cue(&g_anim_finish_ask);
 }
 
 

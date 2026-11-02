@@ -165,19 +165,31 @@ test('the role cue and the finish cue are the kernel\'s answers', () => {
     // Argument order across the bridge: the FIRST three scalars are `shown`.
     assert.equal(animRoleCue({ ...shown, goodMask: 0b101 }, shown), ANIM_CUE_NONE,
         'a good taken away is not a good said, so the two triples are not swapped on the way in');
-    assert.equal(animFinishCue(-1, 0), ANIM_CUE_NONE);
-    assert.equal(animFinishCue(2, 2), ANIM_CUE_FOOL);
-    assert.equal(animFinishCue(2, 0), ANIM_CUE_FINISH);
-    assert.equal(animFinishCue(2, -1), ANIM_CUE_FINISH);
+    // Asked as the finish order is: the elimination, a fool, the seats, me.
+    assert.equal(animFinishCue([0, 1], -1, 3, 0), ANIM_CUE_NONE);
+    assert.equal(animFinishCue([0, 1], 2, 3, 2), ANIM_CUE_FOOL);
+    assert.equal(animFinishCue([0, 1], 2, 3, 0), ANIM_CUE_FINISH);
+    assert.equal(animFinishCue([0, 1], 2, 3, -1), ANIM_CUE_FINISH);
+    // A repetition draw: seat 0 went out and 1 and 2 are both fools, though
+    // `gameOver` names only the lowest. The list crosses, not just that seat.
+    assert.equal(animFinishCue([0], 1, 3, 2), ANIM_CUE_FOOL, 'every fool of a draw hears the fool\'s sound');
+    assert.equal(animFinishCue([0], 1, 3, 0), ANIM_CUE_FINISH, 'and the seat that went out first does not');
 });
 
-test('a board\'s finish cue reads the fool and the viewer off it, each as itself', () => {
-    assert.equal(finishCueOf({ fool: -1, mySeat: 0 }), ANIM_CUE_NONE, 'a running game has no fool and makes no sound');
-    assert.equal(finishCueOf({ fool: 1, mySeat: 1 }), ANIM_CUE_FOOL);
-    assert.equal(finishCueOf({ fool: 1, mySeat: 0 }), ANIM_CUE_FINISH);
+test('a board\'s finish cue reads the end and the viewer off it, each as itself', () => {
+    const seats = (n: number) => Array.from({ length: n }, () => ({}) as TableView['seats'][number]);
+    const board = (elimination: number[], fool: number, n: number, mySeat: number) => ({ elimination, fool, seats: seats(n), mySeat });
+    assert.equal(finishCueOf(board([], -1, 2, 0)), ANIM_CUE_NONE, 'a running game has no fool and makes no sound');
+    assert.equal(finishCueOf(board([0], 1, 2, 1)), ANIM_CUE_FOOL);
+    assert.equal(finishCueOf(board([0], 1, 2, 0)), ANIM_CUE_FINISH);
     // The one viewer for whom the two seats are not interchangeable: a spectator
     // has no seat, and still hears the game end.
-    assert.equal(finishCueOf({ fool: 2, mySeat: -1 }), ANIM_CUE_FINISH);
+    assert.equal(finishCueOf(board([0, 1], 2, 3, -1)), ANIM_CUE_FINISH);
+    // A REPETITION DRAW of four: seat 2 went out, and 0, 1 and 3 are all fools.
+    // The board's `fool` is the lowest of them, so a viewer at seat 3 is a fool
+    // only because the seat count and the elimination crossed too.
+    assert.equal(finishCueOf(board([2], 0, 4, 3)), ANIM_CUE_FOOL, 'a fool of a draw that `fool` does not name hears it');
+    assert.equal(finishCueOf(board([2], 0, 4, 2)), ANIM_CUE_FINISH, 'the seat out before the draw hears the finish');
 });
 
 // ---- 2. the hand-over ---------------------------------------------------------------
