@@ -58,10 +58,53 @@ Measured, those three have a centroid of 630-680 Hz (the real median is 604 Hz).
 The variants he passed over were darker (447-485 Hz) or brighter (748 Hz).
 Next: keep the variation within a centroid of about 580-700 Hz.
 
+
+## The whole throw-in: four steps (Alex, 2026-11-02)
+"The person grabs a card, slides it out, throws it in. Like the deal, it has 4 steps."
+1. **Grab:** two fingers take a card in the hand. It is very quiet and is modelled from its own recording (below).
+2. **Slide out:** the thumb slides the card out from the other cards. This is the deal's thumb slide (`../deal`).
+   - The grab comes right before it (Alex: "right before the thumb slide").
+3. **Flight:** the card leaves the hand and flies ANIM_TIME_MS = 500 ms (Alex: "500ms flight time is fine").
+4. **Landing:** the aggressive throw-in above, where the game strikes ANIM_CUE_PLACE.
+
+`an/throwin_game.py SOUNDGEN NAME SEED COUNT GAP` lays them out on the deal's level scale g (-34 to -32 dBFS):
+- the grab at g-14, 110 ms before the slide's peak;
+- the slide at g-(6..9), its peak 130 ms before the card leaves (as in the deal);
+- the landing at g-(3..5).
+
+## The two-finger grab (an/tgrab_an.py, an/tgrab_syn.py)
+The recording is IMG_2952. `parts/grab_1-8.wav` hold the 8 grabs, each with its peak at 0.2 s; `parts/grab_room.wav` is its room.
+
+**It is its own sound, not a quieter deal grab.** Compared with the deal's grab (`measure.py`), it is:
+- darker: centroid 350 Hz against 975 Hz, with 10-23 dB less above 1 kHz;
+- shorter: 15 ms above -10 dB against 30;
+- less clicky: about 2 clicks against 7.
+
+**Clicks.**
+- The main click is 0.75-1.9 ms wide.
+- In 7 of 8 grabs, a softer pre-click comes 2.6-11 ms before it (-12 to 0 dB).
+- In half, a partner follows 1.5-1.8 ms after it (-12 to -9 dB, about 3 ms wide).
+
+**Spectrum.** It peaks at 300 Hz and is 17 dB down by 1.2 kHz, with a small bump at 2.4 kHz.
+
+**Envelope (re the full-band peak).**
+- A soft lead-in over 15 ms.
+- The contact.
+- A low rustle about 20 dB down that lasts at least 80 ms.
+
+The rustle is well above the room (the room's low band is about 36 dB under a grab's peak), so it is real.
+
+**How it was checked.** Measured with the recording's own room under the synth (`an/with_room.py`), so that the tails compare like for like.
+The shipped sound has no room in it.
+With the clicks +3 dB and one spectral fit, every measure falls inside the 8 grabs.
+
 ## Reproduce
 ```
 cd foolish/tools/soundgen/throwin && mkdir -p synth plots
 python3 -I an/throw_an.py                      # re-measures the reps (rewrites the two spectrum tables)
 python3 -I an/throw_syn.py throw9 7            # 12 variants into synth/
 python3 -I an/measure.py throw9 'parts/real_*.wav' 'synth/throw9_*.wav'
+python3 -I an/tgrab_syn.py tgrab2 9                 # the two-finger grabs
+python3 -I an/with_room.py tgrab2 && python3 -I an/measure.py tgrab2 'parts/grab_?.wav' 'synth/tgrab2R_*.wav'
+python3 -I an/throwin_game.py .. throwin_game1 2 4 2.0   # four whole throw-ins (needs ../deal/synth/thumb9_*.wav)
 ```
