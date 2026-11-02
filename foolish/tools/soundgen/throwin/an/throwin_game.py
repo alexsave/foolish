@@ -3,7 +3,8 @@ the other cards (the deal's thumb slide), it leaves the hand, flies ANIM_TIME_MS
 throw-in, ANIM_CUE_PLACE struck at the landing). The grab sits right before the slide; the slide's peak is SLIDE_LEAD
 before the card leaves, as in the deal. Levels on the deal's scale g: grab g-14 (very quiet), slide g-(6..9) as in the
 deal, landing g-(3..5) (louder than a dealt card's landing: it is thrown).
-Usage: throwin_game.py SOUNDGEN NAME SEED COUNT GAP_S"""
+Usage: throwin_game.py SOUNDGEN NAME SEED COUNT GAP_S [LAND_GLOB LAND_DB_LO LAND_DB_HI]. A cover is the same
+grab, slide and flight with the cover's landing (Alex: "the landing is on a card so it sounds different")."""
 import sys, wave, glob, numpy as np
 SR = 48000; SG, NAME = sys.argv[1], sys.argv[2]; rng = np.random.default_rng(int(sys.argv[3])); COUNT = int(sys.argv[4]); GAP = float(sys.argv[5])
 SLIDE_LEAD, GRAB_BEFORE_SLIDE, FLIGHT = 0.13, 0.11, 0.500
@@ -13,13 +14,14 @@ def save(p, x):
     with wave.open(p, "wb") as w: w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes((np.clip(x, -1, 1) * 32767).astype(np.int16).tobytes())
 def put(out, x, at, ref, db):
     x = x / (np.abs(x).max() + 1e-12) * 10 ** (db / 20); k = int(at * SR) - ref; lo = max(0, k); hi = min(len(out), k + len(x)); out[lo:hi] += x[lo - k: hi - k]
-grabs = [load(p) for p in sorted(glob.glob("synth/tgrab2_[0-9]*.wav"))]
+grabs = [load(p) for p in sorted(glob.glob("grab2/synth/tgrab2_[0-9]*.wav"))]
 slides = [load(p) for p in sorted(glob.glob(f"{SG}/deal/synth/thumb9_*.wav"))]
-lands = [load(p) for p in sorted(glob.glob("synth/throw9_*.wav"))]
+LANDS = sys.argv[6] if len(sys.argv) > 6 else f"{SG}/throwin/synth/throw9_*.wav"; LAND_DB = (float(sys.argv[7]), float(sys.argv[8])) if len(sys.argv) > 8 else (3.0, 5.0)
+lands = [load(p) for p in sorted(glob.glob(LANDS))]
 out = np.zeros(int((1.5 + COUNT * GAP + 1.0) * SR))
 for i in range(COUNT):
     g = rng.uniform(-34, -32); T = 0.8 + i * GAP                      # T: the card leaves the hand
     s = slides[rng.integers(len(slides))]; put(out, s, T - SLIDE_LEAD, int(np.argmax(np.abs(s))), g - rng.uniform(6, 9))
     gr = grabs[rng.integers(len(grabs))]; put(out, gr, T - SLIDE_LEAD - GRAB_BEFORE_SLIDE, int(0.2 * SR), g - 14)
-    l = lands[rng.integers(len(lands))]; put(out, l, T + FLIGHT, int(np.argmax(np.abs(l))), g - rng.uniform(3, 5))
+    l = lands[rng.integers(len(lands))]; put(out, l, T + FLIGHT, int(np.argmax(np.abs(l))), g - rng.uniform(*LAND_DB))
 save(f"synth/{NAME}.wav", out); print("wrote", NAME)
