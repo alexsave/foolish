@@ -27,7 +27,7 @@ def measure(p):
     m["peak dBFS"] = 20 * np.log10(np.abs(x).max())
     pk0 = int(np.argmax(np.abs(x))); w10 = x[max(0, pk0 - 240): pk0 + 240]
     m["crest full 10ms dB"] = 20 * np.log10(np.abs(x).max() / np.sqrt(np.mean(w10 ** 2)))
-    m["crest 150-1k 10ms dB"] = (lambda y: 20 * np.log10(np.abs(y[pk0 - 240: pk0 + 240]).max() / np.sqrt(np.mean(y[pk0 - 240: pk0 + 240] ** 2))))(bp(x, 150, 1000))
+    m["crest 150-1k 10ms dB"] = (lambda y: 20 * np.log10(np.abs(y[max(0, pk0 - 240): pk0 + 240]).max() / np.sqrt(np.mean(y[max(0, pk0 - 240): pk0 + 240] ** 2))))(bp(x, 150, 1000))
     m["peak lo/full dB"] = 20 * np.log10(np.abs(bp(x, 150, 1000)).max() / np.abs(x).max())
     a = 20 * np.log10(np.sqrt(np.mean(bp(x, 500, 10000) ** 2 * 1)) + 1e-12)
     hi = bp(x, 1000, 15000); e = rms_db(hi, 480)[::48]; pk = int(np.argmax(e)); e -= e[pk]
