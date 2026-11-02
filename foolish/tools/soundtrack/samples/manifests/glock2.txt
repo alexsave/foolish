@@ -1,0 +1,6 @@
+67 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/Percussion/Glock/glock_medium_G4.wav
+72 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/Percussion/Glock/glock_medium_C5.wav
+79 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/Percussion/Glock/glock_medium_G5.wav
+84 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/Percussion/Glock/glock_medium_C6.wav
+91 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/Percussion/Glock/glock_medium_G6.wav
+96 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/Percussion/Glock/glock_medium_C7.wav

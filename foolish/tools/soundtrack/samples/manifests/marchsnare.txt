@@ -1,0 +1,17 @@
+60 1 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_click_1.wav
+60 1 2 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_click_2.wav
+60 4 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_f_1.wav
+60 4 2 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_f_2.wav
+60 6 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_fff_1.wav
+60 3 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_mp_1.wav
+60 2 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_p_1.wav
+60 2 2 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_p_2.wav
+60 2 3 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_p_3.wav
+60 2 4 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_p_4.wav
+60 1 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_pp_1.wav
+60 1 2 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_pp_2.wav
+60 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_ppp_1.wav
+60 0 2 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_ppp_2.wav
+60 0 3 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_ppp_3.wav
+60 4 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_rimshot_f_1.wav
+60 5 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vsco2ce/VSCO 1 Percussion/drums/snare/drum3_marching/snare3_rimshot_ff_1.wav

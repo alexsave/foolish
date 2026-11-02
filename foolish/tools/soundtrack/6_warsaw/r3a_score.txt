@@ -1,0 +1,119 @@
+TEMPO 132
+
+SECTION I Impromptu: Storm BARS 16 KEY G# minor
+RH: G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 C#5:0.25 B4:0.25 A#4:0.25 B4:0.25 C#5:0.25 D#5:0.25 F#5:0.25 G#5:0.25 A#5:0.25 | B5:0.25 A#5:0.25 B5:0.25 G#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 D#5:0.25 G5:0.25 | G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 C#5:0.25 B4:0.25 A#4:0.25 B4:0.25 C#5:0.25 D#5:0.25 F#5:0.25 G#5:0.25 B5:0.25 | C#6:0.25 C6:0.25 C#6:0.25 G#5:0.25 E5:0.25 D#5:0.25 E5:0.25 C#5:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 D#5:0.25 G5:0.25 | E6:0.25 D#6:0.25 E6:0.25 D6:0.25 B5:0.25 A#5:0.25 B5:0.25 G#5:0.25 E5:0.25 D#5:0.25 E5:0.25 D5:0.25 B4:0.25 D5:0.25 E5:0.25 G#5:0.25 | A5:0.25 G#5:0.25 A5:0.25 G5:0.25 E5:0.25 D#5:0.25 E5:0.25 C#5:0.25 A4:0.25 G#4:0.25 A4:0.25 C#5:0.25 E5:0.25 A5:0.25 C#6:0.25 E6:0.25 | G6:0.25 F#6:0.25 G6:0.25 E6:0.25 C#6:0.25 C6:0.25 C#6:0.25 A#5:0.25 G5:0.25 F#5:0.25 G5:0.25 E5:0.25 C#5:0.25 C5:0.25 C#5:0.25 A#4:0.25 | D#5:0.25 G5:0.25 A#5:0.25 C#6:0.25 D#6:0.25 G6:0.25 A#6:0.25 C#7:0.25 A#6:0.25 G6:0.25 D#6:0.25 C#6:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 | G#5+G#6:0.25 G5+G6:0.25 G#5+G#6:0.25 F#5+F#6:0.25 D#5+D#6:0.25 D5+D6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 B4+B5:0.25 A#4+A#5:0.25 B4+B5:0.25 C#5+C#6:0.25 D#5+D#6:0.25 F#5+F#6:0.25 G#5+G#6:0.25 A#5+A#6:0.25 | B5+B6:0.25 A#5+A#6:0.25 B5+B6:0.25 G#5+G#6:0.25 D#5+D#6:0.25 D5+D6:0.25 D#5+D#6:0.25 B4+B5:0.25 A#5+A#6:0.25 A5+A6:0.25 A#5+A#6:0.25 G5+G6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 D#5+D#6:0.25 G5+G6:0.25 | %9 | C#6+C#7:0.25 C6+C7:0.25 C#6+C#7:0.25 G#5+G#6:0.25 E5+E6:0.25 D#5+D#6:0.25 E5+E6:0.25 C#5+C#6:0.25 A#5+A#6:0.25 A5+A6:0.25 A#5+A#6:0.25 G5+G6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 D#5+D#6:0.25 G5+G6:0.25 | %5 | %6 | %7 | D#6+D#7:0.25 C#6+C#7:0.25 A#5+A#6:0.25 G5+G6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 A#4+A#5:0.25 G4+G5:0.25 D#4+D#5:0.25 C#4+C#5:0.25 A#3+A#4:0.25 G3+G4:0.25 D#3+D#4:0.25 C#3+C#4:0.25 A#2+A#3:0.25 G2+G3:0.25
+LH: G#1+G#2:0.5 D#3:0.5 G#3:0.5 B3:0.5 D#4:0.5 B3:0.5 G#3:0.5 D#3:0.5 | G#1+G#2:0.5 D#3:0.5 G#3:0.5 B3:0.5 D#2+D#3:0.5 G3:0.5 A#3:0.5 C#4:0.5 | %1 | C#2+C#3:0.5 G#3:0.5 C#4:0.5 E4:0.5 D#2+D#3:0.5 G3:0.5 A#3:0.5 C#4:0.5 | E1+E2:0.5 B2:0.5 E3:0.5 G#3:0.5 B3:0.5 D4:0.5 B3:0.5 G#3:0.5 | A1+A2:0.5 E2:0.5 A2:0.5 C#3:0.5 E3:0.5 A3:0.5 E3:0.5 C#3:0.5 | G1+G2:0.5 A#2:0.5 C#3:0.5 E3:0.5 G3:0.5 E3:0.5 C#3:0.5 A#2:0.5 | D#1+D#2:0.5 A#2:0.5 D#3:0.5 G3:0.5 A#3:0.5 G3:0.5 D#3:0.5 A#2:0.5 | G#1+G#2:0.5 D#2+D#3:0.5 G#2+G#3:0.5 B2+B3:0.5 D#3+D#4:0.5 B2+B3:0.5 G#2+G#3:0.5 D#2+D#3:0.5 | G#1+G#2:0.5 D#2+D#3:0.5 G#2+G#3:0.5 B2+B3:0.5 D#1+D#2:0.5 G2+G3:0.5 A#2+A#3:0.5 C#3+C#4:0.5 | %9 | C#1+C#2:0.5 G#2+G#3:0.5 C#3+C#4:0.5 E3+E4:0.5 D#1+D#2:0.5 G2+G3:0.5 A#2+A#3:0.5 C#3+C#4:0.5 | E1+E2:0.5 B1+B2:0.5 E2+E3:0.5 G#2+G#3:0.5 B2+B3:0.5 D3+D4:0.5 B2+B3:0.5 G#2+G#3:0.5 | A1+A2:0.5 E2+E3:0.5 A2+A3:0.5 C#3+C#4:0.5 E3+E4:0.5 A3+A4:0.5 E3+E4:0.5 C#3+C#4:0.5 | G1+G2:0.5 A#2+A#3:0.5 C#3+C#4:0.5 E3+E4:0.5 G3+G4:0.5 E3+E4:0.5 C#3+C#4:0.5 A#2+A#3:0.5 | D#1+D#2:4
+PEDAL: x:4 | x:2 x:2 | x:4 | x:2 x:2 | x:4 | x:4 | x:4 | x:4 | x:4 | x:2 x:2 | x:4 | x:2 x:2 | x:4 | x:4 | x:4 | x:4
+DYN: f bars 1-4, cresc bars 5-8, ff bars 9-12, fff bars 13-16
+
+SECTION I Impromptu: Hand-off (lament bass sinks to the night) BARS 4 KEY G# minor
+TEMPO 54 RAMP 16
+RH: G#5+G#6:1 G5+G6:1 G#5+G#6:1 F#5+F#6:1 | F#5+F#6:1 F5+F6:1 F#5+F#6:1 E5+E6:1 | E5+G#5:1 D#5+F#5:1 E5+G#5:1 C#5+E5:1 | r:1 B4:1 E5:1 D#5:0.5 E5:0.5
+LH: G#1+G#2:2 D#3+G#3+B3:2 | F#1+F#2:2 C#3+F#3+A#3:2 | E1+E2:2 B2+E3+G#3:2 | B1+B2:2 A2+D#3+F#3:2
+PEDAL: x:4 | x:4 | x:4 | x:4
+DYN: ff bar 1, f bar 2, mp bar 3, pp bar 4
+TRANSITION: bass G#-F#-E (1-b7-b6) then B; E major (VI of G# minor) is re-heard as I, B7 is its dominant; bar 4 RH is already the nocturne's first bar
+
+SECTION II Nocturne: Song BARS 8 KEY E major
+TEMPO 54
+RH: r:1 B4:1 E5:1 D#5:0.5 E5:0.5 | F#5:2 E5:0.25 F#5:0.25 E5:0.25 D#5:0.25 E5:1 | D#5:1.5 C#5:0.5 B4:1 G#4:1 | A4:1.5 B4:0.5 C#5:1 B4:0.5 A4:0.5 | G#4:2 B4:1 E5:1 | F#5:1.5 G#5:0.5 A5:1 B5:1 | C#6:1.5 B5:0.5 G#5:1 F#5:1 | E5:3 r:1
+LH: E1+E2:0.5 B2:0.5 G#3:0.5 B3:0.5 E4:0.5 B3:0.5 G#3:0.5 B2:0.5 | B1+B2:0.5 F#3:0.5 A3:0.5 D#4:0.5 F#4:0.5 D#4:0.5 A3:0.5 F#3:0.5 | %1 | F#1+F#2:0.5 C#3:0.5 A3:0.5 C#4:0.5 F#4:0.5 C#4:0.5 A3:0.5 C#3:0.5 | C#2+C#3:0.5 G#2:0.5 E3:0.5 G#3:0.5 C#4:0.5 G#3:0.5 E3:0.5 G#2:0.5 | A1+A2:0.5 E2:0.5 C#3:0.5 E3:0.5 B1+B2:0.5 F#2:0.5 A2:0.5 D#3:0.5 | C#2+C#3:0.5 G#2:0.5 E3:0.5 G#3:0.5 B1+B2:0.5 F#3:0.5 A3:0.5 D#4:0.5 | %1
+PEDAL: x:4 | x:4 | x:4 | x:4 | x:4 | x:2 x:2 | x:2 x:2 | x:4
+DYN: p dolce, rubato at bars 4 and 8
+
+SECTION II Nocturne: Song in octaves BARS 8 KEY E major
+RH: r:1 B4+B5:1 E5+E6:1 D#5+D#6:0.5 E5+E6:0.5 | F#5+F#6:2 E5+E6:0.25 F#5+F#6:0.25 E5+E6:0.25 D#5+D#6:0.25 E5+E6:1 | D#5+D#6:1.5 C#5+C#6:0.5 B4+B5:1 G#4+G#5:1 | A4+A5:1.5 B4+B5:0.5 C#5+C#6:1 B4+B5:0.5 A4+A5:0.5 | G#4+G#5:2 B4+B5:1 E5+E6:1 | F#5+F#6:1.5 G#5+G#6:0.5 A5+A6:1 B5+B6:1 | C#6+C#7:1.5 B5+B6:0.5 G#5+G#6:1 F#5+F#6:1 | E5+E6:2 D5+D6:1 C5+C6:1
+LH: E1+E2:0.5 B2:0.5 G#3:0.5 B3:0.5 E4:0.5 G#4:0.5 E4:0.5 B3:0.5 | B1+B2:0.5 F#3:0.5 A3:0.5 D#4:0.5 F#4:0.5 A4:0.5 F#4:0.5 D#4:0.5 | %1 | F#1+F#2:0.5 C#3:0.5 A3:0.5 C#4:0.5 F#4:0.5 A4:0.5 F#4:0.5 C#4:0.5 | C#2+C#3:0.5 G#2:0.5 E3:0.5 G#3:0.5 C#4:0.5 E4:0.5 C#4:0.5 G#3:0.5 | A1+A2:0.5 E2:0.5 C#3:0.5 A3:0.5 B1+B2:0.5 F#2:0.5 D#3:0.5 A3:0.5 | C#2+C#3:0.5 G#2:0.5 E3:0.5 G#3:0.5 B1+B2:0.5 F#3:0.5 A3:0.5 D#4:0.5 | E1+E2:0.5 B2:0.5 G3:0.5 B3:0.5 E4:0.5 B3:0.5 G3:0.5 B2:0.5
+PEDAL: x:4 | x:4 | x:4 | x:4 | x:4 | x:2 x:2 | x:2 x:2 | x:4
+DYN: mf, cresc to f at bar 7, bar 8 subito p (the D and C naturals tip it into E minor)
+
+SECTION II Nocturne: Darkening BARS 8 KEY E minor
+RH: r:1 B4+G5:1 E5+C6:1 D#5+B5:0.5 E5+C6:0.5 | F#5+D6:2 E5+C6:0.25 F#5+D6:0.25 E5+C6:0.25 D#5+B5:0.25 E5+C6:1 | F5+A5:1.5 E5+G5:0.5 D5+F5:1 C5+F5:1 | C6+F#6:1 A5+D#6:1 F#5+C6:1 D#5+A5:1 | B5+B6:0.5 A#5+A#6:0.5 B5+B6:0.5 A5+A6:0.5 G5+G6:0.5 F#5+F#6:0.5 G5+G6:0.5 E5+E6:0.5 | C6+C7:1.5 B5+B6:0.5 A5+A6:1 G5+G6:1 | F5+A5+F6:1.5 E5+G5+E6:0.5 D#5+A5+C6:1 D#5+F#5+C6:1 | B4:4
+LH: E1+E2:0.5 B2:0.5 G3:0.5 B3:0.5 E4:0.5 B3:0.5 G3:0.5 B2:0.5 | B1+B2:0.5 F#3:0.5 A3:0.5 D#4:0.5 F#4:0.5 D#4:0.5 A3:0.5 F#3:0.5 | F1+F2:0.5 C3:0.5 A3:0.5 C4:0.5 F4:0.5 C4:0.5 A3:0.5 C3:0.5 | D#1+D#2:0.5 A2:0.5 C3:0.5 F#3:0.5 A3:0.5 C4:0.5 F#4:0.5 A4:0.5 | B1+B2:0.5 F#2+F#3:0.5 A2+A3:0.5 D#3+D#4:0.5 F#3+F#4:0.5 D#3+D#4:0.5 A2+A3:0.5 F#2+F#3:0.5 | C1+C2:0.5 G2+G3:0.5 C3+C4:0.5 E3+E4:0.5 G3+G4:0.5 E3+E4:0.5 C3+C4:0.5 G2+G3:0.5 | A1+A2:0.5 F2+F3:0.5 C3+C4:0.5 F3+F4:0.5 D#1+D#2:0.5 A2+A3:0.5 C3+C4:0.5 F#3+F#4:0.5 | G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5
+PEDAL: x:4 | x:4 | x:4 | x:4 | x:4 | x:4 | x:2 x:2 | x:2 x:2
+DYN: mp bar 1-2, cresc bars 3-4, fff bars 5-7, bar 8 pp subito
+FX: bar 8 is the quote (Chopin, Prelude Op. 28 No. 4, bar 1: the held B over the repeated E minor chords)
+
+SECTION II Nocturne: Hand-off (Prelude bass sinks 1-b7-b6-5) BARS 3 KEY E minor
+RH: B4:3 C5:0.5 B4:0.5 | %1 | B4:3 C5:0.5 A#4:0.5
+LH: D2+D3:0.5 F#3+B3+D4:0.5 F#3+B3+D4:0.5 F#3+B3+D4:0.5 D2+D3:0.5 F#3+B3+D4:0.5 F#3+B3+D4:0.5 F#3+B3+D4:0.5 | C2+C3:0.5 E3+A3+C4:0.5 E3+A3+C4:0.5 E3+A3+C4:0.5 C2+C3:0.5 E3+A3+C4:0.5 E3+A3+C4:0.5 E3+A3+C4:0.5 | B1+B2:0.5 F#3+A3+D#4:0.5 F#3+A3+D#4:0.5 F#3+A3+D#4:0.5 B1+B2:0.5 F#3+A3+D#4:0.5 F#3+A3+D#4:0.5 F#3+A3+D#4:0.5
+PEDAL: x:4 | x:4 | x:4
+DYN: pp, bar 3 cresc
+
+SECTION II Nocturne: Cadenza BARS 1 KEY B major
+TEMPO 100 RAMP 4
+RH: A#4:2 B3:0.25 D#4:0.25 F#4:0.25 B4:0.25 D#5:0.25 F#5:0.25 B5:0.25 D#6:0.25
+LH: B1+B2:0.5 F#3+A3+D#4:0.5 B1+B2:0.5 F#3+A3+D#4:0.5 B1+B2:2
+PEDAL: x:4
+DYN: cresc from p to ff
+TRANSITION: B7 (V of E minor) drops its seventh and stands as the tonic of B major; the run accelerates into the heroic tempo
+
+SECTION III Heroic: Octaves (alla polacca) BARS 16 KEY B major
+TEMPO 100
+RH: F#5+F#6:0.5 B5+B6:0.25 B5+B6:0.25 A#5+A#6:0.5 B5+B6:0.5 C#6+C#7:1 B5+B6:0.5 A#5+A#6:0.5 | G#5+G#6:0.5 G#5+G#6:0.25 G#5+G#6:0.25 F#5+F#6:0.5 E5+E6:0.5 D#5+D#6:1 C#5+C#6:0.5 D#5+D#6:0.5 | %1 | E5+E6:0.5 E5+E6:0.25 E5+E6:0.25 D#5+D#6:0.5 C#5+C#6:0.5 B4+B5:2 | B5+B6:0.5 A#5+A#6:0.25 B5+B6:0.25 A5+A6:0.5 G#5+G#6:0.5 F#5+F#6:1 E5+E6:0.5 G#5+G#6:0.5 | C#6+C#7:0.5 C6+C7:0.25 C#6+C#7:0.25 B5+B6:0.5 A#5+A#6:0.5 G#5+G#6:1 F#5+F#6:0.5 A#5+A#6:0.5 | %5 | D#6+D#7:0.5 C#6+C#7:0.25 B5+B6:0.25 A#5+A#6:0.5 G#5+G#6:0.5 F#5+F#6:1 B5+D#6+F#6+B6:1 | %1 | %2 | %3 | %4 | %5 | %6 | %7 | D#6+D#7:0.5 C#6+C#7:0.25 B5+B6:0.25 A#5+A#6:0.5 G#5+G#6:0.5 F#5+F#6:1 D#5+G5+A#5+D#6:1
+LH: B1+B2:0.5 F#3+B3+D#4:0.25 F#3+B3+D#4:0.25 B1+B2:0.5 F#3+B3+D#4:0.5 B1+B2:1 F#3+B3+D#4:0.5 F#3+B3+D#4:0.5 | E1+E2:0.5 G#3+B3+E4:0.25 G#3+B3+E4:0.25 E1+E2:0.5 G#3+B3+E4:0.5 F#1+F#2:1 A#3+C#4+E4:0.5 A#3+C#4+E4:0.5 | %1 | F#1+F#2:0.5 A#3+C#4+E4:0.25 A#3+C#4+E4:0.25 F#1+F#2:0.5 A#3+C#4+E4:0.5 B1+B2:0.5 D#3+F#3+B3:0.5 B2+B3:0.5 D#3+F#3+B3:0.5 | B1+B2:0.5 F#3+B3+D#4:0.25 F#3+B3+D#4:0.25 A1+A2:0.5 F#3+A3+D#4:0.5 E1+E2:1 G#3+B3+E4:0.5 G#3+B3+E4:0.5 | C#1+C#2:0.5 G#3+C#4+E4:0.25 G#3+C#4+E4:0.25 C#1+C#2:0.5 G#3+C#4+E4:0.5 F#1+F#2:1 A#3+C#4+F#4:0.5 A#3+C#4+F#4:0.5 | %5 | F#1+F#2:0.5 A#3+C#4+E4:0.25 A#3+C#4+E4:0.25 F#1+F#2:0.5 A#3+C#4+E4:0.5 B1+B2:1 F#3+B3+D#4:1 | %1 | %2 | %3 | %4 | %5 | %6 | %7 | F#1+F#2:0.5 A#3+C#4+E4:0.25 A#3+C#4+E4:0.25 F#1+F#2:0.5 A#3+C#4+E4:0.5 B1+B2:1 D#1+D#2:1
+PEDAL: x:4 | x:2 x:2 | x:4 | x:2 x:2 | x:1 x:1 x:2 | x:2 x:2 | x:1 x:1 x:2 | x:2 x:2 | x:4 | x:2 x:2 | x:4 | x:2 x:2 | x:1 x:1 x:2 | x:2 x:2 | x:1 x:1 x:2 | x:2 x:1 x:1
+DYN: ff maestoso bars 1-8, fff bars 9-16
+FX: bar 16 repeats bar 8 and changes only its last chord (B major becomes D#7, the door into G# minor)
+
+SECTION III Heroic: Rising and breaking BARS 7 KEY G# minor
+RH: D#5+D#6:0.5 G#5+G#6:0.25 G#5+G#6:0.25 G5+G6:0.5 G#5+G#6:0.5 A#5+A#6:1 G#5+G#6:0.5 G5+G6:0.5 | E5+E6:0.5 E5+E6:0.25 E5+E6:0.25 D#5+D#6:0.5 C#5+C#6:0.5 B4+B5:1 A#4+A#5:0.5 B4+B5:0.5 | E5+E6:0.5 A5+A6:0.25 A5+A6:0.25 G#5+G#6:0.5 A5+A6:0.5 B5+B6:1 A5+A6:0.5 G#5+G#6:0.5 | G5+A#5+C#6:0.5 A#5+C#6+E6:0.5 C#6+E6+G6:0.5 E6+G6+A#6:0.5 G6+A#6+C#7:1 E6+G6+A#6:0.5 C#6+E6+G6:0.5 | D#6+D#7:0.5 D6+D7:0.25 D#6+D#7:0.25 C#6+C#7:0.5 A#5+A#6:0.5 G5+G6:1 A#5+A#6:0.5 C#6+C#7:0.5 | D#6+D#7:0.5 D6+D7:0.25 D#6+D#7:0.25 C#6+C#7:0.5 A#5+A#6:0.5 G5+G6:1 A#5+A#6:0.5 A5+A6:0.5 | E6+E7:0.25 C#6+C#7:0.25 A#5+A#6:0.25 G5+G6:0.25 E5+E6:0.25 C#5+C#6:0.25 A#4+A#5:0.25 G4+G5:0.25 E4+E5:0.25 C#4+C#5:0.25 A#3+A#4:0.25 G3+G4:0.25 E3+E4:0.25 C#3+C#4:0.25 A#2+A#3:0.25 G2+G3:0.25
+LH: G#1+G#2:0.5 D#3+G#3+B3:0.25 D#3+G#3+B3:0.25 G#1+G#2:0.5 D#3+G#3+B3:0.5 G#1+G#2:1 D#3+G#3+B3:0.5 D#3+G#3+B3:0.5 | E1+E2:0.5 G#3+B3+E4:0.25 G#3+B3+E4:0.25 E1+E2:0.5 G#3+B3+E4:0.5 D#1+D#2:1 G3+A#3+C#4:0.5 G3+A#3+C#4:0.5 | A1+A2:0.5 E3+A3+C#4:0.25 E3+A3+C#4:0.25 A1+A2:0.5 E3+A3+C#4:0.5 A1+A2:1 E3+A3+C#4:0.5 E3+A3+C#4:0.5 | G1+G2:0.5 A#2+C#3+E3:0.5 G1+G2:0.5 A#2+C#3+E3:0.5 G1+G2:0.5 A#2+C#3+E3:0.5 G1+G2:0.5 A#2+C#3+E3:0.5 | D#1+D#2:0.5 G2+A#2+C#3:0.25 G2+A#2+C#3:0.25 D#1+D#2:0.5 G2+A#2+C#3:0.5 D#1+D#2:1 G2+A#2+C#3:0.5 G2+A#2+C#3:0.5 | %5 | G1+G2:1 A#1+A#2:1 C#2+C#3:1 E2+E3:1
+PEDAL: x:4 | x:2 x:2 | x:4 | x:4 | x:4 | x:4 | x:4
+DYN: ff bars 1-3, fff bars 4-7
+FX: bar 6 repeats bar 5 and changes only its last note (C# becomes the Neapolitan A); bar 7 is the double-octave fall against a rising bass
+
+SECTION III Heroic: Hand-off (the held dominant) BARS 1 KEY C# minor
+TEMPO 50 RAMP 4
+RH: G#2+G#3:2 r:2
+LH: G#1+G#2:4
+PEDAL: x:4
+DYN: sffz, left to die to pp
+TRANSITION: the dim7 fall lands on a bare G# octave; G#, dominant of C# minor, is the only sound for one bar and the funeral march enters in its tempo
+
+SECTION IV Funeral: March BARS 8 KEY C# minor
+TEMPO 50
+RH: G#4+C#5+E5:2 G#4+C#5+E5:1.5 G#4+C#5+E5:0.5 | %1 | C#5+E5+G#5:1 C5+D#5+G#5:1 C#5+E5+G#5:1 B4+D#5+G#5:1 | A4+C#5+F#5:2 A4+C#5+F#5:1.5 G#4+C5+D#5:0.5 | A4+D5+F#5:2 A4+D5+F#5:1.5 A4+D5+F#5:0.5 | C5+D#5+F#5+A5:2 C5+D#5+F#5+A5:1.5 C5+D#5+F#5+A5:0.5 | G#4+C5+D#5+F#5:2 G#4+C5+D#5+F#5:1.5 G#4+C5+D#5+F#5:0.5 | %1
+LH: C#1+C#2:2 C#2+G#2+C#3:1.5 C#2+G#2+C#3:0.5 | %1 | C#1+C#2:1 G#1+G#2:1 C#1+C#2:1 G#1+G#2:1 | F#1+F#2:2 F#1+C#2+F#2:1.5 G#1+G#2:0.5 | D1+D2:2 D2+A2+D3:1.5 D2+A2+D3:0.5 | C1+C2:2 C2+F#2+A2:1.5 C2+F#2+A2:0.5 | G#1+G#2:2 G#1+D#2+G#2:1.5 G#1+D#2+G#2:0.5 | %1
+PEDAL: x:4 | x:4 | x:1 x:1 x:1 x:1 | x:3.5 x:0.5 | x:4 | x:4 | x:4 | x:4
+DYN: pp bars 1-2, p bars 3-4, mf bars 5-6, f bar 7, pp bar 8
+FX: bar 3 is motif A in quarter notes (C#, B#, C#, B: the storm's chromatic turn as a dirge); bar 5 Neapolitan D major, bar 6 B# diminished seventh
+
+SECTION IV Funeral: Lament (the sung trio) BARS 8 KEY C# minor
+RH: r:1 G#4+G#5:1 C#5+C#6:1 C5+C6:0.5 C#5+C#6:0.5 | D#5+D#6:2 C#5+C#6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 C5+C6:0.25 C#5+C#6:1 | C5+C6:1.5 B4+B5:0.5 A4+A5:1 G#4+G#5:1 | F#4+F#5:1.5 G#4+G#5:0.5 A4+A5:1 G#4+G#5:0.5 F#4+F#5:0.5 | E4+E5:2 G#4+G#5:1 C#5+C#6:1 | D5+D6:1.5 C#5+C#6:0.5 B4+B5:1 A4+A5:1 | G#4+C5+D#5+G#5:2 F#4+A4+C5+F#5:1 G#4+C5+D#5+F#5:1 | C#5+E5+G#5+C#6:2 C#5+E5+G#5+C#6:1.5 C#5+E5+G#5+C#6:0.5
+LH: C#1+C#2:2 G#2+C#3+E3:2 | B1+B2:2 G#2+B2+E3:2 | A#1+A#2:2 F#2+C#3+E3:2 | A1+A2:2 F#2+A2+C#3:2 | G#1+G#2:2 G#2+C3+D#3:2 | D1+D2:2 A2+D3+F#3:2 | G#1+G#2:2 C2+F#2+A2:1 G#1+D#2+G#2:1 | C#1+C#2:2 C#2+G#2+C#3:1.5 C#2+G#2+C#3:0.5
+PEDAL: x:4 | x:4 | x:4 | x:4 | x:4 | x:4 | x:2 x:1 x:1 | x:4
+DYN: p espressivo, cresc bars 5-7 to f, bar 8 ff
+FX: motif B (the nocturne's song) sung in minor over the chromatic lament bass C#-B-A#-A-G# (1-b7-6-b6-5); bar 6 Neapolitan
+
+SECTION IV Funeral: Hand-off (drum roll into fury) BARS 4 KEY G# minor
+TEMPO 144 RAMP 16
+RH: G3+A#3:0.25 A#3+C#4:0.25 C#4+E4:0.25 E4+G4:0.25 G4+A#4:0.25 A#4+C#5:0.25 C#5+E5:0.25 E5+G5:0.25 G5+A#5:0.25 A#5+C#6:0.25 C#6+E6:0.25 E6+G6:0.25 G6+A#6:0.25 E6+G6:0.25 C#6+E6:0.25 A#5+C#6:0.25 | %1 | D#4+G4:0.25 G4+A#4:0.25 A#4+C#5:0.25 C#5+D#5:0.25 D#5+G5:0.25 G5+A#5:0.25 A#5+C#6:0.25 C#6+D#6:0.25 D#6+G6:0.25 G6+A#6:0.25 A#6+C#7:0.25 C#7+D#7:0.25 A#6+C#7:0.25 G6+A#6:0.25 D#6+G6:0.25 C#6+D#6:0.25 | %3
+LH: G1+G2:0.5 A#2+C#3+E3:0.5 G1+G2:0.5 A#2+C#3+E3:0.5 G1+G2:0.5 A#2+C#3+E3:0.5 G1+G2:0.5 A#2+C#3+E3:0.5 | %1 | D#1+D#2:0.5 G2+A#2+C#3:0.5 D#1+D#2:0.5 G2+A#2+C#3:0.5 D#1+D#2:0.5 G2+A#2+C#3:0.5 D#1+D#2:0.5 G2+A#2+C#3:0.5 | %3
+PEDAL: x:4 | x:4 | x:4 | x:4
+DYN: pp cresc to fff across the four bars
+TRANSITION: C# minor's tonic chord is left; the F##-dim7 of G# minor (vii of the home key) rises in tremolo, then D#7; the accelerando lands on the coda's tempo
+
+SECTION V Coda: Fury BARS 12 KEY G# minor
+TEMPO 144
+RH: G#5+G#6:0.25 G5+G6:0.25 G#5+G#6:0.25 F#5+F#6:0.25 D#5+D#6:0.25 D5+D6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 B4+B5:0.25 A#4+A#5:0.25 B4+B5:0.25 C#5+C#6:0.25 D#5+D#6:0.25 F#5+F#6:0.25 G#5+G#6:0.25 A#5+A#6:0.25 | B5+B6:0.25 A#5+A#6:0.25 B5+B6:0.25 G#5+G#6:0.25 D#5+D#6:0.25 D5+D6:0.25 D#5+D#6:0.25 B4+B5:0.25 A#5+A#6:0.25 A5+A6:0.25 A#5+A#6:0.25 G5+G6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 D#5+D#6:0.25 G5+G6:0.25 | %1 | C#6+C#7:0.25 C6+C7:0.25 C#6+C#7:0.25 G#5+G#6:0.25 E5+E6:0.25 D#5+D#6:0.25 E5+E6:0.25 C#5+C#6:0.25 A#5+A#6:0.25 A5+A6:0.25 A#5+A#6:0.25 G5+G6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 D#5+D#6:0.25 G5+G6:0.25 | A5+C#6+E6:0.5 A5+C#6+E6:0.5 A5+C#6+E6:0.5 A5+C#6+E6:0.5 A5+C#6+E6:0.5 A5+C#6+E6:0.5 A5+C#6+E6:0.5 A5+C#6+E6:0.5 | G#5+C#6+E6:0.5 G#5+C#6+E6:0.5 G#5+C#6+E6:0.5 G#5+C#6+E6:0.5 G5+C#6+E6:0.5 G5+C#6+E6:0.5 G5+C#6+E6:0.5 G5+C#6+E6:0.5 | F#5+A#5+C#6+F#6:0.5 F#5+A#5+C#6+F#6:0.5 F#5+A#5+C#6+F#6:0.5 F#5+A#5+C#6+F#6:0.5 D#5+G5+A#5+D#6:0.5 D#5+G5+A#5+D#6:0.5 D#5+G5+A#5+D#6:0.5 D#5+G5+A#5+D#6:0.5 | D#4+D#5:0.25 G4+G5:0.25 A#4+A#5:0.25 C#5+C#6:0.25 D#5+D#6:0.25 G5+G6:0.25 A#5+A#6:0.25 C#6+C#7:0.25 D#6+D#7:0.25 C#6+C#7:0.25 A#5+A#6:0.25 G5+G6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 A#4+A#5:0.25 G4+G5:0.25 | %1 | %2 | %1 | B5+B6:0.25 A#5+A#6:0.25 B5+B6:0.25 G#5+G#6:0.25 D#5+D#6:0.25 D5+D6:0.25 D#5+D#6:0.25 B4+B5:0.25 A#5+A#6:0.25 A5+A6:0.25 A#5+A#6:0.25 G5+G6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 D#5+D#6:0.25 A5+A6:0.25
+LH: G#1+G#2:1 G1+G2:1 G#1+G#2:1 F#1+F#2:1 | G#1+G#2:1 G1+G2:1 D#1+D#2:1 A#1+A#2:1 | %1 | C#1+C#2:1 C1+C2:1 D#1+D#2:1 A#1+A#2:1 | A1+A2:0.5 E2+A2+C#3:0.5 A1+A2:0.5 E2+A2+C#3:0.5 A1+A2:0.5 E2+A2+C#3:0.5 A1+A2:0.5 E2+A2+C#3:0.5 | G#1+G#2:0.5 E2+G#2+C#3:0.5 G#1+G#2:0.5 E2+G#2+C#3:0.5 G1+G2:0.5 E2+G2+C#3:0.5 G1+G2:0.5 E2+G2+C#3:0.5 | F#1+F#2:0.5 F#2+A#2+C#3:0.5 F#1+F#2:0.5 F#2+A#2+C#3:0.5 D#1+D#2:0.5 D#2+A#2+C#3:0.5 D#1+D#2:0.5 D#2+A#2+C#3:0.5 | D#1+D#2:1 G1+G2:1 A#1+A#2:1 C#2+C#3:1 | G#1+G#2:0.5 G1+G2:0.5 G#1+G#2:0.5 F#1+F#2:0.5 D#1+D#2:0.5 D1+D2:0.5 D#1+D#2:0.5 C#1+C#2:0.5 | G#1+G#2:0.5 G1+G2:0.5 G#1+G#2:0.5 F#1+F#2:0.5 D#1+D#2:0.5 D1+D2:0.5 D#1+D#2:0.5 G1+G2:0.5 | %9 | %10
+PEDAL: x:4 | x:2 x:2 | x:4 | x:2 x:2 | x:4 | x:2 x:2 | x:2 x:2 | x:4 | x:4 | x:2 x:2 | x:4 | x:2 x:2
+DYN: fff bars 1-4, ff bars 5-7 cresc, fff bars 8-12
+FX: bars 1-4 the storm theme in double octaves over motif A in bass octaves (quarter notes); bars 5-7 Prelude-style repeated chords over the sinking bass A-G#-G-F#-D#; bars 9-12 the bass plays the theme's own cells in eighth-note octaves; bar 12 repeats bar 2 and changes only its last note (G to the Neapolitan A)
+
+SECTION V Coda: Collapse BARS 4 KEY G# minor
+TEMPO 60 RAMP 16
+RH: G#4+B4+D#5+G#5:2 G#4+B4+D#5+G#5:1.5 G#4+B4+D#5+G#5:0.5 | A4+C#5+E5+A5:2 A4+C#5+E5+A5:1.5 G4+A#4+C#5+E5:0.5 | D#4+G4+A#4+D#5:2 D#4+G4+A#4+D#5:1.5 D#4+G4+A#4+D#5:0.5 | r:4
+LH: G#1+G#2:2 G#1+D#2+G#2:1.5 G#1+D#2+G#2:0.5 | A1+A2:2 A1+E2+A2:1.5 G1+G2:0.5 | D#1+D#2:2 D#1+A#1+D#2:1.5 D#1+A#1+D#2:0.5 | G#1+G#2:1 F#1+F#2:1 E1+E2:1 D#1+D#2:1
+PEDAL: x:4 | x:3.5 x:0.5 | x:4 | x:1 x:1 x:1 x:1
+DYN: fff bars 1-3, bar 4 pp
+FX: the funeral march's block chords return in the home key (i, Neapolitan, dim7, V7); bar 4 is the lament bass alone, G#-F#-E-D#, the same four notes that carried Part I into the nocturne
+
+SECTION V Return: The storm again (loop) BARS 8 KEY G# minor
+TEMPO 132
+RH: G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 C#5:0.25 B4:0.25 A#4:0.25 B4:0.25 C#5:0.25 D#5:0.25 F#5:0.25 G#5:0.25 A#5:0.25 | B5:0.25 A#5:0.25 B5:0.25 G#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 D#5:0.25 G5:0.25 | G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 C#5:0.25 B4:0.25 A#4:0.25 B4:0.25 C#5:0.25 D#5:0.25 F#5:0.25 G#5:0.25 B5:0.25 | C#6:0.25 C6:0.25 C#6:0.25 G#5:0.25 E5:0.25 D#5:0.25 E5:0.25 C#5:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 D#5:0.25 G5:0.25 | E6:0.25 D#6:0.25 E6:0.25 D6:0.25 B5:0.25 A#5:0.25 B5:0.25 G#5:0.25 E5:0.25 D#5:0.25 E5:0.25 D5:0.25 B4:0.25 D5:0.25 E5:0.25 G#5:0.25 | A5:0.25 G#5:0.25 A5:0.25 G5:0.25 E5:0.25 D#5:0.25 E5:0.25 C#5:0.25 A4:0.25 G#4:0.25 A4:0.25 C#5:0.25 E5:0.25 A5:0.25 C#6:0.25 E6:0.25 | G6:0.25 F#6:0.25 G6:0.25 E6:0.25 C#6:0.25 C6:0.25 C#6:0.25 A#5:0.25 G5:0.25 F#5:0.25 G5:0.25 E5:0.25 C#5:0.25 C5:0.25 C#5:0.25 A#4:0.25 | D#4+D#5:0.25 G4+G5:0.25 A#4+A#5:0.25 C#5+C#6:0.25 D#5+D#6:0.25 G5+G6:0.25 A#5+A#6:0.25 C#6+C#7:0.25 D#6+D#7:0.25 C#6+C#7:0.25 A#5+A#6:0.25 G5+G6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 A#4+A#5:0.25 G4+G5:0.25
+LH: G#1+G#2:0.5 D#2+D#3:0.5 G#2+G#3:0.5 B2+B3:0.5 D#3+D#4:0.5 B2+B3:0.5 G#2+G#3:0.5 D#2+D#3:0.5 | G#1+G#2:0.5 D#2+D#3:0.5 G#2+G#3:0.5 B2+B3:0.5 D#1+D#2:0.5 G2+G3:0.5 A#2+A#3:0.5 C#3+C#4:0.5 | %1 | C#1+C#2:0.5 G#2+G#3:0.5 C#3+C#4:0.5 E3+E4:0.5 D#1+D#2:0.5 G2+G3:0.5 A#2+A#3:0.5 C#3+C#4:0.5 | E1+E2:0.5 B1+B2:0.5 E2+E3:0.5 G#2+G#3:0.5 B2+B3:0.5 D3+D4:0.5 B2+B3:0.5 G#2+G#3:0.5 | A1+A2:0.5 E2+E3:0.5 A2+A3:0.5 C#3+C#4:0.5 E3+E4:0.5 A3+A4:0.5 E3+E4:0.5 C#3+C#4:0.5 | G1+G2:0.5 A#2+A#3:0.5 C#3+C#4:0.5 E3+E4:0.5 G3+G4:0.5 E3+E4:0.5 C#3+C#4:0.5 A#2+A#3:0.5 | D#1+D#2:2 D#1+A#1+D#2:2
+PEDAL: x:4 | x:2 x:2 | x:4 | x:2 x:2 | x:4 | x:4 | x:4 | x:4
+DYN: p bar 1, cresc every bar, ff bar 8
+TRANSITION: bar 8 is a D#7 double-octave run that ends on the leading tone G; the piece loops into Part I bar 1 (G#5) at the same tempo (132), so the last bar is the dominant upbeat of the first

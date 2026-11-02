@@ -1,0 +1,6 @@
+samples/*/
+!samples/manifests/
+*/out/
+*/score
+engine/*.o
+videos/*.mp4
