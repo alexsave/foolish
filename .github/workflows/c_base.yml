@@ -303,11 +303,13 @@ jobs:
       - name: the shell scripts
         run: |
           bash -n c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/ops_env.sh c_base/providers/aws/ops/deploy.sh c_base/providers/local/ops/vm_release.sh c_base/providers/local/ops/vm_deploy.sh c_base/providers/local/ops/vm_boot.sh
-          shellcheck -x .github/scripts/fuzz_select.sh c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/providers/aws/ops/test/changeset_gate_test.sh c_base/providers/aws/ops/role_covers_release.sh c_base/providers/aws/ops/test/role_covers_release_test.sh c_base/providers/local/ops/vm_release.sh c_base/providers/local/ops/vm_deploy.sh c_base/providers/local/ops/vm_boot.sh c_base/fuzz/test/fuzz_mk_test.sh c_base/fuzz/test/fuzz_select_test.sh
+          shellcheck -x .github/scripts/fuzz_select.sh c_base/providers/aws/ops/package.sh c_base/providers/aws/ops/build_bootstrap.sh c_base/providers/aws/ops/eol_guard.sh c_base/providers/aws/ops/dynamo_local.sh c_base/providers/aws/ops/site/web_deploy.sh c_base/providers/aws/ops/lambda_deploy.sh c_base/ops/require_main.sh c_base/ops/test/web_deploy_gate_test.sh c_base/ops/ops_env.sh c_base/ops/test/ops_env_test.sh c_base/providers/aws/ops/test/changeset_gate_test.sh c_base/providers/aws/ops/role_covers_release.sh c_base/providers/aws/ops/test/role_covers_release_test.sh c_base/providers/local/ops/vm_release.sh c_base/providers/local/ops/vm_deploy.sh c_base/providers/local/ops/vm_boot.sh c_base/providers/local/ops/test/vm_boot_logs_test.sh c_base/fuzz/test/fuzz_mk_test.sh c_base/fuzz/test/fuzz_select_test.sh
       - name: web_deploy.sh, vm_release.sh and lambda_deploy.sh refuse a tree behind main (no AWS calls)
         run: bash c_base/ops/test/web_deploy_gate_test.sh
       - name: ops_env.sh never generates a secret for a live stack (no AWS calls)
         run: bash c_base/ops/test/ops_env_test.sh
+      - name: vm_boot.sh keeps system logs in RAM and chrony quiet, idempotently (no AWS calls)
+        run: bash c_base/providers/local/ops/test/vm_boot_logs_test.sh
       - name: deploy.sh's replacement gate on recorded change sets (no AWS calls)
         run: bash c_base/providers/aws/ops/test/changeset_gate_test.sh
       - name: the GitHub deploy role grants every AWS call vm_release.sh makes (no AWS calls)
