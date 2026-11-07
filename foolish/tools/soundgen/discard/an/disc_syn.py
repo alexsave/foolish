@@ -22,7 +22,13 @@ PLACE = np.load(f"{HERE}/place_spec.npy"); PLACEE = np.load(f"{HERE}/place_env.n
 def no_rumble(v): v = v.copy(); v[cs < 280] = np.minimum(v[cs < 280], v[cs >= 280][0]); return v
 INS = no_rumble(np.load(f"{HERE}/ins_spec.npy")); INSE = np.load(f"{HERE}/ins_env.npy"); INSD = np.load(f"{HERE}/ins_dur.npy")
 PLIFT = no_rumble(np.load(f"{HERE}/plift_spec.npy")); PLIFTE = np.load(f"{HERE}/plift_env.npy")
-ROUGH = 3.0    # dB std of the extra slow level wander (calibrated against measure.py's 'rough 1/20ms' of the reps)
+# The level's wander, matched to the reps' modulation spectrum (the envelope's energy at 3-10, 10-30, 30-100 Hz...):
+# mostly slow surges of the hand pushing the pile (40 ms grain), in the lows too, and only a little fast grain (8 ms).
+# An 8 ms-only wander (the first version) was 4 dB too strong at 30-100 Hz and short below 30 Hz: Alex heard "a shovel".
+# Matched within ~2 dB in every modulation band, both halves of the spectrum.
+ROUGH, SLOW_C, FAST = 3.0, 0.04, 0.8          # the shared slow wander (dB std, s) and the highs' fine grain (dB std)
+LO_C, LO_STD = 0.015, 3.0                     # the lows' own wander: the pile's body surging under the hand
+SCR_LO_CUT = 0.0                              # dB taken off the scrape below 1 kHz (an audition knob; 0 = as recorded)
 def fit(name):
     try: return np.load(f"{HERE}/{name}_fit.npy")
     except OSError: return np.zeros(40)
@@ -56,8 +62,8 @@ def scrape(rng, dur=None, pre=0.06, post=0.12, spec=None, envt=None, durs=None, 
     U, EL, EH = envt[0], smooth(envt[1], 3), smooth(envt[2], 3)
     jl, jh = rng.uniform(-1.5, 1.5, len(U)), rng.uniform(-1.5, 1.5, len(U))
     el = np.interp(u, U, EL + jl, left=-70, right=-70); eh = np.interp(u, U, EH + jh, left=-70, right=-70)
-    wv = wander(rng, n, ROUGH if rough is None else rough, 0.008); tmpl = spec + fit(fitname)
-    y = two_band(rng, n, tmpl, el + 0.6 * wv, eh + wv)
+    r = ROUGH if rough is None else rough; sl = wander(rng, n, r, SLOW_C); wv = sl + wander(rng, n, FAST, 0.008); tmpl = spec + fit(fitname)
+    y = two_band(rng, n, tmpl, el + sl + wander(rng, n, LO_STD, LO_C) - (SCR_LO_CUT if spec is SCR else 0), eh + wv)
     loc = np.sqrt(np.convolve(bp(y, 3000, 15000) ** 2, np.ones(480) / 480, "same"))
     for _ in range(rng.poisson(14 * dur)):             # card edges catching: the reps show ~6 clicks a stroke (measure.py)
         a = pre + rng.uniform(0.02, 1.0) * dur; k = int(a * SR)

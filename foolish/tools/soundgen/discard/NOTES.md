@@ -27,11 +27,17 @@ Alex on the first version: the lift was too loud, and "there should just be one 
 - The phone was in the hand that takes the cards, so the lows under 280 Hz are handling rumble: they are held at the 301 Hz level and not fitted.
 - The discard's lift was 17 dB over the strokes, set from peaks; its three videos measure -3, +11 and +23 dB by 50 ms RMS, so it is now +5 dB.
 
+## "Like digging into the earth with a shovel" (Alex, 2026-11-07)
+- **Texture:** the first stroke's level wandered on an 8 ms grain, which measured 4 dB too much flutter at 30-100 Hz in the highs (grit) and 5-7 dB too little below 30 Hz (the hand's slow surges), mostly in the lows.
+  Now a 40 ms wander shared by both bands, a little 8 ms grain on the highs, and the lows' own 15 ms wander: within about 2 dB of the reps in every modulation band.
+- **Level:** auditioning the strokes raised to a common level played them about 20 dB over the video. In the game they were also 3 dB over a pass; the recordings put them 6.5 dB under one, so they dropped 3.5 dB.
+- `SCR_LO_CUT` takes dB off the strokes below 1 kHz, for auditioning only; it is 0 (as recorded).
+
 ## At game pace (`an/disc_game.py`)
 - One stroke per ~2.5 cards (1-5), each 0.8x a recorded stroke, 60-200 ms apart, a little louder as the pile grows.
 - The lift 100-180 ms after the last stroke; the placement after a 500 ms flight (ANIM_TIME_MS).
 - Pickup: the same strokes, the soft lift, then after the 500-600 ms flight the one slide into the hand.
-- Levels are set by 50 ms RMS, the strokes at g-27.
+- Levels are set by 50 ms RMS, the strokes at g-30.5 (6.5 dB under a pass, as recorded).
 
 ## Reproduce
 ```

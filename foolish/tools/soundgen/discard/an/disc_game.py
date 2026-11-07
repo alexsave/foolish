@@ -8,7 +8,8 @@ PICKUP (IMG_3052-3054): the same strokes, then the pile lifted off the table wit
   hand, and it should be quieter") one slide as the cards go into the fanned hand.
 Levels by 50 ms RMS against the strokes, as recorded: the discard's lift +5 dB (its three videos: -3, +11, +23, so the
   first version's +17 was far too loud) and its placement +3 dB; the pickup's lift -10 dB and its slide into the hand
-  -11 dB. The strokes sit at g-27 (so their peaks land near a pass's g-12), on the deal's scale g = -34..-32 dBFS.
+  -11 dB. The strokes sit at g-30.5 by 50 ms RMS, 6.5 dB under a pass shfff as recorded (strokes -51.3, the pass -44.8
+  dBFS; the pass in the game peaks at g-12, which is g-24 by 50 ms RMS), on the deal's scale g = -34..-32 dBFS.
 Usage (from ../discard): python3 -I an/disc_game.py discard|pickup NAME SEED CARDS"""
 import sys, os, glob, wave, numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE); sys.argv, ARGS = sys.argv[:1], sys.argv
@@ -19,7 +20,7 @@ def load(p):
     with wave.open(p) as w: return np.frombuffer(w.readframes(w.getnframes()), np.int16) / 32768
 def put(out, x, at, ref, db):   # db: the part's loudest 50 ms RMS
     y = D.bp(x, 150, 15000); x = x / (np.sqrt(np.convolve(y ** 2, np.ones(2400) / 2400, "same")).max() + 1e-12) * 10 ** (db / 20); k = int(at * SR) - ref; lo = max(0, k); hi = min(len(out), k + len(x)); out[lo:hi] += x[lo - k: hi - k]
-out = np.zeros(12 * SR); g = rng.uniform(-34, -32); SC = g - 27
+out = np.zeros(12 * SR); g = rng.uniform(-34, -32); SC = g - 30.5
 strokes = int(np.clip(round(CARDS / 2.5), 1, 5)); T = 0.4
 for s in range(strokes):
     dur = float(np.clip(rng.choice(D.SCRD) * 0.8 * rng.uniform(0.9, 1.1), 0.25, 0.7))
