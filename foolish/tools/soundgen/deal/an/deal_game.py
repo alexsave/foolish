@@ -5,6 +5,7 @@ import sys, wave, numpy as np
 rng = np.random.default_rng(int(sys.argv[3]) if len(sys.argv) > 3 else 9); SR = 48000
 pace, name = float(sys.argv[1]), sys.argv[2]; N = int(sys.argv[4]) if len(sys.argv) > 4 else 6
 SEATS = int(sys.argv[5]) if len(sys.argv) > 5 else 0      # 0: no seats (every landing at full level)
+LAND = sys.argv[6] if len(sys.argv) > 6 else "land1"      # the landing set: land229 rings at the game's one table (229 Hz)
 # the landing's level follows its distance from the listener (inverse-distance law, -6 dB per doubling): the seats sit on
 # a circle of radius R round the dealer at the centre; the listener is seat 0, whose own cards land OWN_D in front of them
 # 3D: the listener's head is HEAD_H above the table at their seat; their own cards land OWN_IN in front of them
@@ -30,7 +31,7 @@ for i in range(N):
     g = rng.uniform(-34, -32)
     place(out, load(f"synth/thumb9_{i % 8 + 1:02d}.wav"), T - SLIDE_LEAD, g - rng.uniform(6, 9))
     place(out, load(f"synth/grab2_{i % 12 + 1:02d}.wav"), T, g - GRAB_TRIM)
-    place(out, load(f"synth/land1_{(i * 5) % 12 + 1:02d}.wav"), T + FLIGHT, g - rng.uniform(13, 16) + seat_gain_db(i))
+    place(out, load(f"synth/{LAND}_{(i * 5) % 12 + 1:02d}.wav"), T + FLIGHT, g - rng.uniform(13, 16) + seat_gain_db(i))
     T += pace
 with wave.open(f"synth/{name}.wav", "wb") as w:
     w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes((np.clip(out[: int((T + 0.6) * SR)], -1, 1) * 32767).astype(np.int16).tobytes())

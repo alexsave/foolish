@@ -51,6 +51,13 @@ Reference: `parts/real_land_4.wav` (Alex: the best), varied within landings 1, 2
 
 ## The deal (`an/deal_game.py`)
 
+### The table ring (`an/land_syn.py land229 2`)
+- Alex: "ring at 229 Hz", so the deal's landings ring on the game's one table, the throw-in's (`../throwin`).
+- The felt in IMG_2942 has no mode there (-19 to +5 dB over its neighbours, median -3), so the ring is added, not measured: the throw-in's two-pole resonator at 229 Hz, 6 Hz wide.
+- Its level is set by measurement, not by the resonator's setting: at 2 dB the landings' 215-245 Hz band stands a median 5.6 dB over its neighbours from +10 to +90 ms, as the approved throw-in synth's does (5.2 dB).
+- Against land1 nothing else moves: on the 22 measures only the centroid shifts (301 to 275 Hz).
+- `land1` (no ring) still regenerates bit for bit.
+
 - Game timing: the grab at T (the card leaves on screen), the landing at T + 350 ms (ANIM_DEAL_CARD_MS, it lands on screen), the thumb slide's peak 130 ms before the grab so its audible part is over by the click.
 - Levels (Alex, by ear): grab loudest, slide between, landing quietest: grab peak -37 to -39 dBFS (a base of -34..-32 less 5 dB), slide 6-9 dB under the base, landing 13-16 dB under the base.
 - Seats (Alex): a landing's level follows its distance from the listener's head (inverse-distance law, -6 dB per doubling), seats on a circle (radius 0.5 m) round the dealer, the head 0.40 m above the table, one's own cards 0.15 m in front: at 4 seats, own 0 dB, left and right -4.7 dB, across -6.8 dB. A flat 2D model (ears at the table, own cards 0.25 m away) made across -12 dB, which Alex found far too quiet.
@@ -66,4 +73,4 @@ Reference: `parts/real_land_4.wav` (Alex: the best), varied within landings 1, 2
 
 ## Reproduce
 
-From this folder: `mkdir -p synth plots`, then `python3 -I an/grab_an.py`, `python3 -I an/clicks.py`, `python3 -I an/land_clicks.py` (tables), then `python3 -I an/thumb2.py`, `python3 -I an/grab2.py`, `python3 -I an/land_syn.py` (variants into `synth/`), then `python3 -I an/deal_game.py 0.375 deal_4p_seats 9 24 4` (a 4-seat opening deal; arguments: pace s, name, seed, cards, seats).
+From this folder: `mkdir -p synth plots`, then `python3 -I an/grab_an.py`, `python3 -I an/clicks.py`, `python3 -I an/land_clicks.py` (tables), then `python3 -I an/thumb2.py`, `python3 -I an/grab2.py`, `python3 -I an/land_syn.py` and `python3 -I an/land_syn.py land229 2` (variants into `synth/`), then `python3 -I an/deal_game.py 0.375 deal_4p_229 9 24 4 land229` (a 4-seat opening deal on the 229 Hz table; arguments: pace s, name, seed, cards, seats, landing set; without the last it uses land1).
