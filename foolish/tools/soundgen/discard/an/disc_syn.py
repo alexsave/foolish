@@ -29,6 +29,12 @@ PLIFT = no_rumble(np.load(f"{HERE}/plift_spec.npy")); PLIFTE = np.load(f"{HERE}/
 ROUGH, SLOW_C, FAST = 3.0, 0.04, 0.8          # the shared slow wander (dB std, s) and the highs' fine grain (dB std)
 LO_C, LO_STD = 0.015, 3.0                     # the lows' own wander: the pile's body surging under the hand
 SCR_LO_CUT = 0.0                              # dB taken off the scrape below 1 kHz (an audition knob; 0 = as recorded)
+# Alex (2026-11-07), on the strokes at game level: "make it sound more like the shff". SHFF blends the strokes' timbre
+# toward the pass's shfff (../pass: its spectrum and its fit, and its lows ~14 dB under its highs, where a recorded
+# stroke's are level); the strokes keep their own length, swell and roughness. 0 = the recorded strokes, 1 = the pass.
+SHFF = 1.0
+PASS = np.load(f"{HERE}/../../pass/an/pass_spec.npy") + np.load(f"{HERE}/../../pass/an/pass_fit.npy")
+PASS_LO = -14.0
 def fit(name):
     try: return np.load(f"{HERE}/{name}_fit.npy")
     except OSError: return np.zeros(40)
@@ -63,7 +69,10 @@ def scrape(rng, dur=None, pre=0.06, post=0.12, spec=None, envt=None, durs=None, 
     jl, jh = rng.uniform(-1.5, 1.5, len(U)), rng.uniform(-1.5, 1.5, len(U))
     el = np.interp(u, U, EL + jl, left=-70, right=-70); eh = np.interp(u, U, EH + jh, left=-70, right=-70)
     r = ROUGH if rough is None else rough; sl = wander(rng, n, r, SLOW_C); wv = sl + wander(rng, n, FAST, 0.008); tmpl = spec + fit(fitname)
-    y = two_band(rng, n, tmpl, el + sl + wander(rng, n, LO_STD, LO_C) - (SCR_LO_CUT if spec is SCR else 0), eh + wv)
+    lo_off = 0.0
+    if spec is SCR:
+        tmpl = (1 - SHFF) * tmpl + SHFF * PASS; lo_off = SHFF * PASS_LO - SCR_LO_CUT
+    y = two_band(rng, n, tmpl, el + sl + wander(rng, n, LO_STD, LO_C) + lo_off, eh + wv)
     loc = np.sqrt(np.convolve(bp(y, 3000, 15000) ** 2, np.ones(480) / 480, "same"))
     for _ in range(rng.poisson(14 * dur)):             # card edges catching: the reps show ~6 clicks a stroke (measure.py)
         a = pre + rng.uniform(0.02, 1.0) * dur; k = int(a * SR)
@@ -103,6 +112,7 @@ def oct12(y):   # as ../throwin/an/measure.py
 def load(p):
     with wave.open(p) as w: return np.frombuffer(w.readframes(w.getnframes()), np.int16) / 32768
 if __name__ == "__main__" and "fit" in sys.argv[3:]:
+    SHFF = 0.0   # the fit is of the recorded strokes
     for part, gen, name in ((scrape, "scrape", "scr"), (lift, "lift", "lift"), (place, "place", "place"), (insert, "insert", "ins"), (plift, "plift", "plift")):
         A = np.median([oct12(load(p)) for p in glob.glob(f"parts/{gen}_*.wav")], 0)
         for it in range(3):
