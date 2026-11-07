@@ -1,4 +1,4 @@
-# Discard and pickup (first try, 2026-11-07, not yet heard by Alex)
+# Discard and pickup, first try (superseded by ../discard, 2026-11-07: "just sound like a single card")
 
 Alex: discard is "a bunch of passes playing at the same time, with roughly a few instances of difference in where they start, and all end in the same round. then several rounds".
 The number of shfffs is the number of cards, "like a bunch of cards being swept on the table".
