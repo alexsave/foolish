@@ -5,12 +5,23 @@
 # The role is least privilege, so a call the script gains and the role lacks
 # fails the deploy on main, after every test passed, with production still on
 # the old binary. This reads each `aws <service> <command>` in SCRIPT
-# (providers/local/ops/vm_release.sh by default) and requires the IAM action
+# (providers/local/ops/vm_release.sh and the libraries it sources,
+# c_base/ops/s3_prune_lib.sh and providers/local/ops/vm_boot_lib.sh, by default) and requires the IAM action
 # it needs in the role. A command this table does not know stops the check: add
 # its action here and to the role.
+#
+# The actions are not the whole grant: the role scopes them to the release
+# parameters and the object-key prefixes. So every SSM parameter name
+# (cbase-vm/release/<name>) and every object-key prefix (vm/cbase-<name>-) the
+# scripts mention must also appear in the role, or a new pointer or key family
+# would pass the actions and still fail the deploy on main with AccessDenied.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 script="${1:-$here/../../local/ops/vm_release.sh}"
+# The default also reads the libraries vm_release.sh sources (the prune, and the one
+# that names the boot script's key).
+files=("$script")
+[ -n "${1:-}" ] || files+=("$here/../../../ops/s3_prune_lib.sh" "$here/../../local/ops/vm_boot_lib.sh")
 role="${2:-$here/github_oidc.yaml}"
 
 # The IAM action(s) a CLI command needs, space-separated; "-" for none.
@@ -20,7 +31,10 @@ action_of() {
     "s3api get-object") echo s3:GetObject ;;
     "s3api head-object") echo s3:GetObject ;;
     "s3api put-object") echo s3:PutObject ;;
+    "s3api list-objects-v2") echo s3:ListBucket ;;
+    "s3api delete-object") echo s3:DeleteObject ;;
     "ssm put-parameter") echo ssm:PutParameter ;;
+    "ssm get-parameter") echo ssm:GetParameter ;;
     "ssm send-command") echo ssm:SendCommand ;;
     "ssm get-command-invocation") echo ssm:GetCommandInvocation ;;
     "autoscaling describe-auto-scaling-groups") echo autoscaling:DescribeAutoScalingGroups ;;
@@ -28,7 +42,7 @@ action_of() {
   esac
 }
 
-calls="$(grep -v '^[[:space:]]*#' "$script" | grep -oE '(^|[^A-Za-z_-])aws [a-z0-9]+ [a-z-]+' | sed -E 's/^[^a]*aws //' | sort -u)"
+calls="$(cat "${files[@]}" | grep -v '^[[:space:]]*#' | grep -oE '(^|[^A-Za-z_-])aws [a-z0-9]+ [a-z0-9-]+' | sed -E 's/^[^a]*aws //' | sort -u)"
 [ -n "$calls" ] || { echo "role_covers_release: no aws call in $script" >&2; exit 1; }
 bad=0
 while IFS= read -r c; do
@@ -44,5 +58,13 @@ while IFS= read -r c; do
     fi
   done
 done <<<"$calls"
+names="$(cat "${files[@]}" | grep -v '^[[:space:]]*#' | grep -oE 'cbase-vm/release/[a-z]+|vm/cbase-[a-z]+(-[a-z]+)*-' | sort -u)" || names=""
+while IFS= read -r n; do
+  [ -n "$n" ] || continue
+  if ! grep -v '^[[:space:]]*#' "$role" | grep -qF -- "$n"; then
+    echo "role_covers_release: the deploy role does not name $n, which $script uses" >&2
+    bad=1
+  fi
+done <<<"$names"
 [ "$bad" = 0 ] && echo "role_covers_release: ok ($(wc -l <<<"$calls" | tr -d ' ') calls)"
 exit "$bad"

@@ -363,7 +363,7 @@ Since 2026-10-14 every push to `main` deploys what is live, to AWS, with no hand
 
 | What changed on `main` | Workflow, job | What it does |
 |---|---|---|
-| `c_base/**`, `foolish/c/**`, `foolish/server/**`, `shared/c/**`, `shared/tools/**` | `c_base`, `deploy to cbase-vm` | after every test job passes, `providers/local/ops/vm_release.sh`: the CI-built static `cbase serve` binary to the code bucket's `vm/`, `/cbase-vm/release/serve` pointed at it, the instance restarted through SSM, then the binary's sha256, the instance's `/health` and `/ready`, and `https://api.foolish.cards/health` checked (providers/local/ops/VM_RUNBOOK.md, "Upgrade the server"). Until 2026-10-19 this job was `deploy to Lambda` (`lambda_deploy.sh`) |
+| `c_base/**`, `foolish/c/**`, `foolish/server/**`, `shared/c/**`, `shared/tools/**` | `c_base`, `deploy to cbase-vm` | after every test job passes, `providers/local/ops/vm_release.sh`: the CI-built static `cbase serve` binary to the code bucket's `vm/`, `/cbase-vm/release/serve` pointed at it, the boot script pinned the same way (`vm/cbase-vm-boot-<sha12>`, `/cbase-vm/release/boot`), the instance's boot stub run through SSM (it fetches the pinned boot script, which restarts the server), then the binary's sha256, the instance's `/health` and `/ready`, and `https://api.foolish.cards/health` checked (providers/local/ops/VM_RUNBOOK.md, "Upgrade the server"). Until 2026-10-19 this job was `deploy to Lambda` (`lambda_deploy.sh`) |
 | `foolish/**`, `shared/**`, `uttt/c/**`, `uttt/web/**` | `web_aws`, `deploy` | `providers/aws/ops/site/web_deploy.sh site foolish`, then `site uttt`: upload, page lists, invalidation, then `www.foolish.cards` and `www.uttt.live` must answer 200 (both apexes are on CloudFront too) |
 
 Both refuse a tree that does not contain `origin/main` (`ops/require_main.sh`), so a branch behind main, or a re-run of an old run by hand, deploys nothing.
@@ -383,7 +383,7 @@ aws cloudformation deploy --region us-east-1 --stack-name cbase-github \
 
 1. It trusts only `repo:alexsave/foolish:ref:refs/heads/main`.
    To prove a workflow change from its branch before merging, deploy the stack once with `--parameter-overrides ExtraSubject=repo:alexsave/foolish:ref:refs/heads/<branch>` (and let the workflow's `if:` accept that ref on the branch), then deploy it again with `ExtraSubject=` empty.
-2. It may upload a serve binary under the code bucket's `vm/cbase-serve-*`, write `/cbase-vm/release/serve`, run commands through SSM on the `cbase-vm` group's instance and read their results, upload to the web bucket, invalidate the two distributions, rewrite the `cbase-web` page lists, and read that stack; it holds none of the rights a template change needs, so `providers/local/ops/vm_deploy.sh` and `providers/aws/ops/site/web_deploy.sh stack` stay hand steps from this Mac.
+2. It may upload a serve binary under the code bucket's `vm/cbase-serve-*` and the boot script under `vm/cbase-vm-boot-*`, write `/cbase-vm/release/serve` and `/cbase-vm/release/boot`, run commands through SSM on the `cbase-vm` group's instance and read their results, upload to the web bucket, invalidate the two distributions, rewrite the `cbase-web` page lists, and read that stack; it holds none of the rights a template change needs, so `providers/local/ops/vm_deploy.sh` and `providers/aws/ops/site/web_deploy.sh stack` stay hand steps from this Mac.
    `providers/aws/ops/role_covers_release.sh` (in CI) fails when `vm_release.sh` makes an AWS call the role does not grant.
    The Lambda deploy rights were removed on 2026-10-19 when the VM took production; the frozen `cbase` Lambda is redeployed only by hand (`lambda_deploy.sh` with an operator's credentials) if it is ever rolled back to.
 3. Repository secrets (Settings > Secrets and variables > Actions): `CBASE_AWS_ROLE_ARN` (the stack's `DeployRoleArn` output).
@@ -407,7 +407,9 @@ The web is the only switch that matters on day one, and it flips back in minutes
 1. The web's hosting: Vercel is gone (W9), so a bad web deploy is rolled back on AWS (W7, last paragraph).
 2. Anything players did on c_base since the switch stays in DynamoDB and is not copied back.
 3. A bad c_base build is rolled back separately: download an earlier `cbase-lambda` artifact (every CI run keeps one for 30 days) and run `c_base/providers/aws/ops/lambda_deploy.sh <its cbase-lambda.zip>` from a tree that contains main; it points the stack back at that zip.
-   Or point the stack straight at the earlier key, which is still in the code bucket: **CloudFormation > cbase > Update > Use existing template**, CodeKey = the old `cbase-lambda-<hash>.zip`.
+   Or point the stack straight at the earlier key, if it is still in the code bucket: **CloudFormation > cbase > Update > Use existing template**, CodeKey = the old `cbase-lambda-<hash>.zip`.
+   `lambda_deploy.sh` deletes every other `cbase-lambda-*.zip` after a deploy is live and healthy, keeping the new zip and the one the stack ran before it, so only one step back is in the bucket; for older code use the CI artifact.
+   `c_base/ops/s3_prune.sh --dry-run lambda` shows what a prune would delete. The function and the stack are never deleted.
 
 ## Costs, for reference
 
