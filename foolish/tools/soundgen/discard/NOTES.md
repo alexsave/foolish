@@ -20,16 +20,24 @@ Alex then recorded the real thing (IMG_3046, IMG_3047, IMG_3048) and said discar
   - The placement's clicks are less sharp (1-4 kHz kurtosis 12 against 18-22).
 - Like every other model, the synth keeps the phone's dark band at 10-13 kHz.
 
+## Pickup, from its own recordings (IMG_3052-3054)
+Alex on the first version: the lift was too loud, and "there should just be one tap into the hand, and it should be quieter".
+- The recordings show no taps: after the scraping, the pile leaves the table with one soft knock, then 0.55-1.2 s later the cards go into the fanned hand as one slide (350-750 ms, brighter than a scrape, swelling to its end).
+- Measured by 50 ms RMS against the strokes: the lift -9 to -13 dB, the slide into the hand -2 to -12 dB (median -11).
+- The phone was in the hand that takes the cards, so the lows under 280 Hz are handling rumble: they are held at the 301 Hz level and not fitted.
+- The discard's lift was 17 dB over the strokes, set from peaks; its three videos measure -3, +11 and +23 dB by 50 ms RMS, so it is now +5 dB.
+
 ## At game pace (`an/disc_game.py`)
 - One stroke per ~2.5 cards (1-5), each 0.8x a recorded stroke, 60-200 ms apart, a little louder as the pile grows.
 - The lift 100-180 ms after the last stroke; the placement after a 500 ms flight (ANIM_TIME_MS).
-- Pickup: the same strokes and lift, then 550-700 ms later (Alex: "a bit more time between flip and put into hand") 2-3 quiet cover taps into the hand.
+- Pickup: the same strokes, the soft lift, then after the 500-600 ms flight the one slide into the hand.
+- Levels are set by 50 ms RMS, the strokes at g-27.
 
 ## Reproduce
 ```
-python3 -I an/cut.py DIR      # DIR holds d3046.wav d3047.wav d3048.wav (mono 48 kHz from the videos)
+python3 -I an/cut.py DIR PDIR   # d3046-d3048.wav and p3052-p3054.wav, mono 48 kHz from the videos
 python3 -I an/disc_an.py
-mkdir -p synth && python3 -I an/disc_syn.py d4 1 fit
+mkdir -p synth && python3 -I an/disc_syn.py d6 1 fit
 python3 -I an/disc_game.py discard discard_10 2 10
 python3 -I an/disc_game.py pickup pickup_8 4 8
 ```

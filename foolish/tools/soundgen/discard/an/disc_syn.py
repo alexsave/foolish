@@ -8,6 +8,7 @@ LIFT: the pile picked up and turned: a sharp knock (the pile's edge on the table
   it tips over, a short rustle.
 PLACE: the pile set softly on the discard pile: a low, soft landing (its 150 Hz end 25 dB over its 2 kHz), a second touch
   15-75 ms later as it settles.
+INSERT and PLIFT: the pickup's slide into the hand and its one soft lift knock (IMG_3052-3054).
 Usage (from ../discard): python3 -I an/disc_syn.py NAME SEED [fit]   ('fit' re-measures the spectral fit first)"""
 import sys, os, glob, wave, numpy as np
 SR = 48000; HERE = os.path.dirname(os.path.abspath(__file__))
@@ -16,6 +17,11 @@ cs = np.load(f"{HERE}/../../throwin/an/cs40.npy")
 SCR = np.load(f"{HERE}/scr_spec.npy"); SCRE = np.load(f"{HERE}/scr_env.npy"); SCRD = np.load(f"{HERE}/scr_dur.npy")
 LIFT = np.load(f"{HERE}/lift_spec.npy"); LIFTE = np.load(f"{HERE}/lift_env.npy")
 PLACE = np.load(f"{HERE}/place_spec.npy"); PLACEE = np.load(f"{HERE}/place_env.npy")
+# the pickup (IMG_3052-3054): the phone was in the hand that takes the cards, so its lows under 280 Hz are handling rumble;
+# they are held at the 301 Hz band's level
+def no_rumble(v): v = v.copy(); v[cs < 280] = np.minimum(v[cs < 280], v[cs >= 280][0]); return v
+INS = no_rumble(np.load(f"{HERE}/ins_spec.npy")); INSE = np.load(f"{HERE}/ins_env.npy"); INSD = np.load(f"{HERE}/ins_dur.npy")
+PLIFT = no_rumble(np.load(f"{HERE}/plift_spec.npy")); PLIFTE = np.load(f"{HERE}/plift_env.npy")
 ROUGH = 3.0    # dB std of the extra slow level wander (calibrated against measure.py's 'rough 1/20ms' of the reps)
 def fit(name):
     try: return np.load(f"{HERE}/{name}_fit.npy")
@@ -41,14 +47,16 @@ def strike(rng, n, at, db, width, tmpl):
 def wander(rng, n, std, corr):
     """A slow random level in dB: noise smoothed over `corr` seconds, scaled to `std`."""
     w = int(corr * SR); r = np.convolve(rng.standard_normal(n + w), np.ones(w) / w, "valid")[:n]; return r / (r.std() + 1e-12) * std
-def scrape(rng, dur=None, pre=0.06, post=0.12):
-    """One stroke; its onset at `pre` s. dur: the stroke's length (default: drawn from the reps' 250-940 ms)."""
-    if dur is None: dur = float(np.clip(rng.choice(SCRD) * rng.uniform(0.9, 1.1), 0.25, 0.95))
+def scrape(rng, dur=None, pre=0.06, post=0.12, spec=None, envt=None, durs=None, fitname="scr", rough=None):
+    """One stroke; its onset at `pre` s. dur: the stroke's length (default: drawn from the reps' 250-940 ms).
+    The other arguments swap in another stroke-like sound's tables (the pickup's slide into the hand)."""
+    spec = SCR if spec is None else spec; envt = SCRE if envt is None else envt; durs = SCRD if durs is None else durs
+    if dur is None: dur = float(np.clip(rng.choice(durs) * rng.uniform(0.9, 1.1), 0.25, 0.95))
     n = int((pre + dur + post) * SR); u = (np.arange(n) / SR - pre) / dur
-    U, EL, EH = SCRE[0], smooth(SCRE[1], 3), smooth(SCRE[2], 3)
+    U, EL, EH = envt[0], smooth(envt[1], 3), smooth(envt[2], 3)
     jl, jh = rng.uniform(-1.5, 1.5, len(U)), rng.uniform(-1.5, 1.5, len(U))
     el = np.interp(u, U, EL + jl, left=-70, right=-70); eh = np.interp(u, U, EH + jh, left=-70, right=-70)
-    wv = wander(rng, n, ROUGH, 0.008); tmpl = SCR + fit("scr")
+    wv = wander(rng, n, ROUGH if rough is None else rough, 0.008); tmpl = spec + fit(fitname)
     y = two_band(rng, n, tmpl, el + 0.6 * wv, eh + wv)
     loc = np.sqrt(np.convolve(bp(y, 3000, 15000) ** 2, np.ones(480) / 480, "same"))
     for _ in range(rng.poisson(14 * dur)):             # card edges catching: the reps show ~6 clicks a stroke (measure.py)
@@ -73,19 +81,29 @@ def lift(rng):
 def place(rng):
     k = [(0.0, rng.uniform(-2, 0), rng.uniform(0.0012, 0.002)), (rng.uniform(0.015, 0.075), rng.uniform(-13, -5), rng.uniform(0.0012, 0.002))]
     return event(rng, "place", PLACE, PLACEE, k + ticks(rng, int(rng.integers(4, 8)), 0.0, 0.3, -20, -10), 7)   # the reps: 5-11 sharp clicks (1-4 kHz kurtosis ~20) as the cards settle
+def insert(rng, dur=None):
+    """The pickup's last sound: the cards slid into the fanned hand, one 350-750 ms slide, brighter than a scrape and
+    swelling to its end (the cards meeting the stop). Its roughness measured 3.8 dB."""
+    return scrape(rng, dur, spec=INS, envt=INSE, durs=INSD, fitname="ins", rough=ROUGH * 1.3)
+def plift(rng):
+    """The pickup's lift: one soft knock as the pile leaves the table (no turn-over knock, unlike the discard)."""
+    return event(rng, "plift", PLIFT, PLIFTE, [(0.0, rng.uniform(-1, 1), rng.uniform(0.0008, 0.0015))] + ticks(rng, int(rng.integers(0, 3)), -0.02, 0.08, -18, -10), 3)
 def norm(y, db): return y / (np.abs(bp(y, 150, 15000)).max() + 1e-12) * 10 ** (db / 20)
 def oct12(y):   # as ../throwin/an/measure.py
     y = bp(y, 150, 15000); n = 8192; Y = np.zeros(n // 2 + 1); y = np.pad(y, (0, max(0, n - len(y)))); c = 0
     for i in range(0, len(y) - n + 1, n // 4): Y += np.abs(np.fft.rfft(y[i:i + n] * np.hanning(n))) ** 2; c += 1
-    f = np.fft.rfftfreq(n, 1 / SR); v = np.array([10 * np.log10(Y[(f >= q * 2 ** (-1 / 24)) & (f < q * 2 ** (1 / 24))].mean() / c + 1e-20) for q in cs]); return v - v.max()
+    f = np.fft.rfftfreq(n, 1 / SR); v = np.array([10 * np.log10(Y[(f >= q * 2 ** (-1 / 24)) & (f < q * 2 ** (1 / 24))].mean() / c + 1e-20) for q in cs])
+    return v - v[(cs > 300) & (cs < 3000)].mean()   # re the 0.3-3 kHz mean, so a rumbly low band cannot move the rest
 def load(p):
     with wave.open(p) as w: return np.frombuffer(w.readframes(w.getnframes()), np.int16) / 32768
 if __name__ == "__main__" and "fit" in sys.argv[3:]:
-    for part, gen, name in ((scrape, "scrape", "scr"), (lift, "lift", "lift"), (place, "place", "place")):
+    for part, gen, name in ((scrape, "scrape", "scr"), (lift, "lift", "lift"), (place, "place", "place"), (insert, "insert", "ins"), (plift, "plift", "plift")):
         A = np.median([oct12(load(p)) for p in glob.glob(f"parts/{gen}_*.wav")], 0)
         for it in range(3):
             rng = np.random.default_rng(99); B = np.median([oct12(part(rng)) for _ in range(12)], 0)
-            d = A - B; d = np.convolve(np.pad(d, 1, mode="edge"), np.ones(3) / 3, "valid"); np.save(f"{HERE}/{name}_fit.npy", fit(name) + d)
+            d = A - B
+            if gen in ("insert", "plift"): d[cs < 280] = 0      # the handling rumble is not fitted
+            d = np.convolve(np.pad(d, 1, mode="edge"), np.ones(3) / 3, "valid"); np.save(f"{HERE}/{name}_fit.npy", fit(name) + d)
             print(gen, "fit pass", it, "max |A-B|", round(float(np.abs(A - B).max()), 1))
 if __name__ == "__main__":
     rng = np.random.default_rng(SEED)
@@ -93,4 +111,6 @@ if __name__ == "__main__":
         save(f"synth/{NAME}_scrape_{v:02d}.wav", norm(scrape(rng), -36))
         save(f"synth/{NAME}_lift_{v:02d}.wav", norm(lift(rng), -22))
         save(f"synth/{NAME}_place_{v:02d}.wav", norm(place(rng), -31))
+        save(f"synth/{NAME}_insert_{v:02d}.wav", norm(insert(rng), -40))
+        save(f"synth/{NAME}_plift_{v:02d}.wav", norm(plift(rng), -40))
     print(NAME, "written")
