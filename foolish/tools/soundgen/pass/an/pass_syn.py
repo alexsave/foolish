@@ -4,13 +4,15 @@ BODY: noise in the measured body spectrum (broadband, peak 2.4 kHz) on the measu
 follows its own curve 15-25 dB under. WEAVE: a faint amplitude flutter at 55-59 and 94-98 Hz (measured 2.3x the mean
 of the envelope's modulation spectrum in every slide). SNAGS: 2.5 ms catches, 8-19 dB over the hiss: 1-3 as the fingers
 land (0-20 ms), 0-1 in the middle, 2-3 as the card stops (275-345 ms)."""
-import sys, wave, numpy as np
-NAME = sys.argv[1] if len(sys.argv) > 1 else "pass1"; rng = np.random.default_rng(int(sys.argv[2]) if len(sys.argv) > 2 else 4)
-SNAG_EQ = float(sys.argv[4]) if len(sys.argv) > 4 else 6.0
-AM = float(sys.argv[3]) if len(sys.argv) > 3 else 0.025
+import sys, os, wave, numpy as np
+HERE = os.path.dirname(os.path.abspath(__file__))   # tables load from here, so ../sweep can import this
+MAIN = __name__ == "__main__"; A = sys.argv if MAIN else []
+NAME = A[1] if len(A) > 1 else "pass1"; rng = np.random.default_rng(int(A[2]) if len(A) > 2 else 4)
+SNAG_EQ = float(A[4]) if len(A) > 4 else 6.0
+AM = float(A[3]) if len(A) > 3 else 0.025
 SR = 48000; O = int(0.1 * SR); N = int(0.7 * SR)
-cs = np.load("../an/cs40.npy"); SP = np.load("pass_spec.npy")
-try: FIT = np.load("pass_fit.npy")
+cs = np.load(f"{HERE}/../../throwin/an/cs40.npy"); SP = np.load(f"{HERE}/pass_spec.npy")
+try: FIT = np.load(f"{HERE}/pass_fit.npy")
 except OSError: FIT = np.zeros(40)
 def save(p, x):
     with wave.open(p, "wb") as w: w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes((np.clip(x, -1, 1) * 32767).astype(np.int16).tobytes())
@@ -25,8 +27,11 @@ EL = np.array([-60, -26.4, -21.6, -22.9, -21.9, -20.4, -17.2, -20.8, -20.2, -14.
 def snag(n, at, db, width, ref):
     k = int(at * SR); L = int(width * 3 * SR) + 8; t = np.arange(L) / SR; e = np.minimum(1, t / 0.0003) * np.exp(-t / (width / 2.3))
     out = np.zeros(n); out[k:k + L] = rng.standard_normal(L) * e * ref * 10 ** (db / 20); return out
-def slide():
-    ts = rng.uniform(0.85, 1.15); tt = np.arange(N) / SR - O / SR
+def slide(ts=None, land_knock=True, stop_db=0.0):
+    """ts: the time stretch (the card stops ~0.31*ts after onset); None draws the reps' 0.85-1.15. land_knock: the table
+    knock as the fingers land on the card. stop_db: added to the stop knock. The defaults are pass7 exactly."""
+    if ts is None: ts = rng.uniform(0.85, 1.15)
+    tt = np.arange(N) / SR - O / SR
     eh = np.interp(tt, T * ts, EH + np.r_[0, rng.uniform(-1.5, 1.5, len(EH) - 2), 0], left=-90, right=-90)
     el = np.interp(tt, T * ts, EL + np.r_[0, rng.uniform(-1.5, 1.5, len(EL) - 2), 0], left=-90, right=-90)
     hi = bp(eq(rng.standard_normal(N), np.where(cs >= 1000, SP, -60)), 1000, 15000); hi = hi / np.sqrt(np.mean(hi ** 2)) * 10 ** (eh / 20)
@@ -53,10 +58,12 @@ def slide():
         for i in range(k, min(N, k + L + 4800)): v = (1 - r) * z[i] + c * y1 - r * r * y2; y[i] = v; y2, y1 = y1, v
         z = z + y / (np.abs(y).max() + 1e-12) * np.abs(z).max() * 0.7
         return z / (np.sqrt(np.convolve(z ** 2, np.ones(240) / 240, "same")).max() + 1e-12) * P * 10 ** (db / 20)
-    kn = knock(O / SR + rng.uniform(-0.095, 0.030) * ts, rng.uniform(-12, 5)) + knock(O / SR + rng.uniform(0.284, 0.345) * ts, rng.uniform(-10, -3.5))
+    k1 = knock(O / SR + rng.uniform(-0.095, 0.030) * ts, rng.uniform(-12, 5)); k2 = knock(O / SR + rng.uniform(0.284, 0.345) * ts, rng.uniform(-10, -3.5) + stop_db)
+    kn = (k1 if land_knock else 0) + k2
     for _ in range(rng.integers(1, 4)): kn += knock(O / SR + rng.uniform(0.11, 0.23) * ts, rng.uniform(-12, -9))
     sn = sn + kn
     y = eq(body + sn, FIT)
     return y / np.abs(bp(y, 150, 15000)).max() * 10 ** (rng.uniform(-36.2, -30.6) / 20)
-for v in range(1, 13): save(f"synth/{NAME}_{v:02d}.wav", slide())
-print(NAME, "written")
+if MAIN:
+    for v in range(1, 13): save(f"synth/{NAME}_{v:02d}.wav", slide())
+    print(NAME, "written")

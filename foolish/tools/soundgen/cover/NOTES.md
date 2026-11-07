@@ -34,7 +34,7 @@ Alex: "2 finger grab, slide out, throw in landing, and then a shfff as you slide
 ## Next
 1. Alex's review of the pass.
 2. Level balancing ("equalizing") across every sound.
-3. Then discard and pickup.
+3. Discard and pickup: first try in `../sweep` (NOTES.md there).
 4. The C port.
 
 `../round_demo.py` assembles a 4-player deal, the trump flip and three attack/cover pairs from all the models.

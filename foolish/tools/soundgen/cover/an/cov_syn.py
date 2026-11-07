@@ -6,7 +6,7 @@ strike spectrum. BED: the low body (it outweighs the strikes: +4 dB at +6 ms) an
 in dB re the loudest strike's 3-15 kHz 0.25 ms level."""
 import sys, wave, numpy as np
 rng = np.random.default_rng(int(sys.argv[2]) if len(sys.argv) > 2 else 7); SR = 48000; NAME = sys.argv[1] if len(sys.argv) > 1 else "cov1"
-cs = np.load("../an/cs40.npy"); SS = np.load("cov_strike_spec.npy"); BS = np.load("cov_bed_spec.npy")
+cs = np.load("../throwin/an/cs40.npy"); SS = np.load("an/cov_strike_spec.npy"); BS = np.load("an/cov_bed_spec.npy")
 def save(p, x):
     with wave.open(p, "wb") as w: w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes((np.clip(x, -1, 1) * 32767).astype(np.int16).tobytes())
 def eq(y, tmpl):
@@ -24,7 +24,7 @@ LOWPK = float(sys.argv[7]) if len(sys.argv) > 7 else 0
 RISE = float(sys.argv[6]) if len(sys.argv) > 6 else 0.0001
 STILT = float(sys.argv[4]) if len(sys.argv) > 4 else 0
 SLTILT = float(sys.argv[5]) if len(sys.argv) > 5 else 10
-try: FIT = np.load('cov_fit.npy')
+try: FIT = np.load('an/cov_fit.npy')
 except OSError: FIT = np.zeros(40)
 def strike(n, at, db, width):
     k = int(at * SR); L = int(width * 3 * SR) + 8; t = np.arange(L) / SR
