@@ -49,6 +49,7 @@
 // and nothing reads a clock. Across machines the last bit can differ (libm).
 //
 //   soundgen write <dir> <ts>   every file into <dir>, the take table into <ts>
+//   soundgen ctable <c>         the same table for a C host (iOS), alone
 //   soundgen list               one line a file: name, cue id, rate, ms, bytes, anchor ms, role, level
 //   soundgen stats              the same, with peak and RMS
 //   soundgen parts <dir>        each model on its own at 48 kHz, 12 takes, named
@@ -309,6 +310,43 @@ static const char *const CUE_CONST[ANIM_N_CUES] = {
     [ANIM_CUE_PASS] = "ANIM_CUE_PASS", [ANIM_CUE_INTO_HAND] = "ANIM_CUE_INTO_HAND",
 };
 
+// ---- the mix: how loud each cue sits against the others ----------------------------
+// THE ONE PLACE A CUE'S LEVEL IS SET, for every host: soundgen writes it into the
+// web's take table (CUE_MIX in src/audio/gen/cueTakes.ts, which cueSounds.ts reads)
+// and into iOS's (c/build/gen/cue_takes.c, which c/src/cue_voice.c reads), so the
+// two can never be mixed differently. Thousandths, so both read the same numbers.
+//   gain      against the level the files were written at (1000 for every model:
+//             PART_DB and the common gain already set the card sounds' balance)
+//   pitch     how far a play's speed may wander either way (60 is about a semitone);
+//             0 for every model, whose takes already vary as the recordings did
+//   level     how far its level may wander either way
+//   per_card  louder by this for each card past the first, up to +600; 0 when the
+//             takes already say how many cards it is (a sweep's strokes)
+// THE PLACEHOLDERS, set against the modelled card set (Alex 2026-11-07: "turn
+// them down"; they sat 10-20 dB over most card sounds). Targets by loudest 50 ms
+// RMS (`make stats` times the gain), with a card landing at about -22 dBFS and a
+// deal at about -40: the game over -26 (once a game, just under a landing), a
+// seat going out -30, a good -34 and the hand-off -38 (heard every bout, so
+// under the good). The hand-off is the one stand-in that wanders (a row of one
+// sample is a row of cards and not a machine); the notes keep their pitch.
+typedef struct { int gain, pitch, level, per_card; } MixRow;
+#define MODEL { 1000, 0, 0, 0 }
+static const MixRow MIX_ROWS[] = {
+    [ANIM_CUE_NONE]      = { 0, 0, 0, 0 },
+    [ANIM_CUE_DEAL]      = MODEL, [ANIM_CUE_FLIP]   = MODEL, [ANIM_CUE_LIFT]      = MODEL,
+    [ANIM_CUE_PLACE]     = MODEL, [ANIM_CUE_COVER]  = MODEL, [ANIM_CUE_PICKUP]    = MODEL,
+    [ANIM_CUE_SWEEP]     = MODEL, [ANIM_CUE_PILE]   = MODEL,
+    [ANIM_CUE_OUT]       = { 68, 0, 0, 0 },        // -6.6 dBFS raw -> -30
+    [ANIM_CUE_REVERT]    = { 0, 0, 0, 0 },         // the undone cue's row, backwards
+    [ANIM_CUE_GOOD]      = { 44, 0, 0, 0 },        // -6.8 -> -34
+    [ANIM_CUE_HAND_OFF]  = { 47, 60, 180, 0 },     // -11.4 -> -38
+    [ANIM_CUE_FINISH]    = { 100, 0, 0, 0 },       // -5.9 -> -26
+    [ANIM_CUE_FOOL]      = { 95, 0, 0, 0 },        // -5.6 -> -26
+    [ANIM_CUE_DEAL_LAND] = MODEL, [ANIM_CUE_TURN]   = MODEL, [ANIM_CUE_PASS]      = MODEL,
+    [ANIM_CUE_INTO_HAND] = MODEL,
+};
+_Static_assert(sizeof MIX_ROWS / sizeof MIX_ROWS[0] == ANIM_N_CUES, "every sound cue has a line in MIX_ROWS");
+
 // ---- one rendered file -------------------------------------------------------------
 typedef struct {
     char   name[48];
@@ -452,8 +490,46 @@ static int write_table(const char *path, Out *outs, int n) {
                "export const CUE_CARDS_PER_LEVEL: Readonly<Record<number, number>> = {\n");
     for (int c = 1; c < ANIM_N_CUES; c++)
         if (RECIPES[c].prelude.make) fprintf(f, "    [%s]: %.1f,\n", CUE_CONST[c], RECIPES[c].cards_per_level);
+    fprintf(f, "};\n\n/** How each cue sits in the mix (soundgen.c MIX_ROWS): its gain against the level its\n"
+               " *  files were written at, how far a play's pitch and level may wander either way, and how\n"
+               " *  much louder it is a card past the first. */\n"
+               "export interface CueMix { readonly gain: number; readonly pitch: number; readonly level: number; readonly perCard: number }\n"
+               "export const CUE_MIX: Readonly<Record<number, CueMix>> = {\n");
+    for (int c = 1; c < ANIM_N_CUES; c++) {
+        if (!CUE_CONST[c]) continue;
+        const MixRow *m = &MIX_ROWS[c];
+        fprintf(f, "    [%s]: { gain: %g, pitch: %g, level: %g, perCard: %g },\n", CUE_CONST[c],
+                m->gain / 1000.0, m->pitch / 1000.0, m->level / 1000.0, m->per_card / 1000.0);
+    }
     fprintf(f, "};\n\n/** The longest anchor of all: how early the earliest file must start. */\n"
                "export const CUE_MAX_ANCHOR_MS = %.1f;\n", lead);
+    return fclose(f);
+}
+
+// ---- the same table for a C host (iOS: c/src/cue_voice.h) ---------------------------
+// One render writes both, so a take's anchor and a cue's level are the same
+// numbers in every host. The anchor goes over in microseconds, rounded, from the
+// same double the web's table prints to a tenth of a millisecond.
+static int write_ctable(const char *path, Out *outs, int n) {
+    FILE *f = fopen(path, "w");
+    if (!f) return -1;
+    fprintf(f, "// GENERATED by tools/soundgen (soundgen ctable) - do not edit, and not committed.\n"
+               "// Every take soundgen writes, and how each cue sits in the mix: the C twin of\n"
+               "// src/audio/gen/cueTakes.ts, read through c/src/cue_voice.h.\n\n"
+               "#include \"cue_voice.h\"\n\n"
+               "const CueTakeRow CUE_TAKE_ROWS[] = {\n");
+    for (int i = 0; i < n; i++) {
+        const Out *o = &outs[i];
+        fprintf(f, "    { %d, %d, %ld, %d, %d, %d, %d, \"%s\" },\n", o->rate, o->n, lrint(o->anchor_ms * 1000),
+                o->cue, o->role, o->level, (int)strlen(o->name), o->name);
+    }
+    fprintf(f, "};\nconst int CUE_N_TAKE_ROWS = %d;\n\nconst CueMix CUE_MIX_ROWS[ANIM_N_CUES] = {\n", n);
+    for (int c = 0; c < ANIM_N_CUES; c++) {
+        const MixRow *m = &MIX_ROWS[c];
+        fprintf(f, "    [%d] = { %d, %d, %d, %d, %ld },\n", c, m->gain, m->pitch, m->level, m->per_card,
+                lrint(RECIPES[c].cards_per_level * 1000));
+    }
+    fprintf(f, "};\n");
     return fclose(f);
 }
 
@@ -615,10 +691,11 @@ int main(int argc, char **argv) {
     if (!strcmp(mode, "check") && argc > 3) return check(argv[2], argv[3]);
     const int writing = !strcmp(mode, "write") && argc > 3;
     const int table_only = !strcmp(mode, "table") && argc > 2;
+    const int ctable = !strcmp(mode, "ctable") && argc > 2;
     const int stats = !strcmp(mode, "stats");
-    if (!writing && !stats && !table_only && strcmp(mode, "list")) {
+    if (!writing && !stats && !table_only && !ctable && strcmp(mode, "list")) {
         fprintf(stderr, "usage: soundgen write <wavdir> <cueTakes.ts> | table <cueTakes.ts> | encode <wavdir> <outdir>\n"
-                        "                | check <wavdir> <outdir> | list | stats | parts <dir>\n");
+                        "                | check <wavdir> <outdir> | ctable <cue_takes.c> | list | stats | parts <dir>\n");
         return 2;
     }
     Out *outs = calloc(512, sizeof(Out));
@@ -652,7 +729,7 @@ int main(int argc, char **argv) {
         snprintf(path, sizeof path, "%s/" MANIFEST, argv[2]);
         if (!(manifest = fopen(path, "w"))) { fprintf(stderr, "soundgen: cannot write %s\n", path); return 1; }
     }
-    for (int i = 0; i < n && !table_only; i++) {
+    for (int i = 0; i < n && !table_only && !ctable; i++) {
         const Out *o = &outs[i];
         if (writing) {
             fprintf(manifest, "%s %d %d %d\n", o->name, o->rate, o->kbps, o->n);
@@ -677,6 +754,7 @@ int main(int argc, char **argv) {
     if ((writing || table_only) && write_table(argv[writing ? 3 : 2], outs, n) != 0) {
         fprintf(stderr, "soundgen: cannot write %s\n", argv[writing ? 3 : 2]); return 1;
     }
+    if (ctable && write_ctable(argv[2], outs, n) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", argv[2]); return 1; }
     if (writing || stats)
         fprintf(writing ? stderr : stdout, "soundgen: %d files, %ld bytes, loudest card take %.1f dBFS\n",
                 n, total, 20 * log10(loudest + 1e-9));

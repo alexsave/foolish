@@ -6,6 +6,11 @@
 #                  the web reads into ../../src/audio/gen/cueTakes.ts
 #   make table     the take table alone: what type-checks and tests need, with
 #                  no audio written and no ffmpeg
+#   make ctable CTABLE=<path>
+#                  the same table for a C host (iOS: c/src/cue_voice.h), no audio
+#                  written and no ffmpeg; c/Makefile runs it for the iOS kernel
+#   make bundle    `sounds`, but only when soundgen changed since the last one
+#                  (the iOS build runs it on every build, ios/scripts/bundle_sounds.sh)
 #   make check     hold every shipped file to its take (aac's priming declared,
 #                  the length to the sample)
 #   make list      the files it writes, one a line (the cue-table test reads this)
@@ -31,7 +36,7 @@ WAV     := build/wav
 SRC     := soundgen.c c/dsp.c c/models.c c/placeholders.c c/m4a.c
 HDR     := c/dsp.h c/models.h c/placeholders.h c/m4a.h c/tables.h ../../c/src/anim_plan.h ../../../shared/c/rng.h
 
-.PHONY: sounds table check list stats audition parts clean
+.PHONY: sounds table ctable bundle check list stats audition parts clean
 
 build/soundgen: $(SRC) $(HDR)
 	@mkdir -p build
@@ -49,6 +54,18 @@ sounds: build/soundgen
 table: build/soundgen
 	@mkdir -p $(dir $(TS))
 	@./build/soundgen table $(TS)
+
+ctable: build/soundgen
+	@test -n "$(CTABLE)" || { echo "make ctable CTABLE=<path>" >&2; exit 2; }
+	@mkdir -p $(dir $(CTABLE))
+	@./build/soundgen ctable $(CTABLE)
+
+# The stamp is written after a whole `sounds` succeeded, so a failed or
+# interrupted run is redone next time rather than trusted.
+bundle: build/sounds.stamp
+build/sounds.stamp: build/soundgen
+	@$(MAKE) -s sounds
+	@touch $@
 
 check: build/soundgen
 	@./build/soundgen check $(WAV) $(OUT)

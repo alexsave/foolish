@@ -42,16 +42,17 @@ import {
     ANIM_CUE_GOOD, ANIM_CUE_HAND_OFF, ANIM_CUE_FINISH, ANIM_CUE_FOOL,
     ANIM_CUE_DEAL_LAND, ANIM_CUE_TURN, ANIM_CUE_PASS, ANIM_CUE_INTO_HAND,
 } from '@sdk/ts/gen/kernel_consts.bots.ts';
-import { CUE_CARDS_PER_LEVEL, CUE_MAX_ANCHOR_MS, CUE_TAKES, type CueTake } from './gen/cueTakes';
+import { CUE_CARDS_PER_LEVEL, CUE_MAX_ANCHOR_MS, CUE_MIX, CUE_TAKES, type CueTake } from './gen/cueTakes';
 
 export type { CueTake };
 
 export interface CueSound {
     /** The files, each with its anchor and level. */
     takes: readonly CueTake[];
-    /** How loud this cue is against the others, 0..1. THE MIX: Alex sets it by
-     *  ear on /sounds. The modelled cues are written at their models' own
-     *  levels, so 1 is the level the model sets. */
+    /** How loud this cue is against the others, 0..1. THE MIX is soundgen's
+     *  (MIX_ROWS in tools/soundgen/soundgen.c, set by ear on /sounds): the
+     *  modelled cues are written at their models' own levels, so 1 is the
+     *  level the model sets. */
     gain: number;
     /** How far a play's pitch may wander either way, as a fraction of its
      *  speed (0.06 is about a semitone). 0 for a cue with a pitch to keep, and
@@ -75,37 +76,37 @@ export const CUE_SOUND_ROOT = '/audio/';
 export const CUE_MAX_LEAD_MS = CUE_MAX_ANCHOR_MS;
 
 const takes = (kind: number): readonly CueTake[] => CUE_TAKES[kind] ?? [];
-// A modelled card sound: its takes carry the model's own level and variation.
-const model = (kind: number, gain = 1): CueSound =>
-    ({ takes: takes(kind), gain, pitch: 0, level: 0, perCard: 0, cardsPerLevel: CUE_CARDS_PER_LEVEL[kind] ?? 0 });
-// A synthesised stand-in, varied by the engine.
-const standIn = (kind: number, gain: number): CueSound =>
-    ({ takes: takes(kind), gain, pitch: 0.06, level: 0.18, perCard: 0, cardsPerLevel: 0 });
-const note = (kind: number, gain: number): CueSound =>
-    ({ takes: takes(kind), gain, pitch: 0, level: 0, perCard: 0, cardsPerLevel: 0 });
+// A cue's row: its takes, and how it sits in the mix - both soundgen's
+// (tools/soundgen/soundgen.c MIX_ROWS), which writes the same numbers for iOS,
+// so no host sets a level of its own.
+const row = (kind: number): CueSound => {
+    const m = CUE_MIX[kind];
+    return {
+        takes: takes(kind), gain: m?.gain ?? 0, pitch: m?.pitch ?? 0, level: m?.level ?? 0,
+        perCard: m?.perCard ?? 0, cardsPerLevel: CUE_CARDS_PER_LEVEL[kind] ?? 0,
+    };
+};
 
 export const CUE_SOUNDS: Readonly<Record<number, CueSound | null>> = {
-    [ANIM_CUE_DEAL]:      model(ANIM_CUE_DEAL),
-    [ANIM_CUE_DEAL_LAND]: model(ANIM_CUE_DEAL_LAND),
-    [ANIM_CUE_TURN]:      model(ANIM_CUE_TURN),
-    [ANIM_CUE_FLIP]:      model(ANIM_CUE_FLIP),
-    [ANIM_CUE_LIFT]:      model(ANIM_CUE_LIFT),
-    [ANIM_CUE_PLACE]:     model(ANIM_CUE_PLACE),
-    [ANIM_CUE_PASS]:      model(ANIM_CUE_PASS),
-    [ANIM_CUE_COVER]:     model(ANIM_CUE_COVER),
-    [ANIM_CUE_PICKUP]:    model(ANIM_CUE_PICKUP),
-    [ANIM_CUE_INTO_HAND]: model(ANIM_CUE_INTO_HAND),
-    [ANIM_CUE_SWEEP]:     model(ANIM_CUE_SWEEP),
-    [ANIM_CUE_PILE]:      model(ANIM_CUE_PILE),
-    // The placeholders, set against the modelled card set (Alex 2026-11-07: "turn them down"; they sat 10-20 dB
-    // over most card sounds). Targets by loudest 50 ms RMS (`make -C tools/soundgen stats` times the gain), with a
-    // card landing at about -22 dBFS and a deal at about -40: the game over -26 (once a game, just under a landing),
-    // a seat going out -30, a good -34 and the hand-off -38 (heard every bout, so under the good).
-    [ANIM_CUE_HAND_OFF]:  standIn(ANIM_CUE_HAND_OFF, 0.047),   // -11.4 dBFS raw -> -38
-    [ANIM_CUE_OUT]:       note(ANIM_CUE_OUT, 0.068),           // -6.6 -> -30
-    [ANIM_CUE_GOOD]:      note(ANIM_CUE_GOOD, 0.044),          // -6.8 -> -34
-    [ANIM_CUE_FINISH]:    note(ANIM_CUE_FINISH, 0.1),          // -5.9 -> -26
-    [ANIM_CUE_FOOL]:      note(ANIM_CUE_FOOL, 0.095),          // -5.6 -> -26
+    [ANIM_CUE_DEAL]:      row(ANIM_CUE_DEAL),
+    [ANIM_CUE_DEAL_LAND]: row(ANIM_CUE_DEAL_LAND),
+    [ANIM_CUE_TURN]:      row(ANIM_CUE_TURN),
+    [ANIM_CUE_FLIP]:      row(ANIM_CUE_FLIP),
+    [ANIM_CUE_LIFT]:      row(ANIM_CUE_LIFT),
+    [ANIM_CUE_PLACE]:     row(ANIM_CUE_PLACE),
+    [ANIM_CUE_PASS]:      row(ANIM_CUE_PASS),
+    [ANIM_CUE_COVER]:     row(ANIM_CUE_COVER),
+    [ANIM_CUE_PICKUP]:    row(ANIM_CUE_PICKUP),
+    [ANIM_CUE_INTO_HAND]: row(ANIM_CUE_INTO_HAND),
+    [ANIM_CUE_SWEEP]:     row(ANIM_CUE_SWEEP),
+    [ANIM_CUE_PILE]:      row(ANIM_CUE_PILE),
+    // The placeholders: their levels (-38 to -26 dBFS by loudest 50 ms RMS) and
+    // the hand-off's wander are soundgen's MIX_ROWS, which says why.
+    [ANIM_CUE_HAND_OFF]:  row(ANIM_CUE_HAND_OFF),
+    [ANIM_CUE_OUT]:       row(ANIM_CUE_OUT),
+    [ANIM_CUE_GOOD]:      row(ANIM_CUE_GOOD),
+    [ANIM_CUE_FINISH]:    row(ANIM_CUE_FINISH),
+    [ANIM_CUE_FOOL]:      row(ANIM_CUE_FOOL),
 };
 
 /** How long before its moment a cue's earliest take starts: when the frame loop
