@@ -891,6 +891,49 @@ test('a recording listed for soundgen is a take of its cue in the table every ho
     } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// THE TIMING AND LEVEL OF EVERY PART ARE tools/soundgen/tuning.tsv's: the tuner on
+// /sounds edits that file and nothing else, so a part moved there is a take that
+// starts that much earlier, and a file soundgen cannot read in full stops the build.
+test('tuning.tsv places every part: the deal\'s thumb slide moved 100 ms earlier is every deal take\'s anchor 100 ms longer, and nothing else moves', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'soundgen-tune-'));
+    try {
+        const SG = join(REPO, 'tools/soundgen');
+        const tuning = readFileSync(join(SG, 'tuning.tsv'), 'utf8');
+        const ctable = (text: string, name: string) => {
+            const path = join(dir, `${name}.tsv`), out = join(dir, `${name}.c`);
+            writeFileSync(path, text);
+            execFileSync('make', ['-s', '--no-print-directory', '-C', SG, 'ctable', `CTABLE=${out}`],
+                { env: { ...process.env, SOUNDGEN_TUNING: path }, stdio: 'ignore' });
+            return [...readFileSync(out, 'utf8').matchAll(/\{ (-?\d+), (-?\d+), (-?\d+), (\d+), (\d+), (\d+), \d+, "([^"]+)" \}/g)]
+                .map((m) => ({ n: +m[2], anchorUs: +m[3], cue: +m[4], role: +m[5], name: m[7] }));
+        };
+        const line = /^part\tdeal\tmain\tthumb\t-130\t/m;
+        assert.match(tuning, line, 'the deal\'s thumb slide is at -130 ms in the file');
+        const before = ctable(tuning, 'before');
+        const after = ctable(tuning.replace(line, 'part\tdeal\tmain\tthumb\t-230\t'), 'after');
+        const deal = (r: { cue: number; role: number }) => r.cue === ANIM_CUE_DEAL && r.role === 0;
+        assert.equal(before.filter(deal).length, 8, 'eight ordinary deal takes');
+        before.forEach((b, i) => {
+            const a = after[i];
+            if (deal(b)) {
+                assert.equal(a.anchorUs - b.anchorUs, 100000, `${b.name}: its moment 100 ms further into the take`);
+                assert.equal(a.n - b.n, 4800, `${b.name}: and the take 100 ms longer (48 kHz)`);
+            } else {
+                assert.deepEqual(a, b, `${b.name}: not a part of it, so as it was`);
+            }
+        });
+        for (const [bad, why] of [
+            [tuning.replace(/^part\tpass\t.*\n/m, ''), 'a part with no line'],
+            [tuning.replace(/^(part\tpass\t.*\n)/m, '$1$1'), 'a part with two'],
+            [tuning.replace(/^part\tpass\tmain\tslide\t/m, 'part\tpass\tmain\tslid\t'), 'a part soundgen does not have'],
+            [tuning.replace(/^mix\tgood\t.*\n/m, ''), 'a cue with no mix line'],
+        ] as const) {
+            assert.notEqual(bad, tuning, `the test changed the file (${why})`);
+            assert.throws(() => ctable(bad, 'bad'), `${why} stops the build`);
+        }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 // ---- 5. the shipped files: AAC, starting on the millisecond ------------------------------
 
 // An AAC encoder starts its stream with priming samples, and an anchor counts
