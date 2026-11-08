@@ -12,7 +12,7 @@ import { CUE_ROLE_PRELUDE, CUE_ROLE_TIGHT, EVW_MSG_PASSED } from '@sdk/ts/gen/vi
 import type { TableView } from '../state/view';
 import { buildTutorialData } from './Tutorial';
 import { cueAudio, cueFile } from '../audio/cueAudio';
-import { perStrokeOf, playPart, strikes, tunerPlay, voiced, whenLoaded } from '../audio/tunerPlay';
+import { perStrokeOf, playPart, strikes, voiced, whenLoaded } from '../audio/tunerPlay';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 
@@ -142,7 +142,7 @@ export const SoundAudition = () => {
                     </label>
                 </div>
 
-                {SoundTuner && table && <SoundTuner play={tunerPlay} playPart={playPart} perStroke={perStrokeOf} />}
+                {SoundTuner && table && <SoundTuner playPart={playPart} perStroke={perStrokeOf} />}
 
                 <h2 className="title">Each cue</h2>
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>

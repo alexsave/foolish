@@ -55,13 +55,3 @@ export const playPart = (kind: number, cue: string, role: string, part: string, 
         .then((bytes) => cueAudio.playNow(bytes, gain))
         .catch((e) => console.warn('tuner: the part could not be played alone', e));
 };
-
-/** One cue for the tuner, alone: whatever was sounding stops first (one sound at a time). */
-export const tunerPlay = (kind: number, how: 'main' | 'tight' | number): void => {
-    cueAudio.cancel();
-    const per = perStrokeOf(kind);
-    if (how === 'tight') whenLoaded([kind], () => cueAudio.strike(kind, 0));
-    else if (typeof how === 'number') strikes(kind, 1, 0, Math.ceil(how * per));
-    else strikes(kind, 1, 0, per > 0 ? 0 : 1);
-};
-

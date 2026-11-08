@@ -15,9 +15,6 @@ import { ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_CUE_REVERT } from '@sdk/ts/gen/kernel
 // file is what gets committed (docs/AUDIO.md "How to tune").
 
 
-/** How a row of the tuner plays its cue: as a strike with time for its take, as
- *  a run's opening strike (a tight take), or with strokes before it. */
-export type TunerPlay = (kind: number, how: 'main' | 'tight' | number) => void;
 
 // ---- tuning.tsv, as lines with tab-separated fields ---------------------------------
 // The file is edited in place: a value is one field of one line, and every other
@@ -50,8 +47,6 @@ const setField = (text: string, line: number, field: number, value: string): str
     return lines.join('\n');
 };
 
-const dbOfGain = (pm: number) => (pm > 0 ? 20 * Math.log10(pm / 1000) : -Infinity);
-const gainOfDb = (db: number) => Math.max(0, Math.min(8000, Math.round(1000 * 10 ** (db / 20))));
 
 /** What tune.sh's "table" line sums, from the table this page's kernel carries:
  *  the same number means the kernel has taken the new table. */
@@ -63,6 +58,15 @@ const tableFingerprint = (): number => {
         if (m) s += m.gainPm + m.pitchPm + m.levelPm + m.perCardPm;
     }
     return s;
+};
+
+/** A part's name without its cue's, which the heading over it already says: "deal:
+ *  thumb slide" is "thumb slide", "lift, opening a run: grab" is "opening a run: grab". */
+const shortWhat = (what: string): string => {
+    const run = /^[^:,]*, (opening a run: .*)$/.exec(what);
+    if (run) return run[1];
+    const i = what.indexOf(': ');
+    return i >= 0 ? what.slice(i + 2) : what;
 };
 
 const cueKind = (name: string): number => {
@@ -127,9 +131,9 @@ const writeCue = (c: string): void => { try { sessionStorage.setItem(CUE_KEY, c)
 
 /** `compact`: the panel on the replay screen, the cues in tabs by what happens at
  *  the table, no prose. */
-export default function SoundTuner({ play, playPart, perStroke, compact = false }: {
-    play: TunerPlay; perStroke: (kind: number) => number; compact?: boolean;
-    /** A part's row plays that part alone (src/audio/tunerPlay.ts playPart); the whole-cue row plays the cue. */
+export default function SoundTuner({ playPart, perStroke, compact = false }: {
+    perStroke: (kind: number) => number; compact?: boolean;
+    /** A part's row plays that part alone (src/audio/tunerPlay.ts playPart). */
     playPart: (kind: number, cue: string, role: string, part: string, strokes?: number) => void;
 }) {
     const [shown, setShown] = useState<string | null>(() => (compact ? readCue() : null));
@@ -211,9 +215,9 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false 
 
     const rows = parse(text);
     const parts = rows.filter((r): r is PartRow => r.kind === 'part');
-    const mixes = rows.filter((r): r is MixRow => r.kind === 'mix');
-    // The cues in the file's order of parts, then the cues with a mix line only (the stand-ins).
-    const order = [...new Set([...parts.map((r) => r.cue), ...mixes.map((r) => r.cue)])]
+    // The cues that have parts, in the file's order. A cue's whole-cue line (its mix
+    // gain, `mix` in tuning.tsv) is not tuned here (Alex: "get rid of the whole cue").
+    const order = [...new Set(parts.map((r) => r.cue))]
         .filter((c) => cueKind(c) > 0 && cueKind(c) !== ANIM_CUE_REVERT);
     const changedCount = rows.filter((r) => !same(committed.get(keyOf(r)), r)).length;
     const cueChanged = (cue: string) => rows.some((r) => r.cue === cue && !same(committed.get(keyOf(r)), r));
@@ -223,7 +227,6 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false 
     const fs = compact ? 12 : 14;
     const cell: React.CSSProperties = compact ? { ...td, padding: '2px 3px' } : td;
 
-    const playRow = (cue: string, how: 'main' | 'tight' | number) => play(cueKind(cue), how);
 
     return (
         <section data-tuner style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -279,45 +282,11 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false 
                     {listed.map((cue) => {
                         const kind = cueKind(cue);
                         const own = parts.filter((r) => r.cue === cue);
-                        const mix = mixes.find((r) => r.cue === cue);
-                        const mixHead = mix ? committed.get(keyOf(mix)) : undefined;
-                        const mixChanged = !!mix && (!mixHead || (mixHead.kind === 'mix' && mixHead.gain !== mix.gain));
-                        const shift = (ms: number) => {
-                            let next = text;
-                            for (const r of own) if (r.role !== 'prelude') next = setField(next, r.line, 4, num(r.at + ms, 1));
-                            edit(next);
-                        };
                         return [
-                            mix && (
-                                <tr key={`mix ${cue}`} data-tuner-row={`mix ${cue}`} style={{ borderTop: '1px solid #4a382c' }}>
-                                    <td style={cell}>
-                                        <strong>{cue.replace('_', ' ')}</strong>: whole cue
-                                        {mixChanged && <span title="changed against HEAD" style={{ color: changedColor }}> ●</span>}
-                                    </td>
-                                    <td style={cell}>
-                                        <Stepper value={Number(dbOfGain(mix.gain).toFixed(1))} step={1} places={1} label={`${cue} whole cue dB`}
-                                                 changed={mixChanged} narrow={compact}
-                                                 onChange={(v) => edit(setField(text, mix.line, 2, String(gainOfDb(v))))} />
-                                    </td>
-                                    <td style={cell}>
-                                        {own.some((r) => r.role !== 'prelude') && (
-                                            <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center' }}
-                                                  title="moves every part of the cue (not its strokes) against the animation">
-                                                <button type="button" style={small} onClick={() => shift(-10)}>-10</button>
-                                                {!compact && <span style={{ opacity: 0.7, fontSize: 12 }}>all parts</span>}
-                                                <button type="button" style={small} onClick={() => shift(10)}>+10</button>
-                                            </span>
-                                        )}
-                                    </td>
-                                    <td style={cell}><button type="button" style={compact ? { ...playBtn, minWidth: 40 } : playBtn} onClick={() => playRow(cue, 'main')}>Play</button></td>
-                                    <td style={cell}>
-                                        <button type="button" style={{ ...small, visibility: mixChanged && mixHead?.kind === 'mix' ? 'visible' : 'hidden' }}
-                                                onClick={() => { if (mixHead?.kind === 'mix') edit(setField(text, mix.line, 2, String(mixHead.gain))); }}>
-                                            Reset
-                                        </button>
-                                    </td>
-                                </tr>
-                            ),
+                            // The cue's name over its parts, so it is plain which sound they make.
+                            <tr key={`head ${cue}`} data-tuner-row={`head ${cue}`} style={{ borderTop: '1px solid #4a382c' }}>
+                                <td style={cell} colSpan={5}><strong>{cue.replace('_', ' ')}</strong></td>
+                            </tr>,
                             ...own.map((r) => {
                                 const head = committed.get(keyOf(r));
                                 const h = head?.kind === 'part' ? head : undefined;
@@ -326,7 +295,7 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false 
                                 return (
                                     <tr key={keyOf(r)} data-tuner-row={keyOf(r)}>
                                         <td style={{ ...cell, paddingLeft: compact ? 6 : 18, whiteSpace: compact ? 'normal' : 'nowrap' }}>
-                                            {compact ? r.what.replace(new RegExp(`^${cue.replace('_', ' ')}(, |: )`), '') : r.what}
+                                            {compact ? shortWhat(r.what) : r.what}
                                             {(dbChanged || atChanged) && <span title="changed against HEAD" style={{ color: changedColor }}> ●</span>}
                                         </td>
                                         <td style={cell}>
@@ -348,13 +317,14 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false 
                                                 {r.role === 'prelude' && perStroke(kind) > 0 && (
                                                     <select style={{ ...small, minWidth: 0 }} value={strokes[cue] ?? 3} aria-label="strokes"
                                                             onChange={(e) => setStrokes({ ...strokes, [cue]: Number(e.target.value) })}>
-                                                        {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} strokes</option>)}
+                                                        {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{compact ? `${n}x` : `${n} strokes`}</option>)}
                                                     </select>
                                                 )}
                                             </span>
                                         </td>
                                         <td style={cell}>
                                             <button type="button" style={{ ...small, visibility: h && (dbChanged || atChanged) ? 'visible' : 'hidden' }}
+                                                    title="back to the committed value" aria-label="reset"
                                                     onClick={() => {
                                                         if (!h) return;
                                                         let next = setField(text, r.line, 4, num(h.at, 1));
@@ -362,7 +332,7 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false 
                                                         next = setField(next, r.line, 6, num(h.db, 2));
                                                         edit(setField(next, r.line, 7, num(h.dbSpread, 2)));
                                                     }}>
-                                                Reset
+                                                {compact ? "↺" : "Reset"}
                                             </button>
                                         </td>
                                     </tr>
