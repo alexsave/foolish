@@ -355,7 +355,7 @@ The `gain` column of `src/audio/cueSounds.ts` is 1 for every model: the levels a
 | `DEAL_LAND` (own seat) | -34.0 to -30.9 | -49.5 to -47.6 |
 | `PICKUP` (its lift) | -38.7 to -33.7 | -52.1 to -50.3 |
 | `INTO_HAND` | -39.4 to -32.5 | -52.8 to -51.4 |
-| the five placeholders (before their gains of 0.26-0.4) | -1.0 | -11.4 to -5.6 |
+| the five placeholders (before their gains of 0.044-0.1, which bring them to -38 to -26 by 50 ms RMS) | -1.0 | -11.4 to -5.6 |
 
 
 **The strokes are heard in full.**
@@ -478,7 +478,8 @@ An iMessage extension has its own constraints (memory, and it is torn down betwe
 11. **Seat position.**
     A cue carries its step, so a host can pan a sound towards the seat that made it.
     The web plays everything centred; only a dealt card's landing follows its seat, in level.
-12. **The placeholders are now loud against the card set.**
-    The card balance is set from the levels study (see "The balance between the parts"); the five placeholders were left as they were, at -1 dBFS before their gains of 0.26-0.4, which is 10-20 dB over most card sounds, and want the same pass when they are modelled or retuned.
+12. **The placeholders were turned down to sit with the card set** (Alex: "turn them down").
+    Their gains in `src/audio/cueSounds.ts` put them, by loudest 50 ms RMS, at -26 for the game over (once a game, just under a card landing at about -22), -30 for a seat going out, -34 for a good and -38 for the hand-off (heard every bout).
+    They still want designing; these levels are a starting point for tuning by ear on `/sounds`.
 13. **1.8 MB of AAC** (1,783,626 bytes, from 6.5 MB of WAV), loaded after the first tap, wanted cues first.
 14. **The strokes play over the beat before** (Alex: "just play the pickup over the other sounds"): five strokes start 3.5 s before their sweep, over the last cover and its hold.

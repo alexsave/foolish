@@ -97,11 +97,15 @@ export const CUE_SOUNDS: Readonly<Record<number, CueSound | null>> = {
     [ANIM_CUE_INTO_HAND]: model(ANIM_CUE_INTO_HAND),
     [ANIM_CUE_SWEEP]:     model(ANIM_CUE_SWEEP),
     [ANIM_CUE_PILE]:      model(ANIM_CUE_PILE),
-    [ANIM_CUE_HAND_OFF]:  standIn(ANIM_CUE_HAND_OFF, 0.3),
-    [ANIM_CUE_OUT]:       note(ANIM_CUE_OUT, 0.32),
-    [ANIM_CUE_GOOD]:      note(ANIM_CUE_GOOD, 0.26),
-    [ANIM_CUE_FINISH]:    note(ANIM_CUE_FINISH, 0.4),
-    [ANIM_CUE_FOOL]:      note(ANIM_CUE_FOOL, 0.4),
+    // The placeholders, set against the modelled card set (Alex 2026-11-07: "turn them down"; they sat 10-20 dB
+    // over most card sounds). Targets by loudest 50 ms RMS (`make -C tools/soundgen stats` times the gain), with a
+    // card landing at about -22 dBFS and a deal at about -40: the game over -26 (once a game, just under a landing),
+    // a seat going out -30, a good -34 and the hand-off -38 (heard every bout, so under the good).
+    [ANIM_CUE_HAND_OFF]:  standIn(ANIM_CUE_HAND_OFF, 0.047),   // -11.4 dBFS raw -> -38
+    [ANIM_CUE_OUT]:       note(ANIM_CUE_OUT, 0.068),           // -6.6 -> -30
+    [ANIM_CUE_GOOD]:      note(ANIM_CUE_GOOD, 0.044),          // -6.8 -> -34
+    [ANIM_CUE_FINISH]:    note(ANIM_CUE_FINISH, 0.1),          // -5.9 -> -26
+    [ANIM_CUE_FOOL]:      note(ANIM_CUE_FOOL, 0.095),          // -5.6 -> -26
 };
 
 /** How long before its moment a cue's earliest take starts: when the frame loop
