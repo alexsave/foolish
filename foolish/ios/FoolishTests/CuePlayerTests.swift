@@ -38,7 +38,20 @@ final class CuePlayerTests: XCTestCase {
         var err: Float = 0
         for k in 0..<take.count where at + k < out.count { err = max(err, abs(out[at + k] - gain * take[k])) }
         let before = out[0..<max(0, min(at, out.count))].map(abs).max() ?? 0
+        if err > 1e-4 { diagnose(out, at: at, take, gain: gain) }
         return (err, before)
+    }
+
+    /// DEBUG: the lag and gain that best fit `take` into `out` near `at`.
+    private func diagnose(_ out: [Float], at: Int, _ take: [Float], gain: Float) {
+        var best = (lag: 0, corr: -Float.greatestFiniteMagnitude, g: Float(0))
+        let n = min(take.count, 4000)
+        for lag in -3000...3000 {
+            var xy: Float = 0, yy: Float = 0
+            for k in 0..<n where at + lag + k >= 0 && at + lag + k < out.count { xy += out[at + lag + k] * take[k]; yy += take[k] * take[k] }
+            if xy > best.corr { best = (lag, xy, yy > 0 ? xy / yy : 0) }
+        }
+        print("CUE DIAG at \(at): best lag \(best.lag) gain \(best.g) (want \(gain)); out peak \(peak(out)) take peak \(peak(take)) n \(take.count) out \(out.count)")
     }
 
     private func peak(_ x: [Float]) -> Float { x.map(abs).max() ?? 0 }
@@ -52,7 +65,7 @@ final class CuePlayerTests: XCTestCase {
         XCTAssertGreaterThan(player.takes.count, 100, "the kernel links soundgen's table")
         try player.startOffline()
         for (i, t) in player.takes.enumerated() {
-            let s = player.samples(i)
+            let s = player.fileSamples(i)
             XCTAssertEqual(s.count, t.nSamples, "\(t.name).m4a decodes to its take's length")
             XCTAssertGreaterThan(peak(s), 0.0005, "\(t.name).m4a is not silence")
         }
@@ -168,6 +181,37 @@ final class CuePlayerTests: XCTestCase {
         XCTAssertLessThan(err, 1e-4, "the output is the two takes summed")
     }
 
+    /// In a STEREO mix (a phone's speaker or headphones) a take is as loud on
+    /// each side as the web plays it: the mono take, at the master level.
+    func testAStereoMixPlaysATakeAtTheWebsLevel() throws {
+        try player.startOffline(rate: 48000, channels: 2)
+        _ = try player.render(1024)
+        let s = try XCTUnwrap(player.strike(Int(ANIM_CUE_LIFT), in: 0.5).first)
+        let out = try player.render(48000)
+        let (err, _) = compare(out, at: Int(s.startSample - s.nowSample), player.samples(s.take), gain: master)
+        XCTAssertLessThan(err, 1e-4, "the left side is the take at the master level")
+    }
+
+    /// A 32 kHz take in a 48 kHz mix (a cover on a phone) is converted as it
+    /// is decoded and still lands where it was aimed: its loudest sample, at the
+    /// file's own rate, against where it comes out, within a tenth of a
+    /// millisecond (the converter adds no delay).
+    func testATakeAtAnotherRateLandsWhereItWasAimed() throws {
+        try player.startOffline(rate: 48000)
+        _ = try player.render(1024)
+        let s = try XCTUnwrap(player.strike(Int(ANIM_CUE_COVER), in: 0.5).first)
+        XCTAssertEqual(player.takes[s.take].rate, 32000)
+        XCTAssertEqual(s.rate, 48000, "converted to the output's rate")
+        let out = try player.render(48000)
+        let file = player.fileSamples(s.take)
+        let peakAt = file.indices.max { abs(file[$0]) < abs(file[$1]) }!
+        let aimed = Double(s.startSample - s.nowSample) / 48000 + Double(peakAt) / 32000
+        let landed = Double(out.indices.max { abs(out[$0]) < abs(out[$1]) }!) / 48000
+        print(String(format: "CUE SRC: aimed %.5f s, landed %.5f s (%+.3f ms)", aimed, landed, (landed - aimed) * 1000))
+        XCTAssertEqual(landed, aimed, accuracy: 0.0001)
+        XCTAssertEqual(player.samples(s.take).count, file.count * 3 / 2, accuracy: 1, "as long, at the new rate")
+    }
+
     // ---- when it is silent --------------------------------------------------
 
     /// Muted, a strike schedules nothing and nothing is decoded.
@@ -191,19 +235,59 @@ final class CuePlayerTests: XCTestCase {
         XCTAssertTrue(player.strike(Int(ANIM_CUE_COVER), in: 0.1).isEmpty, "no board, no sound")
     }
 
-    /// What every sound costs in memory once decoded, measured on the process
-    /// (phys_footprint) and counted in samples: the number the extension has to
-    /// fit beside its textures (docs/AUDIO.md "iOS and iMessage").
-    func testWhatEverySoundCostsInMemory() throws {
+    /// What is kept decoded is what the kernel says could sound next: those
+    /// cues' own takes, never a stroke prelude, and nothing else once the
+    /// board's answer moves on.
+    func testOnlyTheWantedCuesStayDecoded() throws {
+        try player.startOffline(rate: 32000)
+        player.want(1 << UInt32(ANIM_CUE_COVER))
+        player.waitLoaded()
+        for (i, t) in player.takes.enumerated() {
+            XCTAssertEqual(player.isResident(i), t.cue == Int(ANIM_CUE_COVER), "\(t.name): decoded ahead only if wanted")
+        }
+        // A strike of a cue nobody wanted decodes it and keeps it...
+        _ = try player.render(1024)
+        let place = try XCTUnwrap(player.strike(Int(ANIM_CUE_PLACE), in: 0.1).first)
+        XCTAssertTrue(player.isResident(place.take))
+        // ...a sweep's strokes are let go once scheduled...
+        let sweep = player.strike(Int(ANIM_CUE_SWEEP), in: 4.0, nCards: 10)
+        XCTAssertEqual(sweep.count, 2)
+        XCTAssertFalse(player.isResident(sweep[1].take), "the strokes are never kept")
+        // ...and the next answer drops what it no longer names.
+        player.want(1 << UInt32(ANIM_CUE_LIFT))
+        XCTAssertFalse(player.isResident(place.take))
+        XCTAssertFalse(player.takes.indices.contains { player.isResident($0) && player.takes[$0].cue == Int(ANIM_CUE_COVER) })
+    }
+
+    /// A strike whose file was still decoding follows the web's rule: started
+    /// at once if no more than 80 ms behind its aim, dropped after that.
+    func testAStrikeThatWaitedStartsWithin80msOrNotAtAll() {
+        let t0: UInt64 = 1_000_000_000
+        let ms = { (m: Double) -> UInt64 in t0 + UInt64(m / 1000 / AVAudioTime.seconds(forHostTime: 1)) }
+        XCTAssertEqual(Double(try XCTUnwrap(CuePlayer.waited(aimedUs: 300_000, since: t0, at: ms(100)).startUs)), 200_000, accuracy: 2,
+                       "aimed 300 ms out and decoded in 100: 200 ms from now")
+        XCTAssertEqual(CuePlayer.waited(aimedUs: 0, since: t0, at: ms(70)).startUs, 0, "70 ms behind: now")
+        XCTAssertNil(CuePlayer.waited(aimedUs: 0, since: t0, at: ms(90)).startUs, "90 ms behind: dropped")
+        XCTAssertNil(CuePlayer.waited(aimedUs: 50_000, since: t0, at: ms(140)).startUs, "aimed 50 ms out, 90 behind: dropped")
+    }
+
+    /// What the sounds cost in memory: every cue's own takes decoded (the most
+    /// `want` can ever keep), measured on the process (phys_footprint) and
+    /// counted in samples, and the strokes, which are never kept.
+    func testWhatTheSoundsCostInMemory() throws {
         let before = FlightRecorder.footprintMB()
         try player.startOffline(rate: 48000)
         player.want(UInt32.max)
         player.waitLoaded()
         let loaded = player.loadedBytes
         let after = FlightRecorder.footprintMB()
-        print(String(format: "CUE MEMORY: %d takes, %.2f MB of samples, footprint %.2f -> %.2f MB (+%.2f)",
-                     loaded.files, Double(loaded.bytes) / 1_048_576, before, after, after - before))
-        XCTAssertEqual(loaded.files, player.takes.count, "the loader decodes every take")
-        XCTAssertLessThan(Double(loaded.bytes) / 1_048_576, 16, "every sound decoded stays under 16 MB of samples")
+        let strokes = player.takes.filter { $0.role == Int(CUE_ROLE_PRELUDE) }
+        let strokeMB = Double(strokes.reduce(0) { $0 + $1.nSamples * 4 }) / 1_048_576
+        print(String(format: "CUE MEMORY: %d takes kept, %.2f MB of samples, footprint %.2f -> %.2f MB (+%.2f); "
+                     + "the %d strokes, never kept, would be %.2f MB", loaded.files, Double(loaded.bytes) / 1_048_576,
+                     before, after, after - before, strokes.count, strokeMB))
+        XCTAssertEqual(loaded.files, player.takes.count - strokes.count, "every cue's own takes, and no strokes")
+        // At a 48 kHz output, where the 32 kHz takes are half as long again.
+        XCTAssertLessThan(Double(loaded.bytes) / 1_048_576, 10, "every cue's own takes stay under 10 MB of samples")
     }
 }

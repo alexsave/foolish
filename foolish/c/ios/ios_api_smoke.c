@@ -1827,6 +1827,18 @@ static int board_rules_check(void) {
             || ((const CueStrike *)fio_cue_strike(ANIM_CUE_REVERT, 0, 1, ANIM_CUE_NONE, 1000))->take != -1) {
             printf("FAIL cue strike gain / silent revert\n"); return 1;
         }
+        // The output mix: a take starts on its frame, at its gain.
+        void *mx = fio_mix_new(48000);
+        const float take[3] = { 1, 1, 1 };
+        float blk[8];
+        if (fio_mix_add(mx, take, 3, 2, 0.5f) != 0 || fio_mix_live(mx) != 1) { printf("FAIL mix add\n"); return 1; }
+        fio_mix_render(mx, blk, 8, 0);
+        if (blk[1] != 0 || blk[2] != 0.5f || blk[4] != 0.5f || blk[5] != 0 || fio_mix_live(mx) != 0 || fio_mix_now(mx) != 8
+            || fio_mix_frame_at(mx, 123, 0) != 8) {
+            printf("FAIL mix render\n"); return 1;
+        }
+        fio_mix_clear(mx);
+        fio_mix_free(mx);
     }
     // The end screen clears the board's chrome (anim_board_chrome).
     if (fio_board_chrome(1, 1, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) != FIO_CHROME_RESULTS

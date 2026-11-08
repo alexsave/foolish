@@ -489,6 +489,20 @@ const void *fio_cue_strike(int kind, int lead_us, int n_cards, int undoes, int g
 int fio_cue_resampled_len(int n, int rate_pm);
 int fio_cue_resample(const float *in, int n, int rate_pm, float *out, int cap);
 
+// The output mix (c/src/cue_mix.h): the takes a strike scheduled, summed into
+// the audio callback's output from the exact frame each starts on. Made per
+// engine (fio_mix_new, at the output's rate) and freed by the host once the
+// engine has stopped calling fio_mix_render. add/live/clear/now/frame_at are
+// the main thread's; render is the audio callback's, and allocates nothing.
+void *fio_mix_new(double rate);
+void fio_mix_free(void *m);
+int fio_mix_add(void *m, const float *x, int n, int64_t start, float gain);
+uint32_t fio_mix_live(const void *m);
+void fio_mix_clear(void *m);
+void fio_mix_render(void *m, float *out, int frames, uint64_t host);
+int64_t fio_mix_now(const void *m);
+int64_t fio_mix_frame_at(const void *m, uint64_t at, double ticks_per_second);
+
 // ---------- the pre-bout table (anim_plan.h) -------------------------------
 //
 // THE TABLE A BOUT END SWEEPS, so the board can lay it out and fly each card

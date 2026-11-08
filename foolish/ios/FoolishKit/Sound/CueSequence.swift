@@ -67,22 +67,24 @@ final class CueSequence {
             for h in 0..<max(1, c.hits) {
                 let at = c.atMs + h * Int(ANIM_SOUND_STAGGER_MS)
                 let seconds = paint + boardSeconds(at - startMs)
-                let got = player.strike(c.kind, in: seconds, nCards: c.nCards, undoes: c.undoes, gainPm: gain)
-                guard AnimLog.on, let f = first else { continue }
-                // Where the take's moment falls, from the first beat's opening,
-                // against where the plan puts it from there: the walk's drift
-                // up to the beat that placed it, and any lateness of a take
-                // that had no time to start early.
-                let nowMs = (Double(now) - Double(f.host)) * Self.hostTick * 1000
-                for s in got {
-                    let moment = nowMs + s.momentAfter * 1000
+                // Where each take's moment falls, from the first beat's
+                // opening, against where the plan puts it from there: the
+                // walk's drift up to the beat that placed it, and any lateness
+                // of a take that had no time to start early or waited for its
+                // file.
+                let base = first
+                let aimed = base.map { (Double(now) - Double($0.host)) * Self.hostTick * 1000 + seconds * 1000 } ?? 0
+                let planned = base.map { boardMs(at - $0.ms) } ?? 0
+                let kind = c.kind, step = c.step
+                player.strike(c.kind, in: seconds, nCards: c.nCards, undoes: c.undoes, gainPm: gain) { s in
+                    guard AnimLog.on, let f = base else { return }
+                    let moment = (Double(s.struck) - Double(f.host)) * Self.hostTick * 1000 + s.momentAfter * 1000
                     AnimLog.say(String(format: "sound: cue %d step %d hit %d at_ms %d: %@%@ moment %+.1f ms from beat 0, "
                                        + "the plan %+.1f (off %+.1f; late %+.1f), start sample %lld at %.0f Hz, now %lld",
-                                       c.kind, c.step, h, at, s.name, s.backwards ? " backwards" : "",
-                                       moment, boardMs(at - f.ms), moment - boardMs(at - f.ms),
-                                       (s.momentAfter - seconds) * 1000, s.startSample, s.rate, s.nowSample))
+                                       kind, step, h, at, s.name, s.backwards ? " backwards" : "",
+                                       moment, planned, moment - planned, moment - aimed,
+                                       s.startSample, s.rate, s.nowSample))
                 }
-                if got.isEmpty { AnimLog.say("sound: cue \(c.kind) step \(c.step) hit \(h) silent") }
             }
         }
     }

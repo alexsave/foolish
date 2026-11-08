@@ -34,6 +34,7 @@
 #include "../src/msg_wire.h"
 #include "../src/card.h"
 #include "../src/cue_voice.h"
+#include "../src/cue_mix.h"
 #include "cue_voice_parity.h"
 #include <stdio.h>
 #include <string.h>
@@ -2256,6 +2257,48 @@ static void test_cue_voice_matches_the_web(void) {
           "and under a mix that wanders and is heavier per card");
 }
 
+// THE OUTPUT MIX (cue_mix.h): a take starts on the frame it was given, plays
+// whole across blocks, overlaps what else sounds, and frees its slot once out.
+static void test_cue_mix(void) {
+    static CueMixer m;
+    cue_mix_init(&m, 48000);
+    const float a[5] = { 1, 2, 3, 4, 5 }, b[3] = { 10, 20, 30 };
+    float out[16];
+    CHECK(cue_mix_add(&m, a, 5, 3, 0.5f) == 0 && cue_mix_add(&m, b, 3, 6, 1.0f) == 1 && cue_mix_live(&m) == 3,
+          "two takes in two slots");
+    cue_mix_render(&m, out, 4, 0);
+    CHECK(out[0] == 0 && out[1] == 0 && out[2] == 0 && out[3] == 0.5f, "the first starts on frame 3, at its gain");
+    cue_mix_render(&m, out, 4, 0);                         // frames 4..7
+    CHECK(out[0] == 1 && out[1] == 1.5f && out[2] == 2 + 10 && out[3] == 2.5f + 20,
+          "carried across the block, and the second laid over it from frame 6");
+    CHECK(cue_mix_live(&m) == 2 && cue_mix_now(&m) == 8, "the first played out and gave its slot back");
+    cue_mix_render(&m, out, 4, 0);
+    CHECK(out[0] == 30 && out[1] == 0 && cue_mix_live(&m) == 0, "the second ends whole, and nothing is left");
+    // A start already rendered past plays from the next block, whole.
+    cue_mix_add(&m, b, 3, 2, 1.0f);
+    cue_mix_render(&m, out, 4, 0);
+    CHECK(out[0] == 10 && out[1] == 20 && out[2] == 30 && out[3] == 0, "late is whole, from now");
+    // A clear drops everything at the next block.
+    cue_mix_add(&m, a, 5, cue_mix_now(&m) + 1, 1.0f);
+    cue_mix_clear(&m);
+    cue_mix_render(&m, out, 8, 0);
+    float sum = 0;
+    for (int i = 0; i < 8; i++) sum += out[i];
+    CHECK(sum == 0 && cue_mix_live(&m) == 0, "a clear silences what was scheduled");
+    // Every slot busy: refused, not overwritten.
+    for (int k = 0; k < CUE_MIX_SLOTS; k++) cue_mix_add(&m, a, 5, cue_mix_now(&m) + 1000, 1.0f);
+    CHECK(cue_mix_add(&m, a, 5, 0, 1.0f) == -1 && cue_mix_add(&m, NULL, 5, 0, 1.0f) == -1, "a full mix refuses");
+    cue_mix_clear(&m);
+    cue_mix_render(&m, out, 1, 0);
+    // The clock: with a stamp, the frame heard at a host time; without, the next frame.
+    cue_mix_init(&m, 1000);                                // 1 kHz, a tick a microsecond
+    CHECK(cue_mix_frame_at(&m, 5000000, 1e6) == 0, "no block yet: the next frame");
+    cue_mix_render(&m, out, 10, 2000000);                  // frames 0..9, heard from t = 2 s
+    CHECK(cue_mix_now(&m) == 10, "ten rendered");
+    CHECK(cue_mix_frame_at(&m, 2500000, 1e6) == 500, "half a second after the block's stamp is 500 frames on");
+    CHECK(cue_mix_frame_at(&m, 1990000, 1e6) == -10, "and before it, before it");
+}
+
 int main(void) {
     printf("anim_plan_test\n");
     test_optimistic_animation();
@@ -2272,6 +2315,7 @@ int main(void) {
     test_plan_is_laid_out_in_beats();
     test_plan_sound_cues();
     test_cue_voice();
+    test_cue_mix();
     test_cue_voice_matches_the_web();
     test_hand_order_with_hidden_slots();
     if (g_fails == 0) printf("anim_plan_test: OK\n");

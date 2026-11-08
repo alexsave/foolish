@@ -113,8 +113,11 @@ PLAYBACK_SRC := src/cue_voice.c
 SOUNDGEN_DIR := ../tools/soundgen
 CUE_TAKES_C  := build/gen/cue_takes.c
 PLAYBACK_TABLE_SRC := src/cue_voice_table.c $(CUE_TAKES_C)
+# The output mix a NATIVE host sums its takes in (src/cue_mix.h): iOS links it;
+# the web has Web Audio's own clock, and web.wasm does not carry it.
+MIX_SRC := src/cue_mix.c
 # Linked into every binary built here.
-CORE_SRC := $(KERNEL_SRC) $(HOST_ONLY_SRC) $(BROWSER_HOST_SRC) $(PLAYBACK_SRC)
+CORE_SRC := $(KERNEL_SRC) $(HOST_ONLY_SRC) $(BROWSER_HOST_SRC) $(PLAYBACK_SRC) $(MIX_SRC)
 # Where each becomes an object: build/obj/host/<the source's own path>.o, the
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
@@ -519,7 +522,7 @@ IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
-                src/hand_layout.c $(PLAYBACK_SRC) $(PLAYBACK_TABLE_SRC) $(IOS_BRIDGE_SRC) \
+                src/hand_layout.c $(PLAYBACK_SRC) $(PLAYBACK_TABLE_SRC) $(MIX_SRC) $(IOS_BRIDGE_SRC) \
                 src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(KERNEL_SRC)) ios/ios_bots_api.c
 
@@ -1953,7 +1956,7 @@ COV_BRANCH_MIN ?= 74
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
                   hand_layout bots bot_drive bot_roster analyse ask table_wire netwire netclient move_list \
-                  cue_voice
+                  cue_voice cue_mix
 # deal_rng, sha256 and b32 are in the SAME gate, from their new home. They left this
 # list's `src/` prefix behind when they moved to shared/, and a filter that no
 # longer matches does not fail - gcovr simply reports the file it cannot find as
