@@ -62,8 +62,9 @@ int cue_table_load(const unsigned char *b, int len) {
             || r->n_samples <= 0) return -1;
         // The name ends inside its field, where its length says: found by looking in
         // the field, never by reading at an index the bytes gave.
-        const char *end = memchr(r->name, 0, CUE_NAME_MAX);
-        if (!end || r->name_len == 0 || end - r->name != r->name_len) return -1;
+        int len = 0;
+        while (len < CUE_NAME_MAX && r->name[len]) len++;
+        if (len == CUE_NAME_MAX || len == 0 || len != r->name_len) return -1;
     }
     memcpy(g_loaded, b + 8, (size_t)n * sizeof(CueTakeRow));
     memcpy(g_loaded_mix, b + 8 + (size_t)n * sizeof(CueTakeRow), sizeof g_loaded_mix);
