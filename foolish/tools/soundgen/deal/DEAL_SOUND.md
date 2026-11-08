@@ -82,3 +82,5 @@ The game plays a C port of thumb9, grab2 and land229: `../c/models.c` (`m_thumb`
 Measured with `../throwin/an/measure.py`, each C set is inside the Python takes' range on every measure, and outside the five recordings only where the Python is too, or by a hair (thumb micro-roughness 4-12k, grab crest 150-1k and rise, landing crest 150-1k).
 `make -C .. parts` writes the C takes alone (12 at 48 kHz) to compare against the Python's `synth/`.
 The Python stays the reference and the analysis; change a model here first, then its port.
+
+The levels in the game are this model's own, with the offsets of `PART_DB` in `../soundgen.c` on top (the levels study of 2026-11-07: a card's landing ~25 dB over the grab and slide in one video, and the discard and pickup videos twice as far from the phone), and one common gain over the whole card set; `../../../docs/AUDIO.md` ("The balance between the parts") lists both.

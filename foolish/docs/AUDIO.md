@@ -234,7 +234,7 @@ What the change buys is margin: the sound is ready 7 ms after the tap where it u
 
 ### Shipped as AAC
 
-139 files, 1,846,259 bytes of AAC in MP4 (`.m4a`), from 6,462,394 bytes of 16-bit mono WAV (the placeholders were 16 files, 122 KB).
+139 files, 1,783,626 bytes of AAC in MP4 (`.m4a`), from 6,468,802 bytes of 16-bit mono WAV (the placeholders were 16 files, 122 KB).
 soundgen renders the WAVs into `tools/soundgen/build/wav/`, ffmpeg's native AAC encoder (mono, `-aac_coder fast`) encodes each into `public/audio/gen/`, and `soundgen check` holds every file to its take.
 
 **The bitrates are measured, not chosen** (`tools/soundgen/aac/bitrate.py`).
@@ -333,8 +333,30 @@ The build runs no Python and no numpy.
 **A file is a gesture at the game's timing.**
 `soundgen.c` lays the parts of each cue's gesture out as its `*_game.py` does, against the cue's moment, and writes the take with its anchor.
 The levels are the games' own, on the deal's scale (g = -34 to -32 dBFS a take): the grab at g-5 and the slide at g-6 to g-9, a dealt landing at g-13 to g-16, the flip at g-5, the trump's landing at g-9 to g-12 and the deck at g-3 to g-6, the throw-in's grab at g-14 and its landing at g-3 to g-5, the cover's at g-4 to g-6, the shfff at g-11 to g-13, and the discard parts by 50 ms RMS against the strokes at g-30.5 (lift +5, placement +3, pickup lift -10, slide into the hand -11).
-The whole set is then lifted by one constant (`LIFT_DB`, 32 dB) so the loudest take peaks at -3.3 dBFS: the deal's scale was a listening level, not a file level.
-Balancing the cues against each other is still open (Alex: the cover is "quiet as fuck", the two-finger grab too quiet), and is the `gain` column of `src/audio/cueSounds.ts` (1 for every model, which is the model's level), set by ear on `/sounds`.
+**The balance between the parts** (`PART_DB` in `soundgen.c`, set 2026-11-07 from a levels study, Alex: "do it yourself").
+Within one video a card's landing is about 25 dB over the grab and slide before it, where the games had it about 4 dB over; and the discard and pickup videos were shot about twice as far from the phone as the pass's, so their "6.5 dB under a pass" was distance.
+So on top of each game's level: the throw-in landing +18 dB (also the trump's and the pass's landing, the same model), the cover landing +19, the trump flip +17, the deck set down +14, the discard's lift +18, the strokes +7, the placement on the pile +8, the pickup's lift +8 and the slide into the hand +8; the deal's slide, grab and landing (the landing Alex set by ear), the two-finger grab, the throw-in's slide and the pass's shfff unchanged.
+Then one common gain scales every card take so the loudest peaks at -3 dBFS at full master volume (+14.3 dB from the deal's scale), checked against the mixes a plan really strikes together (six landings a stagger apart, six covers, a refill's landings, the trump turned and landed, a transfer's landing and slide, a run-opening pickup's strokes under its lift and over the last landing, a sweep's strokes over the last cover): the loudest of them peaks at -3.0 dBFS too, so nothing clips and the gain was not lowered (soundgen lowers it, never a part, if a mix would pass -1 dBFS).
+The `gain` column of `src/audio/cueSounds.ts` is 1 for every model: the levels are the files'.
+
+| Cue | Peak (dBFS) | Loudest 50 ms RMS (dBFS) |
+| --- | --- | --- |
+| `PLACE` (throw-in landing) | -6.7 to -3.0 | -24.4 to -17.7 |
+| `COVER` | -6.0 to -3.6 | -27.9 to -23.3 |
+| `TURN` (the trump flip) | -8.3 to -6.0 | -24.4 to -17.1 |
+| `FLIP` (trump landing and deck) | -10.9 to -8.2 | -27.0 to -18.7 |
+| `SWEEP` (the discard's lift) | -10.9 to -5.9 | -27.1 to -25.2 |
+| `PILE` | -23.9 to -18.0 | -38.8 to -37.2 |
+| `DEAL` (slide and grab), tight | -24.6 to -22.2 | -41.2 to -36.8 |
+| `LIFT` (two-finger grab and slide), tight | -28.0 to -24.8 | -41.2 to -37.0 |
+| sweep strokes (1-5) | -27.3 to -21.5 | -44.9 to -39.8 |
+| pickup strokes (1-5) | -32.3 to -23.9 | -45.3 to -40.1 |
+| `PASS` (shfff) | -31.4 to -29.0 | -44.2 to -39.6 |
+| `DEAL_LAND` (own seat) | -34.0 to -30.9 | -49.5 to -47.6 |
+| `PICKUP` (its lift) | -38.7 to -33.7 | -52.1 to -50.3 |
+| `INTO_HAND` | -39.4 to -32.5 | -52.8 to -51.4 |
+| the five placeholders (before their gains of 0.26-0.4) | -1.0 | -11.4 to -5.6 |
+
 
 **The strokes are heard in full.**
 Before a sweep or a pickup come 1-5 strokes (one per 2.5 cards), each 0.8 times a recorded stroke's length and 60-200 ms apart as `disc_game.py` draws them, a little louder as the pile grows, written as preludes of their own and played before the lift over whatever else is sounding.
@@ -456,8 +478,7 @@ An iMessage extension has its own constraints (memory, and it is torn down betwe
 11. **Seat position.**
     A cue carries its step, so a host can pan a sound towards the seat that made it.
     The web plays everything centred; only a dealt card's landing follows its seat, in level.
-12. **The balance between the cues.**
-    Every model is written at its `*_game.py` level and the mix column is 1 throughout: the cover is still "quiet as fuck" and the two-finger grab too quiet, by Alex's ear, and that is his to set on `/sounds`.
-    The five placeholders keep their old gains against a much quieter card set; they will want the same pass.
-13. **1.8 MB of AAC** (from 6.5 MB of WAV), loaded after the first tap, wanted cues first.
+12. **The placeholders are now loud against the card set.**
+    The card balance is set from the levels study (see "The balance between the parts"); the five placeholders were left as they were, at -1 dBFS before their gains of 0.26-0.4, which is 10-20 dB over most card sounds, and want the same pass when they are modelled or retuned.
+13. **1.8 MB of AAC** (1,783,626 bytes, from 6.5 MB of WAV), loaded after the first tap, wanted cues first.
 14. **The strokes play over the beat before** (Alex: "just play the pickup over the other sounds"): five strokes start 3.5 s before their sweep, over the last cover and its hold.

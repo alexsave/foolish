@@ -35,7 +35,7 @@
 //
 // THE LEVELS ARE THE MODELS'. Every part is placed at the level its *_game.py
 // sets on the deal's scale (g = -34..-32 dBFS), and the whole set is lifted by
-// one constant, LIFT_DB, so the loudest take peaks near full scale. Balancing
+// one common gain, so the loudest take peaks near full scale (PART_DB, PEAK_DB). Balancing
 // the cues against each other is Alex's, by ear, on /sounds (the gain column of
 // src/audio/cueSounds.ts), and is not decided here.
 //
@@ -69,11 +69,35 @@
 #define S_(sec) ((int)((sec) * SR))
 static double db2(double db) { return pow(10, db / 20); }
 
-// The whole set up by this much from the models' deal scale (g = -34..-32
-// dBFS), which was a listening level, not a file level: the loudest take then
-// peaks at about -3 dBFS. One number for every cue, so the balance between
-// them is the models' own.
-#define LIFT_DB 32.0
+// THE BALANCE BETWEEN THE PARTS: dB on top of the level each *_game.py sets
+// (positive is louder), each model's own balance kept. From the levels study
+// of 2026-11-07 (within-video ratios in Alex's recordings, the rest corrected
+// for each video's distance to the phone; its scripts and table were
+// scratchpad/levels/py/table.py), as Alex asked ("do it yourself"):
+//   - a card LANDING is ~25 dB over the grab and slide before it in the same
+//     video, where the games had it ~4 dB over: the throw-in landing +18 (also
+//     the trump's and the pass's landing, the same model), the cover landing
+//     +19, the trump flip +17, the deck set down +14, the discard's lift +18;
+//   - the discard and pickup videos were shot about twice as far from the
+//     phone as the pass video, so their parts' "6.5 dB under a pass" was the
+//     distance: the strokes +7, the placement +8, the pickup's lift +8, the
+//     slide into the hand +8;
+//   - unchanged: the deal's thumb slide, grab and landing (the landing Alex set
+//     by ear), the two-finger grab, the throw-in's slide and the pass's shfff.
+enum { P_THUMB, P_GRAB, P_LAND, P_TGRAB, P_THROW, P_COVER, P_FLIP, P_DECK, P_PASS,
+       P_STROKE, P_LIFT, P_PLACE, P_PLIFT, P_INSERT, N_PARTS };
+static const double PART_DB[N_PARTS] = {
+    [P_THUMB] = 0, [P_GRAB] = 0, [P_LAND] = 0, [P_TGRAB] = 0, [P_PASS] = 0,
+    [P_THROW] = 18, [P_COVER] = 19, [P_FLIP] = 17, [P_DECK] = 14, [P_LIFT] = 18,
+    [P_STROKE] = 7, [P_PLACE] = 8, [P_PLIFT] = 8, [P_INSERT] = 8,
+};
+// THE COMMON GAIN is not a constant: after every take is rendered, the whole
+// card set is scaled by one gain so its loudest take peaks at PEAK_DB at full
+// master volume, or lower if a mix of takes a plan really strikes together
+// (MIXES, below) would then pass MIX_DB. One gain for every card sound, so the
+// balance is the parts' own.
+#define PEAK_DB -3.0
+#define MIX_DB  -1.0
 // Silence is trimmed off both ends of a take below this, re its peak.
 #define TRIM_DB -60.0
 // The most strokes a gathering has: 2.5 cards a stroke, and a table of twelve
@@ -88,18 +112,18 @@ static double db2(double db) { return pow(10, db / 20); }
 typedef struct { Sig mix; Rng r; double g; } Take;
 static void take_init(Take *t, uint64_t seed) { t->mix = sig_new(SPAN); rng_init(&t->r, seed); t->g = uni(&t->r, -34, -32); }
 // Add `part` with its sample `ref` at `at_s` from the cue, its peak at `db` (the games' put()).
-static void put_peak(Take *t, Sig part, int ref, double at_s, double db) {
-    const double k = db2(db + LIFT_DB) / (sig_peak(part.x, part.n) + 1e-12);
+static void put_peak(Take *t, int part_id, Sig part, int ref, double at_s, double db) {
+    const double k = db2(db + PART_DB[part_id]) / (sig_peak(part.x, part.n) + 1e-12);
     const int o = CUE0 + S_(at_s) - ref;
     for (int i = 0; i < part.n; i++) if (o + i >= 0 && o + i < SPAN) t->mix.x[o + i] += part.x[i] * k;
     sig_free(&part);
 }
 // ...or with its loudest 50 ms RMS (150 Hz-15 kHz) at `db` (disc_game.py's put()).
-static void put_rms50(Take *t, Sig part, int ref, double at_s, double db) {
+static void put_rms50(Take *t, int part_id, Sig part, int ref, double at_s, double db) {
     Sig b = bp_copy(&part, 150, 15000);
     const double m = max_moving_rms(&b, 2400, 0, b.n);
     sig_free(&b);
-    const double k = db2(db + LIFT_DB) / (m + 1e-12);
+    const double k = db2(db + PART_DB[part_id]) / (m + 1e-12);
     const int o = CUE0 + S_(at_s) - ref;
     for (int i = 0; i < part.n; i++) if (o + i >= 0 && o + i < SPAN) t->mix.x[o + i] += part.x[i] * k;
     sig_free(&part);
@@ -110,27 +134,27 @@ static void put_rms50(Take *t, Sig part, int ref, double at_s, double db) {
 // the grab at the moment the card leaves the stock.
 static void g_deal(Take *t, int level) {
     (void)level;
-    Sig s = m_thumb(&t->r); put_peak(t, s, sig_argmax_abs(&s), -0.13, t->g - uni(&t->r, 6, 9));
-    Sig g = m_grab(&t->r); put_peak(t, g, sig_argmax_abs(&g), 0, t->g - 5.0);
+    Sig s = m_thumb(&t->r); put_peak(t, P_THUMB, s, sig_argmax_abs(&s), -0.13, t->g - uni(&t->r, 6, 9));
+    Sig g = m_grab(&t->r); put_peak(t, P_GRAB, g, sig_argmax_abs(&g), 0, t->g - 5.0);
 }
 // ...and TIGHT, for a card dealt with no time before it: the slide's peak 50 ms
 // before the grab (its swell still before that), so played late from the
 // moment it is over a sixth of a second sooner.
 static void g_deal_tight(Take *t, int level) {
     (void)level;
-    Sig s = m_thumb(&t->r); put_peak(t, s, sig_argmax_abs(&s), -0.05, t->g - uni(&t->r, 6, 9));
-    Sig g = m_grab(&t->r); put_peak(t, g, sig_argmax_abs(&g), 0, t->g - 5.0);
+    Sig s = m_thumb(&t->r); put_peak(t, P_THUMB, s, sig_argmax_abs(&s), -0.05, t->g - uni(&t->r, 6, 9));
+    Sig g = m_grab(&t->r); put_peak(t, P_GRAB, g, sig_argmax_abs(&g), 0, t->g - 5.0);
 }
 // DEAL_LAND: the card on the cloth, land229, quietest of the three. At the
 // viewer's own seat; the host scales it by the seat (anim_seat_gain_pm).
 static void g_deal_land(Take *t, int level) {
     (void)level;
-    Sig l = m_land(&t->r); put_peak(t, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 13, 16));
+    Sig l = m_land(&t->r); put_peak(t, P_LAND, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 13, 16));
 }
 // TURN (flip/an/flip_game.py): the trump flipped, its snap as it leaves the stock.
 static void g_turn(Take *t, int level) {
     (void)level;
-    Sig f = m_flip(&t->r); put_peak(t, f, S_(FLIP_REF_S), 0, t->g - 5.0);
+    Sig f = m_flip(&t->r); put_peak(t, P_FLIP, f, S_(FLIP_REF_S), 0, t->g - 5.0);
 }
 // FLIP: the trump landing (a throw-in, Alex: "similar to a throw in"), then the
 // stock set down on it 350 ms later ("350 ms after trump lands is fine"). Baked
@@ -138,16 +162,16 @@ static void g_turn(Take *t, int level) {
 // moment for the kernel to name, only the sound's own rhythm.
 static void g_flip_land(Take *t, int level) {
     (void)level;
-    Sig l = m_throw(&t->r); put_peak(t, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 9, 12));
-    Sig d = m_deck(&t->r); put_peak(t, d, S_(DECK_REF_S), 0.35, t->g - uni(&t->r, 3, 6));
+    Sig l = m_throw(&t->r); put_peak(t, P_THROW, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 9, 12));
+    Sig d = m_deck(&t->r); put_peak(t, P_DECK, d, S_(DECK_REF_S), 0.35, t->g - uni(&t->r, 3, 6));
 }
 // LIFT (throwin/an/throwin_game.py): two fingers take the card, the thumb slides
 // it out, it leaves: the grab 110 ms before the slide's peak, the slide's peak
 // 130 ms before the card leaves. The same for an attack, a cover and a pass.
 static void g_lift(Take *t, int level) {
     (void)level;
-    Sig s = m_thumb(&t->r); put_peak(t, s, sig_argmax_abs(&s), -0.13, t->g - uni(&t->r, 6, 9));
-    Sig g = m_tgrab(&t->r); put_peak(t, g, S_(TGRAB_REF_S), -0.24, t->g - 14.0);
+    Sig s = m_thumb(&t->r); put_peak(t, P_THUMB, s, sig_argmax_abs(&s), -0.13, t->g - uni(&t->r, 6, 9));
+    Sig g = m_tgrab(&t->r); put_peak(t, P_TGRAB, g, S_(TGRAB_REF_S), -0.24, t->g - 14.0);
 }
 // ...and TIGHT (Alex: "maybe put them closer to each other"), for a move that
 // opens its run and so has no time before its lift: the grab 60 ms before the
@@ -155,24 +179,24 @@ static void g_lift(Take *t, int level) {
 // and 130 ms. The host plays it from the moment, whole.
 static void g_lift_tight(Take *t, int level) {
     (void)level;
-    Sig s = m_thumb(&t->r); put_peak(t, s, sig_argmax_abs(&s), -0.03, t->g - uni(&t->r, 6, 9));
-    Sig g = m_tgrab(&t->r); put_peak(t, g, S_(TGRAB_REF_S), -0.09, t->g - 14.0);
+    Sig s = m_thumb(&t->r); put_peak(t, P_THUMB, s, sig_argmax_abs(&s), -0.03, t->g - uni(&t->r, 6, 9));
+    Sig g = m_tgrab(&t->r); put_peak(t, P_TGRAB, g, S_(TGRAB_REF_S), -0.09, t->g - 14.0);
 }
 // PLACE: the throw-in's landing.
 static void g_place(Take *t, int level) {
     (void)level;
-    Sig l = m_throw(&t->r); put_peak(t, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 3, 5));
+    Sig l = m_throw(&t->r); put_peak(t, P_THROW, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 3, 5));
 }
 // COVER: the cover's landing, on a card.
 static void g_cover(Take *t, int level) {
     (void)level;
-    Sig l = m_cover(&t->r); put_peak(t, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 4, 6));
+    Sig l = m_cover(&t->r); put_peak(t, P_COVER, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 4, 6));
 }
 // PASS (pass/an/pass_game.py): struck at the transfer's landing, beside its
 // PLACE; the "shfff" starts 150 ms after it.
 static void g_pass(Take *t, int level) {
     (void)level;
-    Sig p = m_pass(&t->r); put_peak(t, p, S_(PASS_REF_S), 0.15, t->g - uni(&t->r, 11, 13));
+    Sig p = m_pass(&t->r); put_peak(t, P_PASS, p, S_(PASS_REF_S), 0.15, t->g - uni(&t->r, 11, 13));
 }
 // The strokes gathering the table (discard/an/disc_game.py), the last ending
 // `gap` before the cue, at `sc` (their 50 ms RMS): each 0.8 times a recorded
@@ -189,7 +213,7 @@ static void strokes(Take *t, int count, double gap, double sc) {
     double at = -gap - total;                            // the first stroke's onset, from the cue
     for (int s = 0; s < count; s++) {
         Sig y = m_stroke(&t->r, d[s]);
-        put_rms50(t, y, S_(STROKE_PRE_S), at, sc - 1.5 + 3.0 * s / (count > 1 ? count - 1 : 1) - uni(&t->r, 0, 1.5));
+        put_rms50(t, P_STROKE, y, S_(STROKE_PRE_S), at, sc - 1.5 + 3.0 * s / (count > 1 ? count - 1 : 1) - uni(&t->r, 0, 1.5));
         at += d[s] + gp[s];
     }
 }
@@ -198,26 +222,26 @@ static void strokes(Take *t, int count, double gap, double sc) {
 // lift 5 dB over them.
 static void g_sweep(Take *t, int level) {
     (void)level;
-    Sig l = m_lift(&t->r); put_rms50(t, l, S_(EVENT_PRE_S), 0, t->g - 30.5 + 5);
+    Sig l = m_lift(&t->r); put_rms50(t, P_LIFT, l, S_(EVENT_PRE_S), 0, t->g - 30.5 + 5);
 }
 // ...its prelude: `level` strokes, the last 100-180 ms before the lift.
 static void g_sweep_strokes(Take *t, int level) { strokes(t, level, uni(&t->r, 0.10, 0.18), t->g - 30.5); }
 // PILE: the swept cards set softly on the discard pile, as they land.
 static void g_pile(Take *t, int level) {
     (void)level;
-    Sig p = m_place(&t->r); put_rms50(t, p, S_(EVENT_PRE_S), 0, t->g - 30.5 + 3);
+    Sig p = m_place(&t->r); put_rms50(t, P_PLACE, p, S_(EVENT_PRE_S), 0, t->g - 30.5 + 3);
 }
 // PICKUP: the one soft lift, as the table lifts, 10 dB under the strokes.
 static void g_pickup(Take *t, int level) {
     (void)level;
-    Sig l = m_plift(&t->r); put_rms50(t, l, S_(EVENT_PRE_S), 0, t->g - 30.5 - 10);
+    Sig l = m_plift(&t->r); put_rms50(t, P_PLIFT, l, S_(EVENT_PRE_S), 0, t->g - 30.5 - 10);
 }
 // ...its prelude: `level` strokes, the last 50-120 ms before the lift.
 static void g_pickup_strokes(Take *t, int level) { strokes(t, level, uni(&t->r, 0.05, 0.12), t->g - 30.5); }
 // INTO_HAND: the cards slid into the fanned hand as they land, its onset there.
 static void g_into_hand(Take *t, int level) {
     (void)level;
-    Sig s = m_insert(&t->r); put_rms50(t, s, S_(STROKE_PRE_S), 0, t->g - 30.5 - 11);
+    Sig s = m_insert(&t->r); put_rms50(t, P_INSERT, s, S_(STROKE_PRE_S), 0, t->g - 30.5 - 11);
 }
 
 // ---- the table: what every cue is written as ------------------------------------
@@ -290,6 +314,7 @@ typedef struct {
     char   name[48];
     int    cue, level, role, rate, n, kbps;
     double anchor_ms;      // from the file's first sample to the cue's moment
+    double *x;             // the take before the common gain (a card take; NULL for a placeholder)
     int16_t *pcm;
 } Out;
 
@@ -311,8 +336,8 @@ static void finish_take(Take *t, int rate, Out *o) {
     Sig sh = rate == SR ? cut : resample_3_2(&cut);
     o->rate = rate; o->n = sh.n;
     o->anchor_ms = (double)(CUE0 - a) * 1000.0 / SR;
-    o->pcm = malloc(sizeof(int16_t) * (size_t)sh.n);
-    for (int i = 0; i < sh.n; i++) o->pcm[i] = to16(sh.x[i]);
+    o->x = malloc(sizeof(double) * (size_t)sh.n);
+    memcpy(o->x, sh.x, sizeof(double) * (size_t)sh.n);
     if (sh.x != cut.x) sig_free(&sh);
     sig_free(&cut);
 }
@@ -502,6 +527,87 @@ static int check(const char *wavs, const char *outdir) {
     return bad ? 1 : 0;
 }
 
+// ---- the common gain, and what really sounds together ----------------------------
+// MIXES a plan really strikes together, each as (cue, role, level, moment ms,
+// start ms or NAN to start the take its anchor early). The common gain keeps
+// the loudest of them under MIX_DB: six cards of one attack landing a stagger
+// apart, a refill landing, the trump turned and landed, a transfer's landing
+// and slide, a run-opening pickup's strokes started at once under its lift and
+// over the last attack's landing, and a sweep's five strokes over the last
+// cover and its hold.
+typedef struct { int cue, role, level; double moment, start; } Hit;
+typedef struct { const char *what; Hit hit[12]; int n; } Mix;
+#define STAG ANIM_SOUND_STAGGER_MS
+static const Mix MIXES[] = {
+    { "six cards of an attack", { { ANIM_CUE_PLACE, 0, 0, 0, NAN }, { ANIM_CUE_PLACE, 0, 0, STAG, NAN }, { ANIM_CUE_PLACE, 0, 0, 2 * STAG, NAN },
+      { ANIM_CUE_PLACE, 0, 0, 3 * STAG, NAN }, { ANIM_CUE_PLACE, 0, 0, 4 * STAG, NAN }, { ANIM_CUE_PLACE, 0, 0, 5 * STAG, NAN } }, 6 },
+    { "six covers", { { ANIM_CUE_COVER, 0, 0, 0, NAN }, { ANIM_CUE_COVER, 0, 0, STAG, NAN }, { ANIM_CUE_COVER, 0, 0, 2 * STAG, NAN },
+      { ANIM_CUE_COVER, 0, 0, 3 * STAG, NAN }, { ANIM_CUE_COVER, 0, 0, 4 * STAG, NAN }, { ANIM_CUE_COVER, 0, 0, 5 * STAG, NAN } }, 6 },
+    { "six refilled cards landing", { { ANIM_CUE_DEAL_LAND, 0, 0, 0, NAN }, { ANIM_CUE_DEAL_LAND, 0, 0, STAG, NAN }, { ANIM_CUE_DEAL_LAND, 0, 0, 2 * STAG, NAN },
+      { ANIM_CUE_DEAL_LAND, 0, 0, 3 * STAG, NAN }, { ANIM_CUE_DEAL_LAND, 0, 0, 4 * STAG, NAN }, { ANIM_CUE_DEAL_LAND, 0, 0, 5 * STAG, NAN } }, 6 },
+    { "six cards off the stock", { { ANIM_CUE_DEAL, 0, 0, 0, NAN }, { ANIM_CUE_DEAL, 0, 0, STAG, NAN }, { ANIM_CUE_DEAL, 0, 0, 2 * STAG, NAN },
+      { ANIM_CUE_DEAL, 0, 0, 3 * STAG, NAN }, { ANIM_CUE_DEAL, 0, 0, 4 * STAG, NAN }, { ANIM_CUE_DEAL, 0, 0, 5 * STAG, NAN } }, 6 },
+    { "the trump turned and landed", { { ANIM_CUE_TURN, 0, 0, 0, NAN }, { ANIM_CUE_FLIP, 0, 0, ANIM_TIME_MS, NAN } }, 2 },
+    { "a transfer's landing and slide", { { ANIM_CUE_PLACE, 0, 0, 0, NAN }, { ANIM_CUE_PASS, 0, 0, 0, NAN } }, 2 },
+    { "a pickup opening its run", { { ANIM_CUE_PLACE, 0, 0, -ANIM_GAP_MS, NAN }, { ANIM_CUE_PICKUP, ROLE_PRELUDE, 5, 0, 0 },
+      { ANIM_CUE_PICKUP, 0, 0, 0, 0 }, { ANIM_CUE_INTO_HAND, 0, 0, ANIM_TIME_MS, NAN } }, 4 },
+    { "a sweep's strokes over the last cover", { { ANIM_CUE_COVER, 0, 0, -ANIM_GAP_MS - ANIM_BOUT_END_HOLD_MS, NAN },
+      { ANIM_CUE_COVER, 0, 0, -ANIM_GAP_MS - ANIM_BOUT_END_HOLD_MS + STAG, NAN }, { ANIM_CUE_SWEEP, ROLE_PRELUDE, 5, 0, NAN },
+      { ANIM_CUE_SWEEP, 0, 0, 0, NAN }, { ANIM_CUE_PILE, 0, 0, ANIM_TIME_MS, NAN } }, 5 },
+};
+// The takes of (cue, role, level), in order.
+static int takes_of(Out *outs, int n, int cue, int role, int level, Out **out) {
+    int k = 0;
+    for (int i = 0; i < n; i++) if (outs[i].x && outs[i].cue == cue && outs[i].role == role && outs[i].level == level) out[k++] = &outs[i];
+    return k;
+}
+// The loudest sample of a mix, every take of each hit tried in turn (hit h plays
+// take (r + h) of its set): before the common gain.
+static double mix_peak(Out *outs, int n, const Mix *m) {
+    Out *sets[12][16]; int ns[12]; int rate = 0;
+    for (int h = 0; h < m->n; h++) {
+        ns[h] = takes_of(outs, n, m->hit[h].cue, m->hit[h].role, m->hit[h].level, sets[h]);
+        if (ns[h] == 0) return 0;
+        rate = sets[h][0]->rate;
+    }
+    const int len = rate * 8, zero = rate * 4;          // 8 s round the moment
+    double *buf = malloc(sizeof(double) * (size_t)len), worst = 0;
+    for (int r = 0; r < 8; r++) {
+        memset(buf, 0, sizeof(double) * (size_t)len);
+        for (int h = 0; h < m->n; h++) {
+            const Out *o = sets[h][(r + h) % ns[h]];
+            const double st = isnan(m->hit[h].start) ? m->hit[h].moment - o->anchor_ms : m->hit[h].start;
+            const int at = zero + (int)lrint(st * rate / 1000.0);
+            for (int i = 0; i < o->n; i++) if (at + i >= 0 && at + i < len) buf[at + i] += o->x[i];
+        }
+        for (int i = 0; i < len; i++) if (fabs(buf[i]) > worst) worst = fabs(buf[i]);
+    }
+    free(buf);
+    return worst;
+}
+// The one gain for every card take: its loudest at PEAK_DB, unless a mix would
+// then pass MIX_DB. The card takes are then quantised; the placeholders keep
+// their own level, as the cue table sets theirs.
+static double common_gain(Out *outs, int n, int verbose) {
+    double single = 0;
+    for (int i = 0; i < n; i++) if (outs[i].x) for (int k = 0; k < outs[i].n; k++) if (fabs(outs[i].x[k]) > single) single = fabs(outs[i].x[k]);
+    double g = db2(PEAK_DB) / single, mix = 0;
+    for (unsigned m = 0; m < sizeof MIXES / sizeof MIXES[0]; m++) {
+        const double p = mix_peak(outs, n, &MIXES[m]);
+        if (verbose) fprintf(stderr, "soundgen:   %-40s peaks %6.1f dBFS at the take gain\n", MIXES[m].what, 20 * log10(p * g + 1e-12));
+        if (p > mix) mix = p;
+    }
+    if (mix * g > db2(MIX_DB)) g = db2(MIX_DB) / mix;
+    if (verbose) fprintf(stderr, "soundgen: common gain %+.1f dB: the loudest take %.1f dBFS, the loudest mix %.1f dBFS\n",
+                         20 * log10(g), 20 * log10(single * g), 20 * log10(mix * g));
+    for (int i = 0; i < n; i++) {
+        if (!outs[i].x) continue;
+        outs[i].pcm = malloc(sizeof(int16_t) * (size_t)outs[i].n);
+        for (int k = 0; k < outs[i].n; k++) outs[i].pcm[k] = to16(outs[i].x[k] * g);
+    }
+    return g;
+}
+
 int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "";
     if (!strcmp(mode, "parts") && argc > 2) return parts(argv[2]);
@@ -534,11 +640,12 @@ int main(int argc, char **argv) {
                     Out *o = &outs[n++];
                     render_card(cue, role, set, level, v, o);
                     total += 44 + 2L * o->n;
-                    for (int i = 0; i < o->n; i++) if (abs(o->pcm[i]) / 32767.0 > loudest) loudest = abs(o->pcm[i]) / 32767.0;
                 }
             }
         }
     }
+    common_gain(outs, n, writing || stats);
+    for (int i = 0; i < n; i++) if (outs[i].x) for (int k = 0; k < outs[i].n; k++) if (abs(outs[i].pcm[k]) / 32767.0 > loudest) loudest = abs(outs[i].pcm[k]) / 32767.0;
     FILE *manifest = NULL;
     if (writing) {
         char path[1024];
@@ -553,11 +660,14 @@ int main(int argc, char **argv) {
             snprintf(path, sizeof path, "%s/%s.wav", argv[2], o->name);
             if (write_pcm(path, o->pcm, o->n, o->rate) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", path); return 1; }
         } else if (stats) {
-            double sq = 0; int pk = 0;
-            for (int k = 0; k < o->n; k++) { sq += (double)o->pcm[k] * o->pcm[k]; if (abs(o->pcm[k]) > pk) pk = abs(o->pcm[k]); }
-            printf("%-24s cue %2d  %5d Hz  %5d ms  %7ld B  anchor %7.1f ms  peak %6.1f dBFS  rms %6.1f dBFS\n",
+            int pk = 0;
+            Sig y = sig_new(o->n);
+            for (int k = 0; k < o->n; k++) { y.x[k] = o->pcm[k] / 32767.0; if (abs(o->pcm[k]) > pk) pk = abs(o->pcm[k]); }
+            const double r50 = max_moving_rms(&y, o->rate / 20, 0, y.n);   // the loudest 50 ms
+            sig_free(&y);
+            printf("%-24s cue %2d  %5d Hz  %5d ms  %7ld B  anchor %7.1f ms  peak %6.1f dBFS  50 ms RMS %6.1f dBFS\n",
                    o->name, o->cue, o->rate, o->n * 1000 / o->rate, 44 + 2L * o->n, o->anchor_ms,
-                   20 * log10(pk / 32767.0 + 1e-9), 10 * log10(sq / (o->n ? o->n : 1) / (32767.0 * 32767.0) + 1e-12));
+                   20 * log10(pk / 32767.0 + 1e-9), 20 * log10(r50 + 1e-9));
         } else {
             printf("%s.m4a\t%d\t%d\t%d\t%ld\t%.1f\t%s\t%d\t%d\n", o->name, o->cue, o->rate, o->n * 1000 / o->rate, 44 + 2L * o->n,
                    o->anchor_ms, ROLE_NAME[o->role], o->level, o->kbps);
@@ -570,6 +680,6 @@ int main(int argc, char **argv) {
     if (writing || stats)
         fprintf(writing ? stderr : stdout, "soundgen: %d files, %ld bytes, loudest card take %.1f dBFS\n",
                 n, total, 20 * log10(loudest + 1e-9));
-    if (loudest > 0.999) { fprintf(stderr, "soundgen: a card take clips; lower LIFT_DB\n"); return 1; }
+    if (loudest > db2(PEAK_DB) * 1.001) { fprintf(stderr, "soundgen: a card take is over PEAK_DB\n"); return 1; }
     return 0;
 }
