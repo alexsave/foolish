@@ -96,3 +96,11 @@ python3 -I ../throwin/an/measure.py deck229c 'parts/deck_?.wav' 'synth/deck229c_
 ```
 These regenerate exactly the files Alex approved (checked bit for bit).
 `an/flip_an.py`, `an/flip_spec.py` and `an/deck_an.py` re-measure the reps and rewrite the tables.
+
+## The C port (what ships)
+
+The game plays a C port of flipE and deck229c: `../c/models.c` (`m_flip`, `m_deck`), line for line from the Python here, with the measured tables copied into `../c/tables.h` by `../c/tables.py`.
+`../soundgen.c` lays the parts out at the game's timing (`TURN` is the flip, its snap as the trump leaves the stock; `FLIP` is the throw-in landing as it lands, with the deck set down baked in 350 ms later, since nothing on screen moves there) and writes the takes at build time; `../../../docs/AUDIO.md` ("The card sounds") is the guide.
+Measured with `../throwin/an/measure.py`, both are inside the Python takes' range on every measure; against the recordings the flip is outside on rise, centroid and click width (Python's 1-4 kHz kurtosis comes back inside), the deck on its fall to -20 dB and centroid (as Python) and on 4-12 kHz kurtosis.
+`make -C .. parts` writes the C takes alone (12 at 48 kHz) to compare against the Python's `synth/`.
+The Python stays the reference and the analysis; change a model here first, then its port.

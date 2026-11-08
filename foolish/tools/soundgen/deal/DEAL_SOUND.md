@@ -1,7 +1,7 @@
 # The deal sound
 
 How one dealt card sounds, built from Alex's own recordings of dealing (2026-11-01), measured part by part and synthesized so that every card varies the way the real takes vary.
-This is a PROTOTYPE in Python (measurement and synthesis) beside the C `soundgen`; the shipped version will be a port of these recipes into `soundgen.c`.
+The measurement and synthesis here are Python; the game plays their C port (below).
 
 ## What a deal is (from the recordings)
 
@@ -74,3 +74,11 @@ Reference: `parts/real_land_4.wav` (Alex: the best), varied within landings 1, 2
 ## Reproduce
 
 From this folder: `mkdir -p synth plots`, then `python3 -I an/grab_an.py`, `python3 -I an/clicks.py`, `python3 -I an/land_clicks.py` (tables), then `python3 -I an/thumb2.py`, `python3 -I an/grab2.py`, `python3 -I an/land_syn.py` and `python3 -I an/land_syn.py land229 2` (variants into `synth/`), then `python3 -I an/deal_game.py 0.375 deal_4p_229 9 24 4 land229` (a 4-seat opening deal on the 229 Hz table; arguments: pace s, name, seed, cards, seats, landing set; without the last it uses land1).
+
+## The C port (what ships)
+
+The game plays a C port of thumb9, grab2 and land229: `../c/models.c` (`m_thumb`, `m_grab`, `m_land`), line for line from the Python here, with the measured tables copied into `../c/tables.h` by `../c/tables.py`.
+`../soundgen.c` lays the parts out at the game's timing (`DEAL` is the slide and the grab, its moment the grab as the card leaves; `DEAL_LAND` is the landing, its own cue at the landing, at the seat's level from `anim_seat_gain_pm`) and writes the takes at build time; `../../../docs/AUDIO.md` ("The card sounds") is the guide.
+Measured with `../throwin/an/measure.py`, each C set is inside the Python takes' range on every measure, and outside the five recordings only where the Python is too, or by a hair (thumb micro-roughness 4-12k, grab crest 150-1k and rise, landing crest 150-1k).
+`make -C .. parts` writes the C takes alone (12 at 48 kHz) to compare against the Python's `synth/`.
+The Python stays the reference and the analysis; change a model here first, then its port.

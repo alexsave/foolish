@@ -1,4 +1,4 @@
-# Cover and pass: work in progress (paused 2026-11-02, not yet approved by Alex)
+# Cover and pass
 
 ## Cover (here)
 Alex: "cover is the same two finger grab, slide out, but the landing is on a card so it sounds different".
@@ -35,7 +35,15 @@ Alex: "2 finger grab, slide out, throw in landing, and then a shfff as you slide
 1. Alex's review of the pass.
 2. Level balancing ("equalizing") across every sound.
 3. Discard and pickup: first try in `../sweep` (NOTES.md there).
-4. The C port.
+4. The C port: done (below).
 
 `../round_demo.py` assembles a 4-player deal, the trump flip and three attack/cover pairs from all the models.
 It runs from the scratchpad layout; paths need adjusting to run here.
+
+## The C port (what ships)
+
+The game plays a C port of cover3 and pass7 (`../pass`): `../c/models.c` (`m_cover`, `m_pass`), line for line from the Python here, with the measured tables copied into `../c/tables.h` by `../c/tables.py`.
+`../soundgen.c` lays the parts out at the game's timing (`COVER` is the cover's landing after the same `LIFT`; a transfer is `PLACE` and then `PASS`, the shfff from 150 ms after the landing, told from an attack by the event's msg) and writes the takes at build time; `../../../docs/AUDIO.md` ("The card sounds") is the guide.
+Measured with `../throwin/an/measure.py`, both are inside the Python takes' range on every measure; against the reps the cover is just outside on click width and 1/20 ms roughness, the pass on flatness (as Python), 1-4 kHz kurtosis and 4-12 kHz crest.
+`make -C .. parts` writes the C takes alone (12 at 48 kHz) to compare against the Python's `synth/`.
+The Python stays the reference and the analysis; change a model here first, then its port.
