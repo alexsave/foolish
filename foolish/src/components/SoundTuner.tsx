@@ -67,6 +67,27 @@ const tableFingerprint = (): number => {
 
 /** A reload the tuner asked for: the table it expects, where the page was, what to say. Kept
  *  for this tab only, as "fp scroll tries said". */
+/** The kernel links the dev server serves now, by their hashed file names, read from
+ *  the chunk that names them. A reload before the dev server has seen a relink would
+ *  load the old link and then be hot-patched under the page, so the tuner reloads
+ *  only once these change. */
+let linkChunk: string | null = null;
+const LINKS = /(?:web|promo)\.wasm\.[\w~-]+\.gz/g;
+const servedLinks = async (): Promise<string> => {
+    const chunks = linkChunk ? [linkChunk] : performance.getEntriesByType('resource').map((e) => e.name)
+        .filter((n) => n.includes('/_next/static/chunks/') && n.endsWith('.js'));
+    for (const url of chunks) {
+        const names = (await (await fetch(url, { cache: 'no-store' })).text()).match(LINKS);
+        if (names) { linkChunk = url; return [...new Set(names)].sort().join(' '); }
+    }
+    return '';
+};
+const until = async (changed: () => Promise<boolean>, ms: number): Promise<void> => {
+    for (const end = performance.now() + ms; performance.now() < end; await new Promise((r) => setTimeout(r, 200))) {
+        if (await changed()) return;
+    }
+};
+
 interface Pending { fp: number; scroll: number; said: string; tries: number }
 const readPending = (): Pending | null => {
     try {
@@ -172,8 +193,17 @@ export default function SoundTuner({ play, perStroke }: { play: TunerPlay; perSt
         setBusy(true);
         setStatus('Rebuilding the takes...');
         const t0 = performance.now();
-        fetch(`${TUNE_URL}/tuning`, { method: 'POST', body, headers: { 'Content-Type': 'text/plain' } })
-            .then(async (r) => ({ ok: r.ok, out: await r.text() }))
+        let links = '';
+        servedLinks().catch(() => '').then((l) => { links = l; })
+            .then(() => fetch(`${TUNE_URL}/tuning`, { method: 'POST', body, headers: { 'Content-Type': 'text/plain' } }))
+            .then(async (r) => {
+                const out = await r.text();
+                if (r.ok && out.includes('relinked')) {
+                    setStatus('Waiting for the dev server to serve the new kernel...');
+                    await until(async () => (await servedLinks().catch(() => links)) !== links, 10000);
+                }
+                return { ok: r.ok, out };
+            })
             .then(({ ok, out }) => {
                 if (latest.current !== body) { send(latest.current ?? body); return; }
                 setBusy(false);
@@ -183,7 +213,8 @@ export default function SoundTuner({ play, perStroke }: { play: TunerPlay; perSt
                     return;
                 }
                 const fp = /tune\.sh: table (\d+)/.exec(out);
-                const said = `Rebuilt in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+                const gain = /common gain ([+-][\d.]+ dB)/.exec(out);
+                const said = `Rebuilt in ${((performance.now() - t0) / 1000).toFixed(1)} s${gain ? `; the common gain is ${gain[1]}` : ''}`;
                 if (!fp) { setStatus(said); return; }
                 writePending({ fp: Number(fp[1]), scroll: window.scrollY, said, tries: 0 });
                 window.location.reload();
