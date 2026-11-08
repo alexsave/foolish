@@ -251,8 +251,9 @@ export default function SoundTuner({ play, perStroke }: { play: TunerPlay; perSt
             <h2 className="title">Tune</h2>
             <p style={{ margin: 0, opacity: 0.85 }}>
                 Every part&apos;s level (dB, on the deal&apos;s scale, before the common gain that puts the loudest take
-                at -3 dBFS) and time (ms from the cue&apos;s moment, negative before it). A change rebuilds every take
-                and reloads the page; then press Play. Values come from <code>tools/soundgen/tuning.tsv</code> and are
+                at -3 dBFS, so raising the loudest lowers the rest) and time (ms from the cue&apos;s moment, negative
+                before it). A change rebuilds the takes it touches and reloads the page, in a second or two; then
+                press Play, or play a game at <a href="/ws" style={{ color: 'inherit' }}>/ws</a> (reload it after a change). Values come from <code>tools/soundgen/tuning.tsv</code> and are
                 marked against git HEAD: when it sounds right, commit that file.
             </p>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', minHeight: 26 }}>
