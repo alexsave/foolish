@@ -253,7 +253,8 @@ export class CueAudio {
         // only a few, and ones left running wedged its audio (sounds seconds late, then
         // stuttering, then none until Safari was restarted).
         const page = globalThis as { __foolishCueContext?: AudioContext };
-        if (page.__foolishCueContext && page.__foolishCueContext.state !== 'closed') void page.__foolishCueContext.close().catch(() => {});
+        const before = page.__foolishCueContext;
+        if (before && before.state !== 'closed' && typeof before.close === 'function') void before.close().catch(() => {});
         try {
             this.ctx = new Ctor({ latencyHint: 'interactive' });
         } catch {

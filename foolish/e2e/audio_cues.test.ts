@@ -348,6 +348,7 @@ function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold
         masterGain: { value: number; setValueAtTime(v: number): void } | null = null;
         constructor() { created++; ctxs.push(this); }
         resume() { this.state = 'running'; return Promise.resolve(); }
+        close() { this.state = 'closed'; return Promise.resolve(); }
         createGain() {
             const node: any = { gain: { value: 1, setValueAtTime(v: number) { node.gain.value = v; } }, connected: null as unknown,
                 connect(to: unknown) { node.connected = to; }, disconnect() {} };
@@ -398,7 +399,7 @@ function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold
         },
         /** Let every fetch and decode finish. */
         settle: async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r)); },
-        restore: () => { Object.assign(g, saved); if (saved.AudioContext === undefined) delete g.AudioContext; },
+        restore: () => { Object.assign(g, saved); if (saved.AudioContext === undefined) delete g.AudioContext; delete g.__foolishCueContext; },
     };
 }
 
@@ -424,6 +425,23 @@ async function ready(fake: ReturnType<typeof fakeAudio>): Promise<CueAudio> {
     fake.sources.length = 0;
     return engine;
 }
+
+test('one audio context a page: an engine made again closes the one before it', async () => {
+    // A hot update in development makes the engine again in the same page. Left running,
+    // the old contexts wedged Safari's audio (seconds late, then stuttering, then silent).
+    const fake = fakeAudio();
+    try {
+        const first = new CueAudio();
+        first.unlock();
+        const second = new CueAudio();
+        second.unlock();
+        assert.equal(fake.created(), 2);
+        assert.equal(fake.ctxs[0].state, 'closed', 'the first engine\'s context is closed');
+        assert.equal(fake.ctxs[1].state, 'running', 'the new one plays');
+    } finally {
+        fake.restore();
+    }
+});
 
 test('with no Web Audio at all the engine is a no-op, not a crash', () => {
     const g = globalThis as any;
