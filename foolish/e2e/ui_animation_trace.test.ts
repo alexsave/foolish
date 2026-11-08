@@ -881,8 +881,9 @@ test('a LAST DEFENCE rests before the sweep takes the table', async () => {
     const [lift] = times(ears.heard, 'LIFT'), [cover] = times(ears.heard, 'COVER');
     const [sweep] = times(ears.heard, 'SWEEP'), [pile] = times(ears.heard, 'PILE');
     assert.deepEqual(inOrder(ears.heard).map((h) => h.cue),
-        ['LIFT', 'COVER', 'SWEEP', 'PILE', 'DEAL', 'DEAL', 'DEAL', 'DEAL', 'DEAL', 'HAND_OFF'],
-        'my cover, the sweep, the pile, Anna\'s two cards and my three, and the roles handed on');
+        ['LIFT', 'COVER', 'SWEEP', 'PILE', 'DEAL', 'DEAL', 'DEAL_LAND', 'DEAL', 'DEAL_LAND', 'DEAL', 'DEAL',
+         'DEAL_LAND', 'DEAL_LAND', 'DEAL_LAND', 'HAND_OFF'],
+        'my cover, the sweep, the pile, Anna\'s two cards and my three, each heard leaving and landing, and the roles handed on');
     assert.equal(cover - lift, ANIM_TIME_MS, 'the cover is heard landing exactly one flight after it was heard leaving');
     assert.equal(sweep - cover, ANIM_GAP_MS + ANIM_BOUT_END_HOLD_MS, 'the sweep is heard after the rest, not after the gap');
     assert.equal(pile - sweep, ANIM_TIME_MS, 'and the pile as the sweep lands');
@@ -988,7 +989,8 @@ test('pass: I hand the attack on with a card of its rank', async () => {
     // marks turn when the kernel's board for the move is committed. The sound is
     // struck where the mark turns, so it is heard there too - one frame behind
     // the card's own landing. (A pass that ARRIVES hands on as it opens.)
-    assert.deepEqual(inOrder(ears.heard).map((h) => h.cue), ['LIFT', 'PLACE', 'HAND_OFF']);
+    assert.deepEqual(inOrder(ears.heard).map((h) => h.cue), ['LIFT', 'PLACE', 'PASS', 'HAND_OFF'],
+        'my transfer is heard as one before the server confirms it: it lands, and slides on');
     assert.equal(times(ears.heard, 'PLACE')[0] - times(ears.heard, 'LIFT')[0], ANIM_TIME_MS);
     const behind = times(ears.heard, 'HAND_OFF')[0] - times(ears.heard, 'PLACE')[0];
     assert.ok(behind >= 0 && behind <= FRAME_MS, `the shield is heard at the frame the pass lands (${behind}ms behind the card)`);
@@ -1011,8 +1013,8 @@ test('pickup: I take the table', async () => {
     // at a time. The push that confirms my pickup does not play it a second
     // time, and nothing is handed on: with two of us she attacks again.
     const order = inOrder(ears.heard);
-    assert.deepEqual(order.map((h) => h.cue), ['PICKUP', 'DEAL', 'DEAL', 'DEAL'],
-        'the table taken once, and Anna\'s three cards off the stock');
+    assert.deepEqual(order.map((h) => h.cue), ['PICKUP', 'INTO_HAND', 'DEAL', 'DEAL', 'DEAL', 'DEAL_LAND', 'DEAL_LAND', 'DEAL_LAND'],
+        'the table taken once and into my hand, and Anna\'s three cards off the stock and landing');
     assert.equal(order[0].cards, 3, 'the pickup says how many cards it stands for');
 });
 
@@ -2092,7 +2094,7 @@ test('two moves in a row are each heard whole: the second run\'s cues are not mi
     // …AND THE ENGINE WAS TOLD WHAT TO LOAD FIRST, board by board. The table was
     // empty, so only a card being laid could be heard; with my two attacks down
     // and uncovered, a cover, a pickup and the end of the bout could.
-    assert.deepEqual(ears.wants[0], ['LIFT', 'PLACE'], 'an empty table: only an attack can sound next');
+    assert.deepEqual(ears.wants[0], ['LIFT', 'PLACE', 'PASS'], 'an empty table: only an attack (or a transfer) can sound next');
     assert.ok(ears.wants.some((w) => w.includes('COVER') && w.includes('PICKUP') && w.includes('SWEEP')),
         `once my attacks are down the page asks for what can answer them (${JSON.stringify(ears.wants)})`);
     assert.deepEqual(inOrder(second).map((h) => h.cue), ['LIFT', 'COVER', 'COVER'],
