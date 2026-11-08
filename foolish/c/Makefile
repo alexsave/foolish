@@ -514,6 +514,7 @@ IOS_BRIDGE_SRC := ios/ios_api.c ios/ios_api_view.c ios/ios_api_play.c \
                   ios/ios_api_identity.c ios/ios_api_msg.c ios/ios_api_net.c \
                   ios/ios_api_sound.c
 $(CUE_TAKES_C): $(wildcard $(SOUNDGEN_DIR)/*.c $(SOUNDGEN_DIR)/c/*.c $(SOUNDGEN_DIR)/c/*.h $(SOUNDGEN_DIR)/recordings/*) \
+                $(SOUNDGEN_DIR)/tuning.tsv \
                 $(SOUNDGEN_DIR)/Makefile src/anim_plan.h src/cue_voice.h
 	@mkdir -p $(@D)
 	@$(MAKE) -s -C $(SOUNDGEN_DIR) ctable CTABLE=$(abspath $@).new
