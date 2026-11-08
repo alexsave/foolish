@@ -1,12 +1,20 @@
 # soundgen - every sound the game plays (soundgen.c says what they are and why
 # nothing it writes is committed). docs/AUDIO.md is the user's guide.
 #
-#   make sounds    write every take into ../../public/audio/gen/, and the take
-#                  table the web reads into ../../src/audio/gen/cueTakes.ts
+#   make sounds    every take as AAC into ../../public/audio/gen/ (rendered to
+#                  build/wav/, encoded by ffmpeg, checked), and the take table
+#                  the web reads into ../../src/audio/gen/cueTakes.ts
+#   make table     the take table alone: what type-checks and tests need, with
+#                  no audio written and no ffmpeg
+#   make check     hold every shipped file to its take (aac's priming declared,
+#                  the length to the sample)
 #   make list      the files it writes, one a line (the cue-table test reads this)
 #   make stats     the same, measured: peak and RMS
 #   make parts     each model alone into build/parts/, for measure.py
 #   make audition  play each one in turn, by name (macOS: afplay)
+#
+# ffmpeg (its native AAC encoder) is needed by `sounds` only: macOS has it from
+# Homebrew, Linux from its packages (the CI lanes that build the site install it).
 #
 # -ffp-contract=off so a multiply and an add are never fused into one rounding:
 # the same source then makes the same samples at -O0 and -O2 on one machine.
@@ -19,10 +27,11 @@ CC      ?= cc
 CFLAGS  := -O2 -std=c11 -Wall -Wextra -ffp-contract=off -I. -I../../c/src -I../../../shared/c
 OUT     := ../../public/audio/gen
 TS      := ../../src/audio/gen/cueTakes.ts
-SRC     := soundgen.c c/dsp.c c/models.c c/placeholders.c
-HDR     := c/dsp.h c/models.h c/placeholders.h c/tables.h ../../c/src/anim_plan.h ../../../shared/c/rng.h
+WAV     := build/wav
+SRC     := soundgen.c c/dsp.c c/models.c c/placeholders.c c/m4a.c
+HDR     := c/dsp.h c/models.h c/placeholders.h c/m4a.h c/tables.h ../../c/src/anim_plan.h ../../../shared/c/rng.h
 
-.PHONY: sounds list stats audition parts clean
+.PHONY: sounds table check list stats audition parts clean
 
 build/soundgen: $(SRC) $(HDR)
 	@mkdir -p build
@@ -31,9 +40,18 @@ build/soundgen: $(SRC) $(HDR)
 # The directory is emptied first: a recipe that was removed (its cue now plays
 # a recording) must not leave its old file behind to be served.
 sounds: build/soundgen
-	@rm -rf $(OUT)
-	@mkdir -p $(OUT) $(dir $(TS))
-	@./build/soundgen write $(OUT) $(TS)
+	@rm -rf $(OUT) $(WAV)
+	@mkdir -p $(OUT) $(WAV) $(dir $(TS))
+	@./build/soundgen write $(WAV) $(TS)
+	@./build/soundgen encode $(WAV) $(OUT)
+	@./build/soundgen check $(WAV) $(OUT)
+
+table: build/soundgen
+	@mkdir -p $(dir $(TS))
+	@./build/soundgen table $(TS)
+
+check: build/soundgen
+	@./build/soundgen check $(WAV) $(OUT)
 
 list: build/soundgen
 	@./build/soundgen list
@@ -48,7 +66,7 @@ parts: build/soundgen
 	@./build/soundgen parts build/parts
 
 audition: sounds
-	@for f in $(OUT)/*.wav; do echo "$$(basename $$f)"; afplay "$$f"; sleep 0.35; done
+	@for f in $(OUT)/*.m4a; do echo "$$(basename $$f)"; afplay "$$f"; sleep 0.35; done
 
 clean:
 	rm -rf build $(OUT) $(TS)

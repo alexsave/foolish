@@ -95,6 +95,15 @@ jobs:
       - name: Shipped wasm modules
         run: bash scripts/wasm_build.sh
 
+      # The game's sounds (tools/soundgen, docs/AUDIO.md): rendered in C and
+      # encoded to AAC by ffmpeg, which the image may not carry. Also the take
+      # table the web imports (src/audio/gen/cueTakes.ts), without which the
+      # build does not compile.
+      - name: Sounds
+        run: |
+          command -v ffmpeg || { sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg; }
+          npm run sounds
+
       - name: Build the static export
         run: |
           npx next build

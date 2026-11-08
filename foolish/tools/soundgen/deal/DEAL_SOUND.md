@@ -78,7 +78,7 @@ From this folder: `mkdir -p synth plots`, then `python3 -I an/grab_an.py`, `pyth
 ## The C port (what ships)
 
 The game plays a C port of thumb9, grab2 and land229: `../c/models.c` (`m_thumb`, `m_grab`, `m_land`), line for line from the Python here, with the measured tables copied into `../c/tables.h` by `../c/tables.py`.
-`../soundgen.c` lays the parts out at the game's timing (`DEAL` is the slide and the grab, its moment the grab as the card leaves; `DEAL_LAND` is the landing, its own cue at the landing, at the seat's level from `anim_seat_gain_pm`) and writes the takes at build time; `../../../docs/AUDIO.md` ("The card sounds") is the guide.
+`../soundgen.c` lays the parts out at the game's timing (`DEAL` is the slide and the grab, its moment the grab as the card leaves (with tight takes, the slide's peak 50 ms before the grab, for a card dealt with no time before it, which is played whole and late); `DEAL_LAND` is the landing, its own cue at the landing, at the seat's level from `anim_seat_gain_pm`) and writes the takes at build time; `../../../docs/AUDIO.md` ("The card sounds") is the guide.
 Measured with `../throwin/an/measure.py`, each C set is inside the Python takes' range on every measure, and outside the five recordings only where the Python is too, or by a hair (thumb micro-roughness 4-12k, grab crest 150-1k and rise, landing crest 150-1k).
 `make -C .. parts` writes the C takes alone (12 at 48 kHz) to compare against the Python's `synth/`.
 The Python stays the reference and the analysis; change a model here first, then its port.

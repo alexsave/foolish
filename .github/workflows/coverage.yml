@@ -137,6 +137,13 @@ jobs:
       - name: Toolchain (libclang, clang, binaryen)
         run: bash ../shared/scripts/ci_llvm.sh
 
+      # The sounds and their take table (tools/soundgen): the suites import
+      # the table, and e2e/audio_cues.test.ts decodes the shipped AAC files.
+      - name: Sounds
+        run: |
+          command -v ffmpeg || { sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg; }
+          npm run sounds
+
       - name: Run e2e suite under V8 coverage
         run: npm run coverage:e2e
 

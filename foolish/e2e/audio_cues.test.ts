@@ -28,7 +28,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import {
@@ -719,9 +719,9 @@ test('a board that changes re-orders what has not started, and disturbs nothing 
         engine.want(bits(ANIM_CUE_FINISH, ANIM_CUE_FOOL));
         assert.deepEqual(fake.waiting(), first, 'the three already on their way are left alone');
         await fake.release(1);
-        assert.equal(short(fake.fetched)[3], 'finish_0.wav', 'the next place goes to a wanted file, far ahead of it in the table');
+        assert.equal(short(fake.fetched)[3], 'finish_0.m4a', 'the next place goes to a wanted file, far ahead of it in the table');
         await fake.release(1);
-        assert.equal(short(fake.fetched)[4], 'fool_0.wav');
+        assert.equal(short(fake.fetched)[4], 'fool_0.m4a');
         engine.want(bits(ANIM_CUE_FINISH, ANIM_CUE_FOOL, ANIM_CUE_DEAL));
         engine.want(0);
         await fake.drain();
@@ -766,7 +766,7 @@ test('a cue that is struck jumps the queue, whatever the board said', async () =
         engine.unlock();
         assert.equal(engine.strike(ANIM_CUE_FOOL), true);
         await fake.release(1);
-        assert.equal(short(fake.fetched)[3], 'fool_0.wav', 'a file at the end of the table is the next one fetched');
+        assert.equal(short(fake.fetched)[3], 'fool_0.m4a', 'a file at the end of the table is the next one fetched');
     } finally { fake.restore(); }
 });
 
@@ -908,4 +908,45 @@ test('a placeholder a row names is one soundgen writes, under the cue\'s own nam
     // that nothing downloads a file no row names. It is still dead weight in the tool.
     const orphans = [...written.keys()].filter((f) => !namedByTable.has(f));
     assert.deepEqual(orphans, [], 'soundgen writes a file no row names: its cue plays a recording now, so drop the recipe (make it NULL)');
+});
+
+// ---- 5. the shipped files: AAC, starting on the millisecond ------------------------------
+
+// An AAC encoder starts its stream with priming samples, and an anchor counts
+// samples from a take's FIRST sample, so a file that decodes even a few samples
+// late puts every sound that late. The edit list says where the take starts
+// (tools/soundgen/c/m4a.h); every browser decodes by it (docs/AUDIO.md, "Shipped
+// as AAC", measured in headless Chrome and Firefox and through Core Audio, which
+// Safari decodes with). This holds the files to it: their containers say so to
+// the sample (`make check`), and ffmpeg - Chrome's own decoder - hands back the
+// WAV soundgen rendered, from its first sample.
+test('every shipped file starts on its take\'s first sample', () => {
+    const SG = join(REPO, 'tools/soundgen');
+    const manifest = join(SG, 'build/wav/takes.tsv');
+    assert.ok(existsSync(manifest), 'the sounds were built (npm run sounds) before this ran');
+    const checked = execFileSync('make', ['-s', '--no-print-directory', '-C', SG, 'check'], { encoding: 'utf8' });
+    assert.match(checked, / 0 bad;/, 'every file declares the encoder\'s priming and the take\'s length, to the sample');
+    const pcm = (buf: Buffer, from: number) => { const v = new Int16Array(buf.buffer, buf.byteOffset + from, (buf.length - from) >> 1); return Float32Array.from(v, (x) => x / 32768); };
+    const seen = new Set<string>();
+    for (const line of readFileSync(manifest, 'utf8').trim().split('\n')) {
+        const [name] = line.split(' ');
+        const set = name.replace(/_\d+$/, '');
+        if (seen.has(set)) continue;
+        seen.add(set);
+        const wav = pcm(readFileSync(join(SG, 'build/wav', `${name}.wav`)), 44);
+        const dec = pcm(execFileSync('ffmpeg', ['-nostdin', '-loglevel', 'error', '-i', join(REPO, 'public/audio/gen', `${name}.m4a`), '-f', 's16le', '-'], { maxBuffer: 1 << 26 }), 0);
+        assert.ok(dec.length >= wav.length, `${name}: the whole take decodes`);
+        // The lag that lines the decoded take up with the rendered one, around its peak.
+        let peak = 0;
+        for (let i = 1; i < wav.length; i++) if (Math.abs(wav[i]) > Math.abs(wav[peak])) peak = i;
+        const lo = Math.max(0, peak - 2048), hi = Math.min(wav.length, peak + 2048);
+        let best = -Infinity, lag = 0;
+        for (let L = -1100; L <= 1100; L++) {
+            let c = 0;
+            for (let i = lo; i < hi; i++) { const j = i + L; if (j >= 0 && j < dec.length) c += wav[i] * dec[j]; }
+            if (c > best) { best = c; lag = L; }
+        }
+        assert.equal(lag, 0, `${name}: decoded ${lag} samples off its anchor`);
+    }
+    assert.ok(seen.size > 25, `one take of every set was decoded (${seen.size})`);
 });

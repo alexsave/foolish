@@ -51,7 +51,7 @@ python3 -I an/disc_game.py pickup pickup_8 4 8
 ## The C port (what ships)
 
 The game plays a C port of the strokes, the lifts, the placement and the slide into the hand: `../c/models.c` (`m_stroke`, `m_lift`, `m_place`, `m_plift`, `m_insert`), line for line from the Python here, with the measured tables copied into `../c/tables.h` by `../c/tables.py`.
-`../soundgen.c` lays the parts out at the game's timing (`SWEEP` is the strokes and the lift, in six levels of 0-5 strokes compressed to fit 1.25 s, the engine playing the most that fit the plan's room; `PILE` the placement; `PICKUP` the soft lift alone (no plan leaves a pickup room for strokes); `INTO_HAND` the slide, its own cue at the pickup's landing) and writes the takes at build time; `../../../docs/AUDIO.md` ("The card sounds") is the guide.
+`../soundgen.c` lays the parts out at the game's timing (`SWEEP` is the lift and `PICKUP` the soft lift, each with its strokes as a prelude of their own (1-5 by the cue's cards, uncompressed) played before it in full over whatever is sounding; `PILE` the placement; `INTO_HAND` the slide, its own cue at the pickup's landing) and writes the takes at build time; `../../../docs/AUDIO.md` ("The card sounds") is the guide.
 Measured with `../throwin/an/measure.py`, every part is inside the Python takes' range on every measure but the slide into the hand's crest (15.58 against 15.57), and outside the recordings where the Python is.
 `make -C .. parts` writes the C takes alone (12 at 48 kHz) to compare against the Python's `synth/`.
 The Python stays the reference and the analysis; change a model here first, then its port.

@@ -64,6 +64,7 @@
 #include "c/dsp.h"
 #include "c/models.h"
 #include "c/placeholders.h"
+#include "c/m4a.h"
 
 #define S_(sec) ((int)((sec) * SR))
 static double db2(double db) { return pow(10, db / 20); }
@@ -224,6 +225,9 @@ static void g_into_hand(Take *t, int level) {
 // `rate`: 48 kHz where the deal's thumb slide is in the take (its recordings
 // reach 20 kHz and a third of its energy is over 16 kHz), 32 kHz everywhere else
 // (every other model cuts at 15 kHz, so 32 kHz holds all of it).
+// `kbps` in each set is the AAC bitrate it ships at: the lowest that measured
+// transparent against the WAV (aac/bitrate.py, docs/AUDIO.md "Shipped as AAC"),
+// the highest over a prelude's levels.
 // A cue's takes come in up to three SETS: its own takes (MAIN), the TIGHT ones
 // played when none of those fits the time before the moment, and a PRELUDE in
 // levels (the strokes before a sweep or a pickup, one set per stroke count).
@@ -235,6 +239,7 @@ typedef struct {
     void (*make)(Take *, int level);
     int    takes;      // per level
     int    lo, hi;     // levels, inclusive (0, 0 for a set with none)
+    int    kbps;       // the AAC bitrate it ships at: the lowest that measured transparent (aac/bitrate.py)
 } Set;
 typedef struct {
     const char *name;
@@ -242,29 +247,32 @@ typedef struct {
     Set         main, tight, prelude;
     double      cards_per_level;
 } Recipe;
-#define ONE(f, n) { f, n, 0, 0 }
-#define NONE      { NULL, 0, 0, 0 }
+#define ONE(f, n, k) { f, n, 0, 0, k }
+#define NONE         { NULL, 0, 0, 0, 0 }
+// The placeholders' bitrate: at 8 and 12 kHz ffmpeg's encoder gives no more
+// than this whatever it is asked, and they measure within 0.8 dB at it.
+#define PLACEHOLDER_KBPS 64
 
 static const Recipe RECIPES[] = {
     [ANIM_CUE_NONE]      = { "none",      0,     NONE, NONE, NONE, 0 },
-    [ANIM_CUE_DEAL]      = { "deal",      48000, ONE(g_deal, 8), ONE(g_deal_tight, 4), NONE, 0 },
-    [ANIM_CUE_FLIP]      = { "flip",      32000, ONE(g_flip_land, 8), NONE, NONE, 0 },
-    [ANIM_CUE_LIFT]      = { "lift",      48000, ONE(g_lift, 8), ONE(g_lift_tight, 4), NONE, 0 },
-    [ANIM_CUE_PLACE]     = { "place",     32000, ONE(g_place, 8), NONE, NONE, 0 },
-    [ANIM_CUE_COVER]     = { "cover",     32000, ONE(g_cover, 8), NONE, NONE, 0 },
-    [ANIM_CUE_PICKUP]    = { "pickup",    32000, ONE(g_pickup, 8), NONE, { g_pickup_strokes, 3, 1, MAX_LEVEL }, 2.5 },
-    [ANIM_CUE_SWEEP]     = { "sweep",     32000, ONE(g_sweep, 8), NONE, { g_sweep_strokes, 3, 1, MAX_LEVEL }, 2.5 },
-    [ANIM_CUE_PILE]      = { "pile",      32000, ONE(g_pile, 8), NONE, NONE, 0 },
+    [ANIM_CUE_DEAL]      = { "deal",      48000, ONE(g_deal, 8, 128), ONE(g_deal_tight, 4, 192), NONE, 0 },
+    [ANIM_CUE_FLIP]      = { "flip",      32000, ONE(g_flip_land, 8, 96), NONE, NONE, 0 },
+    [ANIM_CUE_LIFT]      = { "lift",      48000, ONE(g_lift, 8, 128), ONE(g_lift_tight, 4, 160), NONE, 0 },
+    [ANIM_CUE_PLACE]     = { "place",     32000, ONE(g_place, 8, 96), NONE, NONE, 0 },
+    [ANIM_CUE_COVER]     = { "cover",     32000, ONE(g_cover, 8, 96), NONE, NONE, 0 },
+    [ANIM_CUE_PICKUP]    = { "pickup",    32000, ONE(g_pickup, 8, 128), NONE, { g_pickup_strokes, 3, 1, MAX_LEVEL, 160 }, 2.5 },
+    [ANIM_CUE_SWEEP]     = { "sweep",     32000, ONE(g_sweep, 8, 128), NONE, { g_sweep_strokes, 3, 1, MAX_LEVEL, 128 }, 2.5 },
+    [ANIM_CUE_PILE]      = { "pile",      32000, ONE(g_pile, 8, 96), NONE, NONE, 0 },
     [ANIM_CUE_OUT]       = { "out",       0,     NONE, NONE, NONE, 0 },
     [ANIM_CUE_REVERT]    = { "revert",    0,     NONE, NONE, NONE, 0 },
     [ANIM_CUE_GOOD]      = { "good",      0,     NONE, NONE, NONE, 0 },
     [ANIM_CUE_HAND_OFF]  = { "hand_off",  0,     NONE, NONE, NONE, 0 },
     [ANIM_CUE_FINISH]    = { "finish",    0,     NONE, NONE, NONE, 0 },
     [ANIM_CUE_FOOL]      = { "fool",      0,     NONE, NONE, NONE, 0 },
-    [ANIM_CUE_DEAL_LAND] = { "deal_land", 32000, ONE(g_deal_land, 8), NONE, NONE, 0 },
-    [ANIM_CUE_TURN]      = { "turn",      32000, ONE(g_turn, 8), NONE, NONE, 0 },
-    [ANIM_CUE_PASS]      = { "pass",      32000, ONE(g_pass, 8), NONE, NONE, 0 },
-    [ANIM_CUE_INTO_HAND] = { "into_hand", 32000, ONE(g_into_hand, 8), NONE, NONE, 0 },
+    [ANIM_CUE_DEAL_LAND] = { "deal_land", 32000, ONE(g_deal_land, 8, 96), NONE, NONE, 0 },
+    [ANIM_CUE_TURN]      = { "turn",      32000, ONE(g_turn, 8, 128), NONE, NONE, 0 },
+    [ANIM_CUE_PASS]      = { "pass",      32000, ONE(g_pass, 8, 128), NONE, NONE, 0 },
+    [ANIM_CUE_INTO_HAND] = { "into_hand", 32000, ONE(g_into_hand, 8, 128), NONE, NONE, 0 },
 };
 _Static_assert(sizeof RECIPES / sizeof RECIPES[0] == ANIM_N_CUES,
                "every sound cue of anim_plan.h has a line in RECIPES");
@@ -280,7 +288,7 @@ static const char *const CUE_CONST[ANIM_N_CUES] = {
 // ---- one rendered file -------------------------------------------------------------
 typedef struct {
     char   name[48];
-    int    cue, level, role, rate, n;
+    int    cue, level, role, rate, n, kbps;
     double anchor_ms;      // from the file's first sample to the cue's moment
     int16_t *pcm;
 } Out;
@@ -316,10 +324,10 @@ static void render_card(int cue, int role, const Set *set, int level, int v, Out
     set->make(&t, level);
     finish_take(&t, r->rate, o);
     sig_free(&t.mix);
-    if (role == ROLE_PRELUDE) snprintf(o->name, sizeof o->name, "%s_strokes_s%d_%d.wav", r->name, level, v);
-    else if (role == ROLE_TIGHT) snprintf(o->name, sizeof o->name, "%s_tight_%d.wav", r->name, v);
-    else snprintf(o->name, sizeof o->name, "%s_%d.wav", r->name, v);
-    o->cue = cue; o->level = level; o->role = role;
+    if (role == ROLE_PRELUDE) snprintf(o->name, sizeof o->name, "%s_strokes_s%d_%d", r->name, level, v);
+    else if (role == ROLE_TIGHT) snprintf(o->name, sizeof o->name, "%s_tight_%d", r->name, v);
+    else snprintf(o->name, sizeof o->name, "%s_%d", r->name, v);
+    o->cue = cue; o->level = level; o->role = role; o->kbps = set->kbps;
 }
 
 static int render_placeholder(int cue, int v, Out *o) {
@@ -330,7 +338,8 @@ static int render_placeholder(int cue, int v, Out *o) {
         o->pcm = malloc(sizeof(int16_t) * (size_t)n);
         for (int k = 0; k < n; k++) o->pcm[k] = to16(x[k]);
         o->n = n; o->rate = PLACEHOLDERS[i].rate; o->anchor_ms = 0; o->cue = cue; o->level = 0; o->role = ROLE_MAIN;
-        snprintf(o->name, sizeof o->name, "%s_%d.wav", RECIPES[cue].name, v);
+        o->kbps = PLACEHOLDER_KBPS;
+        snprintf(o->name, sizeof o->name, "%s_%d", RECIPES[cue].name, v);
         return 1;
     }
     return 0;
@@ -408,7 +417,7 @@ static int write_table(const char *path, Out *outs, int n) {
         fprintf(f, "    [%s]: [\n", CUE_CONST[c]);
         for (int i = 0; i < n; i++) {
             if (outs[i].cue != c) continue;
-            fprintf(f, "        { file: 'gen/%s', anchorMs: %.1f, role: '%s', level: %d },\n", outs[i].name, outs[i].anchor_ms,
+            fprintf(f, "        { file: 'gen/%s.m4a', anchorMs: %.1f, role: '%s', level: %d },\n", outs[i].name, outs[i].anchor_ms,
                     ROLE_NAME[outs[i].role], outs[i].level);
             if (outs[i].anchor_ms > lead) lead = outs[i].anchor_ms;
         }
@@ -423,13 +432,87 @@ static int write_table(const char *path, Out *outs, int n) {
     return fclose(f);
 }
 
+// ---- the shipped files: AAC, encoded by ffmpeg ---------------------------------------
+// `write` leaves a manifest beside the WAVs (one line a take: name, rate, kbps,
+// samples) for `encode` and `check` to read, so they need not render again.
+#define MANIFEST "takes.tsv"
+typedef struct { char name[48]; int rate, kbps, n; } Entry;
+static int read_manifest(const char *dir, Entry **out) {
+    char path[1024];
+    snprintf(path, sizeof path, "%s/" MANIFEST, dir);
+    FILE *f = fopen(path, "r");
+    if (!f) { fprintf(stderr, "soundgen: no %s (run `soundgen write` first)\n", path); return -1; }
+    Entry *e = calloc(1024, sizeof(Entry));
+    int n = 0;
+    while (n < 1024 && fscanf(f, "%47s %d %d %d", e[n].name, &e[n].rate, &e[n].kbps, &e[n].n) == 4) n++;
+    fclose(f);
+    *out = e;
+    return n;
+}
+// Every take into <outdir>/<name>.m4a, eight ffmpegs at a time.
+static int encode(const char *wavs, const char *outdir) {
+    Entry *e; const int n = read_manifest(wavs, &e);
+    if (n < 0) return 1;
+    int pids[8], at[8], live = 0, bad = 0;
+    for (int i = 0; i < n || live > 0; ) {
+        while (i < n && live < 8) {
+            char w[1024], m[1024];
+            snprintf(w, sizeof w, "%s/%s.wav", wavs, e[i].name);
+            snprintf(m, sizeof m, "%s/%s.m4a", outdir, e[i].name);
+            const int pid = m4a_encode(w, m, e[i].rate, e[i].kbps);
+            if (pid < 0) { fprintf(stderr, "soundgen: cannot run ffmpeg (it encodes the shipped AAC: install it)\n"); return 1; }
+            pids[live] = pid; at[live] = i; live++; i++;
+        }
+        if (m4a_wait(pids[0]) != 0) { fprintf(stderr, "soundgen: ffmpeg failed on %s\n", e[at[0]].name); bad++; }
+        for (int k = 1; k < live; k++) { pids[k - 1] = pids[k]; at[k - 1] = at[k]; }
+        live--;
+    }
+    free(e);
+    return bad ? 1 : 0;
+}
+// Every written file holds its take whole and from its first sample: one edit,
+// starting after the encoder's priming, as long as the take to the sample, in a
+// track at the take's own rate. A decoder that honours the edit list (all of
+// them, docs/AUDIO.md) then hands back the WAV's samples where the anchor
+// counts them.
+static int check(const char *wavs, const char *outdir) {
+    Entry *e; const int n = read_manifest(wavs, &e);
+    if (n < 0) return 1;
+    int bad = 0; long wav_bytes = 0, m4a_bytes = 0;
+    for (int i = 0; i < n; i++) {
+        char m[1024];
+        snprintf(m, sizeof m, "%s/%s.m4a", outdir, e[i].name);
+        M4aInfo info;
+        const int rc = m4a_info(m, &info);
+        const int64_t edit = rc ? -1 : info.edit_duration * e[i].rate / (info.movie_timescale ? info.movie_timescale : 1);
+        const int ok = rc == 0 && info.n_edits == 1 && info.edit_media_time == AAC_PRIMING
+                       && (int)info.media_timescale == e[i].rate && edit == e[i].n
+                       && info.media_duration >= e[i].n + AAC_PRIMING;
+        if (!ok) {
+            bad++;
+            fprintf(stderr, "soundgen: %s.m4a: %d edits, starts at %lld (want %d), lasts %lld samples (want %d), %u Hz (want %d)\n",
+                    e[i].name, info.n_edits, (long long)info.edit_media_time, AAC_PRIMING, (long long)edit, e[i].n,
+                    info.media_timescale, e[i].rate);
+        }
+        wav_bytes += 44 + 2L * e[i].n;
+        m4a_bytes += info.bytes;
+    }
+    printf("soundgen: %d files checked, %d bad; %ld bytes as WAV, %ld as AAC\n", n, bad, wav_bytes, m4a_bytes);
+    free(e);
+    return bad ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "";
     if (!strcmp(mode, "parts") && argc > 2) return parts(argv[2]);
+    if (!strcmp(mode, "encode") && argc > 3) return encode(argv[2], argv[3]);
+    if (!strcmp(mode, "check") && argc > 3) return check(argv[2], argv[3]);
     const int writing = !strcmp(mode, "write") && argc > 3;
+    const int table_only = !strcmp(mode, "table") && argc > 2;
     const int stats = !strcmp(mode, "stats");
-    if (!writing && !stats && strcmp(mode, "list")) {
-        fprintf(stderr, "usage: soundgen write <dir> <cueTakes.ts> | list | stats | parts <dir>\n");
+    if (!writing && !stats && !table_only && strcmp(mode, "list")) {
+        fprintf(stderr, "usage: soundgen write <wavdir> <cueTakes.ts> | table <cueTakes.ts> | encode <wavdir> <outdir>\n"
+                        "                | check <wavdir> <outdir> | list | stats | parts <dir>\n");
         return 2;
     }
     Out *outs = calloc(512, sizeof(Out));
@@ -456,24 +539,34 @@ int main(int argc, char **argv) {
             }
         }
     }
-    for (int i = 0; i < n; i++) {
+    FILE *manifest = NULL;
+    if (writing) {
+        char path[1024];
+        snprintf(path, sizeof path, "%s/" MANIFEST, argv[2]);
+        if (!(manifest = fopen(path, "w"))) { fprintf(stderr, "soundgen: cannot write %s\n", path); return 1; }
+    }
+    for (int i = 0; i < n && !table_only; i++) {
         const Out *o = &outs[i];
         if (writing) {
+            fprintf(manifest, "%s %d %d %d\n", o->name, o->rate, o->kbps, o->n);
             char path[1024];
-            snprintf(path, sizeof path, "%s/%s", argv[2], o->name);
+            snprintf(path, sizeof path, "%s/%s.wav", argv[2], o->name);
             if (write_pcm(path, o->pcm, o->n, o->rate) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", path); return 1; }
         } else if (stats) {
             double sq = 0; int pk = 0;
             for (int k = 0; k < o->n; k++) { sq += (double)o->pcm[k] * o->pcm[k]; if (abs(o->pcm[k]) > pk) pk = abs(o->pcm[k]); }
-            printf("%-18s cue %2d  %5d Hz  %5d ms  %7ld B  anchor %7.1f ms  peak %6.1f dBFS  rms %6.1f dBFS\n",
+            printf("%-24s cue %2d  %5d Hz  %5d ms  %7ld B  anchor %7.1f ms  peak %6.1f dBFS  rms %6.1f dBFS\n",
                    o->name, o->cue, o->rate, o->n * 1000 / o->rate, 44 + 2L * o->n, o->anchor_ms,
                    20 * log10(pk / 32767.0 + 1e-9), 10 * log10(sq / (o->n ? o->n : 1) / (32767.0 * 32767.0) + 1e-12));
         } else {
-            printf("%s\t%d\t%d\t%d\t%ld\t%.1f\t%s\t%d\n", o->name, o->cue, o->rate, o->n * 1000 / o->rate, 44 + 2L * o->n,
-                   o->anchor_ms, ROLE_NAME[o->role], o->level);
+            printf("%s.m4a\t%d\t%d\t%d\t%ld\t%.1f\t%s\t%d\t%d\n", o->name, o->cue, o->rate, o->n * 1000 / o->rate, 44 + 2L * o->n,
+                   o->anchor_ms, ROLE_NAME[o->role], o->level, o->kbps);
         }
     }
-    if (writing && write_table(argv[3], outs, n) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", argv[3]); return 1; }
+    if (manifest) fclose(manifest);
+    if ((writing || table_only) && write_table(argv[writing ? 3 : 2], outs, n) != 0) {
+        fprintf(stderr, "soundgen: cannot write %s\n", argv[writing ? 3 : 2]); return 1;
+    }
     if (writing || stats)
         fprintf(writing ? stderr : stdout, "soundgen: %d files, %ld bytes, loudest card take %.1f dBFS\n",
                 n, total, 20 * log10(loudest + 1e-9));

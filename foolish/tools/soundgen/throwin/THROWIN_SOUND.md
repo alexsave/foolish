@@ -112,7 +112,7 @@ python3 -I an/throwin_game.py .. throwin_game1 2 4 2.0   # four whole throw-ins 
 ## The C port (what ships)
 
 The game plays a C port of throw9 and tgrab2: `../c/models.c` (`m_throw`, `m_tgrab`), line for line from the Python here, with the measured tables copied into `../c/tables.h` by `../c/tables.py`.
-`../soundgen.c` lays the parts out at the game's timing (`LIFT` is the grab and the thumb slide before the card leaves, `PLACE` the landing) and writes the takes at build time; `../../../docs/AUDIO.md` ("The card sounds") is the guide.
+`../soundgen.c` lays the parts out at the game's timing (`LIFT` is the grab and the thumb slide before the card leaves, `PLACE` the landing; for a move that opens its run (no time before the lift) tight takes put the grab 60 ms before the slide's peak and the peak 30 ms before the card leaves, played whole from that moment) and writes the takes at build time; `../../../docs/AUDIO.md` ("The card sounds") is the guide.
 Measured with `../throwin/an/measure.py`, both are inside the Python takes' range on every measure; against the reps the throw-in is just outside on three (dur > -10 dB 17.5 against 18, rise 10 against 11, 4-12 kHz micro-roughness 4.26 against 4.23) and the grab on two (1-4 kHz micro-roughness, as Python; 4-12 kHz kurtosis).
 `make -C .. parts` writes the C takes alone (12 at 48 kHz) to compare against the Python's `synth/`.
 The Python stays the reference and the analysis; change a model here first, then its port.

@@ -27,7 +27,7 @@ The engine has no idea what an attack is, and must not learn.
 A sequence's sounds are not all in its steps, so there are three sources.
 
 **The plan.**
-`AnimPlan.cues` lists everything a step's own motion makes: `{at_ms, kind, step, hits, n_cards, undoes, room_ms}`, twelve bytes a cue.
+`AnimPlan.cues` lists everything a step's own motion makes: `{at_ms, kind, step, hits, n_cards, undoes}`, twelve bytes a cue.
 `at_ms` is on the same clock as every step's `start_ms`.
 A host reads it through the generated layout (`sdk/ts/gen/anim.bots.ts`, `sdk/swift/gen/kernel.ios.swift`) like the rest of the plan.
 
@@ -112,18 +112,12 @@ The kernel spends one COVER event per card, so a two-card cover is two steps and
 **An out is struck with the move that caused it.**
 Its own step sits a bout-end hold (1.5 s) later when it follows a last defence, which is long after the badge collapsed.
 
-**The quiet before a cue (`room_ms`).**
-A gesture can start well before its moment: the strokes that gather a table come before it is swept.
-`room_ms` is how long before `at_ms` the plan has nothing else to strike: back to the end of the latest cue struck before it (its last strike), plus `ANIM_SOUND_ROOM_GUARD_MS` (150 ms) for that cue's own tail, or `at_ms` itself when nothing comes before it.
-A host fits such a gesture into it, so no cue is ever moved for a sound and a gathering never plays over the beat before.
-Measured over real games (`test_plan_cues_over_real_games` prints it): every sweep has at least 400 ms, and 29 of 85 have a second or more (the bout-end hold behind a last cover); no pickup has 400 ms, because a pickup opens its run or follows the attack it answers by one gap.
-
 **A cue never moves once it is in a plan.**
 The web appends to a run in flight and re-plans every frame.
 Every cue rule reads only a step's own beat and the steps before it, so the longer plan has the shorter one's cues at the same milliseconds.
 A host can therefore remember what it has scheduled by `(step, kind)`, which the kernel keeps unique.
 
-Both properties, and that a room never reaches back past the cue before it, are held over 3913 plans of real games by `test_plan_cues_over_real_games` in `c/tests/tests.c`.
+Both properties are held over 3913 plans of real games by `test_plan_cues_over_real_games` in `c/tests/tests.c`.
 
 ## How the web plays one
 
@@ -134,12 +128,18 @@ The engine aims each take's anchor at `AudioContext.currentTime + delay`.
 **A take starts its anchor early.**
 Every file is a whole gesture, and its anchor is how far into the file the cue's moment is (`src/audio/gen/cueTakes.ts`, written by soundgen).
 A `LIFT` take is the grab and the thumb slide, so it starts 280-440 ms before the card leaves; a landing starts a few tens of ms before its peak; the transfer's slide has a negative anchor and starts 50 ms after its landing.
-A cue is therefore handed over its longest anchor plus the look-ahead before its moment (`cueLeadMs`), so the longest gathering (a sweep's, 1.25 s) is scheduled on time whenever the plan knew about it that early.
+A cue is therefore handed over its longest anchor plus the look-ahead before its moment (`cueLeadMs`), so the longest gathering (five strokes before a sweep, 3.5 s) is scheduled on time whenever the plan knew about it that early.
 
-**When there is less time than the gesture.**
-The engine picks a take that fits both the plan's `room_ms` and the time left before the moment: a sweep plays the most strokes its cards ask for (one per 2.5 cards, 1-5) that fit, down to the lift alone.
-A take that still starts in the past is started now, that far into the file: the moment stays where the kernel put it and the part of the gesture that can no longer be heard is not.
-That is the case for every move that OPENS a run: a run starts as its push arrives, so its first lift is at 0 ms and only the tail of the thumb slide is heard (see the open questions).
+**A take is always played whole** (Alex: "you should definitely play them ... and play them in full").
+When the time left before a moment is shorter than a take's anchor, the take starts now, from its first sample, and its moment comes late; nothing is ever started part way into its file.
+That is the case for every move that OPENS a run: a run starts as its push arrives, so its first `LIFT` is at 0 ms.
+For it the deal and the lift have TIGHT takes, the grab and the thumb slide moved closer together and to the moment (Alex: "maybe put them closer to each other"): the lift's grab 60 ms before the slide's peak and the peak 30 ms before the card leaves, where they were 110 and 130 ms; the deal's slide peak 50 ms before the grab, where it was 130.
+The engine plays an ordinary take when one fits the time it has, and a tight one when none does, so a run's first lift is heard whole and late by 180-290 ms (the slide's own swell before its peak) where an ordinary take would be 280-440 ms late.
+
+**The strokes before a sweep or a pickup are a prelude.**
+They are a take of their own, one set per stroke count (one stroke per 2.5 cards of the cue, 1-5, as `disc_game.py` counts them), each stroke as long as the recordings' (0.8 times one, 0.25-0.7 s) and never compressed.
+The engine starts them their anchor before the cue (the last stroke ends 100-180 ms before a sweep's lift, 50-120 ms before a pickup's), over whatever is sounding then (Alex: "just play the pickup over the other sounds then"), and the lift's own take still lands on its cue.
+With no time before the cue at all (a pickup opens its run) the strokes start at once, in full, and the lift and the cards reaching the hand keep their own cues.
 
 **A landing at a far seat is quieter.**
 `DEAL_LAND` is struck at `anim_seat_gain_pm(viewer, seat, n_seats)`, the kernel's inverse-distance level from Alex's table geometry (`deal_game.py`): at four seats a neighbour's card lands 4.7 dB under one's own and the seat across 6.8 dB under.
@@ -211,7 +211,7 @@ It names 12.0 of the 18 cues on average, so it is a strong hint at a lobby (4) a
 - A strike whose file is still on its way waits for it: it starts as the file decodes if that is no more than 80 ms behind the moment it was aimed at, and is dropped otherwise.
 
 **Measured with the placeholders** (2026-10-13) in Chrome on the tutorial, where Start is the first gesture and the deal follows it, from a cold checkout started with `npm run dev`, cache off.
-The modelled set is 35 times the bytes (see "The 4.4 MB itself"), so these numbers are history until they are measured again.
+The modelled set is 15 times the bytes (see "Shipped as AAC"), so these numbers are history until they are measured again.
 The network was throttled with Chrome's own presets after the page had loaded.
 
 | | Before | After |
@@ -232,36 +232,43 @@ That was a measurement that stopped after seven seconds: the deal runs 6.75 s an
 In both columns above all eighteen dealt cards were heard.
 What the change buys is margin: the sound is ready 7 ms after the tap where it used to be 257 ms on a slow connection, and a slower one than that would have lost cards.
 
-### The 4.4 MB itself
+### Shipped as AAC
 
-111 files, 4,362,854 bytes, all 16-bit mono WAV (the placeholders were 16 files, 122 KB).
+139 files, 1,846,259 bytes of AAC in MP4 (`.m4a`), from 6,462,394 bytes of 16-bit mono WAV (the placeholders were 16 files, 122 KB).
+soundgen renders the WAVs into `tools/soundgen/build/wav/`, ffmpeg's native AAC encoder (mono, `-aac_coder fast`) encodes each into `public/audio/gen/`, and `soundgen check` holds every file to its take.
 
-| Cue | Takes | Bytes | Rate |
-| --- | --- | --- | --- |
-| `SWEEP` | 18 (3 for each of 0-5 strokes) | 1,384,254 | 32 kHz |
-| `FLIP` | 8 | 496,466 | 32 kHz |
-| `LIFT` | 8 | 349,976 | 48 kHz |
-| `DEAL` | 8 | 341,240 | 48 kHz |
-| `INTO_HAND` | 8 | 313,864 | 32 kHz |
-| `PASS` | 8 | 310,066 | 32 kHz |
-| `TURN` | 8 | 222,618 | 32 kHz |
-| `PILE` | 8 | 208,224 | 32 kHz |
-| `PICKUP` | 8 | 196,192 | 32 kHz |
-| `PLACE` | 8 | 187,840 | 32 kHz |
-| `COVER` | 8 | 175,088 | 32 kHz |
-| `DEAL_LAND` | 8 | 136,450 | 32 kHz |
-| the five placeholders | 5 | 40,576 | 8-12 kHz |
+**The bitrates are measured, not chosen** (`tools/soundgen/aac/bitrate.py`).
+Each set of takes is encoded at 48-192 kbps exactly as the build does, decoded, and held against the WAVs: the median 1/12-octave spectrum within 0.5 dB in every band within 30 dB of the loudest, and every `measure.py` measure moved by no more than a quarter of the takes' own spread.
+The lowest that passes ships (the `kbps` of each set in `RECIPES`): 96 kbps for the flip, the throw-in and cover landings, the pile and the dealt landing; 128 for the deal, the lift, the turn, the pass, the pickup, the sweep and its strokes and the slide into the hand; 160 for the tight lift and the pickup's strokes; 192 for the tight deal (four takes, so its median moves most).
+At 8 and 12 kHz the encoder gives no more than about 64 kbps whatever it is asked; the five placeholders ship at 64 and measure within 0.8 dB, where the one measure each still misses (a 54 dB low-high balance, a centroid) is the same at every bitrate.
+
+**The priming, measured.**
+An AAC encoder starts its stream with priming samples (ffmpeg's: 1024), and an anchor counts samples from a take's first sample.
+The file says where the take starts in its edit list (`elst`, media time 1024), and with the movie's timescale set to the sample rate (`-movie_timescale`) it says how long the take is to the sample (at ffmpeg's default of 1000 the end is rounded to the millisecond).
+Decoded, one take of every set (and every lift) against its WAV, by cross-correlation and length:
+
+| Decoder | Lag | Length |
+| --- | --- | --- |
+| headless Chrome's `decodeAudioData` (FFmpeg) | 0 samples, every take | equal, every take |
+| headless Firefox's `decodeAudioData` (driven over WebDriver BiDi) | 0 | equal |
+| Core Audio (`afconvert`, the AudioFile and ExtAudioFile API WebKit's `AudioFileReaderCocoa` decodes with on macOS and iOS) | 0 | equal |
+| the ffmpeg CLI | 0 | 1024-frame padding not trimmed at the end (it honours the edit's start only) |
+
+Safari itself was not driven: there is no headless Safari, and `safaridriver` opens a window.
+Its decoder is Core Audio's, measured above, and Apple's TN2258 documents the edit list as how Core Audio reads AAC priming.
+So no anchor is corrected: every browser starts the WAV's first sample on the cue.
+`e2e/audio_cues.test.ts` holds it: `make check` (every file one edit, starting at the priming, as long as its take, at its rate) and ffmpeg's decode of one take of every set lined up with its WAV to the sample; both halves were mutation-checked (no movie timescale; a 5 ms delay).
 
 | Option | Chosen | Why |
 | --- | --- | --- |
-| 32 kHz where a model has nothing above 15 kHz | yes | every model but the deal's thumb slide cuts at 15 kHz, so 32 kHz (a 15.6 kHz windowed-sinc low pass, -0.8 dB at 15 kHz, -77 dB of alias) holds all of it at two thirds of the bytes |
-| 48 kHz for `DEAL` and `LIFT` | yes | they carry the thumb slide, whose recordings reach 20 kHz: 38% of its energy is above 16 kHz |
-| 24 kHz | no | it would cut the 12-15 kHz the models carry |
-| Trimming | yes | each take is cut to 60 dB under its peak at both ends |
-| Pickup strokes | no | no real game leaves a pickup any room, so its 0-5 stroke takes (1.4 MB) would never be heard; `RECIPES` gives it levels again the day a plan does |
-| One packed file for all sounds | no | it defeats loading by priority (the first cue would wait for the whole pack), and a pack needs an index, which is a second layout to keep or a manifest |
-| A compressed format (AAC, Opus) | not yet: the biggest open item | it would cut this about ten times; it needs an encoder in the build, Opus does not decode in every Safari, and both add a codec's start-up padding, which the anchors would then have to include |
-| Fewer takes | not by my judgment | 8 a cue (3 a stroke count) is what the models were heard as; `takes` in `RECIPES` is one number a cue |
+| AAC in MP4 | yes | decodes in every browser the game targets, with its priming declared |
+| Opus | no | Safari's `decodeAudioData` support is too recent to rely on |
+| Apple's AAC encoder (`aac_at`) | no | macOS only; the CI lanes that build the site are Linux, and one encoder writes one set of files |
+| 32 kHz where a model has nothing above 15 kHz, 48 kHz for `DEAL` and `LIFT` | yes | as for the WAVs: the thumb slide has 38% of its energy above 16 kHz |
+| One packed file for all sounds | no | it defeats loading by priority, and a pack needs an index |
+
+**ffmpeg is a build dependency** of `npm run sounds` (Homebrew on macOS, the distribution's package on Linux): the CI lanes that build the site and run the full e2e suite install it.
+Type-checking and the other test lanes run `npm run sounds:table`, which writes only the take table and needs no ffmpeg.
 
 ## How to hear each cue
 
@@ -282,10 +289,11 @@ Prints each file's rate, length, bytes, anchor, peak and RMS.
 
 ## How to replace a sound with a recording
 
-1. Put the recording in `public/audio/`, for example `public/audio/place_a.wav`.
+1. Put the recording in `public/audio/`, for example `public/audio/place_a.m4a`.
    Anything every target browser's `decodeAudioData` reads will do: WAV, m4a/AAC or mp3 (not ogg, which Safari will not decode).
+   An AAC file must declare its priming (an edit list or iTunSMPB), or its anchor must count it.
 2. In `src/audio/cueSounds.ts`, name it in the cue's row with its anchor, the ms into the file of the cue's moment (0 when the file starts on it):
-   `[ANIM_CUE_PLACE]: { ...model(ANIM_CUE_PLACE), takes: [{ file: 'place_a.wav', anchorMs: 12, level: 0 }] },`
+   `[ANIM_CUE_PLACE]: { ...model(ANIM_CUE_PLACE), takes: [{ file: 'place_a.m4a', anchorMs: 12, role: 'main', level: 0 }] },`
    Several takes in a row are takes of one gesture and are played in turn, never the same one twice running.
 3. Set the row's `gain` by ear on `/sounds`.
 4. In `tools/soundgen/soundgen.c`, set the replaced cue's `make` to `NULL` in `RECIPES` so its takes stop being generated.
@@ -316,7 +324,7 @@ The build runs no Python and no numpy.
 | two-finger grab | `throwin/an/tgrab_syn.py tgrab2 9` | `LIFT`, 240 ms before the card leaves |
 | cover landing | `cover/an/cov_syn.py cover3 7` | `COVER` |
 | pass "shfff" | `pass/an/pass_syn.py pass7 4` | `PASS`, from 150 ms after the landing |
-| strokes (SHFF = 1, the pass's timbre) | `discard/an/disc_syn.py` scrape | `SWEEP` (and `PICKUP`, not shipped: no room) |
+| strokes (SHFF = 1, the pass's timbre) | `discard/an/disc_syn.py` scrape | the preludes of `SWEEP` and `PICKUP` |
 | discard lift (two knocks) | `disc_syn.py` lift | `SWEEP`, 100-180 ms after the last stroke |
 | placement on the pile | `disc_syn.py` place | `PILE` |
 | pickup lift (one soft knock) | `disc_syn.py` plift | `PICKUP` |
@@ -328,10 +336,8 @@ The levels are the games' own, on the deal's scale (g = -34 to -32 dBFS a take):
 The whole set is then lifted by one constant (`LIFT_DB`, 32 dB) so the loudest take peaks at -3.3 dBFS: the deal's scale was a listening level, not a file level.
 Balancing the cues against each other is still open (Alex: the cover is "quiet as fuck", the two-finger grab too quiet), and is the `gain` column of `src/audio/cueSounds.ts` (1 for every model, which is the model's level), set by ear on `/sounds`.
 
-**The strokes are fitted, never moved.**
-A sweep's takes come in six levels, 0-5 strokes, the strokes 0.8 times a recorded one's length and 60-200 ms apart as `disc_game.py` draws them, a little louder as the pile grows.
-No take starts more than 1.25 s before its moment (the hold behind a last cover, less the cover's tail and an out's note): the strokes and their gaps are compressed together to fit, never under 150 ms a stroke or 30 ms a gap (Alex: "trim/compress the strokes to fit rather than moving any cue").
-The engine plays the most strokes the cue's cards ask for that fit the cue's `room_ms`.
+**The strokes are heard in full.**
+Before a sweep or a pickup come 1-5 strokes (one per 2.5 cards), each 0.8 times a recorded stroke's length and 60-200 ms apart as `disc_game.py` draws them, a little louder as the pile grows, written as preludes of their own and played before the lift over whatever else is sounding.
 
 **How each was checked.**
 `make -C tools/soundgen parts` writes each model alone, 12 takes at 48 kHz, named as its Python names them.
@@ -385,12 +391,12 @@ It takes about 12 s of one core.
 | Sound button, finish hook and priority hook | about 1.2 KB gzipped | the same |
 | `web.wasm.gz` | +858 B (36,974 to 37,832) | with the kernel |
 | `bots.wasm.gz` | +735 B (87,992 to 88,727) | server side |
-| The sound files | 4.4 MB, 111 requests (was 122 KB, 16) | wanted ones first; all of them after the first tap; none when muted |
+| The sound files | 1.8 MB of AAC, 139 requests (was 122 KB, 16) | wanted ones first; all of them after the first tap; none when muted |
 | The take table (`src/audio/gen/cueTakes.ts`) | about 10 KB of source, a few KB gzipped | with the game routes' JavaScript |
 | `/sounds` | about 2.5 KB gzipped | that route only |
 
 The wasm numbers are measured against a build of main as of the rating stamp (PR #284).
-The modelled cues (the four new ids, `room_ms`, the transfer flag and `anim_seat_gain_pm`) took `web.wasm.gz` from 49,544 to 49,924 B (+380 B, measured against this branch before them, 2026-11-07).
+The modelled cues (the four new ids, the transfer flag and `anim_seat_gain_pm`) took `web.wasm.gz` from 49,544 to 49,924 B (+380 B, measured against this branch before them, 2026-11-07).
 The JavaScript numbers are an estimate from bundling the modules alone, not a diff of two `next build` outputs.
 Neither wasm module grew a page of linear memory (`e2e/mem/wasm_memory.test.ts`).
 
@@ -405,7 +411,7 @@ The plan wire already carries each event's `msg` (`FIO_PLAN_VERSION` 4), so an i
 
 **What a host has to add.**
 
-1. Expose the cues on `AnimPlan` in `sdk/swift/AnimPlanWire.swift`, beside `steps` (a `Cue` struct copied from `pl.cues`, `room_ms` included).
+1. Expose the cues on `AnimPlan` in `sdk/swift/AnimPlanWire.swift`, beside `steps` (a `Cue` struct copied from `pl.cues`).
 2. A `CuePlayer` in FoolishKit: an `AVAudioEngine` with one `AVAudioPlayerNode` pool, the files loaded once as `AVAudioPCMBuffer`, and a table keyed by cue id of takes with their anchors and levels - the twin of `cueSounds.ts`.
    soundgen's take table would then also be written as Swift (or read through the kernel), the anchors being soundgen's.
    A take is started its anchor before its moment, as on the web, and a `DEAL_LAND` at the seat's gain (an `fio_` export of `anim_seat_gain_pm` is still to add).
@@ -427,11 +433,9 @@ An iMessage extension has its own constraints (memory, and it is torn down betwe
 2. **A transfer is its own sound now** (`PASS`, beside its `PLACE`): the plan reads the event's `msg` (`EVW_MSG_PASSED`) through `ClientPlanStep.msg` and the iOS plan wire, and my own transfer is heard as one before the server confirms it.
    An attack and a throw-in are still one sound, which is what Alex modelled.
    A refused transfer reverts as `PLACE` backwards, without its slide.
-3. **The grab and thumb slide of a move that opens its run are not heard.**
-   A run starts as its push arrives, so its first `LIFT` is at 0 ms, and the 280-440 ms of grab and slide before the card leaves are skipped: only the slide's tail is heard.
-   Most moves open their run (one push a move), so the lift's gesture is mostly heard where a move follows another inside one push (a cover after an attack, a refill's deal).
-   The alternative is to play it whole and late, starting as the card leaves, which puts the grab under the flight; say if you prefer that.
-   The same applies to a pickup's strokes, and more so: no plan ever leaves a pickup room for them, so they are not shipped at all.
+3. **A move that opens its run hears its grab and slide late.**
+   Played whole (Alex's call), a tight take 180-290 ms behind the card leaving, where the slide's swell before its peak is most of it; a shorter swell would be a change to the model.
+   A run-opening pickup's lift lands 60-80 ms late the same way, under its strokes.
 4. **`HAND_OFF` at every bout end.**
    The roles change hands after every bout, so this is heard often.
    It may want to be only the transfer's sound.
@@ -455,7 +459,5 @@ An iMessage extension has its own constraints (memory, and it is torn down betwe
 12. **The balance between the cues.**
     Every model is written at its `*_game.py` level and the mix column is 1 throughout: the cover is still "quiet as fuck" and the two-finger grab too quiet, by Alex's ear, and that is his to set on `/sounds`.
     The five placeholders keep their old gains against a much quieter card set; they will want the same pass.
-13. **4.4 MB of WAV.**
-    A compressed format would cut it about ten times, and is the one real cost left (see "The 4.4 MB itself").
-14. **The strokes before a sweep are compressed** to fit the hold before it (at most 1.25 s, strokes down to 150 ms), and fewer are played when the hold is shorter.
-    A sweep with no hold before it (an attacker's "good" in a later push) is the lift alone.
+13. **1.8 MB of AAC** (from 6.5 MB of WAV), loaded after the first tap, wanted cues first.
+14. **The strokes play over the beat before** (Alex: "just play the pickup over the other sounds"): five strokes start 3.5 s before their sweep, over the last cover and its hold.
