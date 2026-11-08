@@ -11,7 +11,7 @@
 # (MAX_BATTLES, the replay arenas) and the triple is not wasm32, so every offset
 # here is its own; and iOS reads a different set of structs, because it reads
 # them where they lie instead of off a wire.
---header client_table.h --header anim_plan.h --header bot_drive.h --header msg_wire.h --header roster.h
+--header client_table.h --header anim_plan.h --header bot_drive.h --header msg_wire.h --header roster.h --header cue_voice.h
 #
 # The client's slot (client_table.h): one viewer's masked board joined to the
 # table's roster. What MaskedView.swift and PackedGame.swift used to walk byte
@@ -34,6 +34,12 @@
 --count AnimPlan.steps=n_steps --count AnimPlan.veil_ids=n_veil --count AnimPlan.cues=n_cues
 --count AnimCounts.hand=n_players --count AnimFrame.hand=n_players
 --count AnimBeats.beats=n_beats --count AnimSurfacePlan.beats=n
+#
+# What a cue plays (cue_voice.h): one row of soundgen's take table, and the
+# answer to one strike - which take, when its file starts, how loud.
+--root CueTakeRow --root CueStrike
+--snapshot CueTakeRow --snapshot CueStrike
+--count CueTakeRow.name=name_len
 #
 # One bot cycle (bot_drive.h), as BotDriveWire.swift decoded it out of a packed
 # blob. LegalMove crosses with the same fields the TS side reads.

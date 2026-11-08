@@ -20,6 +20,7 @@
 #include "anim_plan.h"     // AnimPlan: the plan, read where it lies
 #include "hand_layout.h"   // HandMetrics: the hand's shape, crossing as its structs
 #include "ask.h"           // ask_decode: what the server reads of the body the app posts
+#include "cue_voice.h"     // CueTakeRow, CueStrike: what a cue plays, read where it lies
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1765,6 +1766,67 @@ static int board_rules_check(void) {
         || (fio_cues_next(GAME_STATUS_PLAYING, -1, 2, 1, 0, 0, 0) & (1u << ANIM_CUE_FOOL))
         || !(fio_cues_next(GAME_STATUS_PLAYING, 1, 2, 1, 0, 0, 0) & (1u << ANIM_CUE_FOOL))) {
         printf("FAIL next cues\n"); return 1;
+    }
+    // How loud a dealt card lands at a seat (anim_seat_gain_pm): one's own at
+    // full, at four seats a neighbour -4.7 dB and the seat across -6.8 dB, a
+    // spectator hears every seat at full.
+    if (fio_seat_gain_pm(0, 0, 4) != 1000 || fio_seat_gain_pm(0, 1, 4) != 585
+        || fio_seat_gain_pm(0, 2, 4) != 455 || fio_seat_gain_pm(0, 3, 4) != 585
+        || fio_seat_gain_pm(-1, 2, 4) != 1000) {
+        printf("FAIL seat gain %d %d %d\n", fio_seat_gain_pm(0, 1, 4), fio_seat_gain_pm(0, 2, 4), fio_seat_gain_pm(-1, 2, 4));
+        return 1;
+    }
+    // What a cue plays: soundgen's table as this build links it, and the
+    // strike rules over it (cue_voice.h; their cases are anim_plan_test's).
+    {
+        const int n = fio_cue_n_takes();
+        int voiced = 0;
+        for (int i = 0; i < n; i++) {
+            const CueTakeRow *t = fio_cue_take(i);
+            if (!t || t->name_len == 0 || t->name_len >= CUE_NAME_MAX || strlen(t->name) != t->name_len
+                || t->cue == ANIM_CUE_NONE || t->cue >= ANIM_N_CUES || t->cue == ANIM_CUE_REVERT
+                || t->rate <= 0 || t->n_samples <= 0) {
+                printf("FAIL cue take %d\n", i); return 1;
+            }
+            voiced |= 1 << t->cue;
+        }
+        // Every cue the kernel can make has a sound, but REVERT, which is
+        // another's backwards.
+        const int want = ((1 << ANIM_N_CUES) - 1) & ~(1 << ANIM_CUE_NONE) & ~(1 << ANIM_CUE_REVERT);
+        if (n < 100 || voiced != want || fio_cue_take(n) || fio_cue_take(-1)) {
+            printf("FAIL cue table: %d takes, cues 0x%x\n", n, voiced); return 1;
+        }
+        fio_cue_seed(7);
+        // A lift with no time before it plays a TIGHT take, whole, from now;
+        // with a second to go an ordinary one, its anchor before the moment.
+        const CueStrike *now = fio_cue_strike(ANIM_CUE_LIFT, 0, 1, 0, 1000);
+        const CueTakeRow *tn = now->take >= 0 ? fio_cue_take(now->take) : NULL;
+        if (!tn || tn->role != CUE_ROLE_TIGHT || now->start_us != 0 || now->prelude != -1 || now->gain_pm != 1000) {
+            printf("FAIL cue strike now\n"); return 1;
+        }
+        const CueStrike *later = fio_cue_strike(ANIM_CUE_LIFT, 1000000, 1, 0, 1000);
+        const CueTakeRow *tl = later->take >= 0 ? fio_cue_take(later->take) : NULL;
+        if (!tl || tl->role != CUE_ROLE_MAIN || later->start_us != 1000000 - tl->anchor_us) {
+            printf("FAIL cue strike later\n"); return 1;
+        }
+        // A sweep of ten cards is gathered in four strokes first; a refused
+        // attack is PLACE backwards, with none; a dealt card at a far seat is
+        // struck at the seat's level; a cue with nothing to undo is silent.
+        const CueStrike *sw = fio_cue_strike(ANIM_CUE_SWEEP, 5000000, 10, 0, 1000);
+        const CueTakeRow *tp = sw->prelude >= 0 ? fio_cue_take(sw->prelude) : NULL;
+        if (!tp || tp->cue != ANIM_CUE_SWEEP || tp->role != CUE_ROLE_PRELUDE || tp->level != 4
+            || sw->prelude_start_us != 5000000 - tp->anchor_us) {
+            printf("FAIL cue strike sweep\n"); return 1;
+        }
+        const CueStrike *rv = fio_cue_strike(ANIM_CUE_REVERT, 0, 1, ANIM_CUE_PLACE, 1000);
+        const CueTakeRow *tr = rv->take >= 0 ? fio_cue_take(rv->take) : NULL;
+        if (!tr || tr->cue != ANIM_CUE_PLACE || !rv->backwards || rv->prelude != -1) {
+            printf("FAIL cue strike revert\n"); return 1;
+        }
+        if (((const CueStrike *)fio_cue_strike(ANIM_CUE_DEAL_LAND, 0, 1, 0, fio_seat_gain_pm(0, 2, 4)))->gain_pm != 455
+            || ((const CueStrike *)fio_cue_strike(ANIM_CUE_REVERT, 0, 1, ANIM_CUE_NONE, 1000))->take != -1) {
+            printf("FAIL cue strike gain / silent revert\n"); return 1;
+        }
     }
     // The end screen clears the board's chrome (anim_board_chrome).
     if (fio_board_chrome(1, 1, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) != FIO_CHROME_RESULTS

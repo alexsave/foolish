@@ -33,6 +33,7 @@
 #include "../src/anim_plan.h"
 #include "../src/msg_wire.h"
 #include "../src/card.h"
+#include "../src/cue_voice.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -2079,6 +2080,109 @@ static void test_plan_sound_cues(void) {
     }
 }
 
+// WHAT A CUE PLAYS (cue_voice.h): the web engine's rules (src/audio/cueAudio.ts,
+// cueSounds.ts) over a table of this test's own, so each case is visible.
+static void test_cue_voice(void) {
+    // Two lift takes that need 300 and 400 ms, two tight ones (100, 150), one
+    // pass take that starts 50 ms AFTER its moment, a one-take cue, and a sweep
+    // with preludes of 1 and 2 strokes. 1 s at 1 kHz each, so a microsecond
+    // is easy to count.
+    static const CueTakeRow T[] = {
+        { 1000, 1000, 300000, ANIM_CUE_LIFT,  CUE_ROLE_MAIN,  0, 6, "lift_0" },
+        { 1000, 1000, 400000, ANIM_CUE_LIFT,  CUE_ROLE_MAIN,  0, 6, "lift_1" },
+        { 1000, 1000, 100000, ANIM_CUE_LIFT,  CUE_ROLE_TIGHT, 0, 12, "lift_tight_0" },
+        { 1000, 1000, 150000, ANIM_CUE_LIFT,  CUE_ROLE_TIGHT, 0, 12, "lift_tight_1" },
+        { 1000, 1000, -50000, ANIM_CUE_PASS,  CUE_ROLE_MAIN,  0, 6, "pass_0" },
+        { 1000, 1000, 20000,  ANIM_CUE_PLACE, CUE_ROLE_MAIN,  0, 7, "place_0" },
+        { 1000, 1000, 30000,  ANIM_CUE_SWEEP, CUE_ROLE_MAIN,  0, 7, "sweep_0" },
+        { 1000, 1000, 900000, ANIM_CUE_SWEEP, CUE_ROLE_PRELUDE, 1, 17, "sweep_strokes_s1" },
+        { 1000, 2000, 1900000,ANIM_CUE_SWEEP, CUE_ROLE_PRELUDE, 2, 17, "sweep_strokes_s2" },
+        { 1000, 1000, 10000,  ANIM_CUE_HAND_OFF, CUE_ROLE_MAIN, 0, 10, "hand_off_0" },
+    };
+    const int n = (int)(sizeof T / sizeof T[0]);
+    CueMix M[ANIM_N_CUES] = { 0 };
+    for (int c = 0; c < ANIM_N_CUES; c++) M[c].gain_pm = 1000;
+    M[ANIM_CUE_SWEEP].cards_per_level_pm = 2500;
+    M[ANIM_CUE_PLACE].per_card_pm = 200;
+    M[ANIM_CUE_HAND_OFF] = (CueMix){ 470, 60, 180, 0, 0 };
+    CueVoiceState st = { .rng = 12345 };
+    CueStrike s;
+
+    CHECK(cue_lead_us(T, n, ANIM_CUE_LIFT) == 400000 && cue_lead_us(T, n, ANIM_CUE_SWEEP) == 1900000
+          && cue_lead_us(T, n, ANIM_CUE_PASS) == 0 && cue_lead_us(T, n, ANIM_CUE_OUT) == 0,
+          "a cue's lead is its longest anchor, preludes included, and never negative");
+
+    // An ordinary take whose anchor fits, started its anchor before the moment.
+    for (int i = 0; i < 20; i++) {
+        CHECK(cue_strike(T, n, M, &st, ANIM_CUE_LIFT, 350000, 1, 0, 1000, &s) == 0 && s.take == 0
+              && s.start_us == 50000, "with 350 ms to go only the 300 ms lift fits, 50 ms from now");
+    }
+    // None fits: a tight take, whole, from now; and the two alternate.
+    int last = -1, alternated = 1;
+    for (int i = 0; i < 20; i++) {
+        cue_strike(T, n, M, &st, ANIM_CUE_LIFT, 120000, 1, 0, 1000, &s);
+        CHECK(s.take == 2 || s.take == 3, "with 120 ms to go no lift fits, so a tight one plays");
+        CHECK(s.start_us == (s.take == 2 ? 20000 : 0), "the 100 ms one 20 ms from now, the 150 ms one from now, late");
+        alternated &= s.take != last;
+        last = s.take;
+    }
+    CHECK(alternated, "a cue never plays the take it played last when it has another");
+    // A cue with one take plays it every time; a negative anchor starts after the moment.
+    for (int i = 0; i < 3; i++) {
+        cue_strike(T, n, M, &st, ANIM_CUE_PASS, 0, 1, 0, 1000, &s);
+        CHECK(s.take == 4 && s.start_us == 50000, "the pass's one take, 50 ms after a moment that is now");
+    }
+    cue_strike(T, n, M, &st, ANIM_CUE_PASS, -20000, 1, 0, 1000, &s);
+    CHECK(s.start_us == 50000, "a moment already past is taken as now, as the web clamps its delay");
+    // Backwards: the anchor from the file's other end (1 s long, anchor 20 ms
+    // in: 980 ms from its end), so with a second to go it starts 20 ms from now.
+    cue_strike(T, n, M, &st, ANIM_CUE_REVERT, 1000000, 1, ANIM_CUE_PLACE, 1000, &s);
+    CHECK(s.take == 5 && s.backwards == 1 && s.start_us == 20000 && s.prelude == -1,
+          "a revert is the undone cue's take reversed, its anchor measured from the end, no prelude");
+    cue_strike(T, n, M, &st, ANIM_CUE_REVERT, 1000000, 6, ANIM_CUE_SWEEP, 1000, &s);
+    CHECK(s.take == 6 && s.prelude == -1, "a reverted sweep has no strokes before it");
+    CHECK(cue_strike(T, n, M, &st, ANIM_CUE_REVERT, 0, 1, ANIM_CUE_NONE, 1000, &s) == -1 && s.take == -1,
+          "a revert of nothing is silent");
+    CHECK(cue_strike(T, n, M, &st, ANIM_CUE_OUT, 0, 1, 0, 1000, &s) == -1 && s.take == -1,
+          "a cue with no takes is silent");
+    CHECK(cue_strike(T, n, M, &st, 99, 0, 1, 0, 1000, &s) == -1 && cue_strike(NULL, 0, M, &st, ANIM_CUE_LIFT, 0, 1, 0, 1000, &s) == -1,
+          "a cue out of range, or no table, is silent");
+    // Preludes: one stroke per 2.5 cards (1 at least), as many as there are.
+    cue_strike(T, n, M, &st, ANIM_CUE_SWEEP, 3000000, 1, 0, 1000, &s);
+    CHECK(s.take == 6 && s.prelude == 7 && s.start_us == 2970000 && s.prelude_start_us == 2100000,
+          "one card is one stroke, its anchor before the same moment as the lift's");
+    cue_strike(T, n, M, &st, ANIM_CUE_SWEEP, 3000000, 4, 0, 1000, &s);
+    CHECK(s.prelude == 8, "four cards are two strokes (4 / 2.5 rounds to 2)");
+    cue_strike(T, n, M, &st, ANIM_CUE_SWEEP, 500000, 12, 0, 1000, &s);
+    CHECK(s.prelude == 8 && s.prelude_start_us == 0 && s.start_us == 470000,
+          "twelve cards are as many strokes as there are, from now when there is no time; the lift keeps its moment");
+    cue_strike(T, n, M, &st, ANIM_CUE_SWEEP, 500000, 0, 0, 1000, &s);
+    CHECK(s.prelude == -1, "no cards, no strokes");
+    // Level: the cue's gain times the strike's, heavier per card to +60%.
+    cue_strike(T, n, M, &st, ANIM_CUE_PLACE, 0, 1, 0, 455, &s);
+    CHECK(s.gain_pm == 455 && s.rate_pm == 1000, "a strike's own gain (a far seat) is its level; a model does not wander");
+    cue_strike(T, n, M, &st, ANIM_CUE_PLACE, 0, 3, 0, 1000, &s);
+    CHECK(s.gain_pm == 1400, "two cards past the first at 20%% a card is +40%% (got %d)", s.gain_pm);
+    cue_strike(T, n, M, &st, ANIM_CUE_PLACE, 0, 30, 0, 1000, &s);
+    CHECK(s.gain_pm == 1600, "and no more than +60%% (got %d)", s.gain_pm);
+    // A stand-in wanders, within its range and reaching near its edges.
+    int lo_rate = 2000, hi_rate = 0, lo_gain = 2000, hi_gain = 0, inside = 1;
+    for (int i = 0; i < 400; i++) {
+        cue_strike(T, n, M, &st, ANIM_CUE_HAND_OFF, 0, 1, 0, 1000, &s);
+        inside &= s.rate_pm >= 940 && s.rate_pm <= 1060 && s.gain_pm >= 385 && s.gain_pm <= 555;
+        if (s.rate_pm < lo_rate) lo_rate = s.rate_pm;
+        if (s.rate_pm > hi_rate) hi_rate = s.rate_pm;
+        if (s.gain_pm < lo_gain) lo_gain = s.gain_pm;
+        if (s.gain_pm > hi_gain) hi_gain = s.gain_pm;
+    }
+    CHECK(inside && lo_rate < 950 && hi_rate > 1050 && lo_gain < 400 && hi_gain > 540,
+          "the hand-off wanders +-6%% in speed and +-18%% in level (%d-%d, %d-%d)", lo_rate, hi_rate, lo_gain, hi_gain);
+    // At a faster speed the anchor comes sooner: 10 ms at 1.06 is 9.43 ms.
+    cue_strike(T, n, M, &st, ANIM_CUE_HAND_OFF, 100000, 1, 0, 1000, &s);
+    const double want = 100000 - 10000 * 1000.0 / s.rate_pm;
+    CHECK(s.start_us >= (int)want - 1 && s.start_us <= (int)want + 1, "the anchor is played at the take's speed");
+}
+
 int main(void) {
     printf("anim_plan_test\n");
     test_optimistic_animation();
@@ -2094,6 +2198,7 @@ int main(void) {
     test_plan_sampled_per_frame();
     test_plan_is_laid_out_in_beats();
     test_plan_sound_cues();
+    test_cue_voice();
     test_hand_order_with_hidden_slots();
     if (g_fails == 0) printf("anim_plan_test: OK\n");
     else              printf("anim_plan_test: %d FAILURES\n", g_fails);

@@ -458,6 +458,32 @@ int fio_finish_cue(const uint8_t *elimination, int n_elim, int game_over,
 // AnimCueAsk's, in its order.
 unsigned fio_cues_next(int status, int my_seat, int n_players, int n_battles,
                        int n_covered, int has_flipped, int deck);
+// How loud a card dealt to `seat` lands for the viewer at `viewer` (negative
+// for a spectator), in thousandths: anim_seat_gain_pm, the kernel's geometry.
+// ANIM_CUE_DEAL_LAND is struck at it, with the seat of the cue's own step.
+int fio_seat_gain_pm(int viewer, int seat, int n_seats);
+
+// ---------- what a cue plays (c/src/cue_voice.h) ----------------------------
+// The take table soundgen wrote for this build (the files the app bundles, as
+// <name>.m4a) and the rules that pick a take for a strike, so a host's audio
+// engine only loads files and starts them where it is told. The two pointers
+// are a CueTakeRow and a CueStrike, read through the generated Swift layout
+// (readCueTakeRow, readCueStrike); the strike's is static storage, good until
+// the next call.
+//
+//   take i      i in [0, fio_cue_n_takes()); NULL out of range
+//   lead_us     the longest anchor of a cue's takes: how long before its moment
+//               a host must hand a cue over for its earliest take to start on time
+//   seed        the voice's generator (which take, how far a stand-in wanders)
+//   strike      cue `kind` with its moment `lead_us` from now, for `n_cards`;
+//               `undoes` is a REVERT's undone cue, `gain_pm` the strike's own
+//               level (fio_seat_gain_pm for a dealt card, 1000 otherwise). A
+//               take of -1 is a strike with nothing to play.
+int fio_cue_n_takes(void);
+const void *fio_cue_take(int i);
+int fio_cue_lead_us(int kind);
+void fio_cue_seed(uint32_t seed);
+const void *fio_cue_strike(int kind, int lead_us, int n_cards, int undoes, int gain_pm);
 
 // ---------- the pre-bout table (anim_plan.h) -------------------------------
 //

@@ -1,0 +1,104 @@
+// cue_voice.h - which take a sound cue plays, and when its file starts.
+//
+// The kernel decides WHICH cue a beat makes and WHEN (anim_plan.h "sound
+// cues"). This is the next layer down, the one a host's audio engine asks once
+// a cue is due: given "cue K, its moment D from now, standing for N cards",
+// which of the cue's takes to play, how far from now its file starts so that
+// its ANCHOR (the cue's moment inside the file) falls on the moment, whether
+// the strokes before a sweep or a pickup (a PRELUDE) go with it, and at what
+// level and speed. docs/AUDIO.md is the guide; the rules are its "How the web
+// plays one":
+//
+//   A TAKE IS NEVER CUT. A take whose anchor is longer than the time left
+//   before its moment starts now, whole, and late. A cue with TIGHT takes (the
+//   gesture pressed closer to its moment) plays one of those when no ordinary
+//   take fits, so it is late by as little as it can be.
+//   PRELUDES: one stroke per `cards_per_level` cards, 1 at least, as many as
+//   the cue has levels; started their own anchor before the same moment, over
+//   whatever is sounding, from now when there is no time.
+//   A REVERT is the undone cue's ordinary take played backwards, its anchor
+//   measured from the file's other end, with no prelude.
+//   VARIANTS: a cue never plays the take it played last, when it has others.
+//   THE MIX: a cue's gain, how far its level and pitch may wander either way,
+//   and how much louder it is a card past the first (CueMix, from soundgen).
+//
+// The TAKE TABLE and the MIX are soundgen's (tools/soundgen writes them for
+// every host from one render: src/audio/gen/cueTakes.ts for the web, a C file
+// for iOS), never written by hand. This file holds no table of its own: a host
+// hands it one.
+//
+// THE WEB'S ENGINE (src/audio/cueAudio.ts, cueSounds.ts) is the same rules in
+// TypeScript, written first; this is the C home iOS reaches through
+// fio_cue_strike (c/ios/include/ios_api.h). The two are held to the same
+// cases (c/tests/anim_plan_test.c, e2e/audio_cues.test.ts).
+
+#ifndef CUE_VOICE_H
+#define CUE_VOICE_H
+
+#include <stdint.h>
+#include "anim_plan.h"
+
+#define CUE_ROLE_MAIN    0
+#define CUE_ROLE_TIGHT   1
+#define CUE_ROLE_PRELUDE 2
+
+// A take's file stem, without ".m4a": "deal_0", "sweep_strokes_s3_1".
+#define CUE_NAME_MAX 32
+
+// One file soundgen writes.
+typedef struct {
+    int32_t rate;          // Hz, the file's own
+    int32_t n_samples;     // its length, to the sample (the m4a's edit list says so too)
+    int32_t anchor_us;     // from its first sample to its cue's moment; negative
+                           //   for a file that starts after the moment (the pass's slide)
+    uint8_t cue;           // ANIM_CUE_*
+    uint8_t role;          // CUE_ROLE_*
+    uint8_t level;         // a prelude's stroke count, 1..5; 0 otherwise
+    uint8_t name_len;
+    char    name[CUE_NAME_MAX];
+} CueTakeRow;
+
+// How a cue sits in the mix (soundgen's CUE_MIX). Thousandths, so the table is
+// exact in every host.
+typedef struct {
+    int32_t gain_pm;           // 1000 = the level the files were written at
+    int32_t pitch_pm;          // how far a play's speed may wander either way
+    int32_t level_pm;          // how far its level may wander either way
+    int32_t per_card_pm;       // louder by this a card past the first, to +600
+    int32_t cards_per_level_pm;// a prelude's cards per stroke (2500); 0 for none
+} CueMix;
+
+// What a host remembers between strikes: the take each cue played last, and
+// the prelude, so neither is played twice running. Zeroed is the start.
+typedef struct {
+    int16_t last[2 * ANIM_N_CUES];   // take index + 1; [cue] main, [ANIM_N_CUES + cue] prelude
+    uint32_t rng;
+} CueVoiceState;
+
+// The answer for one strike. Times are microseconds from NOW, never negative.
+typedef struct {
+    int32_t take;             // index into the table; -1 when the strike is silent
+    int32_t start_us;         // when its file starts
+    int32_t gain_pm;          // its level, the strike's own gain included (1000 = as written)
+    int32_t rate_pm;          // its speed (1000 = as written)
+    int32_t prelude;          // the strokes before it: an index, or -1
+    int32_t prelude_start_us;
+    int32_t prelude_gain_pm;
+    int32_t prelude_rate_pm;
+    int32_t backwards;        // 1: play `take` reversed (a REVERT)
+} CueStrike;
+
+// Strike `kind` so that its moment is `lead_us` from now (negative is taken as
+// now), standing for `n_cards`; `undoes` is a REVERT's undone cue, `gain_pm`
+// the strike's own level (a dealt card's seat, anim_seat_gain_pm). Fills `out`
+// and answers 0, or -1 with out->take = -1 for a strike with nothing to play
+// (no takes, a revert of nothing, a bad argument).
+int cue_strike(const CueTakeRow *takes, int n_takes, const CueMix *mix,
+               CueVoiceState *st, int kind, int lead_us, int n_cards, int undoes,
+               int gain_pm, CueStrike *out);
+
+// How long before its moment a cue's earliest take starts (its longest anchor,
+// preludes included), in microseconds: when a host must hand the cue over.
+int cue_lead_us(const CueTakeRow *takes, int n_takes, int kind);
+
+#endif

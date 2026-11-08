@@ -100,8 +100,13 @@ HOST_ONLY_SRC := src/bot_play.c
 # server (src/local_table.h). web.wasm and the native tests link it; a host that
 # serves games does not, so it is not in KERNEL_SRC (print-kernel).
 BROWSER_HOST_SRC := src/local_table.c
+# What a host that PLAYS the game's sounds adds: which take a cue plays and when
+# its file starts (src/cue_voice.h). iOS links it; no server does, so it is not
+# in KERNEL_SRC. Its take table is generated (CUE_TAKES_C, below) and linked
+# by iOS alone: the tests hand it tables of their own.
+PLAYBACK_SRC := src/cue_voice.c
 # Linked into every binary built here.
-CORE_SRC := $(KERNEL_SRC) $(HOST_ONLY_SRC) $(BROWSER_HOST_SRC)
+CORE_SRC := $(KERNEL_SRC) $(HOST_ONLY_SRC) $(BROWSER_HOST_SRC) $(PLAYBACK_SRC)
 # Where each becomes an object: build/obj/host/<the source's own path>.o, the
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
@@ -495,12 +500,25 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 # into ANY of them is caught rather than hidden by the others.
 IOS_BRIDGE_SRC := ios/ios_api.c ios/ios_api_view.c ios/ios_api_play.c \
                   ios/ios_api_anim.c ios/ios_api_replay.c \
-                  ios/ios_api_identity.c ios/ios_api_msg.c ios/ios_api_net.c
+                  ios/ios_api_identity.c ios/ios_api_msg.c ios/ios_api_net.c \
+                  ios/ios_api_sound.c
+# THE TAKE TABLE iOS plays from, written by soundgen from the same render as the
+# web's src/audio/gen/cueTakes.ts and the files the app bundles
+# (ios/scripts/bundle_sounds.sh). Never committed. Rendering every take is
+# about 12 s of one core, so it is remade only when soundgen (or a header it
+# reads) changed; it needs a C compiler and no ffmpeg.
+SOUNDGEN_DIR := ../tools/soundgen
+CUE_TAKES_C  := build/gen/cue_takes.c
+$(CUE_TAKES_C): $(wildcard $(SOUNDGEN_DIR)/*.c $(SOUNDGEN_DIR)/c/*.c $(SOUNDGEN_DIR)/c/*.h) \
+                $(SOUNDGEN_DIR)/Makefile src/anim_plan.h src/cue_voice.h
+	@mkdir -p $(@D)
+	@$(MAKE) -s -C $(SOUNDGEN_DIR) ctable CTABLE=$(abspath $@).new
+	@mv $@.new $@
 IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
-                src/hand_layout.c $(IOS_BRIDGE_SRC) \
+                src/hand_layout.c $(PLAYBACK_SRC) $(CUE_TAKES_C) $(IOS_BRIDGE_SRC) \
                 src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(KERNEL_SRC)) ios/ios_bots_api.c
 
@@ -583,7 +601,7 @@ ios-archives: $(IOSHOST_CORE_OBJ) $(IOSHOST_BOTS_OBJ) $(call c_objs,build/obj/io
 # and drives a full 4-player game to a fool through the Swift-facing entry
 # points. Fast (< 1s). This is the M-A keystone check runnable without a Mac.
 # Every host-side bridge program is the same objects and one file of its own.
-IOSHOST_OBJ = $(call c_objs,build/obj/ioshost,$(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC))
+IOSHOST_OBJ = $(call c_objs,build/obj/ioshost,$(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) $(CUE_TAKES_C))
 define IOSHOST_PROG
 build/$(1): $$(call c_objs,build/obj/ioshost,$(2)) $$(IOSHOST_OBJ)
 	$$(CC) $$(IOS_CFLAGS) $$^ -lm -o $$@
@@ -1929,7 +1947,8 @@ COV_BRANCH_MIN ?= 74
 # coverage climbs; never lower one to make a red build pass.
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
-                  hand_layout bots bot_drive bot_roster analyse ask table_wire netwire netclient move_list
+                  hand_layout bots bot_drive bot_roster analyse ask table_wire netwire netclient move_list \
+                  cue_voice
 # deal_rng, sha256 and b32 are in the SAME gate, from their new home. They left this
 # list's `src/` prefix behind when they moved to shared/, and a filter that no
 # longer matches does not fail - gcovr simply reports the file it cannot find as
