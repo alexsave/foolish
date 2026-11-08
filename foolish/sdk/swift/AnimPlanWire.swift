@@ -132,6 +132,19 @@ public struct AnimPlan: Equatable, Sendable {
         public var kind: EventType? { EventType(rawValue: type) }
     }
 
+    /// One sound the sequence makes (anim_plan.h AnimCue): `hits` strikes of
+    /// `kind` (ANIM_CUE_*), the first at `atMs` on the steps' own clock and
+    /// each after ANIM_SOUND_STAGGER_MS, made by step `step`. `undoes` is a
+    /// REVERT's undone cue. (step, kind) is unique within a plan.
+    public struct Cue: Equatable, Sendable {
+        public let atMs: Int
+        public let kind: Int
+        public let step: Int
+        public let hits: Int
+        public let nCards: Int
+        public let undoes: Int
+    }
+
     /// The board the display holds until the first flight lands.
     public let pre: Counts
     public let steps: [Step]
@@ -140,6 +153,8 @@ public struct AnimPlan: Equatable, Sendable {
     public let veil: Set<String>
     /// Wall time of the whole sequence.
     public let totalMs: Int
+    /// What it sounds like, in the kernel's order (docs/AUDIO.md).
+    public let cues: [Cue]
 
     public static let empty = AnimPlan(pre: Counts(deck: 0, discard: 0, hand: [:]),
                                        steps: [], veil: [], totalMs: 0)
@@ -226,6 +241,8 @@ public struct AnimPlan: Equatable, Sendable {
                  trumpFrom: st.trumpFrom)
         }
         self.veil = Set(pl.veilIds.filter { $0 < 52 }.map { Card(s: $0 / 13, v: $0 % 13 + 1).identity })
+        self.cues = pl.cues.map { Cue(atMs: $0.atMs, kind: $0.kind, step: $0.step, hits: $0.hits,
+                                      nCards: $0.nCards, undoes: $0.undoes) }
     }
 
     private init(pre: Counts, steps: [Step], veil: Set<String>, totalMs: Int) {
@@ -233,6 +250,7 @@ public struct AnimPlan: Equatable, Sendable {
         self.steps = steps
         self.veil = veil
         self.totalMs = totalMs
+        self.cues = []
     }
 
     /// Nothing to animate: the board sits at the state it already settled on.

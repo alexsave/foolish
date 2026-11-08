@@ -146,3 +146,20 @@ int cue_strike(const CueTakeRow *takes, int n_takes, const CueMix *mix,
     }
     return 0;
 }
+
+int cue_resampled_len(int n, int rate_pm) {
+    if (n <= 0 || rate_pm <= 0) return -1;
+    return (int)((int64_t)(n - 1) * 1000 / rate_pm) + 1;
+}
+
+int cue_resample(const float *in, int n, int rate_pm, float *out, int cap) {
+    const int len = cue_resampled_len(n, rate_pm);
+    if (!in || !out || len < 0 || len > cap) return -1;
+    for (int i = 0; i < len; i++) {
+        const int64_t at = (int64_t)i * rate_pm;          // in thousandths of an input sample
+        const int k = (int)(at / 1000);
+        const float f = (float)(at % 1000) / 1000.0f;
+        out[i] = k + 1 < n ? in[k] + (in[k + 1] - in[k]) * f : in[n - 1];
+    }
+    return len;
+}

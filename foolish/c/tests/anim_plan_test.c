@@ -2181,6 +2181,16 @@ static void test_cue_voice(void) {
     cue_strike(T, n, M, &st, ANIM_CUE_HAND_OFF, 100000, 1, 0, 1000, &s);
     const double want = 100000 - 10000 * 1000.0 / s.rate_pm;
     CHECK(s.start_us >= (int)want - 1 && s.start_us <= (int)want + 1, "the anchor is played at the take's speed");
+    // ...and a speed is a buffer: at 1.5 the ramp 0,1,2,3,4 is 0,1.5,3,4 (and the
+    // last sample held); at 1.0 a copy; too small an output is refused.
+    const float ramp[5] = { 0, 1, 2, 3, 4 };
+    float out[16] = { 0 };
+    CHECK(cue_resample(ramp, 5, 1500, out, 16) == 3 && out[0] == 0 && out[1] == 1.5f && out[2] == 3,
+          "faster is fewer samples, interpolated");
+    CHECK(cue_resample(ramp, 5, 500, out, 16) == 9 && out[1] == 0.5f && out[7] == 3.5f && out[8] == 4, "slower is more");
+    CHECK(cue_resample(ramp, 5, 1000, out, 16) == 5 && out[4] == 4, "as written is a copy");
+    CHECK(cue_resample(ramp, 5, 500, out, 8) == -1 && cue_resample(ramp, 0, 1000, out, 16) == -1,
+          "an output too small, or nothing to play, is refused");
 }
 
 int main(void) {

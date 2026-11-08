@@ -9,6 +9,7 @@
 
 import SwiftUI
 import Foundation
+import CFoolish
 
 extension MessageTableView {
 
@@ -177,6 +178,17 @@ extension MessageTableView {
         // branch of the board's `onChange`) is the only thing that animates a
         // pass's shield hand-off.
         ledger.write(.handOff) { $0.roles = target }
+        // …AND IT IS HEARD, here, because this is the one place the marks are
+        // turned: a good said, a transfer's shield, the hand-off that closes a
+        // bout. WHICH turn makes WHICH sound is the kernel's (fio_role_cue: a
+        // good cleared is silent, a mark that travels outranks a good said with
+        // it). Not tied to Reduce Motion: a sound is not a vestibular trigger
+        // (docs/AUDIO.md), and the web's syncRoles strikes it the same way.
+        if animated, let old, old != target {
+            let cue = Int(fio_role_cue(Int32(old.defender), Int32(old.firstAttacker), Int32(old.goodMask),
+                                       Int32(target.defender), Int32(target.firstAttacker), Int32(target.goodMask)))
+            if cue != Int(ANIM_CUE_NONE) { CuePlayer.shared.strike(cue, in: 0) }
+        }
         guard animated, !reduceMotion, let old, old != target, !view.isOver else {
             // Only when something actually moved and did NOT fly: a cold board
             // with nothing to hand over from, a Reduce Motion snap, a game that

@@ -10,6 +10,7 @@
 
 import SwiftUI
 import Foundation
+import CFoolish
 
 extension MessageTableView {
 
@@ -313,6 +314,9 @@ extension MessageTableView {
         // The extension's settle wait runs as long as this plan does (an 8-seat
         // opening deal is ~20 s), not a fixed bound of its own.
         hold.expect(boardSeconds(timing.totalMs))
+        // …AND WHAT IT SOUNDS LIKE, from the same plan, placed beat by beat as
+        // each one opens (docs/AUDIO.md "iOS and iMessage").
+        let sound = CueSequence(timing, viewer: controller.mySeat, seats: view.players.count)
         // The kernel refuses a stream it cannot hold whole rather than
         // truncating it, and a truncated shape would animate half a move. That
         // degrades to no flights at all - the closing beat below still settles
@@ -552,7 +556,8 @@ extension MessageTableView {
             // the conflict record below - the builder's last successful answer
             // is exactly the flight list the animator played.
             var groupFlights: [Flight] = []
-            await playStep(over: pace.flight) { lastChance in
+            await playStep(over: pace.flight,
+                           onOpen: { sound.opens(beat.range, paint: $0) }) { lastChance in
                 // One builder call per event, one flight list for the group: the
                 // animator runs a list in PARALLEL, so a two-card cover leaves
                 // the hand as one movement. A builder that cannot resolve yet
@@ -738,7 +743,23 @@ extension MessageTableView {
         Task {
             try? await Task.sleep(nanoseconds: UInt64(gameOverHold * 1_000_000_000))
             withAnimation(.easeOut) { showResults = true }
+            // …AND IT IS HEARD as the results come up: the fool's sound or
+            // everybody else's, the kernel's answer from the end screen's own
+            // question (fio_finish_cue, with fio_finish_rows' arguments), so the
+            // sound and the list agree on who the fool is. Only here, where a
+            // game watched ending gives way; a finished game opened cold is not
+            // its end and makes no sound.
+            if let v = controller.view, v.isOver { strikeFinishCue(v) }
         }
+    }
+
+    func strikeFinishCue(_ v: GameView) {
+        let elim = v.eliminationOrder.map { UInt8(clamping: $0) }
+        let cue = elim.withUnsafeBufferPointer { p in
+            Int(fio_finish_cue(p.baseAddress, Int32(elim.count), Int32(v.gameOver),
+                               Int32(v.players.count), Int32(controller.mySeat)))
+        }
+        if cue != Int(ANIM_CUE_NONE) { CuePlayer.shared.strike(cue, in: 0) }
     }
 
     // THE SHAPE OF A SEQUENCE is the kernel's answer now - `AnimBeats` over
@@ -800,6 +821,7 @@ extension MessageTableView {
     /// plan step's duration (`pace`); a flight no plan paces (a live play, an
     /// undo, the genesis fallback) flies the kernel beat.
     func playStep(over duration: Double = beatTime,
+                  onOpen: ((_ paint: Double) -> Void)? = nil,
                   _ build: (_ lastChance: Bool) -> [Flight]?) async {
         for i in 0..<26 {
             // ROUND 30: never AIM at a board that is still moving under the
@@ -822,6 +844,10 @@ extension MessageTableView {
             // to be hard-revealed (it "just suddenly appears in hand"). A rough
             // deck->hand flight reads far better than a pop-in.
             if let f = build(i == 25) {
+                // THE BEAT OPENS NOW: its flight starts after the animator's
+                // paint (the plan's gap), and its sounds are placed from there
+                // (CueSequence). A beat with nothing to fly opens on the spot.
+                onOpen?(f.isEmpty ? 0 : FlightPace.waits(flying: duration).paint)
                 if !f.isEmpty { await animator.play([f], over: duration) }
                 return
             }

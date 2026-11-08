@@ -42,3 +42,9 @@ const void *fio_cue_strike(int kind, int lead_us, int n_cards, int undoes, int g
                gain_pm, &g_strike);
     return &g_strike;
 }
+
+int fio_cue_resampled_len(int n, int rate_pm) { return cue_resampled_len(n, rate_pm); }
+
+int fio_cue_resample(const float *in, int n, int rate_pm, float *out, int cap) {
+    return cue_resample(in, n, rate_pm, out, cap);
+}

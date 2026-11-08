@@ -484,6 +484,10 @@ const void *fio_cue_take(int i);
 int fio_cue_lead_us(int kind);
 void fio_cue_seed(uint32_t seed);
 const void *fio_cue_strike(int kind, int lead_us, int n_cards, int undoes, int gain_pm);
+// A take at a strike's speed (CueStrike.rate_pm, a stand-in's wander) as the
+// samples to start in its place: cue_resample. -1 when `cap` is too small.
+int fio_cue_resampled_len(int n, int rate_pm);
+int fio_cue_resample(const float *in, int n, int rate_pm, float *out, int cap);
 
 // ---------- the pre-bout table (anim_plan.h) -------------------------------
 //

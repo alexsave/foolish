@@ -101,4 +101,12 @@ int cue_strike(const CueTakeRow *takes, int n_takes, const CueMix *mix,
 // preludes included), in microseconds: when a host must hand the cue over.
 int cue_lead_us(const CueTakeRow *takes, int n_takes, int kind);
 
+// A take played at `rate_pm` (a stand-in's wander, CueStrike.rate_pm): the
+// samples a host's player starts in place of `in`, by linear interpolation, so
+// a speed is a buffer and not a second resampler in every host. Answers the
+// length written (cue_resampled_len), or -1 when `cap` cannot hold it or an
+// argument is bad. At 1000 it is a copy.
+int cue_resampled_len(int n, int rate_pm);
+int cue_resample(const float *in, int n, int rate_pm, float *out, int cap);
+
 #endif

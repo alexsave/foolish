@@ -267,6 +267,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         hostTrace("didResignActive", nil, conversation)
 #endif
         FlightRecorder.end("resigned")
+        // The sound engine and every decoded take go with the extension's
+        // focus; the next board loads them again (CuePlayer).
+        CuePlayer.shared.shutdown()
     }
 
     /// The one warning iOS gives before it starts killing extensions - and until
@@ -285,6 +288,10 @@ final class MessagesViewController: MSMessagesAppViewController {
         let scheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
         let dropped = FTextures.purgeUnusedTextures(keeping: FTextures.Variant(scheme))
         FlightRecorder.note("memory-warning", "dropped \(dropped) textures")
+        // And the sounds: their decoded samples are the other large thing this
+        // extension holds. The engine stays; a take struck later is decoded
+        // again from the bundle, and the next board change reloads the rest.
+        CuePlayer.shared.purge()
     }
 
     /// A message arrived while we are on screen — an opponent may be live-playing.
