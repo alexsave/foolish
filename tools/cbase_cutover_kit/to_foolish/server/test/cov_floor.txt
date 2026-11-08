@@ -1,0 +1,33 @@
+# foolish/server's coverage floors (c_base/tools/cov_gate.c, `make coverage`, c_base/docs/COVERAGE.md): the
+# line and branch floors of the whole measured scope (c_base's platform and this product, as CI
+# measures them), and the zero list of this product's functions; c_base's own zero list is added to it.
+line 92.50
+branch 73.00
+zero foolish/server/src/app/table_ops.c cb_section_logs_poisoned TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c by_key TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c by_id TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c run TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c prep TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c exec_b TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c count TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c find TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c is_user TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c xdup TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c load_accounts TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c email_now TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c text_of TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c roster_fix TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c games_pass TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c replays_pass TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c unknown_tables TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c body TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_merge.c cb_mig_transform TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_rows.c cb_mig_rank TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_rows.c session_of TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_rows.c refresh_of TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_rows.c fails_of TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_rows.c cb_mig_allow_name_collisions TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/migrate_rows.c cb_mig_name_collisions TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/rows_foolish.c cb_rows_game_list TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/store/rows_foolish.c full_log TEMPORARY: untested on the VM branch, the coverage-tests PR covers it
+zero foolish/server/src/app/bots.c mem_lease_live TEMPORARY: reached only when a test thread races a lease (run to run); the coverage-tests PR pins it
