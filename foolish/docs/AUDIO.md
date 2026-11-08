@@ -178,6 +178,8 @@ On the web a speed is the source's `playbackRate`; iOS keeps a player per speed 
 **The audio clock, not a timer.**
 A cue is handed over up to 120 ms early (`CUE_LOOK_AHEAD_MS`), so a late frame does not make a late sound.
 Measured in Chrome against a live game: a card's landing was aimed 499 to 500 ms after its lift, with the frames that scheduled them 380 to 393 ms apart.
+Measured again after the rules moved to C (2026-11-07), in headless Chrome with its audio muted, by wrapping `AudioBufferSourceNode.start` on `/sounds` and pressing every button: 173 takes started, every one whole (its buffer the table's length), and each take's moment (its start plus its anchor, from the other end for a revert) on the plan's time to 0.1 ms in every "In context" move - the landings at 500, 545 and 590 ms, the cover at 1025, the sweep and its strokes at 2025, the pile at 2525, the opening deal's cards 375 ms apart with their landings 350 ms after each.
+The only moments off by more (5 ms) were a take's first strike while its file was still decoding, which the engine starts late by the rule above.
 
 **When it is silent, on purpose.**
 
