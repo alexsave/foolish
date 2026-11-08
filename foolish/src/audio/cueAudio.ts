@@ -37,6 +37,14 @@
 //   the time it was aimed at, and dropped otherwise. A sound that is 20ms late
 //   is a sound; one that is half a second late is a mistake.
 //
+// A STRIKE IS AIMED AT A MOMENT, NOT AT A FILE'S START. A take is a whole
+// gesture and carries its anchor (src/audio/cueSounds.ts): the file is started
+// that long before the moment, so the grab and the thumb slide come before the
+// card leaves. A take that would have to start in the past is started now, that
+// far into the file - the moment stays the kernel's and the part of the gesture
+// that can no longer be heard is not. A sweep's take is the one with the most
+// strokes its cards ask for that fits the quiet the plan leaves before it.
+//
 // A REVERT IS ANOTHER CUE, BACKWARDS. The one cue id this file knows by name:
 // ANIM_CUE_REVERT has no sound of its own, the kernel says which cue it undoes,
 // and that cue's buffer is played reversed (reversed once, and kept).
