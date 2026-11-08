@@ -2285,6 +2285,14 @@ static void test_cue_mix(void) {
     float sum = 0;
     for (int i = 0; i < 8; i++) sum += out[i];
     CHECK(sum == 0 && cue_mix_live(&m) == 0, "a clear silences what was scheduled");
+    // A drop takes one take out and leaves the other.
+    cue_mix_add(&m, a, 5, cue_mix_now(&m) + 1, 1.0f);
+    const int other = cue_mix_add(&m, b, 3, cue_mix_now(&m) + 1, 1.0f);
+    cue_mix_drop(&m, other);
+    cue_mix_render(&m, out, 8, 0);
+    CHECK(out[0] == 0 && out[1] == 1 && out[2] == 2 && out[5] == 5 && cue_mix_live(&m) == 0,
+          "the dropped take is gone, the other plays (%g %g %g)", out[1], out[2], out[5]);
+    cue_mix_drop(&m, 99);
     // Every slot busy: refused, not overwritten.
     for (int k = 0; k < CUE_MIX_SLOTS; k++) cue_mix_add(&m, a, 5, cue_mix_now(&m) + 1000, 1.0f);
     CHECK(cue_mix_add(&m, a, 5, 0, 1.0f) == -1 && cue_mix_add(&m, NULL, 5, 0, 1.0f) == -1, "a full mix refuses");

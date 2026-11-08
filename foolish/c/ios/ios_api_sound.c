@@ -36,6 +36,7 @@ void fio_mix_free(void *m) { free(m); }
 int fio_mix_add(void *m, const float *x, int n, int64_t start, float gain) { return cue_mix_add(m, x, n, start, gain); }
 uint32_t fio_mix_live(const void *m) { return cue_mix_live(m); }
 void fio_mix_clear(void *m) { cue_mix_clear(m); }
+void fio_mix_drop(void *m, int slot) { cue_mix_drop(m, slot); }
 void fio_mix_render(void *m, float *out, int frames, uint64_t host) { cue_mix_render(m, out, frames, host); }
 int64_t fio_mix_now(const void *m) { return cue_mix_now(m); }
 int64_t fio_mix_frame_at(const void *m, uint64_t at, double ticks_per_second) {

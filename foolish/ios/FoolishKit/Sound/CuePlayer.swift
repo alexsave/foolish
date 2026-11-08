@@ -107,7 +107,7 @@ public final class CuePlayer {
     private var outRate: Double = 0
     /// The samples of every take in the mix, by slot, kept alive until the mix
     /// says the slot is free.
-    private var inMix: [Int32: AVAudioPCMBuffer] = [:]
+    private var inMix: [Int32: (samples: AVAudioPCMBuffer, start: AVAudioFramePosition)] = [:]
     private var users = 0
     private var configObserver: NSObjectProtocol?
     /// True while the engine renders by hand (the tests), where no host time runs.
@@ -126,6 +126,11 @@ public final class CuePlayer {
     private var generation = 0
     private var loading = false
     private let loader = DispatchQueue(label: "cards.foolish.cue.load", qos: .utility)
+    /// A take that has been STRUCK and is not decoded jumps the loader's queue:
+    /// it has 80 ms (the web's rule), and measured in the real extension a
+    /// deal's first cards waited 300-630 ms behind the board's other files and
+    /// were dropped.
+    private let urgent = DispatchQueue(label: "cards.foolish.cue.struck", qos: .userInitiated, attributes: .concurrent)
 
     /// One take on its way, for the trace and the tests: where it starts and
     /// where its anchor falls, in output frames.
@@ -142,6 +147,8 @@ public final class CuePlayer {
         let gain: Float
         /// The host time it was scheduled from, so a trace can place `momentAfter`.
         let struck: UInt64
+        /// Its slot in the mix, for `unschedule`.
+        let slot: Int32
     }
 
     init(bundle: Bundle = Bundle(for: CuePlayer.self)) {
@@ -253,7 +260,8 @@ public final class CuePlayer {
                 self.users = keep
                 if keep > 0 { self.start() }
             }
-        AnimLog.say("sound: engine up at \(Int(outRate)) Hz, session \(session.category.rawValue), "
+        AnimLog.say(String(format: "sound: engine up, footprint %.1f MB; ", FlightRecorder.footprintMB())
+                    + "\(Int(outRate)) Hz, session \(session.category.rawValue), "
                     + "io \(Int(session.ioBufferDuration * 1000)) ms, out \(Int(session.sampleRate)) Hz, silent=\(Self.silent)")
         pump()
     }
@@ -348,7 +356,12 @@ public final class CuePlayer {
                 self.lock.lock()
                 guard gen == self.generation, let i = self.nextToLoad() else {
                     self.loading = false
+                    let n = self.buffers.count
+                    let bytes = self.buffers.values.reduce(0) { $0 + Int($1.frameLength) * 4 }
                     self.lock.unlock()
+                    AnimLog.say(String(format: "sound: %d takes decoded, %.2f MB of samples; footprint %.1f MB, peak %.1f MB",
+                                       n, Double(bytes) / 1_048_576, FlightRecorder.footprintMB(),
+                                       FlightRecorder.footprintPeakMB()))
                     return
                 }
                 self.lock.unlock()
@@ -493,7 +506,7 @@ public final class CuePlayer {
                 }
                 continue
             }
-            loader.async { [weak self] in
+            urgent.async { [weak self] in
                 guard let self else { return }
                 let d = self.decode(i)
                 DispatchQueue.main.async {
@@ -548,11 +561,25 @@ public final class CuePlayer {
             AnimLog.say("sound: the mix is full - \(t.name) dropped")
             return nil
         }
-        inMix[slot] = b
+        inMix[slot] = (b, start)
         let len = Double(t.nSamples) / Double(t.rate)
         let anchor = (backwards ? len - Double(t.anchorUs) / 1e6 : Double(t.anchorUs) / 1e6) * 1000 / Double(ratePm)
         return Scheduled(take: i, name: t.name, rate: outRate, backwards: backwards, startSample: start, nowSample: now,
-                         momentAfter: Double(start - now) / outRate + anchor, gain: gain, struck: host)
+                         momentAfter: Double(start - now) / outRate + anchor, gain: gain, struck: host, slot: slot)
+    }
+
+    /// Take a scheduled take back out of the mix if not one sample of it has
+    /// been rendered (a block of margin, so the callback cannot be inside it):
+    /// a take placed ahead of its beat, which the beat now places again.
+    /// Answers whether it was taken out.
+    func unschedule(_ s: Scheduled) -> Bool {
+        // Its slot, still holding this take (a slot is reused once free).
+        guard let m = mixer, let held = inMix[s.slot], held.start == s.startSample,
+              fio_mix_live(m) & (1 << UInt32(s.slot)) != 0 else { return false }
+        let guardFrames = AVAudioFramePosition(max(0.01, AVAudioSession.sharedInstance().ioBufferDuration) * 2 * outRate)
+        guard s.startSample > fio_mix_now(m) + guardFrames else { return false }
+        fio_mix_drop(m, s.slot)
+        return true
     }
 
     /// Stop everything scheduled or sounding (a mute).

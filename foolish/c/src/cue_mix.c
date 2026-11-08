@@ -35,6 +35,11 @@ void cue_mix_clear(CueMixer *m) {
     if (m) atomic_fetch_or_explicit(&m->clear, cue_mix_live(m), memory_order_release);
 }
 
+void cue_mix_drop(CueMixer *m, int slot) {
+    if (m && slot >= 0 && slot < CUE_MIX_SLOTS)
+        atomic_fetch_or_explicit(&m->clear, cue_mix_live(m) & (1u << slot), memory_order_release);
+}
+
 void cue_mix_render(CueMixer *m, float *out, int frames, uint64_t host) {
     if (!m || !out || frames <= 0) return;
     memset(out, 0, sizeof(float) * (size_t)frames);

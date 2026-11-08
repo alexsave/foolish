@@ -187,7 +187,9 @@ extension MessageTableView {
         if animated, let old, old != target {
             let cue = Int(fio_role_cue(Int32(old.defender), Int32(old.firstAttacker), Int32(old.goodMask),
                                        Int32(target.defender), Int32(target.firstAttacker), Int32(target.goodMask)))
-            if cue != Int(ANIM_CUE_NONE) { CuePlayer.shared.strike(cue, in: 0) }
+            if cue != Int(ANIM_CUE_NONE) {
+                CuePlayer.shared.strike(cue, in: 0) { AnimLog.say("sound: role cue \(cue): \($0.name)") }
+            }
         }
         guard animated, !reduceMotion, let old, old != target, !view.isOver else {
             // Only when something actually moved and did NOT fly: a cold board

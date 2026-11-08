@@ -64,6 +64,9 @@ int cue_mix_add(CueMixer *m, const float *x, int n, int64_t start, float gain);
 // is gone), and a request to drop every take now (a mute).
 uint32_t cue_mix_live(const CueMixer *m);
 void cue_mix_clear(CueMixer *m);
+// ...or one take, by its slot: a take placed ahead of its beat that the beat,
+// opening at another time than foreseen, places again.
+void cue_mix_drop(CueMixer *m, int slot);
 
 // The audio callback: `frames` samples of the sum into `out`, then the clock
 // moves on. `host` is the block's timestamp, 0 when there is none (an offline

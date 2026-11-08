@@ -136,11 +136,18 @@ struct MessageSettingsView: View {
             HStack(spacing: FSpace.s) {
                 Image(systemName: on ? "speaker.wave.2.fill" : "speaker.slash.fill")
                 Text(FStrings.t(on ? "ios.settings.sound.on" : "ios.settings.sound.off"))
-                if chosen { Image(systemName: "checkmark").font(.system(size: 15, weight: .heavy)) }
             }
             .font(FType.title(17))
             .onWoodText()
             .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48)
+            // The check sits at the trailing edge, so choosing does not move
+            // the label.
+            .overlay(alignment: .trailing) {
+                if chosen {
+                    Image(systemName: "checkmark").font(.system(size: 15, weight: .heavy))
+                        .onWoodText().padding(.trailing, FSpace.m)
+                }
+            }
             .background(WoodFill())
             .overlay(Rectangle().strokeBorder(Color.black.opacity(chosen ? 0.75 : 0.35),
                                               lineWidth: chosen ? 2 : 1))

@@ -557,7 +557,7 @@ extension MessageTableView {
             // is exactly the flight list the animator played.
             var groupFlights: [Flight] = []
             await playStep(over: pace.flight,
-                           onOpen: { sound.opens(beat.range, paint: $0) }) { lastChance in
+                           onOpen: { sound.opens(beat.range, paint: $0, empty: $1) }) { lastChance in
                 // One builder call per event, one flight list for the group: the
                 // animator runs a list in PARALLEL, so a two-card cover leaves
                 // the hand as one movement. A builder that cannot resolve yet
@@ -759,7 +759,9 @@ extension MessageTableView {
             Int(fio_finish_cue(p.baseAddress, Int32(elim.count), Int32(v.gameOver),
                                Int32(v.players.count), Int32(controller.mySeat)))
         }
-        if cue != Int(ANIM_CUE_NONE) { CuePlayer.shared.strike(cue, in: 0) }
+        if cue != Int(ANIM_CUE_NONE) {
+            CuePlayer.shared.strike(cue, in: 0) { AnimLog.say("sound: finish cue \(cue): \($0.name)") }
+        }
     }
 
     // THE SHAPE OF A SEQUENCE is the kernel's answer now - `AnimBeats` over
@@ -821,7 +823,7 @@ extension MessageTableView {
     /// plan step's duration (`pace`); a flight no plan paces (a live play, an
     /// undo, the genesis fallback) flies the kernel beat.
     func playStep(over duration: Double = beatTime,
-                  onOpen: ((_ paint: Double) -> Void)? = nil,
+                  onOpen: ((_ paint: Double, _ empty: Bool) -> Void)? = nil,
                   _ build: (_ lastChance: Bool) -> [Flight]?) async {
         for i in 0..<26 {
             // ROUND 30: never AIM at a board that is still moving under the
@@ -847,7 +849,7 @@ extension MessageTableView {
                 // THE BEAT OPENS NOW: its flight starts after the animator's
                 // paint (the plan's gap), and its sounds are placed from there
                 // (CueSequence). A beat with nothing to fly opens on the spot.
-                onOpen?(f.isEmpty ? 0 : FlightPace.waits(flying: duration).paint)
+                onOpen?(f.isEmpty ? 0 : FlightPace.waits(flying: duration).paint, f.isEmpty)
                 if !f.isEmpty { await animator.play([f], over: duration) }
                 return
             }

@@ -499,6 +499,7 @@ void fio_mix_free(void *m);
 int fio_mix_add(void *m, const float *x, int n, int64_t start, float gain);
 uint32_t fio_mix_live(const void *m);
 void fio_mix_clear(void *m);
+void fio_mix_drop(void *m, int slot);
 void fio_mix_render(void *m, float *out, int frames, uint64_t host);
 int64_t fio_mix_now(const void *m);
 int64_t fio_mix_frame_at(const void *m, uint64_t at, double ticks_per_second);
