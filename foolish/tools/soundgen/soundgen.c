@@ -489,7 +489,7 @@ static int workers(int njobs) {
     if (w > 16) w = 16;
     return (int)(w > njobs ? (njobs > 0 ? njobs : 1) : w);
 }
-static int render_all(Job *jobs, int nj) {
+static int render_jobs(Job *jobs, int nj) {
     const int w = workers(nj);
     if (w == 1) {
         for (int j = 0; j < nj; j++) render_card(jobs[j].cue, jobs[j].role, jobs[j].set, jobs[j].level, jobs[j].v, jobs[j].o);
@@ -535,6 +535,77 @@ static int render_all(Job *jobs, int nj) {
     munmap(meta, meta_bytes); munmap(xs, x_bytes);
     if (bad) fprintf(stderr, "soundgen: a render worker failed\n");
     return bad ? -1 : 0;
+}
+
+// THE TUNER'S CACHE (SOUNDGEN_CACHE=<dir>; tools/soundgen/tune.sh sets it and
+// nothing else does): each take as rendered, before the common gain, under a key
+// of its cue, role, level and take and every tuning.tsv line of its cue and
+// role. A take whose lines did not change is read back instead of rendered, so
+// moving one part re-renders that one set. The samples read back are the ones
+// written, so the files are the same either way; tune.sh empties the directory
+// whenever soundgen itself is rebuilt, which is the one change the key cannot see.
+typedef struct { uint64_t key; Done d; } CacheHead;
+static uint64_t job_key(const Job *j) {
+    uint64_t h = 1469598103934665603ull;
+    const int head[4] = { j->cue, j->role, j->level, j->v };
+    const unsigned char *p = (const unsigned char *)head;
+    for (size_t i = 0; i < sizeof head; i++) { h ^= p[i]; h *= 1099511628211ull; }
+    for (int t = 0; t < N_TUNE; t++) {
+        if (TUNE_KEY[t].cue != j->cue || TUNE_KEY[t].role != j->role) continue;
+        p = (const unsigned char *)&TUNE[t];
+        for (size_t i = 0; i < sizeof TUNE[t]; i++) { h ^= p[i]; h *= 1099511628211ull; }
+    }
+    return h;
+}
+static void cache_path(const char *dir, const Job *j, char *out, size_t cap) {
+    snprintf(out, cap, "%s/c%d_r%d_l%d_v%d.take", dir, j->cue, j->role, j->level, j->v);
+}
+static int cache_load(const char *dir, const Job *j) {
+    char path[1024];
+    cache_path(dir, j, path, sizeof path);
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    CacheHead h;
+    int ok = fread(&h, sizeof h, 1, f) == 1 && h.key == job_key(j) && h.d.ok && h.d.n > 0 && h.d.n <= SPAN;
+    Out *o = j->o;
+    if (ok) {
+        o->x = malloc(sizeof(double) * (size_t)h.d.n);
+        ok = fread(o->x, sizeof(double), (size_t)h.d.n, f) == (size_t)h.d.n;
+        if (!ok) { free(o->x); o->x = NULL; }
+    }
+    fclose(f);
+    if (!ok) return 0;
+    memcpy(o->name, h.d.name, sizeof o->name);
+    o->cue = h.d.cue; o->level = h.d.level; o->role = h.d.role; o->rate = h.d.rate; o->n = h.d.n; o->kbps = h.d.kbps;
+    o->anchor_ms = h.d.anchor_ms;
+    return 1;
+}
+static void cache_save(const char *dir, const Job *j) {
+    char path[1024];
+    cache_path(dir, j, path, sizeof path);
+    const Out *o = j->o;
+    CacheHead h;
+    memset(&h, 0, sizeof h);
+    h.key = job_key(j);
+    memcpy(h.d.name, o->name, sizeof h.d.name);
+    h.d.cue = o->cue; h.d.level = o->level; h.d.role = o->role; h.d.rate = o->rate; h.d.n = o->n; h.d.kbps = o->kbps;
+    h.d.anchor_ms = o->anchor_ms; h.d.ok = 1;
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    const int ok = fwrite(&h, sizeof h, 1, f) == 1 && fwrite(o->x, sizeof(double), (size_t)o->n, f) == (size_t)o->n;
+    if (fclose(f) != 0 || !ok) remove(path);
+}
+static int render_all(Job *jobs, int nj) {
+    const char *dir = getenv("SOUNDGEN_CACHE");
+    if (!dir || !*dir) return render_jobs(jobs, nj);
+    Job *todo = malloc(sizeof(Job) * (size_t)(nj > 0 ? nj : 1));
+    int nt = 0;
+    for (int j = 0; j < nj; j++) if (!cache_load(dir, &jobs[j])) todo[nt++] = jobs[j];
+    const int rc = render_jobs(todo, nt);
+    if (rc == 0) for (int t = 0; t < nt; t++) cache_save(dir, &todo[t]);
+    fprintf(stderr, "soundgen: %d of %d takes rendered, the rest read back from %s\n", nt, nj, dir);
+    free(todo);
+    return rc;
 }
 
 static int render_placeholder(int cue, int v, Out *o) {

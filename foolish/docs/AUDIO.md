@@ -330,7 +330,7 @@ The level is in dB on the deal's scale, before the common gain that lifts every 
 The time is in ms from the cue's moment, negative before it; for strokes it is where the last one ends before the lift.
 A grey "to" beside a value is the far end of its random spread, which the tuner shows and leaves alone.
 The whole-cue row sets the cue's level for every host (its `mix` gain), and its "all parts" buttons move every part of the cue 10 ms against the animation.
-Every change writes `tuning.tsv`, rebuilds every take, the take table, `web.wasm` and `promo.wasm` (`tools/soundgen/tune.sh`, about 4 s), and reloads the page, which checks its kernel carries the new table before it says "Rebuilt".
+Every change writes `tuning.tsv`, rebuilds the takes it touched, the take table, `web.wasm` and `promo.wasm` (`tools/soundgen/tune.sh`, 1.5 to 4 s), and reloads the page, which checks its kernel carries the new table before it says "Rebuilt".
 Then press Play: every Play stops whatever was sounding first, so one sound is heard at a time; a tight row's "Now" plays it as a move that opens its run does, and a strokes row plays its cue with the number of strokes chosen beside it.
 The "In context" moves below play the new takes at the plan's own times.
 A value that differs from git HEAD is marked with a dot and gets a Reset; "Reset all" puts the whole file back.
@@ -346,7 +346,7 @@ A line soundgen cannot read, a part with no line or two, or a cue with no `mix` 
 
 **Rendering.**
 soundgen renders the takes in one forked worker per core (`SOUNDGEN_JOBS` sets how many; `1` renders in its own process), about 2.3 s for all 139 where one core takes 11 s, and the files are byte for byte the same whatever the number.
-The tuner's rebuild rewrites only the WAVs whose bytes changed and re-encodes only those.
+The tuner's rebuild also keeps each take as rendered (`SOUNDGEN_CACHE`, set by `tune.sh` only) under a key of its own `tuning.tsv` lines, so a change re-renders only the takes of the part's cue and role, rewrites only the WAVs whose bytes changed and re-encodes only those: about 1.5 s for one part, the relink of both kernel links included.
 
 ## How to replace a sound with a recording
 
