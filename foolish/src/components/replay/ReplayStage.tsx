@@ -13,7 +13,7 @@ import { fmtDuration } from '../../replay/speeds';
 import { StepMessage, FoolMessage } from './StepMessage';
 import { RevealedHands } from './RevealedHands';
 import { OracleOverlay } from '../OracleOverlay';
-import { TUNER_IN_REPLAY, TunerOverlay, keepStep, takeStep } from './TunerOverlay';
+import { TUNER_IN_REPLAY, TunerOverlay, takeStep } from './TunerOverlay';
 import {
     IconBoutNext, IconBoutStart, IconEye, IconOracle, IconPause, IconPen,
     IconPlay, IconStepBack, IconStepForward,
@@ -108,11 +108,11 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
         return () => clearTimeout(id);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
-    // The move on the board again: the step before it, then this one played. The
-    // deal has no step before it, so it is the page again, which deals on load.
+    // The move on the board again: the step before it, then this one played (the
+    // deal's step before it is the table before the deal, -1).
     const again = useCallback(() => {
         const i = play.stepIdx;
-        if (i <= 0) { keepStep(-1); window.location.reload(); return; }
+        if (i < 0) return;
         play.jumpTo(i - 1);
         setTimeout(play.stepForward, 80);
     }, [play]);
@@ -160,7 +160,7 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
                     }}
                 >
                     <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>
-                        {Math.max(0, stepIdx) + 1}
+                        {stepIdx + 1}
                         <span style={{ opacity: 0.55 }}> / {frames.length}</span>
                     </span>
                     {stepIdx >= 0 && times[stepIdx] !== null && (
@@ -218,9 +218,9 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
             >
                 <input
                     type="range"
-                    min={0}
+                    min={-1}
                     max={lastIdx}
-                    value={Math.max(0, stepIdx)}
+                    value={stepIdx}
                     onChange={(e) => play.jumpTo(Number(e.target.value))}
                     style={{ width: '100%' }}
                 />
