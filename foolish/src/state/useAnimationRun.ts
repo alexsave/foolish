@@ -30,7 +30,9 @@ import { dueStrikes } from '../audio/cueSchedule';
 import { ANIM_CUE_DEAL_LAND } from '@sdk/ts/gen/kernel_consts.bots.ts';
 
 /** How long before its moment a cue's earliest take starts: the kernel's (cue_lead_us). */
-const cueLeadMs = (kind: number): number => cueLeadUs(kind) / 1000;
+// A cue is handed over its earliest take's lead before its moment, and the output's
+// delay earlier still, since the engine schedules it that much early (cueAudio.latencyMs).
+const cueLeadMs = (kind: number): number => cueLeadUs(kind) / 1000 + cueAudio.latencyMs();
 
 /** What the page draws for one card at one place while its flight is up. */
 interface CardFlight {
