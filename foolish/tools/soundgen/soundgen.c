@@ -789,8 +789,6 @@ static int encode(const char *wavs, const char *outdir) {
             snprintf(m, sizeof m, "%s/%s.m4a", outdir, e[i].name);
             if (newer(m, w)) { i++; continue; }
             done++;
-            // Named, for the tuner: an open page fetches again only the files that changed.
-            if (getenv("SOUNDGEN_SAY_ENCODED")) fprintf(stderr, "soundgen: encoded %s.m4a\n", e[i].name);
             const int pid = m4a_encode(w, m, e[i].rate, e[i].kbps);
             if (pid < 0) { fprintf(stderr, "soundgen: cannot run ffmpeg (it encodes the shipped AAC: install it)\n"); return 1; }
             pids[live] = pid; at[live] = i; live++; i++;

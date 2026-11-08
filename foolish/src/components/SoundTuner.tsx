@@ -172,9 +172,7 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false 
                 const fp = /tune\.sh: table (\d+)/.exec(out);
                 const gain = /common gain ([+-][\d.]+ dB)/.exec(out);
                 const bytes = await fetchTable();
-                // The files tune.sh re-encoded, by name: only those are fetched again.
-                const changed = [...out.matchAll(/soundgen: encoded (\S+\.m4a)/g)].map((m) => m[1]);
-                const took = bytes && cueAudio.retable(bytes, changed);
+                const took = bytes && cueAudio.retable(bytes);
                 const right = !fp || tableFingerprint() === Number(fp[1]);
                 const said = !took ? 'Rebuilt, but this page could not take the new table: reload'
                     : !right ? 'Rebuilt, but the table here is not the new one: reload'

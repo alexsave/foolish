@@ -14,3 +14,11 @@ export const fetchTable = async (): Promise<Uint8Array | null> => {
         return null;
     }
 };
+
+/** A table's bytes as a short version string (FNV-1a), so a file fetched under it
+ *  is never one a cache kept from another table. */
+export const tableVersion = (bytes: Uint8Array): string => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < bytes.length; i++) h = Math.imul(h ^ bytes[i], 0x01000193);
+    return (h >>> 0).toString(36);
+};

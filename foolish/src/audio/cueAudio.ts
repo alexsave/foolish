@@ -67,7 +67,7 @@
 // is the mute, which is one tap and remembered.
 
 import { botsReady, cueSeed, cueStrike, cueTableLoad, cueTakes } from '@sdk/ts/wasm/bots.ts';
-import { fetchTable } from './tuneEndpoint';
+import { fetchTable, tableVersion } from './tuneEndpoint';
 
 const MUTED_KEY = 'foolish_sound_muted';
 const VOLUME_KEY = 'foolish_sound_volume';
@@ -133,9 +133,9 @@ export class CueAudio {
     private readonly reversed = new Map<AudioBuffer, AudioBuffer>();
     /** The kernel's voice is seeded once, by the first strike. */
     private seeded = false;
-    /** DEVELOPMENT: how many times each file was replaced (retable), so a fetch or
-     *  a decode that began before is not kept. */
-    private readonly replaced = new Map<string, number>();
+    /** DEVELOPMENT: the tuner's table the files belong to, '' for the linked one
+     *  (retable). Asked of every file, so no cache answers with another table's. */
+    private version = '';
 
     // ---- the setting ---------------------------------------------------------
 
@@ -209,29 +209,24 @@ export class CueAudio {
             if (tries > 0) setTimeout(() => void this.devTable(tries - 1), 200);
             return;
         }
-        // Only the table: every file this page fetches is the one on disk now (the dev
-        // server makes the browser revalidate each one), so none is fetched again.
         const bytes = await fetchTable();
-        if (bytes) this.retable(bytes, []);
+        if (bytes) this.retable(bytes);
     }
 
     /**
-     * DEVELOPMENT: the tuner wrote a new take table, and re-encoded `changed` (file
-     * names, "lift_0.m4a"). The kernel takes the table in place of the linked one
-     * (cueTableLoad), and only those files are dropped and fetched again; everything
-     * else stays decoded. False when the kernel refused the bytes.
+     * DEVELOPMENT: the tuner wrote a new take table. The kernel takes it in place of
+     * the linked one (cueTableLoad), and every file is fetched again under the new
+     * table's version: nothing sounding, nothing decoded and nothing on its way is
+     * kept from the old one. False when the kernel refused the bytes.
      */
-    retable(bytes: Uint8Array, changed: readonly string[]): boolean {
+    retable(bytes: Uint8Array): boolean {
         if (!cueTableLoad(bytes)) return false;
-        for (const file of changed) {
-            const old = this.buffers.get(file);
-            if (old) this.reversed.delete(old);
-            this.buffers.delete(file);
-            this.progress.delete(file);
-            this.held.delete(file);
-            this.waiting = this.waiting.filter((w) => w.file !== file);
-            this.replaced.set(file, (this.replaced.get(file) ?? 0) + 1);
-        }
+        this.cancel();
+        this.buffers.clear();
+        this.reversed.clear();
+        this.progress.clear();
+        this.held.clear();
+        this.version = tableVersion(bytes);
         this.pump();
         return true;
     }
@@ -305,17 +300,17 @@ export class CueAudio {
     private fetchFile(file: string): void {
         this.progress.set(file, 'fetching');
         this.fetching++;
-        const version = this.replaced.get(file) ?? 0;
-        fetch(CUE_SOUND_ROOT + file)
+        const version = this.version;
+        fetch(CUE_SOUND_ROOT + file + (version ? `?v=${version}` : ''))
             .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
             .then((bytes) => {
                 this.fetching--;
-                if (version !== (this.replaced.get(file) ?? 0)) return;   // replaced since (retable)
+                if (version !== this.version) return;   // another table's file (retable)
                 if (this.ctx) this.decode(file, bytes);
                 else { this.held.set(file, bytes); this.progress.set(file, 'held'); }
             }, () => {
                 this.fetching--;
-                if (version === (this.replaced.get(file) ?? 0)) this.fail(file);
+                if (version === this.version) this.fail(file);
             })
             .then(() => this.pump());
     }
@@ -324,10 +319,10 @@ export class CueAudio {
         const ctx = this.ctx;
         if (!ctx) return;
         this.progress.set(file, 'decoding');
-        const version = this.replaced.get(file) ?? 0;
+        const version = this.version;
         // The callback form: older Safari has no promise from it.
         ctx.decodeAudioData(bytes, (buffer) => {
-            if (version !== (this.replaced.get(file) ?? 0)) return;   // replaced since (retable)
+            if (version !== this.version) return;   // another table's file (retable)
             this.buffers.set(file, buffer);
             this.progress.delete(file);
             // The strikes that were waiting on this file: now, or not at all.
@@ -360,18 +355,6 @@ export class CueAudio {
      * waiting on a file that is on its way; false is every silent case in this
      * file's header and is never an error.
      */
-    /** How long a sample takes from this context to the listener's ears, in ms: the
-     *  browser's own figure for the output (outputLatency: Bluetooth headphones add
-     *  0.2 s and more) plus the context's processing (baseLatency). A strike is
-     *  scheduled this much early, so it is HEARD at its moment; 0 before there is a
-     *  context, or where the browser does not say. */
-    latencyMs(): number {
-        const c = this.ctx as (AudioContext & { outputLatency?: number }) | null;
-        if (!c) return 0;
-        const s = (Number.isFinite(c.outputLatency) ? c.outputLatency! : 0) + (Number.isFinite(c.baseLatency) ? c.baseLatency : 0);
-        return Math.max(0, s * 1000);
-    }
-
     strike(kind: number, delayMs = 0, nCards = 1, undoes = 0, gainPm = 1000): boolean {
         const ctx = this.ctx, master = this.master;
         if (!ctx || !master || this.settings().muted || ctx.state !== 'running') return false;
@@ -381,9 +364,7 @@ export class CueAudio {
             cueSeed(Math.floor(Math.random() * 0x100000000));
             this.seeded = true;
         }
-        // The moment as it must leave the context to be heard on time (latencyMs). A
-        // moment closer than the output's delay can only be heard late.
-        const leadUs = Math.round(Math.max(0, delayMs - this.latencyMs()) * 1000);
+        const leadUs = Math.round(Math.max(0, delayMs) * 1000);
         const s = cueStrike(kind, leadUs, nCards, undoes, gainPm);
         if (s.take < 0) return false;
         const takes = cueTakes();
