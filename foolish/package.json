@@ -15,6 +15,7 @@
     "wasm": "bash scripts/wasm_build.sh",
     "wasm:web": "bash scripts/wasm_build.sh web",
     "sounds": "make -s -C tools/soundgen sounds",
+    "tune": "make -s -C tools/soundgen tune",
     "dev": "next dev",
     "predev": "npm run gen && npm run wasm && npm run sounds",
     "prebuild": "npm run gen && npm run wasm && npm run sounds",

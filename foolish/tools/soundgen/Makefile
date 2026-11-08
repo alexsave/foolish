@@ -15,6 +15,7 @@
 #   make stats     the same, measured: peak and RMS
 #   make parts     each model alone into build/parts/, for measure.py
 #   make audition  play each one in turn, by name (macOS: afplay)
+#   make tune      the tuner's local endpoint for /sounds (tune.c): edits tuning.tsv by ear
 #
 # ffmpeg (its native AAC encoder) is needed by `sounds` only: macOS has it from
 # Homebrew, Linux from its packages (the CI lanes that build the site install it).
@@ -33,7 +34,7 @@ WAV     := build/wav
 SRC     := soundgen.c c/dsp.c c/models.c c/placeholders.c c/m4a.c
 HDR     := c/dsp.h c/models.h c/placeholders.h c/m4a.h c/tables.h ../../c/src/anim_plan.h ../../../shared/c/rng.h
 
-.PHONY: sounds ctable bundle check list stats audition parts clean
+.PHONY: sounds ctable bundle check list stats audition parts clean tune
 
 build/soundgen: $(SRC) $(HDR)
 	@mkdir -p build
@@ -74,6 +75,15 @@ stats: build/soundgen
 parts: build/soundgen
 	@mkdir -p build/parts
 	@./build/soundgen parts build/parts
+
+# The tuner's endpoint (tune.c, docs/AUDIO.md "How to tune"): runs until stopped,
+# beside `npm run dev`, and rebuilds through tune.sh. Never part of a build.
+build/tune: tune.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) tune.c -o $@
+
+tune: build/tune
+	@./build/tune
 
 audition: sounds
 	@for f in $(OUT)/*.m4a; do echo "$$(basename $$f)"; afplay "$$f"; sleep 0.35; done

@@ -52,18 +52,26 @@
 // DETERMINISTIC: every draw is shared/c/rng.h seeded per cue, level and take,
 // and nothing reads a clock. Across machines the last bit can differ (libm).
 //
-//   soundgen write <dir>        every file into <dir>, and its manifest
+//   soundgen write <dir> [<c>]  every file into <dir>, and its manifest (and the take table, from the same render)
 //   soundgen ctable <c>         the take table every host plays by, alone
 //   soundgen list               one line a file: name, cue id, rate, ms, bytes, anchor ms, role, level
 //   soundgen stats              the same, with peak and RMS
 //   soundgen parts <dir>        each model on its own at 48 kHz, 12 takes, named
 //                               as its Python names them: what measure.py compares
 
+// fork and mmap: the takes are rendered by several processes (render_all).
+#if !defined(__APPLE__)
+#define _DEFAULT_SOURCE
+#endif
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "anim_plan.h"
 #include "c/dsp.h"
@@ -465,6 +473,70 @@ static void render_card(int cue, int role, const Set *set, int level, int v, Out
     o->cue = cue; o->level = level; o->role = role; o->kbps = set->kbps;
 }
 
+// ---- every card take, rendered by several processes ------------------------------
+// A take is its own seed and its own timeline, so the takes are rendered in any
+// order and by any number of processes with the same samples: forked workers
+// (not threads: some models keep scratch arrays) take the next job off a counter
+// in shared memory and leave the take there, and the parent copies them out.
+// SOUNDGEN_JOBS sets how many (1: in this process); the files are the same
+// whatever it is.
+typedef struct { int cue, role, level, v; const Set *set; Out *o; } Job;
+typedef struct { char name[48]; int cue, level, role, rate, n, kbps, ok; double anchor_ms; } Done;
+static int workers(int njobs) {
+    const char *e = getenv("SOUNDGEN_JOBS");
+    long w = e && *e ? strtol(e, NULL, 10) : sysconf(_SC_NPROCESSORS_ONLN);
+    if (w < 1) w = 1;
+    if (w > 16) w = 16;
+    return (int)(w > njobs ? (njobs > 0 ? njobs : 1) : w);
+}
+static int render_all(Job *jobs, int nj) {
+    const int w = workers(nj);
+    if (w == 1) {
+        for (int j = 0; j < nj; j++) render_card(jobs[j].cue, jobs[j].role, jobs[j].set, jobs[j].level, jobs[j].v, jobs[j].o);
+        return 0;
+    }
+    const size_t meta_bytes = sizeof(int) + sizeof(Done) * (size_t)nj, x_bytes = sizeof(double) * (size_t)SPAN * (size_t)nj;
+    void *meta = mmap(NULL, meta_bytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
+    double *xs = mmap(NULL, x_bytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
+    if (meta == MAP_FAILED || xs == MAP_FAILED) { fprintf(stderr, "soundgen: cannot map %zu bytes\n", x_bytes); return -1; }
+    int *next = meta;
+    Done *done = (Done *)((char *)meta + sizeof(int));
+    pid_t pids[16];
+    for (int k = 0; k < w; k++) {
+        pids[k] = fork();
+        if (pids[k] < 0) { fprintf(stderr, "soundgen: cannot fork\n"); return -1; }
+        if (pids[k] == 0) {
+            for (int j; (j = __atomic_fetch_add(next, 1, __ATOMIC_RELAXED)) < nj; ) {
+                Out o; memset(&o, 0, sizeof o);
+                render_card(jobs[j].cue, jobs[j].role, jobs[j].set, jobs[j].level, jobs[j].v, &o);
+                if (o.n > SPAN) _exit(3);
+                memcpy(xs + (size_t)j * SPAN, o.x, sizeof(double) * (size_t)o.n);
+                Done *d = &done[j];
+                memcpy(d->name, o.name, sizeof d->name);
+                d->cue = o.cue; d->level = o.level; d->role = o.role; d->rate = o.rate; d->n = o.n; d->kbps = o.kbps;
+                d->anchor_ms = o.anchor_ms; d->ok = 1;
+                free(o.x);
+            }
+            _exit(0);
+        }
+    }
+    int bad = 0;
+    for (int k = 0; k < w; k++) { int st; if (waitpid(pids[k], &st, 0) < 0 || !WIFEXITED(st) || WEXITSTATUS(st)) bad++; }
+    for (int j = 0; j < nj && !bad; j++) {
+        const Done *d = &done[j];
+        Out *o = jobs[j].o;
+        if (!d->ok) { bad++; break; }
+        memcpy(o->name, d->name, sizeof o->name);
+        o->cue = d->cue; o->level = d->level; o->role = d->role; o->rate = d->rate; o->n = d->n; o->kbps = d->kbps;
+        o->anchor_ms = d->anchor_ms;
+        o->x = malloc(sizeof(double) * (size_t)d->n);
+        memcpy(o->x, xs + (size_t)j * SPAN, sizeof(double) * (size_t)d->n);
+    }
+    munmap(meta, meta_bytes); munmap(xs, x_bytes);
+    if (bad) fprintf(stderr, "soundgen: a render worker failed\n");
+    return bad ? -1 : 0;
+}
+
 static int render_placeholder(int cue, int v, Out *o) {
     for (int i = 0; i < N_PLACEHOLDERS; i++) {
         if (PLACEHOLDERS[i].cue != cue) continue;
@@ -481,17 +553,33 @@ static int render_placeholder(int cue, int v, Out *o) {
 }
 
 // ---- WAV: 16-bit PCM, mono, the 44-byte header and nothing else ------------
-static void le(FILE *f, uint32_t v, int bytes) { for (int i = 0; i < bytes; i++) fputc((int)((v >> (8 * i)) & 0xff), f); }
+// A file whose bytes are already these is left alone, so that `encode` (which
+// skips a take whose .m4a is newer than its WAV) re-encodes only what changed:
+// the tuner's rebuild (tune.sh). `make sounds` empties both directories first.
+static void put_le(unsigned char *p, uint32_t v, int bytes) { for (int i = 0; i < bytes; i++) p[i] = (unsigned char)((v >> (8 * i)) & 0xff); }
 static int write_pcm(const char *path, const int16_t *x, int n, int rate) {
-    FILE *f = fopen(path, "wb");
-    if (!f) return -1;
     const uint32_t data = (uint32_t)n * 2;
-    fwrite("RIFF", 1, 4, f); le(f, 36 + data, 4); fwrite("WAVEfmt ", 1, 8, f);
-    le(f, 16, 4); le(f, 1, 2); le(f, 1, 2); le(f, (uint32_t)rate, 4);
-    le(f, (uint32_t)rate * 2, 4); le(f, 2, 2); le(f, 16, 2);
-    fwrite("data", 1, 4, f); le(f, data, 4);
-    for (int i = 0; i < n; i++) le(f, (uint32_t)(uint16_t)x[i], 2);
-    return fclose(f);
+    const size_t size = 44 + (size_t)data;
+    unsigned char *b = malloc(size);
+    memcpy(b, "RIFF", 4); put_le(b + 4, 36 + data, 4); memcpy(b + 8, "WAVEfmt ", 8);
+    put_le(b + 16, 16, 4); put_le(b + 20, 1, 2); put_le(b + 22, 1, 2); put_le(b + 24, (uint32_t)rate, 4);
+    put_le(b + 28, (uint32_t)rate * 2, 4); put_le(b + 32, 2, 2); put_le(b + 34, 16, 2);
+    memcpy(b + 36, "data", 4); put_le(b + 40, data, 4);
+    for (int i = 0; i < n; i++) put_le(b + 44 + 2 * (size_t)i, (uint32_t)(uint16_t)x[i], 2);
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        unsigned char *old = malloc(size + 1);
+        const size_t got = fread(old, 1, size + 1, f);
+        fclose(f);
+        const int same = got == size && !memcmp(old, b, size);
+        free(old);
+        if (same) { free(b); return 0; }
+    }
+    f = fopen(path, "wb");
+    if (!f) { free(b); return -1; }
+    const size_t put = fwrite(b, 1, size, f);
+    free(b);
+    return fclose(f) != 0 || put != size ? -1 : 0;
 }
 
 // ---- parts: each model alone, for measure.py ---------------------------------------
@@ -571,24 +659,47 @@ static int read_manifest(const char *dir, Entry **out) {
     *out = e;
     return n;
 }
-// Every take into <outdir>/<name>.m4a, eight ffmpegs at a time.
+// Is `a` there and modified no earlier than `b`? To the nanosecond.
+static int newer(const char *a, const char *b) {
+    struct stat sa, sb;
+    if (stat(a, &sa) != 0 || stat(b, &sb) != 0) return 0;
+#ifdef __APPLE__
+    const struct timespec ta = sa.st_mtimespec, tb = sb.st_mtimespec;
+#else
+    const struct timespec ta = sa.st_mtim, tb = sb.st_mtim;
+#endif
+    return ta.tv_sec > tb.tv_sec || (ta.tv_sec == tb.tv_sec && ta.tv_nsec >= tb.tv_nsec);
+}
+// Every take into <outdir>/<name>.m4a, eight ffmpegs at a time; a take whose
+// .m4a is already newer than its WAV is skipped (only the tuner's rebuild ever
+// has one: `make sounds` starts from empty directories). A failed encode leaves
+// no file behind to be skipped next time.
 static int encode(const char *wavs, const char *outdir) {
     Entry *e; const int n = read_manifest(wavs, &e);
     if (n < 0) return 1;
-    int pids[8], at[8], live = 0, bad = 0;
+    int pids[8], at[8], live = 0, bad = 0, done = 0;
     for (int i = 0; i < n || live > 0; ) {
         while (i < n && live < 8) {
             char w[1024], m[1024];
             snprintf(w, sizeof w, "%s/%s.wav", wavs, e[i].name);
             snprintf(m, sizeof m, "%s/%s.m4a", outdir, e[i].name);
+            if (newer(m, w)) { i++; continue; }
+            done++;
             const int pid = m4a_encode(w, m, e[i].rate, e[i].kbps);
             if (pid < 0) { fprintf(stderr, "soundgen: cannot run ffmpeg (it encodes the shipped AAC: install it)\n"); return 1; }
             pids[live] = pid; at[live] = i; live++; i++;
         }
-        if (m4a_wait(pids[0]) != 0) { fprintf(stderr, "soundgen: ffmpeg failed on %s\n", e[at[0]].name); bad++; }
+        if (live == 0) break;
+        if (m4a_wait(pids[0]) != 0) {
+            char m[1024];
+            snprintf(m, sizeof m, "%s/%s.m4a", outdir, e[at[0]].name);
+            remove(m);
+            fprintf(stderr, "soundgen: ffmpeg failed on %s\n", e[at[0]].name); bad++;
+        }
         for (int k = 1; k < live; k++) { pids[k - 1] = pids[k]; at[k - 1] = at[k]; }
         live--;
     }
+    if (getenv("SOUNDGEN_SAY_ENCODED")) fprintf(stderr, "soundgen: %d of %d files encoded\n", done, n);
     free(e);
     return bad ? 1 : 0;
 }
@@ -804,7 +915,7 @@ int main(int argc, char **argv) {
     const int ctable = !strcmp(mode, "ctable") && argc > 2;
     const int stats = !strcmp(mode, "stats");
     if (!writing && !stats && !ctable && strcmp(mode, "list")) {
-        fprintf(stderr, "usage: soundgen write <wavdir> | encode <wavdir> <outdir>\n"
+        fprintf(stderr, "usage: soundgen write <wavdir> [<cue_takes.c>] | encode <wavdir> <outdir>\n"
                         "                | check <wavdir> <outdir> | ctable <cue_takes.c> | list | stats | parts <dir>\n");
         return 2;
     }
@@ -814,9 +925,10 @@ int main(int argc, char **argv) {
     memset(recs, 0, sizeof recs);
     const int n_recs = read_recordings(recs);
     if (n_recs < 0) return 1;
-    int n = 0;
+    int n = 0, nj = 0;
     long total = 0;
     double loudest = 0;
+    Job *jobs = calloc(512, sizeof(Job));
     for (int cue = 1; cue < ANIM_N_CUES; cue++) {
         const Recipe *r = &RECIPES[cue];
         int recorded = 0;
@@ -836,14 +948,13 @@ int main(int argc, char **argv) {
             const Set *set = sets[role];
             if (!set->make) continue;
             for (int level = set->lo; level <= set->hi; level++) {
-                for (int v = 0; v < set->takes; v++) {
-                    Out *o = &outs[n++];
-                    render_card(cue, role, set, level, v, o);
-                    total += 44 + 2L * o->n;
-                }
+                for (int v = 0; v < set->takes; v++) jobs[nj++] = (Job){ cue, role, level, v, set, &outs[n++] };
             }
         }
     }
+    if (render_all(jobs, nj) != 0) return 1;
+    for (int j = 0; j < nj; j++) total += 44 + 2L * jobs[j].o->n;
+    free(jobs);
     common_gain(outs, n, writing || stats);
     for (int i = 0; i < n; i++) if (outs[i].x) for (int k = 0; k < outs[i].n; k++) if (abs(outs[i].pcm[k]) / 32767.0 > loudest) loudest = abs(outs[i].pcm[k]) / 32767.0;
     FILE *manifest = NULL;
@@ -874,7 +985,9 @@ int main(int argc, char **argv) {
         }
     }
     if (manifest) fclose(manifest);
-    if (ctable && write_ctable(argv[2], outs, n) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", argv[2]); return 1; }
+    // `write <wavdir> <ctable>` writes the take table from the same render (the tuner's rebuild).
+    const char *ctable_path = ctable ? argv[2] : writing && argc > 3 ? argv[3] : NULL;
+    if (ctable_path && write_ctable(ctable_path, outs, n) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", ctable_path); return 1; }
     if (writing || stats)
         fprintf(writing ? stderr : stdout, "soundgen: %d files, %ld bytes, loudest card take %.1f dBFS\n",
                 n, total, 20 * log10(loudest + 1e-9));
