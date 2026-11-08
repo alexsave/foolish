@@ -29,6 +29,7 @@
 #include "card.h"
 #include "legal.h"
 #include "anim_plan.h"
+#include "evwire.h"   // EVW_MSG_PASSED
 #include "hand_layout.h"
 
 // ---------- the one table layout, read ---------------------------------------
@@ -159,6 +160,10 @@ int fio_anim_plan(const uint8_t *in, int len) {
             if (cells > 0) { row = &in[p]; row_n = n_bat; }
             p += 2 * n_bat;
         }
+        // …and the message the event was told with (EVW_MSG_*), last: the plan
+        // reads a transfer off it (AnimPlanEvent.passed).
+        if (p >= len) return FIO_EPARSE;
+        const int msg = in[p++];
         evs[i].type = type;
         evs[i].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
         evs[i].from = from;
@@ -175,6 +180,7 @@ int fio_anim_plan(const uint8_t *in, int len) {
         evs[i].hand = hands[i];
         evs[i].n_battles = row_n;
         evs[i].battles = row;
+        evs[i].passed = type == ANIM_EVT_ATTACK_PASS && msg == EVW_MSG_PASSED;
     }
 
     const int rc = anim_build_plan(evs, n, np, in[3], in[4], final_flipped,

@@ -1759,7 +1759,7 @@ static int board_rules_check(void) {
     }
     // What could sound next: a lobby can only deal, and the scalars cross in
     // AnimCueAsk's order (an uncovered attack is n_battles 1, n_covered 0).
-    if (fio_cues_next(GAME_STATUS_WAITING, 0, 2, 0, 0, 0, 0) != ((1u << ANIM_CUE_DEAL) | (1u << ANIM_CUE_FLIP))
+    if (fio_cues_next(GAME_STATUS_WAITING, 0, 2, 0, 0, 0, 0) != ((1u << ANIM_CUE_DEAL) | (1u << ANIM_CUE_DEAL_LAND) | (1u << ANIM_CUE_TURN) | (1u << ANIM_CUE_FLIP))
         || !(fio_cues_next(GAME_STATUS_PLAYING, 0, 2, 1, 0, 1, 20) & (1u << ANIM_CUE_COVER))
         || (fio_cues_next(GAME_STATUS_PLAYING, 0, 2, 1, 1, 1, 20) & (1u << ANIM_CUE_COVER))
         || (fio_cues_next(GAME_STATUS_PLAYING, -1, 2, 1, 0, 0, 0) & (1u << ANIM_CUE_FOOL))
@@ -1995,16 +1995,16 @@ static int board_rules_check(void) {
 static int plan_wire_check(void) {
     //  ver, np, n_events, final deck, final discard, final hands
     //  then per event: type seat from to n_cards n_ids has_counts deck discard
-    //                  hand[np] ids... n_battles [2 x n_battles]
+    //                  hand[np] ids... n_battles [2 x n_battles] msg
     const unsigned char in[] = {
         FIO_PLAN_VERSION, 2, 2, 0, 20, FIO_PLAN_NO_FLIP, 5, 9,
         // PICKUP seat 1, 4 table cards -> hand. Its board: deck 1, hands [3,9],
         // and NO row on the wire at all (0xFE) - which is the case a pickup
         // that leads its stream really is.
-        6, 1, 2, 1, 4, 4, 1, 1, 20, 33, 3, 9, 2, 14, 27, 40, FIO_PRETABLE_NONE,
+        6, 1, 2, 1, 4, 4, 1, 1, 20, 33, 3, 9, 2, 14, 27, 40, FIO_PRETABLE_NONE, 0,
         // REFILL seat 0, 2 cards off a deck of 1. Its board: deck 0, hands
         // [5,9], table empty (0 battles - the bout is over).
-        9, 0, 0, 1, 2, 2, 1, 0, 20, FIO_PLAN_NO_FLIP, 5, 9, 6, 33, 0,
+        9, 0, 0, 1, 2, 2, 1, 0, 20, FIO_PLAN_NO_FLIP, 5, 9, 6, 33, 0, 0,
     };
     // A REPLAYED PASS, and the fixture whose ROW BYTES ARE ACTUALLY READ. Card
     // 3 is the pile already down; card 17 is the card being passed. Declared up
@@ -2020,7 +2020,7 @@ static int plan_wire_check(void) {
         // with BOTH battles on it, uncovered, which is what the kernel
         // committed and what the arrived view shows.
         4, 0, 1, 2, 1, 1, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6, 17,
-        2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
+        2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE, 2,
     };
     // THE PLAN IS THE STRUCT (anim_plan.h AnimPlan), read where it lies. This
     // used to walk a packed block of the same numbers by offset - the same
@@ -2149,6 +2149,11 @@ static int plan_wire_check(void) {
         if (fio_anim_plan(pass_in, (int)sizeof pass_in) != FIO_EOK || pl->n_steps != 1) {
             printf("FAIL pass plan\n"); return 1;
         }
+        // …AND IT IS HEARD AS A TRANSFER: its msg byte is EVW_MSG_PASSED, so it
+        // slides on after it lands (ANIM_CUE_PASS), where an attack would not.
+        int heard_pass = 0;
+        for (int k = 0; k < pl->n_cues; k++) heard_pass |= pl->cues[k].kind == ANIM_CUE_PASS;
+        if (!heard_pass) { printf("FAIL a transfer on the plan wire made no ANIM_CUE_PASS\n"); return 1; }
         // ONE cell, not two, and it is the pile that was already there.
         if (pl->pre.n_battles != 1) {
             printf("FAIL pass pre row %d cells (the pre-bump: the arrived row is 2)\n",
@@ -2188,7 +2193,7 @@ static int plan_wire_check(void) {
         const unsigned char cover_in[] = {
             FIO_PLAN_VERSION, 2, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 5,
             5, 1, 1, 2, 1, 1, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 5, 17,
-            1, 3, 17,
+            1, 3, 17, 0,
         };
         if (fio_anim_plan(cover_in, (int)sizeof cover_in) != FIO_EOK || pl->n_steps != 1) {
             printf("FAIL cover plan\n"); return 1;
@@ -2205,10 +2210,13 @@ static int plan_wire_check(void) {
         const unsigned char masked_in[] = {
             FIO_PLAN_VERSION, 2, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6,
             4, 0, 1, 2, 1, 0, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6,
-            2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
+            2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE, 1,
         };
         if (fio_anim_plan(masked_in, (int)sizeof masked_in) != FIO_EOK || pl->n_steps != 1) {
             printf("FAIL masked plan\n"); return 1;
+        }
+        for (int k = 0; k < pl->n_cues; k++) {
+            if (pl->cues[k].kind == ANIM_CUE_PASS) { printf("FAIL an attack (EVW_MSG_ATTACKED) slid on like a transfer\n"); return 1; }
         }
         if (pl->pre.n_battles != 0) {
             printf("FAIL masked pre row %d (a row was invented for a card nobody named)\n",

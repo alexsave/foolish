@@ -1682,7 +1682,51 @@ static void test_plan_sound_cues(void) {
         CHECK(d0 && d0->at_ms == p.steps[2].start_ms && d0->hits == 1, "a refill is heard at the stock, as the card leaves");
         CHECK(d1 && d1->at_ms == p.steps[3].start_ms && d1->hits == 4 && d1->n_cards == 4,
               "a refill of four cards is four cards off the pile (got %d hits)", d1 ? d1->hits : -1);
-        CHECK(p.n_cues == 6, "and that is every sound a bout end makes (got %d)", p.n_cues);
+        const AnimCue *l0 = cue_of(&p, 2, ANIM_CUE_DEAL_LAND), *l1 = cue_of(&p, 3, ANIM_CUE_DEAL_LAND);
+        CHECK(l0 && l0->at_ms == p.steps[2].start_ms + p.steps[2].duration_ms && l0->hits == 1,
+              "a refilled card is heard landing at its seat, at the landing (got %d)", l0 ? l0->at_ms : -1);
+        CHECK(l1 && l1->at_ms == p.steps[3].start_ms + p.steps[3].duration_ms && l1->hits == 4 && l1->n_cards == 4,
+              "four refilled cards land a strike a card (got %d hits)", l1 ? l1->hits : -1);
+        CHECK(p.n_cues == 8, "and that is every sound a bout end makes (got %d)", p.n_cues);
+        // THE ROOM before the sweep is the hold, behind the cover's own tail:
+        // where the strokes that gather the table are fitted.
+        CHECK(sweep && sweep->room_ms == sweep->at_ms - ANIM_TIME_MS - ANIM_SOUND_ROOM_GUARD_MS,
+              "the sweep's room runs back to the cover's landing and its tail (got %d)", sweep ? sweep->room_ms : -1);
+        CHECK(lift && lift->room_ms == 0, "the first cue of a plan has no room before it: nothing is known before 0");
+        CHECK(cov && cov->room_ms == ANIM_TIME_MS - ANIM_SOUND_ROOM_GUARD_MS,
+              "a landing's room runs back to its own lift (got %d)", cov ? cov->room_ms : -1);
+        CHECK(pile && pile->room_ms == ANIM_TIME_MS - ANIM_SOUND_ROOM_GUARD_MS,
+              "and the pile's to its sweep (got %d)", pile ? pile->room_ms : -1);
+    }
+
+    // A TRANSFER is an attack slid on: it lands like one and then slides, and
+    // only a step the event says was a pass does it.
+    {
+        AnimPlanEvent ev[1] = { cue_ev(ANIM_EVT_ATTACK_PASS, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1) };
+        CHECK(anim_build_plan(ev, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the attack builds");
+        CHECK(!cue_of(&p, 0, ANIM_CUE_PASS) && cues_of_step(&p, 0) == 2, "an attack lands and does not slide on");
+        ev[0].passed = 1;
+        CHECK(anim_build_plan(ev, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the transfer builds");
+        const AnimCue *pa = cue_of(&p, 0, ANIM_CUE_PASS), *pl = cue_of(&p, 0, ANIM_CUE_PLACE);
+        CHECK(pa && pl && pa->at_ms == ANIM_TIME_MS && pl->at_ms == ANIM_TIME_MS && pa->hits == 1,
+              "a transfer lands like an attack and slides on from its landing (got %d)", pa ? pa->at_ms : -1);
+        CHECK(cues_of_step(&p, 0) == 3, "a transfer step makes three: the lift, the landing and the slide");
+        ev[0].type = ANIM_EVT_COVER;
+        CHECK(anim_build_plan(ev, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the flagged cover builds");
+        CHECK(!cue_of(&p, 0, ANIM_CUE_PASS), "only an ATTACK_PASS can be a transfer");
+    }
+    // A LANDING AT A SEAT IS AS LOUD AS IT IS NEAR (deal_game.py's geometry).
+    {
+        CHECK(anim_seat_gain_pm(0, 0, 4) == 1000 && anim_seat_gain_pm(-1, 2, 4) == 1000
+              && anim_seat_gain_pm(0, 4, 4) == 1000 && anim_seat_gain_pm(0, 1, 1) == 1000,
+              "one's own seat, a spectator and a seat out of range are heard at full level");
+        CHECK(anim_seat_gain_pm(0, 1, 4) == 585 && anim_seat_gain_pm(0, 3, 4) == 585,
+              "at four seats the neighbours are -4.7 dB, either side (got %d, %d)",
+              anim_seat_gain_pm(0, 1, 4), anim_seat_gain_pm(0, 3, 4));
+        CHECK(anim_seat_gain_pm(0, 2, 4) == 455, "and across -6.8 dB (got %d)", anim_seat_gain_pm(0, 2, 4));
+        CHECK(anim_seat_gain_pm(2, 0, 4) == 455 && anim_seat_gain_pm(3, 1, 4) == 455,
+              "the table is the same from every chair (got %d)", anim_seat_gain_pm(2, 0, 4));
+        CHECK(anim_seat_gain_pm(0, 1, 2) == 455, "at two seats the other is across (got %d)", anim_seat_gain_pm(0, 1, 2));
     }
 
     // TWO COVERS IN ONE MOVE: one lift, two strikes, and the strikes are not a
@@ -1741,7 +1785,11 @@ static void test_plan_sound_cues(void) {
         const AnimCue *pk = cue_of(&p, 0, ANIM_CUE_PICKUP);
         CHECK(pk && pk->at_ms == 0 && pk->hits == 1 && pk->n_cards == 5,
               "a pickup is one gesture: one sound as the table lifts, for five cards (got %d hits)", pk ? pk->hits : -1);
-        CHECK(cues_of_step(&p, 0) == 1, "and nothing is struck when the cards reach the hand");
+        const AnimCue *in = cue_of(&p, 0, ANIM_CUE_INTO_HAND);
+        CHECK(in && in->at_ms == ANIM_TIME_MS && in->hits == 1 && in->n_cards == 5,
+              "and the cards are heard sliding into the hand as they land (got %d)", in ? in->at_ms : -1);
+        CHECK(cues_of_step(&p, 0) == 2, "and that is all a pickup makes");
+        CHECK(pk && pk->room_ms == 0, "a pickup that opens its run has no room for anything before it");
         const AnimCue *out = cue_of(&p, 1, ANIM_CUE_OUT);
         CHECK(out && out->at_ms == ANIM_TIME_MS + ANIM_SOUND_OUT_LAG_MS,
               "the out is struck a lag behind the landing that caused it (got %d)", out ? out->at_ms : -1);
@@ -1798,12 +1846,18 @@ static void test_plan_sound_cues(void) {
         CHECK(d && d->at_ms == p.steps[2].start_ms && d->hits == 1, "each dealt card is heard as it leaves the stock");
         const AnimCue *fl = cue_of(&p, 3, ANIM_CUE_FLIP);
         CHECK(fl && fl->at_ms == p.steps[3].start_ms + p.steps[3].duration_ms, "the trump is heard turning up as it lands");
+        const AnimCue *tn = cue_of(&p, 3, ANIM_CUE_TURN);
+        CHECK(tn && tn->at_ms == p.steps[3].start_ms && tn->hits == 1, "and turned off the stock as it leaves");
+        const AnimCue *dl = cue_of(&p, 2, ANIM_CUE_DEAL_LAND);
+        CHECK(dl && dl->at_ms == p.steps[2].start_ms + p.steps[2].duration_ms
+              && p.steps[2].duration_ms == ANIM_DEAL_CARD_MS,
+              "a dealt card lands at its seat a dealer's flight after it left (got %d)", dl ? dl->at_ms : -1);
         const AnimCue *rv = cue_of(&p, 5, ANIM_CUE_REVERT);
         CHECK(rv && rv->at_ms == p.steps[5].start_ms, "a refused card is heard as it sets off home");
         CHECK(rv && rv->undoes == ANIM_CUE_PLACE,
               "a card going home whose move is not in the stream undoes a card laid (got %d)", rv ? rv->undoes : -1);
         CHECK(d && d->undoes == ANIM_CUE_NONE && fl && fl->undoes == ANIM_CUE_NONE, "no other cue undoes anything");
-        CHECK(p.n_cues == 4, "four sounds for six steps (got %d)", p.n_cues);
+        CHECK(p.n_cues == 7, "seven sounds for six steps (got %d)", p.n_cues);
     }
     // A REVERT IS THE MOVE IT UNDOES, BACKWARDS, and the stream says which
     // move that was: the nearest step before it that moved the same card.
@@ -1942,7 +1996,8 @@ static void test_plan_sound_cues(void) {
     {
         #define BIT(k) ((uint32_t)1 << (k))
         AnimCueAsk q = { GAME_STATUS_WAITING, 0, 2, 0, 0, false, 0 };
-        CHECK(anim_cues_next(&q) == (BIT(ANIM_CUE_DEAL) | BIT(ANIM_CUE_FLIP)), "a lobby can only deal");
+        CHECK(anim_cues_next(&q) == (BIT(ANIM_CUE_DEAL) | BIT(ANIM_CUE_DEAL_LAND) | BIT(ANIM_CUE_TURN) | BIT(ANIM_CUE_FLIP)),
+              "a lobby can only deal");
         q.status = GAME_STATUS_GAME_OVER;
         CHECK(anim_cues_next(&q) == 0, "a finished game has nothing next");
         q.status = 77;
@@ -1952,7 +2007,7 @@ static void test_plan_sound_cues(void) {
 
         // An empty table mid-game, stock deep: somebody attacks, and that is all.
         AnimCueAsk p = { GAME_STATUS_PLAYING, 0, 2, 0, 0, true, 20 };
-        CHECK(anim_cues_next(&p) == (BIT(ANIM_CUE_LIFT) | BIT(ANIM_CUE_PLACE)),
+        CHECK(anim_cues_next(&p) == (BIT(ANIM_CUE_LIFT) | BIT(ANIM_CUE_PLACE) | BIT(ANIM_CUE_PASS)),
               "an empty table with a deep stock: a card laid, and nothing else (got %x)", anim_cues_next(&p));
         CHECK(!(ANIM_CUES_ALL & 0) && !(anim_cues_next(&p) & BIT(ANIM_CUE_REVERT)),
               "a revert is never named: it is some other cue's sound, backwards");

@@ -330,7 +330,7 @@ int fio_last_reject(void);
 //   5  u8  final flipped trump as a DENSE id (0..51), FIO_PLAN_NO_FLIP for
 //           none - the same encoding the veil and the row on this wire use
 //   6  n_players x u8 final hand counts, by seat
-//   then per event, 11 + n_players + n_ids + 2 x n_battles bytes:
+//   then per event, 12 + n_players + n_ids + 2 x n_battles bytes:
 //     u8 type (EVW_T_*/ANIM_EVT_*), u8 seat (0xFF none), u8 from, u8 to,
 //     u8 n_cards (the count the arithmetic reads), u8 n_ids (real identities
 //     listed; 0 for viewer-masked backs), u8 has_counts, u8 deck, u8 discard,
@@ -341,6 +341,8 @@ int fio_last_reject(void);
 //       as fio_table_encode writes it. A row with a FIO_TABLE_UNKNOWN cell is
 //       read as no row, for fio_pre_bout_table_packed's reason: the freeze's
 //       row is laid out by identity, and a cell nobody can name has none.
+//     u8 msg (EVW_MSG_*, GameEvent.msg): EVW_MSG_PASSED on an ATTACK_PASS is
+//       a transfer, which sounds as one (ANIM_CUE_PASS).
 //   A step with has_counts == 0 carries the walk forward instead of anchoring
 //   it; a stream whose FIRST event has none falls back to undoing them all.
 //   THE ROW IS THE SAME KIND OF ANCHOR, one field later: the row before a pass
@@ -355,7 +357,7 @@ int fio_last_reject(void);
 // The web crosses the same struct (wasm_anim_plan_ptr).
 // Returns FIO_EOK, or a negative error; the plan of a refused call is not to be
 // read.
-#define FIO_PLAN_VERSION 3
+#define FIO_PLAN_VERSION 4
 // The seat block is a FIXED width so a step sits at a constant offset whatever
 // the table size; the kernel's MAX_PLAYERS is checked against it at build time.
 #define FIO_PLAN_SEATS   8

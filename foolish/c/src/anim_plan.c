@@ -203,9 +203,27 @@ _Static_assert(ANIM_MAX_STEPS <= 256 && ANIM_SOUND_MAX_HITS <= 255 && ANIM_N_CUE
 // At most two a step, so ANIM_MAX_CUES cannot be passed; the guard is for the
 // reader, and so a third cue added to some step one day is dropped rather than
 // written past the array.
+// THE ROOM BEFORE A CUE (AnimCue.room_ms): back to the end of the latest cue
+// already in the plan that is struck before it, behind that cue's own tail. The
+// cues already pushed are this step's and the steps' before it, so the answer
+// never changes as a run is appended to.
+static int cue_room(const AnimPlan *p, int at_ms) {
+    int end = -1;
+    for (int k = 0; k < p->n_cues; k++) {
+        const AnimCue *c = &p->cues[k];
+        if (c->at_ms > at_ms) continue;
+        const int e = c->at_ms + (c->hits - 1) * ANIM_SOUND_STAGGER_MS + ANIM_SOUND_ROOM_GUARD_MS;
+        if (e > end) end = e;
+    }
+    const int room = end < 0 ? at_ms : at_ms - end;
+    return room < 0 ? 0 : room > 65535 ? 65535 : room;
+}
+
 static void cue_push(AnimPlan *p, int kind, int step, int at_ms, int hits, int n_cards) {
     if (p->n_cues >= ANIM_MAX_CUES) return;
+    const int room = cue_room(p, at_ms);
     AnimCue *c = &p->cues[p->n_cues++];
+    c->room_ms = (uint16_t)room;
     c->at_ms = at_ms;
     c->kind = (uint8_t)kind;
     c->step = (uint8_t)step;
@@ -282,9 +300,15 @@ static void build_cues(AnimPlan *p, const AnimPlanEvent *events) {
                 // Heard at the stock, a card at a time. A refill's cards fly
                 // as one flight and still leave the pile one after another.
                 cue_strikes(p, ANIM_CUE_DEAL, i, st->start_ms, 0, n);
+                // ...and land at the seat, a card at a time, as PLACE does.
+                cue_strikes(p, ANIM_CUE_DEAL_LAND, i, land, 0, n);
                 break;
             case ANIM_EVT_FLIPPED:
-                if (n > 0) cue_push(p, ANIM_CUE_FLIP, i, land, 1, n);
+                // Turned off the stock as it leaves, face up as it lands.
+                if (n > 0) {
+                    cue_push(p, ANIM_CUE_TURN, i, st->start_ms, 1, n);
+                    cue_push(p, ANIM_CUE_FLIP, i, land, 1, n);
+                }
                 break;
             case ANIM_EVT_ATTACK_PASS:
             case ANIM_EVT_COVER: {
@@ -302,12 +326,19 @@ static void build_cues(AnimPlan *p, const AnimPlanEvent *events) {
                 for (int k = st->beat_first; k < i; k++) before += p->steps[k].n_cards;
                 cue_strikes(p, st->type == ANIM_EVT_COVER ? ANIM_CUE_COVER : ANIM_CUE_PLACE, i,
                             land, before, n);
+                // A TRANSFER lands like an attack and is then slid on to the
+                // next defender: one slide a step, from its landing.
+                if (st->type == ANIM_EVT_ATTACK_PASS && events[i].passed)
+                    cue_push(p, ANIM_CUE_PASS, i, land, 1, n);
                 break;
             }
             case ANIM_EVT_PICKUP:
-                // One gesture: you take the table. Nothing is struck at the
-                // landing - the cards go into a hand, which is quiet.
-                if (n > 0) cue_push(p, ANIM_CUE_PICKUP, i, st->start_ms, 1, n);
+                // The table lifted as the flight opens, and the cards slid into
+                // the hand as they land.
+                if (n > 0) {
+                    cue_push(p, ANIM_CUE_PICKUP, i, st->start_ms, 1, n);
+                    cue_push(p, ANIM_CUE_INTO_HAND, i, land, 1, n);
+                }
                 break;
             case ANIM_EVT_DISCARD:
             case ANIM_EVT_CARDS_TO_TRASH:
@@ -650,6 +681,7 @@ int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out) {
         ev->cards = a->n_cards ? a->cards : 0;
         ev->n_cards = a->n_cards;
         ev->mask_cards = a->mask_cards ? 1 : 0;
+        ev->passed = a->passed ? 1 : 0;
         // `has_counts` is the whole gate, here as in anim_build_plan: a step
         // without it has counts in its struct all the same - whatever the last
         // stream left there - and nothing reads them. The hand is NULL for such
@@ -935,25 +967,57 @@ int anim_role_cue(AnimRoles shown, AnimRoles next) {
     return (next.good_mask & ~shown.good_mask) ? ANIM_CUE_GOOD : ANIM_CUE_NONE;
 }
 
+// cos(2 pi num / den), num in [0, den), without libm: the modules that link
+// this carry none. Folded onto [0, pi/2] and summed to x^14, which is within
+// 1e-9 there - far finer than the gain is rounded to.
+static double cos_turn(int num, int den) {
+    double x = 6.283185307179586 * num / den;               // [0, 2 pi)
+    if (x > 3.141592653589793) x = 6.283185307179586 - x;   // cos is even about pi
+    double sign = 1;
+    if (x > 1.5707963267948966) { x = 3.141592653589793 - x; sign = -1; }
+    const double x2 = x * x;
+    double term = 1, sum = 1;
+    for (int k = 1; k <= 7; k++) { term *= -x2 / ((2 * k - 1) * (2 * k)); sum += term; }
+    return sign * sum;
+}
+
+int anim_seat_gain_pm(int viewer, int seat, int n_seats) {
+    if (viewer < 0 || seat < 0 || n_seats < 2 || viewer >= n_seats || seat >= n_seats || seat == viewer)
+        return 1000;
+    // The geometry of deal_game.py: the viewer's head at (R, 0, H); a seat k
+    // round the table lands its cards at (R - IN)(cos t, sin t), t = 2 pi k / n.
+    const double R = 0.5, IN = 0.15, H = 0.40, r = R - IN;
+    const double own2 = IN * IN + H * H;
+    const double c = cos_turn((seat - viewer + n_seats) % n_seats, n_seats);
+    const double d2 = r * r - 2 * R * r * c + R * R + H * H;
+    // 1000 x sqrt(own2 / d2): the ratio of the distances, rounded.
+    const double q = own2 / d2;
+    double g = q < 1 ? q : 1;                               // a Newton square root, no libm
+    for (int i = 0; i < 30; i++) g = 0.5 * (g + q / g);
+    return (int)(1000 * g + 0.5);
+}
+
 #define CUE(k) ((uint32_t)1 << (k))
 
 uint32_t anim_cues_next(const AnimCueAsk *q) {
     if (!q) return ANIM_CUES_ALL;
-    if (q->status == GAME_STATUS_WAITING) return CUE(ANIM_CUE_DEAL) | CUE(ANIM_CUE_FLIP);
+    if (q->status == GAME_STATUS_WAITING)
+        return CUE(ANIM_CUE_DEAL) | CUE(ANIM_CUE_DEAL_LAND) | CUE(ANIM_CUE_TURN) | CUE(ANIM_CUE_FLIP);
     if (q->status == GAME_STATUS_GAME_OVER) return 0;
     if (q->status != GAME_STATUS_PLAYING) return ANIM_CUES_ALL;
 
-    uint32_t m = CUE(ANIM_CUE_LIFT) | CUE(ANIM_CUE_PLACE);
+    uint32_t m = CUE(ANIM_CUE_LIFT) | CUE(ANIM_CUE_PLACE) | CUE(ANIM_CUE_PASS);
     const int seated = q->my_seat >= 0;   // only a seat can be the fool
     const int stock = (q->deck > 0 ? q->deck : 0) + (q->has_flipped ? 1 : 0);
     const int on_table = q->n_battles > 0;
     // The trump is turned as the opening deal ends, so a stock with no trump
     // under it is a deal still going round.
-    if (q->deck > 0 && !q->has_flipped) m |= CUE(ANIM_CUE_DEAL) | CUE(ANIM_CUE_FLIP);
-    if (q->n_battles > q->n_covered) m |= CUE(ANIM_CUE_COVER) | CUE(ANIM_CUE_PICKUP);
+    if (q->deck > 0 && !q->has_flipped)
+        m |= CUE(ANIM_CUE_DEAL) | CUE(ANIM_CUE_DEAL_LAND) | CUE(ANIM_CUE_TURN) | CUE(ANIM_CUE_FLIP);
+    if (q->n_battles > q->n_covered) m |= CUE(ANIM_CUE_COVER) | CUE(ANIM_CUE_PICKUP) | CUE(ANIM_CUE_INTO_HAND);
     if (on_table) {
         m |= CUE(ANIM_CUE_SWEEP) | CUE(ANIM_CUE_PILE) | CUE(ANIM_CUE_GOOD) | CUE(ANIM_CUE_HAND_OFF);
-        if (stock > 0) m |= CUE(ANIM_CUE_DEAL);
+        if (stock > 0) m |= CUE(ANIM_CUE_DEAL) | CUE(ANIM_CUE_DEAL_LAND);
     }
     // A seat goes out when its hand is empty and there is nothing left to
     // draw. That is now, with the stock already gone, or at the end of a bout

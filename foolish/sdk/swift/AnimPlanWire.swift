@@ -191,6 +191,8 @@ public struct AnimPlan: Equatable, Sendable {
             // derivable at all: the row before a pass is this row with the
             // passed card taken back off it.
             input.append(contentsOf: PreBoutTable.table(board?.battles))
+            // …and the message it was told with: a transfer sounds as one.
+            input.append(UInt8(truncatingIfNeeded: ev.msg))
         }
 
         // The answer is the kernel's own AnimPlan (anim_plan.h), copied out

@@ -919,6 +919,12 @@ int wasm_anim_role_cue(int shown_defender, int shown_first_attacker, int shown_g
     return anim_role_cue(shown, next);
 }
 
+// HOW LOUD A LANDING AT A SEAT IS TO THE VIEWER (anim_plan.h anim_seat_gain_pm),
+// a linear gain in thousandths.
+int wasm_anim_seat_gain_pm(int viewer, int seat, int n_seats) {
+    return anim_seat_gain_pm(viewer, seat, n_seats);
+}
+
 // WHICH CUES COULD SOUND NEXT (anim_plan.h anim_cues_next), asked as a value
 // through its generated writer and answered as the mask itself: bit k is
 // ANIM_CUE_k. A host loads those sounds first.
