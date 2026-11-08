@@ -439,6 +439,8 @@ Each takes about 12 s of one core, and runs only when soundgen changed.
 | `bots.wasm.gz` | +735 B (87,992 to 88,727) | server side |
 | The sound files | 1.8 MB of AAC, 139 requests (was 122 KB, 16) | wanted ones first; all of them after the first tap; none when muted |
 | `/sounds` | about 2.5 KB gzipped | that route only |
+| The iMessage app's sounds | 2.0 MB on disk in `FoolishKit.framework/sounds/` (the same 1.8 MB of AAC) | with every install |
+| The iMessage app's decoded samples | 2.6 MB for a deal, 5.3 to 7.2 MB mid-game, 9.3 MB at most | while a board is up |
 
 The wasm numbers are measured against a build of main as of the rating stamp (PR #284).
 The modelled cues (the four new ids, the transfer flag and `anim_seat_gain_pm`) took `web.wasm.gz` from 49,544 to 49,924 B (+380 B, measured against this branch before them, 2026-11-07).
@@ -448,26 +450,62 @@ Neither wasm module grew a page of linear memory (`e2e/mem/wasm_memory.test.ts`)
 
 ## iOS and iMessage
 
-iOS sound is written but not yet built or run (`ios/FoolishKit/Sound/CuePlayer.swift`, paused); what it plays is the voice's answer, the same C the web asks.
-The plan wire already carries each event's `msg` (`FIO_PLAN_VERSION` 4), so an iOS plan hears a transfer as one.
+The iMessage board plays the same cues as the web, from the same C: which cue and when is the plan's (`AnimPlan.cues` in `sdk/swift/AnimPlanWire.swift`), and which take, when its file starts, how loud and how fast is `fio_cue_strike` (see "The rules are C, for both hosts").
+Nothing in Swift restates a take, an anchor, a level or a rule.
 
-**What is already there.**
-`AnimPlanSnap.cues` is in the generated Swift layout with `ANIM_CUE_*`, `ANIM_N_CUES` and `ANIM_SOUND_STAGGER_MS` as constants.
-`fio_role_cue`, `fio_finish_cue` and `fio_cues_next` are in `c/ios/include/ios_api.h` and held by the host smoke test.
+**The files.**
+`ios/scripts/bundle_sounds.sh` is a build phase of FoolishKit: it runs `make -C tools/soundgen bundle`, which renders and encodes only when soundgen changed since the last time (about 1 s when nothing did), and copies the 139 `.m4a` files soundgen's manifest names into `FoolishKit.framework/sounds/`.
+A file the table names and the build lacks fails the build.
+The take table iOS plays them by is `c/build/gen/cue_takes.c`, which `c/Makefile` writes with `soundgen ctable` from the same sources, so the two cannot disagree.
+They add 2.0 MB on disk to the app (1,783,626 bytes of AAC, which a download does not compress further); Alex accepted the size.
 
-**What a host has to add.**
+**The engine** (`ios/FoolishKit/Sound/CuePlayer.swift`).
+One `AVAudioEngine` with one `AVAudioSourceNode` at the output's own rate and width, whose callback sums the scheduled takes through the kernel's output mix (`c/src/cue_mix.h`, `fio_mix_*`): a take is handed over with the output frame it starts on and its level, and starts on that frame, whole, overlapping whatever else sounds.
+The same mono sum goes to every channel, so a take is as loud on each side as Web Audio's up-mix plays it.
+"Now" is the frame heard at this host time, read off the last rendered block's timestamp; a take whose start was already rendered starts in the next block, whole.
+It was first written on `AVAudioPlayerNode`s, scheduled at sample times; rendered offline, a take came out 25 samples late and 3 dB down through one mixer, and 60 ms late through one more node, which is why the mix is the kernel's.
+Each file is converted once, as it is decoded, to the output's rate (`AVAudioConverter`, mastering quality, priming `.normal`): a 32 kHz cover in a 48 kHz mix lands its loudest sample on the frame it was aimed at.
+A revert plays its take reversed; a stand-in's wander in speed is the kernel's resampler (`fio_cue_resample`).
+The session is `.ambient`: the ringer switch silences the game, and it mixes with the player's music.
 
-1. Expose the cues on `AnimPlan` in `sdk/swift/AnimPlanWire.swift`, beside `steps` (a `Cue` struct copied from `pl.cues`).
-2. A `CuePlayer` in FoolishKit: an `AVAudioEngine` with one `AVAudioPlayerNode` pool, the files loaded once as `AVAudioPCMBuffer`, played where `fio_cue_strike` says (see "The rules are C, for both hosts"), a `DEAL_LAND` at `fio_seat_gain_pm`.
-   Schedule with `scheduleBuffer(_:at:)` against the engine's clock, never `DispatchQueue.asyncAfter`.
-3. In `MessageTableView+Sequence.swift`, where `playStep` builds a beat's flights, schedule the cues whose `step` falls in that beat at `cue.atMs - step.startMs` from the beat's start, each strike `ANIM_SOUND_STAGGER_MS` after the last.
-   iOS walks beats and sleeps between them, so the offset is taken from the beat, not from the sequence.
-4. Ask `fio_role_cue` in `syncRoles` (`MessageTableView+Roles.swift`) and `fio_finish_cue` (with the arguments `fio_finish_rows` already takes) where `gameOverHold` ends.
-5. Use the `.ambient` audio session category, so the ringer switch silences it and it mixes with the player's music.
-6. Play a strike the voice answers `backwards` as its take's buffer reversed (copy the samples back to front once and keep the buffer).
-7. Load the buffers `fio_cues_next` names first.
+**What is decoded.**
+Only the cues `fio_cues_next` names for the board on screen are decoded ahead and kept, in the table's order; what the next answer no longer names is let go.
+A struck take that is not decoded is decoded off the main thread, ahead of the loader's queue, and then follows the web's rule: started if no more than 80 ms behind its aim, dropped otherwise.
+The strokes before a sweep or a pickup (30 files, 5.7 MB as samples, the largest part) are never kept: decoded for their strike and let go once played.
+Everything is dropped when the board goes away, when the extension resigns, and on a memory warning (`purge`, which keeps the engine).
 
-An iMessage extension has its own constraints (memory, and it is torn down between bubbles), so the buffers should be loaded lazily and the engine stopped when the board goes away.
+**Measured** (iPhone 17e simulator, iOS 27, 48 kHz output).
+
+| | |
+| --- | --- |
+| The real extension in Messages, a lobby's deal | footprint 37.3 MB as the engine came up, 43.4 MB with the deal's 31 takes decoded (2.6 MB of samples); peak 49.9 MB over the deal |
+| The harness, a 3-seat game, the decoded set mid-game | 69 to 93 takes, 5.3 to 7.2 MB of samples |
+| Every cue's own takes at once (the most `want` can keep), FoolishTests | 109 takes, 9.3 MB of samples, footprint +8.5 MB |
+
+**Placing a beat's cues** (`ios/FoolishKit/Sound/CueSequence.swift`).
+The board walks beats and sleeps between them (`MessageTableView+Sequence.swift`), so the clock is re-read at every beat: `playStep` says when a beat's flight opens, and the beat's own cues are placed from that moment, which puts them on the picture to well under a millisecond (the trace's "late" for an own-beat cue is 0.2 to 0.8 ms).
+A cue whose take starts before its beat opens (the grab and the thumb slide before the next dealt card, the strokes under the last cover) is placed from the beat before, against where that beat says the next will open.
+The walk is not the plan: measured, a beat that flies nothing (the magic transition before a deal) takes no time where the plan gives it 500 ms, and a flown beat runs about 30 ms over its plan.
+So the forecast is the walk's own: the next beat opens at once after a beat that flies nothing, and otherwise a plan's length later plus the overrun the walk has shown in this stream.
+A take placed ahead whose beat opens elsewhere before it has sounded is taken back and placed again (`cue_mix_drop`).
+Over a 3-seat harness game, 36 forecasts landed within -32 to +37 ms of the beat's real opening (median +4, 28 of 36 within 15 ms), and in the real extension's deal within -36 to +33 ms; that is the error of a take placed ahead that was already sounding when its beat opened.
+A move that opens its run hears its lift late by the tight take's swell (158 to 267 ms), as on the web.
+
+**The role and the end.**
+`syncRoles` (`MessageTableView+Roles.swift`) asks `fio_role_cue` where the marks turn, and the results screen's `settleResults` asks `fio_finish_cue` with `fio_finish_rows`' arguments; a game opened already finished makes no sound.
+
+**The setting.**
+Settings has a Sound row, On or Off (`FPrefs.soundOn`, default on, three keys in all 25 languages); Off is the web's mute, nothing loaded or played.
+There is no volume: the level is the web's 0.7, and the phone's buttons do the rest.
+The feature is behind `CuePlayer.onByDefault` (shipping on); in a debug build `sound=0` in `dev.flags` turns it off, and `sound.silent=1` (or `HARNESS_SOUND_SILENT` in the harness) keeps it running and scheduling at zero output, which is how a simulator run measures it.
+
+**Tests.**
+`ios/FoolishTests/CuePlayerTests.swift` renders the engine offline and holds the output to the take the kernel chose, to the sample: a take starting its anchor before its moment, a tight take from now, a revert, a dealt card at its seat's level, a sweep's strokes, two overlapping strikes, a stereo mix, a 32 kHz take in a 48 kHz mix, mute, detach, what stays decoded, the 80 ms rule and the memory; every one was mutation-checked.
+`c/tests/anim_plan_test.c` holds the mix (`test_cue_mix`), and `c/ios/ios_api_smoke.c` the exports.
+
+**Not yet.**
+A revert is silent on iOS: an iMessage stream never carries a refused move, and the undo and conflict flights are not planned by the kernel, so no cue says what they undo.
+A transfer's `PASS` is in the plan but no harness game played one.
 
 ## Open questions for Alex
 
