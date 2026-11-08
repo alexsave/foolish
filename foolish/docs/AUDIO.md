@@ -9,18 +9,43 @@ Out, good, hand-off, finish and fool are still the first placeholders: nobody ha
 
 ## Who decides what
 
-There are three layers, and each one knows nothing about the next one's business.
+There are four layers, and each one knows nothing about the next one's business.
 
 | Layer | Decides | Lives in |
 | --- | --- | --- |
-| The kernel | WHICH cue a beat makes, WHEN, and how a move of several cards is spread | `c/src/anim_plan.h` ("sound cues"), `c/src/anim_plan.c` |
-| The sounds | what a cue's moment SOUNDS like: the takes, and how much of each gesture comes before its moment (the anchor) | `tools/soundgen/` (the models), writing `src/audio/gen/cueTakes.ts` |
-| The cue table | which takes a cue plays, how loud, how much it may vary | `src/audio/cueSounds.ts` |
-| The engine | turning "cue K in D ms" into a sound on the audio clock | `src/audio/cueAudio.ts` |
+| The plan | WHICH cue a beat makes, WHEN, and how a move of several cards is spread | `c/src/anim_plan.h` ("sound cues"), `c/src/anim_plan.c` |
+| The sounds | what a cue's moment SOUNDS like: the takes, how much of each gesture comes before its moment (the anchor), and how loud each cue sits (the mix) | `tools/soundgen/` (the models, `RECIPES`, `MIX_ROWS`, the recordings), writing the files and the take table `c/build/gen/cue_takes.c` |
+| The voice | what a strike PLAYS: which take, when its file starts, how loud and how fast, reversed or not, the strokes before it | `c/src/cue_voice.h`, `cue_voice.c`, and `cue_voice_table.c` (the one voice over the take table) |
+| The engine | fetching the files, and starting what the voice answers on the host's audio clock | `src/audio/cueAudio.ts` on the web, `ios/FoolishKit/Sound/CuePlayer.swift` on iOS |
 
-The kernel's answer is a rule, so it is asked once and every host gets the same one.
-A host never looks at an event type to choose a sound: two hosts that did would be two sound designs.
+The kernel's answers are rules, so they are asked once and every host gets the same ones.
+A host never looks at an event type to choose a sound, and never chooses a take: two hosts that did would be two sound designs.
 The engine has no idea what an attack is, and must not learn.
+
+### The rules are C, for both hosts
+
+Every decision between "cue K, its moment D from now, for N cards" and a file starting is `cue_strike` in `c/src/cue_voice.c`.
+Both hosts link `c/src/cue_voice_table.c` beside soundgen's take table and export it under their own prefix, one line each: the web as `wasm_cue_*` (`c/wasm/wasm_bots_api.c`, read in `sdk/ts/wasm/bots.ts`), iOS as `fio_cue_*` (`c/ios/ios_api_sound.c`).
+
+| Export | Answers |
+| --- | --- |
+| `cue_n_takes`, `cue_take(i)` | the take table: each file's name (served as `<name>.m4a`), rate, length to the sample, anchor in microseconds, cue, role and stroke count (a `CueTakeRow`) |
+| `cue_lead_us(kind)` | how long before its moment a cue's earliest take starts: when a host must hand it over |
+| `cue_seed(seed)` | seeds the voice's generator, once a page or a board |
+| `cue_strike(kind, lead_us, n_cards, undoes, gain_pm)` | a `CueStrike`: the take (or -1), when its file starts, its level and speed in thousandths, whether it plays backwards, and its strokes (a take, when, how loud, how fast) |
+| `wasm_cue_mix(kind)` | a cue's mix (a `CueMix`), for `/sounds` only, which shows the level and gives a cue with strokes a button per stroke count |
+
+The structs cross through generated readers (`tools/structgen/specs/view_layout.args` for the web, `ios_layout.args` for iOS), so no host reads a byte of them by hand.
+
+**The voice's state lives in the module**, not in the host: the take each cue played last and its generator are one `CueVoiceState` in static storage, like the one resident game, because a page or an iMessage extension has one board.
+The web's engine seeds it on its first strike, from `Math.random`.
+
+**The web's engine made these decisions in TypeScript first.**
+Before that copy was deleted it was driven over 1839 strikes (the real games of `test_plan_cues_over_real_games`, every `/sounds` button and move, and 700 strikes of every kind), with the C voice's generator in place of `Math.random`, and what it started was written down: `c/tests/cue_voice_parity.h`, with the take table it ran against frozen beside it.
+`test_cue_voice_matches_the_web` in `c/tests/anim_plan_test.c` plays the same strikes through `cue_strike`, under the shipped mix and under one that wanders and is heavier per card.
+Every take, way round and prelude matches; levels and speeds agree within the C's thousandths, and starts within the 0.1 ms the web's table rounded anchors to.
+The one difference found was that the C drew from its generator for a cue with one take and the web did not, so the two fell out of step after the first placeholder; the C now draws only when there is a choice.
+`e2e/audio_cues.test.ts` holds the web's engine to the kernel's answer field for field (take, start, level, speed, reversal, strokes) over every cue, lead, card count and seat gain.
 
 ### Where a cue comes from
 
@@ -93,8 +118,8 @@ Cards going home to a hand were laid, and the nearest step before the revert tha
 A revert whose move is not in the stream, because the refusal arrived after that run had ended, is read as `PLACE`.
 That is wrong for a cover refused more than half a second late, and fixing it needs the host to say what it is undoing on the step (see the open questions).
 
-On the web the engine reverses a decoded buffer the first time a revert needs it and keeps the result.
-`e2e/audio_cues.test.ts` refuses a `REVERT` row in the table and a revert file from soundgen.
+The voice answers the undone cue's take with `backwards` set and its start measured from the file's other end; on the web the engine reverses the decoded buffer the first time a revert needs it and keeps the result.
+`e2e/audio_cues.test.ts` refuses a `REVERT` take in the table and a revert file from soundgen.
 
 ### The rules that keep it from being noise
 
@@ -123,22 +148,23 @@ Both properties are held over 3913 plans of real games by `test_plan_cues_over_r
 
 `src/state/useAnimationRun.ts` is the frame loop that already asks the kernel where the run stands.
 Each frame it hands over the cues coming due (`src/audio/cueSchedule.ts`) with how far off each one is.
-The engine aims each take's anchor at `AudioContext.currentTime + delay`.
+The engine asks the voice what the strike plays and starts each file at `AudioContext.currentTime` plus the start it is given.
+The rules below are the voice's (`c/src/cue_voice.c`), and iOS plays by the same ones.
 
 **A take starts its anchor early.**
-Every file is a whole gesture, and its anchor is how far into the file the cue's moment is (`src/audio/gen/cueTakes.ts`, written by soundgen).
+Every file is a whole gesture, and its anchor is how far into the file the cue's moment is (the take table, written by soundgen).
 A `LIFT` take is the grab and the thumb slide, so it starts 280-440 ms before the card leaves; a landing starts a few tens of ms before its peak; the transfer's slide has a negative anchor and starts 50 ms after its landing.
-A cue is therefore handed over its longest anchor plus the look-ahead before its moment (`cueLeadMs`), so the longest gathering (five strokes before a sweep, 3.5 s) is scheduled on time whenever the plan knew about it that early.
+A cue is therefore handed over its longest anchor plus the look-ahead before its moment (`cue_lead_us`), so the longest gathering (five strokes before a sweep, 3.5 s) is scheduled on time whenever the plan knew about it that early.
 
 **A take is always played whole** (Alex: "you should definitely play them ... and play them in full").
 When the time left before a moment is shorter than a take's anchor, the take starts now, from its first sample, and its moment comes late; nothing is ever started part way into its file.
 That is the case for every move that OPENS a run: a run starts as its push arrives, so its first `LIFT` is at 0 ms.
 For it the deal and the lift have TIGHT takes, the grab and the thumb slide moved closer together and to the moment (Alex: "maybe put them closer to each other"): the lift's grab 60 ms before the slide's peak and the peak 30 ms before the card leaves, where they were 110 and 130 ms; the deal's slide peak 50 ms before the grab, where it was 130.
-The engine plays an ordinary take when one fits the time it has, and a tight one when none does, so a run's first lift is heard whole and late by 180-290 ms (the slide's own swell before its peak) where an ordinary take would be 280-440 ms late.
+The voice plays an ordinary take when one fits the time it has, and a tight one when none does, so a run's first lift is heard whole and late by 180-290 ms (the slide's own swell before its peak) where an ordinary take would be 280-440 ms late.
 
 **The strokes before a sweep or a pickup are a prelude.**
 They are a take of their own, one set per stroke count (one stroke per 2.5 cards of the cue, 1-5, as `disc_game.py` counts them), each stroke as long as the recordings' (0.8 times one, 0.25-0.7 s) and never compressed.
-The engine starts them their anchor before the cue (the last stroke ends 100-180 ms before a sweep's lift, 50-120 ms before a pickup's), over whatever is sounding then (Alex: "just play the pickup over the other sounds then"), and the lift's own take still lands on its cue.
+The voice starts them their anchor before the cue (the last stroke ends 100-180 ms before a sweep's lift, 50-120 ms before a pickup's), over whatever is sounding then (Alex: "just play the pickup over the other sounds then"), and the lift's own take still lands on its cue.
 With no time before the cue at all (a pickup opens its run) the strokes start at once, in full, and the lift and the cards reaching the hand keep their own cues.
 
 **A landing at a far seat is quieter.**
@@ -146,7 +172,8 @@ With no time before the cue at all (a pickup opens its run) the strokes start at
 The web asks it with the step's seat and the board's `mySeat`; a spectator hears every seat at full level.
 
 **A modelled sound does not wander.**
-The stand-ins are played a little off pitch and level each time; a model's takes already vary as the recordings did, so its row in `cueSounds.ts` wanders by nothing and is not made heavier per card (a sweep's strokes say how many cards it is).
+The stand-ins are played a little off pitch and level each time; a model's takes already vary as the recordings did, so its row in soundgen's `MIX_ROWS` wanders by nothing and is not made heavier per card (a sweep's strokes say how many cards it is).
+On the web a speed is the source's `playbackRate`; iOS keeps a player per speed and resamples with `fio_cue_resample`.
 
 **The audio clock, not a timer.**
 A cue is handed over up to 120 ms early (`CUE_LOOK_AHEAD_MS`), so a late frame does not make a late sound.
@@ -268,7 +295,7 @@ So no anchor is corrected: every browser starts the WAV's first sample on the cu
 | One packed file for all sounds | no | it defeats loading by priority, and a pack needs an index |
 
 **ffmpeg is a build dependency** of `npm run sounds` (Homebrew on macOS, the distribution's package on Linux): the CI lanes that build the site and run the full e2e suite install it.
-Type-checking and the other test lanes run `npm run sounds:table`, which writes only the take table and needs no ffmpeg.
+The take table needs none: `c/Makefile` runs `soundgen ctable` for web.wasm and the iOS kernel whenever soundgen or a recording changed, so any lane that builds the wasm has it.
 
 ## How to hear each cue
 
@@ -279,7 +306,7 @@ A cue's moment is set far enough off that every take is heard whole, the part be
 The sweep has a button per stroke count instead (the lift alone, then 1-5 strokes).
 Under them, "In context" asks the kernel for the plan of a small move and plays its cues at the plan's own times, exactly as the board does: an attack, a three-card attack, a transfer, an attack and its cover, a bout ending, a pickup, a refused attack, a last card, the opening deal.
 Like the board it starts the plan now, so the grab and the slide before the first lift are cut to what is left of them (see "When there is less time than the gesture").
-It plays through the same engine and table the board uses, so what you hear there is what ships.
+It plays through the same engine and kernel the board uses, so what you hear there is what ships.
 
 **In a terminal: `make -C tools/soundgen audition`.**
 Plays every file in turn with `afplay`, printing each name.
@@ -289,22 +316,19 @@ Prints each file's rate, length, bytes, anchor, peak and RMS.
 
 ## How to replace a sound with a recording
 
-1. Put the recording in `public/audio/`, for example `public/audio/place_a.m4a`.
-   Anything every target browser's `decodeAudioData` reads will do: WAV, m4a/AAC or mp3 (not ogg, which Safari will not decode).
-   An AAC file must declare its priming (an edit list or iTunSMPB), or its anchor must count it.
-2. In `src/audio/cueSounds.ts`, name it in the cue's row with its anchor, the ms into the file of the cue's moment (0 when the file starts on it):
-   `[ANIM_CUE_PLACE]: { ...model(ANIM_CUE_PLACE), takes: [{ file: 'place_a.m4a', anchorMs: 12, role: 'main', level: 0 }] },`
-   Several takes in a row are takes of one gesture and are played in turn, never the same one twice running.
-3. Set the row's `gain` by ear on `/sounds`.
-4. In `tools/soundgen/soundgen.c`, set the replaced cue's `make` to `NULL` in `RECIPES` so its takes stop being generated.
+A recording enters where a model does: as a take soundgen lists, so it is in the one table both hosts play by and among the files they serve and bundle, and nothing in either host changes.
 
-A refused move needs no step of its own: it is the same take, reversed by the engine, with its anchor measured from the other end.
+1. Put it in `tools/soundgen/recordings/` as a 16-bit mono PCM WAV at its own rate (8-48 kHz), named for its cue: `place_rec_0.wav`.
+2. Add a line for it to `tools/soundgen/recordings/recordings.tsv`: the cue as `RECIPES` names it, the role (`main`, `tight`, or `prelude` with its stroke count as the level, `0` otherwise), the file, its anchor (the ms into the file of the cue's moment, 0 when the file starts on it) and its AAC bitrate.
+   `place main 0 place_rec_0.wav 12.5 96`
+   Several lines for one cue are takes of one gesture, played in turn and never the same one twice running.
+3. Rebuild (`npm run dev` does it): soundgen writes and encodes it with the rest, and the wasm is relinked with the new table.
+   A cue with a recording plays its recordings only: its synthesised takes are no longer written.
+4. Set the cue's level by ear on `/sounds`, in its `MIX_ROWS` row in `tools/soundgen/soundgen.c`.
 
-Nothing else changes.
-`e2e/audio_cues.test.ts` fails if a row names a generated file that is not written, or with an anchor soundgen did not write it with, a recording that is not committed, or if a generated file is left with no row.
-To silence a cue altogether, map it to `null`.
-
-The same recordings can serve iOS, since they are plain files under `public/audio/`.
+A refused move needs nothing of its own: it is the same take, reversed by the engine, with its anchor measured from the other end.
+A line soundgen cannot read, or a file that is not such a WAV, stops the build rather than leaving a cue silent.
+`e2e/audio_cues.test.ts` holds it (a recording listed is its cue's one take, at its rate, length and anchor), and fails if the kernel's table and the files soundgen writes ever differ.
 
 ## The card sounds
 
@@ -337,7 +361,7 @@ The levels are the games' own, on the deal's scale (g = -34 to -32 dBFS a take):
 Within one video a card's landing is about 25 dB over the grab and slide before it, where the games had it about 4 dB over; and the discard and pickup videos were shot about twice as far from the phone as the pass's, so their "6.5 dB under a pass" was distance.
 So on top of each game's level: the throw-in landing +18 dB (also the trump's and the pass's landing, the same model), the cover landing +19, the trump flip +17, the deck set down +14, the discard's lift +18, the strokes +7, the placement on the pile +8, the pickup's lift +8 and the slide into the hand +8; the deal's slide, grab and landing (the landing Alex set by ear), the two-finger grab, the throw-in's slide and the pass's shfff unchanged.
 Then one common gain scales every card take so the loudest peaks at -3 dBFS at full master volume (+14.3 dB from the deal's scale), checked against the mixes a plan really strikes together (six landings a stagger apart, six covers, a refill's landings, the trump turned and landed, a transfer's landing and slide, a run-opening pickup's strokes under its lift and over the last landing, a sweep's strokes over the last cover): the loudest of them peaks at -3.0 dBFS too, so nothing clips and the gain was not lowered (soundgen lowers it, never a part, if a mix would pass -1 dBFS).
-The `gain` column of `src/audio/cueSounds.ts` is 1 for every model: the levels are the files'.
+The gain in `MIX_ROWS` is 1000 for every model: the levels are the files'.
 
 | Cue | Peak (dBFS) | Loudest 50 ms RMS (dBFS) |
 | --- | --- | --- |
@@ -402,29 +426,29 @@ They were designed by reasoning, not from recordings.
 | `finish` | four notes up a major chord |
 | `fool` | four notes down by semitones, the last one sagging |
 
-Everything soundgen writes is a build artifact (`npm run sounds`, hooked onto `predev`, `prebuild`, `pretypecheck` and the test lanes' pre-hooks, since the web now imports the take table), written to `public/audio/gen/` and `src/audio/gen/` and never committed.
-It takes about 12 s of one core.
+Everything soundgen writes is a build artifact (`npm run sounds`, hooked onto `predev`, `prebuild` and the full e2e's pre-hook, and `soundgen ctable`, run by `c/Makefile` for the wasm and iOS), written to `public/audio/gen/` and `c/build/gen/` and never committed.
+Each takes about 12 s of one core, and runs only when soundgen changed.
 
 ## Cost
 
 | What | Size | When it is paid |
 | --- | --- | --- |
-| Engine, table and scheduler | about 2.3 KB gzipped (esbuild, minified) | with the game routes' JavaScript |
+| Engine and scheduler | 5.1 KB minified, 2.2 KB gzipped (esbuild), and 1.6 KB, 0.6 KB gzipped, of bridge in `sdk/ts/wasm/bots.ts` | with the game routes' JavaScript |
 | Sound button, finish hook and priority hook | about 1.2 KB gzipped | the same |
-| `web.wasm.gz` | +858 B (36,974 to 37,832) | with the kernel |
+| `web.wasm.gz` | +858 B (36,974 to 37,832); then +2,864 B (49,898 to 52,762) for the voice and the take table | with the kernel |
 | `bots.wasm.gz` | +735 B (87,992 to 88,727) | server side |
 | The sound files | 1.8 MB of AAC, 139 requests (was 122 KB, 16) | wanted ones first; all of them after the first tap; none when muted |
-| The take table (`src/audio/gen/cueTakes.ts`) | about 10 KB of source, a few KB gzipped | with the game routes' JavaScript |
 | `/sounds` | about 2.5 KB gzipped | that route only |
 
 The wasm numbers are measured against a build of main as of the rating stamp (PR #284).
 The modelled cues (the four new ids, the transfer flag and `anim_seat_gain_pm`) took `web.wasm.gz` from 49,544 to 49,924 B (+380 B, measured against this branch before them, 2026-11-07).
 The JavaScript numbers are an estimate from bundling the modules alone, not a diff of two `next build` outputs.
+Moving the rules and the take table into the kernel (2026-11-07) took the engine's JavaScript from 15,669 to 5,107 B minified (3,841 to 2,218 gzipped) and added 1,619 B (613 gzipped) of bridge; `web.wasm.gz` grew 2,864 B, of which the table is about 1.5 KB (139 rows of 48 B, 6,672 B raw), and `promo.wasm.gz` 2,908 B.
 Neither wasm module grew a page of linear memory (`e2e/mem/wasm_memory.test.ts`).
 
 ## iOS and iMessage
 
-Nothing plays sound on iOS yet; the architecture is ready for it.
+iOS sound is written but not yet built or run (`ios/FoolishKit/Sound/CuePlayer.swift`, paused); what it plays is the voice's answer, the same C the web asks.
 The plan wire already carries each event's `msg` (`FIO_PLAN_VERSION` 4), so an iOS plan hears a transfer as one.
 
 **What is already there.**
@@ -434,15 +458,13 @@ The plan wire already carries each event's `msg` (`FIO_PLAN_VERSION` 4), so an i
 **What a host has to add.**
 
 1. Expose the cues on `AnimPlan` in `sdk/swift/AnimPlanWire.swift`, beside `steps` (a `Cue` struct copied from `pl.cues`).
-2. A `CuePlayer` in FoolishKit: an `AVAudioEngine` with one `AVAudioPlayerNode` pool, the files loaded once as `AVAudioPCMBuffer`, and a table keyed by cue id of takes with their anchors and levels - the twin of `cueSounds.ts`.
-   soundgen's take table would then also be written as Swift (or read through the kernel), the anchors being soundgen's.
-   A take is started its anchor before its moment, as on the web, and a `DEAL_LAND` at the seat's gain (an `fio_` export of `anim_seat_gain_pm` is still to add).
+2. A `CuePlayer` in FoolishKit: an `AVAudioEngine` with one `AVAudioPlayerNode` pool, the files loaded once as `AVAudioPCMBuffer`, played where `fio_cue_strike` says (see "The rules are C, for both hosts"), a `DEAL_LAND` at `fio_seat_gain_pm`.
    Schedule with `scheduleBuffer(_:at:)` against the engine's clock, never `DispatchQueue.asyncAfter`.
 3. In `MessageTableView+Sequence.swift`, where `playStep` builds a beat's flights, schedule the cues whose `step` falls in that beat at `cue.atMs - step.startMs` from the beat's start, each strike `ANIM_SOUND_STAGGER_MS` after the last.
    iOS walks beats and sleeps between them, so the offset is taken from the beat, not from the sequence.
 4. Ask `fio_role_cue` in `syncRoles` (`MessageTableView+Roles.swift`) and `fio_finish_cue` (with the arguments `fio_finish_rows` already takes) where `gameOverHold` ends.
 5. Use the `.ambient` audio session category, so the ringer switch silences it and it mixes with the player's music.
-6. Play a `REVERT` as the buffer of `cue.undoes`, reversed (copy the samples back to front once and keep the buffer).
+6. Play a strike the voice answers `backwards` as its take's buffer reversed (copy the samples back to front once and keep the buffer).
 7. Load the buffers `fio_cues_next` names first.
 
 An iMessage extension has its own constraints (memory, and it is torn down between bubbles), so the buffers should be loaded lazily and the engine stopped when the board goes away.
@@ -479,7 +501,7 @@ An iMessage extension has its own constraints (memory, and it is torn down betwe
     A cue carries its step, so a host can pan a sound towards the seat that made it.
     The web plays everything centred; only a dealt card's landing follows its seat, in level.
 12. **The placeholders were turned down to sit with the card set** (Alex: "turn them down").
-    Their gains in `src/audio/cueSounds.ts` put them, by loudest 50 ms RMS, at -26 for the game over (once a game, just under a card landing at about -22), -30 for a seat going out, -34 for a good and -38 for the hand-off (heard every bout).
+    Their gains in soundgen's `MIX_ROWS` put them, by loudest 50 ms RMS, at -26 for the game over (once a game, just under a card landing at about -22), -30 for a seat going out, -34 for a good and -38 for the hand-off (heard every bout).
     They still want designing; these levels are a starting point for tuning by ear on `/sounds`.
 13. **1.8 MB of AAC** (1,783,626 bytes, from 6.5 MB of WAV), loaded after the first tap, wanted cues first.
 14. **The strokes play over the beat before** (Alex: "just play the pickup over the other sounds"): five strokes start 3.5 s before their sweep, over the last cover and its hold.

@@ -626,6 +626,96 @@ static double common_gain(Out *outs, int n, int verbose) {
     return g;
 }
 
+// ---- recordings: a sound replaced by a recording -----------------------------------
+// A RECORDING IS A TAKE SOUNDGEN DOES NOT SYNTHESISE. recordings/recordings.tsv
+// lists them, a line each (# starts a comment):
+//
+//   <cue> <role> <level> <file> <anchor ms> <kbps>
+//   place main 0 place_rec_0.wav 12.5 96
+//
+// <cue> is the cue's name as RECIPES spells it, <role> main, tight or prelude,
+// <level> a prelude's stroke count (0 otherwise), <file> a 16-bit mono PCM WAV
+// beside the list at its own rate, named <cue>_<anything>.wav, and <anchor ms>
+// how far into it the cue's moment is. Each is a take of its cue like any other:
+// written, encoded, checked and listed with the rest, in the table every host
+// plays by (ctable) and the files they serve and bundle. A cue with a recording
+// plays its recordings only: its synthesised takes are not written. The mix
+// (MIX_ROWS) is still its row. SOUNDGEN_RECORDINGS names another directory.
+#define REC_MAX 64
+static int le16(const unsigned char *p) { return p[0] | p[1] << 8; }
+static uint32_t le32(const unsigned char *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
+// A 16-bit mono PCM WAV into o (its samples, rate and length); 0 or -1.
+static int read_wav(const char *path, Out *o) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    const long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    unsigned char *b = malloc((size_t)size);
+    const int got = b && fread(b, 1, (size_t)size, f) == (size_t)size;
+    fclose(f);
+    int rate = 0, fmt_ok = 0, rc = -1;
+    if (got && size >= 12 && !memcmp(b, "RIFF", 4) && !memcmp(b + 8, "WAVE", 4)) {
+        for (long at = 12; at + 8 <= size; ) {
+            const uint32_t len = le32(b + at + 4);
+            const unsigned char *c = b + at + 8;
+            if (at + 8 + (long)len > size) break;
+            if (!memcmp(b + at, "fmt ", 4) && len >= 16) {
+                fmt_ok = le16(c) == 1 && le16(c + 2) == 1 && le16(c + 14) == 16;
+                rate = (int)le32(c + 4);
+            } else if (!memcmp(b + at, "data", 4) && fmt_ok && rate >= 8000 && rate <= 48000) {
+                o->n = (int)(len / 2);
+                o->rate = rate;
+                o->pcm = malloc(sizeof(int16_t) * (size_t)(o->n ? o->n : 1));
+                for (int k = 0; k < o->n; k++) o->pcm[k] = (int16_t)le16(c + 2 * k);
+                rc = o->n > 0 ? 0 : -1;
+                break;
+            }
+            at += 8 + len + (len & 1);
+        }
+    }
+    free(b);
+    return rc;
+}
+// Every recording the list names, in its order; how many, or -1 for a bad line or file.
+static int read_recordings(Out *recs) {
+    const char *dir = getenv("SOUNDGEN_RECORDINGS");
+    if (!dir || !*dir) dir = "recordings";
+    char path[1024], line[512];
+    snprintf(path, sizeof path, "%s/recordings.tsv", dir);
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    int n = 0, bad = 0;
+    for (int ln = 1; fgets(line, sizeof line, f); ln++) {
+        char cue[32], role[16], file[256];
+        int level, kbps;
+        double anchor;
+        const char *t = line;
+        while (*t == ' ' || *t == '\t') t++;
+        if (*t == '#' || *t == '\n' || *t == 0) continue;
+        int c = 0, r = -1;
+        if (sscanf(t, "%31s %15s %d %255s %lf %d", cue, role, &level, file, &anchor, &kbps) != 6 || n >= REC_MAX) c = -1;
+        for (int k = 1; c == 0 && k < ANIM_N_CUES; k++) if (!strcmp(RECIPES[k].name, cue)) c = k;
+        for (int k = 0; k < 3; k++) if (!strcmp(ROLE_NAME[k], role)) r = k;
+        const size_t stem = strlen(file) > 4 && !strcmp(file + strlen(file) - 4, ".wav") ? strlen(file) - 4 : 0;
+        if (c <= 0 || c == ANIM_CUE_REVERT || r < 0 || level < 0 || level > MAX_LEVEL || (r == ROLE_PRELUDE) != (level > 0)
+            || kbps < 32 || kbps > 320 || !stem || stem >= sizeof recs[n].name
+            || strncmp(file, cue, strlen(cue)) || file[strlen(cue)] != '_') {
+            fprintf(stderr, "soundgen: %s line %d: want <cue> <main|tight|prelude> <level> <cue>_<name>.wav <anchor ms> <kbps>\n", path, ln);
+            bad++; continue;
+        }
+        Out *o = &recs[n];
+        char wav[1400];
+        snprintf(wav, sizeof wav, "%s/%s", dir, file);
+        if (read_wav(wav, o) != 0) { fprintf(stderr, "soundgen: %s is not a 16-bit mono PCM WAV at 8-48 kHz\n", wav); bad++; continue; }
+        memcpy(o->name, file, stem); o->name[stem] = 0;
+        o->cue = c; o->role = r; o->level = level; o->anchor_ms = anchor; o->kbps = kbps;
+        n++;
+    }
+    fclose(f);
+    return bad ? -1 : n;
+}
+
 int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "";
     if (!strcmp(mode, "parts") && argc > 2) return parts(argv[2]);
@@ -640,11 +730,23 @@ int main(int argc, char **argv) {
         return 2;
     }
     Out *outs = calloc(512, sizeof(Out));
+    Out recs[REC_MAX];
+    memset(recs, 0, sizeof recs);
+    const int n_recs = read_recordings(recs);
+    if (n_recs < 0) return 1;
     int n = 0;
     long total = 0;
     double loudest = 0;
     for (int cue = 1; cue < ANIM_N_CUES; cue++) {
         const Recipe *r = &RECIPES[cue];
+        int recorded = 0;
+        for (int i = 0; i < n_recs; i++) {
+            if (recs[i].cue != cue) continue;
+            outs[n] = recs[i];
+            total += 44 + 2L * outs[n].n;
+            n++; recorded++;
+        }
+        if (recorded) continue;
         if (!r->main.make) {
             if (render_placeholder(cue, 0, &outs[n])) { total += 44 + 2L * outs[n].n; n++; }
             continue;

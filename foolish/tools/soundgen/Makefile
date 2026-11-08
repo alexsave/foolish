@@ -56,7 +56,7 @@ ctable: build/soundgen
 # The stamp is written after a whole `sounds` succeeded, so a failed or
 # interrupted run is redone next time rather than trusted.
 bundle: build/sounds.stamp
-build/sounds.stamp: build/soundgen
+build/sounds.stamp: build/soundgen $(wildcard recordings/*)
 	@$(MAKE) -s sounds
 	@touch $@
 

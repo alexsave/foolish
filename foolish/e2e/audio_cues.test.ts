@@ -30,7 +30,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import {
@@ -854,6 +855,40 @@ test('the kernel plays by the table soundgen writes its files from', () => {
         assert.equal(ROLES[t.role], role, `${name}: its role`);
         assert.equal(t.level, Number(level), `${name}: its stroke count`);
     });
+});
+
+// A RECORDING ENTERS WHERE A MODEL DOES: as a take soundgen lists (tools/soundgen
+// recordings/recordings.tsv), so it is in the table both hosts play by and among
+// the files they serve and bundle, with nothing in any host to edit.
+test('a recording listed for soundgen is a take of its cue in the table every host plays by, and replaces its models', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'soundgen-rec-'));
+    try {
+        // 3200 samples at 32 kHz of a 16-bit mono PCM WAV: the 44-byte header and the data.
+        const n = 3200, rate = 32000;
+        const wav = Buffer.alloc(44 + 2 * n);
+        wav.write('RIFF', 0); wav.writeUInt32LE(36 + 2 * n, 4); wav.write('WAVEfmt ', 8);
+        wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(rate, 24);
+        wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+        wav.write('data', 36); wav.writeUInt32LE(2 * n, 40);
+        for (let k = 0; k < n; k++) wav.writeInt16LE(Math.round(8000 * Math.sin(k / 9) * Math.exp(-k / 600)), 44 + 2 * k);
+        writeFileSync(join(dir, 'place_rec_0.wav'), wav);
+        writeFileSync(join(dir, 'recordings.tsv'), '# cue role level file anchor_ms kbps\nplace main 0 place_rec_0.wav 12.5 96\n');
+        const out = join(dir, 'cue_takes.c');
+        const SG = join(REPO, 'tools/soundgen');
+        execFileSync('make', ['-s', '--no-print-directory', '-C', SG, 'ctable', `CTABLE=${out}`],
+            { env: { ...process.env, SOUNDGEN_RECORDINGS: dir }, stdio: ['ignore', 'ignore', 'inherit'] });
+        const rows = [...readFileSync(out, 'utf8').matchAll(/\{ (-?\d+), (-?\d+), (-?\d+), (\d+), (\d+), (\d+), \d+, "([^"]+)" \}/g)]
+            .map((m) => ({ rate: +m[1], n: +m[2], anchorUs: +m[3], cue: +m[4], role: +m[5], level: +m[6], name: m[7] }));
+        assert.deepEqual(rows.filter((r) => r.cue === ANIM_CUE_PLACE),
+            [{ rate, n, anchorUs: 12500, cue: ANIM_CUE_PLACE, role: 0, level: 0, name: 'place_rec_0' }],
+            'the recording is the throw-in landing\'s one take, at its own rate and length, with the anchor it was listed with');
+        assert.ok(rows.some((r) => r.cue === ANIM_CUE_COVER) && rows.length > 100, 'and every other cue keeps its models');
+        // A line soundgen cannot read stops the build rather than dropping a sound.
+        writeFileSync(join(dir, 'cover_rec_0.wav'), wav);
+        writeFileSync(join(dir, 'recordings.tsv'), 'place main 0 cover_rec_0.wav 12.5 96\n');
+        assert.throws(() => execFileSync('make', ['-s', '--no-print-directory', '-C', SG, 'ctable', `CTABLE=${out}`],
+            { env: { ...process.env, SOUNDGEN_RECORDINGS: dir }, stdio: 'ignore' }), 'a recording named for another cue is refused');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ---- 5. the shipped files: AAC, starting on the millisecond ------------------------------
