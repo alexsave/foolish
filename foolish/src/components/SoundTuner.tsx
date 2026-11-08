@@ -139,8 +139,27 @@ const Stepper = ({ value, step, places, onChange, label, changed, narrow }: {
     );
 };
 
-/** The cue the compact tuner shows, kept for this tab across the reload after a rebuild. */
-const CUE_KEY = 'foolish_tuner_cue';
+/** The compact tuner's tabs: everything one thing at the table can make heard
+ *  (Alex 2026-11-08), so a cue sits under every tab it belongs to. A cue no tab
+ *  names lands in "other", so a new cue is never hidden. */
+const GROUPS: { name: string; cues: string[] }[] = [
+    { name: 'deal', cues: ['deal', 'deal_land', 'turn', 'flip'] },
+    { name: 'attack', cues: ['lift', 'place'] },
+    { name: 'cover', cues: ['lift', 'cover'] },
+    { name: 'pass', cues: ['lift', 'pass'] },
+    { name: 'discard', cues: ['good', 'sweep', 'pile', 'hand_off', 'deal', 'deal_land'] },
+    { name: 'pickup', cues: ['pickup', 'into_hand', 'hand_off', 'deal', 'deal_land'] },
+    { name: 'game end', cues: ['out', 'finish', 'fool'] },
+];
+const groupsOf = (order: string[]) => {
+    const named = new Set(GROUPS.flatMap((g) => g.cues));
+    const rest = order.filter((c) => !named.has(c));
+    return [...GROUPS.map((g) => ({ name: g.name, cues: g.cues.filter((c) => order.includes(c)) })),
+            ...(rest.length ? [{ name: 'other', cues: rest }] : [])].filter((g) => g.cues.length > 0);
+};
+
+/** The tab the compact tuner shows, kept for this tab across the reload after a rebuild. */
+const CUE_KEY = 'foolish_tuner_group';
 const readCue = (): string | null => { try { return sessionStorage.getItem(CUE_KEY); } catch { return null; } };
 const writeCue = (c: string): void => { try { sessionStorage.setItem(CUE_KEY, c); } catch { /* private mode */ } };
 
@@ -256,8 +275,9 @@ export default function SoundTuner({ play, perStroke, compact = false, beforeRel
         .filter((c) => cueKind(c) > 0 && cueKind(c) !== ANIM_CUE_REVERT);
     const changedCount = rows.filter((r) => !same(committed.get(keyOf(r)), r)).length;
     const cueChanged = (cue: string) => rows.some((r) => r.cue === cue && !same(committed.get(keyOf(r)), r));
-    const pick = compact ? (shown && order.includes(shown) ? shown : order[0]) : null;
-    const listed = pick ? [pick] : order;
+    const groups = groupsOf(order);
+    const group = compact ? (groups.find((g) => g.name === shown) ?? groups[0]) : null;
+    const listed = group ? group.cues : order;
     const fs = compact ? 12 : 14;
     const cell: React.CSSProperties = compact ? { ...td, padding: '2px 3px' } : td;
 
@@ -268,12 +288,12 @@ export default function SoundTuner({ play, perStroke, compact = false, beforeRel
             {!compact && <h2 className="title">Tune</h2>}
             {compact && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {order.map((c) => (
-                        <button key={c} type="button" data-tuner-cue={c} onClick={() => { setShown(c); writeCue(c); }}
-                                style={{ ...small, fontSize: 12, padding: '1px 6px',
-                                         background: c === pick ? '#7a5a3a' : small.background,
-                                         borderColor: cueChanged(c) ? changedColor : small.borderColor }}>
-                            {c.replace('_', ' ')}
+                    {groups.map((g) => (
+                        <button key={g.name} type="button" data-tuner-group={g.name} onClick={() => { setShown(g.name); writeCue(g.name); }}
+                                style={{ ...small, fontSize: 12, padding: '2px 8px',
+                                         background: g === group ? '#7a5a3a' : small.background,
+                                         borderColor: g.cues.some(cueChanged) ? changedColor : small.borderColor }}>
+                            {g.name}
                         </button>
                     ))}
                 </div>
