@@ -107,7 +107,8 @@ BROWSER_HOST_SRC := src/local_table.c
 PLAYBACK_SRC := src/cue_voice.c
 # THE TAKE TABLE both hosts play from, written by soundgen from the same render
 # as the files the web serves and the app bundles (ios/scripts/bundle_sounds.sh).
-# Never committed. Rendering every take is about 12 s of one core, so it is
+# Never committed. Rendering every take is about 11 s of one core (2.3 s over
+# soundgen's forked workers), so it is
 # remade only when soundgen (or a header it reads) changed; it needs a C
 # compiler and no ffmpeg.
 SOUNDGEN_DIR := ../tools/soundgen

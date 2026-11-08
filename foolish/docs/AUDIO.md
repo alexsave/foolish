@@ -14,7 +14,7 @@ There are four layers, and each one knows nothing about the next one's business.
 | Layer | Decides | Lives in |
 | --- | --- | --- |
 | The plan | WHICH cue a beat makes, WHEN, and how a move of several cards is spread | `c/src/anim_plan.h` ("sound cues"), `c/src/anim_plan.c` |
-| The sounds | what a cue's moment SOUNDS like: the takes, how much of each gesture comes before its moment (the anchor), and how loud each cue sits (the mix) | `tools/soundgen/` (the models, `RECIPES`, `MIX_ROWS`, the recordings), writing the files and the take table `c/build/gen/cue_takes.c` |
+| The sounds | what a cue's moment SOUNDS like: the takes, how much of each gesture comes before its moment (the anchor), and how loud each cue sits (the mix) | `tools/soundgen/` (the models, `RECIPES`, `tuning.tsv` for every part's time and level and every cue's mix, the recordings), writing the files and the take table `c/build/gen/cue_takes.c` |
 | The voice | what a strike PLAYS: which take, when its file starts, how loud and how fast, reversed or not, the strokes before it | `c/src/cue_voice.h`, `cue_voice.c`, and `cue_voice_table.c` (the one voice over the take table) |
 | The engine | fetching the files, and starting what the voice answers on the host's audio clock | `src/audio/cueAudio.ts` on the web, `ios/FoolishKit/Sound/CuePlayer.swift` on iOS |
 
@@ -172,7 +172,7 @@ With no time before the cue at all (a pickup opens its run) the strokes start at
 The web asks it with the step's seat and the board's `mySeat`; a spectator hears every seat at full level.
 
 **A modelled sound does not wander.**
-The stand-ins are played a little off pitch and level each time; a model's takes already vary as the recordings did, so its row in soundgen's `MIX_ROWS` wanders by nothing and is not made heavier per card (a sweep's strokes say how many cards it is).
+The stand-ins are played a little off pitch and level each time; a model's takes already vary as the recordings did, so its mix line in soundgen's `tuning.tsv` wanders by nothing and is not made heavier per card (a sweep's strokes say how many cards it is).
 On the web a speed is the source's `playbackRate`; iOS keeps a player per speed and resamples with `fio_cue_resample`.
 
 **The audio clock, not a timer.**
@@ -316,6 +316,38 @@ Plays every file in turn with `afplay`, printing each name.
 **Measured: `make -C tools/soundgen stats`.**
 Prints each file's rate, length, bytes, anchor, peak and RMS.
 
+## How to tune
+
+Every part of every card sound (a grab, a thumb slide, a landing, the strokes) has a line in `tools/soundgen/tuning.tsv`: where it sits from its cue's moment, how loud it is, and how far each may wander a take at a time.
+Every cue has a `mix` line there too: its whole level, for every host.
+That file is the one owner of these numbers; soundgen reads it at build time and nothing else holds a copy.
+
+**By ear, in the browser.**
+Run `npm run dev` and `npm run tune` side by side, and open `http://localhost:3000/sounds`.
+`npm run tune` starts `tools/soundgen/tune.c`, a small endpoint on `127.0.0.1:3101` that answers only pages on this machine and is never part of a build.
+The "Tune" table at the top of `/sounds` has one row a part ("deal: thumb slide", "pickup: slide into hand", "trump: deck set down on it"), grouped under each cue's whole-cue row.
+The level is in dB on the deal's scale, before the common gain that lifts every card take so the loudest peaks at -3 dBFS: raising the loudest part therefore lowers everything else, and what a level says is its balance against the rest.
+The time is in ms from the cue's moment, negative before it; for strokes it is where the last one ends before the lift.
+A grey "to" beside a value is the far end of its random spread, which the tuner shows and leaves alone.
+The whole-cue row sets the cue's level for every host (its `mix` gain), and its "all parts" buttons move every part of the cue 10 ms against the animation.
+Every change writes `tuning.tsv`, rebuilds every take, the take table, `web.wasm` and `promo.wasm` (`tools/soundgen/tune.sh`, about 4 s), and reloads the page, which checks its kernel carries the new table before it says "Rebuilt".
+Then press Play: every Play stops whatever was sounding first, so one sound is heard at a time; a tight row's "Now" plays it as a move that opens its run does, and a strokes row plays its cue with the number of strokes chosen beside it.
+The "In context" moves below play the new takes at the plan's own times.
+A value that differs from git HEAD is marked with a dot and gets a Reset; "Reset all" puts the whole file back.
+When it sounds right, commit `tools/soundgen/tuning.tsv`: that is the shipped value, for the web and iOS alike.
+
+**In a real game.**
+`http://localhost:3000/ws` is a game against a bot, played entirely in the tab (a promo code's local game, no server or sign-in), with the sounds on after the first tap; reload it after a change in the tuner to hear the new takes.
+The tutorial (`/tutorial`) plays the same engine too.
+
+**By hand.**
+Edit `tuning.tsv` in an editor (tab-separated; its header says what each column is) and rebuild (`npm run dev` does it).
+A line soundgen cannot read, a part with no line or two, or a cue with no `mix` line stops the build: `e2e/audio_cues.test.ts` holds it, and that moving a part moves its takes and nothing else.
+
+**Rendering.**
+soundgen renders the takes in one forked worker per core (`SOUNDGEN_JOBS` sets how many; `1` renders in its own process), about 2.3 s for all 139 where one core takes 11 s, and the files are byte for byte the same whatever the number.
+The tuner's rebuild rewrites only the WAVs whose bytes changed and re-encodes only those.
+
 ## How to replace a sound with a recording
 
 A recording enters where a model does: as a take soundgen lists, so it is in the one table both hosts play by and among the files they serve and bundle, and nothing in either host changes.
@@ -326,7 +358,7 @@ A recording enters where a model does: as a take soundgen lists, so it is in the
    Several lines for one cue are takes of one gesture, played in turn and never the same one twice running.
 3. Rebuild (`npm run dev` does it): soundgen writes and encodes it with the rest, and the wasm is relinked with the new table.
    A cue with a recording plays its recordings only: its synthesised takes are no longer written.
-4. Set the cue's level by ear on `/sounds`, in its `MIX_ROWS` row in `tools/soundgen/soundgen.c`.
+4. Set the cue's level by ear with the tuner on `/sounds` (its whole-cue row), which edits its `mix` line in `tools/soundgen/tuning.tsv`.
 
 A refused move needs nothing of its own: it is the same take, reversed by the engine, with its anchor measured from the other end.
 A line soundgen cannot read, or a file that is not such a WAV, stops the build rather than leaving a cue silent.
@@ -357,13 +389,13 @@ The build runs no Python and no numpy.
 | slide into the hand | `disc_syn.py` insert | `INTO_HAND` |
 
 **A file is a gesture at the game's timing.**
-`soundgen.c` lays the parts of each cue's gesture out as its `*_game.py` does, against the cue's moment, and writes the take with its anchor.
+`soundgen.c` lays the parts of each cue's gesture out as its `*_game.py` does, against the cue's moment, at the times and levels `tuning.tsv` gives, and writes the take with its anchor.
 The levels are the games' own, on the deal's scale (g = -34 to -32 dBFS a take): the grab at g-5 and the slide at g-6 to g-9, a dealt landing at g-13 to g-16, the flip at g-5, the trump's landing at g-9 to g-12 and the deck at g-3 to g-6, the throw-in's grab at g-14 and its landing at g-3 to g-5, the cover's at g-4 to g-6, the shfff at g-11 to g-13, and the discard parts by 50 ms RMS against the strokes at g-30.5 (lift +5, placement +3, pickup lift -10, slide into the hand -11).
-**The balance between the parts** (`PART_DB` in `soundgen.c`, set 2026-11-07 from a levels study, Alex: "do it yourself").
+**The balance between the parts** (folded into each part's level in `tuning.tsv`, set 2026-11-07 from a levels study, Alex: "do it yourself").
 Within one video a card's landing is about 25 dB over the grab and slide before it, where the games had it about 4 dB over; and the discard and pickup videos were shot about twice as far from the phone as the pass's, so their "6.5 dB under a pass" was distance.
 So on top of each game's level: the throw-in landing +18 dB (also the trump's and the pass's landing, the same model), the cover landing +19, the trump flip +17, the deck set down +14, the discard's lift +18, the strokes +7, the placement on the pile +8, the pickup's lift +8 and the slide into the hand +8; the deal's slide, grab and landing (the landing Alex set by ear), the two-finger grab, the throw-in's slide and the pass's shfff unchanged.
 Then one common gain scales every card take so the loudest peaks at -3 dBFS at full master volume (+14.3 dB from the deal's scale), checked against the mixes a plan really strikes together (six landings a stagger apart, six covers, a refill's landings, the trump turned and landed, a transfer's landing and slide, a run-opening pickup's strokes under its lift and over the last landing, a sweep's strokes over the last cover): the loudest of them peaks at -3.0 dBFS too, so nothing clips and the gain was not lowered (soundgen lowers it, never a part, if a mix would pass -1 dBFS).
-The gain in `MIX_ROWS` is 1000 for every model: the levels are the files'.
+The gain in each model's `mix` line is 1000: the levels are the files'.
 
 | Cue | Peak (dBFS) | Loudest 50 ms RMS (dBFS) |
 | --- | --- | --- |
@@ -541,7 +573,7 @@ A transfer's `PASS` is in the plan but no harness game played one.
     A cue carries its step, so a host can pan a sound towards the seat that made it.
     The web plays everything centred; only a dealt card's landing follows its seat, in level.
 12. **The placeholders were turned down to sit with the card set** (Alex: "turn them down").
-    Their gains in soundgen's `MIX_ROWS` put them, by loudest 50 ms RMS, at -26 for the game over (once a game, just under a card landing at about -22), -30 for a seat going out, -34 for a good and -38 for the hand-off (heard every bout).
+    Their gains in soundgen's `tuning.tsv` mix lines put them, by loudest 50 ms RMS, at -26 for the game over (once a game, just under a card landing at about -22), -30 for a seat going out, -34 for a good and -38 for the hand-off (heard every bout).
     They still want designing; these levels are a starting point for tuning by ear on `/sounds`.
 13. **1.8 MB of AAC** (1,783,626 bytes, from 6.5 MB of WAV), loaded after the first tap, wanted cues first.
 14. **The strokes play over the beat before** (Alex: "just play the pickup over the other sounds"): five strokes start 3.5 s before their sweep, over the last cover and its hold.

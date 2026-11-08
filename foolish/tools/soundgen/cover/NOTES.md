@@ -48,4 +48,4 @@ Measured with `../throwin/an/measure.py`, both are inside the Python takes' rang
 `make -C .. parts` writes the C takes alone (12 at 48 kHz) to compare against the Python's `synth/`.
 The Python stays the reference and the analysis; change a model here first, then its port.
 
-The levels in the game are this model's own, with the offsets of `PART_DB` in `../soundgen.c` on top (the levels study of 2026-11-07: a card's landing ~25 dB over the grab and slide in one video, and the discard and pickup videos twice as far from the phone), and one common gain over the whole card set; `../../../docs/AUDIO.md` ("The balance between the parts") lists both.
+The levels in the game are this model's own, with the offsets of the levels study on top, all of it in each part's line of `../tuning.tsv` (the levels study of 2026-11-07: a card's landing ~25 dB over the grab and slide in one video, and the discard and pickup videos twice as far from the phone), and one common gain over the whole card set; `../../../docs/AUDIO.md` ("The balance between the parts") lists both.

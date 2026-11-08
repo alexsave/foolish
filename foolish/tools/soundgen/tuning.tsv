@@ -48,6 +48,8 @@ part	into_hand	main	slide	0	0	-33.5	0	pickup: slide into hand
 #   <per card>   louder by this for each card past the first, up to +600
 # The placeholders' gains (Alex 2026-11-07: "turn them down") by loudest 50 ms RMS: the game over -26 (just under
 # a card landing at about -22), a seat going out -30, a good -34 and the hand-off -38 (heard every bout).
+# Their files' own loudest 50 ms RMS, which the gains bring there: out -6.6, good -6.8, hand-off -11.4, finish -5.9,
+# fool -5.6 dBFS. The hand-off is the one stand-in that wanders (a row of one sample is a row of cards, not a machine).
 mix	deal	1000	0	0	0
 mix	flip	1000	0	0	0
 mix	lift	1000	0	0	0
