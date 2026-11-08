@@ -34,8 +34,11 @@
 #include "../src/msg_wire.h"
 #include "../src/card.h"
 #include "../src/cue_voice.h"
+#include "cue_voice_parity.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <math.h>
 
 static int g_fails = 0;
 
@@ -2193,6 +2196,66 @@ static void test_cue_voice(void) {
           "an output too small, or nothing to play, is refused");
 }
 
+// THE WEB'S ENGINE MADE THESE DECISIONS before it asked the kernel (cue_voice_parity.h
+// says how they were recorded): every strike of the corpus, in order, through one
+// voice seeded as the recording's generator was, plays the take the web played, from
+// the same moment, at the same level and speed, the same way round, with the same
+// strokes before it. THE MARGINS are the C's own precision, which is the reference (it is
+// the API test_cue_voice holds, and iOS keeps a player per speed): a level and a speed in
+// thousandths where the web's were floats, so within half of one; and a file started for
+// the speed C answers, so a wandering take's start moves by its anchor times the
+// difference in speed, plus 60 us for the web's anchors, which its table gave to a tenth
+// of a millisecond. A modelled take does not wander, so for it the margin is the 60 us.
+static int parity_play(const char *what, int i, const ParityPlay *want, int take, int start_us, int gain_pm,
+                       int rate_pm, int backwards) {
+    double margin = 60;
+    if (take >= 0) {
+        const CueTakeRow *t = &PARITY_TAKES[take];
+        const double len_us = (double)t->n_samples * 1e6 / t->rate;
+        const double dist = backwards ? len_us - t->anchor_us : t->anchor_us;
+        margin += fabs(dist) * fabs(want->rate_ppm / 1e6 - rate_pm / 1e3) + 1;
+    }
+    const int same = want->take == take
+        && (take < 0 || (fabs((double)want->start_us - start_us) <= margin && abs(want->gain_ppm - gain_pm * 1000) <= 500
+                         && abs(want->rate_ppm - rate_pm * 1000) <= 500 && want->backwards == backwards));
+    if (!same)
+        printf("  strike %d %s: the web played take %d at %d us, level %d, speed %d%s; C answers %d at %d us, %d, %d%s\n",
+               i, what, want->take, want->start_us, want->gain_ppm, want->rate_ppm, want->backwards ? ", backwards" : "",
+               take, start_us, gain_pm * 1000, rate_pm * 1000, backwards ? ", backwards" : "");
+    return same;
+}
+static int parity_session(const ParityStrike *ps, int n, const CueMix *mix, uint32_t seed) {
+    const int n_takes = (int)(sizeof PARITY_TAKES / sizeof PARITY_TAKES[0]);
+    CueVoiceState st = { .rng = seed };
+    int off = 0;
+    for (int i = 0; i < n; i++) {
+        const ParityStrike *p = &ps[i];
+        CueStrike s;
+        cue_strike(PARITY_TAKES, n_takes, mix, &st, p->kind, p->lead_us, p->n_cards, p->undoes, p->gain_pm, &s);
+        const int ok = parity_play("its take", i, &p->main, s.take, s.start_us, s.gain_pm, s.rate_pm, s.backwards)
+            && parity_play("its strokes", i, &p->prelude, s.prelude, s.prelude_start_us, s.prelude_gain_pm,
+                           s.prelude_rate_pm, 0);
+        if (!ok && off++ >= 3) break;
+    }
+    return off;
+}
+static void test_cue_voice_matches_the_web(void) {
+    const int n_a = (int)(sizeof PARITY_SHIPPED / sizeof PARITY_SHIPPED[0]);
+    const int n_b = (int)(sizeof PARITY_WANDERS / sizeof PARITY_WANDERS[0]);
+    int played = 0, strokes = 0, reversed = 0;
+    for (int i = 0; i < n_a; i++) {
+        played += PARITY_SHIPPED[i].main.take >= 0;
+        strokes += PARITY_SHIPPED[i].prelude.take >= 0;
+        reversed += PARITY_SHIPPED[i].main.backwards;
+    }
+    CHECK(n_a > 1500 && played > n_a * 9 / 10 && strokes > 100 && reversed > 20,
+          "the record is of every kind of strike (%d, %d played, %d with strokes, %d reversed)", n_a, played, strokes, reversed);
+    CHECK(parity_session(PARITY_SHIPPED, n_a, PARITY_MIX_SHIPPED, PARITY_SEED_SHIPPED) == 0,
+          "under the shipped mix, every strike plays what the web's engine played");
+    CHECK(parity_session(PARITY_WANDERS, n_b, PARITY_MIX_WANDERS, PARITY_SEED_WANDERS) == 0,
+          "and under a mix that wanders and is heavier per card");
+}
+
 int main(void) {
     printf("anim_plan_test\n");
     test_optimistic_animation();
@@ -2209,6 +2272,7 @@ int main(void) {
     test_plan_is_laid_out_in_beats();
     test_plan_sound_cues();
     test_cue_voice();
+    test_cue_voice_matches_the_web();
     test_hand_order_with_hidden_slots();
     if (g_fails == 0) printf("anim_plan_test: OK\n");
     else              printf("anim_plan_test: %d FAILURES\n", g_fails);

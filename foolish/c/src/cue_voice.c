@@ -51,14 +51,19 @@ static int variant(const CueTakeRow *takes, int n_takes, CueVoiceState *st, int 
         if (i != last) others++;
     }
     if (n == 0) return -1;
-    const int skip = n > 1;            // a cue with one take plays it every time
-    const int pool = skip ? others : n;
+    // A cue with one take plays it every time, and draws nothing for it: the
+    // generator moves only for a choice, as the web's engine did
+    // (tests/cue_voice_parity.h holds the two to the same draws).
+    if (n == 1) {
+        for (int i = 0; i < n_takes; i++) if (admit(&takes[i], kind, lead_us, level)) return i;
+    }
+    const int pool = others;
     int k = (int)(draw(st) * pool);
     if (k >= pool) k = pool - 1;
     for (int i = 0; i < n_takes; i++) {
-        if (!admit(&takes[i], kind, lead_us, level) || (skip && i == last)) continue;
+        if (!admit(&takes[i], kind, lead_us, level) || i == last) continue;
         if (k-- == 0) {
-            if (skip) st->last[slot] = (int16_t)(i + 1);
+            st->last[slot] = (int16_t)(i + 1);
             return i;
         }
     }
