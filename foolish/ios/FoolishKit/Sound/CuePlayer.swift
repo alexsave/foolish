@@ -461,7 +461,9 @@ public final class CuePlayer {
     @discardableResult
     func strike(_ kind: Int, in seconds: Double, nCards: Int = 1, undoes: Int = 0,
                 gainPm: Int = 1000, heard: ((Scheduled) -> Void)? = nil) -> [Scheduled] {
-        guard Self.on, !muted, let engine, offline || engine.isRunning else { return [] }
+        // Muted is no engine at all (setMuted shuts it down, start refuses), so
+        // the engine is the one gate.
+        guard Self.on, let engine, offline || engine.isRunning else { return [] }
         let now = mach_absolute_time()
         let leadUs = Int32(clamping: Int((max(0, seconds) * 1e6).rounded()))
         guard let p = fio_cue_strike(Int32(kind), leadUs, Int32(clamping: nCards), Int32(undoes), Int32(gainPm)),
@@ -574,15 +576,16 @@ public final class CuePlayer {
         users = 1
     }
 
-    /// Render `frames` more samples of the offline engine: its first channel.
-    func render(_ frames: Int) throws -> [Float] {
+    /// Render `frames` more samples of the offline engine: channel `channel`.
+    func render(_ frames: Int, channel: Int = 0) throws -> [Float] {
         guard let e = engine, offline,
               let buf = AVAudioPCMBuffer(pcmFormat: e.manualRenderingFormat, frameCapacity: 4096) else { return [] }
         var out: [Float] = []
         out.reserveCapacity(frames)
         while out.count < frames {
             let n = AVAudioFrameCount(min(4096, frames - out.count))
-            guard try e.renderOffline(n, to: buf) == .success, let d = buf.floatChannelData?[0] else { break }
+            guard try e.renderOffline(n, to: buf) == .success, channel < Int(buf.format.channelCount),
+                  let d = buf.floatChannelData?[channel] else { break }
             out.append(contentsOf: UnsafeBufferPointer(start: d, count: Int(buf.frameLength)))
         }
         return out

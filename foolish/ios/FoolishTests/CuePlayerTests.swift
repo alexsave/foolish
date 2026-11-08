@@ -187,9 +187,10 @@ final class CuePlayerTests: XCTestCase {
         try player.startOffline(rate: 48000, channels: 2)
         _ = try player.render(1024)
         let s = try XCTUnwrap(player.strike(Int(ANIM_CUE_LIFT), in: 0.5).first)
-        let out = try player.render(48000)
+        let out = try player.render(48000, channel: 1)
+        XCTAssertEqual(out.count, 48000, "a second side was rendered")
         let (err, _) = compare(out, at: Int(s.startSample - s.nowSample), player.samples(s.take), gain: master)
-        XCTAssertLessThan(err, 1e-4, "the left side is the take at the master level")
+        XCTAssertLessThan(err, 1e-4, "the right side is the take at the master level, as the left is")
     }
 
     /// A 32 kHz take in a 48 kHz mix (a cover on a phone) is converted as it
@@ -253,6 +254,12 @@ final class CuePlayerTests: XCTestCase {
         let sweep = player.strike(Int(ANIM_CUE_SWEEP), in: 4.0, nCards: 10)
         XCTAssertEqual(sweep.count, 2)
         XCTAssertFalse(player.isResident(sweep[1].take), "the strokes are never kept")
+        // ...nor decoded ahead when their cue is wanted: only its own takes are...
+        player.want(1 << UInt32(ANIM_CUE_SWEEP))
+        player.waitLoaded()
+        for (i, t) in player.takes.enumerated() where t.cue == Int(ANIM_CUE_SWEEP) {
+            XCTAssertEqual(player.isResident(i), t.role != Int(CUE_ROLE_PRELUDE), "\(t.name): a wanted sweep's lift, not its strokes")
+        }
         // ...and the next answer drops what it no longer names.
         player.want(1 << UInt32(ANIM_CUE_LIFT))
         XCTAssertFalse(player.isResident(place.take))
