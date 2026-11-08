@@ -31,4 +31,11 @@ else
   log=$(make -s -j4 -C "$root/c" ${cc:+WASM_CC="$cc"} wasm-web wasm-promo 2>&1) || { echo "$log"; exit 1; }
   echo "tune.sh: web.wasm and promo.wasm relinked with the new take table"
 fi
+# What the page checks after it reloads, so it knows the dev server is serving
+# the new kernel link and not the last one: every take's length and anchor and
+# every cue's mix, summed (src/components/SoundTuner.tsx sums cueTakes() and cueMix() alike).
+fp=$(awk '/^    \{ [0-9]/ { gsub(/[^0-9 -]/, " "); s += $2 + $3 }
+          /^    \[[0-9]+\] = \{/ { gsub(/[^0-9 -]/, " "); s += $2 + $3 + $4 + $5 }
+          END { printf "%d", s }' "$ct")
+echo "tune.sh: table $fp"
 echo "tune.sh: done in $(( $(date +%s) - t0 )) s"

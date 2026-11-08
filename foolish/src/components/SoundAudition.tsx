@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import {
     animBuildPlan, animSeatGainPm, cueLeadUs, cueMix, cueTakes, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn,
 } from '@sdk/ts/wasm/bots.ts';
@@ -107,6 +108,24 @@ const strikes = (kind: number, n: number, undoes = 0, nCards = 1): void =>
         for (let h = 0; h < n; h++) cueAudio.strike(kind, lead + h * ANIM_SOUND_STAGGER_MS, nCards, undoes);
     });
 
+// THE TUNER (SoundTuner.tsx), in development only: the condition is a constant
+// in a production build, so the bundler drops the import and nothing of it ships.
+const SoundTuner = process.env.NODE_ENV === 'development'
+    ? dynamic(() => import('./SoundTuner'), { ssr: false })
+    : null;
+
+/** A cue's strokes: the cards one stroke gathers, 0 for a cue with none. */
+const perStrokeOf = (kind: number): number => (cueMix(kind)?.cardsPerLevelPm ?? 0) / 1000;
+
+/** One cue for the tuner, alone: whatever was sounding stops first (one sound at a time). */
+const tunerPlay = (kind: number, how: 'main' | 'tight' | number): void => {
+    cueAudio.cancel();
+    const per = perStrokeOf(kind);
+    if (how === 'tight') whenLoaded([kind], () => cueAudio.strike(kind, 0));
+    else if (typeof how === 'number') strikes(kind, 1, 0, Math.ceil(how * per));
+    else strikes(kind, 1, 0, per > 0 ? 0 : 1);
+};
+
 const Button = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
     <TexturedSurface as="button" seed={0.4} className="btn-wood btn-wood--md" onClick={onClick}
                      style={{ minWidth: 120 }}>
@@ -140,7 +159,7 @@ export const SoundAudition = () => {
             {/* On a dark panel, like the tutorial's card: the wool is far too
                 busy to read a table against. */}
             <div className="content content--max-width content--gap-lg z-content"
-                 style={{ color: '#f5e6c8', background: 'rgba(28, 20, 16, 0.92)', borderRadius: 14,
+                 style={{ color: '#f5e6c8', background: 'rgba(28, 20, 16, 0.92)', borderRadius: 14, maxWidth: 960,
                           padding: '28px 32px 36px', margin: '64px auto 48px', boxShadow: '0 6px 24px rgba(0,0,0,0.45)' }}>
                 <h1 className="title title--page">Sounds</h1>
                 <p>
@@ -159,6 +178,8 @@ export const SoundAudition = () => {
                         <span style={{ width: 40 }}>{Math.round(volume * 100)}%</span>
                     </label>
                 </div>
+
+                {SoundTuner && table && <SoundTuner play={tunerPlay} perStroke={perStrokeOf} />}
 
                 <h2 className="title">Each cue</h2>
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
