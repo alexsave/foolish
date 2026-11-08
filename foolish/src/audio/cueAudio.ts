@@ -66,8 +66,7 @@
 // is leaning on the other channels to follow the table. The control for sound
 // is the mute, which is one tap and remembered.
 
-import { botsReady, cueSeed, cueStrike, cueTableLoad, cueTakes } from '@sdk/ts/wasm/bots.ts';
-import { fetchTable, tableVersion } from './tuneEndpoint';
+import { botsReady, cueSeed, cueStrike, cueTakes } from '@sdk/ts/wasm/bots.ts';
 
 const MUTED_KEY = 'foolish_sound_muted';
 const VOLUME_KEY = 'foolish_sound_volume';
@@ -133,9 +132,6 @@ export class CueAudio {
     private readonly reversed = new Map<AudioBuffer, AudioBuffer>();
     /** The kernel's voice is seeded once, by the first strike. */
     private seeded = false;
-    /** DEVELOPMENT: the tuner's table the files belong to, '' for the linked one
-     *  (retable). Asked of every file, so no cache answers with another table's. */
-    private version = '';
 
     // ---- the setting ---------------------------------------------------------
 
@@ -198,37 +194,6 @@ export class CueAudio {
         window.addEventListener('pointerdown', wake, { capture: true, passive: true });
         window.addEventListener('keydown', wake, { capture: true, passive: true });
         document.addEventListener('visibilitychange', () => { if (document.hidden) this.cancel(); });
-        // DEVELOPMENT: the tuner's latest table, when its endpoint is running, since
-        // tuning no longer relinks the kernel this page loaded (tools/soundgen/tune.sh).
-        // Constant in a production build, where it is dropped.
-        if (process.env.NODE_ENV === 'development') void this.devTable();
-    }
-
-    private async devTable(tries = 50): Promise<void> {
-        if (!botsReady()) {
-            if (tries > 0) setTimeout(() => void this.devTable(tries - 1), 200);
-            return;
-        }
-        const bytes = await fetchTable();
-        if (bytes) this.retable(bytes);
-    }
-
-    /**
-     * DEVELOPMENT: the tuner wrote a new take table. The kernel takes it in place of
-     * the linked one (cueTableLoad), and every file is fetched again under the new
-     * table's version: nothing sounding, nothing decoded and nothing on its way is
-     * kept from the old one. False when the kernel refused the bytes.
-     */
-    retable(bytes: Uint8Array): boolean {
-        if (!cueTableLoad(bytes)) return false;
-        this.cancel();
-        this.buffers.clear();
-        this.reversed.clear();
-        this.progress.clear();
-        this.held.clear();
-        this.version = tableVersion(bytes);
-        this.pump();
-        return true;
     }
 
     /** Create or wake the context. Only does anything inside a user gesture,
@@ -300,17 +265,15 @@ export class CueAudio {
     private fetchFile(file: string): void {
         this.progress.set(file, 'fetching');
         this.fetching++;
-        const version = this.version;
-        fetch(CUE_SOUND_ROOT + file + (version ? `?v=${version}` : ''))
+        fetch(CUE_SOUND_ROOT + file)
             .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
             .then((bytes) => {
                 this.fetching--;
-                if (version !== this.version) return;   // another table's file (retable)
                 if (this.ctx) this.decode(file, bytes);
                 else { this.held.set(file, bytes); this.progress.set(file, 'held'); }
             }, () => {
                 this.fetching--;
-                if (version === this.version) this.fail(file);
+                this.fail(file);
             })
             .then(() => this.pump());
     }
@@ -319,10 +282,8 @@ export class CueAudio {
         const ctx = this.ctx;
         if (!ctx) return;
         this.progress.set(file, 'decoding');
-        const version = this.version;
         // The callback form: older Safari has no promise from it.
         ctx.decodeAudioData(bytes, (buffer) => {
-            if (version !== this.version) return;   // another table's file (retable)
             this.buffers.set(file, buffer);
             this.progress.delete(file);
             // The strikes that were waiting on this file: now, or not at all.

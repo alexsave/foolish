@@ -640,10 +640,6 @@ int wasm_roster_trailer_read(int len) {
 // a cue with strokes a button per stroke count.
 #include "cue_voice.h"
 int wasm_cue_n_takes(void) { return cue_table_n_takes(); }
-// io = [a tuner table, `len` bytes] (cue_voice.h "THE TUNER'S TABLE"); 0, or -1 when refused.
-int wasm_cue_table_load(int len) {
-    return len < 0 || len > (int)wasm_io_cap() ? -1 : cue_table_load(wasm_io_ptr(), len);
-}
 const CueTakeRow *wasm_cue_take(int i) { return cue_table_take(i); }
 const CueMix *wasm_cue_mix(int kind) { return cue_table_mix(kind); }
 int wasm_cue_lead_us(int kind) { return cue_table_lead_us(kind); }

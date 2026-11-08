@@ -151,10 +151,6 @@ static void serve(int fd) {
         const int rc = run("git show HEAD:./" FILE_NAME " 2>/dev/null", &out);
         if (rc != 0) respond(fd, 404, origin, "", 0);
         else respond(fd, 200, origin, out.p ? out.p : "", out.n);
-    } else if (!strcmp(method, "GET") && !strcmp(path, "/table")) {
-        // The take table as bytes (build/cue_takes.bin, tune.sh), for an open page's kernel.
-        if (read_file("build/cue_takes.bin", &out) != 0) respond(fd, 404, origin, "", 0);
-        else respond_as(fd, 200, "application/octet-stream", origin, out.p, out.n);
     } else if (!strcmp(method, "GET") && !strncmp(path, "/solo/", 6)) {
         // GET /solo/<cue>/<role>/<part>/<take>/<strokes>: one part of one take alone, as a WAV at
         // the game's level (soundgen solo), for the tuner's per-part Play. Names are

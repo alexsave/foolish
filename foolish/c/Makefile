@@ -1163,7 +1163,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_role_cue -Wl,--export=wasm_anim_finish_cue \
   -Wl,--export=wasm_anim_seat_gain_pm \
   -Wl,--export=wasm_anim_cue_ask_ptr -Wl,--export=wasm_anim_cues_next \
-  -Wl,--export=wasm_cue_n_takes -Wl,--export=wasm_cue_table_load -Wl,--export=wasm_cue_take -Wl,--export=wasm_cue_mix \
+  -Wl,--export=wasm_cue_n_takes -Wl,--export=wasm_cue_take -Wl,--export=wasm_cue_mix \
   -Wl,--export=wasm_cue_lead_us -Wl,--export=wasm_cue_seed -Wl,--export=wasm_cue_strike
 
 # The backend's client (src/netclient.h, wasm/wasm_net_api.c): what the web asks
@@ -1570,7 +1570,7 @@ WASM_WEB_NAMES := \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
   wasm_anim_role_cue wasm_anim_finish_cue wasm_anim_seat_gain_pm \
   wasm_anim_cue_ask_ptr wasm_anim_cues_next \
-  wasm_cue_n_takes wasm_cue_table_load wasm_cue_take wasm_cue_mix wasm_cue_lead_us wasm_cue_seed wasm_cue_strike \
+  wasm_cue_n_takes wasm_cue_take wasm_cue_mix wasm_cue_lead_us wasm_cue_seed wasm_cue_strike \
   wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
   wasm_replay_extras_ptr wasm_replay_extras_decode \
   wasm_replay_events wasm_replay_events_index_ptr \
@@ -1637,7 +1637,7 @@ WASM_PROMO_NAMES := \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
   wasm_anim_role_cue wasm_anim_finish_cue wasm_anim_seat_gain_pm \
   wasm_anim_cue_ask_ptr wasm_anim_cues_next \
-  wasm_cue_n_takes wasm_cue_table_load wasm_cue_take wasm_cue_mix wasm_cue_lead_us wasm_cue_seed wasm_cue_strike \
+  wasm_cue_n_takes wasm_cue_take wasm_cue_mix wasm_cue_lead_us wasm_cue_seed wasm_cue_strike \
   wasm_replay_b32_encode wasm_replay_extras_ptr wasm_replay_link
 WASM_PROMO_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_LOCAL_EXPORTS) \
                      $(filter $(addprefix -Wl$(comma)--export=,$(WASM_PROMO_NAMES)),$(WASM_BOTS_ALL_EXPORTS))

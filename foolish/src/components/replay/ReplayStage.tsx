@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { TexturedSurface } from '../TexturedSurface';
 import { useLocalization } from '../../contexts/LocalizationContext';
@@ -13,7 +13,7 @@ import { fmtDuration } from '../../replay/speeds';
 import { StepMessage, FoolMessage } from './StepMessage';
 import { RevealedHands } from './RevealedHands';
 import { OracleOverlay } from '../OracleOverlay';
-import { TUNER_IN_REPLAY, TunerOverlay } from './TunerOverlay';
+import { TUNER_IN_REPLAY, TunerOverlay, takeStep } from './TunerOverlay';
 import {
     IconBoutNext, IconBoutStart, IconEye, IconOracle, IconPause, IconPen,
     IconPlay, IconStepBack, IconStepForward,
@@ -98,7 +98,19 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
     const oracle = useOracle(frames, code, play.stepIdx, play.playing, gameId);
 
     // The sound tuner in the Oracle's place (TunerOverlay.tsx), development only.
+    // A tuning change reloads the page; it comes back open, on the step it was on,
+    // after the opening deal has been published (usePlayback's mount, at 400 ms).
     const [tuner, setTuner] = useState(false);
+    useEffect(() => {
+        if (!TUNER_IN_REPLAY) return;
+        const step = takeStep();
+        if (step === null) return;
+        setTuner(true);
+        if (step <= 0) return;
+        const id = setTimeout(() => play.jumpTo(step), 700);
+        return () => clearTimeout(id);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
     // The move on the board again: the step before it, then this one played (the
     // deal's step before it is the table before the deal, -1).
     const again = useCallback(() => {

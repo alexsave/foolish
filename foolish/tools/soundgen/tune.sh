@@ -3,9 +3,10 @@
 #
 # Everything a page needs to play the new numbers, from ONE render: every take
 # (only the WAVs whose bytes changed are rewritten and re-encoded), the take
-# table every host plays by (c/build/gen/cue_takes.c), and the same table as bytes
-# (build/cue_takes.bin) that an open page hands its kernel, so nothing reloads.
-# The same render `npm run dev` runs, so what the tuner plays is what the build ships.
+# table every host plays by (c/build/gen/cue_takes.c), and the two kernel links
+# that carry it (web.wasm for /sounds and the board, promo.wasm for the promo
+# game, /ws), relinked only when the table changed. The same steps `npm run dev`
+# runs, in the same order, so what the tuner plays is what the build ships.
 set -euo pipefail
 cd "$(dirname "$0")"
 root=../..
@@ -17,7 +18,7 @@ make -s build/soundgen
 # touched (soundgen.c "THE TUNER'S CACHE"); emptied whenever soundgen is rebuilt.
 bin=$(cksum < build/soundgen)
 [ "$(cat build/cache/soundgen.cksum 2>/dev/null)" = "$bin" ] || { rm -rf build/cache; mkdir -p build/cache; echo "$bin" > build/cache/soundgen.cksum; }
-log=$(SOUNDGEN_CACHE=build/cache ./build/soundgen write build/wav "$ct.tune" build/cue_takes.bin 2>&1) || { echo "$log"; exit 1; }
+log=$(SOUNDGEN_CACHE=build/cache ./build/soundgen write build/wav "$ct.tune" 2>&1) || { echo "$log"; exit 1; }
 echo "$log" | grep -E "takes rendered|common gain|loudest card take"
 SOUNDGEN_SAY_ENCODED=1 ./build/soundgen encode build/wav "$root/public/audio/gen"
 ./build/soundgen check build/wav "$root/public/audio/gen"
@@ -27,13 +28,14 @@ if cmp -s "$ct.tune" "$ct"; then
   touch "$ct"
   echo "tune.sh: the take table is unchanged"
 else
-  # NOT relinked: an open page is handed the new table as bytes (build/cue_takes.bin,
-  # GET /table, cue_table_load) and swaps the files it changed, with no reload. The
-  # kernel links pick the table up at the next build (`npm run dev` or `make sounds`
-  # relinks whenever cue_takes.c is newer), and until then a page loading in
-  # development asks the endpoint for it (src/audio/cueAudio.ts).
   mv "$ct.tune" "$ct"
-  echo "tune.sh: the take table changed"
+  # scripts/wasm_build.sh's own targets, in one make and with no -j, as that script runs
+  # them: each is a sub-make that regenerates build/layout/bots.hash (FORCE), and two
+  # running side by side race on it (one rebuild in three failed with -j4).
+  cc=${WASM_CC:-}
+  [ -n "$cc" ] || [ "$(uname -s)" != "Darwin" ] || cc=/opt/homebrew/opt/llvm/bin/clang
+  log=$(make -s -C "$root/c" ${cc:+WASM_CC="$cc"} wasm-web wasm-promo 2>&1) || { echo "$log"; exit 1; }
+  echo "tune.sh: web.wasm and promo.wasm relinked with the new take table"
 fi
 # What the page checks after it reloads, so it knows the dev server is serving
 # the new kernel link and not the last one: every take's length and anchor and

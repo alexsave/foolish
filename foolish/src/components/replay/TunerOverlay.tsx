@@ -12,6 +12,23 @@ export const TUNER_IN_REPLAY = process.env.NODE_ENV === 'development';
 
 const SoundTuner = TUNER_IN_REPLAY ? dynamic(() => import('../SoundTuner'), { ssr: false }) : null;
 
+/** The replay's step, kept for this tab across the reload a rebuild ends in. */
+const STEP_KEY = 'foolish_tuner_replay_step';
+export const keepStep = (step: number): void => {
+    try { sessionStorage.setItem(STEP_KEY, `${location.pathname} ${step}`); } catch { /* private mode */ }
+};
+/** The step to come back to on this page; null when the tuner did not reload it. It is
+ *  forgotten a few seconds after a load, not at once: the tuner may reload again while
+ *  the dev server catches up (SoundTuner's pending check), and that load needs it too. */
+export const takeStep = (): number | null => {
+    try {
+        const v = sessionStorage.getItem(STEP_KEY);
+        setTimeout(() => { try { if (sessionStorage.getItem(STEP_KEY) === v) sessionStorage.removeItem(STEP_KEY); } catch { /* */ } }, 4000);
+        const m = v ? /^(\S+) (-?\d+)$/.exec(v) : null;
+        return m && m[1] === location.pathname ? Number(m[2]) : null;
+    } catch { return null; }
+};
+
 const btn: React.CSSProperties = {
     background: '#3a2c22', color: '#f5e6c8', border: '1px solid #6b5443', borderRadius: 6,
     padding: '2px 8px', font: 'inherit', fontSize: 12, cursor: 'pointer',
@@ -49,7 +66,7 @@ export const TunerOverlay = ({ stepIdx, again, back, forward, onClose }: {
                 <button type="button" style={btn} onClick={onClose} aria-label="close">×</button>
             </div>
             <div style={{ overflowY: 'auto', padding: '6px 8px 8px' }} data-chat-scrollable>
-                <SoundTuner play={tunerPlay} playPart={playPart} perStroke={perStrokeOf} compact />
+                <SoundTuner play={tunerPlay} playPart={playPart} perStroke={perStrokeOf} compact beforeReload={() => keepStep(stepIdx)} />
             </div>
         </div>
     );

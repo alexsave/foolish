@@ -124,17 +124,4 @@ int cue_table_lead_us(int kind);
 void cue_table_seed(uint32_t seed);
 const CueStrike *cue_table_strike(int kind, int lead_us, int n_cards, int undoes, int gain_pm);
 
-// THE TUNER'S TABLE (development: tools/soundgen/tune.sh, src/audio/tunerPlay.ts).
-// A table in place of the linked one, so a page hears a tuning change without the
-// kernel being relinked and the page reloaded: soundgen writes it beside the C table
-// as bytes, CUE_TABLE_MAGIC, an int32 row count, the rows and then ANIM_N_CUES mix
-// rows, each exactly as the structs above lie in memory (the same on every host:
-// no pointers, nothing wider than 32 bits, and the sizes asserted below). Answers 0,
-// or -1 for bytes that are not such a table, which leaves the table as it was.
-#define CUE_TABLE_MAGIC   0x54455543u   /* "CUET", little-endian */
-#define CUE_TABLE_MAX_ROWS 512
-int cue_table_load(const unsigned char *bytes, int len);
-_Static_assert(sizeof(CueTakeRow) == 48, "CueTakeRow's bytes are the tuner table's layout");
-_Static_assert(sizeof(CueMix) == 20, "CueMix's bytes are the tuner table's layout");
-
 #endif
