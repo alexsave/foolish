@@ -220,6 +220,9 @@ export default function SoundTuner({ play, perStroke, compact = false, beforeRel
 
     const send = useCallback((body: string) => {
         sent.current = body;
+        // Before the rebuild: the dev server may reload the page itself the moment the
+        // relinked kernel lands (wasm_asset.ts), ahead of this page's own reload below.
+        beforeReload?.();
         setBusy(true);
         setStatus('Rebuilding the takes...');
         const t0 = performance.now();
@@ -247,7 +250,6 @@ export default function SoundTuner({ play, perStroke, compact = false, beforeRel
                 const said = `Rebuilt in ${((performance.now() - t0) / 1000).toFixed(1)} s${gain ? `; the common gain is ${gain[1]}` : ''}`;
                 if (!fp) { setStatus(said); return; }
                 writePending({ fp: Number(fp[1]), scroll: window.scrollY, said, tries: 0 });
-                beforeReload?.();
                 window.location.reload();
             }, () => { setBusy(false); setOff(true); });
     }, [beforeReload]);
@@ -326,7 +328,9 @@ export default function SoundTuner({ play, perStroke, compact = false, beforeRel
                 )}
             </div>
             {log && <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, background: '#1b130e', padding: 8, borderRadius: 6 }}>{log}</pre>}
-            <div style={{ overflowX: 'auto' }}>
+            {/* Held while a rebuild runs: the page reloads when it lands, and a change made
+                meanwhile would be lost with it. */}
+            <div style={{ overflowX: 'auto', opacity: busy ? 0.45 : 1, pointerEvents: busy ? 'none' : undefined }}>
             <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: fs }}>
                 <thead>
                     <tr style={{ textAlign: 'left', opacity: 0.7 }}>

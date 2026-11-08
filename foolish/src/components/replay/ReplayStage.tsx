@@ -6,7 +6,7 @@ import { GameBoard } from '../GameBoard';
 import { Telestrator } from '../Telestrator';
 import { usePreventScroll } from '../../utils/usePreventScroll';
 import { AnimationSequenceMessage } from '../../state/animationFeed';
-import { type ReplayFrame } from '../../replay/frames';
+import { type ReplayFrame, type ReplayGameState } from '../../replay/frames';
 import { usePlayback } from '../../replay/usePlayback';
 import { useOracle } from '../../replay/useOracle';
 import { fmtDuration } from '../../replay/speeds';
@@ -30,6 +30,9 @@ interface StageProps {
     gameId: string;
     names: string[] | null;
     times: (number | null)[];
+    /** The table before the deal (buildReplayData's preDealGame, made once while the
+     *  kernel is known to be loaded): where a step back from the deal lands. */
+    preDeal: ReplayGameState;
 }
 
 // VHS-deck transport button: a round, dark, bevelled knob (faint top
@@ -79,7 +82,7 @@ const boardInset: React.CSSProperties = {
 
 /** The replay's screen: the board, the readouts and the transport deck. The
  *  deck head itself is usePlayback's and the Oracle's panel is useOracle's. */
-export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: StageProps) => {
+export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times, preDeal }: StageProps) => {
     usePreventScroll();
     const { t } = useLocalization();
     const router = useRouter();
@@ -91,7 +94,7 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
     const [drawing, setDrawing] = useState(false);
     const toggleDrawing = useCallback(() => setDrawing((d) => !d), []);
 
-    const play = usePlayback(frames, reverses, times, { drawing, toggleDrawing });
+    const play = usePlayback(frames, reverses, times, preDeal, { drawing, toggleDrawing });
     const oracle = useOracle(frames, code, play.stepIdx, play.playing, gameId);
 
     // The sound tuner in the Oracle's place (TunerOverlay.tsx), development only.

@@ -18,7 +18,7 @@ import { useServerActions } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { buildSpeeds, type SpeedStop } from './speeds';
-import { REPLAY_KEY, preDealGame, type ReplayFrame } from './frames';
+import { REPLAY_KEY, type ReplayFrame, type ReplayGameState } from './frames';
 
 /** The deck head and the buttons that move it. */
 export interface Playback {
@@ -54,6 +54,10 @@ export function usePlayback(
     frames: ReplayFrame[],
     reverses: (AnimationSequenceMessage | null)[],
     times: (number | null)[],
+    // The table before the deal, made by the caller while the kernel was loaded:
+    // never asked of the kernel during a render (a hot reload re-renders before
+    // the relinked kernel is back, and a synchronous kernel call then throws).
+    preDeal: ReplayGameState,
     pen: PenKeys,
 ): Playback {
     const { updateGameState } = useServerActions();
@@ -70,8 +74,6 @@ export function usePlayback(
     const stepRef = useRef(stepIdx);
     stepRef.current = stepIdx;
     const lastIdx = frames.length - 1;
-    // The board the opening deal animates onto (the provider's first board too).
-    const preDeal = useMemo(() => preDealGame(frames[0]), [frames]);
 
     // publish one step's sequence into the feed (a deep copy: the queue owns
     // what it is handed, and the same step replays after scrubbing back)

@@ -29,10 +29,12 @@ if cmp -s "$ct.tune" "$ct"; then
   echo "tune.sh: the take table is unchanged"
 else
   mv "$ct.tune" "$ct"
-  # scripts/wasm_build.sh's own targets, both links in one make so they link side by side.
+  # scripts/wasm_build.sh's own targets, in one make and with no -j, as that script runs
+  # them: each is a sub-make that regenerates build/layout/bots.hash (FORCE), and two
+  # running side by side race on it (one rebuild in three failed with -j4).
   cc=${WASM_CC:-}
   [ -n "$cc" ] || [ "$(uname -s)" != "Darwin" ] || cc=/opt/homebrew/opt/llvm/bin/clang
-  log=$(make -s -j4 -C "$root/c" ${cc:+WASM_CC="$cc"} wasm-web wasm-promo 2>&1) || { echo "$log"; exit 1; }
+  log=$(make -s -C "$root/c" ${cc:+WASM_CC="$cc"} wasm-web wasm-promo 2>&1) || { echo "$log"; exit 1; }
   echo "tune.sh: web.wasm and promo.wasm relinked with the new take table"
 fi
 # What the page checks after it reloads, so it knows the dev server is serving
