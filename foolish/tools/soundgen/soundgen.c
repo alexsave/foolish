@@ -74,6 +74,7 @@
 #include <unistd.h>
 
 #include "anim_plan.h"
+#include "cue_voice.h"
 #include "c/dsp.h"
 #include "c/models.h"
 #include "c/placeholders.h"
@@ -717,6 +718,34 @@ static int write_ctable(const char *path, Out *outs, int n) {
     return fclose(f);
 }
 
+// The same table as bytes (cue_voice.h "THE TUNER'S TABLE"), for the tuner to hand a
+// running page's kernel in place of the linked one.
+static int write_ctable_bin(const char *path, Out *outs, int n) {
+    if (n > CUE_TABLE_MAX_ROWS) return -1;
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+    const uint32_t magic = CUE_TABLE_MAGIC;
+    const int32_t rows = n;
+    int ok = fwrite(&magic, 4, 1, f) == 1 && fwrite(&rows, 4, 1, f) == 1;
+    for (int i = 0; i < n && ok; i++) {
+        const Out *o = &outs[i];
+        CueTakeRow r;
+        memset(&r, 0, sizeof r);
+        r.rate = o->rate; r.n_samples = o->n; r.anchor_us = (int32_t)lrint(o->anchor_ms * 1000);
+        r.cue = (uint8_t)o->cue; r.role = (uint8_t)o->role; r.level = (uint8_t)o->level;
+        r.name_len = (uint8_t)strlen(o->name);
+        if (r.name_len >= CUE_NAME_MAX) { ok = 0; break; }
+        memcpy(r.name, o->name, r.name_len);
+        ok = fwrite(&r, sizeof r, 1, f) == 1;
+    }
+    for (int c = 0; c < ANIM_N_CUES && ok; c++) {
+        const MixRow *m = &MIX_ROWS[c];
+        const CueMix x = { m->gain, m->pitch, m->level, m->per_card, (int32_t)lrint(RECIPES[c].cards_per_level * 1000) };
+        ok = fwrite(&x, sizeof x, 1, f) == 1;
+    }
+    return fclose(f) != 0 || !ok ? -1 : 0;
+}
+
 // ---- the shipped files: AAC, encoded by ffmpeg ---------------------------------------
 // `write` leaves a manifest beside the WAVs (one line a take: name, rate, kbps,
 // samples) for `encode` and `check` to read, so they need not render again.
@@ -1089,6 +1118,8 @@ int main(int argc, char **argv) {
     // `write <wavdir> <ctable>` writes the take table from the same render (the tuner's rebuild).
     const char *ctable_path = ctable ? argv[2] : writing && argc > 3 ? argv[3] : NULL;
     if (ctable_path && write_ctable(ctable_path, outs, n) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", ctable_path); return 1; }
+    // `write <wavdir> <ctable> <table.bin>`: the same table as bytes, for the tuner.
+    if (writing && argc > 4 && write_ctable_bin(argv[4], outs, n) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", argv[4]); return 1; }
     if (writing || stats)
         fprintf(writing ? stderr : stdout, "soundgen: %d files, %ld bytes, loudest card take %.1f dBFS\n",
                 n, total, 20 * log10(loudest + 1e-9));
