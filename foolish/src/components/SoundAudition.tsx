@@ -94,10 +94,12 @@ const playMove = (events: AnimPlanEventIn[], table: TableView): void => {
     });
 };
 
-// One cue alone, its moment far enough off that every take is heard whole.
+// One cue alone, its moment far enough off that every take is heard whole. A
+// reversed take's lead is the part of it AFTER its anchor, which no table
+// lists; a second covers every one.
 const strikes = (kind: number, n: number, undoes = 0, nCards = 1): void =>
     whenLoaded([voiced(kind, undoes)], () => {
-        const lead = cueLeadMs(voiced(kind, undoes)) + 30;
+        const lead = kind === ANIM_CUE_REVERT ? 1000 : cueLeadMs(voiced(kind, undoes)) + 30;
         for (let h = 0; h < n; h++) cueAudio.strike(kind, lead + h * ANIM_SOUND_STAGGER_MS, nCards, undoes);
     });
 

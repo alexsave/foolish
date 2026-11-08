@@ -227,7 +227,9 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             // viewer: the kernel's geometry (anim_seat_gain_pm).
             let gain = 1;
             if (s.kind === ANIM_CUE_DEAL_LAND) {
-                const board = hooksRef.current.board();
+                // The step's own board says whose seat is whose; the page's may
+                // not have arrived yet (the tutorial's opening deal).
+                const board = run[s.step]?.game_state ?? hooksRef.current.board();
                 const seat = plan.steps[s.step]?.seat ?? -1;
                 if (board) gain = animSeatGain(board.mySeat, seat, board.seats.length);
             }
