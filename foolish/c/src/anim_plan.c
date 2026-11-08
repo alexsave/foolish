@@ -203,27 +203,9 @@ _Static_assert(ANIM_MAX_STEPS <= 256 && ANIM_SOUND_MAX_HITS <= 255 && ANIM_N_CUE
 // At most two a step, so ANIM_MAX_CUES cannot be passed; the guard is for the
 // reader, and so a third cue added to some step one day is dropped rather than
 // written past the array.
-// THE ROOM BEFORE A CUE (AnimCue.room_ms): back to the end of the latest cue
-// already in the plan that is struck before it, behind that cue's own tail. The
-// cues already pushed are this step's and the steps' before it, so the answer
-// never changes as a run is appended to.
-static int cue_room(const AnimPlan *p, int at_ms) {
-    int end = -1;
-    for (int k = 0; k < p->n_cues; k++) {
-        const AnimCue *c = &p->cues[k];
-        if (c->at_ms > at_ms) continue;
-        const int e = c->at_ms + (c->hits - 1) * ANIM_SOUND_STAGGER_MS + ANIM_SOUND_ROOM_GUARD_MS;
-        if (e > end) end = e;
-    }
-    const int room = end < 0 ? at_ms : at_ms - end;
-    return room < 0 ? 0 : room > 65535 ? 65535 : room;
-}
-
 static void cue_push(AnimPlan *p, int kind, int step, int at_ms, int hits, int n_cards) {
     if (p->n_cues >= ANIM_MAX_CUES) return;
-    const int room = cue_room(p, at_ms);
     AnimCue *c = &p->cues[p->n_cues++];
-    c->room_ms = (uint16_t)room;
     c->at_ms = at_ms;
     c->kind = (uint8_t)kind;
     c->step = (uint8_t)step;

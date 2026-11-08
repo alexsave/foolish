@@ -44,7 +44,7 @@ import {
 } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { EVW_MSG_ATTACKED, EVW_MSG_PASSED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { CUE_LATE_MS, CUE_LOOK_AHEAD_MS, cueKey, dueStrikes, type PlanCue } from '../src/audio/cueSchedule.ts';
-import { CUE_SOUNDS, cueLeadMs, takesFor, wantedLevel } from '../src/audio/cueSounds.ts';
+import { CUE_SOUNDS, cueLeadMs, preludesFor, takesFor, wantedLevel } from '../src/audio/cueSounds.ts';
 import { CueAudio } from '../src/audio/cueAudio.ts';
 import { finishCueOf } from '../src/audio/useFinishCue.ts';
 import { cuesNextFor } from '../src/audio/useCuePriority.ts';
@@ -117,11 +117,6 @@ test('a bout end reads back whole: the spread, the out behind its cover, the swe
         `DEAL@${dealAt + ANIM_TIME_MS + ANIM_GAP_MS} step5 x1 (1)`,
         `DEAL_LAND@${dealAt + 2 * ANIM_TIME_MS + ANIM_GAP_MS} step5 x1 (1)`,
     ]);
-    // The quiet before the sweep crosses too: the hold, behind the out's note
-    // and its tail, which is what the strokes that gather the table fill.
-    const sweep = plan.cues.find((c) => c.kind === ANIM_CUE_SWEEP)!;
-    assert.equal(sweep.roomMs, sweepAt - (ANIM_TIME_MS + ANIM_SOUND_OUT_LAG_MS) - 150,
-        'the sweep\'s room runs back to the out, the last thing struck before it, and its tail');
 });
 
 test('a transfer crosses the bridge as one: it lands, then slides on', () => {
@@ -254,22 +249,22 @@ test('a cue further off than the look-ahead waits for a later frame', () => {
     assert.deepEqual(dueStrikes([cue], 1000 - CUE_LOOK_AHEAD_MS - 1, done), []);
     assert.equal(done.size, 0, 'and it is not marked as handed over');
     assert.deepEqual(dueStrikes([cue], 1000 - CUE_LOOK_AHEAD_MS, done),
-        [{ kind: ANIM_CUE_SWEEP, delayMs: CUE_LOOK_AHEAD_MS, nCards: 7, undoes: 0, roomMs: Infinity, step: 0 }],
+        [{ kind: ANIM_CUE_SWEEP, delayMs: CUE_LOOK_AHEAD_MS, nCards: 7, undoes: 0, step: 0 }],
         'with how far off it is and how many cards it stands for');
     assert.deepEqual(dueStrikes([cue], 990, done), [], 'once handed over it is never handed over again');
 });
 
 test('a cue whose file starts before its moment is handed over that much earlier', () => {
-    const cue: PlanCue = { atMs: 2000, kind: ANIM_CUE_SWEEP, step: 2, hits: 1, nCards: 7, undoes: 0, roomMs: 1300 };
+    const cue: PlanCue = { atMs: 2000, kind: ANIM_CUE_SWEEP, step: 2, hits: 1, nCards: 7, undoes: 0 };
     const lead = (kind: number) => (kind === ANIM_CUE_SWEEP ? 1200 : 0);
     const done = new Set<number>();
     assert.deepEqual(dueStrikes([cue], 2000 - 1200 - CUE_LOOK_AHEAD_MS - 1, done, lead), [], 'not before its file has to start');
     assert.deepEqual(dueStrikes([cue], 2000 - 1200 - CUE_LOOK_AHEAD_MS, done, lead),
-        [{ kind: ANIM_CUE_SWEEP, delayMs: 1200 + CUE_LOOK_AHEAD_MS, nCards: 7, undoes: 0, roomMs: 1300, step: 2 }],
+        [{ kind: ANIM_CUE_SWEEP, delayMs: 1200 + CUE_LOOK_AHEAD_MS, nCards: 7, undoes: 0, step: 2 }],
         'and then with the whole lead in hand, aimed at the moment itself');
     // The real table's leads: the deal's thumb slide and grab, the throw-in's.
     assert.ok(cueLeadMs(ANIM_CUE_DEAL) > 150 && cueLeadMs(ANIM_CUE_LIFT) > 150, 'the deal and a lift start well before the card leaves');
-    assert.ok(cueLeadMs(ANIM_CUE_SWEEP) > 1000, 'and the strokes before a sweep, over a second');
+    assert.ok(cueLeadMs(ANIM_CUE_SWEEP) > 2000 && cueLeadMs(ANIM_CUE_PICKUP) > 2000, 'and the strokes before a sweep or a pickup, seconds');
     assert.ok(cueLeadMs(ANIM_CUE_PASS) <= 0, 'the slide on starts after its landing: no lead');
 });
 
@@ -296,7 +291,7 @@ test('a strike is dropped once it is late, and kept while it is merely just behi
 
 test('a revert is handed over with the cue it undoes', () => {
     const cue: PlanCue = { atMs: 0, kind: ANIM_CUE_REVERT, step: 0, hits: 1, nCards: 1, undoes: ANIM_CUE_COVER };
-    assert.deepEqual(dueStrikes([cue], 0, new Set()), [{ kind: ANIM_CUE_REVERT, delayMs: 0, nCards: 1, undoes: ANIM_CUE_COVER, roomMs: Infinity, step: 0 }]);
+    assert.deepEqual(dueStrikes([cue], 0, new Set()), [{ kind: ANIM_CUE_REVERT, delayMs: 0, nCards: 1, undoes: ANIM_CUE_COVER, step: 0 }]);
 });
 
 test('a cue is remembered by its step and kind, the pair the kernel keeps unique', () => {
@@ -485,62 +480,75 @@ test('pitch and level wander only as far as the table lets them, and a note does
     } finally { fake.restore(); }
 });
 
-test('a sweep plays the most strokes its cards ask for that fit the quiet before it', () => {
-    const sweep = CUE_SOUNDS[ANIM_CUE_SWEEP]!;
-    assert.equal(sweep.cardsPerLevel, 2.5, 'a stroke gathers about two and a half cards (disc_game.py)');
-    assert.equal(wantedLevel(sweep, 1), 1, 'one card is one stroke');
-    assert.equal(wantedLevel(sweep, 4), 2);
-    assert.equal(wantedLevel(sweep, 10), 4);
-    assert.equal(wantedLevel(sweep, 30), 5, 'and never more than five');
-    const lead = (ts: readonly { anchorMs: number }[]) => Math.max(...ts.map((t) => t.anchorMs));
-    const roomy = takesFor(sweep, 10, 5000);
-    assert.ok(roomy.every((t) => t.level === 4), 'all the room it wants: four strokes for ten cards');
-    const tight = takesFor(sweep, 10, lead(takesFor(sweep, 2, 5000)));
-    assert.ok(tight.every((t) => t.level <= 2 && t.anchorMs <= lead(takesFor(sweep, 2, 5000))),
-        'less room: fewer strokes, and only takes whose gathering fits it');
-    assert.ok(takesFor(sweep, 10, 0).every((t) => t.level === 0), 'no room at all: the lift alone, never a cue moved');
-    assert.ok(takesFor(sweep, 10, 5000, true).every((t) => t.level === 0), 'and a revert is the bare gesture, backwards');
-    assert.equal(sweep.perCard, 0, 'heavier for more cards by its strokes, not by a gain');
+test('a sweep and a pickup are gathered in a stroke per two and a half cards, and a lift with no time plays its tight take', () => {
+    for (const kind of [ANIM_CUE_SWEEP, ANIM_CUE_PICKUP]) {
+        const sound = CUE_SOUNDS[kind]!;
+        assert.equal(sound.cardsPerLevel, 2.5, 'a stroke gathers about two and a half cards (disc_game.py)');
+        assert.deepEqual([1, 4, 10, 30].map((n) => wantedLevel(sound, n)), [1, 2, 4, 5], 'one to five strokes');
+        assert.ok(preludesFor(sound, 10).length > 0 && preludesFor(sound, 10).every((t) => t.role === 'prelude' && t.level === 4),
+            'ten cards are four strokes, played before the take');
+        assert.ok(takesFor(sound, 0).every((t) => t.role === 'main'), 'the take itself is the lift');
+        assert.deepEqual(preludesFor(sound, 0), [], 'no cards, no strokes');
+    }
+    const lift = CUE_SOUNDS[ANIM_CUE_LIFT]!;
+    const longest = Math.max(...lift.takes.filter((t) => t.role === 'main').map((t) => t.anchorMs));
+    assert.ok(takesFor(lift, longest).every((t) => t.role === 'main'), 'time for the whole gesture: an ordinary take');
+    const some = takesFor(lift, 300);
+    assert.ok(some.every((t) => t.role === 'main' && t.anchorMs <= 300), 'less: only the ordinary takes that fit');
+    assert.ok(takesFor(lift, 0).every((t) => t.role === 'tight'), 'none: a tight one, the grab and slide pressed to the moment');
+    assert.ok(Math.max(...takesFor(lift, 0).map((t) => t.anchorMs)) < longest, 'which comes in sooner');
+    assert.ok(takesFor(lift, 0, true).every((t) => t.role === 'main'), 'and a revert plays the ordinary gesture, backwards');
     const place = CUE_SOUNDS[ANIM_CUE_PLACE]!;
-    assert.equal(takesFor(place, 3, 0), place.takes, 'a row with no levels plays any of its takes');
+    assert.ok(takesFor(place, 0).length === place.takes.length, 'a cue with no tight takes plays any of its own');
 });
 
-test('a take is started its anchor early, or that far into the file when the moment is too near', async () => {
+test('a take is played whole: its anchor early when there is time, from now when there is not', async () => {
     const fake = fakeAudio();
     try {
         const engine = new CueAudio();
         engine.random = () => 0.5;
         engine.unlock();
         await fake.settle();
+        const roleOf = (s: FakeSource) => {
+            const file = (s.buffer as { url: string }).url;
+            for (const sound of Object.values(CUE_SOUNDS)) for (const t of sound?.takes ?? []) if (t.file === file) return t.role;
+            return null;
+        };
         // A lift's grab and thumb slide come before the card leaves.
         assert.ok(engine.strike(ANIM_CUE_LIFT, 1000));
         let s = fake.sources[fake.sources.length - 1];
-        assert.ok(anchorOf(s) > 150);
-        assert.ok(Math.abs(s.startedAt! - (11 - anchorOf(s) / 1000)) < 1e-9 && s.offset === 0, 'early enough to be heard whole');
-        // Struck for NOW, as a run's first move is: the moment stays where the
-        // kernel put it, and the part of the gesture before it is not heard.
+        assert.ok(anchorOf(s) > 150 && roleOf(s) === 'main');
+        assert.ok(Math.abs(s.startedAt! - (11 - anchorOf(s) / 1000)) < 1e-9, 'early enough to be heard whole on time');
+        // Struck for NOW, as a run's first move is: a tight take, whole, from now.
         assert.ok(engine.strike(ANIM_CUE_LIFT, 0));
         s = fake.sources[fake.sources.length - 1];
+        assert.equal(roleOf(s), 'tight', 'the grab and slide pressed closer to the moment');
         assert.equal(s.startedAt, 10, 'started at once');
-        assert.ok(Math.abs(s.offset - anchorOf(s) / 1000) < 1e-9, 'that far into the file, so its moment is now');
+        assert.ok(fake.sources.every((x) => x.offset === 0), 'and nothing is ever started part way into its file');
         // A negative anchor: the slide on starts after its landing.
         assert.ok(engine.strike(ANIM_CUE_PASS, 100));
         s = fake.sources[fake.sources.length - 1];
         assert.ok(anchorOf(s) < 0 && s.startedAt! > 10.1, 'a take that comes after its moment starts after it');
         // A landing at a far seat is quieter by the gain it is struck with.
-        assert.ok(engine.strike(ANIM_CUE_DEAL_LAND, 100, 1, 0, Infinity, 0.5));
+        assert.ok(engine.strike(ANIM_CUE_DEAL_LAND, 100, 1, 0, 0.5));
         s = fake.sources[fake.sources.length - 1];
         assert.equal(s.gain, CUE_SOUNDS[ANIM_CUE_DEAL_LAND]!.gain * 0.5, 'a far seat\'s landing is struck at that seat\'s gain');
-        // A sweep with room for its strokes, and one without.
-        assert.ok(engine.strike(ANIM_CUE_SWEEP, 1500, 10, 0, 1500));
-        s = fake.sources[fake.sources.length - 1];
-        assert.ok(anchorOf(s) > 600 && s.offset === 0, 'its gathering heard whole before the sweep opens');
-        assert.ok(engine.strike(ANIM_CUE_SWEEP, 1500, 10, 0, 0));
-        s = fake.sources[fake.sources.length - 1];
-        assert.ok(anchorOf(s) < 150, 'no room: the lift alone');
-        assert.ok(engine.strike(ANIM_CUE_SWEEP, 300, 10, 0, 5000));
-        s = fake.sources[fake.sources.length - 1];
-        assert.ok(anchorOf(s) <= 300 && s.offset === 0, 'and the room it has is no more than the time left before the moment');
+        // A sweep of ten cards: four strokes, then the lift on its moment.
+        let before = fake.sources.length;
+        assert.ok(engine.strike(ANIM_CUE_SWEEP, 5000, 10));
+        let [lift, strokes] = fake.sources.slice(before);
+        assert.equal(fake.sources.length - before, 2, 'two files: the lift and the strokes before it');
+        assert.equal(roleOf(lift), 'main');
+        assert.equal(roleOf(strokes), 'prelude');
+        assert.ok(Math.abs(lift.startedAt! - (15 - anchorOf(lift) / 1000)) < 1e-9, 'the lift on the sweep\'s moment');
+        assert.ok(Math.abs(strokes.startedAt! - (15 - anchorOf(strokes) / 1000)) < 1e-9 && anchorOf(strokes) > 1000,
+            'and the strokes seconds before it, whole');
+        // No time at all: the strokes start now, whole, and the lift keeps its moment.
+        before = fake.sources.length;
+        assert.ok(engine.strike(ANIM_CUE_PICKUP, 300, 10));
+        [lift, strokes] = fake.sources.slice(before);
+        assert.equal(strokes.startedAt, 10, 'the strokes from now, over whatever else is sounding');
+        assert.ok(Math.abs(lift.startedAt! - (10.3 - anchorOf(lift) / 1000)) < 1e-9, 'and the lift still on its own moment');
     } finally { fake.restore(); }
 });
 
@@ -740,7 +748,7 @@ test('a strike whose file is on its way waits for it, and is dropped if the wait
         await fake.drain(() => filesOf(ANIM_CUE_FOOL).every((f) => engine.loaded(f)));
         assert.equal(fake.sources.length, 2, '60ms behind is still a sound');
         assert.equal(fake.sources[1].startedAt, 10.06, 'started at once, since its moment has passed');
-        assert.ok(Math.abs(fake.sources[1].offset - 0.06) < 1e-9, 'that far into the file, so it ends where it would have');
+        assert.equal(fake.sources[1].offset, 0, 'and whole');
         // Too late: half a second behind. Dropped, and never played afterwards.
         assert.equal(engine.strike(ANIM_CUE_FINISH, 0), true);
         fake.ctxs[0].currentTime = 10.6;
@@ -878,17 +886,19 @@ test('a placeholder a row names is one soundgen writes, under the cue\'s own nam
     const rows = listing.trim().split('\n').map((l) => l.split('\t'));
     const written = new Map(rows.map(([name, cue]) => [`gen/${name}`, Number(cue)]));
     const anchors = new Map(rows.map(([name, , , , , anchor]) => [`gen/${name}`, Number(anchor)]));
+    const roles = new Map(rows.map(([name, , , , , , role]) => [`gen/${name}`, role]));
     assert.ok(written.size >= ANIM_N_CUES - 2, `soundgen lists its files (${written.size})`);
     assert.ok(![...written.keys()].some((f) => f.includes('revert')), 'soundgen writes no revert: there is no such sound');
     const namedByTable = new Set<string>();
     for (let kind = 1; kind < ANIM_N_CUES; kind++) {
-        for (const { file, anchorMs } of CUE_SOUNDS[kind]?.takes ?? []) {
+        for (const { file, anchorMs, role } of CUE_SOUNDS[kind]?.takes ?? []) {
             namedByTable.add(file);
             if (file.startsWith('gen/')) {
                 assert.equal(written.get(file), kind,
                     `${file} is named for ${ANIM_CUE_NAMES[kind]} but soundgen ${written.has(file) ? `writes it for cue ${written.get(file)}` : 'does not write it'}`);
                 assert.ok(file.startsWith(`gen/${ANIM_CUE_NAMES[kind].toLowerCase()}_`), `${file} carries its cue's name`);
                 assert.equal(anchorMs, anchors.get(file), `${file}: the table's anchor is the one soundgen wrote it with`);
+                assert.equal(role, roles.get(file), `${file}: and its role`);
             } else {
                 assert.ok(existsSync(join(REPO, 'public/audio', file)), `${file} is a recording, so it is committed under public/audio/`);
             }

@@ -13628,7 +13628,6 @@ static void test_plan_cues_over_real_games(void) {
     static AnimPlan plan, part;
     int seen[ANIM_N_CUES] = {0};
     int n_plans = 0, n_cues = 0, bad = 0;
-    int room_n[2] = {0}, room_1s[2] = {0}, room_400[2] = {0};
     game_force_first_attacker(-1);
     game_open_at_seat(-1);
     for (int np = 2; np <= 6; np++) {
@@ -13689,21 +13688,6 @@ static void test_plan_cues_over_real_games(void) {
                             || c->hits < 1 || c->hits > ANIM_SOUND_MAX_HITS) { bad++; continue; }
                         seen[c->kind]++;
                         heard[c->step]++;
-                        // The room a gathering sound is fitted into, as real
-                        // play leaves it (docs/AUDIO.md: the strokes before a
-                        // sweep or a pickup). Printed, not held.
-                        if (viewer == -1 && (c->kind == ANIM_CUE_SWEEP || c->kind == ANIM_CUE_PICKUP)) {
-                            const int s = c->kind == ANIM_CUE_SWEEP ? 0 : 1;
-                            room_n[s]++;
-                            if (c->room_ms >= 1000) room_1s[s]++;
-                            if (c->room_ms >= 400) room_400[s]++;
-                        }
-                        // The room never reaches back past the cue before it.
-                        for (int j = 0; j < i; j++) {
-                            const AnimCue *d = &plan.cues[j];
-                            if (d->at_ms <= c->at_ms && c->room_ms > 0
-                                && c->at_ms - c->room_ms < d->at_ms + (d->hits - 1) * ANIM_SOUND_STAGGER_MS) bad++;
-                        }
                         const AnimPlanStep *st = &plan.steps[c->step];
                         if (c->kind == ANIM_CUE_OUT) {
                             if (c->at_ms > st->start_ms + ANIM_SOUND_OUT_LAG_MS) {
@@ -13746,8 +13730,7 @@ static void test_plan_cues_over_real_games(void) {
                             for (int j = 0; j < plan.n_cues && !same; j++) {
                                 const AnimCue *b = &plan.cues[j];
                                 same = a->step == b->step && a->kind == b->kind && a->at_ms == b->at_ms
-                                       && a->hits == b->hits && a->n_cards == b->n_cards
-                                       && a->room_ms == b->room_ms;
+                                       && a->hits == b->hits && a->n_cards == b->n_cards;
                             }
                             if (!same && bad++ < 3)
                                 printf("  a cue of the first %d steps moved in the plan of %d (step %d kind %d, np %d seed %d)\n",
@@ -13760,8 +13743,6 @@ static void test_plan_cues_over_real_games(void) {
     }
     game_set_seed(1);
     printf("  plan cues over real games: %d plans, %d cues, %d broken promises\n", n_plans, n_cues, bad);
-    printf("  room before a sweep: %d of %d have 1 s or more, %d have 400 ms; before a pickup: %d of %d, %d\n",
-           room_1s[0], room_n[0], room_400[0], room_1s[1], room_n[1], room_400[1]);
     CHECK(n_plans > 500, "the games produced plans to listen to");
     CHECK(bad == 0, "every promise a host is made about a plan's cues holds over real games");
     // Every sound a move of a real game can make was actually reached, so the

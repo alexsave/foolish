@@ -40,10 +40,12 @@
 // A STRIKE IS AIMED AT A MOMENT, NOT AT A FILE'S START. A take is a whole
 // gesture and carries its anchor (src/audio/cueSounds.ts): the file is started
 // that long before the moment, so the grab and the thumb slide come before the
-// card leaves. A take that would have to start in the past is started now, that
-// far into the file - the moment stays the kernel's and the part of the gesture
-// that can no longer be heard is not. A sweep's take is the one with the most
-// strokes its cards ask for that fits the quiet the plan leaves before it.
+// card leaves. A TAKE IS NEVER CUT: one that would have to start in the past
+// starts now, whole, and late - and for a cue with tight takes (the gesture
+// pressed closer to its moment) it is one of those, so it is late by as little
+// as it can be. The strokes before a sweep or a pickup are a take of their own
+// (a prelude), started before the cue's take the same way and heard over
+// whatever else is sounding.
 //
 // A REVERT IS ANOTHER CUE, BACKWARDS. The one cue id this file knows by name:
 // ANIM_CUE_REVERT has no sound of its own, the kernel says which cue it undoes,
@@ -68,7 +70,7 @@
 // is the mute, which is one tap and remembered.
 
 import { ANIM_CUE_REVERT } from '@sdk/ts/gen/kernel_consts.bots.ts';
-import { CUE_SOUNDS, CUE_SOUND_ROOT, takesFor, type CueSound, type CueTake } from './cueSounds';
+import { CUE_SOUNDS, CUE_SOUND_ROOT, preludesFor, takesFor, type CueSound, type CueTake } from './cueSounds';
 
 const MUTED_KEY = 'foolish_sound_muted';
 const VOLUME_KEY = 'foolish_sound_volume';
@@ -319,14 +321,12 @@ export class CueAudio {
     /**
      * Strike cue `kind` (an ANIM_CUE_*) so that its MOMENT is `delayMs` from now,
      * standing for `nCards` cards. `undoes` is the plan's word for a REVERT: the
-     * cue whose sound it plays backwards. `roomMs` is how long the plan is quiet
-     * before the moment (AnimCue.room_ms), which a gesture that starts before
-     * its moment is fitted into; `gain` scales this one strike (a landing at a
-     * far seat). Returns whether a sound was scheduled, or is waiting on a file
-     * that is on its way; false is every silent case in this file's header and
-     * is never an error.
+     * cue whose sound it plays backwards. `gain` scales this one strike (a
+     * landing at a far seat). Returns whether a sound was scheduled, or is
+     * waiting on a file that is on its way; false is every silent case in this
+     * file's header and is never an error.
      */
-    strike(kind: number, delayMs = 0, nCards = 1, undoes = 0, roomMs = Number.POSITIVE_INFINITY, gain = 1): boolean {
+    strike(kind: number, delayMs = 0, nCards = 1, undoes = 0, gain = 1): boolean {
         const ctx = this.ctx, master = this.master;
         if (!ctx || !master || this.settings().muted || ctx.state !== 'running') return false;
         if (typeof document !== 'undefined' && document.hidden) return false;
@@ -334,17 +334,23 @@ export class CueAudio {
         const voiced = backwards ? undoes : kind;
         const sound = CUE_SOUNDS[voiced];
         if (!sound || sound.takes.length === 0) return false;
-        // A take whose gathering fits both the plan's quiet and the time left
-        // before the moment, so that as much of it as can be is heard whole.
-        const lead = Math.min(roomMs, Math.max(0, delayMs));
-        const take = this.variant(voiced, takesFor(sound, nCards, lead, backwards));
-        const strike: Strike = { take, sound, at: ctx.currentTime + Math.max(0, delayMs) / 1000, nCards, backwards, gain };
-        const buffer = this.buffers.get(take.file);
+        const at = ctx.currentTime + Math.max(0, delayMs) / 1000;
+        const take = this.variant(voiced, takesFor(sound, Math.max(0, delayMs), backwards));
+        const ok = this.play({ take, sound, at, nCards, backwards, gain }, voiced);
+        // The strokes that gather the table first, over whatever is sounding.
+        const strokes = backwards ? [] : preludesFor(sound, nCards);
+        if (ok && strokes.length > 0) this.play({ take: this.variant(-voiced, strokes), sound, at, nCards, backwards: false, gain }, voiced);
+        return ok;
+    }
+
+    /** One take on its way: started if its file is here, else waiting for it. */
+    private play(strike: Strike, voiced: number): boolean {
+        const buffer = this.buffers.get(strike.take.file);
         if (buffer) {
             this.start(strike, buffer);
             return true;
         }
-        if (this.progress.get(take.file) === 'failed') return false;
+        if (this.progress.get(strike.take.file) === 'failed') return false;
         // It is being played, so it is wanted, whatever the board said: to the
         // front of the queue with it, and the strike waits for the file.
         this.wanted |= 1 << voiced;
@@ -372,9 +378,8 @@ export class CueAudio {
      * file starts anchor seconds before it (after it, for a negative anchor).
      * Played backwards the anchor is measured from the file's other end, so a
      * reversed landing still peaks on its moment. A start that is already
-     * behind the clock starts NOW, that far into the file: the moment stays
-     * where the kernel put it and the part before it that can no longer be
-     * heard is not.
+     * behind the clock starts NOW, from the file's first sample: a take is
+     * never cut (Alex: "play them in full").
      */
     private start(w: Strike, forwards: AudioBuffer): void {
         const ctx = this.ctx, master = this.master;
@@ -399,10 +404,7 @@ export class CueAudio {
         };
         this.live.add(source);
         const anchorS = (backwards ? buffer.duration * 1000 - take.anchorMs : take.anchorMs) / 1000 / rate;
-        const when = w.at - anchorS, now = ctx.currentTime;
-        if (when >= now) source.start(when);
-        else if ((now - when) * rate < buffer.duration) source.start(now, (now - when) * rate);
-        else { this.live.delete(source); gain.disconnect(); }
+        source.start(Math.max(w.at - anchorS, ctx.currentTime));
     }
 
     /** Stop everything scheduled or sounding: a replay was scrubbed, the tab

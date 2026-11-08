@@ -20,9 +20,12 @@
 // `anchorMs` is how far into the file the cue's moment is, and the engine
 // starts the file that much early. SEVERAL TAKES IN A ROW ARE VARIANTS, played
 // in turn at random so that a cue heard six times in a second is not one sample
-// six times. A row's takes may also come in LEVELS (the strokes that gather the
-// table before a sweep or a pickup, one per `cardsPerLevel` cards): the engine
-// plays the most the cue's cards ask for that fit the quiet before it.
+// six times. A take is always played WHOLE: where the time before a moment is
+// shorter than a take's anchor it is played late, and a row may carry TIGHT
+// takes (its gesture pressed closer to the moment) for exactly that case. A
+// row may also carry PRELUDES, the strokes that gather the table before a
+// sweep or a pickup, one set per stroke count, played before its own take and
+// over whatever is sounding then.
 //
 // A CUE MAPPED TO `null` IS SILENT ON PURPOSE. That is how a cue is turned off
 // here without touching the kernel's list, whose ids never change.
@@ -60,7 +63,8 @@ export interface CueSound {
      *  past the first, up to +60%. 0 when the cue's takes already say how many
      *  cards it is (the strokes of a sweep). */
     perCard: number;
-    /** For a row whose takes come in levels: the cards one level stands for. */
+    /** For a row with preludes (strokes before its take): the cards one stroke
+     *  gathers. */
     cardsPerLevel: number;
 }
 
@@ -108,30 +112,35 @@ export function cueLeadMs(kind: number): number {
     return lead;
 }
 
-/** The level a cue of `nCards` asks for: one per `cardsPerLevel` cards, 1 at
- *  least (disc_game.py: one stroke per ~2.5 cards, 1-5). 0 for a row with no
- *  levels. */
+/** How many strokes a cue of `nCards` gathers in: one per `cardsPerLevel`
+ *  cards, 1 at least (disc_game.py: one stroke per ~2.5 cards, 1-5), as many
+ *  as its preludes have. 0 for a row with no preludes, or no cards. */
 export function wantedLevel(sound: CueSound, nCards: number): number {
     if (!sound.cardsPerLevel || nCards <= 0) return 0;
     let top = 0;
-    for (const t of sound.takes) top = Math.max(top, t.level);
+    for (const t of sound.takes) if (t.role === 'prelude') top = Math.max(top, t.level);
     return Math.min(top, Math.max(1, Math.round(nCards / sound.cardsPerLevel)));
 }
 
 /**
- * The takes a strike may play: the most strokes the cue's cards ask for whose
- * gathering fits in `roomMs` (how long the plan is quiet before the cue), and
- * of a row with no levels, every take. A revert (`backwards`) plays the bare
- * gesture, level 0: its strokes would come AFTER the moment, reversed.
- * Never empty for a row that has takes: level 0 is the last resort, and a take
- * longer than the room is started late into the file rather than moved.
+ * The takes a strike may play with `leadMs` to go before its moment: the
+ * cue's own (main) takes whose anchor fits, else its TIGHT takes (the gesture
+ * pressed closer to its moment, so that played late it is late by as little as
+ * can be), else any of its own. A revert (`backwards`) plays its own takes.
+ * Never empty for a row with takes. Whatever is chosen is played whole.
  */
-export function takesFor(sound: CueSound, nCards: number, roomMs: number, backwards = false): readonly CueTake[] {
-    if (!sound.cardsPerLevel) return sound.takes;
-    const want = backwards ? 0 : wantedLevel(sound, nCards);
-    for (let level = want; level >= 0; level--) {
-        const fit = sound.takes.filter((t) => t.level === level && (level === 0 || t.anchorMs <= roomMs));
-        if (fit.length > 0) return fit;
-    }
-    return sound.takes;
+export function takesFor(sound: CueSound, leadMs: number, backwards = false): readonly CueTake[] {
+    const main = sound.takes.filter((t) => t.role === 'main');
+    if (backwards) return main;
+    const fit = main.filter((t) => t.anchorMs <= leadMs);
+    if (fit.length > 0) return fit;
+    const tight = sound.takes.filter((t) => t.role === 'tight');
+    return tight.length > 0 ? tight : main;
+}
+
+/** The strokes a cue of `nCards` is gathered in before its own take (a sweep,
+ *  a pickup): the prelude takes of its level, none for a row with none. */
+export function preludesFor(sound: CueSound, nCards: number): readonly CueTake[] {
+    const level = wantedLevel(sound, nCards);
+    return level > 0 ? sound.takes.filter((t) => t.role === 'prelude' && t.level === level) : [];
 }

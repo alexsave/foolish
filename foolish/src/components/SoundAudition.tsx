@@ -88,13 +88,15 @@ const playMove = (events: AnimPlanEventIn[], table: TableView): void => {
             const seat = plan.steps[cue.step]?.seat ?? -1;
             const gain = cue.kind === ANIM_CUE_DEAL_LAND ? animSeatGain(table.mySeat, seat, table.seats.length) : 1;
             for (let h = 0; h < cue.hits; h++) {
-                cueAudio.strike(cue.kind, cue.atMs + h * ANIM_SOUND_STAGGER_MS, cue.nCards, cue.undoes, cue.roomMs, gain);
+                cueAudio.strike(cue.kind, cue.atMs + h * ANIM_SOUND_STAGGER_MS, cue.nCards, cue.undoes, gain);
             }
         }
     });
 };
 
-// One cue alone, its moment far enough off that every take is heard whole. A
+// One cue alone, its moment far enough off that its own takes fit (a cue with
+// tight takes has a "Now" button too: its moment at once, as a move that opens
+// its run strikes it, which plays a tight take, whole and late). A
 // reversed take's lead is the part of it AFTER its anchor, which no table
 // lists; a second covers every one.
 const strikes = (kind: number, n: number, undoes = 0, nCards = 1): void =>
@@ -160,7 +162,7 @@ export const SoundAudition = () => {
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                     <thead>
                         <tr>
-                            <th style={cell}>Cue</th><th style={cell}>Takes (anchor, strokes)</th><th style={cell}>Gain</th>
+                            <th style={cell}>Cue</th><th style={cell}>Takes (anchor, role, strokes)</th><th style={cell}>Gain</th>
                             <th style={cell} />
                         </tr>
                     </thead>
@@ -174,7 +176,7 @@ export const SoundAudition = () => {
                                     <td style={cell}>
                                         {sound ? sound.takes.map((t) => (
                                             <div key={t.file} data-file={t.file} data-anchor={t.anchorMs} data-loaded={cueAudio.loaded(t.file)}>
-                                                <code>{t.file}</code> <span style={{ opacity: 0.7 }}>{t.anchorMs} ms{sound.cardsPerLevel ? `, ${t.level}` : ''}</span>
+                                                <code>{t.file}</code> <span style={{ opacity: 0.7 }}>{t.anchorMs} ms{t.role !== 'main' ? `, ${t.role}` : ''}{t.role === 'prelude' ? `, ${t.level}` : ''}</span>
                                                 {cueAudio.loaded(t.file) ? '' : ' (not loaded)'}
                                             </div>
                                         )) : kind === ANIM_CUE_REVERT ? 'the undone move, backwards' : 'silent'}
@@ -185,6 +187,9 @@ export const SoundAudition = () => {
                                             <Button onClick={() => strikes(kind, 1)}>Play</Button>
                                             <Button onClick={() => strikes(kind, 4)}>x4</Button>
                                         </>}
+                                        {sound?.takes.some((t) => t.role === 'tight') && (
+                                            <Button onClick={() => whenLoaded([kind], () => cueAudio.strike(kind, 0))}>Now</Button>
+                                        )}
                                         {sound && sound.cardsPerLevel > 0 && [0, 1, 2, 3, 4, 5].map((level) => (
                                             <Button key={level} onClick={() => strikes(kind, 1, 0, level === 0 ? 0 : level * sound.cardsPerLevel)}>
                                                 {level === 0 ? 'lift only' : `${level} stroke${level > 1 ? 's' : ''}`}

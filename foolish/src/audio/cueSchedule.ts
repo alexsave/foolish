@@ -36,7 +36,7 @@ export const CUE_LOOK_AHEAD_MS = 120;
 export const CUE_LATE_MS = 80;
 
 /** A cue as the plan lists one (sdk/ts/wasm/bots.ts AnimCueSnap). */
-export interface PlanCue { atMs: number; kind: number; step: number; hits: number; nCards: number; undoes: number; roomMs?: number }
+export interface PlanCue { atMs: number; kind: number; step: number; hits: number; nCards: number; undoes: number }
 
 /** One strike to hand the engine. */
 export interface CueStrike {
@@ -46,8 +46,6 @@ export interface CueStrike {
     nCards: number;
     /** The cue a REVERT plays backwards; ANIM_CUE_NONE otherwise. */
     undoes: number;
-    /** How long before the moment the plan is quiet (AnimCue.room_ms). */
-    roomMs: number;
     /** The step that makes it (AnimCue.step), whose seat a landing is heard at. */
     step: number;
 }
@@ -74,7 +72,7 @@ export function dueStrikes(cues: readonly PlanCue[], nowMs: number, done: Set<nu
             if (at < nowMs - CUE_LATE_MS) continue;
             (out ??= []).push({
                 kind: c.kind, delayMs: Math.max(0, at - nowMs), nCards: c.nCards, undoes: c.undoes,
-                roomMs: c.roomMs ?? Number.POSITIVE_INFINITY, step: c.step,
+                step: c.step,
             });
         }
     }

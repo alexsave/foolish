@@ -1688,15 +1688,6 @@ static void test_plan_sound_cues(void) {
         CHECK(l1 && l1->at_ms == p.steps[3].start_ms + p.steps[3].duration_ms && l1->hits == 4 && l1->n_cards == 4,
               "four refilled cards land a strike a card (got %d hits)", l1 ? l1->hits : -1);
         CHECK(p.n_cues == 8, "and that is every sound a bout end makes (got %d)", p.n_cues);
-        // THE ROOM before the sweep is the hold, behind the cover's own tail:
-        // where the strokes that gather the table are fitted.
-        CHECK(sweep && sweep->room_ms == sweep->at_ms - ANIM_TIME_MS - ANIM_SOUND_ROOM_GUARD_MS,
-              "the sweep's room runs back to the cover's landing and its tail (got %d)", sweep ? sweep->room_ms : -1);
-        CHECK(lift && lift->room_ms == 0, "the first cue of a plan has no room before it: nothing is known before 0");
-        CHECK(cov && cov->room_ms == ANIM_TIME_MS - ANIM_SOUND_ROOM_GUARD_MS,
-              "a landing's room runs back to its own lift (got %d)", cov ? cov->room_ms : -1);
-        CHECK(pile && pile->room_ms == ANIM_TIME_MS - ANIM_SOUND_ROOM_GUARD_MS,
-              "and the pile's to its sweep (got %d)", pile ? pile->room_ms : -1);
     }
 
     // A TRANSFER is an attack slid on: it lands like one and then slides, and
@@ -1789,7 +1780,6 @@ static void test_plan_sound_cues(void) {
         CHECK(in && in->at_ms == ANIM_TIME_MS && in->hits == 1 && in->n_cards == 5,
               "and the cards are heard sliding into the hand as they land (got %d)", in ? in->at_ms : -1);
         CHECK(cues_of_step(&p, 0) == 2, "and that is all a pickup makes");
-        CHECK(pk && pk->room_ms == 0, "a pickup that opens its run has no room for anything before it");
         const AnimCue *out = cue_of(&p, 1, ANIM_CUE_OUT);
         CHECK(out && out->at_ms == ANIM_TIME_MS + ANIM_SOUND_OUT_LAG_MS,
               "the out is struck a lag behind the landing that caused it (got %d)", out ? out->at_ms : -1);

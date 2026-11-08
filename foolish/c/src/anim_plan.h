@@ -298,22 +298,7 @@ typedef struct {
                        //   PLACE, which is wrong for a late-refused cover:
                        //   telling the two apart there needs the host to say
                        //   so on the step.
-    uint16_t room_ms;  // HOW LONG BEFORE at_ms THE PLAN IS QUIET: from the end
-                       //   of the latest earlier cue (its last strike) plus
-                       //   ANIM_SOUND_ROOM_GUARD_MS, to at_ms, or at_ms itself
-                       //   when no cue comes before it. A sound whose gesture
-                       //   starts before its moment (the strokes gathering a
-                       //   table before it is swept) is fitted into this, so it
-                       //   never sounds over the beat before it and no cue is
-                       //   moved for it (docs/AUDIO.md, anchors). Read off the
-                       //   cues BEFORE this one only, so it never changes once
-                       //   the cue is in a plan. Capped at 65535.
 } AnimCue;
-
-// How far past the end of the cue before it a gathering sound may start: a
-// landing's own tail rings on for about this long, and the next gesture is
-// fitted behind it rather than over it (AnimCue.room_ms).
-#define ANIM_SOUND_ROOM_GUARD_MS 150
 
 // A step makes at most three: one as it opens, one as it lands, and for a
 // transfer the slide on after its landing.

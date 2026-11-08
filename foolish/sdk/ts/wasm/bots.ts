@@ -584,9 +584,6 @@ export interface AnimCueSnap {
     /** For ANIM_CUE_REVERT, the cue of the move being undone, whose sound is
      *  played backwards; ANIM_CUE_NONE on every other cue. */
     undoes: number;
-    /** How long before `atMs` the plan is quiet (AnimCue.room_ms): what a sound
-     *  whose gesture starts before its moment is fitted into. */
-    roomMs: number;
 }
 
 /** The plan (anim_plan.h AnimPlan). */
@@ -715,7 +712,6 @@ function readPlan(ex: WebExports): AnimPlanSnap {
             hits: A.AnimCue_get_hits(m, c),
             nCards: A.AnimCue_get_n_cards(m, c),
             undoes: A.AnimCue_get_undoes(m, c),
-            roomMs: A.AnimCue_get_room_ms(m, c),
         });
     }
     return {

@@ -233,7 +233,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
                 const seat = plan.steps[s.step]?.seat ?? -1;
                 if (board) gain = animSeatGain(board.mySeat, seat, board.seats.length);
             }
-            cueAudio.strike(s.kind, s.delayMs, s.nCards, s.undoes, s.roomMs, gain);
+            cueAudio.strike(s.kind, s.delayMs, s.nCards, s.undoes, gain);
         }
 
         while (landedRef.current < frame.landed && landedRef.current < run.length) {
