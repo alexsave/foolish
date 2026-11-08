@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { TexturedSurface } from '../TexturedSurface';
 import { useLocalization } from '../../contexts/LocalizationContext';
@@ -13,6 +13,7 @@ import { fmtDuration } from '../../replay/speeds';
 import { StepMessage, FoolMessage } from './StepMessage';
 import { RevealedHands } from './RevealedHands';
 import { OracleOverlay } from '../OracleOverlay';
+import { TUNER_IN_REPLAY, TunerOverlay, keepStep, takeStep } from './TunerOverlay';
 import {
     IconBoutNext, IconBoutStart, IconEye, IconOracle, IconPause, IconPen,
     IconPlay, IconStepBack, IconStepForward,
@@ -92,6 +93,29 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
 
     const play = usePlayback(frames, reverses, times, { drawing, toggleDrawing });
     const oracle = useOracle(frames, code, play.stepIdx, play.playing, gameId);
+
+    // The sound tuner in the Oracle's place (TunerOverlay.tsx), development only.
+    // A tuning change reloads the page; it comes back open, on the step it was on,
+    // after the opening deal has been published (usePlayback's mount, at 400 ms).
+    const [tuner, setTuner] = useState(false);
+    useEffect(() => {
+        if (!TUNER_IN_REPLAY) return;
+        const step = takeStep();
+        if (step === null) return;
+        setTuner(true);
+        if (step <= 0) return;
+        const id = setTimeout(() => play.jumpTo(step), 700);
+        return () => clearTimeout(id);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    // The move on the board again: the step before it, then this one played. The
+    // deal has no step before it, so it is the page again, which deals on load.
+    const again = useCallback(() => {
+        const i = play.stepIdx;
+        if (i <= 0) { keepStep(-1); window.location.reload(); return; }
+        play.jumpTo(i - 1);
+        setTimeout(play.stepForward, 80);
+    }, [play]);
 
     const { stepIdx, lastIdx, playing, waitTarget, now } = play;
     const speed = play.speeds[play.speedIdx % play.speeds.length];
@@ -208,12 +232,15 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
                     {btn(<IconBoutNext />, play.nextBout, t('replay_bout_next'))}
                     {btn(<IconEye />, () => setReveal((r) => !r), t(reveal ? 'hide_cards' : 'reveal_cards'), reveal)}
                     {btn(<IconPen />, toggleDrawing, t(drawing ? 'replay_draw_clear' : 'replay_draw'), drawing)}
-                    <span data-testid="oracle-btn-wrap" style={{ opacity: oracle.decision != null ? 1 : 0.4 }}>
+                    <span data-testid="oracle-btn-wrap" style={{ opacity: TUNER_IN_REPLAY || oracle.decision != null ? 1 : 0.4 }}>
                         {btn(
                             <IconOracle />,
-                            () => { if (oracle.decision != null) oracle.setOpen((o) => !o); },
-                            oracle.decision != null ? t('oracle_button_title') : t('oracle_no_decision'),
-                            oracle.open,
+                            TUNER_IN_REPLAY
+                                ? () => setTuner((o) => !o)
+                                : () => { if (oracle.decision != null) oracle.setOpen((o) => !o); },
+                            TUNER_IN_REPLAY ? 'Sound tuner'
+                                : oracle.decision != null ? t('oracle_button_title') : t('oracle_no_decision'),
+                            TUNER_IN_REPLAY ? tuner : oracle.open,
                         )}
                     </span>
                     {play.speeds.length > 1 &&
@@ -223,7 +250,11 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
 
             {/* Infinite Oracle panel - right-anchored, mounted in the board
                 chrome so its mini-cards render inside the replay provider tree */}
-            {oracle.open && (
+            {TUNER_IN_REPLAY && tuner && (
+                <TunerOverlay stepIdx={stepIdx} again={again} back={play.stepBack} forward={play.stepForward}
+                              onClose={() => setTuner(false)} />
+            )}
+            {!TUNER_IN_REPLAY && oracle.open && (
                 <OracleOverlay
                     snapshot={oracle.snapshot}
                     onClose={() => oracle.setOpen(false)}

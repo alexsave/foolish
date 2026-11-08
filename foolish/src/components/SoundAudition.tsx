@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import {
-    animBuildPlan, animSeatGainPm, cueLeadUs, cueMix, cueTakes, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn,
+    animBuildPlan, animSeatGainPm, cueMix, cueTakes, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn,
 } from '@sdk/ts/wasm/bots.ts';
 import {
     ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_SOUND_STAGGER_MS, ANIM_CUE_REVERT, ANIM_CUE_PLACE, ANIM_CUE_COVER, ANIM_CUE_PICKUP,
@@ -12,6 +12,7 @@ import { CUE_ROLE_PRELUDE, CUE_ROLE_TIGHT, EVW_MSG_PASSED } from '@sdk/ts/gen/vi
 import type { TableView } from '../state/view';
 import { buildTutorialData } from './Tutorial';
 import { cueAudio, cueFile } from '../audio/cueAudio';
+import { perStrokeOf, strikes, tunerPlay, voiced, whenLoaded } from '../audio/tunerPlay';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 
@@ -67,21 +68,6 @@ const MOVES: readonly { name: string; says: string; events: () => AnimPlanEventI
                      { type: ANIM_EVT.flipped, from: ANIM_LOC.deck, to: ANIM_LOC.flipped, cards: [card(2, 12)] }] },
 ];
 
-/** Run `play` now, or as soon as every file of `kinds` has arrived: the first
- *  tap on this page is also the gesture that lets them be fetched. The board
- *  never waits like this - a sound that is late there is dropped - but a
- *  workbench is for hearing the sound, however long it took to arrive. */
-const whenLoaded = (kinds: readonly number[], play: () => void, tries = 40): void => {
-    cueAudio.unlock();
-    cueAudio.want(kinds.reduce((m, k) => m | (1 << k), 0));
-    const ready = cueTakes().every((t) => !kinds.includes(t.cue) || cueAudio.loaded(cueFile(t.name)));
-    if (ready || tries <= 0) return play();
-    setTimeout(() => whenLoaded(kinds, play, tries - 1), 100);
-};
-
-/** The cue whose sound a cue is heard as: its own, or for a revert the one it undoes. */
-const voiced = (kind: number, undoes: number): number => (kind === ANIM_CUE_REVERT ? undoes : kind);
-
 // As the board plays a plan: the run starts NOW, so the part of a gesture that
 // comes before a run's first moment is not heard there either (cueAudio.ts).
 const playMove = (events: AnimPlanEventIn[], table: TableView): void => {
@@ -97,34 +83,11 @@ const playMove = (events: AnimPlanEventIn[], table: TableView): void => {
     });
 };
 
-// One cue alone, its moment far enough off that its own takes fit (a cue with
-// tight takes has a "Now" button too: its moment at once, as a move that opens
-// its run strikes it, which plays a tight take, whole and late). A
-// reversed take's lead is the part of it AFTER its anchor, which no table
-// lists; a second covers every one.
-const strikes = (kind: number, n: number, undoes = 0, nCards = 1): void =>
-    whenLoaded([voiced(kind, undoes)], () => {
-        const lead = kind === ANIM_CUE_REVERT ? 1000 : cueLeadUs(voiced(kind, undoes)) / 1000 + 30;
-        for (let h = 0; h < n; h++) cueAudio.strike(kind, lead + h * ANIM_SOUND_STAGGER_MS, nCards, undoes);
-    });
-
 // THE TUNER (SoundTuner.tsx), in development only: the condition is a constant
 // in a production build, so the bundler drops the import and nothing of it ships.
 const SoundTuner = process.env.NODE_ENV === 'development'
     ? dynamic(() => import('./SoundTuner'), { ssr: false })
     : null;
-
-/** A cue's strokes: the cards one stroke gathers, 0 for a cue with none. */
-const perStrokeOf = (kind: number): number => (cueMix(kind)?.cardsPerLevelPm ?? 0) / 1000;
-
-/** One cue for the tuner, alone: whatever was sounding stops first (one sound at a time). */
-const tunerPlay = (kind: number, how: 'main' | 'tight' | number): void => {
-    cueAudio.cancel();
-    const per = perStrokeOf(kind);
-    if (how === 'tight') whenLoaded([kind], () => cueAudio.strike(kind, 0));
-    else if (typeof how === 'number') strikes(kind, 1, 0, Math.ceil(how * per));
-    else strikes(kind, 1, 0, per > 0 ? 0 : 1);
-};
 
 const Button = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
     <TexturedSurface as="button" seed={0.4} className="btn-wood btn-wood--md" onClick={onClick}

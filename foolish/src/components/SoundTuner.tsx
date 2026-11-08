@@ -122,8 +122,8 @@ const td: React.CSSProperties = { padding: '3px 6px', verticalAlign: 'middle', w
 const changedColor = '#f0b429';
 
 /** A number with a step down, a field and a step up. Typing commits on Enter or leaving the field. */
-const Stepper = ({ value, step, places, onChange, label, changed }: {
-    value: number; step: number; places: number; onChange: (v: number) => void; label: string; changed: boolean;
+const Stepper = ({ value, step, places, onChange, label, changed, narrow }: {
+    value: number; step: number; places: number; onChange: (v: number) => void; label: string; changed: boolean; narrow?: boolean;
 }) => {
     const [text, setText] = useState(num(value, places));
     useEffect(() => setText(num(value, places)), [value, places]);
@@ -131,7 +131,7 @@ const Stepper = ({ value, step, places, onChange, label, changed }: {
     return (
         <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center' }}>
             <button type="button" style={small} aria-label={`${label} down`} onClick={() => onChange(value - step)}>-</button>
-            <input style={{ ...input, borderColor: changed ? changedColor : input.borderColor }} value={text} aria-label={label}
+            <input style={{ ...input, width: narrow ? 44 : input.width, borderColor: changed ? changedColor : input.borderColor }} value={text} aria-label={label}
                    onChange={(e) => setText(e.target.value)} onBlur={commit}
                    onKeyDown={(e) => { if (e.key === 'Enter') commit(); }} />
             <button type="button" style={small} aria-label={`${label} up`} onClick={() => onChange(value + step)}>+</button>
@@ -139,7 +139,18 @@ const Stepper = ({ value, step, places, onChange, label, changed }: {
     );
 };
 
-export default function SoundTuner({ play, perStroke }: { play: TunerPlay; perStroke: (kind: number) => number }) {
+/** The cue the compact tuner shows, kept for this tab across the reload after a rebuild. */
+const CUE_KEY = 'foolish_tuner_cue';
+const readCue = (): string | null => { try { return sessionStorage.getItem(CUE_KEY); } catch { return null; } };
+const writeCue = (c: string): void => { try { sessionStorage.setItem(CUE_KEY, c); } catch { /* private mode */ } };
+
+/** `compact`: the panel on the replay screen, one cue at a time picked from a row of
+ *  chips, no prose. `beforeReload`: what the host keeps across the reload a rebuild
+ *  ends in (the replay keeps its step). */
+export default function SoundTuner({ play, perStroke, compact = false, beforeReload }: {
+    play: TunerPlay; perStroke: (kind: number) => number; compact?: boolean; beforeReload?: () => void;
+}) {
+    const [shown, setShown] = useState<string | null>(() => (compact ? readCue() : null));
     const [text, setText] = useState<string | null>(null);
     const [committed, setCommitted] = useState<Map<string, Row>>(new Map());
     const [status, setStatus] = useState<string>('');
@@ -217,9 +228,10 @@ export default function SoundTuner({ play, perStroke }: { play: TunerPlay; perSt
                 const said = `Rebuilt in ${((performance.now() - t0) / 1000).toFixed(1)} s${gain ? `; the common gain is ${gain[1]}` : ''}`;
                 if (!fp) { setStatus(said); return; }
                 writePending({ fp: Number(fp[1]), scroll: window.scrollY, said, tries: 0 });
+                beforeReload?.();
                 window.location.reload();
             }, () => { setBusy(false); setOff(true); });
-    }, []);
+    }, [beforeReload]);
 
     const edit = (next: string) => {
         setText(next);
@@ -243,22 +255,39 @@ export default function SoundTuner({ play, perStroke }: { play: TunerPlay; perSt
     const order = [...new Set([...parts.map((r) => r.cue), ...mixes.map((r) => r.cue)])]
         .filter((c) => cueKind(c) > 0 && cueKind(c) !== ANIM_CUE_REVERT);
     const changedCount = rows.filter((r) => !same(committed.get(keyOf(r)), r)).length;
+    const cueChanged = (cue: string) => rows.some((r) => r.cue === cue && !same(committed.get(keyOf(r)), r));
+    const pick = compact ? (shown && order.includes(shown) ? shown : order[0]) : null;
+    const listed = pick ? [pick] : order;
+    const fs = compact ? 12 : 14;
+    const cell: React.CSSProperties = compact ? { ...td, padding: '2px 3px' } : td;
 
     const playRow = (cue: string, how: 'main' | 'tight' | number) => play(cueKind(cue), how);
 
     return (
         <section data-tuner style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <h2 className="title">Tune</h2>
-            <p style={{ margin: 0, opacity: 0.85 }}>
+            {!compact && <h2 className="title">Tune</h2>}
+            {compact && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {order.map((c) => (
+                        <button key={c} type="button" data-tuner-cue={c} onClick={() => { setShown(c); writeCue(c); }}
+                                style={{ ...small, fontSize: 12, padding: '1px 6px',
+                                         background: c === pick ? '#7a5a3a' : small.background,
+                                         borderColor: cueChanged(c) ? changedColor : small.borderColor }}>
+                            {c.replace('_', ' ')}
+                        </button>
+                    ))}
+                </div>
+            )}
+            {!compact && <p style={{ margin: 0, opacity: 0.85 }}>
                 Every part&apos;s level (dB, on the deal&apos;s scale, before the common gain that puts the loudest take
                 at -3 dBFS, so raising the loudest lowers the rest) and time (ms from the cue&apos;s moment, negative
                 before it). A change rebuilds the takes it touches and reloads the page, in a second or two; then
                 press Play, or play a game at <a href="/ws" style={{ color: 'inherit' }}>/ws</a> (reload it after a change). Values come from <code>tools/soundgen/tuning.tsv</code> and are
                 marked against git HEAD: when it sounds right, commit that file.
-            </p>
+            </p>}
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', minHeight: 26 }}>
-                <span data-tuner-status style={{ color: busy ? changedColor : undefined }}>{status || 'Ready'}</span>
-                <span style={{ opacity: 0.8 }}>{changedCount ? `${changedCount} changed against HEAD` : 'nothing changed against HEAD'}</span>
+                <span data-tuner-status style={{ color: busy ? changedColor : undefined, fontSize: compact ? 12 : undefined }}>{status || 'Ready'}</span>
+                <span style={{ opacity: 0.8, fontSize: compact ? 12 : undefined }}>{changedCount ? `${changedCount} changed against HEAD` : 'nothing changed against HEAD'}</span>
                 {changedCount > 0 && (
                     <button type="button" style={small} onClick={() => {
                         let next = text;
@@ -278,14 +307,14 @@ export default function SoundTuner({ play, perStroke }: { play: TunerPlay; perSt
             </div>
             {log && <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, background: '#1b130e', padding: 8, borderRadius: 6 }}>{log}</pre>}
             <div style={{ overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 14 }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: fs }}>
                 <thead>
                     <tr style={{ textAlign: 'left', opacity: 0.7 }}>
-                        <th style={td}>Sound</th><th style={td}>Level dB</th><th style={td}>Time ms</th><th style={td} /><th style={td} />
+                        <th style={cell}>Sound</th><th style={cell}>{compact ? 'dB' : 'Level dB'}</th><th style={cell}>{compact ? 'ms' : 'Time ms'}</th><th style={cell} /><th style={cell} />
                     </tr>
                 </thead>
                 <tbody>
-                    {order.map((cue) => {
+                    {listed.map((cue) => {
                         const kind = cueKind(cue);
                         const own = parts.filter((r) => r.cue === cue);
                         const mix = mixes.find((r) => r.cue === cue);
@@ -299,27 +328,27 @@ export default function SoundTuner({ play, perStroke }: { play: TunerPlay; perSt
                         return [
                             mix && (
                                 <tr key={`mix ${cue}`} data-tuner-row={`mix ${cue}`} style={{ borderTop: '1px solid #4a382c' }}>
-                                    <td style={td}>
+                                    <td style={cell}>
                                         <strong>{cue.replace('_', ' ')}</strong>: whole cue
                                         {mixChanged && <span title="changed against HEAD" style={{ color: changedColor }}> ●</span>}
                                     </td>
-                                    <td style={td}>
+                                    <td style={cell}>
                                         <Stepper value={Number(dbOfGain(mix.gain).toFixed(1))} step={1} places={1} label={`${cue} whole cue dB`}
-                                                 changed={mixChanged}
+                                                 changed={mixChanged} narrow={compact}
                                                  onChange={(v) => edit(setField(text, mix.line, 2, String(gainOfDb(v))))} />
                                     </td>
-                                    <td style={td}>
+                                    <td style={cell}>
                                         {own.some((r) => r.role !== 'prelude') && (
                                             <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center' }}
                                                   title="moves every part of the cue (not its strokes) against the animation">
                                                 <button type="button" style={small} onClick={() => shift(-10)}>-10</button>
-                                                <span style={{ opacity: 0.7, fontSize: 12 }}>all parts</span>
+                                                {!compact && <span style={{ opacity: 0.7, fontSize: 12 }}>all parts</span>}
                                                 <button type="button" style={small} onClick={() => shift(10)}>+10</button>
                                             </span>
                                         )}
                                     </td>
-                                    <td style={td}><button type="button" style={playBtn} onClick={() => playRow(cue, 'main')}>Play</button></td>
-                                    <td style={td}>
+                                    <td style={cell}><button type="button" style={compact ? { ...playBtn, minWidth: 40 } : playBtn} onClick={() => playRow(cue, 'main')}>Play</button></td>
+                                    <td style={cell}>
                                         <button type="button" style={{ ...small, visibility: mixChanged && mixHead?.kind === 'mix' ? 'visible' : 'hidden' }}
                                                 onClick={() => { if (mixHead?.kind === 'mix') edit(setField(text, mix.line, 2, String(mixHead.gain))); }}>
                                             Reset
@@ -335,23 +364,23 @@ export default function SoundTuner({ play, perStroke }: { play: TunerPlay; perSt
                                 const how = r.role === 'tight' ? 'tight' : r.role === 'prelude' ? (strokes[cue] ?? 3) : 'main';
                                 return (
                                     <tr key={keyOf(r)} data-tuner-row={keyOf(r)}>
-                                        <td style={{ ...td, paddingLeft: 18 }}>
-                                            {r.what}
+                                        <td style={{ ...cell, paddingLeft: compact ? 6 : 18, whiteSpace: compact ? 'normal' : 'nowrap' }}>
+                                            {compact ? r.what.replace(new RegExp(`^${cue.replace('_', ' ')}(, |: )`), '') : r.what}
                                             {(dbChanged || atChanged) && <span title="changed against HEAD" style={{ color: changedColor }}> ●</span>}
                                         </td>
-                                        <td style={td}>
-                                            <Stepper value={r.db} step={1} places={2} label={`${r.what} dB`} changed={dbChanged}
+                                        <td style={cell}>
+                                            <Stepper value={r.db} step={1} places={2} label={`${r.what} dB`} changed={dbChanged} narrow={compact}
                                                      onChange={(v) => edit(setField(text, r.line, 6, num(v, 2)))} />
-                                            {r.dbSpread > 0 && <span style={{ opacity: 0.6, fontSize: 12 }}> to {num(r.db - r.dbSpread, 2)}</span>}
+                                            {!compact && r.dbSpread > 0 && <span style={{ opacity: 0.6, fontSize: 12 }}> to {num(r.db - r.dbSpread, 2)}</span>}
                                         </td>
-                                        <td style={td}>
-                                            <Stepper value={r.at} step={10} places={1} label={`${r.what} ms`} changed={atChanged}
+                                        <td style={cell}>
+                                            <Stepper value={r.at} step={10} places={1} label={`${r.what} ms`} changed={atChanged} narrow={compact}
                                                      onChange={(v) => edit(setField(text, r.line, 4, num(v, 1)))} />
-                                            {r.atSpread > 0 && <span style={{ opacity: 0.6, fontSize: 12 }}> to {num(r.at - r.atSpread, 1)}</span>}
+                                            {!compact && r.atSpread > 0 && <span style={{ opacity: 0.6, fontSize: 12 }}> to {num(r.at - r.atSpread, 1)}</span>}
                                         </td>
-                                        <td style={td}>
+                                        <td style={cell}>
                                             <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
-                                                <button type="button" style={playBtn} onClick={() => playRow(cue, how)}
+                                                <button type="button" style={compact ? { ...playBtn, minWidth: 40 } : playBtn} onClick={() => playRow(cue, how)}
                                                         title={r.role === 'tight' ? 'as a move that opens its run plays it: at once' : undefined}>
                                                     {r.role === 'tight' ? 'Now' : 'Play'}
                                                 </button>
@@ -363,7 +392,7 @@ export default function SoundTuner({ play, perStroke }: { play: TunerPlay; perSt
                                                 )}
                                             </span>
                                         </td>
-                                        <td style={td}>
+                                        <td style={cell}>
                                             <button type="button" style={{ ...small, visibility: h && (dbChanged || atChanged) ? 'visible' : 'hidden' }}
                                                     onClick={() => {
                                                         if (!h) return;
