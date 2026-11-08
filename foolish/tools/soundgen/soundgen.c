@@ -791,16 +791,24 @@ static int encode(const char *wavs, const char *outdir) {
             done++;
             // Named, for the tuner: an open page fetches again only the files that changed.
             if (getenv("SOUNDGEN_SAY_ENCODED")) fprintf(stderr, "soundgen: encoded %s.m4a\n", e[i].name);
-            const int pid = m4a_encode(w, m, e[i].rate, e[i].kbps);
+            // Encoded beside it and renamed over it once whole, so a page fetching the
+            // file while it is remade gets the old one or the new one, never half of one.
+            char tmp[1100];
+            snprintf(tmp, sizeof tmp, "%s/%s.part.m4a", outdir, e[i].name);
+            const int pid = m4a_encode(w, tmp, e[i].rate, e[i].kbps);
             if (pid < 0) { fprintf(stderr, "soundgen: cannot run ffmpeg (it encodes the shipped AAC: install it)\n"); return 1; }
             pids[live] = pid; at[live] = i; live++; i++;
         }
         if (live == 0) break;
-        if (m4a_wait(pids[0]) != 0) {
-            char m[1024];
+        {
+            char m[1024], tmp[1100];
             snprintf(m, sizeof m, "%s/%s.m4a", outdir, e[at[0]].name);
-            remove(m);
-            fprintf(stderr, "soundgen: ffmpeg failed on %s\n", e[at[0]].name); bad++;
+            snprintf(tmp, sizeof tmp, "%s/%s.part.m4a", outdir, e[at[0]].name);
+            if (m4a_wait(pids[0]) != 0 || rename(tmp, m) != 0) {
+                remove(tmp);
+                remove(m);
+                fprintf(stderr, "soundgen: ffmpeg failed on %s\n", e[at[0]].name); bad++;
+            }
         }
         for (int k = 1; k < live; k++) { pids[k - 1] = pids[k]; at[k - 1] = at[k]; }
         live--;
@@ -902,7 +910,30 @@ static double mix_peak(Out *outs, int n, const Mix *m) {
 // The one gain for every card take: its loudest at PEAK_DB, unless a mix would
 // then pass MIX_DB. The card takes are then quantised; the placeholders keep
 // their own level, as the cue table sets theirs.
+// THE TUNER HOLDS IT (SOUNDGEN_GAIN_FILE=<path>, tune.sh sets it and nothing else
+// does): the gain is read from the file, or worked out as below and written there
+// when there is none, so a change to one part re-renders only the takes that hold it
+// instead of rescaling every file. The full build (`make sounds`) works it out afresh.
 static double common_gain(Out *outs, int n, int verbose) {
+    const char *held = getenv("SOUNDGEN_GAIN_FILE");
+    if (held && *held) {
+        FILE *f = fopen(held, "r");
+        double g = 0;
+        const int got = f && fscanf(f, "%lf", &g) == 1 && g > 0;
+        if (f) fclose(f);
+        if (got) {
+            double single = 0;
+            for (int i = 0; i < n; i++) if (outs[i].x) for (int k = 0; k < outs[i].n; k++) if (fabs(outs[i].x[k]) > single) single = fabs(outs[i].x[k]);
+            if (verbose) fprintf(stderr, "soundgen: common gain %+.1f dB (held while tuning): the loudest take %.1f dBFS\n",
+                                 20 * log10(g), 20 * log10(single * g));
+            for (int i = 0; i < n; i++) {
+                if (!outs[i].x) continue;
+                outs[i].pcm = malloc(sizeof(int16_t) * (size_t)outs[i].n);
+                for (int k = 0; k < outs[i].n; k++) outs[i].pcm[k] = to16(outs[i].x[k] * g);
+            }
+            return g;
+        }
+    }
     double single = 0;
     for (int i = 0; i < n; i++) if (outs[i].x) for (int k = 0; k < outs[i].n; k++) if (fabs(outs[i].x[k]) > single) single = fabs(outs[i].x[k]);
     double g = db2(PEAK_DB) / single, mix = 0;
@@ -918,6 +949,10 @@ static double common_gain(Out *outs, int n, int verbose) {
         if (!outs[i].x) continue;
         outs[i].pcm = malloc(sizeof(int16_t) * (size_t)outs[i].n);
         for (int k = 0; k < outs[i].n; k++) outs[i].pcm[k] = to16(outs[i].x[k] * g);
+    }
+    if (held && *held) {
+        FILE *f = fopen(held, "w");
+        if (f) { fprintf(f, "%.17g\n", g); fclose(f); }
     }
     return g;
 }
@@ -1125,6 +1160,13 @@ int main(int argc, char **argv) {
     if (writing || stats)
         fprintf(writing ? stderr : stdout, "soundgen: %d files, %ld bytes, loudest card take %.1f dBFS\n",
                 n, total, 20 * log10(loudest + 1e-9));
-    if (loudest > db2(PEAK_DB) * 1.001) { fprintf(stderr, "soundgen: a card take is over PEAK_DB\n"); return 1; }
+    // While tuning the gain is held (common_gain), so a part raised enough can pass
+    // PEAK_DB: allowed up to full scale, where it would clip.
+    const char *held = getenv("SOUNDGEN_GAIN_FILE");
+    if (held && *held ? loudest >= 32767 / 32767.0 * 0.9999 : loudest > db2(PEAK_DB) * 1.001) {
+        fprintf(stderr, held && *held ? "soundgen: a card take would clip at the held gain: lower that part\n"
+                                      : "soundgen: a card take is over PEAK_DB\n");
+        return 1;
+    }
     return 0;
 }

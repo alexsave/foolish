@@ -248,11 +248,18 @@ export class CueAudio {
         }
         const Ctor = contextCtor();
         if (!Ctor) return;
+        // ONE CONTEXT A PAGE. An engine made again in the same page (a hot update of
+        // this module in development) closes the one before it: Safari allows a page
+        // only a few, and ones left running wedged its audio (sounds seconds late, then
+        // stuttering, then none until Safari was restarted).
+        const page = globalThis as { __foolishCueContext?: AudioContext };
+        if (page.__foolishCueContext && page.__foolishCueContext.state !== 'closed') void page.__foolishCueContext.close().catch(() => {});
         try {
             this.ctx = new Ctor({ latencyHint: 'interactive' });
         } catch {
             return;
         }
+        page.__foolishCueContext = this.ctx;
         this.master = this.ctx.createGain();
         this.master.gain.value = this.settings().volume;
         this.master.connect(this.ctx.destination);

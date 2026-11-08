@@ -165,7 +165,7 @@ static void serve(int fd) {
                        && path[6 + used] == 0 && take >= 0 && take < 64 && strokes >= 0 && strokes <= 9;
         if (!ok) { respond(fd, 400, origin, "want /solo/<cue>/<role>/<part>/<take>/<strokes>\n", 49); free(out.p); return; }
         char cmd[256];
-        snprintf(cmd, sizeof cmd, "SOUNDGEN_CACHE=build/cache ./build/soundgen solo %s %s %s %d build/solo.wav %d 2>&1", cue, role, part, take, strokes);
+        snprintf(cmd, sizeof cmd, "SOUNDGEN_CACHE=build/cache SOUNDGEN_GAIN_FILE=build/cache/gain ./build/soundgen solo %s %s %s %d build/solo.wav %d 2>&1", cue, role, part, take, strokes);
         if (run(cmd, &out) != 0) respond(fd, 422, origin, out.p ? out.p : "", out.n);
         else {
             Buf wav = { 0 };

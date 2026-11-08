@@ -17,7 +17,9 @@ make -s build/soundgen
 # touched (soundgen.c "THE TUNER'S CACHE"); emptied whenever soundgen is rebuilt.
 bin=$(cksum < build/soundgen)
 [ "$(cat build/cache/soundgen.cksum 2>/dev/null)" = "$bin" ] || { rm -rf build/cache; mkdir -p build/cache; echo "$bin" > build/cache/soundgen.cksum; }
-log=$(SOUNDGEN_CACHE=build/cache ./build/soundgen write build/wav "$ct.tune" build/cue_takes.bin 2>&1) || { echo "$log"; exit 1; }
+# The common gain is held while tuning (build/cache/gain, emptied with the cache), so
+# a change re-renders and re-encodes only the takes that hold the part changed.
+log=$(SOUNDGEN_CACHE=build/cache SOUNDGEN_GAIN_FILE=build/cache/gain ./build/soundgen write build/wav "$ct.tune" build/cue_takes.bin 2>&1) || { echo "$log"; exit 1; }
 echo "$log" | grep -E "takes rendered|common gain|loudest card take"
 SOUNDGEN_SAY_ENCODED=1 ./build/soundgen encode build/wav "$root/public/audio/gen"
 ./build/soundgen check build/wav "$root/public/audio/gen"
