@@ -48,6 +48,7 @@ final class NetTests: XCTestCase {
 
     func testTheStreamIsShutUntilOpened() {
         XCTAssertNil(NetClient.streamNext())
-        XCTAssertEqual(NetClient.streamPath, "/mqtt")
+        // A plain binary WebSocket since 5a91ad78d (c/src/netclient.c nc_req_stream).
+        XCTAssertEqual(NetClient.streamPath, "/ws")
     }
 }
