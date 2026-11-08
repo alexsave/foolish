@@ -331,7 +331,11 @@ The time is in ms from the cue's moment, negative before it; for strokes it is w
 A grey "to" beside a value is the far end of its random spread, which the tuner shows and leaves alone.
 The whole-cue row sets the cue's level for every host (its `mix` gain), and its "all parts" buttons move every part of the cue 10 ms against the animation.
 Every change writes `tuning.tsv`, rebuilds the takes it touched, the take table, `web.wasm` and `promo.wasm` (`tools/soundgen/tune.sh`, 1.5 to 4 s), and reloads the page, which checks its kernel carries the new table before it says "Rebuilt".
-Then press Play: every Play stops whatever was sounding first, so one sound is heard at a time; a tight row's "Now" plays it as a move that opens its run does, and a strokes row plays its cue with the number of strokes chosen beside it.
+Then press Play: every Play stops whatever was sounding first, so one sound is heard at a time.
+A part's row plays that part alone: soundgen renders the take again with every other part silent, at the whole set's common gain (`soundgen solo`, served by the endpoint as `GET /solo/<cue>/<role>/<part>/<take>/<strokes>`), and it plays at the cue's mix gain, so it is as loud as in the game.
+Each press plays the set's next take, and a strokes row plays the number of strokes chosen beside it.
+The whole-cue row's Play plays the cue, every part together.
+On the replay screen (development only) the Oracle's button opens the same tuner as a panel, in tabs by what happens at the table, with Again to hear the move on the board once more.
 The "In context" moves below play the new takes at the plan's own times.
 A value that differs from git HEAD is marked with a dot and gets a Reset; "Reset all" puts the whole file back.
 When it sounds right, commit `tools/soundgen/tuning.tsv`: that is the shipped value, for the web and iOS alike.

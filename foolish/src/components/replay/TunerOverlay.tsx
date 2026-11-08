@@ -1,5 +1,5 @@
 import dynamic from 'next/dynamic';
-import { perStrokeOf, tunerPlay } from '../../audio/tunerPlay';
+import { perStrokeOf, playPart, tunerPlay } from '../../audio/tunerPlay';
 
 // THE TUNER ON THE REPLAY SCREEN, in development only (Alex 2026-11-08: "temporarily
 // swap out the oracle overlay for a sound tuner overlay"): ReplayStage opens this
@@ -66,7 +66,7 @@ export const TunerOverlay = ({ stepIdx, again, back, forward, onClose }: {
                 <button type="button" style={btn} onClick={onClose} aria-label="close">×</button>
             </div>
             <div style={{ overflowY: 'auto', padding: '6px 8px 8px' }} data-chat-scrollable>
-                <SoundTuner play={tunerPlay} perStroke={perStrokeOf} compact beforeReload={() => keepStep(stepIdx)} />
+                <SoundTuner play={tunerPlay} playPart={playPart} perStroke={perStrokeOf} compact beforeReload={() => keepStep(stepIdx)} />
             </div>
         </div>
     );

@@ -166,8 +166,10 @@ const writeCue = (c: string): void => { try { sessionStorage.setItem(CUE_KEY, c)
 /** `compact`: the panel on the replay screen, one cue at a time picked from a row of
  *  chips, no prose. `beforeReload`: what the host keeps across the reload a rebuild
  *  ends in (the replay keeps its step). */
-export default function SoundTuner({ play, perStroke, compact = false, beforeReload }: {
+export default function SoundTuner({ play, playPart, perStroke, compact = false, beforeReload }: {
     play: TunerPlay; perStroke: (kind: number) => number; compact?: boolean; beforeReload?: () => void;
+    /** A part's row plays that part alone (src/audio/tunerPlay.ts playPart); the whole-cue row plays the cue. */
+    playPart: (kind: number, cue: string, role: string, part: string, strokes?: number) => void;
 }) {
     const [shown, setShown] = useState<string | null>(() => (compact ? readCue() : null));
     const [text, setText] = useState<string | null>(null);
@@ -385,7 +387,6 @@ export default function SoundTuner({ play, perStroke, compact = false, beforeRel
                                 const h = head?.kind === 'part' ? head : undefined;
                                 const dbChanged = !h || h.db !== r.db || h.dbSpread !== r.dbSpread;
                                 const atChanged = !h || h.at !== r.at || h.atSpread !== r.atSpread;
-                                const how = r.role === 'tight' ? 'tight' : r.role === 'prelude' ? (strokes[cue] ?? 3) : 'main';
                                 return (
                                     <tr key={keyOf(r)} data-tuner-row={keyOf(r)}>
                                         <td style={{ ...cell, paddingLeft: compact ? 6 : 18, whiteSpace: compact ? 'normal' : 'nowrap' }}>
@@ -404,9 +405,9 @@ export default function SoundTuner({ play, perStroke, compact = false, beforeRel
                                         </td>
                                         <td style={cell}>
                                             <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
-                                                <button type="button" style={compact ? { ...playBtn, minWidth: 40 } : playBtn} onClick={() => playRow(cue, how)}
-                                                        title={r.role === 'tight' ? 'as a move that opens its run plays it: at once' : undefined}>
-                                                    {r.role === 'tight' ? 'Now' : 'Play'}
+                                                <button type="button" style={compact ? { ...playBtn, minWidth: 40 } : playBtn}
+                                                        onClick={() => playPart(kind, cue, r.role, r.part, strokes[cue] ?? 3)} title="this sound alone; each press plays the next take">
+                                                    Play
                                                 </button>
                                                 {r.role === 'prelude' && perStroke(kind) > 0 && (
                                                     <select style={{ ...small, minWidth: 0 }} value={strokes[cue] ?? 3} aria-label="strokes"

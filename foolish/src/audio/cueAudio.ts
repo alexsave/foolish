@@ -391,6 +391,17 @@ export class CueAudio {
         source.start(Math.max(w.start, ctx.currentTime));
     }
 
+    /** A workbench's sound played now, whole, through the master volume and stopped
+     *  by cancel() like any take: the tuner's one part alone (src/audio/tunerPlay.ts),
+     *  which is no file of the table. Never used by the board. */
+    async playNow(bytes: ArrayBuffer, gain: number): Promise<void> {
+        this.unlock();
+        const ctx = this.ctx;
+        if (!ctx || this.settings().muted) return;
+        const buffer = await ctx.decodeAudioData(bytes);
+        this.start({ file: '', cue: 0, at: 0, start: 0, gain, rate: 1, backwards: false }, buffer);
+    }
+
     /** Stop everything scheduled or sounding: a replay was scrubbed, the tab
      *  went away, the player hit mute. */
     cancel(): void {

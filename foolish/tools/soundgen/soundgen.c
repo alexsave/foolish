@@ -147,9 +147,13 @@ typedef struct { Sig mix; Rng r; double g; } Take;
 // Where part `id` sits from the cue, in seconds, and its level in dB for this
 // take: drawn up to its spread quieter (no draw where it has none).
 static double at_of(TuneId id) { return TUNE[id].at_ms / 1000; }
+// THE TUNER'S SOLO (`soundgen solo`): one part heard alone, every other part of its
+// take silenced. They are still drawn, so the solo part is the very one the take has.
+static int SOLO = -1;
 static double level_of(Take *t, TuneId id) {
     const Tune *u = &TUNE[id];
-    return u->db_spread > 0 ? t->g - uni(&t->r, -u->db, -u->db + u->db_spread) : t->g + u->db;
+    const double db = u->db_spread > 0 ? t->g - uni(&t->r, -u->db, -u->db + u->db_spread) : t->g + u->db;
+    return SOLO >= 0 && (int)id != SOLO ? -400.0 : db;
 }
 static void take_init(Take *t, uint64_t seed) { t->mix = sig_new(SPAN); rng_init(&t->r, seed); t->g = uni(&t->r, -34, -32); }
 // Add `part` with its sample `ref` at `at_s` from the cue, its peak at `db` (the games' put()).
@@ -985,9 +989,11 @@ int main(int argc, char **argv) {
     const int writing = !strcmp(mode, "write") && argc > 2;
     const int ctable = !strcmp(mode, "ctable") && argc > 2;
     const int stats = !strcmp(mode, "stats");
-    if (!writing && !stats && !ctable && strcmp(mode, "list")) {
+    const int solo = !strcmp(mode, "solo") && argc > 6;   // [7]: a prelude's strokes
+    if (!writing && !stats && !ctable && !solo && strcmp(mode, "list")) {
         fprintf(stderr, "usage: soundgen write <wavdir> [<cue_takes.c>] | encode <wavdir> <outdir>\n"
-                        "                | check <wavdir> <outdir> | ctable <cue_takes.c> | list | stats | parts <dir>\n");
+                        "                | check <wavdir> <outdir> | ctable <cue_takes.c> | list | stats | parts <dir>\n"
+                        "                | solo <cue> <role> <part> <take> <out.wav> [<strokes>]\n");
         return 2;
     }
     if (read_tuning() != 0) return 1;
@@ -1026,7 +1032,31 @@ int main(int argc, char **argv) {
     if (render_all(jobs, nj) != 0) return 1;
     for (int j = 0; j < nj; j++) total += 44 + 2L * jobs[j].o->n;
     free(jobs);
-    common_gain(outs, n, writing || stats);
+    const double gain = common_gain(outs, n, writing || stats);
+    // `solo <cue> <role> <part> <take> <out.wav> [<strokes>]` (the tuner's per-part Play):
+    // that take of the part's set rendered again with only the part sounding, at the common
+    // gain of the whole set, so it is heard at the level it has in the game. A prelude's is
+    // its <strokes>-stroke take (3 when none is given). Nothing else is written.
+    if (solo) {
+        for (int i = 0; i < N_TUNE; i++)
+            if (!strcmp(RECIPES[TUNE_KEY[i].cue].name, argv[2]) && !strcmp(ROLE_NAME[TUNE_KEY[i].role], argv[3])
+                && !strcmp(TUNE_KEY[i].part, argv[4])) SOLO = i;
+        if (SOLO < 0) { fprintf(stderr, "soundgen: no part %s %s %s\n", argv[2], argv[3], argv[4]); return 1; }
+        const int cue = TUNE_KEY[SOLO].cue, role = TUNE_KEY[SOLO].role;
+        const Set *sets[3] = { &RECIPES[cue].main, &RECIPES[cue].tight, &RECIPES[cue].prelude };
+        const Set *set = sets[role];
+        const int want = argc > 7 ? atoi(argv[7]) : 3;
+        const int v = atoi(argv[5]), level = role == ROLE_PRELUDE ? (want < set->lo ? set->lo : want > set->hi ? set->hi : want) : set->lo;
+        if (!set->make || v < 0 || v >= set->takes) { fprintf(stderr, "soundgen: no take %d of %s %s\n", v, argv[2], argv[3]); return 1; }
+        Out o;
+        memset(&o, 0, sizeof o);
+        Job j = { cue, role, level, v, set, &o };
+        if (render_jobs(&j, 1) != 0) return 1;
+        int16_t *pcm = malloc(sizeof(int16_t) * (size_t)(o.n ? o.n : 1));
+        for (int k = 0; k < o.n; k++) pcm[k] = to16(o.x[k] * gain);
+        if (write_pcm(argv[6], pcm, o.n, o.rate) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", argv[6]); return 1; }
+        return 0;
+    }
     for (int i = 0; i < n; i++) if (outs[i].x) for (int k = 0; k < outs[i].n; k++) if (abs(outs[i].pcm[k]) / 32767.0 > loudest) loudest = abs(outs[i].pcm[k]) / 32767.0;
     FILE *manifest = NULL;
     if (writing) {

@@ -83,17 +83,21 @@ static void send_all(int fd, const char *s, size_t n) {
     }
 }
 
+static void respond_as(int fd, int code, const char *type, const char *origin, const char *body, size_t n);
 static void respond(int fd, int code, const char *origin, const char *body, size_t n) {
+    respond_as(fd, code, "text/plain; charset=utf-8", origin, body, n);
+}
+static void respond_as(int fd, int code, const char *type, const char *origin, const char *body, size_t n) {
     const char *what = code == 200 ? "OK" : code == 204 ? "No Content" : code == 403 ? "Forbidden"
                      : code == 404 ? "Not Found" : code == 413 ? "Payload Too Large" : code == 422 ? "Unprocessable Entity"
                      : "Bad Request";
     char head[1024];
     const int h = snprintf(head, sizeof head,
-                           "HTTP/1.1 %d %s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: %zu\r\n"
+                           "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\n"
                            "Cache-Control: no-store\r\nConnection: close\r\n"
                            "Access-Control-Allow-Origin: %s\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
                            "Access-Control-Allow-Headers: Content-Type\r\n\r\n",
-                           code, what, n, origin && *origin ? origin : "null");
+                           code, what, type, n, origin && *origin ? origin : "null");
     send_all(fd, head, (size_t)h);
     send_all(fd, body, n);
 }
@@ -147,6 +151,24 @@ static void serve(int fd) {
         const int rc = run("git show HEAD:./" FILE_NAME " 2>/dev/null", &out);
         if (rc != 0) respond(fd, 404, origin, "", 0);
         else respond(fd, 200, origin, out.p ? out.p : "", out.n);
+    } else if (!strcmp(method, "GET") && !strncmp(path, "/solo/", 6)) {
+        // GET /solo/<cue>/<role>/<part>/<take>/<strokes>: one part of one take alone, as a WAV at
+        // the game's level (soundgen solo), for the tuner's per-part Play. Names are
+        // checked to [a-z0-9_] before they reach a shell.
+        char cue[32], role[16], part[32];
+        int take = -1, strokes = -1, used = 0;
+        const int ok = sscanf(path + 6, "%31[a-z0-9_]/%15[a-z]/%31[a-z0-9_]/%d/%d%n", cue, role, part, &take, &strokes, &used) == 5
+                       && path[6 + used] == 0 && take >= 0 && take < 64 && strokes >= 0 && strokes <= 9;
+        if (!ok) { respond(fd, 400, origin, "want /solo/<cue>/<role>/<part>/<take>/<strokes>\n", 49); free(out.p); return; }
+        char cmd[256];
+        snprintf(cmd, sizeof cmd, "SOUNDGEN_CACHE=build/cache ./build/soundgen solo %s %s %s %d build/solo.wav %d 2>&1", cue, role, part, take, strokes);
+        if (run(cmd, &out) != 0) respond(fd, 422, origin, out.p ? out.p : "", out.n);
+        else {
+            Buf wav = { 0 };
+            if (read_file("build/solo.wav", &wav) != 0) respond(fd, 404, origin, "", 0);
+            else respond_as(fd, 200, "audio/wav", origin, wav.p, wav.n);
+            free(wav.p);
+        }
     } else if (!strcmp(method, "POST") && !strcmp(path, "/tuning")) {
         const long n = strtol(length, NULL, 10);
         if (n <= 0 || n > MAX_BODY) { respond(fd, 413, origin, "want a tuning.tsv\n", 18); free(out.p); return; }
