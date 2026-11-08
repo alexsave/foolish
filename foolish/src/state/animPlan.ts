@@ -21,6 +21,8 @@ export interface AnimStep {
     cards?: readonly ViewCard[];
     from_location?: string;
     to_location?: string;
+    /** EVW_MSG_*, when the step was told with one: a transfer sounds as one. */
+    msg?: number;
     /** The board this step leaves, when it has one of its own. */
     game_state?: TableView | null;
     /** The plan's answer, never the step's own: the trump this draw deals out
@@ -229,6 +231,7 @@ export function planFor(steps: readonly AnimStep[], board: TableView | undefined
         to: s.to_location === undefined ? undefined : ANIM_LOC[s.to_location],
         cards: s.cards,
         board: s.game_state,
+        msg: s.msg,
     })), board);
 }
 

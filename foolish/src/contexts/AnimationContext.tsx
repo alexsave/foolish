@@ -683,6 +683,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 isCover ? move.attack_cards : undefined, move.kind === 'pass' ? wire : undefined);
             enqueue([{
                 type: toHand ? 'pickup' : isCover ? 'cover' : 'attack_pass',
+                // My own transfer is heard as one before the server confirms it.
+                msg: move.kind === 'pass' ? V.EVW_MSG_PASSED : undefined,
                 cards,
                 target_cards: isCover ? move.attack_cards : undefined,
                 from_location: from,

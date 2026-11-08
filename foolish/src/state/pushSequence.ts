@@ -37,6 +37,9 @@ export interface ViewEvent {
     to_location?: string;
     target_card?: ViewCard;
     battle_index?: number;
+    /** The message the push told it with (EVW_MSG_*): the plan hears a
+     *  transfer off it (EVW_MSG_PASSED). */
+    msg?: number;
     /** The board this step leaves. */
     game_state: TableView;
 }
@@ -49,6 +52,7 @@ function eventOf(e: PushEvent, view: TableView): ViewEvent {
     if (e.to >= 0) ev.to_location = LOCATION[e.to];
     if (e.hasTarget) ev.target_card = e.target;
     if (e.battle >= 0) ev.battle_index = e.battle;
+    if (e.msg !== V.EVW_MSG_NONE) ev.msg = e.msg;
     return ev;
 }
 

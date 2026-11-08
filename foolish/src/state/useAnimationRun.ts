@@ -27,6 +27,9 @@ import {
 import { sameCard, type TableView, type ViewCard } from './view';
 import { cueAudio } from '../audio/cueAudio';
 import { dueStrikes } from '../audio/cueSchedule';
+import { cueLeadMs } from '../audio/cueSounds';
+import { animSeatGain } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_CUE_DEAL_LAND } from '@sdk/ts/gen/kernel_consts.bots.ts';
 
 /** What the page draws for one card at one place while its flight is up. */
 interface CardFlight {
@@ -219,8 +222,16 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         // ones coming due are handed over a little EARLY, each with how far off
         // it is, so the engine can pin it to the audio clock instead of to
         // whenever a frame happens to run (src/audio/cueSchedule.ts).
-        for (const s of dueStrikes(plan.cues, nowMs, cuesDoneRef.current)) {
-            cueAudio.strike(s.kind, s.delayMs, s.nCards, s.undoes);
+        for (const s of dueStrikes(plan.cues, nowMs, cuesDoneRef.current, cueLeadMs)) {
+            // A card landing at a seat is as loud as that seat is near the
+            // viewer: the kernel's geometry (anim_seat_gain_pm).
+            let gain = 1;
+            if (s.kind === ANIM_CUE_DEAL_LAND) {
+                const board = hooksRef.current.board();
+                const seat = plan.steps[s.step]?.seat ?? -1;
+                if (board) gain = animSeatGain(board.mySeat, seat, board.seats.length);
+            }
+            cueAudio.strike(s.kind, s.delayMs, s.nCards, s.undoes, s.roomMs, gain);
         }
 
         while (landedRef.current < frame.landed && landedRef.current < run.length) {

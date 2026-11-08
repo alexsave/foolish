@@ -40,10 +40,11 @@ import {
     ANIM_CUE_NONE, ANIM_CUE_DEAL, ANIM_CUE_LIFT, ANIM_CUE_PLACE, ANIM_CUE_COVER, ANIM_CUE_SWEEP,
     ANIM_CUE_PILE, ANIM_CUE_GOOD, ANIM_CUE_HAND_OFF, ANIM_CUE_FINISH, ANIM_CUE_FOOL, ANIM_CUE_OUT,
     ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_SOUND_STAGGER_MS, ANIM_SOUND_OUT_LAG_MS,
-    ANIM_CUE_FLIP, ANIM_CUE_PICKUP, ANIM_CUE_REVERT,
+    ANIM_CUE_FLIP, ANIM_CUE_PICKUP, ANIM_CUE_REVERT, ANIM_CUE_DEAL_LAND, ANIM_CUE_PASS, ANIM_CUE_TURN,
 } from '../sdk/ts/gen/kernel_consts.bots.ts';
+import { EVW_MSG_ATTACKED, EVW_MSG_PASSED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { CUE_LATE_MS, CUE_LOOK_AHEAD_MS, cueKey, dueStrikes, type PlanCue } from '../src/audio/cueSchedule.ts';
-import { CUE_SOUNDS } from '../src/audio/cueSounds.ts';
+import { CUE_SOUNDS, cueLeadMs, takesFor, wantedLevel } from '../src/audio/cueSounds.ts';
 import { CueAudio } from '../src/audio/cueAudio.ts';
 import { finishCueOf } from '../src/audio/useFinishCue.ts';
 import { cuesNextFor } from '../src/audio/useCuePriority.ts';
@@ -112,8 +113,22 @@ test('a bout end reads back whole: the spread, the out behind its cover, the swe
         `SWEEP@${sweepAt} step3 x1 (4)`,
         `PILE@${sweepAt + ANIM_TIME_MS} step3 x1 (4)`,
         `DEAL@${dealAt} step4 x3 (3)`,
+        `DEAL_LAND@${dealAt + ANIM_TIME_MS} step4 x3 (3)`,
         `DEAL@${dealAt + ANIM_TIME_MS + ANIM_GAP_MS} step5 x1 (1)`,
+        `DEAL_LAND@${dealAt + 2 * ANIM_TIME_MS + ANIM_GAP_MS} step5 x1 (1)`,
     ]);
+    // The quiet before the sweep crosses too: the hold, behind the out's note
+    // and its tail, which is what the strokes that gather the table fill.
+    const sweep = plan.cues.find((c) => c.kind === ANIM_CUE_SWEEP)!;
+    assert.equal(sweep.roomMs, sweepAt - (ANIM_TIME_MS + ANIM_SOUND_OUT_LAG_MS) - 150,
+        'the sweep\'s room runs back to the out, the last thing struck before it, and its tail');
+});
+
+test('a transfer crosses the bridge as one: it lands, then slides on', () => {
+    const pass = planOf([{ ...lay(ANIM_EVT.attack_pass, 0, 1), msg: EVW_MSG_PASSED }]);
+    assert.deepEqual(named(pass.cues), [`LIFT@0 step0 x1 (1)`, `PLACE@${ANIM_TIME_MS} step0 x1 (1)`, `PASS@${ANIM_TIME_MS} step0 x1 (1)`]);
+    const attack = planOf([{ ...lay(ANIM_EVT.attack_pass, 0, 1), msg: EVW_MSG_ATTACKED }]);
+    assert.ok(!attack.cues.some((c) => c.kind === ANIM_CUE_PASS), 'an attack does not slide on');
 });
 
 test('a revert crosses the bridge with the cue it undoes', () => {
@@ -128,11 +143,11 @@ test('a revert crosses the bridge with the cue it undoes', () => {
 
 test('which cues could sound next is the kernel\'s answer, field for field', () => {
     const ask = { status: GAME_STATUS_PLAYING, mySeat: 0, nPlayers: 2, nBattles: 0, nCovered: 0, hasFlipped: true, deck: 20 };
-    assert.deepEqual(namesIn(animCuesNext(ask)), ['LIFT', 'PLACE'], 'an empty table mid-game: a card can be laid');
+    assert.deepEqual(namesIn(animCuesNext(ask)), ['LIFT', 'PLACE', 'PASS'], 'an empty table mid-game: a card can be laid');
     // Each scalar is told apart from its neighbour by a board where only it differs.
     assert.ok(animCuesNext({ ...ask, nBattles: 2, nCovered: 1 }) & (1 << ANIM_CUE_COVER), 'one of two attacks is uncovered');
     assert.ok(!(animCuesNext({ ...ask, nBattles: 2, nCovered: 2 }) & (1 << ANIM_CUE_COVER)), 'none is');
-    assert.deepEqual(namesIn(animCuesNext({ ...ask, status: 0 })), ['DEAL', 'FLIP'], 'a lobby (GAME_STATUS_WAITING) can only deal');
+    assert.deepEqual(namesIn(animCuesNext({ ...ask, status: 0 })), ['DEAL', 'FLIP', 'DEAL_LAND', 'TURN'], 'a lobby (GAME_STATUS_WAITING) can only deal');
     const last = { ...ask, hasFlipped: false, deck: 0 };
     assert.ok(animCuesNext(last) & (1 << ANIM_CUE_FOOL), 'the stock gone: a seated viewer could be the fool');
     assert.ok(!(animCuesNext({ ...last, mySeat: -1 }) & (1 << ANIM_CUE_FOOL)), 'a spectator could not');
@@ -143,11 +158,11 @@ test('which cues could sound next is the kernel\'s answer, field for field', () 
 
 test('a board on screen is asked about with its own numbers', () => {
     // TABLE: playing, twelve in the stock and no trump turned, nothing down.
-    assert.deepEqual(namesIn(cuesNextFor(TABLE)), ['DEAL', 'FLIP', 'LIFT', 'PLACE']);
+    assert.deepEqual(namesIn(cuesNextFor(TABLE)), ['DEAL', 'FLIP', 'LIFT', 'PLACE', 'DEAL_LAND', 'TURN', 'PASS']);
     const six = { suit: 0, value: 6 }, none = { suit: CARD_NONE_SUIT, value: CARD_NONE_VALUE };
     const mid: TableView = { ...TABLE, hasFlipped: true, deckCount: 20, mySeat: 1,
         battles: [{ attack: six, defense: { suit: 0, value: 9 } }, { attack: { suit: 1, value: 6 }, defense: none }] };
-    assert.deepEqual(namesIn(cuesNextFor(mid)), ['DEAL', 'LIFT', 'PLACE', 'COVER', 'PICKUP', 'SWEEP', 'PILE', 'GOOD', 'HAND_OFF']);
+    assert.deepEqual(namesIn(cuesNextFor(mid)), ['DEAL', 'LIFT', 'PLACE', 'COVER', 'PICKUP', 'SWEEP', 'PILE', 'GOOD', 'HAND_OFF', 'DEAL_LAND', 'PASS', 'INTO_HAND']);
     assert.ok(!(cuesNextFor({ ...mid, battles: [mid.battles[0]] }) & (1 << ANIM_CUE_COVER)), 'a covered pile is counted as covered');
     assert.ok(cuesNextFor({ ...mid, deckCount: 0, hasFlipped: false }) & (1 << ANIM_CUE_FOOL), 'my seat is passed as mine');
     assert.ok(!(cuesNextFor({ ...mid, deckCount: 0, hasFlipped: false, mySeat: -1 }) & (1 << ANIM_CUE_FOOL)));
@@ -215,7 +230,7 @@ test('at 60 frames a second every strike is handed over once, aimed at the plan\
     const plan = planOf(boutEnd());
     const struck = walk(plan.cues, plan.totalMs + 1000, () => 16);
     assert.deepEqual(byTime(struck), wanted(plan.cues));
-    assert.equal(struck.length, 10, 'a lift, two covers, an out, the sweep, the pile, and four dealt cards (a refill of three is three strikes)');
+    assert.equal(struck.length, 14, 'a lift, two covers, an out, the sweep, the pile, four dealt cards and their four landings (a refill of three is three strikes)');
 });
 
 test('ragged frames move no sound: the same strikes at the same milliseconds', () => {
@@ -239,9 +254,23 @@ test('a cue further off than the look-ahead waits for a later frame', () => {
     assert.deepEqual(dueStrikes([cue], 1000 - CUE_LOOK_AHEAD_MS - 1, done), []);
     assert.equal(done.size, 0, 'and it is not marked as handed over');
     assert.deepEqual(dueStrikes([cue], 1000 - CUE_LOOK_AHEAD_MS, done),
-        [{ kind: ANIM_CUE_SWEEP, delayMs: CUE_LOOK_AHEAD_MS, nCards: 7, undoes: 0 }],
+        [{ kind: ANIM_CUE_SWEEP, delayMs: CUE_LOOK_AHEAD_MS, nCards: 7, undoes: 0, roomMs: Infinity, step: 0 }],
         'with how far off it is and how many cards it stands for');
     assert.deepEqual(dueStrikes([cue], 990, done), [], 'once handed over it is never handed over again');
+});
+
+test('a cue whose file starts before its moment is handed over that much earlier', () => {
+    const cue: PlanCue = { atMs: 2000, kind: ANIM_CUE_SWEEP, step: 2, hits: 1, nCards: 7, undoes: 0, roomMs: 1300 };
+    const lead = (kind: number) => (kind === ANIM_CUE_SWEEP ? 1200 : 0);
+    const done = new Set<number>();
+    assert.deepEqual(dueStrikes([cue], 2000 - 1200 - CUE_LOOK_AHEAD_MS - 1, done, lead), [], 'not before its file has to start');
+    assert.deepEqual(dueStrikes([cue], 2000 - 1200 - CUE_LOOK_AHEAD_MS, done, lead),
+        [{ kind: ANIM_CUE_SWEEP, delayMs: 1200 + CUE_LOOK_AHEAD_MS, nCards: 7, undoes: 0, roomMs: 1300, step: 2 }],
+        'and then with the whole lead in hand, aimed at the moment itself');
+    // The real table's leads: the deal's thumb slide and grab, the throw-in's.
+    assert.ok(cueLeadMs(ANIM_CUE_DEAL) > 150 && cueLeadMs(ANIM_CUE_LIFT) > 150, 'the deal and a lift start well before the card leaves');
+    assert.ok(cueLeadMs(ANIM_CUE_SWEEP) > 1000, 'and the strokes before a sweep, over a second');
+    assert.ok(cueLeadMs(ANIM_CUE_PASS) <= 0, 'the slide on starts after its landing: no lead');
 });
 
 test('a tab that was away does not replay what it missed', () => {
@@ -267,7 +296,7 @@ test('a strike is dropped once it is late, and kept while it is merely just behi
 
 test('a revert is handed over with the cue it undoes', () => {
     const cue: PlanCue = { atMs: 0, kind: ANIM_CUE_REVERT, step: 0, hits: 1, nCards: 1, undoes: ANIM_CUE_COVER };
-    assert.deepEqual(dueStrikes([cue], 0, new Set()), [{ kind: ANIM_CUE_REVERT, delayMs: 0, nCards: 1, undoes: ANIM_CUE_COVER }]);
+    assert.deepEqual(dueStrikes([cue], 0, new Set()), [{ kind: ANIM_CUE_REVERT, delayMs: 0, nCards: 1, undoes: ANIM_CUE_COVER, roomMs: Infinity, step: 0 }]);
 });
 
 test('a cue is remembered by its step and kind, the pair the kernel keeps unique', () => {
@@ -286,7 +315,15 @@ test('a cue is remembered by its step and kind, the pair the kernel keeps unique
 
 // ---- 3. the engine --------------------------------------------------------------------
 
-interface FakeSource { buffer: unknown; playbackRate: { value: number }; startedAt: number | null; stopped: boolean; gain: number; onended: (() => void) | null }
+interface FakeSource { buffer: unknown; playbackRate: { value: number }; startedAt: number | null; offset: number; stopped: boolean; gain: number; onended: (() => void) | null }
+/** The anchor of the take a source plays (its buffer names its file). */
+const anchorOf = (s: FakeSource): number => {
+    const file = (s.buffer as { url: string }).url;
+    for (const sound of Object.values(CUE_SOUNDS)) for (const t of sound?.takes ?? []) if (t.file === file) return t.anchorMs;
+    throw new Error(`no take plays ${file}`);
+};
+/** Every file a cue's row names. */
+const filesOf = (...kinds: number[]) => kinds.flatMap((k) => (CUE_SOUNDS[k]?.takes ?? []).map((t) => t.file));
 
 /** A stand-in AudioContext: a clock the test owns and a record of what was asked of it. */
 function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold?: boolean } = {}) {
@@ -295,8 +332,9 @@ function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold
     /** Held fetches, oldest first: each answers when the test releases it. */
     const held: { url: string; go: () => void }[] = [];
     let open = 0, widest = 0;
-    const samples = (n: number, from: number) => { const d = Float32Array.from({ length: n }, (_, i) => from + i);
-        return { numberOfChannels: 1, length: n, sampleRate: 24000, data: d, getChannelData: () => d }; };
+    // A buffer is four samples, a second long, and says which file it came from.
+    const samples = (n: number, from: number, url = '') => { const d = Float32Array.from({ length: n }, (_, i) => from + i);
+        return { numberOfChannels: 1, length: n, sampleRate: n, duration: 1, data: d, url, getChannelData: () => d }; };
     let decodedN = 0;
     let created = 0;
     const ctxs: any[] = [];
@@ -316,13 +354,13 @@ function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold
         createBufferSource() {
             const s: any = { buffer: null, playbackRate: { value: 1 }, startedAt: null, stopped: false, gain: 0, onended: null,
                 connect(g: any) { s.gainNode = g; },
-                start(when: number) { s.startedAt = when; s.gain = s.gainNode.gain.value; },
+                start(when: number, offset = 0) { s.startedAt = when; s.offset = offset; s.gain = s.gainNode.gain.value; },
                 stop() { s.stopped = true; } };
             sources.push(s);
             return s;
         }
         // Every file decodes to four samples of its own, so a buffer can be told from its reverse.
-        decodeAudioData(_bytes: ArrayBuffer, ok: (b: unknown) => void) { ok(samples(4, 10 * ++decodedN)); }
+        decodeAudioData(bytes: ArrayBuffer, ok: (b: unknown) => void) { ok(samples(4, 10 * ++decodedN, new TextDecoder().decode(bytes))); }
         createBuffer(_channels: number, length: number) { return samples(length, 0); }
     }
     const g = globalThis as any;
@@ -334,7 +372,7 @@ function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold
         widest = Math.max(widest, ++open);
         const answer = () => { open--; return opts.fail?.(url)
             ? { ok: false, status: 404, arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) }
-            : { ok: true, status: 200, arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) }; };
+            : { ok: true, status: 200, arrayBuffer: () => Promise.resolve(new TextEncoder().encode(url.replace('/audio/', '')).buffer) }; };
         if (!opts.hold) return Promise.resolve().then(answer);
         return new Promise((ok) => { held.push({ url, go: () => ok(answer()) }); });
     };
@@ -348,12 +386,12 @@ function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold
         /** Release held fetches one at a time until `done` (default: none is left). Bounded: a
          *  queue that never empties is a failure to report, not a test to hang in. */
         drain: async (done: () => boolean = () => held.length === 0) => {
-            for (let i = 0; i < 60 && !done(); i++) {
+            for (let i = 0; i < 400 && !done(); i++) {
                 assert.ok(held.length > 0, 'the engine stopped asking for files before the test was satisfied');
                 held.shift()!.go();
                 for (let k = 0; k < 8; k++) await new Promise((r) => setImmediate(r));
             }
-            assert.ok(done(), 'sixty fetches were answered and the test is still waiting');
+            assert.ok(done(), 'four hundred fetches were answered and the test is still waiting');
         },
         /** Let every fetch and decode finish. */
         settle: async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r)); },
@@ -394,7 +432,10 @@ test('a strike is a source started on the audio clock, that many milliseconds ah
         await fake.settle();
         assert.equal(engine.strike(ANIM_CUE_PLACE, 120), true);
         const s = fake.sources[fake.sources.length - 1];
-        assert.equal(s.startedAt, 10 + 0.12, 'currentTime + 120ms: scheduled, not played "now"');
+        assert.ok(anchorOf(s) > 0 && anchorOf(s) < 120, 'a landing\'s take has its peak a little way in');
+        assert.ok(Math.abs(s.startedAt! - (10 + 0.12 - anchorOf(s) / 1000)) < 1e-9,
+            'currentTime + 120ms, less the take\'s anchor: scheduled so that its moment falls on the cue\'s');
+        assert.equal(s.offset, 0, 'and played from its first sample');
         assert.equal(s.playbackRate.value, 1);
         assert.equal(s.gain, CUE_SOUNDS[ANIM_CUE_PLACE]!.gain, 'at the level the table gives this cue');
         engine.unlock();
@@ -408,7 +449,7 @@ test('every file the table names is fetched once, from /audio/', async () => {
         const engine = new CueAudio();
         engine.unlock();
         await fake.settle();
-        const files = Object.values(CUE_SOUNDS).flatMap((s) => s?.files ?? []);
+        const files = Object.values(CUE_SOUNDS).flatMap((s) => (s?.takes ?? []).map((t) => t.file));
         assert.deepEqual([...fake.fetched].sort(), files.map((f) => `/audio/${f}`).sort());
         for (const f of files) assert.ok(engine.loaded(f), `${f} decoded`);
     } finally { fake.restore(); }
@@ -420,10 +461,11 @@ test('pitch and level wander only as far as the table lets them, and a note does
         const engine = new CueAudio();
         engine.unlock();
         await fake.settle();
-        const place = CUE_SOUNDS[ANIM_CUE_PLACE]!;
+        const place = CUE_SOUNDS[ANIM_CUE_HAND_OFF]!;
+        assert.ok(place.pitch > 0, 'a stand-in wanders, which is the case under test');
         for (const r of [0, 0.999999]) {
             engine.random = () => r;
-            assert.ok(engine.strike(ANIM_CUE_PLACE));
+            assert.ok(engine.strike(ANIM_CUE_HAND_OFF));
             const s = fake.sources[fake.sources.length - 1];
             assert.ok(Math.abs(s.playbackRate.value - 1) <= place.pitch + 1e-9 && Math.abs(s.playbackRate.value - 1) > place.pitch * 0.9,
                 `at the edge of the dice the pitch is at the edge of its range (${s.playbackRate.value})`);
@@ -435,21 +477,70 @@ test('pitch and level wander only as far as the table lets them, and a note does
         const note = fake.sources[fake.sources.length - 1];
         assert.equal(note.playbackRate.value, 1, 'a cue with a pitch to keep keeps it');
         assert.equal(note.gain, CUE_SOUNDS[ANIM_CUE_GOOD]!.gain);
+        engine.random = () => 0;
+        assert.ok(engine.strike(ANIM_CUE_PLACE));
+        const model = fake.sources[fake.sources.length - 1];
+        assert.equal(model.playbackRate.value, 1, 'nor does a modelled card sound: its takes already vary as the recordings did');
+        assert.equal(model.gain, CUE_SOUNDS[ANIM_CUE_PLACE]!.gain, 'in pitch and in level');
     } finally { fake.restore(); }
 });
 
-test('a cue that stands for many cards is heavier, up to a ceiling', async () => {
+test('a sweep plays the most strokes its cards ask for that fit the quiet before it', () => {
+    const sweep = CUE_SOUNDS[ANIM_CUE_SWEEP]!;
+    assert.equal(sweep.cardsPerLevel, 2.5, 'a stroke gathers about two and a half cards (disc_game.py)');
+    assert.equal(wantedLevel(sweep, 1), 1, 'one card is one stroke');
+    assert.equal(wantedLevel(sweep, 4), 2);
+    assert.equal(wantedLevel(sweep, 10), 4);
+    assert.equal(wantedLevel(sweep, 30), 5, 'and never more than five');
+    const lead = (ts: readonly { anchorMs: number }[]) => Math.max(...ts.map((t) => t.anchorMs));
+    const roomy = takesFor(sweep, 10, 5000);
+    assert.ok(roomy.every((t) => t.level === 4), 'all the room it wants: four strokes for ten cards');
+    const tight = takesFor(sweep, 10, lead(takesFor(sweep, 2, 5000)));
+    assert.ok(tight.every((t) => t.level <= 2 && t.anchorMs <= lead(takesFor(sweep, 2, 5000))),
+        'less room: fewer strokes, and only takes whose gathering fits it');
+    assert.ok(takesFor(sweep, 10, 0).every((t) => t.level === 0), 'no room at all: the lift alone, never a cue moved');
+    assert.ok(takesFor(sweep, 10, 5000, true).every((t) => t.level === 0), 'and a revert is the bare gesture, backwards');
+    assert.equal(sweep.perCard, 0, 'heavier for more cards by its strokes, not by a gain');
+    const place = CUE_SOUNDS[ANIM_CUE_PLACE]!;
+    assert.equal(takesFor(place, 3, 0), place.takes, 'a row with no levels plays any of its takes');
+});
+
+test('a take is started its anchor early, or that far into the file when the moment is too near', async () => {
     const fake = fakeAudio();
     try {
         const engine = new CueAudio();
         engine.random = () => 0.5;
         engine.unlock();
         await fake.settle();
-        const sweep = CUE_SOUNDS[ANIM_CUE_SWEEP]!;
-        const gainFor = (n: number) => { engine.strike(ANIM_CUE_SWEEP, 0, n); return fake.sources[fake.sources.length - 1].gain; };
-        assert.equal(gainFor(1), sweep.gain);
-        assert.ok(Math.abs(gainFor(4) - sweep.gain * (1 + 3 * sweep.perCard)) < 1e-9, 'three cards past the first');
-        assert.ok(Math.abs(gainFor(40) - sweep.gain * 1.6) < 1e-9, 'and never more than 60% over');
+        // A lift's grab and thumb slide come before the card leaves.
+        assert.ok(engine.strike(ANIM_CUE_LIFT, 1000));
+        let s = fake.sources[fake.sources.length - 1];
+        assert.ok(anchorOf(s) > 150);
+        assert.ok(Math.abs(s.startedAt! - (11 - anchorOf(s) / 1000)) < 1e-9 && s.offset === 0, 'early enough to be heard whole');
+        // Struck for NOW, as a run's first move is: the moment stays where the
+        // kernel put it, and the part of the gesture before it is not heard.
+        assert.ok(engine.strike(ANIM_CUE_LIFT, 0));
+        s = fake.sources[fake.sources.length - 1];
+        assert.equal(s.startedAt, 10, 'started at once');
+        assert.ok(Math.abs(s.offset - anchorOf(s) / 1000) < 1e-9, 'that far into the file, so its moment is now');
+        // A negative anchor: the slide on starts after its landing.
+        assert.ok(engine.strike(ANIM_CUE_PASS, 100));
+        s = fake.sources[fake.sources.length - 1];
+        assert.ok(anchorOf(s) < 0 && s.startedAt! > 10.1, 'a take that comes after its moment starts after it');
+        // A landing at a far seat is quieter by the gain it is struck with.
+        assert.ok(engine.strike(ANIM_CUE_DEAL_LAND, 100, 1, 0, Infinity, 0.5));
+        s = fake.sources[fake.sources.length - 1];
+        assert.equal(s.gain, CUE_SOUNDS[ANIM_CUE_DEAL_LAND]!.gain * 0.5, 'a far seat\'s landing is struck at that seat\'s gain');
+        // A sweep with room for its strokes, and one without.
+        assert.ok(engine.strike(ANIM_CUE_SWEEP, 1500, 10, 0, 1500));
+        s = fake.sources[fake.sources.length - 1];
+        assert.ok(anchorOf(s) > 600 && s.offset === 0, 'its gathering heard whole before the sweep opens');
+        assert.ok(engine.strike(ANIM_CUE_SWEEP, 1500, 10, 0, 0));
+        s = fake.sources[fake.sources.length - 1];
+        assert.ok(anchorOf(s) < 150, 'no room: the lift alone');
+        assert.ok(engine.strike(ANIM_CUE_SWEEP, 300, 10, 0, 5000));
+        s = fake.sources[fake.sources.length - 1];
+        assert.ok(anchorOf(s) <= 300 && s.offset === 0, 'and the room it has is no more than the time left before the moment');
     } finally { fake.restore(); }
 });
 
@@ -459,7 +550,7 @@ test('two files are two takes: the same one is never played twice running', asyn
         const engine = new CueAudio();
         engine.unlock();
         await fake.settle();
-        assert.equal(CUE_SOUNDS[ANIM_CUE_DEAL]!.files.length, 2, 'the deal has two takes, which is the case under test');
+        assert.ok(CUE_SOUNDS[ANIM_CUE_DEAL]!.takes.length >= 2, 'the deal has several takes, which is the case under test');
         let last: unknown = null;
         for (let i = 0; i < 12; i++) {
             assert.ok(engine.strike(ANIM_CUE_DEAL));
@@ -499,11 +590,11 @@ test('muting stops what was already scheduled', async () => {
         const engine = new CueAudio();
         engine.unlock();
         await fake.settle();
-        engine.strike(ANIM_CUE_SWEEP, 300);
+        engine.strike(ANIM_CUE_SWEEP, 3000);
         const s = fake.sources[fake.sources.length - 1];
         assert.equal(s.stopped, false);
         engine.setMuted(true);
-        assert.equal(s.stopped, true, 'a sound scheduled 300ms out does not play after the player hit mute');
+        assert.equal(s.stopped, true, 'a sound scheduled 3 s out does not play after the player hit mute');
         const before = fake.sources.length;
         assert.equal(engine.strike(ANIM_CUE_SWEEP), false, 'and with the context already open, a muted strike is still refused');
         assert.equal(fake.sources.length, before, 'nothing is even built for it');
@@ -569,7 +660,8 @@ test('a file that does not arrive silences its cue and no other', async () => {
 // ---- 3b. the order the files arrive in ---------------------------------------------------
 
 const short = (urls: string[]) => urls.map((u) => u.replace('/audio/gen/', ''));
-const ALL_FILES = Object.values(CUE_SOUNDS).flatMap((x) => x?.files ?? []).map((f) => f.replace('gen/', ''));
+const ALL_FILES = Object.values(CUE_SOUNDS).flatMap((x) => (x?.takes ?? []).map((t) => t.file)).map((f) => f.replace('gen/', ''));
+const bare = (files: string[]) => files.map((f) => f.replace('gen/', ''));
 
 test('before a gesture only the wanted cues are fetched, as bytes, and nothing at all unasked', async () => {
     const fake = fakeAudio();
@@ -579,16 +671,17 @@ test('before a gesture only the wanted cues are fetched, as bytes, and nothing a
         assert.deepEqual(fake.fetched, [], 'an engine nobody has told anything fetches nothing');
         engine.want(bits(ANIM_CUE_DEAL, ANIM_CUE_FLIP));
         await fake.settle();
-        assert.deepEqual(short(fake.fetched), ['deal_0.wav', 'deal_1.wav', 'flip_0.wav'], 'a lobby\'s three files, and only those');
+        const lobby = bare(filesOf(ANIM_CUE_DEAL, ANIM_CUE_FLIP));
+        assert.deepEqual(short(fake.fetched), lobby, 'a lobby\'s files, and only those');
         assert.equal(fake.created(), 0, 'with no audio context: a download is not a sound');
-        assert.equal(engine.loaded('gen/deal_0.wav'), false, 'so they are bytes, not yet buffers');
+        assert.equal(engine.loaded(filesOf(ANIM_CUE_DEAL)[0]), false, 'so they are bytes, not yet buffers');
         // The gesture: what was fetched is decoded, not fetched again, and the rest follows.
         engine.unlock();
         assert.equal(engine.strike(ANIM_CUE_DEAL), true, 'the very tap that unlocks audio can strike a wanted cue');
         await fake.settle();
         assert.equal(fake.sources.length, 1, 'and it is heard, off the bytes that were already here');
-        assert.deepEqual([...short(fake.fetched)].sort(), [...ALL_FILES].sort(), 'every file once, the three included');
-        assert.deepEqual(short(fake.fetched).slice(0, 3), ['deal_0.wav', 'deal_1.wav', 'flip_0.wav']);
+        assert.deepEqual([...short(fake.fetched)].sort(), [...ALL_FILES].sort(), 'every file once, the lobby\'s included');
+        assert.deepEqual(short(fake.fetched).slice(0, lobby.length), lobby);
     } finally { fake.restore(); }
 });
 
@@ -598,13 +691,12 @@ test('the wanted cues are fetched first, a few at a time, and the rest in the ta
         const engine = new CueAudio();
         engine.want(bits(ANIM_CUE_COVER, ANIM_CUE_PICKUP));
         engine.unlock();
-        assert.deepEqual(fake.waiting(), ['cover_0.wav', 'cover_1.wav', 'pickup_0.wav'], 'three at once, and they are the wanted three');
-        await fake.release(1);
-        assert.deepEqual(short(fake.fetched)[3], 'deal_0.wav', 'a place frees, and the first unwanted file takes it');
+        const wantedFiles = bare(filesOf(ANIM_CUE_PICKUP, ANIM_CUE_COVER).sort((a, b) => ALL_FILES.indexOf(a.replace('gen/', '')) - ALL_FILES.indexOf(b.replace('gen/', ''))));
+        assert.deepEqual(fake.waiting(), wantedFiles.slice(0, 3), 'three at once, and they are wanted ones');
         await fake.drain();
         assert.equal(fake.widest(), 3, 'never more than three in flight');
-        assert.deepEqual(short(fake.fetched), ['cover_0.wav', 'cover_1.wav', 'pickup_0.wav',
-            ...ALL_FILES.filter((f) => !f.startsWith('cover') && !f.startsWith('pickup'))]);
+        assert.deepEqual(short(fake.fetched), [...wantedFiles, ...ALL_FILES.filter((f) => !wantedFiles.includes(f))],
+            'every wanted file first, in the table\'s order, and then the rest in it');
     } finally { fake.restore(); }
 });
 
@@ -613,12 +705,13 @@ test('a board that changes re-orders what has not started, and disturbs nothing 
     try {
         const engine = new CueAudio();
         engine.unlock();
-        assert.deepEqual(fake.waiting(), ['deal_0.wav', 'deal_1.wav', 'flip_0.wav'], 'nothing wanted: the table\'s order');
+        const first = ALL_FILES.slice(0, 3);
+        assert.deepEqual(fake.waiting(), first, 'nothing wanted: the table\'s order');
         // The board moves on: now the end of a game is what could be heard next.
-        engine.want(bits(ANIM_CUE_FINISH, ANIM_CUE_FOOL, ANIM_CUE_DEAL));
-        assert.deepEqual(fake.waiting(), ['deal_0.wav', 'deal_1.wav', 'flip_0.wav'], 'the three already on their way are left alone');
+        engine.want(bits(ANIM_CUE_FINISH, ANIM_CUE_FOOL));
+        assert.deepEqual(fake.waiting(), first, 'the three already on their way are left alone');
         await fake.release(1);
-        assert.equal(short(fake.fetched)[3], 'finish_0.wav', 'the next place goes to a wanted file, over ten files ahead of it in the table');
+        assert.equal(short(fake.fetched)[3], 'finish_0.wav', 'the next place goes to a wanted file, far ahead of it in the table');
         await fake.release(1);
         assert.equal(short(fake.fetched)[4], 'fool_0.wav');
         engine.want(bits(ANIM_CUE_FINISH, ANIM_CUE_FOOL, ANIM_CUE_DEAL));
@@ -636,21 +729,22 @@ test('a strike whose file is on its way waits for it, and is dropped if the wait
         engine.random = () => 0.5;
         engine.unlock();
         // In time: struck 50ms out, the file lands while that moment is still ahead.
-        assert.equal(engine.strike(ANIM_CUE_FLIP, 50), true, 'waiting is not silence');
+        assert.equal(engine.strike(ANIM_CUE_GOOD, 50), true, 'waiting is not silence');
         assert.equal(fake.sources.length, 0);
-        await fake.release(3);
+        await fake.drain(() => filesOf(ANIM_CUE_GOOD).every((f) => engine.loaded(f)));
         assert.equal(fake.sources.length, 1, 'it starts as its file decodes');
         assert.equal(fake.sources[0].startedAt, 10 + 0.05, 'at the moment it was aimed at, not at the moment the file arrived');
         // A little late: the clock is 60ms past the aim when the file lands. Played, now.
-        assert.equal(engine.strike(ANIM_CUE_PICKUP, 0), true);
+        assert.equal(engine.strike(ANIM_CUE_FOOL, 0), true);
         fake.ctxs[0].currentTime = 10.06;
-        await fake.drain(() => engine.loaded('gen/pickup_0.wav'));
+        await fake.drain(() => filesOf(ANIM_CUE_FOOL).every((f) => engine.loaded(f)));
         assert.equal(fake.sources.length, 2, '60ms behind is still a sound');
         assert.equal(fake.sources[1].startedAt, 10.06, 'started at once, since its moment has passed');
+        assert.ok(Math.abs(fake.sources[1].offset - 0.06) < 1e-9, 'that far into the file, so it ends where it would have');
         // Too late: half a second behind. Dropped, and never played afterwards.
-        assert.equal(engine.strike(ANIM_CUE_SWEEP, 0), true);
+        assert.equal(engine.strike(ANIM_CUE_FINISH, 0), true);
         fake.ctxs[0].currentTime = 10.6;
-        await fake.drain(() => engine.loaded('gen/sweep_0.wav'));
+        await fake.drain(() => filesOf(ANIM_CUE_FINISH).every((f) => engine.loaded(f)));
         assert.equal(fake.sources.length, 2, 'a sound half a second late is a mistake, so it is not made');
         await fake.settle();
         assert.equal(fake.sources.length, 2);
@@ -664,7 +758,7 @@ test('a cue that is struck jumps the queue, whatever the board said', async () =
         engine.unlock();
         assert.equal(engine.strike(ANIM_CUE_FOOL), true);
         await fake.release(1);
-        assert.equal(short(fake.fetched)[3], 'fool_0.wav', 'the last file in the table is the next one fetched');
+        assert.equal(short(fake.fetched)[3], 'fool_0.wav', 'a file at the end of the table is the next one fetched');
     } finally { fake.restore(); }
 });
 
@@ -692,9 +786,9 @@ test('a strike that was waiting does not outlive a cancel', async () => {
     try {
         const engine = new CueAudio();
         engine.unlock();
-        engine.strike(ANIM_CUE_FLIP, 20);
+        engine.strike(ANIM_CUE_FOOL, 20);
         engine.cancel();
-        await fake.release(3);
+        await fake.drain(() => filesOf(ANIM_CUE_FOOL).every((f) => engine.loaded(f)));
         assert.equal(fake.sources.length, 0, 'a seek or a mute takes the waiting strikes with it');
     } finally { fake.restore(); }
 });
@@ -708,19 +802,26 @@ test('a revert plays the undone cue\'s own file reversed, at that cue\'s level, 
         engine.random = () => 0.5;
         engine.unlock();
         await fake.settle();
-        assert.ok(engine.strike(ANIM_CUE_PICKUP));
-        const forwards = fake.sources[0].buffer as any;
-        assert.ok(engine.strike(ANIM_CUE_REVERT, 40, 1, ANIM_CUE_PICKUP));
-        const back = fake.sources[1];
-        assert.notEqual(back.buffer, forwards, 'not the same buffer');
-        assert.deepEqual([...(back.buffer as any).data], [...forwards.data].reverse(), 'the same samples, last first');
-        assert.equal(back.gain, CUE_SOUNDS[ANIM_CUE_PICKUP]!.gain, 'at the level of the cue it undoes');
-        assert.equal(back.startedAt, 10 + 0.04);
-        assert.deepEqual([...forwards.data], [...(fake.sources[0].buffer as any).data], 'and the forward buffer is not disturbed');
-        assert.ok(engine.strike(ANIM_CUE_REVERT, 0, 1, ANIM_CUE_PICKUP));
-        assert.equal(fake.sources[2].buffer, back.buffer, 'the reversed buffer is made once and kept');
-        assert.ok(engine.strike(ANIM_CUE_PICKUP));
-        assert.equal(fake.sources[3].buffer, forwards, 'and the cue itself still plays forwards');
+        // One take each way, so the reversed buffer can be held to its own forwards.
+        const one = { ...CUE_SOUNDS[ANIM_CUE_PICKUP]! };
+        const pickup = one.takes[0];
+        (CUE_SOUNDS as Record<number, unknown>)[ANIM_CUE_PICKUP] = { ...one, takes: [pickup] };
+        try {
+            assert.ok(engine.strike(ANIM_CUE_PICKUP, 500));
+            const forwards = fake.sources[0].buffer as any;
+            assert.ok(engine.strike(ANIM_CUE_REVERT, 1500, 1, ANIM_CUE_PICKUP));
+            const back = fake.sources[1];
+            assert.notEqual(back.buffer, forwards, 'not the same buffer');
+            assert.deepEqual([...(back.buffer as any).data], [...forwards.data].reverse(), 'the same samples, last first');
+            assert.equal(back.gain, one.gain, 'at the level of the cue it undoes');
+            assert.ok(Math.abs(back.startedAt! - (11.5 - (1 - pickup.anchorMs / 1000))) < 1e-9,
+                'its anchor measured from the file\'s other end: the reversed take peaks on the revert\'s moment');
+            assert.deepEqual([...forwards.data], [...(fake.sources[0].buffer as any).data], 'and the forward buffer is not disturbed');
+            assert.ok(engine.strike(ANIM_CUE_REVERT, 0, 1, ANIM_CUE_PICKUP));
+            assert.equal(fake.sources[2].buffer, back.buffer, 'the reversed buffer is made once and kept');
+            assert.ok(engine.strike(ANIM_CUE_PICKUP));
+            assert.equal(fake.sources[3].buffer, forwards, 'and the cue itself still plays forwards');
+        } finally { (CUE_SOUNDS as Record<number, unknown>)[ANIM_CUE_PICKUP] = one; }
     } finally { fake.restore(); }
 });
 
@@ -730,11 +831,12 @@ test('a revert that had to wait for its file is still played backwards', async (
         const engine = new CueAudio();
         engine.unlock();
         assert.equal(engine.strike(ANIM_CUE_REVERT, 30, 1, ANIM_CUE_PICKUP), true, 'the undone cue\'s file is what it waits on');
-        await fake.drain(() => engine.loaded('gen/pickup_0.wav'));
+        await fake.drain(() => filesOf(ANIM_CUE_PICKUP).every((f) => engine.loaded(f)));
         assert.equal(fake.sources.length, 1);
-        const back = [...(fake.sources[0].buffer as any).data];
-        assert.ok(engine.strike(ANIM_CUE_PICKUP));
-        assert.deepEqual(back, [...(fake.sources[1].buffer as any).data].reverse(), 'reversed, though it was started late');
+        const backBuf = fake.sources[0].buffer as any;
+        const file = backBuf.url === '' ? null : backBuf.url;
+        assert.equal(file, null, 'it plays a buffer made by reversing, not a decoded file');
+        assert.ok(backBuf.data[0] > backBuf.data[3], 'the samples run backwards');
     } finally { fake.restore(); }
 });
 
@@ -762,8 +864,8 @@ test('every cue the kernel can make has a row in the table', () => {
             + 'A cue that is meant to be silent gets `null`; one that is forgotten gets this.');
         const s = CUE_SOUNDS[kind];
         if (!s) continue;
-        assert.ok(s.files.length >= 1 && s.gain > 0 && s.gain <= 1 && s.pitch >= 0 && s.pitch < 0.2 && s.level >= 0 && s.level < 0.5,
-            `${ANIM_CUE_NAMES[kind]}: a file, a gain in (0, 1], and wander small enough to still be the same sound`);
+        assert.ok(s.takes.length >= 1 && s.gain > 0 && s.gain <= 1 && s.pitch >= 0 && s.pitch < 0.2 && s.level >= 0 && s.level < 0.5,
+            `${ANIM_CUE_NAMES[kind]}: a take, a gain in (0, 1], and wander small enough to still be the same sound`);
     }
     assert.ok(!(ANIM_CUE_NONE in CUE_SOUNDS), 'NONE is not a cue');
     const extra = Object.keys(CUE_SOUNDS).map(Number).filter((k) => !(k >= 1 && k < ANIM_N_CUES));
@@ -773,17 +875,20 @@ test('every cue the kernel can make has a row in the table', () => {
 test('a placeholder a row names is one soundgen writes, under the cue\'s own name; a recording is a committed file', () => {
     // The generator's own list of what it writes: name, cue id, rate, ms, bytes.
     const listing = execFileSync('make', ['-s', '--no-print-directory', '-C', join(REPO, 'tools/soundgen'), 'list'], { encoding: 'utf8' });
-    const written = new Map(listing.trim().split('\n').map((l) => l.split('\t')).map(([name, cue]) => [`gen/${name}`, Number(cue)]));
+    const rows = listing.trim().split('\n').map((l) => l.split('\t'));
+    const written = new Map(rows.map(([name, cue]) => [`gen/${name}`, Number(cue)]));
+    const anchors = new Map(rows.map(([name, , , , , anchor]) => [`gen/${name}`, Number(anchor)]));
     assert.ok(written.size >= ANIM_N_CUES - 2, `soundgen lists its files (${written.size})`);
     assert.ok(![...written.keys()].some((f) => f.includes('revert')), 'soundgen writes no revert: there is no such sound');
     const namedByTable = new Set<string>();
     for (let kind = 1; kind < ANIM_N_CUES; kind++) {
-        for (const file of CUE_SOUNDS[kind]?.files ?? []) {
+        for (const { file, anchorMs } of CUE_SOUNDS[kind]?.takes ?? []) {
             namedByTable.add(file);
             if (file.startsWith('gen/')) {
                 assert.equal(written.get(file), kind,
                     `${file} is named for ${ANIM_CUE_NAMES[kind]} but soundgen ${written.has(file) ? `writes it for cue ${written.get(file)}` : 'does not write it'}`);
                 assert.ok(file.startsWith(`gen/${ANIM_CUE_NAMES[kind].toLowerCase()}_`), `${file} carries its cue's name`);
+                assert.equal(anchorMs, anchors.get(file), `${file}: the table's anchor is the one soundgen wrote it with`);
             } else {
                 assert.ok(existsSync(join(REPO, 'public/audio', file)), `${file} is a recording, so it is committed under public/audio/`);
             }

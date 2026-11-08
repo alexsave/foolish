@@ -1,48 +1,50 @@
-// soundgen - the PLACEHOLDER sounds, synthesised.
+// soundgen - every sound the game plays, synthesised at build time.
 //
 // Every sound cue the kernel's animation plan can make (c/src/anim_plan.h
-// "sound cues") needs something to be heard as before anybody has recorded a
-// card. This writes one small WAV per cue (two for the ones heard most), from
-// nothing but filtered noise, short sines and envelopes, so the game is audible
-// end to end and the owner has something to dislike precisely.
+// "sound cues") is heard as a file this writes: the card sounds from the models
+// Alex approved by ear (c/models.c, ported from the Python prototypes in the
+// model folders beside this file), and the five cues nobody has modelled yet
+// (OUT, GOOD, HAND_OFF, FINISH, FOOL) from the first synthesised stand-ins
+// (c/placeholders.c). docs/AUDIO.md is the guide.
 //
-// THESE FILES ARE STAND-INS, AND THE HOSTS DO NOT KNOW THAT. A host plays a
-// file its cue table names (src/audio/cueSounds.ts); whether a human recorded
-// it or this program wrote it is not something the playback path can tell,
-// which is the whole point: replacing a placeholder with a recording is naming
-// a different file in that table and touches no logic. docs/AUDIO.md.
+// A FILE IS A WHOLE GESTURE, LINED UP ON ITS CUE. A card thrown in is a grab, a
+// thumb slide, a flight and a landing; the kernel strikes LIFT as the card
+// leaves and PLACE as it lands. So LIFT's file is the grab and the slide that
+// come BEFORE the card leaves, and every file carries an ANCHOR: how far into
+// the file its cue's moment is. The host starts the file that much early (or,
+// for a negative anchor, late). soundgen owns the anchors and writes them, with
+// the file list, into a generated table the web reads (src/audio/gen/cueTakes.ts).
+// The kernel owns WHEN; this owns what the moment sounds like and how much of
+// it comes before.
 //
-// NOTHING IT WRITES IS COMMITTED. The output is a build artifact, like the
-// generated layouts and the wasm: `npm run sounds` writes public/audio/gen/,
-// which is ignored, and the hooks that build the site run it. A recording is
-// the opposite - a source file, committed under public/audio/ - so the two can
-// never be confused for each other on disk.
+// TAKES AND LEVELS. Every card cue has several takes, as the models vary every
+// draw within the recordings' ranges. A sweep and a pickup are gathered in
+// strokes first, one stroke per ~2.5 cards (disc_game.py), so their takes come
+// in LEVELS, one per stroke count (0-5, 0 being the lift alone). The host
+// plays the most strokes the cue's cards ask for that fit in the quiet the plan
+// leaves before it (AnimCue.room_ms), so no cue is moved for them and they
+// never sound over the beat before.
 //
-// TIED TO THE KERNEL'S CUE LIST BY THE COMPILER. The recipe table below is
-// indexed by ANIM_CUE_* and sized by ANIM_N_CUES, so a cue added to
-// anim_plan.h without a line here does not build (see the _Static_assert).
+// THE LEVELS ARE THE MODELS'. Every part is placed at the level its *_game.py
+// sets on the deal's scale (g = -34..-32 dBFS), and the whole set is lifted by
+// one constant, LIFT_DB, so the loudest take peaks near full scale. Balancing
+// the cues against each other is Alex's, by ear, on /sounds (the gain column of
+// src/audio/cueSounds.ts), and is not decided here.
 //
-// DETERMINISTIC: the noise is the tree's one stream generator (shared/c/rng.h,
-// splitmix64), seeded per cue and variant, and nothing reads a clock, so
-// two runs on one machine write the same bytes. Across machines the bytes can
-// differ in the last bit (libm's sin and exp are not bit-identical everywhere),
-// which is one more reason the output is not committed.
+// NOTHING IT WRITES IS COMMITTED: `npm run sounds` writes public/audio/gen/ and
+// src/audio/gen/, both ignored, and the hooks that build the site run it.
 //
-//   soundgen write <dir>   write every file into <dir>
-//   soundgen list          one line a file: name, cue id, rate, length, bytes
-//   soundgen stats         the same, measured: peak, RMS and spectral centroid,
-//                          the three numbers a recording is compared against
-//                          when a recipe is tuned to replicate one
+// TIED TO THE KERNEL'S CUE LIST BY THE COMPILER: the table below is indexed by
+// ANIM_CUE_* and sized by ANIM_N_CUES (the _Static_assert).
 //
-// HOW A SOUND IS BUILT. Four layers, added into one buffer:
-//   burst   band-passed noise with a sharp attack and an exponential tail,
-//           its band sweeping - paper leaving paper, a card's edge on felt
-//   swell   the same noise under a slow rise and fall - cards sliding
-//   thump   a short sine falling in pitch - the table answering a card
-//   tone    a soft mallet note - the sounds that are not cards at all
-// plus `tick`, two cycles of a windowed sine, for the first millisecond of a
-// contact. A card sound is a tick and a burst over a thump; everything else is
-// arithmetic on those.
+// DETERMINISTIC: every draw is shared/c/rng.h seeded per cue, level and take,
+// and nothing reads a clock. Across machines the last bit can differ (libm).
+//
+//   soundgen write <dir> <ts>   every file into <dir>, the take table into <ts>
+//   soundgen list               one line a file: name, cue id, rate, ms, bytes, anchor ms
+//   soundgen stats              the same, with peak and RMS
+//   soundgen parts <dir>        each model on its own at 48 kHz, 12 takes, named
+//                               as its Python names them: what measure.py compares
 
 #include <math.h>
 #include <stdint.h>
@@ -51,397 +53,403 @@
 #include <string.h>
 
 #include "anim_plan.h"
-#include "rng.h"
+#include "c/dsp.h"
+#include "c/models.h"
+#include "c/placeholders.h"
 
-#define PI 3.14159265358979f
-#define MAX_SAMPLES 48000   // two seconds at the highest rate used; nothing is near it
+#define S_(sec) ((int)((sec) * SR))
+static double db2(double db) { return pow(10, db / 20); }
 
-typedef struct {
-    float    x[MAX_SAMPLES];
-    int      n;      // samples in use
-    int      rate;   // Hz
-    uint64_t rng;    // shared/c/rng.h state
-} Buf;
+// The whole set up by this much from the models' deal scale (g = -34..-32
+// dBFS), which was a listening level, not a file level: the loudest take then
+// peaks at about -3 dBFS. One number for every cue, so the balance between
+// them is the models' own.
+#define LIFT_DB 32.0
+// Silence is trimmed off both ends of a take below this, re its peak.
+#define TRIM_DB -60.0
+// A sweep's whole take, strokes and lift, never starts longer than this before
+// its moment: the bout-end hold (1500 ms) behind a cover's tail (anim_plan.h
+// ANIM_SOUND_ROOM_GUARD_MS) and a seat's out is the longest quiet a plan leaves
+// before one (1285-1375 ms), so a longer gathering could never be heard whole.
+// The strokes and their gaps are compressed together to fit (Alex: "trim/
+// compress the strokes to fit rather than moving any cue"), never shorter than
+// 150 ms nor closer than 30 ms.
+#define STROKES_MAX_S 1.25
+#define MAX_LEVEL 5
 
-// ---- noise ----------------------------------------------------------------
-static float noise(Buf *b) {
-    return (float)(int32_t)rng_u32(&b->rng) / 2147483648.0f;
+// ---- a take being assembled -----------------------------------------------------
+// A timeline at 48 kHz with the cue's moment at sample CUE0; parts are added at
+// their offsets from it, and the take is trimmed and resampled at the end.
+#define CUE0 S_(2.5)
+#define SPAN S_(4.5)
+typedef struct { Sig mix; Rng r; double g; } Take;
+static void take_init(Take *t, uint64_t seed) { t->mix = sig_new(SPAN); rng_init(&t->r, seed); t->g = uni(&t->r, -34, -32); }
+// Add `part` with its sample `ref` at `at_s` from the cue, its peak at `db` (the games' put()).
+static void put_peak(Take *t, Sig part, int ref, double at_s, double db) {
+    const double k = db2(db + LIFT_DB) / (sig_peak(part.x, part.n) + 1e-12);
+    const int o = CUE0 + S_(at_s) - ref;
+    for (int i = 0; i < part.n; i++) if (o + i >= 0 && o + i < SPAN) t->mix.x[o + i] += part.x[i] * k;
+    sig_free(&part);
+}
+// ...or with its loudest 50 ms RMS (150 Hz-15 kHz) at `db` (disc_game.py's put()).
+static void put_rms50(Take *t, Sig part, int ref, double at_s, double db) {
+    Sig b = bp_copy(&part, 150, 15000);
+    const double m = max_moving_rms(&b, 2400, 0, b.n);
+    sig_free(&b);
+    const double k = db2(db + LIFT_DB) / (m + 1e-12);
+    const int o = CUE0 + S_(at_s) - ref;
+    for (int i = 0; i < part.n; i++) if (o + i >= 0 && o + i < SPAN) t->mix.x[o + i] += part.x[i] * k;
+    sig_free(&part);
 }
 
-// ---- a band-pass, RBJ's, constant peak gain --------------------------------
-typedef struct { float b0, b2, a1, a2, z1, z2; } Band;
-static void band_set(Band *f, float hz, float q, int rate) {
-    if (hz > 0.45f * rate) hz = 0.45f * rate;
-    const float w = 2 * PI * hz / rate, alpha = sinf(w) / (2 * q), a0 = 1 + alpha;
-    f->b0 = alpha / a0; f->b2 = -alpha / a0;
-    f->a1 = -2 * cosf(w) / a0; f->a2 = (1 - alpha) / a0;
+// ---- the gestures: each *_game.py at the kernel's moments -------------------------
+// DEAL (deal/an/deal_game.py): the thumb slide's peak 130 ms before the grab,
+// the grab at the moment the card leaves the stock.
+static void g_deal(Take *t, int level) {
+    (void)level;
+    Sig s = m_thumb(&t->r); put_peak(t, s, sig_argmax_abs(&s), -0.13, t->g - uni(&t->r, 6, 9));
+    Sig g = m_grab(&t->r); put_peak(t, g, sig_argmax_abs(&g), 0, t->g - 5.0);
 }
-static float band_run(Band *f, float x) {
-    const float y = f->b0 * x + f->z1;
-    f->z1 = -f->a1 * y + f->z2;
-    f->z2 = f->b2 * x - f->a2 * y;
-    return y;
+// DEAL_LAND: the card on the cloth, land229, quietest of the three. At the
+// viewer's own seat; the host scales it by the seat (anim_seat_gain_pm).
+static void g_deal_land(Take *t, int level) {
+    (void)level;
+    Sig l = m_land(&t->r); put_peak(t, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 13, 16));
 }
-
-static int at(const Buf *b, float ms) { return (int)(ms * b->rate / 1000.0f); }
-
-// ---- the layers -------------------------------------------------------------
-
-// Band-passed noise from `at_ms`, `len_ms` long, the band's centre sliding
-// f0 -> f1. The envelope is a fast rise (atk_ms) into an exponential tail
-// (dec_ms): the shape of anything that is struck.
-static void burst(Buf *b, float at_ms, float len_ms, float f0, float f1, float q,
-                  float atk_ms, float dec_ms, float gain) {
-    Band f = {0};
-    const int i0 = at(b, at_ms), n = at(b, len_ms);
-    const float atk = atk_ms * b->rate / 1000.0f, dec = dec_ms * b->rate / 1000.0f;
-    for (int i = 0; i < n && i0 + i < MAX_SAMPLES; i++) {
-        if ((i & 15) == 0) band_set(&f, f0 + (f1 - f0) * (float)i / (float)n, q, b->rate);
-        const float env = (1 - expf(-(float)i / atk)) * expf(-(float)i / dec);
-        b->x[i0 + i] += gain * env * band_run(&f, noise(b));
+// TURN (flip/an/flip_game.py): the trump flipped, its snap as it leaves the stock.
+static void g_turn(Take *t, int level) {
+    (void)level;
+    Sig f = m_flip(&t->r); put_peak(t, f, S_(FLIP_REF_S), 0, t->g - 5.0);
+}
+// FLIP: the trump landing (a throw-in, Alex: "similar to a throw in"), then the
+// stock set down on it 350 ms later ("350 ms after trump lands is fine"). Baked
+// into one file because nothing on screen moves at the set-down: there is no
+// moment for the kernel to name, only the sound's own rhythm.
+static void g_flip_land(Take *t, int level) {
+    (void)level;
+    Sig l = m_throw(&t->r); put_peak(t, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 9, 12));
+    Sig d = m_deck(&t->r); put_peak(t, d, S_(DECK_REF_S), 0.35, t->g - uni(&t->r, 3, 6));
+}
+// LIFT (throwin/an/throwin_game.py): two fingers take the card, the thumb slides
+// it out, it leaves: the grab 110 ms before the slide's peak, the slide's peak
+// 130 ms before the card leaves. The same for an attack, a cover and a pass.
+static void g_lift(Take *t, int level) {
+    (void)level;
+    Sig s = m_thumb(&t->r); put_peak(t, s, sig_argmax_abs(&s), -0.13, t->g - uni(&t->r, 6, 9));
+    Sig g = m_tgrab(&t->r); put_peak(t, g, S_(TGRAB_REF_S), -0.24, t->g - 14.0);
+}
+// PLACE: the throw-in's landing.
+static void g_place(Take *t, int level) {
+    (void)level;
+    Sig l = m_throw(&t->r); put_peak(t, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 3, 5));
+}
+// COVER: the cover's landing, on a card.
+static void g_cover(Take *t, int level) {
+    (void)level;
+    Sig l = m_cover(&t->r); put_peak(t, l, sig_argmax_abs(&l), 0, t->g - uni(&t->r, 4, 6));
+}
+// PASS (pass/an/pass_game.py): struck at the transfer's landing, beside its
+// PLACE; the "shfff" starts 150 ms after it.
+static void g_pass(Take *t, int level) {
+    (void)level;
+    Sig p = m_pass(&t->r); put_peak(t, p, S_(PASS_REF_S), 0.15, t->g - uni(&t->r, 11, 13));
+}
+// The strokes gathering the table (discard/an/disc_game.py), ending `gap` before
+// the cue, at `sc` (their 50 ms RMS), compressed to STROKES_MAX_S.
+static void strokes(Take *t, int count, double gap, double sc) {
+    if (count <= 0) return;
+    double d[MAX_LEVEL], gp[MAX_LEVEL], total = 0, gaps = 0;
+    for (int s = 0; s < count; s++) {
+        double v = m_stroke_dur(&t->r) * 0.8 * uni(&t->r, 0.9, 1.1);
+        d[s] = v < 0.25 ? 0.25 : v > 0.7 ? 0.7 : v;
+        gp[s] = s < count - 1 ? uni(&t->r, 0.06, 0.2) : 0;
+        total += d[s]; gaps += gp[s];
     }
-    if (i0 + n > b->n) b->n = i0 + n < MAX_SAMPLES ? i0 + n : MAX_SAMPLES;
-}
-
-// The same noise under a slow rise to `peak` (0..1 of the way through) and a
-// fall after it. `rough` (0..1) is how much a second, slow noise shakes the
-// level: a slide over felt is not smooth, and one that is sounds like a hiss.
-static void swell(Buf *b, float at_ms, float len_ms, float f0, float f1, float q,
-                  float peak, float rough, float gain) {
-    // Two bands in series: a slide has no top end to speak of, and one band's
-    // skirts let enough of it through to turn felt into a hiss.
-    Band f = {0}, g = {0}, r = {0};
-    band_set(&r, 38.0f, 0.7f, b->rate);
-    const int i0 = at(b, at_ms), n = at(b, len_ms);
-    for (int i = 0; i < n && i0 + i < MAX_SAMPLES; i++) {
-        if ((i & 15) == 0) {
-            band_set(&f, f0 + (f1 - f0) * (float)i / (float)n, q, b->rate);
-            g.b0 = f.b0; g.b2 = f.b2; g.a1 = f.a1; g.a2 = f.a2;
+    // Compressed to fit, never moved: the strokes and their gaps scale down
+    // together until the gathering fits the longest quiet a plan leaves.
+    const double room = STROKES_MAX_S - gap - STROKE_PRE_S - EVENT_PRE_S;
+    if (total + gaps > room) {
+        const double f = room / (total + gaps);
+        total = gaps = 0;
+        for (int s = 0; s < count; s++) {
+            d[s] = d[s] * f < 0.15 ? 0.15 : d[s] * f;
+            gp[s] = gp[s] * f < 0.03 && s < count - 1 ? 0.03 : gp[s] * f;
+            total += d[s]; gaps += gp[s];
         }
-        const float t = (float)i / (float)n;
-        const float e = t < peak ? t / peak : (1 - t) / (1 - peak);
-        const float shake = 1 + rough * 9.0f * band_run(&r, noise(b));
-        b->x[i0 + i] += gain * e * e * (shake < 0 ? 0 : shake) * band_run(&g, band_run(&f, noise(b)));
     }
-    if (i0 + n > b->n) b->n = i0 + n < MAX_SAMPLES ? i0 + n : MAX_SAMPLES;
-}
-
-// A sine falling f0 -> f1 under an exponential tail: the low end of a contact.
-static void thump(Buf *b, float at_ms, float f0, float f1, float dec_ms, float gain) {
-    const int i0 = at(b, at_ms), n = at(b, dec_ms * 5);
-    const float dec = dec_ms * b->rate / 1000.0f;
-    float ph = 0;
-    for (int i = 0; i < n && i0 + i < MAX_SAMPLES; i++) {
-        const float k = expf(-(float)i / dec);
-        ph += 2 * PI * (f1 + (f0 - f1) * k) / b->rate;
-        b->x[i0 + i] += gain * k * sinf(ph);
+    double at = -gap - total - gaps;                     // the first stroke's onset, from the cue
+    for (int s = 0; s < count; s++) {
+        Sig y = m_stroke(&t->r, d[s]);
+        put_rms50(t, y, S_(STROKE_PRE_S), at, sc - 1.5 + 3.0 * s / (count > 1 ? count - 1 : 1) - uni(&t->r, 0, 1.5));
+        at += d[s] + gp[s];
     }
-    if (i0 + n > b->n) b->n = i0 + n < MAX_SAMPLES ? i0 + n : MAX_SAMPLES;
+}
+// SWEEP: `level` strokes, then 100-180 ms on the pile lifted and turned, struck
+// as the sweep opens. Every level of disc_game.py's own: the strokes at g-30.5.
+static void g_sweep(Take *t, int level) {
+    const double sc = t->g - 30.5, gap = uni(&t->r, 0.10, 0.18);
+    strokes(t, level, gap, sc);
+    Sig l = m_lift(&t->r); put_rms50(t, l, S_(EVENT_PRE_S), 0, sc + 5);
+}
+// PILE: the swept cards set softly on the discard pile, as they land.
+static void g_pile(Take *t, int level) {
+    (void)level;
+    Sig p = m_place(&t->r); put_rms50(t, p, S_(EVENT_PRE_S), 0, t->g - 30.5 + 3);
+}
+// PICKUP: `level` strokes, then 50-120 ms on the one soft lift, as the table lifts.
+// SHIPPED WITHOUT ITS STROKES (levels 0 in RECIPES): a pickup opens its run or
+// follows the attack it answers by one gap, so a plan never leaves any quiet
+// before one (c/tests/tests.c prints it: 0 of 83 pickups in real games), and a
+// take that cannot be heard is bytes every player fetches. Give it levels when
+// a plan leaves room.
+static void g_pickup(Take *t, int level) {
+    const double sc = t->g - 30.5, gap = uni(&t->r, 0.05, 0.12);
+    strokes(t, level, gap, sc);
+    Sig l = m_plift(&t->r); put_rms50(t, l, S_(EVENT_PRE_S), 0, sc - 10);
+}
+// INTO_HAND: the cards slid into the fanned hand as they land, its onset there.
+static void g_into_hand(Take *t, int level) {
+    (void)level;
+    Sig s = m_insert(&t->r); put_rms50(t, s, S_(STROKE_PRE_S), 0, t->g - 30.5 - 11);
 }
 
-// Two cycles of a sine under a Hann window: the first millisecond of a touch.
-static void tick(Buf *b, float at_ms, float hz, float gain) {
-    const int i0 = at(b, at_ms), n = (int)(2.0f * b->rate / hz);
-    for (int i = 0; i < n && i0 + i < MAX_SAMPLES; i++) {
-        const float w = 0.5f - 0.5f * cosf(2 * PI * (float)i / (float)n);
-        b->x[i0 + i] += gain * w * sinf(2 * PI * hz * (float)i / b->rate);
-    }
-    if (i0 + n > b->n) b->n = i0 + n < MAX_SAMPLES ? i0 + n : MAX_SAMPLES;
-}
-
-// A soft mallet note: a sine and a quiet third partial, a 2ms rise and an
-// exponential tail. `bend` is how far the pitch has fallen by the end of the
-// tail, as a fraction (0 for none) - the one thing that makes a note sag.
-static void tone(Buf *b, float at_ms, float hz, float dec_ms, float bend, float gain) {
-    const int i0 = at(b, at_ms), n = at(b, dec_ms * 4.5f);
-    const float dec = dec_ms * b->rate / 1000.0f, atk = 0.002f * b->rate;
-    float ph = 0;
-    for (int i = 0; i < n && i0 + i < MAX_SAMPLES; i++) {
-        const float k = expf(-(float)i / dec);
-        ph += 2 * PI * hz * (1 - bend * (float)i / (float)n) / b->rate;
-        const float env = (1 - expf(-(float)i / atk)) * k;
-        b->x[i0 + i] += gain * env * (sinf(ph) + 0.18f * k * sinf(3 * ph));
-    }
-    if (i0 + n > b->n) b->n = i0 + n < MAX_SAMPLES ? i0 + n : MAX_SAMPLES;
-}
-
-// ---- the recipes ------------------------------------------------------------
-//
-// One function a cue. `v` is the variant (0, 1, ...) and `k` a factor near 1
-// that differs between variants: every frequency is scaled by it, so two
-// variants of one cue are the same gesture made by a slightly different hand.
-// The hosts add their own small pitch and level jitter a play on top of this.
-
-// A card off the stock: the edge dragging over the card under it, then free.
-static void r_deal(Buf *b, int v, float k) {
-    (void)v;
-    burst(b, 0, 85, 2600 * k, 5200 * k, 0.9f, 6, 26, 1.0f);
-    burst(b, 0, 60, 7000 * k, 8200 * k, 1.2f, 3, 13, 0.32f);
-    tick(b, 1, 3200 * k, 0.22f);
-}
-
-// The trump turned up: the turn, then the card laid flat.
-static void r_flip(Buf *b, int v, float k) {
-    (void)v;
-    swell(b, 0, 85, 2200 * k, 5200 * k, 0.8f, 0.6f, 0.2f, 0.5f);
-    tick(b, 85, 2600 * k, 0.8f);
-    burst(b, 85, 45, 3600 * k, 2400 * k, 0.8f, 0.6f, 10, 1.0f);
-    thump(b, 85, 200 * k, 120 * k, 22, 0.5f);
-}
-
-// A card drawn out of a held fan: soft, no contact at all.
-static void r_lift(Buf *b, int v, float k) {
-    (void)v;
-    burst(b, 0, 110, 1800 * k, 3400 * k, 0.7f, 26, 34, 1.0f);
-}
-
-// A card put down on the table: the snap, and the table under it.
-static void r_place(Buf *b, int v, float k) {
-    (void)v;
-    tick(b, 0, 2400 * k, 0.9f);
-    burst(b, 0, 45, 3800 * k, 2600 * k, 0.8f, 0.6f, 9, 1.0f);
-    burst(b, 4, 60, 900 * k, 700 * k, 1.0f, 1, 17, 0.35f);
-    thump(b, 0, 190 * k, 110 * k, 24, 0.75f);
-}
-
-// A card put down on a card: two contacts a few milliseconds apart (card on
-// card, then the pair on the table), brighter and with less table in it.
-static void r_cover(Buf *b, int v, float k) {
-    (void)v;
-    tick(b, 0, 3000 * k, 0.7f);
-    burst(b, 0, 40, 4200 * k, 3000 * k, 0.9f, 0.5f, 8, 1.0f);
-    tick(b, 7, 2200 * k, 0.5f);
-    burst(b, 7, 50, 2400 * k, 1800 * k, 0.8f, 0.8f, 12, 0.7f);
-    thump(b, 7, 160 * k, 105 * k, 19, 0.4f);
-}
-
-// The table gathered into a hand: one slide with the cards catching on each
-// other along it, squared up at the end.
-static void r_pickup(Buf *b, int v, float k) {
-    swell(b, 0, 300, 1500 * k, 2600 * k, 0.6f, 0.45f, 0.4f, 0.4f);
-    for (int i = 0; i < 5; i++) {
-        const float t = 15 + i * 52 + 9 * noise(b) + 4 * v;
-        burst(b, t, 70, (2000 + 300 * i) * k, 3400 * k, 0.8f, 7, 19, 0.55f + 0.1f * noise(b));
-        tick(b, t, 2600 * k, 0.2f);
-    }
-    thump(b, 285, 170 * k, 110 * k, 20, 0.3f);
-}
-
-// The table swept off to the pile: a long slide over felt, nothing struck.
-static void r_sweep(Buf *b, int v, float k) {
-    (void)v;
-    swell(b, 0, 360, 1100 * k, 2600 * k, 0.6f, 0.4f, 0.5f, 1.0f);
-    swell(b, 40, 280, 5000 * k, 6500 * k, 1.0f, 0.4f, 0.3f, 0.22f);
-}
-
-// The swept cards coming to rest on the pile: soft and low, a thud with a
-// little paper on top of it.
-static void r_pile(Buf *b, int v, float k) {
-    (void)v;
-    thump(b, 0, 120 * k, 70 * k, 30, 1.0f);
-    burst(b, 0, 70, 700 * k, 450 * k, 0.7f, 1.5f, 22, 0.6f);
-    burst(b, 0, 40, 3200 * k, 2400 * k, 0.9f, 1, 9, 0.3f);
-    tick(b, 0, 1800 * k, 0.25f);
-}
-
-// A seat out of the game: two soft notes stepping down. Not a card sound,
-// because it is not a card moving - it is a fact about a player.
-static void r_out(Buf *b, int v, float k) {
-    (void)v;
-    tone(b, 0, 587.33f * k, 60, 0, 0.8f);
-    tone(b, 130, 392.00f * k, 42, 0, 1.0f);
-}
-
-// A good said: two small bright notes, the second a fifth up. Agreement.
-static void r_good(Buf *b, int v, float k) {
-    (void)v;
-    tone(b, 0, 1046.50f * k, 34, 0, 0.8f);
-    tone(b, 70, 1567.98f * k, 42, 0, 1.0f);
-}
-
-// The shield or the sword crossing the table: air, then it is set down.
-static void r_hand_off(Buf *b, int v, float k) {
-    (void)v;
-    swell(b, 0, 230, 700 * k, 2200 * k, 0.7f, 0.55f, 0.2f, 1.0f);
-    thump(b, 215, 150 * k, 95 * k, 14, 0.5f);
-    burst(b, 215, 40, 1500 * k, 1000 * k, 0.8f, 1, 10, 0.35f);
-}
-
-// The game over, and not for the fool: four notes up a major chord.
-static void r_finish(Buf *b, int v, float k) {
-    (void)v;
-    tone(b, 0, 523.25f * k, 50, 0, 0.7f);
-    tone(b, 105, 659.25f * k, 50, 0, 0.8f);
-    tone(b, 210, 783.99f * k, 55, 0, 0.9f);
-    tone(b, 315, 1046.50f * k, 72, 0, 1.0f);
-}
-
-// ...and for the fool: four notes down by semitones, the last one sagging.
-static void r_fool(Buf *b, int v, float k) {
-    (void)v;
-    tone(b, 0, 392.00f * k, 55, 0, 0.9f);
-    tone(b, 160, 369.99f * k, 55, 0, 0.9f);
-    tone(b, 320, 349.23f * k, 55, 0, 0.9f);
-    tone(b, 480, 329.63f * k, 60, 0.06f, 1.0f);
-}
-
-// What a cue is written as. `name` is the file's stem and is the kernel's own
-// name for the cue in lower case, so a file can be found from a cue id with no
-// table in between. `rate` is per recipe because a sample is two bytes: the
-// card sounds need the top octave and the rest do not. The rate is the lowest
-// that still holds the recipe's highest partial under Nyquist: 8 kHz for the
-// notes that top out near 3.1 kHz, 12 kHz for `good` (4.7 kHz) and for the two
-// sounds that are all low end (the pile's thud, the hand-off's air).
-//
-// A NULL `make` IS A CUE WITH NO PLACEHOLDER. REVERT is one for good: it has
-// no sound of its own, a host plays the undone cue's sound backwards
-// (anim_plan.h ANIM_CUE_REVERT). A cue whose row in the hosts' table now names
-// a recording becomes one too.
+// ---- the table: what every cue is written as ------------------------------------
+// `name` is the file stem and the kernel's own name for the cue in lower case.
+// `rate`: 48 kHz where the deal's thumb slide is in the take (its recordings
+// reach 20 kHz and a third of its energy is over 16 kHz), 32 kHz everywhere else
+// (every other model cuts at 15 kHz, so 32 kHz holds all of it).
+// `levels`: 0 for one set of takes, else the takes come per stroke count 0..levels.
+// `cards_per_level`: how many cards one stroke gathers, for the host's choice.
+// A NULL `make` and no placeholder is a cue with no sound of its own (REVERT).
 typedef struct {
     const char *name;
-    void      (*make)(Buf *, int v, float k);
-    int         variants;
+    void      (*make)(Take *, int level);
+    int         takes;       // per level
     int         rate;
+    int         levels;
+    double      cards_per_level;
 } Recipe;
 
 static const Recipe RECIPES[] = {
-    [ANIM_CUE_DEAL]     = { "deal",     r_deal,     2, 24000 },
-    [ANIM_CUE_FLIP]     = { "flip",     r_flip,     1, 24000 },
-    [ANIM_CUE_LIFT]     = { "lift",     r_lift,     1, 24000 },
-    [ANIM_CUE_PLACE]    = { "place",    r_place,    2, 24000 },
-    [ANIM_CUE_COVER]    = { "cover",    r_cover,    2, 24000 },
-    [ANIM_CUE_PICKUP]   = { "pickup",   r_pickup,   1, 24000 },
-    [ANIM_CUE_SWEEP]    = { "sweep",    r_sweep,    1, 24000 },
-    [ANIM_CUE_PILE]     = { "pile",     r_pile,     1, 12000 },
-    [ANIM_CUE_OUT]      = { "out",      r_out,      1,  8000 },
-    [ANIM_CUE_REVERT]   = { "revert",   NULL,       0,     0 },
-    [ANIM_CUE_GOOD]     = { "good",     r_good,     1, 12000 },
-    [ANIM_CUE_HAND_OFF] = { "hand_off", r_hand_off, 1, 12000 },
-    [ANIM_CUE_FINISH]   = { "finish",   r_finish,   1,  8000 },
-    [ANIM_CUE_FOOL]     = { "fool",     r_fool,     1,  8000 },
+    [ANIM_CUE_NONE]      = { "none",      NULL,        0, 0,     0, 0 },
+    [ANIM_CUE_DEAL]      = { "deal",      g_deal,      8, 48000, 0, 0 },
+    [ANIM_CUE_FLIP]      = { "flip",      g_flip_land, 8, 32000, 0, 0 },
+    [ANIM_CUE_LIFT]      = { "lift",      g_lift,      8, 48000, 0, 0 },
+    [ANIM_CUE_PLACE]     = { "place",     g_place,     8, 32000, 0, 0 },
+    [ANIM_CUE_COVER]     = { "cover",     g_cover,     8, 32000, 0, 0 },
+    [ANIM_CUE_PICKUP]    = { "pickup",    g_pickup,    8, 32000, 0, 0 },
+    [ANIM_CUE_SWEEP]     = { "sweep",     g_sweep,     3, 32000, MAX_LEVEL, 2.5 },
+    [ANIM_CUE_PILE]      = { "pile",      g_pile,      8, 32000, 0, 0 },
+    [ANIM_CUE_OUT]       = { "out",       NULL,        1, 0,     0, 0 },
+    [ANIM_CUE_REVERT]    = { "revert",    NULL,        0, 0,     0, 0 },
+    [ANIM_CUE_GOOD]      = { "good",      NULL,        1, 0,     0, 0 },
+    [ANIM_CUE_HAND_OFF]  = { "hand_off",  NULL,        1, 0,     0, 0 },
+    [ANIM_CUE_FINISH]    = { "finish",    NULL,        1, 0,     0, 0 },
+    [ANIM_CUE_FOOL]      = { "fool",      NULL,        1, 0,     0, 0 },
+    [ANIM_CUE_DEAL_LAND] = { "deal_land", g_deal_land, 8, 32000, 0, 0 },
+    [ANIM_CUE_TURN]      = { "turn",      g_turn,      8, 32000, 0, 0 },
+    [ANIM_CUE_PASS]      = { "pass",      g_pass,      8, 32000, 0, 0 },
+    [ANIM_CUE_INTO_HAND] = { "into_hand", g_into_hand, 8, 32000, 0, 0 },
 };
-// A cue added to anim_plan.h grows ANIM_N_CUES, and this stops building until
-// it has a line above (a cue that is meant to be silent gets a NULL `make`).
 _Static_assert(sizeof RECIPES / sizeof RECIPES[0] == ANIM_N_CUES,
-               "every sound cue of anim_plan.h has a recipe line");
+               "every sound cue of anim_plan.h has a line in RECIPES");
+static const char *const CUE_CONST[ANIM_N_CUES] = {
+    [ANIM_CUE_DEAL] = "ANIM_CUE_DEAL", [ANIM_CUE_FLIP] = "ANIM_CUE_FLIP", [ANIM_CUE_LIFT] = "ANIM_CUE_LIFT",
+    [ANIM_CUE_PLACE] = "ANIM_CUE_PLACE", [ANIM_CUE_COVER] = "ANIM_CUE_COVER", [ANIM_CUE_PICKUP] = "ANIM_CUE_PICKUP",
+    [ANIM_CUE_SWEEP] = "ANIM_CUE_SWEEP", [ANIM_CUE_PILE] = "ANIM_CUE_PILE", [ANIM_CUE_OUT] = "ANIM_CUE_OUT",
+    [ANIM_CUE_GOOD] = "ANIM_CUE_GOOD", [ANIM_CUE_HAND_OFF] = "ANIM_CUE_HAND_OFF", [ANIM_CUE_FINISH] = "ANIM_CUE_FINISH",
+    [ANIM_CUE_FOOL] = "ANIM_CUE_FOOL", [ANIM_CUE_DEAL_LAND] = "ANIM_CUE_DEAL_LAND", [ANIM_CUE_TURN] = "ANIM_CUE_TURN",
+    [ANIM_CUE_PASS] = "ANIM_CUE_PASS", [ANIM_CUE_INTO_HAND] = "ANIM_CUE_INTO_HAND",
+};
 
-// ---- finishing: what every sound gets, whatever it is ----------------------
-//
-// The DC is taken out (a thump leaves some, and DC is a click at both ends),
-// the last few milliseconds are faded to nothing, trailing near-silence is cut
-// (it is bytes), and the whole thing is scaled to one peak level, so that how
-// LOUD a cue is in the game is decided in exactly one place: the hosts' table.
-#define PEAK 0.89f
+// ---- one rendered file -------------------------------------------------------------
+typedef struct {
+    char   name[48];
+    int    cue, level, rate, n;
+    double anchor_ms;      // from the file's first sample to the cue's moment
+    int16_t *pcm;
+} Out;
 
-static void finish(Buf *b) {
-    float dc = 0, prev = 0;
-    for (int i = 0; i < b->n; i++) {            // one-pole high-pass at ~25 Hz
-        const float x = b->x[i];
-        dc = x - prev + (1 - 2 * PI * 25.0f / b->rate) * dc;
-        prev = x;
-        b->x[i] = dc;
-    }
-    float peak = 0;
-    for (int i = 0; i < b->n; i++) if (fabsf(b->x[i]) > peak) peak = fabsf(b->x[i]);
-    if (peak <= 0) return;
-    while (b->n > 1 && fabsf(b->x[b->n - 1]) < 0.004f * peak) b->n--;
-    const int fade = at(b, 6) < b->n ? at(b, 6) : b->n;
-    for (int i = 0; i < fade; i++) b->x[b->n - 1 - i] *= (float)i / (float)fade;
-    for (int i = 0; i < b->n; i++) b->x[i] *= PEAK / peak;
+static int16_t to16(double v) { v *= 32767; if (v > 32767) v = 32767; if (v < -32768) v = -32768; return (int16_t)lrint(v); }
+
+// Trim, fade the ends, resample to the shipping rate.
+static void finish_take(Take *t, int rate, Out *o) {
+    const double pk = sig_peak(t->mix.x, t->mix.n), thr = pk * db2(TRIM_DB);
+    int a = 0, b = t->mix.n - 1;
+    while (a < b && fabs(t->mix.x[a]) < thr) a++;
+    while (b > a && fabs(t->mix.x[b]) < thr) b--;
+    a -= S_(0.002); if (a < 0) a = 0;
+    b += S_(0.004); if (b >= t->mix.n) b = t->mix.n - 1;
+    Sig cut = sig_new(b - a + 1);
+    memcpy(cut.x, t->mix.x + a, sizeof(double) * (size_t)cut.n);
+    const int fi = S_(0.001), fo = S_(0.004);
+    for (int i = 0; i < fi && i < cut.n; i++) cut.x[i] *= (double)i / fi;
+    for (int i = 0; i < fo && i < cut.n; i++) cut.x[cut.n - 1 - i] *= (double)i / fo;
+    Sig sh = rate == SR ? cut : resample_3_2(&cut);
+    o->rate = rate; o->n = sh.n;
+    o->anchor_ms = (double)(CUE0 - a) * 1000.0 / SR;
+    o->pcm = malloc(sizeof(int16_t) * (size_t)sh.n);
+    for (int i = 0; i < sh.n; i++) o->pcm[i] = to16(sh.x[i]);
+    if (sh.x != cut.x) sig_free(&sh);
+    sig_free(&cut);
 }
 
-static Buf g_buf;
+static void render_card(int cue, int level, int v, Out *o) {
+    const Recipe *r = &RECIPES[cue];
+    Take t;
+    take_init(&t, (uint64_t)cue * 1000003u + (uint64_t)level * 7919u + (uint64_t)v * 104729u + 17u);
+    r->make(&t, level);
+    finish_take(&t, r->rate, o);
+    sig_free(&t.mix);
+    if (r->levels) snprintf(o->name, sizeof o->name, "%s_s%d_%d.wav", r->name, level, v);
+    else snprintf(o->name, sizeof o->name, "%s_%d.wav", r->name, v);
+    o->cue = cue; o->level = level;
+}
 
-static void render(const Recipe *r, int cue, int v) {
-    memset(&g_buf, 0, sizeof g_buf);
-    g_buf.rate = r->rate;
-    g_buf.rng = rng_seed64((uint64_t)(cue * 7919 + v * 104729 + 1));
-    // Variants straddle 1: -4% and +4% for two, nothing for one.
-    const float k = 1 + 0.08f * ((float)v - (float)(r->variants - 1) / 2);
-    r->make(&g_buf, v, k);
-    finish(&g_buf);
+static int render_placeholder(int cue, int v, Out *o) {
+    for (int i = 0; i < N_PLACEHOLDERS; i++) {
+        if (PLACEHOLDERS[i].cue != cue) continue;
+        const float *x; int n;
+        placeholder_render(PLACEHOLDERS[i].make, PLACEHOLDERS[i].rate, cue, v, RECIPES[cue].takes, &x, &n);
+        o->pcm = malloc(sizeof(int16_t) * (size_t)n);
+        for (int k = 0; k < n; k++) o->pcm[k] = to16(x[k]);
+        o->n = n; o->rate = PLACEHOLDERS[i].rate; o->anchor_ms = 0; o->cue = cue; o->level = 0;
+        snprintf(o->name, sizeof o->name, "%s_%d.wav", RECIPES[cue].name, v);
+        return 1;
+    }
+    return 0;
 }
 
 // ---- WAV: 16-bit PCM, mono, the 44-byte header and nothing else ------------
-static void le(FILE *f, uint32_t v, int bytes) {
-    for (int i = 0; i < bytes; i++) fputc((int)((v >> (8 * i)) & 0xff), f);
-}
-static int write_wav(const char *path, const Buf *b) {
+static void le(FILE *f, uint32_t v, int bytes) { for (int i = 0; i < bytes; i++) fputc((int)((v >> (8 * i)) & 0xff), f); }
+static int write_pcm(const char *path, const int16_t *x, int n, int rate) {
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
-    const uint32_t data = (uint32_t)b->n * 2;
+    const uint32_t data = (uint32_t)n * 2;
     fwrite("RIFF", 1, 4, f); le(f, 36 + data, 4); fwrite("WAVEfmt ", 1, 8, f);
-    le(f, 16, 4); le(f, 1, 2); le(f, 1, 2); le(f, (uint32_t)b->rate, 4);
-    le(f, (uint32_t)b->rate * 2, 4); le(f, 2, 2); le(f, 16, 2);
+    le(f, 16, 4); le(f, 1, 2); le(f, 1, 2); le(f, (uint32_t)rate, 4);
+    le(f, (uint32_t)rate * 2, 4); le(f, 2, 2); le(f, 16, 2);
     fwrite("data", 1, 4, f); le(f, data, 4);
-    for (int i = 0; i < b->n; i++) {
-        float x = b->x[i] * 32767.0f;
-        if (x > 32767) x = 32767;
-        if (x < -32768) x = -32768;
-        le(f, (uint32_t)(uint16_t)(int16_t)lrintf(x), 2);
-    }
+    for (int i = 0; i < n; i++) le(f, (uint32_t)(uint16_t)x[i], 2);
     return fclose(f);
 }
 
-// ---- measuring ---------------------------------------------------------------
-// The spectral centroid, in Hz: where the weight of the sound sits. 96 probe
-// frequencies spaced by ratio from 60 Hz to just under Nyquist, each one a
-// plain correlation against the buffer - slow per bin and nothing to get wrong.
-static float centroid(const Buf *b) {
-    const int bins = 96;
-    const float lo = 60.0f, hi = 0.49f * b->rate;
-    double num = 0, den = 0;
-    for (int j = 0; j < bins; j++) {
-        const float hz = lo * powf(hi / lo, (float)j / (bins - 1));
-        double re = 0, im = 0;
-        for (int i = 0; i < b->n; i++) {
-            const double p = 2.0 * 3.14159265358979 * hz * i / b->rate;
-            re += b->x[i] * cos(p); im += b->x[i] * sin(p);
+// ---- parts: each model alone, for measure.py ---------------------------------------
+static int write_sig(const char *dir, const char *name, int v, Sig s) {
+    char path[1024];
+    snprintf(path, sizeof path, "%s/%s_%02d.wav", dir, name, v);
+    int16_t *p = malloc(sizeof(int16_t) * (size_t)s.n);
+    for (int i = 0; i < s.n; i++) p[i] = to16(s.x[i]);
+    const int rc = write_pcm(path, p, s.n, SR);
+    free(p); sig_free(&s);
+    return rc;
+}
+// disc_syn.py writes its parts at these peaks (150 Hz-15 kHz); the others come out of their models at their own.
+static Sig at_peak(Sig s, double db) {
+    Sig b = bp_copy(&s, 150, 15000);
+    sig_scale(&s, db2(db) / (sig_peak(b.x, b.n) + 1e-12));
+    sig_free(&b);
+    return s;
+}
+static int parts(const char *dir) {
+    for (int v = 1; v <= 12; v++) {
+        Rng r; rng_init(&r, 4242u + (uint64_t)v);
+        if (write_sig(dir, "thumb9", v, m_thumb(&r)) || write_sig(dir, "grab2", v, m_grab(&r))
+            || write_sig(dir, "land229", v, m_land(&r)) || write_sig(dir, "throw9", v, m_throw(&r))
+            || write_sig(dir, "cover3", v, m_cover(&r)) || write_sig(dir, "tgrab2", v, m_tgrab(&r))
+            || write_sig(dir, "flipE", v, m_flip(&r)) || write_sig(dir, "deck229c", v, m_deck(&r))
+            || write_sig(dir, "pass7", v, m_pass(&r)) || write_sig(dir, "scrape", v, at_peak(m_stroke(&r, 0), -36))
+            || write_sig(dir, "lift", v, at_peak(m_lift(&r), -22)) || write_sig(dir, "place", v, at_peak(m_place(&r), -31))
+            || write_sig(dir, "insert", v, at_peak(m_insert(&r), -40)) || write_sig(dir, "plift", v, at_peak(m_plift(&r), -40))) {
+            fprintf(stderr, "soundgen: cannot write into %s\n", dir); return 1;
         }
-        // Weighted by the bin's width, which grows with its frequency.
-        const double mag = sqrt(re * re + im * im) * hz;
-        num += mag * hz; den += mag;
     }
-    return den > 0 ? (float)(num / den) : 0;
+    return 0;
+}
+
+// ---- the take table the web reads ----------------------------------------------------
+static int write_table(const char *path, Out *outs, int n) {
+    FILE *f = fopen(path, "w");
+    if (!f) return -1;
+    fprintf(f, "// GENERATED by tools/soundgen (npm run sounds) - do not edit, and not committed.\n"
+               "// Every file soundgen writes into public/audio/gen/, by cue: its path under /audio/,\n"
+               "// its ANCHOR (ms from the file's first sample to the cue's moment; the host starts\n"
+               "// it that early, or late for a negative one) and its LEVEL (the strokes before a\n"
+               "// sweep or a pickup; 0 for every other cue). tools/soundgen/soundgen.c says why.\n\n"
+               "import {\n");
+    for (int c = 1; c < ANIM_N_CUES; c++) if (CUE_CONST[c]) fprintf(f, "    %s,\n", CUE_CONST[c]);
+    fprintf(f, "} from '@sdk/ts/gen/kernel_consts.bots.ts';\n\n"
+               "export interface CueTake { readonly file: string; readonly anchorMs: number; readonly level: number }\n\n"
+               "export const CUE_TAKES: Readonly<Record<number, readonly CueTake[]>> = {\n");
+    double lead = 0;
+    for (int c = 1; c < ANIM_N_CUES; c++) {
+        if (!CUE_CONST[c]) continue;
+        int any = 0;
+        for (int i = 0; i < n; i++) any |= outs[i].cue == c;
+        if (!any) continue;
+        fprintf(f, "    [%s]: [\n", CUE_CONST[c]);
+        for (int i = 0; i < n; i++) {
+            if (outs[i].cue != c) continue;
+            fprintf(f, "        { file: 'gen/%s', anchorMs: %.1f, level: %d },\n", outs[i].name, outs[i].anchor_ms, outs[i].level);
+            if (outs[i].anchor_ms > lead) lead = outs[i].anchor_ms;
+        }
+        fprintf(f, "    ],\n");
+    }
+    fprintf(f, "};\n\n/** How many cards one level (one stroke) of a levelled cue gathers. */\n"
+               "export const CUE_CARDS_PER_LEVEL: Readonly<Record<number, number>> = {\n");
+    for (int c = 1; c < ANIM_N_CUES; c++)
+        if (RECIPES[c].levels) fprintf(f, "    [%s]: %.1f,\n", CUE_CONST[c], RECIPES[c].cards_per_level);
+    fprintf(f, "};\n\n/** The longest anchor of all: how early the earliest file must start. */\n"
+               "export const CUE_MAX_ANCHOR_MS = %.1f;\n", lead);
+    return fclose(f);
 }
 
 int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "";
-    const int writing = !strcmp(mode, "write") && argc > 2;
+    if (!strcmp(mode, "parts") && argc > 2) return parts(argv[2]);
+    const int writing = !strcmp(mode, "write") && argc > 3;
     const int stats = !strcmp(mode, "stats");
     if (!writing && !stats && strcmp(mode, "list")) {
-        fprintf(stderr, "usage: soundgen write <dir> | list | stats\n");
+        fprintf(stderr, "usage: soundgen write <dir> <cueTakes.ts> | list | stats | parts <dir>\n");
         return 2;
     }
+    Out *outs = calloc(512, sizeof(Out));
+    int n = 0;
     long total = 0;
-    int files = 0;
+    double loudest = 0;
     for (int cue = 1; cue < ANIM_N_CUES; cue++) {
         const Recipe *r = &RECIPES[cue];
-        if (!r->make) continue;
-        for (int v = 0; v < r->variants; v++) {
-            render(r, cue, v);
-            char name[64];
-            snprintf(name, sizeof name, "%s_%d.wav", r->name, v);
-            const long bytes = 44 + 2L * g_buf.n;
-            total += bytes; files++;
-            if (writing) {
-                char path[1024];
-                snprintf(path, sizeof path, "%s/%s", argv[2], name);
-                if (write_wav(path, &g_buf) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", path); return 1; }
-            } else if (stats) {
-                double sq = 0; float peak = 0;
-                for (int i = 0; i < g_buf.n; i++) {
-                    sq += (double)g_buf.x[i] * g_buf.x[i];
-                    if (fabsf(g_buf.x[i]) > peak) peak = fabsf(g_buf.x[i]);
-                }
-                printf("%-14s cue %2d  %5d Hz  %4d ms  %6ld B  peak %.2f  rms %6.1f dBFS  centroid %5.0f Hz\n",
-                       name, cue, g_buf.rate, g_buf.n * 1000 / g_buf.rate, bytes, peak,
-                       10 * log10(sq / (g_buf.n ? g_buf.n : 1) + 1e-12), centroid(&g_buf));
-            } else {
-                printf("%s\t%d\t%d\t%d\t%ld\n", name, cue, g_buf.rate, g_buf.n * 1000 / g_buf.rate, bytes);
+        for (int level = 0; level <= r->levels; level++) {
+            for (int v = 0; v < r->takes; v++) {
+                Out *o = &outs[n];
+                if (r->make) render_card(cue, level, v, o);
+                else if (!render_placeholder(cue, v, o)) continue;
+                n++;
+                total += 44 + 2L * o->n;
+                for (int i = 0; i < o->n; i++) if (abs(o->pcm[i]) / 32767.0 > loudest && r->make) loudest = abs(o->pcm[i]) / 32767.0;
             }
         }
     }
-    if (writing || stats) fprintf(writing ? stderr : stdout, "soundgen: %d files, %ld bytes\n", files, total);
+    for (int i = 0; i < n; i++) {
+        const Out *o = &outs[i];
+        if (writing) {
+            char path[1024];
+            snprintf(path, sizeof path, "%s/%s", argv[2], o->name);
+            if (write_pcm(path, o->pcm, o->n, o->rate) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", path); return 1; }
+        } else if (stats) {
+            double sq = 0; int pk = 0;
+            for (int k = 0; k < o->n; k++) { sq += (double)o->pcm[k] * o->pcm[k]; if (abs(o->pcm[k]) > pk) pk = abs(o->pcm[k]); }
+            printf("%-18s cue %2d  %5d Hz  %5d ms  %7ld B  anchor %7.1f ms  peak %6.1f dBFS  rms %6.1f dBFS\n",
+                   o->name, o->cue, o->rate, o->n * 1000 / o->rate, 44 + 2L * o->n, o->anchor_ms,
+                   20 * log10(pk / 32767.0 + 1e-9), 10 * log10(sq / (o->n ? o->n : 1) / (32767.0 * 32767.0) + 1e-12));
+        } else {
+            printf("%s\t%d\t%d\t%d\t%ld\t%.1f\n", o->name, o->cue, o->rate, o->n * 1000 / o->rate, 44 + 2L * o->n, o->anchor_ms);
+        }
+    }
+    if (writing && write_table(argv[3], outs, n) != 0) { fprintf(stderr, "soundgen: cannot write %s\n", argv[3]); return 1; }
+    if (writing || stats)
+        fprintf(writing ? stderr : stdout, "soundgen: %d files, %ld bytes, loudest card take %.1f dBFS\n",
+                n, total, 20 * log10(loudest + 1e-9));
+    if (loudest > 0.999) { fprintf(stderr, "soundgen: a card take clips; lower LIFT_DB\n"); return 1; }
     return 0;
 }

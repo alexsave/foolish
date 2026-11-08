@@ -1,31 +1,35 @@
-// cueSounds.ts - WHICH FILE EACH SOUND CUE PLAYS. The one place a sound is
-// swapped.
+// cueSounds.ts - WHICH FILES EACH SOUND CUE PLAYS, AND HOW LOUD. The one place
+// a sound is swapped.
 //
 // The kernel decides which cue a beat makes and when (c/src/anim_plan.h "sound
 // cues"); this table decides only what that cue SOUNDS LIKE on the web. Nothing
-// else in src/ names an audio file, so replacing a placeholder with a recording
-// is an edit to one row here and to nothing else - docs/AUDIO.md walks through
-// it.
+// else in src/ names an audio file, so replacing a sound with a recording is an
+// edit to one row here and to nothing else - docs/AUDIO.md walks through it.
 //
 // THE FILES. A path is relative to /audio/ (public/audio/ in the repo).
-//   gen/<cue>_<n>.wav   PLACEHOLDERS, synthesised by tools/soundgen at build
-//                       time and never committed. The stem is the kernel's own
-//                       name for the cue in lower case.
-//   anything else       a RECORDING: a committed source file. WAV, or whatever
-//                       else every target browser's decodeAudioData reads
-//                       (m4a/AAC and mp3 everywhere; ogg not in Safari).
+//   gen/...        SYNTHESISED by tools/soundgen at build time and never
+//                  committed: the card models Alex approved by ear, and the
+//                  stand-ins for the cues with no model yet. soundgen also
+//                  writes their list (./gen/cueTakes.ts), which this reads.
+//   anything else  a RECORDING: a committed source file. WAV, or whatever else
+//                  every target browser's decodeAudioData reads (m4a/AAC and
+//                  mp3 everywhere; ogg not in Safari).
 //
-// SEVERAL FILES IN A ROW ARE VARIANTS: takes of the same gesture, played in
-// turn at random so that a cue heard six times in a second is not one sample
-// six times. On top of that the engine moves every play's pitch and level a
-// little (`pitch`, `level` below), so one file is enough to start with.
+// A TAKE IS A FILE AND ITS ANCHOR. A card thrown in is a grab and a thumb slide
+// BEFORE the card leaves, so the take struck at that moment starts before it:
+// `anchorMs` is how far into the file the cue's moment is, and the engine
+// starts the file that much early. SEVERAL TAKES IN A ROW ARE VARIANTS, played
+// in turn at random so that a cue heard six times in a second is not one sample
+// six times. A row's takes may also come in LEVELS (the strokes that gather the
+// table before a sweep or a pickup, one per `cardsPerLevel` cards): the engine
+// plays the most the cue's cards ask for that fit the quiet before it.
 //
 // A CUE MAPPED TO `null` IS SILENT ON PURPOSE. That is how a cue is turned off
 // here without touching the kernel's list, whose ids never change.
 //
 // ANIM_CUE_REVERT HAS NO ROW, AND MUST NOT GET ONE. A refused move sounds like
 // that move played backwards: the kernel's cue names the cue it undoes
-// (AnimCue.undoes) and the engine plays THAT row's file reversed. So a
+// (AnimCue.undoes) and the engine plays THAT row's take reversed. So a
 // recording dropped in for PLACE is also the sound of a refused attack, with
 // nothing to keep in step.
 
@@ -33,45 +37,101 @@ import {
     ANIM_CUE_DEAL, ANIM_CUE_FLIP, ANIM_CUE_LIFT, ANIM_CUE_PLACE, ANIM_CUE_COVER,
     ANIM_CUE_PICKUP, ANIM_CUE_SWEEP, ANIM_CUE_PILE, ANIM_CUE_OUT,
     ANIM_CUE_GOOD, ANIM_CUE_HAND_OFF, ANIM_CUE_FINISH, ANIM_CUE_FOOL,
+    ANIM_CUE_DEAL_LAND, ANIM_CUE_TURN, ANIM_CUE_PASS, ANIM_CUE_INTO_HAND,
 } from '@sdk/ts/gen/kernel_consts.bots.ts';
+import { CUE_CARDS_PER_LEVEL, CUE_MAX_ANCHOR_MS, CUE_TAKES, type CueTake } from './gen/cueTakes';
+
+export type { CueTake };
 
 export interface CueSound {
-    /** Paths under /audio/, one per variant. */
-    files: readonly string[];
-    /** How loud this cue is against the others, 0..1. Every placeholder is
-     *  written at one peak level, so this column IS the mix. */
+    /** The files, each with its anchor and level. */
+    takes: readonly CueTake[];
+    /** How loud this cue is against the others, 0..1. THE MIX: Alex sets it by
+     *  ear on /sounds. The modelled cues are written at their models' own
+     *  levels, so 1 is the level the model sets. */
     gain: number;
     /** How far a play's pitch may wander either way, as a fraction of its
-     *  speed (0.06 is about a semitone). 0 for a cue with a pitch to keep. */
+     *  speed (0.06 is about a semitone). 0 for a cue with a pitch to keep, and
+     *  for every modelled cue: its takes already vary as the recordings did. */
     pitch: number;
     /** How far a play's level may wander either way, as a fraction. */
     level: number;
-    /** A cue that stands for several cards (a sweep, a pickup) is this much
-     *  louder for each card past the first, up to +60%. 0 when the cue's
-     *  strikes are already counted one a card. */
+    /** A cue that stands for several cards is this much louder for each card
+     *  past the first, up to +60%. 0 when the cue's takes already say how many
+     *  cards it is (the strokes of a sweep). */
     perCard: number;
+    /** For a row whose takes come in levels: the cards one level stands for. */
+    cardsPerLevel: number;
 }
 
 /** Where the files are served from. */
 export const CUE_SOUND_ROOT = '/audio/';
 
-const card = (files: string[], gain: number, perCard = 0): CueSound =>
-    ({ files, gain, pitch: 0.06, level: 0.18, perCard });
-const note = (files: string[], gain: number): CueSound =>
-    ({ files, gain, pitch: 0, level: 0, perCard: 0 });
+/** How early the engine may have to start a file: its longest anchor. */
+export const CUE_MAX_LEAD_MS = CUE_MAX_ANCHOR_MS;
+
+const takes = (kind: number): readonly CueTake[] => CUE_TAKES[kind] ?? [];
+// A modelled card sound: its takes carry the model's own level and variation.
+const model = (kind: number, gain = 1): CueSound =>
+    ({ takes: takes(kind), gain, pitch: 0, level: 0, perCard: 0, cardsPerLevel: CUE_CARDS_PER_LEVEL[kind] ?? 0 });
+// A synthesised stand-in, varied by the engine.
+const standIn = (kind: number, gain: number): CueSound =>
+    ({ takes: takes(kind), gain, pitch: 0.06, level: 0.18, perCard: 0, cardsPerLevel: 0 });
+const note = (kind: number, gain: number): CueSound =>
+    ({ takes: takes(kind), gain, pitch: 0, level: 0, perCard: 0, cardsPerLevel: 0 });
 
 export const CUE_SOUNDS: Readonly<Record<number, CueSound | null>> = {
-    [ANIM_CUE_DEAL]:     card(['gen/deal_0.wav', 'gen/deal_1.wav'], 0.42),
-    [ANIM_CUE_FLIP]:     card(['gen/flip_0.wav'], 0.6),
-    [ANIM_CUE_LIFT]:     card(['gen/lift_0.wav'], 0.2),
-    [ANIM_CUE_PLACE]:    card(['gen/place_0.wav', 'gen/place_1.wav'], 0.7),
-    [ANIM_CUE_COVER]:    card(['gen/cover_0.wav', 'gen/cover_1.wav'], 0.7),
-    [ANIM_CUE_PICKUP]:   card(['gen/pickup_0.wav'], 0.5, 0.06),
-    [ANIM_CUE_SWEEP]:    card(['gen/sweep_0.wav'], 0.42, 0.06),
-    [ANIM_CUE_PILE]:     card(['gen/pile_0.wav'], 0.5, 0.06),
-    [ANIM_CUE_HAND_OFF]: card(['gen/hand_off_0.wav'], 0.3),
-    [ANIM_CUE_OUT]:      note(['gen/out_0.wav'], 0.32),
-    [ANIM_CUE_GOOD]:     note(['gen/good_0.wav'], 0.26),
-    [ANIM_CUE_FINISH]:   note(['gen/finish_0.wav'], 0.4),
-    [ANIM_CUE_FOOL]:     note(['gen/fool_0.wav'], 0.4),
+    [ANIM_CUE_DEAL]:      model(ANIM_CUE_DEAL),
+    [ANIM_CUE_DEAL_LAND]: model(ANIM_CUE_DEAL_LAND),
+    [ANIM_CUE_TURN]:      model(ANIM_CUE_TURN),
+    [ANIM_CUE_FLIP]:      model(ANIM_CUE_FLIP),
+    [ANIM_CUE_LIFT]:      model(ANIM_CUE_LIFT),
+    [ANIM_CUE_PLACE]:     model(ANIM_CUE_PLACE),
+    [ANIM_CUE_PASS]:      model(ANIM_CUE_PASS),
+    [ANIM_CUE_COVER]:     model(ANIM_CUE_COVER),
+    [ANIM_CUE_PICKUP]:    model(ANIM_CUE_PICKUP),
+    [ANIM_CUE_INTO_HAND]: model(ANIM_CUE_INTO_HAND),
+    [ANIM_CUE_SWEEP]:     model(ANIM_CUE_SWEEP),
+    [ANIM_CUE_PILE]:      model(ANIM_CUE_PILE),
+    [ANIM_CUE_HAND_OFF]:  standIn(ANIM_CUE_HAND_OFF, 0.3),
+    [ANIM_CUE_OUT]:       note(ANIM_CUE_OUT, 0.32),
+    [ANIM_CUE_GOOD]:      note(ANIM_CUE_GOOD, 0.26),
+    [ANIM_CUE_FINISH]:    note(ANIM_CUE_FINISH, 0.4),
+    [ANIM_CUE_FOOL]:      note(ANIM_CUE_FOOL, 0.4),
 };
+
+/** How long before its moment a cue's earliest take starts: when the frame loop
+ *  must hand it over (src/audio/cueSchedule.ts). */
+export function cueLeadMs(kind: number): number {
+    let lead = 0;
+    for (const t of CUE_SOUNDS[kind]?.takes ?? []) lead = Math.max(lead, t.anchorMs);
+    return lead;
+}
+
+/** The level a cue of `nCards` asks for: one per `cardsPerLevel` cards, 1 at
+ *  least (disc_game.py: one stroke per ~2.5 cards, 1-5). 0 for a row with no
+ *  levels. */
+export function wantedLevel(sound: CueSound, nCards: number): number {
+    if (!sound.cardsPerLevel || nCards <= 0) return 0;
+    let top = 0;
+    for (const t of sound.takes) top = Math.max(top, t.level);
+    return Math.min(top, Math.max(1, Math.round(nCards / sound.cardsPerLevel)));
+}
+
+/**
+ * The takes a strike may play: the most strokes the cue's cards ask for whose
+ * gathering fits in `roomMs` (how long the plan is quiet before the cue), and
+ * of a row with no levels, every take. A revert (`backwards`) plays the bare
+ * gesture, level 0: its strokes would come AFTER the moment, reversed.
+ * Never empty for a row that has takes: level 0 is the last resort, and a take
+ * longer than the room is started late into the file rather than moved.
+ */
+export function takesFor(sound: CueSound, nCards: number, roomMs: number, backwards = false): readonly CueTake[] {
+    if (!sound.cardsPerLevel) return sound.takes;
+    const want = backwards ? 0 : wantedLevel(sound, nCards);
+    for (let level = want; level >= 0; level--) {
+        const fit = sound.takes.filter((t) => t.level === level && (level === 0 || t.anchorMs <= roomMs));
+        if (fit.length > 0) return fit;
+    }
+    return sound.takes;
+}

@@ -22,6 +22,13 @@
 //
 // EVERY CUE IS HANDED OVER ONCE, by its (step, kind) - the pair the kernel
 // promises is unique in a plan and stable as a run in flight is appended to.
+//
+// A FILE THAT STARTS BEFORE ITS MOMENT is handed over that much earlier. A take
+// carries an anchor (src/audio/cueSounds.ts): the grab and the thumb slide come
+// before the card leaves, the strokes that gather a table before it is swept.
+// `leadMs(kind)` is the longest anchor a cue's takes have, and the look-ahead
+// runs from the moment the file has to START, so the longest gathering is
+// still scheduled on time whenever the plan knew about it that early.
 
 import { ANIM_SOUND_STAGGER_MS } from '@sdk/ts/gen/kernel_consts.bots.ts';
 
@@ -29,7 +36,7 @@ export const CUE_LOOK_AHEAD_MS = 120;
 export const CUE_LATE_MS = 80;
 
 /** A cue as the plan lists one (sdk/ts/wasm/bots.ts AnimCueSnap). */
-export interface PlanCue { atMs: number; kind: number; step: number; hits: number; nCards: number; undoes: number }
+export interface PlanCue { atMs: number; kind: number; step: number; hits: number; nCards: number; undoes: number; roomMs?: number }
 
 /** One strike to hand the engine. */
 export interface CueStrike {
@@ -39,6 +46,10 @@ export interface CueStrike {
     nCards: number;
     /** The cue a REVERT plays backwards; ANIM_CUE_NONE otherwise. */
     undoes: number;
+    /** How long before the moment the plan is quiet (AnimCue.room_ms). */
+    roomMs: number;
+    /** The step that makes it (AnimCue.step), whose seat a landing is heard at. */
+    step: number;
 }
 
 /** The key a cue is remembered by once it has been handed over. */
@@ -46,20 +57,25 @@ export const cueKey = (c: PlanCue): number => c.step * 256 + c.kind;
 
 /**
  * The strikes to hand over at `nowMs` (from the run's start), given the cues
- * already handed over in `done`, which this ADDS to. A cue whose first strike
- * is still further off than the look-ahead is left for a later frame.
+ * already handed over in `done`, which this ADDS to. A cue whose file must
+ * start (`leadMs` before its first strike) further off than the look-ahead is
+ * left for a later frame.
  */
-export function dueStrikes(cues: readonly PlanCue[], nowMs: number, done: Set<number>): readonly CueStrike[] {
+export function dueStrikes(cues: readonly PlanCue[], nowMs: number, done: Set<number>,
+                           leadMs: (kind: number) => number = () => 0): readonly CueStrike[] {
     let out: CueStrike[] | null = null;
     for (const c of cues) {
-        if (c.atMs - nowMs > CUE_LOOK_AHEAD_MS) continue;
+        if (c.atMs - Math.max(0, leadMs(c.kind)) - nowMs > CUE_LOOK_AHEAD_MS) continue;
         const key = cueKey(c);
         if (done.has(key)) continue;
         done.add(key);
         for (let h = 0; h < c.hits; h++) {
             const at = c.atMs + h * ANIM_SOUND_STAGGER_MS;
             if (at < nowMs - CUE_LATE_MS) continue;
-            (out ??= []).push({ kind: c.kind, delayMs: Math.max(0, at - nowMs), nCards: c.nCards, undoes: c.undoes });
+            (out ??= []).push({
+                kind: c.kind, delayMs: Math.max(0, at - nowMs), nCards: c.nCards, undoes: c.undoes,
+                roomMs: c.roomMs ?? Number.POSITIVE_INFINITY, step: c.step,
+            });
         }
     }
     return out ?? NO_STRIKES;

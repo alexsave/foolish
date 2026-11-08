@@ -438,6 +438,12 @@ export function animRoleCue(shown: AnimRoles, next: AnimRoles): number {
         next.defender, next.firstAttacker, next.goodMask);
 }
 
+/** HOW LOUD A CARD LANDING AT `seat` IS TO THE VIEWER AT `viewer` of a table of
+ *  `nSeats` (anim_seat_gain_pm): a linear gain, 1 for the viewer's own seat. */
+export function animSeatGain(viewer: number, seat: number, nSeats: number): number {
+    return bots().wasm_anim_seat_gain_pm(viewer, seat, nSeats) / 1000;
+}
+
 /** WHICH CUES COULD SOUND NEXT from a board (anim_cues_next): one bit per
  *  ANIM_CUE_*, a superset by design - a hint for what to load first, never a
  *  promise of what will play. The ask is the few scalars the rule reads. */
@@ -539,6 +545,9 @@ export interface AnimPlanEventIn {
     cards?: readonly Card[];
     /** THIS step's own board, when it has one. */
     board?: V.TableView_Snap | null;
+    /** The message the push told it with (EVW_MSG_*, PushEvent.msg): the plan
+     *  hears a transfer off it. Absent for a step that has none. */
+    msg?: number;
 }
 
 /** The count-freeze (anim_plan.h AnimCounts): the board the display holds until a step lands. */
@@ -575,6 +584,9 @@ export interface AnimCueSnap {
     /** For ANIM_CUE_REVERT, the cue of the move being undone, whose sound is
      *  played backwards; ANIM_CUE_NONE on every other cue. */
     undoes: number;
+    /** How long before `atMs` the plan is quiet (AnimCue.room_ms): what a sound
+     *  whose gesture starts before its moment is fitted into. */
+    roomMs: number;
 }
 
 /** The plan (anim_plan.h AnimPlan). */
@@ -609,6 +621,7 @@ export function animBuildPlan(events: readonly AnimPlanEventIn[], final: V.Table
             seat: e.seat === undefined || e.seat < 0 ? A.ANIM_SEAT_NONE : e.seat,
             from: e.from ?? A.ANIM_LOC_NONE, to: e.to ?? A.ANIM_LOC_NONE,
             cards: e.cards ?? [],
+            msg: e.msg ?? V.EVW_MSG_NONE,
         });
         if (e.board) V.writeTableView(m, ex.wasm_client_edit_view_ptr(), e.board);
         ok(ex.wasm_client_plan_step(at, e.board ? 1 : 0), refused);
@@ -702,6 +715,7 @@ function readPlan(ex: WebExports): AnimPlanSnap {
             hits: A.AnimCue_get_hits(m, c),
             nCards: A.AnimCue_get_n_cards(m, c),
             undoes: A.AnimCue_get_undoes(m, c),
+            roomMs: A.AnimCue_get_room_ms(m, c),
         });
     }
     return {

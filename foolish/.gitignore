@@ -63,6 +63,9 @@ public/oracle-mt.wasm.gz
 # sound is the opposite - a source file - and lives one level up, in
 # public/audio/, where this pattern does not reach. docs/AUDIO.md.
 public/audio/gen/
+# ...and the take table soundgen writes beside them (every file, its anchor and
+# its level), which the web's cue table reads.
+src/audio/gen/
 tools/soundgen/build/
 
 # c

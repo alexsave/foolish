@@ -1,13 +1,15 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { animBuildPlan, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn } from '@sdk/ts/wasm/bots.ts';
+import { animBuildPlan, animSeatGain, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn } from '@sdk/ts/wasm/bots.ts';
 import {
     ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_SOUND_STAGGER_MS, ANIM_CUE_REVERT, ANIM_CUE_PLACE, ANIM_CUE_COVER, ANIM_CUE_PICKUP,
+    ANIM_CUE_DEAL_LAND,
 } from '@sdk/ts/gen/kernel_consts.bots.ts';
+import { EVW_MSG_PASSED } from '@sdk/ts/gen/view_layout.bots.ts';
 import type { TableView } from '../state/view';
 import { buildTutorialData } from './Tutorial';
 import { cueAudio } from '../audio/cueAudio';
-import { CUE_SOUNDS } from '../audio/cueSounds';
+import { CUE_SOUNDS, cueLeadMs } from '../audio/cueSounds';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 
@@ -42,9 +44,11 @@ const MOVES: readonly { name: string; says: string; events: () => AnimPlanEventI
     { name: 'An attack', says: 'one card: lift, then place', events: () => [lay(ANIM_EVT.attack_pass, 0, 1)] },
     { name: 'A three-card attack', says: 'one lift, three strikes spread from the landing',
       events: () => [lay(ANIM_EVT.attack_pass, 0, 3)] },
+    { name: 'A transfer', says: 'the card lands like an attack, then is slid on to the next defender',
+      events: () => [{ ...lay(ANIM_EVT.attack_pass, 0, 1), msg: EVW_MSG_PASSED }] },
     { name: 'Attack, then cover', says: 'two beats, a flight and a gap apart',
       events: () => [lay(ANIM_EVT.attack_pass, 0, 1), lay(ANIM_EVT.cover, 1, 1)] },
-    { name: 'A bout ends', says: 'a two-card cover, the rest, the sweep to the pile, both refills',
+    { name: 'A bout ends', says: 'a two-card cover, the rest (the strokes gather the table in it), the sweep to the pile, both refills',
       events: () => [lay(ANIM_EVT.cover, 1, 1), lay(ANIM_EVT.cover, 1, 1),
                      sweep(ANIM_EVT.discard, 4, ANIM_LOC.discard),
                      draw(ANIM_EVT.refill, 0, 2), draw(ANIM_EVT.refill, 1, 2)] },
@@ -67,7 +71,7 @@ const MOVES: readonly { name: string; says: string; events: () => AnimPlanEventI
 const whenLoaded = (kinds: readonly number[], play: () => void, tries = 40): void => {
     cueAudio.unlock();
     cueAudio.want(kinds.reduce((m, k) => m | (1 << k), 0));
-    const ready = kinds.every((k) => (CUE_SOUNDS[k]?.files ?? []).every((f) => cueAudio.loaded(f)));
+    const ready = kinds.every((k) => (CUE_SOUNDS[k]?.takes ?? []).every((t) => cueAudio.loaded(t.file)));
     if (ready || tries <= 0) return play();
     setTimeout(() => whenLoaded(kinds, play, tries - 1), 100);
 };
@@ -75,20 +79,26 @@ const whenLoaded = (kinds: readonly number[], play: () => void, tries = 40): voi
 /** The cue whose sound a cue is heard as: its own, or for a revert the one it undoes. */
 const voiced = (kind: number, undoes: number): number => (kind === ANIM_CUE_REVERT ? undoes : kind);
 
+// As the board plays a plan: the run starts NOW, so the part of a gesture that
+// comes before a run's first moment is not heard there either (cueAudio.ts).
 const playMove = (events: AnimPlanEventIn[], table: TableView): void => {
     const plan = animBuildPlan(events, table);
     whenLoaded(plan.cues.map((c) => voiced(c.kind, c.undoes)), () => {
         for (const cue of plan.cues) {
+            const seat = plan.steps[cue.step]?.seat ?? -1;
+            const gain = cue.kind === ANIM_CUE_DEAL_LAND ? animSeatGain(table.mySeat, seat, table.seats.length) : 1;
             for (let h = 0; h < cue.hits; h++) {
-                cueAudio.strike(cue.kind, cue.atMs + h * ANIM_SOUND_STAGGER_MS, cue.nCards, cue.undoes);
+                cueAudio.strike(cue.kind, cue.atMs + h * ANIM_SOUND_STAGGER_MS, cue.nCards, cue.undoes, cue.roomMs, gain);
             }
         }
     });
 };
 
-const strikes = (kind: number, n: number, undoes = 0): void =>
+// One cue alone, its moment far enough off that every take is heard whole.
+const strikes = (kind: number, n: number, undoes = 0, nCards = 1): void =>
     whenLoaded([voiced(kind, undoes)], () => {
-        for (let h = 0; h < n; h++) cueAudio.strike(kind, h * ANIM_SOUND_STAGGER_MS, 1, undoes);
+        const lead = cueLeadMs(voiced(kind, undoes)) + 30;
+        for (let h = 0; h < n; h++) cueAudio.strike(kind, lead + h * ANIM_SOUND_STAGGER_MS, nCards, undoes);
     });
 
 const Button = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
@@ -129,7 +139,9 @@ export const SoundAudition = () => {
                 <h1 className="title title--page">Sounds</h1>
                 <p>
                     Every sound the game can make, through the same engine and the same table the
-                    board uses. The files marked <code>gen/</code> are synthesised placeholders.
+                    board uses. The files marked <code>gen/</code> are synthesised by tools/soundgen: the card
+                    sounds from Alex&apos;s approved models, and stand-ins for out, good, hand-off, finish and fool.
+                    The anchor is how far into a take its moment is: the take starts that long before it.
                 </p>
 
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -146,7 +158,7 @@ export const SoundAudition = () => {
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                     <thead>
                         <tr>
-                            <th style={cell}>Cue</th><th style={cell}>Files</th><th style={cell}>Gain</th>
+                            <th style={cell}>Cue</th><th style={cell}>Takes (anchor, strokes)</th><th style={cell}>Gain</th>
                             <th style={cell} />
                         </tr>
                     </thead>
@@ -158,18 +170,24 @@ export const SoundAudition = () => {
                                 <tr key={kind} data-cue={name}>
                                     <td style={cell}><strong>{name}</strong> <span style={{ opacity: 0.6 }}>({kind})</span></td>
                                     <td style={cell}>
-                                        {sound ? sound.files.map((f) => (
-                                            <div key={f} data-file={f} data-loaded={cueAudio.loaded(f)}>
-                                                <code>{f}</code>{cueAudio.loaded(f) ? '' : ' (not loaded)'}
+                                        {sound ? sound.takes.map((t) => (
+                                            <div key={t.file} data-file={t.file} data-anchor={t.anchorMs} data-loaded={cueAudio.loaded(t.file)}>
+                                                <code>{t.file}</code> <span style={{ opacity: 0.7 }}>{t.anchorMs} ms{sound.cardsPerLevel ? `, ${t.level}` : ''}</span>
+                                                {cueAudio.loaded(t.file) ? '' : ' (not loaded)'}
                                             </div>
                                         )) : kind === ANIM_CUE_REVERT ? 'the undone move, backwards' : 'silent'}
                                     </td>
                                     <td style={cell}>{sound ? sound.gain : ''}</td>
                                     <td style={{ ...cell, display: 'flex', gap: 8 }}>
-                                        {sound && <>
+                                        {sound && !sound.cardsPerLevel && <>
                                             <Button onClick={() => strikes(kind, 1)}>Play</Button>
                                             <Button onClick={() => strikes(kind, 4)}>x4</Button>
                                         </>}
+                                        {sound && sound.cardsPerLevel > 0 && [0, 1, 2, 3, 4, 5].map((level) => (
+                                            <Button key={level} onClick={() => strikes(kind, 1, 0, level === 0 ? 0 : level * sound.cardsPerLevel)}>
+                                                {level === 0 ? 'lift only' : `${level} stroke${level > 1 ? 's' : ''}`}
+                                            </Button>
+                                        ))}
                                         {kind === ANIM_CUE_REVERT && [ANIM_CUE_PLACE, ANIM_CUE_COVER, ANIM_CUE_PICKUP].map((u) => (
                                             <Button key={u} onClick={() => strikes(kind, 1, u)}>
                                                 {(ANIM_CUE_NAMES[u] ?? '').toLowerCase()}
