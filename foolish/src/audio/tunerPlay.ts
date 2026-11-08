@@ -2,6 +2,7 @@ import { cueLeadUs, cueMix, cueTakes } from '@sdk/ts/wasm/bots.ts';
 import { ANIM_SOUND_STAGGER_MS, ANIM_CUE_REVERT } from '@sdk/ts/gen/kernel_consts.bots.ts';
 import { CUE_ROLE_MAIN, CUE_ROLE_PRELUDE, CUE_ROLE_TIGHT } from '@sdk/ts/gen/view_layout.bots.ts';
 import { cueAudio, cueFile } from './cueAudio';
+import { TUNE_URL } from './tuneEndpoint';
 
 // Playing one cue on its own, for the workbenches: /sounds (SoundAudition) and the
 // tuner panel on the replay screen (SoundTuner). Never used by the board.
@@ -40,7 +41,6 @@ export const perStrokeOf = (kind: number): number => (cueMix(kind)?.cardsPerLeve
  *  other part silent, at the whole set's common gain (`soundgen solo`, served by the
  *  tuner's endpoint), and it plays at the cue's mix gain through the master volume,
  *  so it is as loud as it is in the game. Each press plays the set's next take. */
-const TUNE_URL = 'http://127.0.0.1:3101';
 const nextTake = new Map<string, number>();
 export const playPart = (kind: number, cue: string, role: string, part: string, strokes = 3): void => {
     cueAudio.cancel();

@@ -480,6 +480,18 @@ export function cueTakes(): readonly CueTakeRow[] {
     return (cueRows = rows);
 }
 
+/** DEVELOPMENT: hand the kernel a take table in place of the linked one (cue_voice.h
+ *  "THE TUNER'S TABLE", tools/soundgen/tune.sh), so a tuning change is heard with no
+ *  relink and no reload. False when the kernel refused the bytes. */
+export function cueTableLoad(bytes: Uint8Array): boolean {
+    const ex = bots();
+    if (bytes.length > ex.wasm_io_cap()) return false;
+    mem(ex).u8.set(bytes, ex.wasm_io_ptr());
+    if (ex.wasm_cue_table_load(bytes.length) !== 0) return false;
+    cueRows = null;
+    return true;
+}
+
 /** A cue's mix, or null for none. */
 export function cueMix(kind: number): CueMix | null {
     const ex = bots();

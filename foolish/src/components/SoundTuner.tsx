@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { botsReady, cueMix, cueTakes } from '@sdk/ts/wasm/bots.ts';
+import { cueMix, cueTakes } from '@sdk/ts/wasm/bots.ts';
+import { cueAudio } from '../audio/cueAudio';
+import { TUNE_URL, fetchTable } from '../audio/tuneEndpoint';
 import { ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_CUE_REVERT } from '@sdk/ts/gen/kernel_consts.bots.ts';
 
 // THE TUNER on /sounds: the timing and level of every part of every sound, by ear.
@@ -7,13 +9,11 @@ import { ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_CUE_REVERT } from '@sdk/ts/gen/kernel
 // DEV ONLY. SoundAudition loads it only when NODE_ENV is development, so a
 // production build never has it. It edits tools/soundgen/tuning.tsv through the
 // local endpoint `npm run tune` starts (tools/soundgen/tune.c), which rebuilds
-// every take, the take table and the kernel links from that file; the page then
-// reloads to play them. It holds no value of its own: what it shows is the
+// every take and the take table from that file; the page's kernel then takes the
+// table and the engine the files, with no reload (cueAudio.retable). It holds no value of its own: what it shows is the
 // file's, "changed" is against the file in git HEAD, and when Alex is happy the
 // file is what gets committed (docs/AUDIO.md "How to tune").
 
-const TUNE_URL = 'http://127.0.0.1:3101';
-const RELOAD_KEY = 'foolish_tuner_reload';
 
 /** How a row of the tuner plays its cue: as a strike with time for its take, as
  *  a run's opening strike (a tight take), or with strokes before it. */
@@ -54,7 +54,7 @@ const dbOfGain = (pm: number) => (pm > 0 ? 20 * Math.log10(pm / 1000) : -Infinit
 const gainOfDb = (db: number) => Math.max(0, Math.min(8000, Math.round(1000 * 10 ** (db / 20))));
 
 /** What tune.sh's "table" line sums, from the table this page's kernel carries:
- *  the same number means the reload has the new kernel link. */
+ *  the same number means the kernel has taken the new table. */
 const tableFingerprint = (): number => {
     let s = 0;
     for (const t of cueTakes()) s += t.nSamples + t.anchorUs;
@@ -63,44 +63,6 @@ const tableFingerprint = (): number => {
         if (m) s += m.gainPm + m.pitchPm + m.levelPm + m.perCardPm;
     }
     return s;
-};
-
-/** A reload the tuner asked for: the table it expects, where the page was, what to say. Kept
- *  for this tab only, as "fp scroll tries said". */
-/** The kernel links the dev server serves now, by their hashed file names, read from
- *  the chunk that names them. A reload before the dev server has seen a relink would
- *  load the old link and then be hot-patched under the page, so the tuner reloads
- *  only once these change. */
-let linkChunk: string | null = null;
-const LINKS = /(?:web|promo)\.wasm\.[\w~-]+\.gz/g;
-const servedLinks = async (): Promise<string> => {
-    const chunks = linkChunk ? [linkChunk] : performance.getEntriesByType('resource').map((e) => e.name)
-        .filter((n) => n.includes('/_next/static/chunks/') && n.endsWith('.js'));
-    for (const url of chunks) {
-        const names = (await (await fetch(url, { cache: 'no-store' })).text()).match(LINKS);
-        if (names) { linkChunk = url; return [...new Set(names)].sort().join(' '); }
-    }
-    return '';
-};
-const until = async (changed: () => Promise<boolean>, ms: number): Promise<void> => {
-    for (const end = performance.now() + ms; performance.now() < end; await new Promise((r) => setTimeout(r, 200))) {
-        if (await changed()) return;
-    }
-};
-
-interface Pending { fp: number; scroll: number; said: string; tries: number }
-const readPending = (): Pending | null => {
-    try {
-        const v = sessionStorage.getItem(RELOAD_KEY);
-        const m = v ? /^(\d+) (\d+) (\d+) (.*)$/s.exec(v) : null;
-        return m ? { fp: Number(m[1]), scroll: Number(m[2]), tries: Number(m[3]), said: m[4] } : null;
-    } catch { return null; }
-};
-const writePending = (p: Pending | null): void => {
-    try {
-        if (p) sessionStorage.setItem(RELOAD_KEY, `${p.fp} ${Math.round(p.scroll)} ${p.tries} ${p.said}`);
-        else sessionStorage.removeItem(RELOAD_KEY);
-    } catch { /* private mode */ }
 };
 
 const cueKind = (name: string): number => {
@@ -158,16 +120,15 @@ const groupsOf = (order: string[]) => {
             ...(rest.length ? [{ name: 'other', cues: rest }] : [])].filter((g) => g.cues.length > 0);
 };
 
-/** The tab the compact tuner shows, kept for this tab across the reload after a rebuild. */
+/** The tab the compact tuner shows, kept for this browser tab across reloads. */
 const CUE_KEY = 'foolish_tuner_group';
 const readCue = (): string | null => { try { return sessionStorage.getItem(CUE_KEY); } catch { return null; } };
 const writeCue = (c: string): void => { try { sessionStorage.setItem(CUE_KEY, c); } catch { /* private mode */ } };
 
-/** `compact`: the panel on the replay screen, one cue at a time picked from a row of
- *  chips, no prose. `beforeReload`: what the host keeps across the reload a rebuild
- *  ends in (the replay keeps its step). */
-export default function SoundTuner({ play, playPart, perStroke, compact = false, beforeReload }: {
-    play: TunerPlay; perStroke: (kind: number) => number; compact?: boolean; beforeReload?: () => void;
+/** `compact`: the panel on the replay screen, the cues in tabs by what happens at
+ *  the table, no prose. */
+export default function SoundTuner({ play, playPart, perStroke, compact = false }: {
+    play: TunerPlay; perStroke: (kind: number) => number; compact?: boolean;
     /** A part's row plays that part alone (src/audio/tunerPlay.ts playPart); the whole-cue row plays the cue. */
     playPart: (kind: number, cue: string, role: string, part: string, strokes?: number) => void;
 }) {
@@ -184,30 +145,6 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false,
     const sent = useRef<string | null>(null);
     const latest = useRef<string | null>(null);
 
-    // After a rebuild the page reloads; once the kernel is here it checks the
-    // table is the new one, and reloads again (briefly) if the dev server had
-    // not caught up.
-    useEffect(() => {
-        const p = readPending();
-        if (!p) return;
-        window.scrollTo(0, p.scroll);
-        let stop = false;
-        const check = () => {
-            if (stop) return;
-            if (!botsReady()) { setTimeout(check, 100); return; }
-            if (tableFingerprint() === p.fp || p.tries >= 12) {
-                writePending(null);
-                setStatus(p.tries >= 12 ? `${p.said} (but this page's kernel does not have the new table: reload)` : p.said);
-                requestAnimationFrame(() => window.scrollTo(0, p.scroll));
-            } else {
-                writePending({ ...p, tries: p.tries + 1 });
-                setTimeout(() => window.location.reload(), 400);
-            }
-        };
-        check();
-        return () => { stop = true; };
-    }, []);
-
     useEffect(() => {
         Promise.all([
             fetch(`${TUNE_URL}/tuning`, { cache: 'no-store' }).then((r) => (r.ok ? r.text() : Promise.reject(new Error()))),
@@ -220,26 +157,29 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false,
         }, () => setOff(true));
     }, []);
 
+    // A change is rendered by the endpoint, and then this page's kernel takes the new
+    // table and the engine fetches the files again (cueAudio.retable): no relink and
+    // no reload, so the page, the replay's step and the sound stay where they are.
     const send = useCallback((body: string) => {
         sent.current = body;
-        // Before the rebuild: the dev server may reload the page itself the moment the
-        // relinked kernel lands (wasm_asset.ts), ahead of this page's own reload below.
-        beforeReload?.();
         setBusy(true);
         setStatus('Rebuilding the takes...');
         const t0 = performance.now();
-        let links = '';
-        servedLinks().catch(() => '').then((l) => { links = l; })
-            .then(() => fetch(`${TUNE_URL}/tuning`, { method: 'POST', body, headers: { 'Content-Type': 'text/plain' } }))
+        fetch(`${TUNE_URL}/tuning`, { method: 'POST', body, headers: { 'Content-Type': 'text/plain' } })
             .then(async (r) => {
                 const out = await r.text();
-                if (r.ok && out.includes('relinked')) {
-                    setStatus('Waiting for the dev server to serve the new kernel...');
-                    await until(async () => (await servedLinks().catch(() => links)) !== links, 10000);
-                }
-                return { ok: r.ok, out };
+                if (!r.ok) return { ok: false, out, said: '' };
+                const fp = /tune\.sh: table (\d+)/.exec(out);
+                const gain = /common gain ([+-][\d.]+ dB)/.exec(out);
+                const bytes = await fetchTable();
+                const took = bytes && cueAudio.retable(bytes);
+                const right = !fp || tableFingerprint() === Number(fp[1]);
+                const said = !took ? 'Rebuilt, but this page could not take the new table: reload'
+                    : !right ? 'Rebuilt, but the table here is not the new one: reload'
+                    : `Applied in ${((performance.now() - t0) / 1000).toFixed(1)} s${gain ? `; the common gain is ${gain[1]}` : ''}`;
+                return { ok: true, out, said };
             })
-            .then(({ ok, out }) => {
+            .then(({ ok, out, said }) => {
                 if (latest.current !== body) { send(latest.current ?? body); return; }
                 setBusy(false);
                 if (!ok) {
@@ -247,14 +187,10 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false,
                     setLog(out);
                     return;
                 }
-                const fp = /tune\.sh: table (\d+)/.exec(out);
-                const gain = /common gain ([+-][\d.]+ dB)/.exec(out);
-                const said = `Rebuilt in ${((performance.now() - t0) / 1000).toFixed(1)} s${gain ? `; the common gain is ${gain[1]}` : ''}`;
-                if (!fp) { setStatus(said); return; }
-                writePending({ fp: Number(fp[1]), scroll: window.scrollY, said, tries: 0 });
-                window.location.reload();
+                setLog('');
+                setStatus(said);
             }, () => { setBusy(false); setOff(true); });
-    }, [beforeReload]);
+    }, []);
 
     const edit = (next: string) => {
         setText(next);
@@ -305,7 +241,7 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false,
             {!compact && <p style={{ margin: 0, opacity: 0.85 }}>
                 Every part&apos;s level (dB, on the deal&apos;s scale, before the common gain that puts the loudest take
                 at -3 dBFS, so raising the loudest lowers the rest) and time (ms from the cue&apos;s moment, negative
-                before it). A change rebuilds the takes it touches and reloads the page, in a second or two; then
+                before it). A change rebuilds the takes it touches and this page takes them, in a second or two, with no reload; then
                 press Play, or play a game at <a href="/ws" style={{ color: 'inherit' }}>/ws</a> (reload it after a change). Values come from <code>tools/soundgen/tuning.tsv</code> and are
                 marked against git HEAD: when it sounds right, commit that file.
             </p>}
@@ -330,9 +266,7 @@ export default function SoundTuner({ play, playPart, perStroke, compact = false,
                 )}
             </div>
             {log && <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, background: '#1b130e', padding: 8, borderRadius: 6 }}>{log}</pre>}
-            {/* Held while a rebuild runs: the page reloads when it lands, and a change made
-                meanwhile would be lost with it. */}
-            <div style={{ overflowX: 'auto', opacity: busy ? 0.45 : 1, pointerEvents: busy ? 'none' : undefined }}>
+            <div style={{ overflowX: 'auto' }}>
             <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: fs }}>
                 <thead>
                     <tr style={{ textAlign: 'left', opacity: 0.7 }}>

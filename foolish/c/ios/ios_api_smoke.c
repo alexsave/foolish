@@ -1827,6 +1827,57 @@ static int board_rules_check(void) {
             || ((const CueStrike *)fio_cue_strike(ANIM_CUE_REVERT, 0, 1, ANIM_CUE_NONE, 1000))->take != -1) {
             printf("FAIL cue strike gain / silent revert\n"); return 1;
         }
+        // THE TUNER'S TABLE (cue_table_load): the linked table as bytes, one row moved and
+        // one mix changed, is taken in its place; bytes that are not such a table are
+        // refused and change nothing; the linked table's own bytes put it back.
+        {
+            const int nb = 8 + n * (int)sizeof(CueTakeRow) + ANIM_N_CUES * (int)sizeof(CueMix);
+            unsigned char *orig = malloc((size_t)nb), *b = malloc((size_t)nb);
+            const uint32_t magic = CUE_TABLE_MAGIC;
+            const int32_t rows = n;
+            memcpy(orig, &magic, 4);
+            memcpy(orig + 4, &rows, 4);
+            for (int i = 0; i < n; i++) memcpy(orig + 8 + i * (int)sizeof(CueTakeRow), fio_cue_take(i), sizeof(CueTakeRow));
+            unsigned char *mixes = orig + 8 + n * (int)sizeof(CueTakeRow);
+            memset(mixes, 0, ANIM_N_CUES * sizeof(CueMix));
+            for (int k = 1; k < ANIM_N_CUES; k++) memcpy(mixes + k * (int)sizeof(CueMix), cue_table_mix(k), sizeof(CueMix));
+            const int32_t anchor0 = ((const CueTakeRow *)fio_cue_take(0))->anchor_us, gain_lift = cue_table_mix(ANIM_CUE_LIFT)->gain_pm;
+            memcpy(b, orig, (size_t)nb);
+            ((CueTakeRow *)(void *)(b + 8))->anchor_us = anchor0 + 1234;
+            ((CueMix *)(void *)(b + 8 + n * (int)sizeof(CueTakeRow) + ANIM_CUE_LIFT * (int)sizeof(CueMix)))->gain_pm = 777;
+            if (cue_table_load(b, nb) != 0 || fio_cue_n_takes() != n
+                || ((const CueTakeRow *)fio_cue_take(0))->anchor_us != anchor0 + 1234
+                || cue_table_mix(ANIM_CUE_LIFT)->gain_pm != 777
+                || ((const CueStrike *)fio_cue_strike(ANIM_CUE_LIFT, 1000000, 1, 0, 1000))->gain_pm != 777) {
+                printf("FAIL cue table load\n"); return 1;
+            }
+            // Refused: a wrong magic, a byte short or over, a row of no cue, and a name
+            // length past the field on the LAST row, whose next byte (the empty mix row
+            // of NONE) is 0, so only the length check stands between it and a read
+            // outside the row.
+            unsigned char *bad = calloc((size_t)nb + 1, 1);
+            const int last = 8 + (n - 1) * (int)sizeof(CueTakeRow);
+            const struct { int at; unsigned char v; int len; const char *what; } cases[] = {
+                { 0, 'X', nb, "magic" },
+                { -1, 0, nb - 1, "short length" },
+                { -1, 0, nb + 1, "long length" },
+                { 8 + 12, ANIM_CUE_NONE, nb, "cue" },
+                { last + 15, CUE_NAME_MAX, nb, "name length" },
+            };
+            for (unsigned c = 0; c < sizeof cases / sizeof cases[0]; c++) {
+                memcpy(bad, orig, (size_t)nb);
+                bad[nb] = 0;
+                if (cases[c].at >= 0) bad[cases[c].at] = cases[c].v;
+                if (cue_table_load(bad, cases[c].len) != -1 || ((const CueTakeRow *)fio_cue_take(0))->anchor_us != anchor0 + 1234) {
+                    printf("FAIL cue table load took a bad %s\n", cases[c].what); return 1;
+                }
+            }
+            if (cue_table_load(orig, nb) != 0 || ((const CueTakeRow *)fio_cue_take(0))->anchor_us != anchor0
+                || cue_table_mix(ANIM_CUE_LIFT)->gain_pm != gain_lift) {
+                printf("FAIL cue table load back\n"); return 1;
+            }
+            free(bad); free(b); free(orig);
+        }
         // The output mix: a take starts on its frame, at its gain.
         void *mx = fio_mix_new(48000);
         const float take[3] = { 1, 1, 1 };
