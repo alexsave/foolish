@@ -22,15 +22,17 @@
 //   THE MIX: a cue's gain, how far its level and pitch may wander either way,
 //   and how much louder it is a card past the first (CueMix, from soundgen).
 //
-// The TAKE TABLE and the MIX are soundgen's (tools/soundgen writes them for
-// every host from one render: src/audio/gen/cueTakes.ts for the web, a C file
-// for iOS), never written by hand. This file holds no table of its own: a host
-// hands it one.
+// The TAKE TABLE and the MIX are soundgen's (tools/soundgen writes them, as
+// build/gen/cue_takes.c, from the render that writes the files), never written
+// by hand. The rules hold no table of their own: they are handed one, by the
+// resident voice below or by a test.
 //
-// THE WEB'S ENGINE (src/audio/cueAudio.ts, cueSounds.ts) is the same rules in
-// TypeScript, written first; this is the C home iOS reaches through
-// fio_cue_strike (c/ios/include/ios_api.h). The two are held to the same
-// cases (c/tests/anim_plan_test.c, e2e/audio_cues.test.ts).
+// EVERY HOST ASKS THIS. iOS through fio_cue_* (c/ios/include/ios_api.h), the
+// web through wasm_cue_* (c/wasm/wasm_api.c, sdk/ts/wasm/bots.ts), both one line
+// over the resident voice below; a host only loads files and starts them where
+// it is told. The web's engine made these decisions in TypeScript first, and
+// they were recorded before it was deleted: tests/cue_voice_parity.h holds this
+// file to every one (anim_plan_test test_cue_voice_matches_the_web).
 
 #ifndef CUE_VOICE_H
 #define CUE_VOICE_H
@@ -108,5 +110,18 @@ int cue_lead_us(const CueTakeRow *takes, int n_takes, int kind);
 // argument is bad. At 1000 it is a copy.
 int cue_resampled_len(int n, int rate_pm);
 int cue_resample(const float *in, int n, int rate_pm, float *out, int cap);
+
+// ---- THE RESIDENT VOICE (cue_voice_table.c) -----------------------------------
+// The above over soundgen's table for this build (build/gen/cue_takes.c) and
+// one voice state in static storage, which is what a host exports: a take row,
+// a cue's mix, its lead, the seed, and a strike, whose answer is good until the
+// next one. A host that links this links the generated table with it; the
+// tests hand cue_strike tables of their own instead.
+int cue_table_n_takes(void);
+const CueTakeRow *cue_table_take(int i);          // NULL out of range
+const CueMix *cue_table_mix(int kind);             // NULL for NONE or out of range
+int cue_table_lead_us(int kind);
+void cue_table_seed(uint32_t seed);
+const CueStrike *cue_table_strike(int kind, int lead_us, int n_cards, int undoes, int gain_pm);
 
 #endif

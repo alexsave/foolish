@@ -439,9 +439,70 @@ export function animRoleCue(shown: AnimRoles, next: AnimRoles): number {
 }
 
 /** HOW LOUD A CARD LANDING AT `seat` IS TO THE VIEWER AT `viewer` of a table of
- *  `nSeats` (anim_seat_gain_pm): a linear gain, 1 for the viewer's own seat. */
-export function animSeatGain(viewer: number, seat: number, nSeats: number): number {
-    return bots().wasm_anim_seat_gain_pm(viewer, seat, nSeats) / 1000;
+ *  `nSeats` (anim_seat_gain_pm): a linear gain in thousandths, 1000 for the
+ *  viewer's own seat - what a strike's own level is given as (cueStrike). */
+export function animSeatGainPm(viewer: number, seat: number, nSeats: number): number {
+    return bots().wasm_anim_seat_gain_pm(viewer, seat, nSeats);
+}
+
+// ---- what a cue plays (c/src/cue_voice.h) --------------------------------------
+// The rules and the table are the kernel's, the same C iOS asks through fio_cue_*:
+// which take a strike plays, when its file starts so its anchor lands on the
+// moment, the strokes before it, its level and speed, and the voice that
+// remembers what it played last. The web's engine (src/audio/cueAudio.ts) only
+// fetches what the table names and starts what a strike says.
+
+/** A row of soundgen's take table for this build: a file (gen/<name>.m4a) and its cue, role and anchor. */
+export type CueTakeRow = V.CueTakeRow_Snap;
+/** One strike's answer: which take (-1 for none), when its file starts, its level and speed in
+ *  thousandths, reversed or not, and the strokes before it (a take, or -1). */
+export type CueStrike = V.CueStrike_Snap;
+/** How a cue sits in the mix (soundgen's MIX_ROWS), in thousandths. */
+export type CueMix = V.CueMix_Snap;
+
+/** Is the kernel here to be asked? A browser has it once ensureBotsAsync has
+ *  resolved, and is never made to load it from here (that would choose the
+ *  page's module for it); a runtime with a filesystem loads it on demand. For
+ *  a caller that may come first, as the sound engine does on the first tap. */
+export function botsReady(): boolean {
+    if (exportsCache) return true;
+    if (typeof window !== 'undefined') return false;
+    try { bots(); return true; } catch { return false; }
+}
+
+let cueRows: readonly CueTakeRow[] | null = null;
+/** The take table, read once: the module carries one table for its life. */
+export function cueTakes(): readonly CueTakeRow[] {
+    if (cueRows) return cueRows;
+    const ex = bots();
+    const rows: CueTakeRow[] = [];
+    for (let i = 0, n = ex.wasm_cue_n_takes(); i < n; i++) rows.push(V.readCueTakeRow(mem(ex), ex.wasm_cue_take(i)));
+    return (cueRows = rows);
+}
+
+/** A cue's mix, or null for none. */
+export function cueMix(kind: number): CueMix | null {
+    const ex = bots();
+    const p = ex.wasm_cue_mix(kind);
+    return p ? V.readCueMix(mem(ex), p) : null;
+}
+
+/** How long before its moment a cue's earliest take starts, in microseconds: when it must be handed over. */
+export function cueLeadUs(kind: number): number {
+    return bots().wasm_cue_lead_us(kind);
+}
+
+/** Seed the voice's generator (which take, how far a stand-in wanders). Once a page. */
+export function cueSeed(seed: number): void {
+    bots().wasm_cue_seed(seed >>> 0);
+}
+
+/** Strike `kind` with its moment `leadUs` from now, standing for `nCards`; `undoes` is a
+ *  REVERT's undone cue and `gainPm` the strike's own level (animSeatGainPm for a dealt
+ *  card). The voice remembers it. */
+export function cueStrike(kind: number, leadUs: number, nCards: number, undoes: number, gainPm: number): CueStrike {
+    const ex = bots();
+    return V.readCueStrike(mem(ex), ex.wasm_cue_strike(kind, leadUs | 0, nCards | 0, undoes | 0, gainPm | 0));
 }
 
 /** WHICH CUES COULD SOUND NEXT from a board (anim_cues_next): one bit per

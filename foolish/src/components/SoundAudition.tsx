@@ -1,24 +1,26 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { animBuildPlan, animSeatGain, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn } from '@sdk/ts/wasm/bots.ts';
+import {
+    animBuildPlan, animSeatGainPm, cueLeadUs, cueMix, cueTakes, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn,
+} from '@sdk/ts/wasm/bots.ts';
 import {
     ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_SOUND_STAGGER_MS, ANIM_CUE_REVERT, ANIM_CUE_PLACE, ANIM_CUE_COVER, ANIM_CUE_PICKUP,
     ANIM_CUE_DEAL_LAND,
 } from '@sdk/ts/gen/kernel_consts.bots.ts';
-import { EVW_MSG_PASSED } from '@sdk/ts/gen/view_layout.bots.ts';
+import { CUE_ROLE_PRELUDE, CUE_ROLE_TIGHT, EVW_MSG_PASSED } from '@sdk/ts/gen/view_layout.bots.ts';
 import type { TableView } from '../state/view';
 import { buildTutorialData } from './Tutorial';
-import { cueAudio } from '../audio/cueAudio';
-import { CUE_SOUNDS, cueLeadMs } from '../audio/cueSounds';
+import { cueAudio, cueFile } from '../audio/cueAudio';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 
 // /sounds - hear every sound cue on its own, and a few moves in context.
 //
 // A WORKBENCH, not a screen of the game, and English only for that reason. It
-// plays through the same engine and the same table the board does
-// (src/audio/cueAudio.ts, src/audio/cueSounds.ts), so what is heard here is
-// what ships: swap a file in the table, reload, and this page is the new sound.
+// plays through the same engine, and the same kernel answers, the board does
+// (src/audio/cueAudio.ts over c/src/cue_voice.h and soundgen's take table), so
+// what is heard here is what ships: change a sound in soundgen, rebuild, reload,
+// and this page is the new sound.
 //
 // The "in context" rows do not play a recording of a move. They hand the
 // kernel a small stream and schedule the cues its PLAN comes back with
@@ -71,7 +73,7 @@ const MOVES: readonly { name: string; says: string; events: () => AnimPlanEventI
 const whenLoaded = (kinds: readonly number[], play: () => void, tries = 40): void => {
     cueAudio.unlock();
     cueAudio.want(kinds.reduce((m, k) => m | (1 << k), 0));
-    const ready = kinds.every((k) => (CUE_SOUNDS[k]?.takes ?? []).every((t) => cueAudio.loaded(t.file)));
+    const ready = cueTakes().every((t) => !kinds.includes(t.cue) || cueAudio.loaded(cueFile(t.name)));
     if (ready || tries <= 0) return play();
     setTimeout(() => whenLoaded(kinds, play, tries - 1), 100);
 };
@@ -86,7 +88,7 @@ const playMove = (events: AnimPlanEventIn[], table: TableView): void => {
     whenLoaded(plan.cues.map((c) => voiced(c.kind, c.undoes)), () => {
         for (const cue of plan.cues) {
             const seat = plan.steps[cue.step]?.seat ?? -1;
-            const gain = cue.kind === ANIM_CUE_DEAL_LAND ? animSeatGain(table.mySeat, seat, table.seats.length) : 1;
+            const gain = cue.kind === ANIM_CUE_DEAL_LAND ? animSeatGainPm(table.mySeat, seat, table.seats.length) : 1000;
             for (let h = 0; h < cue.hits; h++) {
                 cueAudio.strike(cue.kind, cue.atMs + h * ANIM_SOUND_STAGGER_MS, cue.nCards, cue.undoes, gain);
             }
@@ -101,7 +103,7 @@ const playMove = (events: AnimPlanEventIn[], table: TableView): void => {
 // lists; a second covers every one.
 const strikes = (kind: number, n: number, undoes = 0, nCards = 1): void =>
     whenLoaded([voiced(kind, undoes)], () => {
-        const lead = kind === ANIM_CUE_REVERT ? 1000 : cueLeadMs(voiced(kind, undoes)) + 30;
+        const lead = kind === ANIM_CUE_REVERT ? 1000 : cueLeadUs(voiced(kind, undoes)) / 1000 + 30;
         for (let h = 0; h < n; h++) cueAudio.strike(kind, lead + h * ANIM_SOUND_STAGGER_MS, nCards, undoes);
     });
 
@@ -142,8 +144,8 @@ export const SoundAudition = () => {
                           padding: '28px 32px 36px', margin: '64px auto 48px', boxShadow: '0 6px 24px rgba(0,0,0,0.45)' }}>
                 <h1 className="title title--page">Sounds</h1>
                 <p>
-                    Every sound the game can make, through the same engine and the same table the
-                    board uses. The files marked <code>gen/</code> are synthesised by tools/soundgen: the card
+                    Every sound the game can make, through the same engine and the same kernel answers the
+                    board uses. Every file is soundgen&apos;s (tools/soundgen): the card
                     sounds from Alex&apos;s approved models, and stand-ins for out, good, hand-off, finish and fool.
                     The anchor is how far into a take its moment is: the take starts that long before it.
                 </p>
@@ -167,31 +169,34 @@ export const SoundAudition = () => {
                         </tr>
                     </thead>
                     <tbody>
-                        {cues.map((kind) => {
-                            const sound = CUE_SOUNDS[kind];
+                        {table && cues.map((kind) => {
+                            const takes = cueTakes().filter((t) => t.cue === kind);
+                            const mix = cueMix(kind);
+                            // A cue with strokes before it: the cards one stroke gathers.
+                            const perStroke = (mix?.cardsPerLevelPm ?? 0) / 1000;
                             const name = (ANIM_CUE_NAMES[kind] ?? String(kind)).toLowerCase();
                             return (
                                 <tr key={kind} data-cue={name}>
                                     <td style={cell}><strong>{name}</strong> <span style={{ opacity: 0.6 }}>({kind})</span></td>
                                     <td style={cell}>
-                                        {sound ? sound.takes.map((t) => (
-                                            <div key={t.file} data-file={t.file} data-anchor={t.anchorMs} data-loaded={cueAudio.loaded(t.file)}>
-                                                <code>{t.file}</code> <span style={{ opacity: 0.7 }}>{t.anchorMs} ms{t.role !== 'main' ? `, ${t.role}` : ''}{t.role === 'prelude' ? `, ${t.level}` : ''}</span>
-                                                {cueAudio.loaded(t.file) ? '' : ' (not loaded)'}
+                                        {takes.length ? takes.map((t) => (
+                                            <div key={t.name} data-file={cueFile(t.name)} data-anchor={t.anchorUs / 1000} data-loaded={cueAudio.loaded(cueFile(t.name))}>
+                                                <code>{t.name}</code> <span style={{ opacity: 0.7 }}>{(t.anchorUs / 1000).toFixed(1)} ms{t.role === CUE_ROLE_TIGHT ? ', tight' : ''}{t.role === CUE_ROLE_PRELUDE ? `, prelude, ${t.level}` : ''}</span>
+                                                {cueAudio.loaded(cueFile(t.name)) ? '' : ' (not loaded)'}
                                             </div>
                                         )) : kind === ANIM_CUE_REVERT ? 'the undone move, backwards' : 'silent'}
                                     </td>
-                                    <td style={cell}>{sound ? sound.gain : ''}</td>
+                                    <td style={cell}>{takes.length && mix ? mix.gainPm / 1000 : ''}</td>
                                     <td style={{ ...cell, display: 'flex', gap: 8 }}>
-                                        {sound && !sound.cardsPerLevel && <>
+                                        {takes.length > 0 && !perStroke && <>
                                             <Button onClick={() => strikes(kind, 1)}>Play</Button>
                                             <Button onClick={() => strikes(kind, 4)}>x4</Button>
                                         </>}
-                                        {sound?.takes.some((t) => t.role === 'tight') && (
+                                        {takes.some((t) => t.role === CUE_ROLE_TIGHT) && (
                                             <Button onClick={() => whenLoaded([kind], () => cueAudio.strike(kind, 0))}>Now</Button>
                                         )}
-                                        {sound && sound.cardsPerLevel > 0 && [0, 1, 2, 3, 4, 5].map((level) => (
-                                            <Button key={level} onClick={() => strikes(kind, 1, 0, level === 0 ? 0 : level * sound.cardsPerLevel)}>
+                                        {takes.length > 0 && perStroke > 0 && [0, 1, 2, 3, 4, 5].map((level) => (
+                                            <Button key={level} onClick={() => strikes(kind, 1, 0, Math.ceil(level * perStroke))}>
                                                 {level === 0 ? 'lift only' : `${level} stroke${level > 1 ? 's' : ''}`}
                                             </Button>
                                         ))}

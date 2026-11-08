@@ -24,9 +24,10 @@
 // promises is unique in a plan and stable as a run in flight is appended to.
 //
 // A FILE THAT STARTS BEFORE ITS MOMENT is handed over that much earlier. A take
-// carries an anchor (src/audio/cueSounds.ts): the grab and the thumb slide come
-// before the card leaves, the strokes that gather a table before it is swept.
-// `leadMs(kind)` is the longest anchor a cue's takes have, and the look-ahead
+// carries an anchor (the kernel's take table, c/src/cue_voice.h): the grab and
+// the thumb slide come before the card leaves, the strokes that gather a table
+// before it is swept. `leadMs(kind)` is the longest anchor a cue's takes have
+// (cue_lead_us), and the look-ahead
 // runs from the moment the file has to START, so the longest gathering is
 // still scheduled on time whenever the plan knew about it that early.
 

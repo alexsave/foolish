@@ -2,13 +2,11 @@
 # nothing it writes is committed). docs/AUDIO.md is the user's guide.
 #
 #   make sounds    every take as AAC into ../../public/audio/gen/ (rendered to
-#                  build/wav/, encoded by ffmpeg, checked), and the take table
-#                  the web reads into ../../src/audio/gen/cueTakes.ts
-#   make table     the take table alone: what type-checks and tests need, with
-#                  no audio written and no ffmpeg
+#                  build/wav/, encoded by ffmpeg, checked)
 #   make ctable CTABLE=<path>
-#                  the same table for a C host (iOS: c/src/cue_voice.h), no audio
-#                  written and no ffmpeg; c/Makefile runs it for the iOS kernel
+#                  the take table every host plays by (c/src/cue_voice.h), no
+#                  audio written and no ffmpeg; c/Makefile runs it for web.wasm
+#                  and the iOS kernel
 #   make bundle    `sounds`, but only when soundgen changed since the last one
 #                  (the iOS build runs it on every build, ios/scripts/bundle_sounds.sh)
 #   make check     hold every shipped file to its take (aac's priming declared,
@@ -31,12 +29,11 @@
 CC      ?= cc
 CFLAGS  := -O2 -std=c11 -Wall -Wextra -ffp-contract=off -I. -I../../c/src -I../../../shared/c
 OUT     := ../../public/audio/gen
-TS      := ../../src/audio/gen/cueTakes.ts
 WAV     := build/wav
 SRC     := soundgen.c c/dsp.c c/models.c c/placeholders.c c/m4a.c
 HDR     := c/dsp.h c/models.h c/placeholders.h c/m4a.h c/tables.h ../../c/src/anim_plan.h ../../../shared/c/rng.h
 
-.PHONY: sounds table ctable bundle check list stats audition parts clean
+.PHONY: sounds ctable bundle check list stats audition parts clean
 
 build/soundgen: $(SRC) $(HDR)
 	@mkdir -p build
@@ -46,14 +43,10 @@ build/soundgen: $(SRC) $(HDR)
 # a recording) must not leave its old file behind to be served.
 sounds: build/soundgen
 	@rm -rf $(OUT) $(WAV)
-	@mkdir -p $(OUT) $(WAV) $(dir $(TS))
-	@./build/soundgen write $(WAV) $(TS)
+	@mkdir -p $(OUT) $(WAV)
+	@./build/soundgen write $(WAV)
 	@./build/soundgen encode $(WAV) $(OUT)
 	@./build/soundgen check $(WAV) $(OUT)
-
-table: build/soundgen
-	@mkdir -p $(dir $(TS))
-	@./build/soundgen table $(TS)
 
 ctable: build/soundgen
 	@test -n "$(CTABLE)" || { echo "make ctable CTABLE=<path>" >&2; exit 2; }
@@ -86,4 +79,4 @@ audition: sounds
 	@for f in $(OUT)/*.m4a; do echo "$$(basename $$f)"; afplay "$$f"; sleep 0.35; done
 
 clean:
-	rm -rf build $(OUT) $(TS)
+	rm -rf build $(OUT)

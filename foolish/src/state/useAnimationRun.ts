@@ -18,7 +18,7 @@
 // game and not about time.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
+import { animSeatGainPm, cueLeadUs, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
 import { ANIM_STEP_NONE } from '@sdk/ts/gen/anim.bots.ts';
 import {
     arrivingPiles, frameAt, heldPiles, NO_ARRIVING, NO_HELD, planFor, sameArriving, sameHeld, withTrumpOut,
@@ -27,9 +27,10 @@ import {
 import { sameCard, type TableView, type ViewCard } from './view';
 import { cueAudio } from '../audio/cueAudio';
 import { dueStrikes } from '../audio/cueSchedule';
-import { cueLeadMs } from '../audio/cueSounds';
-import { animSeatGain } from '@sdk/ts/wasm/bots.ts';
 import { ANIM_CUE_DEAL_LAND } from '@sdk/ts/gen/kernel_consts.bots.ts';
+
+/** How long before its moment a cue's earliest take starts: the kernel's (cue_lead_us). */
+const cueLeadMs = (kind: number): number => cueLeadUs(kind) / 1000;
 
 /** What the page draws for one card at one place while its flight is up. */
 interface CardFlight {
@@ -225,13 +226,13 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         for (const s of dueStrikes(plan.cues, nowMs, cuesDoneRef.current, cueLeadMs)) {
             // A card landing at a seat is as loud as that seat is near the
             // viewer: the kernel's geometry (anim_seat_gain_pm).
-            let gain = 1;
+            let gain = 1000;
             if (s.kind === ANIM_CUE_DEAL_LAND) {
                 // The step's own board says whose seat is whose; the page's may
                 // not have arrived yet (the tutorial's opening deal).
                 const board = run[s.step]?.game_state ?? hooksRef.current.board();
                 const seat = plan.steps[s.step]?.seat ?? -1;
-                if (board) gain = animSeatGain(board.mySeat, seat, board.seats.length);
+                if (board) gain = animSeatGainPm(board.mySeat, seat, board.seats.length);
             }
             cueAudio.strike(s.kind, s.delayMs, s.nCards, s.undoes, gain);
         }

@@ -2083,8 +2083,8 @@ static void test_plan_sound_cues(void) {
     }
 }
 
-// WHAT A CUE PLAYS (cue_voice.h): the web engine's rules (src/audio/cueAudio.ts,
-// cueSounds.ts) over a table of this test's own, so each case is visible.
+// WHAT A CUE PLAYS (cue_voice.h): every rule over a table of this test's own, so
+// each case is visible.
 static void test_cue_voice(void) {
     // Two lift takes that need 300 and 400 ms, two tight ones (100, 150), one
     // pass take that starts 50 ms AFTER its moment, a one-take cue, and a sweep

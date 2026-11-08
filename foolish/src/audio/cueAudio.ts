@@ -5,10 +5,14 @@
 // into a source started at an exact time on the audio clock.
 //
 // WHAT IT DOES NOT: which cue a beat makes or when - the kernel's
-// (c/src/anim_plan.h "sound cues") - and which file a cue plays - the table's
-// (src/audio/cueSounds.ts). There is no event type, no card and no game in this
-// file, and there must not be: it is the playback half of a boundary, and a
-// second sound design starts the day it learns what an attack is.
+// (c/src/anim_plan.h "sound cues") - and what a cue PLAYS, which is the
+// kernel's too (c/src/cue_voice.h, the same C iOS asks): which take, when its
+// file starts, how loud and how fast, reversed or not, the strokes before it,
+// and never the take played last. The files it fetches are the ones the
+// kernel's take table names (soundgen's, for this build). There is no event
+// type, no card, no game and no sound rule in this file, and there must not
+// be: it is the playback half of a boundary, and a second sound design starts
+// the day it learns what an attack is.
 //
 // THE CLOCK. A strike is scheduled, not played: `start(ctx.currentTime + D)`.
 // The audio clock is driven by the sound card and does not drift against the
@@ -37,19 +41,12 @@
 //   the time it was aimed at, and dropped otherwise. A sound that is 20ms late
 //   is a sound; one that is half a second late is a mistake.
 //
-// A STRIKE IS AIMED AT A MOMENT, NOT AT A FILE'S START. A take is a whole
-// gesture and carries its anchor (src/audio/cueSounds.ts): the file is started
-// that long before the moment, so the grab and the thumb slide come before the
-// card leaves. A TAKE IS NEVER CUT: one that would have to start in the past
-// starts now, whole, and late - and for a cue with tight takes (the gesture
-// pressed closer to its moment) it is one of those, so it is late by as little
-// as it can be. The strokes before a sweep or a pickup are a take of their own
-// (a prelude), started before the cue's take the same way and heard over
-// whatever else is sounding.
-//
-// A REVERT IS ANOTHER CUE, BACKWARDS. The one cue id this file knows by name:
-// ANIM_CUE_REVERT has no sound of its own, the kernel says which cue it undoes,
-// and that cue's buffer is played reversed (reversed once, and kept).
+// A STRIKE IS ASKED, THEN STARTED. The kernel answers when the take's file
+// starts (its anchor before the moment, or now and whole when there is not
+// that long: a take is never cut), and when a prelude's does; this starts each
+// at that time on the audio clock, from its first sample, at the level and
+// speed it was given. A revert's answer says to play the take backwards: its
+// decoded buffer is reversed here, once, and kept.
 //
 // WHEN IT IS SILENT, and each is a deliberate no-op rather than an error:
 //   - before the first tap or key. Browsers refuse to start audio a user did
@@ -69,8 +66,7 @@
 // is leaning on the other channels to follow the table. The control for sound
 // is the mute, which is one tap and remembered.
 
-import { ANIM_CUE_REVERT } from '@sdk/ts/gen/kernel_consts.bots.ts';
-import { CUE_SOUNDS, CUE_SOUND_ROOT, preludesFor, takesFor, type CueSound, type CueTake } from './cueSounds';
+import { botsReady, cueSeed, cueStrike, cueTakes } from '@sdk/ts/wasm/bots.ts';
 
 const MUTED_KEY = 'foolish_sound_muted';
 const VOLUME_KEY = 'foolish_sound_volume';
@@ -80,13 +76,18 @@ const DEFAULT_VOLUME = 0.7;
 const MAX_FETCHES = 3;
 /** How far behind its aim a strike that waited for its file may still start. */
 const LATE_S = 0.08;
+/** Where soundgen's files are served (public/audio/gen/): a take is <name>.m4a. */
+export const CUE_SOUND_ROOT = '/audio/gen/';
+/** The file a take of the kernel's table is. */
+export const cueFile = (name: string): string => `${name}.m4a`;
 
 /** Where a file is between "not asked for" (absent) and decoded (in `buffers`). */
 type Progress = 'fetching' | 'held' | 'decoding' | 'failed';
 
-/** One strike on its way to the speaker: the take chosen, and the moment its
- *  anchor is aimed at on the audio clock. */
-interface Strike { take: CueTake; sound: CueSound; at: number; nCards: number; backwards: boolean; gain: number }
+/** One take on its way to the speaker, as the kernel answered it: its file, its
+ *  cue, the moment it is aimed at and the time its file starts on the audio
+ *  clock, its level and speed, and which way round. */
+interface Strike { file: string; cue: number; at: number; start: number; gain: number; rate: number; backwards: boolean }
 
 /** What a screen draws the sound control from. One object per change, so it
  *  compares by identity (useSyncExternalStore). */
@@ -115,7 +116,6 @@ export class CueAudio {
     private master: GainNode | null = null;
     private readonly buffers = new Map<string, AudioBuffer>();
     private readonly live = new Set<AudioBufferSourceNode>();
-    private readonly lastVariant = new Map<number, string>();
     private readonly listeners = new Set<() => void>();
     private state: CueAudioState | null = null;
     private armed = false;
@@ -130,8 +130,8 @@ export class CueAudio {
     /** A decoded file, sample for sample back to front, made the first time a
      *  revert needs it. */
     private readonly reversed = new Map<AudioBuffer, AudioBuffer>();
-    /** [0, 1). Replaceable so a test can hear the same thing twice. */
-    random: () => number = Math.random;
+    /** The kernel's voice is seeded once, by the first strike. */
+    private seeded = false;
 
     // ---- the setting ---------------------------------------------------------
 
@@ -239,15 +239,16 @@ export class CueAudio {
     }
 
     /** The next file to ask for: a wanted cue's, in the table's order, and then
-     *  - once there is a context to decode into - anything left. */
+     *  - once there is a context to decode into - anything left. Nothing until
+     *  the kernel, whose table it is, has loaded. */
     private next(): string | null {
+        if (!botsReady()) return null;
         let later: string | null = null;
-        for (const [kind, sound] of Object.entries(CUE_SOUNDS)) {
-            for (const { file } of sound?.takes ?? []) {
-                if (this.progress.has(file) || this.buffers.has(file)) continue;
-                if (this.wanted & (1 << Number(kind))) return file;
-                later ??= file;
-            }
+        for (const { name, cue } of cueTakes()) {
+            const file = cueFile(name);
+            if (this.progress.has(file) || this.buffers.has(file)) continue;
+            if (this.wanted & (1 << cue)) return file;
+            later ??= file;
         }
         return this.ctx ? later : null;
     }
@@ -287,7 +288,7 @@ export class CueAudio {
             this.progress.delete(file);
             // The strikes that were waiting on this file: now, or not at all.
             this.waiting = this.waiting.filter((w) => {
-                if (w.take.file !== file) return true;
+                if (w.file !== file) return true;
                 if (ctx.currentTime <= w.at + LATE_S) this.start(w, buffer);
                 return false;
             });
@@ -297,7 +298,7 @@ export class CueAudio {
     /** A file that did not arrive or would not decode: its cue is silent. */
     private fail(file: string): void {
         this.progress.set(file, 'failed');
-        this.waiting = this.waiting.filter((w) => w.take.file !== file);
+        this.waiting = this.waiting.filter((w) => w.file !== file);
     }
 
     /** Has this file arrived and decoded? For the audition page, which says
@@ -306,54 +307,50 @@ export class CueAudio {
 
     // ---- playing ---------------------------------------------------------------
 
-    /** Which take to play of those the strike may: any but the one this cue
-     *  played last. */
-    private variant(kind: number, choices: readonly CueTake[]): CueTake {
-        const n = choices.length;
-        if (n === 1) return choices[0];
-        const last = this.lastVariant.get(kind);
-        const others = last === undefined ? choices : choices.filter((t) => t.file !== last);
-        const pick = others[Math.min(others.length - 1, Math.floor(this.random() * others.length))];
-        this.lastVariant.set(kind, pick.file);
-        return pick;
-    }
-
     /**
      * Strike cue `kind` (an ANIM_CUE_*) so that its MOMENT is `delayMs` from now,
      * standing for `nCards` cards. `undoes` is the plan's word for a REVERT: the
-     * cue whose sound it plays backwards. `gain` scales this one strike (a
-     * landing at a far seat). Returns whether a sound was scheduled, or is
+     * cue whose sound it plays backwards. `gainPm` is this one strike's level in
+     * thousandths (a landing at a far seat, animSeatGainPm). What plays is the
+     * kernel's answer (cueStrike). Returns whether a sound was scheduled, or is
      * waiting on a file that is on its way; false is every silent case in this
      * file's header and is never an error.
      */
-    strike(kind: number, delayMs = 0, nCards = 1, undoes = 0, gain = 1): boolean {
+    strike(kind: number, delayMs = 0, nCards = 1, undoes = 0, gainPm = 1000): boolean {
         const ctx = this.ctx, master = this.master;
         if (!ctx || !master || this.settings().muted || ctx.state !== 'running') return false;
         if (typeof document !== 'undefined' && document.hidden) return false;
-        const backwards = kind === ANIM_CUE_REVERT;
-        const voiced = backwards ? undoes : kind;
-        const sound = CUE_SOUNDS[voiced];
-        if (!sound || sound.takes.length === 0) return false;
-        const at = ctx.currentTime + Math.max(0, delayMs) / 1000;
-        const take = this.variant(voiced, takesFor(sound, Math.max(0, delayMs), backwards));
-        const ok = this.play({ take, sound, at, nCards, backwards, gain }, voiced);
+        if (!botsReady()) return false;
+        if (!this.seeded) {
+            cueSeed(Math.floor(Math.random() * 0x100000000));
+            this.seeded = true;
+        }
+        const leadUs = Math.round(Math.max(0, delayMs) * 1000);
+        const s = cueStrike(kind, leadUs, nCards, undoes, gainPm);
+        if (s.take < 0) return false;
+        const takes = cueTakes();
+        const now = ctx.currentTime, at = now + leadUs / 1e6;
+        const strike = (take: number, startUs: number, gain: number, rate: number, backwards: boolean): Strike => ({
+            file: cueFile(takes[take].name), cue: takes[take].cue, at, start: now + startUs / 1e6,
+            gain: gain / 1000, rate: rate / 1000, backwards,
+        });
+        const ok = this.play(strike(s.take, s.startUs, s.gainPm, s.ratePm, s.backwards === 1));
         // The strokes that gather the table first, over whatever is sounding.
-        const strokes = backwards ? [] : preludesFor(sound, nCards);
-        if (ok && strokes.length > 0) this.play({ take: this.variant(-voiced, strokes), sound, at, nCards, backwards: false, gain }, voiced);
+        if (ok && s.prelude >= 0) this.play(strike(s.prelude, s.preludeStartUs, s.preludeGainPm, s.preludeRatePm, false));
         return ok;
     }
 
     /** One take on its way: started if its file is here, else waiting for it. */
-    private play(strike: Strike, voiced: number): boolean {
-        const buffer = this.buffers.get(strike.take.file);
+    private play(strike: Strike): boolean {
+        const buffer = this.buffers.get(strike.file);
         if (buffer) {
             this.start(strike, buffer);
             return true;
         }
-        if (this.progress.get(strike.take.file) === 'failed') return false;
+        if (this.progress.get(strike.file) === 'failed') return false;
         // It is being played, so it is wanted, whatever the board said: to the
         // front of the queue with it, and the strike waits for the file.
-        this.wanted |= 1 << voiced;
+        this.wanted |= 1 << strike.cue;
         this.pump();
         this.waiting.push(strike);
         return true;
@@ -373,29 +370,17 @@ export class CueAudio {
         return out;
     }
 
-    /**
-     * Start a strike's take so that its ANCHOR falls on the strike's moment: the
-     * file starts anchor seconds before it (after it, for a negative anchor).
-     * Played backwards the anchor is measured from the file's other end, so a
-     * reversed landing still peaks on its moment. A start that is already
-     * behind the clock starts NOW, from the file's first sample: a take is
-     * never cut (Alex: "play them in full").
-     */
+    /** Start a take at the time the kernel gave, from its first sample, or now
+     *  if that has passed (a strike that waited for its file): a take is never
+     *  cut (Alex: "play them in full"). */
     private start(w: Strike, forwards: AudioBuffer): void {
         const ctx = this.ctx, master = this.master;
         if (!ctx || !master) return;
-        const { sound, take, backwards } = w;
-        const buffer = backwards ? this.backwards(ctx, forwards) : forwards;
         const source = ctx.createBufferSource();
-        source.buffer = buffer;
-        // A little off true each time, so a row of one sample is a row of
-        // cards and not a machine (the stand-ins; a model varies by its takes).
-        const rate = 1 + sound.pitch * (2 * this.random() - 1);
-        source.playbackRate.value = rate;
+        source.buffer = w.backwards ? this.backwards(ctx, forwards) : forwards;
+        source.playbackRate.value = w.rate;
         const gain = ctx.createGain();
-        gain.gain.value = sound.gain * w.gain
-            * (1 + sound.level * (2 * this.random() - 1))
-            * (1 + Math.min(0.6, sound.perCard * Math.max(0, w.nCards - 1)));
+        gain.gain.value = w.gain;
         source.connect(gain);
         gain.connect(master);
         source.onended = () => {
@@ -403,8 +388,7 @@ export class CueAudio {
             gain.disconnect();
         };
         this.live.add(source);
-        const anchorS = (backwards ? buffer.duration * 1000 - take.anchorMs : take.anchorMs) / 1000 / rate;
-        source.start(Math.max(w.at - anchorS, ctx.currentTime));
+        source.start(Math.max(w.start, ctx.currentTime));
     }
 
     /** Stop everything scheduled or sounding: a replay was scrubbed, the tab
