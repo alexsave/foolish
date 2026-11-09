@@ -7,7 +7,8 @@
 // Held here, each as a client meets it:
 //   - a refresh token is used once: presented again within the grace it is a retry, after it the
 //     whole session ends, the newer token with it;
-//   - a session past its absolute end stays over, however its last token is presented;
+//   - a session past its absolute end stays over, however its last token is presented, an old
+//     token with no end of its own and no session row too;
 //   - a password change needs the current password, and ends every other session's tokens;
 //   - a global sign-out ends every session, a refresh token of each refused after it;
 //   - a deleted account's tokens and password are refused, and another account is untouched.
@@ -30,6 +31,7 @@
 
 #include "../../../../shared/c/le_bytes.h"
 
+#include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -241,6 +243,38 @@ static void a_session_past_its_end_stays_over(void) {
     teardown();
 }
 
+// A token from before sessions were stored: no end of its own (expires_at 0) and no session row.
+// The store cannot refuse it by its time, so auth.c's session end, counted from the token's own
+// created_at, is the only thing that does. Written into the file as such a row would be found.
+static void old_rows_lose_their_session_row(void) {
+    sqlite3 *db = NULL;
+    T_EQ_INT(sqlite3_open(g_db, &db), SQLITE_OK);
+    sqlite3_busy_timeout(db, 5000);
+    T_EQ_INT(sqlite3_exec(db, "UPDATE refresh_tokens SET expires_at = 0; DELETE FROM sessions;", NULL, NULL, NULL), SQLITE_OK);
+    sqlite3_close(db);
+}
+
+static void an_old_token_without_an_end_stops_at_its_sessions_end(void) {
+    setup();
+    T_EQ_INT(post(SU, NULL, creds(CBW_SIGNUP, "HUGO", "correct-horse-1")), 200);
+    session a, b, c;
+    T_CHECK(read_session(&a));
+    // Within its session's end: the session row is made from the token, and it refreshes.
+    old_rows_lose_their_session_row();
+    g_now += DAY;
+    T_CHECK(refresh(a.refresh, &b));
+    // Past it: refused, however often presented.
+    old_rows_lose_their_session_row();
+    g_now += CB_AUTH_SESSION_MS;
+    for (int i = 0; i < 3; i++) {
+        T_EQ_INT(post(RF, NULL, one_str(CBW_REFRESH, b.refresh)), 400);
+        T_CHECK(refused(CBW_ACCOUNT_E_BAD_REFRESH));
+        g_now += 1000;
+    }
+    T_CHECK(!refresh(b.refresh, &c));
+    teardown();
+}
+
 static void a_password_change_needs_the_password_and_ends_the_others(void) {
     setup();
     T_EQ_INT(post(SU, NULL, creds(CBW_SIGNUP, "CORA", "correct-horse-1")), 200);
@@ -334,6 +368,7 @@ static void a_deleted_account_is_gone(void) {
 int main(void) {
     T_RUN(a_token_is_used_once);
     T_RUN(a_session_past_its_end_stays_over);
+    T_RUN(an_old_token_without_an_end_stops_at_its_sessions_end);
     T_RUN(a_password_change_needs_the_password_and_ends_the_others);
     T_RUN(a_global_sign_out_ends_every_session);
     T_RUN(a_deleted_account_is_gone);
