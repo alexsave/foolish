@@ -360,6 +360,19 @@ static int rd_cards(Rd *r, Card *c, int room) {
     return n;
 }
 
+int bot_mem_encode_counts(uint32_t n_records, int8_t num_players, uint8_t *out, int cap) {
+    int len = 6;   // the count's var, then five bytes
+    for (uint32_t v = n_records; v >= 0x80; v >>= 7) len++;
+    if (len > cap) return -1;
+    int at = put_var(out, n_records);
+    out[at++] = (uint8_t)num_players;
+    out[at++] = 0;      // in_now: a counts-only block tracks no seat
+    out[at++] = 0xff;   // cur_def -1
+    out[at++] = 0xff;   // flip_holder -1
+    out[at++] = 8;      // counts only
+    return at;
+}
+
 int bot_mem_encode(const BotMemory *m, uint8_t *out, int cap) {
     uint8_t buf[BOT_MEM_BYTES_MAX + 64];
     int at = 0;
@@ -369,12 +382,7 @@ int bot_mem_encode(const BotMemory *m, uint8_t *out, int cap) {
     buf[at++] = (uint8_t)m->in_now;
     buf[at++] = (uint8_t)m->cur_def;
     buf[at++] = (uint8_t)m->flip_holder;
-    if (m->counts_only) {
-        buf[at++] = 8;
-        if (at > cap) return -1;
-        memcpy(out, buf, (size_t)at);
-        return at;
-    }
+    if (m->counts_only) return bot_mem_encode_counts(m->n_records, m->num_players, out, cap);
     const bool table = m->tbl_n || m->unc_n, alt = m->flip_holder >= 0;
     buf[at++] = (uint8_t)((m->discard ? 1 : 0) | (table ? 2 : 0) | (alt ? 4 : 0));
     if (m->discard) for (int i = 0; i < 8; i++) buf[at++] = (uint8_t)(m->discard >> (8 * i));
