@@ -115,7 +115,7 @@ static void log_config(const char *name, const char *value, bool secret, void *u
 }
 
 static int usage(void) {
-    fprintf(stderr, "usage: cbase serve      (configuration from CBASE_* environment variables, and CBASE_ENV_FILE's; see README.md)\n");
+    fprintf(stderr, "usage: cbase serve      (configuration from CBASE_* environment variables; see README.md)\n");
     return 2;
 }
 
@@ -123,7 +123,7 @@ int cb_process_main(const cb_provider *prov, const cb_app *app, int argc, char *
     if (argc != 2 || strcmp(argv[1], "serve") != 0) return usage();
     cb_config cfg;
     char err[512];
-    if (cb_config_load(&cfg, err, sizeof err) != CB_OK) { fprintf(stderr, "cbase: %s\n", err); return 2; }
+    if (cb_config_from_env(&cfg, err, sizeof err) != CB_OK) { fprintf(stderr, "cbase: %s\n", err); return 2; }
     if (cb_config_check_serve(&cfg, err, sizeof err) != CB_OK) { fprintf(stderr, "cbase: %s\n", err); return 2; }
     cb_log_init(cfg.log_level, 0);
     cb_config_each(&cfg, log_config, NULL);
