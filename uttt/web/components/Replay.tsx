@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { openReplay, type Replay as Kernel } from '../lib/kernel';
-import { SHELL_CODE } from '../lib/shell';
+import { SHELL_CODE, shellRoute, type ShellRoute } from '../lib/shell';
 import styles from './Replay.module.css';
 
 /** The board's lines run past it (the pen's overshoot); this much paper is
@@ -27,12 +27,26 @@ type Status = 'loading' | 'ready' | 'bad';
  *  location.pathname after mount; given any other code (a server render) it
  *  plays that code straight away. */
 export function ReplayAtPath({ code }: { code: string }) {
-    const [real, setReal] = useState<string | null>(code === SHELL_CODE ? null : code);
+    const [route, setRoute] = useState<ShellRoute | null>(code === SHELL_CODE ? null : { code });
     useEffect(() => {
-        if (code !== SHELL_CODE) return setReal(code);
-        setReal(decodeURIComponent(window.location.pathname.split('/')[1] ?? ''));
+        if (code !== SHELL_CODE) return setRoute({ code });
+        const r = shellRoute(window.location.pathname, window.location.search);
+        if ('redirect' in r) window.location.replace(r.redirect);
+        else setRoute(r);
     }, [code]);
-    return real === null ? null : <Replay code={real} />;
+    if (route === null) return null;
+    return 'code' in route ? <Replay code={route.code} /> : <NoGame />;
+}
+
+/** The page for an address that holds no game: a code the kernel refuses, or
+ *  an address that is no code at all (shellRoute's notFound). */
+function NoGame() {
+    return (
+        <main className={styles.page}>
+            <h1 className={styles.title}>Ultimate Tic-Tac-Toe</h1>
+            <p className={styles.line}>This link does not hold a game. Copy it again from the end of the game in Messages.</p>
+        </main>
+    );
 }
 
 export function Replay({ code }: { code: string }) {
@@ -136,14 +150,7 @@ export function Replay({ code }: { code: string }) {
         return () => window.removeEventListener('keydown', key);
     }, [toggle, back, forward]);
 
-    if (status === 'bad') {
-        return (
-            <main className={styles.page}>
-                <h1 className={styles.title}>Ultimate Tic-Tac-Toe</h1>
-                <p className={styles.line}>This link does not hold a game. Copy it again from the end of the game in Messages.</p>
-            </main>
-        );
-    }
+    if (status === 'bad') return <NoGame />;
 
     return (
         <main className={styles.page}>
