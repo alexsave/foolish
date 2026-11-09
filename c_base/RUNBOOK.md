@@ -445,8 +445,8 @@ How a request is served:
 - `/.well-known/*` (the universal-links association file) comes from the bucket as `application/json`, uncompressed, at the apex with no redirect: Apple fetches it without following redirects, and the app's entitlement is `applinks:foolish.cards` only.
 - The `.wasm.gz` modules are uploaded as `application/octet-stream` with no `Content-Encoding`, because the client gunzips them itself; uttt's `.wasm` kernels are `application/wasm` for an hour.
 - `/m/*`, the link unfurl, is the C route `foolish/server/src/app/unfurl_http.c` (DESIGN.md, "Unfurl route").
-  On the live foolish distribution it goes to the origin `vm`, `vm-origin.foolish.cards`, the cbase VM (providers/local/ops/VM_RUNBOOK.md), with `Managed-CachingOptimized` honouring the route's own `Cache-Control`.
-  That origin was added to the distribution by hand at the VM cutover and is not in `web.yaml`, which still sends `/m/*` to the c_base Lambda Function URL (the origin `api`, still on the distribution): a stack update that touches the distribution puts `/m/*` back on the Lambda, so bring the template up to date before the next `web_deploy.sh stack`.
+  It goes to the origin `vm`, `vm-origin.foolish.cards`, the cbase VM (providers/local/ops/VM_RUNBOOK.md), with `Managed-CachingOptimized` honouring the route's own `Cache-Control`.
+  CloudFront adds the VM's `X-Cbase-Origin`: `web_deploy.sh stack` reads it from SSM (`/cbase-vm/env/CBASE_ORIGIN_SECRET`) and passes it as the NoEcho parameter `OriginSecret`.
 - uttt.live has no server routes; its Function also answers `/234` with a 302 to `/243`.
 
 How it deploys: a push to `main` that touches `foolish/**`, `shared/**`, `uttt/c/**`, `uttt/web/**`, `web_deploy.sh`, `ops/require_main.sh` or the workflow runs `web_aws`.
@@ -531,7 +531,7 @@ A bad web deploy: revert the bad commit on `main`, whose push deploys the revert
 ### W7. GitHub deploys for the web
 
 1. The role and its one secret (`CBASE_AWS_ROLE_ARN`) are step 13's: one role deploys the backend and the web.
-2. A template change to `providers/aws/ops/site/web.yaml` is always `web_deploy.sh stack` from this Mac; CI only uploads and rewrites the two page lists on the existing template.
+2. A template change to `providers/aws/ops/site/web.yaml` is always `web_deploy.sh stack` from this Mac, on a tree that contains `origin/main` (`ops/require_main.sh`); CI only uploads and rewrites the two page lists on the existing template.
 3. utils.foolish.cards is built in the sibling repo `foolish-utils` and still deployed by hand (W5 step 4).
 4. Now and then, `c_base/providers/aws/ops/site/web_deploy.sh site foolish --prune-static` (and `uttt`) deletes hashed files no current page uses; a tab left open across two deploys reloads.
 5. The Infinite Oracle's Mode B headers: `CBASE_WEB_ISOLATION=yes c_base/providers/aws/ops/site/web_deploy.sh stack` (and `no` to undo).
