@@ -11613,6 +11613,40 @@ static void test_roster_decode_refuses_each_malformed_field(void) {
     CHECK(roster_validate(&r) == ROSTER_E_COUNT, "validate refuses a negative n");
 }
 
+// THE ADOPT'S UNPACK (roster_unpack): the bytes kept beside a resident are unpacked for SHAPE only,
+// since the load or commit that made the resident judged their rules. It gives what decode gives
+// for every roster decode accepts, refuses every cut or overrun as decode does, and leaves the
+// rules alone (a duplicate id unpacks: no adopt is handed one).
+static void test_roster_unpack(void) {
+    Roster r, a, b;
+    uint8_t buf[ROSTER_MAX + 1];
+    roster_full_fixture(&r);
+    roster_seat_remove(&r, 7);
+    roster_seat_add(&r, RS("local-you"), RS("Ты"), RS(""));
+    const int n = roster_encode(&r, buf, ROSTER_MAX);
+    CHECK(roster_decode(&a, buf, n) == ROSTER_OK && roster_unpack(&b, buf, n) == ROSTER_OK
+          && memcmp(&a, &b, sizeof a) == 0, "unpack gives the decode's roster, byte for byte (the zeros too)");
+    for (int k = 0; k < n; k++)
+        if (roster_unpack(&b, buf, k) != ROSTER_E_LENGTH) { CHECK(0, "every cut of a roster is refused by unpack"); break; }
+    buf[n] = 0;
+    CHECK(roster_unpack(&b, buf, n + 1) == ROSTER_E_LENGTH, "unpack refuses a byte after the last seat");
+    buf[1] = MAX_PLAYERS + 1;
+    CHECK(roster_unpack(&b, buf, n) == ROSTER_E_COUNT, "unpack refuses a count over MAX_PLAYERS");
+    // The rules are not judged again: two seats with one id unpack (decode refuses them).
+    roster_fixture(&r);
+    const int m = roster_encode(&r, buf, ROSTER_MAX);
+    buf[26 + 3] = '0';
+    CHECK(roster_decode(&a, buf, m) == ROSTER_E_DUPLICATE && roster_unpack(&b, buf, m) == ROSTER_OK,
+          "unpack leaves the rules to the load that made the resident");
+    // Format 1 is decode's, rules and all.
+    uint8_t v1[ROSTER_V1_BYTES];
+    roster_fixture(&r);
+    roster_v1_bytes(&r, v1);
+    CHECK(roster_unpack(&b, v1, ROSTER_V1_BYTES) == ROSTER_OK && roster_equal(&r, &b), "unpack reads format 1 as decode does");
+    v1[203 + 128 + 3] = '0';
+    CHECK(roster_unpack(&b, v1, ROSTER_V1_BYTES) == ROSTER_E_DUPLICATE, "and judges it as decode does");
+}
+
 // WHO SITS WHERE, from the bytes (roster_seat_refs): what the server's journal reads instead of
 // keeping a decoded Roster. Both formats, the same answers as a decode.
 static void test_roster_seat_refs(void) {
@@ -23473,6 +23507,7 @@ int main(void) {
     test_roster_round_trip();
     test_roster_reads_format_1();
     test_roster_seat_refs();
+    test_roster_unpack();
     test_roster_decode_refuses_each_malformed_field();
     test_roster_seat_of_is_exact();
     test_roster_ops();

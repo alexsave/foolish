@@ -56,6 +56,7 @@
 
 #include "aws/aws_call.h"
 #include "net/https.h"
+#include "util/uuid.h"
 #include "aws/sigv4.h"
 #include "aws_json.h"
 #include "store/rows_foolish.h"
@@ -171,10 +172,14 @@ static bool meta(bn_http *h, int kind, const char *gid, bn_resp *r) {
 static bool setup(bn_http *h, char *gid, char *user) {
     bn_resp r;
     bn_resp_init(&r);
-    unsigned x = (unsigned)arc4random();
+    // The process's one random source (util/uuid.h), not arc4random: glibc before 2.36 has none,
+    // which kept cbase-bench from building on Linux at all.
+    unsigned rnd[2];
+    cb_random_bytes(rnd, sizeof rnd);
+    const unsigned x = rnd[0];
     char name[32], pw[32];
     snprintf(name, sizeof name, "benchd%08x", x);
-    snprintf(pw, sizeof pw, "bd-%08x%08x", (unsigned)arc4random(), x);
+    snprintf(pw, sizeof pw, "bd-%08x%08x", rnd[1], x);
     nc_reset();
     const NcRequest *q = nc_req_signup(name, (int)strlen(name), pw, (int)strlen(pw));
     bool ok = q && carry(h, q, &r) && nc_session_read(r.status, r.body.p, (int)r.body.len) == NW_OK;
