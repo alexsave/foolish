@@ -526,7 +526,7 @@ Found here:
 ## Unfurl route
 
 `GET /m/<payload>` (`foolish/server/src/app/unfurl_http.{h,c}`, built 2026-10-14) is the link preview a shared iMessage game gets in Messages, Slack and WhatsApp, which run no JavaScript.
-It replaces the Next app's only server code, `foolish/src/app/m/[payload]/layout.tsx` generateMetadata (docs/VERCEL.md 4(a)), so the web app can become a static export.
+It replaces the Next app's only server code, `foolish/src/app/m/[payload]/layout.tsx` generateMetadata, so the web app can become a static export.
 
 As built:
 
@@ -560,7 +560,7 @@ Found here:
   The fix is the kernel's: mark those statics `_Thread_local` (every single-threaded build defines the qualifier away already), then drop the mutex.
 - What differs from the TS page on purpose: the root layout's tags (theme-color, apple-itunes-app, the web-app tags, fonts, analytics) are not on this page, because nothing renders it but a crawler and the instant redirect; the payload is percent-decoded once (Next may decode a param before the route's own `decodeURIComponent`, which differs only for a payload holding `%25`, which base32 never does).
 - Open: crawlers that follow a meta refresh would unfurl the homepage instead.
-  The TS page redirected in JavaScript for exactly that reason; docs/VERCEL.md 4(a) proposed an inline `location.replace` with the refresh only under `<noscript>`, and this build follows the later instruction to use no script.
+  The TS page redirected in JavaScript for exactly that reason; the route's design proposed an inline `location.replace` with the refresh only under `<noscript>`, and this build follows the later instruction to use no script.
   Check a real Messages, Slack and WhatsApp unfurl once the web distribution routes `/m/*` here.
 
 ## Module: realtime
