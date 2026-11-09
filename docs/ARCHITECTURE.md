@@ -238,8 +238,8 @@ include $(CBASE)/cbase.mk
 
 `make -C server serve` builds and runs it, and `make -C server check` runs the app's tests.
 `cbase.mk` and `cdom.mk` both read `APP_CFLAGS` today (native flags in one, wasm flags in the other), so one Makefile including both would mix the two sets.
-The fix is one meaning per name: the wasm side's flags get their own name (proposed: `APP_WASM_CFLAGS` and `APP_WASM_LDFLAGS`, next to `APP_WASM`), pending the owner's ruling.
-Until it lands, keep the server and the UI in separate Makefiles (`server/` and `ui/`), as amgi and the hello-world apps do.
+The owner's ruling (2026-11-09) is one meaning per name: `APP_CFLAGS` belongs to the app's wasm module in `cdom.mk`, and `cbase.mk`'s native flags are renamed `SERVER_CFLAGS` (and `SERVER_LDFLAGS`), with the old name migrated and deleted.
+Once cbase's rename lands, one Makefile may include both; until then, keep the server and the UI in separate Makefiles (`server/` and `ui/`), as amgi and the hello-world apps do.
 
 ## 6. A real app: amgi
 
