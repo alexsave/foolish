@@ -5,10 +5,9 @@
 // had, on the repo's front page: a `supabase/` tree that had moved to
 // server/impls/, a `rustpoc/` that had been renamed `rust/`, a `migrations/`
 // directory that had been folded into seed.sql, "three languages (en/ru/ko)"
-// when there were twenty-five, "deploys to Vercel with zero config" when the
-// Git integration had been deliberately disconnected, and - for several months,
-// at the top of the page - literal tool-call scaffolding (`</content>`,
-// `</invoke>`) left behind by whatever wrote it.
+// when there were twenty-five, a deploy story that had stopped being true,
+// and - for several months, at the top of the page - literal tool-call
+// scaffolding (`</content>`, `</invoke>`) left behind by whatever wrote it.
 //
 // Every one of those was wrong for weeks and no check anywhere noticed, because
 // prose is not compiled. This compiles the part of it that can be: the paths.

@@ -64,9 +64,10 @@ const serverRouting = {
       // the other half of the same finding (docs/APP_REVIEW_NOTES.md): a
       // reviewer's `curl` of the React route returned only the noscript line.
       { source: '/support', destination: '/support.html' },
-      // The link unfurl is a c_base route now (c_base/docs/VERCEL.md section
-      // 4a); on CloudFront /m/* goes to the API's Lambda directly. Under
-      // `next dev` it goes to whichever backend .env.local names.
+      // The link unfurl is a C route in the backend
+      // (foolish/server/src/app/unfurl_http.c); on CloudFront /m/* goes to
+      // the backend directly. Under `next dev` it goes to whichever backend
+      // .env.local names.
       { source: '/m/:payload', destination: `${process.env.NEXT_PUBLIC_BACKEND_URL || 'https://api.foolish.cards'}/m/:payload` },
     ];
   },
