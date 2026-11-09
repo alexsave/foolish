@@ -75,10 +75,12 @@ typedef struct cb_section {
     // that finalizes allocates it once, not per finished game.
     uint8_t    *fin;
     cb_row_buf  rb;               // the loaded row's bytes, the journal's copy (row_acquire); kept with the section, not zeroed
-    // The buffer a commit decodes the new game into (table_resident) for the journal, which takes
-    // it and hands its old one back (rows_foolish.h cb_game_commit.resident): made on first use,
-    // kept with the section, not zeroed.
-    TableResident *res;
+    // The buffers a commit decodes the new game into (table_resident_into) for the journal, which
+    // takes the one written and hands its old one back in its place (rows_foolish.h
+    // cb_game_commit.resident), or NULL: `res` a whole TableResident, for a game with its bot
+    // memory, `res_small` TABLE_RESIDENT_SMALL bytes, for one without (journal.c res_take). Made
+    // on first use, kept with the section, not zeroed.
+    TableResident *res, *res_small;
 } cb_section;
 
 cb_section *cb_section_new(void);

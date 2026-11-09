@@ -494,10 +494,14 @@ typedef struct TableResident {
     bool        mem_full;     // `mem` holds the block (valid, not counts-only)
     BotMemory   mem;          // LAST: a resident without it ends before it
 } TableResident;
-// The bytes res needs, a prefix of the struct: sizeof(TableResident), or for a resident without its
-// memory block offsetof(TableResident, mem). Only those bytes are read by table_adopt and
+// A resident without its memory block: the struct up to `mem`, 992 bytes at the server's caps.
+#define TABLE_RESIDENT_SMALL offsetof(TableResident, mem)
+// The bytes res needs, a prefix of the struct: sizeof(TableResident), or TABLE_RESIDENT_SMALL for a
+// resident without its memory block. Only those bytes are read by table_adopt and
 // table_resident_encode, so a host may copy and keep exactly them.
-size_t table_resident_bytes(const TableResident *res);
+static inline size_t table_resident_bytes(const TableResident *res) {
+    return res->mem_full ? sizeof(TableResident) : TABLE_RESIDENT_SMALL;
+}
 
 // The table loaded from a resident and the roster bytes kept with it: its board copied into
 // t->g (the copy an operation may change; the resident is untouched), the roster unpacked
@@ -509,6 +513,11 @@ int table_adopt(Table *t, const TableResident *res, const uint8_t *roster, int r
 // the board's clock after the operation, which the row's state carries), else NULL for the
 // clock the table was loaded with.
 void table_resident(const Table *t, const BoardClock *clock, TableResident *out);
+// The same into the buffer its bytes fit (table_resident_bytes): `whole` (a whole TableResident)
+// for a resident with its memory block, else `small` (TABLE_RESIDENT_SMALL bytes, or more).
+// Returns the one written. A host that holds residents at their size (the server's journal)
+// keeps one buffer of each, so no resident is copied to be held small.
+TableResident *table_resident_into(const Table *t, const BoardClock *clock, TableResident *whole, TableResident *small);
 // The state blob a resident stands for: exactly the one table_commit_products writes for the
 // table it was made from (state_cap at least TABLE_STATE_MAX). TABLE_OK, or a refusal.
 int table_resident_encode(const TableResident *res, uint8_t *state, int state_cap, int *state_len);

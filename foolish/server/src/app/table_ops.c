@@ -250,6 +250,7 @@ static void section_release(cb_section *s) {   // the section and what it keeps
     free(s->fin);
     cb_row_buf_free(&s->rb);
     free(s->res);
+    free(s->res_small);
     free(s);
 }
 static void section_at_exit(void *p) { section_release(p); }   // a thread ends with nothing out
@@ -1055,7 +1056,9 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // table from them and writes only the Table and the board): the cache and finalize read them.
     // The game as the commit leaves it, decoded, for a store that keeps it (the journal): what a
     // section loaded from the new row would hold, its RNG base from the new row's seed too.
-    if (rc == CB_OK && cb_journal_of(ctx->store) && !s->res && !(s->res = malloc(sizeof *s->res))) rc = CB_E_NOMEM;
+    if (rc == CB_OK && cb_journal_of(ctx->store)
+        && ((!s->res && !(s->res = malloc(sizeof *s->res))) || (!s->res_small && !(s->res_small = malloc(TABLE_RESIDENT_SMALL)))))
+        rc = CB_E_NOMEM;
     if (rc == CB_OK && cb_journal_of(ctx->store)) {
         // The RNG base is the seed's. A plain move (gc.moves) keeps its game's seed, and the table
         // already holds that seed's base (cb_section_load, or table_adopt from its resident): only
@@ -1065,8 +1068,8 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
             if (nrow.has_seed) hex_encode(nrow.seed, CB_SEED_LEN, hex, sizeof hex);
             table_set_deal_seed(t, hex, (int)strlen(hex));
         }
-        table_resident(t, &c->clock, s->res);
-        gc.resident = &s->res;   // the journal takes it, and gives the game's old buffer back
+        // The journal takes the buffer written, and puts the game's old one (or NULL) in its slot.
+        gc.resident = table_resident_into(t, &c->clock, s->res, s->res_small) == s->res ? &s->res : &s->res_small;
         gc.held = s->held;
     }
     if (rc == CB_OK) {

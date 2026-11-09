@@ -580,14 +580,26 @@ static int row_dup_encoded(cb_game_row *dst, const jgame *g) {
     return rc != CB_OK ? rc : row_dup_state(dst, &g->row, buf, n);
 }
 
-// THE RESIDENT HANDED OVER: the caller's decoded game (*res, a buffer the caller owns, always a
-// whole TableResident) becomes the game's. A game is held in the bytes its resident needs
-// (table.h table_resident_bytes): a resident with its bot memory takes the whole struct, and is
-// taken by a swap (the game's old buffer goes back to the caller, where a 2 KB copy was); one
-// without (a table none of whose brains reads the memory: every humans-only game) needs 992 of
-// its 2,016 bytes, and they are copied into the game's own buffer of that size, the caller
-// keeping its own. The caller gets back a whole buffer or NULL, for its next commit
-// (app/table_ops.c cb_section.res makes one when it has none).
+// THE RESIDENT HANDED OVER: the caller's decoded game (*res, a buffer the caller owns) becomes the
+// game's, and the game's old buffer the caller's: a swap, where a 2 KB copy was. A game is held in
+// the bytes its resident needs (table.h table_resident_bytes): the whole struct with its bot memory,
+// TABLE_RESIDENT_SMALL (992 of 2,016 bytes) without (a table none of whose brains reads the memory:
+// every humans-only game). So the caller's buffer is made at that size, or larger
+// (table_resident_into into a buffer of each size, app/table_ops.c cb_section.res and .res_small),
+// and what comes back in its place is a buffer of the same size, or NULL when the game's old one
+// was of the other size (freed: a game changes size only at a deal), for the caller to make again.
+static void res_take(jgame *g, TableResident **res) {
+    const size_t cap = table_resident_bytes(*res);
+    TableResident *old = g->res;
+    const bool same = g->res_cap == cap;
+    g->res = *res;
+    g->res_cap = cap;
+    if (old && !same) { free(old); old = NULL; }
+    *res = old;
+    g->res_valid = true;
+}
+
+// The game's buffer at `need` bytes (res_cap may understate a buffer: never overstate it).
 static bool res_hold(jgame *g, size_t need) {
     if (g->res && g->res_cap == need) return true;
     TableResident *b = malloc(need);
@@ -596,22 +608,6 @@ static bool res_hold(jgame *g, size_t need) {
     g->res = b;
     g->res_cap = need;
     return true;
-}
-
-static void res_take(jgame *g, TableResident **res) {
-    const size_t need = table_resident_bytes(*res);
-    // Not held small only when the buffer cannot be had: the caller's whole one is taken instead.
-    if (need < sizeof(TableResident) && res_hold(g, need)) {
-        memcpy(g->res, *res, need);
-    } else {
-        TableResident *old = g->res;
-        const bool whole = g->res_cap == sizeof(TableResident);
-        g->res = *res;
-        g->res_cap = sizeof(TableResident);
-        if (old && !whole) { free(old); old = NULL; }
-        *res = old;
-    }
-    g->res_valid = true;
 }
 
 // A decoded game copied in (the caller keeps its own: cb_journal_game_decoded, _created).
