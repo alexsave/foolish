@@ -20485,6 +20485,159 @@ static void test_table_rematch_rates_its_own_game(void) {
         CHECK(tb.ratings.before[s] == first.before[s] && tb.ratings.delta[s] == first.delta[s], "and that stamp is still the first game's");
 }
 
+// THE RESIDENT HOLDS ITS BOT MEMORY ONLY WHERE A BRAIN READS IT (table.h TableResident,
+// docs/BOT_MEMORY.md). A table none of whose brains reads the memory (humans, `random`,
+// `handwritten`) keeps a counts-only block, and its resident is the struct's first
+// TABLE_RESIDENT_SMALL bytes; a table with a belief brain (`octogen`) keeps the whole block. Each
+// game is played the server's way, every operation adopted from the last commit's resident held in
+// a buffer of exactly its size (table_resident_into), and at every commit: the resident is of the
+// size its seats call for, it encodes to the row's bytes, and the table adopted from it holds the
+// same memory as one adopted from the whole struct (table_resident). A humans-only table that
+// seats an octogen in its rematch's lobby is small through the lobby and whole from the deal.
+// Mutation check pending.
+static TbRow rs_row;
+static TableResident rs_twin;
+typedef struct { int bad_size, bad_encode, bad_mem, small, whole, commits; } RsCounts;
+
+// The resident as the server holds it, in place of `old`: written by table_resident_into into a
+// buffer of each size, exactly that size, and the other freed; its whole twin beside it.
+static TableResident *rs_hold(const TableCommit *c, TableResident *old) {
+    free(old);
+    TableResident *whole = malloc(sizeof *whole);
+    void *small_bytes = malloc(TABLE_RESIDENT_SMALL);
+    TableResident *small = small_bytes;
+    TableResident *r = table_resident_into(&tb, &c->clock, whole, small);
+    if (r == whole) free(small_bytes); else free(whole);
+    table_resident(&tb, &c->clock, &rs_twin);
+    return r;
+}
+
+// The commit's checks on the resident just held: `full` when its memory block must be held.
+static void rs_check(const TableResident *r, bool full, RsCounts *k) {
+    k->commits++;
+    if (full) k->whole++; else k->small++;
+    if (r->mem_full != full || table_resident_bytes(r) != (full ? sizeof(TableResident) : TABLE_RESIDENT_SMALL)) k->bad_size++;
+    uint8_t enc[TABLE_STATE_MAX];
+    int el = 0;
+    if (table_resident_encode(r, enc, (int)sizeof enc, &el) != TABLE_OK || el != rs_row.state_len || memcmp(enc, rs_row.state, (size_t)el) != 0)
+        k->bad_encode++;
+    static BotMemory from_twin;
+    table_adopt(&tb, &rs_twin, rs_row.roster, rl_of(rs_row.roster));
+    from_twin = tb.mem;
+    const bool twin_valid = tb.mem_valid;
+    table_adopt(&tb, r, rs_row.roster, rl_of(rs_row.roster));
+    if (tb.mem_valid != twin_valid || memcmp(&tb.mem, &from_twin, sizeof from_twin) != 0) k->bad_mem++;
+}
+
+// Plays the held resident's game to its end; the resident held after each commit. 1 when it ended.
+static int rs_play(uint32_t bots, bool full, TableResident **held, RsCounts *k) {
+    char id[16], ab[2 * FOOLISH_SEED_LEN + 1];
+    uint8_t w[128];
+    TableCommit c;
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) memcpy(ab + 2 * i, "ab", 2);
+    for (int step = 0; step < 3000; step++) {
+        if (table_adopt(&tb, *held, rs_row.roster, rl_of(rs_row.roster)) != TABLE_OK || tb_game.status != GAME_STATUS_PLAYING) return 0;
+        table_set_deal_seed(&tb, ab, 2 * FOOLISH_SEED_LEN);
+        int drove = 0;
+        if (table_bots_due(&tb)) {
+            const int d = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+            if (d < 0) return 0;
+            drove = d > 0;
+        }
+        if (!drove) {
+            const int wl = dl_human_move(&tb_game, bots, id, sizeof(id), w, sizeof(w));
+            if (wl <= 0 || table_act(&tb, id, (int)strlen(id), w, wl, -1, 0) != TABLE_APPLIED) return 0;
+        }
+        if (wv_commit(&rs_row, "g", &c) < 0) return 0;
+        *held = rs_hold(&c, *held);
+        rs_check(*held, full, k);
+        if (c.ended) return 1;
+    }
+    return 0;
+}
+
+// A lobby of `np` seats id-0.. (`brain` at the `bots` seats), every seat ready, dealt from
+// tb_seed_fill(seed) and committed as version 1 of rs_row; its resident held. NULL on a refusal.
+static TableResident *rs_deal(int np, uint32_t bots, const char *brain, int seed) {
+    static Game lobby;
+    Roster r;
+    TableCommit c;
+    memset(&lobby, 0, sizeof(lobby));
+    lobby.num_players = (int8_t)np;
+    game_reset_to_lobby(&lobby, (1u << np) - 1u);   // every seat READY
+    tb_roster_for(np, bots, brain, tb_roster2);
+    tb_seed_fill(seed);
+    table_init(&tb, &tb_game, &tb_snaps);
+    if (roster_decode(&r, tb_roster2, rl_of(tb_roster2)) != ROSTER_OK || table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf), NULL) <= 0)
+        return NULL;
+    const int rc = table_ready(&tb, RS("id-0"), tb_seed);
+    game_set_seed(1);   // wide deal mode off again
+    rs_row.version = 0;
+    rs_row.log_len = 0;
+    if (rc != TABLE_OK || wv_commit(&rs_row, "g", &c) < 0) return NULL;
+    return rs_hold(&c, NULL);
+}
+
+static void test_table_resident_holds_memory_only_where_read(void) {
+    static const struct { int np; uint32_t bots; const char *brain; bool full; } cases[] = {
+        { 2, 0, "random", false },          // humans only
+        { 3, 0, "random", false },
+        { 3, 0x6, "random", false },        // bots that read no memory
+        { 3, 0x2, "handwritten", false },
+        { 2, 0x2, "octogen", true },        // a belief brain
+        { 4, 0xA, "octogen", true },
+    };
+    RsCounts k;
+    memset(&k, 0, sizeof k);
+    int played = 0;
+    cb_rng = 0x6d656d33u;
+    for (int i = 0; i < (int)(sizeof cases / sizeof cases[0]); i++) {
+        TableResident *held = rs_deal(cases[i].np, cases[i].bots, cases[i].brain, 40 + i);
+        if (!held) { CHECK(0, "a resident-size table deals"); return; }
+        rs_check(held, cases[i].full, &k);
+        played += rs_play(cases[i].bots, cases[i].full, &held, &k);
+        free(held);
+    }
+    CHECK(played == (int)(sizeof cases / sizeof cases[0]), "every resident-size game plays to its end on its resident");
+
+    // A humans-only table seats an octogen in its rematch's lobby: small until the deal, whole after.
+    {
+        TableCommit c;
+        TableResident *held = rs_deal(2, 0, "random", 70);
+        CHECK(held != NULL, "a humans-only table deals");
+        if (!held) return;
+        rs_check(held, false, &k);
+        CHECK(rs_play(0, false, &held, &k), "and plays to its end on its resident");
+        table_adopt(&tb, held, rs_row.roster, rl_of(rs_row.roster));
+        CHECK(table_continue(&tb, RS("id-0")) == TABLE_OK && wv_commit(&rs_row, "g", &c) >= 0, "its rematch's lobby opens");
+        held = rs_hold(&c, held);
+        rs_check(held, false, &k);
+        tb_seed_fill(77);
+        table_adopt(&tb, held, rs_row.roster, rl_of(rs_row.roster));
+        CHECK(table_add_bot(&tb, RS("id-0"), RS("id-2"), RS("Bot"), RS("octogen"), tb_seed) == TABLE_OK && wv_commit(&rs_row, "g", &c) >= 0,
+              "an octogen sits down in the lobby");
+        held = rs_hold(&c, held);
+        rs_check(held, false, &k);
+        for (int s = 0; s < 2; s++) {
+            char id[8];
+            snprintf(id, sizeof(id), "id-%d", s);
+            table_adopt(&tb, held, rs_row.roster, rl_of(rs_row.roster));
+            const int rc = table_ready(&tb, id, (int)strlen(id), tb_seed);
+            game_set_seed(1);
+            CHECK((rc == TABLE_OK || rc == TABLE_MOOT) && wv_commit(&rs_row, "g", &c) >= 0, "each human readies");
+            held = rs_hold(&c, held);
+            rs_check(held, rs_row.status == GAME_STATUS_PLAYING, &k);
+        }
+        CHECK(rs_row.status == GAME_STATUS_PLAYING && held->mem_full, "the rematch deals with the octogen, and its resident holds the memory");
+        CHECK(rs_play(1u << 2, true, &held, &k), "and plays to its end on its resident");
+        free(held);
+    }
+    CHECK(k.bad_size == 0, "every resident is held at the size its seats call for");
+    CHECK(k.bad_encode == 0, "every held resident encodes to its row's bytes");
+    CHECK(k.bad_mem == 0, "a table adopted from a held resident holds the memory one adopted from the whole struct does");
+    CHECK(k.small > 100 && k.whole > 100, "both sizes are held, many times");
+}
+
 // THE GATE: over 1,000 random games of 2 to 8 seats, humans and "random" bots,
 // every commit cast to every human seat and the spectators - as the board cast,
 // and as a delta wherever table_cast_delta_ok allows one - the client's rebuilt
@@ -23589,6 +23742,7 @@ int main(void) {
     test_rating_stamp_rides_the_row_and_the_envelope();
     test_table_rates_the_game_it_ends();
     test_table_rematch_rates_its_own_game();
+    test_table_resident_holds_memory_only_where_read();
     test_ask_round_trips();
     test_table_ask_runs_every_kind();
     test_table_cast_carries_its_version();

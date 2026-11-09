@@ -190,13 +190,15 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 // What the overlay holds of a game, for a test: its stamps (THE JOURNAL'S TIME, journal.c j_mono:
 // its last operation's, its oldest waiting move's or 0), its decoded game's buffer (compared, never
 // read: NULL when it has none), the holds on it (THE HOLD) and the bytes its row's state buffer
-// holds (journal.c THE STATE BYTES). CB_OK, or CB_E_NOT_FOUND when the overlay does not hold it.
-// Not counted in the stats' lookups.
+// holds (journal.c THE STATE BYTES), and the bytes its decoded game is held in (journal.c res_take:
+// table.h table_resident_bytes; 0 when it has none). CB_OK, or CB_E_NOT_FOUND when the overlay
+// does not hold it. Not counted in the stats' lookups.
 typedef struct {
     int64_t     touched_ms, first_ms;
     const void *resident;
     int         held;
     size_t      state_bytes;
+    size_t      resident_bytes;
 } cb_journal_game_facts;
 int cb_journal_game_info(const cb_store *s, const char *id, cb_journal_game_facts *out);
 
