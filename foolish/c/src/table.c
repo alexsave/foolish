@@ -12,6 +12,10 @@
 #include "../wasm/wire.h"
 #include "../../../shared/c/le_bytes.h"
 #include <string.h>
+#ifdef BOT_MEM_ASSERT
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 // ---------- snapshots -----------------------------------------------------------
 
@@ -134,6 +138,16 @@ static void mem_load(Table *t, const StateBlobSections *sec) {
     else
         bot_mem_clear(&t->mem);
     mem_level_check(t);
+}
+
+// The resident's block (table.h TableResident): its own, or the one its summary stands for.
+static void mem_from_resident(const TableResident *res, BotMemory *m) {
+    if (res->mem_full) { *m = res->mem; return; }
+    bot_mem_clear(m);
+    if (!res->mem_valid) return;
+    m->n_records = res->mem_records;
+    m->num_players = res->mem_players;
+    m->counts_only = 1;
 }
 
 static void scope_open(Table *t, int actor) {
@@ -1064,7 +1078,7 @@ int table_adopt(Table *t, const TableResident *res, const uint8_t *roster, int r
     t->ratings = res->ratings;
     t->rng_base = res->rng_base;
     t->detail = 0;
-    t->mem = res->mem;
+    mem_from_resident(res, &t->mem);
     t->mem_valid = res->mem_valid;
     t->mem_at = 0;   // the board carries no log: the resident's memory is folded to it
     mem_level_check(t);
@@ -1089,9 +1103,27 @@ void table_resident(const Table *t, const BoardClock *clock, TableResident *out)
     out->rng_base = t->rng_base;
     BotMemory scratch;
     bool valid;
-    out->mem = *mem_now(t, &scratch, &valid);
+    const BotMemory *m = mem_now(t, &scratch, &valid);
     out->mem_valid = valid;
-    (void)scratch;
+    out->mem_full = valid && !m->counts_only;
+    out->mem_records = out->mem_full ? 0 : m->n_records;
+    out->mem_players = out->mem_full ? 0 : m->num_players;
+    if (out->mem_full) out->mem = *m;
+#ifdef BOT_MEM_ASSERT
+    else {
+        // The summary is the whole block: rebuilt, it is the table's, byte for byte.
+        BotMemory back;
+        mem_from_resident(out, &back);
+        if (memcmp(&back, m, sizeof back) != 0) {
+            fprintf(stderr, "table_resident: a block without its memory is not its summary\n");
+            abort();
+        }
+    }
+#endif
+}
+
+size_t table_resident_bytes(const TableResident *res) {
+    return res->mem_full ? sizeof(TableResident) : offsetof(TableResident, mem);
 }
 
 int table_resident_encode(const TableResident *res, uint8_t *state, int state_cap, int *state_len) {
@@ -1100,7 +1132,10 @@ int table_resident_encode(const TableResident *res, uint8_t *state, int state_ca
     // A resident is a Table's (table_resident), so its stamp is the board's own (table_stamp).
     const GameRatings *stamp = res->ratings.n > 0 ? &res->ratings : 0;
     uint8_t mb[BOT_MEM_BYTES_MAX];
-    StateBlobSections sec = mem_section(&res->mem, res->mem_valid, mb, (int)sizeof mb);
+    BotMemory light;
+    const BotMemory *m = &res->mem;
+    if (!res->mem_full) { mem_from_resident(res, &light); m = &light; }
+    StateBlobSections sec = mem_section(m, res->mem_valid, mb, (int)sizeof mb);
     sec.rep = &res->rep;   // the ring the resident kept apart from its head (section 2)
     const int n = state_blob_put_full_at(g, &res->clock, stamp, &sec, STATE_BLOB_FORMAT, state);
     if (n == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
