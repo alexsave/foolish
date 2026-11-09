@@ -53,6 +53,11 @@ run() {
     bash "$tmp/work/c_base/providers/aws/ops/site/web_deploy.sh" site foolish > "$tmp/out" 2>&1 && return 0 || return $?
 }
 
+# `stack` changes the template from THIS tree, so it is gated like a site.
+run_stack() {
+  bash "$tmp/work/c_base/providers/aws/ops/site/web_deploy.sh" stack > "$tmp/out" 2>&1 && return 0 || return $?
+}
+
 run_lambda() {
   echo zip > "$tmp/fake.zip"
   bash "$tmp/work/c_base/providers/aws/ops/lambda_deploy.sh" "$tmp/fake.zip" > "$tmp/out" 2>&1 && return 0 || return $?
@@ -76,6 +81,11 @@ if run; then fail "a tree behind origin/main deployed"; fi
 grep -q 'does not contain origin/main' "$tmp/out" || { cat "$tmp/out" >&2; fail "behind main: refused, but not by require_main"; }
 [ ! -e "$tmp/aws_calls" ] || fail "behind main: aws was called before the refusal: $(cat "$tmp/aws_calls")"
 echo "ok - a tree behind origin/main is refused before any AWS call"
+
+if run_stack; then fail "stack: a tree behind origin/main deployed"; fi
+grep -q 'does not contain origin/main' "$tmp/out" || { cat "$tmp/out" >&2; fail "stack, behind main: refused, but not by require_main"; }
+[ ! -e "$tmp/aws_calls" ] || fail "stack, behind main: aws was called before the refusal: $(cat "$tmp/aws_calls")"
+echo "ok - stack: a tree behind origin/main is refused before any AWS call"
 
 if run_lambda; then fail "lambda: a tree behind origin/main deployed"; fi
 grep -q 'does not contain origin/main' "$tmp/out" || { cat "$tmp/out" >&2; fail "lambda, behind main: refused, but not by require_main"; }
@@ -151,6 +161,13 @@ if grep -q 'does not contain origin/main' "$tmp/out"; then cat "$tmp/out" >&2; f
 grep -q 'NEXT_PUBLIC_BACKEND_URL' "$tmp/out" || { cat "$tmp/out" >&2; fail "contains main: did not reach deploy_site"; }
 [ ! -e "$tmp/aws_calls" ] || fail "contains main: unexpected aws call: $(cat "$tmp/aws_calls")"
 echo "ok - a tree containing origin/main gets past the gate"
+
+# The stack gets past the gate to its first AWS call, the origin secret (the stub fails it there).
+if run_stack; then fail "stack: expected the stub aws to stop the deploy"; fi
+if grep -q 'does not contain origin/main' "$tmp/out"; then cat "$tmp/out" >&2; fail "stack: a tree containing main was refused"; fi
+grep -q '^aws ssm get-parameter --name /cbase-vm/env/CBASE_ORIGIN_SECRET' "$tmp/aws_calls" 2>/dev/null || { cat "$tmp/out" >&2; fail "stack, contains main: never reached the origin secret"; }
+rm -f "$tmp/aws_calls"
+echo "ok - stack: a tree containing origin/main gets past the gate"
 
 # The Lambda gets past the gate to its first AWS call (the stub fails it there).
 if run_lambda; then fail "lambda: expected the stub aws to stop the deploy"; fi
