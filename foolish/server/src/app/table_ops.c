@@ -120,8 +120,9 @@ void cb_row_buf_free(cb_row_buf *b) {
 //
 // ONE OWNER: under serve the journal's overlay holds every game an operation touched
 // (journal.h cb_journal_game_acquire), decoded: the section ADOPTS a copy of it (table_adopt, a
-// 2 KB copy; no decode, and a refused operation leaves the game as it was, R1), and gets the
-// row's columns only. A game the overlay holds as bytes (read from the tables, recovered) is
+// copy of the board and a decode of the ~150 byte roster; a refused operation leaves the game as
+// it was, R1), and gets the row's columns and its roster bytes (copied into the section's kept
+// buffer: the commit's row carries them back, section_row). A game the overlay holds as bytes (read from the tables, recovered) is
 // copied into the section's kept buffers (no allocation), decoded by the caller and handed back.
 // With no journal (CBASE_JOURNAL=0, another store) every operation reads the store. There is no
 // other copy of a game in this process: a refusal or a load failure is the game's own answer.
@@ -138,11 +139,16 @@ static int take_game(void *ud, const cb_game_row *row, const TableResident *res)
     row_into *w = ud;
     if (!res) return row_copy_into(w->out, &w->s->rb, row);
     cb_section *s = w->s;
+    if (buf_put(&s->rb.roster, &s->rb.roster_cap, row->roster, row->roster_len) != CB_OK) return CB_E_NOMEM;
     table_init(&s->t, &s->g, &s->snaps);
-    table_adopt(&s->t, res);
+    if (table_adopt(&s->t, res, row->roster, (int)row->roster_len) != TABLE_OK) {
+        CB_ERROR("table", "game %s: its resident's roster is refused (%d)", row->id, s->t.detail);
+        return CB_E_STATE;
+    }
     *w->out = *row;
-    w->out->state = w->out->roster = w->out->list = NULL;
-    w->out->state_len = w->out->roster_len = w->out->list_len = 0;
+    w->out->state = w->out->list = NULL;
+    w->out->state_len = w->out->list_len = 0;
+    w->out->roster = s->rb.roster;
     w->adopted = true;
     return CB_OK;
 }
@@ -842,8 +848,11 @@ static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *de
     np->status = c->status;
     np->state = (uint8_t *)A + c->state.off;
     np->state_len = (size_t)c->state.len;
-    np->roster = (uint8_t *)A + c->roster.off;
-    np->roster_len = (size_t)c->roster.len;
+    // The roster: the one this commit wrote, else (a plain move, TABLE_PRODUCTS_NO_ROW, which
+    // never edits it) the one the section read. Every row carries it: a store that keeps the
+    // game resident keeps it as the roster's one copy (journal.c game_set).
+    np->roster = c->roster.len ? (uint8_t *)A + c->roster.off : row->roster;
+    np->roster_len = c->roster.len ? (size_t)c->roster.len : row->roster_len;
     np->needs_bots = c->needs_bots;
     np->version = row->version + 1;
     np->created_at = row->created_at;

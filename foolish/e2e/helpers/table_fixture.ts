@@ -237,7 +237,7 @@ class Builder {
             throw new FixtureRefused('seal', n, reasonOf(n, ['GAME_INVALID_', 'TABLE_E_']),
                 detail === null ? undefined : { code: detail, reason: reasonOf(detail, ['ROSTER_E_']) });
         }
-        const row = host.read(ex.wasm_io_ptr(), n + L.ROSTER_BYTES);
+        const row = host.read(ex.wasm_io_ptr(), n + ex.wasm_fixture_roster_len());
         return { state: row.slice(0, n), roster: row.slice(n) };
     }
 }

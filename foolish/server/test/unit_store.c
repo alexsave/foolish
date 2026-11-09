@@ -2399,8 +2399,8 @@ static void the_session_list_appends_and_clears(void) {
 // up to `max_commits` (0: to its end): its row (version, state, roster, created_at, list_from) and its
 // session log as schema 9 stored it, one game_moves row per commit at the version the commit wrote.
 typedef struct {
-    uint8_t state[TABLE_STATE_MAX], roster[ROSTER_BYTES], log[1 << 16], seed[FOOLISH_SEED_LEN];
-    int     state_len, log_len, status, n_rows;
+    uint8_t state[TABLE_STATE_MAX], roster[ROSTER_MAX], log[1 << 16], seed[FOOLISH_SEED_LEN];
+    int     state_len, roster_len, log_len, status, n_rows;
     int64_t version, list_from, created_at, now;
     int64_t seq[2048];
     int     off[2048], len[2048];
@@ -2427,7 +2427,8 @@ static void up_play(up_game_t *u, int seed0, int max_commits) {
         u->version++;
         memcpy(u->state, arena + c.state.off, (size_t)c.state.len);
         u->state_len = c.state.len;
-        memcpy(u->roster, arena + c.roster.off, ROSTER_BYTES);
+        memcpy(u->roster, arena + c.roster.off, (size_t)c.roster.len);
+        u->roster_len = c.roster.len;
         u->status = c.status;
         if (c.logs_reset) { u->log_len = 0; u->n_rows = 0; u->list_from = u->version; }
         if (c.logs.len && u->n_rows < 2048 && u->log_len + c.logs.len <= (int)sizeof u->log) {
@@ -2438,7 +2439,7 @@ static void up_play(up_game_t *u, int seed0, int max_commits) {
             u->log_len += c.logs.len;
         }
         if (c.status != GAME_STATUS_PLAYING || (max_commits && n >= max_commits)) break;
-        if (table_load(&t, u->state, u->state_len, u->roster, ROSTER_BYTES) != TABLE_OK) break;
+        if (table_load(&t, u->state, u->state_len, u->roster, u->roster_len) != TABLE_OK) break;
         BotDriveOut drv;
         if (bot_drive_eligible_mask(&g, game_human_mask(&g)) != 0) {
             if (table_bot_drive(&t, 0, 0, 1, &drv) <= 0) break;
@@ -2477,7 +2478,7 @@ static void up_insert(sqlite3 *db, const char *id, const up_game_t *u) {
     sqlite3_bind_int(st, 2, u->status);
     sqlite3_bind_int64(st, 3, u->version);
     sqlite3_bind_blob(st, 4, u->state, u->state_len, SQLITE_STATIC);
-    sqlite3_bind_blob(st, 5, u->roster, ROSTER_BYTES, SQLITE_STATIC);
+    sqlite3_bind_blob(st, 5, u->roster, u->roster_len, SQLITE_STATIC);
     sqlite3_bind_blob(st, 6, u->seed, FOOLISH_SEED_LEN, SQLITE_STATIC);
     sqlite3_bind_int64(st, 7, u->list_from);
     sqlite3_bind_int64(st, 8, u->created_at);

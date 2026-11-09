@@ -76,6 +76,7 @@ static inline int64_t I64(double d) { return (int64_t)d; }
     E(I, wasm_fixture_game_bytes, 0, ()) \
     E(I, wasm_fixture_seat, 3, (I64(a[0]), I64(a[1]), I64(a[2]))) \
     E(P, wasm_fixture_stamp_ptr, 0, ()) \
+    E(I, wasm_fixture_roster_len, 0, ()) \
     E(I, wasm_fixture_title, 1, (I64(a[0]))) \
     E(P, wasm_game_ptr_internal, 0, ()) \
     E(V, wasm_init, 0, ()) \

@@ -65,9 +65,10 @@ static int deal(const char *brain, int np, int n) {
         lobby.players[s].status = PLAYER_STATUS_READY;
     }
     table_init(&g_table, &g_game, &g_snaps);
-    const int len = table_seal(&g_table, &lobby, &roster, g_row, (int)sizeof g_row);
+    int roster_len = 0;
+    const int len = table_seal(&g_table, &lobby, &roster, g_row, (int)sizeof g_row, &roster_len);
     if (len < 0) return len;
-    rc = table_load(&g_table, g_row, len, g_row + len, ROSTER_BYTES);
+    rc = table_load(&g_table, g_row, len, g_row + len, roster_len);
     if (rc != TABLE_OK) return rc;
     uint8_t seed[FOOLISH_SEED_LEN];
     char hex[2 * FOOLISH_SEED_LEN + 1];

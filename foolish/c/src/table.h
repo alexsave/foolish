@@ -366,11 +366,12 @@ int table_ask(Table *t, const char *actor_id, int id_len, const char *name, int 
 // into `t` with table_load, so what a fixture hands back is a row the kernel has
 // already accepted. `g` may be the table's own board (t->g): it is serialized
 // before the load adopts anything. Returns the state blob's length (the roster
-// follows it, ROSTER_BYTES long), or the refusal: TABLE_E_ROSTER with the
+// follows it, *roster_len bytes when roster_len is not NULL; out must hold
+// TABLE_STATE_MAX + ROSTER_MAX), or the refusal: TABLE_E_ROSTER with the
 // ROSTER_E_* in t->detail for a roster that does not encode, TABLE_E_CAP,
 // TABLE_E_STATE_RULES for a board whose rules the format written cannot carry,
 // or whatever table_load says of the row.
-int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap);
+int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap, int *roster_len);
 
 // ---- products ----------------------------------------------------------------
 
@@ -425,7 +426,7 @@ typedef struct {
     // human can do - leaves it false and is bundled with the next card instead.
     bool    goods_changed;
     Span    state;         // durable state blob
-    Span    roster;        // durable roster (ROSTER_BYTES)
+    Span    roster;        // durable roster (roster.h, format 2; at most ROSTER_MAX)
     Span    logs;          // session-log records, u48 LE ms timestamp each; len 0 when none
     Span    views[MAX_PLAYERS];  // the response envelope per HUMAN seat; len 0 for a bot or no seat
     Span    spectator;     // the spectator envelope
@@ -459,10 +460,17 @@ int table_commit_products_flags(const Table *t, const char *game_id, int gid_len
 //
 // A host that keeps a game in memory between operations (the server's journal) keeps it
 // DECODED, as a TableResident: the board up to its log array (a Game without the 128 KB of
-// logs, TABLE_HEAD_BYTES), the roster, the board's clock and rating stamp, and the mid-game
-// RNG base. Adopting one is a copy, not a decode: no roster_decode, no state import, no
-// validation (the resident was made from a table the kernel loaded or committed). It is
-// process memory only, never written anywhere: its layout is the kernel's of the day.
+// logs, TABLE_HEAD_BYTES), the board's clock and rating stamp, and the mid-game RNG base.
+// Adopting one is a copy, not a decode: no state import, no validation of the board (the
+// resident was made from a table the kernel loaded or committed). It is process memory only,
+// never written anywhere: its layout is the kernel's of the day.
+//
+// THE ROSTER IS NOT IN IT. The host keeps the game's durable roster bytes (roster.h, format 2,
+// about 150 bytes) as the roster's one copy, beside the resident, and hands them to every
+// adopt: a decoded Roster is 1.2 KB of mostly padding, and a host holding thousands of games
+// (the server's journal, OV_MAX_GAMES) held it twice over with the bytes. The roster changes
+// only in a commit that writes its row (TABLE_PRODUCTS_NO_ROW is refused to an operation that
+// edited it), so the bytes the commit wrote are the roster until the next such commit.
 
 #define TABLE_HEAD_BYTES offsetof(Game, logs)
 // A bound on one state_put, for reserving space before writing it.
@@ -472,7 +480,6 @@ int table_commit_products_flags(const Table *t, const char *game_id, int gid_len
 typedef struct TableResident {
     _Alignas(8) unsigned char head[TABLE_HEAD_BYTES];   // the Game up to Game.logs (num_logs 0, rep_live clear)
     GameRepetition rep;                                 // its repetition ring (game.h Game.rep), kept apart
-    Roster      r;
     BoardClock  clock;
     GameRatings ratings;
     uint32_t    rng_base;
@@ -480,19 +487,19 @@ typedef struct TableResident {
     bool        mem_valid;
 } TableResident;
 
-// The table loaded from a resident: its board copied into t->g (the copy an operation may
-// change; the resident is untouched), the roster, clock, stamp and RNG base as kept. The
-// session log is not loaded (table_set_session_log), as with table_load. TABLE_OK.
-int table_adopt(Table *t, const TableResident *res);
+// The table loaded from a resident and the roster bytes kept with it: its board copied into
+// t->g (the copy an operation may change; the resident is untouched), the roster decoded (and
+// so validated, roster_decode), the clock, stamp and RNG base as kept. The session log is not
+// loaded (table_set_session_log), as with table_load. TABLE_OK, or TABLE_E_ROSTER with the
+// ROSTER_E_* in t->detail (and nothing loaded) for bytes that are not a roster.
+int table_adopt(Table *t, const TableResident *res, const uint8_t *roster, int roster_len);
 // The loaded table as a resident: after a commit pass the products' clock (TableCommit.clock,
 // the board's clock after the operation, which the row's state carries), else NULL for the
 // clock the table was loaded with.
 void table_resident(const Table *t, const BoardClock *clock, TableResident *out);
-// The row bytes a resident stands for: exactly the state blob and roster
-// table_commit_products writes for the table it was made from (state_cap at least
-// TABLE_STATE_MAX, roster_cap at least ROSTER_BYTES). TABLE_OK, or a refusal.
-int table_resident_encode(const TableResident *res, uint8_t *state, int state_cap, int *state_len, uint8_t *roster,
-                          int roster_cap, int *roster_len);
+// The state blob a resident stands for: exactly the one table_commit_products writes for the
+// table it was made from (state_cap at least TABLE_STATE_MAX). TABLE_OK, or a refusal.
+int table_resident_encode(const TableResident *res, uint8_t *state, int state_cap, int *state_len);
 
 // One viewer's response envelope (seat, or -1 for the spectator): the header
 // (view.h ENV_*, written with env_header_write and read back by the client

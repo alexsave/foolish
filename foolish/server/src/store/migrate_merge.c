@@ -172,7 +172,7 @@ static void games_pass(ctx *c) {
     while (sqlite3_step(s) == SQLITE_ROW) {
         Roster r;
         const unsigned char *rb = sqlite3_column_blob(s, 1);
-        if (sqlite3_column_bytes(s, 1) != ROSTER_BYTES || roster_decode(&r, rb, ROSTER_BYTES) != ROSTER_OK) {
+        if (roster_decode(&r, rb, sqlite3_column_bytes(s, 1)) != ROSTER_OK) {
             fprintf(c->log, "transform: a game's roster does not decode\n");
             c->tx->unexpected++;
             continue;
@@ -186,10 +186,11 @@ static void games_pass(ctx *c) {
             sqlite3_reset(gone);
             continue;
         }
-        unsigned char out[ROSTER_BYTES];
-        if (roster_encode(&r, out, sizeof out) != ROSTER_BYTES) { c->tx->unexpected++; continue; }
+        unsigned char out[ROSTER_MAX];
+        const int out_len = roster_encode(&r, out, sizeof out);
+        if (out_len < 0) { c->tx->unexpected++; continue; }
         sqlite3_bind_text(up, 1, (const char *)sqlite3_column_text(s, 0), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_blob(up, 2, out, ROSTER_BYTES, SQLITE_STATIC);
+        sqlite3_bind_blob(up, 2, out, out_len, SQLITE_STATIC);
         sqlite3_step(up);
         sqlite3_reset(up);
         c->tx->rosters_repointed++;
