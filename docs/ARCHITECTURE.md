@@ -236,8 +236,7 @@ APP_SERVE_DIR   := ..
 include $(CBASE)/cbase.mk
 ```
 
-`make -C server serve` builds and runs it, and `make -C server check` runs the tests and gates.
-Each name means one thing: `APP_CFLAGS` in `cbase: cbase.mk` is the server's native flags, and the UI's wasm flags have a name of their own in `cdom.mk`, so one Makefile may include both.
+`make -C server serve` builds and runs it, and `make -C server check` runs the app's tests.
 `cbase.mk` and `cdom.mk` both read `APP_CFLAGS` today (native flags in one, wasm flags in the other), so one Makefile including both would mix the two sets.
 The fix is one meaning per name: the wasm side's flags get their own name (proposed: `APP_WASM_CFLAGS` and `APP_WASM_LDFLAGS`, next to `APP_WASM`), pending the owner's ruling.
 Until it lands, keep the server and the UI in separate Makefiles (`server/` and `ui/`), as amgi and the hello-world apps do.
@@ -348,6 +347,6 @@ Each rule has a tool or test that fails when the rule breaks, run by `make check
 
 - cdom: README.md (building and starting an app), src/cdom.h (the API, and the I/O contract at its top), cdom.mk (the flags, sources and rules), BRIDGE.md (why one import per operation), RESULTS.md and PERF_LOG.md (measurements, and the no-WebAssembly path), demo/click.c (a small app).
 - The hello-world apps: /Users/alex/Dev/hello-world and hello-world-2, each with a TIMING.md (the timed builds and their friction lists).
-- cbase: README.md (what it is, using it as a submodule), docs/PLATFORM.md (the app API, upgrading notes, the env file and serving files), docs/H2.md (HTTP/2 and gRPC), client/hosts/common/cbc_host.h ("WRITING A HOST"), client/hosts/cdom/README.md (the browser adapter and its tested cdom pin), docs/mutation_checks.md.
-- amgi: README.md (quick start with make start, the app's API), skills/amgi (using it), .claude/skills/e2e-ui (the browser drives), skills/amgi/references/collection-internals.md (Anki's file and its locking), scripts/verify-c-backend.sh (the fresh-clone check).
+- cbase: README.md (what it is, using it as a submodule), docs/PLATFORM.md (the app API, upgrading notes, the env file and serving files), docs/DESIGN.md (why it is built this way), docs/CLIENT_DESIGN.md (the client SDK's design), docs/H2.md (HTTP/2 and gRPC), client/hosts/common/cbc_host.h ("WRITING A HOST"), client/hosts/cdom/README.md (the browser adapter and its tested cdom pin), docs/mutation_checks.md.
+- amgi: README.md (quick start with make start, the app's API), skills/amgi (using it), .claude/skills/e2e-ui (the browser drives), skills/amgi/references/collection-internals.md (Anki's file and its locking), scripts/verify-c-backend.sh (the fresh-clone check; PR #44, pending Alex's merge).
 - foolish: docs/ARCHITECTURE_AS_A_PATTERN.md (the pattern, through one game); the incident write-up is ~/Dev/foolish-reports/incident-1842.md.
