@@ -9,7 +9,7 @@
 #   c_base/providers/aws/ops/site/web_deploy.sh site foolish --out DIR # upload an already built export
 #   c_base/providers/aws/ops/site/web_deploy.sh site foolish --prune-static   # and delete hashed files this build does not use
 #
-# A site deploy, in order (c_base/docs/VERCEL.md section 4d):
+# A site deploy, in order:
 #   0. refuses a tree that does not contain origin/main, except a CI run of a
 #      commit of main that a newer push's run is queued behind (require_main.sh;
 #      for utils, the foolish-utils tree that holds --out);
@@ -165,7 +165,7 @@ deploy_site() {
   #     the page gunzips itself (DecompressionStream), revalidated
   aws s3 sync "$out" "$dest" "${q[@]}" --exclude '*' --include '*.gz' --exclude '_next/*' \
     --content-type application/octet-stream --cache-control "$revalidate"
-  # 3c. uttt's kernels (and any utils wasm), an hour as on Vercel
+  # 3c. uttt's kernels (and any utils wasm), an hour
   aws s3 sync "$out" "$dest" "${q[@]}" --exclude '*' --include '*.wasm' --exclude '_next/*' \
     --content-type application/wasm --cache-control 'public, max-age=3600'
   # 3d. the universal-links association file: JSON, at the apex, no extension

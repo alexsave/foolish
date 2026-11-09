@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 # The web: foolish.cards (with www and utils) and uttt.live, static files in S3
-# behind CloudFront. c_base/docs/VERCEL.md sections 4b to 4f are the design,
-# c_base/RUNBOOK.md "Web hosting" the clicks, ops/web_deploy.sh the deploy.
+# behind CloudFront. c_base/RUNBOOK.md "Web hosting" is the record and the
+# clicks, ops/web_deploy.sh the deploy.
 #
 # What it makes:
 #   * one private S3 bucket, a prefix per site (foolish/, utils/, uttt/), read
@@ -21,7 +21,11 @@ AWSTemplateFormatVersion: "2010-09-09"
 #     missing JS chunk would come back as a 200 of HTML and the /m origin's
 #     errors would be rewritten too;
 #   * on foolish, /m/* to the c_base Lambda Function URL (the link unfurl, a C
-#     route), and optionally the COOP/COEP headers;
+#     route), and optionally the COOP/COEP headers. Production differs: since
+#     the VM cutover the live distribution sends /m/* to a third origin,
+#     vm-origin.foolish.cards, added by hand and not in this template, so a
+#     stack update that touches the distribution puts /m/* back on the Lambda
+#     (RUNBOOK "Web hosting");
 #   (GitHub Actions deploys through ops/github_oidc.yaml's role.)
 #
 # Caching: only AWS-managed cache policies (a Free plan allows no custom
