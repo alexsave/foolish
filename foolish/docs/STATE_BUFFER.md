@@ -115,3 +115,11 @@ On glibc the first pair is 2,104 moves/s apart with the change behind; the next 
 ## Tests
 
 - `server/test/unit_journal.c` `a_resident_keeps_state_bytes_of_its_size`: after each move and flush, and after a read, the game's state buffer is under `TABLE_STATE_MAX / 4`, and the tables and the read hold the same state (mutation check pending).
+
+## Follow-ups
+
+- The replay scratch kept after a game ends is address space, not memory.
+  A debug build that logged each block's address, read against `/proc/PID/pagemap` 22 s into sat2 (musl), found job-0's kept `finalize_game` block (3,407,872 B, `server/src/app/table_ops.c`) with 5 of its 833 pages resident (20 kB), and the replay coder scratch (`c/src/replay.c` `coder_scratch_ready`, 936 KB) with 4 of 235 pages resident (16 kB) on each of job-0 and req-0.
+  Sizing or freeing them would save about 52 kB of RSS at sat2, under the run-to-run spread of RSS p50 (0.3 MiB), so it was not done.
+  req-0 does allocate and free a fresh 3.4 MB block for every pending replay it makes (`finalize_pending` takes a non-pooled section while the operation holds the pooled one; 110 times in a sat2 run): 4 to 5 us a call on musl, against 2.5 to 2.8 us for a 28 KB block, so sizing it would save about 2 us per game end on that path.
+- The largest per-game item left is the resident itself (`TableResident`, 2,016 B, 8.1 MiB at 4,096 games): `BotMemory` is 1,024 B of it whether or not a bot sits at the table (`mem_valid`), and the board head (`TABLE_HEAD_BYTES`) 776 B.
