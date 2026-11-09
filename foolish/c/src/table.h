@@ -483,9 +483,21 @@ typedef struct TableResident {
     BoardClock  clock;
     GameRatings ratings;
     uint32_t    rng_base;
-    BotMemory   mem;          // Table.mem, folded to the board (valid or not)
+    // THE BOT MEMORY (Table.mem, folded to the board), held only where it holds anything. A block
+    // that is not valid is bot_mem_clear's, and a counts-only one (a table none of whose brains reads
+    // the memory: table.c mem_wanted) is that plus its seat count and record count, which every
+    // decision seed reads: such a block is these fields, and `mem` is not written or read (mem_full
+    // false). A host may then hold the resident in table_resident_bytes(res) bytes, its prefix.
+    uint32_t    mem_records;  // (not mem_full) the counts-only block's n_records
+    int8_t      mem_players;  // (not mem_full) its num_players
     bool        mem_valid;
+    bool        mem_full;     // `mem` holds the block (valid, not counts-only)
+    BotMemory   mem;          // LAST: a resident without it ends before it
 } TableResident;
+// The bytes res needs, a prefix of the struct: sizeof(TableResident), or for a resident without its
+// memory block offsetof(TableResident, mem). Only those bytes are read by table_adopt and
+// table_resident_encode, so a host may copy and keep exactly them.
+size_t table_resident_bytes(const TableResident *res);
 
 // The table loaded from a resident and the roster bytes kept with it: its board copied into
 // t->g (the copy an operation may change; the resident is untouched), the roster unpacked
