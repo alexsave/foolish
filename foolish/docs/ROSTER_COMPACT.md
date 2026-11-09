@@ -59,4 +59,48 @@ The musl numbers below are the production build (static musl, THP disabled), per
 
 ## Results
 
-To be filled in from the measurements.
+Measured 2026-11-09 on Alex's M1 Mac, in Docker (6 CPUs), the server pinned to 2 CPUs and the load client to 4, the BASE build's p3load client for every run, base = main at 400a65d09.
+The harness and the raw numbers are in /Users/alex/Dev/cdom-memtest/roster (musl2/out/gate_round*.txt, out/gate_al*.txt).
+Base and change were run interleaved, one at a time, in both orders.
+
+### Memory
+
+| build | metric | base | change | delta |
+|---|---|---|---|---|
+| musl, THP off (prod) | sat2 RSS p50 | 46.9 MiB (45.7 to 47.4, 9 runs) | 34.4 MiB (34.3 to 34.5, 9 runs) | -12.5 MiB |
+| musl, THP off (prod) | sat2 RSS max | 53.6 MiB | 41.3 MiB | -12.3 MiB |
+| musl, THP off (prod) | RssAnon mid-sat2 | 41,650 kB | 29,160 kB | -12,490 kB |
+| glibc | sat2 RSS p50 | median 54.2 MiB (50.5 to 55.4, 6 runs) | median 45.4 MiB (44.1 to 46.1, 6 runs) | -8.9 MiB |
+| glibc | RssAnon mid-sat2 | median 49,840 kB | median 38,740 kB | -11,100 kB |
+
+Per resident game (the overlay holds OV_MAX_GAMES = 4,096 at sat2), the musl RssAnon delta is 12,490 kB / 4,096 = 3,120 B.
+By struct size: `TableResident` 3,256 B to 2,016 B, the roster bytes 1,227 B to 63 B for a sat2 table (two UUID seats), and `jgame` 600 B smaller, about 7,920 B to 4,860 B allocated per game.
+
+### Speed
+
+| build | metric | base | change |
+|---|---|---|---|
+| musl (prod) | sat2 moves/s | mean 31,451 (30,654 to 31,925, 9 runs) | mean 32,078 (31,745 to 32,526, 3 runs of the final build) |
+| musl (prod) | move p50 | 0.05 ms (one run 0.06) | 0.05 ms |
+| musl (prod) | move p99 | 0.48 to 0.80 ms, median 0.58 | 0.47 to 0.56 ms |
+| glibc | sat2 moves/s | 31,731, 32,689, 29,304, 29,815, 27,384, 27,690, 19,829, 27,707 | 33,305, 32,480, 27,001, 28,347, 30,788, 26,669, 26,857, 27,718 |
+| native (M1) | `cbase-bench cpu` kernel_action | 1,247 / 1,233 / 1,230 ns | 829 / 824 / 825 ns |
+| native (M1) | `cbase-bench cpu` dynamo_get_parse | 4,603 / 4,544 / 4,556 ns | 2,825 / 2,827 / 2,816 ns |
+| native (M1) | adopt + resident cycle (scratch microbench) | 117 ns | 128 ns |
+
+In each final musl pair the change was the faster run (+269, +954 and +49 moves/s).
+The first prototype, which judged the roster's rules on every adopt, cost 183 ns in the adopt cycle; the unpack for shape only brought it to 128 ns.
+The glibc runs were taken while macOS's mediaanalysisd and Spotlight held 1 to 2.5 cores of the host, so their spread (19.8k to 33.3k) is the host's, not the build's; their paired differences have a median of about -100 moves/s with a band of thousands, so they neither show nor rule out a difference smaller than that.
+The adopt cycle is 11 ns slower (a 1,235-byte memset and a 2 x 16-byte hex expansion, against two 1,235-byte copies before); at about 60 us of server CPU per move that is under 0.02%, and the same move saves the roster encode at every flush, smaller journal records and smaller rows.
+
+### The hypotheses
+
+- H1 confirmed: about 3,120 B per resident game (RssAnon), against a prediction of 2,970 B and a refutation threshold of 2,400 B.
+- H2 confirmed: musl sat2 RSS p50 fell 12.5 MiB, against a prediction of at least 9 MiB and a refutation threshold of 6 MiB.
+- H3 confirmed on the production (musl) build: every final run is inside or above the base band for moves/s and inside it for p50 and p99. On glibc the host's noise is too wide to decide.
+- H4 confirmed: kernel_action is 33% faster (the format 1 decode re-encoded all 1,227 bytes to check the padding, and every row and products write was 1,227 bytes).
+
+## Follow-ups
+
+- Binary ids end to end (see "Why the ids are text"), including a format bump for the trailer, the asks and the netwire answers that old iOS builds can still read.
+- The journal's state buffer is grown to TABLE_STATE_MAX (about 2.5 KB) per game, whatever the state's size: sizing it to the state is the next largest per-game item.
