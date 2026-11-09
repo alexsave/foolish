@@ -124,13 +124,15 @@ int roster_id_pack(const char *id, int len, uint8_t out[ROSTER_UUID_BYTES]) {
     return 1;
 }
 
+// The 36 characters of a packed UUID: 8-4-4-4-12 hex digits, two per byte, straight-line (it
+// runs for every seat of every adopt).
 static void uuid_text(const uint8_t *b, char *out) {
-    int at = 0;
+    static const uint8_t AT[ROSTER_UUID_BYTES] = { 0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34 };
     for (int k = 0; k < ROSTER_UUID_BYTES; k++) {
-        if (k == 4 || k == 6 || k == 8 || k == 10) out[at++] = '-';
-        out[at++] = HEX[b[k] >> 4];
-        out[at++] = HEX[b[k] & 15];
+        out[AT[k]] = HEX[b[k] >> 4];
+        out[AT[k] + 1] = HEX[b[k] & 15];
     }
+    out[8] = out[13] = out[18] = out[23] = '-';
 }
 
 // ---------- durable encoding --------------------------------------------------
@@ -242,15 +244,15 @@ static int walk_id(const uint8_t *p, int len, int *at, const uint8_t **f, int *n
     return ROSTER_OK;
 }
 
-// The format 2 seats into refs (shape only); the title's span too when asked. Their count.
-static int walk_v2(const uint8_t *p, int len, RosterSeatRef *refs, const uint8_t **title, int *title_len) {
+// The format 2 seats into refs (shape only): their count. The same walk as unpack_v2, field by
+// field (walk_field, walk_id), so the two cannot read a roster differently.
+static int walk_v2(const uint8_t *p, int len, RosterSeatRef *refs) {
     if (len < 2) return ROSTER_E_LENGTH;
     if (p[1] > MAX_PLAYERS) return ROSTER_E_COUNT;
     const int n = p[1];
     int at = 2, v, k;
     const uint8_t *f;
     if ((v = walk_field(p, len, &at, ROSTER_TITLE_MAX, ROSTER_E_TITLE, &f, &k)) != ROSTER_OK) return v;
-    if (title) *title = f, *title_len = k;
     for (int s = 0; s < n; s++) {
         RosterSeatRef *x = &refs[s];
         int packed;
@@ -264,40 +266,61 @@ static int walk_v2(const uint8_t *p, int len, RosterSeatRef *refs, const uint8_t
     return at == len ? n : ROSTER_E_LENGTH;   // nothing after the last seat
 }
 
-static int decode_v2(Roster *r, const uint8_t *p, int len) {
-    RosterSeatRef refs[MAX_PLAYERS];
-    const uint8_t *title = 0;
-    int title_len = 0;
-    const int n = walk_v2(p, len, refs, &title, &title_len);
-    if (n < 0) return n;
+// The format 2 fields into *r, which is zeroed: the bytes, and the zero after each that the
+// struct keeps (roster.h). Shape only, in one pass; `canon` also refuses a UUID spelled as text.
+// A plain copy per field, not put_field: the struct is zero already, so nothing is cleared twice.
+static int unpack_v2(Roster *r, const uint8_t *p, int len, int canon) {
+    if (len < 2) return ROSTER_E_LENGTH;
+    if (p[1] > MAX_PLAYERS) return ROSTER_E_COUNT;
+    const int n = p[1];
+    int at = 2, v, k, packed;
+    const uint8_t *f;
+    if ((v = walk_field(p, len, &at, ROSTER_TITLE_MAX, ROSTER_E_TITLE, &f, &k)) != ROSTER_OK) return v;
     r->n = (int8_t)n;
-    put_field(r->title, ROSTER_TITLE_MAX, &r->title_len, (const char *)title, title_len);
-    // The walk checked every length; the name and the brain follow each id.
+    r->title_len = (uint8_t)k;
+    memcpy(r->title, f, (size_t)k);
     for (int s = 0; s < n; s++) {
         RosterSeat *x = &r->seats[s];
-        const uint8_t *q = refs[s].id + refs[s].id_len;
-        if (refs[s].packed) {
-            uuid_text(refs[s].id, x->id);
+        if ((v = walk_id(p, len, &at, &f, &k, &packed)) != ROSTER_OK) return v;
+        if (packed) {
+            uuid_text(f, x->id);
             x->id_len = ROSTER_UUID_TEXT;
         } else {
             uint8_t unused[ROSTER_UUID_BYTES];
-            if (roster_id_pack((const char *)refs[s].id, refs[s].id_len, unused)) return ROSTER_E_CANON;
-            put_field(x->id, ROSTER_ID_MAX, &x->id_len, (const char *)refs[s].id, refs[s].id_len);
+            if (canon && roster_id_pack((const char *)f, k, unused)) return ROSTER_E_CANON;
+            memcpy(x->id, f, (size_t)k);
+            x->id_len = (uint8_t)k;
         }
-        put_field(x->name, ROSTER_NAME_MAX, &x->name_len, (const char *)q + 1, q[0]);
-        q += 1 + q[0];
-        put_field(x->brain, ROSTER_BRAIN_MAX, &x->brain_len, (const char *)q + 1, q[0]);
+        if ((v = walk_field(p, len, &at, ROSTER_NAME_MAX, ROSTER_E_NAME, &f, &k)) != ROSTER_OK) return v;
+        memcpy(x->name, f, (size_t)k);
+        x->name_len = (uint8_t)k;
+        if ((v = walk_field(p, len, &at, ROSTER_BRAIN_MAX, ROSTER_E_BRAIN, &f, &k)) != ROSTER_OK) return v;
+        memcpy(x->brain, f, (size_t)k);
+        x->brain_len = (uint8_t)k;
     }
-    return roster_validate(r);
+    return at == len ? ROSTER_OK : ROSTER_E_LENGTH;   // nothing after the last seat
 }
 
 int roster_decode(Roster *r, const uint8_t *p, int len) {
     memset(r, 0, sizeof(*r));
     if (!p || len < 1) return ROSTER_E_LENGTH;
     int v;
-    if (p[0] == ROSTER_FORMAT_VERSION) v = decode_v2(r, p, len);
-    else if (p[0] == ROSTER_FORMAT_V1) v = len == ROSTER_V1_BYTES ? decode_v1(r, p) : ROSTER_E_LENGTH;
-    else v = ROSTER_E_VERSION;
+    if (p[0] == ROSTER_FORMAT_VERSION) {
+        v = unpack_v2(r, p, len, 1);
+        if (v == ROSTER_OK) v = roster_validate(r);
+    } else if (p[0] == ROSTER_FORMAT_V1) {
+        v = len == ROSTER_V1_BYTES ? decode_v1(r, p) : ROSTER_E_LENGTH;
+    } else {
+        v = ROSTER_E_VERSION;
+    }
+    if (v != ROSTER_OK) memset(r, 0, sizeof(*r));
+    return v;
+}
+
+int roster_unpack(Roster *r, const uint8_t *p, int len) {
+    if (!p || len < 1 || p[0] != ROSTER_FORMAT_VERSION) return roster_decode(r, p, len);
+    memset(r, 0, sizeof(*r));
+    const int v = unpack_v2(r, p, len, 0);
     if (v != ROSTER_OK) memset(r, 0, sizeof(*r));
     return v;
 }
@@ -306,7 +329,7 @@ int roster_decode(Roster *r, const uint8_t *p, int len) {
 
 int roster_seat_refs(const uint8_t *p, int len, RosterSeatRef *out) {
     if (!p || len < 1) return ROSTER_E_LENGTH;
-    if (p[0] == ROSTER_FORMAT_VERSION) return walk_v2(p, len, out, 0, 0);
+    if (p[0] == ROSTER_FORMAT_VERSION) return walk_v2(p, len, out);
     if (p[0] != ROSTER_FORMAT_V1) return ROSTER_E_VERSION;
     if (len != ROSTER_V1_BYTES) return ROSTER_E_LENGTH;
     if (p[1] > MAX_PLAYERS) return ROSTER_E_COUNT;
