@@ -397,7 +397,7 @@ Checklist (details in `ORACLE_MONETIZATION_ENGINEERING.md` §7.3):
   a 5-minute reviewer session; App Review notes include a 60-second "what to
   try" script and a test game code.
 - 5.1.1(v) account deletion (§9). Privacy labels: account identifier +
-  gameplay data, **no tracking, no ATT prompt** (keep Vercel-style analytics
+  gameplay data, **no tracking, no ATT prompt** (keep page-view web analytics
   OUT of the app; if product analytics are added use a first-party events
   table, not an ad-attribution SDK).
 - Age rating: card game, no wagering — expect 4+/9+ band under the

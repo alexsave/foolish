@@ -45,4 +45,6 @@ replays a named game move for move. The bots are their own wasm module
 The site's AWS side (the `cbase-web` stack's bucket prefix `uttt/`, its own
 CloudFront distribution, the certificate and the Squarespace DNS records) is
 set up once by the owner, as `c_base/RUNBOOK.md` "Web hosting: foolish.cards
-and uttt.live off Vercel" records; after that a push to `main` is the deploy.
+and uttt.live on CloudFront" records; after that a push to `main` is the
+deploy (`.github/workflows/web_aws.yml`, through
+`c_base/providers/aws/ops/site/web_deploy.sh`).

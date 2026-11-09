@@ -85,7 +85,7 @@ thousands of DAU.** Everything below is sequenced to make that climb cheap.
 *Revenue: $0. Purpose: don't pour water into a leaky bucket.*
 
 1. **Analytics or death.** Instrument funnel events (visit → first game →
-   finished game → second session → D1/D7 return). Vercel Analytics is not
+   finished game → second session → D1/D7 return). Page-view counts are not
    enough; add a product analytics tool (PostHog self-hosted keeps costs ~$0).
    Every later phase has a KPI gate; without this you can't read the gates.
 2. **Real accounts + persistent identity.** Supabase Auth (anonymous → upgrade

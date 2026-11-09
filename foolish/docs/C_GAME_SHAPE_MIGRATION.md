@@ -1415,7 +1415,7 @@ Strictly sequential: P3 before anything that loads a table; P4a deployed before 
 
 - **Risk**: `deploy.yml` runs `db push` then `functions deploy`, so a destructive migration lands before the code that tolerates it.
   **Mitigation**: expand, switch, contract as three separate owner deploys (3.4), each safe with the previous code.
-- **Risk**: the web (Vercel) and the edge functions (Supabase) deploy independently.
+- **Risk**: the web and the edge functions (Supabase) deploy independently.
   **Mitigation**: Phase 5a accepts both push formats; Phase 5b switches the server; the `as2` branch is deleted only after a day.
 
 ### 5.9 Cold start and memory

@@ -494,8 +494,8 @@ From `wasmChooseMove` (`bots.ts:244-289`) and the C side:
 - bots.wasm has **no memory pin** (only rules/guards pin, `:420-421,516`);
   the oracle needs none either. Stack: omit the bots-only 22528 override to
   inherit `WASM_FLAGS`' 262144 (`:294,644`) — zero-risk headroom.
-- `public/` is committed and served with zero config (`next.config.mjs` is
-  6 lines; no vercel.json). A committed `public/oracle.wasm.gz` is fetchable
+- `public/` is committed and served as static files, with no host config.
+  A committed `public/oracle.wasm.gz` is fetchable
   at `/oracle.wasm.gz`; the vendored sync `gunzip.ts` inflates it
   client-side (`sdk/ts/wasm/gunzip.ts:1-24`). Embeds are
   the wrong tool at this size (`Makefile:707-709` — "a real 47KB binary, not
