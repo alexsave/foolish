@@ -148,12 +148,6 @@ typedef struct {
 // Reads the environment into cfg. CB_OK, or CB_E_INVALID with a sentence in err.
 int cb_config_from_env(cb_config *cfg, char *err, size_t cap);
 
-// What `cbase serve` reads: CBASE_ENV_FILE's lines into the environment first, where it does not
-// already hold them (env_file.h; unset or empty, no file), then cb_config_from_env. The file is
-// how ./cbase deploy's systemd unit hands the app its settings (/srv/cbase/<app>/env, written from
-// SSM /cbase/<app>/). CB_OK, or CB_E_INVALID with a sentence in err.
-int cb_config_load(cb_config *cfg, char *err, size_t cap);
-
 // Every setting as NAME and value, secrets replaced by "(set)" or "(unset)",
 // for the startup log and the admin console's Config panel.
 typedef void (*cb_config_fn)(const char *name, const char *value, bool secret, void *ud);
