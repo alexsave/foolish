@@ -2835,6 +2835,7 @@ int cb_journal_game_info(const cb_store *s, const char *id, cb_journal_game_fact
         out->resident = g->res_valid ? g->res : NULL;
         out->held = g->held;
         out->state_bytes = g->state_cap;
+        out->resident_bytes = g->res_valid ? g->res_cap : 0;
     }
     pthread_mutex_unlock(&j->ov_mu);
     return g ? CB_OK : CB_E_NOT_FOUND;

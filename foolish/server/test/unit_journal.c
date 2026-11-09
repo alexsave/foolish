@@ -2540,6 +2540,63 @@ static void the_resident_is_handed_over_not_copied(void) {
     close_world(s);
 }
 
+// THE RESIDENT AT ITS SIZE (journal.c res_take, docs/BOT_MEMORY.md): a game none of whose brains
+// reads the bot memory (two humans) is held in TABLE_RESIDENT_SMALL bytes, in its lobby, at its
+// deal and after every move; one that seats an octogen (a belief brain) is held whole once it is
+// dealt. Mutation check pending.
+static void a_resident_is_held_at_its_size(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/ressize.sqlite", g_dir);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    reply r;
+    int rc;
+    move_t m;
+    // Two humans: small in the lobby, at the deal and after each move.
+    call("create", "A", NULL, 0, &r);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
+    T_EQ_INT(facts(s, gid, &rc).resident_bytes, TABLE_RESIDENT_SMALL);
+    meta("B", ASK_JOIN, gid, &r);
+    meta("A", ASK_START, gid, &r);
+    meta("B", ASK_START, gid, &r);
+    cb_game_row dealt = stored(s, gid);
+    T_EQ_INT(dealt.status, GAME_STATUS_PLAYING);
+    cb_game_row_free(&dealt);
+    T_EQ_INT(facts(s, gid, &rc).resident_bytes, TABLE_RESIDENT_SMALL);
+    int moved = 0;
+    for (int i = 0; i < 6 && next_move(s, gid, &m); i++) {
+        T_CHECK(play(gid, &m) > 0);
+        T_EQ_INT(facts(s, gid, &rc).resident_bytes, TABLE_RESIDENT_SMALL);
+        moved++;
+    }
+    T_EQ_INT(moved, 6);
+    // A human and an octogen: small in the lobby, whole from the deal.
+    static const char octogen[] = "4f6f2ebb-1d3e-4761-a5a9-c91313eba087";   // bots.c, octogen's first seeded id
+    call("create", "A", NULL, 0, &r);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
+    TableAsk a;
+    memset(&a, 0, sizeof a);
+    a.kind = ASK_ADD_BOT;
+    a.gid_len = (uint8_t)strlen(gid);
+    memcpy(a.gid, gid, a.gid_len);
+    a.bot_len = (uint8_t)strlen(octogen);
+    memcpy(a.bot, octogen, a.bot_len);
+    uint8_t body[ASK_BYTES_MAX];
+    const int n = ask_encode(&a, body, sizeof body);
+    call("meta", "A", body, n > 0 ? (size_t)n : 0, &r);
+    T_EQ_INT(facts(s, gid, &rc).resident_bytes, TABLE_RESIDENT_SMALL);
+    meta("A", ASK_START, gid, &r);
+    cb_game_row row = stored(s, gid);
+    T_EQ_INT(row.status, GAME_STATUS_PLAYING);
+    T_CHECK(seat_of(&row, octogen) == 1);
+    cb_game_row_free(&row);
+    T_EQ_INT(facts(s, gid, &rc).resident_bytes, sizeof(TableResident));
+    close_world(s);
+}
+
 static int hold_nothing(void *ud, const cb_game_row *row, const TableResident *res) { return CB_OK; }
 static int no_body(void *ud) { return 0; }
 
@@ -3365,6 +3422,7 @@ int main(void) {
     g_bots = false;   // humans only: a bot drive commits once per cycle, some cycles to a step
     T_RUN(a_ratings_read_answers_every_acknowledged_rated_end);   // once: it waits out a busy timeout
     T_RUN(the_resident_is_handed_over_not_copied);
+    T_RUN(a_resident_is_held_at_its_size);
     T_RUN(the_conversion_knows_every_game_id_column);
     T_RUN(the_conversion_draws_again_and_is_all_or_nothing);
     T_RUN(a_crash_mid_conversion_converts_nothing);
