@@ -669,7 +669,7 @@ Telegram client (iOS/Android/Desktop/Web)
 ```
 
 - The game itself already fits the TMA envelope: tiny bundle, zero image assets,
-  offline-tolerant, realtime over plain websockets. Vercel keeps serving it;
+  offline-tolerant, realtime over plain websockets. The static site keeps serving it;
   Supabase Realtime works from Telegram webviews (ordinary WSS).
 - **The Foolish bot** doubles as the retention channel: challenge links, daily
   free-analysis reset pings, replay shares that unfurl into "re-fight this vs
@@ -843,7 +843,7 @@ Why the paid flip is non-negotiable at first revenue:
 4. Custom SMTP (§4) is needed regardless of tier; the built-in 2/hr mailer is
    never acceptable in production.
 
-**Budget:** Pro $25/mo + Resend free tier + Vercel (current plan) + $99/yr Apple
+**Budget:** Pro $25/mo + Resend free tier + the web on CloudFront ($0) + $99/yr Apple
 + $25 Google + $100 one-time Steam Direct. Total fixed burn to run all five
 platforms ≈ **$35–45/mo** (the Apple/Google/Steam fees are annual/one-time, not
 monthly) — the first ~10 subscribers cover it.
