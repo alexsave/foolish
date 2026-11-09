@@ -1,4 +1,5 @@
-// smoke_boot.c - the two binaries refusing to start, as an operator meets it.
+// smoke_boot.c - the two binaries refusing to start, as an operator meets it, and serve starting
+// as ./cbase deploy's systemd unit starts it.
 //
 //   build/test/smoke_boot build/cbase build/bootstrap
 //
@@ -20,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static const char *g_cbase, *g_bootstrap;
@@ -67,6 +69,50 @@ static void cbase_refuses(void) {
     char *busy[] = { listen_env, "CBASE_STORE=sqlite", "CBASE_DB=:memory:", "CBASE_DEV=1", NULL };
     T_CHECK(exits(g_cbase, "serve", busy, 1, "listen"));
     close(fd);
+}
+
+// ./cbase deploy's unit (cbase/tools/cbase.d/vm.sh vm_unit) starts `serve serve` with three
+// variables and no others: CBASE_LISTEN=0.0.0.0:<port>, CBASE_DB=<home>/data/cbase.sqlite and
+// CBASE_ENV_FILE=<home>/env, which holds every setting as NAME='value' lines (vm.sh writes it from
+// SSM /cbase/<app>/). Started so, serve takes its secrets and its public URL from the file, listens
+// on the unit's address and opens the database at the unit's path; a bad line in the file refuses
+// the start, naming the file.
+static void serve_starts_as_the_cbase_unit_starts_it(void) {
+    const char *t = getenv("TMPDIR");
+    char home[256], data[300], db[340], envf[300];
+    snprintf(home, sizeof home, "%s/smoke-unit-XXXXXX", t && *t ? t : "/tmp");
+    T_CHECK(mkdtemp(home) != NULL);
+    snprintf(data, sizeof data, "%s/data", home);
+    snprintf(db, sizeof db, "%s/cbase.sqlite", data);
+    snprintf(envf, sizeof envf, "%s/env", home);
+    T_EQ_INT(mkdir(data, 0700), 0);
+    FILE *f = fopen(envf, "w");
+    T_CHECK(f != NULL);
+    if (!f) return;
+    fputs("CBASE_JWT_SECRET='unit-secret-unit-secret-unit-secret!'\n"
+          "CBASE_PUBLIC_URL='https://api.example.test'\n", f);
+    fclose(f);
+    char env_db[400], env_file[400];
+    snprintf(env_db, sizeof env_db, "CBASE_DB=%s", db);
+    snprintf(env_file, sizeof env_file, "CBASE_ENV_FILE=%s", envf);
+    char *unit[] = { "CBASE_LISTEN=127.0.0.1:0", env_db, env_file, NULL };
+    tp_child c;
+    char *argv[] = { (char *)g_cbase, "serve", NULL };
+    T_EQ_INT(tp_start(&c, argv, unit), 0);
+    T_EQ_INT(tp_wait_line(&c, "listening on 127.0.0.1:", 15000, NULL, 0), 0);
+    T_EQ_INT(tp_stop(&c, SIGTERM, 15000), 0);
+    struct stat st;
+    T_EQ_INT(stat(db, &st), 0);   // the database is the unit's path, in its data folder
+    // A line the file's format refuses: serve does not start, and says which file and line.
+    f = fopen(envf, "w");
+    T_CHECK(f != NULL);
+    if (!f) return;
+    fputs("CBASE_JWT_SECRET='unit-secret-unit-secret-unit-secret!'\nCBASE_PUBLIC_URL = x\n", f);
+    fclose(f);
+    T_CHECK(exits(g_cbase, "serve", unit, 2, "line 2 has a blank before its '='"));
+    char cmd[400];
+    snprintf(cmd, sizeof cmd, "rm -rf '%s'", home);
+    T_EQ_INT(system(cmd), 0);
 }
 
 // THE SATURATION KNOB (util/affinity.h): where threads can be pinned, serve pins its loop and
@@ -270,6 +316,7 @@ int main(int argc, char **argv) {
     g_bootstrap = argv[2];
     signal(SIGPIPE, SIG_IGN);
     T_RUN(cbase_refuses);
+    T_RUN(serve_starts_as_the_cbase_unit_starts_it);
     T_RUN(the_cpu_knob_boots_or_refuses);
     T_RUN(bootstrap_refuses);
     return T_DONE();

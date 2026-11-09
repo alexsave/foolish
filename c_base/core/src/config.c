@@ -1,5 +1,7 @@
 #include "config.h"
 
+#include "env_file.h"
+
 #include "../../../shared/c/b64/b64.h"
 #include "util/err.h"
 #include "util/log.h"
@@ -364,6 +366,12 @@ bool cb_config_origin_allowed(const cb_config *c, const char *origin) {
         p = e;
     }
     return false;
+}
+
+int cb_config_load(cb_config *cfg, char *err, size_t cap) {
+    const char *file = getenv("CBASE_ENV_FILE");
+    int rc = file && *file ? cb_env_file_load(file, err, cap) : CB_OK;
+    return rc == CB_OK ? cb_config_from_env(cfg, err, cap) : rc;
 }
 
 int64_t cb_config_scaled_ms(const cb_config *cfg, int64_t ms) {
