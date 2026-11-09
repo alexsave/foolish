@@ -100,7 +100,34 @@ The adopt cycle is 11 ns slower (a 1,235-byte memset and a 2 x 16-byte hex expan
 - H3 confirmed on the production (musl) build: every final run is inside or above the base band for moves/s and inside it for p50 and p99. On glibc the host's noise is too wide to decide.
 - H4 confirmed: kernel_action is 33% faster (the format 1 decode re-encoded all 1,227 bytes to check the padding, and every row and products write was 1,227 bytes).
 
+## Tests
+
+- `c/tests/tests.c`: `test_roster_reads_format_1`, `test_roster_decode_refuses_each_malformed_field`, `test_roster_unpack`, `test_roster_seat_refs`, and the table tests moved to the variable-length bytes.
+- `server/test/unit_journal.c`, `unit_store.c`: the resident and the stored rows carry the roster's own length.
+
+### Mutation checks (2026-11-09, after the series merged)
+
+Harness: /Users/alex/Dev/cdom-memtest/final/mutate.py on a clone at f99698319 (merged main), results in final/out/mutate.txt and mutate_crashes.txt; every mutant was restored and touched, and clean builds before and after passed (`git diff` of the clone empty).
+
+| mutant | what it breaks | result |
+|---|---|---|
+| 480-K1 | no seat id is packed | red: `a UUID id costs 17 bytes` |
+| 480-K2 | a canonical UUID written as text is accepted | red: `a canonical UUID written as text is refused` |
+| 480-K3 | bytes after the last seat are accepted | red: `a byte after the last seat is refused`, `unpack refuses a byte after the last seat` |
+| 480-K4 | format 1's padding is not checked | red: `format 1: a byte past the title is refused` (and past an id, a name) |
+| 480-K5 | `roster_seat_refs` (format 1) calls every seat human | red: `each seat's kind is the roster's` |
+| 480-K6 | `roster_ref_is` takes any packed seat for any UUID | red: `a packed seat is not another UUID` |
+| 480-K7 | `roster_unpack` judges the rules | red: `unpack leaves the rules to the load that made the resident` |
+| 480-K8 | the packed id's dash positions swapped | red: `a packed id decodes as its text` |
+| 480-S2 | the journal ignores a commit's roster bytes | red: many `unit_journal` tests (`a_move_allocates_almost_nothing` first) |
+| 480-S1 | the journal's membership walk counts bot seats too (`!refs[i].bot` dropped) | survived: equivalent unless a bot's id equals a member's, which no test (and no server) seats |
+| 480-S3 | `table_ops.c` drops the fallback to the loaded row's roster when a commit carries none | survived: a commit without a roster is a plain move under the journal, and `row_set_columns` already keeps the game's roster when `roster_len` is 0, so the fallback is not reached by any test; whether it is dead code (a second guard behind `row_set_columns`) is a follow-up |
+
+Measured on a real t4g.nano on 2026-11-09 (H1 to H3 confirmed: 3,158 B per game, sat2 RSS p50 -10.1 MiB, no slowdown): /Users/alex/Dev/cdom-memtest/GRAVITON.md.
+
 ## Follow-ups
+
+- 480-S3 above: prove the fallback in `cb_section_commit` (`np->roster = c->roster.len ? ... : row->roster`) redundant with `row_set_columns`, and keep one, or write down what each covers.
 
 - Binary ids end to end (see "Why the ids are text"), including a format bump for the trailer, the asks and the netwire answers that old iOS builds can still read.
 - The journal's state buffer is grown to TABLE_STATE_MAX (about 2.5 KB) per game, whatever the state's size: sizing it to the state is the next largest per-game item.

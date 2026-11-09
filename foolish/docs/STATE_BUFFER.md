@@ -114,7 +114,18 @@ On glibc the first pair is 2,104 moves/s apart with the change behind; the next 
 
 ## Tests
 
-- `server/test/unit_journal.c` `a_resident_keeps_state_bytes_of_its_size`: after each move and flush, and after a read, the game's state buffer is under `TABLE_STATE_MAX / 4`, and the tables and the read hold the same state (mutation check pending).
+- `server/test/unit_journal.c` `a_resident_keeps_state_bytes_of_its_size`: after each move and flush, and after a read, the game's state buffer is under `TABLE_STATE_MAX / 4`, and the tables and the read hold the same state (mutation-checked, below).
+
+### Mutation checks (2026-11-09, after the series merged)
+
+Harness: /Users/alex/Dev/cdom-memtest/final/mutate.py on a clone at f99698319 (merged main), results in final/out/mutate.txt and mutate_crashes.txt; every mutant was restored and touched, and clean builds before and after passed (`git diff` of the clone empty).
+
+| mutant | what it breaks | result |
+|---|---|---|
+| 481-J1 | `row_refresh` grows the buffer to `TABLE_STATE_MAX` | red: `[a_resident_keeps_state_bytes_of_its_size] f.state_bytes >= held.state_len && f.state_bytes < TABLE_STATE_MAX / 4` |
+| 481-J2 | `row_dup_encoded` copies the stale bytes instead of encoding | red: `[a_resident_keeps_state_bytes_of_its_size] tables.state_len == held.state_len && memcmp(...) == 0` |
+
+Measured on a real t4g.nano on 2026-11-09 (H1 and H2 on RssAnon confirmed, RSS p50 -6.3 MiB: above the threshold, below the prediction): /Users/alex/Dev/cdom-memtest/GRAVITON.md.
 
 ## Follow-ups
 

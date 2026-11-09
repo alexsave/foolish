@@ -181,9 +181,28 @@ Making a small resident skips the 1,024-byte block copy, and its encode writes t
 
 ## Tests
 
-- `c/tests/tests.c` `test_table_resident_holds_memory_only_where_read`: humans-only tables, tables of `random` and `handwritten` bots and tables with an octogen, played the server's way on residents held at exactly their size; at every commit the resident is of the size its seats call for, encodes to the row's bytes, and adopts to the memory the whole struct adopts to; a humans-only table that seats an octogen in its rematch's lobby is small through the lobby and whole from the deal (mutation check pending).
-- `server/test/unit_journal.c` `a_resident_is_held_at_its_size`: through the app, a two-human game is held in `TABLE_RESIDENT_SMALL` bytes in its lobby, at its deal and after each move, and a game with an octogen whole once dealt (`cb_journal_game_facts.resident_bytes`, new) (mutation check pending).
+- `c/tests/tests.c` `test_table_resident_holds_memory_only_where_read`: humans-only tables, tables of `random` and `handwritten` bots and tables with an octogen, played the server's way on residents held at exactly their size; at every commit the resident is of the size its seats call for, encodes to the row's bytes, and adopts to the memory the whole struct adopts to; a humans-only table that seats an octogen in its rematch's lobby is small through the lobby and whole from the deal (mutation-checked, below).
+- `server/test/unit_journal.c` `a_resident_is_held_at_its_size`: through the app, a two-human game is held in `TABLE_RESIDENT_SMALL` bytes in its lobby, at its deal and after each move, and a game with an octogen whole once dealt (`cb_journal_game_facts.resident_bytes`, new) (mutation-checked, below).
 - Run: the kernel suite (`build/cnitro_tests`, 39,618 checks) and `bot_memory_test`; `unit_journal`, `unit_store`, `unit_app`, `unit_bots_kick`, `unit_inline_moves`, `unit_kernel_threads`, `unit_import`.
+
+### Mutation checks (2026-11-09, after the merge)
+
+Harness: /Users/alex/Dev/cdom-memtest/final/mutate.py on a clone at f99698319 (merged main), results in final/out/mutate.txt and mutate_crashes.txt; every mutant was restored and touched, and clean builds before and after passed (`git diff` of the clone empty).
+
+| mutant | what it breaks | result |
+|---|---|---|
+| 483-K1 | `table_resident_into`: `full = valid` (a counts-only block held whole) | red: `every resident is held at the size its seats call for` |
+| 483-K2 | `full = false` (an octogen's block held as its summary) | red: the `BOT_MEM_ASSERT` check in `table_resident_into` aborts (`a block without its memory is not its summary`), which `cnitro_tests` builds with |
+| 483-K3 | `mem_records = 0` (the summary loses its record count) | red: the same `BOT_MEM_ASSERT` abort |
+| 483-K4 | `mem_from_resident` leaves `counts_only` 0 | red: the same `BOT_MEM_ASSERT` abort |
+| 483-K6 | `mem_from_resident` drops `num_players` | red: the same `BOT_MEM_ASSERT` abort |
+| 483-K5 | `bot_mem_encode_counts` writes `cur_def` 0 | red, but not in the new test: the row and the resident encode through the same function, so `test_table_resident_holds_memory_only_where_read` agrees with itself; the pinned bytes catch it (`deal commit bytes unchanged`, `load then commit is byte-identical`, `bot memory: the dealt row is the current format`) |
+| 483-J1 | `res_take`: `cap = sizeof(TableResident)` for every buffer | red by a crash (SIGSEGV: a 2,016-byte copy into a 992-byte buffer), before the assertion |
+| 483-J2 | `res_copy`: `need = sizeof(TableResident)` | red: `[a_resident_is_held_at_its_size] facts(s, gid, &rc).resident_bytes == TABLE_RESIDENT_SMALL` |
+| 483-J3 | `table_ops.c`: the whole buffer passed as both, so the small one is never used | red by a crash (SIGSEGV after a buffer of the wrong size comes back); an earlier run with stale objects showed `a_resident_is_held_at_its_size` red on `resident_bytes` |
+
+So every mutant goes red, the two new tests on the right assertion where the mutant leaves memory intact; four are caught first by the summary's own debug check, and two only crash.
+Measured on a real t4g.nano on 2026-11-09 (H1 to H4 confirmed, H6 not decided with two bot runs a side): /Users/alex/Dev/cdom-memtest/GRAVITON.md.
 
 ## Follow-ups
 
