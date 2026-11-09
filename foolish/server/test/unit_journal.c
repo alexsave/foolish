@@ -1528,6 +1528,41 @@ static void a_refusal_changes_nothing_and_a_move_is_read_at_once(void) {
     close_world(s);
 }
 
+// THE STATE BYTES (journal.c): a resident game keeps its row's state in a buffer of the state's
+// size, never the encode's bound (TABLE_STATE_MAX, about 2.5 KB for a state of about 130 bytes):
+// not after its moves, not after a flush (whose encode goes to its snapshot), not after a read
+// (whose bytes are kept for the next read); and every read and the tables still get the
+// resident's encode.
+static void a_resident_keeps_state_bytes_of_its_size(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/statebytes.sqlite", g_dir);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    move_t m;
+    cb_journal_game_facts f;
+    two_humans_dealt(gid);
+    for (int i = 0; i < 6 && step(s, gid, &m) > 0; i++) {
+        T_EQ_INT(cb_journal_flush(s), CB_OK);
+        T_EQ_INT(cb_journal_game_info(s, gid, &f), CB_OK);
+        T_CHECK(f.resident != NULL);
+        T_CHECK(f.state_bytes < TABLE_STATE_MAX / 4);
+        cb_game_row held = stored(s, gid), tables;
+        memset(&tables, 0, sizeof tables);
+        T_EQ_INT(cb_rows_sql.game_get(s, gid, &tables), CB_OK);
+        T_EQ_INT(tables.version, held.version);
+        T_CHECK(tables.state_len == held.state_len && memcmp(tables.state, held.state, held.state_len) == 0);
+        T_EQ_INT(cb_journal_game_info(s, gid, &f), CB_OK);
+        T_CHECK(f.state_bytes >= held.state_len && f.state_bytes < TABLE_STATE_MAX / 4);
+        cb_game_row_free(&tables);
+        cb_game_row_free(&held);
+    }
+    T_CHECK(version_of(s, gid) > 0);
+    close_world(s);
+}
+
 // A RESIDENT THE TABLES CONTRADICT IS DROPPED, NEVER BUILT ON: a write the journal did not
 // see (here a raw UPDATE; in production nothing but the admin's, which forgets the overlay
 // itself) makes the next write around the journal (a delete: the last seat leaving) lose its
@@ -3298,6 +3333,7 @@ int main(void) {
     T_RUN(a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused);
     T_RUN(the_resident_is_the_row);
     T_RUN(a_resident_the_tables_contradict_is_dropped);
+    T_RUN(a_resident_keeps_state_bytes_of_its_size);
     T_RUN(the_overlay_keeps_at_most_its_cap);
     T_RUN(a_torn_or_corrupt_whole_commit_is_dropped);
     T_RUN(crafted_whole_commits_recover_or_refuse);

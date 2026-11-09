@@ -274,7 +274,7 @@ typedef struct cb_jhold {
     // its roster bytes: THE ROSTER'S ONE COPY in memory (roster.h format 2, about 150 bytes; the
     // resident holds none, table.h TableResident), every commit's row carries them, and who sits
     // here is read from them (seat_refs). Its state bytes are the game's when row_fresh, else the
-    // resident's encode is due (row_refresh) before anything reads them (R3).
+    // resident's encode is due (row_refresh) before anything reads them (THE STATE BYTES, R3).
     cb_game_row   row;
     bool          row_fresh;
     int64_t       sql_version;   // the version the tables hold
@@ -487,11 +487,13 @@ static uint8_t *dup_bytes(const void *p, size_t n) {
     return d;
 }
 
-static int row_dup(cb_game_row *dst, const cb_game_row *src) {
+// src copied with `state` as its state bytes (no move list).
+static int row_dup_state(cb_game_row *dst, const cb_game_row *src, const uint8_t *state, size_t state_len) {
     *dst = *src;
     dst->list = NULL;
     dst->list_len = 0;
-    dst->state = dup_bytes(src->state, src->state_len);
+    dst->state = dup_bytes(state, state_len);
+    dst->state_len = state_len;
     dst->roster = dup_bytes(src->roster, src->roster_len);
     if (!dst->state || !dst->roster) {
         cb_game_row_free(dst);
@@ -499,6 +501,8 @@ static int row_dup(cb_game_row *dst, const cb_game_row *src) {
     }
     return CB_OK;
 }
+
+static int row_dup(cb_game_row *dst, const cb_game_row *src) { return row_dup_state(dst, src, src->state, src->state_len); }
 
 static int grow_copy(uint8_t **p, size_t *cap, const uint8_t *src, size_t n) {
     if (n > *cap) {
@@ -514,7 +518,7 @@ static int grow_copy(uint8_t **p, size_t *cap, const uint8_t *src, size_t n) {
 static int row_assign(jgame *g, const cb_game_row *src);
 
 // The row's columns become src's, and its roster bytes (every commit carries them); its state
-// buffer stays the game's (row_refresh fills it).
+// buffer stays the game's, stale (THE STATE BYTES: row_refresh fills it when read).
 static int row_set_columns(jgame *g, const cb_game_row *src) {
     if (src->roster_len) {
         uint8_t *roster = g->row.roster;
@@ -534,20 +538,45 @@ static int row_set_columns(jgame *g, const cb_game_row *src) {
     return CB_OK;
 }
 
-// The row's state bytes brought to the resident's (R3: once per commit, and only when read).
+// THE STATE BYTES. A game held as bytes (res_valid false) keeps its row's state, sized exactly.
+// A game held decoded has none until a read asks for them (R3: once per commit, and only when
+// read): row_refresh encodes the resident and keeps the bytes for the next read (row_fresh) in a
+// buffer of their size, which later commits leave in place (stale) for the next refresh to
+// reuse. The encode wants TABLE_STATE_MAX bytes (about 2.5 KB) and a state is about 130: it is
+// made on the stack and copied, so no game holds the bound. The flush, every resident game's
+// reader, copies the encode into its snapshot and keeps nothing (row_dup_encoded): a game that
+// only plays and flushes holds at most the bytes it was created with.
+static int resident_encode(const jgame *g, uint8_t *buf, size_t *len) {
+    int sl = 0;
+    if (table_resident_encode(g->res, buf, TABLE_STATE_MAX, &sl) != TABLE_OK) return CB_E_STATE;
+    *len = (size_t)sl;
+    return CB_OK;
+}
+
+// The row's state bytes brought to the resident's, and kept.
 static int row_refresh(jgame *g) {
     if (g->row_fresh || !g->res_valid) return CB_OK;
-    if (g->state_cap < TABLE_STATE_MAX) {
-        uint8_t *q = realloc(g->row.state, TABLE_STATE_MAX);
-        if (!q) return CB_E_NOMEM;
-        g->row.state = q;
-        g->state_cap = TABLE_STATE_MAX;
-    }
-    int sl = 0;
-    if (table_resident_encode(g->res, g->row.state, (int)g->state_cap, &sl) != TABLE_OK) return CB_E_STATE;
-    g->row.state_len = (size_t)sl;
+    uint8_t buf[TABLE_STATE_MAX];
+    size_t n = 0;
+    int rc = resident_encode(g, buf, &n);
+    if (rc != CB_OK) return rc;
+    uint8_t *state = g->row.state;
+    rc = grow_copy(&state, &g->state_cap, buf, n);
+    g->row.state = state;
+    if (rc != CB_OK) return rc;
+    g->row.state_len = n;
     g->row_fresh = true;
     return CB_OK;
+}
+
+// The row copied with its state bytes, encoded now when they are due and not kept (the flush's
+// snapshot, R4: the copy is all it reads, and the next commit makes them stale).
+static int row_dup_encoded(cb_game_row *dst, const jgame *g) {
+    if (g->row_fresh || !g->res_valid) return row_dup(dst, &g->row);
+    uint8_t buf[TABLE_STATE_MAX];
+    size_t n = 0;
+    const int rc = resident_encode(g, buf, &n);
+    return rc != CB_OK ? rc : row_dup_state(dst, &g->row, buf, n);
 }
 
 // THE RESIDENT HANDED OVER: the caller's decoded game (*res, a buffer the caller owns) becomes the
@@ -1481,7 +1510,7 @@ static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now, int
         jgame *g = due[i];
         cb_game_move *m = moves_for_flush(g, true);
         // R4: the rows the flush writes are the residents' encodes, made now.
-        if (!m || row_refresh(g) != CB_OK || row_dup(&sn->rows[sn->n], &g->row) != CB_OK) {
+        if (!m || row_dup_encoded(&sn->rows[sn->n], g) != CB_OK) {
             free(m);
             free(due);
             snapshot_free(sn);
@@ -2783,6 +2812,7 @@ int cb_journal_game_info(const cb_store *s, const char *id, cb_journal_game_fact
         out->first_ms = g->n_moves ? g->first_ms : 0;
         out->resident = g->res_valid ? g->res : NULL;
         out->held = g->held;
+        out->state_bytes = g->state_cap;
     }
     pthread_mutex_unlock(&j->ov_mu);
     return g ? CB_OK : CB_E_NOT_FOUND;
