@@ -83,7 +83,7 @@ Per resident game (4,096 at sat2), the musl RssAnon delta is 10,366 kB / 4,096 =
 | native (M1) | `cbase-bench cpu` kernel_action | 816 / 816 / 816 ns | 811 / 814 / 820 ns |
 | native (M1) | `cbase-bench cpu` dynamo_get_parse | 2,746 / 2,740 / 2,752 ns | 2,784 / 2,881 / 2,724 ns |
 
-The microbench (`bench/jbench.c`) includes journal.c and times its own functions on a two-seat game 8 moves in (a 134-byte state): a commit handing a resident over, the flush's row (the commit, then the encode and the copy into the snapshot), the first read after a commit (`row_refresh` and `row_dup`) and a second read.
+The microbench (/Users/alex/Dev/cdom-memtest/mem2/bench/jbench.c) includes journal.c and times its own functions on a two-seat game 8 moves in (a 134-byte state): a commit handing a resident over, the flush's row (the commit, then the encode and the copy into the snapshot), the first read after a commit (`row_refresh` and `row_dup`) and a second read.
 Medians of 5 interleaved runs, ns per call:
 
 | build | path | base | change |
@@ -97,7 +97,7 @@ Medians of 5 interleaved runs, ns per call:
 | native (M1) | commit + first read | 96.8 | 98.8 |
 | native (M1) | second read | 38.0 | 37.8 |
 
-The musl second read runs the same code in both builds, so its 45 ns are musl's allocator, not the code: with a 2,720-byte slot beside them, the read's two small allocations cost more.
+The musl second read runs the same code in both builds, so its 45 ns are not the code; the likely cause is musl's allocator (the read's two small allocations sit beside a 2,720-byte slot in the base), which was not profiled further.
 On macOS the first read after a commit is 2 ns (2%) slower, the copy of the state from the stack; on musl, the production allocator, it is 17% faster.
 
 In every musl pair but the noisy first one the change was the faster run (+1,049, +1,092, +735, +1,798 and +114 moves/s); the first pair ran while Spotlight held the host, and both builds fell to 24k together.
