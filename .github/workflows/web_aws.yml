@@ -1,7 +1,7 @@
 # The web on AWS (c_base/providers/aws/ops/site/web.yaml): foolish.cards and uttt.live built here
 # as static exports and uploaded to S3 behind CloudFront by
-# c_base/providers/aws/ops/site/web_deploy.sh. It is the only deploy lane for both sites;
-# Vercel is gone (c_base/RUNBOOK.md, "W9").
+# c_base/providers/aws/ops/site/web_deploy.sh. It is the only deploy lane for both sites
+# (c_base/RUNBOOK.md, "Web hosting").
 #
 #   foolish   gen, wasm, `next build` (out/): the compile gate, on every pull
 #             request that touches the site
