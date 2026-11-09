@@ -1056,9 +1056,13 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // table from them and writes only the Table and the board): the cache and finalize read them.
     // The game as the commit leaves it, decoded, for a store that keeps it (the journal): what a
     // section loaded from the new row would hold, its RNG base from the new row's seed too.
-    if (rc == CB_OK && cb_journal_of(ctx->store)
-        && ((!s->res && !(s->res = malloc(sizeof *s->res))) || (!s->res_small && !(s->res_small = malloc(TABLE_RESIDENT_SMALL)))))
-        rc = CB_E_NOMEM;
+    if (rc == CB_OK && cb_journal_of(ctx->store) && !s->res && !(s->res = malloc(sizeof *s->res))) rc = CB_E_NOMEM;
+    if (rc == CB_OK && cb_journal_of(ctx->store) && !s->res_small) {
+        // The struct's prefix only (table.h TABLE_RESIDENT_SMALL): through void *, which gcc's
+        // -Walloc-size would refuse as a TableResident * of too few bytes.
+        void *small = malloc(TABLE_RESIDENT_SMALL);
+        if (!(s->res_small = small)) rc = CB_E_NOMEM;
+    }
     if (rc == CB_OK && cb_journal_of(ctx->store)) {
         // The RNG base is the seed's. A plain move (gc.moves) keeps its game's seed, and the table
         // already holds that seed's base (cb_section_load, or table_adopt from its resident): only
