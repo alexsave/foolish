@@ -1481,7 +1481,7 @@ typedef struct {
     TableSnaps    snaps;
     Table         t;
     TableResident res;
-    uint8_t       state[TABLE_STATE_MAX], roster[ROSTER_BYTES];
+    uint8_t       state[TABLE_STATE_MAX];
     stmt_t       *log, *set;
 } up_table;
 
@@ -1542,10 +1542,9 @@ static int up_game(cb_sql *x, const char *id, up_table *u) {
         table_init(&u->t, &u->g, &u->snaps);
         if (rc == CB_OK && table_load(&u->t, row.state, (int)row.state_len, row.roster, (int)row.roster_len) == TABLE_OK &&
             table_bots_need_logs(&u->t) && table_set_session_log(&u->t, log.p, (int)log.len) >= 0) {
-            int sl = 0, rl = 0;
+            int sl = 0;
             table_resident(&u->t, NULL, &u->res);
-            if (table_resident_encode(&u->res, u->state, (int)sizeof u->state, &sl, u->roster, (int)sizeof u->roster, &rl) ==
-                    TABLE_OK && rl == (int)row.roster_len && memcmp(u->roster, row.roster, (size_t)rl) == 0) {
+            if (table_resident_encode(&u->res, u->state, (int)sizeof u->state, &sl) == TABLE_OK) {
                 state = u->state;
                 state_len = sl;
             }

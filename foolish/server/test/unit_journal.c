@@ -2008,9 +2008,9 @@ static bool same_board(const Table *a, const Table *b) {
                u->strategy_key == v->strategy_key;
         for (int i = 0; same && i < u->hand_count; i++) same = card_same(u->hand[i], v->hand[i]);
     }
-    uint8_t ra[ROSTER_BYTES], rb[ROSTER_BYTES];
-    same = same && roster_encode(&a->r, ra, sizeof ra) == ROSTER_BYTES && roster_encode(&b->r, rb, sizeof rb) == ROSTER_BYTES &&
-           memcmp(ra, rb, sizeof ra) == 0;
+    uint8_t ra[ROSTER_MAX], rb[ROSTER_MAX];
+    const int la = roster_encode(&a->r, ra, sizeof ra), lb = roster_encode(&b->r, rb, sizeof rb);
+    same = same && la > 0 && la == lb && memcmp(ra, rb, (size_t)la) == 0;
     same = same && memcmp(&a->clock, &b->clock, sizeof a->clock) == 0 && a->ratings.n == b->ratings.n &&
            a->rng_base == b->rng_base;
     return same;
@@ -2030,7 +2030,7 @@ static void the_resident_is_the_row(void) {
     const char *brains[2];
     T_EQ_INT(kt_brains(brains), 2);
     enum { ARENA = 128 * 1024 };
-    uint8_t *aa = malloc(ARENA), *ab = malloc(ARENA), state[4096], roster[ROSTER_BYTES + 8];
+    uint8_t *aa = malloc(ARENA), *ab = malloc(ARENA), state[4096], roster[ROSTER_MAX];
     static const char GID[] = "012345";
     uint64_t rng = 99;
     int ops = 0, games = 0;
@@ -2056,6 +2056,10 @@ static void the_resident_is_the_row(void) {
         T_CHECK(table_commit_products(&a.t, GID, (int)sizeof GID - 1, version, now, &ca, aa, ARENA) > 0);
         TableResident res;
         table_resident(&a.t, &ca.clock, &res);
+        // The roster's one copy is the row's bytes, which the resident is adopted with (as the
+        // journal keeps them).
+        int rl = ca.roster.len;
+        memcpy(roster, aa + ca.roster.off, (size_t)rl);
         // The session log the row's commits wrote, which a load of a row without its bot
         // memory folds (table_bots_need_logs), as the bot loop hands it over.
         static uint8_t slog[1 << 18];
@@ -2065,9 +2069,9 @@ static void the_resident_is_the_row(void) {
         while (ops < 1500) {
             // The server's table and the load's.
             table_init(&a.t, a.g, a.sn);
-            T_EQ_INT(table_adopt(&a.t, &res), TABLE_OK);
-            int sl = 0, rl = 0;
-            T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl, roster, sizeof roster, &rl), TABLE_OK);
+            T_EQ_INT(table_adopt(&a.t, &res, roster, rl), TABLE_OK);
+            int sl = 0;
+            T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl), TABLE_OK);
             memset(b.g, 0, offsetof(Game, logs));   // the load's board starts from zeros, as a section's does (cb_section_free)
             table_init(&b.t, b.g, b.sn);
             T_EQ_INT(table_load(&b.t, state, sl, roster, rl), TABLE_OK);
@@ -2135,9 +2139,9 @@ static void the_resident_is_the_row(void) {
             for (int v = 0; same && v < MAX_PLAYERS; v++)
                 same = cn.views[v].len == ca.views[v].len && memcmp(ab + cn.views[v].off, aa + ca.views[v].off, (size_t)ca.views[v].len) == 0;
             if (!same) { T_CHECK(!"the products with no row are not the products less the row"); break; }
-            // T9: the resident's encode is the products' row, byte for byte.
+            // T9: the resident's encode and the kept roster are the products' row, byte for byte.
             table_resident(&a.t, &ca.clock, &res);
-            T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl, roster, sizeof roster, &rl), TABLE_OK);
+            T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl), TABLE_OK);
             if (sl != ca.state.len || memcmp(state, aa + ca.state.off, (size_t)sl) != 0 || rl != ca.roster.len ||
                 memcmp(roster, aa + ca.roster.off, (size_t)rl) != 0) {
                 T_CHECK(!"the resident's encode is not the products' row");

@@ -36,7 +36,7 @@ typedef struct {
     char     id[CB_GAME_ID_MAX + 1];
     int      status;            // kernel GAME_STATUS_*
     uint8_t *state;   size_t state_len;    // kernel state blob
-    uint8_t *roster;  size_t roster_len;   // kernel durable roster (ROSTER_BYTES)
+    uint8_t *roster;  size_t roster_len;   // kernel durable roster (roster.h: format 2, or a stored format 1)
     // The session's MOVE LIST (move_list.h) is not read with the row: a commit appends
     // its chunk (cb_game_commit list_add) and game_list reads it (the game's end). game_get
     // never fills list; a row handed to game_import may carry it (a migration's whole list).

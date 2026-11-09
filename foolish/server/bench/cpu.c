@@ -93,7 +93,7 @@ static TableSnaps *g_snaps;
 static uint8_t *g_arena;
 static Table g_t;
 static TableCommit g_c;
-static uint8_t g_state[64 * 1024], g_roster[ROSTER_BYTES], g_logs[256 * 1024], g_seed[FOOLISH_SEED_LEN];
+static uint8_t g_state[64 * 1024], g_roster[ROSTER_MAX], g_logs[256 * 1024], g_seed[FOOLISH_SEED_LEN];
 static int g_state_len, g_roster_len, g_logs_len;
 static uint32_t g_version;
 static char g_seed_hex[2 * FOOLISH_SEED_LEN + 1];

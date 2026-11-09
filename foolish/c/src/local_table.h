@@ -69,6 +69,8 @@ typedef struct {
     int64_t       opened_ms;     // the table's creation: the base the move list is timed from (the server's created_at)
     int           list_len;
     int           cast_len;      // the last operation's cast, 0 for none
+    int           roster_len;    // the table's durable roster (roster.h), which every adopt decodes
+    uint8_t       roster[ROSTER_MAX];
     uint8_t       list[LOCAL_LIST_CAP];
     uint8_t       arena[LOCAL_ARENA_CAP];
     uint8_t       cast[LOCAL_CAST_CAP];

@@ -289,10 +289,10 @@ static int unnamed_seat(const Game *g);
 
 // ---------- fixtures --------------------------------------------------------------
 
-int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) {
+int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap, int *roster_len) {
     t->loaded = false;
     t->detail = 0;
-    if (cap < TABLE_STATE_MAX + ROSTER_BYTES) return TABLE_E_CAP;
+    if (cap < TABLE_STATE_MAX + ROSTER_MAX) return TABLE_E_CAP;
     // state_put walks the counts of a board nothing has judged yet: refuse one
     // past its array here, with the code the import would give it.
     if (g->num_players < 0 || g->num_players > MAX_PLAYERS) return GAME_INVALID_NUM_PLAYERS;
@@ -307,6 +307,7 @@ int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) 
     const int rc = roster_encode(r, out + state_len, cap - state_len);
     if (rc < 0) { t->detail = rc; return TABLE_E_ROSTER; }
     const int loaded = table_load(t, out, state_len, out + state_len, rc);
+    if (loaded == TABLE_OK && roster_len) *roster_len = rc;
     return loaded == TABLE_OK ? state_len : loaded;
 }
 // A bound on one session-log record with its timestamp.
@@ -1041,15 +1042,22 @@ _Static_assert(offsetof(Game, num_logs) < offsetof(Game, logs), "num_logs is in 
 _Static_assert(offsetof(Game, rep) == offsetof(Game, logs) + sizeof(((Game *)0)->logs), "Game.rep follows Game.logs");
 _Static_assert(sizeof(Game) - offsetof(Game, rep) - sizeof(((Game *)0)->rep) < 8, "Game.rep is the Game's last field");
 
-int table_adopt(Table *t, const TableResident *res) {
+int table_adopt(Table *t, const TableResident *res, const uint8_t *roster, int roster_len) {
+    // The roster first: bytes that are not one adopt nothing. Decoding validates them, which
+    // vouches for them until an edit (Table.roster_valid).
+    const int rc = roster_decode(&t->r, roster, roster_len);
+    if (rc != ROSTER_OK) {
+        t->loaded = false;
+        t->detail = rc;
+        return TABLE_E_ROSTER;
+    }
+    t->roster_valid = true;
     // The table's Game is full storage (table_init attached it): the head, then the ring the
     // resident kept apart, so a game held between two human moves keeps its history.
     game_copy_head(t->g, (const Game *)(const void *)res->head, TABLE_HEAD_BYTES);
     t->g->rep_live = true;
     t->g->rep = res->rep;
     t->g->num_logs = 0;   // the board carries no log (table_load's rule)
-    t->r = res->r;
-    t->roster_valid = true;   // a resident is made only from a table the kernel loaded or committed
     t->clock = res->clock;
     t->ratings = res->ratings;
     t->rng_base = res->rng_base;
@@ -1074,7 +1082,6 @@ void table_resident(const Table *t, const BoardClock *clock, TableResident *out)
     // instead, played the next operation on another board than the recovery's replay of it;
     // log_virt (the MAX_LOGS cliff, game.h) carried would reach a cliff a load never does.
     state_canonical((Game *)out->head);
-    out->r = t->r;
     out->clock = clock ? *clock : t->clock;
     out->ratings = t->ratings;
     out->rng_base = t->rng_base;
@@ -1085,8 +1092,7 @@ void table_resident(const Table *t, const BoardClock *clock, TableResident *out)
     (void)scratch;
 }
 
-int table_resident_encode(const TableResident *res, uint8_t *state, int state_cap, int *state_len, uint8_t *roster,
-                          int roster_cap, int *roster_len) {
+int table_resident_encode(const TableResident *res, uint8_t *state, int state_cap, int *state_len) {
     const Game *g = (const Game *)res->head;
     if (state_cap < TABLE_STATE_MAX) return TABLE_E_CAP;
     // A resident is a Table's (table_resident), so its stamp is the board's own (table_stamp).
@@ -1097,10 +1103,7 @@ int table_resident_encode(const TableResident *res, uint8_t *state, int state_ca
     const int n = state_blob_put_full_at(g, &res->clock, stamp, &sec, STATE_BLOB_FORMAT, state);
     if (n == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
     if (n < 0) return n;
-    const int rl = roster_encode(&res->r, roster, roster_cap);
-    if (rl < 0) return rl == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     *state_len = n;
-    *roster_len = rl;
     return TABLE_OK;
 }
 

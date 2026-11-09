@@ -10,13 +10,40 @@
 // NUL is not its terminator; the zero byte after each field in the struct is a
 // convenience for C readers, never the length.
 //
-// Two byte layouts live here, and both are frozen:
+// Two byte layouts live here:
 //
-// 1. THE DURABLE ENCODING (games.roster, ROSTER_FORMAT_VERSION 1). Fixed width,
-//    so the one-time SQL conversion from JSONB is a straight concatenation:
+// 1. THE DURABLE ENCODING (games.roster), FORMAT 2: variable length, every field
+//    exactly as long as it is, nothing padded:
+//
+//      u8  ROSTER_FORMAT_VERSION = 2
+//      u8  n seats (0..8)
+//      u8  title_len (0..200), title bytes
+//      n x { u8 id_len, id, u8 name_len (0..64), name UTF-8, u8 brain_len (0..23), brain }
+//
+//    An id is either text (id_len 1..36, the bytes) or A PACKED UUID: id_len 0
+//    and then 16 bytes, which stand for the canonical lowercase text
+//    "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" the struct holds. Every account and
+//    every bot is such a UUID (c_base's user and bot ids), so a seat costs 17
+//    bytes of id instead of 37; an id that is not one (the browser's local
+//    "local-you", a test's "u1") stays text. The encoder packs exactly the
+//    canonical lowercase UUIDs, and the decoder refuses one written as text
+//    (ROSTER_E_CANON), so there is still one byte string per roster.
+//    A real 4-seat table is about 150 bytes, where format 1 was 1227.
+//
+//    The decoder refuses, never clamps: a field running off the end or bytes
+//    after the last seat (E_LENGTH), an unknown version, a count or length over
+//    its cap, invalid UTF-8, a UUID spelled as text, or a duplicate id. So
+//    decode -> encode is the identity for every format 2 string.
+//
+//    FORMAT 1, the fixed-width layout every row was written in until format 2,
+//    is still READ (never written), so the rows already stored load and are
+//    rewritten as format 2 by their next whole commit. It was fixed width only
+//    so that the one-time Postgres conversion from JSONB could build it with
+//    lpad/rpad (docs/C_GAME_SHAPE_MIGRATION.md 3.2, 3.4); that conversion is
+//    gone, and nothing reads a seat out of the column in SQL:
 //
 //      off   size       field
-//      0     1          ROSTER_FORMAT_VERSION = 1
+//      0     1          1
 //      1     1          n seats (0..8)
 //      2     1          title_len (0..200)
 //      3     200        title bytes, zero padded
@@ -30,10 +57,8 @@
 //                         +126  2   reserved, zero
 //      1227             end
 //
-//    The decoder refuses, never clamps: any other length, an unknown version,
-//    a count or length over its cap, invalid UTF-8, a non-zero pad byte, a
-//    non-empty unused record, or a duplicate id. So there is exactly one byte
-//    string per roster, and decode -> encode is the identity.
+//    A format 1 string must be exactly 1227 bytes with every pad, reserved and
+//    unused-record byte zero (E_PADDING), as it always had to be.
 //
 // 2. THE ENVELOPE TRAILER, which shipped iOS builds decode in Swift
 //    (ios/FoolishNet/EnvelopeRoster.swift) and the web decodes in TS
@@ -77,15 +102,20 @@
 #include "game.h"
 #include <stdint.h>
 
-#define ROSTER_FORMAT_VERSION 1
+#define ROSTER_FORMAT_VERSION 2   // what roster_encode writes
+#define ROSTER_FORMAT_V1      1   // the fixed-width format, read only
 #define ROSTER_ID_MAX      36   // bytes: a canonical UUID, or any shorter host id
 #define ROSTER_NAME_MAX    64   // bytes of UTF-8, == MSG_MAX_NAME
 #define ROSTER_BRAIN_MAX   23   // bytes: a bot_roster key such as "cordite"; empty = human
 #define ROSTER_TITLE_MAX   200  // bytes: the table title (50 characters today)
 #define ROSTER_GAME_ID_MAX 64   // bytes: games.id as the trailer carries it
-#define ROSTER_BYTES       1227 // the durable encoding is FIXED WIDTH
-
-#define ROSTER_SEAT_BYTES  128
+#define ROSTER_UUID_TEXT   36   // the canonical text of a UUID
+#define ROSTER_UUID_BYTES  16   // a packed UUID id
+// The longest durable roster roster_encode writes (8 seats at every cap, text ids), for sizing a
+// buffer; a real one is far shorter, and its length is what roster_encode returns.
+#define ROSTER_MAX         (3 + ROSTER_TITLE_MAX + MAX_PLAYERS * (3 + ROSTER_ID_MAX + ROSTER_NAME_MAX + ROSTER_BRAIN_MAX))
+#define ROSTER_V1_BYTES    1227 // a format 1 roster, always exactly this long
+#define ROSTER_V1_SEAT_BYTES 128
 #define ROSTER_TRAILER_FORMAT_V1 1   // the passing game, by definition
 #define ROSTER_TRAILER_FORMAT_V2 2   // format 1, then the rules byte
 #define ROSTER_TRAILER_PASSING 0x01  // the rules byte: 1 the classic passing game, 0 podkidnoy
@@ -98,7 +128,7 @@
 // Results. Negative is a refusal; append-only numbering, because a host may
 // log or map the number.
 #define ROSTER_OK            0
-#define ROSTER_E_LENGTH    (-1)   // durable bytes are not exactly ROSTER_BYTES
+#define ROSTER_E_LENGTH    (-1)   // durable bytes end inside a field or go on after it (format 1: not exactly 1227)
 #define ROSTER_E_VERSION   (-2)   // unknown format byte
 #define ROSTER_E_COUNT     (-3)   // n outside 0..MAX_PLAYERS
 #define ROSTER_E_ID        (-4)   // id empty, over ROSTER_ID_MAX, NUL inside, or not UTF-8
@@ -117,6 +147,7 @@
 #define ROSTER_E_GOOD      (-17)  // a good bit names no seat
 #define ROSTER_E_FLAG      (-18)  // a trailer flag byte is neither 0 nor 1
 #define ROSTER_E_RULES     (-19)  // a trailer rules byte holds a rule this kernel does not know, or `passing` is not 0 or 1
+#define ROSTER_E_CANON     (-20)  // a format 2 id spells a canonical UUID as text (it must be packed)
 
 typedef struct {
     uint8_t id_len, name_len, brain_len;
@@ -165,7 +196,7 @@ typedef struct {
 } RosterSpec;
 
 // What roster_trailer_read found, beside the durable roster it decoded (which
-// the entry leaves in the IO buffer as ROSTER_BYTES of opaque bytes).
+// the entry leaves in the IO buffer as opaque bytes, its length the entry's answer).
 typedef struct {
     int32_t  status;      // GAME_STATUS_*
     uint32_t ai_mask;     // bot seats
@@ -175,8 +206,9 @@ typedef struct {
     char     gid[ROSTER_GAME_ID_MAX];
 } RosterTrailerRead;
 
-// The durable blob. decode zeroes *r first and returns ROSTER_OK or ROSTER_E_*;
-// encode refuses an invalid roster and otherwise returns ROSTER_BYTES.
+// The durable blob. decode reads format 1 or 2, zeroes *r first and returns ROSTER_OK or
+// ROSTER_E_*; encode writes format 2, refuses an invalid roster (or E_CAP when it does not fit
+// in cap, which ROSTER_MAX always does) and otherwise returns the bytes written.
 int      roster_decode(Roster *r, const uint8_t *p, int len);
 int      roster_encode(const Roster *r, uint8_t *out, int cap);
 // The same for a roster the caller has just validated (roster_validate, ROSTER_OK) and not
@@ -191,6 +223,30 @@ int      roster_validate(const Roster *r);
 // The seat whose id is EXACTLY these bytes, or -1. A prefix of a seated id, a
 // longer id that starts with one, and the empty id all miss.
 int      roster_seat_of(const Roster *r, const char *id, int id_len);
+
+// ---- the seats of durable bytes, without decoding them ----------------------
+//
+// For a host that keeps a game's durable roster as its only copy (the server's journal: who
+// sits at each game it holds) and asks who sits where without a Roster: the ids point into
+// the bytes. Format 1 or 2, checked for SHAPE only (every length within its cap and the
+// bytes), not validated: the bytes are a row the kernel wrote or loaded.
+typedef struct {
+    const uint8_t *id;     // id_len bytes of text, or ROSTER_UUID_BYTES when packed
+    uint8_t        id_len;
+    uint8_t        packed; // 1: a packed UUID
+    uint8_t        bot;    // 1: the seat has a brain
+} RosterSeatRef;
+
+// The seats, in order, into out (MAX_PLAYERS of them): their count, or ROSTER_E_*.
+int      roster_seat_refs(const uint8_t *p, int len, RosterSeatRef *out);
+// The seat's id as text (ROSTER_ID_MAX + 1 bytes, NUL-terminated): its length.
+int      roster_ref_text(const RosterSeatRef *s, char *out);
+// The 16 bytes of a canonical lowercase UUID's text, or 0 for any other id (which a packed
+// seat never holds): what roster_ref_is compares a packed seat with.
+int      roster_id_pack(const char *id, int len, uint8_t out[ROSTER_UUID_BYTES]);
+// Whether the seat's id is exactly these bytes. `packed` is roster_id_pack's 16 bytes of the
+// same id, or NULL when that said 0: a caller asking about many seats packs once.
+int      roster_ref_is(const RosterSeatRef *s, const char *id, int id_len, const uint8_t *packed);
 
 // Seats with a brain (brain_len > 0), as a bit mask by seat.
 uint32_t roster_bot_mask(const Roster *r);

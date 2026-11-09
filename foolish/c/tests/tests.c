@@ -11250,6 +11250,19 @@ static void test_analyse_packed_on_a_generated_game(void) {
 #define RS(s) (s), (int)strlen(s)
 
 // Two seats: a human and a bot, under a title.
+// The length of the durable roster at p, which is self-delimiting (roster.h): for the tests' rows
+// that keep a roster in a fixed buffer rather than beside its length. A format 1 roster is 1227.
+static int rl_of(const uint8_t *p) {
+    if (p[0] == ROSTER_FORMAT_V1) return ROSTER_V1_BYTES;
+    int at = 3 + p[2];
+    for (int s = 0; s < p[1]; s++) {
+        at += p[at] ? 1 + p[at] : 1 + ROSTER_UUID_BYTES;
+        at += 1 + p[at];
+        at += 1 + p[at];
+    }
+    return at;
+}
+
 static void roster_fixture(Roster *r) {
     memset(r, 0, sizeof(*r));
     roster_set_title(r, RS("Sveta's Game"));
@@ -11390,91 +11403,258 @@ static void test_player_carries_no_identity(void) {
         CHECK(sizeof(Player) == 68, "Player is 68 bytes at the native caps");
 }
 
+// A FORMAT 1 roster as every row was written until format 2 (roster.h): the test's own writer,
+// so the reader's acceptance of the rows already stored is pinned by bytes the kernel no longer
+// writes.
+static void roster_v1_bytes(const Roster *r, uint8_t out[ROSTER_V1_BYTES]) {
+    memset(out, 0, ROSTER_V1_BYTES);
+    out[0] = ROSTER_FORMAT_V1;
+    out[1] = (uint8_t)r->n;
+    out[2] = r->title_len;
+    memcpy(out + 3, r->title, r->title_len);
+    for (int s = 0; s < r->n; s++) {
+        uint8_t *q = out + 203 + s * ROSTER_V1_SEAT_BYTES;
+        const RosterSeat *x = &r->seats[s];
+        q[0] = x->id_len;     memcpy(q + 1, x->id, x->id_len);
+        q[37] = x->name_len;  memcpy(q + 38, x->name, x->name_len);
+        q[102] = x->brain_len; memcpy(q + 103, x->brain, x->brain_len);
+    }
+}
+
+// A durable roster's bytes as FORMAT 1 (decoded, then written by roster_v1_bytes): what the
+// digests pinned before format 2 fold, so a golden taken on format 1 rows still says that
+// nothing but the roster's layout moved.
+static const uint8_t *roster_as_v1(const uint8_t *p, int len) {
+    static uint8_t v1[ROSTER_V1_BYTES];
+    Roster r;
+    if (roster_decode(&r, p, len) != ROSTER_OK) memset(&r, 0, sizeof r);
+    roster_v1_bytes(&r, v1);
+    return v1;
+}
+
 static void test_roster_round_trip(void) {
     Roster r, back;
-    uint8_t buf[ROSTER_BYTES], again[ROSTER_BYTES];
+    uint8_t buf[ROSTER_MAX], again[ROSTER_MAX];
 
     roster_fixture(&r);
     CHECK(r.n == 2, "the fixture seated two");
-    CHECK(roster_encode(&r, buf, sizeof(buf)) == ROSTER_BYTES, "encode writes exactly ROSTER_BYTES");
-    CHECK(buf[0] == ROSTER_FORMAT_VERSION && buf[1] == 2 && buf[2] == 12, "header: version, n, title_len");
-    CHECK(memcmp(buf + 3, "Sveta's Game", 12) == 0 && buf[3 + 12] == 0, "title bytes, zero padded");
-    CHECK(buf[203] == 3 && memcmp(buf + 204, "p-0", 3) == 0, "seat 0 id at 203");
-    CHECK(buf[203 + 37] == 5 && memcmp(buf + 203 + 38, "Sveta", 5) == 0, "seat 0 name at +37");
-    CHECK(buf[203 + 102] == 0, "seat 0 is human (brain_len 0)");
-    CHECK(buf[203 + 128 + 102] == 7 && memcmp(buf + 203 + 128 + 103, "cordite", 7) == 0, "seat 1 brain at +102");
-    int zero_tail = 1;
-    for (int i = 203 + 2 * 128; i < ROSTER_BYTES; i++) if (buf[i]) zero_tail = 0;
-    CHECK(zero_tail, "unused seat records are all zero");
-    CHECK(roster_decode(&back, buf, ROSTER_BYTES) == ROSTER_OK, "the encoding decodes");
+    // FORMAT 2: every field exactly as long as it is.
+    static const uint8_t WANT[] = {
+        2, 2, 12, 'S', 'v', 'e', 't', 'a', '\'', 's', ' ', 'G', 'a', 'm', 'e',
+        3, 'p', '-', '0', 5, 'S', 'v', 'e', 't', 'a', 0,
+        3, 'p', '-', '1', 6, 0xd0, 0x91, 0xd0, 0xbe, 0xd1, 0x82, 7, 'c', 'o', 'r', 'd', 'i', 't', 'e',
+    };
+    const int n = roster_encode(&r, buf, sizeof(buf));
+    CHECK(n == (int)sizeof WANT && memcmp(buf, WANT, sizeof WANT) == 0,
+          "format 2 is the version, n, then each field as a length and its bytes, nothing padded");
+    CHECK(roster_decode(&back, buf, n) == ROSTER_OK, "the encoding decodes");
     CHECK(roster_equal(&r, &back), "decode gives back every field");
-    CHECK(roster_encode(&back, again, sizeof(again)) == ROSTER_BYTES && memcmp(buf, again, ROSTER_BYTES) == 0,
+    CHECK(roster_encode(&back, again, sizeof(again)) == n && memcmp(buf, again, (size_t)n) == 0,
           "decode -> encode is the identity");
-    CHECK(roster_encode(&r, buf, ROSTER_BYTES - 1) == ROSTER_E_CAP, "a small buffer is refused");
+    CHECK(roster_encode(&r, buf, n - 1) == ROSTER_E_CAP, "a buffer one byte small is refused");
+    CHECK(roster_encode(&r, buf, n) == n, "a buffer of exactly its length is enough");
+
+    // A canonical lowercase UUID id is packed to 16 bytes (id length byte 0), and decodes as its text.
+    memset(&r, 0, sizeof(r));
+    const char *uuid = "0b5f3a52-7c1e-4d2b-9a8e-3f1c2d4e5f60";
+    CHECK(roster_seat_add(&r, uuid, 36, RS("U"), RS("")) == 0, "a UUID seat");
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == 3 + 1 + 16 + 2 + 1, "a UUID id costs 17 bytes");
+    static const uint8_t PACKED[16] = { 0x0b, 0x5f, 0x3a, 0x52, 0x7c, 0x1e, 0x4d, 0x2b,
+                                        0x9a, 0x8e, 0x3f, 0x1c, 0x2d, 0x4e, 0x5f, 0x60 };
+    CHECK(buf[3] == 0 && memcmp(buf + 4, PACKED, 16) == 0, "the id is a 0 length byte and the UUID's 16 bytes");
+    CHECK(roster_decode(&back, buf, 3 + 1 + 16 + 2 + 1) == ROSTER_OK && back.seats[0].id_len == 36
+          && memcmp(back.seats[0].id, uuid, 36) == 0 && back.seats[0].id[36] == 0, "a packed id decodes as its text");
+    // Only the canonical lowercase text packs: anything else is an id of its own, kept as text.
+    memset(&r, 0, sizeof(r));
+    roster_seat_add(&r, RS("0B5F3A52-7C1E-4D2B-9A8E-3F1C2D4E5F60"), RS("U"), RS(""));
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == 3 + 1 + 36 + 2 + 1 && buf[3] == 36, "an uppercase UUID stays text");
+    memset(&r, 0, sizeof(r));
+    roster_seat_add(&r, RS("0b5f3a52x7c1e-4d2b-9a8e-3f1c2d4e5f60"), RS("U"), RS(""));
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == 3 + 1 + 36 + 2 + 1 && buf[3] == 36, "a 36-byte id that is not a UUID stays text");
 
     roster_full_fixture(&r);
     CHECK(r.n == MAX_PLAYERS && r.title_len == ROSTER_TITLE_MAX, "the full fixture is at every cap");
-    CHECK(roster_encode(&r, buf, sizeof(buf)) == ROSTER_BYTES, "a roster at every cap encodes");
-    CHECK(roster_decode(&back, buf, ROSTER_BYTES) == ROSTER_OK && roster_equal(&r, &back),
-          "a roster at every cap round-trips");
+    const int nf = roster_encode(&r, buf, sizeof(buf));
+    CHECK(nf == 3 + ROSTER_TITLE_MAX + MAX_PLAYERS * (3 + ROSTER_UUID_BYTES + ROSTER_NAME_MAX) + MAX_PLAYERS / 2 * ROSTER_BRAIN_MAX,
+          "a roster at every cap encodes, its UUIDs packed");
+    CHECK(roster_decode(&back, buf, nf) == ROSTER_OK && roster_equal(&r, &back), "a roster at every cap round-trips");
+    // ROSTER_MAX is the longest: every cap and 36-byte ids that are not UUIDs.
+    for (int s = 0; s < MAX_PLAYERS; s++) {
+        r.seats[s].id[8] = 'x';
+        memset(r.seats[s].brain, 'k', ROSTER_BRAIN_MAX);
+        r.seats[s].brain_len = ROSTER_BRAIN_MAX;
+    }
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == ROSTER_MAX, "a roster at every cap with text ids is ROSTER_MAX");
 
     memset(&r, 0, sizeof(r));
-    CHECK(roster_encode(&r, buf, sizeof(buf)) == ROSTER_BYTES && roster_decode(&back, buf, ROSTER_BYTES) == ROSTER_OK
-          && back.n == 0, "an empty roster round-trips");
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == 3 && roster_decode(&back, buf, 3) == ROSTER_OK && back.n == 0,
+          "an empty roster is three bytes and round-trips");
+}
+
+// FORMAT 1 STILL LOADS: a row written before format 2 decodes to the same roster, which then
+// encodes as format 2 (its next whole commit rewrites it).
+static void test_roster_reads_format_1(void) {
+    Roster r, back;
+    uint8_t v1[ROSTER_V1_BYTES], buf[ROSTER_MAX];
+    roster_full_fixture(&r);
+    roster_v1_bytes(&r, v1);
+    CHECK(roster_decode(&back, v1, ROSTER_V1_BYTES) == ROSTER_OK && roster_equal(&r, &back), "a format 1 roster at every cap decodes");
+    const int n = roster_encode(&back, buf, sizeof(buf));
+    CHECK(n > 0 && buf[0] == ROSTER_FORMAT_VERSION && n < ROSTER_V1_BYTES, "and is written again as format 2");
+    roster_fixture(&r);
+    roster_v1_bytes(&r, v1);
+    CHECK(roster_decode(&back, v1, ROSTER_V1_BYTES) == ROSTER_OK && roster_equal(&r, &back), "a format 1 lobby decodes");
+    memset(&r, 0, sizeof(r));
+    roster_v1_bytes(&r, v1);
+    CHECK(roster_decode(&back, v1, ROSTER_V1_BYTES) == ROSTER_OK && back.n == 0, "an empty format 1 roster decodes");
 }
 
 static void test_roster_decode_refuses_each_malformed_field(void) {
     Roster r, back;
-    uint8_t good[ROSTER_BYTES + 1], b[ROSTER_BYTES + 1];
+    uint8_t good[ROSTER_V1_BYTES + 1], b[ROSTER_V1_BYTES + 1];
+
+    // ---- format 2 (the fixture's bytes: test_roster_round_trip's WANT) ----
     roster_fixture(&r);
-    roster_encode(&r, good, ROSTER_BYTES);
-    good[ROSTER_BYTES] = 0;
-    const int s0 = 203, s1 = 203 + 128;
-
-#define MUTATE(expect, msg, ...) do { memcpy(b, good, sizeof(b)); __VA_ARGS__; \
-        CHECK(roster_decode(&back, b, ROSTER_BYTES) == (expect), msg); } while (0)
-
-    CHECK(roster_decode(&back, good, ROSTER_BYTES - 1) == ROSTER_E_LENGTH, "one byte short is refused");
-    CHECK(roster_decode(&back, good, ROSTER_BYTES + 1) == ROSTER_E_LENGTH, "one byte long is refused");
+    const int len = roster_encode(&r, good, ROSTER_MAX);
+    CHECK(len == 45, "the fixture is 45 bytes");
+    good[len] = 0;
+    const int t = 2, s0 = 15, s1 = 26;   // the title's length byte, and each seat's id length byte
+#define MUTATE2(expect, msg, ...) do { memcpy(b, good, sizeof(b)); __VA_ARGS__; \
+        CHECK(roster_decode(&back, b, len) == (expect), msg); } while (0)
+    CHECK(roster_decode(&back, good, len - 1) == ROSTER_E_LENGTH, "one byte short is refused");
+    CHECK(roster_decode(&back, good, len + 1) == ROSTER_E_LENGTH, "a byte after the last seat is refused");
     CHECK(roster_decode(&back, good, 0) == ROSTER_E_LENGTH, "nothing is refused");
-    MUTATE(ROSTER_E_VERSION, "an unknown version is refused", b[0] = 2);
-    MUTATE(ROSTER_E_VERSION, "version 0 is refused", b[0] = 0);
-    MUTATE(ROSTER_E_COUNT, "n over MAX_PLAYERS is refused", b[1] = MAX_PLAYERS + 1);
-    MUTATE(ROSTER_E_COUNT, "a negative n is refused", b[1] = 0xff);
-    MUTATE(ROSTER_E_TITLE, "a title over 200 bytes is refused", b[2] = ROSTER_TITLE_MAX + 1);
-    MUTATE(ROSTER_E_TITLE, "a title that is not UTF-8 is refused", b[3] = 0xff);
-    MUTATE(ROSTER_E_ID, "an id over 36 bytes is refused", b[s0] = ROSTER_ID_MAX + 1);
-    MUTATE(ROSTER_E_ID, "an empty id is refused", b[s0] = 0; memset(b + s0 + 1, 0, 3));
-    MUTATE(ROSTER_E_ID, "a NUL inside an id is refused", b[s0 + 2] = 0);
-    MUTATE(ROSTER_E_NAME, "a name over 64 bytes is refused", b[s0 + 37] = ROSTER_NAME_MAX + 1);
-    MUTATE(ROSTER_E_NAME, "a stray 0xff in a name is refused", b[s0 + 38] = 0xff);
-    MUTATE(ROSTER_E_NAME, "an overlong encoding is refused", b[s0 + 38] = 0xc0; b[s0 + 39] = 0x80);
-    MUTATE(ROSTER_E_NAME, "a UTF-16 surrogate is refused", b[s0 + 38] = 0xed; b[s0 + 39] = 0xa0; b[s0 + 40] = 0x80);
-    MUTATE(ROSTER_E_NAME, "a code point past U+10FFFF is refused",
-           b[s0 + 38] = 0xf4; b[s0 + 39] = 0x90; b[s0 + 40] = 0x80; b[s0 + 41] = 0x80);
-    MUTATE(ROSTER_E_NAME, "a name cut mid-sequence is refused", b[s1 + 37] = 5);   // "Бот" is 6 bytes
-    MUTATE(ROSTER_E_NAME, "a lone continuation byte is refused", b[s0 + 38] = 0x80);
-    MUTATE(ROSTER_E_BRAIN, "a brain over 23 bytes is refused", b[s1 + 102] = ROSTER_BRAIN_MAX + 1);
-    MUTATE(ROSTER_E_BRAIN, "a brain that is not printable ASCII is refused", b[s1 + 103] = ' ');
-    MUTATE(ROSTER_E_DUPLICATE, "two seats with one id are refused", b[s1 + 3] = '0');
-    MUTATE(ROSTER_E_PADDING, "a byte past the title is refused", b[3 + 12] = 'x');
-    MUTATE(ROSTER_E_PADDING, "a byte past an id is refused", b[s0 + 1 + 3] = 'x');
-    MUTATE(ROSTER_E_PADDING, "a byte past a name is refused", b[s0 + 38 + 5] = 'x');
-    MUTATE(ROSTER_E_PADDING, "a byte past a brain is refused", b[s1 + 103 + 7] = 'x');
-    MUTATE(ROSTER_E_PADDING, "a reserved byte is refused", b[s0 + 126] = 1);
-    MUTATE(ROSTER_E_PADDING, "an unused seat record that is not empty is refused", b[203 + 5 * 128 + 50] = 1);
-    MUTATE(ROSTER_OK, "the unmutated bytes still decode", (void)0);
+    CHECK(roster_decode(&back, good, 1) == ROSTER_E_LENGTH, "a version alone is refused");
+    CHECK(roster_decode(&back, good, 2) == ROSTER_E_LENGTH, "a roster with no title byte is refused");
+    CHECK(roster_decode(&back, NULL, len) == ROSTER_E_LENGTH, "no bytes are refused");
+    for (int k = 3; k < len; k++)
+        if (roster_decode(&back, good, k) != ROSTER_E_LENGTH) { CHECK(0, "every cut of a roster is refused as its length"); break; }
+    MUTATE2(ROSTER_E_VERSION, "an unknown version is refused", b[0] = 3);
+    MUTATE2(ROSTER_E_VERSION, "version 0 is refused", b[0] = 0);
+    MUTATE2(ROSTER_E_COUNT, "n over MAX_PLAYERS is refused", b[1] = MAX_PLAYERS + 1);
+    MUTATE2(ROSTER_E_COUNT, "a negative n is refused", b[1] = 0xff);
+    MUTATE2(ROSTER_E_LENGTH, "a seat count past the bytes is refused", b[1] = 3);
+    MUTATE2(ROSTER_E_LENGTH, "a seat count short of the bytes is refused", b[1] = 1);
+    MUTATE2(ROSTER_E_TITLE, "a title over 200 bytes is refused", b[t] = ROSTER_TITLE_MAX + 1);
+    MUTATE2(ROSTER_E_TITLE, "a title that is not UTF-8 is refused", b[t + 1] = 0xff);
+    MUTATE2(ROSTER_E_ID, "an id over 36 bytes is refused", b[s0] = ROSTER_ID_MAX + 1);
+    MUTATE2(ROSTER_E_ID, "a NUL inside an id is refused", b[s0 + 2] = 0);
+    MUTATE2(ROSTER_E_NAME, "a name over 64 bytes is refused", b[s0 + 4] = ROSTER_NAME_MAX + 1);
+    MUTATE2(ROSTER_E_NAME, "a stray 0xff in a name is refused", b[s0 + 5] = 0xff);
+    MUTATE2(ROSTER_E_NAME, "an overlong encoding is refused", b[s0 + 5] = 0xc0; b[s0 + 6] = 0x80);
+    MUTATE2(ROSTER_E_NAME, "a UTF-16 surrogate is refused", b[s0 + 5] = 0xed; b[s0 + 6] = 0xa0; b[s0 + 7] = 0x80);
+    MUTATE2(ROSTER_E_NAME, "a lone continuation byte is refused", b[s0 + 5] = 0x80);
+    MUTATE2(ROSTER_E_BRAIN, "a brain over 23 bytes is refused", b[s1 + 11] = ROSTER_BRAIN_MAX + 1);
+    MUTATE2(ROSTER_E_BRAIN, "a brain that is not printable ASCII is refused", b[s1 + 12] = ' ');
+    MUTATE2(ROSTER_E_DUPLICATE, "two seats with one id are refused", b[s1 + 3] = '0');
+    MUTATE2(ROSTER_OK, "the unmutated bytes still decode", (void)0);
+#undef MUTATE2
+    // A UUID spelled as text is not this roster's one byte string: it must be packed.
+    {
+        uint8_t u[64];
+        const char *uuid = "0b5f3a52-7c1e-4d2b-9a8e-3f1c2d4e5f60";
+        int k = 0;
+        u[k++] = 2; u[k++] = 1; u[k++] = 0;
+        u[k++] = 36; memcpy(u + k, uuid, 36); k += 36;
+        u[k++] = 1; u[k++] = 'U'; u[k++] = 0;
+        CHECK(roster_decode(&back, u, k) == ROSTER_E_CANON, "a canonical UUID written as text is refused");
+        u[3 + 1] = 'B';   // "0B5f...": not canonical, so an id of its own
+        CHECK(roster_decode(&back, u, k) == ROSTER_OK, "an id that only looks like a UUID is text");
+        k = 0;
+        u[k++] = 2; u[k++] = 1; u[k++] = 0; u[k++] = 0;
+        memset(u + k, 0xab, 16); k += 16;
+        CHECK(roster_decode(&back, u, k) == ROSTER_E_LENGTH, "a packed id with no name after it is refused");
+        CHECK(roster_decode(&back, u, k - 1) == ROSTER_E_LENGTH, "a packed id cut short is refused");
+        u[k++] = 0; u[k++] = 0;
+        CHECK(roster_decode(&back, u, k) == ROSTER_OK && back.seats[0].id_len == 36
+              && memcmp(back.seats[0].id, "abababab-abab-abab-abab-abababababab", 36) == 0, "any 16 bytes are a UUID");
+    }
+
+    // ---- format 1 (read only) ----
+    roster_fixture(&r);
+    roster_v1_bytes(&r, good);
+    good[ROSTER_V1_BYTES] = 0;
+    const int v0 = 203, v1 = 203 + 128;
+#define MUTATE(expect, msg, ...) do { memcpy(b, good, sizeof(b)); __VA_ARGS__; \
+        CHECK(roster_decode(&back, b, ROSTER_V1_BYTES) == (expect), msg); } while (0)
+    CHECK(roster_decode(&back, good, ROSTER_V1_BYTES - 1) == ROSTER_E_LENGTH, "format 1 one byte short is refused");
+    CHECK(roster_decode(&back, good, ROSTER_V1_BYTES + 1) == ROSTER_E_LENGTH, "format 1 one byte long is refused");
+    MUTATE(ROSTER_E_COUNT, "format 1: n over MAX_PLAYERS is refused", b[1] = MAX_PLAYERS + 1);
+    MUTATE(ROSTER_E_TITLE, "format 1: a title over 200 bytes is refused", b[2] = ROSTER_TITLE_MAX + 1);
+    MUTATE(ROSTER_E_TITLE, "format 1: a title that is not UTF-8 is refused", b[3] = 0xff);
+    MUTATE(ROSTER_E_ID, "format 1: an id over 36 bytes is refused", b[v0] = ROSTER_ID_MAX + 1);
+    MUTATE(ROSTER_E_ID, "format 1: an empty id is refused", b[v0] = 0; memset(b + v0 + 1, 0, 3));
+    MUTATE(ROSTER_E_ID, "format 1: a NUL inside an id is refused", b[v0 + 2] = 0);
+    MUTATE(ROSTER_E_NAME, "format 1: a name over 64 bytes is refused", b[v0 + 37] = ROSTER_NAME_MAX + 1);
+    MUTATE(ROSTER_E_NAME, "format 1: a stray 0xff in a name is refused", b[v0 + 38] = 0xff);
+    MUTATE(ROSTER_E_NAME, "format 1: a code point past U+10FFFF is refused",
+           b[v0 + 38] = 0xf4; b[v0 + 39] = 0x90; b[v0 + 40] = 0x80; b[v0 + 41] = 0x80);
+    MUTATE(ROSTER_E_NAME, "format 1: a name cut mid-sequence is refused", b[v1 + 37] = 5);   // "Бот" is 6 bytes
+    MUTATE(ROSTER_E_BRAIN, "format 1: a brain over 23 bytes is refused", b[v1 + 102] = ROSTER_BRAIN_MAX + 1);
+    MUTATE(ROSTER_E_BRAIN, "format 1: a brain that is not printable ASCII is refused", b[v1 + 103] = ' ');
+    MUTATE(ROSTER_E_DUPLICATE, "format 1: two seats with one id are refused", b[v1 + 3] = '0');
+    MUTATE(ROSTER_E_PADDING, "format 1: a byte past the title is refused", b[3 + 12] = 'x');
+    MUTATE(ROSTER_E_PADDING, "format 1: a byte past an id is refused", b[v0 + 1 + 3] = 'x');
+    MUTATE(ROSTER_E_PADDING, "format 1: a byte past a name is refused", b[v0 + 38 + 5] = 'x');
+    MUTATE(ROSTER_E_PADDING, "format 1: a byte past a brain is refused", b[v1 + 103 + 7] = 'x');
+    MUTATE(ROSTER_E_PADDING, "format 1: a reserved byte is refused", b[v0 + 126] = 1);
+    MUTATE(ROSTER_E_PADDING, "format 1: an unused seat record that is not empty is refused", b[203 + 5 * 128 + 50] = 1);
+    MUTATE(ROSTER_OK, "format 1: the unmutated bytes still decode", (void)0);
 #undef MUTATE
 
     // A Roster built in memory is held to the same rules as one decoded.
     roster_fixture(&r);
     r.seats[1].id_len = 3; memcpy(r.seats[1].id, "p-0", 3);
     CHECK(roster_validate(&r) == ROSTER_E_DUPLICATE, "validate finds a duplicate id");
-    CHECK(roster_encode(&r, b, ROSTER_BYTES) == ROSTER_E_DUPLICATE, "encode refuses an invalid roster");
+    CHECK(roster_encode(&r, b, ROSTER_MAX) == ROSTER_E_DUPLICATE, "encode refuses an invalid roster");
     roster_fixture(&r); r.n = MAX_PLAYERS + 1;
     CHECK(roster_validate(&r) == ROSTER_E_COUNT, "validate refuses n over MAX_PLAYERS");
     roster_fixture(&r); r.n = -1;
     CHECK(roster_validate(&r) == ROSTER_E_COUNT, "validate refuses a negative n");
+}
+
+// WHO SITS WHERE, from the bytes (roster_seat_refs): what the server's journal reads instead of
+// keeping a decoded Roster. Both formats, the same answers as a decode.
+static void test_roster_seat_refs(void) {
+    Roster r;
+    uint8_t buf[ROSTER_MAX], v1[ROSTER_V1_BYTES];
+    RosterSeatRef refs[MAX_PLAYERS];
+    char text[ROSTER_ID_MAX + 1];
+    const char *uuid = "0b5f3a52-7c1e-4d2b-9a8e-3f1c2d4e5f60";
+    uint8_t packed[ROSTER_UUID_BYTES];
+    CHECK(roster_id_pack(uuid, 36, packed) == 1 && roster_id_pack(uuid, 35, packed) == 0
+          && roster_id_pack(RS("p-0"), packed) == 0, "only a canonical UUID packs");
+    roster_fixture(&r);
+    roster_seat_add(&r, uuid, 36, RS("U"), RS("random"));
+    const int n = roster_encode(&r, buf, sizeof buf);
+    roster_v1_bytes(&r, v1);
+    for (int f = 0; f < 2; f++) {
+        const int k = f ? roster_seat_refs(v1, ROSTER_V1_BYTES, refs) : roster_seat_refs(buf, n, refs);
+        const char *what = f ? "format 1" : "format 2";
+        CHECK(k == 3, what);
+        for (int s = 0; s < k && s < 3; s++) {
+            const int tl = roster_ref_text(&refs[s], text);
+            CHECK(tl == r.seats[s].id_len && memcmp(text, r.seats[s].id, (size_t)tl) == 0 && text[tl] == 0,
+                  "each seat's id as text is the roster's");
+            CHECK(refs[s].bot == (r.seats[s].brain_len > 0), "each seat's kind is the roster's");
+            CHECK(roster_ref_is(&refs[s], r.seats[s].id, r.seats[s].id_len, s == 2 ? packed : NULL),
+                  "each seat is its own id");
+        }
+        CHECK(refs[2].packed == (f == 0), "format 2 holds the UUID packed, format 1 as text");
+        CHECK(!roster_ref_is(&refs[0], RS("p-1"), NULL) && !roster_ref_is(&refs[0], RS("p-"), NULL)
+              && !roster_ref_is(&refs[2], RS("p-0"), NULL), "no seat is another's id");
+    }
+    uint8_t other[ROSTER_UUID_BYTES];
+    memcpy(other, packed, sizeof other);
+    other[15] ^= 1;
+    roster_seat_refs(buf, n, refs);
+    CHECK(!roster_ref_is(&refs[2], uuid, 36, other), "a packed seat is not another UUID");
+    CHECK(!roster_ref_is(&refs[2], uuid, 36, NULL), "a packed seat is no id that does not pack");
+    CHECK(roster_seat_refs(buf, n - 1, refs) == ROSTER_E_LENGTH && roster_seat_refs(buf, n + 1, refs) == ROSTER_E_LENGTH
+          && roster_seat_refs(v1, ROSTER_V1_BYTES - 1, refs) == ROSTER_E_LENGTH && roster_seat_refs(buf, 0, refs) == ROSTER_E_LENGTH,
+          "bytes that are not a roster's length are refused");
+    buf[0] = 9;
+    CHECK(roster_seat_refs(buf, n, refs) == ROSTER_E_VERSION, "an unknown version is refused");
 }
 
 static void test_roster_seat_of_is_exact(void) {
@@ -11541,9 +11721,9 @@ static void test_roster_ops(void) {
     CHECK(roster_seat_remove(&r, 3) == ROSTER_E_SEAT && roster_seat_remove(&r, -1) == ROSTER_E_SEAT,
           "remove refuses a seat out of range");
     CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused remove leaves the roster untouched");
-    uint8_t enc[ROSTER_BYTES];
-    CHECK(roster_encode(&r, enc, sizeof(enc)) == ROSTER_BYTES && enc[203 + 3 * 128] == 0,
-          "the vacated record encodes as zero");
+    uint8_t enc[ROSTER_MAX];
+    CHECK(roster_encode(&r, enc, sizeof(enc)) == rl_of(enc) && enc[1] == 3,
+          "the vacated seat is gone from the encoding");
     CHECK(roster_seat_remove(&r, 2) == ROSTER_OK && roster_seat_remove(&r, 1) == ROSTER_OK
           && roster_seat_remove(&r, 0) == ROSTER_OK && r.n == 0, "remove down to empty");
     CHECK(roster_seat_remove(&r, 0) == ROSTER_E_SEAT, "remove from an empty roster is refused");
@@ -11748,7 +11928,7 @@ static void test_roster_trailer(void) {
 static Game tb_game, tb_src, tb_before;
 static TableSnaps tb_snaps;
 static Table tb;
-static uint8_t tb_state[8192], tb_state2[8192], tb_roster[ROSTER_BYTES], tb_roster2[ROSTER_BYTES];
+static uint8_t tb_state[8192], tb_state2[8192], tb_roster[ROSTER_MAX], tb_roster2[ROSTER_MAX];
 static uint8_t tb_arena[1 << 18], tb_buf[1 << 16], tb_buf2[1 << 16];
 static int tb_state_len;
 static LegalMoves tb_moves;
@@ -11769,7 +11949,7 @@ static void tb_roster_for(int np, uint32_t bots, const char *brain, uint8_t *out
         const int bot = (bots >> i) & 1u;
         roster_seat_add(&r, id, (int)strlen(id), name, (int)strlen(name), bot ? brain : "", bot ? (int)strlen(brain) : 0);
     }
-    roster_encode(&r, out, ROSTER_BYTES);
+    roster_encode(&r, out, ROSTER_MAX);
 }
 
 // A seeded deal of `np` seats into tb_src, its blob into tb_state, its roster
@@ -11823,7 +12003,7 @@ static void test_table_load(void) {
     tb_fixture(3, 1u << 2, 11);
     table_init(&tb, &tb_game, &tb_snaps);
     CHECK(table_act(&tb, RS("id-0"), tb_buf, 3, -1, 0) == TABLE_E_NOT_LOADED, "nothing acts on an unloaded table");
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.loaded, "a dealt row loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK && tb.loaded, "a dealt row loads");
     CHECK(tb_same_board(&tb_game, &tb_src), "the loaded board is the blob's");
     CHECK(tb_game.deterministic_deck, "the deterministic-deck flag is carried from the blob");
     CHECK(tb_game.players[0].strategy_key == STRATEGY_KEY_HUMAN && tb_game.players[1].strategy_key == STRATEGY_KEY_HUMAN,
@@ -11836,7 +12016,7 @@ static void test_table_load(void) {
     memcpy(&tb_before, &tb_game, offsetof(Game, logs));
     tb_fixture(3, 1u << 2, 12);
 #define REFUSE(want, msg, state, slen, roster) do { \
-        const int rc_ = table_load(&tb, state, slen, roster, ROSTER_BYTES); \
+        const int rc_ = table_load(&tb, state, slen, roster, rl_of(roster)); \
         if (rc_ != (want)) fprintf(stderr, "  table_load(%s): got %d, want %d\n", msg, rc_, want); \
         CHECK(rc_ == (want) && !tb.loaded, msg); \
         CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, msg); } while (0)
@@ -11845,7 +12025,7 @@ static void test_table_load(void) {
     tb_state2[0] = 1;
     REFUSE(TABLE_E_STATE_VERSION, "a v1 state blob (rewritten to v2 by a migration long ago)", tb_state2, tb_state_len, tb_roster);
     REFUSE(TABLE_E_STATE_VERSION, "a state blob too short to hold a board", tb_state, 3, tb_roster);
-    memcpy(tb_roster2, tb_roster, ROSTER_BYTES); tb_roster2[0] = 9;
+    memcpy(tb_roster2, tb_roster, ROSTER_MAX); tb_roster2[0] = 9;
     REFUSE(TABLE_E_ROSTER, "a roster of an unknown format", tb_state, tb_state_len, tb_roster2);
     CHECK(tb.detail == ROSTER_E_VERSION, "the roster refusal carries the roster's reason");
     tb_roster_for(4, 0, "", tb_roster2);
@@ -11868,7 +12048,7 @@ static void test_table_load(void) {
     tb_src.deterministic_deck = false;
     tb_state_len = tb_blob(&tb_src, tb_state);
     tb_roster_for(3, 1u << 2, "random", tb_roster);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "a lobby row loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "a lobby row loads");
     CHECK(!tb_game.deterministic_deck && tb_game.status == GAME_STATUS_WAITING, "a lobby row is a lobby");
 }
 
@@ -11885,7 +12065,7 @@ static void test_state_blob_v4_carries_the_rules(void) {
     static Game g, back;
     const BoardClock clk = { 1700000000000LL, 1700000000500LL };
     BoardClock got;
-    uint8_t roster2p[ROSTER_BYTES];
+    uint8_t roster2p[ROSTER_MAX];
     tb_roster_for(2, 0, "", roster2p);
 
     // Podkidnoy, written as v4: the passing bit clear. The attacker's hand is
@@ -11909,7 +12089,7 @@ static void test_state_blob_v4_carries_the_rules(void) {
     CHECK(lr == 1 && got.shown_ms == clk.shown_ms && got.settles_ms == clk.settles_ms, "v4: the clock is read");
     CHECK(lr == 1 && tb_same_board(&back, &g), "v4: the board is the one written");
     table_init(&tb, &tb_game, &tb_snaps);
-    int tr = table_load(&tb, blob, n, roster2p, ROSTER_BYTES);
+    int tr = table_load(&tb, blob, n, roster2p, rl_of(roster2p));
     if (tr != TABLE_OK) fprintf(stderr, "  table_load(v4 podkidnoy): got %d\n", tr);
     CHECK(tr == TABLE_OK && !game_pass_allowed(&tb_game) && !menu_has(&tb_game, 1, MOVE_PASS),
           "v4: a table loads a podkidnoy row as podkidnoy");
@@ -11947,8 +12127,8 @@ static void test_state_blob_v4_carries_the_rules(void) {
     }
     {
         Roster r;
-        CHECK(roster_decode(&r, roster2p, ROSTER_BYTES) == ROSTER_OK
-              && table_seal(&tb, &g, &r, tb_buf, sizeof(tb_buf)) > 0 && !game_pass_allowed(&tb_game),
+        CHECK(roster_decode(&r, roster2p, rl_of(roster2p)) == ROSTER_OK
+              && table_seal(&tb, &g, &r, tb_buf, sizeof(tb_buf), NULL) > 0 && !game_pass_allowed(&tb_game),
               "v4 writer: a podkidnoy fixture seals, and the table it loads is podkidnoy");
     }
 
@@ -11968,7 +12148,7 @@ static void test_state_blob_v4_carries_the_rules(void) {
         CHECK(n2 == n && memcmp(again, blob, (size_t)n) == 0, "v4: load then write is byte-identical");
     }
     tb_game.rules = GAME_RULE_NO_PASS;
-    tr = table_load(&tb, blob, n, roster2p, ROSTER_BYTES);
+    tr = table_load(&tb, blob, n, roster2p, rl_of(roster2p));
     CHECK(tr == TABLE_OK && game_pass_allowed(&tb_game) && menu_has(&tb_game, 1, MOVE_PASS),
           "v4: a table loads a passing row as passing over a podkidnoy Game");
     CHECK(tr == TABLE_OK && table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
@@ -11984,7 +12164,7 @@ static void test_state_blob_v4_carries_the_rules(void) {
               f == STATE_BLOB_FORMAT_V3 ? "v3: a row loads as the classic game over a podkidnoy Game"
                                         : "v2: a row loads as the classic game over a podkidnoy Game");
         tb_game.rules = GAME_RULE_NO_PASS;
-        CHECK(table_load(&tb, blob, n, roster2p, ROSTER_BYTES) == TABLE_OK && tb_game.rules == 0,
+        CHECK(table_load(&tb, blob, n, roster2p, rl_of(roster2p)) == TABLE_OK && tb_game.rules == 0,
               f == STATE_BLOB_FORMAT_V3 ? "v3: a table loads a row as the classic game over a podkidnoy Game"
                                         : "v2: a table loads a row as the classic game over a podkidnoy Game");
     }
@@ -11999,7 +12179,7 @@ static void test_state_blob_v4_carries_the_rules(void) {
         memset(&back, 0, sizeof back);
         tb_game.rules = 0;
         const int a = state_blob_load(&back, blob, n, 0);
-        const int b = table_load(&tb, blob, n, roster2p, ROSTER_BYTES);
+        const int b = table_load(&tb, blob, n, roster2p, rl_of(roster2p));
         if (a != 0 || b != TABLE_E_STATE_VERSION) fprintf(stderr, "  v4 flag bit %d: load %d, table_load %d\n", bit, a, b);
         unknown_refused += a == 0 && back.rules == 0 && back.num_players == 0 && b == TABLE_E_STATE_VERSION && !tb.loaded;
     }
@@ -12012,21 +12192,23 @@ static void test_state_blob_v4_carries_the_rules(void) {
 static void test_table_seal(void) {
     Roster r;
     tb_fixture(3, 1u << 2, 21);
-    CHECK(roster_decode(&r, tb_roster, ROSTER_BYTES) == ROSTER_OK, "the fixture roster decodes");
+    CHECK(roster_decode(&r, tb_roster, rl_of(tb_roster)) == ROSTER_OK, "the fixture roster decodes");
     table_init(&tb, &tb_game, &tb_snaps);
 
-    int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf));
+    int seal_rl = -1;
+    int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf), &seal_rl);
     CHECK(n == tb_state_len && memcmp(tb_buf, tb_state, (size_t)n) == 0, "the state blob is the board's durable blob");
-    CHECK(memcmp(tb_buf + n, tb_roster, ROSTER_BYTES) == 0, "the durable roster follows it");
+    CHECK(seal_rl == rl_of(tb_roster) && memcmp(tb_buf + n, tb_roster, (size_t)seal_rl) == 0,
+          "the durable roster follows it, its length the seal's");
     CHECK(tb.loaded && tb_same_board(&tb_game, &tb_src) && tb.r.n == 3, "and the table holds the loaded row");
 
     // The table's own board may be the one sealed.
     memcpy(&tb_game, &tb_src, offsetof(Game, logs));
-    n = table_seal(&tb, &tb_game, &r, tb_buf, (int)sizeof(tb_buf));
+    n = table_seal(&tb, &tb_game, &r, tb_buf, (int)sizeof(tb_buf), NULL);
     CHECK(n == tb_state_len && memcmp(tb_buf, tb_state, (size_t)n) == 0 && tb.loaded, "sealing t->g in place");
 
 #define SEAL_REFUSES(want, msg, cap) do { \
-        const int rc_ = table_seal(&tb, &tb_src, &r, tb_buf, (cap)); \
+        const int rc_ = table_seal(&tb, &tb_src, &r, tb_buf, (cap), NULL); \
         if (rc_ != (want)) fprintf(stderr, "  table_seal(%s): got %d, want %d\n", msg, rc_, want); \
         CHECK(rc_ == (want) && !tb.loaded, msg); } while (0)
     SEAL_REFUSES(TABLE_E_CAP, "an output too small for any row", 64);
@@ -12060,7 +12242,7 @@ static void test_table_seal(void) {
     r.seats[1].id_len = 0;
     SEAL_REFUSES(TABLE_E_ROSTER, "a roster that does not encode", (int)sizeof(tb_buf));
     CHECK(tb.detail == ROSTER_E_ID, "with the roster's reason");
-    roster_decode(&r, tb_roster, ROSTER_BYTES);
+    roster_decode(&r, tb_roster, rl_of(tb_roster));
     memcpy(r.seats[2].brain, "nope", 5);
     r.seats[2].brain_len = 4;
     SEAL_REFUSES(TABLE_E_UNKNOWN_BRAIN, "a bot seat with a brain this build lacks", (int)sizeof(tb_buf));
@@ -12070,7 +12252,7 @@ static void test_table_seal(void) {
 static void test_table_act_resolves_the_seat_from_the_actor_id(void) {
     tb_fixture(3, 1u << 2, 21);
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the table loads");
     uint8_t w[8];
     const int wl = tb_attack_wire(&tb_game, w);
     const int fa = tb_game.first_attacker;
@@ -12110,14 +12292,14 @@ static void test_table_act_moot_and_stale_round(void) {
     table_init(&tb, &tb_game, &tb_snaps);
     uint8_t w[8];
     char fa_id[8];
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the table loads");
     const int wl = tb_attack_wire(&tb_game, w);
     snprintf(fa_id, sizeof(fa_id), "id-%d", tb_game.first_attacker);
     CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, 4, 5) == TABLE_STALE_ROUND, "intent 4 < round 5 is stale");
     CHECK(tb_game.num_battles == 0, "a stale move changes nothing");
     CHECK(table_act(&tb, RS("nobody"), w, wl, 4, 5) == TABLE_STALE_ROUND, "the round guard outranks the seat check");
     CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, 5, 5) == TABLE_APPLIED, "intent == round is current");
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table reloads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the table reloads");
     CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 5) == TABLE_APPLIED, "no intent is not guarded");
 
     // Moot: a move against a finished game is a no-op, before any other check.
@@ -12128,7 +12310,7 @@ static void test_table_act_moot_and_stale_round(void) {
     for (int i = 0; i < 3; i++) tb_src.players[i].status = PLAYER_STATUS_IDLE;
     tb_state_len = tb_blob(&tb_src, tb_state);
     tb_roster_for(3, 0, "", tb_roster);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "a finished row loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "a finished row loads");
     memcpy(&tb_before, &tb_game, offsetof(Game, logs));
     CHECK(table_act(&tb, RS("id-0"), w, wl, -1, 0) == TABLE_MOOT, "a move on a finished game is moot");
     CHECK(table_act(&tb, RS("id-0"), w, wl, 1, 9) == TABLE_MOOT, "moot outranks the round guard");
@@ -12140,7 +12322,7 @@ static void test_table_act_moot_and_stale_round(void) {
 static void test_table_commit_products(void) {
     tb_fixture(3, 1u << 2, 41);
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the table loads");
     TableCommit c;
 
     // Straight after a load: the row as it is, nothing to append or broadcast.
@@ -12149,7 +12331,7 @@ static void test_table_commit_products(void) {
           "a load alone has no records and no events");
     CHECK(c.state.len == tb_state_len && memcmp(tb_arena + c.state.off, tb_state, (size_t)tb_state_len) == 0,
           "the state blob round-trips byte for byte");
-    CHECK(c.roster.len == ROSTER_BYTES && memcmp(tb_arena + c.roster.off, tb_roster, ROSTER_BYTES) == 0,
+    CHECK(c.roster.len == rl_of(tb_roster) && memcmp(tb_arena + c.roster.off, tb_roster, rl_of(tb_roster)) == 0,
           "the roster blob round-trips byte for byte");
     CHECK(c.status == GAME_STATUS_PLAYING && c.fool == -1 && c.num_players == 3 && c.needs_bots,
           "status, fool and needs_bots are the board's");
@@ -12254,7 +12436,7 @@ static void test_table_plays_a_game_to_its_end(void) {
     int rc = TABLE_E_NOT_LOADED, reloads_ok = 1;
     for (int guard = 0; guard < 5000; guard++) {
         // Every move goes the way a server's does: load the committed row, act, commit.
-        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) { reloads_ok = 0; break; }
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) != TABLE_OK) { reloads_ok = 0; break; }
         int seat = -1;
         for (int s = 0; s < 3 && seat < 0; s++) if (should_bot_act(&tb_game, s)) seat = s;
         if (seat < 0) break;
@@ -12636,7 +12818,7 @@ static void test_table_create_and_join(void) {
 
     tb_fixture(2, 0, 61);
     table_init(&tb, &tb_game, &tb_snaps);
-    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster));
     TB_REFUSED(table_join(&tb, RS("late"), RS("Late")), TABLE_E_NOT_WAITING, "no join once dealt");
 }
 
@@ -13372,7 +13554,7 @@ static void test_opening_deal_bytes_are_unchanged(void) {
             DCHECK(rc > 0 && c.dealt_now && c.logs_reset, "deal bytes (%dp): the deal commits", np);
             if (rc <= 0) continue;
             hc = dl_bytes(hc, tb_arena + c.state.off, c.state.len);
-            hc = dl_bytes(hc, tb_arena + c.roster.off, c.roster.len);
+            hc = dl_bytes(hc, roster_as_v1(tb_arena + c.roster.off, c.roster.len), ROSTER_V1_BYTES);   // as format 1 (roster_as_v1)
             hc = dl_bytes(hc, tb_arena + c.logs.off, c.logs.len);
             for (int s = 0; s < np; s++) hc = dl_bytes(hc, tb_arena + c.views[s].off, c.views[s].len);
             hc = dl_bytes(hc, tb_arena + c.spectator.off, c.spectator.len);
@@ -13385,7 +13567,7 @@ static void test_opening_deal_bytes_are_unchanged(void) {
                 memcpy(v5 + board, st + c.state.len - fixed, (size_t)fixed);
                 v5[0] = STATE_BLOB_FORMAT_V5;
                 hc5 = dl_bytes(hc5, v5, board + fixed);
-                hc5 = dl_bytes(hc5, tb_arena + c.roster.off, c.roster.len);
+                hc5 = dl_bytes(hc5, roster_as_v1(tb_arena + c.roster.off, c.roster.len), ROSTER_V1_BYTES);   // as format 1 (roster_as_v1)
                 hc5 = dl_bytes(hc5, tb_arena + c.logs.off, c.logs.len);
                 for (int s = 0; s < np; s++) hc5 = dl_bytes(hc5, tb_arena + c.views[s].off, c.views[s].len);
                 hc5 = dl_bytes(hc5, tb_arena + c.spectator.off, c.spectator.len);
@@ -13710,7 +13892,7 @@ static void test_table_reseat_retitle_continue(void) {
     tb_state_len = tb_blob(&tb_src, tb_state);
     tb_roster_for(3, 1u << 2, "random", tb_roster);
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the finished row loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the finished row loads");
     TB_REFUSED(table_continue(&tb, RS("stranger")), TABLE_E_NOT_SEATED, "a stranger cannot continue");
     CHECK(table_continue(&tb, RS("id-1")) == TABLE_OK && tb_game.status == GAME_STATUS_WAITING
           && tb_game.players[2].status == PLAYER_STATUS_READY && tb_game.players[0].status == PLAYER_STATUS_IDLE
@@ -13718,19 +13900,19 @@ static void test_table_reseat_retitle_continue(void) {
     CHECK(!tb_game.deterministic_deck, "a lobby blob carries no deterministic-deck flag");
     TableCommit c;
     CHECK(table_commit_products(&tb, RS("g"), 9, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_events == 1
-          && table_load(&tb, tb_arena + c.state.off, c.state.len, tb_roster, ROSTER_BYTES) == TABLE_OK,
+          && table_load(&tb, tb_arena + c.state.off, c.state.len, tb_roster, rl_of(tb_roster)) == TABLE_OK,
           "the lobby it commits is one a table loads");
 
     tb_fixture(2, 0, 71);
     table_init(&tb, &tb_game, &tb_snaps);
-    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster));
     TB_REFUSED(table_continue(&tb, RS("id-0")), TABLE_E_NOT_OVER, "continue on a running game is refused");
 }
 
 static void test_table_rearrange_and_redact(void) {
     tb_fixture(2, 0, 81);
     table_init(&tb, &tb_game, &tb_snaps);
-    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster));
     const int n = tb_game.players[1].hand_count;
     uint8_t idx[MAX_HAND_SIZE];
     for (int i = 0; i < n; i++) idx[i] = (uint8_t)i;
@@ -13796,7 +13978,7 @@ static void test_table_seat_of(void) {
     tb_fixture(3, 1u << 2, 83);
     table_init(&tb, &tb_game, &tb_snaps);
     CHECK(table_seat_of(&tb, RS("id-1")) == TABLE_E_NOT_LOADED, "nothing is seated at an unloaded table");
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the table loads");
     CHECK(table_seat_of(&tb, RS("id-0")) == 0 && table_seat_of(&tb, RS("id-2")) == 2, "a seated id is its seat, a bot's too");
     CHECK(table_seat_of(&tb, RS("stranger")) == -1, "an id nobody holds is no seat");
     CHECK(table_seat_of(&tb, RS("id-")) == -1, "a prefix of a seated id is no seat");
@@ -13873,7 +14055,7 @@ static void tb_bot_table_n(const char *brain, int seed, int n_bots) {
     game_set_seed(1);
     table_commit_products(&tb, RS("g"), 1, 1700000000000LL, &c, tb_arena, sizeof(tb_arena));
     tb_store_state(&c);
-    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_MAX);
     memcpy(tb_log, tb_arena + c.logs.off, (size_t)c.logs.len);
     tb_log_len = c.logs.len;
 }
@@ -13883,7 +14065,7 @@ static void tb_bot_table(const char *brain, int seed) { tb_bot_table_n(brain, se
 // when asked (the loop always hands it over; `with_log` 0 is for the cases below
 // that ask what a table does without it).
 static int tb_reload(int with_log) {
-    if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) return -999;
+    if (table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) != TABLE_OK) return -999;
     table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
     return with_log ? table_set_session_log(&tb, tb_log, tb_log_len) : 0;
 }
@@ -13893,7 +14075,7 @@ static int tb_commit_row(int64_t now, TableCommit *c) {
     const int n = table_commit_products(&tb, RS("g"), 2, now, c, tb_arena, sizeof(tb_arena));
     if (n < 0) return n;
     tb_store_state(c);
-    memcpy(tb_roster, tb_arena + c->roster.off, ROSTER_BYTES);
+    memcpy(tb_roster, tb_arena + c->roster.off, ROSTER_MAX);
     memcpy(tb_log + tb_log_len, tb_arena + c->logs.off, (size_t)c->logs.len);
     tb_log_len += c->logs.len;
     return n;
@@ -14190,12 +14372,12 @@ static void test_table_bot_wait(void) {
     tb_fixture(3, 0x7u, 5);
     tb_log_len = 0;
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "a bots-only row loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "a bots-only row loads");
     CHECK(table_bot_wait_ms(&tb, T0) == 0, "a board nobody has been shown asks for no wait");
     CHECK(table_bot_drive(&tb, 0, 0, 0, &tb_drv) > 0, "a bot moves");
     const int bots_ms = tb_push_plan_ms(-1);
     CHECK(bots_ms > 0 && tb_commit_row(T0, &c) > 0, "and the move is shown to a spectator");
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the committed row loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the committed row loads");
     CHECK(table_bot_wait_ms(&tb, T0) == BOT_PACE_MS_BOTS_ONLY, "a bots-only game waits the bots-only pace from the commit");
     CHECK(table_bot_wait_ms(&tb, T0 + BOT_PACE_MS_BOTS_ONLY) == 0, "and no longer");
 
@@ -14208,14 +14390,14 @@ static void test_table_bot_wait(void) {
         const int n2 = STATE_BLOB_HEADER + state_put(&tb_game, VIEW_UNMASKED, tb_state2 + STATE_BLOB_HEADER);
         tb_put_clock(tb_state2 + n2, &clk);
         const int n3 = n2 + TABLE_STATE_V3_CLOCK_BYTES;
-        const int rc = table_load(&tb, tb_state2, n3, tb_roster, ROSTER_BYTES);
+        const int rc = table_load(&tb, tb_state2, n3, tb_roster, rl_of(tb_roster));
         CHECK(rc == TABLE_OK, "a v3 fixture blob loads");
         CHECK(rc == TABLE_OK && tb.clock.shown_ms == T0 && tb.clock.settles_ms == T0 + 500,
               "with the clock it carries");
         CHECK(rc == TABLE_OK && table_bot_wait_ms(&tb, T0 + 100) == BOT_PACE_MS_BOTS_ONLY - 100,
               "and the bot wait is measured from that clock");
-        CHECK(table_load(&tb, tb_state2, n2 + TABLE_STATE_V3_CLOCK_BYTES - 1, tb_roster, ROSTER_BYTES) < 0
-              && table_load(&tb, tb_state2, STATE_BLOB_HEADER + TABLE_STATE_V3_CLOCK_BYTES - 1, tb_roster, ROSTER_BYTES) < 0,
+        CHECK(table_load(&tb, tb_state2, n2 + TABLE_STATE_V3_CLOCK_BYTES - 1, tb_roster, rl_of(tb_roster)) < 0
+              && table_load(&tb, tb_state2, STATE_BLOB_HEADER + TABLE_STATE_V3_CLOCK_BYTES - 1, tb_roster, rl_of(tb_roster)) < 0,
               "a v3 blob one byte short, or too short to hold its clock, is refused");
     }
     tb_rows_v3 = 0;
@@ -14226,11 +14408,11 @@ static void test_table_bot_wait(void) {
         tb_state2[0] = TABLE_STATE_FORMAT_V2;
         tb_state2[1] = tb_game.deterministic_deck ? 1 : 0;
         const int n2 = STATE_BLOB_HEADER + state_put(&tb_game, VIEW_UNMASKED, tb_state2 + STATE_BLOB_HEADER);
-        const int rc = table_load(&tb, tb_state2, n2, tb_roster, ROSTER_BYTES);
+        const int rc = table_load(&tb, tb_state2, n2, tb_roster, rl_of(tb_roster));
         CHECK(rc == TABLE_OK, "a v2 row loads");
         CHECK(rc == TABLE_OK && tb.clock.shown_ms == 0 && tb.clock.settles_ms == 0 && table_bot_wait_ms(&tb, T0) == 0,
               "with a zero clock, which asks for no wait");
-        CHECK(table_load(&tb, tb_state2, n2 - 1, tb_roster, ROSTER_BYTES) < 0, "a v2 row one byte short is refused");
+        CHECK(table_load(&tb, tb_state2, n2 - 1, tb_roster, rl_of(tb_roster)) < 0, "a v2 row one byte short is refused");
     }
 
     Table unloaded;
@@ -14322,7 +14504,7 @@ static void test_table_bot_drive_cycle(void) {
     snprintf(tb_seed_hex, sizeof(tb_seed_hex), "%s", "00ff");
     int ended = 0;
     for (int step = 0; step < 4000 && !ended; step++) {
-        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) break;
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) != TABLE_OK) break;
         table_set_deal_seed(&tb, tb_seed_hex, 4);
         if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) break;
         ended = tb.ended;
@@ -14344,7 +14526,7 @@ static void test_table_drive_prefs(void) {
     int found = 0, s1_len = 0, plen = 0, bridge_same = 1;
     for (int step = 0; step < 200 && !found; step++) {
         snprintf(tb_seed_hex, sizeof(tb_seed_hex), "a%d", step);
-        table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+        table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster));
         table_set_deal_seed(&tb, tb_seed_hex, (int)strlen(tb_seed_hex));
         memcpy(&tb_ref, &tb_game, sizeof(Game));
         const int n = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
@@ -14360,13 +14542,13 @@ static void test_table_drive_prefs(void) {
         for (int k = 0; k < 16 && !found; k++) {
             char other[16];
             snprintf(other, sizeof(other), "b%d", k);
-            table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+            table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster));
             table_set_deal_seed(&tb, other, (int)strlen(other));
             table_bot_drive(&tb, 0, 0, 0, &tb_drv2);
             if (tb_blob(&tb_game, tb_buf2) != s1_len || memcmp(tb_buf2, s1, (size_t)s1_len) != 0) {
                 found = 1;
                 // The same seed as that retry, but offered what the first attempt chose.
-                table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+                table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster));
                 table_set_deal_seed(&tb, other, (int)strlen(other));
                 const int n3 = table_bot_drive(&tb, prefs, plen, 0, &tb_drv2);
                 CHECK(plen > 0 && n3 == n && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)n) == 0
@@ -14396,7 +14578,7 @@ static void test_table_drive_prefs(void) {
         two.actions[0].move.cards[0] = card_of_id(5);
         two.actions[1].seat = 1; two.actions[1].move.type = MOVE_COVER; two.actions[1].move.n_cards = 1;
         two.actions[1].move.cards[0] = card_of_id(6); two.actions[1].move.attack_cards[0] = card_of_id(5);
-        table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+        table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster));
         tb.n_prefs = 0;
         const int bl = table_drive_prefs(&tb, &two, blob, sizeof(blob));
         CHECK(bl == 3 + 1 + 3 + 2, "an attack's blob entry carries its cards, a cover's its cards and the ones they cover");
@@ -14432,7 +14614,7 @@ static int tb_cycle_bytes(int n, uint8_t *out) {
 // once on a module whose RNG streams hold one value, once after a different
 // value and an unrelated robusta cycle on another table.
 static void test_table_bot_drive_ignores_instance_history(void) {
-    static uint8_t other_state[8192], other_roster[ROSTER_BYTES], a[1 << 17], b[1 << 17];
+    static uint8_t other_state[8192], other_roster[ROSTER_MAX], a[1 << 17], b[1 << 17];
     static Game other_game;
     static TableSnaps other_snaps;
     Table other;
@@ -14467,7 +14649,7 @@ static void test_table_bot_drive_ignores_instance_history(void) {
             game_rng_set(0xC0FFEE11u + (uint32_t)step);
             random_strategy_set_seed(0xBADC0DEu ^ (uint32_t)step);
             table_init(&other, &other_game, &other_snaps);
-            table_load(&other, other_state, other_len, other_roster, ROSTER_BYTES);
+            table_load(&other, other_state, other_len, other_roster, rl_of(other_roster));
             table_set_deal_seed(&other, "5eed", 4);
             table_bot_drive(&other, 0, 0, 0, &tb_drv2);
             tb_reload(1);
@@ -14527,7 +14709,7 @@ static void test_table_bot_drive_progress_seeds_the_decision(void) {
 
         // The same stored row on another table: the same cycle, action for action.
         table_init(&row_table, &row_game, &row_snaps);
-        if (table_load(&row_table, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK) {
+        if (table_load(&row_table, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK) {
             table_set_deal_seed(&row_table, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
             table_set_session_log(&row_table, tb_log, tb_log_len);
             const int nc = table_bot_drive(&row_table, 0, 0, 0, &tb_drv2);
@@ -14559,7 +14741,7 @@ static void test_table_bot_drive_progress_seeds_the_decision(void) {
 
 typedef struct {
     uint8_t  state[8192];
-    uint8_t  roster[ROSTER_BYTES];
+    uint8_t  roster[ROSTER_MAX];
     uint8_t  log[1 << 16];
     int      state_len, log_len, status, fool;
     uint32_t version;
@@ -14580,13 +14762,13 @@ static int tb_row_deal_rules(TbRow *row, Table *t, int np, const char *brain, co
     game_reset_to_lobby(t->g, (1u << np) - 1u);
     row->state_len = tb_blob(t->g, row->state);
     tb_roster_for(np, (1u << np) - 1u, brain, row->roster);
-    if (table_load(t, row->state, row->state_len, row->roster, ROSTER_BYTES) != TABLE_OK) return 0;
+    if (table_load(t, row->state, row->state_len, row->roster, rl_of(row->roster)) != TABLE_OK) return 0;
     game_set_seed(1);
     if (table_ready(t, RS("id-0"), seed) != TABLE_OK || !t->dealt_now) return 0;
     if (table_commit_products(t, RS("g"), 1, 1700000000000LL, &c, tb_arena, sizeof(tb_arena)) < 0) return 0;
     memcpy(row->state, tb_arena + c.state.off, (size_t)c.state.len);
     row->state_len = c.state.len;
-    memcpy(row->roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    memcpy(row->roster, tb_arena + c.roster.off, ROSTER_MAX);
     memcpy(row->log, tb_arena + c.logs.off, (size_t)c.logs.len);
     row->log_len = c.logs.len;
     row->version = 1;
@@ -14605,7 +14787,7 @@ static int tb_row_deal(TbRow *row, Table *t, int np, const char *brain, const ui
 // the actions applied (0 when no bot had work) or a negative kernel code.
 static int tb_row_cycle(TbRow *row, Table *t, const char *seed_hex, uint32_t *h) {
     TableCommit c;
-    int rc = table_load(t, row->state, row->state_len, row->roster, ROSTER_BYTES);
+    int rc = table_load(t, row->state, row->state_len, row->roster, rl_of(row->roster));
     if (rc != TABLE_OK) return rc;
     table_set_deal_seed(t, seed_hex, (int)strlen(seed_hex));
     if ((rc = table_set_session_log(t, row->log, row->log_len)) < 0) return rc;
@@ -14627,7 +14809,7 @@ static int tb_row_cycle(TbRow *row, Table *t, const char *seed_hex, uint32_t *h)
     *h = tb_fold(*h, tb_arena + c.spectator.off, c.spectator.len);
     memcpy(row->state, tb_arena + c.state.off, (size_t)c.state.len);
     row->state_len = c.state.len;
-    memcpy(row->roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    memcpy(row->roster, tb_arena + c.roster.off, ROSTER_MAX);
     if (c.logs_reset) row->log_len = 0;
     if (row->log_len + c.logs.len > (int)sizeof(row->log)) return TABLE_E_CAP;
     memcpy(row->log + row->log_len, tb_arena + c.logs.off, (size_t)c.logs.len);
@@ -14821,13 +15003,13 @@ static void test_a_four_aces_table_deals_and_plays_out(void) {
     spin_guard_arm("test_a_four_aces_table_deals_and_plays_out", 20);
     table_init(&tb, &tb_game, &tb_snaps);
     CHECK(tb_row_deal(&row, &tb, 8, "random", seed), "four-Aces table: table_ready deals it");
-    CHECK(table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK, "four-Aces table: the dealt row loads");
+    CHECK(table_load(&tb, row.state, row.state_len, row.roster, rl_of(row.roster)) == TABLE_OK, "four-Aces table: the dealt row loads");
     CHECK(tb_game.has_flipped && tb_game.flipped.value == ACE_VALUE && tb_game.deck_count == 3,
           "four-Aces table: the stored row holds an Ace trump over a stock of three Aces");
     const int trump_id = tb_game.flipped.suit * 13 + (ACE_VALUE - 1);
     const TbPlayed p = tb_row_play(&row, &tb, hex);
     CHECK(p.ended, "four-Aces table: the game is played to its end, cycle by cycle");
-    CHECK(table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK, "four-Aces table: the finished row loads");
+    CHECK(table_load(&tb, row.state, row.state_len, row.roster, rl_of(row.roster)) == TABLE_OK, "four-Aces table: the finished row loads");
     const int n = tb_replay_code(&tb, seed, FOOLISH_SEED_LEN, row.log, row.log_len, tb_code, sizeof(tb_code),
                                     tb_scratch, sizeof(tb_scratch));
     CHECK(n > 0, "four-Aces table: the finished game has a replay code");
@@ -14971,7 +15153,7 @@ static void tb_seed_bytes(int np, int s) {
 typedef struct {
     uint8_t  state[8192];
     int      state_len;
-    uint8_t  roster[ROSTER_BYTES];
+    uint8_t  roster[ROSTER_MAX];
     uint8_t  log[1 << 16];
     int      log_len;
     uint32_t version;
@@ -15002,7 +15184,7 @@ static int bl_row_take(BlRow *row, const TableCommit *c) {
     if (row->log_len + c->logs.len > (int)sizeof(row->log)) return -1000;
     memcpy(row->state, tb_arena + c->state.off, (size_t)c->state.len);
     row->state_len = c->state.len;
-    memcpy(row->roster, tb_arena + c->roster.off, ROSTER_BYTES);
+    memcpy(row->roster, tb_arena + c->roster.off, ROSTER_MAX);
     memcpy(row->log + row->log_len, tb_arena + c->logs.off, (size_t)c->logs.len);
     row->log_len += c->logs.len;
     row->version++;
@@ -15031,7 +15213,7 @@ static int bl_bots_only_row(BlRow *row, int np, const char *brain, const uint8_t
         roster_seat_add(&r, id, (int)strlen(id), name, (int)strlen(name), brain, (int)strlen(brain));
     }
     table_init(&tb, &tb_game, &tb_snaps);
-    int rc = table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf));
+    int rc = table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf), NULL);
     if (rc < 0) return rc;
     rc = table_ready(&tb, RS("id-0"), seed);
     game_set_seed(1);   // wide deal mode off again for whatever runs next (tb_fixture)
@@ -15049,7 +15231,7 @@ static int bl_bots_only_row(BlRow *row, int np, const char *brain, const uint8_t
 // when anything was applied. Returns the actions applied (0 commits nothing),
 // or the refusal.
 static int bl_row_cycle(BlRow *row, const uint8_t *log, int log_len, int max_actions, TableCommit *c) {
-    int rc = table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES);
+    int rc = table_load(&tb, row->state, row->state_len, row->roster, rl_of(row->roster));
     if (rc < 0) return rc;
     rc = table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
     if (rc < 0) return rc;
@@ -15121,7 +15303,7 @@ static void tb_choose_observer(const Game *g, int seat) {
 }
 
 static void test_table_session_log_is_load_bearing_for_octogen(void) {
-    static uint8_t before_state[8192], before_roster[ROSTER_BYTES], blank[10 * MAX_LOGS];
+    static uint8_t before_state[8192], before_roster[ROSTER_MAX], blank[10 * MAX_LOGS];
     TableCommit c;
     int compared = 0, changed = 0, refused = 0, widest_read = 0, widest_list = 0;
     // Eighteen whole octogen games are volume, and the coverage corpus (c/Makefile
@@ -15143,8 +15325,8 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
                 // The row before the cycle, so the blind run starts from the same position.
                 const int before_len = bl_row.state_len, before_log_len = bl_row.log_len;
                 memcpy(before_state, bl_row.state, (size_t)before_len);
-                memcpy(before_roster, bl_row.roster, ROSTER_BYTES);
-                if (table_load(&tb, before_state, before_len, before_roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                memcpy(before_roster, bl_row.roster, ROSTER_MAX);
+                if (table_load(&tb, before_state, before_len, before_roster, rl_of(before_roster)) != TABLE_OK) { refused++; break; }
                 const int belief = before_log_len > 0;
                 // The records the row holds, as the kernel counts them; a log this long
                 // of GAME_START records is the same progress with nothing remembered.
@@ -15159,7 +15341,7 @@ static void test_table_session_log_is_load_bearing_for_octogen(void) {
                 if (n == 0) break;
                 if (!belief) continue;
                 // The same cycle from the same row, with the memory taken away.
-                if (table_load(&tb, before_state, before_len, before_roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                if (table_load(&tb, before_state, before_len, before_roster, rl_of(before_roster)) != TABLE_OK) { refused++; break; }
                 table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
                 memset(blank, 0, (size_t)(10 * records));
                 for (int i = 0; i < records; i++) { blank[10 * i + 6] = LOG_GOOD; blank[10 * i + 7] = 0xFF; blank[10 * i + 8] = 0xFF; }
@@ -15256,7 +15438,7 @@ static void test_bot_memory_rides_the_row(void) {
             for (int cy = 0; cy < CYCLES && bl_row.status == GAME_STATUS_PLAYING; cy++) {
                 // A: the row without its memory (its memory section dropped), backfilled from the stored log.
                 const int l5 = bm_as_v5(&bl_row);
-                if (l5 < 0 || table_load(&tb, bm_v5, l5, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                if (l5 < 0 || table_load(&tb, bm_v5, l5, bl_row.roster, rl_of(bl_row.roster)) != TABLE_OK) { refused++; break; }
                 table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
                 CHECK(table_bots_need_logs(&tb), "a played row without its memory asks for the session log");
                 if (table_set_session_log(&tb, bl_row.log, bl_row.log_len) < 0 || !tb.mem_valid) { refused++; break; }
@@ -15290,7 +15472,7 @@ static void test_bot_memory_rides_the_row(void) {
                 const int bytes = bl_row.state_len - tail - state_blob_board_bytes(bl_row.state, bl_row.state_len);
                 bytes_sum += bytes;
                 if (bytes > bytes_max) bytes_max = bytes;
-                if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster)) != TABLE_OK) { refused++; break; }
                 table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
                 // The memory the row carries forward is the stored log's, folded cold.
                 mem_differ += !(tb.mem_valid && bot_mem_equal(&tb.mem, &backfilled) && !table_bots_need_logs(&tb));
@@ -15318,12 +15500,12 @@ static void test_bot_memory_rides_the_row(void) {
     CHECK(bl_bots_only_row(&bl_row, 3, "random", tb_seed) == TABLE_OK, "bot memory: a three-seat table deals");
     const int l6 = bl_row.state_len;
     memcpy(bm_v6, bl_row.state, (size_t)l6);
-    CHECK(bm_v6[0] == STATE_BLOB_FORMAT && table_load(&tb, bm_v6, l6, bl_row.roster, ROSTER_BYTES) == TABLE_OK && tb.mem_valid,
+    CHECK(bm_v6[0] == STATE_BLOB_FORMAT && table_load(&tb, bm_v6, l6, bl_row.roster, rl_of(bl_row.roster)) == TABLE_OK && tb.mem_valid,
           "bot memory: the dealt row is the current format and loads with its memory");
     backfilled = tb.mem;
     static uint8_t bad[sizeof bm_v6];
 #define BM_REFUSE(msg, edit) do { memcpy(bad, bm_v6, (size_t)l6); int bl = l6; edit; \
-        const int rc_ = table_load(&tb, bad, bl, bl_row.roster, ROSTER_BYTES); \
+        const int rc_ = table_load(&tb, bad, bl, bl_row.roster, rl_of(bl_row.roster)); \
         CHECK(rc_ != TABLE_OK && !tb.loaded, msg); } while (0)
     const int sec_at = state_blob_board_bytes(bm_v6, l6);
     const int count_at = l6 - state_blob_tail_bytes(bm_v6[0]);
@@ -15337,7 +15519,7 @@ static void test_bot_memory_rides_the_row(void) {
     // memory: the log is the truth, and the next cycle folds it again.
     memcpy(bad, bm_v6, (size_t)l6);
     bad[sec_at + 3 + 1] = 0x7f;   // the seat count
-    CHECK(table_load(&tb, bad, l6, bl_row.roster, ROSTER_BYTES) == TABLE_OK && !tb.mem_valid && table_bots_need_logs(&tb),
+    CHECK(table_load(&tb, bad, l6, bl_row.roster, rl_of(bl_row.roster)) == TABLE_OK && !tb.mem_valid && table_bots_need_logs(&tb),
           "bot memory: a memory the codec refuses is no memory, and the table asks for the log");
     // A board not being played carries none: the writer drops it, the reader refuses it.
     static Game lobby, back;
@@ -15391,7 +15573,7 @@ static void test_table_state_blob_round_trips_every_reachable_state(void) {
             for (int cycle = 0; ; cycle++) {
                 // Load then commit writes the same bytes back.
                 if (bl_row.state_len > max_blob) max_blob = bl_row.state_len;
-                if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster)) != TABLE_OK) { refused++; break; }
                 const int pn = table_commit_products(&tb, RS("g"), bl_row.version, 0, &c, tb_arena, sizeof(tb_arena));
                 if (pn < 0 || c.state.len != bl_row.state_len
                     || memcmp(tb_arena + c.state.off, bl_row.state, (size_t)bl_row.state_len) != 0) mismatches++;
@@ -15461,7 +15643,7 @@ static int ct_view_is(const TableView *v, const Game *g, const Roster *r, int vi
 static void test_client_adopts_envelopes(void) {
     tb_fixture(3, 1u << 2, 131);
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the table loads");
     uint8_t w[8];
     char fa[8];
     snprintf(fa, sizeof(fa), "id-%d", tb_game.first_attacker);
@@ -15631,7 +15813,7 @@ static void test_rating_stamp_rides_the_row_and_the_envelope(void) {
 
     // ---- the table: it holds the row's stamp, and a rematch drops it ----
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(table_load(&tb, blob, n5, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 3 && tb.ratings.delta[1] == -3,
+    CHECK(table_load(&tb, blob, n5, tb_roster, rl_of(tb_roster)) == TABLE_OK && tb.ratings.n == 3 && tb.ratings.delta[1] == -3,
           "a table loads a v5 row and holds its stamp");
     CHECK(TABLE_STATE_FORMAT == STATE_BLOB_FORMAT_V7, "this kernel WRITES v7 (v6's sections, the repetition ring among them), which keeps v5's stamp");
 
@@ -15704,7 +15886,7 @@ static int tb_play_to_the_last_move(int seed) {
     table_init(&tb, &tb_game, &tb_snaps);
     TableCommit c;
     for (int guard = 0; guard < 5000; guard++) {
-        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) return 0;
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) != TABLE_OK) return 0;
         int seat = -1;
         for (int s = 0; s < 3 && seat < 0; s++) if (should_bot_act(&tb_game, s)) seat = s;
         if (seat < 0) return 0;
@@ -15741,7 +15923,7 @@ static void test_table_rates_the_game_it_ends(void) {
     // Not before the game ends, and not with the wrong seat count.
     tb_fixture(3, 1u << 1, 51);
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK
           && table_rate(&tb, ratings, 3) == TABLE_MOOT && tb.ratings.n == 0,
           "a table whose last operation did not end the game has nothing to rate: moot, never an error a host must read");
     CHECK(table_commit_products(&tb, RS("g"), 1, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && !c.wants_ratings && c.n_rated == 0,
@@ -15788,10 +15970,10 @@ static void test_table_rates_the_game_it_ends(void) {
           && ct.view.rating_delta[0] == want[0], "and so does the spectator's");
     memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
     tb_state_len = c.state.len;
-    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_MAX);
 
     // A LATER COMMIT ON THE FINISHED TABLE: the stamp stays, and nobody is rated again.
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 3
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK && tb.ratings.n == 3
           && tb.ratings.delta[0] == want[0], "the finished row loads with its stamp");
     CHECK(table_rate(&tb, ratings, 3) == TABLE_MOOT && tb.ratings.delta[0] == want[0], "a game that is already over is not rated a second time, and its stamp stands");
     CHECK(table_redact(&tb, RS("id-0"), RS("Deleted player")) == TABLE_OK, "an account at the finished table is deleted");
@@ -15802,14 +15984,14 @@ static void test_table_rates_the_game_it_ends(void) {
           && ct.view.rating_delta[0] == want[0] && ct.view.rating_before[1] == 1210, "while its envelopes still show what the game did");
     memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
     tb_state_len = c.state.len;
-    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 3 && tb.ratings.delta[2] == want[2],
+    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_MAX);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK && tb.ratings.n == 3 && tb.ratings.delta[2] == want[2],
           "and its row still carries the stamp");
 
     // The rematch: no stamp in the lobby's row or its envelopes.
     CHECK(table_continue(&tb, RS("id-2")) == TABLE_OK
           && table_commit_products(&tb, RS("g"), 101, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_rated == 0, "the table continues");
-    CHECK(table_load(&tb, tb_arena + c.state.off, c.state.len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == 0,
+    CHECK(table_load(&tb, tb_arena + c.state.off, c.state.len, tb_roster, rl_of(tb_roster)) == TABLE_OK && tb.ratings.n == 0,
           "the rematch's lobby row carries no stamp");
 
     // A game the host could not read ratings for ends unrated: nothing stamped, nothing applied.
@@ -15883,7 +16065,7 @@ static void test_client_reads_every_push_of_a_game(void) {
     TableCommit c;
     int pushes = 0, steps = 0, all_ok = 1, finals_ok = 1, ended = 0, as2_ok = 1;
     for (int guard = 0; guard < 5000 && !ended; guard++) {
-        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) { all_ok = 0; break; }
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) != TABLE_OK) { all_ok = 0; break; }
         int seat = -1;
         for (int s = 0; s < 3 && seat < 0; s++) if (should_bot_act(&tb_game, s)) seat = s;
         if (seat < 0) break;
@@ -16285,10 +16467,10 @@ static void test_table_set_rules(void) {
           "set_rules: the dealt commit's row is the written format with PASSING clear");
     memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
     tb_state_len = c.state.len;
-    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_MAX);
     table_init(&tb, &tb_game, &tb_snaps);
     tb_game.rules = 0;
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && !game_pass_allowed(&tb_game),
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK && !game_pass_allowed(&tb_game),
           "set_rules: a table that loads the row plays podkidnoy");
 
     // Toggled back before the last Ready: the deal is the passing game.
@@ -16309,7 +16491,7 @@ static void test_table_set_rules(void) {
     tb_state_len = tb_blob(&tb_src, tb_state);
     tb_roster_for(3, 0, "", tb_roster);
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(tb_state_len > 0 && table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK,
+    CHECK(tb_state_len > 0 && table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK,
           "set_rules: the finished podkidnoy row loads");
     CHECK(table_continue(&tb, RS("id-1")) == TABLE_OK && tb_game.status == GAME_STATUS_WAITING && !game_pass_allowed(&tb_game),
           "set_rules: its rematch lobby is podkidnoy");
@@ -16354,7 +16536,7 @@ static void test_table_bots_never_transfer_under_podkidnoy(void) {
                     // (16 natively, 64 in every shipped build), and a truncated
                     // record is a session no code can verify against.
                     if (b != 0 && row.status == GAME_STATUS_GAME_OVER
-                        && table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK) {
+                        && table_load(&tb, row.state, row.state_len, row.roster, rl_of(row.roster)) == TABLE_OK) {
                         const int n = tb_replay_code(&tb, seed, FOOLISH_SEED_LEN, row.log, row.log_len, tb_code, sizeof(tb_code),
                                                         tb_scratch, sizeof(tb_scratch));
                         ReplayHeader hdr;
@@ -16380,7 +16562,7 @@ static void test_table_bots_never_transfer_under_podkidnoy(void) {
 static void test_client_push_steps_and_refusals(void) {
     tb_fixture(3, 1u << 2, 139);
     table_init(&tb, &tb_game, &tb_snaps);
-    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster));
     client_init(&ct, &ct_slot);
     CHECK(client_push_next(&ct) == CLIENT_E_ORDER && client_push_final(&ct) == CLIENT_E_ORDER, "nothing is read before a push opens");
     const int en = table_envelope(&tb, RS("g-7"), 0, 3, ct_env, sizeof(ct_env));
@@ -17218,7 +17400,7 @@ static void test_client_board_edits(void) {
     // LOBBY: the board the server's reset (table_continue) gives, before it arrives.
     tb_fixture(3, 1u << 2, 151);
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the table loads");
     for (int guard = 0; guard < 3000 && tb_game.status == GAME_STATUS_PLAYING; guard++) if (!cb_step(&tb_game)) break;
     cb_finalize(&tb_game, 1u << 2);
     CHECK(tb_game.status == GAME_STATUS_GAME_OVER, "a game played to its end");
@@ -17357,7 +17539,7 @@ static void test_needs_bots(void) {
     tb_fixture(3, 1u << 2, 163);
     table_init(&tb, &tb_game, &tb_snaps);
     client_init(&ct, &ct_slot);
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb_game.status == GAME_STATUS_PLAYING
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK && tb_game.status == GAME_STATUS_PLAYING
           && tb_game.players[2].status == PLAYER_STATUS_IN, "needs_bots: a game being played, its bot in");
     CHECK(nb_agree(1), "needs_bots: playing with a bot in, the table and its view both say so");
     tb_game.players[2].status = PLAYER_STATUS_OUT;
@@ -17385,7 +17567,7 @@ static void test_table_bots_due(void) {
     tb_fixture(2, 1u << 1, 163);
     table_init(&tb, &tb_game, &tb_snaps);
     CHECK(!table_bots_due(&tb), "bots_due: an unloaded table has nothing to drive");
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK
           && tb_game.status == GAME_STATUS_PLAYING && tb_game.num_battles == 0, "bots_due: a fresh deal, human and bot");
     TableCommit c;
     // The human opens: the bot is in, and can do nothing until the human moves.
@@ -18926,18 +19108,18 @@ static int fx_seal(const FxBoard *b) {
     tb_src.has_good_timestamp = b->good_ts;
     tb_src.deterministic_deck = b->deterministic;
     table_init(&tb, &tb_game, &tb_snaps);
-    const int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf));
+    const int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf), NULL);
     if (n > 0) {
         memcpy(tb_state, tb_buf, (size_t)n);
         tb_state_len = n;
-        memcpy(tb_roster, tb_buf + n, ROSTER_BYTES);
+        memcpy(tb_roster, tb_buf + n, ROSTER_MAX);
     }
     return n;
 }
 
 // Reloads the sealed row: every case below asks about a fresh copy of it.
 static void fx_reload(void) {
-    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the sealed row loads");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the sealed row loads");
 }
 
 // A move as card text: `cards` and, for a cover, the attacks it pairs with.
@@ -19139,7 +19321,7 @@ static void test_table_deals_the_deck_and_random_games_conserve_it(void) {
         for (int s = 0; s < 4; s++) {
             for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (uint8_t)(np * 31 + (900 + s) * 7 + i);
             CHECK(tb_row_deal(&row, &tb, np, "random", seed), "a seeded random table deals");
-            CHECK(table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK, "the dealt row loads");
+            CHECK(table_load(&tb, row.state, row.state_len, row.roster, rl_of(row.roster)) == TABLE_OK, "the dealt row loads");
             CHECK(tb_cards_on_board(&tb_game) == want, np >= 6 ? "6+ seats deal 52 cards" : "2..5 seats deal 36 cards");
             int stock_non_ace = 0;
             for (int i = 0; i < tb_game.deck_count; i++) stock_non_ace |= tb_game.deck[i].value != ACE_VALUE;
@@ -19155,13 +19337,13 @@ static void test_table_deals_the_deck_and_random_games_conserve_it(void) {
             uint32_t h = 0;
             for (int step = 0; step < 3000 && row.status == GAME_STATUS_PLAYING; step++) {
                 if (tb_row_cycle(&row, &tb, hex, &h) <= 0) { conserved = 0; break; }
-                if (table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) != TABLE_OK
+                if (table_load(&tb, row.state, row.state_len, row.roster, rl_of(row.roster)) != TABLE_OK
                     || tb_cards_on_board(&tb_game) != want) { conserved = 0; break; }
             }
             CHECK(conserved, "a bot moves at every cycle of a playing game, and every commit holds every card");
             if (row.status == GAME_STATUS_GAME_OVER) {
                 finished = 1;
-                CHECK(table_load(&tb, row.state, row.state_len, row.roster, ROSTER_BYTES) == TABLE_OK, "the finished row loads");
+                CHECK(table_load(&tb, row.state, row.state_len, row.roster, rl_of(row.roster)) == TABLE_OK, "the finished row loads");
                 int fool_out = 0;
                 for (int i = 0; i < tb_game.num_eliminated; i++) fool_out |= tb_game.elimination_order[i] == row.fool;
                 CHECK(tb_game.num_eliminated == np - 1 && row.fool >= 0 && !fool_out, "everyone but the fool got out");
@@ -19284,7 +19466,7 @@ static void ks_dealt(uint8_t seed_byte) {
     CHECK(tb_row_deal(&row, &tb, 4, "random", seed), "a four-seat table deals");
     memcpy(tb_state, row.state, (size_t)row.state_len);
     tb_state_len = row.state_len;
-    memcpy(tb_roster, row.roster, ROSTER_BYTES);
+    memcpy(tb_roster, row.roster, ROSTER_MAX);
     fx_reload();
 }
 
@@ -19303,7 +19485,7 @@ static void test_table_load_refuses_a_board_it_could_not_have_made(void) {
 
         // The server's door.
         table_init(&tb, &tb_game, &tb_snaps);
-        const int rc = table_load(&tb, bad, bl, tb_roster, ROSTER_BYTES);
+        const int rc = table_load(&tb, bad, bl, tb_roster, rl_of(tb_roster));
         snprintf(what, sizeof(what), "table_load refuses %s", KS_FAMILIES[f].name);
         if (rc != KS_FAMILIES[f].reason) fprintf(stderr, "  %s: got %d, want %d\n", what, rc, KS_FAMILIES[f].reason);
         CHECK(rc == KS_FAMILIES[f].reason, what);
@@ -19330,7 +19512,7 @@ static void test_table_load_refuses_a_board_it_could_not_have_made(void) {
     const int bl = tb_blob(&tb_game, bad);
     ks_dealt(7);
     const int rl = tb_blob(&tb_game, resident);
-    CHECK(table_load(&tb, bad, bl, tb_roster, ROSTER_BYTES) == GAME_INVALID_SEAT, "a bad blob over a loaded one is refused");
+    CHECK(table_load(&tb, bad, bl, tb_roster, rl_of(tb_roster)) == GAME_INVALID_SEAT, "a bad blob over a loaded one is refused");
     CHECK(tb_blob(&tb_game, now) == rl && memcmp(now, resident, (size_t)rl) == 0, "and the loaded board is still the resident one");
 
     // The masked door keeps a podkidnoy board podkidnoy, and refuses a rule it does not know.
@@ -19357,12 +19539,12 @@ static void test_table_load_refuses_a_board_it_could_not_have_made(void) {
     int named = 0;
     for (int cut = 0; cut < whole; cut++) {
         const int want = cut < 4 ? TABLE_E_STATE_VERSION : GAME_INVALID_COUNT;
-        const int r = table_load(&tb, tb_state, cut, tb_roster, ROSTER_BYTES);
+        const int r = table_load(&tb, tb_state, cut, tb_roster, rl_of(tb_roster));
         if (r == want) named++;
         else fprintf(stderr, "  a row cut to %d of %d bytes answered %d, want %d\n", cut, whole, r, want);
     }
     CHECK(named == whole, "every cut of a stored row is refused for its length");
-    CHECK(table_load(&tb, tb_state, whole, tb_roster, ROSTER_BYTES) == TABLE_OK, "and the whole row still loads");
+    CHECK(table_load(&tb, tb_state, whole, tb_roster, rl_of(tb_roster)) == TABLE_OK, "and the whole row still loads");
 
     // A played-on row and a lobby still load: the refusals reach no real game.
     const int wl = tb_attack_wire(&tb_game, w);
@@ -19371,7 +19553,7 @@ static void test_table_load_refuses_a_board_it_could_not_have_made(void) {
     CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 0) == TABLE_APPLIED
           && table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0, "the opening attack commits");
     memcpy(tb_state2, tb_arena + c.state.off, (size_t)c.state.len);
-    CHECK(table_load(&tb, tb_state2, c.state.len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the played-on row loads");
+    CHECK(table_load(&tb, tb_state2, c.state.len, tb_roster, rl_of(tb_roster)) == TABLE_OK, "the played-on row loads");
 }
 
 /* ---- wire formats, views and doors (were e2e test files over bots.wasm) ---- */
@@ -19397,7 +19579,7 @@ static int wv_commit(TbRow *row, const char *gid, TableCommit *c) {
     if (n < 0) return n;
     memcpy(row->state, tb_arena + c->state.off, (size_t)c->state.len);
     row->state_len = c->state.len;
-    memcpy(row->roster, tb_arena + c->roster.off, ROSTER_BYTES);
+    memcpy(row->roster, tb_arena + c->roster.off, ROSTER_MAX);
     if (c->logs_reset) row->log_len = 0;
     if (row->log_len + c->logs.len > (int)sizeof(row->log)) return TABLE_E_CAP;
     memcpy(row->log + row->log_len, tb_arena + c->logs.off, (size_t)c->logs.len);
@@ -19420,9 +19602,9 @@ static int wv_deal(TbRow *row, int np, uint32_t bots) {
     lobby.num_players = (int8_t)np;
     game_reset_to_lobby(&lobby, (1u << np) - 1u);   // every seat READY
     tb_roster_for(np, bots, "random", tb_roster2);
-    if (roster_decode(&r, tb_roster2, ROSTER_BYTES) != ROSTER_OK) return 0;
+    if (roster_decode(&r, tb_roster2, rl_of(tb_roster2)) != ROSTER_OK) return 0;
     table_init(&tb, &tb_game, &tb_snaps);
-    if (table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf)) <= 0) return 0;
+    if (table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf), NULL) <= 0) return 0;
     const int rc = table_ready(&tb, RS("id-0"), tb_seed);
     game_set_seed(1);   // wide deal mode off again for whatever runs next
     if (rc != TABLE_OK || !tb.dealt_now) return 0;
@@ -19439,7 +19621,7 @@ static uint32_t wv_odd_bots(int np) {
 }
 
 static int wv_load(const TbRow *row) {
-    return table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES);
+    return table_load(&tb, row->state, row->state_len, row->roster, rl_of(row->roster));
 }
 
 static int wv_wire(const LegalMove *m, uint8_t *w, int cap) {
@@ -19509,11 +19691,11 @@ static void test_state_blob_formats_read_and_written(void) {
     for (int k = 0; k < 4; k++) {
         memcpy(blob, bl_row.state, (size_t)sl);
         blob[0] = (uint8_t)other[k];
-        const int rc = table_load(&tb, blob, sl, bl_row.roster, ROSTER_BYTES);
+        const int rc = table_load(&tb, blob, sl, bl_row.roster, rl_of(bl_row.roster));
         if (rc != TABLE_E_STATE_VERSION) fprintf(stderr, "  format %d: table_load %d\n", other[k], rc);
         CHECK(rc == TABLE_E_STATE_VERSION, "state blob: a blob of any other format is refused");
     }
-    CHECK(table_load(&tb, bl_row.state, sl, bl_row.roster, ROSTER_BYTES) == TABLE_OK, "state blob: the blob as written loads");
+    CHECK(table_load(&tb, bl_row.state, sl, bl_row.roster, rl_of(bl_row.roster)) == TABLE_OK, "state blob: the blob as written loads");
 
     // A v3 blob: the board, the v3 format byte, the v3 flag byte (the deck bit
     // alone) and a clock: shown at T, done playing at T + 500.
@@ -19525,7 +19707,7 @@ static void test_state_blob_formats_read_and_written(void) {
     const int n3 = board + TABLE_STATE_V3_CLOCK_BYTES;
     blob[0] = TABLE_STATE_FORMAT_V3;
     blob[1] = bl_row.state[1] & TABLE_STATE_FLAG_DETERMINISTIC;
-    CHECK(table_load(&tb, blob, n3, bl_row.roster, ROSTER_BYTES) == TABLE_OK, "state blob: a v3 blob loads");
+    CHECK(table_load(&tb, blob, n3, bl_row.roster, rl_of(bl_row.roster)) == TABLE_OK, "state blob: a v3 blob loads");
     const int wait = table_bot_wait_ms(&tb, T + 100);
     CHECK(wait > 0, "state blob: a bot waits on the board the v3 clock says was just shown");
     CHECK(table_bot_wait_ms(&tb, T + 150) == wait - 50, "state blob: less the time gone since the v3 clock");
@@ -19559,7 +19741,7 @@ static void test_state_blob_formats_read_and_written(void) {
         want[board] = want[board + 1] = 0;
         memcpy(want + board + 2, blob + board, TABLE_STATE_V3_CLOCK_BYTES);
         memset(want + board + 2 + TABLE_STATE_V3_CLOCK_BYTES, 0, TABLE_STATE_STAMP_BYTES);
-        const int rc = table_load(&tb, blob, n4, bl_row.roster, ROSTER_BYTES);
+        const int rc = table_load(&tb, blob, n4, bl_row.roster, rl_of(bl_row.roster));
         CHECK(rc == TABLE_OK, passing ? "state blob: a passing v4 row loads" : "state blob: a podkidnoy v4 row loads");
         CHECK(rc == TABLE_OK && table_commit_products(&tb, RS("g"), bl_row.version, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
               && c.state.len == wl3 && memcmp(tb_arena + c.state.off, want, (size_t)wl3) == 0,
@@ -19567,7 +19749,7 @@ static void test_state_blob_formats_read_and_written(void) {
                       : "state blob: a podkidnoy v4 row is written back the same, still podkidnoy");
     }
     blob[1] = (uint8_t)(deck | TABLE_STATE_FLAG_PASSING | 0x04);
-    CHECK(table_load(&tb, blob, n4, bl_row.roster, ROSTER_BYTES) == TABLE_E_STATE_VERSION,
+    CHECK(table_load(&tb, blob, n4, bl_row.roster, rl_of(bl_row.roster)) == TABLE_E_STATE_VERSION,
           "state blob: a v4 flag bit this kernel does not know is unreadable");
 
     // v5 has no sections: the board, the clock and the stamp. It loads as a game
@@ -19577,7 +19759,7 @@ static void test_state_blob_formats_read_and_written(void) {
     memcpy(blob, bl_row.state, (size_t)board);
     memcpy(blob + board, bl_row.state + sl - TABLE_STATE_TAIL_BYTES + 2, (size_t)TABLE_STATE_TAIL_BYTES - 2);
     blob[0] = TABLE_STATE_FORMAT_V5;
-    CHECK(table_load(&tb, blob, n5, bl_row.roster, ROSTER_BYTES) == TABLE_OK && tb_game.rep.fill == 0,
+    CHECK(table_load(&tb, blob, n5, bl_row.roster, rl_of(bl_row.roster)) == TABLE_OK && tb_game.rep.fill == 0,
           "state blob: a v5 row loads, with no history");
     CHECK(table_commit_products(&tb, RS("g"), bl_row.version, 0, &c, tb_arena, sizeof(tb_arena)) >= 0
           && tb_arena[c.state.off] == TABLE_STATE_FORMAT
@@ -19622,7 +19804,7 @@ static void test_masked_view_does_not_depend_on_hidden_hands(void) {
             for (int i = 0; i < tb_src.deck_count; i++) tb_src.deck[i] = pool[at++];
             moved &= !tb_same_board(&tb_src, &orig);
             hidden_all &= hidden > 0;
-            if (table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf)) <= 0) {
+            if (table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf), NULL) <= 0) {
                 if (sealed) fprintf(stderr, "  game %d viewer %d: the moved board does not seal (%d)\n", g, viewer, tb.detail);
                 sealed = 0;
                 continue;
@@ -20171,7 +20353,7 @@ static int rm_play_to_the_end(uint32_t bots, TableCommit *c) {
     uint8_t w[128];
     for (int i = 0; i < FOOLISH_SEED_LEN; i++) memcpy(ab + 2 * i, "ab", 2);
     for (int step = 0; step < 3000; step++) {
-        table_adopt(&tb, &rm.res);
+        table_adopt(&tb, &rm.res, rm.row.roster, rl_of(rm.row.roster));
         if (tb_game.status != GAME_STATUS_PLAYING) return 0;
         table_set_deal_seed(&tb, ab, 2 * FOOLISH_SEED_LEN);
         int drove = 0;
@@ -20232,7 +20414,7 @@ static void test_table_rematch_rates_its_own_game(void) {
     first_row_len = rm.row.state_len;
 
     // THE REMATCH: back to the lobby, every human ready, a new deal. No stamp in between.
-    table_adopt(&tb, &rm.res);
+    table_adopt(&tb, &rm.res, rm.row.roster, rl_of(rm.row.roster));
     CHECK(table_continue(&tb, RS("id-0")) == TABLE_OK && rm_commit(&c) && c.n_rated == 0, "the table continues into its lobby, rating nobody");
     CHECK(rm.res.ratings.n == 0, "the rematch's lobby carries no stamp: the first game's belongs to the first game");
     for (int s = 0; s < NP; s++) {
@@ -20240,7 +20422,7 @@ static void test_table_rematch_rates_its_own_game(void) {
         char id[8];
         snprintf(id, sizeof(id), "id-%d", s);
         tb_seed_fill(11 + s);
-        table_adopt(&tb, &rm.res);
+        table_adopt(&tb, &rm.res, rm.row.roster, rl_of(rm.row.roster));
         const int rc = table_ready(&tb, id, (int)strlen(id), tb_seed);
         game_set_seed(1);
         CHECK(rc == TABLE_OK && rm_commit(&c) && c.n_rated == 0, "each human readies, rating nobody");
@@ -20263,7 +20445,7 @@ static void test_table_rematch_rates_its_own_game(void) {
     CHECK(differs, "and it is not the first game's stamp");
 
     // THE FIRST GAME'S OWN ROW, read again after the second: still its own stamp.
-    CHECK(table_load(&tb, first_row, first_row_len, rm.row.roster, ROSTER_BYTES) == TABLE_OK && tb.ratings.n == NP,
+    CHECK(table_load(&tb, first_row, first_row_len, rm.row.roster, rl_of(rm.row.roster)) == TABLE_OK && tb.ratings.n == NP,
           "the first game's stored row loads with its stamp");
     for (int s = 0; s < NP; s++)
         CHECK(tb.ratings.before[s] == first.before[s] && tb.ratings.delta[s] == first.delta[s], "and that stamp is still the first game's");
@@ -20371,8 +20553,10 @@ static uint8_t po_arena2[sizeof(tb_arena)];
 // count). It was 0x2758e01d until a table whose brains read no log kept a counts-only block
 // (table.c mem_wanted), and 0xd39a060c until the writer went to v7 (the repetition ring as
 // section 2): the v5 digest above did not move either time, so the sections and the format
-// byte are the whole of each change.
-#define PRODUCTS_DIGEST_GOLDEN_V6 0x6670b4f1u
+// byte are the whole of each change. It was 0x6670b4f1 until the durable roster went to format 2
+// (roster.h); the digest above folds the roster as format 1 (roster_as_v1) and did not move, so the
+// roster's layout is the whole of that change.
+#define PRODUCTS_DIGEST_GOLDEN_V6 0x05552f5fu
 static void test_products_are_the_bytes_they_were(void) {
     uint8_t w[128];
     char id[16], ab[2 * FOOLISH_SEED_LEN + 1];
@@ -20434,7 +20618,7 @@ static void test_products_are_the_bytes_they_were(void) {
                 po_v5[0] = STATE_BLOB_FORMAT_V5;
                 h = tb_fold(h, po_v5, board + fixed);
             }
-            h = tb_fold(h, tb_arena + c.roster.off, c.roster.len);
+            h = tb_fold(h, roster_as_v1(tb_arena + c.roster.off, c.roster.len), ROSTER_V1_BYTES);   // as format 1 (roster_as_v1)
             h = tb_fold(h, tb_arena + c.logs.off, c.logs.len);
             h6 = tb_fold(h6, tb_arena + c.roster.off, c.roster.len);
             h6 = tb_fold(h6, tb_arena + c.logs.off, c.logs.len);
@@ -20472,9 +20656,9 @@ static void test_products_validate_an_edited_roster(void) {
         game_reset_to_lobby(&lobby, 0);
         Roster r;
         tb_roster_for(3, 0, "random", tb_roster2);
-        CHECK(roster_decode(&r, tb_roster2, ROSTER_BYTES) == ROSTER_OK, "roster_valid: the lobby's roster");
+        CHECK(roster_decode(&r, tb_roster2, rl_of(tb_roster2)) == ROSTER_OK, "roster_valid: the lobby's roster");
         table_init(&tb, &tb_game, &tb_snaps);
-        CHECK(table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf)) > 0, "roster_valid: the lobby loads");
+        CHECK(table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf), NULL) > 0, "roster_valid: the lobby loads");
         tb.r.seats[2].name[0] = (char)0xff;   // no longer UTF-8: roster_validate refuses it
         CHECK(table_commit_products(&tb, RS("g"), 2, 1700000000000LL, &c, tb_arena, sizeof(tb_arena)) >= 0,
               "roster_valid: a loaded table's products do not validate its roster again");
@@ -20888,11 +21072,11 @@ static int fz_random_board(const char *brain) {
         roster_seat_add(&r, id, (int)strlen(id), name, (int)strlen(name), brain, (int)strlen(brain));
     }
     table_init(&tb, &tb_game, &tb_snaps);
-    const int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf));
+    const int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf), NULL);
     if (n <= 0) return 0;
     memcpy(tb_state, tb_buf, (size_t)n);
     tb_state_len = n;
-    memcpy(tb_roster, tb_buf + n, ROSTER_BYTES);
+    memcpy(tb_roster, tb_buf + n, ROSTER_MAX);
     return 1;
 }
 
@@ -20906,7 +21090,7 @@ static int fz_scale(void) {
 
 static void test_doors_survive_hostile_bytes(void) {
     static TbRow rows[5];
-    static uint8_t state[8192 + 512], roster[ROSTER_BYTES + 512], log[1 << 16], wire[80];
+    static uint8_t state[8192 + 512], roster[ROSTER_MAX + 512], log[1 << 16], wire[80];
     static const int widths[5] = { 2, 3, 4, 6, 8 };
     const int scale = fz_scale();
     cb_rng = 0xbadf00du;
@@ -20921,9 +21105,10 @@ static void test_doors_survive_hostile_bytes(void) {
     for (int it = 0; it < 600 * scale; it++) {
         const TbRow *row = &rows[cb_rand(5)];
         memcpy(state, row->state, (size_t)row->state_len);
-        memcpy(roster, row->roster, ROSTER_BYTES);
+        memcpy(roster, row->roster, ROSTER_MAX);
         const int sl = cb_rand(10) < 8 ? fz_damage(state, row->state_len, sizeof(state)) : row->state_len;
-        const int rl = cb_rand(10) < 3 ? fz_damage(roster, ROSTER_BYTES, sizeof(roster)) : ROSTER_BYTES;
+        const int rl0 = rl_of(roster);
+        const int rl = cb_rand(10) < 3 ? fz_damage(roster, rl0, sizeof(roster)) : rl0;
         table_init(&tb, &tb_game, &tb_snaps);
         if (table_load(&tb, state, sl, roster, rl) != TABLE_OK) { refused++; continue; }
         loaded++;
@@ -20951,7 +21136,7 @@ static void test_doors_survive_hostile_bytes(void) {
         int ll;
         if (cb_rand(10) < 2) ll = fz_junk(log, cb_rand(400));
         else { memcpy(log, bl_row.log, (size_t)bl_row.log_len); ll = fz_damage(log, bl_row.log_len, sizeof(log)); }
-        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) { CHECK(0, "doors: a sealed board loads"); break; }
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, rl_of(tb_roster)) != TABLE_OK) { CHECK(0, "doors: a sealed board loads"); break; }
         table_set_deal_seed(&tb, "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd", 64);
         imported += table_set_session_log(&tb, log, ll) >= 0;
         drives += table_bot_drive(&tb, 0, 0, 1, &tb_drv) >= 0;
@@ -20961,13 +21146,13 @@ static void test_doors_survive_hostile_bytes(void) {
 
     // The action, request and client doors: random bytes.
     const TbRow *row = &rows[2];
-    CHECK(table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES) == TABLE_OK, "doors: the four-seat row loads");
+    CHECK(table_load(&tb, row->state, row->state_len, row->roster, rl_of(row->roster)) == TABLE_OK, "doors: the four-seat row loads");
     static uint8_t push[1 << 14], damaged[(1 << 14) + 512], ident[128];
     const int pl = table_push(&tb, RS("fuzz"), -1, push, sizeof(push));
     CHECK(pl > 0, "doors: the spectator's push");
     int opened = 0;
     for (int it = 0; it < 600 * scale; it++) {
-        table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES);
+        table_load(&tb, row->state, row->state_len, row->roster, rl_of(row->roster));
         char id[16];
         snprintf(id, sizeof(id), "id-%d", cb_rand(5));
         table_act(&tb, id, (int)strlen(id), wire, fz_junk(wire, cb_rand(40)), cb_rand(2) ? -1 : cb_rand(5), cb_rand(5));
@@ -20990,7 +21175,7 @@ static void test_doors_survive_hostile_bytes(void) {
     // table's: no operation, so no step) still reads whole, and its envelope
     // still reads as its board.
     int steps = 0, k;
-    CHECK(table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES) == TABLE_OK
+    CHECK(table_load(&tb, row->state, row->state_len, row->roster, rl_of(row->roster)) == TABLE_OK
           && client_push_open(&ct, push, pl, 1, 0, 0, 1) == CLIENT_OK, "doors: after the noise the row loads and its push opens");
     while ((k = client_push_next(&ct)) == 1) steps++;
     const int en = table_envelope(&tb, RS("fuzz"), 0, 1, ct_env, sizeof(ct_env));
@@ -21130,13 +21315,13 @@ static void test_table_octogen_game_is_its_deal_seeds(void) {
 // each seat, and every load reads it.
 static void tb_row_rebrain(TbRow *row, const char *const *brains) {
     Roster r;
-    roster_decode(&r, row->roster, ROSTER_BYTES);
+    roster_decode(&r, row->roster, rl_of(row->roster));
     for (int s = 0; s < r.n; s++) {
         const int len = (int)strlen(brains[s]);
         memcpy(r.seats[s].brain, brains[s], (size_t)len + 1);
         r.seats[s].brain_len = (uint8_t)len;
     }
-    roster_encode(&r, row->roster, ROSTER_BYTES);
+    roster_encode(&r, row->roster, ROSTER_MAX);
 }
 
 // The four-seat game of tb_seed played to its end on `t`, a cycle at a time: the
@@ -21170,12 +21355,12 @@ static void test_table_a_game_writes_the_same_rows_twice(void) {
     // The cards first, cycle by cycle, so a failure reads as a rules problem and not a bookkeeping one.
     CHECK(nb == na && memcmp(sa, sb, sizeof(uint32_t) * (size_t)(na > 0 ? na : 0)) == 0,
           "two plays of one deal commit the same state blob at every cycle");
-    CHECK(memcmp(a.roster, b.roster, ROSTER_BYTES) == 0, "and the same roster");
+    CHECK(memcmp(a.roster, b.roster, rl_of(b.roster)) == 0, "and the same roster");
     CHECK(b.log_len == a.log_len && memcmp(a.log, b.log, (size_t)a.log_len) == 0,
           "and the same session-log rows, record for record");
-    const int ca = table_load(&tb, a.state, a.state_len, a.roster, ROSTER_BYTES) == TABLE_OK
+    const int ca = table_load(&tb, a.state, a.state_len, a.roster, rl_of(a.roster)) == TABLE_OK
         ? tb_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, a.log, a.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch)) : -1;
-    const int cb = table_load(&t2, b.state, b.state_len, b.roster, ROSTER_BYTES) == TABLE_OK
+    const int cb = table_load(&t2, b.state, b.state_len, b.roster, rl_of(b.roster)) == TABLE_OK
         ? tb_replay_code(&t2, tb_seed, FOOLISH_SEED_LEN, b.log, b.log_len, tb_code2, sizeof(tb_code2), tb_scratch, sizeof(tb_scratch)) : -1;
     CHECK(ca > 0 && cb == ca && memcmp(tb_code, tb_code2, (size_t)ca) == 0, "and the same replay code");
 }
@@ -21271,7 +21456,7 @@ static int bl_seats_row(BlRow *row, int np, const char *const *brains, const cha
         roster_seat_add(&r, id, (int)strlen(id), names[i], (int)strlen(names[i]), brains[i], (int)strlen(brains[i]));
     }
     table_init(&tb, &tb_game, &tb_snaps);
-    int rc = table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf));
+    int rc = table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf), NULL);
     if (rc < 0) return rc;
     rc = table_ready(&tb, RS("id-0"), tb_seed);
     game_set_seed(1);
@@ -21439,7 +21624,7 @@ static void test_bot_memory_counts_only_without_readers(void) {
         for (int cy = 0; cy < CYCLES && bl_row.status == GAME_STATUS_PLAYING; cy++) {
             // A: the row without its block (v5), the stored log folded whole.
             const int l5 = bm_as_v5(&bl_row);
-            if (l5 < 0 || table_load(&tb, bm_v5, l5, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+            if (l5 < 0 || table_load(&tb, bm_v5, l5, bl_row.roster, rl_of(bl_row.roster)) != TABLE_OK) { refused++; break; }
             table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
             if (table_set_session_log(&tb, bl_row.log, bl_row.log_len) < 0 || !tb.mem_valid) { refused++; break; }
             uint32_t records = 0;
@@ -21450,7 +21635,7 @@ static void test_bot_memory_counts_only_without_readers(void) {
             const int na = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
             if (na <= 0) break;
             // B: the row as written, and no log at all.
-            if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+            if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster)) != TABLE_OK) { refused++; break; }
             table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
             not_counts += !(tb.mem_valid && tb.mem.counts_only && !table_bots_need_logs(&tb));
             count_differ += !(tb.mem.n_records == records && bot_mem_equal(&tb.mem, &backfilled));
@@ -21472,15 +21657,15 @@ static void test_bot_memory_counts_only_without_readers(void) {
     tb_seed_bytes(3, 0xc0de);
     static BlRow reader;
     CHECK(bl_bots_only_row(&reader, 3, "octogen", tb_seed) == TABLE_OK, "counts only: a reader's table deals");
-    CHECK(table_load(&tb, reader.state, reader.state_len, reader.roster, ROSTER_BYTES) == TABLE_OK
+    CHECK(table_load(&tb, reader.state, reader.state_len, reader.roster, rl_of(reader.roster)) == TABLE_OK
           && tb.mem_valid && !tb.mem.counts_only,
           "counts only: a table seating a reader folds the whole memory");
     CHECK(bl_bots_only_row(&bl_row, 3, "random", tb_seed) == TABLE_OK
-          && table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) == TABLE_OK
+          && table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster)) == TABLE_OK
           && tb.mem_valid && tb.mem.counts_only,
           "counts only: a random table deals with a counts-only block");
     const BotMemory counted = tb.mem;
-    CHECK(table_load(&tb, bl_row.state, bl_row.state_len, reader.roster, ROSTER_BYTES) == TABLE_OK
+    CHECK(table_load(&tb, bl_row.state, bl_row.state_len, reader.roster, rl_of(reader.roster)) == TABLE_OK
           && !tb.mem_valid && table_bots_need_logs(&tb),
           "counts only: a counts-only block under a roster that seats a reader is no memory, and the table asks for the log");
     CHECK(table_set_session_log(&tb, bl_row.log, bl_row.log_len) > 0 && tb.mem_valid && !tb.mem.counts_only
@@ -21514,7 +21699,7 @@ static void test_bot_memory_counts_only_without_readers(void) {
 // products stay in tb_arena, described by *c, for bl_row_take.
 static int tp_cycle(const BlRow *row, const char *seed_hex, const uint8_t *prefs, int plen,
                     uint32_t *h, uint8_t *next, int *next_len, TableCommit *c) {
-    if (table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES) != TABLE_OK) return -1;
+    if (table_load(&tb, row->state, row->state_len, row->roster, rl_of(row->roster)) != TABLE_OK) return -1;
     table_set_deal_seed(&tb, seed_hex, (int)strlen(seed_hex));
     if (table_set_session_log(&tb, row->log, row->log_len) < 0) return -1;
     const int32_t delay = table_bot_wait_ms(&tb, TP_NOW0 + row->version);
@@ -21585,7 +21770,7 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
         for (int s = 0; s < np; s++) if (!games[k][s][0]) human = s;
         for (int step = 0; step < 3000 && bl_row.status == GAME_STATUS_PLAYING; step++) {
             TableCommit c;
-            if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { stuck++; break; }
+            if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster)) != TABLE_OK) { stuck++; break; }
             logged += tb.mem_valid && !table_bots_need_logs(&tb);   // a row that carried its bot memory
             if (table_needs_bots(&tb)) {
                 uint32_t h = 0, h2 = 0;
@@ -21609,7 +21794,7 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
                 }
             }
             // No bot had work: the human seat moves - its first legal move, not a pickup when it has another.
-            if (human < 0 || table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { stuck++; break; }
+            if (human < 0 || table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster)) != TABLE_OK) { stuck++; break; }
             table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
             calculate_legal_moves(&tb_game, human, &tb_moves);
             if (tb_moves.n <= 0) { stuck++; break; }
@@ -21633,7 +21818,7 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
         // The game end: the verified v6 code and the extras blob.
         ReplaySummary sum;
         memset(&sum, 0, sizeof(sum));
-        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
+        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster));
         const int cl = tb_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
         // At this suite's compact caps a pickup of more than MAX_LOG_PAIRS cards
         // is logged short (c/Makefile print-human-caps: the shipped builds log 64),
@@ -21648,7 +21833,7 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
         }
         snprintf(what, sizeof(what), "game %d: the replay code verifies, and its summary is the table's seats and fool", k);
         CHECK(cl > 0 && replay_summary_v6(tb_code, cl, &sum) == REPLAY_EOK && sum.num_players == np && sum.fool == fool, what);
-        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
+        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster));
         const int el = tb_replay_extras(&tb, bl_row.log, bl_row.log_len, tb_code2, sizeof(tb_code2));
         const int dl = el > 0 ? replay_extras_decode(tb_code2, el, np, sum.moves, extras, sizeof(extras)) : -1;
         int named = dl > 0 && replay_extras_unpack(extras, dl, &x) == dl && x.n_names == np;
@@ -21659,12 +21844,12 @@ static void test_table_bot_cycles_retry_and_end_in_a_true_code(void) {
         // A session log or a seed that is not this game's does not encode it. Cut
         // mid-record, not at a halfway point: a whole prefix of a session encodes
         // and verifies against itself.
-        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
+        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster));
         const int cut = tb_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len - 1, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
         snprintf(what, sizeof(what), "game %d: a log cut mid-record is refused (%d)", k, cut);
         CHECK(cut < 0, what);
         tb_seed[0] ^= 1;
-        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES);
+        table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster));
         const int other = tb_replay_code(&tb, tb_seed, FOOLISH_SEED_LEN, bl_row.log, bl_row.log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
         snprintf(what, sizeof(what), "game %d: another deal seed is refused (%d)", k, other);
         CHECK(other < 0, what);
@@ -21755,11 +21940,11 @@ static int mr_board(const char *brain) {
         roster_seat_add(&r, id, (int)strlen(id), name, (int)strlen(name), brain, (int)strlen(brain));
     }
     table_init(&tb, &tb_game, &tb_snaps);
-    const int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf));
+    const int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf), NULL);
     if (n <= 0) return 0;
     memcpy(tb_state, tb_buf, (size_t)n);
     tb_state_len = n;
-    memcpy(tb_roster, tb_buf + n, ROSTER_BYTES);
+    memcpy(tb_roster, tb_buf + n, ROSTER_MAX);
     return n;
 }
 
@@ -21769,7 +21954,7 @@ static int mr_board(const char *brain) {
 // the kernel refused a step.
 static uint32_t mr_drive(Table *t, const uint8_t *state, int len, const uint8_t *roster, const char *gid) {
     TableCommit c;
-    if (table_load(t, state, len, roster, ROSTER_BYTES) != TABLE_OK) return 1;
+    if (table_load(t, state, len, roster, rl_of(roster)) != TABLE_OK) return 1;
     table_set_deal_seed(t, "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", 64);
     const int n = table_bot_drive(t, 0, 0, 1, &tb_drv);
     if (n <= 0) return 0;
@@ -21785,7 +21970,7 @@ static uint32_t mr_drive(Table *t, const uint8_t *state, int len, const uint8_t 
 }
 
 static void test_table_a_load_leaves_nothing_of_the_last_table(void) {
-    static uint8_t target[8192], prior[8192], target_roster[ROSTER_BYTES], prior_roster[ROSTER_BYTES];
+    static uint8_t target[8192], prior[8192], target_roster[ROSTER_MAX], prior_roster[ROSTER_MAX];
     static Game fresh_game;
     static TableSnaps fresh_snaps;
     static const char *const brains[] = { "handwritten", "cordite" };
@@ -21802,11 +21987,11 @@ static void test_table_a_load_leaves_nothing_of_the_last_table(void) {
             while (!mr_board(brains[b])) { }
             const int tl = tb_state_len;
             memcpy(target, tb_state, (size_t)tl);
-            memcpy(target_roster, tb_roster, ROSTER_BYTES);
+            memcpy(target_roster, tb_roster, ROSTER_MAX);
             while (!mr_board(brains[b])) { }
             const int pl = tb_state_len;
             memcpy(prior, tb_state, (size_t)pl);
-            memcpy(prior_roster, tb_roster, ROSTER_BYTES);
+            memcpy(prior_roster, tb_roster, ROSTER_MAX);
 
             table_init(&fresh, &fresh_game, &fresh_snaps);
             const uint32_t want = mr_drive(&fresh, target, tl, target_roster, "g");
@@ -21917,7 +22102,7 @@ static void test_table_ranks_every_finished_game(void) {
             }
             if (bl_row.status != GAME_STATUS_GAME_OVER) continue;   // random play can circle: skipped, as the TS file did
             played++;
-            if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { ok = 0; continue; }
+            if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, rl_of(bl_row.roster)) != TABLE_OK) { ok = 0; continue; }
             unsigned char elim[MAX_PLAYERS];
             const int ne = tb_game.num_eliminated;
             for (int i = 0; i < ne; i++) elim[i] = (unsigned char)tb_game.elimination_order[i];
@@ -22405,13 +22590,13 @@ static void test_repetition_history_survives_the_row(void) {
 static void test_repetition_draw_rates_the_fools_level(void) {
     static Game g;
     static unsigned char blob[TABLE_STATE_MAX];
-    uint8_t roster[ROSTER_BYTES], w[16];
+    uint8_t roster[ROSTER_MAX], w[16];
     rep_cycle_board(&g, 0);
     const bool ok = rep_cycles(&g, 2, 0) == 16 && rep_cycle_move(&g, 0, false) && rep_cycle_move(&g, 1, false);
     const int n = state_blob_put(&g, 0, blob);
     tb_roster_for(2, 0, "", roster);
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(ok && table_load(&tb, blob, n, roster, ROSTER_BYTES) == TABLE_OK && tb_game.rep.fill == 4,
+    CHECK(ok && table_load(&tb, blob, n, roster, rl_of(roster)) == TABLE_OK && tb_game.rep.fill == 4,
           "the loop's row loads at a table, one pickup from the draw, its history with it");
     // BETWEEN TWO HUMAN MOVES the server keeps the game resident, not as a row: the
     // head, and the ring kept apart (table.h TableResident). The resident is the row,
@@ -22419,17 +22604,17 @@ static void test_repetition_draw_rates_the_fools_level(void) {
     // MUTATION-CHECKED: table.c table_adopt's `t->g->rep = res->rep;` deleted goes red
     // at "an adopted resident keeps its ring".
     static TableResident res;
-    static uint8_t res_state[TABLE_STATE_MAX], res_roster[ROSTER_BYTES];
-    int res_sl = 0, res_rl = 0;
+    static uint8_t res_state[TABLE_STATE_MAX];
+    int res_sl = 0;
     table_resident(&tb, NULL, &res);
     CHECK(res.rep.fill == 4 && !((const Game *)(const void *)res.head)->rep_live,
           "the resident keeps the ring apart from a head that claims none");
-    CHECK(table_resident_encode(&res, res_state, (int)sizeof res_state, &res_sl, res_roster, (int)sizeof res_roster, &res_rl) == TABLE_OK
+    CHECK(table_resident_encode(&res, res_state, (int)sizeof res_state, &res_sl) == TABLE_OK
           && res_sl == n && memcmp(res_state, blob, (size_t)n) == 0,
           "the resident is the row: its encode is the row it came from, history and all");
     memset(&tb_game, 0, sizeof tb_game);
     table_init(&tb, &tb_game, &tb_snaps);
-    CHECK(table_adopt(&tb, &res) == TABLE_OK && tb_game.rep_live && tb_game.rep.fill == 4
+    CHECK(table_adopt(&tb, &res, roster, rl_of(roster)) == TABLE_OK && tb_game.rep_live && tb_game.rep.fill == 4
           && memcmp(&tb_game.rep, &res.rep, sizeof res.rep) == 0, "an adopted resident keeps its ring");
     AwireAction a;
     memset(&a, 0, sizeof a);
@@ -22584,7 +22769,7 @@ static int gm_cycle(const FxBoard *b, TableCommit *c, int *delay) {
     memcpy(gm_state, tb_arena + c->state.off, (size_t)c->state.len);
     gm_state_len = c->state.len;
     table_init(&next, &next_game, &next_snaps);
-    *delay = table_load(&next, gm_state, gm_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK ? table_bot_wait_ms(&next, GM_NOW) : -1;
+    *delay = table_load(&next, gm_state, gm_state_len, tb_roster, rl_of(tb_roster)) == TABLE_OK ? table_bot_wait_ms(&next, GM_NOW) : -1;
     return n;
 }
 
@@ -22718,7 +22903,7 @@ static void test_table_composed_boards_round_trip(void) {
     TableCommit c;
     CHECK(table_commit_products(&tb, RS("fixture-game"), 7, 0, &c, tb_arena, sizeof(tb_arena)) > 0
           && c.state.len == tb_state_len && memcmp(tb_arena + c.state.off, tb_state, (size_t)tb_state_len) == 0
-          && memcmp(tb_arena + c.roster.off, tb_roster, ROSTER_BYTES) == 0 && c.status == GAME_STATUS_PLAYING,
+          && memcmp(tb_arena + c.roster.off, tb_roster, rl_of(tb_roster)) == 0 && c.status == GAME_STATUS_PLAYING,
           "the loaded table writes the composed blob and roster back unchanged");
     client_init(&ct, &ct_slot);
     int en = table_envelope(&tb, RS("fixture-game"), 0, 7, ct_env, sizeof(ct_env));
@@ -23286,6 +23471,8 @@ int main(void) {
     test_card_parse_invalid();
     test_player_carries_no_identity();
     test_roster_round_trip();
+    test_roster_reads_format_1();
+    test_roster_seat_refs();
     test_roster_decode_refuses_each_malformed_field();
     test_roster_seat_of_is_exact();
     test_roster_ops();

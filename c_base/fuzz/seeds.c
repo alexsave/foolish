@@ -71,7 +71,8 @@ static uint8_t g_env[8][1 << 16];
 static int g_env_len[8], g_n_env;
 static uint8_t g_cast[16][1 << 16];
 static int g_cast_len[16], g_n_cast;
-static uint8_t g_state[1 << 16], g_roster[ROSTER_BYTES];
+static uint8_t g_state[1 << 16], g_roster[ROSTER_MAX];
+static int g_roster_len;
 static int g_state_len;
 static uint8_t g_wire[32][64];
 static int g_wire_len[32], g_n_wire;
@@ -123,9 +124,10 @@ static void play_game(void) {
             break;
         }
     }
-    g_state_len = table_seal(&g_t, g_game, &g_t.r, g_state, sizeof g_state);
+    g_state_len = table_seal(&g_t, g_game, &g_t.r, g_state, sizeof g_state, NULL);
     if (g_state_len < 0) g_state_len = 0;
-    (void)roster_encode(&g_t.r, g_roster, sizeof g_roster);
+    g_roster_len = roster_encode(&g_t.r, g_roster, sizeof g_roster);
+    if (g_roster_len < 0) g_roster_len = 0;
 }
 
 // ---- the targets -----------------------------------------------------------------------------
@@ -318,7 +320,7 @@ static void dynamo_items(void) {
     memset(&g, 0, sizeof g);
     snprintf(g.id, sizeof g.id, "ab12cd");
     g.state = g_state; g.state_len = (size_t)g_state_len;
-    g.roster = g_roster; g.roster_len = sizeof g_roster;
+    g.roster = g_roster; g.roster_len = (size_t)g_roster_len;
     static uint8_t logs[4] = { 1, 2, 3, 4 };
     g.list = logs; g.list_len = 4;
     g.has_seed = true; g.version = 3; g.needs_bots = true; g.created_at = 1; g.updated_at = 2;
@@ -578,9 +580,9 @@ static void seeds_unfurl(void) {
 }
 
 static void seeds_import(void) {
-    char sh[2 * sizeof g_state + 1], rh[2 * ROSTER_BYTES + 1];
+    char sh[2 * sizeof g_state + 1], rh[2 * ROSTER_MAX + 1];
     hex_encode(g_state, (size_t)g_state_len, sh, sizeof sh);
-    hex_encode(g_roster, sizeof g_roster, rh, sizeof rh);
+    hex_encode(g_roster, (size_t)g_roster_len, rh, sizeof rh);
     char hash[CB_BCRYPT_HASH_LEN + 1];
     cb_bcrypt_hash("password", 4, hash);
     cb_buf b;
