@@ -211,6 +211,12 @@ typedef struct {
 // in cap, which ROSTER_MAX always does) and otherwise returns the bytes written.
 int      roster_decode(Roster *r, const uint8_t *p, int len);
 int      roster_encode(const Roster *r, uint8_t *out, int cap);
+// roster_decode for bytes the kernel has already judged: the roster bytes kept beside a resident
+// game (table.h table_adopt), which a load or a commit validated. Format 2 is checked for SHAPE
+// only (every length within its cap and the bytes, nothing after the last seat), so it never
+// reads or writes out of bounds, but its rules (UTF-8, duplicates, a UUID spelled as text) are not
+// judged again; any other format is roster_decode's. ROSTER_OK or ROSTER_E_*.
+int      roster_unpack(Roster *r, const uint8_t *p, int len);
 // The same for a roster the caller has just validated (roster_validate, ROSTER_OK) and not
 // changed since: the products of one operation validate once and write it several times.
 int      roster_encode_validated(const Roster *r, uint8_t *out, int cap);

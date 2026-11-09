@@ -1043,9 +1043,11 @@ _Static_assert(offsetof(Game, rep) == offsetof(Game, logs) + sizeof(((Game *)0)-
 _Static_assert(sizeof(Game) - offsetof(Game, rep) - sizeof(((Game *)0)->rep) < 8, "Game.rep is the Game's last field");
 
 int table_adopt(Table *t, const TableResident *res, const uint8_t *roster, int roster_len) {
-    // The roster first: bytes that are not one adopt nothing. Decoding validates them, which
-    // vouches for them until an edit (Table.roster_valid).
-    const int rc = roster_decode(&t->r, roster, roster_len);
+    // The roster first: bytes that are not one adopt nothing. They were validated when the load
+    // or the commit that made the resident wrote or read them, so they are unpacked, not judged
+    // again (roster_unpack: shape only), and vouch for the roster until an edit (Table.roster_valid),
+    // as the resident itself is not judged again.
+    const int rc = roster_unpack(&t->r, roster, roster_len);
     if (rc != ROSTER_OK) {
         t->loaded = false;
         t->detail = rc;

@@ -488,8 +488,8 @@ typedef struct TableResident {
 } TableResident;
 
 // The table loaded from a resident and the roster bytes kept with it: its board copied into
-// t->g (the copy an operation may change; the resident is untouched), the roster decoded (and
-// so validated, roster_decode), the clock, stamp and RNG base as kept. The session log is not
+// t->g (the copy an operation may change; the resident is untouched), the roster unpacked
+// (roster_unpack: checked for shape, its rules judged when the resident was made), the clock, stamp and RNG base as kept. The session log is not
 // loaded (table_set_session_log), as with table_load. TABLE_OK, or TABLE_E_ROSTER with the
 // ROSTER_E_* in t->detail (and nothing loaded) for bytes that are not a roster.
 int table_adopt(Table *t, const TableResident *res, const uint8_t *roster, int roster_len);
