@@ -196,6 +196,36 @@ static void system_store_refuses_the_test_ca(void) {
     tls_srv_stop(&s);
 }
 
+// With no file given, OpenSSL's own bundle ($SSL_CERT_FILE here) is the one used, ahead of the
+// fixed list of system files (https.h): on a Mac that list's /etc/ssl/cert.pem is Apple's lagging
+// copy, which could not verify example.com on CI's runner while Homebrew's bundle could. Both
+// variables are saved and put back, so the system-store test above and the rest see what they had.
+static void openssl_bundle_before_the_system_list(void) {
+    tls_srv s;
+    T_EQ_INT(tls_srv_start(&s, answer, "keep"), 0);
+    const char *had_cb = getenv("CBASE_CA_FILE");
+    char *saved_cb = had_cb ? strdup(had_cb) : NULL;
+    const char *had_ssl = getenv("SSL_CERT_FILE");
+    char *saved_ssl = had_ssl ? strdup(had_ssl) : NULL;
+    unsetenv("CBASE_CA_FILE");
+    T_EQ_INT(setenv("SSL_CERT_FILE", s.ca_file, 1), 0);
+
+    T_EQ_INT(cb_https_set_ca_file(NULL), CB_OK);
+    cb_https_response r;
+    T_EQ_INT(cb_https_request("localhost", s.port, "GET", "/x", NULL, NULL, 0, 3000, &r), CB_OK);
+    T_EQ_INT(r.status, 200);
+    cb_https_response_free(&r);
+
+    if (saved_ssl) setenv("SSL_CERT_FILE", saved_ssl, 1);
+    else unsetenv("SSL_CERT_FILE");
+    if (saved_cb) setenv("CBASE_CA_FILE", saved_cb, 1);
+    else unsetenv("CBASE_CA_FILE");
+    free(saved_ssl);
+    free(saved_cb);
+    T_EQ_INT(cb_https_set_ca_file(NULL), CB_OK);
+    tls_srv_stop(&s);
+}
+
 static void verified_and_kept_alive(void) {
     tls_srv s;
     T_EQ_INT(tls_srv_start(&s, answer, "keep"), 0);
@@ -416,6 +446,7 @@ int main(void) {
     T_RUN(special_statuses);
     T_RUN(malformed);
     T_RUN(system_store_refuses_the_test_ca);
+    T_RUN(openssl_bundle_before_the_system_list);
     T_RUN(verified_and_kept_alive);
     T_RUN(concurrent_requests_pool_their_connections);
     T_RUN(dead_idle_connection_retried);
