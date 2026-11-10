@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# Sourced by vm_deploy.sh and vm_release.sh (no AWS call in here, so
-# role_covers_release.sh has nothing to read): how the instance's boot is built.
+# Sourced by vm_deploy.sh and vm_release.sh (no AWS call in here): how the
+# instance's boot is built.
 #
 #   boot_assemble BOOT UNIT OUT   vm_boot.sh with cbase.service spliced in at
 #                                 @CBASE_SERVICE@, comments and all. This is the
