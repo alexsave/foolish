@@ -368,7 +368,7 @@ static void verify_bearer_and_expiry(void) {
 // Guessing one account's password (auth.h CB_AUTH_FAIL_*): five free
 // failures in the window, then a lock that doubles; a locked account refuses
 // even the right password, with no bcrypt and no write; a name with no
-// account is never counted; a success clears the count.
+// account is counted and locked the same way; a success clears the count.
 static void signin_lockout(void) {
     setup();
     cb_session s, x;
@@ -416,11 +416,16 @@ static void signin_lockout(void) {
     g_fake_now += CB_AUTH_FAIL_WINDOW_MS + 1;
     T_EQ_INT(cb_auth_signin(ctx.auth, "g@foolish.cards", "wrong", &x), CB_AUTH_E_BAD_LOGIN);
     T_EQ_INT(cb_auth_signin(ctx.auth, "g@foolish.cards", "right-pass-1", &x), CB_OK);
-    // A name with no account: never counted, never written, never locked.
+    // A name with no account: counted, written and locked as an account is, so the lock does not
+    // tell which names have one.
     writes = auth_fakestore_fail_writes(ctx.store);
-    for (int i = 0; i < 3 * CB_AUTH_FAIL_FREE; i++)
+    for (int i = 0; i <= CB_AUTH_FAIL_FREE; i++)
         T_EQ_INT(cb_auth_signin(ctx.auth, "ghost@foolish.cards", "wrong", &x), CB_AUTH_E_BAD_LOGIN);
-    T_EQ_INT(auth_fakestore_fail_writes(ctx.store), writes);
+    T_EQ_INT(auth_fakestore_fail_writes(ctx.store), writes + CB_AUTH_FAIL_FREE + 1);
+    T_EQ_INT(cb_auth_signin(ctx.auth, "ghost@foolish.cards", "wrong", &x), CB_AUTH_E_TOO_MANY);
+    T_EQ_INT(auth_fakestore_fail_writes(ctx.store), writes + CB_AUTH_FAIL_FREE + 1);   // locked: no write
+    g_fake_now += CB_AUTH_LOCK_BASE_MS;
+    T_EQ_INT(cb_auth_signin(ctx.auth, "ghost@foolish.cards", "wrong", &x), CB_AUTH_E_BAD_LOGIN);
     cb_auth_now = cb_now_ms;
     teardown();
 }

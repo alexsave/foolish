@@ -59,16 +59,17 @@ typedef struct {
 bool cb_auth_password_common(const char *pw);
 
 // Guessing one account's password (security finding H1). A wrong password
-// at an account counts in the table (store.h signin_fails); after
+// at an email counts in the table (store.h signin_fails); after
 // CB_AUTH_FAIL_FREE of them, none CB_AUTH_FAIL_WINDOW_MS after the one
 // before (a quiet window starts the count again), each further one
-// locks the account for CB_AUTH_LOCK_BASE_MS, doubling, at most
+// locks the email for CB_AUTH_LOCK_BASE_MS, doubling, at most
 // CB_AUTH_LOCK_MAX_MS. While locked, a sign-in is refused CB_AUTH_E_TOO_MANY
 // at once, with no bcrypt and no write, whatever the password: a guess
-// learns nothing, and costs one read. A name with no account is never
-// counted (nothing to guess, and nothing written for it); that it is never
-// locked tells no more than sign-up's "name taken" already does. A sign-in
-// that succeeds clears the count.
+// learns nothing, and costs one read. An email with no account is counted
+// and locked the same way, with the same reads, bcrypt and writes, so the
+// lock does not tell which names have accounts (the made-up names' rows
+// expire as any do, and the local store sweeps them). A sign-in that
+// succeeds clears the count.
 #define CB_AUTH_FAIL_FREE       5
 #define CB_AUTH_FAIL_WINDOW_MS  (15LL * 60 * 1000)
 #define CB_AUTH_LOCK_BASE_MS    (30LL * 1000)

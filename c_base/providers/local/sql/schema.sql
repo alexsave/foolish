@@ -61,8 +61,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS refresh_tokens_user ON refresh_tokens(user_id);
 
--- Failed sign-ins at one email; gone (read as none) at expires_at, an hour
--- after the last write.
+-- Failed sign-ins at one email, an account's or not; gone (read as none) at
+-- expires_at, an hour after the last write, and swept by every later put.
 CREATE TABLE IF NOT EXISTS signin_fails (
     email        TEXT PRIMARY KEY,
     n            INTEGER NOT NULL,
@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS signin_fails (
     locked_until INTEGER NOT NULL,
     expires_at   INTEGER NOT NULL
 ) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS signin_fails_expiry ON signin_fails(expires_at);
 
 -- An identity at a provider (core/src/store/store.h cb_identity_row; schema 9): unique by (idp,
 -- subject), read so at every provider sign-in, and by user_id when its account is deleted (with it).

@@ -904,3 +904,13 @@ The DynamoDB half (rows_auth.c cb_rows_refresh_take, and the three user_import f
 - auth.c: no grace (`now - r.revoked_at < 0`) -> unit_auth_sqlite `a_token_is_used_once` the retry within the grace refresh(a.refresh, &c) and c.user_id == a.user_id.
 - auth.c: a reuse after the grace leaves the session live -> unit_auth_sqlite `a_token_is_used_once` the newer tokens' refresh == 400 CBW_ACCOUNT_E_REFRESH_USED.
 - auth.c: the session's end not checked when the session row is made from an old token (`if (sess.expires_at <= now)` dropped) survived every ported case; `an_old_token_without_an_end_stops_at_its_sessions_end` (new here: a token row with expires_at 0 and no session row, past its session's end) holds it -> refresh == 400 with CBW_ACCOUNT_E_BAD_REFRESH, three times, and !refresh.
+
+## A failed sign-in is counted whether the name has an account or not (2026-11-10: auth.c verify_counted, store_sqlite.c the fails sweep)
+
+The lock past five wrong passwords was kept only for real accounts, so a real name turned from 400 to 429 and a made-up one never did: the lock told which names have accounts.
+On main before the fix, unit_auth_sqlite `a_made_up_name_locks_as_a_real_one_does` failed st[1][k] == st[0][k] and why[1][k] == why[0][k] at the three locked steps, and fails_rows() == 2 (got 1); `a_made_up_names_row_is_swept_after_its_time` failed its three fails_rows() counts; `the_right_password_clears_the_count` passed (the behaviour it holds is unchanged).
+
+- auth.c cb_auth_signin: a name with no account back to a bare dummy bcrypt (not counted) -> unit_auth_sqlite `a_made_up_name_locks_as_a_real_one_does` st[1][k] == st[0][k] and why[1][k] == why[0][k] (three steps) and fails_rows() == 2, and unit_auth `signin_lockout` the ghost's sign-in == CB_AUTH_E_TOO_MANY and its fail writes == writes + CB_AUTH_FAIL_FREE + 1.
+- auth.c verify_counted: the lock checked only when there is a hash -> unit_auth_sqlite `a_made_up_name_locks_as_a_real_one_does` st[1][k] == st[0][k] and why[1][k] == why[0][k] (three steps), and unit_auth `signin_lockout` the ghost's sign-in == CB_AUTH_E_TOO_MANY.
+- auth.c verify_counted: a success does not clear the count -> unit_auth_sqlite `the_right_password_clears_the_count` fails_rows() == 0 and the wrong passwords after it == 400 (five).
+- store_sqlite.c fails_put_step: the sweep skipped -> unit_auth_sqlite `a_made_up_names_row_is_swept_after_its_time` fails_rows() == 2 and == 1.

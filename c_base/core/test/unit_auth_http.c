@@ -330,8 +330,15 @@ static void rate_limits(void) {
     T_EQ_INT(i, 5);   // signup per address: 5
     T_CHECK(refused(CBW_WHY_ACCOUNT, CBW_ACCOUNT_E_TOO_MANY));
     T_CHECK(strstr(g_a.headers, "Retry-After: ") != NULL);
-    for (i = 0; i < 30 && (st = post(SI, NULL, creds(CBW_SIGNIN, "DORA", "wrong-wrong-1"))) != 429; i++) {}
-    T_EQ_INT(i, 10);   // signin per account: 10 before the address's 20
+    // Signin per account: 10 before the address's 20. A name with or without an account is locked
+    // past six wrong passwords first (auth.h CB_AUTH_FAIL_*): that 429 has no Retry-After, the
+    // limit's does.
+    for (i = 0; i < 30; i++) {
+        st = post(SI, NULL, creds(CBW_SIGNIN, "DORA", "wrong-wrong-1"));
+        T_EQ_INT(st, i < 6 ? 400 : 429);
+        if (strstr(g_a.headers, "Retry-After: ")) break;
+    }
+    T_EQ_INT(i, 10);
     for (i = 0; i < 70 && (st = post(RF, NULL, one_str(CBW_REFRESH, "x", 1))) != 429; i++) {}
     T_EQ_INT(i, 60);
     T_CHECK(refused(CBW_WHY_ACCOUNT, CBW_ACCOUNT_E_TOO_MANY));
