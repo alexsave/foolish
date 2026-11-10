@@ -95,7 +95,7 @@ sat2's tables are two humans each, so every resident's memory is counts-only.
 
 ## The bot behaviour gate
 
-`foolish/docs/memtest/harness/mem3_gate.c` plays seeded games the server's way: every operation runs on a table adopted from the previous commit's resident, held as the journal holds it (the change: `table_resident_into` into two buffers of exactly their sizes, the one written kept; the base: the whole struct), with an eviction every 7th operation (the row loaded with its session log, as a game evicted from the overlay is).
+The bot behaviour gate (its source is not kept in the repository, because it carried its own xorshift generator, which the one-random-source rule forbids; the measurements it produced are recorded here) plays seeded games the server's way: every operation runs on a table adopted from the previous commit's resident, held as the journal holds it (the change: `table_resident_into` into two buffers of exactly their sizes, the one written kept; the base: the whole struct), with an eviction every 7th operation (the row loaded with its session log, as a game evicted from the overlay is).
 Bots move by their brains through `table_bot_drive`; human seats by the gate's own seeded draw (one xorshift, seeded by a named constant and the game's index).
 Each commit prints the moves it applied (seat and action wire) and the row's state bytes in full, and checks that the held resident encodes to exactly those bytes.
 Base and change ran with the same arguments and their outputs were compared byte for byte.
