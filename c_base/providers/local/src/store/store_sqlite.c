@@ -53,7 +53,7 @@ enum {
     ST_USER_DELETE, ST_USER_DEL_REFRESH, ST_USER_DEL_SESSIONS, ST_USERS_ALL,
     ST_SESSION_PUT, ST_SESSION_SWEEP, ST_SESSION_GET, ST_SESSION_REVOKE,
     ST_REFRESH_PUT, ST_REFRESH_SWEEP, ST_REFRESH_GET, ST_REFRESH_TAKE,
-    ST_FAILS_GET, ST_FAILS_PUT, ST_FAILS_CLEAR,
+    ST_FAILS_GET, ST_FAILS_PUT, ST_FAILS_CLEAR, ST_FAILS_SWEEP,
     ST_IDENT_GET, ST_IDENT_INSERT, ST_IDENT_REPLACE, ST_IDENT_OF, ST_USER_DEL_IDENT, ST_ONCE_SWEEP, ST_ONCE_CLAIM,
     ST_READY, ST_TABLES,
     ST_BEGIN, ST_COMMIT, ST_ROLLBACK, ST_SAVEPOINT, ST_RELEASE, ST_ROLLBACK_TO,   // transaction control, prepared once
@@ -120,6 +120,7 @@ static const char *const SQL[ST__COUNT] = {
     [ST_FAILS_GET] = "SELECT n, last_at, locked_until, expires_at FROM signin_fails WHERE email = ?1",
     [ST_FAILS_PUT] = "INSERT OR REPLACE INTO signin_fails (email, n, last_at, locked_until, expires_at) VALUES (?1, ?2, ?3, ?4, ?5)",
     [ST_FAILS_CLEAR] = "DELETE FROM signin_fails WHERE email = ?1",
+    [ST_FAILS_SWEEP] = "DELETE FROM signin_fails WHERE expires_at <= ?1",
     [ST_IDENT_GET] = "SELECT " IDENT_COLS " FROM identities WHERE idp = ?1 AND subject = ?2",
     [ST_IDENT_INSERT] = "INSERT INTO identities (" IDENT_COLS ") VALUES (" IDENT_VALS ")",
     [ST_IDENT_REPLACE] = "INSERT OR REPLACE INTO identities (" IDENT_COLS ") VALUES (" IDENT_VALS ")",
@@ -1471,8 +1472,17 @@ static int sq_signin_fails_get(cb_store *st, const char *email, int64_t now_ms, 
 
 static int fails_put_step(sq *q, void *ud) {
     fails_op *o = ud;
-    sqlite3_stmt *s = stmt(q, o->f ? ST_FAILS_PUT : ST_FAILS_CLEAR);
-    if (!s) return CB_E_DB;
+    sqlite3_stmt *s;
+    if (o->f) {
+        // The rows past their hour go first, in the same write (on signin_fails_expiry): failed
+        // sign-ins at names with no account are counted too (auth.h CB_AUTH_FAIL_*), and nothing
+        // else would ever delete those.
+        if (!(s = stmt(q, ST_FAILS_SWEEP))) return CB_E_DB;
+        b_i64(s, 1, o->now);
+        int rc = run(q, s, "signin fails sweep");
+        if (rc != CB_OK) return rc;
+    }
+    if (!(s = stmt(q, o->f ? ST_FAILS_PUT : ST_FAILS_CLEAR))) return CB_E_DB;
     b_text(s, 1, o->email);
     if (o->f) {
         b_i64(s, 2, o->f->n);

@@ -11,7 +11,10 @@
 //     token with no end of its own and no session row too;
 //   - a password change needs the current password, and ends every other session's tokens;
 //   - a global sign-out ends every session, a refresh token of each refused after it;
-//   - a deleted account's tokens and password are refused, and another account is untouched.
+//   - a deleted account's tokens and password are refused, and another account is untouched;
+//   - a made-up name is counted and locked as a real one is (the lock tells nothing about whether
+//     a name has an account), the right password clears a real one's count, and a made-up name's
+//     row is swept once its time is up.
 #include "t.h"
 #include "cbase/app.h"
 #include "cbase/provider.h"
@@ -365,6 +368,100 @@ static void a_deleted_account_is_gone(void) {
     teardown();
 }
 
+// ---- guessing a password (auth.h CB_AUTH_FAIL_*) ----------------------------------------------
+
+// The rows signin_fails holds, read from the file itself.
+static int fails_rows(void) {
+    sqlite3 *db = NULL;
+    sqlite3_stmt *s = NULL;
+    int n = -1;
+    if (sqlite3_open(g_db, &db) == SQLITE_OK && sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM signin_fails", -1, &s, NULL) == SQLITE_OK &&
+        sqlite3_step(s) == SQLITE_ROW)
+        n = sqlite3_column_int(s, 0);
+    sqlite3_finalize(s);
+    sqlite3_close(db);
+    return n;
+}
+
+// One sign-in at `at`, the in-memory limits (rate_limits.h) out of the way: the account's own count
+// is what is under test. The answer's status, and its account refusal code (-1: none).
+static int sign_in_at(int64_t at, const char *name, const char *pw, int *why) {
+    cb_limits_reset();
+    g_now = at;
+    int st = post(SI, NULL, creds(CBW_SIGNIN, name, pw));
+    *why = g_a.len == CBW_REFUSAL_BYTES && g_a.body[1] == CBW_WHY_ACCOUNT ? (int)le_get_u32(g_a.body + 2) : -1;
+    return st;
+}
+
+// The same guesses at the same times from t0: six wrong passwords (the sixth locks for
+// CB_AUTH_LOCK_BASE_MS), the right one and a wrong one inside the lock, a wrong one at its end
+// (the lock doubles), and one just inside the doubled lock.
+#define WALK (CB_AUTH_FAIL_FREE + 6)
+static void walk(int64_t t0, const char *name, int st[WALK], int why[WALK]) {
+    int k = 0;
+    for (int i = 0; i <= CB_AUTH_FAIL_FREE; i++, k++) st[k] = sign_in_at(t0 + 1000 * (i + 1), name, "wrong-horse-1", &why[k]);
+    const int64_t locked = t0 + 1000 * (CB_AUTH_FAIL_FREE + 1);
+    st[k] = sign_in_at(locked + 1000, name, "correct-horse-1", &why[k]), k++;
+    st[k] = sign_in_at(locked + CB_AUTH_LOCK_BASE_MS - 1, name, "wrong-horse-1", &why[k]), k++;
+    st[k] = sign_in_at(locked + CB_AUTH_LOCK_BASE_MS, name, "wrong-horse-1", &why[k]), k++;
+    st[k] = sign_in_at(locked + 3 * CB_AUTH_LOCK_BASE_MS - 1, name, "correct-horse-1", &why[k]), k++;
+    st[k] = sign_in_at(locked + 3 * CB_AUTH_LOCK_BASE_MS, name, "wrong-horse-1", &why[k]), k++;
+}
+
+// The lock tells nothing about whether a name has an account: a made-up name gets the answers a
+// real one does, at the same times, and a row as the real one does.
+static void a_made_up_name_locks_as_a_real_one_does(void) {
+    setup();
+    T_EQ_INT(post(SU, NULL, creds(CBW_SIGNUP, "IVY", "correct-horse-1")), 200);
+    const int64_t t0 = g_now;
+    int st[2][WALK], why[2][WALK];
+    walk(t0, "IVY", st[0], why[0]);
+    walk(t0, "NOBODY", st[1], why[1]);
+    const int want[WALK] = { 400, 400, 400, 400, 400, 400, 429, 429, 400, 429, 400 };
+    for (int k = 0; k < WALK; k++) {
+        T_EQ_INT(st[0][k], want[k]);
+        T_EQ_INT(why[0][k], want[k] == 429 ? CBW_ACCOUNT_E_TOO_MANY : CBW_ACCOUNT_E_BAD_LOGIN);
+        T_EQ_INT(st[1][k], st[0][k]);
+        T_EQ_INT(why[1][k], why[0][k]);
+    }
+    T_EQ_INT(fails_rows(), 2);
+    teardown();
+}
+
+// The right password clears an account's count: after it, five wrong ones are free again.
+static void the_right_password_clears_the_count(void) {
+    setup();
+    T_EQ_INT(post(SU, NULL, creds(CBW_SIGNUP, "JADE", "correct-horse-1")), 200);
+    int64_t t = g_now;
+    int why;
+    for (int i = 0; i < CB_AUTH_FAIL_FREE; i++) T_EQ_INT(sign_in_at(t += 1000, "JADE", "wrong-horse-1", &why), 400);
+    T_EQ_INT(fails_rows(), 1);
+    T_EQ_INT(sign_in_at(t += 1000, "JADE", "correct-horse-1", &why), 200);
+    T_EQ_INT(fails_rows(), 0);
+    for (int i = 0; i < CB_AUTH_FAIL_FREE + 1; i++) T_EQ_INT(sign_in_at(t += 1000, "JADE", "wrong-horse-1", &why), 400);
+    T_EQ_INT(sign_in_at(t += 1000, "JADE", "correct-horse-1", &why), 429);
+    T_EQ_INT(why, CBW_ACCOUNT_E_TOO_MANY);
+    teardown();
+}
+
+// A made-up name's row goes when its time does (store.h cb_signin_fails: an hour after its last
+// write): any later failed sign-in sweeps it, so names nobody has do not pile up in the file.
+#define FAILS_KEPT_MS (3600LL * 1000)
+static void a_made_up_names_row_is_swept_after_its_time(void) {
+    setup();
+    int64_t t = g_now;
+    int why;
+    T_EQ_INT(sign_in_at(t, "JUNK1", "wrong-horse-1", &why), 400);
+    T_EQ_INT(sign_in_at(t + 1000, "JUNK2", "wrong-horse-1", &why), 400);
+    T_EQ_INT(fails_rows(), 2);
+    // JUNK1's hour is up, JUNK2's not yet: one goes, the other stays, and JUNK3's is new.
+    T_EQ_INT(sign_in_at(t + FAILS_KEPT_MS, "JUNK3", "wrong-horse-1", &why), 400);
+    T_EQ_INT(fails_rows(), 2);
+    T_EQ_INT(sign_in_at(t + FAILS_KEPT_MS + 1000, "JUNK3", "wrong-horse-1", &why), 400);
+    T_EQ_INT(fails_rows(), 1);
+    teardown();
+}
+
 int main(void) {
     T_RUN(a_token_is_used_once);
     T_RUN(a_session_past_its_end_stays_over);
@@ -372,5 +469,8 @@ int main(void) {
     T_RUN(a_password_change_needs_the_password_and_ends_the_others);
     T_RUN(a_global_sign_out_ends_every_session);
     T_RUN(a_deleted_account_is_gone);
+    T_RUN(a_made_up_name_locks_as_a_real_one_does);
+    T_RUN(the_right_password_clears_the_count);
+    T_RUN(a_made_up_names_row_is_swept_after_its_time);
     return T_DONE();
 }

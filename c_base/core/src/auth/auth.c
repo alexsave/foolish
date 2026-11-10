@@ -45,6 +45,7 @@
 
 #include <openssl/crypto.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <openssl/sha.h>
 #include <stdlib.h>
 #include <string.h>
@@ -395,8 +396,8 @@ int cb_auth_signup(cb_auth *a, const char *email, const char *password, const ch
     return begin_session(a, &u, out);
 }
 
-// Spent on an unknown email, so a miss costs what a wrong password does. A
-// hash of a random password nobody kept (htpasswd -B, respelled $2b$).
+// Spent when no guess can be right (no account, or one with no password), so the answer takes a
+// wrong password's time. A hash of a random password nobody kept (htpasswd -B, respelled $2b$).
 static const char DUMMY_HASH[] = "$2b$10$OJvZ7hLjzyMHI.C85EGMDOs4pIvjMhJwQ1XaHEDVepxMCI.baQEUO";
 
 // The count after one more failure at `now` (auth.h CB_AUTH_FAIL_*).
@@ -415,36 +416,36 @@ static void count_failure(cb_signin_fails *f, int64_t now) {
     }
 }
 
-// The password checked against u's hash, counted (auth.h CB_AUTH_FAIL_*):
-// CB_OK, CB_AUTH_E_BAD_LOGIN, CB_AUTH_E_TOO_MANY (locked: not even checked),
-// or a store error. A sign-in and a password change's current password both
-// come through here, so a stolen access token cannot guess the password
-// faster than a sign-in can.
-static int verify_counted(cb_auth *a, const cb_user_row *u, const char *password, int64_t now) {
+// The password checked against `hash`, counted under `email` (auth.h CB_AUTH_FAIL_*): CB_OK,
+// CB_AUTH_E_BAD_LOGIN, CB_AUTH_E_TOO_MANY (locked: not even checked), or a store error. `hash` is
+// NULL or empty when no guess can be right: a name with no account, or an account made by an
+// identity provider. Those are counted and locked as any wrong guess is, with the same reads,
+// bcrypt and writes, so neither the answers nor the store's work tell whether `email` has an
+// account. `who` names it in the log. A sign-in and a password change's current password both
+// come through here, so a stolen access token cannot guess the password faster than a sign-in can.
+static int verify_counted(cb_auth *a, const char *email, const char *hash, const char *who, const char *password,
+                          int64_t now) {
     cb_signin_fails f;
     memset(&f, 0, sizeof f);
-    int rc = CB_STORE_CALL(a->store, signin_fails_get, u->email, now, &f);
+    int rc = CB_STORE_CALL(a->store, signin_fails_get, email, now, &f);
     if (rc != CB_OK && rc != CB_E_NOT_FOUND) return rc;
     bool counted = rc == CB_OK && f.n > 0;
     if (counted && f.locked_until > now) return CB_AUTH_E_TOO_MANY;   // no bcrypt, no write
-    if (!u->password_hash[0]) {
-        // An account made by an identity provider has no password: no guess can be right, so none
-        // is counted, and the bcrypt is spent anyway so the answer takes a wrong password's time.
-        (void)cb_bcrypt_verify(password, DUMMY_HASH);
-        return CB_AUTH_E_BAD_LOGIN;
-    }
-    int ok = cb_bcrypt_verify(password, u->password_hash);
-    if (ok < 0) CB_WARN("auth", "user %s: stored hash does not parse as bcrypt", u->id);
+    int ok = 0;
+    if (hash && hash[0]) {
+        ok = cb_bcrypt_verify(password, hash);
+        if (ok < 0) CB_WARN("auth", "%s: stored hash does not parse as bcrypt", who);
+    } else (void)cb_bcrypt_verify(password, DUMMY_HASH);
     if (ok != 1) {
         count_failure(&f, now);
-        if (f.locked_until) CB_WARN("auth", "user %s: %d failed sign-ins; locked for %lld s", u->id, f.n,
+        if (f.locked_until) CB_WARN("auth", "%s: %d failed sign-ins; locked for %lld s", who, f.n,
                                     (long long)((f.locked_until - now) / 1000));
-        rc = CB_STORE_CALL(a->store, signin_fails_put, u->email, &f, now);
-        if (rc != CB_OK) CB_WARN("auth", "user %s: the failed sign-in was not counted: %s", u->id, cb_strerror(rc));
+        rc = CB_STORE_CALL(a->store, signin_fails_put, email, &f, now);
+        if (rc != CB_OK) CB_WARN("auth", "%s: the failed sign-in was not counted: %s", who, cb_strerror(rc));
         return CB_AUTH_E_BAD_LOGIN;
     }
-    if (counted && (rc = CB_STORE_CALL(a->store, signin_fails_clear, u->email)) != CB_OK)
-        CB_WARN("auth", "user %s: the failed sign-ins were not cleared: %s", u->id, cb_strerror(rc));
+    if (counted && (rc = CB_STORE_CALL(a->store, signin_fails_clear, email)) != CB_OK)
+        CB_WARN("auth", "%s: the failed sign-ins were not cleared: %s", who, cb_strerror(rc));
     return CB_OK;
 }
 
@@ -454,13 +455,18 @@ int cb_auth_signin(cb_auth *a, const char *email, const char *password, cb_sessi
     if (!password || normalize_email(email, em) != CB_OK) return CB_AUTH_E_BAD_LOGIN;
     cb_user_row u;
     int rc = CB_STORE_CALL(a->store, user_by_email, em, &u);
-    if (rc == CB_E_NOT_FOUND) {
-        (void)cb_bcrypt_verify(password, DUMMY_HASH);
-        return CB_AUTH_E_BAD_LOGIN;
-    }
-    if (rc != CB_OK) return rc;
+    if (rc != CB_OK && rc != CB_E_NOT_FOUND) return rc;
     int64_t now = cb_auth_now();
-    if ((rc = verify_counted(a, &u, password, now)) != CB_OK) return rc;
+    if (rc == CB_E_NOT_FOUND) {
+        // No account: counted under the email all the same (auth.h CB_AUTH_FAIL_*).
+        char who[CB_EMAIL_MAX + 16];
+        snprintf(who, sizeof who, "no account %s", em);
+        rc = verify_counted(a, em, NULL, who, password, now);
+        return rc == CB_OK ? CB_AUTH_E_BAD_LOGIN : rc;   // CB_OK cannot happen: no hash, no match
+    }
+    char who[sizeof u.id + 8];
+    snprintf(who, sizeof who, "user %s", u.id);
+    if ((rc = verify_counted(a, u.email, u.password_hash, who, password, now)) != CB_OK) return rc;
     if ((rc = CB_STORE_CALL(a->store, user_touch_sign_in, u.id, now)) != CB_OK) return rc;
     u.last_sign_in_at = now;
     return begin_session(a, &u, out);
@@ -542,7 +548,9 @@ int cb_auth_change_password(cb_auth *a, const cb_user *u, const char *current, c
     int64_t now = cb_auth_now();
     // The current password first (finding M1): an access token alone does
     // not prove the caller owns the account.
-    if ((rc = verify_counted(a, &row, current, now)) != CB_OK) return rc;
+    char who[sizeof row.id + 8];
+    snprintf(who, sizeof who, "user %s", row.id);
+    if ((rc = verify_counted(a, row.email, row.password_hash, who, current, now)) != CB_OK) return rc;
     if ((rc = check_password(new_password, row.username)) != CB_OK) return rc;
     if (strcmp(current, new_password) == 0) return CB_AUTH_E_SAME_PASSWORD;
     char hash[CB_BCRYPT_HASH_LEN + 1];
