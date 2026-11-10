@@ -1,6 +1,13 @@
 // fz_num.c - num_parse_i64 (shared/c/num_parse.h) against a reference model: the same
-// grammar checked by a plain scan and the value accumulated in __int128, so
-// the model has no overflow to get wrong.
+// grammar checked by a plain scan and the magnitude accumulated in unsigned
+// __int128, so the model has no overflow to get wrong.
+//
+// UNSIGNED, not __int128: UBSan's signed-overflow check on a signed 128-bit
+// multiply lowers to a call to __muloti4, which only compiler-rt's builtins
+// carry. clang on Linux links libgcc, so on aarch64 (where LLVM does not expand
+// the check inline, as it does on x86_64) the fuzz target failed to link. An
+// unsigned multiply has no overflow to check, and the magnitude stays under
+// 2^75, so neither the product nor the signed conversion can overflow.
 //
 // Input: [mode][16 bytes of range, used by mode 3][text]. The mode picks the
 // range: 0 the whole int64 range, 1 0..INT64_MAX, 2 1..65535 (a port), 3 two
@@ -26,12 +33,12 @@ static bool model(const uint8_t *s, size_t n, int64_t lo, int64_t hi, int64_t *o
         i = 1;
     }
     if (i == n) return false;
-    __int128 v = 0;
+    unsigned __int128 mag = 0;
     for (; i < n; i++) {
         if (s[i] < '0' || s[i] > '9') return false;
-        if (v <= (__int128)1 << 70) v = v * 10 + (s[i] - '0');   // past 2^70 it only grows: out of range
+        if (mag <= (unsigned __int128)1 << 70) mag = mag * 10 + (unsigned)(s[i] - '0');   // past 2^70 it only grows: out of range
     }
-    if (neg) v = -v;
+    const __int128 v = neg ? -(__int128)mag : (__int128)mag;
     if (v < lo || v > hi) return false;
     *out = (int64_t)v;
     return true;
