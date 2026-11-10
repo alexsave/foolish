@@ -257,10 +257,9 @@ The Apple suite (847 Swift tests plus snapshot tests) runs on a Mac by hand via 
 ## Deploy
 
 **CI builds and deploys, on AWS.**
-[`.github/workflows/web_aws.yml`](../.github/workflows/web_aws.yml) generates the modules, builds the static export with libclang present, and on every push to `main` uploads it to S3 behind CloudFront ([`c_base/providers/aws/ops/site/web_deploy.sh`](../c_base/providers/aws/ops/site/web_deploy.sh)).
-On a pull request the same job is the compile gate.
-The backend is c_base on an AWS VM (`cbase-vm`), deployed from `main` by [`.github/workflows/c_base.yml`](../.github/workflows/c_base.yml).
-Both assume one GitHub OIDC role ([`c_base/providers/aws/ops/github_oidc.yaml`](../c_base/providers/aws/ops/github_oidc.yaml)); [`c_base/RUNBOOK.md`](../c_base/RUNBOOK.md) has the rest.
+[`.github/workflows/web_aws.yml`](../.github/workflows/web_aws.yml) generates the modules and builds the static export with libclang present; on a pull request it is the compile gate.
+On every push to `main`, [`.github/workflows/c_base.yml`](../.github/workflows/c_base.yml) runs every backend gate and that same build, then its `deploy` job runs `../cbase/tools/cbase deploy` from this folder ([`cbase.conf`](cbase.conf)): the server on the `cbase-vm` instance, `out/` into the web bucket, and the `cbase-app-foolish` stack's two CloudFront distributions.
+It assumes one GitHub OIDC role ([`c_base/providers/aws/ops/github_oidc.yaml`](../c_base/providers/aws/ops/github_oidc.yaml)); [`c_base/RUNBOOK.md`](../c_base/RUNBOOK.md) "GitHub deploys" has the rest.
 
 The shipped wasm is a **build output**, like `sdk/ts/gen`: [`scripts/wasm_build.sh`](scripts/wasm_build.sh) is the one entry point, every lane that loads a module builds it, and nothing is committed.
 It used to be built by hand on a Mac and committed, which needed two gates to hold it up - a freshness check that compared commit *order* because it could not compare bytes, and a `WASM_STAMP` committed beside the artifacts to prove a human had run `make`.

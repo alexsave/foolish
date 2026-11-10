@@ -49,7 +49,7 @@ Each one was read from the live stacks, read-only:
   That disk has no database, so serve restores `cbase/latest.sqlite` from the backup bucket at its start.
   serve restores only into a missing database (`backup.c` `cb_backup_restore`), never over one, and the boot script restores nothing itself.
   After a replacement, run step 6 again.
-- **`vm_release.sh` (every push to main, from `c_base.yml`'s deploy job) and `vm_deploy.sh --restart`** send the stub over SSM to the running instance, which runs the boot script now.
+- **`vm_release.sh` (every push to main until step 0.2, from `c_base.yml`'s old deploy job; by hand only since) and `vm_deploy.sh --restart`** send the stub over SSM to the running instance, which runs the boot script now.
   Before #482 that reinstalled and restarted `cbase.service`, a second server on the socket's port, and its `StateDirectory=cbase` would take `/var/lib/cbase` back from `cbase-foolish`.
   #482 adds step 2c to `vm_boot.sh`: once a `cbase-<app>.socket` is installed, the boot ends before step 3 and leaves `cbase.service`, the port and the data alone (`c_base/providers/local/ops/test/vm_boot_handover_test.sh`).
 - **How that change reaches the instance:** `vm_release.sh` uploads the tree's boot script as `vm/cbase-vm-boot-<sha12>`, points `/cbase-vm/release/boot` at it and runs it through SSM.
@@ -282,6 +282,7 @@ If a check fails, the way back is step 9, never a DNS change.
 Every old stack, distribution, bucket and parameter is kept.
 In order:
 
+0. CI deploys off, so no merge puts `./cbase` back during the rollback: `gh variable delete CBASE_DEPLOY` (every `c_base` run is then a dry run; c_base/RUNBOOK.md 13).
 1. The new stacks gone (each is a no-op for an app not deployed yet):
    ```
    (cd "$T/foolish" && ../cbase/tools/cbase undeploy)
@@ -292,7 +293,8 @@ In order:
    `ssm_run $VM "$K/back.sh"` (step 6: `cbase-foolish.socket` and `.service` disabled and stopped, `/var/lib/cbase` back to `cbase`, `cbase.service` enabled and started) prints `active`.
 3. The aliases back: the three `add` lines of step 5.
 4. Check: `curl -s -o /dev/null -w '%{http_code}\n' https://uttt.live/234` is 302 again, `curl -s https://foolish.cards/abc/def | grep -c game_id` is 0, and `curl -s https://api.foolish.cards/health` is `ok cbase`.
-5. Turn the old deploy jobs back on (revert the PR of 0.2).
+5. The old deploy lanes back, if CI should deploy `cbase.service` again: revert the PR that made `c_base.yml`'s `deploy` job run `./cbase` (it removed `web_aws.yml`'s `deploy` job and the old jobs' role rights), apply the old `github_oidc.yaml` it restores (c_base/RUNBOOK.md 13, "The role"), and leave `CBASE_DEPLOY` unset.
+   Until then, `vm_release.sh` and `web_deploy.sh` run by hand with an operator's credentials.
 
 No data is lost either way: both units serve the same file and back it up to the same key.
 Step 1's bucket statement can stay; it only adds a reader.
@@ -301,4 +303,10 @@ Step 1's bucket statement can stay; it only adds a reader.
 
 - After an instance replacement, run step 6 again (the new instance boots `cbase.service` and restores the newest backup into its empty disk).
 - The old distributions stay as they are, without aliases, until Alex says they go; `cbase-web`'s bucket and the VM stack stay, since cbase runs on them.
-- CI deploys through `./cbase` once the GitHub role can make every call `cbase/tools/cbase deploy` makes; until then deploys are by hand.
+- CI deploys through `./cbase` again: on every push to `main` that touches a deployed path, `c_base.yml`'s `deploy` job runs step 6's command for foolish (with the run's own server build and export) and step 7's for uttt, after every gate, then checks `https://api.foolish.cards/health`, `https://foolish.cards/` and `https://uttt.live/` (c_base/RUNBOOK.md 13).
+  It never passes `--accept-drift`, `--allow-downtime` or `--prune`, so a refusal fails the job and is fixed by hand.
+  utils stays a hand deploy from `foolish-utils` (step 7).
+- A run is live only when the repository variable `CBASE_DEPLOY` is `live`; otherwise it is `./cbase deploy --dry-run`.
+  The dry run by hand: `gh workflow run c_base.yml --ref main -f dry_run=true`.
+- Rolling back a bad deploy: `gh run rerun <run id>` on the `c_base` run of the commit to go back to (it rebuilds and deploys that commit), or steps 6 and 7 by hand from a checkout of it.
+  Off `./cbase` entirely: step 9.

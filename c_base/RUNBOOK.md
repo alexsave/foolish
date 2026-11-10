@@ -354,20 +354,45 @@ The web build bakes the backend's URL in at build time, and `.github/workflows/w
 
 ## 13. GitHub deploys
 
-Since 2026-10-14 every push to `main` deploys what is live, to AWS, with no hand steps:
+Every push to `main` that touches a deployed path deploys what is live, through `./cbase deploy` (the `cbase/` submodule's `tools/cbase`; `cbase/README.md`, "./cbase deploy tool"), with no hand steps.
+Since 2026-11-10 (CUTOVER.md) that is the one deploy lane: `vm_release.sh` and `web_deploy.sh` no longer run in CI.
 
 | What changed on `main` | Workflow, job | What it does |
 |---|---|---|
-| `c_base/**`, `foolish/c/**`, `foolish/server/**`, `shared/c/**`, `shared/tools/**` | `c_base`, `deploy to cbase-vm` | after every test job passes, `providers/local/ops/vm_release.sh`: the CI-built static `cbase serve` binary to the code bucket's `vm/`, `/cbase-vm/release/serve` pointed at it, the boot script pinned the same way (`vm/cbase-vm-boot-<sha12>`, `/cbase-vm/release/boot`), the instance's boot stub run through SSM (it fetches the pinned boot script, which restarts the server), then the binary's sha256, the instance's `/health` and `/ready`, and `https://api.foolish.cards/health` checked (providers/local/ops/VM_RUNBOOK.md, "Upgrade the server"). Until 2026-10-19 this job was `deploy to Lambda` (`lambda_deploy.sh`) |
-| `foolish/**`, `shared/**`, `uttt/c/**`, `uttt/web/**` | `web_aws`, `deploy` | `providers/aws/ops/site/web_deploy.sh site foolish`, then `site uttt`: upload, page lists, invalidation, then `www.foolish.cards` and `www.uttt.live` must answer 200 (both apexes are on CloudFront too) |
+| `c_base/**`, `foolish/**`, `uttt/c/**`, `uttt/web/**`, `uttt/cbase.conf`, `shared/**`, the `cbase` pin, `c_base.yml`, `web_aws.yml` | `c_base`, `deploy` | after every gate (`check`, `check_arm64`, `asan`, `fuzz_done`, `dynamo`, `ops`, `serve_binary`) and the two static exports (`web`: `web_aws.yml` called in the same run), from `foolish/`: `CBASE_SERVE_BIN=../c_base/dist/cbase-serve-linux-arm64 ../cbase/tools/cbase deploy` (the server on the `cbase-vm` instance through SSM, `out/` into the web bucket's `foolish/`, the `cbase-app-foolish` stack and its invalidation); then from `uttt/`: `../cbase/tools/cbase deploy` (`web/out` into `uttt/`, `cbase-app-uttt`); then `https://api.foolish.cards/health` must say `ok cbase`, and `https://foolish.cards/` and `https://uttt.live/` must answer 200 |
 
-Both refuse a tree that does not contain `origin/main` (`ops/require_main.sh`), so a branch behind main, or a re-run of an old run by hand, deploys nothing.
-One run per lane runs on main at a time (the workflow's `concurrency` group, `cancel-in-progress: false` on main, because a cancel can land in the middle of a CloudFormation update); a newer push's run waiting behind it replaces any older one still waiting, so the waiting slot always holds the newest commit.
-A run that starts deploys its own commit even if main moved on while it built (the first attempt only; a re-run is refused), because the newest push's run is queued behind it and deploys next.
-So the newest commit of main always deploys.
-This replaced a rule that skipped a run whose commit main had moved past: on 2026-10-18, from 01:25 to 03:05 UTC, main moved on inside every c_base run, so every deploy skipped and nothing shipped until the pushes paused.
-Both can also be run by hand on `main` (Actions > the workflow > Run workflow) to redeploy main as it is.
-Nothing deploys to Supabase.
+`web_aws.yml` deploys nothing: it is the sites' compile gate on a pull request, and on `main` it runs only inside `c_base`'s run, so the deploy hands `./cbase` that run's own exports.
+utils.foolish.cards is deployed from its own repository (`foolish-utils`), by hand.
+
+The job never passes `--accept-drift`, `--allow-downtime` or `--prune`.
+So a stack that drifted, a change set that would replace a distribution or take a hostname off one, and a change set that would replace a bucket each stop `./cbase`, and the job fails with the tool's reason.
+Fix the cause by hand (CUTOVER.md has the commands), then re-run.
+
+One run on `main` at a time (the workflow's `concurrency` group, `cancel-in-progress: false` on main, because a cancel can land between the service restart and the stack update); a newer push's run waiting behind it replaces any older one still waiting, so the waiting slot always holds the newest commit.
+A run that starts deploys its own commit even if main moved on while it built, because the newest push's run is queued behind it and deploys next.
+So the newest commit of main always deploys, and two deploys never overlap.
+
+A foolish deploy always restarts the server (`./cbase` restarts the service on every deploy; the socket holds the port, so a restart queues connections and refuses none), so a site-only merge also restarts it: open WebSockets get 1001 and reconnect.
+
+### Live or dry
+
+A run deploys only when the repository variable `CBASE_DEPLOY` is `live` and the run was not started with `dry_run` ticked.
+Otherwise it runs `./cbase deploy --dry-run` for both apps, which reads AWS, makes and deletes a change set, and changes nothing, and the run shows a warning that it was a dry run.
+
+- The dry run by hand: Actions > c_base > Run workflow on `main`, tick `dry_run`, or `gh workflow run c_base.yml --ref main -f dry_run=true`.
+- Turn deploys on: `gh variable set CBASE_DEPLOY --body live`.
+- Turn deploys off without a code change: `gh variable delete CBASE_DEPLOY` (every run is then a dry run).
+- Redeploy main as it is: `gh workflow run c_base.yml --ref main`.
+
+### Rolling back
+
+- Redeploy an older commit of `main`: find its `c_base` run (`gh run list --workflow c_base.yml --branch main`) and re-run it whole (`gh run rerun <run id>`).
+  A re-run builds and deploys that commit again with the role, since its ref is still `main`; the newer commits' runs do not run again by themselves, so the next merge deploys the newest main again.
+  Re-running the `deploy` job alone works while the run's artifacts last (7 days for the exports, 30 for the server).
+- By hand, with an operator's credentials, from a checkout of the commit to go back to (with `git submodule update --init cbase`): the two commands of CUTOVER.md steps 6 and 7.
+- Off `./cbase` entirely, back to `cbase.service` and the old distributions: CUTOVER.md step 9.
+
+### The role
 
 The credentials are one role, `cbase-github-deploy`, made by the stack `cbase-github` from `providers/aws/ops/github_oidc.yaml` together with the account's GitHub OIDC provider:
 
@@ -378,10 +403,13 @@ aws cloudformation deploy --region us-east-1 --stack-name cbase-github \
 
 1. It trusts only `repo:alexsave/foolish:ref:refs/heads/main`.
    To prove a workflow change from its branch before merging, deploy the stack once with `--parameter-overrides ExtraSubject=repo:alexsave/foolish:ref:refs/heads/<branch>` (and let the workflow's `if:` accept that ref on the branch), then deploy it again with `ExtraSubject=` empty.
-2. It may upload a serve binary under the code bucket's `vm/cbase-serve-*` and the boot script under `vm/cbase-vm-boot-*`, write `/cbase-vm/release/serve` and `/cbase-vm/release/boot`, run commands through SSM on the `cbase-vm` group's instance and read their results, upload to the web bucket, invalidate the two distributions, rewrite the `cbase-web` page lists, and read that stack; it holds none of the rights a template change needs, so `providers/local/ops/vm_deploy.sh` and `providers/aws/ops/site/web_deploy.sh stack` stay hand steps from this Mac.
-   `providers/aws/ops/role_covers_release.sh` (in CI) fails when `vm_release.sh` makes an AWS call the role does not grant.
-   The Lambda deploy rights were removed on 2026-10-19 when the VM took production; the frozen `cbase` Lambda is redeployed only by hand (`lambda_deploy.sh` with an operator's credentials) if it is ever rolled back to.
+2. It may make the calls `./cbase deploy` makes for `foolish/cbase.conf` and `uttt/cbase.conf` on their existing stacks, and the calls CloudFormation makes as the role to apply their change sets, each scoped to the resource it touches (the template says which, and which actions have no resource type): drift detection and change sets on `cbase-app-foolish` and `cbase-app-uttt`, updates to their distributions, routers, origin access controls and response headers policy by id, invalidations of the two site distributions, the three certificates read, the origin secret `/cbase-vm/env/CBASE_ORIGIN_SECRET` read, the server under the code bucket's `vm/foolish/`, the state file `vm/foolish.txt`, uploads under the web bucket's `foolish/` and `uttt/`, and SSM commands on the `cbase-vm` group's instance.
+   It cannot create or delete a stack or a CloudFront resource, request a certificate, write DNS, move a hostname or read any other secret: a first deploy, a replacement, a staged attach and `group-init` stay `./cbase` by hand.
+   A resource replaced by hand gets a new id: update its parameter in the template (a new parameter name, since `aws cloudformation deploy` keeps an old parameter's previous value over a new default).
+   `providers/aws/ops/role_covers_deploy.sh` (in CI, the `ops` job) fails when the `cbase` pin makes an AWS call the role does not grant, or one its table does not know.
+   The `vm_release.sh` and `web_deploy.sh` rights were removed on 2026-11-10 with those lanes; either script now runs only by hand with an operator's credentials, as the frozen `cbase` Lambda's `lambda_deploy.sh` has since 2026-10-19.
 3. Repository secrets (Settings > Secrets and variables > Actions): `CBASE_AWS_ROLE_ARN` (the stack's `DeployRoleArn` output).
+   Repository variables: `CBASE_DEPLOY` (`live`, or unset for dry runs only).
 
 There is no Supabase lane: `deploy.yml` was deleted on 2026-10-14, because the standalone iOS app never shipped and no client talks to Supabase (step 14).
 
@@ -530,8 +558,9 @@ A bad web deploy: revert the bad commit on `main`, whose push deploys the revert
 
 ### W7. GitHub deploys for the web
 
-1. The role and its one secret (`CBASE_AWS_ROLE_ARN`) are step 13's: one role deploys the backend and the web.
-2. A template change to `providers/aws/ops/site/web.yaml` is always `web_deploy.sh stack` from this Mac, on a tree that contains `origin/main` (`ops/require_main.sh`); CI only uploads and rewrites the two page lists on the existing template.
-3. utils.foolish.cards is built in the sibling repo `foolish-utils` and still deployed by hand (W5 step 4).
-4. Now and then, `c_base/providers/aws/ops/site/web_deploy.sh site foolish --prune-static` (and `uttt`) deletes hashed files no current page uses; a tab left open across two deploys reloads.
-5. The Infinite Oracle's Mode B headers: `CBASE_WEB_ISOLATION=yes c_base/providers/aws/ops/site/web_deploy.sh stack` (and `no` to undo).
+1. Since 2026-11-10 the sites deploy with the backend, through `./cbase deploy` in `c_base.yml`'s `deploy` job (step 13); `cbase-web`'s two old distributions, routers and page lists are no longer touched, and `web_deploy.sh` runs only by hand.
+2. A change to a site's routes, shell or hostnames is a change to its `cbase.conf` (`foolish/cbase.conf`, `uttt/cbase.conf`); the next deploy's change set applies it, and one that would replace a distribution or move a hostname stops the job (`--allow-downtime` is a hand step).
+3. utils.foolish.cards is built in the sibling repo `foolish-utils` and still deployed by hand (CUTOVER.md step 7).
+4. Now and then, `../cbase/tools/cbase deploy --prune` by hand from `foolish/` (and `uttt/`) deletes the files the build no longer has; a tab left open across two deploys reloads.
+5. The Infinite Oracle's Mode B headers were `web.yaml`'s (`CBASE_WEB_ISOLATION`), which no longer serves the sites.
+   `./cbase` sets no such headers, so turning Mode B on is a change to `cbase` itself.

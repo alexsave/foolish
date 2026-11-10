@@ -421,6 +421,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="cbase-serve-$(git rev-parse --short=9 HEAD)"
+          # A re-run of this commit's run (a rollback, c_base/RUNBOOK.md 13) finds its release made.
+          if gh release view "$tag" > /dev/null 2>&1; then echo "release $tag exists: kept"; exit 0; fi
           gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" \
             --notes "cbase serve, Linux arm64, static (musl). Built from $GITHUB_SHA." \
             c_base/dist/cbase-serve-linux-arm64 c_base/dist/cbase-serve-linux-arm64.sha256
