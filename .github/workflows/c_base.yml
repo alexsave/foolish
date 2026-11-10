@@ -370,7 +370,9 @@ jobs:
 
   deploy:
     name: deploy to cbase-vm
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    # OFF since the ./cbase cutover (CUTOVER.md step 0.2): ./cbase deploy owns foolish's VM and sites now.
+    # Turning this back on reinstalls cbase.service on 8080 over the ./cbase socket. Rollback only (CUTOVER.md 9).
+    if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: [check, asan, fuzz_done, dynamo, ops, serve_binary]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
