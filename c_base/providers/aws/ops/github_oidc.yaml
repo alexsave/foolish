@@ -148,7 +148,8 @@ Resources:
               # Read, drift-check, change-set, execute. No CreateStack,
               # UpdateStack or DeleteStack: a change set is the one way in,
               # and ./cbase deletes a stack only after a first create, which
-              # CI never makes.
+              # CI never makes. The change-set actions authorize on the stack's
+              # ARN (IAM's simulator refuses them a changeSet/ ARN, even "*").
               - Sid: AppStacks
                 Effect: Allow
                 Action:
@@ -166,7 +167,6 @@ Resources:
                 Resource:
                   - !Sub "arn:${AWS::Partition}:cloudformation:us-east-1:${AWS::AccountId}:stack/cbase-app-foolish/*"
                   - !Sub "arn:${AWS::Partition}:cloudformation:us-east-1:${AWS::AccountId}:stack/cbase-app-uttt/*"
-                  - !Sub "arn:${AWS::Partition}:cloudformation:us-east-1:${AWS::AccountId}:changeSet/cbase-deploy/*"
               # A drift detection's status is read by its id, and drift
               # detection reads each resource type's configuration: neither
               # action has a resource type.
