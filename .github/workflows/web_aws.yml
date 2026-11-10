@@ -155,7 +155,9 @@ jobs:
 
   deploy:
     needs: [foolish, uttt]
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    # OFF since the ./cbase cutover (CUTOVER.md step 0.2): ./cbase deploy owns foolish's VM and sites now.
+    # Turning this back on reinstalls cbase.service on 8080 over the ./cbase socket. Rollback only (CUTOVER.md 9).
+    if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # One deploy at a time, and the newest always deploys: the workflow's
     # concurrency group above. No job-level group here: a second queue would
