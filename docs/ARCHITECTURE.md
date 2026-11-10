@@ -275,7 +275,7 @@ What this shows about the stack:
 
 amgi's C server reads and writes the user's own Anki collection, a SQLite file that Anki itself also holds open.
 On 2026-11-08 at 18:42 that collection was destroyed: 56 of its 58 pages were zeroed, and only a backup brought it back.
-The full write-up is ~/Dev/foolish-reports/incident-1842.md; this section keeps the rules it left behind.
+The full write-up is amgi: docs/INCIDENT_1842.md; this section keeps the rules it left behind.
 
 What happened, in order:
 1. Anki opens its collection in WAL mode with `locking_mode=EXCLUSIVE`, so its WAL index lives in Anki's own memory and no `-shm` file exists.
@@ -349,4 +349,4 @@ Each rule has a tool or test that fails when the rule breaks, run by `make check
 - The hello-world apps: /Users/alex/Dev/hello-world and hello-world-2, each with a TIMING.md (the timed builds and their friction lists).
 - cbase: README.md (what it is, using it as a submodule), docs/PLATFORM.md (the app API, upgrading notes, the env file and serving files), docs/DESIGN.md (why it is built this way), docs/CLIENT_DESIGN.md (the client SDK's design), docs/H2.md (HTTP/2 and gRPC), client/hosts/common/cbc_host.h ("WRITING A HOST"), client/hosts/cdom/README.md (the browser adapter and its tested cdom pin), docs/mutation_checks.md.
 - amgi: README.md (quick start with make start, the app's API), skills/amgi (using it), .claude/skills/e2e-ui (the browser drives), skills/amgi/references/collection-internals.md (Anki's file and its locking), scripts/verify-c-backend.sh (the fresh-clone check; PR #44, pending Alex's merge).
-- foolish: docs/ARCHITECTURE_AS_A_PATTERN.md (the pattern, through one game); the incident write-up is ~/Dev/foolish-reports/incident-1842.md.
+- foolish: docs/ARCHITECTURE_AS_A_PATTERN.md (the pattern, through one game); the incident write-up is amgi: docs/INCIDENT_1842.md.
