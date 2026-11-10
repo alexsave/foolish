@@ -60,7 +60,7 @@ The musl numbers below are the production build (static musl, THP disabled), per
 ## Results
 
 Measured 2026-11-09 on Alex's M1 Mac, in Docker (6 CPUs), the server pinned to 2 CPUs and the load client to 4, the BASE build's p3load client for every run, base = main at 400a65d09.
-The harness and the raw numbers are in /Users/alex/Dev/cdom-memtest/roster (musl2/out/gate_round*.txt, out/gate_al*.txt).
+The harness and the raw numbers are in cdom-memtest/roster (musl2/out/gate_round*.txt, out/gate_al*.txt).
 Base and change were run interleaved, one at a time, in both orders.
 
 ### Memory
@@ -107,7 +107,7 @@ The adopt cycle is 11 ns slower (a 1,235-byte memset and a 2 x 16-byte hex expan
 
 ### Mutation checks (2026-11-09, after the series merged)
 
-Harness: /Users/alex/Dev/cdom-memtest/final/mutate.py on a clone at f99698319 (merged main), results in final/out/mutate.txt and mutate_crashes.txt; every mutant was restored and touched, and clean builds before and after passed (`git diff` of the clone empty).
+Harness: foolish/docs/memtest/harness/mutate.py on a clone at f99698319 (merged main), results in final/out/mutate.txt and mutate_crashes.txt; every mutant was restored and touched, and clean builds before and after passed (`git diff` of the clone empty).
 
 | mutant | what it breaks | result |
 |---|---|---|
@@ -123,7 +123,7 @@ Harness: /Users/alex/Dev/cdom-memtest/final/mutate.py on a clone at f99698319 (m
 | 480-S1 | the journal's membership walk counts bot seats too (`!refs[i].bot` dropped) | survived: equivalent unless a bot's id equals a member's, which no test (and no server) seats |
 | 480-S3 | `table_ops.c` drops the fallback to the loaded row's roster when a commit carries none | survived: a commit without a roster is a plain move under the journal, and `row_set_columns` already keeps the game's roster when `roster_len` is 0, so the fallback is not reached by any test; whether it is dead code (a second guard behind `row_set_columns`) is a follow-up |
 
-Measured on a real t4g.nano on 2026-11-09 (H1 to H3 confirmed: 3,158 B per game, sat2 RSS p50 -10.1 MiB, no slowdown): /Users/alex/Dev/cdom-memtest/GRAVITON.md.
+Measured on a real t4g.nano on 2026-11-09 (H1 to H3 confirmed: 3,158 B per game, sat2 RSS p50 -10.1 MiB, no slowdown): foolish/docs/memtest/GRAVITON.md.
 
 ## Follow-ups
 

@@ -1,0 +1,4 @@
+  LINK build/cbase
+/Users/alex/Dev/cdom-memtest/grav/src_C/c_base/dist/cbase-serve-linux-arm64: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), static-pie linked, BuildID[sha1]=897d11d128052c9f4ca28e1e257820704a0d5b0c, stripped
+-rwxr-xr-x@ 1 alex  staff  8431976 Nov  9 17:26 /Users/alex/Dev/cdom-memtest/grav/src_C/c_base/dist/cbase-serve-linux-arm64
+e937d581c9204a2dac460afd529cd250e883f30cd4b51441f471b217a998ba89  cbase-serve-linux-arm64

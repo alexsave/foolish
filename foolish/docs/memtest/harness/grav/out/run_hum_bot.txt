@@ -1,0 +1,108 @@
+[22:46:24] hum2 h_C build C
+Success	start h_C build C pid 6777 1 listening
+	
+Success	moves=2734 window_s=27.94 moves_per_s=97.8 move_p50_ms=0.21 move_p99_ms=0.33 err_files=0
+1794264419.563636242
+1794264452.111189804
+	
+Success	VmHWM:	   11268 kB
+VmRSS: 11304 kB RssAnon: 5988 kB RssFile: 5316 kB 
+	
+[22:47:37] hum2 h_A build A
+Success	start h_A build A pid 7250 1 listening
+	
+Success	moves=2764 window_s=27.91 moves_per_s=99.0 move_p50_ms=0.21 move_p99_ms=0.36 err_files=0
+1794264492.270497410
+1794264524.817753319
+	
+Success	VmHWM:	   13580 kB
+VmRSS: 13684 kB RssAnon: 7632 kB RssFile: 6052 kB 
+	
+[22:48:50] hum2 h_D build D
+Success	start h_D build D pid 7723 1 listening
+	
+Success	moves=2733 window_s=27.94 moves_per_s=97.8 move_p50_ms=0.22 move_p99_ms=0.32 err_files=0
+1794264566.583778980
+1794264599.132325909
+	
+Success	VmHWM:	   11044 kB
+VmRSS: 11052 kB RssAnon: 5800 kB RssFile: 5252 kB 
+	
+[22:50:04] hum2 h_B build B
+Success	start h_B build B pid 8204 1 listening
+	
+Success	moves=2718 window_s=27.89 moves_per_s=97.4 move_p50_ms=0.21 move_p99_ms=0.33 err_files=0
+1794264640.342798946
+1794264672.900321316
+	
+Success	VmHWM:	   11788 kB
+VmRSS: 11832 kB RssAnon: 6516 kB RssFile: 5316 kB 
+	
+[22:51:16] bot b_C1 build C
+Success	start b_C1 build C pid 8681 1 listening
+	
+Success	moves=810 window_s=24.96 moves_per_s=32.5 move_p50_ms=0.19 move_p99_ms=0.41 err_files=0
+1794264686.981859680
+1794264714.646091047
+	
+Success	VmHWM:	    8812 kB
+VmRSS: 8896 kB RssAnon: 3548 kB RssFile: 5348 kB 
+# pid 8681 PT_TLS memsz 1724048
+8681 cbase_C 0xffff8d45b0d0 1724064 421 5 20
+8684 req-0 0xffff8d228d40 1724064 422 5 20
+8685 job-0 0xffff8d060d40 1724064 422 41 164
+8687 cbase_C 0xffff8ce57d40 1724064 422 2 8
+8688 cbase_C 0xffff8cc57d40 1724064 422 2 8
+# total resident TLS 220 kB
+	
+[22:52:02] bot b_D1 build D
+Success	start b_D1 build D pid 9017 1 listening
+	
+Success	moves=869 window_s=24.95 moves_per_s=34.8 move_p50_ms=0.25 move_p99_ms=0.40 err_files=0
+1794264729.992349916
+1794264757.656070703
+	
+Success	VmHWM:	    8800 kB
+VmRSS: 8900 kB RssAnon: 3612 kB RssFile: 5288 kB 
+# pid 9017 PT_TLS memsz 1724048
+9017 cbase_D 0xffff8685b0d0 1724064 421 5 20
+9020 req-0 0xffff866b5d40 1724064 422 5 20
+9021 job-0 0xffff864edd40 1724064 422 38 152
+9023 cbase_D 0xffff862f3d40 1724064 422 2 8
+9024 cbase_D 0xffff8585ad40 1724064 422 2 8
+# total resident TLS 208 kB
+	
+[22:52:41] bot b_D2 build D
+Success	start b_D2 build D pid 9278 1 listening
+	
+Success	moves=850 window_s=24.99 moves_per_s=34.0 move_p50_ms=0.19 move_p99_ms=0.40 err_files=0
+1794264771.233390402
+1794264798.900884325
+	
+Success	VmHWM:	    8960 kB
+VmRSS: 9032 kB RssAnon: 3748 kB RssFile: 5284 kB 
+# pid 9278 PT_TLS memsz 1724048
+9278 cbase_D 0xffffb2e5b0d0 1724064 421 5 20
+9282 req-0 0xffffb2c28d40 1724064 422 5 20
+9283 job-0 0xffffb2a60d40 1724064 422 38 152
+9284 cbase_D 0xffffb27f5d40 1724064 422 2 8
+9285 cbase_D 0xffffb1c5ad40 1724064 422 2 8
+# total resident TLS 208 kB
+	
+[22:53:24] bot b_C2 build C
+Success	start b_C2 build C pid 9601 1 listening
+	
+Success	moves=815 window_s=24.97 moves_per_s=32.6 move_p50_ms=0.17 move_p99_ms=0.28 err_files=0
+1794264814.199582238
+1794264841.867640985
+	
+Success	VmHWM:	    9012 kB
+VmRSS: 9092 kB RssAnon: 3744 kB RssFile: 5348 kB 
+# pid 9601 PT_TLS memsz 1724048
+9601 cbase_C 0xffffa2c5b0d0 1724064 421 5 20
+9604 req-0 0xffffa2ab5d40 1724064 422 5 20
+9605 job-0 0xffffa28edd40 1724064 422 39 156
+9607 cbase_C 0xffffa26cdd40 1724064 422 2 8
+9608 cbase_C 0xffffa1c5ad40 1724064 422 2 8
+# total resident TLS 212 kB
+	
