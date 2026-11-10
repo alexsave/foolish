@@ -87,7 +87,7 @@ typedef struct {
 // Failed sign-ins at one email, an account's or not (auth.h CB_AUTH_FAIL_*):
 // how many, when the last one was, and until when it is locked. Kept by
 // email, expiring by itself an hour after its last write (DynamoDB's TTL;
-// SQLite sweeps the rows past it at each put).
+// the local store sweeps the rows past it at each put).
 typedef struct {
     int32_t n;
     int64_t last_at;
