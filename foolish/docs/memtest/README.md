@@ -13,7 +13,8 @@ The server's resident memory (RSS p50, saturated) went from 46.9 to 21.2 MiB on 
 
 ## What is here
 
-`harness/` holds the small files the documents cite: the Graviton run's scripts (`ec2/`, `grav/`), the mutation runner (`mutate.py`), and the microbenchmark and gate sources (`mem2_jbench.c`, `mem3_jbench.c`, `mem3_gate.c`).
+`harness/` holds the small files the documents cite: the Graviton run's scripts (`ec2/`, `grav/`), the mutation runner (`mutate.py`), and the microbenchmark sources (`mem2_jbench.c`, `mem3_jbench.c`).
+The bot behaviour gate's source (`mem3_gate.c`) is not kept: it carried its own xorshift generator, which the repository's one-random-source rule forbids, and its measurements are in `BOT_MEMORY.md`.
 The scripts name the paths of the original scratch folder, `~/Dev/cdom-memtest`.
 
 ## What is not here
