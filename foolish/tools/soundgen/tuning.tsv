@@ -20,7 +20,7 @@
 part	deal	main	thumb	-130	0	-6	3	deal: thumb slide
 part	deal	main	grab	0	0	-5	0	deal: grab off the stock
 part	deal	tight	thumb	-50	0	-6	3	deal, opening a run: thumb slide
-part	deal	tight	grab	0	0	-5	0	deal, opening a run: grab off the stock
+part	deal	tight	grab	0	0	-4	0	deal, opening a run: grab off the stock
 part	deal_land	main	land	0	0	-13	3	deal: card lands on the cloth
 part	turn	main	flip	0	0	12	0	trump: flipped over
 part	flip	main	land	0	0	9	3	trump: lands face up
