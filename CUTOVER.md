@@ -1,6 +1,6 @@
 # Cutover: foolish, utils and uttt onto ./cbase
 
-This runbook moves foolish.cards, www, utils.foolish.cards, api.foolish.cards, uttt.live and www.uttt.live onto `./cbase` (the submodule at `cbase/`, pinned to cbase main b4d5cd41).
+This runbook moves foolish.cards, www, utils.foolish.cards, api.foolish.cards, uttt.live and www.uttt.live onto `./cbase` (the submodule at `cbase/`, pinned to cbase main 664de030).
 `./cbase` ADOPTS what runs today (Alex, 2026-11-09).
 The VM is still `cbase-vm`'s instance, the database is still `/var/lib/cbase/cbase.sqlite` on its disk, and its backups still go to the same key.
 The files are still in `cbase-web-487337210065`, and the certificates are today's.
