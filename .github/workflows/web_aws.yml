@@ -1,60 +1,35 @@
-# The web on AWS (c_base/providers/aws/ops/site/web.yaml): foolish.cards and uttt.live built here
-# as static exports and uploaded to S3 behind CloudFront by
-# c_base/providers/aws/ops/site/web_deploy.sh. It is the only deploy lane for both sites
-# (c_base/RUNBOOK.md, "Web hosting").
+# The web's builds: foolish.cards and uttt.live as static exports, each a compile gate on the
+# pull requests that touch its site, and on main the files the deploy uploads.
 #
-#   foolish   gen, wasm, `next build` (out/): the compile gate, on every pull
-#             request that touches the site
+#   foolish   gen, wasm, `next build` (out/): the compile gate
 #   uttt      the uttt wasm, typecheck, the 243 page's module tests, `next
 #             build` (out/), the compile gate
-#   deploy    on a push to main, or a workflow_dispatch from main: both exports,
-#             foolish then uttt (each rewrites the cbase-web stack's page list,
-#             and two stack updates cannot overlap), each upload gated on the
-#             tree containing origin/main, or being a commit of main whose
-#             newer push's run is queued behind this one. One run on main at
-#             a time (the workflow's concurrency group, never cancelled
-#             mid-way: that would stop a stack update half done); a newer
-#             push's run waiting behind it replaces any older one still
-#             waiting, and every run that starts deploys its own commit
-#             (c_base/ops/require_main.sh, QUEUED), so the newest commit of
-#             main always deploys
 #
-# The template and the router's tests are c_base.yml's (its ops job). A
-# template change is deployed by hand (web_deploy.sh stack): this lane only
-# uploads, and rewrites the page lists.
+# This workflow deploys nothing. On main, c_base.yml's `web` job calls it
+# (workflow_call) in c_base's own run, so both exports are uploaded as that
+# run's artifacts foolish-out and uttt-out, and c_base.yml's `deploy` job hands
+# them to ./cbase deploy with the server, after every gate (c_base.yml's header;
+# c_base/RUNBOOK.md, "GitHub deploys"). It has no push trigger of its own: a
+# push to main that touches a site starts c_base.yml, which runs these builds.
 #
-# Secrets (Settings > Secrets and variables > Actions):
-#   CBASE_AWS_ROLE_ARN   the cbase-github stack's DeployRoleArn
-#                        (c_base/providers/aws/ops/github_oidc.yaml; OIDC, no keys, main only)
 # The backend URL is not a secret: NEXT_PUBLIC_BACKEND_URL is
 # https://api.foolish.cards, and the binary surface the bundle speaks has no
 # anon key.
 name: web_aws
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'foolish/**'
-      - 'shared/**'
-      - 'uttt/c/**'
-      - 'uttt/web/**'
-      - 'c_base/providers/aws/ops/site/web_deploy.sh'
-      - 'c_base/ops/require_main.sh'
-      - '.github/workflows/web_aws.yml'
   pull_request:
     paths:
       - 'foolish/**'
       - 'shared/**'
       - 'uttt/c/**'
       - 'uttt/web/**'
-      - 'c_base/providers/aws/ops/site/web_deploy.sh'
-      - 'c_base/ops/require_main.sh'
       - '.github/workflows/web_aws.yml'
-  workflow_dispatch: {}
+  workflow_call: {}
 
-# THE DEPLOY QUEUE, and its one owner (the header's deploy paragraph). A
-# deploy half done is worse than a late one: cancel only pull request runs.
+# Pull request runs are cancelled by newer pushes to the same pull request.
+# Called from c_base.yml on main, the group is never contended: c_base's own
+# concurrency group already runs one main run at a time.
 concurrency:
   group: web_aws-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -63,10 +38,10 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: us-east-1
   NEXT_PUBLIC_BACKEND_URL: https://api.foolish.cards
-  # The one place that says which runs deploy; every job reads it.
-  DEPLOYS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+  # The one place that says which runs keep the exports: the deploy's (called
+  # from c_base.yml), not a pull request's. Every job reads it.
+  KEEPS_EXPORTS: ${{ github.event_name != 'pull_request' }}
 
 jobs:
   foolish:
@@ -102,7 +77,7 @@ jobs:
           du -sh out
 
       - uses: actions/upload-artifact@v6
-        if: env.DEPLOYS == 'true'
+        if: env.KEEPS_EXPORTS == 'true'
         with:
           name: foolish-out
           path: foolish/out
@@ -145,64 +120,10 @@ jobs:
           du -sh out
 
       - uses: actions/upload-artifact@v6
-        if: env.DEPLOYS == 'true'
+        if: env.KEEPS_EXPORTS == 'true'
         with:
           name: uttt-out
           path: uttt/web/out
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
-
-  deploy:
-    needs: [foolish, uttt]
-    # OFF since the ./cbase cutover (CUTOVER.md step 0.2): ./cbase deploy owns foolish's VM and sites now.
-    # Turning this back on reinstalls cbase.service on 8080 over the ./cbase socket. Rollback only (CUTOVER.md 9).
-    if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    # One deploy at a time, and the newest always deploys: the workflow's
-    # concurrency group above. No job-level group here: a second queue would
-    # order deploys by which build finished first, not by push.
-    permissions:
-      contents: read
-      id-token: write   # the OIDC token configure-aws-credentials exchanges for the role
-    steps:
-      - name: is the deploy secret set
-        env:
-          ROLE_ARN: ${{ secrets.CBASE_AWS_ROLE_ARN }}
-        run: |
-          if [ -z "$ROLE_ARN" ]; then
-            echo "::error::CBASE_AWS_ROLE_ARN is not set: main did not deploy (.github/workflows/web_aws.yml header)."
-            exit 1
-          fi
-
-      # For web_deploy.sh and its main-ancestry gate (require_main.sh).
-      - uses: actions/checkout@v5
-
-      - uses: actions/download-artifact@v7
-        with:
-          name: foolish-out
-          path: foolish/out
-
-      - uses: actions/download-artifact@v7
-        with:
-          name: uttt-out
-          path: uttt/web/out
-
-      - uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ secrets.CBASE_AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: foolish.cards - upload, route, invalidate
-        run: c_base/providers/aws/ops/site/web_deploy.sh site foolish --out foolish/out
-
-      - name: uttt.live - upload, route, invalidate
-        run: c_base/providers/aws/ops/site/web_deploy.sh site uttt --out uttt/web/out
-
-      - name: the sites answer
-        run: |
-          for u in https://www.foolish.cards/ https://www.uttt.live/; do
-            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$u")"
-            echo "$u $code"
-            [ "$code" = 200 ] || { echo "::error::$u answered $code"; exit 1; }
-          done
