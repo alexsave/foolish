@@ -96,6 +96,28 @@ jobs:
       - name: unit tests and both smoke lanes
         run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check
 
+  # Linux arm64: the shipped binary's own architecture (cbase-vm is a t4g.nano), which `check`
+  # above, on x86_64, never sees. Two arm64-only failures hid there: hand_contract_test's digest
+  # (GCC 13's -flto build left stack bytes in a struct's padding, and its fused object never fused,
+  # since GCC before 14 implements -ffp-contract=on as off) and the num fuzz target's link (UBSan's
+  # signed 128-bit multiply check calls __muloti4 on aarch64, which libgcc does not carry). So
+  # c_base's suite, the kernel's suites at volume and every fuzz target's link run here too.
+  check_arm64:
+    name: make check, kernel volume and fuzz build (ubuntu-24.04-arm)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update -q && sudo apt-get install -y -q build-essential clang libssl-dev libsqlite3-dev
+      - name: build
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)"
+      - name: unit tests and both smoke lanes
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" check
+      - name: the kernel's suites at volume (tests, hand_contract_test, msg_wire_test 20, analyse_test)
+        run: make -C foolish/c -j"$(getconf _NPROCESSORS_ONLN)" volume
+      - name: every fuzz target builds and links
+        run: make -C c_base -j"$(getconf _NPROCESSORS_ONLN)" fuzz
+
   asan:
     name: make check-asan
     runs-on: ubuntu-24.04
@@ -369,7 +391,7 @@ jobs:
   deploy:
     name: deploy to cbase-vm
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    needs: [check, asan, fuzz_done, dynamo, ops, serve_binary]
+    needs: [check, check_arm64, asan, fuzz_done, dynamo, ops, serve_binary]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # One deploy at a time, and the newest always deploys: the workflow's
