@@ -1,0 +1,12 @@
+[22:55:02] g11 rematch after eviction, build D
+Success	start g11 build D pid 10316 1 listening
+	
+Success	moves=10966 window_s=140.12 moves_per_s=78.3 move_p50_ms=0.20 move_p99_ms=0.44 err_files=0
+rematch wait_ms=2000 n=20 p50_ms=0.325 p90_ms=0.466 max_ms=0.588 mean_ms=0.359
+rematch wait_ms=50000 n=20 p50_ms=0.380 p90_ms=0.550 max_ms=0.695 mean_ms=0.394
+rematch wait_ms=70000 n=20 p50_ms=0.793 p90_ms=0.999 max_ms=2.215 mean_ms=0.863
+1794264910.329798298
+1794265052.007897817
+	
+Success	VmHWM:	    8980 kB
+	

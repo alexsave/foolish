@@ -1,0 +1,14 @@
+i-0963ed8d910d215d0	terminated
+i-01fd4ef7421e2d01f	terminated
+i-0963ed8d910d215d0	terminated
+i-01fd4ef7421e2d01f	terminated
+bucket cbase-mem-test-<suf> deleted
+{
+    "Return": true,
+    "GroupId": "sg-0f82f2ee4958507ee"
+}
+sg sg-0f82f2ee4958507ee deleted
+role cbase-mem-test-role-<suf> deleted
+       0
+       0
+running

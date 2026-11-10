@@ -56,7 +56,7 @@ The musl numbers are the production build (static musl, THP disabled) at sat2 (8
 
 Measured 2026-11-09 on Alex's M1 Mac, in Docker (6 CPUs), the server pinned to 2 CPUs and the load client to 4, the base build's p3load client for every run, base = main at 57a40a1f5.
 Base and change were run interleaved, one at a time, three rounds in each order.
-The harness and the raw numbers are in /Users/alex/Dev/cdom-memtest/mem2 (musl2/out/gate_round*.txt, out/gate_al_r*.txt, bench/).
+The harness and the raw numbers are in cdom-memtest/mem2 (musl2/out/gate_round*.txt, out/gate_al_r*.txt, bench/).
 macOS Spotlight (mds_stores at 70 to 210% of a core) ran through every measurement.
 
 ### Memory
@@ -83,7 +83,7 @@ Per resident game (4,096 at sat2), the musl RssAnon delta is 10,366 kB / 4,096 =
 | native (M1) | `cbase-bench cpu` kernel_action | 816 / 816 / 816 ns | 811 / 814 / 820 ns |
 | native (M1) | `cbase-bench cpu` dynamo_get_parse | 2,746 / 2,740 / 2,752 ns | 2,784 / 2,881 / 2,724 ns |
 
-The microbench (/Users/alex/Dev/cdom-memtest/mem2/bench/jbench.c) includes journal.c and times its own functions on a two-seat game 8 moves in (a 134-byte state): a commit handing a resident over, the flush's row (the commit, then the encode and the copy into the snapshot), the first read after a commit (`row_refresh` and `row_dup`) and a second read.
+The microbench (foolish/docs/memtest/harness/mem2_jbench.c) includes journal.c and times its own functions on a two-seat game 8 moves in (a 134-byte state): a commit handing a resident over, the flush's row (the commit, then the encode and the copy into the snapshot), the first read after a commit (`row_refresh` and `row_dup`) and a second read.
 Medians of 5 interleaved runs, ns per call:
 
 | build | path | base | change |
@@ -118,14 +118,14 @@ On glibc the first pair is 2,104 moves/s apart with the change behind; the next 
 
 ### Mutation checks (2026-11-09, after the series merged)
 
-Harness: /Users/alex/Dev/cdom-memtest/final/mutate.py on a clone at f99698319 (merged main), results in final/out/mutate.txt and mutate_crashes.txt; every mutant was restored and touched, and clean builds before and after passed (`git diff` of the clone empty).
+Harness: foolish/docs/memtest/harness/mutate.py on a clone at f99698319 (merged main), results in final/out/mutate.txt and mutate_crashes.txt; every mutant was restored and touched, and clean builds before and after passed (`git diff` of the clone empty).
 
 | mutant | what it breaks | result |
 |---|---|---|
 | 481-J1 | `row_refresh` grows the buffer to `TABLE_STATE_MAX` | red: `[a_resident_keeps_state_bytes_of_its_size] f.state_bytes >= held.state_len && f.state_bytes < TABLE_STATE_MAX / 4` |
 | 481-J2 | `row_dup_encoded` copies the stale bytes instead of encoding | red: `[a_resident_keeps_state_bytes_of_its_size] tables.state_len == held.state_len && memcmp(...) == 0` |
 
-Measured on a real t4g.nano on 2026-11-09 (H1 and H2 on RssAnon confirmed, RSS p50 -6.3 MiB: above the threshold, below the prediction): /Users/alex/Dev/cdom-memtest/GRAVITON.md.
+Measured on a real t4g.nano on 2026-11-09 (H1 and H2 on RssAnon confirmed, RSS p50 -6.3 MiB: above the threshold, below the prediction): foolish/docs/memtest/GRAVITON.md.
 
 ## Follow-ups
 

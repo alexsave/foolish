@@ -95,7 +95,7 @@ sat2's tables are two humans each, so every resident's memory is counts-only.
 
 ## The bot behaviour gate
 
-`/Users/alex/Dev/cdom-memtest/mem3/gate/gate.c` plays seeded games the server's way: every operation runs on a table adopted from the previous commit's resident, held as the journal holds it (the change: `table_resident_into` into two buffers of exactly their sizes, the one written kept; the base: the whole struct), with an eviction every 7th operation (the row loaded with its session log, as a game evicted from the overlay is).
+`foolish/docs/memtest/harness/mem3_gate.c` plays seeded games the server's way: every operation runs on a table adopted from the previous commit's resident, held as the journal holds it (the change: `table_resident_into` into two buffers of exactly their sizes, the one written kept; the base: the whole struct), with an eviction every 7th operation (the row loaded with its session log, as a game evicted from the overlay is).
 Bots move by their brains through `table_bot_drive`; human seats by the gate's own seeded draw (one xorshift, seeded by a named constant and the game's index).
 Each commit prints the moves it applied (seat and action wire) and the row's state bytes in full, and checks that the held resident encodes to exactly those bytes.
 Base and change ran with the same arguments and their outputs were compared byte for byte.
@@ -114,7 +114,7 @@ The native build also checks, at every `table_resident` (`BOT_MEM_ASSERT`), that
 
 Measured 2026-11-09 on Alex's M1 Mac, in Docker (6 CPUs), the server pinned to 2 CPUs and the load client to 4, the base build's p3load client for every run, base = main at 1270832e0.
 Base and change were run interleaved, one at a time, three rounds in each order.
-The harness and the raw numbers are in /Users/alex/Dev/cdom-memtest/mem3 (musl2/out/gate_round1.txt, gate_round2.txt, botgate.txt, jbench_musl.txt; bench/jbench_native5.txt, bench/cpu/; gate/).
+The harness and the raw numbers are in cdom-memtest/mem3 (musl2/out/gate_round1.txt, gate_round2.txt, botgate.txt, jbench_musl.txt; bench/jbench_native5.txt, bench/cpu/; gate/).
 macOS Spotlight (mds_stores at 120 to 140% of a core) and softwareupdated ran through the second sat2 round, and those runs are the slow ones of both builds.
 
 ### Memory
@@ -146,7 +146,7 @@ The bot-heavy load holds few games (one human's moves wait for an octogen's on o
 
 In the sat2 pairs the change was the faster run in 5 of 6 (+94, +3,296, -249, +778, +2,724 and +683 moves/s); the pairs that fell to 23 to 24k fell together.
 
-The microbench (/Users/alex/Dev/cdom-memtest/mem3/bench/jbench.c, as in `docs/STATE_BUFFER.md`, with two more paths: an operation's adopt of the game's resident and a commit's making of one) runs on a two-seat humans-only game 8 moves in.
+The microbench (foolish/docs/memtest/harness/mem3_jbench.c, as in `docs/STATE_BUFFER.md`, with two more paths: an operation's adopt of the game's resident and a commit's making of one) runs on a two-seat humans-only game 8 moves in.
 ns per call, medians of the interleaved runs:
 
 | build | path | base | change |
@@ -187,7 +187,7 @@ Making a small resident skips the 1,024-byte block copy, and its encode writes t
 
 ### Mutation checks (2026-11-09, after the merge)
 
-Harness: /Users/alex/Dev/cdom-memtest/final/mutate.py on a clone at f99698319 (merged main), results in final/out/mutate.txt and mutate_crashes.txt; every mutant was restored and touched, and clean builds before and after passed (`git diff` of the clone empty).
+Harness: foolish/docs/memtest/harness/mutate.py on a clone at f99698319 (merged main), results in final/out/mutate.txt and mutate_crashes.txt; every mutant was restored and touched, and clean builds before and after passed (`git diff` of the clone empty).
 
 | mutant | what it breaks | result |
 |---|---|---|
@@ -202,7 +202,7 @@ Harness: /Users/alex/Dev/cdom-memtest/final/mutate.py on a clone at f99698319 (m
 | 483-J3 | `table_ops.c`: the whole buffer passed as both, so the small one is never used | red by a crash (SIGSEGV after a buffer of the wrong size comes back); an earlier run with stale objects showed `a_resident_is_held_at_its_size` red on `resident_bytes` |
 
 So every mutant goes red, the two new tests on the right assertion where the mutant leaves memory intact; four are caught first by the summary's own debug check, and two only crash.
-Measured on a real t4g.nano on 2026-11-09 (H1 to H4 confirmed, H6 not decided with two bot runs a side): /Users/alex/Dev/cdom-memtest/GRAVITON.md.
+Measured on a real t4g.nano on 2026-11-09 (H1 to H4 confirmed, H6 not decided with two bot runs a side): foolish/docs/memtest/GRAVITON.md.
 
 ## Follow-ups
 
