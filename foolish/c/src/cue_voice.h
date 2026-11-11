@@ -101,6 +101,13 @@ int cue_strike(const CueTakeRow *takes, int n_takes, const CueMix *mix,
                CueVoiceState *st, int kind, int lead_us, int n_cards, int undoes,
                int gain_pm, CueStrike *out);
 
+// The same for a strike that OPENS ITS RUN (the first card of a deal): the cue's tight takes
+// play even where a longer one would fit, started so their anchor is on the moment all the same.
+// A cue with no tight take is struck as cue_strike does.
+int cue_strike_opening(const CueTakeRow *takes, int n_takes, const CueMix *mix,
+                       CueVoiceState *st, int kind, int lead_us, int n_cards, int undoes,
+                       int gain_pm, CueStrike *out);
+
 // How long before its moment a cue's earliest take starts (its longest anchor,
 // preludes included), in microseconds: when a host must hand the cue over.
 int cue_lead_us(const CueTakeRow *takes, int n_takes, int kind);
@@ -132,6 +139,7 @@ int cue_table_lead_us(int kind);
 int cue_table_late_us(int kind);
 void cue_table_seed(uint32_t seed);
 const CueStrike *cue_table_strike(int kind, int lead_us, int n_cards, int undoes, int gain_pm);
+const CueStrike *cue_table_strike_opening(int kind, int lead_us, int n_cards, int undoes, int gain_pm);
 
 // THE TUNER'S TABLE (development: tools/soundgen/tune.sh, src/audio/tunerPlay.ts).
 // A table in place of the linked one, so a page hears a tuning change without the

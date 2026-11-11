@@ -2134,6 +2134,15 @@ static void test_cue_voice(void) {
         last = s.take;
     }
     CHECK(alternated, "a cue never plays the take it played last when it has another");
+    // A strike that OPENS ITS RUN plays a tight take even with all the time in the world, started so
+    // its anchor is on the moment; a cue with no tight take plays as it always did.
+    for (int i = 0; i < 20; i++) {
+        cue_strike_opening(T, n, M, &st, ANIM_CUE_LIFT, 1000000, 1, 0, 1000, &s);
+        CHECK((s.take == 2 && s.start_us == 900000) || (s.take == 3 && s.start_us == 850000),
+              "opening a run with a second to go plays a tight lift, its anchor on the moment");
+    }
+    cue_strike_opening(T, n, M, &st, ANIM_CUE_PLACE, 1000000, 1, 0, 1000, &s);
+    CHECK(s.take == 5 && s.start_us == 980000, "a cue with no tight take is struck as always");
     // A cue with one take plays it every time; a negative anchor starts after the moment.
     for (int i = 0; i < 3; i++) {
         cue_strike(T, n, M, &st, ANIM_CUE_PASS, 0, 1, 0, 1000, &s);

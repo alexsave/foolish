@@ -21,6 +21,8 @@ export const DeckAndFlipped = () => {
     // the trump while it is (show_flipped_slot), so the overlay's
     // findElementByLocation('deck') and ('flipped') always find the place a
     // card is leaving. The slot gives way to the SuitIcon at end-game.
+    // How big the stock is drawn: a card in the air's size through the opening deal (FlightCard).
+    const lift = deckLifted ? 1.5 : 1;
     const rules = rulesOf(game, inFlightFromDeck, inFlightToFlipped, trumpFlight !== null);
     const displayedDeckLength = rules.deckPile;
     const badgeTotal = rules.deckBadge;
@@ -34,20 +36,15 @@ export const DeckAndFlipped = () => {
     // doesn't shift when the flipped card lands or when the slot is reserved.
     return <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', alignItems: 'center', height: '240px', width: '100px', paddingTop: '85px' }}>
         {showDeckSpot && (
-            // IN THE AIR through the opening deal: the size a card in flight has (FlightCard's 1.5), set
-            // the way FlightCard sets it - at once, with no transition. A transition makes the browser
-            // draw the stock at its own size and scale that picture up, and the fern on the backs
-            // goes soft and the black washes out, where a flight's card is drawn at 1.5 outright.
-            <div
-                style={{
-                    position: 'relative',
-                    transform: deckLifted ? 'scale(1.5)' : 'none',
-                    transformOrigin: 'center',
-                }}
-                data-location="deck"
-            >
+            // IN THE AIR through the opening deal: a card in flight's size (FlightCard's 1.5). The stock is
+            // DRAWN that big, not scaled by a transform, so no browser resamples the fern on its backs
+            // (Alex: it looked washed out), and it stays on the footprint it has, centred, so the
+            // trump's slot below does not move and the flights still leave from its middle.
+            <div style={{ position: 'relative', width: '50px', height: '70px' }} data-location="deck">
+                <div style={{ position: 'absolute', left: `${-25 * (lift - 1)}px`, top: `${-35 * (lift - 1)}px` }}>
                 {/* An empty pile is the card's own footprint and no card. */}
-                <CardBack deckSize={displayedDeckLength} />
+                <CardBack deckSize={displayedDeckLength} scale={lift} />
+                </div>
                 {showDeckPile && <p style={{
                     position: 'absolute',
                     top: '50%',

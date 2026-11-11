@@ -84,3 +84,9 @@ const CueStrike *cue_table_strike(int kind, int lead_us, int n_cards, int undoes
                gain_pm, &g_strike);
     return &g_strike;
 }
+
+const CueStrike *cue_table_strike_opening(int kind, int lead_us, int n_cards, int undoes, int gain_pm) {
+    cue_strike_opening(g_rows, n_rows(), g_mix, &g_voice, kind, lead_us, n_cards, undoes,
+                       gain_pm, &g_strike);
+    return &g_strike;
+}

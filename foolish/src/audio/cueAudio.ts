@@ -380,7 +380,7 @@ export class CueAudio {
         return Math.max(0, s * 1000);
     }
 
-    strike(kind: number, delayMs = 0, nCards = 1, undoes = 0, gainPm = 1000): boolean {
+    strike(kind: number, delayMs = 0, nCards = 1, undoes = 0, gainPm = 1000, opening = false): boolean {
         const ctx = this.ctx, master = this.master;
         if (!ctx || !master || this.settings().muted || ctx.state !== 'running') return false;
         if (typeof document !== 'undefined' && document.hidden) return false;
@@ -392,7 +392,7 @@ export class CueAudio {
         // The moment as it must leave the context to be heard on time (latencyMs). A
         // moment closer than the output's delay can only be heard late.
         const leadUs = Math.round(Math.max(0, delayMs - this.latencyMs()) * 1000);
-        const s = cueStrike(kind, leadUs, nCards, undoes, gainPm);
+        const s = cueStrike(kind, leadUs, nCards, undoes, gainPm, opening);
         if (s.take < 0) return false;
         const takes = cueTakes();
         const now = ctx.currentTime, at = now + leadUs / 1e6;

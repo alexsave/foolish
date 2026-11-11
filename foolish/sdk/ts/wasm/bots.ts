@@ -518,9 +518,11 @@ export function cueSeed(seed: number): void {
 /** Strike `kind` with its moment `leadUs` from now, standing for `nCards`; `undoes` is a
  *  REVERT's undone cue and `gainPm` the strike's own level (animSeatGainPm for a dealt
  *  card). The voice remembers it. */
-export function cueStrike(kind: number, leadUs: number, nCards: number, undoes: number, gainPm: number): CueStrike {
+export function cueStrike(kind: number, leadUs: number, nCards: number, undoes: number, gainPm: number,
+                          opening = false): CueStrike {
     const ex = bots();
-    return V.readCueStrike(mem(ex), ex.wasm_cue_strike(kind, leadUs | 0, nCards | 0, undoes | 0, gainPm | 0));
+    const at = opening ? ex.wasm_cue_strike_opening : ex.wasm_cue_strike;
+    return V.readCueStrike(mem(ex), at(kind, leadUs | 0, nCards | 0, undoes | 0, gainPm | 0));
 }
 
 /** WHICH CUES COULD SOUND NEXT from a board (anim_cues_next): one bit per

@@ -122,9 +122,12 @@ static int32_t start_us(const CueTakeRow *t, int lead_us, int rate_pm, int backw
     return s > 0 ? (int32_t)(s + 0.5) : 0;
 }
 
-int cue_strike(const CueTakeRow *takes, int n_takes, const CueMix *mix,
-               CueVoiceState *st, int kind, int lead_us, int n_cards, int undoes,
-               int gain_pm, CueStrike *out) {
+// `opening`: the strike opens its run, so its tight takes play even where a longer one would fit
+// (Alex: the first card of a deal has nothing in the air, and its whole lead-in is heard before
+// anything moves). A cue with no tight take plays as it always did.
+static int strike_in(const CueTakeRow *takes, int n_takes, const CueMix *mix,
+                     CueVoiceState *st, int kind, int lead_us, int n_cards, int undoes,
+                     int gain_pm, int opening, CueStrike *out) {
     if (!out) return -1;
     *out = (CueStrike){ .take = -1, .prelude = -1 };
     const int backwards = kind == ANIM_CUE_REVERT;
@@ -138,7 +141,8 @@ int cue_strike(const CueTakeRow *takes, int n_takes, const CueMix *mix,
     // its own; a revert its own, backwards.
     Admit admit = admit_main;
     if (!backwards) {
-        if (count(takes, n_takes, admit_fit, voiced, lead_us, 0) > 0) admit = admit_fit;
+        if (opening && count(takes, n_takes, admit_tight, voiced, lead_us, 0) > 0) admit = admit_tight;
+        else if (count(takes, n_takes, admit_fit, voiced, lead_us, 0) > 0) admit = admit_fit;
         else if (count(takes, n_takes, admit_tight, voiced, lead_us, 0) > 0) admit = admit_tight;
     }
     const int take = variant(takes, n_takes, st, voiced, admit, voiced, lead_us, 0);
@@ -159,6 +163,18 @@ int cue_strike(const CueTakeRow *takes, int n_takes, const CueMix *mix,
         }
     }
     return 0;
+}
+
+int cue_strike(const CueTakeRow *takes, int n_takes, const CueMix *mix,
+               CueVoiceState *st, int kind, int lead_us, int n_cards, int undoes,
+               int gain_pm, CueStrike *out) {
+    return strike_in(takes, n_takes, mix, st, kind, lead_us, n_cards, undoes, gain_pm, 0, out);
+}
+
+int cue_strike_opening(const CueTakeRow *takes, int n_takes, const CueMix *mix,
+                       CueVoiceState *st, int kind, int lead_us, int n_cards, int undoes,
+                       int gain_pm, CueStrike *out) {
+    return strike_in(takes, n_takes, mix, st, kind, lead_us, n_cards, undoes, gain_pm, 1, out);
 }
 
 int cue_resampled_len(int n, int rate_pm) {

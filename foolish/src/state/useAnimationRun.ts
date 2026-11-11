@@ -233,6 +233,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         // ones coming due are handed over a little EARLY, each with how far off
         // it is, so the engine can pin it to the audio clock instead of to
         // whenever a frame happens to run (src/audio/cueSchedule.ts).
+        const firstDealStep = plan.cues.find((c) => c.kind === ANIM_CUE_DEAL)?.step;
         for (const s of dueStrikes(plan.cues, nowMs, cuesDoneRef.current, cueLeadMs)) {
             // A card landing at a seat is as loud as that seat is near the
             // viewer: the kernel's geometry (anim_seat_gain_pm).
@@ -244,7 +245,11 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
                 const seat = plan.steps[s.step]?.seat ?? -1;
                 if (board) gain = animSeatGainPm(board.mySeat, seat, board.seats.length);
             }
-            cueAudio.strike(s.kind, s.delayMs, s.nCards, s.undoes, gain);
+            // THE FIRST CARD OF A DEAL OPENS THE RUN: nothing is in the air under its lead-in, so it
+            // is struck with the cue's tight take (cue_strike_opening), which the tuner's "opening a
+            // run" rows set. The cards after it keep the ordinary take.
+            const opening = s.kind === ANIM_CUE_DEAL && s.step === firstDealStep;
+            cueAudio.strike(s.kind, s.delayMs, s.nCards, s.undoes, gain, opening);
         }
 
         // A TRANSFER'S SHIELD MOVES WITH ITS "SHFFF": the sound is struck at the
