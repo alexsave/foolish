@@ -647,6 +647,7 @@ int wasm_cue_table_load(int len) {
 const CueTakeRow *wasm_cue_take(int i) { return cue_table_take(i); }
 const CueMix *wasm_cue_mix(int kind) { return cue_table_mix(kind); }
 int wasm_cue_lead_us(int kind) { return cue_table_lead_us(kind); }
+int wasm_cue_late_us(int kind) { return cue_table_late_us(kind); }
 void wasm_cue_seed(uint32_t seed) { cue_table_seed(seed); }
 const CueStrike *wasm_cue_strike(int kind, int lead_us, int n_cards, int undoes, int gain_pm) {
     return cue_table_strike(kind, lead_us, n_cards, undoes, gain_pm);

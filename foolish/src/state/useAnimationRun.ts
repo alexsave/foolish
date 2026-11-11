@@ -18,7 +18,7 @@
 // game and not about time.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { animSeatGainPm, cueLeadUs, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
+import { animSeatGainPm, cueLateUs, cueLeadUs, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
 import { ANIM_STEP_NONE } from '@sdk/ts/gen/anim.bots.ts';
 import {
     arrivingPiles, frameAt, heldPiles, NO_ARRIVING, NO_HELD, planFor, sameArriving, sameHeld, withTrumpOut,
@@ -26,8 +26,8 @@ import {
 } from './animPlan';
 import { sameCard, type TableView, type ViewCard } from './view';
 import { cueAudio } from '../audio/cueAudio';
-import { dueStrikes } from '../audio/cueSchedule';
-import { ANIM_CUE_DEAL_LAND } from '@sdk/ts/gen/kernel_consts.bots.ts';
+import { cueKey, dueStrikes } from '../audio/cueSchedule';
+import { ANIM_CUE_DEAL_LAND, ANIM_CUE_PASS } from '@sdk/ts/gen/kernel_consts.bots.ts';
 
 /** How long before its moment a cue's earliest take starts: the kernel's (cue_lead_us). */
 // A cue is handed over its earliest take's lead before its moment, and the output's
@@ -61,6 +61,11 @@ interface AnimationRunHooks<S extends RunStep> {
      *  ios/FoolishKit/Boards/MessageTableView+Sequence.swift, which fires both
      *  beside the beat's own flights). */
     onOpened?: (step: S) => void;
+    /** A transfer's "shfff" is HEARD (its cue's moment plus how long after it the
+     *  take's first sound comes, cue_late_us): the shield it slides on to the
+     *  next defender changes hands HERE, with the sound that says it, and not
+     *  with the card. The run does not end before it has been called. */
+    onSlid?: (step: S) => void;
     /** Every step has landed and the run is over. */
     onIdle: () => void;
     /** Steps were added to the run. */
@@ -132,6 +137,8 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     // is rebuilt every frame and a run is appended to in flight; this is what
     // makes a cue sound once across all of those plans. Emptied with the run.
     const cuesDoneRef = useRef<Set<number>>(new Set());
+    // WHICH TRANSFERS' SLIDES HAVE BEEN HEARD (onSlid), by the same (step, kind) key.
+    const slidRef = useRef<Set<number>>(new Set());
     const frameHandleRef = useRef<number | null>(null);
     // The merged step a multi-step beat draws as, held so the page is handed
     // the SAME object every frame: `currentAnimation` is compared by identity
@@ -239,6 +246,18 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             cueAudio.strike(s.kind, s.delayMs, s.nCards, s.undoes, gain);
         }
 
+        // A TRANSFER'S SHIELD MOVES WITH ITS "SHFFF": the sound is struck at the
+        // landing and is first heard cue_late_us after it, and that is when the
+        // badge changes hands. Only a transfer has this cue, so no other change
+        // of the marks (a bout's end, a good) waits on it.
+        let slidePending = false;
+        for (const c of plan.cues) {
+            if (c.kind !== ANIM_CUE_PASS || slidRef.current.has(cueKey(c))) continue;
+            if (c.atMs + cueLateUs(c.kind) / 1000 > nowMs) { slidePending = true; continue; }
+            slidRef.current.add(cueKey(c));
+            if (run[c.step]) hooksRef.current.onSlid?.(run[c.step]);
+        }
+
         while (landedRef.current < frame.landed && landedRef.current < run.length) {
             hooksRef.current.onLanded(run[landedRef.current++]);
         }
@@ -309,7 +328,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             return next;
         });
 
-        if (frame.done && landedRef.current >= run.length) {
+        if (frame.done && landedRef.current >= run.length && !slidePending) {
             settle();
             return;
         }
@@ -330,6 +349,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         // a strike already scheduled a few milliseconds past the last
         // landing (a seat's out, the tail of a spread) is still this run's.
         cuesDoneRef.current.clear();
+        slidRef.current.clear();
         setCurrentAnimation(null);
         setTrumpFlight(null);
         setFlightMs(0);
@@ -387,6 +407,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         // with it: a sweep that was about to sound belongs to a moment the
         // replay is no longer at.
         cuesDoneRef.current.clear();
+        slidRef.current.clear();
         cueAudio.cancel();
         setCurrentAnimation(null);
         setTrumpFlight(null);

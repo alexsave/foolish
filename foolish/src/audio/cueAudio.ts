@@ -314,7 +314,7 @@ export class CueAudio {
         this.progress.set(file, 'fetching');
         this.fetching++;
         const version = this.replaced.get(file) ?? 0;
-        fetch(CUE_SOUND_ROOT + file)
+        fetch(CUE_SOUND_ROOT + file, version ? { cache: 'no-store' } : undefined)
             .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
             .then((bytes) => {
                 this.fetching--;

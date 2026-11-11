@@ -25,6 +25,15 @@ int cue_lead_us(const CueTakeRow *takes, int n_takes, int kind) {
     return lead;
 }
 
+int cue_late_us(const CueTakeRow *takes, int n_takes, int kind) {
+    int late = 0;
+    for (int i = 0; takes && i < n_takes; i++) {
+        if (takes[i].cue != kind || takes[i].role != CUE_ROLE_MAIN || takes[i].anchor_us >= 0) continue;
+        if (late == 0 || -takes[i].anchor_us < late) late = -takes[i].anchor_us;
+    }
+    return late;
+}
+
 // The strokes a cue of n cards is gathered in: one per cards_per_level, 1 at
 // least, as many as its preludes have; 0 for a cue with none, or no cards.
 static int wanted_level(const CueTakeRow *takes, int n_takes, const CueMix *m, int kind, int n_cards) {

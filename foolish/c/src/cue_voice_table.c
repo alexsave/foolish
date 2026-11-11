@@ -44,6 +44,7 @@ const CueMix *cue_table_mix(int kind) {
 }
 
 int cue_table_lead_us(int kind) { return cue_lead_us(g_rows, n_rows(), kind); }
+int cue_table_late_us(int kind) { return cue_late_us(g_rows, n_rows(), kind); }
 
 int cue_table_load(const unsigned char *b, int len) {
     uint32_t magic;

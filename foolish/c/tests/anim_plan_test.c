@@ -2115,6 +2115,9 @@ static void test_cue_voice(void) {
     CHECK(cue_lead_us(T, n, ANIM_CUE_LIFT) == 400000 && cue_lead_us(T, n, ANIM_CUE_SWEEP) == 1900000
           && cue_lead_us(T, n, ANIM_CUE_PASS) == 0 && cue_lead_us(T, n, ANIM_CUE_OUT) == 0,
           "a cue's lead is its longest anchor, preludes included, and never negative");
+    CHECK(cue_late_us(T, n, ANIM_CUE_PASS) == 50000 && cue_late_us(T, n, ANIM_CUE_LIFT) == 0
+          && cue_late_us(T, n, ANIM_CUE_PLACE) == 0 && cue_late_us(T, n, ANIM_CUE_OUT) == 0,
+          "a cue is heard late by how far its take's first sound is after its moment, and 0 when it is not after it");
 
     // An ordinary take whose anchor fits, started its anchor before the moment.
     for (int i = 0; i < 20; i++) {

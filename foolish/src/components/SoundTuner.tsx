@@ -182,7 +182,7 @@ export default function SoundTuner({ playPart, perStroke, compact = false }: {
                 const right = !fp || tableFingerprint() === Number(fp[1]);
                 const said = !took ? 'Rebuilt, but this page could not take the new table: reload'
                     : !right ? 'Rebuilt, but the table here is not the new one: reload'
-                    : `Applied in ${((performance.now() - t0) / 1000).toFixed(1)} s${gain ? `; the common gain is ${gain[1]}` : ''}`;
+                    : `Applied in ${((performance.now() - t0) / 1000).toFixed(1)} s, ${changed.length} file${changed.length === 1 ? '' : 's'} replaced${gain ? `; the common gain is ${gain[1]}` : ''}`;
                 return { ok: true, out, said };
             })
             .then(({ ok, out, said }) => {
@@ -250,9 +250,9 @@ export default function SoundTuner({ playPart, perStroke, compact = false }: {
                 press Play, or play a game at <a href="/ws" style={{ color: 'inherit' }}>/ws</a> (reload it after a change). Values come from <code>tools/soundgen/tuning.tsv</code> and are
                 marked against git HEAD: when it sounds right, commit that file.
             </p>}
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', minHeight: 26 }}>
-                <span data-tuner-status style={{ color: busy ? changedColor : undefined, fontSize: compact ? 12 : undefined }}>{status || 'Ready'}</span>
-                <span style={{ opacity: 0.8, fontSize: compact ? 12 : undefined }}>{changedCount ? `${changedCount} changed against HEAD` : 'nothing changed against HEAD'}</span>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'nowrap', height: 26, flexShrink: 0 }}>
+                <span data-tuner-status title={status} style={{ color: busy ? changedColor : undefined, fontSize: compact ? 12 : undefined, flex: '1 1 0', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status || 'Ready'}</span>
+                <span style={{ opacity: 0.8, fontSize: compact ? 12 : undefined, whiteSpace: 'nowrap', flex: '0 0 auto' }}>{changedCount ? `${changedCount} changed against HEAD` : 'nothing changed against HEAD'}</span>
                 {changedCount > 0 && (
                     <button type="button" style={small} onClick={() => {
                         let next = text;

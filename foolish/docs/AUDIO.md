@@ -84,7 +84,7 @@ The ids are stable and append-only: a host's table is keyed by them.
 | 2 | `FLIP` | the same trump | as it lands in its slot | 1 | a throw-in's landing, and the stock set down on it 350 ms later |
 | 3 | `LIFT` | cards leaving a hand for the table (attack, throw-in, transfer, cover) | as the flight opens | 1 a beat | two fingers take the card, the thumb slides it out |
 | 4 | `PLACE` | a card landing on the table uncovered (attack, throw-in, transfer) | at the landing | one a card, up to 6 | the throw-in's landing |
-| 17 | `PASS` | a transfer (the event's msg is `EVW_MSG_PASSED`) | at its landing, beside its `PLACE` | 1 a step | the "shfff" of the card slid on, from 150 ms after the landing |
+| 17 | `PASS` | a transfer (the event's msg is `EVW_MSG_PASSED`) | at its landing, beside its `PLACE` | 1 a step | the "shfff" of the card slid on, from 350 ms after the landing; the shield changes hands when it is heard (`onSlid`, `cue_late_us`), the only badge change that waits on a sound |
 | 5 | `COVER` | a cover landing on its attack | at the landing | one a card, up to 6 a beat | a card landing on a card |
 | 6 | `PICKUP` | the table taken into a hand | as the cards lift | 1, for n cards | the pile lifted with one soft knock |
 | 18 | `INTO_HAND` | the same cards | as they land in the hand | 1, for n cards | one slide into the fanned hand |

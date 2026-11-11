@@ -559,10 +559,17 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 const cleared = animRolesGoodsCleared(shown.roles, stepGoodMask(step));
                 if (cleared) roles.syncRoles(cleared, { tableOpen: true });
             }
-            // AND A TRANSFER HANDS THE SHIELD OVER WITH ITS CARD. The kernel
-            // tells a pass from an attack, because on the wire they are the same
-            // event and only the rules say which is which; the web names the
-            // seats that laid cards and asks.
+        },
+        // A TRANSFER HANDS THE SHIELD OVER WITH ITS "SHFFF", not with its card
+        // (Alex: the badges cannot slide the card on, so their change is the
+        // slide). The kernel tells a pass from an attack, because on the wire
+        // they are the same event and only the rules say which is which; the
+        // plan has this cue for a transfer alone, so it is called for nothing
+        // else, and a bout's end moves its marks at the closing beat as before.
+        onSlid: (step) => {
+            const roles = roleMotionRef.current;
+            const shown = roles.read();
+            if (!shown) return;
             if (step.type === 'attack_pass' && step.seat !== undefined) {
                 const final = sequenceFinalRef.current;
                 const handOff = final

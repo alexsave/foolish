@@ -504,6 +504,12 @@ export function cueLeadUs(kind: number): number {
     return bots().wasm_cue_lead_us(kind);
 }
 
+/** How long AFTER its moment a cue is first heard, in microseconds (0: at it or before): the wait of
+ *  whatever is drawn to go with the sound (the shield a transfer hands on, with its "shfff"). */
+export function cueLateUs(kind: number): number {
+    return bots().wasm_cue_late_us(kind);
+}
+
 /** Seed the voice's generator (which take, how far a stand-in wanders). Once a page. */
 export function cueSeed(seed: number): void {
     bots().wasm_cue_seed(seed >>> 0);

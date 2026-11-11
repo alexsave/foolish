@@ -925,10 +925,12 @@ test('tuning.tsv places every part: the deal\'s thumb slide moved 100 ms earlier
             return [...readFileSync(out, 'utf8').matchAll(/\{ (-?\d+), (-?\d+), (-?\d+), (\d+), (\d+), (\d+), \d+, "([^"]+)" \}/g)]
                 .map((m) => ({ n: +m[2], anchorUs: +m[3], cue: +m[4], role: +m[5], name: m[7] }));
         };
-        const line = /^part\tdeal\tmain\tthumb\t-130\t/m;
-        assert.match(tuning, line, 'the deal\'s thumb slide is at -130 ms in the file');
+        // Wherever it is tuned to: the test moves it, it does not pin it.
+        const line = /^part\tdeal\tmain\tthumb\t(-?\d+)\t/m;
+        const at = Number(line.exec(tuning)?.[1]);
+        assert.ok(Number.isFinite(at), 'the deal\'s thumb slide has a line in the file');
         const before = ctable(tuning, 'before');
-        const after = ctable(tuning.replace(line, 'part\tdeal\tmain\tthumb\t-230\t'), 'after');
+        const after = ctable(tuning.replace(line, `part\tdeal\tmain\tthumb\t${at - 100}\t`), 'after');
         const deal = (r: { cue: number; role: number }) => r.cue === ANIM_CUE_DEAL && r.role === 0;
         assert.equal(before.filter(deal).length, 8, 'eight ordinary deal takes');
         before.forEach((b, i) => {

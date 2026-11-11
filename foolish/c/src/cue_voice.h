@@ -103,6 +103,12 @@ int cue_strike(const CueTakeRow *takes, int n_takes, const CueMix *mix,
 // preludes included), in microseconds: when a host must hand the cue over.
 int cue_lead_us(const CueTakeRow *takes, int n_takes, int kind);
 
+// How long AFTER its moment a cue is first heard (a take whose first sound
+// comes later than the moment has a negative anchor), in microseconds, 0 for a
+// cue heard at its moment or before. What is drawn to go with the sound (the
+// shield a transfer hands on, with its "shfff") waits this long.
+int cue_late_us(const CueTakeRow *takes, int n_takes, int kind);
+
 // A take played at `rate_pm` (a stand-in's wander, CueStrike.rate_pm): the
 // samples a host's player starts in place of `in`, by linear interpolation, so
 // a speed is a buffer and not a second resampler in every host. Answers the
@@ -121,6 +127,7 @@ int cue_table_n_takes(void);
 const CueTakeRow *cue_table_take(int i);          // NULL out of range
 const CueMix *cue_table_mix(int kind);             // NULL for NONE or out of range
 int cue_table_lead_us(int kind);
+int cue_table_late_us(int kind);
 void cue_table_seed(uint32_t seed);
 const CueStrike *cue_table_strike(int kind, int lead_us, int n_cards, int undoes, int gain_pm);
 
