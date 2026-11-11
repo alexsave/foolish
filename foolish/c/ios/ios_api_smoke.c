@@ -1797,9 +1797,15 @@ static int board_rules_check(void) {
             printf("FAIL cue table: %d takes, cues 0x%x\n", n, voiced); return 1;
         }
         fio_cue_seed(7);
-        // A lift with no time before it plays a TIGHT take, whole, from now;
-        // with a second to go an ordinary one, its anchor before the moment.
-        const CueStrike *now = fio_cue_strike(ANIM_CUE_LIFT, 0, 1, 0, 1000);
+        // A deal with no time before it plays a TIGHT take, whole, from now (the lift has ONE take, so
+        // with no time it plays that, late); with a second to go an ordinary one, its anchor before
+        // the moment.
+        const CueStrike *lone = fio_cue_strike(ANIM_CUE_LIFT, 0, 1, 0, 1000);
+        const CueTakeRow *tlone = lone->take >= 0 ? fio_cue_take(lone->take) : NULL;
+        if (!tlone || tlone->role != CUE_ROLE_MAIN || lone->start_us != 0) {
+            printf("FAIL cue strike lift now\n"); return 1;
+        }
+        const CueStrike *now = fio_cue_strike(ANIM_CUE_DEAL, 0, 1, 0, 1000);
         const CueTakeRow *tn = now->take >= 0 ? fio_cue_take(now->take) : NULL;
         if (!tn || tn->role != CUE_ROLE_TIGHT || now->start_us != 0 || now->prelude != -1 || now->gain_pm != 1000) {
             printf("FAIL cue strike now\n"); return 1;
