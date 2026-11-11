@@ -54,14 +54,8 @@ const CARD_H = 70;
  *  `ios/FoolishKit/Boards/FBattleGrid.swift`'s `.timingCurve(0.25, 0.46, 0.45, 0.94)`. */
 export const EASE = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)';
 
-/** How long a flight stands still before its transition is armed: one crossed
- *  paint, so the start frame renders where the card actually is (see `progress`
- *  below - AnimationOverlay arms it on this timer). Exported because anything
- *  that has to MOVE WITH a flight has to wait the same beat, or it leads the
- *  card it is supposed to be moving with: the battle grid's counter-tilt does
- *  (TableBattles). It is a paint, not choreography - the kernel owns the
- *  duration, and this is the browser's own latency before it begins. */
-export const FLIGHT_ARM_MS = 25;
+// The beat a flight stands still before it is armed lives with the page's other timing.
+export { FLIGHT_ARM_MS } from '../../state/flightTiming';
 
 /** The red treatment for a move the server refused. */
 export const FlightCard = ({ flight, flightMs }: { flight: AnimatedCard; flightMs: number }) => {

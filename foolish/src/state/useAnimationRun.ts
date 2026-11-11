@@ -27,6 +27,7 @@ import {
 import { sameCard, type TableView, type ViewCard } from './view';
 import { cueAudio } from '../audio/cueAudio';
 import { cueKey, dueStrikes } from '../audio/cueSchedule';
+import { PAINT_LAG_MS } from './flightTiming';
 import { ANIM_CUE_DEAL, ANIM_CUE_DEAL_LAND, ANIM_CUE_FLIP, ANIM_CUE_PASS } from '@sdk/ts/gen/kernel_consts.bots.ts';
 
 /** How long before its moment a cue's earliest take starts: the kernel's (cue_lead_us). */
@@ -249,7 +250,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             // is struck with the cue's tight take (cue_strike_opening), which the tuner's "opening a
             // run" rows set. The cards after it keep the ordinary take.
             const opening = s.kind === ANIM_CUE_DEAL && s.step === firstDealStep;
-            cueAudio.strike(s.kind, s.delayMs, s.nCards, s.undoes, gain, opening);
+            cueAudio.strike(s.kind, s.delayMs + PAINT_LAG_MS, s.nCards, s.undoes, gain, opening);
         }
 
         // A TRANSFER'S SHIELD MOVES WITH ITS "SHFFF": the sound is struck at the
@@ -259,21 +260,21 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         let slidePending = false;
         for (const c of plan.cues) {
             if (c.kind !== ANIM_CUE_PASS || slidRef.current.has(cueKey(c))) continue;
-            if (c.atMs + cueLateUs(c.kind) / 1000 > nowMs) { slidePending = true; continue; }
+            if (c.atMs + cueLateUs(c.kind) / 1000 + PAINT_LAG_MS > nowMs) { slidePending = true; continue; }
             slidRef.current.add(cueKey(c));
             if (run[c.step]) hooksRef.current.onSlid?.(run[c.step]);
         }
 
         // THE STOCK IS IN THE AIR THROUGH THE OPENING DEAL, like a card in flight (Alex), from the
-        // first card it deals to the moment the "stock set down on it" is heard, which is the
-        // trump's FLIP cue plus the mark its take carries (CueMix.mark_us, tuning.tsv's
-        // `flip deck`). Only a run that turns a trump has one: a refill does not lift the stock.
+        // moment the run starts (the press of next, and before the first sound) to the moment the
+        // "stock set down on it" is heard, which is the trump's FLIP cue plus the mark its take
+        // carries (CueMix.mark_us, tuning.tsv's `flip deck`) plus the beat the page paints late
+        // (PAINT_LAG_MS). Only a run that turns a trump has one: a refill does not lift the stock.
         let deckPending = false;
         {
             const flip = plan.cues.find((c) => c.kind === ANIM_CUE_FLIP);
-            const first = flip && plan.cues.find((c) => c.kind === ANIM_CUE_DEAL);
-            const down = flip ? flip.atMs + (cueMix(ANIM_CUE_FLIP)?.markUs ?? 0) / 1000 : 0;
-            const up = !!first && nowMs >= first.atMs && nowMs < down;
+            const down = flip ? flip.atMs + (cueMix(ANIM_CUE_FLIP)?.markUs ?? 0) / 1000 + PAINT_LAG_MS : 0;
+            const up = !!flip && nowMs < down;
             deckPending = !!flip && nowMs < down;
             setDeckLifted((prev) => (prev === up ? prev : up));
         }
