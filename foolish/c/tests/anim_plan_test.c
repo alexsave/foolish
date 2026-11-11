@@ -2108,7 +2108,7 @@ static void test_cue_voice(void) {
     for (int c = 0; c < ANIM_N_CUES; c++) M[c].gain_pm = 1000;
     M[ANIM_CUE_SWEEP].cards_per_level_pm = 2500;
     M[ANIM_CUE_PLACE].per_card_pm = 200;
-    M[ANIM_CUE_HAND_OFF] = (CueMix){ 470, 60, 180, 0, 0 };
+    M[ANIM_CUE_HAND_OFF] = (CueMix){ 470, 60, 180, 0, 0, 0 };
     CueVoiceState st = { .rng = 12345 };
     CueStrike s;
 

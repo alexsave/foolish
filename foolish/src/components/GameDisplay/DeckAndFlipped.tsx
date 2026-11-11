@@ -7,7 +7,7 @@ import { rulesOf, type TableView } from "../../state/view";
 
 export const DeckAndFlipped = () => {
     const game = useServer().view as TableView;
-    const { inFlightFromDeck, inFlightToFlipped, trumpFlight } = useAnimation();
+    const { inFlightFromDeck, inFlightToFlipped, trumpFlight, deckLifted } = useAnimation();
 
     // What the stock shows is the kernel's (client_view_rules): cards mid-flight
     // FROM the deck pile have left the visible pile, and cards mid-flight TO the
@@ -34,7 +34,18 @@ export const DeckAndFlipped = () => {
     // doesn't shift when the flipped card lands or when the slot is reserved.
     return <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', alignItems: 'center', height: '240px', width: '100px', paddingTop: '85px' }}>
         {showDeckSpot && (
-            <div style={{ position: 'relative' }} data-location="deck">
+            // IN THE AIR through the opening deal: the size a card in flight has (FlightCard's 1.5), so
+            // the cards leave a stock that is already as big as they are, and it comes down with the
+            // sound of it set down on the trump.
+            <div
+                style={{
+                    position: 'relative',
+                    transform: deckLifted ? 'scale(1.5)' : 'none',
+                    transformOrigin: 'center',
+                    transition: 'transform 180ms cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+                }}
+                data-location="deck"
+            >
                 {/* An empty pile is the card's own footprint and no card. */}
                 <CardBack deckSize={displayedDeckLength} />
                 {showDeckPile && <p style={{

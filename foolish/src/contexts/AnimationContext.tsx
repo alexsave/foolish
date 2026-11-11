@@ -83,6 +83,9 @@ interface AnimationContextType {
     // Subset of inFlightFromDeck that's headed to the flipped slot - these
     // are still "in the deck system" so they count toward the badge total.
     inFlightToFlipped: number;
+    /** The stock is held in the air, as a card in flight is, from the first card of the opening deal to
+     *  the sound of it set down on the trump (useAnimationRun). */
+    deckLifted: boolean;
     /** The flipped trump in the air on its way to a hand (AnimFrame.trump_flight):
      *  it has left its slot, which the stock draws empty. Null otherwise. */
     trumpFlight: Card | null;
@@ -493,7 +496,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // that is about the game, and the loop is about time.
     const {
         isAnimating, currentAnimation, flightMs, rowMs, heldPiles, arrivingPiles,
-        inFlightFromDeck, inFlightToFlipped, trumpFlight, animatingCards, enqueue, reset: resetRun,
+        inFlightFromDeck, inFlightToFlipped, trumpFlight, deckLifted, animatingCards, enqueue, reset: resetRun,
     } = useAnimationRun<ClientAnimationEvent>({
         board: () => currentGameRef.current,
         placesOf: (step) => flightPlaces(step.from_location, step.to_location, step.seat),
@@ -840,6 +843,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             arrivingPiles,
             inFlightFromDeck,
             inFlightToFlipped,
+            deckLifted,
             trumpFlight,
             getCardAnimationState,
             shownRoles: roleMotion.shown,

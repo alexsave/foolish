@@ -18,7 +18,7 @@
 // game and not about time.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { animSeatGainPm, cueLateUs, cueLeadUs, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
+import { animSeatGainPm, cueLateUs, cueLeadUs, cueMix, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
 import { ANIM_STEP_NONE } from '@sdk/ts/gen/anim.bots.ts';
 import {
     arrivingPiles, frameAt, heldPiles, NO_ARRIVING, NO_HELD, planFor, sameArriving, sameHeld, withTrumpOut,
@@ -27,7 +27,7 @@ import {
 import { sameCard, type TableView, type ViewCard } from './view';
 import { cueAudio } from '../audio/cueAudio';
 import { cueKey, dueStrikes } from '../audio/cueSchedule';
-import { ANIM_CUE_DEAL_LAND, ANIM_CUE_PASS } from '@sdk/ts/gen/kernel_consts.bots.ts';
+import { ANIM_CUE_DEAL, ANIM_CUE_DEAL_LAND, ANIM_CUE_FLIP, ANIM_CUE_PASS } from '@sdk/ts/gen/kernel_consts.bots.ts';
 
 /** How long before its moment a cue's earliest take starts: the kernel's (cue_lead_us). */
 // A cue is handed over its earliest take's lead before its moment, and the output's
@@ -90,6 +90,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     const [heldSet, setHeld] = useState<ReadonlySet<number>>(NO_HELD);
     const [arriving, setArriving] = useState<readonly ArrivingPile[]>(NO_ARRIVING);
     const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
+    const [deckLifted, setDeckLifted] = useState(false);
     const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
     // THE TRUMP IN THE AIR (AnimFrame.trump_flight): it has left its slot as
     // the draw that deals it opened, and the flight is the one place it is
@@ -258,6 +259,20 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             if (run[c.step]) hooksRef.current.onSlid?.(run[c.step]);
         }
 
+        // THE STOCK IS IN THE AIR THROUGH THE OPENING DEAL, like a card in flight (Alex), from the
+        // first card it deals to the moment the "stock set down on it" is heard, which is the
+        // trump's FLIP cue plus the mark its take carries (CueMix.mark_us, tuning.tsv's
+        // `flip deck`). Only a run that turns a trump has one: a refill does not lift the stock.
+        let deckPending = false;
+        {
+            const flip = plan.cues.find((c) => c.kind === ANIM_CUE_FLIP);
+            const first = flip && plan.cues.find((c) => c.kind === ANIM_CUE_DEAL);
+            const down = flip ? flip.atMs + (cueMix(ANIM_CUE_FLIP)?.markUs ?? 0) / 1000 : 0;
+            const up = !!first && nowMs >= first.atMs && nowMs < down;
+            deckPending = !!flip && nowMs < down;
+            setDeckLifted((prev) => (prev === up ? prev : up));
+        }
+
         while (landedRef.current < frame.landed && landedRef.current < run.length) {
             hooksRef.current.onLanded(run[landedRef.current++]);
         }
@@ -328,7 +343,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             return next;
         });
 
-        if (frame.done && landedRef.current >= run.length && !slidePending) {
+        if (frame.done && landedRef.current >= run.length && !slidePending && !deckPending) {
             settle();
             return;
         }
@@ -361,6 +376,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         // it starts, and a seek's `reset` zeroes it outright.
         setIsAnimating(false);
         setInFlightFromDeck(0);
+        setDeckLifted(false);
         setInFlightToFlipped(0);
         setAnimatingCards((prev) => (prev.size === 0 ? prev : new Map()));
         hooksRef.current.onIdle();
@@ -417,6 +433,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         setArriving(NO_ARRIVING);
         setIsAnimating(false);
         setInFlightFromDeck(0);
+        setDeckLifted(false);
         setInFlightToFlipped(0);
         setAnimatingCards(new Map());
     }, []);
@@ -431,6 +448,6 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     return {
         isAnimating, currentAnimation, flightMs, rowMs, heldPiles: heldSet,
         arrivingPiles: arriving,
-        inFlightFromDeck, inFlightToFlipped, trumpFlight, animatingCards, enqueue, reset,
+        inFlightFromDeck, inFlightToFlipped, trumpFlight, deckLifted, animatingCards, enqueue, reset,
     };
 }

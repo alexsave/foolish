@@ -854,6 +854,18 @@ test('every cue the kernel can make has takes in its table and a level, and a re
     assert.equal(cueMix(ANIM_CUE_NONE), null, 'NONE is not a cue');
 });
 
+// THE STOCK COMES DOWN WITH ITS SOUND: the trump's cue carries, from its moment, where the "stock set
+// down on it" sits (CueMix.mark_us), and it is tuning.tsv's `flip deck` time and no other number.
+test('the trump\'s cue carries the time of the stock set down on it, from tuning.tsv; no other cue has a mark', () => {
+    const tuning = readFileSync(join(REPO, 'tools/soundgen/tuning.tsv'), 'utf8');
+    const at = Number(/^part\tflip\tmain\tdeck\t(-?[\d.]+)\t/m.exec(tuning)?.[1]);
+    assert.ok(at > 0, 'the stock set down comes after the trump lands');
+    assert.equal(cueMix(ANIM_CUE_FLIP)!.markUs, Math.round(at * 1000), 'the mark is the part\'s time, in microseconds');
+    for (let kind = 1; kind < ANIM_N_CUES; kind++) {
+        if (kind !== ANIM_CUE_FLIP) assert.equal(cueMix(kind)!.markUs, 0, `${ANIM_CUE_NAMES[kind]} has no second moment`);
+    }
+});
+
 test('the kernel plays by the table soundgen writes its files from', () => {
     // The generator's own list of what it writes: name, cue, rate, ms, bytes, anchor, role, level.
     const listing = execFileSync('make', ['-s', '--no-print-directory', '-C', join(REPO, 'tools/soundgen'), 'list'], { encoding: 'utf8' });
