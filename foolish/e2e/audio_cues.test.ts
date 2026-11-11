@@ -30,7 +30,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -46,7 +46,7 @@ import {
     ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_SOUND_STAGGER_MS, ANIM_SOUND_OUT_LAG_MS,
     ANIM_CUE_FLIP, ANIM_CUE_PICKUP, ANIM_CUE_REVERT, ANIM_CUE_DEAL_LAND, ANIM_CUE_PASS, ANIM_CUE_TURN,
 } from '../sdk/ts/gen/kernel_consts.bots.ts';
-import { EVW_MSG_ATTACKED, EVW_MSG_PASSED } from '../sdk/ts/gen/view_layout.bots.ts';
+import { CUE_ROLE_PRELUDE, EVW_MSG_ATTACKED, EVW_MSG_PASSED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { CUE_LATE_MS, CUE_LOOK_AHEAD_MS, cueKey, dueStrikes, type PlanCue } from '../src/audio/cueSchedule.ts';
 import { CueAudio, CUE_SOUND_ROOT, cueFile } from '../src/audio/cueAudio.ts';
 import { finishCueOf } from '../src/audio/useFinishCue.ts';
@@ -268,8 +268,35 @@ test('a cue whose file starts before its moment is handed over that much earlier
     // The real table's leads (the kernel's, cue_lead_us): the deal's thumb slide and grab, the throw-in's.
     const cueLeadMs = (kind: number) => cueLeadUs(kind) / 1000;
     assert.ok(cueLeadMs(ANIM_CUE_DEAL) > 150 && cueLeadMs(ANIM_CUE_LIFT) > 150, 'the deal and a lift start well before the card leaves');
-    assert.ok(cueLeadMs(ANIM_CUE_SWEEP) > 400 && cueLeadMs(ANIM_CUE_PICKUP) > 400, 'and the one scrape before a sweep or a pickup, most of a second');
+    // ...and the scrape of a sweep or a pickup begins ON sound, with the cards: cropped where it is
+    // first audible, its file starts at the moment (a few ms of anchor), never a quiet lead-in.
+    const scrapes = cueTakes().filter((t) => t.role === CUE_ROLE_PRELUDE);
+    assert.ok(scrapes.length > 0 && scrapes.every((t) => t.anchorUs < 60_000),
+        'the scrape starts with the cards moving: no take of it has a lead-in over 60 ms');
     assert.ok(cueLeadMs(ANIM_CUE_PASS) <= 0, 'the slide on starts after its landing: no lead');
+});
+
+// A SCRAPE IS HEARD AS THE CARDS MOVE (Alex: "just crop the scrape so that it's audible at 0"): every
+// take of the strokes before a sweep or a pickup starts on sound, not on the quiet swell a stroke
+// begins with.
+test('every scrape take starts audible: its first 20 ms are not the quiet swell of a stroke', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'soundgen-scrape-'));
+    try {
+        const SG = join(REPO, 'tools/soundgen');
+        execFileSync(join(SG, 'build/soundgen'), ['write', dir, join(dir, 'ct.c'), join(dir, 'tb.bin')],
+            { cwd: SG, stdio: 'ignore' });
+        const names = readdirSync(dir).filter((f) => /^(sweep|pickup)_strokes_s\d_\d+\.wav$/.test(f));
+        assert.ok(names.length >= 10, 'the scrape takes of a sweep and a pickup are there');
+        for (const f of names) {
+            const b = readFileSync(join(dir, f));
+            const rate = b.readUInt32LE(24), n = (b.length - 44) >> 1;
+            const at = (i: number) => Math.abs(b.readInt16LE(44 + 2 * i));
+            let peak = 0, first = 0;
+            for (let i = 0; i < n; i++) peak = Math.max(peak, at(i));
+            for (let i = 0; i < Math.floor(rate * 0.02); i++) first = Math.max(first, at(i));
+            assert.ok(first >= 0.04 * peak, `${f}: audible from its first 20 ms (${first} of a peak of ${peak})`);
+        }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a tab that was away does not replay what it missed', () => {

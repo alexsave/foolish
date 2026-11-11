@@ -327,7 +327,7 @@ Run `npm run dev` and `npm run tune` side by side, and open `http://localhost:30
 `npm run tune` starts `tools/soundgen/tune.c`, a small endpoint on `127.0.0.1:3101` that answers only pages on this machine and is never part of a build.
 The "Tune" table at the top of `/sounds` has one row a part ("deal: thumb slide", "pickup: slide into hand", "trump: deck set down on it"), grouped under each cue's whole-cue row.
 The level is in dB on the deal's scale, before the common gain that lifts every card take so the loudest peaks at -3 dBFS: raising the loudest part therefore lowers everything else, and what a level says is its balance against the rest.
-The time is in ms from the cue's moment, negative before it; for strokes it is where the last one ends before the lift.
+The time is in ms from the cue's moment, negative before it; for strokes it is where the scrape is first heard (0: the instant the cards start moving), drawn up to the spread earlier.
 A grey "to" beside a value is the far end of its random spread, which the tuner shows and leaves alone.
 The whole-cue row sets the cue's level for every host (its `mix` gain), and its "all parts" buttons move every part of the cue 10 ms against the animation.
 Every change writes `tuning.tsv`, rebuilds the takes it touched, the take table, `web.wasm` and `promo.wasm` (`tools/soundgen/tune.sh`, 1.5 to 4 s), and reloads the page, which checks its kernel carries the new table before it says "Rebuilt".

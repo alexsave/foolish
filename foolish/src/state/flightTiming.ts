@@ -17,6 +17,17 @@
  *  kernel owns the duration, and this is the browser's own latency before it begins. */
 export const FLIGHT_ARM_MS = 25;
 
+/** One 60 Hz frame: what React's commit and the browser's paint add after the timer or the
+ *  landing's tick has fired. Measured, not guessed: a flight's timer fires 27-31 ms after its
+ *  step opens (the arm), and what it changes is on screen a frame later. Alex had tuned a card
+ *  landing to +40 and +50 ms to hear it land, which is this. */
+export const FRAME_MS = 17;
+
+/** What is left of the screen-to-ear gap once the arm and a frame are counted, found by ear: with
+ *  those two in, Alex still pushed a card landing +30 ms and the lifts +20 ms later in tuning.tsv.
+ *  It is the display's and the audio path's own delay, one number here so no row carries it. */
+export const EAR_MS = 25;
+
 /** How long after the plan's moment the page SHOWS it: the beat a sound struck for that
  *  moment waits so it is heard as the card moves or lands (useAnimationRun). */
-export const PAINT_LAG_MS = FLIGHT_ARM_MS;
+export const PAINT_LAG_MS = FLIGHT_ARM_MS + FRAME_MS + EAR_MS;

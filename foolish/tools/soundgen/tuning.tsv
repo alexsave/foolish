@@ -7,7 +7,7 @@
 #   part  <cue> <role> <part> <at ms> <at spread ms> <dB> <dB spread> <what>
 #   <cue>, <role>    the take it is in: the cue as RECIPES in soundgen.c names it, and main, tight or prelude
 #   <at ms>          where the part sits from the cue's moment, negative before it (its peak, its onset for a
-#                    stroke, a slide or a soft lift or placement); for strokes, where the last one ends
+#                    stroke, a slide or a soft lift or placement); for strokes, where the scrape is first heard (0: as the cards start moving)
 #   <at spread ms>   drawn up to this much earlier, a take at a time (0: always at <at ms>)
 #   <dB>             its level on the deal's scale, before the common gain (by peak, or by loudest 50 ms RMS
 #                    for the discard's parts, the strokes and the slide into the hand), the loudest it is drawn
@@ -32,10 +32,10 @@ part	lift	tight	thumb	0	0	-30	3	lift, opening a run: thumb slide
 part	place	main	land	0	0	5	2	attack: card lands on the table
 part	cover	main	land	0	0	4	2	cover: card lands on a card
 part	pass	main	slide	350	0	-13	2	transfer: shfff to the next defender
-part	sweep	prelude	strokes	-100	80	-23.5	0	bout end: strokes gathering the table
+part	sweep	prelude	strokes	0	0	-23.5	0	bout end: strokes gathering the table
 part	sweep	main	lift	0	0	-25.5	0	bout end: pile lifted
-part	pile	main	place	0	0	-19.5	0	bout end: pile set down
-part	pickup	prelude	strokes	-50	70	-23.5	0	pickup: strokes gathering the table
+part	pile	main	place	0	0	-25	0	bout end: pile set down
+part	pickup	prelude	strokes	0	0	-30	0	pickup: strokes gathering the table
 part	pickup	main	lift	0	0	-32.5	0	pickup: lift
 part	into_hand	main	slide	0	0	-33.5	0	pickup: slide into hand
 #
