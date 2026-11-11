@@ -710,16 +710,23 @@ static void new_identity_asks_a_name_then_signs_in(void) {
     T_EQ_STR(r.email, "ada@example.com");
     T_CHECK(!r.private_email);
     // The account has no password: a password sign-in by its name refuses, whatever is sent, and
-    // counts nothing (no guess can be right), so it never locks.
-    for (int i = 0; i < 8; i++) {
-        cb_limits_reset();
-        T_EQ_INT(password_route("/v1/auth/signin", CBW_SIGNIN, "ADA", "guess-guess-1"), 400);
-    }
-    T_CHECK(refused(CBW_WHY_ACCOUNT, CBW_ACCOUNT_E_BAD_LOGIN));
+    // is counted and locked as any name's is (auth.h CB_AUTH_FAIL_*), so the lock does not tell a
+    // provider's account from a password account or from no account.
     T_EQ_INT(password_route("/v1/auth/signin", CBW_SIGNIN, "ADA", ""), 400);
     T_CHECK(refused(CBW_WHY_ACCOUNT, CBW_ACCOUNT_E_BAD_LOGIN));
-    T_EQ_INT(password_route("/v1/auth/signin", CBW_SIGNIN, "ADA", "anything"), 400);
-    T_CHECK(refused(CBW_WHY_ACCOUNT, CBW_ACCOUNT_E_BAD_LOGIN));
+    for (int i = 1; i <= CB_AUTH_FAIL_FREE; i++) {
+        cb_limits_reset();
+        T_EQ_INT(password_route("/v1/auth/signin", CBW_SIGNIN, "ADA", "guess-guess-1"), 400);
+        T_CHECK(refused(CBW_WHY_ACCOUNT, CBW_ACCOUNT_E_BAD_LOGIN));
+    }
+    cb_limits_reset();
+    T_EQ_INT(password_route("/v1/auth/signin", CBW_SIGNIN, "ADA", "anything"), 429);
+    T_CHECK(refused(CBW_WHY_ACCOUNT, CBW_ACCOUNT_E_TOO_MANY));
+    // The provider's own sign-in is not the password route's: the lock does not touch it.
+    g_now += 1000;
+    moved.iat = now_s();
+    T_EQ_INT(oidc(NULL, CBW_IDP_APPLE, 0, fi_mint(&g_f, 0, NULL, NULL, &moved), NONCE, NULL, NULL), 200);
+    T_CHECK(read_session(&s2));
     // The session is an ordinary one: it signs out.
     T_EQ_INT(send_req("/v1/auth/signout", s2.access, (const uint8_t *)"\x01\x04\x00", 3), 204);
     teardown();

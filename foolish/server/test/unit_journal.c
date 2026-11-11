@@ -1528,6 +1528,41 @@ static void a_refusal_changes_nothing_and_a_move_is_read_at_once(void) {
     close_world(s);
 }
 
+// THE STATE BYTES (journal.c): a resident game keeps its row's state in a buffer of the state's
+// size, never the encode's bound (TABLE_STATE_MAX, about 2.5 KB for a state of about 130 bytes):
+// not after its moves, not after a flush (whose encode goes to its snapshot), not after a read
+// (whose bytes are kept for the next read); and every read and the tables still get the
+// resident's encode.
+static void a_resident_keeps_state_bytes_of_its_size(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/statebytes.sqlite", g_dir);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    move_t m;
+    cb_journal_game_facts f;
+    two_humans_dealt(gid);
+    for (int i = 0; i < 6 && step(s, gid, &m) > 0; i++) {
+        T_EQ_INT(cb_journal_flush(s), CB_OK);
+        T_EQ_INT(cb_journal_game_info(s, gid, &f), CB_OK);
+        T_CHECK(f.resident != NULL);
+        T_CHECK(f.state_bytes < TABLE_STATE_MAX / 4);
+        cb_game_row held = stored(s, gid), tables;
+        memset(&tables, 0, sizeof tables);
+        T_EQ_INT(cb_rows_sql.game_get(s, gid, &tables), CB_OK);
+        T_EQ_INT(tables.version, held.version);
+        T_CHECK(tables.state_len == held.state_len && memcmp(tables.state, held.state, held.state_len) == 0);
+        T_EQ_INT(cb_journal_game_info(s, gid, &f), CB_OK);
+        T_CHECK(f.state_bytes >= held.state_len && f.state_bytes < TABLE_STATE_MAX / 4);
+        cb_game_row_free(&tables);
+        cb_game_row_free(&held);
+    }
+    T_CHECK(version_of(s, gid) > 0);
+    close_world(s);
+}
+
 // A RESIDENT THE TABLES CONTRADICT IS DROPPED, NEVER BUILT ON: a write the journal did not
 // see (here a raw UPDATE; in production nothing but the admin's, which forgets the overlay
 // itself) makes the next write around the journal (a delete: the last seat leaving) lose its
@@ -2008,9 +2043,9 @@ static bool same_board(const Table *a, const Table *b) {
                u->strategy_key == v->strategy_key;
         for (int i = 0; same && i < u->hand_count; i++) same = card_same(u->hand[i], v->hand[i]);
     }
-    uint8_t ra[ROSTER_BYTES], rb[ROSTER_BYTES];
-    same = same && roster_encode(&a->r, ra, sizeof ra) == ROSTER_BYTES && roster_encode(&b->r, rb, sizeof rb) == ROSTER_BYTES &&
-           memcmp(ra, rb, sizeof ra) == 0;
+    uint8_t ra[ROSTER_MAX], rb[ROSTER_MAX];
+    const int la = roster_encode(&a->r, ra, sizeof ra), lb = roster_encode(&b->r, rb, sizeof rb);
+    same = same && la > 0 && la == lb && memcmp(ra, rb, (size_t)la) == 0;
     same = same && memcmp(&a->clock, &b->clock, sizeof a->clock) == 0 && a->ratings.n == b->ratings.n &&
            a->rng_base == b->rng_base;
     return same;
@@ -2030,7 +2065,7 @@ static void the_resident_is_the_row(void) {
     const char *brains[2];
     T_EQ_INT(kt_brains(brains), 2);
     enum { ARENA = 128 * 1024 };
-    uint8_t *aa = malloc(ARENA), *ab = malloc(ARENA), state[4096], roster[ROSTER_BYTES + 8];
+    uint8_t *aa = malloc(ARENA), *ab = malloc(ARENA), state[4096], roster[ROSTER_MAX];
     static const char GID[] = "012345";
     uint64_t rng = 99;
     int ops = 0, games = 0;
@@ -2056,6 +2091,10 @@ static void the_resident_is_the_row(void) {
         T_CHECK(table_commit_products(&a.t, GID, (int)sizeof GID - 1, version, now, &ca, aa, ARENA) > 0);
         TableResident res;
         table_resident(&a.t, &ca.clock, &res);
+        // The roster's one copy is the row's bytes, which the resident is adopted with (as the
+        // journal keeps them).
+        int rl = ca.roster.len;
+        memcpy(roster, aa + ca.roster.off, (size_t)rl);
         // The session log the row's commits wrote, which a load of a row without its bot
         // memory folds (table_bots_need_logs), as the bot loop hands it over.
         static uint8_t slog[1 << 18];
@@ -2065,9 +2104,9 @@ static void the_resident_is_the_row(void) {
         while (ops < 1500) {
             // The server's table and the load's.
             table_init(&a.t, a.g, a.sn);
-            T_EQ_INT(table_adopt(&a.t, &res), TABLE_OK);
-            int sl = 0, rl = 0;
-            T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl, roster, sizeof roster, &rl), TABLE_OK);
+            T_EQ_INT(table_adopt(&a.t, &res, roster, rl), TABLE_OK);
+            int sl = 0;
+            T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl), TABLE_OK);
             memset(b.g, 0, offsetof(Game, logs));   // the load's board starts from zeros, as a section's does (cb_section_free)
             table_init(&b.t, b.g, b.sn);
             T_EQ_INT(table_load(&b.t, state, sl, roster, rl), TABLE_OK);
@@ -2135,9 +2174,9 @@ static void the_resident_is_the_row(void) {
             for (int v = 0; same && v < MAX_PLAYERS; v++)
                 same = cn.views[v].len == ca.views[v].len && memcmp(ab + cn.views[v].off, aa + ca.views[v].off, (size_t)ca.views[v].len) == 0;
             if (!same) { T_CHECK(!"the products with no row are not the products less the row"); break; }
-            // T9: the resident's encode is the products' row, byte for byte.
+            // T9: the resident's encode and the kept roster are the products' row, byte for byte.
             table_resident(&a.t, &ca.clock, &res);
-            T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl, roster, sizeof roster, &rl), TABLE_OK);
+            T_EQ_INT(table_resident_encode(&res, state, sizeof state, &sl), TABLE_OK);
             if (sl != ca.state.len || memcmp(state, aa + ca.state.off, (size_t)sl) != 0 || rl != ca.roster.len ||
                 memcmp(roster, aa + ca.roster.off, (size_t)rl) != 0) {
                 T_CHECK(!"the resident's encode is not the products' row");
@@ -2498,6 +2537,63 @@ static void the_resident_is_handed_over_not_copied(void) {
     T_EQ_INT(n, 3);
     T_CHECK(seen[1] != NULL && seen[1] != seen[0]);   // the commit's buffer is the game's now
     T_CHECK(seen[2] == seen[0]);                      // and the game's old one came back to the section
+    close_world(s);
+}
+
+// THE RESIDENT AT ITS SIZE (journal.c res_take, docs/BOT_MEMORY.md): a game none of whose brains
+// reads the bot memory (two humans) is held in TABLE_RESIDENT_SMALL bytes, in its lobby, at its
+// deal and after every move; one that seats an octogen (a belief brain) is held whole once it is
+// dealt. Mutation check pending.
+static void a_resident_is_held_at_its_size(void) {
+    char path[320], err[256] = "";
+    snprintf(path, sizeof path, "%s/ressize.sqlite", g_dir);
+    memset(&g_jo, 0, sizeof g_jo);
+    cb_store *s = open_world(path, true, err, sizeof err);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    char gid[CB_GAME_ID_MAX + 1];
+    reply r;
+    int rc;
+    move_t m;
+    // Two humans: small in the lobby, at the deal and after each move.
+    call("create", "A", NULL, 0, &r);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
+    T_EQ_INT(facts(s, gid, &rc).resident_bytes, TABLE_RESIDENT_SMALL);
+    meta("B", ASK_JOIN, gid, &r);
+    meta("A", ASK_START, gid, &r);
+    meta("B", ASK_START, gid, &r);
+    cb_game_row dealt = stored(s, gid);
+    T_EQ_INT(dealt.status, GAME_STATUS_PLAYING);
+    cb_game_row_free(&dealt);
+    T_EQ_INT(facts(s, gid, &rc).resident_bytes, TABLE_RESIDENT_SMALL);
+    int moved = 0;
+    for (int i = 0; i < 6 && next_move(s, gid, &m); i++) {
+        T_CHECK(play(gid, &m) > 0);
+        T_EQ_INT(facts(s, gid, &rc).resident_bytes, TABLE_RESIDENT_SMALL);
+        moved++;
+    }
+    T_EQ_INT(moved, 6);
+    // A human and an octogen: small in the lobby, whole from the deal.
+    static const char octogen[] = "4f6f2ebb-1d3e-4761-a5a9-c91313eba087";   // bots.c, octogen's first seeded id
+    call("create", "A", NULL, 0, &r);
+    T_CHECK(tc_created_game(r.body, r.len, gid));
+    TableAsk a;
+    memset(&a, 0, sizeof a);
+    a.kind = ASK_ADD_BOT;
+    a.gid_len = (uint8_t)strlen(gid);
+    memcpy(a.gid, gid, a.gid_len);
+    a.bot_len = (uint8_t)strlen(octogen);
+    memcpy(a.bot, octogen, a.bot_len);
+    uint8_t body[ASK_BYTES_MAX];
+    const int n = ask_encode(&a, body, sizeof body);
+    call("meta", "A", body, n > 0 ? (size_t)n : 0, &r);
+    T_EQ_INT(facts(s, gid, &rc).resident_bytes, TABLE_RESIDENT_SMALL);
+    meta("A", ASK_START, gid, &r);
+    cb_game_row row = stored(s, gid);
+    T_EQ_INT(row.status, GAME_STATUS_PLAYING);
+    T_CHECK(seat_of(&row, octogen) == 1);
+    cb_game_row_free(&row);
+    T_EQ_INT(facts(s, gid, &rc).resident_bytes, sizeof(TableResident));
     close_world(s);
 }
 
@@ -3294,6 +3390,7 @@ int main(void) {
     T_RUN(a_legacy_deck_cycle_recovers_and_a_cut_one_is_refused);
     T_RUN(the_resident_is_the_row);
     T_RUN(a_resident_the_tables_contradict_is_dropped);
+    T_RUN(a_resident_keeps_state_bytes_of_its_size);
     T_RUN(the_overlay_keeps_at_most_its_cap);
     T_RUN(a_torn_or_corrupt_whole_commit_is_dropped);
     T_RUN(crafted_whole_commits_recover_or_refuse);
@@ -3325,6 +3422,7 @@ int main(void) {
     g_bots = false;   // humans only: a bot drive commits once per cycle, some cycles to a step
     T_RUN(a_ratings_read_answers_every_acknowledged_rated_end);   // once: it waits out a busy timeout
     T_RUN(the_resident_is_handed_over_not_copied);
+    T_RUN(a_resident_is_held_at_its_size);
     T_RUN(the_conversion_knows_every_game_id_column);
     T_RUN(the_conversion_draws_again_and_is_all_or_nothing);
     T_RUN(a_crash_mid_conversion_converts_nothing);

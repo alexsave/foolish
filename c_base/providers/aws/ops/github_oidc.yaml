@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  GitHub Actions deploys for c_base: the account's GitHub OIDC provider and the
-  one role .github/workflows/c_base.yml and web_aws.yml assume from main.
+  GitHub Actions deploys: the account's GitHub OIDC provider and the one role
+  .github/workflows/c_base.yml's deploy job assumes from main to run ./cbase
+  deploy for foolish and uttt.
 
 # The stack `cbase-github`, deployed by hand from this Mac (c_base/RUNBOOK.md,
 # "GitHub deploys"):
@@ -9,35 +10,41 @@ Description: >-
 #   aws cloudformation deploy --region us-east-1 --stack-name cbase-github \
 #     --template-file c_base/providers/aws/ops/github_oidc.yaml --capabilities CAPABILITY_NAMED_IAM
 #
-# Its DeployRoleArn output is the repository secret CBASE_AWS_ROLE_ARN, which
-# both deploy workflows read. One role, one owner: cbase.yaml and web.yaml
-# carry no GitHub resources.
+# Its DeployRoleArn output is the repository secret CBASE_AWS_ROLE_ARN. One
+# role, one owner: no other template carries GitHub resources.
 #
-# What the role may do, and nothing else:
-#   * the API server: upload a `cbase serve` binary and the boot script
-#     (vm/cbase-vm-boot-<sha12>) under the code bucket's vm/ prefix, point
-#     /cbase-vm/release/serve and /cbase-vm/release/boot at them, and run a shell
-#     command on the cbase-vm group's instance through SSM (the boot stub, which
-#     fetches and checks the boot script, which fetches, checks and restarts the
-#     server; then the health checks) and read the result
-#     (c_base/providers/local/ops/vm_release.sh; role_covers_release.sh holds
-#     the script's calls to this list). It reads and writes no other parameter
-#     (the VM's secrets are SecureStrings under /cbase-vm/env/, out of reach);
-#   * the web: upload to and delete from the web bucket, invalidate the two
-#     distributions, and update the cbase-web stack's page-list parameters on
-#     its previous template, which republishes the two router Functions
-#     (c_base/providers/aws/ops/site/web_deploy.sh site);
-#   * read the web stack.
-# It cannot change a template: UpdateStack is allowed on cbase-web, but
-# CloudFormation would need IAM, S3 bucket and CloudFront distribution rights to
-# apply any template change, and the role has none of them. A template change
-# is deployed by hand (local/ops/vm_deploy.sh, aws/ops/site/web_deploy.sh stack).
+# What the role may do, and nothing else: the calls `./cbase deploy` (the cbase
+# submodule's tools/cbase) makes for foolish/cbase.conf and uttt/cbase.conf on
+# their existing stacks, and the calls CloudFormation makes, as this role, to
+# apply their change sets (role_covers_deploy.sh holds the tool's calls to this
+# list, in CI). Each statement's Resource is the narrowest AWS evaluates for its
+# actions; the ones on "*" are actions with no resource type at all.
+#   * the server: read the cbase-vm stack's instance, read the app's origin
+#     secret (the one SecureString it needs, /cbase-vm/env/CBASE_ORIGIN_SECRET),
+#     put the server under the code bucket's vm/foolish/, claim the port in the
+#     state bucket's vm/foolish.txt, and run the install through SSM on the
+#     cbase-vm group's instance;
+#   * the files: put under the web bucket's foolish/ and uttt/ (never delete:
+#     CI never passes --prune);
+#   * the edge: drift-check, change-set, update and invalidate the two app
+#     stacks (cbase-app-foolish, cbase-app-uttt) and their existing CloudFront
+#     resources, by id. It cannot create or delete a stack, distribution,
+#     function, origin access control or policy, request a certificate, write
+#     DNS or move a hostname: a first deploy, a replacement, a staged attach
+#     and group-init stay ./cbase by hand with an operator's credentials, and a
+#     change set that needs them fails the job (CUTOVER.md).
+# The ids below were read from the live stacks on 2026-11-10. A distribution or
+# origin access control replaced by hand gets a new id: update it here.
 #
-# Until 2026-10-19 the role also shipped the Lambda (lambda_deploy.sh: the zip,
-# the cbase stack's CodeKey, and the reads CloudFormation re-resolves). Those
-# rights were removed when the VM took production's traffic and the Lambda was
-# frozen at reserved concurrency 0; a Lambda rollback is lambda_deploy.sh by
-# hand with an operator's credentials (c_base/RUNBOOK.md).
+# NEW NAMES, ON PURPOSE: `aws cloudformation deploy` keeps an existing
+# parameter's previous value over a new default, so a resource id is a
+# parameter name that never held another value.
+#
+# Until 2026-11-10 the role ran c_base/providers/local/ops/vm_release.sh and
+# providers/aws/ops/site/web_deploy.sh (the release pointers under
+# /cbase-vm/release/, the cbase-web stack's page lists, its two old
+# distributions and routers). ./cbase replaced both, and those rights went with
+# them: either script is now run by hand with an operator's credentials.
 
 Parameters:
   GitHubRepo:
@@ -54,22 +61,53 @@ Parameters:
   CodeBucket:
     Type: String
     Default: cbase-code-487337210065-us-east-1
+  StateBucket:
+    Type: String
+    Default: cbase-state-487337210065
+  WebBucket:
+    Type: String
+    Default: cbase-web-487337210065
+  VmStack:
+    Type: String
+    Default: cbase-vm
+    Description: foolish's CBASE_VM_STACK, the stack whose instance ./cbase finds.
   VmGroup:
     Type: String
     Default: cbase-vm
     Description: the cbase-vm auto-scaling group, whose instance the role may run commands on.
-  WebStack:
+  FoolishSiteDistribution:
     Type: String
-    Default: cbase-web
-  WebBucket:
+    Default: E1PA812XSTB2O1
+    Description: cbase-app-foolish's Distribution (foolish.cards, www).
+  FoolishApiDistribution:
     Type: String
-    Default: cbase-web-487337210065
-  FoolishDistributionId:
+    Default: E2IEJ32TP6D7CK
+    Description: cbase-app-foolish's ApiDistribution (api.foolish.cards).
+  UtttSiteDistribution:
     Type: String
-    Default: E1YC4MJXHIOBQD
-  UtttDistributionId:
+    Default: EY5KI0K5UCT1I
+    Description: cbase-app-uttt's Distribution (uttt.live, www).
+  FoolishOacId:
     Type: String
-    Default: E1PSTHCGSF35HM
+    Default: E31EB8PV6H5NI
+  UtttOacId:
+    Type: String
+    Default: E2EQRRX4YXITKM
+  FoolishServerTimingPolicyId:
+    Type: String
+    Default: ffef7284-188f-4bee-a57a-d657b2a8b9cc
+  FoolishCertId:
+    Type: String
+    Default: 42ecb64e-bf84-4372-9170-2e645119b12f
+    Description: foolish/cbase.conf's CBASE_CERT_ARN.
+  FoolishApiCertId:
+    Type: String
+    Default: 30120b19-e9b9-419c-b3a2-6ce73f2e8765
+    Description: foolish/cbase.conf's CBASE_API_CERT_ARN.
+  UtttCertId:
+    Type: String
+    Default: 6f0b38fc-6ed7-40b3-83ef-14347c9cb4ae
+    Description: uttt/cbase.conf's CBASE_CERT_ARN.
 
 Conditions:
   HasExtra: !Not [!Equals [!Ref ExtraSubject, ""]]
@@ -106,40 +144,134 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Sid: ReadStacks
+              # ---- the two app stacks (stack.sh's change-set flow) ----
+              # Read, drift-check, change-set, execute. No CreateStack,
+              # UpdateStack or DeleteStack: a change set is the one way in,
+              # and ./cbase deletes a stack only after a first create, which
+              # CI never makes. The change-set actions authorize on the stack's
+              # ARN (IAM's simulator refuses them a changeSet/ ARN, even "*").
+              - Sid: AppStacks
                 Effect: Allow
                 Action:
                   - cloudformation:DescribeStacks
                   - cloudformation:DescribeStackEvents
-                Resource: !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${WebStack}/*"
-              - Sid: UpdateStacks
-                Effect: Allow
-                Action: cloudformation:UpdateStack
-                Resource: !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${WebStack}/*"
-
-              # ---- the API server (cbase-vm) ----
-              - Sid: VmRelease
-                Effect: Allow
-                Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
+                  - cloudformation:GetTemplate
+                  - cloudformation:DetectStackDrift
+                  - cloudformation:DetectStackResourceDrift
+                  - cloudformation:DescribeStackResourceDrifts
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:TagResource
                 Resource:
-                  - !Sub "arn:${AWS::Partition}:s3:::${CodeBucket}/vm/cbase-serve-*"
-                  - !Sub "arn:${AWS::Partition}:s3:::${CodeBucket}/vm/cbase-vm-boot-*"
-              # The prune after a release (ops/s3_prune_lib.sh) lists only the
-              # release prefixes and deletes only the two key patterns above:
-              # templates/ and the amazon-ssm rpm are out of reach.
-              - Sid: VmReleaseList
+                  - !Sub "arn:${AWS::Partition}:cloudformation:us-east-1:${AWS::AccountId}:stack/cbase-app-foolish/*"
+                  - !Sub "arn:${AWS::Partition}:cloudformation:us-east-1:${AWS::AccountId}:stack/cbase-app-uttt/*"
+              # A drift detection's status is read by its id, and drift
+              # detection reads each resource type's configuration: neither
+              # action has a resource type.
+              - Sid: DriftStatus
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStackDriftDetectionStatus
+                  - cloudformation:BatchDescribeTypeConfigurations
+                Resource: "*"
+
+              # ---- the edge: what CloudFormation calls, as this role, to
+              # detect drift on and update the stacks' resources (their
+              # resource types' read and update handlers), and the invalidation
+              # ./cbase makes after a deploy ----
+              - Sid: Distributions
+                Effect: Allow
+                Action:
+                  - cloudfront:GetDistribution
+                  - cloudfront:GetDistributionConfig
+                  - cloudfront:UpdateDistribution
+                  - cloudfront:ListTagsForResource
+                  - cloudfront:TagResource
+                  - cloudfront:UntagResource
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FoolishSiteDistribution}"
+                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FoolishApiDistribution}"
+                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${UtttSiteDistribution}"
+              # ./cbase invalidates the site distribution alone (its DistributionId output).
+              - Sid: Invalidate
+                Effect: Allow
+                Action: [cloudfront:CreateInvalidation, cloudfront:GetInvalidation]
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FoolishSiteDistribution}"
+                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${UtttSiteDistribution}"
+              # The routers, by name (app.yaml's cbase-<app>-router).
+              - Sid: Routers
+                Effect: Allow
+                Action:
+                  - cloudfront:DescribeFunction
+                  - cloudfront:GetFunction
+                  - cloudfront:UpdateFunction
+                  - cloudfront:PublishFunction
+                  - cloudfront:ListTagsForResource
+                  - cloudfront:TagResource
+                  - cloudfront:UntagResource
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:function/cbase-foolish-router"
+                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:function/cbase-uttt-router"
+              - Sid: OriginAccess
+                Effect: Allow
+                Action: [cloudfront:GetOriginAccessControl, cloudfront:UpdateOriginAccessControl]
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:origin-access-control/${FoolishOacId}"
+                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:origin-access-control/${UtttOacId}"
+              - Sid: ServerTiming
+                Effect: Allow
+                Action: [cloudfront:GetResponseHeadersPolicy, cloudfront:UpdateResponseHeadersPolicy]
+                Resource: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:response-headers-policy/${FoolishServerTimingPolicyId}"
+              # The certificates cbase.conf names, checked ISSUED and covering
+              # the hostnames (cert.sh cert_named).
+              - Sid: Certificates
+                Effect: Allow
+                Action: acm:DescribeCertificate
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:acm:us-east-1:${AWS::AccountId}:certificate/${FoolishCertId}"
+                  - !Sub "arn:${AWS::Partition}:acm:us-east-1:${AWS::AccountId}:certificate/${FoolishApiCertId}"
+                  - !Sub "arn:${AWS::Partition}:acm:us-east-1:${AWS::AccountId}:certificate/${UtttCertId}"
+
+              # ---- the server (vm.sh) ----
+              # vm_find: the cbase-vm stack's auto-scaling group.
+              - Sid: VmStack
+                Effect: Allow
+                Action: cloudformation:DescribeStackResources
+                Resource: !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${VmStack}/*"
+              # The origin secret the stack's VM origins send (vm_origin_secret).
+              # Its key is aws/ssm, whose key policy lets the account's
+              # principals decrypt through SSM: no kms statement.
+              - Sid: OriginSecret
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${VmStack}/env/CBASE_ORIGIN_SECRET"
+              # The server, at its sha256 under vm/foolish/ (vm_ship). ListBucket
+              # is what makes S3 answer a missing key 404 (not 403) to the
+              # head-object that asks whether it is there yet. S3 documents no
+              # s3:prefix on that check, so a prefix condition could turn the
+              # 404 into a 403 and fail every first upload of a new server:
+              # the bucket's key names (no contents) are the price.
+              - Sid: VmArtifact
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${CodeBucket}/vm/foolish/*"
+              - Sid: VmArtifactList
                 Effect: Allow
                 Action: s3:ListBucket
                 Resource: !Sub "arn:${AWS::Partition}:s3:::${CodeBucket}"
-                Condition:
-                  StringLike:
-                    "s3:prefix": [vm/cbase-serve-*, vm/cbase-vm-boot-*]
-              - Sid: VmReleasePointer
+              # The group's state file: the port claim and memory fit, one
+              # conditional write (state.sh). head-bucket is ListBucket.
+              - Sid: VmState
                 Effect: Allow
-                Action: [ssm:PutParameter, ssm:GetParameter]
-                Resource:
-                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cbase-vm/release/serve"
-                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cbase-vm/release/boot"
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${StateBucket}/vm/foolish.txt"
+              - Sid: VmStateBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${StateBucket}"
               # SendCommand authorizes the document and each instance: the
               # instance only when it carries the group's tag (Auto Scaling
               # tags every instance it launches with aws:autoscaling:groupName).
@@ -154,40 +286,36 @@ Resources:
                 Condition:
                   StringEquals:
                     "ssm:resourceTag/aws:autoscaling:groupName": !Ref VmGroup
-              # Neither has a resource type: Resource "*" is the only form.
-              - Sid: VmCommandResult
-                Effect: Allow
-                Action:
-                  - ssm:GetCommandInvocation
-                  - autoscaling:DescribeAutoScalingGroups
-                Resource: "*"
 
-              # ---- the web ----
+              # ---- the files (static.sh) ----
+              # Each app's folder; no delete, no list (CI never prunes).
               - Sid: WebFiles
                 Effect: Allow
-                Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
-                Resource: !Sub "arn:${AWS::Partition}:s3:::${WebBucket}/*"
-              - Sid: WebList
-                Effect: Allow
-                Action: s3:ListBucket
-                Resource: !Sub "arn:${AWS::Partition}:s3:::${WebBucket}"
-              - Sid: Invalidate
-                Effect: Allow
-                Action: [cloudfront:CreateInvalidation, cloudfront:GetInvalidation]
+                Action: [s3:PutObject, s3:AbortMultipartUpload]
                 Resource:
-                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FoolishDistributionId}"
-                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${UtttDistributionId}"
-              # What CloudFormation calls, as this role, to apply new page lists.
-              - Sid: Routers
+                  - !Sub "arn:${AWS::Partition}:s3:::${WebBucket}/foolish/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::${WebBucket}/uttt/*"
+              # The bucket's region, and its policy checked to let the
+              # account's distributions read it (static_policy_check).
+              - Sid: WebBucket
+                Effect: Allow
+                Action: [s3:GetBucketLocation, s3:GetBucketPolicy]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${WebBucket}"
+
+              # ---- reads with no resource type: Resource "*" is the only form ----
+              # list-distributions (no hostname held elsewhere), the hosted
+              # zones (cert.sh; none in this account), the instance and its
+              # type, the auto-scaling group, the SSM command's result.
+              - Sid: Unscoped
                 Effect: Allow
                 Action:
-                  - cloudfront:UpdateFunction
-                  - cloudfront:PublishFunction
-                  - cloudfront:DescribeFunction
-                  - cloudfront:GetFunction
-                Resource:
-                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:function/${WebStack}-foolish-router"
-                  - !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:function/${WebStack}-uttt-router"
+                  - cloudfront:ListDistributions
+                  - route53:ListHostedZonesByName
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceTypes
+                  - autoscaling:DescribeAutoScalingGroups
+                  - ssm:GetCommandInvocation
+                Resource: "*"
 
 Outputs:
   DeployRoleArn:

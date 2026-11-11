@@ -9,12 +9,16 @@ import { useUrlGameId } from '../../utils/useUrlGameId';
 import { promoOf } from '../../common/promo';
 import { PromoGame } from '../../components/PromoGame';
 import { SoundButton } from '../../components/SoundButton';
+import NotFound from '../not-found';
 
 export function GameRoute() {
   const segment = useUrlGameId();
 
   // The static shell's first render: the address bar is read after mount.
   if (segment === undefined) return null;
+  // The shell is served for every unknown path, and a deeper one is no game:
+  // the app's own not-found view (useUrlGameId, shellSegment).
+  if (segment === null) return <NotFound />;
 
   // A promo code (the promo playing cards' QR, src/common/promo.ts) is a game
   // against a bot in this tab: no server, no sign-in. Never a game id: a code

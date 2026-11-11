@@ -22,10 +22,12 @@ open http://localhost:3000/AJG7NYNQG4RFXXGVPGD7QR2ETSOYTWMCREAQ
 ```
 
 `public/uttt.wasm` is a build output and is never committed. CI builds it
-with the repo's pinned clang, and every push to `main` that touches the site
-deploys it with `.github/workflows/web_aws.yml`, as a static export (`out/`)
-to S3 behind CloudFront (`c_base/providers/aws/ops/site/web.yaml`), which serves `uttt.live` and
-`www.uttt.live`.
+with the repo's pinned clang (`.github/workflows/web_aws.yml`), and every
+push to `main` that touches the site deploys the static export (`out/`) with
+`./cbase deploy` from `uttt/` (`uttt/cbase.conf`; the `deploy` job of
+`.github/workflows/c_base.yml`): the files into the web bucket's `uttt/`
+folder, and the `cbase-app-uttt` stack's CloudFront distribution, which
+serves `uttt.live` and `www.uttt.live`.
 
 ## /243: two bots on the 243 x 243 board
 
@@ -42,7 +44,8 @@ replays a named game move for move. The bots are their own wasm module
 
 ## Hosting
 
-The site's AWS side (the `cbase-web` stack's bucket prefix `uttt/`, its own
-CloudFront distribution, the certificate and the Squarespace DNS records) is
-set up once by the owner, as `c_base/RUNBOOK.md` "Web hosting: foolish.cards
-and uttt.live off Vercel" records; after that a push to `main` is the deploy.
+The site's AWS side (the web bucket's prefix `uttt/`, the certificate and the
+Squarespace DNS records) is set up once by the owner, and `CUTOVER.md` at the
+repository's root moved it onto `./cbase`; after that a push to `main` is the
+deploy (`.github/workflows/c_base.yml`'s `deploy` job, through
+`../cbase/tools/cbase deploy`; `c_base/RUNBOOK.md`, "GitHub deploys").

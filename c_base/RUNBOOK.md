@@ -332,17 +332,12 @@ Players who sign up or move between the export and step 11 are lost, so do steps
 
 ## 11. Move the website
 
-The web build bakes the backend's URL in at build time, and CI builds the site (Vercel no longer builds from Git), so a value change needs a CI rebuild.
+The web build bakes the backend's URL in at build time, and `.github/workflows/web_aws.yml` sets it: `NEXT_PUBLIC_BACKEND_URL` is `https://api.foolish.cards` in that file's `env`, so a change of value is a change to that file, deployed by its push.
 
-1. Vercel > the foolish project > **Settings > Environment Variables**.
-2. Set `NEXT_PUBLIC_BACKEND_URL` for **Production** to `https://api.foolish.cards`.
-3. (The binary surface has no anon key: nothing else to set.)
-4. The site no longer speaks Supabase's protocols, so there is no backend to roll the web back to; a web rollback is a rollback of the hosting only (below).
-5. GitHub > **Actions** > **web** > the latest successful run on `main` > **Re-run all jobs**.
-   Its `vercel pull` fetches the new values and the deploy ships them.
-6. Open https://foolish.cards, sign in with an existing account, and play a move against a bot.
-
-That was the cutover on Vercel; the site is on AWS now, where `web_aws.yml` sets `NEXT_PUBLIC_BACKEND_URL` to `https://api.foolish.cards` itself, and the Vercel value is gone with the projects (W9).
+1. (The binary surface has no anon key: nothing else to set.)
+2. The site no longer speaks Supabase's protocols, so there is no backend to roll the web back to; a web rollback is a rollback of the hosting only (W6).
+3. To redeploy main as it is: GitHub > **Actions** > **web_aws** > **Run workflow** on `main`.
+4. Open https://foolish.cards, sign in with an existing account, and play a move against a bot.
    The admin console's Logs panel shows the requests.
 
 ## 12. Move the iOS apps
@@ -359,20 +354,45 @@ That was the cutover on Vercel; the site is on AWS now, where `web_aws.yml` sets
 
 ## 13. GitHub deploys
 
-Since 2026-10-14 every push to `main` deploys what is live, to AWS, with no hand steps:
+Every push to `main` that touches a deployed path deploys what is live, through `./cbase deploy` (the `cbase/` submodule's `tools/cbase`; `cbase/README.md`, "./cbase deploy tool"), with no hand steps.
+Since 2026-11-10 (CUTOVER.md) that is the one deploy lane: `vm_release.sh` and `web_deploy.sh` no longer run in CI.
 
 | What changed on `main` | Workflow, job | What it does |
 |---|---|---|
-| `c_base/**`, `foolish/c/**`, `foolish/server/**`, `shared/c/**`, `shared/tools/**` | `c_base`, `deploy to cbase-vm` | after every test job passes, `providers/local/ops/vm_release.sh`: the CI-built static `cbase serve` binary to the code bucket's `vm/`, `/cbase-vm/release/serve` pointed at it, the boot script pinned the same way (`vm/cbase-vm-boot-<sha12>`, `/cbase-vm/release/boot`), the instance's boot stub run through SSM (it fetches the pinned boot script, which restarts the server), then the binary's sha256, the instance's `/health` and `/ready`, and `https://api.foolish.cards/health` checked (providers/local/ops/VM_RUNBOOK.md, "Upgrade the server"). Until 2026-10-19 this job was `deploy to Lambda` (`lambda_deploy.sh`) |
-| `foolish/**`, `shared/**`, `uttt/c/**`, `uttt/web/**` | `web_aws`, `deploy` | `providers/aws/ops/site/web_deploy.sh site foolish`, then `site uttt`: upload, page lists, invalidation, then `www.foolish.cards` and `www.uttt.live` must answer 200 (both apexes are on CloudFront too) |
+| `c_base/**`, `foolish/**`, `uttt/c/**`, `uttt/web/**`, `uttt/cbase.conf`, `shared/**`, the `cbase` pin, `c_base.yml`, `web_aws.yml` | `c_base`, `deploy` | after every gate (`check`, `check_arm64`, `asan`, `fuzz_done`, `dynamo`, `ops`, `serve_binary`) and the two static exports (`web`: `web_aws.yml` called in the same run), from `foolish/`: `CBASE_SERVE_BIN=../c_base/dist/cbase-serve-linux-arm64 ../cbase/tools/cbase deploy` (the server on the `cbase-vm` instance through SSM, `out/` into the web bucket's `foolish/`, the `cbase-app-foolish` stack and its invalidation); then from `uttt/`: `../cbase/tools/cbase deploy` (`web/out` into `uttt/`, `cbase-app-uttt`); then `https://api.foolish.cards/health` must say `ok cbase`, and `https://foolish.cards/` and `https://uttt.live/` must answer 200 |
 
-Both refuse a tree that does not contain `origin/main` (`ops/require_main.sh`), so a branch behind main, or a re-run of an old run by hand, deploys nothing.
-One run per lane runs on main at a time (the workflow's `concurrency` group, `cancel-in-progress: false` on main, because a cancel can land in the middle of a CloudFormation update); a newer push's run waiting behind it replaces any older one still waiting, so the waiting slot always holds the newest commit.
-A run that starts deploys its own commit even if main moved on while it built (the first attempt only; a re-run is refused), because the newest push's run is queued behind it and deploys next.
-So the newest commit of main always deploys.
-This replaced a rule that skipped a run whose commit main had moved past: on 2026-10-18, from 01:25 to 03:05 UTC, main moved on inside every c_base run, so every deploy skipped and nothing shipped until the pushes paused.
-Both can also be run by hand on `main` (Actions > the workflow > Run workflow) to redeploy main as it is.
-Nothing deploys to Vercel on push any more, and nothing deploys to Supabase at all.
+`web_aws.yml` deploys nothing: it is the sites' compile gate on a pull request, and on `main` it runs only inside `c_base`'s run, so the deploy hands `./cbase` that run's own exports.
+utils.foolish.cards is deployed from its own repository (`foolish-utils`), by hand.
+
+The job never passes `--accept-drift`, `--allow-downtime` or `--prune`.
+So a stack that drifted, a change set that would replace a distribution or take a hostname off one, and a change set that would replace a bucket each stop `./cbase`, and the job fails with the tool's reason.
+Fix the cause by hand (CUTOVER.md has the commands), then re-run.
+
+One run on `main` at a time (the workflow's `concurrency` group, `cancel-in-progress: false` on main, because a cancel can land between the service restart and the stack update); a newer push's run waiting behind it replaces any older one still waiting, so the waiting slot always holds the newest commit.
+A run that starts deploys its own commit even if main moved on while it built, because the newest push's run is queued behind it and deploys next.
+So the newest commit of main always deploys, and two deploys never overlap.
+
+A foolish deploy always restarts the server (`./cbase` restarts the service on every deploy; the socket holds the port, so a restart queues connections and refuses none), so a site-only merge also restarts it: open WebSockets get 1001 and reconnect.
+
+### Live or dry
+
+A run deploys only when the repository variable `CBASE_DEPLOY` is `live` and the run was not started with `dry_run` ticked.
+Otherwise it runs `./cbase deploy --dry-run` for both apps, which reads AWS, makes and deletes a change set, and changes nothing, and the run shows a warning that it was a dry run.
+
+- The dry run by hand: Actions > c_base > Run workflow on `main`, tick `dry_run`, or `gh workflow run c_base.yml --ref main -f dry_run=true`.
+- Turn deploys on: `gh variable set CBASE_DEPLOY --body live`.
+- Turn deploys off without a code change: `gh variable delete CBASE_DEPLOY` (every run is then a dry run).
+- Redeploy main as it is: `gh workflow run c_base.yml --ref main`.
+
+### Rolling back
+
+- Redeploy an older commit of `main`: find its `c_base` run (`gh run list --workflow c_base.yml --branch main`) and re-run it whole (`gh run rerun <run id>`).
+  A re-run builds and deploys that commit again with the role, since its ref is still `main`; the newer commits' runs do not run again by themselves, so the next merge deploys the newest main again.
+  Re-running the `deploy` job alone works while the run's artifacts last (7 days for the exports, 30 for the server).
+- By hand, with an operator's credentials, from a checkout of the commit to go back to (with `git submodule update --init cbase`): the two commands of CUTOVER.md steps 6 and 7.
+- Off `./cbase` entirely, back to `cbase.service` and the old distributions: CUTOVER.md step 9.
+
+### The role
 
 The credentials are one role, `cbase-github-deploy`, made by the stack `cbase-github` from `providers/aws/ops/github_oidc.yaml` together with the account's GitHub OIDC provider:
 
@@ -383,13 +403,15 @@ aws cloudformation deploy --region us-east-1 --stack-name cbase-github \
 
 1. It trusts only `repo:alexsave/foolish:ref:refs/heads/main`.
    To prove a workflow change from its branch before merging, deploy the stack once with `--parameter-overrides ExtraSubject=repo:alexsave/foolish:ref:refs/heads/<branch>` (and let the workflow's `if:` accept that ref on the branch), then deploy it again with `ExtraSubject=` empty.
-2. It may upload a serve binary under the code bucket's `vm/cbase-serve-*` and the boot script under `vm/cbase-vm-boot-*`, write `/cbase-vm/release/serve` and `/cbase-vm/release/boot`, run commands through SSM on the `cbase-vm` group's instance and read their results, upload to the web bucket, invalidate the two distributions, rewrite the `cbase-web` page lists, and read that stack; it holds none of the rights a template change needs, so `providers/local/ops/vm_deploy.sh` and `providers/aws/ops/site/web_deploy.sh stack` stay hand steps from this Mac.
-   `providers/aws/ops/role_covers_release.sh` (in CI) fails when `vm_release.sh` makes an AWS call the role does not grant.
-   The Lambda deploy rights were removed on 2026-10-19 when the VM took production; the frozen `cbase` Lambda is redeployed only by hand (`lambda_deploy.sh` with an operator's credentials) if it is ever rolled back to.
+2. It may make the calls `./cbase deploy` makes for `foolish/cbase.conf` and `uttt/cbase.conf` on their existing stacks, and the calls CloudFormation makes as the role to apply their change sets, each scoped to the resource it touches (the template says which, and which actions have no resource type): drift detection and change sets on `cbase-app-foolish` and `cbase-app-uttt`, updates to their distributions, routers, origin access controls and response headers policy by id, invalidations of the two site distributions, the three certificates read, the origin secret `/cbase-vm/env/CBASE_ORIGIN_SECRET` read, the server under the code bucket's `vm/foolish/`, the state file `vm/foolish.txt`, uploads under the web bucket's `foolish/` and `uttt/`, and SSM commands on the `cbase-vm` group's instance.
+   It cannot create or delete a stack or a CloudFront resource, request a certificate, write DNS, move a hostname or read any other secret: a first deploy, a replacement, a staged attach and `group-init` stay `./cbase` by hand.
+   A resource replaced by hand gets a new id: update its parameter in the template (a new parameter name, since `aws cloudformation deploy` keeps an old parameter's previous value over a new default).
+   `providers/aws/ops/role_covers_deploy.sh` (in CI, the `ops` job) fails when the `cbase` pin makes an AWS call the role does not grant, or one its table does not know.
+   The `vm_release.sh` and `web_deploy.sh` rights were removed on 2026-11-10 with those lanes; either script now runs only by hand with an operator's credentials, as the frozen `cbase` Lambda's `lambda_deploy.sh` has since 2026-10-19.
 3. Repository secrets (Settings > Secrets and variables > Actions): `CBASE_AWS_ROLE_ARN` (the stack's `DeployRoleArn` output).
+   Repository variables: `CBASE_DEPLOY` (`live`, or unset for dry runs only).
 
-The Vercel rollback lanes (`web.yml`, `uttt-web.yml`) were deleted on 2026-10-18 (W9).
-- There is no Supabase lane: `deploy.yml` was deleted on 2026-10-14, because the standalone iOS app never shipped and no client talks to Supabase (step 14).
+There is no Supabase lane: `deploy.yml` was deleted on 2026-10-14, because the standalone iOS app never shipped and no client talks to Supabase (step 14).
 
 ## 14. Retire Supabase
 
@@ -404,7 +426,7 @@ The standalone iOS app never shipped, so no client talks to Supabase, and nothin
 
 The web is the only switch that matters on day one, and it flips back in minutes:
 
-1. The web's hosting: Vercel is gone (W9), so a bad web deploy is rolled back on AWS (W7, last paragraph).
+1. The web's hosting: a bad web deploy is rolled back on AWS (W6).
 2. Anything players did on c_base since the switch stays in DynamoDB and is not copied back.
 3. A bad c_base build is rolled back separately: download an earlier `cbase-lambda` artifact (every CI run keeps one for 30 days) and run `c_base/providers/aws/ops/lambda_deploy.sh <its cbase-lambda.zip>` from a tree that contains main; it points the stack back at that zip.
    Or point the stack straight at the earlier key, if it is still in the code bucket: **CloudFormation > cbase > Update > Use existing template**, CodeKey = the old `cbase-lambda-<hash>.zip`.
@@ -421,11 +443,11 @@ CloudWatch Logs keeps 30 days (set in the template) inside its 5 GB free allowan
 The ten alarms are CloudWatch's always-free ten alarm metrics, and the SNS email topic is inside SNS's free 1,000 emails a month.
 Reserved concurrency costs nothing.
 
-## Web hosting: foolish.cards and uttt.live off Vercel
+## Web hosting: foolish.cards and uttt.live on CloudFront
 
-The design is `docs/VERCEL.md`; the stack is `providers/aws/ops/site/web.yaml`; the deploy is `providers/aws/ops/site/web_deploy.sh`.
-W1 to W5 are done: the stack `cbase-web` is live, and foolish.cards, www, utils.foolish.cards and uttt.live all resolve to its two distributions (checked with `dig`, 2026-10-17).
-Those steps stay as the record and for a rebuild; W7 is the rollback and W9 the teardown.
+Both sites are static exports in S3 behind CloudFront, live since 2026-10-17.
+The stack is `providers/aws/ops/site/web.yaml`, the deploy is `providers/aws/ops/site/web_deploy.sh`, and the one deploy lane is `.github/workflows/web_aws.yml`.
+W1 to W5 are how it was set up, kept as the record and for a rebuild; W6 is the rollback and W7 the deploys.
 
 What exists (us-east-1, account 487337210065):
 
@@ -439,6 +461,25 @@ What exists (us-east-1, account 487337210065):
 | uttt certificate | `arn:aws:acm:us-east-1:487337210065:certificate/6f0b38fc-6ed7-40b3-83ef-14347c9cb4ae` |
 
 Two distributions, not one: a CloudFront flat-rate plan covers one distribution with at most one apex domain, and an account holds three Free plans, so api, foolish and uttt use exactly the three.
+
+How a request is served:
+
+- The default behaviour of both distributions is the bucket, through Origin Access Control, with `Managed-CachingOptimized` and edge compression on.
+  Each object's own `Cache-Control`, set at upload, decides its lifetime: hashed `_next/static` files are immutable for a year, everything else is revalidated by browsers and held by CloudFront until the deploy's one invalidation.
+  Only managed cache policies are used, because a Free plan allows no custom ones.
+- A viewer-request CloudFront Function, the same code on both distributions, picks the bucket prefix by Host, maps a clean URL that is a known page to its `.html`, answers any other extensionless path with the site's shell page, and passes a path with an extension through.
+  The known-page list is written into it by each deploy from the export's own `out/*.html`.
+  Not custom error responses: those are distribution-wide, so a missing JS chunk would come back as a 200 of HTML and the `/m` origin's errors would be rewritten too.
+- `/.well-known/*` (the universal-links association file) comes from the bucket as `application/json`, uncompressed, at the apex with no redirect: Apple fetches it without following redirects, and the app's entitlement is `applinks:foolish.cards` only.
+- The `.wasm.gz` modules are uploaded as `application/octet-stream` with no `Content-Encoding`, because the client gunzips them itself; uttt's `.wasm` kernels are `application/wasm` for an hour.
+- `/m/*`, the link unfurl, is the C route `foolish/server/src/app/unfurl_http.c` (DESIGN.md, "Unfurl route").
+  It goes to the origin `vm`, `vm-origin.foolish.cards`, the cbase VM (providers/local/ops/VM_RUNBOOK.md), with `Managed-CachingOptimized` honouring the route's own `Cache-Control`.
+  CloudFront adds the VM's `X-Cbase-Origin`: `web_deploy.sh stack` reads it from SSM (`/cbase-vm/env/CBASE_ORIGIN_SECRET`) and passes it as the NoEcho parameter `OriginSecret`.
+- uttt.live has no server routes; its Function also answers `/234` with a 302 to `/243`.
+
+How it deploys: a push to `main` that touches `foolish/**`, `shared/**`, `uttt/c/**`, `uttt/web/**`, `web_deploy.sh`, `ops/require_main.sh` or the workflow runs `web_aws`.
+Its `foolish` and `uttt` jobs build the two static exports (and are the compile gate on a pull request); its `deploy` job runs `web_deploy.sh site foolish`, then `site uttt`: the uploads, the router's page list, one invalidation of `/*`, then a check that `www.foolish.cards` and `www.uttt.live` answer 200.
+It authenticates as the `cbase-github-deploy` role through GitHub OIDC (the `CBASE_AWS_ROLE_ARN` secret, made from `providers/aws/ops/github_oidc.yaml`, step 13), which can upload, invalidate and rewrite the page lists but not change the template: a template change is `web_deploy.sh stack`, by hand from this Mac (W7).
 
 ### W1. Validate the two certificates
 
@@ -468,7 +509,7 @@ CBASE_WEB_UTTT_CERT=arn:aws:acm:us-east-1:487337210065:certificate/6f0b38fc-6ed7
   c_base/providers/aws/ops/site/web_deploy.sh stack
 ```
 
-CloudFront refuses an alias another distribution holds, but Vercel is not a CloudFront distribution, so this works while DNS still points at Vercel.
+CloudFront refuses an alias another distribution holds.
 The distribution update takes a few minutes.
 
 ### W3. Put both distributions on the Free plan
@@ -490,57 +531,36 @@ curl -s --connect-to foolish.cards:443:dgow77nr7v5kf.cloudfront.net:443 https://
 curl -sI --connect-to uttt.live:443:d2hb0vxf10cj0w.cloudfront.net:443 https://uttt.live/234 | grep -i location   # /243
 ```
 
-Before the flip, Vercel answered `https://foolish.cards/...` with a 307 to `www`, and served the association file there as `application/octet-stream`.
-Apple fetches the association file at the apex without following redirects, so universal links were broken on Vercel; the apex flip below fixed that.
+### W5. The DNS records
 
-### W5. The DNS flip, in this order
-
-A day ahead, lower the TTL of every record you are about to change to 300 (Squarespace > DNS Settings, each record's TTL).
+The records live at Squarespace (Domains > the domain > **DNS > DNS Settings**).
 DNSSEC must be off for an ALIAS at `@` (it is: `dig +short DS foolish.cards` prints nothing).
 
-1. **uttt.live**, the rehearsal: replace the `@` A record (76.76.21.21) with an **ALIAS** `@` to `d2hb0vxf10cj0w.cloudfront.net`, and the `www` CNAME with `d2hb0vxf10cj0w.cloudfront.net`.
-   Test: `dig +short uttt.live A` and `dig +short uttt.live AAAA` return CloudFront addresses (not 76.76.21.21), `curl -sI https://uttt.live/` says `server: CloudFront`, and a replay link from the app plays.
-   If Squarespace will not take the ALIAS, stop here and use the fallback below before touching foolish.cards.
-2. **www.foolish.cards**: the `www` CNAME (then `d204b352f329121a.vercel-dns-017.com`) becomes `dgow77nr7v5kf.cloudfront.net`.
+1. **uttt.live**: an **ALIAS** `@` to `d2hb0vxf10cj0w.cloudfront.net`, and the `www` CNAME to the same.
+   Test: `dig +short uttt.live A` and `dig +short uttt.live AAAA` return CloudFront addresses, `curl -sI https://uttt.live/` says `server: CloudFront`, and a replay link from the app plays.
+2. **www.foolish.cards**: a CNAME to `dgow77nr7v5kf.cloudfront.net`.
    Test: `curl -sI https://www.foolish.cards/` says `server: CloudFront`; sign in and play a move against a bot.
-3. **foolish.cards**: the `@` A record (216.198.79.193) becomes an **ALIAS** `@` to `dgow77nr7v5kf.cloudfront.net`.
+3. **foolish.cards**: an **ALIAS** `@` to `dgow77nr7v5kf.cloudfront.net`.
    Test: `dig +short foolish.cards A` and `AAAA` return CloudFront addresses, `curl -sI https://foolish.cards/.well-known/apple-app-site-association` is a 200 with `application/json` and no redirect, then `cd foolish && npm run test:validate` (universal_links_validation) and a link tapped on a phone opens the app.
-4. **utils.foolish.cards**, whenever: it is a different site (the sibling repo `foolish-utils`), so first build it there with `output: 'export'` and `images.unoptimized`, upload with `c_base/providers/aws/ops/site/web_deploy.sh site utils --out ../foolish-utils/out` (the right content types, cache headers and invalidation), check it with `curl --connect-to` as in W4, then point the `utils` CNAME (then `1a8ccd91b52ad608.vercel-dns-017.com`) at `dgow77nr7v5kf.cloudfront.net`.
+4. **utils.foolish.cards**: a CNAME to `dgow77nr7v5kf.cloudfront.net`.
+   It is a different site (the sibling repo `foolish-utils`), built there with `output: 'export'` and `images.unoptimized` and uploaded with `c_base/providers/aws/ops/site/web_deploy.sh site utils --out ../foolish-utils/out` (the right content types, cache headers and invalidation); check it with `curl --connect-to` as in W4.
+5. **vm-origin.foolish.cards**: the AAAA record for the VM, the `/m/*` origin (providers/local/ops/VM_RUNBOOK.md).
 
-Fallback if the apex ALIAS does not work: a Route 53 hosted zone ($0.50 a month; ALIAS queries to CloudFront are free).
+Before changing one of these, lower its TTL to 300 a day ahead, so a mistake is minutes.
+
+Fallback if the apex ALIAS stops working: a Route 53 hosted zone ($0.50 a month; ALIAS queries to CloudFront are free).
 Create the zone for the domain, recreate EVERY record from Squarespace in it (the ACM CNAMEs too), add the apex as an A and AAAA alias to the distribution, then change the domain's nameservers at Squarespace to the zone's four.
 Not an apex-to-www forward: the iOS app's entitlement is `applinks:foolish.cards` only, and Apple does not follow redirects for the association file.
 
-### W6. Two weeks in parallel
+### W6. Rollback
 
-Since 2026-10-14 only `web_aws.yml` deploys on push (step 13).
-Watch for two weeks; the c_base admin console's Logs panel shows the `/m` unfurl requests coming through the new distribution.
+A bad web deploy: revert the bad commit on `main`, whose push deploys the revert (a re-run of an older run is refused by `ops/require_main.sh`, step 13), or restore the objects from the bucket's versions (noncurrent versions are kept 30 days) and invalidate `/*`.
 
-### W7. Rollback (DNS part retired 2026-10-18)
+### W7. GitHub deploys for the web
 
-The DNS rollback to Vercel existed until W9 and is gone; the records below are history.
-It was DNS only, and the 300-second TTL made it minutes:
-
-- foolish.cards: `@` back to an A record 216.198.79.193; `www` back to CNAME `d204b352f329121a.vercel-dns-017.com`.
-- uttt.live: `@` back to an A record 76.76.21.21; `www` back to CNAME `e0da883ddeb2a161.vercel-dns-017.com`.
-- utils: CNAME back to `1a8ccd91b52ad608.vercel-dns-017.com`.
-
-A bad web deploy on AWS without a DNS rollback: re-run `web_aws` on the last good commit (Actions > web_aws > that run > Re-run all jobs), or restore objects from the bucket's versions (kept 30 days).
-
-### W8. GitHub deploys for the web
-
-1. The role and its one secret (`CBASE_AWS_ROLE_ARN`) are step 13's: one role deploys the Lambda and the web.
-2. A template change to `providers/aws/ops/site/web.yaml` is always `web_deploy.sh stack` from this Mac; CI only uploads and rewrites the two page lists on the existing template.
-3. utils.foolish.cards is built in the sibling repo `foolish-utils` and still deployed by hand (W5 step 4).
-4. Now and then, `c_base/providers/aws/ops/site/web_deploy.sh site foolish --prune-static` (and `uttt`) deletes hashed files no current page uses; a tab left open across two deploys reloads.
-5. The Infinite Oracle's Mode B headers: `CBASE_WEB_ISOLATION=yes c_base/providers/aws/ops/site/web_deploy.sh stack` (and `no` to undo).
-
-### W9. Retire Vercel - DONE 2026-10-18
-
-Done ahead of the 2026-10-28 date, with Alex's go-ahead: steps 1 and 2 are in the repo teardown PR (workflows, both `VERCEL` halves, the web_deploy_scope test), the repository secrets are deleted by hand after it merges, and Alex deletes the Vercel projects foolish, uttt and foolish-utils himself.
-The W7 rollback below no longer exists; the history is kept.
-
-1. Delete `.github/workflows/web.yml` (workflow_dispatch-only since 2026-10-14; its pull-request gate lives in `web_aws.yml`) and the `VERCEL` half of `foolish/next.config.mjs`.
-   Delete `.github/workflows/uttt-web.yml` too (workflow_dispatch-only since its apex moved to CloudFront) and the `VERCEL` half of `uttt/web/next.config.mjs`.
-2. Delete the repository secrets `VERCEL_PROJECT_ID`, `UTTT_VERCEL_PROJECT_ID`, `VERCEL_TOKEN` and `VERCEL_ORG_ID`.
-3. Vercel dashboard: remove the domains from the foolish and uttt projects and delete both (and the foolish-utils one once utils has moved).
+1. Since 2026-11-10 the sites deploy with the backend, through `./cbase deploy` in `c_base.yml`'s `deploy` job (step 13); `cbase-web`'s two old distributions, routers and page lists are no longer touched, and `web_deploy.sh` runs only by hand.
+2. A change to a site's routes, shell or hostnames is a change to its `cbase.conf` (`foolish/cbase.conf`, `uttt/cbase.conf`); the next deploy's change set applies it, and one that would replace a distribution or move a hostname stops the job (`--allow-downtime` is a hand step).
+3. utils.foolish.cards is built in the sibling repo `foolish-utils` and still deployed by hand (CUTOVER.md step 7).
+4. Now and then, `../cbase/tools/cbase deploy --prune` by hand from `foolish/` (and `uttt/`) deletes the files the build no longer has; a tab left open across two deploys reloads.
+5. The Infinite Oracle's Mode B headers were `web.yaml`'s (`CBASE_WEB_ISOLATION`), which no longer serves the sites.
+   `./cbase` sets no such headers, so turning Mode B on is a change to `cbase` itself.

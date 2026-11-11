@@ -7,32 +7,11 @@
 //   npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
-import { tmpdir } from 'node:os';
-import { pathToFileURL } from 'node:url';
-import ts from 'typescript';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadTs, web } from '../test-support/ts_load.mjs';
 
-const web = join(import.meta.dirname, '..');
-const out = mkdtempSync(join(tmpdir(), 'arena-'));
-
-/** Transpile `file` and every relative module it imports, as .mjs under out/. */
-function load(file, seen = new Set()) {
-    if (seen.has(file)) return;
-    seen.add(file);
-    let js = ts.transpileModule(readFileSync(file, 'utf8'), {
-        compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-    }).outputText;
-    js = js.replace(/(from\s+['"])(\.{1,2}\/[^'"]+)(['"])/g, (_, a, spec, b) => {
-        load(join(dirname(file), spec + '.ts'), seen);
-        return a + spec + '.mjs' + b;
-    });
-    const to = join(out, relative(web, file)).replace(/\.ts$/, '.mjs');
-    mkdirSync(dirname(to), { recursive: true });
-    writeFileSync(to, js);
-}
-load(join(web, 'lib', 'arena.ts'));
-const arena = await import(pathToFileURL(join(out, 'lib', 'arena.mjs')).href);
+const arena = await loadTs('lib/arena.ts');
 const wasm = readFileSync(join(web, 'public', 'uttt243.wasm'));
 
 test('the module loads, its layout matches the kernel, and it states the bots', async () => {

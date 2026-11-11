@@ -106,7 +106,7 @@ jobs:
             echo "::error::found no wasm targets in c/Makefile - did the target naming change?"
             exit 1
           fi
-          echo "targets: $(echo $targets | tr '\n' ' ')"
+          echo "targets: $(tr '\n' ' ' <<< "$targets")"
           failed=""
           for t in $targets; do
             echo "::group::make -C c $t"

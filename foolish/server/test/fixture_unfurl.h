@@ -18,8 +18,8 @@
 // foolish.cards did exactly that on 2026-10-14. These goldens are what the
 // route was written to say, which is what the C route says.
 //
-// The TS route is to be deleted (docs/VERCEL.md 4(a)), so these strings are the
-// contract from here on, not something to regenerate. The payloads were
+// The TS route is deleted (foolish/src/app/m/ is gone), so these strings are
+// the contract from here on, not something to regenerate. The payloads were
 // re-made once by unfurl_payloads.c when the replay format went to 11 (each
 // body the same game, its trump symbol re-radixed); the tags did not move.
 #ifndef CB_FIXTURE_UNFURL_H

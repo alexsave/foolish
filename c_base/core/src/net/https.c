@@ -275,13 +275,21 @@ static int ctx_build(void) {
     static const char *const KNOWN[] = {
         "/etc/pki/tls/certs/ca-bundle.crt",     // Fedora, RHEL and their kin (a one-shot provider's runtime)
         "/etc/ssl/certs/ca-certificates.crt",   // Debian, Ubuntu, Alpine
-        "/etc/ssl/cert.pem",                    // Alpine, macOS's system copy
+        "/etc/ssl/cert.pem",                    // Alpine, macOS's system copy (lagging)
     };
     int ok = 0;
     if (ca && *ca) {
         ok = SSL_CTX_load_verify_locations(ctx, ca, NULL);
         if (!ok) CB_ERROR("https", "cannot load CA bundle %s", ca);
     } else {
+        // OpenSSL's own bundle first ($SSL_CERT_FILE, else the file its build was configured
+        // with: Homebrew's maintained one on a Mac, the distribution's on Linux), when it
+        // exists. Only then the fixed list: macOS also has /etc/ssl/cert.pem, Apple's copy,
+        // which lags the roots servers now chain to (it lacks SSL.com's 2022 ECC root), and
+        // the static Alpine build's configured file is absent on the runtime it ships to.
+        const char *own = getenv(X509_get_default_cert_file_env());
+        if (!own || !*own) own = X509_get_default_cert_file();
+        if (own && *own && file_exists(own)) ok = SSL_CTX_load_verify_locations(ctx, own, NULL);
         for (size_t i = 0; i < sizeof KNOWN / sizeof KNOWN[0] && !ok; i++)
             if (file_exists(KNOWN[i])) ok = SSL_CTX_load_verify_locations(ctx, KNOWN[i], NULL);
         if (!ok) ok = SSL_CTX_set_default_verify_paths(ctx);

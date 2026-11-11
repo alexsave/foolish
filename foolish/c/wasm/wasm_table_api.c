@@ -286,18 +286,23 @@ int wasm_fixture_seat(int id_len, int name_len, int brain_len) {
 }
 
 // -> io = [state blob][durable roster]. The state blob's length, or the refusal
-// (table.h table_seal; wasm_table_detail after TABLE_E_ROSTER).
+// (table.h table_seal; wasm_table_detail after TABLE_E_ROSTER); the roster's
+// length is wasm_fixture_roster_len's.
 //
 // A fixture that set a stamp is a row a rating commit wrote: the state is
 // written again with the stamp behind it (the same length - the stamp is fixed
 // width) and loaded, so a stamp the kernel would not have written (on a board
 // that is not over, or not one per seat) is a refusal here like any other.
+static int g_fixture_roster_len;
+int wasm_fixture_roster_len(void) { return g_fixture_roster_len; }
+
 int wasm_fixture_seal(void) {
     Table *t = table();
-    const int n = table_seal(t, t->g, &g_fixture_roster, wasm_io_ptr(), wasm_io_cap());
+    g_fixture_roster_len = 0;
+    const int n = table_seal(t, t->g, &g_fixture_roster, wasm_io_ptr(), wasm_io_cap(), &g_fixture_roster_len);
     if (n < 0 || g_fixture_stamp.n == 0) return n;
     if (state_blob_put_rated_at(t->g, 0, &g_fixture_stamp, STATE_BLOB_FORMAT, wasm_io_ptr()) != n) return TABLE_E_MISMATCH;
-    const int rc = table_load(t, wasm_io_ptr(), n, wasm_io_ptr() + n, ROSTER_BYTES);
+    const int rc = table_load(t, wasm_io_ptr(), n, wasm_io_ptr() + n, g_fixture_roster_len);
     if (rc != TABLE_OK) return rc;
     return t->ratings.n == g_fixture_stamp.n ? n : TABLE_E_MISMATCH;
 }

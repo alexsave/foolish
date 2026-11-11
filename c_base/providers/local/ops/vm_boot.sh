@@ -142,6 +142,19 @@ if [ -f "$R/etc/chrony.conf" ] && grep -q '^log ' "$R/etc/chrony.conf"; then
 fi
 # end 2b
 
+# 2c. ./cbase holds the server. Once `./cbase deploy` (cbase/tools/cbase.d/vm_remote.sh) has
+# installed an app's cbase-<app>.socket here, that socket owns the port and that app's unit owns the
+# data folder (it stopped and disabled cbase.service and gave /var/lib/cbase to its own user). Step
+# 3 would install cbase.service again and restart it: a second server on the socket's port, and
+# StateDirectory=cbase taking /var/lib/cbase back from the running app. So the boot ends here and
+# touches neither (it never restores a backup either: serve does that itself, and only into a
+# missing database). A new instance has no such socket, and boots cbase.service as ever.
+if compgen -G "$R/etc/systemd/system/cbase-*.socket" > /dev/null; then
+  echo "cbase: $(basename "$(compgen -G "$R/etc/systemd/system/cbase-*.socket" | head -1)") holds the server: cbase.service, its port and its data left alone"
+  exit 0
+fi
+# end 2c
+
 # 3. the server.
 getent passwd cbase >/dev/null || useradd --system --no-create-home --home-dir /var/lib/cbase --shell /sbin/nologin cbase
 fetch serve /usr/local/bin/cbase

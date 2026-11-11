@@ -1,0 +1,53 @@
++ mkdir -p /opt/mt
++ cp /g/pkg/load.sh /g/pkg/rematch.c /g/pkg/src.tgz /g/pkg/srv.sh /g/pkg/tlsres.c /opt/mt/
++ cp /g/bin/cbase_D /opt/mt/
++ echo none
++ chmod +x /opt/mt/load.sh /opt/mt/srv.sh /opt/mt/cbase_D
++ dnf install -y procps-ng openssl
++ tail -3
++ bash /opt/mt/load.sh build
++ bash /opt/mt/srv.sh start t1 D 8080 12
+-rwxr-xr-x 1 root root 3877512 Nov  9 22:28 /opt/mt/rematch
+-rwxr-xr-x 1 root root  203464 Nov  9 22:28 /opt/mt/tlsres
+BUILT
+start t1 build D pid 903 1 listening
++ bash /opt/mt/load.sh run t1 127.0.0.1 4 0 1 100000 8000
+moves=122808 window_s=7.99 moves_per_s=15367.4 move_p50_ms=0.08 move_p99_ms=0.24 err_files=0
+1794263289.865760299
+1794263300.520536262
++ cat /var/tmp/mt/capout_t1_mid.txt
+cat: /var/tmp/mt/capout_t1_mid.txt: No such file or directory
++ head -20 /var/tmp/mt/tls_t1_mid.txt
+head: cannot open '/var/tmp/mt/tls_t1_mid.txt' for reading: No such file or directory
++ bash /opt/mt/srv.sh stop t1
+VmHWM:	   21292 kB
++ bash /opt/mt/srv.sh start t2 D 8080
+start t2 build D pid 1190 1 listening
++ bash /opt/mt/load.sh rematch t2 127.0.0.1 2 2000 3
+moves=789 window_s=4.04 moves_per_s=195.5 move_p50_ms=0.08 move_p99_ms=0.15 err_files=0
+rematch wait_ms=2000 n=4 p50_ms=0.405 p90_ms=0.471 max_ms=0.471 mean_ms=0.397
+1794263301.590666304
+1794263307.368645293
++ bash /opt/mt/srv.sh stop t2
+VmHWM:	    9960 kB
++ bash /opt/mt/srv.sh start t3 D 8080
+start t3 build D pid 1368 1 listening
++ bash /opt/mt/load.sh rematch t3 127.0.0.1 2 65000 2
+moves=457 window_s=65.03 moves_per_s=7.0 move_p50_ms=0.07 move_p99_ms=0.29 err_files=0
+rematch wait_ms=65000 n=2 p50_ms=2.962 p90_ms=2.962 max_ms=2.962 mean_ms=2.516
+1794263308.244786835
+1794263374.891583254
++ bash /opt/mt/srv.sh stop t3
+VmHWM:	    7916 kB
++ head
++ grep -h 'STALL\|failed\|refused' /var/tmp/mt/t1/a0.err /var/tmp/mt/t1/a1.err /var/tmp/mt/t1/a2.err /var/tmp/mt/t1/a3.err /var/tmp/mt/t1/b0.err /var/tmp/mt/t1/b1.err /var/tmp/mt/t1/b2.err /var/tmp/mt/t1/b3.err /var/tmp/mt/t2/a0.err /var/tmp/mt/t2/a1.err /var/tmp/mt/t2/b0.err /var/tmp/mt/t2/b1.err /var/tmp/mt/t3/a0.err /var/tmp/mt/t3/a1.err /var/tmp/mt/t3/b0.err /var/tmp/mt/t3/b1.err
+At1x0: refused_at_once=0; pump after 1.5 s idle:
+At1x1: refused_at_once=0; pump after 1.5 s idle:
+At1x2: refused_at_once=0; pump after 1.5 s idle:
+At1x3: refused_at_once=0; pump after 1.5 s idle:
+Bt1x0: refused_at_once=0; pump after 1.5 s idle:
+Bt1x1: refused_at_once=0; pump after 1.5 s idle:
+Bt1x2: refused_at_once=0; pump after 1.5 s idle:
+Bt1x3: refused_at_once=0; pump after 1.5 s idle:
+At2x0: refused_at_once=0; pump after 1.5 s idle:
+At2x1: refused_at_once=0; pump after 1.5 s idle:

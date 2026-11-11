@@ -9,7 +9,12 @@
 #   c_base/providers/aws/ops/site/web_deploy.sh site foolish --out DIR # upload an already built export
 #   c_base/providers/aws/ops/site/web_deploy.sh site foolish --prune-static   # and delete hashed files this build does not use
 #
-# A site deploy, in order (c_base/docs/VERCEL.md section 4d):
+# The stack, like a site, is deployed only from a tree that contains
+# origin/main (require_main.sh). The /m/* origin's X-Cbase-Origin value is the
+# VM's own, read from SSM (/cbase-vm/env/CBASE_ORIGIN_SECRET, which
+# providers/local/ops/vm_deploy.sh makes) and passed as the NoEcho OriginSecret.
+#
+# A site deploy, in order:
 #   0. refuses a tree that does not contain origin/main, except a CI run of a
 #      commit of main that a newer push's run is queued behind (require_main.sh;
 #      for utils, the foolish-utils tree that holds --out);
@@ -30,7 +35,6 @@
 # Settings, from the environment, else the ops settings file (ops/ops_env.sh:
 # $CBASE_OPS_ENV, else ~/.config/cbase/ops.env, else ops/.env):
 #   CBASE_WEB_STACK          cbase-web (the stack name)
-#   CBASE_STACK              cbase (the API stack; `stack` reads its FunctionUrl for /m/*)
 #   CBASE_WEB_FOOLISH_CERT   `stack`: the foolish.cards certificate ARN, once ISSUED
 #   CBASE_WEB_UTTT_CERT      `stack`: the uttt.live certificate ARN, once ISSUED
 #   CBASE_WEB_ISOLATION      `stack`: yes for the COOP/COEP headers (default: keep)
@@ -43,7 +47,6 @@ repo="$(cd "$(dirname "$0")/../../../../.." && pwd)"
 . "$repo/c_base/ops/ops_env.sh"
 cbase_ops_read "$(cbase_ops_env_file "$repo/c_base")"
 stack="${CBASE_WEB_STACK:-cbase-web}"
-api_stack="${CBASE_STACK:-cbase}"
 region="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 export AWS_REGION="$region"
 
@@ -62,12 +65,11 @@ param() {
 
 # ---- stack ----------------------------------------------------------------------------
 deploy_stack() {
-  local fn_url api_host
-  fn_url="$(output "$api_stack" FunctionUrl)"
-  if [ -z "$fn_url" ] || [ "$fn_url" = None ]; then die "the $api_stack stack has no FunctionUrl output"; fi
-  api_host="${fn_url#https://}"
-  api_host="${api_host%/}"
-  local overrides=("ApiOriginDomain=$api_host")
+  # The VM's origin secret, for the /m/* origin's header (never printed).
+  local origin_secret
+  origin_secret="$(aws ssm get-parameter --name /cbase-vm/env/CBASE_ORIGIN_SECRET --with-decryption --query Parameter.Value --output text)"
+  [ "${#origin_secret}" -ge 32 ] || die "no /cbase-vm/env/CBASE_ORIGIN_SECRET"
+  local overrides=("OriginSecret=$origin_secret")
   [ -n "${CBASE_WEB_FOOLISH_CERT:-}" ] && overrides+=("FoolishCertificateArn=$CBASE_WEB_FOOLISH_CERT")
   [ -n "${CBASE_WEB_UTTT_CERT:-}" ] && overrides+=("UtttCertificateArn=$CBASE_WEB_UTTT_CERT")
   [ -n "${CBASE_WEB_ISOLATION:-}" ] && overrides+=("CrossOriginIsolation=$CBASE_WEB_ISOLATION")
@@ -114,8 +116,8 @@ set_pages() {
   aws cloudformation wait stack-update-complete --stack-name "$stack"
 }
 
-# A site is deployed only from a tree that contains origin/main (require_main.sh
-# says why).
+# The stack and a site are deployed only from a tree that contains origin/main
+# (require_main.sh says why).
 # shellcheck source=c_base/ops/require_main.sh
 . "$repo/c_base/ops/require_main.sh"
 
@@ -165,7 +167,7 @@ deploy_site() {
   #     the page gunzips itself (DecompressionStream), revalidated
   aws s3 sync "$out" "$dest" "${q[@]}" --exclude '*' --include '*.gz' --exclude '_next/*' \
     --content-type application/octet-stream --cache-control "$revalidate"
-  # 3c. uttt's kernels (and any utils wasm), an hour as on Vercel
+  # 3c. uttt's kernels (and any utils wasm), an hour
   aws s3 sync "$out" "$dest" "${q[@]}" --exclude '*' --include '*.wasm' --exclude '_next/*' \
     --content-type application/wasm --cache-control 'public, max-age=3600'
   # 3d. the universal-links association file: JSON, at the apex, no extension
@@ -208,7 +210,7 @@ deploy_site() {
 
 [ $# -ge 1 ] || usage
 case "$1" in
-  stack) deploy_stack ;;
+  stack) require_main "$repo"; deploy_stack ;;
   site)
     [ $# -ge 2 ] || usage
     site="$2"; shift 2

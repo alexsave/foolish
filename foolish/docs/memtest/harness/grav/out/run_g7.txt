@@ -1,0 +1,14 @@
+[22:58:52] g7 standard credits, build D
+i-01fd4ef7421e2d01f
+INSTANCECREDITSPECIFICATIONS	standard	i-01fd4ef7421e2d01f
+Success	start g7 build D pid 11611 1 listening
+cpu  43858 0 8712 238224 1065 0 14511 3 0 0
+	
+Success	moves=1172313 window_s=150.06 moves_per_s=7812.5 move_p50_ms=0.20 move_p99_ms=2.58 err_files=0
+1794265139.802580440
+1794265292.336297630
+      1 Ag7x5: deadline waiting for game 1225
+	
+Success	cpu  45958 0 9626 263203 1626 0 16150 16283 0 0
+VmHWM:	   28292 kB
+	

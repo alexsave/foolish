@@ -92,11 +92,13 @@ It refuses a tree that does not contain `origin/main`, like `vm_release.sh`.
 
 ## Upgrade the server
 
-Every push to main that changes the server deploys it: the `c_base` workflow's `deploy to cbase-vm` job builds the static binary (`build_bootstrap.sh serve`) and runs `vm_release.sh` on it, as the GitHub role (c_base/RUNBOOK.md, "GitHub deploys").
+Every push to main that changes the server or a site deploys it: the `c_base` workflow's `deploy` job runs `./cbase deploy` from `foolish/` with the static binary the run built (`build_bootstrap.sh serve`), as the GitHub role (c_base/RUNBOOK.md, "GitHub deploys").
+It installs the server as `cbase-foolish.service` behind `cbase-foolish.socket` (CUTOVER.md step 6), not as `cbase.service`.
+What follows is `vm_release.sh`, the release before the cutover: since 2026-11-10 it runs only by hand, with an operator's credentials, for a rollback to `cbase.service` (CUTOVER.md step 9).
 `vm_release.sh BIN` uploads BIN as `vm/cbase-serve-<short sha>` with its `.sha256`, points `/cbase-vm/release/serve` at it, runs the instance's boot script through SSM (it fetches and checks the binary named there and restarts `cbase`), then checks that `cbase` is active, that `/usr/local/bin/cbase` has BIN's sha256, that the instance's own `/health` and `/ready` answer 200, and that `https://api.foolish.cards/health` answers `ok cbase`.
 It refuses a tree that does not contain `origin/main` (`c_base/ops/require_main.sh`).
 Every `vm_release.sh` run (and `--restart`) pins the tree's boot script first: it uploads `vm/cbase-vm-boot-<sha12>` (the same object when the script did not change), sets `/cbase-vm/release/boot`, and then sends the stub over SSM, so the instance fetches, checks and installs the new boot script before running it.
-A boot-script or unit change therefore reaches the running instance with the next push to main that touches `c_base/**`, or with `vm_deploy.sh --restart` (= `vm_release.sh --restart`) by hand from a tree that contains main; no stack update and no new instance.
+A boot-script or unit change therefore reaches the running instance with `vm_deploy.sh --restart` (= `vm_release.sh --restart`) by hand from a tree that contains main; no stack update and no new instance.
 The stub is sent as text, not run from the installed copy, so it works even on an instance whose installed boot script predates the stub.
 After the checks pass, the prune keeps the new boot object and the one it replaced, like the binary.
 By hand, the same command runs from this Mac; `vm_release.sh --restart` pins the tree's boot script and restarts on the server release already named, and `--verify` runs only the checks.

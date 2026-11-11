@@ -22,7 +22,8 @@ static void seed_hex(const uint8_t *seed, char *out) {
 }
 
 // The section's first step: the table as the last commit left it.
-static void adopt(LocalTable *L) { table_adopt(&L->t, &L->res); }
+// The resident and the roster bytes kept with it (table.h TableResident): commit wrote both.
+static void adopt(LocalTable *L) { table_adopt(&L->t, &L->res, L->roster, L->roster_len); }
 
 // The section's last step, after an operation that changed the table: the
 // products at the next version, as the server commits them (table_ops.c
@@ -57,6 +58,13 @@ static int commit(LocalTable *L, int64_t now_ms) {
     if (n < 0) return n;
     L->cast_len = n;
     table_resident(t, &c->clock, &L->res);
+    // The roster's one copy is its bytes (the server's journal keeps the same): written again
+    // only when the operation edited it.
+    if (t->roster_changed || L->roster_len == 0) {
+        const int rl = roster_encode(&t->r, L->roster, (int)sizeof L->roster);
+        if (rl < 0) return TABLE_E_ROSTER;
+        L->roster_len = rl;
+    }
     L->version = next;
     return TABLE_OK;
 }

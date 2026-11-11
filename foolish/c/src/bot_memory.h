@@ -187,6 +187,10 @@ static inline bool bot_mem_discarded(const BotMemory *m, Card c) {
 #define BOT_MEM_BYTES_MAX 1400
 // Writes m; returns the byte length (at most BOT_MEM_BYTES_MAX).
 int bot_mem_encode(const BotMemory *m, uint8_t *out, int cap);
+// A counts-only block's bytes from its two fields (what bot_mem_encode writes for one: such a
+// block is bot_mem_count's, nothing else set), for a host that keeps only those (table.h
+// TableResident). Returns the byte length, or -1 when cap is short.
+int bot_mem_encode_counts(uint32_t n_records, int8_t num_players, uint8_t *out, int cap);
 // Reads `len` bytes; false (m cleared) for bytes this kernel did not write.
 bool bot_mem_decode(BotMemory *m, const uint8_t *p, int len);
 // Equal blocks (encoding-equal: what a fold makes is canonical).

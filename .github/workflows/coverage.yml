@@ -67,6 +67,7 @@ jobs:
         run: |
           gcovr --root . --filter 'src/game\.c' --filter 'src/legal\.c' --filter 'src/replay\.c' \
             --json-summary -o cov-summary.json || true
+          # shellcheck disable=SC2016 # the single quotes hold node's JavaScript, not shell
           node -e '
             let l = "", b = "";
             try {
@@ -157,6 +158,7 @@ jobs:
         if: always()
         run: |
           npm run coverage:json:client || true
+          # shellcheck disable=SC2016 # the single quotes hold node's JavaScript, not shell
           node -e '
             const rd = (p) => { try { return require(p).total; } catch (e) { return null; } };
             const c = rd("./.covjson/client/coverage-summary.json");

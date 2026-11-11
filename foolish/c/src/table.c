@@ -12,6 +12,10 @@
 #include "../wasm/wire.h"
 #include "../../../shared/c/le_bytes.h"
 #include <string.h>
+#ifdef BOT_MEM_ASSERT
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 // ---------- snapshots -----------------------------------------------------------
 
@@ -134,6 +138,16 @@ static void mem_load(Table *t, const StateBlobSections *sec) {
     else
         bot_mem_clear(&t->mem);
     mem_level_check(t);
+}
+
+// The resident's block (table.h TableResident): its own, or the one its summary stands for.
+static void mem_from_resident(const TableResident *res, BotMemory *m) {
+    if (res->mem_full) { *m = res->mem; return; }
+    bot_mem_clear(m);
+    if (!res->mem_valid) return;
+    m->n_records = res->mem_records;
+    m->num_players = res->mem_players;
+    m->counts_only = 1;
 }
 
 static void scope_open(Table *t, int actor) {
@@ -289,10 +303,10 @@ static int unnamed_seat(const Game *g);
 
 // ---------- fixtures --------------------------------------------------------------
 
-int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) {
+int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap, int *roster_len) {
     t->loaded = false;
     t->detail = 0;
-    if (cap < TABLE_STATE_MAX + ROSTER_BYTES) return TABLE_E_CAP;
+    if (cap < TABLE_STATE_MAX + ROSTER_MAX) return TABLE_E_CAP;
     // state_put walks the counts of a board nothing has judged yet: refuse one
     // past its array here, with the code the import would give it.
     if (g->num_players < 0 || g->num_players > MAX_PLAYERS) return GAME_INVALID_NUM_PLAYERS;
@@ -307,6 +321,7 @@ int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) 
     const int rc = roster_encode(r, out + state_len, cap - state_len);
     if (rc < 0) { t->detail = rc; return TABLE_E_ROSTER; }
     const int loaded = table_load(t, out, state_len, out + state_len, rc);
+    if (loaded == TABLE_OK && roster_len) *roster_len = rc;
     return loaded == TABLE_OK ? state_len : loaded;
 }
 // A bound on one session-log record with its timestamp.
@@ -1041,20 +1056,29 @@ _Static_assert(offsetof(Game, num_logs) < offsetof(Game, logs), "num_logs is in 
 _Static_assert(offsetof(Game, rep) == offsetof(Game, logs) + sizeof(((Game *)0)->logs), "Game.rep follows Game.logs");
 _Static_assert(sizeof(Game) - offsetof(Game, rep) - sizeof(((Game *)0)->rep) < 8, "Game.rep is the Game's last field");
 
-int table_adopt(Table *t, const TableResident *res) {
+int table_adopt(Table *t, const TableResident *res, const uint8_t *roster, int roster_len) {
+    // The roster first: bytes that are not one adopt nothing. They were validated when the load
+    // or the commit that made the resident wrote or read them, so they are unpacked, not judged
+    // again (roster_unpack: shape only), and vouch for the roster until an edit (Table.roster_valid),
+    // as the resident itself is not judged again.
+    const int rc = roster_unpack(&t->r, roster, roster_len);
+    if (rc != ROSTER_OK) {
+        t->loaded = false;
+        t->detail = rc;
+        return TABLE_E_ROSTER;
+    }
+    t->roster_valid = true;
     // The table's Game is full storage (table_init attached it): the head, then the ring the
     // resident kept apart, so a game held between two human moves keeps its history.
     game_copy_head(t->g, (const Game *)(const void *)res->head, TABLE_HEAD_BYTES);
     t->g->rep_live = true;
     t->g->rep = res->rep;
     t->g->num_logs = 0;   // the board carries no log (table_load's rule)
-    t->r = res->r;
-    t->roster_valid = true;   // a resident is made only from a table the kernel loaded or committed
     t->clock = res->clock;
     t->ratings = res->ratings;
     t->rng_base = res->rng_base;
     t->detail = 0;
-    t->mem = res->mem;
+    mem_from_resident(res, &t->mem);
     t->mem_valid = res->mem_valid;
     t->mem_at = 0;   // the board carries no log: the resident's memory is folded to it
     mem_level_check(t);
@@ -1064,7 +1088,13 @@ int table_adopt(Table *t, const TableResident *res) {
     return TABLE_OK;
 }
 
-void table_resident(const Table *t, const BoardClock *clock, TableResident *out) {
+TableResident *table_resident_into(const Table *t, const BoardClock *clock, TableResident *whole, TableResident *small) {
+    // The memory first: whether it is held (mem_full) picks the buffer.
+    BotMemory scratch;
+    bool valid;
+    const BotMemory *m = mem_now(t, &scratch, &valid);
+    const bool full = valid && !m->counts_only;
+    TableResident *out = full ? whole : small;
     // The head without its ring flag (a head alone has no ring to point at), and the ring apart.
     game_copy_head((Game *)(void *)out->head, t->g, TABLE_HEAD_BYTES);
     if (t->g->rep_live) out->rep = t->g->rep;
@@ -1074,33 +1104,52 @@ void table_resident(const Table *t, const BoardClock *clock, TableResident *out)
     // instead, played the next operation on another board than the recovery's replay of it;
     // log_virt (the MAX_LOGS cliff, game.h) carried would reach a cliff a load never does.
     state_canonical((Game *)out->head);
-    out->r = t->r;
     out->clock = clock ? *clock : t->clock;
     out->ratings = t->ratings;
     out->rng_base = t->rng_base;
-    BotMemory scratch;
-    bool valid;
-    out->mem = *mem_now(t, &scratch, &valid);
     out->mem_valid = valid;
-    (void)scratch;
+    out->mem_full = full;
+    out->mem_records = full ? 0 : m->n_records;
+    out->mem_players = full ? 0 : m->num_players;
+    if (full) out->mem = *m;
+#ifdef BOT_MEM_ASSERT
+    else {
+        // The summary is the whole block: rebuilt, it is the table's, byte for byte.
+        BotMemory back;
+        mem_from_resident(out, &back);
+        if (memcmp(&back, m, sizeof back) != 0) {
+            fprintf(stderr, "table_resident: a block without its memory is not its summary\n");
+            abort();
+        }
+    }
+#endif
+    return out;
 }
 
-int table_resident_encode(const TableResident *res, uint8_t *state, int state_cap, int *state_len, uint8_t *roster,
-                          int roster_cap, int *roster_len) {
+void table_resident(const Table *t, const BoardClock *clock, TableResident *out) {
+    table_resident_into(t, clock, out, out);
+}
+
+int table_resident_encode(const TableResident *res, uint8_t *state, int state_cap, int *state_len) {
     const Game *g = (const Game *)res->head;
     if (state_cap < TABLE_STATE_MAX) return TABLE_E_CAP;
     // A resident is a Table's (table_resident), so its stamp is the board's own (table_stamp).
     const GameRatings *stamp = res->ratings.n > 0 ? &res->ratings : 0;
     uint8_t mb[BOT_MEM_BYTES_MAX];
-    StateBlobSections sec = mem_section(&res->mem, res->mem_valid, mb, (int)sizeof mb);
+    StateBlobSections sec = { 0 };
+    if (res->mem_full) {
+        sec = mem_section(&res->mem, true, mb, (int)sizeof mb);
+    } else if (res->mem_valid) {
+        // The counts-only block the summary stands for, written from it (mem_from_resident's block
+        // encodes to exactly these bytes).
+        const int k = bot_mem_encode_counts(res->mem_records, res->mem_players, mb, (int)sizeof mb);
+        if (k > 0) { sec.bot_memory = mb; sec.bot_memory_len = k; }
+    }
     sec.rep = &res->rep;   // the ring the resident kept apart from its head (section 2)
     const int n = state_blob_put_full_at(g, &res->clock, stamp, &sec, STATE_BLOB_FORMAT, state);
     if (n == STATE_BLOB_E_RULES) return TABLE_E_STATE_RULES;
     if (n < 0) return n;
-    const int rl = roster_encode(&res->r, roster, roster_cap);
-    if (rl < 0) return rl == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     *state_len = n;
-    *roster_len = rl;
     return TABLE_OK;
 }
 

@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 # The web: foolish.cards (with www and utils) and uttt.live, static files in S3
-# behind CloudFront. c_base/docs/VERCEL.md sections 4b to 4f are the design,
-# c_base/RUNBOOK.md "Web hosting" the clicks, ops/web_deploy.sh the deploy.
+# behind CloudFront. c_base/RUNBOOK.md "Web hosting" is the record and the
+# clicks, ops/web_deploy.sh the deploy.
 #
 # What it makes:
 #   * one private S3 bucket, a prefix per site (foolish/, utils/, uttt/), read
@@ -20,8 +20,9 @@ AWSTemplateFormatVersion: "2010-09-09"
 #     page. Not custom error responses: those are distribution-wide, so a
 #     missing JS chunk would come back as a 200 of HTML and the /m origin's
 #     errors would be rewritten too;
-#   * on foolish, /m/* to the c_base Lambda Function URL (the link unfurl, a C
-#     route), and optionally the COOP/COEP headers;
+#   * on foolish, /m/* (the link unfurl, a C route) to the cbase VM,
+#     vm-origin.foolish.cards (providers/local/ops/VM_RUNBOOK.md), with the
+#     VM's X-Cbase-Origin header, and optionally the COOP/COEP headers;
 #   (GitHub Actions deploys through ops/github_oidc.yaml's role.)
 #
 # Caching: only AWS-managed cache policies (a Free plan allows no custom
@@ -41,7 +42,7 @@ Metadata:
       - Label: { default: "Certificates (empty: no custom domains yet)" }
         Parameters: [FoolishCertificateArn, UtttCertificateArn]
       - Label: { default: "Origins and headers" }
-        Parameters: [ApiOriginDomain, CrossOriginIsolation]
+        Parameters: [OriginSecret, CrossOriginIsolation]
       - Label: { default: "Routing (web_deploy.sh writes these from each build)" }
         Parameters: [FoolishPages, UtttPages]
 
@@ -58,11 +59,11 @@ Parameters:
     Description: The ACM certificate (us-east-1) for uttt.live and www.uttt.live. Empty serves the distribution on its cloudfront.net name only.
     AllowedPattern: "(arn:aws:acm:us-east-1:[0-9]{12}:certificate/[0-9a-f-]+)?"
     ConstraintDescription: empty, or an ACM certificate ARN in us-east-1
-  ApiOriginDomain:
+  OriginSecret:
     Type: String
-    Description: The host of the c_base Function URL (the cbase stack's FunctionUrl output without https:// and the slash), the origin of /m/*.
-    AllowedPattern: "[a-z0-9]+\\.lambda-url\\.[a-z0-9-]+\\.on\\.aws"
-    ConstraintDescription: a Lambda Function URL host such as abc123.lambda-url.us-east-1.on.aws
+    NoEcho: true
+    Description: The VM's /cbase-vm/env/CBASE_ORIGIN_SECRET, the X-Cbase-Origin header the /m/* origin sends (the server refuses a request without it). web_deploy.sh stack reads it from SSM; never printed.
+    MinLength: 32
   CrossOriginIsolation:
     Type: String
     Default: "no"
@@ -361,11 +362,18 @@ Resources:
             DomainName: !GetAtt Bucket.RegionalDomainName
             OriginAccessControlId: !GetAtt FoolishOac.Id
             S3OriginConfig: { OriginAccessIdentity: "" }
-          - Id: api
-            DomainName: !Ref ApiOriginDomain
+          # The cbase VM, as vm.yaml's staging distribution reaches it: the
+          # AAAA name over IPv6, plain HTTP on the serve port (TLS ends here).
+          - Id: vm
+            DomainName: vm-origin.foolish.cards
+            OriginCustomHeaders:
+              - { HeaderName: X-Cbase-Origin, HeaderValue: !Ref OriginSecret }
             CustomOriginConfig:
-              OriginProtocolPolicy: https-only
-              OriginSSLProtocols: [TLSv1.2]
+              OriginProtocolPolicy: http-only
+              HTTPPort: 8080
+              IpAddressType: ipv6
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 60
         DefaultCacheBehavior:
           TargetOriginId: s3
           ViewerProtocolPolicy: redirect-to-https
@@ -381,10 +389,10 @@ Resources:
         CacheBehaviors:
           # The link unfurl: the C route answers HTML with its own
           # Cache-Control (a day), which CachingOptimized honours, so one
-          # crawler fetch per link reaches Lambda. The Function URL needs its
-          # own Host, hence AllViewerExceptHostHeader, as in ops/cbase.yaml.
+          # crawler fetch per link reaches the VM. Every viewer header but
+          # Host, as in vm.yaml's staging distribution.
           - PathPattern: /m/*
-            TargetOriginId: api
+            TargetOriginId: vm
             ViewerProtocolPolicy: redirect-to-https
             AllowedMethods: [GET, HEAD]
             CachedMethods: [GET, HEAD]

@@ -43,8 +43,8 @@
 --const BOT_STOP_ --const BOT_PACE_ --const MOVE_
 #
 # Test fixtures (e2e/helpers/table_fixture.ts): card notation refusals and suit
-# numbers (card.h), and the durable roster's length a sealed row carries.
---const CARD_PARSE_E_ --const SUIT_ --const ROSTER_BYTES
+# numbers (card.h).
+--const CARD_PARSE_E_ --const SUIT_
 #
 # The replay code's extras (replay_extras.h ReplayExtras): the seat nicknames and
 # per-move timing a share link carries, as the struct the bridge crosses with.

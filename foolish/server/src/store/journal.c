@@ -262,6 +262,7 @@ typedef struct cb_jhold {
     // handing its own buffer over (game_set: the two are swapped, no copy). The game's own
     // buffer, allocated at its first resident, or NULL.
     TableResident *res;
+    size_t        res_cap;    // its buffer's bytes: sizeof(TableResident), or less (res_take)
     bool          res_valid;
     // THE HOLD: operations that hold the game (cb_journal_game_acquire's `held`, under the game's
     // lock: at most one at a time in practice). A held game is never evicted (ov_evict); unlinked
@@ -270,9 +271,11 @@ typedef struct cb_jhold {
     // `gone` is read without it by the holder's fence (j_game_commit).
     int           held;
     atomic_bool   gone;
-    // The newest acknowledged row (no move list). Its columns are always this game's; its state and
-    // roster bytes are when row_fresh, else the resident's encode is due (row_refresh) before
-    // anything reads them (R3).
+    // The newest acknowledged row (no move list). Its columns are always this game's, and so are
+    // its roster bytes: THE ROSTER'S ONE COPY in memory (roster.h format 2, about 150 bytes; the
+    // resident holds none, table.h TableResident), every commit's row carries them, and who sits
+    // here is read from them (seat_refs). Its state bytes are the game's when row_fresh, else the
+    // resident's encode is due (row_refresh) before anything reads them (THE STATE BYTES, R3).
     cb_game_row   row;
     bool          row_fresh;
     int64_t       sql_version;   // the version the tables hold
@@ -292,10 +295,6 @@ typedef struct cb_jhold {
     int64_t       touched_ms;    // j_mono of its last move
     int64_t       first_ms;      // j_mono of its oldest waiting move
     uint64_t      first_seg;     // a segment at or before the one holding its oldest waiting move
-    int           n_humans;      // the humans its roster seats (the dashboard list's members)
-    cb_uuid       humans[CB_MAX_SEATS];
-    int           n_bots;        // and its bots
-    cb_uuid       bots[CB_MAX_SEATS];
     // A waiting commit changed the seats (a whole commit: journal.h): the flush brings the
     // tables' to these. seats_seq: the newest such commit's version.
     bool          seats_dirty;
@@ -489,11 +488,13 @@ static uint8_t *dup_bytes(const void *p, size_t n) {
     return d;
 }
 
-static int row_dup(cb_game_row *dst, const cb_game_row *src) {
+// src copied with `state` as its state bytes (no move list).
+static int row_dup_state(cb_game_row *dst, const cb_game_row *src, const uint8_t *state, size_t state_len) {
     *dst = *src;
     dst->list = NULL;
     dst->list_len = 0;
-    dst->state = dup_bytes(src->state, src->state_len);
+    dst->state = dup_bytes(state, state_len);
+    dst->state_len = state_len;
     dst->roster = dup_bytes(src->roster, src->roster_len);
     if (!dst->state || !dst->roster) {
         cb_game_row_free(dst);
@@ -501,6 +502,8 @@ static int row_dup(cb_game_row *dst, const cb_game_row *src) {
     }
     return CB_OK;
 }
+
+static int row_dup(cb_game_row *dst, const cb_game_row *src) { return row_dup_state(dst, src, src->state, src->state_len); }
 
 static int grow_copy(uint8_t **p, size_t *cap, const uint8_t *src, size_t n) {
     if (n > *cap) {
@@ -515,8 +518,16 @@ static int grow_copy(uint8_t **p, size_t *cap, const uint8_t *src, size_t n) {
 
 static int row_assign(jgame *g, const cb_game_row *src);
 
-// The row's columns become src's; its byte buffers stay the game's (row_refresh fills them).
-static void row_set_columns(jgame *g, const cb_game_row *src) {
+// The row's columns become src's, and its roster bytes (every commit carries them); its state
+// buffer stays the game's, stale (THE STATE BYTES: row_refresh fills it when read).
+static int row_set_columns(jgame *g, const cb_game_row *src) {
+    if (src->roster_len) {
+        uint8_t *roster = g->row.roster;
+        const int rc = grow_copy(&roster, &g->roster_cap, src->roster, src->roster_len);
+        g->row.roster = roster;
+        if (rc != CB_OK) return rc;
+        g->row.roster_len = src->roster_len;
+    }
     cb_game_row r = *src;
     r.state = g->row.state;
     r.state_len = g->row.state_len;
@@ -525,58 +536,100 @@ static void row_set_columns(jgame *g, const cb_game_row *src) {
     r.list = NULL;
     r.list_len = 0;
     g->row = r;
+    return CB_OK;
 }
 
-// The row's bytes brought to the resident's (R3: once per commit, and only when read).
+// THE STATE BYTES. A game held as bytes (res_valid false) keeps its row's state, sized exactly.
+// A game held decoded has none until a read asks for them (R3: once per commit, and only when
+// read): row_refresh encodes the resident and keeps the bytes for the next read (row_fresh) in a
+// buffer of their size, which later commits leave in place (stale) for the next refresh to
+// reuse. The encode wants TABLE_STATE_MAX bytes (about 2.5 KB) and a state is about 130: it is
+// made on the stack and copied, so no game holds the bound. The flush, every resident game's
+// reader, copies the encode into its snapshot and keeps nothing (row_dup_encoded): a game that
+// only plays and flushes holds at most the bytes it was created with.
+static int resident_encode(const jgame *g, uint8_t *buf, size_t *len) {
+    int sl = 0;
+    if (table_resident_encode(g->res, buf, TABLE_STATE_MAX, &sl) != TABLE_OK) return CB_E_STATE;
+    *len = (size_t)sl;
+    return CB_OK;
+}
+
+// The row's state bytes brought to the resident's, and kept.
 static int row_refresh(jgame *g) {
     if (g->row_fresh || !g->res_valid) return CB_OK;
-    if (g->state_cap < TABLE_STATE_MAX) {
-        uint8_t *q = realloc(g->row.state, TABLE_STATE_MAX);
-        if (!q) return CB_E_NOMEM;
-        g->row.state = q;
-        g->state_cap = TABLE_STATE_MAX;
-    }
-    if (g->roster_cap < ROSTER_BYTES) {
-        uint8_t *q = realloc(g->row.roster, ROSTER_BYTES);
-        if (!q) return CB_E_NOMEM;
-        g->row.roster = q;
-        g->roster_cap = ROSTER_BYTES;
-    }
-    int sl = 0, rl = 0;
-    if (table_resident_encode(g->res, g->row.state, (int)g->state_cap, &sl, g->row.roster, (int)g->roster_cap, &rl) != TABLE_OK)
-        return CB_E_STATE;
-    g->row.state_len = (size_t)sl;
-    g->row.roster_len = (size_t)rl;
+    uint8_t buf[TABLE_STATE_MAX];
+    size_t n = 0;
+    int rc = resident_encode(g, buf, &n);
+    if (rc != CB_OK) return rc;
+    uint8_t *state = g->row.state;
+    rc = grow_copy(&state, &g->state_cap, buf, n);
+    g->row.state = state;
+    if (rc != CB_OK) return rc;
+    g->row.state_len = n;
     g->row_fresh = true;
     return CB_OK;
 }
 
+// The row copied with its state bytes, encoded now when they are due and not kept (the flush's
+// snapshot, R4: the copy is all it reads, and the next commit makes them stale).
+static int row_dup_encoded(cb_game_row *dst, const jgame *g) {
+    if (g->row_fresh || !g->res_valid) return row_dup(dst, &g->row);
+    uint8_t buf[TABLE_STATE_MAX];
+    size_t n = 0;
+    const int rc = resident_encode(g, buf, &n);
+    return rc != CB_OK ? rc : row_dup_state(dst, &g->row, buf, n);
+}
+
 // THE RESIDENT HANDED OVER: the caller's decoded game (*res, a buffer the caller owns) becomes the
-// game's, and the game's old buffer (or NULL) the caller's: a swap, where a 2 KB copy was. The
-// caller keeps whatever comes back for its next commit (app/table_ops.c cb_section.res).
+// game's, and the game's old buffer the caller's: a swap, where a 2 KB copy was. A game is held in
+// the bytes its resident needs (table.h table_resident_bytes): the whole struct with its bot memory,
+// TABLE_RESIDENT_SMALL (992 of 2,016 bytes) without (a table none of whose brains reads the memory:
+// every humans-only game). So the caller's buffer is made at that size, or larger
+// (table_resident_into into a buffer of each size, app/table_ops.c cb_section.res and .res_small),
+// and what comes back in its place is a buffer of the same size, or NULL when the game's old one
+// was of the other size (freed: a game changes size only at a deal), for the caller to make again.
 static void res_take(jgame *g, TableResident **res) {
+    const size_t cap = table_resident_bytes(*res);
     TableResident *old = g->res;
+    const bool same = g->res_cap == cap;
     g->res = *res;
+    g->res_cap = cap;
+    if (old && !same) { free(old); old = NULL; }
     *res = old;
     g->res_valid = true;
 }
 
+// The game's buffer at `need` bytes (res_cap may understate a buffer: never overstate it).
+static bool res_hold(jgame *g, size_t need) {
+    if (g->res && g->res_cap == need) return true;
+    TableResident *b = malloc(need);
+    if (!b) return false;
+    free(g->res);
+    g->res = b;
+    g->res_cap = need;
+    return true;
+}
+
 // A decoded game copied in (the caller keeps its own: cb_journal_game_decoded, _created).
 static int res_copy(jgame *g, const TableResident *src) {
-    if (!g->res && !(g->res = malloc(sizeof *g->res))) return CB_E_NOMEM;
-    *g->res = *src;
+    const size_t need = table_resident_bytes(src);
+    if (!res_hold(g, need) && !(g->res && g->res_cap >= need)) return CB_E_NOMEM;
+    memcpy(g->res, src, need);
     g->res_valid = true;
     return CB_OK;
 }
 
 // The game becomes `src` and, when given, its resident (both acknowledged together): with a
-// resident (taken: res_take) only the columns are copied and the bytes encoded when read;
-// without one the bytes are copied and the next operation decodes them.
+// resident (taken: res_take) only the columns and the roster are copied and the state encoded
+// when read; without one the bytes are copied and the next operation decodes them.
 static int game_set(jgame *g, const cb_game_row *src, TableResident **res) {
     if (res && *res) {
+        // A resident is adopted with the roster bytes kept beside it (table_adopt), so every
+        // commit that hands one over carries them (app/table_ops.c section_row).
+        if (!src->roster_len) return CB_E_STATE;
+        if (row_set_columns(g, src) != CB_OK) return CB_E_NOMEM;
         res_take(g, res);
         g->row_fresh = false;
-        row_set_columns(g, src);
         return CB_OK;
     }
     g->res_valid = false;
@@ -598,20 +651,34 @@ static int row_assign(jgame *g, const cb_game_row *src) {
     return CB_OK;
 }
 
-// The humans a roster seats (the dashboard list's members).
-static void humans_of(jgame *g, const Roster *ro) {
-    g->n_humans = g->n_bots = 0;
-    for (int i = 0; i < ro->n && i < CB_MAX_SEATS; i++) {
-        const bool human = ro->seats[i].brain_len == 0;
-        snprintf(human ? g->humans[g->n_humans++] : g->bots[g->n_bots++], sizeof(cb_uuid), "%.*s", (int)ro->seats[i].id_len,
-                 (const char *)ro->seats[i].id);
-    }
+// WHO SITS HERE, read from the game's roster bytes (roster.h roster_seat_refs), the one copy:
+// the seats in order, their count (0 for bytes that are not a roster, as a game with no seats).
+static int seat_refs(const jgame *g, RosterSeatRef *refs) {
+    const int n = g->row.roster ? roster_seat_refs(g->row.roster, (int)g->row.roster_len, refs) : 0;
+    return n > CB_MAX_SEATS ? CB_MAX_SEATS : n < 0 ? 0 : n;
 }
 
-static void humans_of_roster(jgame *g, const uint8_t *roster, size_t len) {
-    Roster ro;
-    if (roster_decode(&ro, roster, (int)len) == ROSTER_OK) humans_of(g, &ro);
-    else g->n_humans = g->n_bots = 0;
+// Whether `user` sits at g as a human.
+static bool seats_human(const jgame *g, const char *user, int len, const uint8_t *packed) {
+    RosterSeatRef refs[MAX_PLAYERS];
+    const int n = seat_refs(g, refs);
+    for (int i = 0; i < n; i++)
+        if (!refs[i].bot && roster_ref_is(&refs[i], user, len, packed)) return true;
+    return false;
+}
+
+// Its humans and its bots as ids (the flush's membership, the members list): the counts.
+static void seat_ids(const jgame *g, cb_uuid *humans, int *n_humans, cb_uuid *bots, int *n_bots) {
+    RosterSeatRef refs[MAX_PLAYERS];
+    const int n = seat_refs(g, refs);
+    char id[ROSTER_ID_MAX + 1];
+    *n_humans = 0;
+    if (n_bots) *n_bots = 0;
+    for (int i = 0; i < n; i++) {
+        if (refs[i].bot && !bots) continue;
+        roster_ref_text(&refs[i], id);
+        snprintf(refs[i].bot ? bots[(*n_bots)++] : humans[(*n_humans)++], sizeof(cb_uuid), "%s", id);
+    }
 }
 
 // A game made resident at *p (ov_mu held, *p empty): `row` as the tables hold it (and its
@@ -622,8 +689,6 @@ static jgame *ov_insert(cb_journal *j, jgame **p, const cb_game_row *row, TableR
     if (game_set(g, row, res) != CB_OK) { game_free(g); return NULL; }
     g->sql_version = row->version;
     g->touched_ms = j_mono(j);
-    if (g->res_valid) humans_of(g, &g->res->r);
-    else humans_of_roster(g, row->roster, row->roster_len);
     *p = g;
     j->n_games++;
     return g;
@@ -650,8 +715,6 @@ static int ov_apply(cb_journal *j, jrec *r, jgame **applied) {
             // commit): its base is the tables'. A journaled move never changes the seats.
             if (!(g = calloc(1, sizeof *g))) return CB_E_NOMEM;
             g->sql_version = r->m.base_version;
-            if (r->res && *r->res) humans_of(g, &(*r->res)->r);
-            else humans_of_roster(g, r->row.roster, r->row.roster_len);
             *p = g;
             j->n_games++;
         }
@@ -700,8 +763,6 @@ static int ov_apply(cb_journal *j, jrec *r, jgame **applied) {
         ratings_apply(j, rated, now);
     }
     if (r->full) {   // a whole commit may seat or unseat anyone: the flush brings the tables' seats
-        if (r->res && g->res_valid) humans_of(g, &g->res->r);   // (taken: the game's own now)
-        else humans_of_roster(g, r->row.roster, r->row.roster_len);
         g->seats_dirty = true;
         g->seats_seq = r->row.version;
     }
@@ -1395,11 +1456,11 @@ static void snapshot_free(snapshot *sn) {
 // or the game's lock and the flush lock). The copy is the caller's.
 static void flush_seats(const jgame *g, cb_game_flush *f, seats_copy *c) {
     if (!g->seats_dirty) return;
-    memcpy(c->humans, g->humans, sizeof c->humans);
-    memcpy(c->bots, g->bots, sizeof c->bots);
+    int nh, nb;
+    seat_ids(g, c->humans, &nh, c->bots, &nb);
     f->seats = true;
-    f->n_humans = g->n_humans;
-    f->n_bots = g->n_bots;
+    f->n_humans = nh;
+    f->n_bots = nb;
     f->humans = (const cb_uuid *)c->humans;
     f->bots = (const cb_uuid *)c->bots;
 }
@@ -1471,7 +1532,7 @@ static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now, int
         jgame *g = due[i];
         cb_game_move *m = moves_for_flush(g, true);
         // R4: the rows the flush writes are the residents' encodes, made now.
-        if (!m || row_refresh(g) != CB_OK || row_dup(&sn->rows[sn->n], &g->row) != CB_OK) {
+        if (!m || row_dup_encoded(&sn->rows[sn->n], g) != CB_OK) {
             free(m);
             free(due);
             snapshot_free(sn);
@@ -1925,11 +1986,7 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
                 g->res_valid = false;
                 if (c->resident && *c->resident) res_take(g, c->resident);
                 g->sql_version = c->row->version;
-                g->touched_ms = j_mono(j);
-                // The commit's seats are the stored ones now.
-                g->n_humans = g->n_bots = 0;
-                for (int i = 0; i < c->n_humans && i < CB_MAX_SEATS; i++) memcpy(g->humans[g->n_humans++], c->humans[i], sizeof(cb_uuid));
-                for (int i = 0; i < c->n_bots && i < CB_MAX_SEATS; i++) memcpy(g->bots[g->n_bots++], c->bots[i], sizeof(cb_uuid));
+                g->touched_ms = j_mono(j);   // its seats: the commit's roster, which row_assign copied
             }
             over = j->n_games > j->o.max_games;
         }
@@ -2022,8 +2079,9 @@ static int j_is_member(cb_store *s, const char *game_id, const char *user_id) {
     const jgame *g = *ov_slot(j, game_id);
     int rc = -1;
     if (g) {
-        rc = 0;
-        for (int i = 0; i < g->n_humans && !rc; i++) rc = strcmp(g->humans[i], user_id) == 0;
+        const int len = (int)strlen(user_id);
+        uint8_t packed[ROSTER_UUID_BYTES];
+        rc = seats_human(g, user_id, len, roster_id_pack(user_id, len, packed) ? packed : NULL);
     }
     pthread_mutex_unlock(&j->ov_mu);
     return rc >= 0 ? rc : cb_rows_sql.is_member(s, game_id, user_id);
@@ -2035,7 +2093,7 @@ static int j_game_members(cb_store *s, const char *game_id, cb_name_fn fn, void 
     int n = -1;
     pthread_mutex_lock(&j->ov_mu);
     const jgame *g = *ov_slot(j, game_id);
-    if (g) memcpy(humans, g->humans, sizeof humans), n = g->n_humans;
+    if (g) seat_ids(g, humans, &n, NULL, NULL);
     pthread_mutex_unlock(&j->ov_mu);
     if (n < 0) return cb_rows_sql.game_members(s, game_id, fn, ud);
     int out = 0;
@@ -2141,12 +2199,13 @@ static int j_games_of_user(cb_store *s, const char *user, int limit, cb_member_f
     int rc = cb_rows_sql.games_of_user(s, user, limit, memvec_add, &v);
     if (rc >= 0) {
         rc = CB_OK;
+        const int ulen = (int)strlen(user);
+        uint8_t packed[ROSTER_UUID_BYTES];
+        const uint8_t *up = roster_id_pack(user, ulen, packed) ? packed : NULL;
         pthread_mutex_lock(&j->ov_mu);
         for (int b = 0; rc == CB_OK && b < OV_BUCKETS; b++)
             for (jgame *g = j->buckets[b]; rc == CB_OK && g; g = g->next) {
-                bool sits = false;
-                for (int h = 0; h < g->n_humans && !sits; h++) sits = strcmp(g->humans[h], user) == 0;
-                if (!sits) continue;
+                if (!seats_human(g, user, ulen, up)) continue;
                 int i = 0;
                 while (i < v.n && strcmp(v.rows[i].game_id, g->row.id) != 0) i++;
                 if (i < v.n) v.rows[i].updated_at = g->row.updated_at;
@@ -2775,6 +2834,8 @@ int cb_journal_game_info(const cb_store *s, const char *id, cb_journal_game_fact
         out->first_ms = g->n_moves ? g->first_ms : 0;
         out->resident = g->res_valid ? g->res : NULL;
         out->held = g->held;
+        out->state_bytes = g->state_cap;
+        out->resident_bytes = g->res_valid ? g->res_cap : 0;
     }
     pthread_mutex_unlock(&j->ov_mu);
     return g ? CB_OK : CB_E_NOT_FOUND;

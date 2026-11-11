@@ -196,7 +196,8 @@ static Game g_game;
 static TableSnaps g_snaps;
 static Table g_t;
 static uint8_t g_arena[1 << 20];
-static uint8_t g_state[8192], g_roster[ROSTER_BYTES];
+static uint8_t g_state[8192], g_roster[ROSTER_MAX];
+static int g_roster_len;
 static int g_state_len;
 static uint8_t g_log[1 << 18], g_list[1 << 18];
 static int g_log_len, g_list_len;
@@ -227,7 +228,8 @@ static int commit(TableCommit *c) {
     if (n < 0) return n;
     memcpy(g_state, g_arena + c->state.off, (size_t)c->state.len);
     g_state_len = c->state.len;
-    memcpy(g_roster, g_arena + c->roster.off, ROSTER_BYTES);
+    memcpy(g_roster, g_arena + c->roster.off, (size_t)c->roster.len);
+    g_roster_len = c->roster.len;
     // As the server stores the session (table_ops.c section_row): a commit that
     // dealt, or leaves a lobby, starts it again.
     if (c->logs_reset || c->status == GAME_STATUS_WAITING) { g_log_len = 0; g_list_len = 0; }
@@ -243,7 +245,7 @@ static int commit(TableCommit *c) {
 }
 
 static int reload(void) {
-    if (table_load(&g_t, g_state, g_state_len, g_roster, ROSTER_BYTES) != TABLE_OK) return -1;
+    if (table_load(&g_t, g_state, g_state_len, g_roster, g_roster_len) != TABLE_OK) return -1;
     table_set_deal_seed(&g_t, "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff", 64);
     if (table_bots_need_logs(&g_t)) table_set_session_log(&g_t, g_log, g_log_len);
     return 0;

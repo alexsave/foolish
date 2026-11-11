@@ -882,3 +882,36 @@ The id-miss rule (`foolish/server/src/app/misses.h`, `CB_LIMIT_ID_MISS_IP`) and 
 
 - store_sqlite.c sq_admin_query: a write statement moves no change count (main before the fix) -> `an_admin_write_is_backed_up` cb_backup_once(b) == 1 after the UPDATE (got 0), g_puts == 2 and the bucket's copy holds n = 7.
 - store_sqlite.c sq_admin_query: every statement counts, reads too -> `an_admin_write_is_backed_up` cb_backup_once(b) == 0 after the two SELECTs (got 1).
+
+## A refresh take spends a token once, and never brings an expired one back (2026-11-08: port of cbase ace4602c, SQLite only)
+
+The tests are cbase 3c1e40bc's, ported: conformance/auth (run over SQLite by unit_conf_auth_local) and unit_auth_sqlite.
+On main before the fix they failed as found: unit_auth_sqlite `a_session_past_its_end_stays_over` (refresh == 400 got 200, three times), and conformance/auth `refresh_is_taken_once` expires_at == t0 + 10 + SPENT and `refresh_expiry` take(old) == CB_E_NOT_FOUND (got CB_OK).
+The DynamoDB half (rows_auth.c cb_rows_refresh_take, and the three user_import fixes of cbase 230bad01) is parked and not in this change; the conformance suite is not run over DynamoDB here.
+
+- store_sqlite.c: the take's TTL stamped on every take (`expires_at = ?3`) -> conformance/auth `refresh_is_taken_once` expires_at == t0 + 10 + SPENT, and `refresh_expiry` take(h) at t0 + SPENT == CB_E_NOT_FOUND.
+- store_sqlite.c: the take's past-its-time check dropped from refresh_take_step -> conformance/auth `refresh_expiry` take(old) == CB_E_NOT_FOUND and r.user_id[0] == 0, and unit_auth_sqlite `a_session_past_its_end_stays_over` refresh == 400 with CBW_ACCOUNT_E_BAD_REFRESH and !refresh.
+- store_sqlite.c: revoked_at stamped on every take (`revoked_at = ?2`) -> conformance/auth `refresh_is_taken_once` r.revoked_at == t0 + 10, `refresh_double_take` every loser's revoked_at == the winner's now, and unit_auth_sqlite `a_token_is_used_once` the reuse after the grace == 400 CBW_ACCOUNT_E_REFRESH_USED.
+- store_sqlite.c: a global sign-out moves no generation -> conformance/auth `generation_moves_in_the_same_write` session_gen == 1, 2, 3 and `import_rules` session_gen == 2, and unit_auth_sqlite `a_global_sign_out_ends_every_session` each session's refresh == 400 and sign-out == 401.
+- store_sqlite.c: a password change keeps no session -> conformance/auth `generation_moves_in_the_same_write` kept_session == keep, and unit_auth_sqlite `a_password_change_needs_the_password_and_ends_the_others` the caller's refresh(a).
+- store_sqlite.c: a password change moves no generation -> conformance/auth `generation_moves_in_the_same_write` session_gen == 2, 3, and unit_auth_sqlite `a_password_change_needs_the_password_and_ends_the_others` the other session's refresh == 400 and sign-out == 401.
+- store_sqlite.c: a delete keeps the account's refresh tokens -> conformance/auth `delete_takes_its_own_and_only_its_own` take(ra.hash[i]) == CB_E_NOT_FOUND.
+- store_sqlite.c: a delete keeps the account's identities -> conformance/auth `delete_takes_its_own_and_only_its_own` identity_get == CB_E_NOT_FOUND and identities_of == 0.
+- store_sqlite.c: an import takes the imported generation, lower or not -> conformance/auth `import_rules` session_gen == 2 and == 5.
+- store_sqlite.c sq_user_import: the uuid check dropped -> conformance/auth `import_rules` user_import(bad) == CB_E_INVALID, for "not-a-uuid" and for the uppercase id.
+- store_sqlite.c: signin_fails_clear deletes nothing -> conformance/auth `signin_fails_clear` signin_fails_get == CB_E_NOT_FOUND and g.n == 0.
+- store_sqlite.c: the users list oldest first -> conformance/auth `users_list_newest_first` s.ids[0] == u[2].id and s.ids[2] == u[0].id.
+- auth.c: no grace (`now - r.revoked_at < 0`) -> unit_auth_sqlite `a_token_is_used_once` the retry within the grace refresh(a.refresh, &c) and c.user_id == a.user_id.
+- auth.c: a reuse after the grace leaves the session live -> unit_auth_sqlite `a_token_is_used_once` the newer tokens' refresh == 400 CBW_ACCOUNT_E_REFRESH_USED.
+- auth.c: the session's end not checked when the session row is made from an old token (`if (sess.expires_at <= now)` dropped) survived every ported case; `an_old_token_without_an_end_stops_at_its_sessions_end` (new here: a token row with expires_at 0 and no session row, past its session's end) holds it -> refresh == 400 with CBW_ACCOUNT_E_BAD_REFRESH, three times, and !refresh.
+
+## A failed sign-in is counted whether the name has an account or not (2026-11-10: auth.c verify_counted, store_sqlite.c the fails sweep)
+
+The lock past five wrong passwords was kept only for real accounts, so a real name turned from 400 to 429 and a made-up one never did: the lock told which names have accounts.
+On main before the fix, unit_auth_sqlite `a_made_up_name_locks_as_a_real_one_does` failed st[1][k] == st[0][k] and why[1][k] == why[0][k] at the three locked steps, and fails_rows() == 2 (got 1); `a_made_up_names_row_is_swept_after_its_time` failed its three fails_rows() counts; `the_right_password_clears_the_count` passed (the behaviour it holds is unchanged).
+
+- auth.c cb_auth_signin: a name with no account back to a bare dummy bcrypt (not counted) -> unit_auth_sqlite `a_made_up_name_locks_as_a_real_one_does` st[1][k] == st[0][k] and why[1][k] == why[0][k] (three steps) and fails_rows() == 2, and unit_auth `signin_lockout` the ghost's sign-in == CB_AUTH_E_TOO_MANY and its fail writes == writes + CB_AUTH_FAIL_FREE + 1.
+- auth.c verify_counted: the lock checked only when there is a hash -> unit_auth_sqlite `a_made_up_name_locks_as_a_real_one_does` st[1][k] == st[0][k] and why[1][k] == why[0][k] (three steps), and unit_auth `signin_lockout` the ghost's sign-in == CB_AUTH_E_TOO_MANY.
+- auth.c verify_counted: a success does not clear the count -> unit_auth_sqlite `the_right_password_clears_the_count` fails_rows() == 0 and the wrong passwords after it == 400 (five).
+- store_sqlite.c fails_put_step: the sweep skipped -> unit_auth_sqlite `a_made_up_names_row_is_swept_after_its_time` fails_rows() == 2 and == 1.
+- auth.c verify_counted: an account with no password (made by an identity provider) not counted -> unit_oidc `new_identity_asks_a_name_then_signs_in` the seventh password sign-in == 429 and refused CBW_ACCOUNT_E_TOO_MANY (a passwordless name that never locks would be told apart from a made-up one that does).

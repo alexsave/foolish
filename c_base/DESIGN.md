@@ -185,7 +185,8 @@ It does not imitate Lambda: what it holds in memory is the authority, and the ru
   A segment of another format refuses the start: a deploy stops the old server first, and its close flushes every move and deletes its segments.
   The new row and its moves are held in memory; the store's game reads (`game_get`, `game_logs`, the dashboard's `games_get_views`, `is_member`, `game_members`) see them first, and so do the two scans of the games table: the dashboard list (`games_of_user`: the tables' newest, then every held game the user sits at, sorted and cut) and the bot scan (the tables' games the overlay does not hold, then the held ones that match), neither of which flushes.
   ONE OWNER: the overlay is the only copy of a game in the process (there is no row cache beside it).
-  It holds each game DECODED, as the kernel's `TableResident` (the Game up to its log array, the roster, clock, rating stamp and RNG base, about 2.1 KB, made canonical: exactly the board a load of its own row gives), and encodes the row only when something reads it (a view, the flush).
+  It holds each game DECODED, as the kernel's `TableResident` (the Game up to its log array, clock, rating stamp and RNG base, made canonical: exactly the board a load of its own row gives), beside the row's durable roster bytes (format 2, about 150 bytes), which are the roster's one copy: every adopt decodes them, and who sits at the game is read from them.
+  It encodes the state only when something reads it (a view, the flush).
   An operation takes the game's lock and adopts a copy of the resident (`cb_journal_game_acquire`, `table_adopt`: no decode), so a refused operation leaves the game as it was, and only a committed one replaces it; a plain move's products carry no row (`TABLE_PRODUCTS_NO_ROW`).
   A game is resident from its create; one the overlay does not hold is read from the tables once and made resident.
   A bot cycle adopts the resident without the lock (its commit is fenced), and the session log of a session the tables do not hold yet comes from the overlay alone.
@@ -526,7 +527,7 @@ Found here:
 ## Unfurl route
 
 `GET /m/<payload>` (`foolish/server/src/app/unfurl_http.{h,c}`, built 2026-10-14) is the link preview a shared iMessage game gets in Messages, Slack and WhatsApp, which run no JavaScript.
-It replaces the Next app's only server code, `foolish/src/app/m/[payload]/layout.tsx` generateMetadata (docs/VERCEL.md 4(a)), so the web app can become a static export.
+It replaces the Next app's only server code, `foolish/src/app/m/[payload]/layout.tsx` generateMetadata, so the web app can become a static export.
 
 As built:
 
@@ -560,7 +561,7 @@ Found here:
   The fix is the kernel's: mark those statics `_Thread_local` (every single-threaded build defines the qualifier away already), then drop the mutex.
 - What differs from the TS page on purpose: the root layout's tags (theme-color, apple-itunes-app, the web-app tags, fonts, analytics) are not on this page, because nothing renders it but a crawler and the instant redirect; the payload is percent-decoded once (Next may decode a param before the route's own `decodeURIComponent`, which differs only for a payload holding `%25`, which base32 never does).
 - Open: crawlers that follow a meta refresh would unfurl the homepage instead.
-  The TS page redirected in JavaScript for exactly that reason; docs/VERCEL.md 4(a) proposed an inline `location.replace` with the refresh only under `<noscript>`, and this build follows the later instruction to use no script.
+  The TS page redirected in JavaScript for exactly that reason; the route's design proposed an inline `location.replace` with the refresh only under `<noscript>`, and this build follows the later instruction to use no script.
   Check a real Messages, Slack and WhatsApp unfurl once the web distribution routes `/m/*` here.
 
 ## Module: realtime

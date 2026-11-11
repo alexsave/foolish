@@ -20,7 +20,6 @@ yarn-error.log*
 # Environment Variables
 .env
 .env.build
-.vercel
 
 # Vim swap files. Do NOT write `*.sw*`: that also swallows *.swift, i.e. the
 # whole iOS app. There are two shapes to catch.

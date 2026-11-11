@@ -575,7 +575,7 @@ void *wasm_roster_spec_ptr(void)    { return &g_roster_spec; }
 void *wasm_roster_trailer_ptr(void) { return &g_roster_trailer; }
 
 // The spec at wasm_roster_spec_ptr -> roster_set_title + roster_seat_add per
-// seat -> roster_encode into io. Returns ROSTER_BYTES or the ROSTER_E_* refusal.
+// seat -> roster_encode into io. Returns its length or the ROSTER_E_* refusal.
 // It used to take the same table as a packed seat list a harness wrote itself.
 int wasm_roster_encode(void) {
     const RosterSpec *s = &g_roster_spec;
@@ -595,7 +595,7 @@ int wasm_roster_encode(void) {
     return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
 }
 
-// io = ROSTER_BYTES durable roster, then gid_len bytes of game id -> the
+// io = roster_len bytes of durable roster, then gid_len bytes of game id -> the
 // envelope trailer of a table with those rules (`passing` 1 the classic game, 0
 // podkidnoy) in io. Returns its length or the ROSTER_E_* refusal.
 int wasm_roster_trailer_write(int roster_len, int gid_len, int status, unsigned int good_mask, int passing) {
@@ -610,8 +610,8 @@ int wasm_roster_trailer_write(int roster_len, int gid_len, int status, unsigned 
 
 // A trailer in io -> roster_trailer_read. What it found goes into the struct at
 // wasm_roster_trailer_ptr (roster.h RosterTrailerRead); the durable roster it
-// decoded goes back into io as ROSTER_BYTES of opaque bytes the caller forwards.
-// Returns ROSTER_BYTES or the ROSTER_E_* refusal. The answer used to be a packed
+// decoded goes back into io as opaque bytes the caller forwards.
+// Returns their length or the ROSTER_E_* refusal. The answer used to be a packed
 // header a harness took apart itself.
 int wasm_roster_trailer_read(int len) {
     char gid[ROSTER_GAME_ID_MAX + 1];

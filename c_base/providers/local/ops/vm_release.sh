@@ -41,8 +41,9 @@
 #      templates/ or the amazon-ssm rpm. A prune that fails warns and does not
 #      fail the deploy. CBASE_PRUNE_DRY_RUN=1 only prints what it would delete.
 #
-# Every AWS call here is one the GitHub role grants (role_covers_release.sh
-# holds the two together). Settings: AWS_REGION (us-east-1), CBASE_VM_STACK
+# Since the ./cbase cutover (2026-11-10, CUTOVER.md) no CI job runs this, and
+# the GitHub role no longer grants its calls: it runs by hand, with an
+# operator's credentials, for a rollback to cbase.service alone. Settings: AWS_REGION (us-east-1), CBASE_VM_STACK
 # (cbase-vm, the auto-scaling group's name too), CBASE_CODE_BUCKET
 # (cbase-code-<account>-<region>), CBASE_VM_VERSION (the short SHA),
 # CBASE_PUBLIC_URL (https://api.foolish.cards).

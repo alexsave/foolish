@@ -276,9 +276,10 @@ tests-wasm-caps: build/cnitro_tests_wasmcaps
 # rule is the build flag -ffp-contract=off, and tests/hand_contract_test.c fails in a build
 # tree that lacks it. build/obj/fused/hand_layout.o is the same source compiled WITH
 # contraction, its symbol renamed, so the test can show its pin sees the difference.
+# =fast, because GCC before 14 implements =on as =off for C (no fused object at all).
 build/obj/fused/hand_layout.o: src/hand_layout.c
 	@mkdir -p $(@D)
-	$(CC) $(filter-out -ffp-contract=off -flto,$(CFLAGS)) -ffp-contract=on -Dhand_layout=hand_layout_fused \
+	$(CC) $(filter-out -ffp-contract=off -flto,$(CFLAGS)) -ffp-contract=fast -Dhand_layout=hand_layout_fused \
 	    -Dhand_rows=hand_rows_fused -Dhand_slots=hand_slots_fused -c $< -o $@
 build/hand_contract_test: $(call c_objs,build/obj/host,src/hand_layout.c tests/hand_contract_test.c) build/obj/fused/hand_layout.o
 	$(CC) $(CFLAGS) $^ -o $@ -lm

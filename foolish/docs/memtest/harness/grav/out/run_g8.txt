@@ -1,0 +1,38 @@
+[22:54:10] g8 two instances of D
+Success	start g8a build D pid 9868 1 listening
+MemAvailable:     283096 kB
+Cached:           124048 kB
+AnonPages:         55196 kB
+Mem:          422188      128732      150632         368      142824      282716
+VmRSS: 6984 kB RssAnon: 1956 kB RssFile: 5028 kB 
+start g8b build D pid 10053 1 listening
+MemAvailable:     281464 kB
+Cached:           124488 kB
+AnonPages:         57504 kB
+Mem:          422188      130180      148908         380      143100      281256
+VmRSS: 6984 kB RssAnon: 1956 kB RssFile: 5028 kB 
+
+/var/tmp/mt/rollup_g8a_idle.txt:Rss:                6984 kB
+/var/tmp/mt/rollup_g8a_idle.txt:Pss:                6980 kB
+/var/tmp/mt/rollup_g8a_idle.txt:Pss_Anon:           1956 kB
+/var/tmp/mt/rollup_g8a_idle.txt:Pss_File:           5024 kB
+/var/tmp/mt/rollup_g8a_idle.txt:Shared_Clean:          4 kB
+/var/tmp/mt/rollup_g8a_idle.txt:Private_Clean:      4992 kB
+/var/tmp/mt/rollup_g8a_idle.txt:Private_Dirty:      1988 kB
+/var/tmp/mt/rollup_g8b_idle.txt:Rss:                6984 kB
+/var/tmp/mt/rollup_g8b_idle.txt:Pss:                4484 kB
+/var/tmp/mt/rollup_g8b_idle.txt:Pss_Anon:           1956 kB
+/var/tmp/mt/rollup_g8b_idle.txt:Pss_File:           2528 kB
+/var/tmp/mt/rollup_g8b_idle.txt:Shared_Clean:       4996 kB
+/var/tmp/mt/rollup_g8b_idle.txt:Private_Clean:         0 kB
+/var/tmp/mt/rollup_g8b_idle.txt:Private_Dirty:      1988 kB
+VmHWM:	    6984 kB
+MemAvailable:     282532 kB
+AnonPages:         55152 kB
+Mem:          422188      129020      150132         368      143036      282428
+VmHWM:	    6984 kB
+	cat: /proc//status: No such file or directory
+cat: /proc//smaps: No such file or directory
+cat: /proc//smaps_rollup: No such file or directory
+cat: '/proc//task/*/comm': No such file or directory
+

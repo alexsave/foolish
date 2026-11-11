@@ -2,7 +2,6 @@ node_modules/
 .next/
 next-env.d.ts
 *.tsbuildinfo
-.vercel/
 # the kernel, a build output (../c Makefile, wasm-web): built by the pre-hooks
 # and by .github/workflows/web_aws.yml, never committed
 public/uttt.wasm
