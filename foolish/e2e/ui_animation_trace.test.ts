@@ -883,16 +883,15 @@ test('a LAST DEFENCE rests before the sweep takes the table', async () => {
     const [lift] = times(ears.heard, 'LIFT'), [cover] = times(ears.heard, 'COVER');
     const [sweep] = times(ears.heard, 'SWEEP'), [pile] = times(ears.heard, 'PILE');
     assert.deepEqual(inOrder(ears.heard).map((h) => h.cue),
-        ['LIFT', 'COVER', 'SWEEP', 'PILE', 'DEAL', 'DEAL', 'DEAL_LAND', 'DEAL', 'DEAL', 'DEAL',
-         'DEAL_LAND', 'HAND_OFF'],
-        'my cover, the sweep, the pile, Anna\'s two cards and my three, each heard leaving and a seat\'s whole draw landing as ONE sound, and the roles handed on');
+        ['LIFT', 'COVER', 'SWEEP', 'PILE', 'DEAL', 'DEAL_LAND', 'DEAL', 'DEAL_LAND', 'HAND_OFF'],
+        'my cover, the sweep, the pile, Anna\'s two cards and my three, each pack heard leaving once and landing once, and the roles handed on');
     assert.equal(cover - lift, ANIM_TIME_MS, 'the cover is heard landing exactly one flight after it was heard leaving');
     assert.equal(sweep - cover, ANIM_GAP_MS + ANIM_BOUT_END_HOLD_MS, 'the sweep is heard after the rest, not after the gap');
     assert.equal(pile - sweep, ANIM_TIME_MS, 'and the pile as the sweep lands');
     const deals = times(ears.heard, 'DEAL');
     assert.equal(deals[0] - pile, ANIM_GAP_MS, 'Anna\'s refill opens a gap behind the sweep');
-    assert.equal(deals[1] - deals[0], ANIM_SOUND_STAGGER_MS, 'her two cards leave the stock a stagger apart');
-    assert.equal(deals[2] - deals[0], ANIM_TIME_MS + ANIM_GAP_MS, 'and my three open a flight and a gap behind hers');
+    assert.equal(deals.length, 2, 'her pack and mine each leave the stock as ONE sound');
+    assert.equal(deals[1] - deals[0], ANIM_TIME_MS + ANIM_GAP_MS, 'and my three open a flight and a gap behind hers');
 });
 
 test('the defender covers both attacks at once, and both cards fly together', async () => {
@@ -1019,7 +1018,7 @@ test('pickup: I take the table', async () => {
     // at a time. The push that confirms my pickup does not play it a second
     // time, and nothing is handed on: with two of us she attacks again.
     const order = inOrder(ears.heard);
-    assert.deepEqual(order.map((h) => h.cue), ['PICKUP', 'INTO_HAND', 'DEAL', 'DEAL', 'DEAL', 'DEAL_LAND'],
+    assert.deepEqual(order.map((h) => h.cue), ['PICKUP', 'INTO_HAND', 'DEAL', 'DEAL_LAND'],
         'the table taken once and into my hand, and Anna\'s three cards off the stock and landing as one');
     assert.equal(order[0].cards, 3, 'the pickup says how many cards it stands for');
 });

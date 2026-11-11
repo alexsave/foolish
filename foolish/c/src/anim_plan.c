@@ -288,7 +288,10 @@ static void build_cues(AnimPlan *p, const AnimPlanEvent *events) {
             case ANIM_EVT_REFILL:
                 // Heard at the stock, a card at a time. A refill's cards fly
                 // as one flight and still leave the pile one after another.
-                cue_strikes(p, ANIM_CUE_DEAL, i, st->start_ms, 0, n);
+                // ...a refill is ONE pack (a seat's whole draw leaves together) and sounds once,
+                // as it lands does; each card of the opening deal is a step of its own.
+                if (st->type == ANIM_EVT_REFILL) { if (n > 0) cue_push(p, ANIM_CUE_DEAL, i, st->start_ms, 1, n); }
+                else cue_strikes(p, ANIM_CUE_DEAL, i, st->start_ms, 0, n);
                 // ...and land at the seat: a dealt card a strike each, as PLACE does, but a REFILL is
                 // a seat's whole draw landing together and sounds ONCE (Alex: not "brrrrt", the
                 // card landing on the cloth a bunch of times, for every card of it).

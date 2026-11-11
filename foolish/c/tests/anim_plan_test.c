@@ -1685,8 +1685,8 @@ static void test_plan_sound_cues(void) {
               "and the pile is struck as those cards land on it (got %d)", pile ? pile->at_ms : -1);
         const AnimCue *d0 = cue_of(&p, 2, ANIM_CUE_DEAL), *d1 = cue_of(&p, 3, ANIM_CUE_DEAL);
         CHECK(d0 && d0->at_ms == p.steps[2].start_ms && d0->hits == 1, "a refill is heard at the stock, as the card leaves");
-        CHECK(d1 && d1->at_ms == p.steps[3].start_ms && d1->hits == 4 && d1->n_cards == 4,
-              "a refill of four cards is four cards off the pile (got %d hits)", d1 ? d1->hits : -1);
+        CHECK(d1 && d1->at_ms == p.steps[3].start_ms && d1->hits == 1 && d1->n_cards == 4,
+              "a refill of four cards is ONE pack off the pile, one sound (got %d hits)", d1 ? d1->hits : -1);
         const AnimCue *l0 = cue_of(&p, 2, ANIM_CUE_DEAL_LAND), *l1 = cue_of(&p, 3, ANIM_CUE_DEAL_LAND);
         CHECK(l0 && l0->at_ms == p.steps[2].start_ms + p.steps[2].duration_ms && l0->hits == 1,
               "a refilled card is heard landing at its seat, at the landing (got %d)", l0 ? l0->at_ms : -1);

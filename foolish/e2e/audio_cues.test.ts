@@ -116,7 +116,7 @@ test('a bout end reads back whole: the spread, the out behind its cover, the swe
         `OUT@0 step2 x1 (0)`,
         `SWEEP@${sweepAt} step3 x1 (4)`,
         `PILE@${sweepAt + ANIM_TIME_MS} step3 x1 (4)`,
-        `DEAL@${dealAt} step4 x3 (3)`,
+        `DEAL@${dealAt} step4 x1 (3)`,
         `DEAL_LAND@${dealAt + ANIM_TIME_MS} step4 x1 (3)`,
         `DEAL@${dealAt + ANIM_TIME_MS + ANIM_GAP_MS} step5 x1 (1)`,
         `DEAL_LAND@${dealAt + 2 * ANIM_TIME_MS + ANIM_GAP_MS} step5 x1 (1)`,
@@ -229,7 +229,7 @@ test('at 60 frames a second every strike is handed over once, aimed at the plan\
     const plan = planOf(boutEnd());
     const struck = walk(plan.cues, plan.totalMs + 1000, () => 16);
     assert.deepEqual(byTime(struck), wanted(plan.cues));
-    assert.equal(struck.length, 12, 'a lift, two covers, an out, the sweep, the pile, four dealt cards and their landings (a refill of three is three cards off the stock and ONE landing)');
+    assert.equal(struck.length, 10, 'a lift, two covers, an out, the sweep, the pile, four dealt cards and their landings (a refill of three is ONE pack off the stock and ONE landing)');
 });
 
 test('ragged frames move no sound: the same strikes at the same milliseconds', () => {
