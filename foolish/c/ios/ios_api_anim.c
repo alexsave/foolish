@@ -29,6 +29,7 @@
 #include "card.h"
 #include "legal.h"
 #include "anim_plan.h"
+#include "evwire.h"   // EVW_MSG_PASSED
 #include "hand_layout.h"
 
 // ---------- the one table layout, read ---------------------------------------
@@ -159,6 +160,10 @@ int fio_anim_plan(const uint8_t *in, int len) {
             if (cells > 0) { row = &in[p]; row_n = n_bat; }
             p += 2 * n_bat;
         }
+        // …and the message the event was told with (EVW_MSG_*), last: the plan
+        // reads a transfer off it (AnimPlanEvent.passed).
+        if (p >= len) return FIO_EPARSE;
+        const int msg = in[p++];
         evs[i].type = type;
         evs[i].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
         evs[i].from = from;
@@ -175,6 +180,7 @@ int fio_anim_plan(const uint8_t *in, int len) {
         evs[i].hand = hands[i];
         evs[i].n_battles = row_n;
         evs[i].battles = row;
+        evs[i].passed = type == ANIM_EVT_ATTACK_PASS && msg == EVW_MSG_PASSED;
     }
 
     const int rc = anim_build_plan(evs, n, np, in[3], in[4], final_flipped,
@@ -682,4 +688,27 @@ int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
     AnimRoles r;
     return fio_roles_answer(
         anim_pass_hand_off(shown, (unsigned)attack_pass_seats, final_defender, &r), &r, out);
+}
+
+int fio_role_cue(int shown_defender, int shown_first_attacker, int shown_good_mask,
+                 int next_defender, int next_first_attacker, int next_good_mask) {
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    const AnimRoles next = { next_defender, next_first_attacker, next_good_mask };
+    return anim_role_cue(shown, next);
+}
+
+int fio_finish_cue(const uint8_t *elimination, int n_elim, int game_over,
+                   int n_players, int my_seat) {
+    if (n_elim < 0 || n_elim > MAX_PLAYERS || (n_elim > 0 && !elimination)) return ANIM_CUE_NONE;
+    AnimFinishAsk q = { .game_over = game_over, .n_players = n_players, .my_seat = my_seat,
+                        .n_elim = (uint8_t)n_elim };
+    for (int i = 0; i < n_elim; i++) q.elimination[i] = elimination[i];
+    return anim_finish_cue(&q);
+}
+
+unsigned fio_cues_next(int status, int my_seat, int n_players, int n_battles,
+                       int n_covered, int has_flipped, int deck) {
+    const AnimCueAsk q = { (int8_t)status, (int8_t)my_seat, (uint8_t)n_players, (uint8_t)n_battles,
+                           (uint8_t)n_covered, has_flipped != 0, (int16_t)deck };
+    return anim_cues_next(&q);
 }

@@ -428,6 +428,125 @@ export function animRolesPassHandOff(shown: AnimRoles, attackPassSeats: number,
         shown.defender, shown.firstAttacker, shown.goodMask, attackPassSeats, finalDefender));
 }
 
+/** WHAT A CHANGE OF THE MARKS SOUNDS LIKE (anim_role_cue): the ANIM_CUE_* for
+ *  the badges going from `shown` to `next`, ANIM_CUE_NONE for a change that
+ *  makes no sound. Asked where the marks are turned, so no screen decides which
+ *  turn is audible. */
+export function animRoleCue(shown: AnimRoles, next: AnimRoles): number {
+    return bots().wasm_anim_role_cue(
+        shown.defender, shown.firstAttacker, shown.goodMask,
+        next.defender, next.firstAttacker, next.goodMask);
+}
+
+/** HOW LOUD A CARD LANDING AT `seat` IS TO THE VIEWER AT `viewer` of a table of
+ *  `nSeats` (anim_seat_gain_pm): a linear gain in thousandths, 1000 for the
+ *  viewer's own seat - what a strike's own level is given as (cueStrike). */
+export function animSeatGainPm(viewer: number, seat: number, nSeats: number): number {
+    return bots().wasm_anim_seat_gain_pm(viewer, seat, nSeats);
+}
+
+// ---- what a cue plays (c/src/cue_voice.h) --------------------------------------
+// The rules and the table are the kernel's, the same C iOS asks through fio_cue_*:
+// which take a strike plays, when its file starts so its anchor lands on the
+// moment, the strokes before it, its level and speed, and the voice that
+// remembers what it played last. The web's engine (src/audio/cueAudio.ts) only
+// fetches what the table names and starts what a strike says.
+
+/** A row of soundgen's take table for this build: a file (gen/<name>.m4a) and its cue, role and anchor. */
+export type CueTakeRow = V.CueTakeRow_Snap;
+/** One strike's answer: which take (-1 for none), when its file starts, its level and speed in
+ *  thousandths, reversed or not, and the strokes before it (a take, or -1). */
+export type CueStrike = V.CueStrike_Snap;
+/** How a cue sits in the mix (soundgen's MIX_ROWS), in thousandths. */
+export type CueMix = V.CueMix_Snap;
+
+/** Is the kernel here to be asked? A browser has it once ensureBotsAsync has
+ *  resolved, and is never made to load it from here (that would choose the
+ *  page's module for it); a runtime with a filesystem loads it on demand. For
+ *  a caller that may come first, as the sound engine does on the first tap. */
+export function botsReady(): boolean {
+    if (exportsCache) return true;
+    if (typeof window !== 'undefined') return false;
+    try { bots(); return true; } catch { return false; }
+}
+
+let cueRows: readonly CueTakeRow[] | null = null;
+/** The take table, read once: the module carries one table for its life. */
+export function cueTakes(): readonly CueTakeRow[] {
+    if (cueRows) return cueRows;
+    const ex = bots();
+    const rows: CueTakeRow[] = [];
+    for (let i = 0, n = ex.wasm_cue_n_takes(); i < n; i++) rows.push(V.readCueTakeRow(mem(ex), ex.wasm_cue_take(i)));
+    return (cueRows = rows);
+}
+
+/** DEVELOPMENT: hand the kernel a take table in place of the linked one (cue_voice.h
+ *  "THE TUNER'S TABLE", tools/soundgen/tune.sh), so a tuning change is heard with no
+ *  relink and no reload. False when the kernel refused the bytes. */
+export function cueTableLoad(bytes: Uint8Array): boolean {
+    const ex = bots();
+    if (bytes.length > ex.wasm_io_cap()) return false;
+    mem(ex).u8.set(bytes, ex.wasm_io_ptr());
+    if (ex.wasm_cue_table_load(bytes.length) !== 0) return false;
+    cueRows = null;
+    return true;
+}
+
+/** A cue's mix, or null for none. */
+export function cueMix(kind: number): CueMix | null {
+    const ex = bots();
+    const p = ex.wasm_cue_mix(kind);
+    return p ? V.readCueMix(mem(ex), p) : null;
+}
+
+/** How long before its moment a cue's earliest take starts, in microseconds: when it must be handed over. */
+export function cueLeadUs(kind: number): number {
+    return bots().wasm_cue_lead_us(kind);
+}
+
+/** How long AFTER its moment a cue is first heard, in microseconds (0: at it or before): the wait of
+ *  whatever is drawn to go with the sound (the shield a transfer hands on, with its "shfff"). */
+export function cueLateUs(kind: number): number {
+    return bots().wasm_cue_late_us(kind);
+}
+
+/** Seed the voice's generator (which take, how far a stand-in wanders). Once a page. */
+export function cueSeed(seed: number): void {
+    bots().wasm_cue_seed(seed >>> 0);
+}
+
+/** Strike `kind` with its moment `leadUs` from now, standing for `nCards`; `undoes` is a
+ *  REVERT's undone cue and `gainPm` the strike's own level (animSeatGainPm for a dealt
+ *  card). The voice remembers it. */
+export function cueStrike(kind: number, leadUs: number, nCards: number, undoes: number, gainPm: number,
+                          opening = false): CueStrike {
+    const ex = bots();
+    const at = opening ? ex.wasm_cue_strike_opening : ex.wasm_cue_strike;
+    return V.readCueStrike(mem(ex), at(kind, leadUs | 0, nCards | 0, undoes | 0, gainPm | 0));
+}
+
+/** WHICH CUES COULD SOUND NEXT from a board (anim_cues_next): one bit per
+ *  ANIM_CUE_*, a superset by design - a hint for what to load first, never a
+ *  promise of what will play. The ask is the few scalars the rule reads. */
+export function animCuesNext(ask: V.AnimCueAsk_Snap): number {
+    const ex = bots();
+    V.writeAnimCueAsk(mem(ex), ex.wasm_anim_cue_ask_ptr(), ask);
+    return ex.wasm_anim_cues_next() >>> 0;
+}
+
+/** WHAT THE END OF THE GAME SOUNDS LIKE to this viewer (anim_finish_cue),
+ *  asked exactly as the finish order is (animFinishRows below), so the sound
+ *  and the list agree on who the fool is - after a repetition draw, every seat
+ *  `elimination` does not name. `gameOver` is a fool's seat, negative while the
+ *  game runs; `mySeat` is negative for a spectator. */
+export function animFinishCue(
+    elimination: number[], gameOver: number, nPlayers: number, mySeat: number,
+): number {
+    const ex = bots();
+    V.writeAnimFinishAsk(mem(ex), ex.wasm_anim_finish_ask_ptr(), { gameOver, nPlayers, mySeat, elimination });
+    return ex.wasm_anim_finish_cue();
+}
+
 /** MAY THIS WRITER TOUCH THE SHOWN BADGES (anim_shown_ledger_allows)? `claim` is
  *  an ANIM_CLAIM_*: a bystander may not, while a sequence is running; everyone
  *  else may. */
@@ -495,7 +614,7 @@ export function animHandLaidOut(
 // editing the queue a timer chain is walking.
 //
 // The structs are read WHERE THEY LIE, through the generated accessors, and
-// only the scalars a caller actually uses are copied out: a plan is 11,752
+// only the scalars a caller actually uses are copied out: a plan is 15,856
 // bytes and a frame loop that marshalled it whole once per frame would spend
 // more time copying than animating.
 
@@ -507,6 +626,9 @@ export interface AnimPlanEventIn {
     cards?: readonly Card[];
     /** THIS step's own board, when it has one. */
     board?: V.TableView_Snap | null;
+    /** The message the push told it with (EVW_MSG_*, PushEvent.msg): the plan
+     *  hears a transfer off it. Absent for a step that has none. */
+    msg?: number;
 }
 
 /** The count-freeze (anim_plan.h AnimCounts): the board the display holds until a step lands. */
@@ -534,10 +656,23 @@ export interface AnimPlanStepSnap {
     trumpFrom: number;
 }
 
+/** One sound the plan makes (anim_plan.h AnimCue): `hits` strikes of `kind`
+ *  (an ANIM_CUE_*), the first `atMs` from the sequence's start and each one
+ *  after ANIM_SOUND_STAGGER_MS behind the last. `step` is the step that makes
+ *  it, and (step, kind) names a cue uniquely within a plan. */
+export interface AnimCueSnap {
+    atMs: number; kind: number; step: number; hits: number; nCards: number;
+    /** For ANIM_CUE_REVERT, the cue of the move being undone, whose sound is
+     *  played backwards; ANIM_CUE_NONE on every other cue. */
+    undoes: number;
+}
+
 /** The plan (anim_plan.h AnimPlan). */
 export interface AnimPlanSnap {
     nSteps: number; totalMs: number; pre: AnimCountsSnap;
     veilIds: number[]; steps: AnimPlanStepSnap[];
+    /** What the sequence sounds like, in step order (which is not time order). */
+    cues: AnimCueSnap[];
 }
 
 /** Where the plan stands at a moment (anim_plan.h AnimFrame). `step` is
@@ -564,6 +699,7 @@ export function animBuildPlan(events: readonly AnimPlanEventIn[], final: V.Table
             seat: e.seat === undefined || e.seat < 0 ? A.ANIM_SEAT_NONE : e.seat,
             from: e.from ?? A.ANIM_LOC_NONE, to: e.to ?? A.ANIM_LOC_NONE,
             cards: e.cards ?? [],
+            msg: e.msg ?? V.EVW_MSG_NONE,
         });
         if (e.board) V.writeTableView(m, ex.wasm_client_edit_view_ptr(), e.board);
         ok(ex.wasm_client_plan_step(at, e.board ? 1 : 0), refused);
@@ -646,8 +782,21 @@ function readPlan(ex: WebExports): AnimPlanSnap {
     const nVeil = A.AnimPlan_get_n_veil(m, at);
     const veilIds: number[] = [];
     for (let i = 0; i < nVeil; i++) veilIds.push(A.AnimPlan_get_veil_ids(m, at, i));
+    const nCues = A.AnimPlan_get_n_cues(m, at);
+    const cues: AnimCueSnap[] = [];
+    for (let i = 0; i < nCues; i++) {
+        const c = A.AnimPlan_cues_at(at, i);
+        cues.push({
+            atMs: A.AnimCue_get_at_ms(m, c),
+            kind: A.AnimCue_get_kind(m, c),
+            step: A.AnimCue_get_step(m, c),
+            hits: A.AnimCue_get_hits(m, c),
+            nCards: A.AnimCue_get_n_cards(m, c),
+            undoes: A.AnimCue_get_undoes(m, c),
+        });
+    }
     return {
-        nSteps, totalMs: A.AnimPlan_get_total_ms(m, at), steps, veilIds,
+        nSteps, totalMs: A.AnimPlan_get_total_ms(m, at), steps, veilIds, cues,
         pre: {
             deck: A.AnimCounts_get_deck(m, preAt), discard: A.AnimCounts_get_discard(m, preAt),
             hand: preHand, nPlayers, nBattles, battles,

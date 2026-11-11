@@ -567,6 +567,8 @@ typedef struct {
     int8_t  seat;        // the acting seat, or ANIM_SEAT_NONE
     uint8_t from, to;    // ANIM_LOC_*
     uint8_t n_cards;
+    int8_t  msg;         // EVW_MSG_* as the push named it (PushEvent.msg), or
+                         // EVW_MSG_NONE: the plan reads a transfer off it
     Card    cards[ANIM_ASK_MAX_CARDS];
 } ClientPlanStep;
 

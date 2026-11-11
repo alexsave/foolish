@@ -1,0 +1,71 @@
+# tuning.tsv - THE TIMING AND LEVEL OF EVERY PART OF EVERY SOUND, and how loud each cue sits.
+# The one owner of these numbers: soundgen reads it at build time and nothing else holds them.
+# Edit it by hand, or by ear with the tuner on /sounds (`npm run tune`, docs/AUDIO.md "How to tune").
+# Columns are separated by TABS; # starts a comment.
+#
+# THE STOCK SET DOWN (flip deck) has no time of its own: it is heard when the stock held in the air comes down,
+# ANIM_DECK_DOWN_MS after the trump lands (c/src/anim_plan.h), whatever its time column says.
+#
+# PART lines: one part of one cue's gesture (a grab, a thumb slide, a landing).
+#   part  <cue> <role> <part> <at ms> <at spread ms> <dB> <dB spread> <what>
+#   <cue>, <role>    the take it is in: the cue as RECIPES in soundgen.c names it, and main, tight or prelude
+#   <at ms>          where the part sits from the cue's moment, negative before it (its peak, its onset for a
+#                    stroke, a slide or a soft lift or placement); for strokes, where the scrape is first heard (0: as the cards start moving)
+#   <at spread ms>   drawn up to this much earlier, a take at a time (0: always at <at ms>)
+#   <dB>             its level on the deal's scale, before the common gain (by peak, or by loudest 50 ms RMS
+#                    for the discard's parts, the strokes and the slide into the hand), the loudest it is drawn
+#   <dB spread>      drawn up to this much quieter, a take at a time (0: always at <dB>)
+#   <what>           what the tuner calls it
+# The common gain then lifts every card take together, so the loudest peaks at -3 dBFS (soundgen.c PEAK_DB):
+# raising the loudest part lowers everything else, and the balance is what these numbers say.
+# Levels from the games' own (*_game.py) and the levels study of 2026-11-07 (docs/AUDIO.md "The balance between
+# the parts": a landing ~25 dB over the grab and slide before it, the discard videos shot twice as far away).
+part	deal	main	thumb	-120	0	-32	3	deal: thumb slide
+part	deal	main	grab	0	0	-23	0	deal: grab off the stock
+part	deal	tight	thumb	-120	0	-32	3	deal, opening a run: thumb slide
+part	deal	tight	grab	0	0	-23	0	deal, opening a run: grab off the stock
+part	deal_land	main	land	0	0	-15	3	deal: card lands on the cloth
+part	turn	main	flip	0	0	0	0	trump: flipped over
+part	flip	main	land	0	0	6	3	trump: lands face up
+part	flip	main	deck	250	0	3	3	trump: deck set down on it
+part	lift	main	grab	-150	0	-23	0	lift: two-finger grab
+part	lift	main	thumb	-130	0	-33	3	lift: thumb slide
+part	place	main	land	0	0	2	2	attack: card lands on the table
+part	cover	main	land	0	0	1	2	cover: card lands on a card
+part	pass	main	slide	350	0	-13	2	transfer: shfff to the next defender
+part	sweep	prelude	strokes	0	0	-23.5	0	bout end: strokes gathering the table
+part	sweep	main	lift	0	0	-25.5	0	bout end: pile lifted
+part	pile	main	place	0	0	-25	0	bout end: pile set down
+part	pickup	prelude	strokes	0	0	-30	0	pickup: strokes gathering the table
+part	pickup	main	lift	0	0	-32.5	0	pickup: lift
+part	into_hand	main	slide	0	0	-40	0	pickup: slide into hand
+#
+# MIX lines: how loud each cue sits against the others, for every host (soundgen writes them into the take table
+# c/src/cue_voice.c plays by). Thousandths.
+#   mix  <cue> <gain> <pitch> <level> <per card>
+#   <gain>       against the level its files were written at: 1000 for every model (the parts above set them)
+#   <pitch>      how far a play's speed may wander either way (60 is about a semitone); 0 for every model
+#   <level>      how far its level may wander either way
+#   <per card>   louder by this for each card past the first, up to +600
+# The placeholders' gains (Alex 2026-11-07: "turn them down") by loudest 50 ms RMS: the game over -26 (just under
+# a card landing at about -22), a seat going out -30, a good -34 and the hand-off -38 (heard every bout).
+# Their files' own loudest 50 ms RMS, which the gains bring there: out -6.6, good -6.8, hand-off -11.4, finish -5.9,
+# fool -5.6 dBFS. The hand-off is the one stand-in that wanders (a row of one sample is a row of cards, not a machine).
+mix	deal	1000	0	0	0
+mix	flip	1000	0	0	0
+mix	lift	1000	0	0	0
+mix	place	1000	0	0	0
+mix	cover	1000	0	0	0
+mix	pickup	1000	0	0	0
+mix	sweep	1000	0	0	0
+mix	pile	1000	0	0	0
+mix	out	68	0	0	0
+mix	revert	0	0	0	0
+mix	good	44	0	0	0
+mix	hand_off	47	60	180	0
+mix	finish	100	0	0	0
+mix	fool	95	0	0	0
+mix	deal_land	1000	0	0	0
+mix	turn	1000	0	0	0
+mix	pass	1000	0	0	0
+mix	into_hand	1000	0	0	0

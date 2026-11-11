@@ -285,10 +285,11 @@ set +f
 "$SG" "${GAME[@]}" --build "bots=$BOTS" --ts "$prod/game_layout.bots.ts" --hash-ts "$prod/layout_hash.bots.ts"
 "$SG" --cwd "$root/c" --header anim_plan.h --header legal.h --build "bots=$BOTS" \
   --root AnimPlan --root AnimFrame --root AnimBeats --root AnimEvent --root LegalMoves \
-  --const ANIM_TIME_MS --const ANIM_GAP_MS --const ANIM_BOUT_END_HOLD_MS \
+  --const ANIM_TIME_MS --const ANIM_GAP_MS --const ANIM_BOUT_END_HOLD_MS --const ANIM_DECK_DOWN_MS \
   --const ANIM_STEP_NONE --const ANIM_NEVER \
   --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_CONFLICT_ --const ANIM_SEAT_NONE \
   --const ANIM_NO_MASK --const ANIM_CLAIM_ \
+  --const ANIM_CUE_ --const ANIM_N_CUES --const ANIM_SOUND_ \
   --ts "$prod/anim.bots.ts"
 
 # The web client's reader of its slot (c/src/client_table.h): snapshot readers

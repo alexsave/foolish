@@ -378,6 +378,15 @@ targets:
       # exactly one caller in the whole repo (FoolishApp/FoolishApp.swift), so
       # it moved to FoolishApp/PhoneOnly/ with the rest of the phone-only code -
       # see the `Foolish` target above for what that directory is for.
+    # THE GAME'S SOUNDS, generated and never committed (docs/AUDIO.md "iOS and
+    # iMessage"): soundgen renders them (only when it changed) and the script
+    # copies them into this framework as sounds/<name>.m4a, beside the
+    # textures, where CuePlayer reads them. ffmpeg (Homebrew) encodes them.
+    postCompileScripts:
+      - name: Sounds (tools/soundgen, into sounds/)
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/bundle_sounds.sh" "$SRCROOT/.." "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/sounds"
     dependencies:
       # The kernel is BUILT before it is linked: see FoolishKernel at the bottom.
       - target: FoolishKernel

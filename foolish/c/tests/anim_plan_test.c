@@ -33,8 +33,13 @@
 #include "../src/anim_plan.h"
 #include "../src/msg_wire.h"
 #include "../src/card.h"
+#include "../src/cue_voice.h"
+#include "../src/cue_mix.h"
+#include "cue_voice_parity.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <math.h>
 
 static int g_fails = 0;
 
@@ -1612,6 +1617,718 @@ static void test_plan_is_laid_out_in_beats(void) {
     }
 }
 
+// ======================================================================
+// THE PLAN'S SOUND CUES (anim_plan.h "sound cues")
+// ======================================================================
+//
+// Which beat sounds like what, and when, is the kernel's answer, so it is
+// pinned here and a host has nothing to test but its own playback.
+//
+// MUTATION-CHECKED against c/src/anim_plan.c: 28 mutants, each one built, seen
+// red on a check that names it and put back. The ones a reader would reach for:
+//   striking the landing at the step's start_ms          fails "at its landing"
+//   dropping the stagger across a beat                   fails "the beat's second strike"
+//   dropping either half of cue_strikes' cap             fails one "never more than" each
+//   a LIFT for every step of a beat                      fails "one lift a beat"
+//   an out struck at its own start_ms                    fails "not after the hold"
+//   an out riding a step that moved no card              fails "rides nothing"
+//   a pickup struck once a card                          fails "one gesture"
+//   the LIFT counting its whole beat                     fails "is the same cue in the whole plan"
+//   anim_role_cue reading removed goods as a good said   fails "a good cleared is silent"
+//   a mark taken off (or put on) read as a hand-off      fails "not handed to anyone" / "came from nowhere"
+//   anim_finish_cue with the two cues swapped            fails "the fool hears"
+//   anim_finish_cue reading only game_over (one fool)    fails "every other fool" / "the list puts it last"
+
+// The cue step `step` makes of `kind`, or NULL.
+static const AnimCue *cue_of(const AnimPlan *p, int step, int kind) {
+    for (int i = 0; i < p->n_cues; i++)
+        if (p->cues[i].step == step && p->cues[i].kind == kind) return &p->cues[i];
+    return 0;
+}
+static int cues_of_step(const AnimPlan *p, int step) {
+    int n = 0;
+    for (int i = 0; i < p->n_cues; i++) if (p->cues[i].step == step) n++;
+    return n;
+}
+static AnimPlanEvent cue_ev(int type, int seat, int from, int to, const Card *cards, int n) {
+    AnimPlanEvent e;
+    memset(&e, 0, sizeof e);
+    e.type = type; e.seat = seat; e.from = from; e.to = to; e.cards = cards; e.n_cards = n;
+    return e;
+}
+
+static void test_plan_sound_cues(void) {
+    const int stride = ANIM_TIME_MS + ANIM_GAP_MS;
+    int final_hand[2] = { 6, 6 };
+    Card cards[12];
+    for (int i = 0; i < 12; i++) cards[i] = C(i % 4, 2 + i);
+    AnimPlan p;
+
+    // A BOUT END, as the wire delivers one: a cover, the sweep, two refills.
+    {
+        AnimPlanEvent ev[4] = {
+            cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1),
+            cue_ev(ANIM_EVT_DISCARD, ANIM_SEAT_NONE, ANIM_LOC_TABLE, ANIM_LOC_DISCARD, cards, 2),
+            cue_ev(ANIM_EVT_REFILL, 0, ANIM_LOC_DECK, ANIM_LOC_HAND, cards, 1),
+            cue_ev(ANIM_EVT_REFILL, 1, ANIM_LOC_DECK, ANIM_LOC_HAND, cards, 4),
+        };
+        CHECK(anim_build_plan(ev, 4, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the bout-end plan builds");
+        const AnimCue *lift = cue_of(&p, 0, ANIM_CUE_LIFT), *cov = cue_of(&p, 0, ANIM_CUE_COVER);
+        CHECK(lift && lift->at_ms == 0 && lift->hits == 1, "a cover's card is heard leaving the hand as its flight opens");
+        CHECK(cov && cov->at_ms == ANIM_TIME_MS && cov->hits == 1,
+              "a cover is struck at its landing, not at its start (got %d)", cov ? cov->at_ms : -1);
+        const AnimCue *sweep = cue_of(&p, 1, ANIM_CUE_SWEEP), *pile = cue_of(&p, 1, ANIM_CUE_PILE);
+        CHECK(sweep && sweep->at_ms == p.steps[1].start_ms && sweep->at_ms == stride + ANIM_BOUT_END_HOLD_MS,
+              "the sweep is heard as it opens, which is after the hold (got %d)", sweep ? sweep->at_ms : -1);
+        CHECK(sweep && sweep->hits == 1 && sweep->n_cards == 2, "a sweep is one sound for however many cards it takes");
+        CHECK(pile && pile->at_ms == p.steps[1].start_ms + ANIM_TIME_MS && pile->hits == 1,
+              "and the pile is struck as those cards land on it (got %d)", pile ? pile->at_ms : -1);
+        const AnimCue *d0 = cue_of(&p, 2, ANIM_CUE_DEAL), *d1 = cue_of(&p, 3, ANIM_CUE_DEAL);
+        CHECK(d0 && d0->at_ms == p.steps[2].start_ms && d0->hits == 1, "a refill is heard at the stock, as the card leaves");
+        CHECK(d1 && d1->at_ms == p.steps[3].start_ms && d1->hits == 1 && d1->n_cards == 4,
+              "a refill of four cards is ONE pack off the pile, one sound (got %d hits)", d1 ? d1->hits : -1);
+        const AnimCue *l0 = cue_of(&p, 2, ANIM_CUE_DEAL_LAND), *l1 = cue_of(&p, 3, ANIM_CUE_DEAL_LAND);
+        CHECK(l0 && l0->at_ms == p.steps[2].start_ms + p.steps[2].duration_ms && l0->hits == 1,
+              "a refilled card is heard landing at its seat, at the landing (got %d)", l0 ? l0->at_ms : -1);
+        CHECK(l1 && l1->at_ms == p.steps[3].start_ms + p.steps[3].duration_ms && l1->hits == 1 && l1->n_cards == 4,
+              "four refilled cards land as ONE sound, not one a card (got %d hits)", l1 ? l1->hits : -1);
+        CHECK(p.n_cues == 8, "and that is every sound a bout end makes (got %d)", p.n_cues);
+    }
+
+    // A TRANSFER is an attack slid on: it lands like one and then slides, and
+    // only a step the event says was a pass does it.
+    {
+        AnimPlanEvent ev[1] = { cue_ev(ANIM_EVT_ATTACK_PASS, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1) };
+        CHECK(anim_build_plan(ev, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the attack builds");
+        CHECK(!cue_of(&p, 0, ANIM_CUE_PASS) && cues_of_step(&p, 0) == 2, "an attack lands and does not slide on");
+        ev[0].passed = 1;
+        CHECK(anim_build_plan(ev, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the transfer builds");
+        const AnimCue *pa = cue_of(&p, 0, ANIM_CUE_PASS), *pl = cue_of(&p, 0, ANIM_CUE_PLACE);
+        CHECK(pa && pl && pa->at_ms == ANIM_TIME_MS && pl->at_ms == ANIM_TIME_MS && pa->hits == 1,
+              "a transfer lands like an attack and slides on from its landing (got %d)", pa ? pa->at_ms : -1);
+        CHECK(cues_of_step(&p, 0) == 3, "a transfer step makes three: the lift, the landing and the slide");
+        ev[0].type = ANIM_EVT_COVER;
+        CHECK(anim_build_plan(ev, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the flagged cover builds");
+        CHECK(!cue_of(&p, 0, ANIM_CUE_PASS), "only an ATTACK_PASS can be a transfer");
+    }
+    // A LANDING AT A SEAT IS AS LOUD AS IT IS NEAR (deal_game.py's geometry).
+    {
+        CHECK(anim_seat_gain_pm(0, 0, 4) == 1000 && anim_seat_gain_pm(-1, 2, 4) == 1000
+              && anim_seat_gain_pm(0, 4, 4) == 1000 && anim_seat_gain_pm(0, 1, 1) == 1000,
+              "one's own seat, a spectator and a seat out of range are heard at full level");
+        CHECK(anim_seat_gain_pm(0, 1, 4) == 585 && anim_seat_gain_pm(0, 3, 4) == 585,
+              "at four seats the neighbours are -4.7 dB, either side (got %d, %d)",
+              anim_seat_gain_pm(0, 1, 4), anim_seat_gain_pm(0, 3, 4));
+        CHECK(anim_seat_gain_pm(0, 2, 4) == 455, "and across -6.8 dB (got %d)", anim_seat_gain_pm(0, 2, 4));
+        CHECK(anim_seat_gain_pm(2, 0, 4) == 455 && anim_seat_gain_pm(3, 1, 4) == 455,
+              "the table is the same from every chair (got %d)", anim_seat_gain_pm(2, 0, 4));
+        CHECK(anim_seat_gain_pm(0, 1, 2) == 455, "at two seats the other is across (got %d)", anim_seat_gain_pm(0, 1, 2));
+    }
+
+    // TWO COVERS IN ONE MOVE: one lift, two strikes, and the strikes are not a
+    // chord.
+    {
+        AnimPlanEvent ev[2] = {
+            cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1),
+            cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards + 1, 1),
+        };
+        CHECK(anim_build_plan(ev, 2, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the two-cover plan builds");
+        CHECK(cue_of(&p, 0, ANIM_CUE_LIFT) && !cue_of(&p, 1, ANIM_CUE_LIFT),
+              "one lift a beat: both cards leave the hand in one gesture");
+        const AnimCue *a = cue_of(&p, 0, ANIM_CUE_COVER), *b = cue_of(&p, 1, ANIM_CUE_COVER);
+        CHECK(a && a->at_ms == ANIM_TIME_MS, "the first cover is struck at its landing");
+        CHECK(b && b->at_ms == ANIM_TIME_MS + ANIM_SOUND_STAGGER_MS,
+              "the second cover is the beat's second strike, a stagger behind (got %d)", b ? b->at_ms : -1);
+    }
+
+    // SEVERAL CARDS IN ONE ATTACK: one cue, a strike a card, capped.
+    {
+        AnimPlanEvent ev[1] = { cue_ev(ANIM_EVT_ATTACK_PASS, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 3) };
+        CHECK(anim_build_plan(ev, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the three-card attack builds");
+        const AnimCue *pl = cue_of(&p, 0, ANIM_CUE_PLACE);
+        CHECK(pl && pl->at_ms == ANIM_TIME_MS && pl->hits == 3 && pl->n_cards == 3,
+              "three cards down is three strikes from the landing on (got %d)", pl ? pl->hits : -1);
+        CHECK(cue_of(&p, 0, ANIM_CUE_LIFT) && cues_of_step(&p, 0) == 2, "a step makes a lift and a landing, and nothing else");
+
+        ev[0].n_cards = 9;
+        CHECK(anim_build_plan(ev, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the nine-card attack builds");
+        pl = cue_of(&p, 0, ANIM_CUE_PLACE);
+        CHECK(pl && pl->hits == ANIM_SOUND_MAX_HITS && pl->n_cards == 9,
+              "never more than ANIM_SOUND_MAX_HITS strikes, though the cue still says nine cards (got %d)",
+              pl ? pl->hits : -1);
+    }
+    // …AND THE CAP IS THE BEAT'S, not each step's: the seventh card of one
+    // move is not struck at all.
+    {
+        AnimPlanEvent ev[8];
+        for (int i = 0; i < 8; i++) ev[i] = cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards + i, 1);
+        CHECK(anim_build_plan(ev, 8, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the eight-cover plan builds");
+        const AnimCue *last = cue_of(&p, ANIM_SOUND_MAX_HITS - 1, ANIM_CUE_COVER);
+        CHECK(last && last->at_ms == ANIM_TIME_MS + (ANIM_SOUND_MAX_HITS - 1) * ANIM_SOUND_STAGGER_MS,
+              "the sixth cover is the sixth strike");
+        CHECK(!cue_of(&p, ANIM_SOUND_MAX_HITS, ANIM_CUE_COVER) && !cue_of(&p, 7, ANIM_CUE_COVER),
+              "never more than ANIM_SOUND_MAX_HITS strikes a beat: the seventh and eighth are silent");
+    }
+
+    // A PICKUP IS ONE GESTURE, and an out rides the move that caused it.
+    {
+        AnimPlanEvent ev[3] = {
+            cue_ev(ANIM_EVT_PICKUP, 1, ANIM_LOC_TABLE, ANIM_LOC_HAND, cards, 5),
+            cue_ev(ANIM_EVT_OUT, 0, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0),
+            cue_ev(ANIM_EVT_REFILL, 0, ANIM_LOC_DECK, ANIM_LOC_HAND, cards, 1),
+        };
+        CHECK(anim_build_plan(ev, 3, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the pickup plan builds");
+        const AnimCue *pk = cue_of(&p, 0, ANIM_CUE_PICKUP);
+        CHECK(pk && pk->at_ms == 0 && pk->hits == 1 && pk->n_cards == 5,
+              "a pickup is one gesture: one sound as the table lifts, for five cards (got %d hits)", pk ? pk->hits : -1);
+        const AnimCue *in = cue_of(&p, 0, ANIM_CUE_INTO_HAND);
+        CHECK(in && in->at_ms == ANIM_TIME_MS && in->hits == 1 && in->n_cards == 5,
+              "and the cards are heard sliding into the hand as they land (got %d)", in ? in->at_ms : -1);
+        CHECK(cues_of_step(&p, 0) == 2, "and that is all a pickup makes");
+        const AnimCue *out = cue_of(&p, 1, ANIM_CUE_OUT);
+        CHECK(out && out->at_ms == ANIM_TIME_MS + ANIM_SOUND_OUT_LAG_MS,
+              "the out is struck a lag behind the landing that caused it (got %d)", out ? out->at_ms : -1);
+    }
+    // THE CASE THE OUT'S OWN start_ms GETS WRONG: behind a bout-ending cover an
+    // out opens after the hold, a second and a half after the badge collapsed.
+    {
+        AnimPlanEvent ev[3] = {
+            cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1),
+            cue_ev(ANIM_EVT_OUT, 1, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0),
+            cue_ev(ANIM_EVT_DISCARD, ANIM_SEAT_NONE, ANIM_LOC_TABLE, ANIM_LOC_DISCARD, cards, 2),
+        };
+        CHECK(anim_build_plan(ev, 3, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the last-card cover builds");
+        CHECK(p.steps[1].start_ms >= ANIM_TIME_MS + ANIM_BOUT_END_HOLD_MS, "the out step itself sits behind the hold");
+        const AnimCue *out = cue_of(&p, 1, ANIM_CUE_OUT);
+        CHECK(out && out->at_ms == 0,
+              "the out is struck as the cover that emptied the hand SETS OFF (the hand is released), not at its landing and not after the hold (got %d)",
+              out ? out->at_ms : -1);
+        // ...and a seat that only just moved a card for ANOTHER seat is not the one that is out.
+        AnimPlanEvent other[3] = {
+            cue_ev(ANIM_EVT_COVER, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1),
+            cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1),
+            cue_ev(ANIM_EVT_OUT, 0, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0),
+        };
+        CHECK(anim_build_plan(other, 3, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "two seats' covers then an out build");
+        const AnimCue *o2 = cue_of(&p, 2, ANIM_CUE_OUT);
+        CHECK(o2 && o2->at_ms == p.steps[0].start_ms,
+              "the out is struck with ITS seat's own last move, not the nearest card in the air (got %d)", o2 ? o2->at_ms : -1);
+    }
+    // An out with nothing in front of it has nothing to ride.
+    {
+        AnimPlanEvent ev[2] = {
+            cue_ev(ANIM_EVT_OUT, 0, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0),
+            cue_ev(ANIM_EVT_REFILL, 1, ANIM_LOC_DECK, ANIM_LOC_HAND, cards, 1),
+        };
+        CHECK(anim_build_plan(ev, 2, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the leading-out plan builds");
+        const AnimCue *out = cue_of(&p, 0, ANIM_CUE_OUT);
+        CHECK(out && out->at_ms == 0, "an out that leads its stream is struck where it stands");
+        // …and a step that moved no card is nothing to ride either: the beats
+        // let only a beat that MOVED something adopt the outs behind it.
+        ev[1] = ev[0];
+        ev[0] = cue_ev(ANIM_EVT_MAGIC_TRANSITION, ANIM_SEAT_NONE, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0);
+        CHECK(anim_build_plan(ev, 2, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the notice-then-out plan builds");
+        out = cue_of(&p, 1, ANIM_CUE_OUT);
+        CHECK(out && out->at_ms == p.steps[1].start_ms,
+              "an out behind a step that moved no card rides nothing (got %d)", out ? out->at_ms : -1);
+    }
+
+    // THE OPENING: a deal a card, the trump turned as it lands, and the steps
+    // that move no card make no sound at all.
+    {
+        AnimPlanEvent ev[6] = {
+            cue_ev(ANIM_EVT_MAGIC_TRANSITION, ANIM_SEAT_NONE, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0),
+            cue_ev(ANIM_EVT_DEAL, 0, ANIM_LOC_DECK, ANIM_LOC_HAND, cards, 1),
+            cue_ev(ANIM_EVT_DEAL, 1, ANIM_LOC_DECK, ANIM_LOC_HAND, cards + 1, 1),
+            cue_ev(ANIM_EVT_FLIPPED, ANIM_SEAT_NONE, ANIM_LOC_DECK, ANIM_LOC_FLIPPED, cards + 2, 1),
+            cue_ev(ANIM_EVT_DEFENDER_MOVE, 1, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0),
+            cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, cards + 3, 1),
+        };
+        CHECK(anim_build_plan(ev, 6, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the opening plan builds");
+        CHECK(cues_of_step(&p, 0) == 0 && cues_of_step(&p, 4) == 0,
+              "a magic transition and a defender move carry no card and make no sound");
+        const AnimCue *d = cue_of(&p, 2, ANIM_CUE_DEAL);
+        CHECK(d && d->at_ms == p.steps[2].start_ms && d->hits == 1, "each dealt card is heard as it leaves the stock");
+        const AnimCue *fl = cue_of(&p, 3, ANIM_CUE_FLIP);
+        CHECK(fl && fl->at_ms == p.steps[3].start_ms + p.steps[3].duration_ms, "the trump is heard turning up as it lands");
+        const AnimCue *tn = cue_of(&p, 3, ANIM_CUE_TURN);
+        CHECK(tn && tn->at_ms == p.steps[3].start_ms && tn->hits == 1, "and turned off the stock as it leaves");
+        const AnimCue *dl = cue_of(&p, 2, ANIM_CUE_DEAL_LAND);
+        CHECK(dl && dl->at_ms == p.steps[2].start_ms + p.steps[2].duration_ms
+              && p.steps[2].duration_ms == ANIM_DEAL_CARD_MS,
+              "a dealt card lands at its seat a dealer's flight after it left (got %d)", dl ? dl->at_ms : -1);
+        const AnimCue *rv = cue_of(&p, 5, ANIM_CUE_REVERT);
+        CHECK(rv && rv->at_ms == p.steps[5].start_ms, "a refused card is heard as it sets off home");
+        CHECK(rv && rv->undoes == ANIM_CUE_PLACE,
+              "a card going home whose move is not in the stream undoes a card laid (got %d)", rv ? rv->undoes : -1);
+        CHECK(d && d->undoes == ANIM_CUE_NONE && fl && fl->undoes == ANIM_CUE_NONE, "no other cue undoes anything");
+        CHECK(p.n_cues == 7, "seven sounds for six steps (got %d)", p.n_cues);
+    }
+    // A REVERT IS THE MOVE IT UNDOES, BACKWARDS, and the stream says which
+    // move that was: the nearest step before it that moved the same card.
+    {
+        AnimPlanEvent ev[6] = {
+            cue_ev(ANIM_EVT_ATTACK_PASS, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1),
+            cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, cards, 1),
+            cue_ev(ANIM_EVT_COVER, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards + 1, 1),
+            cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, cards + 1, 1),
+            cue_ev(ANIM_EVT_PICKUP, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, cards + 2, 3),
+            cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards + 4, 1),
+        };
+        CHECK(anim_build_plan(ev, 6, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the refusals plan builds");
+        const AnimCue *a = cue_of(&p, 1, ANIM_CUE_REVERT), *c = cue_of(&p, 3, ANIM_CUE_REVERT), *k = cue_of(&p, 5, ANIM_CUE_REVERT);
+        CHECK(a && a->undoes == ANIM_CUE_PLACE, "a refused attack is a card laid, backwards (got %d)", a ? a->undoes : -1);
+        CHECK(c && c->undoes == ANIM_CUE_COVER, "a refused cover is a cover, backwards (got %d)", c ? c->undoes : -1);
+        CHECK(k && k->undoes == ANIM_CUE_PICKUP,
+              "a refused pickup is a pickup, backwards, found by one of its cards (got %d)", k ? k->undoes : -1);
+        // The NEAREST such step: a card laid, refused, then laid as a cover and refused again.
+        AnimPlanEvent twice[4] = { ev[0], ev[1], cue_ev(ANIM_EVT_COVER, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1), ev[1] };
+        CHECK(anim_build_plan(twice, 4, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the twice-refused plan builds");
+        c = cue_of(&p, 3, ANIM_CUE_REVERT);
+        CHECK(c && c->undoes == ANIM_CUE_COVER, "the nearest move of that card is the one undone (got %d)", c ? c->undoes : -1);
+        // Another card's cover in the stream is not this card's move.
+        AnimPlanEvent other[2] = { ev[2], ev[1] };
+        CHECK(anim_build_plan(other, 2, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the unrelated plan builds");
+        a = cue_of(&p, 1, ANIM_CUE_REVERT);
+        CHECK(a && a->undoes == ANIM_CUE_PLACE, "a move of some other card is not the move undone (got %d)", a ? a->undoes : -1);
+        // THE SAME CARD, not a card like it: a cover of the same suit and one of
+        // the same rank are in the stream, and neither is the card going home.
+        {
+            Card mine[1] = { C(1, 9) }, same_suit[1] = { C(1, 10) }, same_rank[1] = { C(2, 9) };
+            AnimPlanEvent near[3] = {
+                cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, same_suit, 1),
+                cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, same_rank, 1),
+                cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, mine, 1),
+            };
+            CHECK(anim_build_plan(near, 3, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the near-miss plan builds");
+            a = cue_of(&p, 2, ANIM_CUE_REVERT);
+            CHECK(a && a->undoes == ANIM_CUE_PLACE, "a cover of the same suit or the same rank is not this card's (got %d)", a ? a->undoes : -1);
+            // SEVERAL CARDS GO HOME IN ONE FLIGHT, and any one of them finds the move.
+            Card home[2] = { C(3, 14), C(2, 9) };
+            near[2] = cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, home, 2);
+            CHECK(anim_build_plan(near, 3, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the two-card revert builds");
+            a = cue_of(&p, 2, ANIM_CUE_REVERT);
+            CHECK(a && a->undoes == ANIM_CUE_COVER, "the second card of a revert finds its cover too (got %d)", a ? a->undoes : -1);
+            // And a multi-card move is found by a card that is not its first.
+            Card laid[2] = { C(0, 7), C(1, 7) }, back[1] = { C(1, 7) };
+            AnimPlanEvent multi[2] = {
+                cue_ev(ANIM_EVT_COVER, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, laid, 2),
+                cue_ev(ANIM_EVT_REVERT, 0, ANIM_LOC_TABLE, ANIM_LOC_HAND, back, 1),
+            };
+            CHECK(anim_build_plan(multi, 2, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the multi-card plan builds");
+            a = cue_of(&p, 1, ANIM_CUE_REVERT);
+            CHECK(a && a->undoes == ANIM_CUE_COVER, "the second card of a move is that move's card (got %d)", a ? a->undoes : -1);
+        }
+        // With nothing in the stream the direction is all there is.
+        AnimPlanEvent alone[1] = { ev[5] };
+        CHECK(anim_build_plan(alone, 1, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the lone revert builds");
+        k = cue_of(&p, 0, ANIM_CUE_REVERT);
+        CHECK(k && k->undoes == ANIM_CUE_PICKUP, "cards going back to the table undo a pickup (got %d)", k ? k->undoes : -1);
+    }
+
+    // A step that names no cards moved none.
+    {
+        AnimPlanEvent ev[2] = {
+            cue_ev(ANIM_EVT_REFILL, 0, ANIM_LOC_DECK, ANIM_LOC_HAND, 0, 0),
+            cue_ev(ANIM_EVT_CARDS_TO_TRASH, ANIM_SEAT_NONE, ANIM_LOC_TABLE, ANIM_LOC_DISCARD, 0, 0),
+        };
+        CHECK(anim_build_plan(ev, 2, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK && p.n_cues == 0,
+              "a refill and a sweep of no cards are silent (got %d)", p.n_cues);
+    }
+
+    // A CUE NEVER MOVES ONCE IT IS IN A PLAN. The web appends to a run in
+    // flight and re-plans it every frame; a cue it already scheduled must be
+    // where it was in the longer plan, or it would be struck twice or late.
+    {
+        AnimPlanEvent ev[8] = {
+            cue_ev(ANIM_EVT_ATTACK_PASS, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 2),
+            cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards + 2, 1),
+            cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards + 3, 1),
+            cue_ev(ANIM_EVT_OUT, 1, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0),
+            cue_ev(ANIM_EVT_DISCARD, ANIM_SEAT_NONE, ANIM_LOC_TABLE, ANIM_LOC_DISCARD, cards, 4),
+            cue_ev(ANIM_EVT_REFILL, 0, ANIM_LOC_DECK, ANIM_LOC_HAND, cards + 4, 2),
+            cue_ev(ANIM_EVT_OUT, 0, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0),
+            cue_ev(ANIM_EVT_PICKUP, 1, ANIM_LOC_TABLE, ANIM_LOC_HAND, cards + 6, 1),
+        };
+        static AnimPlan whole, part;
+        CHECK(anim_build_plan(ev, 8, 2, 10, 12, CARD_NONE, final_hand, &whole) == ANIM_EOK, "the long plan builds");
+        for (int n = 1; n < 8; n++) {
+            CHECK(anim_build_plan(ev, n, 2, 10, 12, CARD_NONE, final_hand, &part) == ANIM_EOK, "the prefix builds");
+            for (int i = 0; i < part.n_cues; i++) {
+                const AnimCue *a = &part.cues[i], *b = cue_of(&whole, a->step, a->kind);
+                CHECK(b && b->at_ms == a->at_ms && b->hits == a->hits && b->n_cards == a->n_cards,
+                      "a cue of the first %d steps (step %d kind %d) is the same cue in the whole plan", n, a->step, a->kind);
+                CHECK(b && b->undoes == a->undoes, "and undoes the same move");
+            }
+        }
+        // And within any one plan a (step, kind) names one cue, which is what
+        // lets a host remember what it has scheduled by that pair.
+        for (int i = 0; i < whole.n_cues; i++)
+            for (int j = i + 1; j < whole.n_cues; j++)
+                CHECK(whole.cues[i].step != whole.cues[j].step || whole.cues[i].kind != whole.cues[j].kind,
+                      "cues %d and %d share a step and a kind", i, j);
+    }
+
+    // ---- the marks ----
+    const AnimRoles shown = { 1, 0, 0x1 };
+    AnimRoles next = shown;
+    CHECK(anim_role_cue(shown, next) == ANIM_CUE_NONE, "marks that did not change make no sound");
+    next.good_mask = 0x5;
+    CHECK(anim_role_cue(shown, next) == ANIM_CUE_GOOD, "a good said is heard");
+    next.good_mask = 0x0;
+    CHECK(anim_role_cue(shown, next) == ANIM_CUE_NONE,
+          "a good cleared is silent: the throw-in that cleared it is already making a sound");
+    next = shown; next.defender = 2;
+    CHECK(anim_role_cue(shown, next) == ANIM_CUE_HAND_OFF, "the shield changing seats is heard");
+    next = shown; next.first_attacker = 2;
+    CHECK(anim_role_cue(shown, next) == ANIM_CUE_HAND_OFF, "the opening sword changing seats is heard");
+    next.good_mask = 0x7;
+    CHECK(anim_role_cue(shown, next) == ANIM_CUE_HAND_OFF, "a hand-off outranks a good said with it: one event, one sound");
+    next = shown; next.good_mask = ANIM_NO_MASK;
+    CHECK(anim_role_cue(shown, next) == ANIM_CUE_NONE, "a board that carried no mask says nothing about the goods");
+    // A MARK THAT WENT NOWHERE IS NOT HANDED ON. The table reset for a rematch
+    // takes both marks off (the web's results screen caught this one: the tap
+    // on Continue was heard as a hand-off), and the opening puts them on.
+    {
+        const AnimRoles nobody = { ANIM_SEAT_NONE, ANIM_SEAT_NONE, shown.good_mask };
+        CHECK(anim_role_cue(shown, nobody) == ANIM_CUE_NONE, "marks taken off the table are not handed to anyone");
+        CHECK(anim_role_cue(nobody, shown) == ANIM_CUE_NONE, "marks that appear where there were none came from nowhere");
+        next = shown; next.defender = ANIM_SEAT_NONE; next.first_attacker = 2;
+        CHECK(anim_role_cue(shown, next) == ANIM_CUE_HAND_OFF, "one mark travelling is a hand-off whatever the other did");
+    }
+
+    // ---- which cues could sound next ----
+    {
+        #define BIT(k) ((uint32_t)1 << (k))
+        AnimCueAsk q = { GAME_STATUS_WAITING, 0, 2, 0, 0, false, 0 };
+        CHECK(anim_cues_next(&q) == (BIT(ANIM_CUE_DEAL) | BIT(ANIM_CUE_DEAL_LAND) | BIT(ANIM_CUE_TURN) | BIT(ANIM_CUE_FLIP)),
+              "a lobby can only deal");
+        q.status = GAME_STATUS_GAME_OVER;
+        CHECK(anim_cues_next(&q) == 0, "a finished game has nothing next");
+        q.status = 77;
+        CHECK(anim_cues_next(&q) == ANIM_CUES_ALL && !(ANIM_CUES_ALL & 1) && (ANIM_CUES_ALL >> ANIM_N_CUES) == 0,
+              "a board the rule cannot read names every cue, and NONE is not a cue");
+        CHECK(anim_cues_next(0) == ANIM_CUES_ALL, "and so does no board at all");
+
+        // An empty table mid-game, stock deep: somebody attacks, and that is all.
+        AnimCueAsk p = { GAME_STATUS_PLAYING, 0, 2, 0, 0, true, 20 };
+        CHECK(anim_cues_next(&p) == (BIT(ANIM_CUE_LIFT) | BIT(ANIM_CUE_PLACE) | BIT(ANIM_CUE_PASS)),
+              "an empty table with a deep stock: a card laid, and nothing else (got %x)", anim_cues_next(&p));
+        CHECK(!(ANIM_CUES_ALL & 0) && !(anim_cues_next(&p) & BIT(ANIM_CUE_REVERT)),
+              "a revert is never named: it is some other cue's sound, backwards");
+        // An uncovered attack: it can be covered or taken, the bout can close.
+        p.n_battles = 1;
+        uint32_t m = anim_cues_next(&p);
+        CHECK((m & BIT(ANIM_CUE_COVER)) && (m & BIT(ANIM_CUE_PICKUP)), "an uncovered attack can be covered or taken");
+        CHECK((m & BIT(ANIM_CUE_SWEEP)) && (m & BIT(ANIM_CUE_PILE)) && (m & BIT(ANIM_CUE_GOOD))
+              && (m & BIT(ANIM_CUE_HAND_OFF)) && (m & BIT(ANIM_CUE_DEAL)),
+              "cards on the table: the bout can close, with its sweep, its refills and its hand-off");
+        CHECK(!(m & BIT(ANIM_CUE_OUT)) && !(m & BIT(ANIM_CUE_FINISH)) && !(m & BIT(ANIM_CUE_FOOL)),
+              "twenty-one cards of stock cannot run out on one bout of two seats");
+        CHECK(!(m & BIT(ANIM_CUE_FLIP)), "the trump is turned: the opening is over");
+        // Every attack covered: nothing to cover or take, the rest stands.
+        p.n_covered = 1;
+        m = anim_cues_next(&p);
+        CHECK(!(m & BIT(ANIM_CUE_COVER)) && !(m & BIT(ANIM_CUE_PICKUP)) && (m & BIT(ANIM_CUE_SWEEP)),
+              "a table all covered has nothing to cover or take, and can still be swept");
+        // The stock within reach of one bout's refills: a seat can go out.
+        p.deck = 11;   // 11 + the trump = 12 = six a seat for two
+        m = anim_cues_next(&p);
+        CHECK((m & BIT(ANIM_CUE_OUT)) && (m & BIT(ANIM_CUE_FINISH)) && (m & BIT(ANIM_CUE_FOOL)),
+              "a stock the refills could empty: a seat can go out and the game can end");
+        p.deck = 12;
+        CHECK(!(anim_cues_next(&p) & BIT(ANIM_CUE_OUT)), "one card more and it cannot");
+        p.my_seat = -1; p.deck = 0;
+        m = anim_cues_next(&p);
+        CHECK((m & BIT(ANIM_CUE_FINISH)) && !(m & BIT(ANIM_CUE_FOOL)), "a spectator can hear the end, never the fool's");
+        // The stock gone, table empty: an attack can be somebody's last card.
+        AnimCueAsk e = { GAME_STATUS_PLAYING, 1, 3, 0, 0, false, 0 };
+        m = anim_cues_next(&e);
+        CHECK((m & BIT(ANIM_CUE_OUT)) && !(m & BIT(ANIM_CUE_DEAL)) && !(m & BIT(ANIM_CUE_SWEEP)),
+              "no stock and no table: a last card, nothing dealt, nothing swept");
+        // The opening still going round: no trump under a stock that has cards.
+        AnimCueAsk o = { GAME_STATUS_PLAYING, 0, 2, 0, 0, false, 30 };
+        m = anim_cues_next(&o);
+        CHECK((m & BIT(ANIM_CUE_DEAL)) && (m & BIT(ANIM_CUE_FLIP)), "a stock with no trump turned is a deal in progress");
+        #undef BIT
+    }
+
+    // ---- the end ----
+    // Asked as the end screen is (AnimFinishAsk): three seats, 0 and 1 out in
+    // that order, 2 left holding cards.
+    {
+        AnimFinishAsk q = { .game_over = 2, .n_players = 3, .my_seat = 0, .n_elim = 2, .elimination = { 0, 1 } };
+        AnimFinishAsk running = q;
+        running.game_over = -1;
+        CHECK(anim_finish_cue(&running) == ANIM_CUE_NONE, "a game still running has no end to sound");
+        CHECK(anim_finish_cue(0) == ANIM_CUE_NONE, "and no question has none either");
+        q.my_seat = 2;
+        CHECK(anim_finish_cue(&q) == ANIM_CUE_FOOL, "the fool hears that they are the fool");
+        q.my_seat = 0;
+        CHECK(anim_finish_cue(&q) == ANIM_CUE_FINISH, "everyone else hears the game finish");
+        q.my_seat = -1;
+        CHECK(anim_finish_cue(&q) == ANIM_CUE_FINISH, "and so does a spectator, who is nobody's fool");
+
+        // A REPETITION DRAW (game.h game_fools): seat 0 went out, then the
+        // position came round a third time with 1, 2 and 3 still in - all
+        // three are fools, and `game_over` names only the lowest of them.
+        AnimFinishAsk draw = { .game_over = 1, .n_players = 4, .my_seat = 1, .n_elim = 1, .elimination = { 0 } };
+        CHECK(anim_finish_cue(&draw) == ANIM_CUE_FOOL, "a draw: the lowest fool hears the fool's sound");
+        draw.my_seat = 3;
+        CHECK(anim_finish_cue(&draw) == ANIM_CUE_FOOL, "a draw: so does every other fool, whom game_over does not name");
+        draw.my_seat = 0;
+        CHECK(anim_finish_cue(&draw) == ANIM_CUE_FINISH, "a draw: the seat that went out before it hears the finish");
+        draw.my_seat = -1;
+        CHECK(anim_finish_cue(&draw) == ANIM_CUE_FINISH, "a draw: and a spectator is still nobody's fool");
+        // The sound and the list are one answer: every row at the last place is
+        // a seat that hears FOOL, and no other row is.
+        AnimFinish rows;
+        draw.my_seat = -1;
+        CHECK(anim_finish_ask(&draw, &rows) == 4, "a draw lists every seat");
+        for (int i = 0; i < rows.n; i++) {
+            AnimFinishAsk me = draw;
+            me.my_seat = rows.rows[i].seat;
+            CHECK((anim_finish_cue(&me) == ANIM_CUE_FOOL) == (rows.rows[i].place == draw.n_players),
+                  "a seat hears FOOL exactly when the list puts it last");
+        }
+    }
+}
+
+// WHAT A CUE PLAYS (cue_voice.h): every rule over a table of this test's own, so
+// each case is visible.
+static void test_cue_voice(void) {
+    // Two lift takes that need 300 and 400 ms, two tight ones (100, 150), one
+    // pass take that starts 50 ms AFTER its moment, a one-take cue, and a sweep
+    // with preludes of 1 and 2 strokes. 1 s at 1 kHz each, so a microsecond
+    // is easy to count.
+    static const CueTakeRow T[] = {
+        { 1000, 1000, 300000, ANIM_CUE_LIFT,  CUE_ROLE_MAIN,  0, 6, "lift_0" },
+        { 1000, 1000, 400000, ANIM_CUE_LIFT,  CUE_ROLE_MAIN,  0, 6, "lift_1" },
+        { 1000, 1000, 100000, ANIM_CUE_LIFT,  CUE_ROLE_TIGHT, 0, 12, "lift_tight_0" },
+        { 1000, 1000, 150000, ANIM_CUE_LIFT,  CUE_ROLE_TIGHT, 0, 12, "lift_tight_1" },
+        { 1000, 1000, -50000, ANIM_CUE_PASS,  CUE_ROLE_MAIN,  0, 6, "pass_0" },
+        { 1000, 1000, 20000,  ANIM_CUE_PLACE, CUE_ROLE_MAIN,  0, 7, "place_0" },
+        { 1000, 1000, 30000,  ANIM_CUE_SWEEP, CUE_ROLE_MAIN,  0, 7, "sweep_0" },
+        { 1000, 1000, 900000, ANIM_CUE_SWEEP, CUE_ROLE_PRELUDE, 1, 17, "sweep_strokes_s1" },
+        { 1000, 2000, 1900000,ANIM_CUE_SWEEP, CUE_ROLE_PRELUDE, 2, 17, "sweep_strokes_s2" },
+        { 1000, 1000, 10000,  ANIM_CUE_HAND_OFF, CUE_ROLE_MAIN, 0, 10, "hand_off_0" },
+    };
+    const int n = (int)(sizeof T / sizeof T[0]);
+    CueMix M[ANIM_N_CUES] = { 0 };
+    for (int c = 0; c < ANIM_N_CUES; c++) M[c].gain_pm = 1000;
+    M[ANIM_CUE_SWEEP].cards_per_level_pm = 2500;
+    M[ANIM_CUE_PLACE].per_card_pm = 200;
+    M[ANIM_CUE_HAND_OFF] = (CueMix){ 470, 60, 180, 0, 0 };
+    CueVoiceState st = { .rng = 12345 };
+    CueStrike s;
+
+    CHECK(cue_lead_us(T, n, ANIM_CUE_LIFT) == 400000 && cue_lead_us(T, n, ANIM_CUE_SWEEP) == 1900000
+          && cue_lead_us(T, n, ANIM_CUE_PASS) == 0 && cue_lead_us(T, n, ANIM_CUE_OUT) == 0,
+          "a cue's lead is its longest anchor, preludes included, and never negative");
+    CHECK(cue_late_us(T, n, ANIM_CUE_PASS) == 50000 && cue_late_us(T, n, ANIM_CUE_LIFT) == 0
+          && cue_late_us(T, n, ANIM_CUE_PLACE) == 0 && cue_late_us(T, n, ANIM_CUE_OUT) == 0,
+          "a cue is heard late by how far its take's first sound is after its moment, and 0 when it is not after it");
+
+    // An ordinary take whose anchor fits, started its anchor before the moment.
+    for (int i = 0; i < 20; i++) {
+        CHECK(cue_strike(T, n, M, &st, ANIM_CUE_LIFT, 350000, 1, 0, 1000, &s) == 0 && s.take == 0
+              && s.start_us == 50000, "with 350 ms to go only the 300 ms lift fits, 50 ms from now");
+    }
+    // None fits: a tight take, whole, from now; and the two alternate.
+    int last = -1, alternated = 1;
+    for (int i = 0; i < 20; i++) {
+        cue_strike(T, n, M, &st, ANIM_CUE_LIFT, 120000, 1, 0, 1000, &s);
+        CHECK(s.take == 2 || s.take == 3, "with 120 ms to go no lift fits, so a tight one plays");
+        CHECK(s.start_us == (s.take == 2 ? 20000 : 0), "the 100 ms one 20 ms from now, the 150 ms one from now, late");
+        alternated &= s.take != last;
+        last = s.take;
+    }
+    CHECK(alternated, "a cue never plays the take it played last when it has another");
+    // A strike that OPENS ITS RUN plays a tight take even with all the time in the world, started so
+    // its anchor is on the moment; a cue with no tight take plays as it always did.
+    for (int i = 0; i < 20; i++) {
+        cue_strike_opening(T, n, M, &st, ANIM_CUE_LIFT, 1000000, 1, 0, 1000, &s);
+        CHECK((s.take == 2 && s.start_us == 900000) || (s.take == 3 && s.start_us == 850000),
+              "opening a run with a second to go plays a tight lift, its anchor on the moment");
+    }
+    cue_strike_opening(T, n, M, &st, ANIM_CUE_PLACE, 1000000, 1, 0, 1000, &s);
+    CHECK(s.take == 5 && s.start_us == 980000, "a cue with no tight take is struck as always");
+    // A cue with one take plays it every time; a negative anchor starts after the moment.
+    for (int i = 0; i < 3; i++) {
+        cue_strike(T, n, M, &st, ANIM_CUE_PASS, 0, 1, 0, 1000, &s);
+        CHECK(s.take == 4 && s.start_us == 50000, "the pass's one take, 50 ms after a moment that is now");
+    }
+    cue_strike(T, n, M, &st, ANIM_CUE_PASS, -20000, 1, 0, 1000, &s);
+    CHECK(s.start_us == 50000, "a moment already past is taken as now, as the web clamps its delay");
+    // Backwards: the anchor from the file's other end (1 s long, anchor 20 ms
+    // in: 980 ms from its end), so with a second to go it starts 20 ms from now.
+    cue_strike(T, n, M, &st, ANIM_CUE_REVERT, 1000000, 1, ANIM_CUE_PLACE, 1000, &s);
+    CHECK(s.take == 5 && s.backwards == 1 && s.start_us == 20000 && s.prelude == -1,
+          "a revert is the undone cue's take reversed, its anchor measured from the end, no prelude");
+    cue_strike(T, n, M, &st, ANIM_CUE_REVERT, 1000000, 6, ANIM_CUE_SWEEP, 1000, &s);
+    CHECK(s.take == 6 && s.prelude == -1, "a reverted sweep has no strokes before it");
+    CHECK(cue_strike(T, n, M, &st, ANIM_CUE_REVERT, 0, 1, ANIM_CUE_NONE, 1000, &s) == -1 && s.take == -1,
+          "a revert of nothing is silent");
+    CHECK(cue_strike(T, n, M, &st, ANIM_CUE_OUT, 0, 1, 0, 1000, &s) == -1 && s.take == -1,
+          "a cue with no takes is silent");
+    CHECK(cue_strike(T, n, M, &st, 99, 0, 1, 0, 1000, &s) == -1 && cue_strike(NULL, 0, M, &st, ANIM_CUE_LIFT, 0, 1, 0, 1000, &s) == -1,
+          "a cue out of range, or no table, is silent");
+    // Preludes: one stroke per 2.5 cards (1 at least), as many as there are.
+    cue_strike(T, n, M, &st, ANIM_CUE_SWEEP, 3000000, 1, 0, 1000, &s);
+    CHECK(s.take == 6 && s.prelude == 7 && s.start_us == 2970000 && s.prelude_start_us == 2100000,
+          "one card is one stroke, its anchor before the same moment as the lift's");
+    cue_strike(T, n, M, &st, ANIM_CUE_SWEEP, 3000000, 4, 0, 1000, &s);
+    CHECK(s.prelude == 8, "four cards are two strokes (4 / 2.5 rounds to 2)");
+    cue_strike(T, n, M, &st, ANIM_CUE_SWEEP, 500000, 12, 0, 1000, &s);
+    CHECK(s.prelude == 8 && s.prelude_start_us == 0 && s.start_us == 470000,
+          "twelve cards are as many strokes as there are, from now when there is no time; the lift keeps its moment");
+    cue_strike(T, n, M, &st, ANIM_CUE_SWEEP, 500000, 0, 0, 1000, &s);
+    CHECK(s.prelude == -1, "no cards, no strokes");
+    // Level: the cue's gain times the strike's, heavier per card to +60%.
+    cue_strike(T, n, M, &st, ANIM_CUE_PLACE, 0, 1, 0, 455, &s);
+    CHECK(s.gain_pm == 455 && s.rate_pm == 1000, "a strike's own gain (a far seat) is its level; a model does not wander");
+    cue_strike(T, n, M, &st, ANIM_CUE_PLACE, 0, 3, 0, 1000, &s);
+    CHECK(s.gain_pm == 1400, "two cards past the first at 20%% a card is +40%% (got %d)", s.gain_pm);
+    cue_strike(T, n, M, &st, ANIM_CUE_PLACE, 0, 30, 0, 1000, &s);
+    CHECK(s.gain_pm == 1600, "and no more than +60%% (got %d)", s.gain_pm);
+    // A stand-in wanders, within its range and reaching near its edges.
+    int lo_rate = 2000, hi_rate = 0, lo_gain = 2000, hi_gain = 0, inside = 1;
+    for (int i = 0; i < 400; i++) {
+        cue_strike(T, n, M, &st, ANIM_CUE_HAND_OFF, 0, 1, 0, 1000, &s);
+        inside &= s.rate_pm >= 940 && s.rate_pm <= 1060 && s.gain_pm >= 385 && s.gain_pm <= 555;
+        if (s.rate_pm < lo_rate) lo_rate = s.rate_pm;
+        if (s.rate_pm > hi_rate) hi_rate = s.rate_pm;
+        if (s.gain_pm < lo_gain) lo_gain = s.gain_pm;
+        if (s.gain_pm > hi_gain) hi_gain = s.gain_pm;
+    }
+    CHECK(inside && lo_rate < 950 && hi_rate > 1050 && lo_gain < 400 && hi_gain > 540,
+          "the hand-off wanders +-6%% in speed and +-18%% in level (%d-%d, %d-%d)", lo_rate, hi_rate, lo_gain, hi_gain);
+    // At a faster speed the anchor comes sooner: 10 ms at 1.06 is 9.43 ms.
+    cue_strike(T, n, M, &st, ANIM_CUE_HAND_OFF, 100000, 1, 0, 1000, &s);
+    const double want = 100000 - 10000 * 1000.0 / s.rate_pm;
+    CHECK(s.start_us >= (int)want - 1 && s.start_us <= (int)want + 1, "the anchor is played at the take's speed");
+    // ...and a speed is a buffer: at 1.5 the ramp 0,1,2,3,4 is 0,1.5,3,4 (and the
+    // last sample held); at 1.0 a copy; too small an output is refused.
+    const float ramp[5] = { 0, 1, 2, 3, 4 };
+    float out[16] = { 0 };
+    CHECK(cue_resample(ramp, 5, 1500, out, 16) == 3 && out[0] == 0 && out[1] == 1.5f && out[2] == 3,
+          "faster is fewer samples, interpolated");
+    CHECK(cue_resample(ramp, 5, 500, out, 16) == 9 && out[1] == 0.5f && out[7] == 3.5f && out[8] == 4, "slower is more");
+    CHECK(cue_resample(ramp, 5, 1000, out, 16) == 5 && out[4] == 4, "as written is a copy");
+    CHECK(cue_resample(ramp, 5, 500, out, 8) == -1 && cue_resample(ramp, 0, 1000, out, 16) == -1,
+          "an output too small, or nothing to play, is refused");
+}
+
+// THE WEB'S ENGINE MADE THESE DECISIONS before it asked the kernel (cue_voice_parity.h
+// says how they were recorded): every strike of the corpus, in order, through one
+// voice seeded as the recording's generator was, plays the take the web played, from
+// the same moment, at the same level and speed, the same way round, with the same
+// strokes before it. THE MARGINS are the C's own precision, which is the reference (it is
+// the API test_cue_voice holds, and iOS keeps a player per speed): a level and a speed in
+// thousandths where the web's were floats, so within half of one; and a file started for
+// the speed C answers, so a wandering take's start moves by its anchor times the
+// difference in speed, plus 60 us for the web's anchors, which its table gave to a tenth
+// of a millisecond. A modelled take does not wander, so for it the margin is the 60 us.
+static int parity_play(const char *what, int i, const ParityPlay *want, int take, int start_us, int gain_pm,
+                       int rate_pm, int backwards) {
+    double margin = 60;
+    if (take >= 0) {
+        const CueTakeRow *t = &PARITY_TAKES[take];
+        const double len_us = (double)t->n_samples * 1e6 / t->rate;
+        const double dist = backwards ? len_us - t->anchor_us : t->anchor_us;
+        margin += fabs(dist) * fabs(want->rate_ppm / 1e6 - rate_pm / 1e3) + 1;
+    }
+    const int same = want->take == take
+        && (take < 0 || (fabs((double)want->start_us - start_us) <= margin && abs(want->gain_ppm - gain_pm * 1000) <= 500
+                         && abs(want->rate_ppm - rate_pm * 1000) <= 500 && want->backwards == backwards));
+    if (!same)
+        printf("  strike %d %s: the web played take %d at %d us, level %d, speed %d%s; C answers %d at %d us, %d, %d%s\n",
+               i, what, want->take, want->start_us, want->gain_ppm, want->rate_ppm, want->backwards ? ", backwards" : "",
+               take, start_us, gain_pm * 1000, rate_pm * 1000, backwards ? ", backwards" : "");
+    return same;
+}
+static int parity_session(const ParityStrike *ps, int n, const CueMix *mix, uint32_t seed) {
+    const int n_takes = (int)(sizeof PARITY_TAKES / sizeof PARITY_TAKES[0]);
+    CueVoiceState st = { .rng = seed };
+    int off = 0;
+    for (int i = 0; i < n; i++) {
+        const ParityStrike *p = &ps[i];
+        CueStrike s;
+        cue_strike(PARITY_TAKES, n_takes, mix, &st, p->kind, p->lead_us, p->n_cards, p->undoes, p->gain_pm, &s);
+        const int ok = parity_play("its take", i, &p->main, s.take, s.start_us, s.gain_pm, s.rate_pm, s.backwards)
+            && parity_play("its strokes", i, &p->prelude, s.prelude, s.prelude_start_us, s.prelude_gain_pm,
+                           s.prelude_rate_pm, 0);
+        if (!ok && off++ >= 3) break;
+    }
+    return off;
+}
+static void test_cue_voice_matches_the_web(void) {
+    const int n_a = (int)(sizeof PARITY_SHIPPED / sizeof PARITY_SHIPPED[0]);
+    const int n_b = (int)(sizeof PARITY_WANDERS / sizeof PARITY_WANDERS[0]);
+    int played = 0, strokes = 0, reversed = 0;
+    for (int i = 0; i < n_a; i++) {
+        played += PARITY_SHIPPED[i].main.take >= 0;
+        strokes += PARITY_SHIPPED[i].prelude.take >= 0;
+        reversed += PARITY_SHIPPED[i].main.backwards;
+    }
+    CHECK(n_a > 1500 && played > n_a * 9 / 10 && strokes > 100 && reversed > 20,
+          "the record is of every kind of strike (%d, %d played, %d with strokes, %d reversed)", n_a, played, strokes, reversed);
+    CHECK(parity_session(PARITY_SHIPPED, n_a, PARITY_MIX_SHIPPED, PARITY_SEED_SHIPPED) == 0,
+          "under the shipped mix, every strike plays what the web's engine played");
+    CHECK(parity_session(PARITY_WANDERS, n_b, PARITY_MIX_WANDERS, PARITY_SEED_WANDERS) == 0,
+          "and under a mix that wanders and is heavier per card");
+}
+
+// THE OUTPUT MIX (cue_mix.h): a take starts on the frame it was given, plays
+// whole across blocks, overlaps what else sounds, and frees its slot once out.
+static void test_cue_mix(void) {
+    static CueMixer m;
+    cue_mix_init(&m, 48000);
+    const float a[5] = { 1, 2, 3, 4, 5 }, b[3] = { 10, 20, 30 };
+    float out[16];
+    CHECK(cue_mix_add(&m, a, 5, 3, 0.5f) == 0 && cue_mix_add(&m, b, 3, 6, 1.0f) == 1 && cue_mix_live(&m) == 3,
+          "two takes in two slots");
+    cue_mix_render(&m, out, 4, 0);
+    CHECK(out[0] == 0 && out[1] == 0 && out[2] == 0 && out[3] == 0.5f, "the first starts on frame 3, at its gain");
+    cue_mix_render(&m, out, 4, 0);                         // frames 4..7
+    CHECK(out[0] == 1 && out[1] == 1.5f && out[2] == 2 + 10 && out[3] == 2.5f + 20,
+          "carried across the block, and the second laid over it from frame 6");
+    CHECK(cue_mix_live(&m) == 2 && cue_mix_now(&m) == 8, "the first played out and gave its slot back");
+    cue_mix_render(&m, out, 4, 0);
+    CHECK(out[0] == 30 && out[1] == 0 && cue_mix_live(&m) == 0, "the second ends whole, and nothing is left");
+    // A start already rendered past plays from the next block, whole.
+    cue_mix_add(&m, b, 3, 2, 1.0f);
+    cue_mix_render(&m, out, 4, 0);
+    CHECK(out[0] == 10 && out[1] == 20 && out[2] == 30 && out[3] == 0, "late is whole, from now");
+    // A clear drops everything at the next block.
+    cue_mix_add(&m, a, 5, cue_mix_now(&m) + 1, 1.0f);
+    cue_mix_clear(&m);
+    cue_mix_render(&m, out, 8, 0);
+    float sum = 0;
+    for (int i = 0; i < 8; i++) sum += out[i];
+    CHECK(sum == 0 && cue_mix_live(&m) == 0, "a clear silences what was scheduled");
+    // A drop takes one take out and leaves the other.
+    cue_mix_add(&m, a, 5, cue_mix_now(&m) + 1, 1.0f);
+    const int other = cue_mix_add(&m, b, 3, cue_mix_now(&m) + 1, 1.0f);
+    cue_mix_drop(&m, other);
+    cue_mix_render(&m, out, 8, 0);
+    CHECK(out[0] == 0 && out[1] == 1 && out[2] == 2 && out[5] == 5 && cue_mix_live(&m) == 0,
+          "the dropped take is gone, the other plays (%g %g %g)", out[1], out[2], out[5]);
+    cue_mix_drop(&m, 99);
+    // Every slot busy: refused, not overwritten.
+    for (int k = 0; k < CUE_MIX_SLOTS; k++) cue_mix_add(&m, a, 5, cue_mix_now(&m) + 1000, 1.0f);
+    CHECK(cue_mix_add(&m, a, 5, 0, 1.0f) == -1 && cue_mix_add(&m, NULL, 5, 0, 1.0f) == -1, "a full mix refuses");
+    cue_mix_clear(&m);
+    cue_mix_render(&m, out, 1, 0);
+    // The clock: with a stamp, the frame heard at a host time; without, the next frame.
+    cue_mix_init(&m, 1000);                                // 1 kHz, a tick a microsecond
+    CHECK(cue_mix_frame_at(&m, 5000000, 1e6) == 0, "no block yet: the next frame");
+    cue_mix_render(&m, out, 10, 2000000);                  // frames 0..9, heard from t = 2 s
+    CHECK(cue_mix_now(&m) == 10, "ten rendered");
+    CHECK(cue_mix_frame_at(&m, 2500000, 1e6) == 500, "half a second after the block's stamp is 500 frames on");
+    CHECK(cue_mix_frame_at(&m, 1990000, 1e6) == -10, "and before it, before it");
+}
+
 int main(void) {
     printf("anim_plan_test\n");
     test_optimistic_animation();
@@ -1626,6 +2343,10 @@ int main(void) {
     test_lobby_scenarios();
     test_plan_sampled_per_frame();
     test_plan_is_laid_out_in_beats();
+    test_plan_sound_cues();
+    test_cue_voice();
+    test_cue_mix();
+    test_cue_voice_matches_the_web();
     test_hand_order_with_hidden_slots();
     if (g_fails == 0) printf("anim_plan_test: OK\n");
     else              printf("anim_plan_test: %d FAILURES\n", g_fails);

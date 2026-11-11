@@ -77,6 +77,17 @@ async function readAssetAsync(): Promise<Uint8Array | null> {
 
 let prefetched: Uint8Array | null = null;
 
+// DEVELOPMENT ONLY: a relinked kernel (the sound tuner's rebuild, tools/soundgen/tune.sh)
+// reaches an open page as a hot update that evaluates this module afresh, with nothing
+// fetched, under a board whose render asks the kernel synchronously: every such call
+// would throw. A page whose kernel changed is reloaded instead of patched. Constant in a
+// production build, where the block is dropped.
+if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
+    const w = window as { __foolishWasmAssetSeen?: boolean };
+    if (w.__foolishWasmAssetSeen) window.location.reload();
+    w.__foolishWasmAssetSeen = true;
+}
+
 /** Synchronous load. Only where the bytes can be read synchronously (Node) or
  *  were already fetched: a browser must await loadWasmGzAsync first. */
 export function loadWasmGz(): Uint8Array {

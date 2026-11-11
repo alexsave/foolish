@@ -18,13 +18,22 @@
 // game and not about time.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
-import { ANIM_STEP_NONE } from '@sdk/ts/gen/anim.bots.ts';
+import { animSeatGainPm, cueLateUs, cueLeadUs, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_DECK_DOWN_MS, ANIM_STEP_NONE } from '@sdk/ts/gen/anim.bots.ts';
 import {
     arrivingPiles, frameAt, heldPiles, NO_ARRIVING, NO_HELD, planFor, sameArriving, sameHeld, withTrumpOut,
     type AnimStep, type ArrivingPile,
 } from './animPlan';
 import { sameCard, type TableView, type ViewCard } from './view';
+import { cueAudio } from '../audio/cueAudio';
+import { cueKey, dueStrikes } from '../audio/cueSchedule';
+import { PAINT_LAG_MS } from './flightTiming';
+import { ANIM_CUE_DEAL, ANIM_CUE_DEAL_LAND, ANIM_CUE_FLIP, ANIM_CUE_PASS } from '@sdk/ts/gen/kernel_consts.bots.ts';
+
+/** How long before its moment a cue's earliest take starts: the kernel's (cue_lead_us). */
+// A cue is handed over its earliest take's lead before its moment, and the output's
+// delay earlier still, since the engine schedules it that much early (cueAudio.latencyMs).
+const cueLeadMs = (kind: number): number => cueLeadUs(kind) / 1000 + cueAudio.latencyMs();
 
 /** What the page draws for one card at one place while its flight is up. */
 interface CardFlight {
@@ -53,6 +62,11 @@ interface AnimationRunHooks<S extends RunStep> {
      *  ios/FoolishKit/Boards/MessageTableView+Sequence.swift, which fires both
      *  beside the beat's own flights). */
     onOpened?: (step: S) => void;
+    /** A transfer's "shfff" is HEARD (its cue's moment plus how long after it the
+     *  take's first sound comes, cue_late_us): the shield it slides on to the
+     *  next defender changes hands HERE, with the sound that says it, and not
+     *  with the card. The run does not end before it has been called. */
+    onSlid?: (step: S) => void;
     /** Every step has landed and the run is over. */
     onIdle: () => void;
     /** Steps were added to the run. */
@@ -77,6 +91,9 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     const [heldSet, setHeld] = useState<ReadonlySet<number>>(NO_HELD);
     const [arriving, setArriving] = useState<readonly ArrivingPile[]>(NO_ARRIVING);
     const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
+    const [deckLifted, setDeckLifted] = useState(false);
+    // The badges as the plan has them now (AnimFrame.hand): a hand drops as its cards LEAVE, not as they land.
+    const [animatedHand, setAnimatedHand] = useState<readonly number[] | null>(null);
     const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
     // THE TRUMP IN THE AIR (AnimFrame.trump_flight): it has left its slot as
     // the draw that deals it opened, and the flight is the one place it is
@@ -119,6 +136,13 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     // schedule. A step that has opened has its cards in the air, so its pile
     // has earned its slot; every step behind it has not.
     const startedRef = useRef(0);
+    // WHICH OF THE RUN'S SOUND CUES HAVE BEEN HANDED TO THE AUDIO ENGINE, by
+    // the (step, kind) the kernel promises is one cue (AnimPlan.cues). The plan
+    // is rebuilt every frame and a run is appended to in flight; this is what
+    // makes a cue sound once across all of those plans. Emptied with the run.
+    const cuesDoneRef = useRef<Set<number>>(new Set());
+    // WHICH TRANSFERS' SLIDES HAVE BEEN HEARD (onSlid), by the same (step, kind) key.
+    const slidRef = useRef<Set<number>>(new Set());
     const frameHandleRef = useRef<number | null>(null);
     // The merged step a multi-step beat draws as, held so the page is handed
     // the SAME object every frame: `currentAnimation` is compared by identity
@@ -207,6 +231,56 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         const nowMs = performance.now() - origin;
         const frame = frameAt(nowMs);
 
+        // WHAT THIS MOMENT SOUNDS LIKE. Which cue and when are the plan's
+        // (c/src/anim_plan.h "sound cues"); all that happens here is that the
+        // ones coming due are handed over a little EARLY, each with how far off
+        // it is, so the engine can pin it to the audio clock instead of to
+        // whenever a frame happens to run (src/audio/cueSchedule.ts).
+        const firstDealStep = plan.cues.find((c) => c.kind === ANIM_CUE_DEAL)?.step;
+        for (const s of dueStrikes(plan.cues, nowMs, cuesDoneRef.current, cueLeadMs)) {
+            // A card landing at a seat is as loud as that seat is near the
+            // viewer: the kernel's geometry (anim_seat_gain_pm).
+            let gain = 1000;
+            if (s.kind === ANIM_CUE_DEAL_LAND) {
+                // The step's own board says whose seat is whose; the page's may
+                // not have arrived yet (the tutorial's opening deal).
+                const board = run[s.step]?.game_state ?? hooksRef.current.board();
+                const seat = plan.steps[s.step]?.seat ?? -1;
+                if (board) gain = animSeatGainPm(board.mySeat, seat, board.seats.length);
+            }
+            // THE FIRST CARD OF A DEAL OPENS THE RUN: nothing is in the air under its lead-in, so it
+            // is struck with the cue's tight take (cue_strike_opening), which the tuner's "opening a
+            // run" rows set. The cards after it keep the ordinary take.
+            const opening = s.kind === ANIM_CUE_DEAL && s.step === firstDealStep;
+            cueAudio.strike(s.kind, s.delayMs + PAINT_LAG_MS, s.nCards, s.undoes, gain, opening);
+        }
+
+        // A TRANSFER'S SHIELD MOVES WITH ITS "SHFFF": the sound is struck at the
+        // landing and is first heard cue_late_us after it, and that is when the
+        // badge changes hands. Only a transfer has this cue, so no other change
+        // of the marks (a bout's end, a good) waits on it.
+        let slidePending = false;
+        for (const c of plan.cues) {
+            if (c.kind !== ANIM_CUE_PASS || slidRef.current.has(cueKey(c))) continue;
+            if (c.atMs + cueLateUs(c.kind) / 1000 + PAINT_LAG_MS > nowMs) { slidePending = true; continue; }
+            slidRef.current.add(cueKey(c));
+            if (run[c.step]) hooksRef.current.onSlid?.(run[c.step]);
+        }
+
+        // THE STOCK IS IN THE AIR THROUGH THE OPENING DEAL, like a card in flight (Alex), from the
+        // moment the run starts (the press of next, and before the first sound) to the moment the
+        // "stock set down on it" is heard: the trump's FLIP cue plus ANIM_DECK_DOWN_MS (the plan's
+        // number, which the sound is made to sit at too) plus the beat the page paints late
+        // (PAINT_LAG_MS). Only a run that turns a trump has one: a refill does not lift the stock.
+        let deckPending = false;
+        {
+            const flip = plan.cues.find((c) => c.kind === ANIM_CUE_FLIP);
+            const down = flip ? flip.atMs + ANIM_DECK_DOWN_MS + PAINT_LAG_MS : 0;
+            const up = !!flip && nowMs < down;
+            deckPending = !!flip && nowMs < down;
+            setDeckLifted((prev) => (prev === up ? prev : up));
+        }
+
         while (landedRef.current < frame.landed && landedRef.current < run.length) {
             hooksRef.current.onLanded(run[landedRef.current++]);
         }
@@ -270,6 +344,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         // for the trump's slot never leaves it at all: both numbers are the
         // kernel's, per step (AnimPlanStep.in_flight_from_deck / _to_flipped).
         setInFlightFromDeck(frame.inFlightFromDeck);
+        setAnimatedHand((prev) => (prev && prev.length === frame.hand.length && prev.every((v, i) => v === frame.hand[i]) ? prev : frame.hand));
         setInFlightToFlipped(frame.inFlightToFlipped);
         setAnimatingCards((prev) => {
             const next = veilOf(flying);
@@ -277,7 +352,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             return next;
         });
 
-        if (frame.done && landedRef.current >= run.length) {
+        if (frame.done && landedRef.current >= run.length && !slidePending && !deckPending) {
             settle();
             return;
         }
@@ -294,6 +369,11 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         beatRef.current = null;
         trumpStepRef.current = null;
         startedRef.current = 0;
+        // The next run numbers its steps from 0 again. Nothing is cancelled:
+        // a strike already scheduled a few milliseconds past the last
+        // landing (a seat's out, the tail of a spread) is still this run's.
+        cuesDoneRef.current.clear();
+        slidRef.current.clear();
         setCurrentAnimation(null);
         setTrumpFlight(null);
         setFlightMs(0);
@@ -305,6 +385,8 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         // it starts, and a seek's `reset` zeroes it outright.
         setIsAnimating(false);
         setInFlightFromDeck(0);
+        setDeckLifted(false);
+        setAnimatedHand(null);
         setInFlightToFlipped(0);
         setAnimatingCards((prev) => (prev.size === 0 ? prev : new Map()));
         hooksRef.current.onIdle();
@@ -347,6 +429,12 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         rowMsRef.current = 0;
         beatRef.current = null;
         trumpStepRef.current = null;
+        // A seek throws the run away, so what it had scheduled is thrown away
+        // with it: a sweep that was about to sound belongs to a moment the
+        // replay is no longer at.
+        cuesDoneRef.current.clear();
+        slidRef.current.clear();
+        cueAudio.cancel();
         setCurrentAnimation(null);
         setTrumpFlight(null);
         setFlightMs(0);
@@ -355,6 +443,8 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         setArriving(NO_ARRIVING);
         setIsAnimating(false);
         setInFlightFromDeck(0);
+        setDeckLifted(false);
+        setAnimatedHand(null);
         setInFlightToFlipped(0);
         setAnimatingCards(new Map());
     }, []);
@@ -369,6 +459,6 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     return {
         isAnimating, currentAnimation, flightMs, rowMs, heldPiles: heldSet,
         arrivingPiles: arriving,
-        inFlightFromDeck, inFlightToFlipped, trumpFlight, animatingCards, enqueue, reset,
+        inFlightFromDeck, inFlightToFlipped, trumpFlight, deckLifted, animatedHand, animatingCards, enqueue, reset,
     };
 }

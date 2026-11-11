@@ -59,6 +59,7 @@ The dev server needs the backend (c_base, `cbase serve` locally), configured thr
 | Script | What it does |
 | --- | --- |
 | `npm run gen` | Regenerate the TS and Swift modules from the C. Ten other scripts run it first. |
+| `npm run sounds` | Synthesise the placeholder sounds into `public/audio/gen/` (see [`docs/AUDIO.md`](docs/AUDIO.md)). `dev` and `build` run it first. |
 | `npm run dev` / `build` / `start` | The website. |
 | `npm run test:e2e` | The kernel through the shipped wasm, the client and the page in jsdom; no server, no database (see [`e2e/README.md`](e2e/README.md)). |
 | `npm run test:validate` | The 17 derived gates in `e2e/validation/`. No database, no network, no compiler. |

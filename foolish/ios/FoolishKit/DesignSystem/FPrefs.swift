@@ -123,4 +123,24 @@ public final class FPrefs: ObservableObject {
     /// nonisolated so it can be read from the same non-isolated contexts
     /// `FStrings.t` is read from; UserDefaults is thread-safe.
     public nonisolated static var storedTable: TableSurface { readStored() }
+
+    // MARK: sound
+
+    private static let soundKey = "ios.sound.on"
+
+    /// Whether the game's card sounds play: on unless the player turned them
+    /// off (the web's default too, docs/AUDIO.md "On by default?"). Off is the
+    /// web's mute - nothing loaded, nothing played (CuePlayer.setMuted). The
+    /// ringer switch silences them as well, whatever this says (`.ambient`).
+    public nonisolated static var storedSoundOn: Bool {
+        UserDefaults.standard.object(forKey: soundKey) as? Bool ?? true
+    }
+
+    @Published public private(set) var soundOn: Bool = FPrefs.storedSoundOn
+
+    public func setSound(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: Self.soundKey)
+        soundOn = on
+        CuePlayer.shared.setMuted(!on)
+    }
 }

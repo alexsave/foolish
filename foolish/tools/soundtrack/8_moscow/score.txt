@@ -1,0 +1,323 @@
+TEMPO 72
+SECTION Steppe: Distant drums BARS 8 KEY Cm
+FIELDDRUM: x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 r:1 | % | x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | %1 | x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 x16:1 | %1 | %3 | x@0.5:1 r:1 x16:2
+BASSES: C2:4 | % | % | % | C2:4 | % | G1:4 | %
+CELLOS: C3:4 | Bb2:4 | Ab2:4 | G2:4 | C3:2 Bb2:2 | Ab2:2 G2:2 | G2:4 | %
+VIOLAS: r:4 | r:4 | Eb3:4 | D3:4 | Eb3:4 | Eb3:2 D3:2 | D3:4 | D3:2 Eb3:1 D3:1
+BASSOONS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | G2:4 | G2:3 Ab2:1
+TIMPANI: r:4 | r:4 | r:4 | r:4 | G1:1 r:3 | r:4 | G1:1 r:3 | G1:0.5 G1:0.5 r:3
+BELL: r:4 | r:4 | r:4 | r:4 | C3:4 | r:4 | r:4 | G2:4
+DYN: pp bars 1-4, p bars 5-8
+FX: FIELDDRUM distant; cellos bars 1-4 walk the lament tetrachord C-Bb-Ab-G under the C pedal, then the same walk twice as fast in bars 5-6
+TRANSITION: bar 7 the bass moves to G (dominant pedal) and the bassoons' Ab-G neighbour in bar 8 is the Phrygian step the whole suite leans on.
+
+SECTION Steppe: Lone bugle BARS 8 KEY Cm
+TRUMPETS: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:3 r:1 | G4:1 F4:1 Eb4:1.5 D4:0.5 | C4:2 Bb3:2 | C4:1 Eb4:1 D4:1.5 C4:0.5 | G3:4
+CLARINETS: r:4 | r:4 | r:4 | r:2 G3:1 C4:1 | Eb4:1.5 D4:0.5 C4:2 | r:4 | r:4 | r:2 G3:1 C4:1
+HORNS: r:4 | r:4 | r:4 | r:4 | G2+D3:4 | Ab2+Eb3:4 | G2+D3:4 | G2+D3:4
+VIOLAS: Eb3:4 | D3:4 | Eb3:2 F3:2 | D3:4 | Eb3:4 | Eb3:2 C3:2 | Eb3:2 D3:2 | D3:3 Eb3:1
+CELLOS: G2:4 | % | % | % | C3:4 | Ab2:4 | G2:4 | %
+BASSES: G1:4 | % | % | % | G1:4 | Ab1:4 | G1:4 | %
+BASSOONS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | G2:1 F2:1 Eb2:1.5 D2:0.5 | C2:2 G2:2
+TIMPANI: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5
+FIELDDRUM: x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 r:1 | % | % | % | % | % | x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | x16:4
+DYN: p bars 1-4, mp bars 5-7, bar 8 to mf
+FX: clarinets echo the bugle's head a bar late (bars 4-5 and bar 8) - the first stretto; HORNS bar 6 stopped
+TRANSITION: bar 6 is the Phrygian bII (Ab under the bugle's C-Bb); bars 7-8 bassoons play motif B's tail backwards (G-F-Eb-D-C) under the held G; bar 8 field-drum roll + timpani G eighths into the snare ostinato; the clarinets' G-C pickup lands on the march's first C.
+
+TEMPO 108 RAMP 8 AT -8
+SECTION March Grows: Ostinato alone BARS 8 KEY Cm
+SNARE: x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:0.25 x:0.25 x:0.5 | %1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x16:1
+BASSDRUM: x@0.5:1 r:1 x@0.5:1 r:1 | % | % | % | % | % | % | x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 r:1
+TIMPANI: C2:1 r:1 G1:1 r:1 | % | % | C2:1 r:1 G1:0.5 G1:0.5 r:1 | %1 | % | % | C2:1 r:1 G1:1 Ab1:1
+BASSES: C2:1 C2:1 C2:1 C2:1 | % | % | C2:1 C2:1 C2:1 Bb1:1 | Ab1:1 Ab1:1 Ab1:1 Ab1:1 | G1:1 G1:1 G1:1 G1:1 | C2:1 C2:1 C2:1 C2:1 | C2:1 C2:1 C2:1 Db2:1
+CELLOS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | %1 | %2 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1
+VIOLAS: r:4 | r:4 | r:4 | r:4 | Eb3:4 | D3:4 | Eb3:2 F3:2 | Eb3:2 D3:1 Db3:1
+BASSOONS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 Db3:1
+DYN: pp bars 1-4, p bars 5-8
+FX: the groove settles for four bars before anything moves; bars 5-6 the bass walks the Steppe's tetrachord (Ab, G) under the unchanged motif A, so A is heard as an Ab-major-seventh for two bars without changing a note
+TRANSITION: bar 8 bass and violas land on Db (bII) which falls to C at the next downbeat; bassoons slip in under the cellos in bar 7 so the next section's reeds are already there.
+
+SECTION March Grows: Reeds and horns BARS 8 KEY Cm
+SNARE: x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:0.25 x:0.25 x:0.5 | %1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x16:1
+BASSDRUM: x@0.5:1 r:1 x@0.5:1 r:1 | % | % | % | % | % | % | x:1 r:1 x:1 x:1
+TIMPANI: C2:1 r:1 G1:1 r:1 | % | Ab1:1 r:1 Eb2:1 r:1 | % | %1 | % | Eb2:1 r:1 Bb1:1 r:1 | G1:1 r:1 G1:0.5 G1:0.5 r:1
+BASSES: C2:1 C2:1 C2:1 C2:1 | % | Ab1:1 Ab1:1 Ab1:1 Ab1:1 | % | C2:1 C2:1 C2:1 C2:1 | % | Eb2:1 Eb2:1 Eb2:1 Eb2:1 | G1:1 G1:1 G1:1 G1:1
+CELLOS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | %2 | Eb3:1.5 Eb3:0.5 Eb3:1 B2:0.5 Db3:0.5 | Eb3:1.5 Gb3:0.5 F3:1 G2:1
+BASSOONS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | %2 | Eb3:1.5 Eb3:0.5 Eb3:1 B2:0.5 Db3:0.5 | Eb3:1.5 Gb3:0.5 F3:1 G2:1
+VIOLAS: Eb4:4 | D4:2 Eb4:2 | Eb4:4 | Eb4:2 Db4:2 | Eb4:3 F4:1 | G4:2 F4:2 | Gb4:4 | F4:2 D4:2
+HORNS: C3+Eb3+G3:4 | % | Ab2+B2+Eb3:4 | Ab2+B2+Eb3:2 Ab2+C3+Eb3:2 | C3+Eb3+G3:4 | % | Eb3+Gb3+Bb3:4 | G2+B2+D3:2 G2+B2+F3:2
+CLARINETS: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | Eb4:1 Ab4:1 B4:1.5 Bb4:0.5 | Ab4:3 r:1 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:2 G4:1 G4:1 | Bb4:1 Eb5:1 Gb5:1.5 F5:0.5 | G4:4
+FLUTES: r:4 | r:4 | r:4 | r:4 | r:2 G4:1 C5:1 | Eb5:1.5 D5:0.5 C5:2 | r:2 Bb4:1 Eb5:1 | Gb5:1 F5:1 G5:2
+DYN: p bars 1-4, mp bars 5-8
+FX: motif A is sequenced by chromatic mediant (C minor, Ab minor, C minor, Eb minor) and the clarinets carry motif B's head through the same sequence; the horn voicing moves on the last two beats of bars 4 and 8 only (minor to major, then a seventh)
+TRANSITION: bars 5-8 flutes answer each clarinet head a half bar late (stretto); bar 8 the G7 voicing in horns and the violas' F-D fall set up the low brass entry on C.
+
+SECTION March Grows: Low brass BARS 8 KEY Cm
+SNARE: x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:0.25 x:0.25 x:0.5 | %1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x16:1
+FIELDDRUM: x:1 x:1 x:0.5 x:0.5 x:1 | % | % | x:1 x:1 x:0.5 x:0.5 x:0.5 x:0.5 | %1 | % | % | x:1 x:1 x16:2
+BASSDRUM: x:1 r:1 x:1 r:1 | % | % | % | % | % | % | x:1 r:1 x:1 x:1
+TIMPANI: C2:1 r:1 G1:1 r:1 | % | % | % | C2:1 r:1 C2:1 r:1 | % | C2:1 r:1 G1:1 r:1 | C2:1 r:1 G1:0.5 G1:0.5 r:1
+TROMBONES: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | Db3:1.5 Db3:0.5 Db3:1 A2:0.5 B2:0.5 | Db3:1.5 E3:0.5 Eb3:1 Ab2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1
+EUPHONIUM: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | Db3:1.5 Db3:0.5 Db3:1 A2:0.5 B2:0.5 | Db3:1.5 E3:0.5 Eb3:1 Ab2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1
+TUBA: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | %1 | C2:1.5 Eb2:0.5 D2:1 Ab1:1 | C2:1 C2:1 C2:1 C2:1 | % | %1 | C2:1.5 Eb2:0.5 D2:1 Db2:1
+BASSES: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | %1 | C2:1.5 Eb2:0.5 D2:1 Ab1:1 | C2:1 C2:1 C2:1 C2:1 | % | %1 | C2:1.5 Eb2:0.5 D2:1 Db2:1
+CELLOS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | Db3:1.5 Db3:0.5 Db3:1 A2:0.5 B2:0.5 | Db3:1.5 E3:0.5 Eb3:1 Ab2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1
+BASSOONS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | Db3:1.5 Db3:0.5 Db3:1 A2:0.5 B2:0.5 | Db3:1.5 E3:0.5 Eb3:1 Ab2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1
+HORNS: C3+Eb3+G3:0.5 r:0.5 C3+Eb3+G3:0.5 r:0.5 C3+Eb3+G3:1 r:1 | % | Ab2+B2+Eb3:0.5 r:0.5 Ab2+B2+Eb3:0.5 r:0.5 Ab2+B2+Eb3:1 r:1 | %1 | Db3+F3+Ab3:0.5 r:0.5 Db3+F3+Ab3:0.5 r:0.5 Db3+F3+Ab3:1 r:1 | % | Ab2+B2+Eb3:2 G2+B2+D3:2 | C3+Eb3+G3:4
+VIOLINS: r:4 | r:4 | G4:4 | F4:4 | F4:4 | Eb4:2 Db4:2 | C4:4 | C4:2 B3:1 C4:1
+VIOLAS: r:4 | r:4 | Eb4:4 | D4:4 | Db4:4 | Db4:2 Ab3:2 | Eb4:2 D4:2 | Eb4:2 D4:1 Eb4:1
+CLARINETS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | Ab4:1 Db5:1 E5:1.5 Eb5:0.5 | Db5:2 Ab4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:4
+FLUTES: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | Ab4:1 Db5:1 E5:1.5 Eb5:0.5 | Db5:2 Ab4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:4
+DYN: mf
+FX: violins enter in bar 3 with a slow chromatic descent G-F-Eb-Db-C over the march (let it sing); bars 5-6 motif A and the horns are lifted a half step to Db (Phrygian bII) while tuba and basses refuse to move off C
+TRANSITION: bar 7 the Db world collapses back onto C through Ab-G in the horns; bar 8 ends on the Db flair and a field-drum roll, which the trumpets override with the C on the next downbeat.
+
+SECTION March Grows: Trumpets on top BARS 8 KEY Cm
+SNARE: x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:0.25 x:0.25 x:0.5 | %1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x16:1
+FIELDDRUM: x:1 x:1 x:0.5 x:0.5 x:1 | % | % | x:1 x:1 x:0.5 x:0.5 x:0.5 x:0.5 | %1 | % | % | x:1 x:1 x16:2
+BASSDRUM: x:1 r:1 x:1 r:1 | % | % | % | % | % | % | x:1 r:1 x:1 x:1
+TIMPANI: C2:1 r:1 G1:1 r:1 | % | % | C2:0.5 C2:0.5 C2:0.5 C2:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 | %1 | % | % | %4
+CYMBALS: x:4 | r:4 | r:4 | r:4 | x:4 | r:4 | r:4 | r:4
+TRUMPETS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | G4:1 G4:1 G4:0.5 G4:0.5 G4:1
+FLUTES: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | G4:1 G4:1 G4:0.5 G4:0.5 G4:1
+HORNS: r:4 | G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:4 | G4:1 F4:1 Eb4:1.5 D4:0.5 | C4:2 Bb3:2 | G3:4
+CLARINETS: r:4 | G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:4 | G4:1 F4:1 Eb4:1.5 D4:0.5 | C4:2 Bb3:2 | G3:4
+TROMBONES: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | %1 | %2 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1
+EUPHONIUM: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | %1 | %2 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1
+TUBA: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | %1 | C2:1.5 Eb2:0.5 D2:1 Ab1:1 | %1 | %2 | %1 | C2:1.5 Eb2:0.5 D2:1 Db2:1
+BASSES: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | %1 | C2:1.5 Eb2:0.5 D2:1 Ab1:1 | %1 | %2 | %1 | C2:1.5 Eb2:0.5 D2:1 Db2:1
+CELLOS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | %1 | %2 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1
+BASSOONS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | %1 | %2 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1
+VIOLINS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | Eb5:3 F5:1 | G5:2 F5:2 | Eb5:2 F5:2 | D5:4
+VIOLAS: Eb4:4 | Eb4:2 D4:2 | Eb4:4 | F4:2 D4:2 | Eb4:4 | Eb4:2 D4:2 | Eb4:2 F4:2 | D4:2 B3:2
+DYN: f
+FX: motif B in canon at the octave - trumpets lead, horns and clarinets follow one bar behind for the whole eight bars; violins double the trumpets for four bars then peel off into their own line while the canon continues underneath
+TRANSITION: bar 8 the trumpets' G hits take the snare's own rhythm (the flair), the horns' canon lands on G a bar late so the G is still sounding when the peak hits.
+
+SECTION March Grows: Peak and release BARS 8 KEY Cm
+SNARE: x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x16:1 | x@0.5:0.5 x@0.5:0.25 x@0.5:0.25 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.25 x@0.5:0.25 x@0.5:1 | % | % | %
+FIELDDRUM: x:1 x:1 x:0.5 x:0.5 x:1 | % | % | x:1 x:1 x16:2 | x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 r:1 | % | % | x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 x16:1
+BASSDRUM: x:1 r:1 x:1 r:1 | % | % | x:1 r:1 x:1 x:1 | x@0.5:1 r:3 | r:4 | r:4 | x@0.5:1 r:3
+TIMPANI: C2:1 r:1 G1:1 r:1 | % | Ab1:1 r:1 Ab1:1 r:1 | G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 | G1:1 r:3 | r:4 | r:4 | G1:1 r:3
+CYMBALS: x:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4
+TRUMPETS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:2 F5:1 Eb5:1 | r:4 | r:4 | r:4 | r:4
+FLUTES: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:2 F5:1 Eb5:1 | r:4 | r:4 | r:4 | r:4
+CLARINETS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:2 F5:1 Eb5:1 | r:4 | r:4 | r:2 G3:1 Bb3:1 | D4:1.5 C4:0.5 Bb3:2
+TROMBONES: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 G2:1 | r:4 | r:4 | r:4 | r:4
+EUPHONIUM: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 G2:1 | r:4 | r:4 | r:4 | r:4
+TUBA: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | %1 | C2:1.5 Eb2:0.5 D2:1 G1:1 | r:4 | r:4 | r:4 | r:4
+HORNS: C3+Eb3+G3:4 | % | Ab2+C3+Eb3:4 | G2+B2+D3:2 G2+Bb2+D3:2 | r:4 | r:4 | r:4 | G2+D3:4
+BASSES: C2:1 C2:1 C2:1 C2:1 | % | Ab1:1 Ab1:1 Ab1:1 Ab1:1 | G1:1 G1:1 G1:1 G1:1 | G1:4 | % | % | %
+CELLOS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | %2 | G2:1.5 G2:0.5 G2:1 Eb2:0.5 F2:0.5 | G2:1.5 Bb2:0.5 A2:1 D2:1 | %5 | G2:1.5 Bb2:0.5 A2:1 Eb2:1
+VIOLAS: C4:1.5 C4:0.5 C4:1 Ab3:0.5 Bb3:0.5 | C4:1.5 Eb4:0.5 D4:1 G3:1 | %1 | %2 | G3:4 | G3:2 F3:2 | Eb3:4 | D3:4
+VIOLINS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:2 F5:1 Eb5:1 | D5:4 | Eb5:2 D5:2 | C5:4 | Bb4:2 A4:2
+CHOIR: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | G1+G2+D3:4 | %
+DYN: ff bars 1-4, p bars 5-8
+FX: bar 3 the horns turn the peak to Ab major under B (chromatic mediant), bar 4 the G chord goes major-to-minor on its last two beats; HORNS bar 8 stopped
+TRANSITION: cellos bars 5-8 play motif A on G (the chant's shape, flair on the last note of bar 8), violins and violas sing a slow descent D-Eb-D-C-Bb-A over the G pedal, clarinets in bars 7-8 try motif B's head in G minor (the chant's seed), choir hums G at bar 7; the snare dies to the field-drum figure of Part I.
+
+TEMPO 84 RAMP 8
+SECTION Chant: Soldiers BARS 8 KEY Gm
+CHOIR: G1+G2+D3:1.5 G1+G2+D3:0.5 G1+G2+D3:1 Eb2+Eb3+Bb3:0.5 F2+F3+C4:0.5 | G1+G2+D3:1.5 Bb2+Bb3+F4:0.5 A2+A3+E4:1 D2+D3+A3:1 | Eb2+G2+G3:1.5 Eb2+G2+G3:0.5 Eb2+G2+G3:1 Eb2+Eb3+Bb3:0.5 Eb2+F3+C4:0.5 | F2+G2+G3:1.5 F2+Bb2+Bb3:0.5 F2+A2+A3:1 F2+Eb3+Eb4:1 | %1 | %2 | C2+G2+G3:1.5 C2+G2+G3:0.5 C2+G2+G3:1 C2+Eb3+Eb4:0.5 C2+F3+F4:0.5 | D2+G2+G3:1.5 D2+Bb2+Bb3:0.5 D2+A2+A3:1 D2+Ab2+Ab3:1
+BASSES: G1:1 r:1 G1:1 r:1 | % | Eb2:1 r:1 Eb2:1 r:1 | F2:1 r:1 F2:1 r:1 | G1:1 r:1 G1:1 r:1 | % | C2:1 r:1 C2:1 r:1 | D2:1 r:1 D2:1 r:1
+CELLOS: G2:0.5 G2:0.5 G2:0.5 G2:0.5 G2:0.5 G2:0.5 G2:0.5 G2:0.5 | % | Eb2:0.5 Eb2:0.5 Eb2:0.5 Eb2:0.5 Eb2:0.5 Eb2:0.5 Eb2:0.5 Eb2:0.5 | F2:0.5 F2:0.5 F2:0.5 F2:0.5 F2:0.5 F2:0.5 F2:0.5 F2:0.5 | %1 | % | C3:0.5 C3:0.5 C3:0.5 C3:0.5 C3:0.5 C3:0.5 C3:0.5 C3:0.5 | D3:0.5 D3:0.5 D3:0.5 D3:0.5 D3:0.5 D3:0.5 Db3:0.5 D3:0.5
+VIOLAS: r:4 | r:4 | r:4 | r:4 | D4:4 | Eb4:2 D4:2 | C4:2 Bb3:2 | A3:2 Ab3:2
+BASSOONS: r:4 | r:4 | r:4 | r:4 | G2:4 | G2:4 | C3:2 Bb2:2 | D3:2 D3:1 Db3:1
+TIMPANI: G1:1 r:1 G1:0.5 G1:0.5 r:1 | % | % | % | % | % | % | D2:1 r:1 D2:0.5 D2:0.5 r:1
+BASSDRUM: x:1 r:1 x:1 r:1 | % | % | % | % | % | % | x:1 r:1 x:1 x@0.5:1
+FIELDDRUM: x:0.5 x:0.5 r:1 x:0.5 x:0.5 r:1 | % | % | % | % | % | % | x:0.5 x:0.5 r:1 x:0.5 x:0.5 x:0.5 x:0.5
+BELL: G2:4 | r:4 | r:4 | r:4 | G2:4 | r:4 | r:4 | r:4
+HORNS: r:4 | r:4 | r:4 | G2+D3:0.5 r:3.5 | r:4 | r:4 | r:4 | D2+A2:0.5 r:3.5
+TAMTAM: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | x@0.5:4
+DYN: f
+FX: choir hard consonant attacks, no vibrato; the chant tune never changes, the bass under it moves every two bars (G, Eb, F, G, C, D) so the same line is harmonised four ways; HORNS stopped
+TRANSITION: bar 8 the drone goes to D (the dominant) and the choir's last note Ab makes a tritone against it; violas bars 5-8 sing the chant's descent D-Eb-D-C-Bb-A-Ab over it; cellos slip a Db into the last beat of bar 8.
+
+SECTION Chant: Swell BARS 8 KEY Gm
+CHOIR: G1+G2+D3:1.5 G1+G2+D3:0.5 G1+G2+D3:1 Eb2+Eb3+Bb3:0.5 F2+F3+C4:0.5 | G1+G2+D3:1.5 Bb2+Bb3+F4:0.5 A2+A3+E4:1 D2+D3+A3:1 | %1 | G1+G2+D3:1.5 Bb2+Bb3+F4:0.5 A2+A3+E4:1 Eb2+Eb3+Bb3:1 | Eb2+G2+D3:1.5 Eb2+G2+D3:0.5 Eb2+G2+D3:1 Eb2+Eb3+Bb3:0.5 Eb2+F3+C4:0.5 | Eb2+G2+D3:1.5 Eb2+Bb3+F4:0.5 Eb2+A3+E4:1 Eb2+D3+A3:1 | %1 | G1+G2+D3:1.5 Bb2+Bb3+F4:0.5 A2+A3+E4:1 G1+G2+G3:1
+TROMBONES: G3:1.5 G3:0.5 G3:1 Eb3:0.5 F3:0.5 | G3:1.5 Bb3:0.5 A3:1 D3:1 | %1 | G3:1.5 Bb3:0.5 A3:1 Eb3:1 | %1 | %2 | %1 | G3:2 Gb3:1 F3:1
+EUPHONIUM: G3:1.5 G3:0.5 G3:1 Eb3:0.5 F3:0.5 | G3:1.5 Bb3:0.5 A3:1 D3:1 | %1 | G3:1.5 Bb3:0.5 A3:1 Eb3:1 | %1 | %2 | %1 | G3:2 Gb3:1 F3:1
+TUBA: G2:1.5 G2:0.5 G2:1 Eb2:0.5 F2:0.5 | G2:1.5 Bb2:0.5 A2:1 D2:1 | %1 | G2:1.5 Bb2:0.5 A2:1 Eb2:1 | Eb2:1.5 Eb2:0.5 Eb2:1 Eb2:0.5 Eb2:0.5 | Eb2:1.5 Eb2:0.5 Eb2:1 Eb2:1 | %1 | G2:2 Gb2:1 F2:1
+HORNS: G2+D3:4 | % | G2+Bb2+D3:4 | % | Eb3+G3+Bb3:4 | % | G2+Bb2+D3:4 | G2+Bb2+D3:2 Gb2+Bb2+Db3:1 F2+A2+C3:1
+TRUMPETS: r:4 | r:4 | G4:1.5 G4:0.5 G4:1 Eb4:0.5 F4:0.5 | G4:1.5 Bb4:0.5 A4:1 D4:1 | r:4 | r:4 | G4:1.5 G4:0.5 G4:1 Eb4:0.5 F4:0.5 | G4:2 Gb4:1 F4:1
+VIOLINS: r:4 | r:4 | r:4 | r:4 | Bb4:4 | C5:2 Bb4:2 | D5:2 C5:2 | Bb4:2 A4:1 Ab4:1
+VIOLINS2: r:4 | r:4 | r:4 | r:4 | G4:4 | G4:2 Eb4:2 | Bb4:2 A4:2 | G4:2 Gb4:1 F4:1
+VIOLAS: D4:4 | D4:2 Eb4:2 | D4:4 | D4:2 C4:2 | Bb3:4 | Bb3:2 C4:2 | D4:2 Eb4:2 | D4:2 Db4:1 C4:1
+BASSES: G1:1 r:1 G1:1 r:1 | % | % | % | Eb2:1 r:1 Eb2:1 r:1 | % | G1:1 r:1 G1:1 r:1 | G1:2 Gb1:1 F1:1
+CELLOS: G2:0.5 G2:0.5 G2:0.5 G2:0.5 G2:0.5 G2:0.5 G2:0.5 G2:0.5 | % | % | % | Eb2:0.5 Eb2:0.5 Eb2:0.5 Eb2:0.5 Eb2:0.5 Eb2:0.5 Eb2:0.5 Eb2:0.5 | % | %1 | G2:2 Gb2:1 F2:1
+TIMPANI: G1:1 r:1 G1:0.5 G1:0.5 r:1 | % | % | % | Eb2:1 r:1 Eb2:0.5 Eb2:0.5 r:1 | % | %1 | G1:1 r:3
+BASSDRUM: x:1 r:1 x:1 r:1 | % | % | % | % | % | % | x:1 r:3
+FIELDDRUM: x:0.5 x:0.5 r:1 x:0.5 x:0.5 r:1 | % | % | % | % | % | % | x:0.5 x:0.5 r:3
+CYMBALS: x:4 | r:4 | r:4 | r:4 | x:4 | r:4 | r:4 | r:4
+TAMTAM: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | x:4
+DYN: ff bars 1-7, bar 8 to mf
+FX: bars 3-4 and 7 the trumpets enter the chant one bar after the choir (stretto); bars 5-6 the whole floor drops to Eb (bVI) while the choir keeps chanting its G - violins and violas sing above it for the first time in the Chant
+TRANSITION: bar 8 trombones, tuba, trumpets, horns and low strings slide G-Gb-F under the tamtam (the horns slide the whole triad, violas Db-C against it); F is the Lament's pedal.
+
+TEMPO 66 RAMP 4
+SECTION Lament: Clarinet BARS 8 KEY Fm
+CLARINETS: C4:1 F4:1 Ab4:1.5 G4:0.5 | F4:2 C4:2 | C4:1 F4:1 Ab4:1.5 Bb4:0.5 | C5:3 r:1 | C5:1 Bb4:1 Ab4:1.5 G4:0.5 | F4:1.5 G4:0.5 Eb4:2 | F4:1 Ab4:1 G4:1.5 F4:0.5 | C4:4
+BALALAIKA: F3:0.5 C4:0.5 Ab3:0.5 C4:0.5 F3:0.5 C4:0.5 Ab3:0.5 C4:0.5 | F3:0.5 C4:0.5 Ab3:0.5 C4:0.5 F3:0.5 C4:0.5 Ab3:0.5 Bb3:0.5 | Db3:0.5 Ab3:0.5 F3:0.5 Ab3:0.5 Db3:0.5 Ab3:0.5 F3:0.5 Ab3:0.5 | Db3:0.5 Ab3:0.5 F3:0.5 Ab3:0.5 Db3:0.5 Ab3:0.5 F3:0.5 Eb3:0.5 | %1 | Bb2:0.5 F3:0.5 Db3:0.5 F3:0.5 Bb2:0.5 F3:0.5 Db3:0.5 F3:0.5 | %2 | C3:0.5 G3:0.5 E3:0.5 G3:0.5 C3:0.5 G3:0.5 E3:0.5 G3:0.5
+VIOLAS: F3:4 | F3:2 G3:2 | Ab3:4 | Ab3:2 F3:2 | Ab3:4 | Bb3:2 Db4:2 | C4:2 Ab3:2 | G3:2 E3:2
+CELLOS: F2:4 | % | Db2:4 | Db2:2 C2:2 | F2:4 | Bb2:4 | F2:2 Db2:2 | C2:4
+BASSES: r:4 | r:4 | r:4 | r:4 | F1:4 | Bb1:4 | F1:4 | C2:4
+VIOLINS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:2 C5:1 F5:1 | Ab5:1.5 G5:0.5 F5:2
+DYN: p
+FX: clarinet alone over the balalaika; the balalaika repeats its bar and changes only its last note (bars 2, 4); violas are an inner voice that sings in long notes against the clarinet - F-G-Ab-F-Ab-Bb-Db-C-Ab-G-E, nothing shorter than a half note; basses join at bar 5 so the second phrase has a floor
+TRANSITION: bar 7 cellos step F-Db, bar 8 Db falls to C (Phrygian again) as the harmony turns to C major; the violins steal the clarinet's head in bars 7-8, a bar before the cellos are due to answer.
+
+SECTION Lament: Cellos answer BARS 8 KEY Fm
+CLARINETS: C5:1 F5:1 Ab5:1.5 G5:0.5 | F5:2 C5:2 | Db5:1 C5:1 Bb4:1.5 Ab4:0.5 | G4:3 r:1 | r:4 | r:4 | r:4 | r:4
+CELLOS: C3:1 F3:1 Ab3:1.5 G3:0.5 | F3:2 C3:2 | Db3:1 C3:1 Bb2:1.5 Ab2:0.5 | G2:3 r:1 | C3:4 | % | C3:2 Db3:2 | C3:4
+VIOLINS: F4+Ab4:4 | % | Db4+F4:4 | C4+G4:4 | C5:1 F5:1 Ab5:2 | G5:2 F5:2 | Eb5:2 Db5:2 | C5:4
+VIOLINS2: r:4 | F4:2 G4:2 | Ab4:4 | G4:4 | Ab4:4 | Ab4:2 G4:2 | G4:2 Db4:2 | E4:4
+VIOLAS: F3+Ab3:4 | % | Db3+F3:4 | C3+G3:4 | Ab3:4 | Ab3:2 G3:2 | G3:2 Db3:2 | E3:4
+HORNS: r:4 | r:4 | r:4 | r:4 | C3+G3:4 | % | % | C3+E3+G3:4
+BASSES: F1:4 | % | Db2:4 | C2:4 | C2:4 | % | % | %
+BALALAIKA: F3:0.5 C4:0.5 Ab3:0.5 C4:0.5 F3:0.5 C4:0.5 Ab3:0.5 C4:0.5 | % | Db3:0.5 Ab3:0.5 F3:0.5 Ab3:0.5 Db3:0.5 Ab3:0.5 F3:0.5 Ab3:0.5 | C3:0.5 G3:0.5 E3:0.5 G3:0.5 C3:0.5 G3:0.5 E3:0.5 G3:0.5 | %1 | %4 | C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 C3:0.25 | %7
+TIMPANI: r:4 | r:4 | r:4 | r:4 | r:4 | C2:1 r:3 | C2:1 r:1 C2:1 r:1 | C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5
+FIELDDRUM: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 x16:1
+DYN: mf bars 1-4, pp bars 5-6, cresc bars 7-8
+FX: cellos sing the Lament tune with the clarinet two octaves above (vibrato, long bows); bars 5-8 the first violins fragment the tune's head over a C pedal - the head once (bar 5), then only its fall (G-F, Eb-Db), then the single C - while the second violins and violas close in on E natural
+TRANSITION: balalaika tremolo on C + timpani C + the horns' C major (E natural arrives in bar 8) = V of F minor; Part V takes the same C as its tonic (pivot). The Part I drum figure returns in bar 8 to announce the army.
+
+TEMPO 116 RAMP 4
+SECTION Army: Approach BARS 8 KEY Cm
+SNARE: x@0.5:0.5 x@0.5:0.25 x@0.5:0.25 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.25 x@0.5:0.25 x@0.5:1 | % | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x16:1
+FIELDDRUM: x:1 x:1 x:0.5 x:0.5 x:1 | % | % | % | % | % | x:1 x:1 x:0.5 x:0.5 x:0.5 x:0.5 | x16:4
+BASSDRUM: x@0.5:1 r:1 x@0.5:1 r:1 | % | % | % | x:1 r:1 x:1 r:1 | % | % | x:1 x:1 x:1 x:1
+TIMPANI: C2:1 r:1 G1:1 r:1 | % | % | % | % | % | Ab1:1 r:1 G1:1 r:1 | C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5
+BASSES: C2:1 C2:1 C2:1 C2:1 | % | % | % | % | % | Ab1:1 Ab1:1 G1:1 G1:1 | C2:1 C2:1 C2:1 C2:1
+CELLOS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | %1 | %2 | %1 | %2
+BASSOONS: r:4 | C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %2 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | %2 | %3 | %2
+VIOLAS: r:4 | r:4 | C4:1.5 C4:0.5 C4:1 Eb4:0.5 D4:0.5 | C4:1.5 Ab3:0.5 Bb3:1 F4:1 | %3 | C4:1.5 Ab3:0.5 Bb3:1 G4:1 | %3 | %4
+TROMBONES: r:4 | r:4 | r:4 | r:4 | C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %5 | %6
+TUBA: r:4 | r:4 | r:4 | r:4 | C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | %5 | %6
+HORNS: r:4 | r:4 | r:4 | r:4 | C3+Eb3+G3:4 | % | Ab2+B2+Eb3:2 Ab2+C3+Eb3:2 | G2+B2+D3:4
+VIOLINS: r:4 | r:4 | r:4 | r:4 | Eb4:4 | Eb4:2 F4:2 | Eb4:4 | D4:4
+TRUMPETS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | G3:0.5 C4:0.5 Eb4:0.5 G4:0.5 C5:1 Bb4:0.5 Ab4:0.5
+DYN: pp -> ff
+FX: motif A as a round - cellos lead, bassoons enter one bar behind (bar 2), violas enter in bar 3 with A turned upside down (C-C-C-Eb-D / C-Ab-Bb-F); the three lines stay in the round until the brass arrive; bar 8 TRUMPETS = QUOTE (Farewell of Slavianka, opening bar, transposed)
+TRANSITION: bar 7 the horns' Ab chord goes minor-to-major on its last two beats and the bass walks Ab-G; the quote in bar 8 is the pickup into the theme.
+
+SECTION Army: The theme BARS 16 KEY Cm
+SNARE: x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:0.25 x:0.25 x:0.5 | %1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x16:1 | %1 | % | % | %4 | %1 | % | % | x16:4
+FIELDDRUM: x:1 x:1 x:0.5 x:0.5 x:1 | % | % | x:1 x:1 x:0.5 x:0.5 x:0.5 x:0.5 | %1 | % | % | x:1 x:1 x16:2 | %1 | % | % | %4 | %1 | % | % | x16:4
+BASSDRUM: x:1 r:1 x:1 r:1 | % | % | % | % | % | % | x:1 r:1 x:1 x:1 | %1 | % | % | % | % | % | % | x:1 x:1 x:1 x:1
+TIMPANI: C2:1 r:1 G1:1 r:1 | % | % | G1:1 r:1 G1:1 r:1 | Ab1:1 r:1 Ab1:1 r:1 | % | C2:1 r:1 G1:1 r:1 | C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 | %1 | % | % | %4 | %5 | % | %7 | G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5
+CYMBALS: x:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | x:4 | r:4 | r:4 | r:4 | x:4 | r:4 | r:4 | r:4
+TROMBONES: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:3 r:1 | G4:1 F4:1 Eb4:1.5 D4:0.5 | C4:2 Bb3:2 | C4:1 Eb4:1 D4:1.5 C4:0.5 | G3:2 G3:1 G3:1 | r:4 | %1 | %2 | %3 | %4 | %5 | %6 | C4:2 Db4:2
+EUPHONIUM: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:3 r:1 | G4:1 F4:1 Eb4:1.5 D4:0.5 | C4:2 Bb3:2 | C4:1 Eb4:1 D4:1.5 C4:0.5 | G3:2 G3:1 G3:1 | r:4 | %1 | %2 | %3 | %4 | %5 | %6 | C4:2 Db4:2
+HORNS: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:3 r:1 | G4:1 F4:1 Eb4:1.5 D4:0.5 | C4:2 Bb3:2 | C4:1 Eb4:1 D4:1.5 C4:0.5 | G3:2 G3:1 G3:1 | r:4 | %1 | %2 | %3 | %4 | %5 | %6 | C4:2 Db4:2
+CELLOS: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:3 r:1 | G4:1 F4:1 Eb4:1.5 D4:0.5 | C4:2 Bb3:2 | C4:1 Eb4:1 D4:1.5 C4:0.5 | G3:2 G3:1 G3:1 | C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %9 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %9 | C3:2 Db3:2
+TUBA: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | %1 | C2:1.5 Eb2:0.5 D2:1 Ab1:1 | Ab1:1.5 Ab1:0.5 Ab1:1 E2:0.5 Gb2:0.5 | Ab1:1.5 B1:0.5 Bb1:1 Eb2:1 | %1 | %2 | %1 | %2 | %1 | %4 | %5 | %6 | %1 | C2:2 Db2:2
+BASSES: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | %1 | C2:1.5 Eb2:0.5 D2:1 Ab1:1 | Ab1:1.5 Ab1:0.5 Ab1:1 E2:0.5 Gb2:0.5 | Ab1:1.5 B1:0.5 Bb1:1 Eb2:1 | %1 | %2 | %1 | %2 | %1 | %4 | %5 | %6 | %1 | C2:2 Db2:2
+BASSOONS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | %2 | %1 | %2 | %1 | %4 | %5 | %6 | %1 | C3:2 Db3:2
+TRUMPETS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | C5:2 Db5:2
+FLUTES: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | C5:2 Db5:2
+VIOLINS: G4:4 | G4:2 F4:2 | Eb4:4 | D4:2 F4:2 | G4:2 Ab4:2 | Ab4:2 G4:2 | G4:2 F4:2 | D4:4 | G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | C5:2 Db5:2
+VIOLINS2: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | Eb5:4 | Eb5:2 D5:2 | Eb5:2 F5:2 | G5:4 | Eb5:4 | C5:2 Eb5:2 | Eb5:2 F5:2 | D5:2 Db5:2
+VIOLAS: Eb4:4 | Eb4:2 D4:2 | Eb4:4 | F4:2 D4:2 | Eb4:4 | Eb4:2 C4:2 | Eb4:2 F4:2 | D4:4 | C4+Eb4:0.5 r:0.5 C4+Eb4:0.5 r:0.5 C4+Eb4:1 r:1 | % | % | B3+D4:0.5 r:0.5 B3+D4:0.5 r:0.5 B3+D4:1 r:1 | Ab3+Eb4:0.5 r:0.5 Ab3+Eb4:0.5 r:0.5 Ab3+Eb4:1 r:1 | % | %9 | Db4+F4:4
+CHOIR: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | C2+C3+G3:0.5 C2+C3+G3:0.5 C2+C3+G3:1 C2+C3+G3:0.5 C2+C3+G3:0.5 C2+C3+G3:1 | % | % | G1+G2+D3:0.5 G1+G2+D3:0.5 G1+G2+D3:1 G1+G2+D3:0.5 G1+G2+D3:0.5 G1+G2+D3:1 | Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:1 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:1 | % | %9 | Db2+Db3+Ab3:4
+DYN: f bars 1-8, ff bars 9-16
+FX: bars 1-8 motif B in the middle of the band (trombones, euphonium, horns, cellos) while tuba, basses and bassoons keep motif A marching under it - the two motifs together for the first time, and A is lifted to Ab for bars 5-6 so B's second phrase is harmonised on the flat sixth; violins and violas sing slow lines above, not the tune; bars 9-16 the tune goes to the top (trumpets, flutes, violins) and the trombones, euphonium and horns answer it in canon one bar behind
+TRANSITION: bar 16 everything hits C then Db (the Neapolitan), snare and field-drum roll into the Menace, which starts on C with that Db still in the ear.
+
+SECTION Army: Menace BARS 8 KEY Cm
+SNARE: x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:0.25 x:0.25 x:0.5 | %1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x16:1
+BASSDRUM: x:1 x:1 x:1 x:1 | % | % | % | % | % | % | x:1 x:1 x:0.5 x:0.5 x:1
+TIMPANI: C2:1 C2:1 C2:1 C2:1 | % | Ab1:1 Ab1:1 Ab1:1 Ab1:1 | % | %1 | % | Eb2:1 Eb2:1 Eb2:1 Eb2:1 | G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5
+TAMTAM: x:4 | r:4 | r:4 | r:4 | x:4 | r:4 | r:4 | r:4
+TROMBONES: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | %2 | Eb3:1.5 Eb3:0.5 Eb3:1 B2:0.5 Db3:0.5 | Eb3:1.5 Gb3:0.5 F3:1 G2:1
+EUPHONIUM: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | %2 | Eb3:1.5 Eb3:0.5 Eb3:1 B2:0.5 Db3:0.5 | Eb3:1.5 Gb3:0.5 F3:1 G2:1
+CELLOS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | %2 | Eb3:1.5 Eb3:0.5 Eb3:1 B2:0.5 Db3:0.5 | Eb3:1.5 Gb3:0.5 F3:1 G2:1
+TUBA: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | Ab1:1.5 Ab1:0.5 Ab1:1 E2:0.5 Gb2:0.5 | Ab1:1.5 B1:0.5 Bb1:1 Eb2:1 | %1 | %2 | Eb2:1.5 Eb2:0.5 Eb2:1 B1:0.5 Db2:0.5 | Eb2:1.5 Gb2:0.5 F2:1 G1:1
+BASSES: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | Ab1:1.5 Ab1:0.5 Ab1:1 E2:0.5 Gb2:0.5 | Ab1:1.5 B1:0.5 Bb1:1 Eb2:1 | %1 | %2 | Eb2:1.5 Eb2:0.5 Eb2:1 B1:0.5 Db2:0.5 | Eb2:1.5 Gb2:0.5 F2:1 G1:1
+BASSOONS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | %2 | Eb3:1.5 Eb3:0.5 Eb3:1 B2:0.5 Db3:0.5 | Eb3:1.5 Gb3:0.5 F3:1 G2:1
+HORNS: C3+Eb3+G3:4 | C3+Eb3+G3:2 C3+Eb3+Ab3:2 | Ab2+B2+Eb3:4 | Ab2+B2+Eb3:2 Ab2+B2+E3:2 | C3+Eb3+G3:4 | C3+Eb3+G3:2 C3+E3+G3:2 | Eb3+Gb3+Bb3:4 | G2+B2+D3:2 G2+B2+F3:2
+TRUMPETS: r:3 Eb5:0.5 Eb5:0.5 | r:4 | r:3 B4:0.5 B4:0.5 | r:4 | r:3 Eb5:0.5 Eb5:0.5 | r:4 | r:3 Gb5:0.5 Gb5:0.5 | G5:3 F5:1
+FLUTES: r:3 Eb5:0.5 Eb5:0.5 | r:4 | r:3 B4:0.5 B4:0.5 | r:4 | r:3 Eb5:0.5 Eb5:0.5 | r:4 | r:3 Gb5:0.5 Gb5:0.5 | G5:3 F5:1
+PICCOLO: r:4 | r:4 | r:4 | r:4 | r:3 Eb6:0.5 Eb6:0.5 | r:4 | r:3 Gb6:0.5 Gb6:0.5 | G6:3 F6:1
+VIOLINS: C5:0.5 C5:0.5 C5:0.5 C5:0.5 C5:0.5 C5:0.5 C5:0.5 C5:0.5 | % | Ab4:0.5 Ab4:0.5 Ab4:0.5 Ab4:0.5 Ab4:0.5 Ab4:0.5 Ab4:0.5 Ab4:0.5 | % | %1 | % | Eb5:0.5 Eb5:0.5 Eb5:0.5 Eb5:0.5 Eb5:0.5 Eb5:0.5 Eb5:0.5 Eb5:0.5 | G4:0.5 G4:0.5 G4:0.5 G4:0.5 G4:0.5 G4:0.5 G4:0.5 G4:0.5
+VIOLINS2: G4:4 | Ab4:4 | Eb5:2 B4:2 | Bb4:4 | G4:4 | Ab4:2 G4:2 | Gb4:2 Bb4:2 | B4:2 D5:2
+VIOLAS: Eb4:4 | Eb4:2 D4:2 | B3:4 | B3:2 Bb3:2 | Eb4:4 | Eb4:2 E4:2 | Gb4:4 | F4:2 D4:2
+CHOIR: C2+C3+G3:0.5 C2+C3+G3:0.5 C2+C3+G3:1 C2+C3+G3:0.5 C2+C3+G3:0.5 C2+C3+G3:1 | % | Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:1 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:1 | % | %1 | % | Eb2+Eb3+Bb3:0.5 Eb2+Eb3+Bb3:0.5 Eb2+Eb3+Bb3:1 Eb2+Eb3+Bb3:0.5 Eb2+Eb3+Bb3:0.5 Eb2+Eb3+Bb3:1 | G1+G2+D3:4
+DYN: ff
+FX: motif A sequenced by chromatic mediants (C minor, Ab minor, C minor, Eb minor) with the full band on it; the horns move one note of the chord on the last two beats of every even bar (the flair: minor sixth, major third, major third, seventh); second violins and violas sing slow lines over the first violins' pulse
+TRANSITION: bar 8 is G7 (the trumpets fall G-F over the horns' F); the climax lands on the unison B.
+
+SECTION Army: Climax BARS 8 KEY Cm
+SNARE: x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:0.25 x:0.25 x:0.5 | %1 | % | % | x16:4
+FIELDDRUM: x:1 x:1 x:0.5 x:0.5 x:1 | % | % | x:1 x:1 x:0.5 x:0.5 x:0.5 x:0.5 | %1 | % | % | x32:4
+BASSDRUM: x:1 r:1 x:1 r:1 | % | % | x:1 r:1 x:1 x:1 | %1 | % | % | x:1 x:1 x:1 x:1
+TIMPANI: C2:1 r:1 G1:1 r:1 | % | Ab1:1 r:1 Ab1:1 r:1 | G1:1 r:1 G1:1 r:1 | C2:1 r:1 G1:1 r:1 | % | Ab1:1 r:1 Ab1:1 r:1 | G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5
+CYMBALS: x:4 | r:4 | r:4 | r:4 | x:4 | r:4 | r:4 | r:4
+TAMTAM: x:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4
+BELL: C2:4 | r:4 | r:4 | r:4 | C2:4 | r:4 | r:4 | r:4
+TRUMPETS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | G4:1 G4:1 G4:1 G4:1
+VIOLINS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | G4:1 G4:1 G4:1 G4:1
+FLUTES: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | G4:1 G4:1 G4:1 G4:1
+PICCOLO: G5:1 C6:1 Eb6:1.5 D6:0.5 | C6:2 G5:2 | G5:1 C6:1 Eb6:1.5 F6:0.5 | G6:3 r:1 | G6:1 F6:1 Eb6:1.5 D6:0.5 | C6:2 Bb5:2 | C6:1 Eb6:1 D6:1.5 C6:0.5 | G5:1 G5:1 G5:1 G5:1
+CLARINETS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | G4:1 G4:1 G4:1 G4:1
+VIOLINS2: Eb5:4 | Eb5:2 D5:2 | Eb5:4 | D5:2 F5:2 | G5:4 | G5:2 F5:2 | Eb5:2 F5:2 | G5:1 G5:1 G5:1 G5:1
+HORNS: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:3 r:1 | C3+Eb3+G3:4 | Ab2+C3+Eb3:4 | Ab2+B2+Eb3:2 G2+B2+D3:2 | G3:1 G3:1 G3:1 G3:1
+TROMBONES: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:3 r:1 | G3:2 F3:2 | Eb3:2 D3:2 | C3:2 Bb2:2 | G3:1 G3:1 G3:1 G3:1
+EUPHONIUM: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:3 r:1 | G3:2 F3:2 | Eb3:2 D3:2 | C3:2 Bb2:2 | G3:1 G3:1 G3:1 G3:1
+CELLOS: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:3 r:1 | G3:2 F3:2 | Eb3:2 D3:2 | C3:2 Bb2:2 | G3:1 G3:1 G3:1 G3:1
+BASSOONS: G3:1 C4:1 Eb4:1.5 D4:0.5 | C4:2 G3:2 | G3:1 C4:1 Eb4:1.5 F4:0.5 | G4:3 r:1 | G3:2 F3:2 | Eb3:2 D3:2 | C3:2 Bb2:2 | G3:1 G3:1 G3:1 G3:1
+TUBA: G2:1 C3:1 Eb3:1.5 D3:0.5 | C3:2 G2:2 | G2:1 C3:1 Eb3:1.5 F3:0.5 | G3:3 r:1 | G2:2 F2:2 | Eb2:2 D2:2 | C2:2 Bb1:2 | G2:1 G2:1 G2:1 G2:1
+BASSES: G2:1 C3:1 Eb3:1.5 D3:0.5 | C3:2 G2:2 | G2:1 C3:1 Eb3:1.5 F3:0.5 | G3:3 r:1 | G2:2 F2:2 | Eb2:2 D2:2 | C2:2 Bb1:2 | G2:1 G2:1 G2:1 G2:1
+VIOLAS: C4+Eb4:0.5 r:0.5 C4+Eb4:0.5 r:0.5 C4+Eb4:1 r:1 | % | Ab3+Eb4:0.5 r:0.5 Ab3+Eb4:0.5 r:0.5 Ab3+Eb4:1 r:1 | B3+D4:0.5 r:0.5 B3+D4:0.5 r:0.5 B3+D4:1 r:1 | %1 | % | %3 | B3+D4:4
+CHOIR: C2+C3+G3:0.5 C2+C3+G3:0.5 C2+C3+G3:1 C2+C3+G3:0.5 C2+C3+G3:0.5 C2+C3+G3:1 | % | Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:1 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:1 | G1+G2+D3:0.5 G1+G2+D3:0.5 G1+G2+D3:1 G1+G2+D3:0.5 G1+G2+D3:0.5 G1+G2+D3:1 | %1 | % | %3 | G1+G2+D3:4
+DYN: fff
+FX: bars 1-4 the whole band on motif B in octaves (the unison is the point - every part doubled); bars 5-7 the top keeps B's second half while trombones, euphonium, cellos, bassoons, tuba and basses play B's tail in augmentation (G-F-Eb-D-C-Bb in half notes) and the horns turn to chords; second violins hold a descant above it all
+TRANSITION: bar 8 unison G in every brass and string part, timpani and drum rolls, straight into the Return at 120.
+
+TEMPO 120 RAMP 4
+SECTION Return: Both motifs BARS 16 KEY Cm
+SNARE: x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:0.25 x:0.25 x:0.5 | %1 | % | % | x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x16:1 | %1 | % | % | %4 | %1 | % | % | x16:4
+FIELDDRUM: x:1 x:1 x:0.5 x:0.5 x:1 | % | % | x:1 x:1 x:0.5 x:0.5 x:0.5 x:0.5 | %1 | % | % | x:1 x:1 x16:2 | %1 | % | % | %4 | %1 | % | % | x32:4
+BASSDRUM: x:1 r:1 x:1 r:1 | % | % | x:1 r:1 x:1 x:1 | %1 | % | % | %4 | %1 | % | % | %4 | %1 | % | % | x:1 x:1 x:1 x:1
+TIMPANI: C2:1 r:1 G1:1 r:1 | % | % | G1:1 r:1 G1:1 r:1 | Ab1:1 r:1 Ab1:1 r:1 | % | C2:1 r:1 G1:1 r:1 | C2:0.5 C2:0.5 C2:0.5 C2:0.5 G1:0.5 G1:0.5 G1:0.5 G1:0.5 | %1 | % | % | %4 | %5 | % | %7 | C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5 C2:0.5
+CYMBALS: x:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | x:4 | r:4 | r:4 | r:4 | x:4 | r:4 | r:4 | r:4
+TROMBONES: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1 | %1 | %2 | %1 | %4 | %5 | %6 | %1 | C3:1 C3:1 C3:1 C3:1
+EUPHONIUM: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1 | %1 | %2 | %1 | %4 | %5 | %6 | %1 | C3:1 C3:1 C3:1 C3:1
+CELLOS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1 | %1 | %2 | %1 | %4 | %5 | %6 | %1 | C3:1 C3:1 C3:1 C3:1
+BASSOONS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Ab2:1 | Ab2:1.5 Ab2:0.5 Ab2:1 E2:0.5 Gb2:0.5 | Ab2:1.5 B2:0.5 Bb2:1 Eb2:1 | %1 | C3:1.5 Eb3:0.5 D3:1 Db3:1 | %1 | %2 | %1 | %4 | %5 | %6 | %1 | C3:1 C3:1 C3:1 C3:1
+TUBA: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | %1 | C2:1.5 Eb2:0.5 D2:1 Ab1:1 | Ab1:1.5 Ab1:0.5 Ab1:1 E2:0.5 Gb2:0.5 | Ab1:1.5 B1:0.5 Bb1:1 Eb2:1 | %1 | C2:1.5 Eb2:0.5 D2:1 Db2:1 | %1 | %2 | %1 | %4 | %5 | %6 | %1 | C2:1 C2:1 C2:1 C2:1
+BASSES: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | %1 | C2:1.5 Eb2:0.5 D2:1 Ab1:1 | Ab1:1.5 Ab1:0.5 Ab1:1 E2:0.5 Gb2:0.5 | Ab1:1.5 B1:0.5 Bb1:1 Eb2:1 | %1 | C2:1.5 Eb2:0.5 D2:1 Db2:1 | %1 | %2 | %1 | %4 | %5 | %6 | %1 | C2:1 C2:1 C2:1 C2:1
+TRUMPETS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | G4:2 G4:1 G4:1 | %1 | %2 | %3 | %4 | %5 | %6 | %7 | C5:1 C5:1 C5:1 C5:1
+FLUTES: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | G4:2 G4:1 G4:1 | %1 | %2 | %3 | %4 | %5 | %6 | %7 | C5:1 C5:1 C5:1 C5:1
+PICCOLO: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | G5:1 C6:1 Eb6:1.5 D6:0.5 | C6:2 G5:2 | G5:1 C6:1 Eb6:1.5 F6:0.5 | G6:3 r:1 | G6:1 F6:1 Eb6:1.5 D6:0.5 | C6:2 Bb5:2 | C6:1 Eb6:1 D6:1.5 C6:0.5 | C6:1 C6:1 C6:1 C6:1
+VIOLINS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:1 C5:1 Eb5:1.5 F5:0.5 | G5:3 r:1 | G5:1 F5:1 Eb5:1.5 D5:0.5 | C5:2 Bb4:2 | C5:1 Eb5:1 D5:1.5 C5:0.5 | G4:2 G4:1 G4:1 | %1 | %2 | %3 | %4 | %5 | %6 | %7 | C5:1 C5:1 C5:1 C5:1
+HORNS: C3+Eb3+G3:0.5 r:0.5 C3+Eb3+G3:0.5 r:0.5 C3+Eb3+G3:1 r:1 | % | % | G2+B2+D3:0.5 r:0.5 G2+B2+D3:0.5 r:0.5 G2+B2+D3:1 r:1 | Ab2+C3+Eb3:0.5 r:0.5 Ab2+C3+Eb3:0.5 r:0.5 Ab2+C3+Eb3:1 r:1 | % | %1 | %4 | G3:2 C4:2 | Eb4:3 D4:1 | C4:4 | G3:4 | G3:2 C4:2 | Eb4:3 F4:1 | G4:4 | G4:1 G4:1 G4:1 G4:1
+VIOLINS2: Eb5:4 | Eb5:2 D5:2 | Eb5:2 F5:2 | G5:4 | Eb5:4 | C5:2 Eb5:2 | Eb5:2 F5:2 | D5:2 Db5:2 | G4:2 C5:2 | Eb5:3 D5:1 | C5:4 | G4:4 | G4:2 C5:2 | Eb5:3 F5:1 | G5:4 | G5:1 G5:1 G5:1 G5:1
+VIOLAS: C4+Eb4:0.5 r:0.5 C4+Eb4:0.5 r:0.5 C4+Eb4:1 r:1 | % | % | B3+D4:0.5 r:0.5 B3+D4:0.5 r:0.5 B3+D4:1 r:1 | Ab3+Eb4:0.5 r:0.5 Ab3+Eb4:0.5 r:0.5 Ab3+Eb4:1 r:1 | % | %1 | %4 | %1 | % | % | %4 | %5 | % | %1 | C4+Eb4:4
+CHOIR: C2+C3+G3:0.5 C2+C3+G3:0.5 C2+C3+G3:1 C2+C3+G3:0.5 C2+C3+G3:0.5 C2+C3+G3:1 | % | % | G1+G2+D3:0.5 G1+G2+D3:0.5 G1+G2+D3:1 G1+G2+D3:0.5 G1+G2+D3:0.5 G1+G2+D3:1 | Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:1 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:0.5 Ab1+Ab2+Eb3:1 | % | %1 | %4 | %1 | % | % | %4 | %5 | % | %1 | C2+C3+G3:4
+DYN: fff
+FX: motif A under motif B for sixteen bars; A is sequenced to Ab for bars 5-6 and 13-14 (so B's second phrase sits on the flat sixth both times) and every fourth bar ends on its flair (Ab, Db); bars 9-16 the horns and second violins play motif B in augmentation (each note twice as long) against the trumpets' B at speed - the same tune at two speeds at once; piccolo joins at bar 9
+TRANSITION: bar 16 everything on C quarter notes over the snare roll, into the circle.
+
+TEMPO 72 RAMP 32
+SECTION Return: Circle closes BARS 8 KEY Cm
+TROMBONES: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | C3:4 | r:4 | r:4 | r:4 | r:4 | r:4
+EUPHONIUM: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | C3:4 | r:4 | r:4 | r:4 | r:4 | r:4
+TUBA: C2:1.5 C2:0.5 C2:1 Ab1:0.5 Bb1:0.5 | C2:1.5 Eb2:0.5 D2:1 G1:1 | C2:4 | r:4 | r:4 | r:4 | r:4 | r:4
+HORNS: C3+Eb3+G3:4 | % | % | C3+G3:4 | Ab2+C3:4 | r:4 | r:4 | r:4
+CHOIR: C2+C3+G3:0.5 C2+C3+G3:0.5 C2+C3+G3:1 C2+C3+G3:0.5 C2+C3+G3:0.5 C2+C3+G3:1 | % | C2+C3+G3:4 | C2+C3:4 | C2+C3:4 | r:4 | r:4 | r:4
+TRUMPETS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4
+VIOLINS: G4:1 C5:1 Eb5:1.5 D5:0.5 | C5:2 G4:2 | G4:4 | G4:2 F4:2 | Eb4:4 | D4:4 | D4:4 | r:4
+VIOLAS: C4+Eb4:0.5 r:0.5 C4+Eb4:0.5 r:0.5 C4+Eb4:1 r:1 | % | Eb3:4 | Eb3:2 D3:2 | Eb3:4 | D3:4 | D3:2 Eb3:1 D3:1 | r:4
+CELLOS: C3:1.5 C3:0.5 C3:1 Ab2:0.5 Bb2:0.5 | C3:1.5 Eb3:0.5 D3:1 G2:1 | C3:4 | Bb2:4 | Ab2:4 | G2:4 | G2:4 | C3:4
+BASSOONS: r:4 | r:4 | r:4 | r:4 | r:4 | C3:1 Bb2:1 Ab2:1.5 G2:0.5 | G2:4 | r:4
+BASSES: C2:1 C2:1 C2:1 C2:1 | % | C2:4 | % | % | % | G1:4 | C2:4
+TIMPANI: C2:1 r:1 G1:1 r:1 | % | C2:1 r:3 | r:4 | r:4 | r:4 | G1:1 r:3 | r:4
+SNARE: x:0.5 x:0.25 x:0.25 x:0.5 x:0.5 x:0.5 x:0.25 x:0.25 x:1 | % | x@0.5:0.5 x@0.5:0.25 x@0.5:0.25 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.25 x@0.5:0.25 x@0.5:1 | % | r:4 | r:4 | r:4 | r:4
+FIELDDRUM: x:1 x:1 x:0.5 x:0.5 x:1 | % | x@0.5:1 x@0.5:1 x@0.5:0.5 x@0.5:0.5 x@0.5:1 | % | x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 r:1 | % | % | x@0.5:1 r:1 x@0.5:0.5 x@0.5:0.5 r:1
+BASSDRUM: x:1 r:1 x:1 r:1 | % | x@0.5:1 r:3 | r:4 | r:4 | r:4 | r:4 | r:4
+BELL: r:4 | r:4 | r:4 | r:4 | C3:4 | r:4 | r:4 | r:4
+DYN: fff -> pp
+FX: bars 3-6 the cellos walk the Steppe's tetrachord C-Bb-Ab-G one note per bar while the violins and violas sing down with them; bar 6 the bassoons play the same four notes in motif A's rhythm (the last hand-off: bassoons were the last voice before the bugle in Part I, and they are the last voice here)
+TRANSITION: bar 7 the bass goes to G as it did in Part I bar 7, bar 8 is Part I bar 1 (field-drum figure, C2 pedal, cellos C3, tempo 72) so the loop into bar 1 is seamless.
+

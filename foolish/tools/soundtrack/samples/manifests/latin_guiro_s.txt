@@ -1,0 +1,2 @@
+60 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Guiro/Guiro_Hit_rr1_Mid.wav
+60 0 2 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Guiro/Guiro_Hit_rr2_Mid.wav

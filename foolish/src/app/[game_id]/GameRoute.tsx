@@ -8,6 +8,7 @@ import { classifyPathSegment } from '@api/common/replay_codec.ts';
 import { useUrlGameId } from '../../utils/useUrlGameId';
 import { promoOf } from '../../common/promo';
 import { PromoGame } from '../../components/PromoGame';
+import { SoundButton } from '../../components/SoundButton';
 import NotFound from '../not-found';
 
 export function GameRoute() {
@@ -27,6 +28,7 @@ export function GameRoute() {
     return (
       <ErrorBoundary context="Promo Game">
         <PromoGame promo={promo} />
+        <SoundButton />
       </ErrorBoundary>
     );
   }
@@ -40,6 +42,7 @@ export function GameRoute() {
     return (
       <ErrorBoundary context="Replay Page">
         <ReplayScreen code={segment} />
+        <SoundButton />
       </ErrorBoundary>
     );
   }
@@ -49,6 +52,10 @@ export function GameRoute() {
       <ProtectedRoute>
         <GameView />
       </ProtectedRoute>
+      {/* The sound control belongs to the ROUTE, not to the board: a game is
+          heard from its lobby (the deal) to its results (the finish), and
+          those are three different screens under this one page. */}
+      <SoundButton />
     </ErrorBoundary>
   );
 }

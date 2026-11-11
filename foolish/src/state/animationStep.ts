@@ -25,6 +25,7 @@ export interface ClientAnimationEvent {
     target_cards?: readonly Card[]; // For multi-card cover animations
     battle_index?: number;
     message?: string;
+    msg?: number;    // EVW_MSG_* the push told it with; EVW_MSG_PASSED is a transfer
     game_state?: TableView; // the board after this event
     // THE KERNEL'S: the flipped trump this draw deals out, by its real identity
     // for every viewer, and the place it leaves from (AnimPlanStep.trump_out /

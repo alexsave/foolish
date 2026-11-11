@@ -61,6 +61,7 @@
 # them), so the layout hash web.wasm is checked against covers them too.
 --header anim_plan.h --root AnimStaleAsk --root AnimStaleRelease --root AnimReversalAsk --root AnimConflictPlan
 --root AnimHandAsk --root AnimHandLaid --root AnimFinishAsk --root AnimFinish
+--header cue_voice.h --root CueTakeRow --root CueMix --root CueStrike
 # The move a client sends (view_layout.args writes it), so the layout hash
 # covers ClientMove too.
 --header client_table.h --root ClientMove

@@ -833,7 +833,7 @@ int wasm_anim_set_transport(int transport) { return anim_set_transport(transport
 // (c/tests).
 //
 // THE STRUCTS ARE READ WHERE THEY LIE, like wasm_legal_moves_ptr: a plan is
-// 11,752 bytes and a host that copied it through g_io once per frame would
+// 15,856 bytes and a host that copied it through g_io once per frame would
 // spend more time marshalling than animating. The caller reads them through the
 // generated accessors (sdk/ts/gen/anim.bots.ts), which is also why AnimFrame is
 // a structgen root: no TypeScript may know a byte offset.
@@ -908,6 +908,30 @@ int wasm_anim_shown_ledger_allows(int claim, int sequencing) {
     return anim_shown_ledger_allows(claim, sequencing);
 }
 
+// WHAT A CHANGE OF THE MARKS SOUNDS LIKE (anim_plan.h anim_role_cue): the badges
+// going from `shown` to `next`, each as its three scalars. An ANIM_CUE_* out,
+// ANIM_CUE_NONE for a change that makes no sound. The host asks it at the one
+// place it turns the marks, so no host decides which turn is audible.
+int wasm_anim_role_cue(int shown_defender, int shown_first_attacker, int shown_good_mask,
+                       int next_defender, int next_first_attacker, int next_good_mask) {
+    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
+    const AnimRoles next = { next_defender, next_first_attacker, next_good_mask };
+    return anim_role_cue(shown, next);
+}
+
+// HOW LOUD A LANDING AT A SEAT IS TO THE VIEWER (anim_plan.h anim_seat_gain_pm),
+// a linear gain in thousandths.
+int wasm_anim_seat_gain_pm(int viewer, int seat, int n_seats) {
+    return anim_seat_gain_pm(viewer, seat, n_seats);
+}
+
+// WHICH CUES COULD SOUND NEXT (anim_plan.h anim_cues_next), asked as a value
+// through its generated writer and answered as the mask itself: bit k is
+// ANIM_CUE_k. A host loads those sounds first.
+static AnimCueAsk g_anim_cue_ask;
+AnimCueAsk *wasm_anim_cue_ask_ptr(void) { return &g_anim_cue_ask; }
+unsigned wasm_anim_cues_next(void) { return anim_cues_next(&g_anim_cue_ask); }
+
 // THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen, asked as
 // a value (AnimFinishAsk: the elimination seats first out first, the fool's
 // seat or a negative while the game runs, the seat count, and the viewer or a
@@ -919,6 +943,12 @@ AnimFinishAsk *wasm_anim_finish_ask_ptr(void) { return &g_anim_finish_ask; }
 AnimFinish *wasm_anim_finish_ptr(void)        { return &g_anim_finish; }
 int wasm_anim_finish_rows(void) {
     return anim_finish_ask(&g_anim_finish_ask, &g_anim_finish);
+}
+// WHAT THE END OF THE GAME SOUNDS LIKE to this viewer (anim_plan.h
+// anim_finish_cue), asked with the same AnimFinishAsk as the rows, written
+// through the same generated writer: an ANIM_CUE_* out.
+int wasm_anim_finish_cue(void) {
+    return anim_finish_cue(&g_anim_finish_ask);
 }
 
 

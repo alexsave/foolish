@@ -1,0 +1,219 @@
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import Link from 'next/link';
+import dynamic from 'next/dynamic';
+import {
+    animBuildPlan, animSeatGainPm, cueMix, cueTakes, ANIM_EVT, ANIM_LOC, type AnimPlanEventIn,
+} from '@sdk/ts/wasm/bots.ts';
+import {
+    ANIM_CUE_NAMES, ANIM_N_CUES, ANIM_SOUND_STAGGER_MS, ANIM_CUE_REVERT, ANIM_CUE_PLACE, ANIM_CUE_COVER, ANIM_CUE_PICKUP,
+    ANIM_CUE_DEAL_LAND,
+} from '@sdk/ts/gen/kernel_consts.bots.ts';
+import { CUE_ROLE_PRELUDE, CUE_ROLE_TIGHT, EVW_MSG_PASSED } from '@sdk/ts/gen/view_layout.bots.ts';
+import type { TableView } from '../state/view';
+import { buildTutorialData } from './Tutorial';
+import { cueAudio, cueFile } from '../audio/cueAudio';
+import { perStrokeOf, playPart, strikes, voiced, whenLoaded } from '../audio/tunerPlay';
+import { TexturedSurface } from './TexturedSurface';
+import { WoolBackgroundLayer } from './WoolBackgroundLayer';
+
+// /sounds - hear every sound cue on its own, and a few moves in context.
+//
+// A WORKBENCH, not a screen of the game, and English only for that reason. It
+// plays through the same engine, and the same kernel answers, the board does
+// (src/audio/cueAudio.ts over c/src/cue_voice.h and soundgen's take table), so
+// what is heard here is what ships: change a sound in soundgen, rebuild, reload,
+// and this page is the new sound.
+//
+// The "in context" rows do not play a recording of a move. They hand the
+// kernel a small stream and schedule the cues its PLAN comes back with
+// (c/src/anim_plan.h AnimPlan.cues), which is the same answer the board's
+// frame loop schedules from - so the gaps between the sounds, the spread of a
+// three-card attack and the rest before a sweep are the real ones.
+
+const card = (suit: number, value: number) => ({ suit, value });
+const lay = (type: number, seat: number, n: number): AnimPlanEventIn => ({
+    type, seat, from: ANIM_LOC.hand, to: ANIM_LOC.table,
+    cards: Array.from({ length: n }, (_, i) => card((seat + i) % 4, 6 + i)),
+});
+const draw = (type: number, seat: number, n: number): AnimPlanEventIn => ({
+    type, seat, from: ANIM_LOC.deck, to: ANIM_LOC.hand,
+    cards: Array.from({ length: n }, (_, i) => card(i % 4, 2 + i)),
+});
+const sweep = (type: number, n: number, to: number, seat?: number): AnimPlanEventIn => ({
+    type, seat, from: ANIM_LOC.table, to,
+    cards: Array.from({ length: n }, (_, i) => card(i % 4, 6 + i)),
+});
+
+const MOVES: readonly { name: string; says: string; events: () => AnimPlanEventIn[] }[] = [
+    { name: 'An attack', says: 'one card: lift, then place', events: () => [lay(ANIM_EVT.attack_pass, 0, 1)] },
+    { name: 'A three-card attack', says: 'one lift, three strikes spread from the landing',
+      events: () => [lay(ANIM_EVT.attack_pass, 0, 3)] },
+    { name: 'A transfer', says: 'the card lands like an attack, then is slid on to the next defender',
+      events: () => [{ ...lay(ANIM_EVT.attack_pass, 0, 1), msg: EVW_MSG_PASSED }] },
+    { name: 'Attack, then cover', says: 'two beats, a flight and a gap apart',
+      events: () => [lay(ANIM_EVT.attack_pass, 0, 1), lay(ANIM_EVT.cover, 1, 1)] },
+    { name: 'A bout ends', says: 'a two-card cover, the rest (the strokes gather the table in it), the sweep to the pile, both refills',
+      events: () => [lay(ANIM_EVT.cover, 1, 1), lay(ANIM_EVT.cover, 1, 1),
+                     sweep(ANIM_EVT.discard, 4, ANIM_LOC.discard),
+                     draw(ANIM_EVT.refill, 0, 2), draw(ANIM_EVT.refill, 1, 2)] },
+    { name: 'A pickup', says: 'the table taken into a hand, then the attacker refills',
+      events: () => [sweep(ANIM_EVT.pickup, 5, ANIM_LOC.hand, 1), draw(ANIM_EVT.refill, 0, 3)] },
+    { name: 'A refused attack', says: 'the card goes down, then comes home: its landing, backwards',
+      events: () => [lay(ANIM_EVT.attack_pass, 0, 1), { ...lay(ANIM_EVT.revert, 0, 1), from: ANIM_LOC.table, to: ANIM_LOC.hand }] },
+    { name: 'A last card', says: 'the cover that empties a hand, and the seat going out with it',
+      events: () => [lay(ANIM_EVT.cover, 1, 1), { type: ANIM_EVT.out, seat: 1 },
+                     sweep(ANIM_EVT.discard, 2, ANIM_LOC.discard)] },
+    { name: 'The opening deal', says: 'twelve cards round the table, then the trump turned up',
+      events: () => [...Array.from({ length: 12 }, (_, i) => draw(ANIM_EVT.deal, i % 2, 1)),
+                     { type: ANIM_EVT.flipped, from: ANIM_LOC.deck, to: ANIM_LOC.flipped, cards: [card(2, 12)] }] },
+];
+
+// As the board plays a plan: the run starts NOW, so the part of a gesture that
+// comes before a run's first moment is not heard there either (cueAudio.ts).
+const playMove = (events: AnimPlanEventIn[], table: TableView): void => {
+    const plan = animBuildPlan(events, table);
+    whenLoaded(plan.cues.map((c) => voiced(c.kind, c.undoes)), () => {
+        for (const cue of plan.cues) {
+            const seat = plan.steps[cue.step]?.seat ?? -1;
+            const gain = cue.kind === ANIM_CUE_DEAL_LAND ? animSeatGainPm(table.mySeat, seat, table.seats.length) : 1000;
+            for (let h = 0; h < cue.hits; h++) {
+                cueAudio.strike(cue.kind, cue.atMs + h * ANIM_SOUND_STAGGER_MS, cue.nCards, cue.undoes, gain);
+            }
+        }
+    });
+};
+
+// THE TUNER (SoundTuner.tsx), in development only: the condition is a constant
+// in a production build, so the bundler drops the import and nothing of it ships.
+const SoundTuner = process.env.NODE_ENV === 'development'
+    ? dynamic(() => import('./SoundTuner'), { ssr: false })
+    : null;
+
+const Button = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
+    <TexturedSurface as="button" seed={0.4} className="btn-wood btn-wood--md" onClick={onClick}
+                     style={{ minWidth: 120 }}>
+        <span className="btn-wood-text">{children}</span>
+    </TexturedSurface>
+);
+
+const cell: React.CSSProperties = { padding: '6px 10px', textAlign: 'left', verticalAlign: 'middle' };
+
+export const SoundAudition = () => {
+    const { muted, volume } = useSyncExternalStore(cueAudio.subscribe, cueAudio.getState, cueAudio.getServerState);
+    // The decoded state of each file is the engine's and has no event of its
+    // own; a workbench can afford to look twice a second.
+    const [, tick] = useState(0);
+    // The board a plan is asked against. A plan needs one to know how many sit
+    // (the cues themselves read no board), and the tutorial's own opening board
+    // is one the kernel made - so no board is written out by hand here, to be
+    // fixed up every time the view grows a field.
+    const [table, setTable] = useState<TableView | null>(null);
+    useEffect(() => {
+        buildTutorialData().then((d) => setTable(d.initial)).catch(() => {});
+        cueAudio.arm();
+        const id = setInterval(() => tick((n) => n + 1), 500);
+        return () => clearInterval(id);
+    }, []);
+
+    const cues = Array.from({ length: ANIM_N_CUES - 1 }, (_, i) => i + 1);
+    return (
+        <div className="page page--with-padding" style={{ width: '100vw', overflowY: 'auto' }}>
+            <WoolBackgroundLayer />
+            {/* On a dark panel, like the tutorial's card: the wool is far too
+                busy to read a table against. */}
+            <div className="content content--max-width content--gap-lg z-content"
+                 style={{ color: '#f5e6c8', background: 'rgba(28, 20, 16, 0.92)', borderRadius: 14, maxWidth: 960,
+                          padding: '28px 32px 36px', margin: '64px auto 48px', boxShadow: '0 6px 24px rgba(0,0,0,0.45)' }}>
+                <h1 className="title title--page">Sounds</h1>
+                <p>
+                    Every sound the game can make, through the same engine and the same kernel answers the
+                    board uses. Every file is soundgen&apos;s (tools/soundgen): the card
+                    sounds from Alex&apos;s approved models, and stand-ins for out, good, hand-off, finish and fool.
+                    The anchor is how far into a take its moment is: the take starts that long before it.
+                </p>
+
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Button onClick={() => cueAudio.setMuted(!muted)}>{muted ? 'Sound is off' : 'Sound is on'}</Button>
+                    <label style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                        Master volume
+                        <input type="range" min={0} max={1} step={0.05} value={volume} data-sound-volume
+                               onChange={(e) => cueAudio.setVolume(Number(e.target.value))} />
+                        <span style={{ width: 40 }}>{Math.round(volume * 100)}%</span>
+                    </label>
+                </div>
+
+                {SoundTuner && table && <SoundTuner playPart={playPart} perStroke={perStrokeOf} />}
+
+                <h2 className="title">Each cue</h2>
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                    <thead>
+                        <tr>
+                            <th style={cell}>Cue</th><th style={cell}>Takes (anchor, role, strokes)</th><th style={cell}>Gain</th>
+                            <th style={cell} />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {table && cues.map((kind) => {
+                            const takes = cueTakes().filter((t) => t.cue === kind);
+                            const mix = cueMix(kind);
+                            // A cue with strokes before it: the cards one stroke gathers.
+                            const perStroke = (mix?.cardsPerLevelPm ?? 0) / 1000;
+                            const name = (ANIM_CUE_NAMES[kind] ?? String(kind)).toLowerCase();
+                            return (
+                                <tr key={kind} data-cue={name}>
+                                    <td style={cell}><strong>{name}</strong> <span style={{ opacity: 0.6 }}>({kind})</span></td>
+                                    <td style={cell}>
+                                        {takes.length ? takes.map((t) => (
+                                            <div key={t.name} data-file={cueFile(t.name)} data-anchor={t.anchorUs / 1000} data-loaded={cueAudio.loaded(cueFile(t.name))}>
+                                                <code>{t.name}</code> <span style={{ opacity: 0.7 }}>{(t.anchorUs / 1000).toFixed(1)} ms{t.role === CUE_ROLE_TIGHT ? ', tight' : ''}{t.role === CUE_ROLE_PRELUDE ? `, prelude, ${t.level}` : ''}</span>
+                                                {cueAudio.loaded(cueFile(t.name)) ? '' : ' (not loaded)'}
+                                            </div>
+                                        )) : kind === ANIM_CUE_REVERT ? 'the undone move, backwards' : 'silent'}
+                                    </td>
+                                    <td style={cell}>{takes.length && mix ? mix.gainPm / 1000 : ''}</td>
+                                    <td style={{ ...cell, display: 'flex', gap: 8 }}>
+                                        {takes.length > 0 && !perStroke && <>
+                                            <Button onClick={() => strikes(kind, 1)}>Play</Button>
+                                            <Button onClick={() => strikes(kind, 4)}>x4</Button>
+                                        </>}
+                                        {takes.some((t) => t.role === CUE_ROLE_TIGHT) && (
+                                            <Button onClick={() => whenLoaded([kind], () => cueAudio.strike(kind, 0))}>Now</Button>
+                                        )}
+                                        {takes.length > 0 && perStroke > 0 && [0, 1, 2, 3, 4, 5].map((level) => (
+                                            <Button key={level} onClick={() => strikes(kind, 1, 0, Math.ceil(level * perStroke))}>
+                                                {level === 0 ? 'lift only' : `${level} stroke${level > 1 ? 's' : ''}`}
+                                            </Button>
+                                        ))}
+                                        {kind === ANIM_CUE_REVERT && [ANIM_CUE_PLACE, ANIM_CUE_COVER, ANIM_CUE_PICKUP].map((u) => (
+                                            <Button key={u} onClick={() => strikes(kind, 1, u)}>
+                                                {(ANIM_CUE_NAMES[u] ?? '').toLowerCase()}
+                                            </Button>
+                                        ))}
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+
+                <h2 className="title">In context</h2>
+                <p>Each of these asks the kernel for the plan of a small move and plays its cues at the plan's own times.</p>
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                    <tbody>
+                        {MOVES.map((m) => (
+                            <tr key={m.name}>
+                                <td style={cell}><strong>{m.name}</strong><div style={{ opacity: 0.7 }}>{m.says}</div></td>
+                                <td style={cell}><Button onClick={() => { if (table) playMove(m.events(), table); }}>Play</Button></td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+
+                <TexturedSurface as={Link} seed={0.5} href="/" className="btn-wood btn-wood--md"
+                                 style={{ textDecoration: 'none', display: 'inline-block' }}>
+                    <span className="btn-wood-text">Home</span>
+                </TexturedSurface>
+            </div>
+        </div>
+    );
+};

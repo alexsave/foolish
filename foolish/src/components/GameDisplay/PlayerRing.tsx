@@ -41,14 +41,19 @@ export const SeatBadgeSize = {
     seat: RoleMarkSize.rowHeight + NAME_ROW_HEIGHT + MINI_CARD_HEIGHT,
 } as const;
 
-const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: ViewSeat, handKey: string, selfHandLength?: number, isSelf: boolean }) => {
+const CardsVisual = ({ player, seat, handKey, selfHandLength, isSelf }: { player: ViewSeat, seat: number, handKey: string, selfHandLength?: number, isSelf: boolean }) => {
     const styles = useStyles();
     const { fernPattern } = useFernFractal();
 
     const hasPattern = styles.miniCard.usePattern && !!fernPattern;
     const cardWidth = MINI_CARD_WIDTH;
     const cardHeight = MINI_CARD_HEIGHT;
-    const displayHandLength = selfHandLength !== undefined ? selfHandLength : player.handCount;
+    // A hand drops as its cards LEAVE (the plan's badge, useAnimation().animatedHand), not as they
+    // land: the board's count still has a card that is in the air, and a seat must not be shown
+    // holding it - least of all one that was just heard going out.
+    const { animatedHand } = useAnimation();
+    const shown = selfHandLength !== undefined ? selfHandLength : player.handCount;
+    const displayHandLength = Math.min(shown, animatedHand?.[seat] ?? shown);
 
     // Mark this container as the deal/refill destination for *other* players only.
     // Self's real hand is rendered by ActionButtons with the same data-* attrs;
@@ -308,6 +313,7 @@ export const PlayerRing = () => {
                         {/* Always render so DEAL/REFILL animations have a destination element to target, even when hand_length === 0 */}
                         <CardsVisual
                             player={player}
+                            seat={index}
                             handKey={key}
                             selfHandLength={index === self_index ? game.myHand.length : undefined}
                             isSelf={index === self_index}

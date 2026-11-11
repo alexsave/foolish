@@ -1,0 +1,10 @@
+60 3 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_ff2.wav
+60 3 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_ff3.wav
+60 2 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_mf1.wav
+60 2 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_mf2.wav
+60 1 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_mp1.wav
+60 1 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_mp2.wav
+60 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_pp1.wav
+60 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_pp2.wav
+60 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_short1.wav
+60 0 1 /private/tmp/claude-501/-Users-alex-Dev-foolish/8f0c400b-6797-4ece-ae66-85b191c32756/scratchpad/soundtrack/samples/vcsl/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_short2.wav

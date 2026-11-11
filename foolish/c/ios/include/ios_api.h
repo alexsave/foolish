@@ -330,7 +330,7 @@ int fio_last_reject(void);
 //   5  u8  final flipped trump as a DENSE id (0..51), FIO_PLAN_NO_FLIP for
 //           none - the same encoding the veil and the row on this wire use
 //   6  n_players x u8 final hand counts, by seat
-//   then per event, 11 + n_players + n_ids + 2 x n_battles bytes:
+//   then per event, 12 + n_players + n_ids + 2 x n_battles bytes:
 //     u8 type (EVW_T_*/ANIM_EVT_*), u8 seat (0xFF none), u8 from, u8 to,
 //     u8 n_cards (the count the arithmetic reads), u8 n_ids (real identities
 //     listed; 0 for viewer-masked backs), u8 has_counts, u8 deck, u8 discard,
@@ -341,6 +341,8 @@ int fio_last_reject(void);
 //       as fio_table_encode writes it. A row with a FIO_TABLE_UNKNOWN cell is
 //       read as no row, for fio_pre_bout_table_packed's reason: the freeze's
 //       row is laid out by identity, and a cell nobody can name has none.
+//     u8 msg (EVW_MSG_*, GameEvent.msg): EVW_MSG_PASSED on an ATTACK_PASS is
+//       a transfer, which sounds as one (ANIM_CUE_PASS).
 //   A step with has_counts == 0 carries the walk forward instead of anchoring
 //   it; a stream whose FIRST event has none falls back to undoing them all.
 //   THE ROW IS THE SAME KIND OF ANCHOR, one field later: the row before a pass
@@ -355,7 +357,7 @@ int fio_last_reject(void);
 // The web crosses the same struct (wasm_anim_plan_ptr).
 // Returns FIO_EOK, or a negative error; the plan of a refused call is not to be
 // read.
-#define FIO_PLAN_VERSION 3
+#define FIO_PLAN_VERSION 4
 // The seat block is a FIXED width so a step sits at a constant offset whatever
 // the table size; the kernel's MAX_PLAYERS is checked against it at build time.
 #define FIO_PLAN_SEATS   8
@@ -432,6 +434,75 @@ int fio_roles_goods_cleared(int shown_defender, int shown_first_attacker,
 int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
                             int shown_good_mask, int attack_pass_seats,
                             int final_defender, int *out);
+
+// ---------- sound cues (anim_plan.h "sound cues") ---------------------------
+// What a sequence sounds like is in its plan (AnimPlan.cues, read through the
+// generated reader with the rest of it). These two are the sounds that are not
+// steps, asked where the host already turns the marks and brings the results
+// up; each answers an ANIM_CUE_* (ANIM_CUE_NONE for silence), which the
+// generated Swift constants name. docs/AUDIO.md says how a host plays one.
+//
+//   role     the badges going from `shown` to `next`: a good said, or a mark
+//            that travelled from one seat to another.
+//   finish   the end of the game for the viewer at `my_seat` (negative for a
+//            spectator), asked with fio_finish_rows' own arguments so the sound
+//            and the list agree on who the fool is: `game_over` is a fool's
+//            seat, negative while it runs, and every seat `elimination` does
+//            not name is a fool (all of them after a repetition draw).
+int fio_role_cue(int shown_defender, int shown_first_attacker, int shown_good_mask,
+                 int next_defender, int next_first_attacker, int next_good_mask);
+int fio_finish_cue(const uint8_t *elimination, int n_elim, int game_over,
+                   int n_players, int my_seat);
+// Which cues could sound NEXT from a board, one bit per ANIM_CUE_* - what a
+// host loads first (anim_cues_next; a superset by design). The scalars are
+// AnimCueAsk's, in its order.
+unsigned fio_cues_next(int status, int my_seat, int n_players, int n_battles,
+                       int n_covered, int has_flipped, int deck);
+// How loud a card dealt to `seat` lands for the viewer at `viewer` (negative
+// for a spectator), in thousandths: anim_seat_gain_pm, the kernel's geometry.
+// ANIM_CUE_DEAL_LAND is struck at it, with the seat of the cue's own step.
+int fio_seat_gain_pm(int viewer, int seat, int n_seats);
+
+// ---------- what a cue plays (c/src/cue_voice.h) ----------------------------
+// The take table soundgen wrote for this build (the files the app bundles, as
+// <name>.m4a) and the rules that pick a take for a strike, so a host's audio
+// engine only loads files and starts them where it is told. The two pointers
+// are a CueTakeRow and a CueStrike, read through the generated Swift layout
+// (readCueTakeRow, readCueStrike); the strike's is static storage, good until
+// the next call.
+//
+//   take i      i in [0, fio_cue_n_takes()); NULL out of range
+//   lead_us     the longest anchor of a cue's takes: how long before its moment
+//               a host must hand a cue over for its earliest take to start on time
+//   seed        the voice's generator (which take, how far a stand-in wanders)
+//   strike      cue `kind` with its moment `lead_us` from now, for `n_cards`;
+//               `undoes` is a REVERT's undone cue, `gain_pm` the strike's own
+//               level (fio_seat_gain_pm for a dealt card, 1000 otherwise). A
+//               take of -1 is a strike with nothing to play.
+int fio_cue_n_takes(void);
+const void *fio_cue_take(int i);
+int fio_cue_lead_us(int kind);
+void fio_cue_seed(uint32_t seed);
+const void *fio_cue_strike(int kind, int lead_us, int n_cards, int undoes, int gain_pm);
+// A take at a strike's speed (CueStrike.rate_pm, a stand-in's wander) as the
+// samples to start in its place: cue_resample. -1 when `cap` is too small.
+int fio_cue_resampled_len(int n, int rate_pm);
+int fio_cue_resample(const float *in, int n, int rate_pm, float *out, int cap);
+
+// The output mix (c/src/cue_mix.h): the takes a strike scheduled, summed into
+// the audio callback's output from the exact frame each starts on. Made per
+// engine (fio_mix_new, at the output's rate) and freed by the host once the
+// engine has stopped calling fio_mix_render. add/live/clear/now/frame_at are
+// the main thread's; render is the audio callback's, and allocates nothing.
+void *fio_mix_new(double rate);
+void fio_mix_free(void *m);
+int fio_mix_add(void *m, const float *x, int n, int64_t start, float gain);
+uint32_t fio_mix_live(const void *m);
+void fio_mix_clear(void *m);
+void fio_mix_drop(void *m, int slot);
+void fio_mix_render(void *m, float *out, int frames, uint64_t host);
+int64_t fio_mix_now(const void *m);
+int64_t fio_mix_frame_at(const void *m, uint64_t at, double ticks_per_second);
 
 // ---------- the pre-bout table (anim_plan.h) -------------------------------
 //

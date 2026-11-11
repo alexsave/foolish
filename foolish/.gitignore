@@ -58,6 +58,12 @@ sdk/ts/wasm/bots.wasm.gz
 public/oracle.wasm.gz
 public/oracle-mt.wasm.gz
 
+# The game's sounds, for the same reason again: written by tools/soundgen
+# (`npm run sounds`, hooked onto dev and build) and never committed.
+# docs/AUDIO.md. (The table they are played by is C, c/build/gen/cue_takes.c.)
+public/audio/gen/
+tools/soundgen/build/
+
 # c
 c/build/
 c/*.trace/

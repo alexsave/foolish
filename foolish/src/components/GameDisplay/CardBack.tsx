@@ -13,7 +13,7 @@ const getRandomRotation = (seed: number, index: number): number => {
     return (randomValue * 40) - 20;
 };
 
-export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deckSize?: number; enableRandomRotation?: boolean }) => {
+export const CardBack = ({ deckSize = 36, enableRandomRotation = false, scale = 1 }: { deckSize?: number; enableRandomRotation?: boolean; scale?: number }) => {
     const styles = useStyles();
     const { fernPattern } = useFernFractal();
     
@@ -22,7 +22,7 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
     const backgroundColor = hasPattern ? '#000000' : styles.cardBack.backgroundColor;
 
     return (
-        <div style={{ position: 'relative', width: '50px', height: '70px' }}>
+        <div style={{ position: 'relative', width: `${50 * scale}px`, height: `${70 * scale}px` }}>
             {Array.from({ length: deckSize }).map((_, layerIndex) => {
                 const rotation = enableRandomRotation ? getRandomRotation(seed, layerIndex) : 0;
                 return (
@@ -30,10 +30,10 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
                         key={`deck-layer-${layerIndex}`}
                         style={{
                             position: 'absolute',
-                            top: enableRandomRotation ? '0' : `${-layerIndex * 2}px`,
-                            left: enableRandomRotation ? '0' : `${-layerIndex * 1}px`,
-                            width: '50px',
-                            height: '70px',
+                            top: enableRandomRotation ? '0' : `${-layerIndex * 2 * scale}px`,
+                            left: enableRandomRotation ? '0' : `${-layerIndex * scale}px`,
+                            width: `${50 * scale}px`,
+                            height: `${70 * scale}px`,
                             backgroundColor: !styles.cardBack.usePattern ? 'transparent' : backgroundColor,
                             border: `${styles.cardBack.borderWidth} solid ${styles.cardBack.borderColor}`,
                             borderRadius: styles.cardBack.borderRadius,

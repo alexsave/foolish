@@ -100,8 +100,25 @@ HOST_ONLY_SRC := src/bot_play.c
 # server (src/local_table.h). web.wasm and the native tests link it; a host that
 # serves games does not, so it is not in KERNEL_SRC (print-kernel).
 BROWSER_HOST_SRC := src/local_table.c
+# What a host that PLAYS the game's sounds adds: which take a cue plays and when
+# its file starts (src/cue_voice.h). iOS and web.wasm link it; no server does,
+# so it is not in KERNEL_SRC. The tests hand it tables of their own; a host
+# links PLAYBACK_TABLE_SRC with it, the one voice over soundgen's table.
+PLAYBACK_SRC := src/cue_voice.c
+# THE TAKE TABLE both hosts play from, written by soundgen from the same render
+# as the files the web serves and the app bundles (ios/scripts/bundle_sounds.sh).
+# Never committed. Rendering every take is about 11 s of one core (2.3 s over
+# soundgen's forked workers), so it is
+# remade only when soundgen (or a header it reads) changed; it needs a C
+# compiler and no ffmpeg.
+SOUNDGEN_DIR := ../tools/soundgen
+CUE_TAKES_C  := build/gen/cue_takes.c
+PLAYBACK_TABLE_SRC := src/cue_voice_table.c $(CUE_TAKES_C)
+# The output mix a NATIVE host sums its takes in (src/cue_mix.h): iOS links it;
+# the web has Web Audio's own clock, and web.wasm does not carry it.
+MIX_SRC := src/cue_mix.c
 # Linked into every binary built here.
-CORE_SRC := $(KERNEL_SRC) $(HOST_ONLY_SRC) $(BROWSER_HOST_SRC)
+CORE_SRC := $(KERNEL_SRC) $(HOST_ONLY_SRC) $(BROWSER_HOST_SRC) $(PLAYBACK_SRC) $(MIX_SRC)
 # Where each becomes an object: build/obj/host/<the source's own path>.o, the
 # "host" variant below (shared/tools/c_rules.mk).
 CORE_OBJ = $(call c_objs,build/obj/host,$(CORE_SRC))
@@ -496,12 +513,19 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 # into ANY of them is caught rather than hidden by the others.
 IOS_BRIDGE_SRC := ios/ios_api.c ios/ios_api_view.c ios/ios_api_play.c \
                   ios/ios_api_anim.c ios/ios_api_replay.c \
-                  ios/ios_api_identity.c ios/ios_api_msg.c ios/ios_api_net.c
+                  ios/ios_api_identity.c ios/ios_api_msg.c ios/ios_api_net.c \
+                  ios/ios_api_sound.c
+$(CUE_TAKES_C): $(wildcard $(SOUNDGEN_DIR)/*.c $(SOUNDGEN_DIR)/c/*.c $(SOUNDGEN_DIR)/c/*.h $(SOUNDGEN_DIR)/recordings/*) \
+                $(SOUNDGEN_DIR)/tuning.tsv \
+                $(SOUNDGEN_DIR)/Makefile src/anim_plan.h src/cue_voice.h
+	@mkdir -p $(@D)
+	@$(MAKE) -s -C $(SOUNDGEN_DIR) ctable CTABLE=$(abspath $@).new
+	@mv $@.new $@
 IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
-                src/hand_layout.c $(IOS_BRIDGE_SRC) \
+                src/hand_layout.c $(PLAYBACK_SRC) $(PLAYBACK_TABLE_SRC) $(MIX_SRC) $(IOS_BRIDGE_SRC) \
                 src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(KERNEL_SRC)) ios/ios_bots_api.c
 
@@ -584,7 +608,7 @@ ios-archives: $(IOSHOST_CORE_OBJ) $(IOSHOST_BOTS_OBJ) $(call c_objs,build/obj/io
 # and drives a full 4-player game to a fool through the Swift-facing entry
 # points. Fast (< 1s). This is the M-A keystone check runnable without a Mac.
 # Every host-side bridge program is the same objects and one file of its own.
-IOSHOST_OBJ = $(call c_objs,build/obj/ioshost,$(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC))
+IOSHOST_OBJ = $(call c_objs,build/obj/ioshost,$(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) $(PLAYBACK_TABLE_SRC))
 define IOSHOST_PROG
 build/$(1): $$(call c_objs,build/obj/ioshost,$(2)) $$(IOSHOST_OBJ)
 	$$(CC) $$(IOS_CFLAGS) $$^ -lm -o $$@
@@ -1136,7 +1160,12 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_plan_at \
   -Wl,--export=wasm_anim_reversal_order \
   -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
-  -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows
+  -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
+  -Wl,--export=wasm_anim_role_cue -Wl,--export=wasm_anim_finish_cue \
+  -Wl,--export=wasm_anim_seat_gain_pm \
+  -Wl,--export=wasm_anim_cue_ask_ptr -Wl,--export=wasm_anim_cues_next \
+  -Wl,--export=wasm_cue_n_takes -Wl,--export=wasm_cue_table_load -Wl,--export=wasm_cue_take -Wl,--export=wasm_cue_mix \
+  -Wl,--export=wasm_cue_lead_us -Wl,--export=wasm_cue_late_us -Wl,--export=wasm_cue_seed -Wl,--export=wasm_cue_strike -Wl,--export=wasm_cue_strike_opening
 
 # The backend's client (src/netclient.h, wasm/wasm_net_api.c): what the web asks
 # c_base and how it reads the answers and the push stream. In the browser's
@@ -1400,7 +1429,7 @@ WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c $(SHARED)/b32.c src/legal.c src/
                 src/bots.c src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/move_list.c src/client_table.c src/card.c \
                 src/hand_layout.c \
                 src/ask.c src/table_wire.c src/netwire.c src/netclient.c $(SHARED)/mqtt/mqtt.c \
-                $(BROWSER_HOST_SRC) \
+                $(BROWSER_HOST_SRC) $(PLAYBACK_SRC) $(PLAYBACK_TABLE_SRC) \
                 $(SHARED)/wasm/libc.c $(SHARED)/wasm/bump_alloc.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c \
                 wasm/wasm_net_api.c wasm/wasm_local_api.c
@@ -1540,6 +1569,9 @@ WASM_WEB_NAMES := \
   wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
+  wasm_anim_role_cue wasm_anim_finish_cue wasm_anim_seat_gain_pm \
+  wasm_anim_cue_ask_ptr wasm_anim_cues_next \
+  wasm_cue_n_takes wasm_cue_table_load wasm_cue_take wasm_cue_mix wasm_cue_lead_us wasm_cue_late_us wasm_cue_seed wasm_cue_strike wasm_cue_strike_opening \
   wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
   wasm_replay_extras_ptr wasm_replay_extras_decode \
   wasm_replay_events wasm_replay_events_index_ptr \
@@ -1604,6 +1636,9 @@ WASM_PROMO_NAMES := \
   wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
   wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
   wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
+  wasm_anim_role_cue wasm_anim_finish_cue wasm_anim_seat_gain_pm \
+  wasm_anim_cue_ask_ptr wasm_anim_cues_next \
+  wasm_cue_n_takes wasm_cue_table_load wasm_cue_take wasm_cue_mix wasm_cue_lead_us wasm_cue_late_us wasm_cue_seed wasm_cue_strike wasm_cue_strike_opening \
   wasm_replay_b32_encode wasm_replay_extras_ptr wasm_replay_link
 WASM_PROMO_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_LOCAL_EXPORTS) \
                      $(filter $(addprefix -Wl$(comma)--export=,$(WASM_PROMO_NAMES)),$(WASM_BOTS_ALL_EXPORTS))
@@ -1923,7 +1958,8 @@ COV_BRANCH_MIN ?= 74
 # coverage climbs; never lower one to make a red build pass.
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
-                  hand_layout bots bot_drive bot_roster analyse ask table_wire netwire netclient move_list
+                  hand_layout bots bot_drive bot_roster analyse ask table_wire netwire netclient move_list \
+                  cue_voice cue_voice_table cue_mix
 # deal_rng, sha256 and b32 are in the SAME gate, from their new home. They left this
 # list's `src/` prefix behind when they moved to shared/, and a filter that no
 # longer matches does not fail - gcovr simply reports the file it cannot find as

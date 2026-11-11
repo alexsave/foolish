@@ -99,10 +99,24 @@ async function until(page: Page, ok: () => boolean, what: string | (() => string
 
 const handCards = (host: HTMLElement) => host.querySelectorAll('[data-location="hand"][data-card]').length;
 
+// WHAT THE PAGE ASKED TO HEAR. jsdom has no Web Audio, so the engine
+// (src/audio/cueAudio.ts) is a no-op here; this stands in at its one door,
+// `strike`, and writes down the cue names, as e2e/ui_animation_trace.test.ts
+// does. A promo code's game is the same game as an online one and has to sound
+// like it.
+async function listen(): Promise<{ heard: string[]; stop: () => void }> {
+    const { cueAudio } = await import('../src/audio/cueAudio.ts');
+    const { ANIM_CUE_NAMES } = await import('../sdk/ts/gen/kernel_consts.bots.ts');
+    const heard: string[] = [];
+    (cueAudio as any).strike = (kind: number) => { heard.push(ANIM_CUE_NAMES[kind] ?? String(kind)); return true; };
+    return { heard, stop: () => { delete (cueAudio as any).strike; } };
+}
+
 /** Holds that `seg` is a dealt local game against the bot, the page in `lang`, and nothing sent. */
 async function landsInADealtGame(seg: string, lang: string, you: string, bot: string): Promise<Page> {
     requests.length = 0;
     const { GAME_STATUS } = await import('../src/state/view.ts');
+    const ears = await listen();
     const page = await open(seg);
     try {
     await until(page, () => page.host.querySelector(`[data-promo-game="${GAME_STATUS.PLAYING}"]`) !== null,
@@ -112,7 +126,15 @@ async function landsInADealtGame(seg: string, lang: string, you: string, bot: st
     assert.ok((page.host.textContent ?? '').includes(you), `/${seg}: the visitor's seat is named in ${lang} (${you})`);
     await page.wait(400);   // the bot's turn, if it leads
     assert.deepEqual(requests, [], `/${seg}: nothing left the page`);
-    } catch (e) { await page.close(); throw e; }
+    // THE DEAL IS HEARD, card by card, and the trump turned up, as online: the
+    // board plays the kernel's plan and its cues alike. And the route mounts
+    // the sound control here too (src/app/[game_id]/GameRoute.tsx).
+    assert.equal(ears.heard.filter((c) => c === 'DEAL').length >= 12, true,
+        `/${seg}: every card of the deal is heard leaving the stock (${ears.heard.join(' ')})`);
+    // The trump turns after the last card lands, so it is waited for.
+    await until(page, () => ears.heard.includes('FLIP'), () => `/${seg}: and the trump turning up (${ears.heard.join(' ')})`);
+    assert.ok(page.host.querySelector('[data-sound]') !== null, `/${seg}: the sound control is on the page`);
+    } catch (e) { await page.close(); throw e; } finally { ears.stop(); }
     return page;
 }
 

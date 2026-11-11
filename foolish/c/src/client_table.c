@@ -971,6 +971,7 @@ int client_plan_step(AnimPlanAsk *ask, int at, const ClientPlanStep *step, const
     ev->from = step->from;
     ev->to = step->to;
     ev->n_cards = step->n_cards;
+    ev->passed = step->type == ANIM_EVT_ATTACK_PASS && step->msg == EVW_MSG_PASSED;
     int backs = 0;
     for (int i = 0; i < step->n_cards; i++) {
         ev->cards[i] = step->cards[i];

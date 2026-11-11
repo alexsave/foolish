@@ -75,6 +75,20 @@ struct MessageSettingsView: View {
                 }
             }
 
+            // SOUND, on or off (CuePlayer; the web's mute). Two choices drawn
+            // like the table's, a checkmark on the chosen one. No volume:
+            // the level is fixed at the web's 0.7 and the phone's own buttons
+            // set the rest. Behind the sound feature's flag (`CuePlayer.on`):
+            // with the sounds off there is nothing for the row to switch.
+            if CuePlayer.on {
+                section("ios.settings.sound") {
+                    HStack(spacing: FSpace.s) {
+                        soundChoice(true)
+                        soundChoice(false)
+                    }
+                }
+            }
+
             Spacer(minLength: 0)
         }
         .padding(FSpace.xl)
@@ -113,6 +127,34 @@ struct MessageSettingsView: View {
             Text(FStrings.t(titleKey)).font(FType.title(17)).onTableText()
             VStack(spacing: FSpace.s) { rows() }
         }
+    }
+
+    /// Sound on or off, as a wooden choice with a checkmark when chosen.
+    private func soundChoice(_ on: Bool) -> some View {
+        let chosen = prefs.soundOn == on
+        return Button { prefs.setSound(on) } label: {
+            HStack(spacing: FSpace.s) {
+                Image(systemName: on ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                Text(FStrings.t(on ? "ios.settings.sound.on" : "ios.settings.sound.off"))
+            }
+            .font(FType.title(17))
+            .onWoodText()
+            .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48)
+            // The check sits at the trailing edge, so choosing does not move
+            // the label.
+            .overlay(alignment: .trailing) {
+                if chosen {
+                    Image(systemName: "checkmark").font(.system(size: 15, weight: .heavy))
+                        .onWoodText().padding(.trailing, FSpace.m)
+                }
+            }
+            .background(WoodFill())
+            .overlay(Rectangle().strokeBorder(Color.black.opacity(chosen ? 0.75 : 0.35),
+                                              lineWidth: chosen ? 2 : 1))
+            .clipShape(Rectangle())
+        }
+        .accessibilityLabel(Text(FStrings.t(on ? "ios.settings.sound.on" : "ios.settings.sound.off")))
+        .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
     }
 
     /// One table swatch: the material itself, with a checkmark on the chosen one.

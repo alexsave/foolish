@@ -6,13 +6,14 @@ import { GameBoard } from '../GameBoard';
 import { Telestrator } from '../Telestrator';
 import { usePreventScroll } from '../../utils/usePreventScroll';
 import { AnimationSequenceMessage } from '../../state/animationFeed';
-import { type ReplayFrame } from '../../replay/frames';
+import { type ReplayFrame, type ReplayGameState } from '../../replay/frames';
 import { usePlayback } from '../../replay/usePlayback';
 import { useOracle } from '../../replay/useOracle';
 import { fmtDuration } from '../../replay/speeds';
 import { StepMessage, FoolMessage } from './StepMessage';
 import { RevealedHands } from './RevealedHands';
 import { OracleOverlay } from '../OracleOverlay';
+import { TUNER_IN_REPLAY, TunerOverlay } from './TunerOverlay';
 import {
     IconBoutNext, IconBoutStart, IconEye, IconOracle, IconPause, IconPen,
     IconPlay, IconStepBack, IconStepForward,
@@ -29,6 +30,9 @@ interface StageProps {
     gameId: string;
     names: string[] | null;
     times: (number | null)[];
+    /** The table before the deal (buildReplayData's preDealGame, made once while the
+     *  kernel is known to be loaded): where a step back from the deal lands. */
+    preDeal: ReplayGameState;
 }
 
 // VHS-deck transport button: a round, dark, bevelled knob (faint top
@@ -78,7 +82,7 @@ const boardInset: React.CSSProperties = {
 
 /** The replay's screen: the board, the readouts and the transport deck. The
  *  deck head itself is usePlayback's and the Oracle's panel is useOracle's. */
-export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: StageProps) => {
+export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times, preDeal }: StageProps) => {
     usePreventScroll();
     const { t } = useLocalization();
     const router = useRouter();
@@ -90,8 +94,19 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
     const [drawing, setDrawing] = useState(false);
     const toggleDrawing = useCallback(() => setDrawing((d) => !d), []);
 
-    const play = usePlayback(frames, reverses, times, { drawing, toggleDrawing });
+    const play = usePlayback(frames, reverses, times, preDeal, { drawing, toggleDrawing });
     const oracle = useOracle(frames, code, play.stepIdx, play.playing, gameId);
+
+    // The sound tuner in the Oracle's place (TunerOverlay.tsx), development only.
+    const [tuner, setTuner] = useState(false);
+    // The move on the board again: the step before it, then this one played (the
+    // deal's step before it is the table before the deal, -1).
+    const again = useCallback(() => {
+        const i = play.stepIdx;
+        if (i < 0) return;
+        play.jumpTo(i - 1);
+        setTimeout(play.stepForward, 80);
+    }, [play]);
 
     const { stepIdx, lastIdx, playing, waitTarget, now } = play;
     const speed = play.speeds[play.speedIdx % play.speeds.length];
@@ -136,7 +151,7 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
                     }}
                 >
                     <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>
-                        {Math.max(0, stepIdx) + 1}
+                        {stepIdx + 1}
                         <span style={{ opacity: 0.55 }}> / {frames.length}</span>
                     </span>
                     {stepIdx >= 0 && times[stepIdx] !== null && (
@@ -194,9 +209,9 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
             >
                 <input
                     type="range"
-                    min={0}
+                    min={-1}
                     max={lastIdx}
-                    value={Math.max(0, stepIdx)}
+                    value={stepIdx}
                     onChange={(e) => play.jumpTo(Number(e.target.value))}
                     style={{ width: '100%' }}
                 />
@@ -208,12 +223,15 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
                     {btn(<IconBoutNext />, play.nextBout, t('replay_bout_next'))}
                     {btn(<IconEye />, () => setReveal((r) => !r), t(reveal ? 'hide_cards' : 'reveal_cards'), reveal)}
                     {btn(<IconPen />, toggleDrawing, t(drawing ? 'replay_draw_clear' : 'replay_draw'), drawing)}
-                    <span data-testid="oracle-btn-wrap" style={{ opacity: oracle.decision != null ? 1 : 0.4 }}>
+                    <span data-testid="oracle-btn-wrap" style={{ opacity: TUNER_IN_REPLAY || oracle.decision != null ? 1 : 0.4 }}>
                         {btn(
                             <IconOracle />,
-                            () => { if (oracle.decision != null) oracle.setOpen((o) => !o); },
-                            oracle.decision != null ? t('oracle_button_title') : t('oracle_no_decision'),
-                            oracle.open,
+                            TUNER_IN_REPLAY
+                                ? () => setTuner((o) => !o)
+                                : () => { if (oracle.decision != null) oracle.setOpen((o) => !o); },
+                            TUNER_IN_REPLAY ? 'Sound tuner'
+                                : oracle.decision != null ? t('oracle_button_title') : t('oracle_no_decision'),
+                            TUNER_IN_REPLAY ? tuner : oracle.open,
                         )}
                     </span>
                     {play.speeds.length > 1 &&
@@ -223,7 +241,11 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
 
             {/* Infinite Oracle panel - right-anchored, mounted in the board
                 chrome so its mini-cards render inside the replay provider tree */}
-            {oracle.open && (
+            {TUNER_IN_REPLAY && tuner && (
+                <TunerOverlay stepIdx={stepIdx} again={again} back={play.stepBack} forward={play.stepForward}
+                              onClose={() => setTuner(false)} />
+            )}
+            {!TUNER_IN_REPLAY && oracle.open && (
                 <OracleOverlay
                     snapshot={oracle.snapshot}
                     onClose={() => oracle.setOpen(false)}

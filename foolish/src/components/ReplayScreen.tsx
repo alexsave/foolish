@@ -131,6 +131,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
                                     gameId={gameId}
                                     names={result.names}
                                     times={result.times}
+                                    preDeal={result.initial}
                                 />
                             </DragProvider>
                         </GameProvider>

@@ -1,0 +1,213 @@
+TEMPO 105
+
+SECTION INTRO BARS 8 KEY A
+PIANO: A3+E4+A4+C#5:4 | E3+B3+E4+G#4:4 | F#3+C#4+F#4+A4:4 | D3+A3+D4+F#4:4 | %1 | %2 | %3 | D3+A3+D4+F#4:2 E3+B3+E4+G#4:2
+PAD: A3+C#4+E4:4 | E3+G#3+B3:4 | F#3+A3+C#4:4 | D3+F#3+A3:4 | %1 | %2 | %3 | D3+F#3+A3:2 E3+G#3+B3:2
+PLUCK: r:4 | r:4 | r:4 | r:4 | E5:0.5 E5:0.5 F#5:0.5 A5:2.5 | r:4 | C#5:0.5 C#5:0.5 E5:0.5 F#5:2.5 | r:2 E5:0.5 D5:0.5 C#5:0.5 B4:0.5
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | %
+DYN: pp->mp. The PLUCK seed (E E F# A) is the hook's head, stated bare.
+FX: PAD lowpass opens 400Hz->open over bars 1-8.
+TRANSITION: bar 8 is a IV->V half cadence (D->E); the PLUCK's E-D-C#-B descent lands on the verse downbeat where the kick enters.
+
+SECTION VERSE1 BARS 16 KEY A
+KICK: x@0.7:1 x@0.7:1 x@0.7:1 x@0.7:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+HAT: r:0.5 x@0.5:0.5 r:0.5 x@0.5:0.5 r:0.5 x@0.5:0.5 r:0.5 x@0.5:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+CLAP: r:4 | % | % | % | % | % | % | % | r:1 x@0.6:1 r:1 x@0.6:1 | % | % | % | % | % | % | %
+BASS: A2:0.5 r:0.5 A2:0.5 r:0.5 A2:0.5 A3:0.5 r:0.5 A2:0.5 | E2:0.5 r:0.5 E2:0.5 r:0.5 E2:0.5 E3:0.5 r:0.5 E2:0.5 | F#2:0.5 r:0.5 F#2:0.5 r:0.5 F#2:0.5 F#3:0.5 r:0.5 F#2:0.5 | D2:0.5 r:0.5 D2:0.5 r:0.5 D2:0.5 D3:0.5 r:0.5 D2:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+PAD: A3+C#4+E4:4 | E3+G#3+B3:4 | F#3+A3+C#4:4 | D3+F#3+A3:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+PIANO: r:0.5 A3+C#4+E4:1 r:0.5 A3+C#4+E4:1 r:1 | r:0.5 E3+G#3+B3:1 r:0.5 E3+G#3+B3:1 r:1 | r:0.5 F#3+A3+C#4:1 r:0.5 F#3+A3+C#4:1 r:1 | r:0.5 D3+F#3+A3:1 r:0.5 D3+F#3+A3:1 r:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+PLUCK: A4:0.5 C#5:0.5 E5:0.5 r:0.5 A5:0.5 r:0.5 E5:0.5 C#5:0.5 | G#4:0.5 B4:0.5 E5:0.5 r:0.5 G#5:0.5 r:0.5 E5:0.5 B4:0.5 | A4:0.5 C#5:0.5 F#5:0.5 r:0.5 A5:0.5 r:0.5 F#5:0.5 C#5:0.5 | A4:0.5 D5:0.5 F#5:0.5 r:0.5 A5:0.5 r:0.5 F#5:0.5 D5:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | A4:0.5 D5:0.5 F#5:0.5 r:0.5 A5:0.5 r:0.5 B5:0.5 C#6:0.5
+STEEL: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:1 E5:0.5 F#5:0.5 E5:1 C#5:1 | B4:1.5 E5:0.5 G#5:1 E5:1 | F#5:0.5 F#5:0.5 A5:0.5 F#5:1 E5:0.5 C#5:1 | D5:1 E5:0.5 F#5:0.5 E5:2 | %9 | %10 | %11 | D5:1 E5:0.5 F#5:0.5 G#5:1 B5:1
+CHOP: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:3 A4a:0.5 B4o:0.5 | r:4 | r:3 C#5a:0.5 E5o:0.5 | r:4
+DYN: mp, clap and STEEL verse tune join at bar 9; STEEL bar 16 repeats bar 12 with only its last two notes lifted (G# B).
+TRANSITION: verse bar 16 (D, IV) steps onto the E pedal of the build: IV->V pedal, the kick keeps running, STRINGS/riser start on the downbeat.
+
+SECTION BUILD1 BARS 8 KEY A
+SUB: E1:4 | % | % | % | % | % | % | %
+BASS: E2:0.5 E2:0.5 E2:0.5 E2:0.5 E2:0.5 E2:0.5 E2:0.5 E2:0.5 | % | % | % | % | % | % | %
+PAD: A3+C#4+E4:4 | E3+G#3+B3:4 | %1 | %2 | %1 | %2 | %1 | E3+G#3+B3+D4:4
+SAW: E5:0.5 E5:0.5 F#5:0.5 A5:1 r:0.5 E5:0.5 F#5:0.5 | G#5:1 E5:0.5 F#5:0.5 E5:1 B4:1 | C#5:0.5 C#5:0.5 E5:0.5 F#5:1 r:0.5 A5:0.5 F#5:0.5 | E5:1.5 D5:0.5 C#5:1 B4:1 | %1 | %2 | %3 | E5:1.5 F#5:0.5 A5:1 B5:1
+CHOP: r:4 | r:4 | r:4 | r:4 | E5a:0.5 E5a:0.5 E5a:0.5 E5a:0.5 E5a:0.5 E5a:0.5 E5a:0.5 E5a:0.5 | % | % | A5o:1 B5a:1 C#6a:1 r:0.5 E5u:0.5
+KICK: x:1 x:1 x:1 x:1 | % | % | % | x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 | % | % | x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 r:0.5
+SNAREROLL: r:4 | % | % | % | x8:4 | % | x16:4 | x32:3.5 r:0.5
+RISER: x:4 | % | % | % | % | % | % | %
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | %
+DYN: mf->ff. The hook is heard whole for the first time as a single filtered line.
+FX: SAW lowpass 300Hz->open over bars 1-8; RISER one continuous 8-bar noise riser; SNAREROLL 8ths->16ths->32nds.
+TRANSITION: 8-bar dominant pedal (E) under I and V, roll doubling each two bars, half-beat silence at the end of bar 8 with a CHOP pickup, IMPACT + CRASH on the drop downbeat.
+
+SECTION DROP1 BARS 16 KEY A
+SAW: C#5+E5:0.5 C#5+E5:0.5 D5+F#5:0.5 E5+A5+C#6:1 r:0.5 C#5+E5:0.5 D5+F#5:0.5 | E5+G#5+B5:1 B4+E5:0.5 D5+F#5:0.5 B4+E5:1 G#4+B4:1 | A4+C#5:0.5 A4+C#5:0.5 C#5+E5:0.5 C#5+F#5+A5:1 r:0.5 F#5+A5:0.5 C#5+F#5:0.5 | A4+E5:1.5 B4+D5:0.5 A4+C#5:1 F#4+B4:1 | %1 | %2 | %3 | A4+E5:1.5 D5+F#5:0.5 E5+A5:1 F#5+B5:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %8
+PLUCK: r:0.5 A4:0.5 r:0.5 C#5:0.5 r:0.5 E5:0.5 r:0.5 A5:0.5 | r:0.5 B4:0.5 r:0.5 E5:0.5 r:0.5 G#5:0.5 r:0.5 B5:0.5 | r:0.5 A4:0.5 r:0.5 C#5:0.5 r:0.5 F#5:0.5 r:0.5 A5:0.5 | r:0.5 A4:0.5 r:0.5 D5:0.5 r:0.5 F#5:0.5 r:0.5 A5:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+CHOP: r:4 | r:2 B4a:0.5 E5a:0.5 F#5o:1 | r:4 | r:1 E5e:0.5 D5e:0.5 C#5a:1 r:1 | %1 | %2 | %3 | r:1 E5e:0.5 F#5e:0.5 A5a:1 B5u:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %8
+PIANO: r:0.5 A4+C#5+E5:0.5 r:0.5 A4+C#5+E5:0.5 r:0.5 A4+C#5+E5:0.5 r:0.5 A4+C#5+E5:0.5 | r:0.5 G#4+B4+E5:0.5 r:0.5 G#4+B4+E5:0.5 r:0.5 G#4+B4+E5:0.5 r:0.5 G#4+B4+E5:0.5 | r:0.5 A4+C#5+F#5:0.5 r:0.5 A4+C#5+F#5:0.5 r:0.5 A4+C#5+F#5:0.5 r:0.5 A4+C#5+F#5:0.5 | r:0.5 A4+D5+F#5:0.5 r:0.5 A4+D5+F#5:0.5 r:0.5 A4+D5+F#5:0.5 r:0.5 A4+D5+F#5:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+STRINGS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | A4:1 B4:1 C#5:1 E5:1 | D5:1 C#5:1 B4:1 G#4:1 | A4:1 B4:1 C#5:1 F#5:1 | F#5:1 E5:1 D5:1 B4:1 | %9 | %10 | %11 | %12
+PAD: A3+C#4+E4:4 | E3+G#3+B3:4 | F#3+A3+C#4:4 | D3+F#3+A3:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+SUB: A1:4 | E1:4 | F#1:4 | D1:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | D1:2 D2:1 C#2:1
+BASS: A2:0.5 A2:0.5 A3:0.5 A2:0.5 A2:0.5 A2:0.5 A3:0.5 A2:0.5 | E2:0.5 E2:0.5 E3:0.5 E2:0.5 E2:0.5 E2:0.5 E3:0.5 E2:0.5 | F#2:0.5 F#2:0.5 F#3:0.5 F#2:0.5 F#2:0.5 F#2:0.5 F#3:0.5 F#2:0.5 | D2:0.5 D2:0.5 D3:0.5 D2:0.5 D2:0.5 D2:0.5 D3:0.5 D2:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+KICK: x:1 x:1 x:1 x:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+CLAP: r:1 x:1 r:1 x:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+HAT: x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+OHAT: r:0.5 x:0.5 r:0.5 x:0.5 r:0.5 x:0.5 r:0.5 x:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+CRASH: x:4 | r:4 | % | % | % | % | % | % | x:4 | r:4 | % | % | % | % | % | %
+IMPACT: x:4 | r:4 | % | % | % | % | % | % | x:4 | r:4 | % | % | % | % | % | %
+DYN: ff. Hook: supersaw chord-voiced, doubled one octave down; bar 8 and 16 repeat bar 4 with the last three notes lifted (F# A B).
+FX: SAW doubled -12st, wide; sidechain pump on PAD/SAW from KICK; STRINGS counter-line enters bar 9.
+TRANSITION: bar 16 the hook lands on its lifted B5 (the 9th of A); SUB walks D-D-C# (V of F#m) under it, PAD A->F#m shares A and C#, and the drums thin to shaker alone so the break begins without a cut.
+
+SECTION BREAK BARS 16 KEY F#m
+PIANO: F#3:0.5 C#4:0.5 F#4:0.5 A4:0.5 C#5:0.5 A4:0.5 F#4:0.5 C#4:0.5 | D3:0.5 A3:0.5 D4:0.5 F#4:0.5 A4:0.5 F#4:0.5 D4:0.5 A3:0.5 | A2:0.5 E3:0.5 A3:0.5 C#4:0.5 E4:0.5 C#4:0.5 A3:0.5 E3:0.5 | E3:0.5 B3:0.5 E4:0.5 G#4:0.5 B4:0.5 G#4:0.5 E4:0.5 B3:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | B2:0.5 F#3:0.5 B3:0.5 D4:0.5 F#4:0.5 D4:0.5 B3:0.5 F#3:0.5 | G2:0.5 D3:0.5 G3:0.5 B3:0.5 D4:0.5 B3:0.5 G3:0.5 D3:0.5 | %2 | A2:0.5 E3:0.5 A3:0.5 C#4:0.5 G4:0.5 C#4:0.5 A3:0.5 E3:0.5
+STEEL: C#5:0.5 C#5:0.5 E5:0.5 F#5:1 E5:0.5 C#5:0.5 B4:0.5 | A4:1.5 B4:0.5 D5:1 A4:1 | C#5:0.5 C#5:0.5 E5:0.5 A5:1 G#5:0.5 E5:0.5 C#5:0.5 | B4:1.5 C#5:0.5 B4:1 G#4:1 | %1 | %2 | %3 | B4:1.5 C#5:0.5 D5:1 F#5:1 | %1 | %2 | %3 | %4 | D5:0.5 D5:0.5 F#5:0.5 G5:1 F#5:0.5 D5:0.5 B4:0.5 | G4:1.5 A4:0.5 B4:1 D5:1 | F#5:0.5 F#5:0.5 A5:0.5 D6:1 A5:0.5 F#5:0.5 D5:0.5 | E5:1.5 F#5:0.5 G5:1 A5:1
+PAD: F#3+A3+C#4:4 | D3+F#3+A3:4 | A3+C#4+E4:4 | E3+G#3+B3:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | B3+D4+F#4:4 | G3+B3+D4:4 | D3+F#3+A3:4 | A3+C#4+E4+G4:4
+STRINGS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | F#4+A4+C#5:4 | D4+F#4+A4:4 | C#4+E4+A4:4 | B3+E4+G#4:4 | B3+D4+F#4:4 | B3+D4+G4:4 | A3+D4+F#4:4 | A3+C#4+E4+G4:4
+SUB: F#1:4 | D1:4 | A1:4 | E1:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | B1:4 | G1:4 | D1:4 | A1:4
+BASS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | F#2:0.5 r:0.5 F#2:0.5 r:0.5 F#2:0.5 F#3:0.5 r:0.5 F#2:0.5 | D2:0.5 r:0.5 D2:0.5 r:0.5 D2:0.5 D3:0.5 r:0.5 D2:0.5 | A2:0.5 r:0.5 A2:0.5 r:0.5 A2:0.5 A3:0.5 r:0.5 A2:0.5 | E2:0.5 r:0.5 E2:0.5 r:0.5 E2:0.5 E3:0.5 r:0.5 E2:0.5 | B2:0.5 r:0.5 B2:0.5 r:0.5 B2:0.5 B3:0.5 r:0.5 B2:0.5 | G2:0.5 r:0.5 G2:0.5 r:0.5 G2:0.5 G3:0.5 r:0.5 G2:0.5 | %10 | %11
+CHOP: r:4 | r:4 | r:4 | r:4 | r:2 F#5a:0.5 E5a:0.5 C#5o:1 | r:4 | r:2 A5a:0.5 G#5a:0.5 E5o:1 | r:4 | r:4 | r:4 | r:4 | r:4 | r:2 F#5a:0.5 E5a:0.5 D5o:1 | r:4 | r:2 A5a:0.5 F#5a:0.5 D5o:1 | r:4
+KICK: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | x@0.6:1 x@0.6:1 x@0.6:1 x@0.6:1 | % | % | % | % | % | % | %
+SNAP: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:1 x:1 r:1 x:1 | % | % | % | % | % | % | %
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+DYN: p->mf. Theme B (STEEL) is grown from the hook's bar-3 head (C# C# E F#) turned minor; bar 8 varies bar 4's last two notes (D F#).
+TRANSITION: bars 13-16 pivot on Bm (iv of F#m = vi of D): Bm-G-D-A7, the A7 (G natural in STRINGS and PIANO) is V7 of D, so the development opens in D with no seam; kick already running.
+
+SECTION DEV BARS 16 KEY D
+STEEL: A4:0.5 A4:0.5 B4:0.5 D5:1 r:0.5 A4:0.5 B4:0.5 | C#5:1 A4:0.5 B4:0.5 A4:1 E4:1 | F#4:0.5 F#4:0.5 A4:0.5 B4:1 r:0.5 D5:0.5 B4:0.5 | A4:1.5 G4:0.5 F#4:1 E4:1 | %1 | %2 | %3 | A4:1.5 B4:0.5 D5:1 E5:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | B4:1.5 C#5:0.5 D5:1 E5:1
+SAW: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | F#4+A4:0.5 F#4+A4:0.5 G4+B4:0.5 A4+D5+F#5:1 r:0.5 F#4+A4:0.5 G4+B4:0.5 | A4+C#5+E5:1 E4+A4:0.5 G4+B4:0.5 E4+A4:1 C#4+E4:1 | D4+F#4:0.5 D4+F#4:0.5 F#4+A4:0.5 F#4+B4+D5:1 r:0.5 B4+D5:0.5 F#4+B4:0.5 | D4+A4:1.5 E4+G4:0.5 D4+F#4:1 C#4+E4:1 | %9 | %10 | %11 | E4+B4:1.5 G#4+B4:0.5 A4+D5:1 B4+E5:1
+PLUCK: r:0.5 D5:0.5 r:0.5 F#5:0.5 r:0.5 A5:0.5 r:0.5 D6:0.5 | r:0.5 C#5:0.5 r:0.5 E5:0.5 r:0.5 A5:0.5 r:0.5 C#6:0.5 | r:0.5 D5:0.5 r:0.5 F#5:0.5 r:0.5 B5:0.5 r:0.5 D6:0.5 | r:0.5 D5:0.5 r:0.5 G5:0.5 r:0.5 B5:0.5 r:0.5 D6:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | r:0.5 B4:0.5 r:0.5 E5:0.5 r:0.5 G#5:0.5 r:0.5 B5:0.5
+PIANO: r:0.5 A4+D5+F#5:0.5 r:0.5 A4+D5+F#5:0.5 r:0.5 A4+D5+F#5:0.5 r:0.5 A4+D5+F#5:0.5 | r:0.5 A4+C#5+E5:0.5 r:0.5 A4+C#5+E5:0.5 r:0.5 A4+C#5+E5:0.5 r:0.5 A4+C#5+E5:0.5 | r:0.5 B4+D5+F#5:0.5 r:0.5 B4+D5+F#5:0.5 r:0.5 B4+D5+F#5:0.5 r:0.5 B4+D5+F#5:0.5 | r:0.5 B4+D5+G5:0.5 r:0.5 B4+D5+G5:0.5 r:0.5 B4+D5+G5:0.5 r:0.5 B4+D5+G5:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | r:0.5 B4+E5+G#5:0.5 r:0.5 B4+E5+G#5:0.5 r:0.5 B4+E5+G#5:0.5 r:0.5 B4+E5+G#5:0.5
+STRINGS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | D5:1 E5:1 F#5:1 A5:1 | G5:1 F#5:1 E5:1 C#5:1 | D5:1 E5:1 F#5:1 B5:1 | B5:1 A5:1 G5:1 E5:1 | %9 | %10 | %11 | B5:1 A5:1 G#5:1 E5:1
+CHOP: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:2 E5a:0.5 A5a:0.5 B5o:1 | r:4 | r:1 A5e:0.5 G5e:0.5 F#5a:1 r:1 | %9 | %10 | %11 | r:1 F#5e:0.5 G#5e:0.5 B5a:1 E5u:1
+PAD: D3+F#3+A3:4 | A3+C#4+E4:4 | B3+D4+F#4:4 | G3+B3+D4:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | E3+G#3+B3:4
+SUB: D1:4 | A1:4 | B1:4 | G1:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | E1:4
+BASS: D2:0.5 D2:0.5 D3:0.5 D2:0.5 D2:0.5 D2:0.5 D3:0.5 D2:0.5 | A2:0.5 A2:0.5 A3:0.5 A2:0.5 A2:0.5 A2:0.5 A3:0.5 A2:0.5 | B2:0.5 B2:0.5 B3:0.5 B2:0.5 B2:0.5 B2:0.5 B3:0.5 B2:0.5 | G2:0.5 G2:0.5 G3:0.5 G2:0.5 G2:0.5 G2:0.5 G3:0.5 G2:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | E2:0.5 E2:0.5 E3:0.5 E2:0.5 E2:0.5 E2:0.5 E3:0.5 E2:0.5
+KICK: x:1 x:1 x:1 x:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+CLAP: r:1 x:1 r:1 x:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+HAT: x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+OHAT: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:0.5 x:0.5 r:0.5 x:0.5 r:0.5 x:0.5 r:0.5 x:0.5 | % | % | % | % | % | % | %
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+CRASH: x:4 | r:4 | % | % | % | % | % | % | x:4 | r:4 | % | % | % | % | % | %
+DYN: mf->f. The hook itself, transposed into D over its own I-V-vi-IV, carried by STEEL first, then by voiced SAW from bar 9 with STRINGS against it.
+FX: SAW lowpass at 60% bars 9-16 (not fully open; the full sound is saved for drop 2).
+TRANSITION: bar 16 reharmonises the hook's last bar over E major (V/V in D) which is V in A: the whole band is on E as the build begins, so the pedal is already sounding; SAW ends on E5, the hook's first note.
+
+SECTION BUILD2 BARS 8 KEY A
+SUB: E1:4 | % | % | % | % | % | % | %
+BASS: E2:0.5 E2:0.5 E2:0.5 E2:0.5 E2:0.5 E2:0.5 E2:0.5 E2:0.5 | % | % | % | % | % | % | %
+PAD: E3+G#3+B3+D4:4 | % | % | % | % | % | % | %
+SAW: C#5+E5:0.5 C#5+E5:0.5 D5+F#5:0.5 E5+A5+C#6:1 r:0.5 C#5+E5:0.5 D5+F#5:0.5 | E5+G#5+B5:1 B4+E5:0.5 D5+F#5:0.5 B4+E5:1 G#4+B4:1 | A4+C#5:0.5 A4+C#5:0.5 C#5+E5:0.5 C#5+F#5+A5:1 r:0.5 F#5+A5:0.5 C#5+F#5:0.5 | A4+E5:1.5 B4+D5:0.5 A4+C#5:1 F#4+B4:1 | %1 | %2 | %3 | A4+E5:1.5 D5+F#5:0.5 E5+A5:1 F#5+B5:1
+PLUCK: r:0.5 B4:0.5 r:0.5 E5:0.5 r:0.5 G#5:0.5 r:0.5 B5:0.5 | % | % | % | % | % | % | %
+STRINGS: E4:4 | F#4:4 | G#4:4 | A4:4 | B4:4 | C#5:4 | D5:4 | E5:4
+CHOP: r:4 | r:4 | r:4 | r:4 | E5a:0.5 E5a:0.5 E5a:0.5 E5a:0.5 E5a:0.5 E5a:0.5 E5a:0.5 E5a:0.5 | % | % | A5o:1 B5a:1 C#6a:1 r:0.5 E5u:0.5
+KICK: x:1 x:1 x:1 x:1 | % | % | % | x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 | % | % | x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 r:0.5
+SNAREROLL: r:4 | % | % | % | x8:4 | % | x16:4 | x32:3.5 r:0.5
+RISER: x:4 | % | % | % | % | % | % | %
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | %
+DYN: f->fff. Same build device as bar 25 but the hook is now full-voiced and the STRINGS climb a whole octave E4->E5 across the 8 bars.
+FX: SAW highpass 800Hz->open over bars 1-8 (the reverse filter of build 1); RISER 8 bars.
+TRANSITION: dominant pedal E, roll to 32nds, half-beat gap, CHOP pickup, IMPACT on the drop.
+
+SECTION DROP2 BARS 16 KEY A
+SAW: C#5+E5:0.5 C#5+E5:0.5 D5+F#5:0.5 E5+A5+C#6:1 r:0.5 C#5+E5:0.5 D5+F#5:0.5 | E5+G#5+B5:1 B4+E5:0.5 D5+F#5:0.5 B4+E5:1 G#4+B4:1 | A4+C#5:0.5 A4+C#5:0.5 C#5+E5:0.5 C#5+F#5+A5:1 r:0.5 F#5+A5:0.5 C#5+F#5:0.5 | A4+E5:1.5 B4+D5:0.5 A4+C#5:1 F#4+B4:1 | %1 | %2 | %3 | A4+E5:1.5 D5+F#5:0.5 E5+A5:1 F#5+B5:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %8
+STEEL: E5:0.5 E5:0.5 F#5:0.5 A5:1 r:0.5 E5:0.5 F#5:0.5 | G#5:1 E5:0.5 F#5:0.5 E5:1 B4:1 | C#5:0.5 C#5:0.5 E5:0.5 F#5:1 r:0.5 A5:0.5 F#5:0.5 | E5:1.5 D5:0.5 C#5:1 B4:1 | %1 | %2 | %3 | E5:1.5 F#5:0.5 A5:1 B5:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %8
+PLUCK: r:0.5 A4:0.5 r:0.5 C#5:0.5 r:0.5 E5:0.5 r:0.5 A5:0.5 | r:0.5 B4:0.5 r:0.5 E5:0.5 r:0.5 G#5:0.5 r:0.5 B5:0.5 | r:0.5 A4:0.5 r:0.5 C#5:0.5 r:0.5 F#5:0.5 r:0.5 A5:0.5 | r:0.5 A4:0.5 r:0.5 D5:0.5 r:0.5 F#5:0.5 r:0.5 A5:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+CHOP: r:4 | r:2 B4a:0.5 E5a:0.5 F#5o:1 | r:4 | r:1 E5e:0.5 D5e:0.5 C#5a:1 B4u:1 | %1 | %2 | %3 | r:1 E5e:0.5 F#5e:0.5 A5a:1 B5u:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %8
+STRINGS: A4:1 B4:1 C#5:1 E5:1 | D5:1 C#5:1 B4:1 G#4:1 | A4:1 B4:1 C#5:1 F#5:1 | F#5:1 E5:1 D5:1 B4:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+PIANO: r:0.5 A4+C#5+E5:0.5 r:0.5 A4+C#5+E5:0.5 r:0.5 A4+C#5+E5:0.5 r:0.5 A4+C#5+E5:0.5 | r:0.5 G#4+B4+E5:0.5 r:0.5 G#4+B4+E5:0.5 r:0.5 G#4+B4+E5:0.5 r:0.5 G#4+B4+E5:0.5 | r:0.5 A4+C#5+F#5:0.5 r:0.5 A4+C#5+F#5:0.5 r:0.5 A4+C#5+F#5:0.5 r:0.5 A4+C#5+F#5:0.5 | r:0.5 A4+D5+F#5:0.5 r:0.5 A4+D5+F#5:0.5 r:0.5 A4+D5+F#5:0.5 r:0.5 A4+D5+F#5:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+PAD: A3+C#4+E4:4 | E3+G#3+B3:4 | F#3+A3+C#4:4 | D3+F#3+A3:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+SUB: A1:4 | E1:4 | F#1:4 | D1:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | D1:2 D2:1 C#2:1
+BASS: A2:0.5 A2:0.5 A3:0.5 A2:0.5 A2:0.5 A2:0.5 A3:0.5 A2:0.5 | E2:0.5 E2:0.5 E3:0.5 E2:0.5 E2:0.5 E2:0.5 E3:0.5 E2:0.5 | F#2:0.5 F#2:0.5 F#3:0.5 F#2:0.5 F#2:0.5 F#2:0.5 F#3:0.5 F#2:0.5 | D2:0.5 D2:0.5 D3:0.5 D2:0.5 D2:0.5 D2:0.5 D3:0.5 D2:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | D2:0.5 D2:0.5 D3:0.5 D2:0.5 C#2:0.5 C#2:0.5 C#3:0.5 C#2:0.5
+KICK: x:1 x:1 x:1 x:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+CLAP: r:1 x:1 r:1 x:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+TAMB: r:1 x:1 r:1 x:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+HAT: x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+OHAT: r:0.5 x:0.5 r:0.5 x:0.5 r:0.5 x:0.5 r:0.5 x:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+CRASH: x:4 | r:4 | % | % | % | % | % | % | x:4 | r:4 | % | % | % | % | % | %
+IMPACT: x:4 | r:4 | % | % | % | % | % | % | x:4 | r:4 | % | % | % | % | % | %
+DYN: fff. Drop 1 plus STEEL doubling the hook line and STRINGS counter-line from bar 1; CHOP bar 4 gains a fourth syllable (B4u).
+FX: SAW doubled -12st and +12st (three octaves); sidechain pump; OHAT and TAMB widen the top.
+TRANSITION: bar 16 the band stops on beat 3 except SUB/BASS, which walk D->C# (V of F#m) in 8ths; the bass riff of the bridge enters on the next downbeat as the continuation of that walk, with SAW's lifted B5 held into the PAD's F#m.
+
+SECTION BRIDGE BARS 16 KEY F#m
+BASS: F#2:1.5 F#2:0.5 A2:1 F#2:0.5 E2:0.5 | E2:0.5 F#2:0.5 A2:1 B2:1 C#3:1 | %1 | E2:0.5 F#2:0.5 A2:1 C#3:1 E3:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+SUB: F#1:4 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+PIANO: F#3+F#4:1.5 F#3+F#4:0.5 A3+A4:1 F#3+F#4:0.5 E3+E4:0.5 | E3+E4:0.5 F#3+F#4:0.5 A3+A4:1 B3+B4:1 C#4+C#5:1 | %1 | E3+E4:0.5 F#3+F#4:0.5 A3+A4:1 C#4+C#5:1 E4+E5:1 | F#3:0.5 C#4:0.5 F#4:0.5 A4:0.5 C#5:0.5 A4:0.5 F#4:0.5 C#4:0.5 | D3:0.5 A3:0.5 D4:0.5 F#4:0.5 A4:0.5 F#4:0.5 D4:0.5 A3:0.5 | A2:0.5 E3:0.5 A3:0.5 C#4:0.5 E4:0.5 C#4:0.5 A3:0.5 E3:0.5 | E3:0.5 B3:0.5 E4:0.5 G#4:0.5 B4:0.5 G#4:0.5 E4:0.5 B3:0.5 | %5 | %6 | %7 | %8 | %6 | %8 | %5 | %5
+PAD: r:4 | r:4 | r:4 | r:4 | F#3+A3+C#4:4 | D3+F#3+A3:4 | A3+C#4+E4:4 | E3+G#3+B3:4 | %5 | %6 | %7 | %8 | %6 | %8 | %5 | %5
+SAW: r:4 | r:4 | r:4 | r:4 | F#4+A4+C#5:1.5 F#4+A4+C#5:0.5 A4+C#5+F#5:1 F#4+A4+C#5:0.5 E4+A4:0.5 | E4+A4:0.5 F#4+A4:0.5 A4+C#5:1 B4+D5:1 C#5+E5:1 | %5 | E4+A4:0.5 F#4+A4:0.5 A4+C#5:1 C#5+E5:1 E5+A5:1 | %5 | %6 | %7 | %8 | %5 | %6 | %7 | %8
+STEEL: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | C#5:0.5 C#5:0.5 E5:0.5 F#5:1 E5:0.5 C#5:0.5 B4:0.5 | A4:1.5 B4:0.5 D5:1 A4:1 | C#5:0.5 C#5:0.5 E5:0.5 A5:1 G#5:0.5 E5:0.5 C#5:0.5 | B4:1.5 C#5:0.5 B4:1 G#4:1 | %9 | %10 | %11 | B4:1.5 C#5:0.5 D5:1 F#5:1
+STRINGS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | D4+F#4+A4:4 | E4+G#4+B4:4 | F#4+A4+C#5:4 | F#4+A4+C#5:4
+CHOP: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:2 F#5a:0.5 E5a:0.5 C#5o:1 | r:4 | r:2 A5a:0.5 G#5a:0.5 E5o:1 | r:4 | %9 | %10 | %11 | %12
+KICK: x@0.8:1 x@0.8:1 x@0.8:1 x@0.8:1 | % | % | % | r:4 | r:4 | r:4 | r:4 | x:1 x:1 x:1 x:1 | % | % | % | % | % | % | %
+SNAP: r:1 x:1 r:1 x:1 | % | % | % | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4
+CLAP: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:1 x:1 r:1 x:1 | % | % | % | % | % | % | %
+HAT: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 | % | % | % | % | % | % | %
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+RISER: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | x:4 | % | % | %
+DYN: f (bars 1-4 bass+kick only) -> mp (5-8) -> f (9-16).
+FX: QUOTE: bar 1 of the BASS (bar 105 overall) is the first measure of "Seven Nation Army" (The White Stripes) transposed to F#; bar 2 is my own continuation upward (E F# A B C#) and bars 3-4 vary only the last two notes (C# E). RISER 4 bars 13-16.
+TRANSITION: the F# tonic pedal in SUB never stops; at the build it is reinterpreted as the DOMINANT of B when the PAD turns F# minor into F# major (Picardy pivot), STRINGS already holding F#+A+C# move A->A#.
+
+SECTION BUILD3 BARS 8 KEY B
+SUB: F#1:4 | % | % | % | % | % | % | %
+BASS: F#2:0.5 F#2:0.5 F#2:0.5 F#2:0.5 F#2:0.5 F#2:0.5 F#2:0.5 F#2:0.5 | % | % | % | % | % | % | %
+PAD: F#3+A#3+C#4+E4:4 | % | % | % | % | % | % | %
+STRINGS: F#4+A#4+C#5:4 | G#4:4 | A#4:4 | B4:4 | C#5:4 | D#5:4 | E5:4 | F#5:4
+SAW: D#5+F#5:0.5 D#5+F#5:0.5 E5+G#5:0.5 F#5+B5+D#6:1 r:0.5 D#5+F#5:0.5 E5+G#5:0.5 | F#5+A#5+C#6:1 C#5+F#5:0.5 E5+G#5:0.5 C#5+F#5:1 A#4+C#5:1 | B4+D#5:0.5 B4+D#5:0.5 D#5+F#5:0.5 D#5+G#5+B5:1 r:0.5 G#5+B5:0.5 D#5+G#5:0.5 | B4+F#5:1.5 C#5+E5:0.5 B4+D#5:1 G#4+C#5:1 | %1 | %2 | %3 | B4+F#5:1.5 E5+G#5:0.5 F#5+B5:1 G#5+C#6:1
+PLUCK: r:0.5 C#5:0.5 r:0.5 F#5:0.5 r:0.5 A#5:0.5 r:0.5 C#6:0.5 | % | % | % | % | % | % | %
+CHOP: r:4 | r:4 | r:4 | r:4 | F#5a:0.5 F#5a:0.5 F#5a:0.5 F#5a:0.5 F#5a:0.5 F#5a:0.5 F#5a:0.5 F#5a:0.5 | % | % | B5o:1 C#6a:1 D#6a:1 r:0.5 F#5u:0.5
+KICK: x:1 x:1 x:1 x:1 | % | % | % | x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 x:0.5 | % | % | x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 x:0.25 r:0.5
+SNAREROLL: r:4 | % | % | % | x8:4 | % | x16:4 | x32:3.5 r:0.5
+RISER: x:4 | % | % | % | % | % | % | %
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | %
+DYN: f->fff. The hook a whole step up, voiced, over the F# dominant pedal; STRINGS climb F#->F#.
+FX: SAW lowpass 500Hz->open; RISER 8 bars; the pedal has now run 24 bars (bridge tonic became build dominant).
+TRANSITION: F# dominant pedal resolves to B on the drop downbeat; half-beat gap, CHOP pickup F#5u, IMPACT + CRASH.
+
+SECTION DROP3 BARS 16 KEY B
+SAW: D#5+F#5:0.5 D#5+F#5:0.5 E5+G#5:0.5 F#5+B5+D#6:1 r:0.5 D#5+F#5:0.5 E5+G#5:0.5 | F#5+A#5+C#6:1 C#5+F#5:0.5 E5+G#5:0.5 C#5+F#5:1 A#4+C#5:1 | B4+D#5:0.5 B4+D#5:0.5 D#5+F#5:0.5 D#5+G#5+B5:1 r:0.5 G#5+B5:0.5 D#5+G#5:0.5 | B4+F#5:1.5 C#5+E5:0.5 B4+D#5:1 G#4+C#5:1 | %1 | %2 | %3 | B4+F#5:1.5 E5+G#5:0.5 F#5+B5:1 G#5+C#6:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %8
+STEEL: F#5:0.5 F#5:0.5 G#5:0.5 B5:1 r:0.5 F#5:0.5 G#5:0.5 | A#5:1 F#5:0.5 G#5:0.5 F#5:1 C#5:1 | D#5:0.5 D#5:0.5 F#5:0.5 G#5:1 r:0.5 B5:0.5 G#5:0.5 | F#5:1.5 E5:0.5 D#5:1 C#5:1 | %1 | %2 | %3 | F#5:1.5 G#5:0.5 B5:1 C#6:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %8
+PLUCK: r:0.5 B4:0.5 r:0.5 D#5:0.5 r:0.5 F#5:0.5 r:0.5 B5:0.5 | r:0.5 C#5:0.5 r:0.5 F#5:0.5 r:0.5 A#5:0.5 r:0.5 C#6:0.5 | r:0.5 B4:0.5 r:0.5 D#5:0.5 r:0.5 G#5:0.5 r:0.5 B5:0.5 | r:0.5 B4:0.5 r:0.5 E5:0.5 r:0.5 G#5:0.5 r:0.5 B5:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+CHOP: r:4 | r:2 C#5a:0.5 F#5a:0.5 G#5o:1 | r:4 | r:1 F#5e:0.5 E5e:0.5 D#5a:1 C#5u:1 | %1 | %2 | %3 | r:1 F#5e:0.5 G#5e:0.5 B5a:1 C#6u:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %8
+STRINGS: B4:1 C#5:1 D#5:1 F#5:1 | E5:1 D#5:1 C#5:1 A#4:1 | B4:1 C#5:1 D#5:1 G#5:1 | G#5:1 F#5:1 E5:1 C#5:1 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+PIANO: r:0.5 B4+D#5+F#5:0.5 r:0.5 B4+D#5+F#5:0.5 r:0.5 B4+D#5+F#5:0.5 r:0.5 B4+D#5+F#5:0.5 | r:0.5 A#4+C#5+F#5:0.5 r:0.5 A#4+C#5+F#5:0.5 r:0.5 A#4+C#5+F#5:0.5 r:0.5 A#4+C#5+F#5:0.5 | r:0.5 B4+D#5+G#5:0.5 r:0.5 B4+D#5+G#5:0.5 r:0.5 B4+D#5+G#5:0.5 r:0.5 B4+D#5+G#5:0.5 | r:0.5 B4+E5+G#5:0.5 r:0.5 B4+E5+G#5:0.5 r:0.5 B4+E5+G#5:0.5 r:0.5 B4+E5+G#5:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+PAD: B3+D#4+F#4:4 | F#3+A#3+C#4:4 | G#3+B3+D#4:4 | E3+G#3+B3:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+SUB: B1:4 | F#1:4 | G#1:4 | E1:4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+BASS: B2:0.5 B2:0.5 B3:0.5 B2:0.5 B2:0.5 B2:0.5 B3:0.5 B2:0.5 | F#2:0.5 F#2:0.5 F#3:0.5 F#2:0.5 F#2:0.5 F#2:0.5 F#3:0.5 F#2:0.5 | G#2:0.5 G#2:0.5 G#3:0.5 G#2:0.5 G#2:0.5 G#2:0.5 G#3:0.5 G#2:0.5 | E2:0.5 E2:0.5 E3:0.5 E2:0.5 E2:0.5 E2:0.5 E3:0.5 E2:0.5 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4 | %1 | %2 | %3 | %4
+KICK: x:1 x:1 x:1 x:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+CLAP: r:1 x:1 r:1 x:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+TAMB: r:1 x:1 r:1 x:1 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+HAT: x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 x@0.6:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+OHAT: r:0.5 x:0.5 r:0.5 x:0.5 r:0.5 x:0.5 r:0.5 x:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | % | % | % | % | % | % | % | % | %
+CRASH: x:4 | r:4 | % | % | % | % | % | % | x:4 | r:4 | % | % | % | % | % | %
+IMPACT: x:4 | r:4 | % | % | % | % | % | % | x:4 | r:4 | % | % | % | % | % | %
+DYN: fff, the peak. Full stack: voiced SAW three octaves, STEEL line, PLUCK offbeats, CHOP answers, STRINGS counter, PIANO stabs.
+FX: SAW doubled -12/+12st; sidechain; bars 9-16 HAT at 16ths (double-time top) and SAW detune widened.
+TRANSITION: bar 16 keeps everything but the hook's last chord lands on G#5+C#6 (the 9th of B), which the outro re-hears as the 3rd of E; B-G#m-E is I-vi-IV in B and that E becomes V of A for the loop.
+
+SECTION OUTRO BARS 8 KEY A
+PIANO: B3+D#4+F#4+B4:4 | % | G#3+B3+D#4+G#4:4 | % | E3+G#3+B3+E4:4 | % | E3+G#3+B3+D4:4 | E3+G#3+B3+D4:2 E3+G#3+D4+F#4:2
+PAD: B3+D#4+F#4:4 | % | G#3+B3+D#4:4 | % | E3+G#3+B3:4 | % | E3+G#3+B3+D4:4 | %
+STRINGS: B4+D#5+F#5:4 | % | B4+D#5+G#5:4 | % | B4+E5+G#5:4 | % | B4+D5+G#5:4 | %
+SAW: D#5+F#5:0.5 D#5+F#5:0.5 E5+G#5:0.5 F#5+B5+D#6:1 r:0.5 D#5+F#5:0.5 E5+G#5:0.5 | F#5+A#5+C#6:1 C#5+F#5:0.5 E5+G#5:0.5 C#5+F#5:1 A#4+C#5:1 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4
+STEEL: r:4 | r:4 | G#5:0.5 G#5:0.5 B5:0.5 C#6:1 B5:0.5 G#5:0.5 F#5:0.5 | B4:1.5 C#5:0.5 E5:1 B4:1 | E5:0.5 E5:0.5 F#5:0.5 A5:2.5 | r:4 | r:4 | r:4
+PLUCK: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:2 E5:0.5 E5:0.5 F#5:0.5 G#5:0.5
+CHOP: r:4 | r:4 | r:4 | r:4 | r:2 A5a:0.5 G#5a:0.5 E5o:1 | r:4 | r:4 | r:4
+SUB: B1:4 | % | G#1:4 | % | E1:4 | % | % | %
+BASS: B2:0.5 B2:0.5 B3:0.5 B2:0.5 B2:0.5 B2:0.5 B3:0.5 B2:0.5 | % | G#2:0.5 G#2:0.5 G#3:0.5 G#2:0.5 G#2:0.5 G#2:0.5 G#3:0.5 G#2:0.5 | % | E2:1 r:1 E2:1 r:1 | % | E2:2 r:2 | r:4
+KICK: x:1 x:1 x:1 x:1 | % | % | % | x:1 r:1 x:1 r:1 | % | x:1 r:3 | r:4
+CLAP: r:1 x:1 r:1 x:1 | % | % | % | r:1 x@0.5:1 r:2 | % | r:4 | r:4
+OHAT: r:0.5 x:0.5 r:0.5 x:0.5 r:0.5 x:0.5 r:0.5 x:0.5 | % | % | % | r:4 | r:4 | r:4 | r:4
+SHAKER: x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 x@0.5:0.5 | % | % | % | % | % | % | %
+DYN: ff->p as a composed decrescendo: SAW out after bar 2, kick halves at bar 5 and stops after bar 7, bass thins to quarter notes then stops, SHAKER never stops.
+FX: PAD lowpass closes open->400Hz over bars 5-8 so bar 8 matches the intro's starting filter.
+TRANSITION (LOOP): bars 1-4 are B->G#m in B major; bar 5 pivots to E (IV of B = V of A) and sits on an E pedal to the end; STEEL restates theme B's head on G#m then the hook seed E E F# A at bar 5 exactly as the intro will; bar 8 is E9 with the PLUCK pickup E E F# G#, whose leading tone resolves onto the intro's bar-1 A major chord at the same dynamic, filter and shaker, so the last bar leads straight into bar 1.
+
+SUMMARY
+1. Arc (152 bars, 5:47 at 105): intro seed -> verse tune -> build -> DROP 1 (hook) -> F# minor break (theme B, grown from the hook's bar 3) -> D major development (the hook itself transposed, half-filtered) -> build -> DROP 2 (hook + counter-line + STEEL doubling) -> bridge (bass riff from the quote, then riff + theme B stacked) -> build -> DROP 3 lifted a whole step to B -> outro that pivots back through E and loops into bar 1.
+2. Key journey: A (1-48) -> F# minor (49-60) -> pivot on Bm (61-64) -> D (65-80) -> E as V/V in D = V in A (80-88) -> A (89-104) -> F# minor with a 16-bar tonic pedal (105-120) -> the same pedal turns into the dominant of B (121-128) -> B (129-144) -> B, G#m, then E = V of A (145-152) -> loops to A.
+3. The quote: bar 105 (BRIDGE bar 1), BASS: first measure of "Seven Nation Army" (The White Stripes) transposed to F#; everything after it (bars 106-108, then the voiced SAW riff and theme B over it) is original growth from that frame.
+4. Flair (repeat a bar, change only the last notes): bars 20/24 STEEL, 36/40/44/48 SAW hook (bar 8 ends F# A B), 56 STEEL theme B (D F#), 72/80 in D, 107-108 bass riff (C# E), 136/144 in B; CHOP bar 4 of each drop gains a syllable.
+5. Transitions: 8 (IV->V half cadence, PLUCK descent), 24 (IV steps onto the E pedal, kick continuous), 25-32 (dominant pedal + roll 8/16/32 + riser + half-beat gap + chop pickup + impact), 48 (hook's lifted 9th held, SUB D-D-C# walk into F#m, drums thin to shaker), 61-64 (Bm pivot, A7 = V7 of D), 80 (hook's last bar reharmonised on E = V/V in D = V in A), 81-88 (pedal build, reverse highpass filter, strings octave climb), 104 (bass walk D->C# as pickup to the quote riff), 105-128 (F# tonic pedal becomes F# dominant pedal via Picardy pivot, strings A->A#), 128 (pedal resolves to B drop), 144 (9th of B re-heard as 3rd of E), 145-152 (B-G#m-E, composed decrescendo, E9 + E E F# G# pickup -> loop to bar 1).
+6. Thickness: every drop has the SAW hook chord-voiced (dyads/triads) with octave doubling, STEEL on the melody line, PLUCK offbeat counter-rhythm, PIANO offbeat stabs, STRINGS stepwise counter-line, vocal CHOP answers in the hook's rests, SUB + plucky BASS with octave jumps, and full drums with OHAT/TAMB; every bar sums to 4.

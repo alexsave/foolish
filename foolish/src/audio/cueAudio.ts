@@ -1,0 +1,565 @@
+// cueAudio.ts - the web's sound engine: a cue id in, a sound out, on time.
+//
+// WHAT THIS OWNS: the AudioContext and when it may exist, the decoded files,
+// the master level and the mute, and turning "strike cue K in D milliseconds"
+// into a source started at an exact time on the audio clock.
+//
+// WHAT IT DOES NOT: which cue a beat makes or when - the kernel's
+// (c/src/anim_plan.h "sound cues") - and what a cue PLAYS, which is the
+// kernel's too (c/src/cue_voice.h, the same C iOS asks): which take, when its
+// file starts, how loud and how fast, reversed or not, the strokes before it,
+// and never the take played last. The files it fetches are the ones the
+// kernel's take table names (soundgen's, for this build). There is no event
+// type, no card, no game and no sound rule in this file, and there must not
+// be: it is the playback half of a boundary, and a second sound design starts
+// the day it learns what an attack is.
+//
+// THE CLOCK. A strike is scheduled, not played: `start(ctx.currentTime + D)`.
+// The audio clock is driven by the sound card and does not drift against the
+// samples it is timing, where a setTimeout fires when the main thread gets
+// round to it. The frame loop hands cues over a little early
+// (src/audio/cueSchedule.ts) precisely so that D is never zero for a sound that
+// has to land on a card.
+//
+// THE ORDER THE FILES ARRIVE IN. Every sound is loaded, but not all at once and
+// not in the table's order: the kernel says which cues could be the NEXT thing
+// heard from the board on screen (c/src/anim_plan.h anim_cues_next), the page
+// passes that on as `want`, and those files go to the front of the queue. A few
+// fetches run at a time so that the front of the queue means something; one
+// already on its way is never restarted, and none is asked for twice.
+//
+//   BEFORE THE FIRST GESTURE only the wanted files are fetched, and only as
+//   bytes: a browser will not let a page make sound unasked, but it will let it
+//   download, and the first thing a player hears is usually caused by the very
+//   tap that unlocks audio. With the bytes already here that tap only has to
+//   decode them (a few milliseconds), where fetching from cold loses the first
+//   card of a deal. It is a few kilobytes, and nothing at all for a player who
+//   is muted.
+//
+//   A STRIKE WHOSE FILE IS STILL ON ITS WAY WAITS FOR IT, briefly: it is
+//   started the moment the file decodes if that is no more than LATE_S behind
+//   the time it was aimed at, and dropped otherwise. A sound that is 20ms late
+//   is a sound; one that is half a second late is a mistake.
+//
+// A STRIKE IS ASKED, THEN STARTED. The kernel answers when the take's file
+// starts (its anchor before the moment, or now and whole when there is not
+// that long: a take is never cut), and when a prelude's does; this starts each
+// at that time on the audio clock, from its first sample, at the level and
+// speed it was given. A revert's answer says to play the take backwards: its
+// decoded buffer is reversed here, once, and kept.
+//
+// WHEN IT IS SILENT, and each is a deliberate no-op rather than an error:
+//   - before the first tap or key. Browsers refuse to start audio a user did
+//     not ask for, so the context is not even created until a gesture; the
+//     sounds of a deal that plays before one are simply not heard.
+//   - while muted. Nothing is fetched or decoded for a player who has it off.
+//     (Before a gesture the wanted files' bytes are fetched, as above; the
+//     context itself still waits.)
+//   - while the tab is hidden. A game that makes noise from a background tab
+//     is the tab you close.
+//   - where there is no Web Audio at all (Node, jsdom, an old browser).
+//   - when a file did not load. That cue is silent and the rest play.
+//
+// NOT TIED TO prefers-reduced-motion, on purpose. That setting is about
+// vestibular triggers - things sliding and zooming on a screen - and a sound is
+// not one. If anything it is the reverse: a player who has motion turned down
+// is leaning on the other channels to follow the table. The control for sound
+// is the mute, which is one tap and remembered.
+
+import { botsReady, cueSeed, cueStrike, cueTableLoad, cueTakes } from '@sdk/ts/wasm/bots.ts';
+import { fetchTable } from './tuneEndpoint';
+
+const MUTED_KEY = 'foolish_sound_muted';
+const VOLUME_KEY = 'foolish_sound_volume';
+const DEFAULT_VOLUME = 0.7;
+/** How many files are fetched at once. Enough to fill a connection, few enough
+ *  that the order of the queue decides what arrives first. */
+const MAX_FETCHES = 3;
+/** How far behind its aim a strike that waited for its file may still start. */
+const LATE_S = 0.08;
+/** Where soundgen's files are served (public/audio/gen/): a take is <name>.m4a. */
+export const CUE_SOUND_ROOT = '/audio/gen/';
+/** The file a take of the kernel's table is. */
+export const cueFile = (name: string): string => `${name}.m4a`;
+
+/** Where a file is between "not asked for" (absent) and decoded (in `buffers`). */
+type Progress = 'fetching' | 'held' | 'decoding' | 'failed';
+
+/** One take on its way to the speaker, as the kernel answered it: its file, its
+ *  cue, the moment it is aimed at and the time its file starts on the audio
+ *  clock, its level and speed, and which way round. */
+interface Strike { file: string; cue: number; at: number; start: number; gain: number; rate: number; backwards: boolean }
+
+/** What a screen draws the sound control from. One object per change, so it
+ *  compares by identity (useSyncExternalStore). */
+export interface CueAudioState {
+    muted: boolean;
+    volume: number;
+    /** The browser would not start this tab's audio (a context still not running a beat after a
+     *  tap, twice): Safari's audio for the tab has hung, and only a new tab clears it. */
+    stuck: boolean;
+}
+
+const SERVER_STATE: CueAudioState = { muted: false, volume: DEFAULT_VOLUME, stuck: false };
+
+/** How long after a tap a context may take to be running before it is taken for hung. */
+export const RESUME_WATCHDOG_MS = 1500;
+
+type ContextCtor = new (options?: AudioContextOptions) => AudioContext;
+
+/** The browser's AudioContext, or null where there is none. Read each time it
+ *  is wanted rather than at import: this module is imported on the server. */
+const contextCtor = (): ContextCtor | null => {
+    const g = globalThis as { AudioContext?: ContextCtor; webkitAudioContext?: ContextCtor };
+    return g.AudioContext ?? g.webkitAudioContext ?? null;
+};
+
+const stored = (key: string): string | null => {
+    try { return typeof localStorage === 'undefined' ? null : localStorage.getItem(key); } catch { return null; }
+};
+const store = (key: string, value: string): void => {
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem(key, value); } catch { /* private mode */ }
+};
+
+export class CueAudio {
+    private ctx: AudioContext | null = null;
+    private master: GainNode | null = null;
+    private readonly buffers = new Map<string, AudioBuffer>();
+    private readonly live = new Set<AudioBufferSourceNode>();
+    private readonly listeners = new Set<() => void>();
+    private state: CueAudioState | null = null;
+    private armed = false;
+    /** The output changed (a Bluetooth or headphone switch) or the context hung: the context is
+     *  made again at the next gesture, since a browser starts a new one only inside one. */
+    private stale = false;
+    private watchdog: ReturnType<typeof setTimeout> | null = null;
+    /** The cues that could sound next, one bit per ANIM_CUE_* (anim_cues_next). */
+    private wanted = 0;
+    private readonly progress = new Map<string, Progress>();
+    /** Bytes fetched before there was a context to decode them with. */
+    private readonly held = new Map<string, ArrayBuffer>();
+    private fetching = 0;
+    /** Strikes whose file had not decoded yet, with the time each was aimed at. */
+    private waiting: Strike[] = [];
+    /** A decoded file, sample for sample back to front, made the first time a
+     *  revert needs it. */
+    private readonly reversed = new Map<AudioBuffer, AudioBuffer>();
+    /** The kernel's voice is seeded once, by the first strike. */
+    private seeded = false;
+    /** DEVELOPMENT: how many times each file was replaced (retable), so a fetch or
+     *  a decode that began before is not kept. */
+    private readonly replaced = new Map<string, number>();
+
+    // ---- the setting ---------------------------------------------------------
+
+    /** The mute and the level, read from this browser the first time they are
+     *  asked for. Two plain keys: a setting is two scalars. */
+    private settings(): CueAudioState {
+        if (!this.state) {
+            const v = Number.parseFloat(stored(VOLUME_KEY) ?? '');
+            this.state = {
+                muted: stored(MUTED_KEY) === '1',
+                volume: Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : DEFAULT_VOLUME,
+                stuck: false,
+            };
+        }
+        return this.state;
+    }
+
+    readonly subscribe = (onChange: () => void): (() => void) => {
+        this.listeners.add(onChange);
+        return () => { this.listeners.delete(onChange); };
+    };
+    readonly getState = (): CueAudioState => this.settings();
+    /** What the server renders: the default, so the first client paint matches. */
+    readonly getServerState = (): CueAudioState => SERVER_STATE;
+
+    private change(next: CueAudioState): void {
+        this.state = next;
+        store(MUTED_KEY, next.muted ? '1' : '0');
+        store(VOLUME_KEY, String(next.volume));
+        // The master carries the LEVEL only. Mute is not a level of zero: it is
+        // strike() refusing and cancel() stopping what was scheduled, so there
+        // is one place that decides whether a muted player hears anything.
+        if (this.master && this.ctx) this.master.gain.setValueAtTime(next.volume, this.ctx.currentTime);
+        for (const l of this.listeners) l();
+    }
+
+    /** Mute or unmute. Call it from the tap itself: unmuting is what creates
+     *  the context for a player who arrived muted, and that needs a gesture. */
+    setMuted(muted: boolean): void {
+        this.change({ ...this.settings(), muted });
+        if (muted) this.cancel();
+        else this.unlock();
+    }
+
+    /** The master level, 0..1. */
+    setVolume(volume: number): void {
+        this.change({ ...this.settings(), volume: Math.min(1, Math.max(0, volume)) });
+    }
+
+    // ---- the context -----------------------------------------------------------
+
+    /**
+     * Listen for the gesture that lets audio start. Idempotent, and a no-op off
+     * the browser. The listeners STAY: a phone suspends the context again after
+     * a call or a trip to another app, and only another gesture brings it back.
+     */
+    arm(): void {
+        if (this.armed || typeof window === 'undefined') return;
+        this.armed = true;
+        const wake = () => this.unlock();
+        window.addEventListener('pointerdown', wake, { capture: true, passive: true });
+        window.addEventListener('keydown', wake, { capture: true, passive: true });
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) { this.cancel(); return; }
+            // Back on the tab: a context the system suspended while it was away may be woken
+            // without a tap, and one that will not wake is rebuilt at the next.
+            this.wake();
+        });
+        // A context left behind by a page that went away is how Safari's audio ends up hung for
+        // the whole tab (reloads in a long session, hot updates in development).
+        window.addEventListener('pagehide', () => this.shutdown());
+        // The output changed under a running context (AirPods in, a display's speakers out): Safari
+        // can leave it running and silent, so it is made again at the next gesture.
+        navigator.mediaDevices?.addEventListener?.('devicechange', () => this.outputChanged());
+        // DEVELOPMENT: the tuner's latest table, when its endpoint is running, since
+        // tuning no longer relinks the kernel this page loaded (tools/soundgen/tune.sh).
+        // Constant in a production build, where it is dropped.
+        if (process.env.NODE_ENV === 'development') void this.devTable();
+    }
+
+    private async devTable(tries = 50): Promise<void> {
+        if (!botsReady()) {
+            if (tries > 0) setTimeout(() => void this.devTable(tries - 1), 200);
+            return;
+        }
+        // Only the table: every file this page fetches is the one on disk now (the dev
+        // server makes the browser revalidate each one), so none is fetched again.
+        const bytes = await fetchTable();
+        if (bytes) this.retable(bytes, []);
+    }
+
+    /**
+     * DEVELOPMENT: the tuner wrote a new take table, and re-encoded `changed` (file
+     * names, "lift_0.m4a"). The kernel takes the table in place of the linked one
+     * (cueTableLoad), and only those files are dropped and fetched again; everything
+     * else stays decoded. False when the kernel refused the bytes.
+     */
+    retable(bytes: Uint8Array, changed: readonly string[]): boolean {
+        if (!cueTableLoad(bytes)) return false;
+        for (const file of changed) {
+            const old = this.buffers.get(file);
+            if (old) this.reversed.delete(old);
+            this.buffers.delete(file);
+            this.progress.delete(file);
+            this.held.delete(file);
+            this.waiting = this.waiting.filter((w) => w.file !== file);
+            this.replaced.set(file, (this.replaced.get(file) ?? 0) + 1);
+        }
+        this.pump();
+        return true;
+    }
+
+    /** Create or wake the context. Only does anything inside a user gesture,
+     *  which is the browser's rule, not ours. */
+    unlock(): void {
+        if (this.settings().muted) return;
+        if (this.ctx && this.stale) { this.stale = false; this.closeContext(); }
+        if (this.ctx) {
+            this.wake();
+            // A player who muted mid-load and came back: carry on where it stopped.
+            this.pump();
+            return;
+        }
+        const Ctor = contextCtor();
+        if (!Ctor) return;
+        // ONE CONTEXT A PAGE. An engine made again in the same page (a hot update of
+        // this module in development) closes the one before it: Safari allows a page
+        // only a few, and ones left running wedged its audio (sounds seconds late, then
+        // stuttering, then none until Safari was restarted).
+        const page = globalThis as { __foolishCueContext?: AudioContext };
+        const before = page.__foolishCueContext;
+        if (before && before.state !== 'closed' && typeof before.close === 'function') void before.close().catch(() => {});
+        try {
+            this.ctx = new Ctor({ latencyHint: 'interactive' });
+        } catch {
+            return;
+        }
+        page.__foolishCueContext = this.ctx;
+        this.master = this.ctx.createGain();
+        this.master.gain.value = this.settings().volume;
+        this.master.connect(this.ctx.destination);
+        this.watchState(this.ctx);
+        this.wake();
+        // What arrived before the gesture can be decoded now, and everything
+        // else may be fetched.
+        for (const [file, bytes] of this.held) this.decode(file, bytes);
+        this.held.clear();
+        this.pump();
+    }
+
+    /** Ask a context that is not running to run, and watch that it does. A hung one never answers: a
+     *  beat later it is taken for dead, and the next gesture makes another. The second that hangs
+     *  too is the tab's (Safari's audio for it has wedged), which the sound button says. */
+    private wake(): void {
+        const ctx = this.ctx;
+        if (!ctx) return;
+        if (ctx.state === 'running') { this.setStuck(false); return; }
+        // Running is the end of it, and a hung context never gets here.
+        void ctx.resume().then(() => { if (this.ctx === ctx && ctx.state === 'running') this.setStuck(false); }, () => {});
+        if (this.watchdog !== null) return;
+        this.watchdog = setTimeout(() => {
+            this.watchdog = null;
+            if (this.ctx !== ctx) return;
+            if (ctx.state === 'running') { this.setStuck(false); return; }
+            this.stale = true;
+            this.setStuck(true);
+        }, RESUME_WATCHDOG_MS);
+    }
+
+    /** A context that reaches running clears the notice; the states are logged in development, where a
+     *  hung tab is diagnosed from the console. */
+    private watchState(ctx: AudioContext): void {
+        ctx.onstatechange = () => {
+            if (process.env.NODE_ENV === 'development') console.info(`[cue audio] context ${ctx.state}`);
+            if (this.ctx === ctx && ctx.state === 'running') this.setStuck(false);
+        };
+    }
+
+    private setStuck(stuck: boolean): void {
+        if (this.settings().stuck === stuck) return;
+        this.change({ ...this.settings(), stuck });
+    }
+
+    /** Close the context and stop what it was playing. The next gesture makes another. */
+    private closeContext(): void {
+        const ctx = this.ctx;
+        this.cancel();
+        this.ctx = null;
+        this.master = null;
+        if (this.watchdog !== null) { clearTimeout(this.watchdog); this.watchdog = null; }
+        if (ctx) { ctx.onstatechange = null; if (ctx.state !== 'closed') void ctx.close().catch(() => {}); }
+        const page = globalThis as { __foolishCueContext?: AudioContext };
+        if (page.__foolishCueContext === ctx) delete page.__foolishCueContext;
+    }
+
+    /** The page is going away (pagehide): give the context back, so a reload does not leave one. */
+    shutdown(): void {
+        this.closeContext();
+    }
+
+    /** The audio output changed: make the context again at the next gesture. */
+    outputChanged(): void {
+        if (this.ctx) this.stale = true;
+    }
+
+    // ---- loading ---------------------------------------------------------------
+
+    /**
+     * The cues that could sound next from the board on screen, one bit per
+     * ANIM_CUE_* - the kernel's answer (anim_cues_next), passed on whenever the
+     * board changes. Their files jump the queue. Nothing already fetching is
+     * disturbed, and a cue that drops out of the set keeps what it has.
+     */
+    want(mask: number): void {
+        if (mask === this.wanted) return;
+        this.wanted = mask;
+        this.pump();
+    }
+
+    /** The next file to ask for: a wanted cue's, in the table's order, and then
+     *  - once there is a context to decode into - anything left. Nothing until
+     *  the kernel, whose table it is, has loaded. */
+    private next(): string | null {
+        if (!botsReady()) return null;
+        let later: string | null = null;
+        for (const { name, cue } of cueTakes()) {
+            const file = cueFile(name);
+            if (this.progress.has(file) || this.buffers.has(file)) continue;
+            if (this.wanted & (1 << cue)) return file;
+            later ??= file;
+        }
+        return this.ctx ? later : null;
+    }
+
+    /** Start as many fetches as there is room for. Called whenever something
+     *  that decides the queue changes: a want, a gesture, a fetch finishing. */
+    private pump(): void {
+        if (this.settings().muted || typeof fetch === 'undefined' || !contextCtor()) return;
+        for (let file = this.next(); file !== null && this.fetching < MAX_FETCHES; file = this.next()) {
+            this.fetchFile(file);
+        }
+    }
+
+    private fetchFile(file: string): void {
+        this.progress.set(file, 'fetching');
+        this.fetching++;
+        const version = this.replaced.get(file) ?? 0;
+        fetch(CUE_SOUND_ROOT + file, version ? { cache: 'no-store' } : undefined)
+            .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+            .then((bytes) => {
+                this.fetching--;
+                if (version !== (this.replaced.get(file) ?? 0)) return;   // replaced since (retable)
+                if (this.ctx) this.decode(file, bytes);
+                else { this.held.set(file, bytes); this.progress.set(file, 'held'); }
+            }, () => {
+                this.fetching--;
+                if (version === (this.replaced.get(file) ?? 0)) this.fail(file);
+            })
+            .then(() => this.pump());
+    }
+
+    private decode(file: string, bytes: ArrayBuffer): void {
+        const ctx = this.ctx;
+        if (!ctx) return;
+        this.progress.set(file, 'decoding');
+        const version = this.replaced.get(file) ?? 0;
+        // The callback form: older Safari has no promise from it.
+        ctx.decodeAudioData(bytes, (buffer) => {
+            if (version !== (this.replaced.get(file) ?? 0)) return;   // replaced since (retable)
+            this.buffers.set(file, buffer);
+            this.progress.delete(file);
+            // The strikes that were waiting on this file: now, or not at all.
+            this.waiting = this.waiting.filter((w) => {
+                if (w.file !== file) return true;
+                if (ctx.currentTime <= w.at + LATE_S) this.start(w, buffer);
+                return false;
+            });
+        }, () => this.fail(file));
+    }
+
+    /** A file that did not arrive or would not decode: its cue is silent. */
+    private fail(file: string): void {
+        this.progress.set(file, 'failed');
+        this.waiting = this.waiting.filter((w) => w.file !== file);
+    }
+
+    /** Has this file arrived and decoded? For the audition page, which says
+     *  so beside each one rather than playing silence. */
+    loaded(file: string): boolean { return this.buffers.has(file); }
+
+    // ---- playing ---------------------------------------------------------------
+
+    /**
+     * Strike cue `kind` (an ANIM_CUE_*) so that its MOMENT is `delayMs` from now,
+     * standing for `nCards` cards. `undoes` is the plan's word for a REVERT: the
+     * cue whose sound it plays backwards. `gainPm` is this one strike's level in
+     * thousandths (a landing at a far seat, animSeatGainPm). What plays is the
+     * kernel's answer (cueStrike). Returns whether a sound was scheduled, or is
+     * waiting on a file that is on its way; false is every silent case in this
+     * file's header and is never an error.
+     */
+    /** How long a sample takes from this context to the listener's ears, in ms: the
+     *  browser's own figure for the output (outputLatency: Bluetooth headphones add
+     *  0.2 s and more) plus the context's processing (baseLatency). A strike is
+     *  scheduled this much early, so it is HEARD at its moment; 0 before there is a
+     *  context, or where the browser does not say. */
+    latencyMs(): number {
+        const c = this.ctx as (AudioContext & { outputLatency?: number }) | null;
+        if (!c) return 0;
+        const s = (Number.isFinite(c.outputLatency) ? c.outputLatency! : 0) + (Number.isFinite(c.baseLatency) ? c.baseLatency : 0);
+        return Math.max(0, s * 1000);
+    }
+
+    strike(kind: number, delayMs = 0, nCards = 1, undoes = 0, gainPm = 1000, opening = false): boolean {
+        const ctx = this.ctx, master = this.master;
+        if (!ctx || !master || this.settings().muted || ctx.state !== 'running') return false;
+        if (typeof document !== 'undefined' && document.hidden) return false;
+        if (!botsReady()) return false;
+        if (!this.seeded) {
+            cueSeed(Math.floor(Math.random() * 0x100000000));
+            this.seeded = true;
+        }
+        // The moment as it must leave the context to be heard on time (latencyMs). A
+        // moment closer than the output's delay can only be heard late.
+        const leadUs = Math.round(Math.max(0, delayMs - this.latencyMs()) * 1000);
+        const s = cueStrike(kind, leadUs, nCards, undoes, gainPm, opening);
+        if (s.take < 0) return false;
+        const takes = cueTakes();
+        const now = ctx.currentTime, at = now + leadUs / 1e6;
+        const strike = (take: number, startUs: number, gain: number, rate: number, backwards: boolean): Strike => ({
+            file: cueFile(takes[take].name), cue: takes[take].cue, at, start: now + startUs / 1e6,
+            gain: gain / 1000, rate: rate / 1000, backwards,
+        });
+        const ok = this.play(strike(s.take, s.startUs, s.gainPm, s.ratePm, s.backwards === 1));
+        // The strokes that gather the table first, over whatever is sounding.
+        if (ok && s.prelude >= 0) this.play(strike(s.prelude, s.preludeStartUs, s.preludeGainPm, s.preludeRatePm, false));
+        return ok;
+    }
+
+    /** One take on its way: started if its file is here, else waiting for it. */
+    private play(strike: Strike): boolean {
+        const buffer = this.buffers.get(strike.file);
+        if (buffer) {
+            this.start(strike, buffer);
+            return true;
+        }
+        if (this.progress.get(strike.file) === 'failed') return false;
+        // It is being played, so it is wanted, whatever the board said: to the
+        // front of the queue with it, and the strike waits for the file.
+        this.wanted |= 1 << strike.cue;
+        this.pump();
+        this.waiting.push(strike);
+        return true;
+    }
+
+    /** `buffer` back to front. Made once a file, on the first revert that
+     *  wants it: most files are never undone. */
+    private backwards(ctx: AudioContext, buffer: AudioBuffer): AudioBuffer {
+        let out = this.reversed.get(buffer);
+        if (!out) {
+            out = ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+            for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+                out.getChannelData(ch).set(buffer.getChannelData(ch).slice().reverse());
+            }
+            this.reversed.set(buffer, out);
+        }
+        return out;
+    }
+
+    /** Start a take at the time the kernel gave, from its first sample, or now
+     *  if that has passed (a strike that waited for its file): a take is never
+     *  cut (Alex: "play them in full"). */
+    private start(w: Strike, forwards: AudioBuffer): void {
+        const ctx = this.ctx, master = this.master;
+        if (!ctx || !master) return;
+        const source = ctx.createBufferSource();
+        source.buffer = w.backwards ? this.backwards(ctx, forwards) : forwards;
+        source.playbackRate.value = w.rate;
+        const gain = ctx.createGain();
+        gain.gain.value = w.gain;
+        source.connect(gain);
+        gain.connect(master);
+        source.onended = () => {
+            this.live.delete(source);
+            gain.disconnect();
+        };
+        this.live.add(source);
+        source.start(Math.max(w.start, ctx.currentTime));
+    }
+
+    /** A workbench's sound played now, whole, through the master volume and stopped
+     *  by cancel() like any take: the tuner's one part alone (src/audio/tunerPlay.ts),
+     *  which is no file of the table. Never used by the board. */
+    async playNow(bytes: ArrayBuffer, gain: number): Promise<void> {
+        this.unlock();
+        const ctx = this.ctx;
+        if (!ctx || this.settings().muted) return;
+        const buffer = await ctx.decodeAudioData(bytes);
+        this.start({ file: '', cue: 0, at: 0, start: 0, gain, rate: 1, backwards: false }, buffer);
+    }
+
+    /** Stop everything scheduled or sounding: a replay was scrubbed, the tab
+     *  went away, the player hit mute. */
+    cancel(): void {
+        for (const source of this.live) {
+            try { source.stop(); } catch { /* never started */ }
+        }
+        this.live.clear();
+        this.waiting = [];
+    }
+}
+
+/** The one engine a page has. */
+export const cueAudio = new CueAudio();

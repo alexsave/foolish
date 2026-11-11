@@ -11,7 +11,7 @@
 # (MAX_BATTLES, the replay arenas) and the triple is not wasm32, so every offset
 # here is its own; and iOS reads a different set of structs, because it reads
 # them where they lie instead of off a wire.
---header client_table.h --header anim_plan.h --header bot_drive.h --header msg_wire.h --header roster.h
+--header client_table.h --header anim_plan.h --header bot_drive.h --header msg_wire.h --header roster.h --header cue_voice.h
 #
 # The client's slot (client_table.h): one viewer's masked board joined to the
 # table's roster. What MaskedView.swift and PackedGame.swift used to walk byte
@@ -31,9 +31,15 @@
 # and n_battles crosses with it.
 --root AnimPlan --root AnimFrame --root AnimBeats --root AnimSurfacePlan
 --snapshot AnimPlan --snapshot AnimFrame --snapshot AnimBeats --snapshot AnimSurfacePlan
---count AnimPlan.steps=n_steps --count AnimPlan.veil_ids=n_veil
+--count AnimPlan.steps=n_steps --count AnimPlan.veil_ids=n_veil --count AnimPlan.cues=n_cues
 --count AnimCounts.hand=n_players --count AnimFrame.hand=n_players
 --count AnimBeats.beats=n_beats --count AnimSurfacePlan.beats=n
+#
+# What a cue plays (cue_voice.h): one row of soundgen's take table, and the
+# answer to one strike - which take, when its file starts, how loud.
+--root CueTakeRow --root CueStrike
+--snapshot CueTakeRow --snapshot CueStrike
+--count CueTakeRow.name=name_len
 #
 # One bot cycle (bot_drive.h), as BotDriveWire.swift decoded it out of a packed
 # blob. LegalMove crosses with the same fields the TS side reads.
@@ -91,6 +97,7 @@
 --const CLIENT_ --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_DEST_ --const ANIM_CONFLICT_
 --const ANIM_SEAT_NONE --const ANIM_STEP_NONE --const ANIM_NEVER --const ANIM_TIME_MS --const ANIM_GAP_MS
 --const ANIM_BOUT_END_HOLD_MS --const ANIM_DEAL_CARD_MS
+--const ANIM_CUE_ --const ANIM_N_CUES --const ANIM_SOUND_ --const CUE_ROLE_
 --const ANIM_NO_MASK --const ANIM_BEAT_ --const ANIM_SURFACE_ --const ANIM_TABLE_NONE
 --const BOT_STOP_ --const BOT_PACE_ --const MOVE_
 --const PLAY_ANSWER_ --const PLAY_HOST_ --const PLAY_PILL_

@@ -7,11 +7,15 @@ import { GameDisplay } from './GameDisplay';
 import { WinScreen } from './WinScreen';
 import { GameLoading } from './GameLoading';
 import { GAME_STATUS } from '../state/view';
+import { useFinishCue } from '../audio/useFinishCue';
 
 export const GameView = () => {
     const { view: game, gameLoadError } = useServer();
     const urlGameId = useUrlGameId()?.toLowerCase() || null;
     const router = useRouter();
+
+    // The end of a game is heard as this screen swaps the board for the results.
+    useFinishCue(game);
 
     // Handle game load errors - redirect to dashboard
     useEffect(() => {

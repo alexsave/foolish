@@ -1,0 +1,410 @@
+**Note on pitch order:** chords are written low-to-high; the last pitch is the top voice (trumpet 1 / tune). Staccato is a performance note, lengths are grid lengths.
+
+---
+
+## 1. MIAMI (tropical house, 100 BPM, 4/4, A major)
+Motif: a lazy three-note climb E-F#-A that lands late on the "and", answered by a falling C#-D-E; the pan drum re-cuts the same climb into 16th pairs.
+
+**(a) chord loop (4 bars)** F#m7 | Dmaj9 | Amaj7 | E9
+```
+"F#2+A3+C#4+E4:4",
+"D2+F#3+A3+C#4+E4:4",
+"A2+E3+G#3+C#4:4",
+"E2+G#3+D4+F#4:4",
+```
+**(b) DROP A, pan flute, 8 bars**
+```
+"r:0.5 E5:0.5 F#5:0.5 A5:1 F#5:0.5 E5:1",
+"C#5:1.5 D5:0.5 E5:1 r:1",
+"r:0.5 E5:0.5 G#5:0.5 A5:1.5 E5:1",
+"F#5:0.5 E5:0.5 D5:0.5 B4:1 r:1.5",
+"r:0.5 E5:0.5 F#5:0.5 A5:1 F#5:0.5 E5:0.5 C#5:0.5",
+"D5:1 E5:0.5 F#5:1 E5:0.5 D5:1",
+"r:0.5 C#5:0.5 E5:0.5 A5:1.5 G#5:0.5 F#5:0.5",
+"F#5:0.5 E5:0.5 B4:0.5 A4:1 r:0.5 E5:1",
+```
+**(c) DROP B, steel pan, 8 bars**
+```
+"E5:0.25 F#5:0.25 A5:0.5 F#5:0.25 E5:0.25 C#5:0.5 E5:0.5 F#5:0.25 A5:0.25 F#5:0.5 E5:0.5",
+"D5:0.5 C#5:0.25 D5:0.25 E5:0.5 F#5:0.25 E5:0.25 D5:0.5 A4:0.5 C#5:0.25 D5:0.25 E5:0.5",
+"E5:0.25 G#5:0.25 A5:0.5 G#5:0.25 E5:0.25 C#5:0.5 E5:0.5 G#5:0.25 A5:0.25 B5:0.5 A5:0.5",
+"F#5:0.5 E5:0.25 D5:0.25 B4:0.5 D5:0.25 E5:0.25 F#5:0.5 G#5:0.5 F#5:0.25 E5:0.25 D5:0.5",
+"E5:0.25 F#5:0.25 A5:0.5 F#5:0.25 E5:0.25 C#5:0.5 E5:0.5 A5:0.25 C#6:0.25 A5:0.5 F#5:0.5",
+"D5:0.5 F#5:0.25 A5:0.25 F#5:0.5 D5:0.25 E5:0.25 F#5:0.5 A5:0.5 F#5:0.25 E5:0.25 D5:0.5",
+"C#5:0.25 E5:0.25 A5:0.5 E5:0.25 C#5:0.25 A4:0.5 C#5:0.5 E5:0.25 G#5:0.25 A5:0.5 C#6:0.5",
+"B5:0.5 A5:0.25 G#5:0.25 F#5:0.5 E5:0.25 D5:0.25 B4:0.5 r:0.5 E5:0.25 F#5:0.25 G#5:0.5",
+```
+**(d) BREAK, slow pan flute, 8 bars** (same loop twice)
+```
+"A4:2 C#5:1 E5:1",
+"F#5:3 E5:1",
+"D5:2 E5:1 F#5:1",
+"E5:4",
+"A4:2 C#5:1 E5:1",
+"A5:3 G#5:1",
+"F#5:1.5 E5:0.5 D5:2",
+"E5:3 r:1",
+```
+
+---
+
+## 2. NEW YORK (garage piano house, 122 BPM, 4/4, F minor / Dorian)
+Motif: a "push" stab (dotted 8th + 16th on beat 1, then the "and of 2") answered every bar by a gospel pickup run up into the next chord.
+
+**(a) chord loop, rootless stabs** Fm9 | Bbm9 | Ebmaj9 | Dbmaj9 - Bb13 (Dorian IV). Bass root in a separate token.
+```
+"F2:4",  "Ab3+C4+Eb4+G4:2 Eb4+G4+Ab4+C5:2",
+"Bb2:4", "Db4+F4+Ab4+C5:2 Ab3+C4+Db4+F4:2",
+"Eb2:4", "G3+Bb3+D4+F4:2 D4+F4+G4+Bb4:2",
+"Db2:2 Bb1:2", "F3+Ab3+C4+Eb4:2 Ab3+D4+G4+C5:2",
+```
+**(b) organ bass riff, 4 bars**
+```
+"F2:0.5 r:0.25 F2:0.25 F3:0.5 Eb3:0.25 C3:0.25 F2:0.5 r:0.25 Ab2:0.25 C3:0.5 Eb3:0.5",
+"Bb1:0.5 r:0.25 Bb1:0.25 Bb2:0.5 Ab2:0.25 F2:0.25 Bb1:0.5 r:0.25 Db2:0.25 F2:0.5 Ab2:0.5",
+"Eb2:0.5 r:0.25 Eb2:0.25 Eb3:0.5 D3:0.25 Bb2:0.25 Eb2:0.5 r:0.25 G2:0.25 Bb2:0.5 D3:0.5",
+"Db2:0.5 r:0.25 Db2:0.25 Db3:0.5 Ab2:0.25 F2:0.25 Bb1:0.5 r:0.25 Bb1:0.25 D2:0.25 F2:0.25 Ab2:0.25 C3:0.25",
+```
+**(c) PIANO HOOK, 8 bars (right hand)**
+```
+"Ab3+C4+Eb4+G4:0.75 Ab3+C4+Eb4+G4:0.25 r:0.5 Ab3+C4+Eb4+G4:0.5 r:0.5 Eb4+G4+Ab4+C5:0.5 r:0.25 C5:0.25 Eb5:0.25 F5:0.25",
+"Db4+F4+Ab4+C5:0.75 Db4+F4+Ab4+C5:0.25 r:0.5 Db4+F4+Ab4+C5:0.5 r:0.5 Ab4:0.25 Bb4:0.25 Db5:0.25 F5:0.25 Ab5:0.5",
+"G3+Bb3+D4+F4:0.75 G3+Bb3+D4+F4:0.25 r:0.5 D4+F4+G4+Bb4:0.5 r:0.5 D4+F4+G4+Bb4:0.5 F5:0.25 Eb5:0.25 D5:0.25 Bb4:0.25",
+"F3+Ab3+C4+Eb4:0.75 F3+Ab3+C4+Eb4:0.25 r:0.5 F3+Ab3+C4+Eb4:0.5 Ab3+D4+G4+C5:0.5 Ab3+D4+G4+C5:0.5 C5:0.25 Eb5:0.25 E5:0.25 F5:0.25",
+"Ab4+Ab5:0.5 r:0.25 Ab4+Ab5:0.25 G4+G5:0.5 F4+F5:0.5 Eb4+Eb5:0.25 F4+F5:0.25 r:0.5 Ab3+C4+Eb4+G4:0.5 r:0.25 Eb4+G4+Ab4+C5:0.25",
+"Db4+F4+Ab4+C5:0.5 r:0.5 Db4+F4+Ab4+C5:0.5 r:0.5 F4:0.25 Ab4:0.25 Bb4:0.25 B4:0.25 C5:0.5 Ab4:0.5",
+"G3+Bb3+D4+F4:0.75 G3+Bb3+D4+F4:0.25 r:0.5 D4+F4+G4+Bb4:0.5 Bb4:0.25 D5:0.25 F5:0.25 G5:0.25 Bb5:0.5 G5:0.5",
+"F3+Ab3+C4+Eb4:0.5 r:0.5 F3+Ab3+C4+Eb4:0.5 Eb4+F4+Ab4+C5:0.5 Ab3+D4+G4+C5:0.5 r:0.25 Ab3+D4+G4+C5:0.25 F5:0.25 Eb5:0.25 C5:0.25 Ab4:0.25",
+```
+**(d) STRINGS/BRASS answer, 8 bars**
+```
+"r:2 C5:2",
+"Db5:3 C5:1",
+"Bb4:4",
+"Ab4:2 G4:1 C5:1",
+"r:1 Eb5:1.5 F5:1.5",
+"F5:2 Eb5:1 Db5:1",
+"D5:2 Bb4:2",
+"C5:2 Ab4:1 G4:1",
+```
+
+---
+
+## 3. SEOUL (K-pop / Jersey club, 140 BPM, 4/4, E minor)
+Motif: a five-note chant E-G-E-D-B placed exactly on the five Jersey kicks (lengths 1, 1, 0.75, 0.75, 0.5), minor third G hammered on every bar 2 beat; play the lead staccato.
+
+**(a) chord loop** Em | Cmaj7 | Am7 | B7 (harmonic-minor V)
+```
+"E2+G3+B3+E4:4",
+"C2+E3+G3+B3:4",
+"A2+C3+E3+G3:4",
+"B2+D#3+F#3+A3:4",
+```
+**(b) CHORUS HOOK, synth lead, 8 bars**
+```
+"E5:1 G5:1 E5:0.75 D5:0.75 B4:0.5",
+"E5:1 G5:1 E5:0.75 C5:0.75 B4:0.5",
+"A4:1 C5:1 E5:0.75 G5:0.75 E5:0.5",
+"D#5:1 F#5:1 B4:0.75 r:0.75 D#5:0.5",
+"E5:1 G5:1 E5:0.75 D5:0.75 B4:0.5",
+"E5:1 G5:1 B5:0.75 G5:0.75 E5:0.5",
+"C5:1 E5:1 A5:0.75 G5:0.75 E5:0.5",
+"B4:1 D#5:1 F#5:0.75 D#5:0.75 B4:0.5",
+```
+**(c) VERSE riff, pluck arp, 4 bars**
+```
+"E3:0.25 B3:0.25 G3:0.25 B3:0.25 E4:0.25 B3:0.25 G3:0.25 B3:0.25 E3:0.25 B3:0.25 G3:0.25 B3:0.25 E4:0.25 D4:0.25 B3:0.25 G3:0.25",
+"C3:0.25 G3:0.25 E3:0.25 G3:0.25 B3:0.25 G3:0.25 E3:0.25 G3:0.25 C3:0.25 G3:0.25 E3:0.25 G3:0.25 B3:0.25 C4:0.25 B3:0.25 G3:0.25",
+"A2:0.25 E3:0.25 C3:0.25 E3:0.25 G3:0.25 E3:0.25 C3:0.25 E3:0.25 A2:0.25 E3:0.25 C3:0.25 E3:0.25 A3:0.25 G3:0.25 E3:0.25 C3:0.25",
+"B2:0.25 F#3:0.25 D#3:0.25 F#3:0.25 A3:0.25 F#3:0.25 D#3:0.25 F#3:0.25 B2:0.25 F#3:0.25 D#3:0.25 F#3:0.25 B3:0.25 A3:0.25 F#3:0.25 D#3:0.25",
+```
+**(d) PRE-CHORUS, 4 bars** harmony: Am7 | Cmaj7 | D#dim7 (D#3+F#3+A3+C4) | B7 (B2+D#3+F#3+A3)
+```
+"E4:0.5 E4:0.5 G4:0.5 G4:0.5 A4:1 r:1",
+"G4:0.5 G4:0.5 B4:0.5 B4:0.5 C5:1 r:1",
+"A4:0.5 A4:0.5 C5:0.5 C5:0.5 D#5:1 F#5:1",
+"F#5:0.5 F#5:0.5 F#5:0.5 F#5:0.5 A5:0.5 F#5:0.5 D#5:0.5 r:0.5",
+```
+
+---
+
+## 4. MADRID (salsa dura, 196 BPM, 4/4, 2-3 clave, G minor / G major coro)
+Motif: a D-G-F-D fall answered by a C-Eb-C-A-D lift; the guajeo keeps the 2-side on the beat and the 3-side on the "and"s, the coro answers in thirds and the trumpet preaches in the coro's rest.
+
+**(a) montuno vamp (2 bars)** Gm7 | Cm7 - D7b9
+```
+"G2+Bb3+D4+F4:4",
+"C2+Eb3+G3+Bb3:2 D2+F#3+C4+Eb4:2",
+```
+**(b) PIANO GUAJEO, 2 bars (octaves)**
+```
+"D5+D6:0.5 Bb4+Bb5:0.5 G4+G5:1 Bb4+Bb5:0.5 D5+D6:0.5 G5+G6:1",
+"C5+C6:0.5 Eb5+Eb6:1 G5+G6:0.5 r:0.5 A5+A6:0.5 F#5+F#6:0.5 D5+D6:0.5",
+```
+**(c) BASS TUMBAO, 2 bars** (the beat-4 note rings into the next bar's opening rest)
+```
+"r:1.5 D3:1.5 C3:1",
+"r:1.5 G2:0.5 D3:1 G2:1",
+```
+**(d) CORO, 2 bars, 3 parts; repeated** (G minor) / (G major lift)
+```
+"r:1 G4+Bb4+D5:0.5 G4+Bb4+D5:0.5 Bb4+D5+F5:1 G4+Bb4+D5:1",
+"Eb4+G4+C5:0.5 Eb4+G4+C5:1 r:0.5 F#4+A4+D5:0.5 F#4+A4+C5:1 r:0.5",
+"r:1 G4+B4+D5:0.5 G4+B4+D5:0.5 B4+D5+F#5:1 G4+B4+D5:1",
+"E4+G4+C5:0.5 E4+G4+C5:1 r:0.5 F#4+A4+D5:0.5 F#4+A4+C5:1 r:0.5",
+```
+**(e) TRUMPET PREGON, two 2-bar phrases** (each starts in the 3-side bar's final beat and lands in the coro's beat-1 rest)
+```
+"r:3.5 D5:0.5",
+"G5:1 Bb5:0.5 A5:0.5 G5:0.5 F5:0.5 D5:1",
+"r:3 D5:0.5 F5:0.5",
+"G5:0.5 G5:0.5 A5:1 Bb5:0.5 A5:0.5 G5:1",
+```
+**(f) MOÑA, 4 bars (bn2, bn1, tpt2, tpt1 low-to-high)**
+```
+"r:1 D4+G4+Bb4+D5:0.5 r:0.5 D4+G4+Bb4+D5:0.5 G4+Bb4+D5+F5:0.5 r:0.5 G4+Bb4+D5+G5:0.5",
+"Eb4+G4+C5+Eb5:0.5 r:1 Eb4+G4+C5+G5:0.5 r:1 F#4+C5+D5+A5:0.5 F#4+A4+C5+F#5:0.5",
+"r:1 D4+G4+Bb4+G5:0.5 r:0.5 D4+G4+Bb4+G5:0.5 G4+Bb4+D5+A5:0.5 r:0.5 G4+Bb4+D5+Bb5:0.5",
+"Eb4+G4+C5+C6:0.5 r:1 Eb4+G4+C5+Bb5:0.5 r:1 F#4+C5+D5+A5:0.5 F#4+A4+C5+Eb5:0.5",
+```
+**(g) VERSE melody, trumpet, 8 bars** (vamp x4)
+```
+"r:0.5 D5:0.5 G5:1 F5:0.5 D5:0.5 Bb4:1",
+"C5:0.5 Eb5:1 C5:0.5 r:0.5 A4:0.5 D5:1",
+"r:0.5 D5:0.5 G5:1 A5:0.5 G5:0.5 F5:1",
+"Eb5:1 C5:0.5 D5:0.5 r:0.5 A4:0.5 D5:1",
+"Bb5:1 A5:0.5 G5:0.5 D5:1 G5:1",
+"Eb5:0.5 G5:1 Eb5:0.5 C5:0.5 A4:0.5 C5:1",
+"r:0.5 Bb4:0.5 D5:1 G5:0.5 F5:0.5 D5:1",
+"Eb5:0.5 C5:1 A4:0.5 F#4:0.5 A4:0.5 D5:1",
+```
+
+---
+
+## 5. VIENNA (Classical sacred, 12/8, dotted quarter = 54, D minor; beat = 8th, bar = 12)
+Motif: the choir enters bar 3 on a gasping on-beat 8th + quarter-rest figure, then flows in dotted quarters; soprano climbs D-E-F-F#-G-G#-A-Bb (bars 9-12) over secondary dominants, 7-6 at bar 7, 4-3 at bars 8 and 16.
+
+**(a) chord plan, per half bar**
+```
+1 Dm|Dm  2 Gm/Bb|A7  3 Dm/F|Dm  4 Gm|A  5 Dm|C7  6 F|F/A  7 Bb(7-6)|Gm  8 A7sus4(4-3)|A7
+9 Dm|C7/E  10 F|D7/F#  11 Gm|E7/G#  12 Dm/A(peak)|Bb  13 Gm|C#dim7/E  14 Dm/F|Gm  15 Dm/A|Bb  16 A7sus4(4-3)|A
+```
+**(b) SATB, 16 bars** (bars 1-2 rest; order S, A, T, B per bar)
+```
+/* 1 */ "r:12", "r:12", "r:12", "r:12",
+/* 2 */ "r:12", "r:12", "r:12", "r:12",
+/* 3 */ "F4:1 r:2 A4:1 r:2 F4:1 r:2 A4:3", "D4:1 r:2 F4:1 r:2 D4:1 r:2 F4:3", "A3:1 r:2 D4:1 r:2 A3:1 r:2 D4:3", "F3:1 r:2 D3:1 r:2 F3:1 r:2 D3:3",
+/* 4 */ "Bb4:1 r:2 D5:1 r:2 C#5:1 r:2 E5:3", "G4:1 r:2 G4:1 r:2 A4:1 r:2 A4:3", "D4:1 r:2 Bb3:1 r:2 E4:1 r:2 C#4:3", "G3:1 r:2 G3:1 r:2 A3:1 r:2 A2:3",
+/* 5 */ "F5:3 E5:2 D5:1 E5:3 C5:3", "A4:3 A4:3 G4:3 G4:3", "D4:3 D4:3 E4:3 E4:3", "D3:3 D3:3 C3:3 C3:3",
+/* 6 */ "C5:3 D5:2 C5:1 A4:6", "A4:3 A4:3 F4:3 F4:3", "F4:3 F4:3 C4:3 A3:3", "F2:3 F2:3 A2:3 A2:3",
+/* 7 */ "A4:4 G4:2 G4:3 Bb4:3", "F4:6 D4:3 D4:3", "D4:6 Bb3:3 Bb3:3", "Bb2:6 G2:3 G2:3",
+/* 8 */ "D5:4 C#5:2 C#5:3 E5:3", "A4:6 G4:3 G4:3", "E4:6 E4:6", "A2:12",
+/* 9 */ "D5:3 D5:3 E5:3 E5:3", "A4:3 A4:3 G4:3 G4:3", "F4:3 F4:3 C4:3 C4:3", "D3:3 D3:3 E3:3 E3:3",
+/* 10 */ "F5:3 F5:3 F#5:3 F#5:3", "A4:3 A4:3 A4:3 A4:3", "C4:3 C4:3 C4:3 C4:3", "F3:3 F3:3 F#3:3 F#3:3",
+/* 11 */ "G5:3 G5:3 G#5:3 G#5:3", "Bb4:3 Bb4:3 B4:3 B4:3", "D4:3 D4:3 D4:3 D4:3", "G3:3 G3:3 G#3:3 G#3:3",
+/* 12 */ "A5:6 Bb5:4 A5:2", "D5:6 D5:6", "F4:6 F4:6", "A2:6 Bb2:6",
+/* 13 */ "G5:3 F5:3 E5:3 E5:3", "D5:3 D5:3 C#5:3 C#5:3", "Bb3:3 Bb3:3 Bb3:3 Bb3:3", "G3:3 G3:3 E3:3 E3:3",
+/* 14 */ "D5:3 D5:3 E5:2 D5:1 Bb4:3", "A4:3 A4:3 G4:3 G4:3", "F4:3 F4:3 D4:3 D4:3", "F3:3 F3:3 G3:3 G3:3",
+/* 15 */ "A4:3 D5:3 F5:3 D5:3", "F4:3 F4:3 F4:3 F4:3", "D4:3 A3:3 Bb3:3 Bb3:3", "A2:3 A2:3 Bb2:3 Bb2:3",
+/* 16 */ "D5:6 C#5:6", "G4:6 E4:6", "E4:6 E4:6", "A2:12",
+```
+Dynamics: p bars 3-8, crescendo bars 9-11, f at bar 12, diminuendo 13-16.
+
+**(c) violin figure, bars 1-4** (sighing pairs, 8th rest per dotted quarter)
+```
+"F5:1 E5:1 r:1 A5:1 G5:1 r:1 F5:1 E5:1 r:1 D5:1 C#5:1 r:1",
+"G5:1 F5:1 r:1 Bb5:1 A5:1 r:1 G5:1 E5:1 r:1 D5:1 C#5:1 r:1",
+"A5:1 G5:1 r:1 F5:1 E5:1 r:1 D5:1 C#5:1 r:1 E5:1 D5:1 r:1",
+"Bb5:1 A5:1 r:1 G5:1 F5:1 r:1 E5:1 D5:1 r:1 C#5:1 E5:1 r:1",
+```
+**(d) continuo bass, 16 bars**
+```
+"D3:3 D3:3 D3:3 D3:3",
+"Bb2:3 Bb2:3 A2:3 A2:3",
+"F3:3 F3:3 D3:3 D3:3",
+"G2:3 G2:3 A2:3 A2:3",
+"D3:3 D3:3 C3:3 C3:3",
+"F2:3 F2:3 A2:3 A2:3",
+"Bb2:3 Bb2:3 G2:3 G2:3",
+"A2:3 A2:3 A2:3 A2:3",
+"D3:3 D3:3 E3:3 E3:3",
+"F3:3 F3:3 F#3:3 F#3:3",
+"G3:3 G3:3 G#3:3 G#3:3",
+"A3:3 A2:3 Bb2:3 Bb2:3",
+"G2:3 G2:3 E2:3 E2:3",
+"F2:3 F2:3 G2:3 G2:3",
+"A2:3 A2:3 Bb2:3 Bb2:3",
+"A2:3 A2:3 A2:3 A2:3",
+```
+
+---
+
+## 6. WARSAW (Chopin-style piano, 4 beats per bar at 160, G# minor / Ab major)
+Motif: every A bar peaks on its downbeat and tumbles through chromatic lower neighbours (G#-G-G#, D#-D-D#), climbing back up on beat 4; the B melody is a sighing Eb-Ab-G turn in long notes with written-out turns.
+
+**(a) A section harmony, per half bar**
+```
+1 G#m|G#m  2 G#m|D#7  3 G#m|G#m  4 C#m|D#7  5 G#m|E  6 C#m|F#7  7 B|B  8 D#7|D#7
+9 G#m|G#m/B  10 C#m|A(bII)  11 G#m/D#|D#7  12 G#m|E  13 C#m|A#dim7  14 D#7|D#7  15 C#m|D#7  16 G#m|G#m
+```
+**(b) A section right-hand top line, 16 bars of 16ths** (G natural = Fx)
+```
+"G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 C#5:0.25 B4:0.25 A#4:0.25 B4:0.25 C#5:0.25 D#5:0.25 F#5:0.25 G#5:0.25 A#5:0.25",
+"B5:0.25 A#5:0.25 B5:0.25 G#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 D#5:0.25 G5:0.25",
+"G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 C#5:0.25 B4:0.25 A#4:0.25 B4:0.25 C#5:0.25 D#5:0.25 F#5:0.25 G#5:0.25 B5:0.25",
+"C#6:0.25 C6:0.25 C#6:0.25 G#5:0.25 E5:0.25 D#5:0.25 E5:0.25 C#5:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 D#5:0.25 G5:0.25",
+"G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 G#5:0.25 G5:0.25 G#5:0.25 E5:0.25 B4:0.25 G#4:0.25 B4:0.25 E5:0.25",
+"E5:0.25 D#5:0.25 E5:0.25 C#5:0.25 G#5:0.25 G5:0.25 G#5:0.25 E5:0.25 F#5:0.25 F5:0.25 F#5:0.25 E5:0.25 C#5:0.25 A#4:0.25 C#5:0.25 E5:0.25",
+"F#5:0.25 F5:0.25 F#5:0.25 D#5:0.25 B4:0.25 A#4:0.25 B4:0.25 D#5:0.25 F#5:0.25 B5:0.25 A#5:0.25 B5:0.25 D#6:0.25 C#6:0.25 B5:0.25 C#6:0.25",
+"D#6:0.25 D6:0.25 D#6:0.25 C#6:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 D5:0.25 D#5:0.25 C#5:0.25 A#4:0.25 C#5:0.25 D#5:0.25 G5:0.25",
+"G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 G#4:0.25 G4:0.25 G#4:0.25 B4:0.25 D#5:0.25 F#5:0.25 G#5:0.25 B5:0.25",
+"C#6:0.25 C6:0.25 C#6:0.25 G#5:0.25 E5:0.25 D#5:0.25 E5:0.25 C#5:0.25 A5:0.25 G#5:0.25 A5:0.25 E5:0.25 C#5:0.25 E5:0.25 A5:0.25 G5:0.25",
+"G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 D#5:0.25 G5:0.25",
+"G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 B5:0.25 A#5:0.25 B5:0.25 G#5:0.25 E5:0.25 D#5:0.25 E5:0.25 G#5:0.25",
+"C#6:0.25 C6:0.25 C#6:0.25 G#5:0.25 E5:0.25 D#5:0.25 E5:0.25 C#5:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 C#6:0.25 E6:0.25 G6:0.25 F#6:0.25",
+"G6:0.25 F#6:0.25 G6:0.25 D#6:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 D5:0.25 D#5:0.25 C#5:0.25 A#4:0.25 C#5:0.25 D#5:0.25 G5:0.25",
+"G#5:0.25 G5:0.25 G#5:0.25 E5:0.25 C#5:0.25 C5:0.25 C#5:0.25 B4:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 D#5:0.25 G5:0.25",
+"G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 G#4:0.25 F#4:0.25 G#4:0.25 B4:0.25 D#5:0.25 B4:0.25 G#4:0.25 D#4:0.25",
+```
+**(c) B section, Ab major, 16 bars** harmony per half bar:
+```
+1 Ab|Ab  2 Eb7|Eb7  3 Ab|Ab/C  4 Db|Eb7  5 Ab|Fm  6 Bbm|Eb7  7 Ab|C7  8 Fm|Db
+9 Ab/Eb|Eb7  10 Ab|Ab7  11 Db|Dbm  12 Ab/Eb|Eb7  13 Fm|Bb7  14 Eb|Eb7  15 Ab|Ddim7  16 Ab/Eb|Eb7
+```
+```
+"r:1 Eb5:1 Ab5:1 G5:0.5 Ab5:0.5",
+"Bb5:2 Ab5:0.25 Bb5:0.25 Ab5:0.25 G5:0.25 Ab5:1",
+"G5:1.5 F5:0.5 Eb5:1 C5:1",
+"F5:1 Eb5:0.5 Db5:1 C5:0.25 Db5:0.25 Bb4:1",
+"C5:1 Eb5:1 Ab5:1.5 C6:0.5",
+"Bb5:1.5 Ab5:0.5 G5:1 F5:0.5 Eb5:0.5",
+"Eb5:1 C5:1 E5:1.5 G5:0.5",
+"F5:1.5 Ab5:0.5 F5:1 Db5:1",
+"Eb5:2 Db5:0.25 Eb5:0.25 F5:0.25 Eb5:0.25 Db5:1",
+"C5:1.5 Eb5:0.5 Gb5:1 Eb5:1",
+"F5:1.5 Ab5:0.5 E5:1 Db5:1",
+"Eb5:1 C5:1 Bb4:0.5 Db5:0.5 G5:0.5 Bb5:0.5",
+"C6:1.5 Ab5:0.5 F5:1 D5:1",
+"Eb5:1 G5:1 Bb5:0.5 Db6:0.5 Bb5:0.5 G5:0.5",
+"Ab5:1.5 Eb5:0.5 F5:1 D5:1",
+"Eb5:1 Ab5:0.5 G5:0.5 F5:0.25 G5:0.25 F5:0.25 Eb5:0.25 Db5:0.5 Bb4:0.5",
+```
+**(d) coda, 4 bars** harmony: G#m|A(bII) ; G#m/D#|D#7 ; G#m (rit.) ; G#m
+```
+"G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 A5:0.25 G#5:0.25 A5:0.25 E5:0.25 C#5:0.25 B4:0.25 C#5:0.25 E5:0.25",
+"D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 G#4:0.25 G4:0.25 G#4:0.25 B4:0.25 A#4:0.25 A4:0.25 A#4:0.25 G4:0.25 D#4:0.25 C#4:0.25 D#4:0.25 G4:0.25",
+"G#4:1 B4:1 D#5:1 G#5:1",
+"G#3+G#4+B4+D#5+G#5:4",
+```
+
+---
+
+## 7. ST. PETERSBURG (Prokofiev manner, 96 BPM, 4/4, Bb minor)
+Motif: a dotted Bb-Bb hammer that leaps to a different interval each bar (5th, 7th, octave) and falls back chromatically; the horn answers in haughty rising 4ths; the ostinato is a Bb pedal with E-natural and C-natural wrong notes.
+
+**(a) opening stacked chords, 2 bars**
+```
+"Bb2+F3+Db4+Ab4+C5+E5:2 r:0.5 Bb2+F3+Db4+Ab4+C5+E5:0.5 Bb2+F3+Db4+Ab4+C5+E5:1",
+"Gb2+Db3+Gb3+Bb3+E4+A4:1.5 F2+C3+F3+A3+Eb4+Gb4:0.5 Bb2+F3+Db4+F4+Bb4:2",
+```
+**(b) bass ostinato, 2 bars**
+```
+"Bb1:0.75 Bb1:0.25 F2:0.5 E2:0.5 Bb1:0.75 Bb1:0.25 Db2:0.5 C2:0.5",
+"Bb1:0.75 Bb1:0.25 F2:0.5 Gb2:0.5 F2:0.5 E2:0.5 Eb2:0.5 Db2:0.5",
+```
+**(c) STRIDING THEME, 8 bars**
+```
+"Bb4:0.75 Bb4:0.25 F5:1 Db5:0.75 Db5:0.25 Bb4:1",
+"Gb5:0.75 F5:0.25 A4:1 E5:0.75 Eb5:0.25 Db5:1",
+"Bb4:0.75 Bb4:0.25 Ab5:1 G5:0.75 Gb5:0.25 F5:1",
+"Db5:0.5 C5:0.5 B4:0.5 Bb4:0.5 F4:0.75 F4:0.25 Bb4:1",
+"Bb4:0.75 Bb4:0.25 Bb5:1 A5:0.75 Ab5:0.25 Gb5:1",
+"F5:0.75 E5:0.25 C5:1 E5:0.75 F5:0.25 Gb5:1",
+"F5:0.75 Eb5:0.25 Db5:0.5 C5:0.5 Bb4:0.75 Bb4:0.25 Gb5:1",
+"F5:1 B4:0.5 Bb4:0.5 F4:0.75 F4:0.25 Bb4:1",
+```
+**(d) HORN COUNTERTHEME, 8 bars**
+```
+"F4:2 Bb4:1 F4:1",
+"Db5:1.5 C5:0.5 A4:2",
+"Bb4:1 F4:1 Ab4:2",
+"Gb4:1 F4:1 E4:1 F4:1",
+"Bb4:2 Db5:1 F5:1",
+"E5:1.5 C5:0.5 Gb4:2",
+"F4:1 Bb4:1 Db5:1 Gb5:1",
+"F5:2 B4:1 Bb4:1",
+```
+**(e) harmony per bar (theme)**
+```
+"Bb2+F3+Db4+F4:4",              /* Bbm */
+"A2+E3+C#4+A4:4",               /* A major sideslip (A6 with the melody's F#) */
+"Bb2+F3+Ab3+Db4:4",             /* Bbm7 snap back */
+"F2+Eb3+A3+C4:2 Bb2+F3+Db4+F4:2", /* F7 - Bbm */
+"Gb2+Db3+Bb3+Gb4:4",            /* Gb (VI) */
+"C2+G3+E4+C5:4",                /* C major wrong-note II */
+"Eb2+Bb2+Gb3+C4:4",             /* Ebm6 */
+"F2+A3+Eb4+Gb4:2 Bb2+F3+Db4:2", /* F7b9 - Bbm */
+```
+**(f) LIGHT MIDDLE, 8 bars, flute** (Db major; celesta plays the chord below each bar as a rising-falling 16th arpeggio)
+```
+"r:0.5 F5:0.5 Ab5:0.5 Db6:0.5 C6:1 Ab5:0.5 F5:0.5",
+"Gb5:0.5 Bb5:0.5 Eb6:0.5 Gb6:0.5 F6:1.5 r:0.5",
+"r:0.5 Eb5:0.5 Gb5:0.5 C6:0.5 Bb5:1 Gb5:0.5 Eb5:0.5",
+"F5:0.5 Ab5:0.5 Db6:0.5 F6:0.5 Eb6:1 Db6:0.5 r:0.5",
+"Ab5:0.5 A5:0.5 Bb5:0.5 Db6:0.5 C6:0.5 B5:0.5 Bb5:0.5 Ab5:0.5",
+"Gb5:1 Eb6:0.5 Db6:0.5 C6:0.5 Bb5:0.5 Ab5:1",
+"r:0.5 F5:0.5 Ab5:0.5 Db6:0.5 F6:0.5 Ab6:0.5 F6:0.5 Db6:0.5",
+"Eb6:1 C6:0.5 Ab5:0.5 Db6:2",
+```
+celesta chords: `"Db4+F4+Ab4+C5:4", "Gb3+Bb3+Db4+F4:4", "Eb3+Gb3+Bb3+Db4:4", "Ab3+C4+Eb4+Gb4:4", "Db3+F3+Ab3+Db4:4", "Eb3+Gb3+Bb3+Db4:2 Ab3+C4+Eb4+Gb4:2", "F3+Ab3+Db4+F4:4", "Ab3+C4+Eb4+Gb4:2 Db4+F4+Ab4:2"`
+
+---
+
+## 8. MOSCOW (state anthem, 76 BPM, 4/4, Eb major)
+Motif: a stepwise Eb-F-G climb with a dotted pickup that leaps a noble 4th (Bb to Eb) in bar 3; the refrain carries the tune on top of TTBB block chords, climaxing on Fm7 at bar 6 and closing IV - I6/4 - V7 - I.
+
+**(a) BELL intro, 2 bars**
+```
+"Eb5+Bb5:1 Bb4+Eb5:1 G4+Bb4+Eb5:1 Eb4+Bb4:1",
+"Ab4+Eb5:1 Bb3+F4+Bb4:1 Eb3+G3+Bb3+Eb4:2",
+```
+**(b) VERSE melody, male unison, 8 bars** (tenors as written, basses 8vb)
+```
+"Eb4:1.5 F4:0.5 G4:1 Bb4:0.75 Ab4:0.25",
+"G4:1 F4:1 Eb4:1.5 F4:0.5",
+"G4:1.5 Ab4:0.5 Bb4:1 Eb5:0.75 D5:0.25",
+"C5:1 Bb4:2 Bb4:0.75 C5:0.25",
+"D5:1.5 C5:0.5 Bb4:1 G4:0.75 Ab4:0.25",
+"Bb4:1 C5:1 Ab4:1.5 G4:0.5",
+"F4:1.5 G4:0.5 Ab4:1 Bb4:0.75 G4:0.25",
+"F4:1 Eb4:2 Bb3:0.75 Bb3:0.25",
+```
+**(c) REFRAIN, TTBB, 8 bars** (B2, B1, T2, T1 low-to-high; top note is the tune)
+```
+"Eb3+Bb3+Eb4+G4:2 Ab2+Eb3+C4+Ab4:1 Eb3+G3+Eb4+Bb4:1",
+"Bb2+F3+D4+Bb4:1 Bb2+F3+D4+Ab4:1 Eb3+Bb3+Eb4+G4:1 Bb2+F3+D4+F4:1",
+"Eb3+G3+Bb3+Eb4:1 Bb2+F3+D4+F4:1 C3+Eb3+C4+G4:1 Ab2+Eb3+C4+Ab4:1",
+"Bb2+F3+Bb3+F4:2 Bb2+F3+D4+G4:1 Bb2+Ab3+D4+Bb4:1",
+"C3+G3+Eb4+C5:1 Eb3+G3+Eb4+Bb4:1 Ab2+Eb3+C4+Ab4:1 Eb3+Bb3+Eb4+G4:1",
+"F3+Ab3+Eb4+C5:2 F3+Ab3+Eb4+Bb4:1 Ab2+Eb3+C4+Ab4:1",
+"Ab2+Eb3+C4+Ab4:1 Ab2+Eb3+C4+F4:1 Bb2+G3+Eb4+G4:1 Bb2+G3+Eb4+Bb4:1",
+"Bb2+F3+D4+Ab4:1 Bb2+Ab3+D4+F4:1 Eb3+G3+Bb3+Eb4:2",
+```
+**(d) brass fanfare, 2 bars**
+```
+"Bb3+Eb4+G4+Bb4:0.75 Bb3+Eb4+G4+Bb4:0.25 Bb3+Eb4+G4+Bb4:1 Eb4+G4+Bb4+Eb5:0.75 Eb4+G4+Bb4+Eb5:0.25 Eb4+G4+Bb4+Eb5:1",
+"Ab3+Eb4+Ab4+C5:0.75 Ab3+Eb4+Ab4+C5:0.25 Bb3+F4+Ab4+D5:1 Eb4+G4+Bb4+Eb5:2",
+```
+**(e) verse harmony per bar**
+```
+"Eb2+Bb2+G3+Bb3:4",                 /* Eb */
+"Bb1+F3+Ab3+D4:4",                  /* Bb7 */
+"C2+G2+Eb3+G3:2 Ab1+Eb3+Ab3+C4:2",  /* Cm - Ab */
+"Bb1+F3+Bb3+D4:4",                  /* Bb (half cadence) */
+"G2+D3+Bb3+D4:4",                   /* Gm */
+"C2+G2+Eb3+Bb3:2 Ab1+Eb3+Ab3+C4:2", /* Cm7 - Ab */
+"F2+C3+Ab3+C4:2 Bb1+F3+Ab3+D4:2",   /* Fm - Bb7 */
+"Bb1+F3+Ab3+D4:1 Eb2+Bb2+G3+Bb3:3", /* Bb7 - Eb */
+```
+
+All bars sum to 4 (Vienna: 12); every bar was summed by hand.

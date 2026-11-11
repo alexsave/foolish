@@ -24,6 +24,8 @@ import { ROLE_CLAIM, useRoleMotion, type RoleHandOff } from '../state/useRoleMot
 import { rolesOf, type ShownBoard } from '../state/roleLedger';
 import { animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff, animShouldDropStale } from '@sdk/ts/wasm/bots.ts';
 import { ANIM_NO_MASK } from '@sdk/ts/gen/anim.bots.ts';
+import { cueAudio } from '../audio/cueAudio';
+import { useCuePriority } from '../audio/useCuePriority';
 
 type Card = ViewCard;
 
@@ -81,6 +83,13 @@ interface AnimationContextType {
     // Subset of inFlightFromDeck that's headed to the flipped slot - these
     // are still "in the deck system" so they count toward the badge total.
     inFlightToFlipped: number;
+    /** The stock is held in the air, as a card in flight is, from the first card of the opening deal to
+     *  the sound of it set down on the trump (useAnimationRun). */
+    deckLifted: boolean;
+    /** Each seat's hand as the plan has it NOW (AnimFrame.hand): a hand drops as its cards of an attack, a
+     *  transfer or a cover LEAVE, not as they land, so a seat is never shown holding a card that is in the
+     *  air. Null while nothing is animating (the board's own counts are the truth). */
+    animatedHand: readonly number[] | null;
     /** The flipped trump in the air on its way to a hand (AnimFrame.trump_flight):
      *  it has left its slot, which the stock draws empty. Null otherwise. */
     trumpFlight: Card | null;
@@ -137,7 +146,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // only the state this provider genuinely needs comes from the state context.
     const serverActions = useServerActions();
     const { updateGameState } = serverActions;
-    const { views: games, game_id } = useServer();
+    const { views: games, game_id, view: boardOnScreen } = useServer();
+    // The sounds that could be heard next from this board are loaded first.
+    useCuePriority(boardOnScreen);
     const { user_id } = useAuth();
     const url_game_id = useUrlGameId()?.toLowerCase();
 
@@ -164,6 +175,13 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // pending pass. src/state/optimisticResolve.ts owns the shape and every
     // routine that settles it; this file only holds it and hands it over.
     const optimistic = useRef<OptimisticState>({ motions: [], pass: null }).current;
+
+    // THE FIRST TAP ANYWHERE UNDER THIS PROVIDER LETS THE GAME BE HEARD. A
+    // browser will not start audio nobody asked for, so the engine waits for a
+    // gesture (src/audio/cueAudio.ts); arming it here rather than on the board
+    // means a tap in the lobby or on the dashboard has already paid that toll
+    // by the time the first card is dealt.
+    useEffect(() => { cueAudio.arm(); }, []);
 
     // Expose the local player's live optimistic table cards to the REST load path,
     // so a reconnect resync re-applies them instead of momentarily wiping them
@@ -482,7 +500,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // that is about the game, and the loop is about time.
     const {
         isAnimating, currentAnimation, flightMs, rowMs, heldPiles, arrivingPiles,
-        inFlightFromDeck, inFlightToFlipped, trumpFlight, animatingCards, enqueue, reset: resetRun,
+        inFlightFromDeck, inFlightToFlipped, trumpFlight, deckLifted, animatedHand, animatingCards, enqueue, reset: resetRun,
     } = useAnimationRun<ClientAnimationEvent>({
         board: () => currentGameRef.current,
         placesOf: (step) => flightPlaces(step.from_location, step.to_location, step.seat),
@@ -548,10 +566,17 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 const cleared = animRolesGoodsCleared(shown.roles, stepGoodMask(step));
                 if (cleared) roles.syncRoles(cleared, { tableOpen: true });
             }
-            // AND A TRANSFER HANDS THE SHIELD OVER WITH ITS CARD. The kernel
-            // tells a pass from an attack, because on the wire they are the same
-            // event and only the rules say which is which; the web names the
-            // seats that laid cards and asks.
+        },
+        // A TRANSFER HANDS THE SHIELD OVER WITH ITS "SHFFF", not with its card
+        // (Alex: the badges cannot slide the card on, so their change is the
+        // slide). The kernel tells a pass from an attack, because on the wire
+        // they are the same event and only the rules say which is which; the
+        // plan has this cue for a transfer alone, so it is called for nothing
+        // else, and a bout's end moves its marks at the closing beat as before.
+        onSlid: (step) => {
+            const roles = roleMotionRef.current;
+            const shown = roles.read();
+            if (!shown) return;
             if (step.type === 'attack_pass' && step.seat !== undefined) {
                 const final = sequenceFinalRef.current;
                 const handOff = final
@@ -672,6 +697,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 isCover ? move.attack_cards : undefined, move.kind === 'pass' ? wire : undefined);
             enqueue([{
                 type: toHand ? 'pickup' : isCover ? 'cover' : 'attack_pass',
+                // My own transfer is heard as one before the server confirms it.
+                msg: move.kind === 'pass' ? V.EVW_MSG_PASSED : undefined,
                 cards,
                 target_cards: isCover ? move.attack_cards : undefined,
                 from_location: from,
@@ -820,6 +847,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             arrivingPiles,
             inFlightFromDeck,
             inFlightToFlipped,
+            deckLifted,
+            animatedHand,
             trumpFlight,
             getCardAnimationState,
             shownRoles: roleMotion.shown,

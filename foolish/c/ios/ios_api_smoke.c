@@ -20,6 +20,7 @@
 #include "anim_plan.h"     // AnimPlan: the plan, read where it lies
 #include "hand_layout.h"   // HandMetrics: the hand's shape, crossing as its structs
 #include "ask.h"           // ask_decode: what the server reads of the body the app posts
+#include "cue_voice.h"     // CueTakeRow, CueStrike: what a cue plays, read where it lies
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1742,6 +1743,168 @@ static int board_rules_check(void) {
         || fio_shown_ledger_allows(FIO_CLAIM_HAND_OFF, 1) != 1) {
         printf("FAIL ledger ownership\n"); return 1;
     }
+    // The two sounds that are not steps (anim_role_cue, anim_finish_cue): the
+    // scalars cross in the order the header gives them.
+    if (fio_role_cue(1, 0, 0x1, 1, 0, 0x5) != ANIM_CUE_GOOD
+        || fio_role_cue(1, 0, 0x5, 1, 0, 0x1) != ANIM_CUE_NONE
+        || fio_role_cue(1, 0, 0x1, 2, 0, 0x1) != ANIM_CUE_HAND_OFF
+        || fio_role_cue(1, 0, 0x1, -1, -1, 0x1) != ANIM_CUE_NONE
+        || fio_finish_cue(NULL, 0, -1, 3, 0) != ANIM_CUE_NONE
+        || fio_finish_cue((const uint8_t[]){ 0, 1 }, 2, 2, 3, 2) != ANIM_CUE_FOOL
+        || fio_finish_cue((const uint8_t[]){ 0, 1 }, 2, 2, 3, 0) != ANIM_CUE_FINISH
+        || fio_finish_cue((const uint8_t[]){ 0, 1 }, 2, 2, 3, -1) != ANIM_CUE_FINISH
+        // a repetition draw: seat 0 went out, seats 1 and 2 are both fools
+        || fio_finish_cue((const uint8_t[]){ 0 }, 1, 1, 3, 2) != ANIM_CUE_FOOL
+        || fio_finish_cue((const uint8_t[]){ 0 }, 1, 1, 3, 0) != ANIM_CUE_FINISH) {
+        printf("FAIL sound cues\n"); return 1;
+    }
+    // What could sound next: a lobby can only deal, and the scalars cross in
+    // AnimCueAsk's order (an uncovered attack is n_battles 1, n_covered 0).
+    if (fio_cues_next(GAME_STATUS_WAITING, 0, 2, 0, 0, 0, 0) != ((1u << ANIM_CUE_DEAL) | (1u << ANIM_CUE_DEAL_LAND) | (1u << ANIM_CUE_TURN) | (1u << ANIM_CUE_FLIP))
+        || !(fio_cues_next(GAME_STATUS_PLAYING, 0, 2, 1, 0, 1, 20) & (1u << ANIM_CUE_COVER))
+        || (fio_cues_next(GAME_STATUS_PLAYING, 0, 2, 1, 1, 1, 20) & (1u << ANIM_CUE_COVER))
+        || (fio_cues_next(GAME_STATUS_PLAYING, -1, 2, 1, 0, 0, 0) & (1u << ANIM_CUE_FOOL))
+        || !(fio_cues_next(GAME_STATUS_PLAYING, 1, 2, 1, 0, 0, 0) & (1u << ANIM_CUE_FOOL))) {
+        printf("FAIL next cues\n"); return 1;
+    }
+    // How loud a dealt card lands at a seat (anim_seat_gain_pm): one's own at
+    // full, at four seats a neighbour -4.7 dB and the seat across -6.8 dB, a
+    // spectator hears every seat at full.
+    if (fio_seat_gain_pm(0, 0, 4) != 1000 || fio_seat_gain_pm(0, 1, 4) != 585
+        || fio_seat_gain_pm(0, 2, 4) != 455 || fio_seat_gain_pm(0, 3, 4) != 585
+        || fio_seat_gain_pm(-1, 2, 4) != 1000) {
+        printf("FAIL seat gain %d %d %d\n", fio_seat_gain_pm(0, 1, 4), fio_seat_gain_pm(0, 2, 4), fio_seat_gain_pm(-1, 2, 4));
+        return 1;
+    }
+    // What a cue plays: soundgen's table as this build links it, and the
+    // strike rules over it (cue_voice.h; their cases are anim_plan_test's).
+    {
+        const int n = fio_cue_n_takes();
+        int voiced = 0;
+        for (int i = 0; i < n; i++) {
+            const CueTakeRow *t = fio_cue_take(i);
+            if (!t || t->name_len == 0 || t->name_len >= CUE_NAME_MAX || strlen(t->name) != t->name_len
+                || t->cue == ANIM_CUE_NONE || t->cue >= ANIM_N_CUES || t->cue == ANIM_CUE_REVERT
+                || t->rate <= 0 || t->n_samples <= 0) {
+                printf("FAIL cue take %d\n", i); return 1;
+            }
+            voiced |= 1 << t->cue;
+        }
+        // Every cue the kernel can make has a sound, but REVERT, which is
+        // another's backwards.
+        const int want = ((1 << ANIM_N_CUES) - 1) & ~(1 << ANIM_CUE_NONE) & ~(1 << ANIM_CUE_REVERT);
+        if (n < 100 || voiced != want || fio_cue_take(n) || fio_cue_take(-1)) {
+            printf("FAIL cue table: %d takes, cues 0x%x\n", n, voiced); return 1;
+        }
+        fio_cue_seed(7);
+        // A deal with no time before it plays a TIGHT take, whole, from now (the lift has ONE take, so
+        // with no time it plays that, late); with a second to go an ordinary one, its anchor before
+        // the moment.
+        const CueStrike *lone = fio_cue_strike(ANIM_CUE_LIFT, 0, 1, 0, 1000);
+        const CueTakeRow *tlone = lone->take >= 0 ? fio_cue_take(lone->take) : NULL;
+        if (!tlone || tlone->role != CUE_ROLE_MAIN || lone->start_us != 0) {
+            printf("FAIL cue strike lift now\n"); return 1;
+        }
+        const CueStrike *now = fio_cue_strike(ANIM_CUE_DEAL, 0, 1, 0, 1000);
+        const CueTakeRow *tn = now->take >= 0 ? fio_cue_take(now->take) : NULL;
+        if (!tn || tn->role != CUE_ROLE_TIGHT || now->start_us != 0 || now->prelude != -1 || now->gain_pm != 1000) {
+            printf("FAIL cue strike now\n"); return 1;
+        }
+        // THE FIRST CARD OF A DEAL OPENS ITS RUN: with a second to go it still plays a tight take, its
+        // anchor on the moment (cue_table_strike_opening); and the pass's slide is heard after its moment.
+        const CueStrike *op = cue_table_strike_opening(ANIM_CUE_DEAL, 1000000, 1, 0, 1000);
+        const CueTakeRow *top = op->take >= 0 ? fio_cue_take(op->take) : NULL;
+        if (!top || top->role != CUE_ROLE_TIGHT || op->start_us != 1000000 - top->anchor_us
+            || cue_table_late_us(ANIM_CUE_PASS) <= 0 || cue_table_late_us(ANIM_CUE_LIFT) != 0) {
+            printf("FAIL cue strike opening / late\n"); return 1;
+        }
+        const CueStrike *later = fio_cue_strike(ANIM_CUE_LIFT, 1000000, 1, 0, 1000);
+        const CueTakeRow *tl = later->take >= 0 ? fio_cue_take(later->take) : NULL;
+        if (!tl || tl->role != CUE_ROLE_MAIN || later->start_us != 1000000 - tl->anchor_us) {
+            printf("FAIL cue strike later\n"); return 1;
+        }
+        // A sweep of ten cards is gathered in four strokes first; a refused
+        // attack is PLACE backwards, with none; a dealt card at a far seat is
+        // struck at the seat's level; a cue with nothing to undo is silent.
+        const CueStrike *sw = fio_cue_strike(ANIM_CUE_SWEEP, 5000000, 10, 0, 1000);
+        const CueTakeRow *tp = sw->prelude >= 0 ? fio_cue_take(sw->prelude) : NULL;
+        if (!tp || tp->cue != ANIM_CUE_SWEEP || tp->role != CUE_ROLE_PRELUDE || tp->level != 4
+            || sw->prelude_start_us != 5000000 - tp->anchor_us) {
+            printf("FAIL cue strike sweep\n"); return 1;
+        }
+        const CueStrike *rv = fio_cue_strike(ANIM_CUE_REVERT, 0, 1, ANIM_CUE_PLACE, 1000);
+        const CueTakeRow *tr = rv->take >= 0 ? fio_cue_take(rv->take) : NULL;
+        if (!tr || tr->cue != ANIM_CUE_PLACE || !rv->backwards || rv->prelude != -1) {
+            printf("FAIL cue strike revert\n"); return 1;
+        }
+        if (((const CueStrike *)fio_cue_strike(ANIM_CUE_DEAL_LAND, 0, 1, 0, fio_seat_gain_pm(0, 2, 4)))->gain_pm != 455
+            || ((const CueStrike *)fio_cue_strike(ANIM_CUE_REVERT, 0, 1, ANIM_CUE_NONE, 1000))->take != -1) {
+            printf("FAIL cue strike gain / silent revert\n"); return 1;
+        }
+        // THE TUNER'S TABLE (cue_table_load): the linked table as bytes, one row moved and
+        // one mix changed, is taken in its place; bytes that are not such a table are
+        // refused and change nothing; the linked table's own bytes put it back.
+        {
+            const int nb = 8 + n * (int)sizeof(CueTakeRow) + ANIM_N_CUES * (int)sizeof(CueMix);
+            unsigned char *orig = malloc((size_t)nb), *b = malloc((size_t)nb);
+            const uint32_t magic = CUE_TABLE_MAGIC;
+            const int32_t rows = n;
+            memcpy(orig, &magic, 4);
+            memcpy(orig + 4, &rows, 4);
+            for (int i = 0; i < n; i++) memcpy(orig + 8 + i * (int)sizeof(CueTakeRow), fio_cue_take(i), sizeof(CueTakeRow));
+            unsigned char *mixes = orig + 8 + n * (int)sizeof(CueTakeRow);
+            memset(mixes, 0, ANIM_N_CUES * sizeof(CueMix));
+            for (int k = 1; k < ANIM_N_CUES; k++) memcpy(mixes + k * (int)sizeof(CueMix), cue_table_mix(k), sizeof(CueMix));
+            const int32_t anchor0 = ((const CueTakeRow *)fio_cue_take(0))->anchor_us, gain_lift = cue_table_mix(ANIM_CUE_LIFT)->gain_pm;
+            memcpy(b, orig, (size_t)nb);
+            ((CueTakeRow *)(void *)(b + 8))->anchor_us = anchor0 + 1234;
+            ((CueMix *)(void *)(b + 8 + n * (int)sizeof(CueTakeRow) + ANIM_CUE_LIFT * (int)sizeof(CueMix)))->gain_pm = 777;
+            if (cue_table_load(b, nb) != 0 || fio_cue_n_takes() != n
+                || ((const CueTakeRow *)fio_cue_take(0))->anchor_us != anchor0 + 1234
+                || cue_table_mix(ANIM_CUE_LIFT)->gain_pm != 777
+                || ((const CueStrike *)fio_cue_strike(ANIM_CUE_LIFT, 1000000, 1, 0, 1000))->gain_pm != 777) {
+                printf("FAIL cue table load\n"); return 1;
+            }
+            // Refused: a wrong magic, a byte short or over, a row of no cue, and a name
+            // length past the field on the LAST row, whose next byte (the empty mix row
+            // of NONE) is 0, so only the length check stands between it and a read
+            // outside the row.
+            unsigned char *bad = calloc((size_t)nb + 1, 1);
+            const int last = 8 + (n - 1) * (int)sizeof(CueTakeRow);
+            const struct { int at; unsigned char v; int len; const char *what; } cases[] = {
+                { 0, 'X', nb, "magic" },
+                { -1, 0, nb - 1, "short length" },
+                { -1, 0, nb + 1, "long length" },
+                { 8 + 12, ANIM_CUE_NONE, nb, "cue" },
+                { last + 15, CUE_NAME_MAX, nb, "name length" },
+            };
+            for (unsigned c = 0; c < sizeof cases / sizeof cases[0]; c++) {
+                memcpy(bad, orig, (size_t)nb);
+                bad[nb] = 0;
+                if (cases[c].at >= 0) bad[cases[c].at] = cases[c].v;
+                if (cue_table_load(bad, cases[c].len) != -1 || ((const CueTakeRow *)fio_cue_take(0))->anchor_us != anchor0 + 1234) {
+                    printf("FAIL cue table load took a bad %s\n", cases[c].what); return 1;
+                }
+            }
+            if (cue_table_load(orig, nb) != 0 || ((const CueTakeRow *)fio_cue_take(0))->anchor_us != anchor0
+                || cue_table_mix(ANIM_CUE_LIFT)->gain_pm != gain_lift) {
+                printf("FAIL cue table load back\n"); return 1;
+            }
+            free(bad); free(b); free(orig);
+        }
+        // The output mix: a take starts on its frame, at its gain.
+        void *mx = fio_mix_new(48000);
+        const float take[3] = { 1, 1, 1 };
+        float blk[8];
+        if (fio_mix_add(mx, take, 3, 2, 0.5f) != 0 || fio_mix_live(mx) != 1) { printf("FAIL mix add\n"); return 1; }
+        fio_mix_render(mx, blk, 8, 0);
+        if (blk[1] != 0 || blk[2] != 0.5f || blk[4] != 0.5f || blk[5] != 0 || fio_mix_live(mx) != 0 || fio_mix_now(mx) != 8
+            || fio_mix_frame_at(mx, 123, 0) != 8) {
+            printf("FAIL mix render\n"); return 1;
+        }
+        fio_mix_clear(mx);
+        fio_mix_free(mx);
+    }
     // The end screen clears the board's chrome (anim_board_chrome).
     if (fio_board_chrome(1, 1, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) != FIO_CHROME_RESULTS
         || (fio_board_chrome(0, 0, 0, FIO_CHROME_RULE_CLEAR_ON_RESULTS) & FIO_CHROME_HAND) == 0
@@ -1971,16 +2134,16 @@ static int board_rules_check(void) {
 static int plan_wire_check(void) {
     //  ver, np, n_events, final deck, final discard, final hands
     //  then per event: type seat from to n_cards n_ids has_counts deck discard
-    //                  hand[np] ids... n_battles [2 x n_battles]
+    //                  hand[np] ids... n_battles [2 x n_battles] msg
     const unsigned char in[] = {
         FIO_PLAN_VERSION, 2, 2, 0, 20, FIO_PLAN_NO_FLIP, 5, 9,
         // PICKUP seat 1, 4 table cards -> hand. Its board: deck 1, hands [3,9],
         // and NO row on the wire at all (0xFE) - which is the case a pickup
         // that leads its stream really is.
-        6, 1, 2, 1, 4, 4, 1, 1, 20, 33, 3, 9, 2, 14, 27, 40, FIO_PRETABLE_NONE,
+        6, 1, 2, 1, 4, 4, 1, 1, 20, 33, 3, 9, 2, 14, 27, 40, FIO_PRETABLE_NONE, 0,
         // REFILL seat 0, 2 cards off a deck of 1. Its board: deck 0, hands
         // [5,9], table empty (0 battles - the bout is over).
-        9, 0, 0, 1, 2, 2, 1, 0, 20, FIO_PLAN_NO_FLIP, 5, 9, 6, 33, 0,
+        9, 0, 0, 1, 2, 2, 1, 0, 20, FIO_PLAN_NO_FLIP, 5, 9, 6, 33, 0, 0,
     };
     // A REPLAYED PASS, and the fixture whose ROW BYTES ARE ACTUALLY READ. Card
     // 3 is the pile already down; card 17 is the card being passed. Declared up
@@ -1996,7 +2159,7 @@ static int plan_wire_check(void) {
         // with BOTH battles on it, uncovered, which is what the kernel
         // committed and what the arrived view shows.
         4, 0, 1, 2, 1, 1, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6, 17,
-        2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
+        2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE, 2,
     };
     // THE PLAN IS THE STRUCT (anim_plan.h AnimPlan), read where it lies. This
     // used to walk a packed block of the same numbers by offset - the same
@@ -2125,6 +2288,11 @@ static int plan_wire_check(void) {
         if (fio_anim_plan(pass_in, (int)sizeof pass_in) != FIO_EOK || pl->n_steps != 1) {
             printf("FAIL pass plan\n"); return 1;
         }
+        // …AND IT IS HEARD AS A TRANSFER: its msg byte is EVW_MSG_PASSED, so it
+        // slides on after it lands (ANIM_CUE_PASS), where an attack would not.
+        int heard_pass = 0;
+        for (int k = 0; k < pl->n_cues; k++) heard_pass |= pl->cues[k].kind == ANIM_CUE_PASS;
+        if (!heard_pass) { printf("FAIL a transfer on the plan wire made no ANIM_CUE_PASS\n"); return 1; }
         // ONE cell, not two, and it is the pile that was already there.
         if (pl->pre.n_battles != 1) {
             printf("FAIL pass pre row %d cells (the pre-bump: the arrived row is 2)\n",
@@ -2164,7 +2332,7 @@ static int plan_wire_check(void) {
         const unsigned char cover_in[] = {
             FIO_PLAN_VERSION, 2, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 5,
             5, 1, 1, 2, 1, 1, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 5, 17,
-            1, 3, 17,
+            1, 3, 17, 0,
         };
         if (fio_anim_plan(cover_in, (int)sizeof cover_in) != FIO_EOK || pl->n_steps != 1) {
             printf("FAIL cover plan\n"); return 1;
@@ -2181,10 +2349,13 @@ static int plan_wire_check(void) {
         const unsigned char masked_in[] = {
             FIO_PLAN_VERSION, 2, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6,
             4, 0, 1, 2, 1, 0, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6,
-            2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
+            2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE, 1,
         };
         if (fio_anim_plan(masked_in, (int)sizeof masked_in) != FIO_EOK || pl->n_steps != 1) {
             printf("FAIL masked plan\n"); return 1;
+        }
+        for (int k = 0; k < pl->n_cues; k++) {
+            if (pl->cues[k].kind == ANIM_CUE_PASS) { printf("FAIL an attack (EVW_MSG_ATTACKED) slid on like a transfer\n"); return 1; }
         }
         if (pl->pre.n_battles != 0) {
             printf("FAIL masked pre row %d (a row was invented for a card nobody named)\n",

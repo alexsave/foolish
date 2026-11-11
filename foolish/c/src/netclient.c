@@ -69,7 +69,6 @@ static uint32_t g_quiet_mix;            // the quiet jitter's running state
 // The server's last message, one whole frame, parsed in place (a pushed message's
 // payload is read where it lies) and good until the next message is fed.
 static uint8_t  g_mq_in[NC_MQ_IN_MAX];
-static int      g_mq_in_len;
 enum { MQ_SHUT = 0, MQ_OPENED, MQ_CONNECTING, MQ_LIVE };   // closed; open; HELLO sent; READY heard
 
 // What the last feed changed. A payload is in g_mq_in (a pushed message, where
@@ -136,7 +135,6 @@ void nc_reset(void) {
     g_next_pid = 0;
     g_reconnect_ms = 0;
     g_forced_at = 0;
-    g_mq_in_len = 0;
     g_n_events = 0;
     g_session_told = g_session_gen;
 }
@@ -1279,7 +1277,6 @@ void nc_stream_opened(int64_t now_ms) {
     g_dead = 0;      // leaves it, and g_open == 0 hides it until the next open)
     g_last_out = now_ms;
     g_n_unsubs = 0;
-    g_mq_in_len = 0;
     for (int i = 0; i < NC_SUBS_MAX; i++)
         if (g_subs[i].state != SUB_FREE) { g_subs[i].state = SUB_WANT; g_subs[i].retry_at = 0; }
 }
@@ -1309,7 +1306,6 @@ int nc_stream_closed(int64_t now_ms) {
     g_open = 0;
     g_mq = MQ_SHUT;
     g_n_unsubs = 0;
-    g_mq_in_len = 0;
     wire_lost(now_ms);
     int wait = g_reconnect_ms ? g_reconnect_ms : NC_RETRY_FIRST_MS;
     g_reconnect_ms = wait * 2 > NC_RETRY_MAX_MS ? NC_RETRY_MAX_MS : wait * 2;
@@ -1686,13 +1682,11 @@ int nc_stream_in(const uint8_t *frame, int len, int is_text, int64_t now_ms) {
     events_begin();
     // One WebSocket message is one frame, and a frame is binary: a text message is not the server's.
     if (is_text || len < 2 || !frame || len > NC_MQ_IN_MAX) {
-        g_mq_in_len = 0;
         event_add(NC_EV_BAD);
         return events_end();
     }
     // The last feed's events (and their payloads, where they lay) are let go now.
     memcpy(g_mq_in, frame, (size_t)len);
-    g_mq_in_len = len;
     take_frame(g_mq_in, len, now_ms);
     return events_end();
 }

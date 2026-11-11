@@ -923,6 +923,8 @@ public struct MessageTableView: View {
             #endif
         }
         .onChange(of: controller.view) { v in
+            // The sounds the next move could make load first (fio_cues_next).
+            if let v { CuePlayer.shared.want(v, mySeat: controller.mySeat) }
             let sequenced = flyBoutEndToDiscard(to: v)
             // Round 16: a move with no sequence of its own still moves the
             // roles - a PASS hands the shield along mid-bout, and that is the
@@ -962,6 +964,10 @@ public struct MessageTableView: View {
             // .onDisappear below, which also flushes any latched arrival a
             // teardown would otherwise strand behind the failsafe.
             controller.setBoardWatching(true)
+            // THE SOUND ENGINE lives as long as a board is up (CuePlayer: an
+            // extension's memory is tight), balanced by .onDisappear below.
+            CuePlayer.shared.attach()
+            if let v = controller.view { CuePlayer.shared.want(v, mySeat: controller.mySeat) }
             // note 39: defensive reset — see `showResults`'s doc.
             showResults = false
             if !controller.ready { await controller.begin() }
@@ -986,7 +992,10 @@ public struct MessageTableView: View {
             await autoPlayIfAsked()
             #endif
         }
-        .onDisappear { controller.setBoardWatching(false) }
+        .onDisappear {
+            controller.setBoardWatching(false)
+            CuePlayer.shared.detach()
+        }
         // NOTE 6: an arrival made the staged bubble stale - overwrite it with
         // the Undo's NOTHING bubble (`restageNothingAfterArrival`). The mount
         // `.task` above pays a debt raised before this board existed.

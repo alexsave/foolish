@@ -628,3 +628,30 @@ int wasm_roster_trailer_read(int len) {
     memcpy(g_roster_trailer.gid, gid, (size_t)gid_len);
     return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
 }
+
+// ---------- what a cue plays (cue_voice.h) ----------------------------------
+// The resident voice over soundgen's table for this build (cue_voice_table.c),
+// one line each, the same C iOS exports as fio_cue_*: the web's engine
+// (src/audio/cueAudio.ts) only fetches the files these name and starts them
+// where a strike says. The two pointers are a CueTakeRow and a CueStrike, read
+// through their generated readers (sdk/ts/gen/view_layout.bots.ts); the
+// strike's is static storage, good until the next call. wasm_cue_mix is the
+// web's alone, for the /sounds workbench, which shows a cue's level and gives
+// a cue with strokes a button per stroke count.
+#include "cue_voice.h"
+int wasm_cue_n_takes(void) { return cue_table_n_takes(); }
+// io = [a tuner table, `len` bytes] (cue_voice.h "THE TUNER'S TABLE"); 0, or -1 when refused.
+int wasm_cue_table_load(int len) {
+    return len < 0 || len > (int)wasm_io_cap() ? -1 : cue_table_load(wasm_io_ptr(), len);
+}
+const CueTakeRow *wasm_cue_take(int i) { return cue_table_take(i); }
+const CueMix *wasm_cue_mix(int kind) { return cue_table_mix(kind); }
+int wasm_cue_lead_us(int kind) { return cue_table_lead_us(kind); }
+int wasm_cue_late_us(int kind) { return cue_table_late_us(kind); }
+void wasm_cue_seed(uint32_t seed) { cue_table_seed(seed); }
+const CueStrike *wasm_cue_strike_opening(int kind, int lead_us, int n_cards, int undoes, int gain_pm) {
+    return cue_table_strike_opening(kind, lead_us, n_cards, undoes, gain_pm);
+}
+const CueStrike *wasm_cue_strike(int kind, int lead_us, int n_cards, int undoes, int gain_pm) {
+    return cue_table_strike(kind, lead_us, n_cards, undoes, gain_pm);
+}

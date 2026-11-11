@@ -189,6 +189,177 @@ int anim_stream_ms(const int *types, const int *seats, int n) {
     return beat_clock(types, seats, n, 0);
 }
 
+// ---- sound cues -----------------------------------------------------------
+//
+// WHAT EACH STEP SOUNDS LIKE, read off the plan's own steps once the clock is
+// on them (anim_plan.h, the sound cues section). Everything here reads a
+// step's type, its card count, its place in its beat and the steps BEFORE it -
+// never a step after it - which is what lets a host append to a run in flight
+// and find every cue it already scheduled exactly where it was.
+
+_Static_assert(ANIM_MAX_STEPS <= 256 && ANIM_SOUND_MAX_HITS <= 255 && ANIM_N_CUES <= 256,
+               "an AnimCue's step, its hits and its kind are one byte each");
+
+// At most two a step, so ANIM_MAX_CUES cannot be passed; the guard is for the
+// reader, and so a third cue added to some step one day is dropped rather than
+// written past the array.
+static void cue_push(AnimPlan *p, int kind, int step, int at_ms, int hits, int n_cards) {
+    if (p->n_cues >= ANIM_MAX_CUES) return;
+    AnimCue *c = &p->cues[p->n_cues++];
+    c->at_ms = at_ms;
+    c->kind = (uint8_t)kind;
+    c->step = (uint8_t)step;
+    c->hits = (uint8_t)hits;
+    c->n_cards = (uint8_t)(n_cards > 255 ? 255 : n_cards);
+    c->undoes = ANIM_CUE_NONE;
+}
+
+// WHICH MOVE A REVERT UNDOES, as the cue that move made (AnimCue.undoes).
+// Cards going back to the TABLE were taken off it: a pickup, and the direction
+// says so on its own. Cards going home to a hand were laid, and the stream says
+// how: the nearest step before the revert that laid one of them was a cover or
+// it was not. With no such step in the stream a card laid is all that is known.
+static int revert_undoes(const AnimPlanEvent *events, int i) {
+    const AnimPlanEvent *rv = &events[i];
+    if (rv->to == ANIM_LOC_TABLE) return ANIM_CUE_PICKUP;
+    for (int j = i - 1; j >= 0; j--) {
+        const AnimPlanEvent *ev = &events[j];
+        if (ev->type != ANIM_EVT_COVER && ev->type != ANIM_EVT_ATTACK_PASS) continue;
+        if (ev->mask_cards || rv->mask_cards || !ev->cards || !rv->cards) continue;
+        for (int a = 0; a < rv->n_cards; a++)
+            for (int b = 0; b < ev->n_cards; b++)
+                if (rv->cards[a].suit == ev->cards[b].suit && rv->cards[a].value == ev->cards[b].value)
+                    return ev->type == ANIM_EVT_COVER ? ANIM_CUE_COVER : ANIM_CUE_PLACE;
+    }
+    return ANIM_CUE_PLACE;
+}
+
+// A STRIKE A CARD, for the sounds that are struck that way: `n` cards whose
+// beat has already struck `before` times. THE ONE PLACE the two numbers of the
+// spread are applied - the strikes of a beat start where the last ones left
+// off, ANIM_SOUND_STAGGER_MS apart, and a beat never strikes more than
+// ANIM_SOUND_MAX_HITS times, so cards past that are in the cue's n_cards and
+// are not heard one by one.
+static void cue_strikes(AnimPlan *p, int kind, int step, int at_ms, int before, int n) {
+    const int room = ANIM_SOUND_MAX_HITS - before;
+    if (n < 1 || room < 1) return;
+    cue_push(p, kind, step, at_ms + before * ANIM_SOUND_STAGGER_MS, n < room ? n : room, n);
+}
+
+// Does a step of this type move a card at all? The gate on "the move that put
+// a seat out": the same two lists anim_build_beats reads for ANIM_BEAT_MOVED
+// (is_placement and moves_cards, below), asked of a type because a plan holds
+// no card identities to ask of.
+static int is_placement(int type);
+static int moves_cards(int type);
+
+// WHEN A SEAT'S OUT IS STRUCK: AS THE SEAT RELEASES ITS FINAL HAND (Alex), which is when its
+// last card sets off, not when it lands. An OUT notice exists only for a seat that really is out
+// (a seat that is refilled never gets one: it is dealt cards, or the deck is not dealt to it), so
+// the sound is struck the instant the seat's own last move opens: the nearest step before the
+// notice that this seat made and that took a card out of its hand.
+//
+// A notice with no such step (a stream that leads with one, or whose last move is not in the
+// stream) rides the nearest step before it that moved a card, as it did: its landing is when the
+// badge has collapsed, a short lag on so it trails the cards' own strikes. NOT the out's own
+// start_ms, which looks like the same number and is not: an out behind a bout-ending cover opens
+// after the cover's HOLD, a second and a half after the badge went. And with nothing in front of
+// it at all it is struck where it stands.
+static int out_cue_ms(const AnimPlanStep *steps, const AnimPlanEvent *events, int i) {
+    for (int k = i - 1; k >= 0 && events; k--) {
+        if (steps[k].type == ANIM_EVT_OUT || events[k].seat != events[i].seat) continue;
+        if (is_placement(steps[k].type) || steps[k].type == ANIM_EVT_COVER) return steps[k].start_ms;
+    }
+    int j = i - 1;
+    while (j >= 0 && steps[j].type == ANIM_EVT_OUT) j--;
+    if (j >= 0 && (is_placement(steps[j].type) || moves_cards(steps[j].type)))
+        return steps[j].start_ms + steps[j].duration_ms + ANIM_SOUND_OUT_LAG_MS;
+    return steps[i].start_ms;
+}
+
+static void build_cues(AnimPlan *p, const AnimPlanEvent *events) {
+    p->n_cues = 0;
+    for (int i = 0; i < p->n_steps; i++) {
+        const AnimPlanStep *st = &p->steps[i];
+        const int n = st->n_cards;
+        const int land = st->start_ms + st->duration_ms;
+        switch (st->type) {
+            case ANIM_EVT_DEAL:
+            case ANIM_EVT_REFILL:
+                // Heard at the stock, a card at a time. A refill's cards fly
+                // as one flight and still leave the pile one after another.
+                // ...a refill is ONE pack (a seat's whole draw leaves together) and sounds once,
+                // as it lands does; each card of the opening deal is a step of its own.
+                if (st->type == ANIM_EVT_REFILL) { if (n > 0) cue_push(p, ANIM_CUE_DEAL, i, st->start_ms, 1, n); }
+                else cue_strikes(p, ANIM_CUE_DEAL, i, st->start_ms, 0, n);
+                // ...and land at the seat: a dealt card a strike each, as PLACE does, but a REFILL is
+                // a seat's whole draw landing together and sounds ONCE (Alex: not "brrrrt", the
+                // card landing on the cloth a bunch of times, for every card of it).
+                if (st->type == ANIM_EVT_REFILL) { if (n > 0) cue_push(p, ANIM_CUE_DEAL_LAND, i, land, 1, n); }
+                else cue_strikes(p, ANIM_CUE_DEAL_LAND, i, land, 0, n);
+                break;
+            case ANIM_EVT_FLIPPED:
+                // Turned off the stock as it leaves, face up as it lands.
+                if (n > 0) {
+                    cue_push(p, ANIM_CUE_TURN, i, st->start_ms, 1, n);
+                    cue_push(p, ANIM_CUE_FLIP, i, land, 1, n);
+                }
+                break;
+            case ANIM_EVT_ATTACK_PASS:
+            case ANIM_EVT_COVER: {
+                if (n <= 0) break;
+                // ONE LIFT A BEAT: a defender covering two attacks takes both
+                // cards out of the hand in one gesture. It counts the cards of
+                // the step that opens the beat, never the beat's, so a cover
+                // appended to a beat in flight does not rewrite it.
+                if (i == st->beat_first) cue_push(p, ANIM_CUE_LIFT, i, st->start_ms, 1, n);
+                // THE LANDING IS STRUCK ONCE A CARD, spread from the landing
+                // on, and the spread runs across the whole BEAT: the second
+                // cover of a two-cover move is the beat's second strike, not a
+                // second first one in the same sample.
+                int before = 0;
+                for (int k = st->beat_first; k < i; k++) before += p->steps[k].n_cards;
+                cue_strikes(p, st->type == ANIM_EVT_COVER ? ANIM_CUE_COVER : ANIM_CUE_PLACE, i,
+                            land, before, n);
+                // A TRANSFER lands like an attack and is then slid on to the
+                // next defender: one slide a step, from its landing.
+                if (st->type == ANIM_EVT_ATTACK_PASS && events[i].passed)
+                    cue_push(p, ANIM_CUE_PASS, i, land, 1, n);
+                break;
+            }
+            case ANIM_EVT_PICKUP:
+                // The table lifted as the flight opens, and the cards slid into
+                // the hand as they land.
+                if (n > 0) {
+                    cue_push(p, ANIM_CUE_PICKUP, i, st->start_ms, 1, n);
+                    cue_push(p, ANIM_CUE_INTO_HAND, i, land, 1, n);
+                }
+                break;
+            case ANIM_EVT_DISCARD:
+            case ANIM_EVT_CARDS_TO_TRASH:
+                if (n > 0) {
+                    cue_push(p, ANIM_CUE_SWEEP, i, st->start_ms, 1, n);
+                    cue_push(p, ANIM_CUE_PILE, i, land, 1, n);
+                }
+                break;
+            case ANIM_EVT_OUT:
+                cue_push(p, ANIM_CUE_OUT, i, out_cue_ms(p->steps, events, i), 1, 0);
+                break;
+            case ANIM_EVT_REVERT:
+                // Heard as it sets off, like the move it undoes heard backwards.
+                if (n > 0 && p->n_cues < ANIM_MAX_CUES) {
+                    cue_push(p, ANIM_CUE_REVERT, i, st->start_ms, 1, n);
+                    p->cues[p->n_cues - 1].undoes = (uint8_t)revert_undoes(events, i);
+                }
+                break;
+            default:
+                // A magic transition and a defender move carry no card. What
+                // they mean to the marks is anim_role_cue's to sound.
+                break;
+        }
+    }
+}
+
 // ---- plan building --------------------------------------------------------
 
 // The per-event count delta, POSITIVE direction (forward in time):
@@ -284,6 +455,7 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     out->n_steps = n_events;
     out->total_ms = 0;
     out->n_veil = 0;
+    out->n_cues = 0;
 
     // The freeze. ONE undo off the first event's own board, because a refill
     // hands out cards the deck count never held (the flipped trump) and undoing
@@ -473,6 +645,9 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     // ANIM_BEAT_HOLDS when a discard or a trash follows, so the last beat of a
     // plan cannot be the one holding; this is the belt to that braces).
     out->total_ms = clock_ms;
+    // …AND WHAT IT SOUNDS LIKE, last, because a cue is read off a step's clock
+    // and its card count and both are on the steps only now.
+    build_cues(out, events);
     return ANIM_EOK;
 }
 
@@ -501,6 +676,7 @@ int anim_plan_ask(const AnimPlanAsk *ask, AnimPlan *out) {
         ev->cards = a->n_cards ? a->cards : 0;
         ev->n_cards = a->n_cards;
         ev->mask_cards = a->mask_cards ? 1 : 0;
+        ev->passed = a->passed ? 1 : 0;
         // `has_counts` is the whole gate, here as in anim_build_plan: a step
         // without it has counts in its struct all the same - whatever the last
         // stream left there - and nothing reads them. The hand is NULL for such
@@ -591,6 +767,19 @@ int anim_plan_at(const AnimPlan *plan, int now_ms, AnimFrame *out) {
                 out->next_ms = st->start_ms;  // we are in the gap before it
             }
         }
+    }
+    // A HAND DROPS AS ITS CARDS LEAVE, not as they land (Alex: a seat was heard going out while its
+    // last card was still in the air, and its hand still showed it). Every step of the sequence that
+    // is in the air now and puts a card down from a hand (an attack, a transfer, a cover) takes its
+    // cards off its seat's badge from the moment its flight opens - a beat of two covers is two such
+    // steps, opened together. The landing's board then says the same number.
+    for (int i = 0; i < n; i++) {
+        const AnimPlanStep *st = &plan->steps[i];
+        if (now_ms < st->start_ms || now_ms >= st->start_ms + st->duration_ms) continue;
+        if (!anim_badge_drops_as_cards_leave(st->type)) continue;
+        if (st->seat < 0 || st->seat >= plan->pre.n_players || st->seat >= MAX_PLAYERS) continue;
+        out->hand[st->seat] -= st->n_cards;
+        if (out->hand[st->seat] < 0) out->hand[st->seat] = 0;
     }
     // THE TRUMP IS THE FREEZE'S UNTIL THE STEP THAT DEALS IT OUT OPENS, which
     // is the rule the owner stated at 1.1(55): it lies in its slot while every
@@ -764,6 +953,88 @@ int anim_pass_hand_off(AnimRoles shown, unsigned attack_pass_seats,
     out->first_attacker = shown.first_attacker;
     out->good_mask = shown.good_mask;
     return 1;
+}
+
+// A mark that TRAVELLED: it was on a seat and is on another one now. A mark
+// appearing where there was none (the opening, once the trump has turned) or
+// going away altogether (the table reset for a rematch) went nowhere.
+static int mark_moved(int from, int to) {
+    return from >= 0 && to >= 0 && from != to;
+}
+
+int anim_role_cue(AnimRoles shown, AnimRoles next) {
+    // A mark that travels is the one sound of that turn of the marks, whatever
+    // else turned with it.
+    if (mark_moved(shown.defender, next.defender)
+        || mark_moved(shown.first_attacker, next.first_attacker))
+        return ANIM_CUE_HAND_OFF;
+    if (shown.good_mask == ANIM_NO_MASK || next.good_mask == ANIM_NO_MASK) return ANIM_CUE_NONE;
+    // ADDED goods only, the same reading anim_goods_opening makes: a good that
+    // is taken away went with the throw-in that cleared it, and that card is
+    // already making a sound.
+    return (next.good_mask & ~shown.good_mask) ? ANIM_CUE_GOOD : ANIM_CUE_NONE;
+}
+
+// cos(2 pi num / den), num in [0, den), without libm: the modules that link
+// this carry none. Folded onto [0, pi/2] and summed to x^14, which is within
+// 1e-9 there - far finer than the gain is rounded to.
+static double cos_turn(int num, int den) {
+    double x = 6.283185307179586 * num / den;               // [0, 2 pi)
+    if (x > 3.141592653589793) x = 6.283185307179586 - x;   // cos is even about pi
+    double sign = 1;
+    if (x > 1.5707963267948966) { x = 3.141592653589793 - x; sign = -1; }
+    const double x2 = x * x;
+    double term = 1, sum = 1;
+    for (int k = 1; k <= 7; k++) { term *= -x2 / ((2 * k - 1) * (2 * k)); sum += term; }
+    return sign * sum;
+}
+
+int anim_seat_gain_pm(int viewer, int seat, int n_seats) {
+    if (viewer < 0 || seat < 0 || n_seats < 2 || viewer >= n_seats || seat >= n_seats || seat == viewer)
+        return 1000;
+    // The geometry of deal_game.py: the viewer's head at (R, 0, H); a seat k
+    // round the table lands its cards at (R - IN)(cos t, sin t), t = 2 pi k / n.
+    const double R = 0.5, IN = 0.15, H = 0.40, r = R - IN;
+    const double own2 = IN * IN + H * H;
+    const double c = cos_turn((seat - viewer + n_seats) % n_seats, n_seats);
+    const double d2 = r * r - 2 * R * r * c + R * R + H * H;
+    // 1000 x sqrt(own2 / d2): the ratio of the distances, rounded.
+    const double q = own2 / d2;
+    double g = q < 1 ? q : 1;                               // a Newton square root, no libm
+    for (int i = 0; i < 30; i++) g = 0.5 * (g + q / g);
+    return (int)(1000 * g + 0.5);
+}
+
+#define CUE(k) ((uint32_t)1 << (k))
+
+uint32_t anim_cues_next(const AnimCueAsk *q) {
+    if (!q) return ANIM_CUES_ALL;
+    if (q->status == GAME_STATUS_WAITING)
+        return CUE(ANIM_CUE_DEAL) | CUE(ANIM_CUE_DEAL_LAND) | CUE(ANIM_CUE_TURN) | CUE(ANIM_CUE_FLIP);
+    if (q->status == GAME_STATUS_GAME_OVER) return 0;
+    if (q->status != GAME_STATUS_PLAYING) return ANIM_CUES_ALL;
+
+    uint32_t m = CUE(ANIM_CUE_LIFT) | CUE(ANIM_CUE_PLACE) | CUE(ANIM_CUE_PASS);
+    const int seated = q->my_seat >= 0;   // only a seat can be the fool
+    const int stock = (q->deck > 0 ? q->deck : 0) + (q->has_flipped ? 1 : 0);
+    const int on_table = q->n_battles > 0;
+    // The trump is turned as the opening deal ends, so a stock with no trump
+    // under it is a deal still going round.
+    if (q->deck > 0 && !q->has_flipped)
+        m |= CUE(ANIM_CUE_DEAL) | CUE(ANIM_CUE_DEAL_LAND) | CUE(ANIM_CUE_TURN) | CUE(ANIM_CUE_FLIP);
+    if (q->n_battles > q->n_covered) m |= CUE(ANIM_CUE_COVER) | CUE(ANIM_CUE_PICKUP) | CUE(ANIM_CUE_INTO_HAND);
+    if (on_table) {
+        m |= CUE(ANIM_CUE_SWEEP) | CUE(ANIM_CUE_PILE) | CUE(ANIM_CUE_GOOD) | CUE(ANIM_CUE_HAND_OFF);
+        if (stock > 0) m |= CUE(ANIM_CUE_DEAL) | CUE(ANIM_CUE_DEAL_LAND);
+    }
+    // A seat goes out when its hand is empty and there is nothing left to
+    // draw. That is now, with the stock already gone, or at the end of a bout
+    // whose refills (six a seat at the very most) could take all of it.
+    if (stock == 0 || (on_table && stock <= 6 * (int)q->n_players)) {
+        m |= CUE(ANIM_CUE_OUT) | CUE(ANIM_CUE_FINISH);
+        if (seated) m |= CUE(ANIM_CUE_FOOL);
+    }
+    return m;
 }
 
 // ---- the pre-bout table ---------------------------------------------------
@@ -1683,21 +1954,25 @@ int anim_pass_slot_shown(int previewing, int dragging, int seen_this_drag,
     return 0;
 }
 
+// THE FOOLS of a finished game, as a seat mask: every seat the elimination
+// does not name (game.h game_fools) - the one seat still holding cards after a
+// game lost on cards, every seat still in after a repetition draw. 0 while the
+// game runs. A seat number past the table names nobody. The one owner of the
+// answer for the end screen's list and its sound alike.
+static uint32_t finish_fools(const unsigned char *elimination, int n_elim, int game_over, int n_players) {
+    if (game_over < 0) return 0;
+    uint32_t fools = n_players >= 32 ? ~0u : (1u << n_players) - 1u;
+    for (int i = 0; i < n_elim; i++)
+        if (elimination[i] < 32) fools &= ~(1u << elimination[i]);
+    return fools;
+}
+
 int anim_finish_rows(const unsigned char *elimination, int n_elim,
                      int game_over, int n_players, int my_seat,
                      AnimFinishRow *out, int cap) {
     if (!out || n_elim < 0 || n_players < 0) return ANIM_EBADARG;
     if (n_elim > 0 && !elimination) return ANIM_EBADARG;
-    // THE FOOLS are every seat the elimination does not name (game.h
-    // game_fools): the one seat still holding cards after a game lost on cards,
-    // every seat still in after a repetition draw. A seat number past the table
-    // names nobody.
-    uint32_t fools = 0;
-    if (game_over >= 0) {
-        fools = n_players >= 32 ? ~0u : (1u << n_players) - 1u;
-        for (int i = 0; i < n_elim; i++)
-            if (elimination[i] < 32) fools &= ~(1u << elimination[i]);
-    }
+    uint32_t fools = finish_fools(elimination, n_elim, game_over, n_players);
     int rows = n_elim;
     for (uint32_t f = fools; f; f &= f - 1u) rows++;
     if (rows > cap) return ANIM_ECAP;
@@ -1734,6 +2009,13 @@ int anim_finish_ask(const AnimFinishAsk *q, AnimFinish *out) {
     if (n < 0) return n;
     out->n = (uint8_t)n;
     return n;
+}
+
+int anim_finish_cue(const AnimFinishAsk *q) {
+    if (!q || q->n_elim > MAX_PLAYERS || q->n_players < 0 || q->n_players > MAX_PLAYERS) return ANIM_CUE_NONE;
+    if (q->game_over < 0) return ANIM_CUE_NONE;
+    const uint32_t fools = finish_fools(q->elimination, q->n_elim, q->game_over, q->n_players);
+    return (q->my_seat >= 0 && q->my_seat < 32 && ((fools >> q->my_seat) & 1u)) ? ANIM_CUE_FOOL : ANIM_CUE_FINISH;
 }
 
 unsigned anim_board_chrome(int is_over, int results_shown, int spectating, int rules) {

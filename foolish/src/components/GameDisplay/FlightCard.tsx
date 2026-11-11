@@ -16,6 +16,7 @@
 import type React from 'react';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
+import { NORMAL, REVERT } from './flightLook';
 import type { ViewCard as Card } from '../../state/view';
 
 /** A card the overlay is flying, with both ends of its journey already found. */
@@ -53,30 +54,10 @@ const CARD_H = 70;
  *  `ios/FoolishKit/Boards/FBattleGrid.swift`'s `.timingCurve(0.25, 0.46, 0.45, 0.94)`. */
 export const EASE = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)';
 
-/** How long a flight stands still before its transition is armed: one crossed
- *  paint, so the start frame renders where the card actually is (see `progress`
- *  below - AnimationOverlay arms it on this timer). Exported because anything
- *  that has to MOVE WITH a flight has to wait the same beat, or it leads the
- *  card it is supposed to be moving with: the battle grid's counter-tilt does
- *  (TableBattles). It is a paint, not choreography - the kernel owns the
- *  duration, and this is the browser's own latency before it begins. */
-export const FLIGHT_ARM_MS = 25;
+// The beat a flight stands still before it is armed lives with the page's other timing.
+export { FLIGHT_ARM_MS } from '../../state/flightTiming';
 
 /** The red treatment for a move the server refused. */
-const REVERT = {
-    border: '2px solid rgb(220, 38, 38)',
-    filter: 'brightness(1.3) contrast(1.2) sepia(0.3) saturate(1.8) hue-rotate(-10deg)',
-    backgroundColor: 'rgb(255, 150, 150)',
-    shadow: 'rgba(255,0,0,0.6)',
-} as const;
-
-const NORMAL = {
-    border: '2px solid black',
-    filter: 'none',
-    backgroundColor: 'var(--color-card-face)',
-    shadow: 'rgba(0,0,0,0.4)',
-} as const;
-
 export const FlightCard = ({ flight, flightMs }: { flight: AnimatedCard; flightMs: number }) => {
     const { startPosition, endPosition, progress, card, isSanitizedRefill, cardCount, isRevert, fromLanding } = flight;
 

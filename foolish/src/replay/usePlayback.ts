@@ -18,7 +18,7 @@ import { useServerActions } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { buildSpeeds, type SpeedStop } from './speeds';
-import { REPLAY_KEY, type ReplayFrame } from './frames';
+import { REPLAY_KEY, type ReplayFrame, type ReplayGameState } from './frames';
 
 /** The deck head and the buttons that move it. */
 export interface Playback {
@@ -54,6 +54,10 @@ export function usePlayback(
     frames: ReplayFrame[],
     reverses: (AnimationSequenceMessage | null)[],
     times: (number | null)[],
+    // The table before the deal, made by the caller while the kernel was loaded:
+    // never asked of the kernel during a render (a hot reload re-renders before
+    // the relinked kernel is back, and a synchronous kernel call then throws).
+    preDeal: ReplayGameState,
     pen: PenKeys,
 ): Playback {
     const { updateGameState } = useServerActions();
@@ -111,19 +115,22 @@ export function usePlayback(
             setPlaying(false);
             setWaitTarget(null);
             resetAnimations();
-            const target = Math.max(0, Math.min(i, lastIdx));
+            // -1 is the table before the deal, so stepping on from it plays the deal.
+            const target = Math.max(-1, Math.min(i, lastIdx));
             // The step's own board, straight from the kernel - no rebuild.
-            updateGameState(REPLAY_KEY, frames[target].game);
+            updateGameState(REPLAY_KEY, target < 0 ? preDeal : frames[target].game);
             setStepIdx(target);
         },
-        [frames, lastIdx, resetAnimations, updateGameState],
+        [frames, lastIdx, preDeal, resetAnimations, updateGameState],
     );
 
     const stepBack = useCallback(() => {
         setPlaying(false);
         setWaitTarget(null);
+        // The deal has no reverse flight (cards do not fly back into a face-down
+        // stock), so a step back from it is a cut to the table before it.
         if (stepRef.current <= 0) {
-            jumpTo(0);
+            jumpTo(-1);
             return;
         }
         publishReverse(stepRef.current);
@@ -149,7 +156,7 @@ export function usePlayback(
             return;
         }
         const prev = [...boutStarts].reverse().find((s) => s < from);
-        jumpTo(prev ?? 0);
+        jumpTo(prev ?? -1);
     }, [boutStarts, jumpTo]);
 
     // opening deal on mount
