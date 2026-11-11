@@ -1959,7 +1959,7 @@ COV_BRANCH_MIN ?= 74
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
                   hand_layout bots bot_drive bot_roster analyse ask table_wire netwire netclient move_list \
-                  cue_voice cue_mix
+                  cue_voice cue_voice_table cue_mix
 # deal_rng, sha256 and b32 are in the SAME gate, from their new home. They left this
 # list's `src/` prefix behind when they moved to shared/, and a filter that no
 # longer matches does not fail - gcovr simply reports the file it cannot find as

@@ -29,7 +29,6 @@
 // A dealt card's landing is struck at its seat's level (fio_seat_gain_pm, the
 // kernel's geometry, with the viewer's seat).
 
-import CFoolish
 import Foundation
 
 final class CueSequence {
@@ -104,7 +103,7 @@ final class CueSequence {
             if !own, nextMs == Int.max || Double(c.atMs) - player.lead(c.kind) * 1000 >= Double(nextMs) { continue }
             var gain = 1000
             if c.kind == Int(ANIM_CUE_DEAL_LAND), c.step < plan.steps.count {
-                gain = Int(fio_seat_gain_pm(Int32(viewer), Int32(plan.steps[c.step].seat), Int32(seats)))
+                gain = CueKernel.seatGainPm(viewer: viewer, seat: plan.steps[c.step].seat, seats: seats)
             }
             for h in 0..<max(1, c.hits) where !done.contains(Self.hitKey(c, h)) {
                 let at = c.atMs + h * Int(ANIM_SOUND_STAGGER_MS)

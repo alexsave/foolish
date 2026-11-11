@@ -53,7 +53,6 @@
 // slot of the mix is taken (32 takes sounding or pending at once).
 
 import AVFoundation
-import CFoolish
 import Foundation
 
 // Public for the two calls the extension's view controller makes (`shared`,
@@ -102,7 +101,7 @@ public final class CuePlayer {
     private var engine: AVAudioEngine?
     private var source: AVAudioSourceNode?
     /// The kernel's output mix (fio_mix_new), summed by `source`'s callback.
-    private var mixer: UnsafeMutableRawPointer?
+    private var mixer: CueKernel.Mixer?
     /// The output's frames a second, and what each take is converted to.
     private var outRate: Double = 0
     /// The samples of every take in the mix, by slot, kept alive until the mix
@@ -153,13 +152,9 @@ public final class CuePlayer {
 
     init(bundle: Bundle = Bundle(for: CuePlayer.self)) {
         self.bundle = bundle
-        var rows: [CueTakeRowSnap] = []
-        for i in 0..<Int(fio_cue_n_takes()) {
-            if let p = fio_cue_take(Int32(i)), let row = try? readCueTakeRow(p) { rows.append(row) }
-        }
-        takes = rows
-        leadUs = (0..<Int(ANIM_N_CUES)).map { Int(fio_cue_lead_us(Int32($0))) }
-        fio_cue_seed(UInt32.random(in: 1...UInt32.max))
+        takes = CueKernel.takes()
+        leadUs = CueKernel.leadUs()
+        CueKernel.seed(UInt32.random(in: 1...UInt32.max))
     }
 
     /// How long before its moment a cue must be handed over for its earliest
@@ -208,7 +203,6 @@ public final class CuePlayer {
         engine = nil
         source = nil
         // The callback has stopped with the engine, so the mix is nobody's now.
-        if let m = mixer { fio_mix_free(m) }
         mixer = nil
         inMix = [:]
         offline = false
@@ -275,12 +269,12 @@ public final class CuePlayer {
         let rate = out.sampleRate > 0 ? out.sampleRate : 48000
         let channels = max(1, out.channelCount)
         guard let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: channels),
-              let m = fio_mix_new(rate) else { return false }
+              let m = CueKernel.Mixer(rate: rate) else { return false }
         let src = AVAudioSourceNode(format: format) { _, stamp, frames, abl -> OSStatus in
             let list = UnsafeMutableAudioBufferListPointer(abl)
             guard let first = list.first?.mData?.assumingMemoryBound(to: Float.self) else { return noErr }
             let host = stamp.pointee.mFlags.contains(.hostTimeValid) ? stamp.pointee.mHostTime : 0
-            fio_mix_render(m, first, Int32(frames), host)
+            m.render(first, frames: Int(frames), host: host)
             for b in list.dropFirst() {
                 b.mData?.copyMemory(from: first, byteCount: Int(frames) * MemoryLayout<Float>.size)
             }
@@ -327,9 +321,9 @@ public final class CuePlayer {
     /// The kernel's answer for a board, asked with its seven scalars.
     func want(_ v: GameView, mySeat: Int) {
         let covered = v.battles.filter { $0.defense != nil }.count
-        want(UInt32(fio_cues_next(Int32(v.status), Int32(mySeat), Int32(v.players.count),
-                                  Int32(v.battles.count), Int32(covered), v.hasFlipped ? 1 : 0,
-                                  Int32(v.deckCount))))
+        want(CueKernel.cuesNext(status: v.status, mySeat: mySeat, players: v.players.count,
+                                battles: v.battles.count, covered: covered, hasFlipped: v.hasFlipped,
+                                deck: v.deckCount))
     }
 
     /// Whether take `i` is one the board's answer keeps decoded. Under `lock`.
@@ -455,10 +449,10 @@ public final class CuePlayer {
     private func atSpeed(_ b: AVAudioPCMBuffer, _ ratePm: Int) -> AVAudioPCMBuffer? {
         if ratePm == 1000 { return b }
         let n = Int(b.frameLength)
-        let len = Int(fio_cue_resampled_len(Int32(n), Int32(ratePm)))
+        let len = CueKernel.resampledLength(n, ratePm: ratePm)
         guard len > 0, let out = AVAudioPCMBuffer(pcmFormat: b.format, frameCapacity: AVAudioFrameCount(len)),
               let src = b.floatChannelData?[0], let dst = out.floatChannelData?[0],
-              fio_cue_resample(src, Int32(n), Int32(ratePm), dst, Int32(len)) == Int32(len) else { return nil }
+              CueKernel.resample(src, n: n, ratePm: ratePm, into: dst, cap: len) == len else { return nil }
         out.frameLength = AVAudioFrameCount(len)
         return out
     }
@@ -478,9 +472,8 @@ public final class CuePlayer {
         // the engine is the one gate.
         guard Self.on, let engine, offline || engine.isRunning else { return [] }
         let now = mach_absolute_time()
-        let leadUs = Int32(clamping: Int((max(0, seconds) * 1e6).rounded()))
-        guard let p = fio_cue_strike(Int32(kind), leadUs, Int32(clamping: nCards), Int32(undoes), Int32(gainPm)),
-              let s = try? readCueStrike(p), s.take >= 0 else { return [] }
+        let leadUs = Int((max(0, seconds) * 1e6).rounded())
+        guard let s = CueKernel.strike(kind, leadUs: leadUs, nCards: nCards, undoes: undoes, gainPm: gainPm) else { return [] }
         var out: [Scheduled] = []
         let want = [(s.take, s.startUs, s.gainPm, s.ratePm, s.backwards != 0)]
             // The strokes that gather the table first, over whatever is sounding.
@@ -541,7 +534,7 @@ public final class CuePlayer {
     /// frame to be rendered.
     private func frame(at host: UInt64) -> AVAudioFramePosition {
         guard let m = mixer else { return 0 }
-        return offline ? fio_mix_now(m) : fio_mix_frame_at(m, host, Self.ticksPerSecond)
+        return offline ? m.now : m.frame(at: host, ticksPerSecond: Self.ticksPerSecond)
     }
 
     private func play(_ i: Int, _ forwards: AVAudioPCMBuffer, startUs: Int, gainPm: Int, ratePm: Int,
@@ -551,12 +544,12 @@ public final class CuePlayer {
               let shaped = backwards ? self.backwards(i, forwards) : forwards,
               let b = atSpeed(shaped, ratePm), let x = b.floatChannelData?[0] else { return nil }
         // Give back the samples of every take the mix has finished with.
-        let live = fio_mix_live(m)
+        let live = m.live
         inMix = inMix.filter { live & (1 << UInt32($0.key)) != 0 }
         let now = frame(at: host)
         let start = now + AVAudioFramePosition((Double(startUs) / 1e6 * outRate).rounded())
         let gain = Float(gainPm) / 1000
-        let slot = fio_mix_add(m, x, Int32(b.frameLength), start, gain)
+        let slot = m.add(x, frames: Int(b.frameLength), start: start, gain: gain)
         guard slot >= 0 else {
             AnimLog.say("sound: the mix is full - \(t.name) dropped")
             return nil
@@ -575,16 +568,16 @@ public final class CuePlayer {
     func unschedule(_ s: Scheduled) -> Bool {
         // Its slot, still holding this take (a slot is reused once free).
         guard let m = mixer, let held = inMix[s.slot], held.start == s.startSample,
-              fio_mix_live(m) & (1 << UInt32(s.slot)) != 0 else { return false }
+              m.live & (1 << UInt32(s.slot)) != 0 else { return false }
         let guardFrames = AVAudioFramePosition(max(0.01, AVAudioSession.sharedInstance().ioBufferDuration) * 2 * outRate)
-        guard s.startSample > fio_mix_now(m) + guardFrames else { return false }
-        fio_mix_drop(m, s.slot)
+        guard s.startSample > m.now + guardFrames else { return false }
+        m.drop(slot: s.slot)
         return true
     }
 
     /// Stop everything scheduled or sounding (a mute).
     func cancel() {
-        if let m = mixer { fio_mix_clear(m) }
+        mixer?.clear()
     }
 
     // ---- the tests' engine -----------------------------------------------------

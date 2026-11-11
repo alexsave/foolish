@@ -11,7 +11,6 @@
 // app bundles are the ones the table names.
 import AVFoundation
 import XCTest
-import CFoolish
 @testable import FoolishKit
 
 final class CuePlayerTests: XCTestCase {
@@ -21,7 +20,7 @@ final class CuePlayerTests: XCTestCase {
     override func setUp() {
         super.setUp()
         player = CuePlayer()
-        fio_cue_seed(20261107)          // the same takes every run
+        CueKernel.seed(20261107)          // the same takes every run
     }
 
     override func tearDown() {
@@ -133,7 +132,7 @@ final class CuePlayerTests: XCTestCase {
     func testADealtCardLandsAtItsSeatsLevel() throws {
         try player.startOffline(rate: 32000)
         _ = try player.render(1024)
-        let gain = Int(fio_seat_gain_pm(0, 2, 4))
+        let gain = CueKernel.seatGainPm(viewer: 0, seat: 2, seats: 4)
         let s = try XCTUnwrap(player.strike(Int(ANIM_CUE_DEAL_LAND), in: 0.2, gainPm: gain).first)
         XCTAssertEqual(s.gain, 0.455, accuracy: 1e-6)
         let out = try player.render(32000)

@@ -10,7 +10,6 @@
 
 import SwiftUI
 import Foundation
-import CFoolish
 
 extension MessageTableView {
 
@@ -755,10 +754,8 @@ extension MessageTableView {
 
     func strikeFinishCue(_ v: GameView) {
         let elim = v.eliminationOrder.map { UInt8(clamping: $0) }
-        let cue = elim.withUnsafeBufferPointer { p in
-            Int(fio_finish_cue(p.baseAddress, Int32(elim.count), Int32(v.gameOver),
-                               Int32(v.players.count), Int32(controller.mySeat)))
-        }
+        let cue = CueKernel.finishCue(elimination: elim, gameOver: v.gameOver, players: v.players.count,
+                                      mySeat: controller.mySeat)
         if cue != Int(ANIM_CUE_NONE) {
             CuePlayer.shared.strike(cue, in: 0) { AnimLog.say("sound: finish cue \(cue): \($0.name)") }
         }

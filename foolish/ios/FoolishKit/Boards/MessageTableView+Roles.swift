@@ -9,7 +9,6 @@
 
 import SwiftUI
 import Foundation
-import CFoolish
 
 extension MessageTableView {
 
@@ -185,8 +184,9 @@ extension MessageTableView {
         // it). Not tied to Reduce Motion: a sound is not a vestibular trigger
         // (docs/AUDIO.md), and the web's syncRoles strikes it the same way.
         if animated, let old, old != target {
-            let cue = Int(fio_role_cue(Int32(old.defender), Int32(old.firstAttacker), Int32(old.goodMask),
-                                       Int32(target.defender), Int32(target.firstAttacker), Int32(target.goodMask)))
+            let cue = CueKernel.roleCue(shownDefender: old.defender, shownFirstAttacker: old.firstAttacker,
+                                        shownGoodMask: old.goodMask, defender: target.defender,
+                                        firstAttacker: target.firstAttacker, goodMask: target.goodMask)
             if cue != Int(ANIM_CUE_NONE) {
                 CuePlayer.shared.strike(cue, in: 0) { AnimLog.say("sound: role cue \(cue): \($0.name)") }
             }

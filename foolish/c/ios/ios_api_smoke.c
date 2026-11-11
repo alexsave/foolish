@@ -1810,6 +1810,14 @@ static int board_rules_check(void) {
         if (!tn || tn->role != CUE_ROLE_TIGHT || now->start_us != 0 || now->prelude != -1 || now->gain_pm != 1000) {
             printf("FAIL cue strike now\n"); return 1;
         }
+        // THE FIRST CARD OF A DEAL OPENS ITS RUN: with a second to go it still plays a tight take, its
+        // anchor on the moment (cue_table_strike_opening); and the pass's slide is heard after its moment.
+        const CueStrike *op = cue_table_strike_opening(ANIM_CUE_DEAL, 1000000, 1, 0, 1000);
+        const CueTakeRow *top = op->take >= 0 ? fio_cue_take(op->take) : NULL;
+        if (!top || top->role != CUE_ROLE_TIGHT || op->start_us != 1000000 - top->anchor_us
+            || cue_table_late_us(ANIM_CUE_PASS) <= 0 || cue_table_late_us(ANIM_CUE_LIFT) != 0) {
+            printf("FAIL cue strike opening / late\n"); return 1;
+        }
         const CueStrike *later = fio_cue_strike(ANIM_CUE_LIFT, 1000000, 1, 0, 1000);
         const CueTakeRow *tl = later->take >= 0 ? fio_cue_take(later->take) : NULL;
         if (!tl || tl->role != CUE_ROLE_MAIN || later->start_us != 1000000 - tl->anchor_us) {
