@@ -15,7 +15,10 @@ SHARED := ../../shared/c
 # why it broke silently when sha256.c and deal_rng.c moved to shared/: a wildcard
 # does not fail when a file leaves it, it just compiles less. Both directories are
 # wildcarded so a NEW file in either is picked up the way one in src/ always was.
-KERNEL_SRC := $(filter-out $(wildcard $(KDIR)/src/main_*.c), $(wildcard $(KDIR)/src/*.c)) \
+# THE SOUND TABLE IS NOT THE SIM'S: cue_voice_table.c is the one voice over soundgen's generated take
+# table (c/build/gen/cue_takes.c, made by `make sounds`), a host that PLAYS sound links it, and a
+# simulated network plays none. Left in, the wildcard fails the link on the table it cannot find.
+KERNEL_SRC := $(filter-out $(wildcard $(KDIR)/src/main_*.c) $(KDIR)/src/cue_voice_table.c, $(wildcard $(KDIR)/src/*.c)) \
               $(filter-out $(wildcard $(SHARED)/*_test.c), $(wildcard $(SHARED)/*.c)) \
               $(SHARED)/mqtt/mqtt.c
 # shared/c/mqtt is a directory of its own (the kernel's client speaks MQTT,
