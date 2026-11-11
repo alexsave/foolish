@@ -34,20 +34,20 @@ export const DeckAndFlipped = () => {
     // doesn't shift when the flipped card lands or when the slot is reserved.
     return <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', alignItems: 'center', height: '240px', width: '100px', paddingTop: '85px' }}>
         {showDeckSpot && (
-            // IN THE AIR through the opening deal: the size a card in flight has (FlightCard's 1.5), so
-            // the cards leave a stock that is already as big as they are, and it comes down with the
-            // sound of it set down on the trump.
+            // IN THE AIR through the opening deal: the size a card in flight has (FlightCard's 1.5), set
+            // the way FlightCard sets it - at once, with no transition. A transition makes the browser
+            // draw the stock at its own size and scale that picture up, and the fern on the backs
+            // goes soft and the black washes out, where a flight's card is drawn at 1.5 outright.
             <div
                 style={{
                     position: 'relative',
                     transform: deckLifted ? 'scale(1.5)' : 'none',
                     transformOrigin: 'center',
-                    transition: 'transform 180ms cubic-bezier(0.25, 0.46, 0.45, 0.94)',
                 }}
                 data-location="deck"
             >
                 {/* An empty pile is the card's own footprint and no card. */}
-                <CardBack deckSize={displayedDeckLength} lifted={deckLifted} />
+                <CardBack deckSize={displayedDeckLength} />
                 {showDeckPile && <p style={{
                     position: 'absolute',
                     top: '50%',
