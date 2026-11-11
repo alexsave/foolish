@@ -268,7 +268,7 @@ test('a cue whose file starts before its moment is handed over that much earlier
     // The real table's leads (the kernel's, cue_lead_us): the deal's thumb slide and grab, the throw-in's.
     const cueLeadMs = (kind: number) => cueLeadUs(kind) / 1000;
     assert.ok(cueLeadMs(ANIM_CUE_DEAL) > 150 && cueLeadMs(ANIM_CUE_LIFT) > 150, 'the deal and a lift start well before the card leaves');
-    assert.ok(cueLeadMs(ANIM_CUE_SWEEP) > 2000 && cueLeadMs(ANIM_CUE_PICKUP) > 2000, 'and the strokes before a sweep or a pickup, seconds');
+    assert.ok(cueLeadMs(ANIM_CUE_SWEEP) > 400 && cueLeadMs(ANIM_CUE_PICKUP) > 400, 'and the one scrape before a sweep or a pickup, most of a second');
     assert.ok(cueLeadMs(ANIM_CUE_PASS) <= 0, 'the slide on starts after its landing: no lead');
 });
 

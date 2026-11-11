@@ -250,24 +250,30 @@ static void g_pass(Take *t, int level) {
 }
 // The strokes gathering the table (discard/an/disc_game.py), the last ending
 // where `id` says before the cue, at its level (their 50 ms RMS): each 0.8 times
-// a recorded stroke's length (0.25-0.7 s), 60-200 ms apart, a little louder as
-// the pile grows. Not compressed: they are heard in full, over whatever is sounding.
+// a recorded stroke's length (0.25-0.7 s), started 15-40 ms apart so they overlap into one scrape,
+// a little louder as the pile grows. Not compressed: they are heard in full, over whatever is sounding.
 static void strokes(Take *t, int count, TuneId id) {
     const Tune *u = &TUNE[id];
     const double gap = uni(&t->r, -u->at_ms / 1000, (-u->at_ms + u->at_spread_ms) / 1000);
     const double sc = level_of(t, id);
-    double d[MAX_LEVEL], gp[MAX_LEVEL], total = 0;
+    // ONE SCRAPE (Alex: "here it looks like there is just one scrape sound"): a bigger pile has more
+    // strokes, but they start a hair apart (15-40 ms) and overlap, a single scraping sound, and not one
+    // stroke after another. The scrape as a whole is at the level the part says, however many strokes
+    // make it (uncorrelated strokes add in power, so each is that much under).
+    double d[MAX_LEVEL], st[MAX_LEVEL], end = 0, off = 0;
     for (int s = 0; s < count; s++) {
         const double v = m_stroke_dur(&t->r) * 0.8 * uni(&t->r, 0.9, 1.1);
         d[s] = v < 0.25 ? 0.25 : v > 0.7 ? 0.7 : v;
-        gp[s] = s < count - 1 ? uni(&t->r, 0.06, 0.2) : 0;
-        total += d[s] + gp[s];
+        st[s] = off;
+        off += uni(&t->r, 0.015, 0.04);
+        if (st[s] + d[s] > end) end = st[s] + d[s];
     }
-    double at = -gap - total;                            // the first stroke's onset, from the cue
+    const double share = 10.0 * log10(count > 0 ? count : 1);
+    const double at0 = -gap - end;                       // the first stroke's onset, from the cue
     for (int s = 0; s < count; s++) {
         Sig y = m_stroke(&t->r, d[s]);
-        put_rms50(t, y, S_(STROKE_PRE_S), at, sc - 1.5 + 3.0 * s / (count > 1 ? count - 1 : 1) - uni(&t->r, 0, 1.5));
-        at += d[s] + gp[s];
+        put_rms50(t, y, S_(STROKE_PRE_S), at0 + st[s],
+                  sc - share - 1.5 + 3.0 * s / (count > 1 ? count - 1 : 1) - uni(&t->r, 0, 1.5));
     }
 }
 // SWEEP: the pile lifted and turned, as the sweep opens (its strokes are the

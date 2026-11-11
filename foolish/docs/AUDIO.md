@@ -88,7 +88,7 @@ The ids are stable and append-only: a host's table is keyed by them.
 | 5 | `COVER` | a cover landing on its attack | at the landing | one a card, up to 6 a beat | a card landing on a card |
 | 6 | `PICKUP` | the table taken into a hand | as the cards lift | 1, for n cards | the pile lifted with one soft knock |
 | 18 | `INTO_HAND` | the same cards | as they land in the hand | 1, for n cards | one slide into the fanned hand |
-| 7 | `SWEEP` | the table swept to the discard | as the sweep opens | 1, for n cards | strokes gathering the table (one per ~2.5 cards, as many as fit the hold before it), then the pile lifted and turned |
+| 7 | `SWEEP` | the table swept to the discard | as the sweep opens | 1, for n cards | one scrape gathering the table (a stroke per ~2.5 cards, started a hair apart so they are one sound), then the pile lifted and turned |
 | 8 | `PILE` | the swept cards coming to rest | as the sweep lands | 1, for n cards | the pile set softly on the discard pile |
 | 9 | `OUT` | a seat going out | 90 ms behind the landing of the move that put them out | 1 | placeholder |
 | 10 | `REVERT` | a refused move flying home | as it sets off | 1, of the cue it undoes, backwards | the undone cue's take, reversed |
@@ -154,7 +154,7 @@ The rules below are the voice's (`c/src/cue_voice.c`), and iOS plays by the same
 **A take starts its anchor early.**
 Every file is a whole gesture, and its anchor is how far into the file the cue's moment is (the take table, written by soundgen).
 A `LIFT` take is the grab and the thumb slide, so it starts 280-440 ms before the card leaves; a landing starts a few tens of ms before its peak; the transfer's slide has a negative anchor and starts 50 ms after its landing.
-A cue is therefore handed over its longest anchor plus the look-ahead before its moment (`cue_lead_us`), so the longest gathering (five strokes before a sweep, 3.5 s) is scheduled on time whenever the plan knew about it that early.
+A cue is therefore handed over its longest anchor plus the look-ahead before its moment (`cue_lead_us`), so the longest scrape (five strokes before a sweep, under a second) is scheduled on time whenever the plan knew about it that early.
 
 **A take is always played whole** (Alex: "you should definitely play them ... and play them in full").
 When the time left before a moment is shorter than a take's anchor, the take starts now, from its first sample, and its moment comes late; nothing is ever started part way into its file.
@@ -163,7 +163,7 @@ For it the deal and the lift have TIGHT takes, the grab and the thumb slide move
 The voice plays an ordinary take when one fits the time it has, and a tight one when none does, so a run's first lift is heard whole and late by 180-290 ms (the slide's own swell before its peak) where an ordinary take would be 280-440 ms late.
 
 **The strokes before a sweep or a pickup are a prelude.**
-They are a take of their own, one set per stroke count (one stroke per 2.5 cards of the cue, 1-5, as `disc_game.py` counts them), each stroke as long as the recordings' (0.8 times one, 0.25-0.7 s) and never compressed.
+They are a take of their own, one set per stroke count (one stroke per 2.5 cards of the cue, 1-5, as `disc_game.py` counts them), each stroke as long as the recordings' (0.8 times one, 0.25-0.7 s) and never compressed, but started 15-40 ms after the one before so they overlap into ONE scrape (Alex: "here it looks like there is just one scrape sound"): a sweep or a pickup is a scrape, then the lift, then (a sweep) the set down. The scrape as a whole is at the level the strokes row says, however many strokes make it.
 The voice starts them their anchor before the cue (the last stroke ends 100-180 ms before a sweep's lift, 50-120 ms before a pickup's), over whatever is sounding then (Alex: "just play the pickup over the other sounds then"), and the lift's own take still lands on its cue.
 With no time before the cue at all (a pickup opens its run) the strokes start at once, in full, and the lift and the cards reaching the hand keep their own cues.
 
