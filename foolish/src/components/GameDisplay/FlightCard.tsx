@@ -16,6 +16,7 @@
 import type React from 'react';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
+import { NORMAL, REVERT } from './flightLook';
 import type { ViewCard as Card } from '../../state/view';
 
 /** A card the overlay is flying, with both ends of its journey already found. */
@@ -63,20 +64,6 @@ export const EASE = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)';
 export const FLIGHT_ARM_MS = 25;
 
 /** The red treatment for a move the server refused. */
-const REVERT = {
-    border: '2px solid rgb(220, 38, 38)',
-    filter: 'brightness(1.3) contrast(1.2) sepia(0.3) saturate(1.8) hue-rotate(-10deg)',
-    backgroundColor: 'rgb(255, 150, 150)',
-    shadow: 'rgba(255,0,0,0.6)',
-} as const;
-
-const NORMAL = {
-    border: '2px solid black',
-    filter: 'none',
-    backgroundColor: 'var(--color-card-face)',
-    shadow: 'rgba(0,0,0,0.4)',
-} as const;
-
 export const FlightCard = ({ flight, flightMs }: { flight: AnimatedCard; flightMs: number }) => {
     const { startPosition, endPosition, progress, card, isSanitizedRefill, cardCount, isRevert, fromLanding } = flight;
 

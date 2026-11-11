@@ -1,6 +1,7 @@
 import { useFernFractal } from "../../utils/fernFractal";
 import { useStyles } from "../../contexts/StyleContext";
 import { SovietCardBack } from "./SovietCardBack";
+import { NORMAL as FLIGHT_LOOK } from "./flightLook";
 
 // Deterministic random function using a simple LCG
 const seededRandom = (seed: number): number => {
@@ -13,7 +14,7 @@ const getRandomRotation = (seed: number, index: number): number => {
     return (randomValue * 40) - 20;
 };
 
-export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deckSize?: number; enableRandomRotation?: boolean }) => {
+export const CardBack = ({ deckSize = 36, enableRandomRotation = false, lifted = false }: { deckSize?: number; enableRandomRotation?: boolean; lifted?: boolean }) => {
     const styles = useStyles();
     const { fernPattern } = useFernFractal();
     
@@ -35,7 +36,9 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
                             width: '50px',
                             height: '70px',
                             backgroundColor: !styles.cardBack.usePattern ? 'transparent' : backgroundColor,
-                            border: `${styles.cardBack.borderWidth} solid ${styles.cardBack.borderColor}`,
+                            // HELD IN THE AIR (the stock through the opening deal): its top card is drawn the
+                            // way a card in flight is, the same black edge and the same shadow under it.
+                            border: lifted && layerIndex === deckSize - 1 ? FLIGHT_LOOK.border : `${styles.cardBack.borderWidth} solid ${styles.cardBack.borderColor}`,
                             borderRadius: styles.cardBack.borderRadius,
                             zIndex: layerIndex + 2,
                             transform: `rotate(90deg) rotate(${rotation}deg)`,
@@ -43,7 +46,7 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
                             backgroundImage: hasPattern ? `url(${fernPattern})` : undefined,
                             backgroundSize: '100% 100%',
                             backgroundRepeat: 'no-repeat',
-                            boxShadow: styles.cardBack.boxShadow,
+                            boxShadow: lifted && layerIndex === deckSize - 1 ? `0 10px 20px ${FLIGHT_LOOK.shadow}` : styles.cardBack.boxShadow,
                             overflow: 'hidden',
                         }}
                     >

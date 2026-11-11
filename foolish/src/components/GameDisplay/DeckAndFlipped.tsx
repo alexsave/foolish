@@ -47,7 +47,7 @@ export const DeckAndFlipped = () => {
                 data-location="deck"
             >
                 {/* An empty pile is the card's own footprint and no card. */}
-                <CardBack deckSize={displayedDeckLength} />
+                <CardBack deckSize={displayedDeckLength} lifted={deckLifted} />
                 {showDeckPile && <p style={{
                     position: 'absolute',
                     top: '50%',
