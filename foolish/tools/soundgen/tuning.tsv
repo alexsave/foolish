@@ -25,12 +25,12 @@ part	deal_land	main	land	0	0	-13	3	deal: card lands on the cloth
 part	turn	main	flip	0	0	12	0	trump: flipped over
 part	flip	main	land	0	0	9	3	trump: lands face up
 part	flip	main	deck	350	0	11	3	trump: deck set down on it
-part	lift	main	grab	-240	0	-14	0	lift: two-finger grab
-part	lift	main	thumb	-130	0	-6	3	lift: thumb slide
-part	lift	tight	grab	-90	0	-14	0	lift, opening a run: two-finger grab
-part	lift	tight	thumb	-30	0	-6	3	lift, opening a run: thumb slide
-part	place	main	land	0	0	15	2	attack: card lands on the table
-part	cover	main	land	0	0	15	2	cover: card lands on a card
+part	lift	main	grab	-220	0	4	0	lift: two-finger grab
+part	lift	main	thumb	-130	0	-3	3	lift: thumb slide
+part	lift	tight	grab	-100	0	-23	0	lift, opening a run: two-finger grab
+part	lift	tight	thumb	-30	0	-30	3	lift, opening a run: thumb slide
+part	place	main	land	0	0	5	2	attack: card lands on the table
+part	cover	main	land	0	0	4	2	cover: card lands on a card
 part	pass	main	slide	150	0	-11	2	transfer: shfff to the next defender
 part	sweep	prelude	strokes	-100	80	-23.5	0	bout end: strokes gathering the table
 part	sweep	main	lift	0	0	-7.5	0	bout end: pile lifted
