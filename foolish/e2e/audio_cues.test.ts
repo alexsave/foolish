@@ -27,7 +27,7 @@
  * Pure kernel/wasm test - needs no Postgres.
  * ========================================================================== */
 
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -49,7 +49,7 @@ import {
 import { CUE_ROLE_PRELUDE, EVW_MSG_ATTACKED, EVW_MSG_PASSED } from '../sdk/ts/gen/view_layout.bots.ts';
 import { ANIM_DECK_DOWN_MS } from '../sdk/ts/gen/anim.bots.ts';
 import { CUE_LATE_MS, CUE_LOOK_AHEAD_MS, cueKey, dueStrikes, type PlanCue } from '../src/audio/cueSchedule.ts';
-import { CueAudio, CUE_SOUND_ROOT, cueFile } from '../src/audio/cueAudio.ts';
+import { CueAudio, CUE_SOUND_ROOT, RESUME_WATCHDOG_MS, cueFile } from '../src/audio/cueAudio.ts';
 import { finishCueOf } from '../src/audio/useFinishCue.ts';
 import { cuesNextFor } from '../src/audio/useCuePriority.ts';
 
@@ -358,7 +358,7 @@ const takeOf = (s: FakeSource): CueTakeRow | null => {
 const filesOf = (...kinds: number[]) => cueTakes().filter((t) => kinds.includes(t.cue)).map((t) => cueFile(t.name));
 
 /** A stand-in AudioContext: a clock the test owns and a record of what was asked of it. */
-function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold?: boolean } = {}) {
+function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold?: boolean; hang?: boolean } = {}) {
     const sources: FakeSource[] = [];
     const fetched: string[] = [];
     /** Held fetches, oldest first: each answers when the test releases it. */
@@ -376,7 +376,7 @@ function fakeAudio(opts: { state?: string; fail?: (url: string) => boolean; hold
         destination = {};
         masterGain: { value: number; setValueAtTime(v: number): void } | null = null;
         constructor() { created++; ctxs.push(this); }
-        resume() { this.state = 'running'; return Promise.resolve(); }
+        resume() { if (opts.hang) return new Promise<void>(() => {}); this.state = 'running'; return Promise.resolve(); }
         close() { this.state = 'closed'; return Promise.resolve(); }
         createGain() {
             const node: any = { gain: { value: 1, setValueAtTime(v: number) { node.gain.value = v; } }, connected: null as unknown,
@@ -472,6 +472,78 @@ test('one audio context a page: an engine made again closes the one before it', 
     }
 });
 
+// A TAB WHOSE AUDIO HAS HUNG (Safari: a context that never reaches running, and a new one that never
+// does either, until the tab is closed). The page cannot repair that, but it must not leave it to be
+// found as silence: it gives the context back when it goes away, takes a context that does not run
+// a beat after a tap for dead and makes another at the next tap, makes one again when the output
+// changes, and says so when the second hangs too.
+test('a page that goes away gives its context back, and the next tap makes another', () => {
+    const fake = fakeAudio();
+    try {
+        const engine = new CueAudio();
+        engine.unlock();
+        assert.equal(fake.created(), 1);
+        engine.shutdown();
+        assert.equal(fake.ctxs[0].state, 'closed', 'the context is closed when the page goes');
+        assert.equal((globalThis as any).__foolishCueContext, undefined, 'and the page no longer names it');
+        engine.unlock();
+        assert.equal(fake.created(), 2, 'a tap makes a new one');
+        assert.equal(fake.ctxs[1].state, 'running');
+    } finally { fake.restore(); }
+});
+
+test('a context that does not run is taken for dead a beat after the tap, remade at the next, and the second that hangs is said', () => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const fake = fakeAudio({ state: 'suspended', hang: true });
+    try {
+        const engine = new CueAudio();
+        assert.equal(engine.getState().stuck, false);
+        engine.unlock();
+        mock.timers.tick(RESUME_WATCHDOG_MS - 1);
+        assert.equal(engine.getState().stuck, false, 'not before the beat has passed');
+        mock.timers.tick(1);
+        assert.equal(engine.getState().stuck, true, 'a beat after the tap it is said');
+        engine.unlock();
+        assert.equal(fake.created(), 2, 'the next tap makes another context');
+        assert.equal(fake.ctxs[0].state, 'closed', 'and gives the dead one back');
+        assert.equal(engine.getState().stuck, true, 'it stays said while the new one has not run');
+    } finally { mock.timers.reset(); fake.restore(); }
+});
+
+test('a remade context that runs clears the notice', async () => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const fake = fakeAudio({ state: 'suspended', hang: true });
+    try {
+        const engine = new CueAudio();
+        engine.unlock();
+        mock.timers.tick(RESUME_WATCHDOG_MS);
+        assert.equal(engine.getState().stuck, true);
+        // The browser lets the next one run.
+        const Ctx = (globalThis as any).AudioContext;
+        const make = Ctx.prototype.resume;
+        Ctx.prototype.resume = function () { this.state = 'running'; return Promise.resolve(); };
+        engine.unlock();
+        await Promise.resolve();
+        assert.equal(engine.getState().stuck, false, 'a context that runs is the end of it');
+        Ctx.prototype.resume = make;
+    } finally { mock.timers.reset(); fake.restore(); }
+});
+
+test('the output changing makes the context again at the next tap, and only then', () => {
+    const fake = fakeAudio();
+    try {
+        const engine = new CueAudio();
+        engine.unlock();
+        engine.outputChanged();
+        assert.equal(fake.created(), 1, 'nothing is made without a tap: a browser would not start it');
+        engine.unlock();
+        assert.equal(fake.created(), 2, 'the next tap makes it again');
+        assert.equal(fake.ctxs[0].state, 'closed');
+        engine.unlock();
+        assert.equal(fake.created(), 2, 'and it is not made again by every tap after');
+    } finally { fake.restore(); }
+});
+
 test('with no Web Audio at all the engine is a no-op, not a crash', () => {
     const g = globalThis as any;
     assert.equal(g.AudioContext, undefined, 'Node has no AudioContext, which is the case under test');
@@ -490,7 +562,7 @@ test('with no Web Audio at all the engine is a no-op, not a crash', () => {
     engine.setVolume(0.3);
     engine.setMuted(true);
     engine.setMuted(false);
-    assert.deepEqual(engine.getState(), { muted: false, volume: 0.3 });
+    assert.deepEqual(engine.getState(), { muted: false, volume: 0.3, stuck: false });
 });
 
 test('a strike is a source started on the audio clock, that many milliseconds ahead', async () => {

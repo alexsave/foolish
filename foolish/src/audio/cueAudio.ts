@@ -92,9 +92,18 @@ interface Strike { file: string; cue: number; at: number; start: number; gain: n
 
 /** What a screen draws the sound control from. One object per change, so it
  *  compares by identity (useSyncExternalStore). */
-export interface CueAudioState { muted: boolean; volume: number }
+export interface CueAudioState {
+    muted: boolean;
+    volume: number;
+    /** The browser would not start this tab's audio (a context still not running a beat after a
+     *  tap, twice): Safari's audio for the tab has hung, and only a new tab clears it. */
+    stuck: boolean;
+}
 
-const SERVER_STATE: CueAudioState = { muted: false, volume: DEFAULT_VOLUME };
+const SERVER_STATE: CueAudioState = { muted: false, volume: DEFAULT_VOLUME, stuck: false };
+
+/** How long after a tap a context may take to be running before it is taken for hung. */
+export const RESUME_WATCHDOG_MS = 1500;
 
 type ContextCtor = new (options?: AudioContextOptions) => AudioContext;
 
@@ -120,6 +129,10 @@ export class CueAudio {
     private readonly listeners = new Set<() => void>();
     private state: CueAudioState | null = null;
     private armed = false;
+    /** The output changed (a Bluetooth or headphone switch) or the context hung: the context is
+     *  made again at the next gesture, since a browser starts a new one only inside one. */
+    private stale = false;
+    private watchdog: ReturnType<typeof setTimeout> | null = null;
     /** The cues that could sound next, one bit per ANIM_CUE_* (anim_cues_next). */
     private wanted = 0;
     private readonly progress = new Map<string, Progress>();
@@ -147,6 +160,7 @@ export class CueAudio {
             this.state = {
                 muted: stored(MUTED_KEY) === '1',
                 volume: Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : DEFAULT_VOLUME,
+                stuck: false,
             };
         }
         return this.state;
@@ -197,7 +211,18 @@ export class CueAudio {
         const wake = () => this.unlock();
         window.addEventListener('pointerdown', wake, { capture: true, passive: true });
         window.addEventListener('keydown', wake, { capture: true, passive: true });
-        document.addEventListener('visibilitychange', () => { if (document.hidden) this.cancel(); });
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) { this.cancel(); return; }
+            // Back on the tab: a context the system suspended while it was away may be woken
+            // without a tap, and one that will not wake is rebuilt at the next.
+            this.wake();
+        });
+        // A context left behind by a page that went away is how Safari's audio ends up hung for
+        // the whole tab (reloads in a long session, hot updates in development).
+        window.addEventListener('pagehide', () => this.shutdown());
+        // The output changed under a running context (AirPods in, a display's speakers out): Safari
+        // can leave it running and silent, so it is made again at the next gesture.
+        navigator.mediaDevices?.addEventListener?.('devicechange', () => this.outputChanged());
         // DEVELOPMENT: the tuner's latest table, when its endpoint is running, since
         // tuning no longer relinks the kernel this page loaded (tools/soundgen/tune.sh).
         // Constant in a production build, where it is dropped.
@@ -240,8 +265,9 @@ export class CueAudio {
      *  which is the browser's rule, not ours. */
     unlock(): void {
         if (this.settings().muted) return;
+        if (this.ctx && this.stale) { this.stale = false; this.closeContext(); }
         if (this.ctx) {
-            if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => {});
+            this.wake();
             // A player who muted mid-load and came back: carry on where it stopped.
             this.pump();
             return;
@@ -264,12 +290,68 @@ export class CueAudio {
         this.master = this.ctx.createGain();
         this.master.gain.value = this.settings().volume;
         this.master.connect(this.ctx.destination);
-        if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => {});
+        this.watchState(this.ctx);
+        this.wake();
         // What arrived before the gesture can be decoded now, and everything
         // else may be fetched.
         for (const [file, bytes] of this.held) this.decode(file, bytes);
         this.held.clear();
         this.pump();
+    }
+
+    /** Ask a context that is not running to run, and watch that it does. A hung one never answers: a
+     *  beat later it is taken for dead, and the next gesture makes another. The second that hangs
+     *  too is the tab's (Safari's audio for it has wedged), which the sound button says. */
+    private wake(): void {
+        const ctx = this.ctx;
+        if (!ctx) return;
+        if (ctx.state === 'running') { this.setStuck(false); return; }
+        // Running is the end of it, and a hung context never gets here.
+        void ctx.resume().then(() => { if (this.ctx === ctx && ctx.state === 'running') this.setStuck(false); }, () => {});
+        if (this.watchdog !== null) return;
+        this.watchdog = setTimeout(() => {
+            this.watchdog = null;
+            if (this.ctx !== ctx) return;
+            if (ctx.state === 'running') { this.setStuck(false); return; }
+            this.stale = true;
+            this.setStuck(true);
+        }, RESUME_WATCHDOG_MS);
+    }
+
+    /** A context that reaches running clears the notice; the states are logged in development, where a
+     *  hung tab is diagnosed from the console. */
+    private watchState(ctx: AudioContext): void {
+        ctx.onstatechange = () => {
+            if (process.env.NODE_ENV === 'development') console.info(`[cue audio] context ${ctx.state}`);
+            if (this.ctx === ctx && ctx.state === 'running') this.setStuck(false);
+        };
+    }
+
+    private setStuck(stuck: boolean): void {
+        if (this.settings().stuck === stuck) return;
+        this.change({ ...this.settings(), stuck });
+    }
+
+    /** Close the context and stop what it was playing. The next gesture makes another. */
+    private closeContext(): void {
+        const ctx = this.ctx;
+        this.cancel();
+        this.ctx = null;
+        this.master = null;
+        if (this.watchdog !== null) { clearTimeout(this.watchdog); this.watchdog = null; }
+        if (ctx) { ctx.onstatechange = null; if (ctx.state !== 'closed') void ctx.close().catch(() => {}); }
+        const page = globalThis as { __foolishCueContext?: AudioContext };
+        if (page.__foolishCueContext === ctx) delete page.__foolishCueContext;
+    }
+
+    /** The page is going away (pagehide): give the context back, so a reload does not leave one. */
+    shutdown(): void {
+        this.closeContext();
+    }
+
+    /** The audio output changed: make the context again at the next gesture. */
+    outputChanged(): void {
+        if (this.ctx) this.stale = true;
     }
 
     // ---- loading ---------------------------------------------------------------

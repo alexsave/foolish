@@ -29,9 +29,29 @@ const BESIDE_BACK: React.CSSProperties = {
 };
 
 export const SoundButton = ({ beside }: { beside?: 'back' }) => {
-    const { muted } = useSyncExternalStore(cueAudio.subscribe, cueAudio.getState, cueAudio.getServerState);
+    const { muted, stuck } = useSyncExternalStore(cueAudio.subscribe, cueAudio.getState, cueAudio.getServerState);
     const label = muted ? 'Turn sound on' : 'Turn sound off';
     return (
+        <>
+        {/* WHEN THE BROWSER WILL NOT START THIS TAB'S AUDIO (cueAudio: a context still not running a beat
+            after a tap), say so: a tap tries once more, and past that only a new tab helps. Silence with no
+            word is what made this look like a game that had stopped making sound. */}
+        {stuck && !muted && (
+            <div
+                role="status"
+                data-sound-stuck
+                style={{
+                    position: 'fixed', zIndex: 1500,
+                    top: 'calc(max(10px, env(safe-area-inset-top, 0px)) + var(--btn-icon-size) + 8px)',
+                    ...(beside === 'back' ? { left: 'max(10px, env(safe-area-inset-left, 0px))' } : { right: 'max(10px, env(safe-area-inset-right, 0px))' }),
+                    maxWidth: 220, padding: '6px 10px', borderRadius: 6, fontSize: 12, lineHeight: 1.3,
+                    color: '#f5e6c8', background: 'rgba(28,20,16,0.92)', border: '1px solid #6b5443',
+                    pointerEvents: 'none',
+                }}
+            >
+                Sound is stuck in this tab. Tap to try again, or reopen the tab.
+            </div>
+        )}
         <TexturedSurface
             as="button"
             seed={0.7}
@@ -56,5 +76,6 @@ export const SoundButton = ({ beside }: { beside?: 'back' }) => {
                 )}
             </svg>
         </TexturedSurface>
+        </>
     );
 };
