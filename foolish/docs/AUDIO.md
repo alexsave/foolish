@@ -160,7 +160,7 @@ A cue is therefore handed over its longest anchor plus the look-ahead before its
 When the time left before a moment is shorter than a take's anchor, the take starts now, from its first sample, and its moment comes late; nothing is ever started part way into its file.
 That is the case for every move that OPENS a run: a run starts as its push arrives, so its first `LIFT` is at 0 ms.
 For it the deal and the lift have TIGHT takes, the grab and the thumb slide moved closer together and to the moment (Alex: "maybe put them closer to each other"): the lift's grab 60 ms before the slide's peak and the peak 30 ms before the card leaves, where they were 110 and 130 ms; the deal's slide peak 50 ms before the grab, where it was 130.
-The voice plays an ordinary take when one fits the time it has, and a tight one when none does, so a run's first lift is heard whole and late by 180-290 ms (the slide's own swell before its peak) where an ordinary take would be 280-440 ms late.
+The voice plays an ordinary take when one fits the time it has, and a cue's tight take when none does. The lift has ONE take (Alex: the plain and the "opening a run" lift should be the same, and were two sets of numbers), so a move that opens its run plays it whole and late by its own lead-in (the grab and the slide are before the card leaves); the deal still has tight takes, and the first card of a deal plays one (`cue_strike_opening`).
 
 **The strokes before a sweep or a pickup are a prelude.**
 They are a take of their own, one set per stroke count (one stroke per 2.5 cards of the cue, 1-5, as `disc_game.py` counts them), each stroke as long as the recordings' (0.8 times one, 0.25-0.7 s) and never compressed, but started 15-40 ms after the one before so they overlap into ONE scrape (Alex: "here it looks like there is just one scrape sound"): a sweep or a pickup is a scrape, then the lift, then (a sweep) the set down. The scrape as a whole is at the level the strokes row says, however many strokes make it.
@@ -268,7 +268,7 @@ soundgen renders the WAVs into `tools/soundgen/build/wav/`, ffmpeg's native AAC 
 
 **The bitrates are measured, not chosen** (`tools/soundgen/aac/bitrate.py`).
 Each set of takes is encoded at 48-192 kbps exactly as the build does, decoded, and held against the WAVs: the median 1/12-octave spectrum within 0.5 dB in every band within 30 dB of the loudest, and every `measure.py` measure moved by no more than a quarter of the takes' own spread.
-The lowest that passes ships (the `kbps` of each set in `RECIPES`): 96 kbps for the flip, the throw-in and cover landings, the pile and the dealt landing; 128 for the deal, the lift, the turn, the pass, the pickup, the sweep and its strokes and the slide into the hand; 160 for the tight lift and the pickup's strokes; 192 for the tight deal (four takes, so its median moves most).
+The lowest that passes ships (the `kbps` of each set in `RECIPES`): 96 kbps for the flip, the throw-in and cover landings, the pile and the dealt landing; 128 for the deal, the lift, the turn, the pass, the pickup, the sweep and its strokes and the slide into the hand; 160 for the pickup's strokes; 192 for the tight deal (four takes, so its median moves most).
 At 8 and 12 kHz the encoder gives no more than about 64 kbps whatever it is asked; the five placeholders ship at 64 and measure within 0.8 dB, where the one measure each still misses (a 54 dB low-high balance, a centroid) is the same at every bitrate.
 
 **The priming, measured.**
@@ -410,7 +410,6 @@ The gain in each model's `mix` line is 1000: the levels are the files'.
 | `SWEEP` (the discard's lift) | -10.9 to -5.9 | -27.1 to -25.2 |
 | `PILE` | -23.9 to -18.0 | -38.8 to -37.2 |
 | `DEAL` (slide and grab), tight | -24.6 to -22.2 | -41.2 to -36.8 |
-| `LIFT` (two-finger grab and slide), tight | -28.0 to -24.8 | -41.2 to -37.0 |
 | sweep strokes (1-5) | -27.3 to -21.5 | -44.9 to -39.8 |
 | pickup strokes (1-5) | -32.3 to -23.9 | -45.3 to -40.1 |
 | `PASS` (shfff) | -31.4 to -29.0 | -44.2 to -39.6 |

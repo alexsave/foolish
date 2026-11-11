@@ -94,7 +94,7 @@ static double db2(double db) { return pow(10, db / 20); }
 typedef enum {
     T_DEAL_THUMB, T_DEAL_GRAB, T_DEAL_TIGHT_THUMB, T_DEAL_TIGHT_GRAB, T_DEAL_LAND,
     T_TURN_FLIP, T_FLIP_LAND, T_FLIP_DECK,
-    T_LIFT_GRAB, T_LIFT_THUMB, T_LIFT_TIGHT_GRAB, T_LIFT_TIGHT_THUMB,
+    T_LIFT_GRAB, T_LIFT_THUMB,
     T_PLACE_LAND, T_COVER_LAND, T_PASS_SLIDE,
     T_SWEEP_STROKES, T_SWEEP_LIFT, T_PILE_PLACE, T_PICKUP_STROKES, T_PICKUP_LIFT, T_INTO_HAND_SLIDE,
     N_TUNE
@@ -112,8 +112,6 @@ static const struct { int cue, role; const char *part; } TUNE_KEY[N_TUNE] = {
     [T_FLIP_DECK]        = { ANIM_CUE_FLIP, ROLE_MAIN, "deck" },
     [T_LIFT_GRAB]        = { ANIM_CUE_LIFT, ROLE_MAIN, "grab" },
     [T_LIFT_THUMB]       = { ANIM_CUE_LIFT, ROLE_MAIN, "thumb" },
-    [T_LIFT_TIGHT_GRAB]  = { ANIM_CUE_LIFT, ROLE_TIGHT, "grab" },
-    [T_LIFT_TIGHT_THUMB] = { ANIM_CUE_LIFT, ROLE_TIGHT, "thumb" },
     [T_PLACE_LAND]       = { ANIM_CUE_PLACE, ROLE_MAIN, "land" },
     [T_COVER_LAND]       = { ANIM_CUE_COVER, ROLE_MAIN, "land" },
     [T_PASS_SLIDE]       = { ANIM_CUE_PASS, ROLE_MAIN, "slide" },
@@ -222,15 +220,6 @@ static void g_lift(Take *t, int level) {
     (void)level;
     Sig s = m_thumb(&t->r); PEAK(T_LIFT_THUMB, s, sig_argmax_abs(&s));
     Sig g = m_tgrab(&t->r); PEAK(T_LIFT_GRAB, g, S_(TGRAB_REF_S));
-}
-// ...and TIGHT (Alex: "maybe put them closer to each other"), for a move that
-// opens its run and so has no time before its lift: the grab 60 ms before the
-// slide's peak and the peak 30 ms before the card leaves, where they were 110
-// and 130 ms. The host plays it from the moment, whole.
-static void g_lift_tight(Take *t, int level) {
-    (void)level;
-    Sig s = m_thumb(&t->r); PEAK(T_LIFT_TIGHT_THUMB, s, sig_argmax_abs(&s));
-    Sig g = m_tgrab(&t->r); PEAK(T_LIFT_TIGHT_GRAB, g, S_(TGRAB_REF_S));
 }
 // PLACE: the throw-in's landing.
 static void g_place(Take *t, int level) {
@@ -348,7 +337,7 @@ static const Recipe RECIPES[] = {
     [ANIM_CUE_NONE]      = { "none",      0,     NONE, NONE, NONE, 0 },
     [ANIM_CUE_DEAL]      = { "deal",      48000, ONE(g_deal, 8, 128), ONE(g_deal_tight, 4, 192), NONE, 0 },
     [ANIM_CUE_FLIP]      = { "flip",      32000, ONE(g_flip_land, 8, 96), NONE, NONE, 0 },
-    [ANIM_CUE_LIFT]      = { "lift",      48000, ONE(g_lift, 8, 128), ONE(g_lift_tight, 4, 160), NONE, 0 },
+    [ANIM_CUE_LIFT]      = { "lift",      48000, ONE(g_lift, 8, 128), NONE, NONE, 0 },
     [ANIM_CUE_PLACE]     = { "place",     32000, ONE(g_place, 8, 96), NONE, NONE, 0 },
     [ANIM_CUE_COVER]     = { "cover",     32000, ONE(g_cover, 8, 96), NONE, NONE, 0 },
     [ANIM_CUE_PICKUP]    = { "pickup",    32000, ONE(g_pickup, 8, 128), NONE, { g_pickup_strokes, 3, 1, MAX_LEVEL, 160 }, 2.5 },

@@ -30,8 +30,6 @@ part	flip	main	land	0	0	6	3	trump: lands face up
 part	flip	main	deck	250	0	3	3	trump: deck set down on it
 part	lift	main	grab	-150	0	-23	0	lift: two-finger grab
 part	lift	main	thumb	-130	0	-33	3	lift: thumb slide
-part	lift	tight	grab	-20	0	-23	0	lift, opening a run: two-finger grab
-part	lift	tight	thumb	0	0	-33	3	lift, opening a run: thumb slide
 part	place	main	land	0	0	2	2	attack: card lands on the table
 part	cover	main	land	0	0	1	2	cover: card lands on a card
 part	pass	main	slide	350	0	-13	2	transfer: shfff to the next defender
