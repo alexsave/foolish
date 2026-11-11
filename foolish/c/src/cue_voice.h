@@ -74,7 +74,7 @@ typedef struct {
 // the prelude, so neither is played twice running. Zeroed is the start.
 typedef struct {
     int16_t last[2 * ANIM_N_CUES];   // take index + 1; [cue] main, [ANIM_N_CUES + cue] prelude
-    uint32_t rng;
+    uint64_t rng;               // shared/c/rng.h's splitmix64 state; any value, 0 included, is a good one
 } CueVoiceState;
 
 // The answer for one strike. Times are microseconds from NOW, never negative.

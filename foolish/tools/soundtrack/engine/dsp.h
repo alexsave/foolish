@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../../../../shared/c/rng.h"
+
 #define SR 48000
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -14,8 +16,9 @@
 
 // ---- deterministic randomness: every note owns a seed, so loop passes render identically ----
 typedef struct { uint64_t s; } Rng;
-static inline uint64_t mix64(uint64_t z) { z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL; z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL; return z ^ (z >> 31); }
-static inline double r01(Rng *r) { r->s += 0x9e3779b97f4a7c15ULL; return (mix64(r->s) >> 11) * (1.0 / 9007199254740992.0); }
+// The finaliser alone, as a hash of a key (the shared generator's own: its step less the increment).
+static inline uint64_t mix64(uint64_t z) { return rng_splitmix64_at(z - RNG_GOLDEN); }
+static inline double r01(Rng *r) { return rng_unit(rng_splitmix64(&r->s)); }
 static inline double rr(Rng *r, double a, double b) { return a + (b - a) * r01(r); }
 static inline double rn(Rng *r) { return 2 * r01(r) - 1; }
 static inline double rgauss(Rng *r) { double u = r01(r) + 1e-12, v = r01(r); return sqrt(-2 * log(u)) * cos(TAU * v); }

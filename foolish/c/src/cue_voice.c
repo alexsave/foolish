@@ -4,13 +4,12 @@
 
 #include <stddef.h>
 
-// [0, 1) from the state's own generator (xorshift32): the host seeds it once,
-// and nothing here reads a clock.
+#include "../../../shared/c/rng.h"
+
+// [0, 1) from the state's own stream, the repo's one generator (shared/c/rng.h): the host seeds
+// it once, and nothing here reads a clock.
 static double draw(CueVoiceState *st) {
-    uint32_t x = st->rng ? st->rng : 0x9E3779B9u;
-    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
-    st->rng = x;
-    return (double)(x >> 8) / (double)(1u << 24);
+    return rng_unit(rng_splitmix64(&st->rng));
 }
 
 // A take that is one of `kind`'s, in `role`, at `level` (any level for -1).
