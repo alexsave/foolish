@@ -79,9 +79,9 @@ The ids are stable and append-only: a host's table is keyed by them.
 | Id | Cue | Made by | Struck | Strikes | Its sound |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `DEAL` | each card of the opening deal; each card of a refill (the trump drawn last included) | as the card leaves the stock | one a card, up to 6 | the dealer's thumb slide, then the grab |
-| 15 | `DEAL_LAND` | the same cards | as each lands at its seat | one a card, up to 6 | the card on the cloth, quieter the further its seat is from the viewer |
+| 15 | `DEAL_LAND` | the same cards | as each lands at its seat | one a card, up to 6 for the opening deal; ONE for a refill (a seat's whole draw lands together, no "brrrrt") | the card on the cloth, quieter the further its seat is from the viewer |
 | 16 | `TURN` | the trump turned up | as it leaves the stock | 1 | the card pushed off and snapped over |
-| 2 | `FLIP` | the same trump | as it lands in its slot | 1 | a throw-in's landing, and the stock set down on it 350 ms later |
+| 2 | `FLIP` | the same trump | as it lands in its slot | 1 | a throw-in's landing, and the stock set down on it ANIM_DECK_DOWN_MS (250 ms, c/src/anim_plan.h) later, the moment the picture of the stock held in the air comes down |
 | 3 | `LIFT` | cards leaving a hand for the table (attack, throw-in, transfer, cover) | as the flight opens | 1 a beat | two fingers take the card, the thumb slides it out |
 | 4 | `PLACE` | a card landing on the table uncovered (attack, throw-in, transfer) | at the landing | one a card, up to 6 | the throw-in's landing |
 | 17 | `PASS` | a transfer (the event's msg is `EVW_MSG_PASSED`) | at its landing, beside its `PLACE` | 1 a step | the "shfff" of the card slid on, from 350 ms after the landing; the shield changes hands when it is heard (`onSlid`, `cue_late_us`), the only badge change that waits on a sound |
@@ -90,7 +90,7 @@ The ids are stable and append-only: a host's table is keyed by them.
 | 18 | `INTO_HAND` | the same cards | as they land in the hand | 1, for n cards | one slide into the fanned hand |
 | 7 | `SWEEP` | the table swept to the discard | as the sweep opens | 1, for n cards | one scrape gathering the table (a stroke per ~2.5 cards, started a hair apart so they are one sound), then the pile lifted and turned |
 | 8 | `PILE` | the swept cards coming to rest | as the sweep lands | 1, for n cards | the pile set softly on the discard pile |
-| 9 | `OUT` | a seat going out | 90 ms behind the landing of the move that put them out | 1 | placeholder |
+| 9 | `OUT` | a seat going out | as the seat releases its last hand: when its own last move SETS OFF (its card in the air is already out of the hand's count). Heard late, within a second, and never dropped, when the push that says so arrives after that | 1 | placeholder |
 | 10 | `REVERT` | a refused move flying home | as it sets off | 1, of the cue it undoes, backwards | the undone cue's take, reversed |
 | 11 | `GOOD` | a good said | as the badge turns | 1 | placeholder |
 | 12 | `HAND_OFF` | the shield or opening sword going from one seat to another | as the mark leaves | 1 | placeholder |

@@ -441,6 +441,11 @@ static int read_tuning(void) {
         if (!ok) { fprintf(stderr, "soundgen: %s line %d: not a part or mix line soundgen knows, a second line for one, or out of range\n", path, ln); bad++; }
     }
     fclose(f);
+    // THE STOCK SET DOWN IS THE PLAN'S MOMENT, not a tuned one: the picture of the stock held in the
+    // air ends then (ANIM_DECK_DOWN_MS after the trump lands) and the sound is made to be heard then.
+    // Its row's time is shown by the tuner as that, and whatever the file says is overruled.
+    TUNE[T_FLIP_DECK].at_ms = ANIM_DECK_DOWN_MS;
+    TUNE[T_FLIP_DECK].at_spread_ms = 0;
     for (int i = 0; i < N_TUNE; i++)
         if (!seen_part[i]) { fprintf(stderr, "soundgen: %s has no line for part %s %s %s\n", path, RECIPES[TUNE_KEY[i].cue].name, ROLE_NAME[TUNE_KEY[i].role], TUNE_KEY[i].part); bad++; }
     for (int c = 1; c < ANIM_N_CUES; c++)
@@ -711,11 +716,6 @@ static int parts(const char *dir) {
 // Each file's name, rate, length to the sample and anchor (in microseconds,
 // rounded), its cue, role and level, and each cue's mix. c/src/cue_voice_table.c
 // is its one reader, for the web (web.wasm) and iOS alike.
-// A cue's MARK: where, from its moment, a second thing in its sound sits that something drawn
-// follows. The FLIP take's stock set down on the trump is the one (Alex: the stock is "in the air"
-// while it is dealt and goes down with that sound), and it is a part's time, tuning.tsv's.
-static long mark_us_of(int cue) { return cue == ANIM_CUE_FLIP ? lrint(TUNE[T_FLIP_DECK].at_ms * 1000) : 0; }
-
 static int write_ctable(const char *path, Out *outs, int n) {
     FILE *f = fopen(path, "w");
     if (!f) return -1;
@@ -732,8 +732,8 @@ static int write_ctable(const char *path, Out *outs, int n) {
     fprintf(f, "};\nconst int CUE_N_TAKE_ROWS = %d;\n\nconst CueMix CUE_MIX_ROWS[ANIM_N_CUES] = {\n", n);
     for (int c = 0; c < ANIM_N_CUES; c++) {
         const MixRow *m = &MIX_ROWS[c];
-        fprintf(f, "    [%d] = { %d, %d, %d, %d, %ld, %ld },\n", c, m->gain, m->pitch, m->level, m->per_card,
-                lrint(RECIPES[c].cards_per_level * 1000), mark_us_of(c));
+        fprintf(f, "    [%d] = { %d, %d, %d, %d, %ld },\n", c, m->gain, m->pitch, m->level, m->per_card,
+                lrint(RECIPES[c].cards_per_level * 1000));
     }
     fprintf(f, "};\n");
     return fclose(f);
@@ -761,7 +761,7 @@ static int write_ctable_bin(const char *path, Out *outs, int n) {
     }
     for (int c = 0; c < ANIM_N_CUES && ok; c++) {
         const MixRow *m = &MIX_ROWS[c];
-        const CueMix x = { m->gain, m->pitch, m->level, m->per_card, (int32_t)lrint(RECIPES[c].cards_per_level * 1000), (int32_t)mark_us_of(c) };
+        const CueMix x = { m->gain, m->pitch, m->level, m->per_card, (int32_t)lrint(RECIPES[c].cards_per_level * 1000) };
         ok = fwrite(&x, sizeof x, 1, f) == 1;
     }
     return fclose(f) != 0 || !ok ? -1 : 0;

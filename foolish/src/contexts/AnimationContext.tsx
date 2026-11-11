@@ -86,6 +86,10 @@ interface AnimationContextType {
     /** The stock is held in the air, as a card in flight is, from the first card of the opening deal to
      *  the sound of it set down on the trump (useAnimationRun). */
     deckLifted: boolean;
+    /** Each seat's hand as the plan has it NOW (AnimFrame.hand): a hand drops as its cards of an attack, a
+     *  transfer or a cover LEAVE, not as they land, so a seat is never shown holding a card that is in the
+     *  air. Null while nothing is animating (the board's own counts are the truth). */
+    animatedHand: readonly number[] | null;
     /** The flipped trump in the air on its way to a hand (AnimFrame.trump_flight):
      *  it has left its slot, which the stock draws empty. Null otherwise. */
     trumpFlight: Card | null;
@@ -496,7 +500,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // that is about the game, and the loop is about time.
     const {
         isAnimating, currentAnimation, flightMs, rowMs, heldPiles, arrivingPiles,
-        inFlightFromDeck, inFlightToFlipped, trumpFlight, deckLifted, animatingCards, enqueue, reset: resetRun,
+        inFlightFromDeck, inFlightToFlipped, trumpFlight, deckLifted, animatedHand, animatingCards, enqueue, reset: resetRun,
     } = useAnimationRun<ClientAnimationEvent>({
         board: () => currentGameRef.current,
         placesOf: (step) => flightPlaces(step.from_location, step.to_location, step.seat),
@@ -844,6 +848,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             inFlightFromDeck,
             inFlightToFlipped,
             deckLifted,
+            animatedHand,
             trumpFlight,
             getCardAnimationState,
             shownRoles: roleMotion.shown,

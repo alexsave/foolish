@@ -111,8 +111,17 @@ test('frame zero: nothing has landed, the badges are frozen and both cards are v
     assert.equal(f.landed, 0, 'the board to commit is the freeze, not step 0\'s');
     assert.equal(f.nextMs, TIME);
     assert.equal(f.done, false);
-    assert.deepEqual(f.hand, [6, 6]);
+    assert.deepEqual(f.hand, [5, 6], 'the attacker\'s badge has dropped: its card is in the air');
     assert.equal(f.veiled, (1n << BigInt(id(SIX_S))) | (1n << BigInt(id(SEVEN_S))));
+});
+
+// A HAND DROPS AS ITS CARDS LEAVE (Alex: a seat was heard going out with its last card still in the
+// air and still counted in its hand): from the first millisecond of the flight, not at its landing,
+// and the landing's own board then says the same number.
+test('a hand drops as its card leaves the hand, not as it lands, and the landing agrees', () => {
+    plan();
+    for (const t of [0, 1, 250, TIME - 1]) assert.deepEqual(animPlanAt(t).hand, [5, 6], `at ${t} ms the card is in the air`);
+    assert.deepEqual(animPlanAt(TIME).hand, [5, 6], 'and at the landing the board says the same');
 });
 
 test('one millisecond before the landing, the step is still flying', () => {

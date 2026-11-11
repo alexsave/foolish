@@ -47,6 +47,7 @@ import {
     ANIM_CUE_FLIP, ANIM_CUE_PICKUP, ANIM_CUE_REVERT, ANIM_CUE_DEAL_LAND, ANIM_CUE_PASS, ANIM_CUE_TURN,
 } from '../sdk/ts/gen/kernel_consts.bots.ts';
 import { CUE_ROLE_PRELUDE, EVW_MSG_ATTACKED, EVW_MSG_PASSED } from '../sdk/ts/gen/view_layout.bots.ts';
+import { ANIM_DECK_DOWN_MS } from '../sdk/ts/gen/anim.bots.ts';
 import { CUE_LATE_MS, CUE_LOOK_AHEAD_MS, cueKey, dueStrikes, type PlanCue } from '../src/audio/cueSchedule.ts';
 import { CueAudio, CUE_SOUND_ROOT, cueFile } from '../src/audio/cueAudio.ts';
 import { finishCueOf } from '../src/audio/useFinishCue.ts';
@@ -112,11 +113,11 @@ test('a bout end reads back whole: the spread, the out behind its cover, the swe
         `LIFT@0 step0 x1 (1)`,
         `COVER@${ANIM_TIME_MS} step0 x1 (1)`,
         `COVER@${ANIM_TIME_MS + ANIM_SOUND_STAGGER_MS} step1 x1 (1)`,
-        `OUT@${ANIM_TIME_MS + ANIM_SOUND_OUT_LAG_MS} step2 x1 (0)`,
+        `OUT@0 step2 x1 (0)`,
         `SWEEP@${sweepAt} step3 x1 (4)`,
         `PILE@${sweepAt + ANIM_TIME_MS} step3 x1 (4)`,
         `DEAL@${dealAt} step4 x3 (3)`,
-        `DEAL_LAND@${dealAt + ANIM_TIME_MS} step4 x3 (3)`,
+        `DEAL_LAND@${dealAt + ANIM_TIME_MS} step4 x1 (3)`,
         `DEAL@${dealAt + ANIM_TIME_MS + ANIM_GAP_MS} step5 x1 (1)`,
         `DEAL_LAND@${dealAt + 2 * ANIM_TIME_MS + ANIM_GAP_MS} step5 x1 (1)`,
     ]);
@@ -228,7 +229,7 @@ test('at 60 frames a second every strike is handed over once, aimed at the plan\
     const plan = planOf(boutEnd());
     const struck = walk(plan.cues, plan.totalMs + 1000, () => 16);
     assert.deepEqual(byTime(struck), wanted(plan.cues));
-    assert.equal(struck.length, 14, 'a lift, two covers, an out, the sweep, the pile, four dealt cards and their four landings (a refill of three is three strikes)');
+    assert.equal(struck.length, 12, 'a lift, two covers, an out, the sweep, the pile, four dealt cards and their landings (a refill of three is three cards off the stock and ONE landing)');
 });
 
 test('ragged frames move no sound: the same strikes at the same milliseconds', () => {
@@ -305,7 +306,8 @@ test('a tab that was away does not replay what it missed', () => {
     // no frames), then it comes back to a run that is long over.
     const done = new Set<number>();
     const before = [0, 16, 32, 200].flatMap((now) => [...dueStrikes(plan.cues, now, done)]);
-    assert.deepEqual(before.map((s) => s.kind), [ANIM_CUE_LIFT], 'only the lift was due in the first 200ms');
+    assert.deepEqual(before.map((s) => s.kind).sort(), [ANIM_CUE_LIFT, ANIM_CUE_OUT].sort(),
+        'only the lift and the out (struck as the seat releases its last hand) were due in the first 200ms');
     const back = dueStrikes(plan.cues, 5200, done);
     assert.deepEqual(back, [], 'nothing it missed is played in a burst');
     assert.equal(done.size, plan.cues.length, 'and every cue is settled, so none of them comes back later either');
@@ -881,16 +883,28 @@ test('every cue the kernel can make has takes in its table and a level, and a re
     assert.equal(cueMix(ANIM_CUE_NONE), null, 'NONE is not a cue');
 });
 
-// THE STOCK COMES DOWN WITH ITS SOUND: the trump's cue carries, from its moment, where the "stock set
-// down on it" sits (CueMix.mark_us), and it is tuning.tsv's `flip deck` time and no other number.
-test('the trump\'s cue carries the time of the stock set down on it, from tuning.tsv; no other cue has a mark', () => {
-    const tuning = readFileSync(join(REPO, 'tools/soundgen/tuning.tsv'), 'utf8');
-    const at = Number(/^part\tflip\tmain\tdeck\t(-?[\d.]+)\t/m.exec(tuning)?.[1]);
-    assert.ok(at > 0, 'the stock set down comes after the trump lands');
-    assert.equal(cueMix(ANIM_CUE_FLIP)!.markUs, Math.round(at * 1000), 'the mark is the part\'s time, in microseconds');
-    for (let kind = 1; kind < ANIM_N_CUES; kind++) {
-        if (kind !== ANIM_CUE_FLIP) assert.equal(cueMix(kind)!.markUs, 0, `${ANIM_CUE_NAMES[kind]} has no second moment`);
-    }
+// THE STOCK COMES DOWN WITH ITS SOUND, and the moment is the plan's (ANIM_DECK_DOWN_MS, c/src/anim_plan.h):
+// the "stock set down on it" in the trump's take is made to sit there, so tuning.tsv's time for that
+// part is overruled and nobody twiddles a delay to line the sound up with the picture.
+test('the stock set down is heard at the plan\'s moment, whatever the file says its time is', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'soundgen-deck-'));
+    try {
+        const SG = join(REPO, 'tools/soundgen');
+        const tuning = readFileSync(join(SG, 'tuning.tsv'), 'utf8');
+        const line = /^(part\tflip\tmain\tdeck\t)(-?[\d.]+)(\t)/m;
+        assert.ok(line.test(tuning), 'the stock set down has a line in the file');
+        const table = (text: string, name: string) => {
+            const path = join(dir, `${name}.tsv`), out = join(dir, `${name}.c`);
+            writeFileSync(path, text);
+            execFileSync('make', ['-s', '--no-print-directory', '-C', SG, 'ctable', `CTABLE=${out}`],
+                { env: { ...process.env, SOUNDGEN_TUNING: path }, stdio: 'ignore' });
+            return readFileSync(out, 'utf8');
+        };
+        const same = table(tuning, 'as-is');
+        assert.equal(table(tuning.replace(line, '$1900$3'), 'later'), same, 'a later time in the file changes no take');
+        assert.equal(table(tuning.replace(line, '$1-40$3'), 'earlier'), same, 'and nor does an earlier one');
+        assert.equal(ANIM_DECK_DOWN_MS, 250, 'the plan\'s moment, from the kernel\'s header');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('the kernel plays by the table soundgen writes its files from', () => {

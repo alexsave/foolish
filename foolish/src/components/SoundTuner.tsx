@@ -36,6 +36,8 @@ const same = (a: Row | undefined, b: Row): boolean =>
     !!a && (a.kind === 'part' && b.kind === 'part'
         ? a.at === b.at && a.atSpread === b.atSpread && a.db === b.db && a.dbSpread === b.dbSpread
         : a.kind === 'mix' && b.kind === 'mix' && a.gain === b.gain);
+/** The one part whose time is the animation's, not a number to tune (ANIM_DECK_DOWN_MS). */
+const PLAN_TIMED = 'part flip main deck';
 const keyOf = (r: Row) => (r.kind === 'part' ? `part ${r.cue} ${r.role} ${r.part}` : `mix ${r.cue}`);
 /** A number as the file writes it: no exponent, no float noise. */
 const num = (v: number, places: number) => String(Number(v.toFixed(places)));
@@ -304,8 +306,14 @@ export default function SoundTuner({ playPart, perStroke, compact = false }: {
                                             {!compact && r.dbSpread > 0 && <span style={{ opacity: 0.6, fontSize: 12 }}> to {num(r.db - r.dbSpread, 2)}</span>}
                                         </td>
                                         <td style={cell}>
+                                            {keyOf(r) === PLAN_TIMED ? (
+                                                // The stock set down is heard when the stock held in the air comes down: the
+                                                // animation's moment (ANIM_DECK_DOWN_MS), not one to tune.
+                                                <span title="the stock is set down when the animation brings it down; nothing to tune" style={{ opacity: 0.7, fontSize: compact ? 12 : undefined }}>with the stock</span>
+                                            ) : (
                                             <Stepper value={r.at} step={10} places={1} label={`${r.what} ms`} changed={atChanged} narrow={compact}
                                                      onChange={(v) => edit(setField(text, r.line, 4, num(v, 1)))} />
+                                            )}
                                             {!compact && r.atSpread > 0 && <span style={{ opacity: 0.6, fontSize: 12 }}> to {num(r.at - r.atSpread, 1)}</span>}
                                         </td>
                                         <td style={cell}>

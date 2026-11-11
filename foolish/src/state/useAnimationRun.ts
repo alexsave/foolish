@@ -18,8 +18,8 @@
 // game and not about time.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { animSeatGainPm, cueLateUs, cueLeadUs, cueMix, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
-import { ANIM_STEP_NONE } from '@sdk/ts/gen/anim.bots.ts';
+import { animSeatGainPm, cueLateUs, cueLeadUs, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_DECK_DOWN_MS, ANIM_STEP_NONE } from '@sdk/ts/gen/anim.bots.ts';
 import {
     arrivingPiles, frameAt, heldPiles, NO_ARRIVING, NO_HELD, planFor, sameArriving, sameHeld, withTrumpOut,
     type AnimStep, type ArrivingPile,
@@ -92,6 +92,8 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     const [arriving, setArriving] = useState<readonly ArrivingPile[]>(NO_ARRIVING);
     const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
     const [deckLifted, setDeckLifted] = useState(false);
+    // The badges as the plan has them now (AnimFrame.hand): a hand drops as its cards LEAVE, not as they land.
+    const [animatedHand, setAnimatedHand] = useState<readonly number[] | null>(null);
     const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
     // THE TRUMP IN THE AIR (AnimFrame.trump_flight): it has left its slot as
     // the draw that deals it opened, and the flight is the one place it is
@@ -267,13 +269,13 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
 
         // THE STOCK IS IN THE AIR THROUGH THE OPENING DEAL, like a card in flight (Alex), from the
         // moment the run starts (the press of next, and before the first sound) to the moment the
-        // "stock set down on it" is heard, which is the trump's FLIP cue plus the mark its take
-        // carries (CueMix.mark_us, tuning.tsv's `flip deck`) plus the beat the page paints late
+        // "stock set down on it" is heard: the trump's FLIP cue plus ANIM_DECK_DOWN_MS (the plan's
+        // number, which the sound is made to sit at too) plus the beat the page paints late
         // (PAINT_LAG_MS). Only a run that turns a trump has one: a refill does not lift the stock.
         let deckPending = false;
         {
             const flip = plan.cues.find((c) => c.kind === ANIM_CUE_FLIP);
-            const down = flip ? flip.atMs + (cueMix(ANIM_CUE_FLIP)?.markUs ?? 0) / 1000 + PAINT_LAG_MS : 0;
+            const down = flip ? flip.atMs + ANIM_DECK_DOWN_MS + PAINT_LAG_MS : 0;
             const up = !!flip && nowMs < down;
             deckPending = !!flip && nowMs < down;
             setDeckLifted((prev) => (prev === up ? prev : up));
@@ -342,6 +344,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         // for the trump's slot never leaves it at all: both numbers are the
         // kernel's, per step (AnimPlanStep.in_flight_from_deck / _to_flipped).
         setInFlightFromDeck(frame.inFlightFromDeck);
+        setAnimatedHand((prev) => (prev && prev.length === frame.hand.length && prev.every((v, i) => v === frame.hand[i]) ? prev : frame.hand));
         setInFlightToFlipped(frame.inFlightToFlipped);
         setAnimatingCards((prev) => {
             const next = veilOf(flying);
@@ -383,6 +386,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         setIsAnimating(false);
         setInFlightFromDeck(0);
         setDeckLifted(false);
+        setAnimatedHand(null);
         setInFlightToFlipped(0);
         setAnimatingCards((prev) => (prev.size === 0 ? prev : new Map()));
         hooksRef.current.onIdle();
@@ -440,6 +444,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         setIsAnimating(false);
         setInFlightFromDeck(0);
         setDeckLifted(false);
+        setAnimatedHand(null);
         setInFlightToFlipped(0);
         setAnimatingCards(new Map());
     }, []);
@@ -454,6 +459,6 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     return {
         isAnimating, currentAnimation, flightMs, rowMs, heldPiles: heldSet,
         arrivingPiles: arriving,
-        inFlightFromDeck, inFlightToFlipped, trumpFlight, deckLifted, animatingCards, enqueue, reset,
+        inFlightFromDeck, inFlightToFlipped, trumpFlight, deckLifted, animatedHand, animatingCards, enqueue, reset,
     };
 }

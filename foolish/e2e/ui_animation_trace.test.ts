@@ -45,6 +45,7 @@
  * ========================================================================== */
 
 import { test, mock, after } from 'node:test';
+import { PAINT_LAG_MS } from '../src/state/flightTiming.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -57,7 +58,8 @@ import { clientTable, encodeAction } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 import { NC_RECONCILE_MS } from '../sdk/ts/gen/net_layout.bots.ts';
 import { askKindName } from './helpers/ask.ts';
-import { ANIM_CUE_NAMES, ANIM_SOUND_STAGGER_MS, ANIM_SOUND_OUT_LAG_MS } from '../sdk/ts/gen/kernel_consts.bots.ts';
+import { ANIM_CUE_NAMES, ANIM_CUE_PASS, ANIM_SOUND_STAGGER_MS, ANIM_SOUND_OUT_LAG_MS } from '../sdk/ts/gen/kernel_consts.bots.ts';
+import { cueLateUs } from '../sdk/ts/wasm/bots.ts';
 import { ANIM_TIME_MS, ANIM_GAP_MS, ANIM_BOUT_END_HOLD_MS } from '../sdk/ts/gen/anim.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.debug = () => {}; }
@@ -881,9 +883,9 @@ test('a LAST DEFENCE rests before the sweep takes the table', async () => {
     const [lift] = times(ears.heard, 'LIFT'), [cover] = times(ears.heard, 'COVER');
     const [sweep] = times(ears.heard, 'SWEEP'), [pile] = times(ears.heard, 'PILE');
     assert.deepEqual(inOrder(ears.heard).map((h) => h.cue),
-        ['LIFT', 'COVER', 'SWEEP', 'PILE', 'DEAL', 'DEAL', 'DEAL_LAND', 'DEAL', 'DEAL_LAND', 'DEAL', 'DEAL',
-         'DEAL_LAND', 'DEAL_LAND', 'DEAL_LAND', 'HAND_OFF'],
-        'my cover, the sweep, the pile, Anna\'s two cards and my three, each heard leaving and landing, and the roles handed on');
+        ['LIFT', 'COVER', 'SWEEP', 'PILE', 'DEAL', 'DEAL', 'DEAL_LAND', 'DEAL', 'DEAL', 'DEAL',
+         'DEAL_LAND', 'HAND_OFF'],
+        'my cover, the sweep, the pile, Anna\'s two cards and my three, each heard leaving and a seat\'s whole draw landing as ONE sound, and the roles handed on');
     assert.equal(cover - lift, ANIM_TIME_MS, 'the cover is heard landing exactly one flight after it was heard leaving');
     assert.equal(sweep - cover, ANIM_GAP_MS + ANIM_BOUT_END_HOLD_MS, 'the sweep is heard after the rest, not after the gap');
     assert.equal(pile - sweep, ANIM_TIME_MS, 'and the pile as the sweep lands');
@@ -959,11 +961,11 @@ test('the `out` that ends the game costs the sequence no time of its own', async
     assert.ok(!order.includes('FOOL'), 'I am not the fool');
     assert.ok(!order.includes('HAND_OFF'), 'and nothing is handed on: there is no next bout for a shield to go to');
     assert.equal(order.filter((c) => c === 'OUT').length, 1, 'my going out is heard once');
-    // The stream is cover, discard, refill, OUT: the out rides the refill that
-    // found the stock empty, a lag behind its landing, and not a beat of its own.
-    const deal = times(ears.heard, 'DEAL'), out = times(ears.heard, 'OUT')[0];
-    assert.equal(out - (deal[deal.length - 1] + ANIM_TIME_MS), ANIM_SOUND_OUT_LAG_MS,
-        'struck a lag behind the landing of the move it rides');
+    // The stream is cover, discard, refill, OUT: the out is struck as my last card SETS OFF (the hand is
+    // released), and the push that says I am out arrives after that, so it is heard when it arrives
+    // - late, within its grace, and never dropped.
+    const [lift] = times(ears.heard, 'LIFT'), out = times(ears.heard, 'OUT')[0];
+    assert.ok(out >= lift, 'struck once my last card has left, not at the landing of a move it rides');
 });
 
 test('pass: I hand the attack on with a card of its rank', async () => {
@@ -993,7 +995,11 @@ test('pass: I hand the attack on with a card of its rank', async () => {
         'my transfer is heard as one before the server confirms it: it lands, and slides on');
     assert.equal(times(ears.heard, 'PLACE')[0] - times(ears.heard, 'LIFT')[0], ANIM_TIME_MS);
     const behind = times(ears.heard, 'HAND_OFF')[0] - times(ears.heard, 'PLACE')[0];
-    assert.ok(behind >= 0 && behind <= FRAME_MS, `the shield is heard at the frame the pass lands (${behind}ms behind the card)`);
+    // THE SHIELD CHANGES HANDS WITH THE "SHFFF" (Alex: the badges cannot slide the card on, so their change
+    // is the slide): as long after the landing as the pass take's first sound is (cue_late_us).
+    const late = cueLateUs(ANIM_CUE_PASS) / 1000;
+    assert.ok(late > 0 && Math.abs(behind - late) <= FRAME_MS,
+        `the shield is heard with the slide, ${late}ms after the card lands (${behind}ms behind it)`);
 });
 
 test('pickup: I take the table', async () => {
@@ -1013,8 +1019,8 @@ test('pickup: I take the table', async () => {
     // at a time. The push that confirms my pickup does not play it a second
     // time, and nothing is handed on: with two of us she attacks again.
     const order = inOrder(ears.heard);
-    assert.deepEqual(order.map((h) => h.cue), ['PICKUP', 'INTO_HAND', 'DEAL', 'DEAL', 'DEAL', 'DEAL_LAND', 'DEAL_LAND', 'DEAL_LAND'],
-        'the table taken once and into my hand, and Anna\'s three cards off the stock and landing');
+    assert.deepEqual(order.map((h) => h.cue), ['PICKUP', 'INTO_HAND', 'DEAL', 'DEAL', 'DEAL', 'DEAL_LAND'],
+        'the table taken once and into my hand, and Anna\'s three cards off the stock and landing as one');
     assert.equal(order[0].cards, 3, 'the pickup says how many cards it stands for');
 });
 
@@ -2099,6 +2105,6 @@ test('two moves in a row are each heard whole: the second run\'s cues are not mi
         `once my attacks are down the page asks for what can answer them (${JSON.stringify(ears.wants)})`);
     assert.deepEqual(inOrder(second).map((h) => h.cue), ['LIFT', 'COVER', 'COVER'],
         'and Anna\'s two covers whole, lift included, though they are steps 0 and 1 of a new run');
-    assert.equal(times(second, 'LIFT')[0], secondAt, 'her lift is heard as her cards leave, at the push');
-    assert.equal(times(second, 'COVER')[0] - secondAt, ANIM_TIME_MS);
+    assert.equal(times(second, 'LIFT')[0], secondAt + PAINT_LAG_MS, 'her lift is heard as her cards leave, at the push, a paint behind it');
+    assert.equal(times(second, 'COVER')[0] - secondAt, ANIM_TIME_MS + PAINT_LAG_MS);
 });

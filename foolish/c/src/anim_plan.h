@@ -251,6 +251,14 @@
 // PICKUP is the cards leaving the table, as the flight opens.
 #define ANIM_CUE_INTO_HAND 18
 
+// WHEN THE STOCK COMES DOWN, from the moment the trump lands face up. Through the opening
+// deal the stock is held in the air (the host draws it as big as a card in flight); it is set
+// down this long after the trump lands, and the "stock set down on it" in the FLIP take is made
+// to be heard at that same moment (soundgen reads this, so tuning.tsv has no time for it:
+// Alex: "have it play at the same time the deck in the air stuff ends, so I don't have to
+// twiddle with the delay"). One number, owned here, read by the picture and the sound alike.
+#define ANIM_DECK_DOWN_MS 250
+
 // One past the last cue id, for a host sizing a table by it. NOT named
 // ANIM_CUE_*, like the three knobs under it: structgen writes a value -> name
 // table from that prefix, and it must hold the cues and nothing else.
@@ -758,7 +766,9 @@ typedef struct {
     int done;         // 1 once every step has landed
     // THE BADGES AS OF NOW: the freeze until step 0 lands, then the last
     // landed step's own board. The same walk anim_build_plan already did,
-    // sampled rather than replayed.
+    // sampled rather than replayed. A hand badge is the exception that leads
+    // the board: it drops as the cards of an attack, a transfer or a cover LEAVE
+    // (anim_badge_drops_as_cards_leave), not when they land.
     int deck, discard;
     int hand[MAX_PLAYERS];
     int n_players;

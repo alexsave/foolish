@@ -31,10 +31,14 @@
 // runs from the moment the file has to START, so the longest gathering is
 // still scheduled on time whenever the plan knew about it that early.
 
-import { ANIM_SOUND_STAGGER_MS } from '@sdk/ts/gen/kernel_consts.bots.ts';
+import { ANIM_CUE_OUT, ANIM_SOUND_STAGGER_MS } from '@sdk/ts/gen/kernel_consts.bots.ts';
 
 export const CUE_LOOK_AHEAD_MS = 120;
 export const CUE_LATE_MS = 80;
+/** A seat going OUT is struck as it releases its last hand, which for my own move is before the
+ *  server's push (the notice is in it) can have arrived. It is news, so it is heard late and not
+ *  dropped, within this: a tab that was away for longer than that still replays nothing. */
+export const CUE_OUT_GRACE_MS = 1000;
 
 /** A cue as the plan lists one (sdk/ts/wasm/bots.ts AnimCueSnap). */
 export interface PlanCue { atMs: number; kind: number; step: number; hits: number; nCards: number; undoes: number }
@@ -70,7 +74,7 @@ export function dueStrikes(cues: readonly PlanCue[], nowMs: number, done: Set<nu
         done.add(key);
         for (let h = 0; h < c.hits; h++) {
             const at = c.atMs + h * ANIM_SOUND_STAGGER_MS;
-            if (at < nowMs - CUE_LATE_MS) continue;
+            if (at < nowMs - (c.kind === ANIM_CUE_OUT ? CUE_OUT_GRACE_MS : CUE_LATE_MS)) continue;
             (out ??= []).push({
                 kind: c.kind, delayMs: Math.max(0, at - nowMs), nCards: c.nCards, undoes: c.undoes,
                 step: c.step,

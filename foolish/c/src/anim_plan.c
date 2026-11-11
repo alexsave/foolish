@@ -253,16 +253,23 @@ static void cue_strikes(AnimPlan *p, int kind, int step, int at_ms, int before, 
 static int is_placement(int type);
 static int moves_cards(int type);
 
-// WHEN A SEAT'S OUT IS STRUCK. An out is a notice that rides the motion that
-// caused it (the OUTS rule): the nearest step before it that is not itself an
-// out, if that step moved a card. Its landing is when the badge has collapsed,
-// so that is the moment, a short lag on so it trails the cards' own strikes.
+// WHEN A SEAT'S OUT IS STRUCK: AS THE SEAT RELEASES ITS FINAL HAND (Alex), which is when its
+// last card sets off, not when it lands. An OUT notice exists only for a seat that really is out
+// (a seat that is refilled never gets one: it is dealt cards, or the deck is not dealt to it), so
+// the sound is struck the instant the seat's own last move opens: the nearest step before the
+// notice that this seat made and that took a card out of its hand.
 //
-// NOT the out's own start_ms, which looks like the same number and is not: an
-// out behind a bout-ending cover opens after the cover's HOLD, a second and a
-// half after the badge went. An out with no such step in front of it (a stream
-// that leads with one) has nothing to ride and is struck where it stands.
-static int out_cue_ms(const AnimPlanStep *steps, int i) {
+// A notice with no such step (a stream that leads with one, or whose last move is not in the
+// stream) rides the nearest step before it that moved a card, as it did: its landing is when the
+// badge has collapsed, a short lag on so it trails the cards' own strikes. NOT the out's own
+// start_ms, which looks like the same number and is not: an out behind a bout-ending cover opens
+// after the cover's HOLD, a second and a half after the badge went. And with nothing in front of
+// it at all it is struck where it stands.
+static int out_cue_ms(const AnimPlanStep *steps, const AnimPlanEvent *events, int i) {
+    for (int k = i - 1; k >= 0 && events; k--) {
+        if (steps[k].type == ANIM_EVT_OUT || events[k].seat != events[i].seat) continue;
+        if (is_placement(steps[k].type) || steps[k].type == ANIM_EVT_COVER) return steps[k].start_ms;
+    }
     int j = i - 1;
     while (j >= 0 && steps[j].type == ANIM_EVT_OUT) j--;
     if (j >= 0 && (is_placement(steps[j].type) || moves_cards(steps[j].type)))
@@ -282,8 +289,11 @@ static void build_cues(AnimPlan *p, const AnimPlanEvent *events) {
                 // Heard at the stock, a card at a time. A refill's cards fly
                 // as one flight and still leave the pile one after another.
                 cue_strikes(p, ANIM_CUE_DEAL, i, st->start_ms, 0, n);
-                // ...and land at the seat, a card at a time, as PLACE does.
-                cue_strikes(p, ANIM_CUE_DEAL_LAND, i, land, 0, n);
+                // ...and land at the seat: a dealt card a strike each, as PLACE does, but a REFILL is
+                // a seat's whole draw landing together and sounds ONCE (Alex: not "brrrrt", the
+                // card landing on the cloth a bunch of times, for every card of it).
+                if (st->type == ANIM_EVT_REFILL) { if (n > 0) cue_push(p, ANIM_CUE_DEAL_LAND, i, land, 1, n); }
+                else cue_strikes(p, ANIM_CUE_DEAL_LAND, i, land, 0, n);
                 break;
             case ANIM_EVT_FLIPPED:
                 // Turned off the stock as it leaves, face up as it lands.
@@ -330,7 +340,7 @@ static void build_cues(AnimPlan *p, const AnimPlanEvent *events) {
                 }
                 break;
             case ANIM_EVT_OUT:
-                cue_push(p, ANIM_CUE_OUT, i, out_cue_ms(p->steps, i), 1, 0);
+                cue_push(p, ANIM_CUE_OUT, i, out_cue_ms(p->steps, events, i), 1, 0);
                 break;
             case ANIM_EVT_REVERT:
                 // Heard as it sets off, like the move it undoes heard backwards.
@@ -754,6 +764,19 @@ int anim_plan_at(const AnimPlan *plan, int now_ms, AnimFrame *out) {
                 out->next_ms = st->start_ms;  // we are in the gap before it
             }
         }
+    }
+    // A HAND DROPS AS ITS CARDS LEAVE, not as they land (Alex: a seat was heard going out while its
+    // last card was still in the air, and its hand still showed it). Every step of the sequence that
+    // is in the air now and puts a card down from a hand (an attack, a transfer, a cover) takes its
+    // cards off its seat's badge from the moment its flight opens - a beat of two covers is two such
+    // steps, opened together. The landing's board then says the same number.
+    for (int i = 0; i < n; i++) {
+        const AnimPlanStep *st = &plan->steps[i];
+        if (now_ms < st->start_ms || now_ms >= st->start_ms + st->duration_ms) continue;
+        if (!anim_badge_drops_as_cards_leave(st->type)) continue;
+        if (st->seat < 0 || st->seat >= plan->pre.n_players || st->seat >= MAX_PLAYERS) continue;
+        out->hand[st->seat] -= st->n_cards;
+        if (out->hand[st->seat] < 0) out->hand[st->seat] = 0;
     }
     // THE TRUMP IS THE FREEZE'S UNTIL THE STEP THAT DEALS IT OUT OPENS, which
     // is the rule the owner stated at 1.1(55): it lies in its slot while every

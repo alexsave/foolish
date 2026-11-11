@@ -3,6 +3,9 @@
 # Edit it by hand, or by ear with the tuner on /sounds (`npm run tune`, docs/AUDIO.md "How to tune").
 # Columns are separated by TABS; # starts a comment.
 #
+# THE STOCK SET DOWN (flip deck) has no time of its own: it is heard when the stock held in the air comes down,
+# ANIM_DECK_DOWN_MS after the trump lands (c/src/anim_plan.h), whatever its time column says.
+#
 # PART lines: one part of one cue's gesture (a grab, a thumb slide, a landing).
 #   part  <cue> <role> <part> <at ms> <at spread ms> <dB> <dB spread> <what>
 #   <cue>, <role>    the take it is in: the cue as RECIPES in soundgen.c names it, and main, tight or prelude
@@ -29,15 +32,15 @@ part	lift	main	grab	-150	0	-23	0	lift: two-finger grab
 part	lift	main	thumb	-130	0	-30	3	lift: thumb slide
 part	lift	tight	grab	-20	0	-23	0	lift, opening a run: two-finger grab
 part	lift	tight	thumb	0	0	-30	3	lift, opening a run: thumb slide
-part	place	main	land	0	0	5	2	attack: card lands on the table
-part	cover	main	land	0	0	4	2	cover: card lands on a card
+part	place	main	land	0	0	2	2	attack: card lands on the table
+part	cover	main	land	0	0	1	2	cover: card lands on a card
 part	pass	main	slide	350	0	-13	2	transfer: shfff to the next defender
 part	sweep	prelude	strokes	0	0	-23.5	0	bout end: strokes gathering the table
 part	sweep	main	lift	0	0	-25.5	0	bout end: pile lifted
 part	pile	main	place	0	0	-25	0	bout end: pile set down
 part	pickup	prelude	strokes	0	0	-30	0	pickup: strokes gathering the table
 part	pickup	main	lift	0	0	-32.5	0	pickup: lift
-part	into_hand	main	slide	0	0	-33.5	0	pickup: slide into hand
+part	into_hand	main	slide	0	0	-40	0	pickup: slide into hand
 #
 # MIX lines: how loud each cue sits against the others, for every host (soundgen writes them into the take table
 # c/src/cue_voice.c plays by). Thousandths.

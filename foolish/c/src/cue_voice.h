@@ -68,8 +68,6 @@ typedef struct {
     int32_t level_pm;          // how far its level may wander either way
     int32_t per_card_pm;       // louder by this a card past the first, to +600
     int32_t cards_per_level_pm;// a prelude's cards per stroke (2500); 0 for none
-    int32_t mark_us;           // from the cue's moment to a second thing in its sound that something
-                               //   drawn follows (the stock set down on the trump, for FLIP); 0 for none
 } CueMix;
 
 // What a host remembers between strikes: the take each cue played last, and
@@ -152,6 +150,6 @@ const CueStrike *cue_table_strike_opening(int kind, int lead_us, int n_cards, in
 #define CUE_TABLE_MAX_ROWS 512
 int cue_table_load(const unsigned char *bytes, int len);
 _Static_assert(sizeof(CueTakeRow) == 48, "CueTakeRow's bytes are the tuner table's layout");
-_Static_assert(sizeof(CueMix) == 24, "CueMix's bytes are the tuner table's layout");
+_Static_assert(sizeof(CueMix) == 20, "CueMix's bytes are the tuner table's layout");
 
 #endif

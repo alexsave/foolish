@@ -1690,8 +1690,8 @@ static void test_plan_sound_cues(void) {
         const AnimCue *l0 = cue_of(&p, 2, ANIM_CUE_DEAL_LAND), *l1 = cue_of(&p, 3, ANIM_CUE_DEAL_LAND);
         CHECK(l0 && l0->at_ms == p.steps[2].start_ms + p.steps[2].duration_ms && l0->hits == 1,
               "a refilled card is heard landing at its seat, at the landing (got %d)", l0 ? l0->at_ms : -1);
-        CHECK(l1 && l1->at_ms == p.steps[3].start_ms + p.steps[3].duration_ms && l1->hits == 4 && l1->n_cards == 4,
-              "four refilled cards land a strike a card (got %d hits)", l1 ? l1->hits : -1);
+        CHECK(l1 && l1->at_ms == p.steps[3].start_ms + p.steps[3].duration_ms && l1->hits == 1 && l1->n_cards == 4,
+              "four refilled cards land as ONE sound, not one a card (got %d hits)", l1 ? l1->hits : -1);
         CHECK(p.n_cues == 8, "and that is every sound a bout end makes (got %d)", p.n_cues);
     }
 
@@ -1800,9 +1800,19 @@ static void test_plan_sound_cues(void) {
         CHECK(anim_build_plan(ev, 3, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "the last-card cover builds");
         CHECK(p.steps[1].start_ms >= ANIM_TIME_MS + ANIM_BOUT_END_HOLD_MS, "the out step itself sits behind the hold");
         const AnimCue *out = cue_of(&p, 1, ANIM_CUE_OUT);
-        CHECK(out && out->at_ms == ANIM_TIME_MS + ANIM_SOUND_OUT_LAG_MS,
-              "the out is struck with the cover that emptied the hand, not after the hold (got %d)",
+        CHECK(out && out->at_ms == 0,
+              "the out is struck as the cover that emptied the hand SETS OFF (the hand is released), not at its landing and not after the hold (got %d)",
               out ? out->at_ms : -1);
+        // ...and a seat that only just moved a card for ANOTHER seat is not the one that is out.
+        AnimPlanEvent other[3] = {
+            cue_ev(ANIM_EVT_COVER, 0, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1),
+            cue_ev(ANIM_EVT_COVER, 1, ANIM_LOC_HAND, ANIM_LOC_TABLE, cards, 1),
+            cue_ev(ANIM_EVT_OUT, 0, ANIM_LOC_NONE, ANIM_LOC_NONE, 0, 0),
+        };
+        CHECK(anim_build_plan(other, 3, 2, 10, 12, CARD_NONE, final_hand, &p) == ANIM_EOK, "two seats' covers then an out build");
+        const AnimCue *o2 = cue_of(&p, 2, ANIM_CUE_OUT);
+        CHECK(o2 && o2->at_ms == p.steps[0].start_ms,
+              "the out is struck with ITS seat's own last move, not the nearest card in the air (got %d)", o2 ? o2->at_ms : -1);
     }
     // An out with nothing in front of it has nothing to ride.
     {
@@ -2108,7 +2118,7 @@ static void test_cue_voice(void) {
     for (int c = 0; c < ANIM_N_CUES; c++) M[c].gain_pm = 1000;
     M[ANIM_CUE_SWEEP].cards_per_level_pm = 2500;
     M[ANIM_CUE_PLACE].per_card_pm = 200;
-    M[ANIM_CUE_HAND_OFF] = (CueMix){ 470, 60, 180, 0, 0, 0 };
+    M[ANIM_CUE_HAND_OFF] = (CueMix){ 470, 60, 180, 0, 0 };
     CueVoiceState st = { .rng = 12345 };
     CueStrike s;
 
