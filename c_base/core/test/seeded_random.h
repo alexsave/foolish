@@ -10,9 +10,10 @@
 // THE SEED, the one value to change for a different (still fixed) run.
 #define CB_TEST_SEED UINT64_C(0x5eed0f001154)
 
-// Puts the stream at word 0 of `seed`'s sequence. A test's setup calls it with
-// CB_TEST_SEED + t_tests * RNG_GOLDEN (t.h's test index), so every test starts from a fixed place whatever
-// ran, and however many words a threaded test drew, before it.
+// Puts the stream at word 0 of `seed`'s sequence. unit_app's setup calls it with
+// CB_TEST_SEED + (t_tests + (again << 16)) * RNG_GOLDEN: t.h's test index, and how many times this test
+// has set up before (a loop of games, each its own deal). So every test starts from a fixed place,
+// whatever ran before it and however many words a threaded test drew.
 void cb_test_reseed(uint64_t seed);
 
 #endif
