@@ -72,6 +72,8 @@ static void h_viewer(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
 static void h_pub_on_loop(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res);
 static void h_pub_twice(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res);
 static void h_heard(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res);
+static void h_user_heard(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res);
+static void h_heard_then_cast(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res);
 static void h_act(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res);
 static void h_would_wait(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res);
 static void h_order(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res);
@@ -96,6 +98,8 @@ static void start(void) {
     T_EQ_INT(cb_router_add(g_ctx.router, "GET", "/t/publoop", CB_ROUTE_LOOP, h_pub_on_loop), CB_OK);
     T_EQ_INT(cb_router_add(g_ctx.router, "GET", "/t/pubtwice", CB_ROUTE_LOOP, h_pub_twice), CB_OK);
     T_EQ_INT(cb_router_add(g_ctx.router, "GET", "/t/heard", CB_ROUTE_LOOP, h_heard), CB_OK);
+    T_EQ_INT(cb_router_add(g_ctx.router, "GET", "/t/uheard", CB_ROUTE_LOOP, h_user_heard), CB_OK);
+    T_EQ_INT(cb_router_add(g_ctx.router, "GET", "/t/heardcast", CB_ROUTE_LOOP, h_heard_then_cast), CB_OK);
     T_EQ_INT(cb_router_add(g_ctx.router, "POST", "/t/act", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_act), CB_OK);
     T_EQ_INT(cb_router_add(g_ctx.router, "POST", "/t/wait", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_would_wait), CB_OK);
     T_EQ_INT(cb_router_add(g_ctx.router, "GET", "/t/order", CB_ROUTE_LOOP, h_order), CB_OK);
@@ -400,6 +404,71 @@ static void a_view_skips_the_users_connection_in_its_room(void) {
     T_EQ_INT(fr_recv(dash, 2000, &m), NW_WS_VIEW);
     close(page);
     close(dash);
+    cb_buf_free(&m);
+}
+
+// Whether a view of G for U1 would reach a connection, asked on the loop: "1" or "0".
+static void h_user_heard(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    cb_res_text(res, 200, cb_rt_user_heard(ctx->rt, U1, G) ? "1" : "0");
+}
+
+// A plain move's shape for a seat whose view is not heard: the question, then the seat's cast, in one
+// pass. The body: how many walks of the by-user table the two took.
+static void h_heard_then_cast(cb_ctx *ctx, const cb_http_req *req, cb_http_res *res) {
+    const long w0 = cb_rt_local_user_walks(ctx->rt);
+    (void)cb_rt_user_heard(ctx->rt, U1, G);
+    const uint8_t cast[] = { 4, 2 };
+    rt_publish_cast(ctx->rt, U1, G, 42, cast, 2);
+    char b[16];
+    snprintf(b, sizeof b, "%ld", cb_rt_local_user_walks(ctx->rt) - w0);
+    cb_res_text(res, 200, b);
+}
+
+static bool user_heard_on_loop(void) {
+    tc_response r;
+    T_EQ_INT(tc_http(g_port, "GET", "/t/uheard", NULL, NULL, 0, &r), 0);
+    T_EQ_INT(r.status, 200);
+    const bool heard = r.body.len == 1 && r.body.p[0] == '1';
+    tc_response_free(&r);
+    return heard;
+}
+
+// WHO WOULD TAKE A USER'S VIEW (realtime.h cb_rt_user_heard): on the loop the hub answers from the
+// user's connections - heard when one of them is outside the quiet room, not heard when every one is
+// in it or there is none - so a plain move builds no view of a seat that only follows the game in its
+// room. Off the loop it cannot tell and says heard. The question walks the user's connections once
+// for the cast after it too (rt_local.c THE LAST USER'S HEARERS).
+static void a_users_view_is_heard_only_outside_its_room(void) {
+    cb_buf m;
+    cb_buf_init(&m);
+    T_CHECK(!user_heard_on_loop());                          // U1 has no connection
+    int page = open_as(U1, NULL, &m);
+    T_CHECK(user_heard_on_loop());                           // one, in no room
+    sub(page, SF_SUB, 0x80000031u, NW_SUB_GAME, G, 200, &m);
+    T_CHECK(!user_heard_on_loop());                          // its only one is in G's room
+    T_CHECK(cb_rt_user_heard(g_ctx.rt, U1, G));              // this thread is not the loop's
+    T_CHECK(cb_rt_user_heard(NULL, U1, G));                  // no transport: heard
+    tc_response r;
+    T_EQ_INT(tc_http(g_port, "GET", "/t/heardcast", NULL, NULL, 0, &r), 0);
+    T_EQ_INT(r.status, 200);
+    T_EQ_MEM(r.body.p, r.body.len, "1", 1);                  // the question and the cast: one walk
+    tc_response_free(&r);
+    T_EQ_INT(fr_recv(page, 2000, &m), NW_WS_CAST);           // the cast reaches the room's connection
+    int dash = open_as(U1, NULL, &m);
+    T_CHECK(user_heard_on_loop());                           // the dashboard, outside the room
+    // The dashboard is sent the view, the bytes the stream has always carried; the page none.
+    publish_view(41);
+    const uint8_t want[] = { 1, NW_WS_VIEW, 6, 'a', 'b', '1', '2', 'c', 'd', 41, 0, 0, 0, 2, 0, 0, 0, 0xee, 0xff };
+    T_EQ_INT(fr_recv(dash, 2000, &m), NW_WS_VIEW);
+    T_EQ_MEM(m.p, m.len, want, sizeof want);
+    T_EQ_INT(fr_recv(page, 300, &m), 0);
+    close(dash);
+    int n = 0;
+    while (user_heard_on_loop() && n++ < 200) usleep(5000);
+    T_CHECK(!user_heard_on_loop());                          // the dashboard gone: the page alone again
+    sub(page, SF_UNSUB, 0x80000032u, NW_SUB_GAME, G, 200, &m);
+    T_CHECK(user_heard_on_loop());                           // out of the room
+    close(page);
     cb_buf_free(&m);
 }
 
@@ -875,6 +944,7 @@ int main(void) {
     T_RUN(a_users_pushes_in_a_pass_walk_once);
     T_RUN(a_room_is_heard_only_while_watched);
     T_RUN(a_view_skips_the_users_connection_in_its_room);
+    T_RUN(a_users_view_is_heard_only_outside_its_room);
     T_RUN(an_inline_req_answers_with_its_pushes);
     T_RUN(a_req_that_would_wait_runs_again_on_the_pool);
     T_RUN(pushes_keep_their_order_across_threads);

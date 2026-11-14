@@ -7,7 +7,8 @@
 //   * the casts and the views on every commit (table_ops.c says why a commit
 //     that moves the version and casts nothing is a refetch on every page);
 //     the deletion of an empty table writes no version and casts nothing;
-//   * a seat that left: its views stream hears the view with no envelope.
+//   * a seat that left: its views stream hears the view with no envelope;
+//   * a seat's view that no connection would take (view_unheard) is not published.
 // Called inside the kernel section's aftermath with the bytes already copied
 // out (casts and envelopes), so it never touches the kernel.
 #ifndef CB_FANOUT_H
@@ -30,6 +31,11 @@ typedef struct {
         cb_uuid        user_id;    // "" for a bot seat (nothing is sent to it)
         const uint8_t *envelope;   // the seat's view (CB_RT_VIEWS)
         size_t         envelope_len;
+        // No connection of the user would take the seat's view (realtime.h cb_rt_user_heard, asked
+        // by table_ops.c cb_section_commit on a plain move): no envelope was built and no view is
+        // published. The cast still is, and it wakes what the view would have (a long poll parked
+        // on the user: both are the user's pushes).
+        bool           view_unheard;
         const uint8_t *cast;       // the seat's cast (CB_RT_SEAT)
         size_t         cast_len;
     } seats[CB_MAX_SEATS];

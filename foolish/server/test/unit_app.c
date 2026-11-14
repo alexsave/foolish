@@ -108,6 +108,7 @@ typedef struct {
     int     count;
     int64_t version;
     int     humans, casts, joined, left;
+    int     envelopes, unheard;   // human seats with a view built, and with none (fanout.h view_unheard)
     bool    spectator_cast;
     bool    casts_name_redaction;   // every cast carries REDACTED_PLAYER_NAME (the roster trailer)
     cb_uuid first_joined, first_left;
@@ -151,6 +152,8 @@ static void fan_observer(const cb_fanout *f) {
     for (int i = 0; i < f->n_seats; i++) {
         if (f->seats[i].user_id[0]) s.humans++;
         if (f->seats[i].cast) s.casts++;
+        if (f->seats[i].user_id[0] && f->seats[i].envelope_len > 0) s.envelopes++;
+        if (f->seats[i].view_unheard) s.unheard++;
     }
     s.spectator_cast = f->spectator_cast != NULL;
     s.casts_name_redaction = s.casts > 0 && s.spectator_cast &&
@@ -1760,6 +1763,64 @@ static void no_spectators_no_spectator_cast(void) {
     g_ctx.rt = NULL;
 }
 
+// NO CONNECTION, NO VIEW: a transport that knows none of a user's connections would take the user's
+// view of a game (realtime.h cb_rt_user_heard: the hub's answer for a user whose page is in the
+// game's room) gets no view for that seat on a plain move, and the commit builds no envelope for
+// it; the seat's cast still goes. The other seat's view goes as ever, and the commits that are not
+// plain moves (the join, the deal) send the unheard user its view as ever.
+static char g_unheard_uid[CB_UUID_LEN + 1];
+static int  g_views_to[2], g_casts_to[2];   // pushes delivered to A, to B
+static int unheard_deliver(cb_rt *rt, const cb_rt_to *to, const uint8_t *frame, size_t len) {
+    const int who = to->user_id && strcmp(to->user_id, UID_A) == 0 ? 0 : to->user_id && strcmp(to->user_id, UID_B) == 0 ? 1 : -1;
+    if (who >= 0 && to->family == CB_RT_VIEWS) g_views_to[who]++;
+    if (who >= 0 && to->family == CB_RT_SEAT) g_casts_to[who]++;
+    return 0;
+}
+static bool unheard_user_heard(cb_rt *rt, const char *user_id, const char *quiet_room) {
+    return strcmp(user_id, g_unheard_uid) != 0;
+}
+static const cb_rt_transport UNHEARD_T = { .name = "unheard", .deliver = unheard_deliver, .user_heard = unheard_user_heard };
+
+static void an_unheard_view_is_not_built(void) {
+    setup(0);
+    cb_rt rt = { &UNHEARD_T, &g_ctx, NULL };
+    g_ctx.rt = &rt;
+    snprintf(g_unheard_uid, sizeof g_unheard_uid, "%s", UID_B);
+    memset(g_views_to, 0, sizeof g_views_to);
+    memset(g_casts_to, 0, sizeof g_casts_to);
+    char gid[CB_GAME_ID_MAX + 1];
+    reply r;
+    create_game(gid, &r);
+    meta("B", ASK_JOIN, gid, NULL, &r);
+    meta("A", ASK_START, gid, NULL, &r);
+    meta("B", ASK_START, gid, NULL, &r);
+    T_EQ_INT(status_of(gid), GAME_STATUS_PLAYING);
+    T_CHECK(g_views_to[1] >= 2);   // the join and the deal: B's views, unheard or not
+    T_EQ_INT(g_fan.unheard, 0);
+    static const char *const uids[2] = { UID_A, UID_B }, *const bearers[2] = { "A", "B" };
+    int moves = 0;
+    for (int step = 0; step < 4000 && status_of(gid) == GAME_STATUS_PLAYING && moves < 6; step++) {
+        const int k = step % 2, seat = seat_of(gid, uids[k]);
+        const int64_t v = version_of(gid);
+        uint8_t wire[64];
+        int n = pick_move(gid, seat, wire, sizeof wire);
+        if (n <= 0) continue;
+        const int views_b = g_views_to[1], casts_b = g_casts_to[1], views_a = g_views_to[0];
+        action(bearers[k], gid, wire, n, (uint32_t)v, &r);
+        if (version_of(gid) != v + 1 || status_of(gid) != GAME_STATUS_PLAYING) continue;
+        moves++;
+        T_EQ_INT(g_views_to[1] - views_b, 0);   // no view for B
+        T_EQ_INT(g_casts_to[1] - casts_b, 1);   // its cast
+        T_EQ_INT(g_views_to[0] - views_a, 1);   // A's view
+        T_EQ_INT(g_fan.unheard, 1);
+        T_EQ_INT(g_fan.envelopes, 1);           // A's envelope alone was built
+        T_EQ_INT(g_fan.casts, 2);
+    }
+    T_EQ_INT(moves, 6);
+    g_unheard_uid[0] = 0;
+    g_ctx.rt = NULL;
+}
+
 // ---- answer first (app/after.h) ---------------------------------------------------------------
 
 // Under Lambda an HTTP invocation answers before it publishes: with the window
@@ -2973,6 +3034,7 @@ int main(void) {
     T_RUN(every_commit_is_cast);
     T_RUN(every_commit_is_cast_as_a_delta);
     T_RUN(no_spectators_no_spectator_cast);
+    T_RUN(an_unheard_view_is_not_built);
     T_RUN(a_bump_wakes_the_bots);
     T_RUN(continue_returns_a_clean_lobby);
     T_RUN(a_stranger_changes_nothing);

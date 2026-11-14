@@ -525,6 +525,8 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     return table_commit_products_flags(t, game_id, gid_len, next_version, now_ms, 0, out, arena, cap);
 }
 
+_Static_assert(MAX_PLAYERS <= 24, "TABLE_PRODUCTS_NO_VIEW's seat bits fit an unsigned");
+
 int table_commit_products_flags(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                                 int64_t now_ms, unsigned flags, TableCommit *out, uint8_t *arena, int cap) {
     memset(out, 0, sizeof(*out));
@@ -621,7 +623,7 @@ int table_commit_products_flags(const Table *t, const char *game_id, int gid_len
                                                   roster_bot_mask(&t->r), game_pass_allowed(g), trailer, (int)sizeof trailer);
     if (tl < 0) return tl == ROSTER_E_CAP ? TABLE_E_CAP : TABLE_E_ROSTER;
     for (int s = 0; s < g->num_players; s++) {
-        if (t->r.seats[s].brain_len > 0) continue;
+        if (t->r.seats[s].brain_len > 0 || (flags & TABLE_PRODUCTS_NO_VIEW(s))) continue;
         const int n = envelope_put(t, game_id, gid_len, s, next_version, arena + at, cap - at, trailer, tl);
         if (n < 0) return n;
         out->views[s].off = at;

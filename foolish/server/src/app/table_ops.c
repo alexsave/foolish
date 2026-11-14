@@ -927,6 +927,20 @@ static void section_row(cb_section *s, const cb_game_row *row, const uint8_t *de
     }
 }
 
+// The human seats whose view of this commit no connection would take (cb_rt_user_heard), as
+// TABLE_PRODUCTS_NO_VIEW bits; never the seat of `actor_id` (its answer is that seat's envelope).
+static unsigned views_unheard(cb_ctx *ctx, const Table *t, const char *gid, const char *actor_id) {
+    const int actor = actor_id ? table_seat_of(t, actor_id, (int)strlen(actor_id)) : -1;
+    unsigned bits = 0;
+    for (int i = 0; i < t->r.n; i++) {
+        if (i == actor || !seat_is_human(&t->r.seats[i])) continue;
+        cb_uuid uid;
+        seat_id(&t->r.seats[i], uid);
+        if (!cb_rt_user_heard(ctx->rt, uid, gid)) bits |= TABLE_PRODUCTS_NO_VIEW(i);
+    }
+    return bits;
+}
+
 int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const uint8_t *dealt_seed,
                       const char *actor_id, int32_t ratings[CB_MAX_SEATS], bool *have_ratings,
                       cb_commit_out *out) {
@@ -945,10 +959,17 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     // answer is its seat's envelope).
     // The kernel's move list holds every move the operation applied (it is the journal's record).
     const bool moved = s->moves_want > 0 && t->n_moves == s->moves_want;
-    unsigned pflags = cb_journal_of(ctx->store) && moved && !t->ended && !t->dealt_now && !t->roster_changed &&
-                              row->status == GAME_STATUS_PLAYING && t->g->status == GAME_STATUS_PLAYING
-                          ? TABLE_PRODUCTS_NO_ROW | TABLE_PRODUCTS_NO_SPECTATOR_VIEW
-                          : 0;
+    const bool move_only = moved && !t->ended && !t->dealt_now && !t->roster_changed &&
+                           row->status == GAME_STATUS_PLAYING && t->g->status == GAME_STATUS_PLAYING;
+    unsigned pflags = cb_journal_of(ctx->store) && move_only ? TABLE_PRODUCTS_NO_ROW | TABLE_PRODUCTS_NO_SPECTATOR_VIEW : 0;
+    // NOR A VIEW NOBODY WILL BE SENT. A seat's view goes to its user's connections that are not in
+    // the game's room (pushes.c rt_publish_view: a page in the room follows the game by its casts),
+    // so when the transport knows the user has none (cb_rt_user_heard: the local hub, on its loop
+    // thread; anywhere else it says heard) the seat's envelope is not built and its view is not
+    // published (fanout.h view_unheard). Its cast still goes, and still wakes a long poll parked
+    // on the user (rt_local.c pub_deliver). Not the actor's seat when the answer carries its
+    // envelope (actor_env, below). A commit that turns out not plain is made again whole (below).
+    if (move_only) pflags |= views_unheard(ctx, t, row->id, actor_id);
     int rc = table_commit_products_flags(t, s->gid, gid_len, next, board_now, pflags, c, s->arena, sizeof s->arena);
     arena_note(s, rc);
     if (rc >= 0 && c->wants_ratings) {
@@ -1026,7 +1047,8 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
         const RosterSeat *seat = &t->r.seats[i];
         if (!seat_is_human(seat)) continue;
         seat_id(seat, f.seats[i].user_id);
-        f.seats[i].envelope = A + c->views[i].off;
+        f.seats[i].view_unheard = plain && (pflags & TABLE_PRODUCTS_NO_VIEW(i));
+        f.seats[i].envelope = f.seats[i].view_unheard ? NULL : A + c->views[i].off;
         f.seats[i].envelope_len = (size_t)c->views[i].len;
         rc = section_cast(s, &ck, i, next, &f.seats[i].cast, &f.seats[i].cast_len, &cast_owned[i]);
     }

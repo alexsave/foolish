@@ -54,7 +54,9 @@
 #include "netwire.h"
 #include "stream_frame.h"
 
+#include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -911,6 +913,99 @@ static void a_rematch_rates_its_own_game(void) {
     cb_buf_free(&env);
     free(sc);
 }
+// ---- a move wakes a long poll, with no view sent ------------------------------------------
+//
+// A seat whose user has no connection outside the game's room is sent no view of a plain move:
+// the server does not build it (realtime.h cb_rt_user_heard, table_ops.c). The seat's cast still
+// goes, and it is the push that wakes a GET /v1/wait the user has parked (rt_local.c pub_deliver
+// wakes the user's key for each of the user's pushes): the parked request answers at the move,
+// not at its 25 s deadline. The user's socket in the room hears the cast and no view.
+typedef struct {
+    char    path[96];
+    char    headers[NC_AUTH_MAX + 64];
+    _Atomic int status;   // 0 while it waits
+    int64_t answered_ms;
+} park_call;
+
+static void *park_thread(void *arg) {
+    park_call *p = arg;
+    tc_response r;
+    int fd = tc_connect(g_port);
+    const int st = fd >= 0 && tc_request(fd, "GET", p->path, p->headers, NULL, 0, SMOKE_ANSWER_MS, &r) == 0 ? r.status : -1;
+    if (fd >= 0) close(fd);
+    if (st >= 0) tc_response_free(&r);
+    p->answered_ms = mono_ms();
+    atomic_store(&p->status, st);
+    return NULL;
+}
+
+static void a_move_wakes_a_long_poll_with_no_view(void) {
+    smoke_user A, B;
+    int sa = signup(&A, "WAITERA"), sb = signup(&B, "WAITERB");
+    T_EQ_INT(sa, 0);
+    T_EQ_INT(sb, 0);
+    if (sa || sb) return;
+    smoke_client *sc = calloc(1, sizeof *sc);
+    cb_buf env;
+    cb_buf_init(&env);
+    T_EQ_INT(call(&A, NC_DO_CREATE, NULL, NULL, 0, -1), 200);
+    client_init(&sc->c, &sc->slot);
+    T_CHECK(client_adopt_envelope(&sc->c, g_body, g_len) >= 0);
+    char gid[32];
+    snprintf(gid, sizeof gid, "%.*s", (int)sc->c.gid_len, sc->c.gid);
+    T_EQ_INT(ask(&B, ASK_JOIN, gid, &env), 200);
+    T_EQ_INT(ask(&A, ASK_START, gid, &env), 200);
+    T_EQ_INT(ask(&B, ASK_START, gid, &env), 200);
+    // The human with a move moves; the other one waits.
+    smoke_user *humans[2] = { &A, &B };
+    uint64_t rng = 0x3a17;
+    uint8_t wire[64];
+    int mover = -1, n = 0;
+    int64_t v = -1, mv = -1;
+    for (int h = 0; h < 2 && mover < 0; h++) {
+        if (!game_view(humans[h], gid, &mv, &env)) continue;
+        if ((n = choose_move(sc, &env, wire, sizeof wire, &rng)) > 0) mover = h;
+    }
+    T_CHECK(mover >= 0);
+    if (mover < 0) { cb_buf_free(&env); free(sc); return; }
+    smoke_user *W = humans[1 - mover];
+    T_CHECK(game_view(W, gid, &v, NULL));
+    // W's one socket follows the game in its room, as the page showing it does.
+    listener *L = calloc(1, sizeof *L);
+    char topic[128];
+    snprintf(topic, sizeof topic, "u/%s/c/%s", W->id, gid);
+    ws_for(L, W, topic);
+    T_CHECK(ws_open(L));
+    drain_ws(L, 300, 50);
+    const int casts0 = L->n_cast, views0 = L->n_view;
+    // W's long poll, parked: nothing is past v yet.
+    park_call *p = calloc(1, sizeof *p);
+    T_EQ_INT(nc_session_load(W->blob, W->blob_len), NW_OK);
+    const NcRequest *q = nc_req_games(cb_now_ms());
+    T_CHECK(q && q->auth_len > 0);
+    if (q) snprintf(p->headers, sizeof p->headers, "Authorization: %.*s\r\n", (int)q->auth_len, q->auth);
+    snprintf(p->path, sizeof p->path, "/v1/wait/%s?v=%lld", gid, (long long)v);
+    pthread_t th;
+    pthread_create(&th, NULL, park_thread, p);
+    struct timespec ts = { 0, 500 * 1000000 };
+    nanosleep(&ts, NULL);
+    T_EQ_INT(atomic_load(&p->status), 0);   // still parked
+    const int64_t t_move = mono_ms();
+    T_EQ_INT(call(humans[mover], NC_DO_PLAY, gid, wire, n, mv), 200);
+    pthread_join(th, NULL);
+    fprintf(stderr, "smoke: the long poll answered %lld ms after the move\n", (long long)(p->answered_ms - t_move));
+    T_EQ_INT(atomic_load(&p->status), 200);
+    T_CHECK(p->answered_ms - t_move < 10000);   // woken by the move's push, not timed out at 25 s
+    drain_ws(L, 1000, 100);
+    T_CHECK(L->n_cast > casts0);                // the seat's cast reached the room's socket
+    T_EQ_INT(L->n_view, views0);                // and no view did
+    close(L->fd);
+    free(L);
+    free(p);
+    cb_buf_free(&env);
+    free(sc);
+}
+
 // ---- kills at any moment lose no acknowledged move --------------------------------------
 //
 // THE JOURNAL'S PROMISE, as production meets it (journal.h): a move is acknowledged once its batch
@@ -1176,6 +1271,7 @@ int main(int argc, char **argv) {
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_lobby_left_to_its_bots_is_deleted);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(game_scenario);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_rematch_rates_its_own_game);
+    if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_move_wakes_a_long_poll_with_no_view);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(kills_lose_no_acknowledged_move);
     else printf("NOTE smoke: the game scenario is off (CBASE_SMOKE_GAME=0)\n");
     T_RUN(drains_on_sigterm);

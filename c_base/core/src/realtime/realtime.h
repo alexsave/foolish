@@ -93,6 +93,10 @@ typedef struct cb_rt_transport {
     // How many connections watch the room of `doc` now, when the transport can tell on this
     // thread (cb_rt_room_watchers); -1 when it cannot. NULL: it never can.
     int (*room_watchers)(cb_rt *rt, const char *doc);
+    // Whether a push to the user's own family with this quiet room (cb_rt_to.quiet_room) reaches
+    // any connection now, when the transport can tell on this thread (cb_rt_user_heard). NULL: it
+    // cannot, and every such push may be heard.
+    bool (*user_heard)(cb_rt *rt, const char *user_id, const char *quiet_room);
 } cb_rt_transport;
 
 struct cb_rt {
@@ -119,6 +123,14 @@ bool cb_rt_room_heard(cb_rt *rt, const char *doc);
 // How many connections watch the room of `doc` (a family under s/) now: the local hub answers on
 // its loop thread (a loop timer of the app's, for a display); -1 anywhere it cannot tell.
 int cb_rt_room_watchers(cb_rt *rt, const char *doc);
+// Whether a push to `user_id`'s own family (a family under u/{user}/) that the user's connections
+// in `quiet_room` do not hear (cb_rt_to.quiet_room; NULL: none) may reach anyone: false only when
+// the transport knows no connection would take it now (the local hub, on its loop thread: the user
+// has no connection outside that room), so the caller need not build the push. True with no
+// transport, or one that cannot tell. It answers for the push alone: what else a push does (the
+// hub wakes a long poll parked on the user, rt_local.c pub_deliver) a push the caller still makes
+// to the same user must do.
+bool cb_rt_user_heard(cb_rt *rt, const char *user_id, const char *quiet_room);
 void cb_rt_batch_end(cb_rt *rt);
 
 // The failed deliveries this thread's publishes counted since the last take

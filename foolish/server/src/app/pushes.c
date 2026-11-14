@@ -76,15 +76,13 @@ static void frame_gid(NwFrame *f, const char *game_id) {
 
 void rt_publish_view(cb_rt *rt, const char *user_id, const cb_view_row *row, bool gone) {
     if (!rt || !row || !user_id) return;
+    // Only the fields the kind carries are set (nw_frame_encode reads kind, gid, version and blob
+    // for a view or a cast): the frame's chat buffer, a kilobyte, is never zeroed for them.
     static _Thread_local NwFrame f;
-    memset(&f, 0, sizeof f);
     f.kind = NW_WS_VIEW;
     frame_gid(&f, row->game_id);
-    if (!gone) {
-        f.version = (uint32_t)row->version;
-        f.blob.p = row->view;
-        f.blob.len = (uint32_t)row->view_len;
-    }
+    f.version = gone ? 0 : (uint32_t)row->version;
+    f.blob = gone ? (NwBlob){ NULL, 0 } : (NwBlob){ row->view, (uint32_t)row->view_len };
     // A connection in the game's room (the page showing it) follows the game by its casts and holds
     // a view of it back (netclient.c): it is not sent one. The user's other connections - the
     // dashboard's list, the iOS app, which never joins a room - get it. A seat's last view (gone)
@@ -95,8 +93,7 @@ void rt_publish_view(cb_rt *rt, const char *user_id, const cb_view_row *row, boo
 
 void rt_publish_cast(cb_rt *rt, const char *user_id, const char *game_id, int64_t version, const uint8_t *cast, size_t len) {
     if (!rt || !game_id) return;
-    static _Thread_local NwFrame f;
-    memset(&f, 0, sizeof f);
+    static _Thread_local NwFrame f;   // its kind's fields only, as rt_publish_view's
     f.kind = user_id ? NW_WS_CAST : NW_WS_SPECT;   // the spectators' casts are their own kind: the stream has no topic to tell them
     frame_gid(&f, game_id);
     f.version = (uint32_t)version;

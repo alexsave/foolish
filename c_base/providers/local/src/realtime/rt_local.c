@@ -822,6 +822,46 @@ static void send_all(local *L, const uint64_t *ids, size_t n, const uint8_t *fra
     for (size_t i = 0; i < n; i++) send_to(L, ids[i], frame, len);
 }
 
+// The user's open connections (loop thread): their ids into *ids_io, which starts as the caller's
+// array of *cap_io and is a malloc'd one, *cap_io long, when they did not fit (the caller frees it
+// when it is not its own). THE LAST USER'S HEARERS: a walk of the by-user table is kept for the
+// user's next push in the same pass, so a commit's view and cast (or the view's cb_rt_user_heard
+// and the cast) walk once.
+static size_t user_conns(local *L, const char *key, uint64_t **ids_io, size_t *cap_io) {
+    uint64_t *ids = *ids_io;
+    size_t n = 0, cap = *cap_io;
+    const uint64_t pass = cb_loop_pass(L->ctx->loop);
+    if (L->last.valid && L->last.gen == L->user_gen && L->last.pass == pass && strcmp(L->last.key, key) == 0) {
+        memcpy(ids, L->last.ids, L->last.n * sizeof *ids);   // the same user's hearers, this pass: no walk
+        n = L->last.n;
+    } else if (L->nbyid) {
+        atomic_fetch_add_explicit(&L->user_walks, 1, memory_order_relaxed);
+        for (lconn *c = L->byuser[user_slot(key, L->nbyid)]; c; c = c->unext) {
+            if (strcmp(c->user->id, key) != 0) continue;
+            if (n == cap) {
+                uint64_t *ni = malloc(cap * 2 * sizeof *ni);
+                if (!ni) break;
+                memcpy(ni, ids, n * sizeof *ni);
+                if (ids != *ids_io) free(ids);
+                ids = ni;
+                cap *= 2;
+            }
+            ids[n++] = c->ws_id;
+        }
+        L->last.valid = n <= sizeof L->last.ids / sizeof L->last.ids[0] && strlen(key) < sizeof L->last.key;
+        if (L->last.valid) {
+            L->last.gen = L->user_gen;
+            L->last.pass = pass;
+            L->last.n = n;
+            memcpy(L->last.ids, ids, n * sizeof *ids);
+            cb_strlcpy(L->last.key, key, sizeof L->last.key);
+        }
+    }
+    *ids_io = ids;
+    *cap_io = cap;
+    return n;
+}
+
 // Sends the push to every connection that hears it (loop thread). Reads p's frame only before it
 // returns (cb_ws_send copies it into each socket's out buffer), so the frame may be borrowed.
 static void pub_deliver(local *L, const pub *p) {
@@ -830,33 +870,8 @@ static void pub_deliver(local *L, const pub *p) {
     uint64_t stack[32];
     uint64_t *ids = stack;
     size_t n = 0, cap = sizeof stack / sizeof *stack;
-    const uint64_t pass = cb_loop_pass(L->ctx->loop);
-    if (p->scope == PUB_USER && L->last.valid && L->last.gen == L->user_gen && L->last.pass == pass &&
-        strcmp(L->last.key, p->key) == 0) {
-        memcpy(ids, L->last.ids, L->last.n * sizeof *ids);   // the same user's hearers, this pass: no walk
-        n = L->last.n;
-    } else if (p->scope == PUB_USER && L->nbyid) {
-        atomic_fetch_add_explicit(&L->user_walks, 1, memory_order_relaxed);
-        for (lconn *c = L->byuser[user_slot(p->key, L->nbyid)]; c; c = c->unext) {
-            if (strcmp(c->user->id, p->key) != 0) continue;
-            if (n == cap) {
-                uint64_t *ni = malloc(cap * 2 * sizeof *ni);
-                if (!ni) break;
-                memcpy(ni, ids, n * sizeof *ni);
-                if (ids != stack) free(ids);
-                ids = ni;
-                cap *= 2;
-            }
-            ids[n++] = c->ws_id;
-        }
-        L->last.valid = n <= sizeof L->last.ids / sizeof L->last.ids[0] && strlen(p->key) < sizeof L->last.key;
-        if (L->last.valid) {
-            L->last.gen = L->user_gen;
-            L->last.pass = pass;
-            L->last.n = n;
-            memcpy(L->last.ids, ids, n * sizeof *ids);
-            cb_strlcpy(L->last.key, p->key, sizeof L->last.key);
-        }
+    if (p->scope == PUB_USER) {
+        n = user_conns(L, p->key, &ids, &cap);
     } else if (p->scope == PUB_ROOM) {
         gent *e = room_find(L, p->key, str_hash(p->key));
         if (e) {
@@ -870,6 +885,11 @@ static void pub_deliver(local *L, const pub *p) {
     }
     // A user's push its connections in the quiet room do not hear (cb_rt_to.quiet_room): they are
     // dropped from the hearers here, after the walk (which the user's next push reuses unfiltered).
+    // Two rules, two cases, not one: local_user_heard lets a caller skip a push NONE of the user's
+    // connections would take (every one in the room, or none open), before it is built; this
+    // filter is the per-connection one for a push that is built because SOME connection takes it
+    // (one in the room, another not: the dashboard and the page), or one that was published off
+    // the loop, where the hub could not be asked.
     if (p->scope == PUB_USER && p->quiet[0]) {
         size_t k = 0;
         for (size_t i = 0; i < n; i++) {
@@ -1042,8 +1062,31 @@ static int local_room_watchers(cb_rt *rt, const char *doc) {
     return e ? (int)e->n : 0;
 }
 
+// The user's connections are the loop's too: there the hub knows whether one of them is outside the
+// quiet room (and so would take the push, pub_deliver); elsewhere it cannot say. A key or a quiet
+// room local_deliver would not take as it is (too long, empty) is heard: the push goes the way it
+// went before (refused and counted, or sent to every connection).
+static bool local_user_heard(cb_rt *rt, const char *user_id, const char *quiet_room) {
+    local *L = rt->impl;
+    if (!rt->ctx->loop || !cb_loop_on_thread(rt->ctx->loop)) return true;
+    if (!*user_id || strlen(user_id) >= sizeof ((pub *)0)->key) return true;
+    const char *q = quiet_room && strlen(quiet_room) < sizeof ((pub *)0)->quiet ? quiet_room : "";
+    uint64_t stack[32];
+    uint64_t *ids = stack;
+    size_t cap = sizeof stack / sizeof *stack;
+    const size_t n = user_conns(L, user_id, &ids, &cap);
+    bool heard = false;
+    for (size_t i = 0; i < n && !heard; i++) {
+        const lconn *c = find(L, ids[i]);
+        heard = c && (!q[0] || watch_index(c, q) < 0);
+    }
+    if (ids != stack) free(ids);
+    return heard;
+}
+
 static const cb_rt_transport LOCAL_T = { .name = "local", .deliver = local_deliver, .free = local_free, .forget = local_forget,
-                                         .room_heard = local_room_heard, .room_watchers = local_room_watchers };
+                                         .room_heard = local_room_heard, .room_watchers = local_room_watchers,
+                                         .user_heard = local_user_heard };
 
 long cb_rt_local_quiet_skips(const cb_rt *rt) {
     const local *L = rt->impl;
