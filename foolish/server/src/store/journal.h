@@ -108,6 +108,10 @@ typedef struct {
     struct cb_loop *loop;
     cb_journal_apply_fn apply;
     void       *apply_ud;
+    // A test's: the journal's clock off the loop (NULL: cb_mono_ms), and no flush thread (the
+    // caller's cb_journal_flush_due is then the only pass, so every rule runs at a moment it picks).
+    int64_t   (*mono_ms)(void);
+    bool        no_flush_thread;
 } cb_journal_opts;
 
 // Recovers the segments into the tables and installs the journal on s (cb_rows_of then
@@ -185,6 +189,10 @@ typedef struct {
     long txn_hold_us_max;                   // the longest one held the flush lock (a write around the journal's worst wait)
     long flusher_wakes;                     // times the flush thread woke (no tick: an idle box wakes it never)
     long lookups;                           // games found by id in the overlay (a human's move: one, its acquire; THE HOLD)
+    // Games and ratings the flush's walks visited under the overlay's lock (the flush rule's, the
+    // residency rule's, the trim's, the alarm's): proportional to the games waiting and the entries
+    // evicted, never to the games resident (journal.c THE WAITING LIST, THE RESIDENCY ORDER).
+    long flush_visits;
 } cb_journal_stats;
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 // What the overlay holds of a game, for a test: its stamps (THE JOURNAL'S TIME, journal.c j_mono:
@@ -201,6 +209,12 @@ typedef struct {
     size_t      resident_bytes;
 } cb_journal_game_facts;
 int cb_journal_game_info(const cb_store *s, const char *id, cb_journal_game_facts *out);
+// For a test: the overlay's lists against its tables (journal.c THE WAITING LIST, THE RESIDENCY
+// ORDER, the ratings' too): every game in the buckets on the residency list once, in its stamps'
+// order, and on the waiting list exactly when it has moves waiting; every rating on the ratings'
+// list once, in its stamps' order; nothing else on any list. CB_OK, or CB_E_STATE (what drifted
+// is logged).
+int cb_journal_check(const cb_store *s);
 
 // ---- the batch codec (pure; unit_journal) ------------------------------------------------
 // One record: one commit of one game, a human's move or a bot cycle's moves.
