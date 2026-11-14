@@ -6,6 +6,7 @@
 // kernel's pacing costs no wall time; every fan-out is recorded through the
 // cb_fanout_observer seam.
 #include "t.h"
+#include "seeded_random.h"
 #include "app/foolish_app.h"
 #include "app/bots.h"
 #include "app/fanout.h"
@@ -60,14 +61,17 @@ static cb_store *g_store;
 
 // ---- the fake clock ----------------------------------------------------------------
 
-static int64_t g_now = 1760000000000LL;
+// Atomic: a bot drive on a worker thread reads it through cb_app_mono while the main thread moves it.
+static _Atomic int64_t g_now = 1760000000000LL;
 static int64_t fake_now(void) { return g_now; }
+static int64_t fake_mono(void) { return g_now; }
 // Every pause taken, in order (the table's contention backoff among them).
 static int64_t g_slept[64];
-static int     g_nslept;
+static _Atomic int g_nslept;
 static void fake_sleep(int64_t ms) {
     g_now += ms;
-    if (g_nslept < 64) g_slept[g_nslept++] = ms;
+    const int i = atomic_fetch_add(&g_nslept, 1);
+    if (i < 64) g_slept[i] = ms;
 }
 
 // ---- recorders -------------------------------------------------------------------------
@@ -87,16 +91,31 @@ static void seq_note(int64_t v) {
 static char g_fin_jobs[8][CB_GAME_ID_MAX + 1];
 static int g_n_fin_jobs;
 static bool g_fin_hold, g_fin_refuse;
+// THE HARNESS'S COUNTERS ARE THE MAIN THREAD'S: t_report bumps plain ints, so a worker thread (the
+// hammer and the driver below) never runs a T_* check. call() on a worker counts a failed check into
+// g_worker_bad instead, and the test asserts it is 0 after the join, one fixed check.
+static _Thread_local bool t_worker;
+static _Atomic int g_worker_bad;
+#define CALL_CHECK(cond) do { if (t_worker) { if (!(cond)) atomic_fetch_add(&g_worker_bad, 1); } else T_CHECK(cond); } while (0)
+
+static pthread_mutex_t g_fin_mu = PTHREAD_MUTEX_INITIALIZER;   // the hammer's threads queue and run these too
 static void run_fin_jobs(void) {
-    for (int i = 0; i < g_n_fin_jobs; i++) T_EQ_INT(cb_table_finalize_job(&g_ctx, g_fin_jobs[i]), CB_OK);
+    char jobs[8][CB_GAME_ID_MAX + 1];
+    pthread_mutex_lock(&g_fin_mu);
+    const int n = g_n_fin_jobs;
+    memcpy(jobs, g_fin_jobs, sizeof jobs);
     g_n_fin_jobs = 0;
+    pthread_mutex_unlock(&g_fin_mu);
+    for (int i = 0; i < n; i++) CALL_CHECK(cb_table_finalize_job(&g_ctx, jobs[i]) == CB_OK);
 }
 
 static int kick_recorder(cb_ctx *ctx, const char *job, const char *game_id) {
     if (strcmp(job, CB_FINALIZE_JOB) == 0) {
-        if (g_fin_refuse || g_n_fin_jobs == 8) return CB_E_STATE;
-        snprintf(g_fin_jobs[g_n_fin_jobs++], sizeof g_fin_jobs[0], "%s", game_id);
-        return CB_OK;
+        pthread_mutex_lock(&g_fin_mu);
+        const bool full = g_fin_refuse || g_n_fin_jobs == 8;
+        if (!full) snprintf(g_fin_jobs[g_n_fin_jobs++], sizeof g_fin_jobs[0], "%s", game_id);
+        pthread_mutex_unlock(&g_fin_mu);
+        return full ? CB_E_STATE : CB_OK;
     }
     seq_note(-1);
     g_kicks++;
@@ -180,6 +199,12 @@ static int fake_verify(cb_ctx *ctx, const struct cb_http_req *req, cb_user *out)
 }
 
 static void setup(int n_bots) {
+    // Every test starts from one fixed place in the seeded stream, whatever ran before it. A test that
+    // sets up again (a loop of games) gets the next place along, so its games are not all one deal.
+    static int last_test, again;
+    again = t_tests == last_test ? again + 1 : 0;
+    last_test = t_tests;
+    cb_test_reseed(CB_TEST_SEED + ((uint64_t)t_tests + ((uint64_t)again << 16)) * RNG_GOLDEN);
     T_CHECK(cb_section_pooled_is_clean());   // what the previous test left in the worker's pooled section
     char err[256];
     cb_config_from_env(&g_cfg, err, sizeof err);
@@ -201,6 +226,7 @@ static void setup(int n_bots) {
     cb_bots_cycle_observer = NULL;
     cb_app_now = fake_now;
     cb_app_sleep = fake_sleep;
+    cb_app_mono = fake_mono;
     cb_functions_verify = fake_verify;
     cb_fanout_observer = fan_observer;
     memset(&g_fan, 0, sizeof g_fan);
@@ -278,10 +304,10 @@ static void call(const char *method, const char *fn, const char *bearer, const c
     cb_http_res res;
     cb_res_init(&res);
     cb_handle(&g_ctx, &req, &res);
-    T_CHECK(cb_section_pooled_is_clean());   // every request leaves the worker's section as calloc made it
+    CALL_CHECK(cb_section_pooled_is_clean());   // every request leaves the worker's section as calloc made it
     if (!g_fin_hold) {
         run_fin_jobs();
-        T_CHECK(cb_section_pooled_is_clean());
+        CALL_CHECK(cb_section_pooled_is_clean());
     }
     out->status = res.status;
     if (g_leak.gid[0]) leak_check(res.body.p, res.body.len);
@@ -2030,7 +2056,8 @@ static void a_stranger_changes_nothing(void) {
 typedef struct { const char *gid, *uid, *bearer; int applied, errors; } hammer_arg;
 static void *hammer(void *p) {
     hammer_arg *a = p;
-    g_rng = (uint64_t)(uintptr_t)a->uid;
+    t_worker = true;   // no T_* check runs on this thread (THE HARNESS'S COUNTERS above)
+    g_rng = CB_TEST_SEED + (uint64_t)(unsigned char)a->uid[0] * RNG_GOLDEN;   // not the uid's address: ASLR
     // 150 moves tried, not 150 looks: a look that finds no move for this seat (the other
     // thread owes one) does not count, or a thread that starts first, or a busy machine that
     // starves the other, spends every look before the other moves once and tries nothing.
@@ -2059,12 +2086,14 @@ static void concurrent_moves_lose_and_duplicate_nothing(void) {
     cb_fanout_observer = NULL;   // g_fan is one struct; two threads would tear it
     int64_t v0 = version_of(gid);
     hammer_arg a = { gid, UID_A, "A", 0, 0 }, b = { gid, UID_B, "B", 0, 0 };
+    atomic_store(&g_worker_bad, 0);
     pthread_t ta, tb;
     pthread_create(&ta, NULL, hammer, &a);
     pthread_create(&tb, NULL, hammer, &b);
     pthread_join(ta, NULL);
     pthread_join(tb, NULL);
     cb_fanout_observer = fan_observer;
+    T_EQ_INT(g_worker_bad, 0);   // every check the two threads' requests made, counted on this thread
     T_CHECK(a.applied + b.applied > 0);
     T_EQ_INT(a.errors + b.errors, 0);   // the game's lock: no move lost its fence (a 500)
     T_EQ_INT(version_of(gid), v0 + a.applied + b.applied);
@@ -2081,6 +2110,9 @@ static void concurrent_moves_lose_and_duplicate_nothing(void) {
 typedef struct { const char *gid; atomic_bool stop; int errors, drives; } driver_arg;
 static void *driver(void *p) {
     driver_arg *d = p;
+    t_worker = true;
+    // Until the hammer is done (the human waits on the bot's turn, so a ceiling would starve it): how many
+    // drives that took is never checked, only that there was one.
     while (!atomic_load(&d->stop)) {
         // CB_E_NOT_FOUND: no bot was due (the store's lease needs the game in the bot scan).
         int rc = cb_bots_drive(&g_ctx, d->gid);
@@ -2116,6 +2148,7 @@ static void a_bot_and_a_human_on_one_game_lose_nothing(void) {
     cb_fanout_observer = seq_observer;   // the game's pushes, in commit order
     hammer_arg a = { gid, UID_A, "A", 0, 0 };
     driver_arg d = { .gid = gid };
+    atomic_store(&g_worker_bad, 0);
     pthread_t ta, td;
     pthread_create(&td, NULL, driver, &d);
     pthread_create(&ta, NULL, hammer, &a);
@@ -2123,6 +2156,7 @@ static void a_bot_and_a_human_on_one_game_lose_nothing(void) {
     atomic_store(&d.stop, true);
     pthread_join(td, NULL);
     cb_fanout_observer = fan_observer;
+    T_EQ_INT(g_worker_bad, 0);
     T_CHECK(a.applied > 0);
     T_CHECK(d.drives > 0);
     T_CHECK(version_of(gid) > v0 + a.applied);   // the bot committed too
@@ -2139,13 +2173,36 @@ static void a_bot_and_a_human_on_one_game_lose_nothing(void) {
 
 // While a bot's move is computed the game's lock is free: from inside the drive (the cycle observer
 // runs between the row read and the compute) another thread takes and gives back the lock.
-typedef struct { const char *gid; atomic_bool got; } taker_arg;
+typedef struct { const char *gid; bool got; pthread_mutex_t mu; pthread_cond_t cv; } taker_arg;
 static void *taker(void *p) {
     taker_arg *t = p;
     cb_game_lock *l = cb_table_lock(t->gid);
-    atomic_store(&t->got, true);
+    pthread_mutex_lock(&t->mu);
+    t->got = true;
+    pthread_cond_broadcast(&t->cv);
+    pthread_mutex_unlock(&t->mu);
     cb_table_unlock(l);
     return NULL;
+}
+static void taker_reset(taker_arg *t) {
+    pthread_mutex_init(&t->mu, NULL);
+    pthread_cond_init(&t->cv, NULL);
+    t->got = false;
+}
+// Waits up to ms for the taker to hold the game's lock: true when it did. A condition wait, not a poll,
+// so no count of checks depends on how long a sleep ran; the long wait is the failure ceiling (the
+// taker should be at once), the short one the time a held lock is given to be wrongly taken.
+static bool taker_wait(taker_arg *t, int ms) {
+    struct timespec until;
+    clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_sec += ms / 1000;
+    until.tv_nsec += (long)(ms % 1000) * 1000000L;
+    if (until.tv_nsec >= 1000000000L) { until.tv_sec++; until.tv_nsec -= 1000000000L; }
+    pthread_mutex_lock(&t->mu);
+    while (!t->got && pthread_cond_timedwait(&t->cv, &t->mu, &until) == 0) { }
+    const bool got = t->got;
+    pthread_mutex_unlock(&t->mu);
+    return got;
 }
 static taker_arg g_taker;
 static pthread_t g_taker_th;
@@ -2154,10 +2211,9 @@ static void taking_observer(const char *game_id, int attempt, int prefs_len) {
     (void)attempt; (void)prefs_len;
     if (g_taker_runs++) return;
     g_taker.gid = game_id;
-    atomic_store(&g_taker.got, false);
+    taker_reset(&g_taker);
     pthread_create(&g_taker_th, NULL, taker, &g_taker);
-    for (int i = 0; i < 2000 && !atomic_load(&g_taker.got); i++) usleep(1000);
-    if (atomic_load(&g_taker.got)) g_taker_free++;
+    if (taker_wait(&g_taker, 5000)) g_taker_free++;
 }
 
 // A commit's pushes go out under the game's lock: another taker does not get it within 20 ms.
@@ -2169,10 +2225,9 @@ static void held_observer(const cb_fanout *f) {
     if (g_pub_n >= 8) return;
     taker_arg *t = &g_pub_taker[g_pub_n];
     t->gid = f->game_id;
-    atomic_store(&t->got, false);
+    taker_reset(t);
     pthread_create(&g_pub_th[g_pub_n++], NULL, taker, t);
-    usleep(20 * 1000);
-    if (atomic_load(&t->got)) g_pub_unheld++;
+    if (taker_wait(t, 20)) g_pub_unheld++;
 }
 
 static void a_bot_computes_unlocked_and_commits_locked(void) {
@@ -2235,13 +2290,12 @@ static void games_never_share_a_lock(void) {
     // The same game's lock is one: a second taker waits for the first.
     held = cb_table_lock("held01");
     g_taker.gid = "held01";
-    atomic_store(&g_taker.got, false);
+    taker_reset(&g_taker);
     pthread_create(&th, NULL, taker, &g_taker);
-    usleep(20 * 1000);
-    T_CHECK(!atomic_load(&g_taker.got));
+    T_CHECK(!taker_wait(&g_taker, 20));
     cb_table_unlock(held);
     pthread_join(th, NULL);
-    T_CHECK(atomic_load(&g_taker.got));
+    T_CHECK(taker_wait(&g_taker, 5000));
 }
 
 // security_hidden_info_{2p,4p,6p}.test.ts: every envelope goes to the user

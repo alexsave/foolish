@@ -17,6 +17,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int t_checks, t_failed, t_tests;
@@ -50,7 +51,18 @@ static inline int t_report(int ok, const char *file, int line, const char *expr)
         fprintf(stderr, "     lengths %zu and %zu, or bytes differ\n", t_an_, t_bn_); \
 } while (0)
 
-#define T_RUN(fn) do { t_current = #fn; t_tests++; fn(); } while (0)
+// T_COUNTS=1 in the environment: one "count <test> <checks it ran>" line on stdout after each test, which
+// c_base/Makefile's seeded-repeat compares between two runs. Unset, the output is unchanged.
+static inline int t_counts_on(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("T_COUNTS"); on = e && strcmp(e, "1") == 0; }
+    return on;
+}
+#define T_RUN(fn) do { \
+    const int t_before_ = t_checks; \
+    t_current = #fn; t_tests++; fn(); \
+    if (t_counts_on()) { printf("count %s %d\n", #fn, t_checks - t_before_); fflush(stdout); } \
+} while (0)
 
 #define T_DONE() t_done(__FILE__)
 static inline int t_done(const char *file) {

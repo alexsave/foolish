@@ -46,6 +46,7 @@ _Static_assert(MAX_LOG_PAIRS >= MAX_DECK,
 
 int64_t (*cb_app_now)(void) = cb_now_ms;
 void (*cb_app_sleep)(int64_t ms) = cb_sleep_ms;
+int64_t (*cb_app_mono)(void) = cb_mono_ms;
 // THE LOOP NEVER WAITS. An operation may run on the network loop's thread (a CB_ROUTE_INLINE
 // route, router.h); there every step that would wait returns CB_E_WOULD_BLOCK before it has
 // changed anything, and the request runs again on the pool (http.h cb_http_res.to_pool). Each

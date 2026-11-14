@@ -84,9 +84,9 @@ static int run_cycle(cb_ctx *ctx, cb_section *s, const char *game_id, int cycle,
                     (long long)row.version);
         if (cb_bots_cycle_observer) cb_bots_cycle_observer(game_id, attempt, prefs_len);
         BotDriveOut drv;
-        const int64_t t0 = cb_mono_ms();
+        const int64_t t0 = cb_app_mono();
         kr = table_bot_drive(&s->t, prefs, prefs_len, 0, &drv);
-        const int64_t drive_ms = cb_mono_ms() - t0;
+        const int64_t drive_ms = cb_app_mono() - t0;
         if (kr < 0) {
             CB_ERROR("bots", "game %s: bot drive refused (%d)", game_id, kr);
             CYCLE_OUT(CYCLE_ERROR);
@@ -180,7 +180,7 @@ static bool mem_lease_live(const mem_lease *l, const cb_ctx *ctx, int64_t now) {
 }
 
 static bool mem_lease_acquire(const cb_ctx *ctx, const char *id) {
-    const int64_t now = cb_mono_ms();
+    const int64_t now = cb_app_mono();
     bool ok = true;
     pthread_mutex_lock(&g_lease_mu);
     for (mem_lease *l = g_leases; l; l = l->next)
@@ -214,7 +214,7 @@ static void mem_lease_release(const char *id) {
 }
 
 static bool mem_lease_held(const cb_ctx *ctx, const char *id) {
-    const int64_t now = cb_mono_ms();
+    const int64_t now = cb_app_mono();
     bool held = false;
     pthread_mutex_lock(&g_lease_mu);
     for (mem_lease *l = g_leases; l; l = l->next)
