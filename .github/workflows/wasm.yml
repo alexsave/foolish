@@ -215,6 +215,11 @@ jobs:
       - name: gen.sh publishes by content
         run: bash tools/structgen/test/publish.sh
 
+      # A link's sources include ones c/Makefile writes (build/gen/cue_takes.c),
+      # and gen.sh runs before any build: it must make them first.
+      - name: gen.sh makes the generated sources it reads
+        run: bash tools/structgen/test/generated_sources.sh
+
       - name: Accessors against wasm32 C (verify)
         # --verify-wasm links test/verify.c into build/verify.wasm. That module is
         # never committed - its bytes are this runner's clang, not a macOS one -
