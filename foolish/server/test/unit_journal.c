@@ -3377,6 +3377,286 @@ static void the_conversion_knows_every_game_id_column(void) {
     close_world(s);
 }
 
+// ---- THE OVERLAY'S LISTS (journal.c THE WAITING LIST, THE RESIDENCY ORDER) -------------------
+//
+// These tests run the journal on a clock of their own and with no flush thread, so every rule
+// runs at the moment the test calls cb_journal_flush_due, at the time the test set.
+
+#define IDLE_EVICT_MS 60000   // journal.c's
+static int64_t g_jnow = 1000000;
+static int64_t journal_clock(void) { return g_jnow; }
+
+static cb_store *lists_world(const char *name, int max_games, int64_t game_age_ms, int txn_moves, char *path, size_t cap) {
+    char err[256] = "";
+    snprintf(path, cap, "%s/%s.sqlite", g_dir, name);
+    memset(&g_jo, 0, sizeof g_jo);
+    g_jo.max_games = max_games;
+    g_jo.game_age_ms = game_age_ms;
+    g_jo.txn_moves = txn_moves;
+    g_jo.mono_ms = journal_clock;
+    g_jo.no_flush_thread = true;
+    cb_store *s = open_world(path, true, err, sizeof err);
+    memset(&g_jo, 0, sizeof g_jo);
+    if (!s) fprintf(stderr, "  %s\n", err);
+    return s;
+}
+
+static cb_journal_stats jstats(cb_store *s) {
+    cb_journal_stats js;
+    cb_journal_stats_get(s, &js);
+    return js;
+}
+
+// THE WORK BOUND: a flush transaction reads the games waiting and the games it evicts, never the
+// games resident. Thousands of idle games stay resident while a handful wait: the transaction that
+// flushes those visits a few games per one waiting, and the one that evicts the idle ones visits
+// those once each.
+static void a_flush_visits_the_games_waiting_not_the_games_resident(void) {
+    char path[320];
+    cb_store *s = lists_world("visits", 100000, 10000, 0, path, sizeof path);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    const uint64_t rng0 = g_rng;
+    const int64_t now0 = g_now;
+    enum { W = 4, IDLE = 5000, FRESH = 100 };
+    char gid[W][CB_GAME_ID_MAX + 1];
+    for (int i = 0; i < W; i++) {
+        cb_limits_reset();   // the create limit is per user and minute
+        two_humans_dealt(gid[i]);
+    }
+    T_EQ_INT(cb_journal_flush(s), CB_OK);   // the lobbies and the deals into the tables: nothing waits
+    cb_game_row row;
+    memset(&row, 0, sizeof row);
+    row.version = 1;
+    row.status = GAME_STATUS_PLAYING;
+    for (int i = 0; i < IDLE; i++) {
+        snprintf(row.id, sizeof row.id, "idle%05d", i);
+        cb_journal_game_created(s, &row, NULL);
+    }
+    T_EQ_INT(jstats(s).games, W + IDLE);
+    move_t m;
+    for (int i = 0; i < W; i++) T_CHECK(step(s, gid[i], &m) > 0);
+    g_jnow += 10000;   // every waiting game's oldest move is game_age_ms old: due
+    cb_journal_stats a = jstats(s);
+    T_EQ_INT(a.waiting, W);
+    T_EQ_INT(cb_journal_flush_due(s), CB_OK);
+    cb_journal_stats b = jstats(s);
+    T_EQ_INT(b.flushed_games - a.flushed_games, W);
+    T_EQ_INT(b.waiting, 0);
+    T_EQ_INT(b.games, W + IDLE);   // nothing idle long enough, nothing over the cap: all stay
+    // The flush rule's walk, the trim's, the residency rule's first look and the ratings' (two
+    // users): a few per game waiting and a constant, where a walk of the buckets is 5,004.
+    T_CHECK(b.flush_visits - a.flush_visits <= 3 * W + 8);
+    if (b.flush_visits - a.flush_visits > 3 * W + 8) fprintf(stderr, "  visited %ld\n", b.flush_visits - a.flush_visits);
+    // Every game idle past IDLE_EVICT_MS but the ones that play on, and a few just made: the idle
+    // ones leave, each visited once.
+    g_jnow += IDLE_EVICT_MS + 1;
+    for (int i = 0; i < W; i++) T_CHECK(step(s, gid[i], &m) > 0);   // waiting, not due
+    for (int i = 0; i < FRESH; i++) {
+        snprintf(row.id, sizeof row.id, "fresh%05d", i);
+        cb_journal_game_created(s, &row, NULL);
+    }
+    a = jstats(s);
+    T_EQ_INT(cb_journal_flush_due(s), CB_OK);
+    b = jstats(s);
+    T_EQ_INT(a.games - b.games, IDLE);
+    T_EQ_INT(b.games, W + FRESH);
+    T_EQ_INT(b.waiting, W);
+    T_CHECK(b.flush_visits - a.flush_visits <= IDLE + 3 * W + 8);
+    if (b.flush_visits - a.flush_visits > IDLE + 3 * W + 8) fprintf(stderr, "  visited %ld\n", b.flush_visits - a.flush_visits);
+    T_EQ_INT(cb_journal_check(s), CB_OK);
+    close_world(s);
+    g_rng = rng0;
+    g_now = now0;
+    cb_limits_reset();
+}
+
+// THE RESIDENCY RULE, EXACTLY: a seeded run of touches, moves, holds, releases, clock steps and
+// flushes against a model of the rule's two parts (a game idle past IDLE_EVICT_MS with nothing
+// waiting and not held leaves; then, while more than max_games are resident, the least recently
+// touched with nothing waiting and not held do). After every flush the games resident are the
+// model's, each with the model's stamp, its moves waiting or not and its holds; and the lists
+// always match the buckets (cb_journal_check).
+#define RESIDENCY_SEED 20261114u
+enum { RM_GAMES = 16, RM_CAP = 6, RM_MOVES = 6 };
+typedef struct {
+    bool    resident, waiting;
+    int     held, moves;
+    int64_t touched, first;
+    cb_jhold *h;
+} rm_game;
+
+// The model's flush at `now`: the due games' moves into the tables (game_age_ms; every due game
+// fits one transaction), then the residency rule. Counts what each part of the rule did.
+static void rm_flush(rm_game *g, int64_t now, int64_t age, int *by_idle, int *by_cap, int *passed) {
+    int resident = 0;
+    for (int i = 0; i < RM_GAMES; i++) {
+        if (g[i].resident && g[i].waiting && now - g[i].first >= age) g[i].waiting = false;
+        resident += g[i].resident;
+    }
+    bool seen[RM_GAMES] = { false };
+    for (;;) {   // the resident games, least recently touched first
+        int k = -1;
+        for (int i = 0; i < RM_GAMES; i++)
+            if (g[i].resident && !seen[i] && (k < 0 || g[i].touched < g[k].touched)) k = i;
+        if (k < 0) break;
+        seen[k] = true;
+        const bool idle = now - g[k].touched > IDLE_EVICT_MS;
+        if (!idle && resident <= RM_CAP) break;
+        if (g[k].waiting || g[k].held) { (*passed)++; continue; }
+        g[k].resident = false;
+        resident--;
+        (*(idle ? by_idle : by_cap))++;
+    }
+}
+
+static void residency_follows_its_two_rules_exactly(void) {
+    char path[320];
+    enum { AGE = 20000, STEPS = 900 };
+    cb_store *s = lists_world("residency", RM_CAP, AGE, 0, path, sizeof path);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    const uint64_t rng0 = g_rng;
+    const int64_t now0 = g_now;
+    char gid[RM_GAMES][CB_GAME_ID_MAX + 1];
+    for (int i = 0; i < RM_GAMES; i++) {
+        cb_limits_reset();
+        two_humans_dealt(gid[i]);
+    }
+    T_EQ_INT(cb_journal_flush(s), CB_OK);
+    g_jnow += IDLE_EVICT_MS + 1;
+    T_EQ_INT(cb_journal_flush_due(s), CB_OK);
+    T_EQ_INT(jstats(s).games, 0);   // the model starts from an empty overlay
+    rm_game g[RM_GAMES];
+    memset(g, 0, sizeof g);
+    uint64_t rng = RESIDENCY_SEED;
+    int by_idle = 0, by_cap = 0, passed = 0, flushes = 0, mismatches = 0;
+    move_t m;
+    for (int step_i = 0; step_i < STEPS && mismatches == 0; step_i++) {
+        g_jnow += 1 + (int64_t)(rng_u32(&rng) % 3);   // every operation its own stamp
+        const int op = (int)(rng_u32(&rng) % 100), i = (int)(rng_u32(&rng) % RM_GAMES);
+        if (op < 35) {   // an operation reads the game
+            T_EQ_INT(cb_journal_game_acquire(s, gid[i], hold_nothing, NULL, NULL), CB_OK);
+            g[i].resident = true;
+            g[i].touched = g_jnow;
+        } else if (op < 60) {   // a move (a few a game: none ends)
+            if (g[i].moves >= RM_MOVES) continue;
+            T_CHECK(step(s, gid[i], &m) > 0);
+            g[i].moves++;
+            g[i].resident = true;
+            g[i].touched = g_jnow;
+            if (!g[i].waiting) g[i].waiting = true, g[i].first = g_jnow;
+        } else if (op < 68) {   // an operation holds it
+            if (g[i].held) continue;
+            T_EQ_INT(cb_journal_game_acquire(s, gid[i], hold_nothing, NULL, &g[i].h), CB_OK);
+            T_CHECK(g[i].h != NULL);
+            g[i].held = 1;
+            g[i].resident = true;
+            g[i].touched = g_jnow;
+        } else if (op < 78) {   // and lets it go
+            if (!g[i].held) continue;
+            cb_journal_game_release(s, g[i].h);
+            g[i].h = NULL;
+            g[i].held = 0;
+        } else if (op < 88) {   // time passes
+            g_jnow += (int64_t)(rng_u32(&rng) % 40000);
+        } else {   // the flush thread's pass
+            T_EQ_INT(cb_journal_flush_due(s), CB_OK);
+            rm_flush(g, g_jnow, AGE, &by_idle, &by_cap, &passed);
+            flushes++;
+            for (int k = 0; k < RM_GAMES; k++) {
+                int rc;
+                const cb_journal_game_facts f = facts(s, gid[k], &rc);
+                const bool same = (rc == CB_OK) == g[k].resident &&
+                                  (!g[k].resident || (f.touched_ms == g[k].touched && (f.first_ms != 0) == g[k].waiting &&
+                                                      (!g[k].waiting || f.first_ms == g[k].first) && f.held == g[k].held));
+                if (!same) {
+                    fprintf(stderr, "  step %d, game %d: resident %d (model %d), touched %lld (%lld), waiting %d (%d), held %d (%d)\n",
+                            step_i, k, rc == CB_OK, g[k].resident, (long long)f.touched_ms, (long long)g[k].touched,
+                            f.first_ms != 0, g[k].waiting, f.held, g[k].held);
+                    mismatches++;
+                }
+            }
+            T_EQ_INT(mismatches, 0);
+        }
+        T_EQ_INT(cb_journal_check(s), CB_OK);
+    }
+    // The run reached every part of the rule: both reasons to leave, and games passed over.
+    T_CHECK(flushes > 50);
+    T_CHECK(by_idle > 10);
+    T_CHECK(by_cap > 10);
+    T_CHECK(passed > 10);
+    for (int i = 0; i < RM_GAMES; i++) if (g[i].held) cb_journal_game_release(s, g[i].h);
+    close_world(s);
+    g_rng = rng0;
+    g_now = now0;
+    cb_limits_reset();
+}
+
+static void sql_exec_on(const char *path, const char *sql) {
+    sqlite3 *db = NULL;
+    T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
+    T_EQ_INT(sqlite3_exec(db, sql, NULL, NULL, NULL), SQLITE_OK);
+    sqlite3_close(db);
+}
+
+// THE TRANSACTION BUDGET'S ORDER: the games due are flushed oldest waiting move first, as many as
+// opts.txn_moves takes each transaction. Their moves are stamped out of the order they came in (a
+// loop's stamp may be a pass old), so neither the order they began waiting in nor its reverse is
+// the order they are due in; a trigger records the order the tables took the rows in.
+static void the_games_due_are_flushed_oldest_first(void) {
+    char path[320];
+    enum { NG = 6 };
+    cb_store *s = lists_world("order", 100000, 10000, 2, path, sizeof path);
+    T_CHECK(s != NULL);
+    if (!s) return;
+    const uint64_t rng0 = g_rng;
+    const int64_t now0 = g_now;
+    char gid[NG][CB_GAME_ID_MAX + 1];
+    for (int i = 0; i < NG; i++) {
+        cb_limits_reset();
+        two_humans_dealt(gid[i]);
+    }
+    T_EQ_INT(cb_journal_flush(s), CB_OK);
+    sql_exec_on(path, "CREATE TABLE flush_order (n INTEGER PRIMARY KEY, id TEXT);"
+                      "CREATE TRIGGER flush_order_t AFTER UPDATE OF version ON games BEGIN "
+                      "INSERT INTO flush_order (id) VALUES (new.id); END;");
+    // Game i's one move at base + at[i]: due oldest first, 3 1 5 4 2 0.
+    static const int64_t at[NG] = { 500, 100, 400, 0, 300, 200 };
+    static const int want[NG] = { 3, 1, 5, 4, 2, 0 };
+    const int64_t base = g_jnow;
+    move_t m;
+    for (int i = 0; i < NG; i++) {
+        g_jnow = base + at[i];
+        T_CHECK(step(s, gid[i], &m) > 0);
+    }
+    g_jnow = base + 500 + 10000;
+    const long flushes0 = jstats(s).flushes;
+    T_EQ_INT(cb_journal_flush_due(s), CB_OK);
+    T_EQ_INT(jstats(s).flushes - flushes0, NG / 2);   // two moves a transaction
+    sqlite3 *db = NULL;
+    T_EQ_INT(sqlite3_open(path, &db), SQLITE_OK);
+    sqlite3_stmt *st = NULL;
+    T_EQ_INT(sqlite3_prepare_v2(db, "SELECT id FROM flush_order ORDER BY n", -1, &st, NULL), SQLITE_OK);
+    int n = 0, wrong = 0;
+    while (st && sqlite3_step(st) == SQLITE_ROW) {
+        const char *id = (const char *)sqlite3_column_text(st, 0);
+        if (n >= NG || !id || strcmp(id, gid[want[n]]) != 0) {
+            fprintf(stderr, "  flushed %d: %s, want %s\n", n, id ? id : "?", n < NG ? gid[want[n]] : "nothing");
+            wrong++;
+        }
+        n++;
+    }
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    T_EQ_INT(n, NG);
+    T_EQ_INT(wrong, 0);
+    close_world(s);
+    g_rng = rng0;
+    g_now = now0;
+    cb_limits_reset();
+}
+
 int main(void) {
     const char *tmp = getenv("TMPDIR");
     snprintf(g_dir, sizeof g_dir, "%s/unit_journal.XXXXXX", tmp && *tmp ? tmp : "/tmp");
@@ -3427,6 +3707,9 @@ int main(void) {
     T_RUN(the_conversion_draws_again_and_is_all_or_nothing);
     T_RUN(a_crash_mid_conversion_converts_nothing);
     T_RUN(twelve_character_games_convert_at_the_boot);
+    T_RUN(a_flush_visits_the_games_waiting_not_the_games_resident);
+    T_RUN(residency_follows_its_two_rules_exactly);
+    T_RUN(the_games_due_are_flushed_oldest_first);
     char cmd[300];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", g_dir);
     if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", g_dir);
