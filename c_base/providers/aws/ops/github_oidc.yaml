@@ -25,7 +25,7 @@ Description: >-
 #     state bucket's vm/foolish.txt, and run the install through SSM on the
 #     cbase-vm group's instance;
 #   * the files: put under the web bucket's foolish/ and uttt/ (never delete:
-#     CI never passes --prune);
+#     CI always passes --no-prune);
 #   * the edge: drift-check, change-set, update and invalidate the two app
 #     stacks (cbase-app-foolish, cbase-app-uttt) and their existing CloudFront
 #     resources, by id. It cannot create or delete a stack, distribution,

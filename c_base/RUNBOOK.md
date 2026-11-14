@@ -359,12 +359,12 @@ Since 2026-11-10 (CUTOVER.md) that is the one deploy lane: `vm_release.sh` and `
 
 | What changed on `main` | Workflow, job | What it does |
 |---|---|---|
-| `c_base/**`, `foolish/**`, `uttt/c/**`, `uttt/web/**`, `uttt/cbase.conf`, `shared/**`, the `cbase` pin, `c_base.yml`, `web_aws.yml` | `c_base`, `deploy` | after every gate (`check`, `check_arm64`, `asan`, `fuzz_done`, `dynamo`, `ops`, `serve_binary`) and the two static exports (`web`: `web_aws.yml` called in the same run), from `foolish/`: `CBASE_SERVE_BIN=../c_base/dist/cbase-serve-linux-arm64 ../cbase/tools/cbase deploy` (the server on the `cbase-vm` instance through SSM, `out/` into the web bucket's `foolish/`, the `cbase-app-foolish` stack and its invalidation); then from `uttt/`: `../cbase/tools/cbase deploy` (`web/out` into `uttt/`, `cbase-app-uttt`); then `https://api.foolish.cards/health` must say `ok cbase`, and `https://foolish.cards/` and `https://uttt.live/` must answer 200 |
+| `c_base/**`, `foolish/**`, `uttt/c/**`, `uttt/web/**`, `uttt/cbase.conf`, `shared/**`, the `cbase` pin, `c_base.yml`, `web_aws.yml` | `c_base`, `deploy` | after every gate (`check`, `check_arm64`, `asan`, `fuzz_done`, `dynamo`, `ops`, `serve_binary`) and the two static exports (`web`: `web_aws.yml` called in the same run), from `foolish/`: `CBASE_SERVE_BIN=../c_base/dist/cbase-serve-linux-arm64 ../cbase/tools/cbase deploy --no-prune` (the server on the `cbase-vm` instance through SSM, `out/` into the web bucket's `foolish/`, the `cbase-app-foolish` stack and its invalidation); then from `uttt/`: `../cbase/tools/cbase deploy --no-prune` (`web/out` into `uttt/`, `cbase-app-uttt`); then `https://api.foolish.cards/health` must say `ok cbase`, and `https://foolish.cards/` and `https://uttt.live/` must answer 200 |
 
 `web_aws.yml` deploys nothing: it is the sites' compile gate on a pull request, and on `main` it runs only inside `c_base`'s run, so the deploy hands `./cbase` that run's own exports.
 utils.foolish.cards is deployed from its own repository (`foolish-utils`), by hand.
 
-The job never passes `--accept-drift`, `--allow-downtime` or `--prune`.
+The job never passes `--accept-drift` or `--allow-downtime`, and always passes `--no-prune` (the tool prunes by default; `role_covers_deploy.sh` fails a deploy line without it, and the deploy role grants no delete).
 So a stack that drifted, a change set that would replace a distribution or take a hostname off one, and a change set that would replace a bucket each stop `./cbase`, and the job fails with the tool's reason.
 Fix the cause by hand (CUTOVER.md has the commands), then re-run.
 
@@ -561,6 +561,6 @@ A bad web deploy: revert the bad commit on `main`, whose push deploys the revert
 1. Since 2026-11-10 the sites deploy with the backend, through `./cbase deploy` in `c_base.yml`'s `deploy` job (step 13); `cbase-web`'s two old distributions, routers and page lists are no longer touched, and `web_deploy.sh` runs only by hand.
 2. A change to a site's routes, shell or hostnames is a change to its `cbase.conf` (`foolish/cbase.conf`, `uttt/cbase.conf`); the next deploy's change set applies it, and one that would replace a distribution or move a hostname stops the job (`--allow-downtime` is a hand step).
 3. utils.foolish.cards is built in the sibling repo `foolish-utils` and still deployed by hand (CUTOVER.md step 7).
-4. Now and then, `../cbase/tools/cbase deploy --prune` by hand from `foolish/` (and `uttt/`) deletes the files the build no longer has; a tab left open across two deploys reloads.
+4. Now and then, `../cbase/tools/cbase deploy` by hand (it prunes by default) from `foolish/` (and `uttt/`) deletes the files the build no longer has; a tab left open across two deploys reloads.
 5. The Infinite Oracle's Mode B headers were `web.yaml`'s (`CBASE_WEB_ISOLATION`), which no longer serves the sites.
    `./cbase` sets no such headers, so turning Mode B on is a change to `cbase` itself.

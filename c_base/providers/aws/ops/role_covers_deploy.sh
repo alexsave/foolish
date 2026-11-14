@@ -5,13 +5,17 @@
 # The role is least privilege, so a call the tool gains (a cbase pin bump) and the role lacks
 # fails the deploy on main, after every test passed, half way through: the server shipped, the
 # stack not updated. This reads every AWS call in the deploy tool (TOOL_DIR, default the cbase
-# submodule's tools/: tools/cbase and tools/cbase.d/*.sh) in each of the forms the tool makes them:
-#   aws_call SERVICE COMMAND     the one call wrapper (cbase.d/aws.sh)
-#   cfn COMMAND                  CloudFormation in the stack's region (cs, describe-change-set, is
-#                                cfn's own line)
-#   acm COMMAND                  ACM in us-east-1
-# and requires, for each, the IAM action(s) it needs in the role, or a reason CI never makes it.
-# A call this table does not know stops the check: decide which it is, here and in the role.
+# submodule's tools/cbase_cli, the Python program tools/cbase launches) with role_calls.py, which
+# parses its modules and knows each form the tool makes a call in (aws.call, aws.callv, stack.py's
+# _cfn and _cs, a direct cli.run of aws), and requires, for each, the IAM action(s) it needs in the
+# role, or a reason CI never makes it. A call this table does not know stops the check, and so does
+# a call role_calls.py cannot read: decide which it is, here and in the role.
+#
+# The prune (on by default in the tool) is a call CI never makes because c_base.yml passes
+# --no-prune to every deploy; that is checked here too (the workflow is CBASE_DEPLOY_WORKFLOW,
+# default .github/workflows/c_base.yml), so a deploy line that drops it fails this check rather
+# than a live deploy half way, or deletes files a tab still open across two deploys needs
+# (c_base/RUNBOOK.md: the prune is by hand).
 #
 # Two lists the tool's text cannot show are checked too:
 #   HANDLER_ACTIONS, what CloudFormation calls as this role to detect drift on and update the
@@ -26,7 +30,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../../../.." && pwd)"
-tool="${1:-$root/cbase/tools}"
+tool="${1:-$root/cbase/tools/cbase_cli}"
 role="${2:-$here/github_oidc.yaml}"
 shift $(($# < 2 ? $# : 2))
 confs=("$@")
@@ -37,8 +41,9 @@ confs=("$@")
 action_of() {
   case "$1" in
     "sts get-caller-identity") echo - ;;
+    "configure get") echo - ;;   # aws configure get region: the CLI's own settings, no AWS call
     # The two app stacks' change-set flow (stack.sh). Every stack waiter is DescribeStacks.
-    "cloudformation describe-stacks"|"cloudformation wait"|"cloudformation wait stack-update-complete") echo cloudformation:DescribeStacks ;;
+    "cloudformation describe-stacks"|"cloudformation wait") echo cloudformation:DescribeStacks ;;
     "cloudformation describe-stack-events") echo cloudformation:DescribeStackEvents ;;
     "cloudformation get-template") echo cloudformation:GetTemplate ;;
     "cloudformation detect-stack-drift") echo cloudformation:DetectStackDrift cloudformation:DetectStackResourceDrift cloudformation:BatchDescribeTypeConfigurations ;;
@@ -75,7 +80,7 @@ action_of() {
     "s3api get-bucket-location") echo s3:GetBucketLocation ;;
     "s3api get-bucket-policy") echo s3:GetBucketPolicy ;;
     "s3 cp") echo s3:PutObject ;;
-    "s3api list-objects-v2"|"s3api delete-object") echo "ci-never: --prune, undeploy and group-destroy" ;;
+    "s3api list-objects-v2"|"s3api delete-objects"|"s3api delete-object") echo "ci-never: c_base.yml deploys with --no-prune (checked below); undeploy and group-destroy" ;;
     # group-init and group-destroy, and the tag lookups of groups the confs do not adopt by name.
     "s3api create-bucket"|"s3api put-public-access-block"|"s3api put-bucket-versioning"|"s3api delete-bucket-tagging") echo "ci-never: group-init and group-destroy" ;;
     "ec2 describe-managed-prefix-lists"|"ec2 describe-instance-type-offerings") echo "ci-never: group-init" ;;
@@ -90,14 +95,10 @@ cloudfront:DescribeFunction cloudfront:GetFunction cloudfront:UpdateFunction clo
 cloudfront:GetOriginAccessControl cloudfront:UpdateOriginAccessControl
 cloudfront:GetResponseHeadersPolicy cloudfront:UpdateResponseHeadersPolicy"
 
-files=("$tool/cbase")
-for f in "$tool"/cbase.d/*.sh; do [ -f "$f" ] && files+=("$f"); done
-[ -f "${files[0]}" ] || { echo "role_covers_deploy: no deploy tool at $tool/cbase (git submodule update --init cbase)" >&2; exit 1; }
-# Every call, as "SERVICE COMMAND" ("SERVICE wait WAITER" for a waiter), comments left out.
-calls="$(cat "${files[@]}" | grep -v '^[[:space:]]*#' \
-  | grep -oE 'aws_call [a-z0-9]+ (wait [a-z0-9-]+|[a-z0-9-]+)|(^|[^A-Za-z0-9_-])(cfn|acm) (wait [a-z0-9-]+|wait|[a-z0-9-]+)' \
-  | sed -E -e 's/^[^a-z]*//' -e 's/^aws_call //' -e 's/^cfn /cloudformation /' \
-  | grep -vE '^[a-z0-9]+ --' | sort -u)" || calls=""
+[ -f "$tool/aws.py" ] || { echo "role_covers_deploy: no deploy tool at $tool/aws.py (git submodule update --init cbase)" >&2; exit 1; }
+# Every call, as "SERVICE COMMAND" ("SERVICE wait WAITER" for a waiter); "UNRESOLVED file:line" for a
+# call role_calls.py cannot read.
+calls="$(python3 -I -B "$here/role_calls.py" "$tool")" || { echo "role_covers_deploy: role_calls.py could not read $tool" >&2; exit 1; }
 [ -n "$calls" ] || { echo "role_covers_deploy: no AWS call in $tool" >&2; exit 1; }
 
 # The role's text, comments left out: an action is granted when it is a word of a line.
@@ -107,6 +108,10 @@ has() { grep -qE "(^|[^A-Za-z0-9:])$1([^A-Za-z0-9]|$)" <<<"$granted"; }
 bad=0
 n=0
 while IFS= read -r c; do
+  case "$c" in UNRESOLVED\ *)
+    echo "role_covers_deploy: the AWS call at ${c#UNRESOLVED } in $tool is in a form role_calls.py cannot read: teach it the form" >&2
+    bad=1; continue ;;
+  esac
   if ! actions="$(action_of "$c")"; then
     echo "role_covers_deploy: \`$c\` in $tool is a call this check does not know: add it here (its action, or why CI never makes it) and to $role" >&2
     bad=1; continue
@@ -120,6 +125,17 @@ done <<<"$calls"
 for a in $HANDLER_ACTIONS; do
   has "$a" || { echo "role_covers_deploy: the deploy role lacks $a, which CloudFormation needs to apply a change set" >&2; bad=1; }
 done
+
+# Every deploy the workflow runs passes --no-prune, so the prune's calls above are ones CI never makes.
+wf="${CBASE_DEPLOY_WORKFLOW:-$root/.github/workflows/c_base.yml}"
+deploys="$(grep -v '^[[:space:]]*#' "$wf" | grep -oE 'cbase/tools/cbase deploy[^;|&]*' || true)"
+[ -n "$deploys" ] || { echo "role_covers_deploy: $wf runs no cbase/tools/cbase deploy" >&2; bad=1; }
+while IFS= read -r d; do
+  [ -z "$d" ] || grep -qE -- '(^|[[:space:]])--no-prune([[:space:]]|$)' <<<"$d" || {
+    echo "role_covers_deploy: \`$d\` in $wf prunes (the tool's default): pass --no-prune, or grant the prune's calls and say so here" >&2
+    bad=1
+  }
+done <<<"$deploys"
 
 # conf_value FILE KEY: the first value of KEY in a cbase.conf ("KEY = value").
 conf_value() { sed -nE "s/^$2[[:space:]]*=[[:space:]]*//p" "$1" | head -1; }

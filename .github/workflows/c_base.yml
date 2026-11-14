@@ -17,15 +17,16 @@
 # as it is; tick dry_run for a dry run). It waits for every gate below and for
 # the two static exports (the `web` job runs web_aws.yml in this same run, so
 # its artifacts are this run's), then, from the checkout with its submodule:
-#   foolish/  CBASE_SERVE_BIN=../c_base/dist/cbase-serve-linux-arm64 ../cbase/tools/cbase deploy
+#   foolish/  CBASE_SERVE_BIN=../c_base/dist/cbase-serve-linux-arm64 ../cbase/tools/cbase deploy --no-prune
 #             the server on the cbase-vm instance (SSM), out/ into the web
 #             bucket's foolish/, the cbase-app-foolish stack (both distributions)
-#   uttt/     ../cbase/tools/cbase deploy: web/out into uttt/, cbase-app-uttt
+#   uttt/     ../cbase/tools/cbase deploy --no-prune: web/out into uttt/, cbase-app-uttt
 # and checks that api.foolish.cards/health says "ok cbase" and that
-# foolish.cards and uttt.live answer 200. It never passes --accept-drift,
-# --allow-downtime or --prune: a drifted stack, a change set that would replace
+# foolish.cards and uttt.live answer 200. It never passes --accept-drift or
+# --allow-downtime: a drifted stack, a change set that would replace
 # a distribution or move a hostname, or a bucket replacement stops the tool,
-# and the job fails with its reason.
+# and the job fails with its reason. It always passes --no-prune (the tool
+# prunes by default; the prune is a hand step, c_base/RUNBOOK.md).
 #   LIVE OR DRY: a run deploys only when the repository variable CBASE_DEPLOY is
 # `live` (Settings > Secrets and variables > Actions > Variables) and dry_run
 # was not ticked; otherwise it runs `./cbase deploy --dry-run` (reads AWS,
@@ -492,17 +493,20 @@ jobs:
           role-to-assume: ${{ secrets.CBASE_AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       # foolish first: its server, then its files, then its stack (./cbase deploy's own order).
-      # Never --accept-drift, --allow-downtime or --prune: a refusal fails the job.
+      # Never --accept-drift or --allow-downtime: a refusal fails the job. Always --no-prune: the tool
+      # prunes by default, the role does not grant it, and the prune is by hand (c_base/RUNBOOK.md),
+      # since a tab open across two deploys still needs the old build's files.
+      # role_covers_deploy.sh fails a deploy line without it.
       - name: foolish - the server on cbase-vm, out/, cbase-app-foolish
         working-directory: foolish
         env:
           CBASE_SERVE_BIN: ../c_base/dist/cbase-serve-linux-arm64
         run: |
-          if [ "$MODE" = live ]; then ../cbase/tools/cbase deploy; else ../cbase/tools/cbase deploy --dry-run; fi
+          if [ "$MODE" = live ]; then ../cbase/tools/cbase deploy --no-prune; else ../cbase/tools/cbase deploy --dry-run --no-prune; fi
       - name: uttt - web/out, cbase-app-uttt
         working-directory: uttt
         run: |
-          if [ "$MODE" = live ]; then ../cbase/tools/cbase deploy; else ../cbase/tools/cbase deploy --dry-run; fi
+          if [ "$MODE" = live ]; then ../cbase/tools/cbase deploy --no-prune; else ../cbase/tools/cbase deploy --dry-run --no-prune; fi
       - name: the API and both sites answer
         if: env.MODE == 'live'
         run: |
