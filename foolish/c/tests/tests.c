@@ -20997,8 +20997,9 @@ static void test_delta_cast_rebuilds_the_board_cast(void) {
 // roster, the session-log records, every human seat's envelope and the spectator's - fold into
 // one digest, which is the one the kernel gave before the trailer was written once per commit,
 // the roster stopped being validated per move, and the trailer writer stopped checking per byte.
-// And the products a plain move asks for (TABLE_PRODUCTS_NO_ROW | NO_SPECTATOR_VIEW) are the
-// same envelopes byte for byte, with no spectator envelope and no row.
+// And the products a plain move asks for (TABLE_PRODUCTS_NO_ROW | NO_SPECTATOR_VIEW, and a seat's
+// NO_VIEW) are the same envelopes byte for byte, with no spectator envelope, no row and no
+// envelope for the seat left out.
 static uint8_t po_arena2[sizeof(tb_arena)];
 // With every state blob folded as its v5 self. It was 0xd0f12e4e (taken on main at
 // 893ab6490), and moved once, with the bot memory (bot_memory.h): this harness hands
@@ -21054,14 +21055,19 @@ static void test_products_are_the_bytes_they_were(void) {
                 }
                 // The plain move's products, first (they read the table and change nothing).
                 const int64_t now = 1700000000000LL + (int64_t)wv_row.version * 1000;
-                if (table_commit_products_flags(&tb, RS("g"), wv_row.version + 1, now, TABLE_PRODUCTS_NO_ROW | TABLE_PRODUCTS_NO_SPECTATOR_VIEW,
+                // One seat's view left out too (TABLE_PRODUCTS_NO_VIEW: nobody would be sent it), a
+                // different seat each version: its envelope is empty, every other one the same.
+                const int quiet = (int)(wv_row.version % np);
+                if (table_commit_products_flags(&tb, RS("g"), wv_row.version + 1, now,
+                                                TABLE_PRODUCTS_NO_ROW | TABLE_PRODUCTS_NO_SPECTATOR_VIEW | TABLE_PRODUCTS_NO_VIEW(quiet),
                                                 &c2, po_arena2, (int)sizeof(po_arena2)) >= 0) {
                     plain_checked++;
                     if (table_commit_products(&tb, RS("g"), wv_row.version + 1, now, &c, tb_arena, sizeof(tb_arena)) >= 0) {
                         bool same = c2.spectator.len == 0 && c2.state.len == 0 && c2.roster.len == 0;
                         for (int s = 0; s < np && same; s++)
-                            same = c.views[s].len == c2.views[s].len
-                                   && memcmp(tb_arena + c.views[s].off, po_arena2 + c2.views[s].off, (size_t)c.views[s].len) == 0;
+                            same = s == quiet ? c2.views[s].len == 0
+                                              : c.views[s].len == c2.views[s].len
+                                                    && memcmp(tb_arena + c.views[s].off, po_arena2 + c2.views[s].off, (size_t)c.views[s].len) == 0;
                         plain_same += same;
                     }
                 }
@@ -21100,7 +21106,7 @@ static void test_products_are_the_bytes_they_were(void) {
     CHECK(h == PRODUCTS_DIGEST_GOLDEN, "products: every commit's bytes are the ones the kernel wrote before (state as v5, roster, logs, envelopes)");
     CHECK(h6 == PRODUCTS_DIGEST_GOLDEN_V6, "products: and the bytes as this kernel writes them (the state as v7)");
     CHECK(plain_checked > 50000 && plain_same == plain_checked,
-          "products: a plain move's products (no row, no spectator envelope) are the same seat envelopes");
+          "products: a plain move's products (no row, no spectator envelope, one seat's view left out) are the same seat envelopes");
 }
 
 // THE ROSTER IS VALIDATED ONLY WHEN IT MAY HAVE CHANGED (Table.roster_valid): a loaded table's

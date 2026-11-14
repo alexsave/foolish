@@ -453,6 +453,11 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
 // for a host that never sends one for this operation (the server's plain move: its actor is
 // seated and its pushes are the seats' envelopes and casts).
 #define TABLE_PRODUCTS_NO_SPECTATOR_VIEW 0x2u
+// TABLE_PRODUCTS_NO_VIEW(seat): no envelope for that human seat (TableCommit.views[seat] stays
+// empty), for a host that knows no one will be sent it (the server's plain move, when none of the
+// seat's connections would take its view: table_ops.c cb_section_commit). Every other seat's
+// envelope is byte for byte the one written without it.
+#define TABLE_PRODUCTS_NO_VIEW(seat) (0x100u << (seat))
 int table_commit_products_flags(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                                 int64_t now_ms, unsigned flags, TableCommit *out, uint8_t *arena, int cap);
 

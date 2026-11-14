@@ -192,6 +192,10 @@ bool cb_rt_room_heard(cb_rt *rt, const char *doc) {
     return !rt || !rt->t || !rt->t->room_heard || !doc || rt->t->room_heard(rt, doc);
 }
 
+bool cb_rt_user_heard(cb_rt *rt, const char *user_id, const char *quiet_room) {
+    return !rt || !rt->t || !rt->t->user_heard || !user_id || rt->t->user_heard(rt, user_id, quiet_room);
+}
+
 int cb_rt_room_watchers(cb_rt *rt, const char *doc) {
     return rt && rt->t && rt->t->room_watchers && doc ? rt->t->room_watchers(rt, doc) : -1;
 }

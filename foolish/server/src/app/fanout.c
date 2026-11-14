@@ -1,8 +1,9 @@
 // fanout.c - after a winning commit, who hears about it (fanout.h).
 //
 // Two things after every winning commit: each human seat's view on its own
-// views stream (realtime.h CB_RT_VIEWS, on EVERY commit; a seat that left hears
-// the view with no envelope), and the casts, one per human seat (CB_RT_SEAT)
+// views stream (realtime.h CB_RT_VIEWS, on EVERY commit but for a seat whose user
+// no connection would take it, view_unheard; a seat that left hears the view with
+// no envelope), and the casts, one per human seat (CB_RT_SEAT)
 // and one for the spectators (CB_RT_WATCH), on every commit that wrote them
 // (all of them but an empty table's deletion, which has no board to cast).
 #include "fanout.h"
@@ -107,16 +108,19 @@ void cb_fanout_publish(cb_ctx *ctx, const cb_fanout *f) {
     cb_rt_batch_begin(rt);
     for (int i = 0; i < f->n_seats; i++) {
         if (!f->seats[i].user_id[0]) continue;   // a bot has no client
-        cb_view_row row;
-        memset(&row, 0, sizeof row);
-        cb_strlcpy(row.game_id, f->game_id, sizeof row.game_id);
-        cb_strlcpy(row.player_id, f->seats[i].user_id, sizeof row.player_id);
-        row.view = (uint8_t *)f->seats[i].envelope;
-        row.view_len = f->seats[i].envelope_len;
-        row.version = f->version;
-        cb_strlcpy(row.status, f->status, sizeof row.status);
-        row.updated_at = f->updated_at;
-        rt_publish_view(rt, f->seats[i].user_id, &row, false);
+        // No view when the hub said none of the user's connections would take it (fanout.h).
+        if (!f->seats[i].view_unheard) {
+            cb_view_row row;
+            memset(&row, 0, sizeof row);
+            cb_strlcpy(row.game_id, f->game_id, sizeof row.game_id);
+            cb_strlcpy(row.player_id, f->seats[i].user_id, sizeof row.player_id);
+            row.view = (uint8_t *)f->seats[i].envelope;
+            row.view_len = f->seats[i].envelope_len;
+            row.version = f->version;
+            cb_strlcpy(row.status, f->status, sizeof row.status);
+            row.updated_at = f->updated_at;
+            rt_publish_view(rt, f->seats[i].user_id, &row, false);
+        }
         if (f->seats[i].cast) rt_publish_cast(rt, f->seats[i].user_id, f->game_id, f->version, f->seats[i].cast, f->seats[i].cast_len);
     }
     for (int i = 0; i < f->n_left; i++) {
