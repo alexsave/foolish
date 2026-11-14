@@ -1721,12 +1721,15 @@ static void every_commit_is_cast_as_a_delta(void) {
 // once someone watches, the next commit casts to the room again.
 static bool g_room_watched;
 static int  g_watch_delivered;
+static int  g_wakes;   // cb_rt_wake on the game: the room told to look again, nothing sent
 static int quiet_deliver(cb_rt *rt, const cb_rt_to *to, const uint8_t *frame, size_t len) {
     if (to->family == CB_RT_WATCH) g_watch_delivered++;
     return 0;
 }
 static bool quiet_room_heard(cb_rt *rt, const char *doc) { return g_room_watched; }
-static const cb_rt_transport QUIET_T = { .name = "quiet", .deliver = quiet_deliver, .room_heard = quiet_room_heard };
+static void quiet_wake(cb_rt *rt, const char *key) { g_wakes++; }
+static const cb_rt_transport QUIET_T = { .name = "quiet", .deliver = quiet_deliver, .room_heard = quiet_room_heard,
+                                         .wake = quiet_wake };
 
 static void no_spectators_no_spectator_cast(void) {
     setup(0);
@@ -1744,6 +1747,7 @@ static void no_spectators_no_spectator_cast(void) {
     T_CHECK(!g_fan.spectator_cast);
     static const char *const uids[2] = { UID_A, UID_B }, *const bearers[2] = { "A", "B" };
     int quiet = 0, heard = 0;
+    g_wakes = 0;   // the create, the join and the deal were quiet commits too: counted from here
     for (int step = 0; step < 4000 && status_of(gid) == GAME_STATUS_PLAYING && heard < 3; step++) {
         const int k = step % 2, seat = seat_of(gid, uids[k]);
         const int64_t v = version_of(gid);
@@ -1751,15 +1755,18 @@ static void no_spectators_no_spectator_cast(void) {
         int n = pick_move(gid, seat, wire, sizeof wire);
         if (n <= 0) continue;
         g_room_watched = quiet >= 3;
+        const int wakes = g_wakes;
         action(bearers[k], gid, wire, n, (uint32_t)v, &r);
         if (version_of(gid) != v + 1) continue;
         T_EQ_INT(g_fan.casts, 2);
         T_EQ_INT(g_fan.spectator_cast, g_room_watched);
+        T_EQ_INT(g_wakes - wakes, g_room_watched ? 0 : 1);   // a quiet commit wakes the room once, a heard one never
         if (g_room_watched) heard++; else quiet++;
     }
     T_EQ_INT(quiet, 3);
     T_EQ_INT(heard, 3);
     T_EQ_INT(g_watch_delivered, 3);   // only the watched commits reached the room
+    T_EQ_INT(g_wakes, 3);             // and only the quiet ones woke it
     g_ctx.rt = NULL;
 }
 

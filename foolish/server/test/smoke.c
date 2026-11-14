@@ -937,7 +937,7 @@ static void *park_thread(void *arg) {
     if (fd >= 0) close(fd);
     if (st >= 0) {
         p->len = r.body.len <= sizeof p->body ? (int)r.body.len : 0;
-        memcpy(p->body, r.body.p, (size_t)p->len);
+        if (p->len) memcpy(p->body, r.body.p, (size_t)p->len);   // a 204's body is NULL: memcpy's pointers must be valid even for 0 bytes
         tc_response_free(&r);
     }
     p->answered_ms = mono_ms();
