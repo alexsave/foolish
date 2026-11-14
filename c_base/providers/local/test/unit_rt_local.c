@@ -220,6 +220,32 @@ static void parked_requests_hold_no_thread(void) {
     T_EQ_INT(g_parked_status[0], 204);
 }
 
+// cb_rt_wake (realtime.h): what a push to the key does besides its delivery, with nothing sent - a
+// request parked on the key looks again - from another thread (queued for the loop) and on the
+// loop's own (at once). The caller of a push it did not build counts on it (fanout.c).
+static void rt_wake_k(cb_loop *l, void *ud) { cb_rt_wake(g_ctx.rt, "k"); }
+
+static void a_wake_with_nothing_sent_wakes_a_parked_request(void) {
+    pthread_t th;
+    for (int on_loop = 0; on_loop < 2; on_loop++) {
+        atomic_store(&g_flag, 0);
+        atomic_store(&g_parked_done, 0);
+        g_park_ms = 5000;
+        pthread_create(&th, NULL, park_client, (void *)(intptr_t)0);
+        usleep(300000);
+        T_EQ_INT(atomic_load(&g_parked_done), 0);   // parked
+        atomic_store(&g_flag, 1);
+        const int64_t t0 = cb_now_ms();
+        if (on_loop) T_EQ_INT(cb_loop_post(g_ctx.loop, rt_wake_k, NULL), CB_OK);
+        else cb_rt_wake(g_ctx.rt, "k");             // this thread is not the loop's
+        pthread_join(th, NULL);
+        T_EQ_INT(g_parked_status[0], 200);
+        T_CHECK(cb_now_ms() - t0 < 4000);           // woken, not timed out at 5 s
+    }
+    atomic_store(&g_flag, 0);
+    cb_rt_wake(NULL, "k");                          // no transport: nothing
+}
+
 static void ws_upgrade_route(void) {
     tc_response r;
     T_EQ_INT(tc_http(g_port, "GET", "/ws", NULL, NULL, 0, &r), 0);
@@ -938,6 +964,7 @@ int main(void) {
     T_RUN(the_family_rule);
     T_RUN(ws_upgrade_route);
     T_RUN(parked_requests_hold_no_thread);
+    T_RUN(a_wake_with_nothing_sent_wakes_a_parked_request);
     T_RUN(pushes_reach_their_hearers);
     T_RUN(many_sockets_hear_once);
     T_RUN(a_push_on_the_loop_is_not_posted);

@@ -196,6 +196,10 @@ bool cb_rt_user_heard(cb_rt *rt, const char *user_id, const char *quiet_room) {
     return !rt || !rt->t || !rt->t->user_heard || !user_id || rt->t->user_heard(rt, user_id, quiet_room);
 }
 
+void cb_rt_wake(cb_rt *rt, const char *key) {
+    if (rt && rt->t && rt->t->wake && key && *key) rt->t->wake(rt, key);
+}
+
 int cb_rt_room_watchers(cb_rt *rt, const char *doc) {
     return rt && rt->t && rt->t->room_watchers && doc ? rt->t->room_watchers(rt, doc) : -1;
 }

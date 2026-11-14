@@ -1054,8 +1054,10 @@ int cb_section_commit(cb_ctx *ctx, cb_section *s, const cb_game_row *row, const 
     }
     // The spectators' cast, unless the hub knows no one watches the game (cb_rt_room_heard: on the
     // loop it can tell; a page that opens later reads the game whole, and a delta that arrives
-    // past a skipped version is refused by the client's version gate and refetched).
-    if (rc == CB_OK && cb_rt_room_heard(ctx->rt, row->id))
+    // past a skipped version is refused by the client's version gate and refetched). Not built,
+    // the room is still woken where it would have been published (fanout.h spectator_unheard).
+    f.spectator_unheard = !cb_rt_room_heard(ctx->rt, row->id);
+    if (rc == CB_OK && !f.spectator_unheard)
         rc = section_cast(s, &ck, -1, next, &f.spectator_cast, &f.spectator_cast_len, &spectator_owned);
     // Who joined and who left: a plain commit's roster is the loaded one (section_seats), so none.
     for (int i = 0; !plain && i < f.n_seats; i++) {

@@ -97,6 +97,9 @@ typedef struct cb_rt_transport {
     // any connection now, when the transport can tell on this thread (cb_rt_user_heard). NULL: it
     // cannot, and every such push may be heard.
     bool (*user_heard)(cb_rt *rt, const char *user_id, const char *quiet_room);
+    // What a push to `key` does besides its delivery, with nothing delivered (cb_rt_wake): from
+    // any thread, in order with the pushes published before it. NULL: a push does nothing more.
+    void (*wake)(cb_rt *rt, const char *key);
 } cb_rt_transport;
 
 struct cb_rt {
@@ -118,8 +121,18 @@ struct cb_rt {
 void cb_rt_batch_begin(cb_rt *rt);
 // Whether a push to the room of `doc` (a family under s/) may reach anyone: false only when the
 // transport knows the room has no watcher now (the local hub, on its loop thread), so the caller
-// need not build the push. True with no transport, or one that cannot tell.
+// need not build the push. True with no transport, or one that cannot tell. It answers for the
+// connections alone: a caller that does not build the push calls cb_rt_wake(doc) where it would
+// have published it, so what else the push does (the hub wakes a long poll parked on the room,
+// rt_local.c pub_deliver) is still done.
 bool cb_rt_room_heard(cb_rt *rt, const char *doc);
+// What a push to `key` (a user id, or a room's doc) does besides its delivery, with nothing sent:
+// under the local hub, a long poll parked on the key looks again (net/server.h cb_server_wake). For
+// a push the caller did not build because no connection would take it (cb_rt_room_heard). From
+// any thread; after the pushes this thread published before it (a batch does not hold it: only a
+// transport with deliver_lanes holds pushes, and none of those has a wake). Nothing with no
+// transport, or one whose pushes do nothing more.
+void cb_rt_wake(cb_rt *rt, const char *key);
 // How many connections watch the room of `doc` (a family under s/) now: the local hub answers on
 // its loop thread (a loop timer of the app's, for a display); -1 anywhere it cannot tell.
 int cb_rt_room_watchers(cb_rt *rt, const char *doc);
