@@ -183,7 +183,9 @@ static bool raw_call(const char *target, const char *json) {
 }
 
 static void the_export_end_to_end(void) {
-    snprintf(g_table, sizeof g_table, "exp_%d_%d", (int)getpid(), rand() % 100000);
+    uint32_t draw;
+    cb_random_bytes(&draw, sizeof draw);   // the process's one source (util/uuid.h)
+    snprintf(g_table, sizeof g_table, "exp_%d_%d", (int)getpid(), (int)(draw % 100000));
     // The stack table's shape, on demand: the export paces itself to a provisioned table's reads (5 RCU/s here, which a
     // thousand items would take minutes to read), and an on-demand one is not paced.
     char ct[1400];

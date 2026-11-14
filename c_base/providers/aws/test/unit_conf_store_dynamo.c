@@ -7,6 +7,7 @@
 
 #include "conformance/store.h"
 #include "lib_store_backend.h"
+#include "util/uuid.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +15,9 @@
 
 static cb_store *open_dynamo(void *ud) {
     char name[64];
-    snprintf(name, sizeof name, "conf_%d_%d", (int)getpid(), rand() % 100000);
+    uint32_t draw;
+    cb_random_bytes(&draw, sizeof draw);   // the process's one source (util/uuid.h)
+    snprintf(name, sizeof name, "conf_%d_%d", (int)getpid(), (int)(draw % 100000));
     cb_store *s = NULL;
     if (tsb_create_table(name) != 0 || cb_store_open_dynamo(name, &s) != CB_OK) return NULL;
     return s;
