@@ -773,10 +773,11 @@ static const cb_ws_handlers WS_ANON = { on_open, anon_message, on_close };
 
 #define PUB_USER 1
 #define PUB_ROOM 2
+#define PUB_WAKE 3   // no frame, no hearers: only what a push to the key does besides (cb_rt_wake)
 
 typedef struct pub {
     cb_rt *rt;
-    int scope;                        // PUB_USER, PUB_ROOM
+    int scope;                        // PUB_USER, PUB_ROOM, PUB_WAKE
     char key[48];                     // the user id, or the room id
     char quiet[48];                   // (PUB_USER) the room whose watchers do not hear it ("" none)
     size_t len, cap;
@@ -867,6 +868,7 @@ static size_t user_conns(local *L, const char *key, uint64_t **ids_io, size_t *c
 static void pub_deliver(local *L, const pub *p) {
     // A request parked on this user (or room) by the long poll looks again (net/server.h cb_server_wake).
     if (L->ctx->server) cb_server_wake(L->ctx->server, p->key);
+    if (p->scope == PUB_WAKE) return;
     uint64_t stack[32];
     uint64_t *ids = stack;
     size_t n = 0, cap = sizeof stack / sizeof *stack;
@@ -922,6 +924,27 @@ static void pq_deliver(local *L) {
 
 static void pq_on_loop(cb_loop *l, void *ud) { (void)l; pq_deliver(ud); }
 
+// A push made elsewhere, queued for the loop (any other thread): 0, or 1 when the loop has stopped.
+static int pub_post(local *L, pub *p) {
+    cb_loop *loop = L->ctx->loop;
+    pthread_mutex_lock(&L->pq_mu);
+    if (L->pq_tail) L->pq_tail->next = p;
+    else L->pq_head = p;
+    L->pq_tail = p;
+    atomic_fetch_add(&L->pq_n, 1);
+    const bool tell = !L->pq_posted;
+    L->pq_posted = true;
+    pthread_mutex_unlock(&L->pq_mu);
+    if (tell && cb_loop_post(loop, pq_on_loop, L) != CB_OK) {
+        // The loop has stopped: nothing will deliver it (local_free frees what is queued).
+        pthread_mutex_lock(&L->pq_mu);
+        L->pq_posted = false;
+        pthread_mutex_unlock(&L->pq_mu);
+        return 1;
+    }
+    return 0;
+}
+
 // ON THE LOOP THREAD (a request inline on the loop, a SUB, a timer): delivered at once, the
 // caller's frame borrowed - no copy, no post, no wake; the push is in each hearer's out buffer
 // in the same pass as the answer, and flush_dirty writes each socket once. Pushes other threads
@@ -961,22 +984,29 @@ static int local_deliver(cb_rt *rt, const cb_rt_to *to, const uint8_t *frame, si
     if (!p->frame) { pub_free(p); return 1; }
     memcpy(p->frame, frame, len);
     p->len = len;
-    pthread_mutex_lock(&L->pq_mu);
-    if (L->pq_tail) L->pq_tail->next = p;
-    else L->pq_head = p;
-    L->pq_tail = p;
-    atomic_fetch_add(&L->pq_n, 1);
-    const bool tell = !L->pq_posted;
-    L->pq_posted = true;
-    pthread_mutex_unlock(&L->pq_mu);
-    if (tell && cb_loop_post(loop, pq_on_loop, L) != CB_OK) {
-        // The loop has stopped: nothing will deliver it (local_free frees what is queued).
-        pthread_mutex_lock(&L->pq_mu);
-        L->pq_posted = false;
-        pthread_mutex_unlock(&L->pq_mu);
-        return 1;
+    return pub_post(L, p);
+}
+
+// cb_rt_wake: a PUB_WAKE in the pushes' order, on the loop as they are (pub_deliver wakes its key).
+static void local_wake(cb_rt *rt, const char *key) {
+    cb_loop *loop = rt->ctx->loop;
+    local *L = rt->impl;
+    if (!loop || strlen(key) >= sizeof ((pub *)0)->key) return;
+    if (cb_loop_on_thread(loop)) {
+        if (atomic_load(&L->pq_n)) pq_deliver(L);
+        pub b = { .rt = rt, .scope = PUB_WAKE };
+        cb_strlcpy(b.key, key, sizeof b.key);
+        pub_deliver(L, &b);
+        return;
     }
-    return 0;
+    pub *p = pub_get();
+    if (!p) return;
+    p->rt = rt;
+    p->scope = PUB_WAKE;
+    cb_strlcpy(p->key, key, sizeof p->key);
+    p->quiet[0] = 0;
+    p->len = 0;
+    (void)pub_post(L, p);
 }
 
 static void local_free(cb_rt *rt) {
@@ -1086,7 +1116,7 @@ static bool local_user_heard(cb_rt *rt, const char *user_id, const char *quiet_r
 
 static const cb_rt_transport LOCAL_T = { .name = "local", .deliver = local_deliver, .free = local_free, .forget = local_forget,
                                          .room_heard = local_room_heard, .room_watchers = local_room_watchers,
-                                         .user_heard = local_user_heard };
+                                         .user_heard = local_user_heard, .wake = local_wake };
 
 long cb_rt_local_quiet_skips(const cb_rt *rt) {
     const local *L = rt->impl;

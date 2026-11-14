@@ -132,5 +132,6 @@ void cb_fanout_publish(cb_ctx *ctx, const cb_fanout *f) {
         rt_publish_view(rt, f->left[i], &row, true);
     }
     if (f->spectator_cast) rt_publish_cast(rt, NULL, f->game_id, f->version, f->spectator_cast, f->spectator_cast_len);
+    else if (f->spectator_unheard) cb_rt_wake(rt, f->game_id);
     cb_rt_batch_end(rt);
 }

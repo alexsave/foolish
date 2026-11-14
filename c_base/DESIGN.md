@@ -633,6 +633,7 @@ The views are the dashboard's, and they are also how a host that shows boards (i
 Under IoT the spectators' cast is published whether or not anyone watches, for the same reason.
 Under `cbase serve` the hub knows who listens, on its loop thread, and two pushes are not built there when nobody would take them.
 The spectators' cast of a room nobody watches is not built (`cb_rt_room_heard`).
+The fan-out wakes the room where it would have published it (`cb_rt_wake`, `fanout.h` `spectator_unheard`), so a `/v1/wait` parked on the game by a spectator (who has no socket in the room) answers at the move, not at its deadline; until 2026-11 it waited the full 25 s.
 A seat's view of a plain move is not built when none of the user's connections is outside the game's room (`cb_rt_user_heard`): a connection in the room follows the game by its casts and is never sent that view (`cb_rt_to.quiet_room`), so the kernel leaves the seat's envelope out (`TABLE_PRODUCTS_NO_VIEW`) and the fan-out publishes no view for it (`fanout.h` `view_unheard`).
 The seat's cast still goes, and it wakes a `/v1/wait` parked on the user, as the view did.
 Off the loop thread, and under IoT, both questions answer "heard", and every push is built as before.

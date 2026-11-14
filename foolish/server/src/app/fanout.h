@@ -8,7 +8,9 @@
 //     that moves the version and casts nothing is a refetch on every page);
 //     the deletion of an empty table writes no version and casts nothing;
 //   * a seat that left: its views stream hears the view with no envelope;
-//   * a seat's view that no connection would take (view_unheard) is not published.
+//   * a seat's view that no connection would take (view_unheard) is not published;
+//   * nor the spectators' cast of a room no connection watches (spectator_unheard): the room is
+//     woken instead.
 // Called inside the kernel section's aftermath with the bytes already copied
 // out (casts and envelopes), so it never touches the kernel.
 #ifndef CB_FANOUT_H
@@ -41,6 +43,11 @@ typedef struct {
     } seats[CB_MAX_SEATS];
     const uint8_t *spectator_cast; // the spectators' (CB_RT_WATCH)
     size_t         spectator_cast_len;
+    // No connection watches the game's room (realtime.h cb_rt_room_heard, asked by table_ops.c
+    // cb_section_commit): no spectators' cast was built. Where it would have been published the
+    // room is woken instead (cb_rt_wake), which is what the cast did besides its sockets: a
+    // spectator's long poll parked on the game (v1_http.c h_wait) looks again.
+    bool           spectator_unheard;
     int     n_joined, n_left;      // membership changes this commit
     cb_uuid joined[CB_MAX_SEATS], left[CB_MAX_SEATS];
 } cb_fanout;
