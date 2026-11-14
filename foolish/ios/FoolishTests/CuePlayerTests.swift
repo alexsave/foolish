@@ -94,17 +94,29 @@ final class CuePlayerTests: XCTestCase {
         XCTAssertLessThan(err, 1e-4, "the output IS the take from its first sample, at the master level")
     }
 
-    /// With no time before its moment a lift plays a TIGHT take, from now, whole.
-    func testATakeWithNoTimeStartsNowWholeAndTight() throws {
+    /// With no time before its moment a take starts now, whole, late by as much
+    /// as its anchor: the cue's one take when it has no tight one (the lift is
+    /// one take), the TIGHT take when it has (the deal's, pressed closer to its
+    /// moment so it is late by as little as it can be). c/src/cue_voice.h "A TAKE
+    /// IS NEVER CUT"; c/ios/ios_api_smoke.c holds the same two cases.
+    private func assertNoTimeStartsNowWhole(_ cue: Int, role: Int, _ why: String) throws {
         try player.startOffline(rate: 48000)
         _ = try player.render(1024)
-        let s = try XCTUnwrap(player.strike(Int(ANIM_CUE_LIFT), in: 0).first)
-        XCTAssertEqual(player.takes[s.take].role, Int(CUE_ROLE_TIGHT), "the tight take, pressed closer to its moment")
+        let s = try XCTUnwrap(player.strike(cue, in: 0).first)
+        XCTAssertEqual(player.takes[s.take].role, role, why)
         XCTAssertEqual(s.startSample, s.nowSample, "from now")
         let take = player.samples(s.take)
         let out = try player.render(take.count + 4800)
         let (err, _) = compare(out, at: 0, take, gain: master)
         XCTAssertLessThan(err, 1e-4, "whole: its first sample is the first sample out")
+    }
+
+    func testALiftWithNoTimeIsItsOneTakePlayedNowWhole() throws {
+        try assertNoTimeStartsNowWhole(Int(ANIM_CUE_LIFT), role: Int(CUE_ROLE_MAIN), "the lift is one ordinary take, played late")
+    }
+
+    func testADealWithNoTimeIsItsTightTakePlayedNowWhole() throws {
+        try assertNoTimeStartsNowWhole(Int(ANIM_CUE_DEAL), role: Int(CUE_ROLE_TIGHT), "the tight take, pressed closer to its moment")
     }
 
     /// A refused attack is PLACE backwards: its anchor measured from the other
@@ -140,26 +152,42 @@ final class CuePlayerTests: XCTestCase {
         XCTAssertLessThan(err, 1e-4, "the take at the master level times the seat's")
     }
 
-    /// A sweep of ten cards is gathered in four strokes first, started their own
-    /// anchor before the same moment, over whatever else plays.
-    func testASweepIsGatheredInStrokesFirst() throws {
+    /// A sweep of ten cards is the lift and four strokes gathering the table,
+    /// each started its OWN anchor before the same moment (the strokes' anchor
+    /// is where the scrape is first heard, a hair after the cards start moving,
+    /// so the lift's file starts first and the scrape sounds over it), summed.
+    func testASweepIsGatheredInStrokesOverTheLift() throws {
         try player.startOffline(rate: 32000)
         _ = try player.render(1024)
         let got = player.strike(Int(ANIM_CUE_SWEEP), in: 5.0, nCards: 10)
         XCTAssertEqual(got.count, 2, "the lift and its strokes")
+        guard got.count == 2 else { return }
         let lift = got[0], strokes = got[1]
+        XCTAssertEqual(player.takes[lift.take].role, Int(CUE_ROLE_MAIN))
         XCTAssertEqual(player.takes[strokes.take].role, Int(CUE_ROLE_PRELUDE))
         XCTAssertEqual(player.takes[strokes.take].level, 4, "ten cards, one stroke per 2.5")
         XCTAssertEqual(strokes.momentAfter, 5.0, accuracy: 1.0 / 32000)
         XCTAssertEqual(lift.momentAfter, 5.0, accuracy: 1.0 / 32000)
-        XCTAssertLessThan(strokes.startSample, lift.startSample)
+        // Each starts its own anchor before the moment, whichever comes first.
+        for s in [lift, strokes] {
+            let row = player.takes[s.take]
+            let want = 5 * 32000 - Int((Double(row.anchorUs) / 1e6 * 32000).rounded())
+            XCTAssertEqual(Int(s.startSample - s.nowSample), want, "\(row.name) started its anchor before the moment")
+        }
         let out = try player.render(32000 * 7)
-        // Until the lift starts the output is the strokes alone.
-        let at = Int(strokes.startSample - strokes.nowSample)
-        let alone = Array(player.samples(strokes.take).prefix(Int(lift.startSample - strokes.startSample)))
-        let (err, before) = compare(out, at: at, alone, gain: master)
-        XCTAssertLessThan(before, 1e-6)
-        XCTAssertLessThan(err, 1e-4)
+        // The output is the two takes summed, and silence before the first.
+        var sum = [Float](repeating: 0, count: out.count)
+        var first = Int.max
+        for s in [lift, strokes] {
+            let x = player.samples(s.take), at = Int(s.startSample - s.nowSample)
+            first = min(first, at)
+            for k in 0..<x.count where at + k < sum.count { sum[at + k] += master * x[k] }
+        }
+        XCTAssertGreaterThan(first, 0)
+        let before = out[0..<max(0, min(first, out.count))].map(abs).max() ?? 0
+        XCTAssertLessThan(before, 1e-6, "nothing before the first take")
+        let err = zip(out, sum).map { abs($0 - $1) }.max() ?? 1
+        XCTAssertLessThan(err, 1e-4, "the output is the lift and the strokes summed")
     }
 
     /// Two strikes a stagger apart overlap on two players: neither is cut or

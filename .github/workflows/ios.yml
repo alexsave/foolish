@@ -78,6 +78,9 @@ jobs:
       - name: Architecture lint (§4, §16.E1)
         run: bash ios/scripts/lint_architecture.sh
 
+      - name: No soundtrack in the iMessage product (sound effects only)
+        run: bash ios/scripts/lint_no_soundtrack.sh
+
   # ---- Portable: the cross-language codecs, both languages at once ----------
   #
   # This job used to run a second file, e2e/imessage_replay_names.test.ts, which
