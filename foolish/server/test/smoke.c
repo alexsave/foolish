@@ -925,6 +925,8 @@ typedef struct {
     char    headers[NC_AUTH_MAX + 64];
     _Atomic int status;   // 0 while it waits
     int64_t answered_ms;
+    uint8_t body[1 << 16];   // the answer's body (len 0 when it did not fit)
+    int     len;
 } park_call;
 
 static void *park_thread(void *arg) {
@@ -933,7 +935,11 @@ static void *park_thread(void *arg) {
     int fd = tc_connect(g_port);
     const int st = fd >= 0 && tc_request(fd, "GET", p->path, p->headers, NULL, 0, SMOKE_ANSWER_MS, &r) == 0 ? r.status : -1;
     if (fd >= 0) close(fd);
-    if (st >= 0) tc_response_free(&r);
+    if (st >= 0) {
+        p->len = r.body.len <= sizeof p->body ? (int)r.body.len : 0;
+        memcpy(p->body, r.body.p, (size_t)p->len);
+        tc_response_free(&r);
+    }
     p->answered_ms = mono_ms();
     atomic_store(&p->status, st);
     return NULL;
@@ -1074,8 +1080,12 @@ static bool crash_read(crash_game *g, int k, smoke_client *sc, cb_buf *env) {
     return true;
 }
 
+// The kills' users, kept: a later test seats them or has one look on, with no signup of its own
+// (an address may sign up only so many accounts an hour, rate_limits.h).
+static smoke_user g_kill_users[3];
+
 static void kills_lose_no_acknowledged_move(void) {
-    smoke_user U[3];
+    smoke_user *U = g_kill_users;
     for (int i = 0; i < 3; i++) {
         char name[24];   // room for any int (GCC's format-truncation check)
         snprintf(name, sizeof name, "SMOKEK%d", i);
@@ -1152,6 +1162,99 @@ static void kills_lose_no_acknowledged_move(void) {
     T_EQ_INT(kills, rounds);
     T_CHECK(moves >= 8);
     T_CHECK(same > 0);
+    cb_buf_free(&env);
+    free(sc);
+}
+
+// ---- a move wakes a spectator's long poll, with no one in the game's room -----------------
+//
+// A spectator's GET /v1/wait parks on the GAME (v1_http.c h_wait: a seated caller's on its user),
+// and the push that wakes it is the spectators' cast (rt_local.c pub_deliver wakes each push's
+// key). The hub does not build that cast when no socket watches the game (realtime.h
+// cb_rt_room_heard, table_ops.c), so a poll parked there, no socket in the room, must still be
+// answered at the move, not at its 25 s deadline, with the version the move wrote. Then the
+// same with the spectator's socket in the room, where the cast is built and heard.
+// The players and the spectator are the kills' users (no signups of its own).
+static void spectator_park(park_call *p, pthread_t *th, smoke_user *u, const char *gid, int64_t v) {
+    memset(p, 0, sizeof *p);
+    T_EQ_INT(nc_session_load(u->blob, u->blob_len), NW_OK);
+    const NcRequest *q = nc_req_games(cb_now_ms());
+    T_CHECK(q && q->auth_len > 0);
+    if (q) snprintf(p->headers, sizeof p->headers, "Authorization: %.*s\r\n", (int)q->auth_len, q->auth);
+    snprintf(p->path, sizeof p->path, "/v1/wait/%s?v=%lld", gid, (long long)v);
+    pthread_create(th, NULL, park_thread, p);
+    struct timespec ts = { 0, 500 * 1000000 };
+    nanosleep(&ts, NULL);
+    T_EQ_INT(atomic_load(&p->status), 0);   // still parked
+}
+
+// A plain move by whichever seat has one; the version it was made at (-1: none).
+static int64_t spectator_move(smoke_user **humans, const char *gid, smoke_client *sc, cb_buf *env, uint64_t *rng) {
+    for (int h = 0; h < 2; h++) {
+        int64_t mv;
+        uint8_t wire[64];
+        if (!game_view(humans[h], gid, &mv, env)) continue;
+        const int n = choose_move(sc, env, wire, sizeof wire, rng);
+        if (n <= 0) continue;
+        T_EQ_INT(call(humans[h], NC_DO_PLAY, gid, wire, n, mv), 200);
+        return mv;
+    }
+    return -1;
+}
+
+static void a_move_wakes_a_spectators_long_poll(void) {
+    smoke_user *A = &g_kill_users[0], *B = &g_kill_users[1], *S = &g_kill_users[2];
+    if (!A->blob_len || !B->blob_len || !S->blob_len) { T_CHECK(0); return; }
+    smoke_client *sc = calloc(1, sizeof *sc);
+    park_call *p = calloc(1, sizeof *p);
+    cb_buf env;
+    cb_buf_init(&env);
+    T_EQ_INT(call(A, NC_DO_CREATE, NULL, NULL, 0, -1), 200);
+    client_init(&sc->c, &sc->slot);
+    T_CHECK(client_adopt_envelope(&sc->c, g_body, g_len) >= 0);
+    char gid[32];
+    snprintf(gid, sizeof gid, "%.*s", (int)sc->c.gid_len, sc->c.gid);
+    T_EQ_INT(ask(B, ASK_JOIN, gid, &env), 200);
+    T_EQ_INT(ask(A, ASK_START, gid, &env), 200);
+    T_EQ_INT(ask(B, ASK_START, gid, &env), 200);
+    smoke_user *humans[2] = { A, B };
+    uint64_t rng = 0x5bec;
+    listener *L = calloc(1, sizeof *L);
+    L->fd = -1;
+    for (int round = 0; round < 2; round++) {
+        // Round 0: no socket anywhere in the game's room. Round 1: the spectator's socket is in it.
+        if (round == 1) {
+            char topic[128];
+            snprintf(topic, sizeof topic, "s/%s", gid);
+            ws_for(L, S, topic);
+            T_CHECK(ws_open(L));
+            drain_ws(L, 300, 50);
+        }
+        const int casts0 = L->n_cast;
+        int64_t v = -1;
+        T_CHECK(game_view(S, gid, &v, NULL));   // the spectator's read: not seated
+        pthread_t th;
+        spectator_park(p, &th, S, gid, v);
+        const int64_t t_move = mono_ms();
+        const int64_t mv = spectator_move(humans, gid, sc, &env, &rng);
+        T_EQ_INT(mv, v);
+        pthread_join(th, NULL);
+        const int64_t took = p->answered_ms - t_move;
+        fprintf(stderr, "smoke: the spectator's long poll (%s) answered %lld ms after the move\n",
+                round ? "its socket in the room" : "no socket in the room", (long long)took);
+        T_EQ_INT(atomic_load(&p->status), 200);
+        T_CHECK(took < 10000);   // woken by the move, not timed out at 25 s
+        const NcGameRow *row = nc_view_read(atomic_load(&p->status), p->body, p->len);
+        T_CHECK(row != NULL);
+        if (row) T_EQ_INT((int64_t)row->version, v + 1);   // the version the move wrote
+        if (round == 1) {
+            drain_ws(L, 1000, 100);
+            T_CHECK(L->n_cast > casts0);   // the spectators' cast reached the room's socket
+        }
+    }
+    if (L->fd >= 0) close(L->fd);
+    free(L);
+    free(p);
     cb_buf_free(&env);
     free(sc);
 }
@@ -1293,6 +1396,8 @@ int main(int argc, char **argv) {
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(kills_lose_no_acknowledged_move);
     // Last of the games: its two signups are past what the address may make before the kills' three.
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_move_wakes_a_long_poll_with_no_view);
+    // The kills' users: a game, and one of them looking on.
+    if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_move_wakes_a_spectators_long_poll);
     else printf("NOTE smoke: the game scenario is off (CBASE_SMOKE_GAME=0)\n");
     T_RUN(drains_on_sigterm);
     if (g_dbdir[0]) {
