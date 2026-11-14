@@ -221,7 +221,23 @@ ex_go() {
     printf -v "EXV_$n" '%s' "$line"
   done < <(make -s --no-print-directory -C "$root/c" -f Makefile -f "$sg/print.mk" $(printf 'sg-print-%s ' $names))
   [ "$i" = "$(printf '%s\n' $names | wc -l | tr -d ' ')" ] || { echo "gen: c/Makefile answered $i of the variables the exports runs asked for" >&2; exit 1; }
-  local pids=() ri=0 build cflags src cmd srcs s iface file module vars link ref
+  local pids=() ri=0 build cflags src cmd srcs s iface file module vars link ref all=()
+  # EVERY SOURCE A RUN READS, MADE FIRST. A link's sources are not all
+  # committed: some are written by c/Makefile (build/gen/cue_takes.c, the take
+  # table soundgen ctable writes for web.wasm and the iOS kernel), and this runs
+  # before any build, so in a fresh checkout they do not exist yet. One make of
+  # every source brings the generated ones up to date by c/Makefile's own rules
+  # and does nothing for a committed file; a source make cannot find or make
+  # stops here, named, before structgen reads anything. (A source named twice
+  # is made once: make builds a goal once.)
+  for r in "${EX_RUNS[@]}"; do
+    IFS='|' read -r _ _ src <<< "$r"; ref="EXV_$src"
+    set -f
+    for s in ${!ref}; do all+=("$s"); done
+    set +f
+  done
+  make -s --no-print-directory -C "$root/c" "${all[@]}" \
+    || { echo "gen: c/Makefile could not make the sources the exports runs read" >&2; exit 1; }
   for r in "${EX_RUNS[@]}"; do
     IFS='|' read -r build cflags src <<< "$r"
     srcs=(); ref="EXV_$src"
