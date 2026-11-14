@@ -164,7 +164,7 @@ The voice plays an ordinary take when one fits the time it has, and a cue's tigh
 
 **The strokes before a sweep or a pickup are a prelude.**
 They are a take of their own, one set per stroke count (one stroke per 2.5 cards of the cue, 1-5, as `disc_game.py` counts them), each stroke as long as the recordings' (0.8 times one, 0.25-0.7 s) and never compressed, but started 15-40 ms after the one before so they overlap into ONE scrape (Alex: "here it looks like there is just one scrape sound"): a sweep or a pickup is a scrape, then the lift, then (a sweep) the set down. The scrape as a whole is at the level the strokes row says, however many strokes make it.
-The voice starts them their anchor before the cue (the last stroke ends 100-180 ms before a sweep's lift, 50-120 ms before a pickup's), over whatever is sounding then (Alex: "just play the pickup over the other sounds then"), and the lift's own take still lands on its cue.
+The voice starts them their anchor before the cue, and their anchor is where the scrape is first audible (tuning.tsv strokes row 0, b268ebc29), so the scrape begins as the cards move, about at the cue, while the lift's own take starts its longer anchor (60-80 ms for a sweep) earlier; the two overlap, over whatever is sounding then (Alex: "just play the pickup over the other sounds then"), and the lift's own take still lands on its cue.
 With no time before the cue at all (a pickup opens its run) the strokes start at once, in full, and the lift and the cards reaching the hand keep their own cues.
 
 **A landing at a far seat is quieter.**
@@ -420,7 +420,7 @@ The gain in each model's `mix` line is 1000: the levels are the files'.
 
 
 **The strokes are heard in full.**
-Before a sweep or a pickup come 1-5 strokes (one per 2.5 cards), each 0.8 times a recorded stroke's length and 60-200 ms apart as `disc_game.py` draws them, a little louder as the pile grows, written as preludes of their own and played before the lift over whatever else is sounding.
+Before a sweep or a pickup come 1-5 strokes (one per 2.5 cards), each 0.8 times a recorded stroke's length and 60-200 ms apart as `disc_game.py` draws them, a little louder as the pile grows, written as preludes of their own and played with the lift (the scrape from the moment the cards move, the lift's take from its own anchor) over whatever else is sounding.
 
 **How each was checked.**
 `make -C tools/soundgen parts` writes each model alone, 12 takes at 48 kHz, named as its Python names them.
