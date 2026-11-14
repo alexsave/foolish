@@ -43,9 +43,15 @@ name: c_base
 on:
   push:
     branches: [main]
+    # What a push must touch to build, test and deploy. GitHub applies these in order, and a '!'
+    # pattern drops what the patterns above it matched: foolish/ios (the iOS apps, which ios.yml
+    # builds and tests) and foolish/docs (prose) feed no deployed artifact, so a push that touches
+    # only them does not start this workflow, and so never deploys.
     paths:
       - 'c_base/**'
       - 'foolish/**'
+      - '!foolish/ios/**'
+      - '!foolish/docs/**'
       - 'uttt/c/**'
       - 'uttt/web/**'
       - 'uttt/cbase.conf'
