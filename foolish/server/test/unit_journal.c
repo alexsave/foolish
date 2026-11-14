@@ -3476,7 +3476,8 @@ static void a_flush_visits_the_games_waiting_not_the_games_resident(void) {
 // waiting and not held leaves; then, while more than max_games are resident, the least recently
 // touched with nothing waiting and not held do). After every flush the games resident are the
 // model's, each with the model's stamp, its moves waiting or not and its holds; and the lists
-// always match the buckets (cb_journal_check).
+// always match the buckets (cb_journal_check). The seats' ratings ride along: read now and then,
+// they are held exactly while their idle rule says (nothing pending: no game ends here).
 #define RESIDENCY_SEED 20261114u
 enum { RM_GAMES = 16, RM_CAP = 6, RM_MOVES = 6 };
 typedef struct {
@@ -3527,15 +3528,25 @@ static void residency_follows_its_two_rules_exactly(void) {
     g_jnow += IDLE_EVICT_MS + 1;
     T_EQ_INT(cb_journal_flush_due(s), CB_OK);
     T_EQ_INT(jstats(s).games, 0);   // the model starts from an empty overlay
+    T_EQ_INT(jstats(s).ratings, 0);   // and no seat's rating held
     rm_game g[RM_GAMES];
     memset(g, 0, sizeof g);
+    bool rat_held[2] = { false, false };
+    int64_t rat_touched[2] = { 0, 0 };
     uint64_t rng = RESIDENCY_SEED;
-    int by_idle = 0, by_cap = 0, passed = 0, flushes = 0, mismatches = 0;
+    int by_idle = 0, by_cap = 0, passed = 0, flushes = 0, mismatches = 0, rat_gone = 0;
     move_t m;
     for (int step_i = 0; step_i < STEPS && mismatches == 0; step_i++) {
         g_jnow += 1 + (int64_t)(rng_u32(&rng) % 3);   // every operation its own stamp
         const int op = (int)(rng_u32(&rng) % 100), i = (int)(rng_u32(&rng) % RM_GAMES);
-        if (op < 35) {   // an operation reads the game
+        if (op < 3) {   // a seating reads its seats' ratings: A's, or A's and B's
+            static const char *const ids[2] = { UID_A, UID_B };
+            int32_t ratings[2];
+            bool old = false;
+            const int n = 1 + (i & 1);
+            T_EQ_INT(cb_journal_seat_ratings(s, ids, n, g_now, 0, ratings, &old), CB_OK);
+            for (int k = 0; k < n; k++) rat_held[k] = true, rat_touched[k] = g_jnow;
+        } else if (op < 35) {   // an operation reads the game
             T_EQ_INT(cb_journal_game_acquire(s, gid[i], hold_nothing, NULL, NULL), CB_OK);
             g[i].resident = true;
             g[i].touched = g_jnow;
@@ -3564,6 +3575,13 @@ static void residency_follows_its_two_rules_exactly(void) {
             T_EQ_INT(cb_journal_flush_due(s), CB_OK);
             rm_flush(g, g_jnow, AGE, &by_idle, &by_cap, &passed);
             flushes++;
+            // The ratings' idle rule (no rated end waits here: nothing pending).
+            int rat_n = 0;
+            for (int k = 0; k < 2; k++) {
+                if (rat_held[k] && g_jnow - rat_touched[k] > IDLE_EVICT_MS) rat_held[k] = false, rat_gone++;
+                rat_n += rat_held[k];
+            }
+            T_EQ_INT(jstats(s).ratings, rat_n);
             for (int k = 0; k < RM_GAMES; k++) {
                 int rc;
                 const cb_journal_game_facts f = facts(s, gid[k], &rc);
@@ -3586,6 +3604,7 @@ static void residency_follows_its_two_rules_exactly(void) {
     T_CHECK(by_idle > 10);
     T_CHECK(by_cap > 10);
     T_CHECK(passed > 10);
+    T_CHECK(rat_gone > 2);
     for (int i = 0; i < RM_GAMES; i++) if (g[i].held) cb_journal_game_release(s, g[i].h);
     close_world(s);
     g_rng = rng0;

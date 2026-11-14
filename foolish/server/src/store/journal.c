@@ -3056,6 +3056,7 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     out->games = j->n_games;
     out->lookups = j->lookups;
     out->flush_visits = j->visits;
+    out->ratings = j->n_ratings;
     pthread_mutex_unlock(&j->ov_mu);
     pthread_mutex_lock(&j->seg_mu);
     out->segments = j->n_segs;
