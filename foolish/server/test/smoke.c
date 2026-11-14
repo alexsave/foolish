@@ -976,8 +976,17 @@ static void a_move_wakes_a_long_poll_with_no_view(void) {
     snprintf(topic, sizeof topic, "u/%s/c/%s", W->id, gid);
     ws_for(L, W, topic);
     T_CHECK(ws_open(L));
+    // The mover holds two: the game's page, in the room, and the dashboard, which is in none.
+    listener *MP = calloc(1, sizeof *MP), *MD = calloc(1, sizeof *MD);
+    snprintf(topic, sizeof topic, "u/%s/c/%s", humans[mover]->id, gid);
+    ws_for(MP, humans[mover], topic);
+    snprintf(topic, sizeof topic, "u/%s/v", humans[mover]->id);
+    ws_for(MD, humans[mover], topic);
+    T_CHECK(ws_open(MP) && ws_open(MD));
     drain_ws(L, 300, 50);
-    const int casts0 = L->n_cast, views0 = L->n_view;
+    drain_ws(MP, 100, 50);
+    drain_ws(MD, 100, 50);
+    const int casts0 = L->n_cast, views0 = L->n_view, mp_views0 = MP->n_view, md_views0 = MD->n_view;
     // W's long poll, parked: nothing is past v yet.
     park_call *p = calloc(1, sizeof *p);
     T_EQ_INT(nc_session_load(W->blob, W->blob_len), NW_OK);
@@ -999,6 +1008,16 @@ static void a_move_wakes_a_long_poll_with_no_view(void) {
     drain_ws(L, 1000, 100);
     T_CHECK(L->n_cast > casts0);                // the seat's cast reached the room's socket
     T_EQ_INT(L->n_view, views0);                // and no view did
+    // The mover's dashboard is sent the move's view, its page none.
+    drain_ws(MD, 1000, 100);
+    drain_ws(MP, 300, 50);
+    T_EQ_INT(MD->n_view - md_views0, 1);
+    T_CHECK(MD->n_view > 0 && MD->view_v[MD->n_view - 1] == (uint32_t)(v + 1));
+    T_EQ_INT(MP->n_view, mp_views0);
+    close(MP->fd);
+    close(MD->fd);
+    free(MP);
+    free(MD);
     close(L->fd);
     free(L);
     free(p);
@@ -1271,8 +1290,9 @@ int main(int argc, char **argv) {
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_lobby_left_to_its_bots_is_deleted);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(game_scenario);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_rematch_rates_its_own_game);
-    if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_move_wakes_a_long_poll_with_no_view);
     if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(kills_lose_no_acknowledged_move);
+    // Last of the games: its two signups are past what the address may make before the kills' three.
+    if (g_port > 0 && !(game && strcmp(game, "0") == 0)) T_RUN(a_move_wakes_a_long_poll_with_no_view);
     else printf("NOTE smoke: the game scenario is off (CBASE_SMOKE_GAME=0)\n");
     T_RUN(drains_on_sigterm);
     if (g_dbdir[0]) {
