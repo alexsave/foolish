@@ -60,7 +60,7 @@ static void h_slow(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { g_last = p
 // its vCPU mid-run.
 static void h_nap(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { g_last = pthread_self(); usleep(3000); cb_res_send(s, 200, "text/plain", "ok", 2); }
 static void h_nap6(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { usleep(6000); h_fx(c, q, s); }
-static void h_nap1(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { usleep(500); h_fx(c, q, s); }
+static void h_nap3(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { usleep(3000); h_fx(c, q, s); }
 static void h_block(cb_ctx *c, const cb_http_req *q, cb_http_res *s) {
     atomic_store(&g_entered, 1);
     while (!atomic_load(&g_release)) usleep(1000);
@@ -109,12 +109,11 @@ static void start(void) {
         { "POST", "/f5", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_f5, 500000 },
         { "POST", "/slowok", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_slow, 500000 },
         { "POST", "/nap6", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_nap6, 5000 },
-        // Never a suspect however slow a sanitizer makes its 1 ms nap.
-        { "POST", "/nap1", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_nap1, 50000 },
+        // Never over its budget however slow a sanitizer makes its 3 ms nap; never quick either.
+        { "POST", "/nap3", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_nap3, 50000 },
         { "POST", "/fx50", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_fx, 50000 },
-        { "POST", "/fy50", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_fy, 50000 },
     };
-    T_EQ_INT(cb_router_add_all(g_ctx.router, own, 6), CB_OK);
+    T_EQ_INT(cb_router_add_all(g_ctx.router, own, (int)(sizeof own / sizeof own[0])), CB_OK);
     cb_server_opts o;
     cb_server_opts_default(&o);
     o.inline_budget_us = 2000;
@@ -122,6 +121,9 @@ static void start(void) {
     o.inline_trip_window_ms = 1000;
     o.inline_off_ms = 400;
     o.inline_pass_us = 4000;
+    // Quick within 1 ms here, not the 100 us of a server: an instant handler on a loaded runner or
+    // under a sanitizer stays quick, and every nap here (3 ms and more) is not.
+    o.inline_quick_us = 1000;
     g_ctx.server = cb_server_new(&g_ctx, &o);
     T_EQ_INT(cb_server_listen(g_ctx.server, "127.0.0.1", 0, &g_port), CB_OK);
     pthread_create(&g_thread, NULL, run, NULL);
@@ -135,6 +137,8 @@ static int post(const char *path) {
     return st;
 }
 static bool on_loop(void) { return pthread_equal(g_last, g_loop_thread); }
+// One quick run: no suspect is left pending from the test before (net/server.c THE VALVE'S CLOCKS).
+static void settle(void) { T_EQ_INT(post("/fast"), 200); }
 
 static void inline_dispatch(void) {
     tc_response r;
@@ -201,45 +205,50 @@ static void a_pass_runs_its_ready_requests_inline(void) {
     for (int i = 0; i < 2000 && !cb_pool_idle(g_ctx.req_pool); i++) usleep(1000);
 }
 
-// A pass's inline time is bounded (inline_pass_us 4 ms here): a 5 ms handler ready first spends it
-// (not over its route's own budget), and the two requests ready behind it in the same pass go
-// to the pool instead of waiting for the loop.
+// A pass's inline time is bounded (inline_pass_us 4 ms here), by the handlers' CPU: two 5 ms
+// handlers ready first (not over their route's own budget) spend it - the first is not quick, so it
+// is charged nothing and the second is timed by the CPU clock and charged its 5 ms - and the two
+// requests ready behind them in the same pass go to the pool instead of waiting for the loop.
 static void the_pass_budget_sends_the_rest_to_the_pool(void) {
+    enum { N = 5 };   // the stall, f5, f5, fy, fz
     cb_inline_stats s0, s1;
-    int a = tc_connect(g_port), b = tc_connect(g_port), c = tc_connect(g_port), d = tc_connect(g_port);
+    settle();
+    int fd[N];
+    for (int i = 0; i < N; i++) fd[i] = tc_connect(g_port);
     usleep(50000);
-    const char *rx = "POST /f5 HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx";
+    const char *r5 = "POST /f5 HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx";
     const char *ry = "POST /fy HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx";
     const char *rz = "POST /fz HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx";
+    const char *req[N] = { NULL, r5, r5, ry, rz };
     cb_server_inline_stats(g_ctx.server, &s0);
-    stall_enter(d);   // the loop is inside /stall: the rest are ready in its next pass, in this order
-    T_CHECK(write(a, rx, strlen(rx)) == (ssize_t)strlen(rx));
-    usleep(5000);
-    T_CHECK(write(b, ry, strlen(ry)) == (ssize_t)strlen(ry));
-    usleep(5000);
-    T_CHECK(write(c, rz, strlen(rz)) == (ssize_t)strlen(rz));
+    stall_enter(fd[0]);   // the loop is inside /stall: the rest are ready in its next pass, in this order
+    for (int i = 1; i < N; i++) {
+        T_CHECK(write(fd[i], req[i], strlen(req[i])) == (ssize_t)strlen(req[i]));
+        usleep(5000);
+    }
     stall_leave();
     char buf[256];
-    int fds[4] = { d, a, b, c };
-    for (int i = 0; i < 4; i++) {
-        struct pollfd p = { fds[i], POLLIN, 0 };
+    for (int i = 0; i < N; i++) {
+        struct pollfd p = { fd[i], POLLIN, 0 };
         T_CHECK(poll(&p, 1, 3000) == 1);
-        T_CHECK(recv(fds[i], buf, sizeof buf, 0) > 0);
+        T_CHECK(recv(fd[i], buf, sizeof buf, 0) > 0);
+        close(fd[i]);
     }
-    close(a); close(b); close(c); close(d);
     cb_server_inline_stats(g_ctx.server, &s1);
-    T_CHECK(pthread_equal(g_tx, g_loop_thread));
+    T_EQ_INT((int)(s1.ran - s0.ran), 2);
+    T_EQ_INT((int)(s1.cpu_timed - s0.cpu_timed), 1);   // the second 5 ms run, after the suspect
     T_CHECK(!pthread_equal(g_ty, g_loop_thread) && !pthread_equal(g_tz, g_loop_thread));
-    T_EQ_INT((int)(s1.ran - s0.ran), 1);
     T_EQ_INT((int)(s1.over - s0.over), 0);
     for (int i = 0; i < 2000 && !cb_pool_idle(g_ctx.req_pool); i++) usleep(1000);
 }
 
-// A run that only looks slow (6 ms of wall clock, its own budget 5 ms, no CPU: a hole) costs the
-// pass nothing until a run measured by CPU says otherwise: the two requests ready behind it in the
-// same pass run inline too, where a hole charged at its budget would have spent the pass's 4 ms.
+// A run that only looks slow (6 ms of wall clock, its own budget 5 ms, no CPU: a hole) is not
+// quick, so it costs the pass nothing, and only the run after it is timed by the CPU clock: the two
+// requests ready behind it in the same pass run inline too, where a hole charged its wall time
+// would have spent the pass's 4 ms; and the valve counts none of it.
 static void a_hole_costs_the_pass_nothing(void) {
     cb_inline_stats s0, s1;
+    settle();
     int a = tc_connect(g_port), b = tc_connect(g_port), c = tc_connect(g_port), d = tc_connect(g_port);
     usleep(50000);
     const char *rx = "POST /nap6 HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx";
@@ -264,36 +273,60 @@ static void a_hole_costs_the_pass_nothing(void) {
     cb_server_inline_stats(g_ctx.server, &s1);
     T_CHECK(pthread_equal(g_tx, g_loop_thread) && pthread_equal(g_ty, g_loop_thread) && pthread_equal(g_tz, g_loop_thread));
     T_EQ_INT((int)(s1.ran - s0.ran), 3);
+    T_EQ_INT((int)(s1.cpu_timed - s0.cpu_timed), 1);   // fy, after the hole; fz after a quick fy reads none
     T_EQ_INT((int)(s1.over - s0.over), 0);
-    T_EQ_INT(post("/fast"), 200);   // (the suspect it left measured away)
+    T_EQ_INT((int)(s1.tripped - s0.tripped), 0);
     for (int i = 0; i < 2000 && !cb_pool_idle(g_ctx.req_pool); i++) usleep(1000);
 }
 
-// The pass budget is CPU: a pass's first two runs cost their wall time (here two instant ones, with
-// a 50 ms budget so that no runner's stall makes either a suspect),
-// and the eight 0.5 ms naps after them (4 to 18 ms of wall with a timer's slack, each within its
-// 50 ms budget, so no suspect) are timed by the CPU clock and cost next to nothing: the request
-// ready behind them in the same pass runs inline too, and only the naps and it read the clock.
-static void a_pass_counts_cpu_not_wall(void) {
-    enum { NAPS = 8, N = NAPS + 4 };   // the stall, fx, fy, the naps, fz
+// A busy pass of quick runs reads no CPU clock at all: a dozen instant runs ready in one pass
+// (a 50 ms budget, so that no runner's stall makes one over it) cost the pass their wall time,
+// and not one is timed by the CPU clock.
+static void a_pass_of_quick_runs_reads_no_cpu_clock(void) {
+    enum { RUNS = 12, N = RUNS + 1 };   // the stall, the runs
     cb_inline_stats s0, s1;
+    settle();
     int fd[N];
     for (int i = 0; i < N; i++) fd[i] = tc_connect(g_port);
     usleep(50000);
     const char *rx = "POST /fx50 HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx";
-    const char *ry = "POST /fy50 HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx";
-    const char *rn = "POST /nap1 HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx";
+    cb_server_inline_stats(g_ctx.server, &s0);
+    stall_enter(fd[0]);   // the loop is inside /stall: the rest are ready in its next pass
+    for (int i = 1; i < N; i++) T_CHECK(write(fd[i], rx, strlen(rx)) == (ssize_t)strlen(rx));
+    stall_leave();
+    char buf[256];
+    for (int i = 0; i < N; i++) {
+        struct pollfd p = { fd[i], POLLIN, 0 };
+        T_CHECK(poll(&p, 1, 3000) == 1);
+        T_CHECK(recv(fd[i], buf, sizeof buf, 0) > 0);
+        close(fd[i]);
+    }
+    cb_server_inline_stats(g_ctx.server, &s1);
+    T_EQ_INT((int)(s1.ran - s0.ran), RUNS);
+    T_EQ_INT((int)(s1.cpu_timed - s0.cpu_timed), 0);
+    for (int i = 0; i < 2000 && !cb_pool_idle(g_ctx.req_pool); i++) usleep(1000);
+}
+
+// The pass budget is CPU, not wall: eight 3 ms naps (24 ms of wall, each within its 50 ms
+// budget, so none is over) cost next to nothing - each nap timed only by the wall clock is not
+// quick and costs nothing, and each after it is timed by the CPU clock and costs its few us - so
+// the request ready behind them in the same pass runs inline too, and only every second nap
+// reads the CPU clock (a CPU-timed nap is quick by its CPU, and turns the CPU timing off again).
+static void a_pass_counts_cpu_not_wall(void) {
+    enum { NAPS = 8, N = NAPS + 2 };   // the stall, the naps, fz
+    cb_inline_stats s0, s1;
+    settle();
+    int fd[N];
+    for (int i = 0; i < N; i++) fd[i] = tc_connect(g_port);
+    usleep(50000);
+    const char *rn = "POST /nap3 HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx";
     const char *rz = "POST /fz HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx";
     cb_server_inline_stats(g_ctx.server, &s0);
     stall_enter(fd[0]);   // the loop is inside /stall: the rest are ready in its next pass, in this order
-    T_CHECK(write(fd[1], rx, strlen(rx)) == (ssize_t)strlen(rx));
-    usleep(2000);
-    T_CHECK(write(fd[2], ry, strlen(ry)) == (ssize_t)strlen(ry));
-    for (int i = 3; i < 3 + NAPS; i++) {
-        usleep(2000);
+    for (int i = 1; i <= NAPS; i++) {
         T_CHECK(write(fd[i], rn, strlen(rn)) == (ssize_t)strlen(rn));
+        usleep(2000);
     }
-    usleep(2000);
     T_CHECK(write(fd[N - 1], rz, strlen(rz)) == (ssize_t)strlen(rz));
     stall_leave();
     char buf[256];
@@ -306,7 +339,8 @@ static void a_pass_counts_cpu_not_wall(void) {
     cb_server_inline_stats(g_ctx.server, &s1);
     T_EQ_INT((int)(s1.ran - s0.ran), N - 1);
     T_CHECK(pthread_equal(g_tz, g_loop_thread));
-    T_EQ_INT((int)(s1.cpu_timed - s0.cpu_timed), NAPS + 1);   // the runs after the pass's second, and only they
+    T_EQ_INT((int)(s1.cpu_timed - s0.cpu_timed), NAPS / 2);
+    T_EQ_INT((int)(s1.over - s0.over), 0);
     for (int i = 0; i < 2000 && !cb_pool_idle(g_ctx.req_pool); i++) usleep(1000);
 }
 
@@ -416,6 +450,7 @@ int main(void) {
     T_RUN(a_pass_runs_its_ready_requests_inline);
     T_RUN(the_pass_budget_sends_the_rest_to_the_pool);
     T_RUN(a_hole_costs_the_pass_nothing);
+    T_RUN(a_pass_of_quick_runs_reads_no_cpu_clock);
     T_RUN(a_pass_counts_cpu_not_wall);
     T_RUN(valve);
     T_RUN(pipelined_answers_share_one_send);
