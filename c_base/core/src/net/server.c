@@ -491,12 +491,12 @@ bool cb_server_inline_ok(cb_server *s, const cb_route *r) {
 // THE PASS BUDGET is the handlers' own CPU, never their wall time and never the loop's other work:
 // a run timed by CPU costs its CPU; a quick run costs its wall time, which its CPU cannot exceed;
 // a suspect costs nothing (it may be a hole: the vCPU taken away, or softirq work, during a 10 us
-// handler). Known limitation: the first slow run of a streak is not charged to the pass, nor is a
-// slow run that follows a quick one (a slow route alternating with quick runs is charged none of
-// its slow runs); the valve still counts those its CPU timing catches.
+// handler). Known limitation: the first slow run of a streak is not charged to the pass, nor
+// counted by the valve, as it is not timed by CPU; so a slow run after a quick one never is (a slow
+// route whose runs alternate with quick ones is charged none of its slow runs).
 // inline_quick_us is 100: a move's handler is about 8 us of CPU (h_action at saturation on a
 // t4g.nano), so a normal run is quick with ten times its time to spare, and a hole (milliseconds)
-// is not. Measured on that nano, 192 games at saturation: the CPU clock read before and after
+// is not. Measured on that nano at saturation: the CPU clock read before and after
 // every run after a pass's second (the rule this replaced) cost the loop 0.85 us a move, 4.5% of
 // it. (Measured on the rig at sat2, for what the pass is charged: handler CPU sends 64 to 277
 // requests a run to the pool for want of pass time, move p99 20 ms; handler wall time 15
