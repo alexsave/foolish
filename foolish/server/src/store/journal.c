@@ -292,8 +292,11 @@ typedef struct cb_jhold {
     int           n_rated, cap_rated;
     long          bytes;         // what the waiting moves hold (move_bytes each)
     size_t        state_cap, roster_cap;   // row.state's and row.roster's buffers
-    int64_t       touched_ms;    // j_mono of its last move
+    int64_t       touched_ms;    // j_mono of its last operation (ov_touch alone writes it)
     int64_t       first_ms;      // j_mono of its oldest waiting move
+    // Its places on THE RESIDENCY ORDER (every game in the buckets) and THE WAITING LIST (a game
+    // with moves waiting), below: written by the lists' helpers alone (ov_mu).
+    struct cb_jhold *lru_prev, *lru_next, *wait_prev, *wait_next;
     uint64_t      first_seg;     // a segment at or before the one holding its oldest waiting move
     // A waiting commit changed the seats (a whole commit: journal.h): the flush brings the
     // tables' to these. seats_seq: the newest such commit's version.
@@ -342,7 +345,8 @@ typedef struct jrating {
     int32_t  rating;       // TABLE_RATING_NONE: no rating row
     int64_t  created_ms;   // the account's created_at; 0: no account (a bot, or deleted)
     int      pending;      // waiting rated ends that change it
-    int64_t  touched_ms;
+    int64_t  touched_ms;   // (rating_touch alone writes it)
+    struct jrating *lru_prev, *lru_next;   // its place on the ratings' residency order (ov_mu)
 } jrating;
 
 struct cb_journal {
@@ -373,8 +377,13 @@ struct cb_journal {
     int             n_games;       // in the overlay, waiting or not
     long            n_waiting;     // moves not in the tables yet
     long            w_bytes;       // their bytes
+    jgame          *lru_head, *lru_tail;   // (ov_mu) THE RESIDENCY ORDER: every game, least recently touched first
+    jgame          *wait_head;             // (ov_mu) THE WAITING LIST: the games with moves waiting
+    int             n_wait_games;
     jrating        *ratings[OV_BUCKETS];   // (ov_mu) THE RATINGS' ONE OWNER, above
+    jrating        *rat_head, *rat_tail;   // (ov_mu) every entry, least recently touched first
     int             n_ratings;
+    long            visits;        // (ov_mu) the games and ratings the flush's walks visited (stats flush_visits)
     // the flush: one at a time, and every write of a journaled game around the journal
     pthread_mutex_t flush_mu;
     pthread_t       thr;
@@ -411,8 +420,10 @@ static bool on_loop(const cb_journal *j) { return j->o.loop && cb_loop_on_thread
 // THE JOURNAL'S TIME for what it stamps on a game or a rating (touched_ms, first_ms): on the
 // loop's thread the loop's own stamp of this pass (net/loop.h cb_loop_now, the same monotonic
 // clock), so a move made there reads no clock for the journal; elsewhere cb_mono_ms. A stamp is
-// at most one pass old, and only ever earlier: a game is due or idle that much sooner.
-static int64_t j_mono(const cb_journal *j) { return on_loop(j) ? cb_loop_now(j->o.loop) : cb_mono_ms(); }
+// at most one pass old, and only ever earlier: a game is due or idle that much sooner. Off the
+// loop it is j_clock: cb_mono_ms, or a test's own clock (opts.mono_ms), which the flush reads too.
+static int64_t j_clock(const cb_journal *j) { return j->o.mono_ms ? j->o.mono_ms() : cb_mono_ms(); }
+static int64_t j_mono(const cb_journal *j) { return on_loop(j) ? cb_loop_now(j->o.loop) : j_clock(j); }
 
 static jgame **ov_slot(cb_journal *j, const char *id) {
     j->lookups++;
@@ -424,6 +435,133 @@ static jgame **ov_slot(cb_journal *j, const char *id) {
 static jrating **rating_slot(cb_journal *j, const char *id) {
     jrating **p = &j->ratings[fnv1a32_str(FNV32_OFFSET, id) & (OV_BUCKETS - 1)];
     while (*p && strcmp((*p)->id, id) != 0) p = &(*p)->next;
+    return p;
+}
+
+// ---- THE OVERLAY'S LISTS: every change to them is one of these helpers (ov_mu held) ----------
+//
+// THE RESIDENCY ORDER: every game in the buckets is on one list, least recently touched first, so
+// the residency rule (ov_evict) reads the games it may evict from the head and stops at the first
+// neither of its rules reaches, never walking the games resident. A game's stamp changes only in
+// ov_touch, which puts it back at the tail, behind every game stamped at or before it. The stamps
+// come from more than one thread (j_mono: the loop's is its pass's, up to a pass old), so the
+// place is found walking back from the tail past the games stamped later (zero steps, or the few
+// touched since that pass began), and the list stays in stamp order exactly. ov_link puts a game
+// in the buckets and on the list; ov_unlink takes it off both, and off the waiting list.
+// THE WAITING LIST: the games with moves waiting (n_moves > 0), in no order: wait_begin as the
+// first comes (ov_apply), wait_end as the last goes (ov_flushed) or the game does (ov_unlink). The
+// flush rule (snapshot_take), the alarm (next_due_ms) and the trim (low_water) read it, never the
+// buckets. (Its order is no rule's: first_ms is restamped by a flush that leaves moves behind, and
+// the loop's stamps may be a pass old, so the flush sorts the games it finds due.)
+// The ratings' entries keep the same order on a list of their own (rating_touch, rating_link,
+// rating_unlink), read by their idle rule (ratings_evict) the same way.
+
+static void lru_out(cb_journal *j, jgame *g) {
+    if (g->lru_prev) g->lru_prev->lru_next = g->lru_next;
+    else j->lru_head = g->lru_next;
+    if (g->lru_next) g->lru_next->lru_prev = g->lru_prev;
+    else j->lru_tail = g->lru_prev;
+    g->lru_prev = g->lru_next = NULL;
+}
+
+// g (off the list) put back at its stamp's place: after the last game stamped at or before it.
+static void lru_in(cb_journal *j, jgame *g) {
+    jgame *a = j->lru_tail;
+    while (a && a->touched_ms > g->touched_ms) a = a->lru_prev;
+    g->lru_prev = a;
+    g->lru_next = a ? a->lru_next : j->lru_head;
+    if (g->lru_next) g->lru_next->lru_prev = g;
+    else j->lru_tail = g;
+    if (a) a->lru_next = g;
+    else j->lru_head = g;
+}
+
+// g's operation at `now`: its stamp, and its place in THE RESIDENCY ORDER.
+static void ov_touch(cb_journal *j, jgame *g, int64_t now) {
+    g->touched_ms = now;
+    if (g == j->lru_tail && (!g->lru_prev || g->lru_prev->touched_ms <= now)) return;   // in place already
+    lru_out(j, g);
+    lru_in(j, g);
+}
+
+// g made resident at *p (the end of its bucket's chain), touched at `now`.
+static void ov_link(cb_journal *j, jgame **p, jgame *g, int64_t now) {
+    g->next = NULL;
+    *p = g;
+    j->n_games++;
+    g->touched_ms = now;
+    lru_in(j, g);
+}
+
+static void wait_begin(cb_journal *j, jgame *g) {
+    g->wait_prev = NULL;
+    g->wait_next = j->wait_head;
+    if (j->wait_head) j->wait_head->wait_prev = g;
+    j->wait_head = g;
+    j->n_wait_games++;
+}
+
+static void wait_end(cb_journal *j, jgame *g) {
+    if (g->wait_prev) g->wait_prev->wait_next = g->wait_next;
+    else j->wait_head = g->wait_next;
+    if (g->wait_next) g->wait_next->wait_prev = g->wait_prev;
+    g->wait_prev = g->wait_next = NULL;
+    j->n_wait_games--;
+}
+
+// The bucket slot that holds g (a game in the buckets): found by its id's bucket, not by its id.
+static jgame **ov_slot_of(cb_journal *j, const jgame *g) {
+    jgame **p = &j->buckets[fnv1a32_str(FNV32_OFFSET, g->row.id) & (OV_BUCKETS - 1)];
+    while (*p != g) p = &(*p)->next;
+    return p;
+}
+
+static void rating_lru_out(cb_journal *j, jrating *e) {
+    if (e->lru_prev) e->lru_prev->lru_next = e->lru_next;
+    else j->rat_head = e->lru_next;
+    if (e->lru_next) e->lru_next->lru_prev = e->lru_prev;
+    else j->rat_tail = e->lru_prev;
+    e->lru_prev = e->lru_next = NULL;
+}
+
+static void rating_lru_in(cb_journal *j, jrating *e) {
+    jrating *a = j->rat_tail;
+    while (a && a->touched_ms > e->touched_ms) a = a->lru_prev;
+    e->lru_prev = a;
+    e->lru_next = a ? a->lru_next : j->rat_head;
+    if (e->lru_next) e->lru_next->lru_prev = e;
+    else j->rat_tail = e;
+    if (a) a->lru_next = e;
+    else j->rat_head = e;
+}
+
+static void rating_touch(cb_journal *j, jrating *e, int64_t now) {
+    e->touched_ms = now;
+    if (e == j->rat_tail && (!e->lru_prev || e->lru_prev->touched_ms <= now)) return;
+    rating_lru_out(j, e);
+    rating_lru_in(j, e);
+}
+
+static void rating_link(cb_journal *j, jrating **p, jrating *e, int64_t now) {
+    e->next = NULL;
+    *p = e;
+    j->n_ratings++;
+    e->touched_ms = now;
+    rating_lru_in(j, e);
+}
+
+// The entry at *p out of the table and its list, and freed.
+static void rating_unlink(cb_journal *j, jrating **p) {
+    jrating *e = *p;
+    *p = e->next;
+    rating_lru_out(j, e);
+    j->n_ratings--;
+    free(e);
+}
+
+static jrating **rating_slot_of(cb_journal *j, const jrating *e) {
+    jrating **p = &j->ratings[fnv1a32_str(FNV32_OFFSET, e->id) & (OV_BUCKETS - 1)];
+    while (*p != e) p = &(*p)->next;
     return p;
 }
 
@@ -443,7 +581,7 @@ static void ratings_apply(cb_journal *j, const cb_game_rated *r, int64_t now) {
         const int64_t v = (int64_t)base + r->delta[i];
         e->rating = v < 0 ? 0 : (int32_t)v;
         e->pending++;
-        e->touched_ms = now;
+        rating_touch(j, e, now);
     }
 }
 
@@ -457,19 +595,17 @@ static void ratings_flushed(cb_journal *j, const cb_game_rated *r) {
     }
 }
 
-// Every entry with nothing waiting that is idle (`all`: every one; ov_mu held).
+// Every entry with nothing waiting that is idle (`all`: every one; ov_mu held). Read from the
+// list's head (the ratings' residency order): an entry there is idle at least as long as every
+// one after it, so the walk stops at the first touched within IDLE_EVICT_MS, having visited the
+// entries it frees, the ones with a rated end waiting, and one more.
 static void ratings_evict(cb_journal *j, int64_t now, bool all) {
-    for (int b = 0; b < OV_BUCKETS; b++)
-        for (jrating **p = &j->ratings[b]; *p;) {
-            jrating *e = *p;
-            if (all || (!e->pending && now - e->touched_ms > IDLE_EVICT_MS)) {
-                *p = e->next;
-                free(e);
-                j->n_ratings--;
-            } else {
-                p = &e->next;
-            }
-        }
+    for (jrating *e = j->rat_head, *next; e; e = next) {
+        if (!all) j->visits++;
+        if (!all && now - e->touched_ms <= IDLE_EVICT_MS) break;
+        next = e->lru_next;
+        if (all || !e->pending) rating_unlink(j, rating_slot_of(j, e));
+    }
 }
 
 static void game_free(jgame *g) {
@@ -688,9 +824,7 @@ static jgame *ov_insert(cb_journal *j, jgame **p, const cb_game_row *row, TableR
     if (!g) return NULL;
     if (game_set(g, row, res) != CB_OK) { game_free(g); return NULL; }
     g->sql_version = row->version;
-    g->touched_ms = j_mono(j);
-    *p = g;
-    j->n_games++;
+    ov_link(j, p, g, j_mono(j));
     return g;
 }
 
@@ -706,17 +840,19 @@ static void kick_flusher(cb_journal *j) {
 // of the game's log buffer.
 static int ov_apply(cb_journal *j, jrec *r, jgame **applied) {
     *applied = NULL;
+    const int64_t now = j_mono(j);
     // The game its operation holds (THE HOLD: no lookup), unless it went meanwhile.
     jgame *g = r->g && !atomic_load_explicit(&r->g->gone, memory_order_relaxed) ? r->g : NULL;
     if (!g) {
         jgame **p = ov_slot(j, r->m.game);
         if (!(g = *p)) {
             // A game no operation read first (recovery, or one evicted between its read and its
-            // commit): its base is the tables'. A journaled move never changes the seats.
+            // commit): its base is the tables'. A journaled move never changes the seats. Its id
+            // is its bucket's key (ov_slot_of) before its row is set.
             if (!(g = calloc(1, sizeof *g))) return CB_E_NOMEM;
+            snprintf(g->row.id, sizeof g->row.id, "%s", r->m.game);
             g->sql_version = r->m.base_version;
-            *p = g;
-            j->n_games++;
+            ov_link(j, p, g, now);
         }
     }
     if (g->n_moves == g->cap_moves) {
@@ -747,7 +883,6 @@ static int ov_apply(cb_journal *j, jrec *r, jgame **applied) {
         if (!(rated = malloc(sizeof *rated))) return CB_E_NOMEM;
         *rated = *r->rated;
     }
-    const int64_t now = j_mono(j);
     if (!g->n_moves) {
         g->first_ms = now;
         g->first_seg = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
@@ -767,11 +902,12 @@ static int ov_apply(cb_journal *j, jrec *r, jgame **applied) {
         g->seats_seq = r->row.version;
     }
     *applied = g;
+    if (!g->n_moves) wait_begin(j, g);
     g->moves[g->n_moves] = (jmove){ r->row.version, (uint32_t)g->list_len, (uint32_t)r->log_len, r->full && r->clear };
     if (r->log_len) memcpy(g->list + g->list_len, r->log, r->log_len);
     g->list_len += r->log_len;
     const long b = move_bytes(&g->moves[g->n_moves++]);
-    g->touched_ms = now;
+    ov_touch(j, g, now);
     g->bytes += b;
     j->w_bytes += b;
     j->n_waiting++;
@@ -1411,12 +1547,13 @@ static void delete_segments_before(cb_journal *j, uint64_t seq) {
     pthread_mutex_unlock(&j->seg_mu);
 }
 
-// The low-water mark: no waiting move is in a segment before it (ov_mu held).
+// The low-water mark: no waiting move is in a segment before it (ov_mu held; THE WAITING LIST).
 static uint64_t low_water(cb_journal *j) {
     uint64_t m = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
-    for (int b = 0; b < OV_BUCKETS; b++)
-        for (jgame *g = j->buckets[b]; g; g = g->next)
-            if (g->n_moves && g->first_seg < m) m = g->first_seg;
+    for (const jgame *g = j->wait_head; g; g = g->wait_next) {
+        j->visits++;
+        if (g->first_seg < m) m = g->first_seg;
+    }
     return m;
 }
 
@@ -1505,22 +1642,23 @@ static int first_ms_cmp(const void *a, const void *b) {
 // together stay within opts.txn_moves (one game bigger than that goes alone: its moves and its
 // row are one write). Only games that waited since before the pass began (first_ms <= pass_ms)
 // are taken, so a pass ends under a steady stream of moves. *more: due games were left for the
-// next transaction.
+// next transaction. The games due are found on THE WAITING LIST (in no order: sorted here), so a
+// transaction reads the games waiting, never the games resident.
 static int snapshot_take(cb_journal *j, snapshot *sn, bool all, int64_t now, int64_t pass_ms, bool *more) {
     memset(sn, 0, sizeof *sn);
     *more = false;
-    int n = 0;
-    for (int b = 0; b < OV_BUCKETS; b++)
-        for (jgame *g = j->buckets[b]; g; g = g->next) n += flush_due(j, g, all, now) && g->first_ms <= pass_ms;
-    if (!n) return CB_OK;
-    jgame **due = malloc((size_t)n * sizeof *due);
+    if (!j->wait_head) return CB_OK;
+    jgame **due = malloc((size_t)j->n_wait_games * sizeof *due);
     if (!due) return CB_E_NOMEM;
-    int k = 0;
-    for (int b = 0; b < OV_BUCKETS; b++)
-        for (jgame *g = j->buckets[b]; g; g = g->next)
-            if (flush_due(j, g, all, now) && g->first_ms <= pass_ms) due[k++] = g;
+    int n = 0;
+    for (jgame *g = j->wait_head; g; g = g->wait_next) {
+        j->visits++;
+        if (flush_due(j, g, all, now) && g->first_ms <= pass_ms) due[n++] = g;
+    }
+    if (!n) { free(due); return CB_OK; }
     qsort(due, (size_t)n, sizeof *due, first_ms_cmp);
     long budget = 0;
+    int k;
     for (k = 0; k < n && (k == 0 || budget + due[k]->n_moves <= j->o.txn_moves); k++) budget += due[k]->n_moves;
     *more = k < n;
     n = k;
@@ -1557,6 +1695,7 @@ static void ov_flushed(cb_journal *j, jgame *g, const cb_game_flush *f, uint64_t
     const size_t cut = k < g->n_moves ? g->moves[k].off : g->list_len;
     if (k) memmove(g->moves, g->moves + k, (size_t)(g->n_moves - k) * sizeof *g->moves);
     g->n_moves -= k;
+    if (k && !g->n_moves) wait_end(j, g);
     for (int i = 0; i < g->n_moves; i++) g->moves[i].off -= (uint32_t)cut;
     if (!g->n_moves) {   // and the move array goes with it: a game between flushes holds neither
         free(g->list);
@@ -1588,9 +1727,12 @@ static void ov_flushed(cb_journal *j, jgame *g, const cb_game_flush *f, uint64_t
     }
 }
 
+// The game at *p out of the overlay: out of its bucket and off both lists (THE OVERLAY'S LISTS).
 static void ov_unlink(cb_journal *j, jgame **p) {
     jgame *g = *p;
     *p = g->next;
+    if (g->n_moves) wait_end(j, g);
+    lru_out(j, g);
     j->n_waiting -= g->n_moves;
     j->w_bytes -= g->bytes;
     j->n_games--;
@@ -1602,34 +1744,26 @@ static void ov_unlink(cb_journal *j, jgame **p) {
     game_free(g);
 }
 
-static int touched_cmp(const void *a, const void *b) {
-    const int64_t x = (*(jgame *const *)a)->touched_ms, y = (*(jgame *const *)b)->touched_ms;
-    return x < y ? -1 : x > y;
-}
-
 // THE RESIDENCY RULE (ov_mu and flush_mu held; a jgame in the buckets is unlinked only under
 // both, so a holder of flush_mu may keep a pointer to one across ov_mu; a gone one is freed by
 // its last release under ov_mu alone, never in the buckets): a game idle IDLE_EVICT_MS with
 // nothing waiting leaves; then, while more than max_games are resident, the least recently
 // touched with nothing waiting do. A game with waiting moves never leaves (only a flush takes
 // them), nor one an operation holds (THE HOLD).
+// Both rules read THE RESIDENCY ORDER from its head, in one walk: a game there is idle at least
+// as long as every game after it, so the idle rule's games are a prefix, and the cap's are the
+// evictable games right after it. The walk stops at the first game neither rule reaches (touched
+// within IDLE_EVICT_MS, with max_games or fewer resident). It visits the games it evicts, the
+// games it passes over (waiting or held: at most the games waiting plus the operations in
+// flight), and one more: never the games resident.
 static void ov_evict(cb_journal *j, int64_t now) {
     ratings_evict(j, now, false);
-    for (int b = 0; b < OV_BUCKETS; b++)
-        for (jgame **p = &j->buckets[b]; *p;) {
-            if (!(*p)->n_moves && !(*p)->held && now - (*p)->touched_ms > IDLE_EVICT_MS) ov_unlink(j, p);
-            else p = &(*p)->next;
-        }
-    if (j->n_games <= j->o.max_games) return;
-    jgame **idle = malloc((size_t)j->n_games * sizeof *idle);
-    if (!idle) return;   // the next pass tries again
-    int n = 0;
-    for (int b = 0; b < OV_BUCKETS; b++)
-        for (jgame *g = j->buckets[b]; g; g = g->next)
-            if (!g->n_moves && !g->held) idle[n++] = g;
-    qsort(idle, (size_t)n, sizeof *idle, touched_cmp);
-    for (int i = 0; i < n && j->n_games > j->o.max_games; i++) ov_unlink(j, ov_slot(j, idle[i]->row.id));
-    free(idle);
+    for (jgame *g = j->lru_head, *next; g; g = next) {
+        j->visits++;
+        if (now - g->touched_ms <= IDLE_EVICT_MS && j->n_games <= j->o.max_games) break;
+        next = g->lru_next;
+        if (!g->n_moves && !g->held) ov_unlink(j, ov_slot_of(j, g));
+    }
 }
 
 // ONE TRANSACTION of a flush pass (flush_mu held): the next games due within the budget
@@ -1638,7 +1772,7 @@ static void ov_evict(cb_journal *j, int64_t now) {
 static int flush_txn(cb_journal *j, bool all, int64_t pass_ms, bool writer_held, bool *more) {
     if (!writer_held) writer_hold(j);
     snapshot sn;
-    const int64_t now = cb_mono_ms();
+    const int64_t now = j_clock(j);
     pthread_mutex_lock(&j->ov_mu);
     int rc = snapshot_take(j, &sn, all, now, pass_ms, more);
     const uint64_t snap_seg = __atomic_load_n(&j->seg_seq, __ATOMIC_RELAXED);
@@ -1687,7 +1821,7 @@ static int flush_txn(cb_journal *j, bool all, int64_t pass_ms, bool writer_held,
 // read waits at most one transaction, never a whole pass. With `all` (a settle, the close, or
 // every waiting move together over total_bytes when the pass began) every game waiting then.
 static int flush_pass(cb_journal *j, bool all) {
-    const int64_t pass_ms = cb_mono_ms();
+    const int64_t pass_ms = j_clock(j);
     pthread_mutex_lock(&j->ov_mu);
     if (j->w_bytes >= j->o.total_bytes) all = true;
     pthread_mutex_unlock(&j->ov_mu);
@@ -1708,7 +1842,7 @@ static int flush_pass(cb_journal *j, bool all) {
 // Every waiting move, with the flush lock and the writer already held (an exclusive section:
 // nothing is acknowledged meanwhile, so the transactions end).
 static int flush_held(cb_journal *j) {
-    const int64_t pass_ms = cb_mono_ms();
+    const int64_t pass_ms = j_clock(j);
     int rc;
     bool more;
     do rc = flush_txn(j, true, pass_ms, true, &more);
@@ -1728,12 +1862,14 @@ int cb_journal_flush_due(cb_store *s) {
     return j ? flush_pass(j, false) : CB_OK;
 }
 
-// When the oldest waiting game is due by its age (ov_mu held): cb_mono_ms, or INT64_MAX.
-static int64_t next_due_ms(const cb_journal *j) {
+// When the oldest waiting game is due by its age (ov_mu held; THE WAITING LIST): j_clock, or
+// INT64_MAX.
+static int64_t next_due_ms(cb_journal *j) {
     int64_t at = INT64_MAX;
-    for (int b = 0; b < OV_BUCKETS; b++)
-        for (const jgame *g = j->buckets[b]; g; g = g->next)
-            if (g->n_moves && g->first_ms + j->o.game_age_ms < at) at = g->first_ms + j->o.game_age_ms;
+    for (const jgame *g = j->wait_head; g; g = g->wait_next) {
+        j->visits++;
+        if (g->first_ms + j->o.game_age_ms < at) at = g->first_ms + j->o.game_age_ms;
+    }
     return at;
 }
 
@@ -1752,7 +1888,7 @@ static void *flusher(void *ud) {
             while (!j->stop && !j->kick && !j->prepare && !j->rearm) pthread_cond_wait(&j->fcv, &j->mu);
         } else {
             struct timespec ts;
-            int64_t in = due_at - cb_mono_ms();
+            int64_t in = due_at - j_clock(j);
             host_deadline_after_ms(&ts, in > 0 ? in : 0);
             while (!j->stop && !j->kick && !j->prepare && !j->rearm && (w = pthread_cond_timedwait(&j->fcv, &j->mu, &ts)) != ETIMEDOUT) {}
         }
@@ -1812,7 +1948,7 @@ int cb_journal_game_acquire(cb_store *s, const char *id, cb_journal_game_fn fn, 
         pthread_mutex_lock(&j->ov_mu);
         jgame *g = *ov_slot(j, id);
         if (g) {
-            g->touched_ms = j_mono(j);
+            ov_touch(j, g, j_mono(j));
             int rc = g->res_valid ? fn(ud, &g->row, g->res) : fn(ud, &g->row, NULL);
             hold(g, rc, held);
             pthread_mutex_unlock(&j->ov_mu);
@@ -1986,7 +2122,7 @@ static int around(cb_store *s, const char *id, const cb_game_commit *c, const ch
                 g->res_valid = false;
                 if (c->resident && *c->resident) res_take(g, c->resident);
                 g->sql_version = c->row->version;
-                g->touched_ms = j_mono(j);   // its seats: the commit's roster, which row_assign copied
+                ov_touch(j, g, j_mono(j));   // its seats: the commit's roster, which row_assign copied
             }
             over = j->n_games > j->o.max_games;
         }
@@ -2279,8 +2415,8 @@ static int ratings_settle(cb_journal *j) {
     if (on_loop(j)) return CB_E_WOULD_BLOCK;
     bool waiting = false;
     pthread_mutex_lock(&j->ov_mu);
-    for (int b = 0; b < OV_BUCKETS && !waiting; b++)
-        for (const jgame *g = j->buckets[b]; g && !waiting; g = g->next) waiting = g->n_rated > 0;
+    // (A rated end waits with its move, flushed together: THE WAITING LIST holds every game that has one.)
+    for (const jgame *g = j->wait_head; g && !waiting; g = g->wait_next) waiting = g->n_rated > 0;
     pthread_mutex_unlock(&j->ov_mu);
     if (waiting) (void)flush_pass(j, false);
     return CB_OK;
@@ -2309,7 +2445,7 @@ int cb_journal_seat_ratings(cb_store *s, const char *const *ids, int n, int64_t 
     pthread_mutex_lock(&j->ov_mu);
     for (int i = 0; i < n; i++) {
         jrating *e = *rating_slot(j, ids[i]);
-        if (e) e->touched_ms = now;
+        if (e) rating_touch(j, e, now);
         else miss[i] = any = true;
     }
     pthread_mutex_unlock(&j->ov_mu);
@@ -2340,9 +2476,7 @@ int cb_journal_seat_ratings(cb_store *s, const char *const *ids, int n, int64_t 
             cb_strlcpy(e->id, mids[i], sizeof e->id);
             e->rating = mr[i];
             e->created_ms = mc[i];
-            e->touched_ms = now;
-            *p = e;
-            j->n_ratings++;
+            rating_link(j, p, e, now);
         }
         pthread_mutex_unlock(&j->ov_mu);
         if (rc != CB_OK) return rc;
@@ -2775,7 +2909,7 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
     }
     if (rc == CB_OK) delete_segments_before(j, j->seg_seq);
     free(segs);
-    if (rc == CB_OK && pthread_create(&j->thr, NULL, flusher, j) != 0) {
+    if (rc == CB_OK && !j->o.no_flush_thread && pthread_create(&j->thr, NULL, flusher, j) != 0) {
         snprintf(err, cap, "journal: no flush thread");
         rc = CB_E_NOMEM;
     }
@@ -2783,7 +2917,7 @@ int cb_journal_open(cb_store *s, const cb_journal_opts *o, char *err, size_t cap
         journal_free(j);
         return rc;
     }
-    j->thr_started = true;
+    j->thr_started = !j->o.no_flush_thread;
     if (j->recovered) CB_INFO(MOD, "recovered %ld move(s) from the journal", (long)j->recovered);
     s->app_state = j;
     s->app_settle = cb_journal_flush;
@@ -2841,6 +2975,70 @@ int cb_journal_game_info(const cb_store *s, const char *id, cb_journal_game_fact
     return g ? CB_OK : CB_E_NOT_FOUND;
 }
 
+static bool in_bucket(const cb_journal *j, const jgame *g) {
+    for (const jgame *b = j->buckets[fnv1a32_str(FNV32_OFFSET, g->row.id) & (OV_BUCKETS - 1)]; b; b = b->next)
+        if (b == g) return true;
+    return false;
+}
+
+static bool rating_in_table(const cb_journal *j, const jrating *e) {
+    for (const jrating *b = j->ratings[fnv1a32_str(FNV32_OFFSET, e->id) & (OV_BUCKETS - 1)]; b; b = b->next)
+        if (b == e) return true;
+    return false;
+}
+
+// THE OVERLAY'S LISTS against the tables they index (ov_mu held): the first drift, or NULL.
+// Each list is walked at most as far as the table holds entries (a cycle is a drift too).
+static const char *lists_drift(const cb_journal *j) {
+    int games = 0, waiting = 0, ratings = 0;
+    for (int b = 0; b < OV_BUCKETS; b++)
+        for (const jgame *g = j->buckets[b]; g; g = g->next) games++, waiting += g->n_moves > 0;
+    for (int b = 0; b < OV_BUCKETS; b++)
+        for (const jrating *e = j->ratings[b]; e; e = e->next) ratings++;
+    if (games != j->n_games) return "n_games is not the buckets' count";
+    if (ratings != j->n_ratings) return "n_ratings is not the table's count";
+    if (waiting != j->n_wait_games) return "n_wait_games is not the count of games with moves waiting";
+    int n = 0;
+    for (const jgame *g = j->lru_head, *prev = NULL; g; prev = g, g = g->lru_next) {
+        if (++n > games) return "the residency list is longer than the buckets";
+        if (g->lru_prev != prev) return "a residency list link is one-way";
+        if (prev && prev->touched_ms > g->touched_ms) return "the residency list is out of its stamps' order";
+        if (!in_bucket(j, g)) return "a game on the residency list is not in its bucket";
+        if (!g->lru_next && g != j->lru_tail) return "the residency list's tail is not its last";
+    }
+    if (n != games) return "a game in the buckets is not on the residency list";
+    if (!games && j->lru_tail) return "the empty residency list has a tail";
+    n = 0;
+    for (const jgame *g = j->wait_head, *prev = NULL; g; prev = g, g = g->wait_next) {
+        if (++n > waiting) return "the waiting list is longer than the games waiting";
+        if (g->wait_prev != prev) return "a waiting list link is one-way";
+        if (!g->n_moves) return "a game on the waiting list has nothing waiting";
+        if (!in_bucket(j, g)) return "a game on the waiting list is not in its bucket";
+    }
+    if (n != waiting) return "a game with moves waiting is not on the waiting list";
+    n = 0;
+    for (const jrating *e = j->rat_head, *prev = NULL; e; prev = e, e = e->lru_next) {
+        if (++n > ratings) return "the ratings' list is longer than the table";
+        if (e->lru_prev != prev) return "a ratings' list link is one-way";
+        if (prev && prev->touched_ms > e->touched_ms) return "the ratings' list is out of its stamps' order";
+        if (!rating_in_table(j, e)) return "an entry on the ratings' list is not in the table";
+        if (!e->lru_next && e != j->rat_tail) return "the ratings' list's tail is not its last";
+    }
+    if (n != ratings) return "an entry in the table is not on the ratings' list";
+    if (!ratings && j->rat_tail) return "the empty ratings' list has a tail";
+    return NULL;
+}
+
+int cb_journal_check(const cb_store *s) {
+    cb_journal *j = cb_journal_of(s);
+    if (!j) return CB_E_STATE;
+    pthread_mutex_lock(&j->ov_mu);
+    const char *why = lists_drift(j);
+    pthread_mutex_unlock(&j->ov_mu);
+    if (why) CB_ERROR(MOD, "the overlay's lists drifted: %s", why);
+    return why ? CB_E_STATE : CB_OK;
+}
+
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     memset(out, 0, sizeof *out);
     cb_journal *j = cb_journal_of(s);
@@ -2857,6 +3055,7 @@ void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out) {
     out->waiting_bytes = j->w_bytes;
     out->games = j->n_games;
     out->lookups = j->lookups;
+    out->flush_visits = j->visits;
     pthread_mutex_unlock(&j->ov_mu);
     pthread_mutex_lock(&j->seg_mu);
     out->segments = j->n_segs;
