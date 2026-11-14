@@ -193,6 +193,7 @@ typedef struct {
     // residency rule's, the trim's, the alarm's): proportional to the games waiting and the entries
     // evicted, never to the games resident (journal.c THE WAITING LIST, THE RESIDENCY ORDER).
     long flush_visits;
+    long ratings;                           // seats' ratings held (journal.c THE RATINGS' ONE OWNER)
 } cb_journal_stats;
 void cb_journal_stats_get(const cb_store *s, cb_journal_stats *out);
 // What the overlay holds of a game, for a test: its stamps (THE JOURNAL'S TIME, journal.c j_mono:
