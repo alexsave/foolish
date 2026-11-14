@@ -12,6 +12,7 @@
 #include "store/store_sql.h"
 #include "t.h"
 #include "util/err.h"
+#include "util/uuid.h"
 
 #include <fcntl.h>
 #include <pthread.h>
@@ -88,7 +89,6 @@ static void a_kill_loses_no_acknowledged_write_and_shows_no_partial_group(void) 
     char rm[3 * sizeof g_path + 32];
     snprintf(rm, sizeof rm, "rm -f %s %s-wal %s-shm", g_path, g_path, g_path);
     T_CHECK(system(rm) == 0);
-    srand((unsigned)time(NULL));
     long acked_total = 0;
     for (g_round = 0; g_round < ROUNDS; g_round++) {
         int p[2];
@@ -114,7 +114,9 @@ static void a_kill_loses_no_acknowledged_write_and_shows_no_partial_group(void) 
             else usleep(200);
         }
         clock_gettime(CLOCK_MONOTONIC, &t0);
-        long run_ms = 40 + rand() % 120;
+        uint32_t draw;
+        cb_random_bytes(&draw, sizeof draw);   // the process's one source (util/uuid.h)
+        long run_ms = 40 + (long)(draw % 120);
         for (;;) {
             ssize_t r = read(p[0], acks + n_acks, sizeof(ack) * 4096);
             if (r > 0) n_acks += (size_t)r / sizeof(ack);

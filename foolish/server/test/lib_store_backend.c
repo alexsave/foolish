@@ -4,6 +4,7 @@
 #include "aws/aws_call.h"
 #include "store/store_import.h"
 #include "util/err.h"
+#include "util/uuid.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,7 +69,9 @@ cb_store *tsb_open_fresh(const char *sqlite_path) {
     if (!tsb_dynamo()) return cb_store_open_sqlite(sqlite_path, &s) == CB_OK ? s : NULL;
     static int seq;
     char *name = g_table;
-    snprintf(name, sizeof g_table, "t%d_%d_%d", (int)getpid(), ++seq, rand() % 100000);
+    uint32_t draw;
+    cb_random_bytes(&draw, sizeof draw);   // the process's one source (util/uuid.h)
+    snprintf(name, sizeof g_table, "t%d_%d_%d", (int)getpid(), ++seq, (int)(draw % 100000));
     if (tsb_create_table(name) != 0) return NULL;
     if (cb_store_open_dynamo(name, &s) != CB_OK) return NULL;
     int n = cb_import_seed_bots(s);

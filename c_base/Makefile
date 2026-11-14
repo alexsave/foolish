@@ -201,9 +201,18 @@ ifneq ($(words $(UNITS)),$(words $(UNIT_SRC)))
   $(error two test roots hold a unit test of the same name)
 endif
 
+# THE SEEDED UNITS: a unit test named here links core/test/seeded_random.c in place of
+# core/src/util/random.c, so every random draw of the code it runs (ids, deal seeds, bot picks)
+# comes from one stream of one seed (CB_TEST_SEED there), and two runs are the same run. Every
+# other program keeps OpenSSL's CSPRNG. core/test/unit_random_gate.c holds that nothing draws
+# randomness any other way.
+UNIT_SEEDED := unit_app
+SEEDED_SRC  := core/test/seeded_random.c
+prog_lib  = $(if $(filter $(1),$(UNIT_SEEDED)),$(filter-out core/src/util/random.c,$(LIB_SRC)) $(SEEDED_SRC),$(LIB_SRC))
+
 # $(call prog,<outdir>,<cb variant>,<kernel variant>,<name>,<sources>,<flags var>)
 define PROG
-$(1)/$(4): $$(call c_objs,$(2),$(5) $$(LIB_SRC)) $$(call c_objs,$(3),$$(KERNEL_SRC))
+$(1)/$(4): $$(call c_objs,$(2),$(5) $$(call prog_lib,$(4))) $$(call c_objs,$(3),$$(KERNEL_SRC))
 	@mkdir -p $$(@D)
 	@echo "  LINK $$@"
 	@$$(CC) $$($(6)) $$^ -o $$@ $$(LDLIBS)
