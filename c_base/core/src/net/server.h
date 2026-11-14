@@ -39,7 +39,11 @@ typedef struct {
     int     inline_off_ms;      // how long the tripped valve keeps inline dispatch off (default 5000)
     int     inline_pass_us;     // inline handler time one loop pass may spend; past it the rest of the
                                 // pass's requests go to the pool, so a burst cannot starve the other
-                                // sockets (default 4000)
+                                // sockets (default 4000); a run costs it its CPU when timed by CPU,
+                                // else its wall time when quick, else nothing (net/server.c THE PASS BUDGET)
+    int     inline_quick_us;    // a run within this much wall time (and its route's budget) is quick:
+                                // it costs the pass its wall time and reads no CPU clock; a longer
+                                // one is a suspect, and the next run is timed by CPU (default 100)
 } cb_server_opts;
 
 void cb_server_opts_default(cb_server_opts *o);
@@ -72,7 +76,7 @@ void cb_server_inline_to_pool(cb_server *s);
 // Inline dispatch counters (loop thread, or after it has stopped): requests
 // run on the loop thread, of them sent on to the pool, runs over their
 // budget, times the valve tripped, and runs timed by the thread's CPU clock
-// (two system calls each: after a suspect, and each run after a pass's second).
+// (two system calls each: only a run after one that was not quick).
 typedef struct { int64_t ran, to_pool, over, tripped, cpu_timed; } cb_inline_stats;
 void cb_server_inline_stats(const cb_server *s, cb_inline_stats *out);
 // ANY THREAD: sweeps run so far (one a second while a connection is open, none while none is).

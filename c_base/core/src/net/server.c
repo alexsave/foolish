@@ -100,10 +100,9 @@ struct cb_server {
     int64_t inline_off_until;   // loop ms: no inline dispatch before this (the valve tripped)
     int64_t inline_ran, inline_over, inline_tripped, inline_to_pool, inline_cpu_timed;
     int64_t inline_over_at[8];  // loop ms of the last runs over budget (a ring, inline_trips of it used)
-    uint64_t inline_pass;       // the loop pass the next two count
-    int inline_pass_runs;       // inline runs begun in it
+    uint64_t inline_pass;       // the loop pass the next one counts
     int64_t inline_pass_used;   // us its runs cost (THE PASS BUDGET)
-    bool inline_confirm;        // the last run looked over its budget by the wall clock: time the next by CPU too
+    bool inline_cpu_next;       // the last run was not quick: time the next by the thread CPU clock too
     int64_t refused;        // connections the cap turned away since the last log line
     int64_t refused_log_ms; // when that line was last written
     bool draining;
@@ -161,6 +160,7 @@ void cb_server_opts_default(cb_server_opts *o) {
     o->inline_trip_window_ms = 1000;
     o->inline_off_ms = 5000;
     o->inline_pass_us = 4000;
+    o->inline_quick_us = 100;
 }
 
 static int set_nonblock(int fd) {
@@ -468,7 +468,6 @@ bool cb_server_inline_ok(cb_server *s, const cb_route *r) {
     const uint64_t pass = cb_loop_pass(ctx->loop);
     if (pass != s->inline_pass) {
         s->inline_pass = pass;
-        s->inline_pass_runs = 0;
         s->inline_pass_used = 0;
     }
     return s->inline_pass_used < s->o.inline_pass_us;
@@ -478,24 +477,32 @@ bool cb_server_inline_ok(cb_server *s, const cb_route *r) {
 // On a burstable instance the hypervisor takes a vCPU away for milliseconds when both are busy,
 // and by that clock a 20 us handler then reads as 2.7 ms: three such holes in a second once
 // tripped the valve and sent every move to the pool for 5 s (bench/analysis_2026-10-20/
-// OPTIMIZED_DESIGN.md 4.2). So a run over its budget by the wall clock is only a suspect: the
-// next inline run is also timed by the thread's CPU clock (a real system call, 0.25 us), which
-// stops while the vCPU is away, and only a run over its budget in CPU counts toward the valve. A
-// handler that is truly slow is slow again on the next run; a hole is not. The thread CPU clock is
-// read only after a suspect, so a human-pace move costs no system call for the valve.
+// OPTIMIZED_DESIGN.md 4.2). So the wall clock only ever clears a run, never convicts one: a run
+// is QUICK when its wall time is within inline_quick_us and its route's budget, and a run that is
+// not quick is a suspect, and the next inline run is also timed by the thread's CPU clock (a real
+// system call, 0.25 us, two a run), which stops while the vCPU is away. A run timed by CPU is
+// judged by its CPU: still not quick, it keeps the CPU timing on for the run after it (a handler
+// that is truly slow is slow again on the next run; a hole is not). So a pass of quick runs, a
+// human-pace move and a busy pass of normal moves alike, reads no CPU clock; a hole costs two
+// system calls once; a truly slow handler is CPU-timed from its second run on.
+//
+// THE VALVE counts only a run over its route's budget in CPU, so it is never fooled by a hole.
 //
 // THE PASS BUDGET is the handlers' own CPU, never their wall time and never the loop's other work:
-// a pass's first two runs cost their wall time within their budget (nothing as a suspect), and
-// every run after them in the same pass is timed by the CPU clock too. A pass of one or two runs
-// - human pace, where two players' moves sometimes share a pass - reads no CPU clock; a busy pass
-// reads it twice a run after its second. (Measured on the rig at sat2:
-// handler CPU sends 64 to 277 requests a run to the pool for want of pass time, move p99 20 ms;
-// handler wall time 15 thousand, p99 30 ms; the loop's CPU since the second run 40 thousand, p99
-// 32 ms.)
+// a run timed by CPU costs its CPU; a quick run costs its wall time, which its CPU cannot exceed;
+// a suspect costs nothing (it may be a hole: the vCPU taken away, or softirq work, during a 10 us
+// handler). Known limitation: the first slow run of a streak is not charged to the pass, nor is a
+// slow run that follows a quick one (a slow route alternating with quick runs is charged none of
+// its slow runs); the valve still counts those its CPU timing catches.
+// inline_quick_us is 100: a move's handler is about 8 us of CPU (h_action at saturation on a
+// t4g.nano), so a normal run is quick with ten times its time to spare, and a hole (milliseconds)
+// is not. Measured on that nano, 192 games at saturation: the CPU clock read before and after
+// every run after a pass's second (the rule this replaced) cost the loop 0.85 us a move, 4.5% of
+// it. (Measured on the rig at sat2, for what the pass is charged: handler CPU sends 64 to 277
+// requests a run to the pool for want of pass time, move p99 20 ms; handler wall time 15
+// thousand, p99 30 ms; the loop's CPU since the pass's second run 40 thousand, p99 32 ms.)
 cb_inline_mark cb_server_inline_begin(cb_server *s) {
-    const bool cpu = s->inline_confirm ||
-                     (s->inline_pass == cb_loop_pass(s->ctx->loop) && s->inline_pass_runs > 1);
-    return (cb_inline_mark){ cb_mono_us(), cpu ? cb_thread_cpu_us() : -1 };
+    return (cb_inline_mark){ cb_mono_us(), s->inline_cpu_next ? cb_thread_cpu_us() : -1 };
 }
 
 // The valve: a run over its route's budget in CPU is over; inline_trips of them within
@@ -510,12 +517,12 @@ void cb_server_inline_done(cb_server *s, const cb_route *r, cb_inline_mark m) {
     const int64_t cpu_us = m.cpu >= 0 ? cb_thread_cpu_us() - m.cpu : -1;
     s->inline_cpu_timed += cpu_us >= 0;
     const int budget = r && r->inline_us > 0 ? r->inline_us : s->o.inline_budget_us;
+    // Quick: within the threshold and the route's budget, so a run over a budget smaller than the
+    // threshold is a suspect for the valve too.
+    const int64_t quick = s->o.inline_quick_us < budget ? s->o.inline_quick_us : budget;
     s->inline_ran++;
-    s->inline_pass_runs++;
-    s->inline_pass_used += cpu_us >= 0 ? cpu_us : wall_us <= budget ? wall_us : 0;
-    // A suspect by the wall clock: the next run is measured by CPU as well. A run measured by CPU
-    // and over its budget stays one (a slow handler is confirmed run after run).
-    s->inline_confirm = cpu_us >= 0 ? cpu_us > budget : wall_us > budget;
+    s->inline_pass_used += cpu_us >= 0 ? cpu_us : wall_us <= quick ? wall_us : 0;
+    s->inline_cpu_next = (cpu_us >= 0 ? cpu_us : wall_us) > quick;
     if (cpu_us <= budget) return;
     const int64_t took_us = cpu_us;
     const int64_t now = cb_loop_now(s->ctx->loop);
