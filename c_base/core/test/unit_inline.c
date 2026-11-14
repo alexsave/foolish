@@ -60,6 +60,7 @@ static void h_slow(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { g_last = p
 // its vCPU mid-run.
 static void h_nap(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { g_last = pthread_self(); usleep(3000); cb_res_send(s, 200, "text/plain", "ok", 2); }
 static void h_nap6(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { usleep(6000); h_fx(c, q, s); }
+static void h_b700(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { burn_us(700); h_fx(c, q, s); }
 static void h_nap3(cb_ctx *c, const cb_http_req *q, cb_http_res *s) { usleep(3000); h_fx(c, q, s); }
 static void h_block(cb_ctx *c, const cb_http_req *q, cb_http_res *s) {
     atomic_store(&g_entered, 1);
@@ -112,6 +113,8 @@ static void start(void) {
         // Never over its budget however slow a sanitizer makes its 3 ms nap; never quick either.
         { "POST", "/nap3", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_nap3, 50000 },
         { "POST", "/fx50", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_fx, 50000 },
+        // A budget below the quick threshold (1 ms here) and a handler over it.
+        { "POST", "/b700", CB_ROUTE_POOL | CB_ROUTE_INLINE, h_b700, 500 },
     };
     T_EQ_INT(cb_router_add_all(g_ctx.router, own, (int)(sizeof own / sizeof own[0])), CB_OK);
     cb_server_opts o;
@@ -410,6 +413,23 @@ static void valve(void) {
     T_CHECK(st.over == 6 && st.tripped == 1);
 }
 
+// A run over a route's budget smaller than the quick threshold is not quick either: 0.7 ms of CPU
+// is within the 1 ms threshold but over /b700's 0.5 ms, so the first run is a suspect and the second,
+// timed by CPU, counts toward the valve (one alone does not trip it).
+static void a_budget_below_the_threshold_still_makes_a_suspect(void) {
+    cb_inline_stats s0, s1;
+    usleep(1100000);   // nothing over budget in the window behind us (the valve's runs)
+    settle();
+    cb_server_inline_stats(g_ctx.server, &s0);
+    for (int i = 0; i < 2; i++) T_EQ_INT(post("/b700"), 200);
+    cb_server_inline_stats(g_ctx.server, &s1);
+    T_EQ_INT((int)(s1.ran - s0.ran), 2);
+    T_EQ_INT((int)(s1.cpu_timed - s0.cpu_timed), 1);
+    T_EQ_INT((int)(s1.over - s0.over), 1);
+    T_EQ_INT((int)(s1.tripped - s0.tripped), 0);
+    settle();
+}
+
 // Two requests in one write, both inline: the first answer waits for the end of the loop pass
 // (net/server.c finish), the pipelined second runs behind it, and both leave in ONE send, in order.
 static void pipelined_answers_share_one_send(void) {
@@ -453,6 +473,7 @@ int main(void) {
     T_RUN(a_pass_of_quick_runs_reads_no_cpu_clock);
     T_RUN(a_pass_counts_cpu_not_wall);
     T_RUN(valve);
+    T_RUN(a_budget_below_the_threshold_still_makes_a_suspect);
     T_RUN(pipelined_answers_share_one_send);
     cb_loop_post(g_ctx.loop, drain_post, NULL);
     pthread_join(g_thread, NULL);

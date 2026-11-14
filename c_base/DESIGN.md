@@ -164,6 +164,7 @@ It does not imitate Lambda: what it holds in memory is the authority, and the ru
   Routes are sorted once when added, and the HTTP method is parsed once into an enum.
 - Inline dispatch: a route marked `CB_ROUTE_INLINE` runs on the loop thread, an HTTP request and a socket's REQ alike, while the loop pass has inline time left (`inline_pass_us`, 4 ms); the rest of the pass goes to the pool.
   A run over its route's budget (`cb_route.inline_us`, a move's 5 ms; else `CBASE_INLINE_BUDGET_US`, 2000 us) counts, and three of them within a second switch inline off for 5 s.
+  The pass is charged the handlers' own CPU: a run quick by the wall clock (`inline_quick_us`, 100 us) costs its wall time and reads no CPU clock, a run that is not quick costs nothing and has the next run timed by the thread CPU clock, and only that clock counts a run toward the valve.
 - Nothing waits on the loop: a game's lock is tried, not taken; a lock another thread holds, a game the journal does not hold, a commit that rates, a write around the journal, a session not held live and a journal writer held by the flush answer `CB_E_WOULD_BLOCK`, and the request runs again on the pool.
 - The loop is the journal's only writer while it runs: a bot drive's record is handed to it and written there, and the loop never makes a segment file (the flush thread makes them ahead).
 - A finished game's replay is a job on the job pool; a read of it, a player's history and the next operation on the game make it first if it is still queued.
