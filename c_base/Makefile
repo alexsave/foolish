@@ -205,7 +205,12 @@ endif
 # core/src/util/random.c, so every random draw of the code it runs (ids, deal seeds, bot picks)
 # comes from one stream of one seed (CB_TEST_SEED there), and two runs are the same run. Every
 # other program keeps OpenSSL's CSPRNG. core/test/unit_random_gate.c holds that nothing draws
-# randomness any other way.
+# randomness any other way. Each test's setup reseeds the stream (cb_test_reseed, seeded_random.h), so
+# what a threaded test drew never moves the next one. THE SEEDED-REPEAT GATE (test and check run it,
+# core/test/seeded_repeat.sh): each of these programs runs twice with T_COUNTS=1 (t.h prints
+# "count <test> <checks>" after every test) and the two outputs, count lines and summary line, must be
+# byte-identical, or the first differing line is named: a test whose check count moves between runs
+# fails here, not as a flake.
 UNIT_SEEDED := unit_app
 SEEDED_SRC  := core/test/seeded_random.c
 prog_lib  = $(if $(filter $(1),$(UNIT_SEEDED)),$(filter-out core/src/util/random.c,$(LIB_SRC)) $(SEEDED_SRC),$(LIB_SRC))
@@ -324,7 +329,11 @@ compiler-gate/$(notdir $(1)): $(1)
 endef
 $(foreach g,$(GATE_SRC),$(eval $(call GATE,$(g))))
 
-test: compiler-gate shared-tests $(call UNIT_RUNS,build/test)
+.PHONY: seeded-repeat
+seeded-repeat: $(addprefix build/test/,$(UNIT_SEEDED)) core/test/seeded_repeat.sh
+	@sh core/test/seeded_repeat.sh $(UNIT_SEEDED)
+
+test: compiler-gate shared-tests seeded-repeat $(call UNIT_RUNS,build/test)
 	$(call RUN_ALL,UNIT TESTS,$(call UNIT_RUNS,build/test))
 # Every unit test and the smokes again with every loop on io_uring (Linux; where the kernel or a
 # seccomp filter refuses it the loops fall back to epoll, said in their logs): CBASE_IO_URING, which
@@ -336,7 +345,7 @@ test-uring: $(call UNIT_RUNS,build/test) $(call SMOKE_PROGS,build)
 smoke: $(call SMOKE_PROGS,build)
 	$(call RUN_ALL,SMOKE,$(call SMOKE_RUNS,build))
 # One pool for both, so the smokes and the units share the machine's cores.
-check: compiler-gate shared-tests $(call UNIT_RUNS,build/test) $(call SMOKE_PROGS,build) client-check
+check: compiler-gate shared-tests seeded-repeat $(call UNIT_RUNS,build/test) $(call SMOKE_PROGS,build) client-check
 	$(call RUN_ALL,CHECK,$(call SMOKE_RUNS,build) $(call UNIT_RUNS,build/test))
 
 test-asan: shared-tests-asan $(call UNIT_RUNS,build/asan/test)

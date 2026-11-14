@@ -24,6 +24,9 @@
 // kernel's pacing costs no wall time.
 extern int64_t (*cb_app_now)(void);
 extern void (*cb_app_sleep)(int64_t ms);
+// The monotonic clock the bot leases and the drive timer read: cb_mono_ms. A test points it at the fake
+// clock so a lease's age is not the wall's.
+extern int64_t (*cb_app_mono)(void);
 // A new game's id: cb_game_id_random (store/game_id.h, THE GAME ID RULE).
 // A test points it at a fixed sequence to make an id collide.
 extern void (*cb_app_game_id)(char out[CB_GAME_ID_MAX + 1]);
