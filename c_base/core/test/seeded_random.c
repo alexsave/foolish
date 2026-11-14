@@ -5,10 +5,12 @@
 // this stream, so the same seed is the same games, the same moves and the same number of checks.
 //
 // THE SEED is CB_TEST_SEED, the one value to change for a different (still fixed) run. The stream
-// is splitmix64 over a counter of 8-byte words: a request takes whole words, so the bytes a request
-// gets are a function of the seed and of the requests before it, nothing else. A lock keeps the
+// is shared/c/rng.h's splitmix64 (the repo's one generator) over a counter of 8-byte words: word k
+// is rng_splitmix64_at(CB_TEST_SEED + k * RNG_GOLDEN). A request takes whole words, so the bytes a
+// request gets are a function of the seed and of the requests before it, nothing else. A lock keeps the
 // counter whole when threads draw; a test whose threads draw at once gets the same words in an
 // order its threads decide, so such a test is fixed only as far as its threads are.
+#include "../../../shared/c/rng.h"
 #include "../src/util/uuid.h"
 
 #include <pthread.h>
@@ -20,18 +22,11 @@
 static uint64_t g_next;   // the count of 8-byte words drawn so far
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static uint64_t splitmix64(uint64_t x) {
-    x += UINT64_C(0x9e3779b97f4a7c15);
-    x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
-    x = (x ^ (x >> 27)) * UINT64_C(0x94d049bb133111eb);
-    return x ^ (x >> 31);
-}
-
 void cb_random_bytes(void *out, size_t n) {
     unsigned char *p = out;
     pthread_mutex_lock(&g_lock);
     while (n > 0) {
-        const uint64_t w = splitmix64(CB_TEST_SEED + g_next++);
+        const uint64_t w = rng_splitmix64_at(CB_TEST_SEED + g_next++ * RNG_GOLDEN);
         const size_t k = n < sizeof w ? n : sizeof w;
         memcpy(p, &w, k);
         p += k;
