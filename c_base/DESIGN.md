@@ -629,7 +629,13 @@ A commit's fan-out is one batch (`realtime.h` `cb_rt_batch_begin`/`end`, 2026-10
 Between two humans it is five publishes: each human's view on `u/<user>/v`, each seat's cast on `u/<user>/c/<game>` (each carries that seat's hand, so the two cannot be one), and the spectators' cast on `s/<game>`.
 None can be dropped from the server's side.
 The views are the dashboard's, and they are also how a host that shows boards (iOS, `nc_set_boards`) takes every move of the game it has open: there a cast is only "the game moved", answered by a GET unless the view of that version has already arrived (`netclient.c` `NW_WS_CAST`); the web drops a view of a game it holds by its casts, but the server cannot tell which host listens, and IoT names no subscriber.
-The spectators' cast is published whether or not anyone watches, for the same reason.
+Under IoT the spectators' cast is published whether or not anyone watches, for the same reason.
+Under `cbase serve` the hub knows who listens, on its loop thread, and two pushes are not built there when nobody would take them.
+The spectators' cast of a room nobody watches is not built (`cb_rt_room_heard`).
+A seat's view of a plain move is not built when none of the user's connections is outside the game's room (`cb_rt_user_heard`): a connection in the room follows the game by its casts and is never sent that view (`cb_rt_to.quiet_room`), so the kernel leaves the seat's envelope out (`TABLE_PRODUCTS_NO_VIEW`) and the fan-out publishes no view for it (`fanout.h` `view_unheard`).
+The seat's cast still goes, and it wakes a `/v1/wait` parked on the user, as the view did.
+Off the loop thread, and under IoT, both questions answer "heard", and every push is built as before.
+A user with one connection in the room and one outside it is sent the view, and the hub drops it for the room's connection alone (`rt_local.c` `pub_deliver`): the question skips a push nobody takes, the filter serves a push some connections take.
 So the batch keeps all five and sends them at once: under IoT each publish is an HTTPS POST that waits about 7.8 ms at p50 for well under 1 ms of CPU, and five of them one after another held the invocation (billed) about 39 ms per move.
 The batch holds each message (copied) and hands them to the transport's `deliver_lanes` at the end: one lane per user and one for the spectators, the lanes concurrently (`rt_iot.c`, a thread per lane, the first on the caller's), each lane in the order published.
 The order within a lane is kept on purpose: a boards host that hears a cast before the view of the same version spends a GET on it, so each user still hears its view before its cast, as it did when everything went out in one row.
