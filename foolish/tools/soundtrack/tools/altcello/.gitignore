@@ -1,0 +1,9 @@
+*.o
+altcello
+test_rng
+test_string_free
+test_helmholtz
+test_schelleng
+test_finger
+test_determinism
+out/
