@@ -26,7 +26,7 @@ static int map(const char *p, double *tp, double *vs, double *dp) {
 void city_setup(void) {
     g_on_done = sections_out;
     // ---- drums: sampled kick on top of a synthesized sub kick; sampled snare and hats; the clap synthesized and wide ----
-    KICK = o_smp("kick", OM "brd_kick_cl.txt", 0.2, 0, 0, 0, 0, 0); eq(KICK, 2, 45, 0.7, 0); eq(KICK, 3, 3500, 1, 3);
+    KICK = o_smp("kick", OM "brd_kick_cl.txt", 0.2, 0, 0, 0, 0, 4); eq(KICK, 2, 45, 0.7, 0); eq(KICK, 3, 3500, 1, 3);
     KSUB = syn_track("kick sub", syn_kick); SP(KSUB, 46, 180, 0.03, 0.32, 0.4, 1.2, 0.2, 0.06); g_tr[KSUB].gain_db = -9; eq(KSUB, 1, 220, 0.7, 0);
     CLAP = syn_track("clap", syn_clap); SP(CLAP, 1100, 1.0, 0.1, 9, 4, 600); g_tr[CLAP].gain_db = -6; g_tr[CLAP].send[0] = 0.25; g_tr[CLAP].width = 1.2;
     SNARE = o_smp("snare", OM "brd_snare_top.txt", 0.2, 0, 0, 0, 0.2, 0);
@@ -39,25 +39,25 @@ void city_setup(void) {
     g_tr[CONGA].human_ms = g_tr[BONGO].human_ms = 7; g_tr[CONGA].human_vel = g_tr[BONGO].human_vel = 0.12;
     g_tr[KICK].human_ms = g_tr[KSUB].human_ms = 1;   // the four-on-the-floor stays on the grid; the hands around it breathe
     // ---- keys ----
-    PIANO = syn_track("keys", syn_saw); SP(PIANO, 5, 16, 2.5, 10, 0.05, 0.8, 0.12, 0.05, 0, 0.001); g_tr[PIANO].gain_db = -5; g_tr[PIANO].pan = -0.15; g_tr[PIANO].send[0] = 0.2; eq(PIANO, 2, 200, 0.7, 0);
+    PIANO = syn_track("keys", syn_saw); SP(PIANO, 5, 16, 2.5, 10, 0.05, 0.8, 0.12, 0.05, 0, 0.001); g_tr[PIANO].gain_db = 4;   /* v5.1: the keys carry the drop riff; the first render had them 13 dB under the Rhodes */ g_tr[PIANO].pan = -0.15; g_tr[PIANO].send[0] = 0.2; eq(PIANO, 2, 200, 0.7, 0);
     g_tr[PIANO].chorus_mix = 0.5; g_tr[PIANO].chorus_ms = 8; g_tr[PIANO].chorus_depth_ms = 2;
-    RHODES = syn_track("rhodes", syn_epiano); SP(RHODES, 1.6, 0.45, 0.2, 2.4, 0.3, 0.25, 4.0, 0.6); g_tr[RHODES].gain_db = -6; g_tr[RHODES].pan = 0.25; g_tr[RHODES].send[0] = 0.35;
+    RHODES = syn_track("rhodes", syn_epiano); SP(RHODES, 1.6, 0.45, 0.2, 2.4, 0.3, 0.25, 4.0, 0.6); g_tr[RHODES].gain_db = -10; g_tr[RHODES].pan = 0.25; g_tr[RHODES].send[0] = 0.35;
     RHODESFM = o_smp("rhodes fm", OM "fmpiano.txt", 0.4, 0, 0.3, 0, 0.35, -8); g_tr[RHODESFM].chorus_mix = 0.4; g_tr[RHODESFM].chorus_ms = 7; g_tr[RHODESFM].chorus_depth_ms = 1.5;
     PLUCK = syn_track("pluck", syn_saw); SP(PLUCK, 3, 10, 1.0, 9, 0.09, 0.7, 0.22, 0.12, 0.25, 0.001); g_tr[PLUCK].gain_db = -1; g_tr[PLUCK].send[0] = 0.25; g_tr[PLUCK].send[1] = 0.25;
     g_tr[PLUCK].chorus_mix = 0.3; g_tr[PLUCK].chorus_ms = 8; g_tr[PLUCK].chorus_depth_ms = 1.5; eq(PLUCK, 2, 180, 0.7, 0);
     MARIMBA = o_smp("marimba", OM "marimba.txt", 1.0, 0, -0.45, 0, 0.2, 2);
     // ---- strings (split into sections by register), pad, sub and bass ----
-    VLN = syn_track("lead", syn_supersaw); SP(VLN, 11, 30, 0.4, 2.5, 12, 0.12, 0.003, 0, 1, 0.12, 0, 0.9, 0.9, 0.9, 900); g_tr[VLN].gain_db = -7; g_tr[VLN].send[0] = 0.3; g_tr[VLN].send[1] = 0.12; eq(VLN, 2, 150, 0.7, 0);
+    VLN = syn_track("lead", syn_supersaw); SP(VLN, 11, 30, 0.4, 2.5, 12, 0.12, 0.07, 0, 1, 0.12, 0, 0.9, 0.9, 0.9, 900);   /* attack 70 ms: Lyria 02's lead measured 136 ms from 10 to 90 percent, a soft entry, not a stab */ g_tr[VLN].gain_db = -7; g_tr[VLN].send[0] = 0.3; g_tr[VLN].send[1] = 0.12; eq(VLN, 2, 150, 0.7, 0);
     LEADLO = syn_track("lead lo", syn_supersaw); SP(LEADLO, 7, 22, 0.5, 2, 6, 0.15, 0.003, 0, 1, 0.12, 0, 0.6, 0.5, 0.8, 400); g_tr[LEADLO].gain_db = -10; g_tr[LEADLO].send[0] = 0.3; eq(LEADLO, 2, 150, 0.7, 0);
     VLA = syn_track("synth strings", syn_pad); SP(VLA, 7, 14, 3.5, 0.08, 0.35, 0.5, 900, 0.0); g_tr[VLA].gain_db = -9; g_tr[VLA].send[0] = 0.35; eq(VLA, 2, 220, 0.7, 0);
     g_tr[VLA].chorus_mix = 0.35; g_tr[VLA].chorus_ms = 9; g_tr[VLA].chorus_depth_ms = 2; VC = VLA;
     PAD = syn_track("pad", syn_pad); SP(PAD, 7, 14, 2.5, 0.6, 0.8, 0.6, 600, 0); g_tr[PAD].gain_db = -12; g_tr[PAD].send[0] = 0.4; eq(PAD, 2, 160, 0.7, 0);
     g_tr[PAD].chorus_mix = 0.4; g_tr[PAD].chorus_ms = 10; g_tr[PAD].chorus_depth_ms = 2.5; g_tr[PAD].chorus_hz = 0.25;
     SUB = syn_track("sub", syn_sub); SP(SUB, 0.006, 0.08, 0.15, 0.4, 0); g_tr[SUB].gain_db = -14; eq(SUB, 1, 120, 0.7, 0);
-    BASS = syn_track("bass", syn_saw); SP(BASS, 2, 8, 1.2, 4, 0.08, 0.9, 0.3, 0.06, 0.3, 0.002); g_tr[BASS].gain_db = -7; eq(BASS, 2, 70, 0.7, 0); eq(BASS, 1, 2400, 0.7, 0);
+    BASS = syn_track("bass", syn_saw); SP(BASS, 2, 8, 1.2, 4, 0.08, 0.9, 0.3, 0.06, 0.3, 0.002); g_tr[BASS].gain_db = 2;   /* v5.1: the bass read -35 LUFS before the master, effectively absent; Lyria 02 and 04 are bass-led */ eq(BASS, 2, 70, 0.7, 0); eq(BASS, 1, 2400, 0.7, 0);
     g_tr[BASS].drive = 0.6; g_tr[BASS].drive_mix = 0.5;
     // a wide layer of the bass a fifth of the way out on each side: the low end gets the references' stereo width
-    BASSW = syn_track("bass wide", syn_saw); SP(BASSW, 4, 22, 1.4, 4, 0.08, 0.9, 0.3, 0.06, 0, 0.002); g_tr[BASSW].gain_db = -8; g_tr[BASSW].width = 1.6;
+    BASSW = syn_track("bass wide", syn_saw); SP(BASSW, 4, 22, 1.4, 4, 0.08, 0.9, 0.3, 0.06, 0, 0.002); g_tr[BASSW].gain_db = 0; g_tr[BASSW].width = 1.6;
     g_tr[BASSW].haas_ms = 9; eq(BASSW, 2, 90, 0.7, 0); eq(BASSW, 1, 1500, 0.7, 0);
     // everything melodic pumps against the kick
     int duck[] = {PAD, RHODES, RHODESFM, PLUCK, BASS, BASSW, SUB, VLN, VLA, LEADLO, PIANO};
@@ -108,7 +108,7 @@ double city_loop(void) {
     }
     // v5: the last two beats before the drop are empty (what Lyria miami_04 does, the drop Alex called solid): every note that
     // starts there is dropped and every note that rings into it is cut short. The first render's drop arrived only 1.1 dB up.
-    { int si = sec_find("IV Storm over Biscayne: Break"); if (si < 0) fprintf(stderr, "no section IV Storm over Biscayne: Break\n"); else {
+    { int si = sec_find("IV Storm over Biscayne: Build"); if (si < 0) fprintf(stderr, "no section IV Storm over Biscayne: Build\n"); else {
         double e = (g_sec[si].bar0 + g_sec[si].bars) * 4.0, g0 = e - 2.0; int w = 0;
         for (int i = n0; i < g_nnote; i++) { Note a = g_note[i];
             if (a.beat >= g0 - 1e-6 && a.beat < e - 1e-6) continue;
