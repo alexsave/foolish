@@ -8,12 +8,16 @@
 #include <stdio.h>
 #include <string.h>
 
-/* recorded from the pre-refactor code (string_params.c and body_params.c), built with -ffp-contract=off: with the default
+/* RE-RECORDED deliberately when the instrument default became the diagnosis setting C1 (string Q at 2 kHz 500/500/300/300,
+   bridge resistance x3, statistical masses x0.5): the physics of the default instrument changed, so every sample changes. The
+   earlier pair (D3 3179987b8cae4f4b, C2 c4533b1282189180) was the bit-identical pre-refactor reference; the refactor itself is
+   still proven by it in git history (commit before the C1 default). Below: the original comment.
+   recorded from the pre-refactor code (string_params.c and body_params.c), built with -ffp-contract=off: with the default
    contraction the refactor (constants that were compile-time literals are now loaded from the Instrument) changes which
    multiply-adds the compiler fuses and moves the last bit of some samples; the Makefile now builds with -ffp-contract=off so
    the arithmetic does not depend on what the compiler can see as constant */
-#define REF_D3 0x3179987b8cae4f4bULL
-#define REF_C2 0xc4533b1282189180ULL
+#define REF_D3 0xa88857656984cdacULL
+#define REF_C2 0x58f68de34d67ee18ULL
 
 static uint64_t hash_trace(const Trace *tr)
 {

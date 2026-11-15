@@ -32,18 +32,28 @@ static double wiring(double I1, double I2)
 
 int main(void)
 {
+    /* the instrument's R_inf is 3 x Woodhouse's 30 (diagnosis C1, instrument_cello.c), which damps the hill away; the designed hill
+       (a, b below) is the one of Woodhouse's R_inf, i.e. the default divided by 3 */
+    Instrument iw = *instrument_cello();
+    iw.body.bridge_R /= 3.0;
     BodyOpts def = body_opts_default(instrument_cello());
     double I0 = def.bridge_inertia;
-    double g0 = body_bridge_gain(instrument_cello(), 20.0, I0), f0 = body_bridge_hill_freq(instrument_cello(), I0), f1 = body_bridge_hill_freq(instrument_cello(), 1.5 * I0);
-    double gp = body_bridge_gain(instrument_cello(), f0, I0);
-    printf("T17a hill factor: %.4f at 20 Hz, peak %.2f (%.1f dB) at %.0f Hz, %.2f at 8 kHz\n", g0, gp, 20.0 * log10(gp), f0, body_bridge_gain(instrument_cello(), 8000.0, I0));
+    double g0 = body_bridge_gain(&iw, 20.0, I0), f0 = body_bridge_hill_freq(&iw, I0), f1 = body_bridge_hill_freq(&iw, 1.5 * I0);
+    double gp = body_bridge_gain(&iw, f0, I0);
+    printf("T17a hill factor (R_inf = %.0f): %.4f at 20 Hz, peak %.2f (%.1f dB) at %.0f Hz, %.2f at 8 kHz\n", iw.body.bridge_R, g0, gp, 20.0 * log10(gp), f0, body_bridge_gain(&iw, 8000.0, I0));
     CHECK(fabs(g0 - 1.0) < 0.01, "hill factor %.4f at 20 Hz, want 1", g0);
     CHECK(f0 > 1200.0 && f0 < 1800.0, "hill at %.0f Hz, designed about 1500 Hz", f0);
     CHECK(gp > 1.3, "hill peak only %.2f", gp);
-    CHECK(body_bridge_gain(instrument_cello(), 8000.0, I0) < 0.5 * gp, "hill factor does not fall above the hill");
+    CHECK(body_bridge_gain(&iw, 8000.0, I0) < 0.5 * gp, "hill factor does not fall above the hill");
     double ratio = f1 / f0;
     printf("T17b hill frequency with 1.5x bridge inertia: %.0f Hz, ratio %.3f (1/sqrt(1.5) = %.3f)\n", f1, ratio, 1.0 / sqrt(1.5));
     CHECK(fabs(ratio / (1.0 / sqrt(1.5)) - 1.0) < 0.10, "ratio %.3f is not within 10 percent of %.3f", ratio, 1.0 / sqrt(1.5));
+    /* the default instrument (C1): no hill is left, the factor stays at or under 1.02 and falls above 1.5 kHz */
+    double pk = 0.0;
+    for (double f = 20.0; f < 12000.0; f *= 1.01) pk = fmax(pk, body_bridge_gain(instrument_cello(), f, I0));
+    printf("T17d default instrument (R_inf = %.0f): hill factor peak %.3f, %.2f at 8 kHz\n", instrument_cello()->body.bridge_R, pk, body_bridge_gain(instrument_cello(), 8000.0, I0));
+    CHECK(pk < 1.02, "default hill factor peaks at %.3f: the C1 bridge damping should leave no hill", pk);
+    CHECK(body_bridge_gain(instrument_cello(), 8000.0, I0) < 0.3, "default hill factor does not fall above 1.5 kHz");
     double w = wiring(I0, 1.5 * I0);
     printf("T17b modal masses: m_k |G(f_k)| identical for I and 1.5 I, worst relative difference %.2e\n", w);
     CHECK(w < 1e-12, "modal masses do not follow the bridge inertia: %g", w);

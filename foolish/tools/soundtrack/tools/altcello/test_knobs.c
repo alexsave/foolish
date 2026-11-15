@@ -53,13 +53,14 @@ int main(void)
     CHECK(w < 1e-12, "mass scales are not exact: %g", w);
     body_modes_free(a);
     body_modes_free(b);
-    double R0 = I->body.bridge_R, pk0 = 0, pk3 = 0;
+    /* the instrument's R_inf is 3 x Woodhouse's 30 (diagnosis C1, instrument_cello.c): compare the Woodhouse value (default / 3) with 3 x it */
+    double R0 = I->body.bridge_R / 3.0, pk0 = 0, pk3 = 0;
     for (double f = 300; f < 8000; f *= 1.01) {
         pk0 = fmax(pk0, body_bridge_gain_R(I, f, I->body.bridge_inertia, R0));
         pk3 = fmax(pk3, body_bridge_gain_R(I, f, I->body.bridge_inertia, 3.0 * R0));
     }
     printf("T24c hill peak %.2f at R, %.2f at 3 R\n", pk0, pk3);
     CHECK(pk3 < 0.5 * pk0, "bridge resistance does not lower the hill (%.2f vs %.2f)", pk3, pk0);
-    CHECK(body_bridge_gain_R(I, 1500.0, I->body.bridge_inertia, R0) == body_bridge_gain(I, 1500.0, I->body.bridge_inertia), "default R differs");
+    CHECK(body_bridge_gain_R(I, 1500.0, I->body.bridge_inertia, I->body.bridge_R) == body_bridge_gain(I, 1500.0, I->body.bridge_inertia), "default R differs");
     TEST_DONE("test_knobs");
 }

@@ -44,13 +44,25 @@
 
 #define L_ALL 0.69
 #define S0_ALL 1.2
-#define S1_ALL 3e-4
+/* STRING LOSS (diagnosis setting C1, DIAGNOSIS.md E3 and the combined table). The earlier sigma1 of 3e-4 gave Q about 2700 at
+ * 2 kHz, so the corners of the Helmholtz motion were not rounded. REFERENCES.md 2.4 (Galluzzo thesis): transverse zeta about 0.001 for the D string, i.e. Q = 1/(2 zeta)
+ * = 500 under the reading that it holds at the partials that matter (UNVERIFIED as a per-partial figure); DIAGNOSIS.md E3 and the
+ * C1 table adopt Q(2 kHz) = 500 for D3 and A3, 300 for C2 and G2 (the wound strings: ASSUMED lossier). The frequency dependent
+ * loss is set per string so that a partial at 2 kHz has amplitude decay rate w/(2 Q): rate = s0 + s1 (w/c)^2 with c = 2 L f0
+ * (the formula of the probe option --q2k). */
+#define Q2K_S1(Q, f0) (((2.0 * M_PI * 2000.0 / (2.0 * (Q)) - S0_ALL) * (2.0 * L_ALL * (f0)) * (2.0 * L_ALL * (f0))) / \
+                       ((2.0 * M_PI * 2000.0) * (2.0 * M_PI * 2000.0)))
 #define CT_RATIO 5.0
 #define ZETA_T 0.01
 #define ZT_RATIO 3.0
 #define EI_B(B, T) ((B) * (T) * L_ALL * L_ALL / (M_PI * M_PI))
-#define STAT_M_SCALE 3.0 /* stage 2 iteration 2: statistical modes 3x heavier = about -10 dB of admittance, so the bridge hill
-                            does not tower over the low modes (the table modes are unchanged) */
+/* statistical modal masses (m = 0.5 below times this). Stage 2 iteration 2 set 3.0 (3x heavier, about -10 dB of admittance, so the
+ * bridge hill does not tower over the low modes). Diagnosis C1 (DIAGNOSIS.md): the statistical masses x0.5 clean the 1-2.5 kHz noise
+ * floor and lower the narrow-band count, so the value is 3.0 x 0.5 = 1.5 (the table modes are unchanged). */
+#define STAT_M_SCALE 1.5
+/* bridge resistance R_inf, rad/(m s N): Woodhouse's 30 (REFERENCES 7.2) x3 = 90 (diagnosis C1, E1: the bridge hill is 3x lower
+ * and wider, which removes the unmatched narrow band near 1.5 kHz of D3 and G2; the hill height was the diagnosed cause) */
+#define BRIDGE_R_INF 90.0
 
 /*STOP_CENTS_BEGIN*/
 #define STOP_CENTS_TABLE \
@@ -61,10 +73,10 @@ static const Instrument cello = {
     "cello", 4,
     {
         /* name f0       T      r       L      EI                  sigma0  sigma1  ct     zeta_t  zt */
-        {"C2", 65.41, 135.0, 0.80e-3, L_ALL, EI_B(8.0e-5, 135.0), S0_ALL, S1_ALL, CT_RATIO, ZETA_T, ZT_RATIO},
-        {"G2", 98.00, 130.0, 0.575e-3, L_ALL, 3.03e-4, S0_ALL, S1_ALL, CT_RATIO, ZETA_T, ZT_RATIO},
-        {"D3", 146.83, 140.0, 0.57e-3, L_ALL, EI_B(3.5e-5, 140.0), S0_ALL, S1_ALL, CT_RATIO, ZETA_T, ZT_RATIO},
-        {"A3", 220.00, 160.0, 0.50e-3, L_ALL, EI_B(2.5e-5, 160.0), S0_ALL, S1_ALL, CT_RATIO, ZETA_T, ZT_RATIO},
+        {"C2", 65.41, 135.0, 0.80e-3, L_ALL, EI_B(8.0e-5, 135.0), S0_ALL, Q2K_S1(300.0, 65.41), CT_RATIO, ZETA_T, ZT_RATIO},
+        {"G2", 98.00, 130.0, 0.575e-3, L_ALL, 3.03e-4, S0_ALL, Q2K_S1(300.0, 98.00), CT_RATIO, ZETA_T, ZT_RATIO},
+        {"D3", 146.83, 140.0, 0.57e-3, L_ALL, EI_B(3.5e-5, 140.0), S0_ALL, Q2K_S1(500.0, 146.83), CT_RATIO, ZETA_T, ZT_RATIO},
+        {"A3", 220.00, 160.0, 0.50e-3, L_ALL, EI_B(2.5e-5, 160.0), S0_ALL, Q2K_S1(500.0, 220.00), CT_RATIO, ZETA_T, ZT_RATIO},
     },
     {36, 43, 50, 57},
     /* bow: width, noise, hair length, friction {a1 v1 a2 v2 c mu_static} */
@@ -90,7 +102,7 @@ static const Instrument cello = {
         {1.0, 0.7, 0.7, 0.7}, /* compact monopole strengths (stage 2 values) */
         480.0, 12000.0, 18.0, 0.5 * STAT_M_SCALE, 6.0,
         0.012, 0.3, /* eta0 at 500 Hz (range 0.008 - 0.02) and exponent (0 - 0.6): REFERENCES 7.1, DERIVED assumption */
-        2.1e-6, 30.0, 1500.0,
+        2.1e-6, BRIDGE_R_INF, 1500.0,
     },
     /* radiation: a_eff, f_c, area, perimeter, G_PLATE */
     {0.25, 3000.0, 0.17, 2.0, 1.245},

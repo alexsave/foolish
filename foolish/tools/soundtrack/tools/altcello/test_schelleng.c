@@ -65,11 +65,14 @@ int main(void)
                 CHECK(cls[i] == CLS_MULTIPLE || cls[i] == CLS_NONE, "beta %.2f: F %.3f below the band is %s", betas[b], F[i], cls_names[cls[i]]);
                 if (cls[i] == CLS_MULTIPLE) below_multiple++;
             }
+            int seen_raucous = 0;
             for (int i = last + 1; i < NF; i++) {
                 /* with torsion the bow at the largest forces can choke the string: almost no slipping at all
-                   (class none, 0.35 slips per period at 10 N) is the physical end of the raucous regime */
-                CHECK(cls[i] == CLS_RAUCOUS || (cls[i] == CLS_NONE && i == NF - 1), "beta %.2f: F %.3f above the band is %s", betas[b], F[i], cls_names[cls[i]]);
-                if (cls[i] == CLS_RAUCOUS) above_raucous++;
+                   (class none, 0.3 slips per period at 7.7 N) is the physical end of the raucous regime, so none is
+                   allowed once a raucous point has been seen above the band (with the C1 string loss the choked
+                   region starts below the top of the grid) */
+                CHECK(cls[i] == CLS_RAUCOUS || (cls[i] == CLS_NONE && seen_raucous), "beta %.2f: F %.3f above the band is %s", betas[b], F[i], cls_names[cls[i]]);
+                if (cls[i] == CLS_RAUCOUS) { above_raucous++; seen_raucous = 1; }
             }
             for (int i = first; i <= last; i++) CHECK(cls[i] != CLS_RAUCOUS, "beta %.2f: raucous point F %.3f inside the Helmholtz span", betas[b], F[i]);
             CHECK(below_multiple > 0, "beta %.2f: no multiple-slipping point below the band", betas[b]);
