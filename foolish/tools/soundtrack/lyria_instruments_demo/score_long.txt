@@ -1,0 +1,13 @@
+TEMPO 60
+
+SECTION cello long BARS 5 KEY C
+CELLO: D3:8 r:2 G3:8 r:2
+VIB CELLO: off
+
+SECTION haegeum long BARS 5 KEY C
+HAEGEUM: C4:8 r:2 G4:8 r:2
+VIB HAEGEUM: off
+
+SECTION trumpet long BARS 5 KEY C
+TRUMPET: D4:8 r:2 A#4:8 r:2
+VIB TRUMPET: off
