@@ -272,6 +272,22 @@ DYN: fff
 FX: motif A under motif B for sixteen bars; A is sequenced to Ab for bars 5-6 and 13-14 (so B's second phrase sits on the flat sixth both times) and every fourth bar ends on its flair (Ab, Db); bars 9-16 the horns and second violins play motif B in augmentation (each note twice as long) against the trumpets' B at speed - the same tune at two speeds at once; piccolo joins at bar 9
 TRANSITION: bar 16 everything on C quarter notes over the snare roll, into the circle.
 
+SECTION Return: Cadence BARS 2 KEY Cm
+CHOIR: Db3+F3+Ab3:4 | G2+D3+F3+B3:4
+TROMBONES: Db3+Ab3:4 | G2+D3+F3:4
+TUBA: Db2:4 | G1:4
+HORNS: F3+Ab3+Db4:4 | B3+D4+F4:4
+TRUMPETS: Ab4+Db5:4 | G4+B4+D5:4
+VIOLINS: F5+Ab5:4 | D5+G5:4
+CELLOS: Db3:4 | G2:4
+BASSES: Db2:4 | G1:4
+TIMPANI: r:4 | G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25 G1:0.25
+BASSDRUM: x:4 | x:4
+CYMBALS: x:4 | r:4
+DYN: fff
+FX: (v5.1) from Lyria mo_06 ("YES"), transcribed: its last four bars go D flat, F minor, G, C minor, the flat second degree before the dominant. Our ending had only the tonic. Two bars here: D flat major held by the men and the band, then G7 over a timpani roll, into the last C minor chord.
+
+
 SECTION Return: Last chord BARS 2 KEY Cm
 CHOIR: C2+G2+C3+Eb3+G3:4 | r:4
 TROMBONES: C3+G3:4 | r:4
