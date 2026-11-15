@@ -26,7 +26,7 @@ def main():
             keep[c[1]] = float(c[3])
     out_dir = os.path.join(SAMP, inst + "_flat_v7")
     os.makedirs(out_dir, exist_ok=True)
-    lines, rep = [], []
+    lines, rep, tsv = [], [], []
     for l in open(os.path.join(MAN, "lyria_%s_flat_v6.txt" % inst)):
         if not l.strip():
             continue
@@ -47,8 +47,15 @@ def main():
             row += " null %.0f/%.0f step %.2f recur %.2f white %.2f chance %.2f ripple %.2f hnr %.1f -> %.1f pp %.2f/%.2f/%.2f |" % (o["null_head"], o["null_tail"], o["step_splice"], o["recur"], o["recur_white"], o["recur_chance"], o["ripple"], o["hnr6"], o["hnr7"], o["vib7"]["pitch_pp"], o["vib7"]["level_pp"], o["vib7"]["harm_pp"])
             print("   ", row, flush=True)
         rep.append(row)
+        if check:
+            v6, v7 = o["vib6"], o["vib7"]
+            tsv.append("\t".join([fn, "%.0f" % o["null_head"], "%.0f" % o["null_tail"], "%.2f" % o["step_splice"], "%.2f" % o["recur"], "%.2f" % o["recur_white"], "%.2f" % o["recur_chance"],
+                "%.2f" % o["ripple"], "%.1f" % o["hnr6"], "%.1f" % o["hnr7"], "%.1f" % o["hnr7_same"]] + ["%.3f" % v[k] for v in (v6, v7) for k in ("pitch_depth", "level_depth", "harm_depth", "ratio", "ratio2", "pitch_pp", "level_pp", "harm_pp")]))
         lines.append("%s %s %s %s" % (root, layer, rr, path.strip().replace("/%s_flat_v6/" % inst, "/%s_flat_v7/" % inst)))
     open(os.path.join(MAN, "lyria_%s_flat_v7.txt" % inst), "w").write("\n".join(lines) + "\n")
+    if check:
+        hdr = ["file", "null_head", "null_tail", "step_splice", "recur", "recur_white", "recur_chance", "ripple", "hnr6", "hnr7", "hnr7_same"] + ["%s_%s" % (v, k) for v in ("v6", "v7") for k in ("pitch_depth", "level_depth", "harm_depth", "ratio", "ratio2", "pitch_pp", "level_pp", "harm_pp")]
+        open(os.path.join(REP, inst + "_flat_v7_checks.tsv"), "w").write("\t".join(hdr) + "\n" + "\n".join(tsv) + "\n")
     open(os.path.join(REP, inst + "_flat_v7.md"), "w").write("\n".join(["# %s long samples, v7 (12 s, fresh noise, slow drift)" % inst, "",
         "| file | keep ms | build |", "|---|---|---|"] + rep) + "\n")
 

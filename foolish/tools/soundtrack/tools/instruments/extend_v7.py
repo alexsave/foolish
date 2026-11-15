@@ -303,6 +303,19 @@ def extend(x, sr, root, name, keep_ms=0.0):
     return y, info
 
 
+def write_wav24_exact(path, x, sr):
+    """24 bit PCM with the scale 2^23 that ffmpeg's decoder undoes (le.write_wav24 uses 2^23 - 1, which moves a full scale sample by one
+    step), so that a kept stretch of a v6 sample comes back bit for bit."""
+    v = np.clip(np.round(x * 2 ** 23), -(2 ** 23), 2 ** 23 - 1).astype(np.int64)
+    n, ch = v.shape
+    u = np.where(v < 0, v + (1 << 24), v).astype(np.uint32).reshape(-1)
+    b = np.stack([u & 255, (u >> 8) & 255, (u >> 16) & 255], axis=1).astype(np.uint8).tobytes()
+    import struct
+    hdr = b"RIFF" + struct.pack("<I", 36 + len(b)) + b"WAVE" + b"fmt " + struct.pack("<IHHIIHH", 16, 1, ch, sr, sr * 3 * ch, 3 * ch, 24) + b"data" + struct.pack("<I", len(b))
+    with open(path, "wb") as f:
+        f.write(hdr + b)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inp"); ap.add_argument("out")
@@ -314,7 +327,7 @@ def main():
     pk = np.abs(y).max()
     if pk > 0.999:
         print("PEAK %.3f" % pk, file=sys.stderr)
-    le.write_wav24(a.out, y, sr)
+    write_wav24_exact(a.out, y, sr)
     print("length %.3f -> %.3f s, f0 %.4f Hz, %d harmonics, drift %.3f c std, zones ta %.2f tr %.2f xf %.2f" % (info["N0"] / sr, info["Nout"] / sr, info["f0"], info["ks"], info["cents_std"], info["ta"] / sr, info["tr"] / sr, info["xf"] / sr))
 
 
