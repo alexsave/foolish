@@ -4,14 +4,15 @@
   1 length: 11.9 to 12.1 s;
   2 null: the kept attack and the moved release tail are identical to the input (under 1e-9);
   3 echo: the residual recurrence share (residual_check.recur, lags 0.1 to 1.0 s) is high on the input (over 0.5) and under 0.15 after;
+  4b harmonic phase of 1 to 4 equal before and after each splice (under 0.1 rad: the tail is moved by whole periods);
   4 fresh: no window of the fresh noise correlates over 0.35 with any same length window of the input residual (never a copy);
   5 drift: pitch drift std 0.03 to 0.2 cent (ev info), vibmod 3 to 8 Hz peak/floor ratios of pitch, level and harmonic 1 to 4 under 3,
     level 3 to 8 Hz depth under 0.05 dB;
   6 seed: the same name gives the same output, another name another noise;
   7 no stray random: only v7_rng.py may mention numpy.random, random, default_rng, time or Date.
 Run: python3 -I test_extend_v7.py   (prints PASS).
-Mutations checked (each must fail the named check): 3 and 4 the fresh noise replaced by the tiled measured residual; 2 the tail moved by a
-quarter period more; 5 DRIFT_PITCH_C 0.1 -> 3 and DRIFT_HZ 0.8 -> 5; 6 stream() ignoring the name; 7 a np.random call added."""
+Mutations checked (each must fail the named check): 3 and 4 the fresh noise replaced by the tiled measured residual; 2 and 4b the tail moved by a
+quarter period more (D += quarter period, f not re-derived); 5 DRIFT_PITCH_C 0.1 -> 3 and DRIFT_HZ 0.8 -> 5; 6 stream() ignoring the name; 7 a np.random call added."""
 import os, re, sys
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -59,6 +60,15 @@ def main():
         c = np.correlate(src, w, "valid") / np.sqrt(np.convolve(src ** 2, np.ones(W), "valid") * np.dot(w, w))
         worst = max(worst, float(np.abs(c).max()))
     assert worst < 0.35, worst
+    # the harmonics are one continuous periodic tone through both splices: the phase of harmonics 1 to 4 (absolute time) just before the
+    # tail and just after it, and in the kept attack and after the head splice, agree
+    f, ks4 = info["f0"], [1, 2, 3, 4]
+    t0, a1 = N0 - tr + info["D"], info["a1"]
+    def ph(i0, i1):
+        return np.angle(ev.project(y, SR, f, i0, i1, ks4)[0])
+    for (u0, u1), (v0, v1) in (((int(0.1 * SR), int(0.3 * SR)), (a1 + int(0.15 * SR), a1 + int(0.35 * SR))), ((t0 - int(0.4 * SR), t0 - int(0.2 * SR)), (t0 + int(0.02 * SR), t0 + int(0.12 * SR)))):
+        d = np.abs(np.angle(np.exp(1j * (ph(u0, u1) - ph(v0, v1)))))
+        assert d.max() < 0.1, ("harmonic phase jump at a splice", d)
     assert 0.03 < info["cents_std"] < 0.2, info["cents_std"]
     seg = y[int(1.0 * SR):int(10 * SR)].mean(axis=1)
     v = vibmod.measure_note(seg, SR, vibmod.hz_of(57))

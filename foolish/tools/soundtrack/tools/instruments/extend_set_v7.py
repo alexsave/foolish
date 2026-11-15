@@ -44,7 +44,7 @@ def main():
         if check:
             import check_v7
             o = check_v7.measure(src, out, int(root), keep.get(fn, 0.0))
-            row += " null %.0f/%.0f step %.2f recur %.2f ripple %.2f hnr %.1f -> %.1f |" % (o["null_head"], o["null_tail"], o["step_splice"], o["recur"], o["ripple"], o["hnr6"], o["hnr7"])
+            row += " null %.0f/%.0f step %.2f recur %.2f white %.2f chance %.2f ripple %.2f hnr %.1f -> %.1f pp %.2f/%.2f/%.2f |" % (o["null_head"], o["null_tail"], o["step_splice"], o["recur"], o["recur_white"], o["recur_chance"], o["ripple"], o["hnr6"], o["hnr7"], o["vib7"]["pitch_pp"], o["vib7"]["level_pp"], o["vib7"]["harm_pp"])
             print("   ", row, flush=True)
         rep.append(row)
         lines.append("%s %s %s %s" % (root, layer, rr, path.strip().replace("/%s_flat_v6/" % inst, "/%s_flat_v7/" % inst)))
