@@ -31,12 +31,13 @@ void city_setup(void) {
     for (int t = VC; t <= VC2; t++) { eq(t, 3, 300, 1, -1.5); eq(t, 1, 6500, 0.7, 0); }   // warm: the bow noise above 7 kHz sat on top of the piano
     eq(CB, 3, 250, 1, -2);
     // v5 (Alex: "maybe some string plucking"): pizzicato cellos and basses pluck the bass of the first nocturne song
-    VCP = o_smp("cellos pizz", OM "vc_pizz.txt", 0.6, 0, 0.3, 0, 0.45, -4);
-    CBP = o_smp("basses pizz", OM "cb_pizz.txt", 0.7, 0, 0.45, 0, 0.4, -2);
+    VCP = o_smp("cellos pizz", OM "vc_pizz.txt", 0.6, 0, 0.3, 0, 0.45, 5);   // level set by solo render: plucks about 6 dB under the left hand in the first song
+    CBP = o_smp("basses pizz", OM "cb_pizz.txt", 0.7, 0, 0.45, 0, 0.4, 7);
     o_hall(2.3, 16);
     g_bus[0].gain_db = -6;
     g_master.cthr = -24; g_master.cratio = 1.6;
     g_dyn_depth = 0.6;
+    g_tail_s = 3.5;   // v5: the last chord has rung out by then (the first v5 render ended in 6 s of silence)
 }
 double city_loop(void) {
     int n0 = g_nnote; g_nsec = 0; score_txt("score.txt", w_map, 0);
@@ -74,7 +75,10 @@ double city_loop(void) {
         for (int i = n0; i < n1; i++) { Note a = g_note[i]; if (a.tr != LH || a.beat < b0 - 1e-6 || a.beat >= b1 - 1e-6) continue;
             int low = 1, pair = 0; for (int j = n0; j < n1; j++) if (j != i && g_note[j].tr == LH && fabs(g_note[j].beat - a.beat) < 0.02) { pair = 1; if (g_note[j].pitch < a.pitch) low = 0; }
             if (!low || !pair) continue; double p = a.pitch; while (p < 28) p += 12;
-            note(CBP, a.beat, 1.0, p, a.vel * 0.7); note(VCP, a.beat, 1.0, p + 12, a.vel * 0.6); } } }
+            note(CBP, a.beat, 1.0, p, fmin(1, a.vel * 1.2)); note(VCP, a.beat, 1.0, p + 12, fmin(1, a.vel * 1.1));
+            /* and an answer two beats later where the harmony holds for the whole bar: the cellos alone, a fifth above the bass */
+            { int held = 1; for (int j = n0; j < n1; j++) if (j != i && g_note[j].tr == LH && g_note[j].pitch < 40 && g_note[j].beat > a.beat + 0.5 && g_note[j].beat < a.beat + 3.9) held = 0;
+              if (held && fmod(a.beat - b0, 4.0) < 0.05) note(VCP, a.beat + 2, 1.0, p + 19, fmin(1, a.vel * 0.9)); } } } }
     return score_total_bars() * 4.0;
 }
 void city_full(void) { city_loop(); }

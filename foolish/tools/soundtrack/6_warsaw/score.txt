@@ -47,7 +47,7 @@ TEMPO 100 RAMP 16
 RH: A#4:2 B4:2 | D#5:1 F#5:1 B5:2 | F#4+A#4+C#5+E5:0.5 F#4+A#4+C#5+E5:0.25 F#4+A#4+C#5+E5:0.25 F#4+A#4+C#5+E5:0.5 F#4+A#4+C#5+E5:0.5 F#4+A#4+C#5+F#5:1 F#4+A#4+E5+F#5:1 | F#4+A#4+C#5+E5:2 B3:0.25 D#4:0.25 F#4:0.25 B4:0.25 D#5:0.25 F#5:0.25 B5:0.25 D#6:0.25
 LH: B1+B2:1 F#3+B3+D#4:1 F#3+B3+D#4:1 F#3+B3+D#4:1 | B1+B2:1 F#3+B3+D#4:1 B1+B2:1 F#3+B3+D#4:1 | F#1+F#2:0.5 C#3+E3+A#3:0.25 C#3+E3+A#3:0.25 F#1+F#2:0.5 C#3+E3+A#3:0.5 F#1+F#2:1 C#3+E3+A#3:1 | F#1+F#2:2 B1+B2:2
 PEDAL: x:4 | x:4 | x:2 x:2 | x:2 x:2
-DYN: p bar 1, mp bar 2, mf bar 3, cresc bar 4 to ff
+DYN: p bars 1-2, mp bar 3, cresc bar 4 to f
 TRANSITION: (v5) B7 drops its seventh (A# rises to B) and B major is heard quietly for two bars; bar 3 previews the polonaise rhythm on F#7; bar 4 is the old run; the tempo climbs 50 -> 100 across all four bars
 
 SECTION III Heroic: Octaves (alla polacca) BARS 16 KEY B major
