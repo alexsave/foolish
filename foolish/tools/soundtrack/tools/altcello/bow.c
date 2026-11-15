@@ -166,3 +166,21 @@ double bow_noise_next(BowNoise *b, Rng *r, long n, double fs)
     b->lp_y = b->lp_a * b->lp_y + (1.0 - b->lp_a) * x;
     return b->lp_y;
 }
+
+void hair_init(Hair *h, double kh, double dt)
+{
+    h->on = 1;
+    h->m = HAIR_MASS;
+    h->k = kh;
+    h->r = 2.0 * HAIR_ZETA * sqrt(kh * HAIR_MASS);
+    double d = h->r * dt / (2.0 * h->m);
+    h->A = (2.0 - dt * dt * kh / h->m) / (1.0 + d);
+    h->B = -(1.0 - d) / (1.0 + d);
+    h->g = dt * dt / (h->m * (1.0 + d));
+    hair_reset(h);
+}
+
+void hair_reset(Hair *h)
+{
+    h->d0 = h->d1 = h->d2 = h->dfree = h->dprev = 0.0;
+}

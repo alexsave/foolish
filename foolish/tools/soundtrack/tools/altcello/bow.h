@@ -21,6 +21,25 @@ void bow_weights_grid(double h, int N, double xB, double width, int *lo, int *hi
  * (the friction coefficient force/F_B); *stuck = 1 if sticking now. See bow.c. */
 double bow_solve(double q, double G, double vprev, int stuck_prev, double *Phi, int *stuck);
 
+/* Compliant bow-hair contact (stage 2 iteration 3, an option, default off; idea source Pitteroff and Woodhouse 1998,
+ * the numbers are a parameter study, ASSUMED): the hair contact point is a small mass m on a spring k and damper r to
+ * the bow stick, which moves at vB. With d the hair displacement relative to the stick, the friction force F phi on the
+ * hair gives  m d'' + r d' + k d = F phi  (the stick acceleration is ignored: the ramp of vB gives 1.7 mN on 0.5 g),
+ * and the contact slip velocity is v_rel = v_string - vB - d'. The hair is one more admittance in series at the
+ * contact (g/(2 dt) per unit F phi, bow.c), so the friction solve stays scalar. */
+#define HAIR_MASS 5.0e-4   /* kg */
+#define HAIR_ZETA 0.3      /* damping ratio of the contact resonance used by hair_init */
+typedef struct {
+    int on;
+    double m, k, r;        /* kg, N/m, N s/m */
+    double A, B, g;        /* d2 = A d1 + B d0 + g F phi */
+    double d0, d1, d2;
+    double dprev;          /* d(n-1) after the commit (diagnostics: hair velocity at n = (d1 - dprev)/2k) */
+    double dfree;          /* free update of this step */
+} Hair;
+void hair_init(Hair *h, double kh, double dt);   /* on = 1, m = HAIR_MASS, r from HAIR_ZETA */
+void hair_reset(Hair *h);
+
 typedef struct {
     double level;       /* std of the raw draws (0 = off) */
     double lp_a;        /* one-pole coefficient */

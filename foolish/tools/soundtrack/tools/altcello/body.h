@@ -6,20 +6,26 @@
 #ifndef ALTCELLO_BODY_H
 #define ALTCELLO_BODY_H
 #include "body_params.h"
+#include "radiate_body.h"
 
 typedef struct {
     int n;
     double fs, k;
     double *A, *B, *Gu, *Gw;     /* q2 = A q1 + B q0 + Gu Fu + Gw Fw */
     double *q0, *q1, *q2;
-    double *m, *w2, *cu, *cw, *r; /* mass, prewarped w^2, participations, radiation weights */
+    double *m, *w2, *cu, *cw, *r; /* mass, prewarped w^2, participations, radiation weights (compact strengths / plate signs, body_params.h) */
+    double *rp;      /* r for the plate modes, 0 for the compact ones */
+    int nc;          /* number of compact modes (the first nc) */
+    Radiator rad;    /* the physical radiation filters (radiate_body.h) */
     /* outputs of the last step */
     double zu, zw;   /* bridge displacement at n+1 */
     double vu, vw;   /* bridge velocity (q2 - q0)/2k at n */
-    double p;        /* body pressure proxy sum r_k q_k'' at n */
+    double p_compact, p_plate; /* the two paths separately (p_plate without G_PLATE), diagnostics */
+    double p;        /* radiated pressure at n: compact path + plate path of the modal velocities (radiate_body.h) */
 } Body;
 
-Body *body_new(const BodyModes *bm, double fs, int lossless);
+/* opts: NULL for the default knobs (only opts->fc is used here) */
+Body *body_new(const BodyModes *bm, double fs, int lossless, const BodyOpts *opts);
 void body_free(Body *b);
 void body_step(Body *b, double Fu, double Fw); /* force on the bridge at time n */
 double body_energy(const Body *b);             /* between the last two states, J */

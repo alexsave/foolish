@@ -53,10 +53,11 @@ void sim_init_instrument(Sim *S, double fs, const SimOpts *o, const char *bowed_
     S->s = S->str[S->bowed];
     S->fwbuf = calloc((size_t)maxN + 1, sizeof(double));
     if (o->body_on) {
-        BodyModes *bm = body_modes_build();
-        if (o->flat_radiation)
-            for (int i = 0; i < bm->n; i++) bm->r[i] = 1.0;
-        S->body = body_new(bm, fs, o->lossless);
+        BodyOpts def = body_opts_default();
+        const BodyOpts *bo = o->body_opts ? o->body_opts : &def;
+        BodyModes *bm = body_modes_build_opts(bo);
+        S->body = body_new(bm, fs, o->lossless, bo); /* NULL if bo->fc has no fitted plate filter (radiate_plate_fits) */
+        if (!S->body) abort();
         body_modes_free(bm);
     }
     common_init(S, fs);
@@ -80,6 +81,7 @@ void sim_start(Sim *S)
     S->n = 0;
     S->vrel_prev = 0.0;
     S->stuck = 0;
+    hair_reset(&S->hair);
 }
 
 void sim_set_bow(Sim *S, double beta, double vB, double FB, double ramp)
@@ -209,6 +211,12 @@ void sim_step(Sim *S)
         }
         q = (q + qt) / (2.0 * k) - vB;
         G = F * (G + Gt) / (2.0 * k);
+        if (S->hair.on) {
+            Hair *h = &S->hair;
+            h->dfree = h->A * h->d1 + h->B * h->d0;
+            q -= (h->dfree - h->d0) / (2.0 * k);
+            G += F * h->g / (2.0 * k);
+        }
         double Phi;
         int stuck;
         vrel = bow_solve(q, G, S->vrel_prev, S->stuck, &Phi, &stuck);
@@ -216,6 +224,7 @@ void sim_step(Sim *S)
         if (S->torsion_on)
             for (int l = tlo; l <= thi; l++) tor->th2[l] -= tor->kk * tor->invD[l] * tor->rs * Jt[l - tlo] * F * Phi;
         fric = F * Phi;
+        if (S->hair.on) S->hair.d2 = S->hair.dfree + S->hair.g * fric;
         vbow = vrel + vB;
         S->vrel_prev = vrel;
         S->stuck = stuck;
@@ -234,6 +243,12 @@ void sim_step(Sim *S)
     S->out[5] = S->body ? S->body->vu : 0.0;
     S->out[6] = S->body ? S->body->vw : 0.0;
     S->out[7] = S->body ? S->body->p : 0.0;
+    if (S->hair.on) {
+        if (!S->bow_on) S->hair.d2 = S->hair.A * S->hair.d1 + S->hair.B * S->hair.d0;
+        S->hair.dprev = S->hair.d0;
+        S->hair.d0 = S->hair.d1;
+        S->hair.d1 = S->hair.d2;
+    }
     for (int i = 0; i < S->nstr; i++) {
         string_commit(S->str[i]);
         torsion_commit(S->str[i]->tor);

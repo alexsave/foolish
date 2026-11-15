@@ -15,12 +15,12 @@ from matplotlib.lines import Line2D
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import calibrate_radiation as CR  # noqa: E402
+import stage2c_notes as CR  # noqa: E402 (the measuring functions that calibrate_radiation.py had; it was removed in iteration 3)
 M = CR.M
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "/Users/alex/Music/foolish_cities_v5/alt_cello/charts/stage2_body_iter2.png"
 IT1 = "/Users/alex/Music/foolish_cities_v5/alt_cello/charts/iter1_data/"
-AUDIO = CR.AUDIO
+AUDIO = "/Users/alex/Music/foolish_cities_v5/alt_cello/audio/stage2b"
 EXE = os.path.join(ROOT, "altcello")
 O = lambda n: os.path.join(ROOT, "out", n)
 F0 = 146.83

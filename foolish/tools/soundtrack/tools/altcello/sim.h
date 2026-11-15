@@ -14,7 +14,7 @@
 #define SIM_MAXSTR 4
 /* channels: bridge force u, bridge force w (of the bowed string, T y_x - E I y_xxx),
  * string velocity at the bow (u), v_rel, bow friction force (N),
- * bridge velocity u, bridge velocity w, body pressure proxy (0 without a body) */
+ * bridge velocity u, bridge velocity w, radiated pressure (radiate_body.h; 0 without a body) */
 extern const char *const sim_channel_names[SIM_NCH];
 extern const char *const sim_string_names[SIM_MAXSTR]; /* C2 G2 D3 A3 */
 
@@ -22,7 +22,7 @@ typedef struct {
     int body_on;      /* modal body on the bridge */
     int all_strings;  /* 1: all four strings on the bridge, 0: only the bowed one */
     int lossless;     /* strings sigma0 = sigma1 = zeta_t = 0 and body Q = infinity (energy test) */
-    int flat_radiation; /* test switch: every mode radiates with weight 1 (the radiativity curve is ignored) */
+    const BodyOpts *body_opts; /* NULL: the default body knobs (body_params.h) */
 } SimOpts;
 
 typedef struct {
@@ -39,6 +39,7 @@ typedef struct {
     Env xFo[SIM_MAXSTR], aFo[SIM_MAXSTR]; /* fingers of the other strings (by str[] index) */
     double bow_width;
     int bow_on;             /* 0: no bow at all */
+    Hair hair;              /* compliant bow-hair contact (bow.h), off by default; set with hair_init before sim_start */
     int torsion_on;         /* 1 (default): the bow contact includes the string's torsion (torsion.h); 0: transverse only */
     double bow_noise_level; /* std of raw draws; set before sim_start */
     double vrel_prev;

@@ -14,7 +14,7 @@
 static void admittance(const BodyModes *bm, double fs, int pol, double *re, double *im, int N)
 {
     double k = 1.0 / fs;
-    Body *b = body_new(bm, fs, 0);
+    Body *b = body_new(bm, fs, 0, NULL);
     for (int n = 0; n < N; n++) {
         body_step(b, pol == 0 && n == 0 ? 1.0 / k : 0.0, pol == 1 && n == 0 ? 1.0 / k : 0.0);
         re[n] = (pol == 0 ? b->vu : b->vw) * k;

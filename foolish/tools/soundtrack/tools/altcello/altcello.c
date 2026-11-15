@@ -1,6 +1,9 @@
 /* altcello command line.
  *   altcello probe STRING BETA VB FB SECONDS OUTPREFIX [--fs 96000] [--finger XF] [--pluck]
  *       [--noise STD] [--body off|on] [--strings bowed|all] [--torsion on|off] [--wav OUT.wav]
+ *       [--hair KH] [--eta0 X] [--eta-exp X] [--fc HZ] [--bridge-inertia-scale X]
+ * The last five are the physical knobs of stage 2 iteration 3: bow-hair stiffness N/m (default off), body loss factor at 500 Hz
+ * and its frequency exponent, plate coincidence frequency (a fitted value of radiate_plate_fits), bridge inertia times 2.1e-6 kg m^2.
  * Writes OUTPREFIX.f32 (interleaved float32 LE, channels in OUTPREFIX.txt) and
  * OUTPREFIX_snap.f32 (u displacement field every 4th sample for the last 2
  * periods, header OUTPREFIX_snap.txt). Prints the real-time factor. */
@@ -39,7 +42,7 @@ static double cpu_seconds(void)
 static int probe(int argc, char **argv)
 {
     if (argc < 8) {
-        fprintf(stderr, "usage: altcello probe STRING BETA VB FB SECONDS OUTPREFIX [--fs 96000] [--finger XF] [--pluck] [--noise STD] [--body off|on] [--strings bowed|all] [--torsion on|off] [--wav OUT.wav]\n");
+        fprintf(stderr, "usage: altcello probe STRING BETA VB FB SECONDS OUTPREFIX [--fs 96000] [--finger XF] [--pluck] [--noise STD] [--body off|on] [--strings bowed|all] [--torsion on|off] [--wav OUT.wav] [--hair KH] [--eta0 X] [--eta-exp X] [--fc HZ] [--bridge-inertia-scale X]\n");
         return 2;
     }
     const StringSpec *sp = string_spec(argv[2]);
@@ -54,6 +57,8 @@ static int probe(int argc, char **argv)
     double noise = 0.03;
     int body = 0, all = 0, torsion = 1;
     const char *wavpath = NULL;
+    double hair = 0.0;
+    BodyOpts bo = body_opts_default();
     for (int i = 8; i < argc; i++) {
         if (!strcmp(argv[i], "--fs") && i + 1 < argc) fs = atof(argv[++i]);
         else if (!strcmp(argv[i], "--finger") && i + 1 < argc) xF = atof(argv[++i]);
@@ -63,12 +68,18 @@ static int probe(int argc, char **argv)
         else if (!strcmp(argv[i], "--strings") && i + 1 < argc) all = !strcmp(argv[++i], "all");
         else if (!strcmp(argv[i], "--torsion") && i + 1 < argc) torsion = !strcmp(argv[++i], "on");
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wavpath = argv[++i];
+        else if (!strcmp(argv[i], "--hair") && i + 1 < argc) hair = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--eta0") && i + 1 < argc) bo.eta0 = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--eta-exp") && i + 1 < argc) bo.eta_exp = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--fc") && i + 1 < argc) bo.fc = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--bridge-inertia-scale") && i + 1 < argc) bo.bridge_inertia *= atof(argv[++i]);
     }
     Sim S;
     if (body || all) {
-        SimOpts so = {body, all, 0, 0};
+        SimOpts so = {body, all, 0, &bo};
         sim_init_instrument(&S, fs, &so, sp->name);
     } else sim_init(&S, sp, fs);
+    if (hair > 0.0) hair_init(&S.hair, hair, S.k);
     S.bow_noise_level = noise;
     S.torsion_on = torsion;
     sim_set_bow(&S, beta, vB, FB, 0.03);
