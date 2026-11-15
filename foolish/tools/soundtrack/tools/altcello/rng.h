@@ -8,6 +8,8 @@
 #define ALTCELLO_SEED 0x5eedce110ULL
 /* the one instrument body: its modes are drawn once from this fixed sub-seed */
 #define ALTCELLO_BODY_SEED (ALTCELLO_SEED ^ 0xb0d1e5ULL)
+/* the slow random walks of the bow force and speed (sim.h, probe option --walk): one stream */
+#define ALTCELLO_WALK_SEED (ALTCELLO_SEED ^ 0x3a1c0ULL)
 /* the signs of the plate radiation path (radiate_body.h): one draw per plate mode */
 #define ALTCELLO_RADIATE_SEED (ALTCELLO_SEED ^ 0x7ad1a7eULL)
 

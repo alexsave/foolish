@@ -41,6 +41,12 @@ typedef struct {
     Hair hair;              /* compliant bow-hair contact (bow.h), off by default; set with hair_init before sim_start */
     int torsion_on;         /* 1 (default): the bow contact includes the string's torsion (torsion.h); 0: transverse only */
     double bow_noise_level; /* std of raw draws; set before sim_start */
+    /* playing gestures (diagnosis knobs, all off by default): sinusoidal finger vibrato of the bowed string and slow random
+       walks of the bow force and speed, both in logical time */
+    double vib_depth_c, vib_rate, vib_t0; /* peak cents, Hz, s; depth 0 = off */
+    double walk_sd, walk_bw;              /* relative sd and bandwidth (Hz) of the F_B and v_B walks; sd 0 = off */
+    double *walk_F, *walk_v;              /* tables at SIM_WALK_RATE per second */
+    long walk_n;
     double vrel_prev;
     int stuck;
     double *fwbuf;          /* w load density, N+1, zero between steps */
@@ -58,6 +64,10 @@ void sim_init(Sim *S, const Instrument *I, const StringSpec *sp, double fs);
 /* the instrument; bowed_name is the name of one of its strings (cello: "C2" "G2" "D3" "A3") */
 void sim_init_instrument(Sim *S, const Instrument *I, double fs, const SimOpts *o, const char *bowed_name);
 void sim_free(Sim *S);
+/* slow random walks of F_B and v_B: relative sd, bandwidth Hz (one-pole), table covering `seconds`; draws from ALTCELLO_WALK_SEED
+   at SIM_WALK_RATE per second of logical time (independent of fs). Call before sim_start. */
+#define SIM_WALK_RATE 100
+void sim_set_walk(Sim *S, double sd, double bw_hz, double seconds);
 void sim_start(Sim *S); /* call after setting controls and bow_noise_level */
 void sim_step(Sim *S);
 void sim_pluck(Sim *S, double x0, double halfwidth, double amp); /* bowed string, u, no velocity */

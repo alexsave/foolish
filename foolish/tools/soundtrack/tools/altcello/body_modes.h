@@ -9,6 +9,9 @@ typedef struct {
     double eta_exp;        /* eta(f) = eta0 (f / 500 Hz)^eta_exp, 0.3 (range 0 - 0.6) */
     double bridge_inertia; /* bridge rocking inertia m a^2, kg m^2, 2.1e-6; the stiffness K stays at its default value */
     double fc;             /* plate coincidence frequency, Hz, 3000 (2000 - 5000; a value of radiate_plate_fits) */
+    double bridge_R;       /* the bridge resistance R_inf, rad/(m s N), 30 (Woodhouse): larger = lower and wider bridge hill */
+    double stat_mass_scale; /* factor on the statistical modal masses, 1 (instrument value times it) */
+    double lead_mass_scale; /* factor on the effective masses of the named table modes, 1 (a diagnosis knob: heavier = weaker low resonances) */
 } BodyOpts;
 BodyOpts body_opts_default(const Instrument *I);
 
@@ -30,6 +33,7 @@ const char *body_mode_name(const Instrument *I, int i); /* "A0" "CBR" "B1-" "B1+
  * admittance, Y_b = a^2 (K R + i w) / (K - m a^2 w^2 + i w K m a^2 R), at the bridge inertia I = m a^2 and the
  * default stiffness K. 1 at low frequency; the statistical modal masses are divided by it. */
 double body_bridge_gain(const Instrument *I, double f, double inertia);
+double body_bridge_gain_R(const Instrument *I, double f, double inertia, double R); /* the same at an explicit R_inf */
 /* the frequency of the maximum of the hill factor (Hz, found on a fine log grid) */
 double body_bridge_hill_freq(const Instrument *I, double inertia);
 double body_eta(const BodyOpts *o, double f);   /* loss factor of the statistical modes */

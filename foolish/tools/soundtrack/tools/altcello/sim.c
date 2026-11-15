@@ -72,6 +72,40 @@ void sim_free(Sim *S)
     S->body = NULL;
     free(S->fwbuf);
     S->fwbuf = NULL;
+    free(S->walk_F);
+    free(S->walk_v);
+    S->walk_F = S->walk_v = NULL;
+}
+
+void sim_set_walk(Sim *S, double sd, double bw_hz, double seconds)
+{
+    long n = (long)(seconds * SIM_WALK_RATE) + 3;
+    free(S->walk_F);
+    free(S->walk_v);
+    S->walk_F = calloc((size_t)n, sizeof(double));
+    S->walk_v = calloc((size_t)n, sizeof(double));
+    S->walk_n = n;
+    S->walk_sd = sd;
+    S->walk_bw = bw_hz;
+    Rng r;
+    rng_seed(&r, ALTCELLO_WALK_SEED);
+    double a = exp(-2.0 * M_PI * bw_hz / SIM_WALK_RATE), b = sd * sqrt(1.0 - a * a), yF = 0.0, yv = 0.0;
+    for (long i = 0; i < n; i++) { /* two draws per index, F then v */
+        yF = a * yF + b * rng_gauss(&r);
+        yv = a * yv + b * rng_gauss(&r);
+        S->walk_F[i] = yF;
+        S->walk_v[i] = yv;
+    }
+}
+
+static double walk_eval(const double *tab, long n, double t)
+{
+    double x = t * SIM_WALK_RATE;
+    long i = (long)x;
+    if (i < 0) return tab[0];
+    if (i >= n - 1) return tab[n - 1];
+    double u = x - (double)i;
+    return tab[i] + u * (tab[i + 1] - tab[i]);
 }
 
 void sim_start(Sim *S)
@@ -157,7 +191,14 @@ void sim_step(Sim *S)
     for (int i = 0; i < S->nstr; i++) {
         const Env *ex = i == S->bowed ? &S->xF : &S->xFo[i];
         const Env *ea = i == S->bowed ? &S->aF : &S->aFo[i];
-        finger_apply(&S->finger, S->str[i], env_eval(ex, t), env_eval(ea, t));
+        double xf = env_eval(ex, t);
+        if (i == S->bowed && S->vib_depth_c > 0.0 && t > S->vib_t0 && env_eval(ea, t) > 0.0) {
+            /* pitch f = f0 L / (L - xF): a sinusoid of c cents about the stopped pitch moves the finger to L - (L - xF) 2^(-c/1200) */
+            double c = S->vib_depth_c * sin(2.0 * M_PI * S->vib_rate * (t - S->vib_t0));
+            double L = S->str[i]->sp.L;
+            xf = L - (L - xf) * pow(2.0, -c / 1200.0);
+        }
+        finger_apply(&S->finger, S->str[i], xf, env_eval(ea, t));
     }
 
     double nz = bow_noise_next(&S->noise, &S->rng, S->n, S->fs); /* always drawn on schedule */
@@ -168,6 +209,10 @@ void sim_step(Sim *S)
     if (S->bow_on) {
         vB = env_eval(&S->vB, t);
         F = env_eval(&S->FB, t);
+        if (S->walk_sd > 0.0) {
+            vB *= 1.0 + walk_eval(S->walk_v, S->walk_n, t);
+            F *= 1.0 + walk_eval(S->walk_F, S->walk_n, t);
+        }
         double beta = env_eval(&S->beta, t);
         double gate = fabs(S->vrel_prev) > 1e-4 ? 1.0 : 0.0;
         F *= 1.0 + nz * gate;

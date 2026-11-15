@@ -15,7 +15,7 @@ const char *body_mode_name(const Instrument *I, int i) { return i < I->body.nlea
 
 BodyOpts body_opts_default(const Instrument *I)
 {
-    BodyOpts o = {I->body.eta0, I->body.eta_exp, I->body.bridge_inertia, I->radiation.fc};
+    BodyOpts o = {I->body.eta0, I->body.eta_exp, I->body.bridge_inertia, I->radiation.fc, I->body.bridge_R, 1.0, 1.0};
     return o;
 }
 
@@ -23,8 +23,13 @@ double body_eta(const BodyOpts *o, double f) { return o->eta0 * pow(f / 500.0, o
 
 double body_bridge_gain(const Instrument *I, double f, double inertia)
 {
+    return body_bridge_gain_R(I, f, inertia, I->body.bridge_R);
+}
+
+double body_bridge_gain_R(const Instrument *I, double f, double inertia, double R)
+{
     const BodySpec *b = &I->body;
-    double K = bridge_K(b), R = b->bridge_R;
+    double K = bridge_K(b);
     double w = 2.0 * M_PI * f;
     double nr = K * R, ni = w;
     double dr = R * (K - inertia * w * w), di = R * w * K * inertia * R;
@@ -64,7 +69,7 @@ BodyModes *body_modes_build_opts(const Instrument *I, const BodyOpts *o)
     for (; n < sp->nlead; n++) {
         b->f[n] = sp->lead[n].f;
         b->Q[n] = sp->lead[n].Q;
-        b->m[n] = sp->lead[n].m;
+        b->m[n] = sp->lead[n].m * o->lead_mass_scale;
         b->cu[n] = sp->lead[n].cu;
         b->cw[n] = sp->lead[n].cw;
         b->r[n] = n < sp->ncompact ? sp->compact_r[n] : 0.7; /* compact monopole strengths; plate modes get signs below */
@@ -76,7 +81,8 @@ BodyModes *body_modes_build_opts(const Instrument *I, const BodyOpts *o)
         /* draws in Hz and kg, in this order per mode: mass, c_u, c_w, then the next gap */
         double mean_m = sp->stat_m500 * sqrt(f / 500.0);
         double m = mean_m * pow(10.0, sp->stat_m_sd_db * rng_gauss(&rng) / 20.0);
-        m /= body_bridge_gain(I, f, o->bridge_inertia);
+        m *= o->stat_mass_scale;
+        m /= body_bridge_gain_R(I, f, o->bridge_inertia, o->bridge_R);
         b->f[n] = f;
         b->Q[n] = 1.0 / body_eta(o, f);
         b->m[n] = m;

@@ -2,6 +2,10 @@
  *   altcello probe STRING BETA VB FB SECONDS OUTPREFIX [--fs 96000] [--finger XF] [--pluck]
  *       [--noise STD] [--body off|on] [--strings bowed|all] [--torsion on|off] [--wav OUT.wav]
  *       [--hair KH] [--eta0 X] [--eta-exp X] [--fc HZ] [--bridge-inertia-scale X]
+ * Diagnosis knobs (stage 5): [--noise-level via --noise] [--fb-env t:v,t:v,...] [--vb-env t:v,...] (replace the ramp-in of F_B / v_B by
+ * breakpoints, seconds:value, linear between) [--lead-mass-scale X] [--vib DEPTH_C RATE_HZ] (finger vibrato from 0.3 s, needs --finger)
+ * [--bridge-R-scale X] [--stat-mass-scale X] [--q2k STRING Q] [--mode NAME HZ] (E0-E3 diagnosis knobs)
+ * [--walk SD BW_HZ] (slow random walks of F_B and v_B, relative sd and bandwidth).
  * The last five are the physical knobs of stage 2 iteration 3: bow-hair stiffness N/m (default off), body loss factor at 500 Hz
  * and its frequency exponent, plate coincidence frequency (a fitted value of radiate_plate_fits), bridge inertia times 2.1e-6 kg m^2.
  * Writes OUTPREFIX.f32 (interleaved float32 LE, channels in OUTPREFIX.txt) and
@@ -39,13 +43,28 @@ static double cpu_seconds(void)
     return (double)ts.tv_sec + 1e-9 * (double)ts.tv_nsec;
 }
 
+/* "t:v,t:v,..." (seconds : value) into an envelope */
+static void parse_env(Env *e, const char *s)
+{
+    e->n = 0;
+    while (*s) {
+        char *end;
+        double t = strtod(s, &end);
+        if (*end != ':') break;
+        double v = strtod(end + 1, &end);
+        env_add(e, t, v);
+        s = *end == ',' ? end + 1 : end;
+    }
+}
+
 static int probe(int argc, char **argv)
 {
     if (argc < 8) {
         fprintf(stderr, "usage: altcello probe STRING BETA VB FB SECONDS OUTPREFIX [--fs 96000] [--finger XF] [--pluck] [--noise STD] [--body off|on] [--strings bowed|all] [--torsion on|off] [--wav OUT.wav] [--hair KH] [--eta0 X] [--eta-exp X] [--fc HZ] [--bridge-inertia-scale X]\n");
         return 2;
     }
-    const StringSpec *sp = instrument_string(instrument_cello(), argv[2]);
+    Instrument ic = *instrument_cello(); /* a private copy: the string loss options below edit it */
+    const StringSpec *sp = instrument_string(&ic, argv[2]);
     if (!sp) {
         fprintf(stderr, "unknown string %s\n", argv[2]);
         return 2;
@@ -58,7 +77,9 @@ static int probe(int argc, char **argv)
     int body = 0, all = 0, torsion = 1;
     const char *wavpath = NULL;
     double hair = 0.0;
-    BodyOpts bo = body_opts_default(instrument_cello());
+    BodyOpts bo = body_opts_default(&ic);
+    const char *fbenv = NULL, *vbenv = NULL;
+    double vibc = 0.0, vibr = 0.0, walk_sd = 0.0, walk_bw = 0.0;
     for (int i = 8; i < argc; i++) {
         if (!strcmp(argv[i], "--fs") && i + 1 < argc) fs = atof(argv[++i]);
         else if (!strcmp(argv[i], "--finger") && i + 1 < argc) xF = atof(argv[++i]);
@@ -72,17 +93,43 @@ static int probe(int argc, char **argv)
         else if (!strcmp(argv[i], "--eta0") && i + 1 < argc) bo.eta0 = atof(argv[++i]);
         else if (!strcmp(argv[i], "--eta-exp") && i + 1 < argc) bo.eta_exp = atof(argv[++i]);
         else if (!strcmp(argv[i], "--fc") && i + 1 < argc) bo.fc = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--fb-env") && i + 1 < argc) fbenv = argv[++i];
+        else if (!strcmp(argv[i], "--vb-env") && i + 1 < argc) vbenv = argv[++i];
+        else if (!strcmp(argv[i], "--lead-mass-scale") && i + 1 < argc) bo.lead_mass_scale = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--vib") && i + 2 < argc) { vibc = atof(argv[i + 1]); vibr = atof(argv[i + 2]); i += 2; }
+        else if (!strcmp(argv[i], "--walk") && i + 2 < argc) { walk_sd = atof(argv[i + 1]); walk_bw = atof(argv[i + 2]); i += 2; }
+        else if (!strcmp(argv[i], "--bridge-R-scale") && i + 1 < argc) bo.bridge_R *= atof(argv[++i]);
+        else if (!strcmp(argv[i], "--stat-mass-scale") && i + 1 < argc) bo.stat_mass_scale = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--q2k") && i + 2 < argc) { /* STRING Q: sigma1 so that a partial at 2 kHz has quality factor Q */
+            int si = instrument_string_index(&ic, argv[i + 1]);
+            if (si < 0) { fprintf(stderr, "unknown string %s\n", argv[i + 1]); return 2; }
+            StringSpec *q = &ic.str[si];
+            double c = 2.0 * q->L * q->f0, w = 2.0 * M_PI * 2000.0, rate = w / (2.0 * atof(argv[i + 2]));
+            q->sigma1 = (rate - q->sigma0) / ((w / c) * (w / c));
+            i += 2;
+        }
+        else if (!strcmp(argv[i], "--mode") && i + 2 < argc) { /* NAME FREQ: move a named table mode */
+            int found = 0;
+            for (int m = 0; m < ic.body.nlead; m++)
+                if (!strcmp(ic.body.lead[m].name, argv[i + 1])) { ic.body.lead[m].f = atof(argv[i + 2]); found = 1; }
+            if (!found) { fprintf(stderr, "unknown mode %s\n", argv[i + 1]); return 2; }
+            i += 2;
+        }
         else if (!strcmp(argv[i], "--bridge-inertia-scale") && i + 1 < argc) bo.bridge_inertia *= atof(argv[++i]);
     }
     Sim S;
     if (body || all) {
         SimOpts so = {body, all, 0, &bo};
-        sim_init_instrument(&S, instrument_cello(), fs, &so, sp->name);
-    } else sim_init(&S, instrument_cello(), sp, fs);
+        sim_init_instrument(&S, &ic, fs, &so, sp->name);
+    } else sim_init(&S, &ic, sp, fs);
     if (hair > 0.0) hair_init(&S.hair, hair, S.k);
     S.bow_noise_level = noise;
     S.torsion_on = torsion;
     sim_set_bow(&S, beta, vB, FB, 0.03);
+    if (fbenv) parse_env(&S.FB, fbenv);
+    if (vbenv) parse_env(&S.vB, vbenv);
+    if (vibc > 0.0) { S.vib_depth_c = vibc; S.vib_rate = vibr; S.vib_t0 = 0.3; }
+    if (walk_sd > 0.0) sim_set_walk(&S, walk_sd, walk_bw, secs);
     if (pluck) {
         S.bow_on = 0;
     }
