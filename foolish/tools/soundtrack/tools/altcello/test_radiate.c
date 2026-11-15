@@ -7,7 +7,8 @@
  *  d) with a white bridge force the compact and the plate paths have equal power in the octave 212-424 Hz when scaled by
  *     G_PLATE (the one relative level of the model), within 1 dB;
  *  e) the old failure: the radiated spectrum no longer carries the mass-line response of the low modes flat to 16 kHz: with a white
- *     bridge force the 3-8 kHz power spectral density sits more than 8 dB below the 212-424 Hz one (flat-acceleration model: 0 dB). */
+ *     bridge force the 3-8 kHz power spectral density sits more than 8 dB below the 212-424 Hz one (the old acceleration model, p = sum r_k q_k'':
+ *     +12.5 dB; measured -10.6 dB). */
 #include "analysis.h"
 #include "body.h"
 #include "rng.h"
@@ -125,8 +126,8 @@ static void check_paths(void)
     Spectrum *st = spec_make(pc, n, FS, 1);
     double lo = band_power(st, 212.0, 424.0), hi = band_power(st, 3000.0, 8000.0);
     double hi_db = 10.0 * log10((hi / 5000.0) / (lo / 212.0)); /* power per Hz */
-    printf("T16e total pressure, white bridge force: 3-8 kHz power density %.1f dB re the 212-424 Hz band (flat-acceleration model: 0 dB)\n", hi_db);
-    CHECK(hi_db < -8.0, "3-8 kHz density is only %.1f dB below the 212-424 Hz band", hi_db);
+    printf("T16e total pressure, white bridge force: 3-8 kHz power density %.1f dB re the 212-424 Hz band (the old acceleration model radiates +12.5 dB here)\n", hi_db);
+    CHECK(hi_db < -8.0, "3-8 kHz density is %.1f dB re the 212-424 Hz band, want below -8", hi_db);
     spec_free(sc);
     spec_free(sp);
     spec_free(st);
