@@ -265,3 +265,19 @@ The stem is first resampled to the engine's 48 kHz so every piece lands on whole
 `--no-share-rising` keeps a RISING sample (a swell: envelope peak after 50 percent of its length, first 30 ms more than 9 dB under the peak) for its own segment only.
 `compare.py` gains a glitch section per stem (`glitch_*` rows; `overall` and every other number are unchanged): null residual after the best lag within 5 ms and one gain, dip and bump runs and seconds against the original's 8 ms envelope, level steps, clicks, residual periodicity, and with `--joins-drums|bass|other FILE` (one join time in seconds per line) the joins that dip within plus or minus 20 ms.
 Tests: `python3 -I test_glitch.py`; the crossfade and sharing checks are in test_extract.sh.
+
+## wa03: note-level recreation of one Lyria clip (cello and piano)
+
+Pipeline (venv python): `wa03_nmf.py` (templates fitted to the CQT: piano decaying, cello sustained), `wa03_post.py` (exact onsets, pedal), `wa03_resid.py` (missing notes), `wa03_vel.py` and `wa03_timing.py` (closed loops against the original), `wa03_eqloop.py` (master EQ), `wa03_events.py` (notes to EVENTS), `wa03_build.sh` (render with `replica/wa03_play.c`, instrument as parameter), `wa03_iter.py` (scores and the iteration figure), `wa03_summary.py`, `wa03_results.py`.
+Data and numbers: `replica/wa03/` (RESULTS.md, ITERATION_LOG.md, BUILD.md).
+Tests: `python test_wa03.py` with the venv python.
+
+Mutation checks of test_wa03.py (each break, the assertion that failed):
+
+| test | mutation | assertion that failed |
+|---|---|---|
+| events | BPM 120 to 60 | beat must be exactly 2 * seconds |
+| vel | velocity step sign flipped | the too quiet note must end above the right one: 0.542 0.350 |
+| timing | move sign flipped | the late note must move earlier, got 1.0293 |
+| resid | missing-note test inverted | the sounding C4 the replica lacks must be added at about 1.0 s |
+| pedal | peak finder on the negated curve | pedal lifts at 5.50 7.64 (not near 4.0) |
