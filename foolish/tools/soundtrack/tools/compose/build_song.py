@@ -69,7 +69,7 @@ def main():
                 lines += [f"# scene: ENGINE {f[2]}" + (f" ({f[4]})" if len(f) > 4 else "")] + engine_section.before + [sec[0]] + engine_section.inside + sec[1:] + [""]
             else: lines += [f"# scene: ENGINE {f[2]}" + (f" ({f[4]})" if len(f) > 4 else ""), f"TEMPO {f[3]}"] + sec + [""]
         elif f[0] == "LYRIA":
-            cmd = [sys.executable, "-I", TO_SCORE, "--notes", f[1], "--start", f[2], "--end", f[3], "--bpm", f[4], "--transpose", f[6], "--name", f[8], "--key", "x"]
+            cmd = [sys.executable, "-I", TO_SCORE, "--notes", f[1], "--start", f[2], "--end", f[3], "--bpm", f[4], "--transpose", f[6], "--name", f[8], "--key", "x", "--quantum", "0.125"]   # a 32nd-note grid: a clip whose tempo the grid cannot fit is still played within about 25 ms of where its notes were
             if f[5] != "auto": cmd += ["--downbeat", f[5]]
             for p in f[9].split(";"):
                 if p.strip(): cmd += ["--part", p.strip()]

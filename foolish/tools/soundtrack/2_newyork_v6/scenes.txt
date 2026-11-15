@@ -1,0 +1,12 @@
+# New York v6, as in COMBINATION_PLANS.md. F minor, 92, one flip to 122.
+ENGINE | ../2_newyork/score.txt | Flash: Needle drop | 92
+LYRIA | /Users/alex/Music/foolish_cities_v5/analysis/notes/2_newyork/ny_16_clip_rhodes_808_filter_moves_0-end.tsv | 0.08 | 30.7 | 92 | 0.08 | 0 | 92 | Lyria ny_16: that sounds like NYC | bass=808,range=C1-C3;other=RHODES,range=C3-C6,maxlanes=4 | /Users/alex/Music/foolish_cities_v5/analysis/stems/htdemucs/ny_16_clip_rhodes_808_filter_moves,low=KICK,mid=SNARE,high=HAT
+LYRIA | /Users/alex/Music/foolish_cities_v5/analysis/notes/2_newyork/ny_13_clip_dark_piano_no_scratch_0-end.tsv | 0.455 | 30.7 | 92 | 0.455 | 3 | 92 | Lyria ny_13: dark piano | bass=808,range=C1-C3;other=PIANO,range=C2-C6,maxlanes=4 | /Users/alex/Music/foolish_cities_v5/analysis/stems/htdemucs/ny_13_clip_dark_piano_no_scratch,low=KICK,mid=SNARE,high=HAT
+ENGINE | ../2_newyork/score.txt | Dusty: Walkdown | 92
+LYRIA | /Users/alex/Music/foolish_cities_v5/analysis/notes/2_newyork/ny_14_clip_grainy_intro_then_beat_0-end.tsv | 20.05 | 30.3 | 92 | 0.264 | -5 | 92 | Lyria ny_14: the beat alone | bass=808,range=C1-C3 | /Users/alex/Music/foolish_cities_v5/analysis/stems/htdemucs/ny_14_clip_grainy_intro_then_beat,low=KICK,mid=SNARE,high=HAT
+LYRIA | /Users/alex/Music/foolish_cities_v5/analysis/notes/2_newyork/ny_15_clip_garage_house_piano_stabs_0-end.tsv | 25.23 | 30.7 | 122 | 3.59 | -2 | 122 | Lyria ny_15: garage flip | bass=BASS,range=C1-C3;other=PIANO,range=C3-C6,maxlanes=4 | /Users/alex/Music/foolish_cities_v5/analysis/stems/htdemucs/ny_15_clip_garage_house_piano_stabs,low=KICK,mid=CLAP,high=OHAT
+LYRIA | /Users/alex/Music/foolish_cities_v5/analysis/notes/2_newyork/ny_15_clip_garage_house_piano_stabs_0-end.tsv | 25.23 | 30.7 | 122 | 3.59 | -2 | 122 | Lyria ny_15: garage flip again | bass=BASS,range=C1-C3;other=PIANO,range=C3-C6,maxlanes=4 | /Users/alex/Music/foolish_cities_v5/analysis/stems/htdemucs/ny_15_clip_garage_house_piano_stabs,low=KICK,mid=CLAP,high=OHAT
+ENGINE | ../2_newyork/score.txt | Cypher: Scratch | 92
+ENGINE | ../2_newyork/score.txt | Cypher: Pass the mic | 92
+LYRIA | /Users/alex/Music/foolish_cities_v5/analysis/notes/2_newyork/ny_16_clip_rhodes_808_filter_moves_0-end.tsv | 0.08 | 10.52 | 92 | 0.08 | 0 | 92 | Lyria ny_16: once more | bass=808,range=C1-C3;other=RHODES,range=C3-C6,maxlanes=4 | /Users/alex/Music/foolish_cities_v5/analysis/stems/htdemucs/ny_16_clip_rhodes_808_filter_moves,low=KICK,mid=SNARE,high=HAT
+ENGINE | ../2_newyork/score.txt | Cypher: Needle | 92
