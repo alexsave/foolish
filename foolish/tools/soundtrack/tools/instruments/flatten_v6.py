@@ -8,9 +8,10 @@ Usage: python3 -I flatten_v6.py IN.wav OUT.wav --root MIDI [--keep-attack-ms N]
      its median over the 25 to 90 percent stretch is removed by a second time-varying read (step 2^(-c/1200), cubic spline), clipped
      to 40 cents, held at its edge values and faded in over 0.15 s after the attack and out over the last 0.10 s;
   pass 2 (harmonics): for each harmonic k of the root up to 10 kHz (at most 40) the mono magnitude A_k(t) is taken by heterodyne
-     (40 Hz low pass); the gain g_k(t) = median(A_k over 25 to 90 percent) / A_k, limited to +-9 dB and applied to that harmonic's
+     (40 Hz low pass); the gain g_k(t) = median(A_k over 25 to 90 percent) / A_k, limited to +-24 dB and applied to that harmonic's
      component (same gain on both channels) as y += (g_k - 1) * component_k. Harmonics more than 45 dB under the strongest
-     are left alone (they are noise-dominated). The gain has the same fades as pass 1.
+     are left alone (they are noise-dominated). The gain has the same fades as pass 1. The same pass also removes each harmonic's
+     phase deviation from its median over the sustain (phase lock, LOCK_PHASE), so that the sustain is exactly periodic.
   Everything not harmonic (noise, bow, breath) is untouched.
 Output: 24 bit wav like flatten_sample. Prints one line: before and after (pitch pp c, level pp dB, harmonic pp dB) over 25 to 90 percent.
 A sample whose v5 flattening was UNRELIABLE is copied through unchanged and the line starts with UNRELIABLE.
@@ -27,12 +28,13 @@ import lyria_notes_extract as le
 import vibmod
 
 MAX_C = 40.0
-MAX_G_DB = 9.0
+MAX_G_DB = 24.0
 FADE_IN_S = 0.15
 FADE_OUT_S = 0.10
 SUS = (0.25, 0.90)
 KMAX = 40
 PITCH_ITERS = 3
+LOCK_PHASE = True
 REL_FLOOR_DB = -45.0
 
 
@@ -75,11 +77,12 @@ def harmonic_pass(y, sr, f0, t_start):
     sos = butter(4, 40.0, fs=sr, output="sos")
     t = np.arange(n) / sr
     ks = [k for k in range(1, KMAX + 1) if k * f0 < min(10000.0, 0.45 * sr)]
-    amps = {}
+    amps, phs = {}, {}
     for k in ks:
         z = mono * np.exp(-2j * np.pi * k * f0 * t)
         z = sosfiltfilt(sos, z.real) + 1j * sosfiltfilt(sos, z.imag)
         amps[k] = np.abs(z)
+        phs[k] = np.unwrap(np.angle(z))
     peak = max(np.median(amps[k][sustain_slice(n)]) for k in ks)
     w = weight(n, sr, t_start)
     out = y.copy()
@@ -93,11 +96,15 @@ def harmonic_pass(y, sr, f0, t_start):
         g_db[:ew] = g_db[ew]
         g_db[-ew:] = g_db[-ew - 1]
         g = 10 ** (g_db * w / 20.0)
+        # phase lock: the harmonic's phase deviation from its own median over the sustain is rotated away, so the harmonic is a steady
+        # sinusoid of the mean fundamental; every loop jump then lands on the same phase of every harmonic
+        th = (phs[k] - np.median(phs[k][sustain_slice(n)])) * w if LOCK_PHASE else 0.0
+        rot = np.exp(-1j * th)
         for ch in range(y.shape[1]):
             z = y[:, ch] * np.exp(-2j * np.pi * k * f0 * t)
             z = sosfiltfilt(sos, z.real) + 1j * sosfiltfilt(sos, z.imag)
-            comp = 2 * (z * np.exp(2j * np.pi * k * f0 * t)).real
-            out[:, ch] += (g - 1.0) * comp
+            e = np.exp(2j * np.pi * k * f0 * t)
+            out[:, ch] += 2 * (z * (g * rot - 1.0) * e).real
     return out
 
 
