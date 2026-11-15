@@ -13,6 +13,8 @@
 //       WASH s    the last 1.5 s of the clip also feed a hall of this reverb time, which rings past the clip's end
 //       LPOUT s   over the last s seconds a low-pass closes from 18 kHz to 250 Hz (a DJ filter fade)
 //       HPIN s    over the first s seconds a high-pass opens from 1.2 kHz down to 20 Hz
+//       SNAPIN w / SNAPOUT w   move the in / out point to the strongest drum onset within +-w seconds (a kick on a bar
+//                 line), 4 ms before it, so a butt join between two snapped points keeps the beat
 //       LABEL txt a name for the sections file (one word; use _ for spaces)
 //   MASTER <lufs> <true_peak_db>       final loudness and ceiling (default -16 -1.3); gain only, the limiter runs only if
 //                                      the peak would pass the ceiling, and it says so
@@ -23,6 +25,16 @@ typedef struct { char name[32]; float *L, *R; long n; } Src;
 typedef struct { int src; double in, out, over, gap, fin, fout, gain, wash, lpout, hpin; double level; int fin_set, fout_set; char label[64]; long at, len; } Clip;
 static Src g_src[64]; static int g_nsrc; static Clip g_clip[256]; static int g_nclip;
 
+// the strongest onset near t: the largest rise of the 8 ms energy (low band weighted 3x) against the 40 ms before it
+static double snap(const Src *s, double t, double w) {
+    long hop = SR / 500, a = (long)((t - w) * SR), b = (long)((t + w) * SR), win = SR * 8 / 1000, pre = SR * 40 / 1000; if (a < pre) a = pre; if (b > s->n - win) b = s->n - win;
+    double best = -1, bt = t; Op lp = {0};
+    for (long i = a; i < b; i += hop) { double e1 = 0, e0 = 0, l1 = 0, l0 = 0; lp.y = 0;
+        for (long k = i - pre; k < i + win; k++) { double x = 0.5 * (s->L[k] + s->R[k]), y = op_lp(&lp, x, 150); if (k < i) { e0 += x * x; l0 += y * y; } else { e1 += x * x; l1 += y * y; } }
+        double rise = (e1 / win + 3 * l1 / win) / (e0 / pre + 3 * l0 / pre + 1e-7) * sqrt(e1 / win + 3 * l1 / win);
+        if (rise > best) { best = rise; bt = (double)i / SR; } }
+    return bt - 0.004;
+}
 static int src_find(const char *n) { for (int i = 0; i < g_nsrc; i++) if (!strcmp(g_src[i].name, n)) return i; fprintf(stderr, "splice: no SRC %s\n", n); exit(1); }
 
 int main(int argc, char **argv) {
@@ -45,7 +57,9 @@ int main(int argc, char **argv) {
             for (int i = 4; i + 1 < nt; i += 2) { double v = atof(tok[i + 1]); const char *k = tok[i];
                 if (!strcmp(k, "OVER")) c->over = v; else if (!strcmp(k, "GAP")) c->gap = v; else if (!strcmp(k, "FIN")) { c->fin = v; c->fin_set = 1; }
                 else if (!strcmp(k, "FOUT")) { c->fout = v; c->fout_set = 1; } else if (!strcmp(k, "GAIN")) c->gain = v; else if (!strcmp(k, "WASH")) c->wash = v;
-                else if (!strcmp(k, "LPOUT")) c->lpout = v; else if (!strcmp(k, "HPIN")) c->hpin = v; else if (!strcmp(k, "LABEL")) snprintf(c->label, sizeof c->label, "%s", tok[i + 1]);
+                else if (!strcmp(k, "LPOUT")) c->lpout = v; else if (!strcmp(k, "HPIN")) c->hpin = v; else if (!strcmp(k, "SNAPIN")) { double o = c->in; c->in = snap(&g_src[c->src], c->in, v); fprintf(stderr, "snap in  %s %.3f -> %.3f\n", tok[1], o, c->in); }
+                else if (!strcmp(k, "SNAPOUT")) { double o = c->out; c->out = snap(&g_src[c->src], c->out, v); fprintf(stderr, "snap out %s %.3f -> %.3f\n", tok[1], o, c->out); }
+                else if (!strcmp(k, "LABEL")) snprintf(c->label, sizeof c->label, "%s", tok[i + 1]);
                 else { fprintf(stderr, "splice: unknown key %s\n", k); return 1; } }
             if (c->out > (double)g_src[c->src].n / SR + 1e-6 || c->in < 0 || c->out <= c->in) { fprintf(stderr, "splice: clip %s %.2f-%.2f is outside its source (%.2f s)\n", tok[1], c->in, c->out, (double)g_src[c->src].n / SR); return 1; }
         } else { fprintf(stderr, "splice: cannot read line starting %s\n", tok[0]); return 1; }
