@@ -16,7 +16,7 @@
  * th0 = time n-1, th1 = n, th2 = n+1. Energy per unit I_p, see torsion_energy. */
 #ifndef ALTCELLO_TORSION_H
 #define ALTCELLO_TORSION_H
-#include "string_params.h"
+#include "instrument.h"
 
 typedef struct {
     double fs, k, h, ct, sigma, Ip, rs, L, kk; /* kk = k^2 / Ip */

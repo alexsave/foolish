@@ -82,9 +82,9 @@ static void chk_cb(const Sim *S, long i, void *u)
 
 static void consistency(void)
 {
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     Sim S;
-    sim_init(&S, sp, 96000.0);
+    sim_init(&S, instrument_cello(), sp, 96000.0);
     hair_init(&S.hair, 1e4, S.k);
     sim_set_bow(&S, 0.1, 0.1, 0.6, 0.03);
     sim_start(&S);
@@ -99,12 +99,12 @@ static void consistency(void)
 
 static void matters(void)
 {
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     double h[2];
     for (int on = 0; on < 2; on++) {
         SimOpts o = {1, 0, 0, NULL};
         Sim S;
-        sim_init_instrument(&S, 96000.0, &o, "D3");
+        sim_init_instrument(&S, instrument_cello(), 96000.0, &o, "D3");
         CHECK(S.hair.on == 0, "the hair must be off by default");
         if (on) hair_init(&S.hair, 1e4, S.k);
         sim_set_bow(&S, 0.1, 0.1, 0.526, 0.03);

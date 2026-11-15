@@ -18,7 +18,7 @@ int main(int argc, char **argv)
     double F[7];
     for (int i = 0; i < 6; i++) F[i] = 0.3 * pow(5.0, i / 5.0);
     F[6] = 0.526;
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     FILE *out = fopen(argv[1], "w");
     if (!out) { perror(argv[1]); return 1; }
     fprintf(out, "# k_h F class onsets_per_period corr slip_frac cents settle_s hump_dB\n");
@@ -26,7 +26,7 @@ int main(int argc, char **argv)
         for (int b = 0; b < 7; b++) {
             SimOpts o = {1, 0, 0, NULL};
             Sim S;
-            sim_init_instrument(&S, 96000.0, &o, "D3");
+            sim_init_instrument(&S, instrument_cello(), 96000.0, &o, "D3");
             if (kh[a] > 0.0) hair_init(&S.hair, kh[a], S.k);
             sim_set_bow(&S, 0.1, 0.1, F[b], 0.03);
             sim_start(&S);

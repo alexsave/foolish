@@ -8,9 +8,12 @@
 #include <stdio.h>
 #include <string.h>
 
-/* recorded from the pre-refactor code (string_params.c and body_params.c) */
-#define REF_D3 0xcba59a5cd4411389ULL
-#define REF_C2 0xb484bc2c569877f3ULL
+/* recorded from the pre-refactor code (string_params.c and body_params.c), built with -ffp-contract=off: with the default
+   contraction the refactor (constants that were compile-time literals are now loaded from the Instrument) changes which
+   multiply-adds the compiler fuses and moves the last bit of some samples; the Makefile now builds with -ffp-contract=off so
+   the arithmetic does not depend on what the compiler can see as constant */
+#define REF_D3 0x3179987b8cae4f4bULL
+#define REF_C2 0xc4533b1282189180ULL
 
 static uint64_t hash_trace(const Trace *tr)
 {
@@ -26,7 +29,7 @@ static uint64_t probe(const char *name, double F)
 {
     Sim S;
     SimOpts so = {1, 1, 0, NULL};
-    sim_init_instrument(&S, 96000.0, &so, name);
+    sim_init_instrument(&S, instrument_cello(), 96000.0, &so, name);
     sim_set_bow(&S, 0.1, 0.1, F, 0.03);
     sim_start(&S);
     Trace *tr = sim_run(&S, 1.0, NULL, NULL);

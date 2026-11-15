@@ -46,15 +46,13 @@
 #ifndef ALTCELLO_RADIATE_BODY_H
 #define ALTCELLO_RADIATE_BODY_H
 
-#define RADIATE_NCOMPACT 4      /* A0 CBR B1- B1+ */
-#define RADIATE_A_EFF 0.25      /* m, equivalent body radius (ASSUMED) */
+#include "instrument.h"
+
+/* The instrument-specific values (number of compact modes, a_eff, plate area and perimeter, f_c, G_PLATE) are in the
+ * Instrument's RadiationSpec / BodySpec (instrument_cello.c); only the speed of sound is a constant here. */
 #define RADIATE_C_AIR 343.0     /* m/s */
-#define RADIATE_AREA 0.17       /* m^2, plate area (ASSUMED) */
-#define RADIATE_PERIM 2.0       /* m, plate perimeter (ASSUMED) */
-#define RADIATE_FC_DEFAULT 3000.0
 #define RADIATE_NSEC 6
 #define RADIATE_NFC 6
-#define RADIATE_G_PLATE 1.245   /* measured by T16d (see above): compact / plate power 1.90 dB in 212-424 Hz for a white bridge force */
 
 typedef struct {
     double fc, K;
@@ -62,8 +60,8 @@ typedef struct {
 } PlateFit;
 extern const PlateFit radiate_plate_fits[RADIATE_NFC]; /* generated, charts/fit_plate_filter.py */
 
-double radiate_plate_sigma(double f, double fc);       /* the formula above, clamped to 1 */
-double radiate_compact_mag(double f);                  /* |H_c| analog, f in Hz */
+double radiate_plate_sigma(const RadiationSpec *rs, double f, double fc); /* the formula above, clamped to 1 */
+double radiate_compact_mag(const RadiationSpec *rs, double f);            /* |H_c| analog, f in Hz */
 
 typedef struct {
     double fs;
@@ -75,7 +73,7 @@ typedef struct {
 } Radiator;
 
 /* returns 0, or -1 if fc is not one of the fitted critical frequencies (the Radiator is then unusable) */
-int radiator_init(Radiator *R, double fs, double fc, double g_plate);
+int radiator_init(Radiator *R, const RadiationSpec *rs, double fs, double fc, double g_plate);
 /* vc = sum_k r_k q_k' of the compact modes, vp = sum_k s_k q_k' of the plate modes; returns the pressure */
 double radiator_step(Radiator *R, double vc, double vp);
 double radiator_step_compact(Radiator *R, double vc);

@@ -5,7 +5,7 @@
  * leapfrog of the whole instrument (see sim.c). */
 #ifndef ALTCELLO_BODY_H
 #define ALTCELLO_BODY_H
-#include "body_params.h"
+#include "body_modes.h"
 #include "radiate_body.h"
 
 typedef struct {
@@ -13,7 +13,7 @@ typedef struct {
     double fs, k;
     double *A, *B, *Gu, *Gw;     /* q2 = A q1 + B q0 + Gu Fu + Gw Fw */
     double *q0, *q1, *q2;
-    double *m, *w2, *cu, *cw, *r; /* mass, prewarped w^2, participations, radiation weights (compact strengths / plate signs, body_params.h) */
+    double *m, *w2, *cu, *cw, *r; /* mass, prewarped w^2, participations, radiation weights (compact strengths / plate signs, body_modes.h) */
     double *rp;      /* r for the plate modes, 0 for the compact ones */
     int nc;          /* number of compact modes (the first nc) */
     Radiator rad;    /* the physical radiation filters (radiate_body.h) */
@@ -24,8 +24,8 @@ typedef struct {
     double p;        /* radiated pressure at n: compact path + plate path of the modal velocities (radiate_body.h) */
 } Body;
 
-/* opts: NULL for the default knobs (only opts->fc is used here) */
-Body *body_new(const BodyModes *bm, double fs, int lossless, const BodyOpts *opts);
+/* opts: NULL for the instrument's default knobs (only opts->fc is used here) */
+Body *body_new(const Instrument *I, const BodyModes *bm, double fs, int lossless, const BodyOpts *opts);
 void body_free(Body *b);
 void body_step(Body *b, double Fu, double Fw); /* force on the bridge at time n */
 double body_energy(const Body *b);             /* between the last two states, J */

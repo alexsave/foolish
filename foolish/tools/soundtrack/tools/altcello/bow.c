@@ -28,17 +28,17 @@
 #include "bow.h"
 #include <math.h>
 
-double bow_phi(double v)
+double bow_phi(const Friction *fr, double v)
 {
     double a = fabs(v);
-    double p = 0.4 * exp(-a / 0.01) + 0.45 * exp(-a / 0.1) + 0.35;
+    double p = fr->a1 * exp(-a / fr->v1) + fr->a2 * exp(-a / fr->v2) + fr->c;
     return v < 0.0 ? -p : p;
 }
 
-double bow_dphi(double v)
+double bow_dphi(const Friction *fr, double v)
 {
     double a = fabs(v);
-    return -40.0 * exp(-a / 0.01) - 4.5 * exp(-a / 0.1);
+    return -(fr->a1 / fr->v1) * exp(-a / fr->v1) - (fr->a2 / fr->v2) * exp(-a / fr->v2);
 }
 
 void bow_weights(const String *s, double xB, double width, int *lo, int *hi, double *J)
@@ -71,13 +71,13 @@ void bow_weights_grid(double h, int N, double xB, double width, int *lo, int *hi
 }
 
 /* largest root of g(w) = w + G phi(w) - aq, Newton from the right; 0 if none */
-static int largest_root(double aq, double G, double *w)
+static int largest_root(const Friction *fr, double aq, double G, double *w)
 {
     double x = aq;
     for (int it = 0; it < 100; it++) {
-        double p = bow_phi(x);
+        double p = bow_phi(fr, x);
         double g = x + G * p - aq;
-        double gp = 1.0 + G * bow_dphi(x);
+        double gp = 1.0 + G * bow_dphi(fr, x);
         if (gp <= 1e-12) return 0;
         double xn = x - g / gp;
         if (xn <= 0.0) return 0;
@@ -92,7 +92,7 @@ static int largest_root(double aq, double G, double *w)
     return 0;
 }
 
-double bow_solve(double q, double G, double vprev, int stuck_prev, double *Phi, int *stuck)
+double bow_solve(const Friction *fr, double q, double G, double vprev, int stuck_prev, double *Phi, int *stuck)
 {
     (void)vprev;
     if (G < 1e-300) {
@@ -101,23 +101,23 @@ double bow_solve(double q, double G, double vprev, int stuck_prev, double *Phi, 
         return q;
     }
     double aq = fabs(q), sg = q < 0.0 ? -1.0 : 1.0, w;
-    if (aq <= BOW_PHI_STATIC * G) {
-        if (stuck_prev || !largest_root(aq, G, &w)) {
+    if (aq <= fr->mu_static * G) {
+        if (stuck_prev || !largest_root(fr, aq, G, &w)) {
             *Phi = q / G;
             *stuck = 1;
             return 0.0;
         }
-    } else if (!largest_root(aq, G, &w)) {
+    } else if (!largest_root(fr, aq, G, &w)) {
         /* cannot happen (unique root); safe bisection on [0, aq] */
         double lo = 0.0, hi = aq;
         for (int i = 0; i < 200; i++) {
             double m = 0.5 * (lo + hi);
-            if (m + G * bow_phi(m) - aq < 0.0) lo = m; else hi = m;
+            if (m + G * bow_phi(fr, m) - aq < 0.0) lo = m; else hi = m;
         }
         w = 0.5 * (lo + hi);
     }
     *stuck = 0;
-    *Phi = sg * bow_phi(w);
+    *Phi = sg * bow_phi(fr, w);
     return sg * w;
 }
 

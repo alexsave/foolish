@@ -12,7 +12,7 @@
 
 int main(void)
 {
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     double betas[3] = {0.05, 0.1, 0.2};
     FILE *out = fopen("out/sweep.txt", "w");
     CHECK(out != NULL, "cannot open out/sweep.txt (run via make test)");
@@ -25,7 +25,7 @@ int main(void)
         for (int i = 0; i < NF; i++) {
             F[i] = 0.02 * pow(500.0, (double)i / (NF - 1));
             Sim S;
-            sim_init(&S, sp, 96000.0);
+            sim_init(&S, instrument_cello(), sp, 96000.0);
             sim_set_bow(&S, betas[b], 0.1, F[i], 0.03);
             sim_start(&S);
             Trace *tr = sim_run(&S, RUNLEN, NULL, NULL);

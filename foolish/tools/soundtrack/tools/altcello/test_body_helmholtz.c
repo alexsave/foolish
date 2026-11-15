@@ -18,7 +18,7 @@ static Trace *run_str(const char *name, int body, int all, double beta, double F
 {
     SimOpts o = {body, all, 0, 0};
     Sim S;
-    sim_init_instrument(&S, 96000.0, &o, name);
+    sim_init_instrument(&S, instrument_cello(), 96000.0, &o, name);
     sim_set_bow(&S, beta, 0.1, F, 0.03);
     sim_start(&S);
     Trace *tr = sim_run(&S, secs, NULL, NULL);
@@ -44,7 +44,7 @@ static void report(const char *tag, const Trace *tr, double f0)
 
 int main(void)
 {
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     double betas[3] = {0.05, 0.1, 0.2};
     /* T3 conditions: choose the F in 0.2..3 N that passes with the best correlation, body on */
     double bestF = 0, bestc = -1;
@@ -102,7 +102,7 @@ int main(void)
     CHECK(nh1 > 0, "no Helmholtz point at beta 0.1 with the body on");
 
     /* C2 with the body on (bowed string only), beta 0.1 and 0.15, 0.2..3 N: written for the chart */
-    const StringSpec *c2 = string_spec("C2");
+    const StringSpec *c2 = instrument_string(instrument_cello(), "C2");
     FILE *oc = fopen("out/sweep_body_c2.txt", "w");
     int nc2 = 0;
     for (int b = 0; b < 2; b++) {

@@ -3,13 +3,13 @@
 #define ALTCELLO_BOW_H
 #include "rng.h"
 #include "altstring.h"
+#include "instrument.h"
 
 #define BOW_NOISE_RATE 4000 /* noise draws per simulated second: one every 0.25 ms */
 #define BOW_MAXPTS 64
-#define BOW_PHI_STATIC 1.2  /* phi(0+) = 0.4 + 0.45 + 0.35 */
 
-double bow_phi(double v);   /* friction curve, odd */
-double bow_dphi(double v);  /* d phi / d |v| for v > 0, negative */
+double bow_phi(const Friction *fr, double v);   /* friction curve, odd (constants: the instrument's BowSpec) */
+double bow_dphi(const Friction *fr, double v);  /* d phi / d |v| for v > 0, negative */
 
 /* raised-cosine bow weights J (1/m, sum J h = 1) on points lo..hi */
 void bow_weights(const String *s, double xB, double width, int *lo, int *hi, double *J);
@@ -19,7 +19,7 @@ void bow_weights_grid(double h, int N, double xB, double width, int *lo, int *hi
 /* Solve  v = q - G phi(v)  (G >= 0) with the Friedlander construction.
  * stuck_prev: the previous step was sticking. Returns v; *Phi = phi value
  * (the friction coefficient force/F_B); *stuck = 1 if sticking now. See bow.c. */
-double bow_solve(double q, double G, double vprev, int stuck_prev, double *Phi, int *stuck);
+double bow_solve(const Friction *fr, double q, double G, double vprev, int stuck_prev, double *Phi, int *stuck);
 
 /* Compliant bow-hair contact (stage 2 iteration 3, an option, default off; idea source Pitteroff and Woodhouse 1998,
  * the numbers are a parameter study, ASSUMED): the hair contact point is a small mass m on a spring k and damper r to

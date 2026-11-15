@@ -19,7 +19,7 @@ static double discrete_freq(const String *s, int p)
 static double *pluck_trace(const StringSpec *sp, double fs, double xfrac, double secs, long *n)
 {
     Sim S;
-    sim_init(&S, sp, fs);
+    sim_init(&S, instrument_cello(), sp, fs);
     S.bow_on = 0;
     sim_start(&S);
     sim_pluck(&S, xfrac * sp->L, 0.02 * sp->L, 1e-3);
@@ -44,7 +44,7 @@ static void energy_test(const StringSpec *sp0, int lossless)
     StringSpec sp = *sp0;
     if (lossless) sp.sigma0 = sp.sigma1 = 0.0;
     Sim S;
-    sim_init(&S, &sp, 96000.0);
+    sim_init(&S, instrument_cello(), &sp, 96000.0);
     S.bow_on = 0;
     sim_start(&S);
     sim_pluck(&S, 0.13 * sp.L, 0.02 * sp.L, 1e-3);
@@ -76,10 +76,10 @@ static void energy_test(const StringSpec *sp0, int lossless)
 
 int main(void)
 {
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     const char *names[4] = {"A3", "D3", "G2", "C2"};
     for (int i = 0; i < 4; i++) {
-        const StringSpec *q = string_spec(names[i]);
+        const StringSpec *q = instrument_string(instrument_cello(), names[i]);
         String *s = string_new(q, 96000.0);
         printf("string %s: rho %.5e kg/m, B = %.4e, N = %d, h = %.4f mm\n", q->name, string_rho(q), string_B(q), s->N, s->h * 1e3);
         string_free(s);

@@ -2,7 +2,7 @@
 #include <math.h>
 #include <stdlib.h>
 
-Body *body_new(const BodyModes *bm, double fs, int lossless, const BodyOpts *opts)
+Body *body_new(const Instrument *I, const BodyModes *bm, double fs, int lossless, const BodyOpts *opts)
 {
     Body *b = calloc(1, sizeof *b);
     int n = bm->n;
@@ -30,8 +30,8 @@ Body *body_new(const BodyModes *bm, double fs, int lossless, const BodyOpts *opt
         b->rp[i] = i < bm->ncompact ? 0.0 : bm->r[i];
     }
     b->nc = bm->ncompact;
-    BodyOpts def = body_opts_default();
-    if (radiator_init(&b->rad, fs, (opts ? opts : &def)->fc, RADIATE_G_PLATE)) {
+    BodyOpts def = body_opts_default(I);
+    if (radiator_init(&b->rad, &I->radiation, fs, (opts ? opts : &def)->fc, I->radiation.g_plate)) {
         free(b);
         return NULL;
     }

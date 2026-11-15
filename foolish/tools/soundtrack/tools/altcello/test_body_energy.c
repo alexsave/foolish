@@ -16,7 +16,7 @@ static void run(int lossless)
 {
     SimOpts o = {1, 1, lossless, 0};
     Sim S;
-    sim_init_instrument(&S, 96000.0, &o, "D3");
+    sim_init_instrument(&S, instrument_cello(), 96000.0, &o, "D3");
     S.bow_on = 0;
     sim_start(&S);
     /* pluck every string in both polarisations at different places */

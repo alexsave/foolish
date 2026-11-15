@@ -9,7 +9,7 @@
 static Trace *run(double fs, BowNoise *noise_out)
 {
     Sim S;
-    sim_init(&S, string_spec("D3"), fs);
+    sim_init(&S, instrument_cello(), instrument_string(instrument_cello(), "D3"), fs);
     sim_set_bow(&S, 0.1, 0.1, 0.4, 0.03);
     sim_start(&S);
     Trace *tr = sim_run(&S, 0.3, NULL, NULL);

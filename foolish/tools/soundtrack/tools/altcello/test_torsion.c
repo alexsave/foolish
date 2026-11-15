@@ -24,11 +24,11 @@ static void rec_cb(const Sim *S, long i, void *u)
 
 static void partials(void)
 {
-    StringSpec sp = *string_spec("D3");
+    StringSpec sp = *instrument_string(instrument_cello(), "D3");
     sp.zeta_t = 0.0;
     double fs = 96000.0;
     Sim S;
-    sim_init(&S, &sp, fs);
+    sim_init(&S, instrument_cello(), &sp, fs);
     S.bow_on = 0;
     sim_start(&S);
     sim_pluck_torsion(&S, 0, 0.137 * sp.L, 0.03 * sp.L, 0.1);
@@ -60,10 +60,10 @@ static void elog(const Sim *S, long i, void *u) { ((Log *)u)->E[i] = torsion_ene
 
 static void damping(void)
 {
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     double fs = 96000.0;
     Sim S;
-    sim_init(&S, sp, fs);
+    sim_init(&S, instrument_cello(), sp, fs);
     S.bow_on = 0;
     sim_start(&S);
     sim_pluck_torsion(&S, 0, 0.137 * sp->L, 0.03 * sp->L, 0.1);
@@ -85,7 +85,7 @@ static void damping(void)
 
 static void impedance(void)
 {
-    StringSpec sp = *string_spec("D3");
+    StringSpec sp = *instrument_string(instrument_cello(), "D3");
     sp.zeta_t = 0.0;
     double fs = 96000.0;
     Torsion *t = torsion_new(&sp, fs);
@@ -130,9 +130,9 @@ static void chk_cb(const Sim *S, long i, void *u)
 
 static void bow_solve_consistency(void)
 {
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     Sim S;
-    sim_init(&S, sp, 96000.0);
+    sim_init(&S, instrument_cello(), sp, 96000.0);
     sim_set_bow(&S, 0.1, 0.1, 0.6, 0.03);
     sim_start(&S);
     Chk c = {0.1, 0.0, 0.1, 0, NULL};
@@ -146,11 +146,11 @@ static void bow_solve_consistency(void)
 
 static void torsion_matters(void)
 {
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     double d[2];
     for (int on = 0; on < 2; on++) {
         Sim S;
-        sim_init(&S, sp, 96000.0);
+        sim_init(&S, instrument_cello(), sp, 96000.0);
         S.torsion_on = on;
         sim_set_bow(&S, 0.1, 0.1, 0.6, 0.03);
         sim_start(&S);

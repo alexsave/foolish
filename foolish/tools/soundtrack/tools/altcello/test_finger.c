@@ -15,7 +15,7 @@
 static Trace *run(const StringSpec *sp, double F, int glide, double xa, double xb)
 {
     Sim S;
-    sim_init(&S, sp, 96000.0);
+    sim_init(&S, instrument_cello(), sp, 96000.0);
     sim_set_bow(&S, 0.1, 0.1, F, 0.03);
     env_const(&S.aF, 1.0);
     env_const(&S.xF, xa);
@@ -68,7 +68,7 @@ static double pitch_at(const Trace *tr, double t, double fguess)
 
 int main(void)
 {
-    const StringSpec *sp = string_spec("A3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "A3");
     double L = sp->L;
     double xa = L * (1.0 - pow(2.0, -7.0 / 12.0));
     double xb = L * (1.0 - pow(2.0, -8.0 / 12.0));

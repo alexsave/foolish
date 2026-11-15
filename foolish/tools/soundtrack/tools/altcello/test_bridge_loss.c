@@ -16,7 +16,7 @@ static Trace *pluck(const char *name, int body, double fs)
 {
     SimOpts o = {body, 0, 0, 0};
     Sim S;
-    sim_init_instrument(&S, fs, &o, name);
+    sim_init_instrument(&S, instrument_cello(), fs, &o, name);
     S.bow_on = 0;
     sim_start(&S);
     sim_pluck(&S, 0.137 * S.s->sp.L, 0.02 * S.s->sp.L, 1e-3);
@@ -61,7 +61,7 @@ static void table(const char *name, int assert_all)
 {
     double fs = 96000.0;
     Trace *rig = pluck(name, 0, fs), *bod = pluck(name, 1, fs);
-    double f0 = string_spec(name)->f0;
+    double f0 = instrument_string(instrument_cello(), name)->f0;
     long i0 = (long)(0.3 * fs);
     Spectrum *sr = spec_make(rig->ch[0] + i0, rig->n - i0, fs, 4), *sb = spec_make(bod->ch[0] + i0, bod->n - i0, fs, 4);
     printf("T10 %s plucked, partials 1..10: T60 rigid bridge vs body on\n", name);

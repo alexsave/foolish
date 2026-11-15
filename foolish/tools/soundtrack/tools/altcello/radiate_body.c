@@ -2,29 +2,29 @@
 #include <math.h>
 #include <string.h>
 
-double radiate_plate_sigma(double f, double fc)
+double radiate_plate_sigma(const RadiationSpec *rs, double f, double fc)
 {
     double s;
     if (f >= fc) return 1.0;
     double a = sqrt(f / fc), lam = RADIATE_C_AIR / fc;
-    double pre = RADIATE_PERIM * lam / (4.0 * M_PI * M_PI * RADIATE_AREA);
+    double pre = rs->perim * lam / (4.0 * M_PI * M_PI * rs->area);
     double u = 1.0 - a * a;
     s = pre * (u * log((1.0 + a) / (1.0 - a)) + 2.0 * a) / (u * sqrt(u));
     return s < 1.0 ? s : 1.0;
 }
 
-double radiate_compact_mag(double f)
+double radiate_compact_mag(const RadiationSpec *rs, double f)
 {
-    double x = 2.0 * M_PI * f * RADIATE_A_EFF / RADIATE_C_AIR;
+    double x = 2.0 * M_PI * f * rs->a_eff / RADIATE_C_AIR;
     return x / sqrt(1.0 + x * x);
 }
 
-int radiator_init(Radiator *R, double fs, double fc, double g_plate)
+int radiator_init(Radiator *R, const RadiationSpec *rs, double fs, double fc, double g_plate)
 {
     memset(R, 0, sizeof *R);
     R->fs = fs;
     R->g_plate = g_plate;
-    double c = 2.0 * fs * RADIATE_A_EFF / RADIATE_C_AIR; /* 2 fs tau */
+    double c = 2.0 * fs * rs->a_eff / RADIATE_C_AIR; /* 2 fs tau */
     R->c_b0 = c / (1.0 + c);
     R->c_b1 = -c / (1.0 + c);
     R->c_a1 = (1.0 - c) / (1.0 + c);

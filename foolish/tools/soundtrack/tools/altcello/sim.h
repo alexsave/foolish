@@ -11,21 +11,20 @@
 #include "altstring.h"
 
 #define SIM_NCH 8
-#define SIM_MAXSTR 4
+#define SIM_MAXSTR INSTR_MAXSTR
 /* channels: bridge force u, bridge force w (of the bowed string, T y_x - E I y_xxx),
  * string velocity at the bow (u), v_rel, bow friction force (N),
  * bridge velocity u, bridge velocity w, radiated pressure (radiate_body.h; 0 without a body) */
 extern const char *const sim_channel_names[SIM_NCH];
-extern const char *const sim_string_names[SIM_MAXSTR]; /* C2 G2 D3 A3 */
-
 typedef struct {
     int body_on;      /* modal body on the bridge */
     int all_strings;  /* 1: all four strings on the bridge, 0: only the bowed one */
     int lossless;     /* strings sigma0 = sigma1 = zeta_t = 0 and body Q = infinity (energy test) */
-    const BodyOpts *body_opts; /* NULL: the default body knobs (body_params.h) */
+    const BodyOpts *body_opts; /* NULL: the instrument's default body knobs (body_modes.h) */
 } SimOpts;
 
 typedef struct {
+    const Instrument *inst;
     String *str[SIM_MAXSTR];
     int nstr, bowed;        /* index of the bowed string in str[] */
     String *s;              /* = str[bowed] */
@@ -55,9 +54,9 @@ typedef struct {
 } Trace;
 
 /* one string, rigid bridge, no body (stage 1) */
-void sim_init(Sim *S, const StringSpec *sp, double fs);
-/* the instrument; bowed_name is "C2" "G2" "D3" or "A3" */
-void sim_init_instrument(Sim *S, double fs, const SimOpts *o, const char *bowed_name);
+void sim_init(Sim *S, const Instrument *I, const StringSpec *sp, double fs);
+/* the instrument; bowed_name is the name of one of its strings (cello: "C2" "G2" "D3" "A3") */
+void sim_init_instrument(Sim *S, const Instrument *I, double fs, const SimOpts *o, const char *bowed_name);
 void sim_free(Sim *S);
 void sim_start(Sim *S); /* call after setting controls and bow_noise_level */
 void sim_step(Sim *S);

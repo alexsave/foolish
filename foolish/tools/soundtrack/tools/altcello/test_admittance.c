@@ -14,7 +14,7 @@
 static void admittance(const BodyModes *bm, double fs, int pol, double *re, double *im, int N)
 {
     double k = 1.0 / fs;
-    Body *b = body_new(bm, fs, 0, NULL);
+    Body *b = body_new(instrument_cello(), bm, fs, 0, NULL);
     for (int n = 0; n < N; n++) {
         body_step(b, pol == 0 && n == 0 ? 1.0 / k : 0.0, pol == 1 && n == 0 ? 1.0 / k : 0.0);
         re[n] = (pol == 0 ? b->vu : b->vw) * k;
@@ -27,7 +27,7 @@ static void admittance(const BodyModes *bm, double fs, int pol, double *re, doub
 int main(void)
 {
     double fs = 96000.0;
-    BodyModes *bm = body_modes_build();
+    BodyModes *bm = body_modes_build(instrument_cello());
     printf("body: %d modes (%d table, %d statistical), f up to %.0f Hz\n", bm->n, bm->nlead, bm->n - bm->nlead, bm->f[bm->n - 1]);
     int N = 1 << 18; /* 2.7 s */
     double *re[2], *im[2];
@@ -59,9 +59,9 @@ int main(void)
         }
         int strong = bm->cw[m] > bm->cu[m] ? 1 : 0;
         double err = 100.0 * (fpk[strong] - f) / f;
-        printf("T9 %-4s table %.1f Hz: Y_uu peak %.2f Hz (%+.3f %%), Y_ww peak %.2f Hz (%+.3f %%); asserted in %s: %+.3f %%\n", body_mode_name(m), f,
+        printf("T9 %-4s table %.1f Hz: Y_uu peak %.2f Hz (%+.3f %%), Y_ww peak %.2f Hz (%+.3f %%); asserted in %s: %+.3f %%\n", body_mode_name(instrument_cello(), m), f,
                fpk[0], 100.0 * (fpk[0] - f) / f, fpk[1], 100.0 * (fpk[1] - f) / f, strong ? "w" : "u", err);
-        CHECK(fabs(err) < 1.0, "%s peak at %.2f Hz is %.3f%% from %.1f Hz", body_mode_name(m), fpk[strong], err, f);
+        CHECK(fabs(err) < 1.0, "%s peak at %.2f Hz is %.3f%% from %.1f Hz", body_mode_name(instrument_cello(), m), fpk[strong], err, f);
     }
     for (int p = 0; p < 2; p++) {
         free(re[p]);

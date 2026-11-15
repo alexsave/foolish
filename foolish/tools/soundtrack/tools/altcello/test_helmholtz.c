@@ -20,7 +20,7 @@ static Helm analyse(const Trace *tr, double f0, double settle)
 static Trace *run(const StringSpec *sp, double beta, double vB, double F, double secs)
 {
     Sim S;
-    sim_init(&S, sp, 96000.0);
+    sim_init(&S, instrument_cello(), sp, 96000.0);
     sim_set_bow(&S, beta, vB, F, 0.03);
     sim_start(&S);
     Trace *tr = sim_run(&S, secs, NULL, NULL);
@@ -38,7 +38,7 @@ static int passes(const Helm *h, double beta)
 
 int main(void)
 {
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     double beta = 0.1;
     double F = 1.0;
     Trace *tr = run(sp, beta, 0.1, F, RUNLEN);
@@ -87,7 +87,7 @@ int main(void)
     trace_free(tr);
 
     /* C2: sweep 0.2..3 N at beta 0.1 and 0.15 (iteration 1: never Helmholtz, B 4e-4) */
-    const StringSpec *c2 = string_spec("C2");
+    const StringSpec *c2 = instrument_string(instrument_cello(), "C2");
     double betas[2] = {0.1, 0.15};
     for (int b = 0; b < 2; b++) {
         int nok2 = 0;

@@ -4,15 +4,15 @@
 #include <string.h>
 
 const char *const sim_channel_names[SIM_NCH] = {"bridge_u", "bridge_w", "vbow_u", "vrel", "fric", "vbridge_u", "vbridge_w", "pbody"};
-const char *const sim_string_names[SIM_MAXSTR] = {"C2", "G2", "D3", "A3"};
 
-static void common_init(Sim *S, double fs)
+static void common_init(Sim *S, const Instrument *I, double fs)
 {
+    S->inst = I;
     S->fs = fs;
     S->k = 1.0 / fs;
-    finger_init(&S->finger);
-    S->bow_width = 0.010;
-    S->bow_noise_level = 0.03;
+    finger_init(&S->finger, &I->finger);
+    S->bow_width = I->bow.width;
+    S->bow_noise_level = I->bow.noise_level;
     S->bow_on = 1;
     S->torsion_on = 1;
     env_const(&S->vB, 0.0);
@@ -26,7 +26,7 @@ static void common_init(Sim *S, double fs)
     }
 }
 
-void sim_init(Sim *S, const StringSpec *sp, double fs)
+void sim_init(Sim *S, const Instrument *I, const StringSpec *sp, double fs)
 {
     memset(S, 0, sizeof *S);
     S->str[0] = string_new(sp, fs);
@@ -34,33 +34,33 @@ void sim_init(Sim *S, const StringSpec *sp, double fs)
     S->bowed = 0;
     S->s = S->str[0];
     S->fwbuf = calloc((size_t)S->s->N + 1, sizeof(double));
-    common_init(S, fs);
+    common_init(S, I, fs);
 }
 
-void sim_init_instrument(Sim *S, double fs, const SimOpts *o, const char *bowed_name)
+void sim_init_instrument(Sim *S, const Instrument *I, double fs, const SimOpts *o, const char *bowed_name)
 {
     memset(S, 0, sizeof *S);
     int maxN = 0;
-    for (int i = 0; i < SIM_MAXSTR; i++) {
-        if (!o->all_strings && strcmp(sim_string_names[i], bowed_name)) continue;
-        StringSpec sp = *string_spec(sim_string_names[i]);
+    for (int i = 0; i < I->nstr; i++) {
+        if (!o->all_strings && strcmp(I->str[i].name, bowed_name)) continue;
+        StringSpec sp = I->str[i];
         if (o->lossless) sp.sigma0 = sp.sigma1 = sp.zeta_t = 0.0;
         S->str[S->nstr] = string_new(&sp, fs);
-        if (!strcmp(sim_string_names[i], bowed_name)) S->bowed = S->nstr;
+        if (!strcmp(I->str[i].name, bowed_name)) S->bowed = S->nstr;
         if (S->str[S->nstr]->N > maxN) maxN = S->str[S->nstr]->N;
         S->nstr++;
     }
     S->s = S->str[S->bowed];
     S->fwbuf = calloc((size_t)maxN + 1, sizeof(double));
     if (o->body_on) {
-        BodyOpts def = body_opts_default();
+        BodyOpts def = body_opts_default(I);
         const BodyOpts *bo = o->body_opts ? o->body_opts : &def;
-        BodyModes *bm = body_modes_build_opts(bo);
-        S->body = body_new(bm, fs, o->lossless, bo); /* NULL if bo->fc has no fitted plate filter (radiate_plate_fits) */
+        BodyModes *bm = body_modes_build_opts(I, bo);
+        S->body = body_new(I, bm, fs, o->lossless, bo); /* NULL if bo->fc has no fitted plate filter (radiate_plate_fits) */
         if (!S->body) abort();
         body_modes_free(bm);
     }
-    common_init(S, fs);
+    common_init(S, I, fs);
 }
 
 void sim_free(Sim *S)
@@ -219,7 +219,7 @@ void sim_step(Sim *S)
         }
         double Phi;
         int stuck;
-        vrel = bow_solve(q, G, S->vrel_prev, S->stuck, &Phi, &stuck);
+        vrel = bow_solve(&S->inst->bow.friction, q, G, S->vrel_prev, S->stuck, &Phi, &stuck);
         for (int l = lo; l <= hi; l++) u2[l] -= s->kk * s->invD[l] * J[l - lo] * F * Phi;
         if (S->torsion_on)
             for (int l = tlo; l <= thi; l++) tor->th2[l] -= tor->kk * tor->invD[l] * tor->rs * Jt[l - tlo] * F * Phi;

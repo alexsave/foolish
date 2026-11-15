@@ -15,7 +15,7 @@
 #ifndef ALTCELLO_ALTSTRING_H
 #define ALTCELLO_ALTSTRING_H
 #include <stddef.h>
-#include "string_params.h"
+#include "instrument.h"
 #include "torsion.h"
 
 typedef struct {

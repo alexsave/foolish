@@ -12,7 +12,7 @@
 
 int main(void)
 {
-    const StringSpec *sp = string_spec("D3");
+    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
     double xF = sp->L * (1.0 - pow(2.0, -3.0 / 12.0));
     double fF3 = sp->f0 * pow(2.0, 3.0 / 12.0);
     double Fs[5] = {0.1, 0.2, 0.35, 0.5, 0.8};
@@ -21,7 +21,7 @@ int main(void)
         for (int fi = 0; fi < 5; fi++) {
             SimOpts o = {c == 0 ? 1 : 0, 0, 0, 0};
             Sim S;
-            sim_init_instrument(&S, 96000.0, &o, "D3");
+            sim_init_instrument(&S, instrument_cello(), 96000.0, &o, "D3");
             sim_set_bow(&S, 0.1, 0.1, Fs[fi], 0.03);
             env_const(&S.xF, xF);
             env_const(&S.aF, 1.0);

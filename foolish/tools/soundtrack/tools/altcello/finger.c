@@ -1,12 +1,7 @@
 #include "finger.h"
 #include <math.h>
 
-void finger_init(Finger *f)
-{
-    f->width = 0.010;
-    f->K = 2e7;
-    f->R = 200.0;
-}
+void finger_init(Finger *f, const FingerSpec *spec) { *f = *spec; }
 
 void finger_weights(const Finger *f, double h, int N, double xF, int *lo, int *hi, double *g)
 {

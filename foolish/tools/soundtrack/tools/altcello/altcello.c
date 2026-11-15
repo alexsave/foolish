@@ -45,7 +45,7 @@ static int probe(int argc, char **argv)
         fprintf(stderr, "usage: altcello probe STRING BETA VB FB SECONDS OUTPREFIX [--fs 96000] [--finger XF] [--pluck] [--noise STD] [--body off|on] [--strings bowed|all] [--torsion on|off] [--wav OUT.wav] [--hair KH] [--eta0 X] [--eta-exp X] [--fc HZ] [--bridge-inertia-scale X]\n");
         return 2;
     }
-    const StringSpec *sp = string_spec(argv[2]);
+    const StringSpec *sp = instrument_string(instrument_cello(), argv[2]);
     if (!sp) {
         fprintf(stderr, "unknown string %s\n", argv[2]);
         return 2;
@@ -58,7 +58,7 @@ static int probe(int argc, char **argv)
     int body = 0, all = 0, torsion = 1;
     const char *wavpath = NULL;
     double hair = 0.0;
-    BodyOpts bo = body_opts_default();
+    BodyOpts bo = body_opts_default(instrument_cello());
     for (int i = 8; i < argc; i++) {
         if (!strcmp(argv[i], "--fs") && i + 1 < argc) fs = atof(argv[++i]);
         else if (!strcmp(argv[i], "--finger") && i + 1 < argc) xF = atof(argv[++i]);
@@ -77,8 +77,8 @@ static int probe(int argc, char **argv)
     Sim S;
     if (body || all) {
         SimOpts so = {body, all, 0, &bo};
-        sim_init_instrument(&S, fs, &so, sp->name);
-    } else sim_init(&S, sp, fs);
+        sim_init_instrument(&S, instrument_cello(), fs, &so, sp->name);
+    } else sim_init(&S, instrument_cello(), sp, fs);
     if (hair > 0.0) hair_init(&S.hair, hair, S.k);
     S.bow_noise_level = noise;
     S.torsion_on = torsion;
@@ -168,7 +168,7 @@ static int admittance(int argc, char **argv)
         fprintf(stderr, "usage: altcello admittance OUTPREFIX\n");
         return 2;
     }
-    BodyModes *bm = body_modes_build();
+    BodyModes *bm = body_modes_build(instrument_cello());
     char path[1024];
     snprintf(path, sizeof path, "%s_adm.txt", argv[2]);
     FILE *f = fopen(path, "w");
@@ -190,7 +190,7 @@ static int admittance(int argc, char **argv)
     fclose(f);
     snprintf(path, sizeof path, "%s_modes.txt", argv[2]);
     f = fopen(path, "w");
-    for (int k = 0; k < bm->n; k++) fprintf(f, "%s %.3f %.2f %.4f %.3f %.3f\n", body_mode_name(k), bm->f[k], bm->Q[k], bm->m[k], bm->cu[k], bm->cw[k]);
+    for (int k = 0; k < bm->n; k++) fprintf(f, "%s %.3f %.2f %.4f %.3f %.3f\n", body_mode_name(instrument_cello(), k), bm->f[k], bm->Q[k], bm->m[k], bm->cu[k], bm->cw[k]);
     fclose(f);
     body_modes_free(bm);
     return 0;
