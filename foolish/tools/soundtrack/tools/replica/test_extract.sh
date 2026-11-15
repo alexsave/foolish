@@ -44,6 +44,22 @@ for L in 6 12; do
     --samples-dir "$TMP/lead$L/samples" --manifest "$TMP/lead$L/man.txt" --events "$TMP/lead$L/ev.txt" --table "$TMP/lead$L/tab.tsv" > /dev/null || exit 2
 done
 $PY "$HERE/test_extract.py" lead "$TMP" || fail=1
+# pitch: a bass line (--transpose f0), chord stabs at four transpositions and a tremolo pad (--transpose shift), roots spaced
+$PY "$HERE/test_extract.py" xmake "$TMP/x/orig" || exit 2
+xrun() {   # name, directory suffix, extract options...
+  local n=$1 sfx=$2; shift 2
+  local D="$TMP/x/x_$n$sfx"
+  mkdir -p "$D"
+  $PY "$EXTRACT" --stem "$TMP/x/orig/$n.wav" --name P --start 0 --end 12 --bpm 120 --roots spaced "$@" \
+    --samples-dir "$D/samples" --manifest "$D/man.txt" --events "$D/ev.txt" --table "$D/tab.tsv" > "$D/extract.log" || { cat "$D/extract.log"; exit 2; }
+  $PY "$HERE/assemble.py" --dir "$D" --bpm 120 --bars 6 --part P "$D/ev.txt" "$D/man.txt" other || exit 2
+  ( cd "$D" && "$TMP/play" full out 2> render.log ) || { cat "$D/render.log"; exit 2; }
+}
+xrun bass "" --distance 0.05 --transpose f0
+xrun stab "" --distance 0.05 --transpose shift
+xrun pad "" --distance 0.05 --transpose shift --merge-sustain 0.05
+xrun pad n --distance 0.05 --transpose shift
+$PY "$HERE/test_extract.py" xcheck "$TMP/x" || fail=1
 # exact flag
 $PY "$HERE/test_extract.py" exactmake "$TMP/exact" || exit 2
 for ex in 1 0; do

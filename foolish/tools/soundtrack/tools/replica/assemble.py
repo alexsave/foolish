@@ -2,7 +2,8 @@
 #
 # What it does: score.txt = TEMPO, one SECTION of --bars bars, then every part's events file (its first line "# NAME gain_db X"
 #   is a comment to the score reader and gives the part's gain); parts.txt = one PART line per part with every manifest
-#   (MANIFEST, MANIFEST.2, ... when extract.py split the roots), gain_db from that comment and release 0.012.
+#   (MANIFEST, MANIFEST.2, ... when extract.py split the roots), gain_db from that comment and release 0.012; a comment ending
+#   "roots spaced" (extract.py --roots spaced) adds the keyword `roots spaced` to the part line.
 # Inputs: --dir DIR --bpm B --bars N --part NAME EVENTS MANIFEST GROUP (repeatable). --manifest-names copies each manifest into
 #   DIR as NAME.txt and refers to it by that file name (the replica directory then holds its own manifests).
 # How to run: python3 -I assemble.py --dir d --bpm 160 --bars 28 --part DRUMS drums_events.txt drums_man.txt drums
@@ -26,9 +27,10 @@ def main(argv=None):
     for name, ev, man, group in a.part:
         lines = open(ev).read().splitlines()
         first = lines[0].split()
-        if len(first) != 4 or first[0] != '#' or first[2] != 'gain_db':
-            sys.exit('assemble: %s must start with "# NAME gain_db X"' % ev)
+        if len(first) not in (4, 6) or first[0] != '#' or first[2] != 'gain_db' or (len(first) == 6 and first[4:] != ['roots', 'spaced']):
+            sys.exit('assemble: %s must start with "# NAME gain_db X" or "# NAME gain_db X roots spaced"' % ev)
         gain = float(first[3])
+        spaced = len(first) == 6
         score += lines
         mans = [man] + [m for m in ('%s.%d' % (man, k) for k in range(2, 17)) if os.path.exists(m)]
         refs = []
@@ -39,7 +41,7 @@ def main(argv=None):
                 refs.append(os.path.basename(dst))
             else:
                 refs.append(os.path.abspath(m))
-        parts.append('PART %s %s gain_db %.4f release_s %g group %s' % (name, ' '.join('sampler ' + r for r in refs), gain, a.release, group))
+        parts.append('PART %s %s gain_db %.4f release_s %g group %s%s' % (name, ' '.join('sampler ' + r for r in refs), gain, a.release, group, ' roots spaced' if spaced else ''))
     open(os.path.join(a.dir, 'score.txt'), 'w').write('\n'.join(score) + '\n')
     open(os.path.join(a.dir, 'parts.txt'), 'w').write('\n'.join(parts) + '\n')
 

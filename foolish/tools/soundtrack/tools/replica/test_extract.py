@@ -174,9 +174,121 @@ def exactcheck(d):
     check('exact_off_varies', float(np.max(np.abs(out[0] - want))) > 0.2, 'without exact: worst deviation = %.3f dB, expected > 0.2 (the random gain is on)' % np.max(np.abs(out[0] - want)))
 
 
+# ---------------------------------------------------------------- pitch fixtures (iteration 2): bass line, chord stabs, tremolo pad
+def _harm(midi, n, nh, decay, att=0.005):
+    t = np.arange(n) / SR
+    f = 440 * 2 ** ((midi - 69) / 12.0)
+    y = sum(np.sin(2 * np.pi * f * h * t) / h for h in range(1, nh + 1) if f * h < SR / 2 - 1000)
+    return y * np.minimum(1, t / att) * np.exp(-t / decay)
+
+
+BASS_MIDI = [36, 43, 41, 38, 48, 45]             # six pitches within an octave of each other
+BASS_T0, BASS_STEP = 0.3, 0.5
+STAB_TRANS = [0, 2, 3, -2]
+STAB_STEP = 0.75
+
+
+def bass_notes():
+    """(start s, midi): 23 plucks of one timbre, 0.5 s apart with +-20 ms of micro-timing, six pitches in a scrambled order."""
+    return [(BASS_T0 + BASS_STEP * k + (T.JIT[k] - 0.5) * 0.04, BASS_MIDI[(k * 5 + k // 6) % 6]) for k in range(int((SECONDS - BASS_T0) / BASS_STEP) - 1)]
+
+
+def stab_notes():
+    return [(0.3 + STAB_STEP * k + (T.JIT[100 + k] - 0.5) * 0.03, STAB_TRANS[(k * 3 + k // 4) % 4]) for k in range(int((SECONDS - 0.3) / STAB_STEP) - 1)]
+
+
+def _place(notes, mk):
+    x = np.zeros(int(SECONDS * SR))
+    for k, (t0, v) in enumerate(notes):
+        t1 = notes[k + 1][0] if k + 1 < len(notes) else SECONDS
+        i0 = int(round(t0 * SR)); n = int(round((t1 - t0) * SR)) + int(0.005 * SR)
+        y = mk(v, n)
+        j = min(len(x), i0 + n)
+        x[i0:j] += y[:j - i0]
+    return x
+
+
+PAD_CHORDS = [(0.3, [57, 60, 64], 0.5), (3.4, [55, 59, 62], 1.0), (6.6, [53, 57, 60], 0.35), (9.5, [59, 62, 65], 0.8)]
+PAD_TREM_HZ, PAD_TREM_DEPTH = 3.0, 0.5
+
+
+def pad_signal(trem=True):
+    x = np.zeros(int(SECONDS * SR))
+    for k, (t0, notes, lev) in enumerate(PAD_CHORDS):
+        t1 = PAD_CHORDS[k + 1][0] if k + 1 < len(PAD_CHORDS) else SECONDS
+        i0 = int(round(t0 * SR)); n = int(round((t1 - t0) * SR))
+        t = np.arange(n) / SR
+        y = sum(_harm(m, n, 4, 1e9, 0.005) for m in notes)
+        env = lev * (1 - (PAD_TREM_DEPTH * (0.5 - 0.5 * np.cos(2 * np.pi * PAD_TREM_HZ * t)) if trem else 0)) * np.minimum(1, (n - np.arange(n)) / (0.01 * SR))
+        x[i0:i0 + n] = y * env
+    return x
+
+
+def xmake(d):
+    os.makedirs(d, exist_ok=True)
+    write(os.path.join(d, 'bass.wav'), 0.3 * _place(bass_notes(), lambda m, n: _harm(m, n, 8, 0.15)))
+    write(os.path.join(d, 'stab.wav'), 0.1 * _place(stab_notes(), lambda tr, n: sum(_harm(m + tr, n, 5, 0.25, 0.003) for m in (57, 60, 64))))
+    write(os.path.join(d, 'pad.wav'), 0.1 * pad_signal())
+
+
+def read_table(path):
+    rows = [l.rstrip('\n').split('\t') for l in open(path)]
+    return [dict(zip(rows[0], r)) for r in rows[1:]]
+
+
+def _cmp_one(d, name, stem_key):
+    o = dec(os.path.join(d, 'orig', name + '.wav')); r = dec(os.path.join(d, 'x_' + name, 'out', 'full.wav'))
+    return C.compare(o, r, SR, {stem_key: o}, {stem_key: r})
+
+
+def xcheck(d):
+    """bass: one timbre on six pitches; stab: a chord at four transpositions; pad: three chord changes under a tremolo."""
+    # bass
+    tab = read_table(os.path.join(d, 'x_bass', 'tab.tsv')); notes = bass_notes()
+    ns = len([r for r in tab if r['exemplar'] == 'yes'])
+    print('  bass: %d events (%d notes), %d samples' % (len(tab), len(notes), ns))
+    check('bass_segments', len(tab) == len(notes), 'bass segments = %d, notes = %d' % (len(tab), len(notes)))
+    check('bass_samples', ns <= 2, 'bass samples = %d, expected <= 2' % ns)
+    if len(tab) == len(notes):
+        ex = {}
+        for i, r in enumerate(tab):
+            if r['exemplar'] == 'yes':
+                ex[r['cluster']] = notes[i][1]
+        worst = max(abs(float(r['shift']) * 100 - 100 * (notes[i][1] - ex[r['cluster']])) for i, r in enumerate(tab))
+        check('bass_shift_cents', worst <= 15, 'worst deviation of an event shift from the true interval = %.1f cents, expected <= 15' % worst)
+    R = _cmp_one(d, 'bass', 'bass')
+    v = R['bass.pitch_within50']
+    print('  bass pitch within 50 cents %.3f, voiced overlap %.3f' % (v, R['bass.pitch_voiced_overlap']))
+    check('bass_pitch_within50', v >= 0.9, 'bass pitch within-50-cents share = %.3f, expected >= 0.9' % v)
+    # stab
+    tab = read_table(os.path.join(d, 'x_stab', 'tab.tsv')); notes = stab_notes()
+    ns = len([r for r in tab if r['exemplar'] == 'yes'])
+    print('  stab: %d events (%d stabs), %d samples' % (len(tab), len(notes), ns))
+    check('stab_segments', len(tab) == len(notes), 'stab segments = %d, stabs = %d' % (len(tab), len(notes)))
+    check('stab_samples', 1 <= ns <= 2, 'stab samples = %d, expected 1 or 2' % ns)
+    if len(tab) == len(notes):
+        ex = {}
+        for i, r in enumerate(tab):
+            if r['exemplar'] == 'yes':
+                ex[r['cluster']] = notes[i][1]
+        bad = [(i, float(r['shift']), notes[i][1] - ex[r['cluster']]) for i, r in enumerate(tab) if abs(float(r['shift']) - (notes[i][1] - ex[r['cluster']])) > 1e-6]
+        check('stab_shifts', not bad, 'stabs whose shift is not the true integer interval: %d (first: %s)' % (len(bad), bad[:2]))
+    R = _cmp_one(d, 'stab', 'other')
+    v = R['mix.chroma_cos_above_chance']
+    check('stab_chroma', v >= 0.8, 'stab chroma_cos_above_chance = %.3f, expected >= 0.8' % v)
+    # pad
+    nm = len(read_table(os.path.join(d, 'x_pad', 'tab.tsv'))); nn = len(read_table(os.path.join(d, 'x_padn', 'tab.tsv')))
+    print('  pad: %d segments with --merge-sustain, %d without' % (nm, nn))
+    check('pad_merged_segments', 3 <= nm <= 5, 'pad segments with merge-sustain = %d, expected 3 to 5' % nm)
+    check('pad_unmerged_segments', nn >= 2 * max(nm, 1) and nn >= 8, 'pad segments without merge-sustain = %d, expected clearly more than %d (>= 8 and >= twice)' % (nn, nm))
+    R = _cmp_one(d, 'pad', 'other')
+    v = R['mix.loud400_corr']
+    check('pad_loud400', v >= 0.9, 'pad 400 ms loudness correlation = %.3f, expected >= 0.9' % v)
+
+
 if __name__ == '__main__':
     cmd, d = sys.argv[1], sys.argv[2]
-    {'make': make, 'exactmake': exactmake, 'check': do_check, 'exactcheck': exactcheck, 'lead': leadcheck, 'leadmake': leadmake}[cmd](d)
+    {'make': make, 'exactmake': exactmake, 'check': do_check, 'exactcheck': exactcheck, 'lead': leadcheck, 'leadmake': leadmake, 'xmake': xmake, 'xcheck': xcheck}[cmd](d)
     if FAILS:
         print('FAILED: ' + ', '.join(FAILS))
         sys.exit(1)

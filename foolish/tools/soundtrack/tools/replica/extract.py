@@ -18,6 +18,18 @@
 #   by one rule (first 1 ms block at 20 percent of the loudest block of the first 80 ms) and lands attacks, not segment starts, on
 #   the original's. --split-roots allows more than 128 clusters: manifest k (MANIFEST, MANIFEST.2, ...) holds clusters 128k..128k+127
 #   and events carry pitch 128k + root (play.c routes them).
+# Pitch (iteration 2): --roots spaced stores sample i at root 100 * i + 50 (an event's pitch is root + shift in semitones, fractional
+#   allowed; no 128 limit, no manifest splitting; the events file's first line then ends "roots spaced" and assemble.py writes the
+#   parts.txt keyword `roots spaced`, so play.c does not route pitch >= 127.5). --transpose f0 (monophonic stem): per segment the median f0
+#   (compare.py's yin, 30-400 Hz by default, --f0-range), the voiced share and f0 at 25/50/75 percent; features are compared after
+#   shifting each by its f0 (log-frequency bins, 36 per octave), an event's shift = 12 log2(f0 member / f0 exemplar) limited to
+#   +-max-shift (default 12; a member beyond it is split into its own cluster); unvoiced segments (voiced share < 0.5) cluster only
+#   among themselves at shift 0; the exemplar is the longest member with voiced share >= 0.8. --transpose shift (polyphonic): distance =
+#   the minimum over integer k in +-max-shift (default 5) semitones of 1 - A . shift(B, k) (zero padded, so symmetric; k = 0 wins ties
+#   within 1e-6); a member's shift is the k that matches the exemplar shifted up by k. --merge-sustain TAU removes an onset when the
+#   feature of the 80 ms before it and of the 80 ms after it are closer than TAU and the 20 ms RMS does not rise by more than 3 dB.
+#   Velocity: RMS over the common length of member and exemplar (the exemplar's transposed length); --vel-window-ms N keeps the
+#   old fixed window (100 = the old rule).
 # Known failure modes: the detector fires some ms before or after the true attack depending on the sound; a stationary sustained
 #   sound is cut at spurious onsets into fragments that replay with the wrong envelope; a cluster's members are all played as its
 #   exemplar at the exemplar's pitch (no transposition), so members of another pitch come out wrong; more than 128 clusters need
@@ -28,11 +40,13 @@ import numpy as np
 from scipy import signal
 from scipy.io import wavfile
 from scipy.cluster import hierarchy
-from scipy.spatial.distance import pdist
+from scipy.spatial.distance import pdist, squareform
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import compare as C
 
+F0_REF = 100.0               # --transpose f0 aligns every feature to this f0
+YW, YHOP = 1024, 512          # compare.yin's frame and hop (22050 Hz samples)
 FEAT_MAX_S = 0.25            # the feature looks at the first 250 ms of a segment
 VEL_S = 0.1                  # the velocity ratio looks at the first 100 ms
 FADE_IN_S, FADE_OUT_S = 0.002, 0.008
@@ -154,6 +168,75 @@ def fmt4(v):
     return '%.4f' % v
 
 
+def drop_continuations(x, sr, t, w, tau):
+    """Removes an onset when the sound simply continues across it: cosine distance between the feature of the 80 ms before and the 80 ms
+    after is under tau, and the 20 ms RMS does not rise by more than 3 dB. Each boundary is judged on the original signal."""
+    n80, n20 = int(round(0.08 * sr)), int(round(0.02 * sr))
+    keep = []
+    for ti in t:
+        i = int(round(ti * sr))
+        pre, post = x[max(0, i - n80):i], x[i:i + n80]
+        if len(pre) < n20 or len(post) < n20:
+            keep.append(True); continue
+        d = 1 - float(feature(pre, sr) @ feature(post, sr))
+        rise = 20 * np.log10(max(rms(x[i:i + n20]), 1e-12) / max(rms(x[i - n20:i]), 1e-12))
+        keep.append(not (d < tau and rise <= 3.0))
+    keep = np.array(keep, dtype=bool)
+    return t[keep], w[keep], int((~keep).sum())
+
+
+def f0_stats(segs, sr, fmin, fmax):
+    """Per segment: median f0 of the voiced frames (compare.py's yin and its voicing rule), voiced share, f0 at 25/50/75 percent."""
+    ys = []
+    for g in segs:
+        x = C.resample(g['seg'].mean(axis=1), sr)
+        f0, per, en = C.yin(x, C.SR, fmin, fmax)
+        nv = min(len(f0), max(1, 1 + (len(x) - YW) // YHOP))
+        ys.append((f0[:nv], per[:nv], en[:nv]))
+    enmax = max(float(e.max()) for _, _, e in ys)
+    for g, (f0, per, en) in zip(segs, ys):
+        v = (per > 0.75) & (en > 10 ** (-45 / 20) * max(enmax, 1e-12))
+        g['voiced'] = float(v.mean())
+        g['f0'] = float(np.median(f0[v])) if v.any() else float('nan')
+        g['f0p'] = []
+        for pc in (0.25, 0.5, 0.75):
+            k = int(round(pc * (len(f0) - 1)))
+            idx = [j for j in sorted(range(len(f0)), key=lambda j: (abs(j - k), j)) if v[j] and abs(j - k) <= 2]
+            g['f0p'].append(float(f0[idx[0]]) if idx else float('nan'))
+        g['isv'] = g['voiced'] >= 0.5 and g['f0'] == g['f0']
+
+
+def align_feature(f, bins):
+    """The feature with its content moved down by `bins` (a segment of f0 f gets bins = 36 log2(f / ref): its f0 lands on ref)."""
+    b = np.arange(len(f))
+    g = np.interp(b + bins, b, f, left=0.0, right=0.0)
+    return g / max(float(np.linalg.norm(g)), 1e-12)
+
+
+def shift_bins(F, k):
+    """Features with their content moved UP by k semitones (3 bins each), zero padded."""
+    n = k * (BINS_PER_OCT // 12)
+    out = np.zeros_like(F)
+    if n > 0:
+        out[:, n:] = F[:, :-n]
+    elif n < 0:
+        out[:, :n] = F[:, -n:]
+    else:
+        out[:] = F
+    return out
+
+
+def shift_distances(F, maxk):
+    """M[a, b] = min over k of 1 - F[a] . shift_up(F[b], k) and K[a, b] = that k (k = 0 wins ties within 1e-6, then the smaller |k|)."""
+    M = 1 - F @ F.T
+    K = np.zeros(M.shape, dtype=int)
+    for k in sorted([j for j in range(-maxk, maxk + 1) if j], key=lambda j: (abs(j), -j)):
+        Dk = 1 - F @ shift_bins(F, k).T
+        better = Dk < M - 1e-6
+        M = np.where(better, Dk, M); K = np.where(better, k, K)
+    return M, K
+
+
 def extract(a):
     global FEAT_EPS
     FEAT_EPS = a.feat_eps
@@ -175,6 +258,10 @@ def extract(a):
     mono = x.mean(axis=1)
     t, w, _ = C.detect_onsets(C.resample(mono, sr))
     t, w = merge_onsets(t, w, a.min_seg_ms / 1000.0)
+    nmerged = 0
+    if a.merge_sustain is not None:
+        t, w, nmerged = drop_continuations(x, sr, t, w, a.merge_sustain)
+        print('merge-sustain %g: removed %d boundaries, %d kept' % (a.merge_sustain, nmerged, len(t)))
     lead = a.lead_ms / 1000.0
     starts = [max(0.0, ti - lead) for ti in t]
     bounds = []                     # (start s, end s)
@@ -203,40 +290,93 @@ def extract(a):
         g['att'] = attack_index(g['seg'], sr)             # where its sound really starts, inside the segment
         g['n'] = g['a1'] - g['a0']
     F = np.stack([feature(s['seg'], sr) for s in segs])
+    mode = a.transpose
+    if mode == 'f0':
+        f0_stats(segs, sr, a.f0_range[0], a.f0_range[1])
+        FA = np.stack([align_feature(F[i], BINS_PER_OCT * np.log2(g['f0'] / F0_REF)) if g['isv'] else F[i] for i, g in enumerate(segs)])
+    else:
+        FA = F
+    M = K = None
+    if ns > 1:
+        if mode == 'shift':
+            M, K = shift_distances(F, int(round(a.max_shift)) if a.max_shift is not None else 5)
+            M = (M + M.T) / 2; np.fill_diagonal(M, 0.0)
+            cond = squareform(np.maximum(M, 0.0), checks=False)
+        else:
+            cond = pdist(FA, 'cosine')
+            if mode == 'f0':
+                uv = np.array([not g['isv'] for g in segs])
+                cond = cond + 10.0 * squareform((uv[:, None] != uv[None, :]).astype(float), checks=False)
     if a.distance <= 0 or ns == 1:
         lab = np.arange(ns)
     else:
-        Z = hierarchy.linkage(pdist(F, 'cosine'), 'complete')
+        Z = hierarchy.linkage(cond, 'complete')
         lab = hierarchy.fcluster(Z, a.distance, 'distance') - 1
+    maxs = a.max_shift if a.max_shift is not None else 12
+    def pick_exemplar(mem):
+        pool = mem
+        if mode == 'f0':
+            hi = [i for i in mem if segs[i]['voiced'] >= 0.8 and segs[i]['isv']]
+            pool = hi or mem
+        best = max(segs[i]['n'] for i in pool)
+        cand = [i for i in pool if segs[i]['n'] == best]
+        mean = FA[mem].mean(axis=0); mean /= max(np.linalg.norm(mean), 1e-12)
+        return min(cand, key=lambda i: (1 - float(FA[i] @ mean), i))
+    nsplit = 0
+    if mode == 'f0':      # a member further than max-shift from its cluster's exemplar becomes a cluster of its own kind
+        lab = lab.copy(); nxt = int(lab.max()) + 1
+        queue = [[i for i in range(ns) if lab[i] == c] for c in range(nxt)]
+        while queue:
+            mem = queue.pop(0)
+            e = pick_exemplar(mem)
+            if not segs[e]['isv']:
+                continue
+            off = [i for i in mem if segs[i]['isv'] and abs(12 * np.log2(segs[i]['f0'] / segs[e]['f0'])) > maxs + 1e-9]
+            if off:
+                for i in off:
+                    lab[i] = nxt
+                nxt += 1; nsplit += len(off); queue.append(off)
     # clusters ordered by first appearance
     order = {}
     for l in lab:
         order.setdefault(int(l), len(order))
     cl = np.array([order[int(l)] for l in lab])
     ncl = len(order)
+    spaced = a.roots == 'spaced'
     base = 24 if ncl <= 100 else 0
-    if base + ncl - 1 > 127 and not a.split_roots:
-        raise SystemExit('extract: %d clusters need roots up to %d (MIDI maximum 127); raise --distance or pass --split-roots' % (ncl, base + ncl - 1))
+    if not spaced and base + ncl - 1 > 127 and not a.split_roots:
+        raise SystemExit('extract: %d clusters need roots up to %d (MIDI maximum 127); raise --distance or pass --split-roots or --roots spaced' % (ncl, base + ncl - 1))
     os.makedirs(a.samples_dir, exist_ok=True)
     man, ex_of, stored = [], {}, []
     for c in range(ncl):
         mem = [i for i in range(ns) if cl[i] == c]
-        mean = F[mem].mean(axis=0)
-        mean /= max(np.linalg.norm(mean), 1e-12)
-        best = max(segs[i]['n'] for i in mem)
-        cand = [i for i in mem if segs[i]['n'] == best]
-        ex = min(cand, key=lambda i: (1 - float(F[i] @ mean), i))
+        ex = pick_exemplar(mem)
         ex_of[c] = ex
         wav = fade(segs[ex]['seg'], sr)
         stored.append(wav)
         fn = os.path.join(a.samples_dir, '%s_%03d.wav' % (a.name, c))
         write_wav(fn, wav)
-        man.append('%d 0 0 %s' % (base + c % 128 if base == 0 else base + c, manifest_path(fn)))
-    # --split-roots (more than 128 clusters): manifest k (MANIFEST, MANIFEST.2, ...) holds clusters 128k..128k+127 with roots 0..127,
-    # and the events carry pitch 128k + root; play.c sends pitch >= 128 to the k-th manifest of the part
-    for k in range((len(man) + 127) // 128):
-        with open(a.manifest if k == 0 else '%s.%d' % (a.manifest, k + 1), 'w') as f:
-            f.write('\n'.join(man[128 * k:128 * k + 128]) + '\n')
+        root = 100 * c + 50 if spaced else (base + c % 128 if base == 0 else base + c)
+        man.append('%d 0 0 %s' % (root, manifest_path(fn)))
+    shifts = np.zeros(ns)
+    for i, g in enumerate(segs):
+        e = ex_of[cl[i]]
+        if i == e:
+            continue
+        if mode == 'f0' and g['isv'] and segs[e]['isv']:
+            shifts[i] = 12 * np.log2(g['f0'] / segs[e]['f0'])
+        elif mode == 'shift':
+            shifts[i] = K[i, e]
+    shifts = np.round(shifts, 4)
+    if spaced:
+        with open(a.manifest, 'w') as f:
+            f.write('\n'.join(man) + '\n')
+    else:
+        # --split-roots (more than 128 clusters): manifest k (MANIFEST, MANIFEST.2, ...) holds clusters 128k..128k+127 with roots 0..127,
+        # and the events carry pitch 128k + root; play.c sends pitch >= 128 to the k-th manifest of the part
+        for k in range((len(man) + 127) // 128):
+            with open(a.manifest if k == 0 else '%s.%d' % (a.manifest, k + 1), 'w') as f:
+                f.write('\n'.join(man[128 * k:128 * k + 128]) + '\n')
     # placement: the engine plays the exemplar from its trimmed start (tr samples in). 'trim': event start = member start + the
     # exemplar's tr. 'attack': event start = member start + (member attack - exemplar attack) + the exemplar's tr, length = what
     # is left of the member after its attack + the exemplar's pre-attack that plays. 'segment': the segment start and length as cut.
@@ -253,13 +393,18 @@ def extract(a):
         else:
             g['ev0'], g['len'] = g['a0'], g['n']
             g['v0'], g['e0'] = 0, 0
-    # events and velocities
-    rr = np.zeros(ns)
+    # events and velocities: the member and the exemplar as played (transposed: shorter or longer by the ratio) over their common length
+    rr = np.zeros(ns); short_ms = np.zeros(ns)
     for i, s in enumerate(segs):
-        n = min(s['n'] - s['v0'], int(VEL_S * sr))
-        e = segs[ex_of[cl[i]]]
-        den = rms(stored[cl[i]][s['e0']:s['e0'] + n])
+        ratio = 2.0 ** (shifts[i] / 12.0)
+        st = stored[cl[i]]
+        n = min(s['n'] - s['v0'], int((len(st) - s['e0']) / ratio))
+        if a.vel_window_ms is not None:
+            n = min(n, int(a.vel_window_ms / 1000.0 * sr))
+        n = max(n, 1)
+        den = rms(st[s['e0']:s['e0'] + int(round(n * ratio))])
         rr[i] = rms(s['seg'][s['v0']:s['v0'] + n]) / max(den, 1e-12)
+        short_ms[i] = max(0.0, (s['len'] - (len(st) - s['e0']) / ratio) / sr * 1000.0)
     rmax = float(rr.max())
     vel = np.clip(rr / rmax - 0.05, 0, 0.95)
     gain_db = 20 * np.log10(rmax)
@@ -267,21 +412,34 @@ def extract(a):
     for i, s in enumerate(segs):
         beat = s['ev0'] / sr * a.bpm / 60.0
         ln = s['len'] / sr * a.bpm / 60.0
-        ev.append('%s,%d,%s,%s' % (fmt4(beat), base + cl[i], fmt4(ln), fmt4(vel[i])))
+        root = 100 * cl[i] + 50 if spaced else base + cl[i]
+        ev.append('%s,%s,%s,%s' % (fmt4(beat), fmt4(root + shifts[i]) if spaced else '%d' % root if shifts[i] == 0 else fmt4(root + shifts[i]), fmt4(ln), fmt4(vel[i])))
     with open(a.events, 'w') as f:
-        f.write('# %s gain_db %.4f\n' % (a.name, gain_db))
+        f.write('# %s gain_db %.4f%s\n' % (a.name, gain_db, ' roots spaced' if spaced else ''))
         for k in range(0, len(ev), 40):
             f.write('EVENTS %s: %s\n' % (a.name, ' '.join(ev[k:k + 40])))
     with open(a.table, 'w') as f:
-        f.write('start_s\tlength_s\tcluster\texemplar\tr\tv\tdist_to_exemplar\tseg_start_s\tseg_end_s\n')   # the last two: the cut as made, in the clip's time
+        f.write('start_s\tlength_s\tcluster\texemplar\tr\tv\tdist_to_exemplar\tseg_start_s\tseg_end_s\tf0\tshift\tvoiced\tf0_25\tf0_50\tf0_75\tshort_ms\n')   # seg_*: the cut as made, in the clip's time
         for i, s in enumerate(segs):
-            d = 1 - float(F[i] @ F[ex_of[cl[i]]])
-            f.write('%.4f\t%.4f\t%d\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\n' % (s['ev0'] / sr, s['len'] / sr, cl[i],
-                    'yes' if ex_of[cl[i]] == i else 'no', rr[i], vel[i], max(d, 0.0), a.start + s['a0'] / sr, a.start + s['a1'] / sr))
+            e = ex_of[cl[i]]
+            if M is not None and mode == 'shift':
+                d = float(M[i, e])
+            else:
+                d = 1 - float(FA[i] @ FA[e])
+            fv = lambda v: '%.3f' % v if v == v else 'nan'
+            f0c = [fv(s['f0']), '%.4f' % s['voiced']] + [fv(v) for v in s['f0p']] if mode == 'f0' else ['-', '-', '-', '-', '-']
+            f.write('%.4f\t%.4f\t%d\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%s\t%.4f\t%s\t%s\t%s\t%s\t%.1f\n' % (s['ev0'] / sr, s['len'] / sr, cl[i],
+                    'yes' if e == i else 'no', rr[i], vel[i], max(d, 0.0), a.start + s['a0'] / sr, a.start + s['a1'] / sr,
+                    f0c[0], shifts[i], f0c[1], f0c[2], f0c[3], f0c[4], short_ms[i]))
     tot = sum(len(w) for w in stored) / sr
+    nshort = int((short_ms > 30).sum())
+    glides = [abs(1200 * np.log2(g['f0p'][2] / g['f0p'][0])) for g in segs if mode == 'f0' and g['isv'] and g['f0p'][0] == g['f0p'][0] and g['f0p'][2] == g['f0p'][2]]
     print('%s D=%g: segments %d, clusters %d, exemplar audio %.3f s, stored share %.4f of %.3f s (part gain %.2f dB)'
           % (a.name, a.distance, ns, ncl, tot, tot / win_s, win_s, gain_db))
-    return dict(segments=ns, clusters=ncl, exemplar_s=tot, share=tot / win_s, gain_db=gain_db)
+    print('STATS merged=%d median_abs_shift=%.4f short30=%d split=%d median_glide_cents=%s unvoiced=%d'
+          % (nmerged, float(np.median(np.abs(shifts))), nshort, nsplit, '%.1f' % float(np.median(glides)) if glides else 'n/a',
+             sum(1 for g in segs if mode == 'f0' and not g['isv'])))
+    return dict(segments=ns, clusters=ncl, exemplar_s=tot, share=tot / win_s, gain_db=gain_db, merged=nmerged, short30=nshort)
 
 
 def main(argv=None):
@@ -300,6 +458,12 @@ def main(argv=None):
     ap.add_argument('--split-roots', action='store_true', help='allow more than 128 clusters (extra manifests, pitch 128k + root)')
     ap.add_argument('--timing', choices=['trim', 'attack', 'segment'], default='trim', help="'trim': segment start, moved by what the engine's smp_trim drops from the exemplar; 'attack': lands each attack where the original's was; 'segment': the segment start as cut")
     ap.add_argument('--feat-eps', type=float, default=FEAT_EPS, help='feature compression: log1p(magnitude / (segment peak * eps)); 0 = log1p(1e4 * magnitude)')
+    ap.add_argument('--roots', choices=['midi', 'spaced'], default='midi', help='spaced: sample i has root 100 i + 50 and an event pitch is root + shift')
+    ap.add_argument('--transpose', choices=['none', 'f0', 'shift'], default='none', help='f0: monophonic stem, shift = f0 ratio; shift: polyphonic, best integer semitone shift')
+    ap.add_argument('--max-shift', type=float, default=None, help='largest shift in semitones (default 12 for f0, 5 for shift)')
+    ap.add_argument('--f0-range', type=float, nargs=2, default=[30.0, 400.0], metavar=('FMIN', 'FMAX'))
+    ap.add_argument('--merge-sustain', type=float, default=None, metavar='TAU', help='remove an onset where the sound simply continues (feature distance under TAU, RMS rise at most 3 dB)')
+    ap.add_argument('--vel-window-ms', type=float, default=None, help='velocity window from the start (default: the whole common length; 100 = the iteration 1 rule)')
     ap.add_argument('--lead-ms', type=float, default=6.0)
     ap.add_argument('--min-seg-ms', type=float, default=50.0)
     return extract(ap.parse_args(argv))

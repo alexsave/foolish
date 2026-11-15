@@ -2,8 +2,10 @@
 //   ./play full OUTDIR        (SOLO=drums renders one part alone, unnormalised, scaled by MGAIN dB if set)
 // It reads score.txt (TEMPO, SECTION and "EVENTS PART: beat,pitch,len,vel ..." lines, see engine/scoretxt.h) and parts.txt from the
 // current directory. parts.txt is plain text, one line per part, lines starting with # ignored:
-//   PART <name> sampler <manifest> gain_db <x> release_s <x> group <drums|bass|other> [exact 0|1]
+//   PART <name> sampler <manifest> gain_db <x> release_s <x> group <drums|bass|other> [exact 0|1] [roots spaced]
 // "sampler" may be repeated: the k-th manifest answers events whose pitch is 128k + root (extract.py --split-roots writes them).
+// "roots spaced" (extract.py --roots spaced): one manifest whose roots are 100 i + 50 and an event's pitch is root + shift in semitones;
+// the pitch >= 127.5 routing above does not apply to such a part.
 // "exact" is optional (default 1): 1 sets the sampler's sp[15] so no random detune or gain variation touches a note; 0 is for tests.
 // Every part is a sampler track with velocity exponent 1, no loop, no pan, no sends, no EQ, no compression, no humanise, no swing.
 // The master has no EQ, compression, tape, room noise, width processing or top filter; loudness normalisation to -16 LUFS and the
@@ -16,7 +18,7 @@
 
 #define MAXPART 16
 #define MAXSUB 16
-typedef struct { char name[48]; int ntr, tr[MAXSUB]; char group[16]; } Part;
+typedef struct { char name[48]; int ntr, tr[MAXSUB]; char group[16]; int spaced; } Part;
 static Part g_part[MAXPART]; static int g_npart;
 
 static void die(const char *file, int line, const char *msg, const char *what) { fprintf(stderr, "play: %s:%d: %s '%s'\n", file, line, msg, what); exit(1); }
@@ -32,17 +34,20 @@ void city_setup(void) {
         if (g_npart >= MAXPART) die("parts.txt", ln, "too many parts at", tok[1]);
         Part *pt = &g_part[g_npart]; memset(pt, 0, sizeof *pt);
         snprintf(pt->name, sizeof pt->name, "%s", tok[1]); for (char *c = pt->name; *c; c++) *c = tolower((unsigned char)*c);
-        char *man[MAXSUB]; int nm = 0; double gain = 0, rel = 0.012; int have_gain = 0, have_rel = 0, exact = 1;
+        char *man[MAXSUB]; int nm = 0; double gain = 0, rel = 0.012; int have_gain = 0, have_rel = 0, exact = 1, spaced = 0;
         for (int i = 2; i < nt; i += 2) {
             if (i + 1 >= nt) die("parts.txt", ln, "keyword without a value", tok[i]);
             if (!strcmp(tok[i], "sampler")) { if (nm >= MAXSUB) die("parts.txt", ln, "too many samplers at", tok[i + 1]); man[nm++] = tok[i + 1]; }
             else if (!strcmp(tok[i], "gain_db")) { gain = atof(tok[i + 1]); have_gain = 1; }
             else if (!strcmp(tok[i], "release_s")) { rel = atof(tok[i + 1]); have_rel = 1; }
             else if (!strcmp(tok[i], "group")) { if (strcmp(tok[i + 1], "drums") && strcmp(tok[i + 1], "bass") && strcmp(tok[i + 1], "other")) die("parts.txt", ln, "group must be drums, bass or other, got", tok[i + 1]); snprintf(pt->group, sizeof pt->group, "%s", tok[i + 1]); }
+            else if (!strcmp(tok[i], "roots")) { if (strcmp(tok[i + 1], "spaced")) die("parts.txt", ln, "roots must be 'spaced', got", tok[i + 1]); spaced = 1; }
             else if (!strcmp(tok[i], "exact")) exact = atoi(tok[i + 1]) != 0;
             else die("parts.txt", ln, "unknown keyword", tok[i]);
         }
         if (!nm || !have_gain || !have_rel || !pt->group[0]) die("parts.txt", ln, "the part lacks sampler, gain_db, release_s or group:", tok[1]);
+        if (spaced && nm != 1) die("parts.txt", ln, "a part with roots spaced has exactly one sampler:", tok[1]);
+        pt->spaced = spaced;
         for (int k = 0; k < nm; k++) {
             int t = syn_track(pt->name, syn_sampler); Track *tr = &g_tr[t]; tr->user = ss_load(man[k]);
             tr->sp[0] = rel; tr->sp[1] = 1; tr->sp[3] = 127; tr->sp[10] = 0; tr->sp[15] = exact;
@@ -68,7 +73,7 @@ double city_loop(void) {
     int n0 = g_nnote; g_nsec = 0; score_txt("score.txt", map, 0);
     // pitch 128k + root belongs to the part's k-th manifest
     for (int i = n0; i < g_nnote; i++) { Note *n = &g_note[i]; if (n->pitch < 127.5) continue;
-        for (int p = 0; p < g_npart; p++) if (n->tr == g_part[p].tr[0]) { int k = (int)((n->pitch + 0.5) / 128);
+        for (int p = 0; p < g_npart; p++) if (n->tr == g_part[p].tr[0]) { if (g_part[p].spaced) break; int k = (int)((n->pitch + 0.5) / 128);
             if (k >= g_part[p].ntr) { fprintf(stderr, "play: pitch %.1f of part %s needs manifest %d, the part has %d\n", n->pitch, g_part[p].name, k + 1, g_part[p].ntr); exit(1); }
             n->tr = g_part[p].tr[k]; n->pitch -= 128 * k; break; } }
     return score_total_bars() * 4.0;

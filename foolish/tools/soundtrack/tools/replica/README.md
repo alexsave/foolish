@@ -172,3 +172,86 @@ The stock song's pad and bass are stationary, so a 400 ms loudness curve of them
 Onset-driven segmentation cuts a stationary sustained sound (a pad) at spurious onsets into fragments that replay with the wrong envelope.
 Members of a cluster are all played as the exemplar at the exemplar's pitch: there is no transposition, so a cluster that merges two pitches plays one of them wrong.
 The velocity is read from the first 100 ms only, and a cluster whose exemplar starts quietly makes r_max (and so the part gain) large.
+
+
+## extract.py, iteration 2: pitch-aware clustering
+
+`--roots spaced` stores sample i at root 100 * i + 50 and plays an event at pitch root + shift (semitones, fractional allowed, 4 decimals).
+The events file's first line then ends in `roots spaced`, assemble.py copies that as the parts.txt keyword `roots spaced`, and play.c skips its pitch >= 127.5 manifest routing for that part.
+A parts.txt without the keyword renders exactly as before (the committed se11_drop_0-42_mid renders sample-identical).
+`--transpose f0` is for a monophonic stem (bass).
+Per segment it measures the median f0 with compare.py's yin (`--f0-range 30 400`), the voiced share and f0 at 25, 50 and 75 percent.
+Features are compared after shifting each by its f0 (36 bins per octave), an event's shift is 12 log2(f0 member / f0 exemplar), limited to `--max-shift` (default 12) by splitting off a member beyond it.
+Segments with a voiced share under 0.5 cluster only among themselves at shift 0, and the exemplar is the longest member with a voiced share of at least 0.8.
+`--transpose shift` is for a polyphonic stem (other).
+The distance is the minimum over integer k in plus or minus `--max-shift` (default 5) semitones of 1 - cosine(A, B moved up k semitones), with k = 0 winning ties within 1e-6, and a member's shift is the k that matches the exemplar to it.
+`--merge-sustain TAU` removes an onset when the 80 ms of feature before it and after it are closer than TAU and the 20 ms RMS does not rise by more than 3 dB; the number removed is printed.
+Velocity is now the RMS ratio over the common length of member and exemplar (the exemplar as transposed); `--vel-window-ms 100` is the old rule.
+The table gains the columns f0, shift, voiced, f0_25, f0_50, f0_75 and short_ms (how much longer the member is than the transposed exemplar), and extract.py prints a STATS line (boundaries merged, median absolute shift, events short by more than 30 ms, splits, median glide in cents, unvoiced segments).
+Tests: test_extract.sh covers a bass line, chord stabs at four transpositions and a tremolo pad.
+
+### Iteration 2 tradeoff on se_11, 0 to 42 s, 160 BPM (each stem rendered and compared alone)
+
+Drums rows are iteration 1 (D given, method unchanged).
+`maxshift` is the shift limit in semitones; rising_* count samples whose 10 ms RMS envelope peaks after 50 percent of their length with the first 30 ms more than 9 dB below the peak.
+
+| stem | options | D | merge | maxshift | events | samples | stored_share | part_gain_db | merged | median_abs_shift | short30 | offset_ms | onset_f30 | onset_dev_mean_ms | chroma_above_chance | cqt_above_chance | lts_mad_db | loud400_corr | loud400_mad_db | loud20_corr | bright_corr | bass_pitch_within50 | rising_samples | rising_events | rising_play_s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| drums | D=0 (iteration 1, reused) | 0 | - | - | 192 | 192 | 1 | 0.9834 | - | 0 | - | -0.3034 | 1 | -0.3284 | 0.9916 | 0.9858 | 0.2891 | 1 | 0.06232 | 0.9991 | 0.9988 | - | 0 | 0 | 0 |
+| drums | D=0.02 (iteration 1, reused) | 0.02 | - | - | 192 | 86 | 0.463 | 4.437 | - | 0 | - | 0.7896 | 0.9641 | -0.5467 | 0.8718 | 0.9058 | 0.6822 | 0.9965 | 0.3569 | 0.9588 | 0.8786 | - | 0 | 0 | 0 |
+| drums | D=0.05 (iteration 1, reused) | 0.05 | - | - | 192 | 35 | 0.2126 | 12.87 | - | 0 | - | 1.553 | 0.961 | -1.017 | 0.7057 | 0.7961 | 1.256 | 0.979 | 0.5418 | 0.9012 | 0.7544 | - | 0 | 0 | 0 |
+| drums | D=0.1 (iteration 1, reused) | 0.1 | - | - | 192 | 20 | 0.1366 | 12.87 | - | 0 | - | 1.681 | 0.9509 | -1.232 | 0.6499 | 0.7491 | 1.308 | 0.9775 | 0.591 | 0.8833 | 0.7098 | - | 0 | 0 | 0 |
+| drums | D=0.2 (iteration 1, reused) | 0.2 | - | - | 192 | 9 | 0.0807 | 12.87 | - | 0 | - | 1.822 | 0.9372 | -2.769 | 0.6406 | 0.7296 | 1.713 | 0.9783 | 0.5833 | 0.869 | 0.6567 | - | 0 | 0 | 0 |
+| drums | D=0.35 (iteration 1, reused) | 0.35 | - | - | 192 | 5 | 0.0526 | 15.32 | - | 0 | - | 1.991 | 0.9364 | -3.366 | 0.602 | 0.6863 | 1.904 | 0.9781 | 0.5951 | 0.8571 | 0.6601 | - | 0 | 0 | 0 |
+| bass | --transpose f0 --roots spaced | 0.02 | off | 12 | 224 | 53 | 0.334 | 27.99 | 0 | 0 | 11 | -8.077 | 0.6356 | -2.785 | 0.673 | 0.4997 | 1.184 | 0.9351 | 1.773 | 0.6977 | 0.5545 | 0.8018 | 12 | 52 | 9.234 |
+| bass | --transpose f0 --roots spaced --max-shift 2 | 0.02 | off | 2 | 224 | 53 | 0.334 | 27.99 | 0 | 0 | 11 | -8.077 | 0.6356 | -2.785 | 0.673 | 0.4997 | 1.184 | 0.9351 | 1.773 | 0.6977 | 0.5545 | 0.8018 | 12 | 52 | 9.234 |
+| bass | --transpose f0 --roots spaced --merge-sustain 0.05 | 0.02 | 0.05 | 12 | 55 | 23 | 0.6 | 6.771 | 169 | 0 | 1 | 0.02852 | 0.7333 | -1.709 | 0.7623 | 0.7497 | 0.343 | 0.9259 | 1.33 | 0.7798 | 0.6896 | 0.8341 | 6 | 15 | 10.06 |
+| bass | --transpose f0 --roots spaced --merge-sustain 0.05 --max-shift 2 | 0.02 | 0.05 | 2 | 55 | 23 | 0.6 | 6.771 | 169 | 0 | 1 | 0.02852 | 0.7333 | -1.709 | 0.7623 | 0.7497 | 0.343 | 0.9259 | 1.33 | 0.7798 | 0.6896 | 0.8341 | 6 | 15 | 10.06 |
+| bass | --transpose f0 --roots spaced | 0.05 | off | 12 | 224 | 20 | 0.1803 | 27.99 | 0 | 0.0153 | 5 | -9.433 | 0.5677 | -2.722 | 0.6374 | 0.4496 | 1.523 | 0.921 | 2.119 | 0.676 | 0.6748 | 0.718 | 6 | 94 | 15.85 |
+| bass | --transpose f0 --roots spaced --max-shift 2 | 0.05 | off | 2 | 224 | 20 | 0.1803 | 27.99 | 0 | 0.0153 | 5 | -9.433 | 0.5677 | -2.722 | 0.6374 | 0.4496 | 1.523 | 0.921 | 2.119 | 0.676 | 0.6748 | 0.718 | 6 | 94 | 15.85 |
+| bass | --transpose f0 --roots spaced --merge-sustain 0.05 | 0.05 | 0.05 | 12 | 55 | 12 | 0.3286 | 9.038 | 169 | 0.0159 | 2 | -2.436 | 0.5782 | 0.7728 | 0.6038 | 0.55 | 0.7636 | 0.7399 | 3.066 | 0.5852 | 0.213 | 0.7125 | 3 | 6 | 2.696 |
+| bass | --transpose f0 --roots spaced --merge-sustain 0.05 --max-shift 2 | 0.05 | 0.05 | 2 | 55 | 12 | 0.3286 | 9.038 | 169 | 0.0159 | 2 | -2.436 | 0.5782 | 0.7728 | 0.6038 | 0.55 | 0.7636 | 0.7399 | 3.066 | 0.5852 | 0.213 | 0.7125 | 3 | 6 | 2.696 |
+| bass | --transpose f0 --roots spaced | 0.1 | off | 12 | 224 | 12 | 0.1439 | 27.99 | 0 | 0.0286 | 4 | -9.8 | 0.5648 | -2.384 | 0.6177 | 0.426 | 1.96 | 0.9137 | 2.186 | 0.6951 | 0.7395 | 0.7005 | 3 | 124 | 19.53 |
+| bass | --transpose f0 --roots spaced --max-shift 2 | 0.1 | off | 2 | 224 | 13 | 0.1483 | 27.99 | 0 | 0.0278 | 4 | -9.696 | 0.5648 | -2.462 | 0.6305 | 0.4321 | 1.959 | 0.9137 | 2.183 | 0.6956 | 0.7393 | 0.7109 | 3 | 122 | 19.27 |
+| bass | --transpose f0 --roots spaced --merge-sustain 0.05 | 0.1 | 0.05 | 12 | 55 | 8 | 0.2518 | 9.038 | 169 | 0.0338 | 4 | -4.85 | 0.5213 | 1.764 | 0.5413 | 0.4847 | 0.9233 | 0.6565 | 3.747 | 0.4732 | 0.144 | 0.6582 | 1 | 4 | 2.325 |
+| bass | --transpose f0 --roots spaced --merge-sustain 0.05 --max-shift 2 | 0.1 | 0.05 | 2 | 55 | 10 | 0.2765 | 9.038 | 169 | 0.0214 | 4 | -3.628 | 0.5309 | 0.9106 | 0.5551 | 0.4949 | 0.897 | 0.6585 | 3.703 | 0.477 | 0.1439 | 0.679 | 3 | 8 | 4.412 |
+| bass | --transpose f0 --roots spaced | 0.2 | off | 12 | 224 | 6 | 0.1074 | 28.87 | 0 | 1.49 | 0 | -3.628 | 0.6908 | -5.222 | 0.4047 | 0.3059 | 1.457 | 0.9077 | 2.502 | 0.7337 | 0.8103 | 0.2664 | 1 | 77 | 11.91 |
+| bass | --transpose f0 --roots spaced --max-shift 2 | 0.2 | off | 2 | 224 | 10 | 0.1225 | 28.87 | 0 | 0.0785 | 4 | -2.904 | 0.5626 | 0.1165 | 0.5202 | 0.3886 | 1.738 | 0.9204 | 2.238 | 0.728 | 0.7264 | 0.4945 | 2 | 74 | 11.57 |
+| bass | --transpose f0 --roots spaced --merge-sustain 0.05 | 0.2 | 0.05 | 12 | 55 | 5 | 0.2212 | 9.038 | 169 | 0.183 | 1 | -3.292 | 0.5166 | 0.7535 | 0.47 | 0.4384 | 1.231 | 0.7247 | 3.371 | 0.5937 | 0.2335 | 0.4955 | 0 | 0 | 0 |
+| bass | --transpose f0 --roots spaced --merge-sustain 0.05 --max-shift 2 | 0.2 | 0.05 | 2 | 55 | 9 | 0.2762 | 9.038 | 169 | 0.0214 | 2 | -3.153 | 0.5391 | 1.591 | 0.554 | 0.4959 | 0.9438 | 0.7316 | 3.12 | 0.579 | 0.211 | 0.641 | 3 | 6 | 2.696 |
+| bass | --transpose f0 --roots spaced | 0.35 | off | 12 | 224 | 5 | 0.0943 | 28.87 | 0 | 1.533 | 1 | -5.146 | 0.6867 | -4.028 | 0.3644 | 0.2757 | 3.659 | 0.9027 | 2.581 | 0.6883 | 0.6733 | 0.241 | 1 | 77 | 11.91 |
+| bass | --transpose f0 --roots spaced --max-shift 2 | 0.35 | off | 2 | 224 | 10 | 0.1225 | 28.87 | 0 | 0.0785 | 4 | -2.904 | 0.5626 | 0.1165 | 0.5202 | 0.3886 | 1.738 | 0.9204 | 2.238 | 0.728 | 0.7264 | 0.4945 | 2 | 74 | 11.57 |
+| bass | --transpose f0 --roots spaced --merge-sustain 0.05 | 0.35 | 0.05 | 12 | 55 | 3 | 0.144 | 9.038 | 169 | 0.6804 | 1 | -2.707 | 0.4713 | 1.108 | 0.351 | 0.3606 | 3.51 | 0.7166 | 3.674 | 0.5612 | 0.1928 | 0.4045 | 0 | 0 | 0 |
+| bass | --transpose f0 --roots spaced --merge-sustain 0.05 --max-shift 2 | 0.35 | 0.05 | 2 | 55 | 8 | 0.2367 | 9.038 | 169 | 0.0271 | 3 | -1.756 | 0.5124 | 0.1298 | 0.5056 | 0.4516 | 3.484 | 0.6392 | 3.931 | 0.4987 | 0.1162 | 0.6222 | 3 | 6 | 2.696 |
+| other | --transpose shift --roots spaced | 0.02 | off | 5 | 225 | 162 | 0.7253 | 5.566 | 0 | 0 | 0 | -1.464 | 0.8271 | 0.3704 | 0.9401 | 0.8501 | 0.2539 | 0.9845 | 0.2196 | 0.9198 | 0.9131 | - | 3 | 3 | 0.9843 |
+| other | --transpose shift --roots spaced --max-shift 2 | 0.02 | off | 2 | 225 | 162 | 0.7253 | 5.566 | 0 | 0 | 0 | -1.464 | 0.8271 | 0.3704 | 0.9401 | 0.8501 | 0.2539 | 0.9845 | 0.2196 | 0.9198 | 0.9131 | - | 3 | 3 | 0.9843 |
+| other | --transpose shift --roots spaced --merge-sustain 0.03 | 0.02 | 0.03 | 5 | 154 | 120 | 0.7666 | 2.161 | 71 | 0 | 0 | -1.151 | 0.8265 | 0.04194 | 0.9433 | 0.872 | 0.3953 | 0.9866 | 0.2144 | 0.9299 | 0.8599 | - | 6 | 9 | 4.742 |
+| other | --transpose shift --roots spaced --merge-sustain 0.03 --max-shift 2 | 0.02 | 0.03 | 2 | 154 | 120 | 0.7666 | 2.161 | 71 | 0 | 0 | -1.151 | 0.8265 | 0.04194 | 0.9433 | 0.872 | 0.3953 | 0.9866 | 0.2144 | 0.9299 | 0.8599 | - | 6 | 9 | 4.742 |
+| other | --transpose shift --roots spaced --merge-sustain 0.06 | 0.02 | 0.06 | 5 | 74 | 60 | 0.8829 | 2.901 | 151 | 0 | 0 | -1.128 | 0.8916 | 1.077 | 0.9452 | 0.9193 | 0.3657 | 0.9752 | 0.2184 | 0.9296 | 0.9309 | - | 5 | 5 | 3.797 |
+| other | --transpose shift --roots spaced --merge-sustain 0.06 --max-shift 2 | 0.02 | 0.06 | 2 | 74 | 60 | 0.8829 | 2.901 | 151 | 0 | 0 | -1.128 | 0.8916 | 1.077 | 0.9452 | 0.9193 | 0.3657 | 0.9752 | 0.2184 | 0.9296 | 0.9309 | - | 5 | 5 | 3.797 |
+| other | --transpose shift --roots spaced --merge-sustain 0.1 | 0.02 | 0.1 | 5 | 49 | 35 | 0.8576 | 2.219 | 176 | 0 | 0 | -1.119 | 0.86 | 0.7721 | 0.9319 | 0.9075 | 0.3919 | 0.9725 | 0.25 | 0.9162 | 0.9252 | - | 2 | 2 | 2.235 |
+| other | --transpose shift --roots spaced --merge-sustain 0.1 --max-shift 2 | 0.02 | 0.1 | 2 | 49 | 35 | 0.8576 | 2.219 | 176 | 0 | 0 | -1.119 | 0.86 | 0.7721 | 0.9319 | 0.9075 | 0.3919 | 0.9725 | 0.25 | 0.9162 | 0.9252 | - | 2 | 2 | 2.235 |
+| other | --transpose shift --roots spaced | 0.05 | off | 5 | 225 | 54 | 0.3344 | 6.148 | 0 | 0 | 0 | -1.958 | 0.6564 | -1.857 | 0.7144 | 0.6008 | 0.9689 | 0.966 | 0.4089 | 0.7988 | 0.7156 | - | 1 | 5 | 1.681 |
+| other | --transpose shift --roots spaced --max-shift 2 | 0.05 | off | 2 | 225 | 55 | 0.3411 | 5.912 | 0 | 0 | 0 | -2.177 | 0.6679 | -1.529 | 0.7305 | 0.609 | 0.9511 | 0.9701 | 0.3896 | 0.8063 | 0.7217 | - | 1 | 5 | 1.681 |
+| other | --transpose shift --roots spaced --merge-sustain 0.03 | 0.05 | 0.03 | 5 | 154 | 47 | 0.3532 | 5.912 | 71 | 0 | 0 | -3.932 | 0.6103 | -0.02927 | 0.6362 | 0.5649 | 1.004 | 0.934 | 0.532 | 0.6836 | 0.6476 | - | 2 | 8 | 3.025 |
+| other | --transpose shift --roots spaced --merge-sustain 0.03 --max-shift 2 | 0.05 | 0.03 | 2 | 154 | 47 | 0.3525 | 5.912 | 71 | 0 | 0 | -3.628 | 0.6188 | -0.7029 | 0.6264 | 0.561 | 1.005 | 0.9309 | 0.5632 | 0.6723 | 0.6436 | - | 2 | 8 | 3.025 |
+| other | --transpose shift --roots spaced --merge-sustain 0.06 | 0.05 | 0.06 | 5 | 74 | 27 | 0.5024 | 3.139 | 151 | 0 | 0 | -1.58 | 0.6746 | 1.563 | 0.6853 | 0.6545 | 0.9053 | 0.885 | 0.6728 | 0.6858 | 0.6881 | - | 2 | 10 | 9.407 |
+| other | --transpose shift --roots spaced --merge-sustain 0.06 --max-shift 2 | 0.05 | 0.06 | 2 | 74 | 27 | 0.5024 | 3.139 | 151 | 0 | 0 | -1.58 | 0.6746 | 1.563 | 0.6853 | 0.6545 | 0.9053 | 0.885 | 0.6728 | 0.6858 | 0.6881 | - | 2 | 10 | 9.407 |
+| other | --transpose shift --roots spaced --merge-sustain 0.1 | 0.05 | 0.1 | 5 | 49 | 16 | 0.4216 | 4.133 | 176 | 0 | 2 | -2.749 | 0.6632 | 0.7135 | 0.5668 | 0.5519 | 0.5766 | 0.8402 | 0.797 | 0.4718 | 0.5912 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced --merge-sustain 0.1 --max-shift 2 | 0.05 | 0.1 | 2 | 49 | 17 | 0.4407 | 4.133 | 176 | 0 | 1 | -1.796 | 0.6792 | 1.34 | 0.5685 | 0.5265 | 0.5718 | 0.8699 | 0.7555 | 0.6532 | 0.5924 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced | 0.1 | off | 5 | 225 | 16 | 0.1319 | 6.093 | 0 | 0 | 0 | -0.692 | 0.6606 | 6.567 | 0.4475 | 0.3786 | 2.13 | 0.9509 | 0.5367 | 0.7218 | 0.6396 | - | 1 | 116 | 23.27 |
+| other | --transpose shift --roots spaced --max-shift 2 | 0.1 | off | 2 | 225 | 19 | 0.1571 | 6.093 | 0 | 0 | 0 | -1.316 | 0.7423 | 0.9904 | 0.5346 | 0.4446 | 1.996 | 0.9697 | 0.4271 | 0.7783 | 0.6229 | - | 1 | 25 | 5.042 |
+| other | --transpose shift --roots spaced --merge-sustain 0.03 | 0.1 | 0.03 | 5 | 154 | 16 | 0.1591 | 6.093 | 71 | 0 | 0 | -10.42 | 0.5439 | 2.439 | 0.4204 | 0.377 | 1.244 | 0.9231 | 0.6561 | 0.6148 | 0.437 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced --merge-sustain 0.03 --max-shift 2 | 0.1 | 0.03 | 2 | 154 | 16 | 0.1664 | 6.093 | 71 | 0 | 0 | -9.433 | 0.5285 | 4.795 | 0.4237 | 0.3894 | 1.213 | 0.915 | 0.6922 | 0.604 | 0.4762 | - | 1 | 29 | 9.909 |
+| other | --transpose shift --roots spaced --merge-sustain 0.06 | 0.1 | 0.06 | 5 | 74 | 10 | 0.2404 | 6.079 | 151 | 0 | 0 | -372.2 | 0.4263 | 1.095 | 0.1103 | 0.1627 | 1.472 | 0.5229 | 1.611 | 0.2434 | 0.1326 | - | 1 | 17 | 12.45 |
+| other | --transpose shift --roots spaced --merge-sustain 0.06 --max-shift 2 | 0.1 | 0.06 | 2 | 74 | 10 | 0.2418 | 4.149 | 151 | 0 | 0 | -372.2 | 0.4286 | 0.3729 | 0.1302 | 0.1724 | 1.469 | 0.5174 | 1.625 | 0.2392 | 0.1061 | - | 1 | 17 | 12.45 |
+| other | --transpose shift --roots spaced --merge-sustain 0.1 | 0.1 | 0.1 | 5 | 49 | 6 | 0.2046 | 1.561 | 176 | 0 | 1 | -2.061 | 0.4967 | 1.295 | 0.3111 | 0.2632 | 1.067 | 0.7794 | 1.015 | 0.3716 | 0.4468 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced --merge-sustain 0.1 --max-shift 2 | 0.1 | 0.1 | 2 | 49 | 7 | 0.2544 | 1.561 | 176 | 0 | 0 | -1.581 | 0.5241 | 2.171 | 0.3507 | 0.3044 | 1.063 | 0.8591 | 0.879 | 0.586 | 0.4362 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced | 0.2 | off | 5 | 225 | 3 | 0.0402 | 5.974 | 0 | 0 | 0 | -1.974 | 0.8039 | 1.339 | 0.2441 | 0.2422 | 1.838 | 0.925 | 0.5777 | 0.7346 | -0.05157 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced --max-shift 2 | 0.2 | off | 2 | 225 | 4 | 0.0613 | 9.614 | 0 | 0 | 0 | 3.628 | 0.7201 | 6.981 | 0.2971 | 0.2508 | 2.451 | 0.9477 | 0.5579 | 0.6708 | 0.3363 | - | 1 | 153 | 28.92 |
+| other | --transpose shift --roots spaced --merge-sustain 0.03 | 0.2 | 0.03 | 5 | 154 | 3 | 0.0499 | 6.646 | 71 | 0 | 0 | -13.02 | 0.4786 | -0.04053 | 0.2404 | 0.2338 | 1.775 | 0.9146 | 0.7235 | 0.5508 | 0.00497 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced --merge-sustain 0.03 --max-shift 2 | 0.2 | 0.03 | 2 | 154 | 4 | 0.0661 | 6.646 | 71 | 0 | 0 | -11.96 | 0.4839 | -0.8072 | 0.2446 | 0.2551 | 1.407 | 0.9178 | 0.721 | 0.5775 | 0.08604 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced --merge-sustain 0.06 | 0.2 | 0.06 | 5 | 74 | 4 | 0.1175 | 8.377 | 151 | 1 | 0 | 0.748 | 0.4504 | 0.03526 | 0.296 | 0.2531 | 1.418 | 0.8481 | 0.9525 | 0.4852 | 0.3276 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced --merge-sustain 0.06 --max-shift 2 | 0.2 | 0.06 | 2 | 74 | 4 | 0.1095 | 1.561 | 151 | 0.5 | 0 | 0.9501 | 0.4382 | -1.884 | 0.2616 | 0.2231 | 1.456 | 0.8529 | 0.9375 | 0.4876 | 0.2867 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced --merge-sustain 0.1 | 0.2 | 0.1 | 5 | 49 | 3 | 0.108 | 1.561 | 176 | 0 | 1 | -247.4 | 0.261 | -2.455 | 0.1071 | 0.08466 | 1.319 | 0.7088 | 1.301 | 0.05852 | 0.1482 | - | 0 | 0 | 0 |
+| other | --transpose shift --roots spaced --merge-sustain 0.1 --max-shift 2 | 0.2 | 0.1 | 2 | 49 | 3 | 0.108 | 1.561 | 176 | 0 | 1 | -247.4 | 0.2656 | -2.447 | 0.1179 | 0.09862 | 1.348 | 0.767 | 1.262 | 0.03739 | 0.0932 | - | 0 | 0 | 0 |
