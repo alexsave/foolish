@@ -3,7 +3,7 @@ CFLAGS = -O2 -Wall -Wextra -std=c11 -D_DARWIN_C_SOURCE
 LIB = rng.c string_params.c torsion.c altstring.c finger.c bow.c control.c radiate_body.c radiate_plate_table.c body_params.c body.c wav.c sim.c fft.c analysis.c
 LIBO = $(LIB:.c=.o)
 TESTS = test_rng test_wav test_string_free test_helmholtz test_schelleng test_finger test_determinism \
-	test_body_energy test_admittance test_bridge_loss test_sympathetic test_body_helmholtz test_wolf test_torsion test_radiate test_bridge_hill test_hair
+	test_body_energy test_admittance test_bridge_loss test_sympathetic test_body_helmholtz test_wolf test_torsion test_radiate test_bridge_hill test_hair test_instrument
 
 all: altcello geomdump test_geom bowhair_study
 

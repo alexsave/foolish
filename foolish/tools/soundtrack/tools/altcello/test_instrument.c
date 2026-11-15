@@ -1,0 +1,46 @@
+/* T23 instrument description regression: a 1 s probe (D3 bowed, then C2 bowed; body on, all four strings on the bridge,
+ * 96 kHz) must be bit-identical to the one recorded BEFORE the Instrument refactor (string_params.c and body_params.c
+ * constants moved into instrument_cello.c). The reference is an FNV-1a 64 bit hash over the raw bytes of all channels of
+ * the trace, recorded from the pre-refactor code. */
+#include "sim.h"
+#include "test_common.h"
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+/* recorded from the pre-refactor code (string_params.c and body_params.c) */
+#define REF_D3 0xcba59a5cd4411389ULL
+#define REF_C2 0xb484bc2c569877f3ULL
+
+static uint64_t hash_trace(const Trace *tr)
+{
+    uint64_t h = 1469598103934665603ULL;
+    for (int c = 0; c < SIM_NCH; c++) {
+        const unsigned char *p = (const unsigned char *)tr->ch[c];
+        for (size_t i = 0; i < sizeof(double) * (size_t)tr->n; i++) h = (h ^ p[i]) * 1099511628211ULL;
+    }
+    return h;
+}
+
+static uint64_t probe(const char *name, double F)
+{
+    Sim S;
+    SimOpts so = {1, 1, 0, NULL};
+    sim_init_instrument(&S, 96000.0, &so, name);
+    sim_set_bow(&S, 0.1, 0.1, F, 0.03);
+    sim_start(&S);
+    Trace *tr = sim_run(&S, 1.0, NULL, NULL);
+    uint64_t h = hash_trace(tr);
+    trace_free(tr);
+    sim_free(&S);
+    return h;
+}
+
+int main(void)
+{
+    uint64_t hd = probe("D3", 0.67082), hc = probe("C2", 1.22127);
+    printf("T23 D3 probe hash %016llx, C2 probe hash %016llx\n", (unsigned long long)hd, (unsigned long long)hc);
+    CHECK(hd == REF_D3, "D3 probe changed: %016llx, want %016llx", (unsigned long long)hd, (unsigned long long)REF_D3);
+    CHECK(hc == REF_C2, "C2 probe changed: %016llx, want %016llx", (unsigned long long)hc, (unsigned long long)REF_C2);
+    TEST_DONE("test_instrument");
+}
