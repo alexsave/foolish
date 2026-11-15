@@ -17,7 +17,7 @@ static int t_map(const char *p, double *tp, double *vs, double *dp) {
 static int lyria_track(const char *name, const char *manifest, int loop, double rel) {
     int t = smp_track(name, manifest);
     g_tr[t].sp[0] = rel;                  // release time constant, s
-    g_tr[t].sp[10] = loop;                // loop sustained samples
+    g_tr[t].sp[10] = loop;                // sustained samples: 2 = long loop (a drawn jump target per pass, correlation matched, constant power crossfade)
     g_tr[t].sp[2] = 25;                   // attack fade for the legato-cut samples
     g_tr[t].human_ms = 0; g_tr[t].human_vel = 0; g_tr[t].send[0] = 0;
     return t;
@@ -33,9 +33,9 @@ static int lyria_track(const char *name, const char *manifest, int loop, double 
 #endif
 void city_setup(void) {
     g_on_done = sections_out;
-    CELLO = lyria_track("cello", LM "lyria_cello.txt", 1, 1.46 / 2.303);
-    HAEGEUM = lyria_track("haegeum", LM "lyria_haegeum.txt", 1, 0.165 / 2.303);
-    TRUMPET = lyria_track("trumpet", LM "lyria_trumpet.txt", 1, 0.735 / 2.303);
+    CELLO = lyria_track("cello", LM "lyria_cello.txt", 2, 1.46 / 2.303);
+    HAEGEUM = lyria_track("haegeum", LM "lyria_haegeum.txt", 2, 0.165 / 2.303);
+    TRUMPET = lyria_track("trumpet", LM "lyria_trumpet.txt", 2, 0.735 / 2.303);
     g_bus[0] = (Bus){.type = 1, .rev = {1.9, 1.05, 0, 0.8, 250, 7500, 0.15, 1.0, 0.25, 0.2}, .gain_db = 0, .duck_src = -1};
     g_tr[HAEGEUM].send[0] = HAE_SEND;
 }

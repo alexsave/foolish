@@ -7,7 +7,7 @@
 #include "keys.h"
 #include "mix.h"
 
-typedef struct { int root, layer, rr; double sr; float *L, *R; long n; double att; char path[600]; } Smp;
+typedef struct { int root, layer, rr; double sr; float *L, *R; long n; double att; int warned; char path[600]; } Smp;
 typedef struct { Smp *s; int n, nl; double gain[16]; char name[64]; } SampleSet;
 
 static void smp_trim(Smp *x) {   // drop leading silence (keep 1.5 ms before the first sample over -50 dBFS of the peak)
@@ -56,8 +56,69 @@ static inline double cubic(const float *x, long n, double pos) {
 //     12 bow: skip the sample's slow swell by note length (1 = on): a short note starts 25 ms before the measured attack point,
 //        a long one (4 s and up) keeps the first 40% of the swell; 13 added vibrato depth cents, 14 its rate Hz (onset after
 //        0.18 s, full by 0.5 s, rate and phase per note) for samples recorded without vibrato or to spread an ensemble
+//        10 = 1: loop the middle 50-90% of the sample with a fixed 60 ms linear crossfade (the same fragment every pass).
+//        10 = 2 ("long loop"): play the sample forward once; when a note outlives the zone [A, B] (A = the later of the attack point
+//        plus 50 ms and 20% of the length, B = 60 ms before the end) each pass jumps, at B - X, to a point drawn from the note's own
+//        seed in the first half of the zone (kept at least 2X + one period from B so the new stream has room for the next
+//        crossfade), refined within one root period to the best normalised cross-correlation, and crossfades
+//        over X = 35% of the zone (40 to 250 ms) with constant-power gains normalised for that correlation; a zone under 150 ms
+//        is not looped (the sample plays out, one stderr line per sample); a note that ended before the zone never starts a loop, one
+//        already looping keeps looping through its release. -DSAMPLER_TRACE prints note and join lines to stderr.
 //     15 exact (> 0): no per-note random detune (+-2 cents) and no +-0.6 dB gain variation, so a note at velocity v plays its sample
 //        at gain (v + 0.05)^sp[1] times sp[8] and at the sample's own pitch (sp[6] detune still applies if set); 0 = off (default)
+// mode 2 ("long loop") of sp[10]; see the sp comment. Positions are in source frames; the loop zone is [A, B].
+static double ll_corr(const Smp *x, long a, long c, long W) {   // normalised cross-correlation of the mono signal at a and c over W frames
+    double sab = 0, saa = 0, sbb = 0;
+    for (long k = 0; k < W; k++) { double u = x->L[a + k] + x->R[a + k], v = x->L[c + k] + x->R[c + k]; sab += u * v; saa += u * u; sbb += v * v; }
+    return saa > 1e-12 && sbb > 1e-12 ? sab / sqrt(saa * sbb) : 0;
+}
+static void sampler_longloop(Smp *x, Rng *rg, const Note *n, const double *p, double ratio, double start, double vdep, double vrate, double vph,
+                             double g, double gl, double gr, double dur, double rel, float *L, float *R, long nf, long s0, long len) {
+    long N = x->n; double sr = x->sr, att = x->att;
+    double A = fmax(att * sr + 0.050 * sr, 0.2 * N), B = N - 0.060 * sr, Z = B - A;
+    int loop = Z >= 0.150 * sr;
+    if (!loop && !x->warned) { x->warned = 1; fprintf(stderr, "sampler: %s: loop zone %.0f ms is under 150 ms, mode 2 plays it out without looping\n", x->path, Z / sr * 1000); }
+    double X = clampd(0.35 * Z, 0.040 * sr, 0.250 * sr);
+    double period = sr / (440.0 * pow(2, (x->root - 69) / 12.0));
+    long W = (long)fmax(2 * period, 0.015 * sr);
+#ifdef SAMPLER_TRACE
+    fprintf(stderr, "TRACE note t=%.4f dur=%.4f layer=%d file=%s n=%ld sr=%.0f root=%d ratio=%.6f att=%.3f\n", n->t, n->dur, x->layer, x->path, N, sr, x->root, ratio, att);
+#endif
+    double pos = start, pos2 = 0, w = 0, rc = 0; int xf = 0, looped = 0;
+    for (long i = 0; i < len; i++) {
+        double t = (double)i / SR, a = 1;
+        if (p[2] > 0 && t < p[2] / 1000) a = t / (p[2] / 1000);
+        if (t > dur) a *= exp(-(t - dur) / rel);
+        if (loop && !xf && pos >= B - X) {   // also inside the release: a tail that reaches the sample's end would stop dead there
+            double hi = fmin(A + 0.5 * Z, B - 2 * X - period); if (hi < A) hi = A;   // the new stream keeps room for the next crossfade
+            double s = A + r01(rg) * (hi - A);
+            long cp = (long)pos, best = (long)s; double br = -2;
+            for (long c = (long)(s - period); c <= (long)(s + period); c++) {
+                if (c < 1 || c + W >= N || cp + W >= N) continue;
+                double r = ll_corr(x, cp, c, W); if (r > br) { br = r; best = c; }
+            }
+            pos2 = best + (pos - cp); rc = clampd(br, 0, 1); w = 0; xf = 1; looped = 1;
+#ifdef SAMPLER_TRACE
+            fprintf(stderr, "TRACE jump t=%.4f from=%.0f to=%.0f corr=%.3f\n", n->t + t, pos, pos2, br);
+#endif
+        }
+        double l, r;
+        if (xf) {
+            double ca = cos(w * M_PI / 2), cb = sin(w * M_PI / 2), nrm = sqrt(ca * ca + cb * cb + 2 * ca * cb * rc);
+            l = (cubic(x->L, N, pos) * ca + cubic(x->L, N, pos2) * cb) / nrm; r = (cubic(x->R, N, pos) * ca + cubic(x->R, N, pos2) * cb) / nrm;
+        } else { if (pos >= N - 1) break; l = cubic(x->L, N, pos); r = cubic(x->R, N, pos); }
+        long j = s0 + i; if (j >= 0 && j < nf) { L[j] += (float)(l * a * g * gl); R[j] += (float)(r * a * g * gr); }
+        double inc = vdep > 0 ? ratio * pow(2, vdep * clampd((t - 0.18) / 0.32, 0, 1) * sin(2 * M_PI * vrate * t + vph)) : ratio;
+        pos += inc;
+        if (xf) { pos2 += inc; w += inc / X;
+            if (w >= 1) { pos = pos2; xf = 0;
+#ifdef SAMPLER_TRACE
+                fprintf(stderr, "TRACE join t=%.4f xf_s=%.4f A=%.0f B=%.0f\n", n->t + t, X / ratio / SR, A, B);
+#endif
+            } }
+        if (a < 1e-5 && t > dur) break;
+    }
+}
 static void syn_sampler(Track *tr, const Note *n, float *L, float *R, long nf) {
     SampleSet *ss = (SampleSet *)tr->user; double *p = tr->sp; if (!ss || !ss->n) return;
     Rng rg = {n->seed};
@@ -82,6 +143,7 @@ static void syn_sampler(Track *tr, const Note *n, float *L, float *R, long nf) {
     double pan = p[5] > 0 ? clampd((n->pitch - 64) / 30.0 * p[5], -1, 1) : 0; double ca = (pan + 1) * M_PI / 4, gl = cos(ca) * 1.41421356, gr = sin(ca) * 1.41421356; if (gl > 1) gl = 1; if (gr > 1) gr = 1;
     double dur = n->dur; if (p[9] > 0) { int ti = (int)(tr - g_tr); dur = fmax(dur, damper_time(ti, n->t + n->dur) - n->t); }
     long s0 = lround(n->t * SR), len = (long)((dur + rel * 6) * SR);
+    if (p[10] >= 1.5) { sampler_longloop(x, &rg, n, p, ratio, start, vdep, vrate, vph, g, gl, gr, dur, rel, L, R, nf, s0, len); return; }
     // loop region for long notes: the middle 50%-90% of the sample, crossfaded over 60 ms
     long la = (long)(x->n * 0.5), lb = (long)(x->n * 0.9), xf = (long)(0.06 * x->sr); if (lb - la < 2 * xf || p[10] <= 0) { la = 0; lb = 0; }
     double pos = start;
