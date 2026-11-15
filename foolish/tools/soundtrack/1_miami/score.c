@@ -7,8 +7,11 @@
 #include "../engine/orch.h"
 #define SP(t, ...) do { double v_[] = {__VA_ARGS__}; memcpy(g_tr[t].sp, v_, sizeof v_); } while (0)
 
+// v5: PIANO and VLN/VLA/VC keep their names (the score's part names are unchanged) but are synths now: Alex heard "classical piano"
+// and "classical violin" in an EDM-inspired city. PIANO = a chorused saw stab (house keys), VLN = a supersaw lead with LEADLO an
+// octave under it, VLA = a synth string pad for the inner voices; VC is unused.
 static int KICK, KSUB, CLAP, SNARE, HAT, OHAT, SHAKER, CONGA, BONGO, CRASH, RISER, PIANO, RHODES, RHODESFM, PLUCK, MARIMBA,
-           VLN, VLA, VC, PAD, SUB, BASS, BASSW;
+           VLN, VLA, VC, PAD, SUB, BASS, BASSW, LEADLO;
 typedef struct { const char *name; int *t; double dp; } PMap;
 static PMap g_pm[] = {{"KICK", &KICK, 60}, {"CLAP", &CLAP, 60}, {"SNARE", &SNARE, 60}, {"HAT", &HAT, 60}, {"OHAT", &OHAT, 60},
     {"SHAKER", &SHAKER, 60}, {"CONGA", &CONGA, 0}, {"BONGO", &BONGO, 0}, {"CRASH", &CRASH, -60}, {"RISER", &RISER, -60},
@@ -28,7 +31,7 @@ void city_setup(void) {
     CLAP = syn_track("clap", syn_clap); SP(CLAP, 1100, 1.0, 0.1, 9, 4, 600); g_tr[CLAP].gain_db = -6; g_tr[CLAP].send[0] = 0.25; g_tr[CLAP].width = 1.2;
     SNARE = o_smp("snare", OM "brd_snare_top.txt", 0.2, 0, 0, 0, 0.2, 0);
     HAT = o_smp("hat", OM "brd_hat_cl.txt", 0.08, 0, 0.25, 0, 0.08, 5); OHAT = o_smp("ohat", OM "brd_hat_open.txt", 0.3, 0, -0.25, 0, 0.1, -3);
-    SHAKER = o_smp("shaker", OM "vcsl_shaker.txt", 0.08, 0, -0.35, 0, 0.1, 14);
+    SHAKER = o_smp("shaker", OM "vcsl_shaker.txt", 0.08, 0, -0.35, 0, 0.1, 8);   // v5: 6 dB down ("the maracas in the back are a bit distracting")
     CONGA = o_smp("conga", OM "latin_conga.txt", 0.3, 0, 0.3, 0, 0.15, 6); BONGO = o_smp("bongo", OM "latin_bongo.txt", 0.3, 0, -0.3, 0, 0.15, 3);
     CRASH = o_smp("crash", OM "crash_oh.txt", 2.0, 0, 0.2, 0, 0.3, -8);
     RISER = syn_track("riser", syn_riser); SP(RISER, 300, 9000, 2.0); g_tr[RISER].gain_db = -18; g_tr[RISER].send[0] = 0.4;
@@ -36,15 +39,18 @@ void city_setup(void) {
     g_tr[CONGA].human_ms = g_tr[BONGO].human_ms = 7; g_tr[CONGA].human_vel = g_tr[BONGO].human_vel = 0.12;
     g_tr[KICK].human_ms = g_tr[KSUB].human_ms = 1;   // the four-on-the-floor stays on the grid; the hands around it breathe
     // ---- keys ----
-    PIANO = o_smp("piano", OM "salamander.txt", 0.6, 0, -0.15, 0, 0.3, 3); g_tr[PIANO].sp[1] = 0.5; eq(PIANO, 3, 300, 1, -2);
+    PIANO = syn_track("keys", syn_saw); SP(PIANO, 5, 16, 2.5, 10, 0.05, 0.8, 0.12, 0.05, 0, 0.001); g_tr[PIANO].gain_db = -5; g_tr[PIANO].pan = -0.15; g_tr[PIANO].send[0] = 0.2; eq(PIANO, 2, 200, 0.7, 0);
+    g_tr[PIANO].chorus_mix = 0.5; g_tr[PIANO].chorus_ms = 8; g_tr[PIANO].chorus_depth_ms = 2;
     RHODES = syn_track("rhodes", syn_epiano); SP(RHODES, 1.6, 0.45, 0.2, 2.4, 0.3, 0.25, 4.0, 0.6); g_tr[RHODES].gain_db = -6; g_tr[RHODES].pan = 0.25; g_tr[RHODES].send[0] = 0.35;
     RHODESFM = o_smp("rhodes fm", OM "fmpiano.txt", 0.4, 0, 0.3, 0, 0.35, -8); g_tr[RHODESFM].chorus_mix = 0.4; g_tr[RHODESFM].chorus_ms = 7; g_tr[RHODESFM].chorus_depth_ms = 1.5;
     PLUCK = syn_track("pluck", syn_saw); SP(PLUCK, 3, 10, 1.0, 9, 0.09, 0.7, 0.22, 0.12, 0.25, 0.001); g_tr[PLUCK].gain_db = -1; g_tr[PLUCK].send[0] = 0.25; g_tr[PLUCK].send[1] = 0.25;
     g_tr[PLUCK].chorus_mix = 0.3; g_tr[PLUCK].chorus_ms = 8; g_tr[PLUCK].chorus_depth_ms = 1.5; eq(PLUCK, 2, 180, 0.7, 0);
     MARIMBA = o_smp("marimba", OM "marimba.txt", 1.0, 0, -0.45, 0, 0.2, 2);
     // ---- strings (split into sections by register), pad, sub and bass ----
-    VLN = o_smp("violins", OM "vln_sus.txt", 0.5, 1, -0.4, -30, 0.45, 0); VLA = o_smp("violas", OM "vla_sus.txt", 0.5, 1, 0.1, -30, 0.45, -2);
-    VC = o_smp("cellos", OM "vc_sus.txt", 0.5, 1, 0.35, -30, 0.4, -2); o_hi(VLN, "violins hi", 88);
+    VLN = syn_track("lead", syn_supersaw); SP(VLN, 11, 30, 0.4, 2.5, 12, 0.12, 0.003, 0, 1, 0.12, 0, 0.9, 0.9, 0.9, 900); g_tr[VLN].gain_db = -7; g_tr[VLN].send[0] = 0.3; g_tr[VLN].send[1] = 0.12; eq(VLN, 2, 150, 0.7, 0);
+    LEADLO = syn_track("lead lo", syn_supersaw); SP(LEADLO, 7, 22, 0.5, 2, 6, 0.15, 0.003, 0, 1, 0.12, 0, 0.6, 0.5, 0.8, 400); g_tr[LEADLO].gain_db = -10; g_tr[LEADLO].send[0] = 0.3; eq(LEADLO, 2, 150, 0.7, 0);
+    VLA = syn_track("synth strings", syn_pad); SP(VLA, 7, 14, 3.5, 0.08, 0.35, 0.5, 900, 0.0); g_tr[VLA].gain_db = -9; g_tr[VLA].send[0] = 0.35; eq(VLA, 2, 220, 0.7, 0);
+    g_tr[VLA].chorus_mix = 0.35; g_tr[VLA].chorus_ms = 9; g_tr[VLA].chorus_depth_ms = 2; VC = VLA;
     PAD = syn_track("pad", syn_pad); SP(PAD, 7, 14, 2.5, 0.6, 0.8, 0.6, 600, 0); g_tr[PAD].gain_db = -12; g_tr[PAD].send[0] = 0.4; eq(PAD, 2, 160, 0.7, 0);
     g_tr[PAD].chorus_mix = 0.4; g_tr[PAD].chorus_ms = 10; g_tr[PAD].chorus_depth_ms = 2.5; g_tr[PAD].chorus_hz = 0.25;
     SUB = syn_track("sub", syn_sub); SP(SUB, 0.006, 0.08, 0.15, 0.4, 0); g_tr[SUB].gain_db = -14; eq(SUB, 1, 120, 0.7, 0);
@@ -54,8 +60,8 @@ void city_setup(void) {
     BASSW = syn_track("bass wide", syn_saw); SP(BASSW, 4, 22, 1.4, 4, 0.08, 0.9, 0.3, 0.06, 0, 0.002); g_tr[BASSW].gain_db = -8; g_tr[BASSW].width = 1.6;
     g_tr[BASSW].haas_ms = 9; eq(BASSW, 2, 90, 0.7, 0); eq(BASSW, 1, 1500, 0.7, 0);
     // everything melodic pumps against the kick
-    int duck[] = {PAD, RHODES, RHODESFM, PLUCK, BASS, BASSW, SUB, VLN, VLA, VC, PIANO};
-    for (unsigned i = 0; i < sizeof duck / sizeof *duck; i++) { g_tr[duck[i]].duck_src = KICK; g_tr[duck[i]].duck_db = duck[i] == SUB || duck[i] == BASS ? 6 : 3; g_tr[duck[i]].duck_rel = 0.12; }
+    int duck[] = {PAD, RHODES, RHODESFM, PLUCK, BASS, BASSW, SUB, VLN, VLA, LEADLO, PIANO};
+    for (unsigned i = 0; i < sizeof duck / sizeof *duck; i++) { g_tr[duck[i]].duck_src = KICK; g_tr[duck[i]].duck_db = duck[i] == SUB || duck[i] == BASS ? 8 : 5;   /* v5: a deeper pump (was 6 and 3) */ g_tr[duck[i]].duck_rel = 0.12; }
     // buses: a dark hall, a plate, and the pluck's dotted-eighth ping-pong
     g_bus[0] = (Bus){.type = 1, .rev = {2.6, 1.0, 22, 1.3, 250, 6500, 0.12, 1.0, 0.25, 0.25}, .gain_db = -6, .duck_src = -1};
     g_bus[1] = (Bus){.type = 2, .dl_s = 60.0 / 122 * 0.75, .dr_s = 60.0 / 122 * 0.75, .fb = 0.3, .lp = 4500, .hp = 400, .gain_db = -12, .duck_src = -1};
@@ -74,7 +80,7 @@ static void fx_filters(void) {
         char part[32]; double a, z; int n0, n1;
         if (si >= 0 && sscanf(line, "FX: FILTER %31s %lf -> %lf bars %d-%d", part, &a, &z, &n0, &n1) == 5) {
             double tp, vs, dp = 60; int t = map(part, &tp, &vs, &dp); if (t < 0) continue;
-            int ts[4] = {t, -1, -1, -1}; if (t == RHODES) ts[1] = RHODESFM; if (t == KICK) ts[1] = KSUB; if (t == VLN) { ts[1] = VLA; ts[2] = VC; } if (t == BASS) ts[1] = BASSW;
+            int ts[4] = {t, -1, -1, -1}; if (t == RHODES) ts[1] = RHODESFM; if (t == KICK) ts[1] = KSUB; if (t == VLN) { ts[1] = VLA; ts[2] = LEADLO; } if (t == BASS) ts[1] = BASSW;
             for (int k = 0; k < 4 && ts[k] >= 0; k++) sec_lp(ts[k], sec, n0, n1, a, z, z < 6000);
         }
     }
@@ -95,11 +101,11 @@ double city_loop(void) {
     for (int i = n0; i < n1; i++) { Note n = g_note[i];
         if (n.tr == KICK) note(KSUB, n.beat, n.len, 60, n.vel);
         if (n.tr == RHODES) note(RHODESFM, n.beat, n.len, n.pitch, n.vel * 0.8);
+        if (n.tr == VLN) note(LEADLO, n.beat, n.len, n.pitch - 12, n.vel * 0.85);
         if (n.tr == BASS) note(BASSW, n.beat, n.len, n.pitch, n.vel * 0.9);
         if (n.tr == HAT || n.tr == SHAKER) { double fr = n.beat - floor(n.beat); g_note[i].vel *= fr < 0.01 ? 1.0 : fabs(fr - 0.5) < 0.01 ? 0.8 : 0.62; }
         if (n.tr == SUB && n.pitch < 29) g_note[i].pitch += 12;   // F1 and below sit an octave up, where a sub is felt and heard
     }
-    o_post(n0);
     fx_filters();
     return score_total_bars() * 4.0;
 }
