@@ -14,8 +14,8 @@ static int t_map(const char *p, double *tp, double *vs, double *dp) {
 }
 void city_setup(void) {
     g_on_done = sections_out;
-    static const char *men[] = {"male1", "male2", "male3", "male4", "male5", "male6", "male7", "male8", "male10", "male11"};   // male9 sings an octave above the rest
-    CH = choir_setup(men, 10, "ah", 0, 0.5);
+    static const char *men[] = {"male1", "male2", "male3", "male4", "male5", "male6", "male8", "male11"};   // male9 sings an octave above the rest; male7 and male10 gave almost no usable long tones
+    CH = choir_setup(men, 8, "ah", 0, 0.5);
     TI = o_smp("timpani", "../../samples/manifests/timpani.txt", 1.2, 0, 0.0, 0, 0.22, 4);
     BD = o_smp("bassdrum", "../../samples/manifests/bassdrum.txt", 1.0, 0, 0.05, 0, 0.18, 3);
     FD = o_smp("fielddrum", "../../samples/manifests/fielddrum.txt", 0.4, 0, 0.15, 0, 0.2, 7);

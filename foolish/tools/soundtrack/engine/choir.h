@@ -2,11 +2,13 @@
 // VocalSet (CC BY 4.0; tools/samples/vocalset_extract.py makes the samples and the manifests choir_<singer>_<vowel>.txt), with
 // his own place in the room, his own timing and tuning. A score writes one CHOIR part; choir_post() hands every note of it
 // to each singer who can sing it (a sample root within CHOIR_REACH semitones), so a unison is ten men, not one man ten times.
-// Notes below every singer's reach go up an octave (the score's G1 does not exist in a human chest), above it down.
-// No vibrato is added and nothing is stretched further than CHOIR_REACH: both were what made sampled parts read as synthetic.
+// A note too few men can reach moves by octaves to where the section can sing it (the score's G1 is not in a human chest).
+// No vibrato is added, and no recording is stretched more than CHOIR_REACH up or CHOIR_REACH_DOWN down.
 #pragma once
 #include "orch.h"
-#define CHOIR_REACH 3
+#define CHOIR_REACH 3        // how far up a recorded note may be stretched, in semitones
+#define CHOIR_REACH_DOWN 5   // and how far down: a voice played lower grows darker and larger, which suits basses; higher it thins out
+#define CHOIR_MIN_MEN 3      // a note fewer men than this can reach moves by octaves to where the section can sing it
 #ifndef CHOIR_OM
 #define CHOIR_OM OM   // where the manifests are, relative to the folder the score runs in
 #endif
@@ -32,12 +34,14 @@ static int choir_setup(const char **names, int n, const char *vowel, double gain
     fprintf(stderr, "choir: %d singers on \"%s\"\n", g_nsinger, vowel);
     return g_choir_in;
 }
-static int singer_can(const Singer *s, int pitch) { for (int j = 0; j < s->nroot; j++) if (abs(s->root[j] - pitch) <= CHOIR_REACH) return 1; return 0; }
+static int singer_can(const Singer *s, int pitch) { for (int j = 0; j < s->nroot; j++) { int d = pitch - s->root[j]; if (d <= CHOIR_REACH && d >= -CHOIR_REACH_DOWN) return 1; } return 0; }
+static int choir_men(int pitch) { int c = 0; for (int k = 0; k < g_nsinger; k++) c += singer_can(&g_singer[k], pitch); return c; }
 static void choir_post(int n0) {
     if (g_choir_in < 0 || !g_nsinger) return;
     int lo = 127, hi = 0, n1 = g_nnote; for (int i = 0; i < g_nsinger; i++) for (int j = 0; j < g_singer[i].nroot; j++) { if (g_singer[i].root[j] < lo) lo = g_singer[i].root[j]; if (g_singer[i].root[j] > hi) hi = g_singer[i].root[j]; }
     for (int i = n0; i < n1; i++) { Note a = g_note[i]; if (a.tr != g_choir_in) continue;
-        int p = (int)lround(a.pitch); while (p < lo - CHOIR_REACH) p += 12; while (p > hi + CHOIR_REACH) p -= 12;
+        int p = (int)lround(a.pitch), need = g_nsinger < CHOIR_MIN_MEN ? g_nsinger : CHOIR_MIN_MEN;
+        if (choir_men(p) < need) { int q = p; while (q < hi && choir_men(q) < need) q += 12; if (choir_men(q) < need) { q = p; while (q > lo && choir_men(q) < need) q -= 12; } if (choir_men(q) >= need) p = q; }
         int sung = 0;
         for (int k = 0; k < g_nsinger; k++) if (singer_can(&g_singer[k], p)) { note(g_singer[k].tr, a.beat, a.len, p, a.vel); sung++; }
         if (!sung) fprintf(stderr, "choir: nobody can sing midi %d at beat %.2f\n", p, a.beat);

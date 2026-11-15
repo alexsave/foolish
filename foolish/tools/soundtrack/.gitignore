@@ -4,3 +4,6 @@ samples/*/
 */score
 engine/*.o
 videos/*.mp4
+# render outputs and compiled scores of test scores one folder deeper than a city
+*/*/out/
+*/*/score

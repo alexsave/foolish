@@ -45,9 +45,9 @@ void city_setup(void) {
     int cy = o_smp("cymbals", OM "clash.txt", 2.0, 0, 0.2, 0, 0.25, -4);
     int tt = o_smp("tamtam", OM "clash.txt", 4.0, 0, -0.2, 0, 0.35, -2); g_tr[tt].sp[6] = -1100; eq(tt, 1, 3500, 0.7, 0);
     BELLT = o_smp("bell piano", OM "salamander.txt", 2.0, 0, -0.1, 0, 0.45, -4); g_tr[BELLT].sp[9] = 1;
-    // v5: the choir is ten men from VocalSet, each his own track (engine/choir.h), in place of the GM "aah" and the formant synth
-    static const char *men[] = {"male1", "male2", "male3", "male4", "male5", "male6", "male7", "male8", "male10", "male11"};
-    int CHIN = choir_setup(men, 10, "ah", 2, 0.5);
+    // v5: the choir is eight men from VocalSet, each his own track (engine/choir.h), in place of the GM "aah" and the formant synth
+    static const char *men[] = {"male1", "male2", "male3", "male4", "male5", "male6", "male8", "male11"};
+    int CHIN = choir_setup(men, 8, "ah", 2, 0.5);
     eq(eu, 1, 2500, 0.7, 0); eq(eu2, 1, 2500, 0.7, 0);   // the euphonium: a trombone with its edge taken off
     o_part("VIOLINS", v1, v1b, 0, 0, 0); o_part("VIOLINS2", v2, -1, 0, 0, 0); o_part("VIOLAS", va, -1, 0, 0, 0); o_part("CELLOS", vc, vc2, 0, 0, 0); o_part("BASSES", cb, cb2, 0, 0, 0);
     o_part("BALALAIKA", bal, -1, 0, 0, 0);

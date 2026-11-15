@@ -1,0 +1,4 @@
+69 0 1 /SAMPLES/soundtrack/samples/vocalset_choir/male10/male10_scales_slow_piano_o_m69_1.wav
+48 1 1 /SAMPLES/soundtrack/samples/vocalset_choir/male10/male10_long_tones_straight_u_m48_1.wav
+65 1 1 /SAMPLES/soundtrack/samples/vocalset_choir/male10/male10_long_tones_straight_o_m65_1.wav
+65 1 2 /SAMPLES/soundtrack/samples/vocalset_choir/male10/male10_long_tones_straight_u_m65_1.wav

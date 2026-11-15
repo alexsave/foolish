@@ -1,0 +1,2 @@
+60 1 1 /SAMPLES/soundtrack/samples/vocalset_choir/male7/male7_long_tones_straight_a_m60_1.wav
+65 1 1 /SAMPLES/soundtrack/samples/vocalset_choir/male7/male7_long_tones_straight_a_m65_1.wav

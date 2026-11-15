@@ -1,0 +1,2 @@
+53 0 1 /SAMPLES/soundtrack/samples/vocalset_choir/male10/male10_scales_slow_piano_a_m53_1.wav
+48 1 1 /SAMPLES/soundtrack/samples/vocalset_choir/male10/male10_long_tones_straight_a_m48_1.wav
