@@ -3,33 +3,36 @@
  * and masses are assumptions, to be tuned against the measured target
  * spectrum later. */
 #include "body_params.h"
+#include "radiativity.h"
 #include "rng.h"
 #include <math.h>
 #include <stdlib.h>
 
 typedef struct {
     const char *name;
-    double f, Q, m, cu, cw, r;
+    double f, Q, m, cu, cw;
 } Lead;
 
 static const Lead lead[] = {
-    /* name   f     Q   m(kg) c_u  c_w  r */
-    {"A0", 102.0, 25.0, 2.0, 0.3, 1.0, 1.0},
-    {"CBR", 150.0, 30.0, 0.9, 0.8, 0.6, 0.7},
-    {"B1-", 178.0, 35.0, 0.35, 1.0, 0.5, 0.7}, /* main wolf candidate, between E3 and F#3 */
-    {"B1+", 205.0, 35.0, 0.45, 1.0, 0.5, 0.7},
-    {"m260", 260.0, 40.0, 0.6, 0.9, 0.5, 0.7},
-    {"m300", 300.0, 40.0, 0.6, 0.9, 0.5, 0.7},
-    {"m345", 345.0, 40.0, 0.6, 0.9, 0.5, 0.7},
-    {"m395", 395.0, 40.0, 0.6, 0.9, 0.5, 0.7},
-    {"m440", 440.0, 40.0, 0.6, 0.9, 0.5, 0.7},
+    /* name   f     Q   m(kg) c_u  c_w */
+    {"A0", 102.0, 25.0, 2.0, 0.3, 1.0},
+    {"CBR", 150.0, 30.0, 0.9, 0.8, 0.6},
+    {"B1-", 178.0, 35.0, 0.35, 1.0, 0.5}, /* main wolf candidate, between E3 and F#3 */
+    {"B1+", 205.0, 35.0, 0.45, 1.0, 0.5},
+    {"m260", 260.0, 40.0, 0.6, 0.9, 0.5},
+    {"m300", 300.0, 40.0, 0.6, 0.9, 0.5},
+    {"m345", 345.0, 40.0, 0.6, 0.9, 0.5},
+    {"m395", 395.0, 40.0, 0.6, 0.9, 0.5},
+    {"m440", 440.0, 40.0, 0.6, 0.9, 0.5},
 };
 #define NLEAD ((int)(sizeof lead / sizeof lead[0]))
 
 #define STAT_F0 480.0
 #define STAT_F1 12000.0
 #define STAT_GAP_MEAN 18.0 /* Hz */
-#define STAT_M500 0.5      /* kg at 500 Hz */
+#define STAT_M_SCALE 3.0   /* stage 2 iteration 2: statistical modes 3x heavier = about -10 dB of admittance, so the bridge hill
+                              does not tower over the low modes (the table modes are unchanged) */
+#define STAT_M500 (0.5 * STAT_M_SCALE) /* kg at 500 Hz */
 #define STAT_M_SD_DB 6.0
 #define BH_F 2000.0 /* bridge hill: single dof rocking resonance */
 #define BH_Q 3.0
@@ -70,7 +73,7 @@ BodyModes *body_modes_build(void)
         b->m[n] = lead[n].m;
         b->cu[n] = lead[n].cu;
         b->cw[n] = lead[n].cw;
-        b->r[n] = lead[n].r;
+        b->r[n] = radiativity_gain(lead[n].f);
     }
     b->nlead = NLEAD;
     double f = STAT_F0;
@@ -84,7 +87,7 @@ BodyModes *body_modes_build(void)
         b->m[n] = m;
         b->cu[n] = 0.3 + 0.7 * rng_uniform(&rng);
         b->cw[n] = 0.3 + 0.7 * rng_uniform(&rng);
-        b->r[n] = 1.0;
+        b->r[n] = radiativity_gain(f);
         n++;
         double u = rng_uniform(&rng);
         if (u < 1e-12) u = 1e-12;

@@ -13,6 +13,8 @@ double bow_dphi(double v);  /* d phi / d |v| for v > 0, negative */
 
 /* raised-cosine bow weights J (1/m, sum J h = 1) on points lo..hi */
 void bow_weights(const String *s, double xB, double width, int *lo, int *hi, double *J);
+/* the same on any grid of spacing h, points 0..N (the torsion grid) */
+void bow_weights_grid(double h, int N, double xB, double width, int *lo, int *hi, double *J);
 
 /* Solve  v = q - G phi(v)  (G >= 0) with the Friedlander construction.
  * stuck_prev: the previous step was sticking. Returns v; *Phi = phi value

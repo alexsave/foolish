@@ -19,7 +19,7 @@ int main(void)
     printf("T13 wolf probe: D3 stopped at x_F %.4f m (F3 %.2f Hz), body on, beta 0.1, v_B 0.1 m/s\n", xF, fF3);
     for (int c = 0; c < 2; c++)
         for (int fi = 0; fi < 5; fi++) {
-            SimOpts o = {c == 0 ? 1 : 0, 0, 0};
+            SimOpts o = {c == 0 ? 1 : 0, 0, 0, 0};
             Sim S;
             sim_init_instrument(&S, 96000.0, &o, "D3");
             sim_set_bow(&S, 0.1, 0.1, Fs[fi], 0.03);

@@ -1,7 +1,8 @@
-/* T8 energy of the coupled instrument: four strings on the bridge plus the
- * modal body. Lossless (strings sigma = 0, body Q = infinity): the total energy
- * is constant to 1e-9 relative over 1 s after a pluck. With losses it never
- * increases. */
+/* T8 energy of the coupled instrument: four strings (transverse, both
+ * polarisations, AND torsion) on the bridge plus the modal body. Lossless
+ * (strings sigma = 0, torsional damping 0, body Q = infinity): the total energy
+ * is constant to 1e-9 relative over 1 s after a pluck of every string in both
+ * polarisations and of every string's torsion. With losses it never increases. */
 #include "sim.h"
 #include "test_common.h"
 #include <math.h>
@@ -13,7 +14,7 @@ static void cb(const Sim *S, long i, void *u) { ((Log *)u)->E[i] = sim_energy(S)
 
 static void run(int lossless)
 {
-    SimOpts o = {1, 1, lossless};
+    SimOpts o = {1, 1, lossless, 0};
     Sim S;
     sim_init_instrument(&S, 96000.0, &o, "D3");
     S.bow_on = 0;
@@ -22,7 +23,10 @@ static void run(int lossless)
     for (int i = 0; i < S.nstr; i++) {
         sim_pluck_string(&S, i, 0, (0.13 + 0.07 * i) * 0.69, 0.02 * 0.69, 1e-3);
         sim_pluck_string(&S, i, 1, (0.21 + 0.05 * i) * 0.69, 0.02 * 0.69, 5e-4);
+        sim_pluck_torsion(&S, i, (0.31 + 0.06 * i) * 0.69, 0.04 * 0.69, 0.5);
     }
+    double Etors0 = 0.0, Etot0 = sim_energy(&S);
+    for (int i = 0; i < S.nstr; i++) Etors0 += S.str[i]->tor->Ip * torsion_energy(S.str[i]->tor);
     long n = 96000;
     Log lg = {calloc((size_t)n, sizeof(double))};
     Trace *tr = sim_run(&S, 1.0, cb, &lg);
@@ -37,11 +41,15 @@ static void run(int lossless)
     }
     /* how much energy actually sits in the body at the end (the test is vacuous if the coupling is nil) */
     double Ebody = body_energy(S.body);
+    double Etors = 0.0;
+    for (int i = 0; i < S.nstr; i++) Etors += S.str[i]->tor->Ip * torsion_energy(S.str[i]->tor);
+    printf("T8 torsion energy: %.3e J at the start (%.1f%% of total), %.3e J at 1 s\n", Etors0, 100.0 * Etors0 / Etot0, Etors);
     if (lossless) {
         double rel = (mx - mn) / lg.E[0];
         printf("T8 lossless: E0 %.6e J, relative spread %.3e (limit 1e-9), body energy at 1 s %.3e J (%.2f%% of total)\n", lg.E[0], rel, Ebody, 100.0 * Ebody / lg.E[n - 1]);
         CHECK(rel < 1e-9, "coupled energy not conserved: relative spread %g", rel);
         CHECK(Ebody > 1e-3 * lg.E[n - 1], "body holds %g of the energy: coupling is vacuous", Ebody / lg.E[n - 1]);
+        CHECK(Etors0 > 0.05 * Etot0 && Etors > 0.05 * lg.E[n - 1], "torsion holds %g of the energy at the start, %g at the end: the test would be vacuous", Etors0 / Etot0, Etors / lg.E[n - 1]);
     } else {
         printf("T8 lossy: E0 %.6e -> %.6e J, largest relative step increase %.3e\n", lg.E[0], lg.E[n - 1], worst_up);
         CHECK(worst_up < 1e-12, "energy increased by relative %g in one step", worst_up);

@@ -1,6 +1,6 @@
 /* altcello command line.
  *   altcello probe STRING BETA VB FB SECONDS OUTPREFIX [--fs 96000] [--finger XF] [--pluck]
- *       [--noise STD] [--body off|on] [--strings bowed|all] [--wav OUT.wav]
+ *       [--noise STD] [--body off|on] [--strings bowed|all] [--torsion on|off] [--wav OUT.wav]
  * Writes OUTPREFIX.f32 (interleaved float32 LE, channels in OUTPREFIX.txt) and
  * OUTPREFIX_snap.f32 (u displacement field every 4th sample for the last 2
  * periods, header OUTPREFIX_snap.txt). Prints the real-time factor. */
@@ -39,7 +39,7 @@ static double cpu_seconds(void)
 static int probe(int argc, char **argv)
 {
     if (argc < 8) {
-        fprintf(stderr, "usage: altcello probe STRING BETA VB FB SECONDS OUTPREFIX [--fs 96000] [--finger XF] [--pluck] [--noise STD] [--body off|on] [--strings bowed|all] [--wav OUT.wav]\n");
+        fprintf(stderr, "usage: altcello probe STRING BETA VB FB SECONDS OUTPREFIX [--fs 96000] [--finger XF] [--pluck] [--noise STD] [--body off|on] [--strings bowed|all] [--torsion on|off] [--wav OUT.wav]\n");
         return 2;
     }
     const StringSpec *sp = string_spec(argv[2]);
@@ -52,7 +52,7 @@ static int probe(int argc, char **argv)
     double fs = 96000.0, xF = -1.0;
     int pluck = 0;
     double noise = 0.03;
-    int body = 0, all = 0;
+    int body = 0, all = 0, torsion = 1;
     const char *wavpath = NULL;
     for (int i = 8; i < argc; i++) {
         if (!strcmp(argv[i], "--fs") && i + 1 < argc) fs = atof(argv[++i]);
@@ -61,14 +61,16 @@ static int probe(int argc, char **argv)
         else if (!strcmp(argv[i], "--noise") && i + 1 < argc) noise = atof(argv[++i]);
         else if (!strcmp(argv[i], "--body") && i + 1 < argc) body = !strcmp(argv[++i], "on");
         else if (!strcmp(argv[i], "--strings") && i + 1 < argc) all = !strcmp(argv[++i], "all");
+        else if (!strcmp(argv[i], "--torsion") && i + 1 < argc) torsion = !strcmp(argv[++i], "on");
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wavpath = argv[++i];
     }
     Sim S;
     if (body || all) {
-        SimOpts so = {body, all, 0};
+        SimOpts so = {body, all, 0, 0};
         sim_init_instrument(&S, fs, &so, sp->name);
     } else sim_init(&S, sp, fs);
     S.bow_noise_level = noise;
+    S.torsion_on = torsion;
     sim_set_bow(&S, beta, vB, FB, 0.03);
     if (pluck) {
         S.bow_on = 0;
@@ -138,8 +140,8 @@ static int probe(int argc, char **argv)
         free(y);
     }
     double cpu = c1 - c0;
-    printf("string=%s fs=%.0f N=%d h=%.4g mm B=%.3e  simulated %.3f s in %.3f s cpu  real-time factor %.1f\n",
-           sp->name, fs, S.s->N, S.s->h * 1e3, string_B(sp), secs, cpu, cpu > 0 ? secs / cpu : 0.0);
+    printf("string=%s fs=%.0f N=%d Nt=%d h=%.4g mm B=%.3e  simulated %.3f s in %.3f s cpu  real-time factor %.1f\n",
+           sp->name, fs, S.s->N, S.s->tor->N, S.s->h * 1e3, string_B(sp), secs, cpu, cpu > 0 ? secs / cpu : 0.0);
     trace_free(tr);
     free(sn.buf);
     sim_free(&S);

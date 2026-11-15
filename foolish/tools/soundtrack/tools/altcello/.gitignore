@@ -17,3 +17,5 @@ test_wolf
 geomdump
 test_geom
 analysis/__pycache__/
+test_torsion
+test_radiation

@@ -23,7 +23,7 @@ static void cb(const Sim *S, long i, void *u)
 int main(void)
 {
     double fs = 96000.0, T0 = 2.0, T1 = 5.0;
-    SimOpts o = {1, 1, 0};
+    SimOpts o = {1, 1, 0, 0};
     Sim S;
     sim_init_instrument(&S, fs, &o, "D3");
     sim_set_bow(&S, 0.1, 0.1, 0.4, 0.03);

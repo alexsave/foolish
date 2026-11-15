@@ -13,8 +13,9 @@ typedef struct {
 } Finger;
 
 void finger_init(Finger *f);
-/* weights for a pad centred at xF (m from the nut): fills g[0..hi-lo], sets
+/* weights for a pad centred at xF (m from the nut) on a grid of spacing h, points 0..N: fills g[0..hi-lo], sets
  * lo, hi (lo > hi when nothing is covered). g must hold 64 entries. */
-void finger_weights(const Finger *f, const String *s, double xF, int *lo, int *hi, double *g);
+void finger_weights(const Finger *f, double h, int N, double xF, int *lo, int *hi, double *g);
+/* the pad acts on the transverse motion and on the string's torsion (torsion.h), each on its own grid */
 void finger_apply(const Finger *f, String *s, double xF, double a);
 #endif

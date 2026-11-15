@@ -14,7 +14,7 @@
 
 static Trace *pluck(const char *name, int body, double fs)
 {
-    SimOpts o = {body, 0, 0};
+    SimOpts o = {body, 0, 0, 0};
     Sim S;
     sim_init_instrument(&S, fs, &o, name);
     S.bow_on = 0;

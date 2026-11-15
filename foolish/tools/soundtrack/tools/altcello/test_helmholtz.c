@@ -1,5 +1,7 @@
 /* T3 Helmholtz motion: D3, beta 0.1, vB 0.1 m/s, F_B 1.0 N (swept 0.2..3 N if
- * that force does not give it). The string-only model has very little loss
+ * that force does not give it). Stage 2 iteration 2: the same sweep for the C2
+ * string (beta 0.1 and 0.15), and the test asserts a Helmholtz point at beta 0.1
+ * for both D3 and C2 (C2 did not reach Helmholtz motion at all with the stiff solid core). The string-only model has very little loss
  * (sigma0 = 1.2 /s), so the stick-slip state needs seconds to settle: the
  * analysis starts at SETTLE = 3.0 s, not 0.5 s (the 0.5 s result is printed
  * for the record). */
@@ -83,5 +85,24 @@ int main(void)
         fclose(ff);
     }
     trace_free(tr);
+
+    /* C2: sweep 0.2..3 N at beta 0.1 and 0.15 (iteration 1: never Helmholtz, B 4e-4) */
+    const StringSpec *c2 = string_spec("C2");
+    double betas[2] = {0.1, 0.15};
+    for (int b = 0; b < 2; b++) {
+        int nok2 = 0;
+        for (int i = 0; i <= 14; i++) {
+            double Ff = 0.2 * pow(15.0, i / 14.0);
+            Trace *t2 = run(c2, betas[b], 0.1, Ff, RUNLEN);
+            Helm g = analyse(t2, c2->f0, SETTLE);
+            RunStats st;
+            classify_run(t2->ch[0], t2->ch[3], t2->fs, c2->f0, RUNLEN - 0.5, RUNLEN, &st);
+            printf("  C2 beta %.2f F %.3f: slips per period %d..%d (%.2f onsets/period, %s), slip fraction %.4f, %.2f cents, corr %.3f%s\n", betas[b], Ff, g.counts_min, g.counts_max, st.onsets_per_period, cls_names[st.cls], g.slip_frac, g.cents_flat, g.corr, passes(&g, betas[b]) ? "  OK" : "");
+            if (passes(&g, betas[b])) nok2++;
+            trace_free(t2);
+        }
+        printf("T3 C2 beta %.2f: %d of 15 forces give Helmholtz motion\n", betas[b], nok2);
+        if (b == 0) CHECK(nok2 > 0, "C2 beta 0.1: no force in 0.2..3 N gives Helmholtz motion");
+    }
     TEST_DONE("test_helmholtz");
 }

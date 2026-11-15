@@ -14,17 +14,19 @@
 #define NF 16
 #define RUNLEN 6.0
 
-static Trace *run(int body, int all, double beta, double F, double secs)
+static Trace *run_str(const char *name, int body, int all, double beta, double F, double secs)
 {
-    SimOpts o = {body, all, 0};
+    SimOpts o = {body, all, 0, 0};
     Sim S;
-    sim_init_instrument(&S, 96000.0, &o, "D3");
+    sim_init_instrument(&S, 96000.0, &o, name);
     sim_set_bow(&S, beta, 0.1, F, 0.03);
     sim_start(&S);
     Trace *tr = sim_run(&S, secs, NULL, NULL);
     sim_free(&S);
     return tr;
 }
+
+static Trace *run(int body, int all, double beta, double F, double secs) { return run_str("D3", body, all, beta, F, secs); }
 
 static int passes(const Helm *h, double beta)
 {
@@ -98,5 +100,28 @@ int main(void)
     }
     if (out) fclose(out);
     CHECK(nh1 > 0, "no Helmholtz point at beta 0.1 with the body on");
+
+    /* C2 with the body on (bowed string only), beta 0.1 and 0.15, 0.2..3 N: written for the chart */
+    const StringSpec *c2 = string_spec("C2");
+    FILE *oc = fopen("out/sweep_body_c2.txt", "w");
+    int nc2 = 0;
+    for (int b = 0; b < 2; b++) {
+        double bc = b == 0 ? 0.1 : 0.15;
+        printf("T12 C2 body on, beta %.2f:", bc);
+        for (int i = 0; i < NF; i++) {
+            double Fc = 0.2 * pow(15.0, (double)i / (NF - 1));
+            Trace *tr = run_str("C2", 1, 0, bc, Fc, RUNLEN);
+            RunStats st;
+            classify_run(tr->ch[0], tr->ch[3], tr->fs, c2->f0, RUNLEN - 0.5, RUNLEN, &st);
+            printf(" %.3f:%.3s", Fc, cls_names[st.cls]);
+            if (oc) fprintf(oc, "%.3f %.5f %s %.3f %.4f %.4f\n", bc, Fc, cls_names[st.cls], st.onsets_per_period, st.corr, st.slip_frac);
+            if (b == 0 && st.cls == CLS_HELMHOLTZ) nc2++;
+            trace_free(tr);
+        }
+        printf("\n");
+    }
+    if (oc) fclose(oc);
+    printf("T12 C2 body on, beta 0.10: %d Helmholtz points\n", nc2);
+    CHECK(nc2 > 0, "no Helmholtz point at beta 0.1 for C2 with the body on");
     TEST_DONE("test_body_helmholtz");
 }

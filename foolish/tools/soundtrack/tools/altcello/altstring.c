@@ -10,7 +10,7 @@ double string_h_min(const StringSpec *sp, double fs)
     double k = 1.0 / fs;
     double rho = string_rho(sp);
     double c2 = sp->T / rho;
-    double kap2 = sp->E * string_I(sp) / rho;
+    double kap2 = sp->EI / rho;
     double a = c2 * k * k + 4.0 * sp->sigma1 * k;
     return sqrt((a + sqrt(a * a + 16.0 * kap2 * k * k)) / 2.0);
 }
@@ -23,7 +23,7 @@ String *string_new(const StringSpec *sp, double fs)
     s->k = 1.0 / fs;
     s->rho = string_rho(sp);
     s->c2 = sp->T / s->rho;
-    s->EI = sp->E * string_I(sp);
+    s->EI = sp->EI;
     s->kap2 = s->EI / s->rho;
     s->s0 = sp->sigma0;
     s->s1 = sp->sigma1;
@@ -44,6 +44,7 @@ String *string_new(const StringSpec *sp, double fs)
     for (int l = 0; l <= s->N; l++) s->invD[l] = 1.0 / (1.0 + s->s0 * s->k);
     s->fing_lo = 1;
     s->fing_hi = 0;
+    s->tor = torsion_new(sp, fs);
     return s;
 }
 
@@ -54,6 +55,7 @@ void string_free(String *s)
         for (int i = 0; i < 3; i++) free(s->store[p][i]);
     free(s->invD);
     free(s->C);
+    torsion_free(s->tor);
     free(s);
 }
 

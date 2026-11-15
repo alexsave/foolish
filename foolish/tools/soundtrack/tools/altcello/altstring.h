@@ -16,6 +16,7 @@
 #define ALTCELLO_ALTSTRING_H
 #include <stddef.h>
 #include "string_params.h"
+#include "torsion.h"
 
 typedef struct {
     StringSpec sp;
@@ -27,6 +28,7 @@ typedef struct {
     double *invD, *C;   /* per point, length N+1 */
     double kk;          /* k^2 / rho */
     int fing_lo, fing_hi;
+    Torsion *tor;       /* torsional motion of this string, own grid (torsion.h) */
 } String;
 
 String *string_new(const StringSpec *sp, double fs);
