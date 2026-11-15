@@ -1,0 +1,10 @@
+# FreePats World and Rare Percussion 2020-09-05 (CC0): hand claps, 9 takes
+60 0 1 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/HandClap/01_02.wav
+60 0 2 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/HandClap/01_03.wav
+60 0 3 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/HandClap/01_05.wav
+60 0 4 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/HandClap/01_06.wav
+60 0 5 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/HandClap/01_07.wav
+60 0 6 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/HandClap/01_08.wav
+60 0 7 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/HandClap/01_09.wav
+60 0 8 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/HandClap/02_02.wav
+60 0 9 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/HandClap/02_05.wav

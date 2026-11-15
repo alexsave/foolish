@@ -1,0 +1,17 @@
+# FreePats World and Rare Percussion 2020-09-05 (CC0): castanets, 16 takes
+60 0 1 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/01.wav
+60 0 2 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/02.wav
+60 0 3 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/03.wav
+60 0 4 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/04.wav
+60 0 5 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/05.wav
+60 0 6 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/06.wav
+60 0 7 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/07.wav
+60 0 8 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/08.wav
+60 0 9 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/09.wav
+60 0 10 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/10.wav
+60 0 11 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/11.wav
+60 0 12 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/12.wav
+60 0 13 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/13.wav
+60 0 14 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/14.wav
+60 0 15 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/15.wav
+60 0 16 /SAMPLES/soundtrack/samples/freepats/percussion/WorldPercussion SFZ+FLAC-20200905/samples/Castanets/16.wav
