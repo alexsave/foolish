@@ -182,3 +182,85 @@ double hump_db(const double *x, long n, double fs, double f0, double flo, double
     spec_free(sp);
     return 20.0 * log10(mx / m1);
 }
+
+SimpleHelm analyse_simple(const double *vrel, long n, double fs, double f_est, double settle, double frac_min)
+{
+    SimpleHelm r = {0, 0, 20, 0.0};
+    long i0 = (long)(settle * fs);
+    double P = fs / f_est;
+    long i = i0;
+    while (i < n - 1 && !(fabs(vrel[i]) <= 1e-4 && fabs(vrel[i + 1]) > 1e-4)) i++;
+    long w0 = i + (long)(0.5 * P);
+    double fr_sum = 0.0;
+    for (int p = 0; p < 20; p++) {
+        long a = w0 + (long)(p * P), b = w0 + (long)((p + 1) * P);
+        if (b > n) { r.nper = p; r.bad_periods += 20 - p; break; }
+        double area[64], dur[64];
+        int cnt = 0;
+        long j = a;
+        while (j < b) {
+            if (fabs(vrel[j]) > 1e-4) {
+                long e = j;
+                double ar = 0.0;
+                while (e < b && fabs(vrel[e]) > 1e-4) { ar += fabs(vrel[e]) / fs; e++; }
+                if (cnt < 64) { area[cnt] = ar; dur[cnt] = (double)(e - j); cnt++; }
+                j = e;
+            } else j++;
+        }
+        double mx = 0.0, md = 0.0;
+        for (int c = 0; c < cnt; c++)
+            if (area[c] > mx) { mx = area[c]; md = dur[c]; }
+        int sig = 0;
+        for (int c = 0; c < cnt; c++)
+            if (mx > 0.0 && area[c] >= frac_min * mx) sig++;
+        if (sig != 1) r.bad_periods++;
+        fr_sum += md / P;
+    }
+    r.ok = (r.bad_periods == 0 && r.nper == 20);
+    r.main_frac = fr_sum / 20.0;
+    return r;
+}
+
+void partial_decays(const double *x, long n, double fs, double f0, int K, double t_start, double win_s, double range_db, double *f_out, double *alpha)
+{
+    long n2 = n < (long)(2.0 * fs) ? n : (long)(2.0 * fs);
+    Spectrum *sp = spec_make(x, n2, fs, 16);
+    long W = (long)(win_s * fs);
+    long hop = W / 2;
+    for (int k = 1; k <= K; k++) {
+        double fk = spec_peak(sp, k * f0, 0.02, NULL);
+        f_out[k - 1] = fk;
+        alpha[k - 1] = 0.0;
+        double w = 2.0 * M_PI * fk / fs, cr = cos(w), ci = sin(w);
+        double lt[2048], la[2048];
+        int m = 0;
+        double first = 0.0;
+        for (long s0 = (long)(t_start * fs); s0 + W <= n && m < 2048; s0 += hop) {
+            double re = 0.0, im = 0.0, pr = 1.0, pi_ = 0.0;
+            /* phasor rotated from the window start */
+            double ph0 = w * (double)s0;
+            pr = cos(ph0);
+            pi_ = -sin(ph0);
+            for (long t = 0; t < W; t++) {
+                double wt = 0.5 * (1.0 - cos(2.0 * M_PI * ((double)t + 0.5) / (double)W));
+                re += x[s0 + t] * wt * pr;
+                im += x[s0 + t] * wt * pi_;
+                double nr = pr * cr + pi_ * ci, ni = pi_ * cr - pr * ci; /* times e^{-iw} */
+                pr = nr;
+                pi_ = ni;
+            }
+            double amp = sqrt(re * re + im * im);
+            if (m == 0) first = amp;
+            if (amp < first * pow(10.0, -range_db / 20.0) || amp <= 0.0) break;
+            lt[m] = ((double)s0 + 0.5 * (double)W) / fs;
+            la[m] = log(amp);
+            m++;
+        }
+        if (m < 4) continue;
+        double st = 0, sa = 0, stt = 0, sta = 0;
+        for (int q = 0; q < m; q++) { st += lt[q]; sa += la[q]; stt += lt[q] * lt[q]; sta += lt[q] * la[q]; }
+        double den = m * stt - st * st;
+        if (den != 0.0) alpha[k - 1] = -(m * sta - st * sa) / den;
+    }
+    spec_free(sp);
+}

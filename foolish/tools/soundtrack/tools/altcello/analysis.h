@@ -42,4 +42,21 @@ Helm analyse_helmholtz(const double *bridge, const double *vrel, long n, double 
 double settle_time(const double *vrel, long n, double fs, double P);
 /* level of the largest spectral magnitude in [flo,fhi] re the fundamental peak (near f0), dB, over the last 1 s */
 double hump_db(const double *x, long n, double fs, double f0, double flo, double fhi);
+
+/* The SIMPLE classifier (oracle experiment B1/B2): a period is Helmholtz-like when it holds ONE dominant slip: the slip with
+ * the largest displacement (sum of |v_rel| dt over a run of |v_rel| > 1e-4 m/s) and no other slip of at least `frac_min`
+ * (0.2) of it. Windows of P = fs/f_est samples start mid-stick after the first slip onset from `settle` s on, 20 periods like
+ * analyse_helmholtz. f_est is the pitch (use Helm.f_est). ok = all 20 periods have exactly one dominant slip. */
+typedef struct {
+    int ok, bad_periods, nper;
+    double main_frac; /* mean fraction of a period spent in the dominant slip */
+} SimpleHelm;
+SimpleHelm analyse_simple(const double *vrel, long n, double fs, double f_est, double settle, double frac_min);
+
+/* Decay rates of the partials k f0, k = 1..K of a decaying (plucked) signal x: the peak of each partial is found on the
+ * spectrum of the first 2 s (frequency refined by parabolic interpolation, out f[k-1]), then its amplitude is measured by a
+ * Hann windowed single bin DFT in windows of win_s s (hop win_s/2) and the log amplitude is fitted by a line over the windows
+ * from t_start until the amplitude has fallen range_db below its first value or reaches the end. alpha[k-1] is the amplitude
+ * decay rate in 1/s (0 if fewer than 4 windows). */
+void partial_decays(const double *x, long n, double fs, double f0, int K, double t_start, double win_s, double range_db, double *f_out, double *alpha);
 #endif
