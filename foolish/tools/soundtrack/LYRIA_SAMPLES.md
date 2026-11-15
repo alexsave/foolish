@@ -89,3 +89,9 @@ A window is in seconds of the original clip; for the second half of wa_22 it alr
 | haegeum_G5_79.wav | se_21_clip_solo_haegeum_high_loud | 14.653-16.613 | G5 | -2.9 | 0.995 | none (legato) | 0 |
 
 75 samples.
+
+## v6 flat sets (flat-v6 branch)
+
+Lyria-derived. The `_flat_v6` sets are the same cuts as the rows above, flattened from the SOURCE cuts (not from the v5 flat files) with `tools/instruments/flatten_v6.py`: the v5 flattening, then a sub-cent pitch pass, then per-harmonic level flattening and harmonic phase lock (a sustain with no pitch, level or per-harmonic modulation).
+Files: `/Users/alex/Dev/soundtrack-samples/lyria/{cello,haegeum,trumpet}_flat_v6/` (68 wavs, same names as the v5 flat files), manifests `samples/manifests/lyria_{cello,haegeum,trumpet}_flat_v6.txt`, per-sample before and after in `/Users/alex/Music/foolish_cities_v5/analysis/lyria_samples/<instrument>_flat_v6.md`.
+The v5 files and manifests are untouched.
