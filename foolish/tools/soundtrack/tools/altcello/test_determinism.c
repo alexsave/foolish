@@ -36,11 +36,19 @@ int main(void)
     CHECK(n96.nlog == 1000 && n48.nlog == 1000, "draw log sizes %ld %ld", n96.nlog, n48.nlog);
     int ident = 1;
     for (long i = 0; i < 1000; i++)
-        if (n96.log_t[i] != n48.log_t[i] || n96.log_x[i] != n48.log_x[i]) {
+        if (n96.log_t[i] != n48.log_t[i] || n96.log_x[i] != n48.log_x[i] || n96.log_now[i] != n48.log_now[i]) {
             ident = 0;
             CHECK(0, "draw %ld differs: t %.9f/%.9f x %.9f/%.9f", i, n96.log_t[i], n48.log_t[i], n96.log_x[i], n48.log_x[i]);
             break;
         }
+    /* draw j (j >= 1) is made when the simulation reaches (j - 1) / 4000 s; draws 0 and 1 at 0 */
+    for (long i = 0; i < 1000; i++) {
+        double want = i >= 1 ? (double)(i - 1) / BOW_NOISE_RATE : 0.0;
+        if (fabs(n96.log_now[i] - want) > 1e-9 || fabs(n48.log_now[i] - want) > 1e-9) {
+            CHECK(0, "draw %ld made at %.9f s (96k) %.9f s (48k), want %.9f s", i, n96.log_now[i], n48.log_now[i], want);
+            break;
+        }
+    }
     printf("T6 first 1000 bow-noise draws (t from %.6f s to %.6f s) identical at 48 kHz and 96 kHz: %s\n", n96.log_t[0], n96.log_t[999], ident ? "yes" : "NO");
     CHECK(fabs(n96.log_t[999] - 999.0 / BOW_NOISE_RATE) < 1e-12, "logical time of draw 999 is %.9f", n96.log_t[999]);
     trace_free(c);

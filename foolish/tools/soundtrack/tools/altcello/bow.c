@@ -118,12 +118,13 @@ void bow_noise_init(BowNoise *b, double level, double fs)
     b->nlog = 0;
 }
 
-static double draw(BowNoise *b, Rng *r, long idx)
+static double draw(BowNoise *b, Rng *r, long idx, double now)
 {
     double x = b->level * rng_gauss(r);
     if (b->nlog < 1000) {
         b->log_t[b->nlog] = (double)idx / BOW_NOISE_RATE;
         b->log_x[b->nlog] = x;
+        b->log_now[b->nlog] = now;
         b->nlog++;
     }
     return x;
@@ -134,8 +135,8 @@ double bow_noise_next(BowNoise *b, Rng *r, long n, double fs)
     if (b->level <= 0.0) return 0.0;
     long ifs = (long)(fs + 0.5);
     if (!b->started) {
-        b->x_prev = draw(b, r, 0);
-        b->x_next = draw(b, r, 1);
+        b->x_prev = draw(b, r, 0, 0.0);
+        b->x_next = draw(b, r, 1, 0.0);
         b->idx_next = 1;
         b->started = 1;
     }
@@ -144,7 +145,7 @@ double bow_noise_next(BowNoise *b, Rng *r, long n, double fs)
     while (n * (long)BOW_NOISE_RATE >= b->idx_next * ifs) {
         b->x_prev = b->x_next;
         b->idx_next++;
-        b->x_next = draw(b, r, b->idx_next);
+        b->x_next = draw(b, r, b->idx_next, (double)n / fs);
     }
     double frac = ((double)n * BOW_NOISE_RATE - (double)(b->idx_next - 1) * ifs) / (double)ifs;
     double x = b->x_prev + frac * (b->x_next - b->x_prev);

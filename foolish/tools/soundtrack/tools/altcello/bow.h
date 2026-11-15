@@ -28,6 +28,7 @@ typedef struct {
     int started;
     long nlog;
     double log_t[1000], log_x[1000]; /* first draws with their logical times */
+    double log_now[1000];            /* simulated time at which each draw was made */
 } BowNoise;
 
 void bow_noise_init(BowNoise *b, double level, double fs);
