@@ -27,12 +27,12 @@ LH: E1+E2:0.5 B2:0.5 G#3:0.5 B3:0.5 E4:0.5 G#4:0.5 E4:0.5 B3:0.5 | B1+B2:0.5 F#3
 PEDAL: x:4 | x:4 | x:4 | x:4 | x:4 | x:2 x:2 | x:2 x:2 | x:4
 DYN: mf, cresc to f at bar 7, bar 8 subito p (the D and C naturals tip it into E minor)
 
-SECTION II Nocturne: Darkening BARS 8 KEY E minor
-RH: r:1 B4+G5:1 E5+C6:1 D#5+B5:0.5 E5+C6:0.5 | F#5+D6:2 E5+C6:0.25 F#5+D6:0.25 E5+C6:0.25 D#5+B5:0.25 E5+C6:1 | F5+A5:1.5 E5+G5:0.5 D5+F5:1 C5+F5:1 | C6+F#6:1 A5+D#6:1 F#5+C6:1 D#5+A5:1 | B5+B6:0.5 A#5+A#6:0.5 B5+B6:0.5 A5+A6:0.5 G5+G6:0.5 F#5+F#6:0.5 G5+G6:0.5 E5+E6:0.5 | C6+C7:1.5 B5+B6:0.5 A5+A6:1 G5+G6:1 | F5+A5+F6:1.5 E5+G5+E6:0.5 D#5+A5+C6:1 D#5+F#5+C6:1 | B4:4
-LH: E1+E2:0.5 B2:0.5 G3:0.5 B3:0.5 E4:0.5 B3:0.5 G3:0.5 B2:0.5 | B1+B2:0.5 F#3:0.5 A3:0.5 D#4:0.5 F#4:0.5 D#4:0.5 A3:0.5 F#3:0.5 | F1+F2:0.5 C3:0.5 A3:0.5 C4:0.5 F4:0.5 C4:0.5 A3:0.5 C3:0.5 | D#1+D#2:0.5 A2:0.5 C3:0.5 F#3:0.5 A3:0.5 C4:0.5 F#4:0.5 A4:0.5 | B1+B2:0.5 F#2+F#3:0.5 A2+A3:0.5 D#3+D#4:0.5 F#3+F#4:0.5 D#3+D#4:0.5 A2+A3:0.5 F#2+F#3:0.5 | C1+C2:0.5 G2+G3:0.5 C3+C4:0.5 E3+E4:0.5 G3+G4:0.5 E3+E4:0.5 C3+C4:0.5 G2+G3:0.5 | A1+A2:0.5 F2+F3:0.5 C3+C4:0.5 F3+F4:0.5 D#1+D#2:0.5 A2+A3:0.5 C3+C4:0.5 F#3+F#4:0.5 | G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5
-PEDAL: x:4 | x:4 | x:4 | x:4 | x:4 | x:4 | x:2 x:2 | x:2 x:2
-DYN: mp bar 1-2, cresc bars 3-4, fff bars 5-7, bar 8 pp subito
-FX: bar 8 is the quote (Chopin, Prelude Op. 28 No. 4, bar 1: the held B over the repeated E minor chords)
+SECTION II Nocturne: Darkening BARS 10 KEY E minor
+RH: r:1 B4+G5:1 E5+C6:1 D#5+B5:0.5 E5+C6:0.5 | F#5+D6:2 E5+C6:0.25 F#5+D6:0.25 E5+C6:0.25 D#5+B5:0.25 E5+C6:1 | F5+A5:1.5 E5+G5:0.5 D5+F5:1 C5+F5:1 | C6+F#6:1 A5+D#6:1 F#5+C6:1 D#5+A5:1 | B5+B6:0.5 A#5+A#6:0.5 B5+B6:0.5 A5+A6:0.5 G5+G6:0.5 F#5+F#6:0.5 G5+G6:0.5 E5+E6:0.5 | C6+C7:1.5 B5+B6:0.5 A5+A6:1 G5+G6:1 | F5+A5+F6:1.5 E5+G5+E6:0.5 D#5+A5+C6:1 D#5+F#5+C6:1 | B5+B6:1 A5+A6:1 F#5+F#6:1 D#5+D#6:1 | B4+B5:2 B4:2 | B4:4
+LH: E1+E2:0.5 B2:0.5 G3:0.5 B3:0.5 E4:0.5 B3:0.5 G3:0.5 B2:0.5 | B1+B2:0.5 F#3:0.5 A3:0.5 D#4:0.5 F#4:0.5 D#4:0.5 A3:0.5 F#3:0.5 | F1+F2:0.5 C3:0.5 A3:0.5 C4:0.5 F4:0.5 C4:0.5 A3:0.5 C3:0.5 | D#1+D#2:0.5 A2:0.5 C3:0.5 F#3:0.5 A3:0.5 C4:0.5 F#4:0.5 A4:0.5 | B1+B2:0.5 F#2+F#3:0.5 A2+A3:0.5 D#3+D#4:0.5 F#3+F#4:0.5 D#3+D#4:0.5 A2+A3:0.5 F#2+F#3:0.5 | C1+C2:0.5 G2+G3:0.5 C3+C4:0.5 E3+E4:0.5 G3+G4:0.5 E3+E4:0.5 C3+C4:0.5 G2+G3:0.5 | A1+A2:0.5 F2+F3:0.5 C3+C4:0.5 F3+F4:0.5 D#1+D#2:0.5 A2+A3:0.5 C3+C4:0.5 F#3+F#4:0.5 | B1+B2:0.5 F#2+F#3:0.5 A2+A3:0.5 D#3+D#4:0.5 F#3:0.5 D#3:0.5 A2:0.5 F#2:0.5 | B1+B2:1 F#2+B2:1 G3+B3+E4:1 G3+B3+E4:1 | G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5 G3+B3+E4:0.5
+PEDAL: x:4 | x:4 | x:4 | x:4 | x:4 | x:4 | x:2 x:2 | x:4 | x:2 x:2 | x:2 x:2
+DYN: mp bars 1-2, cresc bars 3-4, fff bars 5-6, f bar 7, mf bar 8, p bar 9, pp bar 10
+FX: bars 8-9 (v5) let the climax fall away through B7 onto the held B instead of a subito pp; bar 10 is the quote (Chopin, Prelude Op. 28 No. 4, bar 1: the held B over the repeated E minor chords)
 
 SECTION II Nocturne: Elegy BARS 17 KEY E minor
 TEMPO 50 RAMP 16
@@ -42,13 +42,13 @@ PEDAL: x:4 | x:2 x:2 | x:2 x:2 | x:2 x:2 | x:4 | x:2 x:2 | x:2 x:2 | x:2 x:2 | x
 DYN: pp bars 1-6, p bars 7-9, cresc bars 10-11, mf bar 12, bar 13 to p, pp bars 14-16, cresc bar 17
 FX: bars 1-6 are the quote's texture (chords alone under a held B with its C-B sigh) while one inner voice at a time sinks a half step; bar 7 the deep bass octaves enter on the tonic and carry the descent E-D#-D-C#-C-B, the lament bass filled in; bar 10 the chord thickens to four voices, bars 11-12 the melody climbs B-D-F#-G to its one quiet climax over C# half-diminished, bar 13 releases onto C major, bar 14 the diminished seventh over C holds three tones into B7; bars 15-17 the melody sits on B again with its sigh, the octaves leave for one bar and return, and bar 17 is the old hand-off's last bar so the Cadenza enters unchanged
 
-SECTION II Nocturne: Cadenza BARS 1 KEY B major
-TEMPO 100 RAMP 4
-RH: A#4:2 B3:0.25 D#4:0.25 F#4:0.25 B4:0.25 D#5:0.25 F#5:0.25 B5:0.25 D#6:0.25
-LH: B1+B2:0.5 F#3+A3+D#4:0.5 B1+B2:0.5 F#3+A3+D#4:0.5 B1+B2:2
-PEDAL: x:4
-DYN: cresc from p to ff
-TRANSITION: B7 (V of E minor) drops its seventh and stands as the tonic of B major; the run accelerates into the heroic tempo
+SECTION II Nocturne: Cadenza BARS 4 KEY B major
+TEMPO 100 RAMP 16
+RH: A#4:2 B4:2 | D#5:1 F#5:1 B5:2 | F#4+A#4+C#5+E5:0.5 F#4+A#4+C#5+E5:0.25 F#4+A#4+C#5+E5:0.25 F#4+A#4+C#5+E5:0.5 F#4+A#4+C#5+E5:0.5 F#4+A#4+C#5+F#5:1 F#4+A#4+E5+F#5:1 | F#4+A#4+C#5+E5:2 B3:0.25 D#4:0.25 F#4:0.25 B4:0.25 D#5:0.25 F#5:0.25 B5:0.25 D#6:0.25
+LH: B1+B2:1 F#3+B3+D#4:1 F#3+B3+D#4:1 F#3+B3+D#4:1 | B1+B2:1 F#3+B3+D#4:1 B1+B2:1 F#3+B3+D#4:1 | F#1+F#2:0.5 C#3+E3+A#3:0.25 C#3+E3+A#3:0.25 F#1+F#2:0.5 C#3+E3+A#3:0.5 F#1+F#2:1 C#3+E3+A#3:1 | F#1+F#2:2 B1+B2:2
+PEDAL: x:4 | x:4 | x:2 x:2 | x:2 x:2
+DYN: p bar 1, mp bar 2, mf bar 3, cresc bar 4 to ff
+TRANSITION: (v5) B7 drops its seventh (A# rises to B) and B major is heard quietly for two bars; bar 3 previews the polonaise rhythm on F#7; bar 4 is the old run; the tempo climbs 50 -> 100 across all four bars
 
 SECTION III Heroic: Octaves (alla polacca) BARS 16 KEY B major
 TEMPO 100
@@ -90,11 +90,11 @@ FX: motif B (the nocturne's song) sung in minor over the chromatic lament bass C
 
 SECTION IV Funeral: Hand-off (drum roll into fury) BARS 4 KEY G# minor
 TEMPO 144 RAMP 16
-RH: G3+A#3:0.25 A#3+C#4:0.25 C#4+E4:0.25 E4+G4:0.25 G4+A#4:0.25 A#4+C#5:0.25 C#5+E5:0.25 E5+G5:0.25 G5+A#5:0.25 A#5+C#6:0.25 C#6+E6:0.25 E6+G6:0.25 G6+A#6:0.25 E6+G6:0.25 C#6+E6:0.25 A#5+C#6:0.25 | %1 | D#4+G4:0.25 G4+A#4:0.25 A#4+C#5:0.25 C#5+D#5:0.25 D#5+G5:0.25 G5+A#5:0.25 A#5+C#6:0.25 C#6+D#6:0.25 D#6+G6:0.25 G6+A#6:0.25 A#6+C#7:0.25 C#7+D#7:0.25 A#6+C#7:0.25 G6+A#6:0.25 D#6+G6:0.25 C#6+D#6:0.25 | %3
-LH: G1+G2:0.5 A#2+C#3+E3:0.5 G1+G2:0.5 A#2+C#3+E3:0.5 G1+G2:0.5 A#2+C#3+E3:0.5 G1+G2:0.5 A#2+C#3+E3:0.5 | %1 | D#1+D#2:0.5 G2+A#2+C#3:0.5 D#1+D#2:0.5 G2+A#2+C#3:0.5 D#1+D#2:0.5 G2+A#2+C#3:0.5 D#1+D#2:0.5 G2+A#2+C#3:0.5 | %3
-PEDAL: x:4 | x:4 | x:4 | x:4
+RH: G4+A#4+C#5+E5:2 G4+A#4+C#5+E5:1.5 G4+A#4+C#5+E5:0.5 | A#4+C#5+E5+G5:1 A#4+C#5+E5+G5:1 C#5+E5+G5+A#5:1 C#5+E5+G5+A#5:0.5 C#5+E5+G5+A#5:0.5 | D#5+G5+A#5+D#6:1 D#5+G5+A#5+D#6:0.5 D#5+G5+A#5+D#6:0.5 D#5+G5+A#5+D#6:1 D#5+G5+A#5+D#6:0.5 D#5+G5+A#5+D#6:0.5 | D#5+G5+A#5+C#6:0.5 D#5+G5+A#5+C#6:0.5 D#5+G5+A#5+C#6:0.5 D#5+G5+A#5+C#6:0.5 D#6+D#7:0.5 C#6+C#7:0.5 A#5+A#6:0.5 G5+G6:0.5
+LH: G1+G2:2 G1+G2:1.5 G1+G2:0.5 | G1+G2:1 A#1+A#2:1 C#2+C#3:1 E2+E3:0.5 E2+E3:0.5 | D#1+D#2:1 D#2+A#2+D#3:1 D#1+D#2:1 D#2+A#2+D#3:1 | D#1+D#2:1 D#1+D#2:1 D#1+D#2:0.5 D#1+D#2:0.5 D#1+D#2:0.5 D#1+D#2:0.5
+PEDAL: x:4 | x:2 x:2 | x:2 x:2 | x:2 x:1 x:1
 DYN: pp cresc to fff across the four bars
-TRANSITION: C# minor's tonic chord is left; the F##-dim7 of G# minor (vii of the home key) rises in tremolo, then D#7; the accelerando lands on the coda's tempo
+TRANSITION: (v5) C# minor's tonic is left; the F##-dim7 of G# minor in the funeral march's own rhythm, climbing by inversion over a rising bass, then D#7 in repeated chords; no broken-chord run (it read as Moonlight iii); the accelerando lands on the coda's tempo
 
 SECTION V Coda: Fury BARS 12 KEY G# minor
 TEMPO 144
@@ -112,10 +112,27 @@ PEDAL: x:4 | x:3.5 x:0.5 | x:4 | x:1 x:1 x:1 x:1
 DYN: fff bars 1-3, bar 4 pp
 FX: the funeral march's block chords return in the home key (i, Neapolitan, dim7, V7); bar 4 is the lament bass alone, G#-F#-E-D#, the same four notes that carried Part I into the nocturne
 
-SECTION V Return: The storm again (loop) BARS 8 KEY G# minor
+SECTION V Return: The storm again BARS 8 KEY G# minor
 TEMPO 132 RAMP 4
 RH: G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 C#5:0.25 B4:0.25 A#4:0.25 B4:0.25 C#5:0.25 D#5:0.25 F#5:0.25 G#5:0.25 A#5:0.25 | B5:0.25 A#5:0.25 B5:0.25 G#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 B4:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 D#5:0.25 G5:0.25 | G#5:0.25 G5:0.25 G#5:0.25 F#5:0.25 D#5:0.25 D5:0.25 D#5:0.25 C#5:0.25 B4:0.25 A#4:0.25 B4:0.25 C#5:0.25 D#5:0.25 F#5:0.25 G#5:0.25 B5:0.25 | C#6:0.25 C6:0.25 C#6:0.25 G#5:0.25 E5:0.25 D#5:0.25 E5:0.25 C#5:0.25 A#5:0.25 A5:0.25 A#5:0.25 G5:0.25 D#5:0.25 C#5:0.25 D#5:0.25 G5:0.25 | E6:0.25 D#6:0.25 E6:0.25 D6:0.25 B5:0.25 A#5:0.25 B5:0.25 G#5:0.25 E5:0.25 D#5:0.25 E5:0.25 D5:0.25 B4:0.25 D5:0.25 E5:0.25 G#5:0.25 | A5:0.25 G#5:0.25 A5:0.25 G5:0.25 E5:0.25 D#5:0.25 E5:0.25 C#5:0.25 A4:0.25 G#4:0.25 A4:0.25 C#5:0.25 E5:0.25 A5:0.25 C#6:0.25 E6:0.25 | G6:0.25 F#6:0.25 G6:0.25 E6:0.25 C#6:0.25 C6:0.25 C#6:0.25 A#5:0.25 G5:0.25 F#5:0.25 G5:0.25 E5:0.25 C#5:0.25 C5:0.25 C#5:0.25 A#4:0.25 | D#4+D#5:0.25 G4+G5:0.25 A#4+A#5:0.25 C#5+C#6:0.25 D#5+D#6:0.25 G5+G6:0.25 A#5+A#6:0.25 C#6+C#7:0.25 D#6+D#7:0.25 C#6+C#7:0.25 A#5+A#6:0.25 G5+G6:0.25 D#5+D#6:0.25 C#5+C#6:0.25 A#4+A#5:0.25 G4+G5:0.25
 LH: G#1+G#2:0.5 D#2+D#3:0.5 G#2+G#3:0.5 B2+B3:0.5 D#3+D#4:0.5 B2+B3:0.5 G#2+G#3:0.5 D#2+D#3:0.5 | G#1+G#2:0.5 D#2+D#3:0.5 G#2+G#3:0.5 B2+B3:0.5 D#1+D#2:0.5 G2+G3:0.5 A#2+A#3:0.5 C#3+C#4:0.5 | %1 | C#1+C#2:0.5 G#2+G#3:0.5 C#3+C#4:0.5 E3+E4:0.5 D#1+D#2:0.5 G2+G3:0.5 A#2+A#3:0.5 C#3+C#4:0.5 | E1+E2:0.5 B1+B2:0.5 E2+E3:0.5 G#2+G#3:0.5 B2+B3:0.5 D3+D4:0.5 B2+B3:0.5 G#2+G#3:0.5 | A1+A2:0.5 E2+E3:0.5 A2+A3:0.5 C#3+C#4:0.5 E3+E4:0.5 A3+A4:0.5 E3+E4:0.5 C#3+C#4:0.5 | G1+G2:0.5 A#2+A#3:0.5 C#3+C#4:0.5 E3+E4:0.5 G3+G4:0.5 E3+E4:0.5 C#3+C#4:0.5 A#2+A#3:0.5 | D#1+D#2:2 D#1+A#1+D#2:2
 PEDAL: x:4 | x:2 x:2 | x:4 | x:2 x:2 | x:4 | x:4 | x:4 | x:4
 DYN: p bar 1, cresc every bar, ff bar 8
-TRANSITION: bar 8 is a D#7 double-octave run that ends on the leading tone G; the piece loops into Part I bar 1 (G#5) at the same tempo (132), so the last bar is the dominant upbeat of the first
+TRANSITION: (v5) bar 8 is the D#7 double-octave run ending on the leading tone G; it now resolves into the Close instead of looping
+
+SECTION V Close: Cadence BARS 4 KEY G# minor
+TEMPO 72 RAMP 16
+RH: G#5+B5+D#6+G#6:2 E5+G#5+C#6+E6:2 | A4+C#5+E5+A5:2 D#5+G5+A#5+C#6:2 | G#4+B4+D#5+G#5:4 | r:1 B4:1 E5:1 D#5:1
+LH: G#1+G#2:2 C#1+C#2:2 | A1+A2:2 D#1+D#2:2 | G#1+G#2:2 G#1+D#2+G#2:2 | G#1+G#2:4
+PEDAL: x:2 x:2 | x:2 x:2 | x:4 | x:4
+DYN: fff bars 1-2, ff bar 3, p bar 4
+FX: (v5) the cadence the loop never had: i, iv, Neapolitan, V7, i in full chords, slowing 132 -> 72; bar 4 the nocturne's song (motif B) is remembered once, alone, over the tonic octave
+
+SECTION V Close: Last chords BARS 4 KEY G# minor
+TEMPO 54 RAMP 8
+RH: E5:3 D#5:1 | D#4+G4+A#4+C#5:4 | G#3+B3+D#4+G#4:4 | G#3+B3+D#4+G#4:4
+LH: C#2+C#3:2 E2+G#2+C#3:2 | D#1+D#2:4 | G#1+G#2:4 | G#1+G#2:4
+PEDAL: x:4 | x:4 | x:4 | x:4
+DYN: p bar 1, pp bar 2, p bar 3, pp bar 4
+FX: (v5) the song's fall over iv, a quiet V7, and the tonic chord twice, the second softer; the pedal holds and the hall rings out
+

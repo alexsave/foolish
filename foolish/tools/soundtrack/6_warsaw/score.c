@@ -5,7 +5,7 @@
 // about 100 ms later), written by Fable as the PEDAL part and turned into cc 64 here.
 #include "../engine/orch.h"
 
-static int RH, LH, PED, VC, VC2, CB;
+static int RH, LH, PED, VC, VC2, CB, VCP, CBP;
 static void syn_none(Track *tr, const Note *n, float *L, float *R, long nf) { (void)tr; (void)n; (void)L; (void)R; (void)nf; }
 static int w_map(const char *p, double *tp, double *vs, double *dp) {
     *tp = 0; *vs = 1; (void)0;
@@ -26,10 +26,13 @@ void city_setup(void) {
     eq(RH, 3, 2600, 1.0, 1.0); eq(RH, 5, 5000, 0, 2); eq(LH, 3, 220, 0.9, -1.0);
     // strings only where the music is a song or a march: a cello section sings the lament and the octave nocturne an octave
     // under the piano's top line (Chopin wrote for the cello), cellos and basses hold the funeral march's bass
-    VC = o_smp("cellos", OM "vc_sus.txt", 0.45, 1, 0.3, -35, 0.4, 1); VC2 = o_double(VC, "cellos2", -0.15);
+    VC = o_smp("cellos", OM "vc_sus.txt", 0.45, 1, 0.3, -35, 0.5, -2);   // v5: 3 dB lower and wetter, a warmth under the piano and not a solo voice (Alex: "synthy") VC2 = o_double(VC, "cellos2", -0.15);
     CB = o_smp("basses", OM "cb_sus.txt", 0.5, 1, 0.45, -40, 0.35, 3);
     for (int t = VC; t <= VC2; t++) { eq(t, 3, 300, 1, -1.5); eq(t, 1, 6500, 0.7, 0); }   // warm: the bow noise above 7 kHz sat on top of the piano
     eq(CB, 3, 250, 1, -2);
+    // v5 (Alex: "maybe some string plucking"): pizzicato cellos and basses pluck the bass of the first nocturne song
+    VCP = o_smp("cellos pizz", OM "vc_pizz.txt", 0.6, 0, 0.3, 0, 0.45, -4);
+    CBP = o_smp("basses pizz", OM "cb_pizz.txt", 0.7, 0, 0.45, 0, 0.4, -2);
     o_hall(2.3, 16);
     g_bus[0].gain_db = -6;
     g_master.cthr = -24; g_master.cratio = 1.6;
@@ -54,6 +57,7 @@ double city_loop(void) {
         for (int i = n0; i < n1; i++) { Note a = g_note[i]; if (a.tr != RH || a.beat < b0 - 1e-6 || a.beat >= b1 - 1e-6) continue;
             int top = 1; for (int j = n0; j < n1; j++) if (j != i && g_note[j].tr == RH && fabs(g_note[j].beat - a.beat) < 1e-6 && g_note[j].pitch > a.pitch) top = 0;
             if (!top) continue; double p = a.pitch - 12; while (p < 48) p += 12;
+            while (p > 67) p -= 12;   /* v5: never above G4; the octave song had the cellos up to C#6, stretched samples that read as a synthy violin */
             Note *c = note(VC, a.beat, a.len + 0.08, p, a.vel * 0.85); (void)c; Note *d = note(VC2, a.beat, a.len + 0.08, p, a.vel * 0.78); (void)d; } }
     // the march's bass: the lowest left-hand note of each chord, cellos an octave up, basses where they reach
     static const char *march[] = {"IV Funeral: March", "IV Funeral: Lament (the sung trio)", "V Coda: Collapse"};
@@ -64,6 +68,13 @@ double city_loop(void) {
             if (!low || a.len < 0.9) continue; double p = a.pitch; while (p < 28) p += 12;
             note(CB, a.beat, a.len + 0.06, p, a.vel * 0.8);
             if (k != 1) { double q = p; while (q < 36) q += 12; note(VC, a.beat, a.len + 0.06, q, a.vel * 0.7); } } }
+    // v5 pizzicato: in the first song the octave bass notes of the left hand are plucked (basses at pitch, cellos an octave up)
+    { int si = sec_find("II Nocturne: Song"); if (si < 0) fprintf(stderr, "no section II Nocturne: Song\n"); else {
+        double b0 = g_sec[si].bar0 * 4.0, b1 = b0 + g_sec[si].bars * 4.0; int n1 = g_nnote;
+        for (int i = n0; i < n1; i++) { Note a = g_note[i]; if (a.tr != LH || a.beat < b0 - 1e-6 || a.beat >= b1 - 1e-6) continue;
+            int low = 1, pair = 0; for (int j = n0; j < n1; j++) if (j != i && g_note[j].tr == LH && fabs(g_note[j].beat - a.beat) < 0.02) { pair = 1; if (g_note[j].pitch < a.pitch) low = 0; }
+            if (!low || !pair) continue; double p = a.pitch; while (p < 28) p += 12;
+            note(CBP, a.beat, 1.0, p, a.vel * 0.7); note(VCP, a.beat, 1.0, p + 12, a.vel * 0.6); } } }
     return score_total_bars() * 4.0;
 }
 void city_full(void) { city_loop(); }
