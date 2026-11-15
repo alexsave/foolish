@@ -26,3 +26,8 @@ Each mutation was applied to geom.c, the test run, then geom.c restored and the 
    Failing lines: `FAIL string 0 length 0.68310 m (want 0.69 +- 0.001)` for all four strings.
 4. In `geom_outline_halfwidth`, scale the upper bout by 1.05.
    Failing line: `FAIL upper bout 0.3622 (want 0.345 +- 0.002)`.
+
+## Neck angle (added)
+
+- The neck projection (board plane extended to the bridge, above the plate there) is asserted in 0.080-0.0835 m (measured 0.0831).
+- The board end underside over the top plate is asserted in 0.025-0.035 m (measured 0.0306).

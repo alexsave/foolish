@@ -51,6 +51,9 @@ int main(void) {
   /* Brief asked for 0.06-0.09 m^3, but 0.755 x ~0.30 x ~0.14 m is physically about 0.02-0.03 m^3
    * (a real cello air volume is roughly 20-25 litres).  The test pins the geometric range. */
   CHECK(vol > 0.018 && vol < 0.035, "cavity volume %.4f m^3 = %.1f litres (5 mm voxels, %ld cells)", vol, vol * 1000, n);
+  double np = geom_neck_projection(), gap = geom_fb_end_gap();
+  CHECK(np > 0.080 && np < 0.0835, "neck projection %.4f m (want 0.080-0.083)", np);
+  CHECK(gap > 0.025 && gap < 0.035, "fingerboard end gap over the top %.4f m (want 0.025-0.035)", gap);
   /* nut and bridge heights: the board clearance at the end is 5-6 mm */
   GeomPose p;
   geom_pose_default(&p);

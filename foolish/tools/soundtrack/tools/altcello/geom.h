@@ -128,6 +128,8 @@ int geom_cell_fhole(double cx, double cy, double cz, double dx);
 
 int geom_fhole_xy(double x, double y);   /* 1 if (x,y) is over an f-hole slot */
 double geom_outline_halfwidth(double y); /* half width of the body outline at y */
+double geom_neck_projection(void); /* fingerboard plane at the bridge position above the plate (m) */
+double geom_fb_end_gap(void);      /* fingerboard end underside above the top plate (m) */
 double geom_top_z(double x, double y);   /* top plate outer surface */
 void geom_string_endpoints(int s, double nut[3], double bridge[3]);
 void geom_bow_contact(const GeomPose *p, double out[3]);  /* on the string, cello frame */

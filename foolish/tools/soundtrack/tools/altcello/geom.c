@@ -24,16 +24,16 @@
 #define NUT_ARC_A 0.0015  /* m, nut arc rise */
 #define NUT_ARC_X0 0.012  /* m, nut arc half width */
 #define FB_H_NUT 0.001    /* m, string clearance over the board at the nut */
-#define FB_H_END 0.0055   /* m, string clearance over the board at its end (5-6 mm) */
+#define FB_H_END 0.006    /* m, string clearance over the board at its end (5-6 mm) */
 #define FB_THICK_NUT 0.010
-#define FB_THICK_END 0.020
+#define FB_THICK_END 0.058 /* wedge: the board underside rises away from the string line so the end hangs about 3 cm over the top */
 #define FB_HW_NUT 0.0125  /* m, fingerboard half width at the nut */
 #define FB_HW_END 0.020   /* m, at the far end */
 #define NUT_T 0.005       /* m, nut thickness along the string */
 #define NECK_NW_NUT 0.0125 /* m, neck bar half width at the nut */
 #define NECK_NW_ROOT 0.0225
 #define NECK_ND_NUT 0.012 /* m, neck bar depth below the board at the nut */
-#define NECK_ND_ROOT 0.028
+#define NECK_ND_ROOT 0.040
 #define HEEL_HW 0.0225
 #define HEEL_ZBOT (-0.060)
 #define PB_HW 0.014       /* m, pegbox half width */
@@ -203,6 +203,14 @@ static double s_root(void) { return (nut_ref().y - GEOM_BODY_LENGTH) / cos(GEOM_
 static double neck_nw(double S) { return lerp(NECK_NW_NUT, NECK_NW_ROOT, S / s_root()); }
 static double neck_nd(double S) { return lerp(NECK_ND_NUT, NECK_ND_ROOT, S / s_root()); }
 static double heel_ztop(void) { return loc2w(0, s_root(), fb_flat(s_root()) - NECK_ND_ROOT).z + 0.004; }
+
+double geom_neck_projection(void) { /* board plane extended to the bridge, above the plate at the bridge */
+  return loc2w(0, GEOM_STRING_L, fb_top(0, GEOM_STRING_L)).z - plate_ref();
+}
+double geom_fb_end_gap(void) { /* underside of the board end over the top plate */
+  V p = loc2w(0, GEOM_FB_LEN, fb_flat(GEOM_FB_LEN));
+  return p.z - geom_top_z(0, p.y);
+}
 
 void geom_string_endpoints(int s, double nut[3], double bridge[3]) {
   V n = nut_pt(s), b = bridge_pt(s);
