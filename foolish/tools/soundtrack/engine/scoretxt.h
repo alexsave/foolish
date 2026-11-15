@@ -1,6 +1,8 @@
 // scoretxt.h: reads a through-composed score written as text (TEMPO, SECTION ... BARS n KEY k, and
 // "PART: bar | bar | ..." lines; % repeats the previous bar, %N repeats bar N of the part in the section;
-// drums use x / x@0.6 hits; chop notes may carry a vowel letter after the octave, e.g. E5a:0.25).
+// drums use x / x@0.6 hits; chop notes may carry a vowel letter after the octave, e.g. E5a:0.25;
+// "C4:1.5~6" moves on 1.5 beats while the note sounds for 6, so a note can be held across bar lines; a part may have
+// several lines in one section, each a lane of its own).
 // The city maps part names to tracks with a callback; sections are kept for automation by name.
 #pragma once
 #include "score.h"
@@ -27,14 +29,16 @@ static int bar_tokens(int tr, double b, const char *src, double tp, double vs, d
         else for (;;) { ps[np++] = pname(&s); if (vowel_of(*s) >= 0 && (s[1] == ':' || s[1] == '+')) { vow = vowel_of(*s); s++; }
             else if ((*s == 'b' || *s == 'c' || *s == 't') && (s[1] == ':' || s[1] == '+')) { vow = *s == 'b' ? 0 : *s == 'c' ? 1 : 2; s++; }   // scratch: baby / chirp / transformer
             if (*s == '+') { s++; continue; } break; }
-        for (int k = 0; k < 2; k++) {   // ":len" and "@vel" in either order
+        double sound = -1;   // "C4:1.5~6": the cursor moves 1.5 beats but the note sounds for 6 (a note held across bar lines)
+        for (int k = 0; k < 3; k++) {   // ":len", "~sounding length" and "@vel"
             if (*s == ':') { s++; len = strtod(s, (char **)&s); }
+            else if (*s == '~') { s++; sound = strtod(s, (char **)&s); }
             else if (*s == '@') { s++; vel = strtod(s, (char **)&s); } }
         while (*s && *s != ' ' && *s != '\t') s++;
         if (!rest && tr >= 0) {
             if (hit == 1) { note(tr, beat, drum_pitch < 0 ? len : fmin(len, 0.5), fabs(drum_pitch), vel * vs); cnt++; }   // a negative drum pitch keeps the token length (risers)
             else if (hit > 1) { double step = 4.0 / hit; int k = (int)lround(len / step); for (int i = 0; i < k; i++) { note(tr, beat + i * step, step * 0.5, drum_pitch, vel * vs * (0.55 + 0.45 * i / fmax(1, k - 1))); cnt++; } }
-            else for (int i = 0; i < np; i++) { Note *n = note(tr, beat, len * gate, ps[i] + tp, vel * vs); if (vow >= 0) { n->p[0] = vow; n->p[1] = -1; } cnt++; }
+            else for (int i = 0; i < np; i++) { Note *n = note(tr, beat, (sound > 0 ? sound : len) * gate, ps[i] + tp, vel * vs); if (vow >= 0) { n->p[0] = vow; n->p[1] = -1; } cnt++; }
         }
         beat += len;
     }
