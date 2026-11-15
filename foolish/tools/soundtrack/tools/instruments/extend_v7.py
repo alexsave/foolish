@@ -143,6 +143,22 @@ def het_residual(x, sr, f, kmax=KMAX):
     return out
 
 
+def het_pair(x, sr, f, kmax=KMAX):
+    """(harmonic part, rest) of a mono signal as het_residual does it (30 Hz high pass first)."""
+    t = np.arange(len(x)) / sr
+    sos = butter(4, min(40.0, 0.35 * f), fs=sr, output="sos")
+    x = sosfiltfilt(butter(4, LOW_CUT_HZ, btype="high", fs=sr, output="sos"), x)
+    h = np.zeros_like(x)
+    for k in range(1, kmax + 1):
+        if k * f > 0.45 * sr:
+            break
+        e = np.exp(-2j * np.pi * k * f * t)
+        z = x * e
+        z = sosfiltfilt(sos, z.real) + 1j * sosfiltfilt(sos, z.imag)
+        h += 2 * (z * np.conj(e)).real
+    return h, x - h
+
+
 def fill_notches(P, fq, f, bw):
     """P is the power matrix of the het residual, which went through the measurement filter: the noise within +-bw of a harmonic is gone and
     the noise beyond it is attenuated by (1 - G)^2 with G = 1 / (1 + (d / bw)^8) the zero phase response of the 4th order filter at the distance
@@ -279,13 +295,17 @@ def extend(x, sr, root, name, keep_ms=0.0):
     t0 = N0 - tr + D            # start of the tail in the output
     b0, b1 = t0 - xf, t0
     n = np.arange(Nout)
-    rn = rs.copy()
-    rn[:a0] = r0[:a0]
-    s = np.clip((n[a0:a1] - a0) / xf, 0, 1)[:, None]
-    rn[a0:a1] = np.cos(np.pi / 2 * s) * r0[a0:a1] + np.sin(np.pi / 2 * s) * rs[a0:a1]
-    s = np.clip((n[b0:b1] - b0) / xf, 0, 1)[:, None]
-    rn[b0:b1] = np.cos(np.pi / 2 * s) * rs[b0:b1] + np.sin(np.pi / 2 * s) * r0[b0 - D:b1 - D]
-    rn[t0:] = r0[t0 - D:]
+
+    def blend(rs):
+        rn = rs.copy()
+        rn[:a0] = r0[:a0]
+        s = np.clip((n[a0:a1] - a0) / xf, 0, 1)[:, None]
+        rn[a0:a1] = np.cos(np.pi / 2 * s) * r0[a0:a1] + np.sin(np.pi / 2 * s) * rs[a0:a1]
+        s = np.clip((n[b0:b1] - b0) / xf, 0, 1)[:, None]
+        rn[b0:b1] = np.cos(np.pi / 2 * s) * rs[b0:b1] + np.sin(np.pi / 2 * s) * r0[b0 - D:b1 - D]
+        rn[t0:] = r0[t0 - D:]
+        return rn
+    rn = blend(rs)
     # harmonics with the drift, zero over the splice zones
     env = ramp_window(Nout, a1, b0, int(DRIFT_RAMP_S * sr))
     th = slow_noise(rng, Nout, sr) * env
@@ -296,10 +316,24 @@ def extend(x, sr, root, name, keep_ms=0.0):
     lv = slow_noise(rng, Nout, sr) * env * DRIFT_LEVEL_DB
     lk = np.array([slow_noise(rng, Nout, sr) * env * DRIFT_HARM_DB for _ in ks])
     h = harm_sum(c, ks, f, sr, Nout, theta=th, gain_db=(lv, lk))
+    # closed loop noise level: the harmonic to noise ratio as the checks read it (mono, heterodyne residual of min(40 Hz, 0.35 f) bandwidth,
+    # nothing under 30 Hz) over the source's sustain stretch and over a stretch of the same length after the splice; the noise model is
+    # not exact at the harmonics, so the fresh noise is scaled by the difference (at most 6 dB, once)
+    def hnr_of(sig, i0_, i1_):
+        pad_ = int(0.2 * sr)
+        a_, b_ = max(i0_ - pad_, 0), min(i1_ + pad_, len(sig))
+        hh, rr = het_pair(sig[a_:b_], sr, f)
+        u, v = i0_ - a_, len(hh) - (b_ - i1_)
+        return 10 * np.log10(np.dot(hh[u:v], hh[u:v]) / np.dot(rr[u:v], rr[u:v]))
+    u0 = a1 + int(0.3 * sr)
+    hx = hnr_of(x.mean(axis=1), i0, i1)
+    hy = hnr_of((h + rn).mean(axis=1), u0, u0 + (i1 - i0))
+    g = float(np.clip(10 ** ((hy - hx) / 20.0), 0.5, 2.0))
+    rn = blend(rs * g)
     y = h + rn
     y[:ta] = x[:ta]            # the kept attack and the moved tail are the v6 samples themselves, not h + (x - h) rounded
     y[t0:] = x[t0 - D:]
-    info = dict(rn=rn, r0=r0, h=h, f0=f, ks=len(ks), N0=N0, Nout=Nout, ta=ta, tr=tr, xf=xf, D=D, m=m, a1=a1, b0=b0, cents_std=float((1200 / np.log(2) * np.gradient(th) * sr / f)[a1:b0].std()))
+    info = dict(noise_gain=g, rn=rn, r0=r0, h=h, f0=f, ks=len(ks), N0=N0, Nout=Nout, ta=ta, tr=tr, xf=xf, D=D, m=m, a1=a1, b0=b0, cents_std=float((1200 / np.log(2) * np.gradient(th) * sr / f)[a1:b0].std()))
     return y, info
 
 
@@ -328,7 +362,7 @@ def main():
     if pk > 0.999:
         print("PEAK %.3f" % pk, file=sys.stderr)
     write_wav24_exact(a.out, y, sr)
-    print("length %.3f -> %.3f s, f0 %.4f Hz, %d harmonics, drift %.3f c std, zones ta %.2f tr %.2f xf %.2f" % (info["N0"] / sr, info["Nout"] / sr, info["f0"], info["ks"], info["cents_std"], info["ta"] / sr, info["tr"] / sr, info["xf"] / sr))
+    print("length %.3f -> %.3f s, f0 %.4f Hz, %d harmonics, drift %.3f c std, noise gain %.2f, zones ta %.2f tr %.2f xf %.2f" % (info["N0"] / sr, info["Nout"] / sr, info["f0"], info["ks"], info["cents_std"], info["noise_gain"], info["ta"] / sr, info["tr"] / sr, info["xf"] / sr))
 
 
 if __name__ == "__main__":

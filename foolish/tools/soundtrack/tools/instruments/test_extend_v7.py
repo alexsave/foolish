@@ -6,13 +6,14 @@
   3 echo: the residual recurrence share (residual_check.recur, lags 0.1 to 1.0 s) is high on the input (over 0.5) and under 0.15 after;
   4b harmonic phase of 1 to 4 equal before and after each splice (under 0.1 rad: the tail is moved by whole periods);
   4 fresh: no window of the fresh noise correlates over 0.35 with any same length window of the input residual (never a copy);
+  4c harmonic to noise ratio (heterodyne residual, mono) of the fresh stretch within 1.5 dB of the source's;
   5 drift: pitch drift std 0.03 to 0.2 cent (ev info), vibmod 3 to 8 Hz peak/floor ratios of pitch, level and harmonic 1 to 4 under 3,
     level 3 to 8 Hz depth under 0.05 dB;
   6 seed: the same name gives the same output, another name another noise;
   7 no stray random: only v7_rng.py may mention numpy.random, random, default_rng, time or Date.
 Run: python3 -I test_extend_v7.py   (prints PASS).
 Mutations checked (each must fail the named check): 3 and 4 the fresh noise replaced by the tiled measured residual; 2 and 4b the tail moved by a
-quarter period more (D += quarter period, f not re-derived); 5 DRIFT_PITCH_C 0.1 -> 3 and DRIFT_HZ 0.8 -> 5; 6 stream() ignoring the name; 7 a np.random call added."""
+quarter period more (D += quarter period, f not re-derived); 4c the noise gain forced to 2 (blend(rs * 2)); 5 DRIFT_PITCH_C 0.1 -> 3 and DRIFT_HZ 0.8 -> 5; 6 stream() ignoring the name; 7 a np.random call added."""
 import os, re, sys
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -69,6 +70,11 @@ def main():
     for (u0, u1), (v0, v1) in (((int(0.1 * SR), int(0.3 * SR)), (a1 + int(0.15 * SR), a1 + int(0.35 * SR))), ((t0 - int(0.4 * SR), t0 - int(0.2 * SR)), (t0 + int(0.02 * SR), t0 + int(0.12 * SR)))):
         d = np.abs(np.angle(np.exp(1j * (ph(u0, u1) - ph(v0, v1)))))
         assert d.max() < 0.1, ("harmonic phase jump at a splice", d)
+    def hnr(m, i0, i1):
+        hh, rr = ev.het_pair(m[i0 - 4000:i1 + 4000], SR, info["f0"])
+        return 10 * np.log10(np.dot(hh[4000:-4000], hh[4000:-4000]) / np.dot(rr[4000:-4000], rr[4000:-4000]))
+    d_hnr = hnr(y.mean(axis=1), int(2 * SR), int(3 * SR)) - hnr(x.mean(axis=1), int(0.5 * SR), int(1.5 * SR))
+    assert abs(d_hnr) < 1.5, d_hnr
     assert 0.03 < info["cents_std"] < 0.2, info["cents_std"]
     seg = y[int(1.0 * SR):int(10 * SR)].mean(axis=1)
     v = vibmod.measure_note(seg, SR, vibmod.hz_of(57))
