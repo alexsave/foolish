@@ -61,8 +61,10 @@ void city_setup(void) {
     B808 = syn_track("808", syn_808); SP(B808, 0, 1.4, 3, 0.12, 0.25); g_tr[B808].gain_db = -4; eq(B808, 2, 28, 0.7, 0); eq(B808, 1, 2500, 0.7, 0);
     g_tr[B808].cthr = -18; g_tr[B808].cratio = 3; g_tr[B808].catt = 0.005; g_tr[B808].crel = 0.12;
     VOX = syn_track("vox", syn_voice); SP(VOX, 2, 1.0, 5, 10, 5.5, 20, 0.08, 0.02, 0.15, 0.5, 0, 0, 0.2, 0.05, 0.02, 2, 6000);
+    g_tr[VOX].mute = 1;   // v5: no voices outside Moscow; the soul "ahh" stab stays in the score, silent
     g_tr[VOX].gain_db = -9; g_tr[VOX].send[0] = 0.3; dusty(VOX, 7000, 22050);
     VINYL = syn_track("vinyl", syn_vinyl); SP(VINYL, 0.004, 9, 0.5, 0.003); g_tr[VINYL].gain_db = 0; eq(VINYL, 1, 9000, 0.7, 0);   // record noise is dark; flat hiss read as a broadband bed above 16 kHz
+    g_tr[VLN].gain_db -= 5; g_tr[VLA].gain_db -= 5; g_tr[VC].gain_db -= 5;   // v5: "too many strings": a pad far back where they remain
     { int rec[] = {RHODES, RHODESFM, PIANO, VLN, VLA, VC, VIBES, FLUTE, GUITAR, VOX}; for (unsigned i = 0; i < 10; i++) { g_tr[rec[i]].group = 2; g_tr[rec[i]].width = 0.45; g_tr[rec[i]].pan *= 0.4; } }
     g_grp[2] = (Group){.cthr = -20, .cratio = 2, .catt = 0.01, .crel = 0.15, .gain_db = 0};
     g_bus[0] = (Bus){.type = 1, .rev = {1.1, 0.5, 15, 0.8, 300, 6000, 0.15, 1.0, 0.2, 0.2}, .gain_db = -8, .duck_src = -1};
