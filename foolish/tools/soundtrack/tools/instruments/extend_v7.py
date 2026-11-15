@@ -159,12 +159,12 @@ def het_pair(x, sr, f, kmax=KMAX):
     return h, x - h
 
 
-def fill_notches(P, fq, f, bw):
+def fill_notches(P, fq, f, bw, kmax=KMAX):
     """P is the power matrix of the het residual, which went through the measurement filter: the noise within +-bw of a harmonic is gone and
     the noise beyond it is attenuated by (1 - G)^2 with G = 1 / (1 + (d / bw)^8) the zero phase response of the 4th order filter at the distance
     d from the nearest harmonic. Undo that (at most 6 dB, d >= bw) and fill the bins nearer than bw by interpolation (log power; the complex
     coherence) between the corrected bins, so that the fresh noise, measured by the same filter, reads as the source's residual does."""
-    ks = np.arange(1, KMAX + 1)
+    ks = np.arange(1, kmax + 1)
     d = np.abs(fq[:, None] - ks[None, :] * f).min(axis=1)
     G = 1.0 / (1.0 + (d / bw) ** 8)
     corr = np.maximum((1.0 - G) ** 2, 0.25)
@@ -185,7 +185,7 @@ def fill_notches(P, fq, f, bw):
     return out
 
 
-def noise_model(r, sr, e0, e1, NFFT, HOP, f=None):
+def noise_model(r, sr, e0, e1, NFFT, HOP, f=None, kmax=KMAX):
     """Per bin power matrices and the slow band modulation measured on r[e0:e1] (two channels)."""
     win = np.sqrt(np.hanning(NFFT + 1)[:-1])
     fr = [np.fft.rfft(r[a:a + NFFT].T * win, axis=1) for a in range(e0, e1 - NFFT, HOP)]
@@ -196,7 +196,7 @@ def noise_model(r, sr, e0, e1, NFFT, HOP, f=None):
     ker = np.array([1, 2, 3, 2, 1], float) / 9.0 if len(fr) < 24 else np.array([1, 2, 1], float) / 4.0
     P = np.array([np.convolve(np.pad(p, (len(ker) // 2,) * 2, mode="edge"), ker, mode="valid") for p in P])
     if f is not None:
-        P = fill_notches(P, np.fft.rfftfreq(NFFT, 1.0 / sr), f, min(40.0, 0.35 * f))
+        P = fill_notches(P, np.fft.rfftfreq(NFFT, 1.0 / sr), f, min(40.0, 0.35 * f), kmax)
     P[2] = np.where(np.abs(P[2]) > 0.98 * np.sqrt(P[0] * P[1]), P[2] * 0.98 * np.sqrt(P[0] * P[1]) / np.maximum(np.abs(P[2]), 1e-30), P[2])
     fq = np.fft.rfftfreq(NFFT, 1.0 / sr)
     sig, rho = [], []
@@ -287,8 +287,11 @@ def extend(x, sr, root, name, keep_ms=0.0):
     e0 = max(ta, int(0.15 * sr)) if N0 - tr - ta > int(0.3 * sr) else max(int(0.15 * sr), N0 - tr - int(0.3 * sr))
     e1 = N0 - tr
     nfft, hop = frame_size(f)
-    rh = het_residual(x, sr, f)
-    P, sig, tau = noise_model(rh, sr, e0, e1, nfft, hop, f)
+    # only the harmonics that are modelled as steady lines are taken out of the noise: the weak upper partials (under REL_FLOOR_DB, which v6 left
+    # unflattened, so they wander) are kept as noise, else a cello loses its 4 to 8 kHz bow brightness
+    kmod = max(ks)
+    rh = het_residual(x, sr, f, kmod)
+    P, sig, tau = noise_model(rh, sr, e0, e1, nfft, hop, f, kmod)
     rs = synth_noise(rng, P, sig, tau, sr, Nout, nfft, hop)
     # noise: own attack, fresh sustain, own tail moved by D
     a0, a1 = ta, ta + xf

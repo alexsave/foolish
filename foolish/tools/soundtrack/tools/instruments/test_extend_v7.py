@@ -7,13 +7,14 @@
   4b harmonic phase of 1 to 4 equal before and after each splice (under 0.1 rad: the tail is moved by whole periods);
   4 fresh: no window of the fresh noise correlates over 0.35 with any same length window of the input residual (never a copy);
   4c harmonic to noise ratio (heterodyne residual, mono) of the fresh stretch within 1.5 dB of the source's;
+  4d the band of the weak wandering upper partials (1.9 to 3.4 kHz) of the fresh stretch within 2.5 dB of the source's;
   5 drift: pitch drift std 0.03 to 0.2 cent (ev info), vibmod 3 to 8 Hz peak/floor ratios of pitch, level and harmonic 1 to 4 under 3,
     level 3 to 8 Hz depth under 0.05 dB;
   6 seed: the same name gives the same output, another name another noise;
   7 no stray random: only v7_rng.py may mention numpy.random, random, default_rng, time or Date.
 Run: python3 -I test_extend_v7.py   (prints PASS).
 Mutations checked (each must fail the named check): 3 and 4 the fresh noise replaced by the tiled measured residual; 2 and 4b the tail moved by a
-quarter period more (D += quarter period, f not re-derived); 4c the noise gain forced to 2 (blend(rs * 2)); 5 DRIFT_PITCH_C 0.1 -> 3 and DRIFT_HZ 0.8 -> 5; 6 stream() ignoring the name; 7 a np.random call added."""
+quarter period more (D += quarter period, f not re-derived); 4d kmod = KMAX 40 in the noise model (the upper partials taken out of the noise); 4c the noise gain forced to 2 (blend(rs * 2)); 5 DRIFT_PITCH_C 0.1 -> 3 and DRIFT_HZ 0.8 -> 5; 6 stream() ignoring the name; 7 a np.random call added."""
 import os, re, sys
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -33,10 +34,12 @@ def source():
     f = 220.0
     ph = [0.3, 1.1, 2.0, 0.7, 1.9, 2.6, 0.2, 1.4]
     y = sum(a * np.sin(2 * np.pi * (k + 1) * f * t + p) for k, (a, p) in enumerate(zip([1, .6, .45, .3, .2, .15, .1, .08], ph)))
+    # weak upper partials (50 dB under the strongest, under extend_v7.REL_FLOOR_DB) that wander in frequency, as the cello's do after v6
+    y = y + sum(0.0045 * np.sin(2 * np.pi * k * f * t + 4.0 * np.sin(2 * np.pi * 1.3 * t + k)) for k in range(9, 15))
     env = np.minimum(t / 0.05, 1) * np.minimum((1.8 - t) / 0.1, 1)
     pat = rng.standard_normal((2, int(0.3 * SR)))
     pat = np.stack([np.convolve(p, np.ones(8) / 8, "same") for p in pat])      # coloured
-    noise = np.tile(pat, (1, 7))[:, :n].T * 0.08
+    noise = np.tile(pat, (1, 7))[:, :n].T * 0.04
     return (np.stack([y, 0.9 * y], 1) * 0.15 + noise * 0.15) * env[:, None]
 
 
@@ -75,6 +78,14 @@ def main():
         return 10 * np.log10(np.dot(hh[4000:-4000], hh[4000:-4000]) / np.dot(rr[4000:-4000], rr[4000:-4000]))
     d_hnr = hnr(y.mean(axis=1), int(2 * SR), int(3 * SR)) - hnr(x.mean(axis=1), int(0.5 * SR), int(1.5 * SR))
     assert abs(d_hnr) < 1.5, d_hnr
+    def band(sig, i0, i1, lo=1900.0, hi=3400.0):
+        N = 2048
+        w = np.hanning(N)
+        fq = np.fft.rfftfreq(N, 1.0 / SR)
+        P = np.mean([np.abs(np.fft.rfft(sig[a:a + N] * w)) ** 2 for a in range(i0, i1 - N, N // 4)], 0)
+        return 10 * np.log10(P[(fq >= lo) & (fq < hi)].sum())
+    d_band = band(y[:, 0], int(3 * SR), int(9 * SR)) - band(x[:, 0], int(0.5 * SR), int(1.5 * SR))
+    assert abs(d_band) < 2.5, d_band       # the wandering weak partials are kept as noise, not lost
     assert 0.03 < info["cents_std"] < 0.2, info["cents_std"]
     seg = y[int(1.0 * SR):int(10 * SR)].mean(axis=1)
     v = vibmod.measure_note(seg, SR, vibmod.hz_of(57))
