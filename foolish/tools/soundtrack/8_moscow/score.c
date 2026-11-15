@@ -47,7 +47,9 @@ void city_setup(void) {
     BELLT = o_smp("bell piano", OM "salamander.txt", 2.0, 0, -0.1, 0, 0.45, -4); g_tr[BELLT].sp[9] = 1;
     // v5: the choir is eight men from VocalSet, each his own track (engine/choir.h), in place of the GM "aah" and the formant synth
     static const char *men[] = {"male1", "male2", "male3", "male4", "male5", "male6", "male8", "male11"};
-    int CHIN = choir_setup(men, 8, "ah", 2, 0.5);
+    int CHIN = choir_setup(men, 8, "ah", -4, 0.5);
+    // levelled from the first render (pre-master LUFS per man ran from -8.4 to -14.7): everyone within about 1 dB
+    choir_trim("male1", 3); choir_trim("male11", 3); choir_trim("male4", -3); choir_trim("male5", -1);
     eq(eu, 1, 2500, 0.7, 0); eq(eu2, 1, 2500, 0.7, 0);   // the euphonium: a trombone with its edge taken off
     o_part("VIOLINS", v1, v1b, 0, 0, 0); o_part("VIOLINS2", v2, -1, 0, 0, 0); o_part("VIOLAS", va, -1, 0, 0, 0); o_part("CELLOS", vc, vc2, 0, 0, 0); o_part("BASSES", cb, cb2, 0, 0, 0);
     o_part("BALALAIKA", bal, -1, 0, 0, 0);

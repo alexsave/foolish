@@ -106,6 +106,15 @@ double city_loop(void) {
         if (n.tr == HAT || n.tr == SHAKER) { double fr = n.beat - floor(n.beat); g_note[i].vel *= fr < 0.01 ? 1.0 : fabs(fr - 0.5) < 0.01 ? 0.8 : 0.62; }
         if (n.tr == SUB && n.pitch < 29) g_note[i].pitch += 12;   // F1 and below sit an octave up, where a sub is felt and heard
     }
+    // v5: the last two beats before the drop are empty (what Lyria miami_04 does, the drop Alex called solid): every note that
+    // starts there is dropped and every note that rings into it is cut short. The first render's drop arrived only 1.1 dB up.
+    { int si = sec_find("IV Storm over Biscayne: Break"); if (si < 0) fprintf(stderr, "no section IV Storm over Biscayne: Break\n"); else {
+        double e = (g_sec[si].bar0 + g_sec[si].bars) * 4.0, g0 = e - 2.0; int w = 0;
+        for (int i = n0; i < g_nnote; i++) { Note a = g_note[i];
+            if (a.beat >= g0 - 1e-6 && a.beat < e - 1e-6) continue;
+            if (a.beat < g0 && a.beat + a.len > g0) a.len = g0 - a.beat;
+            g_note[n0 + w++] = a; }
+        g_nnote = n0 + w; } }
     fx_filters();
     return score_total_bars() * 4.0;
 }

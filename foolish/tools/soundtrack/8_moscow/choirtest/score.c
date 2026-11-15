@@ -16,6 +16,8 @@ void city_setup(void) {
     g_on_done = sections_out;
     static const char *men[] = {"male1", "male2", "male3", "male4", "male5", "male6", "male8", "male11"};   // male9 sings an octave above the rest; male7 and male10 gave almost no usable long tones
     CH = choir_setup(men, 8, "ah", 0, 0.5);
+    // levelled from the first render (pre-master LUFS per man ran from -8.4 to -14.7): everyone within about 1 dB
+    choir_trim("male1", 3); choir_trim("male11", 3); choir_trim("male4", -3); choir_trim("male5", -1);
     TI = o_smp("timpani", "../../samples/manifests/timpani.txt", 1.2, 0, 0.0, 0, 0.22, 4);
     BD = o_smp("bassdrum", "../../samples/manifests/bassdrum.txt", 1.0, 0, 0.05, 0, 0.18, 3);
     FD = o_smp("fielddrum", "../../samples/manifests/fielddrum.txt", 0.4, 0, 0.15, 0, 0.2, 7);

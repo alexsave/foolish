@@ -134,13 +134,16 @@ SNARE: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | C4:4
 FX: bar 8 snare roll ppp to mp; the horn and violin F# sink to F while the bass holds F#, which Part V respells Gb
 TRANSITION: F# respelled Gb; the Gb-to-F sigh in the bass is the first thing Part V plays
 TEMPO 92
-SECTION VI The Gates Again: Drum roll BARS 1 KEY Bbm
-TIMPANI: F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25
-SNARE: C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25
-BASSDRUM: r:3 C2:1
-DYN: pp -> ff
-TRANSITION: (v5) the lanterns have gone out; one bar of timpani and snare on the dominant F, from nothing, and the gates open again (a blackout and a curtain, in place of the funeral procession and the promenade)
-
+SECTION VI The Gates Again: Drum roll BARS 2 KEY Bbm
+TIMPANI: F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 | F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25 F2:0.25
+SNARE: r:4 | C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25 C4:0.25
+BASSDRUM: r:4 | r:2 C2:1 C2:1
+TROMBONES: r:4 | F2+C3+F3:4
+HORNS: r:4 | F3+C4:4
+CELLOS: r:4 | F2:4
+BASSES: r:4 | F1:4
+DYN: pp bar 1, cresc bar 2 to ff
+TRANSITION: (v5) the lanterns have gone out; a timpani roll on the dominant F from nothing, the snare and the low brass and strings swelling on F in the second bar, and the gates open again (a blackout and a curtain, in place of the funeral procession and the promenade). Two bars, because one bar left an 8.6 dB jump in one second.
 
 SECTION VI The Gates Again: The Stride, Tutti BARS 8 KEY Bbm
 DYN: fff

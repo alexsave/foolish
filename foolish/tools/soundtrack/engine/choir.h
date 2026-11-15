@@ -34,6 +34,9 @@ static int choir_setup(const char **names, int n, const char *vowel, double gain
     fprintf(stderr, "choir: %d singers on \"%s\"\n", g_nsinger, vowel);
     return g_choir_in;
 }
+// one singer louder or softer (dB): the men's recordings differ, and one voice 6 dB over the rest stops being a choir
+static void choir_trim(const char *name, double db) { char nm[32]; snprintf(nm, sizeof nm, "choir %s", name);
+    for (int k = 0; k < g_nsinger; k++) if (!strcmp(g_tr[g_singer[k].tr].name, nm)) g_tr[g_singer[k].tr].gain_db += db; }
 static int singer_can(const Singer *s, int pitch) { for (int j = 0; j < s->nroot; j++) { int d = pitch - s->root[j]; if (d <= CHOIR_REACH && d >= -CHOIR_REACH_DOWN) return 1; } return 0; }
 static int choir_men(int pitch) { int c = 0; for (int k = 0; k < g_nsinger; k++) c += singer_can(&g_singer[k], pitch); return c; }
 static void choir_post(int n0) {
