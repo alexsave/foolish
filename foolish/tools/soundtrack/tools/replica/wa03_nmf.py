@@ -94,12 +94,13 @@ def main():
     ap.add_argument('--bp-onset'); ap.add_argument('--bp-note'); ap.add_argument('--wav'); ap.add_argument('--out')
     ap.add_argument('--lam-p', type=float, default=0.02); ap.add_argument('--lam-c', type=float, default=0.08)
     ap.add_argument('--iters', type=int, default=150)
-    ap.add_argument('--onset-floor', type=float, default=0.08)
-    ap.add_argument('--note-floor', type=float, default=0.10)
+    ap.add_argument('--onset-floor', type=float, default=0.3)
+    ap.add_argument('--note-floor', type=float, default=0.35)
     ap.add_argument('--piano-keep', type=float, default=0.03, help='keep piano candidates with gain above this fraction of the largest gain')
     ap.add_argument('--cello-keep', type=float, default=0.10)
     ap.add_argument('--no-cello', action='store_true')
     ap.add_argument('--save-model', default='')
+    ap.add_argument('--load-model', default='', help='skip the fit, extract notes from a saved fit (changes of the keep thresholds are then instant)')
     a = ap.parse_args()
     y = librosa.load(a.wav, sr=SR, mono=True)[0]
     V = np.abs(librosa.cqt(y, sr=SR, hop_length=HOP, fmin=FMIN, n_bins=NB, bins_per_octave=BPO)) + 1e-6
@@ -139,6 +140,8 @@ def main():
         A[:] = 0
     print('cello cells', int(mask.sum()))
     tp = [PT[p] for p, f in cands]
+    if a.load_model:
+        z = np.load(a.load_model); cands, G, A = z['cands'], z['G'], z['A']; cp = list(z['cp']); a.iters = 0
     for it in range(a.iters):
         M = np.zeros_like(V)
         for (p, f), g, T in zip(cands, G, tp):

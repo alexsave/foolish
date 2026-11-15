@@ -133,7 +133,7 @@ def main():
             if pv and not np.isnan(pick(m, k)):
                 better = pick(m, k) < min(pv) if k in ('onset_dev_mad_ms', 'lts_mad_db', 'microtiming_profile_mad_ms') else (abs(pick(m, k)) < min(abs(x) for x in pv) if k == 'tempo_pct_diff' else pick(m, k) > max(pv))
                 if better:
-                    print('  improved: %s -> %.4g' % (k, pick(m, k)))
+                    print('  improved: %s -> %.4g' % (k, pick(m, k))); improved = True
     if improved and '--no-open' not in sys.argv:
         for q in (png, png.replace('.png', '_piano.png'), png.replace('.png', '_cello.png')):
             if os.path.exists(q):
