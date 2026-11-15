@@ -106,6 +106,35 @@ static double dyn_at(const Section *x, double pos) {
     if (j + 1 >= x->ndyn || x->dyn_pos[j + 1] <= x->dyn_pos[j]) return x->dyn_val[j];
     double f = (pos - x->dyn_pos[j]) / (x->dyn_pos[j + 1] - x->dyn_pos[j]); return x->dyn_val[j] + (x->dyn_val[j + 1] - x->dyn_val[j]) * f;
 }
+// "EVENTS PART: beat,pitch,len,vel beat,pitch,len,vel ...": notes at exact positions, for a passage whose timing is the
+// point (a replica of a recording keeps its micro-timing, swing and velocities). beat is counted from the section's start
+// and is not a multiple of anything; pitch is a name (C4), a MIDI number (61.5 is allowed) or x (the part's drum pitch);
+// len is the sounding length in beats, taken as written (no gate); vel is 0..1 before the part's own scale. No bar sums,
+// no repeats, any number of EVENTS lines per part and section; a note may start before the section or ring past its end.
+static int events_line(const char *s, PartMap map, double b0, double sec_beats, const char *sec) {
+    const char *colon = strchr(s, ':'); if (!colon) return 0;
+    char part[48]; int pl = (int)(colon - s); if (pl <= 0 || pl > 40) return 0; snprintf(part, sizeof part, "%.*s", pl, s);
+    { int L = (int)strlen(part); while (L > 0 && part[L - 1] == ' ') part[--L] = 0; }
+    double tp = 0, vs = 1, dp = 60; int tr = map(part, &tp, &vs, &dp), cnt = 0;
+    if (tr < 0) { fprintf(stderr, "score: part %s ignored\n", part); return 0; }
+    const char *q = colon + 1;
+    for (;;) {
+        while (*q == ' ' || *q == '\t') q++;
+        if (!*q) break;
+        char *e; double beat = strtod(q, &e), pitch, len, vel;
+        if (e == q || *e != ',') { fprintf(stderr, "score: bad event in %s of %s at '%.20s'\n", part, sec, q); exit(1); }
+        q = e + 1;
+        if (*q == 'x' || *q == 'X') { pitch = fabs(dp); q++; }
+        else if (isdigit((unsigned char)*q)) { pitch = strtod(q, &e) + tp; q = e; }
+        else pitch = pname(&q) + tp;
+        if (*q != ',') { fprintf(stderr, "score: event in %s of %s lacks a length at '%.20s'\n", part, sec, q); exit(1); }
+        len = strtod(q + 1, &e); if (*e != ',') { fprintf(stderr, "score: event in %s of %s lacks a velocity at '%.20s'\n", part, sec, q); exit(1); }
+        vel = strtod(e + 1, &e); q = e;
+        if (beat >= sec_beats) fprintf(stderr, "warning: event of %s at beat %.3f starts after section %s ends (%.0f beats)\n", part, beat, sec, sec_beats);
+        note(tr, b0 + beat, len, pitch, clampd(vel * vs, 0, 1)); cnt++;
+    }
+    return cnt;
+}
 // the city may pre-process each part's bar (gate, articulation) through this hook; default gate 0.95
 static double g_txt_gate = 0.95;
 static double g_dyn_depth = 1.0;   // how strongly DYN marks scale velocities (0 = ignore)
@@ -138,6 +167,7 @@ static void score_txt(const char *path, PartMap map, double bar_offset) {
             x->bar0 = bar0; cur = g_nsec++; pend_next = 0; continue;
         }
         if (cur < 0) continue;
+        if (!strncmp(s, "EVENTS ", 7)) { events_line(s + 7, map, g_sec[cur].bar0 * 4.0, g_sec[cur].bars * 4.0, g_sec[cur].name); pend_next = 1; continue; }
         char *colon = strchr(s, ':'); if (!colon) continue;
         char part[48]; int pl = (int)(colon - s); if (pl <= 0 || pl > 40) continue; snprintf(part, sizeof part, "%.*s", pl, s);
         { int L = (int)strlen(part); while (L > 0 && part[L - 1] == ' ') part[--L] = 0; }   // keep suffixes like "VIOLINS SPIC"
