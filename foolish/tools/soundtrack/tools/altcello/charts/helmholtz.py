@@ -133,14 +133,14 @@ if Fmin:
     c_.plot(fgrid, BETA * np.sqrt(Fmin / fgrid), color=C["grey"], lw=2, ls="--", label="Schelleng F_min ~ 1/beta^2 (anchored at beta=0.1)")
 c_.set_xscale("log")
 c_.set_yscale("log")
-c_.set_ylim(0.035, 0.3)
+c_.set_ylim(0.03, 1.2)
 c_.set_xlim(0.015, 12)
 c_.set_yticks([0.05, 0.1, 0.2])
 c_.set_yticklabels(["0.05", "0.1", "0.2"])
 c_.set_xlabel("bow force F_B (N)")
 c_.set_ylabel("relative bow position beta")
 c_.set_title("(c) Schelleng sweep, v_B = 0.1 m/s (8 s runs, last 0.5 s classified)", loc="left", fontsize=14)
-c_.legend(loc="lower left", fontsize=10)
+c_.legend(loc="upper center", fontsize=9, ncol=2, framealpha=0.9)
 
 # (d) spectrum
 d_ = ax[1, 1]
@@ -153,7 +153,7 @@ d_.plot(fq[mk], db[mk], color=C["blue"], lw=1.0, label="ALT-CELLO bridge force s
 for h in range(1, int(5000 / f_est) + 1):
     d_.axvline(h * f_est, color=C["red"], alpha=0.25, lw=1)
     if h <= 20:
-        d_.text(h * f_est, 3, str(h), ha="center", va="bottom", fontsize=9, color=C["red"])
+        d_.text(h * f_est, -98, str(h), ha="center", va="bottom", fontsize=9, color=C["red"])
 d_.plot([], [], color=C["red"], alpha=0.5, label="harmonic numbers n x %.2f Hz" % f_est)
 d_.set_ylim(-100, 12)
 d_.set_xlim(0, 5000)
