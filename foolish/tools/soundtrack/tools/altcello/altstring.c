@@ -82,12 +82,13 @@ void string_ghosts(String *s, int pol, double *y)
 {
     int N = s->N;
     (void)pol;
+    /* y[N] holds the bridge end displacement (0 for a rigid bridge); the
+       ghosts are the odd reflection about it (y_xx = 0 at the end) */
     y[0] = 0.0;
-    y[N] = 0.0;
     y[-1] = -y[1];
     y[-2] = -y[2];
-    y[N + 1] = -y[N - 1];
-    y[N + 2] = -y[N - 2];
+    y[N + 1] = 2.0 * y[N] - y[N - 1];
+    y[N + 2] = 2.0 * y[N] - y[N - 2];
 }
 
 void string_step_free(String *s, int pol, const double *fext)
@@ -109,7 +110,7 @@ void string_step_free(String *s, int pol, const double *fext)
         y2[l] = S * s->invD[l];
     }
     y2[0] = 0.0;
-    y2[s->N] = 0.0;
+    y2[s->N] = 0.0; /* the caller sets the bridge end displacement before string_commit */
 }
 
 void string_commit(String *s)
@@ -127,9 +128,11 @@ double string_bridge_force(const String *s, const double *y)
 {
     int N = s->N;
     double h = s->h;
-    double yx = -y[N - 1] / h; /* centred with y_{N+1} = -y_{N-1} */
-    double yxxx = (2.0 * y[N - 1] - y[N - 2]) / (h * h * h);
-    return s->sp.T * yx - s->EI * yxxx;
+    /* T y_x - E I y_xxx at L with the end value y[N] (the bridge) included; the
+       negative of this is the force the string exerts on the bridge. It is
+       exactly dV/dz of the discrete potential, which makes the coupling with
+       the body a conservative leapfrog. */
+    return s->sp.T * (y[N] - y[N - 1]) / h + s->EI * (y[N] - 2.0 * y[N - 1] + y[N - 2]) / (h * h * h);
 }
 
 double string_energy(const String *s, const double *cur, const double *prev)

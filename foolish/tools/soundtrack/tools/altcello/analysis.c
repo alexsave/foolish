@@ -110,3 +110,75 @@ void classify_run(const double *bridge, const double *vrel, double fs, double f0
     else if (out->onsets_per_period <= 1.05) out->cls = CLS_HELMHOLTZ;
     else out->cls = CLS_MULTIPLE;
 }
+
+Helm analyse_helmholtz(const double *bridge, const double *vrel, long n, double fs, double f0, double settle)
+{
+    Helm h = {0};
+    long i0 = (long)(settle * fs);
+    Spectrum *sp = spec_make(bridge + i0, n - i0, fs, 8);
+    h.f_est = spec_peak(sp, f0, 0.05, NULL);
+    spec_free(sp);
+    h.cents_flat = cents(h.f_est, f0);
+    double P = fs / h.f_est;
+    long i = i0;
+    while (i < n - 1 && !(fabs(vrel[i]) <= 1e-4 && fabs(vrel[i + 1]) > 1e-4)) i++;
+    long w0 = i + (long)(0.5 * P);
+    h.counts_min = 1 << 20;
+    h.counts_max = 0;
+    for (int p = 0; p < 20; p++) {
+        long a = w0 + (long)(p * P), b = w0 + (long)((p + 1) * P);
+        if (b > n) { h.counts_min = -1; break; }
+        double fr;
+        int c = slip_onsets(vrel, a, b, 1e-4, fs, &fr);
+        if (c < h.counts_min) h.counts_min = c;
+        if (c > h.counts_max) h.counts_max = c;
+    }
+    h.ok_one_per_period = (h.counts_min == 1 && h.counts_max == 1);
+    long w1 = w0 + (long)(20 * P);
+    if (w1 <= n) slip_onsets(vrel, w0, w1, 1e-4, fs, &h.slip_frac);
+    long best;
+    if (w0 + (long)(11.1 * P) < n) h.corr = autocorr_max(bridge, w0, w0 + (long)(10 * P), (long)(0.95 * P), (long)(1.05 * P), &best);
+    return h;
+}
+
+double settle_time(const double *vrel, long n, double fs, double P)
+{
+    long minlen = (long)ceil(SLIP_MIN_DUR_S * fs);
+    long *on = malloc(sizeof(long) * (size_t)(n / 8 + 16));
+    int cnt = 0;
+    long i = 0;
+    while (i < n) {
+        if (fabs(vrel[i]) > 1e-4) {
+            long j = i;
+            while (j < n && fabs(vrel[j]) > 1e-4) j++;
+            if (j - i >= minlen) on[cnt++] = i;
+            i = j;
+        } else i++;
+    }
+    double res = -1.0;
+    for (int a = 0; a + 10 < cnt; a++) {
+        int ok = 1;
+        for (int b = a; b < a + 10; b++) {
+            double d = (double)(on[b + 1] - on[b]);
+            if (d < 0.85 * P || d > 1.15 * P) { ok = 0; break; }
+        }
+        if (ok) { res = (double)on[a] / fs; break; }
+    }
+    free(on);
+    return res;
+}
+
+double hump_db(const double *x, long n, double fs, double f0, double flo, double fhi)
+{
+    long len = (long)fs;
+    if (len > n) len = n;
+    Spectrum *sp = spec_make(x + n - len, len, fs, 4);
+    double m1;
+    spec_peak(sp, f0, 0.05, &m1);
+    int lo = (int)(flo / sp->df), hi = (int)(fhi / sp->df);
+    double mx = 0;
+    for (int i = lo; i <= hi; i++)
+        if (sp->mag[i] > mx) mx = sp->mag[i];
+    spec_free(sp);
+    return 20.0 * log10(mx / m1);
+}

@@ -26,3 +26,25 @@ Mutations were applied in a scratch copy of the directory (another agent builds 
   The string-only model (sigma0 = 1.2 /s, no body or bridge loss) needs seconds to settle: at 0.5 s with F_B = 1.0 N the window shows 1..5 slips per period and correlation 0.33.
   The checks run on a window starting at 3.0 s, and F_B = 1.0 N does not give Helmholtz even then (raucous); the sweep finds 0.638, 0.775, 0.940 N.
 - A "slip interval" ignores runs of |v_rel| > 1e-4 shorter than 0.15 ms: these ripple micro-slips (4 to 11 samples at 96 kHz, peak below 0.35 m/s) occur in the stick phase of the Helmholtz motion, real slips last about 0.9 ms and peak near 1.1 m/s.
+
+## Stage 2 (body, four strings, wav)
+
+The coupling is one conservative leapfrog of the whole instrument.
+The strings' bridge end value y[N] is the bridge displacement z = sum_k c_k q_k.
+The force on the bridge is minus dV/dz of the discrete string potential (`string_bridge_force` with the end value included), the body modes use the state at time n like the strings do.
+There is no solve and no lag, and the energy balance is exact (T8).
+
+- test_wav: `wav.c` decimator cutoff 0.45 changed to 0.95 (no anti-alias) -> `FAIL test_wav.c:35: rej < -60.0 -- 30 kHz tone only -0.0 dB down`
+- test_body_energy (T8 lossless): `altstring.c` the bridge force's stiffness term scaled by 1.1 (force no longer the potential gradient) -> `FAIL test_body_energy.c:43: rel < 1e-9 -- coupled energy not conserved: relative spread 0.0019413`
+- test_body_energy (T8 lossy): `body.c` damping sign flipped (anti-damped body modes) -> `FAIL test_body_energy.c:47: worst_up < 1e-12 -- energy increased by relative inf in one step`
+- test_admittance (passivity): `body.c` `Gu` sign flipped -> `FAIL test_admittance.c:49: worst >= -1e-9 * maxY -- Re Y_uu = -0.15686 < 0 at 1720.8 Hz (passivity)`
+- test_admittance (peaks): `body.c` stiffness term scaled by 1.05 (modes 2.5 percent off) -> `FAIL test_admittance.c:64: fabs(err) < 1.0 -- A0 peak at 104.00 Hz is 1.965% from 102.0 Hz`
+- test_bridge_loss (T10): `sim.c` body driven with zero force (rigid in effect) -> `FAIL test_bridge_loss.c:73: tb < tr_ -- partial 1: body-on T60 5.214 s is not shorter than rigid 5.214 s`
+- test_sympathetic (T11): `sim.c` the strings' end value forced to 0 (the bridge does not move them) -> `FAIL test_sympathetic.c:51: db >= 20.0 -- peak at 290.13 Hz is only 0.0 dB above the 270 Hz level`
+- test_body_helmholtz (T12): `bow.h` `BOW_PHI_STATIC` 1.2 changed to 0.3 -> `FAIL test_body_helmholtz.c:100: nh1 > 0 -- no Helmholtz point at beta 0.1 with the body on`
+- test_wolf (T13): no assertions (report only), so there is nothing to mutate.
+
+Stage 2 notes:
+- T9 asserts the A0 peak in Y_ww and the others in Y_uu (the direction of larger participation).
+  In Y_uu the A0 peak sits 1.27 percent low because its c_u is only 0.3 and the skirts of CBR and B1- pull it.
+- T10 fits the dB envelope between 0.05 s and 1 s: the coupled string loses most of its energy to the body in the first 0.3 s and then beats slowly, so a fit from 0.3 s on does not see the loss.

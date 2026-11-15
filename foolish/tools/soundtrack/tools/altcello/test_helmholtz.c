@@ -10,43 +10,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-typedef struct {
-    int ok_one_per_period;
-    int counts_min, counts_max;
-    double slip_frac, f_est, cents_flat, corr;
-} Helm;
-
 static Helm analyse(const Trace *tr, double f0, double settle)
 {
-    Helm h = {0};
-    double fs = tr->fs;
-    long i0 = (long)(settle * fs);
-    Spectrum *sp = spec_make(tr->ch[0] + i0, tr->n - i0, fs, 8);
-    h.f_est = spec_peak(sp, f0, 0.05, NULL);
-    spec_free(sp);
-    h.cents_flat = cents(h.f_est, f0);
-    double P = fs / h.f_est;
-    /* first full slip interval after 0.5 s, then a window of 20 periods that
-       starts in the middle of the stick phase */
-    long i = i0;
-    while (i < tr->n - 1 && !(fabs(tr->ch[3][i]) <= 1e-4 && fabs(tr->ch[3][i + 1]) > 1e-4)) i++;
-    long w0 = i + (long)(0.5 * P);
-    h.counts_min = 1 << 20;
-    h.counts_max = 0;
-    for (int p = 0; p < 20; p++) {
-        long a = w0 + (long)(p * P), b = w0 + (long)((p + 1) * P);
-        if (b > tr->n) { h.counts_min = -1; break; }
-        double fr;
-        int c = slip_onsets(tr->ch[3], a, b, 1e-4, fs, &fr);
-        if (c < h.counts_min) h.counts_min = c;
-        if (c > h.counts_max) h.counts_max = c;
-    }
-    h.ok_one_per_period = (h.counts_min == 1 && h.counts_max == 1);
-    long w1 = w0 + (long)(20 * P);
-    if (w1 <= tr->n) slip_onsets(tr->ch[3], w0, w1, 1e-4, fs, &h.slip_frac);
-    long best;
-    h.corr = autocorr_max(tr->ch[0], w0, w0 + (long)(10 * P), (long)(0.95 * P), (long)(1.05 * P), &best);
-    return h;
+    return analyse_helmholtz(tr->ch[0], tr->ch[3], tr->n, tr->fs, f0, settle);
 }
 
 static Trace *run(const StringSpec *sp, double beta, double vB, double F, double secs)

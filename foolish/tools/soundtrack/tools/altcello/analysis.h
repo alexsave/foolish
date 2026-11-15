@@ -29,4 +29,17 @@ typedef struct {
 extern const char *const cls_names[4];
 /* classify a bowed run on [t0,t1) seconds using nominal f0 */
 void classify_run(const double *bridge, const double *vrel, double fs, double f0, double t0, double t1, RunStats *out);
+
+typedef struct {
+    int ok_one_per_period;
+    int counts_min, counts_max;
+    double slip_frac, f_est, cents_flat, corr;
+} Helm;
+/* the T3 analysis: pitch from the fft of the bridge force from `settle` s on, then 20 periods (window
+   starting mid-stick after a slip onset) each of which must hold exactly one slip interval */
+Helm analyse_helmholtz(const double *bridge, const double *vrel, long n, double fs, double f0, double settle);
+/* time of the first slip onset that begins 10 consecutive periods (onset spacing within 15 percent of P samples/fs), -1 if none */
+double settle_time(const double *vrel, long n, double fs, double P);
+/* level of the largest spectral magnitude in [flo,fhi] re the fundamental peak (near f0), dB, over the last 1 s */
+double hump_db(const double *x, long n, double fs, double f0, double flo, double fhi);
 #endif

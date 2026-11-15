@@ -41,9 +41,11 @@ void string_ghosts(String *s, int pol, double *y);
 /* finger contact on points lo..hi with weights g (a in 0..1); K in N/m^2,
  * R in N s/m^2. lo > hi clears it. */
 void string_set_finger(String *s, int lo, int hi, const double *g, double a, double K, double R);
-/* output: transverse force on the bridge from state y (T y_x - E I y_xxx at L) */
+/* output: T y_x - E I y_xxx at L from state y (includes y[N], the bridge end);
+   the force on the bridge is the negative of it */
 double string_bridge_force(const String *s, const double *y);
 /* numerical energy (Bilbao) between states cur (n+1) and prev (n), per
- * unit of rho: 1/2|dt cur|^2 + c^2/2 <dx+ cur, dx+ prev> + kap^2/2 <dxx cur, dxx prev> */
+ * unit of rho (cur[N], prev[N] may be nonzero bridge displacements; the
+ * energy then includes the string-to-bridge link): 1/2|dt cur|^2 + c^2/2 <dx+ cur, dx+ prev> + kap^2/2 <dxx cur, dxx prev> */
 double string_energy(const String *s, const double *cur, const double *prev);
 #endif

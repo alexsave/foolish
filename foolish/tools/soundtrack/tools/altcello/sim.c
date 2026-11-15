@@ -3,13 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-const char *const sim_channel_names[SIM_NCH] = {"bridge_u", "bridge_w", "vbow_u", "vrel", "fric"};
+const char *const sim_channel_names[SIM_NCH] = {"bridge_u", "bridge_w", "vbow_u", "vrel", "fric", "vbridge_u", "vbridge_w", "pbody"};
+const char *const sim_string_names[SIM_MAXSTR] = {"C2", "G2", "D3", "A3"};
 
-void sim_init(Sim *S, const StringSpec *sp, double fs)
+static void common_init(Sim *S, double fs)
 {
-    memset(S, 0, sizeof *S);
-    S->s = string_new(sp, fs);
-    S->fwbuf = calloc((size_t)S->s->N + 1, sizeof(double));
     S->fs = fs;
     S->k = 1.0 / fs;
     finger_init(&S->finger);
@@ -21,13 +19,55 @@ void sim_init(Sim *S, const StringSpec *sp, double fs)
     env_const(&S->beta, 0.1);
     env_const(&S->xF, 0.0);
     env_const(&S->aF, 0.0);
+    for (int i = 0; i < SIM_MAXSTR; i++) {
+        env_const(&S->xFo[i], 0.0);
+        env_const(&S->aFo[i], 0.0);
+    }
+}
+
+void sim_init(Sim *S, const StringSpec *sp, double fs)
+{
+    memset(S, 0, sizeof *S);
+    S->str[0] = string_new(sp, fs);
+    S->nstr = 1;
+    S->bowed = 0;
+    S->s = S->str[0];
+    S->fwbuf = calloc((size_t)S->s->N + 1, sizeof(double));
+    common_init(S, fs);
+}
+
+void sim_init_instrument(Sim *S, double fs, const SimOpts *o, const char *bowed_name)
+{
+    memset(S, 0, sizeof *S);
+    int maxN = 0;
+    for (int i = 0; i < SIM_MAXSTR; i++) {
+        if (!o->all_strings && strcmp(sim_string_names[i], bowed_name)) continue;
+        StringSpec sp = *string_spec(sim_string_names[i]);
+        if (o->lossless) sp.sigma0 = sp.sigma1 = 0.0;
+        S->str[S->nstr] = string_new(&sp, fs);
+        if (!strcmp(sim_string_names[i], bowed_name)) S->bowed = S->nstr;
+        if (S->str[S->nstr]->N > maxN) maxN = S->str[S->nstr]->N;
+        S->nstr++;
+    }
+    S->s = S->str[S->bowed];
+    S->fwbuf = calloc((size_t)maxN + 1, sizeof(double));
+    if (o->body_on) {
+        BodyModes *bm = body_modes_build();
+        S->body = body_new(bm, fs, o->lossless);
+        body_modes_free(bm);
+    }
+    common_init(S, fs);
 }
 
 void sim_free(Sim *S)
 {
-    string_free(S->s);
-    free(S->fwbuf);
+    for (int i = 0; i < S->nstr; i++) string_free(S->str[i]);
+    S->nstr = 0;
     S->s = NULL;
+    body_free(S->body);
+    S->body = NULL;
+    free(S->fwbuf);
+    S->fwbuf = NULL;
 }
 
 void sim_start(Sim *S)
@@ -50,25 +90,48 @@ void sim_set_bow(Sim *S, double beta, double vB, double FB, double ramp)
     env_add(&S->FB, ramp, FB);
 }
 
-void sim_pluck(Sim *S, double x0, double halfwidth, double amp)
+void sim_pluck_string(Sim *S, int idx, int pol, double x0, double halfwidth, double amp)
 {
-    String *s = S->s;
+    String *s = S->str[idx];
     for (int l = 1; l < s->N; l++) {
         double d = (l * s->h - x0) / halfwidth;
         double v = fabs(d) < 1.0 ? 0.5 * amp * (1.0 + cos(M_PI * d)) : 0.0;
-        s->y1[0][l] = s->y0[0][l] = v;
+        s->y1[pol][l] = s->y0[pol][l] = v;
     }
-    string_ghosts(s, 0, s->y1[0]);
-    string_ghosts(s, 0, s->y0[0]);
+    string_ghosts(s, pol, s->y1[pol]);
+    string_ghosts(s, pol, s->y0[pol]);
+}
+
+void sim_pluck(Sim *S, double x0, double halfwidth, double amp)
+{
+    sim_pluck_string(S, S->bowed, 0, x0, halfwidth, amp);
 }
 
 void sim_step(Sim *S)
 {
-    String *s = S->s;
     double t = S->n * S->k;
     double k = S->k;
-    double xF = env_eval(&S->xF, t), aF = env_eval(&S->aF, t);
-    finger_apply(&S->finger, s, xF, aF);
+    String *s = S->s;
+
+    /* bridge: the strings' end force drives the body (leapfrog of the whole
+       instrument: both the body and the strings use the state at time n) */
+    double zu = 0.0, zw = 0.0;
+    if (S->body) {
+        double Fu = 0.0, Fw = 0.0;
+        for (int i = 0; i < S->nstr; i++) {
+            Fu -= string_bridge_force(S->str[i], S->str[i]->y1[0]);
+            Fw -= string_bridge_force(S->str[i], S->str[i]->y1[1]);
+        }
+        body_step(S->body, Fu, Fw);
+        zu = S->body->zu;
+        zw = S->body->zw;
+    }
+
+    for (int i = 0; i < S->nstr; i++) {
+        const Env *ex = i == S->bowed ? &S->xF : &S->xFo[i];
+        const Env *ea = i == S->bowed ? &S->aF : &S->aFo[i];
+        finger_apply(&S->finger, S->str[i], env_eval(ex, t), env_eval(ea, t));
+    }
 
     double nz = bow_noise_next(&S->noise, &S->rng, S->n, S->fs); /* always drawn on schedule */
     double vB = 0, F = 0, fric = 0, vrel = 0, vbow = 0;
@@ -83,9 +146,14 @@ void sim_step(Sim *S)
         if (F < 0.0) F = 0.0;
         bow_weights(s, s->sp.L * (1.0 - beta), S->bow_width, &lo, &hi, J);
     }
-    /* w polarisation: static downward load through J (no friction) */
+    for (int i = 0; i < S->nstr; i++) {
+        if (i == S->bowed) continue;
+        string_step_free(S->str[i], 0, NULL);
+        string_step_free(S->str[i], 1, NULL);
+    }
     string_step_free(s, 0, NULL);
     if (S->bow_on) {
+        /* w polarisation: static downward load through J (no friction) */
         double *buf = S->fwbuf;
         for (int l = lo; l <= hi; l++) buf[l] = -F * J[l - lo];
         string_step_free(s, 1, buf);
@@ -111,13 +179,31 @@ void sim_step(Sim *S)
     } else {
         string_step_free(s, 1, NULL);
     }
+    for (int i = 0; i < S->nstr; i++) {
+        S->str[i]->y2[0][S->str[i]->N] = zu;
+        S->str[i]->y2[1][S->str[i]->N] = zw;
+    }
     S->out[0] = string_bridge_force(s, s->y2[0]);
     S->out[1] = string_bridge_force(s, s->y2[1]);
     S->out[2] = vbow;
     S->out[3] = vrel;
     S->out[4] = fric;
-    string_commit(s);
+    S->out[5] = S->body ? S->body->vu : 0.0;
+    S->out[6] = S->body ? S->body->vw : 0.0;
+    S->out[7] = S->body ? S->body->p : 0.0;
+    for (int i = 0; i < S->nstr; i++) string_commit(S->str[i]);
     S->n++;
+}
+
+double sim_energy(const Sim *S)
+{
+    double E = 0.0;
+    for (int i = 0; i < S->nstr; i++) {
+        const String *s = S->str[i];
+        for (int p = 0; p < 2; p++) E += s->rho * string_energy(s, s->y1[p], s->y0[p]);
+    }
+    if (S->body) E += body_energy(S->body);
+    return E;
 }
 
 Trace *sim_run(Sim *S, double seconds, SimCb cb, void *user)
