@@ -4,7 +4,7 @@
 // section), field drum, march snare and bass drum (VCSL), clash cymbals, timpani; strings from VSCO 2 CE; the men's choir is
 // the GM choir layered with the formant ensemble. No bells: Fable's BELL strokes are low piano octaves with the pedal down
 // (Rachmaninoff's bell imitation) and the tam-tam is the clash cymbal an octave down, rung long.
-#include "../engine/orch.h"
+#include "../engine/choir.h"
 #define SP(t, ...) do { double v_[] = {__VA_ARGS__}; memcpy(g_tr[t].sp, v_, sizeof v_); } while (0)
 
 static int SUS[8], SPIC[8], NSTR, BELLT;
@@ -45,7 +45,9 @@ void city_setup(void) {
     int cy = o_smp("cymbals", OM "clash.txt", 2.0, 0, 0.2, 0, 0.25, -4);
     int tt = o_smp("tamtam", OM "clash.txt", 4.0, 0, -0.2, 0, 0.35, -2); g_tr[tt].sp[6] = -1100; eq(tt, 1, 3500, 0.7, 0);
     BELLT = o_smp("bell piano", OM "salamander.txt", 2.0, 0, -0.1, 0, 0.45, -4); g_tr[BELLT].sp[9] = 1;
-    int S = choir("tenorchoir", "tenorchoir f", 1, -0.2, 0), B = choir("basschoir", "basschoir f", 0, 0.2, 1);
+    // v5: the choir is ten men from VocalSet, each his own track (engine/choir.h), in place of the GM "aah" and the formant synth
+    static const char *men[] = {"male1", "male2", "male3", "male4", "male5", "male6", "male7", "male8", "male10", "male11"};
+    int CHIN = choir_setup(men, 10, "ah", 2, 0.5);
     eq(eu, 1, 2500, 0.7, 0); eq(eu2, 1, 2500, 0.7, 0);   // the euphonium: a trombone with its edge taken off
     o_part("VIOLINS", v1, v1b, 0, 0, 0); o_part("VIOLINS2", v2, -1, 0, 0, 0); o_part("VIOLAS", va, -1, 0, 0, 0); o_part("CELLOS", vc, vc2, 0, 0, 0); o_part("BASSES", cb, cb2, 0, 0, 0);
     o_part("BALALAIKA", bal, -1, 0, 0, 0);
@@ -54,13 +56,14 @@ void city_setup(void) {
     o_part("FLUTES", fl, -1, 0, 0, 0); o_part("PICCOLO", pc, -1, 0, 0, 0); o_part("CLARINETS", cl, cl2, 0, 0, 0); o_part("BASSOONS", bn, -1, 0, 0, 0);
     o_part("TIMPANI", ti, -1, 0, 0, 0); o_part("SNARE", sn, -1, 0, 1, 0); o_part("FIELDDRUM", fd, -1, 0, 1, 0); o_part("BASSDRUM", bd, -1, 0, 1, 0);
     o_part("CYMBALS", cy, -1, 0, 1, 0); o_part("TAMTAM", tt, -1, 0, 1, 0); o_part("BELL", BELLT, -1, 0, 0, 0);
-    o_part("CHOIR", S / 1000, S % 1000, 0, 0, 0); o_part("CHOIR BASSES", B / 1000, B % 1000, 0, 0, 0);   // the second is filled from CHOIR in city_loop
+    o_part("CHOIR", CHIN, -1, 0, 0, 0); o_part("CHOIR BASSES", CHIN, -1, 0, 0, 0);   // the second is filled from CHOIR in city_loop
     int sus[] = {v1, v1b, v2, va, vc, vc2, cb, cb2, tp, tp2, hn, hn2, tb, tb2, eu, eu2, tu, tu2, fl, pc, cl, cl2, bn}; for (unsigned i = 0; i < sizeof sus / sizeof *sus; i++) g_o_sustain[g_o_nsus++] = sus[i];
     eq(v1, 3, 250, 1, -2); eq(hn, 3, 300, 1, -1.5); eq(tb, 3, 3000, 1, -1.5);
     o_hall(2.4, 20);
     // against the USSR anthem recording: 6-10 dB dark in presence and air, 7 dB short in sub
     g_master.eq[4] = (EqBand){5, 3000, 0, 5}; g_master.eq[5] = (EqBand){4, 55, 0, 3}; g_master.neq = 6;
     g_dyn_depth = 0.8;
+    g_master.tape = 0;   // v5: no tape stage ("massive distortion around 2:20 sounds like electric guitar")
 }
 double city_loop(void) {
     int n0 = g_nnote; g_nsec = 0; score_txt("score.txt", o_map, 0);
@@ -71,6 +74,7 @@ double city_loop(void) {
     // hammered string notes (an eighth or shorter) to the spiccato samples
     for (int i = n0; i < g_nnote; i++) for (int k = 0; k < NSTR; k++)
         if (g_note[i].tr == SUS[k] && g_note[i].len <= 0.5 * 0.95 + 1e-6) { g_note[i].tr = SPIC[k]; break; }
+    choir_post(n0);
     int n1 = g_nnote; o_post(n0);
     // the bell strokes: low octaves on the piano, pedal held through the stroke
     for (int i = n0; i < n1; i++) if (g_note[i].tr == BELLT) { Note a = g_note[i]; note(BELLT, a.beat, a.len, a.pitch - 12, a.vel); cc(BELLT, a.beat - 0.05, 64, 127); cc(BELLT, a.beat + a.len - 0.1, 64, 0); }
