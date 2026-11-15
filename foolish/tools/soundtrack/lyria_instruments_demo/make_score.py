@@ -2,7 +2,8 @@
 """make_score.py - writes score.txt for the Lyria instruments demo from the sampler manifests.
 Usage: python3 -I make_score.py MANIFEST_DIR > score.txt
 Per instrument: every sampled root as a 2-beat note, a slow one-octave scale in semitone steps from the lowest root
-(1 beat per note), then three 4-beat notes on the lowest, middle and highest root. Deterministic, no randomness."""
+(1 beat per note), then three 4-beat notes on the lowest, middle and highest root, then a rest bar and four separated 2-beat notes (low, two middle,
+high root), each followed by 4 beats of rest so the note ends can be measured. Deterministic, no randomness."""
 import sys
 NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 INST = [("cello", "CELLO"), ("haegeum", "HAEGEUM"), ("trumpet", "TRUMPET")]
@@ -38,7 +39,11 @@ def main():
         scale = bars([(nm(roots[0] + i), 1) for i in range(13)])
         mid = roots[len(roots) // 2]
         three = bars([(nm(roots[0]), 4), (nm(mid), 4), (nm(roots[-1]), 4)])
-        allb = a + scale + three
+        sep = [roots[0], roots[len(roots) // 3], roots[2 * len(roots) // 3], roots[-1]]   # low, two middle, high
+        ends = ["r:4"]   # a rest so the last long note's end can be measured
+        for r in sep:
+            ends += ["%s:2 r:2" % nm(r), "r:4"]
+        allb = a + scale + three + ends
         print("SECTION %s roots, scale, long notes BARS %d KEY C" % (inst, len(allb)))
         print("%s: %s" % (part, " | ".join(allb)))
         print("DYN: mf\n")

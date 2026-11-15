@@ -3,6 +3,8 @@
 These samples are cut from AI-generated (Lyria) clips, or from Demucs stems of them.
 They are used for the replication work only.
 Whether they may ship is undecided.
+The owner tested notes cut from these samples with Google's SynthID check: they are detected as Lyria-generated, also after cutting single notes and arranging them with reverb.
+The watermark is treated as a provenance label; nothing here tries to remove it.
 The wavs live in `/Users/alex/Dev/soundtrack-samples/lyria/<instrument>/` and the manifests in `samples/manifests/lyria_<instrument>.txt`.
 Cents corrected is the pitch shift applied to land on equal temperament (the opposite of the measured offset).
 A window is in seconds of the original clip; for the second half of wa_22 it already includes the 15.0988 s offset.
