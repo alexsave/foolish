@@ -216,9 +216,6 @@ void sim_step(Sim *S)
             F *= 1.0 + walk_eval(S->walk_F, S->walk_n, t);
         }
         double beta = env_eval(&S->beta, t);
-        double gate = fabs(S->vrel_prev) > 1e-4 ? 1.0 : 0.0;
-        F *= 1.0 + nz * gate;
-        if (F < 0.0) F = 0.0;
         sim_bow_weights(S, beta, &lo, &hi, J, &tlo, &thi, Jt);
     }
     for (int i = 0; i < S->nstr; i++) {
@@ -266,7 +263,7 @@ void sim_step(Sim *S)
         }
         double Phi;
         int stuck;
-        vrel = bow_solve(&S->inst->bow.friction, q, G, S->vrel_prev, S->stuck, &Phi, &stuck);
+        vrel = bow_solve(&S->inst->bow.friction, q, G, S->vrel_prev, S->stuck, nz, &Phi, &stuck);
         for (int l = lo; l <= hi; l++) u2[l] -= s->kk * s->invD[l] * J[l - lo] * F * Phi;
         if (S->torsion_on)
             for (int l = tlo; l <= thi; l++) tor->th2[l] -= tor->kk * tor->invD[l] * tor->rs * Jt[l - tlo] * F * Phi;

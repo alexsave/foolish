@@ -16,8 +16,10 @@
    contraction the refactor (constants that were compile-time literals are now loaded from the Instrument) changes which
    multiply-adds the compiler fuses and moves the last bit of some samples; the Makefile now builds with -ffp-contract=off so
    the arithmetic does not depend on what the compiler can see as constant */
-#define REF_D3 0xa88857656984cdacULL
-#define REF_C2 0x58f68de34d67ee18ULL
+/* RE-RECORDED again in iteration 2 (a88857656984cdac / 58f68de34d67ee18 before): the bow noise acts on the sliding friction
+   coefficient instead of the bow force and its level is 0.01 (was 0.03), and the torsional damping ratio is 0.05 (was 0.01). */
+#define REF_D3 0xaea0191a9767bf02ULL
+#define REF_C2 0x20e16156da2131f0ULL
 
 static uint64_t hash_trace(const Trace *tr)
 {

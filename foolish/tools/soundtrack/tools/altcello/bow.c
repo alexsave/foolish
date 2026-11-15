@@ -92,32 +92,37 @@ static int largest_root(const Friction *fr, double aq, double G, double *w)
     return 0;
 }
 
-double bow_solve(const Friction *fr, double q, double G, double vprev, int stuck_prev, double *Phi, int *stuck)
+double bow_solve(const Friction *fr, double q, double G, double vprev, int stuck_prev, double noise, double *Phi, int *stuck)
 {
     (void)vprev;
+    double mul = 1.0 + noise;
+    if (mul < 0.0) mul = 0.0;
     if (G < 1e-300) {
         *Phi = 0.0;
         *stuck = 0;
         return q;
     }
     double aq = fabs(q), sg = q < 0.0 ? -1.0 : 1.0, w;
+    /* the noise multiplies the sliding friction coefficient only: the slipping solve uses G mul (phi_slip = mul phi), the
+       sticking test (static limit mu_static G) and the sticking force (q/G) are the deterministic ones */
+    double Gs = G * mul;
     if (aq <= fr->mu_static * G) {
-        if (stuck_prev || !largest_root(fr, aq, G, &w)) {
+        if (stuck_prev || !largest_root(fr, aq, Gs, &w)) {
             *Phi = q / G;
             *stuck = 1;
             return 0.0;
         }
-    } else if (!largest_root(fr, aq, G, &w)) {
+    } else if (!largest_root(fr, aq, Gs, &w)) {
         /* cannot happen (unique root); safe bisection on [0, aq] */
         double lo = 0.0, hi = aq;
         for (int i = 0; i < 200; i++) {
             double m = 0.5 * (lo + hi);
-            if (m + G * bow_phi(fr, m) - aq < 0.0) lo = m; else hi = m;
+            if (m + Gs * bow_phi(fr, m) - aq < 0.0) lo = m; else hi = m;
         }
         w = 0.5 * (lo + hi);
     }
     *stuck = 0;
-    *Phi = sg * bow_phi(fr, w);
+    *Phi = sg * mul * bow_phi(fr, w);
     return sg * w;
 }
 

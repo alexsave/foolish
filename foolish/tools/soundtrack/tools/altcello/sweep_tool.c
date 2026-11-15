@@ -2,7 +2,7 @@
  * tool, not part of the shipped instrument.
  *
  *   sweep_tool oracle STRING BETA FMIN FMAX NF SECS OUT [--vb X] [--q2k-free]
- *   sweep_tool ours   STRING BETA FMIN FMAX NF SECS OUT [--vb X] [--body] [--no-noise] [--no-torsion] [--pt-bow] [--stiff X]
+ *   sweep_tool ours   STRING BETA FMIN FMAX NF SECS OUT [--vb X] [--body] [--tail SECS (classified window, default 1.5)] [--noise-level X] [--ct X] [--zt X] [--zeta X] [--no-noise] [--no-torsion] [--pt-bow] [--stiff X]
  *   sweep_tool onset  STRING BETA F SECS [--model oracle|ours] [--vb X]          (B4: time to steady Helmholtz, force-first start)
  *   sweep_tool wave   STRING BETA F SECS OUT [--model oracle|ours] [--vb X] [--body] ...   (the last 3 periods: t, v at the bow, v_rel, bridge force)
  *
@@ -80,7 +80,7 @@ int main(int argc, char **argv)
     int si = instrument_string_index(I, argv[2]);
     double beta = atof(argv[3]), fs = 96000.0, vB = 0.1;
     int body = 0, noise = 1, torsion = 1, ptbow = 0, use_ours_model = 0;
-    double stiff = 1.0;
+    double tail = 1.5, stiff = 1.0, nlevel = -1.0, ct = -1.0, zt = -1.0, zeta = -1.0;
     int a0 = !strcmp(mode, "onset") ? 6 : !strcmp(mode, "wave") ? 7 : 9;
     for (int i = a0; i < argc; i++) {
         if (!strcmp(argv[i], "--vb") && i + 1 < argc) vB = atof(argv[++i]);
@@ -88,11 +88,22 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--no-noise")) noise = 0;
         else if (!strcmp(argv[i], "--no-torsion")) torsion = 0;
         else if (!strcmp(argv[i], "--pt-bow")) ptbow = 1;
+        else if (!strcmp(argv[i], "--tail") && i + 1 < argc) tail = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--noise-level") && i + 1 < argc) nlevel = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--ct") && i + 1 < argc) ct = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--zt") && i + 1 < argc) zt = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--zeta") && i + 1 < argc) zeta = atof(argv[++i]);
         else if (!strcmp(argv[i], "--stiff") && i + 1 < argc) stiff = atof(argv[++i]);
         else if (!strcmp(argv[i], "--model") && i + 1 < argc) use_ours_model = !strcmp(argv[++i], "ours");
     }
     Instrument ic = *I;
     ic.str[si].EI *= stiff;
+    if (nlevel >= 0.0) ic.bow.noise_level = nlevel;
+    for (int k = 0; k < ic.nstr; k++) { /* torsion knobs: every string of the instrument */
+        if (ct > 0.0) ic.str[k].ct_ratio = ct;
+        if (zt > 0.0) ic.str[k].zt_ratio = zt;
+        if (zeta >= 0.0) ic.str[k].zeta_t = zeta;
+    }
 
     if (!strcmp(mode, "wave")) {
         double F = atof(argv[4]), secs = atof(argv[5]);
@@ -180,7 +191,7 @@ int main(int argc, char **argv)
     if (!out || nf > MAXNF) { fprintf(stderr, "bad output or nf\n"); return 2; }
     fprintf(out, "# F ours simple counts_min counts_max slip_frac corr f_est cents bad_periods\n");
     long n = (long)(secs * fs);
-    double settle = secs - 1.5, ramp = 0.03;
+    double settle = secs - tail, ramp = 0.03;
     Sweep sw = {{0}, {0}, {0}, nf};
     OracleSpec os;
     if (!strcmp(mode, "oracle")) {

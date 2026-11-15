@@ -15,7 +15,11 @@
  * 2004 / Galluzzo thesis 2003, REFERENCES.md 2.4: torsional damping about ten
  * times the transverse one, zeta about 0.01; torsional wave speed several
  * times the transverse one; torsional impedance of the same order as Z0):
- *   c_t = 5.0 c, zeta_t = 0.01, surface torsional impedance 3.0 Z0.
+ *   c_t = 5.0 c, zeta_t = 0.05, surface torsional impedance 3.0 Z0.
+ * Iteration 2 (charts/iter2_run.sh TORS, COMBO; ITERATION_LOG.md): the band of D3 was swept one parameter per sweep (Z_t/Z0 2 3 5 8,
+ * c_t/c 3 5 7, zeta_t 0.01 0.03 0.05) and zeta_t = 0.05 (the top of the 0.01-0.05 literature range: wound strings damp torsion far
+ * more than the transverse motion) gave the widest contiguous band (x5.2 against x1.6). The CHOICE IS CONSTRAINED BY PLAYABILITY, not
+ * by a measurement of these strings: c_t and Z_t stay at the middle of their ranges because no change of them beat it.
  * The outer radii r are ASSUMED typical wound-string radii (Dominant G is 1.15 mm
  * in diameter, measured).
  *
@@ -29,7 +33,7 @@
  * along grain; REFERENCES 7.3); G_PLATE measured by T16d (compact / plate power 1.90 dB in 212-424 Hz for a white bridge force).
  *
  * BOW: friction curve of the stage 1 model (three terms, phi(0+) = 1.2), hair length 0.62 m (full cello bow hair, about 65 cm
- * of usable hair; ASSUMED), width 10 mm, noise level 0.03.
+ * of usable hair; ASSUMED), width 10 mm, noise level 0.01 (relative fluctuation of the SLIDING friction coefficient, bow.h; iteration 2).
  *
  * FINGER: pad 10 mm wide, K = 2e7 N/m^2, R = 200 N s/m^2 (ASSUMED, stage 1, tuned so a fully pressed finger is a hard stop).
  *
@@ -53,7 +57,7 @@
 #define Q2K_S1(Q, f0) (((2.0 * M_PI * 2000.0 / (2.0 * (Q)) - S0_ALL) * (2.0 * L_ALL * (f0)) * (2.0 * L_ALL * (f0))) / \
                        ((2.0 * M_PI * 2000.0) * (2.0 * M_PI * 2000.0)))
 #define CT_RATIO 5.0
-#define ZETA_T 0.01
+#define ZETA_T 0.05
 #define ZT_RATIO 3.0
 #define EI_B(B, T) ((B) * (T) * L_ALL * L_ALL / (M_PI * M_PI))
 /* statistical modal masses (m = 0.5 below times this). Stage 2 iteration 2 set 3.0 (3x heavier, about -10 dB of admittance, so the
@@ -63,6 +67,14 @@
 /* bridge resistance R_inf, rad/(m s N): Woodhouse's 30 (REFERENCES 7.2) x3 = 90 (diagnosis C1, E1: the bridge hill is 3x lower
  * and wider, which removes the unmatched narrow band near 1.5 kHz of D3 and G2; the hill height was the diagnosed cause) */
 #define BRIDGE_R_INF 90.0
+
+/*PLAYABILITY_BEGIN*/
+#define PLAYABILITY_TABLE \
+    {{{{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}, {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}, {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}}, \
+     {{{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}, {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}, {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}}, \
+     {{{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}, {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}, {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}}, \
+     {{{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}, {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}, {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}}}
+/*PLAYABILITY_END*/
 
 /*STOP_CENTS_BEGIN*/
 #define STOP_CENTS_TABLE \
@@ -80,7 +92,7 @@ static const Instrument cello = {
     },
     {36, 43, 50, 57},
     /* bow: width, noise, hair length, friction {a1 v1 a2 v2 c mu_static} */
-    {0.010, 0.03, 0.62, {0.4, 0.01, 0.45, 0.1, 0.35, 1.2}},
+    {0.010, 0.01, 0.62, {0.4, 0.01, 0.45, 0.1, 0.35, 1.2}},
     /* finger: width, K, R */
     {0.010, 2e7, 200.0},
     /* body */
@@ -108,6 +120,8 @@ static const Instrument cello = {
     {0.25, 3000.0, 0.17, 2.0, 1.245},
     /* anchors (N): C2 G2 D3 A3 */
     {1.22127, 0.67082, 0.67082, 0.49717},
+    {0.07, 0.10, 0.14}, {0.05, 0.10, 0.20},
+    PLAYABILITY_TABLE,
     STOP_CENTS_TABLE,
     12.0, 5.4,
 };

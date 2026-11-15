@@ -17,9 +17,10 @@ void bow_weights(const String *s, double xB, double width, int *lo, int *hi, dou
 void bow_weights_grid(double h, int N, double xB, double width, int *lo, int *hi, double *J);
 
 /* Solve  v = q - G phi(v)  (G >= 0) with the Friedlander construction.
- * stuck_prev: the previous step was sticking. Returns v; *Phi = phi value
+ * stuck_prev: the previous step was sticking. noise: relative fluctuation n of the SLIDING friction coefficient
+ * (phi_slip = (1 + n) phi; bow noise is the rosin/hair contact during slip); sticking and the static limit are untouched. Returns v; *Phi = phi value
  * (the friction coefficient force/F_B); *stuck = 1 if sticking now. See bow.c. */
-double bow_solve(const Friction *fr, double q, double G, double vprev, int stuck_prev, double *Phi, int *stuck);
+double bow_solve(const Friction *fr, double q, double G, double vprev, int stuck_prev, double noise, double *Phi, int *stuck);
 
 /* Compliant bow-hair contact (stage 2 iteration 3, an option, default off; idea source Pitteroff and Woodhouse 1998,
  * the numbers are a parameter study, ASSUMED): the hair contact point is a small mass m on a spring k and damper r to

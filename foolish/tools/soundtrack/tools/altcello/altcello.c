@@ -74,7 +74,7 @@ static int probe(int argc, char **argv)
     const char *prefix = argv[7];
     double fs = 96000.0, xF = -1.0;
     int pluck = 0;
-    double noise = 0.03;
+    double noise = -1.0; /* < 0: the instrument's bow noise level */
     int body = 0, all = 0, torsion = 1;
     const char *wavpath = NULL;
     double hair = 0.0;
@@ -124,7 +124,7 @@ static int probe(int argc, char **argv)
         sim_init_instrument(&S, &ic, fs, &so, sp->name);
     } else sim_init(&S, &ic, sp, fs);
     if (hair > 0.0) hair_init(&S.hair, hair, S.k);
-    S.bow_noise_level = noise;
+    S.bow_noise_level = noise >= 0.0 ? noise : ic.bow.noise_level;
     S.torsion_on = torsion;
     sim_set_bow(&S, beta, vB, FB, 0.03);
     if (fbenv) parse_env(&S.FB, fbenv);
