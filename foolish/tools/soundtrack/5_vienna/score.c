@@ -54,8 +54,17 @@ void city_setup(void) {
     o_part("TRUMPETS", tp, tp2, 0, 0, 0); o_part("TROMBONES", tb, tb2, 0, 0, 0); o_part("TIMPANI", ti, -1, 0, 0, 0); o_part("ORGAN", og, -1, 0, 0, 0);
     int sus[] = {v1, v1b, v2, va, vc, vc2, cb, cb2, cl, bn, tp, tp2, tb, tb2, og}; for (unsigned i = 0; i < sizeof sus / sizeof *sus; i++) g_o_sustain[g_o_nsus++] = sus[i];
     eq(v1, 3, 250, 1, -2); eq(v1, 5, 4000, 0, 1.5); eq(tb, 3, 3000, 1, -1.5);
-    o_hall(2.6, 22);
+    o_hall(1.8, 16);   // v5: a shorter, clearer hall (was 2.6 s): "noisy overall", "the piano ... drowned out"
     g_dyn_depth = 1.0;
+    // v5, from Alex's notes on the 4/10 render. No voices outside Moscow: the four choir parts are silent (the violins already
+    // carry the soprano line an octave up). The piano is the angry protagonist and must always be heard: +3 dB, strings and
+    // trombones -3 dB, the organ -6 dB, and no tape stage (the distortion he heard as an electric guitar at 2:07).
+    for (int t = 0; t < g_ntr; t++) { const char *n = g_tr[t].name;
+        if (!strncmp(n, "sopranos", 8) || !strncmp(n, "altos", 5) || !strncmp(n, "tenors", 6) || !strncmp(n, "basschoir", 9)) g_tr[t].mute = 1;
+        else if (!strncmp(n, "piano", 5)) g_tr[t].gain_db += 3;
+        else if (!strncmp(n, "violin", 6) || !strncmp(n, "violas", 6) || !strncmp(n, "cellos", 6) || !strncmp(n, "basses", 6) || !strncmp(n, "trombones", 9)) g_tr[t].gain_db -= 3;
+        else if (!strncmp(n, "organ", 5)) g_tr[t].gain_db -= 6; }
+    g_master.tape = 0;
 }
 double city_loop(void) {
     int n0 = g_nnote; g_nsec = 0; score_txt("score.txt", o_map, 0);
