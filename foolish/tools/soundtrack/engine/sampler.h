@@ -30,7 +30,10 @@ static SampleSet *ss_load(const char *manifest) {
     char line[800]; g_wav_quiet = 1;
     while (fgets(line, sizeof line, f)) {
         Smp x = {0}; char path[600]; if (line[0] == '#' || sscanf(line, "%d %d %d %599[^\n]", &x.root, &x.layer, &x.rr, path) != 4) continue;
-        snprintf(x.path, sizeof x.path, "%s", path);
+        // the manifests carry the absolute path of the machine that built them; SAMPLES=<dir> re-roots everything after
+        // ".../soundtrack/samples/" onto <dir>, so a rebuilt library can live anywhere
+        { const char *root = getenv("SAMPLES"), *cut = strstr(path, "/soundtrack/samples/");
+          if (root && cut) snprintf(x.path, sizeof x.path, "%s/%s", root, cut + 20); else snprintf(x.path, sizeof x.path, "%s", path); }
         x.n = 0; x.L = x.R = 0;   // loaded on first use
         if (x.layer + 1 > ss->nl) ss->nl = x.layer + 1;
         ss->s[ss->n++] = x;
