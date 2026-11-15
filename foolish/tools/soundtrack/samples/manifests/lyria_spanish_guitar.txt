@@ -1,0 +1,2 @@
+47 0 0 /SAMPLES/soundtrack/samples/lyria/spanish_guitar/spanish_guitar_B2_47.wav
+47 0 1 /SAMPLES/soundtrack/samples/lyria/spanish_guitar/spanish_guitar_B2_47_rr1.wav

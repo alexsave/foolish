@@ -96,6 +96,33 @@ NEXT_GUARD_S = 0.020
 PEAK_TARGET_DB = -1.0
 TAIL_AT_S = 0.300
 TAIL_LEN_S = 0.050
+RUN_LEVEL_DB = 45.0
+RUN_DEV_CENTS = 40.0
+RUN_GAP = 2
+RUN_TRIM_CENTS = 25.0
+RUN_TRIM_FRAMES = 6
+RUN_MARGIN_FRAMES = 2
+RUN_MIN_RAW_S = 0.30
+RUN_MIN_S = 0.45
+RUN_QUARTER_DB = 9.0
+NATURAL_SILENCE_S = 0.150
+NATURAL_DB = 40.0
+RUN_FADE_IN_LEGATO_S = 0.012
+RUN_FADE_IN_NATURAL_S = 0.003
+RUN_FADE_OUT_S = 0.040
+ONS_MIN_S = 0.30
+ONS_MAX_S = 2.5
+ONS_NEXT_GUARD_S = 0.020
+ONS_FADE_OUT_S = 0.030
+ONS_REGION_S = (0.040, 0.300)
+ONS_GATE_DB = 45.0
+ONS_FLUX_PCT = 99.0
+ONS_FLUX_FRAC = 0.35
+ONS_PEAK_S = 0.2
+ONS_SECOND_FRAC = 0.30
+MAX_PER_ROOT = 2
+LAYER_MAX_GAP = 5
+LAYER_MIN_RANGE = 12
 WHAT = "Lyria generated solo %s single note, cut and pitch-corrected"
 
 
@@ -265,6 +292,27 @@ def second_onset(flux, ft, start, end):
     return float(best), bt
 
 
+def spectral_summary(sx, cen, f0f, voiced, med, sr):
+    """Purity (median over 8192-point windows hopping 2048 over sx), top 3 non-harmonic peaks, distinct pitches and the
+    fundamental level, for audio sx whose YIN frames are f0f (centres cen, samples)."""
+    wins = []
+    if len(sx) <= NFFT:
+        wins.append((0, len(sx)))
+    else:
+        for a in range(0, len(sx) - NFFT + 1, WIN_HOP):
+            wins.append((a, a + NFFT))
+    purs, perwin = [], []
+    for (a, b) in wins:
+        inside = (cen >= a) & (cen < b) & voiced
+        f0w = float(np.median(f0f[inside])) if inside.any() else med
+        P = window_spectrum(sx[a:b], f0w)
+        pu, peaks = analyse_window(P, sr, f0w)
+        purs.append(pu)
+        perwin.append((f0w, peaks))
+    extra, pitches, fund = nonharmonic(perwin, sr)
+    return float(np.median(purs)), extra, pitches, fund
+
+
 def measure(m, sr, s, e, nxt, db, h, floor, flux, ft, min_len, min_purity=MIN_PURITY):
     """Measures one segment given start/end seconds. Returns the measurement dict (with 'reasons')."""
     L = e - s
@@ -312,23 +360,7 @@ def measure(m, sr, s, e, nxt, db, h, floor, flux, ft, min_len, min_purity=MIN_PU
     r["cents"] = float(1200.0 * np.log2(med / ve.midi_to_hz(r["midi"])))
     r["sd"] = float(np.std(cents))
     r["vib_rate"], r["vib_depth"] = ve.vibrato(1200.0 * np.log2(np.where(voiced, f0f, med) / med), HOP_S)
-    # spectral purity over windows of the stretch
-    wins = []
-    if len(sx) <= NFFT:
-        wins.append((0, len(sx)))
-    else:
-        for a in range(0, len(sx) - NFFT + 1, WIN_HOP):
-            wins.append((a, a + NFFT))
-    purs, perwin = [], []
-    for (a, b) in wins:
-        inside = (cen >= a) & (cen < b) & voiced
-        f0w = float(np.median(f0f[inside])) if inside.any() else med
-        P = window_spectrum(sx[a:b], f0w)
-        pu, peaks = analyse_window(P, sr, f0w)
-        purs.append(pu)
-        perwin.append((f0w, peaks))
-    r["purity"] = float(np.median(purs))
-    r["extra"], r["pitches"], r["fund_rel"] = nonharmonic(perwin, sr)
+    r["purity"], r["extra"], r["pitches"], r["fund_rel"] = spectral_summary(sx, cen, f0f, voiced, med, sr)
     # verdict
     why = []
     if r["pitches"] != 1:
@@ -440,8 +472,8 @@ def pitch_runs(m, sr, db):
 
 
 # ---------------------------------------------------------------- cutting
-def cut(x, sr, r, db, floor):
-    """Returns (pitch-corrected stereo audio, info). Cut window, fades, one resampling ratio."""
+def level_window(x_len, sr, r, db, floor):
+    """Cut window (samples) of a level segment: 8 ms before the start to the end of its release."""
     s, e = r["start"], r["end"]
     a0 = max(int(round((s - PRE_ROLL_S) * sr)), int(round(r["prev_end"] * sr)) if r["prev_end"] > 0 else 0)
     i = int(e / HOP_S)
@@ -450,21 +482,32 @@ def cut(x, sr, r, db, floor):
         lim = min(lim, r["next_start"] - NEXT_GUARD_S)
     while i < len(db) and i * HOP_S < lim and db[i] > floor + RELEASE_FLOOR_DB:
         i += 1
-    end_t = min(max(i * HOP_S, e), lim, len(x) / sr)
-    a1 = int(round(end_t * sr))
+    end_t = min(max(i * HOP_S, e), lim, x_len / sr)
+    return a0, int(round(end_t * sr))
+
+
+def render_span(x, sr, a0, a1, fade_in_s, fade_out_s, midi, f0):
+    """Cuts samples a0:a1, fades, and resamples by one constant ratio so f0 lands on the equal-tempered pitch of midi."""
     y = x[a0:a1].copy()
-    nfi, nfo = int(FADE_IN_S * sr), int(FADE_OUT_S * sr)
+    nfi, nfo = int(fade_in_s * sr), int(fade_out_s * sr)
     y[:nfi] *= np.linspace(0.0, 1.0, nfi)[:, None]
     y[len(y) - nfo:] *= np.linspace(1.0, 0.0, nfo)[:, None]
-    # f0 lands on equal temperament: the audio is replayed (resampled) by f_target / f_measured
-    ratio = ve.midi_to_hz(r["midi"]) / r["f0"]
+    ratio = ve.midi_to_hz(midi) / f0
     fr = Fraction(1.0 / ratio).limit_denominator(600)
     z = np.stack([resample_poly(y[:, c], fr.numerator, fr.denominator) for c in range(y.shape[1])], axis=1)
+    return z, ratio
+
+
+def cut(x, sr, r, db, floor):
+    """Returns (pitch-corrected stereo audio, info) for a level segment."""
+    a0, a1 = level_window(len(x), sr, r, db, floor)
+    z, ratio = render_span(x, sr, a0, a1, FADE_IN_S, FADE_OUT_S, r["midi"], r["f0"])
     return z, dict(a0=a0, a1=a1, ratio=ratio)
 
 
-def sample_file(name, midi, rr):
-    return "%s_%s_%d%s.wav" % (name, note_name(midi), midi, "" if rr == 0 else "_rr%d" % rr)
+def sample_file(name, midi, rr, layer=None):
+    """layer is None for a one-layer instrument, else the layer number."""
+    return "%s_%s_%d%s%s.wav" % (name, note_name(midi), midi, "" if layer is None else "_L%d" % layer, "" if rr == 0 else "_rr%d" % rr)
 
 
 # ---------------------------------------------------------------- report
@@ -535,60 +578,421 @@ def write_report(path, clip, name, sr, floor, thr, rows, asked, min_len, written
         f.write("\n".join(L) + "\n")
 
 
+# ---------------------------------------------------------------- run and onset candidates
+def flux_onsets(m, sr, gate_db):
+    """Spectral-flux onsets (seconds): flux peaks over ONS_FLUX_FRAC of the 99th percentile flux that are the largest within
+    0.2 s, only where the 10 ms level is at least gate_db (absolute dBFS) within the next 50 ms."""
+    flux, ft = spectral_flux(m, sr)
+    if len(flux) < 50:
+        return []
+    db, h = level_db(m, sr)
+    thr = ONS_FLUX_FRAC * np.percentile(flux, ONS_FLUX_PCT)
+    w = int(round(ONS_PEAK_S / HOP_S))
+    out = []
+    for i in range(w, len(flux) - w):
+        if flux[i] >= thr and flux[i] == flux[i - w:i + w + 1].max():
+            k = min(int(ft[i] / HOP_S), len(db) - 1)
+            if db[k:k + 5].max() >= gate_db:
+                out.append(float(ft[i]))
+    return out
+
+
+def spike_in(flux, ft, a, b, ref):
+    """Largest spectral-flux spike in (a, b] as a share of ref: a local maximum of at least ONSET_RATIO of ref and at least
+    ONSET_SPIKE times the median flux within 100 ms around it. Returns (ratio, time) or (0, 0)."""
+    best, bt = 0.0, 0.0
+    hf = int(round(ONSET_MEDIAN_S / HOP_S))
+    for i in np.nonzero((ft > a) & (ft <= b))[0]:
+        lo, hi = max(0, i - 3), min(len(flux), i + 4)
+        if flux[i] < flux[lo:hi].max():
+            continue
+        med = np.median(flux[max(0, i - hf):i + hf + 1])
+        r = flux[i] / ref
+        if r >= ONSET_RATIO and flux[i] >= ONSET_SPIKE * max(med, 1e-12) and r > best:
+            best, bt = r, float(ft[i])
+    return best, bt
+
+
+def region_measure(m, sr, a, b, db, flux, ft, ref):
+    """Measures the analysis region [a, b] s: f0 median, cents, sd over the whole region, purity, distinct pitches,
+    second spike inside, level spread between the region's quarters."""
+    r = dict(a=a, b=b, length=b - a)
+    sx = m[int(a * sr):int(b * sr)]
+    f0f, cen = yin_f0(sx, sr)
+    voiced = f0f > 0
+    r["onset2"], r["onset2_t"] = (spike_in(flux, ft, a, b, ref) if ref > 0 else (0.0, 0.0))
+    d = db[int(a / HOP_S):int(b / HOP_S)]
+    q = [float(np.median(c)) for c in np.array_split(d, 4)] if len(d) >= 4 else [0.0]
+    r["qspread"] = max(q) - min(q)
+    if voiced.sum() < 3:
+        r.update(f0=0.0, midi=0, cents=0.0, sd=0.0, purity=0.0, pitches=0, extra=[], fund_rel=-99.0)
+        return r
+    fv = f0f[voiced]
+    med = float(np.median(fv))
+    r["f0"] = med
+    r["midi"] = int(round(69 + 12 * np.log2(med / 440.0)))
+    r["cents"] = float(1200.0 * np.log2(med / ve.midi_to_hz(r["midi"])))
+    r["sd"] = float(np.std(1200.0 * np.log2(fv / med)))
+    r["purity"], r["extra"], r["pitches"], r["fund_rel"] = spectral_summary(sx, cen, f0f, voiced, med, sr)
+    return r
+
+
+def attack_kind(db, t0):
+    """Seconds of the level onset of the note whose pitch starts at t0, and whether the 150 ms before it are silent
+    (all frames NATURAL_DB below the clip peak)."""
+    thr = float(db.max()) - NATURAL_DB
+    i = min(int(t0 / HOP_S), len(db) - 1)
+    while i > 0 and db[i - 1] >= thr:
+        i -= 1
+    n = int(round(NATURAL_SILENCE_S / HOP_S))
+    natural = i >= n and bool(np.all(db[i - n:i] < thr)) and t0 - i * HOP_S <= 0.2 and db[min(int(t0 / HOP_S), len(db) - 1)] >= thr
+    return i * HOP_S, natural
+
+
+def run_reasons(r):
+    """The rules a run must pass. sd is over the whole trimmed run. With the 40 cent deviation limit and the 25 cent trim the
+    stability rule can only fire for a run whose frames sit almost all near the limit; it is kept as the stated rule."""
+    why = []
+    if r["pitches"] != 1:
+        why.append("pitch")
+    if r["purity"] < MIN_PURITY:
+        why.append("purity")
+    if r["onset2"] > 0:
+        why.append("second_onset")
+    if r["qspread"] > RUN_QUARTER_DB:
+        why.append("level")
+    if r["sd"] > MAX_SD_CENTS:
+        why.append("stability")
+    if r["length"] < RUN_MIN_S:
+        why.append("length")
+    if r["f0"] == 0.0:
+        why = ["no_f0"] + [w for w in why if w != "pitch"]
+    return why
+
+
+def run_candidates(m, sr, db, flux, ft, ref):
+    """Stable pitch runs (legato lines). Returns a list of candidate dicts with their verdicts."""
+    peak = float(db.max())
+    f0, cen = yin_f0(m, sr)
+    t = cen / sr
+    h = int(round(HOP_S * sr))
+    lvl = db[np.minimum((cen // h).astype(int), len(db) - 1)]
+    ok = (f0 > 0) & (lvl >= peak - RUN_LEVEL_DB)
+    runs, good, i, bad = [], [], 0, 0
+    while i < len(f0):
+        if ok[i] and (not good or abs(1200.0 * np.log2(f0[i] / np.median(f0[good]))) <= RUN_DEV_CENTS):
+            good.append(i)
+            bad = 0
+        elif good:
+            bad += 1
+            if bad > RUN_GAP:
+                runs.append(good)
+                i = good[-1] + 1
+                good, bad = [], 0
+                continue
+        i += 1
+    if good:
+        runs.append(good)
+    out = []
+    for g in runs:
+        if t[g[-1]] - t[g[0]] < RUN_MIN_RAW_S:
+            continue
+        med = float(np.median(f0[g]))
+        dev = np.abs(1200.0 * np.log2(f0[g] / med))
+        n = RUN_TRIM_FRAMES
+        ps = [p for p in range(len(g) - n + 1) if g[p + n - 1] - g[p] == n - 1 and np.all(dev[p:p + n] <= RUN_TRIM_CENTS)]
+        c = dict(raw_a=float(t[g[0]]), raw_b=float(t[g[-1]]))
+        if not ps:
+            c.update(reasons=["length"], a=c["raw_a"], b=c["raw_b"], midi=0, attack="none (legato)", purity=0.0, pitches=0,
+                     cents=0.0, f0=0.0, sd=0.0, onset2=0.0, qspread=0.0, length=c["raw_b"] - c["raw_a"], extra=[])
+            out.append(c)
+            continue
+        sf = g[ps[0]] + RUN_MARGIN_FRAMES
+        ef = g[ps[-1] + n - 1] - RUN_MARGIN_FRAMES
+        a, b = float(t[sf]), float(t[max(ef, sf)])
+        r = region_measure(m, sr, a, b, db, flux, ft, ref)
+        r.update(raw_a=c["raw_a"], raw_b=c["raw_b"])
+        on_t, natural = attack_kind(db, c["raw_a"])
+        r["attack"] = "natural" if natural else "none (legato)"
+        r["cut_a"] = on_t - PRE_ROLL_S if natural else a
+        r["cut_b"] = b
+        r["fade_in"] = RUN_FADE_IN_NATURAL_S if natural else RUN_FADE_IN_LEGATO_S
+        r["fade_out"] = RUN_FADE_OUT_S
+        why = run_reasons(r)
+        r["reasons"] = why
+        out.append(r)
+    return out
+
+
+def onset_candidates(m, sr, db, flux, ft, ref):
+    """One candidate per spectral-flux onset (plucked notes). Returns a list of candidate dicts with their verdicts."""
+    peak = float(db.max())
+    floor = float(np.percentile(db, FLOOR_PCT))
+    ons = flux_onsets(m, sr, peak - ONS_GATE_DB)
+    out = []
+    for j, o in enumerate(ons):
+        # the flux frame is centred on the rise: the onset is the 10 ms level frame with the largest rise within 50 ms of it
+        i0, i1 = max(int((o - 0.05) / HOP_S), 0), min(int((o + 0.05) / HOP_S) + 1, len(db))
+        k = i0 + int(np.argmax(np.diff(db[i0:i1]))) + 1
+        on = k * HOP_S
+        nxt = ons[j + 1] if j + 1 < len(ons) else None
+        end = min(on + ONS_MAX_S, (nxt - ONS_NEXT_GUARD_S) if nxt is not None else 1e9, len(m) / sr)
+        i = int((on + 0.02) / HOP_S)
+        while i * HOP_S < end and db[min(i, len(db) - 1)] > floor + RELEASE_FLOOR_DB:
+            i += 1
+        end = min(end, i * HOP_S)
+        a, b = on + ONS_REGION_S[0], min(on + ONS_REGION_S[1], end)
+        if b - a < 0.15:
+            out.append(dict(a=a, b=b, onset=on, length=end - on + PRE_ROLL_S, reasons=["length"], midi=0, cents=0.0, f0=0.0,
+                            sd=0.0, purity=0.0, pitches=0, onset2=0.0, qspread=0.0, extra=[], attack="natural",
+                            cut_a=on - PRE_ROLL_S, cut_b=end, fade_in=FADE_IN_S, fade_out=ONS_FADE_OUT_S, lvl60=0.0, lvl250=0.0))
+            continue
+        r = region_measure(m, sr, a, b, db, flux, ft, 0.0)
+        pw = lambda t0: 10.0 * np.log10(max(float(np.mean(m[int((t0 - 0.01) * sr):int((t0 + 0.01) * sr)] ** 2)), 1e-14))
+        r["lvl60"], r["lvl250"] = pw(on + 0.06), pw(on + 0.25)
+        r.update(onset=on, attack="natural", cut_a=on - PRE_ROLL_S, cut_b=end, fade_in=FADE_IN_S, fade_out=ONS_FADE_OUT_S)
+        r["length"] = end - on + PRE_ROLL_S
+        why = []
+        if r["pitches"] != 1:
+            why.append("pitch")
+        if r["purity"] < MIN_PURITY:
+            why.append("purity")
+        if r["lvl250"] > r["lvl60"]:
+            why.append("entered")
+        if r["length"] < ONS_MIN_S:
+            why.append("length")
+        if r["f0"] == 0.0:
+            why = ["no_f0"] + [w for w in why if w != "pitch"]
+        r["reasons"] = why
+        out.append(r)
+    return out
+
+
+def select_best(cands, layers_on):
+    """Per (layer, root) keeps at most MAX_PER_ROOT accepted candidates, preferring natural attacks, then purity, then length."""
+    acc = [c for c in cands if not c["reasons"]]
+    acc.sort(key=lambda c: (c["layer"] if layers_on else 0, c["midi"], c["attack"] != "natural", -round(c["purity"], 3), -c["length"]))
+    keep, n = [], {}
+    for c in acc:
+        k = (c["layer"] if layers_on else 0, c["midi"])
+        n[k] = n.get(k, 0) + 1
+        if n[k] <= MAX_PER_ROOT:
+            keep.append(c)
+        else:
+            c["dropped"] = "more than %d for this root" % MAX_PER_ROOT
+    return keep
+
+
+def layer_problem(keep):
+    """Describes why a two-layer set is unusable (a gap over LAYER_MAX_GAP semitones inside a layer's roots, or a range under
+    an octave), or '' if it is fine."""
+    for L in (0, 1):
+        roots = sorted({c["midi"] for c in keep if c["layer"] == L})
+        if not roots:
+            return "layer %d has no samples" % L
+        gap = max([b - a for a, b in zip(roots, roots[1:])] or [0])
+        if gap > LAYER_MAX_GAP:
+            return "layer %d has a gap of %d semitones" % (L, gap)
+        if roots[-1] - roots[0] < LAYER_MIN_RANGE:
+            return "layer %d spans only %d semitones" % (L, roots[-1] - roots[0])
+    return ""
+
+
+def write_instrument(name, picks, audio, out_samples, manifest, log_rows, layers_on, labels, offsets=None):
+    """Renders the picks (pitch correction, one gain per instrument), writes wavs, manifest and log rows. Returns file names."""
+    cuts = []
+    for c in picks:
+        x, sr, path = audio[c["clip"]]
+        a0, a1 = int(round(c["cut_a"] * sr)), int(round(c["cut_b"] * sr))
+        z, ratio = render_span(x, sr, max(a0, 0), min(a1, len(x)), c["fade_in"], c["fade_out"], c["midi"], c["f0"])
+        cuts.append((c, z, ratio, sr))
+    peak = max(np.max(np.abs(z)) for _, z, _, _ in cuts)
+    gain = 10.0 ** (PEAK_TARGET_DB / 20.0) / peak
+    os.makedirs(out_samples, exist_ok=True)
+    count, mlines, logl, written = {}, [], [], []
+    for c, z, ratio, sr in sorted(cuts, key=lambda k: (k[0]["layer"] if layers_on else 0, k[0]["midi"], k[0]["attack"] != "natural", -k[0]["purity"])):
+        L = c["layer"] if layers_on else 0
+        rr = count.get((L, c["midi"]), 0)
+        count[(L, c["midi"])] = rr + 1
+        fn = sample_file(name, c["midi"], rr, L if layers_on else None)
+        write_wav24(os.path.join(out_samples, fn), z * gain, sr)
+        written.append(fn)
+        mlines.append("%d %d %d /SAMPLES/soundtrack/samples/lyria/%s/%s" % (c["midi"], L, rr, name, fn))
+        src = labels.get(c["clip"]) or audio[c["clip"]][2]
+        off = (offsets or {}).get(c["clip"], 0.0)
+        logl.append("\t".join([os.path.join(out_samples, fn), src, "%.3f-%.3f" % (c["cut_a"] + off, c["cut_b"] + off),
+                               "%s %+.1f cents" % (note_name(c["midi"]), c["cents"]), "%.6f" % ratio, "%.3f" % c["purity"],
+                               WHAT % name, c["attack"], str(L)]))
+    os.makedirs(os.path.dirname(os.path.abspath(manifest)), exist_ok=True)
+    with open(manifest, "w") as f:
+        f.write("\n".join(mlines) + "\n")
+    with open(log_rows, "a") as f:
+        f.write("\n".join(logl) + "\n")
+    return written
+
+
+def write_report_modes(path, name, mode, clipinfo, asked, written, note, kept):
+    L = ["# Lyria %s clips: %s" % (mode, name), ""]
+    L.append("Segmentation: `%s`." % mode)
+    L.append("Accept rules: one pitch, purity at least %.2f, f0 sd over the whole analysis region at most %.0f cents%s." % (
+        MIN_PURITY, MAX_SD_CENTS, ", no second flux spike inside, level spread between quarters at most %.0f dB, trimmed length at least %.2f s" % (
+            RUN_QUARTER_DB, RUN_MIN_S) if mode == "runs" else ", level 250 ms after the onset not above the level 60 ms after it, sample length at least %.1f s" % ONS_MIN_S))
+    L.append("Note names use C4 = MIDI 60, A4 = 440 Hz.")
+    if note:
+        L.append(note)
+    L.append("")
+    for ci in clipinfo:
+        L.append("## %s (layer %d)" % (ci["label"], ci["layer"]))
+        L.append("")
+        L.append("Asked notes: %s." % (" ".join(asked.get(ci["clip"], [])) or "not given"))
+        L.append("")
+        L.append("| # | region start s | region end s | len s | note | cents | f0 sd | purity | pitches | f0 level dB | spike | quarter spread dB | attack | verdict |")
+        L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        for i, c in enumerate(ci["cands"]):
+            v = "accept" if not c["reasons"] else "reject: " + ", ".join(c["reasons"])
+            if not c["reasons"] and c.get("dropped"):
+                v = "accept, not kept: " + c["dropped"]
+            elif not c["reasons"]:
+                v = "accept, kept"
+            if c.get("midi"):
+                L.append("| %d | %.2f | %.2f | %.2f | %s | %+.1f | %.1f | %.3f | %d | %s | %s | %.1f | %s | %s |" % (
+                    i + 1, c["a"], c["b"], c["length"], note_name(c["midi"]), c["cents"], c["sd"], c["purity"], c["pitches"],
+                    "%.0f" % c["fund_rel"] if c.get("fund_rel", -99) > -99 else "absent",
+                    "%.2f" % c["onset2"] if c["onset2"] > 0 else "none", c["qspread"], c["attack"], v))
+            else:
+                L.append("| %d | %.2f | %.2f | %.2f | none | - | - | - | - | - | - | - | %s | %s |" % (
+                    i + 1, c["a"], c["b"], c["length"], c["attack"], v))
+        L.append("")
+        L.append("Strongest non-harmonic peaks (level re the fundamental).")
+        L.append("")
+        for i, c in enumerate(ci["cands"]):
+            if c.get("extra"):
+                L.append("- Candidate %d: %s." % (i + 1, fmt_extra(c)))
+        L.append("")
+    L.append("Found %d candidates, %d accepted, %d kept." % (sum(len(ci["cands"]) for ci in clipinfo),
+                                                           sum(1 for ci in clipinfo for c in ci["cands"] if not c["reasons"]), len(kept)))
+    reasons = {}
+    for ci in clipinfo:
+        for c in ci["cands"]:
+            for w in c["reasons"]:
+                reasons[w] = reasons.get(w, 0) + 1
+    L.append("Rejections by rule (a candidate can fail several): %s." % (", ".join("%s %d" % kv for kv in sorted(reasons.items())) or "none"))
+    roots = sorted({c["midi"] for c in kept})
+    if roots:
+        gap = max([b - a for a, b in zip(roots, roots[1:])] or [0])
+        L.append("Roots covered: %s; largest gap %d semitones." % (" ".join(note_name(r) for r in roots), gap))
+    L.append("Samples written: %s." % (", ".join(written) if written else "none"))
+    with open(path, "w") as f:
+        f.write("\n".join(L) + "\n")
+
+
 # ---------------------------------------------------------------- main
-def run(clip, name, measure_only, out_samples, manifest, log_rows, report, asked, min_len=None):
+def run_level(clip, name, measure_only, out_samples, manifest, log_rows, report, asked, min_len=None, label=None):
     if min_len is None:
         min_len = MIN_LEN_BY_NAME.get(name, MIN_LEN_S)
     x, sr = decode(clip)
     rows, floor, thr, db = analyse(x, sr, min_len)
-    acc = [r for r in rows if not r["reasons"]]
+    picks = []
+    for r in rows:
+        if r["reasons"]:
+            continue
+        a0, a1 = level_window(len(x), sr, r, db, floor)
+        picks.append(dict(r, clip=clip, layer=0, attack="natural", cut_a=a0 / sr, cut_b=a1 / sr, fade_in=FADE_IN_S,
+                          fade_out=FADE_OUT_S))
     written = []
-    if not measure_only and acc:
-        cuts = []
-        for r in acc:
-            z, info = cut(x, sr, r, db, floor)
-            cuts.append((r, z, info))
-        peak = max(np.max(np.abs(z)) for _, z, _ in cuts)
-        gain = 10.0 ** (PEAK_TARGET_DB / 20.0) / peak
-        os.makedirs(out_samples, exist_ok=True)
-        count = {}
-        mlines, logl = [], []
-        for r, z, info in sorted(cuts, key=lambda c: (c[0]["midi"], c[0]["start"])):
-            rr = count.get(r["midi"], 0)
-            count[r["midi"]] = rr + 1
-            fn = sample_file(name, r["midi"], rr)
-            write_wav24(os.path.join(out_samples, fn), z * gain, sr)
-            written.append(fn)
-            mlines.append("%d 0 %d /SAMPLES/soundtrack/samples/lyria/%s/%s" % (r["midi"], rr, name, fn))
-            logl.append("\t".join([os.path.join(out_samples, fn), clip, "%.3f-%.3f" % (r["start"], r["end"]),
-                                   "%s %+.1f cents" % (note_name(r["midi"]), r["cents"]), "%.6f" % info["ratio"],
-                                   "%.3f" % r["purity"], WHAT % name]))
-        os.makedirs(os.path.dirname(os.path.abspath(manifest)), exist_ok=True)
-        with open(manifest, "w") as f:
-            f.write("\n".join(mlines) + "\n")
-        with open(log_rows, "a") as f:
-            f.write("\n".join(logl) + "\n")
+    if not measure_only and picks:
+        written = write_instrument(name, picks, {clip: (x, sr, clip)}, out_samples, manifest, log_rows, False,
+                                   {clip: label} if label else {})
     os.makedirs(os.path.dirname(os.path.abspath(report)), exist_ok=True)
     write_report(report, clip, name, sr, floor, thr, rows, asked, min_len, written, float(db.max()), pitch_runs(x.mean(axis=1), sr, db))
     return rows
 
 
+def run_modes(clips, name, mode, measure_only, out_samples, manifest, log_rows, report, asked, layers, labels, offsets=None):
+    """runs / onsets segmentation over one or more clips. layers[i] is the source layer of clips[i] (0 or 1)."""
+    audio, clipinfo, allc = {}, [], []
+    for clip, layer in zip(clips, layers):
+        x, sr = decode(clip)
+        audio[clip] = (x, sr, clip)
+        m = x.mean(axis=1)
+        db, _ = level_db(m, sr)
+        flux, ft = spectral_flux(m, sr)
+        sel = db > db.max() - 40.0
+        ref = float(np.percentile(flux[sel[:len(flux)]], 99)) if len(flux) and sel[:len(flux)].any() else 0.0
+        cands = (run_candidates if mode == "runs" else onset_candidates)(m, sr, db, flux, ft, ref)
+        for c in cands:
+            c["clip"], c["layer"] = clip, layer
+        clipinfo.append(dict(clip=clip, label=labels.get(clip) or clip, layer=layer, cands=cands))
+        allc += cands
+    layers_on = len(set(layers)) > 1
+    note = ""
+    keep = select_best(allc, layers_on)
+    if layers_on:
+        why = layer_problem(keep)
+        if why:
+            note = "Two layers were not usable (%s), so the instrument is one layer made from the layer 1 sources only." % why
+            allc1 = [c for c in allc if c["layer"] == 1]
+            for c in allc:
+                c.pop("dropped", None)
+            layers_on = False
+            keep = select_best(allc1, False)
+            for c in allc:
+                if c["layer"] == 0 and not c["reasons"]:
+                    c["dropped"] = "layer 0 source not used"
+        else:
+            note = "Two layers: layer 0 from the soft sources, layer 1 from the loud and medium ones."
+    kept_ids = {id(c) for c in keep}
+    for c in allc:
+        if not c["reasons"] and id(c) not in kept_ids and not c.get("dropped"):
+            c["dropped"] = "more than %d for this root" % MAX_PER_ROOT
+    written = []
+    if not measure_only and keep:
+        written = write_instrument(name, keep, audio, out_samples, manifest, log_rows, layers_on, labels, offsets)
+    os.makedirs(os.path.dirname(os.path.abspath(report)), exist_ok=True)
+    write_report_modes(report, name, mode, clipinfo, asked, written, note, keep)
+    return allc, keep, layers_on
+
+
+def run(clip, name, measure_only, out_samples, manifest, log_rows, report, asked, min_len=None):
+    """Level segmentation of one clip (the first mode)."""
+    return run_level(clip, name, measure_only, out_samples, manifest, log_rows, report, asked, min_len)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("clip")
+    ap.add_argument("clip", nargs="+")
     ap.add_argument("--name", required=True)
+    ap.add_argument("--segment", choices=["level", "runs", "onsets"], default="level")
     ap.add_argument("--measure-only", action="store_true")
     ap.add_argument("--out-samples", required=True)
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--log-rows", required=True)
     ap.add_argument("--report", required=True)
-    ap.add_argument("--asked", default="")
+    ap.add_argument("--asked", default="", help="asked notes of the clip (level mode), or CLIP=notes;CLIP=notes for several")
     ap.add_argument("--min-len", type=float, default=None)
+    ap.add_argument("--layers", default="", help="comma-separated source layer (0 or 1) per clip")
+    ap.add_argument("--offsets", default="", help="comma-separated seconds per clip: where the clip file starts in the original clip (added to the logged window)")
+    ap.add_argument("--labels", default="", help="comma-separated source label per clip for the log rows (default: the path)")
     a = ap.parse_args()
-    rows = run(a.clip, a.name, a.measure_only, a.out_samples, a.manifest, a.log_rows, a.report, a.asked.split(), a.min_len)
-    for i, r in enumerate(rows):
-        print("%d %.2f-%.2f %s purity %.3f %s" % (i + 1, r["start"], r["end"], note_name(r["midi"]) if r.get("midi") else "?",
-                                                  r["purity"], "accept" if not r["reasons"] else "reject " + ",".join(r["reasons"])))
+    layers = [int(v) for v in a.layers.split(",")] if a.layers else [0] * len(a.clip)
+    labels = dict(zip(a.clip, a.labels.split(","))) if a.labels else {}
+    offsets = dict(zip(a.clip, [float(v) for v in a.offsets.split(",")])) if a.offsets else {}
+    if a.segment == "level":
+        rows = run_level(a.clip[0], a.name, a.measure_only, a.out_samples, a.manifest, a.log_rows, a.report, a.asked.split(),
+                         a.min_len, labels.get(a.clip[0]))
+        for i, r in enumerate(rows):
+            print("%d %.2f-%.2f %s purity %.3f %s" % (i + 1, r["start"], r["end"], note_name(r["midi"]) if r.get("midi") else "?",
+                                                      r["purity"], "accept" if not r["reasons"] else "reject " + ",".join(r["reasons"])))
+        return
+    asked = {}
+    for part in a.asked.split(";"):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            asked[k] = v.split()
+    allc, keep, on = run_modes(a.clip, a.name, a.segment, a.measure_only, a.out_samples, a.manifest, a.log_rows, a.report, asked,
+                               layers, labels, offsets)
+    print("%d candidates, %d accepted, %d kept, layers %s" % (len(allc), sum(1 for c in allc if not c["reasons"]), len(keep),
+                                                              "two" if on else "one"))
 
 
 if __name__ == "__main__":

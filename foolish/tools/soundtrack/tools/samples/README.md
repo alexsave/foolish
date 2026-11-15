@@ -110,3 +110,39 @@ Each mutation was applied to a copy of the extractor (the original untouched), t
 | Segment end +0.1 s | end clean: expected 1.700 got 1.800 |
 | Vibrato detection off | vibrato rate: expected 6 got 0.00 |
 | Reported MIDI +1 | midi clean: expected 57 got 58 |
+
+## Lyria runs and onsets segmentation
+
+`lyria_notes_extract.py --segment runs|onsets|level` (default `level`, the section above) takes one or more clips, `--layers 0,1,...` (source layer per clip), `--labels` (source text for the log rows, for stems) and `--offsets` (seconds a trimmed stem file starts into the original clip, added to the logged window).
+`runs` (legato lines): a candidate is a stretch of voiced YIN frames within 40 cents of the running median, trimmed at both ends until 60 ms are within 25 cents of the median, plus 20 ms of margin, at least 0.45 s.
+A candidate is rejected for: not one pitch (the distinct-pitch count), purity under 0.90, a second flux spike inside, a level spread over 9 dB between its quarters, f0 sd over the whole trimmed run over 35 cents, or length.
+With the 40 cent limit and the 25 cent trim the sd rule can almost never fire on real material (it is tested on the rule function), so the other rules do the work.
+The attack is `natural` when 150 ms before the level onset are 40 dB under the clip peak (cut from 8 ms before the onset, 3 ms fade in), else `none (legato)` (cut from the trimmed start, 12 ms fade in); the fade out is 40 ms.
+`onsets` (plucks): a sample runs from 8 ms before a spectral-flux onset to 20 ms before the next onset, the noise floor, or 2.5 s; rejected if under 0.3 s, not one pitch, purity (40 to 300 ms after the onset) under 0.90, or the level 250 ms after the onset above the level 60 ms after it.
+Per layer and root MIDI note at most two samples are kept (natural attack first, then purity, then length).
+Two layers are only kept if each layer has no gap over 5 semitones between neighbouring roots and spans an octave; otherwise the instrument is one layer from the layer 1 sources and the report says so.
+`lyria_clip_survey.py` writes the one-row-per-clip table from the Demucs stems, `lyria_rows_to_md.py` writes `LYRIA_SAMPLES.md` from the log rows.
+
+### Mutations of the new paths
+
+| Mutation | Observed failure |
+|---|---|
+| Runs: no trimming of the glide | run 0: expected reasons [] got ['second_onset'] |
+| Runs: deviation limit 40 to 200 cents | runs: expected 9 candidates got 8 (a semitone step merged) |
+| Runs: level-spread rule off | run 3: expected reasons ['level'] got [] |
+| Runs: every attack legato | run 0: expected attack natural |
+| Runs: every attack natural | run 1: expected attack legato |
+| Runs: legato fade in 3 ms | fade lengths |
+| Runs: whole-run sd rule off | run_reasons: sd 36 must give stability |
+| Runs: second spike rule off | run 5: expected ['second_onset'] got [] |
+| Runs: minimum length 0.2 s | run 8: expected ['length'] got [] |
+| Select: no natural preference | select_best: expected [2, 3] got [3, 1] |
+| Select: three per root | select_best: expected [2, 3] got [2, 3, 1] |
+| Layer gap rule off | layer_problem gap |
+| Layer range rule off | layer fallback not applied |
+| Logged window ignores the offset | logged window start 0.992, expected plus the 10 s offset |
+| Log source label ignored | log source label |
+| Onsets: entered rule off | pluck 3: expected ['entered'] |
+| Onsets: cut ignores the next onset | pluck cut end 3.400, expected the next onset minus 20 ms |
+| Onsets: no step back from the flux time | onset chord: expected 3.50 got 3.512 |
+| Onsets: minimum length rule off | pluck 4: expected ['length'] got [] |

@@ -1,0 +1,5 @@
+57 0 0 /SAMPLES/soundtrack/samples/lyria/domra/domra_A3_57.wav
+57 0 1 /SAMPLES/soundtrack/samples/lyria/domra/domra_A3_57_rr1.wav
+59 0 0 /SAMPLES/soundtrack/samples/lyria/domra/domra_B3_59.wav
+59 0 1 /SAMPLES/soundtrack/samples/lyria/domra/domra_B3_59_rr1.wav
+76 0 0 /SAMPLES/soundtrack/samples/lyria/domra/domra_E5_76.wav

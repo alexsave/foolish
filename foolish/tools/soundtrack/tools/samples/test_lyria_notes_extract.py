@@ -97,6 +97,17 @@ def synth():
     return st, truth
 
 
+    X = np.abs(np.fft.rfft(y * np.hanning(len(y)), nfft))
+    base = hz(midi)
+    best, bc = -1, 0
+    for c in np.arange(-100, 100.5, 0.5):
+        f0 = base * 2 ** (c / 1200.0)
+        s = sum(X[int(round(k * f0 * nfft / sr))] / k for k in range(1, 6))
+        if s > best:
+            best, bc = s, c
+    return bc
+
+
 def comb_f0(y, sr, midi):
     """Independent f0: maximise the summed harmonic magnitude of a long FFT over a +-100 cent grid. Returns cents off equal temperament."""
     y = y[int(0.1 * sr):int(len(y) - 0.2 * sr)]
@@ -206,7 +217,154 @@ def main():
         le.run(clip2, "rr", False, os.path.join(d, "o2"), os.path.join(d, "m2.txt"), os.path.join(d, "l2.tsv"), os.path.join(d, "r2.md"), [], None)
         l2 = [l.split()[:3] for l in open(os.path.join(d, "m2.txt")).read().split("\n")[:-1]]
         check(l2 == [["57", "0", "0"], ["57", "0", "1"]], "round robin: %s" % l2)
-    print("PASS: %d segments, 6 accepted, all assertions hold" % len(rows))
+    test_modes()
+    print("PASS: %d segments, 6 accepted, runs and onsets paths hold, all assertions hold" % len(rows))
+
+
+# ---------------------------------------------------------------- runs and onsets modes
+# legato clip: (kind, start s, end s, midi, cents). A note that follows another with no gap glides into it for 80 ms.
+RUNS = [("lega", 1.0, 2.0, 57, 0.0, "natural"), ("lega", 2.0, 3.0, 60, 30.0, "legato"), ("vib", 3.0, 4.0, 64, 0.0, "legato"),
+        ("dying", 5.0, 6.2, 67, 0.0, "natural"), ("chord", 7.2, 8.4, 62, 0.0, "natural"), ("reattack", 9.4, 10.6, 65, 0.0, "natural"),
+        ("lega", 11.6, 12.3, 55, 0.0, "natural"), ("lega", 12.3, 13.0, 56, 0.0, "legato"), ("blip", 14.0, 14.4, 70, 0.0, "natural")]
+# plucked clip: (kind, onset s, midi)
+PLUCKS = [("pluck", 1.0, 52), ("pluck", 2.0, 59), ("chord", 3.5, 52), ("enter", 5.0, 57), ("short", 6.5, 64), ("pluck", 8.0, 55)]
+
+
+def synth_runs():
+    rng = np.random.default_rng(SEED + 1)
+    x = np.zeros(int(16 * SR))
+    prev_end, prev_f = None, None
+    for kind, s0, e0, m, c, att in RUNS:
+        n = int(round((e0 - s0) * SR))
+        t = np.arange(n) / SR
+        f = hz(m, c) * np.ones(n)
+        if kind == "vib":
+            f = f * 2.0 ** (15.0 * np.sin(2 * np.pi * 6.0 * t) / 1200.0)
+        if att == "legato":   # glide from the previous note over the first 80 ms
+            g = np.clip(t / 0.08, 0, 1)
+            f = prev_f * (f[0] / prev_f) ** g
+        prev_f = hz(m, c)
+        y = tone(f, n)
+        if kind == "chord":
+            y = y + tone(hz(69) * np.ones(n), n)
+        env = np.ones(n)
+        if att == "natural":
+            env = np.minimum(env, t / 0.012)
+        if kind == "dying":
+            env = env * 10.0 ** (-18.0 * t / t[-1] / 20.0)
+        if kind == "reattack":
+            t0 = 0.6
+            dip = np.where((t >= t0) & (t < t0 + 0.02), 1.0 - 0.75 * (t - t0) / 0.02, 1.0)
+            rise = np.where((t >= t0 + 0.02) & (t < t0 + 0.025), 0.25 + 0.75 * (t - t0 - 0.02) / 0.005, 1.0)
+            env = env * np.where(t < t0 + 0.02, dip, rise)
+        if e0 not in [r[1] for r in RUNS if r[5] == "legato"]:
+            env = env * np.minimum(1.0, (t[-1] - t) / 0.02)
+        x[int(round(s0 * SR)):int(round(s0 * SR)) + n] += 0.12 * y * env
+    x += rng.standard_normal(len(x)) * 10.0 ** (NOISE_DB / 20.0)
+    return np.stack([x, 0.8 * x], axis=1)
+
+
+def synth_plucks():
+    rng = np.random.default_rng(SEED + 2)
+    x = np.zeros(int(10 * SR))
+    for kind, o, m in PLUCKS:
+        n = int(1.4 * SR)
+        t = np.arange(n) / SR
+        y = tone(hz(m) * np.ones(n), n)
+        if kind == "chord":
+            y = y + tone(hz(m + 7) * np.ones(n), n)
+        tau = {"short": 0.03, "pluck": 0.25}.get(kind, 0.5)
+        env = np.exp(-t / tau) * np.minimum(1.0, t / 0.003)
+        if kind == "enter":   # a second tone fades in slowly from 60 ms, louder than the decayed pluck by 250 ms
+            y = y * env + 3.0 * np.minimum(1.0, np.maximum(0.0, (t - 0.06) / 0.2)) * np.sin(2 * np.pi * hz(m + 6.3) * t) * np.exp(-t / 1.0)
+        else:
+            y = y * env
+        x[int(o * SR):int(o * SR) + n] += 0.12 * y
+    x += rng.standard_normal(len(x)) * 10.0 ** (NOISE_DB / 20.0)
+    return np.stack([x, 0.8 * x], axis=1)
+
+
+def test_modes():
+    d_ = tempfile.mkdtemp()
+    clip = os.path.join(d_, "legato.wav")
+    wavfile.write(clip, SR, (synth_runs() * 32767).astype("<i2"))
+    out, man, log, rep = os.path.join(d_, "o"), os.path.join(d_, "m.txt"), os.path.join(d_, "l.tsv"), os.path.join(d_, "r.md")
+    allc, keep, on = le.run_modes([clip], "leg", "runs", False, out, man, log, rep, {}, [0], {})
+    # 9 notes: the two joined first notes and the vibrato note, plus six separate ones; the legato 56 follows the 55
+    check(len(allc) == 9, "runs: expected 9 candidates got %d" % len(allc))
+    want = [([], "natural"), ([], "legato"), ([], "legato"), (["level"], "natural"), (["pitch"], "natural"),
+            (["second_onset"], "natural"), ([], "natural"), ([], "legato"), (["length"], "natural")]
+    for i, (c, (r, att)) in enumerate(zip(allc, want)):
+        check(c["reasons"] == r, "run %d: expected reasons %s got %s" % (i, r, c["reasons"]))
+        check((c["attack"] == "natural") == (att == "natural"), "run %d: expected attack %s got %s" % (i, att, c["attack"]))
+    for i, (kind, s0, e0, m, cc, att) in enumerate(RUNS):
+        c = allc[i]
+        check(c["midi"] == m or kind == "chord", "run %d: midi expected %d got %d" % (i, m, c["midi"]))
+        check(c["a"] >= s0 + (0.08 if att == "legato" else 0.0) - 0.005, "run %d: region starts %.3f, inside the glide that ends %.3f" % (i, c["a"], s0 + 0.08))
+        check(c["b"] <= e0 + 0.005, "run %d: region ends %.3f after the note ends %.3f" % (i, c["b"], e0))
+    check(abs(allc[1]["cents"] - 30.0) <= 3.0, "run 1 offset: expected 30 got %.1f" % allc[1]["cents"])
+    # the semitone step: 55 and 56 are two runs, not one
+    check(allc[6]["midi"] == 55 and allc[7]["midi"] == 56, "semitone step merged into one run")
+    # cut windows and fades
+    check(abs(allc[0]["cut_a"] - (1.0 - 0.008)) <= 0.02, "natural cut start %.3f, expected about 0.992" % allc[0]["cut_a"])
+    check(abs(allc[1]["cut_a"] - allc[1]["a"]) < 1e-9, "legato cut starts at the region start")
+    check(abs(allc[1]["fade_in"] - 0.012) < 1e-9 and abs(allc[0]["fade_in"] - 0.003) < 1e-9, "fade lengths")
+    check(len(keep) == 5, "kept: expected 5 got %d" % len(keep))
+    check(not on, "one layer expected")
+    import struct
+    def read24(p):
+        b = open(p, "rb").read()
+        ch = struct.unpack("<H", b[22:24])[0]
+        raw = np.frombuffer(b[44:], dtype=np.uint8)
+        raw = raw[:len(raw) // 3 * 3].reshape(-1, 3).astype(np.int32)
+        v = raw[:, 0] | (raw[:, 1] << 8) | (raw[:, 2] << 16)
+        return (np.where(v >= 1 << 23, v - (1 << 24), v) / float(1 << 23)).reshape(-1, ch)
+    files = sorted(os.listdir(out))
+    check(files == sorted("leg_%s_%d.wav" % (le.note_name(m), m) for m in (55, 56, 57, 60, 64)), "files: %s" % files)
+    y = read24(os.path.join(out, "leg_C4_60.wav")).mean(axis=1)
+    err = comb_f0(y, SR, 60)
+    check(abs(err) <= 3.0, "legato sharp note re-measured: %.1f cents (before 30)" % err)
+    r0, r1 = np.sqrt(np.mean(y[:int(0.003 * SR)] ** 2)), np.sqrt(np.mean(y[int(0.012 * SR):int(0.024 * SR)] ** 2))
+    check(r0 < 0.3 * r1, "legato sample has no 12 ms fade in: rms %.4f vs %.4f" % (r0, r1))
+    log_rows = [l.split("\t") for l in open(log).read().split("\n")[:-1]]
+    check(len(log_rows) == 5 and all(len(r) == 9 for r in log_rows), "log rows: 5 rows of 9 columns")
+    check(sorted(r[7] for r in log_rows).count("natural") == 2, "log attack column")
+    log2 = os.path.join(d_, "l2.tsv")
+    le.run_modes([clip], "off", "runs", False, os.path.join(d_, "o2"), os.path.join(d_, "m2.txt"), log2, os.path.join(d_, "r2.md"), {}, [0],
+                 {clip: "Demucs other stem of xx (second half only)"}, {clip: 10.0})
+    r2 = [l.split("\t") for l in open(log2).read().split("\n")[:-1]]
+    w0 = sorted(float(r[2].split("-")[0]) for r in r2)[0]
+    check(abs(w0 - (10.0 + 0.992)) <= 0.02, "logged window start %.3f, expected the cut start plus the 10 s offset" % w0)
+    check(all(r[1] == "Demucs other stem of xx (second half only)" for r in r2), "log source label")
+    # two layers from the same range (7 semitones, under an octave): falls back to one layer with the sentence
+    allc2, keep2, on2 = le.run_modes([clip, clip], "leg2", "runs", True, out, man, log, rep, {}, [0, 1], {})
+    check(not on2 and "one layer" in open(rep).read(), "layer fallback not applied")
+    check(all(c["layer"] == 1 for c in keep2), "fallback keeps layer 1 sources only")
+    # select_best: natural first, then purity, then length, at most two per root
+    cs = [dict(reasons=[], layer=0, midi=60, attack="none (legato)", purity=0.99, length=1.0, n=1),
+          dict(reasons=[], layer=0, midi=60, attack="natural", purity=0.95, length=0.5, n=2),
+          dict(reasons=[], layer=0, midi=60, attack="none (legato)", purity=0.995, length=2.0, n=3),
+          dict(reasons=[], layer=0, midi=60, attack="none (legato)", purity=0.97, length=3.0, n=4)]
+    got = [c["n"] for c in le.select_best(cs, False)]
+    check(got == [2, 3], "select_best: expected [2, 3] got %s" % got)
+    check(le.layer_problem([dict(layer=L, midi=m) for L in (0, 1) for m in (55, 59, 63, 67)]) == "", "layer_problem false positive")
+    check("gap of 8" in le.layer_problem([dict(layer=0, midi=m) for m in (55, 60, 68, 72)] + [dict(layer=1, midi=60)]), "layer_problem gap")
+    good = dict(pitches=1, purity=0.99, onset2=0.0, qspread=2.0, sd=10.0, length=1.0, f0=200.0)
+    check(le.run_reasons(good) == [], "run_reasons: a good run is rejected")
+    check(le.run_reasons(dict(good, sd=36.0)) == ["stability"], "run_reasons: sd 36 over the whole run must give stability")
+    # plucks
+    clip2 = os.path.join(d_, "pl.wav")
+    wavfile.write(clip2, SR, (synth_plucks() * 32767).astype("<i2"))
+    allp, keepp, _ = le.run_modes([clip2], "pl", "onsets", False, os.path.join(d_, "po"), os.path.join(d_, "pm.txt"), log, os.path.join(d_, "pr.md"), {}, [0], {})
+    check(len(allp) == 6, "onsets: expected 6 candidates got %d" % len(allp))
+    for c, (kind, o, m) in zip(allp, PLUCKS):
+        check(abs(c["onset"] - o) <= 0.006, "onset %s: expected %.2f got %.3f" % (kind, o, c["onset"]))
+        check(abs(c["cut_a"] - (o - 0.008)) <= 0.012, "pluck cut start %.3f vs onset %.2f" % (c["cut_a"], o))
+    wantp = [[], [], ["pitch"], ["entered"], ["length"], []]
+    for i, (c, w) in enumerate(zip(allp, wantp)):
+        check(set(w) <= set(c["reasons"]) and (w or not c["reasons"]), "pluck %d: expected %s got %s" % (i, w, c["reasons"]))
+    check(abs(allp[0]["cut_b"] - 1.98) <= 0.012, "pluck cut end %.3f, expected the next onset minus 20 ms" % allp[0]["cut_b"])
+    check([c["midi"] for c in keepp] == [52, 55, 59], "plucks kept: %s" % [c["midi"] for c in keepp])
 
 
 def fl_args(le, st):
