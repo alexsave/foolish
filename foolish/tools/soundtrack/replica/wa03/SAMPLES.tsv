@@ -1,0 +1,2 @@
+file	source_clip	stem	note
+lyria_cello_flat (manifest samples/manifests/lyria_cello_flat.txt, 24 samples under soundtrack-samples/lyria/cello_flat/)	6_warsaw wa_17 wa_18 wa_19 wa_20 wa_21 wa_22 (approved cello sources, see LYRIA_SAMPLES.md rows)	mp3 and Demucs stems as logged	used by CELLO=lyria and lyria_vib; no new Lyria cut was made for this replica; wa_03 itself is the benchmark and no sample is cut from it

@@ -7,6 +7,9 @@
 //                                                         vsco: the VSCO 2 CE cello section sustains (vc_sus.txt, loop 1, bow skip), _vib adds
 //                                                         the engine vibrato on top of the recorded one
 //   PIANO = salamander                                    (the only piano set so far; the name is the parameter that a later set plugs into)
+//   PIANO_EQ, CELLO_EQ = "type:f:q:gain,..." (1 lp 2 hp 3 peak 4 lshelf 5 hshelf)
+//   PIANO_ATT_MS (linear attack fade of every piano note, default 0)
+//   MASTER_EQ = the same syntax, on the master bus
 //   HALL_RT s (default 1.8), HALL_SEND 0..1 (default 0.25), HALL_DB bus gain (default -5), CELLO_DB, PIANO_DB (default 0)
 // EVENTS PEDAL: pitch is ignored, len is the time the damper stays up (the engine's cc 64 on both piano tracks).
 // Every note is exact: no humanise, no early start, no random detune (sp[15]), because the timing is the point.
@@ -21,6 +24,12 @@
 static int PIANO, CELLO, PEDAL;
 static void syn_none(Track *tr, const Note *n, float *L, float *R, long nf) { (void)tr; (void)n; (void)L; (void)R; (void)nf; }
 static double envd(const char *k, double d) { const char *v = getenv(k); return v && *v ? atof(v) : d; }
+// PIANO_EQ / CELLO_EQ = "type:f:q:gain,type:f:q:gain" (type 1 lp 2 hp 3 peak 4 lshelf 5 hshelf), applied with the engine's eq() to that track
+static void env_eq(int t, const char *k) {
+    const char *v = getenv(k); if (!v || !*v) return;
+    char buf[256]; snprintf(buf, sizeof buf, "%s", v);
+    for (char *b = strtok(buf, ","); b; b = strtok(0, ",")) { int ty; double f, q, g; if (sscanf(b, "%d:%lf:%lf:%lf", &ty, &f, &q, &g) == 4) eq(t, ty, f, q, g); }
+}
 static int map(const char *part, double *tp, double *vs, double *dp) {
     *tp = 0; *vs = 1; *dp = 60;
     if (!strcasecmp(part, "PIANO")) return PIANO;
@@ -35,7 +44,8 @@ void city_setup(void) {
     if (strcmp(pi, "salamander")) { fprintf(stderr, "wa03_play: PIANO=%s unknown\n", pi); exit(1); }
     PIANO = smp_track("piano", OM "salamander.txt");
     Track *p = &g_tr[PIANO]; p->sp[0] = 0.35; p->sp[1] = 0.35; p->sp[5] = 0; p->sp[9] = 1; p->sp[15] = 1;
-    p->human_ms = 0; p->human_vel = 0; p->delay_ms = 0; p->send[0] = envd("HALL_SEND", 0.25); p->gain_db = envd("PIANO_DB", 0); p->width = 0.55;
+    p->human_ms = 0; p->human_vel = 0; p->delay_ms = 0; p->send[0] = envd("HALL_SEND", 0.25); p->gain_db = envd("PIANO_DB", 0); p->width = 0.55; p->sp[2] = envd("PIANO_ATT_MS", 0);
+    env_eq(PIANO, "PIANO_EQ");
     PEDAL = syn_track("pedal", syn_none); g_tr[PEDAL].mute = 1;
     CELLO = -1;
     int none = !strcmp(ce, "none");
@@ -53,8 +63,11 @@ void city_setup(void) {
         c->human_ms = 0; c->human_vel = 0; c->delay_ms = 0; c->sp[15] = 1; c->send[0] = envd("HALL_SEND", 0.25); c->gain_db = envd("CELLO_DB", 0);
         c->sp[13] = vib ? 10.1 : 0; c->sp[14] = vib ? 5.35 : 0;
     }
+    if (CELLO >= 0 && !g_tr[CELLO].mute) env_eq(CELLO, "CELLO_EQ");
     double rt = envd("HALL_RT", 1.8);
     g_bus[0] = (Bus){.type = 1, .rev = {rt, rt * 0.5, 12, 1.4, 180, 7000, 0.14, 1.0, 0.2, 0.25}, .gain_db = envd("HALL_DB", -5), .duck_src = -1};
+    { const char *v = getenv("MASTER_EQ"); if (v && *v) { char buf[256]; snprintf(buf, sizeof buf, "%s", v);
+        for (char *b = strtok(buf, ","); b; b = strtok(0, ",")) { int ty; double f, q, g; if (sscanf(b, "%d:%lf:%lf:%lf", &ty, &f, &q, &g) == 4 && g_master.neq < 8) g_master.eq[g_master.neq++] = (EqBand){ty, f, q, g}; } } }
     g_tail_s = 3;
 }
 double city_loop(void) {
