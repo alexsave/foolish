@@ -47,6 +47,7 @@ import compare as C
 
 F0_REF = 100.0               # --transpose f0 aligns every feature to this f0
 YW, YHOP = 1024, 512          # compare.yin's frame and hop (22050 Hz samples)
+ENGINE_SR = 48000            # the engine's render rate (engine/render.h)
 FEAT_MAX_S = 0.25            # the feature looks at the first 250 ms of a segment
 VEL_S = 0.1                  # the velocity ratio looks at the first 100 ms
 FADE_IN_S, FADE_OUT_S = 0.002, 0.008
@@ -126,6 +127,17 @@ def fade(x, sr):
     return y
 
 
+def fade_edges(x, sr, fin, fout):
+    y = x.copy(); n = len(y)
+    a = min(int(round(FADE_IN_S * sr)), n // 2) if fin else 0
+    b = min(int(round(FADE_OUT_S * sr)), n // 2) if fout else 0
+    if a > 0:
+        y[:a] *= (0.5 - 0.5 * np.cos(np.pi * np.arange(a) / a))[:, None]
+    if b > 0:
+        y[n - b:] *= (0.5 + 0.5 * np.cos(np.pi * np.arange(1, b + 1) / b))[:, None]
+    return y
+
+
 def engine_trim(x, sr):
     """The samples sampler.h's smp_trim drops from the front of a stored sample: everything before the first sample whose left or
     right value reaches 0.3 percent of the peak (-50 dB), less 1.5 ms. Reproduced here so an event can start where the engine's
@@ -166,6 +178,48 @@ def manifest_path(p):
 
 def fmt4(v):
     return '%.4f' % v
+
+
+def fmt6(v):
+    return '%.6f' % v
+
+
+def is_rising(seg, sr):
+    """A swell: the 10 ms RMS envelope peaks after 50 percent of the sample's length and its first 30 ms are more than 9 dB below the peak (played out of context it sounds like a reversed note)."""
+    m = seg.mean(axis=1); w = int(0.01 * sr); nw = len(m) // w
+    if nw < 4:
+        return False
+    e = np.sqrt(np.mean(m[:nw * w].reshape(nw, w) ** 2, axis=1)) + 1e-12
+    pk = int(np.argmax(e))
+    return bool((pk + 0.5) / nw > 0.5 and 20 * np.log10(np.sqrt(np.mean(e[:3] ** 2)) / e[pk]) < -9.0)
+
+
+def null_residual_db(a, b, sr, max_lag_ms=3.0):
+    """The shorter signal's residual against the longer after the best integer lag within +-max_lag_ms and a least-squares gain, in dB
+    of the shorter's energy, over the shorter's length."""
+    if len(a) > len(b):
+        a, b = b, a
+    n, m = len(a), int(round(max_lag_ms / 1000.0 * sr))
+    bp = np.concatenate([np.zeros(m), b, np.zeros(m + n)])[:len(b) + 2 * m + n]
+    c = signal.fftconvolve(bp, a[::-1], mode='valid')[:2 * m + 1]
+    cs = np.concatenate([[0.0], np.cumsum(bp ** 2)])
+    eb = cs[n:n + 2 * m + 1] - cs[:2 * m + 1]
+    ea = float(a @ a)
+    res = ea - c ** 2 / np.maximum(eb, 1e-30)
+    return 10 * np.log10(max(float(res.min()), 1e-30) / max(ea, 1e-30))
+
+
+def share_null_cond(segs, F, sr, share_db, pre=0.4):
+    """Condensed distance: the null residual in dB plus 200 for pairs whose spectral shapes are within `pre` (the rest cannot null and are
+    not computed: distance 1000)."""
+    ns = len(segs)
+    mono = [g['seg'].mean(axis=1) for g in segs]
+    cos = 1 - F @ F.T
+    out = []
+    for i in range(ns):
+        for j in range(i + 1, ns):
+            out.append(null_residual_db(mono[i], mono[j], sr) + 200.0 if cos[i, j] < pre else 1000.0)
+    return np.array(out)
 
 
 def drop_continuations(x, sr, t, w, tau):
@@ -247,6 +301,10 @@ def extract(a):
             raise SystemExit('extract: %s is %d Hz, the stem is %d Hz' % (extra, sr2, sr))
         n = min(len(x), len(y))
         x = x[:n] + y[:n]
+    if a.xfade_ms > 0 and sr != ENGINE_SR:     # the engine renders at ENGINE_SR: samples stored at that rate play at ratio 1, so every piece lands on whole output samples
+        g_ = int(np.gcd(sr, ENGINE_SR))
+        x = signal.resample_poly(x, ENGINE_SR // g_, sr // g_, axis=0)
+        sr = ENGINE_SR
     SR_OUT[0] = sr
     i0, i1 = int(round(a.start * sr)), min(len(x), int(round(a.end * sr)))
     x = x[i0:i1]
@@ -285,8 +343,20 @@ def extract(a):
     ns = len(segs)
     if ns == 0:
         raise SystemExit('extract: no segments')
+    xf = a.xfade_ms > 0
+    h = int(round(a.xfade_ms / 2000.0 * sr)) if xf else 0     # half a crossfade, in samples
     for g in segs:
-        g['tr'] = engine_trim(fade(g['seg'], sr), sr)     # what the engine drops from the front of this segment's stored file
+        if xf:      # the stored sample covers [start - h, end + h] clamped to the window; fades only at the window's own edges
+            g['f0'] = min(h, g['a0']); g['f1'] = min(h, nwin - g['a1'])
+            st = x[g['a0'] - g['f0']:g['a1'] + g['f1']].copy()
+            if g['a0'] - g['f0'] == 0:
+                st = fade_edges(st, sr, True, False)
+            if g['a1'] + g['f1'] == nwin:
+                st = fade_edges(st, sr, False, True)
+            g['stored'] = st
+            g['tr'] = engine_trim(st, sr)
+        else:
+            g['tr'] = engine_trim(fade(g['seg'], sr), sr)     # what the engine drops from the front of this segment's stored file
         g['att'] = attack_index(g['seg'], sr)             # where its sound really starts, inside the segment
         g['n'] = g['a1'] - g['a0']
     F = np.stack([feature(s['seg'], sr) for s in segs])
@@ -307,11 +377,18 @@ def extract(a):
             if mode == 'f0':
                 uv = np.array([not g['isv'] for g in segs])
                 cond = cond + 10.0 * squareform((uv[:, None] != uv[None, :]).astype(float), checks=False)
-    if a.distance <= 0 or ns == 1:
+    thr = a.distance
+    if a.share_null is not None and ns > 1:      # a sample is shared only by segments that null against it
+        cond, thr = share_null_cond(segs, F, sr, a.share_null), a.share_null + 200.0
+    if a.no_share_rising and ns > 1:
+        rs = np.array([is_rising(g['seg'], sr) for g in segs])
+        print('rising segments kept alone: %d' % rs.sum())
+        m_ = squareform(cond); m_[rs[:, None] | rs[None, :]] = 1000.0; np.fill_diagonal(m_, 0.0); cond = squareform(m_, checks=False)
+    if (thr <= 0 and a.share_null is None) or ns == 1:
         lab = np.arange(ns)
     else:
         Z = hierarchy.linkage(cond, 'complete')
-        lab = hierarchy.fcluster(Z, a.distance, 'distance') - 1
+        lab = hierarchy.fcluster(Z, thr, 'distance') - 1
     maxs = a.max_shift if a.max_shift is not None else 12
     def pick_exemplar(mem):
         pool = mem
@@ -352,7 +429,7 @@ def extract(a):
         mem = [i for i in range(ns) if cl[i] == c]
         ex = pick_exemplar(mem)
         ex_of[c] = ex
-        wav = fade(segs[ex]['seg'], sr)
+        wav = segs[ex]['stored'] if xf else fade(segs[ex]['seg'], sr)
         stored.append(wav)
         fn = os.path.join(a.samples_dir, '%s_%03d.wav' % (a.name, c))
         write_wav(fn, wav)
@@ -382,7 +459,11 @@ def extract(a):
     # is left of the member after its attack + the exemplar's pre-attack that plays. 'segment': the segment start and length as cut.
     for i, g in enumerate(segs):
         e = segs[ex_of[cl[i]]]
-        if a.timing == 'attack':
+        if xf:      # the event starts at the segment start - h (+ what the engine trims); note-off at the segment end - h, so the release (X ms, linear) ends at end + h
+            g['ev0'] = g['a0'] - g['f0'] + e['tr']
+            g['len'] = max(1, g['a1'] - h - g['ev0'])
+            g['v0'], g['e0'] = 0, e['f0']
+        elif a.timing == 'attack':
             g['ev0'] = g['a0'] + g['att'] - e['att'] + e['tr']
             g['len'] = (g['n'] - g['att']) + (e['att'] - e['tr'])
             g['v0'], g['e0'] = g['att'], e['att']          # velocity windows start at the attacks
@@ -398,6 +479,8 @@ def extract(a):
     for i, s in enumerate(segs):
         ratio = 2.0 ** (shifts[i] / 12.0)
         st = stored[cl[i]]
+        if xf:
+            st = st[:len(st) - segs[ex_of[cl[i]]]['f1']]
         n = min(s['n'] - s['v0'], int((len(st) - s['e0']) / ratio))
         if a.vel_window_ms is not None:
             n = min(n, int(a.vel_window_ms / 1000.0 * sr))
@@ -409,13 +492,14 @@ def extract(a):
     vel = np.clip(rr / rmax - 0.05, 0, 0.95)
     gain_db = 20 * np.log10(rmax)
     ev = []
+    ff = fmt6 if xf else fmt4
     for i, s in enumerate(segs):
         beat = s['ev0'] / sr * a.bpm / 60.0
         ln = s['len'] / sr * a.bpm / 60.0
         root = 100 * cl[i] + 50 if spaced else base + cl[i]
-        ev.append('%s,%s,%s,%s' % (fmt4(beat), fmt4(root + shifts[i]) if spaced else '%d' % root if shifts[i] == 0 else fmt4(root + shifts[i]), fmt4(ln), fmt4(vel[i])))
+        ev.append('%s,%s,%s,%s' % (ff(beat), ff(root + shifts[i]) if spaced else '%d' % root if shifts[i] == 0 else ff(root + shifts[i]), ff(ln), ff(vel[i])))
     with open(a.events, 'w') as f:
-        f.write('# %s gain_db %.4f%s\n' % (a.name, gain_db, ' roots spaced' if spaced else ''))
+        f.write('# %s gain_db %.4f%s%s\n' % (a.name, gain_db, ' roots spaced' if spaced else '', ' xfade_ms %g' % a.xfade_ms if xf else ''))
         for k in range(0, len(ev), 40):
             f.write('EVENTS %s: %s\n' % (a.name, ' '.join(ev[k:k + 40])))
     with open(a.table, 'w') as f:
@@ -450,7 +534,7 @@ def main(argv=None):
     ap.add_argument('--start', type=float, required=True)
     ap.add_argument('--end', type=float, required=True)
     ap.add_argument('--bpm', type=float, required=True)
-    ap.add_argument('--distance', type=float, required=True)
+    ap.add_argument('--distance', type=float, default=0.0, help='cosine distance of complete linkage (0 = every segment its own sample; ignored with --share-null)')
     ap.add_argument('--samples-dir', required=True)
     ap.add_argument('--manifest', required=True)
     ap.add_argument('--events', required=True)
@@ -464,6 +548,9 @@ def main(argv=None):
     ap.add_argument('--f0-range', type=float, nargs=2, default=[30.0, 400.0], metavar=('FMIN', 'FMAX'))
     ap.add_argument('--merge-sustain', type=float, default=None, metavar='TAU', help='remove an onset where the sound simply continues (feature distance under TAU, RMS rise at most 3 dB)')
     ap.add_argument('--vel-window-ms', type=float, default=None, help='velocity window from the start (default: the whole common length; 100 = the iteration 1 rule)')
+    ap.add_argument('--xfade-ms', type=float, default=0.0, help='X > 0: each sample covers its segment plus X/2 each side with no baked fades, the part plays with a linear X ms attack and release, so adjacent pieces cross over with gains summing to 1')
+    ap.add_argument('--share-null', type=float, default=None, metavar='DB', help='replaces the spectral distance: two segments share a sample only if the shorter nulls against the other (best lag within 3 ms, one gain) below DB')
+    ap.add_argument('--no-share-rising', action='store_true', help='a RISING sample (swell) is used for its own segment only')
     ap.add_argument('--lead-ms', type=float, default=6.0)
     ap.add_argument('--min-seg-ms', type=float, default=50.0)
     return extract(ap.parse_args(argv))

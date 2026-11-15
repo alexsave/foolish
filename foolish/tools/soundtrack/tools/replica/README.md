@@ -255,3 +255,13 @@ Drums rows are iteration 1 (D given, method unchanged).
 | other | --transpose shift --roots spaced --merge-sustain 0.06 --max-shift 2 | 0.2 | 0.06 | 2 | 74 | 4 | 0.1095 | 1.561 | 151 | 0.5 | 0 | 0.9501 | 0.4382 | -1.884 | 0.2616 | 0.2231 | 1.456 | 0.8529 | 0.9375 | 0.4876 | 0.2867 | - | 0 | 0 | 0 |
 | other | --transpose shift --roots spaced --merge-sustain 0.1 | 0.2 | 0.1 | 5 | 49 | 3 | 0.108 | 1.561 | 176 | 0 | 1 | -247.4 | 0.261 | -2.455 | 0.1071 | 0.08466 | 1.319 | 0.7088 | 1.301 | 0.05852 | 0.1482 | - | 0 | 0 | 0 |
 | other | --transpose shift --roots spaced --merge-sustain 0.1 --max-shift 2 | 0.2 | 0.1 | 2 | 49 | 3 | 0.108 | 1.561 | 176 | 0 | 1 | -247.4 | 0.2656 | -2.447 | 0.1179 | 0.09862 | 1.348 | 0.767 | 1.262 | 0.03739 | 0.0932 | - | 0 | 0 | 0 |
+
+## Iteration 3: joins that sum to the original, and glitch measures
+
+`extract.py --xfade-ms X` makes each stored sample cover its segment plus X/2 each side (no baked fades except at the window's own edges), starts the event X/2 early and puts note-off X/2 before the segment end.
+assemble.py then writes `attack_ms X release_lin_ms X release_s 0` for the part (sampler sp[2] and the new sp[16], a linear release that ends exactly X ms after note-off), so two adjacent pieces cross over X ms with gains that sum to 1.
+The stem is first resampled to the engine's 48 kHz so every piece lands on whole output samples and plays at ratio 1; beats and lengths are written with 6 decimals.
+`--share-null DB` replaces the spectral distance: two segments share a sample only if the shorter nulls against the other (best lag within 3 ms, one least-squares gain) below DB; pairs whose spectral cosine distance is over 0.4 are not tried.
+`--no-share-rising` keeps a RISING sample (a swell: envelope peak after 50 percent of its length, first 30 ms more than 9 dB under the peak) for its own segment only.
+`compare.py` gains a glitch section per stem (`glitch_*` rows; `overall` and every other number are unchanged): null residual after the best lag within 5 ms and one gain, dip and bump runs and seconds against the original's 8 ms envelope, level steps, clicks, residual periodicity, and with `--joins-drums|bass|other FILE` (one join time in seconds per line) the joins that dip within plus or minus 20 ms.
+Tests: `python3 -I test_glitch.py`; the crossfade and sharing checks are in test_extract.sh.

@@ -1,0 +1,4 @@
+# one line per part; see replica/play.c
+PART DRUMS sampler drums.txt gain_db 0.1358 release_s 0 group drums roots spaced attack_ms 4 release_lin_ms 4
+PART BASS sampler bass.txt gain_db 2.0241 release_s 0 group bass roots spaced attack_ms 4 release_lin_ms 4
+PART OTHER sampler other.txt gain_db 1.2191 release_s 0 group other roots spaced attack_ms 4 release_lin_ms 4

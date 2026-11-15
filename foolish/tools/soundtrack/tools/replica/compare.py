@@ -600,7 +600,7 @@ def _mean(vals):
     return float(np.mean(v)) if v else NA
 
 
-def compare(orig, replica, sr, stems_orig=None, stems_replica=None, align=True):
+def compare(orig, replica, sr, stems_orig=None, stems_replica=None, align=True, joins=None):
     S = Store()
     ex = S.d['_extra']
     mo, mr = to_mono(orig), to_mono(replica)
@@ -699,6 +699,11 @@ def compare(orig, replica, sr, stems_orig=None, stems_replica=None, align=True):
     else:
         sidechain_metrics(S, 'mix', nat_o, nat_r, sr, 'none')
 
+    # glitch measures (additive; stems only)
+    for sc in [k for k in scopes if k in ('drums', 'bass', 'other')]:
+        for nm, (v, u) in glitch(nat_o[sc], nat_r[sc], sr, (joins or {}).get(sc)).items():
+            S.put(sc, nm, v, u)
+
     # 9. summary
     d = S.d
     def g(k):
@@ -724,6 +729,137 @@ def compare(orig, replica, sr, stems_orig=None, stems_replica=None, align=True):
     ex['terms'] = terms
     S.put('', 'overall', 100 * _mean([v for _, v in terms]), 'score')
     return S.d
+
+
+# ---------------------------------------------------------------- glitch measures (iteration 3, additive: nothing above reads these)
+GLITCH_ENV_MS = 8.0            # analytic-signal envelope smoothing
+GLITCH_LAG_MS = 5.0            # best integer lag searched, +-
+GLITCH_DIP_DB = 3.0            # a dip or bump is a replica envelope this far below or above the original's ...
+GLITCH_RANGE_DB = 30.0         # ... while the original is within this far of its stem peak
+GLITCH_JOIN_MS = 20.0          # a join's window, +-
+GLITCH_STEP_DB, GLITCH_STEP_MS, GLITCH_STEP_ORIG_DB, GLITCH_STEP_ORIG_MS = 6.0, 10.0, 3.0, 20.0
+GLITCH_CLICK_X, GLITCH_CLICK_RMS_MS, GLITCH_CLICK_NEAR_MS = 4.0, 5.0, 2.0
+GLITCH_CLICK_FLOOR = 0.01     # a jump must also exceed this share of the original stem's peak (-40 dB), or silence with a trace of noise is full of clicks
+GLITCH_FLOOR_DB = 60.0         # envelopes are floored this far below the original's peak
+GLITCH_PER_LAGS_S = (0.05, 2.0)
+
+
+def _env_db(x, sr, floor_db):
+    e = np.abs(signal.hilbert(x))
+    w = max(1, int(round(GLITCH_ENV_MS / 1000 * sr)))
+    c = np.concatenate([[0.0], np.cumsum(e)])
+    i = np.arange(len(e))
+    a, b = np.clip(i - w // 2, 0, len(e)), np.clip(i + w - w // 2, 0, len(e))
+    sm = (c[b] - c[a]) / np.maximum(b - a, 1)
+    return 20 * np.log10(np.maximum(sm, 10 ** (floor_db / 20))), sm
+
+
+def _runs(mask):
+    """Number of contiguous True runs."""
+    m = np.concatenate([[0], mask.astype(np.int8), [0]])
+    return int((np.diff(m) == 1).sum())
+
+
+def _align_gain(xo, xr, sr, do_align=True, do_gain=True):
+    n = min(len(xo), len(xr))
+    xo, xr = xo[:n], xr[:n]
+    lag = 0
+    if do_align and n > 16:
+        ml = int(round(GLITCH_LAG_MS / 1000 * sr))
+        N = 1 << int(np.ceil(np.log2(2 * n)))
+        cc = np.fft.irfft(np.fft.rfft(xo, N) * np.conj(np.fft.rfft(xr, N)), N)
+        cand = np.concatenate([cc[:ml + 1], cc[N - ml:]])
+        lags = np.concatenate([np.arange(0, ml + 1), np.arange(-ml, 0)])
+        lag = int(lags[int(np.argmax(cand))])     # replica sample i matches original sample i + lag
+    r = np.zeros(n)
+    if lag >= 0:
+        r[lag:] = xr[:n - lag]
+    else:
+        r[:lag] = xr[-lag:]
+    g = float(xo @ r) / max(float(r @ r), 1e-30) if do_gain else 1.0
+    return xo, r * g, lag, g
+
+
+def glitch(xo, xr, sr, joins=None):
+    """Glitch measures of one stem (mono, same rate on both sides). Returns an ordered dict name -> (value, unit)."""
+    out = {}
+    xo, r, lag, g = _align_gain(np.asarray(xo, float), np.asarray(xr, float), sr)
+    n = len(xo)
+    out['glitch_lag_ms'] = (lag / sr * 1000, 'ms')
+    out['glitch_gain_db'] = (20 * np.log10(max(g, 1e-12)), 'dB')
+    eo_pow = float(np.sum(xo ** 2))
+    out['glitch_null_residual_db'] = (10 * np.log10(max(float(np.sum((xo - r) ** 2)), 1e-30) / max(eo_pow, 1e-30)), 'dB')
+    peak_db = 20 * np.log10(max(float(np.max(np.abs(signal.hilbert(xo)))), 1e-12))
+    eo, _ = _env_db(xo, sr, peak_db - GLITCH_FLOOR_DB)
+    er, _ = _env_db(r, sr, peak_db - GLITCH_FLOOR_DB)
+    eo_peak = float(eo.max())
+    diff = er - eo
+    act = eo > eo_peak - GLITCH_RANGE_DB
+    dip = act & (diff < -GLITCH_DIP_DB)
+    bump = act & (diff > GLITCH_DIP_DB)
+    out['glitch_dip_frames'] = (_runs(dip), 'count')
+    out['glitch_dip_s'] = (float(dip.sum()) / sr, 's')
+    out['glitch_bump_frames'] = (_runs(bump), 'count')
+    out['glitch_bump_s'] = (float(bump.sum()) / sr, 's')
+    out['glitch_deepest_dip_db'] = (float(diff[dip].min()) if dip.any() else 0.0, 'dB')
+    if joins is not None:
+        jm = []
+        w = int(round(GLITCH_JOIN_MS / 1000 * sr))
+        for t in joins:
+            i = int(round(t * sr))
+            if i < 0 or i >= n:
+                continue
+            jm.append(float(diff[max(0, i - w):i + w + 1].min()))
+        jm = np.array(jm)
+        out['glitch_joins'] = (len(jm), 'count')
+        out['glitch_joins_over1db'] = (int((jm < -1).sum()), 'count')
+        out['glitch_joins_over3db'] = (int((jm < -3).sum()), 'count')
+        out['glitch_joins_deepest_db'] = (float(jm.min()) if len(jm) else 0.0, 'dB')
+        out['glitch_joins_median_db'] = (float(np.median(jm)) if len(jm) else 0.0, 'dB')
+    # level steps: on a 1 ms grid
+    h = max(1, int(round(sr / 1000)))
+    e1, r1 = eo[::h], er[::h]
+    k10 = int(round(GLITCH_STEP_MS)); k20 = int(round(GLITCH_STEP_ORIG_MS))
+    m = len(e1)
+    step = np.zeros(m, bool)
+    if m > k10 + 1:
+        big = np.abs(r1[k10:] - r1[:-k10]) > GLITCH_STEP_DB
+        from scipy.ndimage import maximum_filter1d, minimum_filter1d
+        rng_o = maximum_filter1d(e1, k20, mode='nearest') - minimum_filter1d(e1, k20, mode='nearest')
+        calm = rng_o[:m - k10] < GLITCH_STEP_ORIG_DB
+        step[:m - k10] = big & calm
+    out['glitch_level_steps'] = (_runs(step), 'count')
+    # clicks
+    wc = max(1, int(round(GLITCH_CLICK_RMS_MS / 1000 * sr)))
+    def jumps(x):
+        d = np.abs(np.diff(x, prepend=x[0]))
+        c = np.concatenate([[0.0], np.cumsum(x ** 2)])
+        i = np.arange(len(x))
+        a, b = np.clip(i - wc // 2, 0, len(x)), np.clip(i + wc - wc // 2, 0, len(x))
+        rms_ = np.sqrt((c[b] - c[a]) / np.maximum(b - a, 1))
+        return (d > GLITCH_CLICK_X * rms_) & (d > GLITCH_CLICK_FLOOR * max(float(np.abs(xo).max()), 1e-12))
+    jr, jo = jumps(r), jumps(xo)
+    near = max(1, int(round(GLITCH_CLICK_NEAR_MS / 1000 * sr)))
+    jo_near = np.convolve(jo.astype(np.int32), np.ones(2 * near + 1, np.int32), mode='same') > 0
+    cl = jr & ~jo_near
+    # clicks within 2 ms of each other are one click
+    idx = np.nonzero(cl)[0]
+    out['glitch_clicks'] = (int(1 + (np.diff(idx) > near).sum()) if len(idx) else 0, 'count')
+    # regularly recurring faults: the residual's 10 ms envelope autocorrelation
+    f10 = max(1, int(round(0.01 * sr)))
+    nf = n // f10
+    res = (xo - r)[:nf * f10].reshape(nf, f10)
+    ev = np.sqrt(np.mean(res ** 2, axis=1)); ev = ev - ev.mean()
+    lo, hi = int(round(GLITCH_PER_LAGS_S[0] / 0.01)), min(int(round(GLITCH_PER_LAGS_S[1] / 0.01)), nf - 2)
+    pk, pl = 0.0, 0.0
+    if hi > lo and float(ev @ ev) > 0:
+        ac = np.array([float(ev[:nf - L] @ ev[L:]) / float(ev @ ev) for L in range(lo - 1, hi + 2)])
+        for j in range(1, len(ac) - 1):
+            if ac[j] >= ac[j - 1] and ac[j] > ac[j + 1] and ac[j] > pk:
+                pk, pl = float(ac[j]), (lo - 1 + j) * 0.01
+    out['glitch_residual_periodicity'] = (pk, 'r')
+    out['glitch_residual_periodicity_lag_s'] = (pl, 's')
+    return out
 
 
 # ---------------------------------------------------------------- report
@@ -805,8 +941,17 @@ def write_report(R, prefix, title_info=''):
         L.append('')
         L.append('| metric | value | unit | scope |')
         L.append('|---|---|---|---|')
-        for k in ks:
+        for k in [k for k in ks if not k[len(sc) + 1:].startswith('glitch_')]:
             L.append('| %s | %s | %s | %s |' % (k[len(sc) + 1:], fmt(R[k]), units.get(k, ''), sc))
+    gk = [k for k in keys if '.glitch_' in k]
+    if gk:
+        L.append('')
+        L.append('## Glitch measures')
+        L.append('')
+        L.append('| metric | value | unit | scope |')
+        L.append('|---|---|---|---|')
+        for k in gk:
+            L.append('| %s | %s | %s | %s |' % (k.split('.', 1)[1], fmt(R[k]), units.get(k, ''), k.split('.')[0]))
     wc, wf = worst_windows(R)
     L.append('')
     L.append('## Worst 2 s windows by chroma similarity (mix)')
@@ -896,6 +1041,8 @@ def main(argv=None):
     ap.add_argument('--replica-start', type=float); ap.add_argument('--replica-end', type=float)
     ap.add_argument('--orig-stems'); ap.add_argument('--replica-stems')
     ap.add_argument('--no-align', action='store_true')
+    for _k in ('drums', 'bass', 'other'):
+        ap.add_argument('--joins-' + _k, help='file with one join time (s, relative to the window) per line: adds the glitch join metrics of that stem')
     ap.add_argument('--out', default='compare_out')
     a = ap.parse_args(argv)
     xo, sr = _load_window(a.orig, a.orig_start, a.orig_end)
@@ -905,7 +1052,8 @@ def main(argv=None):
     if (so is None) != (sr_ is None):
         so = sr_ = None
         print('stems given for one side only: ignored', file=sys.stderr)
-    R = compare(xo, xr, sr, so, sr_, align=not a.no_align)
+    joins = {k: np.array([float(l) for l in open(getattr(a, 'joins_' + k)) if l.strip()]) for k in ('drums', 'bass', 'other') if getattr(a, 'joins_' + k)}
+    R = compare(xo, xr, sr, so, sr_, align=not a.no_align, joins=joins)
     info = 'Original: %s [%s-%s s]. Replica: %s [%s-%s s].' % (a.orig, a.orig_start, a.orig_end, a.replica, a.replica_start, a.replica_end)
     write_report(R, a.out, info)
     write_plot(R, a.out)

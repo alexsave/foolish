@@ -2,7 +2,7 @@
 # test_extract.sh - end to end: synthetic song -> extract.py per stem -> play.c -> compare.py, plus the exact-flag check.
 # What it does: builds a 12 s swung, off-grid song as three stems, extracts samples and events at distance 0.05, writes
 #   score.txt and parts.txt, compiles replica/play.c, renders the mix and each part solo, and asserts (see test_extract.py).
-# Inputs: none. Optional environment, for mutation checks: EXTRACT (extract.py to test), PLAYC (play.c to compile; its
+# Inputs: none. Optional environment, for mutation checks: EXTRACT (extract.py to test), ASSEMBLE (assemble.py of the pitch fixtures), PLAYC (play.c to compile; its
 #   ../engine must sit beside it), TMP (work directory). Outputs: lines with the measured numbers; exit 1 on any failure.
 # How to run: bash test_extract.sh
 set -u
@@ -52,14 +52,22 @@ xrun() {   # name, directory suffix, extract options...
   mkdir -p "$D"
   $PY "$EXTRACT" --stem "$TMP/x/orig/$n.wav" --name P --start 0 --end 12 --bpm 120 --roots spaced "$@" \
     --samples-dir "$D/samples" --manifest "$D/man.txt" --events "$D/ev.txt" --table "$D/tab.tsv" > "$D/extract.log" || { cat "$D/extract.log"; exit 2; }
-  $PY "$HERE/assemble.py" --dir "$D" --bpm 120 --bars 6 --part P "$D/ev.txt" "$D/man.txt" other || exit 2
+  $PY "${ASSEMBLE:-$HERE/assemble.py}" --dir "$D" --bpm 120 --bars 6 --part P "$D/ev.txt" "$D/man.txt" other || exit 2
   ( cd "$D" && "$TMP/play" full out 2> render.log ) || { cat "$D/render.log"; exit 2; }
 }
 xrun bass "" --distance 0.05 --transpose f0
 xrun stab "" --distance 0.05 --transpose shift
 xrun pad "" --distance 0.05 --transpose shift --merge-sustain 0.05
 xrun pad n --distance 0.05 --transpose shift
+xrun pad x0 --distance 0
+xrun pad x8 --distance 0 --xfade-ms 8
 $PY "$HERE/test_extract.py" xcheck "$TMP/x" || fail=1
+# sharing only what nulls
+$PY "$HERE/test_extract.py" smake "$TMP/x/orig" || exit 2
+xrun shares spec --distance 0.1
+xrun shares null --share-null -20
+xrun shares rise --share-null -20 --no-share-rising
+$PY "$HERE/test_extract.py" scheck "$TMP/x" || fail=1
 # exact flag
 $PY "$HERE/test_extract.py" exactmake "$TMP/exact" || exit 2
 for ex in 1 0; do

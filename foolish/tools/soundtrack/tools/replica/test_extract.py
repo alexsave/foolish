@@ -281,14 +281,65 @@ def xcheck(d):
     print('  pad: %d segments with --merge-sustain, %d without' % (nm, nn))
     check('pad_merged_segments', 3 <= nm <= 5, 'pad segments with merge-sustain = %d, expected 3 to 5' % nm)
     check('pad_unmerged_segments', nn >= 2 * max(nm, 1) and nn >= 8, 'pad segments without merge-sustain = %d, expected clearly more than %d (>= 8 and >= twice)' % (nn, nm))
+    # crossfaded joins: the tremolo pad cut at every false onset (D = 0) must sum back to the original
+    o = dec(os.path.join(d, 'orig', 'pad.wav'))
+    res = {}
+    for k in ('x0', 'x8'):
+        r = dec(os.path.join(d, 'x_pad' + k, 'out', 'full.wav'))
+        G = C.glitch(o, r, SR)
+        res[k] = G['glitch_null_residual_db'][0]
+        print('  pad D=0 %s: %d pieces, null residual %.1f dB, dip runs %d, clicks %d' % (k, len(read_table(os.path.join(d, 'x_pad' + k, 'tab.tsv'))), res[k], G['glitch_dip_frames'][0], G['glitch_clicks'][0]))
+    check('xfade_null', res['x8'] < -40, 'null residual with --xfade-ms 8 = %.1f dB, expected < -40' % res['x8'])
+    check('oldfade_null', res['x0'] > -25, 'null residual with the old fades = %.1f dB, expected > -25' % res['x0'])
     R = _cmp_one(d, 'pad', 'other')
     v = R['mix.loud400_corr']
     check('pad_loud400', v >= 0.9, 'pad 400 ms loudness correlation = %.3f, expected >= 0.9' % v)
 
 
+# ---------------------------------------------------------------- sharing only what is the same (--share-null, --no-share-rising)
+SHARE_KINDS = 'ABABABAB' + 'SS' + 'A'         # A and B: two different noise realisations of one spectrum; S: a swell, twice the same
+SHARE_T0, SHARE_STEP = 0.5, 0.8
+
+
+def _noise_band(seed, lo, hi, n):
+    rng = np.random.default_rng(seed)
+    return T._bp(rng.standard_normal(n), lo, hi)
+
+
+def smake(d):
+    os.makedirs(d, exist_ok=True)
+    n = int(0.6 * SR); t = np.arange(n) / SR
+    A = _noise_band(SEED + 1, 500, 4000, n) * np.exp(-t / 0.1)
+    B = _noise_band(SEED + 2, 500, 4000, n) * np.exp(-t / 0.1)
+    m = int(0.65 * SR); tm = np.arange(m) / SR
+    S = _noise_band(SEED + 3, 200, 1500, m) * (0.1 + np.minimum(tm, 0.6) / 0.6) * np.clip((0.65 - tm) / 0.05, 0, 1)
+    x = np.zeros(int(SECONDS * SR))
+    for k, kind in enumerate(SHARE_KINDS):
+        y = {'A': A, 'B': B, 'S': S}[kind]
+        i = int((SHARE_T0 + SHARE_STEP * k) * SR)
+        x[i:i + len(y)] += (0.15 if k == 6 else 0.3) * y      # one A hit 6 dB quieter: a shared sample plays at its own velocity
+    write(os.path.join(d, 'shares.wav'), x)
+
+
+def scheck(d):
+    def clusters(name):
+        tab = read_table(os.path.join(d, 'x_' + name, 'tab.tsv'))
+        return tab, [r['cluster'] for r in tab]
+    tab, cl = clusters('sharesspec')
+    check('share_segments', len(tab) == len(SHARE_KINDS), 'segments = %d, hits = %d' % (len(tab), len(SHARE_KINDS)))
+    na = len(set(cl[:8]))
+    check('share_spectral_merges', na == 1, 'spectral distance 0.1: A and B hits form %d cluster(s), expected 1 (the two realisations look alike)' % na)
+    tab, cl = clusters('sharesnull')
+    check('share_null_splits', len(set(cl[0::2][:4])) == 1 and len(set(cl[1::2][:4])) == 1 and cl[0] != cl[1], 'share-null: A hits in %d cluster(s), B hits in %d, A and B %s, expected 1, 1, different' % (len(set(cl[0::2][:4])), len(set(cl[1::2][:4])), 'same' if cl[0] == cl[1] else 'different'))
+    check('share_null_swell_shared', cl[8] == cl[9], 'share-null: the two identical swells %s a sample, expected share' % ('share' if cl[8] == cl[9] else 'do not share'))
+    tab, cl = clusters('sharesrise')
+    check('no_share_rising', cl[8] != cl[9], 'with --no-share-rising the two swells %s a sample, expected separate samples' % ('share' if cl[8] == cl[9] else 'do not share'))
+    check('no_share_rising_others', len(set(cl[0::2][:4])) == 1, 'with --no-share-rising the A hits still share (%d cluster(s))' % len(set(cl[0::2][:4])))
+
+
 if __name__ == '__main__':
     cmd, d = sys.argv[1], sys.argv[2]
-    {'make': make, 'exactmake': exactmake, 'check': do_check, 'exactcheck': exactcheck, 'lead': leadcheck, 'leadmake': leadmake, 'xmake': xmake, 'xcheck': xcheck}[cmd](d)
+    {'make': make, 'exactmake': exactmake, 'check': do_check, 'exactcheck': exactcheck, 'lead': leadcheck, 'leadmake': leadmake, 'xmake': xmake, 'xcheck': xcheck, 'smake': smake, 'scheck': scheck}[cmd](d)
     if FAILS:
         print('FAILED: ' + ', '.join(FAILS))
         sys.exit(1)

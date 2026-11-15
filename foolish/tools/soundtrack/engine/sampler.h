@@ -64,6 +64,9 @@ static inline double cubic(const float *x, long n, double pos) {
 //        over X = 35% of the zone (40 to 250 ms) with constant-power gains normalised for that correlation; a zone under 150 ms
 //        is not looped (the sample plays out, one stderr line per sample); a note that ended before the zone never starts a loop, one
 //        already looping keeps looping through its release. -DSAMPLER_TRACE prints note and join lines to stderr.
+//     16 linear release ms (> 0): after note-off the gain falls linearly to zero over exactly that many ms and rendering ends there
+//        (instead of the exponential of sp[0]); with sp[2] equal to it, two adjacent notes crossfade with gains that sum to 1
+//        (not used by loop mode 2); 0 = off (default)
 //     15 exact (> 0): no per-note random detune (+-2 cents) and no +-0.6 dB gain variation, so a note at velocity v plays its sample
 //        at gain (v + 0.05)^sp[1] times sp[8] and at the sample's own pitch (sp[6] detune still applies if set); 0 = off (default)
 // mode 2 ("long loop") of sp[10]; see the sp comment. Positions are in source frames; the loop zone is [A, B].
@@ -144,13 +147,15 @@ static void syn_sampler(Track *tr, const Note *n, float *L, float *R, long nf) {
     double dur = n->dur; if (p[9] > 0) { int ti = (int)(tr - g_tr); dur = fmax(dur, damper_time(ti, n->t + n->dur) - n->t); }
     long s0 = lround(n->t * SR), len = (long)((dur + rel * 6) * SR);
     if (p[10] >= 1.5) { sampler_longloop(x, &rg, n, p, ratio, start, vdep, vrate, vph, g, gl, gr, dur, rel, L, R, nf, s0, len); return; }
+    double rlin = p[16] > 0 ? p[16] / 1000 : 0;    // sp[16]: linear release, the gain falls to zero over exactly this long after note-off
+    if (rlin > 0) len = (long)((dur + rlin) * SR);
     // loop region for long notes: the middle 50%-90% of the sample, crossfaded over 60 ms
     long la = (long)(x->n * 0.5), lb = (long)(x->n * 0.9), xf = (long)(0.06 * x->sr); if (lb - la < 2 * xf || p[10] <= 0) { la = 0; lb = 0; }
     double pos = start;
     for (long i = 0; i < len; i++) {
         double t = (double)i / SR, a = 1;
         if (p[2] > 0 && t < p[2] / 1000) a = t / (p[2] / 1000);
-        if (t > dur) a *= exp(-(t - dur) / rel);
+        if (t > dur) a *= rlin > 0 ? fmax(0.0, 1 - (t - dur) / rlin) : exp(-(t - dur) / rel);
         double l, r;
         if (lb > 0 && pos >= lb - xf) { // crossfaded loop
             double over = pos - (lb - xf); if (over >= xf) { pos = la + (over - xf); over = -1; }
