@@ -26,7 +26,9 @@ void city_setup(void) {
     eq(RH, 3, 2600, 1.0, 1.0); eq(RH, 5, 5000, 0, 2); eq(LH, 3, 220, 0.9, -1.0);
     // strings only where the music is a song or a march: a cello section sings the lament and the octave nocturne an octave
     // under the piano's top line (Chopin wrote for the cello), cellos and basses hold the funeral march's bass
-    VC = o_smp("cellos", OM "vc_sus.txt", 0.45, 1, 0.3, -35, 0.5, -2);   // v5: 3 dB lower and wetter, a warmth under the piano and not a solo voice (Alex: "synthy") VC2 = o_double(VC, "cellos2", -0.15);
+    VC = o_smp("cellos", OM "vc_sus.txt", 0.45, 1, 0.3, -35, 0.5, -2);   // v5: 3 dB lower and wetter, a warmth under the piano and not a solo voice (Alex: "synthy")
+    VC2 = o_double(VC, "cellos2", -0.15);   // the second cello player; this statement used to sit inside the comment above and never ran
+    if (VC2 <= VC) { fprintf(stderr, "6_warsaw score: the second cello track was not created (VC2 %d, VC %d)\n", VC2, VC); exit(1); }
     CB = o_smp("basses", OM "cb_sus.txt", 0.5, 1, 0.45, -40, 0.35, 3);
     for (int t = VC; t <= VC2; t++) { eq(t, 3, 300, 1, -1.5); eq(t, 1, 6500, 0.7, 0); }   // warm: the bow noise above 7 kHz sat on top of the piano
     eq(CB, 3, 250, 1, -2);
