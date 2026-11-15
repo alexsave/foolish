@@ -31,7 +31,7 @@ def main():
     sm = [DR.summarize(ref, ref), DR.summarize(base, ref, pre(tb)), DR.summarize(best, ref, pre(tg))]
     fig = plt.figure(figsize=(16, 11))
     fig.suptitle("ALT-CELLO - %s single note diagnosis - TARGET Philharmonia vs ALT-CELLO - iteration %s" % (note, it), fontsize=21, fontweight="bold")
-    gs = fig.add_gridspec(3, 6, left=0.05, right=0.985, top=0.92, bottom=0.05, hspace=0.38, wspace=0.55)
+    gs = fig.add_gridspec(3, 6, left=0.05, right=0.93, top=0.92, bottom=0.05, hspace=0.38, wspace=0.55)
     ims = []
     for i, (nt, ttl) in enumerate([(ref, "TARGET Philharmonia"), (base, "ALT-CELLO baseline (%s)" % tb), (best, "ALT-CELLO best (%s)" % tg)]):
         ax = fig.add_subplot(gs[0, 2 * i:2 * i + 2])
@@ -39,7 +39,7 @@ def main():
         S, F, T, im = ax.specgram(x[:int(2.5 * SR)], NFFT=4096, Fs=SR, noverlap=3584, cmap="magma", vmin=-110, vmax=-20, scale="dB")
         ax.set_ylim(0, 6000); ax.set_title(ttl, fontsize=12); ax.set_xlabel("s after onset"); ax.set_ylabel("Hz")
         ims.append(im)
-    fig.colorbar(ims[-1], ax=fig.axes[:3], fraction=0.015, pad=0.01, label="dB (same scale, notes equalised on 50-800 Hz)")
+    cax = fig.add_axes([0.945, 0.67, 0.012, 0.25]); fig.colorbar(ims[-1], cax=cax, label="dB, same scale")
     ax = fig.add_subplot(gs[1, 0:3])
     for nt, c, l in [(ref, C_REF, "TARGET Philharmonia"), (base, C_BASE, "ALT-CELLO baseline"), (best, C_BEST, "ALT-CELLO best")]:
         f, p = nt.spec(D.STEADY)
@@ -65,9 +65,9 @@ def main():
     cells = [[r[0]] + [D.fmt(float(s[r[1]]), r[2]) for s in sm] for r in rows]
     # pass column (best vs target)
     ok = DR.passes(sm[2], sm[0] | {"t_slip": 0.0}) if False else DR.passes(sm[2], dict(sm[0], t_slip=0.0))
-    tb_ = ax.table(cellText=cells, colLabels=["metric", "TARGET", "baseline", "best"], loc="center", cellLoc="center", colWidths=[0.34, 0.14, 0.14, 0.14])
+    tb_ = ax.table(cellText=cells, colLabels=["metric", "TARGET", "baseline", "best"], bbox=[0.28, 0.0, 0.70, 1.0], cellLoc="center")
     tb_.auto_set_font_size(False); tb_.set_fontsize(9.5); tb_.scale(1, 1.18)
-    ax.text(0.80, 0.5, "pass rules (best vs TARGET)\n" + "\n".join("%-8s %s" % (k, "PASS" if v else "FAIL") for k, v in ok.items()), transform=ax.transAxes, fontsize=12, family="monospace", va="center")
+    ax.text(0.0, 0.5, "pass rules (best vs TARGET)\n" + "\n".join("%-8s %s" % (k, "PASS" if v else "FAIL") for k, v in ok.items()), transform=ax.transAxes, fontsize=12, family="monospace", va="center")
     out = "/Users/alex/Music/foolish_cities_v5/alt_cello/charts/diagnose_%s_iter%s.png" % (note, it)
     fig.savefig(out, dpi=100)
     shutil.copy(os.path.join(R.OUTD, "%s__%s.wav" % (tg, note)), "/Users/alex/Music/foolish_cities_v5/alt_cello/audio/diagnosis/%s_best.wav" % note)
