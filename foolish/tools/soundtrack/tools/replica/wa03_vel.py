@@ -35,7 +35,7 @@ def energies(notes, y):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('inp'); ap.add_argument('orig'); ap.add_argument('rep'); ap.add_argument('out')
-    ap.add_argument('--gain', type=float, default=0.02); ap.add_argument('--step', type=float, default=0.15)
+    ap.add_argument('--drop-db', type=float, default=0.0, help='drop piano notes whose original energy is this many dB (> 0) under the replica\'s, a ghost note the original does not have'); ap.add_argument('--gain', type=float, default=0.02); ap.add_argument('--step', type=float, default=0.15)
     a = ap.parse_args()
     notes = []
     for ln in open(a.inp):
@@ -47,7 +47,10 @@ def main():
     Er = Er * (Eo.sum() / Er.sum())
     db = 10 * np.log10(Eo / Er)
     new = []
+    ndrop = 0
     for (p, s, e, m, v), d in zip(sel, db):
+        if a.drop_db > 0 and p == 'piano' and d < -a.drop_db:
+            ndrop += 1; continue
         if p == 'piano':
             v2 = v + float(np.clip(a.gain * d, -a.step, a.step))
         else:
@@ -57,6 +60,7 @@ def main():
     with open(a.out, 'w') as f:
         for p, s, e, m, v in sorted(new, key=lambda n: (n[1], n[3])):
             f.write('%s\t%.4f\t%.4f\t%.2f\t%.5f\n' % (p, s, e, m, v))
+    print('dropped', ndrop, 'ghost notes')
     print('velocity calibration: median |dB| %.2f, 90th %.2f' % (np.median(np.abs(db)), np.percentile(np.abs(db), 90)))
 
 
