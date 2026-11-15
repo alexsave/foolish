@@ -107,6 +107,23 @@ SNARE: C4:1.5 C4:0.5 C4:1 C4:1 | % | % | % | % | % | % | % | % | % | % | % | % |
 CYMBALS: r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | r:4 | C5:4 | r:4 | r:4 | r:4 | C5:4 | r:4 | r:4 | r:4 | C5:4
 TRANSITION: the unison E (bars 14-16) is held by cellos into Part IV as the dominant of A major
 
+SECTION III Street Fight: Ground BARS 8 KEY Em
+TRUMPETS: B4:1.5 E5:0.5 G5:2 | F#5:1.5 D5:0.5 A4:2 | G4:1.5 C5:0.5 E5:2 | F#5:2 A5:2 | B5:1.5 G5:0.5 E5:2 | F#5:1.5 D5:0.5 B4:2 | E5:1.5 C5:0.5 A4:2 | G#4:2 B4:2
+VIOLINS SPIC: E5:0.5 G5:0.5 B5:0.5 G5:0.5 E5:0.5 G5:0.5 B5:0.5 G5:0.5 | D5:0.5 F#5:0.5 A5:0.5 F#5:0.5 D5:0.5 F#5:0.5 A5:0.5 F#5:0.5 | C5:0.5 E5:0.5 G5:0.5 E5:0.5 C5:0.5 E5:0.5 G5:0.5 E5:0.5 | D5:0.5 F#5:0.5 A5:0.5 F#5:0.5 D5:0.5 F#5:0.5 A5:0.5 F#5:0.5 | E5:0.5 G5:0.5 B5:0.5 G5:0.5 E5:0.5 G5:0.5 B5:0.5 G5:0.5 | B4:0.5 D4:0.5 F#4:0.5 D4:0.5 B4:0.5 D4:0.5 F#4:0.5 D4:0.5 | A4:0.5 C4:0.5 E4:0.5 C4:0.5 A4:0.5 C4:0.5 E4:0.5 C4:0.5 | E5:0.5 G#5:0.5 B5:0.5 G#5:0.5 E5:0.5 G#5:0.5 B5:0.5 G#5:0.5
+VIOLAS SPIC: E4:0.5 G4:0.5 B4:0.5 G4:0.5 E4:0.5 G4:0.5 B4:0.5 G4:0.5 | D4:0.5 F#4:0.5 A4:0.5 F#4:0.5 D4:0.5 F#4:0.5 A4:0.5 F#4:0.5 | C4:0.5 E4:0.5 G4:0.5 E4:0.5 C4:0.5 E4:0.5 G4:0.5 E4:0.5 | D4:0.5 F#4:0.5 A4:0.5 F#4:0.5 D4:0.5 F#4:0.5 A4:0.5 F#4:0.5 | E4:0.5 G4:0.5 B4:0.5 G4:0.5 E4:0.5 G4:0.5 B4:0.5 G4:0.5 | B3:0.5 D3:0.5 F#3:0.5 D3:0.5 B3:0.5 D3:0.5 F#3:0.5 D3:0.5 | A3:0.5 C3:0.5 E3:0.5 C3:0.5 A3:0.5 C3:0.5 E3:0.5 C3:0.5 | E4:0.5 G#4:0.5 B4:0.5 G#4:0.5 E4:0.5 G#4:0.5 B4:0.5 G#4:0.5
+HORNS: E4+G4+B4:4 | D4+F#4+A4:4 | C4+E4+G4:4 | D4+F#4+A4:4 | E4+G4+B4:4 | B3+D4+F#4:4 | A3+C4+E4:4 | E4+G#4+B4:4
+TROMBONES: E3+B3+E4:1 r:3 | D3+A3+D4:1 r:3 | C3+G3+C4:1 r:3 | D3+A3+D4:1 r:3 | E3+B3+E4:1 r:3 | B2+F#3+B3:1 r:3 | A2+E3+A3:1 r:3 | E3+B3+E4:1 r:3
+CELLOS: E2:1 E2:1 E2:1 E2:1 | D2:1 D2:1 D2:1 D2:1 | C2:1 C2:1 C2:1 C2:1 | D2:1 D2:1 D2:1 D2:1 | E2:1 E2:1 E2:1 E2:1 | B1:1 B1:1 B1:1 B1:1 | A1:1 A1:1 A1:1 A1:1 | E2:1 E2:1 E2:1 E2:1
+BASSES: E2:1 E2:1 E2:1 E2:1 | D2:1 D2:1 D2:1 D2:1 | C2:1 C2:1 C2:1 C2:1 | D2:1 D2:1 D2:1 D2:1 | E2:1 E2:1 E2:1 E2:1 | B1:1 B1:1 B1:1 B1:1 | A1:1 A1:1 A1:1 A1:1 | E2:1 E2:1 E2:1 E2:1
+TUBA: E2:1 E2:1 E2:1 E2:1 | D2:1 D2:1 D2:1 D2:1 | C2:1 C2:1 C2:1 C2:1 | D2:1 D2:1 D2:1 D2:1 | E2:1 E2:1 E2:1 E2:1 | B1:1 B1:1 B1:1 B1:1 | A1:1 A1:1 A1:1 A1:1 | E2:1 E2:1 E2:1 E2:1
+TIMPANI: E2:1 r:1 E2:0.5 E2:0.5 r:1 | D2:1 r:1 D2:0.5 D2:0.5 r:1 | C2:1 r:1 C2:0.5 C2:0.5 r:1 | D2:1 r:1 D2:0.5 D2:0.5 r:1 | E2:1 r:1 E2:0.5 E2:0.5 r:1 | B1:1 r:1 B1:0.5 B1:0.5 r:1 | A1:1 r:1 A1:0.5 A1:0.5 r:1 | E2:1 r:1 E2:0.5 E2:0.5 r:1
+SNARE: C4:0.5 C4:0.25 C4:0.25 C4:0.5 C4:0.5 C4:0.5 C4:0.25 C4:0.25 C4:1 | C4:0.5 C4:0.25 C4:0.25 C4:0.5 C4:0.5 C4:0.5 C4:0.25 C4:0.25 C4:1 | C4:0.5 C4:0.25 C4:0.25 C4:0.5 C4:0.5 C4:0.5 C4:0.25 C4:0.25 C4:1 | C4:0.5 C4:0.25 C4:0.25 C4:0.5 C4:0.5 C4:0.5 C4:0.25 C4:0.25 C4:1 | C4:0.5 C4:0.25 C4:0.25 C4:0.5 C4:0.5 C4:0.5 C4:0.25 C4:0.25 C4:1 | C4:0.5 C4:0.25 C4:0.25 C4:0.5 C4:0.5 C4:0.5 C4:0.25 C4:0.25 C4:1 | C4:0.5 C4:0.25 C4:0.25 C4:0.5 C4:0.5 C4:0.5 C4:0.25 C4:0.25 C4:1 | C4:0.5 C4:0.25 C4:0.25 C4:0.5 C4:0.5 C4:0.5 C4:0.25 C4:0.25 C4:1
+BASSDRUM: C2:2 C2:2 | C2:2 C2:2 | C2:2 C2:2 | C2:2 C2:2 | C2:2 C2:2 | C2:2 C2:2 | C2:2 C2:2 | C2:2 C2:2
+CYMBALS: C5:4 | r:4 | r:4 | r:4 | C5:4 | r:4 | r:4 | r:4
+DYN: ff bars 1-4, fff bars 5-7, f bar 8
+FX: (v5.1) from Lyria sp_11 after 0:57 ("good around 0:57 and a bit after"), transcribed: its bass walks a ground, tonic, a step down, another step down, back up, tonic, the fifth, the fourth (D# C# B C# D# A# G# in its key), twice. Here in E minor, one chord a bar under spiccato strings: E minor, D, C, D, E minor, B minor, A minor, and E major to hand over to the lanterns in A. The tune on the trumpets and everything above the bass is ours.
+
+
 TEMPO 80 RAMP 4 AT -4
 SECTION IV Lanterns: Flute and Celesta BARS 12 KEY Amaj
 DYN: p
