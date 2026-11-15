@@ -8,7 +8,7 @@
 // the pitch >= 127.5 routing above does not apply to such a part.
 // "exact" is optional (default 1): 1 sets the sampler's sp[15] so no random detune or gain variation touches a note; 0 is for tests.
 // Optional on a sampler part: attack_ms <x> (sampler sp[2], a linear attack fade) and release_lin_ms <x> (sampler sp[16]); both default 0.
-// A synth part: PART <name> synth <supersaw|saw|808|sub> sp <comma separated numbers> gain_db <x> group <g> [eq <type>:<f>:<q>:<gain> ...]
+// A synth part: PART <name> synth <supersaw|saw|808|sub|kick|clap|hat|snare> sp <comma separated numbers> gain_db <x> group <g> [eq <type>:<f>:<q>:<gain> ...]
 //   [duck <part> <db> <att_s> <rel_s>] [send <bus> <level>]   (eq type 1 lp 2 hp 3 peak 4 lshelf 5 hshelf; duck: this part ducks under the
 //   named part's note onsets with the engine's apply_duck; send: only bus 0, the reverb of the BUS line, exists)
 // One optional line: BUS reverb <decay_s> <gain_db> (bus 0, an FDN reverb: rt60 decay, high rt60 0.6 of it, 5 ms predelay, size 0.6, hp 300, lp 9000, er 0.15).
@@ -60,8 +60,9 @@ void city_setup(void) {
             else if (!strcmp(k, "attack_ms")) att_ms = atof(tok[i + 1]);
             else if (!strcmp(k, "release_lin_ms")) rlin_ms = atof(tok[i + 1]);
             else if (!strcmp(k, "synth")) { const char *v = tok[i + 1];
-                sfn = !strcmp(v, "supersaw") ? syn_supersaw : !strcmp(v, "saw") ? syn_saw : !strcmp(v, "808") ? syn_808 : !strcmp(v, "sub") ? syn_sub : 0;
-                if (!sfn) die("parts.txt", ln, "synth must be supersaw, saw, 808 or sub, got", v); }
+                sfn = !strcmp(v, "supersaw") ? syn_supersaw : !strcmp(v, "saw") ? syn_saw : !strcmp(v, "808") ? syn_808 : !strcmp(v, "sub") ? syn_sub
+                    : !strcmp(v, "kick") ? syn_kick : !strcmp(v, "clap") ? syn_clap : !strcmp(v, "hat") ? syn_hat : !strcmp(v, "snare") ? syn_snare : 0;
+                if (!sfn) die("parts.txt", ln, "synth must be supersaw, saw, 808, sub, kick, clap, hat or snare, got", v); }
             else if (!strcmp(k, "sp")) { char *c = tok[i + 1]; int n = 0;
                 while (*c) { char *e; double v = strtod(c, &e); if (e == c) die("parts.txt", ln, "bad number in sp at", c); if (n >= 24) die("parts.txt", ln, "sp has more than 24 numbers:", tok[1]); sp[n++] = v; c = e; if (*c == ',') c++; else if (*c) die("parts.txt", ln, "bad separator in sp at", c); }
                 have_sp = 1; }
