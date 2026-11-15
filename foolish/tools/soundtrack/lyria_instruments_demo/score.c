@@ -62,5 +62,8 @@ void city_setup(void) {
     g_bus[0] = (Bus){.type = 1, .rev = {1.9, 1.05, 0, 0.8, 250, 7500, 0.15, 1.0, 0.25, 0.2}, .gain_db = 0, .duck_src = -1};
     g_tr[HAEGEUM].send[0] = HAE_SEND;
 }
-double city_loop(void) { g_nsec = 0; score_txt("score.txt", t_map, 0); return score_total_bars() * 4.0; }
+#ifndef SCORE
+#define SCORE "score.txt"
+#endif
+double city_loop(void) { g_nsec = 0; score_txt(SCORE, t_map, 0); return score_total_bars() * 4.0; }
 void city_full(void) { city_loop(); }

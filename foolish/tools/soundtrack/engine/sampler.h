@@ -56,6 +56,10 @@ static inline double cubic(const float *x, long n, double pos) {
 //     12 bow: skip the sample's slow swell by note length (1 = on): a short note starts 25 ms before the measured attack point,
 //        a long one (4 s and up) keeps the first 40% of the swell; 13 added vibrato depth cents, 14 its rate Hz (onset after
 //        0.18 s, full by 0.5 s, rate and phase per note) for samples recorded without vibrato or to spread an ensemble
+//        17 vibrato delay in seconds (> 0; 0 = the built-in 0.18 s), the ramp to full depth stays 0.32 s after it. The note's own switch:
+//        n->p[2] depth scale (0 = the track's sp[13], negative = off for this note, positive s = sp[13] times s) and n->p[3] rate
+//        override in Hz (0 = sp[14]); the score text sets them with "VIB PART: on|off|depth s|rate hz". A track with sp[13] = 0 has no
+//        vibrato whatever the note asks for.
 //        10 = 1: loop the middle 50-90% of the sample with a fixed 60 ms linear crossfade (the same fragment every pass).
 //        10 = 2 ("long loop"): play the sample forward once; when a note outlives the zone [A, B] (A = the later of the attack point
 //        plus 50 ms and 20% of the length, B = 60 ms before the end) each pass jumps, at B - X, to a point drawn from the note's own
@@ -75,7 +79,7 @@ static double ll_corr(const Smp *x, long a, long c, long W) {   // normalised cr
     for (long k = 0; k < W; k++) { double u = x->L[a + k] + x->R[a + k], v = x->L[c + k] + x->R[c + k]; sab += u * v; saa += u * u; sbb += v * v; }
     return saa > 1e-12 && sbb > 1e-12 ? sab / sqrt(saa * sbb) : 0;
 }
-static void sampler_longloop(Smp *x, Rng *rg, const Note *n, const double *p, double ratio, double start, double vdep, double vrate, double vph,
+static void sampler_longloop(Smp *x, Rng *rg, const Note *n, const double *p, double ratio, double start, double vdep, double vrate, double vph, double vdelay,
                              double g, double gl, double gr, double dur, double rel, float *L, float *R, long nf, long s0, long len) {
     long N = x->n; double sr = x->sr, att = x->att;
     double A = fmax(att * sr + 0.050 * sr, 0.2 * N), B = N - 0.060 * sr, Z = B - A;
@@ -111,7 +115,7 @@ static void sampler_longloop(Smp *x, Rng *rg, const Note *n, const double *p, do
             l = (cubic(x->L, N, pos) * ca + cubic(x->L, N, pos2) * cb) / nrm; r = (cubic(x->R, N, pos) * ca + cubic(x->R, N, pos2) * cb) / nrm;
         } else { if (pos >= N - 1) break; l = cubic(x->L, N, pos); r = cubic(x->R, N, pos); }
         long j = s0 + i; if (j >= 0 && j < nf) { L[j] += (float)(l * a * g * gl); R[j] += (float)(r * a * g * gr); }
-        double inc = vdep > 0 ? ratio * pow(2, vdep * clampd((t - 0.18) / 0.32, 0, 1) * sin(2 * M_PI * vrate * t + vph)) : ratio;
+        double inc = vdep > 0 ? ratio * pow(2, vdep * clampd((t - vdelay) / 0.32, 0, 1) * sin(2 * M_PI * vrate * t + vph)) : ratio;
         pos += inc;
         if (xf) { pos2 += inc; w += inc / X;
             if (w >= 1) { pos = pos2; xf = 0;
@@ -141,12 +145,15 @@ static void syn_sampler(Track *tr, const Note *n, float *L, float *R, long nf) {
     double ratio = pow(2, (n->pitch - x->root) / 12.0 + det) * x->sr / SR;
     double rel = p[0] > 0 ? p[0] : 0.25, start = p[4] > 0 ? p[4] / 1000 * x->sr : 0;
     if (p[12] > 0 && x->att > 0.03) { double f = clampd((n->dur - 0.5) / 3.5, 0, 1), sk = (x->att - 0.025) * (1 - f) + x->att * 0.4 * f; start = fmax(start, sk * x->sr); }
-    double vdep = p[13] / 1200, vrate = (p[14] > 0 ? p[14] : 5.5) * (1 + 0.08 * rgauss(&rg)), vph = r01(&rg) * 2 * M_PI;
+    // the note's own vibrato switch (n->p[2] depth scale: 0 = the track's, negative = off, positive = times that; n->p[3] rate override, 0 = the
+    // track's) and the track's delay sp[17] (0 = 0.18 s); the random draws are the same whatever the switch says, so a note keeps its phase
+    double vsc = n->p[2] < 0 ? 0 : (n->p[2] > 0 ? n->p[2] : 1), vdelay = p[17] > 0 ? p[17] : 0.18;
+    double vdep = p[13] / 1200 * vsc, vrate = (n->p[3] > 0 ? n->p[3] : (p[14] > 0 ? p[14] : 5.5)) * (1 + 0.08 * rgauss(&rg)), vph = r01(&rg) * 2 * M_PI;
     double g = db2a(p[8]) * pow(v + 0.05, p[1] > 0 ? p[1] : 1.0) * ss->gain[x->layer] * gvar;
     double pan = p[5] > 0 ? clampd((n->pitch - 64) / 30.0 * p[5], -1, 1) : 0; double ca = (pan + 1) * M_PI / 4, gl = cos(ca) * 1.41421356, gr = sin(ca) * 1.41421356; if (gl > 1) gl = 1; if (gr > 1) gr = 1;
     double dur = n->dur; if (p[9] > 0) { int ti = (int)(tr - g_tr); dur = fmax(dur, damper_time(ti, n->t + n->dur) - n->t); }
     long s0 = lround(n->t * SR), len = (long)((dur + rel * 6) * SR);
-    if (p[10] >= 1.5) { sampler_longloop(x, &rg, n, p, ratio, start, vdep, vrate, vph, g, gl, gr, dur, rel, L, R, nf, s0, len); return; }
+    if (p[10] >= 1.5) { sampler_longloop(x, &rg, n, p, ratio, start, vdep, vrate, vph, vdelay, g, gl, gr, dur, rel, L, R, nf, s0, len); return; }
     double rlin = p[16] > 0 ? p[16] / 1000 : 0;    // sp[16]: linear release, the gain falls to zero over exactly this long after note-off
     if (rlin > 0) len = (long)((dur + rlin) * SR);
     // loop region for long notes: the middle 50%-90% of the sample, crossfaded over 60 ms
@@ -163,7 +170,7 @@ static void syn_sampler(Track *tr, const Note *n, float *L, float *R, long nf) {
             else { l = cubic(x->L, x->n, pos); r = cubic(x->R, x->n, pos); }
         } else { if (pos >= x->n - 1) break; l = cubic(x->L, x->n, pos); r = cubic(x->R, x->n, pos); }
         long j = s0 + i; if (j >= 0 && j < nf) { L[j] += (float)(l * a * g * gl); R[j] += (float)(r * a * g * gr); }
-        if (vdep > 0) { double ve = clampd((t - 0.18) / 0.32, 0, 1); pos += ratio * pow(2, vdep * ve * sin(2 * M_PI * vrate * t + vph)); } else
+        if (vdep > 0) { double ve = clampd((t - vdelay) / 0.32, 0, 1); pos += ratio * pow(2, vdep * ve * sin(2 * M_PI * vrate * t + vph)); } else
         pos += ratio;
         if (a < 1e-5 && t > dur) break;
     }
