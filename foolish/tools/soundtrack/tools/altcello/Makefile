@@ -1,6 +1,6 @@
 CC = clang
 CFLAGS = -O2 -Wall -Wextra -std=c11 -D_DARWIN_C_SOURCE
-LIB = rng.c string_params.c string.c finger.c bow.c control.c sim.c fft.c analysis.c
+LIB = rng.c string_params.c altstring.c finger.c bow.c control.c sim.c fft.c analysis.c
 LIBO = $(LIB:.c=.o)
 TESTS = test_rng test_string_free test_helmholtz test_schelleng test_finger test_determinism
 

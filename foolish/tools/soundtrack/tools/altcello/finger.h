@@ -1,10 +1,10 @@
 /* Left-hand finger: a pad of raised-cosine weights g_l in [0,1] pressing on
  * the grid points under it, force per metre of string
  *   f_l = -a g_l (K y_l + R y_t,l)      (both polarisations)
- * treated implicitly (centred) in string.c, so any K is stable. */
+ * treated implicitly (centred) in altstring.c, so any K is stable. */
 #ifndef ALTCELLO_FINGER_H
 #define ALTCELLO_FINGER_H
-#include "string.h"
+#include "altstring.h"
 
 typedef struct {
     double width; /* pad width, m */

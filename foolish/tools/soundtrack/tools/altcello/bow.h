@@ -2,9 +2,9 @@
 #ifndef ALTCELLO_BOW_H
 #define ALTCELLO_BOW_H
 #include "rng.h"
-#include "string.h"
+#include "altstring.h"
 
-#define BOW_NOISE_RATE 4000 /* draws per second of simulated time (every 0.25 ms) */
+#define BOW_NOISE_RATE 4000 /* noise draws per simulated second: one every 0.25 ms */
 #define BOW_MAXPTS 64
 #define BOW_PHI_STATIC 1.2  /* phi(0+) = 0.4 + 0.45 + 0.35 */
 

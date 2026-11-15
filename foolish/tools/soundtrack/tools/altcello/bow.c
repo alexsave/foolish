@@ -2,7 +2,7 @@
  *
  * Per sample the bow force on the string is -F phi(v_rel) J_l (u polarisation),
  * v_rel = sum_l J_l h (u2_l - u0_l)/(2k) - vB, and u2_l = ufree_l - A_l J_l F phi
- * with A_l = k^2 / (rho D_l) (D_l = the implicit diagonal of string.c). Hence
+ * with A_l = k^2 / (rho D_l) (D_l = the implicit diagonal of altstring.c). Hence
  *   v_rel = q - G phi(v_rel),
  *   q = sum J h (ufree - u0)/(2k) - vB,   G = F sum_l h A_l J_l^2 / (2k).
  * Friedlander construction, for q > 0 (q < 0 by oddness: solve for |v|, flip):

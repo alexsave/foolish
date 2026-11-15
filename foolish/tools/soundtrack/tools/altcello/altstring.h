@@ -12,8 +12,8 @@
  * y0 = time n-1, y1 = n, y2 = n+1. Arrays are padded with 2 ghost points on
  * each side (index -2 .. N+2); ghosts hold the odd reflection of the
  * simply supported ends (y = y_xx = 0). */
-#ifndef ALTCELLO_STRING_H
-#define ALTCELLO_STRING_H
+#ifndef ALTCELLO_ALTSTRING_H
+#define ALTCELLO_ALTSTRING_H
 #include <stddef.h>
 #include "string_params.h"
 

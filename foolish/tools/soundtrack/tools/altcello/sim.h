@@ -5,7 +5,7 @@
 #include "control.h"
 #include "finger.h"
 #include "rng.h"
-#include "string.h"
+#include "altstring.h"
 
 #define SIM_NCH 5
 /* channels: bridge force u, bridge force w, string velocity at the bow (u),
