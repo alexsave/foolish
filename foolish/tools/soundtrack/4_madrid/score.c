@@ -8,7 +8,7 @@
 #include "../engine/orch.h"
 #define SP(t, ...) do { double v_[] = {__VA_ARGS__}; memcpy(g_tr[t].sp, v_, sizeof v_); } while (0)
 
-static int TRES2, GS, GL, GUIRO, CG, BG, CGS, BGS, PN, TR, VB, BS, BSUB;
+static int TRES2, GS, GL, GUIRO, CG, BG, CGS, BGS, PN, TR, VB, BS, BSUB, V5FL, V5ST, V5NIL;
 
 void city_setup(void) {
     g_on_done = sections_out;
@@ -27,19 +27,20 @@ void city_setup(void) {
     int pn = PN = o_smp("piano", OM "salamander.txt", 0.25, 0, -0.3, 0, 0.12, -4); eq(pn, 3, 300, 1, -2); eq(pn, 5, 3000, 0, 2);
     int bs = BS = o_smp("bass", OM "dbass_pizz.txt", 0.4, 0, 0.0, -8, 0.06, 6); eq(bs, 3, 900, 1, 2);
     // the baby bass's fundamental: a sine under the upright (the low end measured -30 dB under 60 Hz)
-    BSUB = syn_track("bass sub", syn_sub); SP(BSUB, 0.005, 0.12, 0.1, 0.3, 0.6); g_tr[BSUB].gain_db = -8; g_tr[BSUB].delay_ms = -8; eq(BSUB, 1, 140, 0.7, 0);
+    BSUB = syn_track("bass sub", syn_sub); SP(BSUB, 0.005, 0.12, 0.1, 0.3, 0.6); g_tr[BSUB].gain_db = -8; g_tr[BSUB].mute = 1;   /* v5: "a low bass note that is super loud": the sine under the bass is off, the upright stands alone */ g_tr[BSUB].delay_ms = -8; eq(BSUB, 1, 140, 0.7, 0);
     int tr = TR = syn_track("tres", syn_guitar); SP(tr, 0.995, 0.75, 0.12, 0.5, 0.0); g_tr[tr].pan = -0.45; g_tr[tr].send[0] = 0.15; g_tr[tr].human_ms = 4; g_tr[tr].gain_db = 0;
     TRES2 = syn_track("tres octave", syn_guitar); SP(TRES2, 0.994, 0.8, 0.1, 0.4, 0.0); g_tr[TRES2].pan = -0.35; g_tr[TRES2].delay_ms = 9; g_tr[TRES2].send[0] = 0.15; g_tr[TRES2].gain_db = -6;
     eq(tr, 2, 120, 0.7, 0); eq(TRES2, 2, 200, 0.7, 0);
     int vb = VB = o_smp("vibes", OM "vibes.txt", 1.0, 0, 0.2, 0, 0.3, 2);
     // horns: each line a doubled section; the solo trumpet alone, with vibrato
-    int t1 = o_smp("trumpet1", OM "tpt_sus.txt", 0.15, 1, 0.2, -15, 0.2, 0), t1b = o_double(t1, "trumpet1b", 0.1);
-    int t2 = o_smp("trumpet2", OM "tpt_sus.txt", 0.15, 1, 0.4, -15, 0.2, -2), t2b = o_double(t2, "trumpet2b", 0.1);
+    int t1 = o_smp("trumpet1", OM "tpt_sus.txt", 0.15, 1, 0.2, -15, 0.2, -3), t1b = o_double(t1, "trumpet1b", 0.1);
+    int t2 = o_smp("trumpet2", OM "tpt_sus.txt", 0.15, 1, 0.4, -15, 0.2, -5), t2b = o_double(t2, "trumpet2b", 0.1);
     int b1 = o_smp("trombone1", OM "tbn_sus.txt", 0.15, 1, -0.2, -20, 0.2, 12), b1b = o_double(b1, "trombone1b", -0.1);
     int b2 = o_smp("trombone2", OM "tbn_sus.txt", 0.15, 1, -0.4, -20, 0.2, 14), b2b = o_double(b2, "trombone2b", -0.1);
     int so = o_smp("solo trumpet", OM "tpt_vib.txt", 0.2, 1, 0.0, -10, 0.28, 2);
-    int sx = o_smp("sax", OM "tsax.txt", 0.2, 1, 0.1, -15, 0.25, 4), fl = o_smp("flute", OM "fl_vib.txt", 0.2, 1, -0.1, -15, 0.3, 0);
-    int st = o_smp("strings", OM "vln_sus.txt", 0.3, 1, -0.5, -30, 0.35, 0), st2 = o_double(st, "strings2", 0.2); o_hi(st, "strings hi", 88);
+    int sx = o_smp("sax", OM "tsax.txt", 0.2, 1, 0.1, -15, 0.25, 4), fl = o_smp("flute", OM "fl_vib.txt", 0.2, 1, -0.1, -15, 0.3, 0); V5FL = fl;
+    int st = o_smp("strings", OM "vln_sus.txt", 0.3, 1, -0.5, -30, 0.35, 0), st2 = o_double(st, "strings2", 0.2); V5ST = st;
+    V5NIL = syn_track("unused", syn_sub); g_tr[V5NIL].mute = 1; o_hi(st, "strings hi", 88);
     for (int t = t1; t <= so; t++) { eq(t, 2, 150, 0.7, 0); eq(t, 3, 2800, 1, -1); }
     o_part("CONGA", cg, -1, 0, 0, 0); o_part("BONGO", bg, -1, 0, 0, 0); o_part("TIMBALES", tm, -1, 0, 0, 0);
     o_part("BELL", bl, -1, 0, 1, 0); o_part("TBELL", tb, -1, 0, 1, 0); o_part("CLAVE", cl, -1, 0, 1, 0); o_part("CASCARA", cs, -1, 0, 1, 0);
@@ -59,6 +60,12 @@ void city_setup(void) {
 }
 double city_loop(void) {
     int n0 = g_nnote; g_nsec = 0; score_txt("score.txt", o_map, 0);
+    // v5: vibes, flute and violins play only in the cha-cha-cha and its break (the charanga he called "wistful, longing, hopeful");
+    // everywhere else they made the band read as "tavern" and "Under the Sea", so their notes go to a silent track
+    { int s0 = sec_find("III La Latina: Cha-cha-cha (charanga)"), s1 = sec_find("III La Latina: Rompe (percussion break)");
+      if (s0 < 0 || s1 < 0) fprintf(stderr, "no La Latina sections\n");
+      double b0 = s0 < 0 ? 1e9 : g_sec[s0].bar0 * 4.0, b1 = s1 < 0 ? -1 : (g_sec[s1].bar0 + g_sec[s1].bars) * 4.0;
+      for (int i = n0; i < g_nnote; i++) if ((g_note[i].tr == VB || g_note[i].tr == V5FL || g_note[i].tr == V5ST) && (g_note[i].beat < b0 - 1e-6 || g_note[i].beat >= b1 - 1e-6)) g_note[i].tr = V5NIL; }
     o_roll(n0, PN, 9, 184); o_roll(n0, TR, 14, 184); o_roll(n0, VB, 6, 184);   // the montuno's hands spread, the tres strummed
     int n1 = g_nnote;
     for (int i = n0; i < n1; i++) {
