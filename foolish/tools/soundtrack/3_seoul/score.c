@@ -67,6 +67,7 @@ void city_setup(void) {
     g_tr[SSTR].chorus_mix = 0.35; g_tr[SSTR].chorus_ms = 9; g_tr[SSTR].chorus_depth_ms = 2;
     SBRS = syn_track("synth brass", syn_saw); SP(SBRS, 5, 14, 1.6, 6, 0.06, 0.9, 0.18, 0.06, 0.15, 0.004); g_tr[SBRS].gain_db = -5; g_tr[SBRS].send[0] = 0.18; eq(SBRS, 2, 180, 0.7, 0); eq(SBRS, 3, 1400, 1, 2);
     CHANT = syn_track("chant", syn_voice); SP(CHANT, 1, 1.0, 8, 25, 5, 0, 0.35, 0.004, 0.05, 0, 0, 0, 1, 0.03, 0.012, 4, 9000);
+    g_tr[CHANT].mute = 1;   // v5: no voices outside Moscow (Alex heard "weird vocal-like things" at 0:10); the part stays in the score, silent
     g_tr[CHANT].gain_db = -8; g_tr[CHANT].send[0] = 0.3; eq(CHANT, 2, 220, 0.7, 0); eq(CHANT, 3, 2500, 1, 3);
     int duck[] = {PAD, ARP, STAB, LEAD2, B808, SSTR, SBRS, VLN, VLA, VC}; for (unsigned i = 0; i < 10; i++) { g_tr[duck[i]].duck_src = KICK; g_tr[duck[i]].duck_db = 3; g_tr[duck[i]].duck_rel = 0.08; }
     g_grp[2].duck_src = KICK;
@@ -102,11 +103,15 @@ static void post(int n0) {
         if (a.tr == TPT) note(SBRS, a.beat, fmin(a.len, 0.45), a.pitch, a.vel); } }
     int sd[3] = {VC, VLA, VLN}; split_chords(n0, VLN, sd, 3);
     int bd[3] = {TBN, HRN, TPT}; split_chords(n0, TPT, bd, 3);
+    // v5: the pre-chorus lead sat at A5-E7 ("too synthy and thin" at 0:27): an octave down, and no top-octave layer there
+    for (int i = n0; i < g_nnote; i++) if (g_note[i].tr == LEAD && in_sec(g_note[i].beat, "Gangnam Girl-Crush: Pre-chorus")) g_note[i].pitch -= 12;
+    // v5: the house piano stabs get a body: the stab synth an octave below, quietly (the synth piano alone read as thin at 2:55)
+    { int n2 = g_nnote; for (int i = n0; i < n2; i++) if (g_note[i].tr == M1P && (in_sec(g_note[i].beat, "Itaewon After Hours: Stabs") || in_sec(g_note[i].beat, "Itaewon After Hours: Peak"))) note(STAB, g_note[i].beat, g_note[i].len, g_note[i].pitch - 12, g_note[i].vel * 0.45); }
     int n1 = g_nnote;
     for (int i = n0; i < n1; i++) { Note n = g_note[i];
         if (n.tr == LEAD) { // the stack: the full chord on the main layer; the top note an octave up; the bottom note an octave down; a square on the top note
             int top = 1, bot = 1; for (int j = n0; j < n1; j++) if (j != i && g_note[j].tr == LEAD && fabs(g_note[j].beat - n.beat) < 1e-6) { if (g_note[j].pitch > n.pitch) top = 0; if (g_note[j].pitch < n.pitch) bot = 0; }
-            if (top) { note(LEADHI, n.beat, n.len, n.pitch + 12, n.vel * 0.8); note(LEADSQ, n.beat, n.len, n.pitch, n.vel * 0.9); }
+            if (top) { if (!in_sec(n.beat, "Gangnam Girl-Crush: Pre-chorus")) note(LEADHI, n.beat, n.len, n.pitch + 12, n.vel * 0.8); note(LEADSQ, n.beat, n.len, n.pitch, n.vel * 0.9); }
             if (bot) note(LEADLO, n.beat, n.len, n.pitch - 12, n.vel * 0.9); }
         if (n.tr == KICK) note(KTOP, n.beat, 0.05, 60, n.vel);
         if (n.tr == SUB && n.pitch < 40) g_note[i].pitch += 12;
