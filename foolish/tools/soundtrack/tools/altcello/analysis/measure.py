@@ -524,19 +524,22 @@ HEADLINE = [("attack_ms", "attack ms"), ("hnr_db", "HNR dB"), ("hnr_res_db", "HN
 
 def compare_figure(alt_prefix, target_tsv, title, out_png):
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-    A = read_tsv(alt_prefix + ".tsv"); T = read_tsv(target_tsv, "TARGET")
+    A = read_tsv(alt_prefix + ".tsv"); T = read_tsv(target_tsv, "TARGET"); LR = read_tsv(target_tsv, "LYRIA_REF")
     fig = plt.figure(figsize=(16, 11)); fig.suptitle(title, fontsize=18, fontweight="bold")
     gs = fig.add_gridspec(2, 2, hspace=0.32, wspace=0.18, top=0.9, bottom=0.07, left=0.06, right=0.97)
     ax = fig.add_subplot(gs[0, 0]); fz = [f for f in LTAS_F if "ltas_db@%d" % round(f) in A and "ltas_db@%d" % round(f) in T]
+    if LR and all(("ltas_db@%d" % round(f)) in LR for f in fz): ax.plot(fz, [LR["ltas_db@%d" % round(f)][0] for f in fz], "k--", lw=1.5, label="LYRIA_REF")
     for D, lb, col in ((T, "TARGET", "tab:blue"), (A, "ALT-CELLO", "tab:red")):
         ax.plot(fz, [D["ltas_db@%d" % round(f)][0] for f in fz], color=col, lw=2, label=lb)
     ax.set_xscale("log"); ax.set_xlabel("Hz"); ax.set_ylabel("dB re peak"); ax.set_title("long-term spectral envelope (1/6 octave)"); ax.legend(); ax.grid(alpha=0.3)
     ax.set_ylim(-70, 3)
     ax = fig.add_subplot(gs[0, 1]); ks = list(range(2, 17))
+    if LR and all(("h%d" % k) in LR for k in ks): ax.plot(ks, [LR["h%d" % k][0] for k in ks], "k--", lw=1.5, label="LYRIA_REF")
     for D, lb, col in ((T, "TARGET", "tab:blue"), (A, "ALT-CELLO", "tab:red")):
         ax.plot(ks, [D.get("h%d" % k, (np.nan,))[0] for k in ks], "o-", color=col, lw=2, label=lb)
     ax.set_xlabel("harmonic k"); ax.set_ylabel("dB re h1"); ax.set_title("median harmonic levels"); ax.legend(); ax.grid(alpha=0.3)
     ax = fig.add_subplot(gs[1, 0]); fc = [f for f in THIRD_FC if "noise_db@%d" % round(f) in A and "noise_db@%d" % round(f) in T]
+    if LR and all(("noise_db@%d" % round(f)) in LR for f in fc): ax.plot(fc, [LR["noise_db@%d" % round(f)][0] for f in fc], "k--", lw=1.5, label="LYRIA_REF")
     for D, lb, col in ((T, "TARGET", "tab:blue"), (A, "ALT-CELLO", "tab:red")):
         ax.plot(fc, [D["noise_db@%d" % round(f)][0] for f in fc], "o-", color=col, lw=2, label=lb)
     ax.set_xscale("log"); ax.set_xlabel("Hz"); ax.set_ylabel("dB re total"); ax.set_title("noise residual, 1/3-octave bands"); ax.legend(); ax.grid(alpha=0.3)
