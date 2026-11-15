@@ -14,6 +14,29 @@ static int t_map(const char *p, double *tp, double *vs, double *dp) {
     if (!strcmp(p, "TRUMPET")) return TRUMPET;
     return -1;
 }
+// Sample sets and vibrato: MSUF selects the manifest suffix per instrument ("" or "_flat"); a flat set gets the engine's own vibrato
+// LFO (sp[13] depth in cents peak, sp[14] rate in Hz), set per instrument with -DCELLO_VIBC=.. -DCELLO_VIBHZ=.. (default 0 = off).
+#ifndef CELLO_SUF
+#define CELLO_SUF ""
+#endif
+#ifndef HAEGEUM_SUF
+#define HAEGEUM_SUF ""
+#endif
+#ifndef TRUMPET_SUF
+#define TRUMPET_SUF ""
+#endif
+#ifndef CELLO_VIBC
+#define CELLO_VIBC 0
+#define CELLO_VIBHZ 0
+#endif
+#ifndef HAEGEUM_VIBC
+#define HAEGEUM_VIBC 0
+#define HAEGEUM_VIBHZ 0
+#endif
+#ifndef TRUMPET_VIBC
+#define TRUMPET_VIBC 0
+#define TRUMPET_VIBHZ 0
+#endif
 static int lyria_track(const char *name, const char *manifest, int loop, double rel) {
     int t = smp_track(name, manifest);
     g_tr[t].sp[0] = rel;                  // release time constant, s
@@ -33,9 +56,9 @@ static int lyria_track(const char *name, const char *manifest, int loop, double 
 #endif
 void city_setup(void) {
     g_on_done = sections_out;
-    CELLO = lyria_track("cello", LM "lyria_cello.txt", 2, 1.46 / 2.303);
-    HAEGEUM = lyria_track("haegeum", LM "lyria_haegeum.txt", 2, 0.165 / 2.303);
-    TRUMPET = lyria_track("trumpet", LM "lyria_trumpet.txt", 2, 0.735 / 2.303);
+    CELLO = lyria_track("cello", LM "lyria_cello" CELLO_SUF ".txt", 2, 1.46 / 2.303); g_tr[CELLO].sp[13] = CELLO_VIBC; g_tr[CELLO].sp[14] = CELLO_VIBHZ;
+    HAEGEUM = lyria_track("haegeum", LM "lyria_haegeum" HAEGEUM_SUF ".txt", 2, 0.165 / 2.303); g_tr[HAEGEUM].sp[13] = HAEGEUM_VIBC; g_tr[HAEGEUM].sp[14] = HAEGEUM_VIBHZ;
+    TRUMPET = lyria_track("trumpet", LM "lyria_trumpet" TRUMPET_SUF ".txt", 2, 0.735 / 2.303); g_tr[TRUMPET].sp[13] = TRUMPET_VIBC; g_tr[TRUMPET].sp[14] = TRUMPET_VIBHZ;
     g_bus[0] = (Bus){.type = 1, .rev = {1.9, 1.05, 0, 0.8, 250, 7500, 0.15, 1.0, 0.25, 0.2}, .gain_db = 0, .duck_src = -1};
     g_tr[HAEGEUM].send[0] = HAE_SEND;
 }

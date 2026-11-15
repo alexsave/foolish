@@ -1,5 +1,5 @@
 // one_note.c: renders ONE held note of a Lyria sampler instrument alone, for the loop checks.
-// Settings from the environment: INST (cello|haegeum|trumpet), LOOPMODE (sp[10]: 0, 1, 2), SEND (haegeum reverb send, 0 = off),
+// Settings from the environment: INST (a manifest name, e.g. cello or cello_flat) (cello|haegeum|trumpet), LOOPMODE (sp[10]: 0, 1, 2), SEND (haegeum reverb send, 0 = off),
 // REL (release, s), NOTE (e.g. D3), VEL (0..1, picks the layer of a two-layer set), LEN (seconds the note sounds, default 5).
 // The score is written here to score.txt: a 4-beat rest, then the note at beat 4, then rests, at 90 BPM, no DYN line.
 // Build and run from a work folder: clang -O2 -w -o one one_note.c && SAMPLES=... ENGINE=<engine dir> ./one full out
@@ -14,6 +14,7 @@ void city_setup(void) {
     g_tr[T].human_ms = 0; g_tr[T].human_vel = 0;
     g_bus[0] = (Bus){.type = 1, .rev = {1.9, 1.05, 0, 0.8, 250, 7500, 0.15, 1.0, 0.25, 0.2}, .gain_db = 0, .duck_src = -1};
     g_tr[T].send[0] = atof(getenv("SEND"));
+    if (getenv("VIBC")) { g_tr[T].sp[13] = atof(getenv("VIBC")); g_tr[T].sp[14] = atof(getenv("VIBHZ")); }   // the engine LFO: depth (cents, peak) and rate
 }
 double city_loop(void) {
     char sc[400]; double len = getenv("LEN") ? atof(getenv("LEN")) : 5.0;
