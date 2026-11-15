@@ -1,0 +1,2 @@
+24 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/other_d0.35/OTHER_000.wav
+25 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/other_d0.35/OTHER_001.wav

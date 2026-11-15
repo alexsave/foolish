@@ -1,0 +1,5 @@
+24 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/bass_d0.1/BASS_000.wav
+25 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/bass_d0.1/BASS_001.wav
+26 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/bass_d0.1/BASS_002.wav
+27 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/bass_d0.1/BASS_003.wav
+28 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/bass_d0.1/BASS_004.wav

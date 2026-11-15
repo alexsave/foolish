@@ -1,0 +1,5 @@
+24 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/drums_d0.35/DRUMS_000.wav
+25 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/drums_d0.35/DRUMS_001.wav
+26 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/drums_d0.35/DRUMS_002.wav
+27 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/drums_d0.35/DRUMS_003.wav
+28 0 0 /soundtrack/samples/lyria/replica/se11_drop_0-42/drums_d0.35/DRUMS_004.wav

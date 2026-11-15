@@ -56,6 +56,8 @@ static inline double cubic(const float *x, long n, double pos) {
 //     12 bow: skip the sample's slow swell by note length (1 = on): a short note starts 25 ms before the measured attack point,
 //        a long one (4 s and up) keeps the first 40% of the swell; 13 added vibrato depth cents, 14 its rate Hz (onset after
 //        0.18 s, full by 0.5 s, rate and phase per note) for samples recorded without vibrato or to spread an ensemble
+//     15 exact (> 0): no per-note random detune (+-2 cents) and no +-0.6 dB gain variation, so a note at velocity v plays its sample
+//        at gain (v + 0.05)^sp[1] times sp[8] and at the sample's own pitch (sp[6] detune still applies if set); 0 = off (default)
 static void syn_sampler(Track *tr, const Note *n, float *L, float *R, long nf) {
     SampleSet *ss = (SampleSet *)tr->user; double *p = tr->sp; if (!ss || !ss->n) return;
     Rng rg = {n->seed};
@@ -70,7 +72,8 @@ static void syn_sampler(Track *tr, const Note *n, float *L, float *R, long nf) {
     if (!x->L) { g_wav_quiet = 1; x->n = wav_read(x->path, &x->L, &x->R); x->sr = g_wav_sr; g_wav_quiet = 0; smp_trim(x); }
     double det = p[6] > 0 ? rgauss(&rg) * p[6] / 1200 : 0;
     // no two hits identical even without round-robin samples: +-2 cents and +-0.6 dB per note (from its seed)
-    det += rgauss(&rg) * 2.0 / 1200; double gvar = db2a(rgauss(&rg) * 0.6);
+    // sp[15] exact > 0 turns both off (a replica reproduces a stored sample at the level its velocity says, at its own pitch)
+    double gvar = 1; if (p[15] <= 0) { det += rgauss(&rg) * 2.0 / 1200; gvar = db2a(rgauss(&rg) * 0.6); }
     double ratio = pow(2, (n->pitch - x->root) / 12.0 + det) * x->sr / SR;
     double rel = p[0] > 0 ? p[0] : 0.25, start = p[4] > 0 ? p[4] / 1000 * x->sr : 0;
     if (p[12] > 0 && x->att > 0.03) { double f = clampd((n->dur - 0.5) / 3.5, 0, 1), sk = (x->att - 0.025) * (1 - f) + x->att * 0.4 * f; start = fmax(start, sk * x->sr); }

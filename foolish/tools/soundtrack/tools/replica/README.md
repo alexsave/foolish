@@ -103,3 +103,72 @@ Onset detection on dense pads and noisy mixes is noisy; the same detector runs o
 The constant offset cannot follow a tempo mismatch; read `drift_ms`.
 Chroma and CQT cosines of non-negative vectors are high even for unrelated music (about 0.6 to 0.8), which is why only the above-chance values enter the overall score.
 Tempo can land on half or double; compare the candidates before trusting `tempo_pct_diff`.
+
+## extract.py, assemble.py, play.c and test_extract.sh: replaying a window from its own stems
+
+These four make a replica of a window of a recording that plays from an editable score with the recording's real timing, using a small set of one-shot samples cut from the recording's own separated stems.
+Run Python with `python3 -I`.
+The measured trade-off between how few samples are stored and how close the replica gets lives with each replica (its work folder, TRADEOFF.md).
+
+### Usage
+
+```
+python3 -I extract.py --stem STEM.wav [--add MORE.wav ...] --name PART --start S --end S --bpm B --distance D \
+    --samples-dir DIR --manifest PATH --events PATH --table PATH [--lead-ms 6] [--min-seg-ms 50] \
+    [--timing trim|attack|segment] [--feat-eps 0.01] [--split-roots]
+python3 -I assemble.py --dir REPLICA_DIR --bpm B --bars N --part NAME EVENTS MANIFEST GROUP [--part ...] [--manifest-names]
+clang -O2 -w -o play ../../replica/play.c        # from this directory
+cd REPLICA_DIR && SAMPLES=<samples root> ENGINE=<engine dir> ./play full OUTDIR        # SOLO=drums MGAIN=<dB> for one part
+bash test_extract.sh
+```
+
+extract.py cuts the stem window, detects onsets with compare.py's detector (never quantised), cuts one segment per onset (from onset minus the lead to the next onset minus the lead), clusters the segments by spectral shape (complete linkage on 1 minus cosine at distance D, D = 0 keeps every segment), stores the longest member of each cluster as a float32 wav at the stem's native rate (raw level, 2 ms fade in, 8 ms fade out), and writes one event per segment.
+The manifest line is `root 0 0 path` with root = 24 + cluster index (0 + index above 100 clusters).
+A manifest path under `.../soundtrack-samples/` is written as `/soundtrack/samples/...`, which sampler.h re-roots onto `$SAMPLES`.
+Events are `EVENTS PART: beat,pitch,len,vel` lines of at most 40 events; the first line of the events file is the comment `# PART gain_db X`.
+The velocity is v = clip(r / r_max - 0.05, 0, 0.95) with r the member's RMS over its first 100 ms divided by the exemplar's, and the part gain is 20 log10(r_max), so the sampler's gain (v + 0.05) times the part gain reproduces r.
+The table (tsv) has one row per segment: start s, length s, cluster, exemplar, r, v, distance to its exemplar, then the cut as made (start and end in the clip's time).
+
+assemble.py writes the replica directory's score.txt (TEMPO, one SECTION, the events) and parts.txt.
+play.c (in `foolish/tools/soundtrack/replica/`) is the one player for every replica directory: sampler tracks with `sp[15] = 1` (exact: no random detune, no gain variation), velocity exponent 1, no loop, no pan, no sends, no EQ, no compression, no humanise, no swing, and a master with nothing but the engine's -16 LUFS normalisation and limiter.
+parts.txt is `PART <name> sampler <manifest> gain_db <x> release_s <x> group <drums|bass|other> [exact 0|1]`; an unknown keyword or an unknown part in the score stops the run.
+`sampler` may be repeated: the k-th manifest answers events of pitch 128k + root (extract.py `--split-roots`, needed above 128 clusters because a MIDI root only goes to 127).
+
+### Choices the brief left open, and what was measured
+
+- The feature's compression is `log1p(magnitude / (segment peak * eps))` with eps 0.01 (`--feat-eps`).
+  The first try, `log1p(1e4 * magnitude)` in absolute level, is so compressed that D = 0.2 merges the whole bass stem into 1-2 clusters.
+  On the synthetic test (an earlier, single-chord version of the song) at D = 0.05, eps 0.3 / 0.1 / 0.03 / 0.01 / 0.003 gave overall 87.1 / 87.1 / 88.9 / 91.9 / 85.2, so 0.01.
+- Timing.
+  The engine's `smp_trim` drops everything before the first sample that reaches 0.3 percent of the peak (-50 dB), less 1.5 ms.
+  A sample that starts with the 2 ms fade-in and sound loses nothing (the first sample over -50 dB is within 0.1 ms, and 1.5 ms are kept), but a sample with S ms of pre-roll below -50 dB loses S - 1.5 ms, so its sound lands that much early.
+  On the synthetic song (digital silence between sounds) `--timing segment`, the literal segment start, lands the replica 21.5 ms early with a 10.9 ms mean signed onset deviation and the test fails; `--timing trim` (the default: the event starts later by what smp_trim drops from the exemplar) lands it within 0.3 ms.
+  On the real stems smp_trim dropped nothing (there is always sound above -50 dB in the 6 ms before an onset), so `trim` and `segment` gave identical numbers there.
+  `--timing attack` finds each segment's attack by one rule (first 1 ms block at 20 percent of the loudest block of the first 80 ms) and lands attacks instead of segment starts; it is as good on the synthetic song, and on real stems it moves offsets by a few ms in either direction (bass D = 0.1: offset -6.3 ms against 0.04 ms), because compare.py's own detector judges the replica's onsets by its own rule.
+  The detector itself fires from 17 ms before the attack (noise bursts) to 5 ms after it (a kick with a click) depending on the sound, which is why the lead is 6 ms.
+- The engine runs at 48 kHz and the stems are 44.1 kHz, so the sampler resamples every sample (cubic, ratio 0.91875).
+  The measured level error of that is below 0.001 dB on a 440 Hz tone (test: -6.021 dB for velocity 0.45, which is 20 log10(0.5) = -6.0206).
+
+### test_extract.sh
+
+A deterministic 12 s synthetic song (test_compare.py's builder, its one seed; swung off 16ths 40 and 34 ms late with plus or minus 4 ms of jitter, one chord, the kick with a 3 ms click, the pad gated into stabs and the bass into plucks so they have onsets and a loudness shape) is split into three stems, replayed at D = 0.05 through extract.py, play.c and compare.py, and asserted: overall >= 90, mix onset F@30 >= 0.95, |mean signed onset deviation| <= 3 ms, drums onset F@30 >= 0.95, each stem's 400 ms loudness correlation >= 0.9, at most 8 drum samples, and (extra) a constant offset within 4 ms and the lead honoured (the first burst's attack sits 6 ms later with `--lead-ms 12` than with 6).
+A second check renders 10 isolated notes of velocity 0.45 (v + 0.05 = 0.5) with exact on and off: with it each is -6.021 dB against the stored sample (limit +-0.05 around -6.02), without it they scatter by up to 0.9 dB.
+The test also takes the environment variables EXTRACT, PLAYC and TMP, which is how the mutations below were run on copies.
+The stock song's pad and bass are stationary, so a 400 ms loudness curve of them is flat to 0.5 dB and no replica correlates with it (measured 0.50 for the pad); that is why the test gates them.
+
+### Mutation table (extract.py and sampler.h copies, restored afterwards; a diff against the originals was empty)
+
+| mutation | assertions that failed |
+|---|---|
+| events rounded to a 16th at the tempo | mix_onset_f30 = 0.795 (expected >= 0.95), onset_mean_dev = -7.77 ms (expected within 3), drums_onset_f30 = 0.802, loud400_bass = 0.635, overall = 82.4 |
+| all velocities 0.95 | loud400_drums = 0.724 (expected >= 0.9), overall = 85.6 |
+| exemplar chosen as the shortest member | drums_onset_f30 = 0.932 (expected >= 0.95), loud400_bass = 0.691, overall = 82.4 |
+| cluster-to-root mapping shifted by one | mix_onset_f30 = 0.848, onset_mean_dev = 12.66 ms, constant_offset = 232 ms, drums_onset_f30 = 0.847, loud400 of all three stems (0.16, -0.32, 0.21), overall = 46.7 |
+| the exact flag ignored (sampler.h) | exact_level: worst deviation from -6.02 dB = 0.921 dB (expected <= 0.05); loud400_bass = 0.853 |
+| the lead subtracted twice | lead: attack position with --lead-ms 12 minus with 6 = 12.97 ms (expected 6.00 +-0.3) |
+
+### Known limits
+
+Onset-driven segmentation cuts a stationary sustained sound (a pad) at spurious onsets into fragments that replay with the wrong envelope.
+Members of a cluster are all played as the exemplar at the exemplar's pitch: there is no transposition, so a cluster that merges two pitches plays one of them wrong.
+The velocity is read from the first 100 ms only, and a cluster whose exemplar starts quietly makes r_max (and so the part gain) large.
