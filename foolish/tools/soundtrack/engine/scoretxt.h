@@ -118,7 +118,12 @@ static void score_txt(const char *path, PartMap map, double bar_offset) {
             double at = cur < 0 ? bar_offset * 4 : (g_sec[cur].bar0 + (pend_next ? g_sec[cur].bars : 0)) * 4.0;
             if (cur >= 0 && !pend_next) at = g_sec[cur].bar0 * 4.0;
             { char *a2 = strstr(s, " AT "); if (a2) at += atof(a2 + 4); }   // "AT -8": start the change 8 beats early (a ritardando or accelerando into the boundary)
-            if (ramp > 0 && g_score_bpm > 0) { tempo(at, g_score_bpm); tempo(at + ramp, bpm); } else tempo(at, bpm);
+            // A tempo point is joined to the next by a straight line, so a bare "TEMPO x" used to turn the whole stretch since the
+            // last tempo line into one long ramp (Seoul drifted from 156 to 78 over its first 48 bars: "it keeps seeming to slow
+            // down"). A bare TEMPO is a step now: the old tempo holds up to the boundary and the new one starts on it. A change
+            // over time is written "TEMPO x RAMP beats", as before.
+            if (ramp > 0 && g_score_bpm > 0) { tempo(at, g_score_bpm); tempo(at + ramp, bpm); }
+            else { if (g_score_bpm > 0 && bpm != g_score_bpm) tempo(at - 1e-4, g_score_bpm); tempo(at, bpm); }
             g_score_bpm = bpm; continue; }
         if (!strncmp(s, "SECTION", 7)) {
             Section *x = &g_sec[g_nsec]; memset(x, 0, sizeof *x); char *b = strstr(s, " BARS "), *k = strstr(s, " KEY ");
