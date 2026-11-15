@@ -63,3 +63,50 @@ The original was untouched.
 
 The pitch correction lands the median of the tracked frame f0 on the equal-tempered pitch.
 When f0 drifts inside a segment (f0 sd 25 to 40 cents is common in the real recordings), a spectral-peak measure of the written wav can differ from the median by more than 5 cents, because the two summarise a moving pitch differently.
+
+# Lyria single-note clips
+
+`lyria_notes_extract.py` measures an AI-generated (Lyria) clip that was asked for eight single held notes, and cuts the clean notes into a sampler instrument.
+`test_lyria_notes_extract.py` is its test.
+The rules, measurements and thresholds are in the docstring at the top of the extractor.
+
+```
+nice python3 -I lyria_notes_extract.py CLIP --name INSTRUMENT [--measure-only] \
+    --out-samples /path/to/soundtrack-samples/lyria/INSTRUMENT --manifest lyria_INSTRUMENT.txt \
+    --log-rows lyria_rows.tsv --report INSTRUMENT.md [--asked "E4 F#4 ..."]
+```
+
+The clip is decoded with ffmpeg to a temporary wav and keeps its sample rate and both channels.
+Samples are 24-bit stereo wavs named `<name>_<Note>_<midi>.wav`.
+Manifest lines are `root_midi 0 rr /SAMPLES/soundtrack/samples/lyria/<name>/<file>`, so `SAMPLES=/Users/alex/Dev/soundtrack-samples` re-roots them.
+The note segmenter is by level only, so it needs real silences between the notes.
+Measured on the seven first clips (see the reports in `analysis/lyria_samples/`), the generator did not leave silences: haegeum, trumpet, rhodes and balalaika give no segment, guitar and domra give fragments or one merged segment, and only the cello gives segments, one of which joins three notes.
+A fifth chord reads as a single note an octave below with its odd partials missing, so the "one pitch" rule also counts a missing or weak (more than 25 dB down) fundamental as a second pitch.
+
+## Lyria test
+
+`python3 -I test_lyria_notes_extract.py` synthesises a 24.5 s stereo clip: five clean notes (one 30 cents sharp, one with 6 Hz vibrato of 20 cents), a fifth chord, a note with a second attack, a note with an inharmonic second instrument 20 dB down, a 400 cent glide, a 0.4 s blip and a note with band noise at purity 0.93.
+It asserts the segment count and boundaries within 20 ms, the measured notes, the sharp offset within 3 cents and the vibrato, the exact rejection reason of each bad segment, the re-measured f0 of the cut sample within 3 cents of equal temperament by an independent harmonic-comb estimator, the cut window (8 ms pre-roll, nothing from the next note), the manifest roots and paths, and round-robin numbering.
+The extractor under test can be swapped with `LYRIA_EXTRACT_PATH`, which is how the mutations below were run.
+
+## Lyria mutation checks
+
+Each mutation was applied to a copy of the extractor (the original untouched), the test was run against the copy, and the first assertion that failed is listed.
+
+| Mutation | Observed failure |
+|---|---|
+| Skip the pitch correction (ratio = 1) | sharp note re-measured: 30.0 cents from equal temperament |
+| Purity limit 0 | noisy note at purity limit 0.95: reasons [], expected only purity |
+| Ignore second onsets | reattack: expected reasons ['second_onset'] got [] |
+| Cut 200 ms late | cut start: expected 8 ms before 2.700, got 2.9000 s |
+| Distinct pitches always 1 | chord: expected reasons ['pitch'] got [] |
+| Missing-fundamental rule off | chord: expected reasons ['pitch'] got [] |
+| Length rule off | blip: expected reasons ['length'] in [] |
+| Stability rule off | glide: expected reasons ['stability'] in [] |
+| Cut ignores the next note and the release floor | cut end 5.400 s runs into the next note at 4.900 s |
+| Manifest root off by one | manifest roots: expected [52, 57, 60, 62, 64, 67] got [53, 58, 61, 63, 65, 68] |
+| Round robin always 0 | round robin: [['57', '0', '0'], ['57', '0', '0']] |
+| Segment start +0.1 s | start clean: expected 0.500 got 0.600 |
+| Segment end +0.1 s | end clean: expected 1.700 got 1.800 |
+| Vibrato detection off | vibrato rate: expected 6 got 0.00 |
+| Reported MIDI +1 | midi clean: expected 57 got 58 |
