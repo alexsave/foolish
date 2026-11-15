@@ -9,12 +9,20 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import diag_render as R, diagnose as D  # noqa: E402
 
-def sweep(tag, string, knobs=(), beta=0.1, grid=None):
+UP = {"C2": "G2", "G2": "D3", "D3": "A3"}
+
+
+def sweep(tag, string, knobs=(), beta=0.1, grid=None, stopped=False):
     grid = grid or np.geomspace(0.15, 3.0, 17) * R.ANCHOR[string] / 0.67
     rows = []
     for F in grid:
-        w, pre = R.render(string, "band_%s_%.4f_" % (tag, F), beta=beta, F=float(F), secs=2.5, knobs=list(knobs), wav_on=False, string=string)
-        ss = D.slip_stats(pre, R.OPEN[string], late_from=1.5)["lenient"]
+        if stopped:
+            w, pre = R.render(UP[string], "band_%s_%.4f_" % (tag, F), beta=beta, F=float(F), secs=2.5, knobs=list(knobs), wav_on=False, stopped=True)
+            f0 = R.OPEN[UP[string]]
+        else:
+            w, pre = R.render(string, "band_%s_%.4f_" % (tag, F), beta=beta, F=float(F), secs=2.5, knobs=list(knobs), wav_on=False, string=string)
+            f0 = R.OPEN[string]
+        ss = D.slip_stats(pre, f0, late_from=1.5)["lenient"]
         for e in (".f32", "_snap.f32", ".txt", "_snap.txt"): 
             try: os.remove(pre + e)
             except OSError: pass
@@ -24,8 +32,9 @@ def sweep(tag, string, knobs=(), beta=0.1, grid=None):
 
 if __name__ == "__main__":
     tag, string = sys.argv[1], sys.argv[2]
-    knobs = [float(k) if k.replace(".", "").replace("-", "").replace("e", "").isdigit() else k for k in sys.argv[3:]]
-    rows, band = sweep(tag, string, knobs)
-    with open(os.path.join(R.OUTD, "band_%s_%s.txt" % (tag, string)), "w") as f:
+    stopped = "--stopped" in sys.argv
+    knobs = [float(k) if k.replace(".", "").replace("-", "").replace("e", "").isdigit() else k for k in sys.argv[3:] if k != "--stopped"]
+    rows, band = sweep(tag, string, knobs, stopped=stopped)
+    with open(os.path.join(R.OUTD, "band_%s_%s%s.txt" % (tag, string, "_stopped" if stopped else "")), "w") as f:
         for r in rows: f.write("%.4f %.3f %.2f\n" % r)
     print(tag, string, "band", band, flush=True)

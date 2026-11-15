@@ -23,6 +23,9 @@ def stop_env(pitch, vb=0.1, F=None):
 
 
 Q500 = ["--q2k", "C2", 300, "--q2k", "G2", 300, "--q2k", "D3", 500, "--q2k", "A3", 500]
+C1K = Q500[:] + ["--bridge-R-scale", 3, "--stat-mass-scale", 0.5]
+C1F = {"G2": 1.92, "D3": 1.92, "A3": 1.756}  # force scale to the middle of the C1 band
+C1S = {"G2": 0.91, "D3": 1.10, "A3": 0.91}  # stopped notes: force scale to the middle of the stopped-string C1 band (diag_band.py --stopped)
 MID = {"G2": 1.76, "D3": 1.46, "A3": 1.59}  # force scale to the middle of the Q500 band (diag_band.py, q500)
 
 
@@ -38,6 +41,12 @@ def conds(pitch):
         "E1a": dict(knobs=["--bridge-R-scale", 2]), "E1b": dict(knobs=["--bridge-R-scale", 4]),
         "E2": dict(knobs=["--stat-mass-scale", 0.5]),
         "E123": dict(knobs=Q500 + ["--bridge-R-scale", 2, "--stat-mass-scale", 0.5], force_scale=MID[pitch]),
+        "C1g": dict(knobs=C1K + ["--fb-env", "0:0,0.005:%g" % (D.FORCE[pitch] * C1F[pitch]), "--vb-env", "0:0,%g:0.1" % (0.1 / {"G2": 2.0, "D3": 1.0, "A3": 8.0}[pitch])]),
+        "C1s": dict(knobs=C1K, force_scale=C1S[pitch], stopped=True),
+        "C1v": dict(knobs=C1K + list(VIB), force_scale=C1S[pitch], stopped=True),
+        "C1w": dict(knobs=C1K + list(VIB) + ["--walk", 0.05, 2.0], force_scale=C1S[pitch], stopped=True),
+        "C1": dict(knobs=C1K, force_scale=C1F[pitch]),
+        "E0e": dict(knobs=["--fs", 192000]), "E0f": dict(knobs=["--mode", "m440", 455]),
         "F2a": dict(noise=0.0), "F2b": dict(noise=0.01),
         "F3a": dict(force_scale=0.7), "F3b": dict(force_scale=1.4),
         "F4a": dict(knobs=["--fb-env", "0:0,0.005:%g" % F, "--vb-env", "0:0,0.03:0,0.09:0.1"]),

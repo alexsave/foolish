@@ -65,8 +65,10 @@ void sim_init(Sim *S, const Instrument *I, const StringSpec *sp, double fs);
 void sim_init_instrument(Sim *S, const Instrument *I, double fs, const SimOpts *o, const char *bowed_name);
 void sim_free(Sim *S);
 /* slow random walks of F_B and v_B: relative sd, bandwidth Hz (one-pole), table covering `seconds`; draws from ALTCELLO_WALK_SEED
-   at SIM_WALK_RATE per second of logical time (independent of fs). Call before sim_start. */
+   at SIM_WALK_RATE per second of logical seconds, independent of fs. Call before sim_start. */
 #define SIM_WALK_RATE 100
+/* finger position of a string of length L stopped at xF after a pitch shift of `cents` (vibrato) */
+double sim_vib_finger(double L, double xF, double cents);
 void sim_set_walk(Sim *S, double sd, double bw_hz, double seconds);
 void sim_start(Sim *S); /* call after setting controls and bow_noise_level */
 void sim_step(Sim *S);

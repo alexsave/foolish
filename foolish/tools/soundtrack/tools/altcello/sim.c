@@ -77,6 +77,12 @@ void sim_free(Sim *S)
     S->walk_F = S->walk_v = NULL;
 }
 
+double sim_vib_finger(double L, double xF, double cents)
+{
+    /* pitch f = f0 L / (L - xF): c cents about the stopped pitch moves the finger to L - (L - xF) 2^(-c/1200) */
+    return L - (L - xF) * pow(2.0, -cents / 1200.0);
+}
+
 void sim_set_walk(Sim *S, double sd, double bw_hz, double seconds)
 {
     long n = (long)(seconds * SIM_WALK_RATE) + 3;
@@ -192,12 +198,8 @@ void sim_step(Sim *S)
         const Env *ex = i == S->bowed ? &S->xF : &S->xFo[i];
         const Env *ea = i == S->bowed ? &S->aF : &S->aFo[i];
         double xf = env_eval(ex, t);
-        if (i == S->bowed && S->vib_depth_c > 0.0 && t > S->vib_t0 && env_eval(ea, t) > 0.0) {
-            /* pitch f = f0 L / (L - xF): a sinusoid of c cents about the stopped pitch moves the finger to L - (L - xF) 2^(-c/1200) */
-            double c = S->vib_depth_c * sin(2.0 * M_PI * S->vib_rate * (t - S->vib_t0));
-            double L = S->str[i]->sp.L;
-            xf = L - (L - xf) * pow(2.0, -c / 1200.0);
-        }
+        if (i == S->bowed && S->vib_depth_c > 0.0 && t > S->vib_t0 && env_eval(ea, t) > 0.0)
+            xf = sim_vib_finger(S->str[i]->sp.L, xf, S->vib_depth_c * sin(2.0 * M_PI * S->vib_rate * (t - S->vib_t0)));
         finger_apply(&S->finger, S->str[i], xf, env_eval(ea, t));
     }
 

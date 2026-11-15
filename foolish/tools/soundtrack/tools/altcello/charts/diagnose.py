@@ -191,7 +191,10 @@ def narrow_bands(alt, ref, w=STEADY, beta=0.1, top=5):
         rows.append(dict(f=float(f), lev=float(la), ref=float(lr), exc=float(la - lr), h=float(k), hdev=float(100 * (k / round(k) - 1)),
                          mb=float(round(mb)), mbdev=float(100 * (mb / max(round(mb), 1) - 1)) if round(mb) >= 1 else float("nan")))
     um = sorted([r for r in rows if r["exc"] > 6.0], key=lambda r: -r["lev"])
-    return um[:top], len(um), len(rows)
+    keep = []
+    for r in um:  # one band per cluster: a peak within 0.45 f0 of a stronger listed one is a sideband of it
+        if all(abs(r["f"] - k["f"]) > 0.45 * f0 for k in keep): keep.append(r)
+    return keep[:top], len(um), len(rows)
 
 
 def ring_analysis(wav, tstop=2.55, tend=4.1, topn=40):
