@@ -3,6 +3,12 @@
 // drums use x / x@0.6 hits; chop notes may carry a vowel letter after the octave, e.g. E5a:0.25;
 // "C4:1.5~6" moves on 1.5 beats while the note sounds for 6, so a note can be held across bar lines; a part may have
 // several lines in one section, each a lane of its own).
+// "VIB PART: off" / "VIB PART: on" / "VIB PART: depth 0.5 rate 5.2" (words on, off, depth <scale>, rate <hz>, in any order, a later word
+// overriding an earlier one) switches the sampler vibrato of that part in that section, wherever the line stands in the section: it sets
+// p[2] (the depth scale: 0 = the track's depth, negative = off for this note, positive s = depth times s; "on" is 1, "off" is -1,
+// "depth 0" is off) and p[3] (a rate override in Hz, 0 = the track's) of every note of the part whose beat lies in the section, after
+// the section's notes (bars and EVENTS alike) exist. A VIB line on a part that is not a sampler track is ignored with a note on stderr. A line is a VIB line only
+// if everything after its colon is these words, so a part that happens to be named "VIB ..." still reads as a part.
 // The city maps part names to tracks with a callback; sections are kept for automation by name.
 #pragma once
 #include "score.h"
@@ -111,6 +117,35 @@ static double dyn_at(const Section *x, double pos) {
 // and is not a multiple of anything; pitch is a name (C4), a MIDI number (61.5 is allowed) or x (the part's drum pitch);
 // len is the sounding length in beats, taken as written (no gate); vel is 0..1 before the part's own scale. No bar sums,
 // no repeats, any number of EVENTS lines per part and section; a note may start before the section or ring past its end.
+// VIB lines are collected while the score is read and applied at its end (the notes of the section do not all exist yet)
+typedef struct { int sec, tr; double scale, rate; } VibRec;
+static void syn_sampler(struct Track *tr, const Note *n, float *L, float *R, long nf);   // sampler.h (render.h includes it)
+static VibRec g_vib[256]; static int g_nvib;
+static int vib_line(const char *s, PartMap map, int sec) {   // s is the text after "VIB "; returns 1 if it was a VIB line
+    const char *colon = strchr(s, ':'); if (!colon) return 0;
+    char part[48]; int pl = (int)(colon - s); if (pl <= 0 || pl > 40) return 0; snprintf(part, sizeof part, "%.*s", pl, s);
+    { int L = (int)strlen(part); while (L > 0 && part[L - 1] == ' ') part[--L] = 0; }
+    double scale = 0, rate = 0; int words = 0; const char *q = colon + 1;
+    for (;;) {
+        while (*q == ' ' || *q == '\t') q++;
+        if (!*q) break;
+        char *e;
+        if (!strncmp(q, "on", 2) && (q[2] == ' ' || !q[2])) { scale = 1; q += 2; }
+        else if (!strncmp(q, "off", 3) && (q[3] == ' ' || !q[3])) { scale = -1; q += 3; }
+        else if (!strncmp(q, "depth ", 6)) { double v = strtod(q + 6, &e); if (e == q + 6) return 0; scale = v > 0 ? v : -1; q = e; }
+        else if (!strncmp(q, "rate ", 5)) { double v = strtod(q + 5, &e); if (e == q + 5 || v < 0) return 0; rate = v; q = e; }
+        else return 0;
+        words++;
+    }
+    if (!words) return 0;
+    double tp = 0, vs = 1, dp = 60; int tr = map(part, &tp, &vs, &dp);
+    if (tr < 0) { fprintf(stderr, "score: part %s ignored\n", part); return 1; }
+    // only sampler tracks have this vibrato; other synths use the same note slots for their own things (a glide, a pan), so a
+    // VIB line on such a part must not write there
+    if (g_tr[tr].fn != syn_sampler) { fprintf(stderr, "score: VIB %s ignored (not a sampler part)\n", part); return 1; }
+    if (g_nvib < 256) g_vib[g_nvib++] = (VibRec){sec, tr, scale, rate};
+    return 1;
+}
 static int events_line(const char *s, PartMap map, double b0, double sec_beats, const char *sec) {
     const char *colon = strchr(s, ':'); if (!colon) return 0;
     char part[48]; int pl = (int)(colon - s); if (pl <= 0 || pl > 40) return 0; snprintf(part, sizeof part, "%.*s", pl, s);
@@ -139,7 +174,7 @@ static int events_line(const char *s, PartMap map, double b0, double sec_beats, 
 static double g_txt_gate = 0.95;
 static double g_dyn_depth = 1.0;   // how strongly DYN marks scale velocities (0 = ignore)
 static void score_txt(const char *path, PartMap map, double bar_offset) {
-    int n_start = g_nnote;
+    int n_start = g_nnote; g_nvib = 0;
     FILE *f = fopen(path, "r"); if (!f) { perror(path); exit(1); }
     static char line[65536]; int bar0 = (int)bar_offset, cur = -1, pend_next = 0;
     while (fgets(line, sizeof line, f)) {
@@ -167,6 +202,7 @@ static void score_txt(const char *path, PartMap map, double bar_offset) {
             x->bar0 = bar0; cur = g_nsec++; pend_next = 0; continue;
         }
         if (cur < 0) continue;
+        if (!strncmp(s, "VIB ", 4) && vib_line(s + 4, map, cur)) continue;
         if (!strncmp(s, "EVENTS ", 7)) { events_line(s + 7, map, g_sec[cur].bar0 * 4.0, g_sec[cur].bars * 4.0, g_sec[cur].name); pend_next = 1; continue; }
         char *colon = strchr(s, ':'); if (!colon) continue;
         char part[48]; int pl = (int)(colon - s); if (pl <= 0 || pl > 40) continue; snprintf(part, sizeof part, "%.*s", pl, s);
@@ -191,6 +227,10 @@ static void score_txt(const char *path, PartMap map, double bar_offset) {
         if (nb != g_sec[cur].bars) fprintf(stderr, "score: %s in %s has %d bars (section has %d)\n", part, g_sec[cur].name, nb, g_sec[cur].bars);
     }
     fclose(f);
+    // the VIB lines: depth scale and rate override on the notes of that part inside that section
+    for (int v = 0; v < g_nvib; v++) { double b0 = g_sec[g_vib[v].sec].bar0 * 4.0, b1 = (g_sec[g_vib[v].sec].bar0 + g_sec[g_vib[v].sec].bars) * 4.0;
+        for (int i = n_start; i < g_nnote; i++) { Note *n = &g_note[i];
+            if (n->tr == g_vib[v].tr && n->beat >= b0 - 1e-6 && n->beat < b1 - 1e-6) { if (g_vib[v].scale != 0) n->p[2] = g_vib[v].scale; if (g_vib[v].rate != 0) n->p[3] = g_vib[v].rate; } } }
     // apply section dynamics to the notes written by this call (velocity scaled around mf = 1.0)
     for (int i = n_start; i < g_nnote; i++) { Note *n = &g_note[i];
         for (int k = 0; k < g_nsec; k++) { Section *x = &g_sec[k]; if (!x->ndyn) continue; double b0 = x->bar0 * 4.0, b1 = (x->bar0 + x->bars) * 4.0;
