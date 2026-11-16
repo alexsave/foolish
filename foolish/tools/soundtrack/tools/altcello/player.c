@@ -70,6 +70,12 @@ void player_init(Player *p, const Instrument *inst, PlayStyle style, uint64_t se
     p->beta_base = 0.105;
     p->frac_min = 0.35;
     p->frac_span = 0.25;
+    p->att_on = 1;
+    p->att_acc = 0.5;
+    p->att_v_frac = 0.4;
+    p->att_frac = 0.6;
+    p->sw_lo = 0.25;
+    p->sw_hi = 0.45;
 }
 
 /* ---------------------------------------------------------------- playability table */
@@ -239,7 +245,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
     double Tdamp[1024], damp_a[1024];
     if (n > 1024) { free(wsum); free(bacc); return 2; }
     double beta_phrase = 0.1;
-    struct { double onset, rate, dmult, dacc, lead, pk, bwb, bwv, bwf, sdb, frac_nov; double scoop, settle; } sc[1024];
+    struct { double onset, rate, dmult, dacc, lead, pk, bwb, bwv, bwf, sdb, frac_nov; double scoop, settle, tsw; } sc[1024];
     for (int k = 0; k < n; k++) {
         NotePlan *q = &pl[k];
         const Note *nn = &nt[k];
@@ -270,6 +276,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
         sc[k].sdb = d_uni(&d, 0.02, 0.03);
         Tdamp[k] = d_uni(&d, 0.08, 0.15);
         sc[k].frac_nov = d_uni(&d, 0.85, 0.95);
+        sc[k].tsw = d_uni(&d, p->sw_lo, p->sw_hi); /* appended last: the earlier draws keep their values */
         damp_a[k] = p->damp_press;
         if (!q->linked_prev) { /* a new phrase: beta drawn once */
             Dr dp;
@@ -313,6 +320,14 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
         dr_open(&d, p, cnt, k, PU_FORCE);
         bl_noise(&d, df, m, R, sc[k].bwf, 0.05);
         double lead = sc[k].lead, Tacc = sc[k].dacc;
+        const int att = expert && p->att_on && !q->linked_prev;
+        double T0 = 0.0, Tsw = sc[k].tsw, r0 = p->att_v_frac;
+        if (att) {
+            T0 = r0 * q->vB0 / p->att_acc;
+            Tacc = T0 + Tsw;
+            lead = 0.02;
+            q->T_acc = Tacc;
+        }
         q->t_sus0 = q->linked_prev ? tbp + 0.5 * Wp : ts + Tacc;
         q->t_sus1 = q->linked_next ? tbn - 0.5 * Wn : te - 0.04;
         for (long i = ia; i <= ib; i++) {
@@ -330,17 +345,29 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
                 beta = 0.1;
                 vplat = q->vB0;
             }
+            double prof = 1.0, sw = 1.0;
+            if (att) { /* the attack profile of the speed, 0 at the motion start; sw is the swell from the reduced speed to the plateau */
+                double ua = t - ts;
+                sw = rc((ua - T0) / Tsw);
+                prof = ua <= 0.0 ? 0.0 : ua < T0 ? r0 * ua / T0 : r0 + (1.0 - r0) * sw;
+                vplat *= prof;
+            }
             double lo, hi;
             band_or_anchor(I, q->string, beta, vplat, &lo, &hi);
             double D = log(hi / lo), lnF;
+            double frac_t = att ? p->att_frac + (q->frac0 - p->att_frac) * sw : q->frac0;
             if (expert) {
-                lnF = log(lo) + q->frac0 * D + log(1.0 + ar) + log(1.0 + df[i - ia]);
+                lnF = log(lo) + frac_t * D + log(1.0 + ar) + log(1.0 + df[i - ia]);
                 lnF = clampd(lnF, log(lo) + 0.2 * D, log(lo) + 0.8 * D);
             } else lnF = log(lo) + q->frac0 * D;
             F = exp(lnF);
             double V = vplat, fa = 1.0, fr = 1.0, va = 1.0, vr = 1.0;
             if (!q->linked_prev) {
-                if (expert) {
+                if (att) {
+                    va = 1.0; /* the profile is in V already */
+                    double tf = ts - lead - 0.005;
+                    fa = t < tf ? 0.0 : rc((t - tf) / 0.005);
+                } else if (expert) {
                     va = t < ts ? 0.0 : t >= ts + Tacc ? 1.0 : (t - ts) / Tacc;
                     double t0 = ts - lead - 0.02;
                     if (t < t0) fa = 0.0;

@@ -27,6 +27,7 @@ void render_opts_default(RenderOpts *o)
     o->rock = -1.0;
     o->dip = -1.0;
     o->swap_dip = -1.0;
+    o->att = -1;
 }
 
 int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, long *n48, Played *played, double *rtf)
@@ -45,6 +46,11 @@ int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, l
     if (o->beta0 > 0.0) pl.beta_base = o->beta0;
     if (o->vb[1] > 0.0) { pl.vb_min = o->vb[0]; pl.vb_span = o->vb[1]; }
     if (o->frac[1] > 0.0) { pl.frac_min = o->frac[0]; pl.frac_span = o->frac[1]; }
+    if (o->att >= 0) pl.att_on = o->att;
+    if (o->att_acc > 0.0) pl.att_acc = o->att_acc;
+    if (o->att_v > 0.0) pl.att_v_frac = o->att_v;
+    if (o->att_frac > 0.0) pl.att_frac = o->att_frac;
+    if (o->sw[1] > 0.0) { pl.sw_lo = o->sw[0]; pl.sw_hi = o->sw[1]; }
     if (player_play(&pl, notes, n, played)) return 1;
     Sim S;
     SimOpts so = {1, 1, 0, NULL};
@@ -92,6 +98,11 @@ int render_cli(int argc, char **argv)
         else if (!strcmp(argv[i], "--acc") && i + 2 < argc) { o.acc[0] = atof(argv[i + 1]); o.acc[1] = atof(argv[i + 2]); i += 2; }
         else if (!strcmp(argv[i], "--beta0") && i + 1 < argc) o.beta0 = atof(argv[++i]);
         else if (!strcmp(argv[i], "--vb") && i + 2 < argc) { o.vb[0] = atof(argv[i + 1]); o.vb[1] = atof(argv[i + 2]); i += 2; }
+        else if (!strcmp(argv[i], "--att") && i + 1 < argc) o.att = !strcmp(argv[++i], "on");
+        else if (!strcmp(argv[i], "--atta") && i + 1 < argc) o.att_acc = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--attv") && i + 1 < argc) o.att_v = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--attf") && i + 1 < argc) o.att_frac = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--sw") && i + 2 < argc) { o.sw[0] = atof(argv[i + 1]); o.sw[1] = atof(argv[i + 2]); i += 2; }
         else if (!strcmp(argv[i], "--frac") && i + 2 < argc) { o.frac[0] = atof(argv[i + 1]); o.frac[1] = atof(argv[i + 2]); i += 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }

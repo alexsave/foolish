@@ -47,6 +47,12 @@ typedef struct {
     double acc_lo, acc_hi;      /* the Guettler acceleration time of the bow, s (drawn per note), 0.06 - 0.12 */
     double beta_base;           /* phrase beta (relative to the sounding length) at vel 0.5, 0.105; loud notes lower, soft higher */
     double frac_min, frac_span; /* aimed log-band position = frac_min + frac_span * vel (0.35 - 0.60) */
+    /* the expert attack of a note that starts from rest (onset work, ONSET.md): the bow force lands 0.02 s before the motion, the bow
+       accelerates at att_acc (m/s^2) to att_v_frac of the note's plateau speed with the force at the log-band position att_frac,
+       then speed and band position swell together to the plateau over a time drawn in [sw_lo, sw_hi] s (raised cosine). The force
+       is always taken from the playability table at the INSTANTANEOUS speed and stays inside 0.2 - 0.8 of its log band. */
+    int att_on;
+    double att_acc, att_v_frac, att_frac, sw_lo, sw_hi;
 } Player;
 
 #define PLAYER_CTRL_RATE 1000.0
@@ -62,7 +68,7 @@ typedef struct {
     double t_vib0;            /* vibrato start, s */
     double beta0, vB0, frac0; /* phrase beta, plateau speed, log-band fraction aimed at */
     double t_sus0, t_sus1;    /* the sustained part where the force must sit in the band (after the attack, before the lift, outside bow changes) */
-    double scoop_c, T_acc;
+    double scoop_c, T_acc;    /* T_acc: the time from the start of the motion to the end of the attack (the plateau) */
     double ratio;             /* sounding pitch over the open string's pitch: the bow sits at beta0 of the SOUNDING length, so the simulator's beta is beta / ratio */
 } NotePlan;
 

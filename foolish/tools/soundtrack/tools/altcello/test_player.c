@@ -10,7 +10,9 @@
  *     written onsets;
  *  e) vibrato (rendered 3 s notes): measured rate within 0.4 Hz of the drawn rate and depth within 35 percent of the drawn depth; vibrato off:
  *     pitch standard deviation under 3 cents on the stopped notes of the scale;
- *  f) EXPERT and NOVICE differ measurably: attack duration (10 to 90 percent of the level) and the 4-7 Hz share of the level modulation. */
+ *  f) EXPERT and NOVICE differ measurably: attack duration (10 to 90 percent of the level) and the 4-7 Hz share of the level modulation;
+ *  g) the expert attack (a start from rest): the force lands before the motion, stays at 20-80 percent of the log band at the instantaneous speed
+ *     from the landing to the end of the swell (also when aimed at 0.95), the swell lasts 0.25-0.45 s, the novice is untouched. */
 #include "analysis.h"
 #include "player.h"
 #include "render.h"
@@ -477,6 +479,75 @@ static void f_style(void)
     played_free(&pn);
 }
 
+/* ---------------------------------------------------------------- g) the expert attack (ONSET.md) */
+static void check_attack(const Player *p, const Note *nt, int n, const char *what, double *lo, double *hi)
+{
+    Played pl;
+    CHECK(player_play(p, nt, n, &pl) == 0, "player_play");
+    const Instrument *I = instrument_cello();
+    for (int k = 0; k < n; k++) {
+        const NotePlan *q = &pl.plan[k];
+        double T0 = p->att_v_frac * q->vB0 / p->att_acc, Tsw = q->T_acc - T0;
+        CHECK(Tsw >= p->sw_lo - 1e-9 && Tsw <= p->sw_hi + 1e-9, "%s note %d: swell %.3f s outside %.2f-%.2f", what, k, Tsw, p->sw_lo, p->sw_hi);
+        double vmax = 0.0;
+        for (long i = (long)ceil((q->t_s - 0.02) * pl.trk.rate); i <= (long)floor((q->t_s + q->T_acc) * pl.trk.rate); i++) {
+            double v = fabs(pl.trk.vB[i]);
+            if (v > vmax) vmax = v;
+            double fr = player_band_frac(I, pl.trk.bowed[i], pl.beta_rel[i], v < 0.05 ? 0.05 : v, pl.trk.FB[i]);
+            if (fr < *lo) *lo = fr;
+            if (fr > *hi) *hi = fr;
+            CHECK(fr >= 0.2 - 1e-9 && fr <= 0.8 + 1e-9, "%s note %d t %.3f: attack force %.3f N at speed %.3f is at %.3f of the log band", what, k, (double)i / pl.trk.rate - q->t_s,
+                  pl.trk.FB[i], v, fr);
+            if (fr < 0.2 || fr > 0.8) return played_free(&pl);
+        }
+        /* the swell: the speed at the start of the swell is the reduced speed (about att_v_frac of the plateau), then it grows */
+        long i0 = (long)floor((q->t_s + T0) * pl.trk.rate), i1 = (long)floor((q->t_s + q->T_acc) * pl.trk.rate);
+        CHECK(fabs(pl.trk.vB[i0]) < 0.75 * fabs(pl.trk.vB[i1]) + 1e-9 || fabs(pl.trk.vB[i1]) < 0.06, "%s note %d: speed at the end of the acceleration %.3f is not under the plateau %.3f", what, k,
+              fabs(pl.trk.vB[i0]), fabs(pl.trk.vB[i1]));
+        CHECK(pl.trk.FB[(long)floor((q->t_s - 0.03) * pl.trk.rate)] == 0.0 && pl.trk.FB[(long)floor((q->t_s - 0.015) * pl.trk.rate)] > 0.0 && fabs(pl.trk.vB[(long)floor((q->t_s - 0.005) * pl.trk.rate)]) == 0.0,
+              "%s note %d: the force does not land before the motion", what, k);
+    }
+    played_free(&pl);
+}
+
+static void g_attack(void)
+{
+    Note one[3] = {mk(0.5, 1.5, 43, 0.85, 1), mk(3.5, 1.5, 50, 0.85, 1), mk(6.5, 1.5, 57, 0.2, 1)};
+    Player p;
+    player_init(&p, instrument_cello(), STYLE_EXPERT, 0);
+    double lo = 9, hi = -9;
+    check_attack(&p, one, 3, "attack", &lo, &hi);
+    printf("T27g attack: force at %.3f .. %.3f of the log band from the landing to the end of the swell\n", lo, hi);
+    /* aimed outside the band (0.95): the clamp must hold it at 0.8 */
+    p.att_frac = 0.95;
+    p.frac_min = 0.8;
+    p.frac_span = 0.0;
+    double lo2 = 9, hi2 = -9;
+    check_attack(&p, one, 3, "attack aimed at 0.95", &lo2, &hi2);
+    CHECK(hi2 > 0.78, "the edge case never reached the edge (max %.3f): the clamp is not exercised", hi2);
+    printf("T27g attack aimed at 0.95: force at %.3f .. %.3f of the band (clamped)\n", lo2, hi2);
+    /* the attack changes the contours (off = the old Guettler ramp) */
+    Played a, b;
+    player_init(&p, instrument_cello(), STYLE_EXPERT, 0);
+    player_play(&p, one, 3, &a);
+    p.att_on = 0;
+    player_play(&p, one, 3, &b);
+    CHECK(hash_played(&a) != hash_played(&b), "attack on and off give the same contours");
+    played_free(&a);
+    played_free(&b);
+    /* the novice keeps its abrupt start whatever the attack knobs say */
+    Player pn;
+    player_init(&pn, instrument_cello(), STYLE_NOVICE, 0);
+    Played c, d;
+    player_play(&pn, one, 3, &c);
+    pn.att_on = 0;
+    pn.att_acc = 9.0;
+    player_play(&pn, one, 3, &d);
+    CHECK(hash_played(&c) == hash_played(&d), "the novice contours depend on the expert attack");
+    played_free(&c);
+    played_free(&d);
+}
+
 int main(void)
 {
     a_strings();
@@ -485,5 +556,6 @@ int main(void)
     d_scale();
     e_vibrato();
     f_style();
+    g_attack();
     TEST_DONE("test_player");
 }
