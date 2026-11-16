@@ -48,7 +48,7 @@ typedef struct {
     double beta_base;           /* phrase beta (relative to the sounding length) at vel 0.5, 0.105; loud notes lower, soft higher */
     double frac_min, frac_span; /* aimed log-band position = frac_min + frac_span * vel (0.35 - 0.60) */
     /* the expert attack of a note that starts from rest (onset work, ONSET.md): the bow force lands 0.02 s before the motion, the bow
-       accelerates at att_acc (m/s^2) to att_v_frac of the note's plateau speed with the force at the log-band position att_frac,
+       accelerates at att_acc (m/s^2) to att_v_frac of the note's plateau speed with the force at the log-band position att_frac (0.4),
        then speed and band position swell together to the plateau over a time drawn in [sw_lo, sw_hi] s (raised cosine). The force
        is always taken from the playability table at the INSTANTANEOUS speed and stays inside 0.2 - 0.8 of its log band. */
     int att_on;

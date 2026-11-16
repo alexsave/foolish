@@ -73,7 +73,7 @@ void player_init(Player *p, const Instrument *inst, PlayStyle style, uint64_t se
     p->att_on = 1;
     p->att_acc = 0.5;
     p->att_v_frac = 0.4;
-    p->att_frac = 0.6;
+    p->att_frac = 0.4; /* was 0.6 (candidate 2, friction curve); thermal friction: the first take of G2 reaches periodic motion in 0.06-0.07 s on all three seeds (0.17 s median, 0.45 s worst at 0.6), D3 0.06, A3 0.08 (charts/onset_scan.py) */
     p->sw_lo = 0.25;
     p->sw_hi = 0.45;
 }
