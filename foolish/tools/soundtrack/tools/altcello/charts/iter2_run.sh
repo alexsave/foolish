@@ -27,6 +27,8 @@ COMBO) # joint torsion choices at zeta 0.05 (after the one-at-a-time sweeps)
   run combo_D3_zt8_ct5_z0.05 D3 0.1 0.1 32 --zt 8 --zeta 0.05 $N
   run combo_D3_zt5_ct7_z0.05 D3 0.1 0.1 32 --zt 5 --ct 7 --zeta 0.05 $N
   run combo_D3_zt8_ct7_z0.05 D3 0.1 0.1 32 --zt 8 --ct 7 --zeta 0.05 $N ;;
+FINE) # the new defaults, beta 0.1, v_B 0.1, 32 forces, all four strings
+  for s in C2 G2 D3 A3; do run "fine_${s}" $s 0.1 0.1 32; done ;;
 GRID)
   NF=${NF:-20}
   for s in C2 G2 D3 A3; do for b in 0.07 0.1 0.14; do for v in 0.05 0.1 0.2; do run "grid_${s}_b${b}_v${v}" $s $b $v $NF; done; done; done ;;

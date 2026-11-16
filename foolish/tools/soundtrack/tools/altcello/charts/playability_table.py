@@ -63,7 +63,7 @@ def main():
     for si, s in enumerate(STRINGS):
         lines.append("     /* %s */ {\\" % s)
         for b in BETA:
-            ent = ", ".join("{%.4f, %.4f, %.4f}" % t[(s, b, v)] for v in VB)
+            ent = ", ".join("{%.6g, %.6g, %.6g}" % t[(s, b, v)] for v in VB)
             lines.append("         {%s}%s \\" % (ent, "," if b != BETA[-1] else ""))
         lines.append("     }%s \\" % ("," if si < 3 else ""))
     lines.append("    }")
