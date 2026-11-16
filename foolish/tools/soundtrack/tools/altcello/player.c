@@ -58,11 +58,11 @@ void player_init(Player *p, const Instrument *inst, PlayStyle style, uint64_t se
     p->vib_all_off = 0;
     p->damp_press = 0.12;
     p->vb_min = 0.06;
-    p->vb_span = 0.12;
+    p->vb_span = 0.07;
     p->rock = 0.05;
     p->acc_lo = 0.06;
     p->acc_hi = 0.12;
-    p->beta_base = 0.12;
+    p->beta_base = 0.105;
     p->frac_min = 0.35;
     p->frac_span = 0.25;
 }
