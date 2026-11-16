@@ -15,7 +15,7 @@ c4 = pickle.load(open(R.OUT + "/res_c4.pkl", "rb"))
 c5 = pickle.load(open(R.OUT + "/res_comb.pkl", "rb"))
 fig = plt.figure(figsize=(16, 13))
 fig.suptitle("ALT-CELLO - spectral richness: bow noise spectrum, string loss shape, body high end - iteration 1", fontsize=17, fontweight="bold")
-gs = fig.add_gridspec(4, 6, height_ratios=[1, 1, 0.85, 0.85], hspace=0.5, wspace=0.55)
+gs = fig.add_gridspec(4, 6, height_ratios=[1, 1, 0.85, 0.85], hspace=0.5, wspace=1.1)
 for r, (key, nm) in enumerate((("D2", "d2"), ("G2c", "g2c"))):
     for c, (lab, y) in enumerate((("TARGET Philharmonia", R.ref_note(key)), ("candidate 4", R.M.load_audio(R.OUT + "/c4_%s_s0.wav" % nm)), ("candidate 5", R.M.load_audio(R.OUT + "/comb_%s_s0.wav" % nm)))):
         ax = fig.add_subplot(gs[r, c * 2:c * 2 + 2])
@@ -28,7 +28,7 @@ for ax, key in ((fig.add_subplot(gs[2, 0:2]), "D2"), (fig.add_subplot(gs[2, 2:4]
     ax.plot(R.BANDS, c4[key]["ref"]["ltas"], "k", label="Philharmonia")
     for (lo, hi), col in zip(R.RANGES, ("#cde", "#fed", "#dfd", "#fdd")):
         ax.axvspan(lo, hi, color=col, alpha=0.5)
-    ax.set_xscale("log"); ax.set_ylim(-85, 3); ax.set_title("LTAS (third octave, re own peak) " + key, fontsize=9); ax.set_xlabel("Hz"); ax.set_ylabel("dB"); ax.legend(fontsize=7)
+    ax.set_xscale("log"); ax.set_ylim(-85, 3); ax.set_title("LTAS (third octave, re own peak) " + key, fontsize=9); ax.set_xlabel("Hz"); ax.set_ylabel("dB"); ax.legend(fontsize=7, loc="upper right")
     for (lo, hi), lb in zip(R.RANGES, R.RLAB):
         d4 = np.mean([R.ltas_ranges(m["ltas"], c4[key]["ref"]["ltas"]) for m in c4[key]["ours"]], axis=0)
         d5 = np.mean([R.ltas_ranges(m["ltas"], c5[key]["ref"]["ltas"]) for m in c5[key]["ours"]], axis=0)
@@ -47,7 +47,7 @@ for fn, lab, col in (("t60_old.txt", "old loss (sigma1 k^2)", "tab:orange"), ("t
     ax.loglog(f, t, ".-", color=col, label=lab, ms=3)
 ff = np.geomspace(100, 12000, 50)
 ax.loglog(ff, np.log(1000) / (np.pi * ff / 300.0), "k--", label="target: Q 300 flat")
-ax.set_xlabel("Hz"); ax.set_ylabel("T60 of the partial, s"); ax.set_title("G2 string: partial T60 from a pluck, rigid bridge", fontsize=9); ax.legend(fontsize=7)
+ax.set_xlabel("Hz"); ax.set_ylabel("T60 of the partial, s"); ax.set_title("G2 string: partial T60 from a pluck, rigid bridge", fontsize=9); ax.legend(fontsize=7, loc="lower left")
 ax = fig.add_subplot(gs[3, 2:6])
 fac = [("F1 bow noise 16 kHz, 0.02", "f1_16000_0.02"), ("F2 relaxation string loss", "f2"), ("F3 stat. modes to 16 kHz", "f3_statf1"), ("F3 eta exponent 0.15", "f3_etaexp"), ("F3 mass exponent 0.3", "f3_massexp"),
        ("F4 bridge R x0.7", "f4_br07"), ("F4 bridge R x1.5", "f4_br15"), ("F4 table masses x0.5", "f4_lead05"), ("F4 stat. masses x0.5", "f4_stat05"), ("F5 damping touch (null, see text)", None),
@@ -57,7 +57,8 @@ def gap(tag):
 g0 = gap("c4")
 vals = [(g0 - gap(t)) if t else 0.0 for _, t in fac]
 ax.barh(range(len(fac)), vals, color=["tab:green" if v > 0.3 else "tab:gray" for v in vals])
-ax.set_yticks(range(len(fac))); ax.set_yticklabels([n for n, _ in fac], fontsize=7); ax.invert_yaxis()
+ax.set_yticks(range(len(fac))); ax.set_yticklabels([n for n, _ in fac], fontsize=7)
+ax.yaxis.set_tick_params(pad=2); ax.invert_yaxis()
 ax.set_xlabel("mean |LTAS gap| closed over the 4 ranges and 4 notes, dB (candidate 4: %.2f)" % g0, fontsize=8); ax.set_title("gap closed per factor, each alone against candidate 4", fontsize=9)
 ax.axvline(0, color="k", lw=0.5)
 fig.text(0.01, 0.005, "candidate 5 vs 4 (mean of D2, G2c, D3, A3): 5-10 kHz gap %+.1f -> %+.1f dB, 1.6-5 kHz %+.1f -> %+.1f dB, 0.5-1.6 kHz %+.1f -> %+.1f dB; HNR D2 %.1f/%.1f (ref %.1f), G2c %.1f/%.1f (ref %.1f), D3 %.1f/%.1f (ref %.1f), A3 %.1f/%.1f (ref %.1f)" % (
