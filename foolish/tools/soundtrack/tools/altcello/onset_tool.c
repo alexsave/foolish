@@ -31,6 +31,14 @@
 
 /* ---------------------------------------------------------------- the grid */
 
+static int cmp_dbl(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
+static double rms_db(const double *x, long i0, long w)
+{
+    double s = 0.0;
+    for (long i = i0; i < i0 + w; i++) s += x[i] * x[i];
+    return 10.0 * log10(s / (double)w + 1e-20);
+}
+
 typedef struct {
     int si, semis;
     double beta_rel, F, a, vend, secs, t_motion;
@@ -51,7 +59,7 @@ static void cell_run(const Instrument *I, const Cell *c, Rec *rec)
         env_const(&S.beta, beta);
         S.FB.n = 0;
         env_add(&S.FB, 0.0, 0.0);
-        env_add(&S.FB, 0.005, c->F);
+        env_add(&S.FB, c->t_motion - 0.02 > 0.005 ? c->t_motion - 0.02 : 0.005, c->F); /* lands 20 ms before the motion with --tm 0.025 */
         S.vB.n = 0;
         env_add(&S.vB, 0.0, 0.0);
         env_add(&S.vB, c->t_motion, 0.0);
@@ -87,12 +95,13 @@ static void cell_run(const Instrument *I, const Cell *c, Rec *rec)
 
 typedef struct {
     double t_audio, t_slip, e28, onset;
+    double lev[3]; /* level re sustain at +20, +50, +100 ms after the written start (dB) */
     int steady; /* the last 0.4 s is Helmholtz motion by both classifiers (analysis.h) */
 } CellRes;
 
 static CellRes cell_measure(const Cell *c, const Rec *r, double f_sound)
 {
-    CellRes o = {-1.0, -1.0, 0.0, -1.0, 0};
+    CellRes o = {-1.0, -1.0, 0.0, -1.0, {0, 0, 0}, 0};
     o.onset = audio_onset_from(r->aud, r->naud, r->audfs, c->t_motion);
     double tp = o.onset >= 0 ? audio_periodic_time(r->aud, r->naud, r->audfs, f_sound, o.onset, 0.95, 10) : -1.0;
     if (tp >= 0) o.t_audio = tp - o.onset;
@@ -101,6 +110,22 @@ static CellRes cell_measure(const Cell *c, const Rec *r, double f_sound)
     if (o.onset >= 0) {
         long a0 = (long)(o.onset * r->audfs), a1 = a0 + (long)(0.2 * r->audfs), b1 = r->naud, b0 = b1 - (long)(0.4 * r->audfs);
         if (a1 < b0) o.e28 = band_share_db(r->aud, a0, a1, r->audfs, 2000.0, 8000.0) - band_share_db(r->aud, b0, b1, r->audfs, 2000.0, 8000.0);
+    }
+    {   /* level re sustain: 20 ms rms windows starting at the written start + d (charts/attack_scan2.py lev); sustain = median of the
+               10 ms hop envelope from 0.5 s after the written start to the end */
+        const double fa = r->audfs;
+        long w = (long)(0.02 * fa), hop = (long)(0.01 * fa);
+        long a = (long)((c->t_motion + 0.5) * fa);
+        long nfr = r->naud > a + w ? (r->naud - w - a) / hop + 1 : 0;
+        if (nfr > 0) {
+            double *e = malloc(sizeof(double) * (size_t)nfr);
+            for (long k = 0; k < nfr; k++) e[k] = rms_db(r->aud, a + k * hop, w);
+            qsort(e, (size_t)nfr, sizeof *e, cmp_dbl);
+            double sus = e[nfr / 2];
+            free(e);
+            const double ds[3] = {0.02, 0.05, 0.1};
+            for (int j = 0; j < 3; j++) o.lev[j] = rms_db(r->aud, (long)((c->t_motion + ds[j]) * fa), w) - sus;
+        }
     }
     {
         double settle = (double)r->n / FS96 - 0.4;
@@ -118,8 +143,8 @@ static int grid_main(int argc, char **argv)
     int si = instrument_string_index(I, argv[2]);
     if (si < 0) { fprintf(stderr, "unknown string\n"); return 2; }
     Cell c = {si, atoi(argv[3]), 0.1, 0, 0, 0.1, 1.1, 0.02, !strcmp(argv[4], "ours"), 0};
-    int nf = 12;
-    double widen = 2.0;
+    int nf = 12, frange = 0;
+    double widen = 2.0, flo = 0, fhi = 0;
     double accs[16] = {0.25, 0.5, 1, 2, 4, 8};
     int na = 6;
     for (int i = 6; i < argc; i++) {
@@ -129,6 +154,8 @@ static int grid_main(int argc, char **argv)
         else if (!strcmp(argv[i], "--vend") && i + 1 < argc) c.vend = atof(argv[++i]);
         else if (!strcmp(argv[i], "--secs") && i + 1 < argc) c.secs = atof(argv[++i]);
         else if (!strcmp(argv[i], "--seed") && i + 1 < argc) c.seed = strtoull(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--tm") && i + 1 < argc) c.t_motion = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--frange") && i + 1 < argc) { frange = 1; sscanf(argv[++i], "%lf,%lf", &flo, &fhi); }
         else if (!strcmp(argv[i], "--accs") && i + 1 < argc) {
             na = 0;
             for (char *s = strtok(argv[++i], ","); s && na < 16; s = strtok(NULL, ",")) accs[na++] = atof(s);
@@ -138,8 +165,9 @@ static int grid_main(int argc, char **argv)
     if (!out) { perror(argv[5]); return 1; }
     double fmin, fmax;
     if (!player_band(I, si, c.beta_rel, c.vend, &fmin, &fmax)) { fmin = 0.5 * I->helmholtz_force[si]; fmax = 2.0 * I->helmholtz_force[si]; }
+    if (frange) { fmin = flo; fmax = fhi; widen = 1.0; }
     double f_sound = I->str[si].f0 * pow(2.0, c.semis / 12.0);
-    fprintf(out, "# string %s semis %d model %s beta_rel %.3f vend %.3f band %.4f %.4f widen %.2f f_sound %.3f\n# F a t_audio t_slip e28 onset steady\n", argv[2], c.semis,
+    fprintf(out, "# string %s semis %d model %s beta_rel %.3f vend %.3f band %.4f %.4f widen %.2f f_sound %.3f\n# F a t_audio t_slip e28 onset steady lev20 lev50 lev100\n", argv[2], c.semis,
             argv[4], c.beta_rel, c.vend, fmin, fmax, widen, f_sound);
     for (int i = 0; i < nf; i++) {
         c.F = fmin / widen * pow(fmax * widen / (fmin / widen), nf > 1 ? (double)i / (nf - 1) : 0.5);
@@ -148,7 +176,7 @@ static int grid_main(int argc, char **argv)
             Rec r;
             cell_run(I, &c, &r);
             CellRes m = cell_measure(&c, &r, f_sound);
-            fprintf(out, "%.5f %.3f %.4f %.4f %.2f %.4f %d\n", c.F, c.a, m.t_audio, m.t_slip, m.e28, m.onset, m.steady);
+            fprintf(out, "%.5f %.3f %.4f %.4f %.2f %.4f %d %.1f %.1f %.1f\n", c.F, c.a, m.t_audio, m.t_slip, m.e28, m.onset, m.steady, m.lev[0], m.lev[1], m.lev[2]);
             fflush(out);
             rec_free(&r);
         }
