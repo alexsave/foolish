@@ -41,6 +41,8 @@ typedef struct {
     double noise_knee_hz, noise_tilt_db_oct; /* the noise is white up to the knee (4000 Hz) and falls by tilt dB per octave above it
                                   (3, ASSUMED: closer to the measured floor of the Philharmonia notes than white noise) */
     double ref_db_spl;         /* level of rms 1.0: 74 */
+    double gain_fixed;    /* > 0: the wet gain, used instead of the active-rms normalisation (then the level of the signal at the capsule is physical:
+                             the self-noise does not follow the position). 0: normalise as before */
     uint64_t seed;        /* sub-seed of the noise and the FDN signs */
 } RoomSpec;
 
@@ -56,6 +58,9 @@ int room_ir_build(const RoomSpec *s, float **ir, long *n);
 /* the wet signal: in convolved with ir (FFT), scaled so the sounding part of the result has rms 1.0 (= ref_db_spl), plus the
  * microphone self-noise over the full length. *out is malloc'ed with nin + nir - 1 samples (the return value), 0 on failure. */
 long room_apply(const RoomSpec *s, const float *ir, long nir, const float *in, long nin, float **out);
+
+/* room_apply, also returning the active-rms normalisation gain the call would use with gain_fixed = 0 (gain may be NULL) */
+long room_apply_g(const RoomSpec *s, const float *ir, long nir, const float *in, long nin, float **out, double *gain);
 
 /* diagnostics */
 const int *room_fdn_lengths(int *n); /* delay line lengths of the FDN, samples */

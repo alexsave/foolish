@@ -327,6 +327,11 @@ static long next_pow2(long n) { long p = 1; while (p < n) p <<= 1; return p; }
 
 long room_apply(const RoomSpec *s, const float *ir, long nir, const float *in, long nin, float **out)
 {
+    return room_apply_g(s, ir, nir, in, nin, out, NULL);
+}
+
+long room_apply_g(const RoomSpec *s, const float *ir, long nir, const float *in, long nin, float **out, double *gain)
+{
     long nout = nin + nir - 1, N = next_pow2(nout);
     double *ar = calloc((size_t)N, sizeof(double)), *ai = calloc((size_t)N, sizeof(double));
     double *br = calloc((size_t)N, sizeof(double)), *bi = calloc((size_t)N, sizeof(double));
@@ -359,6 +364,8 @@ long room_apply(const RoomSpec *s, const float *ir, long nir, const float *in, l
         if (p >= 0.0625 * mx) { act += p; cnt += fl; }
     }
     double g = (cnt > 0 && act > 0.0) ? 1.0 / sqrt(act / (double)cnt) : 1.0;
+    if (gain) *gain = g;
+    if (s->gain_fixed > 0.0) g = s->gain_fixed;
     /* microphone self-noise: white gaussian, shaped in the frequency domain (flat to the knee, tilt dB per octave above it), scaled so
        that its A-weighted level is self_noise_dba */
     double sig = 0.0;

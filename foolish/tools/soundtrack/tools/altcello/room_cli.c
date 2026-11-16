@@ -52,11 +52,11 @@ static long wav_read_mono(const char *path, float **out, int *rate)
 int room_cli(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: altcello room IN.wav OUT.wav [--rt60 S] [--dist M] [--pattern omni|cardioid] [--mic X,Y,Z] [--no-proximity] [--drr-check] [--no-noise]\n");
+        fprintf(stderr, "usage: altcello room IN.wav OUT.wav [--rt60 S] [--dist M] [--pattern omni|cardioid] [--mic X,Y,Z] [--no-proximity] [--abs-level] [--drr-check] [--no-noise]\n");
         return 2;
     }
     double rt60 = 0.8, dist = 1.5;
-    int pattern = ROOM_CARDIOID, drrcheck = 0, noise = 1, prox = 1, havemic = 0;
+    int pattern = ROOM_CARDIOID, drrcheck = 0, noise = 1, prox = 1, havemic = 0, abslevel = 0;
     double micp[3] = {0, 0, 0};
     for (int i = 4; i < argc; i++) {
         if (!strcmp(argv[i], "--rt60") && i + 1 < argc) rt60 = atof(argv[++i]);
@@ -69,6 +69,7 @@ int room_cli(int argc, char **argv)
         } else if (!strcmp(argv[i], "--drr-check")) drrcheck = 1;
         else if (!strcmp(argv[i], "--no-noise")) noise = 0;
         else if (!strcmp(argv[i], "--no-proximity")) prox = 0;
+        else if (!strcmp(argv[i], "--abs-level")) abslevel = 1;
         else if (!strcmp(argv[i], "--mic") && i + 1 < argc) {
             if (sscanf(argv[++i], "%lf,%lf,%lf", &micp[0], &micp[1], &micp[2]) != 3) { fprintf(stderr, "--mic wants X,Y,Z in metres\n"); return 2; }
             havemic = 1;
@@ -91,6 +92,20 @@ int room_cli(int argc, char **argv)
     float *ir, *out;
     long nir;
     if (room_ir_build(&s, &ir, &nir)) { fprintf(stderr, "ir build failed\n"); return 1; }
+    if (abslevel) { /* the level of the default placement (1.5 m cardioid, same room, proximity on) fixes the gain: closer capsules are louder against their self-noise */
+        RoomSpec rs;
+        room_spec_default(&rs, 1.5);
+        rs.rt60 = rt60;
+        rs.self_noise_dba = 0.0;
+        float *rir, *rout;
+        long nrir, nr;
+        if (room_ir_build(&rs, &rir, &nrir)) { fprintf(stderr, "reference ir build failed\n"); return 1; }
+        double g = 0.0;
+        nr = room_apply_g(&rs, rir, nrir, in, nin, &rout, &g);
+        if (nr <= 0) { fprintf(stderr, "reference apply failed\n"); return 1; }
+        s.gain_fixed = g;
+        free(rir); free(rout);
+    }
     long nout = room_apply(&s, ir, nir, in, nin, &out);
     if (nout <= 0) { fprintf(stderr, "apply failed\n"); return 1; }
     if (wav_write_f32(argv[3], out, nout, 48000)) { perror(argv[3]); return 1; }

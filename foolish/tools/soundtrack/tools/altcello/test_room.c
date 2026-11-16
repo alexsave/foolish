@@ -170,6 +170,36 @@ static void t_proximity(void)
     CHECK(fabs(prox_boost_db(ROOM_CARDIOID, 0, 0.3, 50.0)) < 0.1, "proximity switched off still boosts");
 }
 
+/* gain_fixed replaces the active-rms normalisation: same value reproduces the output, twice the value doubles it, noise untouched */
+static void t_gainfixed(void)
+{
+    RoomSpec s;
+    room_spec_default(&s, 1.5);
+    float *ir, *a, *b, *c; long n;
+    room_ir_build(&s, &ir, &n);
+    float in[9600];
+    for (int i = 0; i < 9600; i++) in[i] = (float)(0.3 * sin(0.07 * i));
+    double g = 0.0;
+    long na = room_apply_g(&s, ir, n, in, 9600, &a, &g);
+    RoomSpec s1 = s, s2 = s;
+    s1.gain_fixed = g;
+    s2.gain_fixed = 2.0 * g;
+    long nb = room_apply(&s1, ir, n, in, 9600, &b), nc = room_apply(&s2, ir, n, in, 9600, &c);
+    double worst = 0.0;
+    for (long i = 0; i < na && i < nb && i < nc; i++) worst = fmax(worst, fabs((double)a[i] - b[i]));
+    /* the signal part: c - a = g w and a - noise = g w, the noise being the output with a tiny gain_fixed */
+    RoomSpec s0 = s;
+    s0.gain_fixed = 1e-12;
+    float *z; room_apply(&s0, ir, n, in, 9600, &z);
+    double err = 0.0, sig = 0.0;
+    for (long i = 0; i < na; i++) { err = fmax(err, fabs(((double)c[i] - a[i]) - ((double)a[i] - z[i]))); sig = fmax(sig, fabs((double)a[i] - z[i])); }
+    printf("room gain_fixed: same gain reproduces the output (max diff %.2e), double gain doubles the signal part (max error %.2e of peak %.3f)\n", worst, err, sig);
+    CHECK(na == nb && worst < 1e-6, "gain_fixed = the normalisation gain changes the output by %.2e", worst);
+    CHECK(err < 1e-4 * sig, "doubling gain_fixed does not double the signal: error %.2e of %.3f", err, sig);
+    CHECK(sig > 0.5, "signal part tiny: %.3f", sig);
+    free(ir); free(a); free(b); free(c); free(z);
+}
+
 static void t_directivity(void)
 {
     RoomSpec s;
@@ -305,6 +335,7 @@ int main(void)
     t_cardioid();
     t_directivity();
     t_proximity();
+    t_gainfixed();
     t_noise();
     t_determinism();
     t_misc();
