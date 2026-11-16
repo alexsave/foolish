@@ -5,10 +5,10 @@ sys.path.insert(0, HERE)
 import player_run as R, player_gates as G  # noqa: E402
 import numpy as np
 SETS = {
-    "A": ["--beta0", 0.105, "--vb", 0.06, 0.12, "--acc", 0.06, 0.12],
+    "A": ["--beta0", 0.105, "--vb", 0.06, 0.12, "--acc", 0.06, 0.12],  # iteration 1
     "B": ["--beta0", 0.12, "--vb", 0.06, 0.07, "--acc", 0.09, 0.12],
-    "C": ["--beta0", 0.12, "--vb", 0.06, 0.12, "--acc", 0.06, 0.12],
-    "D": ["--beta0", 0.105, "--vb", 0.06, 0.07, "--acc", 0.06, 0.12],
+    "C": ["--beta0", 0.12, "--vb", 0.06, 0.12, "--acc", 0.06, 0.12],  # iteration 2
+    "D": [],  # the shipped defaults: iteration 3
     "E": ["--beta0", 0.12, "--vb", 0.06, 0.04, "--acc", 0.06, 0.12],
 }
 names = sys.argv[1:] or list(SETS)
