@@ -4,7 +4,7 @@
 #  GRID  : per string 3x3 beta x v_B at 20 forces        NOISE_ARGS / TORS_ARGS can be set in the environment
 # Rows go to /Users/alex/Music/foolish_cities_v5/alt_cello/iter2/*.txt, summaries to *.log.
 cd "$(dirname "$0")/.." || exit 1
-D=/Users/alex/Music/foolish_cities_v5/alt_cello/iter2
+D=${ITER2_DIR:-/Users/alex/Music/foolish_cities_v5/alt_cello/iter2}
 mkdir -p "$D"
 T=./sweep_tool
 G="0.03 5 32 6"

@@ -18,10 +18,11 @@ double cents(double f, double ref);
    and the fraction of the window they cover */
 /* |v_rel| above this is a slip. The friction curve sticks exactly (v_rel = 0), so 1e-4 m/s; the thermal elasto-plastic bristle creeps in
    the stick phase (v_rel up to about 3e-3 m/s, friction_thermal.h) while a slip peaks near 1 m/s, so a thermal run uses 1e-2 m/s
-   (knobs_install sets it from the bow model). */
+   (sim_start and oracle_new set it from the bow model they run: analysis_slip_thr_for). */
 #define ANALYSIS_SLIP_THR_CURVE 1e-4
 #define ANALYSIS_SLIP_THR_THERMAL 1e-2
 extern double analysis_slip_thr;
+void analysis_slip_thr_for(int thermal); /* the one owner of the threshold: called by sim_start and oracle_new */
 #define SLIP_MIN_DUR_S 0.00015 /* shorter runs of |v_rel| > thr are ripple micro-slips */
 int slip_onsets(const double *v, long i0, long i1, double thr, double fs, double *frac);
 /* max normalised correlation of x[i0,i1) with itself shifted by lag in [lo,hi]; best lag out */

@@ -17,7 +17,10 @@
 
 int main(void)
 {
-    const Instrument *I = instrument_cello();
+    /* the oracle's friction CURVE junction (the thermal junction is tested in test_thermal): the curve instrument, whatever the default */
+    Instrument curve = *instrument_cello();
+    curve.bow.model = BOW_CURVE;
+    const Instrument *I = &curve;
     const StringSpec *sp = instrument_string(I, "D3");
     double fs = 96000.0;
     OracleSpec os;

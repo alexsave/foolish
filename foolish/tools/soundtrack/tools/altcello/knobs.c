@@ -1,5 +1,4 @@
 #include "knobs.h"
-#include "analysis.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -78,5 +77,4 @@ void knobs_install(void)
     copy = *instrument_cello();
     if (knobs_apply(&copy, s)) exit(2);
     instrument_cello_override(&copy);
-    if (copy.bow.model == BOW_THERMAL) analysis_slip_thr = ANALYSIS_SLIP_THR_THERMAL;
 }

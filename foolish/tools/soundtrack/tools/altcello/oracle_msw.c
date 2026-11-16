@@ -103,6 +103,7 @@ Oracle *oracle_new(const OracleSpec *s)
     dl_init(&o->B2, dB);
     o->gm = s->g * (1.0 - s->p);
     if (s->thermal) thermal_init(&o->T, &s->th, s->bow_width, 1.0 / s->fs);
+    analysis_slip_thr_for(s->thermal);
     return o;
 }
 

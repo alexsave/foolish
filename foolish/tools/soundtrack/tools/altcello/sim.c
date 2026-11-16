@@ -1,4 +1,5 @@
 #include "sim.h"
+#include "analysis.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,6 +139,7 @@ void sim_start(Sim *S)
     S->stuck = 0;
     hair_reset(&S->hair);
     thermal_init(&S->th, &S->inst->bow.thermal, S->bow_width, S->k);
+    analysis_slip_thr_for(S->inst->bow.model == BOW_THERMAL);
 }
 
 void sim_set_bow(Sim *S, double beta, double vB, double FB, double ramp)

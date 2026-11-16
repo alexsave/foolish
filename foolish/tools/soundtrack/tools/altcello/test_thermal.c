@@ -84,7 +84,6 @@ int main(void)
     Instrument ic = thermal_instrument();
     const ThermalSpec *p = &ic.bow.thermal;
     const StringSpec *sp = instrument_string(&ic, "D3");
-    analysis_slip_thr = ANALYSIS_SLIP_THR_THERMAL;
 
     /* a) the steady sliding map */
     {
@@ -218,6 +217,5 @@ int main(void)
         printf("T30f determinism: %.15g %.15g\n", sig[0][0], sig[1][0]);
         CHECK(!memcmp(sig[0], sig[1], sizeof sig[0]), "two runs differ");
     }
-    analysis_slip_thr = ANALYSIS_SLIP_THR_CURVE;
     TEST_DONE("test_thermal");
 }

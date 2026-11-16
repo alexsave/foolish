@@ -11,7 +11,7 @@ import math, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SRC = os.path.join(ROOT, "instrument_cello.c")
-D = "/Users/alex/Music/foolish_cities_v5/alt_cello/iter2"
+D = os.environ.get("ITER2_DIR", "/Users/alex/Music/foolish_cities_v5/alt_cello/iter2")
 STRINGS = ["C2", "G2", "D3", "A3"]
 BETA = [0.07, 0.10, 0.14]
 VB = [0.05, 0.10, 0.20]

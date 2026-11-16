@@ -48,6 +48,11 @@ double spec_peak(const Spectrum *s, double f, double frac, double *mag)
 
 double analysis_slip_thr = ANALYSIS_SLIP_THR_CURVE;
 
+void analysis_slip_thr_for(int thermal)
+{
+    analysis_slip_thr = thermal ? ANALYSIS_SLIP_THR_THERMAL : ANALYSIS_SLIP_THR_CURVE;
+}
+
 int slip_onsets(const double *v, long i0, long i1, double thr, double fs, double *frac)
 {
     /* an interval is a maximal run of |v| > thr; runs shorter than

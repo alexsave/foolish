@@ -18,9 +18,12 @@
    the arithmetic does not depend on what the compiler can see as constant */
 /* RE-RECORDED again in iteration 2 (a88857656984cdac / 58f68de34d67ee18 before): the bow noise acts on the sliding friction
    coefficient instead of the bow force and its level is 0.01 (was 0.03), and the torsional damping ratio is 0.05 (was 0.01). */
-#define REF_D3 0xaea0191a9767bf02ULL
+#define REF_D3 0xaea0191a9767bf02ULL /* the friction curve model (BOW_CURVE): unchanged by the thermal work, which proves the curve path is untouched */
 #define REF_C2 0x20e16156da2131f0ULL
-
+/* RECORDED deliberately in thermal iteration 1, when the default bow model became BOW_THERMAL (friction_thermal.h): the physics of the
+   default instrument changed, so every sample changes. Same probes as above, the default instrument. */
+#define REF_D3_THERMAL 0x0812735492e9d6d7ULL
+#define REF_C2_THERMAL 0x1aa802cbd1ddb603ULL
 static uint64_t hash_trace(const Trace *tr)
 {
     uint64_t h = 1469598103934665603ULL;
@@ -31,11 +34,13 @@ static uint64_t hash_trace(const Trace *tr)
     return h;
 }
 
-static uint64_t probe(const char *name, double F)
+static uint64_t probe(const char *name, double F, BowModel model)
 {
     Sim S;
     SimOpts so = {1, 1, 0, NULL};
-    sim_init_instrument(&S, instrument_cello(), 96000.0, &so, name);
+    Instrument ic = *instrument_cello();
+    ic.bow.model = model;
+    sim_init_instrument(&S, &ic, 96000.0, &so, name);
     sim_set_bow(&S, 0.1, 0.1, F, 0.03);
     sim_start(&S);
     Trace *tr = sim_run(&S, 1.0, NULL, NULL);
@@ -47,8 +52,13 @@ static uint64_t probe(const char *name, double F)
 
 int main(void)
 {
-    uint64_t hd = probe("D3", 0.67082), hc = probe("C2", 1.22127);
-    printf("T23 D3 probe hash %016llx, C2 probe hash %016llx\n", (unsigned long long)hd, (unsigned long long)hc);
+    CHECK(instrument_cello()->bow.model == BOW_THERMAL, "the default bow model is not THERMAL");
+    uint64_t hd = probe("D3", 0.67082, BOW_CURVE), hc = probe("C2", 1.22127, BOW_CURVE);
+    uint64_t td = probe("D3", 0.67082, BOW_THERMAL), tc = probe("C2", 1.22127, BOW_THERMAL);
+    printf("T23 curve D3 probe hash %016llx, C2 probe hash %016llx; thermal D3 %016llx, C2 %016llx\n", (unsigned long long)hd, (unsigned long long)hc, (unsigned long long)td,
+           (unsigned long long)tc);
+    CHECK(td == REF_D3_THERMAL, "thermal D3 probe changed: %016llx, want %016llx", (unsigned long long)td, (unsigned long long)REF_D3_THERMAL);
+    CHECK(tc == REF_C2_THERMAL, "thermal C2 probe changed: %016llx, want %016llx", (unsigned long long)tc, (unsigned long long)REF_C2_THERMAL);
     CHECK(hd == REF_D3, "D3 probe changed: %016llx, want %016llx", (unsigned long long)hd, (unsigned long long)REF_D3);
     CHECK(hc == REF_C2, "C2 probe changed: %016llx, want %016llx", (unsigned long long)hc, (unsigned long long)REF_C2);
     TEST_DONE("test_instrument");
