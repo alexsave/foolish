@@ -25,6 +25,8 @@ void render_opts_default(RenderOpts *o)
     o->fs = 96000.0;
     o->damp = -1.0;
     o->rock = -1.0;
+    o->dip = -1.0;
+    o->swap_dip = -1.0;
 }
 
 int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, long *n48, Played *played, double *rtf)
@@ -34,6 +36,10 @@ int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, l
     player_init(&pl, I, o->style, o->seed);
     pl.vib_all_off = o->vib_off;
     if (o->damp >= 0.0) pl.damp_press = o->damp;
+    if (o->bc[1] > 0.0) { pl.bc_lo = o->bc[0]; pl.bc_hi = o->bc[1]; }
+    pl.slur = o->slur;
+    if (o->dip >= 0.0) pl.dip = o->dip;
+    if (o->swap_dip >= 0.0) pl.swap_dip = o->swap_dip;
     if (o->rock >= 0.0) pl.rock = o->rock;
     if (o->acc[1] > 0.0) { pl.acc_lo = o->acc[0]; pl.acc_hi = o->acc[1]; }
     if (o->beta0 > 0.0) pl.beta_base = o->beta0;
@@ -78,6 +84,10 @@ int render_cli(int argc, char **argv)
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) o.trace = argv[++i];
         else if (!strcmp(argv[i], "--fs") && i + 1 < argc) o.fs = atof(argv[++i]);
         else if (!strcmp(argv[i], "--damp") && i + 1 < argc) o.damp = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--bc") && i + 2 < argc) { o.bc[0] = atof(argv[i + 1]); o.bc[1] = atof(argv[i + 2]); i += 2; }
+        else if (!strcmp(argv[i], "--swapdip") && i + 1 < argc) o.swap_dip = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--slur") && i + 1 < argc) o.slur = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--dip") && i + 1 < argc) o.dip = atof(argv[++i]);
         else if (!strcmp(argv[i], "--rock") && i + 1 < argc) o.rock = atof(argv[++i]);
         else if (!strcmp(argv[i], "--acc") && i + 2 < argc) { o.acc[0] = atof(argv[i + 1]); o.acc[1] = atof(argv[i + 2]); i += 2; }
         else if (!strcmp(argv[i], "--beta0") && i + 1 < argc) o.beta0 = atof(argv[++i]);

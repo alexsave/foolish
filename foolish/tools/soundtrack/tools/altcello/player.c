@@ -59,6 +59,11 @@ void player_init(Player *p, const Instrument *inst, PlayStyle style, uint64_t se
     p->damp_press = 0.12;
     p->vb_min = 0.06;
     p->vb_span = 0.07;
+    p->bc_lo = 0.03;
+    p->bc_hi = 0.05;
+    p->dip = 0.75;
+    p->slur = 0;
+    p->swap_dip = 0.8;
     p->rock = 0.05;
     p->acc_lo = 0.06;
     p->acc_hi = 0.12;
@@ -181,10 +186,10 @@ static int pick_string(const Instrument *I, int midi, int vib_on, const NotePlan
 {
     int open = is_open_pitch(I, midi);
     if (open && !vib_on) return open - 1;
-    /* legato on the same string: steps within 5 up / 3 down, not beyond 10 semitones above the open string (ASSUMED: about fourth position) */
+    /* legato on the same string: steps within 5 up / 3 down, not beyond 7 semitones above the open string (ASSUMED: up to fourth position) */
     if (stay_ok && prev) {
         int d = midi - prev_midi, semis = midi - I->midi_open[prev->string];
-        if (d >= -3 && d <= 5 && semis >= (vib_on ? 1 : 0) && semis <= 10) return prev->string;
+        if (d >= -3 && d <= 5 && semis >= (vib_on ? 1 : 0) && semis <= 7) return prev->string;
     }
     int best = -1;
     for (int s = 0; s < I->nstr; s++) {
@@ -257,7 +262,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
         sc[k].dmult = clampd(1.0 + 0.15 * d_gauss(&d), 0.6, 1.5);
         sc[k].dacc = d_uni(&d, p->acc_lo, p->acc_hi);
         sc[k].lead = d_uni(&d, 0.02, 0.04);
-        Wk[k] = d_uni(&d, 0.03, 0.05);
+        Wk[k] = d_uni(&d, p->bc_lo, p->bc_hi);
         sc[k].pk = d_uni(&d, 0.4, 0.6);
         sc[k].bwb = d_uni(&d, 0.5, 3.0);
         sc[k].bwv = d_uni(&d, 0.5, 3.0);
@@ -285,7 +290,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
     }
     /* directions */
     int sgn[1024];
-    for (int k = 0; k < n; k++) sgn[k] = k == 0 ? 1 : pl[k].linked_prev ? -sgn[k - 1] : 1;
+    for (int k = 0; k < n; k++) sgn[k] = k == 0 ? 1 : pl[k].linked_prev ? (p->slur ? sgn[k - 1] : -sgn[k - 1]) : 1;
 
     /* ---- pass 2: bow contours */
     for (int k = 0; k < n; k++) {
@@ -378,7 +383,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
                 for (long i = (long)floor((tb - 0.5 * W) * R); i <= (long)ceil((tb + 0.5 * W) * R) && i < N; i++) {
                     double u = ((double)i / R - (tb - 0.5 * W)) / W;
                     if (u < 0.0 || u > 1.0 || i < 0) continue;
-                    T->FB[i] *= 1.0 - 0.25 * 0.5 * (1.0 - cos(2.0 * M_PI * u));
+                    T->FB[i] *= 1.0 - (1.0 - p->dip) * 0.5 * (1.0 - cos(2.0 * M_PI * u));
                 }
             }
     {
@@ -409,7 +414,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
         int same_swap = k > 0 && pl[k - 1].string == s && q->linked_prev && pl[k - 1].semis > 0;
         double tL = expert ? ts - 0.03 : ts;
         if (expert && nn->slide && same_swap) tL = ts - 0.10;
-        long iL = (long)floor(tL * R);
+        long iL = (long)ceil(tL * R - 1e-9);
         if (iL < 0) iL = 0;
         long ie = (long)floor(te * R);
         if (!stopped) { /* open string: the finger of any earlier note on this string lifts */
@@ -474,7 +479,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
                 a = 1.0 - rock;
                 if (same_swap && expert && !nn->slide) { /* the old finger lifts and the new one lands within 10 ms: a dips, the position swaps in the middle */
                     double u = (t - tL) / 0.01;
-                    if (u >= 0.0 && u <= 1.0) a *= 1.0 - 0.8 * sin(M_PI * u);
+                    if (u >= -1e-6 && u <= 1.0) a *= 1.0 - p->swap_dip * sin(M_PI * u);
                 } else {
                     double up = rc((t - tL) / (expert ? 0.01 : 0.001));
                     if (!(nn->slide && same_swap)) a = fmax(a * up, up < 1.0 ? T->aF[s][i] : 0.0);
@@ -490,7 +495,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
             else if (nn->slide && same_swap && expert) {
                 double xn = sim_vib_finger(L, xnom, c);
                 x = xold + (xn - xold) * rc((t - tL) / 0.12);
-            } else if (same_swap && expert && (t - tL) / 0.01 < 0.5 && t >= tL) x = xold;
+            } else if (same_swap && expert && (t - tL) / 0.01 < 0.5) x = xold;
             else x = sim_vib_finger(L, xnom, c);
             T->xF[s][i] = x;
             T->aF[s][i] = a;

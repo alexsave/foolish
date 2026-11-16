@@ -15,6 +15,9 @@ typedef struct {
     double dist;
     double fs;       /* simulation rate, 96000 */
     double damp;     /* < 0: the player default */
+    int slur;
+    double swap_dip; /* < 0: default */
+    double bc[2], dip; /* 0 0 / < 0: the defaults */
     double rock; /* < 0: default */
     double acc[2]; /* 0 0: the default */
     double beta0; /* 0: default */

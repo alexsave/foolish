@@ -39,6 +39,10 @@ typedef struct {
     int vib_all_off;    /* --vib off */
     double damp_press;  /* finger press left on the string after the bow lift (the damping contact) */
     double vb_min, vb_span;     /* plateau bow speed = vb_min + vb_span * vel, clamped to 0.06 - 0.18 m/s */
+    double bc_lo, bc_hi;        /* length of the bow change through zero speed, s (drawn per change), 0.03 - 0.05 */
+    double swap_dip;            /* press lost at the middle of a finger swap on the same string, 0.8 (the old finger lifts as the new one lands) */
+    int slur;                   /* diagnosis: 1 = no direction reversal at bow changes (one long bow) */
+    double dip;                 /* force at the middle of a bow change as a fraction of the target, 0.75 */
     double rock;                /* amplitude of the finger press rocking with the vibrato (press 1 - 2 rock .. 1), 0.05 */
     double acc_lo, acc_hi;      /* the Guettler acceleration time of the bow, s (drawn per note), 0.06 - 0.12 */
     double beta_base;           /* phrase beta (relative to the sounding length) at vel 0.5, 0.105; loud notes lower, soft higher */
