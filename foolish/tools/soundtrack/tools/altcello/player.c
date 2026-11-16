@@ -62,7 +62,7 @@ void player_init(Player *p, const Instrument *inst, PlayStyle style, uint64_t se
     p->rock = 0.05;
     p->acc_lo = 0.06;
     p->acc_hi = 0.12;
-    p->beta_base = 0.105;
+    p->beta_base = 0.12;
     p->frac_min = 0.35;
     p->frac_span = 0.25;
 }
