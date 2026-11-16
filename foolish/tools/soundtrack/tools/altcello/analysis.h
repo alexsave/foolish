@@ -67,7 +67,7 @@ void partial_decays(const double *x, long n, double fs, double f0, int K, double
  * the next window shifted by the lag in [0.95 P0, 1.05 P0] that maximises the Pearson correlation (so vibrato and the pitch
  * dips of a legato change do not count as aperiodic), sub-sample by a parabola; hop P0/8; returns the number of values, times
  * t0 + k hop_s. r is -1 where the window has no energy.
- * audio_periodic_time: the start time (s, absolute) of the first run of hops where r > thr for nper periods of time
+ * audio_periodic_time: the start, in seconds from the beginning of x, of the first run of hops where r > thr for nper periods of time
  * (thr 0.95, nper 10: "stays above 0.95 for 10 consecutive periods"), or -1. */
 double audio_onset(const double *x, long n, double fs);
 double audio_onset_from(const double *x, long n, double fs, double t_from); /* the same, looking from t_from on (the bow's landing click before the bow moves is not the note) */
