@@ -69,6 +69,7 @@ struct Oracle {
     double ya, yb; /* loss filter states (bridge, nut) */
     double gm;     /* g (1 - p) */
     int stuck;
+    Thermal T; /* thermal elasto-plastic contact (OracleSpec.thermal) */
 };
 
 double oracle_H_mag(double g, double p, double w)
@@ -101,6 +102,7 @@ Oracle *oracle_new(const OracleSpec *s)
     dl_init(&o->B1, dB);
     dl_init(&o->B2, dB);
     o->gm = s->g * (1.0 - s->p);
+    if (s->thermal) thermal_init(&o->T, &s->th, s->bow_width, 1.0 / s->fs);
     return o;
 }
 
@@ -172,7 +174,7 @@ void oracle_step(Oracle *o, double vB, double FB, double fext, double *vrel, dou
     double a1 = dl_tap(&o->B2), a2 = dl_tap(&o->A2);
     double q = a1 + a2 + fext / (2.0 * s->Z0) - vB;
     double G = FB / (2.0 * s->Z0), Phi;
-    double vr = oracle_junction(&s->fr, q, G, &o->stuck, &Phi);
+    double vr = s->thermal ? thermal_solve(&o->T, FB, q, G, 0.0, &Phi) : oracle_junction(&s->fr, q, G, &o->stuck, &Phi);
     double v = vr + vB;
     double b1 = v - a2, b2 = v - a1; /* the wave that leaves toward the bridge is the continuation of a1 plus the bow's part */
     dl_push(&o->A1, b1);
@@ -239,6 +241,9 @@ double oracle_spec_from_string(const Instrument *I, const StringSpec *sp, double
     out->Z0 = oracle_Z0(sp);
     out->beta = beta;
     out->fr = I->bow.friction;
+    out->thermal = I->bow.model == BOW_THERMAL;
+    out->th = I->bow.thermal;
+    out->bow_width = I->bow.width;
     double err = oracle_fit_loss(alpha, Kg, sp->f0, fs, &out->g, &out->p);
     if (alpha_out) memcpy(alpha_out, alpha, sizeof(double) * (size_t)Kg);
     if (K_out) *K_out = Kg;

@@ -8,6 +8,8 @@
  *   zeta.NAMES=X    torsional damping ratio of those strings
  *   zt.NAMES=X      torsional surface impedance over Z0 of those strings
  *   fifths=1        tune the open strings in pure fifths from A3 = 220 Hz (the stopped equal-tempered unisons are then 2-4 cents off)
+ *   bow=1           thermal elasto-plastic bow friction (friction_thermal.h; 0 = the friction curve, the default)
+ *   th_xi=X th_b=X th_s0=X th_ns=N  thermal constants: transition steepness xi, b_tau, bristle stiffness sigma0, substeps per sample
  *   lead_mass=X     factor on the effective masses of the named (table) body modes
  *   stat_mass=X     factor on the statistical body modal masses
  */

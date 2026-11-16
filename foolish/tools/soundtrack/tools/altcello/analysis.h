@@ -16,6 +16,12 @@ double cents(double f, double ref);
 
 /* number of slip intervals (runs of |v| > thr of at least SLIP_MIN_DUR_S, starting inside [i0,i1))
    and the fraction of the window they cover */
+/* |v_rel| above this is a slip. The friction curve sticks exactly (v_rel = 0), so 1e-4 m/s; the thermal elasto-plastic bristle creeps in
+   the stick phase (v_rel up to about 3e-3 m/s, friction_thermal.h) while a slip peaks near 1 m/s, so a thermal run uses 1e-2 m/s
+   (knobs_install sets it from the bow model). */
+#define ANALYSIS_SLIP_THR_CURVE 1e-4
+#define ANALYSIS_SLIP_THR_THERMAL 1e-2
+extern double analysis_slip_thr;
 #define SLIP_MIN_DUR_S 0.00015 /* shorter runs of |v_rel| > thr are ripple micro-slips */
 int slip_onsets(const double *v, long i0, long i1, double thr, double fs, double *frac);
 /* max normalised correlation of x[i0,i1) with itself shifted by lag in [lo,hi]; best lag out */
@@ -44,7 +50,7 @@ double settle_time(const double *vrel, long n, double fs, double P);
 double hump_db(const double *x, long n, double fs, double f0, double flo, double fhi);
 
 /* The SIMPLE classifier (oracle experiment B1/B2): a period is Helmholtz-like when it holds ONE dominant slip: the slip with
- * the largest displacement (sum of |v_rel| dt over a run of |v_rel| > 1e-4 m/s) and no other slip of at least `frac_min`
+ * the largest displacement (sum of |v_rel| dt over a run of |v_rel| > analysis_slip_thr) and no other slip of at least `frac_min`
  * (0.2) of it. Windows of P = fs/f_est samples start mid-stick after the first slip onset from `settle` s on, 20 periods like
  * analyse_helmholtz. f_est is the pitch (use Helm.f_est). ok = all 20 periods have exactly one dominant slip. */
 typedef struct {

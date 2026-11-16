@@ -13,6 +13,7 @@
  * is exact. Same sample rate as the model (96 kHz). */
 #ifndef ALTCELLO_ORACLE_MSW_H
 #define ALTCELLO_ORACLE_MSW_H
+#include "friction_thermal.h"
 #include "instrument.h"
 
 typedef struct {
@@ -21,6 +22,10 @@ typedef struct {
     double beta;    /* bow position, fraction of the string length from the bridge */
     double g, p;    /* per reflection: H(z) = g (1 - p) / (1 - p z^-1) */
     Friction fr;
+    int thermal;         /* 1: the bow junction uses the thermal elasto-plastic law of friction_thermal.h instead of the friction curve fr
+                            (taken from the instrument: bow.model, bow.thermal, bow.width) */
+    ThermalSpec th;
+    double bow_width;    /* m: F_B / width = the force per unit length of the thermal law */
 } OracleSpec;
 
 typedef struct Oracle Oracle;

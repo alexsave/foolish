@@ -29,11 +29,26 @@ typedef struct {
     double mu_static;
 } Friction;
 
+/* thermal elasto-plastic friction, van Walstijn et al. 2026 (friction_thermal.h): Table 1 of the paper unless noted */
+typedef struct {
+    double mu_s, mu_d;      /* static and dynamic friction coefficients (Table 1: 1.05, 0.3) */
+    double sigma0;          /* bristle stiffness, 1/m (1e6) */
+    double tau_g;           /* glass transition temperature above ambient, K (25) */
+    double ya, xi, chi;     /* asymptotic temperature factor (0.4), transition steepness (2), break-away fraction (0.5) */
+    double a_tau, b_tau, c_tau; /* heat constants: absorption m/K (1e-6), velocity dependent conduction (0.22), conduction (1e-4) */
+    int nsub;               /* substeps of the friction state per audio sample */
+    double v_slip;          /* m/s: the bow noise acts on slips above this relative speed (full above twice it) */
+} ThermalSpec;
+
+typedef enum { BOW_CURVE = 0, BOW_THERMAL = 1 } BowModel;
+
 typedef struct {
     double width;       /* bow hair contact width, m */
     double noise_level; /* std of the raw bow-noise draws */
     double hair_length; /* usable hair, m (the controller's bow length budget) */
     Friction friction;
+    BowModel model;     /* BOW_CURVE: friction curve (bow.h); BOW_THERMAL: friction_thermal.h */
+    ThermalSpec thermal;
 } BowSpec;
 
 typedef struct {

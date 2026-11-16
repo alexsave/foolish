@@ -1,4 +1,5 @@
 #include "knobs.h"
+#include "analysis.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,17 @@ int knobs_apply(Instrument *I, const char *spec)
             static const double pf[4] = {65.1852, 97.7778, 146.6667, 220.0}; /* C G D A */
             if (v != 0.0)
                 for (int i = 0; i < I->nstr && i < 4; i++) I->str[i].f0 = pf[i];
+        } else if (!strcmp(tok, "bow") && !names) {
+            /* bow=1 selects the thermal elasto-plastic friction, bow=0 the friction curve */
+            I->bow.model = v != 0.0 ? BOW_THERMAL : BOW_CURVE;
+        } else if (!strcmp(tok, "th_xi") && !names) {
+            I->bow.thermal.xi = v;
+        } else if (!strcmp(tok, "th_b") && !names) {
+            I->bow.thermal.b_tau = v;
+        } else if (!strcmp(tok, "th_s0") && !names) {
+            I->bow.thermal.sigma0 = v;
+        } else if (!strcmp(tok, "th_ns") && !names) {
+            I->bow.thermal.nsub = (int)v;
         } else if (!strcmp(tok, "lead_mass") && !names) {
             for (int m = 0; m < I->body.nlead; m++) I->body.lead[m].m *= v;
         } else if (!strcmp(tok, "stat_mass") && !names) {
@@ -66,4 +78,5 @@ void knobs_install(void)
     copy = *instrument_cello();
     if (knobs_apply(&copy, s)) exit(2);
     instrument_cello_override(&copy);
+    if (copy.bow.model == BOW_THERMAL) analysis_slip_thr = ANALYSIS_SLIP_THR_THERMAL;
 }

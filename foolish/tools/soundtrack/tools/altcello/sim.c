@@ -137,6 +137,7 @@ void sim_start(Sim *S)
     S->vrel_prev = 0.0;
     S->stuck = 0;
     hair_reset(&S->hair);
+    thermal_init(&S->th, &S->inst->bow.thermal, S->bow_width, S->k);
 }
 
 void sim_set_bow(Sim *S, double beta, double vB, double FB, double ramp)
@@ -201,6 +202,7 @@ static void play_apply(Sim *S, double t, double *vB, double *F, double *beta)
         S->s = S->str[b];
         S->vrel_prev = 0.0;
         S->stuck = 0;
+        thermal_reset(&S->th);
     }
     *vB = trk_eval(P->vB, P->n, P->rate, t);
     *F = trk_eval(P->FB, P->n, P->rate, t);
@@ -310,7 +312,11 @@ void sim_step(Sim *S)
         }
         double Phi;
         int stuck;
-        vrel = bow_solve(&S->inst->bow.friction, q, G, S->vrel_prev, S->stuck, nz, &Phi, &stuck);
+        if (S->inst->bow.model == BOW_THERMAL) {
+            vrel = thermal_solve(&S->th, F, q, G, nz, &Phi);
+            stuck = 0;
+        } else
+            vrel = bow_solve(&S->inst->bow.friction, q, G, S->vrel_prev, S->stuck, nz, &Phi, &stuck);
         for (int l = lo; l <= hi; l++) u2[l] -= s->kk * s->invD[l] * J[l - lo] * F * Phi;
         if (S->torsion_on)
             for (int l = tlo; l <= thi; l++) tor->th2[l] -= tor->kk * tor->invD[l] * tor->rs * Jt[l - tlo] * F * Phi;

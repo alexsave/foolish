@@ -46,6 +46,8 @@ double spec_peak(const Spectrum *s, double f, double frac, double *mag)
     return (best + d) * s->df;
 }
 
+double analysis_slip_thr = ANALYSIS_SLIP_THR_CURVE;
+
 int slip_onsets(const double *v, long i0, long i1, double thr, double fs, double *frac)
 {
     /* an interval is a maximal run of |v| > thr; runs shorter than
@@ -98,7 +100,7 @@ void classify_run(const double *bridge, const double *vrel, double fs, double f0
 {
     long i0 = (long)(t0 * fs), i1 = (long)(t1 * fs);
     double frac;
-    int on = slip_onsets(vrel, i0, i1, 1e-4, fs, &frac);
+    int on = slip_onsets(vrel, i0, i1, analysis_slip_thr, fs, &frac);
     double periods = (t1 - t0) * f0;
     long P = (long)(fs / f0 + 0.5);
     long len = i1 - i0 - (long)(1.1 * P);
@@ -121,7 +123,7 @@ Helm analyse_helmholtz(const double *bridge, const double *vrel, long n, double 
     h.cents_flat = cents(h.f_est, f0);
     double P = fs / h.f_est;
     long i = i0;
-    while (i < n - 1 && !(fabs(vrel[i]) <= 1e-4 && fabs(vrel[i + 1]) > 1e-4)) i++;
+    while (i < n - 1 && !(fabs(vrel[i]) <= analysis_slip_thr && fabs(vrel[i + 1]) > analysis_slip_thr)) i++;
     long w0 = i + (long)(0.5 * P);
     h.counts_min = 1 << 20;
     h.counts_max = 0;
@@ -129,13 +131,13 @@ Helm analyse_helmholtz(const double *bridge, const double *vrel, long n, double 
         long a = w0 + (long)(p * P), b = w0 + (long)((p + 1) * P);
         if (b > n) { h.counts_min = -1; break; }
         double fr;
-        int c = slip_onsets(vrel, a, b, 1e-4, fs, &fr);
+        int c = slip_onsets(vrel, a, b, analysis_slip_thr, fs, &fr);
         if (c < h.counts_min) h.counts_min = c;
         if (c > h.counts_max) h.counts_max = c;
     }
     h.ok_one_per_period = (h.counts_min == 1 && h.counts_max == 1);
     long w1 = w0 + (long)(20 * P);
-    if (w1 <= n) slip_onsets(vrel, w0, w1, 1e-4, fs, &h.slip_frac);
+    if (w1 <= n) slip_onsets(vrel, w0, w1, analysis_slip_thr, fs, &h.slip_frac);
     long best;
     if (w0 + (long)(11.1 * P) < n) h.corr = autocorr_max(bridge, w0, w0 + (long)(10 * P), (long)(0.95 * P), (long)(1.05 * P), &best);
     return h;
@@ -148,9 +150,9 @@ double settle_time(const double *vrel, long n, double fs, double P)
     int cnt = 0;
     long i = 0;
     while (i < n) {
-        if (fabs(vrel[i]) > 1e-4) {
+        if (fabs(vrel[i]) > analysis_slip_thr) {
             long j = i;
-            while (j < n && fabs(vrel[j]) > 1e-4) j++;
+            while (j < n && fabs(vrel[j]) > analysis_slip_thr) j++;
             if (j - i >= minlen) on[cnt++] = i;
             i = j;
         } else i++;
@@ -189,7 +191,7 @@ SimpleHelm analyse_simple(const double *vrel, long n, double fs, double f_est, d
     long i0 = (long)(settle * fs);
     double P = fs / f_est;
     long i = i0;
-    while (i < n - 1 && !(fabs(vrel[i]) <= 1e-4 && fabs(vrel[i + 1]) > 1e-4)) i++;
+    while (i < n - 1 && !(fabs(vrel[i]) <= analysis_slip_thr && fabs(vrel[i + 1]) > analysis_slip_thr)) i++;
     long w0 = i + (long)(0.5 * P);
     double fr_sum = 0.0;
     for (int p = 0; p < 20; p++) {
@@ -199,10 +201,10 @@ SimpleHelm analyse_simple(const double *vrel, long n, double fs, double f_est, d
         int cnt = 0;
         long j = a;
         while (j < b) {
-            if (fabs(vrel[j]) > 1e-4) {
+            if (fabs(vrel[j]) > analysis_slip_thr) {
                 long e = j;
                 double ar = 0.0;
-                while (e < b && fabs(vrel[e]) > 1e-4) { ar += fabs(vrel[e]) / fs; e++; }
+                while (e < b && fabs(vrel[e]) > analysis_slip_thr) { ar += fabs(vrel[e]) / fs; e++; }
                 if (cnt < 64) { area[cnt] = ar; dur[cnt] = (double)(e - j); cnt++; }
                 j = e;
             } else j++;

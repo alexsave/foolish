@@ -120,7 +120,9 @@ static const Instrument cello = {
     },
     {36, 43, 50, 57},
     /* bow: width, noise, hair length, friction {a1 v1 a2 v2 c mu_static} */
-    {0.010, 0.01, 0.62, {0.4, 0.01, 0.45, 0.1, 0.35, 1.2}},
+    {0.010, 0.01, 0.62, {0.4, 0.01, 0.45, 0.1, 0.35, 1.2},
+     BOW_CURVE, /* the thermal model is selected by this field (knob bow=thermal); its constants: friction_thermal.h, Table 1 of vW26 */
+     {1.05, 0.3, 1.0e6, 25.0, 0.4, 2.0, 0.5, 1.0e-6, 0.22, 1.0e-4, 4, 0.02}},
     /* finger: width, K, R */
     {0.010, 2e7, 200.0},
     /* body */

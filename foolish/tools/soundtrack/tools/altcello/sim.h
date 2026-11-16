@@ -7,6 +7,7 @@
 #include "bow.h"
 #include "control.h"
 #include "finger.h"
+#include "friction_thermal.h"
 #include "rng.h"
 #include "altstring.h"
 
@@ -40,6 +41,7 @@ typedef struct {
     Env xFo[SIM_MAXSTR], aFo[SIM_MAXSTR]; /* fingers of the other strings (by str[] index) */
     double bow_width;
     int bow_on;             /* 0: no bow at all */
+    Thermal th;             /* thermal elasto-plastic contact (friction_thermal.h), used when inst->bow.model == BOW_THERMAL; sim_start inits it */
     Hair hair;              /* compliant bow-hair contact (bow.h), off by default; set with hair_init before sim_start */
     int torsion_on;         /* 1 (default): the bow contact includes the string's torsion (torsion.h); 0: transverse only */
     double bow_noise_level; /* std of raw draws; set before sim_start */
