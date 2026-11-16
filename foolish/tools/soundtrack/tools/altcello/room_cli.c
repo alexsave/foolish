@@ -52,11 +52,12 @@ static long wav_read_mono(const char *path, float **out, int *rate)
 int room_cli(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: altcello room IN.wav OUT.wav [--rt60 S] [--dist M] [--pattern omni|cardioid] [--drr-check] [--no-noise]\n");
+        fprintf(stderr, "usage: altcello room IN.wav OUT.wav [--rt60 S] [--dist M] [--pattern omni|cardioid] [--mic X,Y,Z] [--no-proximity] [--drr-check] [--no-noise]\n");
         return 2;
     }
     double rt60 = 0.8, dist = 1.5;
-    int pattern = ROOM_CARDIOID, drrcheck = 0, noise = 1;
+    int pattern = ROOM_CARDIOID, drrcheck = 0, noise = 1, prox = 1, havemic = 0;
+    double micp[3] = {0, 0, 0};
     for (int i = 4; i < argc; i++) {
         if (!strcmp(argv[i], "--rt60") && i + 1 < argc) rt60 = atof(argv[++i]);
         else if (!strcmp(argv[i], "--dist") && i + 1 < argc) dist = atof(argv[++i]);
@@ -67,6 +68,11 @@ int room_cli(int argc, char **argv)
             else { fprintf(stderr, "unknown pattern %s\n", p); return 2; }
         } else if (!strcmp(argv[i], "--drr-check")) drrcheck = 1;
         else if (!strcmp(argv[i], "--no-noise")) noise = 0;
+        else if (!strcmp(argv[i], "--no-proximity")) prox = 0;
+        else if (!strcmp(argv[i], "--mic") && i + 1 < argc) {
+            if (sscanf(argv[++i], "%lf,%lf,%lf", &micp[0], &micp[1], &micp[2]) != 3) { fprintf(stderr, "--mic wants X,Y,Z in metres\n"); return 2; }
+            havemic = 1;
+        }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     float *in;
@@ -78,6 +84,9 @@ int room_cli(int argc, char **argv)
     room_spec_default(&s, dist);
     s.rt60 = rt60;
     s.pattern = pattern;
+    s.proximity = prox;
+    if (havemic) room_spec_set_mic(&s, micp[0], micp[1], micp[2]);
+    dist = sqrt(pow(s.src[0] - s.mic[0], 2) + pow(s.src[1] - s.mic[1], 2) + pow(s.src[2] - s.mic[2], 2));
     if (!noise) s.self_noise_dba = 0.0;
     float *ir, *out;
     long nir;

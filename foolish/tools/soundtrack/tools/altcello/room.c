@@ -13,12 +13,22 @@
 #define SHELF_LO_HZ 200.0 /* FDN absorption shelves */
 #define SHELF_HI_HZ 3000.0
 #define CARDIOID_FLOOR_DB (-25.0) /* real capsules leak at the back: ASSUMED */
+#define PROX_LEAK_HZ 4.0 /* the proximity integrator 1 / (j w) is made 1 / (j w + w0), w0 = 2 pi 4 Hz, so that it stays finite at DC (a real capsule's
+                            low end is bounded too); its time constant is 40 ms */
 static const double BAND_REP_HZ[ROOM_BANDS] = {200.0, 1000.0, 6000.0}; /* air absorption evaluated here per band */
 static const int FDN_LEN[ROOM_NLINES] = {601, 691, 787, 881, 977, 1063, 1151, 1259}; /* mutually prime, 12.5 to 26 ms */
 
 const int *room_fdn_lengths(int *n) { *n = ROOM_NLINES; return FDN_LEN; }
 
 double room_speed(const RoomSpec *s) { return 331.3 * sqrt(1.0 + s->temp_c / 273.15); }
+
+void room_spec_set_mic(RoomSpec *s, double x, double y, double z)
+{
+    s->mic[0] = x; s->mic[1] = y; s->mic[2] = z;
+    double d[3] = {s->src[0] - x, s->src[1] - y, s->src[2] - z};
+    double l = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    for (int i = 0; i < 3; i++) s->mic_axis[i] = d[i] / l;
+}
 
 void room_spec_default(RoomSpec *s, double dist)
 {
@@ -32,11 +42,9 @@ void room_spec_default(RoomSpec *s, double dist)
     geom_to_room(c, r);
     s->src[0] = r[0] + 2.7; s->src[1] = r[1] + 3.5; s->src[2] = r[2];
     s->front[0] = 0.0; s->front[1] = -1.0; s->front[2] = 0.0; /* geom_to_room: the top plate faces -Y */
-    s->mic[0] = s->src[0]; s->mic[1] = s->src[1] - dist; s->mic[2] = 1.0;
-    double d[3] = {s->src[0] - s->mic[0], s->src[1] - s->mic[1], s->src[2] - s->mic[2]};
-    double l = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-    for (int i = 0; i < 3; i++) s->mic_axis[i] = d[i] / l;
+    room_spec_set_mic(s, s->src[0], s->src[1] - dist, 1.0);
     s->pattern = ROOM_CARDIOID;
+    s->proximity = 1;
     s->order = 6;
     s->temp_c = 20.0; s->rh = 50.0;
     s->dir_db[0] = 0.0; s->dir_db[1] = 0.75; s->dir_db[2] = 1.5;
@@ -171,11 +179,33 @@ static void fir_add(double *y, const double *x, long n, const double *h, int tap
     }
 }
 
-/* early part: all images up to s->order, three band buffers, band split, returned in e[0..ne) */
-static void build_early(const RoomSpec *s, long ne, double t_limit, double *e)
+/* band split of three band buffers into one broadband buffer e[0..ne) */
+static void band_combine(double *const buf[ROOM_BANDS], long ne, const RoomSpec *s, double *e)
 {
-    double *buf[ROOM_BANDS];
-    for (int b = 0; b < ROOM_BANDS; b++) buf[b] = calloc((size_t)ne, sizeof(double));
+    /* total = mid + LP_lo * (lo - mid) + (delta - LP_hi) * (hi - mid) = mid + LP_lo*(lo-mid) + (hi-mid) - LP_hi*(hi-mid) */
+    double *hlo = malloc(sizeof(double) * SPLIT_TAPS), *hhi = malloc(sizeof(double) * SPLIT_TAPS);
+    sinc_lp(hlo, SPLIT_TAPS, SPLIT_LO_HZ / s->fs);
+    sinc_lp(hhi, SPLIT_TAPS, SPLIT_HI_HZ / s->fs);
+    double *dl = malloc(sizeof(double) * (size_t)ne), *dh = malloc(sizeof(double) * (size_t)ne);
+    for (long i = 0; i < ne; i++) { dl[i] = buf[0][i] - buf[1][i]; dh[i] = buf[2][i] - buf[1][i]; e[i] = buf[1][i] + dh[i]; }
+    fir_add(e, dl, ne, hlo, SPLIT_TAPS, 1.0);
+    fir_add(e, dh, ne, hhi, SPLIT_TAPS, -1.0);
+    free(dl); free(dh); free(hlo); free(hhi);
+}
+
+/* early part: all images up to s->order, three band buffers, band split, returned in e[0..ne).
+ * Proximity effect (cardioid only): the capsule pressure of one arrival is p (0.5 + 0.5 cos(phi) (1 + c / (j w r))) with r the path length of
+ * THAT arrival (figure-8 half of the cardioid on the pressure gradient of a spherical wave). The first two terms are the impulse as before
+ * (mic_gain); the third is an impulse of weight A 0.5 cos(phi) c / r per arrival, collected in a second set of band buffers and
+ * integrated once afterwards (every arrival has the same 1 / (j w + w0)), which is exactly the first order IIR per path with each path's own
+ * r. It is applied to the direct sound and to every image arrival (order up to s->order); the FDN tail is a diffuse field and has none.
+ * The integrated part is written to p[0..n) and runs on past the image/FDN crossover (it is not cut by the crossfade, a cut would be a
+ * high pass and ripple the low end); p is NULL without proximity. */
+static void build_early(const RoomSpec *s, long ne, long n, double t_limit, double *e, double *p)
+{
+    double *buf[ROOM_BANDS], *gbuf[ROOM_BANDS];
+    int prox = s->pattern == ROOM_CARDIOID && s->proximity;
+    for (int b = 0; b < ROOM_BANDS; b++) { buf[b] = calloc((size_t)ne, sizeof(double)); gbuf[b] = prox ? calloc((size_t)ne, sizeof(double)) : NULL; }
     double rb[ROOM_BANDS], air[ROOM_BANDS];
     for (int b = 0; b < ROOM_BANDS; b++) {
         rb[b] = sqrt(1.0 - room_wall_alpha(s, s->rt60 * s->rt60_mult[b]));
@@ -199,20 +229,20 @@ static void build_early(const RoomSpec *s, long ne, double t_limit, double *e)
         double mg = mic_gain(s->pattern, cph);
         for (int b = 0; b < ROOM_BANDS; b++) {
             double A = (1.0 / r) * pow(rb[b], im.nref) * pow(10.0, -air[b] * r / 20.0) *
-                       pow(10.0, s->dir_db[b] * cth / 20.0) * mg;
-            add_frac(buf[b], ne, tau * s->fs, A);
+                       pow(10.0, s->dir_db[b] * cth / 20.0);
+            add_frac(buf[b], ne, tau * s->fs, A * mg);
+            if (prox) add_frac(gbuf[b], ne, tau * s->fs, A * 0.5 * cph * c / r);
         }
     }
-    /* total = mid + LP_lo * (lo - mid) + (delta - LP_hi) * (hi - mid) = mid + LP_lo*(lo-mid) + (hi-mid) - LP_hi*(hi-mid) */
-    double *hlo = malloc(sizeof(double) * SPLIT_TAPS), *hhi = malloc(sizeof(double) * SPLIT_TAPS);
-    sinc_lp(hlo, SPLIT_TAPS, SPLIT_LO_HZ / s->fs);
-    sinc_lp(hhi, SPLIT_TAPS, SPLIT_HI_HZ / s->fs);
-    double *dl = malloc(sizeof(double) * (size_t)ne), *dh = malloc(sizeof(double) * (size_t)ne);
-    for (long i = 0; i < ne; i++) { dl[i] = buf[0][i] - buf[1][i]; dh[i] = buf[2][i] - buf[1][i]; e[i] = buf[1][i] + dh[i]; }
-    fir_add(e, dl, ne, hlo, SPLIT_TAPS, 1.0);
-    fir_add(e, dh, ne, hhi, SPLIT_TAPS, -1.0);
-    free(dl); free(dh); free(hlo); free(hhi);
-    for (int b = 0; b < ROOM_BANDS; b++) free(buf[b]);
+    band_combine(buf, ne, s, e);
+    if (prox) {
+        double *g = calloc((size_t)ne, sizeof(double));
+        band_combine(gbuf, ne, s, g);
+        double a = exp(-2.0 * M_PI * PROX_LEAK_HZ / s->fs), y = 0.0;
+        for (long i = 0; i < n; i++) { y = a * y + (i < ne ? g[i] : 0.0) / s->fs; p[i] = y; }
+        free(g);
+    }
+    for (int b = 0; b < ROOM_BANDS; b++) { free(buf[b]); free(gbuf[b]); }
 }
 
 /* the FDN impulse response, n samples */
@@ -270,7 +300,8 @@ int room_ir_build(const RoomSpec *s, float **ir, long *nout)
     if (ne > n) ne = n;
     double *e = calloc((size_t)ne, sizeof(double));
     double *f = calloc((size_t)n, sizeof(double));
-    build_early(s, ne, tx + 0.002, e);
+    double *pr = (s->pattern == ROOM_CARDIOID && s->proximity) ? calloc((size_t)n, sizeof(double)) : NULL;
+    build_early(s, ne, n, tx + 0.002, e, pr);
     build_fdn(s, n, f);
     /* energy density match over the 20 ms before the fade starts */
     long m0 = (long)((tf0 - 0.020) * s->fs), m1 = (long)(tf0 * s->fs);
@@ -285,9 +316,9 @@ int room_ir_build(const RoomSpec *s, float **ir, long *nout)
         if (t <= tf0) { we = 1.0; wl = 0.0; }
         else if (t >= tx) { we = 0.0; wl = 1.0; }
         else { double u = (t - tf0) / (tx - tf0); we = cos(0.5 * M_PI * u); wl = sin(0.5 * M_PI * u); }
-        out[i] = (float)((i < ne ? we * e[i] : 0.0) + wl * scale * f[i]);
+        out[i] = (float)((i < ne ? we * e[i] : 0.0) + wl * scale * f[i] + (pr ? pr[i] : 0.0));
     }
-    free(e); free(f);
+    free(e); free(f); free(pr);
     *ir = out; *nout = n;
     return 0;
 }

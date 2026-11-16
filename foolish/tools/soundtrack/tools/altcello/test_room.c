@@ -122,6 +122,54 @@ static double band_level(const float *ir, long n, double fs, double t, double f0
     return 10.0 * log10(e);
 }
 
+/* |H(f)| of the first `len` samples of an IR (direct sinusoid projection) */
+static double ir_mag(const float *ir, long len, double fs, double f)
+{
+    double re = 0.0, im = 0.0;
+    for (long i = 0; i < len; i++) { double w = 2.0 * M_PI * f * (double)i / fs; re += ir[i] * cos(w); im -= ir[i] * sin(w); }
+    return sqrt(re * re + im * im);
+}
+
+/* the direct sound alone: order 0 image set in a 400 m box (the first reflection and the FDN start after the 0.5 s window), source
+ * facing the mic, flat directivity, so the transfer function of the direct path is the capsule's alone */
+static double prox_boost_db(int pattern, int proximity, double r, double f_lo)
+{
+    RoomSpec s;
+    room_spec_default(&s, 1.5);
+    s.dim[0] = s.dim[1] = s.dim[2] = 400.0;
+    s.src[0] = s.src[1] = s.src[2] = 200.0;
+    room_spec_set_mic(&s, 200.0, 200.0 - r, 200.0);
+    for (int b = 0; b < ROOM_BANDS; b++) s.dir_db[b] = 0.0;
+    s.order = 0;
+    s.pattern = pattern;
+    s.proximity = proximity;
+    float *ir; long n;
+    room_ir_build(&s, &ir, &n);
+    long len = (long)(0.5 * s.fs);
+    double db = 20.0 * log10(ir_mag(ir, len, s.fs, f_lo) / ir_mag(ir, len, s.fs, 1000.0));
+    free(ir);
+    return db;
+}
+
+static void t_proximity(void)
+{
+    double c = room_speed(&(RoomSpec){.temp_c = 20.0});
+    /* analytic: on axis cardioid p (0.5 + 0.5 (1 + 1 / (j k r))) = p (1 + 0.5 / (j k r)), 50 Hz re 1 kHz; the 1 kHz term is included */
+    double rs[2] = {0.3, 3.0};
+    double lim[2] = {1.0, 0.5};
+    for (int i = 0; i < 2; i++) {
+        double r = rs[i], k50 = 2.0 * M_PI * 50.0 / c * r, k1k = 2.0 * M_PI * 1000.0 / c * r;
+        double want = 20.0 * log10(sqrt(1.0 + 0.25 / (k50 * k50)) / sqrt(1.0 + 0.25 / (k1k * k1k)));
+        double got = prox_boost_db(ROOM_CARDIOID, 1, r, 50.0), omni = prox_boost_db(ROOM_OMNI, 1, r, 50.0);
+        printf("room proximity: cardioid at %.1f m, 50 Hz re 1 kHz %.2f dB, analytic %.2f dB; omni %.2f dB\n", r, got, want, omni);
+        CHECK(fabs(got - want) < 1.0, "proximity boost at %.1f m is %.2f dB, analytic %.2f dB", r, got, want);
+        CHECK(i == 0 || got < lim[i], "proximity boost at %.1f m is %.2f dB, want under 0.5", r, got);
+        CHECK(fabs(omni) < 0.1, "omni mic shows %.2f dB boost at %.1f m", omni, r);
+    }
+    CHECK(prox_boost_db(ROOM_CARDIOID, 1, 0.3, 50.0) > 5.0, "boost at 0.3 m is under 5 dB");
+    CHECK(fabs(prox_boost_db(ROOM_CARDIOID, 0, 0.3, 50.0)) < 0.1, "proximity switched off still boosts");
+}
+
 static void t_directivity(void)
 {
     RoomSpec s;
@@ -256,6 +304,7 @@ int main(void)
     t_rt60();
     t_cardioid();
     t_directivity();
+    t_proximity();
     t_noise();
     t_determinism();
     t_misc();

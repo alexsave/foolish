@@ -32,6 +32,7 @@ typedef struct {
     double mic[3];        /* microphone capsule, m */
     double mic_axis[3];   /* unit vector the microphone points along */
     int pattern;          /* ROOM_OMNI or ROOM_CARDIOID */
+    int proximity;        /* cardioid near-field (proximity) effect on the direct sound and the image arrivals, 1 (see build_early) */
     int order;            /* image source order, 6 */
     double temp_c, rh;    /* air for the absorption: 20 C, 50 percent */
     double dir_db[ROOM_BANDS]; /* source directivity: half the front-back dB per band (gain dB = dir_db * cos(angle from front)) */
@@ -46,6 +47,8 @@ typedef struct {
 /* the 6 x 5 x 3.2 m room of geom.h, cello from geom_to_room placed at X 2.7 m, Y about 4.0 m facing the open room, the mic
  * `dist` m in front of it at 1.0 m height pointing at the source. */
 void room_spec_default(RoomSpec *s, double dist);
+/* put the microphone at (x, y, z) in room coordinates, aimed at the source point */
+void room_spec_set_mic(RoomSpec *s, double x, double y, double z);
 
 /* the IR (float, mono, fs); *ir is malloc'ed, caller frees. 0 on success. */
 int room_ir_build(const RoomSpec *s, float **ir, long *n);
