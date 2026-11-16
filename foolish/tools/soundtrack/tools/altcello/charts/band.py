@@ -56,13 +56,13 @@ for lab, col, pat, ls in (("zeta_t 0.01 (iteration 1 torsion)", GREY, "noise_D3_
     for n in lv:
         nm = (pat % n) if not (pat.startswith("noise2") and n == 0.01) else "zeta_D3_0.05"
         b = ratio(nm)
-        xs.append(max(n, 0.002)); ys.append(b[1] / b[0] if b else np.nan)
+        xs.append(lv.index(n)); ys.append(b[1] / b[0] if b else np.nan)
     ax.plot(xs, ys, ls, color=col, label=lab, lw=2)
-ax.axhline(4, color=RED, ls=":", lw=1.5); ax.text(0.0021, 4.15, "goal x4", color=RED, fontsize=9)
-ax.set_xscale("log"); ax.set_xticks([0.002, 0.005, 0.01, 0.02, 0.03]); ax.set_xticklabels(["0", "0.005", "0.01", "0.02", "0.03"])
-ax.axvline(0.01, color=ORANGE, lw=6, alpha=0.25)
+ax.axhline(4, color=RED, ls=":", lw=1.5); ax.text(-0.2, 4.15, "goal x4", color=RED, fontsize=9)
+ax.set_xticks(range(5)); ax.set_xticklabels(["0", "0.005", "0.01", "0.02", "0.03"])
+ax.axvline(2, color=ORANGE, lw=10, alpha=0.25)
 ax.set_xlabel("bow noise level (std of raw draws, on the sliding friction coefficient)"); ax.set_ylabel("longest contiguous band F_max / F_min")
-ax.set_title("D3, beta 0.1, v_B 0.1, 32 forces 0.03-5 N: band ratio vs noise level (shaded: chosen 0.01)", fontsize=10.5, loc="left")
+ax.set_title("D3 band ratio vs bow-noise level (beta 0.1, v_B 0.1, 32 forces; shaded = chosen)", fontsize=10.5, loc="left")
 ax.legend(frameon=False, loc="upper left"); ax.set_ylim(0, 7)
 
 # B: band vs torsion parameters (floating bars)
@@ -77,10 +77,10 @@ for i, (lab, nm) in enumerate(cfg):
         ax.bar(i, b[1] - b[0], bottom=b[0], color=col, width=0.7)
         ax.text(i, b[1] * 1.08, "x%.1f" % (b[1] / b[0]), ha="center", fontsize=9)
     else:
-        ax.text(i, 0.05, "none", ha="center", fontsize=9, color=RED)
+        ax.text(i, 0.06, "no band", ha="center", fontsize=9, color=RED)
 ax.set_yscale("log"); ax.set_ylim(0.04, 4); ax.set_xticks(range(len(cfg))); ax.set_xticklabels([c[0] for c in cfg], rotation=35, ha="right")
 ax.set_ylabel("contiguous Helmholtz band (N)")
-ax.set_title("D3 band vs each torsion parameter (one at a time, noise 0.01; bars = F_min..F_max, label = ratio)", fontsize=10.5, loc="left")
+ax.set_title("D3 band vs each torsion parameter (bars F_min..F_max, label = ratio)", fontsize=10.5, loc="left")
 
 # C: Schelleng maps
 STR = ["C2", "G2", "D3", "A3"]; BET = [0.07, 0.1, 0.14]; VB = [0.05, 0.1, 0.2]
@@ -112,7 +112,7 @@ leg = [Line2D([], [], marker="o", color=BLUE, ls="", label="Helmholtz, both clas
 fig.legend(handles=leg, loc="upper right", bbox_to_anchor=(0.985, 0.672), ncol=4, frameon=False, fontsize=9.5)
 
 # D: gate table
-ax = fig.add_subplot(gs[2, :]); ax.axis("off")
+ax = fig.add_subplot(gs[2, :]); ax.axis("off"); ax.set_position([0.055, 0.0, 0.93, 0.225])
 g = os.path.join(D, "gate.tsv")
 cols = ["jit %", "shim dB", "nf 0-1k", "nf 1-2.5k", "nf 2.5-5k", "nf 5-10k", "HNR", "cent/f0", "tr dB", "t_slip s", "unm. bands", "1-3k", "3-8k", "mod 4-7"]
 idx = [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15]
@@ -126,7 +126,7 @@ if os.path.exists(g):
         colr.append(["#e3eefb" if kind == "NEW" else ("#f1f1f1" if kind == "REF" else "white")] * (len(idx) + 2))
     tb = ax.table(cellText=cell, colLabels=["note", "row"] + cols, cellColours=colr, loc="center", cellLoc="center")
     tb.auto_set_font_size(False); tb.set_fontsize(8.6); tb.scale(1, 1.22)
-    ax.set_title("Gate table at the band centre (4 s, steady window 0.5-2.0 s) against the DIAGNOSIS.md C1 rows and the Philharmonia reference", fontsize=10.5, loc="left")
+    fig.text(0.055, 0.245, "Gate table at the band centre (4 s, steady window 0.5-2.0 s) against the DIAGNOSIS.md C1 rows and the Philharmonia reference", fontsize=10.5)
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 fig.savefig(OUT, dpi=100)
 print(OUT)
