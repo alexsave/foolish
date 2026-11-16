@@ -173,10 +173,31 @@ void sim_bow_weights(const Sim *S, double beta, int *lo, int *hi, double *J, int
     bow_weights_grid(tor->h, tor->N, xB, wt, tlo, thi, Jt);
 }
 
+/* the played passage (S->play): switch the bowed string at its step, hand the contours of this instant to the controls below */
+static void play_apply(Sim *S, double t, double *vB, double *F, double *beta)
+{
+    const PlayTracks *P = S->play;
+    long i = (long)(t * P->rate);
+    if (i < 0) i = 0;
+    if (i >= P->n) i = P->n - 1;
+    int b = P->bowed[i];
+    if (b != S->bowed && b < S->nstr) {
+        S->bowed = b;
+        S->s = S->str[b];
+        S->vrel_prev = 0.0;
+        S->stuck = 0;
+    }
+    *vB = trk_eval(P->vB, P->n, P->rate, t);
+    *F = trk_eval(P->FB, P->n, P->rate, t);
+    *beta = trk_eval(P->beta, P->n, P->rate, t);
+}
+
 void sim_step(Sim *S)
 {
     double t = S->n * S->k;
     double k = S->k;
+    double pvB = 0.0, pF = 0.0, pbeta = 0.1;
+    if (S->play) play_apply(S, t, &pvB, &pF, &pbeta);
     String *s = S->s;
     Torsion *tor = s->tor;
 
@@ -195,6 +216,11 @@ void sim_step(Sim *S)
     }
 
     for (int i = 0; i < S->nstr; i++) {
+        if (S->play) {
+            finger_apply(&S->finger, S->str[i], trk_eval(S->play->xF[i], S->play->n, S->play->rate, t),
+                         trk_eval(S->play->aF[i], S->play->n, S->play->rate, t));
+            continue;
+        }
         const Env *ex = i == S->bowed ? &S->xF : &S->xFo[i];
         const Env *ea = i == S->bowed ? &S->aF : &S->aFo[i];
         double xf = env_eval(ex, t);
@@ -209,13 +235,13 @@ void sim_step(Sim *S)
     double J[BOW_MAXPTS], Jt[BOW_MAXPTS];
     int tlo = 1, thi = 0;
     if (S->bow_on) {
-        vB = env_eval(&S->vB, t);
-        F = env_eval(&S->FB, t);
+        vB = S->play ? pvB : env_eval(&S->vB, t);
+        F = S->play ? pF : env_eval(&S->FB, t);
         if (S->walk_sd > 0.0) {
             vB *= 1.0 + walk_eval(S->walk_v, S->walk_n, t);
             F *= 1.0 + walk_eval(S->walk_F, S->walk_n, t);
         }
-        double beta = env_eval(&S->beta, t);
+        double beta = S->play ? pbeta : env_eval(&S->beta, t);
         sim_bow_weights(S, beta, &lo, &hi, J, &tlo, &thi, Jt);
     }
     for (int i = 0; i < S->nstr; i++) {

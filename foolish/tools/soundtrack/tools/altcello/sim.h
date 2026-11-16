@@ -35,6 +35,8 @@ typedef struct {
     double fs, k;
     long n;                 /* steps done; state y1 is at time n k */
     Env vB, FB, beta, xF, aF;       /* bow and the finger of the bowed string */
+    const PlayTracks *play;         /* NULL: the Env controls above; else dense contours of a played passage (control.h) that
+                                       replace them all: bow, the bowed string and the fingers of every string (needs all_strings) */
     Env xFo[SIM_MAXSTR], aFo[SIM_MAXSTR]; /* fingers of the other strings (by str[] index) */
     double bow_width;
     int bow_on;             /* 0: no bow at all */

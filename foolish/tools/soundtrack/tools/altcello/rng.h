@@ -13,6 +13,10 @@
 /* the signs of the plate radiation path (radiate_body.h): one draw per plate mode */
 #define ALTCELLO_RADIATE_SEED (ALTCELLO_SEED ^ 0x7ad1a7eULL)
 
+/* the expert player (player.h): every contour of a played passage draws from a stream seeded by this sub-seed, the run seed
+   (--seed N, default 0), the note index and the purpose, so no draw depends on the audio sample rate */
+#define ALTCELLO_PLAYER_SEED (ALTCELLO_SEED ^ 0x91a7e2ULL)
+
 typedef struct {
     uint64_t s[4];
     int have_spare;
