@@ -223,3 +223,31 @@ Added: knobs.c (diagnostic one-factor knobs through ALTCELLO_KNOBS), the shadow 
   Mutation 2: `knobs.c` s0 knob without the Q recompute -> `FAIL test_shadow.c:32: fabs(q2k(&K.str[i]) - q0[i]) < 1e-6 * q0[i] -- string 0 Q2k moved to 283.7427 from 300.0000`.
   Both restored (1 s wait before make; object files touched), test back to PASS.
 - Not added, because the change they guard was not accepted: the ring-ratio bound test and the C2/G2-on-C audio periodicity bound test.
+
+## Thermal elasto-plastic bow friction (iteration 1: friction_thermal.c, van Walstijn et al. 2026; THERMAL is now the default bow model)
+
+- test_thermal (new, T30; about 20 s).
+  Every mutation: applied to the source, 1.2 s pause (the Makefile's make compares whole seconds), make, run, restored, 1 s pause and a touch of the file, make, PASS.
+  - T30a steady sliding: the model settles to the contact temperature of eq (28) / Appendix B (bisection on (B.3), independent of the table) and to muss(tau(v)), both within 2 percent, 3 bow forces x 6 speeds 0.02-1.5 m/s (measured worst 0.06 percent).
+    Mutation: `friction_thermal.c` the conduction `lam = p->b_tau * sqrt(av / Fb)` times 1.1 -> `FAIL test_thermal.c:103: et <= 0.02 -- F 0.4 v 0.02: tau 3.7321 K vs Appendix B 4.0873 K (8.69 percent)` (27 FAIL lines).
+  - T30b passivity: the dissipated power Qf never negative, the cumulative work of the friction force F phi v_rel never negative, and equal to the heat plus the bristle energy within 2 percent (measured 0.09 percent).
+    Mutation: the dissipation `qh` sign flipped -> `FAIL test_thermal.c:115: r.qmin >= 0.0` and `:117: r.wend > 0.0 && miss <= 0.02` (also :103, :137, :157, :169, 24 FAIL lines in all).
+  - T30c relaxation after the bow lifts: time constant a_tau / c_tau = 10.000 ms within 20 percent (measured 10.000 ms), in the module with the force zero, with the contact kept at v = 0, and in a bowed D3 whose force drops to zero.
+    Mutation 1: the contact-off decay `exp(-dt c_tau / a_tau)` with c_tau doubled -> `FAIL test_thermal.c:137: ... relaxation time constant 5.000 ms vs 10.000 ms` and `:157` (bowed note).
+    Mutation 2: the same factor doubled in run_step (v = 0 with the contact on) -> `FAIL test_thermal.c:137: ... relaxation time constant 5.000 ms vs 10.000 ms` (only that case).
+  - T30d Helmholtz on D3 (string alone, beta 0.1, v_B 0.1, F 0.67 N, 4 s, bow noise on): one slip per period for 20 periods, slip fraction 0.1203 (within 0.03 of beta), pitch +0.5 cents (within 5), peak contact temperature 25.3 K above ambient (45 C; asserted 10-80 K); the same on the MSW oracle with the thermal junction (slip fraction 0.1178, pitch -1.4 cents) which must differ from the oracle with the friction curve (0.1070, -0.5 cents).
+    Mutation 1: `sim.c` `if (0 && S->inst->bow.model == BOW_THERMAL)` (the sim falls back to the curve) -> `FAIL test_thermal.c:117: r.wend > 0.0 && miss <= 0.02 -- work 3.4961e-02 J vs heat + bristle 0.0000e+00 J` (3 FAIL lines, with :115 and :169).
+    Mutation 2: `oracle_msw.c` `0 ? thermal_solve(...) : oracle_junction(...)` -> `FAIL test_thermal.c:197: fabs(h.slip_frac - hh[0].slip_frac) > 0.002 || ... -- the thermal oracle junction gives the friction curve's result`.
+  - T30e substeps: 4 substeps per sample against 32 agree within 0.2 cents of pitch (measured 0.08) and 0.005 of slip fraction (measured 0.0005).
+    Mutation: `double h = T->dt` (the substep length ignores NSUB) -> `FAIL test_thermal.c:204: fabs(a.h.cents_flat - b.h.cents_flat) <= 0.2` (and :117).
+  - T30f determinism with the bow noise on: two runs equal bit for bit including the state.
+    Mutation: a static counter added to q in thermal_solve -> `FAIL test_thermal.c:226: !memcmp(sig[0], sig[1], sizeof sig[0]) -- two runs differ`.
+- test_instrument (T23): the D3 and C2 probe hashes of the friction curve (aea0191a9767bf02, 20e16156da2131f0) are UNCHANGED, which proves the curve path is untouched; they now run with `bow.model = BOW_CURVE`.
+  The default instrument is THERMAL, so its probes have new hashes, RECORDED deliberately (D3 0812735492e9d6d7, C2 1aa802cbd1ddb603): the default bow model changed, so every sample changes.
+  The test also asserts that the default model is THERMAL.
+- test_hair T18c: runs on the friction curve (`BOW_CURVE`).
+  The ripple hump is the signature of a perfectly sticking curve; with the thermal bristle (its own compliance, sigma0) the hair moves the hump by 0.18 dB (below the 0.5 dB bound), so the test keeps the model the hair was built for instead of loosening the bound.
+- test_oracle_msw: T25 runs the friction curve junction (the instrument copy with `BOW_CURVE`); the thermal junction is T30d.
+- analysis.c slip threshold: `analysis_slip_thr` is 1e-4 m/s for the curve (exact sticking) and 1e-2 m/s for THERMAL (the bristle creeps in the stick phase, up to about 3e-3 m/s, slips peak near 1 m/s), set by `sim_start` and `oracle_new` from the bow model (one owner).
+  The curve value is the old constant, so every earlier measurement is unchanged (T23 curve hashes, the 175/401 ms scale reproduction).
+- Not tested: thermal_tool, charts/thermal*.py, thermal_run*.sh (measurement and chart scripts).

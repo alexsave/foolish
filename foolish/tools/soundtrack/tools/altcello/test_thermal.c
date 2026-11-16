@@ -171,22 +171,30 @@ int main(void)
         OracleSpec os;
         oracle_spec_from_string(&ic, sp, FS, 0.1, 4000.0, &os, NULL, NULL);
         CHECK(os.thermal, "the oracle did not take the thermal junction from the instrument");
-        Oracle *o = oracle_new(&os);
-        long n = (long)(4.0 * FS);
-        double *br = calloc((size_t)n, sizeof(double)), *vr = calloc((size_t)n, sizeof(double));
-        for (long i = 0; i < n; i++) {
-            double t = (double)i / FS, ra = t < 0.03 ? t / 0.03 : 1.0;
-            oracle_step(o, 0.1 * ra, 0.67 * ra, 0.0, &vr[i], &br[i]);
+        Helm hh[2];
+        for (int th = 1; th >= 0; th--) { /* th 1: the thermal junction, 0: the same oracle with the friction curve */
+            OracleSpec o2 = os;
+            o2.thermal = th;
+            Oracle *o = oracle_new(&o2);
+            long n = (long)(4.0 * FS);
+            double *br = calloc((size_t)n, sizeof(double));
+            double *vr = calloc((size_t)n, sizeof(double));
+            for (long i = 0; i < n; i++) {
+                double t = (double)i / FS, ra = t < 0.03 ? t / 0.03 : 1.0;
+                oracle_step(o, 0.1 * ra, 0.67 * ra, 0.0, &vr[i], &br[i]);
+            }
+            hh[th] = analyse_helmholtz(br, vr, n, FS, sp->f0, 2.5);
+            free(br);
+            free(vr);
+            oracle_free(o);
         }
-        Helm h = analyse_helmholtz(br, vr, n, FS, sp->f0, 2.5);
-        printf("T30d MSW oracle with the thermal junction: one slip per period %d (counts %d..%d), slip fraction %.4f, pitch %+.3f cents\n", h.ok_one_per_period, h.counts_min,
-               h.counts_max, h.slip_frac, h.cents_flat);
+        Helm h = hh[1];
+        printf("T30d MSW oracle with the thermal junction: one slip per period %d (counts %d..%d), slip fraction %.4f, pitch %+.3f cents (the curve junction: %.4f, %+.3f cents)\n",
+               h.ok_one_per_period, h.counts_min, h.counts_max, h.slip_frac, h.cents_flat, hh[0].slip_frac, hh[0].cents_flat);
         CHECK(h.ok_one_per_period, "oracle: not one slip per period: counts %d..%d", h.counts_min, h.counts_max);
         CHECK(fabs(h.slip_frac - 0.1) <= 0.03, "oracle slip fraction %.4f vs beta 0.1", h.slip_frac);
         CHECK(fabs(h.cents_flat) <= 5.0, "oracle pitch %.3f cents from f0", h.cents_flat);
-        free(br);
-        free(vr);
-        oracle_free(o);
+        CHECK(fabs(h.slip_frac - hh[0].slip_frac) > 0.002 || fabs(h.cents_flat - hh[0].cents_flat) > 0.2, "the thermal oracle junction gives the friction curve's result");
     }
 
     /* e) substeps */
