@@ -10,10 +10,10 @@ sys.path.insert(0, HERE)
 import onset_lib as L  # noqa: E402
 G, M = L.G, L.M
 SR = L.SR
-KEYS = ["tper", "t_per", "att10_90", "att_tilt", "mod4_7", "mod10", "lev_sd", "vib_rate", "vib_depth", "hnr", "rel50", "rel100", "rel200"]
+KEYS = ["tper", "t_per", "att10_90", "att_tilt", "mod4_7", "mod10", "lev_sd", "vib_rate", "vib_depth", "hnr"]  # the release gates are left out: the candidate windows end 0.1 s after the lift
 LABEL = {"tper": "audio time to periodic s (C measure)", "t_per": "time to periodic s (gate)", "att10_90": "attack 10-90 ms", "att_tilt": "attack - sustain 2-6 kHz dB",
          "mod4_7": "4-7 Hz modulation share", "mod10": "above-10 Hz share", "lev_sd": "level sd dB", "vib_rate": "vibrato rate Hz", "vib_depth": "vibrato depth c",
-         "hnr": "HNR dB", "rel50": "release +50 ms dB", "rel100": "release +100 ms dB", "rel200": "release +200 ms dB"}
+         "hnr": "HNR dB"}
 NOTES = [("single", "notes", [("G2 (G string)", 43, 0.4, "G"), ("D3 (D string)", 50, 3.4, "D"), ("A3 (A string)", 57, 6.4, "A")]),
          ("low", "low_notes", [("C2 (C string; ref D2)", 36, 0.4, "C"), ("G2 on C (C string)", 43, 3.4, "C")])]
 
@@ -32,7 +32,7 @@ def main():
     res = {}
     for kind, base, notes in NOTES:
         for lab, midi, t, s in notes:
-            res[(lab, "phil")] = gates(M.load_audio(os.path.join(dirs[0], "%s_ref.wav" % base)), midi, t, "cgref%d" % midi + s + kind)
+            res[(lab, "phil")] = gates(M.load_audio(os.path.join(dirs[0], "%s_ref.wav" % base)), 38 if midi == 36 else midi, t, "cgref%d" % midi + s + kind)
             for d in dirs:
                 res[(lab, os.path.basename(d))] = gates(M.load_audio(os.path.join(d, "%s_alt_dry.wav" % base)), midi, t, "cg%s%d%s" % (os.path.basename(d), midi, kind))
     out = []
