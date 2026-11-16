@@ -10,7 +10,7 @@
  *     written onsets;
  *  e) vibrato (rendered 3 s notes): measured rate within 0.4 Hz of the drawn rate and depth within 35 percent of the drawn depth; vibrato off:
  *     pitch standard deviation under 3 cents on the stopped notes of the scale;
- *  f) EXPERT and NOVICE differ measurably: attack time (10 to 90 percent of the level) and the 4-7 Hz share of the level modulation. */
+ *  f) EXPERT and NOVICE differ measurably: attack duration (10 to 90 percent of the level) and the 4-7 Hz share of the level modulation. */
 #include "analysis.h"
 #include "player.h"
 #include "render.h"
