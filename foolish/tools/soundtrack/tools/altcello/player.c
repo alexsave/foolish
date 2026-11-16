@@ -277,7 +277,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
         sc[k].scoop = d_uni(&d, 6.0, 12.0);
         sc[k].settle = d_uni(&d, 0.04, 0.06);
         sc[k].onset = d_uni(&d, 0.2, 0.3);
-        sc[k].rate = d_uni(&d, 5.2, 5.6);
+        sc[k].rate = d_uni(&d, 4.9, 5.3); /* 5.2 - 5.6 before: measured 5.9 Hz against 5.4 Hz (median) of the real notes */
         sc[k].dmult = clampd(1.0 + 0.15 * d_gauss(&d), 0.6, 1.5);
         sc[k].dacc = d_uni(&d, p->acc_lo, p->acc_hi);
         sc[k].lead = d_uni(&d, 0.02, 0.04);
@@ -302,7 +302,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
         q->beta0 = beta_phrase;
         q->vB0 = clampd(p->vb_min + p->vb_span * nn->vel, 0.06, 0.18);
         q->frac0 = expert ? clampd(p->frac_min + p->frac_span * nn->vel, 0.20, 0.80) : sc[k].frac_nov;
-        q->depth_c = (nn->depth_c >= 0.0 ? nn->depth_c : 11.0) * sc[k].dmult;
+        q->depth_c = (nn->depth_c >= 0.0 ? nn->depth_c : 8.0) * sc[k].dmult /* 11 before: the measured depth of the three Philharmonia notes is 7.4 c (median), ours was 10.3 */;
         q->rate_hz = nn->rate_hz >= 0.0 ? nn->rate_hz : sc[k].rate;
         q->scoop_c = sc[k].scoop;
         q->T_acc = sc[k].dacc;
