@@ -71,4 +71,5 @@ def main():
         print("   level re sustain at +50/+100/+200/+300 ms: %.1f %.1f %.1f %.1f" % (lv(0.05), lv(0.1), lv(0.2), lv(0.3)))
         print("midi %d te %.2f: bump %.1f dB at +%.3f s, pitch excursion %.0f c; force zero at %+.3f s, speed at force zero %.4f m/s, aF at te %.2f" % (
             r["midi"], r["te"], r["bump_db"], r["t_bump"], r["pitch_exc_c"], lift, r["vB"][int(np.argmax(r["FB"][i0 - 100:] <= 0)) + i0 - 100] if np.isfinite(lift) else -1, r["aF"][i0]))
-main()
+if __name__ == "__main__":
+    main()
