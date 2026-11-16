@@ -11,8 +11,11 @@
  *  e) vibrato (rendered 3 s notes): measured rate within 0.4 Hz of the drawn rate and depth within 35 percent of the drawn depth; vibrato off:
  *     pitch standard deviation under 3 cents on the stopped notes of the scale;
  *  f) EXPERT and NOVICE differ measurably: attack duration (10 to 90 percent of the level) and the 4-7 Hz share of the level modulation;
- *  g) the expert attack (a start from rest): the force lands before the motion, stays at 20-80 percent of the log band at the instantaneous speed
- *     from the landing to the end of the swell (also when aimed at 0.95), the swell lasts 0.25-0.45 s, the novice is untouched. */
+ *  g) the expert attack (a start from rest): the force lands before the motion and is the Guettler wedge force (att_k * att_acc per string) until the bow
+ *     has reached speed and the hold has passed, relaxes to the sustain force with no step (5 percent per ms), and is inside 20-80 percent of the log band from
+ *     there on (also when aimed at 0.95); the swell lasts 0.25-0.45 s; the novice is untouched;
+ *  h) G2 (rendered, 2 seeds): audio periodic within 0.1 s of the start, level at 50 ms within 4 dB of the measured value and of Philharmonia;
+ *  i) the release: expert force without step or overshoot and the bow still moving at the lift, rise after the lift under 5 dB; novice abrupt (stops first, force step). */
 #include "analysis.h"
 #include "player.h"
 #include "render.h"
@@ -479,7 +482,10 @@ static void f_style(void)
     played_free(&pn);
 }
 
-/* ---------------------------------------------------------------- g) the expert attack (ONSET.md) */
+/* ---------------------------------------------------------------- g) the expert attack (ONSET.md, Guettler wedge of iteration 2) */
+/* From the landing to the end of the relaxation the force is the wedge force att_k * att_acc (held att_hold after the bow reaches speed, then relaxing to the
+   sustain force); from the end of the relaxation on the 0.2 - 0.8 clamp of the log band at the instantaneous speed applies (and holds until the end of the swell
+   plus 0.1 s). The force never steps: no more than 5 percent of the wedge force per ms. */
 static void check_attack(const Player *p, const Note *nt, int n, const char *what, double *lo, double *hi)
 {
     Played pl;
@@ -487,23 +493,33 @@ static void check_attack(const Player *p, const Note *nt, int n, const char *wha
     const Instrument *I = instrument_cello();
     for (int k = 0; k < n; k++) {
         const NotePlan *q = &pl.plan[k];
-        double T0 = p->att_v_frac * q->vB0 / p->att_acc, Tsw = q->T_acc - T0;
+        const double a_w = p->att_acc > 0.0 ? p->att_acc : I->att_acc[q->string];
+        const double F_att = (p->att_k > 0.0 ? p->att_k : I->att_k[q->string]) * a_w;
+        const double T0 = p->att_v_frac * q->vB0 / a_w, Tsw = q->T_acc - T0, t_free = T0 + p->att_hold + p->rel_hi; /* the sustain clamp rules from here on */
         CHECK(Tsw >= p->sw_lo - 1e-9 && Tsw <= p->sw_hi + 1e-9, "%s note %d: swell %.3f s outside %.2f-%.2f", what, k, Tsw, p->sw_lo, p->sw_hi);
         double vmax = 0.0;
-        for (long i = (long)ceil((q->t_s - 0.02) * pl.trk.rate); i <= (long)floor((q->t_s + q->T_acc) * pl.trk.rate); i++) {
-            double v = fabs(pl.trk.vB[i]);
+        for (long i = (long)ceil((q->t_s - 0.015) * pl.trk.rate); i <= (long)floor((q->t_s + q->T_acc + 0.1) * pl.trk.rate); i++) {
+            double t = (double)i / pl.trk.rate - q->t_s, v = fabs(pl.trk.vB[i]);
             if (v > vmax) vmax = v;
-            double fr = player_band_frac(I, pl.trk.bowed[i], pl.beta_rel[i], v < 0.05 ? 0.05 : v, pl.trk.FB[i]);
-            if (fr < *lo) *lo = fr;
-            if (fr > *hi) *hi = fr;
-            CHECK(fr >= 0.2 - 1e-9 && fr <= 0.8 + 1e-9, "%s note %d t %.3f: attack force %.3f N at speed %.3f is at %.3f of the log band", what, k, (double)i / pl.trk.rate - q->t_s,
-                  pl.trk.FB[i], v, fr);
-            if (fr < 0.2 || fr > 0.8) return played_free(&pl);
+            double F = pl.trk.FB[i], dF = fabs(F - pl.trk.FB[i - 1]);
+            CHECK(dF <= 0.05 * F_att + 1e-12, "%s note %d t %.3f: the force steps by %.4f N in 1 ms (limit %.4f)", what, k, t, dF, 0.05 * F_att);
+            if (dF > 0.05 * F_att) return played_free(&pl);
+            if (t <= T0 + p->att_hold) { /* the wedge: F = k a (with the 5 percent force noise: 0.7 - 1.3) */
+                CHECK(F >= 0.7 * F_att && F <= 1.3 * F_att, "%s note %d t %.3f: wedge force %.3f N is not %.3f N * (0.7 - 1.3)", what, k, t, F, F_att);
+                if (F < 0.7 * F_att || F > 1.3 * F_att) return played_free(&pl);
+            } else if (t >= t_free) {
+                double fr = player_band_frac(I, pl.trk.bowed[i], pl.beta_rel[i], v < 0.05 ? 0.05 : v, F);
+                if (fr < *lo) *lo = fr;
+                if (fr > *hi) *hi = fr;
+                CHECK(fr >= 0.2 - 1e-9 && fr <= 0.8 + 1e-9, "%s note %d t %.3f: after the attack the force %.3f N at speed %.3f is at %.3f of the log band", what, k, t, F, v, fr);
+                if (fr < 0.2 || fr > 0.8) return played_free(&pl);
+            }
         }
-        /* the swell: the speed at the start of the swell is the reduced speed (about att_v_frac of the plateau), then it grows */
+        /* the speed at the end of the acceleration is most of the plateau (0.85 of it, noise and arch 3 + 8 percent), then the swell grows */
         long i0 = (long)floor((q->t_s + T0) * pl.trk.rate), i1 = (long)floor((q->t_s + q->T_acc) * pl.trk.rate);
-        CHECK(fabs(pl.trk.vB[i0]) < 0.75 * fabs(pl.trk.vB[i1]) + 1e-9 || fabs(pl.trk.vB[i1]) < 0.06, "%s note %d: speed at the end of the acceleration %.3f is not under the plateau %.3f", what, k,
-              fabs(pl.trk.vB[i0]), fabs(pl.trk.vB[i1]));
+        CHECK(fabs(pl.trk.vB[i0]) > 0.6 * q->vB0 && fabs(pl.trk.vB[i0]) < 1.0 * q->vB0, "%s note %d: speed at the end of the acceleration %.3f of the plateau %.3f", what, k,
+              fabs(pl.trk.vB[i0]), q->vB0);
+        CHECK(fabs(pl.trk.vB[i1]) > 0.8 * q->vB0, "%s note %d: speed at the end of the swell %.3f is under the plateau %.3f", what, k, fabs(pl.trk.vB[i1]), q->vB0);
         CHECK(pl.trk.FB[(long)floor((q->t_s - 0.03) * pl.trk.rate)] == 0.0 && pl.trk.FB[(long)floor((q->t_s - 0.015) * pl.trk.rate)] > 0.0 && fabs(pl.trk.vB[(long)floor((q->t_s - 0.005) * pl.trk.rate)]) == 0.0,
               "%s note %d: the force does not land before the motion", what, k);
     }
@@ -548,6 +564,121 @@ static void g_attack(void)
     played_free(&d);
 }
 
+/* ---------------------------------------------------------------- h) the wedge start of G2 (rendered), i) the expert release */
+static double rms_db_f(const float *y, long i0, long w)
+{
+    double s = 0.0;
+    for (long i = i0; i < i0 + w; i++) s += (double)y[i] * y[i];
+    return 10.0 * log10(s / (double)w + 1e-20);
+}
+
+static int cmp_d(const void *a, const void *b) { double x = *(const double *)a, z = *(const double *)b; return x < z ? -1 : x > z; }
+
+/* level re sustain at `t_after` s after the written start: 20 ms rms window starting there, sustain = median of the 10 ms hop frames from 0.5 s to 1.4 s after the
+   written start (the measure of charts/attack_scan2_lib.py lev, so the numbers are those of the scans) */
+static double lev_re_sustain(const float *y, long n, double t0, double t_after)
+{
+    const long w = 960, hop = 480, a = (long)((t0 + 0.5) * FS48);
+    const long b = (long)((t0 + 1.4) * FS48); /* the scans cut the note's segment 1.4 s after the start */
+    long nf = ((b < n ? b : n) - w - a) / hop + 1;
+    double *e = malloc(sizeof(double) * (size_t)nf);
+    for (long k = 0; k < nf; k++) e[k] = rms_db_f(y, a + k * hop, w);
+    qsort(e, (size_t)nf, sizeof *e, cmp_d);
+    double sus = e[nf / 2];
+    free(e);
+    return rms_db_f(y, (long)((t0 + t_after) * FS48), w) - sus;
+}
+
+/* G2 (stopped on the C string, vibrato on, forte, 1.5 s) with the wedge start: audio periodic within 0.1 s of the start and the level 50 ms after the start within 4 dB
+   of the value measured when the wedge was set (charts/wedge_final.py, seeds 0 and 1: -9.1 and -10.7 dB) and of Philharmonia's G2 (-6.9 dB) */
+static void h_wedge(void)
+{
+    const double measured[2] = {-9.1, -10.7};
+    for (int seed = 0; seed < 2; seed++) {
+        Note one = mk(0.5, 1.5, 43, 0.85, 1);
+        long n48;
+        Played pl;
+        float *y = render_notes_p(&one, 1, STYLE_EXPERT, (uint64_t)seed, 96000.0, &n48, &pl);
+        CHECK(y != NULL, "render");
+        if (!y) return;
+        double *x = malloc(sizeof(double) * (size_t)n48);
+        for (long i = 0; i < n48; i++) x[i] = y[i];
+        double on = audio_onset_from(x, n48, FS48, 0.5);
+        double tp = on >= 0 ? audio_periodic_time(x, n48, FS48, midi_hz(43), on, 0.95, 10) : -1.0;
+        double l50 = lev_re_sustain(y, n48, 0.5, 0.05);
+        printf("T27h G2 seed %d: audio onset %.3f s, time to periodic %.3f s, level at 50 ms %.1f dB re sustain (measured %.1f, Philharmonia -6.9)\n", seed, on, tp - on, l50, measured[seed]);
+        CHECK(on >= 0 && tp >= 0 && tp - on <= 0.1, "seed %d: G2 time to periodic %.3f s (limit 0.1)", seed, tp - on);
+        CHECK(fabs(l50 - measured[seed]) <= 4.0, "seed %d: G2 level at 50 ms %.1f dB re sustain is not within 4 dB of the measured %.1f", seed, l50, measured[seed]);
+        CHECK(fabs(l50 + 6.9) <= 4.0, "seed %d: G2 level at 50 ms %.1f dB re sustain is not within 4 dB of Philharmonia's -6.9", seed, l50);
+        free(x);
+        free(y);
+        played_free(&pl);
+    }
+}
+
+/* the release bump of the audio: the largest rise of the 10 ms level after the lift, max over t in [te + 0.03, te + 0.4] of (L(t) - min of L over [te, t]) */
+static double release_bump(const float *y, long n, double te)
+{
+    const long w = (long)(0.01 * FS48), hop = (long)(0.005 * FS48);
+    double mn = 1e9, bump = 0.0;
+    for (double t = te; t < te + 0.4 && (long)(t * FS48) + w < n; t += 0.005) {
+        double l = rms_db_f(y, (long)(t * FS48), w);
+        if (l < mn) mn = l;
+        if (t >= te + 0.03 && l - mn > bump) bump = l - mn;
+    }
+    (void)hop;
+    return bump;
+}
+
+/* the release of a note that ends a phrase: from the contours the force eases off with no step (at most 5 percent of the sustain force per ms, no overshoot) and the bow
+   still moves when the force reaches zero (the speed is above 0.01 m/s at the lift); the novice stops the bow first and lifts the force in one step. From the audio:
+   the rise after the lift is under 5 dB for the expert (the left hand keeps the note stopped while it rings and lets go slowly) and over 10 dB for the novice (2.6
+   against 16.1 dB when measured) */
+static void i_release(void)
+{
+    Note one = mk(0.5, 1.5, 43, 0.85, 1);
+    const double te = 2.0;
+    double bump[2];
+    for (int st = 0; st < 2; st++) {
+        Player p;
+        player_init(&p, instrument_cello(), st ? STYLE_NOVICE : STYLE_EXPERT, 0);
+        Played pl;
+        CHECK(player_play(&p, &one, 1, &pl) == 0, "player_play");
+        const double R = pl.trk.rate;
+        long it = (long)floor(te * R), iref = (long)floor((te - 0.06) * R);
+        double Fref = pl.trk.FB[iref], maxstep = 0.0, Fmax = 0.0;
+        long ilift = -1;
+        for (long i = iref; i < it + (long)(0.3 * R); i++) {
+            double d = fabs(pl.trk.FB[i] - pl.trk.FB[i - 1]);
+            if (d > maxstep) maxstep = d;
+            if (pl.trk.FB[i] > Fmax) Fmax = pl.trk.FB[i];
+            if (ilift < 0 && i > iref + 5 && pl.trk.FB[i] <= 0.0) ilift = i;
+        }
+        CHECK(ilift > 0, "%s: the force never reaches zero", st ? "novice" : "expert");
+        double vlift = ilift > 0 ? fabs(pl.trk.vB[ilift]) : 0.0;
+        printf("T27i %s release: largest force step %.1f percent of the sustain force per ms, force maximum %.3f of it, bow speed at the lift %.4f m/s\n", st ? "novice" : "expert",
+               100.0 * maxstep / Fref, Fmax / Fref, vlift);
+        if (st == 0) {
+            CHECK(maxstep <= 0.05 * Fref, "expert release: the force steps by %.1f percent of the sustain force in 1 ms (limit 5)", 100.0 * maxstep / Fref);
+            CHECK(Fmax <= 1.05 * Fref, "expert release: the force overshoots to %.3f of the sustain force", Fmax / Fref);
+            CHECK(vlift > 0.01, "expert release: the bow speed at the lift is %.4f m/s (it must still move: limit 0.01)", vlift);
+        } else {
+            CHECK(maxstep > 0.5 * Fref, "novice release: the force steps by only %.1f percent per ms (it should be abrupt)", 100.0 * maxstep / Fref);
+            CHECK(vlift < 1e-6, "novice release: the bow speed at the lift is %.4f m/s (it stops first)", vlift);
+        }
+        long n48;
+        Played pl2;
+        float *y = render_notes_p(&one, 1, st ? STYLE_NOVICE : STYLE_EXPERT, 0, 96000.0, &n48, &pl2);
+        bump[st] = release_bump(y, n48, te);
+        printf("T27i %s release: level rise after the lift %.1f dB\n", st ? "novice" : "expert", bump[st]);
+        free(y);
+        played_free(&pl2);
+        played_free(&pl);
+    }
+    CHECK(bump[0] < 5.0, "expert release bump %.1f dB (limit 5)", bump[0]);
+    CHECK(bump[1] > 10.0, "novice release bump %.1f dB (it should keep its bump: over 10)", bump[1]);
+}
+
 int main(void)
 {
     a_strings();
@@ -557,5 +688,7 @@ int main(void)
     e_vibrato();
     f_style();
     g_attack();
+    h_wedge();
+    i_release();
     TEST_DONE("test_player");
 }

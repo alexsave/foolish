@@ -24,10 +24,12 @@ void render_opts_default(RenderOpts *o)
     o->dist = 1.5;
     o->fs = 96000.0;
     o->damp = -1.0;
+    o->damp_delay = -1.0;
     o->rock = -1.0;
     o->dip = -1.0;
     o->swap_dip = -1.0;
     o->att = -1;
+    o->att_hold = -1.0;
 }
 
 int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, long *n48, Played *played, double *rtf)
@@ -37,6 +39,8 @@ int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, l
     player_init(&pl, I, o->style, o->seed);
     pl.vib_all_off = o->vib_off;
     if (o->damp >= 0.0) pl.damp_press = o->damp;
+    if (o->damp_ease > 0.0) pl.damp_ease = o->damp_ease;
+    if (o->damp_delay >= 0.0) pl.damp_delay = o->damp_delay;
     if (o->bc[1] > 0.0) { pl.bc_lo = o->bc[0]; pl.bc_hi = o->bc[1]; }
     pl.slur = o->slur;
     if (o->dip >= 0.0) pl.dip = o->dip;
@@ -48,6 +52,9 @@ int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, l
     if (o->frac[1] > 0.0) { pl.frac_min = o->frac[0]; pl.frac_span = o->frac[1]; }
     if (o->att >= 0) pl.att_on = o->att;
     if (o->att_acc > 0.0) pl.att_acc = o->att_acc;
+    if (o->att_k > 0.0) pl.att_k = o->att_k;
+    if (o->att_hold >= 0.0) pl.att_hold = o->att_hold;
+    if (o->rel[1] > 0.0) { pl.rel_lo = o->rel[0]; pl.rel_hi = o->rel[1]; }
     if (o->att_v > 0.0) pl.att_v_frac = o->att_v;
     if (o->att_frac > 0.0) pl.att_frac = o->att_frac;
     if (o->sw[1] > 0.0) { pl.sw_lo = o->sw[0]; pl.sw_hi = o->sw[1]; }
@@ -90,6 +97,8 @@ int render_cli(int argc, char **argv)
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) o.trace = argv[++i];
         else if (!strcmp(argv[i], "--fs") && i + 1 < argc) o.fs = atof(argv[++i]);
         else if (!strcmp(argv[i], "--damp") && i + 1 < argc) o.damp = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--ddelay") && i + 1 < argc) o.damp_delay = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--dease") && i + 1 < argc) o.damp_ease = atof(argv[++i]);
         else if (!strcmp(argv[i], "--bc") && i + 2 < argc) { o.bc[0] = atof(argv[i + 1]); o.bc[1] = atof(argv[i + 2]); i += 2; }
         else if (!strcmp(argv[i], "--swapdip") && i + 1 < argc) o.swap_dip = atof(argv[++i]);
         else if (!strcmp(argv[i], "--slur") && i + 1 < argc) o.slur = atoi(argv[++i]);
@@ -100,6 +109,9 @@ int render_cli(int argc, char **argv)
         else if (!strcmp(argv[i], "--vb") && i + 2 < argc) { o.vb[0] = atof(argv[i + 1]); o.vb[1] = atof(argv[i + 2]); i += 2; }
         else if (!strcmp(argv[i], "--att") && i + 1 < argc) o.att = !strcmp(argv[++i], "on");
         else if (!strcmp(argv[i], "--atta") && i + 1 < argc) o.att_acc = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--attk") && i + 1 < argc) o.att_k = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--hold") && i + 1 < argc) o.att_hold = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--rel") && i + 2 < argc) { o.rel[0] = atof(argv[i + 1]); o.rel[1] = atof(argv[i + 2]); i += 2; }
         else if (!strcmp(argv[i], "--attv") && i + 1 < argc) o.att_v = atof(argv[++i]);
         else if (!strcmp(argv[i], "--attf") && i + 1 < argc) o.att_frac = atof(argv[++i]);
         else if (!strcmp(argv[i], "--sw") && i + 2 < argc) { o.sw[0] = atof(argv[i + 1]); o.sw[1] = atof(argv[i + 2]); i += 2; }

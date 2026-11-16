@@ -57,6 +57,8 @@ void player_init(Player *p, const Instrument *inst, PlayStyle style, uint64_t se
     p->ctrl_rate = PLAYER_CTRL_RATE;
     p->vib_all_off = 0;
     p->damp_press = 0.12;
+    p->damp_delay = 0.3;
+    p->damp_ease = 3.0;
     p->vb_min = 0.06;
     p->vb_span = 0.07;
     p->bc_lo = 0.03;
@@ -71,8 +73,12 @@ void player_init(Player *p, const Instrument *inst, PlayStyle style, uint64_t se
     p->frac_min = 0.35;
     p->frac_span = 0.25;
     p->att_on = 1;
-    p->att_acc = 0.5;
-    p->att_v_frac = 0.4;
+    p->att_acc = 0.0; /* 0: the Instrument's per string wedge acceleration (instrument_cello.c WEDGE); iteration 1 used 0.5 m/s^2 for all strings */
+    p->att_k = 0.0;   /* 0: the Instrument's per string wedge slope */
+    p->att_hold = 0.1; /* the wedge force is held until the Helmholtz motion has formed (G2 on C: 1 of 6 takes derailed at 0 s and 0.05 s hold, 5 of 6 periodic at 0.1 s) */
+    p->rel_lo = 0.05;
+    p->rel_hi = 0.15;
+    p->att_v_frac = 0.85; /* was 0.4 with the 0.5 m/s^2 ramp: the speed at 50 ms was 0.025 m/s and the level 8-17 dB under Philharmonia */
     p->att_frac = 0.4; /* was 0.6 (candidate 2, friction curve); thermal friction: the first take of G2 reaches periodic motion in 0.06-0.07 s on all three seeds (0.17 s median, 0.45 s worst at 0.6), D3 0.06, A3 0.08 (charts/onset_scan.py) */
     p->sw_lo = 0.25;
     p->sw_hi = 0.45;
@@ -245,7 +251,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
     double Tdamp[1024], damp_a[1024];
     if (n > 1024) { free(wsum); free(bacc); return 2; }
     double beta_phrase = 0.1;
-    struct { double onset, rate, dmult, dacc, lead, pk, bwb, bwv, bwf, sdb, frac_nov; double scoop, settle, tsw; } sc[1024];
+    struct { double onset, rate, dmult, dacc, lead, pk, bwb, bwv, bwf, sdb, frac_nov; double scoop, settle, tsw, trel; } sc[1024];
     for (int k = 0; k < n; k++) {
         NotePlan *q = &pl[k];
         const Note *nn = &nt[k];
@@ -277,6 +283,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
         Tdamp[k] = d_uni(&d, 0.08, 0.15);
         sc[k].frac_nov = d_uni(&d, 0.85, 0.95);
         sc[k].tsw = d_uni(&d, p->sw_lo, p->sw_hi); /* appended last: the earlier draws keep their values */
+        sc[k].trel = d_uni(&d, p->rel_lo, p->rel_hi); /* appended after the swell: the earlier draws keep their values */
         damp_a[k] = p->damp_press;
         if (!q->linked_prev) { /* a new phrase: beta drawn once */
             Dr dp;
@@ -321,9 +328,11 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
         bl_noise(&d, df, m, R, sc[k].bwf, 0.05);
         double lead = sc[k].lead, Tacc = sc[k].dacc;
         const int att = expert && p->att_on && !q->linked_prev;
-        double T0 = 0.0, Tsw = sc[k].tsw, r0 = p->att_v_frac;
+        double T0 = 0.0, Tsw = sc[k].tsw, r0 = p->att_v_frac, Trel = sc[k].trel, F_att = 0.0;
         if (att) {
-            T0 = r0 * q->vB0 / p->att_acc;
+            const double a_w = p->att_acc > 0.0 ? p->att_acc : I->att_acc[q->string];
+            F_att = (p->att_k > 0.0 ? p->att_k : I->att_k[q->string]) * a_w; /* the wedge: the force proportional to the acceleration */
+            T0 = r0 * q->vB0 / a_w;
             Tacc = T0 + Tsw;
             lead = 0.02;
             q->T_acc = Tacc;
@@ -360,6 +369,11 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
                 lnF = log(lo) + frac_t * D + log(1.0 + ar) + log(1.0 + df[i - ia]);
                 lnF = clampd(lnF, log(lo) + 0.2 * D, log(lo) + 0.8 * D);
             } else lnF = log(lo) + q->frac0 * D;
+            if (att) { /* the Guettler wedge: F = k a while the bow accelerates, then the force relaxes to the sustain force over Trel (raised cosine in ln F, no
+                          step); the 0.2 - 0.8 clamp above is the sustain force, it governs the force from the end of the relaxation on */
+                double ua = t - ts, wr = rc((ua - T0 - p->att_hold) / Trel);
+                if (wr < 1.0) lnF = (1.0 - wr) * (log(F_att) + log(1.0 + df[i - ia])) + wr * lnF;
+            }
             F = exp(lnF);
             double V = vplat, fa = 1.0, fr = 1.0, va = 1.0, vr = 1.0;
             if (!q->linked_prev) {
@@ -512,7 +526,11 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
                     if (!(nn->slide && same_swap)) a = fmax(a * up, up < 1.0 ? T->aF[s][i] : 0.0);
                 }
             } else if (expert) {
-                double tt = t - te, ease = rc(tt / Tdamp[k]);
+                /* the left hand of the last note of a phrase keeps the note stopped while it rings and lets go slowly (the finger lift after the bow
+                   lift re-excites the string: 13-17 dB rises 0.1-0.2 s after the lift when it eases off at once, release_study.py); a legato change keeps the
+                   old quick damping of the old string */
+                double delay = q->linked_next ? 0.0 : p->damp_delay, slow = q->linked_next ? 1.0 : p->damp_ease;
+                double tt = t - te - delay, ease = rc(tt / (slow * Tdamp[k]));
                 a = damp_a[k] + (1.0 - damp_a[k]) * (1.0 - ease);
                 if (tt > 0.5) a *= 1.0 - rc((tt - 0.5) / 0.05);
             } else a = t < te + 0.001 ? 1.0 - (t - te) / 0.001 : 0.0;

@@ -38,6 +38,8 @@ typedef struct {
     double ctrl_rate;   /* contour samples per logical second */
     int vib_all_off;    /* --vib off */
     double damp_press;  /* finger press left on the string after the bow lift (the damping contact) */
+    double damp_ease;   /* factor on the 0.08 - 0.15 s of the finger's ease to damp_press */
+    double damp_delay;  /* s after the lift before the finger starts to ease to damp_press (the expert keeps the note stopped while it rings) */
     double vb_min, vb_span;     /* plateau bow speed = vb_min + vb_span * vel, clamped to 0.06 - 0.18 m/s */
     double bc_lo, bc_hi;        /* length of the bow change through zero speed, s (drawn per change), 0.03 - 0.05 */
     double swap_dip;            /* press lost at the middle of a finger swap on the same string, 0.8 (the old finger lifts as the new one lands) */
@@ -50,9 +52,15 @@ typedef struct {
     /* the expert attack of a note that starts from rest (onset work, ONSET.md): the bow force lands 0.02 s before the motion, the bow
        accelerates at att_acc (m/s^2) to att_v_frac of the note's plateau speed with the force at the log-band position att_frac (0.4),
        then speed and band position swell together to the plateau over a time drawn in [sw_lo, sw_hi] s (raised cosine). The force
-       is always taken from the playability table at the INSTANTANEOUS speed and stays inside 0.2 - 0.8 of its log band. */
+       is always taken from the playability table at the INSTANTANEOUS speed and stays inside 0.2 - 0.8 of its log band (the sustain force; during the
+       first moments of the attack the Guettler wedge below rules, iteration 2). */
     int att_on;
     double att_acc, att_v_frac, att_frac, sw_lo, sw_hi;
+    /* the Guettler-wedge attack (iteration 2): the bow accelerates at the string's att_acc (Instrument; att_acc > 0 here overrides it for all strings) to
+       att_v_frac of the plateau speed with the force at the wedge, att_k * a (att_k > 0 here overrides the Instrument slope), then the force relaxes to the
+       sustain position over a time drawn in [rel_lo, rel_hi] s while the speed swells to the plateau over [sw_lo, sw_hi] s. The 0.2 - 0.8 clamp of the
+       log band applies from the end of the relaxation on; the force is continuous throughout. */
+    double att_k, att_hold, rel_lo, rel_hi; /* att_hold: the wedge force is held this long after the bow reaches speed before it relaxes, s */
 } Player;
 
 #define PLAYER_CTRL_RATE 1000.0
