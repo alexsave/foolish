@@ -1,9 +1,9 @@
 CC = clang
 CFLAGS = -O2 -Wall -Wextra -std=c11 -ffp-contract=off -D_DARWIN_C_SOURCE -DFE_DEFAULT_PATH='"$(CURDIR)/data/fin5_cpl.bodymodes.txt"'
-LIB = knobs.c rng.c geom.c room.c room_cli.c instrument.c instrument_cello.c torsion.c altstring.c finger.c bow.c friction_thermal.c control.c radiate_body.c radiate_plate_table.c body_modes.c fe_body.c body.c wav.c sim.c fft.c analysis.c player.c render.c legato.c lossmeas.c
+LIB = knobs.c rng.c geom.c room.c room_cli.c instrument.c instrument_cello.c torsion.c altstring.c finger.c bow.c friction_thermal.c control.c radiate_body.c radiate_plate_table.c body_modes.c fe_body.c body.c wav.c sim.c fft.c analysis.c player.c render.c pickup.c legato.c lossmeas.c
 LIBO = $(LIB:.c=.o)
 TESTS = test_rng test_wav test_string_free test_helmholtz test_schelleng test_finger test_determinism \
-	test_body_energy test_admittance test_bridge_loss test_sympathetic test_body_helmholtz test_wolf test_torsion test_radiate test_bridge_hill test_hair test_instrument test_knobs test_room test_onset test_oracle_msw test_bow_noise test_player test_shadow test_thermal test_string_loss test_preonset test_fe_body test_contact
+	test_body_energy test_admittance test_bridge_loss test_sympathetic test_body_helmholtz test_wolf test_torsion test_radiate test_bridge_hill test_hair test_instrument test_knobs test_room test_onset test_oracle_msw test_bow_noise test_player test_shadow test_thermal test_string_loss test_preonset test_fe_body test_contact test_pickup
 
 all: altcello rough_tool geomdump test_geom bowhair_study sweep_tool onset_tool ring_tool thermal_tool loss_tool body_tool fe_tool
 

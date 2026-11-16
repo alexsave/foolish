@@ -33,6 +33,7 @@ typedef struct {
     double att_acc, att_v, att_frac, sw[2]; /* 0: the defaults */
     double att_k, att_hold, rel[2]; /* the wedge slope (N per m/s^2) and the force relaxation time range, 0: the defaults */
     const char *trace;
+    const char *pickup; /* NULL: off. Else PREFIX: also write the contact pickup signals PREFIX_<point>_<kind>.wav (pickup.h; raw level, 48 kHz), output only */
     int solo;       /* diagnosis: 1 = only the bowed string on the bridge (no sympathetic strings); 0 (default) all four */
     void (*step_cb)(const Sim *S, long i, void *user); /* diagnosis hook: called after every simulation step (rough_tool.c); NULL = none */
     void *step_user;

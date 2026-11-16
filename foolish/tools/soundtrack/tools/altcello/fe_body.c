@@ -14,6 +14,7 @@
 void fe_file_free(FeFile *F)
 {
     if (!F) return;
+    free(F->tc); free(F->bc);
     free(F->f); free(F->eta); free(F->Q); free(F->m); free(F->r_net); free(F->air);
     for (int s = 0; s < BODY_NS; s++) { free(F->cu[s]); free(F->cw[s]); }
     free(F);
@@ -33,8 +34,8 @@ FeFile *fe_file_load(const char *path, char *err, int errn)
     char line[1024];
     int have_head = 0, count = -1, nc = 0, got = 0, ended = 0;
     char cn[MAXCOL][24];
-    int cf, ce, cq, cm, cr, ca, ccu[BODY_NS], ccw[BODY_NS];
-    cf = ce = cq = cm = cr = ca = -1;
+    int cf, ce, cq, cm, cr, ca, ctc, cbc, ccu[BODY_NS], ccw[BODY_NS];
+    cf = ce = cq = cm = cr = ca = ctc = cbc = -1;
     while (fgets(line, sizeof line, fp)) {
         char *p = line;
         while (isspace((unsigned char)*p)) p++;
@@ -62,6 +63,7 @@ FeFile *fe_file_load(const char *path, char *err, int errn)
             }
             cf = col_of(cn, nc, "f_Hz"); ce = col_of(cn, nc, "eta"); cq = col_of(cn, nc, "Q"); cm = col_of(cn, nc, "m_kg");
             cr = col_of(cn, nc, "r_net"); ca = col_of(cn, nc, "air_share");
+            ctc = col_of(cn, nc, "top_centre_n"); cbc = col_of(cn, nc, "back_centre_n");
             for (int s = 0; s < BODY_NS; s++) {
                 char a[24], b[24];
                 snprintf(a, sizeof a, "cu_%c", F->names[s][0]);
@@ -75,6 +77,7 @@ FeFile *fe_file_load(const char *path, char *err, int errn)
             F->f = calloc((size_t)count, sizeof(double)); F->eta = calloc((size_t)count, sizeof(double));
             F->Q = calloc((size_t)count, sizeof(double)); F->m = calloc((size_t)count, sizeof(double));
             F->r_net = calloc((size_t)count, sizeof(double)); F->air = calloc((size_t)count, sizeof(double));
+            if (ctc >= 0 && cbc >= 0) { F->tc = calloc((size_t)count, sizeof(double)); F->bc = calloc((size_t)count, sizeof(double)); }
             for (int s = 0; s < BODY_NS; s++) { F->cu[s] = calloc((size_t)count, sizeof(double)); F->cw[s] = calloc((size_t)count, sizeof(double)); }
         } else if (!strncmp(p, "end", 3)) {
             ended = 1;
@@ -93,6 +96,7 @@ FeFile *fe_file_load(const char *path, char *err, int errn)
             while (isspace((unsigned char)*e)) e++;
             if (*e) FAIL("data line %d: trailing text", got + 1);
             F->f[got] = v[cf]; F->eta[got] = v[ce]; F->Q[got] = v[cq]; F->m[got] = v[cm]; F->r_net[got] = v[cr]; F->air[got] = v[ca];
+            if (F->tc) { F->tc[got] = v[ctc]; F->bc[got] = v[cbc]; }
             for (int s = 0; s < BODY_NS; s++) { F->cu[s][got] = v[ccu[s]]; F->cw[s][got] = v[ccw[s]]; }
             if (F->f[got] <= 0.0 || F->Q[got] <= 0.0 || F->m[got] <= 0.0) FAIL("data line %d: f, Q, m must be positive", got + 1);
             got++;
@@ -159,6 +163,23 @@ BodyModes *body_modes_build_fe(const Instrument *I, const BodyOpts *o)
     body_modes_free(d);
     fe_file_free(F);
     return b;
+}
+
+int fe_point_weights(const Instrument *I, double **tc, double **bc, int *nfe)
+{
+    const char *path = I->body.fe_path ? I->body.fe_path : FE_DEFAULT_PATH;
+    char err[200];
+    FeFile *F = fe_file_load(path, err, sizeof err);
+    if (!F) { fprintf(stderr, "FE body %s: %s\n", path, err); exit(2); }
+    if (!F->tc) { fe_file_free(F); return 1; }
+    int n = 0;
+    for (int i = 0; i < F->n; i++) if (F->f[i] < I->body.fe_fx) n++;
+    *tc = malloc(sizeof(double) * (size_t)n);
+    *bc = malloc(sizeof(double) * (size_t)n);
+    for (int i = 0, j = 0; i < F->n && F->f[i] < I->body.fe_fx; i++, j++) { (*tc)[j] = F->tc[i]; (*bc)[j] = F->bc[i]; }
+    *nfe = n;
+    fe_file_free(F);
+    return 0;
 }
 
 double fe_white_psd(const Instrument *I, double flo, double fhi, long n)

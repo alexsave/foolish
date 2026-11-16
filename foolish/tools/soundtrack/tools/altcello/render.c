@@ -1,4 +1,6 @@
 #include "render.h"
+#include "fe_body.h"
+#include "pickup.h"
 #include "room.h"
 #include "sim.h"
 #include "wav.h"
@@ -70,15 +72,57 @@ int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, l
     sim_start(&S);
     long total = (long)floor(played->dur * o->fs + 0.5);
     double *pr = malloc(sizeof(double) * (size_t)total);
+    /* contact pickup capture (output only): point velocities 0 bridge_u, 1 bridge_w, 2 top centre, 3 back centre (the last two need the FE body, fe=1|2) */
+    enum { NPK = 4 };
+    static const char *const pk_name[NPK] = {"bridge_u", "bridge_w", "top", "back"};
+    double *pk[NPK] = {0}, *tcw = NULL, *bcw = NULL;
+    int pk_nfe = 0;
+    if (o->pickup) {
+        for (int c = 0; c < 2; c++) pk[c] = malloc(sizeof(double) * (size_t)total);
+        if (S.body && S.body->nfe > 0) {
+            if (fe_point_weights(I, &tcw, &bcw, &pk_nfe) == 0 && pk_nfe == S.body->nfe) {
+                pk[2] = malloc(sizeof(double) * (size_t)total);
+                pk[3] = malloc(sizeof(double) * (size_t)total);
+            } else fprintf(stderr, "pickup: the FE file has no top_centre_n / back_centre_n for the modes in use, top and back skipped\n");
+        }
+    }
     double c0 = cpu_seconds();
     for (long i = 0; i < total; i++) {
         sim_step(&S);
         pr[i] = S.out[7];
+        if (pk[0]) { pk[0][i] = S.out[5]; pk[1][i] = S.out[6]; }
+        if (pk[2]) {
+            double a = 0.0, b = 0.0;
+            for (int j = 0; j < pk_nfe; j++) { a += tcw[j] * S.body->tdq[j]; b += bcw[j] * S.body->tdq[j]; }
+            pk[2][i] = a / (2.0 * S.body->k);
+            pk[3][i] = b / (2.0 * S.body->k);
+        }
         if (o->step_cb) o->step_cb(&S, i, o->step_user);
     }
     double c1 = cpu_seconds();
     if (rtf) *rtf = c1 > c0 ? played->dur / (c1 - c0) : 0.0;
     int fac = (int)(o->fs / 48000.0 + 0.5);
+    for (int c = 0; c < NPK; c++) {
+        if (!pk[c]) continue;
+        double *a = malloc(sizeof(double) * (size_t)total);
+        for (int kind = 0; kind < 4; kind++) { /* 0 velocity (P2), 1 acceleration + 16 Hz high-pass (P1, 10 MOhm), 2 the same at 160 Hz (1 MOhm), 3 acceleration, no high-pass */
+            const double *x = pk[c];
+            const char *kn = "vel";
+            if (kind == 1) { pickup_accel_hp(pk[c], total, o->fs, 16.0, a); x = a; kn = "acc_fc16"; }
+            if (kind == 2) { pickup_accel_hp(pk[c], total, o->fs, 160.0, a); x = a; kn = "acc_fc160"; }
+            if (kind == 3) { pickup_accel_hp(pk[c], total, o->fs, 1e-3, a); x = a; kn = "acc_raw"; }
+            float *y;
+            long m = wav_decimate(x, total, fac, &y);
+            char path[1024];
+            snprintf(path, sizeof path, "%s_%s_%s.wav", o->pickup, pk_name[c], kn);
+            if (wav_write_f32(path, y, m, 48000)) perror(path);
+            free(y);
+        }
+        free(a);
+        free(pk[c]);
+    }
+    free(tcw);
+    free(bcw);
     *n48 = wav_decimate(pr, total, fac, pcm48);
     free(pr);
     sim_free(&S);
@@ -100,6 +144,7 @@ int render_cli(int argc, char **argv)
         else if (!strcmp(argv[i], "--room") && i + 1 < argc) { const char *v = argv[++i]; o.rt60 = !strcmp(v, "off") ? 0.0 : atof(v); }
         else if (!strcmp(argv[i], "--dist") && i + 1 < argc) o.dist = atof(argv[++i]);
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) o.trace = argv[++i];
+        else if (!strcmp(argv[i], "--pickup") && i + 1 < argc) o.pickup = argv[++i];
         else if (!strcmp(argv[i], "--fs") && i + 1 < argc) o.fs = atof(argv[++i]);
         else if (!strcmp(argv[i], "--damp") && i + 1 < argc) o.damp = atof(argv[++i]);
         else if (!strcmp(argv[i], "--ddelay") && i + 1 < argc) o.damp_delay = atof(argv[++i]);

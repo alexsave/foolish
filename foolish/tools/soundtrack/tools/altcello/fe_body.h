@@ -22,11 +22,16 @@ typedef struct {
     char names[BODY_NS][8];
     double rho, c;
     double *f, *eta, *Q, *m, *cu[BODY_NS], *cw[BODY_NS], *r_net, *air; /* as in the file (u not flipped) */
+    double *tc, *bc; /* top_centre_n, back_centre_n per mode (NULL when the file has no such column): surface point shapes for the contact pickup (pickup.h) */
 } FeFile;
 
 /* strtod loader, no JSON. NULL (message in err, if not NULL, up to errn bytes) on any malformed file; free with fe_file_free */
 FeFile *fe_file_load(const char *path, char *err, int errn);
 void fe_file_free(FeFile *F);
+
+/* the pickup point shapes of the FE modes the body uses (those below Instrument.body.fe_fx, in file order): malloc'ed *tc and *bc, *nfe modes; 0 on success,
+ * 1 when the file has no top_centre_n / back_centre_n column. Output only (pickup.h), nothing in the physics reads it. */
+int fe_point_weights(const Instrument *I, double **tc, double **bc, int *nfe);
 
 /* radiated pressure under an independent white bridge force of unit variance on every string (the shipped body gets the sum): the mean power spectral
  * density in flo..fhi, arbitrary units, n steps at 96 kHz from ALTCELLO_SEED. Used to match the two FE variants to the shipped body (fe_tool, test_fe_body). */
