@@ -33,6 +33,7 @@ void sim_init(Sim *S, const Instrument *I, const StringSpec *sp, double fs)
 {
     memset(S, 0, sizeof *S);
     S->str[0] = string_new(sp, fs);
+    S->sidx[0] = 0;
     S->nstr = 1;
     S->bowed = 0;
     S->s = S->str[0];
@@ -52,6 +53,7 @@ void sim_init_instrument(Sim *S, const Instrument *I, double fs, const SimOpts *
             for (int r = 0; r < STR_NREL; r++) sp.rel_s1[r] = 0.0;
         }
         S->str[S->nstr] = string_new(&sp, fs);
+        S->sidx[S->nstr] = i;
         if (!strcmp(I->str[i].name, bowed_name)) S->bowed = S->nstr;
         if (S->str[S->nstr]->N > maxN) maxN = S->str[S->nstr]->N;
         S->nstr++;
@@ -227,8 +229,28 @@ void sim_step(Sim *S)
 
     /* bridge: the strings' end force drives the body (leapfrog of the whole
        instrument: both the body and the strings use the state at time n) */
-    double zu = 0.0, zw = 0.0;
-    if (S->body) {
+    double zu = 0.0, zw = 0.0, zus[SIM_MAXSTR] = {0}, zws[SIM_MAXSTR] = {0}; /* the FE body gives each string its own notch displacement */
+    double vub = 0.0, vwb = 0.0;
+    if (S->body && S->body->nfe > 0) {
+        double Fu[BODY_NS] = {0}, Fw[BODY_NS] = {0};
+        for (int i = 0; i < S->nstr; i++) {
+            double fu = -string_bridge_force(S->str[i], S->str[i]->y1[0]), fw = -string_bridge_force(S->str[i], S->str[i]->y1[1]);
+            Fu[S->sidx[i]] = fu;
+            Fw[S->sidx[i]] = fw;
+            if (S->shadow[i]) {
+                double su[BODY_NS] = {0}, sw[BODY_NS] = {0};
+                su[S->sidx[i]] = fu;
+                sw[S->sidx[i]] = fw;
+                body_step_str(S->shadow[i], su, sw);
+                S->out_pstr[i] = S->shadow[i]->p;
+                S->out_fstr[i] = fu;
+            }
+        }
+        body_step_str(S->body, Fu, Fw);
+        for (int i = 0; i < S->nstr; i++) { zus[i] = S->body->zus[S->sidx[i]]; zws[i] = S->body->zws[S->sidx[i]]; }
+        vub = S->body->vus[S->sidx[S->bowed]];
+        vwb = S->body->vws[S->sidx[S->bowed]];
+    } else if (S->body) {
         double Fu = 0.0, Fw = 0.0;
         for (int i = 0; i < S->nstr; i++) {
             double fu = -string_bridge_force(S->str[i], S->str[i]->y1[0]), fw = -string_bridge_force(S->str[i], S->str[i]->y1[1]);
@@ -243,6 +265,9 @@ void sim_step(Sim *S)
         body_step(S->body, Fu, Fw);
         zu = S->body->zu;
         zw = S->body->zw;
+        for (int i = 0; i < S->nstr; i++) { zus[i] = zu; zws[i] = zw; }
+        vub = S->body->vu;
+        vwb = S->body->vw;
     }
 
     for (int i = 0; i < S->nstr; i++) {
@@ -336,16 +361,16 @@ void sim_step(Sim *S)
         string_step_free(s, 1, NULL);
     }
     for (int i = 0; i < S->nstr; i++) {
-        S->str[i]->y2[0][S->str[i]->N] = zu;
-        S->str[i]->y2[1][S->str[i]->N] = zw;
+        S->str[i]->y2[0][S->str[i]->N] = zus[i];
+        S->str[i]->y2[1][S->str[i]->N] = zws[i];
     }
     S->out[0] = string_bridge_force(s, s->y2[0]);
     S->out[1] = string_bridge_force(s, s->y2[1]);
     S->out[2] = vbow;
     S->out[3] = vrel;
     S->out[4] = fric;
-    S->out[5] = S->body ? S->body->vu : 0.0;
-    S->out[6] = S->body ? S->body->vw : 0.0;
+    S->out[5] = S->body ? vub : 0.0;
+    S->out[6] = S->body ? vwb : 0.0;
     S->out[7] = S->body ? S->body->p : 0.0;
     if (S->hair.on) {
         if (!S->bow_on) S->hair.d2 = S->hair.A * S->hair.d1 + S->hair.B * S->hair.d0;

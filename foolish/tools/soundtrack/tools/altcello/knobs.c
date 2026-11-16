@@ -69,6 +69,20 @@ int knobs_apply(Instrument *I, const char *spec)
             I->bow.width = v;
         } else if (!strcmp(tok, "lead_mass") && !names) {
             for (int m = 0; m < I->body.nlead; m++) I->body.lead[m].m *= v;
+        } else if (!strcmp(tok, "fe") && !names) {
+            /* the solved FE body (fe_body.h): 0 the statistical body, 1 FE-A, 2 FE-B */
+            if (v != 0.0 && v != 1.0 && v != 2.0) { fprintf(stderr, "knob fe: 0, 1 or 2\n"); rc = 1; break; }
+            I->body.fe_variant = (int)v;
+        } else if (!strcmp(tok, "fe_path") && !names) {
+            static char path[512];
+            snprintf(path, sizeof path, "%s", eq + 1);
+            I->body.fe_path = path;
+        } else if (!strcmp(tok, "fe_fx") && !names) {
+            I->body.fe_fx = v;
+        } else if (!strcmp(tok, "fe_ga") && !names) {
+            I->body.fe_gain_a = v;
+        } else if (!strcmp(tok, "fe_gb") && !names) {
+            I->body.fe_gain_b = v;
         } else if (!strcmp(tok, "stat_mass") && !names) {
             I->body.stat_m500 *= v;
         } else if (names && (!strcmp(tok, "q2k") || !strcmp(tok, "zeta") || !strcmp(tok, "zt"))) {

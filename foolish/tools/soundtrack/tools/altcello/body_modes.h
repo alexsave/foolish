@@ -22,10 +22,18 @@ typedef struct {
     double *f, *Q, *m, *cu, *cw, *r; /* Hz, -, kg (effective mass at the bridge), -, -, and r: for the compact modes the
                                         monopole strength r_k (1.0 or 0.7), for all others the fixed random sign s_k = +-1 of the
                                         plate path (radiate_body.h) */
+    /* the solved finite element body (fe_body.h; nfe = 0 for the statistical body): the first nfe modes are FE modes, the rest are the
+       statistical modes above the crossover. For an FE mode f, Q, m are the file's, cu and cw are the mean over the strings, and: */
+    int nfe;
+    double *cus, *cws;  /* [BODY_NS][nfe] string-major: participation of FE mode k at the notch of string s (u already flipped to our geometry) */
+    double *rnet, *air; /* [nfe] r_net (m3 per unit q) and the air share of the mode energy */
 } BodyModes;
+#define BODY_NS 4
 
 BodyModes *body_modes_build(const Instrument *I);                         /* default knobs */
-BodyModes *body_modes_build_opts(const Instrument *I, const BodyOpts *o);       /* deterministic: statistical modes use ALTCELLO_BODY_SEED, signs ALTCELLO_RADIATE_SEED */
+BodyModes *body_modes_build_stat(const Instrument *I, const BodyOpts *o);      /* always the statistical body */
+BodyModes *body_modes_build_fe(const Instrument *I, const BodyOpts *o);        /* the FE modes below fe_fx and the statistical ones above (fe_body.c) */
+BodyModes *body_modes_build_opts(const Instrument *I, const BodyOpts *o);       /* the statistical body, or the FE body when I->body.fe_variant != 0; deterministic: statistical modes use ALTCELLO_BODY_SEED, signs ALTCELLO_RADIATE_SEED */
 void body_modes_free(BodyModes *b);
 const char *body_mode_name(const Instrument *I, int i); /* "A0" "CBR" "B1-" "B1+" ... */
 

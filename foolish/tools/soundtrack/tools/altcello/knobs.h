@@ -17,6 +17,8 @@
  *   bw=X            bow hair contact width, m (0.010)
  *   lead_mass=X     factor on the effective masses of the named (table) body modes
  *   stat_mass=X     factor on the statistical body modal masses
+ *   fe=0|1|2        the body: 0 statistical (default), 1 FE-A, 2 FE-B (fe_body.h); fe_path=FILE the BODYMODES file (else data/fin5_cpl.bodymodes.txt of this directory);
+ *                   fe_fx=HZ the crossover to the statistical modes (2500); fe_ga=X fe_gb=X the crossover match scale of FE-A / FE-B
  */
 #ifndef ALTCELLO_KNOBS_H
 #define ALTCELLO_KNOBS_H

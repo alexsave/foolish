@@ -1,6 +1,7 @@
 /* The body mode set built from an Instrument (instrument.h): the named table modes, then the statistical modes drawn once
  * from ALTCELLO_BODY_SEED. The constants live in the instrument file, not here. */
 #include "body_modes.h"
+#include "fe_body.h"
 #include "rng.h"
 #include <math.h>
 #include <stdlib.h>
@@ -54,6 +55,12 @@ BodyModes *body_modes_build(const Instrument *I)
 
 BodyModes *body_modes_build_opts(const Instrument *I, const BodyOpts *o)
 {
+    if (I->body.fe_variant) return body_modes_build_fe(I, o);
+    return body_modes_build_stat(I, o);
+}
+
+BodyModes *body_modes_build_stat(const Instrument *I, const BodyOpts *o)
+{
     const BodySpec *sp = &I->body;
     Rng rng;
     rng_seed(&rng, ALTCELLO_BODY_SEED);
@@ -106,5 +113,6 @@ void body_modes_free(BodyModes *b)
 {
     if (!b) return;
     free(b->f); free(b->Q); free(b->m); free(b->cu); free(b->cw); free(b->r);
+    free(b->cus); free(b->cws); free(b->rnet); free(b->air);
     free(b);
 }

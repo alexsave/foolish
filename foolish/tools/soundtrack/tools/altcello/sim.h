@@ -28,6 +28,7 @@ typedef struct {
     const Instrument *inst;
     String *str[SIM_MAXSTR];
     int nstr, bowed;        /* index of the bowed string in str[] */
+    int sidx[SIM_MAXSTR];   /* instrument string index of str[i] (selects its coupling in the FE body, fe_body.h) */
     String *s;              /* = str[bowed] */
     Body *body;
     Rng rng;

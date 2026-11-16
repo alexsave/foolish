@@ -169,6 +169,7 @@ static Instrument cello = {
         0.012, 0.15, /* eta0 at 500 Hz (range 0.008 - 0.02) and exponent (0 - 0.6): REFERENCES 7.1, DERIVED assumption; 0.15 since richness F3 (0.3 before) */
         2.1e-6, BRIDGE_R_INF, 1500.0,
         0.3, /* statistical mass law exponent m ~ f^0.3 (richness F3; m ~ sqrt(f) before) */
+        0, 0, 2500.0, 0.072398, 2.073135, /* the FE body is off; crossover 2.5 kHz; the match scales of FE-A and FE-B: fe_tool cal, asserted by test_fe_body T32d */
     },
     /* radiation: a_eff, f_c, area, perimeter, G_PLATE */
     {0.25, 3000.0, 0.17, 2.0, 1.245},

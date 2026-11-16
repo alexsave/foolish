@@ -86,6 +86,11 @@ typedef struct {
     double bridge_R;              /* rad/(m s N) */
     double bridge_f0;             /* Hz */
     double stat_m_exp;            /* mass law exponent of the statistical modes: m = m500 (f / 500 Hz)^stat_m_exp */
+    /* the solved finite element body (fe_body.h), an experiment behind a switch; fe_variant 0 = the statistical body above (the default) */
+    int fe_variant;               /* 0 STAT, 1 FE-A (monopole straight from r_net), 2 FE-B (FE modes through our radiation filters) */
+    const char *fe_path;          /* BODYMODES 1 file; NULL: FE_DEFAULT_PATH */
+    double fe_fx;                 /* Hz: FE modes below, our statistical modes (identical to the default ones) from here up */
+    double fe_gain_a, fe_gain_b;  /* the one crossover scale of each variant, measured by test_fe_body / fe_tool (fe_body.h) */
 } BodySpec;
 
 typedef struct {
